@@ -43,7 +43,7 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
   - TUI 交互: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
 
 **Pi Extension 源码（本项目维护）**:
-- `extensions/` 目录下 16 个 `@zhushanwen/pi-*` extension 包 + `extensions/shared/quota-providers`，由本项目继续发布到 npm（main 线走 `npm-*` tag 人工版本判定，dev-npm 预发布走 changeset version）
+- `extensions/` 目录下 17 个 `@zhushanwen/pi-*` extension 包 + `extensions/shared/quota-providers`，由本项目继续发布到 npm（main 线走 `npm-*` tag 人工版本判定，dev-npm 预发布走 changeset version）。完整清单见下方「Pi Extension 全集」
 - **[HISTORICAL] xyz-pi-extensions-workspace 已废弃**：原独立仓库 `~/Code/xyz-pi-extensions-workspace` 已停止维护，本仓 `extensions/` 是 `@zhushanwen/pi-*` 的**统一开发仓库**。所有 extension 的源码改动、bug 修复、版本发布都在本仓进行，不再回写到旧仓。旧仓的 `main` 分支可能滞后于本仓，排查问题时以本仓为准
 - **structured-output 方案 A（权威 schema 校验）[HISTORICAL]**：workflow 模式下 `PI_WORKFLOW_SCHEMA` env 注入的权威 schema 是唯一校验权威，LLM 传入的 `schema` 参数不参与校验（仅错误回显）。2026-08-01 事故：ds-flash 重写 `add_channels.items` schema 后自洽通过，4 条 channel 修复静默丢失。根因是旧实现校验 LLM 自报 schema 而非权威 schema。修复见 `extensions/structured-output/src/index.ts` 的 `executeStructuredOutput` authoritativeSchema 分支
 - **Extension 开发规范**: [docs/extensions/development-guide.md](docs/extensions/development-guide.md)（完整指南）、[docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)（强约束）、[docs/extensions/glossary.md](docs/extensions/glossary.md)（术语表）
@@ -51,6 +51,28 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 - **本地开发调试**: `.agents/skills/dev-link/` 管理 `XYZ_EXTENSION_PATHS` 环境变量，在本地源码（live edit）和 npm 版本间切换 extension。`link-local.sh <pkg>` 添加 link → `set -a && source .env.dev-extensions && set +a && pnpm dev` 启动 → 改源码后新建 session 即生效。详见 [本地开发指南](docs/extensions/local-dev-guide.md)
 - **[MANDATORY] pi extension 测试优先在本地 pi 实测，不优先在 xyz-agent 验证**：`extensions/` 下 `@zhushanwen/pi-*` 扩展的改动，功能验证优先在**本地 pi CLI 环境**实测（RPC mode + 真实模型跑最小场景，检查 session 文件 / `PI_EXT_DEBUG=1` 扩展日志），而不是优先在 xyz-agent 桌面应用中验证。原因：xyz-agent 有 mandatory 安装/升级机制、数据目录隔离、runtime 中转等额外层，会掩盖或引入版本差异（2026-08-10 事故：嵌套 subagent keep-alive 拦截在本地 pi 7.0.1 实测正常，但用户 xyz-agent 环境滞留 dev 旧版 5.0.0-dev.1 导致拦截缺失）；pi CLI 是最接近扩展真实运行环境的验证场，子进程扩展加载（`mirrorMainProcessFlags` 镜像主进程 `--extension`）行为与 xyz-agent 一致。实测方法：`pi --mode rpc --session-dir <dir> --model <m> --approve --extension <ext-path>` + stdin JSONL 发 `prompt` 命令，配合 `PI_EXT_DEBUG=1` 看 `~/.pi/agent/logs/` 扩展日志、检查子进程 session 文件（`~/.pi/agent/subagents/<enc>/sessions/`）的 `pending:register`/`pending:unregister` 差集。测试模型用 `xiaomi-token-plan-cn/mimo-v2.5-pro`（禁止用 kimi 模型做测试）
 - **Review 工作流**: `.agents/skills/pr-cr-fix/` 是 review→fix→PR 统一编排 skill，调度 `.agents/agents/` 下的 8 个 review agent（7 维审查 + 1 聚合器）。维度覆盖：arch-boundary / business-logic / electron-build / extension-api / monorepo-impact / test-coverage / type-safety。触发词："review 完开 PR"、"pr-cr-fix"。仅用于 xyz-agent worktree 的 PR 场景
+
+**Pi Extension 全集**（`extensions/` 下 17 个 `@zhushanwen/pi-*` 包；新增/删包时同步更新此表）：
+
+| npm 包名 | 目录 | 用途 |
+|---|---|---|
+| `@zhushanwen/pi-ask-user` | `ask-user` | 结构化多问题输入工具（单/多问，分栏预览 + 内联编辑） |
+| `@zhushanwen/pi-context-engineering` | `context-engineering` | 渐进式上下文压缩（L0 清理 / L1 规则压缩 / L2 紧急截断 + recall） |
+| `@zhushanwen/pi-cw-tool` | `cw-tool` | cw CLI 的 role 工具封装（cw_planning/wave/dev/review）+ 5 个编排 agent + pi-cw skill，硬约束层主不自审 |
+| `@zhushanwen/pi-evolve-daily` | `evolve-daily` | 每日演化数据采集（每日首个 session 跑 Python 分析） |
+| `@zhushanwen/pi-goal` | `goal` | Codex 风格 /goal 命令（持久目标驱动自治循环，证据验收） |
+| `@zhushanwen/pi-model-switch` | `model-switch` | 智能模型推荐与切换 |
+| `@zhushanwen/pi-pending-notifications` | `pending-notifications` | 跨扩展异步操作注册/查询（长任务期间防消息注入） |
+| `@zhushanwen/pi-permission` | `permission` | 四档权限模式（yolo/auto/approve/strict）+ 三层管道（AST + 规则 + AI 分类） |
+| `@zhushanwen/pi-plan` | `plan` | 轻量 plan 模式 |
+| `@zhushanwen/pi-rename-session` | `rename-session` | session 自动/手动重命名 |
+| `@zhushanwen/pi-scheduler` | `scheduler` | 定时任务调度（cron / interval，once / recurring） |
+| `@zhushanwen/pi-statusline` | `statusline` | 状态栏（上下文用量 / token 速度 / provider 配额） |
+| `@zhushanwen/pi-structured-output` | `structured-output` | 结构化输出（JSON Schema + Ajv 校验的 tool call 机制） |
+| `@zhushanwen/pi-subagent-workflow` | `subagent-workflow` | 统一 subagent 执行 + 多 agent workflow 编排（有状态工作流管理） |
+| `@zhushanwen/pi-todo` | `todo` | AI 驱动的 todo 列表（会话持久化 + /todos） |
+| `@zhushanwen/pi-unified-hooks` | `unified-hooks` | 统一 hooks 收集（散落 hook 集中维护） |
+| `@zhushanwen/pi-vision` | `vision` | 多模态视觉模型图片分析（带记忆 session） |
 
 **Settings 模块设计文档**:
 - [Settings 视觉 demo](docs/page-design/archive/settings-final.html) — Section Groups 风格 HTML demo（pre-v3 历史稿）

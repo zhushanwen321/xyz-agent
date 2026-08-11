@@ -5,16 +5,16 @@ description: "cw 递归编排大型多 agent 并行开发任务,适用于需多�
 
 # pi-cw
 
-主 agent 发起递归编排:用 cw 建一棵 epic->feature->slice->wave 的任务树,派第一个 planning-agent 自递归展开整棵树,主 agent 空闲等 steer 唤醒,全树完成后报告用户。
+主 agent 发起递归编排:用 cw 建一棵 <顶层>->...->wave 的任务树(<顶层> 通常 epic,也可 feature/slice),派第一个 planning-agent 自递归展开整棵树,主 agent 空闲等 steer 唤醒,全树完成后报告用户。
 
-> **编排机制**:子 agent 完成时 pi 自动 steer 唤醒父 agent(事件驱动,无轮询)。主 agent 只派第一个 epic planning-agent,**不自己 descend 到子层**。设计依据见 `design-v4.md`（同目录）。
+> **编排机制**:子 agent 完成时 pi 自动 steer 唤醒父 agent(事件驱动,无轮询)。主 agent 只派第一个(根层) planning-agent,**不自己 descend 到子层**。设计依据见 `design-v4.md`（同目录）。
 
 ## 何时用
 
-满足任一:
-- 任务需要 epic/feature/slice/wave 多层拆解(单层 wave 装不下)
-- 多个 wave 可并行,各自 worktree 隔离开发
-- 单 agent 从头做到尾会撑爆上下文(设计 + 实现 + 审查 + 合并全栈)
+核心判据:**任务需要多 subagent 并行推进 + 上下文隔离**(不是树深——一棵 epic 树也能单 agent 线性走,见 cw-cli)。满足以下场景之一才用 pi-cw:
+- 多个 wave 要 worktree 隔离并行开发
+- 多个 slice/feature 子树要并行展开
+- 单 agent 线性走完整棵树会撑爆上下文(设计 + 实现 + 审查 + 合并全栈),需按层隔离上下文
 
 > 单 agent 模式或小任务（改 typo / 单文件 / 明确小 bug）走 `cw-cli` skill,不必建树。
 
@@ -22,6 +22,7 @@ description: "cw 递归编排大型多 agent 并行开发任务,适用于需多�
 
 - 单文件小改、明确的小 bug:直接 edit,或派单个 worker subagent;或走 `cw-cli` skill 单 agent 模式
 - 线性任务、无需多 agent 并行:走 cw 单层 wave 即可,不必建树
+- 能单 agent 线性走完的任务(哪怕要建 epic 树):走 `cw-cli` skill 单 agent 模式,不必上递归编排
 - 纯分析 / 调研 / 设计文档:不写代码不该进 cw 编排
 
 ## 前置：cw-tool
@@ -40,26 +41,28 @@ description: "cw 递归编排大型多 agent 并行开发任务,适用于需多�
 ### 1. 建树根
 
 ```bash
-cw create epic --slug <kebab-slug> --objective "<一句话目标,含可验收的完成标准>"
+cw create <顶层> --slug <kebab-slug> --objective "<一句话目标,含可验收的完成标准>"
 ```
 
-拿到 epic 的 unitId(下文记作 `<epicId>`)。
+`<顶层>` 通常 epic,但 feature/slice 也能做根——选能覆盖全貌的最小层(选层标准复用 cw-cli skill 的「规模 × 性质」表)。递归编排的额外门槛:**顶层必须会拆出 ≥2 个可并行的下层 unit**;只拆 1 个(无并行价值)或整棵树线性串行即可,走 cw-cli 单 agent 模式更省。
+
+拿到根 unit 的 unitId(下文记作 `<根Id>`)。
 
 ### 2. 派第一个 planning-agent
 
 用 `subagent` 工具**后台**派发(`planning-agent` 是 cw-tool 内置的 agent 模板):
 
 ```
-subagent(action="start", agent="planning-agent", slug="<epic-slug>-planning", fork=false,
-  task="<背景>这是 cw epic <epicId> 的层主 agent,目标:<原 objective>。这是递归编排,你会自递归派 feature/slice/wave 层 planning-agent。<目标>先调 cw handoff --unitId <epicId> 拿上下文与 guidance,按 guidance 的派发指导自递归展开并合并子树。<验收>cw status --unitId <epicId> 显示该 epic 子树全部 closed。")
+subagent(action="start", agent="planning-agent", slug="<根-slug>-planning", fork=false,
+  task="<背景>这是 cw <根层> <根Id> 的层主 agent,目标:<原 objective>。这是递归编排,你会自递归派下层 planning-agent(<根层> 是 epic 派 feature,是 feature 派 slice,是 slice 派 wave)。<目标>先调 cw handoff --unitId <根Id> 拿上下文与 guidance,按 guidance 的派发指导自递归展开并合并子树。<验收>cw status --unitId <根Id> 显示该 <根层> 子树全部 closed。")
 # 不传 model 参数——默认继承主 agent 模型,递归传给所有下层(见「模型派发」)。
 # 用户特别指定时才传 model="provider/modelId",单个 subagent 生效或作为全树根模型。
 ```
 
 task 三要素:
-- **背景**:epic 的 `<epicId>`、目标、说明这是递归编排(planning-agent 会自递归派下层)
-- **目标**:入口是 `cw handoff --unitId <epicId>`;自递归的每一步按 cw guidance 的派发指导执行
-- **验收**:`cw status --unitId <epicId>` 子树全 `closed`(可查的检查点,禁止"完成""实现该功能"这类不可证伪描述)
+- **背景**:`<根层>` 的 `<根Id>`、目标、说明这是递归编排(planning-agent 会自递归派下层)
+- **目标**:入口是 `cw handoff --unitId <根Id>`;自递归的每一步按 cw guidance 的派发指导执行
+- **验收**:`cw status --unitId <根Id>` 子树全 `closed`(可查的检查点,禁止"完成""实现该功能"这类不可证伪描述)
 
 派发后主 agent 结束当前 turn,进空闲态(session 保活)。
 
@@ -71,7 +74,7 @@ planning-agent 自递归展开(epic->feature->slice->wave),每层 design -> 审�
 
 ```bash
 cw status                     # 全局
-cw frontier --root <epicId>   # 看 epic 子树 frontier
+cw frontier --root <根Id>   # 看根子树 frontier
 ```
 
 - 子树全 `closed` -> 进入第 5 步汇报用户
@@ -86,7 +89,7 @@ cw frontier --root <epicId>   # 看 epic 子树 frontier
 
 - **只派第一个 planning-agent**:主 agent 不自己 descend 到 feature / slice / wave 层。下层派发是 planning-agent 的职责(它调 cw execute 自动建子 unit,并按 guidance 派子 planning-agent / wave-agent)。
 - **靠 cw 查进度,不信自报**:agent 汇报"我做完了"不等于 cw 状态 closed。以 `cw status` / `cw frontier` 为唯一真相。
-- **worktree 隔离**:wave 层用 `worktree: true` 派出(各 wave 独立工作目录,并行不冲突;worktree 与 fork 正交,fork 默认 false);主 agent 派的 epic planning-agent 不需 worktree(它只编排不写码)。worktree 的合并与清理由 slice 层 planning-agent 派 chain workflow(merge-agent)处理,细节见 planning-agent 模板。
+- **worktree 隔离**:wave 层用 `worktree: true` 派出(各 wave 独立工作目录,并行不冲突;worktree 与 fork 正交,fork 默认 false);主 agent 派的根层 planning-agent 不需 worktree(它只编排不写码)。worktree 的合并与清理由 slice 层 planning-agent 派 chain workflow(merge-agent)处理,细节见 planning-agent 模板。
 - **失败恢复靠 L0-L3**:cw gate fail / 审查 must-fix / 方案缺陷 / 父层拆错,各有恢复路径(L0 就地改重审 / L1 cw replan / L2 父 replan 级联 / L3 上报人),定义在 planning-agent 模板与 cw guidance,本 skill 不重复。
 
 ## 模型派发
