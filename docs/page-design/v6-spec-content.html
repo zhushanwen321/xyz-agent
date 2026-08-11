@@ -58,16 +58,17 @@
 .mm-viewport svg { max-width: 90%; height: auto; }
 .mm-wheel-hint { font-family: var(--font-mono); font-size: 10px; color: var(--neutral-dim); text-align: center; padding: 6px; }
 
+/* ── §12 streaming-tail · turn 内容区末尾流式游标 ──
+   [2026-08 同步] 由 §12.6 迁入：正文全 inline 到 turn 内容区，游标跟正文尾部。
+   样式：h-3.5 w-7px 竖条，bg-accent，animate-blink 1s step-end（样式同原 §12.6 游标） */
+.st-tail { display: inline-block; width: 7px; height: 14px; border-radius: 1px; background: var(--accent); vertical-align: middle; margin-left: 2px; animation: blink 1s step-end infinite; }
+
 /* ── §12.6 TurnSummary · hover actions（copy/fork/handoff 方案 A · 扁平 3 按钮）──
    v6 重设计：去掉 split-button 副选项浮层 + 去掉 MD/+Q badge，改为单层 3 个 icon button。
-   fork/handoff 默认走「+Q 变体（带提问）」，composer 直接 enter = 无内容变体。 */
-/* summary 容器：turn-summary pt-3 + 文本随 streaming 切色（TurnSummary.vue:7-10） */
-.ts-wrap { padding-top: 12px; font-size: 13px; line-height: 1.75; }
-.ts-wrap.streaming { color: var(--neutral-mid); }
-.ts-wrap.done { color: var(--neutral-fg); }
-.ts-summary { font-size: 13px; line-height: 1.75; }
-/* streaming cursor（:13）：h-3.5 w-7px 竖条，bg-accent，animate-blink 1s step-end */
-.ts-cursor { display: inline-block; width: 7px; height: 14px; border-radius: 1px; background: var(--accent); vertical-align: middle; margin-left: 2px; animation: blink 1s step-end infinite; }
+   fork/handoff 默认走「+Q 变体（带提问）」，composer 直接 enter = 无内容变体。
+   [2026-08 同步] 去内容化：正文文字与 streaming 切色已迁 turn 内容区（§12 全 inline 模型 / streaming-tail） */
+/* 操作栏容器：turn-summary pt-3（TurnSummary.vue:7-10）· 仅承载 actions 行 */
+.ts-wrap { padding-top: 12px; }
 /* actions 行（方案 A）：mt-1.5 flex gap-0.5 · opacity-0 → group-hover/ai 或 group-focus-within/ai 时 opacity-100（150ms） */
 .ts-actions { display: flex; align-items: center; gap: 2px; margin-top: 6px; opacity: 0; transition: opacity 150ms var(--ease); }
 .ts-actions.show { opacity: 1; }
@@ -180,6 +181,12 @@
           </div>
         </div>
 
+        <!-- streaming-tail（2026-08 新增）：turn 内容区末尾流式游标——跟在所有 block 后，不受 block 增删影响（正文全 inline，见 §12.6 顶部注记） -->
+        <div style="margin-top:16px;padding-top:14px;border-top:1px dashed var(--border);">
+          <div style="font-family:var(--font-mono);font-size:10px;color:var(--neutral-dim);margin-bottom:6px;">streaming-tail · turn 内容区末尾 · 跟在所有 block 后 · 不受 block 增删影响</div>
+          <div style="font-size:14px;line-height:1.75;color:var(--neutral-mid);">正在生成的正文文字随流就地更新（streaming → neutral-mid），颜色跟所属 assistant status<span class="st-tail"></span></div>
+        </div>
+
         <!-- 代码块复制按钮反馈态：默认 Copy icon → hover neutral-fg → 已复制 Check success（MarkdownRenderer.vue:362-400）-->
         <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px dashed var(--border);">
           <div style="text-align:center;">
@@ -219,6 +226,7 @@
       <div class="anno"><b>strong:</b><br>neutral-fg 600（强调回升）</div>
       <div class="anno"><b>thinking variant:</b><br>标题/blockquote 染 reasoning 紫（MarkdownRenderer.vue:474-493）</div>
       <div class="anno"><b>AmbiguousFilePopover <span style="color:var(--warn);">[补充]</span>:</b><br>裸 basename 多匹配浮层（如多个 design.md）→ w-360px + 两行候选（basename + 父目录暗行）+ ↑↓⏎Esc 键盘导航。详见 AmbiguousFilePopover.vue:14-51 / v6-spec-container</div>
+      <div class="anno"><b>streaming-tail（turn 内容区末尾）:</b><br>位置：跟在所有 block 后的独立元素，不受 block 增删影响<br>显隐：<code>isStreaming &amp;&amp; 最后一个可见 block 不是 running tool</code><br>样式：h-3.5 w-7px 竖条 · bg-accent · animate-blink 1s step-end<br>text 全 inline 模型：正文全 inline 就地渲染，样式统一正文 text-base / leading-7，颜色跟所属 assistant status（streaming → neutral-mid / complete → neutral-fg），见 §12.6 顶部注记</div>
     </div>
 
     <!-- ============ §12 统一 head 范式（跨内容容器：代码块 / mermaid / bash输出 / ChangeSetCard）============
@@ -397,7 +405,8 @@
        ================================================================ -->
   <section class="spec" id="s12-6">
     <div class="spec-head"><span class="spec-num">§12.6</span><h2 class="spec-title">TurnSummary · hover actions（copy/fork/handoff · 方案 A 扁平 3 按钮）</h2></div>
-    <p class="spec-desc">每个 assistant 回复底部的动作入口，是<b>对话流最核心交互入口</b>。v6 重设计采用 <b>方案 A</b>：去掉 split-button 副选项浮层、去掉 MD/+Q badge，改为<b>单层 3 个 icon button</b>（copy / fork / handoff）。点击 fork/handoff = 默认进入「+Q 变体」（带提问）；<b>composer 直接 enter = 无内容变体</b>（等效原无 +Q 逻辑）。a11y：键盘 focus-within 唤出。源码：<code>TurnSummary.vue</code>。</p>
+    <p class="spec-desc">每个 assistant turn 底部的<b>动作操作栏</b>（<b>仅 hover actions</b>：copy / fork / handoff），是<b>对话流最核心交互入口</b>。<b>去内容化</b>：不再承载正文文字，正文全 inline 到 turn 内容区（见 §12）。v6 重设计采用 <b>方案 A</b>：去掉 split-button 副选项浮层、去掉 MD/+Q badge，改为<b>单层 3 个 icon button</b>。点击 fork/handoff = 默认进入「+Q 变体」（带提问）；<b>composer 直接 enter = 无内容变体</b>（等效原无 +Q 逻辑）。a11y：键盘 focus-within 唤出。源码：<code>TurnSummary.vue</code>。</p>
+    <p style="font-size:12px;color:var(--warn);margin-top:10px;padding:8px 12px;background:var(--bg-card);border-radius:var(--radius);"><b>[2026-08 产品语义变更]：</b>本次推翻旧意图「<b>中间文字折进执行流程、最终回答底部突出</b>」（原 spec 与 Block.vue 注释确立）→ <b>全 inline 统一</b>（对齐 ChatGPT/Claude 范式）。TurnSummary 去内容化：仅操作栏，文字全 inline 到 turn 内容区；streaming 切色与 cursor 随文字迁出。text 全 inline 模型三要素：<b>位置</b>认 contentBlocks 稳定顺序；<b>样式</b>统一正文 text-base / leading-7；<b>颜色</b>跟所属 assistant status：streaming → neutral-mid / complete → neutral-fg。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> 3 组 split-button · hover 副选项 · MD/+Q badge</span>
       <span class="cp cp-v6"><b>方案 A</b> 单层 3 icon button · 无 split · 无 badge</span>
@@ -409,12 +418,11 @@
     <div class="render-frame">
       <div class="panel-stage"><div class="ms-scroll"><div class="ms-turn"><div class="ms-assistant-col">
 
-        <!-- ① 默认态（无 hover）：summary + actions opacity-0（方案 A：3 扁平 icon button，无 sep/badge） -->
+        <!-- ① 默认态（无 hover）：仅 actions 行 opacity-0（无正文文字——文字全 inline 到 turn 内容区，见 §12） -->
         <div class="state-row" style="margin:0;">
-          <div class="state-tag">① 默认态</div>
+          <div class="state-tag">① 默认态 · actions 行 opacity-0，hover 才显出（无正文文字）</div>
           <div class="state-demo">
-            <div class="ts-wrap done">
-              <div class="ts-summary">这是 assistant 的收尾 summary。完成后文字用 neutral-fg，hover 才显 actions 行。</div>
+            <div class="ts-wrap">
               <div class="ts-actions">
                 <span class="ts-ghost" title="copy（复制）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg></span>
                 <span class="ts-ghost fork" title="fork（fork 后台 · 默认 +Q 带提问）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg></span>
@@ -424,22 +432,11 @@
           </div>
         </div>
 
-        <!-- ② streaming 态：summary neutral-mid + 末尾闪烁竖条 cursor -->
-        <div class="state-row" style="margin:18px 0 0;">
-          <div class="state-tag">② streaming</div>
-          <div class="state-demo">
-            <div class="ts-wrap streaming">
-              <div class="ts-summary">这是 streaming 中的 summary，文字用 neutral-mid（弱化），末尾跟闪烁竖条 cursor<span class="ts-cursor"></span></div>
-            </div>
-          </div>
-        </div>
-
         <!-- ③ hover 态 · 3 扁平 icon button（opacity-100 显出，无 sep/badge） -->
         <div class="state-row" style="margin:18px 0 0;">
-          <div class="state-tag">③ hover 显出</div>
+          <div class="state-tag">③ hover 显出 · actions 行 opacity-100 · 3 个 24px ghost icon 扁平并列（无 sep · 无 badge）</div>
           <div class="state-demo">
-            <div class="ts-wrap done">
-              <div class="ts-summary">hover（或键盘 focus-within）时 actions 行 opacity-100 显出。方案 A：3 个 24px ghost icon 扁平并列，<b>无 sep · 无 badge</b>。</div>
+            <div class="ts-wrap">
               <div class="ts-actions show">
                 <span class="ts-ghost" title="copy（复制）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg></span>
                 <span class="ts-ghost fork" title="fork（fork 后台 · 默认 +Q 带提问）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg></span>
@@ -451,10 +448,9 @@
 
         <!-- ④ fork/handoff hover：accent-soft + accent（默认 +Q 变体语义） -->
         <div class="state-row" style="margin:18px 0 0;">
-          <div class="state-tag">④ fork/handoff hover</div>
+          <div class="state-tag">④ fork/handoff hover · accent-soft + text-accent（提示 +Q 变体入口）</div>
           <div class="state-demo">
-            <div class="ts-wrap done">
-              <div class="ts-summary">fork / handoff hover 时染 accent-soft + text-accent，区别 copy 的中性 hover。视觉上提示「这是会发起 +Q 提问变体的入口」。</div>
+            <div class="ts-wrap">
               <div class="ts-actions show">
                 <span class="ts-ghost" title="copy（复制）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg></span>
                 <span class="ts-ghost fork" style="background:var(--accent-soft);color:var(--accent);" title="fork hover"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg></span>
@@ -466,10 +462,9 @@
 
         <!-- ⑤ 复制反馈态：copied 时 copy icon 切 Check text-success（方案 A 仅单按钮反馈） -->
         <div class="state-row" style="margin:18px 0 0;">
-          <div class="state-tag">⑤ 复制反馈</div>
+          <div class="state-tag">⑤ 复制反馈 · copy icon → Check text-success（fork/handoff 不受影响）</div>
           <div class="state-demo">
-            <div class="ts-wrap done">
-              <div class="ts-summary">复制成功后，copy 按钮 icon 切 Check，染 text-success（fork/handoff 不受影响）。</div>
+            <div class="ts-wrap">
               <div class="ts-actions show">
                 <span class="ts-ghost copied" title="已复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
                 <span class="ts-ghost fork" title="fork"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg></span>
@@ -482,10 +477,9 @@
 
         <!-- ⑥ handoff 进行中态：isHandingOff 时 handoff 按钮 opacity-50 + pointer-events-none -->
         <div class="state-row" style="margin:18px 0 0;">
-          <div class="state-tag">⑥ handoff 中</div>
+          <div class="state-tag">⑥ handoff 中 · handoff 按钮 opacity-50 + pointer-events-none（防重复点击）</div>
           <div class="state-demo">
-            <div class="ts-wrap done">
-              <div class="ts-summary">handoff 进行中（isHandingOff），handoff 按钮 opacity-50 + pointer-events-none，防重复点击。</div>
+            <div class="ts-wrap">
               <div class="ts-actions show">
                 <span class="ts-ghost" title="copy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg></span>
                 <span class="ts-ghost fork" title="fork"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg></span>
@@ -497,10 +491,9 @@
 
         <!-- ⑦ subagent session 差异帧：仅 copy（无 fork/handoff） -->
         <div class="state-row" style="margin:18px 0 0;">
-          <div class="state-tag">⑦ subagent</div>
+          <div class="state-tag">⑦ subagent · 仅 copy 按钮（<code>isSubagentVirtualId</code> true，无 fork / handoff）</div>
           <div class="state-demo">
-            <div class="ts-wrap done">
-              <div class="ts-summary">subagent session（<code>isSubagentVirtualId</code> true）：仅渲染 copy 按钮，<b>无 fork / handoff</b>——关键权限差异。</div>
+            <div class="ts-wrap">
               <div class="ts-actions show">
                 <span class="ts-ghost" title="copy（复制）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg></span>
                 <!-- 无 fork · 无 handoff -->
@@ -514,9 +507,7 @@
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>容器:</b><br>turn-summary pt-3 · text-base · leading-7 · transition-colors 200ms（TurnSummary.vue:7-10）</div>
-      <div class="anno"><b>summary 文字色:</b><br>streaming → neutral-mid（弱化）<br>done → neutral-fg</div>
-      <div class="anno"><b>streaming cursor:</b><br>h-3.5 w-7px 竖条 · bg-accent · animate-blink 1s step-end（:13）</div>
+      <div class="anno"><b>容器:</b><br>turn-summary pt-3 · <b>仅操作栏</b>（无正文文字——文字全 inline 到 turn 内容区，见 §12）</div>
       <div class="anno"><b>actions 行:</b><br>mt-1.5 flex gap-0.5 · <b>opacity-0</b> → group-hover/ai 或 group-focus-within/ai 时 opacity-100（150ms）</div>
       <div class="anno"><b>a11y:</b><br>键盘 focus 也能唤出 actions（focus-within，非仅鼠标 hover）</div>
       <div class="anno" style="background:var(--success-soft);padding:8px 10px;"><b>方案 A（v6 重设计）:</b><br>单层 3 icon button（copy/fork/handoff）· <b>无 split-button 副选项</b> · <b>无 sep</b> · <b>无 MD/+Q badge</b>。<span class="old">旧：3 组 split-button + HoverCard + badge</span></div>
@@ -554,7 +545,7 @@
         <div style="text-align:center;">
           <div style="height:40px;display:flex;align-items:center;justify-content:center;"><span style="width:7px;height:14px;border-radius:1px;background:var(--accent);animation:blink 1s step-end infinite;display:inline-block;vertical-align:middle;"></span></div>
           <div style="font-size:11px;color:var(--neutral-mid);">blink 竖条 cursor</div>
-          <div class="anno" style="margin-top:4px;">blink 1s step-end<br>TurnSummary cursor（§12.6）<br>（subagent bg 状态行已移除，不再消费 blink）</div>
+          <div class="anno" style="margin-top:4px;">blink 1s step-end<br>turn 内容区末尾 streaming-tail（§12）<br>（subagent bg 状态行已移除，不再消费 blink）</div>
         </div>
         <div style="text-align:center;">
           <div style="height:40px;display:flex;align-items:center;justify-content:center;"><svg style="width:18px;height:18px;color:var(--accent);animation:spin 1s linear infinite;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg></div>
