@@ -24,7 +24,7 @@ const SessionReadSchema = Type.Object({
     ['find', 'family', 'outline', 'expand', 'detail', 'search', 'export', 'extract', 'workflow'],
     {
       description:
-        'Action to perform: find (locate session), family (fork/subagent/workflow relations), outline (turn-level overview), expand (single-turn entries), detail (full text of turns), search (full-text grep), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps, step call sessionId jumps to outline/detail).',
+        'Action to perform: find (locate session), family (fork/subagent/workflow relations; recursive=true returns nested execution tree), outline (turn-level overview), expand (single-turn entries), detail (full text of turns), search (full-text grep), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps, step call sessionId jumps to outline/detail).',
     },
   ),
   session: Type.Optional(
@@ -108,6 +108,12 @@ const SessionReadSchema = Type.Object({
     Type.String({
       description:
         'workflow action: focus a single run by runId (disambiguate multiple runs). Omit to see all run overviews.',
+    }),
+  ),
+  recursive: Type.Optional(
+    Type.Boolean({
+      description:
+        'family action: return nested execution tree (arbitrary-depth subagent↔workflow-call nesting, precise parentRecordId chain with flat-fallback for legacy records). Default false (flat family).',
     }),
   ),
 })

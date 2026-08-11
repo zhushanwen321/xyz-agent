@@ -1,4 +1,4 @@
-import { readFile, readdir, open } from 'node:fs/promises'
+import { readFile, readdir, open, stat } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { join, basename } from 'node:path'
 import type { Entry } from '../core/parser.js'
@@ -229,24 +229,40 @@ function parseHeaderLine(line: string | undefined): SessionHeader | null {
  *
  * U4 扩展返回 task/agent（P-fallback 富化用）：从 identity.data.task / data.agent 提取，
  * 存在则带。model/status 在 identity 不存在（探针 15/15 无），P-fallback 时由调用方留 undefined。
+ *
+ * M3b 扩展（IF3 三级数据源 ②）：返回 parentRecordId（identity.data.parentRecordId，新版本
+ * session-runner 才写；当前本机旧数据无此字段→undefined）。size 改 optional——buildFamilyFromFs
+ * 传 size（已有 meta.size 省一次 stat），buildExecutionTree 不传 size（内部 stat 获取）。
  */
-async function readTailIdentity(
+export async function readTailIdentity(
   path: string,
-  size: number,
-): Promise<{ rootSessionId: string; slug: string; task?: string; agent?: string } | undefined> {
-  if (size === 0) return undefined
+  size?: number,
+): Promise<
+  | { rootSessionId: string; slug: string; task?: string; agent?: string; parentRecordId?: string }
+  | undefined
+> {
+  // size 未传时内部 stat 获取（execution-tree.ts 复用时无 size）
+  let resolvedSize = size
+  if (resolvedSize === undefined) {
+    try {
+      resolvedSize = (await stat(path)).size
+    } catch {
+      return undefined // 文件不存在/读失败 → undefined
+    }
+  }
+  if (resolvedSize === 0) return undefined
   let fh: FileHandle | undefined
   try {
     fh = await open(path, 'r')
-    const len = Math.min(TAIL_READ_BYTES, size)
+    const len = Math.min(TAIL_READ_BYTES, resolvedSize)
     const buf = Buffer.alloc(len)
-    await fh.read(buf, 0, len, Math.max(0, size - len))
+    await fh.read(buf, 0, len, Math.max(0, resolvedSize - len))
     const text = buf.toString('utf8')
     const idx = text.lastIndexOf('subagent-identity')
     if (idx < 0) return undefined
     // 行首若在读窗口外（identity 行 > 64KB，整行塞不下）→ 无法可靠解析，跳过
     const lineStartSearch = text.lastIndexOf('\n', idx)
-    if (lineStartSearch < 0 && size > len) return undefined
+    if (lineStartSearch < 0 && resolvedSize > len) return undefined
     const start = lineStartSearch < 0 ? 0 : lineStartSearch + 1
     let end = text.indexOf('\n', idx)
     if (end < 0) end = text.length
@@ -266,6 +282,8 @@ async function readTailIdentity(
       slug: typeof data.slug === 'string' ? data.slug : '',
       task: typeof data.task === 'string' ? data.task : undefined,
       agent: typeof data.agent === 'string' ? data.agent : undefined,
+      parentRecordId:
+        typeof data.parentRecordId === 'string' ? data.parentRecordId : undefined,
     }
   } catch {
     return undefined
@@ -292,6 +310,14 @@ export interface RecordManifest {
   model?: string
   /** 终态 completed/failed/running（探针 20/20 全有；旧 manifest 缺→undefined） */
   status?: string
+  /**
+   * 直接父 subagent 的 record id（M3a 落盘镜像；depth=0 顶层 subagent 为 undefined）。
+   *
+   * session-reader 读侧镜像（IF2）：manifest 主路径透出，旧 manifest 缺此字段（undefined）。
+   * isRecordManifest 校验不改（3 必填不变）。buildExecutionTree（core/execution-tree.ts）
+   * 据此建精确父子链，三级数据源优先级 ①（DM4）。
+   */
+  parentRecordId?: string
 }
 
 function isRecordManifest(v: unknown): v is RecordManifest {

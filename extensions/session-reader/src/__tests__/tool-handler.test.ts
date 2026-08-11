@@ -1257,3 +1257,72 @@ describe.skipIf(!HAS_REAL_WF_SESSION)('doWorkflow - 真实数据守卫', () => {
     expect(r.content[0].text).toContain('budget:')
   }, 30000)
 })
+
+// ============================================================
+// m3b：doFamily recursive false/true（TC-m3b-dofamily-recursive-false/true）
+// ============================================================
+
+describe('doFamily recursive（m3b U8 接入）', () => {
+  let dir: string
+  const MAIN = '019e6c96-cccc-dddd-eeee-000000000001'
+  const SUB = '019e6c96-cccc-dddd-eeee-000000000002'
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'tool-handler-recursive-'))
+    await makeFixtureSession(dir, MAIN, 'main session 内容')
+    // 顶层 subagent（rootSessionId=MAIN，无 parentRecordId → flat 回退）
+    await makeFixtureSubagent(dir, `sa-${SUB.slice(0, 8)}`, {
+      realSessionId: SUB,
+      rootSessionId: MAIN,
+      agentName: 'explorer',
+      firstUserText: 'subagent task',
+    })
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('TC-m3b-dofamily-recursive-false：不传 recursive → flat family（m0-m2 零回归）', async () => {
+    const r = await handleSessionRead({ action: 'family', session: MAIN }, dir)
+    // details 是 Family 对象（root/subagents/workflows），非 { tree }
+    const d = r.details as {
+      root: { sessionId: string }
+      subagents: Array<{ sessionId: string; rootSessionId: string }>
+      workflows: unknown[]
+    }
+    expect(d.root.sessionId).toBe(MAIN)
+    expect(d.subagents.some((s) => s.sessionId === SUB)).toBe(true)
+    expect(Array.isArray(d.workflows)).toBe(true)
+    // content 是 formatFamilyText（非 formatExecutionTreeText）
+    expect(r.content[0].text).toContain('root:')
+    expect(r.content[0].text).not.toContain('execution tree')
+  })
+
+  it('TC-m3b-dofamily-recursive-true：recursive=true → ExecutionTree（details.tree）', async () => {
+    const r = await handleSessionRead(
+      { action: 'family', session: MAIN, recursive: true },
+      dir,
+    )
+    const d = r.details as {
+      tree: {
+        root: { type: string; sessionId: string; children: unknown[] }
+        totalNodes: number
+        maxDepth: number
+        sourceMode: string
+        truncated: boolean
+      }
+    }
+    expect(d.tree).toBeDefined()
+    expect(d.tree.root.type).toBe('main')
+    expect(d.tree.root.sessionId).toBe(MAIN)
+    // subagent 挂 root（flat 回退，无 parentRecordId）
+    expect(d.tree.root.children).toHaveLength(1)
+    expect(d.tree.totalNodes).toBe(2) // main + subagent
+    expect(d.tree.sourceMode).toBe('flat-fallback') // 旧机制无 parentRecordId
+    expect(d.tree.truncated).toBe(false)
+    // content 是 formatExecutionTreeText（含 execution tree 头部）
+    expect(r.content[0].text).toContain('execution tree')
+    expect(r.content[0].text).toContain('node(s)')
+    expect(r.content[0].text).toContain('👉')
+  })
+})

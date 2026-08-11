@@ -223,4 +223,21 @@ describe('sessionReaderExtension - TypeBox schema 与 SessionReadParams 对齐',
     // runId 类型校验：非 string 被拒
     expect(Check(schema, { action: 'workflow', session: 'x', runId: 123 })).toBe(false)
   })
+
+  it('TC-m3b-schema-recursive：recursive optional boolean（family 专用）', () => {
+    const fake = makeFakePi()
+    sessionReaderExtension(fake.pi as unknown as ExtensionAPI)
+    const toolDef = fake.registerTool.mock.calls[0][0] as { parameters: unknown }
+    const schema = toolDef.parameters
+
+    // recursive=true（合法）
+    expect(Check(schema, { action: 'family', session: 'e6c96', recursive: true })).toBe(true)
+    // 不传 recursive（向后兼容，合法）
+    expect(Check(schema, { action: 'family', session: 'e6c96' })).toBe(true)
+    // recursive=false（合法）
+    expect(Check(schema, { action: 'family', session: 'e6c96', recursive: false })).toBe(true)
+    // recursive 非 boolean 被拒
+    expect(Check(schema, { action: 'family', session: 'x', recursive: 'yes' })).toBe(false)
+    expect(Check(schema, { action: 'family', session: 'x', recursive: 1 })).toBe(false)
+  })
 })

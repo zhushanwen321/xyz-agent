@@ -33,6 +33,11 @@ import {
   type ToolResultSummaryEntry,
 } from './core/render.js'
 import type { Family, WorkflowRef } from './core/family.js'
+import {
+  buildExecutionTree,
+  formatExecutionTreeText,
+  type ExecutionTree,
+} from './core/execution-tree.js'
 
 // ---------------------------------------------------------------------------
 // 公共类型（与 index.ts 的 TypeBox schema 对齐）
@@ -72,6 +77,8 @@ export interface SessionReadParams {
   what?: 'user-messages' | 'commands' | 'files' | 'commits' | 'tool-results'
   /** extract action: 过滤 commands/tool-results 的工具名（可选）。 */
   tool?: string
+  /** family action: 返回嵌套执行树（任意深度 subagent↔workflow-call 相互嵌套）。默认 false（flat family）。 */
+  recursive?: boolean
 }
 
 export interface ToolResult {
@@ -625,10 +632,34 @@ async function doFind(params: SessionReadParams, agentDir: string): Promise<Tool
   }
 }
 
-/** family：fork 父链/子代 + 隔代 subagent + workflow run（design §3.4 family）。 */
+/**
+ * family：fork 父链/子代 + 隔代 subagent + workflow run（design §3.4 family）。
+ *
+ * recursive=false（默认）→ flat family（buildFamilyFromFs + formatFamilyText，m0/m1/m2 行为零回归）。
+ * recursive=true → 嵌套执行树（buildExecutionTree + formatExecutionTreeText，任意深度
+ * subagent↔workflow-call 相互嵌套，IF4）。错误契约同构：multi→disambiguate；构建抛错→catch 转 👉。
+ */
 async function doFamily(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
   const resolved = await resolveSessionId(params.session, 'family', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
+
+  // recursive=true：嵌套执行树（U7/U8）
+  if (params.recursive) {
+    let tree: ExecutionTree
+    try {
+      tree = await buildExecutionTree(resolved.sessionId, agentDir)
+    } catch (e) {
+      throw err(
+        `构建执行树失败：${resolved.sessionId}（${e instanceof Error ? e.message : String(e)}）。👉 检查 session 或用 find 重新定位，或改用 recursive:false 看 flat family 兑底。`,
+      )
+    }
+    return {
+      content: [{ type: 'text', text: formatExecutionTreeText(tree) }],
+      details: { tree },
+    }
+  }
+
+  // recursive falsy（默认）：flat family（m0/m1/m2 现状零回归）
   let family: Family
   try {
     family = await buildFamilyFromFs(resolved.sessionId, agentDir)
