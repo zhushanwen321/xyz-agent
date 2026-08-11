@@ -344,7 +344,7 @@ export function renderOutline(
   // 2. perTurnBudget（token → chars×4）
   const perTurnCharBudget = (budget / turns.length) * 4
 
-  // 3. 降级序：L1 行不含 assistantBrief；超预算则砍 toolSummary → 骨架（design §3.5 算法 1 step3）
+  // 3. 降级序：level 0 全有；超预算降到 level 1 砍 assistantBrief；仍超降到 level 2 砍 toolSummary（骨架）。design §3.5 算法 1 step3
   const lineCache: string[] = []
   for (const b of briefs) {
     const branchSize = b.branch !== undefined ? tree.branches.get(b.branch) : undefined

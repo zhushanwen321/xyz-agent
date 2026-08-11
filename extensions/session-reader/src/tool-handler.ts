@@ -4,7 +4,7 @@
  * 分层约定（同 scheduler/cw-tool）：本文件零 pi 依赖——agentDir 作参数注入，
  * 不调用 getAgentDir()，可完全单测；pi 注册与 getAgentDir() 调用在 index.ts。
  *
- * 按 action 分发到 7 条路径，串联 M1 core（parser/tree/turns/render）+ M2 discovery
+ * 按 action 分发到 8 条路径，串联 M1 core（parser/tree/turns/render）+ M2 discovery
  *（find/subagents）。content 给 LLM 读（人类可读摘要），details 供程序化消费/测试断言。
  *
  * 错误规格 F1-F6：handler 抛 Error（message 含 👉 恢复指引），由 index.ts 的 execute
@@ -15,7 +15,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { findSessions, type MatchedSession } from './discovery/find.js'
 import { buildFamilyFromFs } from './discovery/subagents.js'
-import { parseSessionFile, type Entry } from './core/parser.js'
+import { parseSessionFile, type Entry, type ParseResult } from './core/parser.js'
 import { buildTreeView } from './core/tree.js'
 import { segmentTurns, type Turn } from './core/turns.js'
 import { extractToolCalls, formatToolCallSummary, basename } from './core/toolcall.js'
@@ -224,10 +224,9 @@ function disambiguate(query: string, candidates: MatchedSession[]): ToolResult {
 // 文件读取（F6 包装）
 // ---------------------------------------------------------------------------
 
-async function safeParse(fileName: string): Promise<Entry[]> {
+async function safeParse(fileName: string): Promise<ParseResult> {
   try {
-    const { entries } = await parseSessionFile(fileName)
-    return entries
+    return await parseSessionFile(fileName)
   } catch (e) {
     throw err(
       `读取失败：${fileName}（${e instanceof Error ? e.message : String(e)}）。👉 检查文件或换 session。`,
@@ -289,7 +288,7 @@ function formatExpandText(turn: string, entries: EntryBrief[]): string {
   return `${turn}\n${lines.join('\n')}`
 }
 
-/** 从 message.content 提取可读文本（text/thinking 块；tool_use 留 name 占位）。 */
+/** 从 message.content 提取可读文本（text/thinking 块；toolCall 留 name 占位）。 */
 function messageReadableText(content: unknown): string {
   if (typeof content === 'string') return content
   if (Array.isArray(content)) {
@@ -299,8 +298,8 @@ function messageReadableText(content: unknown): string {
           const o = b as Record<string, unknown>
           if (o.type === 'text' && typeof o.text === 'string') return o.text
           if (o.type === 'thinking' && typeof o.thinking === 'string') return `[thinking] ${o.thinking}`
-          if (o.type === 'tool_use')
-            return `[tool_use: ${typeof o.name === 'string' ? o.name : '?'}]`
+          if (o.type === 'toolCall')
+            return `[toolCall: ${typeof o.name === 'string' ? o.name : '?'}]`
         }
         return ''
       })
@@ -320,7 +319,7 @@ function isToolResultSummary(
 }
 
 /**
- * 从 message.content 提取可读文本（text/thinking 块；tool_use 留 name 占位）。
+ * 从 message.content 提取可读文本（text/thinking 块；toolCall 留 name 占位）。
  * v2 O3：接受 Entry | ToolResultSummaryEntry，toolResultSummary 返摘要文本（doExport full 用）。
  */
 function entryReadableText(e: Entry | ToolResultSummaryEntry): string {
@@ -479,7 +478,7 @@ async function doFamily(params: SessionReadParams, agentDir: string): Promise<To
 async function doOutline(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
   const resolved = await resolveSessionId(params.session, 'outline', agentDir)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
-  const entries = await safeParse(resolved.fileName)
+  const { entries, totalBytes } = await safeParse(resolved.fileName)
   const tree = buildTreeView(entries)
   const turns = segmentTurns(entries, new Set(tree.leafPath))
   const opts: OutlineOptions = {
@@ -488,6 +487,9 @@ async function doOutline(params: SessionReadParams, agentDir: string): Promise<T
     granularity: params.granularity,
   }
   const result = renderOutline(turns, tree, opts)
+  // 覆盖 stats.totalBytes：render 用 parsedBytes（leaf entry JSON 字节和）近似，
+  // 此处用 ParseResult.totalBytes（原始文件字节数，design §3.4 stats.totalBytes 语义）
+  result.stats.totalBytes = totalBytes
   return { content: [{ type: 'text', text: formatOutlineText(result) }], details: result }
 }
 
@@ -496,7 +498,7 @@ async function doExpand(params: SessionReadParams, agentDir: string): Promise<To
   const resolved = await resolveSessionId(params.session, 'expand', agentDir)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const turnIdx = parseTurnIndex(requireStr(params.turn, 'turn', 'expand'))
-  const entries = await safeParse(resolved.fileName)
+  const { entries } = await safeParse(resolved.fileName)
   const tree = buildTreeView(entries)
   const turns = segmentTurns(entries, new Set(tree.leafPath))
   const turn = turns.find((t) => t.index === turnIdx)
@@ -518,7 +520,7 @@ async function doDetail(params: SessionReadParams, agentDir: string): Promise<To
   const resolved = await resolveSessionId(params.session, 'detail', agentDir)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const range = parseTurnsRange(requireStr(params.turns, 'turns', 'detail'))
-  const entries = await safeParse(resolved.fileName)
+  const { entries } = await safeParse(resolved.fileName)
   const tree = buildTreeView(entries)
   const turns = segmentTurns(entries, new Set(tree.leafPath))
   const max = turns.length - 1
@@ -545,7 +547,7 @@ async function doSearch(params: SessionReadParams, agentDir: string): Promise<To
   const pattern = requireStr(params.pattern, 'pattern', 'search')
   const scope = params.scope ?? 'all'
   const limit = params.limit ?? 20
-  const entries = await safeParse(resolved.fileName)
+  const { entries } = await safeParse(resolved.fileName)
   const tree = buildTreeView(entries)
   const turns = segmentTurns(entries, new Set(tree.leafPath))
   const regex = compilePattern(pattern)
@@ -603,7 +605,7 @@ async function doExport(params: SessionReadParams, agentDir: string): Promise<To
     text = formatFamilyText(family)
     label = 'family'
   } else if (format === 'full') {
-    const entries = await safeParse(resolved.fileName)
+    const { entries } = await safeParse(resolved.fileName)
     const tree = buildTreeView(entries)
     const turns = segmentTurns(entries, new Set(tree.leafPath))
     const det = renderDetail(turns, {
@@ -620,7 +622,7 @@ async function doExport(params: SessionReadParams, agentDir: string): Promise<To
       .join('\n')
     label = 'full'
   } else {
-    const entries = await safeParse(resolved.fileName)
+    const { entries } = await safeParse(resolved.fileName)
     const tree = buildTreeView(entries)
     const turns = segmentTurns(entries, new Set(tree.leafPath))
     const result = renderOutline(turns, tree, {
@@ -687,7 +689,7 @@ function isExtractWhat(v: unknown): v is ExtractWhat {
  * 从 message.content 提取纯 text（string 直取；数组拼接 text 块）。
  *
  * 与 render.ts 内部 extractText 同语义，但那未导出；extract 仅需纯 text
- *（user-messages / tool-results 的正文），不要 thinking/tool_use 占位，本地实现。
+ *（user-messages / tool-results 的正文），不要 thinking/toolCall 占位，本地实现。
  * content 是 unknown 做类型守卫。
  */
 function extractContentText(content: unknown): string {
@@ -1037,7 +1039,7 @@ function extractToolResults(turns: Turn[], tool: string | undefined): ToolResult
 async function doExtract(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
   const resolved = await resolveSessionId(params.session, 'extract', agentDir)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
-  const entries = await safeParse(resolved.fileName)
+  const { entries } = await safeParse(resolved.fileName)
   // extract 遍历全量 entry（含旁支/压缩历史），与 outline/expand/detail 的 leaf 视图不同：
   // 素材提取要全量（design §2.3 实测全量 519 toolCall / 26 user / 515 toolResult），
   // 用 leafPath 过滤会漏掉旁支素材。turn 标注是全量分段 index（含 compaction 周期 + 旁支

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildFamilyIndex, resolveFamily, isStale } from '../core/family.js'
+import { buildFamilyIndex, resolveFamily } from '../core/family.js'
 import type { Entry } from '../core/parser.js'
 
 // ---- fixture 常量（映射 design §3.3 D-7 Q1 真实场景）----
@@ -108,7 +108,7 @@ describe('buildFamilyIndex', () => {
     expect(index.subagentsByRoot.size).toBe(0)
   })
 
-  it('fileStats 原样存入 index（供 isStale 用）', () => {
+  it('fileStats 原样存入 index（供 cleanedUp 判断用）', () => {
     const fileStats = makeStats(['s1'])
     const index = buildFamilyIndex([], [], fileStats)
 
@@ -203,51 +203,5 @@ describe('resolveFamily - 错误', () => {
     const index = buildFamilyIndex(headers, identities, fileStats)
 
     expect(() => resolveFamily('unknown-session', index)).toThrow(/not found in family index/)
-  })
-})
-
-describe('isStale（design D-5 缓存失效）', () => {
-  function indexFromStats(stats: Map<string, { mtime: number; size: number }>) {
-    return buildFamilyIndex([], [], stats)
-  }
-
-  it('mtime 变化 → stale', () => {
-    const old = makeStats(['s1'])
-    const cur = makeStats(['s1'], { mtime: 2000 })
-    expect(isStale(indexFromStats(old), cur)).toBe(true)
-  })
-
-  it('size 变化 → stale', () => {
-    const old = makeStats(['s1'])
-    const cur = makeStats(['s1'], { size: 6000 })
-    expect(isStale(indexFromStats(old), cur)).toBe(true)
-  })
-
-  it('mtime/size 都不变 → not stale', () => {
-    const old = makeStats(['s1'])
-    const cur = makeStats(['s1'])
-    expect(isStale(indexFromStats(old), cur)).toBe(false)
-  })
-
-  it('新增文件 → stale', () => {
-    const old = makeStats(['s1'])
-    const cur = makeStats(['s1', 's2'])
-    expect(isStale(indexFromStats(old), cur)).toBe(true)
-  })
-
-  it('文件消失 → stale', () => {
-    const old = makeStats(['s1', 's2'])
-    const cur = makeStats(['s1'])
-    expect(isStale(indexFromStats(old), cur)).toBe(true)
-  })
-
-  it('删除+新增数量相同（size 相同）仍 stale（双向遍历兜底）', () => {
-    const old = makeStats(['s1'])
-    const cur = makeStats(['s2']) // s1 消失 + s2 新增，size 都是 1
-    expect(isStale(indexFromStats(old), cur)).toBe(true)
-  })
-
-  it('空 index vs 空 current → not stale', () => {
-    expect(isStale(indexFromStats(new Map()), new Map())).toBe(false)
   })
 })

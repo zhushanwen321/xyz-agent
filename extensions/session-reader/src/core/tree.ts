@@ -13,11 +13,9 @@ export interface TreeView {
  * 沿祖先链找最近的、属于 leafSet 的分叉点。
  * 返回 null：祖先链触不到 leafSet（多 root 独立子树）或检测到环。
  *
- * 注意：design §3.5 算法 2 步骤 5 字面写的是「parentId ∈ leafSet 但自身 ∉ leafSet」，
- * 只数直接挂在 leafPath 上的旁支子节点。但 outline 渲染语义（同节末注释「在 forkPoint
- * 处插入 [旁支 N entries]」）与 task T1.2 用例 2（A→D→E 旁支，期望 forkPointId=A count=2）
- * 要求 N 是整条旁支子树大小，不是直接子数。本实现按 outline/task 意图（子树大小），
- * 对每个非主链 entry 沿祖先链归到最近 leafSet 节点计数。design 步骤 5 字面描述待修正。
+ * 计算旁支子树大小：对每个非主链 entry 沿祖先链归到最近 leafSet 节点计数（design §3.5
+ * 算法 2 步骤 5「按 forkPoint 聚合子树大小」）。如 A→D→E 旁支（D、E 都挂在 forkPoint A
+ * 下）count=2，而非只数直接子节点。
  */
 function findForkPoint(
   startId: string | null,

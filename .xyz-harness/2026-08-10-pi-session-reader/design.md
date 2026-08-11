@@ -205,24 +205,28 @@ agent 看到的：find 候选列表 / family 家族树 / outline turn TOC / deta
 
 **D-3a（v2 O5）：完整 uuid 方案下不需唯一前缀算法。** v2 初版用「8 字符片段碰撞时动态算唯一前缀（字符级 LCP+1）」，后简化为直接插入完整 uuid——完整 uuid 天然全局唯一，findSessions 子串匹配零碰撞，省去 LCP 算法 + 全局扫 + per-cwd/全局作用域一致性维护的复杂度。碰撞率 26.5% 的事实见 optimization-v2.md §2.5，完整 uuid 从源头避开（算法/实测详见 optimization-v2.md §3.3 D5）。
 
+**D-3b（实现注，TUI 层数据源）**：TUI 层（hash-provider.ts / session-command.ts）的 `#` 补全与 `/session-pick` 列表的**显示候选**用 pi 的 `SessionManager.listAll(cwdSessionDir)`（per-cwd，label=age+预览），非 discovery 层 findSessions——TUI 层允许依赖 pi（与 discovery 层「零 pi 依赖」定位不同；2026-08-10 重构从全盘 findSessions 换为 listAll）。
+
+**D-3c（实现注，find 纯 hex 片段优化）**：find 的 `looksLikeUuidFragment(query)` 对纯十六进制 query（如 `e6c96`）跳过名称关键词 fallback 深读（纯 hex 几乎不会出现在自然语言首消息），仅含非 hex 字符的 query 才走首消息 fallback。
+
 **D-4：`#` 引用提交时不展开，由工具侧剥前缀。**
 - 选择：插入纯文本 `#019e6c96-0a0c-74b8-a73f-d1854d88e2a7`，LLM 见到后自行调 `session_read`；被否：`pi.on("input")` transform 把引用展开成路径明文注入。
 - 证据：pi 的 `@` 引用同构——插入 `@path` 纯文本，read 工具经 `normalizePath(p, { stripAtPrefix: true })` 剥 `@`（`core/tools/path-utils.js:36`，stripAtPrefix 是选项名非独立函数），提交时不展开。跟随平台先例，不发明第二套引用语义（一致性 > 品味）。
 
-**D-5：家族索引用「全量首行扫描」自建，不用 `SessionManager.listAll()`。**
-- 选择：只读每个 `.jsonl` 的第 1 行（header 含 id/parentSession/cwd），建 parentSession→children 反查表，按 `mtime+size` 缓存；被否：复用 pi 的 `listAll()`。
-- 证据：`listAll()` 的 `buildSessionInfo` 对每文件**读全文**提取 name/firstMessage（`session-manager.ts:620-702`），只为建家族索引代价过高；首行扫描实测即可拿到 fork 链全部信息（附录 A P-header ✅）。find 需要首消息预览时才对候选文件单独深读。
+**D-5：家族索引用「全量首行扫描」自建，不用 `SessionManager.listAll()`；不缓存（每次重扫）。**
+- 选择：只读每个 `.jsonl` 的第 1 行（header 含 id/parentSession/cwd），建 parentSession→children 反查表；被否：复用 pi 的 `listAll()`；被否：按 `mtime+size` 缓存。
+- 证据：`listAll()` 的 `buildSessionInfo` 对每文件**读全文**提取 name/firstMessage（`session-manager.ts:620-702`），只为建家族索引代价过高；首行扫描实测即可拿到 fork 链全部信息（附录 A P-header ✅）。find 需要首消息预览时才对候选文件单独深读。不缓存同 D-6 论据——首行扫描比全文解析（D-6 实测 5.4MB 17ms）更快，缓存省的时间可忽略，却引入「活跃 session 写入后缓存失效」断言面（准则 8 减法）。原 isStale 缓存失效函数已删（死代码，从未接入 buildFamilyFromFs）。
 
 **D-6：不做解析结果内存缓存，每次调用重读文件。**
 - 选择：无状态工具，每次重新解析；被否：进程内 LRU 缓存解析树。
 - 证据：5.4MB（1204 entry）全文解析实测 **17ms**（附录 A P-parse ✅，python 逐行 json.loads），Node 同量级或更快。缓存省的时间可忽略，却引入「活跃 session 写入后缓存失效」的新断言面——准则 8 减法：by construction 正确，不靠机制。
 
 **D-7：subagent/workflow 家族发现——优先读主 session 里已嵌的指针字段，fallback 才扫描。**
-- 选择（workflow 家族）：**优先**读主 session 的 `workflow-state-link` custom entry 的 `data.path` 字段——它就是 workflow-state 文件的**绝对路径**（实测 `data = {runId, path, updatedAt}`，path 形如 `.../sessions/<cwdSlug>/workflow-state/wf-<id>.jsonl`，附录 A P-wf-link ✅），直读该文件**最后一行**（最新快照）取 `calls[].sessionFile` 即得所有子代理 session。**wf 文件两种格式**（实测本机 371 文件）：NEW（`v:"wf-run-v1"`，`state.calls[].sessionFile`，258 文件/1590 sessionFile）+ OLD（无 `v`，`callCache[].value.sessionFile`，旧 pi 不持久化 → 0 sessionFile）。extractCallSessionFiles 按格式分支提取。**仅当**主 session 无此 entry（workflow 未写 link）才 fallback 扫描 `getAgentDir()/sessions/<cwdSlug>/workflow-state/` 与 `~/.pi/agent/sessions/<cwdSlug>/workflow-state/` 两候选位置。
+- 选择（workflow 家族）：**优先**读主 session 的 `workflow-state-link` custom entry 的 `data.path` 字段——它就是 workflow-state 文件的**绝对路径**（实测 `data = {runId, path, updatedAt}`，path 形如 `.../sessions/<cwdSlug>/workflow-state/wf-<id>.jsonl`，附录 A P-wf-link ✅），直读该文件**最后一行**（最新快照）取 `calls[].sessionFile` 即得所有子代理 session。**wf 文件两种格式**（实测本机 371 文件）：NEW（`v:"wf-run-v1"`，`state.calls[].sessionFile`，258 文件/1590 sessionFile）+ OLD（无 `v`，`callCache[].value.sessionFile`，旧 pi 不持久化 → 0 sessionFile）。extractCallSessionFiles 按格式分支提取。主 session 无 workflow-state-link entry 时（旧 pi 未持久化 link / 异常情况）workflows 返 []——不 fallback 扫描目录（双位置扫描复杂度高、价值低，准则 8 减法；link 是可靠主路径）。
 - 选择（subagent 家族）：扫 `<agentDir>/subagents/<enc(cwd)>/sessions/*.jsonl` **尾行** `subagent-identity`（实测 019fe635 的 identity 在 71/71 行——design "尾部" 确认；header 读首行 8KB、identity 读尾行 64KB 定长 buffer，覆盖 3203/3430 真实文件）。glob 用 `*.jsonl` 精确匹配——**排除 `.jsonl.finalized`**（实测本机 3118 个，与 `.jsonl` 同 base name 并存）。**cleanedUp 机制**（实测）：`.jsonl` 被 30 天 TTL GC 后尾行 identity 一并消失，`records/*.json` manifest（subagent 创建时写入，持久残留）是**孤儿唯一来源**——alive subagent（文件已扫）的 manifest 跳过去重，未扫到的 → cleanedUp 孤儿（design 原"manifest 作孤儿补充"应理解为"唯一来源"）。
 - 隔代关联规则 [审查 Q1]：subagent 的 `rootSessionId` 指向其**直接发起 session**（实测 019fe635→019fe632），可能是 fork 链中间节点而非家族根。family 从某 session 出发关联 subagent 时，匹配条件是「subagent.rootSessionId == 本 session id」**或**「在本地 fork 子代链上」——单用前者会漏隔代 subagent（从家族根 019fe620 出发会漏掉挂在 fork 子代 019fe632 下的 019fe635）。实现：建好 fork 链后，对链上每个节点 id 都查 subagent 反查表。
 - 证据：subagent-workflow 源码证实（`session-reconstructor.ts:125`、`jsonl-run-store.ts:245-252`）；workflow-state-link.data.path 字段实测（附录 A P-wf-link ✅）。
-- 旧「双位置查」描述已废弃：原设计称「workflow-state 硬编码 `~/.pi/agent` 顶层，需双位置查」——实测真实落点在 `~/.pi/agent/sessions/<cwdSlug>/workflow-state/`（硬编码发生在 `resolveSessionDir()`，常态下 `sessions/<slug>` 存在故走 sessionScoped 分支），且 `link.data.path` 已给绝对路径，双位置扫描退化为 fallback，不再需要 `P-workflow-dual` 检查点。
+- 旧「双位置查」描述已废弃：原设计称「workflow-state 硬编码 `~/.pi/agent` 顶层，需双位置查」——实测真实落点在 `~/.pi/agent/sessions/<cwdSlug>/workflow-state/`（硬编码发生在 `resolveSessionDir()`，常态下 `sessions/<slug>` 存在故走 sessionScoped 分支），且 `link.data.path` 已给绝对路径。双位置 fallback 扫描已删除（无 link 时返 []，见上），不再需要 `P-workflow-dual` 检查点。
 - 边界：30 天 TTL GC 会删旧 subagent 文件（`session-file-gc.ts`），family 标注 `[已清理]` 并指向 manifest（对应失败路径 F3）。
 
 **D-8：export 物化到 `<agentDir>/tmp/session-view-<id>.md`。**
@@ -297,7 +301,7 @@ handler 内按 action 校验必填项（缺失抛 F5）。
 | F3 gc_cleaned | subagent 文件被 30 天 TTL GC | `subagent 已清理（>30d TTL）：<path>。manifest 在 records/<id>。👉 family 看存活成员。` |
 | F4 out_of_range | turn/entry 索引越界 | `turn T99 越界，共 N 轮（T000-T{N-1}）。👉 outline 重看有效范围。` |
 | F5 missing_param | action 必填参数缺失 | `action:"X" 需要参数 "Y"。👉 补上重试。` |
-| F6 read_error | 文件读失败/严重损坏 | `读取失败：<path>（跳过 N 坏行）。👉 检查文件或换 session。` |
+| F6 read_error | 文件读失败/严重损坏 | `读取失败：<path>（<error detail>）。👉 检查文件或换 session。`（解析时坏行静默跳过计入 ParseResult.skippedLines，不触发 F6；F6 仅用于文件读失败）|
 | F7 invalid_what | extract 的 `what` 非法 | `what "X" 无效，应为 user-messages/commands/files/commits/tool-results。👉 用合法 what 重试。` |
 | F8 tool_no_match（不抛错） | extract 的 `tool` 过滤零匹配 | `what=X tool="Y" 无匹配。该 session 工具：bash×309,read×64,...。👉 用存在的工具名重试。`（返回工具分布，details 含 `toolDistribution`） |
 | F9 over_budget（不抛错） | extract 结果按 item 系计字节超 8000 预算（首项超大也内部截断） | `[what=X 已显示 K/T 项（Taaa-Tbbb），约 N token 达预算上限。👉 用较小 turns 范围缩小，或换 what 重试。]`（按 item 系计字节达预算即截断；单条超大内部 slice 到剩余字节预算（字节→字符 ×3 近似防 UTF8 切半）；N = body 实际字节/4（非固定 2000）；文案报 shown/count + shown 的 turn 范围；details.truncated=true） |
@@ -409,7 +413,7 @@ M1-M4 全部完成并提交（124 测试绿，tsc/eslint 0 error）。§4 V1-V6 
 |---|---|---|---|
 | P-noise | toolResult 占 72.2%、对话内容（user+assistant text）<6% | python 统计本机 019e6c96（5.4MB）各 block 体积 | ✅ 2026-08-10 实测 |
 | P-parse | 5.4MB 全文解析 ~17ms，「不做缓存」成立 | python 逐行 json.loads 计时（Node 同量级或更快） | ✅ 实测 17ms（019e6c96） |
-| P-outline | turn 级 outline ≈ 506 token（32 行/~2K chars，L1 不含 assistantBrief） | vitest 对 019e6c96 跑 renderOutline(budget:2000) | ✅ 实测 506 token |
+| P-outline | turn 级 outline token（v1 506 / v2 ~1177，32 行，v2 含 assistantBrief） | vitest 对 019e6c96 跑 renderOutline(budget:2000) | ✅ v1 实测 506 / v2 实测 1177（见 §4.1）|
 | P-header | 首行恒为 session header；fork 文件含 `parentSession` 路径指针 | 遍历本机 40 个 session 文件首行，找到真实 fork 对 019fe632→019fe620 | ✅ 实测 |
 | P-identity | subagent session 尾行存在 `subagent-identity` custom entry（含 rootSessionId） | tail 真实 subagent 文件（019fe635） | ✅ 实测 |
 | P-open-active | `SessionManager.open()` 读取**活跃写入中**的 session 文件安全（无锁、不写） | 实施期：对正在对话的 session 调 open 读 entries，确认主进程 append 不受影响 | ⛔ M3 前 |

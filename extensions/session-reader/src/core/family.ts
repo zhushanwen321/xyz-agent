@@ -1,7 +1,7 @@
 import type { Entry } from './parser.js'
 
 /**
- * 家族索引与解析（design §3.3 D-7 + §3.5 D-5 缓存）。
+ * 家族索引与解析（design §3.3 D-7）。
  *
  * M1 范围：纯逻辑层。buildFamilyIndex 接收已读入的 entry 数组（不做文件 IO），
  * 文件扫描/首行读取归 M2 discovery 层（roots.ts/find.ts/subagents.ts）。
@@ -11,7 +11,7 @@ import type { Entry } from './parser.js'
  * - SessionRef.mtime/sizeBytes：从 fileStats 取（M1 key=sessionId），取不到为 0
  * - SubagentRef.sessionId：identity entry 不含 subagent session 的 id → 占位用 entry.id
  * - SubagentRef.cwd：identity entry（custom 类型）无 cwd → 占位空串
- * - fileStats 的 key：M1 用 sessionId（M2 改用真实文件路径），isStale/cleanedUp 逻辑 M1/M2 通用
+ * - fileStats 的 key：M1 用 sessionId（M2 改用真实文件路径），cleanedUp 逻辑 M1/M2 通用
  *
  * 隔代关联规则（design §3.3 D-7 Q1）见 resolveFamily 注释。
  */
@@ -62,7 +62,7 @@ export interface FamilyIndex {
   childrenOf: Map<string, SessionRef[]>
   /** rootSessionId → 该 root 直接发起的 subagent（隔代合并在 resolveFamily 跨链节点做） */
   subagentsByRoot: Map<string, SubagentRef[]>
-  /** 建索引时的文件元信息快照，供 isStale 缓存失效判断（design D-5） */
+  /** 建索引时的文件元信息快照，供 cleanedUp 判断（subagent 文件 GC 检测，design §3.3 D-7） */
   fileStats: Map<string, { mtime: number; size: number }>
 }
 
@@ -107,7 +107,7 @@ function resolveParentSessionId(
  *
  * - headers（type=session）→ byId + childrenOf（parentSession 文件路径反查父 sessionId）
  * - subagentIdentities（type=custom, customType=subagent-identity）→ subagentsByRoot
- * - fileStats 原样存入 index，供 isStale 缓存失效判断
+ * - fileStats 原样存入 index，供 cleanedUp 判断
  *
  * 坏数据容错：identity 缺 rootSessionId/slug 跳过；parentSession 反查不到父（父文件
  * 未被扫描到）该 entry 不进 childrenOf——均不报错，符合 pi 坏 session 容错（design §2）。
@@ -170,30 +170,6 @@ export function buildFamilyIndex(
   }
 
   return { byId, childrenOf, subagentsByRoot, fileStats }
-}
-
-/**
- * 缓存失效判断（design D-5）：任一文件 mtime/size 变化、消失或新增 → true。
- *
- * 比较 index.fileStats（建索引时的快照）与 currentStats（当前文件系统快照）。
- * 双向遍历覆盖三种失效：旧文件消失 / 内容变化 / 新文件新增。
- * 双向必要：仅遍历旧文件会漏"新增文件"（删除+新增数量相同时 size 比较也漏）。
- */
-export function isStale(
-  index: FamilyIndex,
-  currentStats: Map<string, { mtime: number; size: number }>,
-): boolean {
-  // 旧文件消失或内容变化
-  for (const [key, old] of index.fileStats) {
-    const cur = currentStats.get(key)
-    if (!cur) return true // 文件消失
-    if (cur.mtime !== old.mtime || cur.size !== old.size) return true // 内容变化
-  }
-  // 新增文件（currentStats 有 index 没有的 key）
-  for (const key of currentStats.keys()) {
-    if (!index.fileStats.has(key)) return true
-  }
-  return false
 }
 
 /**
