@@ -40,6 +40,24 @@ function createGitRepo(parentDir: string, name: string): string {
 	return realpathSync(repo);
 }
 
+/** 建 bare repo + worktree workspace（xyz-agent 模式：.bare + worktree 子目录）。
+ *  返回 realpath 规范化的 worktree 路径。bare repo worktree 内 git-common-dir basename 是 .bare（非 .git），
+ *  是 detectRepoWorkspace 加固分支的核心场景（设计文档 §2.4 / 决策 2）。 */
+function createBareRepoWorkspace(parentDir: string, name: string): string {
+	const wsRoot = path.join(parentDir, name);
+	mkdirSync(wsRoot);
+	// 先建普通 seed repo（含初始 commit，bare repo 不能直接 commit）
+	const seed = path.join(parentDir, `${name}-seed`);
+	mkdirSync(seed);
+	execSync("git init -q", { cwd: seed });
+	execSync("git -c user.name=test -c user.email=test@test.local commit -q --allow-empty -m init", { cwd: seed });
+	// clone --bare 成 .bare，再 worktree add
+	execSync(`git clone -q --bare ${seed} .bare`, { cwd: wsRoot });
+	const worktree = path.join(wsRoot, "main");
+	execSync('git --git-dir=.bare worktree add -q main', { cwd: wsRoot });
+	return realpathSync(worktree);
+}
+
 afterEach(() => {
 	for (const dir of tmpDirs.splice(0)) {
 		rmSync(dir, { recursive: true, force: true });
@@ -90,6 +108,37 @@ describe("detectRepoWorkspace（真实 git）", () => {
 	it("不存在的路径 → undefined（不抛）", () => {
 		const base = makeTempDir("cw-detect-");
 		expect(detectRepoWorkspace(path.join(base, "does-not-exist"))).toBeUndefined();
+	});
+});
+
+// ── detectRepoWorkspace（bare repo + worktree 模式）──────────────
+
+describe("detectRepoWorkspace（bare repo + worktree 模式）", () => {
+	it("bare repo worktree（.bare）→ undefined（dirname(.bare)=容器根非 git 目录，不传 --workspace）", () => {
+		const base = makeTempDir("cw-bare-");
+		const worktree = createBareRepoWorkspace(base, "ws");
+		expect(detectRepoWorkspace(worktree)).toBeUndefined();
+	});
+
+	it("防误用：--is-bare-repository 在 worktree 内返回 false（不可作 bare 判据）", () => {
+		const base = makeTempDir("cw-bare-isbare-");
+		const worktree = createBareRepoWorkspace(base, "ws");
+		const isBare = execSync("git rev-parse --is-bare-repository", { cwd: worktree })
+			.toString()
+			.trim();
+		expect(isBare).toBe("false");
+	});
+
+	it("bare repo worktree：common-dir basename 是 .bare（非 .git）", () => {
+		const base = makeTempDir("cw-bare-commondir-");
+		const worktree = createBareRepoWorkspace(base, "ws");
+		const commonDir = execSync(
+			"git -C . rev-parse --path-format=absolute --git-common-dir",
+			{ cwd: worktree },
+		)
+			.toString()
+			.trim();
+		expect(path.basename(commonDir)).toBe(".bare");
 	});
 });
 

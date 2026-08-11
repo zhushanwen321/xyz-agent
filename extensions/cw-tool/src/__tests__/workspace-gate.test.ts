@@ -1,9 +1,9 @@
 /**
  * workspace 门控测试：probeCwCliNormalization 纯函数 + executeCwAction 门控决策。
  *
- * 门控语义（差异文档 §3 §4 + ADR-0045 Superseded）：cw-cli 支持 store 内部归一化
+ * 门控语义（cw-cli ADR-0014 store-workspace decoupling）：cw-cli 支持 store 内部归一化
  * （probe 版本 >= MIN_CW_CLI_VERSION_FOR_NORMALIZATION）→ write action 不传 --workspace（纯封装）；
- * 不支持 → 兜底 ADR-0045 的 detectRepoWorkspace + --workspace。只读 action 始终不传（S-3）。
+ * 不支持 → 兜底 cw-cli ADR-0014 的 detectRepoWorkspace + --workspace。只读 action 始终不传（S-3）。
  *
  * detectRepoWorkspace 探测纯函数 + buildCwArgs 构造的测试在 detect-repo-workspace.test.ts，
  * 本文件只测门控决策（probe 三态 × action 两类 × git 环境）。
@@ -109,13 +109,13 @@ describe("probeCwCliNormalization", () => {
 
 	it("版本 === MIN（等号边界）→ supported:true（门控用 >=，锁定等号语义，S-7）", async () => {
 		const cwd = makeTempDir("probe-eq-");
-		const { spawner } = gateSpawner({ versionStdout: "cw 99.0.0" });
+		const { spawner } = gateSpawner({ versionStdout: "cw 1.6.2" });
 		const cap = await probeCwCliNormalization(spawner, cwd);
 		expect(cap.supported).toBe(true);
-		expect(cap.version).toBe("99.0.0");
+		expect(cap.version).toBe("1.6.2");
 	});
 
-	it("版本 < MIN → supported:false（当前 placeholder 99.0.0，真实 cw 1.6.1 不支持）", async () => {
+	it("版本 < MIN → supported:false（1.6.2 是归一化首版，1.6.1 不支持）", async () => {
 		const cwd = makeTempDir("probe-unsupported-");
 		const { spawner } = gateSpawner({ versionStdout: "cw 1.6.1" });
 		const cap = await probeCwCliNormalization(spawner, cwd);
@@ -196,7 +196,7 @@ describe("executeCwAction workspace 门控", () => {
 		expect(actionCall(calls).args).not.toContain("--workspace");
 	});
 
-	it("TC2: probe 不支持 → write action 兜底传 --workspace（ADR-0045 行为）", async () => {
+	it("TC2: probe 不支持 → write action 兜底传 --workspace（cw-cli ADR-0014 行为）", async () => {
 		const base = makeTempDir("gate-tc2-");
 		const repo = createGitRepo(base, "repo");
 		const { spawner, calls } = gateSpawner({ versionStdout: "cw 1.6.1" });
