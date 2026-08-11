@@ -103,6 +103,39 @@ function truncate(s: string, max: number): string {
 }
 
 /**
+ * 两个字符串的字符级最长公共前缀（LCP）长度。逐字符比较到首个差异或较短串末尾。
+ */
+function lcpLength(a: string, b: string): number {
+  const minLen = Math.min(a.length, b.length)
+  let i = 0
+  while (i < minLen && a[i] === b[i]) i++
+  return i
+}
+
+/**
+ * 计算唯一区分前缀（design §3.3 D5：取【最大】LCP + 1）。
+ *
+ * 在同组候选 siblings 中要唯一区分 sid，须比「与它最像的兄弟」（共享前缀最长者）多一位
+ * 字符——取 sid 与所有其他 sibling 的字符级 LCP 的【最大值】+1 作为唯一前缀。
+ *
+ * **取 max 而非 min**（附录第二轮审查教训）：取 min 会被远房邻居把前缀拖短，大碰撞桶
+ *（如 19 元的 019e9680）仍碰撞。须比「最像的兄弟」多一位才能区分。保留连字符——
+ * findSessions 子串匹配按整段命中。
+ *
+ * @param sid 待区分的 sessionId
+ * @param siblings 同组所有候选 sessionId（含 sid 自己；内部排除自己后算 LCP）
+ * @returns sid 的唯一前缀。siblings 无其他成员时 maxLCP=0，返回 sid.slice(0,1)。
+ */
+export function computeUniquePrefix(sid: string, siblings: string[]): string {
+  let maxLCP = 0
+  for (const other of siblings) {
+    if (other === sid) continue
+    maxLCP = Math.max(maxLCP, lcpLength(sid, other))
+  }
+  return sid.slice(0, maxLCP + 1)
+}
+
+/**
  * SessionInfo → AutocompleteCandidate（纯函数，可单测）。
  *
  * **绕过 pi-tui 主列固定32死约束的关键**：不设 description。SelectList.renderItem 在
@@ -114,14 +147,23 @@ function truncate(s: string, max: number): string {
  * - label = `${age} ${预览/name}`（如 "01m 看看 pi-session-reader..."）——满宽渲染，
  *   时间最左 + 1 空格 + 预览吃满，无 padding，不显示 uuid 片段，不含 count（用户反馈）。
  * - description = undefined（不设）——触发上述满宽分支。
- * - insertText = `#片段`（选中才插入，design D-3）。
+ * - insertText = `#片段`（design §3.3 D5）：碰撞桶（siblings.length > 1）→ max LCP+1 唯一前缀
+ *   （保留连字符，如 #019fea0e-c）；唯一候选（siblings 空/缺省）→ 固定 8 字符（design D-3）。
  *
  * name 优先于 firstMessage（design G3）。不清洗 XML 标签（对齐 /resume）。只清洗控制字符/换行。
+ *
+ * @param siblings 同组候选 sessionId（含 s.id）；碰撞时算唯一前缀。缺省/空 → 8 字符片段
+ * @param now 计算 age 的基准时间（默认当前）
  */
-export function toCandidate(s: SessionInfo, now: number = Date.now()): AutocompleteCandidate {
-  const frag = s.id.slice(0, FRAGMENT_LEN)
+export function toCandidate(
+  s: SessionInfo,
+  siblings: string[] = [],
+  now: number = Date.now(),
+): AutocompleteCandidate {
   const age = formatAge(s.modified, now)
   const text = truncate(normalizeSingleLine(s.name ?? s.firstMessage), PREVIEW_MAX) || '(无预览)'
+  // 碰撞桶 → 唯一前缀（max LCP+1，保留连字符）；唯一候选 → 固定 8 字符片段（design D-3）
+  const frag = siblings.length > 1 ? computeUniquePrefix(s.id, siblings) : s.id.slice(0, FRAGMENT_LEN)
   return {
     label: `${age} ${text}`,
     insertText: `#${frag}`,
@@ -154,7 +196,11 @@ export async function provideHashCandidates(
   // uuid 片段非空 → id 子串过滤；空片段（刚输入 #）→ recent（listAll 已按 modified 倒序）
   const filtered =
     fragment === '' ? all : all.filter((s) => s.id.includes(fragment))
-  return filtered.slice(0, limit).map((s) => toCandidate(s))
+  const visible = filtered.slice(0, limit)
+  // D5：siblings = 实际返回的候选 id（slice 后）——弹窗只显示这些，桶内两两唯一即可。
+  //（全量匹配 > limit 时超出部分用户看不到，无需为它们算唯一前缀。）
+  const siblings = visible.map((s) => s.id)
+  return visible.map((s) => toCandidate(s, siblings))
 }
 
 /**

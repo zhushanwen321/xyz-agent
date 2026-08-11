@@ -6,6 +6,7 @@ import {
   extractHashFragment,
   formatAge,
   toCandidate,
+  computeUniquePrefix,
   provideHashCandidates,
   FRAGMENT_LEN,
   type AutocompleteCandidate,
@@ -178,6 +179,7 @@ describe('toCandidate', () => {
   it('label = `${age} ${预览}`（时间最左 + 1 空格 + 预览；不设 description 触发满宽分支）', () => {
     const c = toCandidate(
       makeSessionInfo({ firstMessage: '修复登录 bug', messageCount: 14 }),
+      [],
       new Date('2026-01-01T13:00:00Z').getTime(),
     )
     // modified=2026-01-01T00:00, now=13:00 → 13h
@@ -189,6 +191,7 @@ describe('toCandidate', () => {
   it('有 name → label 放 name 不放 firstMessage（design G3）', () => {
     const c = toCandidate(
       makeSessionInfo({ name: 'my-session', firstMessage: '首条消息内容', messageCount: 5 }),
+      [],
       new Date('2026-01-01T01:00:00Z').getTime(),
     )
     expect(c.label).toBe('01h my-session')
@@ -197,7 +200,7 @@ describe('toCandidate', () => {
 
   it('firstMessage 超长 → 截断到 PREVIEW_MAX（避免传超大字符串给 pi-tui）', () => {
     const longText = 'X'.repeat(500)
-    const c = toCandidate(makeSessionInfo({ firstMessage: longText }), new Date('2026-01-01T01:00:00Z').getTime())
+    const c = toCandidate(makeSessionInfo({ firstMessage: longText }), [], new Date('2026-01-01T01:00:00Z').getTime())
     // label = age(3) + 空格(1) + 截断text(100+…)
     expect(c.label).toMatch(/^01h X{100}…$/)
   })
@@ -218,6 +221,89 @@ describe('toCandidate', () => {
   it('无 name 且无 firstMessage → 标 (无预览)', () => {
     const c = toCandidate(makeSessionInfo({ name: undefined, firstMessage: '' }))
     expect(c.label).toContain('(无预览)')
+  })
+})
+
+// ---- computeUniquePrefix（D5：max LCP + 1 唯一前缀）----
+
+describe('computeUniquePrefix', () => {
+  it('2 元桶：019fea0e-c0cb... / 019fea0e-378e... → 各唯一前缀 019fea0e-c / 019fea0e-3', () => {
+    const a = '019fea0e-c0cb-aaaa-bbbb-ccccdddddddd'
+    const b = '019fea0e-378e-eeee-ffff-000000000000'
+    const siblings = [a, b]
+    expect(computeUniquePrefix(a, siblings)).toBe('019fea0e-c')
+    expect(computeUniquePrefix(b, siblings)).toBe('019fea0e-3')
+  })
+
+  it('大桶（5 元同 8 字符前缀）：结果两两不同（验证取 max 方向，min 会失败）', () => {
+    // 模拟 19 元桶子集，共享 019e9680 前 8 字符，第 9 位（连字符后）分叉
+    const sids = [
+      '019e9680-1111-aaaa-bbbb-cccccccccccc',
+      '019e9680-2222-aaaa-bbbb-cccccccccccc',
+      '019e9680-3333-aaaa-bbbb-cccccccccccc',
+      '019e9680-4444-aaaa-bbbb-cccccccccccc',
+      '019e9680-5555-aaaa-bbbb-cccccccccccc',
+    ]
+    const prefixes = sids.map((s) => computeUniquePrefix(s, sids))
+    // 两两不同（Set 去重后数量等于 sid 数）
+    expect(new Set(prefixes).size).toBe(sids.length)
+    // 每个是 10 字符（019e9680-x，第 10 位区分）；min 错误会得 8 字符且全相同
+    for (const p of prefixes) {
+      expect(p).toHaveLength(10)
+      expect(p.startsWith('019e9680-')).toBe(true)
+    }
+  })
+
+  it('含子簇的大桶：同簇兄弟需更长前缀区分（max 方向核心验证）', () => {
+    // 5 元：前 3 个共享 019e9680-111x（LCP=13），后 2 个共享 019e9680-222x
+    const sids = [
+      '019e9680-1111-aaaa-bbbb-cccccccccccc',
+      '019e9680-1112-aaaa-bbbb-cccccccccccc',
+      '019e9680-1113-aaaa-bbbb-cccccccccccc',
+      '019e9680-2222-aaaa-bbbb-cccccccccccc',
+      '019e9680-2223-aaaa-bbbb-cccccccccccc',
+    ]
+    const prefixes = sids.map((s) => computeUniquePrefix(s, sids))
+    expect(new Set(prefixes).size).toBe(sids.length)
+    // 子簇内最像兄弟 LCP=13 → 需 slice(0,14)（14 字符）区分
+    // min 错误会取跨簇 LCP=9 → slice(0,10)=019e9680-1，子簇内 3 个全碰撞
+    expect(computeUniquePrefix(sids[0], sids)).toBe('019e9680-1111')
+    expect(computeUniquePrefix(sids[1], sids)).toBe('019e9680-1112')
+    expect(computeUniquePrefix(sids[3], sids)).toBe('019e9680-2222')
+  })
+
+  it('siblings 只含自己（无兄弟）→ maxLCP=0，slice(0,1)', () => {
+    expect(computeUniquePrefix('019e9680-aaaa-bbbb', ['019e9680-aaaa-bbbb'])).toBe('0')
+  })
+
+  it('siblings 空数组 → slice(0,1)', () => {
+    expect(computeUniquePrefix('019e9680-aaaa-bbbb', [])).toBe('0')
+  })
+})
+
+// ---- toCandidate O5（碰撞唯一前缀）----
+
+describe('toCandidate（O5 唯一前缀）', () => {
+  it('多候选（siblings > 1）→ insertText 用唯一前缀（>8 字符）', () => {
+    const a = makeSessionInfo({ id: '019fea0e-c0cb-aaaa-bbbb-ccccdddddddd' })
+    const b = makeSessionInfo({ id: '019fea0e-378e-eeee-ffff-000000000000' })
+    const siblings = [a.id, b.id]
+    const ca = toCandidate(a, siblings)
+    expect(ca.insertText).toBe('#019fea0e-c')
+    expect(ca.insertText.length).toBeGreaterThan(FRAGMENT_LEN + 1)
+    // label 不受影响（仍 age+预览，不含片段）
+    expect(ca.label).not.toContain('019fea0e')
+  })
+
+  it('单候选（siblings 空）→ insertText 仍 8 字符（design D-3 契约）', () => {
+    const c = toCandidate(makeSessionInfo(), [])
+    expect(c.insertText).toBe('#019e6c96')
+    expect(c.insertText.length).toBe(FRAGMENT_LEN + 1)
+  })
+
+  it('siblings 缺省 → insertText 仍 8 字符（向后兼容 session-command.ts 调用）', () => {
+    const c = toCandidate(makeSessionInfo())
+    expect(c.insertText).toBe('#019e6c96')
   })
 })
 
@@ -332,5 +418,67 @@ describe('provideHashCandidates', () => {
     expect(result!).toHaveLength(1)
     expect(result![0].label).toContain('my-named-session')
     expect(result![0].label).not.toContain('首条消息内容')
+  })
+
+  it('O5 碰撞桶：多匹配 → insertText 两两不同且为唯一 sid 子串（findSessions 子串命中）', async () => {
+    // 2 元桶 019fea0e：-c0cb（feat-optimize-ui）/ -378e（当前 worktree），LCP=9，第 10 位区分
+    const sids = [
+      '019fea0e-c0cb-aaaa-bbbb-ccccdddddddd',
+      '019fea0e-378e-eeee-ffff-000000000000',
+    ]
+    await makeSession(cwdSessionDir, {
+      fileName: 'a.jsonl',
+      id: sids[0],
+      cwd: '/demo',
+      firstUserText: '读取 pi session 的 extension 设计',
+    })
+    await makeSession(cwdSessionDir, {
+      fileName: 'b.jsonl',
+      id: sids[1],
+      cwd: '/demo',
+      firstUserText: 'settings provider 删除 bug 排查',
+    })
+    const result = await provideHashCandidates('#019fea0e', cwdSessionDir)
+    expect(result).not.toBeNull()
+    expect(result!).toHaveLength(2)
+    const inserts = result!.map((c) => c.insertText)
+    // 两两不同
+    expect(new Set(inserts).size).toBe(2)
+    expect(inserts).toContain('#019fea0e-c')
+    expect(inserts).toContain('#019fea0e-3')
+    // 每个 insertText 去 # 后唯一命中一个 sid（保证 findSessions includes 不多匹配）
+    for (const ins of inserts) {
+      const frag = ins.slice(1)
+      expect(sids.filter((sid) => sid.includes(frag))).toHaveLength(1)
+    }
+  })
+
+  it('O5 大桶（5 元同 8 字符前缀）：5 候选 insertText 两两不同（拦截 min 方向退化）', async () => {
+    const sids = [
+      '019e9680-1111-aaaa-bbbb-cccccccccccc',
+      '019e9680-2222-aaaa-bbbb-cccccccccccc',
+      '019e9680-3333-aaaa-bbbb-cccccccccccc',
+      '019e9680-4444-aaaa-bbbb-cccccccccccc',
+      '019e9680-5555-aaaa-bbbb-cccccccccccc',
+    ]
+    for (let i = 0; i < sids.length; i++) {
+      await makeSession(cwdSessionDir, {
+        fileName: `s${i}.jsonl`,
+        id: sids[i],
+        cwd: '/demo',
+        firstUserText: `session ${i}`,
+      })
+    }
+    const result = await provideHashCandidates('#019e9680', cwdSessionDir)
+    expect(result).not.toBeNull()
+    expect(result!).toHaveLength(5)
+    const inserts = result!.map((c) => c.insertText)
+    // 两两不同（min 方向错误会让 5 个全变成 #019e9680 → Set.size=1）
+    expect(new Set(inserts).size).toBe(5)
+    // 每个唯一命中一个 sid
+    for (const ins of inserts) {
+      const frag = ins.slice(1)
+      expect(sids.filter((sid) => sid.includes(frag))).toHaveLength(1)
+    }
   })
 })
