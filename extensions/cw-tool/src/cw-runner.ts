@@ -109,8 +109,10 @@ export function detectRepoWorkspace(cwd: string): string | undefined {
 		if (result.status !== 0) return undefined;
 		const gitCommonDir = result.stdout.trim();
 		if (gitCommonDir.length === 0) return undefined;
-		// bare repo worktree 模式：common-dir basename 是 .bare（非 .git），dirname 指向容器根（非 git 目录）。
-		// 传该值给 cw 会导致 store-key fallback 错误 → unit not found。返回 undefined 退回 per-cwd（读写一致）。
+		// 非标准 git-dir 一律退回 per-cwd（fail-safe）：bare repo worktree（basename=.bare，
+		// dirname 指向容器根，非 git 目录）、submodule（common-dir=.git/modules/<name>）、
+		// --separate-git-dir / GIT_DIR 等。把 dirname 传给 cw 会导致 store-key fallback 错误
+		// → unit not found。返回 undefined 退回 per-cwd（读写一致）。
 		if (path.basename(gitCommonDir) !== ".git") return undefined;
 		return path.dirname(gitCommonDir);
 	} catch {

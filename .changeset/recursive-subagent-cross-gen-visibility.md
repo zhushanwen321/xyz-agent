@@ -8,3 +8,4 @@ Recursive subagent cross-process visibility: `/subagents` now shows the full rec
 - createRecordForMode uses the propagated true root session id instead of the per-process session id, so deep recursive records survive the collectRecords rootSessionId filter
 - Fork-branch subagents now attach to the top ROOT and are visible from the main session
 - Process-level baselines (execCtxBaseline/forkDepthBaseline) as fallback for ALS reads, since RPC mode ALS stores do not propagate across independent async chains
+- Behavior change: the nesting guard now counts from the propagated process baseline (previously ALS gaps could reset depth to 0 in child processes), so flows nesting beyond MAX_FORK_DEPTH are now rejected with ForkDepthExceededError instead of silently passing
