@@ -159,8 +159,8 @@ export function mockSessionFileExists(
 // ── record / opts / ctx 构造（3 文件一致的最小合法形状）──
 
 /** 构造最小合法的 ExecutionRecord（runSpawn 入参）。 */
-export function makeRecord() {
-  return createRecord("run-1", {
+export function makeRecord(id = "run-1") {
+  return createRecord(id, {
     agent: "general-purpose",
     model: "test-model",
     mode: "sync",

@@ -163,12 +163,12 @@ describe("runSpawn", () => {
       // 第二次 spawn 需等待 results.length 递增到 2，否则 lastSpawnedChild 取回的是 c1。
       const beforeCount = mockSpawn.mock.results.length;
 
-      const rec1 = makeRecord();
+      const rec1 = makeRecord("spawn-c1");
       const p1 = runSpawn(rec1, "Task: c1", makeOpts(), makeCtx());
       await waitForSpawn();
       const c1 = lastSpawnedChild();
 
-      const rec2 = makeRecord();
+      const rec2 = makeRecord("spawn-c2");
       const p2 = runSpawn(rec2, "Task: c2", makeOpts(), makeCtx());
       // 等待第二次 spawn：results.length 从 beforeCount+1 涨到 beforeCount+2
       const start = Date.now();
@@ -211,13 +211,13 @@ describe("runSpawn", () => {
       expect(spawnedChildren.size).toBe(0);
 
       // spawn 两个未 close 的 child（模拟 close 事件漏触发的极端累积场景）
-      const rec1 = makeRecord();
+      const rec1 = makeRecord("clear-c1");
       const p1 = runSpawn(rec1, "Task: clear-1", makeOpts(), makeCtx());
       await waitForSpawn();
       const c1 = lastSpawnedChild();
 
       const beforeCount = mockSpawn.mock.results.length;
-      const rec2 = makeRecord();
+      const rec2 = makeRecord("clear-c2");
       const p2 = runSpawn(rec2, "Task: clear-2", makeOpts(), makeCtx());
       const start = Date.now();
       while (mockSpawn.mock.results.length < beforeCount + 1) {

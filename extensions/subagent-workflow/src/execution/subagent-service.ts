@@ -32,7 +32,8 @@ import { getSubagentRecordsDir, getSubagentSessionDir } from "./path-encoding.ts
 import type { StatusFilter } from "./record-store.ts";
 import { RecordStore } from "./record-store.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
-import { killAllSpawnedChildren, runSpawn, type SessionRunnerContext } from "./session-runner.ts";
+import { getChildByRecord, killAllSpawnedChildren, runSpawn, type SessionRunnerContext, type SpawnResumeOpts } from "./session-runner.ts";
+import { sendFollowUpCommand, sendSteerCommand } from "./stdin-writer.ts";
 import type { StreamSink } from "./stream-sink.ts";
 import { SubagentStream } from "./stream-sink.ts";
 import { writeCancelledTombstone } from "./tombstone-store.ts";
@@ -44,6 +45,7 @@ import type {
   ExecutionHandle,
   ExecutionMode,
   ExecutionRecord,
+  PendingMessage,
   RecordSnapshot,
   SubagentRecord,
   SubagentToolDetails,
@@ -555,6 +557,119 @@ export class SubagentService {
     return this.cancelBackground(record);
   }
 
+  // ── 对话模式投递（M2-B3 message action 调用）──────────────
+
+  /**
+   * busy 投递：向 record 对应的活子进程 stdin 写 follow_up（排队）或 steer（抢占）。
+   *
+   * 设计决策 6 状态×interrupt 映射的 running 分支。同步立即返回（投递即返回，非阻塞）。
+   * 投递后把消息缓存进 record.pendingMessages（消费确认制，M2-B1 只记录不清除——
+   * pi 消费确认 message_start/turn_start 时清除、进程死亡时补投均为 M2-B2）。
+   *
+   * record 必须有活进程（status==="running" 且 spawnedChildren 已注册）；进程刚退
+   * （close 回调 delete 了映射）的竞态窗口在此 throw，由 M2-B2 补投机制处理。
+   *
+   * @param record 目标 record（busy，running 态）
+   * @param text 消息正文
+   * @param interrupt true=steer（抢占）/ false=follow_up（排队）
+   * @throws Error record 无活进程（spawnedChildren 未注册 / 已退出）
+   */
+  deliverToRunning(record: ExecutionRecord, text: string, interrupt: boolean): void {
+    this.assertReady();
+    const child = getChildByRecord(record.id);
+    if (!child) {
+      throw new Error(
+        `subagent ${record.id} has no live process (status=${record.status}); cannot deliver via busy path`,
+      );
+    }
+    if (interrupt) sendSteerCommand(child, text);
+    else sendFollowUpCommand(child, text);
+    // 消费确认制（决策 6）：缓存投递的消息，待 pi 消费确认（M2-B2）或进程死亡补投（M2-B2）。
+    // M2-B1 只 push 不清除——pendingMessages 是安全网，不在本里程碑消费。
+    record.pendingMessages ??= [];
+    record.pendingMessages.push({
+      id: crypto.randomUUID(),
+      text,
+      interrupt,
+      sentAt: Date.now(),
+    } satisfies PendingMessage);
+  }
+
+  /**
+   * idle 投递：resume spawn 开启新一轮对话（设计决策 6 idle 分支）。
+   *
+   * record 必须 idle（轮次完成、进程已回收、record 留内存）。手动把 status 设回 "running"
+   * （M2-A 边界：idle→running 是恢复非终态，绕过 tryTransition——tryTransition 要求当前态
+   * running 才 CAS，idle record 直接进 runAndFinalize 会被 tryTransition 拒绝转态）。
+   *
+   * resume 参数从 record identity 读（防多轮对话模型漂移，探针 P-10）：sessionFile、
+   * model、thinkingLevel 均为 record 身份字段（创建时确定、不可变）。maxTurns/schema 等
+   * 执行约束第一版不恢复（设计 §5 拆分 1 待验证检查点），agentConfig 用 undefined
+   * （pi --session 续写保留上下文，agent 行为由 session 内 messages 决定；M2-B3 messageHandler 可完善）。
+   *
+   * detached 编排（参照 kickOffBackground）：不 await，runAndFinalize 在 background 跑。
+   * chatMode + done 时 runAndFinalize 的 M2-A 分流自动把 record 重新置 idle。并发槽在
+   * runAndFinalize 内重新 acquire（轮次间 idle 已 release）；pool.acquire 是排队模型，
+   * 池满时排队等待槽位而非 throw（与 execute 一致）。
+   *
+   * @param record 目标 record（必须 idle）
+   * @param text 新一轮消息正文
+   * @throws Error record 非 idle / 无 sessionFile / 无 controller
+   */
+  resumeRound(record: ExecutionRecord, text: string): void {
+    this.assertReady();
+    if (record.status !== "idle") {
+      throw new Error(
+        `subagent ${record.id} is not idle (status=${record.status}); resume requires idle record`,
+      );
+    }
+    if (!record.sessionFile) {
+      throw new Error(
+        `subagent ${record.id} has no sessionFile; cannot resume without a session to continue`,
+      );
+    }
+    if (!record.controller) {
+      // chatMode background record 创建时一定有 controller；兜底防御性检查。
+      throw new Error(`subagent ${record.id} has no controller; cannot resume`);
+    }
+
+    // 手动设回 running（M2-A 边界：绕过 tryTransition，idle→running 恢复非终态 CAS）。
+    record.status = "running";
+
+    // resume 参数从 record identity 读（防漂移，P-10）。
+    const resume: SpawnResumeOpts = {
+      sessionFile: record.sessionFile,
+      model: record.model,
+      thinkingLevel: record.thinkingLevel,
+    };
+
+    // 重建 resolved：runSpawn 内 resume.model/thinkingLevel 优先（覆盖 resolved），
+    // resolved.model.id 仅在 runSpawn 内被读（resume 短路时不报错）。从 record.model
+    // （createRecordForMode 写入的 "provider/id" 格式）解析 provider/id 构造最小 ModelInfo。
+    const slashIdx = record.model.indexOf("/");
+    const provider = slashIdx >= 0 ? record.model.slice(0, slashIdx) : "unknown";
+    const modelId = slashIdx >= 0 ? record.model.slice(slashIdx + 1) : record.model;
+    const identity: ResolvedIdentity = {
+      agent: record.agent,
+      agentConfig: undefined,
+      resolved: {
+        model: { id: modelId, name: record.model, provider, reasoning: false },
+        thinkingLevel: record.thinkingLevel,
+      },
+    };
+
+    const opts: ExecuteOptions = {
+      task: text,
+      slug: record.slug,
+      worktree: record.worktreeHandle,
+    };
+    const ctx = this.buildSessionRunnerContext();
+
+    // detached 编排：runAndFinalize 在 background 跑，pool 重新 acquire（轮次间 idle 已 release）。
+    // chatMode + done 时 M2-A 分流自动 finalizeRoundToIdle（record 回 idle、round+1）。
+    this.kickOffBackground(record, opts, ctx, identity, record.controller.signal, PRIORITY_BACKGROUND, resume);
+  }
+
   // ── 编排层专用接口（workflow 消费）──────────────────────
 
   /**
@@ -753,6 +868,8 @@ export class SubagentService {
     priority: number,
     rawOnEvent?: (event: AgentEvent) => void,
     stream?: SubagentStream,
+    /** resume 选项（M2-B1）：透传 runSpawn，重开已 idle 的 session 续聊。undefined = 新 session。 */
+    resume?: SpawnResumeOpts,
   ): Promise<AgentResult> {
     const pooled = record.mode === "background";
     let acquired = false;
@@ -804,7 +921,7 @@ export class SubagentService {
             fork: opts.fork,
             worktree: worktreeHandle,
             parentForkDepth: parentDepth, // [MF#4] 父链深度，不从 opts 读
-          }, ctx),
+          }, ctx, resume),
         ),
       );
     } catch (err) {
@@ -847,6 +964,8 @@ export class SubagentService {
     identity: ResolvedIdentity,
     signal: AbortSignal | undefined,
     priority: number,
+    /** resume 选项（M2-B1）：透传 runAndFinalize→runSpawn。undefined = 新 session。 */
+    resume?: SpawnResumeOpts,
   ): void {
     // 创建 streaming 生命周期对象——streamSink 为 null（session_start 未注入）时降级为 undefined。
     const stream = this.streamSink
@@ -855,7 +974,7 @@ export class SubagentService {
 
     void this.runAndFinalize(
       record, opts, ctx, identity, signal, priority,
-      undefined, stream,
+      undefined, stream, resume,
     )
       .then(() => {
         // background 回注：仅当本路径抢到 CAS（status 已转 done/failed）才 notify。

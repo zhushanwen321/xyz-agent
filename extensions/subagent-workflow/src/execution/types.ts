@@ -301,6 +301,24 @@ export class DirtyWorktreeError extends Error {
   }
 }
 
+/**
+ * 在途消息缓存条目（消费确认制，设计决策 6 状态×interrupt 映射）。
+ *
+ * busy 投递（follow_up/steer）时缓存进 {@link ExecutionRecord.pendingMessages}；
+ * pi 消费确认（message_start/turn_start 事件）时清除；进程死亡时由 M2-B2 补投。
+ * M2-B1 只加此类型 + 投递时 push，不做清除/补投（M2-B2 实现）。
+ */
+export interface PendingMessage {
+  /** 消息唯一 id（FIFO 匹配用，crypto.randomUUID 生成）。 */
+  readonly id: string;
+  /** 消息正文。 */
+  readonly text: string;
+  /** true=steer（抢占）/ false=follow_up（排队），决策 6 状态×interrupt 映射。 */
+  readonly interrupt: boolean;
+  /** 投递墙钟时间戳（Date.now()，ms），诊断/超时判断用。 */
+  readonly sentAt: number;
+}
+
 export interface ExecutionRecord {
   /** 唯一 ID（sync: "run-N"，bg: "bg-N-xxx"）。 */
   readonly id: string;
@@ -345,6 +363,12 @@ export interface ExecutionRecord {
    * 进 idle）+1。undefined 时视为 0。非 chatMode 不自增。
    */
   round?: number;
+  /**
+   * 在途消息缓存（消费确认制，设计决策 6）。busy 投递（follow_up/steer）时缓存；
+   * pi 消费确认（message_start/turn_start，M2-B2 实现）时清除；进程死亡时 M2-B2 补投。
+   * M2-B1 只加字段 + 投递时 push，不做清除/补投。undefined/空 = 无在途消息。
+   */
+  pendingMessages?: PendingMessage[];
 
   // ── 完成 ──
   endedAt: number | undefined;

@@ -34,7 +34,7 @@ vi.mock("@zhushanwen/pi-extension-logger", () => ({
   getLogger: () => loggerMock,
 }));
 
-import { respond, sendGetStateCommand, sendPromptCommand } from "../stdin-writer.ts";
+import { respond, sendFollowUpCommand, sendGetStateCommand, sendPromptCommand, sendSteerCommand } from "../stdin-writer.ts";
 
 // ── helpers ──
 
@@ -362,5 +362,69 @@ describe("writeStdinLine 背压 — write 返回 false 时 warn 不 throw", () =
     respond(child, "req-ok", { value: "x" });
 
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// sendFollowUpCommand / sendSteerCommand（M2-B1 busy 投递，决策 6 状态×interrupt 映射）
+// ============================================================
+describe("sendFollowUpCommand — busy 投递（排队，follow_up）", () => {
+  it("写入 {type:'follow_up',message,id} 一行，message 原样透传", () => {
+    const child = makeChild();
+    sendFollowUpCommand(child, "after you finish");
+
+    const lines = readStdinLines(child);
+    expect(lines).toHaveLength(1);
+    const cmd = lines[0] as { type: string; message: string; id: string };
+    expect(cmd.type).toBe("follow_up");
+    expect(cmd.message).toBe("after you finish");
+    expect(typeof cmd.id).toBe("string");
+    expect(cmd.id.length).toBeGreaterThan(0);
+  });
+
+  it("写入以 \n 结尾（rpc 子进程按行读 stdin）", () => {
+    const child = makeChild();
+    sendFollowUpCommand(child, "msg");
+    expect(readStdin(child).endsWith("\n")).toBe(true);
+  });
+
+  it("每次调用生成不同 id（crypto.randomUUID）", () => {
+    const child = makeChild();
+    sendFollowUpCommand(child, "a");
+    sendFollowUpCommand(child, "b");
+    const lines = readStdinLines(child);
+    expect((lines[0] as { id: string }).id).not.toBe((lines[1] as { id: string }).id);
+  });
+
+  it("child.stdin 已 destroyed → 静默跳过（guard 生效，不抛错）", () => {
+    const stdin = new PassThrough();
+    stdin.destroy();
+    const child = { stdin } as unknown as ChildProcess;
+    expect(() => sendFollowUpCommand(child, "msg")).not.toThrow();
+  });
+});
+
+describe("sendSteerCommand — busy 投递（抢占，steer）", () => {
+  it("写入 {type:'steer',message,id} 一行，与 follow_up 仅 type 不同", () => {
+    const child = makeChild();
+    sendSteerCommand(child, "stop, listen to me");
+
+    const lines = readStdinLines(child);
+    expect(lines).toHaveLength(1);
+    const cmd = lines[0] as { type: string; message: string; id: string };
+    expect(cmd.type).toBe("steer");
+    expect(cmd.message).toBe("stop, listen to me");
+    expect(typeof cmd.id).toBe("string");
+  });
+
+  it("写入以 \n 结尾", () => {
+    const child = makeChild();
+    sendSteerCommand(child, "msg");
+    expect(readStdin(child).endsWith("\n")).toBe(true);
+  });
+
+  it("child.stdin 为 null → 静默跳过（guard 生效）", () => {
+    const child = { stdin: null } as unknown as ChildProcess;
+    expect(() => sendSteerCommand(child, "msg")).not.toThrow();
   });
 });

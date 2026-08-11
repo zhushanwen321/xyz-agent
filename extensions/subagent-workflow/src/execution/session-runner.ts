@@ -185,19 +185,20 @@ The \`ask_user\` tool is available in this session. When you call \`ask_user\`, 
 // 主进程异常退出（SIGKILL/崩溃/session_shutdown dispose）时，sync 子进程会成孤儿。
 //
 // 本 Set 是 dispose 的最后兜底——在 abortRunningControllers（background controller.abort 路径）
-// 之后，遍历所有仍存活的子进程（含 sync）发 SIGTERM。正常退出路径（子进程 close）会从 Set 移除，
+// 之后，遍历所有仍存活的子进程（含 sync）发 SIGTERM。正常退出路径（子进程 close）会从 Map 移除，
 // 不受影响。background 子进程可能被 controller.abort 路径先 kill 一次，再被本遍历 kill 一次
 // （对已退出的 child.kill 返回 false，无害）。
 //
+// [M2-B1] key = record.id（record→child 映射，busy 投递定位活进程用，见 getChildByRecord）。
 // [export] 测试可观测（断言 dispose 后 size===0）。业务代码误外部修改。
-export const spawnedChildren = new Set<ChildProcess>();
+export const spawnedChildren = new Map<string, ChildProcess>();
 
 /**
  * kill 所有未退出的 spawned 子进程（dispose 兜底用）。
  *
- * 遍历 spawnedChildren Set，对每个未 killed 的子进程发 `child.kill(signal)`。
- * 已退出的子进程在 close/error 事件时已从 Set 移除（`spawnedChildren.delete`），
- * 故 Set 中只剩「活着的」或「已被 kill 但 close 事件尚未回调的」。后者用 `child.killed`
+ * 遍历 spawnedChildren Map 的 values()，对每个未 killed 的子进程发 `child.kill(signal)`。
+ * 已退出的子进程在 close/error 事件时已从 Map 移除（按 record.id，`spawnedChildren.delete`），
+ * 故 Map 中只剩「活着的」或「已被 kill 但 close 事件尚未回调的」。后者用 `child.killed`
  * 跳过——避免对一个已 kill 的子进程重复 kill。
  *
  * 用于 SubagentService.dispose（进程退出路径）：覆盖 sync 子进程（controller 为 undefined，
@@ -210,7 +211,7 @@ export const spawnedChildren = new Set<ChildProcess>();
  */
 export function killAllSpawnedChildren(signal: NodeJS.Signals = "SIGTERM"): number {
   let n = 0;
-  for (const child of spawnedChildren) {
+  for (const child of spawnedChildren.values()) {
     // 跳过已 kill 的（killed=true 表示已调过 child.kill；已退出的在 close/error 时已从 Set 移除）。
     // 不依赖 exitCode/signalCode：close 事件回调可能晚于 dispose，此时它们仍为 null，但子进程
     // 可能已被 controller.abort 路径 kill（killed=true）。
@@ -228,6 +229,19 @@ export function killAllSpawnedChildren(signal: NodeJS.Signals = "SIGTERM"): numb
   // 但 Set 无限增长泄漏内存）。
   spawnedChildren.clear();
   return n;
+}
+
+/**
+ * 按 record id 查活子进程（busy 投递定位用，设计决策 6）。
+ *
+ * spawnedChildren 的 record→child 映射查询入口。busy 投递（follow_up/steer）需定位
+ * record 对应的活 ChildProcess 写 stdin；进程 close/error 后已从 Map 移除，返回 undefined。
+ *
+ * @param recordId ExecutionRecord.id
+ * @returns 活子进程；record 无活进程（未注册 / 已退出）时 undefined
+ */
+export function getChildByRecord(recordId: string): ChildProcess | undefined {
+  return spawnedChildren.get(recordId);
 }
 
 // ============================================================
@@ -771,8 +785,8 @@ export async function runSpawn(
     });
     proc = child;
     // [C1] track 子进程供 dispose 兜底 kill（sync + background 均注册——sync 无 controller，
-    // abortRunningControllers 跳过它，靠本 Set 兜底）。close/error 后移除（已退出无需再 kill）。
-    spawnedChildren.add(child);
+    // abortRunningControllers 跳过它，靠本 Map 兜底）。close/error 后按 record.id 移除（已退出无需再 kill）。
+    spawnedChildren.set(record.id, child);
 
     // stdout/stderr 用 utf8 编码：stream 自动按字符边界切分，避免多字节
     // UTF-8（CJK/emoji）跨 chunk 时 toString() 产生 U+FFFD 替换符导致 JSON.parse 失败。
@@ -981,8 +995,8 @@ export async function runSpawn(
     // 等待子进程退出
     const exitCode = await new Promise<number>((resolve) => {
       child.on("close", async (code: number | null) => {
-        // [C1] 子进程已退出，从 orphan-tracking Set 移除（dispose 兜底无需再 kill 它）
-        spawnedChildren.delete(child);
+        // [C1] 子进程已退出，从 orphan-tracking Map 移除（dispose 兜底无需再 kill 它）
+        spawnedChildren.delete(record.id);
         // FR-4: 清理 get_state 监听器（子进程已退出，无更多 response）
         get_stateListeners.clear();
         // FR-4: 子进程已退出，get_state response 不会再来。若握手仍未 settle，立即放弃
@@ -1004,7 +1018,7 @@ export async function runSpawn(
       });
       child.on("error", (err: Error) => {
         // spawn 本身失败（command not found 等）
-        spawnedChildren.delete(child);
+        spawnedChildren.delete(record.id);
         record.lastError = err.message;
         resolve(SIGNAL_EXIT_CODE_THRESHOLD); // 非零退出
       });
