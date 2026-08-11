@@ -14,6 +14,7 @@
  */
 import { ipcMain, BrowserWindow } from 'electron'
 import { homedir } from 'node:os'
+import { sep } from 'node:path'
 import { getDataDir } from '@xyz-agent/shared/paths'
 import type { IpcHandlerDeps } from '../interfaces.js'
 
@@ -33,7 +34,9 @@ export function registerBridgeHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle('get-data-dir', () => {
     const dir = getDataDir()
     const home = homedir()
-    return dir.startsWith(home) ? '~' + dir.slice(home.length) : dir
+    // 路径分隔符边界：home 自身（/Users/alice）满足 startsWith，但 /Users/alice2 不是其子路径，
+    // 必须要求 home + sep 前缀才缩写，避免把同前缀兄弟目录误缩成 ~/lice2（M7-06）。
+    return dir.startsWith(home + sep) ? '~' + dir.slice(home.length) : dir
   })
 
   // ── runtime 手动重启（崩溃重启用尽后，用户从状态条点重试触发）─────────

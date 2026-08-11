@@ -15,7 +15,6 @@
 import path from 'node:path'
 import { app, BrowserWindow } from 'electron'
 import type { WindowOptions } from '../interfaces.js'
-import { resolveRendererEntry } from './resolve-renderer-entry.js'
 
 /** Dev 模式 Vite URL */
 export const VITE_DEV_URL = 'http://localhost:1420'
@@ -149,15 +148,12 @@ export async function createWindow(
   //   - 跳过 Vite dev server 轮询（E2E 不起 dev server，否则 waitForVite 30s 超时）
   //   - 加载构建产物 index.html（与 prod 同源，验证真实渲染链路）
   //   - mock 数据由 renderer 侧 import.meta.env.VITE_E2E 注入（main 不参与）
-  // P0 coexistence spike：renderer 构建产物入口按构建期 flag（process.env.NEW_ARCH）切换，
-  // 与 renderer 侧 vite.config.ts 的 globalThis.__NEW_ARCH__ 同源；默认走原入口（ES1 安全默认）。
-  const rendererEntry = resolveRendererEntry(process.env.NEW_ARCH)
   const isE2E = process.env.XYZ_E2E === '1'
   try {
     if (isE2E) {
       const query: Record<string, string> = { windowId }
       if (options?.sessionId) query.sessionId = options.sessionId
-      win.loadFile(path.join(app.getAppPath(), rendererEntry), { query })
+      win.loadFile(path.join(app.getAppPath(), 'renderer/dist/index.html'), { query })
     } else if (deps.isDev) {
       const params = new URLSearchParams({ windowId })
       if (options?.sessionId) params.set('sessionId', options.sessionId)
@@ -172,7 +168,7 @@ export async function createWindow(
     } else {
       const query: Record<string, string> = { windowId }
       if (options?.sessionId) query.sessionId = options.sessionId
-      win.loadFile(path.join(app.getAppPath(), rendererEntry), { query })
+      win.loadFile(path.join(app.getAppPath(), 'renderer/dist/index.html'), { query })
     }
   } catch (err) {
     // W7 E3 幽灵窗口清理：waitForVite 超时或加载阶段抛错时，destroy 已创建的 BrowserWindow，
