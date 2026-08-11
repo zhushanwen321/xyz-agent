@@ -322,6 +322,29 @@ export interface RunOptions {
   parentForkDepth?: number;
 }
 
+/**
+ * resume spawn 选项——重开已结束的 session 文件继续对话（M1 基建）。
+ *
+ * resume 时 pi 子进程用 `--session <sessionFile> --mode rpc` 续写原文件（探针 P-1/P-8
+ * 实测：路径不变、entry 续写、上下文保留）。runSpawn 收到此参数后：
+ *   - buildSpawnArgs 追加 `--session <sessionFile>`
+ *   - record.sessionFile 提前设为 resume.sessionFile（handshake 只验证 spawn 成功，不覆盖）
+ *   - model/thinkingLevel 优先用此处的值（防多轮对话模型漂移，探针 P-10），否则回退 opts.resolved
+ *
+ * 注意：M1 只暴露能力，messageHandler（M2）才会真正调用。
+ */
+export interface SpawnResumeOpts {
+  /** resume 目标 session 文件绝对路径（pi `--session` 参数值）。 */
+  sessionFile: string;
+  /**
+   * resume 时覆盖的 model（`"provider/id"` 格式，防漂移，探针 P-10 证明必须传）；
+   * 不传则回退 opts.resolved。
+   */
+  model?: string;
+  /** resume 时覆盖的 thinkingLevel；不传则回退 opts.resolved。 */
+  thinkingLevel?: string;
+}
+
 // ============================================================
 // D-A6 schemaEnv bridge
 // ============================================================
@@ -466,6 +489,12 @@ export function buildSpawnArgs(
     agentTools: string[] | undefined;
     appendSystemPromptPath: string | undefined;
     sessionDir: string;
+    /**
+     * resume 目标 session 文件路径。存在时紧跟 `--session-dir <dir>` 追加
+     * `--session <file>`，pi 续写原 session 文件而非新建（探针 P-1/P-8 实测续写成立）。
+     * undefined = 新 session（当前行为，向后兼容）。
+     */
+    sessionFile?: string;
     forkSource: string | undefined;
     skillPaths: string[] | undefined;
     /**
@@ -479,6 +508,10 @@ export function buildSpawnArgs(
   // positional task arg / -p flag 在 rpc mode 下被 resolveAppMode 无视。
   // task 由 runSpawn 内 sendPromptCommand 写 child.stdin 驱动。
   const args: string[] = ["--mode", "rpc", "--session-dir", params.sessionDir];
+  // resume：紧跟 --session-dir 追加 --session <file>，pi 续写原 session 文件（P-8）。
+  if (params.sessionFile) {
+    args.push("--session", params.sessionFile);
+  }
   if (params.model) args.push("--model", params.model);
   if (params.thinkingLevel && params.model) {
     // thinking level 通过 model 后缀 :level 传递（pi CLI 约定）
@@ -526,8 +559,17 @@ export async function runSpawn(
   task: string,
   opts: RunOptions,
   ctx: SessionRunnerContext,
+  /** resume 选项（M1 基建）：重开已结束的 session 继续对话。undefined = 新 session。 */
+  resume?: SpawnResumeOpts,
 ): Promise<AgentResult> {
   const startTime = Date.now();
+
+  // [M1 resume 基建] resume 时提前锁定 record.sessionFile：spawn 前已知目标文件，
+  // handshake 的 finishHandshake 内 `!record.sessionFile` 守卫天然跳过回填，
+  // sessionFile 用 resume.sessionFile 不被覆盖（RPC mode 无 header，header 分支也不触发）。
+  if (resume) {
+    record.sessionFile = resume.sessionFile;
+  }
 
   // a. transient 寄存器（同 run()：tool_end 缺 args 时回填）
   const pendingTools = new Map<string, { toolName: string; args?: unknown }>();
@@ -695,13 +737,18 @@ export async function runSpawn(
     (p): p is string => typeof p === "string" && p.length > 0,
   );
   const modelId = opts.resolved.model.id;
+  // [M1 resume] resume 时 model/thinkingLevel 优先用 resume 值（防多轮对话模型漂移，P-10），
+  // 否则回退 opts.resolved。resume.model 已是 "provider/id" 格式，与 buildSpawnArgs 约定一致。
+  const effectiveModel = resume?.model ?? `${opts.resolved.model.provider}/${modelId}`;
+  const effectiveThinkingLevel = resume?.thinkingLevel ?? opts.resolved.thinkingLevel;
   const spawnArgs = buildSpawnArgs(
     {
-      model: `${opts.resolved.model.provider}/${modelId}`,
-      thinkingLevel: opts.resolved.thinkingLevel,
+      model: effectiveModel,
+      thinkingLevel: effectiveThinkingLevel,
       agentTools: opts.agentConfig?.tools,
       appendSystemPromptPath: tempPromptFile?.filePath,
       sessionDir,
+      sessionFile: resume?.sessionFile,
       forkSource,
       skillPaths: skillPaths.length > 0 ? skillPaths : undefined,
       // 镜像主进程 argv 的 extension/approve flag，让子进程加载行为对齐主进程

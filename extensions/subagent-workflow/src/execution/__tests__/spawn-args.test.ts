@@ -187,6 +187,46 @@ describe("buildSpawnArgs", () => {
     expect(args).not.toContain("--no-extensions");
     expect(args).not.toContain("--approve");
   });
+
+  // ============================================================
+  // sessionFile（M1 resume 基建）：--session <file> 紧跟 --session-dir
+  // ============================================================
+
+  it("sessionFile 存在 → 紧跟 --session-dir 追加 --session <file>", () => {
+    const args = buildSpawnArgs({
+      ...baseParams,
+      sessionFile: "/sessions/sub/abc.jsonl",
+    });
+    const idx = args.indexOf("--session");
+    expect(idx).toBeGreaterThan(-1);
+    expect(args[idx + 1]).toBe("/sessions/sub/abc.jsonl");
+    // 位置紧跟 --session-dir <dir> 之后（--model 之前）
+    const sessionDirIdx = args.indexOf("--session-dir");
+    expect(idx).toBe(sessionDirIdx + 2);
+  });
+
+  it("sessionFile undefined → 不含 --session（向后兼容）", () => {
+    const args = buildSpawnArgs(baseParams);
+    expect(args).not.toContain("--session");
+    expect(args).toEqual(["--mode", "rpc", "--session-dir", "/sessions/dir"]);
+  });
+
+  it("sessionFile + model + thinkingLevel → 三者都进 args（resume 全参数）", () => {
+    const args = buildSpawnArgs({
+      ...baseParams,
+      sessionFile: "/sessions/sub/resume.jsonl",
+      model: "anthropic/claude",
+      thinkingLevel: "high",
+    });
+    // --session <file>
+    const sessionIdx = args.indexOf("--session");
+    expect(sessionIdx).toBeGreaterThan(-1);
+    expect(args[sessionIdx + 1]).toBe("/sessions/sub/resume.jsonl");
+    // --model provider/id:level（thinkingLevel 作 model 后缀）
+    const modelIdx = args.indexOf("--model");
+    expect(modelIdx).toBeGreaterThan(-1);
+    expect(args[modelIdx + 1]).toBe("anthropic/claude:high");
+  });
 });
 
 // ============================================================
