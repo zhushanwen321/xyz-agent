@@ -204,12 +204,13 @@ export class SubagentService {
   /** UI 请求可观测性（sessionMode + handler 缺失告警去重，提取自本类降低行数）。 */
   private readonly uiObservability = new UiRequestObservability();
   private pi: PiLike | null = null;
-  /** 当前 Pi session ID（session 隔离过滤用）。initSession 时注入。 */
+  /** 当前 Pi session ID（本进程 pi session，事件路由等用；record 过滤不用它）。initSession 时注入。 */
   private sessionId: string | null = null;
   /** 所属根 session ID（record 归属过滤用）。根进程 = sessionId（自己是 root）；
    *  子进程 = env PI_SUBAGENT_ROOT_SESSION_ID 贯穿的真 ROOT（initSession 读取）。
    *  与 sessionId 正交：sessionId 是本进程 pi session（事件路由等），sessionRootId 是所属根
-   *  （collectRecords filter 用）。设计见 recursive-subagent-visibility.md 决策 3。 */
+   *  （collectRecords filter 用，与 createRecordForMode 的 rootSessionId 盖章同源——子进程
+   *  因此看到整棵 ROOT 树）。设计见 recursive-subagent-visibility.md 决策 3。 */
   private sessionRootId: string | null = null;
   /** 进程级执行上下文基线（不依赖 ALS 贯穿——pi RPC mode 的 stdin JSONL 是事件回调式
    *  （attachJsonlLineReader stream.on("data")），每个命令是独立异步链，initSession 里
@@ -651,9 +652,10 @@ export class SubagentService {
   }
 
   /** 合并内存(running) + 磁盘(session.jsonl 重建) record（/subagents list + tool list 消费）。
-   *  按 rootSessionId 过滤，只返回当前 session 创建的 record（session 隔离）。 */
+   *  按 rootSessionId 过滤：根进程=本 session（sessionRootId===sessionId）；
+   *  子进程=env 贯穿的真 ROOT（sessionRootId≠sessionId）→ 看到整棵 ROOT 树（决策 3）。 */
   collectRecords(limit: number, statusFilter: StatusFilter = "all"): SubagentRecord[] {
-    return this.store.collectRecords(limit, statusFilter, this.sessionId ?? undefined);
+    return this.store.collectRecords(limit, statusFilter, this.sessionRootId ?? this.sessionId ?? undefined);
   }
 
   // ── 执行内部：身份解析 + record 创建 ──────────

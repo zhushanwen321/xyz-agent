@@ -62,6 +62,8 @@ interface GateSpawnerOpts {
 	versionExitCode?: number;
 	/** cw --version spawn 抛异常（模拟 cw 不在 PATH）。 */
 	versionThrow?: boolean;
+	/** action 调用的返回（默认成功 `{ stdout: "{}", exitCode: 0 }`，覆盖以测失败分支）。 */
+	actionResult?: CwSpawnResult;
 }
 
 /**
@@ -84,7 +86,7 @@ function gateSpawner(opts: GateSpawnerOpts = {}): {
 				exitCode: opts.versionExitCode ?? 0,
 			};
 		}
-		return { stdout: "{}", stderr: "", exitCode: 0 };
+		return opts.actionResult ?? { stdout: "{}", stderr: "", exitCode: 0 };
 	});
 	return { spawner, calls };
 }
@@ -229,5 +231,31 @@ describe("executeCwAction workspace 门控", () => {
 		const { spawner, calls } = gateSpawner({ versionStdout: "cw 1.6.1" });
 		await executeCwAction("execute", DEV_ALLOWED, "cw_dev", "u1", {}, spawner, plain);
 		expect(actionCall(calls).args).not.toContain("--workspace");
+	});
+
+	it("TC6: 非 git 目录 + probe 不支持 + action 失败（exitCode 1）→ error 含升级指引（degradedNoWorkspace 分支回归）", async () => {
+		const plain = makeTempDir("gate-tc6-plain-");
+		const { spawner } = gateSpawner({
+			versionStdout: "cw 1.6.1",
+			actionResult: { stdout: "", stderr: "boom", exitCode: 1 },
+		});
+		const result = await executeCwAction("execute", DEV_ALLOWED, "cw_dev", "u1", {}, spawner, plain);
+		expect(result.ok).toBe(false);
+		// 升级指引文案锚点（准则 6：错误指向恢复动作）
+		expect(result.error).toContain("cw-cli 版本过低");
+		expect(result.error).toContain("@zhushanwen/coding-workflow@latest");
+	});
+
+	it("TC7: git 目录 + probe 不支持 + action 失败 → error 不含升级指引（非降级路径不追加）", async () => {
+		const base = makeTempDir("gate-tc7-");
+		const repo = createGitRepo(base, "repo");
+		const { spawner } = gateSpawner({
+			versionStdout: "cw 1.6.1",
+			actionResult: { stdout: "", stderr: "boom", exitCode: 1 },
+		});
+		const result = await executeCwAction("execute", DEV_ALLOWED, "cw_dev", "u1", {}, spawner, repo);
+		expect(result.ok).toBe(false);
+		expect(result.error).toContain("exit code 1");
+		expect(result.error).not.toContain("cw-cli 版本过低");
 	});
 });

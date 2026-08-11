@@ -408,10 +408,12 @@ export async function executeCwAction(
 		const parts: string[] = [`exit code ${exitCode ?? "null"}`];
 		if (stderr.trim()) parts.push(stderr.trim());
 		let error = parts.join(" | ");
-		// 老 cw-cli（<1.6.2）+ bare repo / 非 git：写动作退回 per-cwd store（读写一致但无 repo 级共享），
-		// 多数情况能跑通；若仍失败，追加升级指引帮用户切到归一化 cw-cli（准则 6：错误指向恢复动作）。
+		// 老 cw-cli（<1.6.2）+ 探测不到 repo 级 workspace（非 git 目录 / bare repo worktree /
+		// git 不可用）：写动作退回 per-cwd store（读写一致但无 repo 级共享），多数情况能跑通；
+		// 若仍失败，追加升级指引帮用户切到归一化 cw-cli（准则 6：错误指向恢复动作）。
+		// 措辞同时覆盖两种降级原因（非 git 场景不误导为 bare repo 问题）。
 		if (degradedNoWorkspace) {
-			error += "\n👉 cw-cli 版本过低（<1.6.2 不支持 store-key 归一化），bare repo worktree 下写动作退回 per-cwd store（读写一致但无 repo 级共享）。建议升级：npm i -g @zhushanwen/coding-workflow@latest";
+			error += "\n👉 cw-cli 版本过低（<1.6.2 不支持 store-key 归一化），且当前目录未探测到 repo 级 workspace（非 git 目录 / bare repo worktree / git 不可用），写动作退回 per-cwd store（读写一致但无 repo 级共享）。建议升级：npm i -g @zhushanwen/coding-workflow@latest";
 		}
 		return { ok: false, ...base, error };
 	}

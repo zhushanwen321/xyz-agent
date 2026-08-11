@@ -92,7 +92,7 @@ interface FakeChild {
 function getLastSpawnedChild(): FakeChild {
   const result = mockSpawn.mock.results.at(-1);
   if (!result) throw new Error("spawn was not called yet");
-  return result.value as unknown as FakeChild;
+  return result.value as FakeChild;
 }
 
 function getLastSpawnEnv(): Record<string, string | undefined> {

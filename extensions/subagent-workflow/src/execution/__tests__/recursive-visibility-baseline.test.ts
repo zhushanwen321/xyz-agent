@@ -68,7 +68,7 @@ vi.mock("node:fs", async () => {
 });
 
 vi.mock("../alive-store.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../runtime/execution/alive-store.ts")>();
+  const actual = await importOriginal<typeof import("../alive-store.ts")>();
   return {
     ...actual,
     writeAliveMarker: vi.fn(),
@@ -127,7 +127,7 @@ interface FakeChild {
 function lastSpawnedChild(): FakeChild {
   const result = mockSpawn.mock.results.at(-1);
   if (!result) throw new Error("spawn was not called yet");
-  return result.value as unknown as FakeChild;
+  return result.value as FakeChild;
 }
 
 function getLastSpawnEnv(): Record<string, string | undefined> {
@@ -230,6 +230,14 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
     expect(rec!.parentRecordId).toBe("sa-parent-record");
     expect(rec!.depth).toBe(2); // 基线 depth 1 + 1
     expect(rec!.rootSessionId).toBe("root-main");
+
+    // [MF-1 回归] 读侧 collectRecords 过滤必须与写侧盖章同源（sessionRootId）。
+    // 旧实现传 this.sessionId（子进程自己的 session id ≠ ROOT）→ 子进程内列表恒空。
+    // 子进程的本进程 sessionId 是 "baseline-it"（initSession 注入），而 record 归属
+    // root-main（env 贯穿的真 ROOT）——能查到即证明过滤用的是 sessionRootId。
+    const viaService = service.collectRecords(10);
+    expect(viaService.map((r) => r.id)).toContain(handle.subagentId);
+    expect(viaService[0]!.rootSessionId).toBe("root-main");
   });
 
   it("[顶层] 无 env（根进程）：parentRecordId undefined / depth 0", async () => {
