@@ -58,7 +58,6 @@ async function withFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<
       maxTimeout: 10_000,
       randomize: true,
     },
-    // eslint-disable-next-line no-magic-numbers -- stale 30s 与 pi 一致（进程卡死超时视为锁失效）
     stale: 30_000,
     onCompromised: (err) => { compromised = err },
   })
@@ -104,17 +103,29 @@ function writeFileAtomic(filePath: string, content: string): void {
 }
 
 /**
- * 读并解析 auth.json。文件不存在按空对象（首次写入前 get 是合法路径）；
- * JSON 损坏抛错（不静默返回空——损坏意味着有外部写坏或磁盘问题，
- * 静默吞掉会让用户以为凭据被删了）。
+ * 读并解析 auth.json。文件不存在按空对象（首次写入前 get 是合法路径）。
+ *
+ * JSON 损坏时按调用方语义分叉：
+ * - 读路径（degradeOnCorrupt=true，get/getAll/hasCredentialSync/listCredentialIds/hasOAuth*）：
+ *   降级为空对象 + warn。前提「损坏意味着外部篡改」不成立——pi 的
+ *   FileAuthStorageBackend 写 auth.json 是原地 writeFileSync+chmodSync（无 tmp+rename，
+ *   已核对 pi 源码），刷新 token 时进程被杀即留截断文件；且同步读不持锁，pi 持锁
+ *   原地写期间并发读可读到撕裂 JSON。单文件损坏不应打挂整个 provider 列表
+ *   （listProviders / composer 模型聚合 / config.hasOAuth 都经此读）。
+ * - 写路径（degradeOnCorrupt=false，set/remove 的 RMW 锁内重读）：保留抛错。
+ *   静默覆盖会基于空对象写回，丢掉损坏文件中仍可恢复的部分，且掩盖磁盘异常。
  */
-function readAuthFile(filePath: string): Record<string, Credential> {
+function readAuthFile(filePath: string, degradeOnCorrupt: boolean): Record<string, Credential> {
   if (!existsSync(filePath)) return {}
   const raw = readFileSync(filePath, 'utf-8')
   if (raw.trim() === '') return {}
   try {
-    return JSON.parse(raw) as Record<string, OAuthCredential>
+    return JSON.parse(raw) as Record<string, Credential>
   } catch (cause) {
+    if (degradeOnCorrupt) {
+      console.warn(`[auth-storage] auth.json 损坏，按空凭据处理（pi 原地写/撕裂读可致，可重新登录恢复）: ${filePath}`)
+      return {}
+    }
     throw new Error(`auth.json 损坏: ${filePath}`, { cause })
   }
 }
@@ -123,17 +134,17 @@ export class AuthStorage {
   constructor(private readonly filePath: string) {}
 
   async get(providerId: string): Promise<Credential | undefined> {
-    return readAuthFile(this.filePath)[providerId]
+    return readAuthFile(this.filePath, true)[providerId]
   }
 
   async getAll(): Promise<Record<string, Credential>> {
-    return readAuthFile(this.filePath)
+    return readAuthFile(this.filePath, true)
   }
 
   /** RMW：锁内重读最新文件 → merge 单 provider → 原子写回 */
   async set(providerId: string, credential: Credential): Promise<void> {
     await withFileLock(this.filePath, async () => {
-      const data = readAuthFile(this.filePath)
+      const data = readAuthFile(this.filePath, false)
       data[providerId] = credential
       // eslint-disable-next-line no-magic-numbers -- 缩进 2 空格，与 pi FileAuthStorageBackend 输出格式一致
       writeFileAtomic(this.filePath, JSON.stringify(data, null, 2))
@@ -147,7 +158,7 @@ export class AuthStorage {
   async remove(providerId: string): Promise<void> {
     if (!existsSync(this.filePath)) return
     await withFileLock(this.filePath, async () => {
-      const data = readAuthFile(this.filePath)
+      const data = readAuthFile(this.filePath, false)
       if (!(providerId in data)) return
       delete data[providerId]
       // eslint-disable-next-line no-magic-numbers -- 缩进 2 空格，与 pi FileAuthStorageBackend 输出格式一致
@@ -158,10 +169,11 @@ export class AuthStorage {
   /**
    * 同步判 auth.json 内存快照中有该 providerId 的任意 type 条目（api_key 或 oauth）。
    * 用于 listProviders 替代 hasOAuthSync 的 oauth-only 判定。
-   * 写是原子 rename，读永远拿到完整文件。
+   * 注意：写路径是原子 rename，读永远拿到完整文件——但该保证只对 xyz-agent 自写成立
+   * （pi 侧 FileAuthStorageBackend 原地写，撕裂读/截断文件仍可能；损坏时降级为空）。
    */
   hasCredentialSync(providerId: string): boolean {
-    return providerId in readAuthFile(this.filePath)
+    return providerId in readAuthFile(this.filePath, true)
   }
 
   /**
@@ -169,23 +181,24 @@ export class AuthStorage {
    * wave2 listProviders 双源聚合 catalog 源用（C4 推荐方案）：聚合 (auth.json keys ∪
    * models.json catalog keys) ∩ builtinData，修复 F1（catalog 凭据在 auth.json 但
    * models.json 无该条目时也能显示）。文件不存在/空 → []，与 hasCredentialSync 同源
-   * （复用 readAuthFile 私有核心，写是原子 rename 读永远拿完整文件）。
+   * （复用 readAuthFile 私有核心）。文件不存在/空/损坏 → []，与 hasCredentialSync 同源。
+   * 注意：写路径原子 rename 的完整性保证只对 xyz-agent 自写成立（pi 原地写可致撕裂）。
    */
   listCredentialIds(): string[] {
-    return Object.keys(readAuthFile(this.filePath))
+    return Object.keys(readAuthFile(this.filePath, true))
   }
 
   /** @deprecated 用 hasCredentialSync 替代（支持 api_key + oauth 联合类型） */
   async hasOAuth(providerId: string): Promise<boolean> {
-    return readAuthFile(this.filePath)[providerId]?.type === 'oauth'
+    return readAuthFile(this.filePath, true)[providerId]?.type === 'oauth'
   }
 
   /**
    * @deprecated 用 hasCredentialSync 替代（支持 api_key + oauth 联合类型）。
    * 同步版 hasOAuth（listProviders 是同步契约，M6 status 派生用）。
-   * 与异步版读同一 readAuthFile（同步核心）；写是原子 rename，读永远拿到完整文件。
+   * 与异步版读同一 readAuthFile（同步核心）；损坏时降级为空（与读路径语义一致）。
    */
   hasOAuthSync(providerId: string): boolean {
-    return readAuthFile(this.filePath)[providerId]?.type === 'oauth'
+    return readAuthFile(this.filePath, true)[providerId]?.type === 'oauth'
   }
 }

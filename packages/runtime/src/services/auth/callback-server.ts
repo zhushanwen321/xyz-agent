@@ -53,6 +53,19 @@ function makeError(code: string, message: string): CallbackServerError {
   return err
 }
 
+/**
+ * listen 失败错误转译为可操作文案（原始 ErrnoException 技术信息直接进 auth.error
+ * 广播，用户无法据此恢复）。EADDRINUSE = 端口被占（双实例是文档承认的常态）。
+ */
+function describeListenError(port: number, err: unknown): string {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code
+  if (code === 'EADDRINUSE') {
+    return `端口 ${port} 被占用，请关闭另一个 xyz-agent 实例后重试`
+  }
+  const message = err instanceof Error ? err.message : String(err)
+  return `无法启动本地回调服务: ${message}`
+}
+
 const SUCCESS_HTML =
   '<!doctype html><html><body><h1>Login successful</h1><p>You can close this window and return to the app.</p></body></html>'
 const ERROR_HTML =
@@ -189,7 +202,14 @@ export async function startCallbackServer(opts: CallbackServerOptions): Promise<
   }
 
   await new Promise<void>((resolveListen, rejectListen) => {
-    server.on('error', rejectListen)
+    server.on('error', (err) => {
+      server.off('error', rejectListen)
+      // listen 失败（EADDRINUSE 等）：teardown 清 5min 超时 timer + abort 监听再 reject
+      // ——否则 timer 保持进程事件循环存活至到期，abort 监听残留。
+      // 注意：此时 server 未 listening，teardown 的 close() 分支安全跳过。
+      teardown(true)
+      rejectListen(makeError('listen_failed', describeListenError(opts.port, err)))
+    })
     server.listen(opts.port, host, () => {
       server.off('error', rejectListen)
       resolveListen()

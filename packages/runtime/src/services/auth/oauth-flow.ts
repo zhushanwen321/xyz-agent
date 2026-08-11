@@ -378,6 +378,8 @@ async function runCopilotDeviceFlow(config: BuiltinOAuthConfig, hooks: OAuthFlow
 
 // eslint-disable-next-line no-magic-numbers -- openai-codex 授权窗口 15min（pi-ai DEVICE_CODE_TIMEOUT_SECONDS 同款）
 const OPENAI_CODEX_TIMEOUT_SECONDS = 15 * 60
+/** token exchange 超时（pi-ai TOKEN_EXCHANGE_TIMEOUT_MS 同款）：回调已到达但远端 API 挂起时兜底 */
+const TOKEN_EXCHANGE_TIMEOUT_MS = 30_000
 
 async function runOpenAICodexDeviceFlow(config: BuiltinOAuthConfig, hooks: OAuthFlowHooks, signal: AbortSignal): Promise<OAuthCredential> {
   // 1. 起始：device_auth_id + user_code
@@ -477,7 +479,7 @@ async function runCallbackFlow(providerId: string, config: BuiltinOAuthConfig, h
         code: callback.code,
         code_verifier: verifier,
         code_challenge_method: 'S256',
-      }, AbortSignal.any([signal, AbortSignal.timeout(30_000)]))
+      }, AbortSignal.any([signal, AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS)]))
       if (!exchange.ok) {
         throw new Error(`OAuth key exchange failed (HTTP ${exchange.status})`)
       }
@@ -516,6 +518,8 @@ async function runCallbackFlow(providerId: string, config: BuiltinOAuthConfig, h
   hooks.onAuthUrl?.({ url: `${config.endpoints.authorize!}?${authParams.toString()}`, callbackPort: server.port })
   try {
     const callback = await server.waitForCallback()
+    // token exchange 带 30s 超时（与 openrouter 分支同款）：
+    // 回调已到达但远端 API 挂起时不能无限转圈（本地 loopback 无兜底超时）
     const exchange = await postJson(config.endpoints.token!, {
       grant_type: 'authorization_code',
       client_id: config.clientId,
@@ -523,7 +527,7 @@ async function runCallbackFlow(providerId: string, config: BuiltinOAuthConfig, h
       state: callback.state,
       redirect_uri: redirectUri.toString(),
       code_verifier: verifier,
-    }, signal)
+    }, AbortSignal.any([signal, AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS)]))
     if (!exchange.ok) {
       throw new Error(`OAuth token exchange failed (HTTP ${exchange.status})`)
     }

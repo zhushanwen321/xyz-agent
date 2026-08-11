@@ -56,14 +56,14 @@ export class AuthService implements IAuthService {
     }
     const controller = new AbortController()
     this.activeFlows.set(providerId, controller)
-    void this.runFlow(providerId, config, controller.signal)
+    void this.runFlow(providerId, config, controller)
     return { started: true }
   }
 
   /**
    * 中止进行中的 OAuth flow。幂等：无进行中 flow 返回 cancelled:false（不报错）。
    * 同步清 activeFlows（不等 abort 异步链走完）——cancel 后立即重新 login 不被拒。
-   * finally 的 delete 幂等兼容（Map.delete 不存在时 no-op）。
+   * finally 的 delete 带身份守卫（Map 条目仍是本 controller 才删除），不误删新 flow 条目。
    */
   cancel(providerId: string): { cancelled: boolean } {
     const controller = this.activeFlows.get(providerId)
@@ -78,7 +78,8 @@ export class AuthService implements IAuthService {
     return this.deps.authStorage.hasOAuth(providerId)
   }
 
-  private async runFlow(providerId: string, config: BuiltinOAuthConfig, signal: AbortSignal): Promise<void> {
+  private async runFlow(providerId: string, config: BuiltinOAuthConfig, controller: AbortController): Promise<void> {
+    const signal = controller.signal
     try {
       const credential = await runOAuthLogin(providerId, config, {
         onDeviceCode: (info) => this.broadcastAuth('auth.deviceCode', {
@@ -109,6 +110,7 @@ export class AuthService implements IAuthService {
         try {
           await this.deps.authStorage.remove(providerId)
         } catch (error) {
+          // best-effort 清理：凭据移除失败仅 warn，不改变早退语义（用户已取消，残留凭据不广播）
           console.warn(`[auth-service] remove cancelled OAuth credential failed for ${providerId}:`, error)
         }
         return
@@ -120,6 +122,10 @@ export class AuthService implements IAuthService {
       } catch (error) {
         console.warn(`[auth-service] clearApiKey failed for ${providerId} (models.json apiKey 残留):`, error)
       }
+      // 第三道 abort 检查（M4 review）：第二道检查后至 broadcast 前的残余窗口
+      // （当前 clearApiKey 是同步闭包窗口为 0，防御未来引入 await 后 cancel 到达）——
+      // 迟到的 auth.success 会让前端状态机 cancelled/authorized 并存（S-7/S-8 同根因）。
+      if (signal.aborted) return
       this.broadcastAuth('auth.success', { providerId })
     } catch (error) {
       if (signal.aborted) {
@@ -129,7 +135,13 @@ export class AuthService implements IAuthService {
       const message = error instanceof Error ? error.message : 'OAuth 授权失败'
       this.broadcastAuth('auth.error', { providerId, message })
     } finally {
-      this.activeFlows.delete(providerId)
+      // ABA 防护（M4-01）：cancel() 同步 abort+delete 后用户立即 re-login（新 controller
+      // 入 Map），旧 flow 的 abort 异步链走完后 finally 若无条件 delete 会删掉新 flow 的
+      // 条目（用户无法取消新 flow / 可并发双流 / 迟到 success）。身份守卫：只有 Map 中
+      // 仍是本 controller 时才删除。
+      if (this.activeFlows.get(providerId) === controller) {
+        this.activeFlows.delete(providerId)
+      }
     }
   }
 
