@@ -381,6 +381,8 @@ export class PluginHost implements PluginHostContract {
       // 测试注入：短路 resolve 链，直接加载 mock（生产不传，走下方 .cjs → .js → .ts 链）
       bootstrapPath = this.workerBootstrapOverride
     } else {
+      // 生产路径：.cjs（tsup bundle）命中首步；.js/.ts 为兜底——
+      // .js 历史由测试 IO 写入（已移除），.ts Node Worker 无法直接加载，两者保留作兜底
       try {
         bootstrapPath = resolveAndValidateFile('plugin-bootstrap.cjs')
       } catch {

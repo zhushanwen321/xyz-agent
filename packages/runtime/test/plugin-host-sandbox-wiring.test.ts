@@ -20,7 +20,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 // spy 保留真实 fork 行为（TC3/TC6 需要真实子进程），仅记录调用次数（TC2 复用断言）
 vi.mock('node:child_process', { spy: true })
 
-const MOCK_BOOTSTRAP = resolve(__dirname, 'fixtures/plugin-bootstrap-process.mock.cjs')
+const PROCESS_MOCK_SOURCE = resolve(__dirname, 'fixtures/plugin-bootstrap-process.mock.cjs')
 const WORKER_MOCK = resolve(__dirname, 'fixtures/mock-bootstrap.cjs')
 const FAKE_PLUGIN_PATH = '/fake/plugin.js'
 
@@ -31,7 +31,7 @@ describe('PluginHost sandbox wiring', () => {
   beforeEach(() => {
     vi.mocked(childProcess.fork).mockClear()
     rpcServer = new PluginRpcServer()
-    host = new PluginHost(rpcServer, { bootstrapPathOverride: MOCK_BOOTSTRAP, workerBootstrapOverride: WORKER_MOCK })
+    host = new PluginHost(rpcServer, { bootstrapPathOverride: PROCESS_MOCK_SOURCE, workerBootstrapOverride: WORKER_MOCK })
   })
 
   afterEach(async () => {
