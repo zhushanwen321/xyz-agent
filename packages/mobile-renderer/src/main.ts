@@ -9,6 +9,10 @@ import { providePlatform } from '@xyz-agent/core'
 import { UI_PACKAGE_NAME } from '@xyz-agent/ui'
 import { bootstrap } from './bootstrap'
 
+// Design tokens 接线（M1d-02）：tailwind.config 的 var(--bg)/var(--border) 等映射
+// 需要 CSS 变量有定义；tokens 提取自 renderer style.css（见 styles/tokens.css 头注释）。
+import './styles/tokens.css'
+
 // W1 依赖边占位：bootstrap 内部会调 providePlatform，此处仅维持 main.ts 的
 // core import（TC-7 回归 + W1 ac1-dependency-edge 护栏）。
 void providePlatform

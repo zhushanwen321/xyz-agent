@@ -37,6 +37,7 @@ export default {
           hover: 'var(--accent-hover)',
           soft: 'var(--accent-soft)',
           ring: 'var(--accent-ring)', // inset 内描边（Card-Active/Input focus/SessionItem 激活）
+          fg: 'var(--accent-fg)', // accent 实色上的前景（M1b-02：Button default variant 深字，与 renderer tailwind.config 对齐）
           foreground: 'var(--accent-foreground)', // shadcn text-accent-foreground
         },
         success: { DEFAULT: 'var(--success)', soft: 'var(--success-soft)' },
