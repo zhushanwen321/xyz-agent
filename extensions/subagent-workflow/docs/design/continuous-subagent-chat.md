@@ -8,6 +8,16 @@
 - **下一层**：可实现的接口/数据模型/技术方案 + 具体代码任务
 - 涉及运行时行为、进程数据流、错误处理 → 设计准则 5（数据流图）/ 6（错误恢复）/ 7（探针）全部 P0 适用
 
+### 设计准则（贯穿全文）
+
+**tool schema 是 LLM 的产品界面，不是底层机制的透传层。** LLM 该学的是「意图词汇」（打断还是排队、结束还是暂停），不该学 pi 的私有术语（prompt/steer/follow_up/resume/sidecar/cancelled）。技术调研越深入，越应该把复杂度封在底下——调研的目的是让底层自动选对实现，不是让 agent 参与选择。
+
+执行细则（§3.3 决策 10）：
+- schema 与 tool description 只出现意图词汇与行为承诺，机制词汇禁入
+- 对外状态收敛为四态（active/waiting/ended/error），内部 ExecutionStatus 进 details
+- 响应 payload 主字段只有意图与结果；机制痕迹（sessionFile/resumed/queued/steered）退到 details 与错误消息
+- 错误消息用 agent 能行动的语言，不出现内部词汇
+
 ---
 
 ## §1 背景目标
@@ -37,7 +47,7 @@ pi-subagent-workflow 的 subagent 工具（`interface/subagent-tool.ts`）当前
 
 **In-scope**：
 - subagent 工具新增 action：`message`（续聊/插入）、`close`（结束对话）
-- start 新增对话模式选项（`mode:"conversation"`）；record 生命周期扩展「对话中」语义
+- start 新增对话模式选项（`conversation:true`）；record 生命周期扩展「对话中」语义
 - resume 重开逻辑（spawn 参数 + session 定位 + 进程句柄映射）
 - 归属守卫（防跨 session 驱动他人 subagent）
 - 对话模式的 sidecar/重建/reaper/notifier 适配
@@ -114,54 +124,55 @@ child.kill("SIGTERM")  →  record archive →  worktree cleanup
 
 ### 3.1 终态（使用者视角）
 
-#### 成功路径：多轮 review 对话
+#### 成功路径：多轮 review 对话（新 tool surface）
 
 ```
-[主 agent] {"action":"start","task":"review record-store.ts 的重建逻辑","slug":"review-rs","agent":"reviewer","mode":"conversation"}
-→ { mode:"conversation", subagentId:"sa-abc123", sessionFile:"...", status:"running" }
+[主 agent] {"action":"start","task":"review record-store.ts 的重建逻辑","slug":"review-rs","agent":"reviewer","conversation":true}
+→ { subagentId:"sa-abc123" }                          ← 主字段只有意图结果
 
 [subagent 完成第一轮 review]  →  notify 唤醒主 agent："review-rs 完成，发现 3 个问题：..."
 
-[主 agent] {"action":"message","subagentId":"sa-abc123","text":"第 2 个问题（重建矩阵兜底 crashed）请给出具体修复方案，先不要改代码"}
-→ { delivered:true, status:"running" }     ← 非阻塞，立即返回；若进程已回收则自动 resume 重开
+[主 agent] {"action":"message","subagentId":"sa-abc123","text":"第 2 个问题请给出具体修复方案，先不要改代码"}
+→ { delivered:true }                                  ← 不打断（interrupt 默认 false），等当前轮说完
 
 [subagent 回复]  →  notify 唤醒主 agent，携带修复方案
 
 [主 agent] {"action":"message","subagentId":"sa-abc123","text":"方案可以，开始改。改完跑测试。"}
-→ { delivered:true, status:"running" }
+→ { delivered:true }
 
 [subagent 改完]  →  notify："修复完成，测试通过"
 
 [主 agent] {"action":"close","subagentId":"sa-abc123"}
-→ { closed:true, status:"done" }           ← 显式结束，走现有 finalize 路径
+→ { closed:true }                                     ← 优雅关闭：当前轮跑完再终态化
 ```
 
-#### 插入消息路径（回复前补充信息）
+#### 插入消息路径（回复前补充信息 + 轮中打断）
 
 ```
 [subagent 正在跑第一轮 review]（主 agent 想补充约束，不打断当前工作）
-[主 agent] {"action":"message","subagentId":"sa-abc123","text":"补充：忽略测试文件，只看生产代码"}   ← deliverAs 默认 "queue"
-→ { delivered:true, queued:true }          ← busy：写活进程 stdin 发 follow_up（pi 原生排队，当前轮后按序处理）
+[主 agent] {"action":"message","subagentId":"sa-abc123","text":"补充：忽略测试文件，只看生产代码"}   ← interrupt 默认 false
+→ { delivered:true }                        ← busy：底层发 follow_up（pi 原生排队，当前轮后按序处理）
 
 [subagent 跑偏了，主 agent 要立即打断纠正]（streaming 抢占）
-[主 agent] {"action":"message","subagentId":"sa-abc123","text":"方向错了！改为只分析错误处理部分","deliverAs":"steer"}
-→ { delivered:true, steered:true }         ← busy：写活进程 stdin 发 steer（实测：streaming 中抢占成功，原任务输出停止）
+[主 agent] {"action":"message","subagentId":"sa-abc123","text":"方向错了！改为只分析错误处理部分","interrupt":true}
+→ { delivered:true }                        ← busy：底层发 steer（实测：streaming 中抢占成功，原任务输出停止）
 
-[subagent 已完成、进程已回收]（idle，两种 deliverAs 同路径）
+[subagent 已完成、进程已回收]（idle，两种 interrupt 同路径）
 [主 agent] {"action":"message","subagentId":"sa-abc123","text":"继续：把发现的第 1 个问题也修了"}
-→ { delivered:true, resumed:true }         ← idle：resume 重开 session 后 prompt
+→ { delivered:true }                        ← idle：底层 resume 重开 session 后 prompt（interrupt 自动退化，agent 无需感知）
 ```
 
-#### 失败路径与恢复指引
+#### 失败路径与恢复指引（错误消息只用行动语言）
 
-| 失败 | 现象 | 恢复指引 |
+| 失败 | 现象（agent 看到的） | 恢复指引 |
 |---|---|---|
-| subagent 不存在 / 已 close / 非本 session 所有 | `subagent not found or not owned: sa-abc123` | `list` 确认 id；若已 close 需重新 `start`；非本 session 所有则无法操作 |
-| 进程忙且 stdin 写入失败（进程刚退） | `subagent sa-xxx process unavailable, queued for resume` | 消息已入扩展内存队列（record.pendingMessages），当前轮结束后 resume 补投；或稍后重发 |
-| 投递后进程死亡（竞态窗口，见决策 6） | 消息经消费确认制补投（resume 后重发），不静默丢失 | 无需用户干预；若 resume 也失败按下行处理 |
-| 进程崩溃 / 会话文件损坏 | `session file missing or unreadable: <path>` | `list` 确认状态；`close` 清理句柄后重新 `start` |
-| 续聊后 subagent 无限循环 | `message` 每次都能投递，无自然停止 | 用 `close` 显式结束；或 `cancel`（同一次性模式） |
-| 排队消息因主 agent 重启丢失 | 重启后 `message` 重发 | 重发消息即可；排队消息不持久化（见 §3.3 决策 6 限制声明） |
+| subagent 不存在 / 已 close / 非本 session 所有 | `subagent not found or not owned: sa-abc123` | `list` 确认 id；已结束的用 `close` 清理后重新 `start`；非本 session 所有则无法操作 |
+| 进程忙且 stdin 写入失败（进程刚退） | `delivery delayed, will retry` | 底层自动入队并在当前轮结束后补投；无需用户干预；若持续失败稍后重发 |
+| 投递后进程死亡（竞态窗口，见决策 6） | （消费确认制自动补投，agent 无感） | 无需用户干预；若 resume 也失败按下行处理 |
+| 进程崩溃 / 会话文件损坏 | `session unavailable: <path>` | `list` 确认状态；`close` 清理后重新 `start` |
+| 并发槽位占满（resume 时） | `too many subagents running, retry later` | 稍后重试，或 `close` 不用的 subagent 释放槽位 |
+| 续聊后 subagent 无限循环 | `message` 每次都能投递，无自然停止 | 用 `close`（或 `close force:true`）显式结束 |
+| 排队消息因主 agent 重启丢失 | 重启后 `message` 重发 | 重发消息即可；排队消息不持久化（见决策 6 限制声明） |
 
 ### 3.2 多方案对比
 
@@ -221,31 +232,48 @@ child.kill("SIGTERM")  →  record archive →  worktree cleanup
   - **worktree reaper 豁免**：`worktree-manager.scan()`（`index.ts:295`，session_start 时执行）现按「pid 死 = 孤儿」清理。idle 记录的 registry 条目需豁免——判据改为「pid 死 **且无 `.idle` sidecar**」才清理；对话模式 worktree 随 `.idle` 存在而保留
   - `close` → 正式终态（删 `.idle` sidecar + 走现有 finalize：archive + worktree cleanup）
   - 一次性模式（默认）行为完全不变
+- **cancel 语义裁决（对话模式）**：`close` 是唯一终态动词（`close {force?}`，见决策 10）；对话模式**无独立 cancel 动词**。「停当前轮但保留对话」由 `message {interrupt:true}` 覆盖（打断必然带新指令）。一次性模式的旧 `cancel` 保留为 `close(force:true)` 的别名，不出现在 tool description 主路径。**被否**：「对话模式 cancel → 写 `.cancelled` 终态」（丢上下文，正是 F2 痛点）；「cancel → idle 但保留独立动词」（动词数与意图不匹配，agent 心智负担）。
 - **被否**：复用 `running` 表示对话中——list 状态无法区分「正在跑」和「在等下一轮」，且磁盘重建无法区分；`running` 语义被破坏。
 - **影响**：`finalize-record.ts` 拆出「轮次完成（→idle，保留 worktree）」与「最终关闭（→done + 现有清理）」两条路径。
 
-#### 决策 6：消息投递 —— 状态分派 + 消费确认制（消除 busy→kill 竞态丢消息）
+#### 决策 6：消息投递 —— 状态 × interrupt 映射 + 消费确认制（消除 busy→kill 竞态丢消息）
 
-- **选择**：`message` 的投递路径按 record 状态 + `deliverAs` 分派（见决策 10）：
-  - **running（busy）+ queue**：写活进程 stdin `follow_up`（pi 原生排队，当前轮后按序处理）
-  - **running（busy）+ steer**：写活进程 stdin `steer`（pi 原生抢占，实测成功）
-  - **idle / done（已回收）**：resume spawn（`--session <sessionFile> --mode rpc`）+ prompt
+- **选择**：`message` 的投递路径按 record 状态 × `interrupt` 布尔映射（agent 只表达意图，实现自动选择，见决策 10）：
+
+| 状态 | interrupt=false（不打断） | interrupt=true（立即打断） |
+|---|---|---|
+| running（busy） | 写活进程 stdin `follow_up`（pi 原生排队，当前轮后按序） | 写活进程 stdin `steer`（pi 原生抢占，实测成功） |
+| idle / done（已回收） | resume spawn + prompt | resume spawn + prompt（idle 无东西可打断，interrupt 自动退化） |
+
   - 需要 **record→ChildProcess 映射**——现有 `spawnedChildren` Set（`session-runner.ts:193`）无 id 关联，改为 `Map<recordId, ChildProcess>`（或等价注册表）
 - **竞态窗口（必须正视，不能靠 "by construction 互斥"）**：kill 的触发点是 stdout pump 读到 `agent_end` 行时同步发出（`session-runner.ts:855` 起），而 message 写 stdin 走独立通道——存在窗口：① 扩展查 record 仍是 running（agent_end 行未消费）→ 走 busy 分支写 stdin 成功；② pump 随后读到 agent_end → SIGTERM；③ 消息随进程死亡静默丢失（写入成功 ≠ 被消费）。
 - **裁决：消费确认制**——投递时把消息缓存进 `record.pendingMessages`（内存数组），投递后观察确认：
-  - 观察到该消息触发的 `message_start`（user 消息）→ 消费确认，清 pendingMessages
-  - 观察期内进程退出（agent_end → SIGTERM / exit）→ 消息未消费 → 进程回收后 **resume 补投** pendingMessages 中未确认的消息
-  - 超时（2s）无确认但进程存活 → 已入队排队中，视为成功
+  - **不变式：`pendingMessages` 只在观察到该消息的消费确认（`message_start` 事件，user 消息）时清除**；进程退出时剩余未确认消息**一律** resume 补投；「2s 无确认且进程存活 → 视为成功」只约束工具调用返回值，**不动安全网**——确认语义跟随消费而非跟随投递（busy+queue 路径消费可能迟到数分钟，确认迟到无妨）
+  - 消息与 message_start 的关联策略：按 subagentId 内 **FIFO 顺序匹配**（同一 subagent 的 message 按发送序消费；同文重发场景以投递时序为准，P-12 验证）
   - 未确认消息随主 agent 进程重启丢失（限制声明同前，不落盘）
 - **被否**：busy 时也 resume 重开——两个进程打开同一 session 文件，pi 无文件锁语义（未探针），并发写损坏风险不可接受。
 - **探针**：P-4（busy 时 follow_up 排队行为）、P-5（resume 后文件可见性）、P-12（消费确认制在竞态窗口下不丢消息）。
 
-#### 决策 10：`message` 增加 `deliverAs`（queue / steer）—— 轮中干预能力
+#### 决策 10：tool surface 只暴露意图词汇，机制词汇禁入
 
-- **选择**：`message` 参数 `deliverAs: "queue" | "steer"`，默认 `"queue"`。queue = 排队不打断（当前轮后按序处理）；steer = 抢占打断（streaming 中立即生效，实测：原任务输出停止、回复切换）。
-- **被否**：busy 时一律排队——subagent 一轮跑 10 分钟且方向跑偏时，纠正消息要等当前轮跑完才生效，F2「中途无法干预」在 busy 场景依旧成立（只剩 cancel 一条路，丢全部上下文）。
-- **证据**：running 时 steer 抢占已实测（决策 1 矩阵）；xyz-agent composer 已按同语义落地（⏎ = steer 抢占、Alt+⏎ = follow_up 排队、busy 时普通发送自动降级 steer，`useChat.ts:298-307`）。
-- **G3 命名修正**：目标从「回复前可插入新消息（排队）」修正为「轮间插入（queue）+ 轮中干预（steer）」两种语义，§1 目标表已同步。
+- **选择**：schema 与 tool description 层封装全部机制（底层决策 1-9 的实现细节），agent 只接触意图词汇。**最终 tool surface**：
+
+```
+start   { task, slug?, agent?, model?, conversation?: boolean }  → { subagentId }
+message { subagentId, text, interrupt?: boolean }                → { delivered: true }
+close   { subagentId, force?: boolean }                          → { closed: true }
+list    { statusFilter? }                                        → { items: [{ subagentId, slug, state, summary }] }
+```
+
+- 执行细则：
+  1. **interrupt 布尔**替代 `deliverAs`——agent 的意图只有「不打断，这轮说完再看」/「立即停下听我说」；idle 时 interrupt 自动退化（决策 6 映射表），agent 不需要知道「idle 时 steer 无效」这个坑
+  2. **close {force}** 合并 cancel/close 两个动词——`force:false`（默认）当前轮跑完再终态化；`force:true` 立即终止；一次性模式的旧 `cancel` 保留为 `close(force:true)` 别名，不出现在 description 主路径
+  3. **状态对外四态收敛**——`active`（running）/ `waiting`（idle）/ `ended`（done/cancelled）/ `error`（failed/crashed）；原始 ExecutionStatus 进 `details` 供调试；未来内部加态不影响对外
+  4. **响应 payload 瘦身**——`start` → `{subagentId}`（sessionFile 移入 details，防诱导 agent 绕开工具读文件）；`message` → `{delivered:true}`；`close` → `{closed:true}`；resume 冷启 ~1.5s 的延迟预期写进 tool description（「对方不在线时唤醒需一两秒，属正常」），不作为返回值暴露
+  5. **`conversation: boolean`** 替代 `mode:"conversation"`——语义是「声明资源生命周期」：轮次结束不回收 worktree、记录不归档、占用 idle 名额直到 close 或 GC；description 写明代价「会持续占用资源直到 close，记得用完 close」；布尔比枚举更难误用，未来出第三模式再升枚举不破坏布尔
+  6. **错误消息只用行动语言**——失败表的文案已遵守（见 §3.1），内部词汇（sidecar/resume/pendingMessages/prompt）禁入
+- **被否**：把机制选择暴露给 agent（deliverAs/prompt/steer/follow_up/sessionFile/queued/steered/resumed）——agent 被迫学习 pi 私有术语与「何时何命令有效」的矩阵，心智负担转移给使用者，且未来底层实现变更会破坏 agent 已形成的错误心智。
+- **反向提醒（不封掉的东西）**：`list` 的 `summary`（每轮结果摘要）与 notify 的轮次送达是 agent 维持对话心智的必需反馈，不能封装；封装的原则是「主字段只有意图与结果，机制痕迹退到 details 和错误消息」。
 
 #### 决策 7：不新增 `wait` action —— 减法
 
@@ -261,7 +289,8 @@ child.kill("SIGTERM")  →  record archive →  worktree cleanup
 
 #### 决策 9：notifier 对话模式豁免 dedup + 状态守卫扩展
 
-- **选择**：`BgNotifier` 的 60s dedup TTL（`notifier.ts` DEDUP_TTL_MS=60000，同 subagentId 60s 内第二次 notify 静默跳过）对对话模式**豁免**——按「轮次」去重而非按 subagentId（`.idle` sidecar 的 round 序号或通知计数）；`toNotifyRecord` 的 status 守卫（现只放行 done/failed/cancelled）增加 idle 分支。
+- **选择**：`BgNotifier` 的 60s dedup TTL（`notifier.ts` DEDUP_TTL_MS=60000，同 subagentId 60s 内第二次 notify 静默跳过）对对话模式**豁免**——按「轮次」去重而非按 subagentId；`toNotifyRecord` 的 status 守卫（现只放行 done/failed/cancelled）增加 idle 分支。
+- **轮次序号来源**：notify 发送（轮次完成时）与 `.idle` sidecar 写入的先后不定——**轮次计数用内存 record 的轮次字段（每轮完成 +1），不依赖 sidecar 读取**（sidecar 的 round 仅用于磁盘重建恢复计数）。
 - **被否**：对话模式继续走 60s dedup——快速多轮（message → 回复间隔 <60s）第二条回复通知被吞，父 agent 永远等不到回复，G1/G2 断裂。
 - **证据**：`notifier.ts` 现有 dedup 语义（一次性模式防抖）；对话模式的回复是**每轮必须送达**的语义，两者冲突。
 
@@ -272,7 +301,7 @@ child.kill("SIGTERM")  →  record archive →  worktree cleanup
 | P-1 | resume 后上下文保留 | kill 进程 → `--session <file> --mode rpc` 重开 → 问「秘密数字」→ 答 42 | ✅ 实测 PASS |
 | P-2 | prompt 续聊触发新 run | 保活进程第二轮 prompt → startCount 2→4、答 42 | ✅ 实测 PASS |
 | P-3 | steer/follow_up 完成后不触发 | agent_end 后 3s 发 follow_up → 60s 无新 agent_end | ✅ 实测 FAIL（符合预期，决策 1 依据） |
-| P-4 | busy 时 follow_up 排队行为 + prompt 的 busy 行为 | 子进程运行中发 `follow_up`（顺序保持、当前轮后处理）；顺带验证 xyz-agent 注释称「isStreaming 时 prompt 强制要求 streamingBehavior」 | ⛔ 实施期 M2 前 |
+| P-4 | busy 时 follow_up 排队行为 + **排队消息不被误杀** | 子进程运行中发 `follow_up`：顺序保持、当前轮后处理、**agent_end 不在该消息被消费前发出**（排队消息若被 pi post-run loop 在 agent_end 前 drain，进程自然续命；反之每个排队消息都要走 kill+resume 补投，"当前轮后按序处理"承诺失效）；顺带验证「isStreaming 时 prompt 强制要求 streamingBehavior」的 xyz-agent 断言 | ⛔ 实施期 M2 前 |
 | P-5 | resume 后 worktree 内文件可见 | 对话模式 subagent 改过文件 → resume 重开 read 同路径 | ⛔ 实施期 M2 前 |
 | P-6 | idle 记录跨重启可寻址 | 主 agent 重启后 `list` → 对话中 subagent 显示 idle（`.idle` sidecar 重建） | ⛔ 实施期 M3 前 |
 | P-7 | 归属守卫拦截 | 用别的 sessionId 驱动某 subagent → 拒绝 not owned | ⛔ 实施期 M3 前 |
@@ -280,7 +309,7 @@ child.kill("SIGTERM")  →  record archive →  worktree cleanup
 | P-9 | identity entry 重复 append 无害 | resume 多轮后 reconstructFromFile 正常（last-wins，数据相同） | ⛔ 实施期 M1 前 |
 | P-10 | resume 后模型保持 | 以非默认模型 spawn 的对话 subagent resume 后仍是原模型（`get_state` 验证，不落回 CLI 默认） | ⛔ 实施期 M1 前 |
 | P-11 | 旧版扩展读 chatMode identity 兼容 | 属性级 type guard（isIdentityData）对带 `chatMode` 字段的 identity entry 不拒（新旧扩展混存场景） | ⛔ 实施期 M3 前 |
-| P-12 | 消费确认制在竞态窗口下不丢消息 | 模拟 busy→kill 竞态（长任务中投递 message，进程被 agent_end 回收）→ 消息经 resume 补投，不静默丢失 | ⛔ 实施期 M2 前 |
+| P-12 | 消费确认制在竞态窗口下不丢消息 | 模拟 busy→kill 竞态（长任务中投递 message，进程被 agent_end 回收）→ 消息经 resume 补投，不静默丢失；**验证消息与 message_start 的 FIFO 关联策略**（同文重发、乱序到达场景） | ⛔ 实施期 M2 前 |
 
 > 探针规则（准则 7）：✅ = 已实测；⛔ = 实施期对应阶段前必须跑通的门槛，跑不通则该断言从文档移除、设计需重审。
 
@@ -293,15 +322,15 @@ child.kill("SIGTERM")  →  record archive →  worktree cleanup
 ### 场景 A：多轮 review 对话（回溯 G1 + G2）
 
 - **上下文**：真实项目（本 worktree），目标文件 `extensions/subagent-workflow/src/execution/record-store.ts`（真实存在）。
-- **步骤**：① `start {task:"review record-store.ts 的重建逻辑", agent:"reviewer", mode:"conversation"}`；② 等 notify 拿到第一轮 review 结果；③ `message {subagentId, text:"针对你发现的矩阵兜底问题给出修复方案，先不改代码"}`；④ 等 notify；⑤ 检查第二轮回复。
+- **步骤**：① `start {task:"review record-store.ts 的重建逻辑", agent:"reviewer", conversation:true}`；② 等 notify 拿到第一轮 review 结果；③ `message {subagentId, text:"针对你发现的矩阵兜底问题给出修复方案，先不改代码"}`；④ 等 notify；⑤ 检查第二轮回复。
 - **通过标准**：第二轮回复明确引用第一轮的具体发现（如提到「兜底 crashed」或同一函数），证明上下文跨轮保留；全程只 spawn 了一个子进程（`list` 中 subagentId 不变）；**机制侧断言**：第二轮 message 后，session 文件含第一轮全部 entry（`get_entries` 或直接读 JSONL 验证），不依赖 LLM 表现判定。
 - **注意**：若模型未引用第一轮内容（压缩/偷懒），以机制侧断言（session 文件 entry 完整）为通过标准，LLM 引用仅作参考。
 
 ### 场景 B：回复前插入消息 + 轮中干预（回溯 G3）
 
 - **上下文**：让 subagent 跑一个长任务（如「分析 `extensions/subagent-workflow/src/execution/` 目录的文件职责」）。
-- **步骤**：① start（对话模式）；② 在它运行中（`list` 显示 running）连发两条 `message`（补充约束，deliverAs 默认 queue）；③ 再发一条 `deliverAs:"steer"` 的 message（改变方向/纠正）；④ 等 notify；⑤ 检查最终结果。
-- **通过标准**：前两条 message 返回 `delivered:true`（非阻塞，queued）；steer 消息在 streaming 中生效（原任务输出被打断，最终结果体现新方向）；最终结果体现补充约束（排队按序处理）；无报错。
+- **步骤**：① `start {conversation:true}`；② 运行中（`list` 显示 active）连发两条 `message`（补充约束，interrupt 默认 false）；③ 再发一条 `interrupt:true` 的 message（改变方向/纠正）；④ 等 notify；⑤ 检查最终结果。
+- **通过标准**：前两条 message 返回 `delivered:true`（非阻塞）；interrupt 消息在 streaming 中生效（原任务输出被打断，最终结果体现新方向）；最终结果体现补充约束（排队按序处理）；无报错。
 
 ### 场景 C：会话重启后恢复（回溯 G4）
 
@@ -312,21 +341,21 @@ child.kill("SIGTERM")  →  record archive →  worktree cleanup
 ### 场景 D：归属守卫与清理（回溯 G5 + 决策 3）
 
 - **上下文**：两个主 agent 会话（两个 pi 进程、同 session-dir）。
-- **步骤**：① 会话 1 spawn 对话模式 subagent；② 会话 2 对该 subagentId 发 `message`；③ 会话 1 发 `close`；④ 再对已 close 的 id 发 `message`。
-- **通过标准**：② 被拒（`not owned`，含恢复指引）；③ 正常关闭；④ 被拒（`not found`，含恢复指引）；close 后 `.idle` sidecar 删除、磁盘记录归档、worktree 清理（与一次性模式一致）。
+- **步骤**：① 会话 1 `start {conversation:true}`；② 会话 2 对该 subagentId 发 `message`；③ 会话 1 发 `close`；④ 再对已 close 的 id 发 `message`。
+- **通过标准**：② 被拒（`not found or not owned`，含恢复指引）；③ 正常关闭；④ 被拒（`not found`，含恢复指引）；close 后 `.idle` sidecar 删除、磁盘记录归档、worktree 清理（与一次性模式一致）。
 
 ### 场景 E：一次性模式无回归（回溯 G5）
 
-- **上下文**：与现状相同的用法。
-- **步骤**：不传 `mode:"conversation"` 的 start → 行为与现在完全一致（跑完通知、archive、worktree cleanup）。
-- **通过标准**：现有一次性用例（`run-spawn-integration.test.ts` 等）全绿；手动跑一次普通 start，`list` 显示 done 且无 idle 残留。
+- **上下文**：与现状相同的用法（旧 `cancel` 动词仍可用，作为 `close(force:true)` 别名）。
+- **步骤**：不传 `conversation` 的 start → 行为与现在完全一致（跑完通知、archive、worktree cleanup）；旧 cancel 调用路径回归。
+- **通过标准**：现有一次性用例（`run-spawn-integration.test.ts` 等）全绿；手动跑一次普通 start，`list` 显示 ended 且无 idle 残留。
 
 ### 场景 F：错误恢复路径（回溯 G4 + §3.1 失败表）
 
 - **上下文**：对话中 subagent 的 session 文件被手动删除（模拟损坏/GC）。
 - **步骤**：① 删除 `<sessionFile>`；② 对该 id 发 `message`。
 - **通过标准**：返回 `session file missing or unreadable` + 恢复指引（`close` 后重新 `start`）；`list` 不崩溃。
-- **上下文 2**：排队消息场景——subagent busy 时发 message（`queued:true`），随即主 agent 重启。
+- **上下文 2**：排队消息场景——subagent busy 时发 message（`delivered:true`，排队中），随即主 agent 重启。
 - **通过标准 2**：重启后该消息不投递（限制声明），重发消息正常；不崩溃。
 
 > 单元测试仅作回归辅助，不计入验收。验收以场景 A-F 在真实环境实跑为准。
@@ -340,19 +369,19 @@ child.kill("SIGTERM")  →  record archive →  worktree cleanup
 | 阶段 | 交付 | 对应验收/探针 |
 |---|---|---|
 | M1：resume spawn 基建 | spawn 支持 `--session <file>` 重开 + 恢复 record 上下文（sessionFile 已知时跳过 handshake 创建）+ **执行参数传递（model/thinkingLevel，见拆分 1）** | P-8/P-9/P-10 + 场景 C 前半 |
-| M2：对话模式执行语义 | start 的 `mode:"conversation"`（chatMode 标志）；轮次完成 → 进程回收 + 写 `.idle` sidecar + record 标记 idle（不 archive）；message/close action；record→child 映射 | P-4/P-5 + 场景 A/B |
-| M3：守卫、重建与展示 | rootSessionId 归属守卫；reconstructAll 加 `.idle` 分支；worktree reaper 豁免；notifier dedup 豁免 + idle 守卫；list/format/gui-mappers idle 展示 | P-6/P-7 + 场景 C/D/E/F |
+| M2：对话模式执行语义 | start 的 `conversation:true`（chatMode 标志）；轮次完成 → 进程回收 + 写 `.idle` sidecar + record 标记 idle（不 archive）；message/close action（interrupt/force 映射）；record→child 映射；消费确认制 | P-4/P-5/P-12 + 场景 A/B |
+| M3：守卫、重建与展示 | rootSessionId 归属守卫；reconstructAll 加 `.idle` 分支；worktree reaper 豁免；notifier dedup 豁免 + idle 守卫；list 对外四态（active/waiting/ended/error）展示 | P-6/P-7/P-11 + 场景 C/D/E/F |
 
 ### 拆分清单
 
 1. **spawn resume 支持**（`pi-invocation.ts` + `subprocess-agent-runner.ts`）：args 组装支持 `--session <sessionFile>`；`get-state-handshake` 适配「已存在 session」路径（sessionFile 提前已知，握手只验证不创建）。**执行参数传递**：resume spawn 从 record identity 读取 `model`/`thinkingLevel` 并继续传 `--model`/`--thinking`，防止多轮对话中途模型漂移（P-10）；maxTurns 等执行约束第一版不恢复（见待验证检查点）。理由：一切续聊的地基，独立可测。
 2. **状态机扩展**（`execution/types.ts`）：`ExecutionStatus` 增加 `"idle"`；`finalize-record.ts` 拆「轮次完成（→idle：写 `.idle` sidecar、保留 record 与 worktree、release 并发槽）」「最终关闭（→done：删 `.idle`、走现有 finalize 清理）」。理由：终态语义是「完成即销毁」假设的核心，必须先立。
 3. **chatMode 标志**（`execution/execution-record.ts` identity entry）：record 持久化 `chatMode: boolean`，随 identity entry 写入 session 文件；不扩展 ExecutionMode（决策 8）。理由：避免波及 mode 消费点（isIdentityData 校验等）。
-4. **新 action**（`interface/subagent-tool.ts` + `subagent-actions.ts`）：`message`（定位 record → busy 走 stdin `follow_up`/`steer`、idle 走 resume + prompt，参数含 `deliverAs`）+ **消费确认制**（投递缓存 record.pendingMessages → 观察 message_start 确认 / 进程死亡补投）、`close`（finalize）。**无 wait**（决策 7）。理由：使用者可见的全部新能力，依赖 1+2。
+4. **新 action**（`interface/subagent-tool.ts` + `subagent-actions.ts`）：`message`（状态 × interrupt 映射投递 + **消费确认制**：投递缓存 record.pendingMessages → 仅在 message_start 消费确认时清除 / 进程死亡 resume 补投）、`close {force}`（终态化；旧 cancel 保留为 force:true 别名）。**无 wait**（决策 7）。理由：使用者可见的全部新能力，依赖 1+2。
 5. **record→child 映射**（`execution/session-runner.ts`）：`spawnedChildren` Set → `Map<recordId, ChildProcess>`，busy 投递定位活进程。理由：busy 时消息必须写活进程 stdin（决策 6），现有结构无 id 关联（`spawnedChildren` Set 定义于 `session-runner.ts:193`）。
 6. **归属守卫**（`subagent-actions.ts`）：`rootSessionId` 比对（决策 3）；跨进程定位需绕过 collectRecords 过滤查磁盘全集。理由：并发安全，依赖 4 的定位逻辑。
 7. **重建矩阵 + reaper 豁免 + notifier 适配**（`record-store.ts`、`worktree-manager.ts`/`worktree-registry.ts`、`notifier.ts`）：`.idle` 分支重建（判定优先级：`.idle` 存在 → idle，无视 pid 死活；无 `.idle` 且 `.alive`+pid 死 → 兜底 crashed 不变）；reaper 判据「pid 死且无 `.idle`」；notifier dedup 按轮次 + 状态守卫加 idle。理由：G4 可恢复性与 G1 通知可靠性的三块基石，互相独立可分批验证。
-8. **list/状态展示**（`record-store.ts` collectRecords + `interface/subagents.ts` + `interface/format.ts` + `interface/gui-mappers.ts` + `interface/list-component.ts`）：idle 态合并展示；format statusIcon/gui-mappers 字符串匹配补 idle case（否则 idle 落入 running/done 错误语义）。理由：G4 的用户可见面，依赖 2+7。
+8. **list/状态展示**（`record-store.ts` collectRecords + `interface/subagents.ts` + `interface/format.ts` + `interface/gui-mappers.ts` + `interface/list-component.ts`）：**对外四态映射**（active/waiting/ended/error，决策 10 细则 3）+ 内部 ExecutionStatus 进 details；idle 态合并展示；format statusIcon/gui-mappers 字符串匹配补 idle case（否则 idle 落入 running/done 错误语义）。理由：G4 的用户可见面，依赖 2+7。
 
 ### 文件改动地图
 
@@ -365,8 +394,8 @@ child.kill("SIGTERM")  →  record archive →  worktree cleanup
 | `execution/execution-record.ts` | identity entry + `chatMode` 字段 + `pendingMessages` 在途消息缓存 |
 | `execution/finalize-record.ts` | 轮次完成 vs 最终关闭分流 + `.idle` sidecar 写删（时序：SIGTERM → 删 `.alive` → 写 `.idle` → record idle；写 `.idle` 前崩溃落 crashed，保守可接受） |
 | `execution/session-runner.ts` | `spawnedChildren` → `Map<recordId, child>`（kill 分支不改） |
-| `interface/subagent-tool.ts` | schema：action 枚举 + `mode` 参数 + message/close 参数 |
-| `interface/subagent-actions.ts` | 新 action handler + rootSessionId 守卫 |
+| `interface/subagent-tool.ts` | schema：`start {conversation?}` / `message {text, interrupt?}` / `close {force?}` / `list {statusFilter?}`（机制词汇禁入，决策 10） |
+| `interface/subagent-actions.ts` | 新 action handler + rootSessionId 守卫 + 旧 `cancel` 别名映射 |
 | `execution/record-store.ts` | idle 态不进 archive；重建矩阵 `.idle` 分支；STATUS_PRIORITY 补 `idle` 键（`Record<ExecutionStatus, number>` 字面量缺键触发 TS2741） |
 | `execution/worktree-manager.ts` + `worktree-registry.ts` | reaper 判据加「无 `.idle` 才清理」 |
 | `execution/notifier.ts` | 对话模式 dedup 按轮次 + status 守卫加 idle |
@@ -374,12 +403,12 @@ child.kill("SIGTERM")  →  record archive →  worktree cleanup
 
 ### 待验证检查点（实施期）
 
-- P-4：busy 时 `follow_up` 排队行为（顺序保证、与 abort 交互）；顺带验证「isStreaming 时 prompt 强制要求 streamingBehavior」的 xyz-agent 断言（若属实，busy 投递**必须**用 follow_up/steer 命令而非 prompt）
+- P-4：busy 时 `follow_up` 排队行为（顺序保证、与 abort 交互、**agent_end 不在排队消息被消费前发出**）；顺带验证「isStreaming 时 prompt 强制要求 streamingBehavior」的 xyz-agent 断言（若属实，busy 投递**必须**用 follow_up/steer 命令而非 prompt）
 - P-5：resume 后 worktree 文件可见性（`--session` 打开时 cwd 是否保持）
 - P-8 上游依赖声明：**「句柄 = sessionFile 可寻址」依赖 pi `--session` 续写原文件**（若上游改为 fork 新文件，需加一层 indirection）——保留探针，但这是对 pi 上游行为的依赖假设
-- `cancel` 在对话模式下的语义（取消当前轮 vs 结束整个对话）——第一版取「取消当前轮，进程退出，会话文件保留可 resume」（与现状 cancel 一致），实施时验证
+- **cancelHandler 改动范围（决策 5 已裁决，实施确认）**：对话模式无独立 cancel——旧 `cancel` action 保留为 `close(force:true)` 别名；`subagent-actions.ts:245` 的 mode 守卫从「非 background 抛 unsupported」改为「conversation 时映射到 close(force:true) 语义」
 - resume 的执行参数（maxTurns/graceTurns/fork/appendSystemPrompt）持久化——第一版**不恢复**执行约束（resume 只带 session 与 model/thinkingLevel，不带约束），后果：maxTurns 每轮重置为全量预算；若后续需要再持久化到 identity entry
-- **resume 槽位失败语义**：对话模式轮次间不占并发槽（release），resume 时重新 acquire——池满时**有界排队（30s）后返回 `pool full` 错误**（含恢复指引：`close` 或稍后重试），不做无限等待
+- **resume 槽位失败语义**：对话模式轮次间不占并发槽（release），resume 时重新 acquire——池满时**有界排队（30s）后返回 `too many subagents running` 错误**（含恢复指引：`close` 或稍后重试），不做无限等待
 - 30 天 session 文件 GC（`session-file-gc.ts` TTL_DAYS=30）与 G4 的边界：idle 超过 30 天的对话 session 文件被删 → 句柄失效——第一版接受该寿命上限（恢复指引：重新 start），后续可豁免对话模式
 
 ---
@@ -389,5 +418,5 @@ child.kill("SIGTERM")  →  record archive →  worktree cleanup
 - **参考实现**：pi-intercom（ask 挂起 + reply 配对，跨 session broker）；nicobailon/pi-subagents（子→父 contact_supervisor 桥接）；Kimi Code CLI（同进程 DI + `agent_id` resume 句柄 + 归属/idle 双守卫，`agent-core-v2/src/session/swarm/`）；Claude Code Agent Teams（文件 mailbox + 轮询，in-process teammate 常驻 loop / transcript resume，`src/utils/teammateMailbox.ts` + `src/tools/SendMessageTool/SendMessageTool.ts`）。
 - **实测**：本地 pi CLI（`--mode rpc`，mimo-v2.5-pro）：resume 上下文保留 PASS；prompt 续聊多轮累积 PASS；steer/follow_up **完成后**不触发 FAIL（即正确行为）；**streaming 中 steer 抢占 PASS**（76 条 text_delta 后发 steer，原任务输出停止、最终回复切换为新问题）；idle 进程 RSS ~147MB / CPU 0%。
 - **xyz-agent 佐证**：composer 的 ⏎（isActive 时）→ `message.steer`、Alt+⏎ → `message.follow_up`、busy 时普通发送自动降级 steer（`useChat.ts:298-307`）；runtime 纯透传 `sendCommand('steer'/'follow_up')`（`rpc-client.ts:495-500`），无 busy 预检、无竞态处理——「完成后无效」的规避全靠前端 isActive 路由（改走 prompt）。
-- **审查**：设计经三轮对抗式审查迭代——第一轮 9 must-fix 全部修复（归属字段 parentRecordId→rootSessionId、idle 重建矩阵 `.idle` sidecar、worktree reaper 豁免、notifier dedup 豁免、删除 wait、验收上下文改真实文件、idle 进程语义裁定 kill+resume、record→child 映射、ExecutionMode 不扩展）；第二轮 9/9 闭合验证；第三轮 1 P0（busy→kill 竞态丢消息 → 消费确认制）+ 2 P1（busy 即时干预 → deliverAs 双语义，实测 steer 抢占；resume 参数传递 → model/thinkingLevel）+ 4 P2（.idle/.alive 时序、槽位失败语义、P-8 上游假设、schema 兼容）全部在本文裁决。首轮审查报告见同目录 `continuous-subagent-chat.review.md`。
+- **审查**：设计经四轮对抗式审查迭代——第一轮 9 must-fix 全部修复（归属字段 parentRecordId→rootSessionId、idle 重建矩阵 `.idle` sidecar、worktree reaper 豁免、notifier dedup 豁免、删除 wait、验收上下文改真实文件、idle 进程语义裁定 kill+resume、record→child 映射、ExecutionMode 不扩展）；第二轮 9/9 闭合验证；第三轮 1 P0（busy→kill 竞态丢消息 → 消费确认制）+ 2 P1（busy 即时干预 → deliverAs 双语义，实测 steer 抢占；resume 参数传递 → model/thinkingLevel）+ 4 P2 全部裁决；第四轮 1 P1（cancel 语义自相矛盾 → 裁决：close{force} 合并动词、对话模式无独立 cancel、message{interrupt} 覆盖停轮）+ 1 P2（pendingMessages 清除不变式）+ 2 探针补强 + tool surface 意图词汇封装准则（决策 10：schema 只暴露意图词汇，机制词汇禁入）。首轮审查报告见同目录 `continuous-subagent-chat.review.md`。
 - **结论**：三家一致支持「文件为状态源 + resume 为持续对话主路径」；无一家依赖中央 broker。
