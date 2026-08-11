@@ -45,8 +45,8 @@ set -a && source .env.dev-extensions && set +a && pnpm dev
 ```
 
 **机制**：`XYZ_EXTENSION_PATHS` 经 `ENV_WHITELIST_PREFIXES`（`XYZ_` 前缀）注入 xyz-agent runtime → pi 子进程。改源码后 xyz-agent 内新建 session 即生效（无需重启 app）。
-- **link**：追加源码路径前，先检查并清理 dev 数据目录（`~/.xyz-agent-dev/npm/node_modules/@zhushanwen/pi-<short>`）下已有的 npm 安装，避免与本地源码并存（user 源优先级高于 settings 源，本地源码本就生效；清理为显式归位）。
-- **unlink**：从 `XYZ_EXTENSION_PATHS` 移除路径，extension 回归 npm 版本（settings 源）。mandatory 包会在 xyz-agent 重启时由 mandatory 机制自动重装。
+- **link**：追加源码路径前，检查 dev 数据目录（`~/.xyz-agent-dev/npm/node_modules/@zhushanwen/pi-<short>`）下已有的 npm 安装——仅 mandatory 包删除（boot 重装前的显式归位，重启时自动重装兜底）；非 mandatory 包保留（user 源优先级高于 settings 源，本地源码本就生效，删除会破坏 unlink 后的「回归 npm 版本」语义）。
+- **unlink**：从 `XYZ_EXTENSION_PATHS` 移除路径，extension 回归 npm 版本（settings 源，npm 安装未被 link 删除，可直接回归）。mandatory 包还会在 xyz-agent 重启时由 mandatory 机制自动重装。
 
 **生效**：xyz-agent dev 模式 + 新建 session。**当前 pi CLI session 不受影响**（不读这个 env）。
 
