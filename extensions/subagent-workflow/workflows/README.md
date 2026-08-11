@@ -56,7 +56,7 @@ workflow run map-reduce --args itemsJson=/path/to/items.json --args operation=".
 
 ```
 workflow run review-fix-loop --args targetType=git-diff target=main \
-  --args batch1=fallow-scan --args batch2=code-reviewer --args autoCommit=true
+  --args batch1=fallow-scan --args batch2=reviewer --args autoCommit=true
 workflow run review-fix-loop --args targetType=file target=/path/to/doc.md \
   --args batch1=doc-reviewer
 ```
@@ -64,7 +64,7 @@ workflow run review-fix-loop --args targetType=file target=/path/to/doc.md \
 - `targetType` 枚举：`git-diff`（target=base ref）/ `file`（target=路径）/ `dir`（target=目录）/ `text`（target=自由描述）
 - `batch1..batchN`：批串行，批内并行 review → aggregate → fix → 重审直到 clean；批次用于前置依赖（如 `fallow-scan` 静态分析先行，后续审查才有意义）
 - 批内某 agent 无 must-fix 后后续轮跳过（`skipCleanAgents` 默认 true + `recheckAfterFix` 默认 false）：clean agent 下轮跳过不重派；显式传 `recheckAfterFix=true` 启用强回归模式——fix 后重派全批，clean agent 走限定 prompt（只审 modifiedFiles ∪ 自检关联点，不诱导全量重扫）
-- agent 项支持：AgentRegistry 名（如 `code-reviewer`）/ 自定义 .md 文件路径（如 `batch1=/path/to/code-reviewer.md`）/ 内置 `fallow-scan` / **内置 `doc-reviewer`**（文档场景推荐：`targetType=file/dir` + `batch1=doc-reviewer`，四遍审查方法论：事实锚点核实/逻辑断言验证/落地清单完备性/边界与迁移；无 write 工具，报告经 schema 返回由 workflow 落盘）
+- agent 项支持：AgentRegistry 名（如 `reviewer`）/ 自定义 .md 文件路径（如 `batch1=/path/to/reviewer.md`）/ 内置 `fallow-scan` / **内置 `doc-reviewer`**（文档场景推荐：`targetType=file/dir` + `batch1=doc-reviewer`，四遍审查方法论：事实锚点核实/逻辑断言验证/落地清单完备性/边界与迁移；无 write 工具，报告经 schema 返回由 workflow 落盘）
 - `fixAgent`（可选）：fix 阶段加载指定 agent（内置名或 .md 路径）；代码场景可在该 agent.md 内写 verify 命令（typecheck/test 实测）当轮拦截编译类回归。⚠️ agent.md 内写的 verify 命令**必须确认能在目标项目可运行**（target 的包管理器/目录结构未知），否则命令失败会误报 fix 状态
 - `maxFixAttempts`（可选，默认 2）：needs-redesign 阈值。问题经 maxFixAttempts 次修复仍未收敛（regressed）→ 终止该批，terminated="needs-redesign"（结构性问题需人工介入，非继续补丁能解决）
 - `convergeNewIssues`（可选，默认 1）+ `convergeRounds`（可选，默认 2）：新发现率收敛阈值。连续 convergeRounds 轮新发现问题 ≤ convergeNewIssues **且**无 open/regressed 活跃条目 → terminated="converged"（推进下一批）。收敛不等于问题全清——需同时满足无活跃条目才终止
