@@ -114,7 +114,7 @@
     </nav>
 
     <div class="ml-auto flex items-center gap-0.5 [-webkit-app-region:no-drag]">
-      <!-- ExtensionHost panel.header 挂载点（audit §12.1，MountPointRegistry panel.header.action）。
+      <!-- ExtensionHost panel.header 挂载点（audit §12.1，MountPointRegistry panel.header）。
            plugin 经 views.update 贡献 header action 视图 → ViewHost 渲染。
            empty="hidden"：无贡献时整组件零 DOM，不挤压右侧内置按钮。见 02-extension-host-wiring.md。 -->
       <ViewHost

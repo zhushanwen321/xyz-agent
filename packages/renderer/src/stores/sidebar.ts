@@ -9,7 +9,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 /**
- * 'plugins' tab：ExtensionHost sidebar view 宿主（挂载点 sidebar.tab，ViewHost view-id=sidebar.plugin）。
+ * 'plugins' tab：ExtensionHost sidebar view 宿主（挂载点 sidebar.tab，ViewHost view-id=sidebar.tab 同名路由）。
  * 无 plugin 贡献时 ViewHost 空态自隐藏（empty="hidden"），tab 内容区空白不破坏布局。
  */
 export type SidebarTab = 'sessions' | 'files' | 'subagents' | 'workflows' | 'plugins'

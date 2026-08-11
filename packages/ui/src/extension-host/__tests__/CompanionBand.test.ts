@@ -31,15 +31,19 @@ import type { OverlayLifecycleSource, OverlayState } from '../companion-band-sou
 // ── Mocks ────────────────────────────────────────────────────────────
 
 class MockDialogRequestSource implements DialogRequestSource {
+  /** 每次 mount 注册订阅返回的退订函数（unmount 退订断言用，MF-5） */
+  unsubs: Array<ReturnType<typeof vi.fn>> = []
   onUiRequest = vi.fn((handler: (req: DialogRequest) => void): (() => void) => {
     this.requestHandler = handler
-    const spy = vi.fn()
-    return spy as unknown as () => void
+    const unsub = vi.fn()
+    this.unsubs.push(unsub)
+    return unsub as unknown as () => void
   })
   onUiTimeout = vi.fn((handler: (e: { sessionId: string; requestId: string }) => void): (() => void) => {
     this.timeoutHandler = handler
-    const spy = vi.fn()
-    return spy as unknown as () => void
+    const unsub = vi.fn()
+    this.unsubs.push(unsub)
+    return unsub as unknown as () => void
   })
 
   requestHandler: ((req: DialogRequest) => void) | null = null
@@ -233,6 +237,24 @@ describe('CompanionBand', () => {
     const { wrapper } = mountBand()
     await nextTick()
     expect(wrapper.find('[data-testid="companion-band"]').exists()).toBe(false)
+  })
+
+  it('MF-5: unmount 后订阅退订生效（queue 在 setup 顶层创建，onScopeDispose 正常注册）', async () => {
+    const { wrapper, source } = mountBand()
+    await nextTick()
+    // 队列创建时注册两个订阅（onUiRequest + onUiTimeout）
+    expect(source.unsubs).toHaveLength(2)
+
+    // 首次请求正常入队渲染
+    source.triggerUiRequest({ sessionId: 'A', requestId: 'r1', method: 'confirm' })
+    await nextTick()
+    expect(wrapper.find('[data-testid="companion-band"]').exists()).toBe(true)
+
+    wrapper.unmount()
+    // scope dispose → 两个订阅均退订。MF-5 修复前 queue 在 computed getter 内创建，
+    // onScopeDispose 注册静默失败（无 active effect scope），unmount 后 unsub 不会被调。
+    expect(source.unsubs[0]).toHaveBeenCalledTimes(1)
+    expect(source.unsubs[1]).toHaveBeenCalledTimes(1)
   })
 
   it('TC-6 未知 method 只读降级：title/message 展示 + 无按钮 + console.warn（ERR3）', async () => {

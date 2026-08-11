@@ -134,7 +134,7 @@ describe('MessageBusBridge', () => {
       expect(e).toMatchObject({ kind: 'ui-request', request: { requestId: 'r1', pluginId: 'tasks', kind: 'confirm', title: '确认？', method: 'confirm' } })
     })
 
-    it('9 个 plugin:* 全部有 handler，无零订阅（kind 集合与 IF3 映射表逐一核对）', () => {
+    it('10 个 plugin:* 全部有 handler，无零订阅（kind 集合与 IF3 映射表逐一核对）', () => {
       const { source, bus } = makeBridge()
       const { emitted } = spyEmit(bus)
       const messages: IncomingPluginMessage[] = [
@@ -147,6 +147,8 @@ describe('MessageBusBridge', () => {
         { type: 'plugin:messageDecoration', payload: { messageId: 'm1' } },
         { type: 'plugin:statusChange', payload: { pluginId: 'p', oldStatus: 'active', newStatus: 'inactive' } },
         { type: 'plugin:uiRequest', payload: { requestId: 'r1', pluginId: 'p', method: 'input' } },
+        // MF-1：plugin:viewUpdate 下行（runtime handleViewUpdate 广播形状）→ extension-widget
+        { type: 'plugin:viewUpdate', payload: { sessionId: 's1', viewId: 'sidebar.tab', pluginId: 'p', guiTree: [{ type: 'ansi-text', props: { lines: ['hi'] } }], updatedAt: 1 } },
       ]
       for (const m of messages) source.emit(m)
       const expectedKinds = [
@@ -159,12 +161,32 @@ describe('MessageBusBridge', () => {
         'plugin-message-decoration',
         'plugin-status-change',
         'ui-request',
+        'extension-widget',
       ]
       for (const kind of expectedKinds) {
         expect(emitted.some((x) => x.kind === kind), `expected ${kind} emitted`).toBe(true)
       }
       expect(emitted.some((x) => x.kind === 'error')).toBe(false)
-      expect(emitted.length).toBe(9)
+      expect(emitted.length).toBe(10)
+    })
+
+    it('viewUpdate → extension-widget（sessionId 透传、viewId/pluginId/guiTree 直存，MF-1）', () => {
+      const { source, bus } = makeBridge()
+      const { emitted } = spyEmit(bus)
+      source.emit({
+        type: 'plugin:viewUpdate',
+        payload: { sessionId: 's1', viewId: 'sidebar.tab', pluginId: 'tasks', guiTree: [{ type: 'stats-line', props: { items: [] } }], updatedAt: 123 },
+      })
+      const e = emitted.find((x) => x.kind === 'extension-widget')
+      expect(e).toBeDefined()
+      expect(e).toMatchObject({
+        kind: 'extension-widget',
+        sessionId: 's1',
+        widget: { viewId: 'sidebar.tab', pluginId: 'tasks', guiTree: [{ type: 'stats-line', props: { items: [] } }] },
+      })
+      // 非法形状（guiTree 非数组）→ error 事件（ERR2 不静默吞）
+      source.emit({ type: 'plugin:viewUpdate', payload: { sessionId: 's1', viewId: 'v', pluginId: 'p', guiTree: 'nope' } })
+      expect(emitted.some((x) => x.kind === 'error')).toBe(true)
     })
   })
 

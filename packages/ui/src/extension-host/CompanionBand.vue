@@ -44,12 +44,13 @@ const overlayLifecycle = inject(OVERLAY_LIFECYCLE_KEY, null)
 const sessionIdRef = computed<string | null>(() => props.sessionId)
 
 // ── 队列：source/transport 均注入时创建；缺失任一则无队列（静默空态） ──
-const queue = computed(() => {
-  if (!source || !transport) return null
-  return createDialogRequestQueue(transport, sessionIdRef, source)
-})
+// MF-5：队列必须在 setup 顶层创建（不在 computed getter 内）——createDialogRequestQueue 内部
+// 依赖 onScopeDispose 注册退订，computed getter 求值期不在 active effect scope，退订注册静默失败，
+// unmount 后 listener 永不退订（重挂时累积翻倍）。inject 结果在 setup 期固定，普通 const 即可。
+const queue =
+  !source || !transport ? null : createDialogRequestQueue(transport, sessionIdRef, source)
 
-const currentRequest = computed(() => queue.value?.currentRequest.value)
+const currentRequest = computed(() => queue?.currentRequest.value)
 
 // 已知 method 集合（ERR3 判定用）
 const KNOWN_METHODS = ['confirm', 'select', 'input', 'editor', 'askUser'] as const
@@ -142,11 +143,11 @@ function onConfirm(): void {
   const r = currentRequest.value
   if (!r) return
   if (r.method === 'input' || r.method === 'editor') {
-    queue.value?.respond(r.requestId, inputValue.value)
+    queue?.respond(r.requestId, inputValue.value)
   } else if (r.method === 'select') {
-    queue.value?.respond(r.requestId, selectValue.value)
+    queue?.respond(r.requestId, selectValue.value)
   } else {
-    queue.value?.respond(r.requestId, true)
+    queue?.respond(r.requestId, true)
   }
 }
 
@@ -154,26 +155,28 @@ function onConfirm(): void {
 function onCancel(): void {
   const r = currentRequest.value
   if (!r) return
-  queue.value?.cancel(r.requestId)
+  queue?.cancel(r.requestId)
 }
 
 /** askUser 提交：answers JSON 原样回传（AskUserForm 已序列化） */
 function onAskUserSubmit(answersJson: string): void {
   const r = currentRequest.value
   if (!r) return
-  queue.value?.respond(r.requestId, answersJson)
+  queue?.respond(r.requestId, answersJson)
 }
 
 </script>
 
 <template>
   <!-- v6 无边框一体化：单容器 bg-input 靠间距分区（对齐旧 AskUserOverlay 容器样式）。
-       无请求时 v-if 自隐藏（不占位）。z-index 由 OverlayLifecycle 状态驱动（bandStyle）。 -->
+       无请求时 v-if 自隐藏（不占位）。z-index 由 OverlayLifecycle 状态驱动（bandStyle）。
+       MF-7：fixed 定位（overlay 挂载，脱离文档流）——弹 dialog 不挤压 panel 布局，
+       bandStyle 的 z-index 对 fixed 元素生效；minimize 后 body 隐藏也不占位。 -->
   <div
     v-if="currentRequest"
     data-testid="companion-band"
     :style="bandStyle"
-    class="flex flex-col overflow-hidden rounded-lg bg-bg-input motion-reduce:animate-none"
+    class="fixed bottom-6 left-1/2 flex w-full max-w-lg -translate-x-1/2 flex-col overflow-hidden rounded-lg bg-bg-input motion-reduce:animate-none"
   >
     <!-- head 行：title（左）+ minimize/restore 控制（右，仅已知 method；ERR3 未知 method 纯只读不显控制） -->
     <div

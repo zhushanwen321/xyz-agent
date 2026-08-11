@@ -115,12 +115,13 @@
         </template>
         <!-- ExtensionHost sidebar view 宿主（audit §12.1 sidebar.tab 挂载点）。
              plugin 经 views.update 贡献 sidebar 视图 → ViewHostStore → ViewHost 渲染。
+             view-id 与 MountPointRegistry 挂载点名同名（'sidebar.tab'，MF-8 统一命名 SSOT）。
              empty="hidden"：无贡献时整组件零 DOM（不破坏布局）。sessionId 绑定焦点 session。
              见 02-extension-host-wiring.md 重构 2。 -->
         <template v-else-if="sidebar.activeTab === 'plugins'">
           <ViewHost
             v-if="focusedSessionId"
-            view-id="sidebar.plugin"
+            view-id="sidebar.tab"
             :session-id="focusedSessionId"
             empty="hidden"
           />

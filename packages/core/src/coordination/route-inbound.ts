@@ -222,6 +222,11 @@ const CROSS_SESSION_TYPES = new Set([
   'extension:status',
   'extension:notify',
   'extension.ui_request', // 点号：runtime wire 实际格式（见上方注释）
+  'extension.ui_timeout', // 带 sid 的 ui 超时广播：DialogRequestQueue onUiTimeout 经 crossSession 通道订阅（MF-6）
+  // plugin:* 带 sid 下行（runtime 广播注入 sessionId）：ExtensionHost 全局单例消费者需同时收
+  // session 通道 + crossSession 通道（ViewHostStore / DialogRequestQueue 按 per-session 分区）
+  'plugin:uiRequest',
+  'plugin:viewUpdate',
 ])
 
 /**

@@ -617,6 +617,7 @@ export type ServerMessageType =
   | 'plugin:statusBarUpdate' | 'plugin:messageDecoration' | 'plugin:config'
   | 'plugin:statusSetUpdate'
   | 'plugin:uiRequest'
+  | 'plugin:viewUpdate'
   | 'extension:widget' | 'extension:widgetGui' | 'extension:status' | 'extension:notify'
   | 'extension:setEditorText'
   | 'message.compactionSummary' | 'message.branchSummary'
@@ -723,6 +724,17 @@ export interface ServerMessageMapBase {
   // reply { pluginId, config }）。config 是该插件全量配置对象（get 不带 key 时）或单 key 子树。
   // 用 Record<string, unknown> 保持 shared 依赖最小化（与 extension:widgetGui.gui:unknown 同先例）。
   'plugin:config': { pluginId: string; config: Record<string, unknown> }
+  // plugin:viewUpdate：plugin views.update 下行广播（plugin-rpc-setup.ts handleViewUpdate 生产，
+  // 带 sessionId 走 session 通道 + CROSS_SESSION_TYPES crossSession 分发到 ExtensionHost）。
+  // guiTree 用 unknown[] 保持 shared 包依赖最小化（与 extension:widgetGui 的 gui:unknown 同先例），
+  // 消费端（core MessageBusBridge parseViewUpdate → ViewHostStore）用 isGuiComponent 守卫收窄。
+  'plugin:viewUpdate': {
+    sessionId: string
+    viewId: string
+    pluginId: string
+    guiTree: unknown[]
+    updatedAt: number
+  }
   'model.list': { models: ModelInfo[] }
   'config.sessions': { groups: SessionGroup[] }
   /** config.systemPrompt：reply + broadcast + 初始推送三用。corrupted=true 表示磁盘配置损坏已回退默认（SR5）。 */

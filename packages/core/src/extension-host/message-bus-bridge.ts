@@ -204,6 +204,28 @@ function parseUiRequest(msg: IncomingPluginMessage): InternalEvent | null {
   return { kind: 'ui-request', sessionId: resolveSessionId(msg, payload), request }
 }
 
+/**
+ * plugin:viewUpdate 窄化守卫（s3 链路，MF-1 修复）。
+ *
+ * runtime plugin-rpc-setup.ts handleViewUpdate 广播 payload 形状：
+ * { sessionId, viewId, pluginId, guiTree, updatedAt }（guiTree 为 GuiComponent[]）。
+ * 与 extension:widget 同事件（extension-widget）：ViewHostStore 消费按 viewId 分区更新，
+ * guiTree 结构化数组直存（窄化规则同 widgetGui——isGuiComponent 校验 + string 行包装）。
+ */
+function parseViewUpdate(msg: IncomingPluginMessage): InternalEvent | null {
+  const payload = asRecord(msg.payload)
+  if (!payload) return null
+  const viewId = asString(payload.viewId)
+  const pluginId = asOptionalString(payload.pluginId) ?? ''
+  const guiTree = Array.isArray(payload.guiTree) ? payload.guiTree : null
+  if (viewId === null || guiTree === null) return null
+  return {
+    kind: 'extension-widget',
+    sessionId: resolveSessionId(msg, payload),
+    widget: { viewId, pluginId, guiTree },
+  }
+}
+
 // ── 5 个 extension:* 窄化守卫（pluginId 一律 ''，wire 无该字段）──────
 
 function parseExtensionWidget(msg: IncomingPluginMessage): InternalEvent | null {
@@ -284,6 +306,7 @@ const PLUGIN_HANDLERS: Record<string, (msg: IncomingPluginMessage) => InternalEv
   'plugin:messageDecoration': parseMessageDecoration,
   'plugin:statusChange': parseStatusChange,
   'plugin:uiRequest': parseUiRequest,
+  'plugin:viewUpdate': parseViewUpdate,
 }
 
 const EXTENSION_HANDLERS: Record<string, (msg: IncomingPluginMessage) => InternalEvent | null> = {

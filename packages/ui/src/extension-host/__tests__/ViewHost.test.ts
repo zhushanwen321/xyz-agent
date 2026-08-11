@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { reactive } from 'vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import ViewHost from '../ViewHost.vue'
 import { VIEW_HOST_SOURCE_KEY, type ViewHostSource, type ViewCacheEntry } from '../view-host-source'
@@ -94,22 +95,23 @@ describe('ViewHost', () => {
     expect(empty.text()).toContain(VIEW_ID)
   })
 
-  it('R2 空态 → 渲染态切换：getView 返回值变化后重渲染', async () => {
-    // 可变 store：先 undefined，后注入树
-    let entry: ViewCacheEntry | undefined = undefined
-    const store: ViewHostSource = {
-      getView: vi.fn(() => entry),
+  it('R2 空态 → 渲染态切换：响应式数据源变化后同实例重渲染（MF-4 回归防护）', async () => {
+    // 模拟壳层响应式桥（MF-4：壳 provide 的 getView 经 reactive 容器读取，store mutate
+    // 触发 computed 失效）——同实例数据变化必须真实触发重渲染，remount 规避不通过。
+    const store = reactive<{ entry: ViewCacheEntry | undefined }>({ entry: undefined })
+    const source: ViewHostSource = {
+      getView: vi.fn(() => store.entry),
     }
-    const wrapper = mountHost(store)
+    const wrapper = mountHost(source)
     await wrapper.vm.$nextTick()
     expect(wrapper.find('[data-testid="view-host-empty"]').exists()).toBe(true)
 
-    entry = { viewId: VIEW_ID, pluginId: 'p1', guiTree: makeTree(), updatedAt: 456 }
-    // 重新 mount（computed 依赖注入对象，测试中通过重新渲染触发）
-    const wrapper2 = mountHost(store)
-    await wrapper2.vm.$nextTick()
-    expect(wrapper2.find('[data-testid="view-host-empty"]').exists()).toBe(false)
-    expect(wrapper2.find('[data-testid="ansi-text"]').exists()).toBe(true)
+    store.entry = { viewId: VIEW_ID, pluginId: 'p1', guiTree: makeTree(), updatedAt: 456 }
+    await wrapper.vm.$nextTick()
+    // 同实例重渲染（不 remount）：computed 依赖的 reactive 值变化 → 空态消失 + GuiComponent 渲染
+    expect(wrapper.find('[data-testid="view-host-empty"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Hello')
   })
 
   it('R3 无注入 source 时静默空态不崩', () => {

@@ -109,7 +109,7 @@ export type ContributionType =
 
 /**
  * 解析后 contribution 统一结构（DM1）。
- * placement 是路由键（'sidebar.tab'/'composer.toolbar'/'panel.header.action'/'statusbar'/'drawer.tab'/...，
+ * placement 是路由键（'sidebar.tab'/'composer.toolbar'/'panel.header'/'statusbar'/'drawer.tab'/...，
  * 开放字符串，壳注册制 IF5）。available 是 routeAll 后的缓存（AC9 置灰依据）。
  */
 export interface ContributionRecord {

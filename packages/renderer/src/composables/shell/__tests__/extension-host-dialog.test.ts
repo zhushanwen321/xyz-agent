@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { InternalEventBus } from '@xyz-agent/core'
 import type { InternalEvent } from '@xyz-agent/core'
-import { dispatchGlobal } from '@/api/events'
+import { dispatchCrossSession } from '@/api/events'
 
 vi.mock('@/api/transport', () => ({
   send: vi.fn(),
@@ -149,16 +149,18 @@ describe('createDialogRequestSource（C2/C3/C4 分流）', () => {
     unsub()
   })
 
-  it('TC9: onUiTimeout 订阅 WS extension.ui_timeout（C3 保留 WS 路径）', () => {
+  it('TC9: onUiTimeout 订阅 crossSession 通道的 extension.ui_timeout（C3 保留 WS 路径）', () => {
     const source = createDialogRequestSource(bus)
     const handler = vi.fn()
     const unsub = source.onUiTimeout(handler)
 
-    dispatchGlobal({ type: 'extension.ui_timeout', payload: { sessionId: 's1', requestId: 'r1' } })
+    // MF-6：extension.ui_timeout 广播带 sessionId，route-inbound 落 session 通道 + CROSS_SESSION_TYPES
+    // （crossSession 通道）——用 dispatchCrossSession（runtime 真实广播形状，onGlobal 收不到）
+    dispatchCrossSession({ type: 'extension.ui_timeout', payload: { sessionId: 's1', requestId: 'r1' } })
     expect(handler).toHaveBeenCalledTimes(1)
     expect(handler).toHaveBeenCalledWith({ sessionId: 's1', requestId: 'r1' })
 
-    dispatchGlobal({ type: 'extension:notify', payload: { sessionId: 's1', message: 'hi' } })
+    dispatchCrossSession({ type: 'extension:notify', payload: { sessionId: 's1', message: 'hi' } })
     expect(handler).toHaveBeenCalledTimes(1) // 非 timeout 类型零触发
     unsub()
   })

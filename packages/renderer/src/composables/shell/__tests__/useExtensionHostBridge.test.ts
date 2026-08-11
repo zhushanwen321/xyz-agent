@@ -61,6 +61,25 @@ describe('createWsPluginMessageSource 过滤条件（FR1/AC1）', () => {
     expect(emitted[0]).not.toMatchObject({ kind: 'error' })
   })
 
+  it('TC1b: plugin:viewUpdate 前缀放行 → bus 收到 kind=extension-widget（MF-1 链路）', () => {
+    const { bus, bridge: b } = makeBridge()
+    bridge = b
+    const { emitted } = spyEmit(bus)
+
+    dispatchCrossSession({
+      type: 'plugin:viewUpdate',
+      payload: { sessionId: 's1', viewId: 'sidebar.tab', pluginId: 'p1', guiTree: [{ type: 'ansi-text', props: { lines: ['hi'] } }], updatedAt: 1 },
+    })
+
+    expect(emitted).toHaveLength(1)
+    expect(emitted[0]).toMatchObject({
+      kind: 'extension-widget',
+      sessionId: 's1',
+      widget: { viewId: 'sidebar.tab', pluginId: 'p1', guiTree: [{ type: 'ansi-text', props: { lines: ['hi'] } }] },
+    })
+    expect(emitted[0]).not.toMatchObject({ kind: 'error' })
+  })
+
   it('TC2: extension.ui_request 白名单放行 → bus 收到 kind=ui-request（与 plugin:uiRequest 归一）', () => {
     const { bus, bridge: b } = makeBridge()
     bridge = b

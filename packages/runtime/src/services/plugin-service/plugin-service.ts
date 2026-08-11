@@ -141,7 +141,16 @@ export class PluginService implements IPluginService {
     })
 
     // UI 请求队列：广播走 broadcastFn（优先）或 broker.broadcast（回退），与原实现一致。
-    this.uiRequestQueue = new UiRequestQueue((type, payload) => this.broadcastOrBroker(type, `ui_${payload.requestId}`, payload))
+    // MF-2：广播 payload 注入当前活跃 sessionId（与 views.update 同源，ActiveSessionResolver 求值时点）——
+    // 前端 DialogRequestQueue/useExtensionUI 均按 sessionId 分区消费，无 sid 的 uiRequest 会被双消费方
+    // 丢弃（C2 守卫），plugin dialog 永不弹出。resolve 时点求值：同一会话串行队列内 resolve 稳定。
+    this.uiRequestQueue = new UiRequestQueue((type, payload) => {
+      const active = this.activeSessionResolver.resolve()
+      this.broadcastOrBroker(type, `ui_${payload.requestId}`, {
+        ...payload,
+        sessionId: active?.id,
+      })
+    })
 
     // Status bar 注册表：广播保持 `plugin:statusBarUpdate` 契约（ADR-0015）。
     this.statusBarRegistry = new StatusBarRegistry((payload) => this.broker.broadcast({

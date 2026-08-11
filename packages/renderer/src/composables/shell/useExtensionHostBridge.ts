@@ -23,6 +23,7 @@
  * 适配（见 extension-host-dialog.ts）经 DIALOG_REQUEST_SOURCE_KEY/UI_RESPONSE_TRANSPORT_KEY 注入。
  */
 import type { App } from 'vue'
+import { reactive } from 'vue'
 import {
   ContributionRegistry,
   createSessionScopedMap,
@@ -40,6 +41,7 @@ import {
   type IncomingPluginMessage,
   type PluginMessageSource,
   type ViewCacheEntry,
+  type StatusBarSessionState,
 } from '@xyz-agent/core'
 import {
   DIALOG_REQUEST_SOURCE_KEY,
@@ -51,6 +53,7 @@ import {
 import { createDialogRequestSource, createUiResponseTransport } from './extension-host-dialog'
 import type { ServerMessage } from '@xyz-agent/shared'
 import { onCrossSession, onGlobal } from '@/api/events'
+import * as transport from '@/api/transport'
 import { useToast } from '@/composables/useToast'
 
 /** 把 renderer 的 WS 消息流（events 通道的 plugin:/extension: 下行）适配成 PluginMessageSource。 */
@@ -135,30 +138,45 @@ export function initExtensionHostBridge(app: App): {
   const source = createWsPluginMessageSource()
   // bridge 构造即订阅 source（source.subscribe → handleMessage → bus.emit）
   const bridge = new MessageBusBridge({ source, bus })
+  // MF-4 响应式桥：core store 是 headless 纯 Map 容器（刻意零 Vue 依赖），事件到达 mutate
+  // 纯 Map 不被 Vue computed 追踪 → ViewHost/StatusBar 永不重渲染。壳层用 reactive 包装分区值
+  // （init 工厂返回 reactive 容器，get/set 走 reactive proxy），ViewHost.vue computed 的
+  // getView/getItems 调用面即被追踪（core 代码零改动）。
   const viewHostStore = new ViewHostStore({
     bus,
-    sessionScoped: createSessionScopedMap(() => new Map<string, ViewCacheEntry>()),
+    sessionScoped: createSessionScopedMap(() => reactive(new Map<string, ViewCacheEntry>())),
   })
   viewHostStore.subscribe()
   const statusBarController = new StatusBarController({
     bus,
     // 分区值须满足 StatusBarSessionState 全字段（setEntries 必填，items/setEntries 后续 update push）
-    sessionScoped: createSessionScopedMap(() => ({ items: [], setEntries: [] })),
+    sessionScoped: createSessionScopedMap(() => reactive<StatusBarSessionState>({ items: [], setEntries: [] })),
   })
+  statusBarController.subscribe()
   const mountPoints = new MountPointRegistry()
   const contributions = new ContributionRegistry(bus)
   setExtensionRegistries({ mountPoints, contributions })
   // fire-and-forget：注册失败由 bootstrap 内部 warn 降级（ES2），不阻塞启动
   void registerMountPoints()
   void scanContributions()
+  // MF-3：把挂载点整表上报 runtime（AC10）——插件 views.listMountPoints() 依赖此中继查询，
+  // 不上报则恒返回 []（registerMountPoints 内部同步注册，此处 list() 已含全部挂载点）。
+  transport.send({ type: 'plugin.mountPoints.sync', payload: { mountPoints: mountPoints.list() } })
 
   // ui 组件数据源（ViewHost/StatusBar 经 inject 取，壳 provide 真实实现；形状对齐 IF10/IF5）
   app.provide(VIEW_HOST_SOURCE_KEY, {
     getView: (sessionId, viewId) => viewHostStore.getView(sessionId, viewId),
   })
   app.provide(STATUS_BAR_SOURCE_KEY, {
-    // 两 scope 重载（ui 契约）：直接委托 StatusBarController（签名对齐 IF8）
-    getItems: statusBarController.getItems.bind(statusBarController),
+    // 两 scope 重载（ui 契约）：直接委托 StatusBarController（签名对齐 IF8）。
+    // MF-4：global scope 分区是 controller 内部普通数组（非 reactive），provide 时 reactive 包装——
+    // reactive() 按原始对象缓存同一 proxy（replaceAllWith in-place 保持引用稳定），computed 追踪有效。
+    getItems: (scope: 'global' | 'per-session', sessionId?: string) => {
+      if (scope === 'global') return reactive(statusBarController.getItems('global'))
+      // sessionId 可能 undefined：controller 实现签名内部 `sessionId ?? GLOBAL_STATUS_KEY` 兜底
+      // （重载签名要求 string，受控断言仅类型擦除，运行时 undefined 走兜底分区）
+      return statusBarController.getItems('per-session', sessionId as string)
+    },
   })
   // CompanionBand 数据源：bus 'ui-request' 适配（无 sid 跳过 / askUser 过滤）+ 回传双通道（FR2/FR7）
   app.provide(DIALOG_REQUEST_SOURCE_KEY, createDialogRequestSource(bus))

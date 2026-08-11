@@ -21,7 +21,7 @@ import type {
   UiResponseTransport,
 } from '@xyz-agent/ui/extension-host'
 import type { ExtensionInteractMethod } from '@xyz-agent/shared'
-import { onGlobal } from '@/api/events'
+import { onCrossSession } from '@/api/events'
 import * as transport from '@/api/transport'
 import { sendExtensionUIResponse } from '@/api/domains/extension'
 
@@ -116,7 +116,10 @@ export function createDialogRequestSource(bus: InternalEventBus): DialogRequestS
       })
     },
     onUiTimeout(handler) {
-      return onGlobal((msg) => {
+      // MF-6：extension.ui_timeout 广播 payload 带 sessionId，route-inbound 落 session 通道 +
+      // CROSS_SESSION_TYPES（crossSession 通道），onGlobal 收不到带 sid 消息——必须订阅
+      // crossSession 通道（onUiTimeout 自身按 payload.sessionId 校验，双保险）。
+      return onCrossSession((msg) => {
         if (msg.type !== 'extension.ui_timeout') return
         const payload = msg.payload as { sessionId?: unknown; requestId?: unknown }
         if (typeof payload.sessionId !== 'string' || typeof payload.requestId !== 'string') return
