@@ -121,15 +121,15 @@ onUnmounted(() => {
   <div class="flex flex-col gap-4">
     <header class="flex items-start justify-between gap-4 mb-4">
       <div class="min-w-0">
-        <h1 class="text-xl font-semibold text-neutral-fg">{{ t('settings.tokenDebug') }}</h1>
-        <p class="mt-1 text-sm text-neutral-mid">{{ t('settings.tokenDebugPage.subtitle') }}</p>
+        <h1 class="text-xl font-semibold text-neutral-fg">{{ t('settings.menu.tokenDebug') }}</h1>
+        <p class="mt-1 text-sm text-neutral-mid">{{ t('settings.menu.tokenDebugPage.subtitle') }}</p>
       </div>
       <div class="flex gap-2 shrink-0">
-        <Button variant="ghost" size="dense" @click="resetAll">{{ t('settings.tokenDebugPage.resetAll') }}</Button>
+        <Button variant="ghost" size="dense" @click="resetAll">{{ t('settings.menu.tokenDebugPage.resetAll') }}</Button>
       </div>
     </header>
 
-    <GroupCard :title="t('settings.tokenDebugPage.presetTitle')">
+    <GroupCard :title="t('settings.menu.tokenDebugPage.presetTitle')">
       <div class="flex flex-col gap-0.5 px-2.5 pt-1.5 pb-2.5">
         <UiButton
           v-for="th in TAIJI_THEMES"
@@ -154,7 +154,7 @@ onUnmounted(() => {
       </div>
     </GroupCard>
 
-    <GroupCard :title="t('settings.tokenDebugPage.fontTitle')">
+    <GroupCard :title="t('settings.menu.tokenDebugPage.fontTitle')">
       <div class="grid grid-cols-4 gap-2 px-2.5 pt-1.5 pb-1">
         <UiButton
           v-for="f in FONT_SCALES"
@@ -171,7 +171,7 @@ onUnmounted(() => {
         </UiButton>
       </div>
       <p class="px-2.5 pb-2.5 text-xs text-neutral-mid">
-        {{ t('settings.tokenDebugPage.fontHint', { size: resolvedBasePx }) }}
+        {{ t('settings.menu.tokenDebugPage.fontHint', { size: resolvedBasePx }) }}
       </p>
     </GroupCard>
 
