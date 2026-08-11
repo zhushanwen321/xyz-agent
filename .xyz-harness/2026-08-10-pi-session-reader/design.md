@@ -199,14 +199,14 @@ agent 看到的：find 候选列表 / family 家族树 / outline turn TOC / deta
 - 选择：默认只呈现当前对话线，分叉处标注 `[旁支 N entries]`；被否：默认全树平铺。
 - 证据：pi 重开文件时 `_buildIndex()` 遍历设 `leafId = 最后 entry.id`（`session-manager.js` 编译版 :680，ts 源 :894-897 语义一致，已验证 ✅），leaf 路径 = 用户 resume 看到的视角——与使用者心智一致。navi 放弃的旁支默认不可见但可 `allBranches:true` 取。⛔ P-leaf-view：仅剩「重建路径与 pi `/resume` 肉眼比对」待 M1（_buildIndex 语义已半验证）。
 
-**D-3：`#` 选中插入 uuid 片段（`#e6c96`），不插入名称。**
-- 选择：`#e6c96`；被否：`#"session name"`。
-- 证据：uuid 片段最短无歧义、可键盘手敲、与用户已有的「文件名里的 `019e6c96-...`」心智一致；名称含空格需引号且可重名。工具 find 剥 `#` 前缀后按片段子串匹配（不限定位置），匹配规则对 uuid 片段 / 完整文件名 / 名称关键词三路兼容。
+**D-3：`#` 选中插入完整 uuid（`#019e6c96-0a0c-74b8-a73f-d1854d88e2a7`），不插入名称。**
+- 选择：`#019e6c96-0a0c-74b8-a73f-d1854d88e2a7`；被否：`#"session name"`。
+- 证据：完整 uuid 天然全局唯一，findSessions 子串匹配（`sessionId.includes(query)`）对完整 uuid 命中且仅命中自身，零碰撞；手敲短片段（如 `#019e6c96`）仍可（find 子串匹配兜底，碰撞走 F2 消歧）。名称含空格需引号且可重名，故不插名称。工具 find 剥 `#` 前缀后按子串匹配（不限定位置），匹配规则对 uuid 片段 / 完整 uuid / 完整文件名 / 名称关键词多路兼容。
 
-**D-3a（v2 O5 补充）：8 字符片段碰撞时，TUI 补全自动延长到唯一前缀。** 8 字符片段在密集开发期（uuid v7 同秒创建）实测碰撞率 26.5%（扫 3486 session，329 个前缀桶碰撞）。TUI 补全 `provideHashCandidates` 在多匹配时，对每个候选的 sessionId 计算 `insertText`：与同组最像的兄弟（共享前缀最长者）求字符级 LCP，取【最大值】+1 作唯一前缀（保留连字符，如 `#019fea0e-c`，区别于同桶的 `#019fea0e-3`），保证 find 永不触发 F2 多匹配。正常唯一候选仍 8 字符。全量 329 碰撞桶验证算法正确（取 max 而非 min——min 会被远房邻居拖短前缀致大桶仍碰撞）。实测数据与算法详见 optimization-v2.md §2.5 + §3.3 D5。
+**D-3a（v2 O5）：完整 uuid 方案下不需唯一前缀算法。** v2 初版用「8 字符片段碰撞时动态算唯一前缀（字符级 LCP+1）」，后简化为直接插入完整 uuid——完整 uuid 天然全局唯一，findSessions 子串匹配零碰撞，省去 LCP 算法 + 全局扫 + per-cwd/全局作用域一致性维护的复杂度。碰撞率 26.5% 的事实见 optimization-v2.md §2.5，完整 uuid 从源头避开（算法/实测详见 optimization-v2.md §3.3 D5）。
 
 **D-4：`#` 引用提交时不展开，由工具侧剥前缀。**
-- 选择：插入纯文本 `#e6c96`，LLM 见到后自行调 `session_read`；被否：`pi.on("input")` transform 把引用展开成路径明文注入。
+- 选择：插入纯文本 `#019e6c96-0a0c-74b8-a73f-d1854d88e2a7`，LLM 见到后自行调 `session_read`；被否：`pi.on("input")` transform 把引用展开成路径明文注入。
 - 证据：pi 的 `@` 引用同构——插入 `@path` 纯文本，read 工具经 `normalizePath(p, { stripAtPrefix: true })` 剥 `@`（`core/tools/path-utils.js:36`，stripAtPrefix 是选项名非独立函数），提交时不展开。跟随平台先例，不发明第二套引用语义（一致性 > 品味）。
 
 **D-5：家族索引用「全量首行扫描」自建，不用 `SessionManager.listAll()`。**
@@ -355,7 +355,7 @@ outline 默认只渲染 leafPath 上的 turn；`allBranches:true` 时在 forkPoi
 
 | # | 回溯目标 | 验证场景（谁/上下文/操作/预期） | 通过标准 |
 |---|---|---|---|
-| V1 | 目标 1 秒定位 + 目标 4 `#` 通道 | 真实 pi TUI 里输入 `#`，下方弹出当前目录 session 列表；选中一项插入 `#<片段>`，补一句「总结这个 session 做了什么」发给 agent | agent 调 `session_read` 完成定位+阅读并给出与该 session 实际内容一致的总结；全程未 `read` 原始 JSONL |
+| V1 | 目标 1 秒定位 + 目标 4 `#` 通道 | 真实 pi TUI 里输入 `#`，下方弹出当前目录 session 列表；选中一项插入 `#<完整 uuid>`，补一句「总结这个 session 做了什么」发给 agent | agent 调 `session_read` 完成定位+阅读并给出与该 session 实际内容一致的总结；全程未 `read` 原始 JSONL |
 | V2 | 目标 3 渐进精读 | 对本机 `019e6c96`（5.4MB / 32 turn / 1204 entry，feat-plugin-arch-3 目录）真实 session：`outline` → 据 TOC 选 2 轮 `detail` | outline 输出 ≤2K token 且 32 行齐全；两步内定位到指定历史事件（如某次 bash 命令的发起轮）；toolResult 默认不出现，`includeToolResult:true` 可取回 |
 | V3 | 目标 3 token 对比 | 同一 `019e6c96` session，对照组：agent 用内置 read 直接读原文（一次最多 50KB ≈ 12K token） | 实验组（outline+detail 完成 V2 任务）总 token < 对照组 read 一次的 5%（v2 含 assistantBrief 后阈值上调到 < 1500 token，口径仍 vs read 对比；多花 ~700 token outline 换省 3 次 expand/detail 重复调用，见 optimization-v2 §3.3 D4） |
 | V4 | 目标 2 家族追溯（fork + subagent 腿） | 对本机真实 fork 对（`019fe632` fork 自 `019fe620`）+ 真实 subagent session（`019fe635`，rootSessionId=019fe632）跑 `family` | 父链、fork 子代、subagent 列表全部列出且与实际文件属实一致；从家族根 019fe620 出发能关联到隔代 subagent 019fe635（验证 D-7 隔代规则）；已 GC 的 subagent（若存在）标注 `[已清理]` |
@@ -381,7 +381,7 @@ M1-M4 全部完成并提交（124 测试绿，tsc/eslint 0 error）。§4 V1-V6 
 
 **待手测项**（V1 TUI 端到端 + V5 RPC 端到端）：需 `pnpm dev` 启动 xyz-agent，手测 `#` 补全 + RPC 模式工具调用。纯逻辑已测试覆盖，端到端是集成验证（非阻塞）。
 
-**v2 优化验收（2026-08-11，O1-O5 已实现并提交）**：基于 optimization-v2.md 的 5 项优化（outline 加 assistantBrief + 修 toolSummary 数据源 bug / expand-detail toolResult 类型化摘要 / detail 默认摘要态 / 新增 extract action / `#` 碰撞延长唯一前缀）全部落地。commit 460d26988 probe 数据：outline `tokenEstimate=1177`（v1 506 → v2 ~1177，D4 tradeoff 量化）；019e6c96 全量 24/32 leaf turn 有 assistantBrief（8 个无 assistant text 的 turn 合理缺省）；extract 实测 commands 519 / user-messages 26 / tool-results 515（与 §2.3 probe 全量计数一致）；`#` 唯一性全量 3486 session / 329 碰撞桶 max LCP+1 算法逐桶验证通过（V-o5 含 19 元大桶 `019e9680`）。对照 optimization-v2.md §4 的 V-o1~V-o5 + V-callcount 要点核对——其中 V-o1-decision 原用 T010/WeakMap 场景经 probe 实测为虚构（019e6c96 全文 WeakMap 出现 0 次），已替换为真实 T008/T009（assistantBrief 含“推荐方案 A（Pi Bridge Extension）”/“推荐 B（appendEntry 代理）”，架构方案选型场景）；optimization-v2.md §2.1/§3.1 的 WeakMap/ADR 示例为设计期格式演示用占位数据，非基准样本真实内容。
+**v2 优化验收（2026-08-11，O1-O5 已实现并提交）**：基于 optimization-v2.md 的 5 项优化（outline 加 assistantBrief + 修 toolSummary 数据源 bug / expand-detail toolResult 类型化摘要 / detail 默认摘要态 / 新增 extract action / `#` insertText 用完整 uuid）全部落地。commit 460d26988 probe 数据：outline `tokenEstimate=1177`（v1 506 → v2 ~1177，D4 tradeoff 量化）；019e6c96 全量 24/32 leaf turn 有 assistantBrief（8 个无 assistant text 的 turn 合理缺省）；extract 实测 commands 519 / user-messages 26 / tool-results 515（与 §2.3 probe 全量计数一致）；`#` 唯一性改用完整 uuid（insertText = `#` + 36 字符，findSessions 子串匹配零碰撞，实测 ~/.pi/agent 3492 session 每个唯一命中，详见 optimization-v2.md §3.3 D5）。对照 optimization-v2.md §4 的 V-o1~V-o5 + V-callcount 要点核对——其中 V-o1-decision 原用 T010/WeakMap 场景经 probe 实测为虚构（019e6c96 全文 WeakMap 出现 0 次），已替换为真实 T008/T009（assistantBrief 含“推荐方案 A（Pi Bridge Extension）”/“推荐 B（appendEntry 代理）”，架构方案选型场景）；optimization-v2.md §2.1/§3.1 的 WeakMap/ADR 示例为设计期格式演示用占位数据，非基准样本真实内容。
 
 ---
 

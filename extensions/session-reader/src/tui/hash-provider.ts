@@ -1,6 +1,5 @@
 import type { AutocompleteProvider, AutocompleteItem } from '@earendil-works/pi-tui'
 import { SessionManager, type SessionInfo } from '@earendil-works/pi-coding-agent'
-import { listGlobalSessionIds } from '../discovery/roots.js'
 
 /**
  * M4 TUI 层：# 引用补全（design §3.3 D-3/D-4 + §1 目标 4 + 附录 P-hash-trigger）。
@@ -9,22 +8,21 @@ import { listGlobalSessionIds } from '../discovery/roots.js'
  * 由 pi 维护文件解析、cwd 目录定位、session_info.name 提取、并发读，extension 只做
  * SessionInfo → AutocompleteItem 的 UI 映射。零自写扫描逻辑（一致性 > 品味）。
  *
- * **唯一前缀作用域（O5 修复）**：insertText 的唯一区分前缀用 **全局同前缀 session id 集**
- *（`listGlobalSessionIds(agentDir)`，跨 cwd），而非显示候选的 per-cwd slice。原因：agent 拿
- * insertText 去 findSessions 是全局扫 agentDir，per-cwd 唯一在全局 find 时可能多匹配
- *（跨 cwd 碰撞）。agentDir 注入（纯逻辑层零 pi 依赖）。
+ * **insertText 方案（完整 uuid）**：insertText = `#` + 完整 sessionId（36 字符 uuid v7）。
+ * 完整 uuid 天然全局唯一，findSessions 的 `sessionId.includes(query)` 子串匹配对完整 uuid
+ * 零碰撞（完整 uuid 是某 sessionId 的完整子串 = 唯一命中）。无需算唯一前缀、无需全局扫，
+ * 一致性零维护（旧 LCP + 全局扫方案已删除）。用户历史 session 里手敲的短片段仍能 find
+ *（子串匹配 + 碰撞时 F2 消歧兜底）。
  *
  * 分层：
  * - 纯逻辑（extractHashFragment / formatAge / toCandidate / provideHashCandidates）：
- *   cwdSessionDir + agentDir 注入，可单测（造真实 session 文件让 listAll 真跑，不 mock）
+ *   cwdSessionDir 注入，可单测（造真实 session 文件让 listAll 真跑，不 mock）
  * - createHashAutocompleteProvider：pi-tui AutocompleteProvider 接口适配，组装在 index.ts
  *
- * design D-3：# 选中插入 uuid 片段（#xxxxxxxx），不插入名称。
- * design D-4：插入纯文本 # 片段，不展开——工具侧（tool-handler）剥 # 前缀后按片段子串匹配。
+ * design D-3：# 选中插入完整 uuid（#xxxxxxxx-xxxx-...），不插入名称。
+ * design D-4：插入纯文本 # uuid，不展开——工具侧（tool-handler）剥 # 前缀后按子串匹配。
  */
 
-/** uuid 片段长度（design D-3：#uuid 片段。8 字符覆盖 uuid v7 碰撞，且可键盘手敲）。 */
-export const FRAGMENT_LEN = 8
 /** # 补全默认返回上限（TUI 弹窗可读上限，design G6）。 */
 const DEFAULT_LIMIT = 10
 /**
@@ -51,7 +49,7 @@ export interface AutocompleteCandidate {
   label: string
   /** 副信息（次列）。本 provider 不设（undefined）——触发 SelectList 满宽 label 分支 */
   description?: string
-  /** 插入编辑器，如 "#019e6c96"（design D-3：uuid 片段，非名称；不显示给用户看） */
+  /** 插入编辑器，如 "#019e6c96-aaaa-bbbb-cccc-dddddddddddd"（design D-3：完整 uuid，非名称；不显示给用户看） */
   insertText: string
 }
 
@@ -109,39 +107,6 @@ function truncate(s: string, max: number): string {
 }
 
 /**
- * 两个字符串的字符级最长公共前缀（LCP）长度。逐字符比较到首个差异或较短串末尾。
- */
-function lcpLength(a: string, b: string): number {
-  const minLen = Math.min(a.length, b.length)
-  let i = 0
-  while (i < minLen && a[i] === b[i]) i++
-  return i
-}
-
-/**
- * 计算唯一区分前缀（design §3.3 D5：取【最大】LCP + 1）。
- *
- * 在同组候选 siblings 中要唯一区分 sid，须比「与它最像的兄弟」（共享前缀最长者）多一位
- * 字符——取 sid 与所有其他 sibling 的字符级 LCP 的【最大值】+1 作为唯一前缀。
- *
- * **取 max 而非 min**（附录第二轮审查教训）：取 min 会被远房邻居把前缀拖短，大碰撞桶
- *（如 19 元的 019e9680）仍碰撞。须比「最像的兄弟」多一位才能区分。保留连字符——
- * findSessions 子串匹配按整段命中。
- *
- * @param sid 待区分的 sessionId
- * @param siblings 同组所有候选 sessionId（含 sid 自己；内部排除自己后算 LCP）
- * @returns sid 的唯一前缀。siblings 无其他成员时 maxLCP=0，返回 sid.slice(0,1)。
- */
-export function computeUniquePrefix(sid: string, siblings: string[]): string {
-  let maxLCP = 0
-  for (const other of siblings) {
-    if (other === sid) continue
-    maxLCP = Math.max(maxLCP, lcpLength(sid, other))
-  }
-  return sid.slice(0, maxLCP + 1)
-}
-
-/**
  * SessionInfo → AutocompleteCandidate（纯函数，可单测）。
  *
  * **绕过 pi-tui 主列固定32死约束的关键**：不设 description。SelectList.renderItem 在
@@ -151,54 +116,42 @@ export function computeUniquePrefix(sid: string, siblings: string[]): string {
  *
  * 映射：
  * - label = `${age} ${预览/name}`（如 "01m 看看 pi-session-reader..."）——满宽渲染，
- *   时间最左 + 1 空格 + 预览吃满，无 padding，不显示 uuid 片段，不含 count（用户反馈）。
+ *   时间最左 + 1 空格 + 预览吃满，无 padding，不显示 uuid，不含 count（用户反馈）。
  * - description = undefined（不设）——触发上述满宽分支。
- * - insertText = `#片段`（design §3.3 D5）：碰撞桶（siblings.length > 1）→ max LCP+1 唯一前缀
- *   （保留连字符，如 #019fea0e-c）；唯一候选（siblings 空/缺省）→ 固定 8 字符（design D-3）。
+ * - insertText = `#${s.id}`（design D-3：完整 36 字符 uuid）。完整 uuid 天然全局唯一，
+ *   findSessions 子串匹配零碰撞——无需算唯一前缀、无需全局扫。
  *
  * name 优先于 firstMessage（design G3）。不清洗 XML 标签（对齐 /resume）。只清洗控制字符/换行。
  *
- * @param siblings 同组候选 sessionId（含 s.id）；碰撞时算唯一前缀。缺省/空 → 8 字符片段
  * @param now 计算 age 的基准时间（默认当前）
  */
-export function toCandidate(
-  s: SessionInfo,
-  siblings: string[] = [],
-  now: number = Date.now(),
-): AutocompleteCandidate {
+export function toCandidate(s: SessionInfo, now: number = Date.now()): AutocompleteCandidate {
   const age = formatAge(s.modified, now)
   const text = truncate(normalizeSingleLine(s.name ?? s.firstMessage), PREVIEW_MAX) || '(无预览)'
-  // 碰撞桶 → 唯一前缀（max LCP+1，保留连字符）；唯一候选 → 固定 8 字符片段（design D-3）
-  const frag = siblings.length > 1 ? computeUniquePrefix(s.id, siblings) : s.id.slice(0, FRAGMENT_LEN)
   return {
     label: `${age} ${text}`,
-    insertText: `#${frag}`,
+    insertText: `#${s.id}`,
   }
 }
 
 /**
- * 核心逻辑：光标前文本 → # 引用候选（design §3.3 D-3 + O5 全局唯一前缀）。
+ * 核心逻辑：光标前文本 → # 引用候选（design §3.3 D-3 + 完整 uuid insertText）。
  *
  * **显示候选**：`SessionManager.listAll(cwdSessionDir)`——pi 返回当前 cwd 目录的全部
  * session（含 name/messageCount/firstMessage，已按 modified 倒序），per-cwd，快（~19ms）。
  *
- * **insertText 唯一前缀作用域**（O5 must-fix）：
- * - fragment 非空（用户要拿片段去 find）：siblings = 全局同前缀 id 集
- *   （`listGlobalSessionIds(agentDir).filter(includes fragment)`）——findSessions 全局扫
- *   agentDir，唯一前缀也须对全局计算，否则跨 cwd 碰撞时 #→find 多匹配。
- * - fragment 空（刚输入 #，recent 浏览态）：退化为 8 字符（siblings 传空）——用户从列表
- *   选择，label 有预览可区分候选，不直接拿片段 find；浏览语义不需全局唯一（有意设计）。
+ * **insertText**：始终完整 uuid（`#${s.id}`）。完整 uuid 天然全局唯一，findSessions
+ * `sessionId.includes(query)` 子串匹配对完整 uuid 零碰撞。无需区分 fragment 空/非空、
+ * 无需全局扫。
  *
  * @param input 光标前的文本（provider wrapper 传 currentLine.slice(0, cursorCol)）
  * @param cwdSessionDir 当前 session 的目录（ctx.sessionManager.getSessionDir()，含 encoded cwd）
- * @param agentDir pi agent 目录（listGlobalSessionIds 全局扫描根，算全局唯一前缀用）
  * @param opts.limit 返回上限（默认 10）
  * @returns 非 # 前缀 → null（委托下家 provider）；# 前缀 → 候选数组（无匹配为空数组，不抛）
  */
 export async function provideHashCandidates(
   input: string,
   cwdSessionDir: string,
-  agentDir: string,
   opts?: { limit?: number },
 ): Promise<AutocompleteCandidate[] | null> {
   const fragment = extractHashFragment(input)
@@ -209,19 +162,9 @@ export async function provideHashCandidates(
   const limit = opts?.limit ?? DEFAULT_LIMIT
   const all = await SessionManager.listAll(cwdSessionDir)
   // uuid 片段非空 → id 子串过滤；空片段（刚输入 #）→ recent（listAll 已按 modified 倒序）
-  const filtered =
-    fragment === '' ? all : all.filter((s) => s.id.includes(fragment))
+  const filtered = fragment === '' ? all : all.filter((s) => s.id.includes(fragment))
   const visible = filtered.slice(0, limit)
-  if (fragment === '') {
-    // recent 浏览态（刚输入 #）：用户从列表选择，label 有预览区分候选，不直接拿片段 find。
-    // 退化为固定 8 字符（toCandidate siblings 传空 → 8 字符），接受可能的跨 cwd 碰撞——
-    // 浏览语义不需全局唯一（有意设计，非 bug）。
-    return visible.map((s) => toCandidate(s, []))
-  }
-  // fragment 非空：用户要拿片段 find，insertText 必须全局唯一（design 目标 5：#→find 永不多匹配）
-  const globalAll = await listGlobalSessionIds(agentDir)
-  const globalIds = globalAll.filter((id) => id.includes(fragment))
-  return visible.map((s) => toCandidate(s, globalIds))
+  return visible.map((s) => toCandidate(s))
 }
 
 /**
@@ -233,11 +176,10 @@ export async function provideHashCandidates(
  * - # 前缀有匹配 → 返回 session 候选
  * - # 前缀无匹配 → return null（不委托 current，避免它把 #xxx 当路径前缀返回文件建议）
  *
- * applyCompletion 把 `#fragment`（光标前已输入的片段）替换为完整 `#xxxxxxxx`（选中项的片段）。
+ * applyCompletion 把 `#fragment`（光标前已输入的片段）替换为完整 `#uuid`（选中项的完整 uuid）。
  */
 export function createHashAutocompleteProvider(
   getCwdSessionDir: () => string,
-  getAgentDir: () => string,
   current: AutocompleteProvider,
 ): AutocompleteProvider {
   return {
@@ -252,12 +194,8 @@ export function createHashAutocompleteProvider(
       if (fragment === null) {
         return current.getSuggestions(lines, cursorLine, cursorCol, options)
       }
-      // # 前缀：查 session（getter 动态读当前 session 目录/agentDir，resume 后自动跟随）
-      const candidates = await provideHashCandidates(
-        textBeforeCursor,
-        getCwdSessionDir(),
-        getAgentDir(),
-      )
+      // # 前缀：查 session（getter 动态读当前 session 目录，resume 后自动跟随）
+      const candidates = await provideHashCandidates(textBeforeCursor, getCwdSessionDir())
       if (options.signal.aborted) return null
       // provideHashCandidates 返回 null 仅在非 # 前缀（fragment===null），上面已拦截；
       // 此处 null 是 TS 收窄的防御性检查，逻辑上不触发

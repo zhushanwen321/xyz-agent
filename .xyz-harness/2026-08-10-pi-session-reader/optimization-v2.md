@@ -17,7 +17,7 @@
 - **S（情境）**：session-reader 是 pi extension，提供 `session_read` 工具（7 action：find/family/outline/expand/detail/search/export）+ TUI `#` 引用补全，让 agent 按语义结构渐进精读历史 session——`outline`（turn 目录）→ `expand`（单轮 entry 列表）→ `detail`（turn 全文）。设计目标是省 token。
 - **C（冲突）**：实际 agent 使用暴露两类问题——① **信噪比低**：三级粒度嵌套包含但每级信息缺失，agent 看懂一个 turn 要 outline→expand→detail 连调，每次重复消费（一次任务调 5 次）；② **`#` 引用不唯一**：8 字符 uuid 片段碰撞率 26.5%，`#019fea0e` 对应 2 个不同 session，agent 拿它 find 触发多匹配。
 - **Q（问题）**：怎么让每级单独可决策 + `#` 引用永远唯一？
-- **A（答案）**：5 个改动——① outline 加 assistant 结论行 + 修 toolSummary 既有 bug；② expand/detail 的 toolResult 改类型化摘要（用 toolResult 自带的 toolName + toolCallId 关联取参数）；③ detail 默认给 toolResult 摘要态；④ 新增 `extract` action（按类型提取）；⑤ `#` 补全碰撞时自动延长片段到唯一。
+- **A（答案）**：5 个改动——① outline 加 assistant 结论行 + 修 toolSummary 既有 bug；② expand/detail 的 toolResult 改类型化摘要（用 toolResult 自带的 toolName + toolCallId 关联取参数）；③ detail 默认给 toolResult 摘要态；④ 新增 `extract` action（按类型提取）；⑤ `#` 补全直接插入完整 uuid（天然全局唯一）。
 
 **设计目标**
 
@@ -25,7 +25,7 @@
 2. **调用次数 ↓**：典型任务从 5 次 → 1-2 次。
 3. **toolResult 有中间态**：给"工具名 + 参数 + 规模"，不全展开也不消失。
 4. **按类型提取**：extract 一次抽出 user 消息 / 命令 / 文件 / commit / tool 结果。
-5. **`#` 引用唯一**：碰撞时自动延长片段，agent 拿 `#` 片段 find 永不触发多匹配。
+5. **`#` 引用唯一**：insertText 用完整 uuid（`#` + 36 字符），agent 拿 `#` 引用 find 永不触发多匹配。
 
 **Scope**
 
@@ -111,7 +111,9 @@ agent 目标: 看懂 019e6c96 干了什么
 
 **根因**：uuid v7 前 32 位是毫秒时间戳，8 字符 hex = 完整时间戳。密集开发期同秒创建的 session 前缀重合。FRAGMENT_LEN=8 的唯一性假设失败。
 
-**影响链**：`#019fea0e` 插入 8 字符 → agent 用它 `find` → F2 多匹配（2 个）→ 卡住。
+**影响链（旧 8 字符方案）**：`#019fea0e` 插入 8 字符 → agent 用它 `find` → F2 多匹配（2 个）→ 卡住。
+
+**结论**：v2 O5 改用完整 uuid（`#` + 36 字符），天然全局唯一——findSessions `sessionId.includes(完整uuid)` 命中且仅命中自身，不需算唯一前缀、不需全局扫。碰撞事实（26.5%）仍成立，但完整 uuid 从源头避开碰撞。
 
 ---
 
@@ -143,14 +145,16 @@ T010 (16 entries)
      │ ...（+ includeToolResult:true 看全文）
 ```
 
-**`#` 补全（v2）**——碰撞时延长片段到唯一：
+**`#` 补全（v2）**——insertText 用完整 uuid（天然全局唯一，零碰撞）：
 
 ```
-用户输入 #019fea0e → 补全列表（2 个，preview 区分）：
-  019fea0e-c  读取 pi session 的 extension 设计    ← insertText "#019fea0e-c"（延长到第 10 位唯一）
-  019fea0e-3  settings provider 删除 bug 排查     ← insertText "#019fea0e-3"
-选中 → 插入唯一片段 → agent find 永不 F2
+用户输入 #019fea0e → 补全列表（2 个，label = age + 预览 区分，不含 uuid）：
+  01m 读取 pi session 的 extension 设计    ← insertText "#019fea0e-c0cb-aaaa-bbbb-ccccdddddddd"（完整 uuid）
+  03h settings provider 删除 bug 排查        ← insertText "#019fea0e-378e-eeee-ffff-000000000000"（完整 uuid）
+选中 → 插入完整 uuid → agent find 子串匹配唯一命中，永不 F2
 ```
+
+显示候选仍 per-cwd `listAll`（label = age + 预览/name，不含 uuid）；insertText 始终完整 uuid，无论 fragment 空/非空。
 
 **extract（v2 新增）**——跨 turn 按类型提取：`extract what=user-messages` 给所有 user 消息；`what=commands tool=bash` 给所有 bash 命令；`what=files` 给改动文件；`what=commits` 给 commit hash。
 
@@ -196,15 +200,15 @@ T010 (16 entries)
 
 **推荐 A**。extract 预设基于 probe 确认的数据结构（见 D3），纯提取不需 LLM。B 让 search 职责混乱，C 不解决痛点。
 
-#### O5：`#` 补全碰撞时延长片段到唯一
+#### O5：`#` 补全 insertText 用完整 uuid（天然全局唯一）
 
 | 方案 | 长期架构 | 短期成本 | 风险 |
 |---|---|---|---|
-| **A（推荐）：findSessions 多匹配时，每个 match 的 insertText 动态算唯一前缀（字符级 LCP+1，保留连字符）** | `#`→find 链路永远唯一；正常 8 字符，碰撞延长 | 中 | 无 |
-| B：永远插入完整 uuid（`#`+36 字符） | 永远唯一但冗长，正常 session 也被迫 36 字符 | 低 | 低 |
+| **A（推荐）：insertText 永远是完整 uuid（`#` + 36 字符）** | 完整 uuid 天然全局唯一，findSessions 子串匹配零碰撞；省去 LCP 算法 + 全局扫 + per-cwd/全局作用域一致性维护的复杂度 | 低 | uuid 是引用句柄非阅读内容，编辑器占位可接受；agent 多 ~7 token 可忽略 |
+| B：碰撞时动态算唯一前缀（字符级 LCP+1） | 正常 8 字符，碰撞延长 | 中 | 全局扫性能冷 ~289ms + LCP 算法复杂度 + per-cwd/全局作用域一致性 bug 风险 |
 | C：维持 8 字符，靠 find F2 提示重试 | 26.5% session 都要走多匹配回路 | 0 | 体验差 |
 
-**推荐 A**。碰撞时 insertText 从 `#019fea0e` 延长到 `#019fea0e-c`（第 10 位区分），findSessions 子串匹配 `019fea0e-c` 唯一命中。正常 session 仍是 8 字符。
+**推荐 A**。「冗长」缺点实际影响小——uuid 是引用句柄非阅读内容，编辑器占位可接受，agent 多 ~7 token 可忽略。为省 28 字符视觉占位而付全局扫 + LCP 算法 + 作用域一致性维护的复杂度不值。
 
 **被否：语义 summary action（"2-3 句总结"）+ outline 意图标签（侦查/设计/修复）**。需要 LLM 语义理解，session-reader 是纯逻辑工具（零 pi 依赖、不调 LLM）。工具能做的是结构化提取（extract），把素材给调用方 agent 自己总结。
 
@@ -259,20 +263,13 @@ T010 (16 entries)
 - **多花 ~700 token outline** vs **省 3 次 expand/detail 调用**（每次重复输出 user+assistant 文本，单次 detail T010 全文就远超 700 token）。
 - outline 单独 token 效率相对 v1 退化（506→~1200，翻倍），但**整体调用链 token 大幅下降**（v1 的重复消费省掉）。v2 验收保留 v1 的"vs read"对比口径（V-callcount），outline 单独退化在 D4 显式披露。
 
-**D5：`#` 唯一前缀算法**（provideHashCandidates 补全层，非工具层 findSessions）
+**D5：`#` insertText 用完整 uuid**（provideHashCandidates 补全层，非工具层 findSessions）
 
-provideHashCandidates 多匹配时，对每个候选的 sessionId 计算 `insertText`：
+provideHashCandidates 对每个候选的 insertText = `#` + 完整 sessionId（36 字符 uuid）。完整 uuid 天然全局唯一——findSessions 的 `sessionId.includes(query)` 子串匹配对完整 uuid 命中且仅命中自身（完整 uuid 是某 sessionId 的完整子串 = 唯一命中），无需算唯一前缀、无需全局扫。
 
-```
-同组 sessionId 列表 S
-对当前 sid，与 S 中其他每个 sid 求字符级 LCP，取【最大值】 maxLCP（最像的兄弟）
-唯一前缀 = sid.slice(0, maxLCP + 1)   // 保留连字符
-insertText = "#" + 唯一前缀
-```
+用户历史 session 里手敲的短片段（如 `#019e6c96`）仍能 find（子串匹配 + 碰撞时 F2 消歧兜底），无破坏性变更。
 
-**算法正确性**（✅ 全量 3486 session / 329 碰撞桶验证通过）：要唯一区分一个 sid，须比"与它最像的兄弟"（共享前缀最长者）多一位——取 LCP **最大值** +1。取最小值会被远房邻居把前缀拖短导致碰撞（初版错误，见附录）。insertText 最长 16 字符（分布：10 字 415 / 12 字 270 / 13 字 158 / 16 字 40），远短于完整 uuid（36）。
-
-例：2 元桶 `019fea0e-c0cb...` 与 `019fea0e-378e...`，LCP=9，唯一前缀=`019fea0e-c`；19 元桶 `019e9680` 每个 sid 的 insertText 两两不同（max LCP+1 全量验证唯一）。findSessions 子串匹配（`sessionId.includes(query)`）成立。正常情况（无碰撞）insertText 仍 8 字符。
+例：2 元桶 `019fea0e-c0cb...` 与 `019fea0e-378e...`，insertText 分别为 `#019fea0e-c0cb-aaaa-bbbb-ccccdddddddd` / `#019fea0e-378e-eeee-ffff-000000000000`，findSessions 各唯一命中 1 个。display 候选仍 per-cwd listAll（label = age + 预览/name，不含 uuid）。
 
 **D6：extract commits 的 uuid 误匹配处理**
 
@@ -310,7 +307,7 @@ insertText = "#" + 唯一前缀
 | V-o2 | 目标 3 | expand toolResult 类型化摘要 | toolResult 行显示 `bash: <cmd> (N行)` / `read: <path>`（非纯文本）；用 toolName+toolCallId 关联，无顺序错位 |
 | V-o3 | 目标 1 | detail 默认 toolResult 摘要态 | ① 条目数 = 16（不再变 9）② toolResult 有摘要 ③ includeToolResult:true 仍全文 |
 | V-o4-* | 目标 4 | extract 5 预设 | user-messages 返 26 条 / commands+bash 返命令带 turn / files 返去重路径 / commits 返 hash（P-extract-commits 误匹配率可接受）/ tool-results 返文本带 toolName |
-| V-o5 | 目标 5 | `#` 碰撞延长 | ① 2 元桶 `#019fea0e` 列 2 候选，insertText `#019fea0e-c`/`#019fea0e-3` 唯一 ② **大桶 `019e9680`（19 元）**：19 候选 insertText 两两不同，每个 `findSessions(insertText去#)` 唯一命中（拦截算法方向错误——2 元桶退化无法暴露） |
+| V-o5 | 目标 5 | `#` insertText 完整 uuid | ① insertText 是 `#` + 36 字符完整 uuid ② 该 insertText 去 `#` 后用 `findSessions`（`sessionId.includes`）在全局只命中 1 个（实测 ~/.pi/agent 3492 session，每个完整 uuid 唯一命中） |
 | V-callcount | 目标 2 | 固定任务"总结 019e6c96 的 plugin 架构决策" | v1 实测调用链（锚定基线）vs v2 ≤2 次 |
 | V-regress | 回归 | v1 既有功能 | find/family/outline(旧字段)/expand/detail(含 includeToolResult)/search/export 行为一致 |
 
@@ -326,7 +323,7 @@ insertText = "#" + 唯一前缀
 | O2 | expand/detail toolResult 类型化摘要 | render.ts：用 toolResult.toolName + toolCallId 关联取 args（D1/D2），entryBrief 改类型化 | 解决痛点 2/5 | V-o2 |
 | O3 | detail 默认摘要态 | render.ts：renderDetail 默认渲染摘要（O2 + 头尾 + 行数），不再 continue | 解决条目消失 | V-o3 |
 | O4 | extract action | tool-handler.ts：action 分发 + 5 预设提取（D3）+ F7-F9 + schema | 解决痛点 4 | V-o4-* |
-| O5 | `#` 唯一性 | tui/hash-provider.ts：provideHashCandidates 多匹配时动态算唯一前缀（D5） | 解决痛点 6（26.5% 碰撞） | V-o5 |
+| O5 | `#` 唯一性 | tui/hash-provider.ts：provideHashCandidates insertText 用完整 uuid（D5） | 解决痛点 6（26.5% 碰撞，完整 uuid 天然零碰撞） | V-o5 |
 
 **文件改动地图**：
 - `core/render.ts`：O1（entryToolCallNames + formatLine + 降级序）+ O2（entryBrief 类型化 + toolCallId 关联）+ O3（renderDetail 摘要态）
