@@ -65,9 +65,6 @@ vi.mock('@/composables/features/chat/useSessionDerivations', () => ({
 vi.mock('@/composables/features/sidebar/useSidebarSubagentActions', () => ({
   useSidebarSubagentActions: () => ({ stopSubagent: vi.fn() }),
 }))
-vi.mock('@/composables/features/search/useSearchModal', () => ({
-  useSearchModal: () => ({ open: vi.fn(), toggle: vi.fn(), close: vi.fn(), isOpen: { value: false } }),
-}))
 vi.mock('@/api/events', () => ({
   onGlobalType: vi.fn(() => () => {}),
   dispatchSession: vi.fn(),
@@ -261,7 +258,7 @@ describe('收尾 9：⌘[/⌘]/⌘, 全局快捷键（从 AppShell 归位）', (
     expect(nav.pointer).toBe(-1)
   })
 
-  it('composer 聚焦时 ⌘, 不触发 openSettings（全局守卫拦截）', async () => {
+  it('composer 聚焦时 ⌘, 仍触发 openSettings（仅 fork/handoff 条目受 focus 守卫）', async () => {
     // 前置：非聚焦态 ⌘, 必须正常触发（避免空绿）
     const wrapperUnfocused = mountSidebar()
     dispatchKey({ key: ',', meta: true })
@@ -269,13 +266,13 @@ describe('收尾 9：⌘[/⌘]/⌘, 全局快捷键（从 AppShell 归位）', (
     expect(openSettingsMock).toHaveBeenCalledTimes(1)
     wrapperUnfocused.unmount()
 
-    // 聚焦 composer 后再按 ⌘,：focus 守卫应拦截，不触发 openSettings
+    // 聚焦 composer 后再按 ⌘,：⌘, 不属于 fork/handoff 条目，应仍触发 openSettings
     openSettingsMock.mockClear()
     const wrapper = mountSidebar()
     focusComposer()
     dispatchKey({ key: ',', meta: true })
     await wrapper.vm.$nextTick()
-    expect(openSettingsMock).not.toHaveBeenCalled()
+    expect(openSettingsMock).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -295,6 +292,14 @@ describe('U16：composer focus 时 ⌘G 不触发 fork', () => {
     dispatchKey({ key: 'g', meta: true })
     await wrapper.vm.$nextTick()
     expect(forkFromLastAssistantMock).not.toHaveBeenCalled()
+  })
+
+  it('composer 聚焦时 ⌘⇧G 也不触发 enterForkModeFromLastAssistant（shift 条目同样受守卫）', async () => {
+    const wrapper = mountSidebar()
+    focusComposer()
+    dispatchKey({ key: 'g', meta: true, shift: true })
+    await wrapper.vm.$nextTick()
+    expect(enterForkModeFromLastAssistantMock).not.toHaveBeenCalled()
   })
 
   it('源码含 composer focus 守卫（activeElement / composer-box 检测）', () => {

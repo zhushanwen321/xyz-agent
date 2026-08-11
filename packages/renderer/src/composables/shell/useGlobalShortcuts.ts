@@ -42,6 +42,8 @@ interface KeymapEntry {
   commandId?: string
   /** 要求 shift 修饰键（⌘⇧G 进 fork 模式 vs ⌘G 后台 fork；无此字段则要求不带 shift） */
   shift?: boolean
+  /** composer 聚焦时禁用（fork/handoff 条目——与 composer 输入语义冲突；其余条目不受影响） */
+  guardComposerFocus?: boolean
   action: () => void
 }
 
@@ -77,11 +79,11 @@ export function useGlobalShortcuts(options: UseGlobalShortcutsOptions): void {
     // FR-16 fork 快捷键：⌘G 从末条 assistant 后台 fork（留在原线）；⌘⇧G 进 composer fork 模式。
     // shift 守卫（keydown handler 内）区分同 key 的 shift/非 shift 项，避免 ⌘G 误命中 ⌘⇧G。
     // 每条 entry 形如 { key: 'g'…}：'g' 后 shift 字段决定修饰要求。
-    { key: 'g', action: () => { void forkFromLastAssistant() } },
-    { key: 'g', shift: true, action: () => { void enterForkModeFromLastAssistant() } },
+    { key: 'g', guardComposerFocus: true, action: () => { void forkFromLastAssistant() } },
+    { key: 'g', shift: true, guardComposerFocus: true, action: () => { void enterForkModeFromLastAssistant() } },
     // fast-handoff 快捷键：⌘J 从末条 assistant 打包文档到新 session（完成后跳转新 session）。
     // 用 ⌘J 而非 ⌘H：macOS 系统保留 ⌘H 为「Hide Application」，OS 先拦截 renderer 拦不住。
-    { key: 'j', action: () => { void handoffFromLastAssistant() } },
+    { key: 'j', guardComposerFocus: true, action: () => { void handoffFromLastAssistant() } },
     // ⌘[ / ⌘] 导航历史（shell spec §八.5 G3-003，从 AppShell 归位收尾 9）。
     // canBack/canForward 为 false 时静默不触发（AppShell 原语义保留）；不挂 commandId（导航系统键）。
     { key: '[', action: () => { if (navigation.canBack) navigation.back() } },
@@ -90,11 +92,12 @@ export function useGlobalShortcuts(options: UseGlobalShortcutsOptions): void {
     { key: ',', action: () => { openSettings() } },
   ]
   useEventListener(window, 'keydown', (e: KeyboardEvent) => {
-    // composer 聚焦时禁用全局 fork 快捷键（避免与 composer 输入冲突；⌘K/⌘N/⌘B 仍可用但 fork 专属此守卫）。
-    // 检测：activeElement 落在 composer-box（contenteditable 输入区）内 → 不派发任何 keymap。
-    if (isComposerFocused()) return
     const overrides = commandStore.shortcutOverrides.value
     const hit = keymap.find((m) => {
+      // composer 聚焦时仅禁用 fork/handoff 条目（guardComposerFocus，避免与 composer 输入冲突）；
+      // ⌘K/⌘N/⌘B/⌘⇧P/⌘[/⌘]/⌘, 在 composer 聚焦时保持可用。
+      // 检测：activeElement 落在 composer-box（contenteditable 输入区）内。
+      if (m.guardComposerFocus && isComposerFocused()) return false
       // 有 override → 解析组合键格式（'mod+n' / 'shift+j' / 'j'）
       if (m.commandId && overrides[m.commandId]) {
         return matchOverrideKey(e, overrides[m.commandId])

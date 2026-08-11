@@ -123,14 +123,6 @@ vi.mock('@/composables/features/chat/useWorkflowListSync', () => ({ useWorkflowL
 vi.mock('@/composables/features/sidebar/useSidebarSubagentActions', () => ({
   useSidebarSubagentActions: () => ({ onSelectSubagent: vi.fn(), onCancelSubagent: vi.fn(), onRetrySubagents: vi.fn() }),
 }))
-vi.mock('@/composables/features/search/useSearchModal', async () => {
-  const { ref } = await import('vue')
-  return {
-    // W5：isOpen 必须是真实 Vue ref（Sidebar 模板 v-model:open="isOpen" 传给 SearchModal 的
-    // Boolean prop open），裸 { value } 对象会触发 "Invalid prop: Expected Boolean, got Object"。
-    useSearchModal: () => ({ isOpen: ref(false), open: vi.fn(), close: vi.fn() }),
-  }
-})
 vi.mock('@/composables/usePlatformShortcut', () => ({ usePlatformShortcut: () => ({ formatKbd: () => '⌘K' }) }))
 
 // ── mock api/events（onMounted 的 loadSessions / app.info 订阅）──

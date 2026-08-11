@@ -285,9 +285,9 @@ export function useComposerShell(params: ComposerShellParams) {
   const boxClass = computed<Array<string | false>>(() => [
     stagingBoxClass.value
       || (isBashMode.value
-        ? 'composer-bash-mode border-[var(--accent)] shadow-[0_0_0_3px_var(--accent-ring,rgba(79,142,247,0.30))]'
+        ? 'composer-bash-mode border-[var(--accent)] shadow-[0_0_0_3px_var(--accent-ring)]'
         : isActive.value
-          ? 'border-[var(--accent)] shadow-[0_0_0_3px_rgba(79,142,247,0.25)]'
+          ? 'border-[var(--accent)] shadow-[var(--shadow-glow)]'
           : hasInput.value
             ? 'border-[var(--border-strong)] shadow-[0_0_0_2px_rgba(255,255,255,0.04)]'
             : ''),

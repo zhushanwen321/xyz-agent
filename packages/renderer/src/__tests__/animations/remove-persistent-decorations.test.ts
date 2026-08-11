@@ -32,7 +32,8 @@ describe('plan 04 删除常驻装饰性动画', () => {
 
   it('TC3: composer-shell isActive 分支为静态 ring（无 steer-breathe，border+shadow 保留）', () => {
     expect(composerShell).not.toContain('animate-steer-breathe')
-    expect(composerShell).toContain('border-[var(--accent)] shadow-[0_0_0_3px_rgba(79,142,247,0.25)]')
+    // M2a-01：活跃态外环 token 化（--shadow-glow 随主题，替代旧硬编码冷蓝 rgba）
+    expect(composerShell).toContain('border-[var(--accent)] shadow-[var(--shadow-glow)]')
   })
 
   it('TC4: sessionStatus waiting 对齐静态范式（animation 为空串，无 animate-wiggle）', () => {

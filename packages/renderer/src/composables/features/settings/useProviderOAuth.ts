@@ -112,9 +112,14 @@ export function useProviderOAuth(onAuthorized: (providerId: string) => void) {
   async function login(providerId: string): Promise<void> {
     activeProviderId = providerId
     state.value = { open: true, status: 'pending', deviceInfo: null, authUrl: null, errorMessage: '' }
-    const result = await config.oauthLogin(providerId)
-    if (!result.started) {
-      state.value = { ...state.value, status: 'error', errorMessage: result.error ?? 'OAuth 启动失败' }
+    try {
+      const result = await config.oauthLogin(providerId)
+      if (!result.started) {
+        state.value = { ...state.value, status: 'error', errorMessage: result.error ?? 'OAuth 启动失败' }
+      }
+    } catch (e) {
+      // transport reject（断连/超时）：重置 pending → error，避免 Dialog 永久卡死（项目规则 #3）
+      state.value = { ...state.value, status: 'error', errorMessage: e instanceof Error ? e.message : String(e) }
     }
   }
 
@@ -122,7 +127,12 @@ export function useProviderOAuth(onAuthorized: (providerId: string) => void) {
   async function cancel(): Promise<void> {
     state.value = { ...state.value, open: false }
     if (activeProviderId) {
-      await config.oauthCancel(activeProviderId)
+      try {
+        await config.oauthCancel(activeProviderId)
+      } catch (e) {
+        // cancel 失败不阻塞关闭 Dialog（幂等，重试由用户再次触发），仅告警
+        console.warn('[provider-oauth] oauthCancel failed:', e)
+      }
     }
   }
 

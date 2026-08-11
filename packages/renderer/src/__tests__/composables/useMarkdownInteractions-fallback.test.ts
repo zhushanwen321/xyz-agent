@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { useMarkdownInteractions } from '@/composables/panel/useMarkdownInteractions'
-import { useSearchModal, resetSearchModal } from '@/composables/features/search/useSearchModal'
+import { useSearchModal, resetSearchModal } from '@xyz-agent/core'
 import * as fileApi from '@/api/domains/file'
 vi.mock('@/api/domains/file', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@/api/domains/file')>()

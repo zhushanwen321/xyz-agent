@@ -27,7 +27,7 @@ import { findByBasename } from '@/lib/file-basename'
 // 注：openExternal（lib/ipc）从本 composable 移除——Wave 2 起 http(s) 外链主路径走 drawer browser tab。
 // Wave 5 的「BrowserPane 外链导出按钮」降级出口由 BrowserPane.vue 自行 import openExternal，
 // 本 composable 不再需要它（tsconfig noUnusedLocals: true，未用 import 会编译失败）。
-import { useSearchModal } from '@/composables/features/search/useSearchModal'
+import { useSearchModal } from '@xyz-agent/core'
 import * as fileApi from '@/api/domains/file'
 import { useCodeblockCopy } from './useCodeblockCopy'
 
