@@ -1,7 +1,7 @@
 /* v6 视觉 token 块（默认 = 太极 · 玄 定稿值，2026-08-02；主题预设见 TokenDebugPage）*/
 :root {
   /* 背景层级（阶梯上抬+加宽级差，暗端防糊） */
-  --bg-stage: #0a0a0c; /* 舞台深底（最外层衬底，低于 --bg） */
+  --bg-stage: #0a0a0c; /* 舞台深底（最外层衬底，低于 --bg）。亮色（皓族）覆盖 #dbd9d4 见 style.css [data-theme=light]；本文件仅固化玄·暗 :root 定稿值（亮色族值见 design-tokens.md 亮色表） */
   --bg: #131316;
   --surface: #1f1f22;
   --surface-hover: #303033;

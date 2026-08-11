@@ -142,6 +142,7 @@
 
 | Token | 值 | 来源 |
 |-------|-----|------|
+| `--bg-stage` | `#dbd9d4` | MF-1 新增：亮色最深衬底（窗口底，透过 app-shell 圆角/padding 透出）；TAIJI_PAPER 无独立 stage，复用宣纸族最深暖灰（同 `--surface-hover`），延续暗色 base→canvas→surface 三层明度（style.css `[data-theme=light]`） |
 | `--bg` | `#f8f9fb` | draft-system light |
 | `--surface` | `#ffffff` | draft-system light |
 | `--surface-2` | `#f1f3f6` | draft-system light（原「待确认」，draft 已给值） |

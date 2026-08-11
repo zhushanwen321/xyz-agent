@@ -160,6 +160,10 @@
    宣纸米白阶梯 + 暖墨文字 + 墨黑 accent；青墨/朱印仅覆盖 accent（见下方 preset）。
    ============================================================ */
 [data-theme="light"] {
+  /* 亮色最深衬底（窗口底，透过 app-shell 圆角/padding 透出）。
+     TAIJI_PAPER 未定义独立 stage，复用宣纸族最深暖灰（同 --surface-hover 值 #dbd9d4），
+     延续暗色 base(深)→canvas(中)→surface(浅) 三层明度；避免泄漏 :root 暗色 #0a0a0c 形成黑框。 */
+  --bg-stage: #dbd9d4;
   --bg: #edebe8;
   --bg-sunken: #edebe8;
   --surface: #f7f6f3;
