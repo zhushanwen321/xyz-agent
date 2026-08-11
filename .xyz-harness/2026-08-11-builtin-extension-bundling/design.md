@@ -36,7 +36,7 @@ review: 对抗式审查（tech-design-review agent + 2 独立核查员）后修�
 **pi 加载 extension 的机制**（✅已实测，二轮审查复核）：
 - pi 是 0.80.3 **bun 编译的 Mach-O binary**（`apps/electron/resources/pi/pi-darwin-arm64`，`file` 确认；node_modules devDep 是 0.82.1 提供开发期类型，版本不同是项目已知状态）
 - pi 用 **jiti** 加载 extension（`loader.js`：`jiti.import(extensionPath)`），bun 模式下 `tryNative: false`（jiti 接管所有 import）。jiti 是 transpile-only，**pi 从不对 extension 做 type-check**（type-check 由 `pnpm extensions:typecheck` 的 tsc 保证）
-- jiti resolve 顺序支持 `.js`（pi 自带 `llama` extension 入口就是 `index.js`，`dist/extensions/llama/index.js`），**go/no-go 门基本解除**
+- jiti resolve 顺序支持 `.js`（pi 自带 `llama` extension 入口就是 `index.js`）。**✅ T1 实测通过（2026-08-11）**：esbuild bundle 的 pi-ask-user（45.8kb）+ pi-goal（58.9kb，含跨 ext value import inline）两个 `.js` extension 在 0.80.3 binary 加载成功（`get_state` success，无 `extension_error`）
 
 **pi 的 virtualModules**（✅已实测 0.80.3 binary strings 提取）：pi 运行时注入以下模块，extension `import` 它们时由 pi 提供、无需 staged 自带：
 - `@earendil-works/pi-coding-agent`、`pi-agent-core`、`pi-tui`、`pi-ai`（+ `/compat`、`/oauth` 子路径）
@@ -247,9 +247,8 @@ $ pnpm dev
 - 处理：`web-tree-sitter`（纯 JS）inline bundle；`tree-sitter-bash.wasm` + `web-tree-sitter.wasm` 走 asset 拷贝；`node-addon-api`/`node-gyp-build` 从清单删除（编译期依赖）。
 - ⛔实施期门：bundle 后 permission 的 `loader.ts` 定位 .wasm 的路径需适配（bundle 改变了模块位置）。实测验证 pi 能加载并解析 bash。
 
-**决策 4｜pi 加载 `.js` extension（go/no-go 门，已基本解除）**
-- ✅已实证：pi 用 jiti 加载（`loader.js` jiti.import），jiti resolve 顺序含 `.js`；pi 自带 `llama` extension 入口是 `index.js`（官方验证路径）。
-- ⛔ T1 唯一剩余实测：用 0.80.3 **binary**（非 0.82.1 node_modules）实际加载一个最小 `.js` extension，确认 0.80.3 同样支持（llama 实证来自 0.82.1 源码，binary 版本需实测）。
+**决策 4｜pi 加载 `.js` extension（✅ T1 实测通过，go/no-go 门解除）**
+- ✅已实证（T1，2026-08-11）：pi 用 jiti 加载（`loader.js` jiti.import），jiti resolve 含 `.js`。**实测**：esbuild bundle 的 pi-ask-user + pi-goal（含跨 ext `countActiveFromEntries` inline）两个 `.js` 在 **0.80.3 binary** 加载成功——`get_state` 返回 `success:true`、无 `extension_error`、无 `Cannot find module`。external 边界（virtualModules）+ protocol/pending-notifications inline 均验证正确。
 - **回退路径（审查 M5 诚实化）**：若 0.80.3 binary 不能加载 .js，回退方案 C。回退后：G1/G2 **仅当方案 C 的多源拷贝递归处理传递闭包时**才达成（goal→pending→? 链不断）；G3 部分达成（自动派生 deps 解决清单，拷贝源规则仍维护）；G4 仍达成。即回退从"根治"降级为"可靠止血（需实现递归拷贝）"，且必须保留 verify-staged 校验门。
 
 **决策 5｜fail-fast 校验门：dev 与 build 都跑，dry-run require（审查 M3 修订）**
@@ -307,7 +306,7 @@ $ pnpm dev
 
 | # | 单元 | justification | 可独立验收 |
 |---|---|---|---|
-| T1 | **go/no-go 前置探针（唯一剩余实测）**：用 **0.80.3 binary** 实测加载一个最小 `.js` extension（复刻 llama 路径） | 决策 4；virtualModules 已实测（§1.1），只剩 .js 加载能力待 binary 实测 | binary 加载 .js extension 无报错 |
+| T1 | ✅ **已通过（2026-08-11 实测）**：esbuild bundle pi-ask-user（45.8kb）+ pi-goal（58.9kb）成 `.js`，0.80.3 binary 加载 `get_state` success 无 error；同时验证跨 ext value import inline（goal→countActiveFromEntries）可行 | — | ✅ binary 加载 .js 成功 + 跨 ext inline 可行 |
 | T2 | **跨 ext value import 前置确认**：确认 countActiveFromEntries 纯函数（已读 state.ts，T2 复核）+ logger 单一消费方（确认无第二个 builtin 用 getLogger）| 决策 2 持续约束 | 源码结论 |
 | T3 | **bundle 脚本** `scripts/bundle-extensions.mjs`：esbuild 配置（external = §3.2 virtualModule 清单，wasm asset loader），产出 `apps/electron/resources/extensions/` | 方案 A 核心 | 9 个 index.js 产出 + 体积报告 |
 | T4 | **重写 `prepare-builtin-extensions.sh`**：调 T3；**rsync 必须排除源码入口 `.ts`**（审查 M4 陷阱：resolver fallback `.ts` 优先 `.js`，残留 .ts 会旁路 bundle）；manifest 改写指向 `.js` + 校验"staged 无同名 .ts 残留" | 替换拷贝机制 + 防静默失效 | 脚本产出 9 自包含包且无 .ts 残留 |
@@ -327,7 +326,7 @@ $ pnpm dev
 
 ### 5.3 待验证检查点
 
-- ⛔ T1：0.80.3 binary 实测加载 .js（go/no-go 唯一剩余门）
+- ✅ T1：0.80.3 binary 加载 .js 已通过（ask-user + goal 两个 esbuild bundle，get_state success 无 error）
 - ⛔ T3 后：permission wasm loader 路径适配
 - ✅ 已测：virtualModules 清单（binary strings）、9 包无真 .node native（permission 走 WASM）、countActiveFromEntries 纯函数、resolver fallback .ts 优先、dev/prod staged 同源、protocol runtime value、pi 是 bun/jiti、typebox 在 binary 提供
 
@@ -345,3 +344,4 @@ v2（审查后修订）：
 - **S4**：删除"失去 pi type-check"伪风险（jiti transpile-only）
 - **推翻 S3**：dev 非回归（当前本就 prepare-once，无 HMR）
 - **推翻 S6**：logger inline 反而更正确（pi 给每 extension 独立 ExtensionAPI）
+- **T1 探针通过**（2026-08-11 实测）：esbuild bundle .js extension 在 0.80.3 binary 加载成功（ask-user + goal，含跨 ext inline），go/no-go 门解除，方案 A 确认可进入完整实现
