@@ -55,9 +55,12 @@ export interface WasmPaths {
  */
 export function resolveWasmPaths(): WasmPaths {
 	// bundle 模式：bundle 后 wasm 与 index.js 同目录（bundle-extensions.mjs 拷贝至此）。
+	// 查两个 wasm 都存在才返回，避免不对称 guard（bash.wasm 在但 web-tree-sitter.wasm
+	// 缺失时 emscripten locateFile 会失败，虽 fail-closed 但不如入口 guard 显式拦截）。
 	const bundleDir = dirname(fileURLToPath(import.meta.url));
 	const bundleBashWasm = join(bundleDir, "tree-sitter-bash.wasm");
-	if (existsSync(bundleBashWasm)) {
+	const bundleRuntimeWasm = join(bundleDir, "web-tree-sitter.wasm");
+	if (existsSync(bundleBashWasm) && existsSync(bundleRuntimeWasm)) {
 		return { bashWasmPath: bundleBashWasm, runtimeWasmDir: bundleDir };
 	}
 
