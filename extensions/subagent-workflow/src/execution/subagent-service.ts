@@ -211,6 +211,18 @@ export class SubagentService {
    *  与 sessionId 正交：sessionId 是本进程 pi session（事件路由等），sessionRootId 是所属根
    *  （collectRecords filter 用）。设计见 recursive-subagent-visibility.md 决策 3。 */
   private sessionRootId: string | null = null;
+  /** 进程级执行上下文基线（不依赖 ALS 贯穿——pi RPC mode 的 stdin JSONL 是事件回调式
+   *  （attachJsonlLineReader stream.on("data")），每个命令是独立异步链，initSession 里
+   *  execCtxAls.enterWith 的 store 不会贯穿到后续 tool 调用事件（实测：递归第二层
+   *  parentRecordId/depth 丢失而 rootSessionId 正确——rootSessionId 是实例字段所以不受影响）。
+   *  基线 = 本进程自己的身份（initSession 从 env 读取，与 sessionRootId 同机制）：
+   *  读 ALS store 失败时兜底，保证「本进程派发的 subagent 都是本进程记录的孩子」
+   *  这一跨进程树形关系成立。
+   *  initSession 设置：有 env PI_SUBAGENT_SELF_RECORD_ID → {recordId: env 值, depth: env DEPTH}；
+   *  无 env（根进程）→ null（顶层）。 */
+  private execCtxBaseline: { recordId: string | undefined; depth: number } | null = null;
+  /** fork 深度基线（同 ALS 断裂问题：forkDepthAls.getStore() 兜底用）。根进程=0。 */
+  private forkDepthBaseline = 0;
   /** UI streaming sink（ctx.ui.setWidget）。workflow 域经 getStreamSink() 取用。 */
   private streamSink: StreamSink | null = null;
   /** [竞态修复] 主 agent isIdle 查询（ctx.isIdle）。notifier flush gate 用。
@@ -299,6 +311,7 @@ export class SubagentService {
       const base = Number.parseInt(envDepth, 10);
       if (!Number.isNaN(base) && base > 0) {
         this.forkDepthAls.enterWith(base);
+        this.forkDepthBaseline = base;
       }
     }
     // [递归可见性] 跨进程身份贯穿（设计 recursive-subagent-visibility.md）。
@@ -315,6 +328,9 @@ export class SubagentService {
     if (envSelfRecord !== undefined && envSelfRecord !== "") {
       const envNestingDepth = Number.parseInt(process.env[ENV_DEPTH] ?? "0", 10);
       const nestingDepth = Number.isNaN(envNestingDepth) ? 0 : envNestingDepth;
+      // [ALS 断裂修复] 基线兜底：enterWith 在 pi 事件回调模型下不可靠（见 execCtxBaseline 注释），
+      // 基线是 createRecordForMode / 护栏读 ALS store 失败时的权威回退。
+      this.execCtxBaseline = { recordId: envSelfRecord, depth: nestingDepth };
       this.execCtxAls.enterWith({ recordId: envSelfRecord, depth: nestingDepth });
       if (process.env.PI_EXT_DEBUG) {
         logger.debug(
@@ -447,7 +463,8 @@ export class SubagentService {
     // 但耗资源且 LLM 易陷入「委派→再委派」死循环。在所有副作用之前拦截，错误直达调用方。
     // 计数基准：顶层 nestingDepth=0，nestingDepth>MAX 被拒。与 fork 体积护栏（parentForkDepth 检查）
     // 互补：本护栏更严（计所有嵌套），混合链下先生效；两者共享 MAX_FORK_DEPTH 上限不漂移。
-    const parentNesting = this.execCtxAls.getStore();
+    // [ALS 断裂修复] getStore() 在 pi 事件回调模型下可能读空（enterWith 不贯穿），基线兜底。
+    const parentNesting = this.execCtxAls.getStore() ?? this.execCtxBaseline;
     const nestingDepth = parentNesting ? parentNesting.depth + 1 : 0;
     if (nestingDepth > MAX_FORK_DEPTH) {
       throw new ForkDepthExceededError(
@@ -540,7 +557,8 @@ export class SubagentService {
     this.assertReady();
 
     // ── BC-12 嵌套护栏：复用 execute() 的 execCtxAls 深度检查 ──
-    const parentNesting = this.execCtxAls.getStore();
+    // [ALS 断裂修复] getStore() 可能读空，基线兜底（与 execute 同）。
+    const parentNesting = this.execCtxAls.getStore() ?? this.execCtxBaseline;
     const nestingDepth = parentNesting ? parentNesting.depth + 1 : 0;
     if (nestingDepth > MAX_FORK_DEPTH) {
       throw new ForkDepthExceededError(
@@ -672,7 +690,9 @@ export class SubagentService {
     // 从 async 调用链读父执行上下文：主 session 链上无 store → 顶层 record；
     // B run() 期间包了 execCtxAls，B 内创建 C 时读到 B → C.parentRecordId=B.id, C.depth=B.depth+1。
     // depth 语义：顶层（无父）=0；有父=父 depth+1。靠 recordId 是否存在区分，不用负数魔数。
-    const parentCtx = this.execCtxAls.getStore();
+    // [ALS 断裂修复] getStore() 在 pi 事件回调模型下可能读空（enterWith 不贯穿），
+    // 基线兜底——本进程的身份在 initSession 已确定（env 注入），任何上下文下都能正确挂父链。
+    const parentCtx = this.execCtxAls.getStore() ?? this.execCtxBaseline;
     const parentRecordId = parentCtx?.recordId;
     const depth = parentCtx ? parentCtx.depth + 1 : 0;
 
@@ -739,7 +759,7 @@ export class SubagentService {
       worktreeHandle = opts.worktree;
     }
     // [MF#4][MF#2] fork 深度护栏：ALS 传递深度（主 session 链无 store→0，fork 推进 +1）。
-    const parentDepth = this.forkDepthAls.getStore() ?? 0;
+    const parentDepth = this.forkDepthAls.getStore() ?? this.forkDepthBaseline;
     const effectiveDepth = opts.fork ? parentDepth + 1 : parentDepth;
 
     let result: AgentResult;
