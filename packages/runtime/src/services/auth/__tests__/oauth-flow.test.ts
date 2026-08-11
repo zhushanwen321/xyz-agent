@@ -414,3 +414,175 @@ describe('runOAuthLogin — callback flow', () => {
     await expect(flow).rejects.toThrow('Login cancelled')
   })
 })
+
+describe('runOAuthLogin — device 起始端点失败（MF-2）', () => {
+  it('xai：device-code 起始端点 4xx → 失败并带 HTTP 状态', async () => {
+    mockFetch(async (url) => {
+      if (url === 'https://auth.x.ai/oauth2/device/code') {
+        return jsonResponse({ error: 'invalid_client' }, 400)
+      }
+      return jsonResponse({}, 404)
+    })
+    await expect(runOAuthLogin('xai', XAI_CONFIG, {}, new AbortController().signal))
+      .rejects.toThrow('OAuth device authorization failed (HTTP 400)')
+  })
+
+  it('copilot：device-code 起始端点 4xx → 失败并带 HTTP 状态', async () => {
+    mockFetch(async (url) => {
+      if (url === 'https://github.com/login/device/code') {
+        return jsonResponse({ error: 'invalid_request' }, 422)
+      }
+      return jsonResponse({}, 404)
+    })
+    await expect(runOAuthLogin('github-copilot', COPILOT_CONFIG, {}, new AbortController().signal))
+      .rejects.toThrow('OAuth device authorization failed (HTTP 422)')
+  })
+
+  it('codex：device-code 起始端点 4xx → 失败并带 HTTP 状态', async () => {
+    mockFetch(async (url) => {
+      if (url === 'https://auth.openai.com/api/accounts/deviceauth/usercode') {
+        return jsonResponse({ error: 'invalid_client' }, 400)
+      }
+      return jsonResponse({}, 404)
+    })
+    await expect(runOAuthLogin('openai-codex', OPENAI_CODEX_CONFIG, {}, new AbortController().signal))
+      .rejects.toThrow('OAuth device authorization failed (HTTP 400)')
+  })
+})
+
+describe('runOAuthLogin — token exchange 错误路径（MF-1）', () => {
+  it('anthropic：callback exchange 端点 500 → 失败并带 HTTP 状态', async () => {
+    const realFetch = globalThis.fetch.bind(globalThis)
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'https://platform.claude.com/v1/oauth/token') {
+        return jsonResponse({}, 500)
+      }
+      return realFetch(url, init)
+    }))
+    const hooks: OAuthFlowHooks = { onAuthUrl: vi.fn() }
+    const flow = runOAuthLogin('anthropic', ANTHROPIC_CONFIG, hooks, new AbortController().signal)
+    // 先挂 rejection handler：exchange 在 callback 到达后立即 reject，早于下方 await fetch 返回，
+    // 不先挂 handler 会被 Node 报为 unhandled rejection
+    const assertion = expect(flow).rejects.toThrow('OAuth token exchange failed (HTTP 500)')
+    await vi.waitFor(() => {
+      expect(hooks.onAuthUrl).toHaveBeenCalled()
+    })
+    const authUrl = (hooks.onAuthUrl as ReturnType<typeof vi.fn>).mock.calls[0][0] as { url: string }
+    const url = new URL(authUrl.url)
+    const state = url.searchParams.get('state') as string
+    const callbackPort = new URL(url.searchParams.get('redirect_uri') as string).port
+    await fetch(`http://127.0.0.1:${callbackPort}/callback?code=authz-123&state=${state}`)
+    await assertion
+  })
+
+  it('openrouter：key exchange 端点 500 → 失败并带 HTTP 状态', async () => {
+    const realFetch = globalThis.fetch.bind(globalThis)
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'https://openrouter.ai/api/v1/auth/keys') {
+        return jsonResponse({}, 500)
+      }
+      return realFetch(url, init)
+    }))
+    const hooks: OAuthFlowHooks = { onAuthUrl: vi.fn() }
+    const flow = runOAuthLogin('openrouter', OPENROUTER_CONFIG, hooks, new AbortController().signal)
+    // 先挂 rejection handler（同 anthropic：exchange 在 callback 到达后立即 reject）
+    const assertion = expect(flow).rejects.toThrow('OAuth key exchange failed (HTTP 500)')
+    await vi.waitFor(() => {
+      expect(hooks.onAuthUrl).toHaveBeenCalled()
+    })
+    const authUrl = (hooks.onAuthUrl as ReturnType<typeof vi.fn>).mock.calls[0][0] as { url: string }
+    const url = new URL(authUrl.url)
+    const callbackUrl = url.searchParams.get('callback_url') as string
+    await fetch(`${callbackUrl}?code=or-code`)
+    await assertion
+  })
+
+  it('openai-codex：二次 exchange 端点 500 → 失败并带 HTTP 状态', async () => {
+    mockFetch(async (url) => {
+      if (url === 'https://auth.openai.com/api/accounts/deviceauth/usercode') {
+        return jsonResponse({ device_auth_id: 'da-1', user_code: 'CODEX-CODE', interval: '1' })
+      }
+      if (url === 'https://auth.openai.com/api/accounts/deviceauth/token') {
+        return jsonResponse({ authorization_code: 'authz-code', code_verifier: 'verifier-x' })
+      }
+      if (url === 'https://auth.openai.com/oauth/token') {
+        return jsonResponse({}, 500)
+      }
+      return jsonResponse({}, 404)
+    })
+    await expect(runOAuthLogin('openai-codex', OPENAI_CODEX_CONFIG, {}, new AbortController().signal))
+      .rejects.toThrow('OAuth token exchange failed (HTTP 500)')
+  })
+
+  it('copilot：Copilot token exchange 端点 500 → 失败并带 HTTP 状态', async () => {
+    mockFetch(async (url) => {
+      if (url === 'https://github.com/login/device/code') {
+        return jsonResponse({
+          device_code: 'dc-gh', user_code: 'GH-CODE',
+          verification_uri: 'https://github.com/login/device', interval: 1, expires_in: 900,
+        })
+      }
+      if (url === 'https://github.com/login/oauth/access_token') {
+        return jsonResponse({ access_token: 'github-token' })
+      }
+      if (url === 'https://api.github.com/copilot_internal/v2/token') {
+        return jsonResponse({}, 500)
+      }
+      return jsonResponse({}, 404)
+    })
+    await expect(runOAuthLogin('github-copilot', COPILOT_CONFIG, {}, new AbortController().signal))
+      .rejects.toThrow('Copilot token exchange failed (HTTP 500)')
+  })
+
+  it('exchange 阶段 abort：token 端点挂起时 abort signal 立即中断（验证 signal 串联）', async () => {
+    // 注入挂起 fetch：永不 resolve，仅 signal abort 时 reject（验证 signal 串联到 exchange fetch）。
+    // 30s 超时用 AbortSignal.timeout 不受 vi fake timer 控制，用挂起 fetch + 手动 abort 替代验证串联
+    const realFetch = globalThis.fetch.bind(globalThis)
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'https://platform.claude.com/v1/oauth/token') {
+        return new Promise<Response>((_, reject) => {
+          const sig = init?.signal as AbortSignal | undefined
+          if (sig?.aborted) reject(new Error('aborted'))
+          else sig?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+        })
+      }
+      return realFetch(url, init)
+    }))
+
+    const controller = new AbortController()
+    const hooks: OAuthFlowHooks = { onAuthUrl: vi.fn() }
+    const flow = runOAuthLogin('anthropic', ANTHROPIC_CONFIG, hooks, controller.signal)
+    await vi.waitFor(() => {
+      expect(hooks.onAuthUrl).toHaveBeenCalled()
+    })
+    const authUrl = (hooks.onAuthUrl as ReturnType<typeof vi.fn>).mock.calls[0][0] as { url: string }
+    const url = new URL(authUrl.url)
+    const state = url.searchParams.get('state') as string
+    const callbackPort = new URL(url.searchParams.get('redirect_uri') as string).port
+    // 触发 exchange（callback 到达 → exchange 发起，挂起）；给 exchange 一点时间发起后再 abort
+    await fetch(`http://127.0.0.1:${callbackPort}/callback?code=authz-123&state=${state}`)
+    await new Promise((r) => setTimeout(r, 50))
+    controller.abort()
+    await expect(flow).rejects.toThrow()
+  })
+})
+
+describe('runOAuthLogin — device poll 错误处理（MF-3）', () => {
+  it('device poll fetch 抛错（网络错误/超时 abort）转结构化 failed，不穿透成裸 throw', async () => {
+    mockFetch(async (url) => {
+      if (url === 'https://auth.x.ai/oauth2/device/code') {
+        return jsonResponse({
+          device_code: 'dc-1', user_code: 'ABCD-EFGH',
+          verification_uri: 'https://auth.x.ai/activate', interval: 1, expires_in: 1800,
+        })
+      }
+      if (url === 'https://auth.x.ai/oauth2/token') {
+        // 模拟网络层 fetch 抛错（DNS/连接重置）——验证 poll catch 转结构化 failed
+        throw new TypeError('fetch failed')
+      }
+      return jsonResponse({}, 404)
+    })
+    await expect(runOAuthLogin('xai', XAI_CONFIG, {}, new AbortController().signal))
+      .rejects.toThrow('OAuth device token request timed out')
+  })
+})

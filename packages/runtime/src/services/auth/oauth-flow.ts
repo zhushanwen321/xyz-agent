@@ -65,7 +65,7 @@ const DEFAULT_DEVICE_TIMEOUT_SECONDS = 900
 const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code'
 
 /** form 编码 POST，返回解析后的 JSON 对象（非 2xx 不抛——调用方读 status 分支） */
-async function postForm(url: string, fields: Record<string, string>, signal: AbortSignal): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
+async function postForm(url: string, fields: Record<string, string>, signal: AbortSignal, timeoutMs?: number): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -73,13 +73,13 @@ async function postForm(url: string, fields: Record<string, string>, signal: Abo
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: new URLSearchParams(fields),
-    signal,
+    signal: timeoutMs !== undefined ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : signal,
   })
   return parseJsonResponse(response)
 }
 
 /** JSON 编码 POST */
-async function postJson(url: string, body: unknown, signal: AbortSignal): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
+async function postJson(url: string, body: unknown, signal: AbortSignal, timeoutMs?: number): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -87,7 +87,7 @@ async function postJson(url: string, body: unknown, signal: AbortSignal): Promis
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
-    signal,
+    signal: timeoutMs !== undefined ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : signal,
   })
   return parseJsonResponse(response)
 }
@@ -152,7 +152,7 @@ async function startDeviceAuthorization(providerId: string, config: BuiltinOAuth
   const fields: Record<string, string> = { client_id: config.clientId }
   if (config.scopes.length > 0) fields.scope = config.scopes.join(' ')
   if (providerId === 'xai') fields.referrer = 'pi'
-  const { ok, status, body } = await postForm(config.endpoints.deviceCode!, fields, signal)
+  const { ok, status, body } = await postForm(config.endpoints.deviceCode!, fields, signal, TOKEN_EXCHANGE_TIMEOUT_MS)
   if (!ok) {
     throw new Error(`OAuth device authorization failed (HTTP ${status})`)
   }
@@ -178,11 +178,19 @@ function standardDevicePoll(
   signal: AbortSignal,
 ): (attempt: number) => Promise<DevicePollResult> {
   return async () => {
-    const { ok, body } = await postForm(tokenUrl, {
-      grant_type: DEVICE_GRANT,
-      client_id: clientId,
-      device_code: deviceCode,
-    }, signal)
+    // device flow 单次请求超时（MF-3）：fetch 挂起/网络错误时转结构化 failed，避免穿透成裸 throw
+    let tokenRes: { ok: boolean; status: number; body: Record<string, unknown> }
+    try {
+      tokenRes = await postForm(tokenUrl, {
+        grant_type: DEVICE_GRANT,
+        client_id: clientId,
+        device_code: deviceCode,
+      }, signal, TOKEN_EXCHANGE_TIMEOUT_MS)
+    } catch (err) {
+      if (signal.aborted) throw err
+      return { status: 'failed', message: 'OAuth device token request timed out' }
+    }
+    const { ok, body } = tokenRes
     if (ok) {
       return { status: 'complete', value: body }
     }
@@ -285,7 +293,7 @@ async function runCopilotDeviceFlow(config: BuiltinOAuthConfig, hooks: OAuthFlow
         ...COPILOT_HEADERS,
       },
       body: new URLSearchParams(fields),
-      signal,
+      signal: AbortSignal.any([signal, AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS)]),
     })
     const { ok, status, body } = await parseJsonResponse(response)
     if (!ok) {
@@ -315,20 +323,27 @@ async function runCopilotDeviceFlow(config: BuiltinOAuthConfig, hooks: OAuthFlow
     waitBeforeFirstPoll: true,
     signal,
     poll: async () => {
-      const response = await fetch(config.endpoints.token!, {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/x-www-form-urlencoded',
-          ...COPILOT_HEADERS,
-        },
-        body: new URLSearchParams({
-          client_id: config.clientId,
-          device_code: device.deviceCode,
-          grant_type: DEVICE_GRANT,
-        }),
-        signal,
-      })
+      // device flow 单次请求超时（MF-3）：fetch 挂起/网络错误时转结构化 failed
+      let response: Response
+      try {
+        response = await fetch(config.endpoints.token!, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            ...COPILOT_HEADERS,
+          },
+          body: new URLSearchParams({
+            client_id: config.clientId,
+            device_code: device.deviceCode,
+            grant_type: DEVICE_GRANT,
+          }),
+          signal: AbortSignal.any([signal, AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS)]),
+        })
+      } catch (err) {
+        if (signal.aborted) throw err
+        return { status: 'failed', message: 'OAuth device token request timed out' }
+      }
       const { ok, status, body } = await parseJsonResponse(response)
       if (ok && typeof body.access_token === 'string') {
         return { status: 'complete', value: body.access_token }
@@ -354,7 +369,7 @@ async function runCopilotDeviceFlow(config: BuiltinOAuthConfig, hooks: OAuthFlow
       Authorization: `Bearer ${String(githubResult.value)}`,
       ...COPILOT_HEADERS,
     },
-    signal,
+    signal: AbortSignal.any([signal, AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS)]),
   })
   const { ok, status, body } = await parseJsonResponse(copilotResponse)
   if (!ok) {
@@ -378,12 +393,12 @@ async function runCopilotDeviceFlow(config: BuiltinOAuthConfig, hooks: OAuthFlow
 
 // eslint-disable-next-line no-magic-numbers -- openai-codex 授权窗口 15min（pi-ai DEVICE_CODE_TIMEOUT_SECONDS 同款）
 const OPENAI_CODEX_TIMEOUT_SECONDS = 15 * 60
-/** token exchange 超时（pi-ai TOKEN_EXCHANGE_TIMEOUT_MS 同款）：回调已到达但远端 API 挂起时兜底 */
+/** 单次 OAuth HTTP 请求超时（pi-ai TOKEN_EXCHANGE_TIMEOUT_MS 同款）：device flow 各出网点 + callback exchange，远端挂起时兜底防无限等待 */
 const TOKEN_EXCHANGE_TIMEOUT_MS = 30_000
 
 async function runOpenAICodexDeviceFlow(config: BuiltinOAuthConfig, hooks: OAuthFlowHooks, signal: AbortSignal): Promise<OAuthCredential> {
   // 1. 起始：device_auth_id + user_code
-  const start = await postJson(config.endpoints.deviceCode!, { client_id: config.clientId }, signal)
+  const start = await postJson(config.endpoints.deviceCode!, { client_id: config.clientId }, signal, TOKEN_EXCHANGE_TIMEOUT_MS)
   if (!start.ok) {
     throw new Error(`OAuth device authorization failed (HTTP ${start.status})`)
   }
@@ -415,10 +430,18 @@ async function runOpenAICodexDeviceFlow(config: BuiltinOAuthConfig, hooks: OAuth
     expiresInSeconds: OPENAI_CODEX_TIMEOUT_SECONDS,
     signal,
     poll: async () => {
-      const { ok, status, body } = await postJson(deviceTokenUrl.toString(), {
-        device_auth_id: deviceAuthId,
-        user_code: userCode,
-      }, signal)
+      // device flow 单次请求超时（MF-3）：fetch 挂起/网络错误时转结构化 failed
+      let pollRes: { ok: boolean; status: number; body: Record<string, unknown> }
+      try {
+        pollRes = await postJson(deviceTokenUrl.toString(), {
+          device_auth_id: deviceAuthId,
+          user_code: userCode,
+        }, signal, TOKEN_EXCHANGE_TIMEOUT_MS)
+      } catch (err) {
+        if (signal.aborted) throw err
+        return { status: 'failed', message: 'OAuth device token request timed out' }
+      }
+      const { ok, status, body } = pollRes
       if (ok) {
         if (typeof body.authorization_code !== 'string' || typeof body.code_verifier !== 'string') {
           return { status: 'failed', message: 'Invalid device auth token response' }
@@ -447,7 +470,7 @@ async function runOpenAICodexDeviceFlow(config: BuiltinOAuthConfig, hooks: OAuth
     code: String((pollResult.value as Record<string, unknown>).authorization_code),
     code_verifier: String((pollResult.value as Record<string, unknown>).code_verifier),
     redirect_uri: new URL(config.endpoints.deviceCode!).origin + '/deviceauth/callback',
-  }, signal)
+  }, signal, TOKEN_EXCHANGE_TIMEOUT_MS)
   if (!exchange.ok) {
     throw new Error(`OAuth token exchange failed (HTTP ${exchange.status})`)
   }
