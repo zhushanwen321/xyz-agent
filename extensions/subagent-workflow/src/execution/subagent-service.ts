@@ -145,6 +145,14 @@ export interface SubagentServiceSessionInit {
 /** background 优先级（保留 priority 排序机制，单一值）。 */
 const PRIORITY_BACKGROUND = 1000;
 
+/** 跨进程身份贯穿的 env 名（父进程 spawn 子进程时注入，子进程 initSession 读取）。
+ *  仿照 PI_SUBAGENT_FORK_DEPTH 机制，让递归 subagent 的身份（rootSessionId / parentRecordId / depth）
+ *  跨进程传递，使主进程 /subagents 能看到完整递归树（设计见 docs/design/recursive-subagent-visibility.md）。
+ *  语义：env 描述「子进程自己的身份」，不是父的身份（决策 1）。 */
+const ENV_ROOT_SESSION_ID = "PI_SUBAGENT_ROOT_SESSION_ID";
+const ENV_SELF_RECORD_ID = "PI_SUBAGENT_SELF_RECORD_ID";
+const ENV_DEPTH = "PI_SUBAGENT_DEPTH";
+
 /** 触发 onUpdate 的事件类型（streaming delta 不触发，避免每 token 刷新）。 */
 const TRIGGERING_EVENT_TYPES = new Set<AgentEvent["type"]>([
   "tool_start",
@@ -198,6 +206,11 @@ export class SubagentService {
   private pi: PiLike | null = null;
   /** 当前 Pi session ID（session 隔离过滤用）。initSession 时注入。 */
   private sessionId: string | null = null;
+  /** 所属根 session ID（record 归属过滤用）。根进程 = sessionId（自己是 root）；
+   *  子进程 = env PI_SUBAGENT_ROOT_SESSION_ID 贯穿的真 ROOT（initSession 读取）。
+   *  与 sessionId 正交：sessionId 是本进程 pi session（事件路由等），sessionRootId 是所属根
+   *  （collectRecords filter 用）。设计见 recursive-subagent-visibility.md 决策 3。 */
+  private sessionRootId: string | null = null;
   /** UI streaming sink（ctx.ui.setWidget）。workflow 域经 getStreamSink() 取用。 */
   private streamSink: StreamSink | null = null;
   /** [竞态修复] 主 agent isIdle 查询（ctx.isIdle）。notifier flush gate 用。
@@ -286,6 +299,27 @@ export class SubagentService {
       const base = Number.parseInt(envDepth, 10);
       if (!Number.isNaN(base) && base > 0) {
         this.forkDepthAls.enterWith(base);
+      }
+    }
+    // [递归可见性] 跨进程身份贯穿（设计 recursive-subagent-visibility.md）。
+    // 父进程 spawn 时注入这 3 个 env 描述「子进程自己的身份」：
+    //   - rootSessionId：所属根 session（贯穿真 ROOT，子进程不覆盖）
+    //   - selfRecordId：子进程自己的 record id（孙 subagent 的直接父）
+    //   - depth：子进程的嵌套深度
+    // 子进程读 env 建立基线后，createRecordForMode 读 execCtxAls 自动正确（孙挂到子名下）。
+    // 根进程无 env → sessionRootId = init.sessionId（自己是 root），execCtxAls 不 enterWith（顶层）。
+    // enterWith 贯穿整个 session 生命周期（与 forkDepthAls 同构，决策 4）。
+    const envRoot = process.env[ENV_ROOT_SESSION_ID];
+    this.sessionRootId = envRoot ?? init.sessionId;
+    const envSelfRecord = process.env[ENV_SELF_RECORD_ID];
+    if (envSelfRecord !== undefined && envSelfRecord !== "") {
+      const envNestingDepth = Number.parseInt(process.env[ENV_DEPTH] ?? "0", 10);
+      const nestingDepth = Number.isNaN(envNestingDepth) ? 0 : envNestingDepth;
+      this.execCtxAls.enterWith({ recordId: envSelfRecord, depth: nestingDepth });
+      if (process.env.PI_EXT_DEBUG) {
+        logger.debug(
+          `[subagents] execCtxAls initialized: recordId=${envSelfRecord} depth=${nestingDepth} rootSessionId=${envRoot ?? init.sessionId}`,
+        );
       }
     }
     // revive（dispose 的逆操作：/resume /fork /new 后复活）
@@ -650,7 +684,7 @@ export class SubagentService {
       task: opts.task,
       slug: opts.slug,
       startedAt: Date.now(),
-      rootSessionId: this.sessionId ?? undefined,
+      rootSessionId: this.sessionRootId ?? undefined,
       parentRecordId,
       depth,
       controller,
@@ -982,6 +1016,11 @@ export class SubagentService {
       dialogQueue: this.dialogQueue,
       // 主进程运行模式：session-runner W4 守卫据此决定是否注入 ask_user RPC 提示词。
       mode: this.uiObservability.getMode(),
+      // [递归可见性] 透传所属根 session（runSpawn 注入为子进程 env PI_SUBAGENT_ROOT_SESSION_ID）。
+      // sessionRootId 在 initSession 设定（根进程=sessionId，子进程=env 贯穿的真 ROOT）。
+      // execute/executeAndAwait 调本方法前必经 initSession，此时 sessionRootId 已非空；
+      // ?? 兑底防类型漂移（运行时不可达）。
+      sessionRootId: this.sessionRootId ?? this.sessionId ?? "",
     };
   }
 }

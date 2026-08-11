@@ -179,6 +179,7 @@ function makeCtx(overrides: Partial<SessionRunnerContext> = {}): SessionRunnerCo
     skillDirs: [],
     mainCwd: "/tmp/test",
     mainSessionFile: undefined,
+    sessionRootId: "root-session-test",
     ...overrides,
   };
 }

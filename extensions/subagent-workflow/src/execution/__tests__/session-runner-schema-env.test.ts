@@ -161,6 +161,7 @@ function makeCtx(): SessionRunnerContext {
     agentDir: "/fake/agent",
     skillDirs: [],
     mainCwd: "/fake/cwd",
+    sessionRootId: "root-session-test",
   };
 }
 

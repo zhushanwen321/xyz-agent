@@ -274,6 +274,9 @@ export interface SessionRunnerContext {
   dialogQueue?: DialogGlobalQueue;
   /** 主进程运行模式（W4 守卫：headless 不注入 ask_user RPC 提示词）。 */
   mode?: ExtensionMode;
+  /** 所属根 session ID（跨进程身份贯穿用）。子进程的 record.rootSessionId 全指向真 ROOT，
+   *  使主进程 /subagents 能看到完整递归树。runSpawn 无条件注入为子进程 env（设计 recursive-subagent-visibility.md）。 */
+  sessionRootId: string;
 }
 
 /** SessionRunner.run 的入参。 */
@@ -660,6 +663,15 @@ export async function runSpawn(
   if (opts.fork && opts.parentForkDepth !== undefined) {
     childEnv.PI_SUBAGENT_FORK_DEPTH = String(opts.parentForkDepth + 1);
   }
+  // [递归可见性] 跨进程身份贯穿（设计 docs/design/recursive-subagent-visibility.md）。
+  // 无条件注入每个 subagent（决策 2：身份贯穿是基础需求，不依赖 fork）。env 描述「子进程自己的身份」：
+  //   - ROOT_SESSION_ID：所属根 session（贯穿真 ROOT，子进程 sessionRootId 读它）
+  //   - SELF_RECORD_ID：子进程自己的 record id（子进程 execCtxAls 基线 = 孙的直接父）
+  //   - DEPTH：子进程的嵌套深度（子进程 execCtxAls 基线 depth）
+  // 子进程 initSession 读这 3 个 env 建立基线 → createRecordForMode 读 execCtxAls 自动正确。
+  childEnv.PI_SUBAGENT_ROOT_SESSION_ID = ctx.sessionRootId;
+  childEnv.PI_SUBAGENT_SELF_RECORD_ID = record.id;
+  childEnv.PI_SUBAGENT_DEPTH = String(record.depth);
   // D-A6 bridge: schema 激活 structured-output 扩展注册 tool（workflow 编排层需要）
   applySchemaEnvToChildEnv(childEnv, opts.schemaEnv);
 
