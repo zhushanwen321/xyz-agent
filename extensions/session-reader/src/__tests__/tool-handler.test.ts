@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
 import { handleSessionRead, renderExtractItems, type SessionReadParams } from '../tool-handler.js'
-import { REAL_AGENT_DIR as REAL, E6, FAM, HAS_E6, HAS_REAL } from './real-data.js'
+import { listRecordManifests } from '../discovery/subagents.js'
+import { REAL_AGENT_DIR as REAL, E6, FAM, HAS_E6, HAS_REAL, HAS_REAL_SUBAGENTS_DIR } from './real-data.js'
 
 /**
  * M3 tool-handler 集成测试。
@@ -73,17 +74,20 @@ describe.skipIf(!HAS_REAL)('handleSessionRead', () => {
     expect(d.sizeBytes).toBeGreaterThan(0)
   })
 
-  // w1 合并 subagent 候选后两处影响（design R2 盲点连带修复）：
-  // 1) query：'zzz999' 在本机某 subagent 首消息命中 → 换确定零匹配串
-  // 2) timeout：缺省 find 全扫 main+subagent 真实数据 ~8s，默认 5s 卡边界 → 放宽到 30s
-  //    （w2 实现 handler source 透传后可改 source:'main' 收窄到 main 侧，届时恢复默认 timeout）
+  // w1 合并 subagent 候选后，本机 subagent task 文本（含本用例 query 字符串本身，因当前
+  // wave 的 subagent task 引用了它）会触发 name-keyword fallback 命中 → 零匹配断言失败。
+  // w2 实现 handler source 透传后，用 source:'main' 收窄到 main 侧避开 subagent 干扰
+  //（w1 test 注释原预言的修复路径），同时恢复默认 timeout（main 单侧扫描快）。
   it('7. F1 find zero match returns empty matches + 👉 hint (no throw)', async () => {
-    const r = await handleSessionRead({ action: 'find', query: 'zzz-nonexistent-session-9q8x2' }, REAL)
+    const r = await handleSessionRead(
+      { action: 'find', query: 'zzz-nonexistent-session-9q8x2', source: 'main' },
+      REAL,
+    )
     const d = r.details as { matches: unknown[]; truncated: boolean }
     expect(d.matches).toEqual([])
     expect(d.truncated).toBe(false)
     expect(r.content[0].text).toContain('👉')
-  }, 30000)
+  })
 
   it('8. F4 detail turn out of range throws with 越界', async () => {
     await expect(
@@ -510,5 +514,406 @@ describe('renderExtractItems F9 截断（S3 首项超大 + S4 文案）', () => 
     expect(text).not.toContain('≈2000 token')
     // 文案含 shown/count
     expect(text).toMatch(/已显示 \d+\/\d+ 项/)
+  })
+})
+
+// ============================================================
+// w2 新增：resolveSessionId 三形态（① 绝对路径 / ② sa-id / ③ findSessions 透传 source）
+// + ES1/ES2 错误契约 + source 透传 + 真实数据守卫（design TC2-TC18）
+// ============================================================
+
+/**
+ * 造 subagent manifest + session 文件（TC7/TC8/TC10/CQ3 用）。
+ * sessionFileExists:false 模拟 GC（manifest 存在但 session 文件不存在 → ES1）。
+ * 返回 session 文件绝对路径（= manifest.sessionFile）。
+ */
+async function makeFixtureSubagent(
+  dir: string,
+  saId: string,
+  opts: {
+    realSessionId: string
+    rootSessionId?: string
+    agentName?: string
+    sessionFileExists?: boolean
+    firstUserText?: string
+  },
+): Promise<string> {
+  const slug = '--demo-cwd--'
+  const sessionFile = join(dir, 'subagents', slug, 'sessions', `${opts.realSessionId}.jsonl`)
+  if (opts.sessionFileExists !== false) {
+    await mkdir(join(dir, 'subagents', slug, 'sessions'), { recursive: true })
+    const lines = [
+      JSON.stringify({ type: 'session', id: opts.realSessionId, cwd: '/demo' }),
+      JSON.stringify({
+        type: 'message',
+        id: opts.realSessionId + '-m1',
+        parentId: opts.realSessionId,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: opts.firstUserText ?? 'subagent work' }],
+        },
+      }),
+    ]
+    await writeFile(sessionFile, lines.join('\n') + '\n')
+  }
+  const recordsDir = join(dir, 'subagents', slug, 'records')
+  await mkdir(recordsDir, { recursive: true })
+  await writeFile(
+    join(recordsDir, `${saId}.json`),
+    JSON.stringify({
+      id: saId,
+      rootSessionId: opts.rootSessionId ?? 'root-session-1',
+      agentName: opts.agentName ?? 'explorer',
+      sessionFile,
+    }),
+  )
+  return sessionFile
+}
+
+describe('resolveSessionId ① 绝对路径形态（w2 TC2-TC6）', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'tool-handler-path-'))
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('TC2: 绝对路径 outline → sessionId=header 真实 id（非文件名）', async () => {
+    const fileId = '019e6c96-dddd-eeee-ffff-000000000b1'
+    // 文件名 arbitrary-name 与 header id 不同，验 sessionId 取 header id
+    const filePath = join(dir, 'sessions', '--demo-cwd--', 'arbitrary-name.jsonl')
+    await mkdir(join(dir, 'sessions', '--demo-cwd--'), { recursive: true })
+    const lines = [
+      JSON.stringify({ type: 'session', id: fileId, cwd: '/demo' }),
+      JSON.stringify({
+        type: 'message',
+        id: fileId + '-m1',
+        parentId: fileId,
+        message: { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+      }),
+    ]
+    await writeFile(filePath, lines.join('\n') + '\n')
+    // export 的 details.path = session-view-<sessionId>.md，含 header 真实 id，不含文件名
+    const r = await handleSessionRead(
+      { action: 'export', session: filePath, format: 'outline' },
+      dir,
+    )
+    const d = r.details as { path: string }
+    expect(d.path).toContain(fileId)
+    expect(d.path).not.toContain('arbitrary-name')
+  })
+
+  it('TC3: 绝对路径文件不存在 → F6 风格错误（含 👉）', async () => {
+    const filePath = join(
+      dir,
+      'sessions',
+      '--demo-cwd--',
+      `not-exist-${Date.now()}.jsonl`,
+    )
+    await expect(
+      handleSessionRead({ action: 'outline', session: filePath }, dir),
+    ).rejects.toThrow(/读取失败.*文件不存在/)
+    await expect(
+      handleSessionRead({ action: 'outline', session: filePath }, dir),
+    ).rejects.toThrow('👉')
+  })
+
+  it('TC4: 绝对路径非 .jsonl → F6 风格错误', async () => {
+    const filePath = join(dir, 'sessions', '--demo-cwd--', 'x.txt')
+    await mkdir(join(dir, 'sessions', '--demo-cwd--'), { recursive: true })
+    await writeFile(filePath, 'not jsonl')
+    await expect(
+      handleSessionRead({ action: 'outline', session: filePath }, dir),
+    ).rejects.toThrow(/读取失败.*非 \.jsonl/)
+  })
+
+  it('TC5: 绝对路径 header 读不出（首行非 session header）→ F6 风格错误', async () => {
+    const filePath = join(dir, 'sessions', '--demo-cwd--', 'bad.jsonl')
+    await mkdir(join(dir, 'sessions', '--demo-cwd--'), { recursive: true })
+    await writeFile(filePath, JSON.stringify({ type: 'custom', customType: 'x' }) + '\n')
+    await expect(
+      handleSessionRead({ action: 'outline', session: filePath }, dir),
+    ).rejects.toThrow(/读取失败.*首行非合法 session header/)
+  })
+
+  it('TC5 变体: 绝对路径空文件 → F6 风格错误', async () => {
+    const filePath = join(dir, 'sessions', '--demo-cwd--', 'empty.jsonl')
+    await mkdir(join(dir, 'sessions', '--demo-cwd--'), { recursive: true })
+    await writeFile(filePath, '')
+    await expect(
+      handleSessionRead({ action: 'outline', session: filePath }, dir),
+    ).rejects.toThrow(/读取失败.*首行非合法 session header/)
+  })
+
+  it('TC6: ~ 前缀展开到 homedir（文件实际在 homedir 下）', async () => {
+    const home = homedir()
+    const tmpUnderHome = await mkdtemp(join(home, '.sr-w2-test-'))
+    try {
+      const fileId = '019e6c96-dddd-eeee-ffff-0000000006c1'
+      const sessionFile = join(tmpUnderHome, 's.jsonl')
+      await writeFile(
+        sessionFile,
+        JSON.stringify({ type: 'session', id: fileId, cwd: '/demo' }) + '\n',
+      )
+      // ~/开头的相对 homedir 路径
+      const tildePath = '~/' + sessionFile.slice(home.length + 1)
+      const r = await handleSessionRead(
+        { action: 'export', session: tildePath, format: 'outline' },
+        dir,
+      )
+      expect((r.details as { path: string }).path).toContain(fileId)
+    } finally {
+      await rm(tmpUnderHome, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('resolveSessionId ② sa-id 形态（w2 TC7-TC10 + CQ3）', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'tool-handler-said-'))
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('TC7: sa-id 恰 1 命中 + sessionFile 存在 → 成功，sessionId=header 真实 id（非 sa-）', async () => {
+    const realId = '019e6c96-dddd-eeee-ffff-0000000007a1'
+    await makeFixtureSubagent(dir, 'sa-aaa', { realSessionId: realId, firstUserText: 'do task' })
+    const r = await handleSessionRead(
+      { action: 'export', session: 'sa-aaa', format: 'outline' },
+      dir,
+    )
+    const d = r.details as { path: string }
+    expect(d.path).toContain(realId)
+    expect(d.path).not.toContain('sa-aaa')
+  })
+
+  it('TC8: sa-id 命中但 sessionFile 不存在（GC/未写入）→ ES1（含 manifest 元数据 + 👉）', async () => {
+    await makeFixtureSubagent(dir, 'sa-gc', {
+      realSessionId: '019e6c96-dddd-eeee-ffff-0000000008a2',
+      rootSessionId: 'root-1',
+      agentName: 'explorer',
+      sessionFileExists: false,
+    })
+    await expect(
+      handleSessionRead({ action: 'outline', session: 'sa-gc' }, dir),
+    ).rejects.toThrow('session 文件不存在')
+    // 错误含 manifest 全部元数据 + 👉
+    try {
+      await handleSessionRead({ action: 'outline', session: 'sa-gc' }, dir)
+    } catch (e) {
+      const msg = (e as Error).message
+      expect(msg).toContain('sa-gc')
+      expect(msg).toContain('root-1')
+      expect(msg).toContain('explorer')
+      expect(msg).toContain('sessionFile:')
+      expect(msg).toContain('👉')
+      expect(msg).toContain('action:"family"')
+    }
+  })
+
+  it('TC9: sa-id 0 命中（可能 running）→ ES2（含 family 指引 + 完整 id 提示 + 👉）', async () => {
+    await expect(
+      handleSessionRead({ action: 'outline', session: 'sa-nonexist-9999' }, dir),
+    ).rejects.toThrow('无匹配 record')
+    try {
+      await handleSessionRead({ action: 'outline', session: 'sa-nonexist-9999' }, dir)
+    } catch (e) {
+      const msg = (e as Error).message
+      expect(msg).toContain('可能仍在运行')
+      expect(msg).toContain('action:"family"')
+      expect(msg).toContain('👉')
+    }
+  })
+
+  it('TC10: sa-id 片段输入（精确相等不命中）→ ES2', async () => {
+    await makeFixtureSubagent(dir, 'sa-c8c8dfa8', {
+      realSessionId: '019e6c96-dddd-eeee-ffff-0000000010a3',
+    })
+    // 片段 sa-c8c8 不等于完整 sa-c8c8dfa8 → 精确相等不命中 → ES2
+    await expect(
+      handleSessionRead({ action: 'outline', session: 'sa-c8c8' }, dir),
+    ).rejects.toThrow('无匹配 record')
+  })
+
+  it('sa-id 多 manifest 命中（数据异常）→ ES2 ambiguous（C4）', async () => {
+    // 同 sa-id 的两个 manifest（不同 cwd slug 目录，模拟数据异常）
+    for (const [slug, realId] of [
+      ['--demo-cwd--', '019e6c96-dddd-eeee-ffff-0000000004a4'],
+      ['--other-cwd--', '019e6c96-dddd-eeee-ffff-0000000004a5'],
+    ] as const) {
+      const sessionFile = join(dir, 'subagents', slug, 'sessions', `${realId}.jsonl`)
+      await mkdir(join(dir, 'subagents', slug, 'sessions'), { recursive: true })
+      await writeFile(
+        sessionFile,
+        JSON.stringify({ type: 'session', id: realId, cwd: '/demo' }) + '\n',
+      )
+      const recordsDir = join(dir, 'subagents', slug, 'records')
+      await mkdir(recordsDir, { recursive: true })
+      await writeFile(
+        join(recordsDir, 'sa-dup.json'),
+        JSON.stringify({
+          id: 'sa-dup',
+          rootSessionId: 'r',
+          agentName: 'a',
+          sessionFile,
+        }),
+      )
+    }
+    await expect(
+      handleSessionRead({ action: 'outline', session: 'sa-dup' }, dir),
+    ).rejects.toThrow(/匹配 2 个 record.*数据异常/)
+  })
+
+  it('CQ3: sa-id 命中但 sessionFile header 读不出 → F6 风格（不降级 record.id 当 sessionId）', async () => {
+    // sessionFile 存在但首行非 session header → readSessionHeaderId 返 undefined
+    const slug = '--demo-cwd--'
+    const sessionFile = join(dir, 'subagents', slug, 'sessions', 'bad.jsonl')
+    await mkdir(join(dir, 'subagents', slug, 'sessions'), { recursive: true })
+    await writeFile(sessionFile, JSON.stringify({ type: 'custom', customType: 'x' }) + '\n')
+    const recordsDir = join(dir, 'subagents', slug, 'records')
+    await mkdir(recordsDir, { recursive: true })
+    await writeFile(
+      join(recordsDir, 'sa-bad.json'),
+      JSON.stringify({
+        id: 'sa-bad',
+        rootSessionId: 'r',
+        agentName: 'a',
+        sessionFile,
+      }),
+    )
+    // 抛 F6 风格（读取失败 + 首行非合法 session header），不降级返回 sa-bad 当 sessionId
+    await expect(
+      handleSessionRead({ action: 'outline', session: 'sa-bad' }, dir),
+    ).rejects.toThrow(/读取失败.*首行非合法 session header/)
+  })
+})
+
+describe('source 透传（w2 TC12-TC13，依赖 w1 findSessions opts.source）', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'tool-handler-src-'))
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('TC12: find source 过滤——subagent 只返回 subagent 候选，main 只返回 main', async () => {
+    const sharedFragment = '019e6c96'
+    const mainId = `${sharedFragment}-aaaa-bbbb-cccc-0000000012d1`
+    const subId = `${sharedFragment}-aaaa-bbbb-cccc-0000000012d2`
+    await makeFixtureSession(dir, mainId, 'main content')
+    await makeFixtureSubagent(dir, 'sa-sub12', { realSessionId: subId, firstUserText: 'sub content' })
+
+    // 无 source → 两者
+    const rBoth = await handleSessionRead(
+      { action: 'find', query: sharedFragment },
+      dir,
+    )
+    const dBoth = rBoth.details as {
+      matches: Array<{ source: string; sessionId: string }>
+    }
+    expect(dBoth.matches.some((m) => m.sessionId === mainId)).toBe(true)
+    expect(dBoth.matches.some((m) => m.sessionId === subId)).toBe(true)
+
+    // source:subagent → 只 sub
+    const rSub = await handleSessionRead(
+      { action: 'find', query: sharedFragment, source: 'subagent' },
+      dir,
+    )
+    const dSub = rSub.details as {
+      matches: Array<{ source: string; sessionId: string }>
+    }
+    expect(dSub.matches.every((m) => m.source === 'subagent')).toBe(true)
+    expect(dSub.matches.some((m) => m.sessionId === subId)).toBe(true)
+    expect(dSub.matches.some((m) => m.sessionId === mainId)).toBe(false)
+
+    // source:main → 只 main
+    const rMain = await handleSessionRead(
+      { action: 'find', query: sharedFragment, source: 'main' },
+      dir,
+    )
+    const dMain = rMain.details as {
+      matches: Array<{ source: string; sessionId: string }>
+    }
+    expect(dMain.matches.every((m) => m.source === 'main')).toBe(true)
+    expect(dMain.matches.some((m) => m.sessionId === mainId)).toBe(true)
+    expect(dMain.matches.some((m) => m.sessionId === subId)).toBe(false)
+  })
+
+  it('TC13: outline source:main → resolveSessionId ③ 收窄到 main 候选（无 source 时多匹配 F2）', async () => {
+    const sharedFragment = '019e6c96'
+    const mainId = `${sharedFragment}-aaaa-bbbb-cccc-0000000013e1`
+    const subId = `${sharedFragment}-aaaa-bbbb-cccc-0000000013e2`
+    await makeFixtureSession(dir, mainId, 'main content')
+    await makeFixtureSubagent(dir, 'sa-sub13', { realSessionId: subId, firstUserText: 'sub content' })
+
+    // 无 source → main+sub 共享片段 → 2 匹配 → F2 消歧
+    const rMulti = await handleSessionRead(
+      { action: 'outline', session: sharedFragment },
+      dir,
+    )
+    expect((rMulti.details as { ambiguous: boolean }).ambiguous).toBe(true)
+
+    // source:main → 收窄到 main → 唯一匹配 → outline 成功，且是 main（export path 含 mainId）
+    const rExp = await handleSessionRead(
+      { action: 'export', session: sharedFragment, source: 'main', format: 'outline' },
+      dir,
+    )
+    expect((rExp.details as { path: string }).path).toContain(mainId)
+  })
+})
+
+describe.skipIf(!HAS_REAL_SUBAGENTS_DIR)('真实数据：subagent sa-id（w2 TC14-TC18）', () => {
+  it('TC14: completed subagent sa-id outline 成功（场景 1，sessionId=header 真实 id）', async () => {
+    const manifests = await listRecordManifests(REAL)
+    const alive = manifests.filter((m) => existsSync(m.sessionFile))
+    if (alive.length === 0) return // 本机无存活 manifest 则跳过（skipIf 只守卫目录存在）
+    const r = await handleSessionRead({ action: 'outline', session: alive[0].id }, REAL)
+    const d = r.details as { turns: unknown[] }
+    expect(d.turns.length).toBeGreaterThan(0)
+  })
+
+  it('TC15: worktree 编码目录 subagent 读取（场景 1b，递归扫描覆盖）', async () => {
+    const manifests = await listRecordManifests(REAL)
+    const wt = manifests.filter(
+      (m) => m.sessionFile.includes('--private-var-folders-') && existsSync(m.sessionFile),
+    )
+    if (wt.length === 0) return // 本机无 worktree 编码目录数据则跳过
+    const r = await handleSessionRead({ action: 'outline', session: wt[0].id }, REAL)
+    expect(((r.details as { turns: unknown[] }).turns).length).toBeGreaterThan(0)
+  })
+
+  it('TC16: 嵌套后代直接 outline（场景 1c，绝对路径形态读任意节点）', async () => {
+    const manifests = await listRecordManifests(REAL)
+    const alive = manifests.filter((m) => existsSync(m.sessionFile))
+    if (alive.length === 0) return
+    // 绝对路径形态直接读（M0 入口不依赖 findSessions）
+    const r = await handleSessionRead(
+      { action: 'outline', session: alive[0].sessionFile },
+      REAL,
+    )
+    expect(((r.details as { turns: unknown[] }).turns).length).toBeGreaterThan(0)
+  })
+
+  it('TC17: GC/failed manifest → ES1（场景 4，sessionFile 不存在）', async () => {
+    const manifests = await listRecordManifests(REAL)
+    const gc = manifests.filter((m) => !existsSync(m.sessionFile))
+    if (gc.length === 0) return // 本机无 GC 数据则跳过
+    await expect(
+      handleSessionRead({ action: 'outline', session: gc[0].id }, REAL),
+    ).rejects.toThrow('session 文件不存在')
+  })
+
+  it('TC18: 不存在 sa-id → ES2（场景 4，可能 running 指引）', async () => {
+    const fakeId = `sa-nonexist-${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 8)}`
+    await expect(
+      handleSessionRead({ action: 'outline', session: fakeId }, REAL),
+    ).rejects.toThrow('无匹配 record')
   })
 })

@@ -231,7 +231,7 @@ async function readTailIdentity(
 // records manifest（孤儿 / cleanedUp 来源）
 // ============================================================
 
-interface RecordManifest {
+export interface RecordManifest {
   id: string
   rootSessionId: string
   agentName?: string
@@ -264,7 +264,7 @@ async function tryReadManifest(path: string): Promise<RecordManifest | undefined
   }
 }
 
-async function listRecordManifests(agentDir: string): Promise<RecordManifest[]> {
+export async function listRecordManifests(agentDir: string): Promise<RecordManifest[]> {
   const root = join(agentDir, 'subagents')
   const out: RecordManifest[] = []
   async function walk(dir: string): Promise<void> {

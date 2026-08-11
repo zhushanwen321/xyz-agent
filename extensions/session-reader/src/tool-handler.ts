@@ -11,10 +11,12 @@
  * 闭包 catch 转 isError:true 文本返回——handler 可抛（纯逻辑可测），execute 不抛（pi 契约）。
  * 例外：F2 多匹配与 F1 find 零匹配「不视为错误」，返回消歧/提示结果而非抛错。
  */
+import { existsSync, openSync, readSync, closeSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, isAbsolute } from 'node:path'
+import { homedir } from 'node:os'
 import { findSessions, type MatchedSession } from './discovery/find.js'
-import { buildFamilyFromFs } from './discovery/subagents.js'
+import { buildFamilyFromFs, listRecordManifests, type RecordManifest } from './discovery/subagents.js'
 import { parseSessionFile, type Entry, type ParseResult } from './core/parser.js'
 import { buildTreeView } from './core/tree.js'
 import { segmentTurns, type Turn } from './core/turns.js'
@@ -58,6 +60,8 @@ export interface SessionReadParams {
   allBranches?: boolean
   granularity?: 'turn' | 'entry'
   cwd?: string
+  /** find/resolveSessionId: 按来源过滤。"main" = sessions/、"subagent" = subagents/。默认两者合并。 */
+  source?: 'main' | 'subagent'
   limit?: number
   /** extract action: 素材类型（必填）。其他 action 忽略。 */
   what?: 'user-messages' | 'commands' | 'files' | 'commits' | 'tool-results'
@@ -165,32 +169,171 @@ type ResolveResult =
   | { kind: 'ok'; sessionId: string; fileName: string }
   | { kind: 'multi'; query: string; candidates: MatchedSession[] }
 
+/** readSessionHeaderId 读首行的 buffer 上限。session header（id/cwd/parentSession）实测 < 300 字节，4KB 足够。 */
+const HEADER_READ_BYTES = 4096
+
 /**
- * 把 session 参数（完整 id 或片段，可能带 # 前缀）解析到唯一完整 id。
+ * 同步读 session 文件首行 header，返回 type==='session' 的 id。
  *
- * 走 findSessions（M2 已实现三路匹配：uuid 片段 / recent / 名称关键词）。
- * - 唯一匹配 → {kind:'ok'}（含 fileName，后续 parseSessionFile 直接用）
- * - 多匹配 → {kind:'multi'}（调用方据此返回 F2 消歧，不抛错）
- * - 零匹配 → 抛 F1（含最近 10 个 session 建议 + 👉，design §3.4 F1 模板）
+ * 任何异常（文件不存在/空文件/解析失败/type 不符）返回 undefined。与 find.ts readFirstLine/
+ * parseHeader 同构（定长 buffer 读首行 + JSON.parse + type 校验），但用同步 fs API
+ *（resolveSessionId 内仅调用 1 次，同步开销可接受），且不导出——避免与 w1 的 find.ts
+ * 文件交叉（CQ2 决策）。
+ */
+function readSessionHeaderId(filePath: string): string | undefined {
+  let fd: number | undefined
+  try {
+    fd = openSync(filePath, 'r')
+    const buf = Buffer.alloc(HEADER_READ_BYTES)
+    const bytesRead = readSync(fd, buf, 0, HEADER_READ_BYTES, 0)
+    if (bytesRead === 0) return undefined
+    const text = buf.subarray(0, bytesRead).toString('utf8')
+    const nl = text.indexOf('\n')
+    const line = nl === -1 ? text : text.slice(0, nl)
+    let raw: unknown
+    try {
+      raw = JSON.parse(line)
+    } catch {
+      return undefined
+    }
+    if (typeof raw !== 'object' || raw === null) return undefined
+    const o = raw as Record<string, unknown>
+    if (o.type !== 'session' || typeof o.id !== 'string') return undefined
+    return o.id
+  } catch {
+    return undefined
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd)
+      } catch {
+        // closeSync 失败：fd 可能已无效，header 数据已读取，关闭失败不影响结果（best-effort）
+        void fd
+      }
+    }
+  }
+}
+
+/** ~ 前缀（home 目录简写），与 expandHome 配套避免 magic number。 */
+const HOME_TILDE_PREFIX = '~/'
+
+/** 展开 ~ 前缀到 homedir（'~' → homedir；'~/x' → homedir/x；其余原样）。 */
+function expandHome(p: string): string {
+  if (p === '~') return homedir()
+  if (p.startsWith(HOME_TILDE_PREFIX))
+    return join(homedir(), p.slice(HOME_TILDE_PREFIX.length))
+  return p
+}
+
+/**
+ * 把 session 参数解析到唯一完整 id（design §6.1 M0 + U2/U3）。
  *
- * 仅用于 family/outline/expand/detail/search/export（find action 自行调 findSessions，
+ * 三形态：
+ * - ① 绝对路径 / ~ 前缀 → 展开后读首行 header，sessionId=header 真实 id（文件名仅定位）
+ * - ② sa-id 前缀 → listRecordManifests 精确反查，sessionId=sessionFile header id
+ *   （禁止降级 record.id——sa- 形态不可当 sessionId，CQ3 决策）
+ * - ③ 其余 → findSessions 透传 source 沿用 F1/F2
+ *
+ * 错误契约（U3）：① 文件不存在/非 .jsonl/header 读不出 → F6 风格；
+ * ② sessionFile GC → ES1（manifest 元数据 + 👉）；sa-id 0/>1 命中 → ES2（👉 family）。
+ *
+ * 仅用于 family/outline/expand/detail/search/export/extract（find action 自行调 findSessions，
  * 零匹配时返回空 + 提示，不抛错）。
  */
 async function resolveSessionId(
   rawSession: string | undefined,
   action: SessionReadAction,
   agentDir: string,
+  source?: 'main' | 'subagent',
 ): Promise<ResolveResult> {
   const session = stripHash(requireStr(rawSession, 'session', action))
-  const { matches } = await findSessions(session, agentDir, { limit: 10 })
+
+  // ① 绝对路径或 ~ 前缀（Windows 盘符由 isAbsolute 处理）
+  if (isAbsolute(session) || session === '~' || session.startsWith('~/')) {
+    const expanded = expandHome(session)
+    if (!expanded.endsWith('.jsonl')) {
+      throw err(
+        `读取失败：${session}（非 .jsonl session 文件）。👉 检查文件或换 session。`,
+      )
+    }
+    if (!existsSync(expanded)) {
+      throw err(`读取失败：${session}（文件不存在）。👉 检查文件或换 session。`)
+    }
+    const headerId = readSessionHeaderId(expanded)
+    if (headerId === undefined) {
+      throw err(
+        `读取失败：${session}（首行非合法 session header）。👉 检查文件或换 session。`,
+      )
+    }
+    return { kind: 'ok', sessionId: headerId, fileName: expanded }
+  }
+
+  // ② sa-id 前缀 → record manifest 精确反查
+  if (session.startsWith('sa-')) {
+    const manifests = await listRecordManifests(agentDir)
+    const hits = manifests.filter((m) => m.id === session)
+    if (hits.length === 0) {
+      throw err(formatSaIdNotFound(session))
+    }
+    if (hits.length > 1) {
+      throw err(formatSaIdAmbiguous(session, hits))
+    }
+    const record = hits[0]
+    if (!existsSync(record.sessionFile)) {
+      throw err(formatSessionGc(record))
+    }
+    const headerId = readSessionHeaderId(record.sessionFile)
+    if (headerId === undefined) {
+      // header 读不出不降级 record.id（sa- 形态不可当 sessionId，CQ3）
+      throw err(
+        `读取失败：${record.sessionFile}（首行非合法 session header）。👉 检查文件或换 session。`,
+      )
+    }
+    return { kind: 'ok', sessionId: headerId, fileName: record.sessionFile }
+  }
+
+  // ③ 其余：findSessions 透传 source 沿用 F1/F2
+  const opts = { limit: 10, ...(source ? { source } : {}) }
+  const { matches } = await findSessions(session, agentDir, opts)
   if (matches.length === 0) {
-    const recent = await findSessions('recent', agentDir, { limit: 10 })
+    const recent = await findSessions('recent', agentDir, opts)
     throw err(formatNoMatch(session, recent.matches))
   }
   if (matches.length === 1) {
     return { kind: 'ok', sessionId: matches[0].sessionId, fileName: matches[0].fileName }
   }
   return { kind: 'multi', query: session, candidates: matches }
+}
+
+/** ES1（SESSION_FILE_GC）：sa-id 恰 1 命中但 sessionFile 不存在（GC/未写入）。含 manifest 元数据 + 👉。 */
+function formatSessionGc(record: RecordManifest): string {
+  return (
+    `subagent "${record.id}" 的 session 文件不存在（可能已被 GC 或未写入）：\n` +
+    `  rootSessionId: ${record.rootSessionId}\n` +
+    `  agentName: ${record.agentName ?? '(未记录)'}\n` +
+    `  sessionFile: ${record.sessionFile}\n` +
+    `👉 改用 session_read { action:"family" } 查该 subagent 的后代，或换一个 completed subagent 重试。`
+  )
+}
+
+/** ES2（SA_ID_NO_MATCH）：sa-id 无精确匹配（可能仍在运行 / 片段输入）。 */
+function formatSaIdNotFound(saId: string): string {
+  return (
+    `subagent "${saId}" 无匹配 record（可能仍在运行——终态 record 在 completed/failed 后才写）。` +
+    `\n👉 用 session_read { action:"family" } 查活跃/已完成的 subagent；` +
+    `若是片段输入，请用完整 sa- id 或 action:"find" 重试。`
+  )
+}
+
+/** ES2（SA_ID_AMBIGUOUS）：sa-id 多 manifest 命中（数据异常，record.id 应唯一）。 */
+function formatSaIdAmbiguous(saId: string, records: RecordManifest[]): string {
+  return (
+    `subagent "${saId}" 匹配 ${records.length} 个 record（数据异常，record.id 应唯一）：\n` +
+    records
+      .map((r) => `  ${r.id} (root=${r.rootSessionId} file=${r.sessionFile})`)
+      .join('\n') +
+    `\n👉 用 session_read { action:"family" } 或完整 session uuid 重试。`
+  )
 }
 
 /** F1 无匹配 message（含最近 10 + 👉）。 */
@@ -462,6 +605,7 @@ async function doFind(params: SessionReadParams, agentDir: string): Promise<Tool
   const { matches, truncated } = await findSessions(query, agentDir, {
     cwd: params.cwd,
     limit: params.limit ?? 20,
+    ...(params.source ? { source: params.source } : {}),
   })
   if (matches.length === 0) {
     const recent = await findSessions('recent', agentDir, { limit: 10 })
@@ -478,7 +622,7 @@ async function doFind(params: SessionReadParams, agentDir: string): Promise<Tool
 
 /** family：fork 父链/子代 + 隔代 subagent + workflow run（design §3.4 family）。 */
 async function doFamily(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'family', agentDir)
+  const resolved = await resolveSessionId(params.session, 'family', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   let family: Family
   try {
@@ -493,7 +637,7 @@ async function doFamily(params: SessionReadParams, agentDir: string): Promise<To
 
 /** outline：turn 级全貌 TOC（design §3.4 outline，~500 token）。 */
 async function doOutline(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'outline', agentDir)
+  const resolved = await resolveSessionId(params.session, 'outline', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const { entries, totalBytes } = await safeParse(resolved.fileName)
   const tree = buildTreeView(entries)
@@ -512,7 +656,7 @@ async function doOutline(params: SessionReadParams, agentDir: string): Promise<T
 
 /** expand：单 turn 的 entry 列表（design §3.4 expand）。turn 越界抛 F4。 */
 async function doExpand(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'expand', agentDir)
+  const resolved = await resolveSessionId(params.session, 'expand', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const turnIdx = parseTurnIndex(requireStr(params.turn, 'turn', 'expand'))
   const { entries } = await safeParse(resolved.fileName)
@@ -534,7 +678,7 @@ async function doExpand(params: SessionReadParams, agentDir: string): Promise<To
 
 /** detail：turns 范围的完整文本（design §3.4 detail）。默认省略 toolResult/thinking。 */
 async function doDetail(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'detail', agentDir)
+  const resolved = await resolveSessionId(params.session, 'detail', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const range = parseTurnsRange(requireStr(params.turns, 'turns', 'detail'))
   const { entries } = await safeParse(resolved.fileName)
@@ -563,7 +707,7 @@ async function doSearch(
   agentDir: string,
   signal?: AbortSignal,
 ): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'search', agentDir)
+  const resolved = await resolveSessionId(params.session, 'search', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const pattern = requireStr(params.pattern, 'pattern', 'search')
   const scope = params.scope ?? 'all'
@@ -615,7 +759,7 @@ async function doSearch(
 /** export：物化摘要到 <agentDir>/tmp/session-view-<id>.md（design §3.4 export，D-8）。 */
 async function doExport(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
   const format = params.format ?? 'outline'
-  const resolved = await resolveSessionId(params.session, 'export', agentDir)
+  const resolved = await resolveSessionId(params.session, 'export', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
 
   let text: string
@@ -1064,7 +1208,7 @@ function extractToolResults(turns: Turn[], tool: string | undefined): ToolResult
  * segmentTurns → 可选 turns 范围限定（复用 parseTurnsRange）→ F7 校验 what → 分发 5 预设。
  */
 async function doExtract(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'extract', agentDir)
+  const resolved = await resolveSessionId(params.session, 'extract', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const { entries } = await safeParse(resolved.fileName)
   // extract 遍历全量 entry（含旁支/压缩历史），与 outline/expand/detail 的 leaf 视图不同：

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
-import { buildFamilyFromFs } from '../discovery/subagents.js'
+import { buildFamilyFromFs, listRecordManifests, type RecordManifest } from '../discovery/subagents.js'
 
 // ---- fixture 常量（uuid 特征，满足 extractSessionIdFromFilename + 互不为子串）----
 const ROOT = '0aaaaaaa-bbbb-7ccc-dddd-000000000001'
@@ -427,4 +427,34 @@ describe.skipIf(!HAS_REAL_WF)('buildFamilyFromFs - 真实 workflow 数据', () =
     expect(rich!.stateFile.endsWith('.jsonl')).toBe(true)
     expect(rich!.runId.startsWith('wf-')).toBe(true)
   }, 30000)
+})
+
+// ============================================================
+// w2 TC1：listRecordManifests + RecordManifest 导出（IF2/DM2，行为零变更验证）
+// ============================================================
+
+describe('listRecordManifests 导出（w2 TC1）', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await makeAgentDir()
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('导出生效：import + 调用返回 RecordManifest[]，字段完整', async () => {
+    await writeRecordManifest(dir, '--demo-cwd--', 'sa-tc1', {
+      rootSessionId: 'root-1',
+      agentName: 'explorer',
+      sessionFile: '/tmp/sa-tc1.jsonl',
+    })
+    const manifests: RecordManifest[] = await listRecordManifests(dir)
+    expect(manifests).toHaveLength(1)
+    const m = manifests[0]
+    expect(m.id).toBe('sa-tc1')
+    expect(m.rootSessionId).toBe('root-1')
+    expect(m.agentName).toBe('explorer')
+    expect(m.sessionFile).toBe('/tmp/sa-tc1.jsonl')
+  })
 })
