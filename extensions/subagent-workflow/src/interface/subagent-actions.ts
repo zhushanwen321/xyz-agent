@@ -226,7 +226,21 @@ export async function cancelHandler(
 
   // step 1: id 不存在（findRecord 只查内存 running record，不从 session.jsonl 重建）
   const rec = service.findRecord(id);
-  if (!rec) throw new Error(`No subagent record with id "${id}". It may have finished — use action:'list' with includeFinished:true to verify.`);
+  if (!rec) {
+    // [S-19] MF-1 全树可见后，list/completion 可能列出其他进程（父/兄弟）的 running record
+    //（collectRecords 扫共享 sessionsDir 按 rootSessionId 过滤，跨进程互相可见），而 cancel
+    // 只作用于本进程内存 record。区分两种失败，避免「may have finished」误导（该 record 正
+    // 被列出且未 finished，只是不属于本进程内存）。仅文案区分，不改 cancel 作用域。
+    const treeRec = service.collectRecords(DEFAULT_LIST_LIMIT, "all").find((r) => r.id === id);
+    if (treeRec && treeRec.status === "running") {
+      throw new Error(
+        `Subagent record "${id}" is running but owned by another process in the tree ` +
+          `(it was spawned by a different subagent process) — this process cannot cancel it; ` +
+          `cancel only works for subagents spawned by the current process.`,
+      );
+    }
+    throw new Error(`No subagent record with id "${id}". It may have finished — use action:'list' with includeFinished:true to verify.`);
+  }
   // step 2: controller 检查（controller 为 undefined 表示 record 已终态或未启动）
   if (rec.mode !== "background") {
     throw new Error(`Cannot cancel subagent ${id} (unsupported mode: ${rec.mode})`);

@@ -28,7 +28,7 @@ description: >-
 ## 调用约定
 
 - `cwd`：git 根目录绝对路径（`git rev-parse --show-toplevel`）
-- 各阶段派 subagent 执行，主 agent 只做编排 + Gate 校验
+- 阶段 1 / 3a 派 subagent 执行；阶段 2 由主 agent **直接**派 workflow（不经 subagent 封装，见 code-review 路径 1 [MANDATORY]）；主 agent 全程只做编排 + Gate 校验
 - review-fix-loop workflow 自带 run 目录与 aggregated 报告，本 skill 不另定义 runId/路径
 
 ## 流程
@@ -46,19 +46,9 @@ task:      "按 pull-request SKILL.md 开 PR；返回 JSON { pr_url, force_push 
 
 ### 阶段 2：review + fix（路由 code-review）
 
-```text
-agent:     "general-purpose"
-skillPath: "<skill 目录>/code-review/SKILL.md"
-cwd:       <git 根>
-task:      "按 code-review SKILL.md【路径 1：pi 环境】执行 review。
-            调 review-fix-loop workflow（workflow 工具 action:run name:review-fix-loop），args：
-              targetType=git-diff, target=main,
-              batch1=.agents/agents/review-arch-boundary.md,.agents/agents/review-business-logic.md,.agents/agents/review-extension-api.md,.agents/agents/review-monorepo-impact.md,.agents/agents/review-type-safety.md,.agents/agents/review-electron-build.md,.agents/agents/review-test-coverage.md,
-              autoCommit=true, recheckAfterFix=false, skipCleanAgents=true
-            （batch1 必须传 .md 文件路径，禁止裸名——见 code-review SKILL 警告）
-            workflow 自动 review → aggregate → fix → 重审直到 clean/converge/stuck。
-            完成后返回 JSON { terminated, rounds, aggregated_file }"
-```
+**不派 subagent**。主 agent 直接读 code-review SKILL.md（`<skill 目录>/code-review/SKILL.md`），按其【路径 1：pi 环境】执行：直接用 workflow 工具跑 `review-fix-loop`（args 以 code-review SKILL 路径 1 的配置为准——batch1 七个 review agent 的 .md 绝对路径、autoCommit=true 等）。
+
+workflow 自动 review → aggregate → fix → 重审直到 clean/converge/stuck；notifyDone 自动注入结果，主 agent 取 `terminated/rounds/aggregated_file`。
 
 **Gate-2**：workflow `terminated` ∈ {`clean`, `converged`, `stuck`} → 进阶段 3。`terminated=needs-redesign` = 结构性问题需人工介入，**停手上报用户**。
 
@@ -101,7 +91,7 @@ push 后可选跑 `scripts/pr-status.sh`（只读）确认 PR 健康。
 
 1. **阶段顺序不可调换**：1 (PR) → 2 (review+fix) → 3 (pre-merge + 推)
 2. **主 agent 不跑 review/fix 实现命令**：review 委托 code-review（workflow）。但 PR 生命周期操作（commit / push / pr-status.sh / pr-pre-merge.sh）主 agent 可直接跑——简单命令、输出少，派 subagent 反而浪费 context
-3. **review 委托 code-review，不自行编排**：禁止手写 review subagent 并行/分批/aggregate。review 执行引擎是 review-fix-loop workflow，编排 SSOT 是 code-review skill
+3. **review 委托 code-review，不自行编排**：禁止手写 review subagent 并行/分批/aggregate，**也禁止派 subagent 封装 workflow**（subagent 内再调 review-fix-loop 是多余中转）——workflow 由主 agent 直接用 workflow 工具派（code-review 路径 1 [MANDATORY]）。review 执行引擎是 review-fix-loop workflow，编排 SSOT 是 code-review skill
 4. **force-push 决策传递**：阶段 1 `force_push=true` → 阶段 3b 必须用 `--force-with-lease`
 5. **禁止 skip 开关**：`SKIP_LINT=1` / `SKIP_EXTENSION_LINT=1` / `--no-verify` / `git push --force`
 6. **pr-pre-merge.sh 是 stage2 marker 唯一写入方**：阶段 3a 必须调它，不能直接跑 `npx vitest run` 替代（marker 不写则 Gate-3 stage2 恒 not_run）
@@ -112,6 +102,7 @@ push 后可选跑 `scripts/pr-status.sh`（只读）确认 PR 健康。
 |--------|------|
 | 主 agent 自己跑 pr-submit.sh / pr-pre-merge.sh | 浪费主 agent 上下文；派 subagent |
 | 阶段 2 手写 review subagent 并行/分批（绕过 code-review） | 复现 review-fix-loop workflow 已有能力，漂移风险；违反规则 #11（模式名先锚定可执行 workflow 入口） |
+| 阶段 2 派 subagent 封装 workflow（subagent 内再调 review-fix-loop） | 多一层无增益中转、白耗 context；违反 code-review 路径 1 [MANDATORY]「主 agent 直接派」 |
 | 阶段 3a 直接跑 vitest 替代 pr-pre-merge.sh | marker 不写，Gate-3 stage2 恒 not_run |
 | 阶段 2 后再手动分组 fix（旧阶段 3a 手写编排） | 与 review-fix-loop 的 autoCommit fix 重叠冲突；fix 已由 workflow 完成 |
 | 删/改 code-review SKILL.md 或 review-*.md | 破坏 review 维度完整性 |

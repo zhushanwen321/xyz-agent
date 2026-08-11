@@ -30,10 +30,12 @@ git diff main...HEAD --stat
 **适用条件**：当前主 agent 是 pi agent，且能调用内置 workflow
 （检测：pi CLI 可用 + 主 agent 支持 workflow 调用）。
 
-**执行**：跑内置 `review-fix-loop` workflow（7 维并行 review → 聚合 → fix → 重审，直到 clean / 收敛 / maxRounds）：
+**执行**：主 agent 直接用 workflow 工具跑内置 `review-fix-loop` workflow（7 维并行 review → 聚合 → fix → 重审，直到 clean / 收敛 / maxRounds）：
+
+> **[MANDATORY] 主 agent 直接派，禁止 subagent 封装**：workflow 工具 `action:"run"` 是异步后台运行 + notifyDone 自动注入结果，主 agent 直接能拿到 `terminated/rounds/aggregated_file`。**禁止**先派一个 subagent 再让它在内部调 workflow——workflow 自己会派 7 个 review agent + fix agent，subagent 封装只是多一层中转，无功能增益、白耗 context。以下 args 由主 agent 直接传给 workflow 工具：
 
 ```bash
-# 在 pi agent 内用 workflow 工具调用（action:"run", name:"review-fix-loop"）；
+# workflow 工具 action:"run" name:"review-fix-loop"（主 agent 直接调，不经 subagent 中转）；
 # 下方 CLI 形式 pi workflow run ... 仅供识别，实际执行用 workflow 工具
 #
 # ⚠️ batch1 必须传 **.md 绝对路径**（`/` 或 `~/` 开头），禁止相对路径/裸名：

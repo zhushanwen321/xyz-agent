@@ -145,6 +145,19 @@ export interface SubagentServiceSessionInit {
 /** background 优先级（保留 priority 排序机制，单一值）。 */
 const PRIORITY_BACKGROUND = 1000;
 
+/** 跨进程身份贯穿的 env 名（父进程 spawn 子进程时注入，子进程 initSession 读取）。
+ *  仿照 PI_SUBAGENT_FORK_DEPTH 机制，让递归 subagent 的身份（rootSessionId / parentRecordId / depth）
+ *  跨进程传递，使主进程 /subagents 能看到完整递归树（设计见 docs/design/recursive-subagent-visibility.md）。
+ *  语义：env 描述「子进程自己的身份」，不是父的身份（决策 1）。
+ *  [MF-3] 第 4 个 env：真 ROOT 的 cwd（PI_SUBAGENT_ROOT_CWD）。worktree 模式下子进程 spawn cwd =
+ *  checkout 路径，若按各自 cwd 编码落盘目录，深层 record 写到 enc(worktree) 段、ROOT 磁盘重建
+ *  扫不到 → 全树可见性深度 ≥ 2 断裂。子进程经本 env 拿 ROOT cwd，sessions 与 records 两套目录
+ *  统一编码在 enc(ROOT cwd) 段（与身份贯穿同构，见 session-runner 注入点）。 */
+const ENV_ROOT_SESSION_ID = "PI_SUBAGENT_ROOT_SESSION_ID";
+const ENV_SELF_RECORD_ID = "PI_SUBAGENT_SELF_RECORD_ID";
+const ENV_DEPTH = "PI_SUBAGENT_DEPTH";
+const ENV_ROOT_CWD = "PI_SUBAGENT_ROOT_CWD";
+
 /** 触发 onUpdate 的事件类型（streaming delta 不触发，避免每 token 刷新）。 */
 const TRIGGERING_EVENT_TYPES = new Set<AgentEvent["type"]>([
   "tool_start",
@@ -196,8 +209,31 @@ export class SubagentService {
   /** UI 请求可观测性（sessionMode + handler 缺失告警去重，提取自本类降低行数）。 */
   private readonly uiObservability = new UiRequestObservability();
   private pi: PiLike | null = null;
-  /** 当前 Pi session ID（session 隔离过滤用）。initSession 时注入。 */
+  /** 当前 Pi session ID（本进程 pi session，事件路由等用；record 过滤不用它）。initSession 时注入。 */
   private sessionId: string | null = null;
+  /** 所属根 session ID（record 归属过滤用）。根进程 = sessionId（自己是 root）；
+   *  子进程 = env PI_SUBAGENT_ROOT_SESSION_ID 贯穿的真 ROOT（initSession 读取）。
+   *  与 sessionId 正交：sessionId 是本进程 pi session（事件路由等），sessionRootId 是所属根
+   *  （collectRecords filter 用，与 createRecordForMode 的 rootSessionId 盖章同源——子进程
+   *  因此看到整棵 ROOT 树）。设计见 recursive-subagent-visibility.md 决策 3。 */
+  private sessionRootId: string | null = null;
+  /** 进程级执行上下文基线（不依赖 ALS 贯穿——pi RPC mode 的 stdin JSONL 是事件回调式
+   *  （attachJsonlLineReader stream.on("data")），每个命令是独立异步链，initSession 里
+   *  execCtxAls.enterWith 的 store 不会贯穿到后续 tool 调用事件（实测：递归第二层
+   *  parentRecordId/depth 丢失而 rootSessionId 正确——rootSessionId 是实例字段所以不受影响）。
+   *  基线 = 本进程自己的身份（initSession 从 env 读取，与 sessionRootId 同机制）：
+   *  读 ALS store 失败时兜底，保证「本进程派发的 subagent 都是本进程记录的孩子」
+   *  这一跨进程树形关系成立。
+   *  initSession 设置：有 env PI_SUBAGENT_SELF_RECORD_ID → {recordId: env 值, depth: env DEPTH}；
+   *  无 env（根进程）→ null（顶层）。 */
+  private execCtxBaseline: { recordId: string | undefined; depth: number } | null = null;
+  /** fork 深度基线（同 ALS 断裂问题：forkDepthAls.getStore() 兜底用）。根进程=0。 */
+  private forkDepthBaseline = 0;
+  /** [MF-3] 所属根进程 cwd（sessions/records 落盘目录编码键）。
+   *  根进程=自身 cwd（构造时 init.cwd）；子进程=env PI_SUBAGENT_ROOT_CWD 贯穿的真 ROOT cwd。
+   *  worktree 模式下子进程 this.cwd 是 checkout 路径，若按它编码目录，深层 record 落到
+   *  enc(worktree) 段、ROOT 扫描不到 → 全树可见性深度 ≥ 2 断裂（与 sessionRootId 同构）。 */
+  private rootCwd: string;
   /** UI streaming sink（ctx.ui.setWidget）。workflow 域经 getStreamSink() 取用。 */
   private streamSink: StreamSink | null = null;
   /** [竞态修复] 主 agent isIdle 查询（ctx.isIdle）。notifier flush gate 用。
@@ -229,8 +265,15 @@ export class SubagentService {
     this.uiRequestHandler = init.uiRequestHandler;
     this.pool = new DefaultConcurrencyPool(this.modelService.getGlobalConfig().maxConcurrent);
     this.worktreeManager = new WorktreeManager(this.modelService.getAgentDir());
-    const sessionsDir = getSubagentSessionDir(this.modelService.getAgentDir(), init.cwd);
-    const recordsDir = getSubagentRecordsDir(this.modelService.getAgentDir(), init.cwd);
+    // [MF-3] worktree 隔离下全树落盘目录统一到 ROOT cwd：子进程（spawn cwd = worktree checkout 路径）
+    // 若按自身 cwd 编码目录，深层 record 写到 enc(worktree) 段，ROOT 磁盘重建扫不到。
+    // 读 env PI_SUBAGENT_ROOT_CWD（根进程无 env → init.cwd）。sessions 与 records 两套目录
+    // 必须同源（同一 rootCwd），否则 enc 段不变量断裂（只改其一会让同 record 的
+    // session 文件与 manifest 分落两段，GC/重建互相找不到）。
+    const envRootCwd = process.env[ENV_ROOT_CWD];
+    this.rootCwd = envRootCwd && envRootCwd !== "" ? envRootCwd : init.cwd;
+    const sessionsDir = getSubagentSessionDir(this.modelService.getAgentDir(), this.rootCwd);
+    const recordsDir = getSubagentRecordsDir(this.modelService.getAgentDir(), this.rootCwd);
     this.manifestStore = new ManifestStore(recordsDir);
     this.store = new RecordStore(sessionsDir, this.manifestStore, this.pi ?? undefined);
     this.notifier = new BgNotifier(this.piAdapter());
@@ -286,6 +329,32 @@ export class SubagentService {
       const base = Number.parseInt(envDepth, 10);
       if (!Number.isNaN(base) && base > 0) {
         this.forkDepthAls.enterWith(base);
+        this.forkDepthBaseline = base;
+      }
+    }
+    // [递归可见性] 跨进程身份贯穿（设计 recursive-subagent-visibility.md）。
+    // 父进程 spawn 时注入这 4 个 env 描述「子进程自己的身份」：
+    //   - rootSessionId：所属根 session（贯穿真 ROOT，子进程不覆盖）
+    //   - selfRecordId：子进程自己的 record id（孙 subagent 的直接父）
+    //   - depth：子进程的嵌套深度
+    //   - rootCwd：真 ROOT 的 cwd（[MF-3] 落盘目录编码键，worktree 下与自身 cwd 不同）
+    // 子进程读 env 建立基线后，createRecordForMode 读 execCtxAls 自动正确（孙挂到子名下）。
+    // 根进程无 env → sessionRootId = init.sessionId（自己是 root），execCtxAls 不 enterWith（顶层）。
+    // enterWith 贯穿整个 session 生命周期（与 forkDepthAls 同构，决策 4）。
+    const envRoot = process.env[ENV_ROOT_SESSION_ID];
+    this.sessionRootId = envRoot ?? init.sessionId;
+    const envSelfRecord = process.env[ENV_SELF_RECORD_ID];
+    if (envSelfRecord !== undefined && envSelfRecord !== "") {
+      const envNestingDepth = Number.parseInt(process.env[ENV_DEPTH] ?? "0", 10);
+      const nestingDepth = Number.isNaN(envNestingDepth) ? 0 : envNestingDepth;
+      // [ALS 断裂修复] 基线兜底：enterWith 在 pi 事件回调模型下不可靠（见 execCtxBaseline 注释），
+      // 基线是 createRecordForMode / 护栏读 ALS store 失败时的权威回退。
+      this.execCtxBaseline = { recordId: envSelfRecord, depth: nestingDepth };
+      this.execCtxAls.enterWith({ recordId: envSelfRecord, depth: nestingDepth });
+      if (process.env.PI_EXT_DEBUG) {
+        logger.debug(
+          `[subagents] execCtxAls initialized: recordId=${envSelfRecord} depth=${nestingDepth} rootSessionId=${envRoot ?? init.sessionId}`,
+        );
       }
     }
     // revive（dispose 的逆操作：/resume /fork /new 后复活）
@@ -413,7 +482,8 @@ export class SubagentService {
     // 但耗资源且 LLM 易陷入「委派→再委派」死循环。在所有副作用之前拦截，错误直达调用方。
     // 计数基准：顶层 nestingDepth=0，nestingDepth>MAX 被拒。与 fork 体积护栏（parentForkDepth 检查）
     // 互补：本护栏更严（计所有嵌套），混合链下先生效；两者共享 MAX_FORK_DEPTH 上限不漂移。
-    const parentNesting = this.execCtxAls.getStore();
+    // [ALS 断裂修复] getStore() 在 pi 事件回调模型下可能读空（enterWith 不贯穿），基线兜底。
+    const parentNesting = this.execCtxAls.getStore() ?? this.execCtxBaseline;
     const nestingDepth = parentNesting ? parentNesting.depth + 1 : 0;
     if (nestingDepth > MAX_FORK_DEPTH) {
       throw new ForkDepthExceededError(
@@ -506,7 +576,8 @@ export class SubagentService {
     this.assertReady();
 
     // ── BC-12 嵌套护栏：复用 execute() 的 execCtxAls 深度检查 ──
-    const parentNesting = this.execCtxAls.getStore();
+    // [ALS 断裂修复] getStore() 可能读空，基线兜底（与 execute 同）。
+    const parentNesting = this.execCtxAls.getStore() ?? this.execCtxBaseline;
     const nestingDepth = parentNesting ? parentNesting.depth + 1 : 0;
     if (nestingDepth > MAX_FORK_DEPTH) {
       throw new ForkDepthExceededError(
@@ -599,9 +670,10 @@ export class SubagentService {
   }
 
   /** 合并内存(running) + 磁盘(session.jsonl 重建) record（/subagents list + tool list 消费）。
-   *  按 rootSessionId 过滤，只返回当前 session 创建的 record（session 隔离）。 */
+   *  按 rootSessionId 过滤：根进程=本 session（sessionRootId===sessionId）；
+   *  子进程=env 贯穿的真 ROOT（sessionRootId≠sessionId）→ 看到整棵 ROOT 树（决策 3）。 */
   collectRecords(limit: number, statusFilter: StatusFilter = "all"): SubagentRecord[] {
-    return this.store.collectRecords(limit, statusFilter, this.sessionId ?? undefined);
+    return this.store.collectRecords(limit, statusFilter, this.sessionRootId ?? this.sessionId ?? undefined);
   }
 
   // ── 执行内部：身份解析 + record 创建 ──────────
@@ -638,7 +710,9 @@ export class SubagentService {
     // 从 async 调用链读父执行上下文：主 session 链上无 store → 顶层 record；
     // B run() 期间包了 execCtxAls，B 内创建 C 时读到 B → C.parentRecordId=B.id, C.depth=B.depth+1。
     // depth 语义：顶层（无父）=0；有父=父 depth+1。靠 recordId 是否存在区分，不用负数魔数。
-    const parentCtx = this.execCtxAls.getStore();
+    // [ALS 断裂修复] getStore() 在 pi 事件回调模型下可能读空（enterWith 不贯穿），
+    // 基线兜底——本进程的身份在 initSession 已确定（env 注入），任何上下文下都能正确挂父链。
+    const parentCtx = this.execCtxAls.getStore() ?? this.execCtxBaseline;
     const parentRecordId = parentCtx?.recordId;
     const depth = parentCtx ? parentCtx.depth + 1 : 0;
 
@@ -650,7 +724,7 @@ export class SubagentService {
       task: opts.task,
       slug: opts.slug,
       startedAt: Date.now(),
-      rootSessionId: this.sessionId ?? undefined,
+      rootSessionId: this.sessionRootId ?? undefined,
       parentRecordId,
       depth,
       controller,
@@ -705,7 +779,7 @@ export class SubagentService {
       worktreeHandle = opts.worktree;
     }
     // [MF#4][MF#2] fork 深度护栏：ALS 传递深度（主 session 链无 store→0，fork 推进 +1）。
-    const parentDepth = this.forkDepthAls.getStore() ?? 0;
+    const parentDepth = this.forkDepthAls.getStore() ?? this.forkDepthBaseline;
     const effectiveDepth = opts.fork ? parentDepth + 1 : parentDepth;
 
     let result: AgentResult;
@@ -982,6 +1056,15 @@ export class SubagentService {
       dialogQueue: this.dialogQueue,
       // 主进程运行模式：session-runner W4 守卫据此决定是否注入 ask_user RPC 提示词。
       mode: this.uiObservability.getMode(),
+      // [递归可见性] 透传所属根 session（runSpawn 注入为子进程 env PI_SUBAGENT_ROOT_SESSION_ID）。
+      // sessionRootId 在 initSession 设定（根进程=sessionId，子进程=env 贯穿的真 ROOT）。
+      // execute/executeAndAwait 调本方法前必经 initSession，此时 sessionRootId 已非空；
+      // ?? 兑底防类型漂移（运行时不可达）。
+      sessionRootId: this.sessionRootId ?? this.sessionId ?? "",
+      // [MF-3] 透传 ROOT cwd（runSpawn 落盘目录编码键 + 注入子进程 env PI_SUBAGENT_ROOT_CWD）。
+      // worktree 模式下 mainCwd = 本进程 checkout 路径，rootCwd 才是真 ROOT——session 文件
+      // 落盘统一用 rootCwd 编码，ROOT 磁盘重建才扫得到深层 record（与 sessionRootId 同构）。
+      rootCwd: this.rootCwd,
     };
   }
 }

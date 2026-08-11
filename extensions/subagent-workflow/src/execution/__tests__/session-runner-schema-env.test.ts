@@ -104,7 +104,7 @@ interface FakeChild {
 function getLastSpawnedChild(): FakeChild {
   const result = mockSpawn.mock.results.at(-1);
   if (!result) throw new Error("spawn was not called yet");
-  return result.value as unknown as FakeChild;
+  return result.value as FakeChild;
 }
 
 function getLastSpawnEnv(): Record<string, string | undefined> {
@@ -155,12 +155,15 @@ function makeRunOpts(overrides: Partial<RunOptions> = {}): RunOptions {
   };
 }
 
-function makeCtx(): SessionRunnerContext {
+function makeCtx(overrides: Partial<SessionRunnerContext> = {}): SessionRunnerContext {
   return {
     cwd: "/fake/cwd",
     agentDir: "/fake/agent",
     skillDirs: [],
     mainCwd: "/fake/cwd",
+    sessionRootId: "root-session-test",
+    rootCwd: "/fake/cwd",
+    ...overrides,
   };
 }
 
