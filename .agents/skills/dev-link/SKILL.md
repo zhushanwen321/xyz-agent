@@ -17,7 +17,7 @@ description: >-
 
 | 模式 | 测试目标 | 机制 | 安装脚本 | 卸载脚本 |
 |---|---|---|---|---|
-| **pi 模式** | **原版 pi**（当前 pi CLI session、`pi` 命令直接跑） | `pi install/remove`（pi 原生，改 `~/.pi/agent/settings.json`） | `pi-link.sh` | `pi-unlink.sh` |
+| **pi 模式** | **原版 pi**（当前 pi CLI session、`pi` 命令直接跑） | symlink 到 `~/.pi/agent/extensions/`（globalExtDir，loader 自动发现）+ 备份/恢复 npm 条目（改 `~/.pi/agent/settings.json`） | `pi-link.sh` | `pi-unlink.sh` |
 | **xyz-agent 模式** | **xyz-agent dev**（Electron app，runtime 注入给 pi 子进程） | `XYZ_EXTENSION_PATHS` 环境变量（`.env.dev-extensions`） | `link-local.sh` | `link-npm.sh` |
 
 **一句话区分**：pi 模式让**你现在跑的这个 pi** 加载本地源码；xyz 模式只影响 **xyz-agent app 的 dev 模式**（它 spawn 的 pi 子进程），当前 pi session 不读这个 env。
@@ -25,11 +25,11 @@ description: >-
 ## pi 模式（原版 pi）
 
 ```bash
-bash .agents/skills/dev-link/pi-link.sh subagent-workflow      # symlink 本地到 ~/.pi/agent/extensions/
-bash .agents/skills/dev-link/pi-unlink.sh subagent-workflow    # rm symlink
+bash .agents/skills/dev-link/pi-link.sh subagent-workflow      # symlink 本地到 ~/.pi/agent/extensions/ + 备份并清 npm 残留
+bash .agents/skills/dev-link/pi-unlink.sh subagent-workflow    # rm symlink + 恢复 npm 条目（无需联网）
 ```
 
-**机制**：symlink 本地源码 → `~/.pi/agent/extensions/pi-<short>`（globalExtDir，loader 第 2 步扫描，pi-statusline 同模式）。同时清 settings.json `packages` 里该 extension 的残留（`npm:` 源 + 旧 configuredPaths 本地路径），避免 globalExtDir + configuredPaths 两源冲突。
+**机制**：symlink 本地源码 → `~/.pi/agent/extensions/pi-<short>`（globalExtDir，loader 第 2 步扫描，pi-statusline 同模式）。同时清 settings.json `packages` 里该 extension 的残留（`npm:` 源 + 旧 configuredPaths 本地路径），避免 globalExtDir + configuredPaths 两源冲突——**删除的条目先备份到 `~/.pi/agent/.pi-link-backup.json`，unlink 时自动还原**，保证 link → unlink 往返后 extension 回到 npm 源（状态守恒）。
 
 **生效**：新建 pi session（当前 session 已加载旧版，不重扫）。**注意 pi list 不显示** globalExtDir symlink——pi list 只列 `packages` 配置的，不列自动发现源，但 loader 会加载（正常现象）。
 
@@ -63,13 +63,26 @@ bash .agents/skills/dev-link/link-list.sh
 
 三种都支持：短名 `subagent-workflow` / pi-前缀 `pi-subagent-workflow` / npm 全名 `@zhushanwen/pi-subagent-workflow`。多包一次：`pi-link.sh goal todo ask-user`。
 
+## 共享映射（dev-link-lib.sh）
+
+四个安装/卸载脚本统一 `source` `dev-link-lib.sh`，**短名 → 事实的映射从本项目 `extensions/` 目录扫描构建**，SSOT = 各包 `package.json`：
+
+```
+extensions/<short>/package.json
+  ├─ name           → npm 包名（如 @zhushanwen/pi-subagent-workflow）   ← 事实，不按命名约定拼
+  ├─ pi.extensions  → 是否真 pi extension（库包如 quota-providers 没有该字段）
+  └─ 目录本身        → 源码目录（symlink target / XYZ_EXTENSION_PATHS 条目）
+```
+
+新增/改名包自动进映射，脚本零改动。pi loader（0.82.1 loader.js）识别 extension **不读目录名**——扫 globalExtDir 一层，靠目录内 package.json 的 `pi.extensions` 字段或 index.ts/js 识别，所以 symlink 目录名 `pi-<short>` 只是约定。
+
 ## 约束
 
 - `.env.dev-extensions` 不进 git（xyz 模式，`.gitignore` 的 `.env.*` 覆盖）；pi 模式改 `~/.pi/agent/settings.json`（pi 自己管理）
 - **两模式都需新建 session 生效**（运行中的 session 不重扫 extension 源）
-- **pi 模式 `pi-unlink` 需联网**（`pi install npm:` 恢复要 npm install）；离线恢复会失败
+- **pi 模式 `pi-unlink` 自动恢复 npm 条目**（读 `~/.pi/agent/.pi-link-backup.json` 写回 settings.json，纯本地操作，**无需联网**）；备份不存在时（从未 link 过的包）不受影响
 - **merge/删 worktree 前清理**：两模式 link 都指向 worktree 的 `extensions/` 源码，worktree 删了 pi 加载报 ENOENT。pi 模式 `pi-unlink.sh <pkg>`、xyz 模式 `link-npm.sh <pkg>` 清理
-- **quota-providers 是库包不是 extension**，脚本自动跳过
+- **quota-providers 是库包不是 extension**（package.json 无 `pi.extensions`），pi-link / link-local 都会自动跳过
 - 多 worktree：脚本用 `git rev-parse --show-toplevel` 定位 `extensions/`，worktree 切换后路径变，需在该 worktree 重新 link
 
 ## 常见错误
@@ -79,5 +92,6 @@ bash .agents/skills/dev-link/link-list.sh
 | pi 模式 link 后 pi 仍用旧版 | 当前 session 已加载旧版，**需新 session**；或没 remove npm（两源冲突，pi resolver 不知选谁）|
 | xyz 模式 link 后 xyz-agent 看不到 extension | 没 `source .env.dev-extensions`；或没新建 session |
 | pi 启动报 ENOENT extension path | worktree 删了但 link 未清理 → 对应模式 unlink |
+| link → unlink 往返后 extension 消失 | 旧版 pi-link 删 npm 条目无备份、unlink 不恢复 → 状态丢失。现版已修复：link 备份、unlink 自动还原 |
 | **link 了但不生效（最常见）** | **模式选错**：想测当前 pi 却用 xyz 模式（`XYZ_EXTENSION_PATHS` 当前 pi 不读）；想测 xyz-agent 却用 pi 模式。按"何时用哪个"选 |
 | source 报 command not found | 路径含空格未加引号；或 `.env.dev-extensions` 格式错 |
