@@ -99,12 +99,23 @@ function assistantWithBlocks(opts: {
   } as Message
 }
 
-/** 构造 MessageTurn：complete 态 + hasFoldable=true（让 turn-meta 可点击展开）。 */
+/** 构造 MessageTurn：complete 态 + hasFoldable=true（让 turn-meta 可点击展开）。
+ *  [block-rendering M0] 默认 assistant 含 thinking 块（trace 容器恒渲染后，折叠/展开以内容显隐表达，
+ *  需要可折叠内容才能断言「内容隐藏」语义）。 */
 function makeTurn(over: Partial<MessageTurn> = {}): MessageTurn {
   return {
     index: 1,
     user: { id: 'u1', role: 'user', content: 'hi', status: 'complete', timestamp: Date.now() } as Message,
-    assistants: [assistantWithBlocks({ status: 'complete' })],
+    assistants: [
+      assistantWithBlocks({
+        status: 'complete',
+        thinking: [{ id: 'th1', content: 'thinking', collapsed: true }],
+        contentBlocks: [
+          { type: 'thinking', refId: 'th1' },
+          { type: 'text', refId: 'text' },
+        ],
+      }),
+    ],
     isStreaming: false,
     hasFoldable: true,
     ...over,
@@ -164,13 +175,16 @@ beforeEach(() => {
 describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
   it('TC-w4-1: complete 态默认折叠（showTrace=false），点 turn-meta → 展开 trace（isExpanded 驱动）', async () => {
     const wrapper = mountTurn({ turn: makeTurn() })
-    // complete + 默认折叠 → trace 不存在
-    expect(wrapper.find('.trace').exists()).toBe(false)
+    // [block-rendering M0] trace 容器恒渲染（v-if 下沉 Block 级）：折叠态内容隐藏——仅 text 恒渲染，
+    // thinking/tool 不渲染（原「容器不存在」断言改「内容隐藏」语义）
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(1)
     // chevron 未 rotate-90（折叠态）
     expect(wrapper.find('.chev').classes()).not.toContain('rotate-90')
-    // 点击 turn-meta → useTurnExpansion.toggle → isExpanded=true → showTrace=true
+    // 点击 turn-meta → useTurnExpansion.toggle → isExpanded=true → showTrace=true → thinking 块渲染
     await wrapper.find('.turn-meta').trigger('click')
     expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(2)
     // chevron rotate-90（展开态）
     expect(wrapper.find('.chev').classes()).toContain('rotate-90')
   })
@@ -198,12 +212,15 @@ describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
         stubs: { Block: true, ChangeSetCard: true, MarkdownRenderer: true },
       },
     })
-    // sessionActive=true → showTrace = true || true = true（trace 可见）
+    // sessionActive=true → showTrace = true || true = true（thinking+text 都渲染）
     expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(2)
     // 对话结束：isSessionActive true→false → useTurnElapsed watch 触发 onComplete → deps.collapse(1)
-    //   → isExpanded(1) 变 false → showTrace = false || false = false → trace 消失
+    //   → isExpanded(1) 变 false → showTrace = false || false = false → thinking/tool 内容隐藏
     await wrapper.setProps({ isSessionActive: false })
-    expect(wrapper.find('.trace').exists()).toBe(false)
+    // [block-rendering M0] trace 容器恒渲染，折叠态仅 text 恒渲染（thinking 隐藏）
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(1)
     // 回归守卫：collapse 确实被调用（expandedTurns 已被 onComplete 路径复位）。
     // 若 onComplete 被改成 no-op，此处仍为 true，测试会失败（捕捉回归）。
     expect(expandedTurns.has(1)).toBe(false)
@@ -216,14 +233,18 @@ describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
     const turnB = makeTurn({ index: 2 })
     const wrapperA = mountTurn({ turn: turnA, sessionId: 'sessA' })
     const wrapperB = mountTurn({ turn: turnB, sessionId: 'sessB' })
-    // 初始都折叠
-    expect(wrapperA.find('.trace').exists()).toBe(false)
-    expect(wrapperB.find('.trace').exists()).toBe(false)
+    // [block-rendering M0] 初始都折叠：trace 容器恒渲染，内容隐藏（仅 text，thinking 不渲染）
+    expect(wrapperA.find('.trace').exists()).toBe(true)
+    expect(wrapperA.findAllComponents({ name: 'Block' }).length).toBe(1)
+    expect(wrapperB.find('.trace').exists()).toBe(true)
+    expect(wrapperB.findAllComponents({ name: 'Block' }).length).toBe(1)
     // 展开 A
     await wrapperA.find('.turn-meta').trigger('click')
     expect(wrapperA.find('.trace').exists()).toBe(true)
+    expect(wrapperA.findAllComponents({ name: 'Block' }).length).toBe(2)
     // B 仍折叠（不同 turnIndex，展开态隔离）
-    expect(wrapperB.find('.trace').exists()).toBe(false)
+    expect(wrapperB.find('.trace').exists()).toBe(true)
+    expect(wrapperB.findAllComponents({ name: 'Block' }).length).toBe(1)
   })
 
   it('TC-w4-8: 连续同类 tool 调用 → 每个 block 独立渲染（不再合并）', async () => {
@@ -252,9 +273,14 @@ describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
     expect(wrapper.find('.trace').exists()).toBe(true)
     // 不存在 merged 卡片（合并功能已移除）
     expect(wrapper.findAll('[data-testid="merged-block-card"]')).toHaveLength(0)
-    // 3 个连续 tool 各自独立渲染（3 个 Block / trace-blk）
+    // [block-rendering M0] 3 个连续 tool + 末位 text（不再被 filter，全 inline 就地渲染）各自独立渲染
     const blocks = wrapper.findAll('.trace-blk')
-    expect(blocks).toHaveLength(3)
+    expect(blocks).toHaveLength(4)
+    expect(blocks[0].find('.trace-tool').exists()).toBe(true)
+    expect(blocks[1].find('.trace-tool').exists()).toBe(true)
+    expect(blocks[2].find('.trace-tool').exists()).toBe(true)
+    // 末位 text 在 trace 内（contentBlocks 顺序：3 tool + text）
+    expect(blocks[3].findComponent({ name: 'MarkdownRenderer' }).exists()).toBe(true)
   })
 })
 
