@@ -216,10 +216,15 @@ export function createHashAutocompleteProvider(
       const currentLine = lines[cursorLine] ?? ''
       const before = currentLine.slice(0, cursorCol - prefix.length)
       const after = currentLine.slice(cursorCol)
-      const newLine = before + item.value + after
+      // 选中后自动补一个空格，让 #uuid 与后续输入隔开（LLM 解析时 uuid 片段与指令分离，
+      // 避免 #uuid查看 连写被整体当作查询串）。仅当光标后已以空白开头时不重复加（行尾也补，
+      // 用户选中后直接打字即产生间隔）；光标停在补的空格之后
+      const spacer = /^\s/.test(after) ? '' : ' '
+      const insert = item.value + spacer
+      const newLine = before + insert + after
       const newLines = lines.slice()
       newLines[cursorLine] = newLine
-      return { lines: newLines, cursorLine, cursorCol: before.length + item.value.length }
+      return { lines: newLines, cursorLine, cursorCol: before.length + insert.length }
     },
   }
 }

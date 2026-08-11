@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { tmpdir } from 'node:os'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -7,9 +7,11 @@ import {
   formatAge,
   toCandidate,
   provideHashCandidates,
+  createHashAutocompleteProvider,
   type AutocompleteCandidate,
 } from '../tui/hash-provider.js'
 import type { SessionInfo } from '@earendil-works/pi-coding-agent'
+import type { AutocompleteProvider } from '@earendil-works/pi-tui'
 
 /**
  * TUI 层纯逻辑单测（design §3.3 D-3/D-4 + 2026-08-10 重构）。
@@ -339,5 +341,158 @@ describe('provideHashCandidates', () => {
     expect(result!).toHaveLength(1)
     expect(result![0].label).toContain('my-named-session')
     expect(result![0].label).not.toContain('首条消息内容')
+  })
+})
+
+// ---- createHashAutocompleteProvider（wrapper 层，MF-8：此前零测试）----
+// fake current provider + fake signal，断言委托/不委托/早退；applyCompletion 前缀替换手术。
+
+const FULL_UUID = '019e6c96-0a0c-74b8-a73f-d1854d88e2a7'
+
+function makeFakeCurrent(): {
+  current: AutocompleteProvider
+  getSuggestions: ReturnType<typeof vi.fn>
+  applyCompletion: ReturnType<typeof vi.fn>
+} {
+  const getSuggestions = vi.fn()
+  const applyCompletion = vi.fn()
+  const current = {
+    getSuggestions,
+    applyCompletion,
+  } as unknown as AutocompleteProvider
+  return { current, getSuggestions, applyCompletion }
+}
+
+function makeOptions(): { signal: AbortSignal; force?: boolean } {
+  return { signal: new AbortController().signal }
+}
+
+describe('createHashAutocompleteProvider - getSuggestions', () => {
+  let agentDir: string
+  let cwdSessionDir: string
+
+  beforeEach(async () => {
+    agentDir = await mkdtemp(join(tmpdir(), 'hash-provider-wrapper-'))
+    cwdSessionDir = join(agentDir, 'sessions', 'cwdA')
+    await mkdir(cwdSessionDir, { recursive: true })
+  })
+  afterEach(async () => {
+    await rm(agentDir, { recursive: true, force: true })
+  })
+
+  it('signal.aborted → 早退返 null，不调 current、不做 IO', async () => {
+    const { current, getSuggestions } = makeFakeCurrent()
+    const provider = createHashAutocompleteProvider(() => cwdSessionDir, current)
+    const aborted = new AbortController()
+    aborted.abort()
+    const result = await provider.getSuggestions(['hello #e6c9'], 0, 11, {
+      signal: aborted.signal,
+    })
+    expect(result).toBeNull()
+    expect(getSuggestions).not.toHaveBeenCalled()
+  })
+
+  it('非 # 前缀 → 显式委托 current.getSuggestions（同参数透传）', async () => {
+    const { current, getSuggestions } = makeFakeCurrent()
+    getSuggestions.mockResolvedValue(null)
+    const provider = createHashAutocompleteProvider(() => cwdSessionDir, current)
+    const options = makeOptions()
+    const lines = ['@path/to/fi']
+    const result = await provider.getSuggestions(lines, 0, 12, options)
+    expect(result).toBeNull()
+    expect(getSuggestions).toHaveBeenCalledTimes(1)
+    expect(getSuggestions.mock.calls[0]).toEqual([lines, 0, 12, options])
+  })
+
+  it('# 前缀有匹配 → 返回 items + prefix=#fragment，不委托 current', async () => {
+    await makeSession(cwdSessionDir, {
+      fileName: 'a.jsonl',
+      id: FULL_UUID,
+      cwd: '/demo',
+      firstUserText: '修复登录 bug',
+    })
+    const { current, getSuggestions } = makeFakeCurrent()
+    const provider = createHashAutocompleteProvider(() => cwdSessionDir, current)
+    const result = await provider.getSuggestions(['hello #e6c9'], 0, 11, makeOptions())
+    expect(result).not.toBeNull()
+    expect(result!.prefix).toBe('#e6c9')
+    expect(result!.items).toHaveLength(1)
+    expect(result!.items[0].value).toBe(`#${FULL_UUID}`) // 完整 uuid insertText
+    expect(result!.items[0].label).toContain('修复登录 bug')
+    expect(getSuggestions).not.toHaveBeenCalled()
+  })
+
+  it('# 前缀无匹配 → return null 且不委托 current（避免 current 把 #xxx 当路径返回文件建议）', async () => {
+    await makeSession(cwdSessionDir, { fileName: 'a.jsonl', id: FULL_UUID, cwd: '/demo' })
+    const { current, getSuggestions } = makeFakeCurrent()
+    const provider = createHashAutocompleteProvider(() => cwdSessionDir, current)
+    const result = await provider.getSuggestions(['see #deadbeef'], 0, 13, makeOptions())
+    expect(result).toBeNull()
+    expect(getSuggestions).not.toHaveBeenCalled()
+  })
+
+  it('空 cwdSessionDir → # 前缀返 null（不调 listAll 全盘分支，防卡死）', async () => {
+    const { current, getSuggestions } = makeFakeCurrent()
+    const provider = createHashAutocompleteProvider(() => '', current)
+    const result = await provider.getSuggestions(['#'], 0, 1, makeOptions())
+    expect(result).toBeNull()
+    expect(getSuggestions).not.toHaveBeenCalled()
+  })
+})
+
+describe('createHashAutocompleteProvider - applyCompletion', () => {
+  it('前缀替换手术：光标前保留 + item.value + 光标后保留，行尾自动补空格，cursor 前移', () => {
+    const { current, applyCompletion } = makeFakeCurrent()
+    const provider = createHashAutocompleteProvider(() => '', current)
+    const lines = ['hello #e6c9']
+    // 'hello ' = 6 字符，'#e6c9' = 5 字符 → cursor 在 11
+    const out = provider.applyCompletion(lines, 0, 11, { value: `#${FULL_UUID}`, label: 'x' }, '#e6c9')
+    // 行尾选中：补一个尾随空格，用户直接打字即产生间隔
+    expect(out.lines[0]).toBe(`hello #${FULL_UUID} `)
+    expect(out.cursorLine).toBe(0)
+    // cursor 停在补的空格之后
+    expect(out.cursorCol).toBe(6 + `#${FULL_UUID}`.length + 1)
+  })
+
+  it('光标后有内容且已以空白开头：替换只影响 # 片段区间，不重复补空格', () => {
+    const { current } = makeFakeCurrent()
+    const provider = createHashAutocompleteProvider(() => '', current)
+    const lines = ['before #e6c9 after']
+    // 'before ' = 7，'#e6c9' = 5 → cursor 12，尾部 ' after' 保留
+    const out = provider.applyCompletion(lines, 0, 12, { value: `#${FULL_UUID}`, label: 'x' }, '#e6c9')
+    expect(out.lines[0]).toBe(`before #${FULL_UUID} after`)
+    expect(out.cursorCol).toBe(7 + `#${FULL_UUID}`.length)
+  })
+
+  it('光标后紧贴非空白内容：补一个空格与后续内容隔开', () => {
+    const { current } = makeFakeCurrent()
+    const provider = createHashAutocompleteProvider(() => '', current)
+    const lines = ['before #e6c9after']
+    // 'before ' = 7，'#e6c9' = 5 → cursor 12，尾部 'after' 紧贴
+    const out = provider.applyCompletion(lines, 0, 12, { value: `#${FULL_UUID}`, label: 'x' }, '#e6c9')
+    expect(out.lines[0]).toBe(`before #${FULL_UUID} after`)
+    expect(out.cursorCol).toBe(7 + `#${FULL_UUID}`.length + 1)
+  })
+
+  it('CJK 多字节内容：按 JS 字符串长度（code unit）计算区间与 cursor，不切坏字符', () => {
+    const { current } = makeFakeCurrent()
+    const provider = createHashAutocompleteProvider(() => '', current)
+    const lines = ['你好 #e6c9']
+    // '你好 ' = 3 个 code unit，'#e6c9' = 5 → cursor 8
+    const out = provider.applyCompletion(lines, 0, 8, { value: `#${FULL_UUID}`, label: 'x' }, '#e6c9')
+    expect(out.lines[0]).toBe(`你好 #${FULL_UUID} `)
+    expect(out.cursorCol).toBe(3 + `#${FULL_UUID}`.length + 1)
+    // 替换后无孤立代理对（CJK 未被切半）
+    expect(out.lines[0].length).toBe(3 + `#${FULL_UUID}`.length + 1)
+  })
+
+  it('非本 provider 的 item（value 不以 # 开头）→ 委托 current.applyCompletion', () => {
+    const { current, applyCompletion } = makeFakeCurrent()
+    const provider = createHashAutocompleteProvider(() => '', current)
+    const lines = ['@file.txt']
+    applyCompletion.mockReturnValue({ lines, cursorLine: 0, cursorCol: 5 })
+    const out = provider.applyCompletion(lines, 0, 5, { value: '/path/file.txt', label: 'file' }, '@file.txt')
+    expect(applyCompletion).toHaveBeenCalledTimes(1)
+    expect(out).toEqual({ lines, cursorLine: 0, cursorCol: 5 })
   })
 })
