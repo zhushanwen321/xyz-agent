@@ -27,15 +27,17 @@
 1. **主进程 `/subagents` 看到完整递归树**：无论嵌套多深（A→B→C→…），所有 record 都出现在列表里，depth 标签、parent、children 关系正确。
 2. **身份字段持久化正确**：重建出的 record 的 `rootSessionId` 全指向真根 session，`parentRecordId` 指向直接父，`depth` 正确递增。
 3. **重开 session 仍可见全树**：主 session 结束后 `/resume` 重开，全树仍可重建（持久化链路完整）。
+4. **fork 分支可见**：fork 出的 session 分支内 spawn 的 subagent，在主进程 `/subagents` 可见（消除 fork 可见性割裂）。
 
 ### Scope
 
-- **In scope**：跨进程身份贯穿（`rootSessionId` / `parentRecordId` / `depth` 三个字段）；主进程视角全树可见。
+- **In scope**：
+  - 跨进程身份贯穿（`rootSessionId` / `parentRecordId` / `depth` 三个字段）；主进程视角全树可见
+  - **fork 分支可见性顺带改善**：fork 出的 session 分支内 spawn 的 subagent，归到顶层 ROOT、主进程可见（现状下归 fork session 自身、主进程不可见——可见性割裂）。env 无条件注入每个 subagent，fork subagent 同样收到 `PI_SUBAGENT_ROOT_SESSION_ID`，自然归 ROOT
 - **Out of scope**（用户明确确认）：
   - subagent 子进程**内部**的 `/subagents` 视图（subagent 不交互，无需自查子树）
   - 旧 session 文件兼容（只保证新 session 生效，不做迁移）
   - `list-view` 树形缩进展示（当前 depth 标签 `[L2]`/`[L3]` + 详情面板 parent/children 已足够，非本设计阻塞项）
-  - fork 场景的 `rootSessionId` 归属（fork 是独立问题，本设计不改变 fork 语义）
 
 ## 2. 现状与问题分析
 
@@ -51,7 +53,7 @@
 
 #### 断点 1：`rootSessionId` 不跨进程保持为 ROOT（过滤层）
 
-`record-store.ts` 的 `collectRecords` 按 `rootSessionId === ROOT` 过滤（`ROOT` = 主进程 `this.sessionId`）。而 `rootSessionId` 赋值在 `subagent-service.ts:652` 的 `createRecordForMode`：
+`record-store.ts` 的 `collectRecords` 按 `rootSessionId === ROOT` 过滤（`ROOT` = 主进程 `this.sessionId`）。而 `rootSessionId` 赋值在 `subagent-service.ts:653` 的 `createRecordForMode`：
 
 ```ts
 rootSessionId: this.sessionId ?? undefined,  // 当前进程的 pi session id
@@ -154,7 +156,10 @@ B 子进程(B_sess) → C 同样错位 …
 
 所有层级的 record 都可见，parent/children 链完整可追溯，depth 标签正确区分层级。
 
-**恢复指引（失败路径）**：若某 record 详情显示 `parent: (root)` 但用户预期它有父，说明该 record 的 identity entry 缺 `parentRecordId`——检查 `PI_SUBAGENT_SELF_RECORD_ID` env 是否在 spawn 链正确传递（`PI_EXT_DEBUG=1` 看 `[subagents] execCtxAls initialized` 日志）。
+**恢复指引（失败路径）**：
+
+- **record 详情 `parent: (root)` 但预期有父**：identity entry 缺 `parentRecordId`。查 `PI_EXT_DEBUG=1` 的 `[subagents] execCtxAls initialized: recordId=X` 日志，确认 `PI_SUBAGENT_SELF_RECORD_ID` env 是否贯穿到该子进程。
+- **B/C 等 record 根本不出现**（更常见失败）：identity entry 的 `rootSessionId` 不等于主 session id、被过滤丢弃。排查链：`cat <session>.jsonl | grep subagent-identity` 看 `rootSessionId` 值 → 若不等于主 session id，查 `[subagents] execCtxAls initialized: rootSessionId=Z` 日志确认 env 是否贯穿 → 指向注入点（`runSpawn` 的 childEnv）或读取点（`initSession`）。
 
 ### 3.2 多方案对比
 
@@ -208,9 +213,13 @@ env 是父进程写给即将启动的子进程的，描述**子进程（这个 s
 
 **被否**：用 `PI_SUBAGENT_PARENT_RECORD_ID`（描述父）。语义混乱——env 的接受方是子进程，子进程读 `PARENT_RECORD_ID` 后还要再映射"我的父是 X"，不如 `SELF_RECORD_ID` 直接建立"我是 X"的执行上下文。`SELF` 与 `execCtxAls.enterWith({recordId: SELF})` 一一对应，零映射。
 
-#### 决策 2：无条件注入（区别于 forkDepth 的条件注入）
+#### 决策 2：无条件注入（含 fork subagent，顺带改善 fork 可见性）
 
 `PI_SUBAGENT_FORK_DEPTH` 仅 `fork=true` 时注入（fork 是可选行为）。本设计的 3 个 env **无条件注入每个 subagent**——身份贯穿是所有 subagent 的基础需求，不依赖 fork。
+
+**fork subagent 的归属变化（顺带改善）**：`execute(opts.fork=true)` 同样走 `runSpawn`（`subagent-service.ts:715-718` 透传 `opts.fork`），childEnv 无条件构造，故 fork subagent 的子进程也收到 `PI_SUBAGENT_ROOT_SESSION_ID`。现状下 fork session 内 spawn 的 subagent 其 `rootSessionId` = fork session 自身 id，主进程（filter=ROOT）不可见；本设计后归顶层 ROOT、主进程可见。这是**改善**（消除 fork 可见性割裂，符合「看到全部」诉求），非破坏——多个**独立**主 session（非 fork 关系）仍按各自 rootSessionId 隔离（场景 3 覆盖）。
+
+**被否**：注入加 `if (!opts.fork)` 排除 fork subagent。会让 fork 分支内的递归 subagent 仍不可见，与「看到全部」诉求冲突，且增加条件分支复杂度。
 
 #### 决策 3：`rootSessionId` 来源从 `this.sessionId` 改为 `this.sessionRootId`
 
@@ -238,10 +247,13 @@ this.sessionRootId = envRoot ?? init.sessionId;  // 有 env = 子进程（贯穿
 
 ### 场景 1：三层嵌套全树可见（回溯目标 1）
 
+**确定性构造**：不依赖 LLM 自主决定是否递归——写一个强制递归 test agent（`recursive-worker.md`），system prompt 固定「收到任何 task，若未达第 3 层则先 spawn 一个同 agent 子 agent，再用一句话回复」，配 `maxTurns` 钉死三层。确保每次都产生确定的 A→B→C 链，而非「大概率触发」。
+
 **步骤**：
-1. 本地起主 pi session（rpc 模式）：`pi --mode rpc --session-dir /tmp/acc-rec --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve --extension <subagent-workflow 路径>`
-2. 发 prompt 让主 agent spawn A（worker），A 的 task 明确要求"完成后 spawn 一个子 worker B"，B 的 task 同理要求 spawn C（构造 A→B→C 三层）。
-3. 等全树完成后，主 session 发 `/subagents` 命令。
+1. 写 `recursive-worker.md`（强制递归 agent，深度到 3 停）。
+2. 本地起主 pi session（rpc 模式）：`pi --mode rpc --session-dir /tmp/acc-rec --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve --extension <subagent-workflow 路径>`
+3. 发 prompt 让主 agent 用 `recursive-worker.md` spawn A（`agent({agent: <recursive-worker 绝对路径>, maxTurns: 3})`），A 强制 spawn B、B 强制 spawn C。
+4. 等全树完成后，主 session 发 `/subagents` 命令。
 
 **通过标准**：
 - `/subagents` 列表出现 3 条 record（A/B/C）
@@ -249,6 +261,14 @@ this.sessionRootId = envRoot ?? init.sessionId;  // 有 env = 子进程（贯穿
 - 选中 A 详情：`parent: (root)`，`children:` 列出 B 的 id
 - 选中 B 详情：`parent:` 指向 A 的 id，`children:` 列出 C 的 id
 - 选中 C 详情：`parent:` 指向 B 的 id，`children:` 为空
+
+### 场景 1b：env 传递机制确定性验证（回溯目标 1，单元层）
+
+场景 1 依赖 LLM 配合验端到端可见性；本场景用单元测**确定性**验证 env 传递机制本身（不依赖 LLM）。
+
+**步骤**：单元测断言 `runSpawn` 构造的 `childEnv` 含 3 个 `PI_SUBAGENT_*` 键，值 = `ctx.sessionRootId` / `record.id` / `String(record.depth)`（mock `spawn` 捕获传入 env）。
+
+**通过标准**：3 个 env 键存在且值正确；覆盖 `opts.fork=true` 与 `opts.fork=false` 两种（决策 2 无条件注入，两者都应有）。
 
 ### 场景 2：identity entry 字段持久化正确（回溯目标 2）
 
@@ -275,6 +295,15 @@ this.sessionRootId = envRoot ?? init.sessionId;  // 有 env = 子进程（贯穿
 
 **通过标准**：全树 A/B/C 仍可见，parent/children/depth 与场景 1 一致（磁盘重建链路完整）。
 
+### 场景 5：fork 分支 subagent 可见（回溯目标 4）
+
+**步骤**：主 session 中 fork 出一个分支 session（pi `/fork`），在 fork 分支内用场景 1 的 `recursive-worker` spawn 一个 subagent F。回到主 session 发 `/subagents`。
+
+**通过标准**：
+- 主 session `/subagents` 列表出现 F（rootSessionId = 主 session id，归 ROOT）
+- F 的 identity entry `rootSessionId` = 主 session id（非 fork session id）
+- 场景 3 的独立 session 隔离仍成立（fork 分支归 ROOT 不破坏独立 session 隔离）
+
 ## 5. 下一层拆分
 
 ### 数据模型 + env 契约（单元 1）
@@ -289,7 +318,8 @@ this.sessionRootId = envRoot ?? init.sessionId;  // 有 env = 子进程（贯穿
   const envRoot = process.env.PI_SUBAGENT_ROOT_SESSION_ID;
   this.sessionRootId = envRoot ?? init.sessionId;
   const envSelfRecord = process.env.PI_SUBAGENT_SELF_RECORD_ID;
-  if (envSelfRecord !== undefined) {
+  // 守卫对齐 forkDepth（subagent-service.ts:284 同样排空串），防 env 异常空串导致 enterWith({recordId:""})
+  if (envSelfRecord !== undefined && envSelfRecord !== "") {
     const envDepth = Number.parseInt(process.env.PI_SUBAGENT_DEPTH ?? "0", 10);
     this.execCtxAls.enterWith({ recordId: envSelfRecord, depth: Number.isNaN(envDepth) ? 0 : envDepth });
   }
@@ -300,7 +330,7 @@ this.sessionRootId = envRoot ?? init.sessionId;  // 有 env = 子进程（贯穿
 
 ### createRecordForMode 改 rootSessionId 来源（单元 3）
 
-- **改 `subagent-service.ts:652`**：`rootSessionId: this.sessionRootId`（从 `this.sessionId` 改）。
+- **改 `subagent-service.ts:653`**：`rootSessionId: this.sessionRootId`（从 `this.sessionId` 改）。
 - `parentRecordId` / `depth` 不变（仍读 `execCtxAls`，单元 2 保证子进程 ALS 已建立）。
 - **justification**：根进程 `sessionRootId===sessionId`（行为不变），子进程用贯穿的真 ROOT。
 - **验收**：场景 2。
@@ -335,4 +365,4 @@ this.sessionRootId = envRoot ?? init.sessionId;  // 有 env = 子进程（贯穿
 ### 待验证检查点
 
 - 探针实测（决策 4）：实施期在本地 pi 跑场景 1，确认 `[subagents] execCtxAls initialized` 日志在 A/B/C 三个子进程都出现且值正确。
-- 深度护栏交互：`execCtxAls` 既用于建树（本设计）又用于嵌套深度护栏（`subagent-service.ts:416` 的 `nestingDepth` 检查）。子进程 initSession 建立基线后，护栏读到的深度会从正确值起算——需确认不破坏现有护栏阈值（实施期跑一次极限深度场景确认）。
+- 深度护栏交互（设计期值链推导，实施期 smoke 确认）：`execCtxAls` 既用于建树（本设计）又用于嵌套深度护栏（`subagent-service.ts:416-417` 的 `nestingDepth = parentNesting ? parentNesting.depth+1 : 0`）。值链自洽：`enterWith` 基线 `depth` = env `PI_SUBAGENT_DEPTH` = 父注入的 `String(record.depth)`；子进程创建孙时护栏读 `execCtxAls.depth + 1` = 子.depth，与主进程 `execute` 入口的计算同构（主进程无 env → ALS 空 → depth=0 顶层）。**结论：不破坏护栏阈值**，子进程从正确深度起算而非从 0 重计。实施期跑一次极限深度场景 smoke 确认推导成立。
