@@ -8,6 +8,8 @@
  * 特殊分支（测试专用）：
  * - crash → process.exit(1) 模拟子进程崩溃（exit 非 0）
  * - fatal → 回 fatal_error 消息模拟子进程主动报告致命错误
+ * - fatalThenExit → 回 fatal_error 后延迟 300ms process.exit(1)（模拟崩溃→重建竞态：
+ *   旧进程晚到 exit 落在重建后的新 handle 上）
  * - hang  → 不响应（模拟 loadPlugin 超时）
  */
 'use strict'
@@ -37,6 +39,10 @@ process.on('message', (msg) => {
     process.exit(1)
   } else if (m.type === 'fatal') {
     process.send({ type: 'fatal_error', error: 'mock fatal error' })
+  } else if (m.type === 'fatalThenExit') {
+    process.send({ type: 'fatal_error', error: 'mock fatal error then exit' })
+    // 延迟退出：给宿主留出重激活窗口，晚到 exit 用于验证崩溃→重建竞态（M6a-03）
+    setTimeout(() => process.exit(1), 300)
   } else if (m.type === 'hang') {
     hanging = true
   }

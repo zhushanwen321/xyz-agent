@@ -82,6 +82,7 @@ describe('plugin-esm-loader sandbox interception', () => {
     writeFileSync(join(pluginDir, 'good.mjs'), 'export const value = 42\n')
     writeFileSync(join(pluginDir, 'inner-import.mjs'), "import './good.mjs'\nexport const ok = true\n")
     writeFileSync(join(pluginDir, 'bad-builtin.mjs'), "import 'node:fs'\n")
+    writeFileSync(join(pluginDir, 'bad-module.mjs'), "import 'node:module'\n")
     writeFileSync(join(pluginDir, 'bad-bare.mjs'), "import 'fs'\n")
     writeFileSync(join(pluginDir, 'bad-outside.mjs'), "import '../outside.mjs'\n")
     // 出界目标放 pluginDir 父目录（../outside.mjs 解析目标），保证拦截因边界而非文件缺失
@@ -150,6 +151,15 @@ describe('plugin-esm-loader sandbox interception', () => {
     // 不给 run 消息——loader initialize 阶段即失败，进程不会进入消息循环
     const code = await exitPromise
     expect(code).not.toBe(0)
+  }, TIMEOUT_MS)
+
+  it('TC8: node:module 被拦截（createRequire 绕过链第一环，M6a-01）', async () => {
+    setupSandbox()
+    const results = await runImports({ XYZ_PLUGIN_SANDBOX_DIR: pluginDir }, [
+      { label: 'bad-module', url: pluginFile('bad-module.mjs') },
+    ])
+    expect(results[0].ok).toBe(false)
+    expect(results[0].error).toContain('PERMISSION_DENIED')
   }, TIMEOUT_MS)
 
   it('TC7: loader 源文件结构正确（hooks 导出 + self-register + realpath 规范化）', () => {

@@ -107,7 +107,11 @@ export class PluginHostProcess implements PluginHostProcessContract {
       const processId = `sandbox-${pluginId}`
       const existing = this.processes.get(processId)
       if (existing && existing.status === 'active') {
-        existing.pluginIds.push(pluginId)
+        // M6a-06：复用分支去重——deactivate 不 terminate 进程，每次重激活都会命中
+        // 此分支，重复 push 会让 pluginIds 随激活次数累积（崩溃回调收到重复 id）
+        if (!existing.pluginIds.includes(pluginId)) {
+          existing.pluginIds.push(pluginId)
+        }
         return processId
       }
       return this.createProcess(processId, 'sandbox', pluginId, pluginDir).processId
@@ -269,6 +273,26 @@ export class PluginHostProcess implements PluginHostProcessContract {
     pluginId: string,
     pluginDir?: string,
   ): ProcessHandle {
+    // M6a-03：覆盖同 processId 前先清理残留句柄（崩溃→重建竞态防护）。
+    // 崩溃（handleProcessCrash 不 kill 不删 map）后重激活走 createProcess 直接 set 覆盖，
+    // 旧 child 的 exit/disconnect/error/message 监听全部残留——旧 child 晚到的 exit（code≠0）
+    // 会命中新 handle，健康进程被误标 crashed + RPC 反注册。此处 kill 旧 child + off 全部
+    // 监听 + 删 map + 反注册，使旧进程的任何晚到事件都无法再触碰新 handle。
+    const staleChild = this.processInstances.get(processId)
+    if (staleChild) {
+      this.processInstances.delete(processId)
+      this.processes.delete(processId)
+      staleChild.removeAllListeners()
+      try {
+        staleChild.kill()
+      } catch (e: unknown) {
+        // kill 失败（进程已死/权限）不阻塞重建
+        console.debug(`[plugin-host-process] kill stale child failed for ${processId}:`, e)
+      }
+      // rpcServer 反注册旧 worker（下方 createProcess 会重新注册新 worker）
+      this.rpcServer.unregisterWorker(processId)
+    }
+
     // bootstrap 路径：测试 override 优先；生产走 resolveAndValidateFile 链
     // （plugin-bootstrap-process.cjs → .js → .ts，与 plugin-host 的 .cjs/.js/.ts 同约定）
     let bootstrapPath: string
@@ -408,6 +432,19 @@ export class PluginHostProcess implements PluginHostProcessContract {
     handle.status = 'crashed'
     const pluginIds = [...handle.pluginIds]
     this.rpcServer.unregisterWorker(processId)
+
+    // M6a-03：kill 兜底——fatal_error 消息路径子进程可能仍存活（发完消息不退出 = 进程
+    // 泄漏）。崩溃时强制终止。kill 后晚到的 exit 被上方 status='crashed' 幂等守卫拦截，
+    // 且重建时 createProcess 的残留清理会 removeAllListeners，不会命中新 handle。
+    const child = this.processInstances.get(processId)
+    if (child && child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill()
+      } catch (e: unknown) {
+        // best-effort：进程可能已退出，kill 抛错不阻塞崩溃通知
+        console.debug(`[plugin-host-process] kill failed for crashed process ${processId}:`, e)
+      }
+    }
 
     this.onCrash?.(processId, pluginIds, error)
   }

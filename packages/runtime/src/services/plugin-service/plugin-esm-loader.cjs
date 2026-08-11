@@ -41,6 +41,8 @@ const BLOCKED_BUILTINS = [
   'v8',
   'vm',
   'worker_threads',
+  // module：node:module 暴露 createRequire，可构造绕过 sandbox 拦截的 require（M6a-01）
+  'module',
 ]
 
 let sandboxDir = ''

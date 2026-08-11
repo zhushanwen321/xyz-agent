@@ -905,6 +905,10 @@ describe('ExtensionService', () => {
     ]
     /** 一个不属于 builtin 的 user 包（迁移后必须保留） */
     const userPkg = 'npm:user-installed-pkg'
+    /** infrastructure 级 builtin（不可禁，disabled 记录属残留，迁移清除） */
+    const infraNames = ['@zhushanwen/pi-pending-notifications', '@zhushanwen/pi-structured-output']
+    /** feature 级 builtin（可禁，disabled 记录是用户合法状态，迁移必须保留，M6a-02） */
+    const featureNames = builtinNames.filter(n => !infraNames.includes(n))
 
     it('清理 3 个数据文件中的 builtin 包记录，user 记录保留', async () => {
       // settings.json packages[]：builtin + user
@@ -918,7 +922,7 @@ describe('ExtensionService', () => {
         autoUpgrade: [...builtinNames.map(n => `npm:${n}`), userPkg],
       }), 'utf-8')
 
-      // disabled-packages.json：builtin + user
+      // disabled-packages.json：builtin（infra + feature）+ user
       writeFileSync(join(testSettingsDir, 'disabled-packages.json'), JSON.stringify({
         disabled: [...builtinNames.map(n => `npm:${n}`), userPkg],
       }), 'utf-8')
@@ -940,13 +944,52 @@ describe('ExtensionService', () => {
       }
       expect(auto.autoUpgrade).toContain(userPkg)
 
-      // disabled-packages.json：builtin 清除，user 保留
+      // disabled-packages.json（M6a-02）：infrastructure builtin 清除（残留），
+      // feature builtin 保留（用户合法禁用状态），user 保留
       const disabledRaw = readFileSync(join(testSettingsDir, 'disabled-packages.json'), 'utf-8')
       const disabled = JSON.parse(disabledRaw) as { disabled: string[] }
-      for (const n of builtinNames) {
+      for (const n of infraNames) {
         expect(disabled.disabled).not.toContain(`npm:${n}`)
       }
+      for (const n of featureNames) {
+        expect(disabled.disabled).toContain(`npm:${n}`)
+      }
       expect(disabled.disabled).toContain(userPkg)
+    })
+
+    it('禁用 feature builtin 后迁移保留 disabled（模拟 boot，M6a-02）', async () => {
+      // 用户禁用 feature builtin（toggleExtension 落盘 npm:<name>）
+      const disabledPath = join(testSettingsDir, 'disabled-packages.json')
+      writeFileSync(disabledPath, JSON.stringify({
+        disabled: ['npm:@zhushanwen/pi-goal', 'npm:@zhushanwen/pi-subagent-workflow'],
+      }), 'utf-8')
+      // 旧机制遗留：settings.json packages[] 有同包 npm 记录（迁移应清除）
+      writeFileSync(join(testSettingsDir, 'settings.json'), JSON.stringify({
+        packages: ['npm:@zhushanwen/pi-goal'],
+      }), 'utf-8')
+
+      // 模拟 boot 迁移
+      await service.migrateBuiltinExtensions()
+
+      // disabled 保留：feature builtin 禁用状态跨重启持久
+      const disabled = JSON.parse(readFileSync(disabledPath, 'utf-8')) as { disabled: string[] }
+      expect(disabled.disabled).toContain('npm:@zhushanwen/pi-goal')
+      expect(disabled.disabled).toContain('npm:@zhushanwen/pi-subagent-workflow')
+      // packages[] 仍清理（builtin 不可安装，该记录永远不该存在）
+      const settings = JSON.parse(readFileSync(join(testSettingsDir, 'settings.json'), 'utf-8'))
+      expect(settings.packages).not.toContain('npm:@zhushanwen/pi-goal')
+    })
+
+    it('迁移清除 infrastructure builtin 的 disabled 残留（M6a-02）', async () => {
+      // 旧 mandatory 机制/手动编辑残留的 infrastructure disabled 记录应被清除
+      writeFileSync(join(testSettingsDir, 'disabled-packages.json'), JSON.stringify({
+        disabled: ['npm:@zhushanwen/pi-pending-notifications', 'npm:@zhushanwen/pi-structured-output'],
+      }), 'utf-8')
+
+      await service.migrateBuiltinExtensions()
+
+      // infrastructure disabled 全清后 disabled-packages.json 被 JsonStore 删除（空数组删文件行为）
+      expect(existsSync(join(testSettingsDir, 'disabled-packages.json'))).toBe(false)
     })
 
     it('幂等：无 builtin 记录时不报错且数据不变', async () => {

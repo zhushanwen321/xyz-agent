@@ -462,7 +462,15 @@ export class ExtensionService {
     for (const ext of mandatoryExtensions) {
       const source = `npm:${ext.name}`
       await this.extSettings.removePackage(source)
-      await this.extSettings.removeDisabled(source)
+      // M6a-02：disabled 只清 infrastructure 级。本分支语义为「feature builtin 可禁」
+      // （toggleExtension 只拦 infrastructure，extension-filter loadable 尊重 disabled），
+      // feature 包的 disabled 记录是用户合法状态，每次 boot 无条件清除会静默重新启用。
+      // infrastructure 不可禁（toggleExtension 抛错），其 disabled 记录只可能是旧版
+      // mandatory 机制/手动编辑残留，清除无语义冲突。removePackage/removeAutoUpgrade
+      // 对所有包继续执行（builtin 不可安装/不可升级，这两类记录永远不该存在）。
+      if (ext.tier === 'infrastructure') {
+        await this.extSettings.removeDisabled(source)
+      }
       await this.extSettings.removeAutoUpgrade(source)
     }
   }

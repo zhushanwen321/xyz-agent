@@ -264,4 +264,53 @@ describe('PluginHostProcess', () => {
 
     await expect(host.terminateProcess('nonexistent-process')).resolves.toBeUndefined()
   })
+
+  // ── TC13: 崩溃→重建竞态（M6a-03）────────────────────────────
+  it('TC13: rebuild after crash — stale child late exit must not crash new handle', async () => {
+    const { host } = createHost()
+    track(host)
+
+    const crashes: Array<{ processId: string; pluginIds: string[]; error: string }> = []
+    host.setCrashCallback((processId, pluginIds, error) => {
+      crashes.push({ processId, pluginIds, error })
+    })
+
+    // 1. 首启 + fatal_error（mock 发 fatal 后延迟 300ms 才退出，留出重建窗口）
+    const processId = await host.assignProcess('rebuild-test', 'sandbox')
+    const handle = host.getProcessHandle('rebuild-test')!
+    handle.postMessage({ type: 'fatalThenExit' })
+
+    await waitFor(() => crashes.length >= 1)
+    expect(host.getProcessHandleById(processId)!.status).toBe('crashed')
+
+    // 2. 崩溃后重激活（crash 路径是插件系统明确支持的路径）→ 走 createProcess 重建
+    const processId2 = await host.assignProcess('rebuild-test', 'sandbox')
+    expect(processId2).toBe(processId)
+    const rebuilt = host.getProcessHandleById(processId)
+    expect(rebuilt).toBeTruthy()
+    expect(rebuilt!.status).toBe('active')
+    expect(rebuilt!.pid).toBeGreaterThan(0)
+
+    // 3. 等旧进程晚到的 exit 传播：修复前旧 child 监听残留，exit 会命中新 handle
+    //    （健康进程被误标 crashed + crash 回调重复触发）；修复后 createProcess 已
+    //    removeAllListeners 旧 child + handleProcessCrash kill 兜底，不应再有任何影响
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    expect(host.getProcessHandleById(processId)!.status).toBe('active')
+    expect(crashes.length).toBe(1)
+  })
+
+  // ── TC14: sandbox 复用分支 pluginIds 去重（M6a-06）───────────
+  it('TC14: sandbox reassign of same plugin does not duplicate pluginIds', async () => {
+    const { host } = createHost()
+    track(host)
+
+    const processId = await host.assignProcess('dup-test', 'sandbox')
+    // 复用 active 进程分支：第二次 assign 同一插件（deactivate 不 terminate 进程的
+    // 真实路径）不应重复 push pluginIds
+    const again = await host.assignProcess('dup-test', 'sandbox')
+    expect(again).toBe(processId)
+
+    const handle = host.getProcessHandleById(processId)!
+    expect(handle.pluginIds).toEqual(['dup-test'])
+  })
 })

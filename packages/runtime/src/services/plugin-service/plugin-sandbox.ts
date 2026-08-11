@@ -28,6 +28,8 @@ export const BLOCKED_BUILTINS: readonly string[] = [
   'v8',
   'vm',
   'worker_threads',
+  // module：node:module 暴露 createRequire，可构造绕过本拦截器的 require（M6a-01）
+  'module',
 ]
 
 /**
@@ -57,7 +59,10 @@ export function createRequireInterceptor(pluginDir: string): (request: string, r
     }
 
     // npm 包名 / 内置模块：检查 blocklist
-    if (BLOCKED_BUILTINS.includes(request)) {
+    // node: 前缀剥离后查黑名单（M6a-01）：require('node:fs') 与 require('fs') 等价，
+    // 不剥离则 node: 前缀绕过黑名单（ESM loader 侧已有同样剥离，两侧必须对称）。
+    const bareName = request.startsWith('node:') ? request.slice('node:'.length) : request
+    if (BLOCKED_BUILTINS.includes(bareName)) {
       throw errorWithCode(`Sandbox: require('${request}') is blocked`, 'PERMISSION_DENIED')
     }
 
