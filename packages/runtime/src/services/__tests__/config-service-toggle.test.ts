@@ -20,6 +20,9 @@ import { join } from 'node:path'
 import { ConfigService } from '../config-service.js'
 import type { IConfigStore, ConfigModelsConfig, ConfigProviderConfig } from '../ports/config.js'
 import type { AuthStorage } from '../auth/auth-storage.js'
+// M5-02：mock 镜像生产 getDefaultModel 的 auto-fix 语义需要 deriveEnabled（与
+// pi-provider-store.findValidDefaultModel 同源判定）。本文件不 mock provider-catalog。
+import { deriveEnabled } from '../provider-catalog.js'
 // 真实 pi-settings-store（边界3 持久化验证用）
 import { clearEnabledModels, ensureProviderInWhitelist, setEnabledModels, setModelsPath } from '../../infra/pi/pi-provider-store.js'
 import { setSettingsPath, invalidateSettingsCache } from '../../infra/pi/pi-settings-store.js'
@@ -49,7 +52,27 @@ function makeStore(opts: StoreOpts = {}) {
   return {
     readModels: vi.fn(() => ({ providers: models })),
     getEnabledModels: vi.fn(() => [...enabledModels]),
-    getDefaultModel: vi.fn(() => defaultModel),
+    getDefaultModel: vi.fn(() => {
+      // M5-02：镜像生产 PiConfigStore.getDefaultModel（findValidDefaultModel + wasFixed
+      // auto-fix 写回）。default 有效（provider 在 models、有 models、启用、modelId 存在）
+      // → 原值返回；无效 → 重选 models 中第一个启用且有 models 的 provider 并写回
+      //（wasFixed 语义）；无可用 → null（生产 catalog 兜底 wasFixed:false 不写回，mock 简化为 null）。
+      // 若 mock 仍是「无条件返回初值」，TC4 测的是生产不可达路径（旧实现顺序 bug 漏网）。
+      if (!defaultModel) return null
+      const cur = defaultModel
+      const cfg = models[cur.provider]
+      const isEnabled = deriveEnabled(cur.provider, enabledModels)
+      if (cfg?.models?.length && isEnabled && cfg.models.some(m => m.id === cur.modelId)) {
+        return cur
+      }
+      for (const [pid, pcfg] of Object.entries(models)) {
+        if (pcfg.models?.length && deriveEnabled(pid, enabledModels)) {
+          defaultModel = { provider: pid, modelId: pcfg.models[0].id }
+          return defaultModel
+        }
+      }
+      return null
+    }),
     getProviderConfig: vi.fn((id: string) => (id in models ? JSON.parse(JSON.stringify(models[id])) : undefined)),
     setEnabledModels: vi.fn((p: string[]) => { enabledModels = [...p] }),
     clearEnabledModels: vi.fn(() => { enabledModels = [] }),
@@ -196,6 +219,24 @@ describe('TC4: 边界2 defaultModel 守卫——禁用承载 default 的 provide
     const ret = svc.toggleProviderEnabled('openai', false)
     expect(store.setDefaultModel).not.toHaveBeenCalled()
     expect(ret).toEqual({})
+  })
+
+  it('M5-02：剩余可用 provider 是 auth.json-only catalog → 重选凭据优先的 anthropic（生产真实路径）', () => {
+    // 场景：openai 承载 default，禁用后唯一剩余可用是 auth.json 凭据的 catalog provider
+    // anthropic（不在 models.json——生产 findValidDefaultModel 的 fallback 只扫 models.json，
+    // 看不到它；pickEnabledDefaultModel 的 B1 凭据优先经 listProviders 双源聚合能看到）。
+    const { svc, store } = makeService({
+      models: { openai: { models: [{ id: 'gpt-4' }] } },
+      enabledModels: ['openai/*'],
+      defaultModel: { provider: 'openai', modelId: 'gpt-4' },
+      authIds: ['anthropic'],
+    })
+    const ret = svc.toggleProviderEnabled('openai', false)
+    // 白名单更新前读到旧 default（openai）→ 重选 anthropic 并持久化
+    expect(store.setDefaultModel).toHaveBeenCalledWith('anthropic', expect.any(String))
+    expect(ret.newDefault?.provider).toBe('anthropic')
+    // 关键：setDefaultModel 被调用（非惰性等下次 getDefaultModel auto-fix）
+    expect(store.setDefaultModel).toHaveBeenCalledTimes(1)
   })
 })
 

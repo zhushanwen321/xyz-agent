@@ -389,6 +389,12 @@ export function toggleProviderEnabled(
     // 无 pattern 被移除（provider 不在白名单 / 白名单空）——幂等 no-op
     return {}
   }
+  // 边界2（TC4）：先读 default 再更新白名单。生产 PiConfigStore.getDefaultModel 内部
+  // findValidDefaultModel 会 auto-fix 写回（wasFixed:true）——若先更新白名单再读，被禁用
+  // 的 default provider 已触发 auto-fix 重选（oldDefault 变成别的 provider），下方
+  // oldDefault.provider === providerId 恒 false，pickEnabledDefaultModel 的 B1 凭据优先
+  // 重选不可达（M5-02）。白名单更新前读取时该 provider 仍启用，default 若承载它返回原值。
+  const oldDefault = configStore.getDefaultModel()
   // 边界3（TC3）：重算后空 → delete 字段（CL2），非写空数组（pi 语义空=全可用，写 [] 语义反转）；
   // 非空 → 写回新白名单
   if (remaining.length === 0) {
@@ -397,11 +403,12 @@ export function toggleProviderEnabled(
     configStore.setEnabledModels(remaining)
   }
 
-  // 边界2（TC4）：若 defaultModel 承载被禁用的 provider，重选（否则 pi session scopedModels
-  // 不含该 provider，defaultModel 与 scope 错位）。复用 listProviders（wave2 双源聚合 + deriveEnabled）
-  // 找首个启用且有 model 的 provider——不依赖 findValidDefaultModel（其主路径未过滤 enabledModels）。
-  const oldDefault = configStore.getDefaultModel()
   if (oldDefault && oldDefault.provider === providerId) {
+    // 若 defaultModel 承载被禁用的 provider，显式「重选 + 持久化」（否则 pi session
+    // scopedModels 不含该 provider，defaultModel 与 scope 错位）。复用 listProviders
+    //（wave2 双源聚合 + deriveEnabled + B1 凭据优先）选新 default 并 setDefaultModel 写回，
+    // 不依赖 getDefaultModel 的惰性 auto-fix（其 fallback 只扫 models.json，看不到
+    // auth.json-only 的 catalog provider）。
     const newDefault = pickEnabledDefaultModel(configStore, authStorage, providerId)
     if (newDefault) {
       configStore.setDefaultModel(newDefault.provider, newDefault.modelId)
@@ -504,8 +511,23 @@ export async function removeProviderByKind(
     // MF1 修复（exec-review must-fix）：catalog override 承载 defaultModel 时 removeProvider 内部
     // 重选 default + mutate settings.json，透传 newDefault 让 handler 广播 config.defaults
     // （与 custom 分支 + deleteProvider 对称，否则 renderer 收不到重选通知）。
-    const overrideResult = configStore.removeProvider(providerId)
+    let overrideResult = configStore.removeProvider(providerId)
     configStore.cleanEnabledModelsResidue(providerId)
+    // M5-03（G2 增删入口自动维护 defaultModel）：catalog provider 无 models.json override 时
+    // removeProvider 提前 return { removed:false }，跳过 defaultProvider/defaultModel 清理重选
+    //（「导入后无 override 的 catalog provider 承载 default」正是 G4 移除流程的常态形态，
+    // MF1 修复只覆盖 override 分支）。default 承载该 provider 时显式重选并持久化（复用
+    // toggle 边界2 的 pickEnabledDefaultModel，B1 凭据优先），透传 newDefault 广播 config.defaults。
+    if (!overrideResult.removed) {
+      const oldDefault = configStore.getDefaultModel()
+      if (oldDefault && oldDefault.provider === providerId) {
+        const newDefault = pickEnabledDefaultModel(configStore, authStorage, providerId)
+        if (newDefault) {
+          configStore.setDefaultModel(newDefault.provider, newDefault.modelId)
+          overrideResult = { removed: false, newDefault }
+        }
+      }
+    }
     // 清 auth.json 凭据（api_key / oauth token，强绑定凭据不能残留）。await：remove 内部
     // withFileLock 是真异步，fire-and-forget 会导致 broadcastProviderList 读到旧凭据 → 广播
     // stale 列表（catalog provider 删除后首次广播仍含该 provider 的根因）。失败仅 warn 不阻断。

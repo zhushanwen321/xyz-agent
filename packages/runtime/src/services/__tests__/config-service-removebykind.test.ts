@@ -152,6 +152,49 @@ describe('TC2: removeProviderByKind(catalog) 清 auth.json 凭据 + override + e
     // 若改回 fire-and-forget，此断言失败（凭据 5ms 后才删，返回后立即查仍在）。
     expect(svc.listProviders().some(p => p.id === 'openai')).toBe(false)
   })
+
+  it('M5-03：catalog 无 override（removeProvider 返回 removed:false）且 default 承载该 provider → 显式重选并持久化', async () => {
+    // 场景：catalog provider openai 无 models.json override（导入后常态形态），但 settings.json
+    // default 承载它。removeProvider 提前 return {removed:false} 跳过默认清理（旧实现残留
+    // 指向无凭据 provider 的 default）。修复：显式 pickEnabledDefaultModel 重选（anthropic）
+    // + setDefaultModel 持久化 + 透传 newDefault 供广播。
+    const { svc, store } = makeService({
+      models: { anthropic: { models: [{ id: 'claude-3' }] } },
+      enabledModels: ['openai/*', 'anthropic/*'],
+    })
+    ;(store.removeProvider as ReturnType<typeof vi.fn>).mockReturnValueOnce({ removed: false })
+    ;(store.getDefaultModel as ReturnType<typeof vi.fn>).mockReturnValueOnce({ provider: 'openai', modelId: 'gpt-4' })
+
+    const ret = await svc.removeProviderByKind('openai', 'catalog')
+
+    expect(store.setDefaultModel).toHaveBeenCalledWith('anthropic', 'claude-3')
+    expect(ret).toEqual({ removed: true, newDefault: { provider: 'anthropic', modelId: 'claude-3' } })
+  })
+
+  it('M5-03：catalog 无 override + default 承载该 provider + 无其他启用 provider → 不重选（无候选）', async () => {
+    const { svc, store } = makeService({ enabledModels: ['openai/*'] })
+    ;(store.removeProvider as ReturnType<typeof vi.fn>).mockReturnValueOnce({ removed: false })
+    ;(store.getDefaultModel as ReturnType<typeof vi.fn>).mockReturnValueOnce({ provider: 'openai', modelId: 'gpt-4' })
+
+    const ret = await svc.removeProviderByKind('openai', 'catalog')
+
+    expect(store.setDefaultModel).not.toHaveBeenCalled()
+    expect(ret).toEqual({ removed: true })
+  })
+
+  it('M5-03：catalog 无 override 且 default 不承载该 provider → 不重选', async () => {
+    const { svc, store } = makeService({
+      models: { anthropic: { models: [{ id: 'claude-3' }] } },
+      enabledModels: ['anthropic/*'],
+    })
+    ;(store.removeProvider as ReturnType<typeof vi.fn>).mockReturnValueOnce({ removed: false })
+    ;(store.getDefaultModel as ReturnType<typeof vi.fn>).mockReturnValueOnce({ provider: 'anthropic', modelId: 'claude-3' })
+
+    const ret = await svc.removeProviderByKind('openai', 'catalog')
+
+    expect(store.setDefaultModel).not.toHaveBeenCalled()
+    expect(ret).toEqual({ removed: true })
+  })
 })
 
 // ══ TC3: custom 分支——删 models.json 条目 + 清残留 ═══════════════════════════════════
