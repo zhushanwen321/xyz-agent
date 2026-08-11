@@ -4,7 +4,9 @@ xyz-agent 的架构决策记录。每条 ADR 记录一个不可逆的架构/技�
 
 ## 编号说明
 
-2026-08-02 重构：合并了原 `docs/adr/`（功能/GUI 决策）和 `docs/architecture/adr/`（系统架构决策）两套独立编号体系，按日期统一重编号为 0001-0057 连续序列。
+2026-08-02 重构：合并了原 `docs/adr/`（功能/GUI 决策）和 `docs/architecture/adr/`（系统架构决策）两套独立编号体系，按日期统一重编号为 0001-0057。此后新增 ADR 直接顺延编号：0058-0060 为重构后新增（含 Proposed 状态），0061 为 0045 重号消歧（原 `docs/architecture/adr/0045-cw-store-repo-level-keying.md` 与 `docs/adr/0045-self-built-virtual-turn-list.md` 在合并时编号冲突，cw-store 版重编号为 0061）。
+
+**编号唯一性**：磁盘上的 ADR 文件编号与索引一一对应，无重号。
 
 **旧编号查找**：如果从历史 commit/文档看到旧编号引用，按以下映射查找新编号：
 
@@ -18,6 +20,7 @@ xyz-agent 的架构决策记录。每条 ADR 记录一个不可逆的架构/技�
 | 0034-0037 | 0039, 0041-0043 | 0035 (display) | 0048 |
 | 0038-0040 | 0044-0046 | 0036-0040 | 0049-0053 |
 | 0041-0044 | 0054-0057 | | |
+| 0045 (cw-store) | 0061 | | |
 
 > extensions 子系统有独立的 ADR 编号体系（`pi-ext-*`），存放在 `docs/extensions/adr/`，不在本索引范围。
 
@@ -82,3 +85,7 @@ xyz-agent 的架构决策记录。每条 ADR 记录一个不可逆的架构/技�
 | 0055 | 2026-07-29 | MessageBus 架构（per-session ring buffer） |
 | 0056 | 2026-07-29 | Composer Staging Mode（暂存模式） |
 | 0057 | 2026-07-29 | Composer Staging 策略模式（行为层） |
+| 0058 | 2026-08-05 | 新建 @xyz-agent/dom-core 承载 DOM-bound 前端逻辑（Accepted） |
+| 0059 | 2026-08-06 | core factory 与 pinia store 集成范式（方法访问 + cast 接缝）（Proposed） |
+| 0060 | 2026-08-06 | route-inbound crossSession 通道（全局消费者订阅带 sid 消息）（Proposed） |
+| 0061 | 2026-08-06 | cw store 键控基准改为 repo 级（git common dir）（Superseded，被引擎层方案 A 取代） |

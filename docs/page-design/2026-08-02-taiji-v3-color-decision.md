@@ -2,7 +2,7 @@
 
 > 日期：2026-08-02
 > 性质：临时决策文档（换色落地前的方向固化，落地后合并进 `v6-master-spec.md §4` SSOT）
-> ⚠️ **下表为决策提案值，demo 实现时多处微调**（如 `--accent` 最终定稿 `#cfcfd4`，非提案的 `#c8c8cd`；`--neutral-dim` 最终 `#74747a` 等）。最终定稿值以 [`v6-master-spec.md §4`](./v6-master-spec.md) + `.tmp/v6/src/styles/tokens.css` 为准。
+> ⚠️ **下表为决策提案值，demo 实现时多处微调**（如 `--accent` 最终定稿 `#cfcfd4`，非提案的 `#c8c8cd`；`--neutral-dim` 最终 `#74747a` 等）。最终定稿值以 [`v6-master-spec.md §4`](./v6-master-spec.md) + [`v6-tokens.css`](./v6-tokens.css) 为准。
 > 前置：本决策改变的是**色相**，不改变 v6 的明度阶梯、圆角档位、间距体系、布局拓扑
 > 对比稿：palette/taiji-pure-restrained-v3.html（临时探索稿，不进 git）
 

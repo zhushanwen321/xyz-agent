@@ -4,7 +4,7 @@
 > 由 ADR-0019 确立：C(zcode-demo) 视觉方向 + 补全的完整体系。
 > 标注「补全」的项未经视觉校准，需在高保真阶段验证。
 >
-> **2026-08-02 更新**：v6 重构后，token 决策与范式权威源迁至 [`v6-master-spec.md`](./v6-master-spec.md) §4。本文件与 master-spec §4 的值如有差异（如 `--accent` master-spec 定稿 `#cfcfd4` vs 本文件早期值 `#c8c8cd`），**以 master-spec §4 + `.tmp/v6/src/styles/tokens.css` 为准**（demo 实现对早期提案值做了微调）。本文件保留作历史决策追溯。
+> **2026-08-02 更新**：v6 重构后，token 决策与范式权威源迁至 [`v6-master-spec.md`](./v6-master-spec.md) §4；值真值的机器可读固化见 [`v6-tokens.css`](./v6-tokens.css)（自 .tmp/v6 demo 固化，随仓库提交）。本文件表格已同步为定稿值（如 `--accent` = `#cfcfd4`，微提自早期提案 `#c8c8cd`）；如有差异，以 master-spec §4 + v6-tokens.css 为准。本文件保留作历史决策追溯。
 
 ## 色彩 — 暗色（默认 / 优先）
 
@@ -18,7 +18,7 @@
 > 每层 ≥Δ5 肉眼可辨。bg / bg-input 保持不变（锚点 + 输入坑凹陷语义）。
 >
 > **2026-08-02 太极·玄定稿值**（当前真值）：冷蓝暗色系整体替换为纯灰系（太极·玄），
-> 决策见 `2026-08-02-taiji-v3-color-decision.md` §三。下表「值」列为太极·玄定稿值（与 `.tmp/v6/src/styles/tokens.css` 逐字对齐），
+> 决策见 `2026-08-02-taiji-v3-color-decision.md` §三。下表「值」列为太极·玄定稿值（与 [`v6-tokens.css`](./v6-tokens.css) 逐字对齐），
 > 「来源」列末尾以「；2026-08-02 太极·玄」标注改动项。亮色变体本轮不动。
 
 | Token | 值 | 用途 | 来源 |
@@ -102,7 +102,7 @@
 
 ## 圆角（C 原仅 3/12，补 8 中间档）
 
-> **v6 已落地**（2026-08-02 反写，C1）：`--radius-sm` 已升至 `6px`（全局默认档），新增 `--radius-card: 10px`。下表为当前真值（与 `.tmp/v6/src/styles/tokens.css` 对齐）。
+> **v6 已落地**（2026-08-02 反写，C1）：`--radius-sm` 已升至 `6px`（全局默认档），新增 `--radius-card: 10px`。下表为当前真值（与 [`v6-tokens.css`](./v6-tokens.css) 对齐）。
 
 | Token | 值 | 用途 |
 |-------|-----|------|

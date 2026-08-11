@@ -17,10 +17,10 @@
 # 方法 1：终端启动（推荐，直接看到所有 console 输出）
 /Applications/太极.app/Contents/MacOS/TaiJi
 
-# 方法 2：macOS 系统日志（过滤 xyz-agent 和 runtime 子进程）
-log stream --predicate 'process == "xyz-agent"' --level debug
+# 方法 2：macOS 系统日志（过滤 TaiJi 和 runtime 子进程）
+log stream --predicate 'process == "TaiJi"' --level debug
 
-# 方法 3：Console.app → 搜索 xyz-agent
+# 方法 3：Console.app → 搜索 TaiJi
 ```
 
 ## 关键诊断路径

@@ -1,9 +1,9 @@
 # v6 重构完整规格（2026-08）
 
-> **状态**：权威整合主文档（Master Spec）。整合自 28 份 v6 过程文档 + `.tmp/v6/` 可运行 demo（2026-08-02 最新）。
+> **状态**：权威整合主文档（Master Spec）。整合自 28 份 v6 过程文档 + `.tmp/v6/` 可运行 demo（2026-08-02 最新）。token 值真值固化见 [`v6-tokens.css`](./v6-tokens.css)（自 demo 固化，随仓库提交）。
 > **性质**：视觉语言层 + 前端架构重构的完整设计。授权大刀阔斧，不考虑兼容性。
 > **取代关系**：本文档是 v6 的单一权威源。过程文档（`v6-design.md` / `v6-summary.md` / `v6-spec-*.html`）降级为**实现细节参考**，与本文档冲突时以本文档 + demo 为准。（`v6-review-*.md` / `v6-fix-plan.md` 等审查/修复文档已删除，裁决收敛进本文档 §9。）
-> **真相源优先级**：本文档（决策与范式） > `.tmp/v6/` demo（token 真值与组件实现） > `v6-spec-*.html`（视觉标注稿，部分已滞后） > 过程文档（审查/修复计划，已收敛进本文档）。
+> **真相源优先级**：本文档（决策与范式） > [`v6-tokens.css`](./v6-tokens.css)（token 值真值，随仓库提交） > `.tmp/v6/` demo（组件实现活验证） > `v6-spec-*.html`（视觉标注稿，部分已滞后） > 过程文档（审查/修复计划，已收敛进本文档）。
 >
 > **2026-08-02 修订**：新增 §3.5 实践原则（8 条，demo 迭代沉淀）；§5.6 状态指示圆点范式范围限缩（SessionList 改用 §3.5.2）；§9 新增 D12/D13/D14 裁决（SessionList 信号编排 / TurnRail 滚动条二合一 / Project 一级导航）。
 > **2026-08-02 审查修订**：spec↔demo 全量对照后修正——P0 内部矛盾统一（TurnRail thumb 色阶 / pulse-accent 时长 / badge 图标 / ChangeSetCard vs GitPanel badge 边界）；P1 跟 demo（send-slot 圆角矩形 / comp-box has-input 兑淡 / UiInput surface-2 / UiCheckbox focus 双环 / composer-bar 6 元素）；demo 新增 landing 页 + useTheme composable + ProjectSwitcher 增删 + 6 太极主题 SystemPage 接通，spec 同步记录；P2 笔误修正（7 tab 补 browser / tab 名统一 / keyframes SSOT 约束 / install-ok soft 底统一等）。
@@ -194,7 +194,7 @@ demo 阶段功能做到「可见 + 可交互 + 数据 mock」即够。不接 run
 
 ## §4 Design Tokens
 
-> **真相源**：`.tmp/v6/src/styles/tokens.css`（2026-08-02 太极·玄定稿值）。以下值与该文件逐字对齐。
+> **真相源**：[`v6-tokens.css`](./v6-tokens.css)（2026-08-02 太极·玄定稿值，自 .tmp/v6 demo 固化、随仓库提交）。以下值与该文件逐字对齐。
 > 本节取代 `v6-design.md §2` / `v6-summary.md §3` / `v6-spec-tokens.html`（三者均滞后于 demo）。
 
 ### 4.1 背景层级（阶梯上抬 + 加宽级差，暗端防糊）

@@ -2,7 +2,7 @@
 
 xyz-agent 前端设计的权威目录。设计系统的 SSOT 与设计稿集中于此。
 
-> **当前状态（2026-08）**：视觉层已从 v3 冷蓝演进到 **v6 太极纯灰**（accent `#cfcfd4`）。v6 范式 SSOT = [`v6-master-spec.md`](./v6-master-spec.md)（单一权威源）。v6 Vue 交互 demo 在 `../../.tmp/v6/`（独立可运行项目，不放在文档目录）。完整演变叙事见 [design-evolution.md](../design-evolution.md)。
+> **当前状态（2026-08）**：视觉层已从 v3 冷蓝演进到 **v6 太极纯灰**（accent `#cfcfd4`）。v6 范式 SSOT = [`v6-master-spec.md`](./v6-master-spec.md)（单一权威源）。token 值真值固化在 [`v6-tokens.css`](./v6-tokens.css)（自 demo 固化，随仓库提交）。v6 Vue 交互 demo 在 `../../.tmp/v6/`（独立可运行项目，不放在文档目录）。完整演变叙事见 [design-evolution.md](../design-evolution.md)。
 
 ## 目录结构
 
@@ -10,6 +10,7 @@ xyz-agent 前端设计的权威目录。设计系统的 SSOT 与设计稿集中�
 page-design/
 ├── README.md                          本文件（索引 + 归属判定）
 ├── design-tokens.md                   原子 SSOT（色/字/距/影/动效）— 所有值的唯一来源
+├── v6-tokens.css                      v6 token 值真值固化（自 .tmp/v6 demo，随仓库提交）
 ├── design-system.md                   组件原语层（Card/Input/Button 等如何用 tokens）
 ├── v6-master-spec.md                  ★ v6 单一权威源（决策与范式，整合自 28 份过程文档 + demo）
 ├── v6-design.md                       v6 五原则原始定稿（被 master-spec 取代为实现细节参考）
@@ -40,12 +41,12 @@ v6-master-spec.md      ← v6 单一权威源（决策与范式）
         ↑ 冲突时以此为准
 design-tokens.md       ← 原子真值（色/字/距/影/动效）
         ↑ token 层以此为准
-v6-design.md / v6-spec-*.html  ← 过程文档（实现细节参考，部分已滞后）
-        ↑ 已被 master-spec 取代
-.tmp/v6/ demo          ← token 真值与组件实现的活验证层
+v6-tokens.css          ← token 值真值固化（自 .tmp/v6 demo，随仓库提交）
+        ↑ 值以此为准（.tmp 不随仓库提交）
+.tmp/v6/ demo          ← 活验证层（组件实现对照，值以 v6-tokens.css 为准）
 ```
 
-- **v6-master-spec.md 是 v6 单一权威源**：整合自 v6-design.md / v6-summary.md / v6-review-* / v6-fix-plan / v6-spec-*.html 等 28 份过程文档 + demo。冲突时以 master-spec + demo 为准
+- **v6-master-spec.md 是 v6 单一权威源**：整合自 v6-design.md / v6-summary.md / v6-review-* / v6-fix-plan / v6-spec-*.html 等 28 份过程文档 + demo。冲突时以 master-spec §4 + v6-tokens.css 为准
 - **design-tokens.md 是值的唯一来源**：CSS 变量必须全部能在此找到
 - **过程文档已降级**：v6-design.md / v6-spec-*.html 作为实现细节参考保留，不代表当前最新决策
 

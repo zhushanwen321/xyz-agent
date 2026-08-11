@@ -1,4 +1,4 @@
-# ADR-0045: cw store 键控基准改为 repo 级（git common dir）
+# ADR-0061: cw store 键控基准改为 repo 级（git common dir）
 
 > **⚠️ Superseded** —— 本 ADR 的「调用层先行」方案（cw-tool 探测 common-dir + dirname + `--workspace` 透传）已被**引擎层方案 A**取代：
 > - 引擎层 SSOT：`coding-workflow` 仓库 `fix-cw-cwd-worktree/docs/cw-store-workspace-decoupling.md`（commit `aa4949b`，含自身对抗审查）
