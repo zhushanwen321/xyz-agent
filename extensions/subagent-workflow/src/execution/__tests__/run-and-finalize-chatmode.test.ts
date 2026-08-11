@@ -193,4 +193,30 @@ describe("runAndFinalize chatMode idle 分流 (M2-A)", () => {
     expect(record.round).toBe(1);
     expect(mockRunSpawn).toHaveBeenCalled();
   });
+
+  it("chatMode + done + closeAfterRound=true → finalizeRecord(done)（不进 idle，M2-B3）", async () => {
+    // close 优雅关闭（force:false）：running 时置 closeAfterRound=true，
+    // runAndFinalize done 分流终态化为 done（而非进 idle）。
+    const record = makeRecord(true);
+    record.status = "running";
+    record.closeAfterRound = true;
+    internals.store.register(record);
+    await callRunAndFinalize(record, true);
+
+    expect(record.status).toBe("done");
+    expect(record.closeAfterRound).toBeUndefined(); // 清标志
+    // 终态化 → archive → 内存无（与 idle 分流「留内存」对比）
+    expect(internals.store.getMutable(record.id)).toBeUndefined();
+  });
+
+  it("chatMode + done + 无 closeAfterRound → 进 idle（现有 M2-A 行为不变）", async () => {
+    const record = makeRecord(true);
+    record.status = "running";
+    internals.store.register(record);
+    await callRunAndFinalize(record, true);
+
+    expect(record.status).toBe("idle");
+    expect(record.round).toBe(1);
+    expect(internals.store.getMutable(record.id)).toBe(record);
+  });
 });

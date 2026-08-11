@@ -13,6 +13,7 @@ import type { AgentResult as WorkflowAgentResult } from "../orchestration/models
 import { mapToWorkflowAgentResult } from "./agent-result-mapper.ts";
 import { removeAliveMarker } from "./alive-store.ts";
 import { bestEffort } from "./best-effort.ts";
+import { removeIdleMarker } from "./idle-marker.ts";
 import { type ConcurrencyPool,DefaultConcurrencyPool } from "./concurrency-pool.ts";
 import type { DialogGlobalQueue, UiRequestHandler } from "./dialog-queue.ts";
 import {
@@ -670,6 +671,111 @@ export class SubagentService {
     this.kickOffBackground(record, opts, ctx, identity, record.controller.signal, PRIORITY_BACKGROUND, resume);
   }
 
+  // ── 对话模式 message/close action 支持（M2-B3）──────────────
+
+  /**
+   * 按 id 查 record 并做归属校验（message/close action 的统一入口）。
+   *
+   * 设计决策 3（归属守卫）：校验 record.rootSessionId 必须等于当前 session 的根 id
+   *（this.sessionRootId）。不匹配 / 不存在统一抛「not found or not owned」——不区分
+   * 两种失败，防信息泄露（无法通过错误消息探测其他 session 的 subagent id）。
+   *
+   * 只查内存 record（getMutable，running + idle 都在内存）；终态 record 已 archive 查不到
+   * → 走 not found 分支。跨重启 idle 重建（M3）后此处才可能命中磁盘 idle record。
+   *
+   * @param id subagent record id
+   * @returns 可变 ExecutionRecord（message/close handler 直接操作）
+   * @throws Error record 不存在 / 非本 session 所有（含恢复指引）
+   */
+  getRecordForAction(id: string): ExecutionRecord {
+    this.assertReady();
+    const record = this.store.getMutable(id);
+    if (!record || record.rootSessionId !== this.sessionRootId) {
+      throw new Error(
+        `subagent not found or not owned: ${id}. Recovery: use action:'list' to confirm the id; ` +
+        `ended subagents cannot be messaged — start a new one; only subagents owned by the current session can be operated on.`,
+      );
+    }
+    return record;
+  }
+
+  /**
+   * close action 的统一行为分流（running/idle/终态 × force）。
+   *
+   *   running + force:true  → cancelBackground（立即 SIGTERM + cancelled 终态）
+   *   running + force:false → 置 closeAfterRound=true（等当前轮完成，runAndFinalize done 分流终态化为 done）
+   *   idle                  → closeChatIdle（无活进程，立即终态化为 done：删 .idle sidecar + finalize）
+   *   其他终态              → 幂等 no-op（已结束）
+   *
+   * force 对 idle 无意义——idle 无在跑的工作可强制终止，统一走 closeChatIdle（done）。
+   * 与设计决策 5 一致：close = 正式终态（删 .idle + 走 finalize），force 只影响 running 时机。
+   *
+   * @param record 目标 record（getRecordForAction 已校验归属）
+   * @param force true=立即终止（running 时 SIGTERM）/ false=优雅关闭（running 时等轮完）
+   */
+  async closeSubagent(record: ExecutionRecord, force: boolean): Promise<void> {
+    this.assertReady();
+    if (record.status === "running") {
+      if (force) {
+        // 立即终止：cancelBackground（controller.abort + tryTransition cancelled + finalize）
+        this.cancelBackground(record);
+      } else {
+        // 优雅关闭：标记，runAndFinalize done 分流时终态化（不进 idle）
+        record.closeAfterRound = true;
+      }
+    } else if (record.status === "idle") {
+      // idle 无活进程，立即终态化为 done（force 参数对 idle 无意义）
+      await this.closeChatIdle(record);
+    }
+    // 其他终态（done/failed/cancelled/crashed）：幂等 no-op
+  }
+
+  /**
+   * idle record 手动终态化为 done（close action 的 idle 分支）。
+   *
+   * idle record 无在途 AgentResult（轮次完成时 record 未冻结，turns[] 保留运行时状态），
+   * 构造合成 done result（对齐 cancelBackground 的 cancelledResult 模式）。
+   * 走 doFinalizeRecord 的完整终态化路径（completeRecord + archive + finalized + worktree
+   * cleanup + alive marker + manifest），并额外删 .idle sidecar（doFinalizeRecord 不删 .idle）。
+   *
+   * 不走 tryTransition（idle record 的 status 不是 running，CAS 不通过）——直接由 doFinalizeRecord
+   * 内部的 completeRecord 覆盖 status，与 cancelBackground 对 record 的处理同构。
+   */
+  private async closeChatIdle(record: ExecutionRecord): Promise<void> {
+    // 先删 .idle sidecar（doFinalizeRecord 写 finalized marker 但不删 .idle；
+    // 磁盘重建 M3 优先级 .idle > finalized，残留 .idle 会让已 close 的 record 重建为 idle）。
+    if (record.sessionFile) {
+      try {
+        removeIdleMarker(record.sessionFile);
+      } catch (err) {
+        bestEffort(err, "removeIdleMarker (closeChatIdle)");
+      }
+    }
+    // 合成 done result（idle record 无在途 AgentResult，对齐 cancelBackground cancelledResult）
+    const doneResult: AgentResult = {
+      text: "",
+      turns: record.turnCount,
+      durationMs: Date.now() - record.startedAt,
+      success: true,
+      sessionId: record.id,
+      toolCalls: [],
+    };
+    await doFinalizeRecord(
+      {
+        manifestStore: this.manifestStore,
+        worktreeManager: this.worktreeManager,
+        store: this.store,
+        modelService: this.modelService,
+        pi: this.pi,
+        clearThrottle: (id) => this.clearThrottle(id),
+        emitUnregister: (id, st) => emitPendingUnregister(this.pi, id, st),
+      },
+      record,
+      doneResult,
+      "done",
+    );
+  }
+
   // ── 编排层专用接口（workflow 消费）──────────────────────
 
   /**
@@ -842,6 +948,7 @@ export class SubagentService {
       rootSessionId: this.sessionRootId ?? undefined,
       parentRecordId,
       depth,
+      chatMode: opts.conversation === true,
       controller,
     });
 
@@ -945,10 +1052,17 @@ export class SubagentService {
     // CAS 抢锁：抢到则完整收尾；没抢到（cancel 已先设 cancelled）则跳过
     if (tryTransition(record, status)) {
       if (record.chatMode && status === "done") {
-        // 对话模式轮次成功完成 → idle（保留 record 内存 + worktree，等待续聊）。
-        // tryTransition 已把 status 设为 done，finalizeRoundToIdle 覆盖为 idle（chatMode 专属语义）。
-        // chatMode + failed/cancelled 仍走终态化（对话模式失败/取消不进 idle）。
-        await this.finalizeRoundToIdle(record, result);
+        if (record.closeAfterRound) {
+          // close 优雅关闭（force:false）：当前轮完成后终态化为 done，不进 idle。
+          // 清标志（防重复触发），走终态化路径（archive + worktree cleanup）。
+          record.closeAfterRound = undefined;
+          await this.finalizeRecord(record, result, "done");
+        } else {
+          // 对话模式轮次成功完成 → idle（保留 record 内存 + worktree，等待续聊）。
+          // tryTransition 已把 status 设为 done，finalizeRoundToIdle 覆盖为 idle（chatMode 专属语义）。
+          // chatMode + failed/cancelled 仍走终态化（对话模式失败/取消不进 idle）。
+          await this.finalizeRoundToIdle(record, result);
+        }
       } else {
         await this.finalizeRecord(record, result, status);
       }

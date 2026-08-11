@@ -21,7 +21,7 @@ import { getSubagentService } from "../execution/subagent-service.ts";
 import type { SubagentToolResult } from "../execution/types.ts";
 import { extractAgentName } from "./format.ts";
 import { toGuiCtx } from "./gui-mappers.ts";
-import { adapter, cancelHandler, listHandler, startHandler } from "./subagent-actions.ts";
+import { adapter, cancelHandler, closeHandler, listHandler, messageHandler, startHandler } from "./subagent-actions.ts";
 import { type RenderContext,renderSubagentCall, renderSubagentResult } from "./tool-render.ts";
 
 // ============================================================
@@ -71,8 +71,8 @@ type SubagentRenderResultCb = (
 // （subagent_start / subagent_list / subagent_cancel），让每个 tool 的 schema 真实
 // 反映必填性。勿在此基础上继续堆 action 条件逻辑——要加就拆 tool。
 const SubagentParams = Type.Object({
-  action: StringEnum(["start", "list", "cancel"], {
-    description: "Operation: 'start' runs a subagent, 'list' shows running subagents (optional includeFinished), 'cancel' stops a background subagent by id.",
+  action: StringEnum(["start", "list", "cancel", "message", "close"], {
+    description: "Operation: 'start' runs a subagent, 'list' shows subagents, 'cancel' stops a background subagent, 'message' sends a follow-up to a conversation-mode subagent, 'close' ends a conversation-mode subagent.",
   }),
   // ── action:"start" fields (flattened to top level). task/slug REQUIRED for start. ──
   // Missing/empty task or slug throws at runtime (startHandler).
@@ -113,6 +113,12 @@ const SubagentParams = Type.Object({
   cwd: Type.Optional(Type.String({
     description: 'Override the working directory for the subagent execution. Must be an absolute path. Defaults to the parent session\'s cwd.',
   })),
+  conversation: Type.Optional(Type.Boolean({
+    description:
+      "Enable continuous chat with this subagent. When true, the subagent stays available after each reply — you can send follow-up messages (action:'message') and it keeps the full conversation context across rounds, with no need to re-spawn or re-explain. Use this for multi-round collaboration (iterative review-fix loops, back-and-forth refinement). " +
+      "Cost: a conversation-mode subagent holds resources (memory, and a worktree if enabled) until you explicitly end it with action:'close'. Always close when done. " +
+      "Omit (or false) for one-shot tasks — the subagent runs once, notifies on completion, and is cleaned up automatically (default).",
+  })),
   // action:"list" → listParam OPTIONAL (all fields optional, defaults apply). Ignored by other actions.
   listParam: Type.Optional(Type.Object({
     includeFinished: Type.Optional(Type.Boolean({
@@ -128,6 +134,27 @@ const SubagentParams = Type.Object({
       description: "REQUIRED for action:'cancel'. The subagentId to cancel. Throws if missing. Only background subagents can be cancelled.",
     }),
   })),
+  // action:"message" → messageParam.subagentId + text REQUIRED. conversation-mode subagents only.
+  messageParam: Type.Optional(Type.Object({
+    subagentId: Type.String({
+      description: "REQUIRED for action:'message'. The subagentId to message (a conversation-mode subagent started with conversation:true).",
+    }),
+    text: Type.String({
+      description: "REQUIRED for action:'message'. The message to send. Whitespace-only throws.",
+    }),
+    interrupt: Type.Optional(Type.Boolean({
+      description: "If true, interrupt the subagent's current work immediately (in-progress output stops, it switches to your new message). If false (default), the message is queued and processed after the current round completes. When the subagent is idle (between rounds), interrupt has no effect — the message always starts a new round.",
+    })),
+  })),
+  // action:"close" → closeParam.subagentId REQUIRED. Ends a conversation-mode subagent.
+  closeParam: Type.Optional(Type.Object({
+    subagentId: Type.String({
+      description: "REQUIRED for action:'close'. The subagentId to close (a conversation-mode subagent).",
+    }),
+    force: Type.Optional(Type.Boolean({
+      description: "If true, terminate immediately even if mid-round (in-progress work is lost). If false (default), let the current round finish, then close. When idle, the subagent closes immediately regardless.",
+    })),
+  })),
 });
 
 // ============================================================
@@ -142,13 +169,13 @@ function assertNever(value: never): string {
 }
 
 /** Subagent action 字面量联合（与 parameters schema 的 StringEnum 取值一致）。 */
-type SubagentAction = "start" | "list" | "cancel";
+type SubagentAction = "start" | "list" | "cancel" | "message" | "close";
 
 /** 类型守卫：把 schema 投影出的 string 形式 action 收窄回字面量联合。
  *  typebox v1 的 StringEnum Static 退化为 string，需运行时校验 + 类型收窄
  *  才能恢复 switch 的 exhaustiveness 约束。 */
 function isSubagentAction(value: string): value is SubagentAction {
-  return value === "start" || value === "list" || value === "cancel";
+  return value === "start" || value === "list" || value === "cancel" || value === "message" || value === "close";
 }
 
 /** unknown 是否为含 model/thinkingLevel 的对象（类型守卫，替代全可选结构 `as`）。 */
@@ -186,15 +213,21 @@ Delegate when the task needs a distinct specialized role, context isolation (for
 
 ## Actions
 
-- action:"start" — run a subagent. Pass task and slug as top-level fields (REQUIRED). Optional: agent, model, thinkingLevel, skillPath, appendSystemPrompt, schema, maxTurns, graceTurns, fork, worktree, cwd. Background only: returns a subagentId immediately, notifies on completion.
+- action:"start" — run a subagent. Pass task and slug as top-level fields (REQUIRED). Optional: agent, model, thinkingLevel, skillPath, appendSystemPrompt, schema, maxTurns, graceTurns, fork, worktree, cwd, conversation. Background only: returns a subagentId immediately, notifies on completion.
+- action:"message" — send a follow-up message to a conversation-mode subagent (started with conversation:true); it keeps the full context across rounds. REQUIRED messageParam: { subagentId, text }. Optional: interrupt (default false). Returns { delivered: true } immediately; the reply auto-notifies when the round completes.
+- action:"close" — end a conversation-mode subagent and release its resources. REQUIRED closeParam: { subagentId }. Optional: force (default false; true terminates mid-round immediately). Always close when done.
 - action:"list" — list subagents. Pass listParam: { includeFinished?, limit? } (all optional). Read an item's sessionFile for full detail.
-- action:"cancel" — cancel a background subagent. REQUIRED cancelParam: { subagentId }.
+- action:"cancel" — stop a background subagent (legacy verb; for conversation-mode use close). REQUIRED cancelParam: { subagentId }.
 
 ## Examples
 
 \`\`\`
 {"action":"start","task":"<your task>","slug":"<kebab-case>"}
 {"action":"start","task":"...","slug":"fix-login","agent":"worker","model":"anthropic/claude-3.5-sonnet","fork":true}
+{"action":"start","task":"review iteratively","slug":"review","conversation":true}
+{"action":"message","messageParam":{"subagentId":"sa-550e8400","text":"now also handle the empty-list case"}}
+{"action":"message","messageParam":{"subagentId":"sa-550e8400","text":"stop, switch direction to X","interrupt":true}}
+{"action":"close","closeParam":{"subagentId":"sa-550e8400"}}
 {"action":"list","listParam":{"includeFinished":false,"limit":20}}
 {"action":"cancel","cancelParam":{"subagentId":"sa-550e8400"}}
 \`\`\`
@@ -215,10 +248,13 @@ Completion auto-notifies you (steer wakes next turn, even mid-poll). So:
 - Treating subagent results as authoritative without verification.
 - Canceling by guessing a subagentId instead of using action:"list" first.
 
+## Continuous chat (conversation mode)
+
+For multi-round work, set conversation:true on start. The subagent stays available across replies — action:"message" continues with full context retained, action:"close" releases it. Always close when finished.
+
 ## You cannot
 
-- Get a synchronous/inline result — always background, returns a subagentId immediately.
-- Pause or resume a subagent (only cancel).
+- Get a synchronous/inline result — start always returns a subagentId immediately (background).
 - Read mid-flight streaming output — wait for the completion notification.
 
 ## Calling patterns
@@ -321,6 +357,10 @@ const executeSubagent: SubagentExecuteCb = async (
       return adapter({ action: "list", domain: listHandler(service, params.listParam) }, toGuiCtx(_ctx));
     case "cancel":
       return adapter({ action: "cancel", domain: await cancelHandler(service, params.cancelParam) }, toGuiCtx(_ctx));
+    case "message":
+      return adapter({ action: "message", domain: await messageHandler(service, params.messageParam) }, toGuiCtx(_ctx));
+    case "close":
+      return adapter({ action: "close", domain: await closeHandler(service, params.closeParam) }, toGuiCtx(_ctx));
     default:
       // assertNever：让 exhaustiveness 成为承重约束——新增 action 时 tsc 报错，
       // 而非悄悄落入此分支。

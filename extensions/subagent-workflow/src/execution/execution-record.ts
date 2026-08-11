@@ -668,6 +668,7 @@ export function snapshot(record: ExecutionRecord): RecordSnapshot {
     task: record.task,
     slug: record.slug,
     status: record.status,
+    chatMode: record.chatMode,
     turns: record.turnCount,
     totalTokens: record.totalTokens,
     startedAt: record.startedAt,

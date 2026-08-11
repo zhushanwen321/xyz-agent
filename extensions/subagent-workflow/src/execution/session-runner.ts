@@ -668,6 +668,16 @@ export async function runSpawn(
         agentEvent({ type: "compaction" });
         return;
       }
+      case "turn_start": {
+        // 消费确认清除（设计决策 6）：turn_start = pi 开始新 turn（消费了一条排队消息）。
+        // 从 pendingMessages FIFO shift 最老的一条（投递时按序缓存，消费时按序清除）。
+        // pendingMessages 只在 deliverToRunning（busy 投递）时 push；prompt（idle 续聊）不 push，
+        // 故 idle 续聊的 turn_start 清除空数组 no-op（安全）。M2-B3 只做清除，补投是 M2-B2。
+        if (record.pendingMessages && record.pendingMessages.length > 0) {
+          record.pendingMessages.shift();
+        }
+        return;
+      }
       default:
         return;
     }

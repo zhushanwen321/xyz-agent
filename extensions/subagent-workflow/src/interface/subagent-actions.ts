@@ -23,7 +23,11 @@ import type { SubagentService } from "../execution/subagent-service.ts";
 import type {
   BgResponse,
   CancelResponse,
+  CloseResponse,
+  ExecutionStatus,
+  ExternalState,
   ListResponse,
+  MessageResponse,
   SubagentListItem,
   SubagentRecord,
   SubagentToolResult,
@@ -70,6 +74,8 @@ export interface StartHandlerInput {
   worktree?: boolean;
   /** 覆盖子 agent 工作目录（默认 mainCwd）。 */
   cwd?: string;
+  /** 可持续对话模式（true = chatMode，轮次完成进 idle 等续聊）。 */
+  conversation?: boolean;
 }
 
 /** start 领域对象（adapter 包成 bgResponse）。 */
@@ -114,12 +120,36 @@ export interface CancelHandlerResult {
  * 不新增 sessionId 到 ExecutionRecord（YAGNI，修跨 session 清理是独立问题）。
  */
 
-/** SubagentRecord → SubagentListItem（8 字段，duration 实时计算）。 */
+/**
+ * 内部 ExecutionStatus → 对外四态映射（设计决策 10 细则 3）。
+ *   running → active / idle → waiting / done+cancelled → ended / failed+crashed → error
+ * 未来内部加态只需扩展此处，不影响对外契约。
+ */
+export function mapExternalState(status: ExecutionStatus): ExternalState {
+  switch (status) {
+    case "running":
+      return "active";
+    case "idle":
+      return "waiting";
+    case "done":
+    case "cancelled":
+      return "ended";
+    case "failed":
+    case "crashed":
+      return "error";
+    default:
+      // 防御：未来新增状态兑底为 ended（保守，不再 active/waiting）
+      return "ended";
+  }
+}
+
+/** SubagentRecord → SubagentListItem（state 四态主字段 + status 调试字段，duration 实时计算）。 */
 function recordToListItem(r: SubagentRecord): SubagentListItem {
   return {
     subagentId: r.id,
     agent: r.agent,
     slug: r.slug,
+    state: mapExternalState(r.status),
     status: r.status,
     mode: r.mode,
     duration: computeElapsedSeconds(r),
@@ -171,6 +201,7 @@ export async function startHandler(
     fork: input.fork,
     worktree: input.worktree,
     cwd: input.cwd,
+    conversation: input.conversation,
     ctxModel,
     signal,
     // background 不回流 onUpdate：detached 运行，完成由 notify 驱动新 turn。
@@ -245,6 +276,14 @@ export async function cancelHandler(
   if (rec.mode !== "background") {
     throw new Error(`Cannot cancel subagent ${id} (unsupported mode: ${rec.mode})`);
   }
+  // 对话模式 cancel = close(force:true) 别名（设计决策 5）：chatMode record（running/idle）
+  // 走 close 行为路径（idle 删 .idle sidecar + 终态化 done；running 立即 SIGTERM cancelled），
+  // 返回 cancel 响应（向后兼容 cancel action 的返回类型）。非 chatMode 保持现有 cancel 行为。
+  if (rec.chatMode) {
+    const chatRecord = service.getRecordForAction(id);
+    await service.closeSubagent(chatRecord, true);
+    return { subagentId: id, response: { cancelled: true } };
+  }
   // step 3: service.cancel boolean（list-view 契约不变）；false = 已终态（CAS 抢锁失败）。
   // 注意：不嵌入 rec.status——findRecord 快照可能已过期（TOCTOU：cancel 期间 detached
   // 路径 CAS 到 done/failed）。重新查当前状态，避免「status: running」与「already finished」矛盾。
@@ -260,6 +299,108 @@ export async function cancelHandler(
 }
 
 // ============================================================
+// message handler（M2-B3 对话模式续聊/插入）
+// ============================================================
+
+export interface MessageHandlerInput {
+  subagentId?: string;
+  text?: string;
+  interrupt?: boolean;
+}
+
+/** message 领域对象（adapter 包成 messageResponse）。 */
+export type MessageHandlerResult = {
+  kind: "message";
+  subagentId: string;
+  response: MessageResponse;
+};
+
+/**
+ * message action handler：向对话模式 subagent 续聊/插入消息。
+ *
+ * 状态 × interrupt 自动映射（设计决策 6，agent 只表达意图）：
+ *   running → deliverToRunning（busy 投递：interrupt=true 抢占 / false 排队）
+ *   idle    → resumeRound（resume 重开 session + prompt，interrupt 自动退化，agent 无感）
+ *   终态    → throw ended（正常路径不命中——终态 record 已 archive，getRecordForAction 先 throw not found）
+ *
+ * 归属守卫（决策 3）：getRecordForAction 内部校验 rootSessionId。
+ *
+ * @throws Error subagentId/text 缺失 / 不存在或非本 session 所有 / 已结束
+ */
+export async function messageHandler(
+  service: SubagentService,
+  input: MessageHandlerInput | undefined,
+): Promise<MessageHandlerResult> {
+  const id = input?.subagentId?.trim();
+  if (!id) throw new Error("messageParam.subagentId is required for action:'message'");
+  const text = input?.text?.trim();
+  if (!text) throw new Error(
+    "messageParam.text is required for action:'message' (must not be whitespace-only). " +
+    'Correct: {"action":"message","messageParam":{"subagentId":"sa-...","text":"your follow-up"}}',
+  );
+  const interrupt = input?.interrupt === true;
+
+  // 归属守卫（决策 3）：getRecordForAction 内部校验 rootSessionId
+  const record = service.getRecordForAction(id);
+
+  if (record.status === "running") {
+    // busy 投递（决策 6 running 分支）：follow_up(排队) / steer(抢占)
+    service.deliverToRunning(record, text, interrupt);
+  } else if (record.status === "idle") {
+    // idle 续聊（决策 6 idle 分支）：resume 重开 session + prompt，interrupt 自动退化（agent 无感）
+    service.resumeRound(record, text);
+  } else {
+    // 终态（done/failed/cancelled/crashed）：防御性兜底（终态 record 已 archive，正常走 not found）
+    throw new Error(
+      `subagent ${id} has ended (status: ${record.status}), cannot message. ` +
+      `Recovery: use action:'close' to clean up, then action:'start' a new subagent.`,
+    );
+  }
+  return { kind: "message", subagentId: id, response: { delivered: true } };
+}
+
+// ============================================================
+// close handler（M2-B3 对话模式结束）
+// ============================================================
+
+export interface CloseHandlerInput {
+  subagentId?: string;
+  force?: boolean;
+}
+
+/** close 领域对象（adapter 包成 closeResponse）。 */
+export type CloseHandlerResult = {
+  kind: "close";
+  subagentId: string;
+  response: CloseResponse;
+};
+
+/**
+ * close action handler：结束对话模式 subagent。
+ *
+ * force 语义（设计决策 5/10）：
+ *   force:false（默认）= 优雅关闭——running 等当前轮完成后终态化，idle 立即终态化
+ *   force:true = 立即终止——running 立即 SIGTERM，idle 立即终态化（force 对 idle 无意义）
+ *
+ * 行为分流委托 service.closeSubagent（归属守卫由 getRecordForAction 把关）。
+ * 已终态 record 由 getRecordForAction throw not found（「已结束的不能再操作」语义）。
+ */
+export async function closeHandler(
+  service: SubagentService,
+  input: CloseHandlerInput | undefined,
+): Promise<CloseHandlerResult> {
+  const id = input?.subagentId?.trim();
+  if (!id) throw new Error("closeParam.subagentId is required for action:'close'");
+  const force = input?.force === true;
+
+  // 归属守卫（决策 3）+ 行为分流（service.closeSubagent）
+  const record = service.getRecordForAction(id);
+  await service.closeSubagent(record, force);
+
+  return { kind: "close", subagentId: id, response: { closed: true } };
+}
+
+// ============================================================
 // adapter（领域对象 → SubagentToolResult + {content, details}）
 // ============================================================
 
@@ -270,7 +411,9 @@ export async function cancelHandler(
 type AdapterInput =
   | { action: "start"; domain: StartHandlerResult }
   | { action: "list"; domain: ListHandlerResult }
-  | { action: "cancel"; domain: CancelHandlerResult };
+  | { action: "cancel"; domain: CancelHandlerResult }
+  | { action: "message"; domain: MessageHandlerResult }
+  | { action: "close"; domain: CloseHandlerResult };
 
 export function adapter(
   input: AdapterInput,
@@ -283,8 +426,13 @@ export function adapter(
     result = { action, subagentId: d.subagentId, sessionFile: d.sessionFile ?? null, slug: d.slug, bgResponse: d.response };
   } else if (action === "list") {
     result = { action, subagentId: null, sessionFile: null, listResponse: input.domain.response };
-  } else {
+  } else if (action === "cancel") {
     result = { action, subagentId: input.domain.subagentId, sessionFile: null, cancelResponse: input.domain.response };
+  } else if (action === "message") {
+    result = { action, subagentId: input.domain.subagentId, sessionFile: null, messageResponse: input.domain.response };
+  } else {
+    // action === "close"
+    result = { action, subagentId: input.domain.subagentId, sessionFile: null, closeResponse: input.domain.response };
   }
 
   // content JSON：LLM 看的结构化结果（schema 模式 parsedOutput 作为嵌套 JSON 值可接受）。
@@ -333,6 +481,16 @@ export function buildGuiComponent(
         status: mapRunStatus(it.status),
         icon: mapRunIcon(it.status),
       })),
+    });
+  }
+  if (action === "message") {
+    return guiComponent("stats-line", {
+      items: [{ label: "messaged", value: (input.domain as MessageHandlerResult).subagentId, severity: "ok" }],
+    });
+  }
+  if (action === "close") {
+    return guiComponent("stats-line", {
+      items: [{ label: "closed", value: (input.domain as CloseHandlerResult).subagentId, severity: "warn" }],
     });
   }
   // cancel

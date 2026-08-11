@@ -41,6 +41,7 @@ type TreeStatus = NonNullable<TreeItem["status"]>;
  */
 export function mapRunStatus(status: string): TreeStatus {
   const s = status.toLowerCase();
+  if (s === "idle") return "running"; // 对话模式等待续聊：显示为活跃态（配 pause icon，决策 10 细则 3）
   if (s.includes("running") || s.includes("paused")) return "running";
   if (
     s.includes("failed") ||
@@ -66,6 +67,7 @@ export function mapRunStatus(status: string): TreeStatus {
  */
 export function mapRunIcon(status: string): TreeItemIcon {
   const s = status.toLowerCase();
+  if (s === "idle") return "pause"; // 对话模式等待续聊（与 paused 同 icon）
   if (s.includes("paused")) return "pause";
   if (s.includes("running")) return "circle";
   if (

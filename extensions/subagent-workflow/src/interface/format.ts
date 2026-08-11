@@ -182,6 +182,10 @@ export function statusGlyph(status: ExecutionStatus): { icon: string | undefined
       return { icon: "■", color: "muted" };
     case "crashed":
       return { icon: "✝", color: "error" };
+    case "idle":
+      // 对话模式轮次完成、等待续聊（waiting 语义，决策 10 细则 3）。
+      // 暂停图标 + warning 色，与 running（spinner accent）和 done（✓ success）区分。
+      return { icon: "⏸", color: "warning" };
     default:
       // 防御:运行时 status 可能是意外值(SDK 投影异常/未来新增状态),兜底为 running 语义
       return { icon: undefined, color: "accent" };

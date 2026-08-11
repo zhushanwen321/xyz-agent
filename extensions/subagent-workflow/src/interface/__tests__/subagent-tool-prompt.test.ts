@@ -31,12 +31,13 @@ function extractDescription(src: string): string {
 const DESCRIPTION = extractDescription(SUBAGENT_TOOL_SRC);
 
 describe("subagent tool description — 行为约束器（非功能说明书）", () => {
-  it("词数 ≤ 550（高风险 description 密度上限）", () => {
+  it("词数 ≤ 650（高风险 description 密度上限）", () => {
     // 高风险 tool 的 description 应聚焦约束而非功能铺陈；过长会稀释信号。
-    // 上限从 400 放宽到 550：补了 JSON 调用正例段（start/list/cancel 三 action 完整 JSON），
-    // 正例对弱模型首次调用用对参数的价值 > 节省这点 description 预算。
+    // 上限演进：400 → 550（补 start/list/cancel 三 action 完整 JSON 正例）→
+    // 650（M2-B3 新增 message/close 两 action + conversation 对话模式 + 例子）。
+    // 每次 action 扩展必然增加必需描述；正例对弱模型首次用对参数的价值 > 节省 description 预算。
     const words = DESCRIPTION.trim().split(/\s+/).filter(Boolean).length;
-    expect(words).toBeLessThanOrEqual(550);
+    expect(words).toBeLessThanOrEqual(650);
   });
 
   it("含 'When to delegate' 调用条件段（何时委派 vs 自己做）", () => {

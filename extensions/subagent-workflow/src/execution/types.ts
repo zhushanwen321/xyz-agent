@@ -40,6 +40,19 @@ export const DEFAULT_AGENT_NAME = "general-purpose";
  */
 export type ExecutionStatus = "running" | "done" | "failed" | "cancelled" | "crashed" | "idle";
 
+/**
+ * 对外四态（设计决策 10 细则 3）：内部 ExecutionStatus 收敛为 agent 可理解的状态语义。
+ *
+ *   running              → active   （正在执行）
+ *   idle                 → waiting  （对话模式轮次完成，等待续聊）
+ *   done / cancelled     → ended    （已结束）
+ *   failed / crashed     → error    （出错）
+ *
+ * 原始 ExecutionStatus 进 list item 的 status 字段供调试；state 是对外主字段。
+ * 未来内部加态（如 paused）只需扩展 mapExternalState，不影响对外契约。
+ */
+export type ExternalState = "active" | "waiting" | "ended" | "error";
+
 /** 执行模式。background = 调用方立即拿 handle 返回，子 agent 在 detached promise 里跑。 */
 export type ExecutionMode = "background";
 
@@ -369,6 +382,13 @@ export interface ExecutionRecord {
    * M2-B1 只加字段 + 投递时 push，不做清除/补投。undefined/空 = 无在途消息。
    */
   pendingMessages?: PendingMessage[];
+  /**
+   * close 优雅关闭标志（M2-B3）。chatMode record 运行中调 `close {force:false}` 时置 true；
+   * runAndFinalize 的 done 分流检查此标志——true 则终态化为 done（而非进 idle），并清标志。
+   * undefined/false = 正常 idle 分流（对话模式轮次完成进 idle 等续聊）。
+   * 仅 chatMode + running 时有意义；force:true（立即终止）不走此标志。
+   */
+  closeAfterRound?: boolean;
 
   // ── 完成 ──
   endedAt: number | undefined;
@@ -464,6 +484,12 @@ export interface ExecuteOptions {
   worktree?: boolean | WorktreeHandle;
   /** 覆盖执行 cwd（默认 mainCwd）。 */
   cwd?: string;
+  /**
+   * 可持续对话模式（决策 8：独立 chatMode 标志，不扩展 ExecutionMode）。
+   * true = record 标记 chatMode，轮次完成进 idle 态（保留 record + worktree，等待 message 续聊）；
+   * undefined/false = 一次性模式（默认，行为完全不变）。service.execute 透传到 createRecordForMode。
+   */
+  conversation?: boolean;
   // 注：fork 深度不从外部传入（曾暴露 parentForkDepth，改用 ALS 后 execute 内部从调用链派生，
   // 公开字段成为死字段误导调用方，已移除）。深度限制检查见 session-runner.ts 内部 RunOptions.parentForkDepth
   // （与历史残留的 types.ts RunOptions 同名不同 interface——后者已删除）。
@@ -485,12 +511,15 @@ export type ExecutionHandle = {
 // tool action 出参（外层分组，adapter 产出）
 // ============================================================
 
-/** list 的 item 结构（8 字段）。 */
+/** list 的 item 结构。 */
 export interface SubagentListItem {
   subagentId: string;
   agent: string;
   /** 短标签（≤35 字符），来自 record.slug。旧 record 反序列化时为空串。 */
   slug: string;
+  /** 对外四态（决策 10 细则 3，主字段）。由 mapExternalState(status) 派生。 */
+  state: ExternalState;
+  /** 原始内部状态（调试用，供 details 展示）。 */
   status: ExecutionStatus;
   mode: ExecutionMode;
   /** 运行秒数（running 态实时计算，终态 endedAt-startedAt）。 */
@@ -521,6 +550,16 @@ export interface CancelResponse {
   cancelled: true;
 }
 
+/** message 的内层响应（挂在 SubagentToolResult.messageResponse，决策 10 瘦身）。 */
+export interface MessageResponse {
+  delivered: true;
+}
+
+/** close 的内层响应（挂在 SubagentToolResult.closeResponse，决策 10 瘦身）。 */
+export interface CloseResponse {
+  closed: true;
+}
+
 /**
  * Tool 外层出参（renderResult + LLM content JSON 同源）。
  * adapter 唯一产出：领域对象（bg/list/cancel 三选一）+ action/subagentId/sessionFile。
@@ -532,7 +571,9 @@ export interface CancelResponse {
 export type SubagentToolResult =
   | { action: "start"; subagentId: string; sessionFile: string | null; slug: string; bgResponse: BgResponse; __gui__?: GuiRenderResult }
   | { action: "list"; subagentId: null; sessionFile: null; listResponse: ListResponse; __gui__?: GuiRenderResult }
-  | { action: "cancel"; subagentId: string; sessionFile: null; cancelResponse: CancelResponse; __gui__?: GuiRenderResult };
+  | { action: "cancel"; subagentId: string; sessionFile: null; cancelResponse: CancelResponse; __gui__?: GuiRenderResult }
+  | { action: "message"; subagentId: string; sessionFile: null; messageResponse: MessageResponse; __gui__?: GuiRenderResult }
+  | { action: "close"; subagentId: string; sessionFile: null; closeResponse: CloseResponse; __gui__?: GuiRenderResult };
 
 // ============================================================
 // TUI list 视图的合并 record（4 源 merge 后的形状）
@@ -614,6 +655,8 @@ export interface RecordSnapshot {
   /** 短标签（≤35 字符）。来自 record.slug。 */
   readonly slug: string;
   readonly status: ExecutionStatus;
+  /** 对话模式标志（与 ExecutionRecord.chatMode 同源）。cancel 别名判定用。 */
+  readonly chatMode?: boolean;
   readonly turns: number;
   readonly totalTokens: number;
   readonly startedAt: number;
