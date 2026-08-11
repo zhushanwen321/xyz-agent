@@ -1,16 +1,11 @@
 <template>
   <!--
-    TurnSummary：收尾 summary + streaming cursor + hover actions（复制/MD/fork/handoff）。
-    从 Turn.vue 拆出。fork/handoff useTurnActions 在内部调用，不冒泡。
+    TurnSummary：hover actions 操作栏（复制/MD/fork/handoff）。从 Turn.vue 拆出。
+    [block-rendering M0] 去内容化：不再渲染正文文字（text 全 inline 到 turn 内容区统一正文样式）
+    与 streaming 光标（迁移到 Turn.vue trace 容器末尾 streaming-tail）。
+    fork/handoff useTurnActions 在内部调用，不冒泡。
   -->
-  <div
-    v-if="summaryText"
-    class="turn-summary pt-3 text-[length:var(--text-base)] leading-7 transition-colors duration-200"
-    :class="isStreaming ? 'text-neutral-mid' : 'text-neutral-fg'"
-  >
-    <MarkdownRenderer :content="summaryText" :session-id="sessionId" />
-    <!-- streaming 光标：行内闪烁竖条，紧跟 summary 末尾 -->
-    <span v-if="isStreaming" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] rounded-[1px] bg-accent align-middle animate-blink" />
+  <div v-if="lastAssistant" class="turn-summary pt-3">
     <!--
       hover actions（4 个并列按钮：复制 / 复制MD / fork / handoff）。
       fork/handoff 点击进 composer staging 模式：可输入文本带上发送，也可不输入直接提交（空提交≈
@@ -88,12 +83,10 @@ import { normalizeContent } from '@xyz-agent/shared'
 import { useCopy } from './composables/useCopy'
 import { isSubagentVirtualId } from '../../lib/subagent-id'
 import { useChatViewDeps } from './chat-view-deps'
-import MarkdownRenderer from './MarkdownRenderer.vue'
 
 const props = defineProps<{
   turn: MessageTurn
   sessionId: string
-  isStreaming: boolean
   lastAssistant: Message | null
 }>()
 
@@ -116,8 +109,7 @@ const aiCopyKey = computed(() => `ai-${props.turn.index}`)
 const aiMdKey = computed(() => `md-${props.turn.index}`)
 
 /**
- * 收尾 summary：仅最后一条 assistant.content。
- * streaming 和 complete 态都渲染。
+ * summary 文本：copy 按钮内容来源（仅最后一条 assistant.content，streaming/complete 都渲染）。
  */
 const summaryText = computed(() => {
   const as = props.turn.assistants
