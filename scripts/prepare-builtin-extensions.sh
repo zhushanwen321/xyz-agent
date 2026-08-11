@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
 # prepare-builtin-extensions.sh — 准备 builtin pi extensions 打包产物。
 #
-# 9 个 builtin extension 包（原 mandatory）连带真实运行时依赖拷贝到
-# apps/electron/resources/extensions/@zhushanwen/<pkg>/，
-# 再由 electron-builder extraResources 拷进 Resources/extensions/。
+# 机制（重构后）：调用 bundle-extensions.mjs，用 esbuild 把每个 builtin extension
+# bundle 成自包含 index.js（所有 JS value dep inline，仅 pi virtualModules external）。
 #
-# 方案：直接从项目 hoisted node_modules 拷贝源码 + 精选真实 deps。
-# 不用 pnpm deploy（isolated 模式下 --legacy 会装整个 monorepo 依赖树），
-# 不用 npm install（会把 peerDeps 的传递闭包全拖进来）。
-#
-# peerDeps（@earendil-works/pi-*、typebox）由 pi 进程运行时提供，不拷贝。
-# workspace 互引（pi-subagent-workflow 等）是纯契约 peerDep，无运行时 import，不拷贝。
+# 根治旧机制（"拷源码 + 人工声明 PKG_DEPS + 从根 node_modules 拷依赖"）的缺陷：
+# workspace 包（@xyz-agent/*、@zhushanwen/*）不在根 node_modules（pnpm hoisted），
+# 旧机制 copy_dep 拷不到，pi 加载 extension 报 Cannot find module，新会话创建失败。
+# 新机制由 esbuild 静态分析 import 自动 inline 所有 value 依赖，从结构上消除该根因，
+# 并兑现 G3（新增静态 value 依赖不需改打包配置）。
 #
 # builtin 包清单 SSOT：packages/shared/src/mandatory-extensions.json
-# 体积：permission 24M（tree-sitter-bash），structured-output 3M（ajv+传递），
-# 其余 <200K，合计约 28M。
+# （由 bundle-extensions.mjs 读取，本脚本不再硬编码包列表）
+#
+# 产物（apps/electron/resources/extensions/@zhushanwen/<pkg>/）：
+#  - index.js + index.js.map（bundle 产物，自包含，无 node_modules）
+#  - package.json（pi.extensions 改指 ./index.js；源码 package.json 不动）
+#  - pi-permission 额外含 tree-sitter-bash.wasm + web-tree-sitter.wasm
+#
+# dev 与 build 同源：dev 直接读此目录，build 经 electron-builder extraResources
+# 逐字节拷进 Resources/extensions/。修一处即修两处。
 #
 # Usage: ./scripts/prepare-builtin-extensions.sh
 set -euo pipefail
@@ -22,119 +27,97 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-SRC_NODE_MODULES="$REPO_ROOT/node_modules"
-OUTPUT_DIR="apps/electron/resources/extensions"
+STAGED_SCOPED="$REPO_ROOT/apps/electron/resources/extensions/@zhushanwen"
+MANDATORY_JSON="$REPO_ROOT/packages/shared/src/mandatory-extensions.json"
 
-# ── builtin 包源码目录名（extensions/ 下的目录名）──
-BUILTIN_PACKAGES=(
-  "ask-user"
-  "goal"
-  "todo"
-  "pending-notifications"
-  "subagent-workflow"
-  "structured-output"
-  "permission"
-  "scheduler"
-  "rename-session"
-)
-
-# ── 每个包的真实运行时 deps（不含 peerDeps，不含 devDeps）──
-# 格式："pkg_dir:dep1 dep2 ..."
-# 这些 deps 从项目 node_modules 拷贝（含其传递依赖，扁平 hoisted 布局）
-declare -A PKG_DEPS
-PKG_DEPS["ask-user"]="@xyz-agent/extension-protocol"
-PKG_DEPS["goal"]="@xyz-agent/extension-protocol"
-PKG_DEPS["todo"]="@xyz-agent/extension-protocol"
-PKG_DEPS["pending-notifications"]=""
-PKG_DEPS["subagent-workflow"]="@xyz-agent/extension-protocol"
-PKG_DEPS["structured-output"]="ajv fast-deep-equal fast-uri json-schema-traverse require-from-string"
-PKG_DEPS["permission"]="tree-sitter-bash web-tree-sitter node-addon-api node-gyp-build"
-PKG_DEPS["scheduler"]="croner"
-PKG_DEPS["rename-session"]=""
-
-echo "=== prepare-builtin-extensions ==="
-echo "Output: ${OUTPUT_DIR}/"
-
-# 清理旧产物
-rm -rf "$OUTPUT_DIR"
-mkdir -p "$OUTPUT_DIR/@zhushanwen"
-
-# 拷贝单个 dep（含 @scope/ 前缀处理）
-copy_dep() {
-  local dep="$1"
-  local dest_node_modules="$2"
-  local src="$SRC_NODE_MODULES/$dep"
-
-  if [[ ! -e "$src" ]]; then
-    echo "    WARN: $dep not found in node_modules, skipping" >&2
-    return 0
-  fi
-
-  # 处理 @scope/name 结构
-  if [[ "$dep" == @* ]]; then
-    mkdir -p "$dest_node_modules/@$(echo "$dep" | cut -d/ -f1 | tr -d @)"
-  fi
-
-  # cp -RL dereference symlink（isolated 模式下 node_modules 是 symlink → .pnpm/）
-  cp -RL "$src" "$dest_node_modules/$dep" 2>/dev/null || true
-}
-
-# 逐包处理
-FAILED=0
-for pkg_dir in "${BUILTIN_PACKAGES[@]}"; do
-  pkg_name="@zhushanwen/pi-${pkg_dir}"
-  src_pkg="$REPO_ROOT/extensions/$pkg_dir"
-  dest_pkg="$OUTPUT_DIR/@zhushanwen/pi-${pkg_dir}"
-
-  if [[ ! -d "$src_pkg" ]]; then
-    echo "  SKIP: extensions/$pkg_dir not found" >&2
-    FAILED=$((FAILED + 1))
-    continue
-  fi
-
-  echo "  packaging ${pkg_name}..."
-
-  # 1. 拷贝源码（不含 node_modules / __tests__ / 临时文件）
-  rsync -a \
-    --exclude node_modules \
-    --exclude __tests__ \
-    --exclude '*.test.ts' \
-    --exclude '.gitignore' \
-    --exclude 'PLAN.md' \
-    "$src_pkg/" "$dest_pkg/"
-
-  # 2. 拷贝真实运行时 deps
-  deps="${PKG_DEPS[$pkg_dir]:-}"
-  if [[ -n "$deps" ]]; then
-    mkdir -p "$dest_pkg/node_modules"
-    for dep in $deps; do
-      copy_dep "$dep" "$dest_pkg/node_modules"
-    done
-  fi
-done
-
-# 汇总体积
-echo ""
-echo "=== Packaged packages ==="
-TOTAL_KB=0
-for pkg_dir in "${BUILTIN_PACKAGES[@]}"; do
-  dest_pkg="$OUTPUT_DIR/@zhushanwen/pi-${pkg_dir}"
-  if [[ -d "$dest_pkg" ]]; then
-    size_kb=$(du -sk "$dest_pkg" 2>/dev/null | awk '{print $1}')
-    size_mb=$(echo "scale=1; ${size_kb} / 1024" | bc)
-    echo "  @zhushanwen/pi-${pkg_dir}: ${size_mb}M"
-    TOTAL_KB=$((TOTAL_KB + size_kb))
-  fi
-done
-total_mb=$(echo "scale=1; ${TOTAL_KB} / 1024" | bc)
-echo "  ────────────"
-echo "  Total: ${total_mb}M"
-
-if [[ $FAILED -gt 0 ]]; then
-  echo ""
-  echo "ERROR: ${FAILED} package(s) failed" >&2
-  exit 1
+# 包目录名列表（pi-ask-user pi-goal ...），从 SSOT 一次性读取
+PKG_DIRS=$(node -e "const d=require(process.argv[1]);process.stdout.write(d.map(p=>p.name.replace(/^@zhushanwen\//,'')).join(' '))" "$MANDATORY_JSON")
+if [[ -z "$PKG_DIRS" ]]; then
+	echo "ERROR: 无法从 $MANDATORY_JSON 读取包列表" >&2
+	exit 1
 fi
 
+echo "=== prepare-builtin-extensions ==="
+echo "staged: ${STAGED_SCOPED}"
 echo ""
-echo "=== Done ==="
+
+# 1. 清空 staged scoped 目录后重建（双保险：bundle-extensions.mjs 内部也会清空，
+#    此处显式清空防旧机制 .ts/src 残留旁路 bundle —— extension-resolver.ts 的
+#    resolveExtensionEntries fallback 顺序 index.ts 优先于 index.js，残留 .ts 会让
+#    pi 加载源码旁路 bundle，bug 原样存在，R3 关键防护）
+rm -rf "$STAGED_SCOPED"
+mkdir -p "$STAGED_SCOPED"
+
+# 2. esbuild bundle 9 个 builtin extension 成自包含 index.js
+node "$REPO_ROOT/scripts/bundle-extensions.mjs"
+
+# 3. 补充非源码文档资源（README / ARCHITECTURE）。bundle 已产出运行时核心文件
+#    （index.js / package.json / wasm），此步仅拷文档供产物自描述，严格排除 *.ts /
+#    src/ / node_modules / 测试，防 .ts 入口残留触发 resolver fallback 旁路 bundle。
+for pkg_dir in $PKG_DIRS; do
+	src_dir="${pkg_dir#pi-}"          # pi-ask-user → ask-user（extensions/ 下目录名）
+	dest_pkg="$STAGED_SCOPED/$pkg_dir"
+	src_pkg="$REPO_ROOT/extensions/$src_dir"
+
+	if [[ -d "$src_pkg" ]]; then
+		rsync -a \
+			--include='README.md' \
+			--include='ARCHITECTURE.md' \
+			--exclude='*' \
+			"$src_pkg/" "$dest_pkg/" 2>/dev/null || true
+	fi
+done
+
+# 4. 校验 staged 无 index.ts / *.ts 残留（R3 关键防护，fail-fast）
+RESIDUAL_TS=$(find "$STAGED_SCOPED" \( -name "index.ts" -o -name "*.ts" \) 2>/dev/null || true)
+if [[ -n "$RESIDUAL_TS" ]]; then
+	echo "" >&2
+	echo "ERROR: staged 残留 .ts 文件，resolver fallback 会旁路 bundle：" >&2
+	echo "$RESIDUAL_TS" >&2
+	echo "" >&2
+	echo "[FIX] bundle-extensions.mjs 是否正确产出 index.js？rsync 是否排除 *.ts？" >&2
+	exit 1
+fi
+
+# 5. 校验每包有 index.js + pi-permission 有 wasm（fail-fast，拦截残缺产物）
+FAIL=0
+for pkg_dir in $PKG_DIRS; do
+	dest_pkg="$STAGED_SCOPED/$pkg_dir"
+	if [[ ! -f "$dest_pkg/index.js" ]]; then
+		echo "ERROR: $pkg_dir 缺 index.js（bundle 可能失败）" >&2
+		FAIL=1
+	fi
+done
+if [[ ! -f "$STAGED_SCOPED/pi-permission/tree-sitter-bash.wasm" ]] || \
+   [[ ! -f "$STAGED_SCOPED/pi-permission/web-tree-sitter.wasm" ]]; then
+	echo "ERROR: pi-permission 缺 wasm（permission 将无法解析 bash）" >&2
+	FAIL=1
+fi
+if [[ $FAIL -ne 0 ]]; then
+	echo "[FIX] 重新运行 bash scripts/prepare-builtin-extensions.sh" >&2
+	exit 1
+fi
+
+# 6. 成功汇总
+echo ""
+echo "=== staged 产物汇总 ==="
+TOTAL_KB=0
+PKG_COUNT=0
+for pkg_dir in $PKG_DIRS; do
+	dest_pkg="$STAGED_SCOPED/$pkg_dir"
+	js_kb=$(du -sk "$dest_pkg/index.js" 2>/dev/null | awk '{print $1}')
+	dir_kb=$(du -sk "$dest_pkg" 2>/dev/null | awk '{print $1}')
+	extras=""
+	if [[ "$pkg_dir" == "pi-permission" ]]; then
+		extras=" (+2 wasm)"
+	fi
+	printf "  @zhushanwen/%-18s index.js %5skb  dir %6skb%s\n" "$pkg_dir" "$js_kb" "$dir_kb" "$extras"
+	TOTAL_KB=$((TOTAL_KB + dir_kb))
+	PKG_COUNT=$((PKG_COUNT + 1))
+done
+total_mb=$(echo "scale=1; ${TOTAL_KB} / 1024" | bc)
+echo "  ──────────────────────────────────────────────"
+echo "  Total staged: ${total_mb}M (${PKG_COUNT} packages, self-contained bundles)"
+
+echo ""
+echo "=== Done: prepare-builtin-extensions ==="
