@@ -2,10 +2,10 @@ import { readFile, readdir, open } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { join, basename } from 'node:path'
 import type { Entry } from '../core/parser.js'
-import { parseSessionContent } from '../core/parser.js'
-import type { Family, SessionRef, SubagentRef, WorkflowRef } from '../core/family.js'
+import type { Family, SessionRef, SubagentRef } from '../core/family.js'
 import { buildFamilyIndex, resolveFamily } from '../core/family.js'
 import { listMainSessions, listSubagentSessions } from './roots.js'
+import { resolveWorkflows } from './workflows.js'
 
 /**
  * [M2 discovery] 从文件系统构建某 session 的完整家族（IO 适配层）。
@@ -344,77 +344,13 @@ export async function listRecordManifests(agentDir: string): Promise<RecordManif
 }
 
 // ============================================================
-// workflow-state 链路（M1 family.workflows 的填充）
+// 文件名 sessionId 提取（find.ts + discovery/workflows.ts 共用 helper）
 // ============================================================
-
-/**
- * 从 wf-state 快照对象提取 calls[].sessionFile（绝对路径数组）。
- *
- * 两种格式（探查确认，本机 371 个 wf 文件）：
- * - NEW (v="wf-run-v1")：state.calls[]，每项顶层 .sessionFile（258 文件 / 1590 sessionFile）
- * - OLD (无 v)：callCache[]=[{key,value}]，value.sessionFile（112 文件 / 0 sessionFile，旧 pi 不持久化）
- */
-function extractCallSessionFiles(snap: unknown): string[] {
-  const out: string[] = []
-  if (typeof snap !== 'object' || snap === null) return out
-  const s = snap as Record<string, unknown>
-  const isNew = s.v === 'wf-run-v1'
-  let callsRaw: unknown
-  if (isNew) {
-    const state = s.state
-    callsRaw = typeof state === 'object' && state !== null ? (state as Record<string, unknown>).calls : undefined
-  } else {
-    callsRaw = s.callCache
-  }
-  if (!Array.isArray(callsRaw)) return out
-  for (const c of callsRaw) {
-    if (typeof c !== 'object' || c === null) continue
-    const co = c as Record<string, unknown>
-    // NEW: call 本身；OLD: {key, value}，取 value
-    const item: Record<string, unknown> = isNew
-      ? co
-      : typeof co.value === 'object' && co.value !== null
-        ? (co.value as Record<string, unknown>)
-        : co
-    const sf = item.sessionFile
-    if (typeof sf === 'string') {
-      out.push(sf)
-      continue
-    }
-    const result = item.result
-    const sf2 =
-      typeof result === 'object' && result !== null
-        ? (result as Record<string, unknown>).sessionFile
-        : undefined
-    if (typeof sf2 === 'string') out.push(sf2)
-  }
-  return out
-}
-
-/**
- * 读 wf-state 文件，从最后一个有效快照行提取 calls 的 sessionFile 路径。
- *
- * wf 文件每行是一个完整快照（多行 = 周期性追加，最后一行最新）。从尾向头找首个可解析行。
- */
-async function readWorkflowCallSessionFiles(wfPath: string): Promise<string[]> {
-  let content: string
-  try {
-    content = await readFile(wfPath, 'utf8')
-  } catch {
-    return [] // wf 文件不存在/读失败 → 空 calls（不抛错）
-  }
-  const lines = content.split('\n')
-  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i].trim() === '') continue
-    try {
-      return extractCallSessionFiles(JSON.parse(lines[i]))
-    } catch {
-      continue // 坏行，试上一行
-    }
-  }
-  return []
-}
+//
+// workflow-state 发现链路（resolveWorkflows / extractCallSessionFiles /
+// readRunSnapshot / sessionRefFromPath）已迁至 discovery/workflows.ts（w5 架构归位，
+// SSOT §6.3 workflow 与 subagent 发现解耦）。本函数被 find.ts + workflows.ts 共用，
+// 故留原位 export。
 
 /** 从文件名（<timestamp>_<sessionId>.jsonl）提取 sessionId；非 uuid 特征返回空串。 */
 export function extractSessionIdFromFilename(name: string): string {
@@ -422,62 +358,6 @@ export function extractSessionIdFromFilename(name: string): string {
   const idx = noExt.lastIndexOf('_')
   const candidate = idx >= 0 ? noExt.slice(idx + 1) : noExt
   return /^[0-9a-f-]{8,}$/i.test(candidate) ? candidate : ''
-}
-
-/**
- * 从 sessionFile 绝对路径反查 SessionRef。优先用已扫描的 pathToRef（含真实 id/cwd/stat）；
- * 找不到（文件 GC/路径迁移）返回 fileName-only 最小 SessionRef（不抛错）。
- */
-function sessionRefFromPath(path: string, pathToRef: Map<string, SessionRef>): SessionRef {
-  const existing = pathToRef.get(path)
-  if (existing) return existing
-  return {
-    sessionId: extractSessionIdFromFilename(basename(path)),
-    fileName: path,
-    mtime: 0,
-    sizeBytes: 0,
-    cwd: '',
-  }
-}
-
-/**
- * 读目标 session 文件全文，解析 workflow-state-link custom entries，构造 WorkflowRef[]。
- * 同一 runId 的多个 link（workflow 多次更新产生）按 runId 去重，取最新 link（path 相同）。
- */
-async function resolveWorkflows(
-  sessionId: string,
-  sessionIdToPath: Map<string, string>,
-  pathToRef: Map<string, SessionRef>,
-): Promise<WorkflowRef[]> {
-  const targetPath = sessionIdToPath.get(sessionId)
-  if (!targetPath) return [] // 兜底（buildFamilyFromFs 已校验 sessionId 存在）
-  let content: string
-  try {
-    content = await readFile(targetPath, 'utf8')
-  } catch {
-    return []
-  }
-  const { entries } = parseSessionContent(content)
-  const linkByRunId = new Map<string, { runId: string; path: string }>()
-  for (const e of entries) {
-    if (e.customType !== 'workflow-state-link') continue
-    const data = e.data as Record<string, unknown> | undefined
-    const runId = data?.runId
-    const path = data?.path
-    if (typeof runId === 'string' && typeof path === 'string') {
-      linkByRunId.set(runId, { runId, path }) // 后写覆盖前写（取最新 link）
-    }
-  }
-  const workflows: WorkflowRef[] = []
-  for (const { runId, path } of linkByRunId.values()) {
-    const sessionFiles = await readWorkflowCallSessionFiles(path)
-    workflows.push({
-      runId,
-      stateFile: path,
-      calls: sessionFiles.map((sf) => sessionRefFromPath(sf, pathToRef)),
-    })
-  }
-  return workflows
 }
 
 // ============================================================
