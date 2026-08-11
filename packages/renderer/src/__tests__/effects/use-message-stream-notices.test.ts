@@ -9,8 +9,10 @@
  * - forkNoticeBaseTop 不再叠加 dispatching 占位（dispatching 高度已计入 vlistBottom）
  * - isDispatching/hasWorkingTurn 仍返回（useForkNoticeStream 兜底用）
  *
- * 公式（useNoticeStack.ts，COMPACTING_NOTICE_HEIGHT=46）：
- *   forkNoticeBaseTop = vlistBottom + topOffset + (isCompacting ? 46 : 0)
+ * 公式（useMessageStreamNotices.ts，COMPACTING_NOTICE_HEIGHT=24）：
+ *   forkNoticeBaseTop = vlistBottom + topOffset + (isCompacting ? 24 : 0)
+ *
+ * 注：断言用 import 的 COMPACTING_NOTICE_HEIGHT 常量计算，避免常量变更再次漂移。
  *
  * mock 策略：mock useChatStore（控制 isCompacting/isActive/isGenerating 布尔）。
  *
@@ -19,7 +21,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { computed, effectScope, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { useMessageStreamNotices } from '@/composables/panel/useMessageStreamNotices'
+import { useMessageStreamNotices, COMPACTING_NOTICE_HEIGHT } from '@/composables/panel/useMessageStreamNotices'
 
 // mock useChatStore：返回可配置的布尔状态（isCompacting/isActive/isGenerating）
 const chatState = ref({
@@ -72,11 +74,11 @@ describe('useMessageStreamNotices · forkNoticeBaseTop 基线', () => {
     expect(ret.forkNoticeBaseTop.value).toBe(1244)
   })
 
-  it('vlistBottom=1000 + isCompacting=true → forkNoticeBaseTop=1046（叠 compacting 浮层占位）', () => {
+  it('vlistBottom=1000 + isCompacting=true → forkNoticeBaseTop=1024（叠 compacting 浮层占位）', () => {
     chatState.value.isCompacting = true
     const { ret } = setup({ vlistBottom: 1000 })
-    // topOffset 默认 0 → 1000 + 0 + 46(compacting 浮层) = 1046
-    expect(ret.forkNoticeBaseTop.value).toBe(1046)
+    // topOffset 默认 0 → 1000 + 0 + 24(compacting 浮层) = 1024
+    expect(ret.forkNoticeBaseTop.value).toBe(1000 + COMPACTING_NOTICE_HEIGHT)
   })
 
   it('[方案 D] isDispatching 不再叠加 fork 基线占位（dispatching 已迁入文档流，计入 vlistBottom）', () => {

@@ -23,6 +23,9 @@ const configMock = vi.hoisted(() => ({
   listProviders: vi.fn(async () => []),
   setProvider: vi.fn(async () => {}),
   deleteProvider: vi.fn(async () => {}),
+  // wave4 C1/IF3：toggle 持久化走 toggleProviderEnabled（写 enabledModels 白名单），删除按 kind 走 removeProviderByKind
+  toggleProviderEnabled: vi.fn(async () => {}),
+  removeProviderByKind: vi.fn(async () => {}),
   testProvider: vi.fn(async () => ({ ok: true })),
   discoverModels: vi.fn(async () => ({ success: true, models: [] })),
   setDefaultModel: vi.fn(async () => {}),
@@ -80,6 +83,8 @@ beforeEach(() => {
   __resetSettingsStoreForTesting()
   configMock.setProvider.mockClear()
   configMock.deleteProvider.mockClear()
+  configMock.toggleProviderEnabled.mockClear()
+  configMock.removeProviderByKind.mockClear()
   configMock.setDefaultModel.mockClear()
 })
 
@@ -212,7 +217,7 @@ describe('ProviderPage 默认模型从 settingsStore.defaultModel 派生（U5）
  */
 describe('ProviderPage W1 robustness', () => {
   it('U1: toggle enabled 失败 → 常驻 inline error 区域可见并含错误文案', async () => {
-    configMock.setProvider.mockRejectedValueOnce(new Error('网络错误'))
+    configMock.toggleProviderEnabled.mockRejectedValueOnce(new Error('网络错误'))
     wrapper = mount(ProviderPage, {
       props: { providers: PROVIDERS },
       attachTo: document.body,
@@ -233,7 +238,7 @@ describe('ProviderPage W1 robustness', () => {
   it('D14: 删除 defaultModel 归属 provider → 前端清空 defaultModel', async () => {
     const store = getSettingsStore()
     store.defaultModel.value = 'anthropic/claude-sonnet-4'
-    configMock.deleteProvider.mockResolvedValueOnce(undefined)
+    configMock.removeProviderByKind.mockResolvedValueOnce(undefined)
     wrapper = mount(ProviderPage, {
       props: { providers: PROVIDERS },
       attachTo: document.body,
@@ -250,7 +255,7 @@ describe('ProviderPage W1 robustness', () => {
     confirmBtn!.click()
     await flushPromises()
 
-    expect(configMock.deleteProvider).toHaveBeenCalledWith('anthropic')
+    expect(configMock.removeProviderByKind).toHaveBeenCalledWith('anthropic', 'custom')
     expect(store.defaultModel.value).toBe('')
   })
 })
