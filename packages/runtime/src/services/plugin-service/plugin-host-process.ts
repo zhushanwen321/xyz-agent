@@ -43,9 +43,25 @@ export interface PluginHostProcessContract {
   getProcessHandle(pluginId: string): { processId: string; postMessage(message: unknown): void } | undefined
 }
 
+/**
+ * PluginHost / PluginHostProcess 共享的构造选项。
+ *
+ * 接口职责说明：名字含 'Process' 是历史遗留——此接口实际同时被两个宿主消费：
+ *   - PluginHost（Worker 线程版）读 workerBootstrapOverride（trusted Worker bootstrap 注入口）
+ *   - PluginHostProcess（fork 子进程版）读 bootstrapPathOverride（fork 子进程 bootstrap 注入口）
+ * 两者互不影响。长期可重命名为 PluginPoolOptions，本次为减小影响面不重命名，以本注释标注职责。
+ * production 构造任一宿主时不传任何 override，各自走 resolveAndValidateFile（.cjs → .js → .ts）链。
+ */
 export interface PluginHostProcessOptions {
-  /** 测试注入：fork 目标文件绝对路径（默认走 resolveAndValidateFile 链） */
+  /** 测试注入：fork 子进程 bootstrap 目标文件绝对路径（默认走 resolveAndValidateFile 链）。由 PluginHostProcess 消费 */
   bootstrapPathOverride?: string
+  /**
+   * 测试注入：trusted Worker 线程 bootstrap 的 mock 注入口，与 bootstrapPathOverride（fork 子进程 mock
+   * 注入）对偶；由 PluginHost 消费。生产不传——createWorker 走原 resolveAndValidateFile
+   * （'.cjs' → '.js' → '.ts'）链：生产 .cjs bundle 命中首步，测试环境（无 bundle）fallback 至 .ts
+   * 但 Node Worker 不能加载 .ts，故测试场景 trusted 必须传 override 短路 resolve 链加载 mock。
+   */
+  workerBootstrapOverride?: string
   /** fork execArgv（ESM loader 经 --import 注入点；默认空，不继承父进程 flags） */
   execArgv?: string[]
   /** loadPlugin 超时（测试注入短超时用；默认 10s） */

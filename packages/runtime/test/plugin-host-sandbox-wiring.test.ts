@@ -3,19 +3,25 @@
  *
  * 覆盖：assignWorker/loadPlugin/terminateWorker/getWorkerHandle/shutdown 的
  * sandbox 转调（子进程宿主）+ crash 回调转发 + trusted 回归。
- * mock 子进程宿主经 PluginHostProcessOptions.bootstrapPathOverride 注入
- * （plugin-bootstrap-process.mock.cjs，fork 版协议 mock）。
+ * - sandbox fork 子进程宿主经 PluginHostProcessOptions.bootstrapPathOverride 注入（fixtures/plugin-bootstrap-process.mock.cjs）
+ * - trusted Worker 线程经 workerBootstrapOverride 注入（fixtures/mock-bootstrap.cjs）——
+ *   移位后 resolvePluginHostDir() 仍返回 src/services/plugin-service/，删 A1 后 resolve 链
+ *   fallback .ts，Node Worker 不能加载 .ts，故 trusted 必须经 override 注入 mock（TC7）。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { resolve } from 'node:path'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import * as childProcess from 'node:child_process'
-import { PluginHost } from './plugin-host.js'
-import { PluginRpcServer } from './plugin-rpc-server.js'
+import { PluginHost } from '../src/services/plugin-service/plugin-host.js'
+import { PluginRpcServer } from '../src/services/plugin-service/plugin-rpc-server.js'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // spy 保留真实 fork 行为（TC3/TC6 需要真实子进程），仅记录调用次数（TC2 复用断言）
 vi.mock('node:child_process', { spy: true })
 
-const MOCK_BOOTSTRAP = resolve(__dirname, 'plugin-bootstrap-process.mock.cjs')
+const MOCK_BOOTSTRAP = resolve(__dirname, 'fixtures/plugin-bootstrap-process.mock.cjs')
+const WORKER_MOCK = resolve(__dirname, 'fixtures/mock-bootstrap.cjs')
 const FAKE_PLUGIN_PATH = '/fake/plugin.js'
 
 describe('PluginHost sandbox wiring', () => {
@@ -25,7 +31,7 @@ describe('PluginHost sandbox wiring', () => {
   beforeEach(() => {
     vi.mocked(childProcess.fork).mockClear()
     rpcServer = new PluginRpcServer()
-    host = new PluginHost(rpcServer, { bootstrapPathOverride: MOCK_BOOTSTRAP })
+    host = new PluginHost(rpcServer, { bootstrapPathOverride: MOCK_BOOTSTRAP, workerBootstrapOverride: WORKER_MOCK })
   })
 
   afterEach(async () => {

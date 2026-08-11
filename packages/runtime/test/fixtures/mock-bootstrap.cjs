@@ -2,10 +2,14 @@
  * Mock Worker bootstrap for PluginHost unit tests.
  *
  * Handles load / activate / deactivate / rpc / crash messages without loading real plugins.
- * Uses ESM syntax because runtime package has "type": "module" — .js files are treated as ESM.
+ * 合法 CJS 模块（.cjs 文件）：用 require 而非 import。经 PluginHostProcessOptions.workerBootstrapOverride
+ * 注入 trusted Worker 线程（new Worker(this.workerBootstrapOverride)），由 Node Worker 直接加载——
+ * 不再经「写 src/plugin-bootstrap.js 文本中转」，消除并行测试互相覆盖的竞态。
+ *
+ * 注：被 require()/new Worker() 顶层加载时 parentPort 为 undefined（非 Worker 上下文），
+ * if(parentPort) 守卫使其安全返回，不抛错。
  */
-
-import { parentPort } from 'node:worker_threads'
+const { parentPort } = require('node:worker_threads')
 
 if (parentPort) {
   parentPort.on('message', (msg) => {

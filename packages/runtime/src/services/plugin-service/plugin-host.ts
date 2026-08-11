@@ -145,6 +145,8 @@ export class PluginHost implements PluginHostContract {
   /** sandbox 插件子进程宿主（fork 版，惰性创建；无 sandbox 插件时不创建） */
   private processHost: PluginHostProcess | null = null
   private readonly processHostOptions?: PluginHostProcessOptions
+  /** trusted Worker bootstrap mock 注入口（测试专用，由 PluginHostProcessOptions.workerBootstrapOverride 传入；详见该接口注释） */
+  private readonly workerBootstrapOverride?: string
 
   /** Per-plugin crash counter */
   private crashCounts = new Map<string, number>()
@@ -158,6 +160,7 @@ export class PluginHost implements PluginHostContract {
   constructor(rpcServer: PluginRpcServer, processHostOptions?: PluginHostProcessOptions) {
     this.rpcServer = rpcServer
     this.processHostOptions = processHostOptions
+    this.workerBootstrapOverride = processHostOptions?.workerBootstrapOverride
   }
 
   /** 设置 crash callback（含 Worker 重建后的重新加载） */
@@ -372,15 +375,20 @@ export class PluginHost implements PluginHostContract {
     // plugin-bootstrap.js 与本文件（plugin-host）同目录
     // resolveAndValidateFile 在文件不存在时抛出含诊断信息的错误
     // 生产环境（CJS bundle）用 .cjs，开发/测试（JS 源码直跑）用 .js，
-    // 测试 mock 场景也使用 .js（test setup 会写入 plugin-bootstrap.js）
+    // 测试场景经 workerBootstrapOverride 注入 mock（短路下方 resolve 链，不再写 src 目录）
     let bootstrapPath: string
-    try {
-      bootstrapPath = resolveAndValidateFile('plugin-bootstrap.cjs')
-    } catch {
+    if (this.workerBootstrapOverride) {
+      // 测试注入：短路 resolve 链，直接加载 mock（生产不传，走下方 .cjs → .js → .ts 链）
+      bootstrapPath = this.workerBootstrapOverride
+    } else {
       try {
-        bootstrapPath = resolveAndValidateFile('plugin-bootstrap.js')
+        bootstrapPath = resolveAndValidateFile('plugin-bootstrap.cjs')
       } catch {
-        bootstrapPath = resolveAndValidateFile('plugin-bootstrap.ts')
+        try {
+          bootstrapPath = resolveAndValidateFile('plugin-bootstrap.js')
+        } catch {
+          bootstrapPath = resolveAndValidateFile('plugin-bootstrap.ts')
+        }
       }
     }
 

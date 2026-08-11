@@ -7,11 +7,13 @@
  * - crashCounts per-plugin 递增
  * - 超过 3 次后放弃
  *
- * 运行命令: pnpm --filter @xyz-agent/runtime run test -- test/plugin-worker-rebuild.test.ts
+ * trusted Worker 线程加载 fixtures/mock-bootstrap.cjs（经 workerBootstrapOverride 注入，不再写 src 目录）；
+ * sandbox fork 子进程加载 fixtures/plugin-bootstrap-process.mock.cjs（经 bootstrapPathOverride 注入）。
+ *
+ * 运行命令: npx vitest run test/plugin-worker-rebuild.test.ts
  */
 
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
-import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs'
+import { describe, it, expect } from 'vitest'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -19,50 +21,11 @@ import { PluginHost } from '../src/services/plugin-service/plugin-host.js'
 import { PluginRpcServer } from '../src/services/plugin-service/plugin-rpc-server.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-// trusted Worker 线程的 mock bootstrap（运行时写入 plugin-bootstrap.js）
-const WORKER_MOCK_SOURCE = resolve(
-  __dirname,
-  '../src/services/plugin-service/plugin-bootstrap.mock.cjs',
-)
-// sandbox fork 子进程的 mock bootstrap（经 bootstrapPathOverride 注入）
-const PROCESS_MOCK_SOURCE = resolve(
-  __dirname,
-  '../src/services/plugin-service/plugin-bootstrap-process.mock.cjs',
-)
-// Worker 从 resolvePluginHostDir() 加载 bootstrap，即 plugin-host.ts 的目录
-const TARGET_BOOTSTRAP = resolve(
-  __dirname,
-  '../src/services/plugin-service/plugin-bootstrap.js',
-)
 
-let originalContent: string | null = null
-let targetExisted = false
-
-beforeAll(() => {
-  // 记录原始文件是否存在，存在则备份内容
-  if (existsSync(TARGET_BOOTSTRAP)) {
-    targetExisted = true
-    originalContent = readFileSync(TARGET_BOOTSTRAP, 'utf-8')
-  }
-})
-
-// beforeEach（而非 beforeAll）重写 mock：与 plugin-host.test.ts 并行运行时，两者共享
-// 此文件，另一文件的 afterAll 恢复可能在本文件测试间隙清空它；每个用例前重新写入，
-// 保证本测试创建的 trusted Worker 总能加载到 mock（修复并行运行时的跨文件干扰）。
-beforeEach(() => {
-  const mockCode = readFileSync(WORKER_MOCK_SOURCE, 'utf-8')
-  writeFileSync(TARGET_BOOTSTRAP, mockCode, 'utf-8')
-})
-
-afterAll(() => {
-  if (targetExisted && originalContent !== null) {
-    // 恢复原始内容
-    writeFileSync(TARGET_BOOTSTRAP, originalContent, 'utf-8')
-  } else if (!targetExisted) {
-    // 文件原本不存在，清理
-    try { unlinkSync(TARGET_BOOTSTRAP) } catch { /* best effort */ }
-  }
-})
+/** trusted Worker 线程的 mock bootstrap（经 workerBootstrapOverride 注入） */
+const WORKER_MOCK = resolve(__dirname, 'fixtures/mock-bootstrap.cjs')
+/** sandbox fork 子进程的 mock bootstrap（经 bootstrapPathOverride 注入） */
+const PROCESS_MOCK_SOURCE = resolve(__dirname, 'fixtures/plugin-bootstrap-process.mock.cjs')
 
 /**
  * 触发 trusted Worker 崩溃：经 Worker 实例 postMessage({type:'crash'}) → mock exit(1)。
@@ -79,7 +42,7 @@ async function crashTrustedWorker(host: PluginHost, workerId: string): Promise<v
 describe('Worker Crash Rebuild', () => {
   it('should rebuild trusted worker after crash', async () => {
     const rpc = new PluginRpcServer()
-    const host = new PluginHost(rpc)
+    const host = new PluginHost(rpc, { workerBootstrapOverride: WORKER_MOCK })
     host.setRebuildCooldownMs(50)
 
     const workerId = await host.assignWorker('trusted-plugin', 'trusted')
@@ -137,7 +100,7 @@ describe('Worker Crash Rebuild', () => {
 
   it('should give up after max rebuild attempts', async () => {
     const rpc = new PluginRpcServer()
-    const host = new PluginHost(rpc)
+    const host = new PluginHost(rpc, { workerBootstrapOverride: WORKER_MOCK })
     host.setRebuildCooldownMs(50)
 
     await host.assignWorker('crashy-plugin', 'trusted')
@@ -173,11 +136,11 @@ describe('Worker Crash Rebuild', () => {
 
   it('crash counts are per-PluginHost instance (non-persistent)', () => {
     const rpc1 = new PluginRpcServer()
-    const host1 = new PluginHost(rpc1)
+    const host1 = new PluginHost(rpc1, { workerBootstrapOverride: WORKER_MOCK })
     expect(host1.getCrashCount('any-plugin')).toBe(0)
 
     const rpc2 = new PluginRpcServer()
-    const host2 = new PluginHost(rpc2)
+    const host2 = new PluginHost(rpc2, { workerBootstrapOverride: WORKER_MOCK })
     expect(host2.getCrashCount('any-plugin')).toBe(0)
 
     host1.shutdown()
@@ -186,7 +149,7 @@ describe('Worker Crash Rebuild', () => {
 
   it('should rebuild trusted worker with multiple plugins', async () => {
     const rpc = new PluginRpcServer()
-    const host = new PluginHost(rpc)
+    const host = new PluginHost(rpc, { workerBootstrapOverride: WORKER_MOCK })
     host.setRebuildCooldownMs(50)
 
     const workerId1 = await host.assignWorker('multi-1', 'trusted')

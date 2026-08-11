@@ -1,8 +1,9 @@
 /**
- * Mock 子进程 bootstrap for PluginHostProcess unit tests.
+ * Mock 子进程 bootstrap for PluginHostProcess / PluginHost sandbox 分流 unit tests.
  *
- * fork 版 mock：响应固定消息，不加载真实插件。
+ * fork 版 mock（合法 CJS，'use strict' + process.on/process.send）：响应固定消息，不加载真实插件。
  * 对齐 fixtures/mock-bootstrap.cjs（Worker 版）的消息协议，传输层换 process.send。
+ * 经 PluginHostProcessOptions.bootstrapPathOverride 注入 fork 子进程（fork(this.bootstrapPathOverride)）。
  *
  * 特殊分支（测试专用）：
  * - crash → process.exit(1) 模拟子进程崩溃（exit 非 0）
