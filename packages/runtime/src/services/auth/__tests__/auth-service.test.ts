@@ -187,6 +187,40 @@ describe('AuthService.cancel', () => {
     expect(svc.cancel('xai')).toEqual({ cancelled: true })
   })
 
+  it('M4-01 ABA 防护：旧 flow finally 在 re-login 后执行，不得删除新 flow 条目', async () => {
+    const deps = makeDeps()
+    const svc = new AuthService(deps)
+    let signal: AbortSignal | undefined
+    vi.mocked(runOAuthLogin).mockImplementation(async (_id, _cfg, _hooks, sig) => {
+      signal = sig
+      return new Promise<OAuthCredential>((_resolve, reject) => {
+        sig?.addEventListener('abort', () => {
+          // 模拟 abort 沿异步链延迟传播（真实场景 cancel 落在 set() 的 proper-lockfile
+          // 锁等待期，旧 flow 的 finally 要等锁释放后才执行）
+          setTimeout(() => reject(new Error('Login cancelled')), 5)
+        })
+      })
+    })
+
+    svc.login('xai')
+    await vi.waitFor(() => expect(signal).toBeDefined())
+    expect(svc.cancel('xai')).toEqual({ cancelled: true })
+    // cancel 同步清条目后立即 re-login：新 controller 入 Map（ABA 的 B 状态）
+    expect(svc.login('xai')).toEqual({ started: true })
+
+    // 等旧 flow 的 abort 传播完成、finally 已执行（旧条目已被 cancel 同步删除，
+    // 此处 finally 执行的是对 Map 的第二次访问）
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    // 关键断言：旧 finally 不得删除新 flow 条目——新 flow 必须仍可取消。
+    // 无身份守卫时旧 finally 会把新条目一并删除，此处返回 cancelled:false，测试失败。
+    expect(svc.cancel('xai')).toEqual({ cancelled: true })
+    // 清理：确认两个 flow 均已收尾（无 auth.error——abort 是用户主动取消非错误）
+    await vi.waitFor(() => {
+      expect(deps.events.some((e) => e.type === 'auth.error')).toBe(false)
+    })
+  })
+
   it('S-7: cancel 落在「token 获取完成 → 写盘」窗口时不落盘、不发 auth.success', async () => {
     const deps = makeDeps()
     const svc = new AuthService(deps)

@@ -90,14 +90,20 @@ describe('AuthStorage', () => {
     expect(await storage.getAll()).toEqual({})
   })
 
-  it('损坏 JSON：get 抛错（不静默返回空）', async () => {
+  it('M4-02: 损坏 JSON 读路径降级——get/hasCredentialSync/listCredentialIds 全部不抛（pi 原地写/撕裂读容忍）', async () => {
     writeFileSync(file, '{ not valid json')
-    await expect(storage.get('a')).rejects.toThrow()
+    // 读路径全部降级：不抛错，按空凭据处理
+    expect(await storage.get('a')).toBeUndefined()
+    expect(await storage.getAll()).toEqual({})
+    expect(storage.hasCredentialSync('a')).toBe(false)
+    expect(storage.hasOAuthSync('a')).toBe(false)
+    expect(storage.listCredentialIds()).toEqual([])
   })
 
-  it('损坏 JSON：set 抛错（RMW 重读时发现损坏）', async () => {
+  it('损坏 JSON：写路径保留抛错（RMW 重读时发现损坏，静默覆盖会丢数据）', async () => {
     writeFileSync(file, '{ not valid json')
     await expect(storage.set('a', oauthCred('t1'))).rejects.toThrow()
+    await expect(storage.remove('a')).rejects.toThrow()
   })
 
   it('空文件内容按空对象处理', async () => {

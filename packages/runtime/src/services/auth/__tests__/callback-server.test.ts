@@ -127,4 +127,21 @@ describe('startCallbackServer', () => {
     server.close()
     expect(() => server.close()).not.toThrow()
   })
+
+  it('M4-03: listen EADDRINUSE → reject listen_failed + 可操作文案（端口被占提示）', async () => {
+    // 先占住一个端口，再同端口 listen 必然 EADDRINUSE
+    const blocker = await startCallbackServer({ port: 0, path: '/block' })
+    const ac = new AbortController()
+    try {
+      await expect(startCallbackServer({ port: blocker.port, path: '/callback', signal: ac.signal }))
+        .rejects.toMatchObject({
+          code: 'listen_failed',
+          message: expect.stringMatching(/端口 \d+ 被占用，请关闭另一个 xyz-agent 实例后重试/),
+        })
+      // reject 后 abort 不抛（监听已摘除）；timer 已清不留悬挂
+      ac.abort()
+    } finally {
+      blocker.close()
+    }
+  })
 })
