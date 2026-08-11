@@ -44,15 +44,14 @@ export interface PluginHostProcessContract {
 }
 
 /**
- * PluginHost / PluginHostProcess 共享的构造选项。
+ * PluginHost / PluginHostProcess 共享的构造选项（插件池统一配置）。
  *
- * 接口职责说明：名字含 'Process' 是历史遗留——此接口实际同时被两个宿主消费：
+ * 此接口同时被两个宿主消费：
  *   - PluginHost（Worker 线程版）读 workerBootstrapOverride（trusted Worker bootstrap 注入口）
  *   - PluginHostProcess（fork 子进程版）读 bootstrapPathOverride（fork 子进程 bootstrap 注入口）
- * 两者互不影响。长期可重命名为 PluginPoolOptions，本次为减小影响面不重命名，以本注释标注职责。
- * production 构造任一宿主时不传任何 override，各自走 resolveAndValidateFile（.cjs → .js → .ts）链。
+ * 两者互不影响。production 构造任一宿主时不传任何 override，各自走 resolveAndValidateFile（.cjs → .js → .ts）链。
  */
-export interface PluginHostProcessOptions {
+export interface PluginPoolOptions {
   /** 测试注入：fork 子进程 bootstrap 目标文件绝对路径（默认走 resolveAndValidateFile 链）。由 PluginHostProcess 消费 */
   bootstrapPathOverride?: string
   /**
@@ -79,7 +78,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
   private readonly execArgv: string[]
   private readonly loadTimeoutMs: number
 
-  constructor(rpcServer: PluginRpcServer, options?: PluginHostProcessOptions) {
+  constructor(rpcServer: PluginRpcServer, options?: PluginPoolOptions) {
     this.rpcServer = rpcServer
     this.bootstrapPathOverride = options?.bootstrapPathOverride
     this.execArgv = options?.execArgv ?? []

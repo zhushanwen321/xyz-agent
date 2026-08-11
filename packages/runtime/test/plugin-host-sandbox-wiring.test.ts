@@ -3,7 +3,7 @@
  *
  * 覆盖：assignWorker/loadPlugin/terminateWorker/getWorkerHandle/shutdown 的
  * sandbox 转调（子进程宿主）+ crash 回调转发 + trusted 回归。
- * - sandbox fork 子进程宿主经 PluginHostProcessOptions.bootstrapPathOverride 注入（fixtures/plugin-bootstrap-process.mock.cjs）
+ * - sandbox fork 子进程宿主经 PluginPoolOptions.bootstrapPathOverride 注入（fixtures/plugin-bootstrap-process.mock.cjs）
  * - trusted Worker 线程经 workerBootstrapOverride 注入（fixtures/mock-bootstrap.cjs）——
  *   移位后 resolvePluginHostDir() 仍返回 src/services/plugin-service/，删 A1 后 resolve 链
  *   fallback .ts，Node Worker 不能加载 .ts，故 trusted 必须经 override 注入 mock（TC7）。

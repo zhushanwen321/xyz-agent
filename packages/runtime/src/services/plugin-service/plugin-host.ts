@@ -11,7 +11,7 @@ import { existsSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type { WorkerHandle, RpcRequest } from './plugin-types.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
-import { PluginHostProcess, type PluginHostProcessOptions } from './plugin-host-process.js'
+import { PluginHostProcess, type PluginPoolOptions } from './plugin-host-process.js'
 
 /**
  * 解析 plugin-host.ts 所在目录（即 dist/runtime/）。
@@ -144,8 +144,8 @@ export class PluginHost implements PluginHostContract {
 
   /** sandbox 插件子进程宿主（fork 版，惰性创建；无 sandbox 插件时不创建） */
   private processHost: PluginHostProcess | null = null
-  private readonly processHostOptions?: PluginHostProcessOptions
-  /** trusted Worker bootstrap mock 注入口（测试专用，由 PluginHostProcessOptions.workerBootstrapOverride 传入；详见该接口注释） */
+  private readonly processHostOptions?: PluginPoolOptions
+  /** trusted Worker bootstrap mock 注入口（测试专用，由 PluginPoolOptions.workerBootstrapOverride 传入；详见该接口注释） */
   private readonly workerBootstrapOverride?: string
 
   /** Per-plugin crash counter */
@@ -157,7 +157,7 @@ export class PluginHost implements PluginHostContract {
   private static readonly REBUILD_COOLDOWN_MS = REBUILD_COOLDOWN_MS
   private rebuildCooldownMs = PluginHost.REBUILD_COOLDOWN_MS
 
-  constructor(rpcServer: PluginRpcServer, processHostOptions?: PluginHostProcessOptions) {
+  constructor(rpcServer: PluginRpcServer, processHostOptions?: PluginPoolOptions) {
     this.rpcServer = rpcServer
     this.processHostOptions = processHostOptions
     this.workerBootstrapOverride = processHostOptions?.workerBootstrapOverride
