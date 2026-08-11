@@ -17,7 +17,8 @@ import { findSessions, type MatchedSession } from './discovery/find.js'
 import { buildFamilyFromFs } from './discovery/subagents.js'
 import { parseSessionFile, type Entry } from './core/parser.js'
 import { buildTreeView } from './core/tree.js'
-import { segmentTurns } from './core/turns.js'
+import { segmentTurns, type Turn } from './core/turns.js'
+import { extractToolCalls, formatToolCallSummary, basename } from './core/toolcall.js'
 import {
   renderOutline,
   renderExpand,
@@ -41,6 +42,7 @@ export type SessionReadAction =
   | 'detail'
   | 'search'
   | 'export'
+  | 'extract'
 
 export interface SessionReadParams {
   action: SessionReadAction
@@ -57,6 +59,10 @@ export interface SessionReadParams {
   granularity?: 'turn' | 'entry'
   cwd?: string
   limit?: number
+  /** extract action: 素材类型（必填）。其他 action 忽略。 */
+  what?: 'user-messages' | 'commands' | 'files' | 'commits' | 'tool-results'
+  /** extract action: 过滤 commands/tool-results 的工具名（可选）。 */
+  tool?: string
 }
 
 export interface ToolResult {
@@ -643,6 +649,412 @@ async function doExport(params: SessionReadParams, agentDir: string): Promise<To
 }
 
 // ===========================================================================
+// extract action（v2 O4：跨 turn 按类型提取素材）
+// ===========================================================================
+//
+// design §3.3 D3 的 5 个预设 + F7/F8/F9 错误规格。复用 O1 共享层（extractToolCalls /
+// formatToolCallSummary / basename）与现有 resolveSessionId/safeParse/buildTreeView/
+// segmentTurns/parseTurnsRange。纯提取，不调 LLM。
+
+/** extract 的 5 个合法 what（design §3.3 D3）。 */
+type ExtractWhat = 'user-messages' | 'commands' | 'files' | 'commits' | 'tool-results'
+
+/** extract 结果预算（design §3.3 F9）：8000 字节 ≈ 2000 token。 */
+const EXTRACT_BUDGET_BYTES = 8000
+
+/** 含 path 参数的文件类工具（design §3.3 D3 files scope）。 */
+const FILE_TOOLS = new Set(['read', 'edit', 'write', 'head'])
+
+/** git 命令关键词（commits 预设判定 bash 结果是否来自 git 命令）。 */
+const GIT_CMD_RE = /\bgit\s+(log|show|commit|push|merge|cherry-pick|revert|reset|rebase|diff)\b/
+/** git short hash（commits 预设，保守限定 7-8 位避免 uuid 全量误报）。 */
+const SHORT_HASH_RE = /\b[0-9a-f]{7,8}\b/g
+/** commit 上下文消歧关键词（commits 次路径：hash 附近出现才纳入）。 */
+const COMMIT_CTX_RE = /feat:|fix:|refactor:|chore:|docs:|\b(commit|commits|merged|pushed|merge)\b/i
+
+/** what 类型守卫（直接比较，避开不安全断言；schema 已校验，此处防御 + 可单测绕过）。 */
+function isExtractWhat(v: unknown): v is ExtractWhat {
+  return (
+    v === 'user-messages' ||
+    v === 'commands' ||
+    v === 'files' ||
+    v === 'commits' ||
+    v === 'tool-results'
+  )
+}
+
+/**
+ * 从 message.content 提取纯 text（string 直取；数组拼接 text 块）。
+ *
+ * 与 render.ts 内部 extractText 同语义，但那未导出；extract 仅需纯 text
+ *（user-messages / tool-results 的正文），不要 thinking/tool_use 占位，本地实现。
+ * content 是 unknown 做类型守卫。
+ */
+function extractContentText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    const parts: string[] = []
+    for (const b of content) {
+      if (b !== null && typeof b === 'object') {
+        const o = b as Record<string, unknown>
+        if (o.type === 'text' && typeof o.text === 'string') parts.push(o.text)
+      }
+    }
+    return parts.join('\n')
+  }
+  return ''
+}
+
+/** 截断到 max 字符，超出加省略号（防爆；tool-results 正文用）。 */
+function truncateText(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max) + '…'
+}
+
+/** turns 数组紧凑标签（前 5 个 + +N，避免一行过长撑爆预算）。 */
+function turnsLabel(turns: number[]): string {
+  const head = turns.slice(0, 5).map((n) => `T${pad(n)}`)
+  const suffix = turns.length > 5 ? `+${turns.length - 5}` : ''
+  return head.join(',') + suffix
+}
+
+/**
+ * 计算工具分布（按出现次数降序），用于 F8 提示 + details.toolDistribution。
+ * 遍历 assistant entry 的 toolCall，复用 extractToolCalls。
+ */
+function computeToolDistribution(
+  turns: Turn[],
+): Array<{ name: string; count: number }> {
+  const counts = new Map<string, number>()
+  for (const t of turns) {
+    for (const e of t.entries) {
+      if (e.message?.role !== 'assistant') continue
+      for (const tc of extractToolCalls(e)) {
+        counts.set(tc.name, (counts.get(tc.name) ?? 0) + 1)
+      }
+    }
+  }
+  return Array.from(counts.entries())
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count)
+}
+
+/** F8：commands/tool-results 的 tool 过滤零匹配 → 返回工具分布 + 👉（不抛错，design §3.3 F8）。 */
+function f8ToolNoMatch(what: ExtractWhat, tool: string, turns: Turn[]): ToolResult {
+  const dist = computeToolDistribution(turns).slice(0, 10)
+  const distStr = dist.map((d) => `${d.name}×${d.count}`).join(', ')
+  const text = `what=${what} tool="${tool}" 无匹配。该 session 工具：${distStr}。👉 用存在的工具名重试。`
+  return { content: [{ type: 'text', text }], details: { what, tool, toolDistribution: dist } }
+}
+
+/**
+ * 通用预算渲染：逐项累加字节，超 EXTRACT_BUDGET_BYTES 截断（design §3.3 F9）。
+ *
+ * details.items 放实际展示的子集（截断后），count 放全集长度，测试可断言 shown/count/truncated。
+ * emptyHint 仅 items 为空时用（files/commits 无匹配不报错，返空 + 提示）。
+ */
+function renderExtractItems<I>(
+  what: ExtractWhat,
+  items: I[],
+  renderLine: (item: I) => string,
+  emptyHint?: string,
+): ToolResult {
+  if (items.length === 0) {
+    const text = emptyHint ?? `what=${what} 无匹配。`
+    return {
+      content: [{ type: 'text', text }],
+      details: { what, count: 0, shown: 0, truncated: false, items: [] },
+    }
+  }
+  const shown: I[] = []
+  let bytes = 0
+  let cut = false
+  for (const item of items) {
+    const line = renderLine(item)
+    const lineBytes = Buffer.byteLength(line, 'utf8') + 1 // +\n
+    if (bytes + lineBytes > EXTRACT_BUDGET_BYTES && shown.length > 0) {
+      cut = true
+      break
+    }
+    shown.push(item)
+    bytes += lineBytes
+  }
+  const body = shown.map(renderLine).join('\n')
+  if (!cut) {
+    return {
+      content: [{ type: 'text', text: body }],
+      details: {
+        what,
+        count: items.length,
+        shown: shown.length,
+        truncated: false,
+        items: shown,
+      },
+    }
+  }
+  // F9：超预算截断，文案注明 ≈ token 换算 + 缩小建议
+  const tokens = Math.round(EXTRACT_BUDGET_BYTES / 4)
+  const text =
+    body +
+    `\n[what=${what} 结果超预算（≈${tokens} token），已截断到 ${shown.length}/${items.length}。👉 缩小 turns=T000-T009 或换 what=commands 重试。]`
+  return {
+    content: [{ type: 'text', text }],
+    details: {
+      what,
+      count: items.length,
+      shown: shown.length,
+      truncated: true,
+      items: shown,
+    },
+  }
+}
+
+/** 预设 1：user-messages——收集 role==='user' 的全文（按 turn 排列，design §3.3 D3）。 */
+function extractUserMessages(turns: Turn[]): ToolResult {
+  const items: Array<{ turn: number; text: string }> = []
+  for (const t of turns) {
+    for (const e of t.entries) {
+      if (e.message?.role !== 'user') continue
+      items.push({ turn: t.index, text: extractContentText(e.message.content) })
+    }
+  }
+  return renderExtractItems(
+    'user-messages',
+    items,
+    (it) => `T${pad(it.turn)}: ${it.text}`,
+  )
+}
+
+/**
+ * 预设 2：commands——assistant 的 toolCall，带 name + D1 摘要（design §3.3 D3）。
+ * 可选 tool 过滤；过滤后零匹配 → F8（工具分布 + 👉，不抛错）。
+ * index = entry 在 turn.entries 内的位置，与 expand 的 [N] 对齐便于定位。
+ */
+function extractCommands(turns: Turn[], tool: string | undefined): ToolResult {
+  const items: Array<{ turn: number; index: number; name: string; summary: string }> = []
+  for (const t of turns) {
+    for (let ei = 0; ei < t.entries.length; ei++) {
+      const e = t.entries[ei]
+      if (e.message?.role !== 'assistant') continue
+      for (const tc of extractToolCalls(e)) {
+        if (tool !== undefined && tc.name !== tool) continue
+        items.push({
+          turn: t.index,
+          index: ei,
+          name: tc.name,
+          summary: formatToolCallSummary(tc),
+        })
+      }
+    }
+  }
+  if (tool !== undefined && items.length === 0) return f8ToolNoMatch('commands', tool, turns)
+  return renderExtractItems('commands', items, (it) => `T${pad(it.turn)} #${it.index} ${it.summary}`)
+}
+
+/**
+ * 预设 3：files——read/edit/write/head 的 path 去重（design §3.3 D3）。
+ * 同 path 多次操作合并，op 聚合成 `read+edit` 形式，turns 记录出现过的轮次。
+ * todo/subagent/cw 无 path 不纳入。无匹配不报错（返空 + 提示）。
+ */
+function extractFiles(turns: Turn[]): ToolResult {
+  const map = new Map<string, { ops: Set<string>; turns: Set<number> }>()
+  for (const t of turns) {
+    for (const e of t.entries) {
+      if (e.message?.role !== 'assistant') continue
+      for (const tc of extractToolCalls(e)) {
+        if (!FILE_TOOLS.has(tc.name)) continue
+        const p = tc.arguments.path
+        if (typeof p !== 'string') continue
+        let rec = map.get(p)
+        if (rec === undefined) {
+          rec = { ops: new Set(), turns: new Set() }
+          map.set(p, rec)
+        }
+        rec.ops.add(tc.name)
+        rec.turns.add(t.index)
+      }
+    }
+  }
+  const items = Array.from(map.entries()).map(([path, rec]) => ({
+    path,
+    basename: basename(path),
+    op: Array.from(rec.ops).sort().join('+'),
+    turns: Array.from(rec.turns).sort((a, b) => a - b),
+  }))
+  return renderExtractItems(
+    'files',
+    items,
+    (it) => `${it.op}: ${it.path} (${turnsLabel(it.turns)})`,
+    `what=files 无匹配（该 session 无 read/edit/write/head 文件操作）。`,
+  )
+}
+
+/**
+ * 预设 4：commits——git 命令 toolResult 的 hash（design §3.3 D3 + D6 误匹配处理）。
+ *
+ * 保守策略（宁可少召回不要乱报 uuid）：
+ * ① 主路径（高置信）：只从 bash 且关联 command 含 git (log|show|commit|push|merge|...) 的
+ *    toolResult 文本提取 7-8 位 hex；
+ * ② 次路径（中置信）：扫所有 toolResult 文本，hash 前后各 30 字符内含
+ *    feat:/fix:/commit/merge 等关键词的才纳入；
+ * ③ 去重，git-cmd 置信度优先；不扫 user/assistant 自由文本（uuid/session-id 误报太多）。
+ *
+ * 已知局限：7-8 位 hex 与 uuid v7 片段形似，靠 git 命令上下文过滤；仍可能漏报
+ *（git 操作未被 toolResult 捕获）或误报（git log 输出里的其他 hex）。每条标注来源 turn
+ * + source + context，agent 可快速辨认。完全语义判断需 LLM，本工具零 LLM 依赖。
+ */
+function extractCommits(turns: Turn[]): ToolResult {
+  // 建 toolCallId → bash command 映射（用于判定 toolResult 是否来自 git 命令）
+  const bashCmds = new Map<string, string>()
+  for (const t of turns) {
+    for (const e of t.entries) {
+      if (e.message?.role !== 'assistant') continue
+      for (const tc of extractToolCalls(e)) {
+        if (tc.name === 'bash') {
+          const cmd = tc.arguments.command
+          if (typeof cmd === 'string') bashCmds.set(tc.id, cmd)
+        }
+      }
+    }
+  }
+
+  type CommitItem = {
+    hash: string
+    turn: number
+    source: 'git-cmd' | 'commit-context'
+    context: string
+  }
+  const high: CommitItem[] = []
+  const low: CommitItem[] = []
+
+  for (const t of turns) {
+    for (const e of t.entries) {
+      if (e.message?.role !== 'toolResult') continue
+      const msg = e.message
+      const text = extractContentText(msg.content)
+      if (text === '') continue
+      const cmd = msg.toolCallId !== undefined ? bashCmds.get(msg.toolCallId) : undefined
+      const isGitBash = msg.toolName === 'bash' && cmd !== undefined && GIT_CMD_RE.test(cmd)
+      for (const m of text.matchAll(SHORT_HASH_RE)) {
+        const hash = m[0]
+        const idx = m.index ?? 0
+        const ctx = text
+          .slice(Math.max(0, idx - 30), idx + hash.length + 30)
+          .replace(/\s+/g, ' ')
+          .trim()
+        if (isGitBash) {
+          high.push({ hash, turn: t.index, source: 'git-cmd', context: ctx })
+        } else if (COMMIT_CTX_RE.test(ctx)) {
+          low.push({ hash, turn: t.index, source: 'commit-context', context: ctx })
+        }
+      }
+    }
+  }
+
+  // 去重：高置信优先，同 hash 保留首次
+  const seen = new Set<string>()
+  const items: CommitItem[] = []
+  for (const c of high) {
+    if (seen.has(c.hash)) continue
+    seen.add(c.hash)
+    items.push(c)
+  }
+  for (const c of low) {
+    if (seen.has(c.hash)) continue
+    seen.add(c.hash)
+    items.push(c)
+  }
+
+  return renderExtractItems(
+    'commits',
+    items,
+    (it) => `T${pad(it.turn)} ${it.hash} [${it.source}] ${it.context}`,
+    `what=commits 无匹配（该 session 无 git commit hash，或未在 toolResult 中出现）。`,
+  )
+}
+
+/**
+ * 预设 5：tool-results——role==='toolResult' 文本（design §3.3 D3）。
+ * text 截断到 500 字防爆；可选 tool 过滤（msg.toolName）；过滤零匹配 → F8。
+ */
+function extractToolResults(turns: Turn[], tool: string | undefined): ToolResult {
+  const items: Array<{ turn: number; index: number; toolName: string; text: string }> = []
+  for (const t of turns) {
+    for (let ei = 0; ei < t.entries.length; ei++) {
+      const e = t.entries[ei]
+      if (e.message?.role !== 'toolResult') continue
+      const tn = e.message.toolName ?? '?'
+      if (tool !== undefined && tn !== tool) continue
+      const text = truncateText(extractContentText(e.message.content), 500)
+      items.push({ turn: t.index, index: ei, toolName: tn, text })
+    }
+  }
+  if (tool !== undefined && items.length === 0)
+    return f8ToolNoMatch('tool-results', tool, turns)
+  return renderExtractItems(
+    'tool-results',
+    items,
+    (it) => `T${pad(it.turn)} #${it.index} ${it.toolName}: ${it.text}`,
+  )
+}
+
+/**
+ * extract：跨 turn 按类型提取素材（design §3.3 D3 五预设 + F7/F8/F9）。
+ *
+ * 流程：resolveSessionId（multi 走 disambiguate）→ safeParse → buildTreeView +
+ * segmentTurns → 可选 turns 范围限定（复用 parseTurnsRange）→ F7 校验 what → 分发 5 预设。
+ */
+async function doExtract(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
+  const resolved = await resolveSessionId(params.session, 'extract', agentDir)
+  if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
+  const entries = await safeParse(resolved.fileName)
+  // extract 遍历全量 entry（含旁支/压缩历史），与 outline/expand/detail 的 leaf 视图不同：
+  // 素材提取要全量（design §2.3 实测全量 519 toolCall / 26 user / 515 toolResult），
+  // 用 leafPath 过滤会漏掉旁支素材。turn 标注是全量分段 index（含 compaction 周期 + 旁支
+  // turn），与 outline 的 32 leaf turn index 不一定逐一对齐，但素材内容完整。
+  const allTurns = segmentTurns(entries, new Set(entries.map((e) => e.id)))
+
+  // 可选 turns 范围限定（复用 parseTurnsRange；未传则全 session）
+  let turns = allTurns
+  if (params.turns !== undefined) {
+    const range = parseTurnsRange(params.turns)
+    const max = allTurns.length - 1
+    if (allTurns.length === 0 || range.start > max || range.end > max) {
+      throw err(
+        `turns "${rangeLabel(range)}" 越界，该 session 共 ${allTurns.length} 轮（T000-T${pad(Math.max(0, max))}）。👉 用 outline 重看有效范围。`,
+      )
+    }
+    turns = allTurns.filter((t) => t.index >= range.start && t.index <= range.end)
+  }
+
+  // F7：what 校验（schema 已校验，此处防御 + 可单测绕过 schema）
+  const what = params.what
+  if (!isExtractWhat(what)) {
+    const given = what === undefined ? '(missing)' : String(what)
+    throw err(
+      `what "${given}" 无效，应为 user-messages/commands/files/commits/tool-results。👉 用合法 what 重试。`,
+    )
+  }
+
+  switch (what) {
+    case 'user-messages':
+      return extractUserMessages(turns)
+    case 'commands':
+      return extractCommands(turns, params.tool)
+    case 'files':
+      return extractFiles(turns)
+    case 'commits':
+      return extractCommits(turns)
+    case 'tool-results':
+      return extractToolResults(turns, params.tool)
+    default: {
+      // exhaustive guard：5 预设全覆盖，default 不可达；防御未来新增 what 未加 case
+      const exhaustive: never = what
+      throw err(`unreachable extract what: ${JSON.stringify(exhaustive)}`)
+    }
+  }
+}
+
+// ===========================================================================
 // 入口：按 action 分发
 // ===========================================================================
 
@@ -671,12 +1083,14 @@ export async function handleSessionRead(
       return doSearch(params, agentDir)
     case 'export':
       return doExport(params, agentDir)
+    case 'extract':
+      return doExtract(params, agentDir)
     default: {
-      // exhaustive guard：switch 覆盖全部 7 action，此处 params.action 收窄为 never；
+      // exhaustive guard：switch 覆盖全部 8 action，此处 params.action 收窄为 never；
       // 仅防御运行时非法 action（schema 正常校验下不可达）
       const exhaustive: never = params.action
       throw err(
-        `未知 action "${JSON.stringify(exhaustive)}"。👉 合法 action: find/family/outline/expand/detail/search/export。`,
+        `未知 action "${JSON.stringify(exhaustive)}"。👉 合法 action: find/family/outline/expand/detail/search/export/extract。`,
       )
     }
   }
