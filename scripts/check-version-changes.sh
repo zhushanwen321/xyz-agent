@@ -9,6 +9,9 @@
 #   3. 在反向依赖图上对「已声明 bump 的包」做传递闭包 → DEPENDENTS_OF_CHANGED
 #      （自己没改 src，但通过 workspace: 直接/间接引用了已 bump 包，须 patch 重发刷新 tarball 范围）
 #   4. 读 .changeset/config.json 的 linked 组，输出受影响组（参考用，不驱动）
+#   5. 残留 changeset 检测（警告级，纯信息增量）：对每个 .changeset/*.md 做双信号判定
+#      （git 删除历史内容一致 / body 首行已在 CHANGELOG），命中只警告不排除，
+#      防已发布消费过的 changeset 被旧分支 merge 复活后被重复消费（误发新版 + CHANGELOG 重复）
 #
 # 触发判定准则（§4.1 step 3）：
 #   - *.md 文档 → 仅当位于包 npm files 白名单内（SKILL.md / agent.md / README 等
@@ -39,6 +42,9 @@ Usage: bash scripts/check-version-changes.sh [git-diff-range]
   UNDECLARED_PACKAGES     改了 src 但无 changeset 声明（PR 漏声明警告）
   DEPENDENTS_OF_CHANGED   传递闭包：引用了已 bump 包、须 patch 重发刷新范围的包
   LINKED_GROUPS_AFFECTED  linked 组受影响参考（不强制对齐）
+  WARN_DECLARED_PACKAGE_NOT_FOUND          声明了但包不存在（typo/已删）
+  WARN_CHANGESET_PREVIOUSLY_CONSUMED       疑似已发布消费过的残留 changeset
+                                           （git 删除历史 / CHANGELOG 首行双信号，只警告不排除）
 
 退出码：0 = 正常；非 0 = 脚本本身出错
 EOF
@@ -254,6 +260,7 @@ for (const f of changedFiles) {
 const changesetDir = path.join(ROOT, '.changeset');
 const declared = {};          // name -> type（declared type，只显示不采纳）
 const changesetFilesForPkg = {}; // name -> [filename,...]（供 apply 消费时关联）
+const changesetMeta = {};      // file -> { pkgs, firstLine, content }（供残留检测）
 if (fs.existsSync(changesetDir)) {
   for (const f of fs.readdirSync(changesetDir)) {
     if (!f.endsWith('.md') || f === 'README.md') continue;
@@ -261,6 +268,7 @@ if (fs.existsSync(changesetDir)) {
     const m = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
     if (!m) continue;
     const fm = m[1];
+    const pkgs = [];
     for (const line of fm.split(/\r?\n/)) {
       // 支持 '@scope/pkg': minor / "@scope/pkg": minor / unquoted: minor
       const mm = line.match(/^['"]?([^:'"\s]+?)['"]?\s*:\s*(major|minor|patch)\s*$/);
@@ -268,8 +276,12 @@ if (fs.existsSync(changesetDir)) {
         const pkgName = mm[1].trim();
         declared[pkgName] = mm[2];
         (changesetFilesForPkg[pkgName] ||= []).push(f);
+        pkgs.push(pkgName);
       }
     }
+    // body 首个非空行 = apply-version.sh 生成的 CHANGELOG 条目文本（检测需用同一文本）
+    const firstLine = (m[2].split(/\r?\n/).find(l => l.trim().length > 0) || '').trim();
+    changesetMeta[f] = { pkgs, firstLine, content };
   }
 }
 
@@ -326,6 +338,61 @@ for (const group of (config.linked || [])) {
 // --- 声明了但不存在的包（typo/已删）警告 ---
 const declaredMissing = Object.keys(declared).filter(n => !exists(n));
 
+// --- 已发布 changeset 残留检测（警告级，纯信息增量，不改变任何段/退出码/下游行为）---
+// 背景：已消费的 changeset（apply-version.sh 消费即删除）可能被旧分支 merge 复活，重新进入
+// CHANGED_PACKAGES 被人工误当新声明 → 重复 bump + CHANGELOG 重复条目。此处只把警告投放到
+// 人工定 type 的决策面，不擅自排除（排除会破坏「人工决策、脚本机械执行」的语义边界）。
+// 双信号（任一命中即警告）：
+//   git       文件曾在历史中被删除，且删除前内容与当前一致（内容比对防止开发分支上同名不同内容的正常重建误报）
+//   changelog body 首个非空行（= apply-version.sh 生成的 CHANGELOG 条目文本）已出现在声明包的 CHANGELOG.md
+// 降级原则：所有 git/文件操作失败一律静默降级为不报警（shallow clone、无历史、文件缺失），
+// 绝不允许检测本身影响脚本退出码——防御机制的故障不能比被防的事故更糟。
+const consumedWarnings = []; // [{ file, evidence: [string] }]
+for (const [f, meta] of Object.entries(changesetMeta)) {
+  const evidence = [];
+  const relPath = `.changeset/${f}`;
+  // 信号 1：git 删除历史 + 内容一致性比对
+  let deletedIn = null;
+  try {
+    deletedIn = execFileSync('git', ['log', '--all', '--diff-filter=D', '--format=%H', '-1', '--', relPath],
+      { cwd: ROOT, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim() || null;
+  } catch { deletedIn = null; }
+  if (deletedIn) {
+    let prevContent = null;
+    try {
+      prevContent = execFileSync('git', ['show', `${deletedIn}^:${relPath}`],
+        { cwd: ROOT, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch { prevContent = null; }
+    // \r\n 归一 + 去首尾空白：从 git 历史恢复的文件与当前文件在换行符/尾换行上的差异不构成新内容
+    const norm = (s) => s.replace(/\r\n/g, '\n').trim();
+    if (prevContent !== null && norm(prevContent) === norm(meta.content)) {
+      evidence.push(`git: file was deleted by ${deletedIn.slice(0, 9)} and current content is identical`);
+    }
+  }
+  // 信号 2：body 首行已出现在声明包的 CHANGELOG.md（首行 <10 字符不检测，泛文本撞车无告警价值）
+  if (meta.firstLine.length >= 10) {
+    for (const name of meta.pkgs) {
+      const p = packages[name];
+      if (!p) continue;
+      const clPath = path.join(ROOT, p.dir, 'CHANGELOG.md');
+      let hit = false;
+      try {
+        if (fs.existsSync(clPath)) {
+          hit = fs.readFileSync(clPath, 'utf8').split('\n')
+            // 条目行格式固定为 "- <sha>: <首行>"（或历史 official-changeset 的 "- <首行>"）；
+            // endsWith 要求行尾完整等于首行，排除 "fix bug" 命中 "fix bug in xxx" 类子串误报
+            .some(line => { const t = line.trimEnd(); return t.startsWith('- ') && t.endsWith(meta.firstLine); });
+        }
+      } catch { hit = false; }
+      if (hit) {
+        evidence.push(`changelog: body first line already present in ${name} CHANGELOG.md`);
+        break; // 一个包命中即可，多包声明的 changeset 不重复刷屏
+      }
+    }
+  }
+  if (evidence.length > 0) consumedWarnings.push({ file: f, evidence });
+}
+
 // --- 输出 ---
 const lines = [];
 const needs = changedList.length > 0 || undeclaredList.length > 0 || dependents.length > 0;
@@ -362,6 +429,14 @@ if (declaredMissing.length > 0) {
   lines.push('');
   lines.push('WARN_DECLARED_PACKAGE_NOT_FOUND:');
   for (const name of declaredMissing) lines.push(`  ${name} (declared in changeset but no such package)`);
+}
+if (consumedWarnings.length > 0) {
+  lines.push('');
+  lines.push('WARN_CHANGESET_PREVIOUSLY_CONSUMED: (likely leftover from an already-released changeset; do not bump unless the change is genuinely new)');
+  for (const w of consumedWarnings) {
+    lines.push(`  .changeset/${w.file}`);
+    for (const e of w.evidence) lines.push(`    - ${e}`);
+  }
 }
 console.log(lines.join('\n'));
 NODE_SCRIPT
