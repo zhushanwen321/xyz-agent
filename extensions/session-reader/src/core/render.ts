@@ -554,7 +554,9 @@ export function renderDetail(
           const toolCallId = msg.toolCallId
           const tc = toolCallId !== undefined ? tcMap.get(toolCallId) : undefined
           const text = toolResultText(msg.content)
-          const lines = text.split('\n')
+          // 空文本口径与 formatToolResultSummary 一致：空结果 = 0 行
+          //（''.split('\n') 返 [''] length=1，会与 summary 的 (0行) 自相矛盾）
+          const lines = text === '' ? [] : text.split('\n')
           const headLines = lines.slice(0, 3).map((l) => truncate(l, 80)).join(' | ')
           out.push({
             type: 'toolResultSummary',

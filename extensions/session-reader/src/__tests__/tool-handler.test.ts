@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { existsSync } from 'node:fs'
-import { handleSessionRead, type SessionReadParams } from '../tool-handler.js'
+import { handleSessionRead, renderExtractItems, type SessionReadParams } from '../tool-handler.js'
 
 /**
  * M3 tool-handler 集成测试。
@@ -259,5 +259,73 @@ describe('extract (v2 O4)', () => {
     await expect(handleSessionRead(params, REAL)).rejects.toThrow(
       /user-messages\/commands\/files\/commits\/tool-results/,
     )
+  })
+
+  it('S2: extract turns 越界文案说明 extract turn 体系（不指向 outline）', async () => {
+    // extract 用全量 entry 分段（含 compaction/旁支），turn index 与 outline leaf 视图不对齐
+    let msg = ''
+    try {
+      await handleSessionRead(
+        { action: 'extract', session: E6, what: 'user-messages', turns: 'T999' },
+        REAL,
+      )
+    } catch (e) {
+      msg = (e as Error).message
+    }
+    expect(msg).toContain('extract 的 turn 范围与 outline 不同')
+    expect(msg).not.toContain('用 outline 重看有效范围')
+    expect(msg).toContain('该 session extract 共')
+  })
+})
+
+describe('renderExtractItems F9 截断（S3 首项超大 + S4 文案）', () => {
+  it('S3: 首项超大内部截断 → body 不超预算，shown<count + truncated=true', () => {
+    // 首项 10000 字符 >> EXTRACT_BUDGET_BYTES(8000)；旧逻辑放行首项致 body≈10KB
+    const longText = 'x'.repeat(10000)
+    const items = [
+      { turn: 5, text: longText },
+      { turn: 6, text: 'short6' },
+      { turn: 7, text: 'short7' },
+    ]
+    const r = renderExtractItems(
+      'user-messages',
+      items,
+      (it) => `T${String(it.turn).padStart(3, '0')}: ${it.text}`,
+      (it) => [it.turn],
+    )
+    const d = r.details as { what: string; count: number; shown: number; truncated: boolean }
+    expect(d.truncated).toBe(true)
+    expect(d.count).toBe(3)
+    expect(d.shown).toBe(1) // 首项截断后保留，后续项因预算用未加入
+    // body（含文案行）字节数远小于 3 项全量（30000+ 字节），≤ 预算 + 合理余量
+    const bodyBytes = Buffer.byteLength(r.content[0].text, 'utf8')
+    expect(bodyBytes).toBeLessThan(8000 * 1.5)
+    // 截断标记存在（首项被内部 slice + 省略号）
+    expect(r.content[0].text).toContain('…')
+    // 完整 longText 不在输出里（已被截断）
+    expect(r.content[0].text).not.toContain(longText)
+  })
+
+  it('S4: F9 文案含实际 turn 范围 + 实际 token（非固定 2000）', () => {
+    // 3 项各 ~3000 字节，累计超 8000 → 第 3 项触发截断（文案报 shown turn 范围）
+    const items = [
+      { turn: 10, text: 'a'.repeat(3000) },
+      { turn: 20, text: 'b'.repeat(3000) },
+      { turn: 30, text: 'c'.repeat(3000) },
+    ]
+    const r = renderExtractItems(
+      'user-messages',
+      items,
+      (it) => `T${String(it.turn).padStart(3, '0')}: ${it.text}`,
+      (it) => [it.turn],
+    )
+    const text = r.content[0].text
+    // 文案含 turn 范围（shown 的 min-max turn）
+    expect(text).toMatch(/T010-T0\d{2}/)
+    // 文案含实际 token（从 body 实际字节算），不再是固定 2000
+    expect(text).toContain('token 达预算上限')
+    expect(text).not.toContain('≈2000 token')
+    // 文案含 shown/count
+    expect(text).toMatch(/已显示 \d+\/\d+ 项/)
   })
 })

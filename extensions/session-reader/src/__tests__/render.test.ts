@@ -322,6 +322,29 @@ describe('renderDetail', () => {
       ),
     ).toBe(true)
   })
+
+  it('v2 S1：空 content 的 toolResult totalLines=0（与 formatToolResultSummary 口径一致）', () => {
+    // 同一空 toolResult：summary 显示 "(0行)"，totalLines 必须也是 0（非 ''.split('\n') 的 1）
+    const tcId = 'call_bash1'
+    const t = turn(
+      0,
+      [
+        uEntry('U', 'q'),
+        aEntry('A', 'r', [{ name: 'bash', id: tcId, arguments: { command: 'ls' } }]),
+        tEntry('T', '', { toolCallId: tcId, toolName: 'bash' }), // 空 content
+      ],
+      { userEntry: uEntry('U', 'q') },
+    )
+    const def = renderDetail([t])
+    const summary = def.find(
+      (e): e is ToolResultSummaryEntry => e.type === 'toolResultSummary',
+    )!
+    expect(summary).toBeDefined()
+    expect(summary.totalLines).toBe(0) // 空结果 = 0 行（非 1）
+    expect(summary.headLines).toBe('') // 空结果无头行
+    // 对照：summary 文案也不含行数（formatToolResultSummary 空结果不 append (N行)）
+    expect(summary.summary).not.toContain('行)')
+  })
 })
 
 // 测试内联的类型守卫镜像（验证 renderDetail 剥离效果，不依赖 render 内部导出）

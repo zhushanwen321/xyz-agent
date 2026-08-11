@@ -300,7 +300,7 @@ handler 内按 action 校验必填项（缺失抛 F5）。
 | F6 read_error | 文件读失败/严重损坏 | `读取失败：<path>（跳过 N 坏行）。👉 检查文件或换 session。` |
 | F7 invalid_what | extract 的 `what` 非法 | `what "X" 无效，应为 user-messages/commands/files/commits/tool-results。👉 用合法 what 重试。` |
 | F8 tool_no_match（不抛错） | extract 的 `tool` 过滤零匹配 | `what=X tool="Y" 无匹配。该 session 工具：bash×309,read×64,...。👉 用存在的工具名重试。`（返回工具分布，details 含 `toolDistribution`） |
-| F9 over_budget（不抛错） | extract 结果超 8000 字节（≈2000 token）预算 | `[what=X 结果超预算（≈2000 token），已截断到 K/T。👉 缩小 turns 或换 what 重试。]`（截断后返回，details.truncated=true） |
+| F9 over_budget（不抛错） | extract 结果按 item 系计字节超 8000 预算（首项超大也内部截断） | `[what=X 已显示 K/T 项（Taaa-Tbbb），约 N token 达预算上限。👉 用较小 turns 范围缩小，或换 what 重试。]`（按 item 系计字节达预算即截断；单条超大内部 slice 到剩余字节预算（字节→字符 ×3 近似防 UTF8 切半）；N = body 实际字节/4（非固定 2000）；文案报 shown/count + shown 的 turn 范围；details.truncated=true） |
 
 ### 3.5 核心算法
 
@@ -381,7 +381,7 @@ M1-M4 全部完成并提交（124 测试绿，tsc/eslint 0 error）。§4 V1-V6 
 
 **待手测项**（V1 TUI 端到端 + V5 RPC 端到端）：需 `pnpm dev` 启动 xyz-agent，手测 `#` 补全 + RPC 模式工具调用。纯逻辑已测试覆盖，端到端是集成验证（非阻塞）。
 
-**v2 优化验收（2026-08-11，O1-O5 已实现并提交）**：基于 optimization-v2.md 的 5 项优化（outline 加 assistantBrief + 修 toolSummary 数据源 bug / expand-detail toolResult 类型化摘要 / detail 默认摘要态 / 新增 extract action / `#` 碰撞延长唯一前缀）全部落地。commit 460d26988 probe 数据：outline `tokenEstimate=1177`（v1 506 → v2 ~1177，D4 tradeoff 量化）；019e6c96 全量 24/32 leaf turn 有 assistantBrief（8 个无 assistant text 的 turn 合理缺省）；extract 实测 commands 519 / user-messages 26 / tool-results 515（与 §2.3 probe 全量计数一致）；`#` 唯一性全量 3486 session / 329 碰撞桶 max LCP+1 算法逐桶验证通过（V-o5 含 19 元大桶 `019e9680`）。对照 optimization-v2.md §4 的 V-o1~V-o5 + V-callcount 要点逐条核对。
+**v2 优化验收（2026-08-11，O1-O5 已实现并提交）**：基于 optimization-v2.md 的 5 项优化（outline 加 assistantBrief + 修 toolSummary 数据源 bug / expand-detail toolResult 类型化摘要 / detail 默认摘要态 / 新增 extract action / `#` 碰撞延长唯一前缀）全部落地。commit 460d26988 probe 数据：outline `tokenEstimate=1177`（v1 506 → v2 ~1177，D4 tradeoff 量化）；019e6c96 全量 24/32 leaf turn 有 assistantBrief（8 个无 assistant text 的 turn 合理缺省）；extract 实测 commands 519 / user-messages 26 / tool-results 515（与 §2.3 probe 全量计数一致）；`#` 唯一性全量 3486 session / 329 碰撞桶 max LCP+1 算法逐桶验证通过（V-o5 含 19 元大桶 `019e9680`）。对照 optimization-v2.md §4 的 V-o1~V-o5 + V-callcount 要点核对——其中 V-o1-decision 原用 T010/WeakMap 场景经 probe 实测为虚构（019e6c96 全文 WeakMap 出现 0 次），已替换为真实 T008/T009（assistantBrief 含“推荐方案 A（Pi Bridge Extension）”/“推荐 B（appendEntry 代理）”，架构方案选型场景）；optimization-v2.md §2.1/§3.1 的 WeakMap/ADR 示例为设计期格式演示用占位数据，非基准样本真实内容。
 
 ---
 

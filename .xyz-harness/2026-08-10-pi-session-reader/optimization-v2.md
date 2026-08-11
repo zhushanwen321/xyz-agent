@@ -306,7 +306,7 @@ insertText = "#" + 唯一前缀
 | ID | 回溯目标 | 场景 | 通过标准 |
 |---|---|---|---|
 | V-o1 | 目标 1 | outline 含 assistant 结论 + toolSummary | ① 每行含 assistant 结论（非空）② toolSummary 显示真实工具（不再空）③ token ≤1500（P-o1-token） |
-| V-o1-decision | 目标 1 | agent 只看 outline 判断"哪轮改 WeakMap" | 指向 T010（assistantBrief 含"WeakMap/Map 分区"），无需 expand |
+| V-o1-decision | 目标 1 | agent 只看 outline 判断“哪轮做了架构方案选型” | 指向 T008/T009（assistantBrief 含“推荐方案 A（Pi Bridge Extension）”/“推荐 B（appendEntry 代理）”），无需 expand（probe 实测：019e6c96 全文 WeakMap 出现 0 次，原 T010/WeakMap 场景为虚构，已替换为真实 T008/T009） |
 | V-o2 | 目标 3 | expand toolResult 类型化摘要 | toolResult 行显示 `bash: <cmd> (N行)` / `read: <path>`（非纯文本）；用 toolName+toolCallId 关联，无顺序错位 |
 | V-o3 | 目标 1 | detail 默认 toolResult 摘要态 | ① 条目数 = 16（不再变 9）② toolResult 有摘要 ③ includeToolResult:true 仍全文 |
 | V-o4-* | 目标 4 | extract 5 预设 | user-messages 返 26 条 / commands+bash 返命令带 turn / files 返去重路径 / commits 返 hash（P-extract-commits 误匹配率可接受）/ tool-results 返文本带 toolName |

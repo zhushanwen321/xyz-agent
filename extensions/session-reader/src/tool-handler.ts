@@ -751,11 +751,18 @@ function f8ToolNoMatch(what: ExtractWhat, tool: string, turns: Turn[]): ToolResu
  *
  * details.items 放实际展示的子集（截断后），count 放全集长度，测试可断言 shown/count/truncated。
  * emptyHint 仅 items 为空时用（files/commits 无匹配不报错，返空 + 提示）。
+ *
+ * 预算控制：按 item 累计字节达预算即截断。**首项超大也内部截断**（对单行 slice 到剩余字节预算，
+ * 字节→字符 ×3 近似防 UTF8 多字节被切半），保证 body 不超预算——而非放行首项致 body 远超预算。
+ * 导出供 tool-handler.test 单测 F9 截断逻辑（首项截断 + 文案含 turn 范围 + 实际 token）。
+ *
+ * getTurns：从 item 提取 turn 列表（files 是 turns 数组，其余单值包数组），供 F9 文案报 turn 范围。
  */
-function renderExtractItems<I>(
+export function renderExtractItems<I>(
   what: ExtractWhat,
   items: I[],
   renderLine: (item: I) => string,
+  getTurns: (item: I) => number[],
   emptyHint?: string,
 ): ToolResult {
   if (items.length === 0) {
@@ -766,19 +773,29 @@ function renderExtractItems<I>(
     }
   }
   const shown: I[] = []
+  const shownLines: string[] = []
   let bytes = 0
   let cut = false
   for (const item of items) {
     const line = renderLine(item)
     const lineBytes = Buffer.byteLength(line, 'utf8') + 1 // +\n
-    if (bytes + lineBytes > EXTRACT_BUDGET_BYTES && shown.length > 0) {
+    if (bytes + lineBytes > EXTRACT_BUDGET_BYTES) {
+      // 超预算：对当前 line 内部截断到剩余预算（首项超大也截断，但保留截断后的内容）
+      const remainingBytes = EXTRACT_BUDGET_BYTES - bytes
+      const charBudget = Math.floor(remainingBytes / 3) // 字节→字符 ×3 近似防 UTF8 切半
+      if (charBudget > 0) {
+        const sliced = line.slice(0, charBudget) + '…'
+        shown.push(item)
+        shownLines.push(sliced)
+      }
       cut = true
       break
     }
     shown.push(item)
+    shownLines.push(line)
     bytes += lineBytes
   }
-  const body = shown.map(renderLine).join('\n')
+  const body = shownLines.join('\n')
   if (!cut) {
     return {
       content: [{ type: 'text', text: body }],
@@ -791,11 +808,16 @@ function renderExtractItems<I>(
       },
     }
   }
-  // F9：超预算截断，文案注明 ≈ token 换算 + 缩小建议
-  const tokens = Math.round(EXTRACT_BUDGET_BYTES / 4)
+  // F9：超预算截断。tokens 反映 body 实际体积（非固定 2000）；文案报 shown/count + turn 范围 + 实际 token
+  const shownTurns = shown.flatMap(getTurns)
+  const turnRange =
+    shownTurns.length > 0
+      ? `（T${pad(Math.min(...shownTurns))}-T${pad(Math.max(...shownTurns))}）`
+      : ''
+  const actualTokens = Math.round(Buffer.byteLength(body, 'utf8') / 4)
   const text =
     body +
-    `\n[what=${what} 结果超预算（≈${tokens} token），已截断到 ${shown.length}/${items.length}。👉 缩小 turns=T000-T009 或换 what=commands 重试。]`
+    `\n[what=${what} 已显示 ${shown.length}/${items.length} 项${turnRange}，约 ${actualTokens} token 达预算上限。👉 用较小 turns 范围（如 T000-T005）缩小，或换 what 重试。]`
   return {
     content: [{ type: 'text', text }],
     details: {
@@ -821,6 +843,7 @@ function extractUserMessages(turns: Turn[]): ToolResult {
     'user-messages',
     items,
     (it) => `T${pad(it.turn)}: ${it.text}`,
+    (it) => [it.turn],
   )
 }
 
@@ -847,7 +870,12 @@ function extractCommands(turns: Turn[], tool: string | undefined): ToolResult {
     }
   }
   if (tool !== undefined && items.length === 0) return f8ToolNoMatch('commands', tool, turns)
-  return renderExtractItems('commands', items, (it) => `T${pad(it.turn)} #${it.index} ${it.summary}`)
+  return renderExtractItems(
+    'commands',
+    items,
+    (it) => `T${pad(it.turn)} #${it.index} ${it.summary}`,
+    (it) => [it.turn],
+  )
 }
 
 /**
@@ -884,6 +912,7 @@ function extractFiles(turns: Turn[]): ToolResult {
     'files',
     items,
     (it) => `${it.op}: ${it.path} (${turnsLabel(it.turns)})`,
+    (it) => it.turns,
     `what=files 无匹配（该 session 无 read/edit/write/head 文件操作）。`,
   )
 }
@@ -968,6 +997,7 @@ function extractCommits(turns: Turn[]): ToolResult {
     'commits',
     items,
     (it) => `T${pad(it.turn)} ${it.hash} [${it.source}] ${it.context}`,
+    (it) => [it.turn],
     `what=commits 无匹配（该 session 无 git commit hash，或未在 toolResult 中出现）。`,
   )
 }
@@ -994,6 +1024,7 @@ function extractToolResults(turns: Turn[], tool: string | undefined): ToolResult
     'tool-results',
     items,
     (it) => `T${pad(it.turn)} #${it.index} ${it.toolName}: ${it.text}`,
+    (it) => [it.turn],
   )
 }
 
@@ -1020,7 +1051,7 @@ async function doExtract(params: SessionReadParams, agentDir: string): Promise<T
     const max = allTurns.length - 1
     if (allTurns.length === 0 || range.start > max || range.end > max) {
       throw err(
-        `turns "${rangeLabel(range)}" 越界，该 session 共 ${allTurns.length} 轮（T000-T${pad(Math.max(0, max))}）。👉 用 outline 重看有效范围。`,
+        `turns "${rangeLabel(range)}" 越界，extract 的 turn 范围与 outline 不同（extract 含 compaction 周期/旁支，turn 数更多）。该 session extract 共 ${allTurns.length} 轮（T000-T${pad(Math.max(0, max))}）。👉 用较小 turns 范围（如 T000-T005）试探，或先不带 turns extract 看全量 turn 标注。`,
       )
     }
     turns = allTurns.filter((t) => t.index >= range.start && t.index <= range.end)
