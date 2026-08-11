@@ -25,6 +25,7 @@ import {
   type OutlineOptions,
   type OutlineResult,
   type EntryBrief,
+  type ToolResultSummaryEntry,
 } from './core/render.js'
 import type { Family } from './core/family.js'
 
@@ -255,6 +256,8 @@ function formatOutlineText(r: OutlineResult): string {
     const parts = [`T${pad(b.index)}${time ? ' ' + time : ''}`]
     if (b.userBrief) parts.push(b.userBrief)
     if (b.toolSummary) parts.push(b.toolSummary)
+    // v2 O1：补 assistant 结论行（→ ）让 outline 单独可决策
+    if (b.assistantBrief) parts.push('→ ' + b.assistantBrief)
     const om = formatOmitted(b.omittedBytes)
     if (om) parts.push(om)
     if (b.branch) parts.push('[旁支]')
@@ -301,7 +304,23 @@ function messageReadableText(content: unknown): string {
   return ''
 }
 
-function entryReadableText(e: Entry): string {
+/**
+ * ToolResultSummaryEntry 判别（Entry.type 是宽 string，TS 无法靠 === 判别联合，须显式谓词收窄）。
+ */
+function isToolResultSummary(
+  e: Entry | ToolResultSummaryEntry,
+): e is ToolResultSummaryEntry {
+  return e.type === 'toolResultSummary'
+}
+
+/**
+ * 从 message.content 提取可读文本（text/thinking 块；tool_use 留 name 占位）。
+ * v2 O3：接受 Entry | ToolResultSummaryEntry，toolResultSummary 返摘要文本（doExport full 用）。
+ */
+function entryReadableText(e: Entry | ToolResultSummaryEntry): string {
+  if (isToolResultSummary(e)) {
+    return `${e.summary} (共 ${e.totalLines} 行，前 3 行：${e.headLines})`
+  }
   const msg = e.message
   if (msg !== undefined) {
     if (msg.role === 'toolResult') return `[toolResult] ${messageReadableText(msg.content)}`
@@ -313,10 +332,17 @@ function entryReadableText(e: Entry): string {
   return `[${e.type}]`
 }
 
-function formatDetailText(range: { start: number; end: number }, entries: Entry[]): string {
+function formatDetailText(
+  range: { start: number; end: number },
+  entries: Array<Entry | ToolResultSummaryEntry>,
+): string {
   const head = `turns ${rangeLabel(range)} · ${entries.length} entries`
   const body = entries
     .map((e) => {
+      if (isToolResultSummary(e)) {
+        // v2 O3：摘要态渲染（summary + 头 3 行 + 看全文提示）
+        return `---\ntoolResultSummary (${e.id.slice(0, 8)})\n${e.summary}\n     │ 共 ${e.totalLines} 行，前 3 行：${e.headLines}\n     │ （+ includeToolResult:true 看全文）`
+      }
       const role = e.message ? `/${e.message.role}` : ''
       return `---\n${e.type}${role} (${e.id.slice(0, 8)})\n${entryReadableText(e)}`
     })
@@ -579,10 +605,12 @@ async function doExport(params: SessionReadParams, agentDir: string): Promise<To
       includeThinking: false,
     })
     text = det
-      .map(
-        (e) =>
-          `${'='.repeat(40)}\n${e.type}${e.message ? '/' + e.message.role : ''} (${e.id.slice(0, 8)})\n${entryReadableText(e)}`,
-      )
+      .map((e) => {
+        if (isToolResultSummary(e)) {
+          return `${'='.repeat(40)}\ntoolResultSummary (${e.id.slice(0, 8)})\n${entryReadableText(e)}`
+        }
+        return `${'='.repeat(40)}\n${e.type}${e.message ? '/' + e.message.role : ''} (${e.id.slice(0, 8)})\n${entryReadableText(e)}`
+      })
       .join('\n')
     label = 'full'
   } else {

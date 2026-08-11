@@ -1,4 +1,5 @@
 import type { Entry } from './parser.js'
+import { extractToolCalls, formatToolCallSummary, type ToolCallInfo } from './toolcall.js'
 import type { Turn } from './turns.js'
 import type { TreeView } from './tree.js'
 
@@ -70,7 +71,7 @@ function blockThinking(block: ContentBlock): string {
   return ''
 }
 
-/** 拼接 text 块文本（排除 thinking / tool_use / tool_result 块）。 */
+/** 拼接 text 块文本（排除 thinking / toolCall / tool_use / tool_result 块）。 */
 function extractText(content: unknown): string {
   if (isStringContent(content)) return content
   if (isBlockArray(content)) {
@@ -78,7 +79,8 @@ function extractText(content: unknown): string {
       .filter(
         (b) =>
           b.type !== 'thinking' &&
-          b.type !== 'tool_use' &&
+          b.type !== 'toolCall' && // pi 当前真实工具调用 block type（probe 实测 519）
+          b.type !== 'tool_use' && // 历史/兼容防御（probe 实测 0，保留兜底）
           b.type !== 'tool_result',
       )
       .map(blockText)
@@ -110,22 +112,13 @@ function contentBytes(content: unknown): number {
   }
 }
 
-interface ToolCallLike {
-  name?: unknown
-}
-
+/**
+ * 该 entry 聚合的工具名列表（O1 toolSummary 用）。
+ * 从 assistant content 的 toolCall block 提取（修 v1 读 message.toolCalls 恒返 [] 的 bug——
+ * probe 实测 toolCalls 顶层字段从未存在，工具调用全在 content blocks，v1 全程没工作过）。
+ */
 function entryToolCallNames(entry: Entry): string[] {
-  const msg = entry.message
-  if (msg === undefined || msg.toolCalls === undefined || !Array.isArray(msg.toolCalls)) {
-    return []
-  }
-  const names: string[] = []
-  for (const tc of msg.toolCalls) {
-    if (typeof tc === 'object' && tc !== null && typeof (tc as ToolCallLike).name === 'string') {
-      names.push((tc as ToolCallLike).name as string)
-    }
-  }
-  return names
+  return extractToolCalls(entry).map((tc) => tc.name)
 }
 
 /** 该 entry 省略的字节：toolResult 整段 content + assistant 的 thinking 块。 */
@@ -135,6 +128,44 @@ function entryOmittedBytes(entry: Entry): number {
   if (msg.role === 'toolResult') return contentBytes(msg.content)
   if (msg.role === 'assistant') return utf8Bytes(extractThinking(msg.content))
   return 0
+}
+
+/** toolResult content 提取为纯文本（content 是 [{type:'text',text}] 数组，拼接 text）。 */
+function toolResultText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (isBlockArray(content)) {
+    return content.map(blockText).join('')
+  }
+  return ''
+}
+
+/**
+ * O2/O3：toolResult 的类型化摘要 = 参数摘要（formatToolCallSummary）+ 结果规模（按工具）。
+ *
+ * - bash → append 结果行数（命令输出多行，行数是核心规模信号）
+ * - read → append 结果 KB（文件内容体积）
+ * - 其余工具（edit/write/head/todo/cw/未知）→ 不 append（formatToolCallSummary 已含 edit/write
+ *   的参数规模 blocks/KB，head 含 limit；避免双重括号）
+ *
+ * tc 匹配失败（toolCallId 缺失或无对应 toolCall，probe 实测 0%）→ base 退化为 toolName；
+ * toolName 也缺失 → '[tool result]'。
+ */
+function formatToolResultSummary(
+  toolName: string | undefined,
+  tc: ToolCallInfo | undefined,
+  resultText: string,
+): string {
+  const base = tc !== undefined ? formatToolCallSummary(tc) : (toolName ?? '[tool result]')
+  if (toolName === 'bash') {
+    const lines = resultText === '' ? 0 : resultText.split('\n').length
+    return lines > 0 ? `${base} (${lines}行)` : base
+  }
+  if (toolName === 'read') {
+    if (resultText === '') return base
+    const kb = Math.max(1, Math.round(utf8Bytes(resultText) / 1024))
+    return `${base} (${kb}KB)`
+  }
+  return base
 }
 
 function entryJsonBytes(e: Entry): number {
@@ -232,17 +263,18 @@ function formatBytesMarker(bytes: number): string {
 
 /**
  * 渲染单行为字符串（用于预算度量与降级判断）。
- * L1 文本行不含 assistantBrief（design §3.5 算法 1 step2：L1 是定位目录，
- * userBrief+toolSummary+omitted 足够；assistant 走 L2/L3）。
- * level: 0=含 toolSummary / 1=骨架（去 toolSummary）。
+ * v2 O1：L1 行含 assistantBrief（补 assistant 结论行让 outline 单独可决策，不再逼反复 expand）。
+ * level: 0=全有（toolSummary + assistantBrief）/ 1=砍 assistantBrief / 2=再砍 toolSummary（骨架）。
+ * userBrief + omittedBytes 骨架永保。assistantBrief 格式 `→ <结论>`，在 toolSummary 后、omitted 前。
  */
-function formatLine(b: TurnBrief, level: 0 | 1, branchSize?: number): string {
+function formatLine(b: TurnBrief, level: 0 | 1 | 2, branchSize?: number): string {
   const parts: string[] = []
   const head = `T${String(b.index).padStart(3, '0')}`
   const time = formatHHMM(b.startTime)
   parts.push(time ? `${head} ${time}` : head)
   if (b.userBrief) parts.push(b.userBrief)
-  if (level <= 0 && b.toolSummary) parts.push(b.toolSummary)
+  if (level <= 1 && b.toolSummary) parts.push(b.toolSummary)
+  if (level <= 0 && b.assistantBrief) parts.push(`→ ${b.assistantBrief}`)
   const marker = formatBytesMarker(b.omittedBytes)
   if (marker) parts.push(marker)
   if (branchSize !== undefined && branchSize > 0) parts.push(`[旁支 ${branchSize} entries]`)
@@ -318,8 +350,13 @@ export function renderOutline(
     const branchSize = b.branch !== undefined ? tree.branches.get(b.branch) : undefined
     let line = formatLine(b, 0, branchSize)
     if (line.length > perTurnCharBudget) {
-      b.toolSummary = ''
+      // 超预算：先砍 assistantBrief（level 1），仍超再砍 toolSummary（level 2，骨架）
+      b.assistantBrief = ''
       line = formatLine(b, 1, branchSize)
+      if (line.length > perTurnCharBudget) {
+        b.toolSummary = ''
+        line = formatLine(b, 2, branchSize)
+      }
     }
     lineCache.push(line)
   }
@@ -411,14 +448,21 @@ export interface EntryBrief {
   omittedBytes: number
 }
 
-function entryBrief(e: Entry): string {
+/**
+ * 单 entry 的一行 brief（L2 expand 用）。
+ * O2：toolResult 改类型化摘要（toolName + toolCallId 关联取 args + 结果规模），
+ * 不再是结果文本前 100 字（v1 agent 不知工具维度）。
+ */
+function entryBrief(e: Entry, tcMap?: Map<string, ToolCallInfo>): string {
   const msg = e.message
   if (msg !== undefined) {
     if (msg.role === 'user' || msg.role === 'assistant') {
       return truncate(extractText(msg.content), 100) || `[${msg.role}]`
     }
     if (msg.role === 'toolResult') {
-      return truncate(extractText(msg.content), 100) || '[tool result]'
+      const toolCallId = msg.toolCallId
+      const tc = toolCallId !== undefined ? tcMap?.get(toolCallId) : undefined
+      return formatToolResultSummary(msg.toolName, tc, toolResultText(msg.content))
     }
   }
   if (e.type === 'compaction') {
@@ -440,11 +484,17 @@ export function renderExpand(turn: Turn): {
   if (turn.userEntry === undefined && !turn.isCompaction) bits.push('preface')
   const header = `${head} (${bits.join(', ')})`
 
+  // O2：建 toolCallId → ToolCallInfo 索引（收本 turn assistant entry 的 toolCall，供 toolResult 关联取 args）
+  const tcMap = new Map<string, ToolCallInfo>()
+  for (const e of turn.entries) {
+    for (const tc of extractToolCalls(e)) tcMap.set(tc.id, tc)
+  }
+
   const entries: EntryBrief[] = turn.entries.map((e, i) => ({
     index: i,
     type: e.type,
     role: e.message?.role,
-    brief: entryBrief(e),
+    brief: entryBrief(e, tcMap),
     omittedBytes: entryOmittedBytes(e),
   }))
   return { turn: header, entries }
@@ -460,25 +510,69 @@ function stripThinking(content: unknown): unknown {
   return content.filter((b) => b.type !== 'thinking')
 }
 
+/**
+ * L3 detail 默认摘要态的 toolResult entry（v2 O3：toolResult 不再整条消失，给中间态）。
+ * includeToolResult:true 时 renderDetail 返回原 Entry（全文），否则返回此摘要。
+ */
+export interface ToolResultSummaryEntry {
+  type: 'toolResultSummary'
+  /** 原 toolResult entry 的 id（与全文 Entry 对齐，便于定位） */
+  id: string
+  /** 类型化摘要（同 O2 格式：toolName + 参数摘要 + 结果规模） */
+  summary: string
+  /** 结果文本前 3 行（每行截 80 字，' | ' 分隔，单行便于渲染） */
+  headLines: string
+  /** 结果文本总行数 */
+  totalLines: number
+  /** 原 toolResult entry（includeToolResult:true 时 renderDetail 改用此返回全文） */
+  fullEntry: Entry
+}
+
 export function renderDetail(
   turns: Turn[],
   opts: { includeToolResult?: boolean; includeThinking?: boolean } = {},
-): Entry[] {
+): Array<Entry | ToolResultSummaryEntry> {
   const includeToolResult = opts.includeToolResult ?? false
   const includeThinking = opts.includeThinking ?? false
 
-  const out: Entry[] = []
+  const out: Array<Entry | ToolResultSummaryEntry> = []
   for (const t of turns) {
+    // O2/O3：turn 级 toolCallId → ToolCallInfo 索引（toolResult 摘要的参数部分用）
+    const tcMap = new Map<string, ToolCallInfo>()
+    for (const e of t.entries) {
+      for (const tc of extractToolCalls(e)) tcMap.set(tc.id, tc)
+    }
+
     for (const e of t.entries) {
       const msg = e.message
-      if (msg !== undefined) {
-        if (msg.role === 'toolResult' && !includeToolResult) continue
-        if (!includeThinking) {
-          const cleaned = stripThinking(msg.content)
-          if (cleaned !== msg.content) {
-            out.push({ ...e, message: { ...msg, content: cleaned } })
-            continue
-          }
+      if (msg !== undefined && msg.role === 'toolResult') {
+        if (includeToolResult) {
+          // 全文态：返回原 entry（thinking 剥离不适用 toolResult）
+          out.push(e)
+        } else {
+          // O3 摘要态：不消失，给类型化摘要 + 头 3 行 + 总行数
+          const toolCallId = msg.toolCallId
+          const tc = toolCallId !== undefined ? tcMap.get(toolCallId) : undefined
+          const text = toolResultText(msg.content)
+          const lines = text.split('\n')
+          const headLines = lines.slice(0, 3).map((l) => truncate(l, 80)).join(' | ')
+          out.push({
+            type: 'toolResultSummary',
+            id: e.id,
+            summary: formatToolResultSummary(msg.toolName, tc, text),
+            headLines,
+            totalLines: lines.length,
+            fullEntry: e,
+          })
+        }
+        continue
+      }
+      // 非 toolResult：thinking 剥离逻辑保留
+      if (msg !== undefined && !includeThinking) {
+        const cleaned = stripThinking(msg.content)
+        if (cleaned !== msg.content) {
+          out.push({ ...e, message: { ...msg, content: cleaned } })
+          continue
         }
       }
       out.push(e)

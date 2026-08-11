@@ -26,17 +26,21 @@ describe('handleSessionRead', () => {
     expect(r.content[0]).toEqual({ type: 'text', text: expect.any(String) })
   })
 
-  it('2. outline yields 32 turns within token budget', async () => {
+  it('2. outline yields 32 turns within token budget (v2 O1: <=1500)', async () => {
     const r = await handleSessionRead({ action: 'outline', session: E6 }, REAL)
     const d = r.details as { turns: unknown[]; tokenEstimate: number }
     expect(d.turns.length).toBe(32)
-    expect(d.tokenEstimate).toBeLessThanOrEqual(600)
+    // v2 O1：加 assistantBrief + 修 toolSummary bug 后阈值 600→1500（design §3.3 D4）
+    expect(d.tokenEstimate).toBeLessThanOrEqual(1500)
   })
 
-  it('3. detail single turn returns entries without toolResult by default', async () => {
+  it('3. detail single turn returns toolResult summary by default (v2 O3)', async () => {
     const r = await handleSessionRead({ action: 'detail', session: E6, turns: 'T001' }, REAL)
-    const d = r.details as { entries: Array<{ message?: { role?: string } }> }
+    const d = r.details as { entries: Array<{ type: string; message?: { role?: string } }> }
     expect(d.entries.length).toBeGreaterThan(0)
+    // v2 O3：默认 toolResult 变摘要态（type=toolResultSummary），条目不消失
+    expect(d.entries.some((e) => e.type === 'toolResultSummary')).toBe(true)
+    // 不再有 role=toolResult 的原文 entry（除非 includeToolResult:true）
     expect(d.entries.some((e) => e.message?.role === 'toolResult')).toBe(false)
   })
 

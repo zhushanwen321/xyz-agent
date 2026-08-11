@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { renderOutline, renderExpand, renderDetail } from '../core/render.js'
+import { renderOutline, renderExpand, renderDetail, type ToolResultSummaryEntry } from '../core/render.js'
 import type { Entry } from '../core/parser.js'
 import type { Turn } from '../core/turns.js'
 import type { TreeView } from '../core/tree.js'
@@ -21,18 +21,36 @@ function uEntry(id: string, text: string): Entry {
 function aEntry(
   id: string,
   text: string,
-  toolCalls?: Array<{ name: string }>,
+  toolCalls?: Array<{ name: string; id?: string; arguments?: Record<string, unknown> }>,
   thinking?: string,
 ): Entry {
+  // v2：toolCalls 进 content 的 toolCall block（真实结构，probe 实测 519），不再设 message.toolCalls
   const content: unknown[] = [{ type: 'text', text }]
   if (thinking !== undefined) content.push({ type: 'thinking', thinking })
-  const message: NonNullable<Entry['message']> = { role: 'assistant', content }
-  if (toolCalls !== undefined) message.toolCalls = toolCalls
-  return { type: 'message', id, parentId: null, message }
+  if (toolCalls !== undefined) {
+    for (const tc of toolCalls) {
+      content.push({
+        type: 'toolCall',
+        id: tc.id ?? `call_${tc.name}`,
+        name: tc.name,
+        arguments: tc.arguments ?? {},
+      })
+    }
+  }
+  return { type: 'message', id, parentId: null, message: { role: 'assistant', content } }
 }
 
-function tEntry(id: string, content: string): Entry {
-  return { type: 'message', id, parentId: null, message: { role: 'toolResult', content } }
+function tEntry(
+  id: string,
+  content: string,
+  opts?: { toolCallId?: string; toolName?: string },
+): Entry {
+  // v2：content 保持 string（测试简化，toolResultText 对 string/数组都处理）；
+  // 加 toolCallId/toolName 供 O2 类型化摘要关联测试
+  const message: NonNullable<Entry['message']> = { role: 'toolResult', content }
+  if (opts?.toolName !== undefined) message.toolName = opts.toolName
+  if (opts?.toolCallId !== undefined) message.toolCallId = opts.toolCallId
+  return { type: 'message', id, parentId: null, message }
 }
 
 function turn(
@@ -152,15 +170,18 @@ describe('renderOutline', () => {
     expect(withoutBranches.turns[0].branch).toBeUndefined()
   })
 
-  it('8. 真实 019e6c96：outline tokenEstimate <= 600（design V3 基线）', async () => {
-    // 32 turn（见 turns.test.ts 真实用例说明：26 基线为旧 user-only 定义）
+  it('8. 真实 019e6c96：outline tokenEstimate <= 1500 + assistantBrief/toolSummary 非空（v2 O1）', async () => {
+    // v2 O1：加 assistantBrief + 修 toolSummary bug 后 outline 变长，阈值 600→1500（design §3.3 D4）
     const parsed = await parseSessionFile(REAL_SESSION)
     const tree = buildTreeView(parsed.entries)
     const turns = segmentTurns(parsed.entries, new Set(tree.leafPath))
     const result = renderOutline(turns, tree, { budget: 2000 })
 
     expect(result.turns.length).toBe(32)
-    expect(result.tokenEstimate).toBeLessThanOrEqual(600)
+    expect(result.tokenEstimate).toBeLessThanOrEqual(1500)
+    // v2 O1 验证：assistant 结论行存在（非空）+ toolSummary 显示真实工具（修 v1 恒空 bug）
+    expect(result.turns.some((b) => b.assistantBrief !== '')).toBe(true)
+    expect(result.turns.some((b) => b.toolSummary !== '')).toBe(true)
     // stats 完整性
     expect(result.stats.totalTurns).toBe(32)
     // totalEntries 近似（leaf+branch+orphan）不含 session header（segmentTurns 规则1 跳过）；
@@ -188,32 +209,118 @@ describe('renderExpand', () => {
     // toolResult 的 omittedBytes = content 字节
     expect(out.entries[2].omittedBytes).toBe(Buffer.byteLength('result text', 'utf8'))
   })
+
+  it('v2 O2：toolResult 类型化摘要（bash: <cmd> (N行)，toolCallId 关联取 args）', () => {
+    // 构造带 toolCallId 关联的 turn：assistant 调 bash，toolResult 靠 toolCallId 关联回去取 command
+    const tcId = 'call_bash1'
+    const t = turn(
+      0,
+      [
+        uEntry('U', '查一下文件'),
+        aEntry('A', '好的', [{ name: 'bash', id: tcId, arguments: { command: 'ls -la src/' } }]),
+        tEntry('T', 'file1\nfile2\nfile3', { toolCallId: tcId, toolName: 'bash' }),
+      ],
+      { userEntry: uEntry('U', '查一下文件') },
+    )
+    const out = renderExpand(t)
+    const trBrief = out.entries.find((e) => e.role === 'toolResult')!
+    // 类型化摘要：bash: <cmd> (N行)，不是结果文本前 100 字（file1/file2...）
+    expect(trBrief.brief).toContain('bash: ls -la src/')
+    expect(trBrief.brief).toContain('3行')
+    expect(trBrief.brief).not.toContain('file1')
+  })
+
+  it('v2 O2：read/edit/write 等工具的类型化摘要', () => {
+    const t = turn(
+      0,
+      [
+        uEntry('U', '改代码'),
+        aEntry('A1', '读文件', [{ name: 'read', id: 'r1', arguments: { path: '/a/b/src/index.ts' } }]),
+        tEntry('TR1', 'content', { toolCallId: 'r1', toolName: 'read' }),
+        aEntry('A2', '编辑', [{ name: 'edit', id: 'e1', arguments: { path: '/a/b/foo.ts', edits: [{}, {}] } }]),
+        tEntry('TR2', 'ok', { toolCallId: 'e1', toolName: 'edit' }),
+        aEntry('A3', '写', [{ name: 'write', id: 'w1', arguments: { path: '/a/b/out.txt', content: 'x'.repeat(2048) } }]),
+        tEntry('TR3', 'ok', { toolCallId: 'w1', toolName: 'write' }),
+      ],
+      { userEntry: uEntry('U', '改代码') },
+    )
+    const out = renderExpand(t)
+    const briefs = out.entries.filter((e) => e.role === 'toolResult').map((e) => e.brief)
+    // read: read: index.ts (NKB)（结果 KB）
+    expect(briefs[0]).toMatch(/^read: index\.ts \(\d+KB\)$/) // 点号转义
+    // edit: edit: foo.ts (2 blocks)（参数 blocks）
+    expect(briefs[1]).toBe('edit: foo.ts (2 blocks)')
+    // write: write: out.txt (NKB)（参数 content KB）
+    expect(briefs[2]).toMatch(/^write: out\.txt \(\d+KB\)$/) // 修正：out.txt
+  })
 })
 
 describe('renderDetail', () => {
-  it('默认过滤 toolResult 与 thinking；includeToolResult/includeThinking 取回', () => {
+  it('默认 toolResult 摘要态（O3）+ thinking 剥离；includeToolResult/includeThinking 取回', () => {
     const t = turn(0, [
       uEntry('U', 'q'),
       aEntry('A', 'visible', undefined, 'hidden-thinking'),
       tEntry('T', 'tool-output'),
     ], { userEntry: uEntry('U', 'q') })
 
-    // 默认：toolResult entry 被丢，thinking 块被剥离
+    // v2 O3：默认不再 continue 跳过 toolResult，条目数不减少（toolResult 变摘要态）
     const defaultOut = renderDetail([t])
-    expect(defaultOut).toHaveLength(2) // user + assistant（toolResult 丢）
-    const assistantDefault = defaultOut.find((e) => e.message?.role === 'assistant')!
+    expect(defaultOut).toHaveLength(3)
+    expect(defaultOut.some((e) => e.type === 'toolResultSummary')).toBe(true)
+    // thinking 块被剥离（assistant 副本，无 thinking）
+    const entries = defaultOut.filter((e): e is Entry => e.type !== 'toolResultSummary')
+    const assistantDefault = entries.find((e) => e.message?.role === 'assistant')!
     expect(extractTextForTest(assistantDefault.message!.content)).toBe('visible')
 
-    // includeToolResult：toolResult entry 回来
+    // includeToolResult：toolResult 原文 entry 回来（非摘要态）
     const withTool = renderDetail([t], { includeToolResult: true })
     expect(withTool).toHaveLength(3)
-    expect(withTool.some((e) => e.message?.role === 'toolResult')).toBe(true)
+    expect(
+      withTool.some(
+        (e): e is Entry => e.type !== 'toolResultSummary' && e.message?.role === 'toolResult',
+      ),
+    ).toBe(true)
 
     // includeThinking：thinking 块回来
     const withThinking = renderDetail([t], { includeThinking: true })
-    const assistantThinking = withThinking.find((e) => e.message?.role === 'assistant')!
+    const entriesT = withThinking.filter((e): e is Entry => e.type !== 'toolResultSummary')
+    const assistantThinking = entriesT.find((e) => e.message?.role === 'assistant')!
     expect(extractTextForTest(assistantThinking.message!.content)).toBe('visible')
     expect(extractThinkingForTest(assistantThinking.message!.content)).toBe('hidden-thinking')
+  })
+
+  it('v2 O3：renderDetail 默认摘要态 + includeToolResult 全文', () => {
+    const tcId = 'call_r1'
+    const t = turn(
+      0,
+      [
+        uEntry('U', 'q'),
+        aEntry('A', 'r', [{ name: 'read', id: tcId, arguments: { path: '/x/y/f.ts' } }]),
+        tEntry('T', 'line1\nline2\nline3\nline4', { toolCallId: tcId, toolName: 'read' }),
+      ],
+      { userEntry: uEntry('U', 'q') },
+    )
+
+    // 默认摘要态
+    const def = renderDetail([t])
+    expect(def).toHaveLength(3)
+    const summary = def.find(
+      (e): e is ToolResultSummaryEntry => e.type === 'toolResultSummary',
+    )!
+    expect(summary).toBeDefined()
+    expect(summary.summary).toMatch(/^read: f\.ts \(\d+KB\)$/)
+    expect(summary.totalLines).toBe(4)
+    expect(summary.headLines).toContain('line1')
+    expect(summary.fullEntry.message?.role).toBe('toolResult')
+
+    // includeToolResult 全文：返回原 Entry
+    const full = renderDetail([t], { includeToolResult: true })
+    expect(full).toHaveLength(3)
+    expect(
+      full.some(
+        (e): e is Entry => e.type !== 'toolResultSummary' && e.message?.role === 'toolResult',
+      ),
+    ).toBe(true)
   })
 })
 

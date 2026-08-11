@@ -7,6 +7,8 @@ import { readFile } from 'node:fs/promises'
  * - type / id / parentId：树结构字段。root（session header）在文件里无 parentId，
  *   归一化为 null（design §3.5 算法 2 的 root 判定依据）。
  * - message：仅 type=message（role/content/toolCalls）。
+ *   toolName/toolCallId：仅 role=toolResult 的 message 透出（probe 实测 515/515 带，
+ *   O2/O3 据此精确关联同 turn 内 toolCall 取参数，替代 v1 脆弱的顺序关联）。
  * - customType / data：仅 type=custom。
  * - parentSession / cwd：仅 type=session；parentSession 是 fork 文件指向来源的路径指针。
  * - summary：仅 type=compaction。
@@ -20,7 +22,15 @@ export interface Entry {
   id: string
   parentId: string | null
   timestamp?: string
-  message?: { role: 'user' | 'assistant' | 'toolResult'; content: unknown; toolCalls?: unknown[] }
+  message?: {
+    role: 'user' | 'assistant' | 'toolResult'
+    content: unknown
+    toolCalls?: unknown[]
+    /** toolResult 的工具名（probe 实测 515/515 带，仅 role=toolResult 时存在） */
+    toolName?: string
+    /** toolResult 关联的 toolCall.id（probe 实测 515/515 全部匹配 toolCall.id） */
+    toolCallId?: string
+  }
   customType?: string
   data?: unknown
   parentSession?: string
@@ -74,6 +84,9 @@ function toEntry(raw: unknown): Entry | undefined {
     if (isMessageRole(m.role)) {
       const message: NonNullable<Entry['message']> = { role: m.role, content: m.content }
       if (Array.isArray(m.toolCalls)) message.toolCalls = m.toolCalls
+      // toolResult 自带的工具关联字段（O2/O3 用，additive，实测 515/515 存在）
+      if (typeof m.toolName === 'string') message.toolName = m.toolName
+      if (typeof m.toolCallId === 'string') message.toolCallId = m.toolCallId
       entry.message = message
     }
   }
