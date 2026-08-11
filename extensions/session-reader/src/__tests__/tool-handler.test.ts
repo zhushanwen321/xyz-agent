@@ -373,6 +373,81 @@ describe('search 灾难性正则降级 + abort（fixture，MF-5 回归）', () =
     expect(d.hits.length).toBeGreaterThan(0)
   })
 
+  it('范围量词 {m,n} 形态 → 降级字面子串（(a{1,3})*、(a{0,2})*、(a{1,3}){2,}，MF-1 回归）', async () => {
+    for (const pattern of ['(a{1,3})*', '(a{0,2})*', '(a{1,3}){2,}']) {
+      const r = await handleSessionRead({ action: 'search', session: SID, pattern }, dir)
+      const d = r.details as { hits: unknown[] }
+      // 字面量不含这些 pattern → 0 命中；若按正则执行会指数回溯挂死
+      expect(d.hits, `pattern=${pattern}`).toHaveLength(0)
+    }
+  })
+
+  it('alternation/嵌套量词分支 (a|aa)+、(a*)* → 降级字面子串（MF-5 分支回归）', async () => {
+    for (const pattern of ['(a|aa)+', '(a*)*']) {
+      const r = await handleSessionRead({ action: 'search', session: SID, pattern }, dir)
+      const d = r.details as { hits: unknown[] }
+      expect(d.hits, `pattern=${pattern}`).toHaveLength(0)
+    }
+  })
+
+  it('(a{1,3}) 单独使用不被降级（组后无尾随量词，仍按正则执行）', async () => {
+    const r = await handleSessionRead(
+      { action: 'search', session: SID, pattern: '(a{1,3})' },
+      dir,
+    )
+    const d = r.details as { hits: unknown[] }
+    // 按正则执行命中 'aaa' → >0 命中（若被降级为字面量则 0 命中）
+    expect(d.hits.length).toBeGreaterThan(0)
+  })
+
+  it('降级标注：header 含「已降级为字面子串匹配」（S-3）', async () => {
+    const r = await handleSessionRead({ action: 'search', session: SID, pattern: '(a+)+' }, dir)
+    expect(r.content[0].text).toContain('已降级为字面子串匹配')
+  })
+
+  it('非法正则 pattern → 字面子串兜底不抛错（零命中，S-6）', async () => {
+    const r = await handleSessionRead({ action: 'search', session: SID, pattern: '[unclosed' }, dir)
+    const d = r.details as { hits: unknown[] }
+    expect(d.hits).toHaveLength(0)
+  })
+
+  it('scope 过滤：scope=assistant 零命中（fixture 仅 user 角色，S-6）', async () => {
+    const r = await handleSessionRead(
+      { action: 'search', session: SID, pattern: 'aaa', scope: 'assistant' },
+      dir,
+    )
+    const d = r.details as { hits: unknown[] }
+    expect(d.hits).toHaveLength(0)
+  })
+
+  it('limit 截断 → truncated=true + hits 限长（3 条命中 limit=2，S-6）', async () => {
+    const sid2 = '019e6c96-bbbb-cccc-dddd-00000000000b'
+    // message 链式 parentId（与真实 pi session 一致）：m0→session 根，m1→m0，m2→m1，
+    // 否则 buildTreeView 只回溯最后一条的父链，前两条被当旁支过滤
+    const lines = [
+      JSON.stringify({ type: 'session', id: sid2, cwd: '/demo' }),
+      ...['aa1', 'aa2', 'aa3'].map((t, i) =>
+        JSON.stringify({
+          type: 'message',
+          id: `${sid2}-m${i}`,
+          parentId: i === 0 ? sid2 : `${sid2}-m${i - 1}`,
+          message: { role: 'user', content: [{ type: 'text', text: t }] },
+        }),
+      ),
+    ]
+    await writeFile(
+      join(dir, 'sessions', '--demo-cwd--', `${sid2}.jsonl`),
+      lines.join('\n') + '\n',
+    )
+    const r = await handleSessionRead(
+      { action: 'search', session: sid2, pattern: 'aa', limit: 2 },
+      dir,
+    )
+    const d = r.details as { hits: unknown[]; truncated: boolean }
+    expect(d.truncated).toBe(true)
+    expect(d.hits).toHaveLength(2)
+  })
+
   it('aborted signal → search 抛中断错误（不继续扫描）', async () => {
     const ac = new AbortController()
     ac.abort()

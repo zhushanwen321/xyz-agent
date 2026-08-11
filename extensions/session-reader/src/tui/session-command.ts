@@ -69,8 +69,9 @@ export function createSessionCommand(
       if (idx < 0) return
       // 选中后插入 # + 完整 uuid（剥 # 算片段，再补 # 插入编辑器）
       const frag = toCandidate(top[idx]).insertText.slice(1)
-      // /session-pick 提交后编辑器已清空，直接 set # uuid 供用户补完指令再发送
-      ctx.ui.setEditorText(`#${frag}`)
+      // /session-pick 提交后编辑器已清空，直接 set # uuid 供用户补完指令再发送；
+      // 尾部补空格与 # 弹窗 applyCompletion spacer 语义一致（S-2），避免 #uuid查看 连写被整体当查询串
+      ctx.ui.setEditorText(`#${frag} `)
     },
   }
 }

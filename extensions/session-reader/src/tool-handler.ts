@@ -388,13 +388,14 @@ function formatFamilyText(f: Family): string {
 
 /**
  * 灾难性正则形态探测（MF-5）：组内含量词/`|` 且组本身又被量词修饰的 pattern
- *（`(a+)+`、`(a*)*`、`(a|aa)+` 等）对长文本指数级回溯，可挂死整个 turn（5.4MB session
- * 全文逐 entry 匹配）。命中则降级为字面子串匹配（与非法正则同一兜底路径）。
+ *（`(a+)+`、`(a*)*`、`(a|aa)+`、`(a{1,3})*` 等）对长文本指数级回溯，可挂死整个 turn（5.4MB session
+ * 全文逐 entry 匹配）。内层字符类含 `{` 以捕获 `{m,n}` 范围量词（MF-1）；`(a{1,3})` 单独使用
+ *（组后无尾随量词）不命中，仍按正则执行。命中则降级为字面子串匹配（与非法正则同一兜底路径）。
  * 保守拒绝（把合法但形似的 pattern 降级为子串）比挂死可接受。
  */
 function isCatastrophicPattern(pattern: string): boolean {
   return (
-    /\((?:[^()\\]|\\.)*[+*?](?:[^()\\]|\\.)*\)[+*?{]/.test(pattern) ||
+    /\((?:[^()\\]|\\.)*[+*?{](?:[^()\\]|\\.)*\)[+*?{]/.test(pattern) ||
     /\((?:[^()\\]|\\.)*\|(?:[^()\\]|\\.)*\)[+*?{]/.test(pattern)
   )
 }
@@ -571,6 +572,8 @@ async function doSearch(
   const tree = buildTreeView(entries)
   const turns = segmentTurns(entries, new Set(tree.leafPath))
   const regex = compilePattern(pattern)
+  // S-3：启发式降级时在 header 标注，避免 LLM 把 0 hit(s) 误读为「无匹配」（静默错数据）
+  const degraded = isCatastrophicPattern(pattern)
   const hits: Array<{
     turnIndex: number
     entryIndex: number
@@ -603,9 +606,9 @@ async function doSearch(
   const lines = sliced.map(
     (h) => `  T${pad(h.turnIndex)} #${h.entryIndex} ${h.role}: ${h.matchSnippet}`,
   )
-  const text = `${sliced.length} hit(s) for /${pattern}/${scope !== 'all' ? ' scope=' + scope : ''}${
-    truncated ? ` (truncated, showing first ${sliced.length})` : ''
-  }\n${lines.join('\n')}`
+  const text = `${sliced.length} hit(s) for /${pattern}/${degraded ? '（已降级为字面子串匹配）' : ''}${
+    scope !== 'all' ? ' scope=' + scope : ''
+  }${truncated ? ` (truncated, showing first ${sliced.length})` : ''}\n${lines.join('\n')}`
   return { content: [{ type: 'text', text }], details: { hits: sliced, truncated } }
 }
 

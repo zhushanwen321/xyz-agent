@@ -132,7 +132,7 @@ describe('createSessionCommand - handler select 流程', () => {
     await rm(agentDir, { recursive: true, force: true })
   })
 
-  it('选中 label → setEditorText(#完整 uuid)（value 语义保持完整 uuid）', async () => {
+  it('选中 label → setEditorText(#完整 uuid + 尾随空格)（value 语义保持完整 uuid）', async () => {
     await makeSession(cwdSessionDir, {
       fileName: 'a.jsonl',
       id: '019e6c96-0a0c-74b8-a73f-d1854d88e2a7',
@@ -144,7 +144,7 @@ describe('createSessionCommand - handler select 流程', () => {
     select.mockImplementation(async (_title: string, options: string[]) => options[0])
     await cmd.handler('', ctx)
     expect(select).toHaveBeenCalledTimes(1)
-    expect(setEditorText).toHaveBeenCalledWith('#019e6c96-0a0c-74b8-a73f-d1854d88e2a7')
+    expect(setEditorText).toHaveBeenCalledWith('#019e6c96-0a0c-74b8-a73f-d1854d88e2a7 ')
   })
 
   it('取消（select 返回 undefined）→ 不插入', async () => {
@@ -192,7 +192,7 @@ describe('createSessionCommand - handler select 流程', () => {
     const labelsArg = select.mock.calls[0][1] as string[]
     expect(labelsArg.length).toBe(2)
     expect(new Set(labelsArg).size).toBe(2)
-    // 插入的是第 2 条 session 的完整 uuid（旧实现 indexOf(label) 会错插第 1 条）
-    expect(setEditorText).toHaveBeenCalledWith(`#${ID2}`)
+    // 插入的是第 2 条 session 的完整 uuid（旧实现 indexOf(label) 会错插第 1 条）；尾随空格与 applyCompletion spacer 语义一致（S-2）
+    expect(setEditorText).toHaveBeenCalledWith(`#${ID2} `)
   })
 })
