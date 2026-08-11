@@ -1,0 +1,87 @@
+/**
+ * setProvider catalog 分支测试（M5-01，P0 修复验证）。
+ *
+ * 测试框架：vitest（从 vitest 导入 describe/it/expect/vi，禁 node:test）。
+ * 运行命令：cd packages/runtime && npx vitest run src/services/__tests__/config-service-catalog.test.ts
+ *
+ * 策略：**不 mock provider-catalog**——isCatalogProvider 走真实实现（builtin-providers.json
+ * 判定）。补 config-service.test.ts 的测试盲区（该文件 vi.mock 把 isCatalogProvider 恒置
+ * false，catalog 分支从未被真实路径覆盖，setProvider 的 apiKey 双写 bug 因此漏网）。
+ */
+import { describe, it, expect, vi } from 'vitest'
+import { ConfigService } from '../config-service.js'
+import type { IConfigStore } from '../ports/config.js'
+import type { AuthStorage } from '../auth/auth-storage.js'
+
+type AuthPick = Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'set' | 'hasCredentialSync' | 'listCredentialIds'>
+
+function makeStore() {
+  return {
+    getProviderConfig: vi.fn(() => ({ name: 'anthropic' })),
+    upsertProvider: vi.fn(() => ({})),
+    removeProvider: vi.fn(() => ({ removed: true })),
+    cleanEnabledModelsResidue: vi.fn(),
+  } as unknown as IConfigStore & { upsertProvider: ReturnType<typeof vi.fn> }
+}
+
+function makeAuth(): AuthPick {
+  return {
+    listCredentialIds: vi.fn(() => []),
+    hasCredentialSync: vi.fn(() => false),
+    remove: vi.fn().mockResolvedValue(undefined),
+    set: vi.fn().mockResolvedValue(undefined),
+    hasOAuth: vi.fn(() => false),
+    hasOAuthSync: vi.fn(() => false),
+  } as unknown as AuthPick
+}
+
+describe('M5-01: setProvider catalog 分支（真实 isCatalogProvider，不 mock）', () => {
+  it('catalog provider（anthropic）保存 apiKey → 写 auth.json，upsertProvider 收到的 merged 不含 apiKey（不双写 models.json）', () => {
+    const store = makeStore()
+    const auth = makeAuth()
+    const svc = new ConfigService('/tmp/project', store, auth)
+
+    svc.setProvider('anthropic', { apiKey: 'sk-secret' })
+
+    // catalog 凭据归 auth.json（pi-alignment 决策 1）
+    expect(auth.set).toHaveBeenCalledWith('anthropic', { type: 'api_key', key: 'sk-secret' })
+    // models.json 不落 apiKey（G5 迁移的安全动机：catalog 秘钥不写 0644 明文 models.json）
+    const merged = store.upsertProvider.mock.calls[0][1] as Record<string, unknown>
+    expect('apiKey' in merged).toBe(false)
+  })
+
+  it('catalog provider 不传 apiKey（只改 baseUrl）→ 不写 auth.json，merged 无 apiKey', () => {
+    const store = makeStore()
+    const auth = makeAuth()
+    const svc = new ConfigService('/tmp/project', store, auth)
+
+    svc.setProvider('anthropic', { baseUrl: 'https://proxy.example.com' })
+
+    expect(auth.set).not.toHaveBeenCalled()
+    const merged = store.upsertProvider.mock.calls[0][1] as Record<string, unknown>
+    expect('apiKey' in merged).toBe(false)
+  })
+
+  it('custom provider（my-custom）保存 apiKey → merged 含 apiKey（回归：custom 分支仍写 models.json + I9 清 auth.json oauth）', () => {
+    const store = makeStore()
+    const auth = makeAuth()
+    const svc = new ConfigService('/tmp/project', store, auth)
+
+    svc.setProvider('my-custom', { apiKey: 'sk-x' })
+
+    // custom 凭据写 models.json（apiKey 字段），auth.json 反而要清（I9 清理①）
+    expect(auth.set).not.toHaveBeenCalled()
+    expect(auth.remove).toHaveBeenCalledWith('my-custom')
+    const merged = store.upsertProvider.mock.calls[0][1] as Record<string, unknown>
+    expect(merged.apiKey).toBe('sk-x')
+  })
+
+  it('catalog provider + 未注入 authStorage → 不抛错，merged 不含 apiKey（凭据无处安放宁丢不写错位）', () => {
+    const store = makeStore()
+    const svc = new ConfigService('/tmp/project', store)
+
+    expect(() => svc.setProvider('anthropic', { apiKey: 'sk-secret' })).not.toThrow()
+    const merged = store.upsertProvider.mock.calls[0][1] as Record<string, unknown>
+    expect('apiKey' in merged).toBe(false)
+  })
+})

@@ -262,7 +262,7 @@ export function setProvider(
   if (data.apiKey !== undefined && data.apiKey !== '') {
     if (isCatalogProvider(providerId) && authStorage) {
       // catalog provider: apiKey → auth.json (0600), strip from models.json
-      void authStorage.set(providerId, { type: 'api_key', key: data.apiKey }).catch(err => {
+      void authStorage?.set(providerId, { type: 'api_key', key: data.apiKey }).catch(err => {
         console.warn(`[config-service] auth.json api_key write failed for ${providerId}:`, err)
       })
       // Don't write apiKey to models.json for catalog providers
@@ -275,7 +275,11 @@ export function setProvider(
       })
     }
   }
-  if (data.apiKey !== undefined) merged.apiKey = data.apiKey as string
+  // M5-01（P0，pi-alignment 决策 1）：catalog provider 的 apiKey 只归 auth.json——上面
+  // delete merged.apiKey 后若此处无条件 re-add，apiKey 会双写进 models.json（G5 迁移
+  // 的安全动机被此路径持续回填）。仅非 catalog 分支写回；catalog + 无 authStorage 时
+  // apiKey 无处安放（凭据只允许落 auth.json 0600），宁丢不写错位（生产恒注入 authStorage）。
+  if (data.apiKey !== undefined && !isCatalogProvider(providerId)) merged.apiKey = data.apiKey as string
   // I6：authMethod 透传（ProviderQuickSetup.onSave 按所选认证方式填充）
   if (data.authMethod !== undefined) merged.authMethod = data.authMethod
   if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl as string
