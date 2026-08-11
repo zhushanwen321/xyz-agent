@@ -76,6 +76,10 @@ export interface ChatHydratePort {
  * - clearFileTree → useFileTreeStore().clearSession（[P4 s5 w2] clearTasks 随 tasks 域删除）
  * - clearSubagent → subagentStore.clearSession；clearWorkflow → workflowStore.clearSession
  * - clearExtensionUI → extensionUIStore.clearSession
+ * - clearExtensionHost → 壳层 bus.emit({kind:'session-destroyed', sessionId})——extension-host 的
+ *   StatusBarController/ViewHostStore/OverlayLifecycle 三处 createSessionScopedMap 分区不注册
+ *   triggerSessionCleanups（那是 useSessionScopedState 机制），唯一清理路径是 bus 事件，
+ *   而该事件零生产者（M1-03）：必须由本编排点经 hook 显式触发
  * - evictChat → chatStore.evictSessionWithVirtual（须先于 disposeChat，D5 时序）
  * - clearSubagentTombstones → clearSubagentTombstones(id)（模块级 Set 按 mainSid 前缀清）
  * - evictVirtualKeys → workflowStore.getAgentCallVirtualIdsByMain + chatStore.evictVirtualKey
@@ -89,6 +93,9 @@ export interface SessionCleanupHooks {
   clearSubagent(sid: string): void
   clearWorkflow(sid: string): void
   clearExtensionUI(sid: string): void
+  /** extension-host per-session 分区清理（M1-03）：壳层实现 emit session-destroyed 到 InternalEventBus，
+   *  触发 StatusBarController/ViewHostStore/OverlayLifecycle 的 scoped map cleanup */
+  clearExtensionHost(sid: string): void
   /** chat.evictSessionWithVirtual：先按 mainSid 前缀扫 subagent 虚拟 key，再 dispose 主 session */
   evictChat(sid: string): void
   clearSubagentTombstones(sid: string): void
@@ -295,7 +302,7 @@ export function createUseSession(deps: UseSessionDeps) {
    *
    * S3 顺序（与 renderer cleanupSessionState 逐条对齐）：
    * panel 解绑 → overlay 清理 → removeFromList → clearPendingOpen（ES3）→
-   * 11 项跨 store 钩子（clearFileTree→…→invalidateStatus）→ triggerSessionCleanups。
+   * 12 项跨 store 钩子（clearFileTree→…→invalidateStatus）→ triggerSessionCleanups。
    */
   function cleanupSessionState(id: string): void {
     // 删除的 session 若绑定到 panel，清空 panel 绑定，避免悬空引用指向已删 session。
@@ -317,6 +324,9 @@ export function createUseSession(deps: UseSessionDeps) {
     hooks.clearSubagent(id)
     hooks.clearWorkflow(id)
     hooks.clearExtensionUI(id)
+    // M1-03：extension-host 三处 scoped map 分区（ViewHostStore/StatusBarController/OverlayLifecycle）
+    // 只订阅 session-destroyed bus 事件，而该事件无生产者——本编排点必须显式触发清理
+    hooks.clearExtensionHost(id)
     // evictSessionWithVirtual 在 disposeSession 之前：先按 mainSid 前缀扫 subagent 虚拟 key，
     // 再 dispose 主 session（dispose 后主记录已删，evict 无法反查）。D5 时序。
     hooks.evictChat(id)

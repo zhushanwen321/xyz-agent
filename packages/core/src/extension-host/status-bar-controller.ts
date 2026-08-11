@@ -10,10 +10,13 @@
  * AC7：绝不 import domain store（静态 import 检查由 scripts/verify-extension-host-boundaries.mjs
  * 强制——本文件只依赖 types + internal-event-bus + utils/session-scoped-map）。
  *
- * 聚合规则（clarify Q3 裁决）：
+ * 聚合规则（clarify Q3 裁决 + ERR5 替换语义）：
  * - plugin-status-bar-update items 逐项按 scope 分流：scope==='global'（或缺失）→ globalState.items；
  *   scope==='per-session' → sessionScoped 分区（分区键优先级 item.sessionId > event.sessionId
  *   > '__global__' 兜底）
+ *   **替换语义（ERR5）**：runtime 每次任一 item 变化都广播**当前全量** items（status-bar-registry
+ *   broadcastAll），各分区做全量快照同步——同 key（`${pluginId}:${id}` 复合键）更新不累积、
+ *   广播外条目删除（runtime 删 item / clearForPlugin 后前端同步消失）、未提及分区清空
  * - plugin-status-set-update → 分区 setEntries（sessionId 缺失 → '__global__'）
  * - extension-status → 分区 extensionStatus（sessionId 缺失 → '__global__'）
  * - session-destroyed → sessionScoped.cleanup(sid)（ERR4 防内存泄漏）
@@ -73,17 +76,51 @@ export class StatusBarController {
     return itemSessionId ?? eventSessionId ?? GLOBAL_STATUS_KEY
   }
 
+  /**
+   * 条目稳定键：pluginId + id 复合（ERR5 替换语义的判等依据）。
+   * id 在 plugin 内唯一（ContributionRecord 契约），跨插件防碰撞故复合 pluginId。
+   */
+  private static entryKey(item: StatusBarEntry): string {
+    return `${item.pluginId}:${item.id}`
+  }
+
+  /**
+   * 全量快照同步（in-place，分区数组引用稳定）：同 key 就地替换、广播外条目删除（runtime 已删）、
+   * 新条目追加。incoming 是该分区在当前广播全量中的子集。
+   */
+  private replaceAllWith(items: StatusBarEntry[], incoming: StatusBarEntry[]): void {
+    const incomingKeys = new Set(incoming.map((i) => StatusBarController.entryKey(i)))
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (!incomingKeys.has(StatusBarController.entryKey(items[i]))) items.splice(i, 1)
+    }
+    for (const item of incoming) {
+      const key = StatusBarController.entryKey(item)
+      const idx = items.findIndex((existing) => StatusBarController.entryKey(existing) === key)
+      if (idx === -1) items.push(item)
+      else items[idx] = item
+    }
+  }
+
   private handleStatusBarUpdate(e: { sessionId?: string; items: StatusBarEntry[] }): void {
+    // 广播是全量快照：global 分区同步为「非 per-session 子集」
+    this.replaceAllWith(this.globalState.items, e.items.filter((i) => i.scope !== 'per-session'))
+
+    // per-session 项按分区键分组（item.sessionId > event.sessionId > '__global__'）
+    const groups = new Map<string, StatusBarEntry[]>()
     for (const item of e.items) {
-      if (item.scope === 'per-session') {
-        const key = this.resolvePartitionKey(item.sessionId, e.sessionId)
-        this.deps.sessionScoped.update(key, (s) => {
-          s.items.push(item)
-        })
-      } else {
-        // scope==='global'（或缺失）→ globalState（IF8 契约）
-        this.globalState.items.push(item)
-      }
+      if (item.scope !== 'per-session') continue
+      const key = this.resolvePartitionKey(item.sessionId, e.sessionId)
+      const list = groups.get(key)
+      if (list) list.push(item)
+      else groups.set(key, [item])
+    }
+    for (const [key, incoming] of groups) {
+      this.deps.sessionScoped.update(key, (s) => this.replaceAllWith(s.items, incoming))
+    }
+    // 未提及分区：快照中无其条目 = runtime 已全部删除 → 清空分区（防「删除不消失」+ Map 增长）
+    const mentioned = new Set(groups.keys())
+    for (const key of this.deps.sessionScoped.keys()) {
+      if (!mentioned.has(key)) this.deps.sessionScoped.cleanup(key)
     }
   }
 

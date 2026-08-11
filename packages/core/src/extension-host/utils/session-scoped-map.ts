@@ -23,6 +23,8 @@ export interface SessionScopedMap<T> {
   /** 移除分区（session 销毁调） */
   cleanup(sessionId: string): void
   has(sessionId: string): boolean
+  /** 遍历全部分区键（status-bar 快照同步清空未提及分区用） */
+  keys(): Iterable<string>
 }
 
 /**
@@ -53,6 +55,9 @@ export function createSessionScopedMap<T>(init: () => T): SessionScopedMap<T> {
     },
     has(sessionId: string): boolean {
       return partitions.has(sessionId)
+    },
+    keys(): Iterable<string> {
+      return partitions.keys()
     },
   }
 }

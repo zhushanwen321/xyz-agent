@@ -107,6 +107,62 @@ describe('StatusBarController', () => {
     })
   })
 
+  describe('ERR5: 全量快照替换语义（同 id 更新不累积 + 删除同步消失）', () => {
+    it('global：同 pluginId:id 更新 → 长度不变 + 文本为新值（不累积）', () => {
+      const { bus, controller } = makeController()
+      const base = { pluginId: 'statusline', id: 'g1', text: '3 tasks', alignment: 'left' as const, priority: 100, scope: 'global' as const }
+      bus.emit({ kind: 'plugin-status-bar-update', items: [base] })
+      bus.emit({ kind: 'plugin-status-bar-update', items: [{ ...base, text: '4 tasks' }] })
+      expect(controller.getItems('global')).toHaveLength(1)
+      expect(controller.getItems('global')[0].text).toBe('4 tasks')
+    })
+
+    it('global：不同插件同 id 不互相替换（pluginId:id 复合键，同一快照内共存）', () => {
+      const { bus, controller } = makeController()
+      const a = { pluginId: 'pA', id: 'x', text: 'A', alignment: 'left' as const, priority: 100, scope: 'global' as const }
+      const b = { pluginId: 'pB', id: 'x', text: 'B', alignment: 'left' as const, priority: 100, scope: 'global' as const }
+      // 同一全量快照中两个插件各自 id:'x'：复合键区分，互不覆盖
+      bus.emit({ kind: 'plugin-status-bar-update', items: [a, b] })
+      expect(controller.getItems('global')).toHaveLength(2)
+      expect(controller.getItems('global').map((i) => i.pluginId).sort()).toEqual(['pA', 'pB'])
+    })
+
+    it('per-session：同 key 更新不累积（分区内替换）', () => {
+      const { bus, controller } = makeController()
+      const base = { pluginId: 'tasks', id: 'p1', text: '2 todos', alignment: 'right' as const, priority: 50, scope: 'per-session' as const, sessionId: 's1' }
+      bus.emit({ kind: 'plugin-status-bar-update', items: [base] })
+      bus.emit({ kind: 'plugin-status-bar-update', items: [{ ...base, text: '3 todos' }] })
+      expect(controller.getItems('per-session', 's1')).toHaveLength(1)
+      expect(controller.getItems('per-session', 's1')[0].text).toBe('3 todos')
+    })
+
+    it('per-session：runtime 删除（全量广播不再含该 item）→ 条目消失', () => {
+      const { bus, controller } = makeController()
+      bus.emit({
+        kind: 'plugin-status-bar-update',
+        items: [{ id: 'p1', pluginId: 'tasks', text: 't', alignment: 'left', priority: 1, scope: 'per-session', sessionId: 's1' }],
+      })
+      expect(controller.getItems('per-session', 's1')).toHaveLength(1)
+      // 空 text 移除 / clearForPlugin 后广播全量不含该 item
+      bus.emit({ kind: 'plugin-status-bar-update', items: [] })
+      expect(controller.getItems('per-session', 's1')).toHaveLength(0)
+      expect(controller.getItems('global')).toHaveLength(0)
+    })
+
+    it('per-session：广播未提及的分区被清空（快照外条目不残留）', () => {
+      const { bus, sessionScoped, controller } = makeController()
+      const item = (id: string, sid: string) => ({ id, pluginId: 'tasks', text: 't', alignment: 'left' as const, priority: 1, scope: 'per-session' as const, sessionId: sid })
+      bus.emit({ kind: 'plugin-status-bar-update', items: [item('p1', 's1'), item('p2', 's2')] })
+      expect(controller.getItems('per-session', 's1')).toHaveLength(1)
+      expect(controller.getItems('per-session', 's2')).toHaveLength(1)
+      // 新快照只剩 s1 的 item：s2 分区应被清空（其条目在 runtime 已全部删除）
+      bus.emit({ kind: 'plugin-status-bar-update', items: [item('p1', 's1')] })
+      expect(controller.getItems('per-session', 's1')).toHaveLength(1)
+      expect(controller.getItems('per-session', 's2')).toHaveLength(0)
+      expect(sessionScoped.has('s2')).toBe(false)
+    })
+  })
+
   describe('ERR4: session-destroyed cleanup', () => {
     it('session-destroyed → 分区清空（has false）+ getItems 返回空数组', () => {
       const { bus, sessionScoped, controller } = makeController()

@@ -27,7 +27,7 @@ function summary(id: string, cwd = '/a'): SessionSummary {
 function makeHooks(log: string[]): SessionCleanupHooks & Record<string, ReturnType<typeof vi.fn>> {
   const names = [
     'clearBoundPanelOverlays', 'clearFileTree', 'clearSubagent', 'clearWorkflow',
-    'clearExtensionUI', 'evictChat', 'clearSubagentTombstones', 'evictVirtualKeys',
+    'clearExtensionUI', 'clearExtensionHost', 'evictChat', 'clearSubagentTombstones', 'evictVirtualKeys',
     'clearAgentCallMapping', 'disposeChat', 'invalidateStatus',
   ] as const
   const hooks = {} as SessionCleanupHooks & Record<string, ReturnType<typeof vi.fn>>
@@ -184,7 +184,7 @@ describe('deleteSession', () => {
     resetSessionListSubForTest()
   })
 
-  it('TC-4 S3 全 hooks 调用序：panel 解绑→overlay→removeFromList→clearPendingOpen→11 hooks→triggerSessionCleanups', async () => {
+  it('TC-4 S3 全 hooks 调用序：panel 解绑→overlay→removeFromList→clearPendingOpen→12 hooks→triggerSessionCleanups', async () => {
     const f = makeFixture()
     seed(f.store, [{ cwd: '/a', sessions: [summary('del')] }])
     f.store.activeId.value = 'del'
@@ -206,10 +206,12 @@ describe('deleteSession', () => {
     const expectedOrder = [
       'clearBoundPanelOverlays(p1,del)',
       'clearFileTree(del)', 'clearSubagent(del)', 'clearWorkflow(del)',
-      'clearExtensionUI(del)', 'evictChat(del)', 'clearSubagentTombstones(del)',
+      'clearExtensionUI(del)', 'clearExtensionHost(del)', 'evictChat(del)', 'clearSubagentTombstones(del)',
       'evictVirtualKeys(del)', 'clearAgentCallMapping(del)', 'disposeChat(del)', 'invalidateStatus(del)',
     ]
     expect(f.log).toEqual(expectedOrder)
+    // M1-03：extension-host 分区清理钩子被调用（壳层实现 emit session-destroyed）
+    expect(f.hooks.clearExtensionHost).toHaveBeenCalledWith('del')
     f.dispose()
   })
 

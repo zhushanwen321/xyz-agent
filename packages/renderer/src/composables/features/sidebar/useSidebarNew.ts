@@ -53,6 +53,7 @@ import { useExtensionUIStore } from '@/stores/extension-ui'
 import { useChat, ensureStreamSubscription } from '@/composables/features/chat/useChat'
 import { invalidateStatusCache } from '@/composables/features/chat/useSessionDerivations'
 import { clearUnread } from '@/composables/useSessionMarkers'
+import { getExtensionBus } from '@/composables/shell/useExtensionHostBridge'
 import { registerAppCommands } from '@/composables/features/command/useAppCommands'
 import { useForkActions } from '@/composables/features/fork-handoff/useForkActions'
 import { useHandoffActions } from '@/composables/features/fork-handoff/useHandoffActions'
@@ -154,6 +155,9 @@ export function useSidebarNew() {
     clearSubagent: (sid) => useSubagentStore().clearSession(sid),
     clearWorkflow: (sid) => useWorkflowStore().clearSession(sid),
     clearExtensionUI: (sid) => useExtensionUIStore().clearSession(sid),
+    // M1-03：extension-host 三处 scoped map 分区（ViewHostStore/StatusBarController/OverlayLifecycle）
+    // 只订阅 session-destroyed bus 事件（该事件无生产者），经 bus 显式 emit 触发分区 cleanup
+    clearExtensionHost: (sid) => getExtensionBus().emit({ kind: 'session-destroyed', sessionId: sid }),
     evictChat: (sid) => chat.evictSessionWithVirtual(sid),
     clearSubagentTombstones: (sid) => clearSubagentTombstones(sid),
     evictVirtualKeys: (sid) => {
