@@ -1,5 +1,8 @@
 # AI Coding Agent 状态与记忆（State & Memory）调研
 
+> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。
+
+
 > 调研时间：2026-05-21
 > 调研范围：Claude Code、Codex CLI、Devin、SWE-Agent、Aider、MemGPT/Letta、LangGraph 等
 > 信息来源：源码分析文档、官方工程博客、学术论文、行业报告

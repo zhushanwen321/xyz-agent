@@ -1,5 +1,8 @@
 # ADR-036: Statusline Footer Aggregation — 解决 pi-permission 与 pi-statusline 的 footer 单例冲突
 
+> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。
+
+
 - **Status**: proposed
 - **Date**: 2026-07-29
 - **Branch**: `feat-permission-guidance`
