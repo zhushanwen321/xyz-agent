@@ -404,9 +404,9 @@ describe("runSpawn", () => {
     });
   });
 
-  // ── 7. identity 补写 ──
-  describe("identity 补写", () => {
-    it("正常 close 后 appendFileSync 写入 IDENTITY_CUSTOM_TYPE custom entry", async () => {
+  // ── 7. identity 写入职责（M4 / V2 决策 5：迁移到子进程 session_start）──
+  describe("identity 写入职责", () => {
+    it("正常 close 后 session-runner 不再 fs 补写 identity（M4 迁移到子进程 session_start）", async () => {
       const record = makeRecord();
       const promise = runSpawn(record, "Task: identity", makeOpts(), makeCtx());
 
@@ -425,17 +425,11 @@ describe("runSpawn", () => {
 
       await promise;
 
-      // appendFileSync 被调用写 identity custom entry
-      expect(mockAppendFileSync).toHaveBeenCalledWith(
-        sessionFile,
-        expect.stringContaining('"customType":"subagent-identity"'),
-        "utf-8",
-      );
-      // 写入内容含 record.id / agent
-      const written = mockAppendFileSync.mock.calls[0]?.[1] as string;
-      expect(written).toContain(record.id);
-      expect(written).toContain(record.agent);
-      expect(written).toContain('"type":"custom"');
+      // [M4 / V2 决策 5] identity 不再由 session-runner fs.appendFileSync 补写——
+      // 改由子进程 session_start hook 用 pi.appendEntry 写（pi 自动生成 id/parentId，
+      // 修复旧 fs 补写缺 id/parentId 污染 _buildIndex 的 bug）。identity 写入由
+      // index-session-start-identity.test.ts 覆盖；此处守护 session-runner 不再 fs 写。
+      expect(mockAppendFileSync).not.toHaveBeenCalled();
     });
 
     it("sessionFile 不存在（existsSync=false）→ 不补写 identity（不调 appendFileSync）", async () => {

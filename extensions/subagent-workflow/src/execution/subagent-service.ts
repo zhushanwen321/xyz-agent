@@ -14,6 +14,8 @@ import { mapToWorkflowAgentResult } from "./agent-result-mapper.ts";
 import { removeAliveMarker } from "./alive-store.ts";
 import { bestEffort } from "./best-effort.ts";
 import { removeIdleMarker } from "./idle-marker.ts";
+// [V2 决策 3] lifecycle-manager idle timer：chatMode 统一投递新 turn disarm（防误杀活进程）
+import { disarmIdleTimer } from "./lifecycle-manager.ts";
 import { type ConcurrencyPool,DefaultConcurrencyPool } from "./concurrency-pool.ts";
 import type { DialogGlobalQueue, UiRequestHandler } from "./dialog-queue.ts";
 import {
@@ -34,7 +36,7 @@ import type { StatusFilter } from "./record-store.ts";
 import { RecordStore } from "./record-store.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import { getChildByRecord, killAllSpawnedChildren, runSpawn, type SessionRunnerContext, type SpawnResumeOpts } from "./session-runner.ts";
-import { sendFollowUpCommand, sendSteerCommand } from "./stdin-writer.ts";
+import { sendFollowUpCommand, sendPromptCommand, sendSteerCommand } from "./stdin-writer.ts";
 import type { StreamSink } from "./stream-sink.ts";
 import { SubagentStream } from "./stream-sink.ts";
 import { writeCancelledTombstone } from "./tombstone-store.ts";
@@ -686,6 +688,51 @@ export class SubagentService {
     this.kickOffBackground(record, opts, ctx, identity, record.controller.signal, PRIORITY_BACKGROUND, resume);
   }
 
+  /**
+   * [V2 决策 3] chatMode 统一投递：按**进程死活**分流，不按 record.status。
+   *
+   * V2 进程长驻——chatMode record 首轮 agent_settled 后进轻量 idle（Step 4a：进程保活、
+   * idle timer armed），续聊时进程仍在内存，不该重开 session。故续聊投递不按 status
+   *（running/idle 都可能是热路径），而是判进程死活：
+   *
+   *   热路径（进程活）：prompt + streamingBehavior——pi 权威裁决 busy/idle（F3/F4）。
+   *     busy（isStreaming）时 followUp 入队/steer 抢占；idle 时 streamingBehavior 被忽略、
+   *     直接开新 turn。不用 steer/followUp 命令、不依赖 clearQueue（F8），结构上消除残留。
+   *   冷路径（进程死）：复用 resumeRound 重开 session + prompt（仅崩溃/timeout kill/跨重启命中）。
+   *
+   * disarm idle timer：新 turn 开始必须 disarm（V2 决策 4），防 turn 期间 idle timer 误杀活进程。
+   *
+   * status 处理：判活分流后**各自**设 running——热路径手动设 running（新 turn 开始）；
+   * 冷路径由 resumeRound 校验 idle 并自行设 running + spawn（故不在此预设 running，否则
+   * resumeRound 的 idle 检查会 throw）。resume spawn 后 session-runner 回填 record.pid，
+   * 热路径拿到 child 时也顺便刷新 pid（resume 重开进程后 pid 已变）。
+   *
+   * 与 deliverToRunning（非 chatMode busy 投递）的区别：deliverToRunning 用 follow_up/steer
+   * 命令 + pendingMessages 消费确认制；本方法用 prompt+streamingBehavior 统一语义（V2 删除
+   * 消费确认制/sidecar/重建矩阵，见决策 3）。非 chatMode 路径完全不走本方法（messageHandler 分流）。
+   *
+   * @param record 目标 record（chatMode，running 或 idle）
+   * @param text 消息正文
+   * @param interrupt true=steer（抢占）/ false=followUp（排队），仅热路径 prompt streamingBehavior 用
+   */
+  deliverMessage(record: ExecutionRecord, text: string, interrupt: boolean): void {
+    this.assertReady();
+    // 新 turn，disarm idle timer（防 turn 期间误杀活进程，V2 决策 4）
+    disarmIdleTimer(record.id);
+    const child = getChildByRecord(record.id);
+    if (child && !child.killed) {
+      // 热路径：进程活，prompt + streamingBehavior（V2 决策 3，pi 权威裁决 busy/idle）
+      record.status = "running";
+      // 刷新 pid 内存记账（resume spawn 后 child.pid 已变，顺便更新）
+      if (child.pid !== undefined) record.pid = child.pid;
+      sendPromptCommand(child, text, { streamingBehavior: interrupt ? "steer" : "followUp" });
+    } else {
+      // 冷路径：进程死（idle timer reap / 崩溃 / 跨重启），record 应为 idle → resume spawn。
+      // resumeRound 校验 idle 并自行设 running + spawn（不在上预设 running，否则 idle 检查 throw）。
+      this.resumeRound(record, text);
+    }
+  }
+
   // ── 对话模式 message/close action 支持（M2-B3）──────────────
 
   /**
@@ -1138,6 +1185,16 @@ export class SubagentService {
       stream?.dispose();
     }
 
+    // [V2 决策 2/3] chatMode 首轮闭环：runSpawn 因 agent_settled 提前 resolve（onRoundSettled
+    // 已设 record.status=idle + round+=1 + notify 主 agent）。进程仍保活（idle timer armed），
+    // 不进下方 chatMode 分流（那是 close 后 done/failed/cancelled 终态化的，走 finalizeRoundToIdle
+    // / finalizeRecord）。tryTransition(idle→done) 天然失败（要求 status==="running"），此处显式
+    // early return 让语义清晰 + 防状态机未来改动。防 double-notify 由 notifier dedup 兜底
+    //（同 id:round 60s 内吞，kickOffBackground.then 的 notify 是 no-op，见 notifier.ts L122）。
+    if (record.chatMode && record.status === "idle") {
+      return result;
+    }
+
     // status 唯一判定点：success ? done : (aborted ? cancelled : failed)
     const status: "done" | "failed" | "cancelled" = result.success
       ? "done"
@@ -1442,6 +1499,19 @@ export class SubagentService {
       // worktree 模式下 mainCwd = 本进程 checkout 路径，rootCwd 才是真 ROOT——session 文件
       // 落盘统一用 rootCwd 编码，ROOT 磁盘重建才扫得到深层 record（与 sessionRootId 同构）。
       rootCwd: this.rootCwd,
+      // [V2 决策 2] chatMode 首轮闭环：agent_settled 时 session-runner 调本回调。
+      // 轻量 idle 化（选项 1）：设 record.status=idle + round+=1 让 notify 守卫放行 + notify
+      // 主 agent，但**不调 doFinalizeRoundToIdle**（不写 .idle sidecar / 不 emitUnregister /
+      // 不 redeliver——V2 要删的副作用都不做）。runAndFinalize 检测到 status=idle 后 early return，
+      // 不进现有 chatMode 分流。Step 5 删 idle 状态机时统一清理这个过渡 idle。
+      // 防箭头函数 this 丢失：用箭头函数捕获 SubagentService 实例 this。
+      onRoundSettled: (record) => {
+        record.status = "idle";
+        // round 可能初始 undefined（与 notifier.ts `record.round ?? 0` 兜底一致），
+        // 首轮 0+1=1。round 是 notifier dedup key 的组成部分，递增后同 id 下一轮不被 60s dedup 吞。
+        record.round = (record.round ?? 0) + 1;
+        this.notifyComplete(record);
+      },
     };
   }
 }

@@ -343,8 +343,12 @@ export async function messageHandler(
   // 归属守卫（决策 3）：getRecordForAction 内部校验 rootSessionId
   const record = service.getRecordForAction(id);
 
-  if (record.status === "running") {
-    // busy 投递（决策 6 running 分支）：follow_up(排队) / steer(抢占)
+  // [V2 决策 3] chatMode 统一投递：按进程死活分流（热路径 prompt+streamingBehavior / 冷路径 resume），
+  // 不按 record.status（V2 进程长驻，idle 态进程仍活，续聊走热路径 prompt 而非重开 session）。
+  if (record.chatMode) {
+    service.deliverMessage(record, text, interrupt);
+  } else if (record.status === "running") {
+    // busy 投递（决策 6 running 分支）：follow_up(排队) / steer(抢占）
     service.deliverToRunning(record, text, interrupt);
   } else if (record.status === "idle") {
     // idle 续聊（决策 6 idle 分支）：resume 重开 session + prompt，interrupt 自动退化（agent 无感）

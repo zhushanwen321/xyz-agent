@@ -31,6 +31,8 @@ import {
   ModelConfigService,
   setModelConfigService,
 } from "./execution/model-config-service.ts";
+import { IDENTITY_CUSTOM_TYPE, type SubagentIdentityData } from "./execution/session-reconstructor.ts";
+import type { ExecutionMode } from "./execution/types.ts";
 import { maybeCleanupExpiredSessionFiles } from "./execution/session-file-gc.ts";
 import {
   getSubagentService,
@@ -216,6 +218,47 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     const agentDir = getAgentDir();
     const sessionId = ctx.sessionManager.getSessionId();
     lsRef.lastSessionId = sessionId;
+
+    // ── [M4] identity 子进程写入（V2 决策 5）──
+    // 子进程经 env（PI_SUBAGENT_*）接收自己的 identity，在 session_start 用 pi.appendEntry
+    // 写 subagent-identity custom entry。pi 自动生成 id/parentId → message tree 连续。
+    // 旧实现父进程 fs.appendFileSync 补写的 custom entry 缺 id/parentId → 污染 _buildIndex
+    // leafId 指针 → message tree 断成两棵 → 多轮对话丢上下文（bug 根因）。
+    // 主/子进程判定：PI_SUBAGENT_SELF_RECORD_ID 仅 session-runner spawn 子进程时注入，
+    // 主进程无此 env → 跳过（identity 只在子进程写一次）。
+    const selfRecordId = process.env.PI_SUBAGENT_SELF_RECORD_ID;
+    if (selfRecordId) {
+      try {
+        const modeEnv = process.env.PI_SUBAGENT_MODE;
+        // ExecutionMode 联合窄化：父进程经 env 注入（record.mode 恒为 "background"），
+        // 运行时校验合法值，非法兜底 background（避免裸 cast，符合 taste/no-unsafe-cast）。
+        const mode: ExecutionMode = modeEnv === "background" ? modeEnv : "background";
+        const identity: SubagentIdentityData = {
+          id: selfRecordId,
+          agent: process.env.PI_SUBAGENT_AGENT ?? "",
+          mode,
+          task: process.env.PI_SUBAGENT_TASK ?? "",
+          slug: process.env.PI_SUBAGENT_SLUG,
+          startedAt: Number(process.env.PI_SUBAGENT_STARTED_AT ?? Date.now()),
+          rootSessionId: process.env.PI_SUBAGENT_ROOT_SESSION_ID,
+          parentRecordId: process.env.PI_SUBAGENT_PARENT_RECORD_ID,
+          depth:
+            process.env.PI_SUBAGENT_DEPTH !== undefined
+              ? Number(process.env.PI_SUBAGENT_DEPTH)
+              : undefined,
+          forkDepth:
+            process.env.PI_SUBAGENT_FORK_DEPTH !== undefined
+              ? Number(process.env.PI_SUBAGENT_FORK_DEPTH)
+              : undefined,
+          chatMode: process.env.PI_SUBAGENT_CHAT_MODE === "true",
+        };
+        pi.appendEntry(IDENTITY_CUSTOM_TYPE, identity);
+      } catch (err) {
+        logger.warn("[subagents] identity appendEntry failed in session_start", {
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
 
     // ── subagents 域：双 Service 装配 ──
     const existingService = getSubagentService();

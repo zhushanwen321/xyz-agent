@@ -403,6 +403,16 @@ export interface ExecutionRecord {
   /** session jsonl 文件名。session 创建成功后由 session-runner.run() 回填（窗口期内 undefined）。 */
   sessionFile?: string;
 
+  /**
+   * [V2 决策 3] 子进程 pid（spawn 后由 session-runner 回填到内存 record）。
+   *
+   * 用于 lifecycle-manager 孤儿扫描（V2 §5.2 职责 4：父进程重启时按持久化 pid 扫收
+   * 上次崩溃遗留的孤儿）。本字段仅在内存记账，持久化留 Step 5（idle sidecar / record
+   * 文件写入 pid + 启动时 scanOrphanProcesses 消费）。undefined = 尚未 spawn / 已退出。
+   * 向后兼容：旧 record 无此字段，按无 pid 处理（孤儿扫描跳过）。
+   */
+  pid?: number;
+
   /** [MF#3] worktree 模式下子 agent 改动的 patch 文件路径（worktree 外，供调用方应用）。 */
   patchFile?: string;
 

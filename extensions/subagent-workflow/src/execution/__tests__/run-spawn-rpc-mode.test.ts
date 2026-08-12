@@ -131,7 +131,7 @@ describe("runSpawn", () => {
       });
     }
 
-    it("无 header + get_state response 回填 sessionFile → identity 写入成功", async () => {
+    it("无 header + get_state response 回填 sessionFile（identity 不再由 session-runner fs 写）", async () => {
       const record = makeRecord();
       const promise = runSpawn(record, "Task: rpc-no-header", makeOpts(), makeCtx());
 
@@ -158,12 +158,9 @@ describe("runSpawn", () => {
       expect(result.success).toBe(true);
       expect(record.sessionFile).toBe(expectedSessionFile);
       expect(result.sessionFile).toBe(expectedSessionFile);
-      // identity 经握手回填的 sessionFile 写入（不再依赖 sessionHeader 条件）
-      expect(mockAppendFileSync).toHaveBeenCalledWith(
-        expectedSessionFile,
-        expect.stringContaining('"customType":"subagent-identity"'),
-        "utf-8",
-      );
+      // [M4 / V2 决策 5] identity 不再由 session-runner fs 补写（迁移到子进程 session_start，
+      // 见 index-session-start-identity.test.ts）。此处仅守护 session-runner 不 fs 写 identity。
+      expect(mockAppendFileSync).not.toHaveBeenCalled();
     });
 
     it("无 header + get_state 无响应 → close 主动 settle 不阻塞，identity 不写入", async () => {

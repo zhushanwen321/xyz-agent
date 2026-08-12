@@ -288,6 +288,37 @@ describe("sendPromptCommand", () => {
     const child = { stdin: null } as unknown as ChildProcess;
     expect(() => sendPromptCommand(child, "task")).not.toThrow();
   });
+
+  // [V2 决策 3] streamingBehavior 可选参数：chatMode 统一投递热路径用 prompt+streamingBehavior
+  it("options.streamingBehavior='followUp' → 写入 streamingBehavior:followUp 字段", () => {
+    const child = makeChild();
+    sendPromptCommand(child, "queue this", { streamingBehavior: "followUp" });
+
+    const lines = readStdinLines(child);
+    expect(lines).toHaveLength(1);
+    const cmd = lines[0] as { type: string; message: string; streamingBehavior?: string };
+    expect(cmd.type).toBe("prompt");
+    expect(cmd.message).toBe("queue this");
+    expect(cmd.streamingBehavior).toBe("followUp");
+  });
+
+  it("options.streamingBehavior='steer' → 写入 streamingBehavior:steer 字段", () => {
+    const child = makeChild();
+    sendPromptCommand(child, "interrupt now", { streamingBehavior: "steer" });
+
+    const lines = readStdinLines(child);
+    const cmd = lines[0] as { streamingBehavior?: string };
+    expect(cmd.streamingBehavior).toBe("steer");
+  });
+
+  it("省略 options → 不写入 streamingBehavior 字段（向后兼容，首帧 prompt / 非 chatMode 调用方）", () => {
+    const child = makeChild();
+    sendPromptCommand(child, "first task");
+
+    const lines = readStdinLines(child);
+    const cmd = lines[0] as { streamingBehavior?: string };
+    expect(cmd.streamingBehavior).toBeUndefined();
+  });
 });
 
 // ============================================================

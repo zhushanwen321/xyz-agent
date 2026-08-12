@@ -10,6 +10,7 @@ import { type ChildProcess,execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 
 import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { armIdleTimer } from "./lifecycle-manager.ts";
 import { readActivePendingFromSessionFile } from "./session-pending.ts";
 
 import type { ExtensionMode } from "./host-mode.ts";
@@ -25,7 +26,6 @@ import { collectResult } from "./output-collector.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
-import { IDENTITY_CUSTOM_TYPE, type SubagentIdentityData } from "./session-reconstructor.ts";
 import { sendPromptCommand } from "./stdin-writer.ts";
 import {
   deriveSessionFilePath,
@@ -73,6 +73,19 @@ function isAgentEndEvt(
   if (!("type" in x)) return false;
   // `"type" in x` 已窄化，TS 允许直接访问 x.type（无需 cast）
   return x.type === "agent_end";
+}
+
+/**
+ * [V2 模块 3] agent_settled 事件守卫。对齐 isAgentEndEvt 模式（type 字段窄化，无需 cast）。
+ *
+ * agent_settled 是 V2 持续对话的「真空闲边界」：agent_end 之后、post-run（compact 检查等）
+ * 完成后才 emit（pi `agent-session.js` `_runAgentPrompt` finally 块，约 L744-755）。chatMode 在
+ * 此 arm idle timer + 通知本轮完成；非 chatMode 忽略（agent_end handler 已处理一次性 kill）。
+ */
+function isAgentSettledEvt(x: unknown): x is { type: "agent_settled" } {
+  if (typeof x !== "object" || x === null) return false;
+  if (!("type" in x)) return false;
+  return x.type === "agent_settled";
 }
 
 // ============================================================
@@ -295,6 +308,22 @@ export interface SessionRunnerContext {
    *  mainCwd=checkout 路径，rootCwd 贯穿真 ROOT——session 文件落盘统一用 ROOT cwd 编码，
    *  主进程磁盘重建才能看到全树（设计 recursive-subagent-visibility.md）。 */
   rootCwd: string;
+  /**
+   * [V2 模块 3] chatMode 本轮完成通知挂载点。
+   *
+   * V2 决策：chatMode 进程长驻（agent_end 不 kill），「本轮完成」的真空闲边界是
+   * `agent_settled`（agent_end 之后、post-run 完成后 emit，见 pi `agent-session.js`
+   * `_runAgentPrompt` finally 块），而非 agent_end（agent_end 时 post-run 可能仍在跑）。
+   * session-runner 在 agent_settled 时调本回调，调用方（subagent-service）注入
+   * notifyComplete 通知父 agent。
+   *
+   * **本步只定义挂载点，不接线**：subagent-service 未改，回调未注入 = no-op。
+   * notify 端到端 + runSpawn resolve 语义重构留 Step 4（与统一投递 + subagent-service
+   * 一起系统处理）。非 chatMode 路径不触发 agent_settled handler，本字段无影响。
+   *
+   * @param record 当前 ExecutionRecord（chatMode、已完成本轮）
+   */
+  onRoundSettled?: (record: ExecutionRecord) => void;
 }
 
 /** SessionRunner.run 的入参。 */
@@ -624,7 +653,35 @@ export async function runSpawn(
     }
   };
 
+  // [V2 决策 2] chatMode 首轮 resolveRun：agent_settled 时提前 resolve runSpawn 的 exitCode
+  // promise（首轮完成 exit code 0），让 runAndFinalize 拿到 result 走 chatMode 首轮分支。
+  // 非 chatMode 不触发 agent_settled resolve（agent_end handler 一次性 kill → close resolve）。
+  // chatMode 后续轮次（idle timer kill → close）到达时 resolve(code) 是 no-op（Promise 只
+  // resolve 一次）。close handler 的 cleanup（spawnedChildren.delete / get_stateListeners.clear /
+  // settleHandshake）完全不变——chatMode 下 close 最终触发时仍执行。
+  let resolveRun: ((code: number) => void) | undefined = undefined;
+
   const handleSdkEvent = (raw: SdkEvent): void => {
+    // [V2 模块 3] agent_settled：真空闲边界（agent_end 之后、post-run 完成后才 emit）。
+    // chatMode：arm idle timer（超时 SIGTERM 回收）+ 通知本轮完成（onRoundSettled，本步 no-op）。
+    // 非 chatMode：忽略（agent_end handler 的一次性 kill 已处理，进程不会活到 agent_settled）。
+    if (isAgentSettledEvt(raw)) {
+      if (record.chatMode) {
+        armIdleTimer(record.id, () => {
+          // onTimeout 复用现有 kill 路径：child.kill("SIGTERM") 触发 close → close handler
+          // 统一 cleanup（spawnedChildren.delete / get_stateListeners.clear / resolve）。
+          // 与 agent_end handler 现有 SIGTERM 分支一致，不新造 cleanup。
+          const child = getChildByRecord(record.id);
+          if (child && !child.killed) child.kill("SIGTERM");
+        });
+        ctx.onRoundSettled?.(record);
+        // [V2 决策 2] chatMode 首轮：agent_settled = 本轮真空闲，提前 resolve runSpawn
+        //（exit code 0，进程仍保活 idle timer armed）。runAndFinalize 拿到 result 后走
+        // chatMode 首轮分支（不进 finalize 分流），onRoundSettled 已 notify 主 agent。
+        resolveRun?.(0);
+      }
+      return;
+    }
     switch (raw.type) {
       case "tool_execution_start": {
         const toolName = raw.toolName ?? "";
@@ -760,6 +817,20 @@ export async function runSpawn(
   // 子进程的 store/runSpawn 落盘目录须统一编码在 enc(ROOT cwd) 段（与身份贯穿同构），
   // 否则 ROOT 磁盘重建扫不到深层 record（见 subagent-service ENV_ROOT_CWD 注释）。
   childEnv.PI_SUBAGENT_ROOT_CWD = ctx.rootCwd;
+  // [M4 identity 子进程写] 子进程 session_start hook 读这些 env → pi.appendEntry 写
+  // subagent-identity custom entry（V2 决策 5）。旧实现父进程 fs.appendFileSync 补写的
+  // custom entry 缺 id/parentId → 污染 pi _buildIndex leafId → message tree 断成两棵
+  // → 多轮对话丢上下文。改由子进程（session 文件所有者）用 appendEntry 写，pi 自动生成 id/parentId。
+  // id/rootSessionId/depth/forkDepth 复用上方身份贯穿 env（SELF_RECORD_ID/ROOT_SESSION_ID/DEPTH/FORK_DEPTH），
+  // 此处补 identity 专属字段：agent/mode/task/slug/startedAt/parentRecordId/chatMode。
+  childEnv.PI_SUBAGENT_AGENT = record.agent;
+  childEnv.PI_SUBAGENT_MODE = record.mode;
+  childEnv.PI_SUBAGENT_TASK = record.task;
+  childEnv.PI_SUBAGENT_SLUG = record.slug;
+  childEnv.PI_SUBAGENT_STARTED_AT = String(record.startedAt);
+  childEnv.PI_SUBAGENT_PARENT_RECORD_ID = record.parentRecordId;
+  childEnv.PI_SUBAGENT_CHAT_MODE =
+    record.chatMode !== undefined ? String(record.chatMode) : undefined;
   // D-A6 bridge: schema 激活 structured-output 扩展注册 tool（workflow 编排层需要）
   applySchemaEnvToChildEnv(childEnv, opts.schemaEnv);
 
@@ -814,6 +885,9 @@ export async function runSpawn(
     // [C1] track 子进程供 dispose 兜底 kill（sync + background 均注册——sync 无 controller，
     // abortRunningControllers 跳过它，靠本 Map 兜底）。close/error 后按 record.id 移除（已退出无需再 kill）。
     spawnedChildren.set(record.id, child);
+    // [V2 决策 3] spawn 后 child.pid 同步立即可得，记录到 record 内存（lifecycle-manager
+    // 孤儿扫描用，Step 5 接入持久化）。resume spawn 时此处同样覆盖更新（pid 可能已变）。
+    if (child.pid !== undefined) record.pid = child.pid;
 
     // stdout/stderr 用 utf8 编码：stream 自动按字符边界切分，避免多字节
     // UTF-8（CJK/emoji）跨 chunk 时 toString() 产生 U+FFFD 替换符导致 JSON.parse 失败。
@@ -940,6 +1014,14 @@ export async function runSpawn(
             if (evt.willRetry) {
               // agent 会重试，不能 kill。
             } else {
+              // [V2 决策 1] chatMode：对话模式进程不因轮次死。agent_end 不 kill、不 MF-3/MF-4。
+              // 等待 agent_settled（真空闲信号）arm idle timer + notify（onRoundSettled）。
+              // 用 continue 而非 return：return 会跳出 stdout data handler 的 for(line) 循环，
+              // 丢弃同一 flush 内 agent_end 之后的事件（如紧随的 agent_settled）。continue 只
+              // 跳过当前行剩余（handleSdkEvent 对 agent_end 是 no-op），继续处理后续行。
+              if (record.chatMode) {
+                continue;
+              }
               // [recursive-orchestration] 条件 kill：读子进程 session 文件算活跃后代
               // （pending:register − unregister 差集）。有活跃后代（background subagent /
               // workflow）→ 保持进程 idle，等后代完成时 notifier triggerTurn steer 唤醒；
@@ -1023,6 +1105,9 @@ export async function runSpawn(
 
     // 等待子进程退出
     const exitCode = await new Promise<number>((resolve) => {
+      // [V2 决策 2] resolveRun 指向本 promise 的 resolve：chatMode 首轮 agent_settled 时
+      // 由 handleSdkEvent 提前调 resolveRun(0)，close 最终到达时 resolve(code) 是 no-op。
+      resolveRun = resolve;
       child.on("close", async (code: number | null) => {
         // [C1] 子进程已退出，从 orphan-tracking Map 移除（dispose 兜底无需再 kill 它）
         spawnedChildren.delete(record.id);
@@ -1061,10 +1146,10 @@ export async function runSpawn(
     opts.signal?.removeEventListener("abort", onAbort);
     clearTimeout(watchdog);
 
-    // [持久化 A] sessionFile 兜底校验 + identity entry。
-    // session.jsonl 由子进程写入，父进程在子进程退出后（写入完成）補写身份条目。
-    // reconstructFromFile 依赖 IDENTITY_CUSTOM_TYPE custom entry 重建 record 身份，
-    // 缺失则 /subagents list 磁盘源为空（终态 record 全丢失）。[回归修复]
+    // [持久化 A] sessionFile 兜底校验。
+    // identity custom entry 已改由子进程 session_start hook 写（M4 / V2 决策 5），
+    // 父进程不再 fs 补写——fs 补写的 entry 缺 id/parentId 污染 pi _buildIndex。
+    // 此处仅保留 sessionFile 路径兜底（deriveSessionFilePath/握手路径可能不准）。
     if (record.sessionFile) {
       // 兜底：deriveSessionFilePath 推导或握手返回的路径可能不存在（pi 命名规则变化），
       // 用 sessionId 后缀匹配实际文件。匹配到则修正 record.sessionFile。
@@ -1074,35 +1159,6 @@ export async function runSpawn(
         if (lookupId) {
           const actual = findSessionFileByHeaderId(sessionDir, lookupId);
           if (actual) record.sessionFile = actual;
-        }
-      }
-      // 补写 identity custom entry（子进程已退出，append 安全）。
-      if (fs.existsSync(record.sessionFile)) {
-        const identity: SubagentIdentityData = {
-          id: record.id,
-          agent: record.agent,
-          mode: record.mode,
-          task: record.task,
-          slug: record.slug,
-          startedAt: record.startedAt,
-          rootSessionId: record.rootSessionId,
-          parentRecordId: record.parentRecordId,
-          depth: record.depth,
-          forkDepth: opts.fork ? (opts.parentForkDepth ?? 0) + 1 : undefined,
-          chatMode: record.chatMode,
-        };
-        try {
-          fs.appendFileSync(
-            record.sessionFile,
-            `${JSON.stringify({ type: "custom", customType: IDENTITY_CUSTOM_TYPE, data: identity })}\n`,
-            "utf-8",
-          );
-        } catch (err) {
-          // best-effort：identity 写入失败不影响执行结果，但会影响 /subagents list 重建。
-          // 记录到 logger（非阻断）—— 终态 record 会从 list 消失，这是可观测的退化信号。
-          logger.error(`[subagents] identity append failed for ${record.sessionFile}`, {
-            detail: err instanceof Error ? err.message : String(err),
-          });
         }
       }
     }

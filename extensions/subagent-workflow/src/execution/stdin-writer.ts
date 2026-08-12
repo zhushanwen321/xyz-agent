@@ -62,17 +62,31 @@ export function respond(child: ChildProcess, id: string, out: UiResponse, signal
  * pi 在 await rebindSession() 后才挂 stdin reader（rpc-mode.ts:778-781），
  * reader 处理 prompt 时 session 已就绪。
  *
+ * [V2 决策 3] chatMode 续聊热路径用 prompt + streamingBehavior 统一投递（替代 steer/followUp
+ * 命令），pi 权威裁决 busy/idle（设计 F3/F4）：busy 时 followUp 入队/steer 抢占；idle 时
+ * streamingBehavior 被忽略、直接开新 turn。不传 streamingBehavior（首帧 prompt / 旧调用方）
+ * 行为完全不变——向后兼容。
+ *
  * @param child 子进程（stdin 写入 prompt 命令）
  * @param task 完整 task 文本（含 schema 指令）
+ * @param options.streamingBehavior V2 统一投递语义：`"followUp"`（排队，当前轮后处理）/ `"steer"`（抢占，立即中断 streaming）。
+ *        省略时不写入该字段（首帧 prompt / 非 chatMode 调用方，行为不变）。
  */
-export function sendPromptCommand(child: ChildProcess, task: string): void {
+export function sendPromptCommand(
+  child: ChildProcess,
+  task: string,
+  options?: { streamingBehavior?: "followUp" | "steer" },
+): void {
   if (!child.stdin || child.stdin.destroyed) return;
-  const command = JSON.stringify({
+  const payload: Record<string, unknown> = {
     id: crypto.randomUUID(),
     type: "prompt",
     message: task,
-  });
-  writeStdinLine(child, command, "prompt command");
+  };
+  if (options?.streamingBehavior) {
+    payload.streamingBehavior = options.streamingBehavior;
+  }
+  writeStdinLine(child, JSON.stringify(payload), "prompt command");
 }
 
 /**

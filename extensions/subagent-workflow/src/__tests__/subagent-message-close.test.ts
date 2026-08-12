@@ -14,7 +14,7 @@ import type { SubagentService } from "../execution/subagent-service.ts";
 import type { ExecutionRecord } from "../execution/types.ts";
 import { adapter, closeHandler, mapExternalState, messageHandler } from "../interface/subagent-actions.ts";
 
-/** 构造测试用 record（默认 chatMode running）。 */
+/** 构造测试用 record（默认非 chatMode running——chatMode 统一投递测试显式传 chatMode:true）。 */
 function makeRecord(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
   const r = createRecord("sa-test", {
     agent: "general-purpose",
@@ -24,7 +24,7 @@ function makeRecord(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
     slug: "test",
     startedAt: 1000,
     rootSessionId: "root-session",
-    chatMode: true,
+    chatMode: false,
   });
   Object.assign(r, overrides);
   return r;
@@ -36,6 +36,7 @@ function makeMockService(): SubagentService {
     getRecordForAction: vi.fn(),
     deliverToRunning: vi.fn(),
     resumeRound: vi.fn(),
+    deliverMessage: vi.fn(),
     closeSubagent: vi.fn(),
   } as unknown as SubagentService;
 }
@@ -84,10 +85,12 @@ describe("messageHandler 参数校验", () => {
 });
 
 // ============================================================
-// messageHandler 状态分流（设计决策 6 状态×interrupt 映射）
+// messageHandler 非 chatMode 状态分流（回归防护，设计决策 6 状态×interrupt 映射）
+// V2 决策 3：chatMode 走 deliverMessage 统一投递（见下方独立 describe）；此处验证
+// 非 chatMode record 仍走 deliverToRunning/resumeRound（V2 改造零回归）。
 // ============================================================
 
-describe("messageHandler 状态分流", () => {
+describe("messageHandler 非 chatMode 状态分流（回归防护，决策 6）", () => {
   it("running + interrupt:true → deliverToRunning(record, text, true)", async () => {
     const service = makeMockService();
     const record = makeRecord({ status: "running" });
@@ -153,6 +156,50 @@ describe("messageHandler 状态分流", () => {
     await expect(
       messageHandler(service, { subagentId: "sa-x", text: "hi" }),
     ).rejects.toThrow(/not found or not owned/);
+  });
+});
+
+// ============================================================
+// messageHandler chatMode 统一投递（V2 决策 3）
+// ============================================================
+
+describe("messageHandler chatMode 统一投递（V2 决策 3）", () => {
+  it("chatMode running → deliverMessage（不走 deliverToRunning/resumeRound）", async () => {
+    const service = makeMockService();
+    const record = makeRecord({ chatMode: true, status: "running" });
+    (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
+
+    const result = await messageHandler(service, {
+      subagentId: "sa-test",
+      text: "follow up",
+      interrupt: true,
+    });
+
+    expect(service.deliverMessage).toHaveBeenCalledWith(record, "follow up", true);
+    expect(service.deliverToRunning).not.toHaveBeenCalled();
+    expect(service.resumeRound).not.toHaveBeenCalled();
+    expect(result.response).toEqual({ delivered: true });
+  });
+
+  it("chatMode idle → deliverMessage（统一投递，不走 resumeRound——V2 进程长驻，判活分流）", async () => {
+    const service = makeMockService();
+    const record = makeRecord({ chatMode: true, status: "idle" });
+    (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
+
+    await messageHandler(service, { subagentId: "sa-test", text: "continue", interrupt: false });
+
+    expect(service.deliverMessage).toHaveBeenCalledWith(record, "continue", false);
+    expect(service.resumeRound).not.toHaveBeenCalled();
+    expect(service.deliverToRunning).not.toHaveBeenCalled();
+  });
+
+  it("chatMode interrupt 透传 deliverMessage（true=steer / false=followUp）", async () => {
+    const service = makeMockService();
+    const record = makeRecord({ chatMode: true, status: "running" });
+    (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
+
+    await messageHandler(service, { subagentId: "sa-test", text: "stop", interrupt: true });
+    expect(service.deliverMessage).toHaveBeenCalledWith(record, "stop", true);
   });
 });
 
