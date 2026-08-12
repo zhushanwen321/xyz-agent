@@ -16,6 +16,9 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "dependencies": {
+    "@zhushanwen/pi-llm-shared": "workspace:*"
+  },
   "devDependencies": {
     "vitest": "^4.1.8"
   },

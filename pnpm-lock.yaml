@@ -254,6 +254,9 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: '*'
         version: 0.82.1(ws@8.21.0)(zod@3.25.76)
+      '@zhushanwen/pi-llm-shared':
+        specifier: workspace:*
+        version: link:../shared/llm-shared
       typebox:
         specifier: '*'
         version: 1.1.38
