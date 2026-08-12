@@ -3,7 +3,7 @@
  *
  * Spawns a dedicated Pi child process with a vision-capable model to analyze images.
  * Supports fork context: inherits parent session for context-aware analysis.
- * Reads model configuration from ~/.pi/agent/vision-models.json.
+ * Reads model configuration from <agentDir>/vision-models.json (path derived from pi's getAgentDir).
  */
 
 import * as fs from "node:fs";
@@ -219,7 +219,7 @@ export default function visionExtension(pi: ExtensionAPI) {
 			"The image is processed by the vision model only — it never enters the main session context.",
 			"Returns text-only analysis conclusions.",
 			"",
-			"Requires ~/.pi/agent/vision-models.json with at least one vision model entry.",
+			"Requires <agentDir>/vision-models.json (PI_CODING_AGENT_DIR) with at least one vision model entry.",
 			"",
 			"Context modes:",
 			"- 'fresh' (default): clean session, no prior context.",
