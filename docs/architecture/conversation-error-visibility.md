@@ -17,8 +17,8 @@
 
 ### 设计目标（从使用者体验倒推）
 
-1. **G1 失败一眼可辨**：滚动对话流时，tool 失败与 session 错误不需要点击、不需要看 rail，在流内即可被 danger 色直接定位。
-   - **streaming 场景打折声明**：streaming 进行中失败的工具（块在 running 态挂载）只 header 变红，错误输出仍收起（见 §3.3.1 决策）。G1 完整生效在「turn 结束后回看」与「历史 session 重开」两个场景。
+1. **G1a 失败可辨**：滚动对话流时，tool 失败与 session 错误不需要点击、不需要看 rail，在流内即可被 danger 色 header 直接定位——streaming 进行中与回开态均达成（header 是 computed，响应 status 变化）。
+2. **G1b 错误输出直达**：失败工具的错误输出（stderr/错误详情）无需点击即可见——回开态达成（终态挂载默认展开），**streaming 场景打折**（块在 running 态挂载固化为收起，失败后保持收起，见 §3.3.1 决策；turn 结束后重开/重挂按终态展开）。
 2. **G2 进行态信噪比可控**：streaming 中用户可以收起 thinking 块（默认仍展开，保留「agent 活着」的感知），收起权在用户。
 3. **G3 已完成态骨架不动**：非活跃 turn 折叠、块级默认收起、TurnMeta 聚合计数——现状良好的部分零变化。thinking 在 turn 完成后回落收起（恢复骨架），用户手动收起过的块保持收起。
 4. **G4 视觉体系一致**：只用 tokens 已有的 danger/warn 通道；不引入 side-stripe 彩色边条（绝对禁令）、不引入饱和色、与 rail 的 danger 语义一致（同一种红，同一个含义）。
@@ -111,12 +111,12 @@
 | 形态 | 触发条件 | 内容特征 | 渲染处理 |
 |---|---|---|---|
 | **纯 error 消息** | 无 streaming 实体（`markSessionError` 追加全新消息） | msg 无先存 content，errorText 即全文 | 整条 danger 化：AlertCircle 图标（`text-danger`，size 与正文行高匹配）+ 正文 `text-danger` |
-| **追加形态** | 有 streaming assistant 时 `markSessionError` → `finalizeSession('error', errorText)` → `streaming-state-machine.ts` 把 errorText **追加进已有 content**（`content ? \`${content}\n\n${errorText}\` : errorText`），整条 msg.status='error' | msg 含崩溃前正常正文 + 尾部 errorText | **不动正常正文**：分离尾部 errorText 渲染为独立 error 行/块（AlertCircle + danger），正常正文保持原色 |
+| **追加形态** | 有 streaming assistant 时 `markSessionError` → `finalizeSession('error', errorText)` → `streaming-state-machine.ts` 的 `finalizeMessages()`（当前行 169-170）**改为把 errorText 写入 `Message.error` 字段**（`packages/shared/src/message.ts:259`，注释明确「assistant turn：message.error 通道写入错误文本」用途对口），content 通道保持崩溃前正常正文不动（现状是 `${content}\n\n${errorText}` 拼接，实施时改为双通道），整条 msg.status='error' | msg.content 含崩溃前正常正文 + msg.error 含 errorText（分属两个字段） | **不动正常正文**：msg.content 按普通 assistant 正文渲染，msg.error 渲染为独立 error 行（AlertCircle + danger） |
 
-**为什么必须区分（误染边界）**：追加形态下，text 块 ref 是整条 `msg.content`（正常正文 + 追加的 errorText）。若按 message 级 status 无差别整条 danger 化，会把崩溃前产出的全部正常正文也染红——这与「失败一眼可辨」的初衷恰好反向（用户分不清哪段是错误、哪段是崩溃前正常输出）。
+**为什么必须区分（误染边界）**：追加形态下，msg.content 是崩溃前的正常正文，errorText 在独立的 msg.error 字段。若渲染层按 message 级 status 无差别把整条 content 染红，会把崩溃前产出的正常正文也染红——这与「失败一眼可辨」的初衷恰好反向（用户分不清哪段是错误、哪段是崩溃前正常输出）。双通道（content / error 分离）从数据层消除了「errorText 混在 content 里」的歧义，渲染层只需按字段分别处理。
 
 - 纯 error 消息不用 `danger-soft` 整行底色（多行文本上显脏）；追加形态的独立 error 行同理。图标+文字色足够辨识度，且与「错误插入对话流」的现有形态一致。
-- **实现要点**：追加形态的「分离尾部 errorText」需要一种标记机制区分正常 content 与追加的 error 段（如 message 上附加 `appendedErrorText` 字段，或 content 用约定分隔符）。实现层（§5）进一步拆分。
+- **实现要点（双通道，无需标记机制）**：追加形态的 errorText 写入现成的 `Message.error` 字段（`message.ts:259`），content 保持崩溃前正文不动——两者天然分属不同字段，无需额外标记机制区分。两个早期候选均已排除：**约定分隔符不可行**（现状分隔符就是 `\n\n`，而 assistant 正常多段正文也用 `\n\n`，渲染时无法可靠区分）；**新增 `appendedErrorText` 字段冗余**（违反「不加推测性功能」，现成 error 字段已满足）。实施改动：`streaming-state-machine.ts` 的 `finalizeMessages()` 不再拼接 content，改为写 error 字段（见 §5 文件改动地图）。
 
 #### 3.3.3 thinking working 态：默认展开可收起 + 完成态回落（`Block.vue`）
 
@@ -130,14 +130,14 @@
    - 收起状态为块级本地 ref（不引入跨块/跨 session 记忆——§3.5.4 减法原则：用户收起是一段一段的即时动作，持久记忆是过度设计）。
    - 新 thinking 块仍默认展开：收起前一块不影响后一块（每块独立 ref），「最新推理始终可见」的感知保留。
 
-**virtua 重挂载取舍声明**：MessageStream 用 virtua `Virtualizer`（仅 `keep-mounted=pinnedIndexes`），历史 session 中用户手动收起某块后滚离视口、重挂载时按初值逻辑会重新初始化（failed→展开、thinking 非终态→收起）——**用户收起态在 virtua 卸载/重挂载下不持久**。这是「不引入记忆」减法决定的已知取舍；若用户反馈强烈，后续评估把折叠态提升到 ThinkingBlock/ToolCall 模型层（本设计不预埋）。
+**virtua 重挂载取舍声明**：MessageStream 用 virtua `Virtualizer`（仅 `keep-mounted=pinnedIndexes`），历史 session 中用户手动折叠/展开某块后滚离视口、重挂载时按初值逻辑会重新初始化（failed→展开、thinking 非终态→收起）——**用户手动折叠/展开态在 virtua 卸载/重挂载下均不持久**（手动展开的非 failed thinking 块重挂载后回到默认收起）。这是「不引入记忆」减法决定的已知取舍；若用户反馈强烈，后续评估把折叠态提升到 ThinkingBlock/ToolCall 模型层（本设计不预埋）。
 
 #### 3.3.4 TurnMeta 文案归正（`TurnMeta.vue` + i18n）
 
 - working 态：`panel.message.thinking`（「思考中」）→ 新增 key `panel.message.working`（「工作中」），zh/en 同步。elapsed 保留（「工作中 12m 46s」语义正确：turn 已进行时长）。
 - **`isPendingPlaceholder` 占位态保持「思考中」**：空窗期（user 已发、assistant 未到）的语义确实是「agent 在想/在启动」，「思考中」正确，不动（`TurnMeta.vue` 占位分支）。
 - 完成态「已工作」不动。
-- **图标选型说明**：v6 `§5.11` 错误反馈先例用 TriangleAlert。本设计 error 图标选 AlertCircle（与对话流正文行高匹配的圆形更柔和，避免三角警告在多行 error 文本上的过度压迫感）——偏离先例，spec 联动修订时记录该偏离理由（见 §5）。
+- **图标选型说明**：v6 `§5.11`（`v6-master-spec.md:486`）错误反馈先例用 TriangleAlert（`.install-err` / `.inline-error` 内联反馈条，danger 色 + 常驻可重试）。本设计 error 图标选 AlertCircle（与对话流正文行高匹配的圆形更柔和，避免三角警告在多行 error 文本上的过度压迫感）——偏离先例，spec 联动修订时记录该偏离理由（见 §5）。
 
 #### 3.3.5 运行时断言探针清单
 
@@ -146,7 +146,7 @@
 | P-failed-expand | **streaming 中失败的工具不自动展开、无跳动**（header 红、错误输出收起）；turn 结束后/历史重开时终态挂载的 failed 块默认展开 | dev app 构造 streaming 中 tool 失败（第 N 个工具失败），观察：(1) streaming 中失败瞬间无展开/跳动、header 变红；(2) 任务完成后重开 session，failed 块默认展开 | ⛔ 实施期 M1 |
 | P-thinking-toggle | working 态收起某段 thinking 生效（一行预览）；后续新 thinking 块仍默认展开；turn 完成后未手动收起的块回落收起、手动收起过的保持收起 | dev app thinking「最高」档任务实测 | ⛔ 实施期 M3 |
 | P-error-pure | 纯 error 消息（无先存 content）整条 danger 化；普通 assistant 文本（status complete/streaming）零影响 | dev app 正常任务对话流正文渲染无变化 + 构造纯 error 路径 | ⛔ 实施期 M2 |
-| P-error-append | 追加形态：崩溃前正常正文保持原色，仅尾部 errorText 渲染为独立 danger 行 | dev app streaming 中 kill pi 子进程触发 session.exited → markSessionError（追加形态） | ⛔ 实施期 M2 |
+| P-error-append | 追加形态：崩溃前正常正文（msg.content）保持原色，msg.error 的 errorText 渲染为独立 danger 行 | dev app streaming 中 kill pi 子进程触发 session.exited → markSessionError（追加形态） | ⛔ 实施期 M2 |
 | P-i18n-keys | 新增 `panel.message.working` 在 zh/en 语言文件同步存在 | 直接读两个语言文件确认 | ⛔ 实施期 M4 |
 
 ## §4 验收
@@ -166,7 +166,7 @@
 - **步骤**：构造 session 级错误——dev app 任务进行中 `kill` pi 子进程，触发 `session.exited` → `markSessionError`（追加形态，崩溃前有正常正文）；另构造纯 error 路径（无 streaming 实体时的 markSessionError）
 - **通过标准**：
   - 纯 error：消息带 danger 图标 + 红色正文，与正常 assistant 正文一眼区分；无 banner、无 toast 双表达（P-error-pure）
-  - 追加形态：**崩溃前正常正文保持原色，仅尾部 errorText 渲染为独立 danger 行**，不误染正常正文（P-error-append）
+  - 追加形态：**崩溃前正常正文（msg.content）保持原色，msg.error 的 errorText 渲染为独立 danger 行**，不误染正常正文（P-error-append）
 - **说明**：abort 不产生 error 消息（`store-types.ts` reason 映射：`aborted → message:complete`），不可用作构造路径；真实 error 触发源是 `stream_error`/`error`/`timeout`/`disconnect`/`restart` → `message:error`，dev 中 kill pi 子进程触发 session.exited 是最易构造的真实路径。
 
 ### 场景 3：thinking 可收起 + 完成态回落（回溯 G2/G3）
@@ -187,7 +187,7 @@
 | 步骤 | 交付 | 独立验证 |
 |---|---|---|
 | M1 failed tool 视觉+终态默认展开 | `Block.vue` `toolStatusClass` failed→`text-danger` + `toolCollapsed` 状态分化初值 | 场景 1 + P-failed-expand |
-| M2 session error 视觉（含形态判定） | `Block.vue` text 分支 status==='error' 形态判定：纯 error 整条 danger / 追加形态分离尾部 errorText 独立 danger 行 | 场景 2 + P-error-pure + P-error-append |
+| M2 session error 视觉（含形态判定） | `Block.vue` text 分支 status==='error' 形态判定：纯 error 整条 danger / 追加形态读 msg.error 渲染独立 danger 行（content 保持原色） | 场景 2 + P-error-pure + P-error-append |
 | M3 thinking 可收起 + 完成态回落 | `thinkingExpanded` 去短路 + collapsed working 初值 false + 删禁 toggle + watch working→false 回落 | 场景 3 + P-thinking-toggle |
 | M4 TurnMeta 文案 | 新增 `panel.message.working` key（zh/en）+ working 态引用切换 | 场景 3 顺带 + P-i18n-keys |
 
@@ -200,12 +200,14 @@
 | `packages/ui/src/features/chat/Block.vue` | `toolStatusClass` failed 分支；`toolCollapsed` 终态初值分化；`thinkingExpanded` 去短路 + thinkingCollapsed working 初值 + watch 回落 + 删禁 toggle；text 分支 error 形态判定（纯/追加） |
 | `packages/ui/src/features/chat/TurnMeta.vue` | working 态文案 key 切换（thinking → working） |
 | i18n 语言文件（zh/en） | 新增 `panel.message.working`（「工作中」/「Working」） |
-| `packages/core/src/domain/chat/*`（追加形态标记） | 追加形态需标记机制区分正常 content 与 errorText（如 message 上附加 `appendedErrorText` 字段）——M2 实现层定方案 |
+| `packages/core/src/domain/chat/streaming-state-machine.ts`（追加形态双通道） | `finalizeMessages()`（当前行 169-170）追加形态分支：errorText 写入 `Message.error` 字段（不再 `${content}\n\n${errorText}` 拼接 content）；content 通道保持崩溃前正文不动 |
 | 测试 | Block 的 failed 终态展开/streaming 不展开用例；error 纯/追加两种形态渲染用例；thinking 回落用例；TurnMeta 文案断言更新 |
 
 ### spec 联动修订项（偏离全场景中性条款的代价）
 
-本设计偏离 v6-master-spec `:444` 全场景中性条款，必须同步修订 spec，否则 spec 与实现长期不一致：
+本设计偏离 v6-master-spec `:444` 全场景中性条款，必须同步修订 spec，否则 spec 与实现长期不一致。
+
+**过渡期裁决**：实施以本文档为准，spec `:444` 修订为独立后续项，不阻塞 M1-M4。
 
 | 修订项 | 位置 | 内容 |
 |---|---|---|
@@ -218,4 +220,4 @@
 
 1. **failed 终态展开与非活跃折叠的交互**：非活跃 session 的 turn 整 trace 不渲染（`Turn.vue` showTrace），failed 终态展开只在 trace 展开时生效——确认两者不冲突（预期：turn 级折叠优先，展开 turn 后 failed 块已展开）。
 2. **unfinished 边界**：streaming 被 abort 时 running 中的 tool 会转 unfinished——确认其保持中性（不红）在多 abort 场景下不产生「abort 后满屏灰块疑似失败」的歧义；若用户反馈分不清，后续再评估 unfinished 是否用 warn 区分（本设计不预埋）。
-3. **追加形态标记机制**：M2 实现层需定「如何区分正常 content 与追加的 errorText」——候选方案（message.appendedErrorText 字段 / content 约定分隔符）的取舍在实现层裁决，需保证不污染正常正文渲染路径。
+3. **追加形态 errorText 通道（设计前置验证）**：方案选定 errorText 写入现成的 `Message.error` 字段（`message.ts:259`），不再需要标记机制区分 content。**前置验证（M2 启动前必须确认）**：pi JSONL 往返（离线重开 session）是否保留 `Message.error`——验证路径：(1) 文件路径 `session-history.ts` getHistoryFromFile 解析 JSONL，pi 的 message entry 是否携带 error 字段；(2) RPC 路径 `message-converter.ts` convertPiHistory 是否映射 pi error 到 `Message.error`。**若不保留**：§7.5 重开态降级方案明确——error 消息在重开态降级为普通正文渲染（现状），不阻断对话流；实时态（streaming 中 markSessionError 内存写 error 字段）仍 danger 化。此降级为可接受代价（重开态低频、实时态是主路径），不留「实现层裁决」模糊。
