@@ -13,7 +13,7 @@
  * 运行：cd packages/renderer && npx vitest run src/composables/effects/__tests__/useMessageEffects.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import type { SubagentRecord } from '@xyz-agent/shared'
+import type { ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
 
 const storeMocks = vi.hoisted(() => ({
   markSessionError: vi.fn(),
@@ -112,12 +112,13 @@ describe('createInboundEffects（§11.4 InboundEffects 接线）', () => {
     expect(storeMocks.applyRecords).toHaveBeenCalledWith('s1', records)
   })
 
-  it('onWorkflowUpdate → triggerWorkflowReload(sid, status)；status 缺省按 "unknown"', () => {
-    effects.onWorkflowUpdate!('s1', { status: 'running' })
+  it('onWorkflowUpdate → triggerWorkflowReload(sid, status)；status 缺省按 "unknown"（防御运行时坏形状）', () => {
+    effects.onWorkflowUpdate!('s1', { runId: 'wf-1', status: 'running' })
     expect(storeMocks.triggerWorkflowReload).toHaveBeenCalledWith('s1', 'running')
 
     storeMocks.triggerWorkflowReload.mockClear()
-    effects.onWorkflowUpdate!('s1', {})
+    // protocol SSOT 声明 status 必填，但运行时不可信——缺 status 时兜底 'unknown'（显式 cast 模拟坏形状）
+    effects.onWorkflowUpdate!('s1', { runId: 'wf-1' } as ServerMessageMap['session.workflowUpdate']['update'])
     expect(storeMocks.triggerWorkflowReload).toHaveBeenCalledWith('s1', 'unknown')
   })
 

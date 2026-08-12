@@ -47,6 +47,23 @@ export interface SubscriptionState {
  */
 const subscriptionStates = new Map<string, SubscriptionState>()
 
+/**
+ * in-flight 订阅去重表（key → 进行中的 subscribeSession Promise）。
+ *
+ * MF-2：幂等守卫（subscribed 标记）与状态写入非原子——两个并发 initial subscribe
+ * （fromSeq 均 undefined）会在第一个 await resolve 前双双通过守卫，导致重复 RPC +
+ * 重复 snapshot 回放。本表把并发调用收敛到同一 Promise。
+ *
+ * key 必须含 fromSeq：gap backfill（fromSeq 显式）与 initial subscribe（fromSeq undefined）
+ * 语义不同，不得互吞；同参并发（重复相同 backfill）则复用同一 Promise。
+ * 失败也清理（finally）：failed subscribe 可重试，不残留死 Promise。
+ */
+const inFlightSubscribes = new Map<string, Promise<void>>()
+
+function subscribeKey(sessionId: string, fromSeq?: number): string {
+  return fromSeq === undefined ? sessionId : `${sessionId}:${fromSeq}`
+}
+
 // ── 端口注入（C1：内部注入点，非公共 API） ─────────────────────────
 
 /**
@@ -102,45 +119,61 @@ export async function subscribeSession(sessionId: string, fromSeq?: number): Pro
   const existing = subscriptionStates.get(sessionId)
   if (existing?.subscribed && fromSeq === undefined) return
 
-  let reply: { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
-  try {
-    reply = await subscribeImpl(sessionId, fromSeq)
-  } catch (e) {
-    // subscribe 失败：不标记 subscribed（下次可重试）。不抛——调用方 fire-and-forget。
-    console.warn(`[core/subscription-state] subscribe failed for session ${sessionId}:`, e)
-    return
-  }
+  // in-flight 去重（MF-2）：守卫通过后、await 前的窗口内并发调用复用同一 Promise，
+  // 避免重复 RPC + 重复 snapshot 回放。key 含 fromSeq（gap backfill 不吞 initial subscribe）。
+  const key = subscribeKey(sessionId, fromSeq)
+  const inFlight = inFlightSubscribes.get(key)
+  if (inFlight) return inFlight
 
-  // applySnapshot：回放历史到 events 通道（与 live push 同一消费入口）。
-  // snapshot 元素是带 seq 的 ServerMessage（bus ring 内当前事件序列），逐条 dispatchSession
-  // 让订阅端（useChat/useSessionEvents 等）复现已发生事件。
-  //
-  // 注：reconcile（fromSeq 传入）回放的 snapshot 可能与 gap 期间已 dispatch 的 live 消息重叠
-  // （routeInbound 在触发 reconcile 时仍 dispatch 了当前 msg），存在重复 dispatch 的竞态（R2）。
-  // 订阅端需自行幂等（如 chat store 按 message id 去重）。本 wave 不在 dispatch 层做去重
-  // （会破坏 events 层纯分发语义），统一治理在 remove-bandaids wave。
-  for (const msg of reply.snapshot) {
-    dispatchSessionImpl(sessionId, msg)
-  }
+  const run = (async (): Promise<void> => {
+    try {
+      let reply: { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
+      try {
+        reply = await subscribeImpl(sessionId, fromSeq)
+      } catch (e) {
+        // subscribe 失败：不标记 subscribed（下次可重试）。不抛——调用方 fire-and-forget。
+        console.warn(`[core/subscription-state] subscribe failed for session ${sessionId}:`, e)
+        return
+      }
 
-  // stateSnapshot（wave:remove-bandaids）：4 个 state topic（commands/context/subagents/workflows）
-  // 的 last-value 数组，逐条 dispatchSession 让 routeInbound 兜底分支据此更新对应 store。
-  // stateSnapshot 与 snapshot 独立（snapshot 受 fromSeq 增量过滤，stateSnapshot 是 last-value
-  // 不受影响），可能与 snapshot 末尾消息重叠，重复 dispatch 由订阅端幂等兜底（与 snapshot 重叠同 R2 策略）。
-  for (const msg of reply.stateSnapshot) {
-    dispatchSessionImpl(sessionId, msg)
-  }
+      // applySnapshot：回放历史到 events 通道（与 live push 同一消费入口）。
+      // snapshot 元素是带 seq 的 ServerMessage（bus ring 内当前事件序列），逐条 dispatchSession
+      // 让订阅端（useChat/useSessionEvents 等）复现已发生事件。
+      //
+      // 注：reconcile（fromSeq 传入）回放的 snapshot 可能与 gap 期间已 dispatch 的 live 消息重叠
+      // （routeInbound 在触发 reconcile 时仍 dispatch 了当前 msg），存在重复 dispatch 的竞态（R2）。
+      // 订阅端需自行幂等（如 chat store 按 message id 去重）。本 wave 不在 dispatch 层做去重
+      // （会破坏 events 层纯分发语义），统一治理在 remove-bandaids wave。
+      for (const msg of reply.snapshot) {
+        dispatchSessionImpl(sessionId, msg)
+      }
 
-  // 记基线 + 标记 subscribed（后续 routeInbound 启用 gap 检测）。
-  // lastSeq 可能小于已 dispatch 的某条 snapshot seq（ring 溢出场景）或小于 routeInbound 已更新
-  // 的 lastSeenSeq（reconcile 期间 live 消息已推进基线），取 max 保证基线不回退。
-  // stateSnapshot 内消息的 seq 也纳入 max 计算——state topic 消息同样占用 bus seqCounter。
-  const existingNow = subscriptionStates.get(sessionId)
-  const prevLastSeen = existingNow?.lastSeenSeq ?? 0
-  const maxSnapshotSeq = reply.snapshot.reduce((max, m) => (typeof m.seq === 'number' && m.seq > max ? m.seq : max), 0)
-  const maxStateSnapshotSeq = reply.stateSnapshot.reduce((max, m) => (typeof m.seq === 'number' && m.seq > max ? m.seq : max), 0)
-  const lastSeenSeq = Math.max(reply.lastSeq, maxSnapshotSeq, maxStateSnapshotSeq, prevLastSeen)
-  subscriptionStates.set(sessionId, { lastSeenSeq, subscribed: true })
+      // stateSnapshot（wave:remove-bandaids）：4 个 state topic（commands/context/subagents/workflows）
+      // 的 last-value 数组，逐条 dispatchSession 让 routeInbound 兜底分支据此更新对应 store。
+      // stateSnapshot 与 snapshot 独立（snapshot 受 fromSeq 增量过滤，stateSnapshot 是 last-value
+      // 不受影响），可能与 snapshot 末尾消息重叠，重复 dispatch 由订阅端幂等兜底（与 snapshot 重叠同 R2 策略）。
+      for (const msg of reply.stateSnapshot) {
+        dispatchSessionImpl(sessionId, msg)
+      }
+
+      // 记基线 + 标记 subscribed（后续 routeInbound 启用 gap 检测）。
+      // lastSeq 可能小于已 dispatch 的某条 snapshot seq（ring 溢出场景）或小于 routeInbound 已更新
+      // 的 lastSeenSeq（reconcile 期间 live 消息已推进基线），取 max 保证基线不回退。
+      // stateSnapshot 内消息的 seq 也纳入 max 计算——state topic 消息同样占用 bus seqCounter。
+      // （MF-3：gap 触发后基线推进在此发生——reconcile 成功才推进，失败则保持原位可重试）
+      const existingNow = subscriptionStates.get(sessionId)
+      const prevLastSeen = existingNow?.lastSeenSeq ?? 0
+      const maxSnapshotSeq = reply.snapshot.reduce((max, m) => (typeof m.seq === 'number' && m.seq > max ? m.seq : max), 0)
+      const maxStateSnapshotSeq = reply.stateSnapshot.reduce((max, m) => (typeof m.seq === 'number' && m.seq > max ? m.seq : max), 0)
+      const lastSeenSeq = Math.max(reply.lastSeq, maxSnapshotSeq, maxStateSnapshotSeq, prevLastSeen)
+      subscriptionStates.set(sessionId, { lastSeenSeq, subscribed: true })
+    } finally {
+      // 无论成败都清 in-flight（失败可重试，成功靠 subscribed 守卫拦截后续调用）
+      inFlightSubscribes.delete(key)
+    }
+  })()
+  inFlightSubscribes.set(key, run)
+  return run
 }
 
 /**
@@ -188,4 +221,6 @@ export function updateLastSeenSeq(sessionId: string, seq: number): void {
  */
 export function resetSubscriptionStates(): void {
   subscriptionStates.clear()
+  // in-flight 去重表同步清空（测试隔离；生产代码 in-flight 条目由 finally 自清理）
+  inFlightSubscribes.clear()
 }

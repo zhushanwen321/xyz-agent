@@ -183,7 +183,7 @@ describe('TC5: seq === lastSeenSeq+1 正常递进（不 reconcile）', () => {
 })
 
 describe('TC4: gap 检测 seq>lastSeenSeq+1 触发 reconcile', () => {
-  it('seq=8, lastSeenSeq=5：触发 subscribeSession(s1, 7) + 当前 msg 仍 dispatch', async () => {
+  it('seq=8, lastSeenSeq=5：触发 subscribeSession(s1, 5) + 当前 msg 仍 dispatch + 基线不提前推进（MF-3）', async () => {
     subscribeMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
     await subscribeSession('s1')
     vi.clearAllMocks()
@@ -193,10 +193,10 @@ describe('TC4: gap 检测 seq>lastSeenSeq+1 触发 reconcile', () => {
     // 当前 msg 仍 dispatch（gap 期间尽量不丢）
     expect(eventsMock.dispatchSession).toHaveBeenCalledTimes(1)
     expect(eventsMock.dispatchSession).toHaveBeenCalledWith('s1', liveMsg(8))
-    // 基线更新到 8（当前 msg 已处理）
-    expect(getSubscriptionState('s1')!.lastSeenSeq).toBe(8)
-    // reconcile 触发：subscribeSession(s1, fromSeq=7) 被调（seq-1=当前缺失的最早 seq）
-    expect(subscribeMock.subscribe).toHaveBeenCalledWith('s1', 7)
+    // MF-3：基线不提前推进到 8——reconcile RPC 成功前推进基线，失败则缺失段 {6,7} 永久不可恢复
+    expect(getSubscriptionState('s1')!.lastSeenSeq).toBe(5)
+    // reconcile 触发：subscribeSession(s1, fromSeq=5) 被调（lastSeenSeq=排他下界，覆盖缺失段 {6,7}）
+    expect(subscribeMock.subscribe).toHaveBeenCalledWith('s1', 5)
   })
 })
 

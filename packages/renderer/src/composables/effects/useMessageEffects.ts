@@ -20,7 +20,7 @@ import { useWorkflowStore } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'
 import { handleCompletion } from '@/composables/effects/useCompletionNotify'
 import type { InboundEffects } from '@xyz-agent/core'
-import type { SubagentRecord } from '@xyz-agent/shared'
+import type { ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
 
 const t = i18n.global.t
 
@@ -57,8 +57,8 @@ function handleSubagents(sessionId: string, subagents: SubagentRecord[]): void {
   useSubagentStore().applyRecords(sessionId, subagents)
 }
 
-/** 处理 session.workflowUpdate 事件（workflow 增量信号兜底）。 */
-function handleWorkflowUpdate(sessionId: string, update: { status?: string }): void {
+/** 处理 session.workflowUpdate 事件（workflow 增量信号兜底）。update 锚定 protocol SSOT（MF-4）。 */
+function handleWorkflowUpdate(sessionId: string, update: ServerMessageMap['session.workflowUpdate']['update']): void {
   useWorkflowStore().triggerWorkflowReload(sessionId, update.status ?? 'unknown')
 }
 

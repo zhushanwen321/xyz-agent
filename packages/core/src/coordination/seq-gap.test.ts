@@ -6,7 +6,7 @@
  * ② state.subscribed=false → pass
  * ③ msg.seq 非 number → pass
  * ④ seq <= lastSeenSeq → drop（重复/乱序丢弃）
- * ⑤ seq > lastSeenSeq+1 → pass + reconcileFromSeq: seq-1（gap）
+ * ⑤ seq > lastSeenSeq+1 → pass + reconcileFromSeq: lastSeenSeq（gap；subscribe fromSeq 是排他下界）
  * ⑥ seq === lastSeenSeq+1 → pass（正常递进，无 reconcileFromSeq）
  *
  * 纯函数零 mock：直接 import 调用断言返回值。
@@ -41,9 +41,11 @@ describe('evalSeqGap', () => {
     expect(evalSeqGap({ seq: 0 }, subscribed)).toEqual({ action: 'drop' })
   })
 
-  it('分支⑤：seq > lastSeenSeq+1 → pass + reconcileFromSeq: seq-1（gap 回拉）', () => {
-    expect(evalSeqGap({ seq: 12 }, subscribed)).toEqual({ action: 'pass', reconcileFromSeq: 11 })
-    expect(evalSeqGap({ seq: 20 }, subscribed)).toEqual({ action: 'pass', reconcileFromSeq: 19 })
+  it('分支⑤：seq > lastSeenSeq+1 → pass + reconcileFromSeq: lastSeenSeq（gap 回拉，排他下界覆盖缺失段）', () => {
+    // runtime session.subscribe 的 fromSeq 是排他下界（只返 seq > fromSeq）：
+    // 传 lastSeenSeq（而非 seq-1）才能取回 lastSeenSeq+1..seq-1 的整个缺失段（MF-1）。
+    expect(evalSeqGap({ seq: 12 }, subscribed)).toEqual({ action: 'pass', reconcileFromSeq: 10 })
+    expect(evalSeqGap({ seq: 20 }, subscribed)).toEqual({ action: 'pass', reconcileFromSeq: 10 })
   })
 
   it('分支⑥：seq === lastSeenSeq+1 → pass（正常递进，无 reconcileFromSeq）', () => {
@@ -54,7 +56,7 @@ describe('evalSeqGap', () => {
   it('边界：lastSeenSeq=0（无历史）时 seq=1 正常递进、seq=2 gap', () => {
     const fresh: SubscriptionState = { lastSeenSeq: 0, subscribed: true }
     expect(evalSeqGap({ seq: 1 }, fresh)).toEqual({ action: 'pass' })
-    expect(evalSeqGap({ seq: 2 }, fresh)).toEqual({ action: 'pass', reconcileFromSeq: 1 })
+    expect(evalSeqGap({ seq: 2 }, fresh)).toEqual({ action: 'pass', reconcileFromSeq: 0 })
     expect(evalSeqGap({ seq: 0 }, fresh)).toEqual({ action: 'drop' })
   })
 })

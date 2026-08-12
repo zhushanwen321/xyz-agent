@@ -5,7 +5,8 @@
  * ① msg.id + type==='error' → 委托 pending.resolveEnvelope（收到完整原始 error envelope，不直接 reject）+ 不进路由表
  * ② msg.id + 非 error → 委托 pending.resolveEnvelope（不直接 resolve）+ 不进路由表
  * ③ 有 sessionId 未注册 type → seq gap 中间件 + dispatchSession + 更新 lastSeenSeq
- * ④ gap（seq>lastSeenSeq+1）→ subscribeSession(sid, seq-1) 被调用 + 当前消息仍 dispatch
+ * ④ gap（seq>lastSeenSeq+1）→ subscribeSession(sid, lastSeenSeq) 被调用 + 当前消息仍 dispatch
+ *    + 基线在 reconcile 成功前不推进（MF-3）
  * ⑤ 无 sessionId → dispatchGlobal + L9 warn（session./message. 前缀）
  * ⑥ 未注册 type 落 fallback（恒真条目，有 sid 也 dispatchSession）
  * ⑦ effects 回调：session.exited / message.complete / session.subagents /
@@ -17,7 +18,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { configureRouteInbound } from './route-inbound'
 import type { TransportPorts, InboundEffects } from './route-inbound'
-import { resetSubscriptionStates, subscribeSession } from './subscription-state'
+import { resetSubscriptionStates, subscribeSession, getSubscriptionState } from './subscription-state'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 function makePorts(overrides?: Partial<TransportPorts>): TransportPorts {
@@ -175,11 +176,13 @@ describe('configureRouteInbound — session 通道 + seq gap 中间件（③/④
     expect(ports.events.dispatchGlobal).not.toHaveBeenCalled()
   })
 
-  it('④ gap（seq>lastSeenSeq+1）→ subscribeSession(sid, seq-1) + 当前消息仍 dispatch', async () => {
+  it('④ gap（seq>lastSeenSeq+1）→ subscribeSession(sid, lastSeenSeq) + 当前消息仍 dispatch + 基线 reconcile 成功后推进（MF-3）', async () => {
     const ports = makePorts()
     const dispatcher = configureRouteInbound(ports)
-    // 先建立订阅（模拟 renderer ensureStreamSubscription）：lastSeenSeq 基线 = 10
-    ;(ports.subscribe as ReturnType<typeof vi.fn>).mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 10 })
+    // 先建立订阅（模拟 renderer ensureStreamSubscription）：lastSeenSeq 基线 = 10；reconcile 返回 ring 最新 seq 13
+    ;(ports.subscribe as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ snapshot: [], stateSnapshot: [], lastSeq: 10 }) // initial subscribe
+      .mockResolvedValueOnce({ snapshot: [], stateSnapshot: [], lastSeq: 13 }) // reconcile
     await subscribeSession('s1')
     expect(ports.events.dispatchSession).toHaveBeenCalledTimes(0) // 空回放
 
@@ -187,7 +190,13 @@ describe('configureRouteInbound — session 通道 + seq gap 中间件（③/④
     dispatcher(sessionMsg('session.ping', {}, { seq: 13 }))
     expect(ports.events.dispatchSession).toHaveBeenCalledTimes(1) // 当前消息仍 dispatch
     expect(ports.subscribe).toHaveBeenCalledTimes(2) // 第二次 = reconcile 回拉
-    expect(ports.subscribe).toHaveBeenLastCalledWith('s1', 12) // fromSeq = seq-1
+    expect(ports.subscribe).toHaveBeenLastCalledWith('s1', 10) // fromSeq = lastSeenSeq（排他下界，非 seq-1；MF-1）
+    // MF-3：reconcile 未 resolve 前基线不推进到 13（gap 路径不 updateLastSeenSeq）
+    expect(getSubscriptionState('s1')?.lastSeenSeq).toBe(10)
+    // reconcile resolve 后 subscribeImpl 的 max() 收敛推进基线到 reply.lastSeq
+    await vi.waitFor(() => {
+      expect(getSubscriptionState('s1')?.lastSeenSeq).toBe(13)
+    })
   })
 
   it('④b drop（seq<=lastSeenSeq）：不 dispatch 不触发 reconcile', async () => {
@@ -278,13 +287,13 @@ describe('configureRouteInbound — global 通道 + L9 + effects（⑤/⑦）', 
     expect(effects.onSubagents).toHaveBeenCalledTimes(1)
   })
 
-  it('⑦ session.workflowUpdate 条目：dispatchSession 后 onWorkflowUpdate 回调', () => {
+  it('⑦ session.workflowUpdate 条目：dispatchSession 后 onWorkflowUpdate 回调（payload 锚定 protocol SSOT）', () => {
     const ports = makePorts()
     const effects = makeEffects()
     const dispatcher = configureRouteInbound(ports, effects)
-    dispatcher(sessionMsg('session.workflowUpdate', { update: { status: 'running' } }))
+    dispatcher(sessionMsg('session.workflowUpdate', { update: { runId: 'wf-1', status: 'running' } }))
     expect(ports.events.dispatchSession).toHaveBeenCalledTimes(1)
-    expect(effects.onWorkflowUpdate).toHaveBeenCalledWith('s1', { status: 'running' })
+    expect(effects.onWorkflowUpdate).toHaveBeenCalledWith('s1', { runId: 'wf-1', status: 'running' })
   })
 
   it('⑦ error 无 id 无 sid → onGlobalError 回调（fallback 分支）', () => {

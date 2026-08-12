@@ -145,7 +145,8 @@ describe('ws-client 不变量 ④ seq 回放', () => {
     expect(subscribeSpy).toHaveBeenCalledWith('s1', undefined)
 
     // fake WS push seq=13 的 session 通道消息：s1 已 subscribed（lastSeenSeq=10），
-    // 13 > 10+1 → gap，reconcileFromSeq = seq-1 = 12 → fire-and-forget subscribeSession(s1, 12)
+    // 13 > 10+1 → gap，reconcileFromSeq = lastSeenSeq = 10（排他下界，覆盖缺失段 {11,12}；
+    // 非 seq-1=12——runtime subscribe 只返 seq > fromSeq，传 12 会永久漏掉 11/12，MF-1）
     latestFake().triggerMessage(
       JSON.stringify({ type: 'message.chunk', seq: 13, payload: { sessionId: 's1' } }),
     )
@@ -154,7 +155,7 @@ describe('ws-client 不变量 ④ seq 回放', () => {
     await Promise.resolve()
 
     expect(subscribeSpy).toHaveBeenCalledTimes(2)
-    expect(subscribeSpy).toHaveBeenLastCalledWith('s1', 12)
+    expect(subscribeSpy).toHaveBeenLastCalledWith('s1', 10)
   })
 
   it.todo('reconcile 响应 → seqReset → reload 会话历史（重载前静默窗口逻辑保留）')

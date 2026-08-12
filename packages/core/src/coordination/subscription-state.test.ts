@@ -56,6 +56,37 @@ describe('subscribeSession', () => {
     expect(getSubscriptionState('s1')).toEqual({ lastSeenSeq: 5, subscribed: true })
   })
 
+  it('①b 并发 initial subscribe 去重（MF-2）：in-flight 期间重复调用复用同一 Promise（subscribe 只调一次）', async () => {
+    const { subscribe } = setup()
+    // 挂起第一个 subscribe，制造「守卫通过后、await 前」的并发窗口
+    let resolveFirst!: (v: { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number }) => void
+    subscribe.mockImplementation(
+      () => new Promise((resolve) => { resolveFirst = resolve }),
+    )
+    const p1 = subscribeSession('s1')
+    const p2 = subscribeSession('s1')
+    expect(subscribe).toHaveBeenCalledTimes(1) // 第二个复用 in-flight，不发重复 RPC
+    resolveFirst({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
+    await Promise.all([p1, p2])
+    expect(getSubscriptionState('s1')).toEqual({ lastSeenSeq: 5, subscribed: true })
+    // resolve 后再调 → subscribed 守卫拦截，仍不重复 RPC
+    await subscribeSession('s1')
+    expect(subscribe).toHaveBeenCalledTimes(1)
+  })
+
+  it('①c gap backfill 不被 initial subscribe 互吞（MF-2）：不同 fromSeq 各发各的 RPC', async () => {
+    const { subscribe } = setup()
+    const resolvers: Array<(v: { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number }) => void> = []
+    subscribe.mockImplementation(() => new Promise((resolve) => { resolvers.push(resolve) }))
+    const p1 = subscribeSession('s1') // initial（fromSeq undefined）in-flight
+    const p2 = subscribeSession('s1', 10) // gap backfill（fromSeq 显式）不得互吞
+    expect(subscribe).toHaveBeenCalledTimes(2)
+    resolvers[0]({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
+    resolvers[1]({ snapshot: [], stateSnapshot: [], lastSeq: 10 })
+    await Promise.all([p1, p2])
+    expect(getSubscriptionState('s1')).toEqual({ lastSeenSeq: 10, subscribed: true }) // max(5, 10)
+  })
+
   it('② fromSeq 显式传入 → 跳过幂等守卫发 RPC（reconcile backfill，即使已 subscribed）', async () => {
     const { subscribe } = setup()
     subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
