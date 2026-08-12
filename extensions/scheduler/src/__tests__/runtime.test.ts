@@ -280,30 +280,60 @@ describe('SchedulerRuntime', () => {
       expect(updated!.lastError).toBe('cron expression invalid')
     })
 
-    // ── TC7：persist 失败捕获（ERR-6）──
-    it('TC7: persist 失败不抛、保留内存态、失败任务不停用', async () => {
+    // ── TC-W-APPEND-FAIL：appendEntry 失败捕获（ER-APPEND-FAIL）──
+    it('TC-W-APPEND-FAIL: appendEntry 失败不抛、保留内存态、不污染 lastError', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      backend.persistError = new Error('disk full')
+      backend.appendError = new Error('pi internal')
 
-      // addTask 内部 persist 抛错 → 被捕获，不 rethrow
+      // addTask 内 appendEntry 抛错 → 被捕获（console.warn），不 rethrow；内存态已更新（task 仍在）
       const task = await runtime.addTask('test', { mode: 'interval', intervalMs: 60000 })
       expect(runtime.getTask(task.id)).toBeDefined()
       expect(task.enabled).toBe(true)
-      expect(task.lastError).toBe('persist failed')
+      // appendEntrySafe 不污染业务态（append 失败是 transient，不设 lastError）
+      expect(task.lastError).toBeUndefined()
+      expect(warnSpy).toHaveBeenCalled()
 
-      // tickScheduler 同样不抛（persist 异常被捕获，console.warn 记录）
+      // tickScheduler 同样不抛：dispatch 成功后 append advance 抛错被捕获，nextRunAt 已推进（内存态正确）
       task.nextRunAt = Date.now() - 1000
       await expect(runtime.tickScheduler()).resolves.toBeUndefined()
-
-      expect(warnSpy).toHaveBeenCalled()
-      // 内存态保留：任务仍在、enabled 不变（失败任务未被停用）
-      const updated = runtime.getTask(task.id)
-      expect(updated).toBeDefined()
-      expect(updated!.enabled).toBe(true)
-      expect(updated!.runCount).toBe(1)
-      // dispatch 成功已清除旧 lastError，tick 末尾 persist 再失败又标记
-      expect(updated!.lastError).toBe('persist failed')
+      const updated = runtime.getTask(task.id)!
+      expect(updated.enabled).toBe(true)
+      expect(updated.runCount).toBe(1)
+      // nextRunAt 已推进到未来（内存态正确，append 失败只丢持久化）
+      expect(updated.nextRunAt).toBe(Date.now() + 60000)
+      expect(updated.lastError).toBeUndefined() // 不被 append 失败污染
       warnSpy.mockRestore()
+    })
+
+    // ── TC-W-ON-AFTER-TICK：onAfterTick 回调（W2）──
+    it('TC-W-ON-AFTER-TICK: onAfterTick 回调在 tick 完成后被调用 1 次', async () => {
+      const spy = vi.fn()
+      runtime.onAfterTick(spy)
+      await runtime.tickScheduler()
+      expect(spy).toHaveBeenCalledTimes(1)
+    })
+
+    // ── TC-W-ENABLED-FILTER：tickScheduler 步骤3 显式 enabled 过滤（W4）──
+    it('TC-W-ENABLED-FILTER: disabled 且到期的任务不被 dispatch，enabled 到期则 dispatch', async () => {
+      // disabled + 到期
+      const disabled = await runtime.addTask('disabled', { mode: 'interval', intervalMs: 60000 })
+      await runtime.toggleTask(disabled.id, false)
+      disabled.nextRunAt = Date.now() - 1000
+
+      // enabled + 到期（force=true 绕过 idle/busy 检查，隔离 enabled 维度）
+      const enabledTask = await runtime.addTask('enabled', { mode: 'interval', intervalMs: 60000 }, { force: true })
+      enabledTask.nextRunAt = Date.now() - 1000
+
+      await runtime.tickScheduler()
+
+      // 只 dispatch enabled（disabled 被步骤2 不标 pending + 步骤3 +t.enabled 双重过滤）
+      expect(backend.sentMessages).toHaveLength(1)
+      expect(backend.sentMessages[0]!.msg.content).toBe('enabled')
+      // disabled 仍在、未被 dispatch、enabled=false
+      const stillDisabled = runtime.getTask(disabled.id)
+      expect(stillDisabled).toBeDefined()
+      expect(stillDisabled!.enabled).toBe(false)
+      expect(stillDisabled!.runCount).toBe(0)
     })
   })
 

@@ -17,18 +17,6 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { describe, expect, it, vi } from 'vitest'
 
-// Mock store 模块：避免 runtime 触发真实 FS 写入（session_start 会创建 SchedulerRuntime，
-// 进而 createStore(cwd) 写 ~/.pi/agent/scheduler/...）。sdk-contract 只验证注册契约，
-// 不关心持久化，故 store 返回空状态 + no-op persist。
-vi.mock('../store.js', () => ({
-  createStore: () => ({
-    load: () => ({ version: 1, tasks: [] }),
-    persist: vi.fn(),
-    persistSync: vi.fn(),
-    storePath: '/mocked/scheduler.json',
-  }),
-}))
-
 import schedulerExtension from '../index.js'
 
 /**
@@ -62,6 +50,7 @@ function createMockPi(): {
     registerCommand: (name: string, opts: Record<string, unknown>) => commands.push({ name, opts }),
     on: (event: string, handler: (...args: unknown[]) => void) => events.set(event, handler),
     sendMessage: vi.fn(),
+    appendEntry: vi.fn(),
   } as unknown as ExtensionAPI
   return { pi, tools, commands, events }
 }
@@ -76,6 +65,12 @@ function createFakeCtx(): ExtensionContext {
     isIdle: () => true,
     hasPendingMessages: () => false,
     ui: { setWidget: vi.fn() },
+    // append-only 模型：session_start 时 PiSchedulerBackend(ctx, pi) 读 ctx.sessionManager.getEntries()
+    // 折叠恢复任务。fakeCtx 返回空 entries + 固定 sessionFile（无历史任务，等价新 session）。
+    sessionManager: {
+      getEntries: () => [],
+      getSessionFile: () => '/test/session.json',
+    },
   } as unknown as ExtensionContext
 }
 

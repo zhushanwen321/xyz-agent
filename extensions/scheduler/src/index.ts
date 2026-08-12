@@ -16,9 +16,6 @@ import {
 } from './tool.js'
 import { renderSchedulerWidget } from './widget.js'
 
-/** widget 刷新节奏：对齐 runtime 的 TICK_INTERVAL_MS（30s），保证 nextRunAt 倒计时随 tick 更新。 */
-const WIDGET_REFRESH_MS = 30_000
-
 /**
  * pi-scheduler extension factory。
  * 注册 schedule + schedule_control 两个 tool、/schedule command、session 事件。
@@ -29,8 +26,6 @@ const WIDGET_REFRESH_MS = 30_000
  */
 export default function schedulerExtension(pi: ExtensionAPI): void {
   let service: SchedulerService | null = null
-  // widget 刷新计时器：与 service 同生命周期，session_shutdown 时清理。
-  let widgetTimer: ReturnType<typeof setInterval> | null = null
 
   const getService = (): SchedulerService => {
     if (!service) throw new Error('Scheduler not initialized: session not started')
@@ -38,28 +33,24 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
   }
 
   pi.on('session_start', (_event, ctx: ExtensionContext) => {
-    // 装配点：backend（FS/pi/时间源）→ runtime（内存态 + 调度）→ service（业务入口）
-    const backend = new PiSchedulerBackend(ctx.cwd, pi)
+    // 装配点：backend（ctx.sessionManager 读 entries / pi.appendEntry 写 op）→ runtime（内存态 + 调度）→ service（业务入口）
+    const backend = new PiSchedulerBackend(ctx, pi)
     const runtime = new SchedulerRuntime(backend, ctx)
     runtime.loadTasks(backend.loadTasks())
+    // W2：tick 后回调刷新 widget（替代独立 widgetTimer + setInterval，节奏对齐 TICK_INTERVAL_MS）
+    runtime.onAfterTick(() => refreshWidget(ctx))
     runtime.startScheduler()
     service = new SchedulerService(runtime, () => backend.now())
 
-    // 注册 widget（SDK setWidget 第一重载：直接传 string[]）。
-    // string[] 只渲染一次，调度器需要随 task 状态/nextRunAt 倒计时刷新，
-    // 因此用一个对齐 TICK_INTERVAL_MS 的 interval 周期性重发 string[]，
-    // 等价于 plan 扩展的 push 模式（plan/src/widget.ts:13）。
+    // 注册 widget（SDK setWidget 第一重载：直接传 string[]）。初始渲染一次，
+    // 后续随每次 tickScheduler 末尾的 onAfterTick 回调刷新（nextRunAt 倒计时 + task 状态）。
     refreshWidget(ctx)
-    widgetTimer = setInterval(() => refreshWidget(ctx), WIDGET_REFRESH_MS)
   })
 
   pi.on('session_shutdown', async () => {
-    if (widgetTimer) {
-      clearInterval(widgetTimer)
-      widgetTimer = null
-    }
+    // append-only 模型无 persistSync（runtime 已按 op appendEntry 落盘到 owner session JSONL）；
+    // widgetTimer 已移除（由 runtime.onAfterTick 替代）。仅停止 scheduler tick。
     if (service) {
-      await service.runtime.persistSync()
       service.runtime.stopScheduler()
     }
   })
