@@ -121,7 +121,12 @@ export const useProjectStore = defineStore('project', () => {
    * 合法数据（id 命中、默认项存在）原样保留，不覆盖 runtime 权威。
    */
   function normalizeLoadedProjects(): void {
-    if (!projects.value.some((p) => !p.name)) {
+    // ① 默认项目占用检查（[review S-1]）：按 id 判占用而非按 nameless——外部编辑把默认项改名
+    //    （name 非空）时旧条件会 unshift 第二个同 id 项（重复 id 被 deep watch 全量持久化，
+    //    recentProjects 的 filter/find 语义错乱）。id 占用即默认项存在，改名不触发补插。
+    //    注：默认项被改名后不再 nameless，下方 stale-id 回退链 find(p=>!p.name) 会落到
+    //    projects[0]（已收录在回退链「首个」档），行为可接受。
+    if (!projects.value.some((p) => p.id === DEFAULT_PROJECT_ID)) {
       projects.value.unshift(makeDefaultProject())
     }
     if (!projects.value.some((p) => p.id === activeProjectId.value)) {

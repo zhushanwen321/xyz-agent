@@ -123,6 +123,24 @@ describe('Project store: 初始态与 init()', () => {
     expect(store.isDefaultProject).toBe(false)
   })
 
+  it('init()：默认项被外部改名（id 占用但 name 非空）→ 不补插第二个同 id 项（review S-1）', async () => {
+    // 触发类与 MF-2 相同（projects.json 被外部编辑）：默认项改名 'General'，旧补插条件
+    // 查「无 nameless 项」会 unshift 第二个 id='proj-default' → 重复 id 被持久化 + recentProjects
+    // 的 filter/find 语义错乱。修复：按 id 占用判默认项存在。
+    mockLoad.mockResolvedValue({
+      projects: [makeProject('proj-default', 'General'), makeProject('proj-a', 'Alpha')],
+      activeProjectId: 'proj-a',
+    })
+    const store = useProjectStore()
+    await store.init()
+
+    // 只保留一个 proj-default（不因 nameless 检查缺失而 unshift 重复 id）
+    const defaultIds = store.projects.filter((p) => p.id === DEFAULT_PROJECT_ID)
+    expect(defaultIds).toHaveLength(1)
+    // 合法 activeProjectId 原样保留（runtime 权威不 clobber，改动不破坏首启/权威语义）
+    expect(store.activeProjectId).toBe('proj-a')
+  })
+
   it('init()：runtime 空 + localStorage 无数据 → 保持默认 project', async () => {
     mockLoad.mockResolvedValue({ projects: [], activeProjectId: '' })
     const store = useProjectStore()
