@@ -55,8 +55,8 @@
 | 事实 | 位置 | 核实 |
 |---|---|---|
 | 注册表条目 pid=0 占位，注释「session-runner first header 时补 pid」 | `worktree-manager.ts` create() → `registry.add({..., pid: 0})` | ✅ 属实 |
-| `registerPid` 唯一生产调用点在 `if (parsed.kind === "header")` 分支内 | `session-runner.ts:811, 829-832`：`ctx.onWorktreePid?.(opts.worktree.branch, child.pid)` | ✅ 属实 |
-| 该分支注释原文：「buildSpawnArgs 固定 --mode rpc，RPC mode 不发 header——此分支当前不触发，仅为未来 mode 回切（如 json mode 调试）保留」 | `session-runner.ts:834-836` | ✅ 属实，作者自己标注了不触发 |
+| `registerPid` 唯一生产调用点在 `if (parsed.kind === "header")` 分支内 | `session-runner.ts:811`（header if）、`:832`（`ctx.onWorktreePid?.(opts.worktree.branch, child.pid)`） | ✅ 属实 |
+| 该分支注释原文：「buildSpawnArgs 固定 --mode rpc，RPC mode 不发 header——此分支当前不触发，仅为未来 mode 回切（如 json mode 调试）保留」 | `session-runner.ts:836-837` | ✅ 属实，作者自己标注了不触发 |
 | `buildSpawnArgs` 固定 `--mode rpc`（实际唯一使用的 mode） | `session-runner.ts:481` | ✅ 属实 |
 | RPC mode 不输出 header 行（只有 json/print mode 输出） | `spawn-event-adapter.ts` 头部注释 | ✅ 属实 |
 | `child.pid` 在 `spawn()` 返回后同步可得，无需等任何 stdout | `session-runner.ts:719` | ✅ 属实（Node.js ChildProcess.pid 同步属性） |
@@ -99,7 +99,7 @@ reaper 触发点 = 任意 session_start。低频场景（偶尔 1 个 background
 
 ### 2.6 现有测试为什么没拦住
 
-`session-start-reaper.test.ts:52`、`crash-recovery.test.ts:72`、`index-session-start.test.ts:119` 全部 `registerPid = vi.fn()` mock。单测验证的是「mock 了补全回调后的 reaper 行为」，从未验证「真实调用链中补全回调是否被调用」。这是结构性的测试盲区：**任何把补全挂错位置的接线错误，现有测试层级永远无法发现**。
+4 个测试文件 mock 掉 `registerPid`：`session-start-reaper.test.ts:52`、`crash-recovery.test.ts:72`、`index-session-start.test.ts:119`、`stream-sink-guard.test.ts:86`（`worktree-manager.test.ts:230` 是直接调 `registerPid` 的行为单测，非 mock，但它只验证「补全函数本身写入注册表」，同样不验证「生产调用链是否真的调用它」）。单测验证的是「mock 了补全回调后的 reaper 行为」，从未验证「真实调用链中补全回调是否被调用」。这是结构性的测试盲区：**任何把补全挂错位置的接线错误，现有测试层级永远无法发现**。
 
 ---
 
@@ -118,7 +118,7 @@ reaper 触发点 = 任意 session_start。低频场景（偶尔 1 个 background
 ```
 cwd 不存在：/var/folders/.../T/pi-subagents/.../pi-sub-sa-xxx
 该 worktree 可能已被 orphan reaper 清理，或子 agent 已结束。
-恢复：1) 检查 ~/.pi/agent/subagents/worktrees.json 中该 branch 的 pid 是否已补全；
+恢复：1) 检查 pi agent 目录下 subagents/worktrees.json（实现时由代码注入实际 agentDir 路径，禁止硬编码）中该 branch 的 pid 是否已补全；
       2) 若子 agent 仍在运行，重新派发（worktree 重建）；3) 若已结束，忽略此错误。
 ```
 
@@ -155,9 +155,10 @@ cwd 不存在：/var/folders/.../T/pi-subagents/.../pi-sub-sa-xxx
 
 **决策 4：cw-tool spawn 错误可操作化**
 
-- 选择：`cw-spawn.ts` 的 `defaultCwSpawner` 在 `spawn` 前 `fs.existsSync(cwd)` 检查，不存在时返回含 cwd 路径 + 恢复指引的错误；`session-runner.ts` 的 spawn error handler（`child.on("error")`）同样把 `spawnCwd` 拼进错误消息（当前 ENOENT 只报 command 名，不报 cwd——本次事故 glm-5.2 误诊「node 被卸载」的直接原因）。
+- 选择：`cw-spawn.ts` 的 `defaultCwSpawner` 在 `spawn` 前 `fs.existsSync(cwd)` 检查，不存在时返回含 cwd 路径 + 恢复指引的错误；**cw-spawn.ts 自身的 `child.on("error")` handler（cw-spawn.ts:97-100，当前 `[spawn error] ${err.message}`）同样把 cwd 拼进 stderr**——spawn 前检查存在 TOCTOU 窗口（检查通过 → 目录被删 → spawn ENOENT），error handler 是兜底；`session-runner.ts` 的 spawn error handler（`child.on("error")`）同样把 `spawnCwd` 拼进错误消息（当前 ENOENT 只报 command 名，不报 cwd——本次事故 glm-5.2 误诊「node 被卸载」的直接原因）。
 - 被否：只改 cw-tool 不改 session-runner（spawn 层同样有误导，同类问题同修）。
 - 依据：AGENTS.md「错误信息必须可操作」：错误 → 权威源（worktrees.json）→ 重试闭环。
+- 契约：`defaultCwSpawner` 返回 `Promise<CwSpawnResult>`（不 reject，error 事件走 finish 返回 exitCode=-1）。existsSync 检查失败时**与现有 error 路径保持一致**（resolve exitCode=-1 + stderr 文案），不引入 reject 新形态。
 
 **决策 5：reaper 二次确认（方案 C）不纳入本次主修复**
 
@@ -181,15 +182,19 @@ cwd 不存在：/var/folders/.../T/pi-subagents/.../pi-sub-sa-xxx
 3. 等待 90 秒（超过 60s 宽限），期间触发额外 session_start
 4. 检查 `$TMPDIR/pi-subagents/<enc>/pi-sub-<id>/` 目录仍存在（探针 2），子 agent 完成后标记文件存在（探针 3）
 
-**通过标准**：探针 1 中 pid ≠ 0；探针 2 目录存在（活 worktree 未被误清）；探针 3 任务正常完成。反向场景：手动 kill 子进程后触发 session_start，60s+ 后该 worktree 被 reaper 回收（真孤儿仍删）。
+**通过标准**：探针 1 中 pid ≠ 0；探针 2 目录存在（活 worktree 未被误清）；探针 3 任务正常完成。反向场景：手动 kill 子进程后触发任意 session_start，该 worktree **立即**被 reaper 回收（pid>0 且进程死即孤儿，无需等宽限——60s 宽限仅覆盖 pid=0 条目，此场景顺带验证该语义）。
 
-### 场景 2（目标 1）：集成测试——真实 spawn + fake timers
+### 场景 2（目标 4，间接含目标 1 断言）：集成测试——真实 spawn + fake timers
 
-**验证场景**：`extensions/subagent-workflow` 内新增集成测试（vitest），真实 spawn 最小 RPC 子进程 + 真实 worktree 创建。
+**验证场景**：`extensions/subagent-workflow` 内新增集成测试（vitest），真实 spawn 子进程 + 真实 worktree 创建。测试编排必须满足三点（缺一不可，详见 §5 Task 2）：
+
+1. **`vi.mock("./pi-invocation.ts")` 注入可执行脚本**——runSpawn 的 command 由 `getPiInvocation` 决定（`session-runner.ts:711`），vitest 环境下命中分支 1 会真实 spawn 当前 vitest 入口进程（灾难）；mock 注入 `node -e` 内联脚本
+2. **正向用例用长驻脚本**（sleep 90s 或等 stdin close 才退出），且 `runSpawn` 不 await（子进程存活时 close 不触发，await 会挂死）——测试从注册表读 pid、fake timers 推进超 60s、调 `scan()`、断言 checkout 目录仍存在，最后测试自持 SIGTERM 清理子进程
+3. **反向用例用短命脚本**（输出几行 event JSON 后退出），scan 后断言目录被回收
 
 **步骤**：`npx vitest run execution/__tests__/worktree-pid-registration.integration.test.ts`（或按仓库测试惯例命名）。
 
-**通过标准**：测试在修复前红（pid 恒 0、scan 后 checkout 消失）、修复后绿（pid 补全、scan 后目录健在）；含反向用例（子进程退出后 scan 回收）。
+**通过标准**：测试在修复前红（pid 恒 0、scan 后 checkout 消失）、修复后绿（pid 补全、scan 后目录健在）；含反向用例（短命子进程退出后 scan 回收）。
 
 ### 场景 3（目标 3）：cwd 不存在时的可操作错误
 
@@ -199,7 +204,7 @@ cwd 不存在：/var/folders/.../T/pi-subagents/.../pi-sub-sa-xxx
 
 **通过标准**：错误消息包含**完整 cwd 路径**（非仅「cw: ENOENT」）+ 恢复指引（查 worktrees.json / 重新派发）；错误经对话流展示给用户后，用户能据此判断是「worktree 被清」而非「环境坏了」。
 
-### 场景 4（目标 4）：回归基线——现有单测全绿
+### 场景 4（回归基线）：现有单测全绿
 
 **验证场景**：全量扩展测试。
 
@@ -223,20 +228,22 @@ cwd 不存在：/var/folders/.../T/pi-subagents/.../pi-sub-sa-xxx
     ctx.onWorktreePid?.(opts.worktree.branch, child.pid);
   }
   ```
-- **同时**：更新 `worktree-manager.ts` create() 与 `worktree-registry.ts` 中「first header 时补 pid」的注释为「spawn 返回后同步补 pid」；`worktree-manager.ts` scan() 的 pid=0 分支补 warn 日志（含 branch/checkout/createdAt）。
+- **同时**：更新 `worktree-manager.ts` create() 与 `worktree-registry.ts` 中「first header 时补 pid」的注释为「spawn 返回后同步补 pid」；`worktree-manager.ts` scan() 的 pid=0 分支补 warn 日志（含 branch/checkout/createdAt）；**`worktree-registry.ts` updatePid 写盘失败时补 warn（含 branch/pid）**——当前 save 的 catch 是 best-effort 静默吞错，若写盘失败（磁盘满/权限），条目 pid 恒 0、60s 后误删路径仍在且无诊断线索；与 scan 的 pid=0 warn 呼应，形成「补全失败可观测」闭环。
 - **验收**：§4 场景 1 探针 1、场景 2。
 - **justification**：这是本 bug 的唯一根治点——让补全路径真实可达。其余 Task 均不解决「pid 永不补全」本身。
 
 ### Task 2：端到端集成测试（堵结构性盲区）
 
-- **改动**：`extensions/subagent-workflow/src/execution/__tests__/` 新增集成测试：真实 spawn 最小 RPC 子进程（可用 `process.execPath` + 内联脚本或 mock pi 脚本，输出 `{"type":"event",...}` 几行后退出）+ `worktreeManager.create()` 真实建 worktree → 断言 spawn 返回后注册表 pid 已补全 → `vi.useFakeTimers()` 推进超 SPAWN_GRACE_MS → `scan()` → 断言 checkout 目录存在；反向：子进程退出后 scan 回收。
+- **改动**：`extensions/subagent-workflow/src/execution/__tests__/` 新增集成测试，两个用例两种脚本形态（缺一不可）：
+  - **正向用例（验证修复）**：`vi.mock("./pi-invocation.ts")` 注入 `node -e` 长驻脚本（sleep 90s 或等 stdin close 才退出，模拟长跑子 agent）→ `worktreeManager.create()` 真实建 worktree → `runSpawn()` **不 await**（子进程存活时 close 不触发，await 会挂死；测试从注册表读 pid 后自行 SIGTERM 清理）→ 断言 spawn 返回后注册表 pid 已补全（≠0）→ `vi.useFakeTimers()` 推进超 SPAWN_GRACE_MS → `scan()` → 断言 checkout 目录仍存在
+  - **反向用例（验证回收）**：mock 注入 `node -e` 短命脚本（输出几行 `{"type":"event",...}` 后退出）→ await runSpawn 完成 → `scan()` → 断言 checkout 目录被回收
 - **验收**：§4 场景 2。
-- **justification**：现有测试全 mock `registerPid`（§2.6），接线错误零检测能力。此测试是唯一能防同类回归的层级，先红后绿验证其有效性。
+- **justification**：现有测试全 mock `registerPid`（§2.6），接线错误零检测能力。此测试是唯一能防同类回归的层级，先红后绿验证其有效性（修复前正向用例红：pid 恒 0 → scan 删目录）。
 
 ### Task 3：cw-tool + session-runner spawn 错误可操作化
 
 - **改动**：
-  - `extensions/cw-tool/src/cw-spawn.ts` `defaultCwSpawner`：spawn 前 `fs.existsSync(cwd)`，不存在时返回含路径 + 恢复指引的错误（§3.1 的失败路径文案）
+  - `extensions/cw-tool/src/cw-spawn.ts` `defaultCwSpawner`：spawn 前 `fs.existsSync(cwd)`，不存在时返回含路径 + 恢复指引的错误（§3.1 的失败路径文案；返回形态与现有 error 路径一致：resolve exitCode=-1 + stderr，不 reject）；**error handler（cw-spawn.ts:97-100）同样把 cwd 拼进 stderr**（TOCTOU 兜底）
   - `extensions/subagent-workflow/src/execution/session-runner.ts` `child.on("error")`：错误消息拼接 `spawnCwd`（当前 ENOENT 只报 command 名）
 - **验收**：§4 场景 3。
 - **justification**：本次事故「烧 3.27M token 误诊」的直接原因是错误消息无 cwd 信息；同类 spawn 层错误同修，遵循「错误 → 权威源 → 重试」闭环。
@@ -255,7 +262,7 @@ Task 1 → Task 2（验证 Task 1 的先红后绿，依赖）→ Task 3（独立
 
 **待验证检查点**（设计阶段无法确定、实施期确认）：
 - spawn 失败时 `child.pid` 的确切值（undefined）——Task 1 的 `child.pid` 守卫已覆盖，实施期单测确认
-- 集成测试中最小 RPC 子进程脚本的最简形态（可用 `node -e` 内联，无需完整 pi 二进制）——实施期确认，若不可行则退化为「真实 spawn 长驻脚本 + SIGTERM」
+- 集成测试中 `vi.mock("./pi-invocation.ts")` 注入的最小脚本形态（`node -e` 内联）在 vitest 环境的可行性——实施期确认；长驻脚本是正向用例的必需形态（非退化方案），若 `node -e` 不可行则改用临时 .js 文件 + `process.execPath` spawn
 - cw-tool 现有测试对 spawner 的 mock 方式，Task 3 改动是否破坏现有测试契约——实施期跑 `pnpm extensions:test` 确认
 
 ---
