@@ -295,6 +295,21 @@ describe('ExtensionService', () => {
       await expect(service.installExtension('git:foo/bar')).rejects.toThrow('Unsupported source')
     })
 
+    it('rejects builtin packages (builtin_already_installed guard, MF-4)', async () => {
+      // @zhushanwen/pi-goal 是 builtin（feature 级），installExtension 守卫应拒绝用户 npm 安装。
+      // 否则与内置副本产生去重冲突，deduplicate 保留用户装的那份，
+      // 产生 source(user-installed)/tier(mandatory) 矛盾条目（不可卸载却显示为用户安装）。
+      // 与 uninstall/toggle 的 builtin 守卫对称（均有测），唯独 install 入口原缺测（MF-4）。
+      try {
+        await service.installExtension('npm:@zhushanwen/pi-goal')
+        expect.unreachable('Should have thrown builtin_already_installed')
+      } catch (e) {
+        expect(e).toBeInstanceOf(ExtensionInstallError)
+        expect((e as ExtensionInstallError).code).toBe('builtin_already_installed')
+        expect((e as Error).message).toMatch(/already built in/i)
+      }
+    })
+
     it('throws when package is not a valid pi extension', async () => {
       // installPackage succeeds but the installed package lacks pi manifest fields
       mockedInstallPackage.mockResolvedValue(undefined)

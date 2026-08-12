@@ -162,6 +162,22 @@ describe('plugin-esm-loader sandbox interception', () => {
     expect(results[0].error).toContain('PERMISSION_DENIED')
   }, TIMEOUT_MS)
 
+  it('TC9: data:/blob: URL 沙箱逃逸被拦截（MF-1：插件代码 import 非 file:// 非 npm 裸名 scheme 一律拒绝）', async () => {
+    setupSandbox()
+    // 插件代码 import data: URL —— MF-1 逃逸向量：
+    // data: 模块内的 node: import，parentURL 为 data: URL（非 file://）→ isInsideSandbox 短路 → 黑名单绕过。
+    // 修复后插件代码发起的 data:/blob:/http: 等 import 在 resolve 阶段即被拒绝。
+    writeFileSync(
+      join(pluginDir, 'bad-data.mjs'),
+      "import 'data:text/javascript,export const x=1'\n",
+    )
+    const results = await runImports({ XYZ_PLUGIN_SANDBOX_DIR: pluginDir }, [
+      { label: 'bad-data', url: pluginFile('bad-data.mjs') },
+    ])
+    expect(results[0].ok).toBe(false)
+    expect(results[0].error).toContain('PERMISSION_DENIED')
+  }, TIMEOUT_MS)
+
   it('TC7: loader 源文件结构正确（hooks 导出 + self-register + realpath 规范化）', () => {
     // 对应 TC7（打包验证的源文件层检查）：hooks 先赋值后 self-register 是
     // resolve 生效的前提，realpath 规范化修复 macOS /var→/private/var 失配。

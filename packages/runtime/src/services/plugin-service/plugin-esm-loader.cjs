@@ -82,22 +82,37 @@ async function resolve(specifier, context, nextResolve) {
     return nextResolve(specifier, context)
   }
 
-  const isBare = !specifier.startsWith('./') && !specifier.startsWith('../') && !specifier.startsWith('/') && !specifier.startsWith('file:')
-  if (isBare) {
-    const bareName = specifier.startsWith('node:') ? specifier.slice('node:'.length) : specifier
-    if (BLOCKED_BUILTINS.includes(bareName)) {
-      throw sandboxError(`Sandbox: import('${specifier}') is blocked`)
+  // 路径类 import（./ ../ / 绝对路径 / file:）：先解析再查边界
+  if (
+    specifier.startsWith('./') ||
+    specifier.startsWith('../') ||
+    specifier.startsWith('/') ||
+    specifier.startsWith('file:')
+  ) {
+    const resolved = await nextResolve(specifier, context)
+    if (!isInsideSandbox(resolved.url)) {
+      throw sandboxError(`Sandbox: import('${specifier}') resolves outside plugin directory`)
     }
-    // 非黑名单裸名（npm 包）放行
-    return nextResolve(specifier, context)
+    return resolved
   }
 
-  // 路径类 import（./ ../ / file:）：先解析再查边界
-  const resolved = await nextResolve(specifier, context)
-  if (!isInsideSandbox(resolved.url)) {
-    throw sandboxError(`Sandbox: import('${specifier}') resolves outside plugin directory`)
+  // node: 前缀或裸内置名 → 黑名单检查
+  const bareName = specifier.startsWith('node:') ? specifier.slice('node:'.length) : specifier
+  if (BLOCKED_BUILTINS.includes(bareName)) {
+    throw sandboxError(`Sandbox: import('${specifier}') is blocked`)
   }
-  return resolved
+
+  // 非 node: 的带 scheme specifier（data:/blob:/http: 等）一律拒绝（MF-1 沙箱逃逸）：
+  // 这类 URL 不经 pluginDir 边界校验，其内部 import 的 parentURL 非沙箱 file://，
+  // 会短路整个 hook 绕过黑名单（如 data: 模块内 import 'node:fs' 直读任意文件）。
+  // node:/file: 已在上文分流；npm 裸名（无 scheme，如 ajv/croner）继续放行。
+  // 仅拦「插件代码直接 import」，不影响 npm dep 内部的 data:/blob:（其 parentURL 在 node_modules，走 bypass）。
+  if (!specifier.startsWith('node:') && /^[a-z][a-z0-9+.-]*:/i.test(specifier)) {
+    throw sandboxError(`Sandbox: import('${specifier}') uses blocked scheme`)
+  }
+
+  // 裸名（npm 包名，非黑名单）放行
+  return nextResolve(specifier, context)
 }
 
 // hooks 先赋值再 self-register（register 从本模块 exports 提取 hooks，
