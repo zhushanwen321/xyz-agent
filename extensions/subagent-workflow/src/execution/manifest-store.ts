@@ -7,6 +7,8 @@ import { bestEffort } from "./best-effort.ts";
 export interface ManifestRecord {
   id: string;
   rootSessionId: string;
+  /** 直接父 subagent record ID（层级树构建用）。顶层 record 缺失（undefined）。M3a 补字段。 */
+  parentRecordId?: string;
   agentName: string;
   /**
    * 终态枚举：finalizeRecord 写 running/completed/failed/cancelled 四态；cancelled 不再
@@ -24,6 +26,9 @@ export interface ManifestRecord {
   slug?: string;
   model?: string;
 }
+
+/** JSON.stringify 缩进空格数（no-magic-numbers 合规）。 */
+const MANIFEST_INDENT_SPACES = 2;
 
 /** 合法 manifest status 集合（4 态；运行时守卫用，磁盘文件可能陈旧/损坏）。crashed 不在其中。 */
 const VALID_MANIFEST_STATUSES: ReadonlySet<string> = new Set([
@@ -69,7 +74,7 @@ export class ManifestStore {
   async writeManifest(record: ManifestRecord): Promise<void> {
     const filePath = path.join(this.dir, `${record.id}.json`);
     const tmpPath = `${filePath}.tmp.${process.pid}`;
-    const content = JSON.stringify(record, null, 2);
+    const content = JSON.stringify(record, null, MANIFEST_INDENT_SPACES);
 
     let renamed = false;
     try {
