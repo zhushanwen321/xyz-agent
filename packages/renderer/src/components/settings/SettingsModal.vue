@@ -15,25 +15,47 @@
       :aria-label="t('settings.title')"
       @keydown="onKeydown"
     >
+      <!-- 左上 chrome 按钮组（与主应用 AppNavControls 同位 top-5/left-8/translate-x-64 + 同样式 nav-btn）：
+           ← 后退退出 settings（回到非 settings 页面）；收起侧栏/前进在 settings 全屏内无可见导航语义，禁用。
+           浮在 overlay 层（非 nav 内），确保按钮组定位对齐窗口左上（与主应用一致）且不受 nav 布局影响。 -->
+      <div class="absolute top-[5px] left-[8px] z-10 flex gap-0.5 translate-x-[64px] [-webkit-app-region:no-drag]">
+        <Button
+          variant="ghost"
+          size="icon"
+          disabled
+          class="nav-btn h-[22px] w-[26px] rounded-md text-neutral-dim disabled:opacity-40"
+          :title="t('shell.collapseSidebar')"
+          :aria-label="t('shell.toggleSidebar')"
+        >
+          <PanelLeftClose class="size-[14px]" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="nav-btn h-[22px] w-[26px] rounded-md text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg"
+          :title="t('shell.goBack')"
+          :aria-label="t('shell.goBack')"
+          data-testid="settings-back-btn"
+          @click="close"
+        >
+          <ArrowLeft class="size-[14px]" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          disabled
+          class="nav-btn h-[22px] w-[26px] rounded-md text-neutral-dim disabled:opacity-40"
+          :title="t('shell.goForward')"
+          :aria-label="t('shell.goForward')"
+        >
+          <ArrowRight class="size-[14px]" />
+        </Button>
+      </div>
       <!-- 左 nav -->
       <nav ref="navRootEl" class="flex w-[220px] shrink-0 flex-col bg-[var(--bg-sunken)] p-[8px] gap-[1px]" data-settings-nav>
-        <!-- traffic light 安全区：pl-[80px] 让位红黄绿（三平台统一，全屏态保留无害）。
-             本 overlay 是 fixed inset:0 全屏覆盖，不继承 AsideRegion 的 pt-6 安全区，故显式让位。
-             红黄绿原生位置 x8~60，pl-80 仍足够让位。 -->
-        <!-- 顶部退出按钮：与 trafficlight 同行（pl-[80px] 让位红黄绿 x8~60），ArrowLeft 表示退出设置。
-             替代原「设置」标题文字——退出入口放左上符合「返回上一级」导航心智（右上 X 关闭并存）。 -->
-        <div class="flex h-[44px] items-center pl-[80px] pr-[12px]">
-          <Button
-            type="button"
-            variant="ghost"
-            class="back-btn flex h-[28px] w-[28px] p-0 items-center justify-center rounded-[var(--radius-sm)] text-[length:var(--text-base)] font-normal leading-[1.5] text-neutral-mid transition-colors duration-[var(--duration-fast)] ease-[var(--ease)] hover:bg-surface-hover hover:text-neutral-fg"
-            :title="t('settings.close')"
-            :aria-label="t('settings.close')"
-            @click="close"
-          >
-            <ArrowLeft class="!w-[16px] !h-[16px]" />
-          </Button>
-        </div>
+        <!-- traffic light + chrome 让位（44px）：按钮组浮在 overlay 层（上方 absolute，同主应用 AppNavControls
+             位置），nav 顶部留白避免遮挡 menus。红黄绿原生位置 x8~60。 -->
+        <div class="h-[44px] shrink-0"></div>
         <div class="flex flex-col gap-[1px]">
           <Button
             v-for="item in menus"
@@ -110,7 +132,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
-import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X, Download, Bug, ArrowLeft } from '@lucide/vue'
+import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X, Download, Bug, ArrowLeft, ArrowRight, PanelLeftClose } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { getSettingsStore, useSettings, type SystemSettings } from '@xyz-agent/core'
 import { useToast } from '@/composables/useToast'
@@ -352,7 +374,7 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
 }
 .xbtn:focus-visible,
-.back-btn:focus-visible {
+.nav-btn:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
 }
