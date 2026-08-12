@@ -18,7 +18,8 @@
 //   - node:child_process 不 mock（真实 spawn / execFileSync git）
 //   - node:fs 不 mock（真实目录/文件：worktree checkout、注册表 JSON）
 //   - alive-store 不 mock（真实 process.kill(pid, 0) 探活）
-//   - 仅 vi.mock("./pi-invocation.ts")：getPiInvocation 返回 node -e 脚本
+//   - 仅 vi.mock("../pi-invocation.ts")：getPiInvocation 返回 node -e 脚本
+//     （注意：相对路径按测试文件所在目录解析，须从 __tests__/ 上溯到 execution/）
 //   - fake timers 仅 toFake: ["Date"]：推进注册表宽限判定用，不干扰真实 I/O 事件
 
 import { execFileSync } from "node:child_process";
@@ -43,10 +44,12 @@ const { scriptHolder, LONG_RUNNING_SCRIPT, SHORT_LIVED_SCRIPT } = vi.hoisted(() 
   };
 });
 
-vi.mock("./pi-invocation.ts", () => ({
+vi.mock("../pi-invocation.ts", () => ({
   getPiInvocation: (userArgs: string[]) => ({
+    // 注意：node -e <script> 后不能带 --mode/--session-dir 等以 - 开头的参数——
+    // node 会当自身选项解析报 "bad option"（实测）。脚本不消费 argv，userArgs 省略。
     command: process.execPath,
-    args: ["-e", scriptHolder.script, ...userArgs],
+    args: ["-e", scriptHolder.script],
   }),
 }));
 
@@ -209,7 +212,7 @@ describe("worktree pid 注册链路（真实 spawn 集成）", () => {
       makeOpts({ worktree: handle }),
       ctx,
     );
-    expect(result.status).not.toBe("error"); // 进程正常退出（exit 0），非 spawn 失败
+    expect(result.success).toBe(true); // 进程正常退出（exit 0），非 spawn 失败
 
     // 3. pid 已补全（短命进程退出后 pid 仍有效，registerPid 同步执行不受退出影响）
     const entry = readEntry(handle.branch);
