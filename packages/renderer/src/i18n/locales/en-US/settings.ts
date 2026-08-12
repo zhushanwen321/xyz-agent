@@ -53,6 +53,8 @@ export default {
     appendPlaceholder: 'Enter the prompt to append…',
     save: 'Save',
     savedToast: 'Saved',
+    discard: 'Discard',
+    restoreDefault: 'Restore default',
     corruptedHint: 'The system prompt config file is corrupted; rolled back to defaults',
     charCount: 'chars',
     defaultToggle: 'View pi default prompt',
@@ -387,6 +389,12 @@ export default {
     installSelected: 'Install selected',
     cancel: 'Cancel',
     installedTitle: 'Installed',
+    // v6 demo backfill: group by layer (builtin mandatory / user installed)
+    installedBuiltinTitle: 'Installed',
+    scopeBuiltinPill: 'System mandatory',
+    scopeUserPill: 'User installed',
+    builtinAux: 'Installed and upgraded by runtime · cannot disable or uninstall',
+    userAux: 'Toggle, upgrade and uninstall freely',
     noExtensions: 'No extensions',
     sourceUser: 'user',
     sourceDiscovery: 'discovery',
@@ -645,6 +653,11 @@ export default {
     preDownloadTitle: 'Pre-download Updates',
     preDownloadDesc: 'Automatically download the installer in the background when a new version is detected, so updates no longer wait for download',
     preDownloadLabel: 'Enable pre-download',
+    autoUpdateTitle: 'Automatic Updates',
+    autoUpdateDesc: 'Automatically check for updates on startup and prompt to download when a new version is found',
+    autoUpdateLabel: 'Check for updates on startup',
+    currentVersionLabel: 'Current Version',
+    channelHint: 'stable channel · restart the app for the update to take effect',
   },
   // ── Compat editor (CompatEditor / CompatField) ──
   compat: {

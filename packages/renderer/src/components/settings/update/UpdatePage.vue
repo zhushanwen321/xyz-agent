@@ -4,7 +4,37 @@
 -->
 <template>
   <div class="flex max-w-[860px] flex-col gap-3">
-    <!-- 卡 1：预下载设置 -->
+    <!-- 卡 1：自动更新（v6 demo 回填：开关 + 当前版本 + 检查更新状态机） -->
+    <div class="rounded-md border border-border bg-bg">
+      <div class="px-4 pb-3 pt-3">
+        <h3 class="text-[13px] font-medium text-fg">{{ t('settings.update.autoUpdateTitle') }}</h3>
+        <p class="mt-0.5 text-[11px] text-muted">{{ t('settings.update.autoUpdateDesc') }}</p>
+      </div>
+      <div class="border-t border-border">
+        <!-- 自动更新开关行 -->
+        <div class="flex items-center justify-between px-4 py-3">
+          <Label class="text-[12px] text-fg">{{ t('settings.update.autoUpdateLabel') }}</Label>
+          <Switch
+            data-testid="switch-auto-update"
+            :model-value="autoUpdate"
+            :disabled="autoUpdateSaving"
+            @update:model-value="onToggleAutoUpdate"
+          />
+        </div>
+        <!-- 当前版本行 -->
+        <div class="flex items-center justify-between border-t border-border px-4 py-3">
+          <Label class="text-[12px] text-fg">{{ t('settings.update.currentVersionLabel') }}</Label>
+          <span
+            class="rounded-sm border border-border-strong bg-bg-input px-2 py-0.5 font-mono text-[11px] text-fg"
+            data-testid="current-version-pill"
+          >v{{ appVersion }} · {{ t('settings.update.channelHint') }}</span>
+        </div>
+        <!-- 检查更新状态机（UpdateCheckCard 内嵌为卡内区块） -->
+        <UpdateCheckCard />
+      </div>
+    </div>
+
+    <!-- 卡 2：预下载设置 -->
     <div class="rounded-md border border-border bg-bg">
       <div class="px-4 pb-3 pt-3">
         <h3 class="text-[13px] font-medium text-fg">{{ t('settings.update.preDownloadTitle') }}</h3>
@@ -23,7 +53,7 @@
       </div>
     </div>
 
-    <!-- 卡 2：代理配置 -->
+    <!-- 卡 3：代理配置 -->
     <div class="rounded-md border border-border bg-bg">
       <div class="px-4 pb-3 pt-3">
         <h3 class="text-[13px] font-medium text-fg">{{ t('settings.update.sectionTitle') }}</h3>
@@ -140,6 +170,7 @@ import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { getProxyConfig, setProxyConfig, testProxy, getUpdateSettings, setUpdateSettings } from '@/api/domains/settings'
 import { useToast } from '@/composables/useToast'
+import UpdateCheckCard from '../UpdateCheckCard.vue'
 
 const { t } = useI18n()
 const { info: toastInfo, error: toastError } = useToast()
@@ -166,6 +197,14 @@ const preDownload = ref(false)
 /** 预下载开关持久化中（切换时短暂 disable 控件） */
 const preDownloadSaving = ref(false)
 
+/** 自动更新开关（启动时自动检查更新，从 main 进程加载，切换时立即持久化） */
+const autoUpdate = ref(false)
+/** 自动更新开关持久化中（切换时短暂 disable 控件） */
+const autoUpdateSaving = ref(false)
+
+/** 当前应用版本（vite define 注入，全局声明见 env.d.ts） */
+const appVersion = __APP_VERSION__
+
 // ── Lifecycle ──
 
 /** 加载当前配置 */
@@ -188,12 +227,28 @@ async function loadConfig() {
   // 预下载设置
   if (results[1].status === 'fulfilled') {
     preDownload.value = results[1].value.preDownload
+    autoUpdate.value = results[1].value.autoUpdate ?? false
   } else {
     console.error('[UpdatePage] load update settings failed:', results[1].reason)
   }
 }
 
 onMounted(loadConfig)
+
+/** 切换自动更新开关（立即持久化到 main 进程） */
+async function onToggleAutoUpdate(value: boolean | string): Promise<void> {
+  const enabled = value === true
+  autoUpdateSaving.value = true
+  try {
+    await setUpdateSettings({ autoUpdate: enabled })
+    autoUpdate.value = enabled
+  } catch (err) {
+    // 持久化失败：恢复控件到原值，toast 提示
+    toastError(err instanceof Error ? err.message : String(err))
+  } finally {
+    autoUpdateSaving.value = false
+  }
+}
 
 /** 切换预下载开关（立即持久化到 main 进程） */
 async function onTogglePreDownload(value: boolean | string): Promise<void> {

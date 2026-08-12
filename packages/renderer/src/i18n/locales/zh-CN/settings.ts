@@ -53,6 +53,8 @@ export default {
     appendPlaceholder: '输入要追加的提示词……',
     save: '保存',
     savedToast: '已保存',
+    discard: '放弃',
+    restoreDefault: '恢复默认',
     corruptedHint: '系统提示词配置文件已损坏，已回退默认配置',
     charCount: '字符',
     defaultToggle: '查看 pi 默认提示词',
@@ -387,6 +389,12 @@ export default {
     installSelected: '安装选中',
     cancel: '取消',
     installedTitle: '已安装',
+    // ── v6 demo 回填：按 layer 分组（builtin 系统强制 / user 用户安装）──
+    installedBuiltinTitle: '已安装扩展',
+    scopeBuiltinPill: '系统强制',
+    scopeUserPill: '用户安装',
+    builtinAux: 'runtime 自动安装/升级 · 不可禁用/卸载',
+    userAux: '可开关 · 可升级 · 可卸载',
     noExtensions: '暂无扩展',
     sourceUser: 'user',
     sourceDiscovery: 'discovery',
@@ -645,6 +653,11 @@ export default {
     preDownloadTitle: '预下载更新',
     preDownloadDesc: '检测到新版本时自动在后台下载安装包，更新时无需等待下载',
     preDownloadLabel: '启用预下载',
+    autoUpdateTitle: '自动更新',
+    autoUpdateDesc: '启动时自动检查更新，发现新版本后提示下载安装',
+    autoUpdateLabel: '启动时自动检查更新',
+    currentVersionLabel: '当前版本',
+    channelHint: 'stable 渠道 · 更新完成后需重启应用生效',
   },
   // ── Compat 编辑器（CompatEditor / CompatField）──
   compat: {

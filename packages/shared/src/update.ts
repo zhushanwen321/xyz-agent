@@ -80,8 +80,12 @@ export interface IProxyConfig {
  * 字段：
  * - preDownload：检测到新版时是否自动在后台预下载安装包。开启后点击更新跳过下载等待。
  *   默认 false（新用户不自动消耗流量/磁盘，需主动开启）。
+ * - autoUpdate：启动时自动检查更新并提示下载（v6 demo 语义）。默认 false。
+ *   可选字段：调用方可以只传部分字段做局部更新（setUpdateSettings 内部与现有值合并）。
  */
 export interface UpdateSettings {
   /** 检测到新版时自动后台预下载 */
   preDownload: boolean
+  /** 启动时自动检查更新并提示下载 */
+  autoUpdate?: boolean
 }

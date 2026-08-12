@@ -153,8 +153,8 @@ export interface ElectronAPI {
   // ── 升级设置（功能 2：预下载开关）──────────────────────────────
   /** 读取升级设置（预下载开关等） */
   getUpdateSettings(): Promise<UpdateSettings>
-  /** 保存升级设置 */
-  setUpdateSettings(settings: UpdateSettings): Promise<{ success: boolean }>
+  /** 保存升级设置（局部更新：只传要修改的字段） */
+  setUpdateSettings(settings: Partial<UpdateSettings>): Promise<{ success: boolean }>
   // ── 系统提示音（跨平台：mac afplay / linux paplay / win 返 wav base64）──
   /** 列出当前平台可用的系统提示音（existsSync 过滤后的精选清单） */
   listSystemSounds(): Promise<{ platform: string; sounds: Array<{ id: string; name: string }> }>
@@ -293,7 +293,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── 升级提醒持久化标志 + 升级设置 ────────────────────────────────
   getPendingUpdate: () => ipcRenderer.invoke('update:getPending'),
   getUpdateSettings: () => ipcRenderer.invoke('update:getSettings'),
-  setUpdateSettings: (settings: UpdateSettings) => ipcRenderer.invoke('update:setSettings', settings),
+  setUpdateSettings: (settings: Partial<UpdateSettings>) => ipcRenderer.invoke('update:setSettings', settings),
   // ── 系统提示音 ──────────────────────────────────────────────
   listSystemSounds: () => ipcRenderer.invoke('sound:list'),
   playSystemSound: (name: string, kind?: 'success' | 'error') => ipcRenderer.invoke('sound:play', name, kind),

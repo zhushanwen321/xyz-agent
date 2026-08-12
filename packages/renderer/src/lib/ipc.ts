@@ -329,7 +329,7 @@ export function getUpdateSettings(): Promise<UpdateSettings> {
 }
 
 /** 保存升级设置。无 IPC 时 no-op 返回 success */
-export function setUpdateSettings(settings: UpdateSettings): Promise<{ success: boolean }> {
+export function setUpdateSettings(settings: Partial<UpdateSettings>): Promise<{ success: boolean }> {
   return api?.setUpdateSettings(settings) ?? Promise.resolve({ success: true })
 }
 

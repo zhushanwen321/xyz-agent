@@ -143,7 +143,7 @@ export async function getUpdateSettings(): Promise<UpdateSettings> {
   return getUpdateSettingsIpc()
 }
 
-/** 保存升级设置。 */
-export async function setUpdateSettings(settings: UpdateSettings): Promise<void> {
+/** 保存升级设置（局部更新：只传要修改的字段）。 */
+export async function setUpdateSettings(settings: Partial<UpdateSettings>): Promise<void> {
   await setUpdateSettingsIpc(settings)
 }

@@ -1,8 +1,11 @@
 <!--
-  Settings · System 页 · 版本检查卡片。
+  UpdateCheckCard · 版本检查区块（挂载于 UpdatePage 自动更新卡内）。
 
   自包含组件：内部调 useAppUpdate（单例 state），与侧边栏 UpdateButton 共享同一份 state，
   天然联动（任一入口检测/下载/安装，另一处实时反映）。
+
+  v6 demo 回填：原为独立卡片（含「版本更新」标题），现去卡片壳内嵌为
+  UpdatePage「自动更新」卡的卡内区块（版本行 + 检查按钮 + 状态机 + 确认 Dialog）。
 
   状态机分支（state.state）：
   - idle         检查按钮
@@ -16,28 +19,19 @@
   - unsupported  前往下载（备用页）
 -->
 <template>
-  <div class="rounded-md border border-border bg-bg">
-    <div class="px-4 pb-3 pt-3">
-      <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.system.versionTitle') }}</h3>
-      <p class="mt-0.5 text-[10px] text-neutral-dim">{{ t('settings.system.versionDesc') }}</p>
-    </div>
-    <div class="flex items-center justify-between border-t border-border px-4 py-3">
+  <div class="flex items-center justify-between border-t border-border px-4 py-3">
       <!-- 状态文案（左） -->
       <div class="flex min-w-0 items-center gap-1.5">
-        <!-- idle / checking：当前版本 -->
-        <template v-if="state.state === 'idle' || state.state === 'checking'">
-          <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.currentVersion') }}</Label>
-          <span class="text-[12px] text-neutral-mid">v{{ appVersion }}</span>
-        </template>
+        <!-- idle / checking：无左侧状态文案（当前版本已由自动更新卡内版本行展示），仅保留右侧按钮 -->
         <!-- available：发现新版本 -->
         <span
-          v-else-if="state.state === 'available'"
+          v-if="state.state === 'available'"
           class="text-[12px] text-accent"
           data-testid="settings-update-new-version"
         >{{ t('settings.system.newVersionAvailable', { version: state.latestRelease?.version }) }}</span>
         <!-- downloading / verifying：进度 -->
         <span
-          v-else-if="state.state === 'downloading' || state.state === 'verifying'"
+          v-if="state.state === 'downloading' || state.state === 'verifying'"
           class="inline-flex items-center gap-1 text-[12px] text-neutral-mid"
         >
           <Loader2 class="size-4 animate-spin" />
@@ -168,7 +162,6 @@
         </div>
       </DialogContent>
     </Dialog>
-  </div>
 </template>
 
 <script setup lang="ts">
@@ -176,7 +169,6 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RefreshCw, Download, CheckCircle2, AlertCircle, Loader2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
 import {
   Dialog,
   DialogContent,
@@ -188,9 +180,6 @@ import { useAppUpdate } from '@/composables/features/settings/useAppUpdate'
 
 const { t } = useI18n()
 const { state, checkForUpdate, performDownload, performInstall, openFallbackUrl } = useAppUpdate()
-
-/** xyz-agent 版本号（vite define 注入，全局声明见 env.d.ts） */
-const appVersion = __APP_VERSION__
 
 /** 确认重启安装 Dialog 开关 */
 const showConfirmDialog = ref(false)
