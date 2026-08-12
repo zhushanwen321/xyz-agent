@@ -61,6 +61,7 @@ export { mandatoryExtensions }
 // Node-only 消费方（main/runtime）从子路径 import：'@xyz-agent/shared/paths'
 export * from './file-tree'
 export type { RecentWorkspaceRecord } from './workspace'
+export type { Project, ProjectStoreState } from './project'
 export type { SubagentRecord, SubagentStatus } from './subagent'
 // Coding Plan 额度查询类型
 export type {

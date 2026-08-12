@@ -135,6 +135,6 @@ describe('Landing 选目录延迟 create（不预建 session）', () => {
 
     // 首发提交才 create，用 pendingCwd（/picked）而非 resolveDefaultCwd（/elsewhere）；label='hello'（≤10 原文）
     expect(apiMock.create).toHaveBeenCalledTimes(1)
-    expect(apiMock.create).toHaveBeenCalledWith('/picked', 'hello', undefined)
+    expect(apiMock.create).toHaveBeenCalledWith('/picked', 'hello', undefined, undefined)
   })
 })

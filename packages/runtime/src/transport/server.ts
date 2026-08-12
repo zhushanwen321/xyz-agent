@@ -35,12 +35,14 @@ import { PluginMessageHandler } from './plugin-message-handler.js'
 import { GitMessageHandler } from './git-message-handler.js'
 import { FileMessageHandler } from './file-message-handler.js'
 import { WorkspaceMessageHandler } from './workspace-message-handler.js'
+import { ProjectMessageHandler } from './project-message-handler.js'
 import { WorktreeMessageHandler } from './worktree-message-handler.js'
 import { TerminalMessageHandler } from './terminal-message-handler.js'
 import { QuotaMessageHandler } from './quota-message-handler.js'
 import { PresetMessageHandler } from './preset-message-handler.js'
 import type { MessageHandlerContext, ErrorDetails } from './message-context.js'
 import type { WorkspaceService } from '../services/workspace/workspace-service.js'
+import type { ProjectStore } from '../services/project/project-store.js'
 import type { IWorktreeService } from '../services/ports/worktree-service.js'
 import type { HandoffService } from '../services/handoff-service.js'
 import type { ITerminalService } from '../services/ports/terminal-service.js'
@@ -84,6 +86,7 @@ export class RuntimeServer implements IMessageBroker {
   private gitMessageHandler?: GitMessageHandler
   private fileMessageHandler?: FileMessageHandler
   private workspaceMessageHandler!: WorkspaceMessageHandler
+  private projectMessageHandler!: ProjectMessageHandler
   private worktreeMessageHandler?: WorktreeMessageHandler
   private terminalMessageHandler?: TerminalMessageHandler
   private quotaMessageHandler!: QuotaMessageHandler
@@ -120,7 +123,7 @@ export class RuntimeServer implements IMessageBroker {
     this.messageBus = bus
   }
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }, skillRegistry?: SkillRegistry, worktree?: IWorktreeService, terminal?: ITerminalService, quota?: QuotaService, handoff?: HandoffService, preset?: PresetService, auth?: IAuthService): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }, skillRegistry?: SkillRegistry, worktree?: IWorktreeService, terminal?: ITerminalService, quota?: QuotaService, handoff?: HandoffService, preset?: PresetService, auth?: IAuthService, project?: ProjectStore): void {
     this.gitService = git
     this.fileService = file
     this.handoffService = handoff
@@ -226,6 +229,12 @@ export class RuntimeServer implements IMessageBroker {
         workspaceService: workspace,
       })
     }
+    if (project) {
+      this.projectMessageHandler = new ProjectMessageHandler({
+        ...messaging,
+        projectStore: project,
+      })
+    }
     if (worktree) {
       this.worktreeMessageHandler = new WorktreeMessageHandler({
         ...messaging,
@@ -258,6 +267,7 @@ export class RuntimeServer implements IMessageBroker {
     const gitHandler = this.gitMessageHandler
     const fileHandler = this.fileMessageHandler
     const workspaceHandler = this.workspaceMessageHandler
+    const projectHandler = this.projectMessageHandler
     const worktreeHandler = this.worktreeMessageHandler
     const terminalHandler = this.terminalMessageHandler
     const quotaHandler = this.quotaMessageHandler
@@ -271,6 +281,7 @@ export class RuntimeServer implements IMessageBroker {
       ...(gitHandler ? gitHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => gitHandler.handleGitMessage(msg, ws)] as const) : []),
       ...(fileHandler ? fileHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => fileHandler.handleFileMessage(msg, ws)] as const) : []),
       ...(workspaceHandler ? workspaceHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => workspaceHandler.handleWorkspaceMessage(msg, ws)] as const) : []),
+      ...(projectHandler ? projectHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => projectHandler.handleProjectMessage(msg, ws)] as const) : []),
       ...(worktreeHandler ? worktreeHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => worktreeHandler.handleWorktreeMessage(msg, ws)] as const) : []),
       ...(terminalHandler ? terminalHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => terminalHandler.handleTerminalMessage(msg, ws)] as const) : []),
       ...(quotaHandler ? quotaHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => quotaHandler.handleQuotaMessage(msg, ws)] as const) : []),

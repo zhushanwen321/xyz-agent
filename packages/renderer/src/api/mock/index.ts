@@ -287,6 +287,15 @@ export const session = {
     pushSessionList()
   },
 
+  /** Mock：归入项目（D14 语义修正）——与 real session.setProject 同构，更新归属 + 广播。 */
+  async setProject(sessionId: string, projectId: string): Promise<void> {
+    await sleep(TIMING.ack)
+    const target = fixtureSessions.find((s) => s.id === sessionId)
+    if (!target) throw new Error(`mock: session ${sessionId} 不存在`)
+    target.projectId = projectId || undefined
+    pushSessionList()
+  },
+
   async remove(sessionId: string): Promise<void> {
     await sleep(TIMING.ack)
     const idx = fixtureSessions.findIndex((s) => s.id === sessionId)
@@ -1161,6 +1170,17 @@ export const workspace = {
   // detect：mock 恒返 not-repo（三态检测，real 轨驱动）
   async detect(_cwd: string): Promise<import('@xyz-agent/shared').ServerMessageMap['workspace.detected']> {
     return { mode: 'not-repo', wsRoot: '', barePath: '', repoRoot: '', defaultBranch: '' }
+  },
+}
+
+// project 域 mock 占位（D14，2026-08-04）：mock 模式无 runtime，project 列表回退默认空态。
+// 与 real 轨 api/domains/project.ts 签名同构（load/save），避免门面三元崩溃。
+export const project = {
+  async load(): Promise<import('@xyz-agent/shared').ProjectStoreState> {
+    return { projects: [], activeProjectId: '' }
+  },
+  async save(state: import('@xyz-agent/shared').ProjectStoreState): Promise<import('@xyz-agent/shared').ProjectStoreState> {
+    return { ...state }
   },
 }
 

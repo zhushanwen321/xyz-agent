@@ -143,7 +143,7 @@ describe('useNewTaskFlow 状态机', () => {
       await flow.submitFirstMessage(textToSegments('一二三四五六七八九十十一')) // 11 字
       expect(apiMock.create).toHaveBeenCalledTimes(1)
       // cwd 兑底用最近 session 的 /repo；label 截断为前 10 字 + 省略号
-      expect(apiMock.create).toHaveBeenCalledWith('/repo', '一二三四五六七八九十…', undefined)
+      expect(apiMock.create).toHaveBeenCalledWith('/repo', '一二三四五六七八九十…', undefined, undefined)
     })
 
     it('短提示词 → label = 原文（不加省略号），与提示词一致', async () => {
@@ -153,7 +153,7 @@ describe('useNewTaskFlow 状态机', () => {
       const flow = useNewTaskFlow()
       await flow.startFlow()
       await flow.submitFirstMessage(textToSegments('修 bug')) // 4 字
-      expect(apiMock.create).toHaveBeenCalledWith('/repo', '修 bug', undefined)
+      expect(apiMock.create).toHaveBeenCalledWith('/repo', '修 bug', undefined, undefined)
     })
 
     it('selectedWorkspace 选定 cwd 后发送 → create 第 1 参数用选定 cwd 而非兑底', async () => {
@@ -163,7 +163,7 @@ describe('useNewTaskFlow 状态机', () => {
       flow.openDirPopover() // landing→dir-popover（selectWorkspace 须从 dir-popover 调用）
       await flow.selectWorkspace('/custom/path') // dir-popover→landing，记 pendingCwd
       await flow.submitFirstMessage(textToSegments('hello world!'))
-      expect(apiMock.create).toHaveBeenCalledWith('/custom/path', 'hello worl…', undefined)
+      expect(apiMock.create).toHaveBeenCalledWith('/custom/path', 'hello worl…', undefined, undefined)
     })
   })
 
@@ -184,7 +184,7 @@ describe('useNewTaskFlow 状态机', () => {
       await flow.startFlow()
       await flow.submitFirstMessage(textToSegments('hello'))
       // create 用兑底 cwd 调用
-      expect(apiMock.create).toHaveBeenCalledWith('/gone', expect.any(String), undefined)
+      expect(apiMock.create).toHaveBeenCalledWith('/gone', expect.any(String), undefined, undefined)
       // toast 触发一次，文案含「已不存在」+ 原 cwd
       expect(toastMock.error).toHaveBeenCalledTimes(1)
       expect(toastMock.error).toHaveBeenCalledWith(expect.stringContaining('已不存在'))
@@ -271,7 +271,7 @@ describe('useNewTaskFlow 状态机', () => {
       )
       // create 的 label 参数取自 bashCommand.command（"ls -la"），不带 `!` 前缀
       // 第三参数 presetId=undefined（main 的 preset 透传，pendingPreset 为 null 时降级 undefined）
-      expect(apiMock.create).toHaveBeenCalledWith('/repo', 'ls -la', undefined)
+      expect(apiMock.create).toHaveBeenCalledWith('/repo', 'ls -la', undefined, undefined)
       // 反向断言：label 绝不以 `!` 开头
       const labelArg = apiMock.create.mock.calls[0]?.[1]
       expect(labelArg).toBeTruthy()

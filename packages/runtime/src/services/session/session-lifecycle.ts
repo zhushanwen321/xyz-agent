@@ -138,6 +138,8 @@ export class SessionLifecycle {
     hidden?: boolean
     /** Launch preset id（设计文档 §5，绑定到新 session 并解析为 pi 启动参数）。 */
     presetId?: string
+    /** 归属 project id（D14 语义修正，2026-08-04）：创建时归属当前 activeProject；空 = 默认项目兑底。 */
+    projectId?: string
     /** Landing Model Chip 传入值，覆盖 preset.modelOverride（C-RL-6 优先级）。 */
     modelOverride?: string
     /** Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel（C-RL-6 优先级）。 */
@@ -233,6 +235,16 @@ export class SessionLifecycle {
       ;(session as { launchPresetId?: string }).launchPresetId = presetId
       if (session.sessionFilePath) {
         this.sessionStore.persistPresetBinding(session.sessionFilePath, presetId)
+      }
+    }
+    // 持久化归属 project 到 .project.json sidecar（D14 语义修正，2026-08-04）。
+    // 与 preset 同模式：pi 延迟写入窗口（sessionFilePath 未落盘）时 sidecar 写入内部
+    // existsSync 守卫跳过，内存态兑底 patch session.projectId（toSummary 透传）。
+    // 空 projectId（默认项目创建）不写 sidecar——等价于未归类，读取侧一致兑底默认项目。
+    if (options?.projectId) {
+      ;(session as { projectId?: string }).projectId = options.projectId
+      if (session.sessionFilePath) {
+        this.sessionStore.persistProjectBinding(session.sessionFilePath, options.projectId)
       }
     }
     // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表。
@@ -483,6 +495,11 @@ export class SessionLifecycle {
     const forkPresetId = (this.svc.getSession(srcSessionId) as { launchPresetId?: string } | undefined)?.launchPresetId
       ?? source.launchPresetId
       ?? BUILTIN_PRESET_IDS.FULL
+    // fork 继承源 session 的归属 project（D14 语义修正，2026-08-04）：
+    // 与 preset 同模式——active 内存态兑底（延迟写入窗口），fallback 扫描 sidecar 值。
+    // 无归属（undefined）= 默认项目，不写 fork sidecar。
+    const forkProjectId = (this.svc.getSession(srcSessionId) as { projectId?: string } | undefined)?.projectId
+      ?? source.projectId
     const forkResolution = await this.svc.getLaunchPresetOptions(forkPresetId, sessionCwd)
     const allExtPaths = forkResolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
     // Staging Mode（ADR-0056）：override 优先于源 preset 的 modelOverride/thinkingLevel（见 buildPresetClientOptions
@@ -521,6 +538,10 @@ export class SessionLifecycle {
       // 写 preset 绑定到 forkedFilePath 的 sidecar（设计文档 §4.5）。
       // fork 继承源 preset，forkedFilePath 是新文件（已写出），existsSync 守卫会通过。
       this.sessionStore.persistPresetBinding(forkedFilePath, forkPresetId)
+      // 写归属 project 到 forkedFilePath 的 sidecar（D14 语义修正）：fork 继承源归属。
+      if (forkProjectId) {
+        this.sessionStore.persistProjectBinding(forkedFilePath, forkProjectId)
+      }
     } catch (e) {
       // L5: switchSession 失败时清理孤儿 fork 文件（已写出但 pi 未能加载）
       await this.safeDestroy(forkedId)

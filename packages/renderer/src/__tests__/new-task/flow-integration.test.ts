@@ -264,7 +264,7 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     await flow.submitFirstMessage(textToSegments('hello world'))
 
     // create 用 workspaceStore.defaultCwd（最近工作区 cwd=/repo）；label=提示词前10字（'hello world' 11 字符 → 截断+省略号）
-    expect(createCtrl.create).toHaveBeenCalledWith('/repo', 'hello worl…', undefined)
+    expect(createCtrl.create).toHaveBeenCalledWith('/repo', 'hello worl…', undefined, undefined)
     expect(session.activeId).toBe('new-1') // activeId 绑定
     expect(session.list.map((s) => s.id)).toContain('new-1') // appendSession 入组
     // panel 载入 active panel
@@ -290,7 +290,7 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     await flow.submitFirstMessage(textToSegments('go'))
 
     // create 用 pendingCwd（/picked），而非 workspaceStore.defaultCwd（/last-repo）；label='go'（≤10 原文）
-    expect(createCtrl.create).toHaveBeenCalledWith('/picked', 'go', undefined)
+    expect(createCtrl.create).toHaveBeenCalledWith('/picked', 'go', undefined, undefined)
   })
 
   it('cwd 来源：无 pendingCwd 时用 workspaceStore.defaultCwd', async () => {
@@ -304,7 +304,7 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     await flow.submitFirstMessage(textToSegments('go'))
 
     // create 用 workspaceStore.defaultCwd（最近活跃 cwd=/last-repo）；label='go'（≤10 原文）
-    expect(createCtrl.create).toHaveBeenCalledWith('/last-repo', 'go', undefined)
+    expect(createCtrl.create).toHaveBeenCalledWith('/last-repo', 'go', undefined, undefined)
   })
 
   it('重试场景（currentSession 已存在）→跳过 create 直接 send', async () => {
@@ -380,7 +380,7 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     await flow.submitFirstMessage(imageSegments)
 
     // 纯图无 text：label 走 deriveSessionLabel('') 兜底为「无提示词」
-    expect(createCtrl.create).toHaveBeenCalledWith('/repo', '无提示词', undefined)
+    expect(createCtrl.create).toHaveBeenCalledWith('/repo', '无提示词', undefined, undefined)
     expect(chatMock.send).toHaveBeenCalledWith('img-only', imageSegments)
     expect(flow.state.value).toBe('completed')
   })

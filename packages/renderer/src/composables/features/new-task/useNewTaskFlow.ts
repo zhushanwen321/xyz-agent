@@ -33,6 +33,7 @@ import { createSessionFlow, useNewTaskFlow as useCoreNewTaskFlow } from '@xyz-ag
 import type { CreateSessionFlowCtx, SessionApiPort } from '@xyz-agent/core'
 import { useSessionStore } from '@/stores/session'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { useProjectStore } from '@/stores/project'
 import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
 import { useChat } from '@/composables/features/chat/useChat'
@@ -61,7 +62,7 @@ function buildCreateFlowApiPort(): SessionApiPort {
   return {
     list: () => sessionApi.list(),
     switchSession: (id) => sessionApi.switchSession(id),
-    create: (cwd, label, presetId) => sessionApi.create(cwd, label, presetId),
+    create: (cwd, label, presetId, projectId) => sessionApi.create(cwd, label, presetId, projectId),
     rename: (id, label) => sessionApi.rename(id, label),
     remove: (id) => sessionApi.remove(id),
     removeByCwd: (cwd) => sessionApi.removeByCwd(cwd),
@@ -86,6 +87,7 @@ export function useNewTaskFlow() {
   if (cachedFlow) return cachedFlow
   const session = useSessionStore()
   const workspaceStore = useWorkspaceStore()
+  const projectStore = useProjectStore()
   const panel = usePanelStore()
   const navigation = useNavigationStore()
   const chat = useChat()
@@ -115,7 +117,14 @@ export function useNewTaskFlow() {
               }
             },
           }
-          const result = await createSessionFlow(ctx, input)
+          // D14 语义修正（2026-08-04）：归属 project 经 input 透传——创建时归属当前
+          // activeProject（与 cwd 无关，project 可跨目录）。默认项目不传（undefined = 未归类，
+          // 读取侧统一兑底默认项目，不写 sidecar）。fork 路径不走 createSessionFlow
+          //（useForkActions 直接 sessionApi.fork），fork 在 runtime 侧继承父归属。
+          const result = await createSessionFlow(ctx, {
+            ...input,
+            projectId: projectStore.isDefaultProject ? undefined : projectStore.activeProjectId,
+          })
           return result
         },
         setThinkingLevel: (sid, level) => setThinkingLevel(sid, level),

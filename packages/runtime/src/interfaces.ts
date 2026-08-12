@@ -97,6 +97,8 @@ export interface SessionCreateOptions {
    * 优先级（设计文档 §5.2）：Landing Chip > preset.thinkingLevel > 全局默认。
    */
   thinkingOverride?: string
+  /** 归属 project id（D14 语义修正 2026-08-04）：创建时归属当前 activeProject；空 = 默认项目兑底。 */
+  projectId?: string
 }
 
 /** Session lifecycle: creation, deletion, messaging, history. */
@@ -105,6 +107,8 @@ export interface ISessionService {
   delete(sessionId: string): Promise<void>
   deleteByCwd(cwd: string): Promise<BatchDeleteResult>
   renameSession(sessionId: string, newName: string): Promise<void>
+  /** 手动归类（D14 语义修正 2026-08-04）：写 session 归属 project sidecar（空 = 归回默认项目）。 */
+  setProject(sessionId: string, projectId: string): Promise<void>
   /**
    * 发送用户消息。
    *

@@ -7,6 +7,7 @@ import type { FileNode } from './file-tree'
 // 领域 DTO 已下沉到各自领域文件（E2 架构候选）：protocol.ts 仅保留 type→payload 映射 SSOT，
 // 领域形状（ExtensionInfo / GitStatusResult / PluginInfo …）按领域就近归属。
 import type { ExtensionInfo, RecommendedExtension, ExtensionInteractMethod } from './extension'
+import type { ProjectStoreState } from './project'
 import type { GitStatusResult } from './git'
 import type { PluginInfo } from './plugin'
 import type { RecentWorkspaceRecord } from './workspace'
@@ -42,7 +43,7 @@ export interface CommandSourceInfo {
 
 export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'session.deleteByCwd' | 'config.sessions' | 'session.switch' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
-  | 'session.compact' | 'session.rename' | 'session.fork'
+  | 'session.compact' | 'session.rename' | 'session.fork' | 'session.setProject'
   | 'session.handoff' | 'session.abortHandoff'
   // runtime-message-bus（slice:runtime-message-bus，wave:protocol-seq）：
   // session.subscribe 订阅某 session 的 live 事件流（bus.publish 推送的带 seq 消息），
@@ -89,6 +90,7 @@ export type ClientMessageType =
   | 'file.write.create' | 'file.write.rename' | 'file.write.delete'
   | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.checkoutCwd' | 'git.createBranch'
   | 'workspace.listRecent' | 'workspace.record' | 'workspace.detectBare' | 'workspace.detect'
+  | 'project.load' | 'project.save'
   | 'worktree.create' | 'worktree.listBranches' | 'worktree.list'
   | 'terminal.spawn' | 'terminal.write' | 'terminal.resize' | 'terminal.kill' | 'terminal.attach'
   | 'config.getTerminalConfig' | 'config.setTerminalConfig'
@@ -232,6 +234,8 @@ export interface ClientMessageMap {
     label?: string
     hidden?: boolean
     presetId?: string
+    /** 归属 project id（D14 语义修正）：创建时归属当前 activeProject；空 = 默认项目兑底。 */
+    projectId?: string
     modelOverride?: string
     thinkingOverride?: ThinkingLevel
   }
@@ -246,6 +250,9 @@ export interface ClientMessageMap {
   'session.getContext': { sessionId: string }
   'session.compact': { sessionId: string; customInstructions?: string }
   'session.rename': { sessionId: string; name: string }
+  // session.setProject：手动归类（SessionItem「归入项目」菜单）。
+  // runtime 写 `<sessionFile>.project.json` sidecar + 刷新列表广播。projectId 空 = 归回默认项目。
+  'session.setProject': { sessionId: string; projectId: string }
   // fork：从 srcSessionId 截断到 fromPiEntryId（pi JSONL entry id，前端 Message.piEntryId），
   // includeFrom=true 保留到该 entry（含），false 保留到该 entry 前（不含）。
   // runtime 按 fromPiEntryId 在源 session JSONL 树回溯截断，写新 JSONL，switch_session 加载。
@@ -416,6 +423,10 @@ export interface ClientMessageMap {
   'git.createBranch': { sessionId: string; name: string }
   'workspace.listRecent': Record<string, never>
   'workspace.record': { cwd: string }
+  // project.load / project.save：project 列表持久化（D14，2026-08-04 迁 runtime projects.json，
+  // 对齐 recent-workspaces.json 模式；localStorage 仅首启迁移源）。
+  'project.load': Record<string, never>
+  'project.save': ProjectStoreState
   /** workspace.detectBare：向后兼容别名，等价于 workspace.detect。 */
   'workspace.detectBare': { cwd: string }
   /** workspace.detect：检测 cwd 所在 git 仓库模式（bare-workspace / plain-repo / not-repo）。
@@ -574,7 +585,8 @@ export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.fullHistory'
-  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted'
+  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted' | 'session.setProject'
+  | 'project.loaded'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
   | 'session.workflowUpdate' | 'session.workflowActionDone' | 'session.subagentActionDone'
@@ -964,8 +976,12 @@ export interface ServerMessageMapBase {
   // session.deletedByCwd：session.deleteByCwd reply（session-message-handler.ts reply BatchDeleteResult，
   // 含 deleted/failed 聚合列表，前端据此 toast 部分失败）。
   'session.deletedByCwd': BatchDeleteResult
+  // project.loaded：project.load reply（project 列表全量，D14 迁 runtime projects.json）。
+  'project.loaded': ProjectStoreState
   // session.renamed：session.rename reply（session-message-handler.ts:162 reply { sessionId, name }）。
   'session.renamed': { sessionId: string; name: string }
+  // session.setProject：session.setProject reply（确认即可；归属更新经 config.sessions 全量广播）。
+  'session.setProject': { sessionId: string; projectId: string }
   // session.forkNotice：session.fork 成功后的广播（FR-12 修订 PR2），通知 srcSession 所在 panel
   // 在对话流插一条 ForkNotice 反馈行。广播时机：fork RPC 成功创建 newSession 之后。
   // branchName/preview optional——纯后台 fork 传 branchName，fork-ask 传 preview（提问预览）。
@@ -1248,6 +1264,8 @@ export interface ReplyPayloadMap {
   'plugin.mountPoints.sync': ServerMessageMap['pong']
   'workspace.listRecent': ServerMessageMap['workspace.recentList']
   'workspace.record': ServerMessageMap['workspace.recentList']
+  'project.load': ServerMessageMap['project.loaded']
+  'project.save': void                  // ack 型（保存成功即 resolve）
   'workspace.detectBare': ServerMessageMap['workspace.detected']
   'workspace.detect': ServerMessageMap['workspace.detected']
   'worktree.create': ServerMessageMap['worktree.created']
@@ -1350,6 +1368,7 @@ export interface ReplyPayloadMap {
   // 不读 reply payload，取消订阅的副作用由后续 live 事件停发体现。
   'session.unsubscribe': void     // reply message.status
   'session.rename': void          // reply session.renamed
+  'session.setProject': void      // reply session.setProject
   'session.setThinkingLevel': void // reply session.thinkingLevelSet
   'session.subagentAction': void  // reply session.subagentActionDone
   'session.switch': void          // reply session.history（前端不读 payload）

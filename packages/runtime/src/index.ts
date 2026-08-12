@@ -52,6 +52,7 @@ export type { BusClient, SessionBusState } from './services/message-bus/types.js
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
 import { FsExecutor } from './infra/fs-executor.js'
 import { RecentWorkspacesStore } from './services/workspace/recent-workspaces-store.js'
+import { ProjectStore } from './services/project/project-store.js'
 import { WorkspaceService } from './services/workspace/workspace-service.js'
 import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 
@@ -206,6 +207,9 @@ async function main(): Promise<void> {
   const workspaceService = new WorkspaceService(recentWorkspacesStore, new WorkspaceDetector(fs))
   // 启动定期 flush 计时器（全量周期，补充 per-write debounce 500ms）
   recentWorkspacesStore.startFlushTimer()
+  // ProjectStore：project 列表持久化（D14，2026-08-04 迁 runtime projects.json，
+  // 与 recent-workspaces 同模式；前端 localStorage 仅首启迁移源）。
+  const projectStore = new ProjectStore(configDir)
   const pluginRegistry = new PluginRegistry(effectiveRoot, configDir)
   const pluginInstaller = new NpmPluginInstaller(join(configDir, 'plugins'))
   const pluginService = new PluginService(pluginRegistry, server, {
@@ -454,7 +458,7 @@ async function main(): Promise<void> {
     },
   })
 
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService, handoffService, presetService, authService)
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService, handoffService, presetService, authService, projectStore)
 
   // Graceful shutdown on signals
   let shuttingDown = false
@@ -465,6 +469,7 @@ async function main(): Promise<void> {
     try {
       recentWorkspacesStore.flushAll()
       recentWorkspacesStore.stopFlushTimer()
+      projectStore.flushAll()
       // R1：关闭 SkillRegistry 的 chokidar watcher（global + project），防句柄泄漏阻塞退出。
       skillRegistry.dispose()
       await server.stop()

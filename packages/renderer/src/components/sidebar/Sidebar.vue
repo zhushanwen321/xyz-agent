@@ -44,6 +44,9 @@
 
       <div class="my-2 mx-2.5 h-px bg-border" />
 
+      <!-- ProjectSwitcher（v6 D14：nav 下方 Project 一级导航，spec §6.2） -->
+      <ProjectSwitcher />
+
       <!-- segmented tab（会话 | 文件 | Agents | Flows | Plugins） -->
       <SegmentedTab
         v-model="sidebar.activeTab"
@@ -79,6 +82,7 @@
             @delete="onDeleteSession"
             @delete-folder="onDeleteFolder"
             @stop-branch="onStopBranch"
+            @set-project="onAssignProject"
           />
         </template>
         <template v-else-if="sidebar.activeTab === 'subagents'">
@@ -201,6 +205,7 @@ import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
 import UpdateButton from './UpdateButton.vue'
 import Brand from './Brand.vue'
+import ProjectSwitcher from './ProjectSwitcher.vue'
 import FileView from './FileView.vue'
 import SubagentList from './SubagentList.vue'
 import WorkflowList from './WorkflowList.vue'
@@ -231,7 +236,7 @@ const subagentStore = useSubagentStore()
 const workflowStore = useWorkflowStore()
 const { error: toastError } = useToast()
 const openSettings = inject<() => void>('openSettings', () => {})
-const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, focusedSessionId, focusedSession: currentSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant } = useSidebarNew()
+const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, assignSessionToProject, focusedSessionId, focusedSession: currentSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant } = useSidebarNew()
 const piVersion = ref('')
 const versionLabel = computed(() => piVersion.value ? `v${__APP_VERSION__} · pi v${piVersion.value}` : `v${__APP_VERSION__}`)
 const renameOpen = ref(false)
@@ -239,7 +244,7 @@ const targetSessionId = ref('')
 const { fileCount, subagentCount, subagentRunningCount, subagentList, workflowCount, workflowRunningCount, workflowList, currentWorkflow } = useSidebarCounts(focusedSessionId)
 const { derivedStatus } = useSessionDerivations()
 function statusOf(id: string) { return derivedStatus(id).value }
-const { onSelectSession, onNewSession, onRenameSession, onDeleteSession, onDeleteFolder, onStopBranch, onConfirmRename, onRetryLoadSessions, onRetryWorkflows, onRetrySubagents, searchDeps, onOpenSearchDrawer } = useSidebarSessionActions({ focusedSessionId, selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, renameOpen, targetSessionId })
+const { onSelectSession, onNewSession, onRenameSession, onDeleteSession, onDeleteFolder, onStopBranch, onConfirmRename, onAssignProject, onRetryLoadSessions, onRetryWorkflows, onRetrySubagents, searchDeps, onOpenSearchDrawer } = useSidebarSessionActions({ focusedSessionId, selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, assignSessionToProject, renameOpen, targetSessionId })
 const { onSelectSubagent, onCancelSubagent, onSelectWorkflow, onWorkflowBack, onSelectAgentCall, onWorkflowAction } = useSidebarSubagentActions(focusedSessionId)
 useGlobalShortcuts({ onNewSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant, navigation: useNavigationStore(), openSettings })
 onMounted(() => {

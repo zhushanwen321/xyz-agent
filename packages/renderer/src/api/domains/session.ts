@@ -34,11 +34,13 @@ export async function list(): Promise<SessionGroup[]> {
  * presetId：session 创建时锁定的 pi 启动预设 id（设计文档 §4.1），透传给 runtime。
  * reply envelope 是 { session }，解包 .session。
  */
-export async function create(cwd?: string, label?: string, presetId?: string): Promise<SessionSummary> {
-  const payload: { cwd?: string; label?: string; presetId?: string } = {}
+export async function create(cwd?: string, label?: string, presetId?: string, projectId?: string): Promise<SessionSummary> {
+  const payload: { cwd?: string; label?: string; presetId?: string; projectId?: string } = {}
   if (cwd !== undefined) payload.cwd = cwd
   if (label !== undefined) payload.label = label
   if (presetId !== undefined) payload.presetId = presetId
+  // D14 语义修正（2026-08-04）：创建时归属当前 activeProject（空 = 默认项目兑底）。
+  if (projectId !== undefined) payload.projectId = projectId
   const reply = await command('session.create', payload)
   return reply.session
 }
@@ -104,6 +106,14 @@ export function getContext(
 /** 重命名 session（label 更新） */
 export function rename(sessionId: string, label: string): Promise<void> {
   return command('session.rename', { sessionId, name: label })
+}
+
+/**
+ * 手动归类（D14 语义修正）：写 session 归属 project 到 sidecar（SessionItem「归入项目」菜单）。
+ * projectId 空串 = 归回默认项目（runtime 删除绑定）。
+ */
+export function setProject(sessionId: string, projectId: string): Promise<void> {
+  return command('session.setProject', { sessionId, projectId })
 }
 
 /** 删除 session（从列表移除） */
