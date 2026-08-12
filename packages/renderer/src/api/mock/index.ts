@@ -980,12 +980,17 @@ export const extension = {
     await sleep(TIMING.ack)
     extensionsSub.broadcast(fixtureExtensions.map((e) => ({ ...e })))
   },
-  async toggle(name: string, enabled: boolean) {
+  async toggle(name: string, enabled: boolean): Promise<{ extensions: ReturnType<typeof toCandidate>[] }> {
     await sleep(TIMING.ack)
     const target = fixtureExtensions.find((e) => e.name === name)
     if (target) target.enabled = enabled
-    // 广播快照（模拟 runtime extension.toggle 后 onExtensions 推回）
+    // 真实 runtime：RPC reply { extensions }（scanExtensions 最新快照），routeInbound 命中 pending
+    // 不触发 onExtensions 全局订阅，前端用 reply 刷新 store。mock 对齐：返回 toCandidate 转换快照
+    // （toCandidate 覆盖 ExtensionInfo 必需字段，类型可赋给 Ref<ExtensionInfo[]>）。
+    // broadcast 保留以模拟连接级 onExtensions 推送（幂等，值一致）。
+    const snapshot = fixtureExtensions.map(toCandidate)
     extensionsSub.broadcast(fixtureExtensions.map((e) => ({ ...e })))
+    return { extensions: snapshot }
   },
   /**
    * npm 直装（mock：剥 npm: 前缀后以真实包名加入 fixture 并广播刷新）。

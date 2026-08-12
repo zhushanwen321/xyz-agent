@@ -30,7 +30,12 @@ export function onExtensions(handler: (extensions: ExtensionInfo[]) => void): ()
   })
 }
 
-export function toggle(name: string, enabled: boolean): Promise<void> {
+/**
+ * 切换扩展启用/禁用。runtime reply 携带 scanExtensions() 的最新列表（{ extensions }）——
+ * 前端用它刷新 store（RPC reply 命中 pending 被 routeInbound 吞掉、不触发 onExtensions
+ * 全局订阅，故需显式消费 reply 而非依赖广播）。
+ */
+export function toggle(name: string, enabled: boolean): Promise<{ extensions: ExtensionInfo[] }> {
   return command('extension.toggle', { name, enabled })
 }
 

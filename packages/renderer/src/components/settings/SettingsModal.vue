@@ -20,8 +20,19 @@
         <!-- traffic light 安全区：pl-[80px] 让位红黄绿（三平台统一，全屏态保留无害）。
              本 overlay 是 fixed inset:0 全屏覆盖，不继承 AsideRegion 的 pt-6 安全区，故显式让位。
              红黄绿原生位置 x8~60，pl-80 仍足够让位。 -->
+        <!-- 顶部退出按钮：与 trafficlight 同行（pl-[80px] 让位红黄绿 x8~60），ArrowLeft 表示退出设置。
+             替代原「设置」标题文字——退出入口放左上符合「返回上一级」导航心智（右上 X 关闭并存）。 -->
         <div class="flex h-[44px] items-center pl-[80px] pr-[12px]">
-          <span class="text-[11px] font-bold uppercase tracking-[0.08em] text-neutral-dim">{{ t('settings.title') }}</span>
+          <Button
+            type="button"
+            variant="ghost"
+            class="back-btn flex h-[28px] w-[28px] p-0 items-center justify-center rounded-[var(--radius-sm)] text-[length:var(--text-base)] font-normal leading-[1.5] text-neutral-mid transition-colors duration-[var(--duration-fast)] ease-[var(--ease)] hover:bg-surface-hover hover:text-neutral-fg"
+            :title="t('settings.close')"
+            :aria-label="t('settings.close')"
+            @click="close"
+          >
+            <ArrowLeft class="!w-[16px] !h-[16px]" />
+          </Button>
         </div>
         <div class="flex flex-col gap-[1px]">
           <Button
@@ -99,7 +110,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
-import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X, Download, Bug } from '@lucide/vue'
+import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X, Download, Bug, ArrowLeft } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { getSettingsStore, useSettings, type SystemSettings } from '@xyz-agent/core'
 import { useToast } from '@/composables/useToast'
@@ -340,7 +351,8 @@ onBeforeUnmount(() => {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
 }
-.xbtn:focus-visible {
+.xbtn:focus-visible,
+.back-btn:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
 }

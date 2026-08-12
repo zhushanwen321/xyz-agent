@@ -1330,7 +1330,7 @@ export interface ReplyPayloadMap {
   'extension.install': void       // reply config.extensions
   'extension.list': void          // reply config.extensions
   'extension.setAutoUpgrade': void // reply config.extensions
-  'extension.toggle': void        // reply config.extensions
+  'extension.toggle': { extensions: ExtensionInfo[] }  // reply config.extensions（前端消费 reply 刷新 store；RPC reply 命中 pending 不走 dispatchGlobal）
   'extension.uninstall': void     // reply config.extensions
   'extension.upgrade': void       // reply config.extensions
   'git.checkout': void            // reply message.status

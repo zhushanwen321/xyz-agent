@@ -12,6 +12,8 @@
         :aria-label="ext.enabled ? t('settings.extension.disableExt') : t('settings.extension.enableExt')"
         @update:model-value="onToggle(ext, $event)"
       />
+      <!-- toggle 中：短暂 loading 反馈（开关乐观已滑动，spinner 表示正在持久化 + 重扫刷新列表） -->
+      <Loader2 v-if="toggling.has(ext.name)" class="size-3.5 shrink-0 animate-spin text-neutral-mid" />
       <!-- 升级按钮（仅 user 层 + user-installed 来源扩展显示；builtin 由 runtime 自动升级） -->
       <Button
         v-if="ext.layer !== 'builtin' && ext.source === 'user-installed'"
@@ -105,7 +107,10 @@ async function onToggle(ext: ExtensionItem, enabled: boolean) {
   // 乐观：立即改 store
   const old = settingsStore.setExtensionEnabled(ext.name, enabled)
   try {
-    await extensionApi.toggle(ext.name, enabled)
+    const reply = await extensionApi.toggle(ext.name, enabled)
+    // RPC reply 命中 pending 被 routeInbound 吞掉、不触发 onExtensions 全局订阅，
+    // 故手动用 reply 的权威扫描结果刷新列表（替代不可靠的广播）。乐观值与权威值一致时幂等。
+    settingsStore.extensions.value = reply.extensions
   } catch (e) {
     // 回滚
     settingsStore.setExtensionEnabled(ext.name, old)
