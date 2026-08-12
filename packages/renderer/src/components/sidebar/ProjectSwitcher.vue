@@ -131,9 +131,9 @@ function cancelCreate() {
         @keydown.enter="select(p.id)"
       >
         <span class="flex-1 truncate">{{ p.name || t('sidebar.projectSwitcher.defaultName') }}</span>
-        <!-- 删除按钮：多 project 时才显（保底不删最后一个）；hover item 淡入 -->
+        <!-- 删除按钮：命名 project 且多 project 时才显（保底不删最后一个；默认项目行永不显，review MF-1 双保险）；hover item 淡入 -->
         <Button
-          v-if="projectStore.projects.length > 1"
+          v-if="p.name && projectStore.projects.length > 1"
           variant="ghost"
           class="size-5 shrink-0 rounded-sm p-0 text-neutral-dim opacity-0 transition-opacity duration-[var(--duration-fast)] hover:bg-danger-soft hover:text-danger group-hover:opacity-100 group-focus-within:opacity-100"
           :title="t('sidebar.projectSwitcher.deleteProject')"
@@ -172,7 +172,7 @@ function cancelCreate() {
     <ConfirmDialog
       v-model:open="deleteOpen"
       :title="t('sidebar.projectSwitcher.deleteTitle')"
-      :description="t('sidebar.projectSwitcher.deleteDesc', { name: pendingDeleteName || currentName })"
+      :description="t('sidebar.projectSwitcher.deleteDesc', { name: pendingDeleteName || t('sidebar.projectSwitcher.defaultName') })"
       :confirm-text="t('sidebar.projectSwitcher.deleteConfirm')"
       :cancel-text="t('sidebar.projectSwitcher.cancel')"
       variant="danger"

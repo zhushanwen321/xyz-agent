@@ -77,7 +77,8 @@ export async function createWindow(
     //   AppShell p-3(12px) → aside 左缘 x=12，与红黄绿 x=16 有 4px 差（v6-spec-shell 同款，预期）；
     //   AppNavControls top-21 → 按钮中线 y=32（= 红黄绿中线，三处 chrome 统一 y32 对齐，v6-spec-shell §4）；
     //   PanelHeader 38px（main-panel 顶 y13 + 19 = 中线 y32），折叠态 chrome 迁入 header 后同样对齐。
-    // win/linux：frame:false 应用自绘圆点 mimic mac（renderer TrafficLight.vue left-16/top-26，与 mac 同位）。
+    // win/linux：frame:false 应用自绘圆点 mimic mac（renderer TrafficLight.vue left-4(=16px)/top-[26px]，
+    // 挂载 AppShell 层直接子节点（v6-spec-shell §3 修订②），相对 AppShell padding box = 窗口 (16,26)，与 mac 同位）。
     ...(process.platform === 'darwin'
       ? {
         titleBarStyle: 'hidden' as const,

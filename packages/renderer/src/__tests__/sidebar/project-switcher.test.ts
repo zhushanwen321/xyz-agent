@@ -7,26 +7,44 @@
  *  - 超过 5 个 project 时列表容器可滚动（max-h + overflow-y-auto）。
  *  - 选择 project 后列表收起（select 关 expanded）。
  *  - 新建流：点「新建项目」→ input 出现 → Enter 创建并设为活跃。
- *  - 删除流：hover 项出删除按钮 → ConfirmDialog → 确认删除。
+ *  - 删除流：hover 项出删除按钮 → ConfirmDialog → 确认删除（默认项目行永不渲染删除按钮；
+ *    取消路径不删除；删活跃项自动切首个）。
  *
  * 测试框架：vitest + @vue/test-utils（mount）。vue-i18n 由 vitest-i18n-setup.ts 全局 mock。
  * 运行：cd packages/renderer && npx vitest run src/__tests__/sidebar/project-switcher.test.ts
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { nextTick } from 'vue'
 import ProjectSwitcher from '@/components/sidebar/ProjectSwitcher.vue'
-import { useProjectStore } from '@/stores/project'
+import { useProjectStore, DEFAULT_PROJECT_ID } from '@/stores/project'
 import type { Project } from '@xyz-agent/shared'
 
 function makeProject(id: string, name: string, lastUsedAt = 0): Project {
   return { id, name, lastUsedAt }
 }
 
+/** ConfirmDialog 经 reka DialogPortal teleport 到 body：在 body 内找确认/取消按钮（同 command-popover-landing 范式）。 */
+function findDialogButton(text: string): HTMLElement | null {
+  return Array.from(document.body.querySelectorAll('button')).find(
+    (b) => b.textContent?.trim() === text,
+  ) ?? null
+}
+
+/** 删除流用例共享 wrapper：afterEach 统一 unmount，避免 teleport 内容在 body 残留叠加。 */
+let wrapper: ReturnType<typeof mount> | null = null
+
 describe('ProjectSwitcher: 折叠/展开两态 + 排序 + 滚动', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     localStorage.removeItem('xyz-agent:projects')
+  })
+
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = null
+    document.body.innerHTML = ''
   })
 
   // ── 首屏折叠态 ─────────────────────────────
@@ -131,5 +149,110 @@ describe('ProjectSwitcher: 折叠/展开两态 + 排序 + 滚动', () => {
 
     expect(store.projects.some((p) => p.name === '新项目')).toBe(true)
     expect(store.activeProjectId).toBe(store.projects.find((p) => p.name === '新项目')!.id)
+  })
+
+  // ── 删除流（review MF-4：补删除按钮显隐 + ConfirmDialog + 确认/取消 + 删活跃切首个）──
+  it('删除流：默认项目行永不渲染删除按钮；仅默认 project 时列表无任何删除按钮', async () => {
+    const store = useProjectStore()
+    // 默认态（仅默认 project）：展开后无删除按钮
+    const w1 = mount(ProjectSwitcher)
+    await w1.find('[data-testid="project-switcher-current"]').trigger('click')
+    expect(w1.findAll('[title="删除项目"]').length).toBe(0)
+    w1.unmount()
+
+    // 默认 + 命名 project：命名行有删除按钮，默认行（name 空）没有（review MF-1 双保险）
+    store.projects = [
+      makeProject(DEFAULT_PROJECT_ID, ''),
+      makeProject('a', 'Alpha'),
+    ]
+    store.activeProjectId = 'a'
+    const w2 = mount(ProjectSwitcher)
+    await w2.find('[data-testid="project-switcher-current"]').trigger('click')
+    const rows = w2.findAll('[data-testid="project-item"]')
+    expect(rows).toHaveLength(2)
+    const defaultRow = rows.find((r) => r.text().includes('默认项目'))!
+    expect(defaultRow.find('[title="删除项目"]').exists()).toBe(false)
+    const alphaRow = rows.find((r) => r.text().includes('Alpha'))!
+    expect(alphaRow.find('[title="删除项目"]').exists()).toBe(true)
+  })
+
+  it('删除流：点 Trash → ConfirmDialog 出现（描述指向被删项）→ 确认 → removeProject 生效 + 列表消失', async () => {
+    const store = useProjectStore()
+    store.projects = [
+      makeProject(DEFAULT_PROJECT_ID, ''),
+      makeProject('a', 'Alpha'),
+      makeProject('b', 'Beta'),
+    ]
+    store.activeProjectId = 'a'
+
+    wrapper = mount(ProjectSwitcher, { attachTo: document.body })
+    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
+
+    // 点 Beta 行的 Trash → ConfirmDialog 打开（teleport 到 body，描述含被删项名）
+    const betaRow = wrapper
+      .findAll('[data-testid="project-item"]')
+      .find((r) => r.text().includes('Beta'))!
+    await betaRow.find('[title="删除项目"]').trigger('click')
+    await nextTick()
+    expect(document.body.textContent).toContain('确认删除项目「Beta」')
+
+    // 确认 → removeProject 生效，列表刷新后 Beta 行消失
+    findDialogButton('删除')!.dispatchEvent(new MouseEvent('click'))
+    await nextTick()
+    expect(store.projects.some((p) => p.id === 'b')).toBe(false)
+    expect(
+      wrapper.findAll('[data-testid="project-item"]').some((r) => r.text().includes('Beta')),
+    ).toBe(false)
+  })
+
+  it('删除流：取消不删除，ConfirmDialog 关闭', async () => {
+    const store = useProjectStore()
+    store.projects = [
+      makeProject(DEFAULT_PROJECT_ID, ''),
+      makeProject('a', 'Alpha'),
+      makeProject('b', 'Beta'),
+    ]
+    store.activeProjectId = 'a'
+
+    wrapper = mount(ProjectSwitcher, { attachTo: document.body })
+    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
+
+    const betaRow = wrapper
+      .findAll('[data-testid="project-item"]')
+      .find((r) => r.text().includes('Beta'))!
+    await betaRow.find('[title="删除项目"]').trigger('click')
+    await nextTick()
+
+    findDialogButton('取消')!.dispatchEvent(new MouseEvent('click'))
+    await nextTick()
+    expect(store.projects.some((p) => p.id === 'b')).toBe(true)
+    // 关闭态断言：reka DialogContent data-state=closed（exit 动画依赖 transitionend，happy-dom 不触发，
+    // 内容不会卸载——以 state 断言关闭语义而非 DOM 消失）
+    expect(document.body.querySelector('[data-state="closed"]')).not.toBeNull()
+  })
+
+  it('删除流：删活跃项自动切首个（recentProjects 顺序首位）', async () => {
+    const store = useProjectStore()
+    store.projects = [
+      makeProject(DEFAULT_PROJECT_ID, ''),
+      makeProject('a', 'Alpha'),
+      makeProject('b', 'Beta'),
+    ]
+    store.activeProjectId = 'a'
+
+    wrapper = mount(ProjectSwitcher, { attachTo: document.body })
+    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
+
+    const alphaRow = wrapper
+      .findAll('[data-testid="project-item"]')
+      .find((r) => r.text().includes('Alpha'))!
+    await alphaRow.find('[title="删除项目"]').trigger('click')
+    await nextTick()
+    findDialogButton('删除')!.dispatchEvent(new MouseEvent('click'))
+    await nextTick()
+
+    expect(store.projects.some((p) => p.id === 'a')).toBe(false)
+    // 删的是活跃项 → 切到列表首位（默认项目，recentProjects 排序后的第一个）
+    expect(store.activeProjectId).toBe(DEFAULT_PROJECT_ID)
   })
 })

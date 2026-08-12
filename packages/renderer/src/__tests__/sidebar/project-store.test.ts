@@ -15,7 +15,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import type { Project, ProjectStoreState } from '@xyz-agent/shared'
-import { useProjectStore, STORAGE_KEY } from '@/stores/project'
+import { useProjectStore, STORAGE_KEY, DEFAULT_PROJECT_ID } from '@/stores/project'
 
 vi.mock('@/api', () => ({
   project: { load: vi.fn(), save: vi.fn().mockResolvedValue(undefined) },
@@ -136,20 +136,24 @@ describe('Project store: CRUD + 持久化', () => {
     expect(store.projects.find((p) => p.id === b)!.lastUsedAt).toBeGreaterThan(0)
   })
 
-  it('removeProject：保底不删最后一个；删活跃项自动切首个', () => {
+  it('removeProject：默认项目不可删；保底不删最后一个；删活跃项自动切首个', () => {
     const store = useProjectStore()
     const a = store.addProject('A')
-    store.addProject('B')
+    const b = store.addProject('B')
     store.setActiveProject(a)
 
     store.removeProject(a)
     expect(store.projects).toHaveLength(2) // 默认 + B
     expect(store.activeProjectId).not.toBe(a)
 
+    // 默认项目（DEFAULT_PROJECT_ID）不可删除（review MF-1 守卫：未归类 session 的兜底聚合）
+    store.removeProject(DEFAULT_PROJECT_ID)
+    expect(store.projects.map((p) => p.id)).toEqual([DEFAULT_PROJECT_ID, b])
+
+    store.removeProject(b)
+    expect(store.projects).toHaveLength(1) // 只剩默认（保底不删最后一个）
     store.removeProject(store.projects[0]!.id)
-    expect(store.projects).toHaveLength(1)
-    store.removeProject(store.projects[0]!.id)
-    expect(store.projects).toHaveLength(1)
+    expect(store.projects).toHaveLength(1) // 默认项目守卫再拦一次
   })
 
   it('isDefaultProject：命名 project 非默认；默认 project（name 空）是默认', () => {

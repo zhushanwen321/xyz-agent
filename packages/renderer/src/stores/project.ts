@@ -157,8 +157,12 @@ export const useProjectStore = defineStore('project', () => {
 
   /** 删除 project：移除；若删的是活跃则切到第一个；保底不删最后一个（UI 永远有项可显）。
    *  删除不影响已归属该 project 的 session（归属在 session sidecar，project 删除后这些
-   *  session 在展示层落入默认项目聚合——projectId 匹配不到任何命名 project）。 */
+   *  session 在展示层落入默认项目聚合——projectId 匹配不到任何命名 project）。
+   *  [MANDATORY] 默认项目（DEFAULT_PROJECT_ID）不可删除（review MF-1）：默认项目是未归类/孤儿
+   *  session 的兜底聚合，删除后这些 session 在任何命名 project 过滤下都匹配不到 → SessionList 空态，
+   *  且无重建路径（makeDefaultProject 仅初始态），归属无法修复。组件侧删除按钮亦对默认行不渲染（双保险）。 */
   function removeProject(id: string): void {
+    if (id === DEFAULT_PROJECT_ID) return
     if (projects.value.length <= 1) return
     const idx = projects.value.findIndex((p) => p.id === id)
     if (idx === -1) return

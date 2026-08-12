@@ -26,8 +26,11 @@
             {{ dirNameOf(g.cwd) }}
           </span>
           <span class="font-mono text-[10px] text-neutral-dim opacity-60">{{ g.sessions.length }}</span>
-          <!-- folder 维度批量删除按钮（两段式确认，与 SessionItem.delete 一致） -->
+          <!-- folder 维度批量删除按钮（两段式确认，与 SessionItem.delete 一致）。
+               [review MF-2] 仅当组内可见数 = 该 cwd 全量数时渲染：removeByCwd 是 cwd 全量删除（项目无关），
+               项目过滤隐藏了部分 session 时点删除会误删用户不可见的其他 project session。 -->
           <div
+            v-if="isFolderDeleteAvailable(g.cwd)"
             class="ml-auto"
             :class="folderConfirmingCwd === g.cwd ? 'flex' : 'flex opacity-0 group-hover/folder:opacity-100'"
             @mouseleave="onFolderMouseLeave(g.cwd)"
@@ -162,6 +165,19 @@ const visibleGroups = computed<SessionGroup[]>(() => {
 const totalCount = computed(() =>
   visibleGroups.value.reduce((sum, g) => sum + g.sessions.length, 0),
 )
+
+/**
+ * folder 删除可用性（review MF-2）：组内可见 session 数 < 该 cwd 全量 session 数时隐藏删除按钮。
+ * 项目过滤按 session.projectId 逐条过滤（同 cwd 跨项目是模型常态），而 deleteFolder →
+ * api.removeByCwd(cwd) 是项目无关的全量删除——过滤态下删除会连带删掉不可见的 session，
+ * 且 header 计数（过滤后）会误导「删 1 个实际删 N 个」。全量数从未过滤的 props.groups 取，
+ * 不改 runtime removeByCwd 语义。
+ */
+function isFolderDeleteAvailable(cwd: string): boolean {
+  const total = props.groups.find((g) => g.cwd === cwd)?.sessions.length ?? 0
+  const visible = visibleGroups.value.find((g) => g.cwd === cwd)?.sessions.length ?? 0
+  return total === visible
+}
 
 /**
  * 取当前 session 的直接子分支列表（FR-17，spec §2 层③）。

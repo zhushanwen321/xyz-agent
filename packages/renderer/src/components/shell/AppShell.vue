@@ -13,6 +13,10 @@
     :class="sidebar.collapsed ? '!gap-0' : ''"
     data-testid="app-shell"
   >
+    <!-- TrafficLight 挂载点（v6-spec-shell §3 修订② + v6 demo 真值）：AppShell 层直接子节点，
+         AppNavControls 旁。absolute left-4(=16px)/top-[26px] 相对 AppShell padding box =
+         窗口 (16,26)，与 mac trafficLightPosition 同位；不随 aside 折叠归零（折叠态不被 overflow-hidden 裁剪）。 -->
+    <TrafficLight />
     <AsideRegion />
     <AppNavControls />
     <MainPanel />
@@ -30,6 +34,7 @@ import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import AppNavControls from './AppNavControls.vue'
 import AsideRegion from './AsideRegion.vue'
 import MainPanel from './MainPanel.vue'
+import TrafficLight from './TrafficLight.vue'
 import SettingsModal from '@/components/settings/SettingsModal.vue'
 import { useSidebarStore } from '@/stores/sidebar'
 

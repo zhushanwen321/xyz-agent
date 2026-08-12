@@ -129,18 +129,19 @@
         </PopoverTrigger>
         <PopoverContent side="right" align="start" :collision-padding="8" class="w-44 p-1">
           <div class="flex flex-col gap-px">
+            <!-- 默认项目项 id=''：未归类 session 的 projectId 是 undefined，必须归一为空串才能命中高亮（review S-2） -->
             <Button
               v-for="p in assignTargets"
               :key="p.id"
               variant="ghost"
               data-testid="assign-project-option"
               class="h-auto w-full justify-start gap-2 rounded-sm px-2 py-1.5 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
-              :class="session.projectId === p.id ? 'text-accent' : ''"
+              :class="(session.projectId || '') === p.id ? 'text-accent' : ''"
               @click="onAssign(p.id)"
             >
               <span
                 class="size-2 shrink-0 rounded-full"
-                :class="session.projectId === p.id ? 'bg-accent' : 'bg-transparent'"
+                :class="(session.projectId || '') === p.id ? 'bg-accent' : 'bg-transparent'"
               />
               <span class="truncate">{{ p.name || t('sidebar.projectSwitcher.defaultName') }}</span>
             </Button>

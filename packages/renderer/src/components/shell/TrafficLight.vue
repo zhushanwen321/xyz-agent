@@ -2,7 +2,9 @@
   <!--
     TrafficLight · 跨平台窗口控制（shell spec §五方案 X + v6-spec-shell §三 SSOT）
     - mac：空占位 div（保留 .traffic-light 定位 + opacity transition 语义，红黄绿由 OS 绘制，trafficLightPosition {16,26}）
-    - win/linux：自绘 3 彩色圆点 mimic mac（与 mac 同位 left-16 / top-26，v6-spec-shell「三平台统一」），hover 整组显 close/min/max 符号，点击 IPC 控窗口
+    - win/linux：自绘 3 彩色圆点 mimic mac。挂载点已提升至 AppShell 层直接子节点（v6-spec-shell §3 修订②，
+      AppNavControls 旁）：left-4(=16px)/top-[26px] 相对 AppShell padding box = 窗口 (16,26)，与 mac
+      trafficLightPosition 同位（三平台统一）；折叠态 aside 归零不改变定位基准、不被 overflow-hidden 裁剪。
     全屏态 isFullscreen=true 时 opacity→0（响应式 :class 绑定，替代旧 [data-fullscreen] 祖先选择器），
     mac 系统 hover 浮层独立不参与。
   -->
