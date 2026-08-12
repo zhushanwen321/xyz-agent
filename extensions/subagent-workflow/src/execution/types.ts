@@ -147,6 +147,9 @@ export type SdkEvent = {
     usage?: AgentUsage & { cost?: { total: number } };
     stopReason?: string;
     errorMessage?: string;
+    /** 消息角色（message_start 事件携带，user/assistant/toolResult/custom）。
+     *  MF-5：消费确认制按 user 消息的 message_start 清除 pendingMessages（设计决策 6 spec L251）。 */
+    role?: string;
   };
   assistantMessageEvent?: { type?: string; delta?: string };
   reason?: string;

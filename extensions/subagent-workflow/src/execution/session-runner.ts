@@ -669,11 +669,20 @@ export async function runSpawn(
         return;
       }
       case "turn_start": {
-        // 消费确认清除（设计决策 6）：turn_start = pi 开始新 turn（消费了一条排队消息）。
-        // 从 pendingMessages FIFO shift 最老的一条（投递时按序缓存，消费时按序清除）。
-        // pendingMessages 只在 deliverToRunning（busy 投递）时 push；prompt（idle 续聊）不 push，
-        // 故 idle 续聊的 turn_start 清除空数组 no-op（安全）。M2-B3 只做清除，补投是 M2-B2。
-        if (record.pendingMessages && record.pendingMessages.length > 0) {
+        // turn_start = pi 开始新 turn（agent-loop 单次迭代）。不在此清除 pendingMessages——
+        // 一条 user 消息处理会产出多个 turn（每轮 LLM 调用一个 turn_start），用它清除会连 shift
+        // 掉尚未消费的排队消息，破坏 FIFO 不变式（MF-5）。清除改由 message_start(user) 承担。
+        return;
+      }
+      case "message_start": {
+        // 消费确认清除（设计决策 6 spec L251）：message_start(role=user) = pi 开始消费一条
+        // user 消息（含 deliverToRunning 投递的 follow_up/steer）。从 pendingMessages FIFO shift
+        // 最老的一条（投递时按序缓存，消费时按序清除，1:1）。
+        // 只对 user 消息清除——assistant/toolResult 的 message_start 不消费 pendingMessages。
+        // turn_start 是 1:N（一条消息多 turn），用它清除会破坏 FIFO（MF-5 修复）。
+        // pi 源码确认：rpc mode 对注入的 steer/follow_up 会 emit message_start(role=user)
+        //（agent-loop.ts:184 dequeued message → emit message_start），spec L251 指定 message_start。
+        if (raw.message?.role === "user" && record.pendingMessages && record.pendingMessages.length > 0) {
           record.pendingMessages.shift();
         }
         return;

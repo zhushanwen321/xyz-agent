@@ -153,9 +153,12 @@ describe("deliverToRunning (M2-B1 busy 投递)", () => {
     expect(record.pendingMessages![0]).toMatchObject({ text: "stop now", interrupt: true });
   });
 
-  it("child 不存在（进程已退）→ throw（M2-B2 补投机制处理竞态）+ 不写 pendingMessages", () => {
-    expect(() => service.deliverToRunning(record, "msg", false)).toThrow(/no live process/);
-    expect(record.pendingMessages).toBeUndefined();
+  it("child 不存在（进程已退）→ 不 throw，入队 pendingMessages（MF-1 安全网，由 resume 补投）", () => {
+    // MF-1：竞态窗口（record 仍 running 但子进程刚 close）不再 throw——throw 会丢消息 + 错误导 LLM。
+    // 改为仅入队（delivery delayed, will retry），由 doFinalizeRoundToIdle 的 redeliverPending 补投。
+    expect(() => service.deliverToRunning(record, "msg", false)).not.toThrow();
+    expect(record.pendingMessages).toHaveLength(1);
+    expect(record.pendingMessages![0]).toMatchObject({ text: "msg", interrupt: false });
   });
 
   it("多次投递累积 pendingMessages（FIFO 顺序保留）", () => {
@@ -219,21 +222,22 @@ describe("resumeRound (M2-B1 idle 投递)", () => {
     expect(record.round).toBe(beforeRound! + 1);
   });
 
-  it("非 idle record → throw（仅 idle 可 resume），不触发 kickOff", () => {
+  it("非 idle record → throw 行动语言（MF-4，仅 idle 可续聊），不触发 kickOff", () => {
     record.status = "running";
-    expect(() => service.resumeRound(record, "msg")).toThrow(/not idle/);
+    // MF-4：行动语言（spec §3.1），不暴露 resume/controller 内部词汇
+    expect(() => service.resumeRound(record, "msg")).toThrow(/not ready for a new message/);
     expect(mockRunSpawn).not.toHaveBeenCalled();
   });
 
-  it("record 无 sessionFile → throw（resume 需要续写的 session）", () => {
+  it("record 无 sessionFile → throw 行动语言（MF-4 canonical session unavailable），不触发 kickOff", () => {
     record.sessionFile = undefined;
-    expect(() => service.resumeRound(record, "msg")).toThrow(/no sessionFile/);
+    expect(() => service.resumeRound(record, "msg")).toThrow(/session unavailable/);
     expect(mockRunSpawn).not.toHaveBeenCalled();
   });
 
-  it("record 无 controller → throw（防御性，chatMode record 创建时一定有）", () => {
+  it("record 无 controller → throw 行动语言（MF-4），不触发 kickOff", () => {
     record.controller = undefined;
-    expect(() => service.resumeRound(record, "msg")).toThrow(/no controller/);
+    expect(() => service.resumeRound(record, "msg")).toThrow(/not ready for a new message/);
     expect(mockRunSpawn).not.toHaveBeenCalled();
   });
 });

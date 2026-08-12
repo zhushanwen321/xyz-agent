@@ -423,7 +423,9 @@ export function adapter(
   let result: SubagentToolResult;
   if (action === "start") {
     const d = input.domain;
-    result = { action, subagentId: d.subagentId, sessionFile: d.sessionFile ?? null, slug: d.slug, bgResponse: d.response };
+    // MF-3（决策 10 细则 4）：LLM content (text) 用 null 瘦身，防诱导 agent 用 read 绕过工具
+    // 直接读 session 文件。真实 sessionFile 仅 details 保留（供 GUI/程序化消费）。
+    result = { action, subagentId: d.subagentId, sessionFile: null, slug: d.slug, bgResponse: d.response };
   } else if (action === "list") {
     result = { action, subagentId: null, sessionFile: null, listResponse: input.domain.response };
   } else if (action === "cancel") {
@@ -438,10 +440,18 @@ export function adapter(
   // content JSON：LLM 看的结构化结果（schema 模式 parsedOutput 作为嵌套 JSON 值可接受）。
   const text = JSON.stringify(result);
 
+  // MF-3：start 的 LLM content 已瘦身（sessionFile:null），details 保留真实 sessionFile 供 GUI/程序化消费。
+  // result 已是合法 SubagentToolResult（start 变体 sessionFile:null）；start 时重建一个带真实 sessionFile 的副本。
+  let detailsBase: SubagentToolResult = result;
+  if (action === "start") {
+    const d = input.domain;
+    detailsBase = { action: "start", subagentId: d.subagentId, sessionFile: d.sessionFile ?? null, slug: d.slug, bgResponse: d.response };
+  }
+
   // GUI 协议：RPC 模式下附加结构化渲染数据（union 各成员已声明 __gui__?，无需强转）
   const details: SubagentToolResult = ctx && isGuiCapable(ctx)
-    ? { ...result, __gui__: guiResult(buildGuiComponent(action, input, result)) }
-    : result;
+    ? { ...detailsBase, __gui__: guiResult(buildGuiComponent(action, input, result)) }
+    : detailsBase;
 
   // [W3 修复] list action 追加 reminder text block：LLM 调 list 时提醒不要轮询。
   // reminder 作为第二个 text block（独立追加，不污染 details/JSON schema）。

@@ -5,7 +5,7 @@
 // mock session-runner.runSpawn（受控返回 success/failed result），走 SubagentService
 // 真实的 runAndFinalize 分流逻辑，验证：
 //   - chatMode + done   → doFinalizeRoundToIdle：record.status=idle、留内存、round+1
-//   - chatMode + failed → doFinalizeRecord：record.status=failed、archived（不进 idle）
+//   - chatMode + failed → MF-6：回退 idle（可恢复），不销毁（agent 可重试 message 或 close）
 //   - 非 chatMode + done → doFinalizeRecord：record.status=done、archived（现有行为不变）
 //
 // 分流效果通过「最终可观察状态」验证（record.status + store.getMutable 是否在内存），
@@ -157,14 +157,17 @@ describe("runAndFinalize chatMode idle 分流 (M2-A)", () => {
     expect(internals.store.getMutable(record.id)).toBe(record);
   });
 
-  it("chatMode + failed → record failed，archived（终态化，不进 idle）", async () => {
+  it("chatMode + failed → MF-6：回退 idle（可恢复），不销毁对话（agent 可重试 message 或 close）", async () => {
     const record = makeRecord(true);
     internals.store.register(record);
     await callRunAndFinalize(record, false);
 
-    expect(record.status).toBe("failed");
-    // chatMode+failed 走 finalizeRecord → archive → 内存无
-    expect(internals.store.getMutable(record.id)).toBeUndefined();
+    // MF-6：chatMode 失败不终态销毁——record 回退 idle（留内存），agent 可重试 message 或 close。
+    expect(record.status).toBe("idle");
+    expect(internals.store.getMutable(record.id)).toBe(record); // 留内存（未 archive）
+    // record.result 被 finalizeRoundToIdle 设值（MF-2：否则 notifier idle 恒 (empty)）。
+    // makeResult(false) 返回 text:"err" + error:"boom"；text 非空 → record.result="err"。
+    expect(record.result).toBeTruthy();
   });
 
   it("非 chatMode + done → record done，archived（现有一次性模式行为不变）", async () => {

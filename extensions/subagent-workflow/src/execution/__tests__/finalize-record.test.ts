@@ -204,7 +204,7 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
   });
 
   /** 构造 FinalizeDeps：worktreeManager.cleanup / store.archive 为 vi.fn 以断言「不调」。 */
-  function makeDeps() {
+  function makeDeps(redeliverPending?: ReturnType<typeof vi.fn>) {
     return {
       manifestStore,
       worktreeManager: { cleanup: vi.fn(), collectPatch: vi.fn() } as never,
@@ -213,6 +213,7 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
       pi: { appendEntry: vi.fn() } as never,
       clearThrottle: vi.fn(),
       emitUnregister: vi.fn(),
+      redeliverPending,
     };
   }
 
@@ -303,14 +304,55 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     expect(manifest).toBeNull();
   });
 
-  it("残留 pendingMessages → warn + 清除防泄漏（M2-B2 最小，决策 6）", async () => {
+  it("MF-2: record.result 设为 result.text（否则 notifier idle 回复恒为 (empty)，G1/G2 不成立）", async () => {
+    const record = makeMinimalRecord({ id: "rec-result" });
+    record.status = "done";
+    const result = makeMinimalResult();
+    result.text = "review done, found 3 issues";
+    await doFinalizeRoundToIdle(makeDeps(), record, result);
+    // MF-2：record.result 被 result.text 填充，notifier idle 分支读取后携带回复正文
+    expect(record.result).toBe("review done, found 3 issues");
+  });
+
+  it("MF-2 兑底：失败轮次 result.text 为空时用 result.error 填 record.result（MF-6 回退 idle 路径）", async () => {
+    const record = makeMinimalRecord({ id: "rec-result-err" });
+    record.status = "done";
+    const result = makeMinimalResult();
+    result.text = "";
+    result.success = false;
+    result.error = "spawn timeout";
+    await doFinalizeRoundToIdle(makeDeps(), record, result);
+    // 失败轮次的 notify 需可读：result.text 空 → 兑底用 error
+    expect(record.result).toBe("round did not complete: spawn timeout");
+  });
+
+  it("残留 pendingMessages → 触发 redeliverPending 补投（MF-1 安全网，不再静默清除）", async () => {
+    const redeliverPending = vi.fn();
     const record = makeMinimalRecord({ id: "rec-pending" });
     record.status = "done";
     record.pendingMessages = [
       { id: "m1", text: "unconsumed race-window msg", interrupt: false, sentAt: 1 },
+      { id: "m2", text: "second queued", interrupt: true, sentAt: 2 },
     ];
-    await doFinalizeRoundToIdle(makeDeps(), record, makeMinimalResult());
-    // 残留 pendingMessages 被清除防泄漏（极窄竞态：follow_up 在 agent_end 那刻发，未 drain）
+    await doFinalizeRoundToIdle(makeDeps(redeliverPending), record, makeMinimalResult());
+    // MF-1：pendingMessages 从队列移除（转入 resume 重投通道）
     expect(record.pendingMessages).toBeUndefined();
+    // redeliverPending 被调（合并文本 = 两条用 \n\n 拼接）
+    await vi.waitFor(() => expect(redeliverPending).toHaveBeenCalledTimes(1));
+    expect(redeliverPending).toHaveBeenCalledWith(
+      record,
+      "unconsumed race-window msg\n\nsecond queued",
+    );
+  });
+
+  it("无残留 pendingMessages → 不调 redeliverPending（正常路径）", async () => {
+    const redeliverPending = vi.fn();
+    const record = makeMinimalRecord({ id: "rec-no-pending" });
+    record.status = "done";
+    await doFinalizeRoundToIdle(makeDeps(redeliverPending), record, makeMinimalResult());
+    expect(record.pendingMessages).toBeUndefined();
+    // 给 setTimeout(0) 一个周期确认未被调
+    await new Promise((r) => setTimeout(r, 10));
+    expect(redeliverPending).not.toHaveBeenCalled();
   });
 });

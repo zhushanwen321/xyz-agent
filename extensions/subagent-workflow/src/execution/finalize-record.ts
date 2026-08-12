@@ -45,6 +45,17 @@ export interface FinalizeDeps {
   clearThrottle(id: string): void;
   /** pending-notifications 终态注销（绑定 pi.events.emit，由调用方闭包提供）。 */
   emitUnregister(id: string, status: string): void;
+  /**
+   * 消费确认制补投回调（MF-1，设计决策 6 spec L251）。doFinalizeRoundToIdle 发现残留
+   * pendingMessages（进程退出时未消费的 in-flight 消息）时调用，触发 resumeRound 重开
+   * session 补投。调用方（SubagentService）实现为合并消息文本 → resumeRound(record, mergedText)。
+   *
+   * 调用时机由 doFinalizeRoundToIdle 用 setTimeout(0) 延迟，避免与当前 runAndFinalize 链
+   *（含 finally pool.release / .then notify）的时序竞争（TODO 原文标注的时序竞争）。
+   * 防递归：补投前已清空 pendingMessages，resume 新轮不再产生本批残留；resume 失败由
+   * MF-6 分流保证回退 idle（不销毁），不递归补投。
+   */
+  redeliverPending?: (record: ExecutionRecord, mergedText: string) => void;
 }
 
 /**
@@ -176,25 +187,42 @@ export async function doFinalizeRecord(
  *   - 删 .alive marker（进程已 SIGTERM 回收，不再是活进程）
  *   - emitUnregister（进程已死，从 pending 活跃后代差集移除；record 留内存不 archive）
  *
- * 状态：record.status = "idle"（覆盖 tryTransition 设的 done），record.round += 1。
+ * MF-2：设 record.result = result.text（否则 notifier idle 回复正文恒为 "(empty)"，
+ *   G1/G2 多轮回复送达不成立）。失败轮次（result.success=false，MF-6 回退 idle 路径）
+ *   的 result.text 可能为空，用 result.error 兜底让 notify 可读。
+ *
+ * MF-1（设计决策 6 spec L251 消费确认安全网）：进程退出时残留 pendingMessages
+ *   一律 resume 补投（不再清除）。残留是极窄竞态（follow_up/steer 在 agent_end 那刻发出，
+ *   pi post-run loop 不 drain → 进程 kill 时未消费）。合并残留文本经 redeliverPending 回调
+ *   触发 resumeRound 重投，setTimeout(0) 延迟避开与当前 runAndFinalize 链的时序竞争。
+ *
+ * 状态：record.status = "idle"（覆盖 tryTransition 设的 done/failed），record.round += 1。
  * 各步骤 best-effort 互不阻断（参照 doFinalizeRecord 的 bestEffort 用法）。
  *
  * @param deps 与 doFinalizeRecord 同源（从 SubagentService 注入）
- * @param _result 本轮 AgentResult（当前未使用——record 保留运行时 turns[]，不冻结汇总；
- *                保留参数位置与 doFinalizeRecord 委托签名对称，M2-B close 合并轮次时可用）
+ * @param result 本轮 AgentResult（MF-2：result.text 写入 record.result 供 notifier idle 回复）
  */
 export async function doFinalizeRoundToIdle(
   deps: FinalizeDeps,
   record: ExecutionRecord,
-  _result: AgentResult,
+  result: AgentResult,
 ): Promise<void> {
   // 清节流状态：防 trailing timer 在 record idle 后误发陈旧 onUpdate。
   deps.clearThrottle(record.id);
+
+  // MF-2：设 record.result 供 notifier idle 回复正文（否则恒 "(empty)"，G1/G2 不成立）。
+  // MF-6 兜底：失败轮次（success=false）的 result.text 可能为空，用 error 让 notify 可读。
+  record.result = result.text || (result.error ? `round did not complete: ${result.error}` : record.result);
 
   // 写 .idle sidecar + 删 .alive marker（进程已 SIGTERM 回收）。
   // sessionFile 窗口期可能 undefined（极少——对话模式轮次完成意味着 session 已跑过），
   // 缺失时跳过 sidecar 但仍设内存 idle（重启后磁盘重建会落到 crashed，边界可接受）。
   if (record.sessionFile) {
+    try {
+      removeAliveMarker(record.sessionFile);
+    } catch (err) {
+      bestEffort(err, "removeAliveMarker (doFinalizeRoundToIdle)");
+    }
     try {
       writeIdleMarker(record.sessionFile, {
         id: record.id,
@@ -205,35 +233,43 @@ export async function doFinalizeRoundToIdle(
     } catch (err) {
       bestEffort(err, "writeIdleMarker (doFinalizeRoundToIdle)");
     }
-    try {
-      removeAliveMarker(record.sessionFile);
-    } catch (err) {
-      bestEffort(err, "removeAliveMarker (doFinalizeRoundToIdle)");
-    }
   }
 
   // pending-notifications：进程已死，从活跃后代差集移除（record 留内存不 archive，
   // 但 pending 注册的是进程活跃性，进程死了需注销）。
   deps.emitUnregister(record.id, "idle");
 
-  // 状态机：record 进 idle（覆盖 tryTransition 设的 done），轮次计数 +1。
+  // 状态机：record 进 idle（覆盖 tryTransition 设的 done/failed），轮次计数 +1。
   record.status = "idle";
   record.round = (record.round ?? 0) + 1;
 
-  // 消费确认制残留处理（设计决策 6）：检查 turn_start 未清除的 pendingMessages。
-  // 正常情况 follow_up 在 turn 间 drain + turn_start 清除（探针 P-4）；残留是极窄竞态
-  //（follow_up/steer 在 agent_end 那刻发出，pi post-run loop 不 drain → 进程 kill 时未消费）。
+  // 消费确认制补投（MF-1，设计决策 6 spec L251 安全网）：进程退出时残留 pendingMessages
+  // 一律 resume 补投（不再静默清除——清除会让 busy→kill 竞态窗口的消息静默丢失）。
+  // 残留是极窄竞态：follow_up/steer 在 agent_end 那刻发出，pi post-run loop 不 drain → 进程
+  // kill 时未消费。合并残留文本经 redeliverPending 回调触发 resumeRound 重投。
   //
-  // 最小实现：warn + 清除防内存泄漏。完整补投（resume 重发）涉及 doFinalizeRoundToIdle
-  // 内触发 resumeRound 的时序竞争（runAndFinalize finally release pool vs kickOff acquire），
-  // 复杂度高 + 极窄竞态概率低（P-4 证明正常 drain），留作 followup。
-  // TODO(M2-B2-full): 残留消息经 resume 补投（合并 pendingMessages → resumeRound 重发），
-  //   需 FinalizeDeps 注入 redeliver 回调 + 防递归（限次 + pi 消费确认终止）。
+  // 防递归：清空 pendingMessages 后再投，resume 新轮的 pendingMessages 只来自该轮的 busy
+  // 投递，不再含本批；resume 失败由 MF-6 分流保证回退 idle（不销毁），不递归补投。
+  // setTimeout(0) 延迟：让当前 runAndFinalize 链（finally pool.release + .then notify）完整
+  // 退出后再开新轮，避免 pool release/acquire 时序竞争（TODO 原文标注的时序竞争）。
   if (record.pendingMessages && record.pendingMessages.length > 0) {
+    const pending = record.pendingMessages;
+    record.pendingMessages = undefined; // 清空：消息转入 resume 重投通道，pendingMessages 不再持有
+    const mergedText = pending.map((m) => m.text).join("\n\n");
     getLogger("subagents").warn(
-      `[subagents] idle record ${record.id} has ${record.pendingMessages.length} unconsumed pendingMessages (race window: follow_up/steer sent near agent_end, pi did not drain); clearing to prevent leak`,
-      { id: record.id, count: record.pendingMessages.length },
+      `[subagents] idle record ${record.id} has ${pending.length} unconsumed pendingMessages (race window: follow_up/steer sent near agent_end, pi did not drain); triggering resume re-delivery`,
+      { id: record.id, count: pending.length },
     );
-    record.pendingMessages = undefined;
+    if (deps.redeliverPending) {
+      setTimeout(() => {
+        try {
+          deps.redeliverPending!(record, mergedText);
+        } catch (err) {
+          // resume 前置校验 throw（如 status 已被并发改动）→ best-effort 记录，消息已从队列移除
+          //（spec 限制声明：排队消息因主 agent 重启/竞态丢失可接受，重发即可）。
+          bestEffort(err, "redeliverPending (doFinalizeRoundToIdle resume)");
+        }
+      }, 0);
+    }
   }
 }

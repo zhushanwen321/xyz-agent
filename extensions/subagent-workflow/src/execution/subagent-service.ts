@@ -567,29 +567,21 @@ export class SubagentService {
    * busy 投递：向 record 对应的活子进程 stdin 写 follow_up（排队）或 steer（抢占）。
    *
    * 设计决策 6 状态×interrupt 映射的 running 分支。同步立即返回（投递即返回，非阻塞）。
-   * 投递后把消息缓存进 record.pendingMessages（消费确认制，M2-B1 只记录不清除——
-   * pi 消费确认 message_start/turn_start 时清除、进程死亡时补投均为 M2-B2）。
+   * 投递后把消息缓存进 record.pendingMessages（消费确认制，MF-5：message_start(user) 清除、
+   * 进程死亡时由 doFinalizeRoundToIdle 的 redeliverPending 补投）。
    *
-   * record 必须有活进程（status==="running" 且 spawnedChildren 已注册）；进程刚退
-   * （close 回调 delete 了映射）的竞态窗口在此 throw，由 M2-B2 补投机制处理。
+   * MF-1（设计决策 6 spec L251 消费确认安全网）：record 仍 running 但子进程刚 close 的竞态窗口
+   * （getChildByRecord 返回 undefined）不再 throw——throw 会让 messageHandler 把错误直达 LLM 且
+   * 消息丢失。改为仅入队（delivery delayed, will retry），由 doFinalizeRoundToIdle 的 resume 补投。
+   * spec §3.1 失败表：「进程忙且 stdin 写入失败（进程刚退）→ delivery delayed, will retry」。
    *
    * @param record 目标 record（busy，running 态）
    * @param text 消息正文
    * @param interrupt true=steer（抢占）/ false=follow_up（排队）
-   * @throws Error record 无活进程（spawnedChildren 未注册 / 已退出）
    */
   deliverToRunning(record: ExecutionRecord, text: string, interrupt: boolean): void {
     this.assertReady();
-    const child = getChildByRecord(record.id);
-    if (!child) {
-      throw new Error(
-        `subagent ${record.id} has no live process (status=${record.status}); cannot deliver via busy path`,
-      );
-    }
-    if (interrupt) sendSteerCommand(child, text);
-    else sendFollowUpCommand(child, text);
-    // 消费确认制（决策 6）：缓存投递的消息，待 pi 消费确认（M2-B2）或进程死亡补投（M2-B2）。
-    // M2-B1 只 push 不清除——pendingMessages 是安全网，不在本里程碑消费。
+    // 先入队（消费确认制安全网）：无论 child 是否存活都缓存，message_start(user) 清除 / 进程死亡补投。
     record.pendingMessages ??= [];
     record.pendingMessages.push({
       id: crypto.randomUUID(),
@@ -597,6 +589,19 @@ export class SubagentService {
       interrupt,
       sentAt: Date.now(),
     } satisfies PendingMessage);
+
+    const child = getChildByRecord(record.id);
+    if (!child) {
+      // MF-1 竞态窗口：record 仍 running 但子进程刚 close（agent_end 已到、pump 还未走完 finalize）。
+      // 不 throw（防消息丢失 + 错误导 LLM）；消息已入队，doFinalizeRoundToIdle 的 redeliverPending 会 resume 补投。
+      getLogger("subagents").warn(
+        `[subagents] busy deliver race window: ${record.id} child closed between status check and stdin write; message enqueued, will be re-delivered via resume when the round finalizes`,
+        { id: record.id },
+      );
+      return;
+    }
+    if (interrupt) sendSteerCommand(child, text);
+    else sendFollowUpCommand(child, text);
   }
 
   /**
@@ -623,18 +628,25 @@ export class SubagentService {
   resumeRound(record: ExecutionRecord, text: string): void {
     this.assertReady();
     if (record.status !== "idle") {
+      // MF-4：行动语言（spec §3.1），不暴露 resume/controller 等内部词汇。
       throw new Error(
-        `subagent ${record.id} is not idle (status=${record.status}); resume requires idle record`,
+        `subagent ${record.id} is not ready for a new message (current state: ${record.status}). ` +
+        `Recovery: use action:'list' to confirm state; wait for the current round to finish, or send the message again once it is idle.`,
       );
     }
     if (!record.sessionFile) {
+      // MF-4：session 损坏 → canonical 文案（spec §3.1 失败表）。
       throw new Error(
-        `subagent ${record.id} has no sessionFile; cannot resume without a session to continue`,
+        `session unavailable for subagent ${record.id} (session file missing or unreadable). ` +
+        `Recovery: use action:'close' to clean up, then action:'start' a new subagent.`,
       );
     }
     if (!record.controller) {
-      // chatMode background record 创建时一定有 controller；兜底防御性检查。
-      throw new Error(`subagent ${record.id} has no controller; cannot resume`);
+      // chatMode background record 创建时一定有 controller；兜底防御性检查。MF-4 行动语言。
+      throw new Error(
+        `subagent ${record.id} is not ready for a new message (internal state error). ` +
+        `Recovery: use action:'close' to clean up, then action:'start' a new subagent.`,
+      );
     }
 
     // 手动设回 running（M2-A 边界：绕过 tryTransition，idle→running 恢复非终态 CAS）。
@@ -1098,6 +1110,26 @@ export class SubagentService {
       // 会逃逸出 run() —— 合成 failed result + 收尾。
       // swallow（不 re-throw）：sync 调用方拿到合成 failed result，background 的
       // .then 正常跑 notify。避免异常逃逸到 tool 层 + record 卡 running。
+      //
+      // MF-6（决策 6 spec §3.1）：chatMode（含 resume）spawn/创建失败不销毁对话——回退 idle
+      //（可恢复），让 agent 可重试 message 或 close。与一次性模式（finalizeFailed 终态销毁）区分。
+      if (record.chatMode) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const failedResult: AgentResult = {
+          text: "",
+          turns: record.turnCount,
+          durationMs: Date.now() - record.startedAt,
+          success: false,
+          error: errMsg,
+          sessionId: record.id,
+          toolCalls: [],
+        };
+        if (tryTransition(record, "failed")) {
+          // 回退 idle（record.result 由 finalizeRoundToIdle 设为 error 兜底文本，notify 可读）。
+          await this.finalizeRoundToIdle(record, failedResult);
+        }
+        return failedResult;
+      }
       result = await this.finalizeFailed(record, err);
       return result;
     } finally {
@@ -1122,9 +1154,14 @@ export class SubagentService {
         } else {
           // 对话模式轮次成功完成 → idle（保留 record 内存 + worktree，等待续聊）。
           // tryTransition 已把 status 设为 done，finalizeRoundToIdle 覆盖为 idle（chatMode 专属语义）。
-          // chatMode + failed/cancelled 仍走终态化（对话模式失败/取消不进 idle）。
           await this.finalizeRoundToIdle(record, result);
         }
+      } else if (record.chatMode && (status === "failed" || status === "cancelled")) {
+        // MF-6（决策 6 spec §3.1）：chatMode 轮次失败/取消不销毁对话——回退 idle（可恢复），
+        // 让 agent 可重试 message 或 close。与一次性模式（finalizeRecord 终态销毁）区分。
+        // record.result 由 finalizeRoundToIdle 设为 error 兜底文本，notify 经 idle 路径送达行动指引。
+        // 注：close(force:true) 的 cancelled 由 cancelBackground 直接终态化（不走此分支）。
+        await this.finalizeRoundToIdle(record, result);
       } else {
         await this.finalizeRecord(record, result, status);
       }
@@ -1241,7 +1278,8 @@ export class SubagentService {
 
   /**
    * 对话模式轮次完成收尾：委托 doFinalizeRoundToIdle（record 进 idle，保留内存 + worktree）。
-   * 与 finalizeRecord 对称的委托方法，deps 同源注入。chatMode + done 时由 runAndFinalize 调用。 */
+   * 与 finalizeRecord 对称的委托方法，deps 同源注入。chatMode + done/failed/cancelled 时由 runAndFinalize 调用
+   *（MF-6：chatMode 失败/取消也回退 idle 而非终态销毁）。 */
   private async finalizeRoundToIdle(
     record: ExecutionRecord,
     result: AgentResult,
@@ -1255,10 +1293,25 @@ export class SubagentService {
         pi: this.pi,
         clearThrottle: (id) => this.clearThrottle(id),
         emitUnregister: (id, st) => emitPendingUnregister(this.pi, id, st),
+        // MF-1：残留 pendingMessages 经 resume 补投（设计决策 6 spec L251 消费确认安全网）。
+        // redeliverPendingMessages 合并消息文本 → resumeRound 重开 session 续聊。
+        redeliverPending: (rec, mergedText) => this.redeliverPendingMessages(rec, mergedText),
       },
       record,
       result,
     );
+  }
+
+  /**
+   * MF-1 消费确认制补投（设计决策 6 spec L251）：doFinalizeRoundToIdle 发现进程退出时残留的
+   * pendingMessages（in-flight 的 follow_up/steer 未被 pi drain）后，合并文本经 resumeRound 重投。
+   *
+   * 由 doFinalizeRoundToIdle 用 setTimeout(0) 延迟调用（避开与当前 runAndFinalize 链的 pool
+   * release/acquire 时序竞争）。resume 失败由 MF-6 分流保证回退 idle（不销毁），不递归补投。
+   */
+  private redeliverPendingMessages(record: ExecutionRecord, mergedText: string): void {
+    // record 此时为 idle（doFinalizeRoundToIdle 已设），resumeRound 会手动设回 running 开新轮。
+    this.resumeRound(record, mergedText);
   }
 
   /** run() 创建期异常的收尾（H1 修复）：createAndConfigureSession 失败会抛，本方法合成 failed

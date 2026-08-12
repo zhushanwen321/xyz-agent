@@ -1,14 +1,15 @@
 // src/execution/__tests__/consume-confirmation.test.ts
 //
-// M2-B3 消费确认清除：turn_start 事件 → pendingMessages FIFO shift。
+// MF-5 消费确认清除：message_start(role=user) 事件 → pendingMessages FIFO shift。
 //
-// 设计决策 6：busy 投递（follow_up/steer）时消息缓存进 record.pendingMessages；
-// pi 开始新 turn（turn_start 事件）= 消费了一条排队消息，shift 最老的一条（FIFO）。
-// pendingMessages 只在 deliverToRunning 时 push，prompt（idle 续聊）不 push，
-// 故 idle 续聊的 turn_start 清除空数组 no-op（安全）。
+// 设计决策 6（spec L251）：busy 投递（follow_up/steer）时消息缓存进 record.pendingMessages；
+// pi 开始消费一条 user 消息（message_start(role=user)）= 消费了一条排队消息，shift 最老的一条（FIFO）。
+// 只对 user 消息清除——assistant/toolResult 的 message_start 不消费 pendingMessages。
+// turn_start 是 1:N（一条消息多 turn），用它清除会连 shift 掉尚未消费的排队消息，破坏 FIFO（MF-5）。
+// pi 源码确认 rpc mode 对注入的 steer/follow_up emit message_start(role=user)（agent-loop.ts:184）。
 //
-// 集成测试：FakeChild 模拟子进程 stdout 发 turn_start 事件，走 runSpawn 真实 stdout pump
-// → handleSdkEvent → case "turn_start" → shift。验证端到端路由。
+// 集成测试：FakeChild 模拟子进程 stdout 发 message_start 事件，走 runSpawn 真实 stdout pump
+// → handleSdkEvent → case "message_start" → shift。验证端到端路由。
 
 import { spawn } from "node:child_process";
 
@@ -64,9 +65,9 @@ import {
 import { runSpawn } from "../session-runner.ts";
 import type { PendingMessage } from "../types.ts";
 
-describe("消费确认清除：turn_start shift pendingMessages (M2-B3 决策 6)", () => {
-  it("turn_start 事件 → pendingMessages FIFO shift 最老一条", async () => {
-    const record = makeRecord("run-turn-start");
+describe("消费确认清除：message_start(user) shift pendingMessages (MF-5 决策 6)", () => {
+  it("message_start(role=user) 事件 → pendingMessages FIFO shift 最老一条", async () => {
+    const record = makeRecord("run-message-start");
     record.pendingMessages = [
       { id: "m1", text: "a", interrupt: false, sentAt: 1 },
       { id: "m2", text: "b", interrupt: true, sentAt: 2 },
@@ -76,13 +77,13 @@ describe("消费确认清除：turn_start shift pendingMessages (M2-B3 决策 6)
     await waitForSpawn(vi.mocked(mockedSpawn));
     const child = lastSpawnedChild(vi.mocked(mockedSpawn));
 
-    // turn_start = pi 开始新 turn（消费了一条排队消息）→ shift 最老的 m1
-    emitStdoutLine(child, { type: "turn_start" });
+    // message_start(role=user) = pi 开始消费一条排队消息 → shift 最老的 m1
+    emitStdoutLine(child, { type: "message_start", message: { role: "user" } });
     expect(record.pendingMessages!.length).toBe(1);
     expect(record.pendingMessages![0]!.id).toBe("m2"); // m1 已 shift，剩 m2
 
-    // 第二个 turn_start → shift m2
-    emitStdoutLine(child, { type: "turn_start" });
+    // 第二个 message_start(user) → shift m2
+    emitStdoutLine(child, { type: "message_start", message: { role: "user" } });
     expect(record.pendingMessages!.length).toBe(0); // 全清
 
     // 清理：close child 让 runSpawn resolve
@@ -90,16 +91,52 @@ describe("消费确认清除：turn_start shift pendingMessages (M2-B3 决策 6)
     await runPromise;
   });
 
-  it("pendingMessages 为空时 turn_start no-op（安全，不报错）", async () => {
+  it("pendingMessages 为空时 message_start(user) no-op（安全，不报错）", async () => {
     const record = makeRecord("run-empty");
-    // pendingMessages 保持 undefined（模拟 idle 续聊 prompt 的 turn_start）
+    // pendingMessages 保持 undefined（模拟 idle 续聊 prompt 的 message_start）
 
     const runPromise = runSpawn(record, "task", makeOpts(), makeCtx());
     await waitForSpawn(vi.mocked(mockedSpawn));
     const child = lastSpawnedChild(vi.mocked(mockedSpawn));
 
-    emitStdoutLine(child, { type: "turn_start" }); // no-op，不报错
+    emitStdoutLine(child, { type: "message_start", message: { role: "user" } }); // no-op，不报错
     expect(record.pendingMessages).toBeUndefined();
+
+    child.emit("close", 0);
+    await runPromise;
+  });
+
+  it("message_start(role=assistant) 不 shift pendingMessages（只 user 消息消费排队）", async () => {
+    const record = makeRecord("run-assistant");
+    record.pendingMessages = [
+      { id: "m1", text: "a", interrupt: false, sentAt: 1 },
+    ] satisfies PendingMessage[];
+
+    const runPromise = runSpawn(record, "task", makeOpts(), makeCtx());
+    await waitForSpawn(vi.mocked(mockedSpawn));
+    const child = lastSpawnedChild(vi.mocked(mockedSpawn));
+
+    // assistant 的 message_start 不消费 pendingMessages（MF-5：只 user 消息 1:1 清除）
+    emitStdoutLine(child, { type: "message_start", message: { role: "assistant" } });
+    expect(record.pendingMessages!.length).toBe(1); // 不变
+
+    child.emit("close", 0);
+    await runPromise;
+  });
+
+  it("turn_start 不 shift pendingMessages（1:N 会破坏 FIFO，MF-5）", async () => {
+    const record = makeRecord("run-turn-start-noop");
+    record.pendingMessages = [
+      { id: "m1", text: "a", interrupt: false, sentAt: 1 },
+    ] satisfies PendingMessage[];
+
+    const runPromise = runSpawn(record, "task", makeOpts(), makeCtx());
+    await waitForSpawn(vi.mocked(mockedSpawn));
+    const child = lastSpawnedChild(vi.mocked(mockedSpawn));
+
+    // turn_start 不再清除（改由 message_start 承担，MF-5）
+    emitStdoutLine(child, { type: "turn_start" });
+    expect(record.pendingMessages!.length).toBe(1); // 不变
 
     child.emit("close", 0);
     await runPromise;
