@@ -190,4 +190,54 @@ describe('sessionReaderExtension - TypeBox schema 与 SessionReadParams 对齐',
     expect(Check(schema, { action: 42 })).toBe(false)
     expect(Check(schema, {})).toBe(false) // 缺必填 action
   })
+
+  it('source 字段：合法值（main/subagent）通过、非法值拒绝；不传 source 向后兼容', () => {
+    const fake = makeFakePi()
+    sessionReaderExtension(fake.pi as unknown as ExtensionAPI)
+    const toolDef = fake.registerTool.mock.calls[0][0] as { parameters: unknown }
+    const schema = toolDef.parameters
+
+    // 合法值通过（enum 约束）
+    expect(Check(schema, { action: 'find', query: 'x', source: 'main' })).toBe(true)
+    expect(Check(schema, { action: 'find', query: 'x', source: 'subagent' })).toBe(true)
+    // 非法值被拒
+    expect(Check(schema, { action: 'find', query: 'x', source: 'bogus' })).toBe(false)
+    // 不传 source 向后兼容（既有合法形态仍 true）
+    expect(Check(schema, { action: 'find', query: 'x' })).toBe(true)
+  })
+
+  it('TC-w6-schema-action：action enum 含 workflow + runId optional（w6）', () => {
+    const fake = makeFakePi()
+    sessionReaderExtension(fake.pi as unknown as ExtensionAPI)
+    const toolDef = fake.registerTool.mock.calls[0][0] as { parameters: unknown }
+    const schema = toolDef.parameters
+
+    // action='workflow' 不传 runId（合法）
+    expect(Check(schema, { action: 'workflow', session: 'e6c96' })).toBe(true)
+    // action='workflow' 传 runId（合法）
+    expect(Check(schema, { action: 'workflow', session: 'e6c96', runId: 'wf-1' })).toBe(true)
+    // runId 传任意 action 均合法（其他 action 忽略 runId，不报错）
+    expect(Check(schema, { action: 'find', query: 'x', runId: 'wf-1' })).toBe(true)
+    // 不传 runId 向后兼容
+    expect(Check(schema, { action: 'outline', session: 'e6c96' })).toBe(true)
+    // runId 类型校验：非 string 被拒
+    expect(Check(schema, { action: 'workflow', session: 'x', runId: 123 })).toBe(false)
+  })
+
+  it('TC-m3b-schema-recursive：recursive optional boolean（family 专用）', () => {
+    const fake = makeFakePi()
+    sessionReaderExtension(fake.pi as unknown as ExtensionAPI)
+    const toolDef = fake.registerTool.mock.calls[0][0] as { parameters: unknown }
+    const schema = toolDef.parameters
+
+    // recursive=true（合法）
+    expect(Check(schema, { action: 'family', session: 'e6c96', recursive: true })).toBe(true)
+    // 不传 recursive（向后兼容，合法）
+    expect(Check(schema, { action: 'family', session: 'e6c96' })).toBe(true)
+    // recursive=false（合法）
+    expect(Check(schema, { action: 'family', session: 'e6c96', recursive: false })).toBe(true)
+    // recursive 非 boolean 被拒
+    expect(Check(schema, { action: 'family', session: 'x', recursive: 'yes' })).toBe(false)
+    expect(Check(schema, { action: 'family', session: 'x', recursive: 1 })).toBe(false)
+  })
 })
