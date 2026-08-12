@@ -35,7 +35,8 @@ export function useTurnElapsed(
   getIsStreaming: () => boolean,
   getIsSessionActive?: () => boolean,
   onComplete?: () => void,
-): { elapsed: Ref<string> } {
+): { elapsed: Ref<string>; elapsedSecs: Ref<number> } {
+  const elapsedSecs = ref(0)
   const elapsed = ref(formatElapsed())
   let elapsedTimer: ReturnType<typeof setInterval> | null = null
 
@@ -47,10 +48,14 @@ export function useTurnElapsed(
    */
   function formatElapsed(): string {
     const as = getAssistants()
-    if (as.length === 0) return '0s'
+    if (as.length === 0) {
+      elapsedSecs.value = 0
+      return '0s'
+    }
     const first = as[0].timestamp
     const end = getIsStreaming() ? Date.now() : as[as.length - 1].timestamp
     const secs = Math.max(1, Math.round((end - first) / MS_PER_SEC))
+    elapsedSecs.value = secs
     const m = Math.floor(secs / SEC_PER_MIN)
     const s = secs % SEC_PER_MIN
     return m > 0 ? `${m}m ${String(s).padStart(SEC_PAD_WIDTH, '0')}s` : `${s}s`
@@ -105,5 +110,5 @@ export function useTurnElapsed(
 
   onUnmounted(stopElapsedTimer)
 
-  return { elapsed }
+  return { elapsed, elapsedSecs }
 }

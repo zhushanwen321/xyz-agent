@@ -24,11 +24,11 @@
     >
       <!-- streaming 态：spinner（更显眼的流式生成指示），替代原脉冲点。仅文本流式生成时转（A 类） -->
       <!-- streaming 或 dispatching 占位（isPendingPlaceholder）时转 spinner；ask-user 等待态不转 -->
-      <Loader2 v-if="isStreaming || isPendingPlaceholder" class="size-3 shrink-0 animate-spin text-accent" />
+      <Loader2 v-if="isStreaming || isPendingPlaceholder" class="size-3.5 shrink-0 animate-spin" :class="spinnerColor" />
       <span class="text-[length:var(--text-sm)] font-medium">
         <span class="lbl" :class="sessionActive ? 'text-accent' : 'text-neutral-mid'">{{ sessionActive ? t('panel.message.thinking') : t('panel.message.worked') }}</span>
         <!-- dispatching 占位态尚未开始计时，隐藏 elapsed（避免显示 0s） -->
-        <span v-if="!isPendingPlaceholder" class="elapsed ml-1 font-mono font-medium tracking-[0.01em] text-neutral-fg">{{ elapsed }}</span>
+        <span v-if="!isPendingPlaceholder" class="elapsed ml-1 font-mono font-medium tracking-[0.01em]" :class="elapsedColor">{{ elapsed }}</span>
       </span>
       <!-- chevron 紧跟耗时（展开/收起 trace 入口），在 badge 之前 -->
       <ChevronRight
@@ -37,14 +37,14 @@
         :class="isExpanded(turnIndex) ? 'rotate-90 text-accent' : ''"
       />
       <!-- H 设计 badge 灰阶化：bg-surface-2 text-neutral-mid 替代 bg-reasoning-soft/bg-info-soft -->
-      <span v-if="thinkCount > 0" class="badge badge-think inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-1 font-mono text-[length:var(--text-2xs)] font-semibold tracking-[0.02em] text-neutral-mid">
-        <Brain class="size-2.5" />{{ t('panel.message.thinkCount', { count: thinkCount }) }}
+      <span v-if="thinkCount > 0" class="badge badge-think inline-flex items-center gap-1 rounded-full bg-surface-2 px-1.5 py-0.5 font-mono text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-neutral-dim">
+        <Brain class="size-2" />{{ t('panel.message.thinkCount', { count: thinkCount }) }}
       </span>
-      <span v-if="toolCount > 0" class="badge badge-tool inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-1 font-mono text-[length:var(--text-2xs)] font-semibold tracking-[0.02em] text-neutral-mid">
-        <SquareFunction class="size-2.5" />{{ t('panel.message.toolCount', { count: toolCount }) }}
+      <span v-if="toolCount > 0" class="badge badge-tool inline-flex items-center gap-1 rounded-full bg-surface-2 px-1.5 py-0.5 font-mono text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-neutral-dim">
+        <SquareFunction class="size-2" />{{ t('panel.message.toolCount', { count: toolCount }) }}
       </span>
     </Button>
-    <hr class="border-0 border-t border-border" />
+    <hr v-if="!sessionActive" class="border-0 border-t border-border" />
   </div>
 </template>
 
@@ -63,6 +63,8 @@ const props = defineProps<{
   thinkCount: number
   toolCount: number
   elapsed: string
+  /** 已耗时秒数（与 elapsed 字符串同源，用于长时生成分级警示配色） */
+  elapsedSecs: number
   /** 当前 turn 在 session 内的序列下标（turn expansion key） */
   turnIndex: number
   /** session id（透传保留） */
@@ -84,5 +86,31 @@ const { t } = useI18n()
  */
 const isPendingPlaceholder = computed(
   () => props.sessionActive && props.turn.assistants.length === 0,
+)
+
+/** 长时生成分级阈值（秒）：≥5min 转 warn、≥30min 转 danger（正常生成 30s~2min 不触发）。 */
+const DURATION_WARN_SECS = 300
+const DURATION_DANGER_SECS = 1800
+
+/** 分级警示：驱动 spinner + elapsed 配色，让卡死/死循环类异常长耗时在视觉上跳出来。 */
+const durationLevel = computed<'normal' | 'warn' | 'danger'>(() => {
+  const s = props.elapsedSecs
+  if (s >= DURATION_DANGER_SECS) return 'danger'
+  if (s >= DURATION_WARN_SECS) return 'warn'
+  return 'normal'
+})
+
+/** spinner 配色：normal 跟随 accent，warn/danger 转警示色（随时长“变暖”）。 */
+const spinnerColor = computed(() =>
+  durationLevel.value === 'danger' ? 'text-danger'
+    : durationLevel.value === 'warn' ? 'text-warn'
+      : 'text-accent',
+)
+
+/** elapsed 配色：normal 中性前景，warn/danger 转警示色。 */
+const elapsedColor = computed(() =>
+  durationLevel.value === 'danger' ? 'text-danger'
+    : durationLevel.value === 'warn' ? 'text-warn'
+      : 'text-neutral-fg',
 )
 </script>

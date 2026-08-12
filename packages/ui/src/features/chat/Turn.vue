@@ -28,6 +28,7 @@
         :think-count="thinkCount"
         :tool-count="toolCount"
         :elapsed="elapsed"
+        :elapsed-secs="elapsedSecs"
         :turn-index="turn.index"
         :session-id="sessionId"
       />
@@ -133,7 +134,7 @@ const showTrace = computed(() => sessionActive.value || isExpanded(props.turn.in
 /**
  * 工作耗时 live 计时。
  */
-const { elapsed } = useTurnElapsed(
+const { elapsed, elapsedSecs } = useTurnElapsed(
   () => props.turn.assistants,
   () => isStreaming.value,
   () => sessionActive.value,
