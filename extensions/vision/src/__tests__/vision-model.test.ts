@@ -17,6 +17,12 @@ vi.mock("node:fs", () => ({
   readFileSync: mockReadFileSync,
 }));
 
+// 固定 agent 目录，避免断言依赖真实 homedir fallback（环境设置 PI_CODING_AGENT_DIR 时挂）。
+// 同时规避 vitest.config.ts 中指向不存在路径的悬空 alias。
+vi.mock("@earendil-works/pi-coding-agent", () => ({
+  getAgentDir: () => "/home/test/.pi/agent",
+}));
+
 // VISION_MODELS_PATH 在模块加载时经 pi 的 getAgentDir() 求值（读 PI_CODING_AGENT_DIR env）。
 // 必须在 import 前 stub env——pi 包内部不经过 vitest 的 node:os mock。
 vi.hoisted(() => {

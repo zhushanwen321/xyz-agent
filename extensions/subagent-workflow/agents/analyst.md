@@ -2,7 +2,7 @@
 name: analyst
 description: "深度项目分析 agent（只读，产出给人读的报告，CSIO 分层，设计决策标 Inferred）"
 color: "#10b981"
-tools: read, bash, grep, glob
+tools: read, bash, grep, find
 when: 深度分析某项目/repo 架构、选型对比、学习借鉴、产出给人读的技术报告
 notFor: 快速找代码、改代码、查外部资料、运行时故障诊断
 examples:

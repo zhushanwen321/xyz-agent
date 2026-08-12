@@ -6,8 +6,7 @@
   "linked": [
     [
       "@zhushanwen/pi-quota-providers",
-      "@zhushanwen/pi-model-switch",
-      "@zhushanwen/pi-statusline"
+      "@zhushanwen/pi-model-switch"
     ],
     [
       "@zhushanwen/pi-structured-output",

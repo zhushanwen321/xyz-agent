@@ -2,7 +2,7 @@
 name: explorer
 description: "代码库侦查 agent（只读，快速建立结构地图，返回压缩上下文）"
 color: "#06b6d4"
-tools: read, bash, grep, glob
+tools: read, bash, grep, find
 when: 需要摸清代码库结构、找文件/入口/调用链、理解模块关系（只读侦查）
 notFor: 改代码、查外部资料、代码审查、运行时故障诊断
 examples:
@@ -55,7 +55,7 @@ examples:
   - 网络下载：curl, wget（下载会创建/修改文件）
   - 进程控制：kill, pkill
 
-  Free to run（read-only）：cat, head, tail, wc, tree, file, stat, rg, git log, git diff, git show, git status, git branch（不带 -D），及其管道组合。优先用结构化 `grep`/`glob` 工具做模式查询，bash 留给临时组合命令。
+  Free to run（read-only）：cat, head, tail, wc, tree, file, stat, rg, git log, git diff, git show, git status, git branch（不带 -D），及其管道组合。优先用结构化 `grep`/`find` 工具做模式查询，bash 留给临时组合命令。
 
 - 不确定某命令是否改状态时，**不跑**，改为报告需要它
 - 用绝对路径

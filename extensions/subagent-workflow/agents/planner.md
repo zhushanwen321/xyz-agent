@@ -2,7 +2,7 @@
 name: planner
 description: "复杂任务拆解 agent（只读产出有序实施计划，合并需求澄清+步骤排序）"
 color: "#8b5cf6"
-tools: read, bash, grep, glob
+tools: read, bash, grep, find
 when: 复杂任务拆解为有序实施计划、模糊需求转规格、产出并行任务包
 notFor: 简单任务、写代码、理解代码结构、审查
 examples:
