@@ -5,7 +5,7 @@
  * 从 pi-config-bridge.ts 提取以控制文件行数（pi-config-bridge 已删除）。
  */
 
-import { existsSync, readFileSync, statSync, openSync, writeSync, closeSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, openSync, writeSync, closeSync, readdirSync, unlinkSync } from 'node:fs'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { parseJsonl, readTailEntries } from '../../utils/jsonl.js'
 import { join } from 'node:path'
@@ -147,12 +147,29 @@ export function projectSidecarPath(filePath: string): string {
  *（ManagedSession.projectId），不阻断主流程。
  *
  * @param filePath session JSONL 绝对路径（sidecar = projectSidecarPath(filePath)）
- * @param projectId 归属 project id（空串 = 归回默认项目，等价于删除绑定）
+ * @param projectId 归属 project id（空串 = 归回默认项目，删除已存在的绑定 sidecar）
  */
 export function persistProjectBinding(filePath: string, projectId: string): void {
   if (!filePath) return
-  // 空 projectId（归回默认项目）= 删除绑定，不写 sidecar（读取侧一致兑底默认项目）。
-  if (!projectId) return
+  // 空 projectId（归回默认项目）= 删除绑定 sidecar。readProjectBinding 以 sidecar 为权威（无 sidecar
+  // 兑底 undefined → 展示层归入默认项目），若只 return 不删，已存在的 .project.json 会继续生效——
+  // 重启后 session 归属回退到旧命名项目（review MF-2 回归）。删除不创建文件，不违反规则 #6，
+  // 因此不依赖 JSONL 存在性，放在 existsSync 检查之前执行。
+  if (!projectId) {
+    const sidecarPath = projectSidecarPath(filePath)
+    try {
+      if (existsSync(sidecarPath)) {
+        unlinkSync(sidecarPath)
+        // 与写入分支同失效处理：缓存键只含 JSONL 的 (mtimeMs, size)，sidecar 删除不变 JSONL stat，
+        // 不删缓存会命中旧 projectId（扫描读回已删除的归属）。
+        sessionMetaCache.delete(filePath)
+      }
+    // eslint-disable-next-line taste/no-silent-catch -- file delete: failure must not crash caller
+    } catch (e) {
+      console.error(`[session-file-utils] persistProjectBinding: failed to delete sidecar: ${sidecarPath}`, e)
+    }
+    return
+  }
   if (!existsSync(filePath)) {
     // 文件不存在（pi 延迟写入窗口）：绝不创建文件，直接跳过（ES-RL-1 同款）。
     return

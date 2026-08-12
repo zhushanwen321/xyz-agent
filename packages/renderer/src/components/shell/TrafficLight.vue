@@ -5,12 +5,16 @@
     - win/linux：自绘 3 彩色圆点 mimic mac。挂载点已提升至 AppShell 层直接子节点（v6-spec-shell §3 修订②，
       AppNavControls 旁）：left-4(=16px)/top-[26px] 相对 AppShell padding box = 窗口 (16,26)，与 mac
       trafficLightPosition 同位（三平台统一）；折叠态 aside 归零不改变定位基准、不被 overflow-hidden 裁剪。
-    全屏态 isFullscreen=true 时 opacity→0（响应式 :class 绑定，替代旧 [data-fullscreen] 祖先选择器），
-    mac 系统 hover 浮层独立不参与。
+    全屏态 isFullscreen=true 时 opacity→0 + pointer-events-none（响应式 :class 绑定，替代旧 [data-fullscreen]
+    祖先选择器），mac 系统 hover 浮层独立不参与。
+    [review MF-1] pointer-events-none 必须与 opacity-0 成对：仅隐藏视觉时，win/linux 自绘圆点
+    （absolute z-10，窗口 (16,26)）仍可被点击——折叠 + 全屏下隐形圆点组悬浮在 PanelHeader chrome
+    按钮之上，点击静默触发最小化/最大化。opacity 只管视觉，pointer-events 管命中；全屏态
+    窗口控制经系统浮层完成，应用内圆点必须整体让出命中区域。
   -->
   <div
     class="traffic-light absolute left-4 top-[26px] flex gap-2 z-10 transition-opacity duration-[var(--duration-slow)] ease-[var(--ease)] group"
-    :class="{ 'opacity-0': isFullscreen }"
+    :class="{ 'opacity-0 pointer-events-none': isFullscreen }"
   >
     <template v-if="!isMac">
       <Button
@@ -39,6 +43,9 @@
  * 平台判定：detectPlatform() 纯字符串匹配（模块加载时算一次，平台运行期不变）。
  * 全屏态：usePlatformChrome 单例 isFullscreen ref（onMounted 注册 IPC 监听）。
  * 窗口控制仅 win/linux 触发；mac 下模板不渲染按钮，事件不可达。
+ * [review MF-1] 全屏态同时置 opacity-0 + pointer-events-none：隐形但可命中的圆点组
+ * （absolute z-10 悬浮在 PanelHeader chrome 之上）会劫持点击，静默触发窗口控制。
+ * opacity 隐藏视觉，pointer-events-none 让出命中区域，两者缺一不可。
  */
 import { type FunctionalComponent } from 'vue'
 import { X, Minus, Plus } from '@lucide/vue'

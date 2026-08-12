@@ -52,10 +52,10 @@ function makeGroups(): SessionGroup[] {
   ]
 }
 
-function mountList() {
+function mountList(groups: SessionGroup[] = makeGroups()) {
   return mount(SessionList, {
     props: {
-      groups: makeGroups(),
+      groups,
       activeId: null,
       statusOf: () => 'done' as never,
     },
@@ -144,5 +144,34 @@ describe('SessionList: 切换 project 列表实时变化（用户主诉求回归
     expect(wrapper.text()).toContain('会话 sb') // 未归类可见
     expect(wrapper.text()).not.toContain('会话 sa') // 归属 proj-a（存在）→ 隐藏
     expect(wrapper.text()).not.toContain('会话 sc') // 归属 proj-b（存在）→ 隐藏
+  })
+})
+
+describe('SessionList: folder 删除按钮随过滤状态隐藏（review MF-2 防护）', () => {
+  it('命名 project 过滤态（/repo 可见 1/3）→ folder-delete-btn 不存在（防误删不可见 session）', () => {
+    // 仅 /repo 单组：sa 归属 proj-a 可见，sb 未归类 / sc 归属 proj-b 被过滤 → visible(1) < total(3)。
+    // 不能用默认 makeGroups（其 /repo2 组 sd 归属 proj-a 全量可见会渲染按钮，污染计数断言）。
+    setupProjects('proj-a', [['proj-a', 'Alpha'], ['proj-b', 'Beta']])
+    const wrapper = mountList([{
+      cwd: '/repo',
+      sessions: [
+        makeSession('sa', '/repo', { projectId: 'proj-a' }),
+        makeSession('sb', '/repo'),
+        makeSession('sc', '/repo', { projectId: 'proj-b' }),
+      ],
+    }])
+    // removeByCwd 是 cwd 全量删除（项目无关），过滤态下删除会连带删掉不可见的 session → 按钮必须隐藏
+    expect(wrapper.findAll('[data-testid="folder-delete-btn"]')).toHaveLength(0)
+  })
+
+  it('默认项目全量视图（无过滤）→ folder-delete-btn 存在', () => {
+    // 全部 session 未归类：默认项目视图无过滤（visible === total），删除按钮可安全渲染
+    setupProjects('proj-default', [['proj-a', 'Alpha']])
+    const wrapper = mountList([{
+      cwd: '/repo',
+      sessions: [makeSession('sa', '/repo'), makeSession('sb', '/repo')],
+    }])
+    const btns = wrapper.findAll('[data-testid="folder-delete-btn"]')
+    expect(btns.length).toBeGreaterThan(0)
   })
 })

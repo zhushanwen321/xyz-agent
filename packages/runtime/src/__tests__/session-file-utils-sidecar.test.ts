@@ -81,4 +81,26 @@ describe('session-file-utils sidecar', () => {
     persistProjectBinding(filePath, '')
     expect(existsSync(filePath + '.project.json')).toBe(false)
   })
+
+  it('P6: 归回默认项目（空 projectId）删除已存在的绑定 sidecar（review MF-2 回归防护）', () => {
+    const filePath = join(dir, 'test.jsonl')
+    writeFileSync(filePath, '{"type":"message","id":"m1"}\n')
+    // 先绑定命名项目 → sidecar 存在且可读回
+    persistProjectBinding(filePath, 'proj-abc')
+    expect(readProjectBinding(filePath)).toBe('proj-abc')
+    // 归回默认 → 空 projectId 必须删除 sidecar，读取侧兑底 undefined
+    persistProjectBinding(filePath, '')
+    expect(existsSync(filePath + '.project.json')).toBe(false)
+    expect(readProjectBinding(filePath)).toBeUndefined()
+  })
+
+  it('P7: 归回默认项目且 JSONL 缺失（延迟写入窗口）仍删除已存在 sidecar（删除不依赖 JSONL）', () => {
+    const filePath = join(dir, 'test.jsonl')
+    writeFileSync(filePath, '{"type":"message","id":"m1"}\n')
+    persistProjectBinding(filePath, 'proj-abc')
+    // 模拟 JSONL 被移除（如重建），sidecar 残留
+    rmSync(filePath)
+    persistProjectBinding(filePath, '')
+    expect(existsSync(filePath + '.project.json')).toBe(false)
+  })
 })
