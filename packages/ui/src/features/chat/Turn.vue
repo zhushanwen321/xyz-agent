@@ -173,8 +173,9 @@ const traceBlocksByAssistant = computed<OrderedBlock[][]>(() => {
 const showStreamingCursor = computed(() => {
   if (!isStreaming.value) return false
   let lastVisible: OrderedBlock | null = null
-  for (const a of props.turn.assistants) {
-    for (const b of expandAssistantBlocks(a)) {
+  // 复用 traceBlocksByAssistant 缓存（streaming 每 token re-render，避免重跑 expandAssistantBlocks）
+  for (const blocks of traceBlocksByAssistant.value) {
+    for (const b of blocks) {
       if (b.kind === 'text' || showTrace.value) lastVisible = b
     }
   }

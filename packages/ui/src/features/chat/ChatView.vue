@@ -5,7 +5,7 @@
     职责（clarify Q1 方案 2）：
     - 组装迁来的展示子树（Turn 列表 + SystemNotice），不含 virtua/scroll/rail/fork-notice
       （这些留 renderer MessageStream.vue 壳层编排）
-    - ChatViewDeps / StickGuardDeps 由 renderer 壳 provide（上层 inject），本组件不 provide
+    - ChatViewDeps 由 renderer 壳 provide（上层 inject），本组件不 provide
 
     AC1 冒烟：composer 输入区用 data-testid 占位元素（真实 composer 由 renderer 壳注入，
     composer 域独立 slice，ui 薄壳不耦合 composer 实现）。

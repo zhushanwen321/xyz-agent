@@ -11,7 +11,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
-// [w6 chat-ui-and-shell T7] ui 包 Turn 经 ChatViewDeps/StickGuardDeps inject 消费依赖，mount 时 provide mock deps
+// [w6 chat-ui-and-shell T7] ui 包 Turn 经 ChatViewDeps inject 消费依赖，mount 时 provide mock deps
 import { Turn } from '@xyz-agent/ui'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import type { Message } from '@xyz-agent/shared'

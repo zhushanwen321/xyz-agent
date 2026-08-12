@@ -315,6 +315,7 @@ pi `text_start/toolcall_start` 在 `event-adapter.ts:106` 是 noop。无需改�
 | compact/fork/handoff | 读 content | **不影响**（content 角色不变） |
 | **v6 spec §12.6** | 容器/文字/cursor 定义变更 | **必须同步更新**（纳入清单） |
 | 既有测试 | contentBlocks 填充测试不变 | Turn.vue 渲染断言需更新 + **新增零跳变回归测试**（§8） |
+| **trace 折叠 stick-guard 通路** | 删 `<Transition>` 后 `StickGuardDepsKey` provide 落空（无 inject 方）、`useTraceTransition` hooks 零调用 → 孤儿 | **清理退役**：删除 `useStickGuard.ts` / `stick-guard-deps.ts` + barrel export + MessageStream provide + 3 处测试 mock。guarded 回归（完成时 trace 收缩 → scrollTop clamp → stickToBottom 翻 false）**结构上不可能**：`useVirtuaFollow` INVAR-M4-2 下 `onScroll` 只单向翻真（`distance≤40 → true`），永不翻 false；翻 false 只由 `onWheel`（纯用户信号）驱动。**已实测无回归**（真实 session + 探针验证，2026-08-12）：① 手动折叠（v-if 移除 thinking/tool block，scrollHeight 794→762）不触发 virtua `onScroll`；② 对话完成（isSessionActive true→false + trace 折叠 + watch scrollToBottom）无 `onScroll`、无 stickToBottom 翻真，`followIfStuck` rAF 重读 `stickToBottom=false` 时跳过滚动，界面停留在上滑位置（scrollTop 不变）。`pause/resumeStickGuard` 计数器已随删除退役（`useVirtuaFollow` 无 pause/resume 函数、无计数逻辑，勿据旧文档重建） |
 
 ### 7.4 运行时行为断言与探针
 
@@ -323,7 +324,7 @@ pi `text_start/toolcall_start` 在 `event-adapter.ts:106` 是 noop。无需改�
 | P-single-text | 单 message 最多 1 text 块（三处守卫） | grep 三填充点 text push 均 `.some(b=>b.type==='text')` | ✅ by guard |
 | P-stable | expandAssistantBlocks 输出 = contentBlocks 顺序 | 读 message-turns.ts:158-176 原序 push | ✅ |
 | P-order | 前端到达顺序 = pi content array 顺序 | 工具执行在 LLM 输出完整 tool_use 后 | ✅（常见场景） |
-| P-cursor | 光标现状在 TurnSummary 非 Turn.vue | grep `streaming-cursor` 仅 TurnSummary.vue:13 | ✅ |
+| P-cursor | 光标已迁至 Turn.vue trace 容器末尾独立 `streaming-tail` 元素（显隐条件 §6.4） | grep `streaming-tail` 命中 Turn.vue（TurnSummary 已无 cursor 元素） | ✅ 已核实 |
 | P-append-only | contentBlocks 三处 append 不前插 | 读三处均 `[...prev, new]` 尾追加 | ✅（支撑 §6.5） |
 | P-no-jump | 改造后 T2→T3 零跳变（位置+样式） | §8 场景 1 录屏逐帧 + 组件测试 DOM 断言 | ⛔ 实施期 |
 | P-fold-visible | 折叠态/重开 text 始终可见 | §8 场景 3 | ⛔ |

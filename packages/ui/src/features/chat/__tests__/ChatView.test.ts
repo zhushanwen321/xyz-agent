@@ -5,13 +5,13 @@
  * - 空 messages：chat-view 容器 + composer 占位 DOM 存在
  * - 有 user+assistant：Turn 渲染（消息列表 DOM 存在）
  *
- * mock 策略（design-review mockStrategyNote）：provide mock ChatViewDeps（vi.fn 各回调）+
- * mock StickGuardDeps（transition hooks 直接 done），零真 store。
+ * mock 策略（design-review mockStrategyNote）：provide mock ChatViewDeps（vi.fn 各回调），
+ * 零真 store。
  */
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ChatView, ChatViewDepsKey, StickGuardDepsKey } from '@xyz-agent/ui'
-import type { ChatViewDeps, StickGuardDeps } from '@xyz-agent/ui'
+import { ChatView, ChatViewDepsKey } from '@xyz-agent/ui'
+import type { ChatViewDeps } from '@xyz-agent/ui'
 import type { Message } from '@xyz-agent/shared'
 
 /** 构造 mock ChatViewDeps（所有字段 vi.fn 或合理默认，零真 store） */
@@ -40,19 +40,12 @@ function createMockDeps(): ChatViewDeps {
   }
 }
 
-const mockStickGuard: StickGuardDeps = {
-  onTraceBeforeLeave: () => {},
-  onTraceLeave: (_el, done) => done(),
-  onTraceEnter: (_el, done) => done(),
-}
-
 function mountChatView(messages: Message[]) {
   return mount(ChatView, {
     props: { messages, sessionId: 's1', isSessionActive: false },
     global: {
       provide: {
         [ChatViewDepsKey as symbol]: createMockDeps(),
-        [StickGuardDepsKey as symbol]: mockStickGuard,
       },
     },
   })

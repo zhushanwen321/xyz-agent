@@ -9,8 +9,8 @@
  * fork/handoff 按钮的 data-testid / disabled 守卫单测在 TurnSummary 维度覆盖（shallowMount 下
  * Turn 内是 stub，断言 testid 无意义）。Turn.vue 维度只校验编排器挂载了正确的子组件。
  *
- * [w6 chat-ui-and-shell T7] ui 包 Turn 经 ChatViewDeps/StickGuardDeps inject 消费依赖，
- * 原 renderer store/composable vi.mock（chatStore/useChat/useSidebar/useTurnElapsed/useStickGuard）
+ * [w6 chat-ui-and-shell T7] ui 包 Turn 经 ChatViewDeps inject 消费依赖，
+ * 原 renderer store/composable vi.mock（chatStore/useChat/useSidebar/useTurnElapsed）
  * 已失效，改为 mount 时 provide mock deps（isHandingOff 守卫断言经 overrides 注入）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/components/Turn.smoke.test.ts

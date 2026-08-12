@@ -8,11 +8,10 @@
  */
 // 顶层薄壳 + 组装
 export { default as ChatView } from './ChatView.vue'
-// deps inject token（ChatViewDeps + StickGuardDeps）
+// deps inject token（ChatViewDeps）。trace 折叠 stick-guard 通路已随 <Transition> 删除退役
+//（useVirtuaFollow INVAR-M4-2：onScroll 只单向翻真，永不翻 false，guarded 回归结构上不可能）。
 export { ChatViewDepsKey, useChatViewDeps } from './chat-view-deps'
 export type { ChatViewDeps, DrawerOpenOptions } from './chat-view-deps'
-export { StickGuardDepsKey, useStickGuardDeps } from './stick-guard-deps'
-export type { StickGuardDeps } from './stick-guard-deps'
 // 纯函数（图标决策 + 耗时格式化）
 export * from './block-icon'
 export * from './format-utils'
