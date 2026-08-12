@@ -109,6 +109,28 @@ export const useProjectStore = defineStore('project', () => {
   )
 
   /**
+   * 归一化（[review MF-2] 存在性校验）：init() 加载数据后校验一致性，必须在 deep watch save
+   * 触发前同步完成（init 内无后续 await，watcher flush 见到的即归一化后状态）——否则 stale id
+   * 被持久化回 projects.json，重启后 bug 依旧。
+   * ① activeProjectId 失配（legacy 迁移残留 / projects.json 被外部编辑或跨实例残留，指向已删除
+   *    项目）→ 回退：nameless 默认项 → 首个 → DEFAULT_PROJECT_ID。失配时 SessionList 过滤与
+   *    recentProjects 高亮消费原始 id，activeProject computed 兜底只覆盖显示层 → 会话列表空态
+   *    + 默认聚合进不去，且无自动恢复路径。
+   * ② nameless 默认项缺失（legacy/外部数据）→ 补插 makeDefaultProject()：默认项目是未归类/孤儿
+   *    session 的兜底聚合，缺失则默认项目视图永久不可达（makeDefaultProject 仅初始态，init 整体替换）。
+   * 合法数据（id 命中、默认项存在）原样保留，不覆盖 runtime 权威。
+   */
+  function normalizeLoadedProjects(): void {
+    if (!projects.value.some((p) => !p.name)) {
+      projects.value.unshift(makeDefaultProject())
+    }
+    if (!projects.value.some((p) => p.id === activeProjectId.value)) {
+      activeProjectId.value =
+        projects.value.find((p) => !p.name)?.id ?? projects.value[0]?.id ?? DEFAULT_PROJECT_ID
+    }
+  }
+
+  /**
    * 启动加载（initApp 调用，必须在 newSession 之前——create 归属读 activeProjectId）。
    * 优先级：runtime projects.json → 旧 localStorage（一次性迁移）→ 默认 project。
    * RPC 失败降级为默认（不抛，不阻断启动，对齐 workspaceStore.load 语义）。
@@ -117,9 +139,10 @@ export const useProjectStore = defineStore('project', () => {
     try {
       const state = await projectApi.load()
       if (state.projects.length > 0) {
-        // runtime 权威：直接用（含 activeProjectId；id 失配由 activeProject computed 兜底）
+        // runtime 权威：直接用（含 activeProjectId）；id 失配/默认项缺失由归一化修复
         projects.value = state.projects
         if (state.activeProjectId) activeProjectId.value = state.activeProjectId
+        normalizeLoadedProjects()
         return
       }
     } catch (e) {
@@ -131,6 +154,8 @@ export const useProjectStore = defineStore('project', () => {
     if (legacy) {
       projects.value = legacy.projects
       activeProjectId.value = legacy.activeProjectId || DEFAULT_PROJECT_ID
+      // 归一化先于显式 save：迁移落盘即归一化状态（stale id 不持久化）
+      normalizeLoadedProjects()
       void projectApi.save({ projects: projects.value, activeProjectId: activeProjectId.value }).catch(() => {})
     }
   }

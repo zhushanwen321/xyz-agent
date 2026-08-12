@@ -79,13 +79,48 @@ describe('Project store: 初始态与 init()', () => {
     const store = useProjectStore()
     await store.init()
 
-    expect(store.projects[0]!.name).toBe('旧项目')
+    // 归一化补插 nameless 默认项（[review MF-2]）：默认聚合视图保持可达，命名项顺延到 index 1
+    expect(store.projects).toHaveLength(2)
+    expect(store.projects[0]!.name).toBe('')
+    expect(store.projects[1]!.name).toBe('旧项目')
     // 旧 workspaces 字段被剥离
-    expect('workspaces' in store.projects[0]!).toBe(false)
-    // 迁移写回 runtime
+    expect('workspaces' in store.projects[1]!).toBe(false)
+    // 迁移写回 runtime（归一化后状态：默认项在前）
     expect(mockSave).toHaveBeenCalled()
     const saved = mockSave.mock.calls[0][0] as ProjectStoreState
-    expect(saved.projects[0]!.id).toBe('p1')
+    expect(saved.projects[1]!.id).toBe('p1')
+  })
+
+  it('init()：activeProjectId 失配（stale id）→ 归一化回退默认项（review MF-2）', async () => {
+    mockLoad.mockResolvedValue({
+      projects: [makeProject('proj-a', 'Alpha')],
+      activeProjectId: 'ghost-project',
+    })
+    const store = useProjectStore()
+    await store.init()
+
+    // stale id 不再被 SessionList 过滤/recentProjects 高亮消费：回退到 nameless 默认项
+    expect(store.activeProjectId).toBe(DEFAULT_PROJECT_ID)
+    expect(store.isDefaultProject).toBe(true)
+    // 归一化状态被 deep watch 持久化（重启不再复现 stale id）
+    await nextTick()
+    const saved = mockSave.mock.calls[mockSave.mock.calls.length - 1][0] as ProjectStoreState
+    expect(saved.activeProjectId).toBe(DEFAULT_PROJECT_ID)
+  })
+
+  it('init()：projects 缺 nameless 默认项 → 补插；合法 activeProjectId 不被覆盖（review MF-2）', async () => {
+    mockLoad.mockResolvedValue({
+      projects: [makeProject('proj-a', 'Alpha')],
+      activeProjectId: 'proj-a',
+    })
+    const store = useProjectStore()
+    await store.init()
+
+    // 默认聚合视图可达（补插不依赖初始态 makeDefaultProject）
+    expect(store.projects.map((p) => p.id)).toContain(DEFAULT_PROJECT_ID)
+    // 合法数据保留（runtime 权威不被 clobber）
+    expect(store.activeProjectId).toBe('proj-a')
+    expect(store.isDefaultProject).toBe(false)
   })
 
   it('init()：runtime 空 + localStorage 无数据 → 保持默认 project', async () => {
