@@ -5,7 +5,8 @@
  *
  * [HISTORICAL] 不变量：
  * 1. 4 态状态机：disconnected → connecting → connected（onclose → reconnecting → connecting...）
- * 2. 心跳：15s 发 ping，runtime 不回 pong 会主动断（触发重连）
+ * 2. 心跳：15s 发 ping 保活（仅 keepalive，不跟踪 pong；死连接检测靠 TCP 层 + IPC supervisor
+ *    事件 runtime-restarting/runtime-failed 驱动，非 pong 超时）
  * 3. 指数退避重连：1s 起、×2、上限 30s
  * 4. generation 计数：新连接 ++generation，旧 WS 的残余回调（onopen/onclose/onmessage）
  *    检查 gen !== wsGeneration 时直接 return，不干扰新连接
@@ -35,9 +36,10 @@ const HEARTBEAT_INTERVAL_MS = 15_000
 const RECONNECT_BASE_DELAY_MS = 1_000
 const RECONNECT_BACKOFF_EXPONENT = 2
 const MAX_RECONNECT_DELAY_MS = 30_000
-/** 重连尝试上限（设计文档 A4 §3.3）：超此不再自动重连，置 failed 待用户手动重试 */
-const MAX_RECONNECT_ATTEMPTS = 20
-/** 重连总时长上限（ms）：超过即放弃，避免长时间无意义重试占用资源 */
+/** 重连总时长上限（ms）：超过即放弃，置 failed 待用户手动重试，避免长时间无意义重试占用资源。
+ *  说明：曾配 attempts 计数上限（MAX_RECONNECT_ATTEMPTS=20），但指数退避（1+2+4+8+16+30…）
+ *  累积约第 6-7 次即跨 60s → duration cap 先触发，attempts 永不可达，该常量为死代码已删除。
+ *  放弃自动重连的判定唯由本时长上限决定。 */
 const MAX_RECONNECT_DURATION_MS = 60_000
 
 // ── 状态 ────────────────────────────────────────────────────
@@ -82,6 +84,10 @@ export function setRestarting(): void {
  */
 export function setFailed(): void {
   clearTimers()
+  // 重置重连簿记：failed 为终止态，残留的 reconnectAttempts/reconnectStartedAt（约 60s 前的旧值）
+  // 会让后续用户重试 / visibility 重连在首次掉线时立即被判超时 → 一次失败即回 failed，指数退避失效。
+  reconnectAttempts = 0
+  reconnectStartedAt = null
   state.value = 'failed'
 }
 
@@ -108,13 +114,19 @@ export function connect(url: string): void {
 
   ws.onmessage = (event) => {
     if (gen !== wsGeneration) return
+    let parsed: unknown
     try {
-      const msg = JSON.parse(String(event.data)) as ServerMessage
-      messageHandler?.(msg)
-    // eslint-disable-next-line taste/no-silent-catch -- 非 JSON 消息解析失败，跳过
+      parsed = JSON.parse(String(event.data))
     } catch (e) {
+      // JSON 解析失败：仅记日志跳过（dispatch 已移出 try，handler 抛错不再被此处吞掉）
       console.error('[ws] parse error:', e)
+      return
     }
+    if (!isServerMessage(parsed)) {
+      console.warn('[ws] dropping malformed (non-ServerMessage) inbound:', parsed)
+      return
+    }
+    messageHandler?.(parsed)
   }
 
   ws.onclose = () => {
@@ -125,6 +137,7 @@ export function connect(url: string): void {
   }
 
   ws.onerror = (err) => {
+    if (gen !== wsGeneration) return // 旧 WS 残余回调，忽略（避免误 close 掉已被新 gen 取代的当前 socket）
     console.error('[ws] error:', err)
     ws?.close()
   }
@@ -163,15 +176,28 @@ export function send(msg: ClientMessage): boolean {
 
 // ── 内部 ────────────────────────────────────────────────────
 
+/**
+ * 入站消息运行时形状守卫（MF-5：替代 `JSON.parse(...) as ServerMessage` unsafe cast）。
+ * 仅做最小形状校验：type 为字符串 + payload 非 null。不验证 type 是否在已知 ServerMessageType
+ * 联合内（未知 type 由下游 dispatcher 兜底分支处理），避免过度收紧静默丢弃合法 runtime 消息。
+ * ServerMessage 的 payload 恒为对象（pong / session.writeSegments:result 为 Record<string,never>={}），
+ * 故 payload!=null 不会误杀任何合法变体。
+ */
+function isServerMessage(x: unknown): x is ServerMessage {
+  return (
+    typeof x === 'object' &&
+    x !== null &&
+    typeof (x as { type?: unknown }).type === 'string' &&
+    (x as { payload?: unknown }).payload != null
+  )
+}
+
 function scheduleReconnect(): void {
   if (!currentUrl) return
-  // 重连上限兜底（设计文档 A4 §3.3）：尝试次数或总时长超限 → 放弃自动重连，置 failed
+  // 重连时长上限兜底（设计文档 A4 §3.3）：总时长超 MAX_RECONNECT_DURATION_MS → 放弃自动重连，置 failed。
   if (reconnectStartedAt === null) reconnectStartedAt = Date.now()
-  if (
-    reconnectAttempts >= MAX_RECONNECT_ATTEMPTS ||
-    Date.now() - reconnectStartedAt > MAX_RECONNECT_DURATION_MS
-  ) {
-    console.warn('[ws] reconnect attempts exhausted, giving up (state=failed)')
+  if (Date.now() - reconnectStartedAt > MAX_RECONNECT_DURATION_MS) {
+    console.warn('[ws] reconnect duration exceeded, giving up (state=failed)')
     setFailed()
     return
   }

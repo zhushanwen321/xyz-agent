@@ -210,7 +210,7 @@ describe('ws-client 不变量 ⑤ 重连退避', () => {
     expect(fakes.length).toBe(7) // 30s 到 → cap 生效
   })
 
-  it('连续重连失败达上限后停止重连（防无限重试）', () => {
+  it('连续重连失败达时长上限后停止重连（防无限重试）', () => {
     connect('ws://test')
     latestFake().triggerOpen()
 
