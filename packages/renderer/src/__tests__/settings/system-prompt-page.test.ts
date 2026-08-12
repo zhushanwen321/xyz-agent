@@ -194,6 +194,56 @@ describe('SystemPromptPage 保存交互', () => {
     const { toasts } = useToast()
     expect(toasts.value.some((t) => t.type === 'error' && t.message.includes('保存失败'))).toBe(true)
   })
+
+  it('修改后点「放弃」还原已保存快照，编辑态回退且保存按钮禁用', async () => {
+    configMock.getSystemPrompt.mockResolvedValueOnce({
+      config: {
+        version: 1,
+        replace: { enabled: true, prompt: '已保存的提示词' },
+        append: { enabled: false, prompt: '' },
+      },
+      corrupted: false,
+    })
+
+    await openSystemPromptPage()
+
+    // 编辑态：修改 textarea 文本 → dirty → 放弃按钮可用
+    await $('[data-testid="system-prompt-replace-input"]').setValue('未保存的修改')
+    const discardBtn = $('[data-testid="system-prompt-replace-discard"]')
+    expect(discardBtn.attributes('disabled')).toBeUndefined()
+
+    // 放弃 → textarea 还原为快照值、放弃按钮禁用（dirty 归零）
+    await discardBtn.trigger('click')
+    await flushPromises()
+
+    const input = $('[data-testid="system-prompt-replace-input"]')
+    expect((input.element as HTMLTextAreaElement).value).toBe('已保存的提示词')
+    expect($('[data-testid="system-prompt-replace-discard"]').attributes('disabled')).toBeDefined()
+    expect(configMock.setSystemPrompt).not.toHaveBeenCalled()
+  })
+
+  it('替换卡「恢复默认」清空文本并关开关（编辑态，需保存生效）', async () => {
+    configMock.getSystemPrompt.mockResolvedValueOnce({
+      config: {
+        version: 1,
+        replace: { enabled: true, prompt: '已保存的提示词' },
+        append: { enabled: false, prompt: '' },
+      },
+      corrupted: false,
+    })
+
+    await openSystemPromptPage()
+
+    // 开启状态下文本非空 → dirty 由 enabled 翻转产生（enabled 未变时需先改文本）
+    await $('[data-testid="system-prompt-replace-input"]').setValue('临时改动')
+    await $('[data-testid="system-prompt-replace-reset"]').trigger('click')
+    await flushPromises()
+
+    const input = $('[data-testid="system-prompt-replace-input"]')
+    expect((input.element as HTMLTextAreaElement).value).toBe('')
+    expect((input.element as HTMLTextAreaElement).disabled).toBe(true) // 开关已关，textarea 禁用
+    expect(configMock.setSystemPrompt).not.toHaveBeenCalled()
+  })
 })
 
 describe('SystemPromptPage corrupted 提示', () => {

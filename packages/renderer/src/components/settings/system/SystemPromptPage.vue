@@ -55,14 +55,35 @@
         />
         <div class="mt-1 flex items-center justify-between">
           <span class="font-mono text-[10px] text-neutral-dim">{{ replacePrompt.length }}/{{ maxLength }}</span>
-          <Button
-            data-testid="system-prompt-replace-save"
-            size="dense"
-            :disabled="!replaceEnabled"
-            @click="saveReplace"
-          >
-            {{ t('settings.systemPrompt.save') }}
-          </Button>
+          <!-- foot 操作簇（v6 demo sp-foot 范式）：放弃（还原快照）+ 恢复默认（清空关开关，仅 replace 卡）+ 保存。dirty 才可用。 -->
+          <div class="flex items-center gap-1.5">
+            <Button
+              data-testid="system-prompt-replace-discard"
+              variant="danger"
+              size="dense"
+              :disabled="!replaceDirty"
+              @click="discardReplace"
+            >
+              {{ t('settings.systemPrompt.discard') }}
+            </Button>
+            <Button
+              data-testid="system-prompt-replace-reset"
+              variant="secondary"
+              size="dense"
+              :disabled="!replaceDirty"
+              @click="resetReplace"
+            >
+              {{ t('settings.systemPrompt.restoreDefault') }}
+            </Button>
+            <Button
+              data-testid="system-prompt-replace-save"
+              size="dense"
+              :disabled="!replaceDirty"
+              @click="saveReplace"
+            >
+              {{ t('settings.systemPrompt.save') }}
+            </Button>
+          </div>
         </div>
 
         <!-- 可折叠：查看 pi 默认提示词参考 -->
@@ -131,14 +152,25 @@
         <div class="mt-1 flex items-center justify-between">
           <!-- append 走 hook 不经 argv，无 32k/16000 硬上限约束，故只显示字符数不显示上限（R3）。 -->
           <span class="font-mono text-[10px] text-neutral-dim">{{ appendPrompt.length }} {{ t('settings.systemPrompt.charCount') }}</span>
-          <Button
-            data-testid="system-prompt-append-save"
-            size="dense"
-            :disabled="!appendEnabled"
-            @click="saveAppend"
-          >
-            {{ t('settings.systemPrompt.save') }}
-          </Button>
+          <div class="flex items-center gap-1.5">
+            <Button
+              data-testid="system-prompt-append-discard"
+              variant="danger"
+              size="dense"
+              :disabled="!appendDirty"
+              @click="discardAppend"
+            >
+              {{ t('settings.systemPrompt.discard') }}
+            </Button>
+            <Button
+              data-testid="system-prompt-append-save"
+              size="dense"
+              :disabled="!appendDirty"
+              @click="saveAppend"
+            >
+              {{ t('settings.systemPrompt.save') }}
+            </Button>
+          </div>
         </div>
       </div>
     </GroupCard>
@@ -146,7 +178,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, ChevronRight, Copy } from '@lucide/vue'
 import { Switch } from '@/components/ui/switch'
@@ -171,6 +203,23 @@ const replacePrompt = ref('')
 const appendEnabled = ref(false)
 const appendPrompt = ref('')
 
+/** 已保存快照（v6 demo 范式）：loadConfig / 保存成功后刷新，dirty = 快照 diff。 */
+const saved = ref({ replaceEnabled: false, replacePrompt: '', appendEnabled: false, appendPrompt: '' })
+function snapshot() {
+  saved.value = {
+    replaceEnabled: replaceEnabled.value,
+    replacePrompt: replacePrompt.value,
+    appendEnabled: appendEnabled.value,
+    appendPrompt: appendPrompt.value,
+  }
+}
+const replaceDirty = computed(
+  () => replaceEnabled.value !== saved.value.replaceEnabled || replacePrompt.value !== saved.value.replacePrompt,
+)
+const appendDirty = computed(
+  () => appendEnabled.value !== saved.value.appendEnabled || appendPrompt.value !== saved.value.appendPrompt,
+)
+
 /** 参考区展开态（默认折叠）。 */
 const showDefaultPrompt = ref(false)
 
@@ -192,15 +241,35 @@ async function loadConfig(): Promise<void> {
     replacePrompt.value = res.config.replace.prompt
     appendEnabled.value = res.config.append.enabled
     appendPrompt.value = res.config.append.prompt
+    snapshot()
   } catch (e) {
     error(e instanceof Error ? e.message : String(e))
   }
+}
+
+/** 放弃替换卡编辑：还原已保存快照（dirty 归零）。 */
+function discardReplace(): void {
+  replaceEnabled.value = saved.value.replaceEnabled
+  replacePrompt.value = saved.value.replacePrompt
+}
+
+/** 放弃追加卡编辑：还原已保存快照（dirty 归零）。 */
+function discardAppend(): void {
+  appendEnabled.value = saved.value.appendEnabled
+  appendPrompt.value = saved.value.appendPrompt
+}
+
+/** 恢复默认（v6 demo resetDefault 语义）：清空 replace 文本 + 关开关。编辑操作不写盘，需保存生效。 */
+function resetReplace(): void {
+  replaceEnabled.value = false
+  replacePrompt.value = ''
 }
 
 /** 保存替换卡：以当前编辑态写回 config。 */
 async function saveReplace(): Promise<void> {
   try {
     await config.setSystemPrompt(buildConfig())
+    snapshot()
     info(t('settings.systemPrompt.savedToast'))
   } catch (e) {
     error(e instanceof Error ? e.message : String(e))
@@ -211,6 +280,7 @@ async function saveReplace(): Promise<void> {
 async function saveAppend(): Promise<void> {
   try {
     await config.setSystemPrompt(buildConfig())
+    snapshot()
     info(t('settings.systemPrompt.savedToast'))
   } catch (e) {
     error(e instanceof Error ? e.message : String(e))

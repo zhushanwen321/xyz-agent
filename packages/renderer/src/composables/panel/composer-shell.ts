@@ -281,7 +281,9 @@ export function useComposerShell(params: ComposerShellParams) {
   // ── 视觉派生（原 useComposerBoxClass + useComposerModeVisual 合并，D1 留壳）──
   const stagingBoxClass = computed(() => staging.activeStaging.value?.visual.boxClass.value ?? '')
   const stagingPlaceholder = computed(() => staging.activeStaging.value?.visual.placeholder.value ?? null)
-  /** composer-box class 三级链：staging > bash（accent 边 + ring）> 流式 steer 呼吸 > 聚焦 ring；发送中叠半透明 */
+  /** composer-box class 三级链：staging > bash（accent 边 + ring）> 流式 steer 呼吸 > has-input 微环；发送中叠半透明。
+   *  分支 token 同口径（v6-master-spec §6.1 + v6-spec-base.css：has-input = 2px surface-hover/40 微环，不改 border；
+   *  rgba(255,255,255,0.04) 硬编码已废弃） */
   const boxClass = computed<Array<string | false>>(() => [
     stagingBoxClass.value
       || (isBashMode.value
@@ -289,7 +291,7 @@ export function useComposerShell(params: ComposerShellParams) {
         : isActive.value
           ? 'border-[var(--accent)] shadow-[var(--shadow-glow)]'
           : hasInput.value
-            ? 'border-[var(--border-strong)] shadow-[0_0_0_2px_rgba(255,255,255,0.04)]'
+            ? 'shadow-[0_0_0_2px_color-mix(in_oklch,var(--surface-hover)_40%,transparent)]'
             : ''),
     isSending.value && 'opacity-[0.55]',
   ])
