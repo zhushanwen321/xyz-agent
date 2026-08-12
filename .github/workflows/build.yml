@@ -17,6 +17,11 @@ on:
         required: false
         type: string
         default: ''
+      dir-only:
+        description: 'CI 模式：只产出 unpacked 目录，跳过安装器压缩（省 ~185s）。release 不传，保持完整构建验证深度。'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -36,11 +41,17 @@ jobs:
 
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
+    env:
+      # 提到 job 级：Cache pi resources 步骤的 key 和 prepare 步骤共用同一版本号。
+      PI_VERSION: '0.80.3'
 
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          # CI/release 构建均不依赖 git 历史（版本号来自 package.json/workflow input，
+          # generate-manifest.sh 不用 git）。release.yml 的 changelog 生成在其独立
+          # Create Release job（自带 fetch-depth: 0），不受此处影响。浅 clone 省 ~13s。
+          fetch-depth: 1
 
       - uses: pnpm/action-setup@v4
 
@@ -95,16 +106,36 @@ jobs:
         shell: bash
         run: bash scripts/preflight-check.sh --ci
 
+      # 缓存 pi resources（~70MB，含二进制 + assets + theme）。
+      # prepare-pi-resources.sh 自身有「binary 存在则跳过下载」逻辑，cache 恢复目录后脚本自动 skip。
+      # key 含 PI_VERSION：版本升级自动失效重建（binary 文件名含版本，旧 cache 不会误用）。
+      - name: Cache pi resources
+        uses: actions/cache@v4
+        with:
+          path: apps/electron/resources/pi
+          key: ${{ runner.os }}-pi-${{ env.PI_VERSION }}-${{ runner.arch }}
+
       - name: Download and prepare pi resources
         shell: bash
         env:
-          PI_VERSION: '0.80.3'
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           chmod +x scripts/prepare-pi-resources.sh
           ./scripts/prepare-pi-resources.sh "$PI_VERSION"
 
+      # CI 模式（dir-only=true）：用 build:dir，只产出 unpacked 目录，跳过 zip/NSIS/DMG/AppImage 压缩。
+      # 安装器打包配置（nsis/dmg 段）的回归交给 release.yml 完整构建覆盖。
+      # 验证分层：CI 验证代码正确性（asar 打包 + runtime unpacked + smoke test），
+      # release 验证打包产物完整性（安装器压缩 + 分发格式）。
+      - name: Build (dir-only)
+        if: inputs.dir-only == true
+        env:
+          # 跳过 macOS 代码签名（未配置 Apple Developer 证书）
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: pnpm --filter @xyz-agent/electron run build:dir
+
       - name: Build
+        if: inputs.dir-only != true
         env:
           # 跳过 macOS 代码签名（未配置 Apple Developer 证书）
           CSC_IDENTITY_AUTO_DISCOVERY: false

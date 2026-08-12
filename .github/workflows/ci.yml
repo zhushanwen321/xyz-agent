@@ -108,8 +108,12 @@ jobs:
         working-directory: packages/plugin-sdk
         run: pnpm run check-sync
 
-  test:
-    name: Test
+  # Test 拆分为 4 个并行 job（原串行 214s → 关键路径 ~120s，省 ~95s）。
+  # runner 分钟数总量不变（ubuntu 充足），build gate 语义保持（任一失败不启动 build）。
+  # mac 完整 main tests（updater-script-integration 的 mac 专属用例）仍由 build.yml mac 平台跑，
+  # 此处 test-main 只跑 ubuntu 上能跑的子集。
+  test-runtime:
+    name: Test (runtime)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -128,33 +132,103 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: pnpm install --frozen-lockfile
 
-      - name: Test - runtime
+      - name: Test
         run: pnpm --filter @xyz-agent/runtime run test -- --reporter=junit --outputFile=test-results.xml
-
-      - name: Test - renderer
-        run: pnpm --filter @xyz-agent/frontend run test -- --reporter=junit --outputFile=test-results.xml
-
-      - name: Test - main
-        run: pnpm --filter @xyz-agent/electron run test:main
-
-      - name: Test - pi extensions
-        run: pnpm extensions:test
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
-          path: |
-            packages/runtime/test-results.xml
-            packages/renderer/test-results.xml
+          name: test-results-runtime
+          path: packages/runtime/test-results.xml
           retention-days: 7
+          if-no-files-found: ignore
 
-  # PR 构建检查：完整 electron-builder 打包流程（与 release 一致），不在 PR 上传产物。
-  # needs gate：lint/typecheck/sdk-sync/test 已知失败时不浪费 mac runner（mac 构建 5-8min）。
+  test-renderer:
+    name: Test (renderer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        run: pnpm --filter @xyz-agent/frontend run test -- --reporter=junit --outputFile=test-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-renderer
+          path: packages/renderer/test-results.xml
+          retention-days: 7
+          if-no-files-found: ignore
+
+  test-main:
+    name: Test (main)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        run: pnpm --filter @xyz-agent/electron run test:main
+
+  test-extensions:
+    name: Test (extensions)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        run: pnpm extensions:test
+
+  # PR 构建检查：electron-builder 打包流程，不在 PR 上传产物。
+  # dir-only=true：只产出 unpacked 目录，跳过安装器压缩（省 ~185s）。安装器配置回归交给 release.yml。
+  # needs gate：lint/typecheck/sdk-sync + 4 个 test job 任一已知失败时不浪费 mac runner（mac 构建 5-8min）。
   build:
     name: Build
-    needs: [lint, typecheck, sdk-sync, test]
+    needs: [lint, typecheck, sdk-sync, test-runtime, test-renderer, test-main, test-extensions]
     uses: ./.github/workflows/build.yml
     with:
       upload-artifacts: false
+      dir-only: true
