@@ -3,11 +3,11 @@
  *
  * 覆盖（v6-spec-shell SSOT）：
  *  - 三个拓扑 testid 存在：app-shell / app-shell-aside / app-shell-main
- *  - 关键类：AppShell p-3（12px 四周统一）、aside pt-[52px]（traffic-light 安全区，恒定）、
+ *  - 关键类：AppShell p-1（4px 四周统一）、aside pt-11（44px traffic-light 安全区，恒定）、
  *    MainPanel rounded-[10px]（float-panel 圆角与窗口共线）
  *  - 折叠态 !gap-0（强制覆盖 gap-3），展开态无
- *  - TrafficLight 挂载在 AppShell 层（v6-spec-shell §3 修订②：aside 折叠归零不改定位基准、
- *    不被 overflow-hidden 裁剪），不在 aside 内
+ *  - TrafficLight 挂载在 AsideRegion 内（2026-08 二次裁决：恢复刻意调整形态——trafficLightPosition {8,8}、
+ *    aside 顶 y=4，left-0/top-4 = 窗口 (8,8)，与 mac OS 红黄绿同位）
  *
  * Mock 策略（沿用 sidebar-layout / session-status-icons 既有模式，避免全局副作用）：
  *  - useSettingsShell 置空（AppShell 壳副作用，非拓扑被测面）
@@ -67,20 +67,20 @@ beforeEach(() => {
   platformChromeMock.isFullscreen.value = false
 })
 
-describe('AppShell 拓扑渲染 gate（D-6 回填回归防线）', () => {
-  it('展开态：三个拓扑 testid 存在 + 关键类（p-3 / aside pt-[52px] / main rounded-[10px]）', () => {
+describe('AppShell 拓扑渲染 gate（刻意调整形态回归防线）', () => {
+  it('展开态：三个拓扑 testid 存在 + 关键类（p-1 / aside pt-11 / main rounded-[10px]）', () => {
     const wrapper = mount(AppShell)
 
-    // ① app-shell 根容器：p-3(12px) 四周统一 + relative 定位基准
+    // ① app-shell 根容器：p-1(4px) 四周统一 + relative 定位基准
     const shell = wrapper.find('[data-testid="app-shell"]')
     expect(shell.exists()).toBe(true)
-    expect(shell.classes()).toContain('p-3')
+    expect(shell.classes()).toContain('p-1')
     expect(shell.classes()).toContain('relative')
 
-    // ② aside：pt-[52px] traffic-light 安全区恒定
+    // ② aside：pt-11(44px) traffic-light 安全区恒定
     const aside = wrapper.find('[data-testid="app-shell-aside"]')
     expect(aside.exists()).toBe(true)
-    expect(aside.classes()).toContain('pt-[52px]')
+    expect(aside.classes()).toContain('pt-11')
 
     // ③ main float-panel：rounded-[10px]（与窗口圆角共线）
     const main = wrapper.find('[data-testid="app-shell-main"]')
@@ -101,22 +101,14 @@ describe('AppShell 拓扑渲染 gate（D-6 回填回归防线）', () => {
     expect(wrapper.find('[data-testid="app-shell"]').classes()).toContain('!gap-0')
   })
 
-  it('TrafficLight 挂载在 AppShell 层（aside 外）：折叠态不被 aside overflow-hidden 裁剪', async () => {
+  it('TrafficLight 挂载在 AsideRegion 内：left-0/top-4 相对 aside 顶 y=4 = 窗口 (8,8) 与 mac 同位', () => {
     const wrapper = mount(AppShell)
-    const shell = wrapper.find('[data-testid="app-shell"]')
 
-    // traffic-light 是 AppShell 直接子节点（与 AppNavControls 同层，v6-spec-shell §3 修订②）
+    // traffic-light 在 aside 内（刻意调整形态：aside 是 offset parent，left-0/top-4 → 窗口 (8,8)）
     const tl = wrapper.find('.traffic-light')
     expect(tl.exists()).toBe(true)
-    expect(tl.element.parentElement).toBe(shell.element)
-    // 不在 aside 内（折叠态 aside overflow-hidden 会裁剪）
-    expect(wrapper.find('[data-testid="app-shell-aside"] .traffic-light').exists()).toBe(false)
-    // 折叠态依然存在于 DOM（aside 归零不影响挂载点）
-    const sidebar = useSidebarStore()
-    sidebar.collapsed = true
-    await nextTick()
-    expect(wrapper.find('.traffic-light').element.parentElement).toBe(
-      wrapper.find('[data-testid="app-shell"]').element,
+    expect(tl.element.parentElement).toBe(
+      wrapper.find('[data-testid="app-shell-aside"]').element,
     )
   })
 

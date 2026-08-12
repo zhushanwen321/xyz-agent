@@ -157,7 +157,7 @@ describe('PanelHeader 折叠态 chrome 迁入（review MF-6）', () => {
 
     const wrapper = mountHeader()
     const header = wrapper.find('header')
-    // 让位类：非全屏留 pl-[88px]（红黄绿原生 x16~68，chrome 起 x≈100 与浮层一致）
+    // 让位类：非全屏留 pl-[88px]（红黄绿原生 x8~60，chrome 起 x≈88 与浮层一致）
     expect(header.classes()).toContain('pl-[88px]')
     // chrome 三按钮组迁入 header（收起按钮 testid 与浮层 AppNavControls 同源）
     expect(wrapper.find('[data-testid="sidebar-collapse-toggle"]').exists()).toBe(true)

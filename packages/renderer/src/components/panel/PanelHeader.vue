@@ -7,18 +7,17 @@
     v2：移除 split 后无 split/新建会话/关闭按钮（原双 panel 专属操作）。
     更多菜单（G2-005 rename 等）DEFERRED hide。
     拖拽区（shell/spec §七-6）：header 空白 -webkit-app-region:drag，交互元素 no-drag。
-    高度 38px 对齐 v6-spec-shell（2026-08 裁决：v6 demo + v6-spec-shell.html 为真值）：
-      main-panel 顶=AppShell p-3(12)+border(1)=y13，h-38 → 中线 y=13+19=32，
-      与红黄绿中线（trafficLightPosition {16,26}：26+6=32）和 AppNavControls 按钮中线（top-21+h-22）三处对齐。
-      右侧 drawer/git 按钮 size-22 / jsonl 按钮 h-5 在 38px header 内垂直居中（items-center）。
+    高度对齐 trafficlight 行（AGENTS.md #11）：h-[22px] 使 header 与窗口红黄绿+nav 按钮行共线。
+      main-panel 顶=AppShell p-1(4)+border(1)=y5，h-22 → bottom y27 = AppNavControls 按钮 bottom（top-5+h-22），
+      内容中线 y16 ≈ 红黄绿实测中线 y15.75。右侧 drawer/git 按钮 size-22 适配（不溢出 22 高 header）。
     折叠态 chrome 落位（sidebar/spec.md §收起态 + draft-collapsed-state.html 卡 A/B/C）：
     sidebar 折叠时，收起/←/→ 三按钮迁入此 header 最左侧（chrome 槽位）。
-    安全区 padding：非全屏留 pl-[88px] 让位窗口左上 traffic-light（红黄绿原生 x16~68，header 内容起 x≈100，
-    chrome 按钮与红黄绿拉开约 32px 呼吸，与浮层 AppNavControls 非折叠位 left-100 一致）；全屏态红黄绿 OS 隐藏，header pl-4（卡 B「h-nav 紧贴左」）。
+    安全区 padding：非全屏留 pl-[88px] 让位窗口左上 traffic-light（红黄绿原生 x8~60，header 内容起 x≈88，
+    chrome 按钮与红黄绿拉开约 28px 呼吸）；全屏态红黄绿 OS 隐藏，header pl-4（卡 B「h-nav 紧贴左」）。
     唤回侧栏靠 ⌘B + 此 chrome 按钮（rail-restore 已移除）。
   -->
   <header
-    class="flex h-[38px] flex-shrink-0 items-center gap-2 bg-bg-elevated px-3.5 [-webkit-app-region:drag]"
+    class="flex h-[22px] flex-shrink-0 items-center gap-2 bg-bg-elevated px-3.5 [-webkit-app-region:drag]"
     :class="showChrome && !isFullscreen ? 'pl-[88px]' : 'pl-4'"
   >
     <!-- 折叠态 P1 chrome 槽位：收起/←/→ 三按钮（sidebar/spec §收起态「导航能力迁移」）。
