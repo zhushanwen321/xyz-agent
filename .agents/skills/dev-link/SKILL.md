@@ -29,7 +29,7 @@ bash .agents/skills/dev-link/pi-link.sh subagent-workflow      # symlink 本地�
 bash .agents/skills/dev-link/pi-unlink.sh subagent-workflow    # rm symlink + 恢复 npm 条目（无需联网）
 ```
 
-**机制**：symlink 本地源码 → `~/.pi/agent/extensions/pi-<short>`（globalExtDir，loader 第 2 步扫描，pi-statusline 同模式）。同时清 settings.json `packages` 里该 extension 的残留（`npm:` 源 + 旧 configuredPaths 本地路径），避免 globalExtDir + configuredPaths 两源冲突——**删除的条目先备份到 `~/.pi/agent/.pi-link-backup.json`，unlink 时自动还原**，保证 link → unlink 往返后 extension 回到 npm 源（状态守恒）。
+**机制**：symlink 本地源码 → `~/.pi/agent/extensions/pi-<short>`（globalExtDir，loader 第 2 步扫描，subagent-workflow 同模式）。同时清 settings.json `packages` 里该 extension 的残留（`npm:` 源 + 旧 configuredPaths 本地路径），避免 globalExtDir + configuredPaths 两源冲突——**删除的条目先备份到 `~/.pi/agent/.pi-link-backup.json`，unlink 时自动还原**，保证 link → unlink 往返后 extension 回到 npm 源（状态守恒）。
 
 **生效**：新建 pi session（当前 session 已加载旧版，不重扫）。**注意 pi list 不显示** globalExtDir symlink——pi list 只列 `packages` 配置的，不列自动发现源，但 loader 会加载（正常现象）。
 

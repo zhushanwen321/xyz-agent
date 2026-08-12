@@ -152,6 +152,11 @@
       "name": "@zhushanwen/pi-session-reader",
       "directory": "extensions/session-reader",
       "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-structured-output",
+      "directory": "extensions/structured-output",
+      "dependsOn": []
     }
   ]
 }

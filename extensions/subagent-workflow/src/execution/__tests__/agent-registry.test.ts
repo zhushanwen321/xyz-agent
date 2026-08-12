@@ -237,17 +237,17 @@ describe("builtin agents 数据合规", () => {
     // tools 字段精确匹配：未声明的为 undefined，声明的为具体数组。
     // 改 frontmatter 时这里会立即报错，拦住拼写错误或字段遗漏。
     expect(reg.loadByPath(path.join(AGENTS_DIR, "explorer.md"))?.tools).toEqual(
-      ["read", "bash", "grep", "find"],
+      ["read", "bash", "grep", "find", "structured-output"],
     );
     expect(reg.loadByPath(path.join(AGENTS_DIR, "researcher.md"))?.tools).toEqual(["read", "bash"]);
     expect(reg.loadByPath(path.join(AGENTS_DIR, "orchestrator.md"))?.tools).toEqual([
       "todo", "goal_control", "workflow", "subagent", "ask_user",
     ]);
     expect(reg.loadByPath(path.join(AGENTS_DIR, "reviewer.md"))?.tools).toEqual(["read", "bash", "grep", "find", "structured-output"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "planner.md"))?.tools).toEqual(["read", "bash", "grep", "find"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "coder.md"))?.tools).toEqual(["read", "write", "edit", "bash", "grep", "find"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "debugger.md"))?.tools).toEqual(["read", "write", "edit", "bash", "grep", "find"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "analyst.md"))?.tools).toEqual(["read", "bash", "grep", "find"]);
+    expect(reg.loadByPath(path.join(AGENTS_DIR, "planner.md"))?.tools).toEqual(["read", "bash", "grep", "find", "structured-output"]);
+    expect(reg.loadByPath(path.join(AGENTS_DIR, "coder.md"))?.tools).toEqual(["read", "write", "edit", "bash", "grep", "find", "structured-output"]);
+    expect(reg.loadByPath(path.join(AGENTS_DIR, "debugger.md"))?.tools).toEqual(["read", "write", "edit", "bash", "grep", "find", "structured-output"]);
+    expect(reg.loadByPath(path.join(AGENTS_DIR, "analyst.md"))?.tools).toEqual(["read", "bash", "grep", "find", "structured-output"]);
     expect(reg.loadByPath(path.join(AGENTS_DIR, "doc-reviewer.md"))?.tools).toEqual(["read", "grep", "structured-output"]);
   });
 });
