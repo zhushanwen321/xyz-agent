@@ -23,7 +23,7 @@ import type { ExtensionInfo } from '@xyz-agent/shared'
 import { recommendedExtensions, isMandatoryExtension, isBuiltinExtension, isInfrastructureBuiltin, BUILTIN_EXTENSION_FILES, mandatoryExtensions } from '@xyz-agent/shared'
 import semver from 'semver'
 import type { IInstaller, IExtensionResolver, DiscoveredExtension } from './ports/installer.js'
-import { resolveExtensions, readPkgMeta, type ResolvedExtension } from './extension-filter.js'
+import { resolveExtensions, dedupeLoadedExtensions, readPkgMeta, type ResolvedExtension } from './extension-filter.js'
 import type { IExtensionSettings } from './ports/extension-settings.js'
 import type { IConfigStore } from './ports/config.js'
 import { isStrictlyUnder, isUnderOrEqual, extractRepoName, expandHome } from '../utils/path-utils.js'
@@ -378,7 +378,10 @@ export class ExtensionService {
     const { discovered, disabledSet } = await this.getDiscoveredAndDisabled(cwd)
     // 委托给过滤管道（一次读盘，元数据透传）
     const resolved = resolveExtensions(discovered, disabledSet)
-    const filtered = resolved.filter(r => r.loadable).map(r => r.path)
+    // P7：加载层同名去重（discovery 目录与 settings npm 版双路径冲突防护）。
+    // scanExtensions 全局视图不去重（列表仍显示），仅 --extension 注入去重。
+    const deduped = dedupeLoadedExtensions(resolved)
+    const filtered = deduped.filter(r => r.loadable).map(r => r.path)
     // builtin extension 永远前置（设计文档 §2.3）
     filtered.unshift(...this.getBuiltinExtensionPaths())
     return filtered

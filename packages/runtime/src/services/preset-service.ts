@@ -15,7 +15,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { resolveExtensions, applyPresetMode } from './extension-filter.js'
+import { resolveExtensions, dedupeLoadedExtensions, applyPresetMode } from './extension-filter.js'
 
 import {
   BUILTIN_PRESET_IDS,
@@ -556,9 +556,12 @@ export class PresetService {
 
     // 一次读盘：disabled 过滤 + tier 推导
     const resolved = resolveExtensions(discovered, disabledSet)
+    // P7：加载层同名去重（与 getExtensionPaths 一致——preset 分支同样注入 --extension，
+    // discovery 目录与 settings npm 版同名时只保留受管版，避免 pi Tool conflicts）
+    const deduped = dedupeLoadedExtensions(resolved)
     // preset mode 二次筛选（infrastructure 在任何模式下都存活）
     const afterPreset = applyPresetMode(
-      resolved,
+      deduped,
       preset.extensionMode,
       preset.allowedExtensions ?? [],
       preset.deniedExtensions ?? [],
