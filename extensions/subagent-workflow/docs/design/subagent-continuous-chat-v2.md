@@ -1,12 +1,12 @@
 # Subagent 可持续对话终态架构（v2）
 
-> **一句话结论**：v1 选「每轮 kill 进程 + resume 重开」是设计期信息不全下的合理权衡——它正确否决了纯进程保活（那个范式下「进程没了对话就没了」真成立），也明确评估过「保活 + 文件兜底」混合方案并因复杂度推迟。但有两处设计期问题在实现盘点后才显形：**其一**，选项空间构造缺陷——「进程死活」与「文件恢复」两个正交维度被压成互斥选项，「保活 + 文件兜底」被迫以「A + B 双机制」形态背负虚高复杂度（正解实为 resume 一个机制兼任异常恢复与冷路径，热路径零机制）；**其二**，「每轮 kill」的补丁机制成本（消费确认制、sidecar、重建矩阵）在设计期尚未长成、无法计入方案对比。本设计用实现期完整成本数据重估该权衡：正确范式是**进程与对话轮次解耦**——进程长驻（性能）+ session 文件兜底（恢复）+ 统一投递语义（pi 权威裁决 busy，父进程零状态镜像）+ 显式生命周期管理（单 activation 互斥、三道收割防线）。v1 为「每轮 kill」打补丁的机制随之消失——**删的比写的多（行数实测净减 ~270-330 行），且删掉的全是状态机与竞态处理**。
+> **一句话结论**：v1 选「每轮 kill 进程 + resume 重开」是设计期信息不全下的合理权衡——它正确否决了纯进程保活（那个范式下「进程没了对话就没了」真成立），也明确评估过「保活 + 文件兜底」混合方案并因复杂度推迟。但有两处设计期问题在实现盘点后才显形：**其一**，选项空间构造缺陷——「进程死活」与「文件恢复」两个正交维度被压成互斥选项，「保活 + 文件兜底」被迫以「A + B 双机制」形态背负虚高复杂度（正解实为复用 resume 单一机制——冷路径（崩溃/timeout/重启后）才 resume，热路径直接 prompt、零恢复机制）；**其二**，「每轮 kill」的补丁机制成本（消费确认制、sidecar、重建矩阵）在设计期尚未长成、无法计入方案对比。本设计用实现期完整成本数据重估该权衡：正确范式是**进程与对话轮次解耦**——进程长驻（性能）+ session 文件兜底（恢复）+ 统一投递语义（pi 权威裁决 busy，父进程零状态镜像）+ 显式生命周期管理（单 activation 互斥、三道收割防线）。v1 为「每轮 kill」打补丁的机制随之消失——**删的比写的多（行数实测净减 ~270-330 行），且删掉的全是状态机与竞态处理**。
 
 ## 层声明
 
 - **当前层**：架构 / 技术方案（范式选择 + 架构设计）
 - **下一层**：实现计划（进程生命周期管理、统一投递、idle 回收等模块拆分，见 §5）
-- 本设计与 v1（`continuous-subagent-chat.md`）平级，定位为**替代**。与 `continuous-chat-resume-context-fix.md`（v1 框架内的 identity 写入修复）是**包含关系**——其「identity 由子进程写」被本设计吸收为决策 5，该修复可先行落地止血（其 M1/M2 是本设计的严格子集）。
+- 本设计是 subagent 可持续对话的终态架构，**替代**此前的所有过程设计（v1「每轮 kill + resume」方案、identity 写入修复方案均被本设计吸收/取代）。
 - 涉及运行时行为（进程生命周期、崩溃恢复、内存回收）、数据流（消息投递路径）、错误处理（冷热路径降级） → 设计准则 5/6/7 全部 P0 适用
 
 ### 设计准则（贯穿全文）
@@ -23,7 +23,7 @@
 ### SCQA
 
 - **S（情境）**：subagent 可持续对话功能（`feat-subagent-continuous-chat` 分支）已按 v1 设计实现一大半——6 大机制（idle 状态机、消费确认制、归属守卫、resume spawn、`.idle` sidecar 重建、notifier dedup 豁免）都落地了。
-- **C（冲突）**：实测（session `a55378`）多轮对话第二轮丢上下文。根因排查发现两层问题：(i) identity entry 由父进程跨进程手工拼文件写出、缺 `id`/`parentId`，污染 pi 的 leaf 指针、message tree 断成两棵（机制详见 fix 文档 §2，已实证）；(ii) 更深一层，v1 里最复杂、最易出 bug 的机制（消费确认制、idle 重建矩阵、sidecar 时序）全是「每轮 kill」这个范式的并发症。
+- **C（冲突）**：实测（session `a55378`）多轮对话第二轮丢上下文。根因排查发现两层问题：(i) identity entry 由父进程跨进程手工拼文件写出、缺 `id`/`parentId`，污染 pi 的 leaf 指针、message tree 断成两棵（机制详见 §2.3，已实证）；(ii) 更深一层，v1 里最复杂、最易出 bug 的机制（消费确认制、idle 重建矩阵、sidecar 时序）全是「每轮 kill」这个范式的并发症。
 - **Q（问题）**：subagent 可持续对话的终态最合理架构是什么？怎样既保留 v1 的正确部分（session 文件为状态源、resume 能力），又消除「每轮 kill」的补丁串，同时不因进程长驻引入新故障面、不焊死未来多 agent 通信的扩展门？
 - **A（答案）**：进程生命周期与对话轮次解耦 + 文件为唯一状态源 + 统一投递（streamingBehavior 让 pi 权威裁决）+ 显式生命周期管理（activate/passivate/reap 三转换点、单 activation 互斥）。本文展开。
 
@@ -33,7 +33,7 @@
 
 **subagent 架构**：subagent 是主 pi 进程 spawn 的独立子进程（`pi --mode rpc`），有自己的 SessionManager 实例和 session 文件。父进程通过 stdin 发命令（`prompt`/`steer`/`follow_up`）、收 stdout 事件流。子进程加载同一套扩展（`--extension` 经 `mirrorMainProcessFlags` 镜像）。
 
-**关键事实**（决定范式选择与投递语义，均附验证状态）：
+**关键事实**（决定范式选择与投递语义，均附验证状态）。行号约定：本表引 pi 源码 `.ts` 行号，正文偶引编译后 `.js` 行号（偏移源于编译，语义一致）。
 
 | # | 事实 | 验证 |
 |---|---|---|
@@ -48,7 +48,7 @@
 | F9 | RPC 启动（含 `--session <file>` 冷路径 resume）必然触发 `session_start` hook：`bindExtensions` 无条件 `emit(_sessionStartEvent)`，rpc-mode 启动即 `rebindSession()` | ✅源码核实（`agent-session.ts:2197`、`rpc-mode.ts:313`） |
 | F10 | 子进程 stdin EOF 时自杀（`process.stdin.on("end") → shutdown()`）——父进程死亡 → 管道断 → 子进程退出 | ✅源码核实（`rpc-mode.ts:778-781`）。注意这是管道语义副作用，不是「OS 必然清理进程树」（Unix 孤儿 reparent 到 init 继续跑）——本设计不把它当唯一防线（决策 7） |
 | F11 | custom entry 不进 LLM context（`sessionEntryToContextMessages` 对 `type:"custom"` 返回空数组） | ✅源码核实（`session-manager.ts:379-406`） |
-| F12 | pi `_buildIndex` 对无 id entry 零校验：`leafId = entry.id` 无条件执行，无 id entry 会把 leafId 污染成 undefined → 后续 entry `parentId=null` 成新根 → tree 断裂 | ✅源码核实（`session-manager.ts` `_buildIndex`）；fix 文档 §2 已实证 |
+| F12 | pi `_buildIndex` 对无 id entry 零校验：`leafId = entry.id` 无条件执行，无 id entry 会把 leafId 污染成 undefined → 后续 entry `parentId=null` 成新根 → tree 断裂 | ✅源码核实（`session-manager.ts` `_buildIndex`）；本文 §2.3 已实证 |
 
 ### 设计目标（从使用者体验倒推）
 
@@ -68,7 +68,7 @@
 - 进程生命周期模型（长驻 + idle timeout 回收 + 全局活进程上限 + 显式收割）
 - 统一投递语义（streamingBehavior 权威裁决 followUp/steer 统一，不用 steer 命令、不依赖 clearQueue）
 - 状态机简化（取消 idle 持久态语义）
-- identity entry 由子进程写（吸收 fix 文档论证的方案）
+- identity entry 由子进程写（见决策 5）
 - 孤儿/双写防护（单 activation 不变量 + 三道收割防线）
 - 从 v1 到终态的迁移路径
 
@@ -85,7 +85,7 @@
 
 ### 2.1 v1 的范式：每轮 kill + resume
 
-v1 的核心决策（`continuous-subagent-chat.md` 决策 5/6）：对话模式每轮完成（`agent_end` 无后代）→ 进程照常 SIGTERM 回收 → record 标记 idle + 写 `.idle` sidecar → 续聊时 resume spawn（`--session <file>` 重开）+ prompt。
+v1 的核心决策（每轮 kill + resume）：对话模式每轮完成（`agent_end` 无后代）→ 进程照常 SIGTERM 回收 → record 标记 idle + 写 `.idle` sidecar → 续聊时 resume spawn（`--session <file>` 重开）+ prompt。
 
 续聊状态机（v1）：
 
@@ -99,7 +99,7 @@ v1 的核心决策（`continuous-subagent-chat.md` 决策 5/6）：对话模式�
 
 公允归因（经 v1 §3.2 原文核对）：
 
-**(a) 选项空间构造缺陷**：v1 把「进程死活策略」与「文件恢复策略」两个**正交维度**压成了一维互斥选项——方案 A（纯保活，无 resume）与方案 B（每轮 kill + resume）非此即彼。v1 对方案 A 的否定本身成立（「上下文在进程内存，进程没了对话就没了」对**不配 resume 的纯保活**是真命题）；问题不在否定 A，在于这个构造使正解只能以「方案 C = A + B 双机制」的形态出现——「同一功能两条代码路径，kill 语义、守卫、状态机各一份」，复杂度被结构性高估。而正解的实际形态是 **resume 一个机制兼任两种角色**（崩溃/timeout 后的冷路径恢复 + 进程长驻时的热路径零机制）——不是 A + B 的叠加，是 B 的机制在保活范式下复用（resume 能恢复上下文恰恰证明「进程死了，对话没死，文件还在」；v1 自己的探针 P-2 也实测保活进程多轮 prompt 正常，F1）。选项空间的错误构造让正解看起来比实际复杂得多，这是它被推迟的先决原因。
+**(a) 选项空间构造缺陷**：v1 把「进程死活策略」与「文件恢复策略」两个**正交维度**压成了一维互斥选项——方案 A（纯保活，无 resume）与方案 B（每轮 kill + resume）非此即彼。v1 对方案 A 的否定本身成立（「上下文在进程内存，进程没了对话就没了」对**不配 resume 的纯保活**是真命题）；问题不在否定 A，在于这个构造使正解只能以「方案 C = A + B 双机制」的形态出现——「同一功能两条代码路径，kill 语义、守卫、状态机各一份」，复杂度被结构性高估。而正解的实际形态是 **resume 单机制从「每轮用」收窄到「仅冷路径用」**（崩溃/timeout/重启后），热路径进程内存天然保留上下文、直接 prompt、无需任何恢复机制——不是 A + B 的叠加，是 B（resume）在保活范式下收窄复用（resume 能恢复上下文恰恰证明「进程死了，对话没死，文件还在」；v1 自己的探针 P-2 也实测保活进程多轮 prompt 正常，F1）。选项空间的错误构造让正解看起来比实际复杂得多，这是它被推迟的先决原因。
 
 **(b) 复杂度误判**：v1 §3.2 **明确评估过方案 C（保活 + 文件兜底混合）并主动裁决推迟**——「同一功能两条代码路径，kill 语义、守卫、状态机各一份……收益在 resume 已实测 ~1.5s 加载成本面前不成立」。这是一次复杂度权衡，**不是漏看选项**。但这笔账算于「每轮 kill」的补丁机制（消费确认制、sidecar、重建矩阵）长成**之前**——方案对比时它们还不存在，kill 侧的成本被系统性低估；而混合方案的「两条路径」实际是「热路径零机制 + 冷路径复用已有 resume」，并非两套状态机。实现盘点后重算：kill 侧补丁成本远超预估，混合方案净复杂度反而更低（行数实测净减 ~270-330 行）。
 
@@ -121,9 +121,9 @@ v1 的复杂机制按「存在理由是否被 kill-per-round 逼出来」分两�
 
 **第二类：独立问题（与 kill-per-round 正交，任何范式下都必须修）**
 
-**identity entry 父进程 fs 补写**（tree 污染 bug 源头）：所有权边界违例——session 文件的格式不变量（id 唯一、parentId 链连续）由持有它的进程的 SessionManager 维护，父进程越界直写、手工复刻格式，写出无 `id`/`parentId` 的 entry 污染 leaf 指针（F12，fix 文档 §2 已实证）。它的存在理由**不是**「子进程死了只能父进程写」——fix 文档证明子进程 `session_start` hook 在 v1 框架内同样能写（kill-per-round + 子进程写 identity 可共存，tree 污染照样消失）。真正的来源是「record 持久化归父进程负责」的心智（fix 文档 §2.5）。终态下修复方式与 fix 文档相同（决策 5），且长驻让写入次数更少（热路径不 spawn、不触发 session_start，F9）。
+**identity entry 父进程 fs 补写**（tree 污染 bug 源头）：所有权边界违例——session 文件的格式不变量（id 唯一、parentId 链连续）由持有它的进程的 SessionManager 维护，父进程越界直写、手工复刻格式，写出无 `id`/`parentId` 的 entry 污染 leaf 指针（F12，本文 §2.3 已实证）。它的存在理由**不是**「子进程死了只能父进程写」——子进程 `session_start` hook 在 v1 框架内同样能写（kill-per-round + 子进程写 identity 可共存，tree 污染照样消失，F9）。真正的来源是「record 持久化归父进程负责」的心智。终态下修复方式见决策 5，且长驻让写入次数更少（热路径不 spawn、不触发 session_start，F9）。
 
-**归错因会导致修错层**：只修范式不修 identity，冷路径 resume 后仍可能再写出脏 entry；只修 identity 不修范式，补丁机制群继续作为 bug 农场存在。两层都要修，且能分开修——fix 文档的 M1/M2 可先行落地。
+**归错因会导致修错层**：只修范式不修 identity，冷路径 resume 后仍可能再写出脏 entry；只修 identity 不修范式，补丁机制群继续作为 bug 农场存在。两层都要修，本设计同时修（决策 1 范式 + 决策 5 identity）。
 
 ### 2.4 物理数据流：v1 vs 终态
 
@@ -281,7 +281,7 @@ message(id, text, interrupt?):
 
 - **选择**：(i) 父进程 shutdown hook 显式 SIGTERM 全部 activation；(ii) record 持久化 PID，父进程启动时扫描——PID 存活且非本进程 activation → SIGTERM 收孤儿；(iii) 单 activation 不变量——activate 前确认旧进程死透（无句柄 + PID 已回收），并发 message 触发竞争 activate 时串行化。
 - **防线定位**：stdin EOF 自杀（F10 ✅源码核实）是免费兜底，**不作设计依据**——它依赖 spawn 管道方式，方式一变（detach/setsid）静默失效，失效后果是双写者毁文件。
-- **被否**：「OS 会清理进程树」（错误前提——Unix 孤儿 reparent 到 init 继续跑，OS 从不清理；F10 核实后确认实际机制是 EOF 自杀）；「崩溃概率低，不做孤儿防护」（双写者毁文件的代价远超防护成本，准则 4）。
+- **被否**：「OS 会清理进程树」（**伪命题**——Unix 孤儿 reparent 到 init 继续跑，OS 从不清理；F10 核实后确认实际机制是 EOF 自杀）；「崩溃概率低，不做孤儿防护」（双写者毁文件的代价远超防护成本，准则 4）。
 - **上游兜底**：pi session 文件锁（附录 B），让双 activation 在 pi 层不可能。
 
 #### 决策 8：保留 v1 的正确部分
@@ -418,7 +418,7 @@ v1 已实现一大半，终态不是从零开始。迁移的核心动作是**「
 1. **进程生命周期管理**（lifecycle-manager）：kill 分支翻转；per-record idle timer（启动/重置/触发 SIGTERM）；全局 ceiling（最久空闲挤出）；shutdown hook；启动孤儿扫描（按持久化 PID）；activate 互斥（单 activation 不变量）。**理由**：决策 1/4/7，范式核心。
 2. **统一投递**（替换续聊状态机）：`message` → getChild 判活 → 热路径 `prompt(streamingBehavior: interrupt?"steer":"followUp")`（pi 权威裁决，不用 steer 命令、不依赖 clearQueue）/ 冷路径 resume + prompt；父进程零 busy 状态。**理由**：决策 2/3，收敛续聊语义，判定权归 pi。
 3. **`agent_settled` 事件跟踪**：事件 pump 挂 `agent_settled`（不是 `agent_end`）驱动 notify、idle timer 启动、可回收状态标记。**理由**：支柱四，F6。
-4. **identity 子进程写**（= fix 文档 M1/M2）：子进程 `session_start` 用 `pi.appendEntry`；全字段经 env 传入（补 `PI_SUBAGENT_CHAT_MODE`/`PI_SUBAGENT_SLUG` 等）；删 session-runner.ts:1081-1098。**理由**：决策 5，根治 tree 污染。
+4. **identity 子进程写**：子进程 `session_start` 用 `pi.appendEntry`；全字段经 env 传入（补 `PI_SUBAGENT_CHAT_MODE`/`PI_SUBAGENT_SLUG` 等）；删 session-runner.ts:1081-1098。**理由**：决策 5，根治 tree 污染。
 5. **删除 v1 并发症**：`.idle` sidecar 写/读/重建矩阵/reaper 豁免；消费确认制三环；idle→running CAS；notifier 轮次豁免。**理由**：决策 2/6，减法。
 6. **冷路径 resume 复用 v1**：`--session` 组装 + model/thinkingLevel 防漂移不变，仅作为冷路径实现。**理由**：决策 8，保留正确部分。
 
@@ -455,7 +455,7 @@ v1 已实现一大半，终态不是从零开始。迁移的核心动作是**「
 - v1 的正确骨架（session 文件为状态源、resume 能力、归属守卫、notifier、tool surface 封装、model 防漂移）终态全部保留（决策 8）。
 - v1 的选择是设计期信息不全下的合理权衡，有两处设计期问题在实现盘点后才显形（§2.2）：**选项空间构造缺陷**（正交维度压成互斥选项，正解以「A + B 双机制」形态背负虚高复杂度）+ **复杂度缺口**（方案 C 推迟时，kill 侧补丁成本尚未长成、无法计入）。v1 否决纯保活是对的；评估并推迟混合方案是当时信息下的合理判断。本设计的贡献是用实现期成本数据重估。
 - v1 的四轮对抗审查质量很高（机制层面），但审的是「机制对不对」，没审「前提对不对」；且方案对比的成本账在补丁机制长成后无人重算。这是比 P-1 探针假阳性更深的一课：**设计期的成本对比要在实现盘点后重算**。
-- fix 文档（`continuous-chat-resume-context-fix.md`）的「identity 由子进程写」被决策 5 完整吸收，其 M1/M2 是本设计的严格子集，可先行落地止血；其 §6 给 pi 上游的 `_buildIndex` 建议并入附录 B。
+- 早期的 identity 写入修复方案（「identity 由子进程 session_start 写」）被决策 5 完整吸收；给 pi 上游的 `_buildIndex` 防御建议见附录 B。
 
 ## 附录 B：给 pi 上游的建议
 
