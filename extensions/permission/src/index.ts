@@ -300,7 +300,7 @@ async function processToolCall(
 		return { block: true, reason: "[pi-permission] tool_call event missing toolName" };
 	}
 
-	// 装配 deps（每次 tool_call 重新装配，捕获当前 ctx.mode/ui；classifier 单例在 createPipelineDeps 内）
+	// 装配 deps（每次 tool_call 重新装配，捕获当前 ctx.mode/ui；classifier 走 ctx.modelRegistry）
 	const approvalCtx = {
 		mode: ctx.mode,
 		ui: {
@@ -318,7 +318,7 @@ async function processToolCall(
 				: {}),
 		},
 	};
-	const deps: CheckPermissionDeps = createPipelineDeps(approvalCtx);
+	const deps: CheckPermissionDeps = createPipelineDeps(approvalCtx, ctx);
 
 	try {
 		const decision = await checkPermission(

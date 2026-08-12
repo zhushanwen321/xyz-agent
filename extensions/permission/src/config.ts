@@ -6,8 +6,9 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 import {
 	DEFAULT_CLASSIFIER_CONFIG,
@@ -20,12 +21,13 @@ import {
 
 // ──────────────────────── 路径解析 ────────────────────────
 
-/** PI_CODING_AGENT_DIR 环境变量覆盖 ~/.pi/agent 基础路径 */
-function getAgentDir(): string {
-	const override = process.env.PI_CODING_AGENT_DIR?.trim();
-	if (override) return override;
-	return join(homedir(), ".pi", "agent");
-}
+/**
+ * agent 根目录来自 pi 导出的 getAgentDir（尊重 PI_CODING_AGENT_DIR 覆盖）。
+ *
+ * P3 收口：原自实现 PI_CODING_AGENT_DIR 解析（与 model-resolver.ts 重复）改为复用 pi 导出
+ * （CL-config-path）。permission-config.json 路径格式不变（<agentDir>/permission-config.json），
+ * 不迁 llm-shared getConfigPath（其 <agentDir>/config/<pkg>.json 格式不兼容，会破坏向后兼容）。
+ */
 
 /** 配置文件完整路径 */
 export function getConfigPath(): string {

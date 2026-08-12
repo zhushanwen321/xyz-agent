@@ -28,7 +28,6 @@ import type {
 	ToolInvocationContext,
 } from "../types.js";
 import { parseClassifierResponse } from "./json-parser.js";
-import { type ResolvedModel } from "./model-resolver.js";
 import { buildClassifierUserPrompt, CLASSIFIER_SYSTEM_PROMPT } from "./prompt.js";
 
 // ──────────────────────── fail-closed fallback ────────────────────────
@@ -47,16 +46,33 @@ const CLASSIFY_FALLBACK_RESULT: ClassifierResult = {
 // ──────────────────────── 依赖注入 ────────────────────────
 
 /**
+ * resolveModel 注入点返回的「模型 + 凭证」装配结果。
+ *
+ * P3 收口：model 解析与凭证获取（getApiKeyAndHeaders）都走 ctx.modelRegistry，
+ * 必须在同一个 async 注入点完成（getApiKeyAndHeaders 是 async）。auth 携带多源凭证
+ * （apiKey / headers / env），透传给 streamSimple 的 options。
+ */
+export interface ResolvedModelAuth {
+	model: Model<Api>;
+	auth: {
+		apiKey?: string;
+		headers?: Record<string, string>;
+		env?: Record<string, string>;
+	};
+}
+
+/**
  * Classifier 的外部依赖（DI 便于测试 mock）。
  *
- * - resolveModel：把 ClassifierConfig.model 解析为 ResolvedModel（或 null）
+ * - resolveModel（async）：把 ClassifierConfig.model 解析为 { model, auth }（或 null）。
+ *   async 是因为凭证获取（ctx.modelRegistry.getApiKeyAndHeaders）是 async（C1 契约）。
  * - streamSimple：pi-ai 的流式调用（同步返回 EventStream，result() 异步）
  * - onLog：可选日志回调（调试/审计）
  *
  * 命名锁定为 streamSimple（G7：不是 callStreamSimple）。
  */
 export interface ClassifierDeps {
-	resolveModel: (config: ClassifierConfig) => ResolvedModel | null;
+	resolveModel: (config: ClassifierConfig) => Promise<ResolvedModelAuth | null>;
 	streamSimple: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
 	onLog?: (msg: string) => void;
 }
@@ -69,30 +85,7 @@ interface AssistantMessageLike {
 	content?: { type: string; text?: string }[];
 }
 
-// ──────────────────────── 辅助：构造 Model<Api> ────────────────────────
-
-/**
- * 从 ResolvedModel 构造 pi-ai 的 Model<Api>。
- *
- * ResolvedModel.api 是字符串（来自 models.json），断言为 Api 联合类型。
- * cost 字段携带 input 真实值（G4），其余填 0（classifier 不关心 token 成本计量）。
- */
-function buildModel(resolved: ResolvedModel): Model<Api> {
-	const inputCost = typeof resolved.inputCost === "number" ? resolved.inputCost : 0;
-	return {
-		id: resolved.id,
-		name: resolved.name ?? resolved.id,
-		api: resolved.api as Api,
-		provider: resolved.provider,
-		// G4：baseUrl 用真实值（无则空串，provider 内部会补默认）
-		baseUrl: resolved.baseUrl ?? "",
-		reasoning: false,
-		input: ["text"],
-		cost: { input: inputCost, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 128000,
-		maxTokens: 16384,
-	};
-}
+// ──────────────────────── 辅助：构造 Context ────────────────────────
 
 /** 构造无 transcript 的 Context（单轮 user message） */
 function buildContext(ctx: ToolInvocationContext): Context {
@@ -175,21 +168,24 @@ export function createClassifier(deps: ClassifierDeps): {
 		config: ClassifierConfig,
 		signal?: AbortSignal,
 	): Promise<ClassifierResult> {
-		// 1. 解析模型；无可用模型 → fail-closed
-		const resolved = resolveModel(config);
+		// 1. 解析模型 + 凭证（async：getApiKeyAndHeaders 是 async）；无可用模型 → fail-closed
+		const resolved = await resolveModel(config);
 		if (resolved === null) {
 			onLog?.("[pi-permission] classifier: no model resolved, returning fallback");
 			return { ...CLASSIFY_FALLBACK_RESULT };
 		}
 
-		// 2. 构造 model/context/options（timeout 秒→毫秒，传 provider 原生 timeoutMs + signal + apiKey）
-		const model = buildModel(resolved);
+		// 2. 构造 model/context/options（model 由注入点提供；timeout 秒→毫秒，传 provider 原生
+		//    timeoutMs + signal + auth 凭证 apiKey/headers/env 透传）
+		const model = resolved.model;
 		const context = buildContext(ctx);
 		const timeoutMs = config.timeout > 0 ? config.timeout * MILLIS_PER_SECOND : undefined;
 		const options: SimpleStreamOptions = {
 			...(timeoutMs !== undefined ? { timeoutMs } : {}),
 			...(signal !== undefined ? { signal } : {}),
-			...(resolved.apiKey !== undefined ? { apiKey: resolved.apiKey } : {}),
+			...(resolved.auth.apiKey !== undefined ? { apiKey: resolved.auth.apiKey } : {}),
+			...(resolved.auth.headers !== undefined ? { headers: resolved.auth.headers } : {}),
+			...(resolved.auth.env !== undefined ? { env: resolved.auth.env } : {}),
 		};
 
 		// 3. 调用 streamSimple（同步返回 EventStream）。包裹 try/catch 防同步抛错。

@@ -9,13 +9,11 @@
 export type { ClassifierDeps } from "./classifier.js";
 export { createClassifier } from "./classifier.js";
 export { PARSE_FALLBACK_RESULT,parseClassifierResponse } from "./json-parser.js";
-export type { ResolvedModel, ResolvedModelEntry } from "./model-resolver.js";
+export type { ResolvedModelEntry } from "./model-resolver.js";
 export {
 	agentDir,
-	findCheapestModel,
 	flattenModels,
 	loadModelsJson,
-	resolveClassifierModel,
 } from "./model-resolver.js";
 export { buildClassifierUserPrompt,CLASSIFIER_SYSTEM_PROMPT } from "./prompt.js";
 
