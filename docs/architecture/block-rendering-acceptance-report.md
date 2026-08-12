@@ -28,8 +28,10 @@
 **结果**：
 - 新 turn 产生 T1-0(tool) / T1-1(tool) / T1-2(text) 三个块，**按 contentBlocks 顺序稳定排列**，text 在工具之后
 - 已有 turn 的 T0-0(text) 全程保持 `text-neutral-fg`（完成态），**未随新 assistant 到达翻转颜色**；T1-2 新 text 流式期间为 `text-neutral-mid`（streaming 态）——颜色跟所属 assistant status，单调不翻转
-- T0-0 的节点 identity 与相对顺序全程不变（帧 7-38 零跳变；帧 39 后的变化为完成态虚拟滚动节点复用噪声，非跳变）
+- T0-0 的节点 identity 与相对顺序全程不变（帧 7-59 零跳变；~帧 60 起旧 turn 因虚拟滚动移出视口触发 id 重编号，属滚动卸载噪声非跳变，且发生在 streaming 中）
 - **通过标准对照**：全程无 block 改变位置；a2 出现不改 a1 位置/样式；文字统一正文级 —— 全部满足
+
+**限定注明（exec-review followup）**：本场景实测为**跨 turn 稳定性**（a2 新 turn 到达不改 a1 turn 位置/样式）；§3.2 主症形态「同 turn 内 a1 文字存在时 message_start(a2) 到达」的跳变瞬间，因 MiMo 先调工具后输出文字的产出模式未被真实 pi 复现（该形态下旧代码渲染同样稳定）。该瞬间已由组件级零跳变回归测试 **TC-REG-1** 锁定（mount Turn 模拟 a1→text→tool→message_start(a2)→text 序列，DOM 断言 a1 text 节点全程同一引用 + 相对顺序不变，block-rendering-regression.test.ts）。
 
 ### 场景 2：多工具连续调用 ✅
 
@@ -68,6 +70,7 @@
 - 文字流式期间 .streaming-tail 存在（scene1-frames.json 帧数据，tail=true 帧与 text 流式同步）
 - 工具 running 态未捕捉到独立帧（工具执行 <2s 即 completed），无法直接观测「running 时隐藏」；**该分支已由组件级测试 TC-M0-2b 锁定**（末位 running tool → streaming-tail 不存在）
 - 未出现「光标+loader」并存的帧
+- **证据精度注明（exec-review followup）**：帧数据未记录 tool 的 running/completed 状态字段，「f7-f17 末块 tool 已 completed」窗口基于 pi jsonl 工具执行时间线（1.8s 完成）推断
 
 **§11 检查点 1 裁决（末块 completed tool 时光标行为）**：
 
