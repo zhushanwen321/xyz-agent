@@ -103,7 +103,7 @@ pi-subagent-workflow 产生的记录物理上都在 `agentDir`(动态推导,默�
 
 **场景 2:workflow 编排总览(M2)**
 ```
-[LLM] session_read({ action:"workflow", runId:"wf-1786339613616-o5v1i2" })
+[LLM] session_read({ action:"workflow", session:"#019fc731", runId:"wf-1786339613616-o5v1i2" })
 [工具] → status:done · 13 calls · 1h39m · steps:#0 arch-boundary 7m → session 019fea23 ...
 ```
 
@@ -197,15 +197,16 @@ M0 `findSessions` 合并 `listMainSessions`+`listSubagentSessions`,`resolveSessi
 3. workflow 子树(指针递归):对每个 subagent node 的 sessionFile,读其 workflow-state-link
    → RunSnapshot → calls[].sessionFile(call 作为子 node)
    → 对每个 call session 再读它的 workflow-state-link(嵌套 workflow),递归
-4. 返回 ExecutionNode[] { type, sessionId/runId, sessionFile/stateFile, depth, rootSessionId,
-   parentRecordId, children }
+4. 返回 ExecutionTree { root: ExecutionTreeNode, totalNodes, maxDepth, truncated, sourceMode }
+   (单根对象 + 元数据;ExecutionTreeNode { type, sessionId/runId, sessionFile/stateFile, depth,
+   rootSessionId, parentRecordId, children })
 ```
 
 - **parentRecordId 数据来源优先级**:① manifest 的 parentRecordId(M3a 落盘后);② identity 的 parentRecordId(session 文件未被 GC 时);③ 两者都缺(旧 manifest + 已 GC)→ 回退 rootSessionId 扁平 + depth 启发式。
 - `tool-handler.ts`:`family` 加 `recursive: boolean` 参数(默认 false 保持现状;true 返回 ExecutionTree)。**不新增 action**(减法,复用 family)。
 - M0 打通后,树里任意节点 id 直接走 `outline/detail` 深读。
 
-**M3a(pi-subagent-workflow 侧,2 行,前置)**:ManifestRecord 加 `parentRecordId?: string`(manifest-store.ts:7);finalize-record.ts:144 writeManifest 补 `parentRecordId: record.parentRecordId`。identity 已写(session-runner.ts:994),不动。纯加可选字段,向后兼容,无运行时副作用。
+**M3a(pi-subagent-workflow 侧,核心 2 行 + lint 合规,前置)**:ManifestRecord 加 `parentRecordId?: string`(manifest-store.ts:7);finalize-record.ts:144 writeManifest 补 `parentRecordId: record.parentRecordId`。另含 `MANIFEST_INDENT_SPACES` 常量重构(no-magic-numbers 合规,功能等价)。identity 已写(session-runner.ts:994),不动。纯加可选字段,向后兼容,无运行时副作用。
 
 ### 6.5 探针清单(准则 7)
 
@@ -336,3 +337,4 @@ extensions/subagent-workflow/src/   [M3a 补 2 行,前置]
 - v2:tech-design-review 修复(workflow 现状失真、encodeCwd 双目录、嵌套 family 局限声明、行号、验收边界)。
 - v3:加入任意深度嵌套支持(M3)。经数据核实确认父 session jsonl 不记录子标识、record rootSessionId(新机制=顶层main)+ workflow 指针足够递归重建全树。纳入审查二 5 点。声明中间节点子树为已知局限。
 - v4:经源码核实升级 M3 方案——发现 `parentRecordId`(直接父)**运行时早已存在**(subagent-service.ts:716)、identity 已写(session-runner.ts:994),**只是 manifest 落盘漏了**。故决策五从"rootSessionId 扁平"升级为"复用 parentRecordId 精确建树":pi-subagent-workflow 仅补 2 行(manifest 字段 + finalize 赋值),session-reader 读现有字段建精确父子链,任意节点子树可切。中间节点子树从"已知局限"变为"已解决"。这不是加 clever 机制,是补上本该有的落盘。
+- v5:review-fix-loop 对抗式审查(代码 vs 文档一致性)。修复 2 个 major:MF-1(workflow-call session 双重挂载,parentRecordId 链与 workflow 指针两套去重集合键空间不同 → 跨集合去重)、MF-2(buildExecutionTree 支持 subagent root 切子树,§5.5 兑现)。处理 suggestion:S-4 删 resolveParentRecordId 的 identityPresent 死代码;S-1/S-3/S-5 文档对齐(workflow 场景补 session 参数、M3a 注明含 MANIFEST_INDENT_SPACES lint 重构、返回类型 ExecutionNode[]→ExecutionTree 单根对象)。S-2/S-6 经核实为 reviewer 误报(v4 文档无 identity.depth 版本探测表述 / workflow.test.ts 已有半截 JSON 测试 TC-w5-read-tail-fallback)。

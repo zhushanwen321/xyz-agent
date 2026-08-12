@@ -111,23 +111,20 @@ const SESSION_ID_SLICE = 8
  */
 async function resolveParentRecordId(
   manifest: RecordManifest,
-): Promise<{ parentRecordId: string | undefined; identityPresent: boolean }> {
+): Promise<{ parentRecordId: string | undefined }> {
   // ① manifest.parentRecordId
   if (manifest.parentRecordId !== undefined) {
-    return { parentRecordId: manifest.parentRecordId, identityPresent: false }
+    return { parentRecordId: manifest.parentRecordId }
   }
   // ② identity.data.parentRecordId（读 sessionFile 尾行；readTailIdentity 容错返 undefined）
   if (manifest.sessionFile) {
     const ident = await readTailIdentity(manifest.sessionFile)
     if (ident !== undefined) {
-      return {
-        parentRecordId: ident.parentRecordId,
-        identityPresent: true,
-      }
+      return { parentRecordId: ident.parentRecordId }
     }
   }
   // ③ 都缺
-  return { parentRecordId: undefined, identityPresent: false }
+  return { parentRecordId: undefined }
 }
 
 // ============================================================
@@ -280,8 +277,20 @@ async function attachWorkflowChildren(ctx: BuildContext, node: ExecutionTreeNode
     workflows = [] // resolveWorkflows 容错（ES4），异常时不中断树
   }
 
+  // MF-1 跨集合去重：收集本节点已有的 subagent 直接子节点 sessionFile。call session 在新机制下
+  // 同时被 parentRecordId 链（作 subagent 子节点）与 workflow 指针（作 workflow-call 子节点）命中，
+  // 两套去重集合（visitedRecord record id 维度 / expandedSessions sessionFile 维度）键空间不同会双重挂载。
+  // 仅对「同一父节点」去重——目标已是本节点 subagent 子节点时跳过 wf-call（非环，不标 truncated）；
+  // 不同父节点的交叉引用（如环 A→B→A）不受影响，保留以触发环检测（设计 §4.1 场景 3「每个 call session 只出现一次」）。
+  const subagentChildFiles = new Set<string>()
+  for (const c of node.children) {
+    if (c.type === 'subagent' && c.sessionFile) subagentChildFiles.add(c.sessionFile)
+  }
+
   for (const wf of workflows) {
     for (const call of wf.calls) {
+      // MF-1 dedup：目标 session 已是本节点 subagent 直接子节点 → 跳过（去重，非环）
+      if (call.fileName && subagentChildFiles.has(call.fileName)) continue
       const callKey = call.fileName || `wf:${wf.runId}:${call.sessionId}`
       // 环检测（ES1）：call session 已是某祖先 node 的 session（指针成环/重复引用）→ 标 truncated 跳过
       if (ctx.expandedSessions.has(callKey)) {
@@ -335,12 +344,18 @@ async function attachWorkflowChildrenOfTree(
 }
 
 /**
- * 从顶层 main session id 构建嵌套执行树（IF3）。
+ * 从任意节点（main 或 subagent）构建嵌套执行树（IF3 + 设计 §5.5「任意节点子树可切」）。
  *
- * 流程：① listRecordManifests 扫所有 record；② collectRelatedRecords filter root 树
- *（版本探测 + 旧机制 rootSessionId 链）；③ resolveParentRecordId 解析每节点 parentRecordId
- *（DM4 三级）；④ subagent 后代按 parentRecordId 精确链挂载（undefined→顶层 main）；
- * ⑤ workflow-call 后代指针递归（resolveWorkflows）；⑥ visited Set 防环 + MAX_DEPTH 截断。
+ * 两种 root 形态：
+ * - **main root**（无 manifest 匹配 sessionFile）：按 rootSessionId 链收全树（版本探测 +
+ *   旧机制兼容），root 节点 type='main'，attachSubagentChildren 从 undefined 挂顶层 subagent。
+ * - **subagent root**（有 manifest 且 sessionFile 含 rootSessionId，MF-2）：root 节点 type='subagent'
+ *   携带 manifest 元数据；复用其 rootSessionId（新机制=顶层 main）拉全树记录，再由
+ *   attachSubagentChildren 按 parentRecordId 链只挂该 subagent 的后代（§5.5 决策五）。
+ *
+ * 流程：① listRecordManifests 扫所有 record；② 探测 root 形态 + collectRelatedRecords 收集；
+ * ③ resolveParentRecordId 解析每节点 parentRecordId（DM4 三级）；④ subagent 后代按 parentRecordId
+ * 精确链挂载；⑤ workflow-call 后代指针递归（resolveWorkflows）；⑥ visited Set 防环 + MAX_DEPTH 截断。
  *
  * 错误契约（ES1-5）全容错：环/深度超限截断标 truncated 不抛错；wf-state GC→children=[]；
  * 无后代→单节点树（totalNodes=1）。绝不丢弃 record。
@@ -351,8 +366,17 @@ export async function buildExecutionTree(
 ): Promise<ExecutionTree> {
   const manifests = await listRecordManifests(agentDir)
 
-  // ①② 收集 root 树相关 record（版本探测 + 旧机制兼容）
-  const related = collectRelatedRecords(rootSessionId, manifests)
+  // MF-2：探测 root 是否为 subagent（有 manifest 且 sessionFile 文件名含 rootSessionId）。
+  // subagent root 时按 parentRecordId 链切子树；main root 时按 rootSessionId 链收全树。
+  const rootManifest = manifests.find(
+    (m) => extractSessionIdFromFilename(basename(m.sessionFile)) === rootSessionId,
+  )
+
+  // ①② 收集相关 record：subagent root 复用其 rootSessionId（新机制=顶层 main）拉全树记录，
+  // 再由 attachSubagentChildren 按 parentRecordId 链只挂该 subagent 的后代（§5.5）；
+  // main root 直接用 rootSessionId 收全树。旧机制 subagent root 无精确链 → 单节点（已知局限，§10）。
+  const collectRoot = rootManifest?.rootSessionId || rootSessionId
+  const related = collectRelatedRecords(collectRoot, manifests)
 
   // ③ 解析每节点 parentRecordId（三级数据源）+ 探测 sourceMode
   const parentOf = new Map<string, string | undefined>()
@@ -367,8 +391,11 @@ export async function buildExecutionTree(
   const sourceMode: 'precise' | 'flat-fallback' =
     related.length > 0 && !hasPreciseLink ? 'flat-fallback' : 'precise'
 
+  // ctx.rootSessionId：subagent root 用其 manifest.rootSessionId（顶层 main），使后代节点的
+  // rootSessionId 字段仍指向全树共享的顶层 main（字段语义不变）。
+  const ctxRootSessionId = rootManifest?.rootSessionId || rootSessionId
   const ctx: BuildContext = {
-    rootSessionId,
+    rootSessionId: ctxRootSessionId,
     related,
     parentOf,
     visitedRecord: new Set<string>(),
@@ -378,16 +405,40 @@ export async function buildExecutionTree(
     maxDepth: 0,
   }
 
-  const root: ExecutionTreeNode = {
-    type: 'main',
-    sessionId: rootSessionId,
-    depth: 0,
-    rootSessionId,
-    children: [],
+  // root 节点：subagent root → 携带 manifest 元数据的 subagent 节点（MF-2）；否则 main 节点
+  let root: ExecutionTreeNode
+  let rootRecordId: string | undefined
+  if (rootManifest) {
+    rootRecordId = rootManifest.id
+    // 防 root 自身被当后代重挂（环/坏数据多父）
+    ctx.visitedRecord.add(rootManifest.id)
+    root = {
+      type: 'subagent',
+      sessionId: rootSessionId,
+      sessionFile: rootManifest.sessionFile,
+      depth: 0,
+      rootSessionId: ctxRootSessionId,
+      parentRecordId: parentOf.get(rootManifest.id),
+      agentName: rootManifest.agentName,
+      slug: rootManifest.slug,
+      task: rootManifest.task,
+      model: rootManifest.model,
+      status: rootManifest.status,
+      children: [],
+    }
+  } else {
+    root = {
+      type: 'main',
+      sessionId: rootSessionId,
+      depth: 0,
+      rootSessionId,
+      children: [],
+    }
   }
 
-  // 主流程：先挂 subagent 后代（parentRecordId 链），再遍历整树挂 workflow 后代
-  await attachSubagentChildren(ctx, root, undefined)
+  // 主流程：先挂 subagent 后代（parentRecordId 链，subagent root 从 rootRecordId 挂其后代），
+  // 再遍历整树挂 workflow 后代
+  await attachSubagentChildren(ctx, root, rootRecordId)
   await attachWorkflowChildrenOfTree(ctx, root)
 
   return {
