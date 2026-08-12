@@ -70,8 +70,8 @@ extraResources:
   # xyz-agent pi extension (xyz-navigate command)
   # 源文件在 repo root。electron-builder projectDir=apps/electron/，
   # from 相对 projectDir 解析，需上两级到仓库根。
-  # 注：builtin pi-extensions（@zhushanwen/pi-*）已改为 Settings 推荐安装，
-  # 不再打包进产物。详见 recommended-extensions.json + extension.recommended WS 协议。
+  # 注：builtin pi-extensions（@zhushanwen/pi-*）打包内置（2026-08 重构），
+  # 由下方 resources/extensions 条目拷贝，不走 Settings 推荐安装（旧机制已废弃）。
   - from: ../../xyz-agent-extension.js
     to: xyz-agent-extension.js
   # xyz-system-prompt-extension.js（before_agent_start hook：追加注入 + 快照）
@@ -82,7 +82,8 @@ extraResources:
   # 客户端 message 元数据映射框架：重开 session 时按映射回填 image/file badge。同前两个 extension 模式。
   - from: ../../xyz-client-msg-id-mapper.js
     to: xyz-client-msg-id-mapper.js
-  # builtin pi extensions（9 个 @zhushanwen/pi-* 包，打包内置，不走 npm install）
+  # builtin pi extensions（@zhushanwen/pi-* 包，数量以 mandatory-extensions.json SSOT 为准，
+  # 打包内置，不走 npm install）
   # prepare-builtin-extensions.sh 预先 deploy 到 resources/extensions/@zhushanwen/<pkg>/
   # 含真实运行时 deps（tree-sitter-bash/ajv/croner 等），不含 peerDeps（pi 进程提供）
   - from: resources/extensions
