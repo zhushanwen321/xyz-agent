@@ -384,6 +384,24 @@ describe("runSpawn", () => {
       expect(result.error).toContain("spawn ENOENT");
       expect(record.lastError).toContain("spawn ENOENT");
     });
+
+    it("[worktree-reaper-fix] ENOENT error 消息拼 spawnCwd（避免误诊 node 被卸载）", async () => {
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: enoent-cwd", makeOpts(), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+
+      // ENOENT 且带 code（Node spawn 失败的真实形态）——error handler 必须拼 spawnCwd
+      const err = Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
+      child.emit("error", err);
+
+      const result = await promise;
+
+      expect(result.success).toBe(false);
+      // makeCtx().cwd = "/tmp/test"，无 worktree 时 spawnCwd = ctx.cwd
+      expect(record.lastError).toContain("/tmp/test");
+    });
   });
 
   // ── 7. identity 补写 ──

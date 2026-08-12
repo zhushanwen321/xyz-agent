@@ -162,5 +162,6 @@ describe('parseSessionFile', () => {
     expect(result.lastLinePartial).toBe(false)
     // 5.4MB 量级
     expect(result.totalBytes).toBeGreaterThan(5_000_000)
-  })
+    // 5.6MB 全量解析在并发/高负载下可能超 vitest 默认 5s，显式放宽
+  }, 60000)
 })

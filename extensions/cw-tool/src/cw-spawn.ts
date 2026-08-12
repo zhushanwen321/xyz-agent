@@ -6,8 +6,27 @@
  *
  * cw 路径解析：spawn 裸命令名 `cw`，由 OS execvp 语义在 `process.env.PATH` 中
  * 查找（架构约定 #16：禁止写死绝对路径）。env 继承自 process.env，确保 PATH 可用。
+ *
+ * [worktree-reaper-fix] cwd 可能已被 orphan reaper 清理（pi-subagent-workflow 误删活
+ * worktree 后子进程 cwd 指向虚空）。Node spawn 对不存在的 cwd 报 ENOENT，错误消息只含
+ * command 名（"cw"）不含 cwd——2026-08-11 事故中导致 AI 误诊"node 被卸载"。故 spawn 前
+ * 检查 cwd 存在性，失败时返回可操作错误（含完整 cwd + 恢复指引）。
  */
+import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
+
+/**
+ * cwd 不存在时的可操作错误文案（错误 → 权威源 worktrees.json → 重试闭环）。
+ * @param cwd 不存在的路径
+ */
+function cwdMissingError(cwd: string): string {
+	return [
+		`cwd 不存在：${cwd}`,
+		"该 worktree 可能已被 orphan reaper 清理，或子 agent 已结束。",
+		"恢复：1) 检查 pi agent 目录下 subagents/worktrees.json 中该 branch 的 pid 是否已补全；",
+		"      2) 若子 agent 仍在运行，重新派发（worktree 重建）；3) 若已结束，忽略此错误。",
+	].join("\n");
+}
 
 /** cw 子进程执行结果。 */
 export interface CwSpawnResult {
@@ -47,6 +66,13 @@ export type CwSpawner = (
  */
 export const defaultCwSpawner: CwSpawner = (args, input, cwd, signal) =>
 	new Promise<CwSpawnResult>((resolve) => {
+		// [worktree-reaper-fix] spawn 前检查 cwd 存在性（TOCTOU 兜底见下方 error handler）。
+		// 与现有 error 路径返回形态一致：resolve + exitCode=-1 + stderr，不 reject。
+		if (!existsSync(cwd)) {
+			resolve({ stdout: "", stderr: cwdMissingError(cwd), exitCode: -1 });
+			return;
+		}
+
 		const child = spawn("cw", args, {
 			cwd,
 			env: process.env,
@@ -92,8 +118,13 @@ export const defaultCwSpawner: CwSpawner = (args, input, cwd, signal) =>
 		};
 
 		child.on("error", (err: NodeJS.ErrnoException) => {
-			// spawn 失败（cw 不在 PATH / 无执行权限等）。exitCode=-1 区分于正常退出码。
-			finish({ stdout, stderr: `${stderr}\n[spawn error] ${err.message}`, exitCode: -1 });
+			// spawn 失败（cw 不在 PATH / 无执行权限 / TOCTOU：检查后 cwd 被删等）。
+			// [worktree-reaper-fix] 拼 cwd 进错误消息：ENOENT 的 err.message 只有 command 名，
+			// 无 cwd 线索会导致误诊（2026-08-11 事故 AI 误判"node 被卸载"）。
+			// exitCode=-1 区分于正常退出码。
+			const errCwd = err.code === "ENOENT" ? `\ncwd: ${cwd}` : "";
+			const hint = err.code === "ENOENT" && !existsSync(cwd) ? `\n${cwdMissingError(cwd)}` : "";
+			finish({ stdout, stderr: `${stderr}\n[spawn error] ${err.message}${errCwd}${hint}`, exitCode: -1 });
 		});
 		child.on("close", (code: number | null) => {
 			finish({ stdout, stderr, exitCode: code });

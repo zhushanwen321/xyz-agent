@@ -185,7 +185,8 @@ describe('renderOutline', () => {
     // totalEntries 近似（leaf+branch+orphan）不含 session header（segmentTurns 规则1 跳过）；
     // 准确值由 M2 工具层用 ParseResult.totalEntries 覆盖。M1 验量级。
     expect(result.stats.totalEntries).toBeGreaterThan(1000)
-  })
+    // 5.6MB 全量解析在并发/高负载下可能超 vitest 默认 5s，显式放宽
+  }, 60000)
 })
 
 describe('renderExpand', () => {

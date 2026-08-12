@@ -750,4 +750,33 @@ describe("cw 路径解析", () => {
 		expect(result.stderr).toContain("spawn cw ENOENT");
 		expect(result.stdout).toBe("");
 	});
+
+	it("[worktree-reaper-fix] cwd 不存在 → 不 spawn，exitCode:-1 + 可操作错误（含 cwd 路径与恢复指引）", async () => {
+		// worktree 被 orphan reaper 误删后，子进程 cwd 指向虚空。spawn 前检查必须拦截并返回
+		// 含完整 cwd + 恢复指引的错误（否则 Node ENOENT 只报 command 名，误导诊断为"node 被卸载"）。
+		const result = await defaultCwSpawner(
+			["status", "--unitId", "u1"],
+			undefined,
+			"/nonexistent-cwd-for-reaper-test",
+		);
+
+		expect(result.exitCode).toBe(-1);
+		expect(result.stderr).toContain("/nonexistent-cwd-for-reaper-test");
+		expect(result.stderr).toContain("worktrees.json");
+		// 前置检查拦截：不进入 spawn
+		expect(spawnMock).not.toHaveBeenCalled();
+	});
+
+	it("[worktree-reaper-fix] spawn error ENOENT → stderr 拼 cwd 路径（TOCTOU 兜底）", async () => {
+		// existsSync 检查通过后目录被删（TOCTOU）：error handler 必须兜底拼 cwd。
+		const child = makeFakeChild();
+		spawnMock.mockImplementation(() => child as unknown as cp.ChildProcess);
+		const err = Object.assign(new Error("spawn cw ENOENT"), { code: "ENOENT" });
+		queueMicrotask(() => child.emit("error", err));
+
+		const result = await defaultCwSpawner(["status", "--unitId", "u1"], undefined, "/tmp");
+
+		expect(result.exitCode).toBe(-1);
+		expect(result.stderr).toContain("cwd: /tmp");
+	});
 });

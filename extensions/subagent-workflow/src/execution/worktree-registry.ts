@@ -21,6 +21,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { bestEffort } from "./best-effort.ts";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+const logger = getLogger("subagents");
 
 /** create→spawn 宽限期（ms）：pid=0 条目超过此阈值判 create 后崩溃。 */
 export const SPAWN_GRACE_MS = 60_000;
@@ -90,7 +93,7 @@ export class WorktreeRegistry {
   }
 
   /**
-   * 更新 pid（session-runner first header 时调）。
+   * 更新 pid（runSpawn spawn() 返回后同步调）。
    * branch 不存在则忽略（create 后崩溃 + reaper 已清的竞态）。
    * sessionFile 可选补全：传入时填入 entry 供 reaper .idle 豁免判据读取。
    */
@@ -103,7 +106,7 @@ export class WorktreeRegistry {
         pid,
         ...(sessionFile !== undefined ? { sessionFile } : {}),
       };
-      this.save(entries);
+      this.save(entries, { branch, pid });
     }
   }
 
@@ -141,8 +144,9 @@ export class WorktreeRegistry {
    * 原子写入全部条目。
    * best-effort：写入失败不阻断主流程（create/cleanup 的 git 操作已执行，
    * 注册表与 git 状态的短暂不一致靠下次 reaper 对账收敛）。
+   * 写盘失败时 warn 日志（updatePid 路径带 branch/pid，补全失败可观测闭环）。
    */
-  private save(entries: WorktreeEntry[]): void {
+  private save(entries: WorktreeEntry[], context?: { branch: string; pid: number }): void {
     try {
       fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
       const tmp = `${this.filePath}.tmp`;
@@ -150,6 +154,12 @@ export class WorktreeRegistry {
       fs.renameSync(tmp, this.filePath);
     } catch (err) {
       bestEffort(err, "worktree registry save");
+      // [worktree-reaper-fix] 补全写盘失败静默吞错时，条目 pid 恒 0、60s 后被 reaper 误删
+      // 活 worktree 且无诊断线索。此 warn 与 reaper scan 的 pid=0 warn 呼应，形成闭环。
+      logger.warn(
+        "[worktree] registry save failed; pid may stay 0 and be reaped by orphan reaper",
+        { ...(context ?? {}), err: err instanceof Error ? err.message : String(err) },
+      );
     }
   }
 }
