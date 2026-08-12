@@ -544,7 +544,7 @@ export class ExtensionService {
       const target = installed.find((e) => e.name === name)
       const thirdPartyDir = this.extensionsDir
 
-      // local-dir / git 安装的 extension 在 ~/.xyz-agent/pi/agent/extensions/ 下。
+      // local-dir / git 安装的 extension 在 ~/.xyz-agent/extensions/ 下（getExtensionsDir）。
       // finishInstall 时只 cpSync 到此目录，未记录到 settings.json packages[]——
       // 卸载必须 rmSync 目录，否则 resolver 会重新发现它。
       if (target?.path && isUnderOrEqual(thirdPartyDir, target.path)) {

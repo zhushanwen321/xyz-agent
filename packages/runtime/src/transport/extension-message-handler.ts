@@ -128,7 +128,7 @@ export class ExtensionMessageHandler {
           const extensions = await ext.scanExtensions()
           return this.ctx.reply(ws, msg.id, 'config.extensions', { extensions })
         } catch (e) {
-          // 透传 ExtensionInstallError 的 code/hint（如 mandatory_cannot_disable），
+          // 透传 ExtensionInstallError 的 code/hint（如 infrastructure_cannot_disable），
           // 与 install 路径对称；非领域错误 fallback 到 toggle_failed。
           return sendHandlerError(this.ctx, ws, ExtensionInstallError, 'toggle_failed', e, msg.id, (matched) => matched.hint ? { hint: matched.hint } : undefined)
         }
@@ -150,7 +150,7 @@ export class ExtensionMessageHandler {
         try {
           await ext.uninstallExtension(msg.payload.name)
         } catch (e) {
-          // 透传 ExtensionInstallError 的 code/hint（如 mandatory_cannot_uninstall），
+          // 透传 ExtensionInstallError 的 code/hint（如 builtin_cannot_uninstall），
           // 与 install/toggle 路径对称；非领域错误 fallback 到 uninstall_failed。
           return sendHandlerError(this.ctx, ws, ExtensionInstallError, 'uninstall_failed', e, msg.id, (matched) => matched.hint ? { hint: matched.hint } : undefined)
         }
