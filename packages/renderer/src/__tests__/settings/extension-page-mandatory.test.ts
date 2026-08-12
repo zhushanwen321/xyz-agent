@@ -183,4 +183,43 @@ describe('ExtensionPage 三层权限矩阵 UI', () => {
     // 推荐区标题「推荐扩展」不应出现在 DOM
     expect(wrapper!.text()).not.toContain('推荐扩展')
   })
+
+  it('按 layer 分两组渲染：builtin 系统强制组在前、user 用户安装组在后，扩展归入对应组', async () => {
+    // 乱序传入：user 在前、builtin 在后，验证分组按 layer 归位而非输入顺序
+    wrapper = mount(ExtensionPage, {
+      props: { extensions: [userExt(), infraBuiltinExt(), featureBuiltinExt()] },
+    })
+    await flushPromises()
+    const builtinGroup = wrapper!.find('[data-testid="extension-group-builtin"]')
+    const userGroup = wrapper!.find('[data-testid="extension-group-user"]')
+    // 两组组头均存在
+    expect(builtinGroup.exists()).toBe(true)
+    expect(userGroup.exists()).toBe(true)
+    // 组头 = 标题 + pill + count + aux
+    expect(builtinGroup.text()).toContain('已安装扩展')
+    expect(builtinGroup.text()).toContain('系统强制')
+    expect(builtinGroup.text()).toContain('runtime 自动安装/升级')
+    expect(builtinGroup.text()).toContain('2') // count badge = 2 个 builtin
+    expect(userGroup.text()).toContain('用户安装')
+    expect(userGroup.text()).toContain('可开关 · 可升级 · 可卸载')
+    // builtin 扩展（infrastructure + feature）出现在系统强制组内，user 扩展不在
+    expect(builtinGroup.text()).toContain('@zhushanwen/pi-pending-notifications')
+    expect(builtinGroup.text()).toContain('@zhushanwen/pi-goal')
+    expect(builtinGroup.text()).not.toContain('my-tools')
+    // user 扩展出现在用户安装组内，builtin 扩展不在
+    expect(userGroup.text()).toContain('my-tools')
+    expect(userGroup.text()).not.toContain('@zhushanwen/pi-goal')
+    // builtin 组在 user 组之前（DOM 顺序）
+    const html = wrapper!.html()
+    expect(html.indexOf('extension-group-builtin')).toBeLessThan(html.indexOf('extension-group-user'))
+  })
+
+  it('空组不渲染组头（整体隐藏）', async () => {
+    // 只有 user 扩展 → builtin 组整体隐藏
+    wrapper = mount(ExtensionPage, { props: { extensions: [userExt()] } })
+    await flushPromises()
+    expect(wrapper!.find('[data-testid="extension-group-builtin"]').exists()).toBe(false)
+    expect(wrapper!.find('[data-testid="extension-group-user"]').exists()).toBe(true)
+    expect(wrapper!.text()).not.toContain('系统强制')
+  })
 })
