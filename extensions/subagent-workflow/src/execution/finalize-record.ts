@@ -156,6 +156,7 @@ export async function doFinalizeRecord(
     await deps.manifestStore.writeManifest({
       id: record.id,
       rootSessionId: record.rootSessionId ?? "",
+      parentRecordId: record.parentRecordId,
       agentName: record.agent,
       status: status === "done" ? "completed" : status,
       createdAt: record.startedAt,

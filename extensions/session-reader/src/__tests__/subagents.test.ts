@@ -1,9 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { tmpdir } from 'node:os'
+import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
-import { buildFamilyFromFs } from '../discovery/subagents.js'
+import {
+  buildFamilyFromFs,
+  listRecordManifests,
+  extractSessionIdFromFilename,
+  type RecordManifest,
+} from '../discovery/subagents.js'
 
 // ---- fixture 常量（uuid 特征，满足 extractSessionIdFromFilename + 互不为子串）----
 const ROOT = '0aaaaaaa-bbbb-7ccc-dddd-000000000001'
@@ -54,12 +60,13 @@ async function writeMainSession(
 /**
  * 写 subagent session 文件：首行 header（真实 id）+ 占位 message + 尾行 identity。
  * identity 在尾行（实测 pi 行为；subagent-identity 由 session-runner 在 session 创建后写）。
+ * U4 扩展：identity.task/agent 可定制（P-fallback 测试用，默认 't'/'explorer'）。
  */
 async function writeSubagentSession(
   dir: string,
   slug: string,
-  realId: string,
-  identity: { rootSessionId: string; slug: string; dataId?: string },
+ realId: string,
+  identity: { rootSessionId: string; slug: string; dataId?: string; task?: string; agent?: string },
 ): Promise<string> {
   const sessionDir = join(dir, 'subagents', slug, 'sessions')
   await mkdir(sessionDir, { recursive: true })
@@ -79,11 +86,36 @@ async function writeSubagentSession(
         id: identity.dataId ?? `sa-${realId.slice(0, 8)}`,
         rootSessionId: identity.rootSessionId,
         slug: identity.slug,
-        agent: 'explorer',
+        agent: identity.agent ?? 'explorer',
         mode: 'sync',
-        task: 't',
+        task: identity.task ?? 't',
         startedAt: 1,
       },
+    }),
+  ]
+  await writeFile(path, lines.join('\n') + '\n')
+  return path
+}
+
+/**
+ * 写 alive subagent 文件但**无 identity 尾行**（运行中/异常，尾行是 message）。
+ * TC-u4-pfallback-no-identity 场景：header 有效、无 manifest、无 identity → buildFamilyFromFs 跳过。
+ */
+async function writeAliveSubagentNoIdentity(
+  dir: string,
+  slug: string,
+  realId: string,
+): Promise<string> {
+  const sessionDir = join(dir, 'subagents', slug, 'sessions')
+  await mkdir(sessionDir, { recursive: true })
+  const path = join(sessionDir, `${realId}.jsonl`)
+  const lines = [
+    JSON.stringify({ type: 'session', id: realId, cwd: `/proj/${slug}` }),
+    JSON.stringify({
+      type: 'message',
+      id: 'm1',
+      parentId: realId,
+      message: { role: 'user', content: 'still running' },
     }),
   ]
   await writeFile(path, lines.join('\n') + '\n')
@@ -118,12 +150,20 @@ async function writeWfLink(
   await writeFile(sessionPath, line + '\n', { flag: 'a' })
 }
 
-/** 写 records manifest（孤儿源）。 */
+/** 写 records manifest（孤儿源）。U4 扩展：fields 支持富字段 task/slug/model/status。 */
 async function writeRecordManifest(
   dir: string,
   slug: string,
   id: string,
-  fields: { rootSessionId: string; agentName?: string; sessionFile: string },
+  fields: {
+    rootSessionId: string
+    agentName?: string
+    sessionFile: string
+    task?: string
+    slug?: string
+    model?: string
+    status?: string
+  },
 ): Promise<void> {
   const recordsDir = join(dir, 'subagents', slug, 'records')
   await mkdir(recordsDir, { recursive: true })
@@ -362,7 +402,7 @@ describe('buildFamilyFromFs - fixture', () => {
     expect(family.workflows[0].calls[0].mtime).toBe(0)
   })
 
-  it('MF-3 回归：alive 但无 identity 的 subagent 文件（运行中）不被 manifest 收编为 cleanedUp', async () => {
+  it('MF-3 回归：alive 但无 identity 的 subagent（运行中）不被收编为 cleanedUp——U4 后 manifest 主路径建族', async () => {
     await writeMainSession(dir, '--root-cwd--', ROOT, { cwd: '/proj/root' })
     // 运行中 subagent：有效 header、无 identity 尾行（identity 完成时才写入），manifest 已存在
     const subDir = join(dir, 'subagents', '--root-cwd--', 'sessions')
@@ -379,12 +419,17 @@ describe('buildFamilyFromFs - fixture', () => {
     })
 
     const family = await buildFamilyFromFs(ROOT, dir)
-    // 旧实现：无 identity → 步骤 2 跳过 → 步骤 3 按孤儿收编 → 活 subagent 显示 [已清理]
-    // 新实现：header 有效即 alive → manifest 跳过 → 无 identity 无法关联 rootSessionId，不入列表
-    const subs = family.subagents.filter(
-      (s) => s.sessionId === SUB_REAL || s.sessionId.startsWith('sa-'),
-    )
-    expect(subs).toHaveLength(0)
+    // U4 语义变化（TC-manifest-source）：m0 时 alive 无 identity → 完全丢弃（无数据源建族）。
+    // U4 manifest 主路径：manifest 命中即建族（manifest 有 rootSessionId），不再依赖 identity。
+    // MF-3 核心保护仍生效：不被收编为 cleanedUp（fileStats 有 realId → cleanedUp=false）。
+    const sub = family.subagents.find((s) => s.sessionId === SUB_REAL)
+    expect(sub).toBeDefined()
+    expect(sub!.cleanedUp).toBe(false) // 核心：运行中不被当孤儿
+    expect(sub!.rootSessionId).toBe(ROOT) // manifest 主：rootSessionId 从 manifest 透传
+    expect(sub!.agentName).toBe('explorer') // manifest.agentName → agentName
+    // 无 identity 尾行 → task/model/status 取决于 manifest（本 fixture manifest 未写这些 → undefined）
+    expect(sub!.task).toBeUndefined()
+    expect(sub!.model).toBeUndefined()
     expect(family.subagents.every((s) => s.cleanedUp === false)).toBe(true)
   })
 })
@@ -426,5 +471,237 @@ describe.skipIf(!HAS_REAL_WF)('buildFamilyFromFs - 真实 workflow 数据', () =
     // stateFile 是 wf-state 文件绝对路径
     expect(rich!.stateFile.endsWith('.jsonl')).toBe(true)
     expect(rich!.runId.startsWith('wf-')).toBe(true)
+  }, 30000)
+})
+
+// ============================================================
+// w2 TC1：listRecordManifests + RecordManifest 导出（IF2/DM2，行为零变更验证）
+// ============================================================
+
+describe('listRecordManifests 导出（w2 TC1）', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await makeAgentDir()
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('导出生效：import + 调用返回 RecordManifest[]，字段完整', async () => {
+    await writeRecordManifest(dir, '--demo-cwd--', 'sa-tc1', {
+      rootSessionId: 'root-1',
+      agentName: 'explorer',
+      sessionFile: '/tmp/sa-tc1.jsonl',
+    })
+    const manifests: RecordManifest[] = await listRecordManifests(dir)
+    expect(manifests).toHaveLength(1)
+    const m = manifests[0]
+    expect(m.id).toBe('sa-tc1')
+    expect(m.rootSessionId).toBe('root-1')
+    expect(m.agentName).toBe('explorer')
+    expect(m.sessionFile).toBe('/tmp/sa-tc1.jsonl')
+  })
+})
+
+// ============================================================
+// U4 端到端：buildFamilyFromFs 富化（manifest 主 / P-fallback identity 回退 / orphan / compat）
+// 验证数据流重组：manifest 索引命中透全字段，未命中读尾行 identity 回退，孤儿 manifest 富字段+cleanedUp
+// ============================================================
+
+describe('U4 buildFamilyFromFs 富化（manifest 主 / P-fallback）', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await makeAgentDir()
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('TC-u4-manifest-enrich: alive + manifest 全字段 → SubagentRef 富字段全透传', async () => {
+    await writeMainSession(dir, '--root-cwd--', ROOT, { cwd: '/proj/root' })
+    const subPath = await writeSubagentSession(dir, '--root-cwd--', SUB_REAL, {
+      rootSessionId: ROOT,
+      slug: 'identity-slug', // identity.slug，manifest 主时被 manifest.slug 覆盖
+      task: 'identity-task', // identity.task，manifest 主时被 manifest.task 覆盖
+      agent: 'worker', // identity.agent，manifest 主时被 manifest.agentName 覆盖
+    })
+    // manifest 全字段（命中 meta.path 索引 → 走 manifest 主路径，覆盖 identity 值）
+    await writeRecordManifest(dir, '--root-cwd--', `sa-${SUB_REAL}`, {
+      rootSessionId: ROOT,
+      agentName: 'explorer',
+      sessionFile: subPath,
+      task: '调研 codex',
+      slug: 'codex-ask-user-research',
+      model: 'glm-5.2',
+      status: 'completed',
+    })
+
+    const family = await buildFamilyFromFs(ROOT, dir)
+    const sub = family.subagents.find((s) => s.sessionId === SUB_REAL)
+
+    expect(sub).toBeDefined()
+    // manifest 主：富字段从 manifest 透传（覆盖 identity 的值）
+    expect(sub!.task).toBe('调研 codex')
+    expect(sub!.slug).toBe('codex-ask-user-research')
+    expect(sub!.agentName).toBe('explorer') // manifest.agentName → agentName
+    expect(sub!.model).toBe('glm-5.2')
+    expect(sub!.status).toBe('completed')
+    expect(sub!.sessionFile).toBe(subPath)
+    expect(sub!.cleanedUp).toBe(false)
+    expect(sub!.rootSessionId).toBe(ROOT)
+  })
+
+  it('TC-u4-pfallback-identity: alive 无 manifest + identity 含 task/agent → 回退 identity，model/status undefined', async () => {
+    await writeMainSession(dir, '--root-cwd--', ROOT, { cwd: '/proj/root' })
+    // 只写 alive session（含 identity 尾行），不写 manifest → P-fallback 路径
+    const subPath = await writeSubagentSession(dir, '--root-cwd--', SUB_REAL, {
+      rootSessionId: ROOT,
+      slug: 'fix',
+      task: 'fix bug',
+      agent: 'worker',
+    })
+
+    const family = await buildFamilyFromFs(ROOT, dir)
+    const sub = family.subagents.find((s) => s.sessionId === SUB_REAL)
+
+    expect(sub).toBeDefined()
+    // P-fallback：task/agent/sessionFile 从 identity 回退
+    expect(sub!.task).toBe('fix bug')
+    expect(sub!.slug).toBe('fix')
+    expect(sub!.agentName).toBe('worker') // identity.data.agent → agentName
+    expect(sub!.sessionFile).toBe(subPath) // P-fallback sessionFile=alive meta.path
+    // P-fallback 核心断言：model/status 不可回退，必 undefined
+    expect(sub!.model).toBeUndefined()
+    expect(sub!.status).toBeUndefined()
+    expect(sub!.cleanedUp).toBe(false)
+  })
+
+  it('TC-u4-pfallback-no-identity: alive 无 manifest 无 identity（运行中）→ 不入 family.subagents，不抛错', async () => {
+    await writeMainSession(dir, '--root-cwd--', ROOT, { cwd: '/proj/root' })
+    // alive 文件无 identity 尾行（运行中/异常），无 manifest
+    await writeAliveSubagentNoIdentity(dir, '--root-cwd--', SUB_REAL)
+
+    // 核心断言：buildFamilyFromFs 不抛错、不崩溃
+    const family = await buildFamilyFromFs(ROOT, dir)
+
+    // 无 manifest 无 identity → 无法确定 rootSessionId → 不入 family.subagents
+    const sub = family.subagents.find((s) => s.sessionId === SUB_REAL)
+    expect(sub).toBeUndefined()
+  })
+
+  it('TC-u4-orphan-manifest: manifest 全字段 + sessionFile 指向不存在路径 → 孤儿 cleanedUp=true，富字段透传', async () => {
+    await writeMainSession(dir, '--root-cwd--', ROOT, { cwd: '/proj/root' })
+    const ghostPath = '/nonexistent/gc-ghost.jsonl' // .jsonl 已被 GC（不写该文件）
+    await writeRecordManifest(dir, '--root-cwd--', 'sa-ghost-id', {
+      rootSessionId: ROOT,
+      agentName: 'worker',
+      sessionFile: ghostPath,
+      task: 'ghost task',
+      slug: 'ghost-slug',
+      model: 'gpt-4',
+      status: 'completed',
+    })
+
+    const family = await buildFamilyFromFs(ROOT, dir)
+    const ghost = family.subagents.find((s) => s.sessionId === 'sa-ghost-id')
+
+    expect(ghost).toBeDefined()
+    expect(ghost!.cleanedUp).toBe(true) // 文件 GC → cleanedUp
+    // 孤儿用 manifest 完整富字段
+    expect(ghost!.task).toBe('ghost task')
+    expect(ghost!.slug).toBe('ghost-slug')
+    expect(ghost!.agentName).toBe('worker')
+    expect(ghost!.model).toBe('gpt-4')
+    expect(ghost!.status).toBe('completed')
+    expect(ghost!.sessionFile).toBe(ghostPath) // GC 路径保留（不置空）
+    expect(ghost!.rootSessionId).toBe(ROOT)
+  })
+
+  it('TC-u4-recordmanifest-compat: 旧 manifest（仅 id/rootSessionId/sessionFile）→ 富字段 undefined，不抛错', async () => {
+    await writeMainSession(dir, '--root-cwd--', ROOT, { cwd: '/proj/root' })
+    // 旧格式 manifest：无 task/slug/model/status/agentName
+    await writeRecordManifest(dir, '--root-cwd--', 'sa-old', {
+      rootSessionId: ROOT,
+      sessionFile: '/nonexistent/old.jsonl',
+    })
+
+    // listRecordManifests 兼容：返回该 manifest，富字段 undefined
+    const manifests = await listRecordManifests(dir)
+    expect(manifests).toHaveLength(1)
+    const m = manifests[0]
+    expect(m.id).toBe('sa-old')
+    expect(m.rootSessionId).toBe(ROOT)
+    expect(m.task).toBeUndefined()
+    expect(m.slug).toBeUndefined()
+    expect(m.model).toBeUndefined()
+    expect(m.status).toBeUndefined()
+    expect(m.agentName).toBeUndefined()
+
+    // buildFamilyFromFs 消费旧 manifest（孤儿路径）不抛错，富字段 undefined
+    const family = await buildFamilyFromFs(ROOT, dir)
+    const ghost = family.subagents.find((s) => s.sessionId === 'sa-old')
+    expect(ghost).toBeDefined()
+    expect(ghost!.cleanedUp).toBe(true)
+    expect(ghost!.task).toBeUndefined()
+    expect(ghost!.model).toBeUndefined()
+    // 旧 manifest slug 缺失 → 回退 agentName（也缺）→ 空串兜底
+    expect(ghost!.slug).toBe('')
+  })
+})
+
+// ============================================================
+// U4 C4 契约：extractSessionIdFromFilename 导出（仅加 export，不改逻辑，供 w4 复用）
+// ============================================================
+
+describe('U4 extractSessionIdFromFilename 导出（C4 契约）', () => {
+  it('导出生效：从 <timestamp>_<sessionId>.jsonl 提取 sessionId', () => {
+    expect(
+      extractSessionIdFromFilename('2026-08-07T16-49-48-393Z_019fdd21-8169-7a02-8f11-eef6c9ca11cc.jsonl'),
+    ).toBe('019fdd21-8169-7a02-8f11-eef6c9ca11cc')
+  })
+
+  it('非 uuid 特征文件名 → 空串（行为不变）', () => {
+    expect(extractSessionIdFromFilename('not-a-uuid.jsonl')).toBe('')
+    expect(extractSessionIdFromFilename('readme.txt')).toBe('')
+  })
+
+  it('无下划线的纯 uuid 文件名 → 返回 uuid（兼容简化场景）', () => {
+    expect(extractSessionIdFromFilename('019fdd21-8169-7a02-8f11-eef6c9ca11cc.jsonl')).toBe(
+      '019fdd21-8169-7a02-8f11-eef6c9ca11cc',
+    )
+  })
+})
+
+// ============================================================
+// U4 真实数据守卫（TC-u4-real-data-guard）：~/.pi/agent 富字段从 manifest 正确透传
+// ============================================================
+
+const HAS_REAL_SUBAGENTS_DIR = existsSync(join(REAL_AGENT_DIR, 'subagents'))
+
+describe.skipIf(!HAS_REAL_ROOT || !HAS_REAL_SUBAGENTS_DIR)('U4 真实数据守卫：~/.pi/agent', () => {
+  it('TC-u4-real-data-guard: 019fe620 subagents 富字段透传（manifest 主 task 非空率 > 80%）', async () => {
+    const family = await buildFamilyFromFs(
+      '019fe620-8ae1-78a7-b76a-43a1ba4cc3c7',
+      REAL_AGENT_DIR,
+    )
+    // 有 subagent 才验证富字段（019fe620 确有隔代 subagent，见既有真实数据测试）
+    expect(family.subagents.length).toBeGreaterThan(0)
+
+    // manifest 主的 subagent（model !== undefined 近似判定，探针 manifest 20/20 有 model）：
+    // task 非空率应 > 80%（探针 20/20 manifest 全有 task）
+    const manifestSourced = family.subagents.filter((s) => s.model !== undefined)
+    if (manifestSourced.length > 0) {
+      const withTask = manifestSourced.filter((s) => s.task !== undefined && s.task !== '')
+      expect(withTask.length / manifestSourced.length).toBeGreaterThan(0.8)
+    }
+
+    // P-fallback 的 subagent（model === undefined）：status 必 undefined（identity 不可回退 status）
+    const pfallback = family.subagents.filter((s) => s.model === undefined)
+    expect(pfallback.every((s) => s.status === undefined)).toBe(true)
+
+    // 所有 subagent 的 sessionFile 非空（manifest.sessionFile 或 alive meta.path）
+    expect(family.subagents.every((s) => typeof s.sessionFile === 'string' && s.sessionFile.length > 0)).toBe(true)
   }, 30000)
 })

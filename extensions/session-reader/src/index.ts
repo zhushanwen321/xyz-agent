@@ -21,16 +21,16 @@ import { createSessionCommand } from './tui/session-command.js'
 
 const SessionReadSchema = Type.Object({
   action: StringEnum(
-    ['find', 'family', 'outline', 'expand', 'detail', 'search', 'export', 'extract'],
+    ['find', 'family', 'outline', 'expand', 'detail', 'search', 'export', 'extract', 'workflow'],
     {
       description:
-        'Action to perform: find (locate session), family (fork/subagent/workflow relations), outline (turn-level overview), expand (single-turn entries), detail (full text of turns), search (full-text grep), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type).',
+        'Action to perform: find (locate session), family (fork/subagent/workflow relations; recursive=true returns nested execution tree), outline (turn-level overview), expand (single-turn entries), detail (full text of turns), search (full-text grep), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps; requires session, optional runId focuses one run; step call sessionId jumps to outline/detail).',
     },
   ),
   session: Type.Optional(
     Type.String({
       description:
-        'Session id or uuid fragment (e.g. e6c96). Required for family/outline/expand/detail/search/export. # prefix auto-stripped.',
+        'Session id, uuid fragment (e.g. e6c96), subagent record id (sa-xxx, precise lookup), or absolute .jsonl path (~ or ~/ allowed). Required for family/outline/expand/detail/search/export/workflow. # prefix auto-stripped.',
     }),
   ),
   query: Type.Optional(
@@ -83,6 +83,11 @@ const SessionReadSchema = Type.Object({
   cwd: Type.Optional(
     Type.String({ description: 'find: filter by cwd. Optional.' }),
   ),
+  source: Type.Optional(
+    StringEnum(['main', 'subagent'], {
+      description: 'find action: filter by source. "main" = sessions/, "subagent" = subagents/. Default both (merged).',
+    }),
+  ),
   limit: Type.Optional(
     Type.Number({ description: 'find/search: max results. Default 20.' }),
   ),
@@ -99,6 +104,18 @@ const SessionReadSchema = Type.Object({
       description: 'extract action: filter commands/tool-results by tool name (e.g. "bash").',
     }),
   ),
+  runId: Type.Optional(
+    Type.String({
+      description:
+        'workflow action: focus a single run by runId (disambiguate multiple runs). Omit to see all run overviews.',
+    }),
+  ),
+  recursive: Type.Optional(
+    Type.Boolean({
+      description:
+        'family action: return nested execution tree (arbitrary-depth subagent↔workflow-call nesting, precise parentRecordId chain with flat-fallback for legacy records). Default false (flat family).',
+    }),
+  ),
 })
 
 // ---- guidelines（注入 LLM，design §3.4）----
@@ -109,12 +126,13 @@ const guidelines = [
   'outline before detail. Never read raw .jsonl files—use this tool.',
   'family traces fork parents/children, subagent sessions, and workflow runs.',
   'extract what=<type> to pull user messages / commands / files / commits / tool results across turns (optional tool= filter for commands/tool-results).',
+  "workflow action to see workflow run overviews (status/budget/steps). Each step's call sessionId can jump to outline/detail for deep reading.",
   'Errors carry a 👉 recovery hint—follow it to retry in one step.',
 ]
 
 // ---- 工具 description（design §3.4，照搬措辞）----
 
-const description = `Read pi session files (conversation history) by semantic structure instead of raw bytes. Use when you need to review another session, trace a fork/subagent/workflow family, or locate a past decision. Eight actions: find (locate by name/uuid fragment), family (fork/subagent/workflow relations), outline (turn-level overview, ~500 token), expand (single-turn entry list), detail (full text of turns), search (full-text grep across a session), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type). Progressive reading: outline → expand → detail. Do NOT use for the current session (use get_messages) or to edit sessions (pi has /resume /fork).`
+const description = `Read pi session files (conversation history) by semantic structure instead of raw bytes. Use when you need to review another session, trace a fork/subagent/workflow family, or locate a past decision. Nine actions: find (locate by name/uuid fragment), family (fork/subagent/workflow relations), outline (turn-level overview, ~500 token), expand (single-turn entry list), detail (full text of turns), search (full-text grep across a session), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps, step call sessionId jumps to outline/detail). Progressive reading: outline → expand → detail. Do NOT use for the current session (use get_messages) or to edit sessions (pi has /resume /fork).`
 
 /**
  * 已注册过 TUI provider/command 的 pi 实例集合。

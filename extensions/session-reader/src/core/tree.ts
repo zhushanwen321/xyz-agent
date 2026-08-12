@@ -36,9 +36,11 @@ function findForkPoint(
 /**
  * 按 design §3.5 算法 2 重建 leaf 路径视图。
  *
- * leafId = entries 最后一条的 id（D-2：pi 重开时把 leafId 重置为文件最后 entry，
- * 即用户 resume 看到的对话线）。从 leafId 沿 parentId 回溯到 root，遇 parentId 不在
- * 索引（断点/孤儿 root）即停。
+ * leafId = 末尾往前第一个 parentId !== null 的 entry（D-2 修正：pi 写的 subagent-identity
+ * 等元数据 custom entry 是 subagent session 文件尾行，但 parentId=null、非对话流节点；
+ * 若直接取文件尾 entry 会让 leafPath 在第一步断链，丢失全部对话 entry）。从 leafId 沿
+ * parentId 回溯到 root，遇 parentId 不在索引（断点/孤儿 root）即停。全空 session（仅
+ * header + 元数据，无 parentId!==null 的对话节点）→ leafId fallback entries[0]。
  *
  * orphans 只收集「不在 leafPath 上 + parentId 指向不存在」的 entry；leafPath 根自身
  * 即使 parentId 断（断点处）也不重复计入——它已有归属（主链根），符合「孤儿=无归属」语义。
@@ -57,8 +59,15 @@ export function buildTreeView(entries: Entry[]): TreeView {
   const index = new Map<string, Entry>()
   for (const e of entries) index.set(e.id, e)
 
-  // 2. leafId = 最后一条 entry 的 id
-  const leafId = entries[entries.length - 1].id
+  // 2. leafId = 末尾往前第一个 parentId !== null 的 entry（跳过 subagent-identity 等
+  //    尾部元数据 custom；全空 session fallback entries[0]=root header）
+  let leafId: string = entries[0].id
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i].parentId !== null) {
+      leafId = entries[i].id
+      break
+    }
+  }
 
   // 3. 从 leafId 沿 parentId 回溯到 root
   let cur: string | null = leafId

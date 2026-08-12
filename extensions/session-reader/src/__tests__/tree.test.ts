@@ -98,4 +98,24 @@ describe('buildTreeView', () => {
     expect(t.branches.size).toBe(0)
     expect(t.orphans).toEqual([])
   })
+
+  it('subagent-identity 尾行（parentId=null）不劫持 leafId：跳过取末尾对话节点', () => {
+    // 模拟 subagent session：header A → message B → message C（对话链），尾行 identity sa-x（parentId=null）
+    const entries = [e('A', null), e('B', 'A'), e('C', 'B'), e('sa-x', null)]
+    const t = buildTreeView(entries)
+    // leafId 跳过 sa-x（parentId=null），取 C（末尾 parentId!==null）→ leafPath 含完整对话链
+    expect(t.leafPath).toEqual(['A', 'B', 'C'])
+    // sa-x parentId=null → 独立 root，不计旁支不计孤儿
+    expect(t.branches.size).toBe(0)
+    expect(t.orphans).toEqual([])
+  })
+
+  it('全空 session（仅 header + 元数据 custom，无 parentId!==null 对话节点）→ leafId fallback entries[0]', () => {
+    const entries = [e('A', null), e('sa-x', null)]
+    const t = buildTreeView(entries)
+    // 全 parentId=null → leafId fallback entries[0]=A → leafPath=[A]
+    expect(t.leafPath).toEqual(['A'])
+    expect(t.branches.size).toBe(0)
+    expect(t.orphans).toEqual([])
+  })
 })
