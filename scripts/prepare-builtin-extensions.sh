@@ -48,7 +48,7 @@ echo ""
 rm -rf "$STAGED_SCOPED"
 mkdir -p "$STAGED_SCOPED"
 
-# 2. esbuild bundle 9 个 builtin extension 成自包含 index.js
+# 2. esbuild bundle builtin extension（数量以 mandatory-extensions.json SSOT 为准）成自包含 index.js
 node "$REPO_ROOT/scripts/bundle-extensions.mjs"
 
 # 3. 补充非源码文档资源（README / ARCHITECTURE）。bundle 已产出运行时核心文件
@@ -115,7 +115,7 @@ for pkg_dir in $PKG_DIRS; do
 	TOTAL_KB=$((TOTAL_KB + dir_kb))
 	PKG_COUNT=$((PKG_COUNT + 1))
 done
-total_mb=$(echo "scale=1; ${TOTAL_KB} / 1024" | bc)
+total_mb=$(awk -v kb="$TOTAL_KB" 'BEGIN { printf "%.1f", kb / 1024 }')
 echo "  ──────────────────────────────────────────────"
 echo "  Total staged: ${total_mb}M (${PKG_COUNT} packages, self-contained bundles)"
 

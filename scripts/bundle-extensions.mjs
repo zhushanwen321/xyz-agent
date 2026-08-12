@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * bundle-extensions.mjs — 用 esbuild 把 9 个 builtin pi extension 各自 bundle 成
+ * bundle-extensions.mjs — 用 esbuild 把 builtin pi extension（数量以
+ * packages/shared/src/mandatory-extensions.json 为准，现 10 个）各自 bundle 成
  * 自包含 .js，解决 prepare-builtin-extensions.sh 旧机制的根本缺陷。
  *
  * 旧机制（"拷源码 + 人工声明 PKG_DEPS + 从根 node_modules 拷依赖"）的两个根因：
@@ -17,7 +18,8 @@
  *  - package.json（pi.extensions 改指 ./index.js；源码 package.json 不动）
  *  - permission 额外含 tree-sitter-bash.wasm + web-tree-sitter.wasm（手动拷贝，与 index.js 同目录）
  *
- * external 边界权威源：0.80.3 pi binary virtualModules 实测（见
+ * external 边界权威源：0.84.1 pi binary virtualModules 实测（0.80.3 首测，2026-08-12
+ * 随 pi 0.84.1 升级重测 10 包 get_state 加载全绿后更新；见
  * .xyz-harness/2026-08-11-builtin-extension-bundling/design.md §1.1）。
  *  - @earendil-works/*（pi-coding-agent / pi-ai / pi-tui / pi-agent-core 等）
  *  - @mariozechner/*（旧名别名）

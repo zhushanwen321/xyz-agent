@@ -140,6 +140,15 @@ jobs:
       - name: Test - pi extensions
         run: pnpm extensions:test
 
+      # builtin-ext-bundle vitest 套件（scripts/__tests__/builtin-ext-bundle.test.mjs，TC3/TC4/TC7/TC8
+      # + checkManifest 6 失败分支）依赖 prepare-builtin-extensions.sh 预产出的 staged 产物
+      #（gitignored，fresh checkout 不存在）——先 prepare 再跑。vitest 经 pnpm hoisted 提升到根。
+      - name: Prepare builtin extensions (staged bundles)
+        run: bash scripts/prepare-builtin-extensions.sh
+
+      - name: Test - builtin-ext-bundle
+        run: npx vitest run scripts/__tests__/builtin-ext-bundle.test.mjs
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -160,11 +169,13 @@ jobs:
 
   # E2E 视觉回归（mock 轨 visual-chromium）：只跑像素 diff baseline（S2 W3 交付的
   # visual-chromium project，testMatch **/visual/** + chromium.launch + spawn vite @ VITE_MOCK=true）。
-  # 只需 chromium（无需 electron 二进制/build:e2e），ubuntu-latest 轻量；与 lint/typecheck/test 并行
+  # 只需 chromium（无需 electron 二进制/build:e2e）。runner 用 macos-latest 与 baseline 生成
+  # 平台（macOS 本地）一致——ubuntu 无 CJK 字体（UI 全中文→tofu）且跨平台 chromium 渲染
+  # 差异大概率超 maxDiffPixelRatio 0.01 阈值（MF-6）。与 lint/typecheck/test 并行
   # （非 needs 依赖故并行），但纳入 build 的 needs（E2E 失败阻塞 release 构建）。
   e2e-visual:
     name: E2E Visual (mock)
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -186,7 +197,17 @@ jobs:
         run: npx playwright install chromium
 
       - name: Run visual E2E (mock track)
+        env:
+          # visual 轨只需 chromium + vite（不需要 Electron 构建产物），跳过 globalSetup 的
+          # build:e2e 产物检查（fresh checkout 上 build:e2e 别名指向的 apps/electron 无此 script）
+          E2E_VISUAL_ONLY: '1'
         run: npx playwright test e2e/visual
+
+      # token 消费 chromium 轨（scripts/token-consume-check.mjs）：真实 vite dev server + Tailwind
+      # JIT 产物 + chromium 验证 5 核心组件 computed style 取自 CSS 变量（与 vitest 契约轨双轨互补）。
+      # 本 job 已装 playwright chromium + 依赖，复用环境（MF-9 接线）。
+      - name: Token consume check (chromium track)
+        run: node scripts/token-consume-check.mjs
 
       - name: Upload test results
         if: always()

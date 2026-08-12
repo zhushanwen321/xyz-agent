@@ -28,6 +28,13 @@ function artifactsMissing(): boolean {
 }
 
 export default async function globalSetup(): Promise<void> {
+  // visual-only 运行（CI e2e-visual job，E2E_VISUAL_ONLY=1）只需 chromium + vite（mock），
+  // 不需要 Electron 构建产物——直接跳过产物检查，避免 fresh checkout 上触发 build:e2e
+  //（electron 行为轨专属，visual 轨不应承担构建开销）。
+  if (process.env.E2E_VISUAL_ONLY === '1') {
+    console.log('[e2e global-setup] E2E_VISUAL_ONLY=1（visual 轨），跳过 Electron 构建产物检查')
+    return
+  }
   if (artifactsMissing()) {
     console.log('[e2e global-setup] 构建产物缺失，跑 build:e2e ...')
     // VITE_E2E=true 必须透传给 renderer 构建（vite.config.ts define 读此注入 sample-project cwd）
