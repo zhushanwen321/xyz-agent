@@ -32,7 +32,7 @@ export interface ServiceResult<T = unknown> {
  * data 供 tool details（create: {task, nextRuns}；list: {tasks}）。
  */
 export class SchedulerService {
-  constructor(public readonly runtime: SchedulerRuntime) {}
+  constructor(public readonly runtime: SchedulerRuntime, private readonly now: () => number) {}
 
   /**
    * 创建任务。
@@ -67,7 +67,16 @@ export class SchedulerService {
       return { success: false, errorCode: 'INTERNAL', message }
     }
 
-    const nextRuns = await computeNextRuns(task.schedule, Date.now(), 5)
+    const count = task.kind === 'once' ? 1 : 5
+    const nextRuns = await computeNextRuns(task.schedule, this.now(), count)
+    // once 单行内联回显（只执行 1 次，编号列表会误导）；recurring 保持 5 行编号列表
+    const runPreview =
+      task.kind === 'once'
+        ? `Next run: ${formatRelativeTime(nextRuns[0]!)}`
+        : [
+            'Next 5 runs:',
+            ...nextRuns.map((t, i) => `  ${i + 1}. ${formatRelativeTime(t)}`),
+          ].join('\n')
     const message = [
       `Task "${task.name}" (${task.id}) created.`,
       `Schedule: ${formatSchedule(task.schedule, task.kind)}`,
@@ -75,8 +84,7 @@ export class SchedulerService {
       `Expires: ${task.expiresAt ? formatRelativeTime(task.expiresAt) : 'never'}`,
       `Force: ${task.force ? 'yes' : 'no'}`,
       '',
-      'Next 5 runs:',
-      ...nextRuns.map((t, i) => `  ${i + 1}. ${formatRelativeTime(t)}`),
+      runPreview,
     ].join('\n')
 
     return { success: true, message, data: { task, nextRuns } }

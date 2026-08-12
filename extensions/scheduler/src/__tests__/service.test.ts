@@ -8,9 +8,11 @@ const mockCtx = { isIdle: () => true, hasPendingMessages: () => false }
 
 describe('SchedulerService', () => {
   let service: SchedulerService
+  let backend: MockSchedulerBackend
 
   beforeEach(() => {
-    service = new SchedulerService(new SchedulerRuntime(new MockSchedulerBackend(), mockCtx))
+    backend = new MockSchedulerBackend()
+    service = new SchedulerService(new SchedulerRuntime(backend, mockCtx), () => backend.now())
   })
 
   describe('create', () => {
@@ -23,6 +25,33 @@ describe('SchedulerService', () => {
       expect(result.message).toContain('Next 5 runs:')
       expect(result.data!.task.schedule).toEqual({ mode: 'interval', intervalMs: 300000 })
       expect(result.data!.nextRuns).toHaveLength(5)
+      // TC-RECURRING-NO-REGRESS：recurring 回显仍为 5 行编号 run 行（编号列表不变）
+      const runLines = result.message.split('\n').filter(l => /^\s+\d+\./.test(l))
+      expect(runLines).toHaveLength(5)
+    })
+
+    // TC-ONCE-ECHO：once 任务回显仅 1 条 run 行（单行内联，无编号列表）
+    it('TC-ONCE-ECHO: once task echoes single run line without numbered list', async () => {
+      const result = await service.create('git pull', '1h', { kind: 'once' })
+      expect(result.success).toBe(true)
+      expect(result.message).toContain('Kind: once')
+      expect(result.message).not.toContain('Next 5 runs:')
+      expect(result.message).toContain('Next run: in 1h')
+      // 无编号 run 行（once 单行内联）
+      expect(result.message).not.toMatch(/^\s+\d+\./m)
+      // nextRuns 数据同步裁剪
+      expect(result.data!.nextRuns).toHaveLength(1)
+    })
+
+    // TC-NOW-INJECT：create 用注入的 now 源（backend.now()）而非 Date.now()
+    it('TC-NOW-INJECT: create uses injected now source', async () => {
+      const fixedNow = Date.now()
+      const injectBackend = new MockSchedulerBackend()
+      injectBackend.nowValue = fixedNow
+      const nowService = new SchedulerService(new SchedulerRuntime(injectBackend, mockCtx), () => injectBackend.now())
+      const result = await nowService.create('one shot', '1h', { kind: 'once' })
+      expect(result.data!.nextRuns[0]).toBe(fixedNow + 3_600_000)
+      expect(result.message).toContain('in 1h')
     })
 
     it('creates cron task', async () => {
@@ -169,7 +198,7 @@ describe('SchedulerService', () => {
     it('returns DISPATCH_SKIPPED when ctx is busy (isIdle=false)', async () => {
       const busyCtx = { isIdle: () => false, hasPendingMessages: () => false }
       const busyBackend = new MockSchedulerBackend()
-      const busyService = new SchedulerService(new SchedulerRuntime(busyBackend, busyCtx))
+      const busyService = new SchedulerService(new SchedulerRuntime(busyBackend, busyCtx), () => busyBackend.now())
 
       const created = await busyService.create('test', '5m')
       const id = created.data!.task.id

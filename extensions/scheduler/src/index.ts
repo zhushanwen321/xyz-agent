@@ -43,7 +43,7 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
     const runtime = new SchedulerRuntime(backend, ctx)
     runtime.loadTasks(backend.loadTasks())
     runtime.startScheduler()
-    service = new SchedulerService(runtime)
+    service = new SchedulerService(runtime, () => backend.now())
 
     // 注册 widget（SDK setWidget 第一重载：直接传 string[]）。
     // string[] 只渲染一次，调度器需要随 task 状态/nextRunAt 倒计时刷新，

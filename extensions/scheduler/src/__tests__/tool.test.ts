@@ -13,7 +13,8 @@ describe('schedule tool', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    service = new SchedulerService(new SchedulerRuntime(new MockSchedulerBackend(), mockCtx))
+    const backend = new MockSchedulerBackend()
+    service = new SchedulerService(new SchedulerRuntime(backend, mockCtx), () => backend.now())
     handler = createScheduleHandler(service)
   })
 
@@ -39,7 +40,8 @@ describe('schedule_control tool', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    service = new SchedulerService(new SchedulerRuntime(new MockSchedulerBackend(), mockCtx))
+    const backend = new MockSchedulerBackend()
+    service = new SchedulerService(new SchedulerRuntime(backend, mockCtx), () => backend.now())
     handler = createScheduleControlHandler(service)
   })
 
