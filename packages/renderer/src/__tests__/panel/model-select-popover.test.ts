@@ -124,7 +124,7 @@ describe('ModelSelectPopover 纯受控 + store 数据源', () => {
     expect(groups[0].models[0].name).toBe('Claude 4')
   })
 
-  it('U12: store 空时渲染「无匹配模型」', async () => {
+  it('U12: store 空时渲染引导空态（P2：模型池为空 → 引导导入凭据/配置，区别于搜索无结果）', async () => {
     getSettingsStore().models.value = []
     const wrapper = mount(ModelSelectPopover, {
       props: { selected: '' },
@@ -132,11 +132,12 @@ describe('ModelSelectPopover 纯受控 + store 数据源', () => {
     await wrapper.vm.$nextTick()
     const groups = (wrapper.vm as unknown as { groups: unknown[] }).groups
     expect(groups).toHaveLength(0)
-    // groups.length===0 时 PopoverContent 内渲染「无匹配模型」空态。
+    // groups.length===0 且模型池为空 → PopoverContent 内渲染「暂无可用模型」引导空态。
     // reka-ui PopoverContent teleport 到 body：打开 popover 后查 body 文案。
     ;(wrapper.vm as unknown as { open: boolean }).open = true
     await wrapper.vm.$nextTick()
-    expect(document.body.textContent).toContain('无匹配模型')
+    expect(document.body.textContent).toContain('暂无可用模型，请先在设置中导入凭据或配置供应商')
+    expect(document.body.textContent).not.toContain('无匹配模型')
   })
 
   it('U6: enabled===false 的 model 不出现在分组列表（runtime aggregateModels 已过滤，前端兜底）', async () => {

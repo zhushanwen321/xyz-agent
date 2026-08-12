@@ -199,6 +199,16 @@ export function onDefaults(handler: (defaultModel: string) => void): () => void 
   })
 }
 
+/** 带 source 的 config.defaults 订阅（仅广播携带 source；reply 走 pending map 不进全局通道）。
+ *  ProviderPage 用它区分「provider 变更后 runtime 自动修复默认模型」（source='provider-updated'/
+ *  'provider-deleted' 等）与用户主动 config.setDefaultModel（source='default-set'）。
+ *  source 用宽 string（shared 未导出 DefaultModelSource 联合类型，其成员均为 string 字面量，赋值兼容）。 */
+export function onDefaultsWithSource(handler: (payload: { defaultModel: string; source?: string }) => void): () => void {
+  return events.onGlobalType('config.defaults', (msg) => {
+    handler({ defaultModel: msg.payload.defaultModel, source: msg.payload.source })
+  })
+}
+
 // ── 动作-ack（状态变更由对应订阅通道推回）──
 /**
  * 目录级管道写入（ADR-0021 §1）：覆盖 skill 加载路径配置（含 scope 的 SkillDirConfig[]，靠前覆盖靠后）。

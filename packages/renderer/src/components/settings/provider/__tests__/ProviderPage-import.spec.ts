@@ -44,6 +44,8 @@ const configMock = vi.hoisted(() => ({
   onAuthAuthUrl: vi.fn(() => () => {}),
   onAuthSuccess: vi.fn(() => () => {}),
   onAuthError: vi.fn(() => () => {}),
+  // P2：ProviderPage 默认 pill + 默认修复 toast（缺则 TypeError 崩 mount）
+  onDefaultsWithSource: vi.fn(() => () => {}),
 }))
 
 vi.mock('@/api', () => ({

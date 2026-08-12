@@ -46,6 +46,8 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
     onAgentDirs: vi.fn(() => () => {}),
     onExtensionDirs: vi.fn(() => () => {}),
     onDefaults: vi.fn(() => () => {}),
+    // P2：ProviderPage 默认 pill + 默认修复 toast（缺则 TypeError 崩 mount）
+    onDefaultsWithSource: vi.fn(() => () => {}),
     onSystemPrompt: vi.fn(() => () => {}),
     onTerminalConfig: vi.fn(() => () => {}),
     detectSources: vi.fn(async () => []),

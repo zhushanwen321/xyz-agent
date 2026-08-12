@@ -219,7 +219,7 @@ export default {
   },
   modelSelect: {
     title: 'Select model',
-    noModel: 'No models',
+    noModel: 'No models available. Import credentials or configure a provider in Settings first.',
     switchModel: 'Switch model',
     searchPlaceholder: 'Search models…',
     noMatch: 'No matching models',

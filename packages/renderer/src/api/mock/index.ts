@@ -748,6 +748,8 @@ export const config = {
   onSkills: (h: (skills: SkillInfo[]) => void) => skillsSub.subscribe(h),
   onAgents: (h: (agents: AgentInfo[]) => void) => agentsSub.subscribe(h),
   onDefaults: (h: (defaultModel: string) => void) => defaultsSub.subscribe(h),
+  // P2：带 source 的 defaults 订阅（mock 广播不携带 source，source 恒 undefined）
+  onDefaultsWithSource: (h: (payload: { defaultModel: string; source?: string }) => void) => defaultsSub.subscribe((defaultModel: string) => h({ defaultModel })),
   onSkillDirs: (h: (dirs: SkillDirConfig[]) => void) => skillDirsSub.subscribe(h),
   // Wave3：skill 缓存失效信号订阅。mock 模式无真实文件系统 watcher（不广播失效信号），
   // 返回 no-op unsubscribe 保持与 real domains 签名同构（facade 三元要求）。

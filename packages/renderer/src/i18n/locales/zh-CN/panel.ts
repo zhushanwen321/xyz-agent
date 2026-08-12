@@ -219,7 +219,7 @@ export default {
   },
   modelSelect: {
     title: '选择模型',
-    noModel: '暂无模型',
+    noModel: '暂无可用模型，请先在设置中导入凭据或配置供应商',
     switchModel: '切换模型',
     searchPlaceholder: '搜索模型…',
     noMatch: '无匹配模型',

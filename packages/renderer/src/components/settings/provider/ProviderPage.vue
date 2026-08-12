@@ -83,12 +83,24 @@
           :class="authBadgeClass(p)"
         >{{ t(`settings.provider.builtinTemplate.authBadge.${authBadgeTextKey(p)}`) }}</span>
 
-        <!-- 默认供应商 pill -->
-        <Button
+        <!-- 默认供应商 pill（P2：可点击 → 弹模型选择，选中后 config.setDefaultModel） -->
+        <ModelSelectPopover
           v-if="p.id !== NEW_ID && p.id === defaultProviderId"
-          variant="ghost"
-          class="h-auto shrink-0 rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent hover:bg-accent-soft"
-        >{{ t('settings.provider.defaultPill') }}</Button>
+          :selected="settingsStore.defaultModel.value"
+          :provider-filter="[p.id]"
+          @select="onSetDefaultModel"
+        >
+          <template #trigger>
+            <PopoverTrigger as-child>
+              <Button
+                variant="ghost"
+                class="h-auto shrink-0 rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent hover:bg-accent-soft"
+                :title="t('panel.modelSelect.switchModel')"
+                data-testid="provider-default-pill"
+              >{{ t('settings.provider.defaultPill') }}</Button>
+            </PopoverTrigger>
+          </template>
+        </ModelSelectPopover>
 
         <span v-if="p.id !== NEW_ID" class="shrink-0 text-[11px] text-neutral-dim">{{ t('settings.provider.modelsCount', { count: p.models.length }) }}</span>
 
@@ -199,12 +211,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, provide, onMounted } from 'vue'
+import { computed, ref, provide, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertCircle, Settings, Trash2 } from '@lucide/vue'
 import { ConfirmDialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { PopoverTrigger } from '@/components/ui/popover'
+import ModelSelectPopover from '@/components/panel/ModelSelectPopover.vue'
 import type { BuiltinProviderTemplate, ProviderInfo, ProviderStatus, SetProviderData, ProviderId } from '@xyz-agent/shared'
 import { config } from '@/api'
 import { getSettingsStore } from '@xyz-agent/core'
@@ -321,6 +335,31 @@ const toggling = ref<Set<string>>(new Set())
 
 const settingsStore = getSettingsStore()
 const defaultProviderId = computed(() => settingsStore.defaultModel.value?.split('/')[0] ?? '')
+
+// ── P2：默认模型自动修复 toast（任务 3）──
+// runtime 在 setProvider/applyImportProviders/deleteProvider/toggleProviderEnabled 等 provider
+// 变更后自动对账默认模型（reconcileDefaultModelAfterProviderChange + getDefaultModel 兜底）并广播
+// config.defaults。前端消费广播：默认模型实际发生变化（非用户主动 default-set）时 toast 告知。
+const lastDefaultModel = ref(settingsStore.defaultModel.value)
+const unsubscribeDefaults = config.onDefaultsWithSource(({ defaultModel, source }) => {
+  const prev = lastDefaultModel.value
+  lastDefaultModel.value = defaultModel
+  if (!defaultModel || defaultModel === prev || source === 'default-set') return
+  toast.info(t('settings.provider.defaultAutoUpdated', { model: defaultModel }))
+})
+onUnmounted(unsubscribeDefaults)
+
+/** P2：pill 点击选择默认模型 → config.setDefaultModel（状态经 onDefaults 广播推回，无需本地乐观更新） */
+async function onSetDefaultModel({ modelId, provider }: { modelId: string; provider: ProviderId }): Promise<void> {
+  actionError.value = ''
+  try {
+    await config.setDefaultModel(provider, modelId)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    actionError.value = msg
+    toast.error(msg)
+  }
+}
 
 /** 新建态 sentinel id（渲染合成行 + null provider 进 ProviderEditBody） */
 const NEW_ID = '__new__' as ProviderId

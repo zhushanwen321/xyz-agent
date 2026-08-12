@@ -86,6 +86,7 @@ export default {
     emptyTitle: 'No providers yet',
     emptyDesc: 'Add your first provider to connect AI models and start chatting.',
     defaultPill: 'Default',
+    defaultAutoUpdated: 'Default model auto-updated to {model}',
     modelsCount: '{count} models',
     editTitle: 'Edit provider',
     deleteTitle: 'Delete provider',

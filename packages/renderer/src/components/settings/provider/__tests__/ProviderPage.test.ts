@@ -49,6 +49,9 @@ const configMock = vi.hoisted(() => ({
   listBuiltinProviders: vi.fn(() => Promise.resolve([])),
   toggleProviderEnabled: vi.fn(() => Promise.resolve()),
   removeProviderByKind: vi.fn(() => Promise.resolve()),
+  // P2：默认 pill 设置默认模型 + 默认修复 toast 订阅
+  setDefaultModel: vi.fn(() => Promise.resolve()),
+  onDefaultsWithSource: vi.fn(() => () => {}),
   // 防止 useProviderOAuth onMounted 订阅 4 个 auth.* 事件缺方法报错
   onAuthDeviceCode: vi.fn(() => () => {}),
   onAuthAuthUrl: vi.fn(() => () => {}),
@@ -62,6 +65,8 @@ vi.mock('@/api', () => ({
 
 import ProviderPage from '@/components/settings/provider/ProviderPage.vue'
 import { Switch } from '@/components/ui/switch'
+import { getSettingsStore } from '@xyz-agent/core'
+import { useToast } from '@/composables/useToast'
 
 let wrapper: ReturnType<typeof mount> | null = null
 
@@ -69,6 +74,9 @@ beforeEach(() => {
   setActivePinia(createPinia())
   configMock.toggleProviderEnabled.mockClear()
   configMock.removeProviderByKind.mockClear()
+  configMock.setDefaultModel.mockClear()
+  configMock.onDefaultsWithSource.mockClear()
+  useToast().toasts.value = []
 })
 
 afterEach(() => {
@@ -264,5 +272,129 @@ describe('TC5: 删除/移除按钮 + 确认弹窗文案按 ProviderInfo.kind 收
     await flushPromises()
 
     expect(configMock.removeProviderByKind).toHaveBeenCalledWith('my-custom', 'custom')
+  })
+})
+
+// ══ P2: 默认 pill 可点击 → 弹模型选择 → setDefaultModel ═══════════════════════════
+
+describe('P2: 默认 pill 可点击设默认模型（provider-default-pill）', () => {
+  const MODELS = [
+    { id: 'gpt-4o', name: 'GPT-4o', providerId: 'openai', providerName: 'OpenAI', enabled: true },
+    { id: 'gpt-5', name: 'GPT-5', providerId: 'openai', providerName: 'OpenAI', enabled: true },
+  ]
+
+  it('默认 provider 行渲染可点击 pill（DOM 断言）', async () => {
+    getSettingsStore().defaultModel.value = 'openai/gpt-4o'
+    wrapper = mountPage([CATALOG_P])
+    await flushPromises()
+
+    const pill = wrapper.find('[data-testid="provider-default-pill"]')
+    expect(pill.exists()).toBe(true)
+    expect(pill.text()).toContain('默认供应商')
+  })
+
+  it('非默认 provider 行不渲染 pill', async () => {
+    getSettingsStore().defaultModel.value = 'openai/gpt-4o'
+    wrapper = mountPage([CUSTOM_P])
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="provider-default-pill"]').exists()).toBe(false)
+  })
+
+  it('点击 pill → 弹模型选择（仅当前 provider 模型）→ 点击模型 → config.setDefaultModel 被调', async () => {
+    getSettingsStore().defaultModel.value = 'openai/gpt-4o'
+    getSettingsStore().models.value = MODELS
+    wrapper = mountPage([CATALOG_P])
+    await flushPromises()
+
+    // pill 可点击：点击触发 popover 展开（reka Popover，内容 teleport 到 body）
+    const pill = wrapper.find('[data-testid="provider-default-pill"]')
+    expect(pill.attributes('title')).toBe('切换模型')
+    await pill.trigger('click')
+    await flushPromises()
+
+    // 模型列表出现（providerFilter 限定当前 provider：openai 的两个模型）
+    const bodyItems = Array.from(document.body.querySelectorAll('button')).map(b => b.textContent ?? '')
+    expect(bodyItems.some(t => t.includes('GPT-4o'))).toBe(true)
+    expect(bodyItems.some(t => t.includes('GPT-5'))).toBe(true)
+
+    // 点击 GPT-5 → setDefaultModel('openai', 'gpt-5')
+    const gpt5 = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('GPT-5')) as HTMLButtonElement
+    gpt5.click()
+    await flushPromises()
+
+    expect(configMock.setDefaultModel).toHaveBeenCalledTimes(1)
+    expect(configMock.setDefaultModel).toHaveBeenCalledWith('openai', 'gpt-5')
+  })
+
+  it('setDefaultModel 失败 → actionError 常驻 error 区域可见', async () => {
+    getSettingsStore().defaultModel.value = 'openai/gpt-4o'
+    getSettingsStore().models.value = MODELS
+    configMock.setDefaultModel.mockRejectedValueOnce(new Error('设默认失败'))
+    wrapper = mountPage([CATALOG_P])
+    await flushPromises()
+
+    await wrapper.find('[data-testid="provider-default-pill"]').trigger('click')
+    await flushPromises()
+    const gpt5 = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('GPT-5')) as HTMLButtonElement
+    gpt5.click()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="provider-action-error"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="provider-action-error"]').text()).toContain('设默认失败')
+  })
+})
+
+// ══ P2: 默认模型自动修复 toast（provider 变更广播） ═══════════════════════════════
+
+describe('P2: provider 变更后默认模型自动修复 → toast 提示', () => {
+  it('导入/保存凭据后 runtime 广播默认修复（值变化）→ info toast 含模型', async () => {
+    let defaultsHandler: ((p: { defaultModel: string; source?: string }) => void) | null = null
+    configMock.onDefaultsWithSource.mockImplementation((h: (p: { defaultModel: string; source?: string }) => void) => {
+      defaultsHandler = h
+      return () => {}
+    })
+    getSettingsStore().defaultModel.value = ''
+    wrapper = mountPage([CATALOG_P])
+    await flushPromises()
+
+    // 模拟 runtime 在凭据导入/保存后自动修复默认模型的 config.defaults 广播
+    defaultsHandler!({ defaultModel: 'openai/gpt-4o', source: 'provider-updated' })
+    await flushPromises()
+
+    const toasts = useToast().toasts.value
+    expect(toasts.some(t => t.type === 'info' && t.message.includes('默认模型已自动更新为 openai/gpt-4o'))).toBe(true)
+  })
+
+  it('默认模型未变化（值相同）→ 不 toast（避免 toggle 非默认 provider 误报）', async () => {
+    let defaultsHandler: ((p: { defaultModel: string; source?: string }) => void) | null = null
+    configMock.onDefaultsWithSource.mockImplementation((h: (p: { defaultModel: string; source?: string }) => void) => {
+      defaultsHandler = h
+      return () => {}
+    })
+    getSettingsStore().defaultModel.value = 'openai/gpt-4o'
+    wrapper = mountPage([CATALOG_P])
+    await flushPromises()
+
+    defaultsHandler!({ defaultModel: 'openai/gpt-4o', source: 'provider-updated' })
+    await flushPromises()
+
+    expect(useToast().toasts.value).toHaveLength(0)
+  })
+
+  it('用户主动设置（source=default-set）→ 不 toast', async () => {
+    let defaultsHandler: ((p: { defaultModel: string; source?: string }) => void) | null = null
+    configMock.onDefaultsWithSource.mockImplementation((h: (p: { defaultModel: string; source?: string }) => void) => {
+      defaultsHandler = h
+      return () => {}
+    })
+    getSettingsStore().defaultModel.value = 'openai/gpt-4o'
+    wrapper = mountPage([CATALOG_P])
+    await flushPromises()
+
+    defaultsHandler!({ defaultModel: 'openai/gpt-5', source: 'default-set' })
+    await flushPromises()
+
+    expect(useToast().toasts.value).toHaveLength(0)
   })
 })

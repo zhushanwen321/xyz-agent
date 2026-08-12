@@ -29,6 +29,8 @@ const configMock = vi.hoisted(() => ({
   testProvider: vi.fn(async () => ({ ok: true })),
   discoverModels: vi.fn(async () => ({ success: true, models: [] })),
   setDefaultModel: vi.fn(async () => {}),
+  // P2：ProviderPage 默认 pill + 默认修复 toast（缺则 TypeError 崩 mount）
+  onDefaultsWithSource: vi.fn(() => () => {}),
   // wave-quick-setup-c/wave-list-badge：OAuth + env 检测（useProviderOAuth onMounted 订阅）
   checkEnvVars: vi.fn(async () => ({})),
   oauthLogin: vi.fn(async () => ({ started: false, error: 'mock' })),

@@ -86,6 +86,7 @@ export default {
     emptyTitle: '还没有供应商',
     emptyDesc: '添加第一个供应商，连接 AI 模型开始对话。',
     defaultPill: '默认供应商',
+    defaultAutoUpdated: '默认模型已自动更新为 {model}',
     modelsCount: '{count} 模型',
     editTitle: '编辑供应商',
     deleteTitle: '删除供应商',
