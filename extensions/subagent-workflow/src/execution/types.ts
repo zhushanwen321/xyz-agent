@@ -611,6 +611,12 @@ export interface SubagentRecord {
   sessionFile?: string;
   /** [MF#3] worktree 模式下子 agent 改动的 patch 文件路径（worktree 外，供调用方应用）。 */
   patchFile?: string;
+  /**
+   * 对话轮次计数（仅 chatMode idle record 有意义）。M3 reconstructAll 从 .idle sidecar
+   * 重建恢复；非对话模式 / 非 idle record 为 undefined。内存源由 recordToSubagent 从
+   * ExecutionRecord.round 投影。
+   */
+  round?: number;
   /** 外部 Pi 实例（进程隔离模式下由外部启动的子进程）。 */
   externalInstance?: AliveMarker;
   /** fork 模式下的 worktree handle。 */

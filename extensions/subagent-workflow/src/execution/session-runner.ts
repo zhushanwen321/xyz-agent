@@ -265,7 +265,7 @@ export interface SessionRunnerContext {
    * Runtime 层接线为 WorktreeManager.registerPid，用于注册表补全 pid。
    * 解耦 Core 与 Runtime——session-runner 不直接依赖 WorktreeManager。
    */
-  onWorktreePid?: (branch: string, pid: number) => void;
+  onWorktreePid?: (branch: string, pid: number, sessionFile?: string) => void;
   /**
    * UI 请求处理回调。子进程发 extension_ui_request 时调用。
    *
@@ -900,7 +900,9 @@ export async function runSpawn(
           // create 时 pid 未知写 0 占位，此处拿到 child.pid 后回调 WorktreeManager.registerPid。
           // 取代旧的 .session mapping sidecar——注册表是 reaper 的唯一数据源。
           if (opts.worktree && child.pid) {
-            ctx.onWorktreePid?.(opts.worktree.branch, child.pid);
+            // 透传 record.sessionFile：reaper .idle 豁免判据需读 sidecar，
+            // first header 时 sessionFile 已回填（deriveSessionFilePath 在本分支上方）。
+            ctx.onWorktreePid?.(opts.worktree.branch, child.pid, record.sessionFile);
           }
           // FR-4 加速路径：header 到达即 finishHandshake（header 已提供 sessionId，
           // 足以推导 sessionFile + 兜底查找，无需等 get_state response）。

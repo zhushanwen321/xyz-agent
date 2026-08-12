@@ -149,6 +149,12 @@ export interface ReconstructedRecord {
   forkDepth: number | undefined;
   /** 对话模式标志（来自 identity custom entry；旧文件为 undefined）。 */
   chatMode?: boolean;
+  /**
+   * 对话轮次计数（M3 从 .idle sidecar 填充，非 identity entry 字段）。
+   * reconstructFromFile 本身不填（identity 不含 round），reconstructAll 的 .idle 分支
+   * 从 readIdleMarker 填入。非 idle record 为 undefined。
+   */
+  round?: number;
   sessionFile: string;
   // ── 可变状态（来自 message entries）──
   status: ExecutionStatus;

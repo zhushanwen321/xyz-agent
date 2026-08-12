@@ -184,3 +184,61 @@ describe("BgNotifier — isIdle gate 竞态修复", () => {
 		expect(host.sendMessageCalls).toHaveLength(0);
 	});
 });
+
+describe("BgNotifier dedup 按轮次（G1 决策 9：对话模式豁免 60s dedup）", () => {
+	let host: ReturnType<typeof makeMockHost>;
+	let notifier: BgNotifier;
+
+	beforeEach(() => {
+		host = makeMockHost();
+		// hasRunningBackground=false → notify 立即 flush（不排队）；dedup 仍在 push 前生效
+		notifier = new BgNotifier(host);
+	});
+
+	afterEach(() => {
+		notifier.dispose();
+	});
+
+	it("对话模式：同 id 不同 round 的两次 notify 都送达（不被 60s dedup 吞）", () => {
+		notifier.notify({
+			id: "sa-chat", status: "idle", agent: "w", round: 1, result: "round1",
+			startedAt: 1, endedAt: 2,
+		});
+		notifier.notify({
+			id: "sa-chat", status: "idle", agent: "w", round: 2, result: "round2",
+			startedAt: 3, endedAt: 4,
+		});
+
+		// 两条都送达（dedup key=id:round 不同 → G1 对话模式每轮回复不被吞）
+		expect(host.sendMessageCalls).toHaveLength(2);
+	});
+
+	it("同 id 同 round 60s 内第二次被 dedup 吞（防重复通知）", () => {
+		notifier.notify({
+			id: "sa-dup", status: "idle", agent: "w", round: 1, result: "r",
+			startedAt: 1, endedAt: 2,
+		});
+		notifier.notify({
+			id: "sa-dup", status: "idle", agent: "w", round: 1, result: "r",
+			startedAt: 3, endedAt: 4,
+		});
+
+		// 第二条被吞（dedup key=sa-dup:1 命中）
+		expect(host.sendMessageCalls).toHaveLength(1);
+	});
+
+	it("非 chatMode（round undefined → key=id:0）行为同旧（向后兼容，60s 内同 id 吞）", () => {
+		// round undefined → dedup key="sa-once:0"，与旧 record.id 单 key 行为一致
+		notifier.notify({
+			id: "sa-once", status: "done", agent: "w", result: "done",
+			startedAt: 1, endedAt: 2,
+		});
+		notifier.notify({
+			id: "sa-once", status: "done", agent: "w", result: "done",
+			startedAt: 3, endedAt: 4,
+		});
+
+		// 第二条被吞（旧 dedup 行为不变，一次性模式回归）
+		expect(host.sendMessageCalls).toHaveLength(1);
+	});
+});

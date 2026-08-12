@@ -25,6 +25,7 @@ import type { PatchResult,WorktreeHandle } from "./types.ts";
 import { DirtyWorktreeError } from "./types.ts";
 import { bestEffort } from "./best-effort.ts";
 import { isProcessAlive } from "./alive-store.ts";
+import { readIdleMarker } from "./idle-marker.ts";
 import { SPAWN_GRACE_MS,type WorktreeEntry,WorktreeRegistry } from "./worktree-registry.ts";
 
 // recordId 白名单：字母数字下划线短横线
@@ -127,9 +128,10 @@ export class WorktreeManager {
    * 注册子进程 pid（session-runner first header 时调）。
    * create 时 pid 未知写 0 占位，子进程 spawn 拿到 pid 后由此补全。
    * reaper 据 pid 死活判孤儿，pid=0 条目用 SPAWN_GRACE 宽限。
+   * sessionFile 可选补全：传入时填入 registry entry 供 reaper .idle 豁免读取。
    */
-  registerPid(branch: string, pid: number): void {
-    this.registry.updatePid(branch, pid);
+  registerPid(branch: string, pid: number, sessionFile?: string): void {
+    this.registry.updatePid(branch, pid, sessionFile);
   }
 
   /**
@@ -223,8 +225,19 @@ export class WorktreeManager {
     }
   }
 
-  /** pid 死活判孤儿。pid=0 走 SPAWN_GRACE 宽限。 */
+  /**
+   * 判孤儿：pid 死活为主判据，.idle sidecar 豁免为辅。
+   *
+   * .idle 豁免（G4 worktree 保留）：对话模式 idle record 的子进程已被 SIGTERM 回收
+   *（pid 必然死），但 session 可续聊——worktree 必须保留到 close。entry.sessionFile
+   * 存在且旁有 .idle sidecar → 豁免（return false）。无 sessionFile / 无 .idle → 原 pid 判据。
+   * pid=0 走 SPAWN_GRACE 宽限（create→spawn 窗口）。
+   */
   private isOrphan(entry: WorktreeEntry, now: number): boolean {
+    // .idle 豁免：对话模式 idle worktree 保留（pid 死但 session 可续聊）。
+    if (entry.sessionFile && readIdleMarker(entry.sessionFile)) {
+      return false;
+    }
     if (entry.pid === 0) {
       // create→spawn 窗口：超过宽限期仍未补 pid = create 后崩溃
       return now - entry.createdAt > SPAWN_GRACE_MS;

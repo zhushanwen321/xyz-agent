@@ -35,8 +35,8 @@ vi.mock("../alive-store.ts", () => ({
 }));
 
 // WorktreeRegistry mock：内存数组模拟，add/updatePid/remove/load 全部可追踪
-const { mockLoad, mockAdd, mockUpdatePid, mockRemove, registryEntries } = vi.hoisted(() => {
-  type Entry = { repo: string; branch: string; checkout: string; pid: number; createdAt: number };
+const { mockLoad, mockAdd, mockUpdatePid, mockRemove, mockReadIdleMarker, registryEntries } = vi.hoisted(() => {
+  type Entry = { repo: string; branch: string; checkout: string; pid: number; createdAt: number; sessionFile?: string };
   const entries: Entry[] = [];
   return {
     registryEntries: entries,
@@ -46,14 +46,19 @@ const { mockLoad, mockAdd, mockUpdatePid, mockRemove, registryEntries } = vi.hoi
       if (idx >= 0) entries[idx] = e;
       else entries.push(e);
     }),
-    mockUpdatePid: vi.fn((branch: string, pid: number): void => {
+    mockUpdatePid: vi.fn((branch: string, pid: number, sessionFile?: string): void => {
       const e = entries.find((x) => x.branch === branch);
-      if (e) e.pid = pid;
+      if (e) {
+        e.pid = pid;
+        if (sessionFile !== undefined) e.sessionFile = sessionFile;
+      }
     }),
     mockRemove: vi.fn((branch: string): void => {
       const idx = entries.findIndex((x) => x.branch === branch);
       if (idx >= 0) entries.splice(idx, 1);
     }),
+    // idle-marker mock：默认返回 undefined（无 .idle sidecar），豁免测试 mockReturnValue。
+    mockReadIdleMarker: vi.fn(() => undefined),
   };
 });
 
@@ -65,6 +70,10 @@ vi.mock("../worktree-registry.ts", () => ({
     load = mockLoad;
   },
   SPAWN_GRACE_MS: 60_000,
+}));
+
+vi.mock("../idle-marker.ts", () => ({
+  readIdleMarker: mockReadIdleMarker,
 }));
 
 import { execFileSync } from "node:child_process";
@@ -118,13 +127,14 @@ function setupCleanTree(): void {
 }
 
 /** 向注册表注入一条活条目（模拟 create 后的状态）。 */
-function injectEntry(overrides: Partial<{ branch: string; pid: number; checkout: string; repo: string; createdAt: number }> = {}): void {
+function injectEntry(overrides: Partial<{ branch: string; pid: number; checkout: string; repo: string; createdAt: number; sessionFile: string }> = {}): void {
   registryEntries.push({
     repo: overrides.repo ?? MAIN_CWD,
     branch: overrides.branch ?? "pi-sub-orphan1",
     checkout: overrides.checkout ?? path.join(os.tmpdir(), "pi-sub-orphan1"),
     pid: overrides.pid ?? 0,
     createdAt: overrides.createdAt ?? Date.now(),
+    sessionFile: overrides.sessionFile,
   });
 }
 
@@ -230,7 +240,7 @@ describe("WorktreeManager", () => {
   describe("registerPid", () => {
     it("委托 registry.updatePid", () => {
       mgr.registerPid("pi-sub-bg-1", 12345);
-      expect(mockUpdatePid).toHaveBeenCalledWith("pi-sub-bg-1", 12345);
+      expect(mockUpdatePid).toHaveBeenCalledWith("pi-sub-bg-1", 12345, undefined);
     });
   });
 
@@ -418,6 +428,46 @@ describe("WorktreeManager", () => {
       );
       expect(branchDeleteCalls).toHaveLength(1);
       expect(mockRemove).toHaveBeenCalledWith("pi-sub-stubborn");
+    });
+
+    // ============================================================
+    // .idle sidecar 豁免（M3 G4：对话模式 idle worktree 保留）
+    // ============================================================
+    it(".idle 豁免：entry 有 sessionFile + .idle sidecar 存在 + pid 死 → 不清理（保留 idle worktree）", () => {
+      mockReadIdleMarker.mockReturnValue({ id: "sa-idle", sessionFile: "/tmp/s.jsonl", round: 1 });
+      injectEntry({ branch: "pi-sub-idle", pid: 99999, sessionFile: "/tmp/s.jsonl" });
+      mockIsProcessAlive.mockReturnValue(false); // pid 死
+
+      mgr.scan();
+
+      // .idle 豁免 → 不清理（无 worktree remove / branch -D / registry remove）
+      const removeCalls = mockExec.mock.calls.filter(
+        (c) => c[1]?.[0] === "worktree" && c[1]?.[1] === "remove",
+      );
+      expect(removeCalls).toHaveLength(0);
+      expect(mockRemove).not.toHaveBeenCalled();
+    });
+
+    it(".idle 豁免：entry 有 sessionFile 但无 .idle sidecar → 原 pid 判据（pid 死 → 清理）", () => {
+      mockReadIdleMarker.mockReturnValue(undefined); // 无 .idle
+      injectEntry({ branch: "pi-sub-no-idle", pid: 99998, sessionFile: "/tmp/s2.jsonl" });
+      mockIsProcessAlive.mockReturnValue(false);
+
+      mgr.scan();
+
+      // 无 .idle → 不豁免 → pid 死 → 清理
+      expect(mockRemove).toHaveBeenCalledWith("pi-sub-no-idle");
+    });
+
+    it(".idle 豁免：entry 无 sessionFile → 原 pid 判据（向后兼容旧 worktrees.json）", () => {
+      mockReadIdleMarker.mockReturnValue(undefined);
+      // 不传 sessionFile（旧 entry 格式）
+      injectEntry({ branch: "pi-sub-legacy", pid: 99997 });
+      mockIsProcessAlive.mockReturnValue(false);
+
+      mgr.scan();
+
+      expect(mockRemove).toHaveBeenCalledWith("pi-sub-legacy");
     });
   });
 });

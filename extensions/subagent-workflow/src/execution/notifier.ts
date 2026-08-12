@@ -11,7 +11,11 @@
 /** 一条待发送的完成通知记录。 */
 export interface BgNotifyRecord {
   id: string;
-  status: "done" | "failed" | "cancelled";
+  /**
+   * 完成状态。idle = 对话模式轮次完成（每轮回复需送达，与一次性 done 区分）。
+   * toNotifyRecord 守卫放行 idle 后经此联合穷尽。
+   */
+  status: "done" | "failed" | "cancelled" | "idle";
   agent: string;
   /** 执行所用 model（RecordSnapshot.model），用于完成通知显示。 */
   model?: string;
@@ -19,6 +23,11 @@ export interface BgNotifyRecord {
   error?: string;
   startedAt: number;
   endedAt: number | undefined;
+  /**
+   * 对话轮次计数（仅 idle 有意义）。dedup key 按 `id:round` 去重——对话模式每轮 round
+   * 不同，60s 内多轮不被吞；非 chatMode round 恒定（0/undefined），key 同旧 id 行为不变。
+   */
+  round?: number;
   /** [MF#1] worktree 模式下子 agent 改动的 patch 路径（worktree 外，cleanup 后留存）。
    *  done 时通知文本显式提示 `git apply`，否则 background 子 agent 在隔离 worktree 的改动
    *  会静默丢失——父 LLM 不知 patch 路径，无法应用。 */
@@ -108,9 +117,12 @@ export class BgNotifier {
         if (now - ts >= DEDUP_TTL_MS) this.dedup.delete(id);
       }
     }
-    const lastSeen = this.dedup.get(record.id);
+    // dedup key 按 `id:round` 去重：对话模式每轮 round 不同 → 60s 内多轮回复不被吞（G1）；
+    // 非 chatMode round 恒定（0/undefined）→ key 同旧 `id`，行为完全不变（向后兼容）。
+    const dedupKey = `${record.id}:${record.round ?? 0}`;
+    const lastSeen = this.dedup.get(dedupKey);
     if (lastSeen !== undefined && now - lastSeen < DEDUP_TTL_MS) return;
-    this.dedup.set(record.id, now);
+    this.dedup.set(dedupKey, now);
 
     this.pending.push(record);
 
@@ -221,6 +233,9 @@ export class BgNotifier {
         return `Subagent "${agent}" (${id}) failed: ${record.error ?? "(unknown error)"}`;
       case "cancelled":
         return `Subagent "${agent}" (${id}) cancelled.`;
+      case "idle":
+        // 对话模式轮次完成：携带本轮结果（result）送回主 agent，等待下一轮 message。
+        return `Subagent "${agent}" (${id}) finished a round. Reply:\n${record.result ?? "(empty)"}`;
     }
   }
 

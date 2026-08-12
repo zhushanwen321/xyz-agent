@@ -444,7 +444,8 @@ export class SubagentService {
   private toNotifyRecord(record: ExecutionRecord): BgNotifyRecord | undefined {
     const snap = snapshot(record);
     const s = snap.status;
-    if (s !== "done" && s !== "failed" && s !== "cancelled") return undefined;
+    // 守卫放行 idle：对话模式轮次完成需 notify 主 agent（G1）。非这四态（running/crashed）跳过。
+    if (s !== "done" && s !== "failed" && s !== "cancelled" && s !== "idle") return undefined;
     return {
       id: snap.id,
       status: s,
@@ -455,6 +456,8 @@ export class SubagentService {
       startedAt: snap.startedAt,
       endedAt: snap.endedAt,
       patchFile: record.patchFile,
+      // round 透传给 notifier 的 dedup key（对话模式按轮次去重，G1 决策 9）。
+      round: record.round,
     };
   }
 
@@ -680,8 +683,9 @@ export class SubagentService {
    *（this.sessionRootId）。不匹配 / 不存在统一抛「not found or not owned」——不区分
    * 两种失败，防信息泄露（无法通过错误消息探测其他 session 的 subagent id）。
    *
-   * 只查内存 record（getMutable，running + idle 都在内存）；终态 record 已 archive 查不到
-   * → 走 not found 分支。跨重启 idle 重建（M3）后此处才可能命中磁盘 idle record。
+   * 同进程内 running + idle record 都在内存（getMutable）；终态 record 已 archive。
+   * 跨重启（G4 场景 C）内存空时，从磁盘 .idle sidecar 水合 idle record（hydrateIdleRecord），
+   * 水合成功则 register 进内存后续可复用。终态 record 查不到 → 走 not found 分支。
    *
    * @param id subagent record id
    * @returns 可变 ExecutionRecord（message/close handler 直接操作）
@@ -689,13 +693,71 @@ export class SubagentService {
    */
   getRecordForAction(id: string): ExecutionRecord {
     this.assertReady();
-    const record = this.store.getMutable(id);
+    let record = this.store.getMutable(id);
+    // 跨重启水合（G4 场景 C）：内存未命中时，从磁盘 .idle sidecar 重建 idle record。
+    // 同进程 idle record 已在内存（不 archive），直接命中；跨重启内存空才走水合。
+    if (!record) {
+      record = this.hydrateIdleRecord(id);
+      if (record) this.store.register(record);
+    }
     if (!record || record.rootSessionId !== this.sessionRootId) {
       throw new Error(
         `subagent not found or not owned: ${id}. Recovery: use action:'list' to confirm the id; ` +
         `ended subagents cannot be messaged — start a new one; only subagents owned by the current session can be operated on.`,
       );
     }
+    return record;
+  }
+
+  /**
+   * 跨重启水合 idle record（G4 场景 C 核心，P-6 探针）。
+   *
+   * 扫磁盘全集（collectRecords 不过滤 session）找 `id 匹配且 status==="idle"` 的
+   * SubagentRecord（reconstructAll 的 .idle 分支已从 sidecar 重建），转成可变
+   * ExecutionRecord 供 message/close action 续操作。
+   *
+   * 重建细节：
+   *   - chatMode：.idle sidecar 只在 chatMode 轮次完成时写，存在即 chatMode=true
+   *   - controller：新建（AbortController 不持久化，跨重启无法恢复原引用；
+   *     resumeRound 的 controller 检查通过，abort 时作用于新进程）
+   *   - turns[]：createRecord 初始化为 [emptyTurn()]（跨重启 turns[] 丢失可接受——
+   *     pi session 文件有完整历史，resume 续聊不依赖内存 turns[]）
+   *   - worktreeHandle：跨重启不重建（resume 在主 cwd 跑；worktree 复用是边缘场景，
+   *     registry pid 过期 + checkout 可能已 reaper，留 TODO）
+   *   - round/sessionFile：从重建的 SubagentRecord 恢复
+   *
+   * 稀疏触发（仅内存未命中时），collectRecords 扫磁盘开销可接受。
+   *
+   * @param id subagent record id
+   * @returns 水合的可变 ExecutionRecord（status=idle）；找不到返回 undefined
+   */
+  private hydrateIdleRecord(id: string): ExecutionRecord | undefined {
+    // collectRecords 扫磁盘全集（rootSessionFilter=undefined 不过滤 session），
+    // 找 id 匹配的 idle record。归属校验留给 getRecordForAction（比对 rootSessionId）。
+    const found = this.store
+      .collectRecords(1000, "all", undefined)
+      .find((r) => r.id === id && r.status === "idle");
+    if (!found) return undefined;
+
+    const record = createRecord(id, {
+      agent: found.agent,
+      model: found.model,
+      thinkingLevel: found.thinkingLevel,
+      mode: found.mode,
+      task: found.task,
+      slug: found.slug,
+      startedAt: found.startedAt,
+      rootSessionId: found.rootSessionId,
+      parentRecordId: found.parentRecordId,
+      depth: found.depth,
+      chatMode: true,
+      controller: new AbortController(),
+    });
+    record.status = "idle";
+    record.sessionFile = found.sessionFile;
+    record.round = found.round;
+    // TODO(cross-restart worktree): worktreeHandle 跨重启不重建——resume 在主 cwd 跑；
+    // worktree 复用需 registry pid 刷新 + checkout 存活保证，属边缘场景，留待后续。
     return record;
   }
 
@@ -1311,7 +1373,7 @@ export class SubagentService {
       // mainSessionFile: fork source 解析用，从 session_start 缓存获取。
       mainSessionFile: this.getMainSessionFile?.() ?? undefined,
       // worktree pid 回调：session-runner first header 时补全注册表 pid。
-      onWorktreePid: (branch: string, pid: number) => this.worktreeManager.registerPid(branch, pid),
+      onWorktreePid: (branch: string, pid: number, sessionFile?: string) => this.worktreeManager.registerPid(branch, pid, sessionFile),
       uiRequestHandler: this.uiRequestHandler,
       // SR-4：L2 dialog 队列透传——child close 时 session-runner 据此调 rejectChildDialogs
       // 清理 L2 pending dialog，防全局死锁。undefined 时 session-runner 跳过 L2 清理。
