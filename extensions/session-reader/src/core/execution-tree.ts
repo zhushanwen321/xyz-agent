@@ -349,6 +349,9 @@ async function attachWorkflowChildrenOfTree(
  * 两种 root 形态：
  * - **main root**（无 manifest 匹配 sessionFile）：按 rootSessionId 链收全树（版本探测 +
  *   旧机制兼容），root 节点 type='main'，attachSubagentChildren 从 undefined 挂顶层 subagent。
+ *   mainSessionFile 参数（MF-1）：main session 自身发起的 workflow run 也要进树——main root
+ *   节点填 sessionFile 后 attachWorkflowChildren 才能读到其 workflow-state-link（否则
+ *   workflow-call 分支对无 sessionFile 节点直接 return，main 的 workflow run 永不入树）。
  * - **subagent root**（有 manifest 且 sessionFile 含 rootSessionId，MF-2）：root 节点 type='subagent'
  *   携带 manifest 元数据；复用其 rootSessionId（新机制=顶层 main）拉全树记录，再由
  *   attachSubagentChildren 按 parentRecordId 链只挂该 subagent 的后代（§5.5 决策五）。
@@ -363,6 +366,8 @@ async function attachWorkflowChildrenOfTree(
 export async function buildExecutionTree(
   rootSessionId: string,
   agentDir: string,
+  /** main session .jsonl 绝对路径（MF-1：main root 填 sessionFile 使 main 的 workflow run 可读）。 */
+  mainSessionFile?: string,
 ): Promise<ExecutionTree> {
   const manifests = await listRecordManifests(agentDir)
 
@@ -430,6 +435,9 @@ export async function buildExecutionTree(
     root = {
       type: 'main',
       sessionId: rootSessionId,
+      // MF-1：main root 携带 sessionFile（调用方传入），否则 attachWorkflowChildren 对无
+      // sessionFile 节点直接 return，main 自身发起的 workflow run 永远进不了执行树。
+      sessionFile: mainSessionFile,
       depth: 0,
       rootSessionId,
       children: [],

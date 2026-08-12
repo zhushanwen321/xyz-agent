@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { execSync } from 'node:child_process'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { buildExecutionTree, formatExecutionTreeText } from '../core/execution-tree.js'
+import { buildExecutionTree, formatExecutionTreeText, type ExecutionTreeNode } from '../core/execution-tree.js'
 
 /**
  * M3b U7 buildExecutionTree 单测（design m3b 6 testCases）。
@@ -165,13 +165,13 @@ async function writeWfLink(
 
 /** 在节点树里按 type+sessionId 查找节点（DFS）。 */
 function findNode(
-  node: { type: string; sessionId: string; children: unknown[] },
+  node: ExecutionTreeNode,
   type: string,
   sidPrefix: string,
-): { type: string; sessionId: string; children: unknown[]; depth: number; parentRecordId?: string; runId?: string } | undefined {
-  if (node.type === type && node.sessionId.startsWith(sidPrefix)) return node as never
+): ExecutionTreeNode | undefined {
+  if (node.type === type && node.sessionId.startsWith(sidPrefix)) return node
   for (const c of node.children) {
-    const found = findNode(c as never, type, sidPrefix)
+    const found = findNode(c, type, sidPrefix)
     if (found) return found
   }
   return undefined
@@ -238,16 +238,16 @@ describe('buildExecutionTree - fixture', () => {
     expect(tree.root.type).toBe('main')
     expect(tree.root.sessionId).toBe(MAIN)
     // root.children 含 A（subagent）
-    const nodeA = findNode(tree.root as never, 'subagent', A_REAL)
+    const nodeA = findNode(tree.root, 'subagent', A_REAL)
     expect(nodeA).toBeDefined()
     expect(tree.root.children.some((c) => c === nodeA)).toBe(true)
     // A.children 含 B（workflow-call，runId/stateFile）
-    const nodeB = findNode(tree.root as never, 'workflow-call', B_REAL)
+    const nodeB = findNode(tree.root, 'workflow-call', B_REAL)
     expect(nodeB).toBeDefined()
     expect(nodeA!.children.some((c) => c === nodeB)).toBe(true)
     expect(nodeB!.runId).toBe(RUN_A)
     // A.children 含 C（subagent，parentRecordId=recAId，严格 parentRecordId 链挂 A 下）
-    const nodeC = findNode(tree.root as never, 'subagent', C_REAL)
+    const nodeC = findNode(tree.root, 'subagent', C_REAL)
     expect(nodeC).toBeDefined()
     expect(nodeA!.children.some((c) => c === nodeC)).toBe(true)
     expect(nodeC!.parentRecordId).toBe(recAId)
@@ -334,10 +334,10 @@ describe('buildExecutionTree - fixture', () => {
     // root.children 含 A, B（正常分支继续建树）
     expect(tree.root.children).toHaveLength(2)
     // A 下有 workflow-call 指向 B session；B 的 workflow 指回 A 被 visited 跳过（不无限递归）
-    const nodeA = findNode(tree.root as never, 'subagent', A_REAL)
+    const nodeA = findNode(tree.root, 'subagent', A_REAL)
     expect(nodeA).toBeDefined()
     // A 至少展开了 workflow-call（B session 的 call）
-    expect(nodeA!.children.some((c) => (c as never).type === 'workflow-call')).toBe(true)
+    expect(nodeA!.children.some((c) => c.type === 'workflow-call')).toBe(true)
   })
 
   it('TC-m3b-single-node：无 subagent record、无 workflow → 单节点树（ES5）', async () => {
@@ -405,21 +405,21 @@ describe('buildExecutionTree - fixture', () => {
     // sourceMode=precise（Y/Z 有精确链）
     expect(tree.sourceMode).toBe('precise')
     // X 挂 main（顶层）
-    const nodeX = findNode(tree.root as never, 'subagent', A_REAL)
+    const nodeX = findNode(tree.root, 'subagent', A_REAL)
     expect(nodeX).toBeDefined()
     expect(tree.root.children.some((c) => c === nodeX)).toBe(true)
     // Y 挂 X（manifest.parentRecordId=sa-X，①）
-    const nodeY = findNode(tree.root as never, 'subagent', B_REAL)
+    const nodeY = findNode(tree.root, 'subagent', B_REAL)
     expect(nodeY).toBeDefined()
     expect(nodeX!.children.some((c) => c === nodeY)).toBe(true)
     expect(nodeY!.parentRecordId).toBe('sa-X')
     // Z 挂 X（identity.data.parentRecordId=sa-X，②）
-    const nodeZ = findNode(tree.root as never, 'subagent', C_REAL)
+    const nodeZ = findNode(tree.root, 'subagent', C_REAL)
     expect(nodeZ).toBeDefined()
     expect(nodeX!.children.some((c) => c === nodeZ)).toBe(true)
     expect(nodeZ!.parentRecordId).toBe('sa-X')
     // W 挂 main（flat，③）
-    const nodeW = findNode(tree.root as never, 'subagent', '000000000005')
+    const nodeW = findNode(tree.root, 'subagent', '000000000005')
     expect(nodeW).toBeDefined()
     expect(tree.root.children.some((c) => c === nodeW)).toBe(true)
     expect(nodeW!.parentRecordId).toBeUndefined()
@@ -477,24 +477,21 @@ describe('buildExecutionTree - fixture', () => {
     const tree = await buildExecutionTree(MAIN, dir)
 
     // B 作为 subagent 出现一次（parentRecordId 链命中）
-    const nodeBSub = findNode(tree.root as never, 'subagent', B_REAL)
+    const nodeBSub = findNode(tree.root, 'subagent', B_REAL)
     expect(nodeBSub).toBeDefined()
     expect(nodeBSub!.parentRecordId).toBe(recAId)
     // B 不作为 workflow-call 重复出现（MF-1 dedup）
-    const nodeBWf = findNode(tree.root as never, 'workflow-call', B_REAL)
+    const nodeBWf = findNode(tree.root, 'workflow-call', B_REAL)
     expect(nodeBWf).toBeUndefined()
     // B 挂在 A 下；A 下不应有指向 B 的 workflow-call
-    const nodeA = findNode(tree.root as never, 'subagent', A_REAL)
+    const nodeA = findNode(tree.root, 'subagent', A_REAL)
     expect(nodeA).toBeDefined()
     expect(nodeA!.children.some((c) => c === nodeBSub)).toBe(true)
     expect(
-      nodeA!.children.some(
-        (c) => (c as never as { type: string; sessionId: string }).type === 'workflow-call'
-          && (c as never as { sessionId: string }).sessionId === B_REAL,
-      ),
+      nodeA!.children.some((c) => c.type === 'workflow-call' && c.sessionId === B_REAL),
     ).toBe(false)
     // B 的嵌套后代 D 仍挂在 B 下（caution：call 节点内派生的 sub-subagent 不丢失）
-    const nodeD = findNode(tree.root as never, 'subagent', D_REAL)
+    const nodeD = findNode(tree.root, 'subagent', D_REAL)
     expect(nodeD).toBeDefined()
     expect(nodeBSub!.children.some((c) => c === nodeD)).toBe(true)
     // 树规模：main + A + B + D = 4（B 不重复计数）
@@ -559,20 +556,133 @@ describe('buildExecutionTree - fixture', () => {
     // root 是 A（subagent 节点，携带 manifest 元数据）
     expect(tree.root.type).toBe('subagent')
     expect(tree.root.sessionId).toBe(A_REAL)
-    expect((tree.root as never as { agentName?: string }).agentName).toBe('explorer')
+    expect(tree.root.agentName).toBe('explorer')
     // A 的子树含 B→C，不含兄弟 X
-    const nodeB = findNode(tree.root as never, 'subagent', B_REAL)
+    const nodeB = findNode(tree.root, 'subagent', B_REAL)
     expect(nodeB).toBeDefined()
     expect(tree.root.children.some((c) => c === nodeB)).toBe(true)
-    const nodeC = findNode(tree.root as never, 'subagent', C_REAL)
+    const nodeC = findNode(tree.root, 'subagent', C_REAL)
     expect(nodeC).toBeDefined()
     expect(nodeB!.children.some((c) => c === nodeC)).toBe(true)
     // 兄弟 X 不在 A 的子树
-    const nodeX = findNode(tree.root as never, 'subagent', X_REAL)
+    const nodeX = findNode(tree.root, 'subagent', X_REAL)
     expect(nodeX).toBeUndefined()
     // 树规模：A + B + C = 3
     expect(tree.totalNodes).toBe(3)
     expect(tree.sourceMode).toBe('precise')
+    expect(tree.truncated).toBe(false)
+  })
+
+  it('TC-m3b-mf1-main-root：main root 填 sessionFile 后 main 自身发起的 workflow run 入树（MF-1）', async () => {
+    const mainPath = await writeMainSession(dir, '--main-cwd--', MAIN)
+    // main 的 workflow-state-link → wf-state → call session B
+    const sbB = join(
+      dir,
+      'subagents',
+      '--main-cwd--',
+      'sessions',
+      `2026-08-07T16-49-48-393Z_${B_REAL}.jsonl`,
+    )
+    await mkdir(join(dir, 'subagents', '--main-cwd--', 'sessions'), { recursive: true })
+    await writeFile(sbB, JSON.stringify({ type: 'session', id: B_REAL, cwd: '/proj/wf' }) + '\n')
+    const wfPath = await writeWfState(dir, '--main-cwd--', RUN_A, [sbB])
+    await writeWfLink(mainPath, MAIN, { runId: RUN_A, path: wfPath })
+
+    const tree = await buildExecutionTree(MAIN, dir, mainPath)
+
+    // main root 携带 sessionFile，workflow-state-link 被读取 → wf-call 子节点入树
+    expect(tree.root.type).toBe('main')
+    expect(tree.root.sessionFile).toBe(mainPath)
+    const nodeB = findNode(tree.root, 'workflow-call', B_REAL)
+    expect(nodeB).toBeDefined()
+    expect(tree.root.children.some((c) => c === nodeB)).toBe(true)
+    expect(nodeB!.runId).toBe(RUN_A)
+    expect(tree.totalNodes).toBe(2) // main + wf-call B
+    expect(tree.maxDepth).toBe(1)
+    expect(tree.truncated).toBe(false)
+
+    // 差分守卫：不传 mainSessionFile（旧行为）→ main root 无 sessionFile → workflow run 不可达
+    const tree2 = await buildExecutionTree(MAIN, dir)
+    expect(tree2.root.sessionFile).toBeUndefined()
+    expect(tree2.totalNodes).toBe(1)
+  })
+
+  it('TC-m3b-max-depth：21+ 层 parentRecordId 链在 MAX_DEPTH(20) 截断，truncated=true 不抛错（MF-4）', async () => {
+    await writeMainSession(dir, '--main-cwd--', MAIN)
+    // 循环生成 25 层链：R1 顶层（parentRecordId=undefined），R(i+1).parentRecordId=Ri.id
+    // 深度计数：root=0，R1=1，…，R20=20（attachSubagentChildren 在 node.depth>=20 截断，R21+ 不挂）
+    const CHAIN_RECORDS = 25
+    // 链 id 用独立前缀（0bbbbb…，与 MAIN 的 0aaaa… 不撞——否则 sidOf(1)===MAIN 会被
+    // rootManifest 探测误判为 subagent root，深度计数整体偏移 1）
+    const sidOf = (n: number): string =>
+      `0bbbbbbb-cccc-7ddd-eeee-0000000000${String(n).padStart(2, '0')}`
+    const recIdOf = (n: number): string => `sa-chain-${String(n).padStart(2, '0')}`
+    let prevRecId: string | undefined
+    for (let i = 1; i <= CHAIN_RECORDS; i++) {
+      const saPath = await writeSubagentSession(dir, '--main-cwd--', sidOf(i), {
+        rootSessionId: MAIN,
+        slug: `chain-${i}`,
+      })
+      await writeRecordManifest(dir, '--main-cwd--', recIdOf(i), {
+        rootSessionId: MAIN,
+        agentName: 'explorer',
+        sessionFile: saPath,
+        parentRecordId: prevRecId,
+      })
+      prevRecId = recIdOf(i)
+    }
+
+    const tree = await buildExecutionTree(MAIN, dir)
+
+    // 深度截断契约：MAX_DEPTH=20 → main + 20 层 subagent = 21 节点，R21+ 被截断
+    expect(tree.truncated).toBe(true)
+    expect(tree.maxDepth).toBe(20)
+    expect(tree.totalNodes).toBe(21)
+    // R20 是最后挂载的节点，其下无后代（R21 被截断）
+    const deepest = findNode(tree.root, 'subagent', sidOf(20))
+    expect(deepest).toBeDefined()
+    expect(deepest!.children).toEqual([])
+    // R21 不在树中
+    expect(findNode(tree.root, 'subagent', sidOf(21))).toBeUndefined()
+    expect(tree.root.children).toHaveLength(1)
+    expect(tree.sourceMode).toBe('precise')
+  })
+
+  it('TC-m3b-bfs-spread：旧机制嵌套形态 rootSessionId=父 session id，BFS 扩散收集不丢 record（MF-5）', async () => {
+    await writeMainSession(dir, '--main-cwd--', MAIN)
+    // A：顶层（rootSessionId=MAIN，无 parentRecordId——旧机制）
+    const saA = await writeSubagentSession(dir, '--main-cwd--', A_REAL, {
+      rootSessionId: MAIN,
+      slug: 'a',
+    })
+    await writeRecordManifest(dir, '--main-cwd--', 'sa-A', {
+      rootSessionId: MAIN,
+      agentName: 'explorer',
+      sessionFile: saA,
+    })
+    // B：旧机制嵌套形态——rootSessionId=A 的 session id（非 MAIN），A 无 manifest.parentRecordId
+    const saB = await writeSubagentSession(dir, '--main-cwd--', B_REAL, {
+      rootSessionId: A_REAL,
+      slug: 'b',
+    })
+    await writeRecordManifest(dir, '--main-cwd--', 'sa-B', {
+      rootSessionId: A_REAL,
+      agentName: 'explorer',
+      sessionFile: saB,
+    })
+
+    const tree = await buildExecutionTree(MAIN, dir)
+
+    // BFS 扩散：queue 从 MAIN → A 的 session id 入队 → 第二轮收 B。B 不被丢弃（ES3）
+    expect(tree.totalNodes).toBe(3) // main + A + B
+    expect(tree.sourceMode).toBe('flat-fallback')
+    const nodeA = findNode(tree.root, 'subagent', A_REAL)
+    expect(nodeA).toBeDefined()
+    const nodeB = findNode(tree.root, 'subagent', B_REAL)
+    expect(nodeB).toBeDefined()
+    // 旧机制无 parentRecordId → B 与 A 都 flat 挂 main（flat-fallback 语义）
+    expect(tree.root.children.some((c) => c === nodeA)).toBe(true)
+    expect(tree.root.children.some((c) => c === nodeB)).toBe(true)
     expect(tree.truncated).toBe(false)
   })
 })

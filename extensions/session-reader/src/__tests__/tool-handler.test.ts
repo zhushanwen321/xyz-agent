@@ -933,6 +933,7 @@ describe.skipIf(!HAS_REAL_SUBAGENTS_DIR)('真实数据：subagent sa-id（w2 TC1
 // ---- workflow fixture 常量（uuid 特征，互不为子串）----
 const WF_ROOT = '019w6aaa-0000-7000-b000-000000000001' // 发起 workflow 的 main session
 const WF_CALL = '019w6bbb-0000-7000-b000-000000000002' // workflow call 的目标 session（call-jump）
+const SUB_WF_ROOT = '019w6ccc-0000-7000-b000-000000000003' // 发起 workflow 的 subagent session（MF-2）
 
 /** 写 main session（header + 1 条 user message，让 outline 有 turn）。返回绝对路径。 */
 async function wfMainSession(
@@ -1230,6 +1231,46 @@ describe('doWorkflow（w6，fixture）', () => {
     )
     const dOutline = rOutline.details as { turns: unknown[] }
     expect(dOutline.turns.length).toBeGreaterThan(0)
+  })
+
+  it('TC-w6-subagent-session：workflow action 对 subagent session 直读 wf-link 不抛错（MF-2）', async () => {
+    const slug = '--wf-subagent--'
+    // subagent session 放 subagents/ 下（不在 sessions/——buildFamilyFromFs 的 main byId
+    // 索引外，旧实现 resolveFamily 找不到会抛「session not found in family index」）
+    const subDir = join(dir, 'subagents', slug, 'sessions')
+    await mkdir(subDir, { recursive: true })
+    const subPath = join(subDir, `${SUB_WF_ROOT}.jsonl`)
+    await writeFile(
+      subPath,
+      JSON.stringify({ type: 'session', id: SUB_WF_ROOT, cwd: `/proj/${slug}` }) + '\n',
+    )
+    const callSession = join(dir, 'sessions', slug, `${WF_CALL}.jsonl`)
+    const wfPath = await wfStateFile(dir, slug, 'wf-sub.jsonl', [
+      wfSnapshotNew('wf-sub-1', [
+        { sessionId: WF_CALL, sessionFile: callSession, description: 'sub-step' },
+      ]),
+    ])
+    // subagent session 的 workflow-state-link（wfLink helper 只写 sessions/，此处直接追加）
+    await writeFile(
+      subPath,
+      JSON.stringify({
+        type: 'custom',
+        id: 'wf-link-wf-sub-1',
+        parentId: SUB_WF_ROOT,
+        customType: 'workflow-state-link',
+        data: { runId: 'wf-sub-1', path: wfPath, updatedAt: '2026-08-12T00:00:00Z' },
+        timestamp: '2026-08-12T00:00:00Z',
+      }) + '\n',
+      { flag: 'a' },
+    )
+
+    const r = await handleSessionRead({ action: 'workflow', session: SUB_WF_ROOT }, dir)
+    const d = r.details as { runs: Array<{ runId: string }>; runIds: string[] }
+    expect(d.runs).toHaveLength(1)
+    expect(d.runs[0].runId).toBe('wf-sub-1')
+    expect(d.runIds).toEqual(['wf-sub-1'])
+    expect(r.content[0].text).toContain('run: wf-sub-1')
+    expect(r.content[0].text).toContain('call=')
   })
 })
 

@@ -17,7 +17,7 @@ import { join, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import { findSessions, type MatchedSession } from './discovery/find.js'
 import { buildFamilyFromFs, listRecordManifests, type RecordManifest } from './discovery/subagents.js'
-import { readRunSnapshot } from './discovery/workflows.js'
+import { readRunSnapshot, resolveWorkflows } from './discovery/workflows.js'
 import { parseSessionFile, type Entry, type ParseResult } from './core/parser.js'
 import { parseRunSnapshot, renderWorkflowOverview, type WorkflowOverview } from './core/workflow.js'
 import { buildTreeView } from './core/tree.js'
@@ -32,7 +32,7 @@ import {
   type EntryBrief,
   type ToolResultSummaryEntry,
 } from './core/render.js'
-import type { Family, WorkflowRef } from './core/family.js'
+import type { Family, SessionRef, WorkflowRef } from './core/family.js'
 import {
   buildExecutionTree,
   formatExecutionTreeText,
@@ -647,7 +647,9 @@ async function doFamily(params: SessionReadParams, agentDir: string): Promise<To
   if (params.recursive) {
     let tree: ExecutionTree
     try {
-      tree = await buildExecutionTree(resolved.sessionId, agentDir)
+      // MF-1：传 resolved.fileName 使 main root 填 sessionFile——main session 自身发起的
+      // workflow run（workflow-state-link）进入执行树，与 flat family 行为一致。
+      tree = await buildExecutionTree(resolved.sessionId, agentDir, resolved.fileName)
     } catch (e) {
       throw err(
         `构建执行树失败：${resolved.sessionId}（${e instanceof Error ? e.message : String(e)}）。👉 检查 session 或用 find 重新定位，或改用 recursive:false 看 flat family 兑底。`,
@@ -1317,11 +1319,18 @@ interface SkippedRun {
 /**
  * workflow：workflow run 概览（design §3.4 workflow，m2 IF-doWorkflow）。
  *
- * 流程：① resolveSessionId（multi 走 disambiguate）→ ② buildFamilyFromFs 拿 family.workflows
+ * 流程：① resolveSessionId（multi 走 disambiguate）→ ② 读目标 session 的 workflow-state-link
  * → ③ 无 run → ES-wf-no-runs（提示+👉family，不抛错）→ ④ runId 过滤，无匹配 →
  * ES-wf-runid-not-found（列候选+👉，不抛错）→ ⑤ 逐 run readRunSnapshot+parseRunSnapshot，
  * 不可读/不可解析 → skippedRuns（不中断其他 run，ES-wf-snapshot-read-fail/unparseable）
  * → ⑥ renderWorkflowOverview 拼接。
+ *
+ * ② 的读取（MF-2）：不用 buildFamilyFromFs（其 resolveFamily 只索引 main session，subagent
+ * session 会抛「session not found in family index」）——resolveSessionId 已把 session 解析到
+ * 真实文件（kind==='ok' 保证文件存在，三形态：绝对路径/sa-id 均 existsSync 校验，片段匹配
+ * 来自实际 fs 扫描），直接用 resolved.fileName 构造单条目 sessionIdToPath 调 resolveWorkflows
+ *（与 buildFamilyFromFs 步骤 6 的 workflow 腿同源）。pathToRef 仅含目标 session，call 引用
+ * 走 sessionRefFromPath 文件名最小回退（sessionId+fileName，足够 LLM 跳 outline/detail 深读）。
  *
  * 错误契约（C2）：workflow 概览探索语义，三类错误均返回 ToolResult 不抛错。
  * step 的 call sessionId/sessionFile 是 LLM 跳 outline/detail 的入口（m0 resolveSessionId
@@ -1331,16 +1340,20 @@ async function doWorkflow(params: SessionReadParams, agentDir: string): Promise<
   const resolved = await resolveSessionId(params.session, 'workflow', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
 
-  let family: Family
+  let workflows: WorkflowRef[]
   try {
-    family = await buildFamilyFromFs(resolved.sessionId, agentDir)
+    // MF-2：直读 resolved.fileName（subagent session 亦可），绕过 buildFamilyFromFs 的
+    // main-only byId 索引（对 subagent 抛「session not found in family index」）。
+    // resolveWorkflows 自身容错（读失败返回 []），「session 真不存在」的 F 级契约已由
+    // resolveSessionId 保证（kind==='ok' 前已 existsSync/扫描校验）。
+    const sessionIdToPath = new Map<string, string>([[resolved.sessionId, resolved.fileName]])
+    const pathToRef = new Map<string, SessionRef>()
+    workflows = await resolveWorkflows(resolved.sessionId, sessionIdToPath, pathToRef)
   } catch (e) {
     throw err(
-      `读取家族失败：${resolved.sessionId}（${e instanceof Error ? e.message : String(e)}）。👉 检查 session 或用 find 重新定位。`,
+      `读取 workflow run 失败：${resolved.sessionId}（${e instanceof Error ? e.message : String(e)}）。👉 检查 session 或用 find 重新定位。`,
     )
   }
-
-  const workflows: WorkflowRef[] = family.workflows
   const allRunIds = workflows.map((w) => w.runId)
 
   // ③ ES-wf-no-runs：session 未发起任何 workflow run（不抛错，返提示+👉family）

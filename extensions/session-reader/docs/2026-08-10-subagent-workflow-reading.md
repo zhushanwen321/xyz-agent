@@ -186,7 +186,7 @@ M0 `findSessions` 合并 `listMainSessions`+`listSubagentSessions`,`resolveSessi
 
 **目标**:让 LLM 看到任意深度嵌套的完整派生树 + 深读任意节点。
 
-新增 `core/execution-tree.ts`:`buildExecutionTree(rootSessionId, agentDir)` 递归构建:
+新增 `core/execution-tree.ts`:`buildExecutionTree(rootSessionId, agentDir, mainSessionFile?)` 递归构建:
 
 ```
 1. subagent 后代:扫所有 record manifest,filter rootSessionId == 给定 root(顶层全树,任意深度)
