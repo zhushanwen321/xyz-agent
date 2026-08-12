@@ -39,7 +39,7 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 **外部项目源码**:
 - **pi**: [badlogic/pi-mono](https://github.com/badlogic/pi-mono) — AI coding agent CLI，xyz-agent 通过子进程 RPC 调用。session tree / fork / clone 核心能力为 pi 原生，xyz-agent 不依赖任何 fork 特有改动
   - npm 包: `@earendil-works/pi-coding-agent`
-  - 当前版本: `0.82.1`（devDependency 提供 extensions 开发期类型；打包的 pi binary 见 `resources/pi/`）
+  - 当前版本: `0.84.1`（devDependency 提供 extensions 开发期类型；打包的 pi binary 见 `resources/pi/`）
   - 历史背景：此前使用 fork `zhushanwen321/pi`（包名 `xyz-pi`），fork 唯一改动是在 `get_state` RPC 响应中透出 `leafId` 字段。该字段在 xyz-agent 前端从未消费，2026-07 已切回上游，leafId 改为从 JSONL session 文件解析近似值
   - Skill 加载: `packages/coding-agent/src/core/skills.ts`
   - Skill 展开: `packages/coding-agent/src/core/agent-session.ts` — `_expandSkillCommand()`

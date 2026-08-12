@@ -1,6 +1,6 @@
 # 默认模型统一出口：聚合校验 + 语义对齐 + 对账闭环 + 交互补齐
 
-> **结论**：xyz-agent 的默认模型（default provider/model）从「设置 → 展示 → 持久化 → pi 生效」全链路存在结构性缺陷，核心根因是**校验基准只认 models.json 不认 auth.json catalog 凭据**（用户设置的默认模型在纯 catalog 场景被静默替换为 builtin 列表首模型）。对抗式审查（2026-08-12，含运行时 binary 0.80.3 实测）修正了两个关键事实：① **pi `set_model` RPC 原生写默认模型**（切换即改全局默认是 pi 语义，xyz-agent 侧覆写是冗余同步而非根因）；② 设置页默认 pill 可点、fallback toast、空态区分**已落地**（commit e2aff464f，handoff P2 批次 1）。本文据此修订为四件套：**runtime 层默认模型校验基准聚合化**（对齐 listProviders 双源聚合语义）、**切换语义与 pi 对齐 + 可见性确认**（不再尝试剥离 pi 原生行为）、**pi 实际模型对账闭环**（get_state 为唯一真值源回写 session.modelId 缓存）、**剩余交互补齐**（导入/OAuth 引导设默认、模型能力 gate）。按「runtime 聚合 → 对账 → 前端引导 + 能力 gate」分三阶段实施。
+> **结论**：xyz-agent 的默认模型（default provider/model）从「设置 → 展示 → 持久化 → pi 生效」全链路存在结构性缺陷，核心根因是**校验基准只认 models.json 不认 auth.json catalog 凭据**（用户设置的默认模型在纯 catalog 场景被静默替换为 builtin 列表首模型）。对抗式审查（2026-08-12，含运行时 binary 实测；当日升级 0.84.1 后探针复测）修正了两个关键事实：① **pi `set_model` RPC 原生写默认模型**（切换即改全局默认是 pi 语义，xyz-agent 侧覆写是冗余同步而非根因）；② 设置页默认 pill 可点、fallback toast、空态区分**已落地**（commit e2aff464f，handoff P2 批次 1）。本文据此修订为四件套：**runtime 层默认模型校验基准聚合化**（对齐 listProviders 双源聚合语义）、**切换语义与 pi 对齐 + 可见性确认**（不再尝试剥离 pi 原生行为）、**pi 实际模型对账闭环**（get_state 为唯一真值源回写 session.modelId 缓存）、**剩余交互补齐**（导入/OAuth 引导设默认、模型能力 gate）。按「runtime 聚合 → 对账 → 前端引导 + 能力 gate」分三阶段实施。
 
 ---
 
@@ -24,7 +24,7 @@
    - `model-service.ts` — `switchModel()`（pi set_model RPC + 持久化 + 广播）
    - `settings-message-handler.ts` — config 域 RPC handler + `reconcileDefaultModelAfterProviderChange()`
    - `session-lifecycle.ts` / `rpc-client.ts` — session 创建时 `--model` 参数注入 pi 子进程
-3. **pi 子进程**：per-session 独立进程。**版本基线：运行时 binary = 0.80.3**（`apps/electron/resources/pi/`，打包产物）；`node_modules` devDep 源码 = 0.82.1（仅 extensions 开发期类型参考，**不是运行时行为依据**——本文 pi 行为断言均以 0.80.3 binary 实测或 0.80.3 对应源码链为准）。
+3. **pi 子进程**：per-session 独立进程。**版本基线：运行时 binary = 0.84.1**（`apps/electron/resources/pi/`，打包产物，2026-08-12 从 0.80.3 升级）；`node_modules` devDep 源码 = 0.84.1（仅 extensions 开发期类型参考，**不是运行时行为依据**——本文 pi 行为断言均以 binary 实测为准）。
 
 ### 设计目标（从使用者体验倒推）
 
@@ -34,7 +34,7 @@
 | G2 | Settings 页能直接设默认模型 | ✅ **已落地**（e2aff464f：默认 pill 可点 → ModelSelectPopover → setDefaultModel，testid=`provider-default-pill`） |
 | G3 | 导入凭据 / OAuth 授权后可引导设默认 | ❌ 导入成功仅 toast（`useProviderImport.onImportConfirm` 零默认模型引用）；OAuth `onAuthorized` 回调是空函数（`ProviderPage.vue:269`） |
 | G4 | 默认模型被系统 fallback 修正时用户可见 | ✅ **已落地**（e2aff464f：`onDefaultsWithSource` 消费 `config.defaults` broadcast，source ≠ `default-set` 且值变化时 toast） |
-| G5 | 切换 session 模型的副作用（默认随之更新）**可见、可预测**，且设置页有显式入口（不依赖切换副作用作为唯一路径） | ⚠️ 部分：pi `set_model` 原生写默认（实测 0.80.3）+ xyz-agent 侧冗余覆写；toast 已覆盖 `model-switch` source；剩余 = 语义确认 + 文档化 + 验收 |
+| G5 | 切换 session 模型的副作用（默认随之更新）**可见、可预测**，且设置页有显式入口（不依赖切换副作用作为唯一路径） | ⚠️ 部分：pi `set_model` 原生写默认（实测 0.84.1，与 0.80.3 行为一致）+ xyz-agent 侧冗余覆写；toast 已覆盖 `model-switch` source；剩余 = 语义确认 + 文档化 + 验收 |
 | G6 | 不支持图片的模型（如 mimo-v2-pro，input 仅 text）在 UI 上禁用图片上传/粘贴并有提示 | ❌ 零 gate：粘贴/拖拽/菜单/命令 popover 4 条通路全部恒可用 |
 
 ### scope
@@ -79,7 +79,7 @@
 
 ### 2.2 根因二：切换即改默认——pi 原生语义，非 xyz-agent 单方行为（G5）
 
-**对抗式审查实证**（binary 0.80.3 实测 + 源码链）：
+**对抗式审查实证**（binary 实测：0.80.3 首测，0.84.1 升级后复测一致 + 源码链）：
 
 - **pi 原生**：`set_model` RPC → `AgentSession.setModel`（agent-session.js:1194-1207）→ `settingsManager.setDefaultModelAndProvider()`（settings-manager.js:455-464）→ **写 settings.json 的 defaultProvider/defaultModel**。实测：probe6 场景（`--model` 启动后 `set_model` 到 mimo-v2.5）→ settings.json 被 pi 覆写为 `{defaultProvider: xiaomi-token-plan-cn, defaultModel: mimo-v2.5}`。
 - **xyz-agent 侧**：`model-service.switchModel()`（model-service.ts:85-105）在 pi RPC 成功后也 `setDefaultModel` 持久化 + 广播 `config.defaults`（source: `'model-switch'`）——与 pi 行为**方向一致**（冗余但无害，值相同；若 pi 未来版本不再写默认，xyz-agent 侧仍保证语义）。
@@ -93,7 +93,7 @@
 - `event-adapter.ts` 全文 grep `model` 零命中；shared 对话 `Message` 类型无 model 字段（`BgNotifyRecord.model` 是 subagent 通知子记录，非对话消息流）。
 - 前端模型显示链 = runtime 的 launch `--model` / `set_model` 回写缓存 → broadcast → sessionStore——**全部是「自己记的账」**。
 - pi 进程内模型与缓存漂移的场景：pi 自身 fallback 生效（`--model` 被拒时 findInitialModel 5 级兜底）、settings.json 变更后既有 session 不重启、未来 extension 真切模型。
-- **可对账**：pi `get_state` RPC 响应含 `model` 字段（实测 0.80.3：`{id, provider, name, api, input, ...}`，provider/id 分字段，回写需拼 `${provider}/${id}`）——对账真值源已实证。
+- **可对账**：pi `get_state` RPC 响应含 `model` 字段（实测：`{id, provider, name, api, input, ...}`，provider/id 分字段，回写需拼 `${provider}/${id}`）——对账真值源已实证。
 
 ### 2.4 根因四：剩余交互缺失（G3 + G6）与协议漂移
 
@@ -124,7 +124,7 @@
         ▼                             ▼                        │
    settings.json { defaultProvider, defaultModel } ◄───────────┘
         ▲                             ▲
-        │ pi set_model 原生覆写（0.80.3 实测）│ xyz-agent switchModel 冗余覆写
+        │ pi set_model 原生覆写（0.84.1 实测）│ xyz-agent switchModel 冗余覆写
         │
         ▼
    getDefaultModel() = findValidDefaultModel()
@@ -192,7 +192,7 @@
 **失败路径 · 切换副作用可见 + 显式入口（G5）**
 
 ```
-[用户] session A 切到 anthropic → model.switch → pi set_model（原生写默认，0.80.3 实测）
+[用户] session A 切到 anthropic → model.switch → pi set_model（原生写默认，0.84.1 实测）
 [renderer] toast「默认模型已更新为 anthropic/...」（model-switch source，✅ 已实现）+ 设置页 pill 联动
 [用户] 想改回 → 设置页点 pill 直接设（✅ 已实现），不依赖切换副作用
 ```
@@ -237,7 +237,7 @@
 
 #### 决策三：pi 实际模型对账（G5 关联 / 漂移消除）
 
-**审查修正**：初版设计「恢复时扫描 JSONL model_change entry」被推翻——① pi 恢复模型真值源是 `getSessionContextSettings`（session-manager.js:145-164）：**assistant message 的 provider/model 也是记账点**且路径后到者胜，model_change 不是唯一记账点；② JSONL **延迟写**（实测：无 assistant 消息的 session 无文件，AGENTS.md 规则 6 同源）；③ model-switch extension 的 `switchToModel` 只 `appendEntry('model_change')` **不真切模型**（index.ts:312-335 源码实证）——扫 model_change 会把假切换当真值回写缓存，制造新漂移。**对账真值源改为 `get_state`**（实测 0.80.3 响应含 `model` 对象）。
+**审查修正**：初版设计「恢复时扫描 JSONL model_change entry」被推翻——① pi 恢复模型真值源是 `getSessionContextSettings`（session-manager.js:145-164）：**assistant message 的 provider/model 也是记账点**且路径后到者胜，model_change 不是唯一记账点；② JSONL **延迟写**（实测：无 assistant 消息的 session 无文件，AGENTS.md 规则 6 同源）；③ model-switch extension 的 `switchToModel` 只 `appendEntry('model_change')` **不真切模型**（index.ts:312-335 源码实证）——扫 model_change 会把假切换当真值回写缓存，制造新漂移。**对账真值源改为 `get_state`**（实测 0.84.1 响应含 `model` 对象，与 0.80.3 一致）。
 
 | 方案 | 长期架构 | 短期成本 | 风险 | 裁决 |
 |---|---|---|---|---|
@@ -308,15 +308,15 @@
 
 | ID | 验证的行为 | 探针 | 状态 |
 |---|---|---|---|
-| **P1** | `get_state` 响应含 model 字段及形状 | **✅ 已实证（0.80.3 binary 实测）**：`state.model = {id, provider, name, api, input, ...}`（provider/id 分字段，回写拼复合串） | ✅ |
-| **P2** | pi `set_model` 写 settings.json 默认 | **✅ 已实证（0.80.3 binary 实测）**：probe6 后 settings.json 被覆写；源码链 agent-session.js:1194-1207 → settings-manager.js:455-464 | ✅ |
+| **P1** | `get_state` 响应含 model 字段及形状 | **✅ 已实证（0.84.1 binary 实测，0.80.3 同）**：`state.model = {id, provider, name, api, input, ...}`（provider/id 分字段，回写拼复合串） | ✅ |
+| **P2** | pi `set_model` 写 settings.json 默认 | **✅ 已实证（0.84.1 binary 实测，0.80.3 同）**：set_model 后 settings.json 被覆写；源码链 agent-session.js:1194-1207 → settings-manager.js:455-464 | ✅ |
 | **P3** | model-switch extension 的 switch 是否真切模型 | **✅ 已实证（源码）**：`switchToModel` 只 `appendEntry('model_change')`，无 pi 切模型 API（index.ts:312-335）——记账不生效 | ✅ |
 | **P4** | pi 事件流（message_start 等）是否带 model 字段 | 未测（B 方案升级依据，不阻塞 A 实施） | ⛔ 可选 |
 | **P5** | 聚合校验 resolver 与 listProviders 视图一致 | resolver 与 listProviders 对同一磁盘状态返回一致「可用 provider/models」（单测断言） | ⛔ Phase 1 |
 | **P6** | 聚合校验后三头一致 | 设默认 mimo-v2.5-pro → 新建 session → 断言 `--model` 参数 = settings.json 值 = UI pill 值 | ⛔ Phase 1 |
 | **P7** | 对账回写生效 | 启动/恢复后 `get_state.model` 与 `session.modelId` 一致；人工改 pi 进程模型（模拟 extension 真切）后恢复 → 缓存追平 | ⛔ Phase 2 |
 
-> pi 行为断言基线：运行时 binary 0.80.3（`apps/electron/resources/pi/pi-darwin-arm64`）。源码参考 `node_modules/@earendil-works/pi-coding-agent` 0.82.1（**仅类型参考，非运行时行为依据**）；binary 升级（`scripts/prepare-pi-resources.sh`）后需重跑 P1/P2 探针确认行为未变。
+> pi 行为断言基线：运行时 binary 0.84.1（`apps/electron/resources/pi/pi-darwin-arm64`，2026-08-12 从 0.80.3 升级，探针 P1/P2 复测通过）。源码参考 `node_modules/@earendil-works/pi-coding-agent` 0.84.1（**仅类型参考，非运行时行为依据**）；未来 binary 升级（`scripts/prepare-pi-resources.sh`）后需重跑 P1/P2 探针确认行为未变。
 
 ---
 
@@ -431,5 +431,5 @@ Phase 1 运行时聚合校验（决策一 + D1/D2 + D4 协议收敛）  →  Pha
 - **provider-arch-hardening.md 衔接**：该文档的 ProviderId 品牌类型 / reconcile helper 已落地——Phase 1 不得破坏品牌类型边界（`defaultProvider as ProviderId` 反序列化提升点保留）；resolver 复用 `deriveEnabled`（provider-catalog）语义
 - **mock 对齐**：`api/mock/index.ts` 的 setDefaultModel mock 已有；ModelInfo 补 input 后 mock model fixture 需同步（漏了测试会暴露）
 - **测试框架**：vitest（`packages/runtime` / `packages/renderer` 各自 vitest.config.ts），禁 node:test；wave design 填 `testCwd`
-- **pi 版本**：运行时 binary 0.80.3 行为基线；binary 升级后重跑探针 P1/P2
+- **pi 版本**：运行时 binary 0.84.1 行为基线（2026-08-12 升级，P1/P2 复测通过）；未来 binary 升级后重跑探针 P1/P2
 - **行号引用**：本文行号以 2026-08-12 feat-optimize-ui HEAD 为准；实施前如有漂移以实际代码为准
