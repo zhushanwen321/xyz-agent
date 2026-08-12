@@ -1,11 +1,11 @@
 # 对话流 renderer 模型归一：判别单点化 + 队列子域 + 状态派生归位
 
-> **一句话结论**：现状「这条消息是什么」在生产链路被嗅 3 次（外加一处因黑名单前置过滤而不可达的死分支），判别规则分散且靠 customType 黑名单兜底——收敛为：`RenderItem.kind` 由 `toRenderItems` 单函数现算（全集 turn/systemNotice/bashExecution/gui），MessageStream 退化为 kind→组件纯查表；`display` 可见性前置到 registry customStart 写入时；queue 三处分裂收进 `core/domain/chat/queue.ts` 子域；`deriveStatus` 纯函数下 core；MessageStream slot vnode 加稳定 key 让 prepend 后展开态不错位。死分支（BgNotifyCard）随归一删除。四包链与 effect 注册表大方向不动，这是归位不是重做。
+> **一句话结论**：现状「这条消息是什么」在生产链路被 live 嗅 2 次（外加两处因黑名单前置过滤而不可达的死分支——BgNotifyCard 与 gui），判别规则分散且靠 customType 黑名单兜底——收敛为：`RenderItem.kind` 由 `toRenderItems` 单函数现算（全集 turn/systemNotice/bashExecution），MessageStream 退化为 kind→组件纯查表；`display` 可见性前置到 registry customStart 写入时（完成通知 customType 覆写 display:false，supersede ADR-0048 的「显示」决策）；queue 三处分裂收进 `core/domain/chat/queue.ts` 子域；`deriveStatus` 纯函数下 core；MessageStream slot vnode 加稳定 key 让 prepend 后展开态不错位。两处死分支（BgNotifyCard + gui）随归一删除，display 历史链路分叉由 converter 归一（方案 Z）一并消除。四包链与 effect 注册表大方向不动，这是归位不是重做。
 
 ## §1 背景目标
 
 - **S（情境）**：对话流 renderer 已完成四包重构（ADR-0058：shared ◄ core headless ◄ dom-core ◄ ui ◄ renderer），core 是真 headless 数据层（store 598 行、mutation 集中、effects 注册表），block 渲染已裁决「contentBlocks 顺序 SSOT、禁止末位派生判断」。
-- **C（冲突）**：但消息级模型仍停留在「上帝接口 + 多处重嗅」：`Message` 是 16 个可选字段的单一接口（`shared/message.ts:223-291`），「这条消息是什么」由生产链路的多个环节各自用可选字段重新判别（registry 透传 display、filterDisplayableMessages 的 customType 黑名单、MessageStream system 分支嗅探），且其中一处分支（`MessageStream.vue:55` BgNotifyCard）因黑名单在 `toRenderItems` 之前已移除该消息、根本不可达，已成死代码；「排队」状态三处并存；`deriveStatus` 9 态纯函数错放在 renderer；turn key 用 index 导致加载更多后展开态错位。
+- **C（冲突）**：但消息级模型仍停留在「上帝接口 + 多处重嗅」：`Message` 是 16 个可选字段的单一接口（`shared/message.ts:223-291`），「这条消息是什么」由生产链路的多个环节各自用可选字段重新判别（registry 透传 display、filterDisplayableMessages 的 customType 黑名单、MessageStream system 分支嗅探），且其中两处分支（`MessageStream.vue:55` BgNotifyCard + `:64` gui）因黑名单在 `toRenderItems` 之前已移除对应消息、根本不可达，已成死代码；「排队」状态三处并存；`deriveStatus` 9 态纯函数错放在 renderer；turn key 用 index 导致加载更多后展开态错位。
 - **Q（问题）**：怎么把消息判别、队列、状态派生收敛到各自单一权威，而不推翻已落地的四包链与 effect 注册表？
 - **A（答案）**：判别归一（RenderItem.kind 全集 + display 前置）+ 队列子域 + deriveStatus 下 core + MessageStream 稳定 key，分步推进，渲染层归一先行（不动存储），存储层 tagged union 留给历史链路统一 converter（`conversation-history-unified-converter.md`）落地后再评估。本文展开这个答案。
 
@@ -31,24 +31,24 @@ WS 事件 → core/domain/chat/effects/registry.ts（事件→store mutation）
 ### Scope
 
 - **当前层 → 下一层**：对话流 renderer 模型归位设计 → 模块级实现拆分（§5）。
-- **In-scope**：`message-turns.ts`（RenderItem.kind 全集 + display 前置 + 删 customType 黑名单）、`MessageStream.vue`（查表化）、`registry.ts` customStart 写 display、新建 `core/domain/chat/queue.ts`、`sessionStatus.ts` 迁 core、MessageStream 稳定 key、死代码清理（ProgressZone / `message.status` no-op / `sendMode:'send'` / **BgNotifyCard.vue + MessageStream.vue:55 死分支**）。
+- **In-scope**：`message-turns.ts`（RenderItem.kind 全集 + display 前置 + 删 customType 黑名单）、`MessageStream.vue`（查表化）、`registry.ts` customStart 写 display（引用 shared `COMPLETE_NOTIFY_CUSTOM_TYPES`）、新建 `core/domain/chat/queue.ts`、`sessionStatus.ts` 迁 core、MessageStream 稳定 key、死代码清理（ProgressZone / `message.status` no-op / `sendMode:'send'` / **BgNotifyCard.vue + MessageStream.vue:55 BgNotifyCard 死分支 + :64 gui 死分支**）、shared `COMPLETE_NOTIFY_CUSTOM_TYPES` SSOT 常量（converter 归一协调）。
 - **依赖**：G2（queue 子域）依赖 steer 解耦（`steer-followup-conversation-decoupling.md`）**落地实施**——该文档目前仅是设计（commit `ef40adeed` 标题即「docs: add ... design」），全仓 grep 无 `pendingBuffer`，pending 虚线气泡机制（`store.ts:257` appendPending + core `useChat.ts:383/413` 实时调用）完整存活。pending 消息删除后队列才只剩两处可统一。G1 不依赖 steer。
 - **Out-of-scope**：存储层 `Message` tagged union 化（等待统一 converter 供料，§3.2 方案 B 论证）；runtime 侧链路（converter 文档范围）；ui 包组件视觉（error 可见性文档范围）；旧 renderer 层 P6 物理删除（已有独立计划）。
 
 ## §2 现状与问题分析
 
-**现状是：一条 bg-notify 消息从事件到屏幕，「它是什么」在生产链路被嗅 2-3 次（外加一处不可达死分支）；「排队」有三套数据；最该 headless 的纯函数放在了最不该在的层；加载更多一次，展开状态全乱。**
+**现状是：一条 bg-notify 消息从事件到屏幕，「它是什么」在生产链路被 live 嗅 2 次（外加两处不可达死分支）；「排队」有三套数据；最该 headless 的纯函数放在了最不该在的层；加载更多一次，展开状态全乱。**
 
-### 2.1 多处重嗅 + 一处死分支：bg-notify 的旅程（真实例子）
+### 2.1 多处重嗅 + 两处死分支：bg-notify 的旅程（真实例子）
 
-一条 background subagent 完成通知（pi customType=`subagent-bg-notify`）从事件到屏幕，在生产链路被嗅 3 次（外加一处不可达死分支）：
+一条 background subagent 完成通知（pi customType=`subagent-bg-notify`）从事件到屏幕，在生产链路被 live 嗅 2 次（外加两处不可达死分支）：
 
 1. **registry 透传 + 解析**（`effects/registry.ts:425` `message.customStart` handler）：透传 payload 的 `display`（不主动覆写，仅 `payload['display']===true/false ? :undefined` 三态保留），按 customType 解析 `bgNotify`（仅 `subagent-bg-notify` 走 `parseBgNotifyDetails`）。消息以 `role:'system' + customType + bgNotify + details + display` 存入 store；
 2. **过滤层黑名单**（`message-turns.ts:75-83` `filterDisplayableMessages`）：`HIDDEN_NOTIFY_CUSTOM_TYPES` 黑名单（`subagent-bg-notify`/`workflow-result`）**无条件**过滤（不看 display 字段），另叠加 `display===false` 过滤。subagent-bg-notify 命中黑名单 → **在 `toRenderItems` 之前即被移除**，永不进 renderItems。`message-turns.test.ts:44` 注释明示设计意图「用户选择不展示通知，即使 display:true 也过滤」；
-3. **渲染分发嗅探**（`MessageStream.vue:48-69` system 分支）：按 `item.message.bgNotify`/`bashExecution`/`extractGuiComponent(details)`/role 嗅探选组件（BgNotifyCard/BashOutputBlock/GuiComponentRenderer/SystemNotice）。**但 bg-notify 已在第 2 步被移除，BgNotifyCard 分支（`MessageStream.vue:55`）不可达 = 死代码**（自 edc3a45ba「hide notify」起）；BashOutputBlock 分支（bashExecution，customType 不在黑名单）、GuiComponentRenderer 分支（details.__gui__，E5 协议通用通路）则真实命中；
+3. **渲染分发**（`MessageStream.vue:55-69` system 分支）：按 `item.message.bgNotify`/`bashExecution`/`extractGuiComponent(details)`/role 选组件（BgNotifyCard/BashOutputBlock/GuiComponentRenderer/SystemNotice）。其中 **BgNotifyCard 分支（`:55`）不可达 = 死代码**（bg-notify 已在第 2 步被黑名单移除，自 edc3a45ba「hide notify」起）；**gui 分支（`:64` GuiComponentRenderer）同样不可达 = 死代码**——system 消息带 `details.__gui__` 的唯一 builtin 生产者是 workflow-result（`extensions/subagent-workflow/src/interface/helpers.ts:133,146` 声明 `customType:"workflow-result"` + `display:true` + `details.__gui__`），而 workflow-result 同样命中第 2 步黑名单 → 不进 renderItems → gui 分支永远拿不到 `__gui__`；tool RPC 的 `__gui__`（todo/goal 等结构化组件）走 **`Block.vue:331` 自带的 extractGuiComponent**（assistant turn 内 tool result，`extractGui(props.tool?.details)?.component` :342，不经 MessageStream system 分支），gui kind 对它无作用。BashOutputBlock 分支（bashExecution，customType 不在黑名单）与 SystemNotice 兜底真实命中；
 4. ~~组件内判别~~（BgNotifyCard.vue 按 bgNotify 结构定单条/批量）：死代码，不计入。
 
-问题定性是**维护性**不是性能：每渲染重算 kind 的开销在 LRU 8 session 上限下可忽略，真正的代价是判别规则分散 + 靠 customType 黑名单兜底——新增一种 customType 消息时，要在 registry（怎么存）、黑名单（藏不藏）、MessageStream（用谁渲染）三处同步，漏任何一处就是静默错误（渲染错组件或直接消失，且如 BgNotifyCard 般悄无声息地变成死分支而不报错）。这与已裁决的 contentBlocks「顺序 SSOT、禁止末位派生」精神直接相悖：块级判别已前置（`expandAssistantBlocks` 按 contentIndex），**消息级判别还停留在多处重嗅 + 黑名单兜底**。
+问题定性是**维护性**不是性能：每渲染重算 kind 的开销在 LRU 8 session 上限下可忽略，真正的代价是判别规则分散 + 靠 customType 黑名单兜底——新增一种 customType 消息时，要在 registry（怎么存）、黑名单（藏不藏）、MessageStream（用谁渲染）三处同步，漏任何一处就是静默错误（渲染错组件或直接消失，且如 BgNotifyCard/gui 般悄无声息地变成死分支而不报错）。这与已裁决的 contentBlocks「顺序 SSOT、禁止末位派生」精神直接相悖：块级判别已前置（`expandAssistantBlocks` 按 contentIndex），**消息级判别还停留在多处重嗅 + 黑名单兜底**。
 
 ### 2.2 队列三处分裂
 
@@ -71,7 +71,7 @@ steer 解耦落地后剩②③：同一「排队等投递」语义，两个数�
 
 ## §3 解决方案
 
-**终态：RenderItem.kind 全集驱动 MessageStream 纯查表渲染；`display` 可见性在 registry customStart 写入时前置，过滤层只读 display 单字段（不再按 customType 黑名单判别）；queue.ts 一个子域对外暴露统一 QueueState；deriveStatus 在 core 被 renderer/mobile 共用；MessageStream slot vnode 加稳定 key，prepend 后展开态原地不动。**
+**终态：RenderItem.kind 全集（turn/systemNotice/bashExecution）驱动 MessageStream 纯查表渲染；`display` 可见性在 registry customStart 写入时前置（完成通知 customType 覆写 display:false），过滤层只读 display 单字段（不再按 customType 黑名单判别），converter 历史链路对称覆写消除实时/重开分叉（方案 Z）；queue.ts 一个子域对外暴露统一 QueueState；deriveStatus 在 core 被 renderer/mobile 共用；MessageStream slot vnode 加稳定 key，prepend 后展开态原地不动。**
 
 ### 3.1 终态（使用者与维护者视角）
 
@@ -119,20 +119,23 @@ type RenderItem =
   | { kind: 'turn'; turn: MessageTurn }
   | { kind: 'systemNotice'; message: Message }   // compaction/branchSummary/stream_warn 一行通知
   | { kind: 'bashExecution'; message: Message }  // BashOutputBlock（system + bashExecution 字段）
-  | { kind: 'gui'; message: Message }            // details.__gui__ → GuiComponentRenderer（E5 通用通路）
 ```
 
-判别规则（**从 MessageStream.vue:48-69 的 system 分支整体上移**，规则不重新发明）：bashExecution→bashExecution；`extractGuiComponent(details)` 命中→gui；role==='system' 其余→systemNotice；user/assistant→turn 分组。**kind 是 `toRenderItems` 每渲染从同一堆可选字段现算的派生值，不落 store**——无存储迁移，单一判定函数；M1 加一致性单测防未来加 Message 字段忘更新判别（§5）。
+判别规则（**从 MessageStream.vue:55-69 的 system 分支整体上移**，规则不重新发明）：bashExecution→bashExecution；role==='system' 其余→systemNotice；user/assistant→turn 分组。**kind 是 `toRenderItems` 每渲染从同一堆可选字段现算的派生值，不落 store**——无存储迁移，单一判定函数；M1 加一致性单测防未来加 Message 字段忘更新判别（§5）。
 
-**为什么没有 `bgNotify` kind**：bgNotify 类消息（subagent-bg-notify/workflow-result）由 registry customStart 写 `display:false`（§3.3.2），在 `filterDisplayableMessages` 阶段即被移除，根本不进 renderItems——没有「先藏再找」的等价性陷阱，也就不需要专属 kind。`toRenderItems` 输出全集后，`MessageStream` 退化为 `kind → 组件` 纯查表（turn→Turn / systemNotice→SystemNotice / bashExecution→BashOutputBlock / gui→GuiComponentRenderer，一个 switch/map，无嗅探逻辑）；`ChatView.vue` 的双编排随之失去存在理由（随旧层 P6 删）。
+**为什么没有 `bgNotify` kind**：bgNotify 类消息（subagent-bg-notify）由 registry customStart 写 `display:false`（§3.3.2），在 `filterDisplayableMessages` 阶段即被移除，根本不进 renderItems——没有「先藏再找」的等价性陷阱，也就不需要专属 kind。
+
+**为什么没有 `gui` kind（死代码，同 bgNotify）**：system 消息带 `details.__gui__` 的唯一 builtin 生产者是 workflow-result（`extensions/subagent-workflow/src/interface/helpers.ts:133,146`：`customType:"workflow-result"` + `display:true` + `details.__gui__`），而 workflow-result 同属完成通知、由 registry 写 `display:false`（§3.3.2）移除 → 不进 renderItems → system 分支永远遇不到带 `__gui__` 的消息。tool RPC 的 `__gui__`（todo/goal 等结构化组件）在 assistant turn 内由 `Block.vue:331` 自带 `extractGuiComponent` 渲染（`extractGui(props.tool?.details)?.component`，:342），不经 MessageStream system 分支——gui kind 对它无作用。故 gui 分支（`MessageStream.vue:64`）是死代码，随归一删除（§3.3.6），不进 kind 全集。
+
+`toRenderItems` 输出全集后，`MessageStream` 退化为 `kind → 组件` 纯查表（turn→Turn / systemNotice→SystemNotice / bashExecution→BashOutputBlock，一个 switch/map，无嗅探逻辑）；`ChatView.vue` 的双编排随之失去存在理由（随旧层 P6 删）。
 
 #### 3.3.2 display 可见性前置（选项 A：维持「不显示」，删死代码）
 
 「完成通知（subagent-bg-notify/workflow-result）对用户是噪声，结果由 agent 后续 turn 体现」是现状语义（`message-turns.test.ts:44` 设计意图），本设计**维持此语义不变**，但把实现从「customType 黑名单兜底」收敛为「display 字段单一判别」：
 
 1. **删黑名单**：移除 `message-turns.ts` 的 `HIDDEN_NOTIFY_CUSTOM_TYPES`（51-58）与 test:44 的 customType 黑名单用例。`filterDisplayableMessages` 只保留 `display === false` 单一判别——display 字段已存在（`shared/message.ts:266`），这是**改写入策略非新增字段**；
-2. **display 由 registry 按 customType 业务逻辑写入**：customStart handler（`registry.ts:425`）对 `subagent-bg-notify`/`workflow-result` 这两个**完成通知语义**的 customType 强制写 `display:false`（覆盖 payload 透传——pi 侧 notifier 声明的 display:true 是「未细化」的默认值，前端按消息语义覆写）。**注意与 ADR-0048 的区别**：ADR-0048 拒绝的是「按 extension 名硬编码过滤」，此处覆写依据是 `customType`（消息语义属性，即「这条消息是完成通知」），不是 extension 包名——同一 extension 的不同 customType 可有不同 display 策略。这是在 customType 维度细化 display，不是在 extension 维度硬编码；
-3. **删 BgNotifyCard 死代码**：`MessageStream.vue:55` 的 `<BgNotifyCard>` 分支（自 edc3a45ba 起因黑名单前置过滤不可达）+ `packages/ui/src/features/chat/BgNotifyCard.vue` 组件 + 其测试一并删除。可见性从「黑名单 + display 双重」收敛为「display 单一」——这才是判别单点。
+2. **display 由 registry 按 customType 业务逻辑写入**：customStart handler（`registry.ts:425`）对完成通知语义的 customType 强制写 `display:false`（覆盖 payload 透传——pi 侧 notifier 声明的 display:true 是「未细化」的默认值，前端按消息语义覆写）。完成通知 customType 列表引用 shared 层 SSOT 常量 `COMPLETE_NOTIFY_CUSTOM_TYPES`（`packages/shared/src/`，含 `subagent-bg-notify`/`workflow-result`，converter mapper 与本文 registry 两边引用同一常量，方案 Z 见下文「display 历史链路分叉已消除」段）——不再在各处硬编码 customType 字符串。**与 ADR-0048 的关系是 supersede（修订），不是避开**：ADR-0048（2026-07-21）的决策是「尊重 extension 声明的 display」，其「零误伤验证」表白纸黑字记录 `workflow-result / subagent-bg-notify | display:true | 显示（BgNotifyCard / GuiComponentRenderer）`。但 commit edc3a45ba「hide notify」随后把这两个 customType 加回 `HIDDEN_NOTIFY_CUSTOM_TYPES` 黑名单无条件隐藏，**偏离了 ADR-0048 却未记录推翻**；本设计 M2 固化此隐藏语义（从黑名单收敛为 display:false 覆写），理由是：完成通知对用户是噪声，结果由主 agent 被 triggerTurn 唤醒续跑在新 turn 体现（subagent-bg-notify）/ 由侧栏 workflow 面板体现（workflow-result），不需要在对话流内重复显示。ADR-0048 的「尊重 display」原则对其他 customType 仍然成立，仅对完成通知这一类按消息语义覆写——建议本设计落地时同步更新 ADR-0048 状态（Proposed → Superseded 并补修订记录，或新增一条 ADR 说明完成通知例外）；
+3. **删 BgNotifyCard 死代码（分支随 M1，组件文件随 M2）**：`packages/ui/src/features/chat/BgNotifyCard.vue` 组件 + 其测试一并删除（其 `<BgNotifyCard>` 分支 `MessageStream.vue:55` 已随 M1 查表化删除——kind 全集不含 bgNotify，分支自然消失，故组件本体归 M2 随 display:false 语义固化时清理）。可见性从「黑名单 + display 双重」收敛为「display 单一」——这才是判别单点。gui 死分支（`MessageStream.vue:64`）同理随 M1 删（kind 全集不含 gui，§3.3.1 已论证其不可达）。
 
 **删黑名单后各 customType 去向**（均不孤儿，各有侧信道或被语义过滤）：
 
@@ -141,11 +144,11 @@ type RenderItem =
 | `subagent-bg-notify` | registry 写 display:false → filter 移除 | 主 agent 被 triggerTurn 唤醒续跑，结果在新 turn 体现（pi-subagent-workflow notifier 发起，见 AGENTS.md 规则 17）|
 | `workflow-result` | registry 写 display:false → filter 移除 | event-interpreter 广播 `session.workflows` → 侧栏 workflow 面板（`runtime/test/event-interpreter-workflow-push.test.ts` U2 验证）|
 | 其他 customType（goal-context 等） | payload 透传 display（现状 display:false 的 context 消息仍被过滤） | — |
-| 带 details.__gui__ 的可见 customType | display!==false → 进 renderItems → kind:'gui' | GuiComponentRenderer（E5 通用通路，删黑名单后对该通路完全生效）|
+| 带 details.__gui__ 的 system 消息 | 无独立通路（唯一 builtin 生产者 workflow-result 已 display:false 移除；tool RPC 的 __gui__ 走 Block.vue:331 不经 system 分支） | — |
 
 **闪现不会发生**：display 在 customStart handler 内随 Message 对象一次性写入（`commitMessages` 一次 commit），Vue 响应式批处理保证一次 commit → 一次渲染，不存在「先以 display:undefined 渲染一帧再被改 false」的中间态。
 
-**已知限制（违反规则 7.5，标注待统一）**：display 前置只作用于**实时链路**（registry customStart handler）。历史链路（RPC 路径 `message-converter.ts` + 文件路径 `entry-tree-builder→convertPiHistory`）透传 pi JSONL 持久化的 display——pi 不认识前端写的 display:false（它持久化的是 extension 声明的 display）。重开 session 时可见性可能由持久化值决定而非实时覆写值，导致实时/重开可见性分叉。本设计暂不修历史链路，标注为已知限制，待统一 converter（`conversation-history-unified-converter.md`）落地后由 converter 负责 display 归一（§5 联动项）。
+**display 历史链路分叉已由 converter 归一消除（方案 Z）**：display 前置原只作用于**实时链路**（registry customStart handler），历史链路（RPC 路径 `message-converter.ts:267-270` 透传 `display: cm.display` + 文件路径 `entry-tree-builder`）透传 pi JSONL 持久化的 display——pi 不认识前端写的 display:false（它持久化的是 extension 声明的 display:true），重开 session 时完成通知会涌现显示（用户可见行为回归，违反规则 7.5）。**方案 Z 已将 converter 纳入 display 归一 scope**：shared 层定义 `COMPLETE_NOTIFY_CUSTOM_TYPES` SSOT 常量，converter mapper（`message-converter` custom 分支 + `entry-tree-builder`）与本文 registry customStart 两边对称引用该常量、对完成通知 customType 覆写 `display:false`。实时/历史两链路对称覆写，分叉消除（不再违反规则 7.5）。converter 改动属统一 converter（`conversation-history-unified-converter.md`）范围，本文 registry 侧改动与之协调（共享 SSOT 常量）。
 
 #### 3.3.3 queue 子域（`core/domain/chat/queue.ts`，**依赖 steer 解耦落地实施——当前仅设计、未实现**）
 
@@ -175,21 +178,22 @@ interface QueueItem {
 
 `toRenderItems` 给每个 turn 计算稳定 key：`user?.id ?? assistants[0]?.id`（user 消息的 `u-<uuid>` 由 appendUser 生成）。历史消息与系统消息的 id 是否唯一稳定未逐一核实，由探针 P-id-stable 兜底：若存在无稳定 id 的消息形态，则在 prepend 合并层（mutations.ts）为该消息生成 session 内单调 key 并随消息存储——不推倒 key 方案，只补齐 id 缺口。
 
-**M5 实现要点**：现状 MessageStream 的 `<Virtualizer>` slot vnode 无显式 `:key`（virtua 按 index 隐式 fallback，见 §2.3）。M5 在 slot 内的 Turn/SystemNotice 等 vnode 上加 `:key="renderKey(item)"`（virtua 尊重子 vnode 的 key，覆盖 index fallback）；`turn-expansion.ts` 的展开态记录从 `Map<number, boolean>`（turnIdx）改为 `Map<string, boolean>`（稳定 key）。两处同换。prepend 后旧 turn key 不变，展开态/滚动/DOM 原地保留。
+**M5 实现要点**：现状 MessageStream 的 `<Virtualizer>` slot vnode 无显式 `:key`（virtua 按 index 隐式 fallback，见 §2.3）。M5 在 slot 内的 Turn/SystemNotice 等 vnode 上加 `:key="renderKey(item)"`——virtua 尊重子 vnode 的 key（`node_modules/virtua/lib/vue/index.cjs:333` 的 key 函数 `k=(e,t)=>{ if(1===e.length){ const k=e[0].key; if(null!=k) return k; } return "_"+t; }`：slot 单子节点时取 `e[0].key`，否则 fallback 到 `"_"+index`；MessageStream slot 运行时 v-if/v-else-if/v-else 链只渲染单个 vnode，属单子节点，`:key` 生效；`:496`/`:751` 的 createVNode `key:k(s,r)` 消费该值）；`turn-expansion.ts` 的展开态记录从 `Map<number, boolean>`（turnIdx）改为 `Map<string, boolean>`（稳定 key）。两处同换。prepend 后旧 turn key 不变，展开态/滚动/DOM 原地保留。P-id-stable 探针验证 wrapper key 确实驱动 Vue patch（非仅 virtua 内部记账）。
 
 #### 3.3.6 死代码清理
 
-删：`ProgressZone.vue`（state 恒 null）、`registry.ts:460` 的 `message.status` no-op handler（保留事件接收但不注册空 handler——注释标明 pi status 事件语义未用）、`sendMode:'send'` 类型成员（`shared/message.ts:249` 无写入点）、`BgNotifyCard.vue`（`packages/ui/src/features/chat/`）+ `MessageStream.vue:55` 死分支 + `HIDDEN_NOTIFY_CUSTOM_TYPES` 黑名单（§3.3.2 第 3 步）。每项独立小 commit。
+删：`ProgressZone.vue`（state 恒 null）、`registry.ts:460` 的 `message.status` no-op handler（保留事件接收但不注册空 handler——注释标明 pi status 事件语义未用）、`sendMode:'send'` 类型成员（`shared/message.ts:249` 无写入点）、`BgNotifyCard.vue`（`packages/ui/src/features/chat/`）+ `MessageStream.vue:55` BgNotifyCard 死分支 + `MessageStream.vue:64` gui 死分支（含 `GuiComponentRenderer` import :166 + `extractGuiComponent` import :169，system 分支不再消费）+ `HIDDEN_NOTIFY_CUSTOM_TYPES` 黑名单（§3.3.2 第 3 步）。每项独立小 commit。
 
 #### 3.3.7 运行时断言探针清单（准则 7）
 
 | ID | 验证的行为 | 探针 | 状态 |
 |---|---|---|---|
 | P-id-stable | 所有消息（实时 appendUser/converter 历史/系统消息）都有稳定唯一 id，prepend 合并不产生重复 key | prepend 加载更多后断言 turn key 序列只增不改（旧 key 全保留） | ⛔ 实施期 M5 |
-| P-kind-cover | 扩展后的 RenderItem.kind（turn/systemNotice/bashExecution/gui）对现存全部消息形态穷尽（无 fallback 到错误分支） | 真实 session 全量 renderItems 断言 kind 分布与现状 live 分支一一对应（BgNotifyCard 死分支不计，已删） | ⛔ 实施期 M1 |
+| P-kind-cover | 扩展后的 RenderItem.kind（turn/systemNotice/bashExecution）对现存全部消息形态穷尽（无 fallback 到错误分支） | 真实 session 全量 renderItems 断言 kind 分布与现状 live 分支一一对应（BgNotifyCard/gui 两处死分支不计，已删） | ⛔ 实施期 M1 |
 | P-display-same | display 前置后渲染可见性与现状逐条一致（subagent-bg-notify/workflow-result 仍不可见于流内——改由 registry display:false 过滤，语义不变；BgNotifyCard 死代码已删不再渲染） | 含 bg-notify/workflow-result 的真实 session 渲染对比（确认流内不出现，结果经侧信道/续跑体现） | ⛔ 实施期 M2 |
 | P-queue-merge | queue.ts 统一视图在 streaming/compact 两场景项数与现状两组件各自计数一致 | dev app 两场景对比 | ⛔ 实施期 M4 |
 | P-derive-parity | deriveStatus 迁 core 后 9 态输出与搬迁前逐状态一致 | 单测全状态矩阵 + dev app sidebar/header 状态点视觉核对 | ⛔ 实施期 M3 |
+| P-stream-recompute | streaming 期间 assistant content 逐 chunk 追加不触发 toRenderItems 全量重算（依赖收集只跟踪 role/status/bashExecution 等结构字段，不跟踪 content） | dev app 长 session（>50 turn）streaming 期间 instrumentation 计 toRenderItems 调用次数 vs content chunk 数；若 1:1 则需把 kind 派生 memo（按 messages 引用 + 结构字段缓存） | ⛔ 实施期 M1 |
 
 ## §4 验收
 
@@ -228,8 +232,8 @@ interface QueueItem {
 
 | 步骤 | 交付 | 独立验证 |
 |---|---|---|
-| M1 RenderItem.kind 全集（现算）+ MessageStream 查表 | message-turns.ts 扩展 kind 全集（turn/systemNotice/bashExecution/gui）+ MessageStream 查表化 + kind 一致性单测 | 场景 2 + P-kind-cover |
-| M2 display 前置 + 删死代码 | registry customStart 对完成通知 customType 写 display:false（按消息语义非 extension 名，避开 ADR-0048）+ 删黑名单 + 删 BgNotifyCard 死分支/组件 | 场景 2 + P-display-same |
+| M1 RenderItem.kind 全集（现算）+ MessageStream 查表 + 删 system 死分支 | message-turns.ts 扩展 kind 全集（turn/systemNotice/bashExecution）+ MessageStream 查表化（system 分支收敛为 bashExecution/SystemNotice 两路）+ 删 MessageStream BgNotifyCard（:55）+ gui（:64）两处死分支（随查表化，kind 全集不含这两类自然消失）+ kind 一致性单测 | 场景 2 + P-kind-cover + P-stream-recompute |
+| M2 display 前置 + 删 BgNotifyCard 组件 + converter 归一 | registry customStart 引用 shared `COMPLETE_NOTIFY_CUSTOM_TYPES` 对完成通知写 display:false（supersede ADR-0048 的「显示」决策，见 §3.3.2）+ 删 `HIDDEN_NOTIFY_CUSTOM_TYPES` 黑名单 + 删 `BgNotifyCard.vue` 组件文件（分支已随 M1 删，此步删组件本体）+ converter mapper 对称覆写 display:false（方案 Z，消除实时/重开分叉） | 场景 2 + P-display-same |
 | M3 deriveStatus 下 core | 纯函数搬迁 + renderer re-export（覆盖全部 import 点）+ 单测 | 场景 4 + P-derive-parity |
 | M4 queue 子域（**依赖 steer 解耦落地实施——当前仅设计**） | queue.ts 纯状态 + shell 层 flush 编排 + QueueBubble/CompactQueueBadge 数据源统一 | 场景 3 + P-queue-merge |
 | M5 MessageStream 稳定 key | toRenderItems key 生成 + slot vnode 加 :key + turn-expansion Map<number>→Map<string> | 场景 1 + P-id-stable |
@@ -241,22 +245,23 @@ interface QueueItem {
 
 | 文件 | 改动 |
 |---|---|
-| `packages/core/src/domain/chat/message-turns.ts` | RenderItem.kind 全集（turn/systemNotice/bashExecution/gui）+ `renderKey` 已存在（:44，M5 让 MessageStream 消费）；删 HIDDEN_NOTIFY_CUSTOM_TYPES + filter 改 display 单一判别 |
-| `packages/core/src/domain/chat/effects/registry.ts` | customStart 对完成通知 customType（subagent-bg-notify/workflow-result）写 display:false；删 message.status no-op |
+| `packages/core/src/domain/chat/message-turns.ts` | RenderItem.kind 全集（turn/systemNotice/bashExecution）+ `renderKey` 已存在（:44，M5 让 MessageStream 消费）；删 HIDDEN_NOTIFY_CUSTOM_TYPES + filter 改 display 单一判别 |
+| `packages/core/src/domain/chat/effects/registry.ts` | customStart 引用 shared `COMPLETE_NOTIFY_CUSTOM_TYPES` 对完成通知写 display:false；删 message.status no-op |
 | `packages/core/src/domain/chat/queue.ts` | **新建**（M4）：QueueItem/QueueState 纯状态 + 两来源合并（flush 编排留 renderer shell） |
 | `packages/core/src/domain/session/`（或 chat/status.ts） | deriveStatus + DerivedStatus 迁入 |
 | `packages/renderer/src/composables/logic/sessionStatus.ts` | 改 re-export（覆盖 deriveStatus + DerivedStatus 全 import 点）+ 视觉映射（DOT_CLASS/STATUS_ICON 保留） |
-| `packages/renderer/src/components/panel/MessageStream.vue` | system 分支嗅探 → kind 查表（4 分支）；slot vnode 加 :key；删 BgNotifyCard 分支（:55） |
+| `packages/renderer/src/components/panel/MessageStream.vue` | system 分支嗅探 → kind 查表（turn/systemNotice/bashExecution 三路）；slot vnode 加 :key；删 BgNotifyCard 分支（:55）+ gui 分支（:64，含 GuiComponentRenderer/extractGuiComponent import）——两分支随 M1 查表化删除 |
 | `packages/renderer/src/components/panel/{QueueBubble,CompactQueueBadge}.vue` | 数据源换 queue.ts（M4） |
-| `packages/ui/src/features/chat/BgNotifyCard.vue` | 删除（死代码，随 §3.3.2 M2） |
+| `packages/ui/src/features/chat/BgNotifyCard.vue` | 删除（死代码，分支随 M1 删，组件本体随 M2 display:false 语义固化删） |
 | `packages/renderer/src/components/panel/ProgressZone.vue` | 删除 |
 | `packages/renderer/src/stores/turn-expansion.ts` | 展开态 Map<number> → Map<稳定key>（随 M5） |
 | `packages/shared/src/message.ts` | `sendMode:'send'` 成员删除 |
+| `packages/shared/src/`（constants 或新文件） | **新建** `COMPLETE_NOTIFY_CUSTOM_TYPES` SSOT 常量（含 subagent-bg-notify/workflow-result），registry customStart 与 converter mapper 两边引用（方案 Z） |
 | 测试 | message-turns（kind 一致性）/queue/deriveStatus 单测；MessageStream 渲染等价用例 |
 
 ### 待验证检查点
 
-1. **kind 现算（已裁定，不落 store）**：kind 是 `toRenderItems` 每渲染从同一堆可选字段现算的派生值，不落 store（无存储迁移、单一判定函数）。每 prepend 全量重算开销在 LRU 8 session 上限下可忽略。M1 加 **kind 一致性单测**：构造含各 Message 可选字段（bgNotify/bashExecution/details.__gui__/display 等）的消息，断言 `toRenderItems` 输出的 kind 与现状 MessageStream 分支选择一一对应，防未来加 Message 字段忘更新判别。
+1. **kind 现算（已裁定，不落 store）**：kind 是 `toRenderItems` 每渲染从同一堆可选字段现算的派生值，不落 store（无存储迁移、单一判定函数）。每 prepend 全量重算开销在 LRU 8 session 上限下可忽略；但 **streaming 期间 assistant content 逐 chunk 追加**若触发 toRenderItems 重算，长 session 不可忽略——P-stream-recompute 探针验证依赖收集是否只跟踪 role/status/bashExecution 等结构字段（而非 content），若 1:1 重算则需 memo（按 messages 引用 + 结构字段缓存 kind 派生）。M1 加 **kind 一致性单测**：构造含各 Message 可选字段（bgNotify/bashExecution/display 等）的消息，断言 `toRenderItems` 输出的 kind 与现状 MessageStream 分支选择一一对应（gui kind 已删，details.__gui__ 不再作为判别字段），防未来加 Message 字段忘更新判别。
 2. **queue.ts 与 steer pendingBuffer 的边界**（steer 未实现，本条待 steer 落地后裁决）：pendingBuffer（steer **设计文档**，存 segments 供 drain 时 appendUser——当前零实现）是「待投递暂存」，queue.ts 是「对外展示的队列视图」——两者数据源部分重叠（pi 快照只有 text），待 steer 实施时裁决 pendingBuffer 是否并入 queue.ts（倾向：pendingBuffer 属 drain 恢复机制留在 store，queue.ts 只读视图聚合，不强行合并）。
 3. **mobile-renderer 复用 deriveStatus 的 import 形态**：迁 core 后 mobile-renderer 直接 import core/domain，确认无 DOM 传递依赖混入。
-4. **display 历史链路可见性分叉（已知限制，待 converter 统一）**：M2 的 display:false 前置只作用于实时链路（registry customStart）。历史链路（`message-converter.ts` RPC 路径 + `entry-tree-builder` 文件路径）透传 pi 持久化的 display，重开 session 时可见性可能与实时不一致（违反规则 7.5）。本设计暂不修——待统一 converter（`conversation-history-unified-converter.md`）落地后，由 converter 负责 display 归一（完成通知 customType 在 converter 侧也写 display:false）。落地前 M2 验收（P-display-same）只覆盖实时链路，重开场景标为已知差异。
+4. **display 历史链路可见性分叉（已由 converter display 归一解决，方案 Z）**：原分叉根因是 M2 display:false 只作用于实时链路（registry customStart），历史链路（`message-converter.ts:267-270` RPC 路径 + `entry-tree-builder` 文件路径）透传 pi 持久化的 display:true，重开 session 涌现显示（违反规则 7.5）。**方案 Z 已解决**：shared `COMPLETE_NOTIFY_CUSTOM_TYPES` SSOT 常量由 converter mapper 与 registry customStart 两边对称引用，对完成通知 customType 覆写 display:false——实时/历史两链路对称覆写，分叉消除。M2 验收（P-display-same）同时覆盖实时链路与重开场景（converter 改动协调）。
