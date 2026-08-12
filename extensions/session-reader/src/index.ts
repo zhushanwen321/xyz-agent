@@ -24,13 +24,13 @@ const SessionReadSchema = Type.Object({
     ['find', 'family', 'outline', 'expand', 'detail', 'search', 'export', 'extract', 'workflow'],
     {
       description:
-        'Action to perform: find (locate session), family (fork/subagent/workflow relations; recursive=true returns nested execution tree), outline (turn-level overview), expand (single-turn entries), detail (full text of turns), search (full-text grep), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps, step call sessionId jumps to outline/detail).',
+        'Action to perform: find (locate session), family (fork/subagent/workflow relations; recursive=true returns nested execution tree), outline (turn-level overview), expand (single-turn entries), detail (full text of turns), search (full-text grep), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps; requires session, optional runId focuses one run; step call sessionId jumps to outline/detail).',
     },
   ),
   session: Type.Optional(
     Type.String({
       description:
-        'Session id or uuid fragment (e.g. e6c96). Required for family/outline/expand/detail/search/export. # prefix auto-stripped.',
+        'Session id, uuid fragment (e.g. e6c96), subagent record id (sa-xxx, precise lookup), or absolute .jsonl path (~ or ~/ allowed). Required for family/outline/expand/detail/search/export/workflow. # prefix auto-stripped.',
     }),
   ),
   query: Type.Optional(
