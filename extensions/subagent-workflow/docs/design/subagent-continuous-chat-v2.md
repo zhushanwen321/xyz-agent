@@ -1,6 +1,6 @@
 # Subagent 可持续对话终态架构（v2）
 
-> **一句话结论**：v1 选「每轮 kill 进程 + resume 重开」，建立在两个相互独立的误判上——**事实误判**（「上下文在进程内存」，被 resume 能力和 v1 自己的 P-2 探针证伪）与**复杂度误判**（否决「保活 + 文件兜底」混合方案时，「每轮 kill」的补丁机制尚未长成、其成本无法计入方案对比）。正确范式是**进程与对话轮次解耦**：进程长驻（性能）+ session 文件兜底（恢复）+ 统一投递语义（pi 权威裁决 busy，父进程零状态镜像）+ 显式生命周期管理（单 activation 互斥、三道收割防线）。v1 为「每轮 kill」打补丁的机制随之消失——**删的比写的多（行数实测净减 ~270-330 行），且删掉的全是状态机与竞态处理**。
+> **一句话结论**：v1 选「每轮 kill 进程 + resume 重开」是设计期信息不全下的合理权衡——它正确否决了纯进程保活（那个范式下「进程没了对话就没了」真成立），也明确评估过「保活 + 文件兜底」混合方案并因复杂度推迟。但有两处设计期问题在实现盘点后才显形：**其一**，选项空间构造缺陷——「进程死活」与「文件恢复」两个正交维度被压成互斥选项，「保活 + 文件兜底」被迫以「A + B 双机制」形态背负虚高复杂度（正解实为 resume 一个机制兼任异常恢复与冷路径，热路径零机制）；**其二**，「每轮 kill」的补丁机制成本（消费确认制、sidecar、重建矩阵）在设计期尚未长成、无法计入方案对比。本设计用实现期完整成本数据重估该权衡：正确范式是**进程与对话轮次解耦**——进程长驻（性能）+ session 文件兜底（恢复）+ 统一投递语义（pi 权威裁决 busy，父进程零状态镜像）+ 显式生命周期管理（单 activation 互斥、三道收割防线）。v1 为「每轮 kill」打补丁的机制随之消失——**删的比写的多（行数实测净减 ~270-330 行），且删掉的全是状态机与竞态处理**。
 
 ## 层声明
 
@@ -43,8 +43,8 @@
 | F4 | idle 时 `streamingBehavior` 参数被忽略（仅在 `isStreaming` 分支内被读取）——传了也不会入队残留 | ✅源码核实（`agent-session.ts:1121`） |
 | F5 | RPC 模式下 `prompt` 命令的 throw 经 error response 返回父进程（`.catch(e => output(error(...)))`）；`preflightResult` 回调报告受理成功 | ✅源码核实（`rpc-mode.ts:393-414`） |
 | F6 | pi 的真 idle 信号是 `agent_settled`（`_isAgentRunActive=false` 时同步发出）；`agent_end` 发出后 post-run loop 还会跑 retry/compaction/queued continue，不是 idle 信号 | ✅源码核实（`agent-session.ts:534-541`、`:1033`） |
-| F7 | `steer()`/`followUp()` **不检查 isStreaming**，直接入队；idle 时误发 steer → 队列无人 drain，下次 prompt 时被 drain 进 context（污染）；误发 followUp → 主 turn 结束后 drain → 额外多跑一个完整 LLM turn（成本+污染） | ✅源码核实（`agent-session.ts:1294-1330` + agent-loop drain 逻辑） |
-| F8 | `clearQueue()` 清空 steering + followUp 两个队列（含 agent 层），可用于投递前防御历史残留 | ✅源码核实（`agent-session.ts:1469-1477`） |
+| F7 | `steer()`/`followUp()` **不检查 isStreaming**，直接入队；idle 时误发 steer → 队列无人 drain，**无新 turn、无回复（session「不应答」）**；下次 prompt 时被 drain 进 context（`agent-loop.ts:167` turn 开头 drain、`:182-188` 逐条 push `currentContext.messages`，污染）；误发 followUp → 主 turn 结束后 drain（`agent-loop.ts:263`）→ 额外多跑一个完整 LLM turn（成本+污染）。且 RPC `steer` 命令 idle 时仍返回 success（`rpc-mode.ts:417-420`）——静默受理，最坏失败形态 | ✅源码核实（`agent-session.ts:1294-1330`、`agent-loop.ts:167/182-188/263`、`rpc-mode.ts:417-420`）+ ✅已测（v1 决策 1 能力矩阵：idle 时 steer/follow_up 只入队不触发，实测 FAIL） |
+| F8 | `clearQueue()` 清空 steering + followUp 两个队列（含 agent 层）；**但 RPC 命令层（rpc-mode.js）无 clearQueue 命令，父进程经 stdin 不可达**，故不作为投递防御手段（v2 通过统一 `prompt(streamingBehavior)` 从结构上消除残留，无需 clearQueue，见决策 3） | ✅源码核实（`agent-session.ts:1469-1477` 方法成立；rpc-mode.js 命令集无 clearQueue，父进程不可达） |
 | F9 | RPC 启动（含 `--session <file>` 冷路径 resume）必然触发 `session_start` hook：`bindExtensions` 无条件 `emit(_sessionStartEvent)`，rpc-mode 启动即 `rebindSession()` | ✅源码核实（`agent-session.ts:2197`、`rpc-mode.ts:313`） |
 | F10 | 子进程 stdin EOF 时自杀（`process.stdin.on("end") → shutdown()`）——父进程死亡 → 管道断 → 子进程退出 | ✅源码核实（`rpc-mode.ts:778-781`）。注意这是管道语义副作用，不是「OS 必然清理进程树」（Unix 孤儿 reparent 到 init 继续跑）——本设计不把它当唯一防线（决策 7） |
 | F11 | custom entry 不进 LLM context（`sessionEntryToContextMessages` 对 `type:"custom"` 返回空数组） | ✅源码核实（`session-manager.ts:379-406`） |
@@ -66,7 +66,7 @@
 
 **In-scope**：
 - 进程生命周期模型（长驻 + idle timeout 回收 + 全局活进程上限 + 显式收割）
-- 统一投递语义（streamingBehavior 权威裁决 + interrupt 显式抢占 + clearQueue 防御）
+- 统一投递语义（streamingBehavior 权威裁决 followUp/steer 统一，不用 steer 命令、不依赖 clearQueue）
 - 状态机简化（取消 idle 持久态语义）
 - identity entry 由子进程写（吸收 fix 文档论证的方案）
 - 孤儿/双写防护（单 activation 不变量 + 三道收割防线）
@@ -95,15 +95,15 @@ v1 的核心决策（`continuous-subagent-chat.md` 决策 5/6）：对话模式�
 | **idle** | **进程死 + 等续聊** | **resume spawn 重开 session + prompt** |
 | done/终态 | 进程死 + 已关闭 | 拒绝 |
 
-### 2.2 v1 范式选择的真实历史：两个独立误判的叠加
+### 2.2 v1 范式选择的真实历史：两个设计期问题的叠加
 
 公允归因（经 v1 §3.2 原文核对）：
 
-**(a) 事实误判**：v1 评估方案 A（进程保活）时写「上下文在进程内存，进程没了对话就没了」。作为事实陈述这是错的——pi 的对话上下文载体是 session 文件，持久化与进程死活正交：resume 能恢复上下文恰恰证明「进程死了，对话没死，文件还在」；v1 自己的探针 P-2 也实测保活进程多轮 prompt 正常（F1）。这个错误让「保活」的安全性看起来比实际差，使方案 A 在对比中被低估。
+**(a) 选项空间构造缺陷**：v1 把「进程死活策略」与「文件恢复策略」两个**正交维度**压成了一维互斥选项——方案 A（纯保活，无 resume）与方案 B（每轮 kill + resume）非此即彼。v1 对方案 A 的否定本身成立（「上下文在进程内存，进程没了对话就没了」对**不配 resume 的纯保活**是真命题）；问题不在否定 A，在于这个构造使正解只能以「方案 C = A + B 双机制」的形态出现——「同一功能两条代码路径，kill 语义、守卫、状态机各一份」，复杂度被结构性高估。而正解的实际形态是 **resume 一个机制兼任两种角色**（崩溃/timeout 后的冷路径恢复 + 进程长驻时的热路径零机制）——不是 A + B 的叠加，是 B 的机制在保活范式下复用（resume 能恢复上下文恰恰证明「进程死了，对话没死，文件还在」；v1 自己的探针 P-2 也实测保活进程多轮 prompt 正常，F1）。选项空间的错误构造让正解看起来比实际复杂得多，这是它被推迟的先决原因。
 
 **(b) 复杂度误判**：v1 §3.2 **明确评估过方案 C（保活 + 文件兜底混合）并主动裁决推迟**——「同一功能两条代码路径，kill 语义、守卫、状态机各一份……收益在 resume 已实测 ~1.5s 加载成本面前不成立」。这是一次复杂度权衡，**不是漏看选项**。但这笔账算于「每轮 kill」的补丁机制（消费确认制、sidecar、重建矩阵）长成**之前**——方案对比时它们还不存在，kill 侧的成本被系统性低估；而混合方案的「两条路径」实际是「热路径零机制 + 冷路径复用已有 resume」，并非两套状态机。实现盘点后重算：kill 侧补丁成本远超预估，混合方案净复杂度反而更低（行数实测净减 ~270-330 行）。
 
-**本设计的贡献不是发现 v1 漏掉的选项，而是用实现期的完整成本数据，重估 v1 在信息不全时推迟掉的方案。** 教训有两层，缺一不可：方案对比前先验证前提假设（(a) 的教训）；方案对比的成本账要在实现盘点后重算——补丁机制的成本在设计期不可见（(b) 的教训）。
+**本设计的贡献不是发现 v1 漏掉的选项，而是用实现期的完整成本数据，重估 v1 在信息不全时推迟掉的方案。** 教训有两层，缺一不可：方案对比时先检查选项空间的构造——互斥选项可能把正交维度错误打包，让正解以「全都要的双机制」形态虚胖出场（(a) 的教训）；方案对比的成本账要在实现盘点后重算——补丁机制的成本在设计期不可见（(b) 的教训）。
 
 ### 2.3 「每轮 kill」的真并发症 vs 独立的所有权违例（精确归因）
 
@@ -185,7 +185,7 @@ v1 的复杂机制按「存在理由是否被 kill-per-round 逼出来」分两�
 
 **为什么不依赖 stdin EOF 单一防线**：EOF 自杀是 spawn 管道方式的副作用——spawn 方式变化（detach stdio、setsid）会让它静默失效，失效后果是孤儿持有 session 文件 + 冷路径再 spawn = 双写者。显式收割是设计职责，EOF 是免费兜底。
 
-**idle timeout 与全局活进程上限（双阀）**：per-record timeout 是 G2（低延迟）与 G5（内存）的调节阀，但它在「N 个 subagent 于 timeout 窗口内高频复用」场景**无全局内存上界**（high-water 可能远超 v1 每轮 kill）。因此加**全局活进程上限（ceiling）**：活进程数超限时对最久空闲者提前 passivate。timeout 默认值的决策依据：与 prompt cache TTL（~5min）的关系——timeout > cacheTTL 则活进程白占内存（cache 已过期，续聊仍 miss）；timeout < cacheTTL 则 kill 丢热 cache。**初拟默认 ≤ cacheTTL（~5min）**；「保 cache 心跳」（timeout 前发心跳保活 cache 但不回收内存）作为显式可选项后置，初版不做（§5.4）。默认值实测定（P-timeout）。
+**idle timeout 与全局活进程上限（双阀）**：per-record timeout 是 G2（低延迟）与 G5（内存）的调节阀，但它在「N 个 subagent 于 timeout 窗口内高频复用」场景**无全局内存上界**（high-water 可能远超 v1 每轮 kill）。因此加**全局活进程上限（ceiling）**：活进程数超限时，对**最久未活动的空闲进程**提前 passivate（busy 进程永不做挤出候选；全 busy 超限时的行为见决策 4）。timeout 默认值的决策依据：与 prompt cache TTL（~5min）的关系——timeout > cacheTTL 则活进程白占内存（cache 已过期，续聊仍 miss）；timeout < cacheTTL 则 kill 丢热 cache。**初拟默认 ≤ cacheTTL（~5min）**；「保 cache 心跳」（timeout 前发心跳保活 cache 但不回收内存）作为显式可选项后置，初版不做（§5.4）。默认值实测定（P-timeout）。
 
 #### 支柱二：session 文件为唯一状态源，进程是活缓存
 
@@ -204,10 +204,9 @@ message(id, text, interrupt?):
   if child 死了:
      resume spawn(--session <file>, --model, ...)   // 冷路径（单 activation 不变量检查）
      prompt(text)
-  else if interrupt:
-     clearQueue + steer(text)     // 显式抢占（决策 3 的防御）
   else:
-     prompt(text, streamingBehavior: "followUp")    // 热路径：pi 权威裁决
+     // 热路径：统一走 prompt + streamingBehavior，pi 权威裁决 busy/idle（不用 steer 命令、不依赖 clearQueue）
+     prompt(text, streamingBehavior: interrupt ? "steer" : "followUp")
   return { delivered: true }
 ```
 
@@ -227,14 +226,14 @@ message(id, text, interrupt?):
 | **v1：每轮 kill + resume（被替代）** | ❌ 补丁机制群（§2.3 第一类）；每轮重放；identity tree 污染已实锤（§2.3 第二类） | 已实现一大半（沉没成本） | 高：补丁机制多、易出 bug | ❌ 替代 |
 | **纯进程保活，无文件兜底** | ❌ 进程崩溃/重启真丢对话；需自己造恢复机制 | 低 | 高 | ❌（v1 否它否对了） |
 
-**关键澄清**（公允版）：v1 否决纯保活是**对的**——那个范式下「进程没了对话就没了」真成立。v1 也评估过混合方案（方案 C）并因复杂度推迟——不是漏看，是当时信息下的合理判断（§2.2 (b)）。本设计用实现期成本数据重估该判断：混合方案的两条路径是「热路径零机制 + 冷路径复用 resume」，净复杂度反降。v1 的事实误判（§2.2 (a)）则让保活侧的安全性被低估，两个误判叠加才走向每轮 kill。
+**关键澄清**（公允版）：v1 否决纯保活是**对的**——那个范式下「进程没了对话就没了」真成立。v1 也评估过混合方案（方案 C）并因复杂度推迟——不是漏看，是当时信息下的合理判断（§2.2 (b)）。本设计用实现期成本数据重估该判断：混合方案的两条路径是「热路径零机制 + 冷路径复用 resume」，净复杂度反降。v1 的选项空间构造缺陷（§2.2 (a)）让正解以双机制形态虚胖出场，叠加复杂度误判（§2.2 (b)），才走向每轮 kill。
 
 ### 3.3 关键决策与权衡
 
 #### 决策 1：进程不因轮次结束而死（核心范式决策）
 
 - **选择**：`agent_settled`（一轮完成，支柱四）**不 kill 进程**，进程进入空闲，等下条消息或 idle timeout / 全局上限。
-- **被否**：v1 的「每轮 kill」——两个误判的叠加（§2.2），且引发一整串补丁（§2.3）。
+- **被否**：v1 的「每轮 kill」——两个设计期问题的叠加（§2.2），且引发一整串补丁（§2.3）。
 - **前提检验**：多轮 prompt 能力 F1 ✅已测；**长驻稳定性 ⛔ P-keepalive 为承重探针**——数十轮（≥20）+ 跨小时 RSS/延迟监控 + 增长阈值（稳态后每轮 RSS 增幅 <2%），**不通过则设计引入定期重启退路**（如 N 轮后强制 passivate → 冷路径重建），范式论点部分退化为「长驻窗口有限」，恢复路径不变。验证强度匹配该前提的承重地位（准则 1）。
 
 #### 决策 2：统一投递，取消 idle 持久态语义
@@ -243,17 +242,24 @@ message(id, text, interrupt?):
 - **被否**：v1 的 idle 持久态（进程死 + 可恢复，需 `.idle` sidecar 标记 + 跨重启重建矩阵）——终态没有「进程死但可恢复」的中间态：进程死了，下次 message 冷路径重建，无需预先标记。
 - **收益**：`.idle` sidecar、idle 重建矩阵、reaper 豁免、idle→running CAS **全部删除**。
 
-#### 决策 3：投递语义统一为 streamingBehavior 裁决；显式处理 steer/followUp 残留污染
+#### 决策 3：投递语义统一为 streamingBehavior 裁决（followUp/steer 同路径），残留从结构上消除
 
-- **选择**：普通消息 = `prompt(streamingBehavior:"followUp")`；抢占 = `steer` 命令（调用方显式 `interrupt:true`）。父进程不维护 busy 状态。
-- **依据**：F3/F4/F5 ✅源码核实——busy 时 pi 入队 followUp（当前轮后处理）、idle 时参数被忽略；throw 路径（不传 streamingBehavior 的裸 prompt 撞 busy）经 RPC error response 可达父进程，作为调试/降级手段。
-- **次选（保留为契约文档）**：乐观策略——裸 `prompt` → catch "already processing" → 降级 followUp。与 streamingBehavior 路径等价但多一次 round-trip；用于需要区分「立即处理 vs 排队」的调用方可见性场景。两路径都保证**永不向 idle 进程发 steer/followUp**。
-- **残留污染（v1 天然免疫、v2 新引入的正确性风险，准则 4 诚实引入）**：`steer()`/`followUp()` 不检查 isStreaming（F7 ✅源码核实）。idle 时误发 steer → 残留队列 → 下次 prompt 时被 drain 进 context（污染）；误发 followUp → 额外多跑一个完整 LLM turn（成本+污染）。**消除**：(i) 主路径（streamingBehavior 裁决）从结构上不会在 idle 时入队（F4）；(ii) interrupt 路径发 steer 前先 `clearQueue` 清历史残留（F8 ✅源码核实），且 steer 仅在事件 pump 确认 busy（`agent_settled` 未收到）时发出——注意此处事件用于**防御**而非**判定**，判定权仍在 pi。
-- **探针**：P-deliver（全路径）+ P-residue（残留防御）。
+- **选择**：**所有热路径投递统一走 `prompt(streamingBehavior)`**——普通消息用 `"followUp"`，抢占（`interrupt:true`）用 `"steer"`。**不用 `steer` 命令、不依赖 `clearQueue`**。父进程不维护任何 busy 状态。
+- **依据**（F3/F4/F5/F7 ✅源码核实）：
+  - busy 时：`prompt(streamingBehavior:"followUp")` → pi 入队（当前轮后处理，F3）；`prompt(streamingBehavior:"steer")` → pi 走 `_queueSteer` 抢占（F3，`agent-session.js:839`）——**与 `steer` 命令调用同一个 `_queueSteer`，效果完全一致**。
+  - idle 时：`streamingBehavior` 参数被忽略（仅在 `isStreaming` 分支内读取，F4），正常开新 turn。interrupt 在 idle 时自动退化为新 prompt（idle 无东西可抢，语义正确）。
+  - RPC 透传已核实（`rpc-mode.js:305` `streamingBehavior: command.streamingBehavior`）。
+- **steer 命令路径被否**（不再使用）：(i) `session.steer()` 不检查 isStreaming（F7），idle 时误发会残留污染，逼父进程自行判 busy（事件镜像，破坏零状态镜像原则）；(ii) `clearQueue` 虽能清队列（F8 方法成立），**但 RPC 命令层无 clearQueue 命令、父进程经 stdin 不可达**，作为「发 steer 前清残留」的防御无法执行。统一走 `prompt(streamingBehavior:"steer")` 后，busy/idle 分支由 pi 裁决（F3/F4），**从结构上不会在 idle 时入队，根本不产生残留**，clearQueue 防御随之不需要。
+- **残留污染（v1 天然免疫、v2 新引入的正确性风险，准则 4 诚实引入）**：`steer()`/`followUp()` 不检查 isStreaming（F7），idle 时误发 steer → 残留队列 → 下次 prompt 被 drain 进 context（`agent-loop.ts:167` turn 开头 drain、`:182-188` 逐条 emit + push `currentContext.messages`，污染）；误发 followUp → 额外多跑完整 LLM turn。**消除方式**：统一 `prompt(streamingBehavior)` 路径从结构上避免 idle 入队（F4），无需 clearQueue（不可达）；唯一残留风险是「绕过扩展投递层、直接向子进程 RPC 注入 steer」——属调试/攻击场景，由 P-residue 验证危害真实存在 + 统一路径不触发。
+- **调用方契约（写进 tool surface 文档）**：(i) `{delivered:true}` = **已受理**（accepted），不是已处理——busy 入队时 `preflightResult(true)`、父进程立即拿 success（F5）；「已被处理」由后续 notify / `agent_settled` 事件表达。崩溃重发语义（决策 6）依赖这个区分。(ii) `interrupt:true` 在对方空闲时**自动退化为普通新消息**（F4，idle 无东西可抢，语义正确）——主 agent 不需要感知忙闲。(iii) 消息文本以 `/` 开头时走 prompt 路径会被 skill/template 展开（与普通消息一致）；这与 `steer` 命令（对 extension 命令抛错）行为不同——统一路径下 interrupt 与普通消息同等处理，一致性是优点，实现者知悉即可。
+- **次选（保留为契约文档）**：乐观策略——裸 `prompt` → catch "already processing" → 降级 followUp。与 streamingBehavior 路径等价但多一次 round-trip；用于需要区分「立即处理 vs 排队」的调用方可见性场景。
+- **探针**：P-deliver（全路径含 interrupt）+ P-residue（残留危害 + 统一路径不触发）。
 
 #### 决策 4：idle timeout 回收 + 全局活进程上限（双阀）
 
-- **选择**：per-record timer（`agent_settled` 后启动，任何 stdin 写入重置，超时 SIGTERM）+ 全局 ceiling（活进程数超限，最久空闲者提前 passivate）。子进程死后 session 文件留盘，下次 message 冷路径 resume。
+- **选择**：per-record timer + 全局 ceiling。子进程死后 session 文件留盘，下次 message 冷路径 resume。
+- **timer 的 arm/disarm 语义（并发正确性，必须写死）**：timer **仅在空闲态 armed**——`agent_settled` arm，新 turn 开始（投递导致 isStreaming 转 true）disarm，超时触发时二次确认进程仍空闲才 SIGTERM。**禁止「timer 常驻、stdin 写入重置」的实现**——长 turn（10 分钟无 stdin 写入）期间 timer 若仍在跑，正在干活的进程会被误杀。turn 期间进程由 busy 状态保护，不回收。
+- **ceiling 挤出候选（并发正确性，必须写死）**：挤出候选**仅限空闲进程**（busy 进程的 lastActiveAt 陈旧是正常状态，按 LRU 选会误杀正在干活的进程）。**全部 busy 且超限时允许临时超限**（不拒绝新 activation、不排队等待）——busy 进程迟早 `agent_settled` 回落为空闲，下一轮评估自然回收；拒绝服务或延迟激活的代价高于短时内存超限。
 - **被否**：子进程自维护 timer（需 pi 支持 idle exit，扩展成本高且父进程崩溃时 timer 失效）；无 timeout 无 ceiling（内存无上界，违反 G5）；仅 timeout 无 ceiling（高频复用场景 high-water 无界，准则 4）。
 - **默认值决策依据**：timeout ≤ prompt cache TTL（~5min）——超出 cacheTTL 的活进程白占内存（续聊仍 cache miss），「保 cache 心跳」作为显式可选项后置（初版不做）。P-timeout 实测确认。
 
@@ -298,9 +304,9 @@ message(id, text, interrupt?):
 | P-hotpath | 热路径续聊零延迟（不 resume） | 第二轮 message 时监控 spawn 调用，断言热路径无新进程（spawn 次数 = 1） | ⛔ 实施期 |
 | P-coldpath | 冷路径崩溃恢复 | kill 子进程模拟崩溃 → message → 断言自动 resume 且上下文保留（parentId 链连续） | ⛔ 实施期 |
 | P-timeout | idle timeout 回收后冷路径正确 + 定默认值 | 短 timeout 配置 → 断言进程退出 → message → 断言 resume 恢复；对照 timeout ≤/> cacheTTL 的续聊延迟 | ⛔ 实施期 |
-| **P-deliver**（决策 3） | streamingBehavior 权威裁决全路径 | idle 时发 message → 断言开新 turn（无入队、无残留）；busy 时发 message → 断言当前轮后按序处理；interrupt → 断言 steer 抢占生效 | ⛔ 实施期 |
-| **P-residue**（决策 3） | idle 误发 steer/followUp 的防御 | 直接向 idle 子进程 RPC 注入 steer（绕过扩展投递层）→ clearQueue 后发 prompt → 断言 context 无残留消息、LLM 请求次数无额外 turn | ⛔ 实施期 |
-| P-settled | `agent_settled` 与可安全回收/投递状态的时序 | 真实扩展环境复验：`agent_end` → post-run（制造 compaction 场景）→ `agent_settled` 的顺序与间隔 | ⛔ 实施期（F6 已源码核实，此为集成复验） |
+| **P-deliver**（决策 3） | streamingBehavior 权威裁决全路径（含 interrupt） | idle 时发普通 message → 断言开新 turn（无入队）；busy 时发普通 message → 断言当前轮后按序处理；busy 时发 interrupt → 断言 steer 抢占生效；idle 时发 interrupt → 断言退化为新 prompt（不残留） | ⛔ 实施期 |
+| **P-residue**（决策 3） | 残留污染危害真实存在 + 统一路径不触发 | ①绕过扩展投递层直接向 idle 子进程 RPC 注入 steer → 发 prompt → 断言 context 被污染（证 F7 危害真实）；②经扩展 interrupt 路径发 message（走 prompt streamingBehavior:"steer"）→ 断言 idle 时不入队、开新 turn、context 无残留 | ⛔ 实施期 |
+| P-settled | `agent_settled` 与可安全回收/投递状态的时序 + compaction 窗口投递语义 | 真实扩展环境复验：`agent_end` → post-run（制造 compaction 场景）→ `agent_settled` 的顺序与间隔；**compaction 窗口内投递 message → 断言 isStreaming 仍 true、消息走 followUp 排队、`agent_settled` 后按序处理（不错乱不丢失）** | ⛔ 实施期（F6 已源码核实，此为集成复验） |
 | P-eof | 父进程死亡各姿势下子进程退出 | SIGTERM/SIGKILL 父进程 → 断言子进程退出（EOF 自杀，F10）；若发现失效姿势 → 必须命中 P-orphan 收割路径 | ⛔ 实施期 |
 | **P-orphan**（决策 7） | 启动收割 + 单 activation 互斥 | 制造孤儿（绕过 shutdown hook kill 父进程）→ 重启 → 断言孤儿被按 PID 收割；并发 message 触发竞争 activate → 断言串行化、无双写（session 文件 tree 完整） | ⛔ 实施期 |
 | **P-ceiling**（决策 4） | 全局上限触发 LRU passivate，内存有界 | N=5 对话 subagent 在 timeout 窗口内高频轮转 → 断言活进程数 ≤ ceiling、内存 high-water 有界 | ⛔ 实施期 |
@@ -375,10 +381,11 @@ message(id, text, interrupt?):
 - **步骤**：① 制造孤儿（绕过 shutdown hook：`kill -9` 父进程，若 EOF 自杀生效则人为保留孤儿）；② 重启父进程；③ 对同一 subagent 并发发两条 message（触发竞争 activate）。
 - **通过标准**：重启时孤儿被按 PID 收割；并发 message 串行化，同 recordId 不出现两个活进程；session 文件 parentId 链完整（无双写痕迹）。
 
-### 场景 H：残留污染防御（回溯 G6）
+### 场景 H：残留污染——危害验证 + 统一路径不触发（回溯 G6）
 
-- **步骤**：① subagent 空闲（`agent_settled` 已发）；② 绕过扩展投递层，直接向子进程 RPC 注入一条 steer；③ 经扩展正常 `message` 续聊。
-- **通过标准**：扩展投递前的 clearQueue 防御清掉注入的 steer；续聊 context 中无该 steer 内容；LLM 请求次数 = 预期（无额外 turn）。
+- **可操作性前提**：子进程 stdin 是父进程持有的管道，外部进程无法直接写入。步骤②的「直接注入 steer」须经**扩展投递层预留的测试后门**（debug 入口，直接 `child.stdin.write` 原生 `steer` 命令 JSONL，绕过统一投递逻辑）执行——实现期需预留该后门（仅测试构建/环境变量开启）。
+- **步骤**：① subagent 空闲（`agent_settled` 已发）；② **危害验证**：经测试后门向子进程注入裸 `steer` 命令 → 发 prompt → 断言 context 被污染（证 F7 残留危害真实）；③ **统一路径不触发**：另起一轮，经扩展 interrupt 路径发 message（走 `prompt(streamingBehavior:"steer")`）→ 断言 idle 时开新 turn、不入队、context 无残留。
+- **通过标准**：② 证危害真实（context 含注入的 steer）；③ 证统一路径不残留（context 干净、LLM 请求次数 = 预期）。两者合证「v2 不依赖 clearQueue（不可达），靠统一路径从结构上消除残留」。
 
 > 单元测试仅作回归辅助。验收以场景 A-H 真实环境实跑为准。
 
@@ -394,7 +401,7 @@ v1 已实现一大半，终态不是从零开始。迁移的核心动作是**「
 |---|---|---|
 | 改 `agent_end` kill 分支：对话模式**不 kill**，挂 `agent_settled` 进空闲 + 启 timer | **改**（核心，一行决策翻转 + 信号换挂） | session-runner.ts kill 分支 |
 | 加 idle timeout 模块 + 全局 ceiling（per-record timer + LRU 挤出） | **新增** | 新模块 lifecycle-manager |
-| 加统一投递（getChild 判活 + streamingBehavior 裁决 + interrupt clearQueue/steer） | **改**（替换 v1 的 running/idle 分支） | subagent-actions.ts / subagent-service.ts |
+| 加统一投递（getChild 判活 + streamingBehavior 裁决 followUp/steer 统一） | **改**（替换 v1 的 running/idle 分支） | subagent-actions.ts / subagent-service.ts |
 | 加显式收割（shutdown hook + record 持久化 PID + 启动孤儿扫描 + activate 互斥） | **新增** | index.ts / record-store.ts / lifecycle-manager |
 | 加 `agent_settled` 事件跟踪（notify / idle timer / 可回收状态） | **新增** | session-runner.ts 事件 pump |
 | identity 写入迁子进程 session_start hook | **改 + 删** | 新增 hook + 删 session-runner.ts:1081-1098 |
@@ -409,7 +416,7 @@ v1 已实现一大半，终态不是从零开始。迁移的核心动作是**「
 ### 5.2 模块拆分清单
 
 1. **进程生命周期管理**（lifecycle-manager）：kill 分支翻转；per-record idle timer（启动/重置/触发 SIGTERM）；全局 ceiling（最久空闲挤出）；shutdown hook；启动孤儿扫描（按持久化 PID）；activate 互斥（单 activation 不变量）。**理由**：决策 1/4/7，范式核心。
-2. **统一投递**（替换续聊状态机）：`message` → getChild 判活 → 热路径 `prompt(streamingBehavior:"followUp")` / interrupt → `clearQueue + steer` / 冷路径 resume + prompt；父进程零 busy 状态。**理由**：决策 2/3，收敛续聊语义，判定权归 pi。
+2. **统一投递**（替换续聊状态机）：`message` → getChild 判活 → 热路径 `prompt(streamingBehavior: interrupt?"steer":"followUp")`（pi 权威裁决，不用 steer 命令、不依赖 clearQueue）/ 冷路径 resume + prompt；父进程零 busy 状态。**理由**：决策 2/3，收敛续聊语义，判定权归 pi。
 3. **`agent_settled` 事件跟踪**：事件 pump 挂 `agent_settled`（不是 `agent_end`）驱动 notify、idle timer 启动、可回收状态标记。**理由**：支柱四，F6。
 4. **identity 子进程写**（= fix 文档 M1/M2）：子进程 `session_start` 用 `pi.appendEntry`；全字段经 env 传入（补 `PI_SUBAGENT_CHAT_MODE`/`PI_SUBAGENT_SLUG` 等）；删 session-runner.ts:1081-1098。**理由**：决策 5，根治 tree 污染。
 5. **删除 v1 并发症**：`.idle` sidecar 写/读/重建矩阵/reaper 豁免；消费确认制三环；idle→running CAS；notifier 轮次豁免。**理由**：决策 2/6，减法。
@@ -421,7 +428,7 @@ v1 已实现一大半，终态不是从零开始。迁移的核心动作是**「
 |---|---|
 | `execution/session-runner.ts` | kill 分支改（对话模式不 kill，信号换挂 `agent_settled`）；删 identity fs 补写（1081-1098）；childEnv 补 identity 字段（745-762 区域）；事件 pump 加 `agent_settled` 跟踪 |
 | `execution/subagent-service.ts` | resumeRound 改为统一投递的冷路径；删 idle→running CAS；消费确认制降级；record 持久化 PID |
-| `interface/subagent-actions.ts` | message handler 改为统一投递入口（streamingBehavior 裁决 + interrupt 路径） |
+| `interface/subagent-actions.ts` | message handler 改为统一投递入口（streamingBehavior 裁决 followUp/steer 统一，无 steer 命令、无 clearQueue） |
 | `execution/idle-marker.ts` | **删除**（.idle sidecar 不再需要） |
 | `execution/record-store.ts` | 删 idle 重建矩阵分支；STATUS_PRIORITY 删 idle 键；record 加 PID 持久化 |
 | `execution/finalize-record.ts` | 删 doFinalizeRoundToIdle；消费确认制补投删除 |
@@ -446,7 +453,7 @@ v1 已实现一大半，终态不是从零开始。迁移的核心动作是**「
 ## 附录 A：与 v1 的关系（公允版）
 
 - v1 的正确骨架（session 文件为状态源、resume 能力、归属守卫、notifier、tool surface 封装、model 防漂移）终态全部保留（决策 8）。
-- v1 的失误是两个**独立**误判的叠加（§2.2）：事实误判（「上下文在进程内存」，被 resume 能力与 v1 自己的 P-2 证伪）+ 复杂度误判（方案 C 推迟时，kill 侧补丁成本尚未长成、无法计入）。v1 否决纯保活是对的；评估并推迟混合方案是当时信息下的合理判断。本设计的贡献是用实现期成本数据重估。
+- v1 的选择是设计期信息不全下的合理权衡，有两处设计期问题在实现盘点后才显形（§2.2）：**选项空间构造缺陷**（正交维度压成互斥选项，正解以「A + B 双机制」形态背负虚高复杂度）+ **复杂度缺口**（方案 C 推迟时，kill 侧补丁成本尚未长成、无法计入）。v1 否决纯保活是对的；评估并推迟混合方案是当时信息下的合理判断。本设计的贡献是用实现期成本数据重估。
 - v1 的四轮对抗审查质量很高（机制层面），但审的是「机制对不对」，没审「前提对不对」；且方案对比的成本账在补丁机制长成后无人重算。这是比 P-1 探针假阳性更深的一课：**设计期的成本对比要在实现盘点后重算**。
 - fix 文档（`continuous-chat-resume-context-fix.md`）的「identity 由子进程写」被决策 5 完整吸收，其 M1/M2 是本设计的严格子集，可先行落地止血；其 §6 给 pi 上游的 `_buildIndex` 建议并入附录 B。
 
@@ -460,4 +467,4 @@ v1 已实现一大半，终态不是从零开始。迁移的核心动作是**「
 
 ## 附录 C：修订说明
 
-本版在初稿基础上吸收对抗审查（`subagent-continuous-chat-v2.review.md`）与二次源码核实修订：identity 归因修正（与 kill-per-round 正交，§2.3）；「OS 必然清理」断言修正（实为 stdin EOF 自杀，F10）并新增显式收割决策（决策 7）；busySet 改为 streamingBehavior 权威裁决并补 steer/followUp 残留污染对策（决策 3，F3-F8）；P-keepalive 扩 scope 并加承重退路（决策 1）；新增全局内存上限（决策 4）；新增 §3.5 多 agent 通信演进路径。
+本版在初稿基础上吸收对抗审查（`subagent-continuous-chat-v2.review.md`）与二次源码核实修订：identity 归因修正（与 kill-per-round 正交，§2.3）；「OS 必然清理」断言修正（实为 stdin EOF 自杀，F10）并新增显式收割决策（决策 7）；busySet 改为 streamingBehavior 权威裁决并补 steer/followUp 残留污染对策（决策 3，F3-F8）；P-keepalive 扩 scope 并加承重退路（决策 1）；新增全局内存上限（决策 4）；新增 §3.5 多 agent 通信演进路径。再修订：§2.2 归因修正为选项空间构造缺陷（消除 (a)/(b) 自相矛盾）；决策 4 写死 timer arm/disarm 与 ceiling 空闲候选/全 busy 溢出语义（并发正确性）；决策 3 补 delivered/interrupt 退化调用方契约；场景 H 补测试后门可操作性；F7 证据升级（v1 实测 FAIL + agent-loop 行号）；P-settled 补 compaction 窗口投递断言。
