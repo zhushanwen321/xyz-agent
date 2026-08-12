@@ -72,7 +72,7 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 | `@zhushanwen/pi-plan` | `plan` | 轻量 plan 模式 |
 | `@zhushanwen/pi-rename-session` | `rename-session` | session 自动/手动重命名 |
 | `@zhushanwen/pi-scheduler` | `scheduler` | 定时任务调度（cron / interval，once / recurring） |
-| `@zhushanwen/pi-statusline` | `statusline` | 状态栏（上下文用量 / token 速度 / provider 配额） |
+| `@zhushanwen/pi-session-reader` | `session-reader` | pi session 语义化读取（find/family/outline/expand/detail/search/export/extract/workflow 九种 action） |
 | `@zhushanwen/pi-structured-output` | `structured-output` | 结构化输出（JSON Schema + Ajv 校验的 tool call 机制） |
 | `@zhushanwen/pi-subagent-workflow` | `subagent-workflow` | 统一 subagent 执行 + 多 agent workflow 编排（有状态工作流管理） |
 | `@zhushanwen/pi-todo` | `todo` | AI 驱动的 todo 列表（会话持久化 + /todos） |

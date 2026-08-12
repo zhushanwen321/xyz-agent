@@ -23,8 +23,9 @@ import type { ModelInfo, ModelRegistryLike } from "./model-resolver.ts";
  * 「调用时显示的名」与「实际加载的 agent.md」一致。
  *
  * [HISTORICAL] 旧实现两处各硬编码：service 用 "default"（虚构名），format 用
- * "worker"（真实但不是兌底语义）。导致不传 agent 时，block 标题显示 worker，
- * 但实际执行兌底逻辑不一致。统一为 general-purpose 后名实相符。
+ * "worker"（真实但不是兌底语义，worker agent 已在 2026-08 agent 重构中删除）。
+ * 导致不传 agent 时，block 标题显示 worker，但实际执行兌底逻辑不一致。统一为
+ * general-purpose 后名实相符。
  */
 export const DEFAULT_AGENT_NAME = "general-purpose";
 
