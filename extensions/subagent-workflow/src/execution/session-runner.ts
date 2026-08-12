@@ -723,6 +723,14 @@ export async function runSpawn(
       env: childEnv,
     });
     proc = child;
+    // [worktree-reaper-fix] 同步补全注册表 pid：spawn 返回后 child.pid 立即可得（Node.js
+    // 同步属性），无需等任何 stdout 事件。原补全点挂在 header 分支（下方 stdout handler 内），
+    // 而 RPC mode（buildSpawnArgs 固定 --mode rpc）不输出 header 行——pid 恒为 0，超
+    // SPAWN_GRACE_MS 后被 reaper 当孤儿误删活 worktree（2026-08-11 cw 递归编排整树失活事故）。
+    // header 分支调用保留：json mode 回切时仍能补全，updatePid 同 branch 覆盖写幂等，无副作用。
+    if (opts.worktree && child.pid) {
+      ctx.onWorktreePid?.(opts.worktree.branch, child.pid);
+    }
     // [C1] track 子进程供 dispose 兜底 kill（sync + background 均注册——sync 无 controller，
     // abortRunningControllers 跳过它，靠本 Set 兜底）。close/error 后移除（已退出无需再 kill）。
     spawnedChildren.add(child);
@@ -957,8 +965,13 @@ export async function runSpawn(
       });
       child.on("error", (err: Error) => {
         // spawn 本身失败（command not found 等）
+        // [worktree-reaper-fix] 拼 spawnCwd 进错误消息：ENOENT 的 err.message 只含 command 名，
+        // 无 cwd 线索（worktree 被 reaper 误删后 cwd 指向虚空）会导致误诊——2026-08-11 事故
+        // AI 误判"node 被卸载"的直接原因。
         spawnedChildren.delete(child);
-        record.lastError = err.message;
+        const errno = err as NodeJS.ErrnoException;
+        const cwdHint = errno.code === "ENOENT" ? ` (cwd: ${spawnCwd})` : "";
+        record.lastError = `${err.message}${cwdHint}`;
         resolve(SIGNAL_EXIT_CODE_THRESHOLD); // 非零退出
       });
     });

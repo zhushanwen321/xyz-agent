@@ -32,6 +32,21 @@ function hasRealSession(sid: string): boolean {
     return false
   }
 }
+
+// 双目录版探测：subagent session 文件在 subagents/ 下，hasRealSession 扫不到。
+// 用于对活跃数据目录中具体文件（fork 子代/隔代 subagent）存在性的守卫。
+function hasAnyRealSession(fragment: string): boolean {
+  try {
+    return (
+      execSync(
+        `find ${REAL_AGENT_DIR}/sessions ${REAL_AGENT_DIR}/subagents -name '*${fragment}*' -name '*.jsonl' ! -name '*.finalized' 2>/dev/null | head -1`,
+        { encoding: 'utf8' },
+      ).trim().length > 0
+    )
+  } catch {
+    return false
+  }
+}
 const HAS_REAL_ROOT = hasRealSession('019fe620-8ae1-78a7-b76a-43a1ba4cc3c7')
 const HAS_REAL_WF = hasRealSession('019fdcda-75c7-74b7-a160-f67f6bf88384')
 
@@ -440,6 +455,9 @@ describe('buildFamilyFromFs - fixture', () => {
 
 describe.skipIf(!HAS_REAL_ROOT)('buildFamilyFromFs - 真实数据 ~/.pi/agent', () => {
   it('019fe620 family：fork 019fe632（跨 cwd）+ 隔代 subagent 019fe635（真实 id）', async () => {
+    // 数据守卫：019fe632（sessions/）与 019fe635（subagents/）位于活跃数据目录，
+    // 被 GC/重命名时跳过而非失败（同 TC14-TC18 守卫模式），避免偶发红。
+    if (!hasAnyRealSession('019fe632') || !hasAnyRealSession('019fe635')) return
     const family = await buildFamilyFromFs(
       '019fe620-8ae1-78a7-b76a-43a1ba4cc3c7',
       REAL_AGENT_DIR,
@@ -458,6 +476,17 @@ describe.skipIf(!HAS_REAL_ROOT)('buildFamilyFromFs - 真实数据 ~/.pi/agent', 
 
 describe.skipIf(!HAS_REAL_WF)('buildFamilyFromFs - 真实 workflow 数据', () => {
   it('019fdcda：workflows 非空，至少一个 workflow calls>=4', async () => {
+    // 数据守卫：workflow-state 快照文件可能被清理（wf-state 是会话运行产物），
+    // 019fdcda 的 workflow-state-link 指向的快照不存在时跳过而非失败。
+    const wfFile = execSync(
+      `find ${REAL_AGENT_DIR}/sessions -name '*019fdcda*' -name '*.jsonl' ! -name '*.finalized' 2>/dev/null | head -1`,
+      { encoding: 'utf8' },
+    ).trim()
+    if (!wfFile) return
+    const raw = execSync(`grep -c 'workflow-state-link' '${wfFile}' 2>/dev/null || true`, {
+      encoding: 'utf8',
+    }).trim()
+    if (raw === '0' || raw === '') return
     const family = await buildFamilyFromFs(
       '019fdcda-75c7-74b7-a160-f67f6bf88384',
       REAL_AGENT_DIR,
@@ -682,6 +711,9 @@ const HAS_REAL_SUBAGENTS_DIR = existsSync(join(REAL_AGENT_DIR, 'subagents'))
 
 describe.skipIf(!HAS_REAL_ROOT || !HAS_REAL_SUBAGENTS_DIR)('U4 真实数据守卫：~/.pi/agent', () => {
   it('TC-u4-real-data-guard: 019fe620 subagents 富字段透传（manifest 主 task 非空率 > 80%）', async () => {
+    // 数据守卫：019fe635 是 019fe620 家族已知的隔代 subagent（含 task 富字段的锚点），
+    // 被 GC 后跳过富字段验证（manifest 数据不可复现，跳过比失败合理）。
+    if (!hasAnyRealSession('019fe635')) return
     const family = await buildFamilyFromFs(
       '019fe620-8ae1-78a7-b76a-43a1ba4cc3c7',
       REAL_AGENT_DIR,
