@@ -19,8 +19,8 @@
 import { MODE_LABELS, type PermissionMode } from "./types.js";
 import type { PermissionPalette } from "./statusline-palette.js";
 
-// ── 协议契约字面量（必须与 extensions/statusline/src/footer-handshake-access.ts 完全一致）──
-// ⚠️ 改名必须两端同步（Symbol.for 字符串匹配），否则握手静默失败。
+// ── 协议契约字面量（statusline 包已于 2026-08 删除，此常量定义现仅存于本文件）──
+// ⚠️ Symbol.for 字符串是稳定契约：若有未来 footer 消费方读取这些 slot，名称必须一致，否则握手静默失败。
 export const FOOTER_HANDSHAKE_KEY = Symbol.for(
 	"@zhushanwen/pi-statusline.footerHandshake",
 );

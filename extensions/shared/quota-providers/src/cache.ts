@@ -89,7 +89,7 @@ export function triggerUpdate(): void {
 			updating = false;
 		})
 		.catch((e) => {
-			console.warn("[statusline] doUpdate failed:", e);
+			console.warn("[quota-cache] doUpdate failed:", e);
 		});
 }
 
@@ -105,7 +105,7 @@ async function doUpdate(): Promise<void> {
 		const oldVal = (old as Record<string, unknown>)[p.id] ?? null;
 		if (r.status === "rejected") {
 			// 记录到 stderr 方便排查，不持久化
-			console.error(`[statusline] ${p.id} fetch failed:`, r.reason?.message ?? r.reason);
+			console.error(`[quota-cache] ${p.id} fetch failed:`, r.reason?.message ?? r.reason);
 		}
 		cache[p.id] =
 			r.status === "fulfilled" && r.value !== null ? r.value : oldVal;
@@ -119,7 +119,7 @@ async function doUpdate(): Promise<void> {
 		renameSync(tmpPath, CACHE_PATH);
 	// eslint-disable-next-line taste/no-silent-catch -- 磁盘写失败属于容错路径：保留旧缓存，下次 triggerUpdate 会重试
 	} catch (e) {
-		console.warn(`[statusline] cache write failed (keeping old):`, e);
+		console.warn(`[quota-cache] cache write failed (keeping old):`, e);
 	}
 }
 
@@ -130,7 +130,7 @@ function readCacheSync(): CacheData {
 		// 确保 updatedAt 存在，其余字段原样保留（由 provider 动态管理）
 		return { ...parsed, updatedAt: parsed.updatedAt ?? 0 };
 	} catch (e) {
-		console.warn(`[statusline] cache read failed (using empty):`, e);
+		console.warn(`[quota-cache] cache read failed (using empty):`, e);
 		return { ...EMPTY_CACHE };
 	}
 }
@@ -165,7 +165,7 @@ function persistDailyRecord<T extends unknown[]>(
 		}
 	// eslint-disable-next-line taste/no-silent-catch -- 文件损坏属于容错路径：fallback 到空 records
 	} catch (e) {
-		console.warn(`[statusline] ${recordName} record read failed (using empty):`, e);
+		console.warn(`[quota-cache] ${recordName} record read failed (using empty):`, e);
 	}
 
 	// 追加今日记录
@@ -186,7 +186,7 @@ function persistDailyRecord<T extends unknown[]>(
 		writeFileSync(filePath, JSON.stringify(records));
 	// eslint-disable-next-line taste/no-silent-catch -- 写入失败属于容错路径
 	} catch (e) {
-		console.warn(`[statusline] ${recordName} record write failed:`, e);
+		console.warn(`[quota-cache] ${recordName} record write failed:`, e);
 	}
 
 	return records;
