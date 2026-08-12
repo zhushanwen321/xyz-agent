@@ -1,5 +1,11 @@
 # @zhushanwen/pi-ask-user
 
+## 7.0.6
+
+### Patch Changes
+
+- 2f38dbd86: chore: refresh dependency range (triggered by @zhushanwen/pi-subagent-workflow@7.3.1 → @zhushanwen/pi-subagent-workflow@7.3.2)
+
 ## 7.0.5
 
 ### Patch Changes
