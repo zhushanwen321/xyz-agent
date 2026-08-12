@@ -24,8 +24,11 @@ import { encodeCwd } from "./path-encoding.ts";
 import type { PatchResult,WorktreeHandle } from "./types.ts";
 import { DirtyWorktreeError } from "./types.ts";
 import { bestEffort } from "./best-effort.ts";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { isProcessAlive } from "./alive-store.ts";
 import { SPAWN_GRACE_MS,type WorktreeEntry,WorktreeRegistry } from "./worktree-registry.ts";
+
+const logger = getLogger("subagents");
 
 // recordId 白名单：字母数字下划线短横线
 const SAFE_ID_RE = /^[\w-]+$/;
@@ -80,7 +83,7 @@ export class WorktreeManager {
       cwd: mainCwd,
     });
 
-    // 注册到全局表（pid=0 占位）。session-runner first header 时补 pid。
+    // 注册到全局表（pid=0 占位）。runSpawn 在 spawn() 返回后同步补 pid。
     // 放在 worktree add 成功后、symlink 前——确保只有真正创建了 worktree 才登记。
     this.registry.add({
       repo: mainCwd,
@@ -124,8 +127,8 @@ export class WorktreeManager {
   }
 
   /**
-   * 注册子进程 pid（session-runner first header 时调）。
-   * create 时 pid 未知写 0 占位，子进程 spawn 拿到 pid 后由此补全。
+   * 注册子进程 pid（runSpawn spawn() 返回后同步调）。
+   * create 时 pid 未知写 0 占位，子进程 spawn 返回后（child.pid 同步可得）由此补全。
    * reaper 据 pid 死活判孤儿，pid=0 条目用 SPAWN_GRACE 宽限。
    */
   registerPid(branch: string, pid: number): void {
@@ -227,7 +230,17 @@ export class WorktreeManager {
   private isOrphan(entry: WorktreeEntry, now: number): boolean {
     if (entry.pid === 0) {
       // create→spawn 窗口：超过宽限期仍未补 pid = create 后崩溃
-      return now - entry.createdAt > SPAWN_GRACE_MS;
+      const expired = now - entry.createdAt > SPAWN_GRACE_MS;
+      if (expired) {
+        // [worktree-reaper-fix] pid=0 超宽限 = create 后 spawn 前崩溃（或补全链路再次断链）。
+        // 正常路径 spawn 返回后 pid 已同步补全，此处不应命中活 worktree；命中即诊断信号，
+        // 与 updatePid 写盘失败的 warn 日志呼应（补全失败可观测闭环）。
+        logger.warn(
+          "[worktree] orphan reaper: pid=0 entry exceeded SPAWN_GRACE_MS, treating as orphan",
+          { branch: entry.branch, checkout: entry.checkout, createdAt: entry.createdAt, now },
+        );
+      }
+      return expired;
     }
     return !isProcessAlive(entry.pid);
   }
