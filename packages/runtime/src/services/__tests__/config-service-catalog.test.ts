@@ -36,12 +36,12 @@ function makeAuth(): AuthPick {
 }
 
 describe('M5-01: setProvider catalog 分支（真实 isCatalogProvider，不 mock）', () => {
-  it('catalog provider（anthropic）保存 apiKey → 写 auth.json，upsertProvider 收到的 merged 不含 apiKey（不双写 models.json）', () => {
+  it('catalog provider（anthropic）保存 apiKey → 写 auth.json，upsertProvider 收到的 merged 不含 apiKey（不双写 models.json）', async () => {
     const store = makeStore()
     const auth = makeAuth()
     const svc = new ConfigService('/tmp/project', store, auth)
 
-    svc.setProvider('anthropic', { apiKey: 'sk-secret' })
+    await svc.setProvider('anthropic', { apiKey: 'sk-secret' })
 
     // catalog 凭据归 auth.json（pi-alignment 决策 1）
     expect(auth.set).toHaveBeenCalledWith('anthropic', { type: 'api_key', key: 'sk-secret' })
@@ -83,5 +83,42 @@ describe('M5-01: setProvider catalog 分支（真实 isCatalogProvider，不 moc
     expect(() => svc.setProvider('anthropic', { apiKey: 'sk-secret' })).not.toThrow()
     const merged = store.upsertProvider.mock.calls[0][1] as Record<string, unknown>
     expect('apiKey' in merged).toBe(false)
+  })
+
+  it('MF-1：catalog provider 保存 apiKey 时 await authStorage.set 后才 upsertProvider（防 stale 广播）', async () => {
+    // 复现生产缺陷：fire-and-forget 时 setProvider 同步返回，handler 立即 broadcastProviderList
+    // 裸读 auth.json——withFileLock 尚未落盘 → catalog 瞬时显示 not_configured。修复（await）后
+    // set 返回时凭据已落盘。构造带延迟的 set，验证 await 完成后 auth.set 才生效。
+    let setDone = false
+    const auth = {
+      ...makeAuth(),
+      set: vi.fn(async (_id: string, _cred: unknown) => {
+        await new Promise(r => setTimeout(r, 5))
+        setDone = true
+      }),
+    } as unknown as AuthPick
+    const store = makeStore()
+    const svc = new ConfigService('/tmp/project', store, auth)
+
+    await svc.setProvider('anthropic', { apiKey: 'sk-secret' })
+
+    // await 返回时 set 已完成（fire-and-forget 会因 5ms 延迟未完成）
+    expect(setDone).toBe(true)
+    expect(auth.set).toHaveBeenCalledWith('anthropic', { type: 'api_key', key: 'sk-secret' })
+  })
+
+  it('MF-1：catalog provider 保存 apiKey 时 authStorage.set 失败 → setProvider reject（不静默吞凭据丢失）', async () => {
+    // 复现生产缺陷：fire-and-forget + .catch(warn) 时 set 失败只 warn，apiKey 既未进 auth.json
+    // 又已从 models.json 删 → 用户收成功但凭据丢失无错误出口。修复（await 无 catch）后失败直接 reject。
+    const auth = {
+      ...makeAuth(),
+      set: vi.fn().mockRejectedValueOnce(new Error('disk full')),
+    } as unknown as AuthPick
+    const store = makeStore()
+    const svc = new ConfigService('/tmp/project', store, auth)
+
+    await expect(svc.setProvider('anthropic', { apiKey: 'sk-secret' })).rejects.toThrow('disk full')
+    // 失败时 upsertProvider 不应被调用（原子失败，不残留半写入的 models.json）
+    expect(store.upsertProvider).not.toHaveBeenCalled()
   })
 })

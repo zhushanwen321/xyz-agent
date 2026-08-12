@@ -238,6 +238,24 @@ describe('TC4: 边界2 defaultModel 守卫——禁用承载 default 的 provide
     // 关键：setDefaultModel 被调用（非惰性等下次 getDefaultModel auto-fix）
     expect(store.setDefaultModel).toHaveBeenCalledTimes(1)
   })
+
+  it('MF-3：重选 default 时跳过候选 provider 的已禁用 model（model 级 enabled 校验，M5-02 路径）', () => {
+    // 场景：openai 承载 default，禁用 openai 后重选到 anthropic，但 anthropic 的 models[0]
+    // 被用户显式禁用（enabled:false）。旧实现 pickEnabledDefaultModel 只校验 provider 级
+    // p.enabled + p.models[0] 存在性，会把已禁用 model 写成新 default。修复后 find 首个启用 model。
+    const { svc, store } = makeService({
+      models: {
+        openai: { models: [{ id: 'gpt-4' }] },
+        anthropic: { models: [{ id: 'disabled-m', enabled: false }, { id: 'enabled-m', enabled: true }] },
+      },
+      enabledModels: ['openai/*', 'anthropic/*'],
+      defaultModel: { provider: 'openai', modelId: 'gpt-4' },
+    })
+    const ret = svc.toggleProviderEnabled('openai', false)
+    // 重选跳过 disabled-m，选 enabled-m（首个启用 model）
+    expect(store.setDefaultModel).toHaveBeenCalledWith('anthropic', 'enabled-m')
+    expect(ret.newDefault).toEqual({ provider: 'anthropic', modelId: 'enabled-m' })
+  })
 })
 
 // ══ TC6: setProvider 停用 provider 级 enabled 写入 ══════════════════════════════════

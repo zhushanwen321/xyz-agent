@@ -273,7 +273,7 @@ export interface IConfigService {
     baseUrl?: string
     models?: Array<string | { id: string; name?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null> }>
     enabled?: boolean
-  }): { newDefault?: { provider: ProviderId; modelId: string } }
+  }): Promise<{ newDefault?: { provider: ProviderId; modelId: string } }>
   /**
    * 切换 provider 启用状态（wave3 IF2）——写 enabledModels 白名单。
    *

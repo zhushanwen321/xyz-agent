@@ -195,6 +195,49 @@ describe('TC2: removeProviderByKind(catalog) 清 auth.json 凭据 + override + e
     expect(store.setDefaultModel).not.toHaveBeenCalled()
     expect(ret).toEqual({ removed: true })
   })
+
+  it('MF-2：cleanEnabledModelsResidue 改白名单后 getDefaultModel auto-fix 不应跳过重选（预读修复）', async () => {
+    // 复现生产缺陷：PiConfigStore.getDefaultModel 内部 findValidDefaultModel 在白名单变更后
+    // auto-fix 重选。旧实现在 cleanEnabledModelsResidue（白名单变更）之后才读 default，
+    // oldDefault.provider 已被 auto-fix 成别的 provider，oldDefault.provider === providerId
+    // 恒 false，M5-03 显式 B1 凭据优先重选不可达。
+    // 状态化 mock：getDefaultModel 在 cleanEnabledModelsResidue 前返 openai（真旧 default），
+    // 之后返 anthropic（auto-fix 重选值）。修复（预读）后 getDefaultModel 在 clean 前被调用 →
+    // oldDefault=openai，重选触发。旧实现该断言失败（setDefaultModel 未调用）。
+    const { svc, store } = makeService({
+      models: { anthropic: { models: [{ id: 'claude-3' }] } },
+      enabledModels: ['openai/*', 'anthropic/*'],
+    })
+    let cleanCalled = false
+    ;(store.getDefaultModel as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      cleanCalled ? { provider: 'anthropic', modelId: 'claude-3' } : { provider: 'openai', modelId: 'gpt-4' },
+    )
+    ;(store.cleanEnabledModelsResidue as ReturnType<typeof vi.fn>).mockImplementation(() => { cleanCalled = true })
+    ;(store.removeProvider as ReturnType<typeof vi.fn>).mockReturnValueOnce({ removed: false })
+
+    const ret = await svc.removeProviderByKind('openai', 'catalog')
+
+    // 修复后：预读 oldDefault=openai（clean 前），重选触发，setDefaultModel 被调
+    expect(store.setDefaultModel).toHaveBeenCalledWith('anthropic', 'claude-3')
+    expect(ret).toEqual({ removed: true, newDefault: { provider: 'anthropic', modelId: 'claude-3' } })
+  })
+
+  it('MF-3：重选 default 时跳过候选 provider 的已禁用 model（model 级 enabled 校验，M5-03 路径）', async () => {
+    // 场景：catalog provider openai 无 override 承载 default，移除后重选到 anthropic，
+    // 但 anthropic 的 models[0] 被用户显式禁用（enabled:false）。旧实现 pickEnabledDefaultModel
+    // 只校验 provider 级 p.enabled + p.models[0] 存在性，会把已禁用 model 写成新 default。
+    const { svc, store } = makeService({
+      models: { anthropic: { models: [{ id: 'disabled-m', enabled: false }, { id: 'enabled-m', enabled: true }] } },
+      enabledModels: ['openai/*', 'anthropic/*'],
+    })
+    ;(store.removeProvider as ReturnType<typeof vi.fn>).mockReturnValueOnce({ removed: false })
+    ;(store.getDefaultModel as ReturnType<typeof vi.fn>).mockReturnValueOnce({ provider: 'openai', modelId: 'gpt-4' })
+
+    const ret = await svc.removeProviderByKind('openai', 'catalog')
+
+    expect(store.setDefaultModel).toHaveBeenCalledWith('anthropic', 'enabled-m')
+    expect(ret).toEqual({ removed: true, newDefault: { provider: 'anthropic', modelId: 'enabled-m' } })
+  })
 })
 
 // ══ TC3: custom 分支——删 models.json 条目 + 清残留 ═══════════════════════════════════

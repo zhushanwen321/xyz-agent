@@ -123,7 +123,7 @@ export class ConfigService implements IConfigService {
     return checkEnvVarsImpl(names)
   }
 
-  setProvider(providerId: string, data: SetProviderInput): { newDefault?: { provider: ProviderId; modelId: string } } {
+  async setProvider(providerId: string, data: SetProviderInput): Promise<{ newDefault?: { provider: ProviderId; modelId: string } }> {
     return setProviderImpl(this.configStore, this.authStorage, providerId, data)
   }
 

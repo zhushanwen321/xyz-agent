@@ -244,12 +244,12 @@ export function getProvider(configStore: IConfigStore, providerId: string): { ap
  * 新建 / 更新 provider（wave3 边界1 白名单守卫 + I9 auth.json 清理 + catalog 分体系）。
  * 纯函数：configStore / authStorage 经参数注入（原 ConfigService.setProvider 逐字搬迁）。
  */
-export function setProvider(
+export async function setProvider(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
   providerId: string,
   data: SetProviderInput,
-): { newDefault?: { provider: ProviderId; modelId: string } } {
+): Promise<{ newDefault?: { provider: ProviderId; modelId: string } }> {
   // wave3：existingConfig===undefined 判定「新建 provider」（边界1 白名单守卫用）
   const existingConfig = configStore.getProviderConfig(providerId)
   const existing = existingConfig ?? {}
@@ -262,9 +262,13 @@ export function setProvider(
   if (data.apiKey !== undefined && data.apiKey !== '') {
     if (isCatalogProvider(providerId) && authStorage) {
       // catalog provider: apiKey → auth.json (0600), strip from models.json
-      void authStorage?.set(providerId, { type: 'api_key', key: data.apiKey }).catch(err => {
-        console.warn(`[config-service] auth.json api_key write failed for ${providerId}:`, err)
-      })
+      // MF-1（stale 广播 + 静默丢 key）：await authStorage.set 后再 delete merged.apiKey +
+      // upsertProvider。fire-and-forget 时 withFileLock 未落盘 → handler 同步返回后
+      // broadcastProviderList 裸读 auth.json 拿到 stale（catalog 显示 not_configured）；
+      // 且 set 失败只 warn，apiKey 既未进 auth.json 又已从 models.json 删 → 凭据静默丢失。
+      // await 后失败直接 reject 上抛（handler try-catch 转 sendError），不静默吞、不 stale 广播。
+      // 与 deleteProvider/removeProviderByKind 的 cleanAuthCredential await 对称（写入路径对齐删除路径）。
+      await authStorage.set(providerId, { type: 'api_key', key: data.apiKey })
       // Don't write apiKey to models.json for catalog providers
       delete merged.apiKey
     } else {
@@ -434,11 +438,17 @@ function pickEnabledDefaultModel(
   // B1：优先选有凭据（apiKeySet）的启用 provider 作 default，
   // 避免重选到无凭据的 catalog provider（用户禁用某 provider 触发重选时）。
   // 有凭据优先，找不到再 fallback 到任意启用 provider（含 ambient 认证如 bedrock）。
-  const candidates = providers.filter(p => p.id !== excludedId && p.enabled && p.models[0])
-  const withCred = candidates.find(p => p.apiKeySet)
-  if (withCred) return { provider: withCred.id, modelId: withCred.models[0].id }
+  // MF-3：候选 provider 选 model 时校验 model 级 enabled——p.models[0] 可能被用户显式禁用
+  //（enabled:false，listProviders 经 toUserInfoModel 透传该字段），旧实现只校验 provider 级
+  // p.enabled + p.models[0] 存在性，会把已禁用 model 写成新 default。改为 find 首个启用 model。
+  const candidates = providers
+    .filter(p => p.id !== excludedId && p.enabled)
+    .map(p => ({ p, m: p.models.find(m => m.enabled !== false) }))
+    .filter(x => x.m)
+  const withCred = candidates.find(x => x.p.apiKeySet)
+  if (withCred) return { provider: withCred.p.id, modelId: withCred.m!.id }
   const any = candidates[0]
-  return any ? { provider: any.id, modelId: any.models[0].id } : undefined
+  return any ? { provider: any.p.id, modelId: any.m!.id } : undefined
 }
 
 /**
@@ -512,6 +522,15 @@ export async function removeProviderByKind(
   if (kind === 'catalog') {
     // 清 models.json override 条目（若有）。无 override 时 removeProvider 返回 { removed: false }，
     // 不影响后续清残留——catalog 的「移除」语义是清用户侧状态，override 本就可能不存在。
+    // MF-2（顺序缺陷）：预读 oldDefault 在所有 mutation 之前（removeProvider /
+    // cleanEnabledModelsResidue）。生产 PiConfigStore.getDefaultModel 内部 findValidDefaultModel
+    // 会 auto-fix 写回（wasFixed）——若在 cleanEnabledModelsResidue（白名单变更）之后读取，
+    // 被删 catalog provider 的白名单 pattern 已被清除触发 auto-fix 重选，oldDefault.provider
+    // 已变成别的 provider，下方 oldDefault.provider === providerId 恒 false，M5-03 显式 B1
+    // 凭据优先重选（pickEnabledDefaultModel）不可达。与 toggleProviderEnabled（先读 default 再
+    // 更新白名单）顺序对齐。override 分支（removeProvider 返回 removed:true）内部自重选 default，
+    // 不消费 oldDefault，预读对其无影响（无 override 时 removeProvider 返回 removed:false 不 mutate）。
+    const oldDefault = configStore.getDefaultModel()
     // MF1 修复（exec-review must-fix）：catalog override 承载 defaultModel 时 removeProvider 内部
     // 重选 default + mutate settings.json，透传 newDefault 让 handler 广播 config.defaults
     // （与 custom 分支 + deleteProvider 对称，否则 renderer 收不到重选通知）。
@@ -523,7 +542,6 @@ export async function removeProviderByKind(
     // MF1 修复只覆盖 override 分支）。default 承载该 provider 时显式重选并持久化（复用
     // toggle 边界2 的 pickEnabledDefaultModel，B1 凭据优先），透传 newDefault 广播 config.defaults。
     if (!overrideResult.removed) {
-      const oldDefault = configStore.getDefaultModel()
       if (oldDefault && oldDefault.provider === providerId) {
         const newDefault = pickEnabledDefaultModel(configStore, authStorage, providerId)
         if (newDefault) {

@@ -64,7 +64,7 @@ export class SettingsMessageHandler {
         return true
       case 'config.setProvider': {
         const { providerId, ...data } = msg.payload
-        const setResult = this.ctx.configService.setProvider(providerId, data as Parameters<IConfigService['setProvider']>[1])
+        const setResult = await this.ctx.configService.setProvider(providerId, data as Parameters<IConfigService['setProvider']>[1])
         this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId })
         this.ctx.broadcastProviderList()
         reconcileDefaultModelAfterProviderChange(this.ctx, setResult.newDefault)
