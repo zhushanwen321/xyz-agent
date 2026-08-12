@@ -111,6 +111,7 @@
   /* ── 层级 / 组件尺寸 ──────────────────────────────────── */
   --content-max-w: 720px;       /* 内容列最大宽（settings 等收窄） */
   --panel-bg: var(--surface);   /* panel 内 sticky 浮层底色契约 */
+  --message-stream-pad-top: 20px; /* 消息流顶部留白：scrollEl pt 与 TurnMeta sticky 覆盖同源（改一处两处同步生效；TurnMeta 用 -mt+pt 同值让 sticky 浮层背景覆盖 padding 区，挡住滚过来的文字） */
   --z-sticky: 1;
   --z-popover: 10;
   --z-overlay: 20;

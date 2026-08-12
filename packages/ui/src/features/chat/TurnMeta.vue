@@ -7,7 +7,7 @@
        底色用 --panel-bg（Panel 注入，随 panel 状态变化）不透明遮挡滚动文字。 -->
   <div
     v-if="turn.assistants.length > 0 || sessionActive"
-    :class="sessionActive ? 'sticky top-0 z-[1] bg-[var(--panel-bg,var(--surface))]' : ''"
+    :class="sessionActive ? 'sticky top-0 z-[1] bg-[var(--panel-bg,var(--surface))] -mt-[var(--message-stream-pad-top)] pt-[var(--message-stream-pad-top)]' : ''"
     :data-testid="`turn-meta-${turnIndex}`"
   >
     <Button
@@ -28,7 +28,7 @@
       <span class="text-[length:var(--text-sm)] font-medium">
         <span class="lbl" :class="sessionActive ? 'text-accent' : 'text-neutral-mid'">{{ sessionActive ? t('panel.message.thinking') : t('panel.message.worked') }}</span>
         <!-- dispatching 占位态尚未开始计时，隐藏 elapsed（避免显示 0s） -->
-        <span v-if="!isPendingPlaceholder" class="elapsed font-mono font-medium tracking-[0.01em] text-neutral-fg">{{ elapsed }}</span>
+        <span v-if="!isPendingPlaceholder" class="elapsed ml-1 font-mono font-medium tracking-[0.01em] text-neutral-fg">{{ elapsed }}</span>
       </span>
       <!-- chevron 紧跟耗时（展开/收起 trace 入口），在 badge 之前 -->
       <ChevronRight

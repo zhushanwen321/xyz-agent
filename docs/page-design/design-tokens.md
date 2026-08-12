@@ -218,6 +218,7 @@
 | `--composer-btn-size` | `30px` | Composer 发送/停止按钮尺寸 |
 | `--content-max-w` | `720px` | 内容列最大宽（settings 等收窄；v6 新增） |
 | `--panel-bg` | `var(--surface)` | panel 内 sticky 浮层底色契约（v6 新增） |
+| `--message-stream-pad-top` | `20px` | 消息流顶部留白：MessageStream scrollEl pt 与 TurnMeta sticky 覆盖同源（sticky 用 -mt+pt 同值让浮层背景覆盖 padding 区，挡住滚过来的文字） |
 | `--bar-fill-soft` | `55%` | progress-bar fill 柔化档（v6 新增） |
 
 ## z-index 层级（2026-08-02 太极·玄新增）
