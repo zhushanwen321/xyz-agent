@@ -93,12 +93,14 @@ export function convertSinglePiMessage(
   const toolCalls: ToolCall[] = []
   const contentBlocks: import('@xyz-agent/shared').ContentBlock[] = []
 
-  for (const part of parts) {
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]
     if (part.type === 'text') {
       textContent += part.text ?? ''
       // text 块按真实到达顺序 push（首次遇到时 push 一次，多次 text part 只累加不重复 push）。
+      // contentIndex = parts 下标（pi content array 顺序），与 streaming 路径对称（§11 检查点 3）。
       if (!contentBlocks.some((b) => b.type === 'text')) {
-        contentBlocks.push({ type: 'text', refId: 'text' })
+        contentBlocks.push({ type: 'text', refId: 'text', contentIndex: i })
       }
     } else if (part.type === 'thinking') {
       const thkId = crypto.randomUUID()
@@ -107,7 +109,7 @@ export function convertSinglePiMessage(
         content: part.thinking ?? '',
         collapsed: true,
       })
-      contentBlocks.push({ type: 'thinking', refId: thkId })
+      contentBlocks.push({ type: 'thinking', refId: thkId, contentIndex: i })
     } else if (part.type === 'toolCall' || part.type === 'tool_use') {
       const tcId = part.id ?? crypto.randomUUID()
       toolCalls.push({
@@ -117,7 +119,7 @@ export function convertSinglePiMessage(
         status: 'completed',
         startTime: m.timestamp ?? Date.now(),
       })
-      contentBlocks.push({ type: 'toolCall', refId: tcId })
+      contentBlocks.push({ type: 'toolCall', refId: tcId, contentIndex: i })
     }
   }
 

@@ -52,6 +52,13 @@ export interface ContentBlock {
   type: ContentBlockType
   /** thinking/toolCall 指向对应数组的元素 id；text 指向 'text' */
   refId: string
+  /**
+   * pi content array 中的产出顺序索引（模型输出顺序，非到达顺序）。
+   * 两条 contentBlocks 填充路径（streaming 事件流 / 持久化 content array）统一按此排序，
+   * 消除「同 turn 内 text 在 tool 之后」时 streaming 的 toolCall 块延迟到达导致的顺序错位。
+   * 旧数据/无 index 事件缺省（渲染层不读该字段，仅排序语义）。
+   */
+  contentIndex?: number
 }
 
 export interface Usage {

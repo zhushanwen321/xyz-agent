@@ -133,6 +133,12 @@ export class EventInterpreter {
   private subagentRecords: Map<string, SubagentRecord> = new Map()
   /** subagent tool-call-start 的 startParam 缓存（toolCallId → startParam），end 时取出合并 */
   private pendingStartParams: Map<string, { agent: string; slug: string; task: string }> = new Map()
+  /**
+   * toolCall 产出顺序锚点缓存（toolCallId → contentIndex，pi toolcall_start 提供）。
+   * tool-call-start（tool_execution_start）到达时取出附到 tool_call_start WS 帧，
+   * 前端按 contentIndex 有序插入 contentBlocks（§11 检查点 3 两条路径顺序语义统一）。
+   */
+  private toolCallContentIndex: Map<string, number> = new Map()
 
   // ── [ADR-0047] ping 探测状态 ──
   /** ping 定时器句柄（null = 未在探测） */
@@ -215,6 +221,10 @@ export class EventInterpreter {
         // hook 改写是异步的：handler 内部 await 后 send（不阻塞本循环）
         void this.handleToolCallStart(ev)
         return
+      case 'tool-call-index':
+        // 缓存 toolCall 产出顺序锚点（pi toolcall_start），tool-call-start 到达时附到 WS 帧
+        this.toolCallContentIndex.set(ev.toolCallId, ev.contentIndex)
+        return
       case 'tool-call-end':
         void this.handleToolCallEnd(ev)
         return
@@ -281,6 +291,8 @@ export class EventInterpreter {
       // 阻断：不产出 tool_call_start，但仍触发 onPiEvent hook（带 blocked 标记，供观测插件）。
       // 移到 try-catch 外：与 tool_execution_end 的 fire-and-forget 模式一致——
       // onBeforeToolCall hook 失败（catch 分支）时仍触发 onPiEvent（不因 hook 失败丢观测事件）。
+      // contentIndex 锚点不再被消费，同步清理（防 Map 残留）。
+      this.toolCallContentIndex.delete(toolCallId)
       this.opts.executeHooks?.('onPiEvent', { event: 'tool_execution_start', toolCallId, toolName, input, blocked: true }).catch(() => {})
       return
     }
@@ -290,8 +302,19 @@ export class EventInterpreter {
 
     this.opts.send({
       type: 'message.tool_call_start',
-      payload: { sessionId: this.sessionId, toolCallId, toolName, input },
+      payload: {
+        sessionId: this.sessionId,
+        toolCallId,
+        toolName,
+        input,
+        // §11 检查点 3：toolCall 产出顺序锚点（pi toolcall_start 提供，模型输出 tool_use 时）。
+        // tool_call_start 帧由 tool_execution_start（工具执行时）驱动，若无此锚点，同 turn 内
+        // text 在 tool 之后时 contentBlocks 顺序会错位（text_delta 先到）。缺失（旧 pi/异常）时不带。
+        ...(this.toolCallContentIndex.get(toolCallId) !== undefined ? { contentIndex: this.toolCallContentIndex.get(toolCallId) } : {}),
+      },
     })
+    // 锚点已消费，清除缓存（防 Map 无限增长；同 id 重复 start 无意义）
+    this.toolCallContentIndex.delete(toolCallId)
 
     // subagent tool-call-start：缓存 startParam（agent/slug/task），end 时取出合并 details 建记录
     if (SUBAGENT_TOOL_NAMES.has(toolName)) {

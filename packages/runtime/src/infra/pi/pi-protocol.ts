@@ -185,6 +185,10 @@ export interface PiMessageEndEvent extends PiBaseMessage {
  */
 export interface PiMessageUpdateEvent extends PiBaseMessage {
   type: 'message_update'
+  /** 运行时 pi 带完整 partial message（agent-session.js:462 确认）。toolcall_start 提取 toolCallId 用。 */
+  message?: {
+    content?: Array<{ type?: string; id?: string; name?: string }>
+  }
   assistantMessageEvent: PiAssistantMessageSubEvent
 }
 

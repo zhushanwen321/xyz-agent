@@ -111,6 +111,25 @@ function isLastAssistantStreaming(
   return false
 }
 
+/**
+ * 按 pi contentIndex（产出顺序）有序插入 contentBlocks（§11 检查点 3 顺序语义统一）。
+ *
+ * 背景：streaming 事件到达顺序受 tool_execution_start 延迟扭曲（工具执行晚于模型输出），
+ * 若纯 append，同 turn 内 text 在 tool 之后时 toolCall 块会排到 text 后面，与持久化路径
+ * （按 pi content array 顺序 = contentIndex 顺序）错位。统一语义：contentBlocks 顺序 =
+ * contentIndex 顺序（模型产出顺序），插入时找到第一个 contentIndex 更大的块插到其前。
+ * 无 contentIndex（旧事件/兼容）时退化为 append 尾部。
+ */
+function insertContentBlockByIndex(blocks: ContentBlock[], block: ContentBlock): ContentBlock[] {
+  const idx = block.contentIndex
+  if (idx === undefined) return [...blocks, block]
+  const insertAt = blocks.findIndex((b) => (b.contentIndex ?? Infinity) > idx)
+  if (insertAt === -1) return [...blocks, block]
+  const next = [...blocks]
+  next.splice(insertAt, 0, block)
+  return next
+}
+
 const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> = {
   // ── 主流式生命周期（chunk 创建/收口 + isGenerating 派生）──
   'message.message_start': (ctx, sid, payload) => {
@@ -259,10 +278,11 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const delta = readString(payload, 'delta') ?? ''
     const next = [...prev]
     // 首个 text_delta push text 块到 contentBlocks（幂等：已含 text 块则不重复 push）。
+    // 插入位置按 contentIndex 有序插入（§11 检查点 3），无 index 时退化为 append。
     const prevBlocks = next[idx].contentBlocks ?? []
     const contentBlocks = prevBlocks.some((b) => b.type === 'text')
       ? prevBlocks
-      : [...prevBlocks, { type: 'text', refId: 'text' } satisfies ContentBlock]
+      : insertContentBlockByIndex(prevBlocks, { type: 'text', refId: 'text', ...(readNumber(payload, 'contentIndex') !== undefined ? { contentIndex: readNumber(payload, 'contentIndex') } : {}) } satisfies ContentBlock)
     next[idx] = { ...next[idx], content: next[idx].content + delta, contentBlocks }
     commitMessages(messages, sid, next)
   },
@@ -278,8 +298,9 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const blockId = readString(payload, 'thinkingId') ?? `th-${crypto.randomUUID()}`
     const next = [...prev]
     const thinking = [...(next[idx].thinking ?? []), { id: blockId, content: '', collapsed: true, startTime: Date.now() }]
-    // push 到 contentBlocks 尾部（refId 复用 blockId，防两处分别 randomUUID 断链）。
-    const contentBlocks = [...(next[idx].contentBlocks ?? []), { type: 'thinking', refId: blockId } satisfies ContentBlock]
+    // push 到 contentBlocks（refId 复用 blockId，防两处分别 randomUUID 断链）。
+    // 按 contentIndex 有序插入（§11 检查点 3），无 index 时退化为 append。
+    const contentBlocks = insertContentBlockByIndex(next[idx].contentBlocks ?? [], { type: 'thinking', refId: blockId, ...(readNumber(payload, 'contentIndex') !== undefined ? { contentIndex: readNumber(payload, 'contentIndex') } : {}) } satisfies ContentBlock)
     next[idx] = { ...next[idx], thinking, contentBlocks }
     commitMessages(messages, sid, next)
   },
@@ -340,8 +361,9 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // [P4 s5 w2] tasks 域已删除（D5 存根过渡到期），objective 提取随 tasks store 一并移除。
     const next = [...prev]
     const toolCalls = [...(next[idx].toolCalls ?? []), call]
-    // push 到 contentBlocks 尾部（callId 复用，与 toolCalls[].id 一致）。
-    const contentBlocks = [...(next[idx].contentBlocks ?? []), { type: 'toolCall', refId: callId } satisfies ContentBlock]
+    // push 到 contentBlocks（callId 复用，与 toolCalls[].id 一致）。
+    // 按 contentIndex 有序插入（§11 检查点 3），无 index 时退化为 append。
+    const contentBlocks = insertContentBlockByIndex(next[idx].contentBlocks ?? [], { type: 'toolCall', refId: callId, ...(readNumber(payload, 'contentIndex') !== undefined ? { contentIndex: readNumber(payload, 'contentIndex') } : {}) } satisfies ContentBlock)
     next[idx] = { ...next[idx], toolCalls, contentBlocks }
     commitMessages(messages, sid, next)
   },

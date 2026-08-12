@@ -180,7 +180,8 @@ describe('convertPiHistory - contentBlocks 到达顺序（循环内 push）', ()
       },
     ]
     const messages = convertPiHistory(raw)
-    expect(messages[0].contentBlocks).toEqual([{ type: 'text', refId: 'text' }])
+    // §11 检查点 3：contentBlocks 带 contentIndex（parts 下标），与 streaming 路径对称
+    expect(messages[0].contentBlocks).toEqual([{ type: 'text', refId: 'text', contentIndex: 0 }])
   })
 
   // U10b：text part 在前（非末位）→ text 能落在 contentBlocks 非末位

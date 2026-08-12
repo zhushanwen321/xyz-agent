@@ -114,4 +114,68 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
     // 收口后 delta 被丢弃，content 不变
     expect(lastAssistant(ctx).content).toBe('before')
   })
+
+  // ── §11 检查点 3：两条 contentBlocks 填充路径顺序语义统一 ──
+  // streaming 事件序列（本文件）与持久化 content array（runtime message-converter 测试）
+  // 对同一消息内容必须产生一致顺序。真实 pi 事件流：模型输出 tool_use 时发 toolcall_start
+  // （带 contentIndex），text_delta 实时到达，tool_execution_start（工具执行）最后到——
+  // 故「text 在 tool 之后」时事件到达顺序是 [thinking, text, tool]，但 contentIndex 顺序是
+  // [thinking(0), toolCall(1), text(2)]。前端按 contentIndex 有序插入，结果与持久化路径一致。
+
+  it('顺序统一：text 在 tool 之后时按 contentIndex 插入（与持久化路径一致）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    // 事件到达顺序：thinking → text（模型先输出 thinking，再输出 tool_use，turn 结束后才执行工具）
+    dispatchMessageEvent(ctx, SID, msg('message.thinking_start', { thinkingId: 'th1', contentIndex: 0 }))
+    dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'answer', contentIndex: 2 }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read', input: { path: '/x' }, contentIndex: 1 }))
+    const a = lastAssistant(ctx)
+    expect(a.contentBlocks).toEqual([
+      { type: 'thinking', refId: 'th1', contentIndex: 0 },
+      { type: 'toolCall', refId: 'tc1', contentIndex: 1 },
+      { type: 'text', refId: 'text', contentIndex: 2 },
+    ])
+  })
+
+  it('顺序统一：text 在 tool 之前时按 contentIndex 插入（append 等价，行为不变）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'let me check', contentIndex: 0 }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read', input: { path: '/x' }, contentIndex: 1 }))
+    const a = lastAssistant(ctx)
+    expect(a.contentBlocks).toEqual([
+      { type: 'text', refId: 'text', contentIndex: 0 },
+      { type: 'toolCall', refId: 'tc1', contentIndex: 1 },
+    ])
+  })
+
+  it('顺序统一：无 contentIndex 时退化为 append（旧事件兼容）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.thinking_start', { thinkingId: 'th1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read', input: {} }))
+    dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'text' }))
+    const a = lastAssistant(ctx)
+    expect(a.contentBlocks).toEqual([
+      { type: 'thinking', refId: 'th1' },
+      { type: 'toolCall', refId: 'tc1' },
+      { type: 'text', refId: 'text' },
+    ])
+  })
+
+  it('顺序统一：多 tool 交错的 contentIndex 插入（thinking0/tool1/text2/tool3）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.thinking_start', { thinkingId: 'th1', contentIndex: 0 }))
+    dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'mid', contentIndex: 2 }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read', input: {}, contentIndex: 1 }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc2', toolName: 'grep', input: {}, contentIndex: 3 }))
+    const a = lastAssistant(ctx)
+    expect(a.contentBlocks).toEqual([
+      { type: 'thinking', refId: 'th1', contentIndex: 0 },
+      { type: 'toolCall', refId: 'tc1', contentIndex: 1 },
+      { type: 'text', refId: 'text', contentIndex: 2 },
+      { type: 'toolCall', refId: 'tc2', contentIndex: 3 },
+    ])
+  })
 })

@@ -95,14 +95,29 @@ function handleMessageUpdate(event: PiMessageUpdateEvent, sid: string): PiTransl
 
   switch (sub.type) {
     case 'text_delta':
-      return [{ kind: 'message', message: { type: 'message.text_delta', payload: { sessionId: sid, delta: sub.delta ?? '' } } }]
+      return [{ kind: 'message', message: { type: 'message.text_delta', payload: { sessionId: sid, delta: sub.delta ?? '', ...(sub.contentIndex !== undefined ? { contentIndex: sub.contentIndex } : {}) } } }]
     case 'thinking_start':
-      return [{ kind: 'message', message: { type: 'message.thinking_start', payload: { sessionId: sid } } }]
+      return [{ kind: 'message', message: { type: 'message.thinking_start', payload: { sessionId: sid, ...(sub.contentIndex !== undefined ? { contentIndex: sub.contentIndex } : {}) } } }]
     case 'thinking_delta':
       return [{ kind: 'message', message: { type: 'message.thinking_delta', payload: { sessionId: sid, delta: sub.delta ?? '' } } }]
     case 'thinking_end':
       return [{ kind: 'message', message: { type: 'message.thinking_end', payload: { sessionId: sid } } }]
-    case 'toolcall_start': case 'toolcall_delta': case 'toolcall_end':
+    case 'toolcall_start': {
+      // toolCall 块顺序锚点（§11 检查点 3）：pi 在模型输出 tool_use 时发 toolcall_start（带 contentIndex），
+      // 远早于 tool_execution_start（工具执行时，无 contentIndex）。toolCall 块若由 tool_execution_start 驱动，
+      // 同 turn 内 text 在 tool 之后时顺序会错位（text_delta 先到、toolCall 后到）。
+      // 此处产出 tool-call-index 中间事件（toolCallId + contentIndex），interpreter 缓存后
+      // 在 tool-call-start 到达时附到 tool_call_start WS 帧，前端按 contentIndex 有序插入。
+      const contentIndex = sub.contentIndex
+      const toolCallId = contentIndex !== undefined
+        ? (event.message?.content?.[contentIndex] as { id?: string } | undefined)?.id
+        : undefined
+      if (toolCallId && contentIndex !== undefined) {
+        return [{ kind: 'tool-call-index', toolCallId, contentIndex }]
+      }
+      return [{ kind: 'noop' }]
+    }
+    case 'toolcall_delta': case 'toolcall_end':
     case 'text_start': case 'text_end':
       return [{ kind: 'noop' }]
     // FR-5: streaming error — surface as message.stream_error

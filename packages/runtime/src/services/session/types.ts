@@ -136,6 +136,12 @@ export type PiTranslatedEvent =
       toolName: string
       input: unknown
     }
+  /**
+   * toolCall 产出顺序锚点（pi toolcall_start，模型输出 tool_use 时，带 contentIndex）。
+   * interpreter 缓存 toolCallId → contentIndex，tool-call-start 到达时附到 tool_call_start WS 帧，
+   * 前端按 contentIndex 有序插入 contentBlocks（§11 检查点 3：两条填充路径统一顺序语义）。
+   */
+  | { kind: 'tool-call-index'; toolCallId: string; contentIndex: number }
   /** 工具调用结束 —— interpreter 跑 onAfterToolResult hook（改写 output）+ 触发 file_changes diff。 */
   | {
       kind: 'tool-call-end'
