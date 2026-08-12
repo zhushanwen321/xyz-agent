@@ -514,17 +514,17 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 8. **禁止硬编码颜色** — 用 CSS 变量（`var(--accent)`）或语义 Tailwind 类
 9. **禁止魔数间距** — 用标准 Tailwind scale，不用 `p-[17px]`
 10. **border-radius 遵循 v3 design-tokens**（`--radius-sm:3px` / `--radius:8px` / `--radius-lg:12px`）— `rounded-sm`(3px) 默认，`rounded-md`/`rounded-lg`(8/12px) 特殊场景。SSOT 见 [docs/page-design/design-tokens.md](docs/page-design/design-tokens.md)，裁决依据 ADR-0019（旧 Warm 时期的 1px/2px 规则已推翻）。详见 docs/standards.md §7.1
-11. **窗口顶部 traffic light 安全区（v3 shell 拓扑）** — v3 重建采用 zcode-demo 拓扑：base 平铺全屏 → sidebar 透明融合 → main 是唯一 float-panel 浮起。traffic light 靠 **aside-region 顶部留白**兼容，而非旧版 padding-left 避让。具体要求：
-    - AppShell `p-1`(4px) 四周统一：上下左右各 4px（紧凑但有呼吸，对称）。注意：左右 4 使 aside 左缘 x=4，与红黄绿 x=8 有 4px 差（红黄绿保持原生位置不动，用户明确不移动 trafficLightPosition）；折叠态 `!gap-0`（aside 归零，padding 保持 p-1 四周 4px，与展开态一致）
-    - `.aside-region` 恒定 `padding-top: 44px`(pt-11)（安全区 + 拉开 trafficlight 行与 LOGO 行间距），**三平台统一，全屏也保留**（mac 全屏 hover 时系统下拉覆盖层会落进这块留白）。AppShell py-1 使 aside 顶在窗口 y=4，红黄绿 y=8~20，安全区让出，与 trafficlight 行（nav 按钮 bottom y27）视觉间距约 12px
-    - mac 红黄绿位置由主进程 `titleBarStyle:'hidden'` + `trafficLightPosition:{x:8,y:8}` 放到 macOS 原生左上角（**不用 hiddenInset**——inset 模式强制水平内缩，`trafficLightPosition.x` 被系统忽略）；win/linux 自绘圆点 `left:0 top:[4px]`（TrafficLight.vue，aside 顶在窗口 y=4，故 top-4 = 窗口 y8，与 mac 同位）。圆点 12px，顶理论 y=8 / **实测中线 y≈15.75**（macOS 渲染亚像素偏置，比理论 y14 低 ~2pt）/ 右缘 x=60
-    - app-nav-controls（收起侧栏/←/→）浮在 AppShell 层（aside 外），**非折叠态** `left:72px top:5px`（按钮中线 y=5+11=16，对齐红黄绿**实测**中线 ~15.75；红黄绿右缘 60 + 12 呼吸），全屏 `left:8px`（320ms 平移与 traffic-light opacity 同步）。**PanelHeader `h-[22px]` 与 trafficlight 行共线对齐**：main-panel 顶=AppShell p-1(4)+border(1)=y5，h-22 → header bottom y27 = nav 按钮 bottom，内容中线 y16 ≈ 红黄绿实测中线 y15.75（三者顶/底/中线全对齐）。右侧 drawer/git 按钮 `size-[22px]` 适配 22 高 header
-    - **折叠态** chrome 迁入 P1 PanelHeader 内（header `pl-[88px]` 让位红黄绿右缘 60），chrome 按钮在 header 中线（header h-22 中线 y16 = 红黄绿中线，无高度差）；AppShell 折叠态 `!gap-0`（强制覆盖 gap-3，padding 保持 p-1）
-    - 全屏两态：非全屏（traffic light opacity 1，按钮 left:72px）/ 全屏（opacity 0，按钮左移 left:8px）。**无第三态**，mac 全屏 hover 红黄绿由系统提供，应用不渲染
+11. **窗口顶部 traffic light 安全区（v6 shell 拓扑）** — v6 重建采用 zcode-demo 拓扑：base 平铺全屏 → sidebar 透明融合 → main 是唯一 float-panel 浮起。traffic light 靠 **aside-region 顶部留白**兼容，而非旧版 padding-left 避让。**2026-08 裁决：以 V6 demo（.tmp/v6）+ v6-spec-shell.html 为真值**（此前本条目数值描述 v3 旧拓扑，已整体重写；实现同步回填）。具体要求：
+    - AppShell `p-3`(12px) 四周统一（v6-spec-shell window-frame 同款）。注意：左右 12 使 aside 左缘 x=12，与红黄绿 x=16 有 4px 差（v6-spec-shell 同款，预期）；折叠态 `!gap-0`（aside 归零，padding 保持 p-3 四周 12px，与展开态一致）
+    - `.aside-region` 恒定 `padding-top: 52px`(pt-[52px]，非 Tailwind 标准档)（安全区 + 拉开 trafficlight 行与 LOGO 行间距），**三平台统一，全屏也保留**（mac 全屏 hover 时系统下拉覆盖层会落进这块留白）。AppShell p-3 使 aside 顶在窗口 y=12，红黄绿 y=26~38，安全区让出
+    - mac 红黄绿位置由主进程 `titleBarStyle:'hidden'` + `trafficLightPosition:{x:16,y:26}` 放到 macOS 原生左上角（**不用 hiddenInset**——inset 模式强制水平内缩，`trafficLightPosition.x` 被系统忽略）；win/linux 自绘圆点 `left:16px top:26px`（TrafficLight.vue，与 mac 同位，三平台统一）。圆点 12px，顶 y=26 / 中线 y=32（26+6）/ 右缘 x=68（红 16~28 / 黄 36~48 / 绿 56~68）
+    - app-nav-controls（收起侧栏/←/→）浮在 AppShell 层（aside 外），**非折叠态** `left:100px top:21px`（按钮高 22，中线 y=21+11=32，对齐红黄绿中线 32；红黄绿右缘 68 + 32px 呼吸），全屏 `left:16px`（320ms 平移与 traffic-light opacity 同步）。**PanelHeader `h-[38px]` 三处 chrome 共线对齐 y32**：main-panel 顶=AppShell p-3(12)+border(1)=y13，h-38 → 中线 y=13+19=32 = 红黄绿中线（26+6）= nav 按钮中线（21+11）（三者中线全对齐）。右侧 drawer/git 按钮 `size-[22px]` / jsonl 按钮 h-5 在 38px header 内垂直居中
+    - **折叠态** chrome 迁入 P1 PanelHeader 内（header `pl-[88px]` 让位红黄绿右缘 68，chrome 按钮起 x≈100，与浮层非折叠位 left:100 一致，切换无跳动）；AppShell 折叠态 `!gap-0`（强制覆盖 gap-3，padding 保持 p-3）
+    - 全屏两态：非全屏（traffic light opacity 1，按钮 left:100px）/ 全屏（opacity 0，按钮左移 left:16px）。**无第三态**，mac 全屏 hover 红黄绿由系统提供，应用不渲染
     - win/linux 走 mimic_mac：自绘彩色圆点放左侧模拟 mac，三平台左上视觉统一
     - 唤回侧栏：⌘B + header chrome 按钮（**rail-restore 左缘细条已移除**）
     - 新增或修改任何窗口顶部区域 UI 时，必须读 [v6 shell spec](docs/page-design/v6-spec-shell.html) 确认拓扑一致
-    - 设计决策记录：[ADR 0017](docs/adr/0017-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已 Superseded**）、v6 shell spec（现版 SSOT，2026-06-18 修正）
+    - 设计决策记录：[ADR 0017](docs/adr/0017-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已 Superseded**）、v6 shell spec（现版 SSOT，2026-06-18 修正；2026-08 裁决确认 demo 与 spec 一致，dev 实现回填对齐）
 12. **reka ScrollAreaViewport 默认 `overflow-x: hidden` [HISTORICAL]** — reka-ui 的 `ScrollAreaViewport` 内联注入 `overflow-x: hidden`，横向溢出的内容被**裁掉不滚动**（非 `scroll` 也非 `auto`）。文件树等需横向滚动看长文件名的场景，必须给 `ScrollArea` 传 `horizontal` prop（`src/components/ui/scroll-area/ScrollArea.vue`，渲染额外横向 ScrollBar + 用 `!overflow-x-auto` 覆盖内联 style）。覆盖用 Tailwind `!` 前缀（`!important` 压过 inline）；scoped `<style>` 的 `:deep()` 不行——会注入 `<style>` 元素破坏 reka Root 的子组件渲染顺序，导致 ScrollBar/Corner 不挂载
 
 ### 自动化检查

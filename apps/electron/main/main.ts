@@ -200,7 +200,7 @@ app.whenReady().then(async () => {
   if (isDev && process.platform === 'darwin') {
     const dockIcon = path.join(app.getAppPath(), 'build', 'icon-1024.png')
     if (existsSync(dockIcon)) {
-      app.dock.setIcon(dockIcon)
+      app.dock?.setIcon(dockIcon)
     }
   }
   // 注册 local-file:// 协议，用于渲染进程加载本地文件（如图片）
