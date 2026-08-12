@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
 	INFINITE_WIN,
 	type NormalizedQuotaRow,
@@ -8,7 +10,19 @@ import {
 } from "./types.js";
 import { MS_PER_SEC, SEC_PER_MIN, SEC_PER_HOUR, SEC_PER_DAY } from "../time.js";
 
-const HOME = homedir();
+const home = homedir();
+
+/**
+ * ZAI auth token 候选路径（按优先级）：
+ * [0] pi agentDir 上级目录下的 .zhipu_auth_token（getAgentDir 返回 pi 数据目录，
+ *     其上级与历史 <home>/.pi 位置一致），支持 PI_CODING_AGENT_DIR 实例隔离。
+ * [1] Claude 配置目录下的 .zhipu_auth_token（非 pi 目录，实例隔离不适用，
+ *     保留 homedir 推导）。
+ */
+export const ZHIPU_TOKEN_PATHS = [
+	resolve(getAgentDir(), "..", ".zhipu_auth_token"),
+	join(home, ".claude", ".zhipu_auth_token"),
+] as const;
 
 export interface ZhipuData {
 	label: string;
@@ -42,11 +56,7 @@ async function fetchZhipu(): Promise<ZhipuData | null> {
 	// 优先环境变量，兼容文件
 	let token = process.env.ZAI_AUTH_TOKEN ?? "";
 	if (!token) {
-		const tokenPaths = [
-			join(HOME, ".pi", ".zhipu_auth_token"),
-			join(HOME, ".claude", ".zhipu_auth_token"),
-		];
-		for (const p of tokenPaths) {
+		for (const p of ZHIPU_TOKEN_PATHS) {
 			if (existsSync(p)) {
 				token = readFileSync(p, "utf-8").trim();
 				break;

@@ -2,7 +2,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createStore } from '../store.js'
 import type { ScheduledTask, SchedulerStore } from '../types.js'
@@ -18,26 +18,41 @@ import type { ScheduledTask, SchedulerStore } from '../types.js'
  * 注意（修正方向 3）：store.gc() 用真实 Date.now() 过滤过期任务
  * （!t.expiresAt || t.expiresAt > now），构造数据的 expiresAt 必须用未来值，
  * 否则 persistSync 时任务被 gc 删掉、load 回来断言全红。
+ *
+ * 隔离（TC4）：beforeEach stubEnv PI_CODING_AGENT_DIR 到 os.tmpdir() 下临时
+ * 子目录，store 文件写入隔离目录不污染真实 ~/.pi/agent。
  */
 
 const FUTURE_OFFSET_MS = 86_400_000 * 30 // 30 天，远大于真实时钟漂移
 
 describe('store load 白名单 round-trip（真实 fs）', () => {
   let tmpCwd: string
+  let tmpAgentDir: string
   let storePath: string | null
 
   beforeEach(() => {
     // os.tmpdir 建临时 cwd 隔离 store 文件（getStorePath 基于 cwd 生成路径段）
     tmpCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'scheduler-store-'))
+    // 隔离 agentDir 到临时目录，避免污染真实 ~/.pi/agent（TC4）
+    tmpAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scheduler-agent-'))
+    vi.stubEnv('PI_CODING_AGENT_DIR', tmpAgentDir)
     storePath = null
   })
 
   afterEach(() => {
-    // 清理真实写入的 store 目录树（~/.pi/agent/scheduler/<root>/<segments>/）
+    vi.unstubAllEnvs()
+    // 清理真实写入的 store 目录树（<tmpAgentDir>/scheduler/<root>/<segments>/）
     if (storePath) {
       fs.rmSync(path.dirname(storePath), { recursive: true, force: true })
     }
     fs.rmSync(tmpCwd, { recursive: true, force: true })
+    fs.rmSync(tmpAgentDir, { recursive: true, force: true })
+  })
+
+  it('TC4: store 路径落到隔离的 PI_CODING_AGENT_DIR，不污染真实 agentDir', () => {
+    const s = createStore(tmpCwd)
+    storePath = s.storePath
+    expect(storePath.startsWith(tmpAgentDir)).toBe(true)
   })
 
   it('六白名单字段（lastError/lastStatus/lastRunAt/expiresAt/force/history）精确 round-trip', () => {

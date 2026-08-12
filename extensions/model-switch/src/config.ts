@@ -1,7 +1,8 @@
 /**
  * Model Switch — 配置文件加载
  *
- * 从 ~/.pi/agent/model-policy.json 加载配置。
+ * 从 <agentDir>/model-policy.json 加载配置（agentDir 由 pi 的 getAgentDir()
+ * 推导，尊重 PI_CODING_AGENT_DIR 实现实例隔离）。
  * v2 格式：models 以 provider 名为 key，内嵌 models 表；plans 以 plan 名为 key。
  * v1 格式自动迁移为 v2 内存结构。
  */

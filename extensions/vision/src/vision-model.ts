@@ -1,8 +1,9 @@
 /**
  * Vision model configuration and resolution for image analysis.
  *
- * Loads vision model entries from ~/.pi/agent/vision-models.json,
- * selects the best available model with fallback chain.
+ * Loads vision model entries from `<agentDir>/vision-models.json` (agentDir
+ * derived from pi's getAgentDir(), honoring PI_CODING_AGENT_DIR for instance
+ * isolation), selects the best available model with fallback chain.
  *
  * State (cached config + timestamp) is encapsulated in the
  * `createVisionModelApi()` factory closure so multiple extension
@@ -10,8 +11,9 @@
  */
 
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 // ──────────────────────── Types ────────────────────────
 
@@ -41,7 +43,7 @@ export interface VisionModelApi {
 
 // ──────────────────────── Constants ────────────────────────
 
-export const VISION_MODELS_PATH = path.join(os.homedir(), ".pi", "agent", "vision-models.json");
+export const VISION_MODELS_PATH = path.join(getAgentDir(), "vision-models.json");
 export const VISION_ALLOWED_TOOLS = "read,bash,grep";
 
 export const VISION_SYSTEM_PROMPT = [

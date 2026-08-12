@@ -17,10 +17,6 @@ vi.mock("node:fs", () => ({
   readFileSync: mockReadFileSync,
 }));
 
-vi.mock("node:os", () => ({
-  homedir: () => "/home/test",
-}));
-
 // Import AFTER mocks
 import {
   createVisionModelApi,
@@ -33,10 +29,6 @@ import {
 // ── Tests ──────────────────────────────────────────────
 
 describe("constants", () => {
-  it("VISION_MODELS_PATH points to ~/.pi/agent/vision-models.json", () => {
-    expect(VISION_MODELS_PATH).toBe("/home/test/.pi/agent/vision-models.json");
-  });
-
   it("VISION_ALLOWED_TOOLS is a non-empty string", () => {
     expect(VISION_ALLOWED_TOOLS).toBeTruthy();
     expect(VISION_ALLOWED_TOOLS).toContain("read");
@@ -276,5 +268,35 @@ describe("resolveVisionModelsSync", () => {
       "p2/fallback1",
       "p2/fallback2",
     ]);
+  });
+});
+
+// ── VISION_MODELS_PATH 推导（TC1 + TC4）──────────────────────────────
+// vision-model.ts 改用 getAgentDir() 后，VISION_MODELS_PATH 是模块顶层常量
+// （加载时求值）。不 vi.mock getAgentDir（mock 工厂跨 resetModules 持久，
+// 与验证真实 env 读取冲突），改用 stubEnv + resetModules + dynamic import
+// 让模块在隔离 env 下重新求值。
+describe("VISION_MODELS_PATH derivation (getAgentDir)", () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("TC1: derives vision-models.json from PI_CODING_AGENT_DIR", async () => {
+    vi.stubEnv("PI_CODING_AGENT_DIR", "/home/test/.pi/agent");
+    const mod = await import("../vision-model.js");
+    expect(mod.VISION_MODELS_PATH).toBe(
+      "/home/test/.pi/agent/vision-models.json",
+    );
+  });
+
+  it("TC4: isolates to custom PI_CODING_AGENT_DIR", async () => {
+    vi.stubEnv("PI_CODING_AGENT_DIR", "/tmp/test-agent-dir");
+    const mod = await import("../vision-model.js");
+    expect(mod.VISION_MODELS_PATH.startsWith("/tmp/test-agent-dir")).toBe(true);
   });
 });

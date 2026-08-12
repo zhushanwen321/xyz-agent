@@ -14,12 +14,25 @@ vi.mock('node:fs', () => ({
 }))
 
 describe('getStorePath', () => {
-  it('returns path under ~/.pi/agent/scheduler/', () => {
-    const p = getStorePath('/Users/test/project')
-    expect(p).toContain('.pi')
-    expect(p).toContain('agent')
-    expect(p).toContain('scheduler')
-    expect(p).toContain('scheduler.json')
+  beforeEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('TC2: derives scheduler store path from PI_CODING_AGENT_DIR', () => {
+    vi.stubEnv('PI_CODING_AGENT_DIR', '/mock/agent')
+    const p = getStorePath('/a/b')
+    expect(p.startsWith('/mock/agent/scheduler')).toBe(true)
+    expect(p.endsWith('scheduler.json')).toBe(true)
+  })
+
+  it('TC4: isolates scheduler store to custom PI_CODING_AGENT_DIR', () => {
+    vi.stubEnv('PI_CODING_AGENT_DIR', '/tmp/test-agent-dir')
+    const p = getStorePath('/a/b')
+    expect(p.startsWith('/tmp/test-agent-dir')).toBe(true)
   })
 
   it('generates different paths for different cwds', () => {
