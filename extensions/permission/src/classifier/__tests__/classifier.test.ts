@@ -11,24 +11,31 @@
  *  - C10 timeout 秒→毫秒传递
  *  - C11 G3 关键修正：stopReason='error' / 'aborted' → fallback（即使 result() resolve）
  */
-import type { AssistantMessageEventStream, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessageEventStream, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 
 import type { ClassifierConfig, ToolInvocationContext } from "../../types.js";
-import type { ClassifierDeps } from "../classifier.js";
+import type { ClassifierDeps, ResolvedModelAuth } from "../classifier.js";
 import { createClassifier } from "../classifier.js";
-import type { ResolvedModel } from "../model-resolver.js";
 
 // ──────────────────────── fixtures ────────────────────────
 
-const FIXED_MODEL: ResolvedModel = {
-	provider: "test-co",
+/** 测试用 Model<Api>（P3 收口后 resolveModel 注入点直接返回 Model<Api>，无需 buildModel） */
+const FIXED_MODEL_OBJ: Model<Api> = {
 	id: "test-model",
-	api: "openai-completions",
 	name: "Test Model",
+	api: "openai-completions" as Api,
+	provider: "test-co",
 	baseUrl: "http://localhost",
-	inputCost: 0,
+	reasoning: false,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 128000,
+	maxTokens: 16384,
 };
+
+/** 测试用 resolveModel 返回值（model + 凭证） */
+const FIXED_MODEL: ResolvedModelAuth = { model: FIXED_MODEL_OBJ, auth: {} };
 
 const CONFIG: ClassifierConfig = {
 	enabled: true,
@@ -81,7 +88,7 @@ function textMessage(text: string, stopReason = "stop"): AssistantMessageMock {
 
 function makeDeps(over: Partial<ClassifierDeps> = {}): ClassifierDeps {
 	return {
-		resolveModel: () => FIXED_MODEL,
+		resolveModel: async () => FIXED_MODEL,
 		streamSimple: () => mockStreamFromMessage(textMessage('{"outcome":"allow","risk_level":"low","reasoning":"ok","confidence":0.9}')),
 		...over,
 	};
@@ -143,7 +150,7 @@ describe("CT1: happy path — streamSimple resolve 正常文本", () => {
 
 describe("CT2: fail-closed 路径", () => {
 	it("C5: resolveModel 返回 null → fallback ask", async () => {
-		const classifier = createClassifier(makeDeps({ resolveModel: () => null }));
+		const classifier = createClassifier(makeDeps({ resolveModel: async () => null }));
 		const r = await classifier.classifyRisk(CTX, CONFIG);
 		expect(r.outcome).toBe("ask");
 		expect(r.confidence).toBe(0);
@@ -245,7 +252,7 @@ describe("CT5: resolved.apiKey 透传到 streamSimple options", () => {
 			textMessage('{"outcome":"allow","risk_level":"low","reasoning":"x","confidence":0.9}'),
 		);
 		const classifier = createClassifier(makeDeps({
-			resolveModel: () => ({ ...FIXED_MODEL, apiKey: "sk-test-secret-key-12345" }),
+			resolveModel: async () => ({ ...FIXED_MODEL, auth: { apiKey: "sk-test-secret-key-12345" } }),
 			streamSimple: spy,
 		}));
 		const r = await classifier.classifyRisk(CTX, CONFIG);
@@ -273,7 +280,7 @@ describe("CT5: resolved.apiKey 透传到 streamSimple options", () => {
 			textMessage('{"outcome":"allow","risk_level":"low","reasoning":"x","confidence":0.9}'),
 		);
 		const classifier = createClassifier(makeDeps({
-			resolveModel: () => ({ ...FIXED_MODEL, apiKey: "k9" }),
+			resolveModel: async () => ({ ...FIXED_MODEL, auth: { apiKey: "k9" } }),
 			streamSimple: spy,
 		}));
 		// CONFIG.timeout=90 → timeoutMs=90000

@@ -1,12 +1,10 @@
 /**
- * MRT 系列：model-resolver.ts 单元测试。
+ * MRT 系列：model-resolver.ts 单元测试（picker 相关 API）。
  *
- * 覆盖：
- *  - G2：agentDir 解析（env override / 默认）
+ * P3 收口后 classifier 不再用本模块（改走 llm-shared resolveModel + ctx.modelRegistry）。
+ * resolveClassifierModel / findCheapestModel 已废弃删除。本测试仅覆盖 picker 所需的：
  *  - loadModelsJson（文件缺失返回 null + onWarning）
  *  - flattenModels（拍平 + hasApiKey 推断）
- *  - findCheapestModel（过滤 hasApiKey + 按 input cost 升序）
- *  - resolveClassifierModel（'auto' / 'provider/model-id' / 非法格式）
  *
  * 用真实 fs + 临时目录（不用 mock fs），与 config.test.ts 风格一致。
  */
@@ -16,7 +14,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { findCheapestModel, flattenModels, loadModelsJson, resolveClassifierModel } from "../model-resolver.js";
+import { flattenModels, loadModelsJson } from "../model-resolver.js";
 
 let tempDir: string;
 let modelsJsonPath: string;
@@ -109,65 +107,5 @@ describe("MRT2: flattenModels", () => {
 		// 同 provider 下所有 model 共享 provider.apiKey
 		const big = entries.find((e) => e.id === "big");
 		expect(big?.apiKey).toBe("k1");
-	});
-});
-
-describe("MRT3: findCheapestModel", () => {
-	it("过滤无 apiKey 的，返回 input cost 最低", () => {
-		const cheapest = findCheapestModel(MODELS_JSON);
-		// cheap-co/mini (0.1) < cheap-co/big (1.0)；noauth-co/ultra-cheap 被 hasApiKey 过滤掉
-		expect(cheapest?.id).toBe("mini");
-		expect(cheapest?.cost.input).toBeCloseTo(0.1);
-	});
-
-	it("全部无 apiKey → null", () => {
-		const data = {
-			providers: {
-				x: { baseUrl: "http://x", api: "openai-completions", models: [{ id: "m", cost: { input: 0.1, output: 0, cacheRead: 0, cacheWrite: 0 } }] },
-			},
-		};
-		expect(findCheapestModel(data)).toBeNull();
-	});
-});
-
-describe("MRT4: resolveClassifierModel", () => {
-	it("'auto' → 最便宜可用模型", () => {
-		const r = resolveClassifierModel("auto", MODELS_JSON);
-		expect(r?.id).toBe("mini");
-		expect(r?.provider).toBe("cheap-co");
-	});
-
-	it("'provider/model-id' → 精确匹配", () => {
-		const r = resolveClassifierModel("cheap-co/big", MODELS_JSON);
-		expect(r?.id).toBe("big");
-		expect(r?.provider).toBe("cheap-co");
-	});
-
-	it("'provider/model-id' 未匹配 → null", () => {
-		expect(resolveClassifierModel("cheap-co/nonexistent", MODELS_JSON)).toBeNull();
-	});
-
-	it("非法格式（无斜线）→ null", () => {
-		expect(resolveClassifierModel("just-a-name", MODELS_JSON)).toBeNull();
-	});
-
-	it("非法格式（斜线在首/尾）→ null", () => {
-		expect(resolveClassifierModel("/leading", MODELS_JSON)).toBeNull();
-		expect(resolveClassifierModel("trailing/", MODELS_JSON)).toBeNull();
-	});
-
-	it("ResolvedModel 携带 baseUrl/name/inputCost（G4）", () => {
-		const r = resolveClassifierModel("cheap-co/mini", MODELS_JSON);
-		expect(r?.baseUrl).toBe("http://x");
-		expect(r?.name).toBe("mini"); // 无 name → fallback 到 id
-		expect(r?.inputCost).toBeCloseTo(0.1);
-	});
-
-	it("ResolvedModel 携带 apiKey 值（MRT4 补充：透传给 streamSimple 用）", () => {
-		// reviewer 指出 MRT4 只断言 hasApiKey，没断言 apiKey 值。补断言。
-		const auto = resolveClassifierModel("auto", MODELS_JSON);
-		expect(auto?.apiKey).toBe("k1"); // cheap-co 的 apiKey
-		const explicit = resolveClassifierModel("cheap-co/big", MODELS_JSON);
-		expect(explicit?.apiKey).toBe("k1");
 	});
 });
