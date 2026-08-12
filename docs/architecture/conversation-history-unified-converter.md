@@ -33,8 +33,8 @@ session JSONL 文件 ──→ session-history.ts ─────┘
 ### Scope
 
 - **当前层 → 下一层**：runtime 历史链路技术方案 → 文件级实现拆分（§5）。
-- **In-scope**：共享 mapper 抽取与两路径接入；compaction 生命周期事件驱动（dispatcher 零广播、interpreter 唯一源）；compacting reason 文案区分手动/自动（store + MessageStream + i18n）；直接相关的契约清理（死分支、entry_appended、AGENTS.md 7.5 文档同步）。
-- **Out-of-scope**：renderer 消息模型归一（`conversation-renderer-model-unification.md`，本次仅改 compacting 浮层文案不动消息模型）；pi 侧行为（不改 pi）；WS 全量契约 SSOT 文档化（仅同步本文触及的消息注释）；`getHistoryTailFromFile` 的 20 turn 窗口策略（不改，场景测试约束 ≤20 turn）。
+- **In-scope**：共享 mapper 抽取与两路径接入；compaction 生命周期事件驱动（dispatcher 零广播、interpreter 唯一源）；compacting reason 文案区分手动/自动（store + MessageStream + i18n）；**display 历史链路归一（完成通知 customType 在历史链路也写 display:false，消除规则 7.5 实时/重开可见性分叉，方案 Z，MF-新2）**；直接相关的契约清理（死分支、entry_appended、AGENTS.md 7.5 文档同步）。
+- **Out-of-scope**：renderer 消息模型归一（`conversation-renderer-model-unification.md`，本次仅改 compacting 浮层文案；**display 历史链路归一除外**——MF-新2 把完成通知 customType 的 display 覆写前移到 runtime mapper + shared SSOT 常量，core/message-turns.ts 仅改引用源不过滤逻辑，非消息模型变更）；pi 侧行为（不改 pi）；WS 全量契约 SSOT 文档化（仅同步本文触及的消息注释）；`getHistoryTailFromFile` 的 20 turn 窗口策略（不改，场景测试约束 ≤20 turn）。
 
 ## §2 现状与问题分析
 
@@ -178,10 +178,12 @@ function mapSessionEntries(entries: PiSessionEntry[]): MappedSessionEntries
 
 - `message` → 透传 message 体（**不再注入 `__entryId`**——见 3.3.2）
 - `compaction` → 伪消息 `{role:'compactionSummary', summary, tokensBefore, timestamp}`
-- `custom_message` → 伪消息 `{role:'custom', customType, content, details, display, timestamp}`
+- `custom_message` → 伪消息 `{role:'custom', customType, content, details, display, timestamp}`；**完成通知类 customType 强制覆写 `display:false`**（display 归一，方案 Z，见下）
 - `branch_summary` → 伪消息 `{role:'branchSummary', summary, fromId, timestamp}`
 - `custom` → 不进 messages，进 `customDataEntries`（RPC 路径建 clientUuidMap 用）
 - 其余（label/session_info 等）→ 跳过
+
+**display 历史链路归一（方案 Z，MF-新2）**：完成通知类 custom_message（`subagent-bg-notify`/`workflow-result`）在实时链路被前端 `filterDisplayableMessages` 的 `HIDDEN_NOTIFY_CUSTOM_TYPES`（core/message-turns.ts:51）挡住不渲染——但历史链路（converter custom 分支 message-converter.ts:266 `display: cm.display`）直接透传 pi 持久化的 display 值，**无 HIDDEN_NOTIFY 兜底** → pi 持久化 display:true 时重开后这些通知冒出来显示，与实时链路可见性分叉（规则 7.5 实时/重开一致被破坏）。裁决：完成通知 customType 在 mapper 层强制覆写 `display:false`，与实时链路 registry 对称（实时靠 HIDDEN_NOTIFY 挡住，历史靠 display:false，两者都进 `filterDisplayableMessages` 的 `display===false` 分支统一挡住）。判别不分散在两处——**shared 层定义 SSOT 常量** `COMPLETE_NOTIFY_CUSTOM_TYPES = new Set(['subagent-bg-notify','workflow-result'])`（放 `packages/shared/src/message.ts`，从 core/message-turns.ts:51 提升），mapper 与 core/message-turns.ts 双向引用（消除分散判别，新增完成通知 customType 只改 shared 一处）。
 
 #### 3.3.2 `__entryId` 注入删除，统一平行 entryIds
 
@@ -198,7 +200,7 @@ function mapSessionEntries(entries: PiSessionEntry[]): MappedSessionEntries
 
 #### 3.3.4 compaction 生命周期事件驱动（dispatcher 零广播 + interpreter 唯一源）
 
-**设计原则**：compaction 生命周期的所有前端状态与反馈，由 interpreter 从 pi `compaction_start`/`compaction_end` 事件**唯一驱动**。dispatcher 的 `compact()` 退化为「预检 + RPC 触发 + 失败复位」三件事，**删除全部 compaction 生命周期广播**（`session.compacting` + `compactionSummary` + `session.compacted` + `session.compacted{error}` 四条全删）。手动/自动两条触发源经同一事件流驱动，**by construction 不可能双发**——原方案 P-dedup 的「事件驱动 vs dispatcher 手动广播重叠去重」难题从「需探针验证」降为「结构上不可能」（准则 8 减法优先）。
+**设计原则**：compaction 生命周期的所有前端状态与反馈，由 interpreter 从 pi `compaction_start`/`compaction_end` 事件**唯一驱动**。dispatcher 的 `compact()` 退化为「预检 + RPC 触发 + 失败复位」三件事，**删除全部 compaction 生命周期广播**——4 类 type / **5 处语句**（message-dispatcher.ts:444 busy 预检拒绝路径 `session.compacted{error}` + :455 `session.compacting` + :466 catch 块 `session.compacted{error}` + :477 `message.compactionSummary` + :491 `session.compacted`；`compacted{error}` 出现 2 次分别在 busy 预检与 catch，按 type 类别算 4 类全覆盖，删语句时 :444 busy 预检路径易漏须单列，SUG-新1）。手动/自动两条触发源经同一事件流驱动，**by construction 不可能双发**——原方案 P-dedup 的「事件驱动 vs dispatcher 手动广播重叠去重」难题从「需探针验证」降为「结构上不可能」（准则 8 减法优先）。
 
 **前提（已 pi dist 核实）**：
 - pi 手动与自动 compact 都发 `compaction_start{reason}` + `compaction_end`（agent-session.js:1370 手动 `reason:'manual'` 硬编码 / :1608 自动 `reason:'threshold'|'overflow'`）。
@@ -211,26 +213,28 @@ function mapSessionEntries(entries: PiSessionEntry[]): MappedSessionEntries
 
 | 事件 | 广播 | 说明 |
 |---|---|---|
-| `compaction_start{reason}` | `session.compacting{reason}` | compacting 态置位；reason 驱动文案（手动「正在压缩」/ 自动「正在自动压缩上下文」，文案改动见 MF4） |
-| `compaction_end{result}`（成功，result 真值） | `message.compactionSummary{summary, tokensBefore}` + `applyContextUpdate(estimatedTokensAfter)` + `session.compacted` | 压缩记录进对话流；context 计数刷新；compacting 复位 + flush compact queue |
-| `compaction_end`（aborted，无 errorMessage 真值） | `session.compacted`（**不带 error**） | 取消（extension cancel :1623 / signal abort :1658 / 手动 catch 的取消类错误 :1468）——压缩未发生，不提示失败；按现状 compacted handler 语义 flush 队列（释放 compacting 期间积压消息，在未变 context 上继续） |
-| `compaction_end{errorMessage:<msg>}`（failed，errorMessage 真值） | `session.compacted{error}` + 对话流错误提示 | 真失败——「上下文压缩失败：<原因>」+ 恢复指引；compacting 复位；前端 compacted handler error 非空 → 不 flush（队列保留） |
+| `compaction_start{reason}` | `session.compacting{reason}` | compacting 态置位（前端 setCompacting(true) + runtime `active.isCompacting=true`）；reason 驱动文案（手动「正在压缩」/ 自动「正在自动压缩上下文」，文案改动见 MF4） |
+| `compaction_end{result}`（成功，result 真值） | `message.compactionSummary{summary, tokensBefore}` + `applyContextUpdate(estimatedTokensAfter)` + `session.compacted` | 压缩记录进对话流；context 计数刷新；compacting 复位（前端 setCompacting(false) + runtime `active.isCompacting=false`，与 start 对称，SUG-新2）+ flush compact queue |
+| `compaction_end`（aborted，无 errorMessage 真值） | `session.compacted`（**不带 error**） | 取消（extension cancel :1623 / signal abort :1658 / 手动 catch 的取消类错误 :1468）——压缩未发生，不提示失败；compacting 复位（`active.isCompacting=false`，与 start 对称）；按现状 compacted handler 语义 flush 队列（释放 compacting 期间积压消息，在未变 context 上继续） |
+| `compaction_end{errorMessage:<msg>}`（failed，errorMessage 真值） | `session.compacted{error}` + 对话流错误提示 | 真失败——「上下文压缩失败：<原因>」+ 恢复指引；compacting 复位（`active.isCompacting=false`，与 start 对称，SUG-新2）；前端 compacted handler error 非空 → 不 flush（队列保留） |
 
 **failed 判据：以 `errorMessage` 真值为准（非 aborted 字段、非 key 存在性）**。理由：pi 的三种 aborted:true 形态在「errorMessage 真值」层面一致（都为 falsy）——extension cancel（:1623）/ signal abort（:1658）对象字面量**无 errorMessage key**；手动 catch 的取消类错误（:1468）显式写 `errorMessage: aborted ? undefined : ...`（key 在但值为 undefined）。而 aborted 字段本身不可靠（手动 catch :1466 里 aborted 是动态计算：`"Compaction cancelled"` / `AbortError` → true，其余 → false）。故失败分叉以 **errorMessage 真值**为唯一判据——三种 aborted:true 在真值层面与 JSON wire format 层面都等价（`undefined` 被 `JSON.stringify` 省略），分叉干净。文档与实现统一约定此口径。
+
+**孤儿 compaction_end 容错（SUG-新3）**：interpreter 编排假设「compaction_start 必先于 compaction_end」，但 pi overflow「已 retry 过一次」早退路径（agent-session.js:1544-1550，`_overflowRecoveryAttempted` 为 true 时）**不发 compaction_start 直接发 compaction_end**（`reason:"overflow"` + `aborted:false` + truthy `errorMessage` + `result:undefined`）——此路径跳过了 `_runAutoCompaction`（:1595，compaction_start 发出点 :1608），故无 preceding start，interpreter 的 compaction_start 置位从未执行。容错要求：compaction_end handler 的复位操作（`active.isCompacting=false`、前端 setCompacting(false)、flush 判定）对「本来就 false 的 isCompacting」幂等无害（setCompacting(false) 对 false 无操作，flush 按 error 真值判定照常——此孤儿 end 的 errorMessage 真值 → failed 分支 → 不 flush）；但文档须提此路径——interpreter **不得维护 start/end 配对状态机**（不因「未收到对应 start」而拒绝处理 end），end 自洽处理（复位 + 按 errorMessage 真值判分支）。这条孤儿 end 在历史链路也会被 pi 持久化（compaction entry / custom_message），mapper 与 converter 照常映射。
 
 **dispatcher `compact()`（message-dispatcher.ts:423-500）改为三件事**：
 1. **busy 预检（补 isCompacting 拒绝）**：现状预检（:439）`if (active.isBashRunning || active.isGenerating)` 只防「bash/generating 重入 compact」——这是**已存在**的方向（sendPrompt:111 / sendBash:255 已反向拒 isCompacting，:433-437 注释明言双向互斥已补齐）。补 `|| active.isCompacting` 防的是**第二个并发 compact() 重入**：A 置位 isCompacting（:458）后，B 进来预检若不查 isCompacting 就看不到 A → 两个 `client.compact` RPC 并发 → 双 compaction 事件流。补上后 P-dedup by construction 成立。
 2. **RPC 触发**：`client.compact()`（:462）。
 3. **catch（失败复位）**：**删除** `session.compacted{error}` 兜底广播（:467）与 toast；只做 `isCompacting = false` 复位（:498 finally）+ 传播 RPC error（throw/reject）。错误反馈统一归 interpreter。
 
-**错误提示通道选择（interpreter 对话流 vs dispatcher toast）→ 选 interpreter**。理由：pi 手动 compact 失败**必发** compaction_end{errorMessage}（无静默路径），interpreter 是确定可见的错误源；dispatcher catch 的 RPC error 是同一失败的「另一条信号」，若也提示会造成双 toast（现状 useChat compacted handler :191 注释已警惕此问题，故失败不在此 toast）。auto compact 失败无 RPC reply（不 rethrow），dispatcher 根本不参与——只有 interpreter 能统一覆盖手动+自动两路失败。代价：transport 级失败（RPC 未达 pi，pi 来不及发事件）不触发 interpreter，此时靠 useChat `compact()` catch 的原有 toast（:504）兜底——保留不动。
+**错误提示通道选择（interpreter 对话流 vs useChat toast）→ 选 interpreter，useChat `compact()` catch 删 toast（MF-新1）**。理由：pi 手动 compact 失败**必发** compaction_end{errorMessage}（无静默路径），interpreter 是确定可见的错误源；而 useChat `compact()` catch（:506）的 `deps.toast.error(...)` 对**所有 RPC 失败无条件触发**——failed 路径 interpreter 已从 compaction_end{errorMessage} 提示（双提示），aborted 路径取消却显示失败 toast（误提示）。useChat compacted handler :190 注释已警惕此双 toast bug。裁决：catch **删 toast**，错误提示统一归 interpreter（compaction_end{errorMessage} → 对话流错误提示）。auto compact 失败无 RPC reply（不 rethrow），dispatcher 根本不参与——只有 interpreter 能统一覆盖手动+自动两路失败。transport 级失败（RPC 未达 pi，pi 来不及发 compaction_end）不触发 interpreter，此时靠 **chatApi 层通用错误处理**兜底（非 compact 专属 toast）——compact 失败不单独 toast，与其它 RPC 命令失败同走通用通道。
 
 **isCompacting 状态源切换**：前端 compacting 态从「dispatcher 标记」改为「session.compacting/compacted 消息」驱动。现状前端 handler（useChat.ts:186/190）订阅的正是这两个消息，切换后**handler 体零改动**（compacting handler 仍 `setCompacting(sid,true)`，compacted handler 仍按 error 决 flush）；但 reason 文案区分需改 store + MessageStream（见 MF4）。
 
 **auto-compaction 可见化对 compact queue / 提交互斥的连锁影响**（新增分析）：
 - 现状 auto compact 期间，前端无 compacting 态，Composer 直接 sendPrompt（sendPrompt:111 预检虽查 isCompacting，但 runtime 侧 `active.isCompacting` 只在 dispatcher 手动 compact 路径 :458 设置，auto 期间为 false）→ 用户消息正常进 pi，pi 内部 followUp/steering 排队。
 - 可见化后，auto 的 compaction_start → 前端 setCompacting(true) → Composer 切 queueSend（Composer.vue:115 检测 isCompacting 路由，真正入队在 useComposerShell 层）→ 用户消息进 xyz 前端 compact queue → compaction_end → flush 重放。
-- **裁决：接受「auto 期间走前端队列」的新行为**。理由：手动 compact 已是此模型（用户预期 compacting 期间消息排队），auto 与手动经同一事件流后行为一致，用户心智统一；pi 内部排队与前端队列并发可能致顺序歧义，但 auto compact 窗口短（秒级），flush 后顺序由 xyz 前端保证。代价：auto 期间 `active.isCompacting` 需由 compaction_start 事件驱动（interpreter 置位），sendPrompt 预检才能正确拦截——这是 M4 的一部分。
+- **裁决：接受「auto 期间走前端队列」的新行为**。理由：手动 compact 已是此模型（用户预期 compacting 期间消息排队），auto 与手动经同一事件流后行为一致，用户心智统一；pi 内部排队与前端队列并发可能致顺序歧义，但 auto compact 窗口短（秒级），flush 后顺序由 xyz 前端保证。代价：auto 期间 `active.isCompacting` 需由 compaction_start 事件驱动（interpreter 置位），sendPrompt 预检才能正确拦截——这是 M4 的一部分。**复位对称（SUG-新2）**：interpreter 必须在 compaction_end（成功/aborted/failed 三路）**复位** `active.isCompacting=false`，与 compaction_start 置位对称——否则 auto compact 结束后 `active.isCompacting` 永远 true，sendPrompt 预检（:111）永远拒绝，session 卡死（现状 dispatcher 手动路径靠 finally :498 复位，事件驱动后此 finally 随零广播一同删除，复位责任转移到 interpreter）。
 
 #### 3.3.5 契约清理（随本设计一并做）
 
@@ -292,10 +296,10 @@ function mapSessionEntries(entries: PiSessionEntry[]): MappedSessionEntries
 
 | 步骤 | 交付 | 独立验证 |
 |---|---|---|
-| M1 共享 mapper | `infra/pi/session-entry-mapper.ts` 新增 `mapSessionEntries` + 单测（四类映射/custom 数据 entry 分流/畸形 data 降级/平行 entryIds）；pi-protocol.ts 补 `PiSessionCustomMessageEntry`（MF1） | 单测 |
+| M1 共享 mapper | `infra/pi/session-entry-mapper.ts` 新增 `mapSessionEntries` + 单测（四类映射/custom 数据 entry 分流/畸形 data 降级/平行 entryIds/**完成通知 customType 覆写 display:false**）；pi-protocol.ts 补 `PiSessionCustomMessageEntry`（MF1）；shared/message.ts 提升 `COMPLETE_NOTIFY_CUSTOM_TYPES` SSOT 常量（MF-新2） | 单测 |
 | M2 RPC 路径接入 | `rebuildHistoryFromEntries` 改用 mapper（clientUuidMap 从 customDataEntries 建，badge 回填保留） | 场景 1 + P-badge-backfill |
 | M3 文件路径接入 | `getHistoryFromFilePath`/`tailReadHistory` 换 mapper；删 `__entryId` 注入；扩 port 签名 `convertHistory(raw, entryIds?)` + PiSessionStore 透传（MF5） | 场景 4② + P-fork-locate + 场景 5 |
-| M4 compaction 事件驱动 | adapter 放开两事件 + interpreter 编排（errorMessage 真值判据）+ dispatcher 零广播（补 isCompacting 预检）+ compacting reason 文案（MF4）+ auto 期间置位 active.isCompacting | 场景 2/3 + P-dedup（by construction）+ P-failed-judge + P-auto-queue |
+| M4 compaction 事件驱动 | adapter 放开两事件 + interpreter 编排（errorMessage 真值判据 + isCompacting 置位/复位对称 SUG-新2 + 孤儿 end 容错 SUG-新3）+ dispatcher 零广播（补 isCompacting 预检）+ compacting reason 文案（MF4） | 场景 2/3 + P-dedup（by construction）+ P-failed-judge + P-auto-queue |
 | M5 契约清理 + 文档同步 | §3.3.5 四项 + agent_start 从 NULL_EVENTS 移除（S1）+ PiCompactionEndEvent.result 收紧类型（S5） | grep 无死分支；P-msg-start-dead 实测；AGENTS.md 7.5 更新 |
 
 拆分理由：M1-M3 是「双路一致」主线（mapper 先行，两路径各自独立可验）；M4 是 compaction 可见性主线（依赖 M1 的 compaction 映射才能让重开可见，故排在 M1 后；与 M2/M3 无代码耦合但共享场景 1 的验收上下文）；M5 纯清理放最后防干扰主线。
@@ -311,13 +315,15 @@ function mapSessionEntries(entries: PiSessionEntry[]): MappedSessionEntries
 | `packages/runtime/src/services/ports/session.ts` | `ISessionStore.convertHistory(raw)`（:91-92）扩为 `convertHistory(raw, entryIds?: string[])`（MF5） |
 | `packages/runtime/src/infra/pi/session-store.ts` | PiSessionStore.convertHistory 实现（:65-67）透传第二参数 entryIds 给 convertPiHistory（MF5） |
 | `packages/runtime/src/infra/pi/event-adapter.ts` | NULL_EVENTS（:667，9 成员）移除 compaction_start/end；agent_start 从 NULL_EVENTS 移除让 hook 分支可达（S1）；删 message_start 死分支（:493-510，M5 实测确认后）；登记 entry_appended 入 NULL_EVENTS |
-| `packages/runtime/src/services/session/event-interpreter.ts` | 新增 compaction_start/end 编排（§3.3.4 表格）；以 **errorMessage 真值**为 failed 判据；auto compaction 期间置位 active.isCompacting（让 sendPrompt 预检拦截，§3.3.4 auto-queue） |
-| `packages/runtime/src/services/session/message-dispatcher.ts` | compact（:423-500）**零广播**：删 session.compacting/compactionSummary/compacted/compacted{error} 四条；预检（:439）补 isCompacting 条件（防并发 compact 重入）；catch 只复位 isCompacting（:498）+ 传播 RPC error；删 toast（归 interpreter） |
-| `packages/runtime/src/infra/pi/message-converter.ts` | 无逻辑改动（`__entryId` 回退 :126-131 保留作防御，注释标注生产路径已不再产生；role 分支 :231/253/283/308 为 if 链） |
+| `packages/runtime/src/services/session/event-interpreter.ts` | 新增 compaction_start/end 编排（§3.3.4 表格）；以 **errorMessage 真值**为 failed 判据；compaction_start 置位 + compaction_end（成功/aborted/failed 三路）**复位** active.isCompacting（对称，SUG-新2）；孤儿 compaction_end 容错（overflow 早退路径 agent-session.js:1544 无 preceding start，end handler 幂等自洽，SUG-新3） |
+| `packages/runtime/src/services/session/message-dispatcher.ts` | compact（:423-500）**零广播**：删 4 类 type / 5 处语句（:444 busy 预检 compacted{error} + :455 compacting + :466 catch compacted{error} + :477 compactionSummary + :491 compacted，SUG-新1）；预检（:439）补 isCompacting 条件（防并发 compact 重入）；catch 只复位 isCompacting（:498）+ 传播 RPC error |
+| `packages/runtime/src/infra/pi/message-converter.ts` | custom 分支（:253-272）引用 `COMPLETE_NOTIFY_CUSTOM_TYPES`（shared SSOT）对完成通知 customType 覆写 `display:false`（display 归一，MF-新2）；`__entryId` 回退 :126-131 保留作防御，注释标注生产路径已不再产生；role 分支 :231/253/283/308 为 if 链 |
+| `packages/shared/src/message.ts` | **新增** `COMPLETE_NOTIFY_CUSTOM_TYPES = new Set(['subagent-bg-notify','workflow-result'])` SSOT 常量（从 core/message-turns.ts:51 提升，MF-新2）；mapper 与 core 双向引用 |
+| `packages/core/src/domain/chat/message-turns.ts` | `HIDDEN_NOTIFY_CUSTOM_TYPES`（:51）改为引用 shared `COMPLETE_NOTIFY_CUSTOM_TYPES`（消除分散判别，过滤逻辑不变，MF-新2） |
 | `packages/core/src/domain/chat/store.ts` | `setCompacting(sessionId, value)`（:471）扩 reason 参数（MF4）；底层结构从 `Set<string>` 调整为可挂 reason |
 | `packages/renderer/src/components/panel/MessageStream.vue` | compacting 浮层（:93）按 reason 切文案：手动 `t('panel.message.compressing')` / 自动 `t('panel.message.autoCompressing')`（MF4） |
 | i18n 文件（zh/en） | 新增 `panel.message.autoCompressing` key（MF4） |
-| `packages/core/src/domain/chat/useChat.ts` | compacting handler（:186）传 reason 给 setCompacting；compacted handler（:190）注释更新「错误反馈归 interpreter」；compact() catch toast（:504）保留作 transport 级失败兜底 |
+| `packages/core/src/domain/chat/useChat.ts` | compacting handler（:186）传 reason 给 setCompacting；compacted handler（:190）注释更新「错误反馈归 interpreter」；**compact() catch 删 toast（:506）**——错误统一归 interpreter（compaction_end{errorMessage}），transport 级失败走 chatApi 通用错误处理（非 compact 专属 toast，MF-新1） |
 | `AGENTS.md` 规则 7.5 | RPC 路径描述同步为 get_entries → mapper → convertPiHistory |
 | 测试 | mapper 单测新增；entry-tree-builder/session-history/dispatcher/interpreter 相关用例同步 |
 
