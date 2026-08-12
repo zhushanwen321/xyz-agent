@@ -19,7 +19,7 @@
     动机：happy-dom + Teleport 把 DialogContent 内容渲染到 document.body，导致 wrapper.html() 拿不到搜索结果
     （SearchModal 测试断言依赖整棵 DOM 在 mount root 内）。生产行为对齐：
     - 居中遮罩 + 内容区（fixed 全屏遮罩 + pt-[10vh] 内容上移，复用 Dialog 视觉风格）
-    - ESC 关闭（全局 keydown listener，onGlobalKeydown 处理）
+    - ESC 关闭（dialog div 内 keydown listener，onGlobalKeydown 处理——input 事件冒泡到 dialog div）
     - 点击遮罩关闭（onBackdropClick，仅 .self 触发）
     - focus 管理：input 装上时通过 nextTick autofocus
   -->
@@ -150,7 +150,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onUnmounted, type Component } from 'vue'
+import { ref, computed, watch, nextTick, onUnmounted, type Component, type ComponentPublicInstance } from 'vue'
 import { Search, Terminal, FileText, Code, MessageSquare, Clock, Loader2 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Input } from '@xyz-agent/ui'
@@ -233,8 +233,8 @@ const selIdx = ref(0)
 const resultsRef = ref<HTMLElement | null>(null)
 /** 浮层根 div（替代 reka-ui Dialog 的 focus trap 容器；用于自管理 focus） */
 const dialogRef = ref<HTMLElement | null>(null)
-/** 输入框 ref（用于 open 时自动 focus，替代 Dialog 默认聚焦首个可聚焦元素） */
-const inputRef = ref<HTMLInputElement | null>(null)
+/** 输入框组件实例 ref（Input 是单根组件，$el 即根 <input>；用于 open 时自动 focus，替代 Dialog 默认聚焦首个可聚焦元素） */
+const inputRef = ref<ComponentPublicInstance | null>(null)
 
 /** useSearch.query 返回的分组（四类 Section[]，符号占位恒在） */
 const remoteSections = ref<Awaited<ReturnType<typeof runQuery>>>([])
@@ -285,6 +285,9 @@ const flatItems = computed<IdxItem[]>(() => sections.value.flatMap((s) => s.item
 const total = computed(() => flatItems.value.length)
 
 function onKeydown(e: KeyboardEvent) {
+  // IME 组合输入中不拦截：拼音/日文候选导航的 Enter/Arrow 属输入法操作，非浮层导航——
+  // 否则选中候选词会触发 confirmSel 跳转并关闭浮层（与 AskUserForm/AskUserOverlay/Composer 守卫一致）。
+  if (e.isComposing) return
   // #9 AC-9.1：Tab/Shift+Tab 循环切类（先于 total 守卫，使空过滤态仍可继续切换出空类型）。
   if (e.key === 'Tab') {
     e.preventDefault()
@@ -308,6 +311,8 @@ function onKeydown(e: KeyboardEvent) {
  * 浮层内的情况（input 自然会冒泡到 dialog div）；input 内 Escape 用户体感一致。
  */
 function onGlobalKeydown(e: KeyboardEvent) {
+  // IME 组合输入中 Esc 用于取消候选词，不关浮层（同 onKeydown 守卫）
+  if (e.isComposing) return
   if (e.key === 'Escape') {
     e.preventDefault()
     emit('update:open', false)
@@ -352,6 +357,9 @@ async function confirmSel(): Promise<void> {
 
 /** 查询变化 → debounce 120ms → 重置选中 + 拉新结果（AC-7.15） */
 watch(query, () => {
+  // MR-7.1 孤儿查询守卫：浮层关闭后 query 变化（close 分支置 ''）不得再调度 loadResults——
+  // 否则 close 后 120ms 仍有幽灵加载，且其 finally 可能清掉重开后的 loadingTimer（S-3）。
+  if (!props.open) return
   errorMsg.value = '' // AC-8.5：新查询清除上一次 error（transient）
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
@@ -370,12 +378,10 @@ watch(() => props.open, (isOpen) => {
     // W1：open=true 时 nextTick 后 focus input（替代 reka-ui Dialog 默认聚焦首个可聚焦元素）。
     // Input 组件是单根组件（template 根为 <input>），ref 拿到 component instance，需用 $el 拿 DOM。
     nextTick(() => {
-      const el = (inputRef.value as unknown as { $el?: HTMLInputElement } | null)?.$el
-      if (el && typeof el.focus === 'function') {
-        el.focus()
-      } else if (inputRef.value && typeof (inputRef.value as unknown as HTMLInputElement).focus === 'function') {
-        ;(inputRef.value as unknown as HTMLInputElement).focus()
-      }
+      // $el 为 Element（ComponentPublicInstance），instanceof + focus 函数检查做运行时守卫
+      // （Input 根元素若换成非输入元素不崩）。Input 无 defineExpose → $el 恒为根 <input>，无 fallback 分支。
+      const el = inputRef.value?.$el
+      if (el instanceof HTMLElement && typeof el.focus === 'function') el.focus()
     })
   } else {
     query.value = ''
