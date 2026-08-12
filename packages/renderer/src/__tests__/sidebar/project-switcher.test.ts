@@ -151,6 +151,95 @@ describe('ProjectSwitcher: 折叠/展开两态 + 排序 + 滚动', () => {
     expect(store.activeProjectId).toBe(store.projects.find((p) => p.name === '新项目')!.id)
   })
 
+  it('新建流边缘：展开态输入未提交 → 点折叠态行收起 → 输入框消失（creating 复位）', async () => {
+    const store = useProjectStore()
+    store.projects = [makeProject('a', 'Alpha')]
+    store.activeProjectId = 'a'
+
+    const wrapper = mount(ProjectSwitcher)
+    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
+
+    // 展开态进入新建流：输入未提交（只输入不回车）
+    const newBtn = wrapper.findAll('button').find((w) => w.text().includes('新建项目'))
+    await newBtn!.trigger('click')
+    const input = wrapper.find('input')
+    expect(input.exists()).toBe(true)
+    await input.setValue('未提交')
+
+    // 点折叠态行（toggle 收起）→ 未提交输入一并取消
+    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
+    expect(wrapper.find('[data-testid="project-list"]').exists()).toBe(false)
+    expect(wrapper.find('input').exists()).toBe(false)
+    expect(store.projects.some((p) => p.name === '未提交')).toBe(false)
+
+    // 再次展开：新建输入已复位（回到「新建项目」按钮，非输入框）
+    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
+    expect(wrapper.find('input').exists()).toBe(false)
+    expect(wrapper.findAll('button').some((w) => w.text().includes('新建项目'))).toBe(true)
+  })
+
+  it('新建流边缘：输入名称后 blur → 提交创建', async () => {
+    const store = useProjectStore()
+    store.projects = [makeProject('a', 'Alpha')]
+    store.activeProjectId = 'a'
+
+    const wrapper = mount(ProjectSwitcher)
+    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
+
+    const newBtn = wrapper.findAll('button').find((w) => w.text().includes('新建项目'))
+    await newBtn!.trigger('click')
+    const input = wrapper.find('input')
+    await input.setValue('Blur项目')
+    // blur → commitCreate（同 Enter 提交语义）
+    await input.trigger('blur')
+
+    expect(store.projects.some((p) => p.name === 'Blur项目')).toBe(true)
+    // 提交后输入框退出新建流（creating 复位）
+    expect(wrapper.find('input').exists()).toBe(false)
+  })
+
+  it('新建流边缘：输入后按 Esc → 取消不创建', async () => {
+    const store = useProjectStore()
+    store.projects = [makeProject('a', 'Alpha')]
+    store.activeProjectId = 'a'
+
+    const wrapper = mount(ProjectSwitcher)
+    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
+
+    const newBtn = wrapper.findAll('button').find((w) => w.text().includes('新建项目'))
+    await newBtn!.trigger('click')
+    const input = wrapper.find('input')
+    await input.setValue('Esc项目')
+    await input.trigger('keydown.esc')
+
+    // Esc → cancelCreate：不创建、输入框消失、回到「新建项目」按钮
+    expect(store.projects.some((p) => p.name === 'Esc项目')).toBe(false)
+    expect(wrapper.find('input').exists()).toBe(false)
+    expect(wrapper.findAll('button').some((w) => w.text().includes('新建项目'))).toBe(true)
+  })
+
+  it('新建流边缘：输入纯空格 → 不创建（trim 后空）', async () => {
+    const store = useProjectStore()
+    store.projects = [makeProject('a', 'Alpha')]
+    store.activeProjectId = 'a'
+    const before = store.projects.length
+
+    const wrapper = mount(ProjectSwitcher)
+    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
+
+    const newBtn = wrapper.findAll('button').find((w) => w.text().includes('新建项目'))
+    await newBtn!.trigger('click')
+    const input = wrapper.find('input')
+    await input.setValue('   ')
+    await input.trigger('keydown.enter')
+
+    // trim 后空 → commitCreate 不 addProject（守卫：if (name)）
+    expect(store.projects.length).toBe(before)
+    expect(store.projects.some((p) => p.name === '')).toBe(false)
+    // 输入框仍复位（创建流程结束，回到「新建项目」按钮）
+    expect(wrapper.find('input').exists()).toBe(false)
+  })
+
   // ── 删除流（review MF-4：补删除按钮显隐 + ConfirmDialog + 确认/取消 + 删活跃切首个）──
   it('删除流：默认项目行永不渲染删除按钮；仅默认 project 时列表无任何删除按钮', async () => {
     const store = useProjectStore()

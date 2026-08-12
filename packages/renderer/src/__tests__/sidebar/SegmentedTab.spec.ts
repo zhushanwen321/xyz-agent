@@ -3,9 +3,10 @@
  *
  * 覆盖：
  * - 渲染 3 个 tab（sessions/files/subagents）
- * - subagents tab 含 Bot icon + count
+ * - subagents tab 含 Bot icon
  * - icon-only 模式（label 收进 title）
  * - active 态切换
+ * - badge 精确化：仅 subagentRunningCount/workflowRunningCount > 0 亮蓝点（count 数字 props 已随组件删除）
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/sidebar/SegmentedTab.spec.ts
  */
@@ -19,10 +20,6 @@ describe('SegmentedTab', () => {
     const wrapper = mount(SegmentedTab, {
       props: {
         modelValue: 'sessions' as SidebarTab,
-        sessionCount: 6,
-        fileCount: 4,
-        subagentCount: 2,
-        workflowCount: 0,
       },
     })
 
@@ -41,10 +38,6 @@ describe('SegmentedTab', () => {
     const wrapper = mount(SegmentedTab, {
       props: {
         modelValue: 'subagents' as SidebarTab,
-        sessionCount: 6,
-        fileCount: 4,
-        subagentCount: 2,
-        workflowCount: 0,
       },
     })
 
@@ -60,10 +53,6 @@ describe('SegmentedTab', () => {
     const wrapper = mount(SegmentedTab, {
       props: {
         modelValue: 'sessions' as SidebarTab,
-        sessionCount: 6,
-        fileCount: 4,
-        subagentCount: 3,
-        workflowCount: 0,
         // badge 精确化：仅 running 态 > 0 亮蓝点（组件 badge = subagentRunningCount > 0）
         subagentRunningCount: 1,
         workflowRunningCount: 0,
@@ -84,10 +73,6 @@ describe('SegmentedTab', () => {
     const wrapper = mount(SegmentedTab, {
       props: {
         modelValue: 'sessions' as SidebarTab,
-        sessionCount: 6,
-        fileCount: 4,
-        subagentCount: 0,
-        workflowCount: 0,
         subagentRunningCount: 0,
         workflowRunningCount: 0,
       },
@@ -103,10 +88,6 @@ describe('SegmentedTab', () => {
     const wrapper = mount(SegmentedTab, {
       props: {
         modelValue: 'sessions' as SidebarTab,
-        sessionCount: 6,
-        fileCount: 4,
-        subagentCount: 2,
-        workflowCount: 0,
       },
     })
 

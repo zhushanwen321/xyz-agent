@@ -41,10 +41,6 @@ const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: SidebarTab
-  sessionCount: number
-  fileCount: number
-  subagentCount: number
-  workflowCount: number
   /** running 态数量（badge 精确化：仅 running>0 亮蓝点，避免已完成任务也亮） */
   subagentRunningCount: number
   workflowRunningCount: number
@@ -58,22 +54,21 @@ interface TabDef {
   value: SidebarTab
   label: string
   icon: Component
-  count: number
   /** 活跃任务时显示蓝点（如 running 态 subagent） */
   badge: boolean
 }
 
 /**
- * tabs 响应式读 props 计数。
+ * tabs 静态定义（count 数字已移除，不消费计数 props）。
  * badge 精确化：仅 running 态 > 0 亮蓝点（需关注的任务），已完成任务不亮。
  */
 const tabs = computed<TabDef[]>(() => [
-  { value: 'sessions', label: t('sidebar.segmentedTab.session'), icon: MessageSquare, count: props.sessionCount, badge: false },
-  { value: 'files', label: t('sidebar.segmentedTab.file'), icon: File, count: props.fileCount, badge: false },
-  { value: 'subagents', label: t('sidebar.segmentedTab.subagent'), icon: Bot, count: props.subagentCount, badge: props.subagentRunningCount > 0 },
-  { value: 'workflows', label: t('sidebar.segmentedTab.workflow'), icon: Workflow, count: props.workflowCount, badge: props.workflowRunningCount > 0 },
+  { value: 'sessions', label: t('sidebar.segmentedTab.session'), icon: MessageSquare, badge: false },
+  { value: 'files', label: t('sidebar.segmentedTab.file'), icon: File, badge: false },
+  { value: 'subagents', label: t('sidebar.segmentedTab.subagent'), icon: Bot, badge: props.subagentRunningCount > 0 },
+  { value: 'workflows', label: t('sidebar.segmentedTab.workflow'), icon: Workflow, badge: props.workflowRunningCount > 0 },
   // ExtensionHost sidebar view 宿主（MountPointRegistry sidebar.tab，W4 接线）。
-  // 无 plugin 贡献时 ViewHost 空态自隐藏，tab 仅作挂载点占位（count/badge 不适用）。
-  { value: 'plugins', label: t('sidebar.segmentedTab.plugin'), icon: Puzzle, count: 0, badge: false },
+  // 无 plugin 贡献时 ViewHost 空态自隐藏，tab 仅作挂载点占位（badge 不适用）。
+  { value: 'plugins', label: t('sidebar.segmentedTab.plugin'), icon: Puzzle, badge: false },
 ])
 </script>

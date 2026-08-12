@@ -50,10 +50,6 @@
       <!-- segmented tab（会话 | 文件 | Agents | Flows | Plugins） -->
       <SegmentedTab
         v-model="sidebar.activeTab"
-        :session-count="session.list.length"
-        :file-count="fileCount"
-        :subagent-count="subagentCount"
-        :workflow-count="workflowCount"
         :subagent-running-count="subagentRunningCount"
         :workflow-running-count="workflowRunningCount"
       />
@@ -241,7 +237,7 @@ const piVersion = ref('')
 const versionLabel = computed(() => piVersion.value ? `v${__APP_VERSION__} · pi v${piVersion.value}` : `v${__APP_VERSION__}`)
 const renameOpen = ref(false)
 const targetSessionId = ref('')
-const { fileCount, subagentCount, subagentRunningCount, subagentList, workflowCount, workflowRunningCount, workflowList, currentWorkflow } = useSidebarCounts(focusedSessionId)
+const { subagentRunningCount, subagentList, workflowRunningCount, workflowList, currentWorkflow } = useSidebarCounts(focusedSessionId)
 const { derivedStatus } = useSessionDerivations()
 function statusOf(id: string) { return derivedStatus(id).value }
 const { onSelectSession, onNewSession, onRenameSession, onDeleteSession, onDeleteFolder, onStopBranch, onConfirmRename, onAssignProject, onRetryLoadSessions, onRetryWorkflows, onRetrySubagents, searchDeps, onOpenSearchDrawer } = useSidebarSessionActions({ focusedSessionId, selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, assignSessionToProject, renameOpen, targetSessionId })

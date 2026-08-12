@@ -114,4 +114,54 @@ describe('session status icons extended states', () => {
     expect(wrapper.find('[data-testid="sidebar-session-icon"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="session-badge-waiting"]').exists()).toBe(true)
   })
+
+  it('error 状态 SessionItem 渲染 ! 胶囊 badge（danger，需用户介入）', () => {
+    const wrapper = mount(SessionItem, {
+      props: {
+        session: { id: '1', label: 'x', cwd: '/a', lastActiveAt: 0, status: 'active' },
+        active: false,
+        status: 'error',
+      },
+    })
+    // error → 专用 badge（! 胶囊，bg-danger-soft）
+    const badge = wrapper.find('[data-testid="session-badge-error"]')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toBe('!')
+    // 其他状态 badge 不渲染（互斥）
+    expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="session-badge-waiting"]').exists()).toBe(false)
+  })
+
+  it('done / stopped 状态 SessionItem 无 badge（仅耗时文字）', () => {
+    for (const status of ['done', 'stopped'] as const) {
+      const wrapper = mount(SessionItem, {
+        props: {
+          session: { id: '1', label: 'x', cwd: '/a', lastActiveAt: 0, status: 'active' },
+          active: false,
+          status,
+        },
+      })
+      // 终态：running/waiting/error 三类 badge 均不渲染，meta 区只剩耗时文字
+      expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="session-badge-waiting"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="session-badge-error"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="sidebar-session-meta"]').exists()).toBe(true)
+    }
+  })
+
+  it('dead 状态 isDead 抑制 badge（整行 opacity-50 表达，无任何状态 badge）', () => {
+    const wrapper = mount(SessionItem, {
+      props: {
+        session: { id: '1', label: 'x', cwd: '/a', lastActiveAt: 0, status: 'dead' },
+        active: false,
+        status: 'dead',
+      },
+    })
+    // dead 由 isDead 抑制 badge（badgeKind=none），整行 opacity-50 表达（spec §5.6A）
+    expect(wrapper.find('[data-testid="session-badge-error"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="session-badge-waiting"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="sidebar-session-meta"]').exists()).toBe(true)
+    expect(wrapper.find('.session-item').classes()).toContain('opacity-50')
+  })
 })
