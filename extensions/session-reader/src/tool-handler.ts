@@ -11,11 +11,15 @@
  * 闭包 catch 转 isError:true 文本返回——handler 可抛（纯逻辑可测），execute 不抛（pi 契约）。
  * 例外：F2 多匹配与 F1 find 零匹配「不视为错误」，返回消歧/提示结果而非抛错。
  */
+import { existsSync, openSync, readSync, closeSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, isAbsolute } from 'node:path'
+import { homedir } from 'node:os'
 import { findSessions, type MatchedSession } from './discovery/find.js'
-import { buildFamilyFromFs } from './discovery/subagents.js'
+import { buildFamilyFromFs, listRecordManifests, type RecordManifest } from './discovery/subagents.js'
+import { readRunSnapshot, resolveWorkflows } from './discovery/workflows.js'
 import { parseSessionFile, type Entry, type ParseResult } from './core/parser.js'
+import { parseRunSnapshot, renderWorkflowOverview, type WorkflowOverview } from './core/workflow.js'
 import { buildTreeView } from './core/tree.js'
 import { segmentTurns, type Turn } from './core/turns.js'
 import { extractToolCalls, formatToolCallSummary, basename } from './core/toolcall.js'
@@ -28,7 +32,12 @@ import {
   type EntryBrief,
   type ToolResultSummaryEntry,
 } from './core/render.js'
-import type { Family } from './core/family.js'
+import type { Family, SessionRef, WorkflowRef } from './core/family.js'
+import {
+  buildExecutionTree,
+  formatExecutionTreeText,
+  type ExecutionTree,
+} from './core/execution-tree.js'
 
 // ---------------------------------------------------------------------------
 // 公共类型（与 index.ts 的 TypeBox schema 对齐）
@@ -43,6 +52,7 @@ export type SessionReadAction =
   | 'search'
   | 'export'
   | 'extract'
+  | 'workflow'
 
 export interface SessionReadParams {
   action: SessionReadAction
@@ -58,11 +68,17 @@ export interface SessionReadParams {
   allBranches?: boolean
   granularity?: 'turn' | 'entry'
   cwd?: string
+  /** find/resolveSessionId: 按来源过滤。"main" = sessions/、"subagent" = subagents/。默认两者合并。 */
+  source?: 'main' | 'subagent'
+  /** workflow action: 可选，聚焦单个 runId（多 run 消歧）。不传 → 全部 run 概览。 */
+  runId?: string
   limit?: number
   /** extract action: 素材类型（必填）。其他 action 忽略。 */
   what?: 'user-messages' | 'commands' | 'files' | 'commits' | 'tool-results'
   /** extract action: 过滤 commands/tool-results 的工具名（可选）。 */
   tool?: string
+  /** family action: 返回嵌套执行树（任意深度 subagent↔workflow-call 相互嵌套）。默认 false（flat family）。 */
+  recursive?: boolean
 }
 
 export interface ToolResult {
@@ -165,32 +181,171 @@ type ResolveResult =
   | { kind: 'ok'; sessionId: string; fileName: string }
   | { kind: 'multi'; query: string; candidates: MatchedSession[] }
 
+/** readSessionHeaderId 读首行的 buffer 上限。session header（id/cwd/parentSession）实测 < 300 字节，4KB 足够。 */
+const HEADER_READ_BYTES = 4096
+
 /**
- * 把 session 参数（完整 id 或片段，可能带 # 前缀）解析到唯一完整 id。
+ * 同步读 session 文件首行 header，返回 type==='session' 的 id。
  *
- * 走 findSessions（M2 已实现三路匹配：uuid 片段 / recent / 名称关键词）。
- * - 唯一匹配 → {kind:'ok'}（含 fileName，后续 parseSessionFile 直接用）
- * - 多匹配 → {kind:'multi'}（调用方据此返回 F2 消歧，不抛错）
- * - 零匹配 → 抛 F1（含最近 10 个 session 建议 + 👉，design §3.4 F1 模板）
+ * 任何异常（文件不存在/空文件/解析失败/type 不符）返回 undefined。与 find.ts readFirstLine/
+ * parseHeader 同构（定长 buffer 读首行 + JSON.parse + type 校验），但用同步 fs API
+ *（resolveSessionId 内仅调用 1 次，同步开销可接受），且不导出——避免与 w1 的 find.ts
+ * 文件交叉（CQ2 决策）。
+ */
+function readSessionHeaderId(filePath: string): string | undefined {
+  let fd: number | undefined
+  try {
+    fd = openSync(filePath, 'r')
+    const buf = Buffer.alloc(HEADER_READ_BYTES)
+    const bytesRead = readSync(fd, buf, 0, HEADER_READ_BYTES, 0)
+    if (bytesRead === 0) return undefined
+    const text = buf.subarray(0, bytesRead).toString('utf8')
+    const nl = text.indexOf('\n')
+    const line = nl === -1 ? text : text.slice(0, nl)
+    let raw: unknown
+    try {
+      raw = JSON.parse(line)
+    } catch {
+      return undefined
+    }
+    if (typeof raw !== 'object' || raw === null) return undefined
+    const o = raw as Record<string, unknown>
+    if (o.type !== 'session' || typeof o.id !== 'string') return undefined
+    return o.id
+  } catch {
+    return undefined
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd)
+      } catch {
+        // closeSync 失败：fd 可能已无效，header 数据已读取，关闭失败不影响结果（best-effort）
+        void fd
+      }
+    }
+  }
+}
+
+/** ~ 前缀（home 目录简写），与 expandHome 配套避免 magic number。 */
+const HOME_TILDE_PREFIX = '~/'
+
+/** 展开 ~ 前缀到 homedir（'~' → homedir；'~/x' → homedir/x；其余原样）。 */
+function expandHome(p: string): string {
+  if (p === '~') return homedir()
+  if (p.startsWith(HOME_TILDE_PREFIX))
+    return join(homedir(), p.slice(HOME_TILDE_PREFIX.length))
+  return p
+}
+
+/**
+ * 把 session 参数解析到唯一完整 id（design §6.1 M0 + U2/U3）。
  *
- * 仅用于 family/outline/expand/detail/search/export（find action 自行调 findSessions，
+ * 三形态：
+ * - ① 绝对路径 / ~ 前缀 → 展开后读首行 header，sessionId=header 真实 id（文件名仅定位）
+ * - ② sa-id 前缀 → listRecordManifests 精确反查，sessionId=sessionFile header id
+ *   （禁止降级 record.id——sa- 形态不可当 sessionId，CQ3 决策）
+ * - ③ 其余 → findSessions 透传 source 沿用 F1/F2
+ *
+ * 错误契约（U3）：① 文件不存在/非 .jsonl/header 读不出 → F6 风格；
+ * ② sessionFile GC → ES1（manifest 元数据 + 👉）；sa-id 0/>1 命中 → ES2（👉 family）。
+ *
+ * 仅用于 family/outline/expand/detail/search/export/extract（find action 自行调 findSessions，
  * 零匹配时返回空 + 提示，不抛错）。
  */
 async function resolveSessionId(
   rawSession: string | undefined,
   action: SessionReadAction,
   agentDir: string,
+  source?: 'main' | 'subagent',
 ): Promise<ResolveResult> {
   const session = stripHash(requireStr(rawSession, 'session', action))
-  const { matches } = await findSessions(session, agentDir, { limit: 10 })
+
+  // ① 绝对路径或 ~ 前缀（Windows 盘符由 isAbsolute 处理）
+  if (isAbsolute(session) || session === '~' || session.startsWith('~/')) {
+    const expanded = expandHome(session)
+    if (!expanded.endsWith('.jsonl')) {
+      throw err(
+        `读取失败：${session}（非 .jsonl session 文件）。👉 检查文件或换 session。`,
+      )
+    }
+    if (!existsSync(expanded)) {
+      throw err(`读取失败：${session}（文件不存在）。👉 检查文件或换 session。`)
+    }
+    const headerId = readSessionHeaderId(expanded)
+    if (headerId === undefined) {
+      throw err(
+        `读取失败：${session}（首行非合法 session header）。👉 检查文件或换 session。`,
+      )
+    }
+    return { kind: 'ok', sessionId: headerId, fileName: expanded }
+  }
+
+  // ② sa-id 前缀 → record manifest 精确反查
+  if (session.startsWith('sa-')) {
+    const manifests = await listRecordManifests(agentDir)
+    const hits = manifests.filter((m) => m.id === session)
+    if (hits.length === 0) {
+      throw err(formatSaIdNotFound(session))
+    }
+    if (hits.length > 1) {
+      throw err(formatSaIdAmbiguous(session, hits))
+    }
+    const record = hits[0]
+    if (!existsSync(record.sessionFile)) {
+      throw err(formatSessionGc(record))
+    }
+    const headerId = readSessionHeaderId(record.sessionFile)
+    if (headerId === undefined) {
+      // header 读不出不降级 record.id（sa- 形态不可当 sessionId，CQ3）
+      throw err(
+        `读取失败：${record.sessionFile}（首行非合法 session header）。👉 检查文件或换 session。`,
+      )
+    }
+    return { kind: 'ok', sessionId: headerId, fileName: record.sessionFile }
+  }
+
+  // ③ 其余：findSessions 透传 source 沿用 F1/F2
+  const opts = { limit: 10, ...(source ? { source } : {}) }
+  const { matches } = await findSessions(session, agentDir, opts)
   if (matches.length === 0) {
-    const recent = await findSessions('recent', agentDir, { limit: 10 })
+    const recent = await findSessions('recent', agentDir, opts)
     throw err(formatNoMatch(session, recent.matches))
   }
   if (matches.length === 1) {
     return { kind: 'ok', sessionId: matches[0].sessionId, fileName: matches[0].fileName }
   }
   return { kind: 'multi', query: session, candidates: matches }
+}
+
+/** ES1（SESSION_FILE_GC）：sa-id 恰 1 命中但 sessionFile 不存在（GC/未写入）。含 manifest 元数据 + 👉。 */
+function formatSessionGc(record: RecordManifest): string {
+  return (
+    `subagent "${record.id}" 的 session 文件不存在（可能已被 GC 或未写入）：\n` +
+    `  rootSessionId: ${record.rootSessionId}\n` +
+    `  agentName: ${record.agentName ?? '(未记录)'}\n` +
+    `  sessionFile: ${record.sessionFile}\n` +
+    `👉 改用 session_read { action:"family" } 查该 subagent 的后代，或换一个 completed subagent 重试。`
+  )
+}
+
+/** ES2（SA_ID_NO_MATCH）：sa-id 无精确匹配（可能仍在运行 / 片段输入）。 */
+function formatSaIdNotFound(saId: string): string {
+  return (
+    `subagent "${saId}" 无匹配 record（可能仍在运行——终态 record 在 completed/failed 后才写）。` +
+    `\n👉 用 session_read { action:"family" } 查活跃/已完成的 subagent；` +
+    `若是片段输入，请用完整 sa- id 或 action:"find" 重试。`
+  )
+}
+
+/** ES2（SA_ID_AMBIGUOUS）：sa-id 多 manifest 命中（数据异常，record.id 应唯一）。 */
+function formatSaIdAmbiguous(saId: string, records: RecordManifest[]): string {
+  return (
+    `subagent "${saId}" 匹配 ${records.length} 个 record（数据异常，record.id 应唯一）：\n` +
+    records
+      .map((r) => `  ${r.id} (root=${r.rootSessionId} file=${r.sessionFile})`)
+      .join('\n') +
+    `\n👉 用 session_read { action:"family" } 或完整 session uuid 重试。`
+  )
 }
 
 /** F1 无匹配 message（含最近 10 + 👉）。 */
@@ -462,6 +617,7 @@ async function doFind(params: SessionReadParams, agentDir: string): Promise<Tool
   const { matches, truncated } = await findSessions(query, agentDir, {
     cwd: params.cwd,
     limit: params.limit ?? 20,
+    ...(params.source ? { source: params.source } : {}),
   })
   if (matches.length === 0) {
     const recent = await findSessions('recent', agentDir, { limit: 10 })
@@ -476,10 +632,36 @@ async function doFind(params: SessionReadParams, agentDir: string): Promise<Tool
   }
 }
 
-/** family：fork 父链/子代 + 隔代 subagent + workflow run（design §3.4 family）。 */
+/**
+ * family：fork 父链/子代 + 隔代 subagent + workflow run（design §3.4 family）。
+ *
+ * recursive=false（默认）→ flat family（buildFamilyFromFs + formatFamilyText，m0/m1/m2 行为零回归）。
+ * recursive=true → 嵌套执行树（buildExecutionTree + formatExecutionTreeText，任意深度
+ * subagent↔workflow-call 相互嵌套，IF4）。错误契约同构：multi→disambiguate；构建抛错→catch 转 👉。
+ */
 async function doFamily(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'family', agentDir)
+  const resolved = await resolveSessionId(params.session, 'family', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
+
+  // recursive=true：嵌套执行树（U7/U8）
+  if (params.recursive) {
+    let tree: ExecutionTree
+    try {
+      // MF-1：传 resolved.fileName 使 main root 填 sessionFile——main session 自身发起的
+      // workflow run（workflow-state-link）进入执行树，与 flat family 行为一致。
+      tree = await buildExecutionTree(resolved.sessionId, agentDir, resolved.fileName)
+    } catch (e) {
+      throw err(
+        `构建执行树失败：${resolved.sessionId}（${e instanceof Error ? e.message : String(e)}）。👉 检查 session 或用 find 重新定位，或改用 recursive:false 看 flat family 兑底。`,
+      )
+    }
+    return {
+      content: [{ type: 'text', text: formatExecutionTreeText(tree) }],
+      details: { tree },
+    }
+  }
+
+  // recursive falsy（默认）：flat family（m0/m1/m2 现状零回归）
   let family: Family
   try {
     family = await buildFamilyFromFs(resolved.sessionId, agentDir)
@@ -493,7 +675,7 @@ async function doFamily(params: SessionReadParams, agentDir: string): Promise<To
 
 /** outline：turn 级全貌 TOC（design §3.4 outline，~500 token）。 */
 async function doOutline(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'outline', agentDir)
+  const resolved = await resolveSessionId(params.session, 'outline', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const { entries, totalBytes } = await safeParse(resolved.fileName)
   const tree = buildTreeView(entries)
@@ -512,7 +694,7 @@ async function doOutline(params: SessionReadParams, agentDir: string): Promise<T
 
 /** expand：单 turn 的 entry 列表（design §3.4 expand）。turn 越界抛 F4。 */
 async function doExpand(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'expand', agentDir)
+  const resolved = await resolveSessionId(params.session, 'expand', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const turnIdx = parseTurnIndex(requireStr(params.turn, 'turn', 'expand'))
   const { entries } = await safeParse(resolved.fileName)
@@ -534,7 +716,7 @@ async function doExpand(params: SessionReadParams, agentDir: string): Promise<To
 
 /** detail：turns 范围的完整文本（design §3.4 detail）。默认省略 toolResult/thinking。 */
 async function doDetail(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'detail', agentDir)
+  const resolved = await resolveSessionId(params.session, 'detail', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const range = parseTurnsRange(requireStr(params.turns, 'turns', 'detail'))
   const { entries } = await safeParse(resolved.fileName)
@@ -563,7 +745,7 @@ async function doSearch(
   agentDir: string,
   signal?: AbortSignal,
 ): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'search', agentDir)
+  const resolved = await resolveSessionId(params.session, 'search', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const pattern = requireStr(params.pattern, 'pattern', 'search')
   const scope = params.scope ?? 'all'
@@ -615,7 +797,7 @@ async function doSearch(
 /** export：物化摘要到 <agentDir>/tmp/session-view-<id>.md（design §3.4 export，D-8）。 */
 async function doExport(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
   const format = params.format ?? 'outline'
-  const resolved = await resolveSessionId(params.session, 'export', agentDir)
+  const resolved = await resolveSessionId(params.session, 'export', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
 
   let text: string
@@ -1064,7 +1246,7 @@ function extractToolResults(turns: Turn[], tool: string | undefined): ToolResult
  * segmentTurns → 可选 turns 范围限定（复用 parseTurnsRange）→ F7 校验 what → 分发 5 预设。
  */
 async function doExtract(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'extract', agentDir)
+  const resolved = await resolveSessionId(params.session, 'extract', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const { entries } = await safeParse(resolved.fileName)
   // extract 遍历全量 entry（含旁支/压缩历史），与 outline/expand/detail 的 leaf 视图不同：
@@ -1115,6 +1297,135 @@ async function doExtract(params: SessionReadParams, agentDir: string): Promise<T
 }
 
 // ===========================================================================
+// workflow action（w6：消费 w5 的 readRunSnapshot/parseRunSnapshot/renderWorkflowOverview）
+// ===========================================================================
+
+/** doWorkflow 的 details 结构（ES-wf-no-runs/runid-not-found/snapshot-* 错误契约的具体类型）。 */
+interface WorkflowDetails {
+  runs: WorkflowOverview[]
+  runIds: string[]
+  skippedRuns?: Array<{ runId: string; stateFile: string; reason: string }>
+  requestedRunId?: string
+  sessionId?: string
+}
+
+/** 单个被跳过的 run 记录（snapshot 不可读/不可解析）。 */
+interface SkippedRun {
+  runId: string
+  stateFile: string
+  reason: string
+}
+
+/**
+ * workflow：workflow run 概览（design §3.4 workflow，m2 IF-doWorkflow）。
+ *
+ * 流程：① resolveSessionId（multi 走 disambiguate）→ ② 读目标 session 的 workflow-state-link
+ * → ③ 无 run → ES-wf-no-runs（提示+👉family，不抛错）→ ④ runId 过滤，无匹配 →
+ * ES-wf-runid-not-found（列候选+👉，不抛错）→ ⑤ 逐 run readRunSnapshot+parseRunSnapshot，
+ * 不可读/不可解析 → skippedRuns（不中断其他 run，ES-wf-snapshot-read-fail/unparseable）
+ * → ⑥ renderWorkflowOverview 拼接。
+ *
+ * ② 的读取（MF-2）：不用 buildFamilyFromFs（其 resolveFamily 只索引 main session，subagent
+ * session 会抛「session not found in family index」）——resolveSessionId 已把 session 解析到
+ * 真实文件（kind==='ok' 保证文件存在，三形态：绝对路径/sa-id 均 existsSync 校验，片段匹配
+ * 来自实际 fs 扫描），直接用 resolved.fileName 构造单条目 sessionIdToPath 调 resolveWorkflows
+ *（与 buildFamilyFromFs 步骤 6 的 workflow 腿同源）。pathToRef 仅含目标 session，call 引用
+ * 走 sessionRefFromPath 文件名最小回退（sessionId+fileName，足够 LLM 跳 outline/detail 深读）。
+ *
+ * 错误契约（C2）：workflow 概览探索语义，三类错误均返回 ToolResult 不抛错。
+ * step 的 call sessionId/sessionFile 是 LLM 跳 outline/detail 的入口（m0 resolveSessionId
+ * 三形态复用：sessionId/绝对路径/sa-id 均可深读，TC-wf-step-sessionfile-link）。
+ */
+async function doWorkflow(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
+  const resolved = await resolveSessionId(params.session, 'workflow', agentDir, params.source)
+  if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
+
+  let workflows: WorkflowRef[]
+  try {
+    // MF-2：直读 resolved.fileName（subagent session 亦可），绕过 buildFamilyFromFs 的
+    // main-only byId 索引（对 subagent 抛「session not found in family index」）。
+    // resolveWorkflows 自身容错（读失败返回 []），「session 真不存在」的 F 级契约已由
+    // resolveSessionId 保证（kind==='ok' 前已 existsSync/扫描校验）。
+    const sessionIdToPath = new Map<string, string>([[resolved.sessionId, resolved.fileName]])
+    const pathToRef = new Map<string, SessionRef>()
+    workflows = await resolveWorkflows(resolved.sessionId, sessionIdToPath, pathToRef)
+  } catch (e) {
+    throw err(
+      `读取 workflow run 失败：${resolved.sessionId}（${e instanceof Error ? e.message : String(e)}）。👉 检查 session 或用 find 重新定位。`,
+    )
+  }
+  const allRunIds = workflows.map((w) => w.runId)
+
+  // ③ ES-wf-no-runs：session 未发起任何 workflow run（不抛错，返提示+👉family）
+  if (workflows.length === 0) {
+    const text =
+      `session ${resolved.sessionId} 无 workflow run。\n` +
+      `👉 用 session_read { action:'family' } 查该 session 的 subagent 后代，或确认 session 是否发起过 workflow。`
+    const details: WorkflowDetails = { runs: [], runIds: [], sessionId: resolved.sessionId }
+    return { content: [{ type: 'text', text }], details }
+  }
+
+  // ④ runId 过滤（可选，多 run 消歧）
+  const requestedRunId =
+    params.runId !== undefined && params.runId.trim() !== '' ? params.runId.trim() : undefined
+  let selected: WorkflowRef[] = workflows
+  if (requestedRunId !== undefined) {
+    selected = workflows.filter((w) => w.runId === requestedRunId)
+    if (selected.length === 0) {
+      // ES-wf-runid-not-found：列出可用 runId + 👉（不抛错，与 F2 多匹配消歧同构）
+      const lines = allRunIds.map((rid) => `  ${rid}`).join('\n')
+      const text =
+        `runId "${requestedRunId}" 无匹配。可用 runId：\n${lines}\n` +
+        `👉 用上述完整 runId 重试，或不传 runId 看全部 run 概览。`
+      const details: WorkflowDetails = { runs: [], runIds: allRunIds, requestedRunId }
+      return { content: [{ type: 'text', text }], details }
+    }
+  }
+
+  // ⑤⑥ 逐 run 读 snapshot → parse → render
+  const runs: WorkflowOverview[] = []
+  const runIds: string[] = []
+  const skippedRuns: SkippedRun[] = []
+  const contentParts: string[] = []
+
+  for (const wf of selected) {
+    const snap = await readRunSnapshot(wf.stateFile)
+    if (snap === undefined) {
+      // ES-wf-snapshot-read-fail：文件不存在/读失败/全行不可解析 → 跳过，不中断其他 run
+      skippedRuns.push({ runId: wf.runId, stateFile: wf.stateFile, reason: 'snapshot-unreadable' })
+      contentParts.push(`run ${wf.runId}: 快照不可读（stateFile=${wf.stateFile}）已跳过`)
+      continue
+    }
+    const overview = parseRunSnapshot(snap, wf.runId, wf.stateFile)
+    if (overview === null) {
+      // ES-wf-snapshot-unparseable：对象既非 NEW 也非 OLD → 跳过
+      skippedRuns.push({ runId: wf.runId, stateFile: wf.stateFile, reason: 'snapshot-unparseable' })
+      contentParts.push(`run ${wf.runId}: 快照格式不可识别（stateFile=${wf.stateFile}）已跳过`)
+      continue
+    }
+    runs.push(overview)
+    runIds.push(wf.runId)
+    contentParts.push(renderWorkflowOverview(overview))
+  }
+
+  const details: WorkflowDetails = { runs, runIds }
+  if (requestedRunId !== undefined) details.requestedRunId = requestedRunId
+  if (skippedRuns.length > 0) details.skippedRuns = skippedRuns
+
+  // 全部 run 都跳过的兑底提示（ES-wf-snapshot-read-fail 末段）
+  let text: string
+  if (runs.length === 0) {
+    text =
+      contentParts.join('\n') +
+      `\n👉 检查 stateFile 或用 session_read { action:'family' } 看 call session 直接深读。`
+  } else {
+    text = contentParts.join('\n\n')
+  }
+
+  return { content: [{ type: 'text', text }], details }
+}
+
+// ===========================================================================
 // 入口：按 action 分发
 // ===========================================================================
 
@@ -1148,12 +1459,14 @@ export async function handleSessionRead(
       return doExport(params, agentDir)
     case 'extract':
       return doExtract(params, agentDir)
+    case 'workflow':
+      return doWorkflow(params, agentDir)
     default: {
-      // exhaustive guard：switch 覆盖全部 8 action，此处 params.action 收窄为 never；
+      // exhaustive guard：switch 覆盖全部 9 action，此处 params.action 收窄为 never；
       // 仅防御运行时非法 action（schema 正常校验下不可达）
       const exhaustive: never = params.action
       throw err(
-        `未知 action "${JSON.stringify(exhaustive)}"。👉 合法 action: find/family/outline/expand/detail/search/export/extract。`,
+        `未知 action "${JSON.stringify(exhaustive)}"。👉 合法 action: find/family/outline/expand/detail/search/export/extract/workflow。`,
       )
     }
   }

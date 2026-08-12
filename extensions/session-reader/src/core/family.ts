@@ -32,6 +32,16 @@ export interface SubagentRef extends SessionRef {
   slug: string
   /** identity 在但文件已被 30 天 TTL GC（design §3.3 D-7 边界 / 失败路径 F3） */
   cleanedUp?: boolean
+  /** subagent 任务文本（manifest.task，P-fallback 时 identity.data.task；两者都无则 undefined） */
+  task?: string
+  /** agent 类型名（manifest.agentName，P-fallback 时 identity.data.agent；同语义异名） */
+  agentName?: string
+  /** 模型 id（仅 manifest 有；P-fallback 时 undefined） */
+  model?: string
+  /** 终态 completed/failed/running（仅 manifest 有；P-fallback 时 undefined） */
+  status?: string
+  /** subagent session.jsonl 绝对路径（manifest.sessionFile 或 alive 文件 meta.path） */
+  sessionFile?: string
 }
 
 export interface WorkflowRef {
@@ -68,14 +78,37 @@ export interface FamilyIndex {
 
 // ---- 类型守卫：从 unknown 的 entry.data 提取 subagent identity 字段 ----
 
+/**
+ * identity 尾行 data 结构（读取视图，DM-IdentityData）。
+ *
+ * 守卫只强制 rootSessionId+slug（m0 契约），其余富字段全 optional——由 buildFamilyFromFs
+ * 按 manifest 主/P-fallback 回退路径组装时决定是否填入（manifest 主填全，P-fallback
+ * 只填 task/agent/sessionFile，model/status 缺）。
+ */
 interface SubagentIdentityData {
   rootSessionId: string
   slug: string
+  /** 任务文本（manifest.task 或 identity.data.task） */
+  task?: string
+  /**
+   * agent 类型名（identity.data.agent）。
+   * 同语义异名：manifest.agentName ↔ identity.data.agent。buildFamilyFromFs 组装
+   * identity entry 时把 manifest.agentName 映射到 data.agent，此处统一读 data.agent
+   * 填 SubagentRef.agentName，消费方无需感知来源差异。
+   */
+  agent?: string
+  /** 模型 id（仅 manifest 主路径写入；P-fallback 无） */
+  model?: string
+  /** 终态（仅 manifest 主路径写入；P-fallback 无） */
+  status?: string
+  /** subagent session.jsonl 绝对路径 */
+  sessionFile?: string
 }
 
 function isSubagentIdentityData(v: unknown): v is SubagentIdentityData {
   if (typeof v !== 'object' || v === null) return false
   const obj = v as Record<string, unknown>
+  // 守卫放宽：只校验 rootSessionId+slug 必填（m0 契约），task/agent/model/status/sessionFile optional
   return typeof obj.rootSessionId === 'string' && typeof obj.slug === 'string'
 }
 
@@ -163,6 +196,13 @@ export function buildFamilyIndex(
       cwd: '', // identity entry 无 cwd；M2 从 subagent 文件 header 补
       // M1: fileStats key=sessionId；M2 改用 subagent 真实文件路径（SubagentRef.fileName）查 fileStats
       cleanedUp: !fileStats.has(ident.id),
+      // U4 富字段：从 identity data 读（manifest 主/P-fallback 由 buildFamilyFromFs 组装时决定）
+      task: ident.data.task,
+      // 异名映射：identity.data.agent ↔ manifest.agentName（buildFamilyFromFs 组装时统一到 data.agent）
+      agentName: ident.data.agent,
+      model: ident.data.model,
+      status: ident.data.status,
+      sessionFile: ident.data.sessionFile,
     }
     const list = subagentsByRoot.get(ident.data.rootSessionId) ?? []
     list.push(ref)
