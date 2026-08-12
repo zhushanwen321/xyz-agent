@@ -302,4 +302,15 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     const manifest = await manifestStore.readManifest("rec-nomanifest");
     expect(manifest).toBeNull();
   });
+
+  it("残留 pendingMessages → warn + 清除防泄漏（M2-B2 最小，决策 6）", async () => {
+    const record = makeMinimalRecord({ id: "rec-pending" });
+    record.status = "done";
+    record.pendingMessages = [
+      { id: "m1", text: "unconsumed race-window msg", interrupt: false, sentAt: 1 },
+    ];
+    await doFinalizeRoundToIdle(makeDeps(), record, makeMinimalResult());
+    // 残留 pendingMessages 被清除防泄漏（极窄竞态：follow_up 在 agent_end 那刻发，未 drain）
+    expect(record.pendingMessages).toBeUndefined();
+  });
 });

@@ -219,4 +219,21 @@ export async function doFinalizeRoundToIdle(
   // 状态机：record 进 idle（覆盖 tryTransition 设的 done），轮次计数 +1。
   record.status = "idle";
   record.round = (record.round ?? 0) + 1;
+
+  // 消费确认制残留处理（设计决策 6）：检查 turn_start 未清除的 pendingMessages。
+  // 正常情况 follow_up 在 turn 间 drain + turn_start 清除（探针 P-4）；残留是极窄竞态
+  //（follow_up/steer 在 agent_end 那刻发出，pi post-run loop 不 drain → 进程 kill 时未消费）。
+  //
+  // 最小实现：warn + 清除防内存泄漏。完整补投（resume 重发）涉及 doFinalizeRoundToIdle
+  // 内触发 resumeRound 的时序竞争（runAndFinalize finally release pool vs kickOff acquire），
+  // 复杂度高 + 极窄竞态概率低（P-4 证明正常 drain），留作 followup。
+  // TODO(M2-B2-full): 残留消息经 resume 补投（合并 pendingMessages → resumeRound 重发），
+  //   需 FinalizeDeps 注入 redeliver 回调 + 防递归（限次 + pi 消费确认终止）。
+  if (record.pendingMessages && record.pendingMessages.length > 0) {
+    getLogger("subagents").warn(
+      `[subagents] idle record ${record.id} has ${record.pendingMessages.length} unconsumed pendingMessages (race window: follow_up/steer sent near agent_end, pi did not drain); clearing to prevent leak`,
+      { id: record.id, count: record.pendingMessages.length },
+    );
+    record.pendingMessages = undefined;
+  }
 }
