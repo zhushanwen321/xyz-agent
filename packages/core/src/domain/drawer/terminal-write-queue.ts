@@ -30,7 +30,7 @@ export interface TerminalWriteQueue {
   /**
    * 入队写命令（联动 2：消息流 tool 块「在终端运行」调）。
    * - PTY 已活 → 立即 write
-   * - PTY 未活 → 入 pendingWrites，markAlive 时 flush
+   * - PTY 未活 → 入 pendingWrites，markAlive 时 flush；队列达 MAX_PENDING_WRITES 上限时丢弃最旧命令（drop-oldest，保留最新）
    */
   enqueueWrite(sid: string, cmd: string): void
   /** 查询 PTY 存活态（TerminalView 工具栏 kill 按钮 disabled 判断用）。 */
@@ -45,6 +45,9 @@ export interface TerminalWriteQueue {
  * @param writeFn 写副作用注入（core 零 api 层依赖）：调用方传 (sid, cmd) => void
  *                （renderer 兼容层传 terminalApi.write 包装）
  */
+/** 待写命令队列容量上限（内存边界，NFR Issue #11 同族：PTY 长期不活时命令只入队不消费，无上限会无限累积）。超限丢弃最旧命令（drop-oldest：保留最新命令，最新代表最新意图） */
+export const MAX_PENDING_WRITES = 100
+
 export function createTerminalWriteQueue(writeFn: TerminalWriteFn): TerminalWriteQueue {
   /**
    * per-session 状态表（工厂实例内共享，跨组件共享语义由调用方持有实例保证）。
@@ -95,6 +98,10 @@ export function createTerminalWriteQueue(writeFn: TerminalWriteFn): TerminalWrit
     if (s.ptyAlive) {
       writeFn(sid, cmd)
     } else {
+      if (s.pendingWrites.length >= MAX_PENDING_WRITES) {
+        // 队列满：丢弃最旧命令（drop-oldest，保留最新）
+        s.pendingWrites.shift()
+      }
       s.pendingWrites.push(cmd)
     }
   }

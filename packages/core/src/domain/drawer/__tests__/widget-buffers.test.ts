@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { ref } from 'vue'
 import type { Ref } from 'vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
-import { createDrawerBuffers, mapWidgetKeyToTab, truncateLines, WIDGET_MAX_LINES } from '../widget-buffers'
+import { createDrawerBuffers, mapWidgetKeyToTab, truncateLines, WIDGET_MAX_LINES, MAX_STATUS_KEYS } from '../widget-buffers'
 import type { SideDrawerTab } from '../types'
 
 function mkGui(kind: string): GuiComponent {
@@ -152,6 +152,32 @@ describe('updateStatus 同 key 覆盖', () => {
     buffers.updateStatus('S1', 'cpu', '10%')
     buffers.updateStatus('S1', 'mem', '50%')
     expect(buffers.statusEntries.value).toHaveLength(2)
+  })
+
+  it('statusMap 条目上限（大量唯一 key 内存有界：超限淘汰最早插入的 key）', () => {
+    const { buffers } = makeFixture()
+    for (let i = 0; i < MAX_STATUS_KEYS + 20; i++) {
+      buffers.updateStatus('S1', `key-${i}`, `v-${i}`)
+    }
+    const entries = buffers.statusEntries.value
+    expect(entries).toHaveLength(MAX_STATUS_KEYS)
+    // 最早 20 个 key 被淘汰，保留 key-20..key-(MAX+19)，插入序保持
+    expect(entries[0]).toEqual({ statusKey: 'key-20', text: 'v-20', textRaw: undefined })
+    expect(entries[MAX_STATUS_KEYS - 1]).toEqual({
+      statusKey: `key-${MAX_STATUS_KEYS + 19}`,
+      text: `v-${MAX_STATUS_KEYS + 19}`,
+      textRaw: undefined,
+    })
+  })
+
+  it('已达上限时覆盖既有 key 不触发淘汰（同 key 覆盖语义不变）', () => {
+    const { buffers } = makeFixture()
+    for (let i = 0; i < MAX_STATUS_KEYS; i++) {
+      buffers.updateStatus('S1', `key-${i}`, `v-${i}`)
+    }
+    buffers.updateStatus('S1', 'key-0', 'updated')
+    expect(buffers.statusEntries.value).toHaveLength(MAX_STATUS_KEYS)
+    expect(buffers.statusEntries.value[0]).toEqual({ statusKey: 'key-0', text: 'updated', textRaw: undefined })
   })
 })
 

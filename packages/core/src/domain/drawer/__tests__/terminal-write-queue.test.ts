@@ -14,7 +14,7 @@
  * 测试框架 vitest（禁止 node:test / tsx --test）。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createTerminalWriteQueue } from '../terminal-write-queue'
+import { createTerminalWriteQueue, MAX_PENDING_WRITES } from '../terminal-write-queue'
 import type { TerminalWriteFn } from '../terminal-write-queue'
 
 describe('terminal-write-queue 状态机（WQ 联动 2）', () => {
@@ -87,6 +87,30 @@ describe('terminal-write-queue 状态机（WQ 联动 2）', () => {
     queue.markAlive('s1')
     queue.removeSession('s1')
     expect(queue.isPtyAlive('s1')).toBe(false)
+  })
+
+  it('WQ-8: pendingWrites 容量上限（超限丢弃最旧，保留最新，flush 顺序保持）', () => {
+    const queue = createTerminalWriteQueue(writeFn)
+    for (let i = 0; i < MAX_PENDING_WRITES + 25; i++) {
+      queue.enqueueWrite('s1', `cmd-${i}`)
+    }
+    expect(writeFn).not.toHaveBeenCalled() // 全部入队，未 flush
+    queue.markAlive('s1')
+    // 只 flush 最近 MAX_PENDING_WRITES 条（最旧 25 条被丢弃），保留 FIFO 顺序
+    expect(writeFn).toHaveBeenCalledTimes(MAX_PENDING_WRITES)
+    expect(writeFn).toHaveBeenNthCalledWith(1, 's1', 'cmd-25')
+    expect(writeFn).toHaveBeenNthCalledWith(MAX_PENDING_WRITES, 's1', `cmd-${MAX_PENDING_WRITES + 24}`)
+  })
+
+  it('WQ-9: 队列在容量上限内不丢命令（边界：恰好 MAX_PENDING_WRITES 条全保留）', () => {
+    const queue = createTerminalWriteQueue(writeFn)
+    for (let i = 0; i < MAX_PENDING_WRITES; i++) {
+      queue.enqueueWrite('s1', `cmd-${i}`)
+    }
+    queue.markAlive('s1')
+    expect(writeFn).toHaveBeenCalledTimes(MAX_PENDING_WRITES)
+    expect(writeFn).toHaveBeenNthCalledWith(1, 's1', 'cmd-0')
+    expect(writeFn).toHaveBeenNthCalledWith(MAX_PENDING_WRITES, 's1', `cmd-${MAX_PENDING_WRITES - 1}`)
   })
 
   it('工厂 per-instance 隔离：两个实例互不影响', () => {

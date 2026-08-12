@@ -27,6 +27,9 @@ import type { SideDrawerTab } from './types'
 /** widget 缓冲行数上限（NFR Issue #11 性能：前端最多保留 1000 行，超出截断保留尾部最新） */
 export const WIDGET_MAX_LINES = 1000
 
+/** statusMap 条目上限（内存边界：statusKey 由 extension 自定义，动态 key（时间戳/随机 id）时 per-session Map 无上限会无限增长）。新 key 达上限时淘汰最早插入的 key（Map 保持插入序，首键最旧） */
+export const MAX_STATUS_KEYS = 100
+
 /**
  * widgetKey → tab 路由启发式（NFR Prototype 1 枚举对齐前的过渡方案）。
  * runtime 推送的 widgetKey 为 extension 自定义字符串，归一化后匹配常见关键词。
@@ -89,7 +92,7 @@ export interface DrawerBuffersUpdater {
    * 删 guiWidgetsByTab 条目 + 清对应 tab 的纯文本 lines。
    */
   updateWidgetGui(sid: string, key: string, gui: GuiComponent | null): void
-  /** extension:status：statusKey 维度聚合，同 key 覆盖（透传 textRaw 供 AnsiText 着色） */
+  /** extension:status：statusKey 维度聚合，同 key 覆盖（透传 textRaw 供 AnsiText 着色）。新 key 且已达 MAX_STATUS_KEYS 上限时淘汰最早插入的 key */
   updateStatus(sid: string, statusKey: string, text: string, textRaw?: string): void
 }
 
@@ -181,6 +184,11 @@ export function createDrawerBuffers(
   /** extension:status 写入：statusKey 维度聚合，同 key 覆盖（透传 textRaw 供 AnsiText 着色） */
   function updateStatus(sid: string, statusKey: string, text: string, textRaw?: string): void {
     drawerState.updateFor(sid, (buf) => {
+      if (!buf.statusMap.has(statusKey) && buf.statusMap.size >= MAX_STATUS_KEYS) {
+        // 新 key 且已达上限：淘汰最早插入的 key（Map 保持插入序，首键最旧）
+        const oldestKey = buf.statusMap.keys().next().value
+        if (oldestKey !== undefined) buf.statusMap.delete(oldestKey)
+      }
       buf.statusMap.set(statusKey, { text, textRaw })
     })
   }
