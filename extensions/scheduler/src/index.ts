@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 
 import { PiSchedulerBackend } from './backend.js'
 import { registerScheduleCommand } from './commands.js'
+import { importLegacyStore } from './importer.js'
 import { SchedulerRuntime } from './runtime.js'
 import { SchedulerService } from './service.js'
 import {
@@ -35,6 +36,10 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
   pi.on('session_start', (_event, ctx: ExtensionContext) => {
     // 装配点：backend（ctx.sessionManager 读 entries / pi.appendEntry 写 op）→ runtime（内存态 + 调度）→ service（业务入口）
     const backend = new PiSchedulerBackend(ctx, pi)
+    // 旧 store 原子导入（CL3 方案A）：必须在 backend.loadTasks() 之前执行——
+    // append 的 upsert entry 进入 pi 内存 fileEntries，紧接的 loadTasks replay 统一重放读到导入任务。
+    // ctx.cwd 类型为 string（SDK ExtensionContext 必填），无需 ?? process.cwd() 兜底（CL2）。
+    importLegacyStore(ctx.cwd, pi, ctx.sessionManager.getSessionFile())
     const runtime = new SchedulerRuntime(backend, ctx)
     runtime.loadTasks(backend.loadTasks())
     // W2：tick 后回调刷新 widget（替代独立 widgetTimer + setInterval，节奏对齐 TICK_INTERVAL_MS）
