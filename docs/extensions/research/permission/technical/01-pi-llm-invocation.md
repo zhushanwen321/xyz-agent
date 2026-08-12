@@ -1,5 +1,8 @@
 # Pi Extension 直接调用 LLM 的机制
 
+> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。
+
+
 **调研日期**：2026-07-27 | **置信度**：高（pi-mono 源码逐行核实 + xyz-pi-extensions 现有扩展交叉验证）
 **调研方式**：主 agent 亲自查 pi-mono fork 源码（`~/Code/git-fork/pi-mono-workspace/main/`）+ xyz-pi-extensions 现有实现
 

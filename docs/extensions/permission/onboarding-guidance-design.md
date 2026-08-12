@@ -1,5 +1,8 @@
 # Onboarding Guidance 设计
 
+> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。
+
+
 ## 背景
 
 ### 当前痛点

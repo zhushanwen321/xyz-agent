@@ -1,5 +1,8 @@
 # Context Engineering 扩展 — 模块级源码详解
 
+> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。
+
+
 > 源码版本：`context-engineering/` 当前 main 分支
 > 分析日期：2026-06-01
 

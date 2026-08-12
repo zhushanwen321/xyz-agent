@@ -9,7 +9,7 @@
 *.local
 *.log
 dist/
-node_modules/
+node_modules
 sidecar/dist/
 sidecar/node_modules/
 src-tauri/binaries/

@@ -1,5 +1,8 @@
 # magic-context 源码架构分析（下）— Historian / Compressor / Dreamer / Strip / Cache / Partial-Recomp
 
+> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。
+
+
 > 分析对象：magic-context（⭐764）五个核心子系统
 > 分析日期：2025-06-01
 > 分析深度：源码级（compartment-runner-historian 585 行、compartment-runner-compressor 798 行、dreamer/runner 1381 行、strip-content 657 行、system-prompt-hash 512 行、compartment-runner-partial-recomp 498 行已完整阅读）
