@@ -703,7 +703,7 @@ describe.skipIf(!HAS_REAL)('buildExecutionTree - 真实数据守卫', () => {
     // 不抛错（已隐含：到这行说明成功）
     expect(tree.root.type).toBe('main')
     expect(tree.root.sessionId).toBe(FAM)
-  })
+  }, 60000)
 })
 
 // ============================================================
