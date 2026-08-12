@@ -42,15 +42,6 @@ export interface ElectronAPI {
     canceled: boolean
     path: string | null
   }>
-  /**
-   * 把剪贴板图片（base64）写到 <getDataDir>/attachments/<sessionId>/（持久化），返回 {path, fileName, displayName, id, persisted}。
-   * Cmd+V/Ctrl+V 粘贴截图走此 IPC（renderer 读 blob → base64 → 落地文件）。
-   * 主进程校验 mimeType image/* 前缀 + 20MB 上限，写失败 throw。
-   * sessionId 为空时（landing 态）降级走 OS tmpdir。
-   * - fileName：落地磁盘文件名（含 uuid 前缀，segment.fileName 用，extractImages 读文件用）
-   * - displayName：用户可读名（badge/alt 显示，无 uuid 前缀）；粘贴截图无原文件名时为 截图-时间戳.ext
-   * - persisted：sessionId 非空 true（落 attachments 已持久化）；空 false（落 tmpdir，session 创建后需迁移）
-   */
   /** 在默认浏览器中打开外部链接 */
   openExternal(url: string): Promise<void>
   /** 监听 macOS 全屏状态变化 */

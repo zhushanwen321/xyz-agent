@@ -70,12 +70,12 @@ export async function createWindow(
     show: false,
     title: 'TaiJi',
     // 跨平台窗口装饰（shell spec §五方案 X）。
-    // mac：hidden + trafficLightPosition 把红黄绿放到 macOS 原生左上角位置 {8,8}（圆点中线 y=14）。
+    // mac：hidden + trafficLightPosition 把红黄绿放到 macOS 原生左上角位置 {8,8}（圆点中线理论 y=14，实测 ≈y15.75）。
     //   不用 hiddenInset：inset 模式强制红黄绿水平内缩，trafficLightPosition.x 被系统忽略。
     //   hidden 模式下红黄绿仍由 OS 绘制（点击/全屏 hover 行为不变），位置可控。
-    //   原生位置：圆点 12px，顶 y=8 / 中线 y=14；左缘 x=8 / 右缘 x=60（红 8~20 / 黄 28~40 / 绿 48~60）。
-    //   AppShell 左 padding p-2(8) → aside 左缘 x=8 与红黄绿左缘对齐；
-    //   AppNavControls top-[3px] → 按钮中线 y=14 与红黄绿中线对齐；left-[72px]（右缘 60 + 12 呼吸）。
+    //   原生位置：圆点 12px，顶理论 y=8 / 实测中线 y≈15.75（macOS 亚像素偏置，比理论 y14 低 ~2pt）；左缘 x=8 / 右缘 x=60（红 8~20 / 黄 28~40 / 绿 48~60）。
+    //   AppShell 是 p-1(4px) → aside 左缘 x=4，与红黄绿 x=8 有 4px 差（AGENTS.md 规则 11 明确该差值为预期）；
+    //   AppNavControls top-[5px] → 按钮中线 y=16（≈ 红黄绿实测中线 y15.75 对齐）；left-[72px]（右缘 60 + 12 呼吸）。
     //   取舍：不再追求与 PanelHeader 中线(y=32)对齐——原生 mac 应用红黄绿在 titlebar 顶部、
     //   工具栏按钮在其下方，二者本就不同高；折叠态 PanelHeader chrome 在 header 中线，与红黄绿有高度差属预期。
     // win/linux：frame:false 应用自绘圆点 mimic mac（renderer TrafficLight.vue left-0/top-0，aside 顶已在窗口 y=8）。
