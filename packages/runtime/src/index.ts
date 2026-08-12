@@ -154,7 +154,7 @@ async function main(): Promise<void> {
   // 必须在首次 session spawn 前完成（pi AuthStorage 无文件监听，旧 session 不感知新 auth.json）。
   // 幂等：已迁移条目不再重复处理。失败不阻断启动（warn + 下次重试）。
   try {
-    const migrationReport = await migrateProviderConfig(authStorage)
+    const migrationReport = await migrateProviderConfig(configStore, authStorage)
     const { catalog, enabled } = migrationReport
     if (catalog.migrated.length > 0 || catalog.errors.length > 0 || enabled.migratedEnabled || enabled.fullDisabledWarn) {
       console.log('[runtime] provider config migration:', JSON.stringify({

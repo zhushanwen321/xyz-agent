@@ -1,14 +1,16 @@
 /**
  * useSearchJump（#6）—— 选中项跳转编排（type switch 分发）。
  *
- * 接线层级：跨模块（type switch 调 commandStore + file/session domain + useDetailPane + useSidebarNew + useRecents）。
- * 依赖方向：api（file/session domain）+ composables（useSidebarNew/useRecents）+ stores/command + stores/fileTree。
+ * 接线层级：跨模块（type switch 调 commandStore + file/session domain + useDetailPane + useRecents）。
+ * 依赖方向：api（file/session domain）+ composables（useRecents）+ stores/command + stores/fileTree。
+ * selectSession 经 options 注入（壳装配层传入，对齐 useSearchModalDeps 的 ShellDeps 模式），
+ * 破 search → sidebar 域级依赖（§7.4 域依赖方向一致）。
  *
  * 数据流：SearchModal.confirmSel → confirm(item, ctx) → type switch →
  *   command: AppCommand（name 不以 / 开头）→ commandStore 取 action 执行；
  *            slash 命令（name 以 / 开头）→ commandStore.requestSlashInjection 写一次性通道（Composer watch 消费调 insertSlashChip）
  *   file: 直调 fileApi.read（AC-6.9 不经 useDetailPane 的预览加载吞错层）→ 成功后 selectFile 触发 useDetailPane watch 链渲染
- *   session: useSidebarNew.selectSession（id 经 sessionApi.list 按 title 反查，因 SearchItem 无 id 字段）
+ *   session: selectSession（options 注入，id 经 sessionApi.list 按 title 反查，因 SearchItem 无 id 字段）
  *   symbol: 占位不跳转（D-001）
  * → useRecents.write + 返回 JumpResult（AC-6.7：成功才关浮层，失败浮层保持打开）
  *
@@ -24,14 +26,20 @@
 import type { SearchItem, JumpCtx, JumpResult, RecentEntry } from '@xyz-agent/core'
 import { file as fileApi, session as sessionApi } from '@/api'
 import { useRecents } from '@/composables/features/new-task/useRecents'
-import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { useCommandStore } from '@/stores/command'
 import { useFileTreeStore } from '@/stores/fileTree'
 import i18n from '@/i18n'
 
 const t = i18n.global.t
 
-export function useSearchJump() {
+/** useSearchJump 注入依赖（壳装配层提供）。selectSession 是 useSidebarNew 实例方法（Sidebar 已实例化），
+ *  由调用方传入避免 search 域值 import sidebar 域（§7.4 域级双向依赖修复，同 useSearchModalDeps ShellDeps 模式）。 */
+export interface UseSearchJumpOptions {
+  selectSession: (id: string) => Promise<void>
+}
+
+export function useSearchJump(options: UseSearchJumpOptions) {
+  const { selectSession } = options
   const recents = useRecents()
   const commandStore = useCommandStore()
   const fileTreeStore = useFileTreeStore()
@@ -112,13 +120,14 @@ export function useSearchJump() {
   }
 
   /**
-   * session 分支：useSidebarNew.selectSession(id)。
+   * session 分支：options.selectSession(id)。
    *
    * id 反查（SearchItem 无 id 字段，DTO 映射时丢了）：session 跳转需 session id，
    * 但 SearchItem 只有 title/sub。优先复用 sessionApi.list() 按 title（session.label）反查 id，
    * 命中后调 selectSession(id)。反查未命中 / switch reject → {ok:false}（AC-6.6）。
    *
-   * 备注：useSidebarNew.selectSession 内部已对 switchSession reject 抛错（mock id 不存在时），错误在此 catch。
+   * 备注：selectSession（useSidebarNew.selectSession，壳注入）内部已对 switchSession reject 抛错
+   *（mock id 不存在时），错误在此 catch。
    */
   async function confirmSession(item: SearchItem): Promise<JumpResult> {
     try {
@@ -126,7 +135,6 @@ export function useSearchJump() {
       if (!id) {
         return { ok: false, error: t('search.sessionNotFound', { title: item.title }) }
       }
-      const { selectSession } = useSidebarNew()
       await selectSession(id) // AC-6.6：switchSession reject 抛错由 catch 捕获
       writeRecent(item)
       return { ok: true }

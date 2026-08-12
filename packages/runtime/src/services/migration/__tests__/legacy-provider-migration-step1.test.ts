@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import { migrateLegacyProviderConfig } from '../legacy-provider-migration.js'
 import { setModelsPath } from '../../../infra/pi/pi-provider-store.js'
 import { setSettingsPath, invalidateSettingsCache } from '../../../infra/pi/pi-settings-store.js'
+import { PiConfigStore } from '../../../infra/pi/pi-config-store.js'
 import { AuthStorage } from '../../auth/auth-storage.js'
 
 let dir: string
@@ -55,7 +56,7 @@ describe('M5-04: step1 hasOverride 判定含 models/quota（catalog 条目保留
     })
     const authStorage = new AuthStorage(join(agentDir, 'auth.json'))
 
-    const report = await migrateLegacyProviderConfig(authStorage)
+    const report = await migrateLegacyProviderConfig(new PiConfigStore(), authStorage)
 
     expect(report.migrated).toContain('openai')
     // models.json：条目保留（hasOverride——models 属用户配置，删除即丢 model 级 enabled），
@@ -75,7 +76,7 @@ describe('M5-04: step1 hasOverride 判定含 models/quota（catalog 条目保留
     })
     const authStorage = new AuthStorage(join(agentDir, 'auth.json'))
 
-    const report = await migrateLegacyProviderConfig(authStorage)
+    const report = await migrateLegacyProviderConfig(new PiConfigStore(), authStorage)
 
     expect(report.migrated).toContain('anthropic')
     const anthropic = (readModelsRaw().providers as Record<string, Record<string, unknown>>).anthropic
@@ -88,7 +89,7 @@ describe('M5-04: step1 hasOverride 判定含 models/quota（catalog 条目保留
     writeModels({ openai: { apiKey: 'sk-test' } })
     const authStorage = new AuthStorage(join(agentDir, 'auth.json'))
 
-    const report = await migrateLegacyProviderConfig(authStorage)
+    const report = await migrateLegacyProviderConfig(new PiConfigStore(), authStorage)
 
     expect(report.migrated).toContain('openai')
     // A7：removeProvider 删整个条目，catalog provider 回退 builtin template

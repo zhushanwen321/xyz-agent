@@ -18,6 +18,7 @@ import {
 } from '../legacy-provider-migration.js'
 import { setModelsPath } from '../../../infra/pi/pi-provider-store.js'
 import { setSettingsPath, invalidateSettingsCache } from '../../../infra/pi/pi-settings-store.js'
+import { PiConfigStore } from '../../../infra/pi/pi-config-store.js'
 import { deriveEnabled } from '../../provider-catalog.js'
 import { findValidDefaultModel } from '../../../infra/pi/pi-provider-store.js'
 import { AuthStorage } from '../../auth/auth-storage.js'
@@ -84,7 +85,7 @@ describe('TC1: step2 部分禁用 → enabledModels = enabled providers 的 <id>
       'custom-x': { enabled: true, models: [{ id: 'cx-1' }] },
     })
 
-    const report = await migrateProviderEnabledToWhitelist()
+    const report = await migrateProviderEnabledToWhitelist(new PiConfigStore())
 
     expect(report.migratedEnabled).toBe(true)
     expect(report.fullDisabledWarn).toBeUndefined()
@@ -108,7 +109,7 @@ describe('TC2: step2 全 enabled（无禁用）→ no-op（不设白名单，保
       anthropic: { enabled: true, models: [{ id: 'claude-3' }] },
     })
 
-    const report = await migrateProviderEnabledToWhitelist()
+    const report = await migrateProviderEnabledToWhitelist(new PiConfigStore())
 
     expect(report.migratedEnabled).toBe(true)
     expect(report.fullDisabledWarn).toBeUndefined()
@@ -137,7 +138,7 @@ describe('TC3: step2 全 disabled → 删字段 + warn（ES4 空数组守卫）'
       anthropic: { enabled: false, models: [{ id: 'claude-3' }] },
     })
 
-    const report = await migrateProviderEnabledToWhitelist()
+    const report = await migrateProviderEnabledToWhitelist(new PiConfigStore())
 
     expect(report.migratedEnabled).toBe(true)
     expect(report.fullDisabledWarn).toBe(true)
@@ -163,7 +164,7 @@ describe('TC4: step2 删 provider 级 enabled 字段（model.enabled 保留）',
       anthropic: { enabled: false, models: [{ id: 'claude-3' }] },
     })
 
-    await migrateProviderEnabledToWhitelist()
+    await migrateProviderEnabledToWhitelist(new PiConfigStore())
 
     const models = readModelsRaw()
     const openai = (models.providers as Record<string, Record<string, unknown>>).openai as Record<string, unknown>
@@ -185,7 +186,7 @@ describe('TC5: step2 defaultModel 重选（迁移后 default 落白名单外 →
     // 迁移前 default 落在被禁用的 openai
     writeSettings({ defaultProvider: 'openai', defaultModel: 'gpt-4' })
 
-    await migrateProviderEnabledToWhitelist()
+    await migrateProviderEnabledToWhitelist(new PiConfigStore())
 
     // settings.json：enabledModels = ['anthropic/*']（openai 被禁用）
     const settings = readSettingsRaw()
@@ -214,7 +215,7 @@ describe('TC5: step2 defaultModel 重选（迁移后 default 落白名单外 →
     // default 指向不存在的 provider（已删/已迁移）
     writeSettings({ defaultProvider: 'deleted-provider', defaultModel: 'old-model' })
 
-    await migrateProviderEnabledToWhitelist()
+    await migrateProviderEnabledToWhitelist(new PiConfigStore())
 
     // settings.json：enabledModels = ['anthropic/*']
     expect(readSettingsRaw()?.enabledModels).toEqual(['anthropic/*'])
@@ -236,7 +237,7 @@ describe('TC6: step2 幂等（无 provider 级 enabled 字段时 no-op）', () =
     })
     // 不写 settings.json（文件不存在）
 
-    const report = await migrateProviderEnabledToWhitelist()
+    const report = await migrateProviderEnabledToWhitelist(new PiConfigStore())
 
     expect(report.migratedEnabled).toBe(false)
     expect(report.fullDisabledWarn).toBeUndefined()
@@ -252,7 +253,7 @@ describe('TC6: step2 幂等（无 provider 级 enabled 字段时 no-op）', () =
     // settings.json 已有用户后来配置的白名单（不是迁移产生的）
     writeSettings({ enabledModels: ['openai/*'] })
 
-    const report = await migrateProviderEnabledToWhitelist()
+    const report = await migrateProviderEnabledToWhitelist(new PiConfigStore())
 
     expect(report.migratedEnabled).toBe(false)
     // settings.json enabledModels 不变（未被 step2 改写）
@@ -271,7 +272,7 @@ describe('TC7: 编排 migrateProviderConfig（调 step1 + step2）', () => {
     })
     const authStorage = new AuthStorage(join(agentDir, 'auth.json'))
 
-    const report = await migrateProviderConfig(authStorage)
+    const report = await migrateProviderConfig(new PiConfigStore(), authStorage)
 
     // step1：openai apiKey 迁 auth.json（hasOverride 分支保留其余字段）
     expect(report.catalog.migrated).toContain('openai')
@@ -304,7 +305,7 @@ describe('TC7: 编排 migrateProviderConfig（调 step1 + step2）', () => {
     // 但不影响 step2 执行）
     const authStorage = new AuthStorage(join(agentDir, 'nonexistent', 'auth.json'))
 
-    const report = await migrateProviderConfig(authStorage)
+    const report = await migrateProviderConfig(new PiConfigStore(), authStorage)
 
     // step2 仍执行：全 disabled 检测？不是——有一个 enabled (anthropic)
     // → enabledModels = ['anthropic/*']
@@ -318,7 +319,7 @@ describe('TC7: 编排 migrateProviderConfig（调 step1 + step2）', () => {
     })
     const authStorage = new AuthStorage(join(agentDir, 'auth.json'))
 
-    const report = await migrateProviderConfig(authStorage)
+    const report = await migrateProviderConfig(new PiConfigStore(), authStorage)
 
     // step1：custom-only 非 catalog → kept，不迁
     expect(report.catalog.migrated).toEqual([])
@@ -339,7 +340,7 @@ describe('TC7: 编排 migrateProviderConfig（调 step1 + step2）', () => {
     })
     const authStorage = new AuthStorage(join(agentDir, 'auth.json'))
 
-    const report = await migrateProviderConfig(authStorage)
+    const report = await migrateProviderConfig(new PiConfigStore(), authStorage)
 
     // step2 先迁：有 disabled（openai）→ enabledModels = ['anthropic/*']
     expect(report.enabled.migratedEnabled).toBe(true)

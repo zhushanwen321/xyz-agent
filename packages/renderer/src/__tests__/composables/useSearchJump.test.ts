@@ -14,6 +14,7 @@
  * - T5.3（D-001）symbol 选中不跳转：confirm({type:'symbol'}) → {ok:false,error:'符号搜索暂不可用'}（不调 domain/store）
  *
  * 环境：vitest happy-dom + pinia（useCommandStore/useFileTreeStore 需 pinia）。
+ * selectSession 经 options 注入（壳装配层模式，§7.4 破 search→sidebar 域级依赖），测试直接传 mock。
  * 禁止 node:test。运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useSearchJump.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -28,11 +29,9 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
   session: { list: (...args: unknown[]) => sessionListMock(...args) },
 }))
 
-// mock useSidebar（selectSession 是 session 跳转接线点，T4.3/T4.6）
+// selectSession 经 useSearchJump options 注入（§7.4 域级双向依赖修复：search 域不 import sidebar 域），
+// 测试直接传 mock，不再 mock sidebar 域模块。
 const selectSessionMock = vi.fn()
-vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
-  useSidebarNew: () => ({ selectSession: (...args: unknown[]) => selectSessionMock(...args) }),
-}))
 
 // mock useDetailPane：仅占位（AC-6.9 不应被 useSearchJump 调用；此 mock 用于断言 openPreview 未被调）
 const openPreviewMock = vi.fn()
@@ -64,7 +63,7 @@ describe('T2.2 选中应用命令执行 + 写 recents', () => {
   it('confirm({type:command,title:新建}) → action 调用 + recents.write 调用 + {ok:true}', async () => {
     const action = vi.fn()
     registerAppCmds({ id: 'new', name: '新建', action })
-    const { confirm } = useSearchJump()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
     const item: SearchItem = { type: 'command', title: '新建', sub: '创建一个新会话 · ⌘N', commandKind: 'app' }
 
     const result = await confirm(item, { activeSessionId: 's1' })
@@ -81,7 +80,7 @@ describe('T2.2 选中应用命令执行 + 写 recents', () => {
 describe('U7 选中 slash 命令 → 写 commandStore.pendingSlash（icon 从 item.icon 透传）', () => {
   it('confirm(slash 命令带 icon:wrench) → {ok:true} + pendingSlash.icon===wrench（非 terminal，证明从 item.icon 透传）+ recents 写入', async () => {
     const commandStore = useCommandStore()
-    const { confirm } = useSearchJump()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
     // commandKind='slash' 是唯一分发依据（命令名不带 / 前缀，对齐 pi 格式）。
     // icon 故意用 wrench（与 commit 常规图标 terminal 不同），锁定数据来自 item.icon 而非按 name 重查
     const item: SearchItem = { type: 'command', title: 'commit', sub: '提交改动', icon: 'wrench', commandKind: 'slash' }
@@ -103,7 +102,7 @@ describe('U7 选中 slash 命令 → 写 commandStore.pendingSlash（icon 从 it
 describe('U8 landing 态放行（修现有 bug：原返「无活动会话」错误）', () => {
   it('confirm(slash 命令, activeSessionId:null) → {ok:true} + pendingSlash.sessionId===null + recents 写入', async () => {
     const commandStore = useCommandStore()
-    const { confirm } = useSearchJump()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
     const item: SearchItem = { type: 'command', title: 'goal', sub: '目标驱动', icon: 'star', commandKind: 'slash' }
 
     const result = await confirm(item, { activeSessionId: null })
@@ -119,7 +118,7 @@ describe('U8 landing 态放行（修现有 bug：原返「无活动会话」错�
 describe('U9 icon undefined 透传（缺省态）', () => {
   it('confirm(slash 命令无 icon) → {ok:true} + pendingSlash.icon===undefined（透传 undefined，不兜底不报错）', async () => {
     const commandStore = useCommandStore()
-    const { confirm } = useSearchJump()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
     const item: SearchItem = { type: 'command', title: 'goal', sub: '', commandKind: 'slash' }
 
     const result = await confirm(item, { activeSessionId: 's1' })
@@ -129,9 +128,9 @@ describe('U9 icon undefined 透传（缺省态）', () => {
   })
 })
 
-describe('U10 useSearchJump 不传选项 + slash confirm 仍成功（不再依赖 injectSlash 回调）', () => {
-  it('useSearchJump() 空调用 + slash confirm → {ok:true}（不因 injectSlash undefined 返错）', async () => {
-    const { confirm } = useSearchJump()
+describe('U10 useSearchJump 传 options + slash confirm 仍成功（不再依赖 injectSlash 回调）', () => {
+  it('slash confirm → {ok:true}（不因 selectSession 未被调而受影响）', async () => {
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
     const item: SearchItem = { type: 'command', title: 'goal', sub: '', icon: 'star', commandKind: 'slash' }
 
     const result = await confirm(item, { activeSessionId: 's1' })
@@ -145,7 +144,7 @@ describe('U11 应用命令分支不受影响（回归）', () => {
     const commandStore = useCommandStore()
     const action = vi.fn()
     registerAppCmds({ id: 'new', name: '新建', action })
-    const { confirm } = useSearchJump()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
     const item: SearchItem = { type: 'command', title: '新建', sub: '', commandKind: 'app' }
 
     const result = await confirm(item, { activeSessionId: 's1' })
@@ -163,7 +162,7 @@ describe('T2.6（AC-6.8）command action 抛错', () => {
       throw new Error('action 炸了')
     })
     registerAppCmds({ id: 'fail', name: '失败命令', action })
-    const { confirm } = useSearchJump()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
     const item: SearchItem = { type: 'command', title: '失败命令', sub: '', commandKind: 'app' }
 
     const result = await confirm(item, { activeSessionId: 's1' })
@@ -182,7 +181,7 @@ describe('T2.7 跳转成功关闭', () => {
   it('confirm 成功 → {ok:true}（调用方据 ok=true 关浮层）', async () => {
     const action = vi.fn()
     registerAppCmds({ id: 'ok', name: '成功命令', action })
-    const { confirm } = useSearchJump()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
     const item: SearchItem = { type: 'command', title: '成功命令', sub: '', commandKind: 'app' }
 
     const result = await confirm(item, { activeSessionId: 's1' })
@@ -195,7 +194,7 @@ describe('T2.7 跳转成功关闭', () => {
 describe('T3.4（AC-6.5/6.9）file.read 失败', () => {
   it('mock fileApi.read reject → {ok:false,error} + 未调 useDetailPane.openPreview', async () => {
     fileReadMock.mockRejectedValueOnce(new Error('文件不存在'))
-    const { confirm } = useSearchJump()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
     const item: SearchItem = { type: 'file', title: 'auth/session.ts', sub: 'src/auth/session.ts' }
 
     const result = await confirm(item, { activeSessionId: 's1' })
@@ -216,7 +215,7 @@ describe('T3.4（AC-6.5/6.9）file.read 失败', () => {
 describe('T3.6 file.read 成功 DetailPane 打开', () => {
   it('mock fileApi.read resolve → fileTreeStore.selectFile 调用 + {ok:true, drawerTab:detail}', async () => {
     fileReadMock.mockResolvedValueOnce({ content: 'file body', truncated: false })
-    const { confirm } = useSearchJump()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
     const item: SearchItem = { type: 'file', title: 'auth/token.ts', sub: 'src/auth/token.ts' }
 
     const result = await confirm(item, { activeSessionId: 's1' })
@@ -239,7 +238,7 @@ describe('T4.3 选中会话切换', () => {
       { cwd: 'p', sessions: [{ id: 'sess-1', label: '搜索浮层设计', cwd: 'p' }] },
     ])
     selectSessionMock.mockResolvedValueOnce(undefined)
-    const { confirm } = useSearchJump()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
     const item: SearchItem = { type: 'session', title: '搜索浮层设计', sub: 'refactor-arch · feat-search' }
 
     const result = await confirm(item, { activeSessionId: 's1' })
@@ -259,7 +258,7 @@ describe('T4.6（AC-6.6）session.switch 失败', () => {
       { cwd: 'p', sessions: [{ id: 'sess-x', label: '会话X', cwd: 'p' }] },
     ])
     selectSessionMock.mockRejectedValueOnce(new Error('session 已失效'))
-    const { confirm } = useSearchJump()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
     const item: SearchItem = { type: 'session', title: '会话X', sub: 'p · main' }
 
     const result = await confirm(item, { activeSessionId: 's1' })
@@ -274,7 +273,7 @@ describe('T4.6（AC-6.6）session.switch 失败', () => {
 
   it('session.list 反查未命中 label → {ok:false,error}（无匹配会话）', async () => {
     sessionListMock.mockResolvedValueOnce([{ cwd: 'p', sessions: [] }])
-    const { confirm } = useSearchJump()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
     const item: SearchItem = { type: 'session', title: '不存在会话', sub: '' }
 
     const result = await confirm(item, { activeSessionId: 's1' })
@@ -293,7 +292,7 @@ describe('T4.7 跳转成功 active session 切换', () => {
       { cwd: 'p', sessions: [{ id: 'sess-ok', label: '工作流', cwd: 'p' }] },
     ])
     selectSessionMock.mockResolvedValueOnce(undefined)
-    const { confirm } = useSearchJump()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
     const item: SearchItem = { type: 'session', title: '工作流', sub: 'p · dev' }
 
     const result = await confirm(item, { activeSessionId: 's1' })
@@ -306,7 +305,7 @@ describe('T4.7 跳转成功 active session 切换', () => {
 
 describe('T5.3（D-001）symbol 选中不跳转', () => {
   it('confirm({type:symbol}) → {ok:false,error:符号搜索暂不可用}（不调任何 domain/store）', async () => {
-    const { confirm } = useSearchJump()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
     const item: SearchItem = { type: 'symbol', title: 'authenticate()', sub: 'auth/session.ts:42' }
 
     const result = await confirm(item, { activeSessionId: 's1' })

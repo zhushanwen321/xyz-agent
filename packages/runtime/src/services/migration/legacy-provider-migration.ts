@@ -8,12 +8,14 @@
  * - 自定义 provider 条目 → 不动
  * - OAuth 冲突（auth.json 已有 oauth）→ 跳过
  * - 迁移失败不阻断启动，warn + 下次重试
+ *
+ * 🔒 三层架构：本文件位于 services 层，models.json CRUD 经 IConfigStore port 访问
+ *（infra/pi/pi-config-store 实现），pi 协议类型（PiProviderConfig）不进入 services——
+ * 这里只见 ConfigProviderConfig service 视图。
  */
-import { readModels, upsertProvider, getProviderNames, setEnabledModels, clearEnabledModels, removeProvider } from '../../infra/pi/pi-provider-store.js'
 import { isCatalogProvider } from '../provider-catalog.js'
 import { AuthStorage } from '../auth/auth-storage.js'
-import { join } from 'node:path'
-import type { PiProviderConfig } from '../../infra/pi/pi-provider-store.js'
+import type { IConfigStore, ConfigProviderConfig } from '../ports/config.js'
 
 export interface MigrationReport {
   migrated: string[]
@@ -49,11 +51,11 @@ export interface ProviderConfigMigrationReport {
  * @param authStorage AuthStorage 实例（操作 auth.json）
  * @returns MigrationReport
  */
-export async function migrateLegacyProviderConfig(authStorage: AuthStorage): Promise<MigrationReport> {
+export async function migrateLegacyProviderConfig(configStore: IConfigStore, authStorage: AuthStorage): Promise<MigrationReport> {
   const report: MigrationReport = { migrated: [], kept: [], failed: [], skipped: [], errors: [] }
 
   try {
-    const models = readModels()
+    const models = configStore.readModels()
     const providers = models.providers ?? {}
 
     for (const [providerId, config] of Object.entries(providers)) {
@@ -97,14 +99,14 @@ export async function migrateLegacyProviderConfig(authStorage: AuthStorage): Pro
           || rest.models !== undefined || rest.quota !== undefined
         )
         if (hasOverride) {
-          upsertProvider(providerId, rest as Parameters<typeof upsertProvider>[1])
+          configStore.upsertProvider(providerId, rest as ConfigProviderConfig)
         } else {
           // 无 override → 删除整个条目，catalog provider 回退 builtin template。
           // A7：用 removeProvider（功能完整：删条目 + 同步清理 default）替代「写最小条目」变通
           // （写 {name,api,baseUrl} 会丢失 models/quota 等字段且语义不准）。
           // removeProvider 若删的是 default 承载 provider 会重选 newDefault 并写回 settings.json，
           // 运行时 findValidDefaultModel 兜底（catalog provider 仍可用，凭据已正位 auth.json）。
-          removeProvider(providerId)
+          configStore.removeProvider(providerId)
         }
 
         report.migrated.push(providerId)
@@ -143,17 +145,17 @@ export async function migrateLegacyProviderConfig(authStorage: AuthStorage): Pro
  *
  * @returns migratedEnabled=true 表示曾发现有 enabled 字段并已处理（删字段 ± 设白名单）
  */
-export async function migrateProviderEnabledToWhitelist(): Promise<ProviderEnabledMigrationReport> {
+export async function migrateProviderEnabledToWhitelist(configStore: IConfigStore): Promise<ProviderEnabledMigrationReport> {
   const report: ProviderEnabledMigrationReport = { migratedEnabled: false }
 
   try {
-    const models = readModels()
+    const models = configStore.readModels()
     const providers = models.providers ?? {}
 
     // 收集有 provider 级 enabled 字段的（含 enabled:true / enabled:false）
     const providersWithEnabled = Object.entries(providers).filter(
       ([, config]) => config !== null && typeof config === 'object' && 'enabled' in config,
-    ) as Array<[string, PiProviderConfig]>
+    ) as Array<[string, ConfigProviderConfig]>
 
     // 无 provider 级 enabled 字段 → 完全 no-op（幂等，TC6）
     if (providersWithEnabled.length === 0) {
@@ -173,11 +175,11 @@ export async function migrateProviderEnabledToWhitelist(): Promise<ProviderEnabl
     if (hasDisabled) {
       if (enabledProviderIds.length === 0) {
         // 全 disabled → clearEnabledModels + warn（ES4/TC3）
-        clearEnabledModels()
+        configStore.clearEnabledModels()
         report.fullDisabledWarn = true
       } else {
         // 部分禁用 → enabledModels = enabled 的 <id>/*（TC1）
-        setEnabledModels(enabledProviderIds.map(id => `${id}/*`))
+        configStore.setEnabledModels(enabledProviderIds.map(id => `${id}/*`))
       }
     }
     // 全 enabled（无 disabled）→ 不设白名单（保持全可用，TC2/CL1）
@@ -186,7 +188,7 @@ export async function migrateProviderEnabledToWhitelist(): Promise<ProviderEnabl
     // model 级 models[].enabled 不动（pi 原生消费）。
     for (const [providerId, config] of providersWithEnabled) {
       const { enabled: _removed, ...rest } = config
-      upsertProvider(providerId, rest)
+      configStore.upsertProvider(providerId, rest)
     }
 
     report.migratedEnabled = true
@@ -209,8 +211,8 @@ export async function migrateProviderEnabledToWhitelist(): Promise<ProviderEnabl
  *
  * @param authStorage AuthStorage 实例（step1 操作 auth.json）
  */
-export async function migrateProviderConfig(authStorage: AuthStorage): Promise<ProviderConfigMigrationReport> {
-  const enabled = await migrateProviderEnabledToWhitelist()
-  const catalog = await migrateLegacyProviderConfig(authStorage)
+export async function migrateProviderConfig(configStore: IConfigStore, authStorage: AuthStorage): Promise<ProviderConfigMigrationReport> {
+  const enabled = await migrateProviderEnabledToWhitelist(configStore)
+  const catalog = await migrateLegacyProviderConfig(configStore, authStorage)
   return { catalog, enabled }
 }

@@ -47,7 +47,9 @@ describe('block-rendering M0: Block text 分支正文样式（TC-M0-4）', () =>
     const defaultWrapper = mountTextBlock()
     expect(defaultWrapper.find('.trace-blk > div').classes()).toContain('text-neutral-fg')
     // streaming 布尔切换驱动颜色（单调，不随兄弟 message 翻转）
-    await wrapper.setProps({ streaming: true })
+    // .vue shim 下 VTU setProps 的 $props 类型解析为 attrs-only（Block.vue 自定义 props 不可见），
+    // 运行时 setProps 走 Record<string, unknown>，cast 仅为满足 tsc（同 search-modal.test.ts:86 模式）。
+    await wrapper.setProps({ streaming: true } as never)
     expect(wrapper.find('.trace-blk > div').classes()).toContain('text-neutral-mid')
   })
 })
