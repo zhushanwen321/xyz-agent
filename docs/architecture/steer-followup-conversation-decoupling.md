@@ -89,6 +89,16 @@ steer/followup 的底层流转：前端发 RPC → pi 入队 → pi 推 `message
 
 这条 pending message 是 steer/followup **为对话流专门造的组件态**——正是"对话逻辑感知到触发源、为它造了对应组件"。它违反了对话流应是"通用对话逻辑"的原则：对话流只该认"通知"（appendUser 了一条 complete 消息 / assistant 开始 streaming），不该知道消息来自 steer 还是 followUp。
 
+**队列视角的完整现状：排队状态实际是三处分裂，不止 pending 消息一处。** 本设计只解决第一处，但拆分边界必须先看清全貌：
+
+| 排队机制 | 数据结构 | UI 表达 | 可取消 | 来源 |
+|---|---|---|---|---|
+| ① pending 消息（本设计删除） | `messages` 内 `status:'pending'`（store.ts:257） | UserBubble 虚线框 | 否（drain 前只能等） | 前端 RPC 前注入 |
+| ② pi 队列快照 | `queueStates`（store.ts:87，`{steering?, followUp?}`） | QueueBubble（composer 顶部） | **否**（pi 无 clear_queue RPC） | pi `queue_update` 事件回流 |
+| ③ compact 排队 buffer | `compactQueue`（useChat.ts:199-208，模块级） | CompactQueueBadge（composer 上方） | **是**（逐条取消） | compact 期间用户输入前端暂存 |
+
+方案 A 落地后②③仍并存："排队"仍有两个数据结构、两种 affordance（②只读 / ③可取消），同类信息不同能力。②与③的统一（queue 子域）属后续独立设计，不在本文 scope，登记于此避免"队列问题已解决"的错觉。
+
 ### 2.4 V6 spec 已判该虚线框废弃
 
 V6 spec（`docs/page-design/v6-spec-input.html`）对 UserBubble pending 分支的裁决：
@@ -232,6 +242,7 @@ for (const text of countDrained(prev.steering ?? [], steering ?? [])) {
 | P-derived-independent | DerivedStatus 的 'pending'（session 级 pendingSend 空窗态）不受 MessageStatus 删 'pending' 影响 | read `renderer/src/types.ts:16` DerivedStatus（session 级）vs `shared/message.ts` MessageStatus（消息级）；read `sessionStatus.ts:150-182` deriveStatus 确认 'pending' 由 isActive(pendingSend) 派生，不读 message.status | ✅ 已验证（两者同名异义、互不引用；DerivedStatus 的 'pending' 显式保留） |
 | P-groupturns-user | groupTurns 对每个 user message 开新 turn | 读 message-turns.ts:78 `if (msg.role === 'user') turnSeq += 1` | ✅ 已验证 |
 | P-no-pending-leak | 重开 session 后 messages 无残留 pending（pi JSONL 不记录 pending message） | 发 steer 后重开 session，检查对话流无虚线框/无幽灵消息 | ⛔ 实施期 M2 |
+| P-placeholder | drain→appendUser→message_start 极短间隔下，TurnMeta `isPendingPlaceholder` 空 turn 占位（TurnMeta.vue:79-85，"思考中"spinner）不闪烁、不错位 | dev app drain 后观察新 turn：appendUser 与 message_start 几乎同步到达（P-order），占位 spinner 应一闪而过或直接不出现；断言 turn 视觉无"先占位再跳变"的割裂感 | ⛔ 实施期 M2 |
 
 ---
 
@@ -302,7 +313,7 @@ for (const text of countDrained(prev.steering ?? [], steering ?? [])) {
 |---|---|---|
 | shared types | `packages/shared/src/message.ts` | `MessageStatus` 删 `'pending'`（M4，P-derived-independent 已确认安全） |
 | core store | `packages/core/src/domain/chat/store.ts` | 删 appendPending/markPendingDelivered/removePending/findPendingIndex；加 pendingBuffer + pushPending/drainPending/abortPending |
-| core useChat | `packages/core/src/domain/chat/useChat.ts` | steer(line 383): appendPending→pushPending, catch(387) removePending→abortPending；followUp(413/417) 同理 |
+| core useChat | `packages/core/src/domain/chat/useChat.ts` | steer(line 383): appendPending→pushPending, catch(387) removePending→abortPending；followUp(413/417) 同理。**另注意 send(line 337-349)：`isActive` 时静默改道 steer**——改道即调 steer 方法，自动走 pushPending 无需独立改动，但行为随之变化：busy 时普通 send 的消息从"虚线框 pending 气泡"变为"QueueBubble 排队"（与 steer 一致），这正是 G1/G2 目标的覆盖扩展 |
 | core effects | `packages/core/src/domain/chat/effect-types.ts` | MessageEffectContext 加 appendUser + drainPending |
 | core effects | `packages/core/src/domain/chat/effects/registry.ts` | queue_update handler(546-551): markPendingDelivered → drainPending+appendUser |
 | core store（ctx 组装） | `store.ts` `applyMessageEvent` | 把 appendUser + drainPending 加入 ctx 对象字面量（当前已注入 markPendingDelivered，同位置追加）。组装点已确认，非待验证 |
