@@ -183,14 +183,12 @@ const traceWindow = computed(() =>
  */
 const visibleBlocks = computed<FlatBlock[]>(() => {
   if (!showTrace.value) {
-    const lastTextByAssistant = new Map<string, FlatBlock>()
+    // 全 turn 末位 text（与 computeTraceWindow ①一致，不按 assistant 分组）
+    let lastText: FlatBlock | undefined
     for (const fb of flatBlocks.value) {
-      if (fb.block.kind === 'text') {
-        const prev = lastTextByAssistant.get(fb.assistantId)
-        if (!prev || fb.flatIndex > prev.flatIndex) lastTextByAssistant.set(fb.assistantId, fb)
-      }
+      if (fb.block.kind === 'text' && (!lastText || fb.flatIndex > lastText.flatIndex)) lastText = fb
     }
-    return [...lastTextByAssistant.values()].sort((a, b) => a.flatIndex - b.flatIndex)
+    return lastText ? [lastText] : []
   }
   // 窗口仅作用于工作 turn：完成态/历史手动展开回看全量，不截断（design §3.1 交互6 / G5）。
   if (!isWorkingTurn.value) {

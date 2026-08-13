@@ -119,32 +119,34 @@ export function computeTraceWindow(
     return { visible: [...blocks], compactedCount: 0, failedCount: 0 }
   }
 
-  // ① 每个 assistant 的末位 text（按 assistantId 分组，各保留 flatIndex 最大的 text 块）。
-  // 多 assistant turn 下每个 assistant 的最终回复默认可见（非末位 assistant 完整回复不丢失）；
-  // 单 assistant 内的过渡碎片只留末位。
-  const lastTextByAssistant = new Map<string, FlatBlock>()
+  // ① 全 turn 末位 text（flatIndex 最大的 text 块，单个）——不按 assistant 分组。
+  // [2026-08-14 修正] 原「按 assistantId 分组各保留末位 text」针对多 assistant turn（ask-user/compact
+  // 续写），但 pi tool 循环协议下每 message_start 新 assistant Message，单 agent 一个 turn 跑几十次
+  // 循环产生几十个 assistant，按 assistant 分组会每 assistant 末位 text 都保留致 visible 爆炸（实测
+  // 61 assistant → ①=12 text）。改为全 turn 最后 text：流式正文始终可见，历史 text 进③候选池可被窗口收编。
+  // 多 assistant 续写场景的非末位回复经 takeover「展开全部」或历史 turn 查看。
+  let lastText: FlatBlock | undefined
   for (const fb of blocks) {
-    if (fb.block.kind === 'text') {
-      const prev = lastTextByAssistant.get(fb.assistantId)
-      if (!prev || fb.flatIndex > prev.flatIndex) {
-        lastTextByAssistant.set(fb.assistantId, fb)
-      }
+    if (fb.block.kind === 'text' && (!lastText || fb.flatIndex > lastText.flatIndex)) {
+      lastText = fb
     }
   }
 
-  // ② 进行中块：每个 streaming assistant 取其拍平块中最后一个非 text 块（flatIndex 最大者）。
-  const inProgressByAssistant = new Map<string, FlatBlock>()
+  // ② 进行中块：只保留全 turn 最后一个 streaming 块（flatIndex 最大的 streaming 非 text，单个）。
+  // [2026-08-14 修正] 原按 streaming assistant 分组每 assistant 各一个，但 pi tool 循环历史 assistant
+  // 未正确 complete（上游 bug）致多 streaming assistant，②爆炸（实测 61 streaming → ②=61）。
+  // 改为单个最后 streaming 块：只展示「当前正在进行的最新动作」。
+  let lastInProgress: FlatBlock | undefined
   for (const fb of blocks) {
-    if (fb.assistantStatus === 'streaming' && fb.block.kind !== 'text') {
-      const prev = inProgressByAssistant.get(fb.assistantId)
-      if (!prev || fb.flatIndex > prev.flatIndex) {
-        inProgressByAssistant.set(fb.assistantId, fb)
-      }
+    if (
+      fb.assistantStatus === 'streaming' &&
+      fb.block.kind !== 'text' &&
+      (!lastInProgress || fb.flatIndex > lastInProgress.flatIndex)
+    ) {
+      lastInProgress = fb
     }
   }
-  const inProgressSet = new Set<number>(
-    [...inProgressByAssistant.values()].map((fb) => fb.flatIndex),
-  )
+  const inProgressSet = new Set<number>(lastInProgress ? [lastInProgress.flatIndex] : [])
 
   // ③ 已完成过程块（压缩候选）：kind!=='text' 且不在②内 且（thinking 或 tool/agentgraph 非 error）。
   const completedProcessPool: FlatBlock[] = []
@@ -162,8 +164,8 @@ export function computeTraceWindow(
 
   // 合并三类（按 flatIndex 去重），按 flatIndex 升序输出。
   const merged = new Map<number, FlatBlock>()
-  for (const fb of lastTextByAssistant.values()) merged.set(fb.flatIndex, fb)
-  for (const fb of inProgressByAssistant.values()) merged.set(fb.flatIndex, fb)
+  if (lastText) merged.set(lastText.flatIndex, lastText)
+  if (lastInProgress) merged.set(lastInProgress.flatIndex, lastInProgress)
   for (const fb of windowed) merged.set(fb.flatIndex, fb)
   const visible = [...merged.values()].sort((a, b) => a.flatIndex - b.flatIndex)
 

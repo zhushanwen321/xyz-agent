@@ -328,7 +328,7 @@ describe('TC7 failedCount 独立性（3 completed + 2 error）', () => {
 
 // ── G1：非末位 text 块不进 visible ────────────────────────────────────
 
-describe('G1 text 收集规则：按 assistant 分组各保留末位 text', () => {
+describe('G1 text 收集规则：全 turn 末位 text（单个，不按 assistant 分组）', () => {
   it('单 assistant 多个 text（过渡碎片）→ 仅末位 text 进 visible，前面的不收集', () => {
     // a1 含 3 个 text block（流式过渡碎片）→ ①只留末位（flatIndex 2），前两个不收集
     const a1 = makeAssistant({
@@ -350,7 +350,7 @@ describe('G1 text 收集规则：按 assistant 分组各保留末位 text', () =
     expect(res.failedCount).toBe(0)
   })
 
-  it('多 assistant 各含 text → 每个 assistant 的末位 text 都进 visible（不丢失完整回复）', () => {
+  it('多 assistant 各含 text → 只保留全 turn 最后 text（tool 循环协议防爆炸，2026-08-14 修正）', () => {
     // a1: text → flatIndex 0；a2: text → flatIndex 1（多 assistant turn，各自完整回复）
     const a1 = makeAssistant({
       id: 'a1',
@@ -367,8 +367,8 @@ describe('G1 text 收集规则：按 assistant 分组各保留末位 text', () =
     const flat = flattenTurnBlocks([a1, a2])
     expect(flatIndices(flat)).toEqual([0, 1])
     const res = computeTraceWindow(flat, { windowSize: W, takeover: false })
-    // ①每个 assistant 各保留末位 text → 两个都进 visible（非末位 assistant 完整回复不丢失）
-    expect(flatIndices(res.visible)).toEqual([0, 1])
+    // ①全 turn 末位 text（单个，flatIndex 最大者）——不按 assistant 分组（tool 循环协议防爆炸）
+    expect(flatIndices(res.visible)).toEqual([1])
     expect(res.compactedCount).toBe(0)
     expect(res.failedCount).toBe(0)
   })
