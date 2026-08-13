@@ -56,7 +56,14 @@ set -a && source .env.dev-extensions && set +a && pnpm dev
 
 ```bash
 bash .agents/skills/dev-link/link-list.sh
-# 显示 pi 模式（pi list 本地源）+ xyz-agent 模式（.env.dev-extensions）两者的当前 link
+```
+
+智能检测（动态推导路径，不写死项目路径）：
+- **pi 模式**（`PI_EXT_DIR/pi-*` symlink）：显示所有 link + target，标注归属 `[当前worktree]` / `[其他worktree: name]` / `[外部]`；悬空 symlink（worktree 删了未清）标 `✗悬空`
+- **xyz-agent 模式**（`.env.dev-extensions`）：从当前 git root 动态查找，检测路径存在性 + worktree 归属
+- **npm 条目备份**：显示 pi-link 清掉的 npm 源（pi-unlink 会恢复）
+- **PI_CODING_AGENT_DIR 不一致警告**：link 位置与运行时 agentDir 不一致时提示（pi 可能不加载）
+- 路径 source `dev-link-lib.sh` 复用 `PI_EXT_DIR`/`SETTINGS`/`DL_BACKUP_FILE`，与 link 建立位置一致
 ```
 
 ## 包名格式
