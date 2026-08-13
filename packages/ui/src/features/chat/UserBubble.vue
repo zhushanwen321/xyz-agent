@@ -1,6 +1,6 @@
 <template>
   <!--
-    UserBubble：用户气泡（展示态/编辑态/pending态 + skill/file/image badge + hover actions）。
+    UserBubble：用户气泡（展示态/编辑态 + skill/file/image badge + hover actions）。
     从 Turn.vue 拆出。emit edit-state-change 通知父组件 pinEditing。
   -->
   <!-- user 区：编辑态切 textarea，展示态气泡 + hover actions -->
@@ -20,20 +20,6 @@
           </Button>
         </div>
       </div>
-    </div>
-    <!-- pending 气泡（draft-composer-states S7）：steer/followup 已入队未投递 -->
-    <div
-      v-else-if="isPendingUser"
-      class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-dashed px-[13px] py-[9px] text-[length:var(--text-base)] leading-[1.55] text-neutral-fg whitespace-pre-wrap"
-      :class="pendingBubbleClass"
-    >
-      <span class="mb-1 flex items-center gap-1.5 font-mono text-[length:var(--text-2xs)] font-semibold tracking-wider"
-        :class="pendingLabelClass"
-      >
-        <span class="size-[6px] animate-pulse-accent rounded-full" :class="pendingDotClass" />
-        {{ pendingLabel }}
-      </span>
-      <span>{{ normalizeContent(turn.user!.content) }}</span>
     </div>
     <!-- 展示态气泡 -->
     <div
@@ -79,9 +65,9 @@
       </template>
       <MarkdownRenderer v-if="!userSegments.length && typeof turn.user?.content === 'string'" :content="turn.user!.content" :session-id="sessionId" />
     </div>
-    <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（非活跃态）时显示。pending 不显示。 -->
+    <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（非活跃态）时显示。 -->
     <div
-      v-if="!isEditingThisUser && !isPendingUser"
+      v-if="!isEditingThisUser"
       class="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/user:opacity-100 group-focus-within/user:opacity-100"
     >
       <Button
@@ -170,22 +156,6 @@ const userSegments = computed<Segment[]>(() => {
   if (Array.isArray(content)) return content
   return []
 })
-
-/**
- * pending user 气泡：steer/followup 已入队 pi 但未投递。
- */
-const isPendingUser = computed(
-  () => !!props.turn.user && props.turn.user.status === 'pending',
-)
-const isSteerMode = computed(() => props.turn.user?.sendMode === 'steer')
-const pendingBubbleClass = computed(() =>
-  isSteerMode.value
-    ? 'border-[var(--accent)] bg-accent-soft'
-    : 'border-info bg-info-soft',
-)
-const pendingLabelClass = computed(() => (isSteerMode.value ? 'text-accent' : 'text-info'))
-const pendingDotClass = computed(() => (isSteerMode.value ? 'bg-accent' : 'bg-info'))
-const pendingLabel = computed(() => (isSteerMode.value ? t('panel.queue.steerLabel') : t('panel.queue.followupLabel')))
 
 /** 复制反馈 */
 const { copied, copy } = useCopy()

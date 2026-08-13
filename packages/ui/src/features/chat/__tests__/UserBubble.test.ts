@@ -2,7 +2,7 @@
  * UserBubble.vue 组件测试（W4TC3）。
  *
  * 覆盖：
- * - W4TC3: UserBubble 拆分后渲染一致（展示态/编辑态/pending态 + badge + hover actions）
+ * - W4TC3: UserBubble 拆分后渲染一致（展示态/编辑态 + badge + hover actions）
  *
  * 运行：cd packages/renderer && npx vitest run src/components/panel/message-stream/__tests__/UserBubble.test.ts
  */
@@ -81,51 +81,6 @@ describe('W4TC3: UserBubble 展示态', () => {
     const wrapper = mountBubble({ canEdit: true, isSessionEditable: true })
     const actions = wrapper.find('.group\\/user .opacity-0')
     expect(actions.findAll('button').length).toBe(1)
-  })
-})
-
-describe('W4TC3: UserBubble pending 态', () => {
-  it('pending 气泡（status=pending）渲染虚线边框 + 脉冲点', () => {
-    const wrapper = mountBubble({
-      turn: makeTurn({
-        user: { id: 'u1', role: 'user', content: 'pending...', status: 'pending', sendMode: 'steer', timestamp: NOW } as Message,
-      }),
-    })
-    // pending 气泡有 border-dashed
-    expect(wrapper.find('.border-dashed').exists()).toBe(true)
-    // 脉冲点
-    expect(wrapper.find('.animate-pulse-accent').exists()).toBe(true)
-  })
-
-  it('pending 态不显示 hover actions', () => {
-    const wrapper = mountBubble({
-      turn: makeTurn({
-        user: { id: 'u1', role: 'user', content: 'pending...', status: 'pending', timestamp: NOW } as Message,
-      }),
-    })
-    expect(wrapper.find('.group\\/user .opacity-0').exists()).toBe(false)
-  })
-
-  it('steer 模式 pending → accent 蓝配色', () => {
-    const wrapper = mountBubble({
-      turn: makeTurn({
-        user: { id: 'u1', role: 'user', content: 'steering', status: 'pending', sendMode: 'steer', timestamp: NOW } as Message,
-      }),
-    })
-    const bubble = wrapper.find('.border-dashed')
-    expect(bubble.classes()).toContain('border-[var(--accent)]')
-    expect(bubble.classes()).toContain('bg-accent-soft')
-  })
-
-  it('follow-up 模式 pending → info 青配色', () => {
-    const wrapper = mountBubble({
-      turn: makeTurn({
-        user: { id: 'u1', role: 'user', content: 'following', status: 'pending', sendMode: 'follow-up', timestamp: NOW } as Message,
-      }),
-    })
-    const bubble = wrapper.find('.border-dashed')
-    expect(bubble.classes()).toContain('border-info')
-    expect(bubble.classes()).toContain('bg-info-soft')
   })
 })
 
