@@ -1,6 +1,6 @@
 {
   "name": "@xyz-agent/electron",
-  "version": "0.8.69",
+  "version": "0.8.70",
   "private": true,
   "description": "AI Agent Desktop Workstation",
   "author": {
