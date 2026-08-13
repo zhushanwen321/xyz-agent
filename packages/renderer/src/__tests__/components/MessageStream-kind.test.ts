@@ -7,10 +7,10 @@
  * - kind==='bashExecution' → BashOutputBlock
  * - 其余（systemNotice）   → SystemNotice
  *
- * 死分支回归防护：bgNotify / gui（GuiComponentRenderer + extractGuiComponent）分支
- * 已随 M1 删除（bgNotify 组件本体 M2 删除）——kind 全集不含这两类，若未来有人加回
- * `item.message.bgNotify` / extractGuiComponent 嗅探，本测通过「kind 全集三态互斥 +
- * 无 bgNotify/gui 渲染」抓出。
+ * 死分支回归防护：bgNotify / gui 渲染分支已随 M1 删除（BgNotifyCard 组件本体 M2、
+ * Message.bgNotify 字段与 extractGuiComponent 函数 M6 删除）——kind 全集不含这两类，
+ * 若未来有人加回「嗅探 details.__gui__ / bgNotify 字段再渲染专属卡片」的路径，
+ * 本测通过「kind 全集三态互斥 + 无 bgNotify/gui 渲染」抓出。
  *
  * 为什么 mock virtua/vue：happy-dom 无真实布局/ResizeObserver，真 <Virtualizer> 的
  * viewportSize=0 → 不窗口化渲染任何项（MessageStream-bash.test.ts T10/gap3 因同因 skip）。
