@@ -154,6 +154,37 @@ streamSink: ctx.mode === "rpc"
 
 **范例**：`extensions/{rename-session,permission,model-switch,vision,scheduler}/skills/*-ext-config/`
 
+### 配置路径约定 [强制]
+
+所有扩展的磁盘配置文件统一放 `<agentDir>/config/<extension简名>.json`。
+
+- **命名 = 包名简写**（从 extension 名直接推导）：`permission.json` / `model-switch.json` / `vision.json`
+  - 禁止语义名（`model-policy.json`、`vision-models.json`）、禁止 `<名>-config.json`（`permission-config.json`）
+  - **不要**用 `xxx-ext-config.json` —— 会和 config skill 名 `xxx-ext-config` 混淆（skill 是 SKILL.md 指导文档，配置是 .json 数据）。`config/` 目录已隐含「配置」语义，文件名不叠 `-config` 后缀
+- `<agentDir>` = pi 的 `getAgentDir()`（`PI_CODING_AGENT_DIR` 覆盖，默认 `~/.pi/agent`；xyz-agent 隔离环境 `~/.xyz-agent/pi/agent`）
+- shared 库（如 quota-providers）的领域数据文件（providers.json / secrets.json / quota-cache.json）也放 `config/`，可用领域名（非包名）
+- 目录形态的配置（如 plan-templates/）不在此约定内
+
+**历史路径迁移（安装时自动完成，运行时不双读旧路径）**：
+
+- 迁移必须发生在 **npm 安装时**，extension 运行时**只读新路径**——禁止「先读新、没有读旧」的双读 fallback
+- 每个需要迁移的包：
+  1. 写 `scripts/migrate-config.mjs`（幂等：旧路径不存在 → noop；新路径已存在 → 不覆盖仅删旧；失败 → warn + 不抛错）
+  2. `package.json` 声明 `"pi": { "migrate": "./scripts/migrate-config.mjs" }`（xyz-agent extension-service 装后 hook 执行，注入 agentDir 到 argv[2] + `PI_CODING_AGENT_DIR`）+ `"scripts": { "postinstall": "node scripts/migrate-config.mjs" }`（原生 pi `pi install` 走真实 npm CLI 时执行）
+  3. `files` 含 `"scripts/"`（否则 npm publish 丢脚本）
+- 升级场景自洽：旧版本代码读旧路径、新版本代码读新路径，迁移只在升级（重新安装）瞬间执行一次，任何版本都不双读
+- 已迁移的用户文件保留在 config/，旧路径残留删除
+
+**已收敛清单**（2026-08，迁移脚本随包发布）：
+
+| 包 | 旧路径 | 新路径 |
+|---|---|---|
+| `pi-permission` | `<agentDir>/permission-config.json` | `<agentDir>/config/permission.json` |
+| `pi-model-switch` | `<agentDir>/model-policy.json` | `<agentDir>/config/model-switch.json` |
+| `pi-vision` | `<agentDir>/vision-models.json` | `<agentDir>/config/vision.json` |
+| `pi-quota-providers`（cache） | `<agentDir>/statusline_cache.json`（statusline 遗留孤儿名） | `<agentDir>/config/quota-cache.json`（首次加载迁移） |
+| `pi-rename-session` | 已合规 | `<agentDir>/config/rename-session.json`（llm-shared 派生，无迁移脚本） |
+
 ## Extension 依赖管理 [MANDATORY]
 
 所有 extension 之间的依赖关系必须在项目根的 `extension-dependencies.json` 中声明。新增、修改、删除 extension 时必须同步更新此文件。

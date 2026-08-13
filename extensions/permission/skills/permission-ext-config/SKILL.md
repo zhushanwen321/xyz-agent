@@ -1,6 +1,6 @@
 ---
 name: permission-ext-config
-description: "配置 @zhushanwen/pi-permission（四档权限模式 + AI 风险分类）时加载。含配置文件路径、PermissionConfig/ClassifierConfig schema、权限模式、classifier model、默认值、示例、userRules。触发词：配置权限、permission 配置、权限模式、classifier model、permission-config、auto/approve/strict/yolo 模式。"
+description: "配置 @zhushanwen/pi-permission（四档权限模式 + AI 风险分类）时加载。含配置文件路径、PermissionConfig/ClassifierConfig schema、权限模式、classifier model、默认值、示例、userRules。触发词：配置权限、permission 配置、权限模式、classifier model、permission.json、permission 配置文件、auto/approve/strict/yolo 模式。"
 ---
 
 # permission 配置指南

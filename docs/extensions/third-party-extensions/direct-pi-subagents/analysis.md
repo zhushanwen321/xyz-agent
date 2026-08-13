@@ -73,7 +73,7 @@
 ### 保留的自主组件
 - `@zhushanwen/pi-vision`（新建）：从旧 subagent 的 vision/spawn 逻辑提取，提供 `analyze_image` tool
   - pi-subagents 不提供 vision 功能
-  - vision 需要 vision-models.json 配置 + memory session + 只读约束，不适合通过 subagent tool 间接调用
+  - vision 需要 config/vision.json 配置 + memory session + 只读约束，不适合通过 subagent tool 间接调用
 
 ### 功能映射
 

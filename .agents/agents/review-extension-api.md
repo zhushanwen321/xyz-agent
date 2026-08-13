@@ -36,6 +36,11 @@ task prompt 中必须包含：
    - SKILL.md frontmatter：`name` = 目录名 + `description` 双引号含触发词（决定 agent 能否正确匹配 read）
    - 范例：`extensions/{rename-session,permission,model-switch,vision,scheduler}/skills/*-ext-config/`
 
+**配置路径约定**（参考 extension-conventions §「配置路径约定」）：有磁盘配置文件的 extension，路径必须是 `<agentDir>/config/<extension简名>.json`（包名简写，禁语义名 / `-config` 后缀）。检查：
+   - 配置路径是否落在 `config/` 子目录 + 文件名 = 包名简写（如 `permission.json`、`model-switch.json`）
+   - 历史路径迁移是否在安装时完成：`pi.migrate`（指向 `scripts/migrate-config.mjs`）+ `scripts.postinstall` + `files` 含 `"scripts/"`
+   - 代码是否**只读新路径**（无旧路径 fallback / 双读）
+
 4. **向后兼容性**（参考 extension-conventions §「状态持久化」）：
    - 已有 tool 的参数 schema 变更是否兼容（新增字段可选？）
    - details 接口变更是否破坏下游消费者
