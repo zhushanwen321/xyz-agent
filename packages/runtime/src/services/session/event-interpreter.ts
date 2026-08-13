@@ -636,7 +636,7 @@ export class EventInterpreter {
       })
       this.opts.send({
         type: 'message.error',
-        payload: { sessionId: this.sessionId, message: `上下文压缩失败：${ev.errorMessage}` },
+        payload: { sessionId: this.sessionId, message: `上下文压缩失败：${ev.errorMessage}（可重试 /compact，上下文未压缩、agent 记忆未变）` },
       })
     } else {
       // 成功（result 真值）或 aborted（无 errorMessage 真值）—— 都不带 error，前端 compacted handler flush queue。

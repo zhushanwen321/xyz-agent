@@ -164,7 +164,7 @@ const TIMING: Timing = {
   toolGap: 90, // tool_call 各阶段间隔（进度感）
   fileChangesGap: 120, // accumulating → ready 间隔
   retryGap: 800, // auto_retry_start → end 间隔（让指示位可见）
-  steerDrain: 1500, // steer/followUp 入队 → 模拟 drain（pi 投递）间隔，让 pending 气泡可见
+  steerDrain: 1500, // steer/followUp 入队 → 模拟 drain（pi 投递）间隔，让 QueueBubble 可见
 }
 
 const streamHandlers = new Map<string, Set<(msg: ServerMessage) => void>>()
@@ -174,8 +174,8 @@ const cancelled = new Set<string>()
 const timers = new Set<ReturnType<typeof setTimeout>>()
 /**
  * mock 队列状态镜像（steer/followUp pending）。
- * steer/followUp 入队时 push + emit 全量 queue_update（QueueBubble 渲染 + pending 气泡），
- * 延迟后 splice 模拟 drain（pi 投递）+ emit 全量（移除该项）→ 前端 pending 气泡转 complete。
+ * steer/followUp 入队时 push + emit 全量 queue_update（QueueBubble 渲染），
+ * 延迟后 splice 模拟 drain（pi 投递）+ emit 全量（移除该项）→ drainPending 取 segments + appendUser（complete user 进对话流）。
  */
 const mockQueues = new Map<string, { steering: string[]; followUp: string[] }>()
 
@@ -196,7 +196,7 @@ function emit(sessionId: string, msg: ServerMessage): void {
   streamHandlers.get(sessionId)?.forEach((h) => h(msg))
 }
 
-/** emit 全量 queue_update（steering + followUp 镜像），驱动 QueueBubble + pending 气泡 */
+/** emit 全量 queue_update（steering + followUp 镜像），驱动 QueueBubble 渲染 */
 function emitQueueUpdate(sessionId: string): void {
   const q = mockQueues.get(sessionId)
   const steering = q?.steering.length ? q.steering : undefined
@@ -593,7 +593,7 @@ export const chat = {
 
   /**
    * steer：ack 后推 queue_update（steering 入队），延迟后模拟 drain（pi 投递：splice 移除 + emit）。
-   * 入队 → QueueBubble 渲染 + pending 气泡；drain → 前端 pending→complete。
+   * 入队 → QueueBubble 渲染；drain → drainPending 取 segments + appendUser（complete user 进对话流）。
    * drain 时机简化为固定延迟（真实 pi 在「当前回合工具调用结束后、下次 LLM 调用前」）。
    */
   async steer(sessionId: string, text: string): Promise<void> {

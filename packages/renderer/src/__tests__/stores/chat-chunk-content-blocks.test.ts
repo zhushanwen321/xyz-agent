@@ -32,7 +32,9 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     armStreamingTimer: vi.fn(),
     armBashTimer: vi.fn(),
     clearBashTimer: vi.fn(),
-    markPendingDelivered: vi.fn(),
+    // m2：queue_update drain 接线 drainPending + appendUser（对齐 core __tests__/effects.test.ts 形态）
+    drainPending: vi.fn(),
+    appendUser: vi.fn(),
   }
 }
 
