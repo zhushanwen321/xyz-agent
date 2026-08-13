@@ -246,6 +246,13 @@ export default {
     builtinCommand: 'Built-in command',
     compactDesc: 'Compact session context',
     noFullDoc: 'No full documentation (description only)',
+    meta: 'Metadata',
+    metaName: 'Name',
+    metaDesc: 'Description',
+    copyFrontmatter: 'Copy frontmatter',
+    copied: 'Copied',
+    expand: 'Expand',
+    collapse: 'Collapse',
   },
   queue: {
     title: 'Queue',

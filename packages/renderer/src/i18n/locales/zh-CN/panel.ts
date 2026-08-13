@@ -246,6 +246,13 @@ export default {
     builtinCommand: '内置命令',
     compactDesc: '压缩会话上下文',
     noFullDoc: '无完整文档（仅 description）',
+    meta: '元信息',
+    metaName: '名称',
+    metaDesc: '描述',
+    copyFrontmatter: '复制 frontmatter',
+    copied: '已复制',
+    expand: '展开',
+    collapse: '收起',
   },
   queue: {
     title: '队列',
