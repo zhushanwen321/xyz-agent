@@ -492,24 +492,10 @@ function handleMessageStart(event: PiMessageStartEvent, sid: string): PiTranslat
   // 与历史路径 message-converter.ts:36（toolResult 合并进父 assistant，非独立消息）语义一致。
   if (role === 'toolResult') return [{ kind: 'noop' }]
 
-  if (role === 'compactionSummary') {
-    return [{
-      kind: 'message',
-      message: {
-        type: 'message.compactionSummary',
-        payload: { sessionId: sid, summary: msg.summary as string | undefined, tokensBefore: msg.tokensBefore as number | undefined, timestamp: msg.timestamp as number | undefined },
-      },
-    }]
-  }
-  if (role === 'branchSummary') {
-    return [{
-      kind: 'message',
-      message: {
-        type: 'message.branchSummary',
-        payload: { sessionId: sid, summary: msg.summary as string | undefined, fromId: msg.fromId as string | undefined, timestamp: msg.timestamp as number | undefined },
-      },
-    }]
-  }
+  // [HISTORICAL] compactionSummary / branchSummary 的 message_start 分支已在 M5 删除——
+  // grep 历史 session JSONL 确认 pi 从不 emit message_start{role:compactionSummary|branchSummary}
+  //（死分支）。压缩/分支摘要改由 compaction_end 事件（event-interpreter.handleCompactionEnd）
+  // 与 entry 树重建（mapSessionEntries → convertPiHistory）两条通路覆盖，不经 message_start。
   // custom message from pi.sendMessage（扩展注入的结构化通知，如 subagent-bg-notify）。
   // 用独立 type 'message.customStart'，与 assistant turn 的 message_start 区分——
   // 前端 message_start handler 默认建 role:'assistant' 气泡，custom 不应走那条路径。
@@ -679,7 +665,7 @@ function handleCompactionStart(event: PiCompactionStartEvent, _sid: string): PiT
  *
  * result/aborted/errorMessage 原样透传，失败判据由 interpreter 以 errorMessage 真值为准
  * （非 aborted 字段——pi 三种 aborted:true 形态在 errorMessage 真值层面一致，都 falsy）。
- * result 类型暂 unknown（M5 契约清理时收紧，CQ1），interpreter 运行时读 summary/tokensBefore/estimatedTokensAfter。
+ * result 类型已收紧为 PiCompactionResult（M5，S5），interpreter 运行时读 summary/tokensBefore/estimatedTokensAfter。
  */
 function handleCompactionEnd(event: PiCompactionEndEvent, _sid: string): PiTranslatedEvent[] {
   return [
@@ -697,12 +683,14 @@ function handleCompactionEnd(event: PiCompactionEndEvent, _sid: string): PiTrans
 // 注意：turn_end 不在此列——它经 handleTurnEndPi 提取 usage 触发 context.update（见 DISPATCHER）。
 // agent_settled 是 pi 0.80.3 稳态事件（无待处理工具/消息），xyz-agent 不消费——显式登记忽略。
 // compaction_start/compaction_end 在 M4 移出此列（改事件驱动，interpreter 唯一编排 compaction 生命周期）。
-// agent_start 保留在 NULL_EVENTS 但其 hook 分支在 translate() 内单独可达（见下方 agent_start 分支）——
-// M5 契约清理时再评估是否移出（CQ2）。
+// agent_start 在 M5 移出此列——其 hook 分支在 translate() 内单独消费（onPiEvent/agent_start hook，
+// 消费方是插件 executeHooks，S1）。若放回 NULL_EVENTS 会被此处 short-circuit，hook 分支不可达。
+// entry_appended 在 M5 登记此列——pi extension appendEntry 会 emit，xyz-agent 无前端消费方，
+// 不登记会刷 console.warn unhandled。
 const NULL_EVENTS = new Set([
-  'agent_start', 'turn_start', 'message_end',
+  'turn_start', 'message_end',
   'extension_config', 'extension_ui_response', 'response',
-  'agent_settled',
+  'agent_settled', 'entry_appended',
 ])
 
 // ── Dispatcher map ─────────────────────────────────────────────────

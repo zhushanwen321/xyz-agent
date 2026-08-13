@@ -350,13 +350,33 @@ export interface PiCompactionStartEvent extends PiBaseMessage {
 }
 
 /**
- * Compaction 结束事件。result 用 unknown——pi 内部用 CompactionResult 类型，
- * xyz-agent 不消费其字段，故不引入该类型的镜像。
+ * pi CompactionResult 的协议镜像（compaction_end 事件的 result 字段形状）。
+ *
+ * 字段全可选——事件路径下 aborted/error 时 result 可能缺失或部分字段未填；
+ * event-interpreter.handleCompactionEnd 用 `if (ev.result)` 守卫后读
+ * summary/tokensBefore/estimatedTokensAfter（M4 事件驱动）。
+ *
+ * 与 services/ports/pi-engine.ts 的 PiCompactionResult 区别：后者是 compact RPC
+ * 成功返回契约（summary/firstKeptEntryId/tokensBefore 必填），本类型是事件路径
+ * 的宽松形状（全可选，兼容 aborted）。两者镜像同一个 pi 内部 CompactionResult。
+ */
+export interface PiCompactionResult {
+  summary?: string
+  firstKeptEntryId?: string
+  tokensBefore?: number
+  estimatedTokensAfter?: number
+  usage?: unknown
+  details?: unknown
+}
+
+/**
+ * Compaction 结束事件。result 收紧为 PiCompactionResult（M5，S5）——event-adapter
+ * handleCompactionEnd 原样透传，event-interpreter 读 summary/tokensBefore/estimatedTokensAfter。
  */
 export interface PiCompactionEndEvent extends PiBaseMessage {
   type: 'compaction_end'
   reason: PiCompactionReason
-  result?: unknown
+  result?: PiCompactionResult
   aborted: boolean
   willRetry: boolean
   errorMessage?: string

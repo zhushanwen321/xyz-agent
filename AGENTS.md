@@ -246,7 +246,7 @@ state.cleanup(sid)  // 移除指定 sid 分区（手动调用，正常由 delete
 
 持久化链路的两条读取路径都要覆盖（缺一会导致「在线重开能看到、离线重开看不到」或反之）：
 
-1. **RPC 路径**（session 在线，有 pi 子进程）：`session-service.getHistory` → `client.getHistory()` → pi `get_messages` → `message-converter.ts` 的 `convertPiHistory`。converter 必须处理所有 pi 返回的 message role（`user`/`assistant`/`toolResult`/`compactionSummary`/`branchSummary` 等），不能静默丢弃未知 role。
+1. **RPC 路径**（session 在线，有 pi 子进程）：`session-service.getHistory` → `client.getEntries()` → pi `get_entries` → `mapSessionEntries`（entry 树 → 伪消息，session-entry-mapper.ts）→ `convertPiHistory`（message-converter.ts，converter M1-M4 已改走 entry 树重建）。converter 必须处理所有 pi 返回的 message role（`user`/`assistant`/`toolResult`/`compactionSummary`/`branchSummary` 等），不能静默丢弃未知 role。
 2. **文件路径**（session 离线，无 pi 子进程）：`session-history.ts` 的 `getHistoryFromFile` → 解析 JSONL。filter 不能只留 `type === 'message'`，pi 的顶层 entry 类型（`compaction`/`branch`/`bashExecution` 等）需按需放开并转换。
 
 **新增任何进入对话流的状态时，必须同时实现两条通路**。只补实时广播、不改 converter/文件读取的，会在重开时丢失。检测方法：操作后关闭 session 再重开，对话流应与关闭前一致。
