@@ -24,7 +24,7 @@
       <!-- turn-meta：TurnMeta 子组件（展开态直接读 useTurnExpansion 共享 store） -->
       <TurnMeta
         :turn="turn"
-        :session-active="sessionActive"
+        :is-working-turn="isWorkingTurn"
         :is-streaming="isStreaming"
         :think-count="thinkCount"
         :tool-count="toolCount"

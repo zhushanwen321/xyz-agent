@@ -46,7 +46,7 @@ export interface TraceWindowResult {
 }
 
 /** 窗口宽度（已完成过程块保留条数）。导出供 window wave 使用。 */
-export const W = 8
+export const W = 6
 
 /**
  * 把多条 assistant Message 的内部块按 contentBlocks 真实时序解出后拍平为一维。

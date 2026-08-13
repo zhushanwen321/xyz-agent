@@ -37,7 +37,7 @@
             <CopyIcon v-else class="size-3" />
           </Button>
           <MarkdownRenderer v-if="!working" :content="content ?? ''" :session-id="sessionId ?? undefined" variant="thinking" />
-          <span v-else class="whitespace-pre-wrap">{{ previewText }}</span>
+          <span v-else class="whitespace-pre-wrap">{{ content ?? '' }}</span>
         </div>
       </div>
     </div>

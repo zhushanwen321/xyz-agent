@@ -194,19 +194,19 @@ describe('streaming-trace-window D1: Turn 折叠作用域降到 turn 级', () =>
 // describe 2：window wave 窗口切片
 // ═════════════════════════════════════════════════════════════════
 describe('streaming-trace-window window: Turn 窗口切片渲染', () => {
-  it('TC1: 12 块 turn（W=8）折叠窗口 → 仅渲染 visible（末 W=8 过程块 + 末位 text），前 4 块收编不在 DOM', () => {
+  it('TC1: 12 块 turn（W=6）折叠窗口 → 仅渲染 visible（末 W=6 过程块 + 末位 text），前 6 块收编不在 DOM', () => {
     // showTrace=true（末位工作 turn），takeover=false
     const wrapper = mountTurn({
       turn: makeWindowTurn({ toolCount: 12 }),
       isSessionActive: true,
       isLastTurn: true,
     })
-    // visible = 8 个 completed tool（tc-4..tc-11）+ 1 text = 9 块
+    // visible = 6 个 completed tool（tc-6..tc-11）+ 1 text = 7 块
     const blocks = wrapper.findAll('.trace .trace-blk')
-    expect(blocks.length).toBe(9)
-    // 收编区前 4 个 tool（tc-0..tc-3）不在 DOM
+    expect(blocks.length).toBe(7)
+    // 收编区前 6 个 tool（tc-0..tc-5）不在 DOM
     expect(wrapper.find('.trace-blk[data-type="tool"]').exists()).toBe(true)
-    // 收编行存在（compactedCount=4）
+    // 收编行存在（compactedCount=6）
     expect(wrapper.find('[data-testid="trace-compactor"]').exists()).toBe(true)
   })
 
@@ -374,7 +374,7 @@ describe('streaming-trace-window TraceCompactorRow', () => {
 describe('streaming-trace-window edges: D9 边界态窗口冻结（组件层）', () => {
   it('case1 ask-user/compacting 态（sessionActive + assistantStatus=complete）→ trace 区渲染 visible 窗口 + compactor 存在', () => {
     // ask-user/compacting 期间：对话进行中（isSessionActive=true）但 assistant 已 complete（无 streaming 块）。
-    // 12 completed tool + text：②进行中集合空 → visible=last 8 tool + text = 9 块，compactedCount=4。
+    // 12 completed tool + text：②进行中集合空 → visible=last 6 tool + text = 7 块，compactedCount=6。
     const wrapper = mountTurn({
       turn: makeWindowTurn({ toolCount: 12, assistantStatus: 'complete' }),
       isSessionActive: true,
@@ -382,9 +382,9 @@ describe('streaming-trace-window edges: D9 边界态窗口冻结（组件层）'
     })
     // showTrace = sessionActive(true) && isLastTurn(true) = true → trace 展开
     expect(wrapper.find('.trace').exists()).toBe(true)
-    // visible = 8 tool（tc-4..tc-11）+ 1 text = 9 块
-    expect(wrapper.findAll('.trace .trace-blk').length).toBe(9)
-    // compactedCount=4 > 0 → compactor 渲染
+    // visible = 6 tool（tc-6..tc-11）+ 1 text = 7 块
+    expect(wrapper.findAll('.trace .trace-blk').length).toBe(7)
+    // compactedCount=6 > 0 → compactor 渲染
     expect(wrapper.find('[data-testid="trace-compactor"]').exists()).toBe(true)
   })
 
@@ -423,8 +423,8 @@ describe('streaming-trace-window edges: D9 边界态窗口冻结（组件层）'
       // isSessionActive 不传 → 回退 turn.isStreaming=true → sessionActive=true
     })
     // showTrace=true（sessionActive && isLastTurn）→ trace 展开
-    expect(wrapper.findAll('.trace .trace-blk').length).toBe(9) // 8 tool + text
-    expect(wrapper.find('[data-testid="trace-compactor"]').exists()).toBe(true) // compactedCount=4
+    expect(wrapper.findAll('.trace .trace-blk').length).toBe(7) // 6 tool + text
+    expect(wrapper.find('[data-testid="trace-compactor"]').exists()).toBe(true) // compactedCount=6
     // streaming-tail 显示（isStreaming=true，末位 text 非 running tool）
     expect(wrapper.find('.streaming-tail').exists()).toBe(true)
     // 关键：trace 区所有块的 streaming prop=false（assistantStatus 全 complete，无进行中块）
@@ -435,9 +435,9 @@ describe('streaming-trace-window edges: D9 边界态窗口冻结（组件层）'
   it('case4 takeover 边界态切换 smoke：false→窗口策略 / true→全展', () => {
     // 同一 forceWorking 边界态 turn，takeover false vs true 渲染差异
     const turn = { ...makeWindowTurn({ toolCount: 12, assistantStatus: 'complete' }), isStreaming: true }
-    // takeover=false：窗口策略，visible=9（8 tool + text），compactor 渲染
+    // takeover=false：窗口策略，visible=7（6 tool + text），compactor 渲染
     const w1 = mountTurn({ turn, isLastTurn: true, isTakeover: () => false })
-    expect(w1.findAll('.trace .trace-blk').length).toBe(9)
+    expect(w1.findAll('.trace .trace-blk').length).toBe(7)
     expect(w1.find('[data-testid="trace-compactor"]').exists()).toBe(true)
     // takeover=true：全展，visible=13（12 tool + text）；计数归零但收编行保留（恢复精简回退入口，design 交互1）
     const w2 = mountTurn({ turn, isLastTurn: true, isTakeover: () => true })

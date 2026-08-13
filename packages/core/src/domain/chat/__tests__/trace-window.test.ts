@@ -195,9 +195,9 @@ describe('TC4 多 assistant 混合（2 assistant: complete + streaming）', () =
     expect(flat[4].block.kind).toBe('thinking')
   })
 
-  it('takeover=false, W=8: visible=[0,1,2,3,4]，进行中块(fb4)+末位text(fb2)+全部已完成过程块(fb0,fb1,fb3)', () => {
+  it('takeover=false, W=6: visible=[0,1,2,3,4]，进行中块(fb4)+末位text(fb2)+全部已完成过程块(fb0,fb1,fb3)', () => {
     const res = computeTraceWindow(flat, { windowSize: W, takeover: false })
-    // ①末位text=fb2(2) ②进行中=a2末尾非text=fb4(4) ③已完成过程块池=[fb0,fb1,fb3](3，W=8全收)
+    // ①末位text=fb2(2) ②进行中=a2末尾非text=fb4(4) ③已完成过程块池=[fb0,fb1,fb3](3，W=6全收)
     expect(flatIndices(res.visible)).toEqual([0, 1, 2, 3, 4])
     expect(res.compactedCount).toBe(0) // ③池3 − visible内③=3
     expect(res.failedCount).toBe(0)
@@ -233,7 +233,7 @@ describe('TC4 多 assistant 混合（2 assistant: complete + streaming）', () =
 
 // ── TC5：窗口边界 W=8（7 / 8 / 9 个 completed tool） ──────────────────
 
-describe('TC5 窗口边界 W=8', () => {
+describe('TC5 窗口边界 W=6', () => {
   function makeNCompletedTools(n: number): Message {
     const tools: ToolCall[] = []
     const blocks: Array<{ type: 'toolCall'; refId: string }> = []
@@ -245,26 +245,26 @@ describe('TC5 窗口边界 W=8', () => {
     return makeAssistant({ id: 'a1', status: 'complete', tools, blocks })
   }
 
-  it('7 个 completed tool: visible=[0..6], compactedCount=0', () => {
+  it('5 个 completed tool: visible=[0..4], compactedCount=0', () => {
+    const flat = flattenTurnBlocks([makeNCompletedTools(5)])
+    const res = computeTraceWindow(flat, { windowSize: W, takeover: false })
+    expect(flatIndices(res.visible)).toEqual([0, 1, 2, 3, 4])
+    expect(res.compactedCount).toBe(0)
+    expect(res.failedCount).toBe(0)
+  })
+
+  it('6 个 completed tool: visible=[0..5], compactedCount=0', () => {
+    const flat = flattenTurnBlocks([makeNCompletedTools(6)])
+    const res = computeTraceWindow(flat, { windowSize: W, takeover: false })
+    expect(flatIndices(res.visible)).toEqual([0, 1, 2, 3, 4, 5])
+    expect(res.compactedCount).toBe(0)
+    expect(res.failedCount).toBe(0)
+  })
+
+  it('7 个 completed tool: visible=[1..6]（最近6个=flatIndex最大者）, compactedCount=1（收编flatIndex0）', () => {
     const flat = flattenTurnBlocks([makeNCompletedTools(7)])
     const res = computeTraceWindow(flat, { windowSize: W, takeover: false })
-    expect(flatIndices(res.visible)).toEqual([0, 1, 2, 3, 4, 5, 6])
-    expect(res.compactedCount).toBe(0)
-    expect(res.failedCount).toBe(0)
-  })
-
-  it('8 个 completed tool: visible=[0..7], compactedCount=0', () => {
-    const flat = flattenTurnBlocks([makeNCompletedTools(8)])
-    const res = computeTraceWindow(flat, { windowSize: W, takeover: false })
-    expect(flatIndices(res.visible)).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
-    expect(res.compactedCount).toBe(0)
-    expect(res.failedCount).toBe(0)
-  })
-
-  it('9 个 completed tool: visible=[1..8]（最近8个=flatIndex最大者）, compactedCount=1（收编flatIndex0）', () => {
-    const flat = flattenTurnBlocks([makeNCompletedTools(9)])
-    const res = computeTraceWindow(flat, { windowSize: W, takeover: false })
-    expect(flatIndices(res.visible)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    expect(flatIndices(res.visible)).toEqual([1, 2, 3, 4, 5, 6])
     expect(res.compactedCount).toBe(1)
     expect(res.failedCount).toBe(0)
   })
