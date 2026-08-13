@@ -899,15 +899,13 @@ export async function runSpawn(
     // [close-diag] stdin/exit 诊断监听：对照 close 时刻判断是否 stdin 先断导致子进程退出。
     // 仅加日志，不改任何控制流。排查 conversation V2 保活闭环失效（agent_settled 到达前进程自行 close）。
     child.stdin?.on("error", (err: Error) => {
-      logger.warn(`[close-diag] record.id=${record.id} stdin error: ${err.message}`);
+      fs.appendFileSync("/tmp/conversation-close-diag.log", `[${new Date().toISOString()}] stdin error record.id=${record.id}: ${err.message}\n`);
     });
     child.stdin?.on("close", () => {
-      logger.warn(`[close-diag] record.id=${record.id} stdin close`);
+      fs.appendFileSync("/tmp/conversation-close-diag.log", `[${new Date().toISOString()}] stdin close record.id=${record.id}\n`);
     });
     child.on("exit", (exitCode: number | null, signal: NodeJS.Signals | null) => {
-      logger.warn(
-        `[close-diag] record.id=${record.id} exit code=${exitCode} signal=${signal} child.killed=${child.killed}`,
-      );
+      fs.appendFileSync("/tmp/conversation-close-diag.log", `[${new Date().toISOString()}] EXIT record.id=${record.id} code=${exitCode} signal=${signal} child.killed=${child.killed}\n`);
     });
 
     // 喂 prompt 命令驱动子进程开始处理 task。pi runRpcMode 只消费 stdin RpcCommand，
@@ -1125,9 +1123,7 @@ export async function runSpawn(
       child.on("close", async (code: number | null) => {
         // [close-diag] close 时刻诊断：记录 exit code/signal/killed/stdin 状态。
         // exit 事件早于 close 触发，对照两条日志的时刻差可定位退出根因。
-        logger.warn(
-          `[close-diag] record.id=${record.id} close code=${code} child.exitCode=${child.exitCode} child.signalCode=${child.signalCode} child.killed=${child.killed} stdin.destroyed=${child.stdin?.destroyed}`,
-        );
+        fs.appendFileSync("/tmp/conversation-close-diag.log", `[${new Date().toISOString()}] CLOSE record.id=${record.id} code=${code} child.exitCode=${child.exitCode} child.signalCode=${child.signalCode} child.killed=${child.killed} stdin.destroyed=${child.stdin?.destroyed}\n`);
         // [C1] 子进程已退出，从 orphan-tracking Map 移除（dispose 兜底无需再 kill 它）
         spawnedChildren.delete(record.id);
         // FR-4: 清理 get_state 监听器（子进程已退出，无更多 response）
