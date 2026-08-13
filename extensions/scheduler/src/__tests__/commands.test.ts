@@ -25,8 +25,10 @@ describe('/schedule command', () => {
         commandOpts = opts
       },
     }
+    const backend = new MockSchedulerBackend()
     service = new SchedulerService(
-      new SchedulerRuntime(new MockSchedulerBackend(), { isIdle: () => true, hasPendingMessages: () => false }),
+      new SchedulerRuntime(backend, { isIdle: () => true, hasPendingMessages: () => false }),
+      () => backend.now(),
     )
     registerScheduleCommand(mockPi as never, () => service)
   })

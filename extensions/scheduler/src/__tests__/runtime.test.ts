@@ -280,30 +280,144 @@ describe('SchedulerRuntime', () => {
       expect(updated!.lastError).toBe('cron expression invalid')
     })
 
-    // ── TC7：persist 失败捕获（ERR-6）──
-    it('TC7: persist 失败不抛、保留内存态、失败任务不停用', async () => {
+    // ── TC-W-APPEND-FAIL：appendEntry 失败捕获（ER-APPEND-FAIL）──
+    it('TC-W-APPEND-FAIL: appendEntry 失败不抛、保留内存态、不污染 lastError', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      backend.persistError = new Error('disk full')
+      backend.appendError = new Error('pi internal')
 
-      // addTask 内部 persist 抛错 → 被捕获，不 rethrow
+      // addTask 内 appendEntry 抛错 → 被捕获（console.warn），不 rethrow；内存态已更新（task 仍在）
       const task = await runtime.addTask('test', { mode: 'interval', intervalMs: 60000 })
       expect(runtime.getTask(task.id)).toBeDefined()
       expect(task.enabled).toBe(true)
-      expect(task.lastError).toBe('persist failed')
+      // appendEntrySafe 不污染业务态（append 失败是 transient，不设 lastError）
+      expect(task.lastError).toBeUndefined()
+      expect(warnSpy).toHaveBeenCalled()
 
-      // tickScheduler 同样不抛（persist 异常被捕获，console.warn 记录）
+      // tickScheduler 同样不抛：dispatch 成功后 append advance 抛错被捕获，nextRunAt 已推进（内存态正确）
       task.nextRunAt = Date.now() - 1000
       await expect(runtime.tickScheduler()).resolves.toBeUndefined()
-
-      expect(warnSpy).toHaveBeenCalled()
-      // 内存态保留：任务仍在、enabled 不变（失败任务未被停用）
-      const updated = runtime.getTask(task.id)
-      expect(updated).toBeDefined()
-      expect(updated!.enabled).toBe(true)
-      expect(updated!.runCount).toBe(1)
-      // dispatch 成功已清除旧 lastError，tick 末尾 persist 再失败又标记
-      expect(updated!.lastError).toBe('persist failed')
+      const updated = runtime.getTask(task.id)!
+      expect(updated.enabled).toBe(true)
+      expect(updated.runCount).toBe(1)
+      // nextRunAt 已推进到未来（内存态正确，append 失败只丢持久化）
+      expect(updated.nextRunAt).toBe(Date.now() + 60000)
+      expect(updated.lastError).toBeUndefined() // 不被 append 失败污染
       warnSpy.mockRestore()
+    })
+
+    // ── TC-W-ON-AFTER-TICK：onAfterTick 回调（W2）──
+    it('TC-W-ON-AFTER-TICK: onAfterTick 回调在 tick 完成后被调用 1 次', async () => {
+      const spy = vi.fn()
+      runtime.onAfterTick(spy)
+      await runtime.tickScheduler()
+      expect(spy).toHaveBeenCalledTimes(1)
+    })
+
+    // ── TC-W-ENABLED-FILTER：tickScheduler 步骤3 显式 enabled 过滤（W4）──
+    it('TC-W-ENABLED-FILTER: disabled 且到期的任务不被 dispatch，enabled 到期则 dispatch', async () => {
+      // disabled + 到期
+      const disabled = await runtime.addTask('disabled', { mode: 'interval', intervalMs: 60000 })
+      await runtime.toggleTask(disabled.id, false)
+      disabled.nextRunAt = Date.now() - 1000
+
+      // enabled + 到期（force=true 绕过 idle/busy 检查，隔离 enabled 维度）
+      const enabledTask = await runtime.addTask('enabled', { mode: 'interval', intervalMs: 60000 }, { force: true })
+      enabledTask.nextRunAt = Date.now() - 1000
+
+      await runtime.tickScheduler()
+
+      // 只 dispatch enabled（disabled 被步骤2 不标 pending + 步骤3 +t.enabled 双重过滤）
+      expect(backend.sentMessages).toHaveLength(1)
+      expect(backend.sentMessages[0]!.msg.content).toBe('enabled')
+      // disabled 仍在、未被 dispatch、enabled=false
+      const stillDisabled = runtime.getTask(disabled.id)
+      expect(stillDisabled).toBeDefined()
+      expect(stillDisabled!.enabled).toBe(false)
+      expect(stillDisabled!.runCount).toBe(0)
+    })
+
+    // ── MF-1：toggle enable 重算 nextRunAt 到未来时清除残留 pending ──
+    // 场景：busy tick 标记 pending=true（W4 跨 tick 重试）→ disable → enable 重算到未来。
+    // 修复前 pending 残留 → 下个 tick step3 `pending && enabled` 在重算的未来时间点之前提前 dispatch。
+    it('MF-1: enable 重算 nextRunAt 到未来时清除残留 pending，不提前 dispatch', async () => {
+      // 可控 idle 状态：先 busy 模拟 dispatchTask 跳过保留 pending（W4），后切 idle 排除 busy 干扰
+      let idle = false
+      const controllableCtx = { isIdle: () => idle, hasPendingMessages: () => false }
+      const controllableBackend = new MockSchedulerBackend()
+      const rt = new SchedulerRuntime(controllableBackend, controllableCtx)
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+      const task = await rt.addTask('mf1', { mode: 'interval', intervalMs: 60000 })
+
+      // T0+61s：任务到期 + busy → step2 标 pending=true，step3 dispatchTask busy 跳过（pending 保留）
+      vi.setSystemTime(new Date('2026-01-01T00:01:01Z'))
+      await rt.tickScheduler()
+      expect(task.pending).toBe(true) // busy tick 残留 pending（W4 跨 tick 重试）
+      expect(controllableBackend.sentMessages).toHaveLength(0)
+
+      // disable → enable：enable 重算 nextRunAt 到未来（T0+61s + 60s = T0+121s）
+      await rt.toggleTask(task.id, false)
+      await rt.toggleTask(task.id, true)
+      expect(task.pending).toBe(false) // 修复后：重算到未来清除残留 pending
+      const recalcedNext = task.nextRunAt
+      expect(recalcedNext).toBeGreaterThan(Date.now()) // 确认重算到了未来
+
+      // T0+90s：在重算的未来 nextRunAt 之前 tick，切 idle 排除 busy 干扰 → 不应 dispatch
+      vi.setSystemTime(new Date('2026-01-01T00:01:30Z'))
+      idle = true
+      await rt.tickScheduler()
+      expect(controllableBackend.sentMessages).toHaveLength(0)
+
+      // 到达重算的未来 nextRunAt 后 tick：才 dispatch
+      vi.setSystemTime(new Date(recalcedNext + 1000))
+      await rt.tickScheduler()
+      expect(controllableBackend.sentMessages).toHaveLength(1)
+    })
+
+    // ── P1：toggle enable 重算的 nextRunAt 跨 session 重放后保持未来值 ──
+    // 场景：addTask → nextRunAt 过期 → disable → enable 重算到未来（内存）→
+    //   新建第二个 SchedulerRuntime + backend.loadTasks() 重放 appendedOps（模拟 resume）→
+    //   重放后 nextRunAt = 重算的未来值（非 upsert 快照旧过期值）+ enabled=true + tick 不立即 dispatch。
+    // 修复前：toggle op 不带 nextRunAt，重放回退到 upsert 快照旧过期值 → 首个 tick 立即 dispatch（跨 session 数据丢失）。
+    it('P1: toggle enable 重算的 nextRunAt 跨 session 重放后保持未来值，不回退到旧过期值', async () => {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+      const task = await runtime.addTask('cross-session', { mode: 'interval', intervalMs: 60000 })
+      const oldNextRunAt = task.nextRunAt // T0+60s（upsert 快照值）
+
+      // T0+120s：nextRunAt(T0+60s) 已过期
+      vi.setSystemTime(new Date('2026-01-01T00:02:00Z'))
+      expect(task.nextRunAt).toBeLessThan(Date.now())
+
+      // disable → enable：enable 重算 nextRunAt 到未来（T0+120s + 60s = T0+180s）
+      await runtime.toggleTask(task.id, false)
+      await runtime.toggleTask(task.id, true)
+      const recalcedNext = task.nextRunAt
+      expect(recalcedNext).toBeGreaterThan(Date.now()) // 内存态已重算到未来
+      expect(recalcedNext).not.toBe(oldNextRunAt) // 确实重算，非旧值
+
+      // 模拟 resume：把第一个 runtime 的 appendedOps 包装成 entries，喂给第二个 backend 重放。
+      // appendedOps = [upsert(T0+60s), toggle(enabled=false), toggle(enabled=true, nextRunAt=T0+180s)]
+      const replayBackend = new MockSchedulerBackend()
+      replayBackend.fakeEntries = backend.appendedOps.map(op => ({
+        type: 'custom',
+        customType: 'pi-scheduler:task',
+        data: op,
+      }))
+      // fakeSessionFile 默认 '/test/session.json'，与第一个 backend 一致 → owner 过滤放行
+      const replayRuntime = new SchedulerRuntime(replayBackend, mockCtx)
+      replayRuntime.loadTasks(replayBackend.loadTasks())
+
+      const replayed = replayRuntime.getTask(task.id)
+      expect(replayed).toBeDefined()
+      expect(replayed!.enabled).toBe(true)
+      // 重放后是重算的未来值（修复核心），非 upsert 快照的旧过期值
+      expect(replayed!.nextRunAt).toBe(recalcedNext)
+      expect(replayed!.nextRunAt).not.toBe(oldNextRunAt)
+
+      // 再 tick 一次（now=T0+120s < 重算 nextRunAt T0+180s）：不应 dispatch。
+      // 修复前此断言会失败：nextRunAt 回退到 oldNextRunAt(T0+60s) < now → 首个 tick 立即触发
+      await replayRuntime.tickScheduler()
+      expect(replayBackend.sentMessages).toHaveLength(0)
     })
   })
 
