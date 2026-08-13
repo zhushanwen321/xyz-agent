@@ -29,6 +29,7 @@ export type { ChatStoreInstance } from './store'
 // w6 chat-ui-and-shell：chat 域纯逻辑（turn 分组/摘要）迁入
 export * from './message-turns'
 export * from './summarize-turn'
+export * from './trace-window'
 
 export { createUseChat, ensureStreamSubscription, resetChatModuleStateForTest } from './useChat'
 export type { UseChatDeps, EnsureStreamSubDeps, SessionStoreLike } from './useChat'
