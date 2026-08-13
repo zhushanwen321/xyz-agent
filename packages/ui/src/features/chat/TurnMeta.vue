@@ -1,13 +1,12 @@
 <template>
   <!--
-    TurnMeta：回合级元信息（已工作/工作中 + badge + sticky）。
+    TurnMeta：回合级元信息（已工作/工作中 + badge）。
     从 Turn.vue 拆出。badge 灰阶化（H 设计：bg-surface-2 text-neutral-mid 替代彩色）。
   -->
-  <!-- turn-meta + hr 包在同一 sticky wrapper：working 态贴顶时两者一起固定。
-       底色用 --panel-bg（Panel 注入，随 panel 状态变化）不透明遮挡滚动文字。 -->
+  <!-- turn-meta + hr wrapper（sticky 已移除：负 margin 覆盖 scrollEl padding-top 的技巧不可靠——
+       working 态贴顶时与 scrollEl 顶部有间隔，滚过来的文字从 gap 漏出。改回正常文档流）。 -->
   <div
     v-if="turn.assistants.length > 0 || sessionActive"
-    :class="sessionActive ? 'sticky top-0 z-[1] bg-[var(--panel-bg,var(--surface))] -mt-[var(--message-stream-pad-top)] pt-[var(--message-stream-pad-top)]' : ''"
     :data-testid="`turn-meta-${turnIndex}`"
   >
     <Button

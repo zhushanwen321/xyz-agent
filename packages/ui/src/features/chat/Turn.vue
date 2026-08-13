@@ -39,11 +39,12 @@
       <div class="trace mt-1 mb-1 flex flex-col">
         <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
           <template v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]" :key="`${assistant.id}-${blk.kind}-${bIdx}`">
-            <!-- 单块独立渲染：每个 block 直接输出（不再合并同类块）。
+            <!-- 单块独立渲染。text 折叠态只渲染最后一个（过渡 text 随 trace 折叠，见 lastTextBlockKey）；
+                 thinking/tool/agentgraph 受 showTrace 控制。
                  agentgraph（subagent/workflow）数据结构同 tool（ref 是 ToolCall），按 tool 提取 ref；
                  type 透传 'agentgraph'，Block.vue 内部靠 toolName 路由 subagent/workflow 分支。 -->
             <Block
-              v-if="blk.kind === 'text' || showTrace"
+              v-if="blk.kind === 'text' ? (lastTextBlockKey === `${aIdx}-${bIdx}` || showTrace) : showTrace"
               :type="blk.kind"
               :content="blk.kind === 'text' ? (blk.ref as string) : blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).content : undefined"
               :tool="blk.kind === 'tool' || blk.kind === 'agentgraph' ? (blk.ref as ToolCall) : undefined"
@@ -168,6 +169,24 @@ const isSessionEditable = computed(() => isActive(props.sessionId))
  */
 const traceBlocksByAssistant = computed<OrderedBlock[][]>(() => {
   return props.turn.assistants.map((a) => expandAssistantBlocks(a))
+})
+
+/**
+ * turn 内最后一个 text block 的标识（`${aIdx}-${bIdx}`）。
+ * 折叠态（!showTrace）只渲染这一个 text block——工具调用循环中的过渡 text（被工具打断的碎片）
+ * 随 trace 折叠，只保留最终回复 text。streaming 中 showTrace=true 全显示，不依赖此值（无跳变：
+ * complete 后 blocks 稳定，lastTextBlockKey 不变；历史「末位 filter 跳变」是 streaming 中 filter 导致，
+ * 本方案 streaming 全显示故不重蹈）。
+ */
+const lastTextBlockKey = computed(() => {
+  const all = traceBlocksByAssistant.value
+  for (let aIdx = all.length - 1; aIdx >= 0; aIdx--) {
+    const blocks = all[aIdx]
+    for (let bIdx = blocks.length - 1; bIdx >= 0; bIdx--) {
+      if (blocks[bIdx].kind === 'text') return `${aIdx}-${bIdx}`
+    }
+  }
+  return null
 })
 
 /**

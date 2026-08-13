@@ -133,12 +133,10 @@ describe('W4TC1: TurnMeta badge 灰阶化', () => {
 })
 
 describe('W4TC2: TurnMeta sticky + streaming 状态', () => {
-  it('sessionActive 时 turn-meta 父 div 含 sticky class', () => {
+  it('sessionActive 时 turn-meta 父 div 无 sticky（已移除，正常文档流）', () => {
+    // sticky 已移除：负 margin 覆盖 scrollEl padding-top 的技巧不可靠（贴顶时与顶部有间隔漏出滚动内容）
     const wrapper = mountMeta({ sessionActive: true })
-    const outerDiv = wrapper.find('.sticky')
-    expect(outerDiv.exists()).toBe(true)
-    expect(outerDiv.classes()).toContain('top-0')
-    expect(outerDiv.classes()).toContain('z-[1]')
+    expect(wrapper.find('.sticky').exists()).toBe(false)
   })
 
   it('非 sessionActive 时无 sticky class', () => {

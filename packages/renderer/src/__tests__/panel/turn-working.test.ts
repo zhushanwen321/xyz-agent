@@ -262,8 +262,8 @@ describe('Turn · T4 isWorking 拆分（isStreaming vs isSessionActive）', () =
     expect(wrapper.find('.trace').exists()).toBe(true)
     // B 类进行中：折叠按钮 disabled（进行中禁止折叠 trace）
     expect(wrapper.find('.turn-meta').attributes('disabled')).toBeDefined()
-    // B 类进行中：sticky 贴顶（turn-meta 父 wrapper 带 sticky class）
-    expect(wrapper.find('.sticky').exists()).toBe(true)
+    // sticky 已移除（负 margin 覆盖 padding-top 技巧不可靠），turn-meta 正常文档流
+    expect(wrapper.find('.sticky').exists()).toBe(false)
     // C 类进行中：working 文案（对话在进行，显示「工作中」而非「已工作」；
     // 3266931c8 后仅空窗占位显示「思考中」，此处 assistants 非空）
     expect(wrapper.find('.lbl').text()).toBe('工作中')
@@ -589,7 +589,7 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
     expect(wrapper.find('.streaming-tail').exists()).toBe(false)
   })
 
-  // [block-rendering M0] TC-M0-3：折叠态（showTrace=false）text 恒渲染，thinking/tool 隐藏
+  // [block-rendering M0] TC-M0-3：折叠态（showTrace=false）渲染最后一个 text（单 text turn 即唯一 text），thinking/tool 隐藏
   it('TC-M0-3: 折叠态 text 可见（thinking/tool 隐藏）', () => {
     const wrapper = mountTurnWithRealBlock({
       turn: makeTurn({
@@ -619,5 +619,40 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
     // thinking/tool 块 DOM 不存在
     expect(wrapper.find('.trace-think').exists()).toBe(false)
     expect(wrapper.find('.trace-tool').exists()).toBe(false)
+  })
+
+  // 多 assistant turn（工具调用循环）折叠态只渲染最后一个 text block——过渡 text（被工具打断的
+  // 碎片）随 trace 折叠，只保留最终回复 text（Turn.vue lastTextBlockKey 驱动）
+  it('折叠态多 assistant text turn 只渲染最后一个 text（过渡 text + tool 随 trace 折叠）', () => {
+    const wrapper = mountTurn({
+      turn: makeTurn({
+        isStreaming: false,
+        hasFoldable: true,
+        assistants: [
+          msg({
+            id: 'a1',
+            status: 'complete',
+            content: '我先查一下文件',
+            toolCalls: [{ id: 'tc1', toolName: 'read', input: {}, status: 'completed', startTime: 0 }],
+            contentBlocks: [
+              { type: 'text', refId: 't1' },
+              { type: 'toolCall', refId: 'tc1' },
+            ],
+          }),
+          msg({
+            id: 'a2',
+            status: 'complete',
+            content: '已完成修改',
+            contentBlocks: [{ type: 'text', refId: 't2' }],
+          }),
+        ],
+      }),
+    })
+    // 折叠态（!sessionActive && !expanded）：只渲染最后一个 text block（最终回复），
+    // 过渡 text（assistant[0]"我先查一下文件"）+ tool 随 trace 折叠
+    const blocks = wrapper.findAllComponents({ name: 'Block' })
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].props('type')).toBe('text')
+    expect(blocks[0].props('content')).toBe('已完成修改')
   })
 })
