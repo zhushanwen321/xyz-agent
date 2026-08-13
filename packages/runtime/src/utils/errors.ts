@@ -55,3 +55,8 @@ export function errorWithCode(message: string, code: string | number): Error & {
 
 /** session 创建/恢复/fork 时 model 未配置的错误码（前端据此引导用户去 Settings 配置） */
 export const MODEL_NOT_CONFIGURED = 'MODEL_NOT_CONFIGURED'
+
+/** session 恢复时找不到磁盘 session 文件（pi 延迟写入窗口崩溃 / 文件被删） */
+export const SESSION_NOT_FOUND = 'SESSION_NOT_FOUND'
+/** session 恢复时 spawn pi / switchSession / initialize 失败 */
+export const RESTORE_FAILED = 'RESTORE_FAILED'

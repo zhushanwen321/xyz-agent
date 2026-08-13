@@ -6,7 +6,7 @@ import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
 import type { HandoffService } from '../services/handoff-service.js'
-import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED } from '../utils/errors.js'
+import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND, RESTORE_FAILED } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 // MessageBus（wave:runtime-wiring）：session.subscribe/unsubscribe RPC handler 用它注册订阅。
 // type-only import（handler 不持有 bus 实例的创建，只调它的方法）。
@@ -37,7 +37,7 @@ export class SessionMessageHandler {
 
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
-    'session.create', 'session.delete', 'session.deleteByCwd', 'config.sessions', 'session.switch', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork', 'session.setProject',
+    'session.create', 'session.delete', 'session.deleteByCwd', 'config.sessions', 'session.switch', 'session.restore', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork', 'session.setProject',
     'session.handoff', 'session.abortHandoff',
     // wave:runtime-wiring：session.subscribe/unsubscribe RPC（IF6/IF7）。
     'session.subscribe', 'session.unsubscribe',
@@ -76,6 +76,26 @@ export class SessionMessageHandler {
             return
           }
           throw e
+        }
+      }
+      case 'session.restore': {
+        try {
+          const session = await this.ctx.sessionService.restoreSession(msg.payload.sessionId)
+          this.ctx.reply(ws, msg.id, 'session.created', { session })
+          return this.ctx.broadcastSessionList()
+        } catch (e) {
+          const code = (e as Error & { code?: string }).code
+          if (code === MODEL_NOT_CONFIGURED) {
+            this.ctx.sendError(ws, MODEL_NOT_CONFIGURED, toErrorMessage(e), msg.id)
+            return
+          }
+          if (code === SESSION_NOT_FOUND) {
+            this.ctx.sendError(ws, SESSION_NOT_FOUND, toErrorMessage(e), msg.id)
+            return
+          }
+          // spawn pi / switchSession / initialize 失败统一归为 restore_failed
+          this.ctx.sendError(ws, RESTORE_FAILED, toErrorMessage(e), msg.id)
+          return
         }
       }
       case 'session.fork': {

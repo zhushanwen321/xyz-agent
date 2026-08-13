@@ -215,13 +215,14 @@ export function useSidebarNew() {
    * ensureStreamSubscription 须先于 syncSessionToPanel（C-W3-4）——panel 载入后 MessageStream
    * 挂载，订阅必须先就绪否则 snapshot 回放事件被丢（2026-07-29 handoff 回复丢失事故）。
    */
-  async function selectSession(id: string): Promise<void> {
-    // flow 活跃（landing/overlay）时切 session → cancelled（AC-3.10，避免 overlay 卡死 + landing 残留）
-    const newTaskFlow = useNewTaskFlow()
-    if (newTaskFlow.isActive.value) newTaskFlow.cancelFlow()
-
-    await sessionApi.switchSession(id)
-    sessionStore.setActiveId(id)
+  /**
+   * postLoadSession —— session 载入后的通用编排（selectSession/restoreSession 共享）。
+   * clearUnread → ensureStreamSubscription → touchLru → syncSessionToPanel → navigation →
+   * hydrate(getHistory) → consumePendingOpen → fileTree → evictIfNeeded。
+   * 前置约束：调用方须先 setActiveId(id)——ensureStreamSubscription/syncSessionToPanel 依赖
+   * 当前 activeId 路由到正确 session 分区（ADR-0049 + 架构约定 #7）。
+   */
+  async function postLoadSession(id: string): Promise<void> {
     // 清除未读标记：用户主动查看该 session，不再显示未读 badge
     clearUnread(id)
     // ensureStreamSubscription：同步注册 events.on handler + fire-and-forget subscribeSession
@@ -248,6 +249,32 @@ export function useSidebarNew() {
     // [lru-panel-exempt-fix] evictIfNeeded 前刷新 panel 绑定 session 的 LRU recency
     if (panel.currentLeaf.sessionId) chat.touchLru(panel.currentLeaf.sessionId)
     chat.evictIfNeeded()
+  }
+
+  async function selectSession(id: string): Promise<void> {
+    // flow 活跃（landing/overlay）时切 session → cancelled（AC-3.10，避免 overlay 卡死 + landing 残留）
+    const newTaskFlow = useNewTaskFlow()
+    if (newTaskFlow.isActive.value) newTaskFlow.cancelFlow()
+
+    await sessionApi.switchSession(id)
+    sessionStore.setActiveId(id)
+    await postLoadSession(id)
+  }
+
+  /**
+   * restoreSession —— 显式重开 dead session（重新 spawn pi）。
+   * 编排对齐 selectSession，但第一步用 sessionApi.restoreSession（显式 RPC）替代 switchSession。
+   * cancelFlow → restoreSession RPC → setActiveId → postLoadSession → revive（dead→idle 统一收口）。
+   * 解决：模式 A（useI18n 报错——须由调用方在 setup 内解构后调闭包）、模式 B（隐式分支）。
+   */
+  async function restoreSession(id: string): Promise<void> {
+    const newTaskFlow = useNewTaskFlow()
+    if (newTaskFlow.isActive.value) newTaskFlow.cancelFlow()
+
+    await sessionApi.restoreSession(id)
+    sessionStore.setActiveId(id)
+    await postLoadSession(id)
+    sessionStore.revive(id)
   }
 
   /**
@@ -372,6 +399,7 @@ export function useSidebarNew() {
     focusedSessionId,
     focusedSession,
     selectSession,
+    restoreSession,
     newSession,
     retryHistory,
     goOverview,

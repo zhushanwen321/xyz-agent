@@ -51,6 +51,20 @@ export function switchSession(sessionId: string): Promise<void> {
 }
 
 /**
+ * 恢复（重开）指定 session：runtime 重新 spawn pi 进程并载入历史对话（session-lifecycle.restoreSession）。
+ *
+ * 与 switchSession 的区别：switchSession 切换到内存中已存在的 session（若不存在则隐式 restore）；
+ * restoreSession 显式触发 restore（重新 spawn pi），语义独立、不依赖 getSummary 副作用判断。
+ *
+ * reply 复用 session.created（{ session: SessionSummary }），解包 .session。
+ * 错误码：MODEL_NOT_CONFIGURED / SESSION_NOT_FOUND / RESTORE_FAILED（runtime 侧 sendError）。
+ */
+export async function restoreSession(sessionId: string): Promise<SessionSummary> {
+  const reply = await command('session.restore', { sessionId })
+  return reply.session
+}
+
+/**
  * Fork session：从 srcSessionId 截断到 fromPiEntryId，创建新 session（独立 pi 进程）。
  * reply 复用 session.created，解包 .session。
  *

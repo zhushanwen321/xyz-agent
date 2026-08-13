@@ -352,6 +352,8 @@ export default {
     sessionDeadHint: 'Process terminated unexpectedly. Conversation cannot continue. Try reopening.',
     reopen: 'Reopen',
     reopenFailed: 'Reopen failed: {error}',
+    sessionFileLost: 'Session file is missing — history cannot be recovered',
+    deleteThisSession: 'Delete this session',
     startConversation: 'Type a message to start',
     selectSession: 'Select a session from the left',
     taskFailed: 'Task creation failed: {error}',

@@ -352,6 +352,8 @@ export default {
     sessionDeadHint: '进程异常终止，对话不可继续。可尝试重新打开。',
     reopen: '重新打开',
     reopenFailed: '重新打开失败：{error}',
+    sessionFileLost: '会话文件已丢失，无法恢复历史',
+    deleteThisSession: '删除此项',
     startConversation: '输入消息开始对话',
     selectSession: '选择左侧会话开始',
     taskFailed: '任务创建失败：{error}',

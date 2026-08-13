@@ -17,6 +17,7 @@ import { useChat } from '@/composables/features/chat/useChat'
 import { useSearchModalDeps } from '@/composables/features/search/useSearchModalDeps'
 import { useSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 import { useSubagentStore } from '@/stores/subagent'
+import { useSessionStore } from '@/stores/session'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
@@ -25,6 +26,8 @@ import { useI18n } from 'vue-i18n'
 export interface UseSidebarSessionActionsOptions {
   focusedSessionId: Ref<string | null>
   selectSession: (id: string) => Promise<void>
+  /** dead session 重开（显式 restore RPC），sidebar 点击 dead session 时分流到此 */
+  restoreSession: (id: string) => Promise<void>
   newSession: (cwd?: string) => Promise<string | null>
   goOverview: () => void
   loadSessions: () => void
@@ -43,6 +46,7 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
   const {
     focusedSessionId,
     selectSession,
+    restoreSession,
     newSession,
     goOverview,
     loadSessions,
@@ -61,7 +65,14 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
 
   async function onSelectSession(id: string): Promise<void> {
     try {
-      await selectSession(id)
+      // dead session → 显式 restore（重新 spawn pi + revive 统一在 useSidebarNew.restoreSession）；
+      // 非 dead → 常规切换。useSessionStore 是 pinia store，可在非 setup 上下文调用。
+      const isDead = useSessionStore().list.find((s) => s.id === id)?.status === 'dead'
+      if (isDead) {
+        await restoreSession(id)
+      } else {
+        await selectSession(id)
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       toastError(t('sidebar.switchSessionFailed', { msg }))

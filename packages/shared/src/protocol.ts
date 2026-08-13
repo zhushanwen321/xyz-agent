@@ -42,7 +42,7 @@ export interface CommandSourceInfo {
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
 export type ClientMessageType =
-  | 'session.create' | 'session.delete' | 'session.deleteByCwd' | 'config.sessions' | 'session.switch' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
+  | 'session.create' | 'session.delete' | 'session.deleteByCwd' | 'config.sessions' | 'session.switch' | 'session.restore' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename' | 'session.fork' | 'session.setProject'
   | 'session.handoff' | 'session.abortHandoff'
   // runtime-message-bus（slice:runtime-message-bus，wave:protocol-seq）：
@@ -244,6 +244,7 @@ export interface ClientMessageMap {
   'session.deleteByCwd': { cwd: string }
   'config.sessions': Record<string, never>
   'session.switch': { sessionId: string }
+  'session.restore': { sessionId: string }
   'session.history': { sessionId: string }
   'session.getFullHistory': { sessionId: string }
   'session.getCommands': { sessionId: string }
@@ -1237,6 +1238,7 @@ export interface ReplyPayloadMap {
   'model.list': ServerMessageMap['model.list']
   'session.create': ServerMessageMap['session.created']
   'session.fork': ServerMessageMap['session.created']
+  'session.restore': ServerMessageMap['session.created']
   'session.getAgentCallFilePath': ServerMessageMap['session.agentCallFilePath']
   'session.getAgentCallHistory': ServerMessageMap['session.agentCallHistory']
   'session.getCommands': ServerMessageMap['session.commands']

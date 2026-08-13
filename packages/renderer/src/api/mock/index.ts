@@ -289,6 +289,17 @@ export const session = {
     pushSessionState(id)
   },
 
+  /** mock restoreSession：等价 switchSession（mock 不真正 spawn pi，模拟激活即可）。返回 SessionSummary。 */
+  async restoreSession(id: string): Promise<SessionSummary> {
+    await sleep(TIMING.switchCmd)
+    const s = isE2E && id === e2eTestSession.id ? e2eTestSession : fixtureSessions.find((item) => item.id === id)
+    if (!s) {
+      throw new Error(`mock: session ${id} 不存在`)
+    }
+    pushSessionState(id)
+    return { ...s }
+  },
+
   /** 拉取 session 扩展命令（与 real domain 同接口，mock 返回 MOCK_COMMANDS） */
   async getCommands(id: string): Promise<{ sessionId: string; commands: typeof MOCK_COMMANDS }> {
     await sleep(TIMING.ack)

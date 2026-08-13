@@ -26,10 +26,15 @@
     >
       <AlertCircle class="size-8 text-danger opacity-60" />
       <div class="space-y-1">
-        <p class="text-sm text-text">{{ t('panel.panel.sessionDead') }}</p>
+        <p v-if="restoreErrorCode === 'SESSION_NOT_FOUND'" class="text-sm text-text">{{ t('panel.panel.sessionFileLost') }}</p>
+        <p v-else class="text-sm text-text">{{ t('panel.panel.sessionDead') }}</p>
         <p class="text-xs text-neutral-dim">{{ t('panel.panel.sessionDeadHint') }}</p>
       </div>
-      <Button variant="default" size="sm" @click="onReviveSession">
+      <Button v-if="restoreErrorCode === 'SESSION_NOT_FOUND'" variant="ghost" size="sm" @click="onDeleteGhostSession">
+        <Trash2 class="mr-1.5 size-3.5" />
+        {{ t('panel.panel.deleteThisSession') }}
+      </Button>
+      <Button v-else variant="default" size="sm" @click="onReviveSession">
         <RotateCcw class="mr-1.5 size-3.5" />
         {{ t('panel.panel.reopen') }}
       </Button>
@@ -88,9 +93,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, AlertCircle, RotateCcw } from '@lucide/vue'
+import { MessageSquare, AlertCircle, RotateCcw, Trash2 } from '@lucide/vue'
 import { isAskUserQuestion, type AskUserQuestion } from '@xyz-agent/extension-protocol'
 import MessageStream from './MessageStream.vue'
 import Composer from './Composer.vue'
@@ -123,6 +128,12 @@ const subagentStore = useSubagentStore()
 const workflowStore = useWorkflowStore()
 
 const flow = useNewTaskFlow()
+
+/** dead session 重开：显式调 useSidebarNew.restoreSession（setup 内解构，避免事件回调调 composable 触发 useI18n 报错） */
+const { restoreSession, retryHistory, deleteSession } = useSidebarNew()
+
+/** restore 失败的错误 code（ghost session 判据）：SESSION_NOT_FOUND 时显示删除入口 */
+const restoreErrorCode = ref<string | null>(null)
 
 /** Panel 卸载时停止 subagent streaming 订阅（防止泄漏）。
  *  subagent overlay 的 header 展示与返回逻辑已随 PanelHeader 提升到 PanelContainer，
@@ -235,18 +246,31 @@ const historyError = computed(() =>
 
 /** Landing 重试 → useSidebarNew.retryHistory（#2 AC-2.6） */
 function onRetryHistory(): void {
-  if (props.sessionId) void useSidebarNew().retryHistory(props.sessionId)
+  if (props.sessionId) void retryHistory(props.sessionId)
 }
 
-/** dead session「重新打开」：调 selectSession 触发 restore（重新 spawn pi），成功后 revive 重置 idle */
+/** dead session「重新打开」：调 useSidebarNew.restoreSession（显式 restore RPC），成功后内部已 revive */
 async function onReviveSession(): Promise<void> {
   if (!props.sessionId) return
+  restoreErrorCode.value = null
   try {
-    await useSidebarNew().selectSession(props.sessionId)
-    sessionStore.revive(props.sessionId)
+    await restoreSession(props.sessionId)
   } catch (e) {
+    const code = (e as Error & { code?: string }).code
+    restoreErrorCode.value = code ?? null
     const msg = e instanceof Error ? e.message : String(e)
     toastError(t('panel.panel.reopenFailed', { error: msg }))
+  }
+}
+
+/** ghost session 删除：session 文件丢失（SESSION_NOT_FOUND）后用户选择删除该项 */
+async function onDeleteGhostSession(): Promise<void> {
+  if (!props.sessionId) return
+  try {
+    await deleteSession(props.sessionId)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(msg)
   }
 }
 

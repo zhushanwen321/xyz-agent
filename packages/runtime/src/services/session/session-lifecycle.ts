@@ -22,7 +22,7 @@ import type { PresetResolution } from '../preset-service.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
-import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED } from '../../utils/errors.js'
+import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND } from '../../utils/errors.js'
 import { createForkedSessionFile } from './session-fork.js'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
 
@@ -348,7 +348,7 @@ export class SessionLifecycle {
   /** 从持久化文件恢复 session。 */
   async restoreSession(sessionId: string): Promise<SessionSummary> {
     const target = this.svc.findScannedSession(sessionId)
-    if (!target) throw new Error(`Persisted session ${sessionId} not found`)
+    if (!target) throw errorWithCode(`Persisted session ${sessionId} not found`, SESSION_NOT_FOUND)
 
     if (!this.configStore.getDefaultModel()) {
       throw errorWithCode('No model configured. Please configure a provider and model in Settings before restoring a session.', MODEL_NOT_CONFIGURED)
