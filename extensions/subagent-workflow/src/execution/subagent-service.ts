@@ -13,7 +13,6 @@ import type { AgentResult as WorkflowAgentResult } from "../orchestration/models
 import { mapToWorkflowAgentResult } from "./agent-result-mapper.ts";
 import { removeAliveMarker } from "./alive-store.ts";
 import { bestEffort } from "./best-effort.ts";
-import { removeIdleMarker } from "./idle-marker.ts";
 // [V2 决策 3] lifecycle-manager idle timer：chatMode 统一投递新 turn disarm（防误杀活进程）
 import { disarmIdleTimer } from "./lifecycle-manager.ts";
 import { type ConcurrencyPool,DefaultConcurrencyPool } from "./concurrency-pool.ts";
@@ -863,15 +862,6 @@ export class SubagentService {
    * 内部的 completeRecord 覆盖 status，与 cancelBackground 对 record 的处理同构。
    */
   private async closeChatIdle(record: ExecutionRecord): Promise<void> {
-    // 先删 .idle sidecar（doFinalizeRecord 写 finalized marker 但不删 .idle；
-    // 磁盘重建 M3 优先级 .idle > finalized，残留 .idle 会让已 close 的 record 重建为 idle）。
-    if (record.sessionFile) {
-      try {
-        removeIdleMarker(record.sessionFile);
-      } catch (err) {
-        bestEffort(err, "removeIdleMarker (closeChatIdle)");
-      }
-    }
     // 合成 done result（idle record 无在途 AgentResult，对齐 cancelBackground cancelledResult）
     const doneResult: AgentResult = {
       text: "",

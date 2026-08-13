@@ -19,7 +19,6 @@ import * as path from "node:path";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { removeAliveMarker } from "./alive-store.ts";
-import { writeIdleMarker } from "./idle-marker.ts";
 import { bestEffort } from "./best-effort.ts";
 import { completeRecord } from "./execution-record.ts";
 import { writeFinalized } from "./finalized-marker.ts";
@@ -215,24 +214,14 @@ export async function doFinalizeRoundToIdle(
   // MF-6 兜底：失败轮次（success=false）的 result.text 可能为空，用 error 让 notify 可读。
   record.result = result.text || (result.error ? `round did not complete: ${result.error}` : record.result);
 
-  // 写 .idle sidecar + 删 .alive marker（进程已 SIGTERM 回收）。
+  // 删 .alive marker（进程已 SIGTERM 回收）。
   // sessionFile 窗口期可能 undefined（极少——对话模式轮次完成意味着 session 已跑过），
-  // 缺失时跳过 sidecar 但仍设内存 idle（重启后磁盘重建会落到 crashed，边界可接受）。
+  // 缺失时跳过但仍设内存 idle（重启后磁盘重建会落到 crashed，边界可接受）。
   if (record.sessionFile) {
     try {
       removeAliveMarker(record.sessionFile);
     } catch (err) {
       bestEffort(err, "removeAliveMarker (doFinalizeRoundToIdle)");
-    }
-    try {
-      writeIdleMarker(record.sessionFile, {
-        id: record.id,
-        sessionFile: record.sessionFile,
-        rootSessionId: record.rootSessionId,
-        round: (record.round ?? 0) + 1,
-      });
-    } catch (err) {
-      bestEffort(err, "writeIdleMarker (doFinalizeRoundToIdle)");
     }
   }
 

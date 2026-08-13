@@ -140,19 +140,15 @@ describe("closeSubagent 行为分流", () => {
     expect(store.getMutable(record.id)).toBe(record); // 留内存
   });
 
-  it("idle → closeChatIdle（done 终态化 + archive + .idle sidecar 删除）", async () => {
+  it("idle → closeChatIdle（done 终态化 + archive）", async () => {
     const record = makeRecord({ status: "idle", round: 1 });
     record.sessionFile = path.join(agentDir, "test.jsonl");
-    // 预写 .idle sidecar（模拟 idle record 的磁盘状态）
-    fs.writeFileSync(`${record.sessionFile}.idle`, '{"id":"sa-test","sessionFile":"x","round":1}');
-    expect(fs.existsSync(`${record.sessionFile}.idle`)).toBe(true);
     store.register(record);
 
     await service.closeSubagent(record, false);
 
     expect(record.status).toBe("done");
     expect(store.getMutable(record.id)).toBeUndefined(); // archived
-    expect(fs.existsSync(`${record.sessionFile}.idle`)).toBe(false); // .idle 删除
   });
 
   it("running + force:true → cancelBackground（cancelled 终态化 + archive）", async () => {

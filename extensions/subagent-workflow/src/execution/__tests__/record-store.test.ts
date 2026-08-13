@@ -26,7 +26,6 @@ import { getSubagentRecordsDir, getSubagentSessionDir } from "../path-encoding.t
 import type { StatusFilter } from "../record-store.ts";
 import { RecordStore } from "../record-store.ts";
 import { writeCancelledTombstone } from "../tombstone-store.ts";
-import { writeIdleMarker } from "../idle-marker.ts";
 import type { AliveMarker, ExecutionRecord } from "../types.ts";
 
 /** 构造 ExecutionRecord（base 默认 running，over 覆盖任意字段）。 */
@@ -320,86 +319,6 @@ describe("RecordStore", () => {
     });
   });
 
-  // ============================================================
-  // reconstructAll .idle 分支重建 (M3 G4)
-  // ============================================================
-  describe("reconstructAll .idle 分支重建 (M3 G4)", () => {
-    it(".idle sidecar 存在 + 无 .alive → 重建 idle（不落兜底 crashed）", () => {
-      const store = new RecordStore(tmpDir);
-      const file = path.join(tmpDir, "idle-recon.jsonl");
-      writeSessionJsonl(file, {
-        id: "sa-idle-1", agent: "worker", mode: "background", task: "chat round 1",
-        startedAt: 1000, rootSessionId: "sess-current",
-      });
-      writeIdleMarker(file, { id: "sa-idle-1", sessionFile: file, rootSessionId: "sess-current", round: 1 });
-      // 不写 .alive（idle record 进程已 SIGTERM 回收）
-
-      const rec = store.collectRecords(100, "all", "sess-current").find((r) => r.id === "sa-idle-1");
-      expect(rec).toBeDefined();
-      expect(rec!.status).toBe("idle");
-      expect(rec!.round).toBe(1); // round 从 marker 恢复
-    });
-
-    it(".cancelled 优先于 .idle（cancelled 分支在前，终态压制可恢复态）", () => {
-      const store = new RecordStore(tmpDir);
-      const file = path.join(tmpDir, "cancelled-over-idle.jsonl");
-      writeSessionJsonl(file, {
-        id: "sa-cancelled", agent: "worker", mode: "background", task: "t",
-        startedAt: 1000, rootSessionId: "sess-current",
-      });
-      writeIdleMarker(file, { id: "sa-cancelled", sessionFile: file, rootSessionId: "sess-current", round: 2 });
-      writeCancelledTombstone(file, {
-        id: "sa-cancelled", status: "cancelled", agent: "worker", startedAt: 1000, endedAt: 2000,
-      });
-
-      const rec = store.collectRecords(100, "all", "sess-current").find((r) => r.id === "sa-cancelled");
-      expect(rec!.status).toBe("cancelled"); // cancelled 优先，非 idle
-    });
-
-    it(".finalized 优先于 .idle（finalized 分支在前）", () => {
-      const store = new RecordStore(tmpDir);
-      const file = path.join(tmpDir, "finalized-over-idle.jsonl");
-      writeSessionJsonl(file, {
-        id: "sa-finalized", agent: "worker", mode: "background", task: "t",
-        startedAt: 1000, rootSessionId: "sess-current",
-      });
-      writeIdleMarker(file, { id: "sa-finalized", sessionFile: file, rootSessionId: "sess-current", round: 1 });
-      writeFinalized(file);
-
-      const rec = store.collectRecords(100, "all", "sess-current").find((r) => r.id === "sa-finalized");
-      expect(rec!.status).toBe("done"); // finalized 推导 done，优先于 idle
-    });
-
-    it(".idle 优先于 .alive+pid（idle 分支在 alive 前，即使 pid 活也判 idle）", () => {
-      // 场景：idle record 的 .alive 理论上已删，但若残留 .alive + 活 pid + .idle，
-      // .idle 分支应先命中（idle record pid 必死，但防御性验证分支优先级）。
-      const store = new RecordStore(tmpDir);
-      const file = path.join(tmpDir, "idle-over-alive.jsonl");
-      writeSessionJsonl(file, {
-        id: "sa-both", agent: "worker", mode: "background", task: "t",
-        startedAt: 1000, rootSessionId: "sess-current",
-      });
-      writeIdleMarker(file, { id: "sa-both", sessionFile: file, rootSessionId: "sess-current", round: 1 });
-      writeAliveMarker(file, { pid: process.pid, id: "sa-both", startedAt: Date.now() }); // pid 活
-
-      const rec = store.collectRecords(100, "all", "sess-current").find((r) => r.id === "sa-both");
-      expect(rec!.status).toBe("idle"); // .idle 优先，非 running
-    });
-
-    it("round 从 .idle marker 恢复（多轮场景 round=3）", () => {
-      const store = new RecordStore(tmpDir);
-      const file = path.join(tmpDir, "round3.jsonl");
-      writeSessionJsonl(file, {
-        id: "sa-round3", agent: "worker", mode: "background", task: "t",
-        startedAt: 1000, rootSessionId: "sess-current",
-      });
-      writeIdleMarker(file, { id: "sa-round3", sessionFile: file, rootSessionId: "sess-current", round: 3 });
-
-      const rec = store.collectRecords(100, "all", "sess-current").find((r) => r.id === "sa-round3");
-      expect(rec!.status).toBe("idle");
-      expect(rec!.round).toBe(3);
-    });
-  });
 
   // ============================================================
   // 重建缓存

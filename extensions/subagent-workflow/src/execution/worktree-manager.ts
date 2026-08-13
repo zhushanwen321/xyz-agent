@@ -26,7 +26,6 @@ import { DirtyWorktreeError } from "./types.ts";
 import { bestEffort } from "./best-effort.ts";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { isProcessAlive } from "./alive-store.ts";
-import { readIdleMarker } from "./idle-marker.ts";
 import { SPAWN_GRACE_MS,type WorktreeEntry,WorktreeRegistry } from "./worktree-registry.ts";
 
 const logger = getLogger("subagents");
@@ -229,18 +228,9 @@ export class WorktreeManager {
   }
 
   /**
-   * 判孤儿：pid 死活为主判据，.idle sidecar 豁免为辅。
-   *
-   * .idle 豁免（G4 worktree 保留）：对话模式 idle record 的子进程已被 SIGTERM 回收
-   *（pid 必然死），但 session 可续聊——worktree 必须保留到 close。entry.sessionFile
-   * 存在且旁有 .idle sidecar → 豁免（return false）。无 sessionFile / 无 .idle → 原 pid 判据。
-   * pid=0 走 SPAWN_GRACE 宽限（create→spawn 窗口）。
+   * 判孤儿：pid 死活为主判据。pid=0 走 SPAWN_GRACE 宽限（create→spawn 窗口）。
    */
   private isOrphan(entry: WorktreeEntry, now: number): boolean {
-    // .idle 豁免：对话模式 idle worktree 保留（pid 死但 session 可续聊）。
-    if (entry.sessionFile && readIdleMarker(entry.sessionFile)) {
-      return false;
-    }
     if (entry.pid === 0) {
       // create→spawn 窗口：超过宽限期仍未补 pid = create 后崩溃
       const expired = now - entry.createdAt > SPAWN_GRACE_MS;

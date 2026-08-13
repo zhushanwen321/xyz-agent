@@ -26,7 +26,6 @@ vi.mock("@zhushanwen/pi-extension-logger", () => ({
 }));
 
 import { doFinalizeRecord, doFinalizeRoundToIdle } from "../finalize-record.ts";
-import { readIdleMarker } from "../idle-marker.ts";
 import { ManifestStore } from "../manifest-store.ts";
 import type { AgentResult, ExecutionRecord } from "../types.ts";
 
@@ -217,7 +216,7 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     };
   }
 
-  it("record 带 sessionFile → 写 .idle sidecar + 删 .alive + record.status=idle + round 0→1", async () => {
+  it("record 带 sessionFile → 删 .alive + record.status=idle + round 0→1", async () => {
     const sessionFile = path.join(tmpDir, "session.jsonl");
     // 预写 .alive marker（验证 doFinalizeRoundToIdle 删除它——进程已回收）
     fs.writeFileSync(
@@ -234,13 +233,6 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     // 状态机
     expect(record.status).toBe("idle");
     expect(record.round).toBe(1);
-    // .idle sidecar 写入且字段正确
-    expect(fs.existsSync(`${sessionFile}.idle`)).toBe(true);
-    const marker = readIdleMarker(sessionFile);
-    expect(marker?.id).toBe("rec-idle");
-    expect(marker?.sessionFile).toBe(sessionFile);
-    expect(marker?.round).toBe(1);
-    expect(marker?.rootSessionId).toBe("session-main");
     // .alive marker 被删（进程已 SIGTERM 回收）
     expect(fs.existsSync(`${sessionFile}.alive`)).toBe(false);
   });

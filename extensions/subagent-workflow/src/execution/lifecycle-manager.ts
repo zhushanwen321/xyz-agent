@@ -265,6 +265,12 @@ export interface OrphanCandidate {
  * @param records 持久化的 record 列表（含 pid）
  * @param isProcessAlive pid 探活谓词（调用方注入，对齐 alive-store.isProcessAlive）
  * @returns 孤儿候选 recordId 列表
+ *
+ * TODO(Step 5c): 接入 session_start 编排收割。pid 持久化数据已就绪——.alive sidecar
+ * 写 pid（alive-store.writeAliveMarker），reconstructAll 已读 alive.pid 判 running
+ * 分支。接入尚缺两块：① reconstructAll 分支 3 回填 rec.pid（当前只存 externalInstance）
+ * ② PID 复用校验（本函数注释上方 V2 §5.4 要求，防 OS 复用 pid 误杀——需跨平台读
+ * 进程命令行确认含 pi --mode rpc，无 V2 精确 spec 不宜贸然接入高频启动路径）。
  */
 export function scanOrphanProcesses(
   records: OrphanCandidate[],
@@ -308,6 +314,12 @@ const activateLockTails = new Map<string, Promise<void>>();
  *
  * @returns release 函数——获得锁后**必须**调用它释放（finally 块），否则同 recordId
  *          的后续 acquire 永久挂起。
+ *
+ * TODO(Step 5c): 接入 runSpawn。需与既有并发控制协调——runSpawn 内 turnLimiter /
+ * spawnedChildren 注册 / controller.abort 路径 / chatMode idle timer 已是复杂状态机；
+ * release 必须覆盖所有退出路径（正常 close / error / abort / chatMode resolve），
+ * 漏一处则同 recordId 后续 acquire 永久挂起（死锁）。锁粒度（runSpawn 全程 vs
+ * spawn→register 窗口）待 spec 定。
  */
 export function acquireActivateLock(recordId: string): Promise<() => void> {
   const prev = activateLockTails.get(recordId) ?? Promise.resolve();

@@ -24,7 +24,6 @@ import type {
 } from "./types.ts";
 import { isProcessAlive, readAliveMarker } from "./alive-store.ts";
 import { readFinalized } from "./finalized-marker.ts";
-import { readIdleMarker } from "./idle-marker.ts";
 import { readCancelledTombstone } from "./tombstone-store.ts";
 
 const logger = getLogger("subagents");
@@ -325,7 +324,6 @@ export class RecordStore {
       const tomb = readCancelledTombstone(file);
       const finalized = readFinalized(file);
       const alive = readAliveMarker(file);
-      const idle = readIdleMarker(file);
 
       // 构造 base record（status/error/endedAt/externalInstance 后续按分支覆盖）。
       const rec: SubagentRecord = {
@@ -371,14 +369,6 @@ export class RecordStore {
         markReconstructedStatus(rec, status);
         // 用最后一条 entry 的时间戳作为 endedAt（避免重建后耗时随墙钟无限增长）。
         rec.endedAt = recon.endedAt;
-      }
-      // ── 分支 2.5: .idle sidecar（对话模式轮次完成，进程已 SIGTERM 回收，等待续聊）──
-      // 必须在 .alive+pid 之前：idle record 的 .alive 已删（进程回收），否则落兜底 crashed。
-      // .idle 存在即 idle，无视 pid 死活（idle record 的 pid 必然已死——进程被回收才进 idle）。
-      // round 从 marker 恢复（内存 record.round 跨重启丢失，唯一来源是 sidecar）。
-      else if (idle) {
-        markReconstructedStatus(rec, "idle");
-        rec.round = idle.round;
       }
       // ── 分支 3: .alive + pid 存活 + 未超 24h 软超时 ──
       else if (

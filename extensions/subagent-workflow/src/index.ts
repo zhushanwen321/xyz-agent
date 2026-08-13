@@ -39,6 +39,7 @@ import {
   setSubagentService,
   SubagentService,
 } from "./execution/subagent-service.ts";
+import { killAllSpawnedChildren } from "./execution/session-runner.ts";
 import { SubprocessAgentRunner } from "./execution/subprocess-agent-runner.ts";
 import { WorktreeManager } from "./execution/worktree-manager.ts";
 import { setupSubagentListInjector } from "./injectors/subagent-list-injector.ts";
@@ -78,6 +79,34 @@ declare module "@earendil-works/pi-coding-agent" {
 
 // 模块级 logger（setPiHandle 注入后自动走 appendEntry）
 const logger = getLogger("subagents");
+
+// ═══ [V2 决策 7 防线 i] process 级 shutdown hook ═══
+//
+// session_shutdown 是 pi 的 async hook，进程被 SIGTERM/SIGINT 强杀或崩溃时来不及
+// 触发；sync 子进程（controller 为 undefined，abortRunningControllers 跳过它们）会
+// 泄漏为孤儿。process.on 兜底显式 killAllSpawnedChildren 收割全部活子进程。
+// guard 防多信号叠加（如 SIGINT 后又 beforeExit）重复 kill。
+let processShutdownHookFired = false;
+
+function reapSpawnedChildrenOnShutdown(): void {
+  if (processShutdownHookFired) return;
+  processShutdownHookFired = true;
+  try {
+    killAllSpawnedChildren("SIGTERM");
+  } catch {
+    // best-effort：收割失败不阻断退出流程
+  }
+}
+
+/**
+ * 测试钩子：重置 module 级 shutdown guard。
+ *
+ * 对齐 lifecycle-manager._resetLifecycleState 模式——processShutdownHookFired 是
+ * module 级单例状态，跨 test 持久，单测需显式重置以验证 idempotent 行为。
+ */
+export function _resetProcessShutdownGuardForTest(): void {
+  processShutdownHookFired = false;
+}
 
 export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // 注入 pi handle 给全局 extension-logger，让深层代码（best-effort / error-recovery）
@@ -464,6 +493,30 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     const dialogQueue = getOrCreateDialogQueue();
     dialogQueue.rejectAll();
   });
+
+  // ════════════════════════════════════════════════════════════
+  //  [V2 决策 7 防线 i] process 级 shutdown hook（显式收割三道防线之一）
+  //
+  //  上方 session_shutdown（pi async hook）在进程被 SIGTERM/SIGINT 强杀或崩溃时
+  //  不触发，此处 process.on 兜底确保 sync 子进程被收割（防线 i：shutdown 时显式
+  //  SIGTERM 全部 activation）。
+  //
+  //  - SIGTERM/SIGINT 注册 listener 后 Node 不执行默认终止，故 handler 内主动 exit(0)。
+  //  - beforeExit 是退出前最后事件，不 exit（自然退出）。
+  //  - idempotent guard（reapSpawnedChildrenOnShutdown 内）防多信号叠加重复 kill。
+  //
+  //  防线 ii（启动 scanOrphans）/ 防线 iii（activate 互斥）接入留 Step 5c，见
+  //  lifecycle-manager 的 scanOrphanProcesses / acquireActivateLock TODO 注释。
+  // ════════════════════════════════════════════════════════════
+  process.on("SIGTERM", () => {
+    reapSpawnedChildrenOnShutdown();
+    process.exit(0);
+  });
+  process.on("SIGINT", () => {
+    reapSpawnedChildrenOnShutdown();
+    process.exit(0);
+  });
+  process.on("beforeExit", reapSpawnedChildrenOnShutdown);
 
   // ════════════════════════════════════════════════════════════
   //  pi.__workflowRun（D-8 签名）
