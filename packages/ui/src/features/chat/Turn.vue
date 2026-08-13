@@ -101,6 +101,9 @@ const props = withDefaults(
     sessionId: string
     canEdit?: boolean
     isSessionActive?: boolean
+    /** 本 turn 是否为列表末位 turn（D1 折叠作用域修正，streaming-trace-window design §3.3）。
+     *  由列表渲染器（MessageStream）按 turn === lastRenderTurn 传入；缺省 false。 */
+    isLastTurn?: boolean
   }>(),
   { isSessionActive: undefined },
 )
@@ -127,15 +130,21 @@ const lastAssistant = computed(() => {
  */
 const isStreaming = computed(() => props.turn.isStreaming)
 const sessionActive = computed(() => props.isSessionActive ?? props.turn.isStreaming)
+/**
+ * 本 turn 是否为「工作 turn」（D1：折叠作用域降到 turn 级，streaming-trace-window design §3.3）。
+ * session 进行中且本 turn 是列表末位 turn 时才在 run 期间展开 trace——历史 turn 不再因
+ * sessionActive 翻真而重展开（F1 修复）。isLastTurn 缺省 false：单 turn 隔离测试须显式传 true。
+ */
+const isWorkingTurn = computed(() => sessionActive.value && (props.isLastTurn ?? false))
 
 const thinkCount = computed(() => countThinking(props.turn))
 const toolCount = computed(() => countToolCalls(props.turn))
 
 // 折叠态经 ChatViewDeps inject（renderer 壳绑 useTurnExpansion store，isExpanded/collapse 已在上方解构）
-/** 对话进行中（含 ask-user）或手动 expanded 时展开 trace（B 类：sessionActive 驱动）
+/** 工作态（仅末位 turn）或手动 expanded 时展开 trace（D1：turn 级作用域，替代旧 sessionActive 驱动）。
  *  [M5 stable-key] 展开态按 turnStableId(turn)（首条消息 id）查询——消息插删时 index 漂移
  *  会错绑展开态，稳定 id 随 turn 本身不变。 */
-const showTrace = computed(() => sessionActive.value || isExpanded(turnStableId(props.turn)))
+const showTrace = computed(() => isWorkingTurn.value || isExpanded(turnStableId(props.turn)))
 
 /**
  * 工作耗时 live 计时。

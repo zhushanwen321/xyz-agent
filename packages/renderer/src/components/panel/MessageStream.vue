@@ -56,6 +56,7 @@
           :session-id="sessionId"
           :can-edit="!!item.turn.user && index === lastUserTurnIdx"
           :is-session-active="isSessionActive"
+          :is-last-turn="item.turn === lastRenderTurn"
           @edit-state-change="onEditStateChange(index, $event.editing)"
         />
         <BashOutputBlock

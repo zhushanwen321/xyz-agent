@@ -42,12 +42,15 @@ function makeTurn(over: Partial<MessageTurn> = {}): MessageTurn {
 }
 
 /** mount Turn，stub 掉子组件（Block/ChangeSetCard/MarkdownRenderer），隔离 Turn 自身逻辑。
- *  isSessionActive prop 透传（T4：session 进行中信号，缺省回退到 turn.isStreaming）。 */
-function mountTurn(props: { turn: MessageTurn; sessionId?: string; isSessionActive?: boolean }) {
+ *  isSessionActive prop 透传（T4：session 进行中信号，缺省回退到 turn.isStreaming）。
+ *  isLastTurn 默认 true：单 turn 隔离挂载即视为列表末位 turn（D1 折叠作用域，streaming-trace-window
+ *  design §3.3）——session 进行中时该 turn 的工作 trace 才会展开。需测「非末位 turn 折叠」显式传 false。 */
+function mountTurn(props: { turn: MessageTurn; sessionId?: string; isSessionActive?: boolean; isLastTurn?: boolean }) {
   return mount(Turn, {
     props: {
       turn: props.turn,
       sessionId: props.sessionId ?? 's1',
+      isLastTurn: props.isLastTurn ?? true,
       ...(props.isSessionActive !== undefined ? { isSessionActive: props.isSessionActive } : {}),
     },
     global: {
@@ -65,9 +68,10 @@ function mountTurn(props: { turn: MessageTurn; sessionId?: string; isSessionActi
  * 必须用 reactive Set——普通 Set 非响应式，computed 不重算）。
  */
 const expandedTurns = reactive(new Set<string>())
-function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string }) {
+// isLastTurn 默认 true：单 turn 隔离挂载即末位 turn（D1，同 mountTurn），session 进行中时工作 trace 才展开。
+function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string; isLastTurn?: boolean }) {
   return mount(Turn, {
-    props: { turn: props.turn, sessionId: props.sessionId ?? 's1' },
+    props: { turn: props.turn, sessionId: props.sessionId ?? 's1', isLastTurn: props.isLastTurn ?? true },
     global: {
       plugins: [createPinia()],
       provide: mockChatProvide({

@@ -55,9 +55,11 @@ function makeTurn(over: Partial<MessageTurn> = {}): MessageTurn {
  * computed 不重算）。
  */
 const expandedTurns = reactive(new Set<string>())
-function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string }) {
+// isLastTurn 默认 true：单 turn 隔离挂载即末位 turn（D1 折叠作用域，streaming-trace-window design §3.3），
+// session 进行中（streaming）时工作 trace 才展开——TC-REG-1 的 streaming 序列需要末位 turn 展开 trace。
+function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string; isLastTurn?: boolean }) {
   return mount(Turn, {
-    props: { turn: props.turn, sessionId: props.sessionId ?? 's1' },
+    props: { turn: props.turn, sessionId: props.sessionId ?? 's1', isLastTurn: props.isLastTurn ?? true },
     global: {
       plugins: [createPinia()],
       provide: mockChatProvide({
