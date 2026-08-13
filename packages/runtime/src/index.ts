@@ -25,7 +25,7 @@ import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
 import { EventInterpreter } from './services/session/event-interpreter.js'
-import { join, resolve } from 'node:path'
+import { join, resolve, isAbsolute } from 'node:path'
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 import { ExtensionService } from './services/extension-service.js'
@@ -41,6 +41,8 @@ import { WorktreeService } from './services/worktree/worktree-service.js'
 import { TerminalService } from './services/terminal/terminal-service.js'
 import { QuotaService } from './services/quota-service.js'
 import { FileService } from './services/file-service.js'
+import { getSkillDirs } from './infra/pi/discovery-store.js'
+import { expandHome } from './utils/path-utils.js'
 import { HandoffService } from './services/handoff-service.js'
 // MessageBus（wave:bus-core 产物）：per-session 消息广播核心。
 // wave:runtime-wiring 在组合根创建单例并注入到 SessionService（session 级消息双写走 bus.publish）+
@@ -365,10 +367,19 @@ async function main(): Promise<void> {
   const fileService = new FileService({
     sessionService,
     executor: new FsExecutor(),
+    // allowedReadDirs：file.read 白名单。除三个固定目录外，动态合并用户在 discovery.json
+    // 配置的 skill 目录（globalPaths，如 ~/.claude/skills）——否则这些 skill 的 SKILL.md
+    // 既不在 cwd 内（cwd 守门拒）也不在固定白名单内（白名单拒），两路 file.read 都失败，
+    // drawer 误显示「该 skill 无文档正文」。projectPaths（相对 cwd）走 cwd 守门，不需进白名单。
+    // expandHome 处理 globalPaths 里 ~/ 开头路径；filter(isAbsolute) 丢弃相对路径（白名单需绝对路径）。
     allowedReadDirs: [
       resolve(homeDir, '.agents/skills'),
       resolve(piAgentDir, 'skills'),
       resolve(piAgentDir, 'npm'),
+      ...getSkillDirs()
+        .map((d) => expandHome(d))
+        .filter((d) => isAbsolute(d))
+        .map((d) => resolve(d)),
     ],
   })
 
