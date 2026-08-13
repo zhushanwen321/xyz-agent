@@ -200,7 +200,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertCircle, Check, Copy as CopyIcon } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
@@ -229,8 +229,9 @@ const props = defineProps<{
   tool?: ToolCall
   /** thinking 块初始折叠态（来自 ThinkingBlock.collapsed，默认收起） */
   collapsed?: boolean
-  /** working 态（turn 进行中）：thinking 强制全展开且不可手动收（draft §1 无背景下划线展开）。
-   *  tool 块不再因 working 强制展开（改后 streaming 态也 1 行收起，header 自带状态指示）。 */
+  /** working 态（turn 进行中）：thinking 默认展开（collapsed 初值 false）但可手动收起/展开；
+   *  working→false 时未手动操作过的块回落收起（SSOT §3.3.3）。
+   *  tool 块不因 working 强制展开（streaming 态也 1 行收起，header 自带状态指示）。 */
   working?: boolean
   /** streaming 态（所属 assistant 正在流式）：驱动 text 分支颜色——streaming→text-neutral-mid，
    *  complete/缺省→text-neutral-fg（单调，不随兄弟 message 到达翻转）。
@@ -246,14 +247,29 @@ const props = defineProps<{
   sessionId?: string | null
 }>()
 
-/* ── thinking 折叠：working 态强制展开且不可收（draft §1）；非 working 由本地态 toggle ── */
-const thinkingCollapsed = ref(props.collapsed ?? true)
-const thinkingExpanded = computed(() => props.working || !thinkingCollapsed.value)
+/* ── thinking 折叠（SSOT §3.3.3）：默认展开由 collapsed 初值承担（working→false 展开，
+ *    非 working→props.collapsed ?? true 收起），computed 不再带 props.working 短路；
+ *    working 中也可手动收起/展开（删禁 toggle 提前 return）；
+ *    working→false 完成态回落：未手动操作过的块自动收起（恢复 G3 完成态骨架）。── */
+const thinkingCollapsed = ref(props.working ? false : (props.collapsed ?? true))
+const thinkingExpanded = computed(() => !thinkingCollapsed.value)
+/** 用户是否手动 toggle 过（收起/展开均置位）——置位后完成态不回落（显式意图优先，CQ1） */
+const userToggledThinking = ref(false)
 
 function toggleThinking(): void {
-  if (props.working) return
+  userToggledThinking.value = true
   thinkingCollapsed.value = !thinkingCollapsed.value
 }
+
+/** working true→false：未手动操作过的块回落收起（用户手动操作过的保持用户意图不回滚） */
+watch(
+  () => props.working,
+  (working) => {
+    if (working === false && !userToggledThinking.value) {
+      thinkingCollapsed.value = true
+    }
+  },
+)
 
 /** 收起态的正文预览（截断，draft：收起时显一行摘要） */
 const PREVIEW_LIMIT = 60

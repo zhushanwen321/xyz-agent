@@ -176,3 +176,59 @@ describe('error-visibility M1: failed tool header danger + 终态展开（TC1-3�
     expect(header.classes()).not.toContain('text-danger')
   })
 })
+
+/* ── error-visibility M3：thinking 可收起 + 完成态回落（TC1-3）──
+ * SSOT: docs/architecture/conversation-error-visibility.md §3.3.3
+ * - T1: thinkingExpanded 去 props.working 短路（working 默认展开改由 collapsed 初值承担）
+ *   ——working 挂载 collapsed 初值 false（展开）、非 working 挂载 true（收起，G3 骨架）
+ * - T2: 删禁 toggle（working 中也可手动收起/展开）；watch working true→false 回落收起
+ * - CQ1: 手动操作过（userToggled）→ working→false 不回落（显式意图优先） */
+const THINK_HEADER_SEL = '.group\\/think'
+const THINK_EXPANDED_SEL = '.group\\/result'
+
+describe('error-visibility M3: thinking 可收起 + 完成态回落（TC1-3）', () => {
+  function mountThinking(over: Record<string, unknown> = {}) {
+    return mount(Block, {
+      // collapsed 显式传 undefined（Vue Boolean prop 键缺失时缺省 false，会吃掉 `?? true` 的
+      // fallback 导致误展开；显式 undefined 才等价「未提供」，`?? true` 正常生效）
+      props: { type: 'thinking', content: 'deep reasoning content', thinkingId: 't-1', collapsed: undefined, ...over },
+      global: {
+        stubs: { MarkdownRenderer: MdStub },
+      },
+    })
+  }
+
+  it('TC1: working=true 挂载默认展开（无需点击，去强制展开短路后由 collapsed 初值承担）', () => {
+    const wrapper = mountThinking({ working: true })
+    // 展开内容区直接渲染（thinkingExpanded=true）
+    expect(wrapper.find(THINK_EXPANDED_SEL).exists()).toBe(true)
+  })
+
+  it('TC2: 非 working 挂载默认收起（1 行摘要），点击可展开', async () => {
+    const wrapper = mountThinking({})
+    // 默认收起：展开内容区不渲染
+    expect(wrapper.find(THINK_EXPANDED_SEL).exists()).toBe(false)
+    // 点击 header 展开（toggle 对非 working 可用）
+    await wrapper.find(THINK_HEADER_SEL).trigger('click')
+    expect(wrapper.find(THINK_EXPANDED_SEL).exists()).toBe(true)
+  })
+
+  it('TC3: working→false 回落收起；手动展开过不回落（CQ1）', async () => {
+    // 场景 A：未手动操作 → working→false 自动回落收起
+    const autoWrapper = mountThinking({ working: true })
+    expect(autoWrapper.find(THINK_EXPANDED_SEL).exists()).toBe(true)
+    // VTU setProps 的 $props 类型解析为 attrs-only（Block.vue 自定义 props 不可见），
+    // cast 仅为满足 tsc（同 search-modal.test.ts:86 模式，见本文件 text 测试注释）
+    await autoWrapper.setProps({ working: false } as never)
+    expect(autoWrapper.find(THINK_EXPANDED_SEL).exists()).toBe(false)
+
+    // 场景 B：手动操作过（收起再展开，userToggled 置位且最终展开）→ working→false 不回落
+    const manualWrapper = mountThinking({ working: true })
+    await manualWrapper.find(THINK_HEADER_SEL).trigger('click') // 手动收起
+    await manualWrapper.find(THINK_HEADER_SEL).trigger('click') // 手动展开
+    expect(manualWrapper.find(THINK_EXPANDED_SEL).exists()).toBe(true)
+    await manualWrapper.setProps({ working: false } as never)
+    // 保持用户意图不回滚
+    expect(manualWrapper.find(THINK_EXPANDED_SEL).exists()).toBe(true)
+  })
+})
