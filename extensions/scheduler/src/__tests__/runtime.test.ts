@@ -335,6 +335,44 @@ describe('SchedulerRuntime', () => {
       expect(stillDisabled!.enabled).toBe(false)
       expect(stillDisabled!.runCount).toBe(0)
     })
+
+    // ── MF-1：toggle enable 重算 nextRunAt 到未来时清除残留 pending ──
+    // 场景：busy tick 标记 pending=true（W4 跨 tick 重试）→ disable → enable 重算到未来。
+    // 修复前 pending 残留 → 下个 tick step3 `pending && enabled` 在重算的未来时间点之前提前 dispatch。
+    it('MF-1: enable 重算 nextRunAt 到未来时清除残留 pending，不提前 dispatch', async () => {
+      // 可控 idle 状态：先 busy 模拟 dispatchTask 跳过保留 pending（W4），后切 idle 排除 busy 干扰
+      let idle = false
+      const controllableCtx = { isIdle: () => idle, hasPendingMessages: () => false }
+      const controllableBackend = new MockSchedulerBackend()
+      const rt = new SchedulerRuntime(controllableBackend, controllableCtx)
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+      const task = await rt.addTask('mf1', { mode: 'interval', intervalMs: 60000 })
+
+      // T0+61s：任务到期 + busy → step2 标 pending=true，step3 dispatchTask busy 跳过（pending 保留）
+      vi.setSystemTime(new Date('2026-01-01T00:01:01Z'))
+      await rt.tickScheduler()
+      expect(task.pending).toBe(true) // busy tick 残留 pending（W4 跨 tick 重试）
+      expect(controllableBackend.sentMessages).toHaveLength(0)
+
+      // disable → enable：enable 重算 nextRunAt 到未来（T0+61s + 60s = T0+121s）
+      await rt.toggleTask(task.id, false)
+      await rt.toggleTask(task.id, true)
+      expect(task.pending).toBe(false) // 修复后：重算到未来清除残留 pending
+      const recalcedNext = task.nextRunAt
+      expect(recalcedNext).toBeGreaterThan(Date.now()) // 确认重算到了未来
+
+      // T0+90s：在重算的未来 nextRunAt 之前 tick，切 idle 排除 busy 干扰 → 不应 dispatch
+      vi.setSystemTime(new Date('2026-01-01T00:01:30Z'))
+      idle = true
+      await rt.tickScheduler()
+      expect(controllableBackend.sentMessages).toHaveLength(0)
+
+      // 到达重算的未来 nextRunAt 后 tick：才 dispatch
+      vi.setSystemTime(new Date(recalcedNext + 1000))
+      await rt.tickScheduler()
+      expect(controllableBackend.sentMessages).toHaveLength(1)
+    })
   })
 
   // ── TC9：expiresAt 三态（addTask 的 expires 分支）──

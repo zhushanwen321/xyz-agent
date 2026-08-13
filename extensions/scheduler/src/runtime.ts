@@ -116,6 +116,11 @@ export class SchedulerRuntime {
         // nextRunAt 保留原值（enabled=false 后 tick 不再触发）
       } else {
         task.nextRunAt = next
+        // MF-1：重算到未来后清除残留 pending。pending 是「到期待 dispatch」标记，
+        // 由 busy tick 的 step2 置位（W4 跨 tick 重试保留）。nextRunAt 已推到未来则该标记过期，
+        // 否则下个 tick step3 `pending && enabled` 会在重算的未来时间点之前提前 dispatch，
+        // 违背上方注释「避免 enable 瞬间立即触发」承诺。
+        task.pending = false
       }
     }
     // 全部 mutation 完成后 append toggle：确保 append 的 enabled 是最终值
