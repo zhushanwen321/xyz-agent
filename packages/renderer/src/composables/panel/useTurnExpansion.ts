@@ -30,6 +30,8 @@ export function useTurnExpansion(sessionId: Ref<string | null>): {
   toggle: (turnKey: TurnKey) => void
   expand: (turnKey: TurnKey) => void
   collapse: (turnKey: TurnKey) => void
+  isTakeover: (turnKey: TurnKey) => boolean
+  setTakeover: (turnKey: TurnKey, on: boolean) => void
   expandAll: (turnKeys: TurnKey[]) => void
   collapseAll: (turnKeys: TurnKey[]) => void
   hasAnyExpanded: (turnKeys: TurnKey[]) => boolean
@@ -61,6 +63,16 @@ export function useTurnExpansion(sessionId: Ref<string | null>): {
     collapse: (turnKey: TurnKey): void => {
       const s = sid()
       if (s !== null) store.collapse(s, turnKey)
+    },
+    /** 查询「展开全部」接管态。null sid 返回 false（D6/TC2，窗口级语义，驱动 computeTraceWindow） */
+    isTakeover: (turnKey: TurnKey): boolean => {
+      const s = sid()
+      return s !== null && store.isTakeover(s, turnKey)
+    },
+    /** 设/清「展开全部」接管态。null sid 时 no-op */
+    setTakeover: (turnKey: TurnKey, on: boolean): void => {
+      const s = sid()
+      if (s !== null) store.setTakeover(s, turnKey, on)
     },
     /** 批量展开。null sid 时 no-op */
     expandAll: (turnKeys: TurnKey[]): void => {

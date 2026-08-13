@@ -42,12 +42,20 @@ export interface ChatViewDeps {
   /** turn 是否展开（useTurnExpansion store 派生，Turn/TurnMeta 消费。key=turnStableId(turn)
    *  首条消息 id，M5 stable-key——不随消息插删漂移） */
   isExpanded: (turnKey: string) => boolean
+  /** turn 是否处于「展开全部」接管态（useTurnExpansion store 派生，Turn 消费。
+   *  key=turnStableId(turn)，D6/TC2 窗口级语义：takeover=true 时 computeTraceWindow 全量展开。
+   *  optional：takeover 是窗口增强能力，仅 Turn 单消费者；未 provide 时 Turn 兜底 false（折叠态）。
+   *  renderer useChatViewDeps 运行时总 provide 真实实现，测试 mock 可省略） */
+  isTakeover?: (turnKey: string) => boolean
 
   // ── 操作回调（触发 RPC / store action）──
   /** 切换 turn 展开/折叠（useTurnExpansion store action。key=turnStableId(turn)） */
   toggleExpand: (turnKey: string) => void
   /** 折叠 turn（useTurnExpansion collapse，Turn.vue 完成自动收起用。key=turnStableId(turn)） */
   collapse: (turnKey: string) => void
+  /** 设/清「展开全部」接管态（useTurnExpansion setTakeover。key=turnStableId(turn)。
+   *  optional，同 isTakeover：仅 Turn 消费，未 provide 时 onToggleTakeover no-op） */
+  setTakeover?: (turnKey: string, on: boolean) => void
   /** 中止 bash 执行（useChat.abortBash 经壳桥接） */
   abortBash: (sessionId: string, messageId?: string) => void
   /** 编辑并重发 user message（useChat.editAndResend，segments 是重建后的 Segment[]） */
