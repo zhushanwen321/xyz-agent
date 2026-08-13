@@ -10,8 +10,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { type AgentToolResult, type AgentToolUpdateCallback, type ExtensionAPI, type ExtensionContext, type Theme, type ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type AgentToolResult, type AgentToolUpdateCallback, type ExtensionAPI, type ExtensionContext, type Theme, type ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { migrateLegacyConfig } from "@zhushanwen/pi-llm-shared";
 import { type Static, Type } from "typebox";
 
 import {
@@ -208,6 +209,16 @@ function buildVisionResult(
 export default function visionExtension(pi: ExtensionAPI) {
 	// Per-instance state: vision-model cache is owned by the factory closure.
 	const visionModel = createVisionModelApi();
+
+	// [MIGRATION] Added in v0.2.0. Remove after v1.0.0 (one major past).
+	// session_start 迁移：vision-models.json → config/vision.json（幂等，过渡性）
+	let configMigrationChecked = false;
+	pi.on("session_start", () => {
+		if (!configMigrationChecked) {
+			configMigrationChecked = true;
+			migrateLegacyConfig(getAgentDir(), "vision-models.json", "config/vision.json");
+		}
+	});
 
 	pi.registerTool({
 		name: "analyze_image",

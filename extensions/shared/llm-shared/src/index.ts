@@ -5,3 +5,4 @@
 export { resolveModel, readEnabledModels, matchGlob, type ModelSelector } from "./resolve.ts";
 export { callLLM, extractText, type CallLLMOptions, type CallLLMResult } from "./call.ts";
 export { getConfigPath, loadConfig, saveConfig, clearConfigCache } from "./config.ts";
+export { migrateLegacyConfig, type MigrationResult } from "./migrate.ts";

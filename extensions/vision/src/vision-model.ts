@@ -5,7 +5,7 @@
  * derived from pi's getAgentDir(), honoring PI_CODING_AGENT_DIR for instance
  * isolation), selects the best available model with fallback chain.
  * [HISTORICAL] 2026-08 path convergence: vision-models.json -> config/vision.json
- * (migrated at npm install time via scripts/migrate-config.mjs, no runtime fallback).
+ * (migrated at session_start via migrateLegacyConfig since v0.2.0, no runtime fallback).
  *
  * State (cached config + timestamp) is encapsulated in the
  * `createVisionModelApi()` factory closure so multiple extension

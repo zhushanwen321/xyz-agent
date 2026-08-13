@@ -1,0 +1,48 @@
+/**
+ * 历史配置路径迁移工具（幂等，过渡性——供 extension session_start hook 调用）。
+ *
+ * 迁移语义：
+ * - 旧路径不存在 → noop
+ * - 旧路径存在 + 新路径不存在 → renameSync 原子搬移
+ * - 旧路径存在 + 新路径已存在 → 保留旧文件（warn，不覆盖不删——宁可残留 stale 文件，不可丢用户数据）
+ * - 失败 → warn 不抛错（best-effort，下次启动重试）
+ *
+ * 调用方在 session_start hook 里用模块级 once flag 防同进程重复触发。
+ * agentDir 由调用方传入（通常 getAgentDir()），便于测试传 tmp dir。
+ *
+ * 设计依据见 docs/extensions/extension-conventions.md §配置路径约定「历史路径迁移」。
+ */
+import { existsSync, mkdirSync, renameSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+export interface MigrationResult {
+	migrated: boolean;
+	/** 新路径已存在时保留旧文件（未迁移），true 表示旧文件作为备份保留。 */
+	keptLegacy?: boolean;
+	/** 迁移失败时的错误对象（best-effort，不抛错）。 */
+	error?: unknown;
+}
+
+/**
+ * 迁移单个配置文件：`<agentDir>/<oldRel>` → `<agentDir>/<newRel>`。
+ * 幂等、best-effort，重复调用安全。
+ */
+export function migrateLegacyConfig(agentDir: string, oldRel: string, newRel: string): MigrationResult {
+	const oldPath = join(agentDir, oldRel);
+	if (!existsSync(oldPath)) return { migrated: false };
+
+	const newPath = join(agentDir, newRel);
+	try {
+		mkdirSync(dirname(newPath), { recursive: true });
+		if (existsSync(newPath)) {
+			console.warn(`[migrate-config] new config already exists, keeping legacy file: ${oldPath}`);
+			return { migrated: false, keptLegacy: true };
+		}
+		renameSync(oldPath, newPath);
+		console.warn(`[migrate-config] migrated: ${oldPath} -> ${newPath}`);
+		return { migrated: true };
+	} catch (e) {
+		console.warn(`[migrate-config] migration failed for ${oldPath} -> ${newPath}:`, e);
+		return { migrated: false, error: e };
+	}
+}

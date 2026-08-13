@@ -13,7 +13,7 @@ description: "配置 @zhushanwen/pi-model-switch（模型切换 + 配额策略 +
 
 - `agentDir` 由 pi 的 `getAgentDir()`（`@earendil-works/pi-coding-agent`）推导，尊重 `PI_CODING_AGENT_DIR` 环境变量实现实例隔离（xyz-agent dev 为 `~/.xyz-agent-dev`，prod 为 `~/.xyz-agent`）
 - 源码：`extensions/model-switch/src/config.ts` → `CONFIG_PATH = join(getAgentDir(), "config", "model-switch.json")`
-- [HISTORICAL] 旧路径 `<agentDir>/model-policy.json`：npm 安装时经 `scripts/migrate-config.mjs` 自动迁移到新路径，运行时不双读旧路径
+- [HISTORICAL] 旧路径 `<agentDir>/model-policy.json`：session_start hook 自动迁移到新路径（`migrateLegacyConfig`，Added in v0.6.0, remove after v1.0.0），运行时不双读旧路径
 - 文件不存在时 `loadConfig()` 返回 `null`，扩展不注入能力表，`list`/`switch`/`recommend` 返回 `No model policy configured`
 
 ## Schema（v2）

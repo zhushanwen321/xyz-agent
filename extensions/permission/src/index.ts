@@ -11,11 +11,14 @@
  *  - yolo 快速路径：mode=yolo 或 enabled=false → 直接 return undefined（不跑管道）。
  */
 
-import type {
-	ExtensionAPI,
-	ExtensionCommandContext,
-	ExtensionContext,
-	} from "@earendil-works/pi-coding-agent";
+import {
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+	type ExtensionContext,
+	getAgentDir,
+} from "@earendil-works/pi-coding-agent";
+
+import { migrateLegacyConfig } from "@zhushanwen/pi-llm-shared";
 
 import { listAvailableModels } from "./classifier/model-resolver.js";
 import { handlePermissionCommand, handlePermissionModelCommand, handlePermissionRuleCommand } from "./commands.js";
@@ -26,6 +29,13 @@ import { makeNextIdCounter } from "./rule-templates.js";
 import { checkPermission, type CheckPermissionDeps } from "./pipeline.js";
 import { createPipelineDeps } from "./production.js";
 import type { PermissionConfig } from "./types.js";
+
+// ──────────────────────── [MIGRATION] 配置路径迁移（session_start 运行时） ────────────────────────
+// Added in v1.0.0. Remove after v2.0.0 (one major past).
+// session_start 首次触发时把旧路径 permission-config.json 迁到 config/permission.json。
+// 幂等、best-effort（migrateLegacyConfig 见 @zhushanwen/pi-llm-shared）。
+// 模块级 once flag 防同进程重复触发；agentDir 由 getAgentDir() 推导（尊重 PI_CODING_AGENT_DIR）。
+let configMigrationChecked = false;
 
 // ──────────────────────── tool_call event 最小子集 ────────────────────────
 
@@ -70,8 +80,14 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 		config = loadAndWatchConfig((msg) => console.warn(msg));
 	}
 
-	// ──────────────────────── session_start：重载配置 ────────────────────────
+	// ──────────────────────── session_start：迁移配置 + 重载 ────────────────────────
 	pi.on("session_start", (_event: unknown) => {
+		// [MIGRATION] Added in v1.0.0. Remove after v2.0.0.
+		// 先迁再 loadConfig（同进程首次 session_start 迁移改写文件后，refreshConfig 读到迁移后内容）。
+		if (!configMigrationChecked) {
+			configMigrationChecked = true;
+			migrateLegacyConfig(getAgentDir(), "permission-config.json", "config/permission.json");
+		}
 		refreshConfig();
 	});
 

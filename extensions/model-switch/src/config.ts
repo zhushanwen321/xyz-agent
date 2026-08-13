@@ -4,7 +4,7 @@
  * 从 <agentDir>/config/model-switch.json 加载配置（agentDir 由 pi 的 getAgentDir()
  * 推导，尊重 PI_CODING_AGENT_DIR 实现实例隔离）。
  * [HISTORICAL] 2026-08 路径收敛：<agentDir>/model-policy.json → config/model-switch.json，
- * 迁移在 npm 安装时自动完成（scripts/migrate-config.mjs），运行时不双读旧路径。
+ * 迁移在 session_start hook 完成（migrateLegacyConfig，v0.6.0 起），运行时不双读旧路径。
  * v2 格式：models 以 provider 名为 key，内嵌 models 表；plans 以 plan 名为 key。
  * v1 格式自动迁移为 v2 内存结构。
  */

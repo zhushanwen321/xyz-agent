@@ -178,6 +178,9 @@ importers:
       '@earendil-works/pi-tui':
         specifier: '*'
         version: 0.82.1
+      '@zhushanwen/pi-llm-shared':
+        specifier: workspace:*
+        version: link:../shared/llm-shared
       '@zhushanwen/pi-quota-providers':
         specifier: workspace:*
         version: link:../shared/quota-providers
@@ -440,6 +443,9 @@ importers:
       '@earendil-works/pi-tui':
         specifier: '*'
         version: 0.82.1
+      '@zhushanwen/pi-llm-shared':
+        specifier: workspace:*
+        version: link:../shared/llm-shared
       typebox:
         specifier: '*'
         version: 1.1.38

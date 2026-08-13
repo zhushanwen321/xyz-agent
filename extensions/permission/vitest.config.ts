@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
 	test: {
-		include: ["src/**/*.test.ts", "scripts/**/*.test.mjs"],
+		include: ["src/**/*.test.ts"],
 		root: __dirname,
 	},
 });

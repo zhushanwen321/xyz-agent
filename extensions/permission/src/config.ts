@@ -6,16 +6,18 @@
  *
  * [HISTORICAL] 2026-08 路径收敛 + 范式统一：
  * - 路径从 <agentDir>/permission-config.json 迁到 <agentDir>/config/permission.json。
- *   迁移在 npm 安装时自动完成（pi.migrate 脚本，见 scripts/migrate-config.mjs），
- *   运行时不双读旧路径——本文件没有任何旧路径 fallback。
+ *   迁移在 session_start hook 运行时完成（migrateLegacyConfig，见 src/index.ts），
+ *   幂等、过渡性（Added in v1.0.0, remove after v2.0.0）；运行时不双读旧路径。
+ *   ensureConfigFile 仅在旧路径残留时 warn 提醒（降级兜底，见下方）。
  * - 原实现自研 mtime+size 缓存 / 原子写 / tmp 清理，与 llm-shared 泛型 config 重复，
  *   读/写/缓存全部委托 llm-shared；本文件只保留 permission 特有行为：
  *   文件缺失时创建默认配置文件（llm-shared loadConfig 不建文件）。
  */
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
 	clearConfigCache,
 	getConfigPath as getLlmConfigPath,
@@ -97,6 +99,10 @@ function createDefaultConfigContent(): string {
 
 function ensureConfigFile(configPath: string, onWarning?: (msg: string) => void): void {
 	if (existsSync(configPath)) return;
+	// [MIGRATION] Added in v1.0.0. Remove after v2.0.0.
+	// 降级兜底：旧路径残留但新路径缺失 → 迁移可能未跑（session_start hook 未触发/失败）。
+	// 此时即将建 yolo 默认，用户可能从 strict/auto 意外降级，显眼 warn 提醒手动迁移。
+	warnLegacyConfigIfExists();
 	try {
 		mkdirSync(dirname(configPath), { recursive: true });
 		writeFileSync(configPath, createDefaultConfigContent(), { encoding: "utf-8", mode: 0o600 });
@@ -104,6 +110,21 @@ function ensureConfigFile(configPath: string, onWarning?: (msg: string) => void)
 		const message = error instanceof Error ? error.message : String(error);
 		onWarning?.(`[pi-permission] Failed to create default config at '${configPath}': ${message}`);
 	}
+}
+
+// [MIGRATION] Added in v1.0.0. Remove after v2.0.0.
+// 检测旧路径 <agentDir>/permission-config.json 残留：迁移未跑（session_start hook 失败/用户手动放置）
+// 时新配置缺失，即将回落 yolo 默认。显眼 warn 提醒，避免 strict→yolo 静默降级。
+// 不自动迁移（迁移职责在 session_start hook 的 migrateLegacyConfig），只告警。
+function warnLegacyConfigIfExists(): void {
+	const legacyPath = join(getAgentDir(), "permission-config.json");
+	if (!existsSync(legacyPath)) return;
+	const newPath = join(getAgentDir(), "config", "permission.json");
+	console.warn(
+		`[pi-permission] Legacy config detected at '${legacyPath}' but new config '${newPath}' is missing. ` +
+			`Migration did not run — defaulting to yolo mode, which may downgrade your previous strict/auto setting. ` +
+			`Remove the legacy file or move it to the new path after migrating.`,
+	);
 }
 
 // ──────────────────────── 加载 ────────────────────────

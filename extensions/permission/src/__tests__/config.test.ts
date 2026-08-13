@@ -268,3 +268,30 @@ describe("getConfigPath", () => {
 		expect(path.startsWith(tempDir)).toBe(true);
 	});
 });
+
+describe("[MIGRATION] legacy config 降级告警（ensureConfigFile 兜底）", () => {
+	it("旧路径残留 + 新路径缺失 → console.warn 提醒 strict→yolo 降级", () => {
+		// 写 legacy 文件到 agentDir 根（PI_CODING_AGENT_DIR=tempDir）
+		const legacyPath = join(tempDir, "permission-config.json");
+		writeFileSync(legacyPath, JSON.stringify({ mode: "strict" }), "utf-8");
+
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			loadAndWatchConfig();
+			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Legacy config detected"));
+			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("downgrade"));
+		} finally {
+			warnSpy.mockRestore();
+		}
+	});
+
+	it("旧路径不存在 → 不触发 legacy 告警", () => {
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			loadAndWatchConfig();
+			expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("Legacy config detected"));
+		} finally {
+			warnSpy.mockRestore();
+		}
+	});
+});

@@ -165,17 +165,25 @@ streamSink: ctx.mode === "rpc"
 - shared 库（如 quota-providers）的领域数据文件（providers.json / secrets.json / quota-cache.json）也放 `config/`，可用领域名（非包名）
 - 目录形态的配置（如 plan-templates/）不在此约定内
 
-**历史路径迁移（安装时自动完成，运行时不双读旧路径）**：
+**历史路径迁移（session_start 运行时迁移，过渡性——一个 major 后去除）**：
 
-- 迁移必须发生在 **npm 安装时**，extension 运行时**只读新路径**——禁止「先读新、没有读旧」的双读 fallback
-- 每个需要迁移的包：
-  1. 写 `scripts/migrate-config.mjs`（幂等：旧路径不存在 → noop；新路径已存在 → 不覆盖仅删旧；失败 → warn + 不抛错）
-  2. `package.json` 声明 `"pi": { "migrate": "./scripts/migrate-config.mjs" }`（xyz-agent extension-service 装后 hook 执行，注入 agentDir 到 argv[2] + `PI_CODING_AGENT_DIR`）+ `"scripts": { "postinstall": "node scripts/migrate-config.mjs" }`（原生 pi `pi install` 走真实 npm CLI 时执行）
-  3. `files` 含 `"scripts/"`（否则 npm publish 丢脚本）
-- 升级场景自洽：旧版本代码读旧路径、新版本代码读新路径，迁移只在升级（重新安装）瞬间执行一次，任何版本都不双读
-- 已迁移的用户文件保留在 config/，旧路径残留删除
+- **迁移机制**：extension 在 `session_start` hook 里做**幂等一次性迁移**（模块级 once flag 防同进程重复触发）。运行时迁移**不是**双读 fallback——迁移完成后运行时只读新路径，session_start 只是触发迁移的时机
+- **为何用 session_start 而非安装时迁移**：session_start hook 在 pi 进程内运行，**跨原生 pi + xyz-agent 统一生效**（xyz-agent 启 pi 子进程时同样触发），不依赖包管理器是否执行 lifecycle 脚本。pi 无 install-time/first-load 钩子（pi 的 `readPiManifest` 只读 extensions/themes/skills/prompts，不认自定义字段），session_start 是最可靠的统一迁移时机
+- **过渡性标记 [强制]**：迁移 hook 是为平滑老用户升级而设的**过渡机制，不是永久逻辑**。每个迁移 hook 必须在代码注释里标注：
+  - `Added in v<X.Y.Z>`（加入此 hook 的版本）
+  - `Remove after v<N>.0.0`（计划去除版本 = 加入版本的下一个个 major release 之后；到达时必须删除迁移 hook——老用户已充分迁移，新用户不存在旧路径）
+- **幂等要求**（迁移逻辑复用 `@zhushanwen/pi-llm-shared` 的 `migrateLegacyConfig` 工具）：
+  - 旧路径不存在 → noop
+  - 旧路径存在 + 新路径不存在 → `renameSync`（同盘原子搬移）
+  - 旧路径存在 + 新路径已存在 → **保留旧文件**作备份（warn，不覆盖不删除——宁可残留 stale 文件，不可丢用户数据）
+  - 失败 → warn 不抛错（best-effort，下次启动重试）
+- **已废弃机制（禁止再用）**：`scripts/migrate-config.mjs` / `package.json#scripts.postinstall` / `pi.migrate` 字段是早期「安装时迁移」方案，已被 session_start 取代：
+  - `postinstall` 在 pnpm workspace install（开发环境）会误触发，动开发者真实 `~/.pi/agent`
+  - `pi.migrate` 是 xyz-agent runtime 私有字段，pi 原生不认（对原生 pi 用户无效）
+  - session_start 无此副作用，统一覆盖两环境
+- **升级场景自洽**：旧版本代码读旧路径、新版本代码读新路径 + session_start hook 迁移，任何版本运行时都不双读
 
-**已收敛清单**（2026-08，迁移脚本随包发布）：
+**已收敛清单**（2026-08，session_start hook 迁移，随包发布）：
 
 | 包 | 旧路径 | 新路径 |
 |---|---|---|

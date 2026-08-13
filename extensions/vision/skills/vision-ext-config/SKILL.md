@@ -13,7 +13,7 @@ description: "配置 @zhushanwen/pi-vision（多模态视觉模型图片分析�
 
 - `agentDir` 由 pi 的 `getAgentDir()`（`@earendil-works/pi-coding-agent`）推导，尊重 `PI_CODING_AGENT_DIR` 环境变量实现实例隔离
 - 源码：`extensions/vision/src/vision-model.ts` → `VISION_MODELS_PATH = path.join(getAgentDir(), "config", "vision.json")`
-- [HISTORICAL] 旧路径 `<agentDir>/vision-models.json`：npm 安装时经 `scripts/migrate-config.mjs` 自动迁移到新路径，运行时不双读旧路径
+- [HISTORICAL] 旧路径 `<agentDir>/vision-models.json`：session_start hook 自动迁移到新路径（`migrateLegacyConfig`，Added in v0.2.0, remove after v1.0.0），运行时不双读旧路径
 - 文件不存在时 `loadVisionModels()` 返回 `null`，`analyze_image` 抛错 `No vision models configured. Create <path> with model entries.`（即**无配置 = 工具不可用**，没有内置默认模型）
 
 ## Schema（VisionModelsConfig）

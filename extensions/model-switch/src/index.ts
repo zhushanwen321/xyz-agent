@@ -9,7 +9,9 @@
  */
 
 import { StringEnum } from "@earendil-works/pi-ai";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { migrateLegacyConfig } from "@zhushanwen/pi-llm-shared";
 import { readCache } from "@zhushanwen/pi-quota-providers";
 import { Type } from "typebox";
 
@@ -54,7 +56,15 @@ interface BeforeAgentStartLikeEvent {
 export default function modelSwitchExtension(pi: ExtensionAPI) {
 	const state: SessionState = { config: null, injectedModelTable: false };
 
+	// [MIGRATION] Added in v0.6.0. Remove after v1.0.0 (one major past).
+	// session_start 迁移：model-policy.json → config/model-switch.json（幂等，过渡性）
+	let configMigrationChecked = false;
+
 	pi.on("session_start", async (_event: unknown, _ctx: ExtensionContext) => {
+		if (!configMigrationChecked) {
+			configMigrationChecked = true;
+			migrateLegacyConfig(getAgentDir(), "model-policy.json", "config/model-switch.json");
+		}
 		state.config = loadConfig();
 		state.injectedModelTable = false;
 	});
