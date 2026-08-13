@@ -127,3 +127,7 @@ package-lock.json.*
 # === v6 Vue demo 工作区（从 docs/page-design/ 迁出）===
 /.tmp/
 .review-reports/
+
+# === dev 模式自制 Electron app bundle（dev-electron.mjs 生成，太极图标）===
+# dev 启动时按需重建，不进版本库
+/apps/electron/.dev-electron/

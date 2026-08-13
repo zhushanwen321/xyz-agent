@@ -197,7 +197,12 @@ app.whenReady().then(async () => {
   // 不读 electron-builder 的 build/icon.*（那只在打包产物生效）。macOS dock 图标跟随
   // app bundle——dev 无 bundle，必须显式 setIcon 才有新 LOGO（双鱼太极）。
   // 打包版无需此调用：bundle 的 Info.plist + Contents/Resources/icon.icns 自动生效。
-  if (isDev && process.platform === 'darwin') {
+  //
+  // 跳过条件：dev-electron.mjs 已用自制 Taiji.app bundle（改了 Info.plist 的
+  // CFBundleIconFile）启动，dock 启动即显示太极图标，无需再 setIcon（且避免重设闪烁）。
+  // 此时 main 进程会收到 XYZ_DEV_BUNDLE_ICON=1 环境变量。fallback 到默认 electron 时
+  // 无此变量，走 setIcon 兜底（会闪但至少有图标）。
+  if (isDev && process.platform === 'darwin' && !process.env.XYZ_DEV_BUNDLE_ICON) {
     const dockIcon = path.join(app.getAppPath(), 'build', 'icon-1024.png')
     if (existsSync(dockIcon)) {
       app.dock?.setIcon(dockIcon)
