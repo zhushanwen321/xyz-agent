@@ -20,6 +20,7 @@
  */
 
 import { type Component, Container, type SelectItem, SelectList, type SelectListTheme, truncateToWidth } from "@earendil-works/pi-tui";
+import type { Api, Model } from "@earendil-works/pi-ai";
 
 import type { ResolvedModelEntry } from "./classifier/model-resolver.js";
 
@@ -278,6 +279,11 @@ export class ProviderModelSelectorComponent extends Container {
 /** overlay 上下文（从 Pi ExtensionContext 提取的最小子集）。 */
 export interface ModelPickerContext {
 	mode: "tui" | "rpc" | "json" | "print";
+	/** E2：listAvailableModels 数据源（model 列表 + auth 判定），结构兼容 ExtensionContext.modelRegistry */
+	modelRegistry: {
+		getAll(): Model<Api>[];
+		hasConfiguredAuth(model: Model<Api>): boolean;
+	};
 	ui: {
 		notify(msg: string, type?: "info" | "warning" | "error"): void;
 		select(title: string, options: string[], opts?: { signal?: AbortSignal; timeout?: number }): Promise<string | undefined>;
@@ -288,10 +294,10 @@ export interface ModelPickerContext {
 	};
 }
 
-/** listAvailableModels 注入签名（便于测试 mock）。 */
+/** listAvailableModels 注入签名（E2 改走 ctx.modelRegistry，签名带 ctx；便于测试 mock）。 */
 export type ListAvailableModelsFn = (
+	ctx: ModelPickerContext,
 	onWarning?: (msg: string) => void,
-	filePath?: string,
 ) => Map<string, ResolvedModelEntry[]>;
 
 /**
@@ -307,7 +313,7 @@ export async function pickModelViaOverlay(
 	currentSpec: string,
 	models?: Map<string, ResolvedModelEntry[]>,
 ): Promise<string | undefined> {
-	const modelsByProvider = models ?? listAvailableModelsDefault();
+	const modelsByProvider = models ?? listAvailableModelsDefault(ctx);
 	if (modelsByProvider.size === 0) return undefined;
 
 	const providers = [...modelsByProvider.keys()];

@@ -1,13 +1,16 @@
 /**
  * 生产装配层（W5 集成层）。
  *
- * P3 收口：classifier 的 model 解析 + 凭证获取改走 llm-shared resolveModel +
- * ctx.modelRegistry.getApiKeyAndHeaders（三源合并含 OAuth/env/auth.json），废弃
- * 自读 models.json。'auto' 保留作 scoped 别名（向后兼容），scoped 空时 fallback
+ * P3 收口：classifier 的 model 解析改走 llm-shared resolveModel（三源合并含 OAuth/env/auth.json），
+ * 废弃自读 models.json。'auto' 保留作 scoped 别名（向后兼容），scoped 空时 fallback
  * available（CL-scoped-fallback）。
  *
+ * C1a 收口：classifier 的 LLM 调用改走 llm-shared callLLM（凭证 getApiKeyAndHeaders +
+ * completeSimple + stopReason 归一化都在 callLLM 内部完成），删除 getApiProvider +
+ * streamSimple（@ts-ignore 随之消除）。
+ *
  *  - createProductionClassifier(ctx)：装配 ClassifierDeps（resolveModel 注入走 ctx.modelRegistry，
- *    streamSimple 走 getApiProvider）。
+ *    callLLM 注入闭包捕获 ctx）。
  *  - createPipelineDeps(approvalCtx, ctx)：装配完整 CheckPermissionDeps。
  *
  * 设计：createProductionClassifier 接受 ExtensionContext（model 解析 + 凭证都绑 ctx.modelRegistry），
@@ -15,11 +18,8 @@
  * 见 CL-classifier-singleton；createClassifier 是纯对象装配无成本）。
  */
 
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore - getApiProvider resolves via root tsconfig stub but per-package tsc paths differ
-import { getApiProvider } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { resolveModel as resolveModelShared, type ModelSelector } from "@zhushanwen/pi-llm-shared";
+import { callLLM, resolveModel as resolveModelShared, type ModelSelector } from "@zhushanwen/pi-llm-shared";
 
 import { type ApprovalContext, requestUserApproval } from "./approval.js";
 import { analyzeBashStructure } from "./ast/index.js";
@@ -55,11 +55,9 @@ export function toSelector(modelSpec: string): ModelSelector {
  *  3. scoped 返回 null → fallback resolveModelShared(ctx, {type:'available'})（getAvailable 首个，
  *     等价旧 auto「有 apiKey 的首个」，向后兼容）
  *  4. model 仍 null → 返回 null（fail-closed）
- *  5. ctx.modelRegistry.getApiKeyAndHeaders(model) → auth（判别联合，必须 narrow）
- *  6. auth.ok=false → 返回 null（fail-closed）；auth.ok=true → 返回 { model, auth }
  *
- * streamSimple：getApiProvider(model.api) 拿 provider 调 streamSimple。
- * 无 provider → throw（caller 捕获转 fallback，但 classifier 内部已 try/catch streamSimple）。
+ * callLLM 注入（C1a）：闭包捕获 ctx，把 llm-shared callLLM 绑定为 classifier 的 LLM 调用。
+ * 凭证获取（getApiKeyAndHeaders）在 callLLM 内部完成（C1a 收口后不再在 resolveModel 层预检）。
  */
 export function createProductionClassifier(ctx: ExtensionContext): {
 	classifyRisk: ReturnType<typeof createClassifier>["classifyRisk"];
@@ -73,19 +71,9 @@ export function createProductionClassifier(ctx: ExtensionContext): {
 			if (!model && selector.type === "scoped") {
 				model = resolveModelShared(ctx, { type: "available" });
 			}
-			if (!model) return null;
-			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-			// 判别联合 narrow：auth.ok=false 时不可访问 auth.apiKey（类型安全）
-			if (!auth.ok) return null;
-			return { model, auth: { apiKey: auth.apiKey, headers: auth.headers, env: auth.env } };
+			return model;
 		},
-		streamSimple: (model, context, options) => {
-			const provider = getApiProvider(model.api);
-			if (!provider) {
-				throw new Error(`[pi-permission] No API provider registered for api: ${model.api}`);
-			}
-			return provider.streamSimple(model, context, options);
-		},
+		callLLM: (opts) => callLLM(ctx, opts),
 		onLog: (msg: string) => console.warn(msg),
 	});
 }

@@ -9,12 +9,8 @@
 export type { ClassifierDeps } from "./classifier.js";
 export { createClassifier } from "./classifier.js";
 export { PARSE_FALLBACK_RESULT,parseClassifierResponse } from "./json-parser.js";
-export type { ResolvedModelEntry } from "./model-resolver.js";
-export {
-	agentDir,
-	flattenModels,
-	loadModelsJson,
-} from "./model-resolver.js";
+export type { ListAvailableModelsCtx, ResolvedModelEntry } from "./model-resolver.js";
+export { listAvailableModels } from "./model-resolver.js";
 export { buildClassifierUserPrompt,CLASSIFIER_SYSTEM_PROMPT } from "./prompt.js";
 
 // 类型 re-export（单一来源：types.ts）

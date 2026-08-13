@@ -69,6 +69,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function normalizeClassifierConfig(raw: unknown): ClassifierConfig {
 	const record = isPlainObject(raw) ? raw : {};
 	const timeout = Number(record.timeout);
+	// C3b：classifier.model 只接受 string（'auto' 或 'provider/model-id'）。对象形式（如
+	// `{ "type": "available" }`）不受支持，此前会被静默忽略回落默认——现在显式 warn 消除静默。
+	if (record.model !== undefined && !(typeof record.model === "string" && record.model.length > 0)) {
+		console.warn("[pi-permission] Ignoring invalid classifier.model (expected string 'auto' or 'provider/model-id'), using default auto");
+	}
 	return {
 		enabled: record.enabled !== false,
 		model: typeof record.model === "string" && record.model.length > 0 ? record.model : DEFAULT_CLASSIFIER_CONFIG.model,

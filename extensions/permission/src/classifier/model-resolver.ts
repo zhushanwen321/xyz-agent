@@ -1,34 +1,33 @@
 /**
- * model picker 的 models.json 读取（picker 用，非 classifier）。
+ * model picker 的模型列表（picker 用，非 classifier）。
  *
  * P3 收口后 classifier 不再自读 models.json（改走 llm-shared resolveModel +
- * ctx.modelRegistry，见 classifier.ts / production.ts）。本文件仅保留 picker
- * （/permission model 命令）所需的 listAvailableModels / loadModelsJson / flattenModels。
+ * ctx.modelRegistry，见 classifier.ts / production.ts）。
  *
- * TODO(follow-up): listAvailableModels 仍自读 models.json（picker 用），与 classifier
- * 收口解耦，见 CL-picker-scope；未来可改走 ctx.modelRegistry.getAll()。
+ * E2（CL-picker-scope 收口）：listAvailableModels 改走 ctx.modelRegistry.getAll() +
+ * hasConfiguredAuth() 过滤——用户只经 `pi auth login` 配的内置/OAuth provider 同样可见，
+ * 不再自读 models.json（loadModelsJson / flattenModels 已删除）。
+ * E1：ResolvedModelEntry.apiKey 死字段已删（P3 收口后凭证走 modelRegistry，无消费者）。
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import type { Api, Model } from "@earendil-works/pi-ai";
 
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
-
-// ──────────────────────── agentDir（pi 导出复用） ────────────────────────
+// ──────────────────────── modelRegistry 最小子集 ────────────────────────
 
 /**
- * 解析 agent 根目录（复用 pi 导出的 getAgentDir，尊重 PI_CODING_AGENT_DIR 覆盖）。
- *
- * P3 收口：原自实现 PI_CODING_AGENT_DIR 解析（与 config.ts 重复）改为复用 pi 导出，
- * 消除重复路径推导逻辑（CL-config-path）。
+ * listAvailableModels 的 ctx 最小子集（duck typing，不依赖完整 SDK 类型）。
+ * 结构兼容 ModelPickerContext（model-picker.ts）与 ExtensionContext.modelRegistry。
  */
-export function agentDir(): string {
-	return getAgentDir();
+export interface ListAvailableModelsCtx {
+	modelRegistry: {
+		getAll(): Model<Api>[];
+		hasConfiguredAuth(model: Model<Api>): boolean;
+	};
 }
 
-// ──────────────────────── models.json schema（最小子集） ────────────────────────
+// ──────────────────────── 条目类型 ────────────────────────
 
-/** 单个 model 的 cost 结构（与 pi-ai Model.cost 同形） */
+/** 单个 model 的 cost 结构（与 pi-ai Model.cost 同形；缺失时填零默认） */
 interface ModelCost {
 	input: number;
 	output: number;
@@ -36,37 +35,11 @@ interface ModelCost {
 	cacheWrite: number;
 }
 
-/** models.json 中单个 model 定义的最小子集（参考 pi-coding-agent parseModels） */
-interface ModelsJsonModelDef {
-	id: string;
-	name?: string;
-	api?: string;
-	baseUrl?: string;
-	reasoning?: boolean;
-	input?: ("text" | "image")[];
-	cost?: ModelCost;
-	contextWindow?: number;
-	maxTokens?: number;
-}
-
-/** models.json 中 provider 定义的最小子集 */
-interface ModelsJsonProviderDef {
-	name?: string;
-	baseUrl?: string;
-	apiKey?: string;
-	api?: string;
-	models?: ModelsJsonModelDef[];
-}
-
-/** models.json 顶层结构 */
-interface ModelsJsonFile {
-	providers?: Record<string, ModelsJsonProviderDef>;
-}
-
 /**
- * 解析后的「扁平 model 条目」：附带其 provider 名 + 是否有 apiKey（auth 可用）。
+ * 解析后的「扁平 model 条目」：附带其 provider 名。
  *
  * listAvailableModels 的中间表示，用于 picker 分组展示。
+ * 注：hasApiKey 语义已不存在（E2 后用 hasConfiguredAuth 过滤，能进列表即已配 auth）。
  */
 export interface ResolvedModelEntry {
 	provider: string;
@@ -75,101 +48,50 @@ export interface ResolvedModelEntry {
 	api: string;
 	baseUrl?: string;
 	cost: ModelCost;
-	/** 该 provider 在 models.json 是否配置了 apiKey（auth 可用） */
-	hasApiKey: boolean;
-	/** 该 provider 的 apiKey（用于 streamSimple 调用） */
-	apiKey?: string;
-}
-
-// ──────────────────────── loadModelsJson ────────────────────────
-
-/**
- * 读取并解析 models.json。
- *
- * @param onWarning 非致命问题（文件缺失/解析失败）的警告回调；不抛错（fail-closed：返回 null）
- * @returns 解析后的 ModelsJsonFile；文件不存在或解析失败返回 null
- *
- * G6：显式 onWarning 参数，让调用方决定如何上报（console.warn / telemetry / 静默）。
- */
-export function loadModelsJson(
-	onWarning?: (msg: string) => void,
-	filePath?: string,
-): ModelsJsonFile | null {
-	const path = filePath ?? join(agentDir(), "models.json");
-	if (!existsSync(path)) {
-		return null;
-	}
-	try {
-		const raw = readFileSync(path, "utf-8");
-		const parsed: unknown = JSON.parse(raw);
-		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-			onWarning?.(`[pi-permission] models.json root is not an object: ${path}`);
-			return null;
-		}
-		return parsed as ModelsJsonFile;
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		onWarning?.(`[pi-permission] Failed to parse models.json at '${path}': ${message}`);
-		return null;
-	}
-}
-
-// ──────────────────────── 拍平 ────────────────────────
-
-/** 把 models.json 拍平成 ResolvedModelEntry 列表（每个 provider.model 一条） */
-export function flattenModels(data: ModelsJsonFile): ResolvedModelEntry[] {
-	const providers = data.providers ?? {};
-	const out: ResolvedModelEntry[] = [];
-	for (const [providerName, providerDef] of Object.entries(providers)) {
-		if (!providerDef || typeof providerDef !== "object") continue;
-		const hasApiKey = typeof providerDef.apiKey === "string" && providerDef.apiKey.length > 0;
-		const apiKey = hasApiKey ? providerDef.apiKey : undefined;
-		const modelDefs = Array.isArray(providerDef.models) ? providerDef.models : [];
-		for (const m of modelDefs) {
-			if (!m || typeof m.id !== "string") continue;
-			const api = m.api ?? providerDef.api;
-			if (typeof api !== "string" || api.length === 0) continue; // 无法构造 Model<Api>
-			out.push({
-				provider: providerName,
-				id: m.id,
-				name: typeof m.name === "string" ? m.name : m.id,
-				api,
-				baseUrl: typeof m.baseUrl === "string" ? m.baseUrl : typeof providerDef.baseUrl === "string" ? providerDef.baseUrl : undefined,
-				// 缺失 cost 时填零默认（picker 排序稳定，不依赖真实成本）
-				cost: m.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-				hasApiKey,
-				apiKey,
-			});
-		}
-	}
-	return out;
 }
 
 // ──────────────────────── listAvailableModels（W7 model picker 用） ────────────────────────
 
 /**
- * 列出所有「可用」（provider 配了 apiKey）的模型，按 provider 分组成 Map。
+ * 列出所有「可用」（hasConfiguredAuth 通过）的模型，按 provider 分组成 Map。
  *
  * model picker（/permission model）用：第一级选 provider，第二级选该 provider 下的 model。
  *
- * 排序规则：
- *  - provider 内 model 按 cost.input 升序，并列时按 id 字母序 tiebreaker
- *  - provider 之间按字母序（Map 保持插入序，便于 picker 稳定展示）
+ * 排序规则（E2）：整体按 provider + id 字典序（cost 在 xyz-agent 环境普遍缺失，
+ * 旧 cost.input 排序无语义；Map 保持插入序，字典序保证 picker 展示稳定）。
  *
- * 文件缺失 / 解析失败 → 返回空 Map（不 throw，调用方据此降级为「无可选模型」提示）。
+ * modelRegistry 无可用模型 / 全部无 auth → 返回空 Map（不 throw，调用方据此降级为
+ * 「无可选模型」提示）。
  *
- * @param onWarning 文件读取/解析问题的警告回调（透传给 loadModelsJson）
- * @param filePath 可选，自定义 models.json 路径（测试用）
- * @returns Map<providerName, ResolvedModelEntry[]>（仅含 hasApiKey=true 的 provider）
+ * @param ctx 含 modelRegistry 的上下文（model 列表 + auth 判定）
+ * @param onWarning 保留参数位（契约兼容；E2 后无文件读取，无警告源）
+ * @returns Map<providerName, ResolvedModelEntry[]>
  */
 export function listAvailableModels(
+	ctx: ListAvailableModelsCtx,
 	onWarning?: (msg: string) => void,
-	filePath?: string,
 ): Map<string, ResolvedModelEntry[]> {
-	const file = loadModelsJson(onWarning, filePath);
-	if (file === null) return new Map();
+	void onWarning; // 无警告源（不再读文件），保留参数位兼容调用方
+	const entries: ResolvedModelEntry[] = [];
+	for (const m of ctx.modelRegistry.getAll()) {
+		if (!ctx.modelRegistry.hasConfiguredAuth(m)) continue;
+		entries.push({
+			provider: m.provider,
+			id: m.id,
+			name: m.name ?? m.id,
+			api: m.api,
+			...(m.baseUrl ? { baseUrl: m.baseUrl } : {}),
+			// 缺失 cost 时填零默认（picker 展示稳定，不依赖真实成本）
+			cost: m.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		});
+	}
 
-	const entries = flattenModels(file).filter((m) => m.hasApiKey);
+	// provider + id 字典序（整体排序，Map 按插入序分组自然有序）
+	entries.sort((a, b) => {
+		if (a.provider !== b.provider) return a.provider < b.provider ? -1 : 1;
+		return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+	});
+
 	// 按 provider 分组
 	const grouped = new Map<string, ResolvedModelEntry[]>();
 	for (const entry of entries) {
@@ -179,24 +101,6 @@ export function listAvailableModels(
 		} else {
 			list.push(entry);
 		}
-	}
-
-	// provider 内排序：cost.input 升序 + id 字母序 tiebreaker
-	for (const list of grouped.values()) {
-		list.sort((a, b) => {
-			if (a.cost.input !== b.cost.input) return a.cost.input - b.cost.input;
-			return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-		});
-	}
-
-	// provider 间按字母序重排（新建 Map 保持插入序）
-	if (grouped.size > 1) {
-		const sortedProviders = [...grouped.keys()].sort();
-		const reordered = new Map<string, ResolvedModelEntry[]>();
-		for (const p of sortedProviders) {
-			reordered.set(p, grouped.get(p)!);
-		}
-		return reordered;
 	}
 	return grouped;
 }

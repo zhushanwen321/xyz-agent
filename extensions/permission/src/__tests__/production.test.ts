@@ -1,16 +1,18 @@
 /**
  * production.test.ts — createProductionClassifier + createPipelineDeps 装配测试。
  *
- * P3 收口后 createProductionClassifier(ctx) 走 ctx.modelRegistry（resolveModel +
- * getApiKeyAndHeaders）。测试用 mock ctx.modelRegistry + vi.mock llm-shared resolveModel
- * 精确控制 model 解析与凭证返回，覆盖：
+ * C1a 收口后 createProductionClassifier(ctx) 的 resolveModel 注入走 llm-shared resolveModel
+ * （不再预检凭证），callLLM 注入闭包捕获 ctx（凭证在 callLLM 内部 getApiKeyAndHeaders）。
+ * 测试用 mock ctx.modelRegistry + vi.mock llm-shared（resolveModel + callLLM）精确控制，覆盖：
  *  - TC1/TC2: toSelector 映射（'auto'→scoped / 'provider/model-id'→ref）
- *  - TC3: scoped 全空 fail-closed（resolveModel null → classifyRisk fallback）
- *  - TC4: OAuth 命中（resolveModel 返回 model + getApiKeyAndHeaders ok → auth 装配）
- *  - TC5: auth.ok=false → null fail-closed（narrow 不访问 auth.apiKey）
+ *  - TC3: scoped 全空 fail-closed（resolveModel null → classifyRisk fallback，不触达 callLLM）
+ *  - TC4（静态断言）: production.ts 收口完成——无 getApiProvider/streamSimple/@ts-ignore，走 callLLM
+ *  - TC4（装配）: resolveModel 命中 → callLLM 收到 model → ok:true 正常分类（链路通）
+ *  - TC5: callLLM 返回 ok:false（LLM 调用失败）→ classifier fail-closed fallback
  *  - TC7: scoped 空 fallback available（CL-scoped-fallback 退化防护）
  *  - m1: 每次 createPipelineDeps 创建独立 classifier（CL-classifier-singleton）
  */
+import { readFileSync } from "node:fs";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,22 +21,23 @@ import type { ApprovalContext } from "../approval.js";
 import type { CheckPermissionDeps } from "../pipeline.js";
 import { createPipelineDeps, createProductionClassifier, toSelector } from "../production.js";
 
-// vi.mock 必须在 import 之前（vitest hoisting）。替换 llm-shared 的 resolveModel 为可控 mock，
-// 默认透传 actual（真实读 settings.json），单测用 mockImplementation 精确控制。
+// vi.mock 必须在 import 之前（vitest hoisting）。替换 llm-shared 的 resolveModel + callLLM
+// 为可控 mock，默认透传 actual（真实实现），单测用 mockImplementation/mockResolvedValue 精确控制。
 vi.mock("@zhushanwen/pi-llm-shared", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@zhushanwen/pi-llm-shared")>();
 	return {
 		...actual,
 		resolveModel: vi.fn(actual.resolveModel),
+		callLLM: vi.fn(actual.callLLM),
 	};
 });
 
 // mock 后再 import，拿到的是 mock 版（用于单测配置返回值）
-const { resolveModel: resolveModelShared } = await import("@zhushanwen/pi-llm-shared");
+const { resolveModel: resolveModelShared, callLLM: callLLMShared } = await import("@zhushanwen/pi-llm-shared");
 
 // ──────────────────────── fixtures ────────────────────────
 
-/** 测试用 model（api 用未注册的 bogus 值，让 getApiProvider 返回 undefined → streamSimple throw → fallback） */
+/** 测试用 model（resolveModel mock 的返回值；callLLM 已 mock，不触达真实 provider） */
 const MOCK_MODEL_A: Model<Api> = {
 	id: "model-a",
 	name: "Model A",
@@ -83,6 +86,7 @@ function makeMockCtx(over: {
 
 beforeEach(() => {
 	vi.mocked(resolveModelShared).mockReset();
+	vi.mocked(callLLMShared).mockReset();
 });
 
 // ──────────────────────── TC1/TC2: toSelector 映射 ────────────────────────
@@ -121,44 +125,53 @@ describe("createProductionClassifier", () => {
 	});
 });
 
-// ──────────────────────── resolveModelAndAuth 装配（C3） ────────────────────────
+// ──────────────────────── resolveModel 装配（C3 + C1a 收口） ────────────────────────
 
-describe("resolveModelAndAuth 装配（resolveModel + getApiKeyAndHeaders）", () => {
+describe("resolveModel 装配（resolveModel + callLLM）", () => {
 	const CTX = { toolName: "bash", command: "ls", cwd: "/tmp" };
 	const CFG = { enabled: true, model: "auto", timeout: 5, autoApproveLowRisk: false, autoDenyHighRisk: true };
 
-	it("TC3: scoped enabledModels 空 + available 空 → resolveModel null → fail-closed ask（getApiKeyAndHeaders 不被调）", async () => {
+	it("TC3: scoped enabledModels 空 + available 空 → resolveModel null → fail-closed ask（不触达 callLLM）", async () => {
 		vi.mocked(resolveModelShared).mockReturnValue(null);
-		const getApiKeyAndHeaders = vi.fn(async () => ({ ok: true as const, apiKey: "should-not-reach" }));
-		const ctx = makeMockCtx({ getApiKeyAndHeaders });
+		const ctx = makeMockCtx();
 		const classifier = createProductionClassifier(ctx);
 		const result = await classifier.classifyRisk(CTX, CFG);
 		expect(result.outcome).toBe("ask");
 		expect(result.confidence).toBe(0);
-		// 关键：resolveModel null 时不应触达 getApiKeyAndHeaders
-		expect(getApiKeyAndHeaders).not.toHaveBeenCalled();
+		// 关键：resolveModel null 时不应触达 callLLM（LLM 调用层）
+		expect(callLLMShared).not.toHaveBeenCalled();
 	});
 
-	it("TC4: scoped 命中 model + getApiKeyAndHeaders ok → auth 装配（apiKey 来自 getApiKeyAndHeaders，场景 3 OAuth）", async () => {
+	it("TC4（静态断言）: production.ts 收口完成——无 getApiProvider/streamSimple/@ts-ignore，classifier 走 callLLM", () => {
+		const source = readFileSync(new URL("../production.ts", import.meta.url), "utf-8");
+		// 匹配代码形式（import 调用 / 字段定义），注释里的历史描述不算残留
+		expect(source).not.toMatch(/getApiProvider\s*\(/);
+		expect(source).not.toMatch(/streamSimple\s*[:=]/);
+		expect(source).not.toMatch(/\/\/\s*@ts-ignore/);
+		expect(source).not.toMatch(/import\s*\{[^}]*getApiProvider/);
+		// classifier LLM 调用收口到 llm-shared callLLM（注入闭包捕获 ctx）
+		expect(source).toMatch(/callLLM\s*:/);
+		expect(source).toContain('from "@zhushanwen/pi-llm-shared"');
+	});
+
+	it("TC4（装配）: resolveModel 命中 → callLLM 收到 model → ok:true 正常分类（收口链路通）", async () => {
 		vi.mocked(resolveModelShared).mockImplementation((_ctx, selector) =>
 			selector.type === "scoped" ? MOCK_MODEL_A : null,
 		);
-		const getApiKeyAndHeaders = vi.fn(async () => ({ ok: true as const, apiKey: "oauth-key-xxx" }));
-		const ctx = makeMockCtx({ getApiKeyAndHeaders });
-		const classifier = createProductionClassifier(ctx);
-		// streamSimple 走真实 getApiProvider，bogus-api 未注册 → throw → classifier catch → fallback ask。
-		// 本测试验证装配层（resolve→auth 链路通），streamSimple apiKey 透传由 classifier.test.ts CT5 覆盖。
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-		let result: Awaited<ReturnType<typeof classifier.classifyRisk>>;
-		try {
-			result = await classifier.classifyRisk(CTX, CFG);
-		} finally {
-			warnSpy.mockRestore();
-		}
-		expect(result!.outcome).toBe("ask"); // streamSimple throw 的 fallback（非 null 路径）
-		// 关键：resolveModel 返回 model 后，getApiKeyAndHeaders 被调用且收到该 model（证明 OAuth resolve→auth 通）
-		expect(getApiKeyAndHeaders).toHaveBeenCalledOnce();
-		expect(getApiKeyAndHeaders).toHaveBeenCalledWith(MOCK_MODEL_A);
+		vi.mocked(callLLMShared).mockResolvedValue({
+			ok: true,
+			content: '{"outcome":"allow","risk_level":"low","reasoning":"safe","confidence":0.9}',
+		});
+		const classifier = createProductionClassifier(makeMockCtx());
+		const result = await classifier.classifyRisk(CTX, CFG);
+		expect(result.outcome).toBe("allow");
+		// 关键：resolveModel 返回 model 后，callLLM 被调用且收到该 model（收口链路 resolve→callLLM 通）
+		expect(callLLMShared).toHaveBeenCalledOnce();
+		// callLLM(ctx, opts) 两个参数：mock.calls[0] = [ctx, opts]
+		const opts = vi.mocked(callLLMShared).mock.calls[0]![1];
+		expect(opts.model).toBe(MOCK_MODEL_A);
+		expect(opts.messages).toHaveLength(1);
+		expect(opts.systemPrompt.length).toBeGreaterThan(0);
 		// scoped 命中只调 1 次 resolveModel（不走 available fallback）
 		expect(vi.mocked(resolveModelShared)).toHaveBeenCalledTimes(1);
 	});
@@ -167,8 +180,8 @@ describe("resolveModelAndAuth 装配（resolveModel + getApiKeyAndHeaders）", (
 		vi.mocked(resolveModelShared).mockImplementation((_ctx, selector) =>
 			selector.type === "scoped" ? MOCK_MODEL_A : null,
 		);
-		const getApiKeyAndHeaders = vi.fn(async () => ({ ok: true as const, apiKey: "oauth-key-xxx" }));
-		const classifier = createProductionClassifier(makeMockCtx({ getApiKeyAndHeaders }));
+		vi.mocked(callLLMShared).mockResolvedValue({ ok: true, content: "x" });
+		const classifier = createProductionClassifier(makeMockCtx());
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		try {
 			await classifier.classifyRisk(CTX, CFG);
@@ -179,15 +192,14 @@ describe("resolveModelAndAuth 装配（resolveModel + getApiKeyAndHeaders）", (
 		}
 	});
 
-	it("TC5: getApiKeyAndHeaders 返回 auth.ok=false → null fail-closed（narrow 不访问 auth.apiKey，不 throw）", async () => {
+	it("TC5: callLLM 返回 ok:false（LLM 调用失败）→ classifier fail-closed fallback（不 throw）", async () => {
 		vi.mocked(resolveModelShared).mockReturnValue(MOCK_MODEL_A);
-		const getApiKeyAndHeaders = vi.fn(async () => ({ ok: false as const, error: "token expired" }));
-		const ctx = makeMockCtx({ getApiKeyAndHeaders });
-		const classifier = createProductionClassifier(ctx);
+		vi.mocked(callLLMShared).mockResolvedValue({ ok: false, error: "token expired", recoverable: true });
+		const classifier = createProductionClassifier(makeMockCtx());
 		const result = await classifier.classifyRisk(CTX, CFG);
 		expect(result.outcome).toBe("ask");
 		expect(result.confidence).toBe(0);
-		expect(getApiKeyAndHeaders).toHaveBeenCalledOnce();
+		expect(callLLMShared).toHaveBeenCalledOnce();
 	});
 
 	it("TC7: scoped 空 fallback available 命中（CL-scoped-fallback：有 auth provider 但无 enabledModels 不退化）", async () => {
@@ -195,16 +207,16 @@ describe("resolveModelAndAuth 装配（resolveModel + getApiKeyAndHeaders）", (
 		vi.mocked(resolveModelShared).mockImplementation((_ctx, selector) =>
 			selector.type === "available" ? MOCK_MODEL_A : null,
 		);
-		const getApiKeyAndHeaders = vi.fn(async () => ({ ok: true as const, apiKey: "available-key" }));
-		const ctx = makeMockCtx({ getApiKeyAndHeaders });
-		const classifier = createProductionClassifier(ctx);
+		vi.mocked(callLLMShared).mockResolvedValue({ ok: true, content: "x" });
+		const classifier = createProductionClassifier(makeMockCtx());
 		const result = await classifier.classifyRisk(CTX, CFG);
-		// fallback 命中 available → getApiKeyAndHeaders 被调（非 scoped 的 null 直接返回）
-		expect(getApiKeyAndHeaders).toHaveBeenCalledOnce();
-		expect(getApiKeyAndHeaders).toHaveBeenCalledWith(MOCK_MODEL_A);
+		// fallback 命中 available → callLLM 收到 available model（非 scoped 的 null 直接返回）
+		expect(callLLMShared).toHaveBeenCalledOnce();
+		const opts = vi.mocked(callLLMShared).mock.calls[0]![1];
+		expect(opts.model).toBe(MOCK_MODEL_A);
 		// scoped 调 1 次（null）+ available fallback 调 1 次 = 2 次
 		expect(vi.mocked(resolveModelShared)).toHaveBeenCalledTimes(2);
-		// streamSimple bogus-api throw → fallback ask（但已证明 resolveModelAndAuth 非 null）
+		// callLLM ok:true 但 content 非 JSON → parser fallback ask（链路已证明 resolve→callLLM 非 null）
 		expect(result.outcome).toBe("ask");
 	});
 });

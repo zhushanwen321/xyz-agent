@@ -389,7 +389,7 @@ const result = await callLLM(ctx, {
 | E2 | 提供 auto，换排序依据（如 contextWindow 或显式 priority） | ❌ |
 | E3 | 提供 auto，强制要求填 cost | ❌ |
 
-**推荐 E1**。理由：auto 在当前环境不可靠（cost 普遍缺失），提供它等于给用户埋坑。显式 selector 行为确定、可预期。permission 的 `classifier.model: "auto"` 配置在 C1 收口后，**映射为 `{type:"scoped"}`**——从用户 settings.json 的 enabledModels 取首个可用 model（用户显式排序，比 getAvailable 取首个更可控）。这同时修复了"读不到 OAuth provider"的缺陷（走 `modelRegistry.getApiKeyAndHeaders`）。⛔ **探针**（P3 实施时）：确认 enabledModels 非空时 scoped 能取到 model；enabledModels 为空时 permission 降级为 fail-closed `ask`（与现状一致）。
+**推荐 E1**。理由：auto 在当前环境不可靠（cost 普遍缺失），提供它等于给用户埋坑。显式 selector 行为确定、可预期。permission 的 `classifier.model: "auto"` 配置在 C1 收口后，**映射为 `{type:"scoped"}`**——从用户 settings.json 的 enabledModels 取首个可用 model（用户显式排序，比 getAvailable 取首个更可控）。这同时修复了"读不到 OAuth provider"的缺陷（走 `modelRegistry.getApiKeyAndHeaders`）。⛔ **探针**（P3 实施时）：确认 enabledModels 非空时 scoped 能取到 model；enabledModels 为空时 permission 降级为 fail-closed `ask`（与现状一致）。**（C4 回写，批次 3）**：实现采用更宽的兜底（CL-scoped-fallback）：**enabledModels 为空 → 先试 available fallback（getAvailable 首个）→ 仍 null 才 fail-closed `ask`**——保证「有 apiKey provider 但没配 enabledModels」的用户不退化（旧 auto 行为）。探针结论按实现回写：降级语义是「available 兜底失败后才 fail-closed」，非「空即 fail-closed」。
 
 **「没配置模型就不能用 auto」= 天然门禁，无需额外代码**：scoped 在 enabledModels 为空 / 启用的 model 都没配 auth 时返回 `null` → permission 沿用现有 `CLASSIFY_FALLBACK_RESULT`（`classifier.ts:80`）降级为 `ask`。这与 permission 现有 fail-closed 设计一致，C1 收口不需要写新的门禁逻辑。
 
@@ -540,7 +540,9 @@ export async function callLLM(ctx, opts) {
 |------|------|---------|
 | `resolveModel` 返回 `null` | selector 指定的 model 不存在/未配 auth/scoped 时 enabledModels 为空 | 检查 `<agentDir>/models.json` 或跑 `pi auth login`；scoped 时检查 `<agentDir>/settings.json` 的 `enabledModels` 是否非空 |
 | `callLLM` 返回 `{ok:false, recoverable:true}` | 网络/超时/auth 失败 | rename 静默跳过；permission 降级为 `ask`（fail-closed） |
-| `callLLM` 返回 `{ok:false, recoverable:false}` | model 配置错误（如 api 类型不支持） | 修正 models.json 的 model 定义 |
+| `callLLM` 返回 `{ok:false, recoverable:false}` | model 配置错误（如 api 类型不支持） | ~~修正 models.json 的 model 定义~~（**C2b 回写**：当前实现无此分支，catch/stopReason 路径统一 `recoverable:true`，细分待未来有消费者后再实现；`stopReason?: "error" \| "aborted"` 作为独立透传字段已就位，细分时可映射） |
+
+> **C2b 回写（批次 3）**：错误规格两级 recoverable 为设计目标，**当前实现统一 `true`**（catch 与 stopReason 归一化都不细分）。唯一消费者 rename 不区分值，细分属 YAGNI，待未来出现需要区分恢复性的消费者（如「model 配置错误立即失败不重试」）再实现，届时直接映射已就位的 stopReason 透传字段。
 
 **调用语义契约（fire-and-forget，审查 suggestion）**：rename-session 现状 `index.ts` 的 turn_end handler 是**真正的 fire-and-forget**——`void callRenameLLM(...).then(...).catch(...)`，handler 立即 resolve，LLM 调用与 setSessionName 在后台异步完成（不阻塞 agent 进入下一次迭代）。**改造后必须保留此契约**：turn_end handler 内调 `callLLM` 必须用 `void callLLM(...).then(...).catch(...)` 包裹，**禁止 `await callLLM`**（await 会阻塞 turn_end handler，与现有行为不符，可能导致 agent 循环卡顿）。permission 的 classifier 不受此约束（classifier 在请求处理链内同步等待结果是正确行为）。
 
@@ -652,7 +654,7 @@ interface RenameSessionConfig {
 
 ### 场景 3：permission classifier 走共享库后能用到 OAuth provider（验证目标 2、3，依赖决策 C=C1）
 
-**前置**：用户只通过 `pi auth login` 配了官方 provider（没手写 models.json 的 provider）。`permission-config.json` 的 `classifier.model` 设为 `{ "type": "available" }` 或某 OAuth provider 的 ref。
+**前置**：用户只通过 `pi auth login` 配了官方 provider（没手写 models.json 的 provider）。`permission-config.json` 的 `classifier.model` 设为 `"auto"` 或某 OAuth provider 的 `"provider/model-id"` ref（**C3b 回写**：仅支持 string 形式；对象形式会被 normalize 忽略并 console.warn 回落 `auto`）。
 
 **步骤**：触发一次需要 classifier 的命令（如执行一个中等风险 bash 命令）。
 

@@ -6,7 +6,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_CONFIG } from "../types.js";
 import {
@@ -121,6 +121,51 @@ describe("WT3: 配置解析容错（malformed JSON）", () => {
 		expect(config.mode).toBe("strict");
 		expect(config.classifier.model).toBe("auto"); // 默认
 		expect(config.classifier.timeout).toBe(90); // 默认
+	});
+
+	it("TC6 (C3b): classifier.model 传对象形式 → console.warn + 回落默认 auto", () => {
+		const configPath = join(tempDir, "permission-config.json");
+		// 用户照旧设计文档配对象形式 selector（不受支持）
+		writeFileSync(configPath, JSON.stringify({ classifier: { model: { type: "available" } } }), "utf-8");
+
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			const config = loadAndWatchConfig(configPath);
+			// 回落默认 auto（不再静默）
+			expect(config.classifier.model).toBe("auto");
+			// warn 提示忽略无效 classifier.model
+			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Ignoring invalid classifier.model"));
+		} finally {
+			warnSpy.mockRestore();
+		}
+	});
+
+	it("classifier.model 传数字 → console.warn + 回落默认 auto", () => {
+		const configPath = join(tempDir, "permission-config.json");
+		writeFileSync(configPath, JSON.stringify({ classifier: { model: 42 } }), "utf-8");
+
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			const config = loadAndWatchConfig(configPath);
+			expect(config.classifier.model).toBe("auto");
+			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Ignoring invalid classifier.model"));
+		} finally {
+			warnSpy.mockRestore();
+		}
+	});
+
+	it("classifier.model 合法 string（'auto' / 'provider/model-id'）→ 不 warn", () => {
+		const configPath = join(tempDir, "permission-config.json");
+		writeFileSync(configPath, JSON.stringify({ classifier: { model: "zhipu/glm-4-flash" } }), "utf-8");
+
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			const config = loadAndWatchConfig(configPath);
+			expect(config.classifier.model).toBe("zhipu/glm-4-flash");
+			expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("Ignoring invalid classifier.model"));
+		} finally {
+			warnSpy.mockRestore();
+		}
 	});
 
 	it("userRules 含非法条目时过滤掉", () => {

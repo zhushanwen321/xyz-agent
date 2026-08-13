@@ -2,7 +2,7 @@
  * model-picker.test.ts — W7 T5：model picker 单元测试。
  *
  * 覆盖：
- *  - listAvailableModels（5）：空文件 / 无 apiKey 过滤 / 多 provider 排序 / cost 升序 / 无 model 的 provider 不进 Map
+ *  - listAvailableModels（2）：E2 后走 mock ctx.modelRegistry（详细覆盖在 model-resolver.test.ts）
  *  - pickModelViaOverlay（3）：TUI mock custom / RPC mock select / headless 降级
  *  - ProviderModelSelectorComponent（5，含 WR1 handleInput 锁定）：
  *      构造 / 初始 stage / provider onSelect / switchToModelStage / model onSelect
@@ -10,11 +10,9 @@
  *
  * 用真实 pi-tui SelectList（不 mock），验证键盘委托集成通路（WR1 critical）。
  */
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { Api, Model } from "@earendil-works/pi-ai";
 
 import type { ResolvedModelEntry } from "../classifier/model-resolver.js";
 import { listAvailableModels } from "../classifier/model-resolver.js";
@@ -26,103 +24,70 @@ import {
 	type SelectionResult,
 } from "../model-picker.js";
 
-// ──────────────────────── 临时文件 fixtures（listAvailableModels） ────────────────────────
-
-let tempDir: string;
-let modelsJsonPath: string;
-
-beforeEach(() => {
-	tempDir = mkdtempSync(join(tmpdir(), "pi-perm-mp-"));
-	modelsJsonPath = join(tempDir, "models.json");
-});
-
-afterEach(() => {
-	rmSync(tempDir, { recursive: true, force: true });
-});
-
-function writeModels(data: unknown): void {
-	writeFileSync(modelsJsonPath, JSON.stringify(data), "utf-8");
-}
+// ──────────────────────── mock fixtures（listAvailableModels） ────────────────────────
 
 /** 构造一条 ResolvedModelEntry（测试 helper）。 */
-function makeEntry(provider: string, id: string, inputCost: number, hasApiKey = true): ResolvedModelEntry {
+function makeEntry(provider: string, id: string, inputCost: number): ResolvedModelEntry {
 	return {
 		provider,
 		id,
 		name: id,
 		api: "openai-completions",
 		cost: { input: inputCost, output: 0, cacheRead: 0, cacheWrite: 0 },
-		hasApiKey,
 	};
 }
 
-/** 构造 models Map（用于 component / pickModelViaOverlay 测试，避免读盘）。 */
+/** 构造 mock Model（modelRegistry.getAll 用）。 */
+function makeMockModel(provider: string, id: string): Model<Api> {
+	return {
+		id,
+		name: id,
+		api: "openai-completions" as Api,
+		provider,
+		baseUrl: "",
+		reasoning: false,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	} as Model<Api>;
+}
+
+/** 构造 models Map（用于 component / pickModelViaOverlay 测试，避免真实数据源）。 */
 function makeModelsMap(providers: Record<string, ResolvedModelEntry[]>): Map<string, ResolvedModelEntry[]> {
 	return new Map(Object.entries(providers));
 }
 
-// ──────────────────────── listAvailableModels（5 cases） ────────────────────────
+// ──────────────────────── listAvailableModels（E2 数据源接入） ────────────────────────
 
-describe("MPT1: listAvailableModels", () => {
-	it("文件缺失 → 空 Map（不 throw）", () => {
-		expect(existsSync(modelsJsonPath)).toBe(false);
-		const map = listAvailableModels(undefined, modelsJsonPath);
-		expect(map.size).toBe(0);
-	});
-
-	it("无 apiKey 的 provider 被过滤（不进 Map）", () => {
-		writeModels({
-			providers: {
-				"auth-co": { apiKey: "k1", api: "openai-completions", models: [{ id: "m1", cost: { input: 0.1, output: 0, cacheRead: 0, cacheWrite: 0 } }] },
-				"noauth-co": { api: "openai-completions", models: [{ id: "m2", cost: { input: 0.2, output: 0, cacheRead: 0, cacheWrite: 0 } }] },
+describe("MPT1: listAvailableModels（E2 走 ctx.modelRegistry）", () => {
+	it("mock ctx.modelRegistry：hasConfiguredAuth 过滤后按 provider 分组（OAuth provider 可见）", () => {
+		const ctx: ModelPickerContext = {
+			mode: "rpc",
+			modelRegistry: {
+				getAll: () => [makeMockModel("auth-co", "m1"), makeMockModel("noauth-co", "m2")],
+				hasConfiguredAuth: (m) => m.provider === "auth-co",
 			},
-		});
-		const map = listAvailableModels(undefined, modelsJsonPath);
+			ui: {
+				notify: vi.fn(),
+				select: vi.fn(() => Promise.resolve(undefined)),
+				custom: vi.fn(() => Promise.resolve(undefined)),
+			},
+		};
+		const map = listAvailableModels(ctx);
 		expect(map.has("auth-co")).toBe(true);
-		expect(map.has("noauth-co")).toBe(false); // 无 apiKey 过滤
+		expect(map.has("noauth-co")).toBe(false);
 	});
 
-	it("多 provider 按 provider 名字母序排序（Map 插入序）", () => {
-		writeModels({
-			providers: {
-				"zebra-co": { apiKey: "k1", api: "openai-completions", models: [{ id: "m1", cost: { input: 0.1, output: 0, cacheRead: 0, cacheWrite: 0 } }] },
-				"alpha-co": { apiKey: "k2", api: "openai-completions", models: [{ id: "m2", cost: { input: 0.2, output: 0, cacheRead: 0, cacheWrite: 0 } }] },
+	it("registry 无可选模型 → 空 Map（picker 降级提示）", () => {
+		const ctx: ModelPickerContext = {
+			mode: "rpc",
+			modelRegistry: { getAll: () => [], hasConfiguredAuth: () => false },
+			ui: {
+				notify: vi.fn(),
+				select: vi.fn(() => Promise.resolve(undefined)),
+				custom: vi.fn(() => Promise.resolve(undefined)),
 			},
-		});
-		const map = listAvailableModels(undefined, modelsJsonPath);
-		const providers = [...map.keys()];
-		expect(providers).toEqual(["alpha-co", "zebra-co"]); // 字母序
-	});
-
-	it("provider 内 model 按 cost.input 升序 + id 字母序 tiebreaker", () => {
-		writeModels({
-			providers: {
-				"co": {
-					apiKey: "k1",
-					api: "openai-completions",
-					models: [
-						{ id: "expensive", cost: { input: 1.0, output: 0, cacheRead: 0, cacheWrite: 0 } },
-						{ id: "cheap-b", cost: { input: 0.1, output: 0, cacheRead: 0, cacheWrite: 0 } },
-						{ id: "cheap-a", cost: { input: 0.1, output: 0, cacheRead: 0, cacheWrite: 0 } },
-					],
-				},
-			},
-		});
-		const map = listAvailableModels(undefined, modelsJsonPath);
-		const models = map.get("co")!;
-		expect(models.map((m) => m.id)).toEqual(["cheap-a", "cheap-b", "expensive"]);
-	});
-
-	it("provider 有 apiKey 但无 model → 不进 Map（无 model 项被过滤）", () => {
-		writeModels({
-			providers: {
-				"empty-co": { apiKey: "k1", api: "openai-completions", models: [] },
-				"has-co": { apiKey: "k2", api: "openai-completions", models: [{ id: "m1", cost: { input: 0.1, output: 0, cacheRead: 0, cacheWrite: 0 } }] },
-			},
-		});
-		const map = listAvailableModels(undefined, modelsJsonPath);
-		expect(map.has("empty-co")).toBe(false); // 无 model 不进 Map
-		expect(map.has("has-co")).toBe(true);
+		};
+		const map = listAvailableModels(ctx);
+		expect(map.size).toBe(0);
 	});
 });
 
@@ -131,13 +96,21 @@ describe("MPT1: listAvailableModels", () => {
 function makePickerCtx(overrides: Partial<ModelPickerContext> = {}): ModelPickerContext {
 	const base: ModelPickerContext = {
 		mode: "tui",
+		modelRegistry: {
+			getAll: vi.fn(() => []),
+			hasConfiguredAuth: vi.fn(() => false),
+		},
 		ui: {
 			notify: vi.fn(),
 			select: vi.fn(() => Promise.resolve(undefined)),
 			custom: vi.fn(() => Promise.resolve(undefined)),
 		},
 	};
-	return { mode: overrides.mode ?? base.mode, ui: { ...base.ui, ...overrides.ui } };
+	return {
+		mode: overrides.mode ?? base.mode,
+		modelRegistry: overrides.modelRegistry ?? base.modelRegistry,
+		ui: { ...base.ui, ...overrides.ui },
+	};
 }
 
 describe("MPT2: pickModelViaOverlay 分发", () => {

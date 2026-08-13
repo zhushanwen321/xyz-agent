@@ -217,21 +217,28 @@ function makeModelEntry(provider: string, id: string, inputCost: number): Resolv
 		name: id,
 		api: "openai-completions",
 		cost: { input: inputCost, output: 0, cacheRead: 0, cacheWrite: 0 },
-		hasApiKey: true,
 	};
 }
 
-/** 构造 mock ctx（mode + ui.notify/custom/select）。 */
+/** 构造 mock ctx（mode + modelRegistry + ui.notify/custom/select）。 */
 function makeModelPickerCtx(overrides: Partial<ModelPickerContext> = {}): ModelPickerContext {
 	const base: ModelPickerContext = {
 		mode: "rpc",
+		modelRegistry: {
+			getAll: vi.fn(() => []),
+			hasConfiguredAuth: vi.fn(() => false),
+		},
 		ui: {
 			notify: vi.fn(),
 			select: vi.fn(() => Promise.resolve("Auto")),
 			custom: vi.fn(() => Promise.resolve(undefined)),
 		},
 	};
-	return { mode: overrides.mode ?? base.mode, ui: { ...base.ui, ...overrides.ui } };
+	return {
+		mode: overrides.mode ?? base.mode,
+		modelRegistry: overrides.modelRegistry ?? base.modelRegistry,
+		ui: { ...base.ui, ...overrides.ui },
+	};
 }
 
 /** 构造 mock deps（listModels + save）。 */

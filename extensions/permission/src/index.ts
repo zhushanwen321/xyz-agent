@@ -60,9 +60,9 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 	});
 
 	// W7：注入 listAvailableModels 真实实现（model-picker.ts 默认返回空 Map）。
-	// G1 口径：(onWarning?, filePath?) → 封装读盘；warning 透传到 console.warn。
-	setDefaultListAvailableModels((onWarning, filePath) =>
-		listAvailableModels(onWarning ?? ((m) => console.warn(m)), filePath),
+	// E2 签名：(ctx, onWarning?) → ctx.modelRegistry.getAll() + hasConfiguredAuth 过滤；warning 透传到 console.warn。
+	setDefaultListAvailableModels((ctx, onWarning) =>
+		listAvailableModels(ctx, onWarning ?? ((m) => console.warn(m))),
 	);
 
 	/** 读取最新配置到闭包变量（mtime 缓存内部去重，未变化不读 fs） */
@@ -143,6 +143,8 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 				await handlePermissionModelCommand(
 					{
 						mode: ctx.mode,
+						// E2：model picker 数据源（listAvailableModels 走 modelRegistry）
+						modelRegistry: ctx.modelRegistry,
 						ui: {
 							notify: (msg: string, type?: "info" | "warning" | "error") => ctx.ui.notify(msg, type),
 							select: (title: string, options: string[], opts?: Parameters<typeof ctx.ui.select>[2]) =>
@@ -160,7 +162,7 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 					},
 					config,
 					{
-						listModels: () => listAvailableModels((m) => console.warn(m)),
+						listModels: (pickerCtx) => listAvailableModels(pickerCtx, (m) => console.warn(m)),
 						save: (newConfig) => {
 							const result = saveConfig(newConfig);
 							if (result.success) {

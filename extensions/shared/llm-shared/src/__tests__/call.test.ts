@@ -66,6 +66,55 @@ describe("callLLM", () => {
 		expect(result).toMatchObject({ recoverable: true, error: expect.stringContaining("network") });
 	});
 
+	it("TC1 stopReason=error → {ok:false, error, recoverable:true, stopReason:'error'}（不再 ok:true 返回错误文本）", async () => {
+		const ctx = makeCtx({ ok: true, apiKey: "k" });
+		// completeSimple 对错误也 resolve（带 stopReason），content 是错误文本
+		mockComplete.mockResolvedValue({ stopReason: "error", content: [{ type: "text", text: "API error: 429 rate limited" }] });
+
+		const result = await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
+
+		expect(result).toEqual({ ok: false, error: "API error: 429 rate limited", recoverable: true, stopReason: "error" });
+	});
+
+	it("TC2 stopReason=aborted → {ok:false, error, recoverable:true, stopReason:'aborted'}", async () => {
+		const ctx = makeCtx({ ok: true, apiKey: "k" });
+		mockComplete.mockResolvedValue({ stopReason: "aborted", content: [{ type: "text", text: "user aborted" }] });
+
+		const result = await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
+
+		expect(result).toEqual({ ok: false, error: "user aborted", recoverable: true, stopReason: "aborted" });
+	});
+
+	it("TC3 stopReason=stop（正常）→ 不受 stopReason 检查影响，ok:true 提取文本", async () => {
+		const ctx = makeCtx({ ok: true, apiKey: "k" });
+		mockComplete.mockResolvedValue({ stopReason: "stop", content: [{ type: "text", text: "  hello  " }] });
+
+		const result = await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
+
+		expect(result).toEqual({ ok: true, content: "hello" });
+	});
+
+	it("stopReason=error 且 content 无 text → error 回落 'unknown error'", async () => {
+		const ctx = makeCtx({ ok: true, apiKey: "k" });
+		mockComplete.mockResolvedValue({ stopReason: "error", content: [] });
+
+		const result = await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
+
+		expect(result).toEqual({ ok: false, error: "unknown error", recoverable: true, stopReason: "error" });
+	});
+
+	it("TC13 catch 路径不设 stopReason（错误原因不可知）", async () => {
+		const ctx = makeCtx({ ok: true, apiKey: "k" });
+		mockComplete.mockRejectedValue(new Error("boom"));
+
+		const result = await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
+
+		expect(result.ok).toBe(false);
+		if (result.ok === false) {
+			expect(result.stopReason).toBeUndefined();
+		}
+	});
+
 	it("review TF1: sessionId 透传到 options 第三参数", async () => {
 		const ctx = makeCtx({ ok: true, apiKey: "k" });
 		mockComplete.mockResolvedValue({ content: [{ type: "text", text: "x" }] });

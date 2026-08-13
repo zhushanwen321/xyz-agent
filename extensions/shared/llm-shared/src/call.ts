@@ -38,11 +38,13 @@ export interface CallLLMOptions {
 /**
  * callLLM 出参。
  * - ok:true → content 为提取并 trim 的文本
- * - ok:false → recoverable=true 表示网络/超时/auth 类瞬时错误，调用方可静默跳过或降级
+ * - ok:false → recoverable 表示可恢复性（C2b：当前实现统一 true，细分待未来有消费者）；
+ *   stopReason 是独立透传字段（失败原因维度，不映射 recoverable），供调用方保留
+ *   error/aborted 的日志区分（如 permission classifier 的 G3 语义）。
  */
 export type CallLLMResult =
 	| { ok: true; content: string }
-	| { ok: false; error: string; recoverable: boolean };
+	| { ok: false; error: string; recoverable: boolean; stopReason?: "error" | "aborted" };
 
 // ──────────────────────── 文本提取 ────────────────────────
 
@@ -70,8 +72,11 @@ export function extractText(resp: {
  * 流程：
  * 1. 凭证：getApiKeyAndHeaders(model) → narrow（auth.ok 判别联合）→ 失败返回 {ok:false, recoverable:true}
  * 2. 调用：completeSimple(model, {systemPrompt, messages, tools:[]}, {apiKey, headers?, env?, signal?, maxTokens?, timeoutMs?, sessionId?})
- * 3. 提取 text → {ok:true, content}
- * 4. throw（网络/超时/解析）→ catch → {ok:false, error:String(e), recoverable:true}
+ * 3. 检查 resp.stopReason：error/aborted（completeSimple 对错误/中止也 resolve 带 stopReason，G3）
+ *    → {ok:false, error: 提取错误文本, recoverable:true, stopReason}（不再当正常内容提取）
+ * 4. 提取 text → {ok:true, content}
+ * 5. throw（网络/超时/解析）→ catch → {ok:false, error:String(e), recoverable:true}
+ *    （C2b：catch 路径不细分 recoverable，统一 true；stopReason 不设——错误原因不可知）
  *
  * tools 显式传 []（不塞工具）—— 本库用于标题生成等 best-effort 场景，不需要工具调用。
  */
@@ -105,6 +110,12 @@ export async function callLLM(
 			...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
 		};
 		const resp = await completeSimple(opts.model, context, options);
+		// G3/C1a：completeSimple 对 error/aborted 也 resolve（带 stopReason，不 reject）。
+		// 归一为 ok:false + stopReason 独立透传（recoverable 统一 true，与 C2b 一致不触发细分）。
+		if (resp.stopReason === "error" || resp.stopReason === "aborted") {
+			const errorText = extractText(resp) || "unknown error";
+			return { ok: false, error: errorText, recoverable: true, stopReason: resp.stopReason };
+		}
 		return { ok: true, content: extractText(resp) };
 	} catch (error) {
 		return { ok: false, error: error instanceof Error ? error.message : String(error), recoverable: true };
