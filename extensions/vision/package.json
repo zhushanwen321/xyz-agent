@@ -7,6 +7,9 @@
   "pi": {
     "extensions": [
       "./index.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "keywords": [
@@ -18,7 +21,8 @@
   "license": "MIT",
   "files": [
     "src/",
-    "index.ts"
+    "index.ts",
+    "skills/"
   ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

@@ -7,6 +7,9 @@
   "pi": {
     "extensions": [
       "./index.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "keywords": [
@@ -20,6 +23,7 @@
   "license": "MIT",
   "files": [
     "src/",
+    "skills/",
     "index.ts"
   ],
   "scripts": {

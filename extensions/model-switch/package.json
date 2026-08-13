@@ -17,11 +17,15 @@
   "files": [
     "index.ts",
     "src/**/*.ts",
+    "skills/",
     "README.md"
   ],
   "pi": {
     "extensions": [
       "./index.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "dependencies": {
