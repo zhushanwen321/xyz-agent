@@ -160,6 +160,8 @@
 
 **推荐**：方案 A。
 
+**⏸️ 状态变更（2026-08 更新）：暂缓——归位位置与 remote COPY_MAP 覆盖冲突待裁决**。remote 分支 `sync-mobile-from-renderer.sh` 的 COPY_MAP 为**整目录 copy**（`composables`、`stores`、`components/ui` 等 26 项）；方案 A 的域 composable 按七层铁律归位到 `features/<domain>/`，**不在 COPY_MAP 覆盖范围**——C2 收敛后 mobile 同步拿不到新 composable。二选一待与 mobile 开发协同裁决：① C2 产出放 `composables/`（sync 兼容，违反 features/ 域归位）；② 放 `features/` + COPY_MAP 改显式文件清单（remote-use-merge-architecture §5「整目录改显式清单」先例方向）。裁决后实施。C3 不阻塞（features/browser/ 已有先例，且 C3 产出在 COPY_MAP 范围内）。
+
 **测试影响**：本候选不新增单测——IPC 封装是薄透传，行为等价验证依赖真实场景（主进程 IPC 无法在 renderer 单测中模拟全链路）。若 browser 域已有 composable 测试先例（useBrowserZoom/useBrowserRectSync），useBrowserControls 的纯参数透传部分可补 1 条签名一致性测试。
 
 **改动点**（5 处直连全部收编）：

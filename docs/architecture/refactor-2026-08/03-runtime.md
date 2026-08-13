@@ -119,6 +119,8 @@
 
 **migration-progress 联动改造**（与 06-doc-debt.md 合并推进）：`docs/architecture/runtime-migration-progress.md` 的「当前状态」章节从手写「FULLY CLEAN」改为**指向可执行检查输出**——`check_layer_boundaries.py` 增加 `--report` 模式（输出当前违规清单，空 = 三层边界 FULLY CLEAN，exit 0），文档标注「截至 <日期> 历史快照 + 当前状态: 运行 `.githooks/check_layer_boundaries.py --report` 验证」。声明与事实的核对从人工变脚本。
 
+**执行注记（2026-08 更新）**：D1 落地后，`feat-remote-use` 分支的 runtime 代码（transport 侵入式改动：connection-manager/message-broker 重写 + token/seq-counter/session-buffer/file-endpoint 新增 + services 层 lease-manager + infra 层 async-context/async-mutex）合并进 main 时必须过本守护——提前确认 remote 分支代码三层合规（`rg "Pi[A-Z]" services/ transport/` 归零、无 infra→services 反向 import、services→infra 均属 16 个受控例外三元组），否则合并被拦。D1 作为 remote 合并的三层边界守门人，W1 优先级不变。
+
 ### D2（Strong）16/16 port 单实现 → 7 个 hypothetical seam 折叠 [W5 · 前置 DP-2 裁决]
 
 #### 3.2.1 现状
@@ -156,6 +158,8 @@
 - 与本设计集的关系：主文档 DP 清单推荐倾向为「单消费方 port 折叠（7 个），多消费方 port 留 ports/」——即选项 A 为主、B 为多消费方部分的落实
 
 **裁决建议**：选项 A（折叠 7 个单消费方）+ 选项 B 的域拆分只用于剩余多消费方 port（两选项并非互斥——矛盾点只在「单消费方 port 去留」）。若裁决选 B 全量集中，本候选降级为「只加审计不折叠」，收益归零，需在 DP-2 记录理由。
+
+**⏸️ 状态变更（2026-08 更新）：DP-2 暂缓——决策输入未稳定**。`feat-remote-use` 合并为 runtime 侵入式改动（`connection-manager`/`message-broker` 重写、`transport/` 新增 token/seq-counter/session-buffer/file-endpoint、services 层新增 `lease-manager.ts`、infra 新增 async-context/async-mutex），ports 消费方事实可能在 remote 基线上变化——「7 个单消费方」需在 remote 合并后重新盘点。折叠可逆（反转 3-4 处改动），晚裁成本低。重新评估触发：remote 合并后（详见 README「实施状态与决策记录」节）。
 
 #### 3.2.3 实施步骤（DP-2 裁决后 1-2 commit）
 

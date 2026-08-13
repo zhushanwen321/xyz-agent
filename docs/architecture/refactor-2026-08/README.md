@@ -46,20 +46,20 @@
 |------|-----|------|--------|------|
 | B1 | 包级链 | Strong | 清除 renderer 的 core re-export shim 层 | W0 |
 | B2 | 包级链 | Strong | core 的 pinia 死声明移出 dependencies | W0 |
-| B3 | 包级链 | Worth | composables/logic/ 纯函数下沉 core（13 文件 1456 行） | W3 |
+| B3 | 包级链 | Worth | composables/logic/ 纯函数下沉 core（13 文件 1456 行） | W3（DP-1 已决：下沉） |
 | B4 | 包级链 | Worth | shared 扁平大杂烩按域收敛 | W4 |
 | B5 | 包级链 | Worth | 包名统一 frontend vs renderer | W5 |
 | B6 | 包级链 | Speculative | composer-shell 越层直连 dom-core 裁决 | W5 |
-| B7 | 包级链 | Speculative | mobile sync 文档 gap 清理 | W5 |
+| B7 | 包级链 | Speculative | mobile sync 文档 gap 清理 | ⏸️ 暂缓（前提反转，remote 合并后协同） |
 | C1 | renderer | Strong | useSidebar 绞杀残留死壳删除（565 行旧壳 → useSidebarNew） | W0 |
-| C2 | renderer | Strong | Feature 层 vue 直连 lib/ipc 归位到域 composable | W2 |
+| C2 | renderer | Strong | Feature 层 vue 直连 lib/ipc 归位到域 composable | ⏸️ 暂缓（归位位置 vs COPY_MAP 待裁决） |
 | C3 | renderer | Strong | 剪贴板 4 份 + resize 订阅 N 份收敛为 useClipboard/useWindowResize | W2 |
 | C4 | renderer | Strong | summarizeTurn dead code + guiComponent 注释失真 | W0 |
 | C5 | renderer | Worth | 四未下沉 store 直连 api 通道 → 下沉 core/domain | W3 |
 | C6 | renderer | Worth | composables/panel/ 25 文件平铺 → 分子目录 | W4 |
 | C7 | renderer | Worth | components/panel/ 巨模块群拆分（DetailPane 优先） | W4 |
 | D1 | runtime | Strong | 三层骨架回潮修复 + pre-commit 守护（**Top 推荐**） | W1 |
-| D2 | runtime | Strong | 16/16 port 单实现 → 7 个 hypothetical seam 折叠（需裁决） | W5 |
+| D2 | runtime | Strong | 16/16 port 单实现 → 7 个 hypothetical seam 折叠（需裁决） | ⏸️ 暂缓（remote 合并后盘点 ports） |
 | D3 | runtime | Strong | ITerminalService/IWorktreeService 方向反置归位 | W2 |
 | D4 | runtime | Strong | settings-message-handler 业务编排下沉 config-service | W2 |
 | D5 | runtime | Worth | session-message-handler 业务判断下沉 | W3 |
@@ -74,13 +74,13 @@
 | E5 | electron | Worth | interfaces.ts 契约层 session 域泄漏 | W4 |
 | E6 | electron | Worth | supervisor 内部重复实现 + shell-env 目录孤儿 | W4 |
 | E7 | electron | Speculative | preload 形态适配归位 + update 域口径统一 | W5 |
-| F1 | extensions | Strong | 跨包微型工具 12 处复制下沉 shared | W3 |
-| F2 | extensions | Strong | pi session JSONL 解析 adapter 唯一化 | W3 |
-| F3 | extensions | Strong | shared 层定位重整（quota-providers 死面，删除测试驱动 + DP-3） | W4（删除测试 + DP-3 裁决前移 W3 之前） |
-| F4 | extensions | Worth | Ajv schema 编译层收敛（审计先行，涉及 builtin） | W4 |
-| F5 | extensions | Worth | 裸 console 迁移决策（二选一） | W5 |
-| F6 | extensions | Speculative | formatDuration 同名异义（合法变体，记录即可） | W5 |
-| F7 | extensions | Medium | assistantMessageEvent 分流唯一化（与 F2 同构） | W3 |
+| F1 | extensions | Strong | 跨包微型工具 12 处复制下沉 shared | ⛔ 冻结 |
+| F2 | extensions | Strong | pi session JSONL 解析 adapter 唯一化 | ⛔ 冻结 |
+| F3 | extensions | Strong | shared 层定位重整（quota-providers 死面，删除测试驱动 + DP-3） | ⛔ 冻结（quota 重构中，DP-3 暂缓） |
+| F4 | extensions | Worth | Ajv schema 编译层收敛（审计先行，涉及 builtin） | ⛔ 冻结 |
+| F5 | extensions | Worth | 裸 console 迁移决策（二选一） | ⛔ 冻结 |
+| F6 | extensions | Speculative | formatDuration 同名异义（合法变体，记录即可） | ⛔ 冻结 |
+| F7 | extensions | Medium | assistantMessageEvent 分流唯一化（与 F2 同构） | ⛔ 冻结 |
 | §6 | 文档债 | - | 5 份文档改"历史快照 + 可执行检查输出" | W1 起随行 |
 
 ## §3 解决方案
@@ -96,37 +96,66 @@ D1：runtime 三层回潮修复 + pre-commit 守护。配套 §6 文档债中 mi
 - 守护：pre-commit 检查为新增 githook，落地后所有后续波次的 diff 都会被它检查
 
 **W2 · seam 归位（中风险，行为收敛类）**
-C2 + C3 + D3 + D4 + E2 + E3。六项都是"绕过已有 seam 的直连/错位归位到正确位置"，模式相同（收编 → 收敛 → 删除旧路径），可并行走 3 层。
-- C3 依赖 C2 的域 composable 先例（features/browser/ 已有先例，不阻塞）
+C3 + D3 + D4 + E2 + E3。五项都是"绕过已有 seam 的直连/错位归位到正确位置"，模式相同（收编 → 收敛 → 删除旧路径），可并行走 3 层。
+- ⏸️ **C2 已暂缓**（归位位置与 remote COPY_MAP 覆盖冲突，待 mobile 开发协同裁决，见「实施状态与决策记录」节）——C3 不依赖 C2（features/browser/ 已有先例）
 
 **W3 · 下沉/收敛（中高风险，行为迁移类）**
-B3 + C5 + D5 + D6 + D7 + E1 + F1 + F2 + F7。九项都是"把逻辑从 A 层迁移到 B 层 / 修复深机制断链"，涉及 import 改写和测试迁移，是最大波次。
-- B3 前置：先裁决 DP-1（与 renderer-target-architecture §2.2「留在原处」裁定冲突）再动
-- F2 与 F7 同构（外部 seam 唯一化），建议同批实施
+B3 + C5 + D5 + D6 + D7 + E1。六项都是"把逻辑从 A 层迁移到 B 层 / 修复深机制断链"，涉及 import 改写和测试迁移，是最大波次。F1/F2/F7 已冻结（extension 冻结，见「实施状态与决策记录」节）。
+- B3 前置：✅ DP-1 已裁决（下沉，mobile 为真实消费方）——子集边界按 mobile 消费清单确定
 - E1 前置：orchestrator 已 DI 注入，验证现有测试基建后再收编
 - D7 前置：对照 ADR-0055 phase-1/phase-2 边界确认 dual-write 退出范围
-- **DP-3 前置（F1/F3 联动）**：F3 的删除测试独立先行（砍 0 消费者导出不依赖 F1），DP-3 裁决 shared 去留 → **再决定 F1 的 utils 建在 shared 还是 model-switch**。即 W3 开工前先完成 F3-①②③（删除测试 + DP-3 裁决），避免 F1 先建 shared utils 后 DP-3 判撤又搬家的返工（决策与实施反序）
+- ⛔ DP-3 前置（F1/F3 联动）冻结：F3 删除测试随 quota-providers 重构消化，DP-3 裁决等 extension 解冻后重新评估
 
 **W4 · 组织债 / 深模块（长期架构收益，大工程）**
-B4 + C6 + C7 + D8 + E4 + E5 + E6 + F3 + F4。九项中 C6/C7/E4 是纯组织重构（低风险），B4/D8/F3 是结构性（高风险）。
-- F3 前置：删除测试 + DP-3 裁决已在 W3 之前完成（见上）；W4 只做裁决分支落地（保留瘦身 / 并回 model-switch）
+B4 + C6 + C7 + D8 + E4 + E5 + E6。七项中 C6/C7/E4 是纯组织重构（低风险），B4/D8 是结构性（高风险）。F3/F4 已冻结（extension 冻结）。
+- ⛔ F3 前置（删除测试 + DP-3 裁决）随 extension 冻结暂停，解冻后并入
 - D8 渐进切分，禁止大爆炸（审查报告明确警告）
 
 **W5 · 决策 / 收尾（低风险，需裁决项 + 文档对齐）**
-B5 + B6 + B7 + D2 + D9 + E7 + F5 + F6。其中 D2（port 折叠 vs 集中，与 R9 决策相悖）和 F5（logger 推广 vs 退出）需要先裁决后落地；D9 建议直接关闭（审查报告核查后判定原候选自相矛盾）。
-- D2 前置：DP-2 裁决（折叠 vs 集中拆分）
+B5 + B6 + D9 + E7。B7/D2 已暂缓（remote 合并后重新评估）、F5/F6 已冻结（extension 冻结），见「实施状态与决策记录」节；D9 建议直接关闭（审查报告核查后判定原候选自相矛盾）。
+- ⏸️ D2 前置（DP-2 裁决）暂缓：remote 合并后盘点 ports 消费方再裁（折叠可逆，晚裁成本低）
 - E5 在 W4（总览表口径），涉及 shared 类型 + renderer 消费方，盘点先行（renderer 对 WindowState 零消费、sessionIds 是恒空镜像已初步核实）再动
 
 ### 关键决策点（DP）清单
 
 | DP | 问题 | 涉及 | 推荐倾向 | 裁决时机 |
 |----|------|------|---------|---------|
-| DP-1 | logic/ 纯函数下沉 core 与 renderer-target-architecture §2.2「留在原处」裁定冲突 | B3 | 包级 leverage 视角优先（移动端复用价值 > 包内七层纯净），下沉 | W3 实施前 |
-| DP-2 | port 折叠进消费方 vs 按域集中拆分（R9 决策相悖） | D2 | 单消费方 port 折叠（7 个），多消费方 port 留 ports/；与 R9 的"集中"是两种组织哲学，需一次显式裁决 | W5 实施前 |
-| DP-3 | shared/ 层去留（quota-providers 死面砍后残存价值） | F3 | 删除测试驱动：砍死面后若只剩 readCache 深接口 → 保留瘦身；若渗透率推不动 → 撤销 shared 定位，quota 并回 model-switch。**裁决时机：W3 之前**（F3 删除测试独立先行，裁决结果决定 F1 utils 归位，避免决策与实施反序） |
-| DP-4 | 裸 console：全仓推广 extension-logger vs 承认私有依赖退出 shared | F5 | 真实数据支持推广（用了 logger 的包裸 console=0），推广优先 | W5 实施前 |
+| DP-1 | logic/ 纯函数下沉 core 与 renderer-target-architecture §2.2「留在原处」裁定冲突 | B3 | 包级 leverage 视角优先（移动端复用价值 > 包内七层纯净），下沉 | ✅ 已裁决（2026-08）：下沉（mobile/多端开发中，demand-driven 条件成立） |
+| DP-2 | port 折叠进消费方 vs 按域集中拆分（R9 决策相悖） | D2 | 单消费方 port 折叠（7 个），多消费方 port 留 ports/；与 R9 的"集中"是两种组织哲学，需一次显式裁决 | ⏸️ 暂缓：remote 合并后盘点 ports 消费方再裁 |
+| DP-3 | shared/ 层去留（quota-providers 死面砍后残存价值） | F3 | 删除测试驱动：砍死面后若只剩 readCache 深接口 → 保留瘦身；若渗透率推不动 → 撤销 shared 定位，quota 并回 model-switch。**裁决时机：W3 之前**（F3 删除测试独立先行，裁决结果决定 F1 utils 归位，避免决策与实施反序） | ⏸️ 暂缓：quota-providers 重构中 + extension 冻结，重构完成后重新评估残存价值 |
+| DP-4 | 裸 console：全仓推广 extension-logger vs 承认私有依赖退出 shared | F5 | 真实数据支持推广（用了 logger 的包裸 console=0），推广优先 | ⛔ 冻结：extension 冻结期间不裁（依赖 DP-3） |
 | DP-5 | composer-shell 越层直连 dom-core：文档注记 vs 强制链式 | B6 | 注记（选项 b）——强制链式会为形式约束加一层纯转发 seam | W5 实施前 |
 | DP-6 | 包名 @xyz-agent/frontend vs 文档改口 frontend | B5 | 改包名 @xyz-agent/renderer（改口面更大，改包名一处） | W5 实施前 |
+
+### 实施状态与决策记录（2026-08 更新）
+
+**上下文变更**（本设计文档集成稿后）：mobile/多端与 remote 使用均已进入开发（`feat-remote-use` 分支 P0-P7 待合并 main）；extension 开发冻结（用户指令）；quota-providers 正在重构（用户指令）。以下为由此产生的裁决与暂停记录。
+
+**决策记录**
+
+| 决策 | 结果 | 依据 |
+|------|------|------|
+| DP-1（B3 下沉） | ✅ 已裁决：下沉 | mobile/多端开发中，mobile-renderer 为真实消费方——「零消费、基于预期」的 speculative 前提失效，demand-driven 条件成立。子集边界按 mobile 消费清单确定，mermaid 不下沉不变 |
+| C2 归位位置（新增裁决） | ⏸️ 待裁决 | remote COPY_MAP 整目录 copy（composables/ 等 26 项）vs 七层 features/ 域归位——C2 产出放 composables/（sync 兼容）或 features/ + COPY_MAP 显式清单化，与 mobile 开发协同定 |
+| B7 重新设计（前提反转） | ⏸️ 待 remote 合并 | feat-remote-use 分支真实存在 `scripts/sync-mobile-from-renderer.sh`（COPY_MAP 26 项 + MANUAL_FORK useConnection.ts）——sync 机制合并后真实存在，B7 从「删纪律描述」改为「按真实机制更新文档」 |
+| DP-2（D2 折叠） | ⏸️ 暂缓 | remote 合并为 runtime 侵入式改动（connection-manager/message-broker 重写、lease-manager 新增），「7 个单消费方」事实需在 remote 基线重新盘点；折叠可逆，晚裁成本低 |
+| DP-3 / DP-4 | ⏸️ 暂缓 / ⛔ 冻结 | quota-providers 重构消化 F3 删除测试前提；extension 冻结使 F1/F5 决策链下游暂停 |
+
+**暂停清单（需要等的，先不做）**
+
+| 项 | 状态 | 重新评估触发 |
+|----|------|-------------|
+| D2（W5） | ⏸️ 暂缓 | remote 合并后 |
+| B7（W5） | ⏸️ 暂缓 | remote 合并后 |
+| C2（W2） | ⏸️ 暂缓 | mobile 开发协同裁决归位位置 |
+| F1-F7 + conventions 附带项 | ⛔ 冻结 | extension 解冻 |
+| DP-3（F3 删除测试） | ⏸️ 暂缓 | quota 重构完成 + extension 解冻 |
+
+**执行注记**
+
+- **D1 与 remote 合并**：D1（W1）落地后，remote 分支 runtime 代码（transport 侵入式改动）合并进 main 必须过 `.githooks/check_layer_boundaries.py`——提前确认 remote 分支三层合规，否则合并被拦。D1 是 remote 合并的三层边界守门人，优先级不变
+- **B1 与 COPY_MAP**：`lib/file-basename.ts` 在 remote COPY_MAP 单文件清单内——B1 删除 shim 后需同步清理 remote 分支 COPY_MAP 条目（脚本 SRC-MISSING 警告机制兜底）
+- **C5/C7 与 COPY_MAP**：stores/、components/panel/message-stream/、components/panel/detail-renderers/ 均在 COPY_MAP 整目录清单内——C5 下沉后 mobile 改从 core import（与 mobile 开发协同）；C7 拆分产物落在 COPY_MAP 覆盖范围（detail-renderers 已入清单），与 sync 对齐，无冲突
 
 ### 子文档索引
 

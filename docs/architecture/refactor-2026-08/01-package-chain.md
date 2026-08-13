@@ -206,6 +206,11 @@
 
 **推荐**：本设计推荐方案 A（下沉 headless 纯函数子集），最终由 DP-1 裁决批准/否决；若裁决维持「留在原处」，则 B3 关闭并在 §2.2 追加「mobile 复用需求出现时重议」注记。**speculative 提示**：当前 mobile 零 markdown 消费，下沉的核心价值（跨端 leverage）建立在未来需求预期上；若 mobile 真实出现 markdown 需求再下沉，是 demand-driven 的更稳路径（届时子集边界由真实消费方确定，避免为不存在的需求迁移 1300+ 行）。实施时按方案 C 的分批节奏降低风险（裁决后批次执行，目标是 headless 纯函数子集）。
 
+**DP-1 裁决记录（2026-08 更新）**：✅ **已裁决——下沉**。mobile/多端已进入开发（mobile-renderer 为真实消费方），「当前 mobile 零消费、下沉基于预期」的前提已不成立——speculative 升级为 demand-driven，DP-1 推荐倾向（包级 leverage 视角优先）生效。实施约束：
+- 下沉子集边界按 **mobile 实际消费清单**确定，不全量 13 文件；mermaid 不下沉边界不变（DOM 强依赖）
+- mobile 消费路径：mobile-renderer 经 COPY_MAP 整目录 copy `composables/`——下沉后 mobile 侧需改从 core import（与 mobile 开发协同）
+- 实施节奏仍按方案 C 分批（裁决后批次执行）
+
 **改动点**（裁决通过后）
 
 1. `packages/core/` 新增子域目录：markdown 域（markdown.ts 的字符串产物部分 + 依赖声明 katex/shiki/markdown-it/markdown-it-katex 入 core dependencies）、diff 域（parseDiff.ts）、foundation 纯逻辑（file-type/formatTime/messageTurns/file-tree-utils/session-file-format/messageFormat/popover-styles）
@@ -381,6 +386,8 @@ import { ... } from '@xyz-agent/dom-core/composer/input'
 - **方案 C：维持现状**：文档描述未实现机制、mobile 挂着未消费依赖。取舍：零成本，但文档继续误导读者（§2.3 声称的纪律约束着不存在的脚本），依赖声明面继续撒谎（与 B2 同类问题）。
 
 **推荐**：方案 A。
+
+**⏸️ 状态变更（2026-08 更新）：暂缓——前提反转**。本候选核查口径基于当前 feat-optimize-ui 分支；`feat-remote-use` 分支**真实存在** `scripts/sync-mobile-from-renderer.sh`（5808B，COPY_MAP 26 项 + MANUAL_FORK `composables/useConnection.ts`）且 `lib/remote/` 5 文件在 COPY_MAP 内——remote 合并进 main 后 sync 机制**真实存在**，方案 A「删不存在的纪律描述」前提作废。B7 改为与 remote 合并协同：合并时按真实 COPY_MAP/脚本更新 5 份文档（描述真实机制），不再删除。mobile-renderer 的 `@xyz-agent/shared` 依赖同理：mobile 开发中即将真实消费，保留。重新评估触发：remote 合并后（详见 README「实施状态与决策记录」节）。
 
 **改动点**
 
