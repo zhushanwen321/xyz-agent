@@ -136,6 +136,24 @@ streamSink: ctx.mode === "rpc"
 
 有 skills 目录的扩展还必须声明 `"pi.skills": ["./skills"]`。
 
+### 配置 skill 约定 [强制]
+
+凡 agent 可能需要协助配置/使用/排查的扩展，**必须**附带一个统一命名的 config skill，承载该扩展的配置/使用说明，让 agent 通过 pi 的 progressive disclosure（skill description 进 `<available_skills>`，正文按需 read）自动发现。
+
+**触发条件**（任一命中）：
+- 扩展读取磁盘配置文件（`<agentDir>/` 下的 .json 等）
+- 扩展有命令交互 / 复杂存储机制（如 event sourcing），agent 可能需要协助使用或排查
+
+**要求**：
+- **命名**：`skills/<extension简名>-ext-config/SKILL.md`（如 `permission` → `permission-ext-config`、`model-switch` → `model-switch-ext-config`）
+- **声明**：`package.json` 的 `pi.skills: ["./skills"]` + `files` 含 `"skills/"`（否则 npm publish 丢 skill）
+- **frontmatter**：`name` = 目录名 + `description` 双引号含触发词（决定 agent 能否正确匹配 read）
+- **内容**：
+  - 有磁盘配置文件 → 配置路径（getAgentDir 派生）+ schema + 默认值 + 配置示例
+  - 无配置文件但有命令交互/复杂存储 → 使用方式 + 存储机制（不硬套配置 schema 模板）
+
+**范例**：`extensions/{rename-session,permission,model-switch,vision,scheduler}/skills/*-ext-config/`
+
 ## Extension 依赖管理 [MANDATORY]
 
 所有 extension 之间的依赖关系必须在项目根的 `extension-dependencies.json` 中声明。新增、修改、删除 extension 时必须同步更新此文件。
