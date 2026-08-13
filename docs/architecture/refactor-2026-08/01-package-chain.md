@@ -19,7 +19,7 @@
 
 1. **死 shim 清除**（B1）：renderer 的 core/ui re-export 兼容层全部删除，消费方寻址直达真源，interface 恢复单入口
 2. **interface 诚实化**（B2）：core package.json 去掉 pinia 假声明，ADR-0059「core 真 headless + pinia 集成走 renderer 薄壳」名副其实
-3. **跨端 leverage**（B3，DP-1 裁决后）：logic/ 纯算法下沉 core，mobile 不再重造 markdown/parseDiff
+3. **跨端 leverage（speculative）**（B3，DP-1 裁决后）：logic/ 中 headless 纯函数子集下沉 core（剔除 mermaid 的 DOM 强依赖）；mobile markdown 复用是预期收益——当前 mobile 零 markdown 消费，下沉基于预期而非既成事实
 4. **shared 按域收敛**（B4）：扁平大杂烩先补 exports 子路径、再评估配置域拆出
 5. **命名一致**（B5）：包名/目录/文档三语境统一
 6. **文档与事实对齐**（B6/B7）：五包图画成 DAG 事实、删除未实现机制的纪律描述
@@ -48,7 +48,7 @@
 |------|------|--------|------|------|
 | B1 | Strong | 清除 renderer 的 core/ui re-export shim 层（5 文件） | W0 | 无 |
 | B2 | Strong | core 的 pinia 死声明移出 dependencies（降 devDependencies） | W0 | 无 |
-| B3 | Worth | composables/logic/ 纯函数下沉 core（12 文件 1347 行） | W3 | **DP-1 裁决**（与 §2.2「留在原处」冲突） |
+| B3 | Worth（speculative） | composables/logic/ headless 纯函数子集下沉 core（剔除 mermaid DOM 强依赖） | W3 | **DP-1 裁决**（与 §2.2「留在原处」冲突；当前无 mobile 消费方，下沉基于预期） |
 | B4 | Worth | shared 扁平大杂烩按域收敛（轻量步 exports 子路径 → 重步拆配置域） | W4 | 无 |
 | B5 | Worth | 包名统一 frontend vs renderer | W5 | **DP-6 裁决**（改包名 vs 文档改口） |
 | B6 | Speculative | composer-shell 越层直连 dom-core：文档注记（选项 b） | W5 | **DP-5 裁决**（注记 vs 强制链式） |
@@ -75,8 +75,8 @@
 |---|---|---|---|
 | `lib/ws-client.ts` | 25 | 头注释自述「@deprecated…过渡期 re-export shim」 | 3（useExtensionHostBridge / api/mock/index / api/transport） |
 | `lib/utils.ts` | 8 | `export { cn } from '@xyz-agent/ui'` | 29 |
-| `lib/file-basename.ts` | 8 | `export { findByBasename, collectBasenames, collectFilePaths } from '@xyz-agent/ui'` | 3 |
-| `composables/useSessionScopedState.ts` | 12 | `export * from '@xyz-agent/core/foundation/use-session-scoped-state'` | 6 |
+| `lib/file-basename.ts` | 8 | `export { findByBasename, collectBasenames, collectFilePaths } from '@xyz-agent/ui'` | 2（3 符号 / 2 文件） |
+| `composables/useSessionScopedState.ts` | 12 | `export * from '@xyz-agent/core/foundation/use-session-scoped-state'` | 5 |
 | `composables/useMessageBusSubscription.ts` | 23 | `export * from '@xyz-agent/core/coordination/subscription-state'` | 0（仅 3 个测试文件引用） |
 
 > 注意：`stores/chat.ts` 的 pinia 注册薄壳**不在此列**——它是 ADR-0059 终态（renderer 负责 pinia 集成、core 保持 headless），保留。
@@ -97,7 +97,7 @@
 | `lib/utils.ts` | 29 文件（脚本批量） | `@xyz-agent/ui`（cn 同一包） |
 | `lib/file-basename.ts` | 3 文件（脚本批量） | `@xyz-agent/ui` |
 | `composables/useSessionScopedState.ts` | useCompactQueue.ts · useSidebar.ts · useTerminal.ts · useSessionMarkers.ts · stores/turn-expansion.ts | `@xyz-agent/core/foundation/use-session-scoped-state` |
-| `composables/useMessageBusSubscription.ts` | 非测试 0；测试 3（select-session-pull / useMessageBusSubscription / useChat） | `@xyz-agent/core/coordination/subscription-state` |
+| `composables/useMessageBusSubscription.ts` | 非测试 0；测试 2（select-session-pull.test / useMessageBusSubscription.test） | `@xyz-agent/core/coordination/subscription-state` |
 
 注意 useSessionScopedState 的 5 个消费方中 useSidebar.ts 是 session 销毁编排点（triggerSessionCleanups）——改 import 后 registry 单例语义不变（core 包内单例），但建议在 dev 冒烟中专门验证删除 session 的清理链路（见验收 1）。
 
@@ -105,8 +105,8 @@
 
 1. `packages/renderer/src/lib/ws-client.ts` 删除；3 处消费方手改 import 指向 `@xyz-agent/core/transport/ws-client`：`composables/shell/useExtensionHostBridge.ts`、`api/mock/index.ts`、`api/transport.ts`（注意 mock 分支的 platform 注入语义已由 createMockPlatform 承担，import 改路径即可，不触碰 mock 逻辑）
 2. `lib/utils.ts` / `lib/file-basename.ts` 删除；32 处消费方脚本批量替换：`@/lib/utils` → `@xyz-agent/ui`（utils 29 + file-basename 3），用 `sed -i 's|@/lib/utils|@xyz-agent/ui|g'` 后逐个文件确认 import 行语义（utils 的 cn 来自 `@xyz-agent/ui`，file-basename 同理）
-3. `composables/useSessionScopedState.ts` 删除；6 处消费方改 import `@xyz-agent/core/foundation/use-session-scoped-state`
-4. `composables/useMessageBusSubscription.ts` 删除；3 个测试文件（select-session-pull.test / useMessageBusSubscription.test / useChat.test）改 import `@xyz-agent/core/coordination/subscription-state`
+3. `composables/useSessionScopedState.ts` 删除；5 处消费方改 import `@xyz-agent/core/foundation/use-session-scoped-state`
+4. `composables/useMessageBusSubscription.ts` 删除；2 个测试文件（select-session-pull.test / useMessageBusSubscription.test）改 import `@xyz-agent/core/coordination/subscription-state`（useChat.test.ts:54 仅在注释提及符号名，非 import/mock，不计入）
 5. `rg -n "@/lib/ws-client|@/lib/utils|@/lib/file-basename|@/composables/useSessionScopedState|@/composables/useMessageBusSubscription" packages/renderer/src` 确认零残留（除测试 fixtures 里作为字符串出现的除外，逐个判断）
 
 **风险**：低。纯 re-export 转发，无本地逻辑。唯一注意点：useSessionScopedState 的「禁止复制实现」约束（双份 registry 会导致 triggerSessionCleanups 失效）在删除 shim 后天然满足——消费方直连 core 单例；实施时不得顺手「内联实现」。
@@ -122,7 +122,7 @@
 
 - [ ] T1-1 删 ws-client shim + 3 处手改（含 mock 分支确认）
 - [ ] T1-2 脚本批量替换 utils/file-basename 消费方（29+3 处），逐个文件过一遍 import 行
-- [ ] T1-3 删 useSessionScopedState / useMessageBusSubscription shim + 9 处（6 消费 + 3 测试）改 import
+- [ ] T1-3 删 useSessionScopedState / useMessageBusSubscription shim + 7 处（5 消费 + 2 测试）改 import
 - [ ] T1-4 零残留 rg + typecheck + dev 冒烟（T1-1~3 完成后一起验）
 - [ ] T1-5 随 W1 评估「禁止 re-export 兼容层」lint 守护（可选，见方案 C）
 
@@ -132,10 +132,11 @@
 
 **问题**
 
-`packages/core/package.json:90` dependencies 声明 `"pinia": "^3"`，但 core 生产源码**零 import**（grep `createPinia|defineStore` 仅命中注释提及：terminal-write-queue.ts:57/65/68、useChat.ts:8、timers.ts:37 均为文档性说明，无实际 import）。仅测试文件 2 处消费：
+`packages/core/package.json:90` dependencies 声明 `"pinia": "^3"`，但 core 生产源码**零 import**（grep `createPinia|defineStore` 仅命中注释提及：terminal-write-queue.ts:57/65/68、useChat.ts:8、timers.ts:37 均为文档性说明，无实际 import）。仅测试文件 3 处消费（⚠️ 核查修正：原口径「2 处」漏 effects.test.ts）：
 
 - `src/domain/chat/__tests__/store.test.ts:17,50`（createPinia/setActivePinia）
 - `src/domain/chat/__tests__/derive-status.test.ts:13`
+- `src/domain/chat/__tests__/effects.test.ts:19,62,186,233`（3 个 beforeEach 各建独立 pinia 实例）
 
 声明依赖即 interface 承诺——消费方读到「core 依赖 pinia」会误判 core 有 pinia 耦合，与「core 真 headless」的实测纯度矛盾。ADR-0059 的前提（pinia 集成走 renderer 薄壳、core 不含 pinia）因死声明而未名副其实。
 
@@ -182,7 +183,7 @@
 |---|---|---|
 | markdown.ts | 541 | katex / markdown-it / markdown-it-katex / shiki（第三方）+ `@/i18n`（t 直接耦合） |
 | parseDiff.ts | 235 | 纯函数（无 i18n 依赖） |
-| mermaid.ts | 138 | 动态 import mermaid（懒加载）；**:42 读 `document.documentElement.getAttribute('data-theme')`**（全目录唯一 DOM 命中） |
+| mermaid.ts | 138 | ⚠️ **DOM 强依赖，不下沉留 renderer**：:126 `await mermaid.render(id, source)` 本身需 DOM（:127-130 自承「在不完整 DOM 环境 happy-dom/jsdom 会静默返回空串」）；另 :42 读 `document.documentElement.getAttribute('data-theme')`。非纯函数 |
 | file-type.ts | 112 | 纯映射（无 i18n 依赖） |
 | sessionStatus.ts | 104 | 已是 re-export shim：deriveStatus 迁 core 后转发 + 视觉映射（DOT_CLASS/STATUS_ICON 属展示层） |
 | messageFormat.ts | 39 | `@/i18n` 直接耦合 |
@@ -193,35 +194,35 @@
 | messageTurns.ts | 17 | 纯函数 |
 | summarizeTurn.ts | 11 | **零调用方死代码**（唯一引用是自己的测试，TD7 迁 core 后的残骸；属 C4 清理范围，W0 删） |
 
-判定：12 文件中 11 个无 vue 无 DOM（唯一例外 mermaid.ts:42）；依赖面全纯函数 + 两个薄 seam——`@/i18n` 直接 import（实测 3 文件：formatTime/markdown/messageFormat，⚠️ 核查修正：审查报告「t 注入 4 文件」口径偏宽，parseDiff/file-type 等为无 i18n 依赖的纯函数）+ theme 字符串（mermaid/popover-styles）。纯算法被锁定在装配层（renderer），mobile-renderer 无法复用——mobile 若要渲染 markdown 只能重造 541 行。
+判定：12 文件中 **headless 友好的纯函数子集**——parseDiff/file-type/formatTime/messageTurns/file-tree-utils/session-file-format/messageFormat（7 个纯函数）+ markdown.ts 的字符串产物部分（shiki `codeToHtml` / katex `renderToString`）+ popover-styles（theme 字符串映射）。**例外 1：mermaid.ts 是 DOM 强依赖**（`mermaid.render()` 本身需 DOM，非纯函数，不下沉留 renderer）——这是本候选经审查修订后的关键边界，原方案「全量下沉」会把 DOM 耦合拖进 headless core，与 §2「core 纯度 ✅ 真 headless」直接矛盾。例外 2：summarizeTurn 是死代码（C4 删）。依赖面有薄 seam：`@/i18n` 直接 import（实测 3 文件：formatTime/markdown/messageFormat，⚠️ 核查修正：审查报告「t 注入 4 文件」口径偏宽，parseDiff/file-type 等为无 i18n 依赖的纯函数）需改参数注入。纯算法被锁定在装配层（renderer），mobile-renderer 无法复用——但**当前 mobile 零 markdown 消费**，mobile 复用是预期收益而非既成事实（speculative）。
 
-**与既有裁定的张力**：renderer-target-architecture §2.2 明确「composables/logic/（13 个零状态纯函数文件）→ 合法落点，留在原处」，理由是「stores 可 import 纯函数（无状态无倒置）」。那是**包内七层视角**（renderer 内部 Foundation 层组织）；本候选是**包级 leverage 视角**（跨端复用优先）。两个视角冲突，需 DP-1 裁决——主文档推荐倾向：包级 leverage 优先（移动端复用价值 > 包内七层纯净），下沉。
+**与既有裁定的张力**：renderer-target-architecture §2.2 明确「composables/logic/（13 个零状态纯函数文件）→ 合法落点，留在原处」，理由是「stores 可 import 纯函数（无状态无倒置）」。那是**包内七层视角**（renderer 内部 Foundation 层组织）；本候选是**包级 leverage 视角**（跨端复用优先）。两个视角冲突，需 DP-1 裁决。**DP-1 裁决记录需写明前提**：当前无 mobile markdown 消费方，下沉基于预期（speculative）；若裁决者认为「等 mobile 真实出现需求再下沉（demand-driven）」更稳，则 B3 关闭或仅下沉零争议的纯函数子集。
 
 **方案对比**
 
-- **方案 A：全量下沉 core**（**长期方案**，DP-1 裁决后实施）：12 文件（剔除 summarizeTurn 死代码后约 1336 行）迁 `packages/core/` 合适子域（如 `core/domain/markdown/`、`core/domain/diff/`、`core/foundation/logic/` 按域归位），t 注入从「直接 import renderer i18n 单例」改为**参数注入**（函数签名带 `t?: TranslateFn`，默认回退 key 直出，renderer 调用点传 `i18n.global.t`），theme 字符串同理（mermaid 的 data-theme 读取改为参数 `theme: 'dark'|'light'`，renderer 从 DOM 读后传入；popover-styles 的 CSS 类映射保留 renderer 侧——CSS 类属展示层）。第三方依赖（katex/shiki/markdown-it/mermaid）平移进 core dependencies（renderer 已有，非新增）。取舍：import 改写面大（logic 的消费方遍布 renderer，估计数十处）、core 增加 4 个第三方依赖、需要 core 侧新增单测迁移；收益是三端复用（mobile 直接 import core 渲染 markdown/diff）、headless 逻辑与 core 域同处、renderer 瘦身 ~1.3k 行。
+- **方案 A：下沉 headless 纯函数子集**（**长期方案**，DP-1 裁决后实施）：**剔除 mermaid**（DOM 强依赖，留 renderer）和 summarizeTurn（死代码，C4 删）后，下沉 headless 友好的纯函数子集迁 `packages/core/` 合适子域——markdown 字符串产物（markdown.ts 的 shiki `codeToHtml` / katex `renderToString` 部分）+ parseDiff/file-type/formatTime/messageTurns/file-tree-utils/session-file-format/messageFormat + popover-styles（theme 字符串映射）。t 注入从「直接 import renderer i18n 单例」改为**参数注入**（函数签名带 `t?: TranslateFn`，默认回退 key 直出，renderer 调用点传 `i18n.global.t`）。第三方依赖（katex/shiki/markdown-it）平移进 core dependencies（**mermaid 不平移，留 renderer**）。取舍：import 改写面大（logic 消费方遍布 renderer，估计数十处）、core 增加 **3 个**第三方依赖（非 4，mermaid 不含）、需要 core 侧新增单测迁移；收益是 headless 纯逻辑与 core 域同处、renderer 瘦身；mobile 复用是预期收益（当前无 mobile markdown 消费方）。
 - **方案 B：留在原处**（**短期方案**，维持 §2.2 裁定）：零改动，renderer 内部组织保持「logic 目录 = 合法落点」。取舍：mobile 将来需要 markdown/parseDiff 时只能复制或重写（跨端重复实现——正是 C3/F1 类问题在包级链的重演）；且 sessionStatus 已出现「核心迁走、视觉留在 renderer」的拆分先例，留在原处的文件实际是一半 shim 一半逻辑的混合态，归属边界已经模糊。
-- **方案 C：分批下沉**（**短期过渡方案**）：先迁大文件（markdown/parseDiff/mermaid，约 914 行），小文件（file-type/formatTime/messageTurns 等）后续再议。取舍：降低单次改动面与审查成本，但同域逻辑两处维护、t 注入契约要在两批里分别定，中间态存在「部分 logic 在 core、部分在 renderer」的歧义期。
+- **方案 C：分批下沉**（**短期过渡方案**）：先迁大文件（markdown/parseDiff，约 776 行，**不含 mermaid**），小文件（file-type/formatTime/messageTurns 等）后续再议。取舍：降低单次改动面与审查成本，但同域逻辑两处维护、t 注入契约要在两批里分别定，中间态存在「部分 logic 在 core、部分在 renderer」的歧义期。
 
-**推荐**：方案 A（全量下沉），但**必须等 DP-1 裁决通过**——裁决是方向性决策（§2.2 裁定是否推翻），本设计不预判结果；若裁决维持「留在原处」，则 B3 关闭并在 §2.2 追加「mobile 复用需求出现时重议」注记。实施时按方案 C 的分批节奏降低风险（裁决后批次执行，但目标是全量）。
+**推荐**：本设计推荐方案 A（下沉 headless 纯函数子集），最终由 DP-1 裁决批准/否决；若裁决维持「留在原处」，则 B3 关闭并在 §2.2 追加「mobile 复用需求出现时重议」注记。**speculative 提示**：当前 mobile 零 markdown 消费，下沉的核心价值（跨端 leverage）建立在未来需求预期上；若 mobile 真实出现 markdown 需求再下沉，是 demand-driven 的更稳路径（届时子集边界由真实消费方确定，避免为不存在的需求迁移 1300+ 行）。实施时按方案 C 的分批节奏降低风险（裁决后批次执行，目标是 headless 纯函数子集）。
 
 **改动点**（裁决通过后）
 
-1. `packages/core/` 新增子域目录：markdown 域（markdown.ts + 依赖声明 katex/shiki/markdown-it/markdown-it-katex 入 core dependencies）、diff 域（parseDiff.ts）、foundation 纯逻辑（file-type/formatTime/messageTurns/file-tree-utils/session-file-format/messageFormat）、mermaid 域（mermaid.ts + mermaid 依赖 + theme 参数化）
+1. `packages/core/` 新增子域目录：markdown 域（markdown.ts 的字符串产物部分 + 依赖声明 katex/shiki/markdown-it/markdown-it-katex 入 core dependencies）、diff 域（parseDiff.ts）、foundation 纯逻辑（file-type/formatTime/messageTurns/file-tree-utils/session-file-format/messageFormat/popover-styles）
 2. t 注入改造：formatTime/markdown/messageFormat 3 个直接耦合 `@/i18n` 的文件，函数签名加 `t` 可选参数（默认回退 key 直出）；renderer 调用点统一传 `i18n.global.t`（调用方改动集中在 markdown 渲染链路）
-3. mermaid.ts:42 的 `document...getAttribute('data-theme')` 改为 theme 参数（renderer 的 MermaidRenderer.vue 读 DOM 传入）
+3. **mermaid.ts 留 renderer 不下沉**（`mermaid.render()` :126 DOM 强依赖，与 core 真 headless 矛盾）——不迁移、不加 core 依赖、不参数化 theme。其渲染链路（MermaidRenderer.vue 调 renderMermaid + getCurrentTheme 读 DOM）完整保留在 renderer
 4. summarizeTurn.ts 删除（C4 W0 已排，实施 B3 前确认已删，避免把死代码搬进 core）
-5. renderer 消费方 import 改写 + logic 目录删除；原 renderer 测试（如 `src/__tests__/composables/mermaid.test.ts`、logic 相关单测）迁移到 core 对应目录，`logic/__tests__/summarizeTurn.test.ts` 随死代码删除
-6. 同步更新 renderer-target-architecture §2.2：logic/ 条目改为「已迁 core」并追加 DP-1 裁决记录
+5. renderer 消费方 import 改写（仅 headless 子集）；原 renderer 测试（markdown/parseDiff 等纯逻辑单测）迁移到 core 对应目录，`logic/__tests__/summarizeTurn.test.ts` 随死代码删除，**mermaid.test.ts 留 renderer**（测的就是 DOM 渲染链路，迁 core 会变假绿）
+6. 同步更新 renderer-target-architecture §2.2：logic/ 条目改为「headless 纯函数子集已迁 core，mermaid 留 renderer（DOM 耦合）」并追加 DP-1 裁决记录
 
-**风险**：中。① import 改写面大（logic 消费方多）；② t 注入契约从「编译期耦合 renderer i18n 单例」变「运行时参数」，漏传 t 会导致文案回退到 key（不崩但丑）——需在 renderer 调用点统一收口；③ mermaid 懒加载语义（动态 import 缓存）迁 core 后单例归属变化，需在 core 侧保留同一缓存语义；④ core 新增 4 个第三方依赖（katex/shiki/markdown-it/mermaid）：core 无 tsup bundle（与 B2 同理，源码直出 src/），不涉及 noExternal 连锁；但需确认 renderer 的 vite 构建链路对 core 内第三方依赖的 external/预构建处理（shiki/mermaid 的 worker/动态 import 形态），打包链路验证见验收 5。
+**风险**：中。① import 改写面大（logic 消费方多）；② t 注入契约从「编译期耦合 renderer i18n 单例」变「运行时参数」，漏传 t 会导致文案回退到 key（不崩但丑）——需在 renderer 调用点统一收口；③ core 新增 3 个第三方依赖（katex/shiki/markdown-it，**不含 mermaid**）：core 无 tsup bundle（与 B2 同理，源码直出 src/），不涉及 noExternal 连锁；但需确认 renderer 的 vite 构建链路对 core 内第三方依赖的 external/预构建处理（shiki 的 worker/动态 import 形态），打包链路验证见验收 5。**mermaid 留 renderer 已消除其 DOM 耦合风险**——原方案「全量下沉」会把 `mermaid.render()` 的 DOM 依赖拖进 headless core，与 §2「core 纯度 ✅ 真 headless」直接矛盾，收窄后此风险不存在。
 
 **验收**（真实场景）
 
-1. `pnpm run dev` 启动，发一条含代码块（fence）与 mermaid 块的消息，确认：代码高亮（shiki 双主题 + CSS 变量切换）、mermaid 渲染、明暗主题切换后 mermaid 重渲染（theme 参数链路）——三个渲染链路全过
+1. `pnpm run dev` 启动，发一条含代码块（fence）与 mermaid 块的消息，确认：代码高亮（shiki 双主题 + CSS 变量切换，下沉后链路不变）、mermaid 渲染（**mermaid 留 renderer，链路完全不迁移**，确认下沉 markdown 字符串产物未破坏 mermaid 渲染入口）、明暗主题切换后 mermaid 重渲染——三个渲染链路全过
 2. 同一会话中打开文件 diff（DetailPane），parseDiff 渲染与迁移前一致（对比迁移前后截图，行为等价验证）
 3. 消息时间戳/文件类型图标（formatTime/file-type）与迁移前一致
-4. mobile-renderer（若已初始化 markdown 消费）直接 import core markdown 域成功——跨端复用验证（当前 mobile 无 markdown 消费则验证 import 可达即可）
+4. mobile-renderer（若已初始化 markdown 消费）直接 import core markdown 域成功——跨端复用验证；**当前 mobile 无 markdown 消费**，此项为可选验证（import 可达即可），不构成 B3 的硬性验收（speculative：跨端 leverage 是预期收益）
 5. core + renderer 全量测试绿 + `pnpm run lint` + `bash scripts/validate-runtime-bundle.sh`
 
 **下一层拆分**
@@ -230,7 +231,7 @@
 - [ ] T3-2 纯函数小文件批：file-type/formatTime/messageTurns/file-tree-utils/session-file-format/popover-styles（t 参数化 + 消费方改写）
 - [ ] T3-3 markdown 域：依赖声明 + 迁移 + 调用点 t 注入
 - [ ] T3-4 diff 域：parseDiff 迁移
-- [ ] T3-5 mermaid 域：theme 参数化 + 懒加载语义保持
+- [ ] T3-5 ~~mermaid 域~~（取消：mermaid DOM 强依赖，不下沉留 renderer，见审查修订）
 - [ ] T3-6 死代码确认（summarizeTurn 已在 W0 删）+ logic/ 目录清空删除
 - [ ] T3-7 §2.2 文档更新 + 全量验证（见验收）
 
@@ -295,8 +296,8 @@ interface 是「什么都装」的扁平集合：新成员定位困难（27 文�
 
 1. `packages/renderer/package.json:2`：`"name": "@xyz-agent/renderer"`（其他字段不动）
 2. **代码内常量同步**（易漏点）：`src/shell/index.ts:1` 的 `RENDERER_SHELL_SCAFFOLD = '@xyz-agent/frontend/shell'` 与 `src/workspace/index.ts:1` 的 `RENDERER_WORKSPACE_SCAFFOLD = '@xyz-agent/frontend/workspace'` ——这两个常量目前无消费方（注释标「终态迁入点」占位），改包名时同步改为 `@xyz-agent/renderer/...` 保持标识符与包名一致；若判定为废弃占位可随 B5 一并删除（需确认未来 shell/workspace 层落位是否引用此标识符）
-3. **测试文件头注释批量改**：约 10+ 个测试文件（BlockSubagent/BlockWorkflow/chat-streaming-reset/provider-page 等）头注释含 `pnpm --filter @xyz-agent/frontend run test` 运行命令——不改会导致命令失效（filter 匹配不到包），脚本批量替换 `@xyz-agent/frontend` → `@xyz-agent/renderer`（含 packages/ui 下 2 个测试的注释）
-4. **apps/electron 连带**（关键，漏改则 pnpm install 解析失败）：`apps/electron/package.json:28` 的 `"@xyz-agent/frontend": "workspace:*"`（electron 依赖 renderer 包）改为 `@xyz-agent/renderer`；同文件 :16/:23 的 `dev:vite`/`build:vite` 脚本里 `--filter @xyz-agent/frontend` 同步替换
+3. **测试文件头注释批量改**：实测全仓 `@xyz-agent/frontend` 引用约 87 文件（多为测试头注释 + 少量代码内常量），其中 BlockSubagent/BlockWorkflow/chat-streaming-reset/provider-page 等测试文件头注释含 `pnpm --filter @xyz-agent/frontend run test` 运行命令——不改会导致命令失效（filter 匹配不到包），脚本批量替换 `@xyz-agent/frontend` → `@xyz-agent/renderer`（含 packages/ui 下 2 个测试的注释）
+4. **apps/electron 连带**（关键，漏改则 pnpm install 解析失败）：`apps/electron/package.json:28` 的 `"@xyz-agent/frontend": "workspace:*"`（electron 依赖 renderer 包）改为 `@xyz-agent/renderer`；同文件 :16/:23 的 `dev:vite`/`build:vite` 脚本里 `--filter @xyz-agent/frontend` 同步替换；**漏 :25 `test:all` 脚本**（`pnpm --filter @xyz-agent/frontend run test && ...`）也需同步替换——改名后 `pnpm test:all` 会因 filter 匹配不到包而失败
 5. 测试断言：mobile-renderer 的 ac1-dependency-edge.test.ts FORBIDDEN_XYZ_DEPS 含 `'@xyz-agent/renderer'`——**新包名恰好匹配该字符串**，改名后护栏断言语义自动正确（它禁止 mobile 依赖 renderer 壳，@xyz-agent/renderer 不在 ALLOWED 白名单 → 加进 dependencies 会红，护栏有效），注释中确认指向一致即可
 6. 文档口径统一：module-map / 速查表 / 审查 README 中「renderer」表述已正确，只需检查是否有按包名 `frontend` 描述处（大概率无——漂移方向是文档用 renderer、包名用 frontend，改包名即对齐）
 7. 根 `pnpm install --lockfile-only` 更新 lock 中的包名映射
@@ -363,16 +364,19 @@ import { ... } from '@xyz-agent/dom-core/composer/input'
 
 **问题**
 
-⚠️ 核查修正口径：git 跟踪源码内 **COPY_MAP 零命中**（仅 `.cw` 临时产物 2 处设计记录提及，原「全仓」措辞过宽）；`sync-mobile-from-renderer.sh` 脚本**不存在**（scripts/ 与 packages/ 下均无）；但两处文档描述了该机制：
+⚠️ 核查修正口径：git 跟踪源码内 **COPY_MAP 零命中**（仅 `.cw` 临时产物 2 处设计记录提及，原「全仓」措辞过宽）；`sync-mobile-from-renderer.sh` 脚本**不存在**（scripts/ 与 packages/ 下均无）；但 **5 份 git 跟踪文档**描述了该机制（均经 `git ls-files` 确认跟踪）：
 
 1. `docs/architecture/renderer-target-architecture.md:199`（§2.3 内「sync 兼容纪律」段）：声称「被 `sync-mobile-from-renderer.sh` COPY_MAP 覆盖的文件…v6 重构改路径时必须同步更新 sync 脚本」
 2. `docs/todo/remote-use-merge-architecture.md:88,137`（§5「sync 兼容纪律」）：声称「已内化进 sync 脚本 + B9 checklist」——脚本不存在，描述的是未实现机制
+3. `docs/architecture/v6-architecture-refactor.md:400-403`（§B 项「⚠️ sync 兼容纪律」整段）：声称 B5/B9 改动需同步 COPY_MAP，把不存在的脚本当真实纪律约束
+4. `docs/architecture/renderer-rebuild-architecture.md:58,111,404,517`（多处）：:58/111 把 sync 脚本描述为「锁死重构空间的隐性契约」、:404 列在删除清单、:517 声称「sync 脚本删除」已随包共享落地作废
+5. `docs/page-design/v6-master-spec.md:688`（B9 composables 分层条目）：尾注「⚠️ sync 兼容（改 COPY_MAP 文件路径需同步 sync-mobile-from-renderer.sh）」
 
 另外 `packages/mobile-renderer/package.json` dependencies 声明 `"@xyz-agent/shared": "workspace:*"`，但 `src/` 零消费（唯一命中是 `__tests__/ac1-dependency-edge.test.ts` 的 ALLOWED_XYZ_DEPS 白名单字符串——那是护栏测试的允许边声明，不是消费）。
 
 **方案对比**
 
-- **方案 A：删不存在的纪律描述 + 清未用依赖**（**长期方案**，推荐）：renderer-target-architecture §2.3 的 sync 兼容纪律段删除（或改写为「mobile 同步机制未实现，若未来实施需重估」一句）；remote-use-merge-architecture.md 是「合并 remote-use 后删除」的临时文档（AGENTS.md 已规定），其 §5 随文档生命周期处理即可；mobile-renderer package.json 移除 `@xyz-agent/shared` + AC1 白名单同步移除。取舍：文档与代码事实对齐，未来实施 sync 时从零设计（不会被过期纪律误导）；护栏测试白名单收窄后仍覆盖 core/dom-core/ui 三条允许边，护栏强度不减。
+- **方案 A：删不存在的纪律描述 + 清未用依赖**（**长期方案**，推荐）：5 份 git 跟踪文档的 sync 纪律描述全部清理——renderer-target-architecture §2.3、remote-use-merge-architecture.md §5（「合并 remote-use 后删除」的临时文档，AGENTS.md 已规定，§5 随文档生命周期处理）、**v6-architecture-refactor.md:400-403、renderer-rebuild-architecture.md:58,111,404,517、v6-master-spec.md:688**（均改写为「机制未实现」或删除相关段）；mobile-renderer package.json 移除 `@xyz-agent/shared` + AC1 白名单同步移除。取舍：文档与代码事实对齐，未来实施 sync 时从零设计（不会被过期纪律误导）；护栏测试白名单收窄后仍覆盖 core/dom-core/ui 三条允许边，护栏强度不减。
 - **方案 B：实现 sync 脚本**（**短期方案**，超范围）：按文档描述把 COPY_MAP 机制实现出来。取舍：mobile-renderer 现仅 0.5k 行壳（App.vue/bootstrap/platform/shell），尚无 renderer 同步需求；为一个不存在需求实现脚本是推测性功能（违反「不加推测性功能」），且 sync 方向（renderer → mobile）的正确性本身需重估（远程化合并后 mobile 是否还走文件复制路线未定）。
 - **方案 C：维持现状**：文档描述未实现机制、mobile 挂着未消费依赖。取舍：零成本，但文档继续误导读者（§2.3 声称的纪律约束着不存在的脚本），依赖声明面继续撒谎（与 B2 同类问题）。
 
@@ -382,9 +386,12 @@ import { ... } from '@xyz-agent/dom-core/composer/input'
 
 1. `docs/architecture/renderer-target-architecture.md` §2.3：删除 sync 兼容纪律段（含 COPY_MAP/MANUAL_FORK 表述），如 §2.3 其余内容仍有效则保留节内其他段落
 2. `docs/todo/remote-use-merge-architecture.md` §5：该文档本身待删（合并 remote-use 后），本次仅确认不依赖其中的 sync 描述；如该文档近期不会删除，则同步删 §5
-3. `packages/mobile-renderer/package.json`：dependencies 移除 `@xyz-agent/shared`
-4. `packages/mobile-renderer/src/__tests__/ac1-dependency-edge.test.ts`：ALLOWED_XYZ_DEPS 移除 `'@xyz-agent/shared'`（保留 core/dom-core/ui），注释同步
-5. 根 `pnpm install --lockfile-only` 更新 lock
+3. `docs/architecture/v6-architecture-refactor.md:400-403`：删除「⚠️ sync 兼容纪律」整段（B5/B9 引用 COPY_MAP 的约束），或改写为「mobile 同步机制未实现，若未来实施需重估」一句
+4. `docs/architecture/renderer-rebuild-architecture.md:58,111,404,517`：改写/删除 sync 脚本相关描述——:58/111 把「sync 锁死重构」改写为「（历史构想，机制未实现）」、:404/517 删除或标注「机制未实现」
+5. `docs/page-design/v6-master-spec.md:688`：B9 条目尾注删除「⚠️ sync 兼容（改 COPY_MAP 文件路径需同步 sync-mobile-from-renderer.sh）」括注
+6. `packages/mobile-renderer/package.json`：dependencies 移除 `@xyz-agent/shared`
+7. `packages/mobile-renderer/src/__tests__/ac1-dependency-edge.test.ts`：ALLOWED_XYZ_DEPS 移除 `'@xyz-agent/shared'`（保留 core/dom-core/ui），注释同步
+8. 根 `pnpm install --lockfile-only` 更新 lock
 
 **风险**：极低。shared 在 mobile 侧零消费，移除依赖不产生运行时变化；护栏测试收窄一条允许边，仍断言「@xyz-agent/* 依赖 ∈ 白名单」，防护语义不变。
 
@@ -392,15 +399,18 @@ import { ... } from '@xyz-agent/dom-core/composer/input'
 
 1. mobile-renderer 的 AC1 护栏测试绿（移除 shared 后白名单断言通过）；故意把 shared 加回 dependencies 会红（护栏仍有效）
 2. `pnpm install` 后 mobile-renderer 的 dev/build 正常（`pnpm --filter @xyz-agent/mobile-renderer build` 通过）
-3. `rg -n "sync-mobile-from-renderer|COPY_MAP" docs/ packages/` 仅剩历史 git 记录与 .cw 临时产物，git 跟踪文档零命中
+3. `rg -n "sync-mobile-from-renderer|COPY_MAP" docs/ packages/` 仅剩历史 git 记录与 .cw 临时产物，**git 跟踪文档零命中**（5 份文档全部清理：renderer-target-architecture §2.3 / remote-use-merge-architecture §5 / v6-architecture-refactor :400-403 / renderer-rebuild-architecture :58,111,404,517 / v6-master-spec :688）
 4. renderer-target-architecture §2.3 可读性确认（删除段落后上下文连贯）
 
 **下一层拆分**
 
 - [ ] T7-1 删 renderer-target-architecture §2.3 sync 纪律段
 - [ ] T7-2 remote-use-merge-architecture §5 处理（随文档生命周期；近期不删则同步删段）
-- [ ] T7-3 mobile package.json 移除 shared + AC1 白名单同步 + lock 更新
-- [ ] T7-4 护栏测试 + mobile build 验证
+- [ ] T7-3 清理 v6-architecture-refactor.md:400-403 sync 兼容纪律整段
+- [ ] T7-4 清理 renderer-rebuild-architecture.md:58,111,404,517 sync 脚本描述
+- [ ] T7-5 清理 v6-master-spec.md:688 B9 条目 sync 兼容括注
+- [ ] T7-6 mobile package.json 移除 shared + AC1 白名单同步 + lock 更新
+- [ ] T7-7 护栏测试 + mobile build 验证 + rg 抽查 5 份文档零命中
 
 ## §4 验收
 
@@ -438,7 +448,7 @@ B1/B2（W0，无依赖，可同批）→ B3（W3，依赖 DP-1 裁决 + C4 已�
 ### 实施顺序与 commit 建议
 
 1. **W0（B1+B2 同批）**：每个 shim 删除一个 commit（5 个 shim 可合并为 2-3 个 commit：ws-client 单独、utils+file-basename 批量、useSessionScopedState+useMessageBusSubscription 一组），B2 单独一个 commit。删除类改动零行为变化，验证 = typecheck + dev 冒烟
-2. **W3（B3）**：按 T3-2→T3-5 分批，每批一个 commit（小文件批 / markdown / diff / mermaid），依赖声明变更单独 commit 并逐个跑 validate-runtime-bundle（AGENTS.md §12：打包相关改动逐个 commit 逐个验证）
+2. **W3（B3）**：按 T3-2→T3-4 分批（小文件批 / markdown / diff，**无 mermaid 批**——mermaid 留 renderer 不下沉），每批一个 commit，依赖声明变更单独 commit 并逐个跑 validate-runtime-bundle（AGENTS.md §12：打包相关改动逐个 commit 逐个验证）
 3. **W4（B4）**：轻量步 exports 是 additive 变更，一个 commit；重步与 F3 联动，等 DP-3
 4. **W5（B5/B6/B7）**：三者独立互不依赖，各自一个 commit（B5 改名 commit 前先 grep 全量引用点清单；B6/B7 纯文档+注释+依赖清理）
 5. **全程纪律**：每个 commit 前跑对应包 typecheck + 测试；涉及 shared/core/mobile 的 package.json 改动 commit 前跑 `pnpm install --lockfile-only` 确认 lock 一致；pre-commit hook 检出问题全部正面修复（AGENTS.md 强制）

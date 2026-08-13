@@ -1,6 +1,6 @@
 # 2. Renderer 详细设计（91.1k 行）
 
-> 本文档是主文档（`README.md`）的子文档，覆盖 renderer 层候选 **C1-C7**。波次归属、DP 裁决、全局验收见主文档。所有路径/行号基于 2026-08-13 审查后二次核实（审查后代码有少量漂移，已按实际路径修正并在各候选标注）。审查报告纯文本提取版：`/tmp/arch-review-text.md` §2。
+> 本文档是主文档（`README.md`）的子文档，覆盖 renderer 层候选 **C1-C7**。波次归属、DP 裁决、全局验收见主文档。所有路径/行号基于 2026-08-13 审查后二次核实（审查后代码有少量漂移，已按实际路径修正并在各候选标注）。审查的修正项已内联在各候选，正文自包含。
 
 ## §1 背景与目标
 
@@ -21,8 +21,8 @@
 ### 目标
 
 1. **绞杀收尾**：C1 删除 useSidebar 旧壳（565 行）、C4 删除 summarizeTurn dead code（W0，与 B1/B2 合计约 600 行零风险死代码清除）
-2. **seam 归位**：C2 把 Feature 层 vue 直连 lib/ipc 的 3 处（8+1+1 符号）收编进域 composable；C3 把剪贴板 4 份、resize 订阅 5+ 处收敛为 useClipboard/useWindowResize 经 platform 端口注入（W2）
-3. **绞杀续行**：C5 按 chat 域已验证路径把四 store 直连 api 通道下沉 core/domain（W3，subagent/workflow 分批后置）
+2. **seam 归位**：C2 把 Feature 层 vue 直连 lib/ipc 的 **5 处**（8+3+2+1+1 符号）收编进域 composable（TrafficLight 归 shell 域、SettingsResourcePage 的 chooseDirectory 归 settings 域）；C3 把剪贴板 4 份、window resize 3 处 + element ResizeObserver 若干收敛为 useClipboard/useWindowResize（+ useResizeObserver 单独设计，W2）
+3. **绞杀续行**：C5 按 chat 域已验证路径把 store 直连 api 通道下沉 core/domain（W3，subagent/workflow 分批后置；terminal-write-queue/workspace 经审查补入，分批处理）
 4. **组织债**：C6 composables/panel 按 4 域分子目录、C7 components/panel 四个巨模块按 zone 拆分（W4）
 
 ### Out of Scope
@@ -44,10 +44,10 @@
 | 编号 | 级别 | 波次 | 问题类型 | 一句话 | 关键事实（已核实） |
 |------|------|------|---------|--------|-------------------|
 | C1 | Strong | W0 | 死壳删除 | useSidebar 绞杀残留死壳，仅 1 个消费方 | useSidebar.ts 565 行，消费方仅 `useChatViewDeps.ts:34,57`；useSidebarNew.ts 413 行真消费方 9 处（App.vue/useForkNoticeStream/composer-shell/useHandoffEffect/Sidebar.vue/Panel.vue/AppShell.vue/Workspace.vue/Overview.vue） |
-| C2 | Strong | W2 | seam 归位 | Feature 层 vue 直连 lib/ipc 绕过同域 composable seam | BrowserPane.vue:178 直连 8 符号（browserCreate/Navigate/Hide/Show/Back/Forward/onBrowserState/openExternal）；SystemSoundSection.vue:112（listSystemSounds）；ExtensionPage.vue:41（chooseDirectory）。同域 useBrowserZoom/useBrowserRectSync 已走 seam |
-| C3 | Strong | W2 | 重复收敛 | 剪贴板 4 份 + resize 订阅 5+ 份 | clipboard.writeText：useCopy.ts:21 / useCodeblockCopy.ts:37 / SystemPromptPage.vue:293 / BrowserPane.vue:364（1200ms 常量、await/then 风格不一）；resize：useMessageStreamRail.ts:163 / useBrowserRectSync.ts:118 / TerminalView.vue:174 / TokenDebugPage.vue:111 / useConstantHeightAssert.ts:65 等 |
+| C2 | Strong | W2 | seam 归位 | Feature 层 vue 直连 lib/ipc 绕过同域 composable seam | 实测 **5 处**（8+3+2+1+1 符号）：BrowserPane.vue:178（browserCreate/Navigate/Hide/Show/Back/Forward/onBrowserState/openExternal）；TrafficLight.vue:49（windowClose/windowMinimize/windowToggleMaximize）；SettingsResourcePage.vue:84（chooseDirectory/getDataDir）；SystemSoundSection.vue:112（listSystemSounds）；ExtensionPage.vue:41（chooseDirectory）。同域 useBrowserZoom/useBrowserRectSync 已走 seam |
+| C3 | Strong | W2 | 重复收敛 | 剪贴板 4 份 + window resize 3 处 + element ResizeObserver 若干 | clipboard.writeText：useCopy.ts:21 / useCodeblockCopy.ts:37 / SystemPromptPage.vue:293 / BrowserPane.vue:364（1200ms 常量、await/then 风格不一）；**window resize（`addEventListener('resize')`）3 处**：useMessageStreamRail.ts:163 / useBrowserRectSync.ts:118 / TokenDebugPage.vue:111；**element ResizeObserver（`new ResizeObserver`）若干**：TerminalView.vue:174 / useConstantHeightAssert.ts:65 / useMessageStreamRail.ts:160 / useBrowserRectSync.ts:107 |
 | C4 | Strong | W0 | dead code | summarizeTurn 零调用方 + guiComponent 注释失真 | summarizeTurn.ts 11 行零调用方（唯一引用自身测试，TD7 迁 core 残骸）；guiComponent.ts **已不存在**（审查后已删），作已解决案例 |
-| C5 | Worth | W3 | 绞杀续行 | 四未下沉 store 直连 api | 矛盾严格成立者 **2/4**：subagent.ts:19-20、workflow.ts:26 头注释「依赖方向：无」却直连 @/api；project.ts:21 直连但无声明（缺失非矛盾）；fileTree.ts 零直连（import shared + composables/logic/file-tree-utils） |
+| C5 | Worth | W3 | 绞杀续行 | 未下沉 store 直连 api | 实测 stores/ 直连 @/api **6 处**：subagent.ts:19-20、workflow.ts:26（矛盾严格成立，头注释「依赖方向：无」却直连）；project.ts:21（直连无声明）；**terminal-write-queue.ts:22**（terminalApi，迁移中兼容层 W2）；**workspace.ts:12**（已诚实声明依赖方向）；extension-ui.ts:28（type-only）；fileTree.ts 零直连 |
 | C6 | Worth | W4 | 组织债 | composables/panel/ 25 项平铺 | composer-shell.ts 387 行与 useCopy 等小 module 平铺混放；features/ 已按 14 域分组（B9），panel/ 桶复发 |
 | C7 | Worth | W4 | 组织债 | components/panel/ 巨模块群 | DetailPane 520（t244/s275）/ MessageStream 405（t150/s240/st16）/ Composer 407（t149/s257）/ BrowserPane 390（t143/s246）；深度在 script 段（3/4 无 style 段），非 template+style |
 
@@ -126,14 +126,16 @@
 
 **级别**：Strong · W2 · seam 归位
 
-**问题**：BrowserPane.vue:178 的 import 区**同一处混两种范式**——useBrowserZoom / useBrowserRectSync 走域 composable seam，8 个控制函数（browserCreate/browserNavigate/browserHide/browserShow/browserBack/browserForward/onBrowserState/openExternal）却直连 `@/lib/ipc`。SystemSoundSection.vue:112（listSystemSounds）、ExtensionPage.vue:41（chooseDirectory）同理。违反七层铁律：Feature 层不应直接调 T&C adapter（renderer-target-architecture 七层依赖铁律：Feature 层经 seam 访问 Transport&Coordination，禁止绕 seam 直连）。
+**问题**：BrowserPane.vue:178 的 import 区**同一处混两种范式**——useBrowserZoom / useBrowserRectSync 走域 composable seam，8 个控制函数（browserCreate/browserNavigate/browserHide/browserShow/browserBack/browserForward/onBrowserState/openExternal）却直连 `@/lib/ipc`。SystemSoundSection.vue:112（listSystemSounds）、ExtensionPage.vue:41（chooseDirectory）同理。**另有 2 处经审查修订补入**：TrafficLight.vue:49（windowClose/windowMinimize/windowToggleMaximize）直连 shell 窗控、SettingsResourcePage.vue:84（chooseDirectory/getDataDir）直连 settings 目录选择。违反七层铁律：Feature 层不应直接调 T&C adapter（renderer-target-architecture 七层依赖铁律：Feature 层经 seam 访问 Transport&Coordination，禁止绕 seam 直连）。
 
-**现状证据**（已核实）：
+**现状证据**（已核实，⚠️ 核查修正：实测 `rg "@/lib/ipc" components/` = **5 处**，原口径「3 处」漏 TrafficLight + SettingsResourcePage）：
 
 - BrowserPane.vue:178 的 import 区中 `@/lib/ipc` 的 8 符号块与 `@/composables/features/browser/useBrowserZoom`、`useBrowserRectSync` 相邻并列——同一文件、同一 import 区、两种范式并存，是最直观的「seam 泄漏」样本
 - browser 域已有走 seam 的先例（useBrowserZoom / useBrowserRectSync，同目录还有 useBrowserFocusSync），leverage 现成却不复用
-- sound/directory 两处为单符号直连，泄漏面小但范式相同
-- 与 C3 的 platform seam 不同：本候选是「域内归位」（browser 业务控制函数 → browser 域 composable），C3 是「跨端能力收敛」（clipboard/resize → platform port），两者不要合并成一个方案
+- **TrafficLight.vue:49**（windowClose/windowMinimize/windowToggleMaximize 3 符号）：shell 窗控，归 shell 域 composable
+- **SettingsResourcePage.vue:84**（chooseDirectory/getDataDir 2 符号）：settings 目录选择，归 settings 域（与 ExtensionPage:41 的 chooseDirectory 同域，可合并封装）
+- sound（listSystemSounds）、directory（ExtensionPage chooseDirectory）两处为单符号直连，泄漏面小但范式相同
+- 与 C3 的 platform seam 不同：本候选是「域内归位」（browser 业务控制函数 → browser 域 composable；shell 窗控 → shell 域；settings 目录选择 → settings 域），C3 是「跨端能力收敛」（clipboard/resize → platform port），两者不要合并成一个方案
 
 **影响分析**：
 
@@ -145,7 +147,7 @@
 
 | 方案 | 性质 | 内容 | 取舍 |
 |------|------|------|------|
-| A：收编进域 composable | 长期 | 新建 `features/browser/useBrowserControls.ts` 收编 8 符号（透传 IPC 签名，onBrowserState 订阅生命周期随组件挂载管理）；sound 归 `features/settings/` 域（listSystemSounds）；chooseDirectory 归 settings 域封装 | 与 features/ 14 域分组范式一致，复用现有 seam 结构；BrowserPane 的 import 区归一为全走 seam，审查口径从此清晰。代价：3 个新薄封装 + 订阅生命周期管理责任转移 |
+| A：收编进域 composable | 长期 | 新建 `features/browser/useBrowserControls.ts` 收编 8 符号（透传 IPC 签名，onBrowserState 订阅生命周期随组件挂载管理）；sound 归 `features/settings/` 域（listSystemSounds）；chooseDirectory 归 settings 域封装（ExtensionPage:41 + SettingsResourcePage:84 合并）；TrafficLight 的 windowClose/windowMinimize/windowToggleMaximize 归 shell 域 composable | 与 features/ 14 域分组范式一致，复用现有 seam 结构；5 处 import 区归一为全走 seam，审查口径从此清晰。代价：4 个新薄封装（browser / settings 合一 / shell） + 订阅生命周期管理责任转移 |
 | B：现状 + 豁免注释 | 短期 | 直连保留，头注释声明「已知豁免」 | 零改动；但同一 import 区双范式持续存在，审查持续报，未来新增直连无约束——豁免注释会变成"法外之地"的注册表 |
 | C：lib/ipc 上加通用 wrapper | 长期 | 在 lib/ipc 之上包一层非按域的通用函数层 | 解决"绕过 seam"却制造新桶（wrapper 无域语义，与 features/ 14 域分组冲突），且与 C3 的 platform seam 方案职责重叠——比 A 差 |
 
@@ -160,12 +162,13 @@
 
 **测试影响**：本候选不新增单测——IPC 封装是薄透传，行为等价验证依赖真实场景（主进程 IPC 无法在 renderer 单测中模拟全链路）。若 browser 域已有 composable 测试先例（useBrowserZoom/useBrowserRectSync），useBrowserControls 的纯参数透传部分可补 1 条签名一致性测试。
 
-**改动点**：
+**改动点**（5 处直连全部收编）：
 
 1. 新增 `composables/features/browser/useBrowserControls.ts`：8 符号薄封装，保持主进程 IPC 参数/返回签名不变（纯透传，不做形态转换——preload 的 canceled→null 形态适配不在本层，见 E7）
 2. BrowserPane.vue:178 import 区替换；onBrowserState 的 on/off 订阅随组件 mount/unmount 成对管理（遵守「事件总线 listener 防重复注册」规则——BrowserPane 可能多实例）
 3. SystemSoundSection.vue:112 → settings 域 composable（listSystemSounds，薄封装）
-4. ExtensionPage.vue:41 → settings 域 chooseDirectory 封装（注意：SystemPromptPage.vue 的剪贴板直连是 C3 范围，本候选不碰）
+4. ExtensionPage.vue:41 + SettingsResourcePage.vue:84 → settings 域 chooseDirectory/getDataDir 合并封装（两处同域，合并为一个薄封装减少重复；注意：SystemPromptPage.vue 的剪贴板直连是 C3 范围，本候选不碰）
+5. TrafficLight.vue:49 → shell 域 composable（windowClose/windowMinimize/windowToggleMaximize，薄封装；shell 窗控归 shell 域与 chrome 一致）
 
 **收益**：seam 归位（Feature 层不再直连 T&C adapter，七层铁律恢复）、leverage 复用（browser 域先例扩展，无新机制）。收编后「components/ 下无 lib/ipc 直连」成为可执行的守护检查条件。
 
@@ -174,25 +177,30 @@
 **验收（真实场景）**：
 
 1. 启动 dev → BrowserPane 完整操作（新建/导航/后退/前进/隐藏/显示/打开外部链接）与迁移前行为一致
-2. 设置页声音预览播放正常；Extension 设置页目录选择 dialog 正常（含取消返回 null 形态）
+2. 设置页声音预览播放正常；Extension 设置页 + SettingsResourcePage 目录选择 dialog 正常（含取消返回 null 形态）；TrafficLight 窗口最小化/关闭/最大化冒烟正常
 3. Playwright（9222 端口）断言 BrowserPane 关键控件可点击且状态正确；`rg "@/lib/ipc" components/` 归零
 4. 行为等价验证：迁移前后跑同一操作序列，断言输出一致
 5. 与主文档 §4 全局验收联动：本波次（W2）完成后跑全量检查（`pnpm run lint` + renderer `npx vitest run`）确认零回归
 
-**下一层拆分**：无独立子任务，3 处收编可各一个 commit（browser 控制函数 / sound / directory）。与 C3 同波次 W2——C3 的 useWindowResize 会触及同域 useBrowserRectSync，建议 C2 先行（域 composable 先例成型）或同批实施，避免对 useBrowserRectSync 的重复修改。
+**下一层拆分**：5 处收编按域分 commit（browser 控制函数 / sound / settings 目录选择合并 / TrafficLight shell 窗控）。与 C3 同波次 W2——C3 的 useWindowResize 会触及同域 useBrowserRectSync，建议 C2 先行（域 composable 先例成型）或同批实施，避免对 useBrowserRectSync 的重复修改。
 
 ---
 
-### C3 · 剪贴板 4 份 + resize 订阅 N 份收敛
+### C3 · 剪贴板 4 份 + window resize 3 处 + element ResizeObserver 若干收敛
 
 **级别**：Strong · W2 · platform seam 收敛
 
-**问题**：`navigator.clipboard.writeText` 在 4 处独立实现——useCopy.ts:21、useCodeblockCopy.ts:37、SystemPromptPage.vue:293、BrowserPane.vue:364，1200ms 提示常量与 await/then/catch 风格各自为政（useCopy 失败静默 catch 吞错，SystemPromptPage 用 await，BrowserPane 用 then）；window resize 订阅全仓 5+ 处——useMessageStreamRail.ts:163、useBrowserRectSync.ts:118、TerminalView.vue:174、TokenDebugPage.vue:111、useConstantHeightAssert.ts:65 等，节流/时序语义各写各的。
+**问题**：`navigator.clipboard.writeText` 在 4 处独立实现——useCopy.ts:21、useCodeblockCopy.ts:37、SystemPromptPage.vue:293、BrowserPane.vue:364，1200ms 提示常量与 await/then/catch 风格各自为政（useCopy 失败静默 catch 吞错，SystemPromptPage 用 await，BrowserPane 用 then）。**resize 分两类机制，不可混为一谈**（⚠️ 审查修订）：
+
+- **window resize**（`addEventListener('resize')`）实测 **3 处**：useMessageStreamRail.ts:163、useBrowserRectSync.ts:118、TokenDebugPage.vue:111——响应窗口尺寸变化
+- **element ResizeObserver**（`new ResizeObserver`）若干：TerminalView.vue:174、useConstantHeightAssert.ts:65、useMessageStreamRail.ts:160、useBrowserRectSync.ts:107——响应元素尺寸变化（splitter 拖动、布局重排等，**与窗口缩放无关**）
+
+原口径「window resize 订阅 5+ 处」混入了 element ResizeObserver（TerminalView/useConstantHeightAssert），按原方案把 terminal 的 ResizeObserver 塞进 useWindowResize，terminal 容器在 splitter 拖动（窗口未缩放）时将不再自适应——破坏现有行为。
 
 **现状证据**（已核实）：
 
 - ⚠️ 核查修正：原「注释自认『刻意双份』」不实——useCopy 头注释自称「单一真相源」，useCodeblockCopy 给出「事件委托 vs ref-based」技术辩护；重复是事实但作者并未认账，该论据需改写
-- ⚠️ 核查修正：全仓 resize 订阅不止 2 处（原口径偏窄），实测 5+ 处
+- ⚠️ 核查修正：resize 分两类——window resize 实测 3 处（`addEventListener('resize')`）；element ResizeObserver 若干（`new ResizeObserver`），原口径「5+ 处」混入 ResizeObserver 导致分类错误
 - duplicate-code-audit.md 只覆盖 runtime（D1-D28）——这是 renderer 侧第一批实测重复证据，修完本候选 audit 才有 renderer 章节可写
 
 **影响分析**：
@@ -208,9 +216,9 @@
 
 | 方案 | 性质 | 内容 | 取舍 |
 |------|------|------|------|
-| A：useClipboard + useWindowResize | 长期 | 抽共享 composable，经 platform 端口注入（对齐 core 的 port 模式——core 定义 port 接口 + renderer 薄壳注入 window/navigator 实现） | 单点可测——port 注入把 4+5 处调用点变成可单测的纯逻辑；1200ms 常量/节流语义归一为单一真相源（这次是真的）。代价：行为等价验证面广（resize 各消费点语义不同，rAF 合并可能改变帧时序） |
+| A：useClipboard + useWindowResize（+ useResizeObserver 单独设计） | 长期 | clipboard 抽共享 composable；**window resize 3 处**抽 useWindowResize（经 platform 端口注入，rAF 合并 + 自动退订）；**element ResizeObserver 单独设计**（TerminalView/useConstantHeightAssert → useResizeObserver 或保留，因响应的是元素尺寸变化非窗口缩放，机制不同，不能塞进 useWindowResize） | 单点可测——port 注入把调用点变成可单测的纯逻辑；1200ms 常量/节流语义归一为单一真相源。代价：行为等价验证面广（window resize 各消费点语义不同，rAF 合并可能改变帧时序）；element ResizeObserver 的收敛单独设计，本候选只定方向 |
 | B：保留现状 | 短期 | 4 份复制各自演进 | 零改动；重复持续、风格漂移加剧、下一轮审计继续报同一问题——现状是"5 份代码维护一份语义"的净亏损 |
-| C：只抽 useClipboard | 长期 | clipboard 收敛，resize 维持现状 | 半收敛——clipboard 收益落地但 resize 5+ 处重复继续，且两者同为 platform seam 问题，拆两批反而重复评审与验收 |
+| C：只抽 useClipboard | 长期 | clipboard 收敛，resize（window + ResizeObserver）维持现状 | 半收敛——clipboard 收益落地但 window resize 3 处 + element ResizeObserver 若干重复继续，且两者同为 platform seam 问题，拆两批反而重复评审与验收 |
 
 **方案评述**：
 
@@ -228,19 +236,20 @@
 
 1. 新增 platform seam：`composables/platform/useClipboard.ts` + `useWindowResize.ts`（或 core/domain 定义 port 接口 + renderer 实现注入，与 chat 域 ports 先例同构——具体归位按 B3/DP-1 裁决后的逻辑层现状定）
 2. 4 处 clipboard 调用点替换；1200ms 提示常量收敛为共享常量（文案/时长统一）
-3. 5+ 处 resize 订阅点替换为统一订阅工厂（回调注册 + rAF 合并 + 自动清理，onUnmounted 统一退订）
-4. 删除各点本地重复实现（useMessageStreamRail 的内联 addEventListener、useBrowserRectSync 的本地监听等）
+3. **window resize 3 处**（useMessageStreamRail:163 / useBrowserRectSync:118 / TokenDebugPage:111）替换为 useWindowResize（回调注册 + rAF 合并 + 自动清理，onUnmounted 统一退订）
+4. **element ResizeObserver 单独设计**（TerminalView:174 / useConstantHeightAssert:65 / useMessageStreamRail:160 / useBrowserRectSync:107）：评估抽 useResizeObserver 或保留现状——**不可塞进 useWindowResize**（响应的是元素尺寸变化非窗口缩放）。本候选只定方向，不强行收敛（若各点 ResizeObserver 语义差异大，保留比假收敛更稳）
+5. 删除各点本地重复实现（useMessageStreamRail 的内联 addEventListener、useBrowserRectSync 的本地监听等——仅 window resize 部分）
 
-**风险**：中。resize 各消费点的节流/时序语义需逐一比对（useMessageStreamRail 的右缘刷新、useBrowserRectSync 的 rect push、useConstantHeightAssert 的断言时序、TerminalView 的自适应），rAF 合并可能改变帧时序——必须真实场景行为等价验证，单测只是辅助。clipboard 侧风险低（writeText 语义单一）。
+**风险**：中。**window resize** 各消费点的节流/时序语义需逐一比对（useMessageStreamRail 的右缘刷新、useBrowserRectSync 的 rect push、TokenDebugPage 的字体刷新），rAF 合并可能改变帧时序——必须真实场景行为等价验证，单测只是辅助。**element ResizeObserver**（TerminalView/useConstantHeightAssert）是不同机制，塞进 useWindowResize 会破坏 terminal 容器在 splitter 拖动时的自适应——本候选明确将其拆出单独设计，避免此风险。clipboard 侧风险低（writeText 语义单一）。
 
 **验收（真实场景）**：
 
 1. 启动 dev → 4 个复制场景（代码块复制按钮/消息复制/系统提示词页复制/浏览器 URL 复制）逐一粘贴验证内容正确、1200ms 反馈一致（迁移前后对比同一操作序列）
-2. 窗口缩放 → message rail 右缘刷新、browser rect 推送、terminal 自适应、height 断言全部正常（各消费点逐一核对节流语义等价）
+2. **窗口缩放** → message rail 右缘刷新、browser rect 推送、TokenDebugPage 字体刷新全部正常（window resize 3 处消费点逐一核对节流语义等价）；**元素尺寸变化（splitter 拖动等，非窗口缩放）** → terminal 自适应、height 断言正常（element ResizeObserver 链路，验收触发条件是元素尺寸变化非窗口缩放）
 3. 单测：mock port 注入验证 useClipboard 错误路径（writeText reject 时 catch 行为）与 useWindowResize 订阅/退订计数（作辅助，主验收是真实场景行为等价）
 4. 与主文档 §4 全局验收联动：W2 波次收尾时对迁移前后两份代码跑同一窗口缩放脚本，断言各消费点响应一致（收敛类候选的强制验收口径）
 
-**下一层拆分**：调用点按域分 2-3 个 commit（clipboard 4 处一批 / resize 按消费域 2 批：panel 域一批、browser 域 + terminal + debug 页一批）。每批内先建 seam、后换消费点、再删旧实现，保持每批可独立验证。
+**下一层拆分**：调用点按域分批（clipboard 4 处一批 / window resize 3 处按消费域 2 批：panel 域一批 + browser 域 + debug 页一批 / element ResizeObserver 单独一批或保留）。每批内先建 seam、后换消费点、再删旧实现，保持每批可独立验证。element ResizeObserver 的收敛单独评估，不与 window resize 混批。
 
 ---
 
@@ -305,25 +314,25 @@
 
 ---
 
-### C5 · 四未下沉 store 直连 api 通道 → 下沉 core/domain
+### C5 · store 直连 api 通道 → 下沉 core/domain
 
 **级别**：Worth · W3 · 绞杀续行
 
-**问题**（⚠️ 修正后口径，已核实）：矛盾严格成立者 **2/4**——subagent.ts:19-20、workflow.ts:26 头注释写「依赖方向：无（stores 间禁止互相 import）」却直连 `@/api`（interface 声明与 implementation 事实矛盾）；project.ts:21 直连 `@/api` 但完全无依赖方向声明（声明缺失，不是矛盾）；fileTree.ts 零直连（import shared + composables/logic/file-tree-utils，无「依赖方向」前缀声明）。对照：chat 域已完整下沉（chat.ts 31 行 factory + ADR-0059 薄壳）——同层新旧两种 implementation 并存，绞杀停在断点。
+**问题**（⚠️ 修正后口径，已核实）：实测 stores/ 直连 `@/api` **6 处文件**，分四类——①矛盾严格成立 **2**：subagent.ts:19-20、workflow.ts:26 头注释写「依赖方向：无（stores 间禁止互相 import）」却直连 `@/api`（interface 声明与 implementation 事实矛盾）；②直连无声明 **1**：project.ts:21（声明缺失，不是矛盾）；③**经审查修订补入 2**：terminal-write-queue.ts:22（terminalApi，文件头自称「兼容层（W2 迁移中）」）、workspace.ts:12（workspace，已诚实声明依赖方向）；④type-only **1**：extension-ui.ts:28（`import type`，无运行时值消费）。fileTree.ts 零直连（import shared + composables/logic/file-tree-utils）。对照：chat 域已完整下沉（chat.ts 31 行 factory + ADR-0059 薄壳）——同层新旧两种 implementation 并存，绞杀停在断点。
 
 **影响分析**：
 
 - 头注释谎报契约——「依赖方向：无」的真实语义是「stores 之间不互 import」，不是「不依赖外部层」，注释口径与实现脱节，阅读者被误导
-- 四 store 与 chat 域 depth 不对称——chat 已沉到底（Foundation 归位），其余四个停在直连 T&C 层，同层两套范式，新 store 不知照哪个写
+- 下沉候选 store 与 chat 域 depth 不对称——chat 已沉到底（Foundation 归位），subagent/workflow/project 等停在直连 T&C 层（terminal-write-queue/workspace 经审查补入），同层两套范式，新 store 不知照哪个写
 - 无守护时这种漂移是常态——本次审查就是靠人工核查才发现 2/4 矛盾，注释类声明不修就永远失真
 
 **方案对比**：
 
 | 方案 | 性质 | 内容 | 取舍 |
 |------|------|------|------|
-| A：按 chat 域路径下沉，分批 | 长期 | 按 chat 域已验证的绞杀路径下沉 core/domain（ports 注入替换 api 直连）。分两批：fileTree/project 轻量先行（project 只换 1 处 import；fileTree 本无直连，只需补声明），subagent/workflow 后置（耦合虚拟 session，renderer-target-architecture §12.1 已判定「高且深」，需独立设计先行） | Foundation 归位、依赖倒置消除，depth 与 chat 域对称；ADR-0058/0059 同向非冲突。代价：阶段 3 是大工程，需拆独立设计/评审循环，本波次只完成阶段 1-2 是务实边界 |
+| A：按 chat 域路径下沉，分批 | 长期 | 按 chat 域已验证的绞杀路径下沉 core/domain（ports 注入替换 api 直连）。分批：fileTree/project 轻量先行（project 只换 1 处 import；fileTree 本无直连，只需补声明）；**terminal-write-queue.ts:22** 标「迁移中兼容层，阶段 3 后再议」（W2 仍在迁移，强行下沉会与 W2 冲突）；**workspace.ts:12** 标「已诚实声明依赖方向，阶段 2 可顺手下沉或保留」（依赖面小，下沉与否皆可）；subagent/workflow 后置（耦合虚拟 session，§12.1 判定「高且深」，独立设计先行） | Foundation 归位、依赖倒置消除，depth 与 chat 域对称；ADR-0058/0059 同向非冲突。代价：阶段 3 是大工程，需拆独立设计/评审循环，本波次只完成阶段 1-2 是务实边界 |
 | B：先修头注释止血 | 短期 | subagent/workflow 的「依赖方向：无」改为如实声明「依赖 api（T&C 层）」，project 补声明，fileTree 补「无 api 依赖」 | 声明与事实对齐，成本极低（2-4 处注释），可作为 A 的前置 commit 立即落地；但结构不动，直连仍在 |
-| C：维持现状 + 文档标记例外 | 长期 | 不沉，在 renderer-target-architecture 中把四 store 标记为已知例外 | 承认而非解决，与「绞杀续行」主叙事相悖；例外清单会持续膨胀，下一个新 store 会照直连范式写——不推荐 |
+| C：维持现状 + 文档标记例外 | 长期 | 不沉，在 renderer-target-architecture 中把直连 store 标记为已知例外 | 承认而非解决，与「绞杀续行」主叙事相悖；例外清单会持续膨胀，下一个新 store 会照直连范式写——不推荐 |
 
 **方案评述**：
 
@@ -335,9 +344,9 @@
 
 **改动点**：
 
-1. 阶段 1（止血）：修正 subagent.ts/workflow.ts 头注释（如实声明 api 依赖），project.ts 补声明，fileTree.ts 补「零 api 直连」声明
-2. 阶段 2（轻）：project store 的 projectApi 下沉 core/domain（ports 注入替换 `stores/project.ts:21` 直连；project 是四者中依赖面最小的，作为下沉样板）
-3. 阶段 3（重）：subagent/workflow 下沉——虚拟 session 解耦设计先行（本候选只定方向与分批，不断言实施细节）
+1. 阶段 1（止血）：修正 subagent.ts/workflow.ts 头注释（如实声明 api 依赖），project.ts 补声明，fileTree.ts 补「零 api 直连」声明；extension-ui.ts:28 的 type-only import 保持（无运行时值消费）
+2. 阶段 2（轻）：project store 的 projectApi 下沉 core/domain（ports 注入替换 `stores/project.ts:21` 直连；project 是候选 store 中依赖面最小的，作为下沉样板）；workspace.ts:12 可顺手下沉（依赖面小）或保留（已诚实声明，阶段 2 不强求）
+3. 阶段 3（重）：subagent/workflow 下沉——虚拟 session 解耦设计先行（本候选只定方向与分批，不断言实施细节）；terminal-write-queue.ts:22 等 W2 迁移完成后再议（阶段 3 后再评估，避免与 W2 的 terminal 兼容层迁移冲突）
 
 **风险**：阶段 1-2 低（注释 + 单点替换）；阶段 3 中高——subagent/workflow 与虚拟 session 的耦合是真正难点，必须独立设计 + 对抗审查后再动，禁止大爆炸式迁移（与 D8 同纪律：渐进切分）。
 
@@ -345,7 +354,7 @@
 
 1. 阶段 2 后 project 设置页保存/加载功能冒烟正常（行为等价）
 2. 阶段 3 后 subagent 面板（任务列表/新建/取消/状态刷新）、workflow 运行列表全流程冒烟正常
-3. 全量 typecheck + vitest 全绿；`rg "from '@/api'" stores/` 归零（fileTree 本无直连，归零口径为 subagent/workflow/project 三文件）
+3. 全量 typecheck + vitest 全绿；`rg "from '@/api'" stores/` 归零口径明确为**本次下沉的文件清单**——subagent/workflow/project（阶段 3 后）。**排除及理由**：terminal-write-queue.ts（W2 迁移中兼容层，阶段 3 后再议）、workspace.ts（已诚实声明依赖方向，阶段 2 顺手或保留）、extension-ui.ts（type-only，无运行时值消费）。验收命令：`rg "from '@/api'" stores/subagent.ts stores/workflow.ts stores/project.ts` 归零
 
 **下一层拆分**：三阶段对应 3 个 commit；阶段 3 前置独立设计文档（可拆为子 wave，单独 design-review 循环）。
 
@@ -459,8 +468,8 @@
 | 波次 | 候选 | 类型 | 验收核心 |
 |------|------|------|---------|
 | W0 | C1/C4 | 删除类 | `rg` 确认旧符号零引用（useSidebar / summarizeTurn），typecheck 通过，dev 启动侧栏全流程冒烟——删除类禁止以单测为唯一验收 |
-| W2 | C2/C3 | 收敛类 | 行为等价验证——迁移前后跑同一真实场景（浏览器操作序列/复制 4 场景/窗口缩放），断言输出一致 |
-| W3 | C5 | 下沉类 | 既有测试全绿 + 新增单测覆盖迁移后纯逻辑 + project/subagent/workflow 页面冒烟 + stores/ 直连归零 |
+| W2 | C2/C3 | 收敛类 | 行为等价验证——迁移前后跑同一真实场景（浏览器操作序列/复制 4 场景/窗口缩放/元素尺寸变化），断言输出一致 |
+| W3 | C5 | 下沉类 | 既有测试全绿 + 新增单测覆盖迁移后纯逻辑 + project/subagent/workflow 页面冒烟 + stores/ 下沉清单归零（terminal-write-queue/workspace/extension-ui 排除） |
 | W4 | C6/C7 | 组织类 | typecheck + vitest 全绿 + 对话全链路冒烟 + 组件级视觉对比（C7，minimax-m3 视觉模型核对截图） |
 
 ### 汇总表
@@ -468,10 +477,10 @@
 | 候选 | 级别 | 波次 | 方案对比数 | 推荐方案 | 验收场景（真实） |
 |------|------|------|-----------|---------|-----------------|
 | C1 | Strong | W0 | 3 | A 换注入+删壳 | dev 启动侧栏创建/切换/删除全流程 + 9 消费方 typecheck + rg 零引用 |
-| C2 | Strong | W2 | 3 | A 收编域 composable | BrowserPane 全操作序列 + 声音预览 + 目录选择 + Playwright 控件断言 + rg components/ 直连归零 |
-| C3 | Strong | W2 | 3 | A useClipboard+useWindowResize | 4 复制场景逐一粘贴 + 窗口缩放 4 类响应 + mock port 单测辅助 |
+| C2 | Strong | W2 | 3 | A 收编域 composable | BrowserPane 全操作序列 + 声音预览 + 目录选择 + 窗口最小化/关闭/最大化 + Playwright 控件断言 + rg components/ 直连归零 |
+| C3 | Strong | W2 | 3 | A useClipboard+useWindowResize(+useResizeObserver) | 4 复制场景逐一粘贴 + 窗口缩放 3 类响应 + 元素尺寸变化验证 + mock port 单测辅助 |
 | C4 | Strong | W0 | 2 | A 删+测试删 | dev 会话消息折叠/展开正常 + rg 零命中 |
-| C5 | Worth | W3 | 3 | A 分批下沉 | project/subagent/workflow 页面冒烟 + stores/ 直连归零 |
+| C5 | Worth | W3 | 3 | A 分批下沉 | project/subagent/workflow 页面冒烟 + stores/ 下沉清单归零（subagent/workflow/project） |
 | C6 | Worth | W4 | 3 | A 4 域分子目录 | 对话全链路 + typecheck/vitest + 无残留旧路径 |
 | C7 | Worth | W4 | 3 | A zone 拆分 | 4 类 detail 渲染对比 + 流/钉住/加载 + composer 行为 + 主文件 <300 行 |
 
@@ -511,9 +520,11 @@ W4         C6 panel 分子目录 → C7 巨模块拆分
 | W0-1 | C1 useSidebar 换注入 + 删壳 + 删测试 | typecheck + dev 冒烟 + rg 零引用 |
 | W0-2 | C4 summarizeTurn 删 + 测试删 | typecheck + rg 零命中 |
 | W2-1 | C2 browser 控制函数收编 useBrowserControls | BrowserPane 全操作冒烟 |
-| W2-2 | C2 sound/directory 归域 | 声音预览 + 目录选择冒烟 |
+| W2-2 | C2 sound/directory/settings-resource 归域 | 声音预览 + 目录选择冒烟 |
+| W2-2b | C2 TrafficLight 窗控归 shell 域 | 窗口最小化/关闭/最大化冒烟 |
 | W2-3 | C3 useClipboard 收敛 4 处 | 4 复制场景验证 |
-| W2-4 | C3 useWindowResize 收敛 5+ 处 | 窗口缩放各响应验证 |
+| W2-4 | C3 useWindowResize 收敛 window resize 3 处 | 窗口缩放各响应验证 |
+| W2-4b | C3 element ResizeObserver 评估（抽 useResizeObserver 或保留） | 元素尺寸变化（splitter 拖动）验证 |
 | W3-1 | C5 阶段 1 注释止血 | typecheck |
 | W3-2 | C5 阶段 2 project 下沉 | project 页冒烟 + 单测 |
 | W3-3+ | C5 阶段 3 subagent/workflow（前置设计文档） | 独立设计评审 + 双面板冒烟 |
