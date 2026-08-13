@@ -255,8 +255,8 @@ export interface Message {
    * 仅 assistant 消息有值；user/system 消息不设置。
    */
   fileChanges?: FileChange[]
-  /** 发送模式，仅 user 消息有值 */
-  sendMode?: 'send' | 'steer' | 'follow-up'
+  /** 发送模式，仅 user 消息有值（'send' 成员已删——无写入点，§3.3.6） */
+  sendMode?: 'steer' | 'follow-up'
   /** 是否被 abort 中断，仅 assistant 消息有值 */
   isInterrupted?: boolean
   /**
