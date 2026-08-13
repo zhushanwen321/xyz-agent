@@ -88,6 +88,8 @@ pi 启动时 `ModelRuntime.create()` 把三源合并成完整的 provider/model 
 
 ## 2. 现状与问题分析
 
+> **本节为设计启动时（P0-P4 收口前）的现状快照，行号指向收口前代码。** 收口后 `model-resolver.ts`（整体重写为 `listAvailableModels`，仅 106 行，`resolveClassifierModel`/`findCheapestModel`/`loadModelsJson`/`flattenModels` 均已删除）、`classifier.ts`、rename `llm.ts`（改走 `llm-shared.callLLM`）等均已重构（见 §3 决策 + §5 实施），此处引用的行号（如 `model-resolver.ts:132-167/242-298`、`classifier.ts:80/188-193`、`llm.ts:68-93`）均已失效，保留作设计决策的背景追溯。
+
 ### 2.1 LLM 调用现状：两个直接调用者，两种完全不同的做法
 
 extension 进程内直接发起 LLM 调用的只有 **rename-session** 和 **permission** 两个（`vision` 是 spawn 子进程，不算；详见 §2.5）。
@@ -445,7 +447,7 @@ export interface CallLLMOptions {
 
 export type CallLLMResult =
   | { ok: true; content: string }             // 提取后的文本（已 trim）
-  | { ok: false; error: string; recoverable: boolean };
+  | { ok: false; error: string; recoverable: boolean; stopReason?: "error" | "aborted" };
 ```
 
 **核心函数**：
@@ -469,22 +471,27 @@ export function callLLM(
 **resolveModel 的解析逻辑**（走 modelRegistry，不自读文件）：
 
 ```ts
+// 共用 parseRef：拆 "provider/modelId"，用 indexOf 取首个 "/"（modelId 可含 "/"，如 "a/b/c" → provider="a", modelId="b/c"）。
+// 边界守卫：无 "/" / "/" 开头 / "/" 结尾（provider 或 modelId 为空）→ null，不传空串给 find。
+function parseRef(ref: string) {
+  const slash = ref.indexOf("/");
+  if (slash <= 0 || slash >= ref.length - 1) return null;
+  return { provider: ref.slice(0, slash), modelId: ref.slice(slash + 1) };
+}
+
 export function resolveModel(ctx, selector) {
   const reg = ctx.modelRegistry;
   if (selector.type === "ref") {
-    // 用 indexOf 取首个 "/" 分隔，不整串 split —— modelId 可能含 "/"，如 "a/b/c" → provider="a", modelId="b/c"；若用 split 按 "/" 全切分，modelId 会被截成 "b" 丢弃 "/c"
-    const slash = selector.ref.indexOf("/");
-    const provider = slash >= 0 ? selector.ref.slice(0, slash) : selector.ref;
-    const modelId = slash >= 0 ? selector.ref.slice(slash + 1) : "";
-    const m = reg.find(provider, modelId);
+    const parsed = parseRef(selector.ref);
+    if (!parsed) return null;
+    const m = reg.find(parsed.provider, parsed.modelId);
     return m && reg.hasConfiguredAuth(m) ? m : null;
   }
   if (selector.type === "fallback") {
     for (const ref of selector.refs) {
-      const slash = ref.indexOf("/");
-      const p = slash >= 0 ? ref.slice(0, slash) : ref;
-      const id = slash >= 0 ? ref.slice(slash + 1) : "";
-      const m = reg.find(p, id);
+      const parsed = parseRef(ref);
+      if (!parsed) continue;
+      const m = reg.find(parsed.provider, parsed.modelId);
       if (m && reg.hasConfiguredAuth(m)) return m;
     }
     return null;
@@ -512,14 +519,18 @@ export function resolveModel(ctx, selector) {
 **callLLM 的凭证处理**（走 modelRegistry，必须 narrow 判别联合）：
 
 ```ts
+// 顶层静态 import（决策 E 已证可行：compat 非 throwing stub，pi loader 运行时重映射，见 §2.3 问题 7）
+import { completeSimple } from "@earendil-works/pi-ai/compat";
+
 export async function callLLM(ctx, opts) {
-  const auth = await ctx.modelRegistry.getApiKeyAndHeaders(opts.model);
-  if (!auth.ok) {
-    return { ok: false, error: auth.error, recoverable: true };
-  }
-  // 静态 import（决策 E 已证可行）
-  const { completeSimple } = await import("@earendil-works/pi-ai/compat");
+  // B5：getApiKeyAndHeaders 与 completeSimple 同处 try。getApiKeyAndHeaders 的 reject
+  //（抛异常，非返回 {ok:false}）也归一入 catch，保证调用方日志前缀一致——避免 callLLM 直接
+  // reject 时上游走外层 .catch 输出不一致前缀（如 [pi-rename-session] 而非 [rename-session]）。
   try {
+    const auth = await ctx.modelRegistry.getApiKeyAndHeaders(opts.model);
+    if (!auth.ok) {
+      return { ok: false, error: auth.error, recoverable: true };
+    }
     const resp = await completeSimple(opts.model, {
       systemPrompt: opts.systemPrompt,
       messages: opts.messages,
@@ -559,7 +570,7 @@ export async function callLLM(ctx, opts) {
 ```ts
 // llm-shared/config.ts
 // ⚠️ 用 pi 导出的 getAgentDir（dist/index.d.ts:2），禁止自实现
-// permission 的 config.ts:24 和 model-resolver.ts:34 各自实现了一份重复版，本次顺带清理
+// permission 原 config.ts + classifier/model-resolver.ts 各自重复自实现了一份 PI_CODING_AGENT_DIR 解析（P3 收口已统一为复用 pi 导出）
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 
@@ -567,11 +578,21 @@ export function getConfigPath(pkgName: string): string {
   return join(getAgentDir(), "config", `${pkgName}.json`);
 }
 
-// loadConfig：读 + 归一化（容错），文件不存在返回默认值
-export function loadConfig<T>(pkgName: string, defaults: T, normalize: (raw: unknown) => T): T;
+// loadConfig：读 + 归一化（容错）。文件不存在/坏 JSON/normalize throw 返回 defaults（调 onWarning）
+export function loadConfig<T>(
+  pkgName: string,
+  defaults: T,
+  normalize: (raw: unknown) => T,
+  onWarning?: (msg: string) => void,
+): T;
 
 // saveConfig：原子写（tmp + rename，参考 permission 的范式）
-export function saveConfig(pkgName: string, config: unknown): void;
+// 返回 { success, error? }：rename 失败（如 Windows EPERM 目标占用）不抛错，由调用方处理
+export function saveConfig(
+  pkgName: string,
+  config: unknown,
+  onWarning?: (msg: string) => void,
+): { success: boolean; error?: string };
 ```
 
 **rename-session 配置 schema**（`<agentDir>/config/rename-session.json`）：
@@ -585,7 +606,7 @@ interface RenameSessionConfig {
 }
 ```
 
-**配置读写采用 mtime 缓存**（参考 permission 的 `config.ts`，避免每次 turn_end 都读盘）。
+**配置读写采用 mtime+size 双 key 缓存**（参考 permission 的 `config.ts`，避免每次 turn_end 都读盘；mtime + size 双 key 防 APFS 等文件系统 mtime 精度截断导致快速连续保存后缓存失效）。
 
 ### 3.6 硬编码路径修正范围
 
@@ -660,7 +681,7 @@ interface RenameSessionConfig {
 
 ### 场景 3：permission classifier 走共享库后能用到 OAuth provider（验证目标 2、3，依赖决策 C=C1）
 
-**前置**：用户只通过 `pi auth login` 配了官方 provider（没手写 models.json 的 provider）。`permission-config.json` 的 `classifier.model` 仅支持 string 形式（`"auto"` 或 OAuth provider 的 `"provider/model-id"` ref）；传对象会被 normalize 忽略并 `console.warn('[pi-permission] Ignoring invalid classifier.model ...')` 回落 `auto`（与实现 `config.ts:67-69` 一致，**C3b 回写**）。
+**前置**：用户只通过 `pi auth login` 配了官方 provider（没手写 models.json 的 provider）。`permission-config.json` 的 `classifier.model` 仅支持 string 形式（`"auto"` 或 OAuth provider 的 `"provider/model-id"` ref）；传对象会被 normalize 忽略并 `console.warn('[pi-permission] Ignoring invalid classifier.model ...')` 回落 `auto`（与实现 `config.ts:72-79` 一致：warn 在 `:75`、normalizeClassifierConfig 在 `:69`、回落在 `:79`，**C3b 回写**）。
 
 **步骤**：触发一次需要 classifier 的命令（如执行一个中等风险 bash 命令）。
 
@@ -730,6 +751,8 @@ interface RenameSessionConfig {
 **修改**：
 - `extensions/rename-session/src/{index.ts, llm.ts, pure.ts, commands.ts}`（收口到 llm-shared）
 - `extensions/permission/src/classifier/{model-resolver.ts, classifier.ts}` + `production.ts`（若 C1）
+  - 注：`model-resolver.ts` 已从 `resolveClassifierModel`（自读 models.json）**整体重写**为 `listAvailableModels`（走 `ctx.modelRegistry.getAll` + `hasConfiguredAuth` 过滤，给 picker 用），`loadModelsJson`/`flattenModels` 已删除
+  - `extensions/permission/src/model-picker.ts`（W7 独立功能：`/permission model` 交互式选模型 overlay UI），**非本设计 classifier 收口范围**
 - `extensions/permission/package.json`（移除 statusline peerDep）
 - `extensions/model-switch/src/config.ts`、`extensions/vision/src/vision-model.ts`（路径改 getAgentDir）；`extensions/scheduler/src/importer.ts`（已重构：`store.ts` 拆分为 backend/runtime/service 等，`importer.ts:33` 已走 `getAgentDir`，`:34` homedir legacyPath 为旧版迁移 fallback 有意保留）
 - `AGENTS.md`（Pi Extension 全集表格移除 3 行，17 → 14）
@@ -750,6 +773,8 @@ interface RenameSessionConfig {
 ---
 
 ## 附录 A：调研事实出处索引
+
+> **本附录为设计启动时（P0-P4 收口前）的调研快照，行号指向收口前代码，收口后均已失效（见 §2 顶部快照声明）。** 保留作设计决策的背景追溯。
 
 本文档的现状分析基于以下调研（均为只读，未改代码）：
 
