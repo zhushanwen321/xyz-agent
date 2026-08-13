@@ -674,6 +674,11 @@ export async function runSpawn(
           const child = getChildByRecord(record.id);
           if (child && !child.killed) child.kill("SIGTERM");
         }, record.idleTimeoutMs);
+        // [SP-9] chatMode 每轮 reset turn-limiter：新一轮开始（续聊）时，
+        // maxTurns/graceTurns 不跨轮累计（续聊本质是无限轮，累计上限违背 G1）。
+        // reset steered/aborted 标志 + turnCount 归零，下一轮独立计数。
+        limiter.reset();
+        record.turnCount = 0;
         ctx.onRoundSettled?.(record);
         // [V2 决策 2] chatMode 首轮：agent_settled = 本轮真空闲，提前 resolve runSpawn
         //（exit code 0，进程仍保活 idle timer armed）。runAndFinalize 拿到 result 后走
