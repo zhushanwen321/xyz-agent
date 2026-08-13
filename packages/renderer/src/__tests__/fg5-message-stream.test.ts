@@ -172,10 +172,10 @@ describe('FG5 groupTurns 回合分组', () => {
       userMsg('u2', 'q2'),
       assistantMsg('a2', 'r2'),
     ])
-    // 顺序：turn(u1+a1) → system(s1) → turn(u2+a2)
-    expect(items.map((i) => i.kind)).toEqual(['turn', 'system', 'turn'])
+    // 顺序：turn(u1+a1) → systemNotice(s1) → turn(u2+a2)
+    expect(items.map((i) => i.kind)).toEqual(['turn', 'systemNotice', 'turn'])
     const sysItem = items[1]
-    if (sysItem.kind !== 'system') throw new Error('expected system item')
+    if (sysItem.kind !== 'systemNotice') throw new Error('expected systemNotice item')
     expect(sysItem.message.content).toBe('system notice')
     // groupTurns 过滤掉 system，只剩 2 个 turn
     const turns = groupTurns([
@@ -690,6 +690,6 @@ describe('FG5 chat store 块类型扩展', () => {
     // 先建一个 user turn
     store.applyMessageEvent('sx', { type: 'message.customStart', payload: { sessionId: 'sx', customType: 'x', content: '' } })
     const items = toRenderItems(store.getMessages('sx'))
-    expect(items.map((i) => i.kind)).toEqual(['system'])
+    expect(items.map((i) => i.kind)).toEqual(['systemNotice'])
   })
 })

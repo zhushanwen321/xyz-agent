@@ -12,7 +12,13 @@
   -->
   <div class="chat-view flex flex-col" data-testid="chat-view">
     <template v-for="item in renderItems" :key="renderKey(item)">
-      <SystemNotice v-if="item.kind === 'system'" :message="item.message" />
+      <!-- kind 全集查表（renderer-model 归一 M1）：systemNotice → 一行通知；bashExecution → 输出块；其余 → turn -->
+      <SystemNotice v-if="item.kind === 'systemNotice'" :message="item.message" />
+      <BashOutputBlock
+        v-else-if="item.kind === 'bashExecution'"
+        :message="item.message"
+        :session-id="sessionId"
+      />
       <Turn
         v-else
         :turn="item.turn"
@@ -37,6 +43,7 @@ import { toRenderItems, renderKey } from '@xyz-agent/core/domain/chat'
 import type { Message } from '@xyz-agent/shared'
 import Turn from './Turn.vue'
 import SystemNotice from './SystemNotice.vue'
+import BashOutputBlock from './BashOutputBlock.vue'
 
 const props = withDefaults(
   defineProps<{

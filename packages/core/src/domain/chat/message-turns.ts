@@ -35,12 +35,24 @@ export interface MessageTurn {
   hasFoldable: boolean
 }
 
-/** 渲染项：turn（user+assistant 回合）或 system 提示行（独立穿插） */
+/**
+ * 渲染项：kind 全集（renderer-model 归一 M1，conversation-renderer-model-unification §3.3.1）。
+ * kind 是 toRenderItems 每渲染从同一堆可选字段现算的派生值，不落 store——单一判定函数。
+ *
+ * - turn：user+assistant 回合
+ * - systemNotice：compaction/branchSummary/stream_warn 等一行通知（system 无 bashExecution）
+ * - bashExecution：BashOutputBlock（system + bashExecution 字段）
+ *
+ * 判定顺序与旧 MessageStream system 分支一致：bashExecution 优先于 systemNotice 兜底。
+ * bgNotify/gui 两类不属全集：bgNotify 由 registry 写 display:false 过滤（M2），
+ * gui 的 producer（workflow-result）同属完成通知一并移除，tool RPC 的 __gui__ 走 Block.vue。
+ */
 export type RenderItem =
   | { kind: 'turn'; turn: MessageTurn }
-  | { kind: 'system'; message: Message }
+  | { kind: 'systemNotice'; message: Message }
+  | { kind: 'bashExecution'; message: Message }
 
-/** 一个渲染回合的稳定 key（turn 索引从 1 起；system 用 message.id） */
+/** 一个渲染回合的稳定 key（turn 索引从 1 起；system 类用 message.id） */
 export function renderKey(item: RenderItem): string {
   return item.kind === 'turn' ? `t-${item.turn.index}` : `s-${item.message.id}`
 }
@@ -101,7 +113,11 @@ export function toRenderItems(
       current.assistants.push(msg)
     } else if (msg.role === 'system') {
       current = null
-      items.push({ kind: 'system', message: msg })
+      items.push(
+        msg.bashExecution
+          ? { kind: 'bashExecution', message: msg }
+          : { kind: 'systemNotice', message: msg },
+      )
     }
   }
 

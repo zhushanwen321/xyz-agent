@@ -31,7 +31,7 @@
          - :keepMounted streaming/editing turn idx 恒挂载（design §4.3，virta 仍挂 RO 不致测量断）
          - :startMargin load-more 占位高度（virta getItemOffset 已含 startMargin，design §4.11）
          - :key=session 强制重建 Virtualizer，跨 session 测量缓存隔离（design §4.5）
-         slot 内 item.kind 分支与原 visibleItems 循环一致（turn/system 穿插渲染）。 -->
+         slot 内 item.kind 分支与原 visibleItems 循环一致（kind 全集三态：turn/systemNotice/bashExecution）。 -->
     <Virtualizer
       ref="vlistRef"
       :data="renderItems"
@@ -52,20 +52,13 @@
           :is-session-active="isSessionActive"
           @edit-state-change="onEditStateChange(index, $event.editing)"
         />
-        <BgNotifyCard v-else-if="item.message.bgNotify" :message="item.message" />
-        <!-- bash 执行结果气泡（composer-bash-execute W3）：role:'system' + bashExecution -->
+        <!-- bash 执行结果气泡（composer-bash-execute W3）：kind 全集内 bashExecution 项 -->
         <BashOutputBlock
-          v-else-if="item.message.bashExecution"
+          v-else-if="item.kind === 'bashExecution'"
           :message="item.message"
           :session-id="sessionId"
         />
-        <!-- 结构化 GUI 组件（extension GUI 协议 E5：customMessage 的 details.__gui__）。 -->
-        <div
-          v-else-if="extractGuiComponent(item.message)"
-          class="py-1 pl-1 font-mono text-[length:var(--text-sm)] leading-snug text-neutral-fg"
-        >
-          <GuiComponentRenderer :component="extractGuiComponent(item.message)!" />
-        </div>
+        <!-- 其余 system 消息（compaction/branchSummary/stream_warn 等）→ 一行通知 -->
         <SystemNotice v-else :message="item.message" />
       </template>
     </Virtualizer>
@@ -162,11 +155,9 @@ import { toRenderItems, filterDisplayableMessages } from '@/composables/logic/me
 import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubagentStore } from '@/stores/subagent'
 // [w6 chat-ui-and-shell T6] chat 展示组件迁 @xyz-agent/ui/features/chat，壳层经
 // ChatViewDeps inject token 注入 store/composable 依赖（TD3 inject 裁决）。
-import { Turn, SystemNotice, BgNotifyCard, BashOutputBlock, TurnRail, ChatViewDepsKey } from '@xyz-agent/ui'
-import { GuiComponentRenderer } from '@xyz-agent/ui/rendering-protocol'
+import { Turn, SystemNotice, BashOutputBlock, TurnRail, ChatViewDepsKey } from '@xyz-agent/ui'
 import { useChatViewDeps } from '@/composables/panel/useChatViewDeps'
 import ForkNotice from './ForkNotice.vue'
-import { extractGuiComponent } from '@/composables/logic/guiComponent'
 import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
 import { useLoadMoreHistory } from '@/composables/panel/useLoadMoreHistory'
 import { useSessionActive } from '@/composables/panel/useSessionActive'

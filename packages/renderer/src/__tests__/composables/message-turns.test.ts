@@ -16,8 +16,13 @@
  * 运行：npx vitest run src/__tests__/composables/message-turns.test.ts
  */
 import { describe, it, expect } from 'vitest'
-import { expandAssistantBlocks, filterDisplayableMessages } from '@/composables/logic/messageTurns'
+import {
+  expandAssistantBlocks,
+  filterDisplayableMessages,
+  toRenderItems,
+} from '@/composables/logic/messageTurns'
 import type { Message } from '@xyz-agent/shared'
+import type { RenderItem } from '@/composables/logic/messageTurns'
 
 function makeMsg(over: Partial<Message> = {}): Message {
   return { id: 'a1', role: 'assistant', content: '', status: 'complete', timestamp: Date.now(), ...over }
@@ -223,5 +228,104 @@ describe('expandAssistantBlocks —— 单条 assistant 内部块按时序展开
     const result = expandAssistantBlocks(msg)
     // 降级顺序 text→tool：subagent 标 agentgraph，grep 标 tool
     expect(result.map((b) => b.kind)).toEqual(['text', 'agentgraph', 'tool'])
+  })
+})
+
+/**
+ * kind 全集现算（renderer-model 归一 M1，conversation-renderer-model-unification §3.3.1）。
+ *
+ * kind 是 toRenderItems 每渲染从同一堆可选字段现算的派生值（不落 store），全集三态：
+ * turn（user+assistant 回合）/ systemNotice（system 无 bashExecution）/ bashExecution（system + bashExecution）。
+ *
+ * 判定顺序与旧 MessageStream system 分支一致：bashExecution 优先于 systemNotice 兜底。
+ * bgNotify/gui 不属全集（完成通知 display:false 过滤 + workflow-result 同源移除，见 SSOT）。
+ */
+function bashMsg(id: string, over: Partial<Message> = {}): Message {
+  return makeMsg({
+    id,
+    role: 'system',
+    content: '',
+    bashExecution: {
+      command: 'echo hi',
+      output: 'hi',
+      exitCode: 0,
+      cancelled: false,
+      truncated: false,
+      timestamp: 1000,
+    },
+    ...over,
+  })
+}
+
+/** kind 全集 → MessageStream 渲染组件映射契约（M1 检查点 1 的测试载体）。
+ *  新增 kind 时必须同步更新此表 + MessageStream.vue 模板分发（TC3 防遗漏/多余）。 */
+const KIND_COMPONENT_MAP: Record<RenderItem['kind'], string> = {
+  turn: 'Turn',
+  systemNotice: 'SystemNotice',
+  bashExecution: 'BashOutputBlock',
+}
+
+describe('toRenderItems kind 全集现算（renderer-model M1）', () => {
+  it('TC1: user/assistant 消息 → turn（assistant 归入 user 开启的同一回合）', () => {
+    const items = toRenderItems([
+      makeMsg({ id: 'u1', role: 'user', content: 'q' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r' }),
+    ])
+    expect(items.map((i) => i.kind)).toEqual(['turn'])
+    const turn = items[0]
+    if (turn.kind !== 'turn') throw new Error('expected turn item')
+    expect(turn.turn.assistants.map((m) => m.id)).toEqual(['a1'])
+  })
+
+  it('TC1: system + bashExecution → bashExecution（不落 systemNotice）', () => {
+    const items = toRenderItems([bashMsg('bash-1')])
+    expect(items.map((i) => i.kind)).toEqual(['bashExecution'])
+    const item = items[0]
+    if (item.kind !== 'bashExecution') throw new Error('expected bashExecution item')
+    expect(item.message.id).toBe('bash-1')
+  })
+
+  it('TC1: system 无 bashExecution（compactionSummary/branchSummary/stream_warn）→ systemNotice', () => {
+    const items = toRenderItems([
+      makeMsg({ id: 'c1', role: 'system', content: '压缩记录' }),
+      makeMsg({ id: 'b1', role: 'system', branchSummary: { summary: 's', fromId: 'prev-id' } }),
+      makeMsg({ id: 'w1', role: 'system', customType: 'stream_warn', content: 'warn' }),
+    ])
+    expect(items.map((i) => i.kind)).toEqual(['systemNotice', 'systemNotice', 'systemNotice'])
+  })
+
+  it('TC1: 混合序列顺序：turn → systemNotice → turn → bashExecution（system 消息不归入 turn）', () => {
+    const items = toRenderItems([
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'c1', role: 'system', content: '压缩记录' }),
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+      makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
+      bashMsg('bash-1'),
+    ])
+    expect(items.map((i) => i.kind)).toEqual(['turn', 'systemNotice', 'turn', 'bashExecution'])
+    // 压缩记录穿插在 turn 之间，不并入任何 turn
+    const notice = items[1]
+    if (notice.kind !== 'systemNotice') throw new Error('expected systemNotice item')
+    expect(notice.message.content).toBe('压缩记录')
+  })
+
+  it('TC3 kind 一致性：全覆盖消息形态产出的 kind 集合恰好 = 全集（无遗漏/无多余）', () => {
+    const messages: Message[] = [
+      // → turn
+      makeMsg({ id: 'u1', role: 'user', content: 'q' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r' }),
+      // → bashExecution
+      bashMsg('bash-1'),
+      // → systemNotice 各形态（compactionSummary/branchSummary/stream_warn/customType）
+      makeMsg({ id: 'c1', role: 'system', content: '压缩记录' }),
+      makeMsg({ id: 'b1', role: 'system', branchSummary: { summary: 's', fromId: 'prev-id' } }),
+      makeMsg({ id: 'w1', role: 'system', customType: 'stream_warn', content: 'warn' }),
+    ]
+    const kinds = new Set(toRenderItems(messages).map((i) => i.kind))
+    // 三态全集恰好都被产出（无 kind 被遗漏）
+    expect([...kinds].sort()).toEqual(['bashExecution', 'systemNotice', 'turn'])
+    // 组件映射表 keys 与 kind 全集一致（无多余/缺失分支，与 MessageStream 查表对齐）
+    expect(Object.keys(KIND_COMPONENT_MAP).sort()).toEqual(['bashExecution', 'systemNotice', 'turn'])
   })
 })
