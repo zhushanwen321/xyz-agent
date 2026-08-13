@@ -131,16 +131,16 @@ describe("RecordStore", () => {
       expect(ids).toContain("run-1");
     });
 
-    it("磁盘 session.jsonl 重建的终态 record 出现在结果中（无 sidecar → crashed）", () => {
+    it("磁盘 session.jsonl 重建的终态 record 出现在结果中（无 sidecar → idle, SP-2）", () => {
       const sessionFile = path.join(tmpDir, "2026-01-01-uuid-a.jsonl");
       writeSessionJsonl(sessionFile, {
         id: "bg-1", agent: "worker", mode: "background", task: "do it", startedAt: 5000,
       });
-      // 无 sidecar → 四分支兜底 crashed
+      // 无 sidecar → 四分支兜底 idle（SP-2：跨重启可恢复）
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === "bg-1");
       expect(found).toBeDefined();
-      expect(found?.status).toBe("crashed");
+      expect(found?.status).toBe("idle");
       expect(found?.agent).toBe("worker");
       expect(found?.turns).toBe(1);
       expect(found?.totalTokens).toBe(30);
@@ -168,7 +168,7 @@ describe("RecordStore", () => {
       store.register(makeRecord({ id: "run-1", mode: "background", startedAt: 1000 }));
       const filter: StatusFilter = "running";
       const ids = store.collectRecords(100, filter).map((r) => r.id);
-      expect(ids).toEqual(["run-1"]); // 只有内存 running，磁盘 crashed 被滤
+      expect(ids).toEqual(["run-1"]); // 只有内存 running，磁盘 idle（SP-2）被滤
     });
 
     it("statusFilter='all'（默认）返回内存 + 磁盘", () => {
@@ -191,7 +191,7 @@ describe("RecordStore", () => {
       const store = new RecordStore(tmpDir);
       store.register(makeRecord({ id: "dup-1", mode: "background", status: "running", startedAt: 5000 }));
       const found = store.collectRecords(100).find((r) => r.id === "dup-1");
-      expect(found?.status).toBe("running"); // 内存 running 覆盖磁盘 crashed
+      expect(found?.status).toBe("running"); // 内存 running 覆盖磁盘 idle（SP-2）
     });
 
     it("[MF-3/S-20] 跨进程组合：子进程（worktree）写入 enc(ROOT) 的深层 record 被 ROOT store 重建，同 rootSessionId 全树可见、他树被排除", () => {
@@ -254,12 +254,12 @@ describe("RecordStore", () => {
   // compareRecords 排序稳定性（内存 running record）
   // ============================================================
   describe("compareRecords 排序", () => {
-    it("status priority（running < crashed）", () => {
+    it("status priority（running < idle）", () => {
       const store = new RecordStore(tmpDir);
-      // 内存 running record vs 磁盘无 sidecar → crashed
+      // 内存 running record vs 磁盘无 sidecar → idle（SP-2）
       const running = makeRecord({ id: "run-1", mode: "background", startedAt: 3000, status: "running" });
       store.register(running);
-      // 磁盘 crashed record（无 sidecar → 四分支兜底）
+      // 磁盘 idle record（无 sidecar → 四分支兜底 idle）
       writeSessionJsonl(path.join(tmpDir, "a.jsonl"), {
         id: "done-1", agent: "w", mode: "background", task: "t", startedAt: 5000,
       });
@@ -275,7 +275,7 @@ describe("RecordStore", () => {
       writeSessionJsonl(path.join(tmpDir, "new.jsonl"), {
         id: "new", agent: "w", mode: "background", task: "t", startedAt: 9000,
       });
-      // 两个都是 crashed（磁盘重建，无 sidecar），按 startedAt desc
+      // 两个都是 idle（磁盘重建，无 sidecar → SP-2 兜底 idle），按 startedAt desc
       const ids = store.collectRecords(100).map((r) => r.id);
       expect(ids).toEqual(["new", "old"]);
     });
@@ -440,27 +440,27 @@ describe("RecordStore", () => {
       expect(found?.externalInstance).toEqual(marker);
     });
 
-    // ── 分支 3→4: .alive + 死 pid → crashed ──
-    it(".alive + 死 pid → crashed", () => {
+    // ── 分支 3→4: .alive + 死 pid → idle（SP-2：跨重启可恢复）──
+    it(".alive + 死 pid → idle（SP-2 跨重启可恢复）", () => {
       const sessionFile = writeBaseSession();
       const marker: AliveMarker = { pid: 9999999, id: SESSION_ID, startedAt: STARTED_AT };
       writeAliveMarker(sessionFile, marker);
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
-      expect(found?.status).toBe("crashed");
+      expect(found?.status).toBe("idle");
       expect(found?.externalInstance).toBeUndefined();
     });
 
-    // ── 分支 4: 都无 sidecar → crashed ──
-    it("无任何 sidecar → crashed", () => {
+    // ── 分支 4: 都无 sidecar → idle（SP-2：跨重启可恢复）──
+    it("无任何 sidecar → idle（SP-2 跨重启可恢复）", () => {
       writeBaseSession();
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
-      expect(found?.status).toBe("crashed");
+      expect(found?.status).toBe("idle");
     });
 
-    // ── 分支 4: >24h 软超时 → crashed（无视探活）──
-    it(">24h 软超时 → crashed（即使 pid 存活）", () => {
+    // ── 分支 4: >24h 软超时 → idle（SP-2：跨重启可恢复，无视探活）──
+    it(">24h 软超时 → idle（SP-2，即使 pid 存活）", () => {
       const sessionFile = writeBaseSession();
       // startedAt 设为 25 小时前
       const oldStartedAt = Date.now() - 25 * 60 * 60 * 1000;
@@ -475,7 +475,7 @@ describe("RecordStore", () => {
 
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
-      expect(found?.status).toBe("crashed");
+      expect(found?.status).toBe("idle");
       expect(found?.externalInstance).toBeUndefined();
     });
 
@@ -597,7 +597,7 @@ describe("RecordStore", () => {
       expect(found?.endedAt).toBe(9000); // 不是 Date.now()
     });
 
-    it("无 sidecar（crashed）→ endedAt 为最后 entry 时间戳（非 now）", () => {
+    it("无 sidecar（idle, SP-2）→ endedAt 保持 undefined（非终态）", () => {
       const sessionFile = path.join(tmpDir, "crash.jsonl");
       writeSessionJsonl(sessionFile, {
         id: "bg-1", agent: "w", mode: "background", task: "t",
@@ -605,8 +605,9 @@ describe("RecordStore", () => {
       });
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100, "all", "sess-A").find((r) => r.id === "bg-1");
-      expect(found?.status).toBe("crashed");
-      expect(found?.endedAt).toBe(9000);
+      expect(found?.status).toBe("idle");
+      // SP-2: idle 是非终态，endedAt 保持 undefined（待续聊）
+      expect(found?.endedAt).toBeUndefined();
     });
 
     it(".alive running → endedAt 保持 undefined（running 耗时继续增长是正确的）", () => {
@@ -703,6 +704,59 @@ describe("RecordStore", () => {
         "subagent:manifest-invalid-status",
         expect.objectContaining({ id: "broken-1" }),
       );
+    });
+  });
+
+  // ============================================================
+  // SP-2: reconstructAll 兜底分支输出 idle（非 crashed）
+  // ============================================================
+  describe("SP-2: reconstructAll 兜底 idle（跨重启恢复）", () => {
+    // TC-1: 兜底分支输出 idle（非 crashed）
+    it("TC-1: 无 sidecar + 死 pid → reconstructAll 输出 idle（可冷路径 resume）", () => {
+      const sessionFile = path.join(tmpDir, "sp2-tc1.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-sp2-1", agent: "worker", mode: "background", task: "cross-restart task",
+        startedAt: 1000, rootSessionId: "sess-sp2",
+      });
+      // 无任何 sidecar marker → 分支 4 兜底
+      const store = new RecordStore(tmpDir);
+      const found = store.collectRecords(100, "all", "sess-sp2").find((r) => r.id === "sa-sp2-1");
+      expect(found).toBeDefined();
+      expect(found?.status).toBe("idle");
+      // SP-2: idle 是非终态，endedAt 保持 undefined
+      expect(found?.endedAt).toBeUndefined();
+    });
+
+    // TC-2: 有 .finalized marker 的 record 仍归档为 done（不回归）
+    it("TC-2: .finalized marker → done（分支 1/2 不回归）", () => {
+      const sessionFile = path.join(tmpDir, "sp2-tc2.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-sp2-2", agent: "worker", mode: "background", task: "finalized task",
+        startedAt: 2000, rootSessionId: "sess-sp2",
+      });
+      writeFinalized(sessionFile);
+      const store = new RecordStore(tmpDir);
+      const found = store.collectRecords(100, "all", "sess-sp2").find((r) => r.id === "sa-sp2-2");
+      expect(found).toBeDefined();
+      // 分支 2 仍归档为 done，不受 SP-2 影响
+      expect(found?.status).toBe("done");
+      expect(found?.endedAt).toBeDefined();
+    });
+
+    // TC-2b: .cancelled marker → cancelled（分支 1 不回归）
+    it("TC-2b: .cancelled marker → cancelled（分支 1 不回归）", () => {
+      const sessionFile = path.join(tmpDir, "sp2-tc2b.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-sp2-2b", agent: "worker", mode: "background", task: "cancelled task",
+        startedAt: 3000, rootSessionId: "sess-sp2",
+      });
+      writeCancelledTombstone(sessionFile, {
+        id: "sa-sp2-2b", status: "cancelled", agent: "worker", startedAt: 3000, endedAt: 4000,
+      });
+      const store = new RecordStore(tmpDir);
+      const found = store.collectRecords(100, "all", "sess-sp2").find((r) => r.id === "sa-sp2-2b");
+      expect(found).toBeDefined();
+      expect(found?.status).toBe("cancelled");
     });
   });
 });

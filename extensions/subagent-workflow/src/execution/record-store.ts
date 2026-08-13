@@ -288,7 +288,12 @@ export class RecordStore {
    *   1. .cancelled → cancelled
    *   2. .finalized → done/failed（按 recon.stopReason 推）
    *   3. .alive + pid 存活 + 未超 24h → running, externalInstance=true
-   *   4. 兜底 → crashed
+   *   4. 兜底（无 marker、pid 死、超时）→ idle（可冷路径 resume，跨重启恢复）
+   *
+   * 分支 4 SP-2 变更：旧实现兜底 crashed（终态不可恢复）。跨重启场景下进程已死
+   * 但 session.jsonl 仍完整，record 应可经 deliverMessage → resumeRound 冷路径续聊。
+   * idle 状态满足 resumeRound 的 status !== "idle" 守卫，同时 L2 sidecar absent
+   * 确保分支 1/2/3 不拦截（无 .cancelled/.finalized marker）。
    *
    * 所有分支经 markReconstructedStatus（不裸 .status=）。
    *
@@ -380,10 +385,11 @@ export class RecordStore {
         rec.externalInstance = alive;
       }
       // ── 分支 4: 兜底（都无 / .alive 但 pid 死 / 超 24h）──
+      // SP-2: idle（非 crashed）——跨重启后进程已死但 session.jsonl 完整，record
+      // 可经 deliverMessage → resumeRound 冷路径续聊。endedAt 保持 undefined（非终态，
+      // 耗时语义：idle record 待续聊，无"已结束"时间点）。
       else {
-        markReconstructedStatus(rec, "crashed");
-        // crashed 以最后已知活动时间为准（pid 死亡时间未知，用最后 entry 时间近似）。
-        rec.endedAt = recon.endedAt;
+        markReconstructedStatus(rec, "idle");
       }
 
       cache.set(file, rec);
