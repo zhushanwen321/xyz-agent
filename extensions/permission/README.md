@@ -12,7 +12,6 @@ Pi permission 扩展 — 四档权限模式（yolo / auto / approve / strict）+
 - **AI Classifier**：auto 模式下用 LLM 评估未知命令风险（low/medium/high）
 - **用户审批 UI**：TUI（自定义 Component）/ RPC（select 对话框）/ headless（fail-closed deny）
 - **Reject-with-Reason**：用户拒绝时可输入真实理由（回传 agent 辅助理解）
-- **statusline 集成**：TUI 底部 footer 显示当前权限模式标签（通过 globalThis Symbol 握手协议向 statusline 注册一行 footer line renderer）
 - **fail-closed**：任何异常路径 → block（绝不静默放行）
 
 ## 安装
@@ -381,42 +380,8 @@ auto 模式下层 3 用 LLM 评估未知命令风险：
 - **无可用模型**：`models.json` 不存在 / 无 provider 配 `apiKey` / 解析失败时，`listAvailableModels` 返回空 Map，命令降级为提示 `No available models. Configure ~/.pi/agent/models.json first.`（不阻塞，不修改配置）。
 - **结果写回**：选中后 `classifier.model` 更新为 `auto` 或 `provider/model-id`，其余字段（mode/enabled/timeout/userRules）保留。
 
-## statusline 集成
-
-permission 不再自管 footer，而是通过 **globalThis Symbol 握手协议** 向 `@zhushanwen/pi-statusline` 注册一行 footer line renderer（`session_start` 时调用 `registerPermissionFooterLine`）：
-
-- **statusline 是 footer canonical owner**：唯一创建 footer registry（`getOrCreateFooterRegistry`）。
-- **permission 是 consumer**：永不创建 registry 实例，永不写 `slot.registry` 字段；只通过 `FOOTER_HANDSHAKE_KEY = Symbol.for('@zhushanwen/pi-statusline.footerHandshake')` 读写 slot。
-- **插入位置**：renderer `order=2`，聚合排序后落在 line2（model）和 line3（ctx）之间。
-- **加载顺序无关**：slot 形状 `{version, registry?, pending:[]}`。registry 未就绪时 consumer 只 push pending，等 statusline 后到时 flush（沿用 ask-user 的 pending-flush 修复模式）。
-- **无代码层 import**：permission 仅对 statusline 做运行时 `globalThis` 反射，statusline 是可选 `peerDep`，未安装时静态 import 不会破坏 permission。
-- **重绘触发**：mode/enabled 切换后调用 `requestFooterRender()`（`REQUEST_RENDER_KEY`），statusline 立即重绘 footer。
-
-footer line 内容（精简版，避免 footer 拥挤）：
-
-```
-[permission] Auto · enabled
-[permission] disabled
-```
-
-模式标签：YOLO / Auto / Approve / Strict（对应 yolo/auto/approve/strict）。
-
-**未安装 statusline 时 silent 降级**：permission 功能完整，仅 footer 不显示 mode 标签。可用 `/permission status` 查看 mode。
-
-## 升级须知
-
-**v0.0.1 → v0.1.0 breaking change**：本扩展不再自管 footer，权限模式标签现在由 `@zhushanwen/pi-statusline` 聚合提供（通过 globalThis Symbol 握手协议）。此前 footer 由各扩展各自调用 `ctx.ui.setFooter` 单例渲染、互相覆盖。
-
-- **同时安装 statusline 的用户**：无需任何操作。mode 标签自动作为 statusline footer 的一行出现（line2 和 line3 之间）。
-- **未安装 statusline 的用户**：footer 不再显示 mode 标签。两种恢复方式：
-  - 安装 statusline：`pi install npm:@zhushanwen/pi-statusline`，mode 标签回到 footer。
-  - 或随时用 `/permission status` 查看/切换 mode（不依赖 footer）。
-
-详见下方「statusline 集成」章节。
-
 ## 已知限制
 
-- **Footer 由 statusline 聚合**：本扩展不再自管 footer，mode 标签通过 globalThis Symbol 握手协议向 `@zhushanwen/pi-statusline` 注册（见「statusline 集成」）。未安装 statusline 时 footer 不显示 mode 标签（silent 降级，不影响功能）。
 - **TUI Reject-with-Reason**：当前 RPC 分支已完整接入 `ctx.ui.input` 采集拒绝理由；TUI 分支因 pi-tui Input 组件集成成本较高，暂保留简化 deny（固定文案），后续迭代补齐内联文本输入。
 - **headless 模式**：json/print 模式无交互 UI，所有审批请求 fail-closed deny（不阻塞自动化流程，但 strict/approve 模式下无法放行）。
 - **wasm 加载**：AST 分析依赖 tree-sitter-bash wasm，加载失败时 fail-closed（clean=false, parseError=true）。

@@ -1,6 +1,6 @@
 # ADR-036: Statusline Footer Aggregation — 解决 pi-permission 与 pi-statusline 的 footer 单例冲突
 
-> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。
+> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。permission 侧的 consumer 握手协议（footer-provider.ts / statusline-palette.ts）已于 2026-08-13 一并删除（见 .xyz-harness/shared-llm-config/followups.md §2-E4），本 ADR 描述的系统已全部消亡。
 
 
 - **Status**: proposed
