@@ -53,7 +53,7 @@ ln -s /path/to/xyz-pi-extensions-workspace/feat-permission-and-auto-mode/extensi
 | `mode` | `"yolo"` | 当前权限模式（yolo/auto/approve/strict） |
 | `enabled` | `true` | 扩展是否启用（false=完全放行，等同 yolo 但保留配置） |
 | `classifier.enabled` | `true` | 是否启用 AI 层（auto 模式自动 true） |
-| `classifier.model` | `"auto"` | AI 模型（`auto` 选最便宜，或 `provider/model-id`） |
+| `classifier.model` | `"auto"` | AI 模型（`auto` = scoped：取 settings.json enabledModels 首个可用，或 `provider/model-id`） |
 | `classifier.timeout` | `90` | AI 分类超时秒数 |
 | `classifier.autoApproveLowRisk` | `true` | 低风险是否自动放行（false=转人工） |
 | `classifier.autoDenyHighRisk` | `true` | 高风险是否自动拦截（true=强制 deny） |
@@ -359,7 +359,7 @@ publish 规则在后，last-match-wins 时 deny 胜出。
 
 auto 模式下层 3 用 LLM 评估未知命令风险：
 
-- **模型**：`classifier.model`（`auto` 自动选最便宜，或指定 `provider/model-id`）
+- **模型**：`classifier.model`（`auto` = scoped：取 enabledModels 首个可用（空则 fallback available），或指定 `provider/model-id`）
 - **输出**：`risk_level`（low/medium/high）+ `outcome`（allow/deny/ask）+ `reasoning` + `confidence`
 - **override**（WT7 偏差补丁）：
   - `low + allow + autoApproveLowRisk=false` → 强制 `ask`（转人工）
@@ -370,7 +370,7 @@ auto 模式下层 3 用 LLM 评估未知命令风险：
 
 `/permission model` 弹出 overlay 选择 AI classifier 使用的模型，写回 `classifier.model`：
 
-- **第一级 provider 选择**：列出 `Auto`（自动选最便宜可用模型）+ 所有可用 provider（来自 `~/.pi/agent/models.json`，按字母序）。当前 `classifier.model` 预选高亮。
+- **第一级 provider 选择**：列出 `Auto`（自动：scoped 取 enabledModels 首个可用）+ 所有可用 provider（来自 `~/.pi/agent/models.json`，按字母序）。当前 `classifier.model` 预选高亮。
 - **第二级 model 选择**：选中具体 provider 后，列出该 provider 下所有可用 model（按 `cost.input` 升序，并列按 id 字母序）。`Esc` 回退到 provider 列表。
 - **键位**：`↑/↓` 导航、`Enter` 确认、`Esc` 取消（provider stage）或回退（model stage）。
 - **三模式分发**：

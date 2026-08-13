@@ -17,7 +17,7 @@ export function loadSecrets(): Secrets {
 		const raw = JSON.parse(readFileSync(path, "utf-8")) as unknown;
 		return resolveSecrets(raw);
 	} catch (e) {
-		console.warn(`[statusline] failed to parse ${path}:`, e);
+		console.warn(`[quota-providers] failed to parse ${path}:`, e);
 		return {};
 	}
 }

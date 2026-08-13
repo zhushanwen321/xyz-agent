@@ -190,3 +190,51 @@ describe("callRenameLLM", () => {
 		expect(resolveModel).toHaveBeenCalledWith(ctx, BASE_CONFIG.model);
 	});
 });
+
+// ────────────────────────────────────────────────────
+// A1 日志（TC1-3：失败路径 + 成功路径可排查，契约 C1 文案锁定）
+// ────────────────────────────────────────────────────
+
+describe("callRenameLLM A1 日志", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("TC1: resolveModel null → console 输出 '[rename-session] model not available, skipping'，返回 null", async () => {
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			vi.mocked(resolveModel).mockReturnValue(null);
+			const result = await callRenameLLM(createCtx(), BASE_CONFIG);
+			expect(result).toBeNull();
+			expect(warnSpy).toHaveBeenCalledWith("[rename-session] model not available, skipping");
+		} finally {
+			warnSpy.mockRestore();
+		}
+	});
+
+	it("TC2: callLLM {ok:false} → console 输出 '[rename-session] rename LLM call failed: <error>'，返回 null", async () => {
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+			vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
+			const result = await callRenameLLM(createCtx(), BASE_CONFIG);
+			expect(result).toBeNull();
+			expect(warnSpy).toHaveBeenCalledWith("[rename-session] rename LLM call failed: boom");
+		} finally {
+			warnSpy.mockRestore();
+		}
+	});
+
+	it("TC3: callLLM 成功 → console 输出 '[rename-session] rename with model <modelId>'（resolveModel 结果的 model.id），返回标题", async () => {
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+			vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "修复登录bug" });
+			const result = await callRenameLLM(createCtx(), BASE_CONFIG);
+			expect(result).toBe("修复登录bug");
+			expect(warnSpy).toHaveBeenCalledWith("[rename-session] rename with model stub-model");
+		} finally {
+			warnSpy.mockRestore();
+		}
+	});
+});

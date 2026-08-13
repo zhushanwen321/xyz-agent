@@ -88,7 +88,7 @@ export type RiskLevel = "low" | "medium" | "high";
 export interface ClassifierConfig {
 	/** 是否启用 AI 层（auto 模式自动 true，其他模式忽略） */
 	enabled: boolean;
-	/** 模型：'auto'（选最便宜）或 'provider/model-id'（如 'zhipu/glm-4-flash'） */
+	/** 模型：'auto'（=scoped：读 settings.json enabledModels 取首个可用，空则 fallback available）或 'provider/model-id'（如 'zhipu/glm-4-flash'） */
 	model: string;
 	/** 超时秒数 */
 	timeout: number;

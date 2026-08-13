@@ -148,13 +148,35 @@ describe("resolveModelAndAuth 装配（resolveModel + getApiKeyAndHeaders）", (
 		const classifier = createProductionClassifier(ctx);
 		// streamSimple 走真实 getApiProvider，bogus-api 未注册 → throw → classifier catch → fallback ask。
 		// 本测试验证装配层（resolve→auth 链路通），streamSimple apiKey 透传由 classifier.test.ts CT5 覆盖。
-		const result = await classifier.classifyRisk(CTX, CFG);
-		expect(result.outcome).toBe("ask"); // streamSimple throw 的 fallback（非 null 路径）
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		let result: Awaited<ReturnType<typeof classifier.classifyRisk>>;
+		try {
+			result = await classifier.classifyRisk(CTX, CFG);
+		} finally {
+			warnSpy.mockRestore();
+		}
+		expect(result!.outcome).toBe("ask"); // streamSimple throw 的 fallback（非 null 路径）
 		// 关键：resolveModel 返回 model 后，getApiKeyAndHeaders 被调用且收到该 model（证明 OAuth resolve→auth 通）
 		expect(getApiKeyAndHeaders).toHaveBeenCalledOnce();
 		expect(getApiKeyAndHeaders).toHaveBeenCalledWith(MOCK_MODEL_A);
 		// scoped 命中只调 1 次 resolveModel（不走 available fallback）
 		expect(vi.mocked(resolveModelShared)).toHaveBeenCalledTimes(1);
+	});
+
+	it("TC4b: resolveModel 成功（scoped 命中）→ onLog 输出 '[pi-permission] classifier: using model <modelId>'（契约 C2，R2 验收前提）", async () => {
+		vi.mocked(resolveModelShared).mockImplementation((_ctx, selector) =>
+			selector.type === "scoped" ? MOCK_MODEL_A : null,
+		);
+		const getApiKeyAndHeaders = vi.fn(async () => ({ ok: true as const, apiKey: "oauth-key-xxx" }));
+		const classifier = createProductionClassifier(makeMockCtx({ getApiKeyAndHeaders }));
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			await classifier.classifyRisk(CTX, CFG);
+			// onLog 实装为 console.warn（production.ts），成功路径日志在 LLM 调用前输出
+			expect(warnSpy).toHaveBeenCalledWith("[pi-permission] classifier: using model model-a");
+		} finally {
+			warnSpy.mockRestore();
+		}
 	});
 
 	it("TC5: getApiKeyAndHeaders 返回 auth.ok=false → null fail-closed（narrow 不访问 auth.apiKey，不 throw）", async () => {

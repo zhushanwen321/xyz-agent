@@ -286,6 +286,7 @@ export default function visionExtension(pi: ExtensionAPI) {
 
 		renderCall(args: Record<string, unknown>, theme: Theme) {
 			const rawPath = args.image_path as string;
+			// 仅用于显示层路径缩写（~ 替换 home 前缀），不读取 pi 目录（TC9 合法命中）
 			const home = os.homedir();
 			const shortPath = rawPath.startsWith(home) ? `~${rawPath.slice(home.length)}` : rawPath;
 			const resolvedModel = visionModel.resolveVisionModelsSync()[0]?.ref;

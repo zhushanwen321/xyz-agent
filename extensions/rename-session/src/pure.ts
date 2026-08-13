@@ -1,4 +1,13 @@
-import { loadConfig, saveConfig, type ModelSelector } from "@zhushanwen/pi-llm-shared";
+import { existsSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import {
+	getConfigPath,
+	loadConfig,
+	saveConfig,
+	type ModelSelector,
+} from "@zhushanwen/pi-llm-shared";
 
 // ──────────────────────── 配置 ────────────────────────
 
@@ -81,6 +90,28 @@ function normalizeModelSelector(raw: unknown): ModelSelector | null {
 
 /** 加载配置（mtime+size 缓存；文件缺失/损坏返回默认，不抛错）。 */
 export function loadRenameConfig(): RenameSessionConfig {
+	// [HISTORICAL] E3 一次性迁移（两个版本后可删）：
+	// 旧版开关是 <agentDir>/auto-rename-enabled 文件存在性，新版改为 config/rename-session.json
+	// 的 enabled 字段（默认 false）。检测「旧文件存在且新配置不存在」→ enabled=true 写入新配置
+	// + 删旧文件，避免旧开启用户升级后开关被静默重置为关闭。
+	// 顺序保证（R1 mitigation）：先写新配置成功再 unlink 旧文件——写入失败保留旧文件不删，
+	// 下次 load 再试，不丢状态；unlink 失败也不阻断（新配置已生效，残留旧文件无害）。
+	const configPath = getConfigPath(CONFIG_PKG);
+	const legacySwitchPath = join(getAgentDir(), "auto-rename-enabled");
+	if (!existsSync(configPath) && existsSync(legacySwitchPath)) {
+		const migrated: RenameSessionConfig = { ...DEFAULT_RENAME_CONFIG, enabled: true };
+		const saveResult = saveConfig(CONFIG_PKG, migrated);
+		if (saveResult.success) {
+			try {
+				unlinkSync(legacySwitchPath);
+			} catch {
+				// 旧文件删不掉不阻断（enabled 已落盘，下次 load 不会再触发迁移）
+			}
+			return migrated;
+		}
+		// 写入失败：保留旧文件，下次 load 再试迁移
+	}
+
 	return loadConfig(CONFIG_PKG, DEFAULT_RENAME_CONFIG, normalizeRenameConfig);
 }
 

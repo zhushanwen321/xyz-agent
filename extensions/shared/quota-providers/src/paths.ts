@@ -24,7 +24,7 @@ export function getSecretsPath(): string {
 	return join(getConfigDir(), "secrets.json");
 }
 
-/** statusline_cache.json 路径 */
+/** 用量缓存文件名（历史遗留自 statusline 接管期，保留以兼容既有缓存数据）。 */
 export function getCachePath(): string {
 	return join(getAgentDir(), "statusline_cache.json");
 }
@@ -45,7 +45,7 @@ export function resolveEnvRef(value: string): string {
 	const envVal = process.env[name];
 	if (envVal === undefined) {
 		if (!warnedEnvVars.has(name)) {
-			console.warn(`[statusline] env var ${name} is not set`);
+			console.warn(`[quota-providers] env var ${name} is not set`);
 			warnedEnvVars.add(name);
 		}
 		return "";

@@ -2,7 +2,7 @@
  * Providers 配置加载器
  *
  * 读取 ~/.pi/agent/config/providers.json，解析为声明式 provider 列表。
- * 缺失文件或解析失败返回空配置（statusline 仍可运行，只是没有 provider）。
+ * 缺失文件或解析失败返回空配置（quota-providers 仍可运行，只是没有 provider）。
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -33,7 +33,7 @@ export function loadProvidersConfig(): ProvidersConfig {
 			"search-tools": normalizeList((raw as Record<string, unknown>)["search-tools"]),
 		};
 	} catch (e) {
-		console.warn(`[statusline] failed to parse ${path}:`, e);
+		console.warn(`[quota-providers] failed to parse ${path}:`, e);
 		return EMPTY;
 	}
 }

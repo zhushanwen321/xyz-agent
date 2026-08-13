@@ -250,4 +250,43 @@ describe("loadRenameConfig / saveRenameConfig", () => {
 		clearConfigCache();
 		expect(loadRenameConfig().enabled).toBe(false);
 	});
+
+	// ── E3 旧开关一次性迁移（TC5-7：旧 auto-rename-enabled 文件 → 新 config enabled 字段） ──
+
+	it("TC5: E3 迁移触发（旧开关文件存在 + 新配置不存在 → enabled=true 写入新配置 + 删旧文件）", () => {
+		const legacyPath = path.join(tmpAgentDir, "auto-rename-enabled");
+		fs.writeFileSync(legacyPath, "");
+
+		const cfg = loadRenameConfig();
+
+		expect(cfg.enabled).toBe(true);
+		// 新配置已落盘且 enabled=true
+		const newConfigPath = path.join(tmpAgentDir, "config", "rename-session.json");
+		expect(fs.existsSync(newConfigPath)).toBe(true);
+		const raw = JSON.parse(fs.readFileSync(newConfigPath, "utf-8"));
+		expect(raw.enabled).toBe(true);
+		// 旧开关文件被删（R1 mitigation：先写新配置成功再 unlink）
+		expect(fs.existsSync(legacyPath)).toBe(false);
+	});
+
+	it("TC6: E3 不迁移（新配置已存在 + 旧开关存在 → enabled 按新配置，旧文件不动）", () => {
+		const legacyPath = path.join(tmpAgentDir, "auto-rename-enabled");
+		// 先写新配置 enabled=false，再放旧开关文件
+		saveRenameConfig({ ...DEFAULT_RENAME_CONFIG, enabled: false });
+		fs.writeFileSync(legacyPath, "");
+		clearConfigCache();
+
+		const cfg = loadRenameConfig();
+
+		expect(cfg.enabled).toBe(false);
+		// 旧文件未被删、未被改写
+		expect(fs.existsSync(legacyPath)).toBe(true);
+	});
+
+	it("TC7: E3 不迁移（无旧开关 + 无新配置 → enabled 默认 false，不创建任何文件）", () => {
+		const cfg = loadRenameConfig();
+		expect(cfg.enabled).toBe(false);
+		expect(fs.existsSync(path.join(tmpAgentDir, "config", "rename-session.json"))).toBe(false);
+		expect(fs.existsSync(path.join(tmpAgentDir, "auto-rename-enabled"))).toBe(false);
+	});
 });

@@ -175,6 +175,10 @@ export function createClassifier(deps: ClassifierDeps): {
 			return { ...CLASSIFY_FALLBACK_RESULT };
 		}
 
+		// A1 同类成功路径日志（R2 验收前提）：LLM 调用前记录解析到的 model id，
+		// 实证 classifier 真实用到 OAuth/配置的模型（而非 fail-closed 降级）。
+		onLog?.(`[pi-permission] classifier: using model ${resolved.model.id}`);
+
 		// 2. 构造 model/context/options（model 由注入点提供；timeout 秒→毫秒，传 provider 原生
 		//    timeoutMs + signal + auth 凭证 apiKey/headers/env 透传）
 		const model = resolved.model;

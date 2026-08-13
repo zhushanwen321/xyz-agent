@@ -6,8 +6,9 @@
  */
 
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 // ── Skill path resolution (with npm dir cache) ─────────────────────
 
@@ -32,8 +33,9 @@ function getNpmSkillCandidates(npmSkillsDir: string): string[] {
  * Resolve a skill name to its directory or SKILL.md path.
  * Search order:
  * 1. Project-level: .agents/skills/<name>/
- * 2. Global: ~/.pi/agent/skills/<name>/
- * 3. npm packages: ~/.pi/agent/npm/node_modules/<pkg>/skills/<name>/
+ * 2. Global: <agentDir>/skills/<name>/（agentDir = getAgentDir()，实例隔离：
+ *    PI_CODING_AGENT_DIR 场景读隔离目录，不碰 ~/.pi/agent）
+ * 3. npm packages: <agentDir>/npm/node_modules/<pkg>/skills/<name>/
  * Returns the directory path if found, undefined otherwise.
  */
 export function resolveSkillPath(skillName: string): string | undefined {
@@ -41,11 +43,11 @@ export function resolveSkillPath(skillName: string): string | undefined {
  // Project-level
     path.resolve(process.cwd(), ".agents/skills", skillName),
  // Global user skills
-    path.join(os.homedir(), ".pi/agent/skills", skillName),
+    path.join(getAgentDir(), "skills", skillName),
   ];
 
  // npm package skills (cached)
-  const npmSkillsDir = path.join(os.homedir(), ".pi/agent/npm/node_modules");
+  const npmSkillsDir = path.join(getAgentDir(), "npm/node_modules");
   for (const pkgSkillsBase of getNpmSkillCandidates(npmSkillsDir)) {
     candidates.push(path.join(pkgSkillsBase, skillName));
   }

@@ -75,9 +75,15 @@ export async function callRenameLLM(
 	ctx: ExtensionContext,
 	config: RenameSessionConfig,
 ): Promise<string | null> {
-	// 独立选模：config.model（默认 scoped）。不可用静默跳过。
+	// 独立选模：config.model（默认 scoped）。不可用静默跳过（A1 日志：不静默，可排查）。
 	const model = resolveModel(ctx, config.model);
-	if (!model) return null;
+	if (!model) {
+		console.warn("[rename-session] model not available, skipping");
+		return null;
+	}
+
+	// A1 成功路径日志（R1 验收前提）：记录所选 model id，实证「改名用了配置的模型」。
+	console.warn(`[rename-session] rename with model ${model.id}`);
 
 	const sessionId = ctx.sessionManager.getSessionId();
 	const messages = buildMessages(
@@ -95,7 +101,11 @@ export async function callRenameLLM(
 		signal: ctx.signal,
 		sessionId,
 	});
-	if (!result.ok) return null;
+	if (!result.ok) {
+		// A1 失败路径日志：调用失败不静默（不抛错，靠日志留痕）。
+		console.warn(`[rename-session] rename LLM call failed: ${result.error ?? "unknown error"}`);
+		return null;
+	}
 
 	const title = cleanTitle(result.content, config.maxTitleLength);
 	return title || null;
