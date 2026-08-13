@@ -77,13 +77,14 @@ export class SchedulerService {
             'Next 5 runs:',
             ...nextRuns.map((t, i) => `  ${i + 1}. ${formatRelativeTime(t)}`),
           ].join('\n')
+    // 一行紧凑：name(id) + schedule(含 kind 信息) + expires + force。
+    // 删冗余 Kind 行（formatSchedule 已含 once/every）；Expires/Force 合并（默认 no-expires/no-force 显式）。
+    const expiresLabel = task.expiresAt
+      ? `expires ${formatRelativeTime(task.expiresAt)}`
+      : 'no-expires'
+    const forceLabel = task.force ? 'force' : 'no-force'
     const message = [
-      `Task "${task.name}" (${task.id}) created.`,
-      `Schedule: ${formatSchedule(task.schedule, task.kind)}`,
-      `Kind: ${task.kind}`,
-      `Expires: ${task.expiresAt ? formatRelativeTime(task.expiresAt) : 'never'}`,
-      `Force: ${task.force ? 'yes' : 'no'}`,
-      '',
+      `Task "${task.name}" (${task.id}) created. ${formatSchedule(task.schedule, task.kind)}, ${expiresLabel}, ${forceLabel}`,
       runPreview,
     ].join('\n')
 

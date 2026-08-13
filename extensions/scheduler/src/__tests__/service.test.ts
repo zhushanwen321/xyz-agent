@@ -34,7 +34,7 @@ describe('SchedulerService', () => {
     it('TC-ONCE-ECHO: once task echoes single run line without numbered list', async () => {
       const result = await service.create('git pull', '1h', { kind: 'once' })
       expect(result.success).toBe(true)
-      expect(result.message).toContain('Kind: once')
+      expect(result.message).toContain('once in 1h')
       expect(result.message).not.toContain('Next 5 runs:')
       expect(result.message).toContain('Next run: in 1h')
       // 无编号 run 行（once 单行内联）
