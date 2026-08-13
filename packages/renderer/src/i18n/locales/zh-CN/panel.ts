@@ -42,6 +42,7 @@ export default {
     copy: '复制',
     edit: '编辑',
     thinking: '思考中',
+    working: '工作中',
     worked: '已工作',
     steer: 'STEER',
     followup: 'FOLLOWUP',

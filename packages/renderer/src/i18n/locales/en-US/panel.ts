@@ -42,6 +42,7 @@ export default {
     copy: 'Copy',
     edit: 'Edit',
     thinking: 'Thinking',
+    working: 'Working…',
     worked: 'Worked',
     steer: 'STEER',
     followup: 'FOLLOWUP',

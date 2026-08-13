@@ -11,6 +11,8 @@
  * 运行：cd packages/renderer && npx vitest run src/components/panel/message-stream/__tests__/TurnMeta.test.ts
  */
 import { describe, it, expect, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { mount } from '@vue/test-utils'
 import { TurnMeta } from '@xyz-agent/ui'
 import type { MessageTurn } from '@xyz-agent/core/domain/chat'
@@ -59,6 +61,13 @@ function mountMeta(props: {
 }
 
 describe('W4TC1: TurnMeta badge 灰阶化', () => {
+  it('i18n panel.message.working 在 zh/en 语言文件均定义（zh 工作中 / en Working…）', () => {
+    const zh = readFileSync(resolve(__dirname, '../../../../../renderer/src/i18n/locales/zh-CN/panel.ts'), 'utf8')
+    const en = readFileSync(resolve(__dirname, '../../../../../renderer/src/i18n/locales/en-US/panel.ts'), 'utf8')
+    expect(zh).toContain("working: '工作中'")
+    expect(en).toContain("working: 'Working…'")
+  })
+
   it('thinkCount badge 使用 bg-surface-2 text-neutral-mid（不再是 bg-reasoning-soft text-reasoning）', () => {
     const wrapper = mountMeta({ thinkCount: 3, toolCount: 0 })
     const badge = wrapper.find('.badge-think')
@@ -92,10 +101,20 @@ describe('W4TC1: TurnMeta badge 灰阶化', () => {
     expect(wrapper.find('.elapsed').text()).toBe('12s')
   })
 
-  it('turn-meta 按钮文字：streaming 态显示「思考中」+ elapsed', () => {
+  it('turn-meta 按钮文字：working 态显示「工作中」（panel.message.working）+ elapsed', () => {
     const wrapper = mountMeta({ sessionActive: true, isStreaming: true, elapsed: '3s' })
-    expect(wrapper.find('.lbl').text()).toBe('panel.message.thinking')
+    expect(wrapper.find('.lbl').text()).toBe('panel.message.working')
     expect(wrapper.find('.elapsed').text()).toBe('3s')
+  })
+
+  it('turn-meta 按钮文字：dispatching 占位态（assistants 空）保持「思考中」（panel.message.thinking）', () => {
+    const wrapper = mountMeta({
+      turn: makeTurn({ assistants: [] }),
+      sessionActive: true,
+      isStreaming: false,
+      elapsed: '',
+    })
+    expect(wrapper.find('.lbl').text()).toBe('panel.message.thinking')
   })
 
   it('thinkCount=0 时不渲染 think badge', () => {

@@ -26,7 +26,7 @@
       <!-- streaming 或 dispatching 占位（isPendingPlaceholder）时转 spinner；ask-user 等待态不转 -->
       <Loader2 v-if="isStreaming || isPendingPlaceholder" class="size-3.5 shrink-0 animate-spin" :class="spinnerColor" />
       <span class="text-[length:var(--text-sm)] font-medium">
-        <span class="lbl" :class="sessionActive ? 'text-accent' : 'text-neutral-mid'">{{ sessionActive ? t('panel.message.thinking') : t('panel.message.worked') }}</span>
+        <span class="lbl" :class="sessionActive ? 'text-accent' : 'text-neutral-mid'">{{ statusLabel }}</span>
         <!-- dispatching 占位态尚未开始计时，隐藏 elapsed（避免显示 0s） -->
         <span v-if="!isPendingPlaceholder" class="elapsed ml-1 font-mono font-medium tracking-[0.01em]" :class="elapsedColor">{{ elapsed }}</span>
       </span>
@@ -36,11 +36,12 @@
         class="chev size-[9px] text-neutral-dim transition-transform duration-[var(--duration)] ease-[var(--ease)]"
         :class="isExpanded(turnIndex) ? 'rotate-90 text-accent' : ''"
       />
-      <!-- H 设计 badge 灰阶化：bg-surface-2 text-neutral-mid 替代 bg-reasoning-soft/bg-info-soft -->
-      <span v-if="thinkCount > 0" class="badge badge-think inline-flex items-center gap-1 rounded-full bg-surface-2 px-1.5 py-0.5 font-mono text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-neutral-dim">
+      <!-- H 设计 badge 灰阶化：bg-surface-2 text-neutral-mid 替代 bg-reasoning-soft/bg-info-soft。
+           mid #96969c on surface-2 #27272a = 5.06:1 过 AA；dim #74747a = 3.21:1 不过（tokens SSOT） -->
+      <span v-if="thinkCount > 0" class="badge badge-think inline-flex items-center gap-1 rounded-full bg-surface-2 px-1.5 py-0.5 font-mono text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-neutral-mid">
         <Brain class="size-2" />{{ t('panel.message.thinkCount', { count: thinkCount }) }}
       </span>
-      <span v-if="toolCount > 0" class="badge badge-tool inline-flex items-center gap-1 rounded-full bg-surface-2 px-1.5 py-0.5 font-mono text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-neutral-dim">
+      <span v-if="toolCount > 0" class="badge badge-tool inline-flex items-center gap-1 rounded-full bg-surface-2 px-1.5 py-0.5 font-mono text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-neutral-mid">
         <SquareFunction class="size-2" />{{ t('panel.message.toolCount', { count: toolCount }) }}
       </span>
     </Button>
@@ -87,6 +88,15 @@ const { t } = useI18n()
 const isPendingPlaceholder = computed(
   () => props.sessionActive && props.turn.assistants.length === 0,
 )
+
+/**
+ * working 态文案（SSOT §3.3.4）：占位空窗期（assistant 未到）语义是「思考中」保持不动；
+ * 真正 working（assistant 已到、仍在生成）显示「工作中」；完成态「已工作」。
+ */
+const statusLabel = computed(() => {
+  if (!props.sessionActive) return t('panel.message.worked')
+  return isPendingPlaceholder.value ? t('panel.message.thinking') : t('panel.message.working')
+})
 
 /** 长时生成分级阈值（秒）：≥5min 转 warn、≥30min 转 danger（正常生成 30s~2min 不触发）。 */
 const DURATION_WARN_SECS = 300
