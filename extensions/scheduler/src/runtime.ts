@@ -104,6 +104,9 @@ export class SchedulerRuntime {
     const task = this.tasks.get(id)
     if (!task) return false
     task.enabled = enabled
+    // enable 重算到未来后的新 nextRunAt；携带到 toggle op 持久化，
+    // 防 resume 重放从 upsert 快照回退到旧过期 nextRunAt（P1 跨 session 持久化）
+    let recalcedNext: number | undefined
     // enable 时若 nextRunAt 已过期，重算，避免 enable 瞬间立即触发
     if (enabled && task.nextRunAt < this.backend.now()) {
       const next = await computeNextRunAt(task.schedule, this.backend.now())
@@ -116,6 +119,7 @@ export class SchedulerRuntime {
         // nextRunAt 保留原值（enabled=false 后 tick 不再触发）
       } else {
         task.nextRunAt = next
+        recalcedNext = next
         // MF-1：重算到未来后清除残留 pending。pending 是「到期待 dispatch」标记，
         // 由 busy tick 的 step2 置位（W4 跨 tick 重试保留）。nextRunAt 已推到未来则该标记过期，
         // 否则下个 tick step3 `pending && enabled` 会在重算的未来时间点之前提前 dispatch，
@@ -125,7 +129,14 @@ export class SchedulerRuntime {
     }
     // 全部 mutation 完成后 append toggle：确保 append 的 enabled 是最终值
     // （LOW4：cron-invalid 回退 enabled=false 的路径，append enabled=false 而非入参 true）
-    this.appendEntrySafe({ op: 'toggle', taskId: id, enabled: task.enabled })
+    // P1：nextRunAt 仅 enable 重算到未来时携带——持久化重算值，防 resume 重放回退到 upsert 快照的旧过期值。
+    // 普通 toggle / cron 失效回退（recalcedNext=undefined）不带，重放时保持 upsert 快照值。
+    this.appendEntrySafe({
+      op: 'toggle',
+      taskId: id,
+      enabled: task.enabled,
+      ...(recalcedNext !== undefined && { nextRunAt: recalcedNext }),
+    })
     return true
   }
 

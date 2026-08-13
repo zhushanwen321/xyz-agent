@@ -373,6 +373,52 @@ describe('SchedulerRuntime', () => {
       await rt.tickScheduler()
       expect(controllableBackend.sentMessages).toHaveLength(1)
     })
+
+    // ── P1：toggle enable 重算的 nextRunAt 跨 session 重放后保持未来值 ──
+    // 场景：addTask → nextRunAt 过期 → disable → enable 重算到未来（内存）→
+    //   新建第二个 SchedulerRuntime + backend.loadTasks() 重放 appendedOps（模拟 resume）→
+    //   重放后 nextRunAt = 重算的未来值（非 upsert 快照旧过期值）+ enabled=true + tick 不立即 dispatch。
+    // 修复前：toggle op 不带 nextRunAt，重放回退到 upsert 快照旧过期值 → 首个 tick 立即 dispatch（跨 session 数据丢失）。
+    it('P1: toggle enable 重算的 nextRunAt 跨 session 重放后保持未来值，不回退到旧过期值', async () => {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+      const task = await runtime.addTask('cross-session', { mode: 'interval', intervalMs: 60000 })
+      const oldNextRunAt = task.nextRunAt // T0+60s（upsert 快照值）
+
+      // T0+120s：nextRunAt(T0+60s) 已过期
+      vi.setSystemTime(new Date('2026-01-01T00:02:00Z'))
+      expect(task.nextRunAt).toBeLessThan(Date.now())
+
+      // disable → enable：enable 重算 nextRunAt 到未来（T0+120s + 60s = T0+180s）
+      await runtime.toggleTask(task.id, false)
+      await runtime.toggleTask(task.id, true)
+      const recalcedNext = task.nextRunAt
+      expect(recalcedNext).toBeGreaterThan(Date.now()) // 内存态已重算到未来
+      expect(recalcedNext).not.toBe(oldNextRunAt) // 确实重算，非旧值
+
+      // 模拟 resume：把第一个 runtime 的 appendedOps 包装成 entries，喂给第二个 backend 重放。
+      // appendedOps = [upsert(T0+60s), toggle(enabled=false), toggle(enabled=true, nextRunAt=T0+180s)]
+      const replayBackend = new MockSchedulerBackend()
+      replayBackend.fakeEntries = backend.appendedOps.map(op => ({
+        type: 'custom',
+        customType: 'pi-scheduler:task',
+        data: op,
+      }))
+      // fakeSessionFile 默认 '/test/session.json'，与第一个 backend 一致 → owner 过滤放行
+      const replayRuntime = new SchedulerRuntime(replayBackend, mockCtx)
+      replayRuntime.loadTasks(replayBackend.loadTasks())
+
+      const replayed = replayRuntime.getTask(task.id)
+      expect(replayed).toBeDefined()
+      expect(replayed!.enabled).toBe(true)
+      // 重放后是重算的未来值（修复核心），非 upsert 快照的旧过期值
+      expect(replayed!.nextRunAt).toBe(recalcedNext)
+      expect(replayed!.nextRunAt).not.toBe(oldNextRunAt)
+
+      // 再 tick 一次（now=T0+120s < 重算 nextRunAt T0+180s）：不应 dispatch。
+      // 修复前此断言会失败：nextRunAt 回退到 oldNextRunAt(T0+60s) < now → 首个 tick 立即触发
+      await replayRuntime.tickScheduler()
+      expect(replayBackend.sentMessages).toHaveLength(0)
+    })
   })
 
   // ── TC9：expiresAt 三态（addTask 的 expires 分支）──

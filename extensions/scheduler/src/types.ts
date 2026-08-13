@@ -71,7 +71,7 @@ export interface TaskSnapshot {
 export type SchedulerEntryOp =
   | { op: 'upsert'; taskId: string; ownerSessionFile: string; task: TaskSnapshot }
   | { op: 'advance'; taskId: string; nextRunAt: number; at: number; status: 'success' }
-  | { op: 'toggle'; taskId: string; enabled: boolean }
+  | { op: 'toggle'; taskId: string; enabled: boolean; nextRunAt?: number }
   | { op: 'delete'; taskId: string }
 
 // ── 持久化 ──

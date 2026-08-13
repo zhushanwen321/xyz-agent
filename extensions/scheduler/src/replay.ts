@@ -67,6 +67,9 @@ export function replayFoldEntries(
           const task = tasks.get(op.taskId)
           if (!task) break
           task.enabled = op.enabled
+          // P1：enable 重算到未来的 nextRunAt 随 toggle op 持久化；重放时应用，
+          // 防 upsert 快照回退到旧过期值导致首个 tick 立即触发
+          if (op.nextRunAt !== undefined) task.nextRunAt = op.nextRunAt
           break
         }
         case 'delete': {

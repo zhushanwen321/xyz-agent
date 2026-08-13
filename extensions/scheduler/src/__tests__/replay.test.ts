@@ -214,6 +214,47 @@ describe('replayFoldEntries', () => {
     expect(result.size).toBe(0)
   })
 
+  // ── P1：toggle op 携带 nextRunAt 重放不回退到 upsert 快照旧值（跨 session 持久化）──
+  it('P1: toggle op 携带 nextRunAt 时，重放后 task.nextRunAt = toggle 携带值（非 upsert 快照旧过期值）', () => {
+    const session = '/s.json'
+    const entries = [
+      // upsert 快照 nextRunAt=100（disable 期间过期的旧值），enabled=false（disable 态）
+      entry({
+        op: 'upsert',
+        taskId: 'A',
+        ownerSessionFile: session,
+        task: snapshot({ id: 'A', nextRunAt: 100, enabled: false }),
+      }),
+      // toggle enable 重算到未来（500）并携带 nextRunAt
+      entry({ op: 'toggle', taskId: 'A', enabled: true, nextRunAt: 500 }),
+    ]
+
+    const result = replayFoldEntries(entries, session)
+    const a = result.get('A')!
+    expect(a).toBeDefined()
+    expect(a.enabled).toBe(true)
+    expect(a.nextRunAt).toBe(500) // 重算的未来值，非 upsert 快照的旧过期值 100
+  })
+
+  // 对照：toggle 不携带 nextRunAt 时，nextRunAt 保持 upsert 快照值（普通 toggle / cron 失效回退语义）
+  it('P1 对照: toggle op 不携带 nextRunAt 时，重放后 nextRunAt = upsert 快照值', () => {
+    const session = '/s.json'
+    const entries = [
+      entry({
+        op: 'upsert',
+        taskId: 'A',
+        ownerSessionFile: session,
+        task: snapshot({ id: 'A', nextRunAt: 100, enabled: false }),
+      }),
+      entry({ op: 'toggle', taskId: 'A', enabled: true }),
+    ]
+
+    const result = replayFoldEntries(entries, session)
+    const a = result.get('A')!
+    expect(a.enabled).toBe(true)
+    expect(a.nextRunAt).toBe(100) // 保持 upsert 快照值
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
   })
