@@ -601,7 +601,7 @@ describe('rebuildHistoryFromEntries', () => {
   })
 
   // ── C1 用例 4：custom message entry (bg-notify) → system 消息 ───────
-  it('C1 case 4: custom message entry (subagent-bg-notify) → system message with customType + bgNotify (was lost before C1)', () => {
+  it('C1 case 4: custom message entry (subagent-bg-notify) → system message with customType + details (was lost before C1)', () => {
     const entries: PiSessionEntry[] = [
       makeMessageEntry({ id: 'msg-c1-30', role: 'user', text: 'run subagent' }),
       makeSpecialRoleEntry({
@@ -630,13 +630,17 @@ describe('rebuildHistoryFromEntries', () => {
     expect(messages).toHaveLength(2)
     expect(messages.map((m) => m.role)).toEqual(['user', 'system'])
     const sysMsg = messages[1]
-    // ★ C1 核心断言：customType + bgNotify 还原
+    // ★ C1 核心断言：customType + details 还原（bgNotify 派生字段已删，§3.3.6）
     expect(sysMsg.customType).toBe('subagent-bg-notify')
-    expect(sysMsg.bgNotify).toBeDefined()
-    const rec = sysMsg.bgNotify as { id: string; agent: string; status: string }
-    expect(rec.id).toBe('job-1')
-    expect(rec.agent).toBe('coder')
-    expect(rec.status).toBe('done')
+    expect(sysMsg.details).toEqual({
+      id: 'job-1',
+      status: 'done',
+      agent: 'coder',
+      model: 'claude-4.5',
+      result: 'Done.',
+      startedAt: 1000,
+      endedAt: 13000,
+    })
     // display 透传
     expect(sysMsg.display).toBe(true)
   })

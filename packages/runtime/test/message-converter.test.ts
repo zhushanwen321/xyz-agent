@@ -227,14 +227,16 @@ describe('convertPiHistory - contentBlocks 到达顺序（循环内 push）', ()
       expect(m.role).toBe('system')
       expect(m.customType).toBe('subagent-bg-notify')
       expect(m.content).toContain('coder')
-      // bgNotify 解析为单条 record（非 batch）
-      expect(m.bgNotify).toBeDefined()
-      expect(!('batch' in (m.bgNotify as object))).toBe(true)
-      const rec = m.bgNotify as { id: string; status: string; agent: string; model: string }
-      expect(rec.id).toBe('job-1')
-      expect(rec.status).toBe('done')
-      expect(rec.agent).toBe('coder')
-      expect(rec.model).toBe('claude-4.5')
+      // bgNotify 派生字段已删（§3.3.6，前端零消费）——details 原始透传保留
+      expect(m.details).toEqual({
+        id: 'job-1',
+        status: 'done',
+        agent: 'coder',
+        model: 'claude-4.5',
+        result: 'Done.',
+        startedAt: 1000,
+        endedAt: 13000,
+      })
     })
 
     it('subagent-bg-notify 批量 → bgNotify = {batch, items}', () => {
@@ -255,15 +257,17 @@ describe('convertPiHistory - contentBlocks 到达顺序（循环内 push）', ()
       ]
       const messages = convertPiHistory(raw)
       const m = messages[0]
-      expect(m.bgNotify).toBeDefined()
-      expect('batch' in (m.bgNotify as object)).toBe(true)
-      const batch = m.bgNotify as { batch: boolean; items: Array<{ id: string; status: string }> }
-      expect(batch.items).toHaveLength(2)
-      expect(batch.items[0].id).toBe('j1')
-      expect(batch.items[1].status).toBe('failed')
+      // bgNotify 派生字段已删（§3.3.6）——details 原始透传保留（含 batch 形态）
+      expect(m.details).toEqual({
+        batch: true,
+        items: [
+          { id: 'j1', status: 'done', agent: 'a1', startedAt: 1000 },
+          { id: 'j2', status: 'failed', agent: 'a2', startedAt: 2000, error: 'boom' },
+        ],
+      })
     })
 
-    it('其他 customType → system + customType，无 bgNotify', () => {
+    it('其他 customType → system + customType，details 透传', () => {
       const raw = [
         {
           role: 'custom',
@@ -277,7 +281,7 @@ describe('convertPiHistory - contentBlocks 到达顺序（循环内 push）', ()
       expect(messages).toHaveLength(1)
       expect(messages[0].role).toBe('system')
       expect(messages[0].customType).toBe('some-other-extension')
-      expect(messages[0].bgNotify).toBeUndefined()
+      expect(messages[0].details).toEqual({ foo: 'bar' })
     })
 
     // ── display 字段透传（FR-3 / AC-6）──────────────────────────────────
@@ -345,7 +349,7 @@ describe('convertPiHistory - contentBlocks 到达顺序（循环内 push）', ()
       expect(messages[1].display).toBe(false)
     })
 
-    it('subagent-bg-notify details 缺必需字段 → bgNotify 为 undefined（降级纯文本）', () => {
+    it('subagent-bg-notify details 缺必需字段 → details 原样透传（不再解析校验，§3.3.6）', () => {
       const raw = [
         {
           role: 'custom',
@@ -357,7 +361,7 @@ describe('convertPiHistory - contentBlocks 到达顺序（循环内 push）', ()
         },
       ]
       const messages = convertPiHistory(raw)
-      expect(messages[0].bgNotify).toBeUndefined()
+      expect(messages[0].details).toEqual({ status: 'done' })
       expect(messages[0].content).toBe('partial')
     })
   })

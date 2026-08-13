@@ -3,7 +3,7 @@ import type {
   PiHistoryToolResult,
 } from './pi-protocol.js'
 import type { Message, ThinkingBlock, ToolCall, FileChange, Segment } from '@xyz-agent/shared'
-import { parseBgNotifyDetails, textToSegments } from '@xyz-agent/shared'
+import { textToSegments } from '@xyz-agent/shared'
 import { normalizePiToolResult } from './normalize-tool-result.js'
 
 /**
@@ -248,7 +248,7 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[]): Message[]
     // custom message（pi CustomMessage，扩展经 sendMessage 注入的结构化通知）。
     // pi get_messages 返回 role:'custom'，带 customType/content/details。
     // 转成 system 消息（messageTurns 产出独立 RenderItem 穿插在 turn 间），
-    // customType:"subagent-bg-notify" 时解析 details 为 BgNotifyDetails（单条或批量）。
+    // details 原始透传（__gui__ 等由前端消费；bgNotify 派生字段已删——前端零消费，§3.3.6）。
     // AGENTS.md 规则 7.5：对话流状态必须可重开恢复——重开 session 时 background 完成通知经此分支还原。
     if (m.role === 'custom') {
       const cm = m as {
@@ -268,10 +268,6 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[]): Message[]
         details: cm.details as Record<string, unknown> | undefined,
         timestamp: cm.timestamp ?? Date.now(),
         display: cm.display,
-      }
-      if (cm.customType === 'subagent-bg-notify' && cm.details) {
-        const bgNotify = parseBgNotifyDetails(cm.details)
-        if (bgNotify) msg.bgNotify = bgNotify
       }
       result.push(msg)
       continue
