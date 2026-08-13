@@ -225,4 +225,39 @@ describe('CommandDocPanel', () => {
 
     expect(wrapper.text()).toContain('未选择命令')
   })
+
+  it('skill description 经 MarkdownRenderer 渲染 + content 异步到达不崩（fragment 切换）', async () => {
+    await setup('s1')
+    // file.read 延迟 resolve：模拟 content 从 null→有值，触发 fragment 内 div(无文档正文)→mdStub(content) 切换。
+    // 两个相邻 MarkdownRenderer（description/content）若无 key，此切换会导致 Vue keyed diff 错位、
+    // 卸载时 el.parentNode 已 null → removeChild 报错（用户报告的弹不出窗口崩溃）。
+    let resolveRead!: (v: { content: string; truncated: boolean }) => void
+    readMock.mockReturnValue(new Promise((r) => { resolveRead = r }))
+
+    const drawer = useSideDrawer()
+    drawer.open('doc', { commandName: '/fix' })
+
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub } },
+    })
+    await flushPromises()
+
+    // content 未到：只有 description 一个 md-stub（command.description='修复问题'，经 MarkdownRenderer 而非纯文本）
+    const stubsBefore = wrapper.findAll('.md-stub')
+    expect(stubsBefore.length).toBe(1)
+    expect(stubsBefore[0]!.text()).toContain('修复问题')
+    expect(wrapper.text()).toContain('无文档正文')
+
+    // content 到达 → fragment 切换（卸载“无文档正文” div，挂载 content md-stub）
+    resolveRead({ content: '# Fix Skill body', truncated: false })
+    await flushPromises()
+
+    // 切换后不崩：description + content 两个 md-stub 共存，不再显示「无文档正文」
+    const stubsAfter = wrapper.findAll('.md-stub')
+    expect(stubsAfter.length).toBe(2)
+    expect(stubsAfter[0]!.text()).toContain('修复问题')
+    expect(stubsAfter[1]!.text()).toContain('Fix Skill body')
+    expect(wrapper.text()).not.toContain('无文档正文')
+  })
 })

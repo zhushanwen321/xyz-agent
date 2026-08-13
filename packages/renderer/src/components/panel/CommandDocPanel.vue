@@ -21,8 +21,11 @@
       <template v-if="skill">
         <!-- skill 完整文档（SKILL.md 经 markdown 渲染） -->
         <!-- description 改用 MarkdownRenderer：skill frontmatter description 普遍含行内 markdown（反引号/星号/链接），纯文本插值会原样显示标记符号 -->
-        <MarkdownRenderer v-if="skill.description" :content="skill.description" :session-id="sessionId ?? undefined" class="mb-3" />
-        <MarkdownRenderer v-if="skill.content" :content="skill.content" :session-id="sessionId ?? undefined" />
+        <!-- key 必填：fragment 内两个相邻 MarkdownRenderer（description / content）若不加 key，
+             Vue 的 keyed diff 会在 content 从 null→有值时把它们误当同一 vnode 复用 → patch/unmount 错位 →
+             remove() 读到 null parentNode 崩溃（弹不出窗口）。同类型组件相邻 v-if 必须显式 key。 -->
+        <MarkdownRenderer v-if="skill.description" key="skill-desc" :content="skill.description" :session-id="sessionId ?? undefined" class="mb-3" />
+        <MarkdownRenderer v-if="skill.content" key="skill-content" :content="skill.content" :session-id="sessionId ?? undefined" />
         <div v-else class="py-6 text-center text-[12px] text-neutral-dim">{{ t('panel.command.noDocBody') }}</div>
         <!-- skill 元信息：sourcePath / tools / triggers -->
         <div v-if="skill.sourcePath" class="mt-4 border-t border-border pt-3">
