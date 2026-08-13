@@ -109,6 +109,14 @@ export function createChatStore() {
    * 与 messages 解耦——pushPending 只写本 buffer，不写 messages（pending 不进对话流）。
    * 投递信号 queue_update 到达时，drainPending 取出 segments 交 appendUser 进对话流（m2 接线）。
    * 与 queueStates 同层 ref<Map<string, T>>，disposeSession 一并清理（T2）。
+   *
+   * [M4 queue 子域归位契约] queue 纯状态（queueStates pi 快照 + pendingBuffer 前端暂存）
+   * 全部归位 core 本 store，renderer 无副本（stores/chat.ts 仅 defineStore 薄包装）。
+   * flush/取消的编排（调 chatApi.send/steer）留在 renderer shell（useCompactQueue.ts），
+   * core 只经 deps.getCompactQueue() 注入调用——core 域文件不 import renderer api。
+   * 组件消费点唯一：QueueBubble 经 Composer → chatStore.getQueueState 读 queueStates；
+   * CompactQueueBadge 经 useCompactQueue() 单例读 compact 暂存。pendingBuffer 属 drain
+   * 恢复机制留在 store（SSOT 检查点 2 裁决：不强行并入统一视图）。
    */
   const pendingBuffer = ref<Map<string, PendingItem[]>>(new Map())
   /** FileChanges 子域控制器（W10，ADR-0024 D5），委托 chat-changeset.ts。messages 由本 store 注入，设计见 ./README.md + chat-changeset.ts。 */

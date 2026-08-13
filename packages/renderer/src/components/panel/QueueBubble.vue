@@ -6,6 +6,9 @@
   内容：每条一行，Zap（steer，accent）/ Clock（followup，info）icon + truncate 文本；
   多条显前 3 条 + 「+N」。只读（入队后不可改/撤，pi 无 clear_queue RPC）。
   生命周期绑定 store：message_start 到达 → store queueStates.delete → v-if 消失。
+
+  [M4 queue 子域] 数据源唯一：纯 props 展示（state 由 Composer 经 chatStore.getQueueState
+  读 core queueStates，core/domain/chat/store.ts），组件内不取数不持状态。
 -->
 <template>
   <div
