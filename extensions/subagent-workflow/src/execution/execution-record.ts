@@ -158,6 +158,8 @@ export function createRecord(
     depth?: number;
     /** 对话模式标志（true = 可持续对话，轮次完成进 idle）。默认 undefined/false = 一次性。 */
     chatMode?: boolean;
+    /** 空闲超时毫秒数（仅 chatMode 有意义）。覆盖默认 5min。 */
+    idleTimeoutMs?: number;
     controller?: AbortController;
   },
 ): ExecutionRecord {
@@ -174,6 +176,7 @@ export function createRecord(
     parentRecordId: identity.parentRecordId,
     depth: identity.depth ?? 0,
     chatMode: identity.chatMode,
+    idleTimeoutMs: identity.idleTimeoutMs,
 
     // 状态（实时更新）
     status: "running",

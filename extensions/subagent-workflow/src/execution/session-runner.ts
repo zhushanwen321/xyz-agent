@@ -673,7 +673,7 @@ export async function runSpawn(
           // 与 agent_end handler 现有 SIGTERM 分支一致，不新造 cleanup。
           const child = getChildByRecord(record.id);
           if (child && !child.killed) child.kill("SIGTERM");
-        });
+        }, record.idleTimeoutMs);
         ctx.onRoundSettled?.(record);
         // [V2 决策 2] chatMode 首轮：agent_settled = 本轮真空闲，提前 resolve runSpawn
         //（exit code 0，进程仍保活 idle timer armed）。runAndFinalize 拿到 result 后走

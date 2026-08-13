@@ -115,9 +115,17 @@ const SubagentParams = Type.Object({
   })),
   conversation: Type.Optional(Type.Boolean({
     description:
-      "Enable continuous chat with this subagent. When true, the subagent stays available after each reply — you can send follow-up messages (action:'message') and it keeps the full conversation context across rounds, with no need to re-spawn or re-explain. Use this for multi-round collaboration (iterative review-fix loops, back-and-forth refinement). " +
-      "Cost: a conversation-mode subagent holds resources (memory, and a worktree if enabled) until you explicitly end it with action:'close'. Always close when done. " +
-      "Omit (or false) for one-shot tasks — the subagent runs once, notifies on completion, and is cleaned up automatically (default).",
+      "Enable continuous chat with this subagent. When true, the subagent stays available after each reply — you can send follow-up messages (action:'message') and it keeps the full conversation context across rounds, with no need to re-spawn or re-explain. " +
+      "\nUse conversation:true for: multi-round collaboration (iterative review-fix loops, back-and-forth refinement), any task where you expect to send follow-up messages after the initial result. " +
+      "\nOmit (or false) for: one-shot tasks — single exploration, lookup, file read, code generation that needs no follow-up. The subagent runs once, notifies on completion, and is cleaned up automatically (default). " +
+      "\nFor long-interval collaboration (each round spaced >5min apart), set conversation:true AND increase idleTimeoutMs to avoid premature timeout. " +
+      "Cost: a conversation-mode subagent holds resources (memory, and a worktree if enabled) until you explicitly end it with action:'close'. Always close when done.",
+  })),
+  idleTimeoutMs: Type.Optional(Type.Number({
+    description:
+      "Idle timeout in milliseconds for conversation-mode subagents. Controls how long an idle subagent (between rounds) stays alive before automatic cleanup. " +
+      "Default: 300000 (5min). Override for long-interval collaboration where each round is spaced >5min apart. " +
+      "Only meaningful with conversation:true; ignored for one-shot subagents.",
   })),
   // action:"list" → listParam OPTIONAL (all fields optional, defaults apply). Ignored by other actions.
   listParam: Type.Optional(Type.Object({
@@ -213,7 +221,7 @@ Delegate when the task needs a distinct specialized role, context isolation (for
 
 ## Actions
 
-- action:"start" — run a subagent. Pass task and slug as top-level fields (REQUIRED). Optional: agent, model, thinkingLevel, skillPath, appendSystemPrompt, schema, maxTurns, graceTurns, fork, worktree, cwd, conversation. Background only: returns a subagentId immediately, notifies on completion.
+- action:"start" — run a subagent. Pass task and slug as top-level fields (REQUIRED). Optional: agent, model, thinkingLevel, skillPath, appendSystemPrompt, schema, maxTurns, graceTurns, fork, worktree, cwd, conversation, idleTimeoutMs. Background only: returns a subagentId immediately, notifies on completion.
 - action:"message" — send a follow-up message to a conversation-mode subagent (started with conversation:true); it keeps the full context across rounds. REQUIRED messageParam: { subagentId, text }. Optional: interrupt (default false). Returns { delivered: true } immediately; the reply auto-notifies when the round completes.
 - action:"close" — end a conversation-mode subagent and release its resources. REQUIRED closeParam: { subagentId }. Optional: force (default false; true terminates mid-round immediately). Always close when done.
 - action:"list" — list subagents. Pass listParam: { includeFinished?, limit? } (all optional). Read an item's sessionFile for full detail.
@@ -251,6 +259,13 @@ Completion auto-notifies you (steer wakes next turn, even mid-poll). So:
 ## Continuous chat (conversation mode)
 
 For multi-round work, set conversation:true on start. The subagent stays available across replies — action:"message" continues with full context retained, action:"close" releases it. Always close when finished.
+
+When to use:
+- ✅ Multi-round collaboration (review/fix loops) → conversation:true
+- ✅ Long-interval rounds (>5min apart) → conversation:true + idleTimeoutMs increased
+- ❌ Single exploration/lookup → default (one-shot)
+
+idleTimeoutMs: idle timeout in ms for conversation-mode subagents (default 300000 / 5min). Env PI_SUBAGENT_IDLE_TIMEOUT_MS sets global default; per-call param takes precedence.
 
 ## You cannot
 

@@ -34,6 +34,19 @@
 export const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 分钟
 
 /**
+ * 从环境变量 PI_SUBAGENT_IDLE_TIMEOUT_MS 读取全局默认超时。
+ * 返回 undefined 表示 env 未设置或非法（调用方回落 DEFAULT_IDLE_TIMEOUT_MS）。
+ * PI_ 前缀符合 ENV_WHITELIST_PREFIXES 白名单。
+ */
+function getEnvIdleTimeoutMs(): number | undefined {
+  const raw = process.env.PI_SUBAGENT_IDLE_TIMEOUT_MS;
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
+/**
  * 默认全局活进程上限（ceiling）。
  *
  * V2 §5.4 / 决策 4：防「N 个 subagent 于 timeout 窗口内高频复用」场景的内存高水位
@@ -71,25 +84,28 @@ const idleTimers = new Map<string, IdleTimerEntry>();
  *
  * @param recordId subagent record id（sa-<uuid>）
  * @param onTimeout 超时回调（调用方注入：SIGTERM 回收进程）
- * @param timeoutMs 可选，默认 DEFAULT_IDLE_TIMEOUT_MS
+ * @param timeoutMs 可选。SP-6 优先级：参数 > env PI_SUBAGENT_IDLE_TIMEOUT_MS > DEFAULT_IDLE_TIMEOUT_MS。
  */
 export function armIdleTimer(
   recordId: string,
   onTimeout: () => void,
-  timeoutMs: number = DEFAULT_IDLE_TIMEOUT_MS,
+  timeoutMs?: number,
 ): void {
+  // SP-6 优先级：参数 > env PI_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms (5min)。
+  const resolved = timeoutMs ?? getEnvIdleTimeoutMs() ?? DEFAULT_IDLE_TIMEOUT_MS;
+
   // 刷新：先清旧 timer，避免同一 record 叠加多个 armed timer。
   disarmIdleTimer(recordId);
 
   const timer = setTimeout(() => {
     idleTimers.delete(recordId);
     onTimeout();
-  }, timeoutMs);
+  }, resolved);
   // node 默认 setTimeout 返回的 timer 会被事件循环 keep-alive；unref 让它不阻塞
   // 进程退出（进程退出由 shutdown hook 显式收割兜底，不靠 timer 拖延）。
   timer.unref?.();
 
-  idleTimers.set(recordId, { timer, timeoutMs });
+  idleTimers.set(recordId, { timer, timeoutMs: resolved });
 }
 
 /**

@@ -76,6 +76,8 @@ export interface StartHandlerInput {
   cwd?: string;
   /** 可持续对话模式（true = chatMode，轮次完成进 idle 等续聊）。 */
   conversation?: boolean;
+  /** 空闲超时毫秒数（仅 conversation 模式有意义，覆盖默认 5min）。 */
+  idleTimeoutMs?: number;
 }
 
 /** start 领域对象（adapter 包成 bgResponse）。 */
@@ -202,6 +204,7 @@ export async function startHandler(
     worktree: input.worktree,
     cwd: input.cwd,
     conversation: input.conversation,
+    idleTimeoutMs: input.idleTimeoutMs,
     ctxModel,
     signal,
     // background 不回流 onUpdate：detached 运行，完成由 notify 驱动新 turn。

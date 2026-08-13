@@ -364,6 +364,12 @@ export interface ExecutionRecord {
    * 向后兼容：旧 record / 旧 session 文件无此字段，按一次性模式处理。
    */
   readonly chatMode?: boolean;
+  /**
+   * 空闲超时毫秒数（仅 chatMode 有意义）。覆盖默认 5min idle timeout。
+   * 优先级：参数 > env PI_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
+   * 向后兼容：旧 record 无此字段，按默认值处理。
+   */
+  readonly idleTimeoutMs?: number;
 
   // ── 状态（实时更新）──
   status: ExecutionStatus;
@@ -503,6 +509,11 @@ export interface ExecuteOptions {
    * undefined/false = 一次性模式（默认，行为完全不变）。service.execute 透传到 createRecordForMode。
    */
   conversation?: boolean;
+  /**
+   * 空闲超时毫秒数（仅 conversation 模式有意义）。覆盖默认 5min idle timeout。
+   * 优先级：参数 > env PI_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
+   */
+  idleTimeoutMs?: number;
   // 注：fork 深度不从外部传入（曾暴露 parentForkDepth，改用 ALS 后 execute 内部从调用链派生，
   // 公开字段成为死字段误导调用方，已移除）。深度限制检查见 session-runner.ts 内部 RunOptions.parentForkDepth
   // （与历史残留的 types.ts RunOptions 同名不同 interface——后者已删除）。
