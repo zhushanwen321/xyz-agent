@@ -20,11 +20,15 @@
     <div class="min-h-0 flex-1 overflow-auto p-3">
       <template v-if="skill">
         <!-- skill 完整文档（SKILL.md 经 markdown 渲染） -->
-        <!-- description 改用 MarkdownRenderer：skill frontmatter description 普遍含行内 markdown（反引号/星号/链接），纯文本插值会原样显示标记符号 -->
-        <!-- key 必填：fragment 内两个相邻 MarkdownRenderer（description / content）若不加 key，
-             Vue 的 keyed diff 会在 content 从 null→有值时把它们误当同一 vnode 复用 → patch/unmount 错位 →
-             remove() 读到 null parentNode 崩溃（弹不出窗口）。同类型组件相邻 v-if 必须显式 key。 -->
-        <MarkdownRenderer v-if="skill.description" key="skill-desc" :content="skill.description" :session-id="sessionId ?? undefined" class="mb-3" />
+        <!-- description 卡片化：frontmatter description 是元信息摘要，用卡片样式（背景+边框+次要色）
+             与正文区分、次要化；content MR 在 fragment 顶层 v-if，加 key 防 null→有值切换时 diff 错位 -->
+        <div v-if="skill.description" class="mb-4 rounded-md border border-border bg-surface px-3 py-2">
+          <MarkdownRenderer
+            :content="skill.description"
+            :session-id="sessionId ?? undefined"
+            class="text-[13px] leading-[1.55] text-neutral-mid [&_p]:m-0 [&_p]:leading-[1.55]"
+          />
+        </div>
         <MarkdownRenderer v-if="skill.content" key="skill-content" :content="skill.content" :session-id="sessionId ?? undefined" />
         <div v-else class="py-6 text-center text-[12px] text-neutral-dim">{{ t('panel.command.noDocBody') }}</div>
         <!-- skill 元信息：sourcePath / tools / triggers -->
@@ -138,6 +142,17 @@ const skillContent = ref<string | null>(null)
 let loadingPath: string | null = null
 
 /**
+ * 剥掉 SKILL.md 开头的 YAML frontmatter 块（--- ... ---）。
+ * frontmatter 是元数据（name/description/triggers），description 已单独渲染，
+ * 若不剥会被 MarkdownRenderer 当正文渲染：---→分割线、key:value→段落，整块元数据泄漏成正文。
+ * 正则锚定 ^---，正文里的 --- 不会被误伤；无 frontmatter 的文件原样返回。
+ */
+function stripFrontmatter(content: string): string {
+  const m = content.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/)
+  return m ? content.slice(m[0].length) : content
+}
+
+/**
  * 读 SKILL.md：先带 sessionId 走 cwd 守门（项目级 skill 在 cwd 下），
  * 失败（out_of_cwd）再不带 sessionId 走白名单（全局 skill 如 ~/.agents/skills）。
  * 两条守门都不绕过，任一通过即读到。
@@ -153,8 +168,8 @@ async function loadSkillContent(path: string): Promise<void> {
     const result = sid
       ? await fileApi.read(path, sid).catch(() => fileApi.read(path))
       : await fileApi.read(path)
-    // 防竞态：异步期间用户已切到别的命令，丢弃本次结果
-    if (loadingPath === path) skillContent.value = result.content
+    // 防竞态：异步期间用户已切到别的命令，丢弃本次结果。剥掉 frontmatter 防元数据泄漏正文
+    if (loadingPath === path) skillContent.value = stripFrontmatter(result.content)
   } catch {
     // 两路守门均拒绝（路径既不在 cwd 下也不在白名单）→ 退化为无文档体
     if (loadingPath === path) skillContent.value = null

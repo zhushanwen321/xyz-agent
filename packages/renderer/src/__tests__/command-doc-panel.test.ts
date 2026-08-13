@@ -290,4 +290,25 @@ describe('CommandDocPanel', () => {
     expect(probes.length).toBe(2)
     expect(probes.every((p) => p.text() === 'true')).toBe(true)
   })
+
+  it('SKILL.md content 的 YAML frontmatter 被剥掉（不泄漏成分正文）', async () => {
+    await setup('s1')
+    readMock.mockResolvedValue({
+      content: '---\nname: fix\ndescription: 修 bug\n---\n\n# Fix Skill\n\n正文内容。',
+      truncated: false,
+    })
+    const drawer = useSideDrawer()
+    drawer.open('doc', { commandName: '/fix' })
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub } },
+    })
+    await flushPromises()
+    // 正文保留
+    expect(wrapper.text()).toContain('正文内容')
+    expect(wrapper.text()).toContain('Fix Skill')
+    // frontmatter 元数据不泄漏成正文（name:/description: 不再被当段落渲染）
+    expect(wrapper.text()).not.toContain('name: fix')
+    expect(wrapper.text()).not.toContain('description: 修 bug')
+  })
 })
