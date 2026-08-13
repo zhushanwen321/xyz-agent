@@ -82,13 +82,13 @@ describe("messageHandler 参数校验", () => {
 });
 
 // ============================================================
-// messageHandler 非 chatMode 状态分流（回归防护，设计决策 6 状态×interrupt 映射）
-// V2 决策 3：chatMode 走 deliverMessage 统一投递（见下方独立 describe）；此处验证
-// 非 chatMode record 仍走 deliverToRunning/resumeRound（V2 改造零回归）。
+// messageHandler 非 chatMode 状态分流（SP-5 one-shot upgrade）
+// SP-5：非 chatMode active record（running/idle）收到 message 时自动升级为 chatMode，
+// 走 deliverMessage 统一投递路径（热路径或冷路径 resume）。
 // ============================================================
 
-describe("messageHandler 非 chatMode 状态分流（回归防护，决策 6）", () => {
-  it("running + interrupt:true → deliverToRunning(record, text, true)", async () => {
+describe("messageHandler 非 chatMode 状态分流（SP-5 one-shot upgrade）", () => {
+  it("running + interrupt:true → upgrade chatMode + deliverMessage(record, text, true)", async () => {
     const service = makeMockService();
     const record = makeRecord({ status: "running" });
     (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
@@ -99,7 +99,10 @@ describe("messageHandler 非 chatMode 状态分流（回归防护，决策 6）"
       interrupt: true,
     });
 
-    expect(service.deliverToRunning).toHaveBeenCalledWith(record, "follow up", true);
+    // SP-5：非 chatMode running → upgrade chatMode → deliverMessage（非 deliverToRunning）
+    expect(record.chatMode).toBe(true);
+    expect(service.deliverMessage).toHaveBeenCalledWith(record, "follow up", true);
+    expect(service.deliverToRunning).not.toHaveBeenCalled();
     expect(service.resumeRound).not.toHaveBeenCalled();
     expect(result).toEqual({
       kind: "message",
@@ -108,17 +111,20 @@ describe("messageHandler 非 chatMode 状态分流（回归防护，决策 6）"
     });
   });
 
-  it("running + interrupt 默认 false → deliverToRunning(record, text, false)", async () => {
+  it("running + interrupt 默认 false → upgrade chatMode + deliverMessage(record, text, false)", async () => {
     const service = makeMockService();
     const record = makeRecord({ status: "running" });
     (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
 
     await messageHandler(service, { subagentId: "sa-test", text: "queue this" });
 
-    expect(service.deliverToRunning).toHaveBeenCalledWith(record, "queue this", false);
+    // SP-5：非 chatMode running → upgrade chatMode → deliverMessage（非 deliverToRunning）
+    expect(record.chatMode).toBe(true);
+    expect(service.deliverMessage).toHaveBeenCalledWith(record, "queue this", false);
+    expect(service.deliverToRunning).not.toHaveBeenCalled();
   });
 
-  it("idle → resumeRound（interrupt 自动退化，agent 无感）", async () => {
+  it("idle → upgrade chatMode + deliverMessage（冷路径 resume）", async () => {
     const service = makeMockService();
     const record = makeRecord({ status: "idle" });
     (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
@@ -126,10 +132,13 @@ describe("messageHandler 非 chatMode 状态分流（回归防护，决策 6）"
     const result = await messageHandler(service, {
       subagentId: "sa-test",
       text: "continue",
-      interrupt: true, // idle 时 interrupt 无意义，仍走 resumeRound
+      interrupt: true, // idle 时 interrupt 透传 deliverMessage
     });
 
-    expect(service.resumeRound).toHaveBeenCalledWith(record, "continue");
+    // SP-5：非 chatMode idle → upgrade chatMode → deliverMessage（非 resumeRound 直调）
+    expect(record.chatMode).toBe(true);
+    expect(service.deliverMessage).toHaveBeenCalledWith(record, "continue", true);
+    expect(service.resumeRound).not.toHaveBeenCalled();
     expect(service.deliverToRunning).not.toHaveBeenCalled();
     expect(result.response).toEqual({ delivered: true });
   });

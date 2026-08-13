@@ -346,16 +346,19 @@ export async function messageHandler(
   // 归属守卫（决策 3）：getRecordForAction 内部校验 rootSessionId
   const record = service.getRecordForAction(id);
 
+  // SP-5 one-shot upgrade：非 chatMode 的 active record（running/idle）收到 message 时
+  // 自动升级为 chatMode，后续走 deliverMessage 统一投递路径（热路径或冷路径 resume）。
+  // closed/cancelled 终态 record 不可 upgrade（getRecordForAction 已抛 not found）。
+  // chatMode 是 ExecutionRecord 的 readonly 字段，用 Object.assign 绕过 readonly 约束（upgrade 语义）。
+  if (!record.chatMode && (record.status === "running" || record.status === "idle")) {
+    Object.assign(record, { chatMode: true });
+  }
+
   // [V2 决策 3] chatMode 统一投递：按进程死活分流（热路径 prompt+streamingBehavior / 冷路径 resume），
   // 不按 record.status（V2 进程长驻，idle 态进程仍活，续聊走热路径 prompt 而非重开 session）。
+  // SP-5：upgrade 后 record.chatMode 已为 true，统一进此分支。
   if (record.chatMode) {
     await service.deliverMessage(record, text, interrupt);
-  } else if (record.status === "running") {
-    // busy 投递（决策 6 running 分支）：follow_up(排队) / steer(抢占）
-    service.deliverToRunning(record, text, interrupt);
-  } else if (record.status === "idle") {
-    // idle 续聊（决策 6 idle 分支）：resume 重开 session + prompt，interrupt 自动退化（agent 无感）
-    service.resumeRound(record, text);
   } else {
     // 终态（closed/cancelled）：防御性兜底（终态 record 已 archive，正常走 not found）
     throw new Error(
