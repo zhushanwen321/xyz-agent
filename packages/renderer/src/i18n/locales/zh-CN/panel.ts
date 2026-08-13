@@ -91,7 +91,7 @@ export default {
     thinkCount: '思考 ×{count}',
     toolCount: '工具 ×{count}',
     traceExpandAll: '展开全部（{count} 步）',
-    traceCollapse: '收起精简',
+    traceCollapse: '恢复精简',
     traceFailed: '含 {count} 次失败',
     bashCancelled: '已取消',
     bashTimeout: '已超时',

@@ -37,11 +37,15 @@
 
       <!-- trace 容器：恒渲染（v-if 下沉 Block 级）。
            折叠态（!showTrace）仅末位 text 正文（scope wave D1）；
-           展开态（showTrace）渲染 computeTraceWindow 窗口切片结果（末位 text + 进行中块 + 最近 W 个已完成过程块）。
-           收编区有内容时在 visible 块之前显示 TraceCompactorRow（design §3.1，D5 零 chrome）。 -->
+           工作展开态（showTrace && isWorkingTurn）渲染 computeTraceWindow 窗口切片结果
+             （末位 text + 进行中块 + 最近 W 个已完成过程块）；
+           完成态/历史手动展开（showTrace && !isWorkingTurn）渲染全量 flatBlocks
+             （design §3.1 交互6「回看就是全量」、G5「完成态与历史呈现不变」，窗口只作用于工作 turn）。
+           收编行仅在「工作 turn 且（接管态 或 有收编/失败块）」时显示（design §3.1，D5 零 chrome）。
+           takeover 态保留行以提供「恢复精简」回退入口（design 交互1），否则用户卡死在全展态。 -->
       <div class="trace mt-1 mb-1 flex flex-col">
         <TraceCompactorRow
-          v-if="showTrace && (traceWindow.compactedCount > 0 || traceWindow.failedCount > 0)"
+          v-if="showTrace && isWorkingTurn && (takeover || traceWindow.compactedCount > 0 || traceWindow.failedCount > 0)"
           :compacted-count="traceWindow.compactedCount"
           :failed-count="traceWindow.failedCount"
           :takeover="takeover"
@@ -58,7 +62,7 @@
           :tool="fb.block.kind === 'tool' || fb.block.kind === 'agentgraph' ? (fb.block.ref as ToolCall) : undefined"
           :thinking-id="fb.block.kind === 'thinking' ? (fb.block.ref as ThinkingBlock).id : undefined"
           :collapsed="fb.block.kind === 'thinking' ? (fb.block.ref as ThinkingBlock).collapsed : undefined"
-          :working="sessionActive"
+          :working="fb.assistantStatus === 'streaming'"
           :streaming="fb.assistantStatus === 'streaming'"
           :status="fb.assistantStatus"
           :error="assistantById.get(fb.assistantId)?.error"
@@ -172,7 +176,10 @@ const traceWindow = computed(() =>
  * - 折叠态（!showTrace）：每个 assistant 的末位 text（按 assistantId 分组各取 flatIndex 最大者）。
  *   多 assistant turn 下每个 assistant 的最终回复默认可见（与 computeTraceWindow ①规则一致）；
  *   computeTraceWindow 不参与折叠态（无 trace 细节）。
- * - 展开态（showTrace）：traceWindow.visible（窗口切片结果，含各 assistant 末位 text + 过程块）。
+ * - 工作展开态（showTrace && isWorkingTurn）：traceWindow.visible（窗口切片结果，含各 assistant
+ *   末位 text + 过程块；takeover=true 时 visible=全量）。
+ * - 完成态/历史手动展开（showTrace && !isWorkingTurn）：全量 flatBlocks（design §3.1 交互6
+ *   「窗口只作用于工作 turn，回看就是全量」、G5「完成态与历史呈现不变」，不走窗口切片）。
  */
 const visibleBlocks = computed<FlatBlock[]>(() => {
   if (!showTrace.value) {
@@ -184,6 +191,10 @@ const visibleBlocks = computed<FlatBlock[]>(() => {
       }
     }
     return [...lastTextByAssistant.values()].sort((a, b) => a.flatIndex - b.flatIndex)
+  }
+  // 窗口仅作用于工作 turn：完成态/历史手动展开回看全量，不截断（design §3.1 交互6 / G5）。
+  if (!isWorkingTurn.value) {
+    return flatBlocks.value
   }
   return traceWindow.value.visible
 })

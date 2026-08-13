@@ -21,7 +21,7 @@ vi.mock('vue-i18n', () => ({
     t: (key: string, params?: Record<string, unknown>) => {
       const msgs: Record<string, string> = {
         'panel.message.traceExpandAll': '展开全部（{count} 步）',
-        'panel.message.traceCollapse': '收起精简',
+        'panel.message.traceCollapse': '恢复精简',
         'panel.message.traceFailed': '含 {count} 次失败',
       }
       let s = msgs[key] ?? key
@@ -119,9 +119,10 @@ const BlockStub = {
     type: { type: String, required: true },
     status: { type: String, default: '' },
     streaming: { type: Boolean, default: false },
+    working: { type: Boolean, default: false },
     tool: { type: Object, default: undefined },
   },
-  template: `<div class="trace-blk" :data-type="type" :data-status="status" :data-streaming="streaming ? 'true' : 'false'" />`,
+  template: `<div class="trace-blk" :data-type="type" :data-status="status" :data-streaming="streaming ? 'true' : 'false'" :data-working="working ? 'true' : 'false'" />`,
 }
 
 function mountTurn(opts: {
@@ -209,7 +210,7 @@ describe('streaming-trace-window window: Turn 窗口切片渲染', () => {
     expect(wrapper.find('[data-testid="trace-compactor"]').exists()).toBe(true)
   })
 
-  it('TC2: takeover=true 全展开 → 渲染全部块（12 tool + text = 13），收编行不显示（计数归零）', () => {
+  it('TC2: takeover=true 全展开 → 渲染全部块（12 tool + text = 13），收编行保留显示「恢复精简」回退入口', () => {
     const wrapper = mountTurn({
       turn: makeWindowTurn({ toolCount: 12 }),
       isSessionActive: true,
@@ -218,8 +219,9 @@ describe('streaming-trace-window window: Turn 窗口切片渲染', () => {
     })
     const blocks = wrapper.findAll('.trace .trace-blk')
     expect(blocks.length).toBe(13)
-    // takeover=true → compactedCount=0, failedCount=0 → 收编行 v-if=false
-    expect(wrapper.find('[data-testid="trace-compactor"]').exists()).toBe(false)
+    // takeover=true → compactedCount=0, failedCount=0，但收编行 v-if 含 takeover 维度仍保留
+    // （design 交互1：接管态原地变为「恢复精简」，提供回退入口，否则用户卡死在全展态）
+    expect(wrapper.find('[data-testid="trace-compactor"]').exists()).toBe(true)
   })
 
   it('TC14: 块数 ≤ W（3 块）→ 无收编，收编行不渲染', () => {
@@ -258,7 +260,7 @@ describe('streaming-trace-window window: Turn 窗口切片渲染', () => {
     expect(failed.text()).toContain('3')
   })
 
-  it('TC9: Block props 透传——streaming assistant 的块收到 streaming=true / status=streaming', () => {
+  it('TC9: Block props 透传——streaming assistant 的块收到 streaming=true / status=streaming / working=true', () => {
     // assistantStatus='streaming' + 末位 running tool
     const wrapper = mountTurn({
       turn: makeWindowTurn({ toolCount: 1, assistantStatus: 'streaming' }),
@@ -269,6 +271,8 @@ describe('streaming-trace-window window: Turn 窗口切片渲染', () => {
     expect(tool.exists()).toBe(true)
     expect(tool.attributes('data-streaming')).toBe('true')
     expect(tool.attributes('data-status')).toBe('streaming')
+    // :working 随所属 assistant 的 streaming 态（MF-2：从 FlatBlock 所属 assistant 解出）
+    expect(tool.attributes('data-working')).toBe('true')
   })
 
   it('TC2-toggle: 点击收编行 emit toggle → 调用 setTakeover（takeover false→true）', async () => {
@@ -285,6 +289,36 @@ describe('streaming-trace-window window: Turn 窗口切片渲染', () => {
     expect(setTakeover).toHaveBeenCalledTimes(1)
     // isTakeover mock 返回 false，onToggleTakeover 取反 → setTakeover(key, true)
     expect(setTakeover).toHaveBeenCalledWith(expect.any(String), true)
+  })
+
+  it('TC-MF2: Block :working 从所属 assistant 解出（非 session 级）——完成 assistant 的块 working=false（session 活跃期可查看 thinking 全文）', () => {
+    // 完成 assistant（status='complete'）+ 末位工作 turn（sessionActive=true）：
+    // design 要求 Block props 从 FlatBlock 所属 assistant 解出。:working 应随 assistantStatus，
+    // 而非 session 级 sessionActive——否则完成助手 thinking 全文在 session 活跃期不可查看。
+    const wrapper = mountTurn({
+      turn: makeWindowTurn({ toolCount: 2, assistantStatus: 'complete' }),
+      isSessionActive: true,
+      isLastTurn: true,
+    })
+    const blocks = wrapper.findAll('.trace .trace-blk')
+    expect(blocks.length).toBeGreaterThan(0)
+    // session 虽活跃，但该 assistant 已 complete → 所有块 working=false（旧 sessionActive 绑定会为 true）
+    expect(blocks.every((b) => b.attributes('data-working') === 'false')).toBe(true)
+  })
+
+  it('TC-MF3: 完成态/历史 turn 手动展开 → 全量 flatBlocks（不走窗口），收编行不渲染（窗口只作用于工作 turn）', () => {
+    // 非工作 turn（isLastTurn=false）但 isExpanded=true（手动展开回看）：
+    // design §3.1 交互6「回看就是全量」、G5「完成态与历史呈现不变」→ 不截断、无收编行。
+    const wrapper = mountTurn({
+      turn: makeWindowTurn({ toolCount: 12 }),
+      isSessionActive: true,
+      isLastTurn: false, // 非末位 → isWorkingTurn=false
+      isExpanded: () => true, // 手动展开 → showTrace=true
+    })
+    // 全量：12 tool + 1 text = 13 块（非窗口的 9 块）
+    expect(wrapper.findAll('.trace .trace-blk').length).toBe(13)
+    // 非工作 turn → 收编行不渲染（窗口专属 chrome 不出现在回看态）
+    expect(wrapper.find('[data-testid="trace-compactor"]').exists()).toBe(false)
   })
 })
 
@@ -304,9 +338,9 @@ describe('streaming-trace-window TraceCompactorRow', () => {
     expect(w.find('[data-testid="trace-compactor-failed"]').exists()).toBe(false)
   })
 
-  it('TC3: 全展态（takeover=true）显示「收起精简」', () => {
+  it('TC3: 全展态（takeover=true）显示「恢复精简」', () => {
     const w = mountRow({ compactedCount: 0, failedCount: 0, takeover: true })
-    expect(w.text()).toContain('收起精简')
+    expect(w.text()).toContain('恢复精简')
   })
 
   it('TC4: failedCount>0 渲染 danger 子计数（含 count + text-danger class）', () => {
@@ -405,9 +439,9 @@ describe('streaming-trace-window edges: D9 边界态窗口冻结（组件层）'
     const w1 = mountTurn({ turn, isLastTurn: true, isTakeover: () => false })
     expect(w1.findAll('.trace .trace-blk').length).toBe(9)
     expect(w1.find('[data-testid="trace-compactor"]').exists()).toBe(true)
-    // takeover=true：全展，visible=13（12 tool + text），计数归零 compactor 不渲染
+    // takeover=true：全展，visible=13（12 tool + text）；计数归零但收编行保留（恢复精简回退入口，design 交互1）
     const w2 = mountTurn({ turn, isLastTurn: true, isTakeover: () => true })
     expect(w2.findAll('.trace .trace-blk').length).toBe(13)
-    expect(w2.find('[data-testid="trace-compactor"]').exists()).toBe(false)
+    expect(w2.find('[data-testid="trace-compactor"]').exists()).toBe(true)
   })
 })
