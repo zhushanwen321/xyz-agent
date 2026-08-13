@@ -142,7 +142,7 @@ describe("deliverMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径 resu
     spawnedChildren.set(record.id, makeEpipeChild());
 
     // deliverMessage 不 throw（首次 EPIPE 走 resume 兜底）
-    expect(() => service.deliverMessage(record, "msg after epipe", false)).not.toThrow();
+    await expect(service.deliverMessage(record, "msg after epipe", false)).resolves.toBeUndefined();
 
     // spawnedChildren 中的死进程条目已清理（EPIPE catch 块 delete）
     expect(spawnedChildren.has(record.id)).toBe(false);
@@ -172,7 +172,7 @@ describe("deliverMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径 resu
     spawnedChildren.set(record.id, makeEpipeChild());
 
     // 第 1 次：EPIPE → resume（不 throw）
-    service.deliverMessage(record, "first epipe", false);
+    await service.deliverMessage(record, "first epipe", false);
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
 
     // resume 完成后 record 回 idle（mock runSpawn done → finalizeRoundToIdle）
@@ -185,7 +185,7 @@ describe("deliverMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径 resu
     // 注意：第二 EPIPE 时 count 已为 2，catch 块立即 throw（不经过 resumeRound）。
     let thrown: unknown;
     try {
-      service.deliverMessage(record, "second epipe", false);
+      await service.deliverMessage(record, "second epipe", false);
     } catch (err) {
       thrown = err;
     }
@@ -201,13 +201,13 @@ describe("deliverMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径 resu
 
     // 第 1 轮：EPIPE → resume
     spawnedChildren.set(record.id, makeEpipeChild());
-    service.deliverMessage(record, "epipe msg", false);
+    await service.deliverMessage(record, "epipe msg", false);
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(record.status).toBe("idle"));
 
     // 第 2 轮：正常 child，成功写入（清零 EPIPE 计数）
     spawnedChildren.set(record.id, makeNormalChild());
-    service.deliverMessage(record, "normal msg", true);
+    await service.deliverMessage(record, "normal msg", true);
     // 不 throw，status=running（热路径成功）
     expect(record.status).toBe("running");
 
@@ -215,6 +215,6 @@ describe("deliverMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径 resu
     // 需要先让 record 回 idle
     record.status = "idle";
     spawnedChildren.set(record.id, makeEpipeChild());
-    expect(() => service.deliverMessage(record, "after reset", false)).not.toThrow();
+    await expect(service.deliverMessage(record, "after reset", false)).resolves.toBeUndefined();
   });
 });

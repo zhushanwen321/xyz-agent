@@ -14,7 +14,7 @@ import { mapToWorkflowAgentResult } from "./agent-result-mapper.ts";
 import { removeAliveMarker } from "./alive-store.ts";
 import { bestEffort } from "./best-effort.ts";
 // [V2 决策 3] lifecycle-manager idle timer：chatMode 统一投递新 turn disarm（防误杀活进程）
-import { disarmIdleTimer } from "./lifecycle-manager.ts";
+import { acquireActivateLock, disarmIdleTimer } from "./lifecycle-manager.ts";
 import { type ConcurrencyPool,DefaultConcurrencyPool } from "./concurrency-pool.ts";
 import type { DialogGlobalQueue, UiRequestHandler } from "./dialog-queue.ts";
 import {
@@ -732,7 +732,7 @@ export class SubagentService {
    * @param text 消息正文
    * @param interrupt true=steer（抢占）/ false=followUp（排队），仅热路径 prompt streamingBehavior 用
    */
-  deliverMessage(record: ExecutionRecord, text: string, interrupt: boolean): void {
+  async deliverMessage(record: ExecutionRecord, text: string, interrupt: boolean): Promise<void> {
     this.assertReady();
     // 新 turn，disarm idle timer（防 turn 期间误杀活进程，V2 决策 4）
     disarmIdleTimer(record.id);
@@ -776,8 +776,14 @@ export class SubagentService {
       }
     } else {
       // 冷路径：进程死（idle timer reap / 崩溃 / 跨重启），record 应为 idle → resume spawn。
-      // resumeRound 校验 idle 并自行设 running + spawn（不在上预设 running，否则 idle 检查 throw）。
-      this.resumeRound(record, text);
+      // D3：acquireActivateLock 双保险——idle CAS 守卫仍有效，锁作为额外防护层。
+      // 防并发 message 同时走冷路径（虽概率极低，CAS 已覆盖，锁是结构化保障）。
+      const releaseLock = await acquireActivateLock(record.id);
+      try {
+        this.resumeRound(record, text);
+      } finally {
+        releaseLock();
+      }
     }
   }
 
