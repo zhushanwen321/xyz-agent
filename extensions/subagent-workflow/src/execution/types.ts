@@ -33,20 +33,39 @@ export const DEFAULT_AGENT_NAME = "general-purpose";
 // ============================================================
 
 /**
- * 唯一执行状态。所有路径共用。crashed 为进程崩溃终态（重建推断）。
+ * 唯一执行状态。所有路径共用。
  *
  * idle = 对话模式（chatMode）轮次完成、子进程已回收、record 保留在内存、
- * 等待下一轮 message 续聊（非终态，close 后才进 done 等终态）。
+ * 等待下一轮 message 续聊（非终态，close 后才进 closed 终态）。
+ *
+ * closed = 统一终态（done/failed/crashed 三态合并）。具体关闭原因由
+ * {@link ClosedReason} 子枚举表达（如 user-close / gc / cancelled / parent-shutdown）。
+ * ExecutionRecord.closedReason 携带 L2 原因，投影层按需派生对外语义（error / ended）。
  */
-export type ExecutionStatus = "running" | "done" | "failed" | "cancelled" | "crashed" | "idle";
+export type ExecutionStatus = "running" | "idle" | "cancelled" | "closed";
+
+/**
+ * closed 终态的 L2 关闭原因子枚举。
+ *
+ * 与 ExecutionStatus="closed" 配合使用，表达「为什么关闭」：
+ *   parent-shutdown  — 父进程 session_shutdown 时回收子进程
+ *   parent-fork     — 父进程 fork 新 session 时清理旧子进程
+ *   parent-new      — 父进程创建新 subagent 时清理旧子进程
+ *   user-close      — 用户手动 close action（含对话模式 close）
+ *   cancelled       — 用户取消（close(force:true) / cancelBackground）
+ *   gc              — 通用完成/失败（一次执行自然结束、超时、错误等无专属 reason 的终态）
+ */
+export type ClosedReason = 'parent-shutdown' | 'parent-fork' | 'parent-new' | 'user-close' | 'cancelled' | 'gc';
 
 /**
  * 对外四态（设计决策 10 细则 3）：内部 ExecutionStatus 收敛为 agent 可理解的状态语义。
  *
  *   running              → active   （正在执行）
  *   idle                 → waiting  （对话模式轮次完成，等待续聊）
- *   done / cancelled     → ended    （已结束）
- *   failed / crashed     → error    （出错）
+ *   cancelled            → ended    （已取消）
+ *   closed + L2 reason   → ended 或 error（按 ClosedReason 派生）
+ *     - closedReason=cancelled/parent-shutdown/parent-fork/parent-new/gc → ended
+ *     - （未来扩展：如 closedReason=crash → error）
  *
  * 原始 ExecutionStatus 进 list item 的 status 字段供调试；state 是对外主字段。
  * 未来内部加态（如 paused）只需扩展 mapExternalState，不影响对外契约。
@@ -373,6 +392,10 @@ export interface ExecutionRecord {
 
   // ── 状态（实时更新）──
   status: ExecutionStatus;
+  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。表达「为什么关闭」。
+   *  由 tryTransition(record, "closed", reason) 写入；投影层按需派生对外语义。
+   *  向后兼容：旧 record 无此字段，按 gc 处理（通用完成/失败）。 */
+  closedReason?: ClosedReason;
   /** 完整执行内容，按 turn 组织。createRecord 初始化为 [空 turn]。 */
   turns: Turn[];
   /** turn 计数（= turns.filter(closed).length，冗余存储供投影直接读）。 */
@@ -612,6 +635,8 @@ export interface SubagentRecord {
   /** 短标签（≤35 字符）。磁盘重建源旧文件可能缺失→兜底空串。 */
   slug: string;
   status: ExecutionStatus;
+  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。SP-1 新增。 */
+  closedReason?: ClosedReason;
   mode: ExecutionMode;
   startedAt: number;
   /** 根 Pi session ID（session 隔离过滤用）。递归链上所有层 record 同值。 */

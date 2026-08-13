@@ -43,6 +43,7 @@ import type { WorktreeHandle } from "./types.ts";
 import type {
   AgentEvent,
   AgentResult,
+  ClosedReason,
   ExecuteOptions,
   ExecutionHandle,
   ExecutionMode,
@@ -403,7 +404,7 @@ export class SubagentService {
     // 让 pending-notifications 清理 registry entry，避免进程退出后两侧状态不一致。
     // 必须在 abortRunningControllers 之前——此时 record 仍 running，listRunning 能取到。
     for (const record of this.store.listRunning()) {
-      emitPendingUnregister(this.pi, record.id, "failed");
+      emitPendingUnregister(this.pi, record.id, "closed");
     }
     // [R0/C1 孤儿进程修复] 两层兜底 kill 所有 spawned 子进程（sync + background）：
     //   1. abortRunningControllers：background record 的 controller.abort → child.kill（CAS 收尾语义）。
@@ -428,7 +429,8 @@ export class SubagentService {
   // ── 执行（subagent-tool 调）────────────────────────────
 
   /** background 完成回注（record → BgNotifyRecord 映射 + notifier.notify）。
-   *  非终态 status（running/crashed）静默跳过——notify 只对 done/failed/cancelled 有意义。 */
+   *  非终态 status（running/idle except for chatMode）静默跳过——notify 只对 closed/cancelled/idle 有意义。
+   *  SP-1: closed 统一终态（done/failed/crashed 合并），closedReason 携带 L2 原因。 */
   private notifyComplete(record: ExecutionRecord): void {
     const notify = this.toNotifyRecord(record);
     if (notify) this.notifier.notify(notify);
@@ -448,16 +450,22 @@ export class SubagentService {
   }
 
   /** record → BgNotifyRecord（notifier.notify 入参映射，内部不外露）。
-   *  运行时守卫：非 done/failed/cancelled 返回 undefined（调用方 notifyComplete 跳过 notify）。
-   *  守卫后 status 已收窄为 BgNotifyRecord.status union，无需 cast。 */
+   *  运行时守卫：非 closed/cancelled/idle 返回 undefined（调用方 notifyComplete 跳过 notify）。
+   *  守卫后 status 已收窄为 BgNotifyRecord.status union，无需 cast。
+   *  SP-1: closed 统一终态（done/failed/crashed 合并），closedReason 携带 L2 原因。 */
   private toNotifyRecord(record: ExecutionRecord): BgNotifyRecord | undefined {
     const snap = snapshot(record);
     const s = snap.status;
-    // 守卫放行 idle：对话模式轮次完成需 notify 主 agent（G1）。非这四态（running/crashed）跳过。
-    if (s !== "done" && s !== "failed" && s !== "cancelled" && s !== "idle") return undefined;
+    // 守卫放行 idle：对话模式轮次完成需 notify 主 agent（G1）。非这三态跳过。
+    // SP-1: closed 统一终态（done/failed/crashed 合并），closedReason 由 BgNotifyRecord 携带。
+    if (s !== "closed" && s !== "cancelled" && s !== "idle") return undefined;
+    // closed 时映射到 BgNotifyRecord 的 closed+reason；cancelled/idle 直接透传。
+    const notifyStatus: BgNotifyRecord["status"] = s === "closed"
+      ? "closed"
+      : s === "cancelled" ? "cancelled" : "idle";
     return {
       id: snap.id,
-      status: s,
+      status: notifyStatus,
       agent: snap.agent,
       model: snap.model,
       result: snap.result,
@@ -467,6 +475,8 @@ export class SubagentService {
       patchFile: record.patchFile,
       // round 透传给 notifier 的 dedup key（对话模式按轮次去重，G1 决策 9）。
       round: record.round,
+      // SP-1: closedReason 透传给 notifier（L2 原因，供通知文案按需展示）。
+      closedReason: record.closedReason,
     };
   }
 
@@ -857,7 +867,7 @@ export class SubagentService {
       // idle 无活进程，立即终态化为 done（force 参数对 idle 无意义）
       await this.closeChatIdle(record);
     }
-    // 其他终态（done/failed/cancelled/crashed）：幂等 no-op
+    // 其他终态（closed/cancelled）：幂等 no-op
   }
 
   /**
@@ -872,7 +882,7 @@ export class SubagentService {
    * 内部的 completeRecord 覆盖 status，与 cancelBackground 对 record 的处理同构。
    */
   private async closeChatIdle(record: ExecutionRecord): Promise<void> {
-    // 合成 done result（idle record 无在途 AgentResult，对齐 cancelBackground cancelledResult）
+    // 合成 closed result（idle record 无在途 AgentResult，对齐 cancelBackground cancelledResult）
     const doneResult: AgentResult = {
       text: "",
       turns: record.turnCount,
@@ -893,7 +903,8 @@ export class SubagentService {
       },
       record,
       doneResult,
-      "done",
+      "closed",
+      "user-close", // close action 主动关闭
     );
   }
 
@@ -1172,7 +1183,7 @@ export class SubagentService {
           sessionId: record.id,
           toolCalls: [],
         };
-        if (tryTransition(record, "failed")) {
+        if (tryTransition(record, "closed", "gc")) {
           // 回退 idle（record.result 由 finalizeRoundToIdle 设为 error 兜底文本，notify 可读）。
           await this.finalizeRoundToIdle(record, failedResult);
         }
@@ -1196,32 +1207,33 @@ export class SubagentService {
       return result;
     }
 
-    // status 唯一判定点：success ? done : (aborted ? cancelled : failed)
-    const status: "done" | "failed" | "cancelled" = result.success
-      ? "done"
-      : signal?.aborted ? "cancelled" : "failed";
+    // status 唯一判定点：success ? closed : (aborted ? cancelled : closed)
+    // SP-1: done/failed 合并为 closed，cancelled 保持独立。
+    const status: "closed" | "cancelled" = signal?.aborted ? "cancelled" : "closed";
+    // closedReason 派生：success → user-close（正常完成），!success → gc（通用失败）。
+    const closedReason: ClosedReason = result.success ? "user-close" : "gc";
 
     // CAS 抢锁：抢到则完整收尾；没抢到（cancel 已先设 cancelled）则跳过
-    if (tryTransition(record, status)) {
-      if (record.chatMode && status === "done") {
+    if (tryTransition(record, status, closedReason)) {
+      if (record.chatMode && status === "closed" && result.success) {
         if (record.closeAfterRound) {
-          // close 优雅关闭（force:false）：当前轮完成后终态化为 done，不进 idle。
+          // close 优雅关闭（force:false）：当前轮完成后终态化为 closed，不进 idle。
           // 清标志（防重复触发），走终态化路径（archive + worktree cleanup）。
           record.closeAfterRound = undefined;
-          await this.finalizeRecord(record, result, "done");
+          await this.finalizeRecord(record, result, "closed", "user-close");
         } else {
           // 对话模式轮次成功完成 → idle（保留 record 内存 + worktree，等待续聊）。
-          // tryTransition 已把 status 设为 done，finalizeRoundToIdle 覆盖为 idle（chatMode 专属语义）。
+          // tryTransition 已把 status 设为 closed，finalizeRoundToIdle 覆盖为 idle（chatMode 专属语义）。
           await this.finalizeRoundToIdle(record, result);
         }
-      } else if (record.chatMode && (status === "failed" || status === "cancelled")) {
+      } else if (record.chatMode && (status === "closed" && !result.success || status === "cancelled")) {
         // MF-6（决策 6 spec §3.1）：chatMode 轮次失败/取消不销毁对话——回退 idle（可恢复），
         // 让 agent 可重试 message 或 close。与一次性模式（finalizeRecord 终态销毁）区分。
         // record.result 由 finalizeRoundToIdle 设为 error 兜底文本，notify 经 idle 路径送达行动指引。
         // 注：close(force:true) 的 cancelled 由 cancelBackground 直接终态化（不走此分支）。
         await this.finalizeRoundToIdle(record, result);
       } else {
-        await this.finalizeRecord(record, result, status);
+        await this.finalizeRecord(record, result, status, closedReason);
       }
     }
     return result;
@@ -1316,7 +1328,8 @@ export class SubagentService {
   private async finalizeRecord(
     record: ExecutionRecord,
     result: AgentResult,
-    status: "done" | "failed" | "cancelled",
+    status: "closed" | "cancelled",
+    closedReason?: ClosedReason,
   ): Promise<void> {
     await doFinalizeRecord(
       {
@@ -1331,6 +1344,7 @@ export class SubagentService {
       record,
       result,
       status,
+      closedReason,
     );
   }
 
@@ -1380,8 +1394,9 @@ export class SubagentService {
     // durationMs 用真实耗时（startedAt → now），避免失败统计恒为 0 失真。
     const failedResult: AgentResult = { text: "", turns: record.turnCount, durationMs: Date.now() - record.startedAt, success: false, error: errMsg, sessionId: record.id, toolCalls: [] };
     // CAS 抢锁：抢到（status 仍 running）则完整收尾；没抢到（cancel 已先设 cancelled）跳过。
-    if (tryTransition(record, "failed")) {
-      await this.finalizeRecord(record, failedResult, "failed");
+    // SP-1: failed → closed + gc（通用失败终态）。
+    if (tryTransition(record, "closed", "gc")) {
+      await this.finalizeRecord(record, failedResult, "closed", "gc");
     }
     return failedResult;
   }

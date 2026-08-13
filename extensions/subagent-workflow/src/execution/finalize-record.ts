@@ -27,7 +27,7 @@ import type { ModelConfigService } from "./model-config-service.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
 import type { RecordStore } from "./record-store.ts";
 import { writeCancelledTombstone } from "./tombstone-store.ts";
-import type { AgentResult, ExecutionRecord } from "./types.ts";
+import type { AgentResult, ClosedReason, ExecutionRecord } from "./types.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
 
 const logger = getLogger("subagents");
@@ -68,7 +68,8 @@ export async function doFinalizeRecord(
   deps: FinalizeDeps,
   record: ExecutionRecord,
   result: AgentResult,
-  status: "done" | "failed" | "cancelled",
+  status: "closed" | "cancelled",
+  closedReason?: ClosedReason,
 ): Promise<void> {
   // 终态清节流状态：防 trailing timer 在 record 归档后误发陈旧 onUpdate
   deps.clearThrottle(record.id);
@@ -93,7 +94,7 @@ export async function doFinalizeRecord(
 
   // ── Step 1: completeRecord（B9: 抛错→后续仍执行）──
   try {
-    completeRecord(record, result, status);
+    completeRecord(record, result, status, closedReason);
   } catch (err) {
     bestEffort(err, "completeRecord (finalizeRecord B9)", "error");
   }
@@ -157,7 +158,8 @@ export async function doFinalizeRecord(
       rootSessionId: record.rootSessionId ?? "",
       parentRecordId: record.parentRecordId,
       agentName: record.agent,
-      status: status === "done" ? "completed" : status,
+      // SP-1: manifest status 统一为 closed/cancelled（旧 completed/failed 已合并为 closed）
+      status: status === "closed" ? "closed" : "cancelled",
       createdAt: record.startedAt,
       completedAt: record.endedAt ?? Date.now(),
       sessionFile: record.sessionFile,

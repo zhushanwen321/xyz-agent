@@ -70,11 +70,11 @@ describe("statusGlyph", () => {
   });
 
   it("done → checkmark, success", () => {
-    expect(statusGlyph("done")).toEqual({ icon: "✓", color: "success" });
+    expect(statusGlyph("closed")).toEqual({ icon: "✓", color: "success" });
   });
 
-  it("failed → cross, error", () => {
-    expect(statusGlyph("failed")).toEqual({ icon: "✗", color: "error" });
+  it("closed → checkmark, success", () => {
+    expect(statusGlyph("closed")).toEqual({ icon: "✓", color: "success" });
   });
 
   it("cancelled → square, muted", () => {

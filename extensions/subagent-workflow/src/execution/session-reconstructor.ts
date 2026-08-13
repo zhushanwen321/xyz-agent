@@ -157,6 +157,9 @@ export interface ReconstructedRecord {
   sessionFile: string;
   // ── 可变状态（来自 message entries）──
   status: ExecutionStatus;
+  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。SP-1 新增。
+   *  从 stopReason 推导：error/aborted → gc；其余 → gc。 */
+  closedReason?: import("./types.ts").ClosedReason;
   turns: Turn[];
   turnCount: number;
   totalTokens: number;
@@ -441,10 +444,10 @@ export function reconstructFromFile(sessionFile: string): ReconstructedRecord | 
   const eventLog = deriveEventLog(turns, lastError, identity.startedAt);
 
   // 终态 status：最后一条 assistant message 的 stopReason 推导（与 finalizeRecord 的判定一致）。
-  // error/aborted → failed；其余（stop/toolUse/length）→ done。
-  // cancelled 由 tombstone override（record-store 层），本函数不感知。
-  const status: ExecutionStatus =
-    lastStopReason === "error" || lastStopReason === "aborted" ? "failed" : "done";
+  // SP-1：done/failed 合并为 closed，cancelled 由 tombstone override（record-store 层），本函数不感知。
+  const status: ExecutionStatus = "closed";
+  // closedReason 统 gc（通用完成/失败）。error/aborted 的区分由 error 字段保留。
+  const closedReason: import("./types.ts").ClosedReason = "gc";
 
   // rootSessionId 归一化：新文件读 rootSessionId，旧文件 fallback parentSessionId。
   const rootSessionId = identity.rootSessionId ?? identity.parentSessionId;
@@ -459,6 +462,7 @@ export function reconstructFromFile(sessionFile: string): ReconstructedRecord | 
     forkDepth: identity.forkDepth,
     sessionFile,
     status,
+    closedReason,
     turns,
     turnCount,
     totalTokens,

@@ -49,7 +49,7 @@ describe("BgNotifier.flushPendingNotifications — deliverAs 契约", () => {
 	it("flush 时调 sendMessage 的 options.deliverAs === 'steer'（FR-3/AC-3）", () => {
 		notifier.notify({
 			id: "bg-test-1",
-			status: "done",
+			status: "closed",
 			agent: "explorer",
 			result: "done",
 			startedAt: Date.now() - 1000,
@@ -65,7 +65,7 @@ describe("BgNotifier.flushPendingNotifications — deliverAs 契约", () => {
 	it("flush 时 triggerTurn 也必须为 true（让父 agent 立即唤醒）", () => {
 		notifier.notify({
 			id: "bg-test-2",
-			status: "failed",
+			status: "closed",
 			agent: "worker",
 			error: "boom",
 			startedAt: Date.now(),
@@ -100,7 +100,7 @@ describe("BgNotifier — isIdle gate 竞态修复", () => {
 		host.isIdle.mockReturnValue(false);
 		notifier.notify({
 			id: "bg-race-1",
-			status: "done",
+			status: "closed",
 			agent: "worker",
 			result: "ok",
 			startedAt: Date.now(),
@@ -131,7 +131,7 @@ describe("BgNotifier — isIdle gate 竞态修复", () => {
 		host.isIdle.mockReturnValue(false);
 		notifier.notify({
 			id: "bg-starve-1",
-			status: "done",
+			status: "closed",
 			agent: "worker",
 			result: "ok",
 			startedAt: Date.now(),
@@ -155,7 +155,7 @@ describe("BgNotifier — isIdle gate 竞态修复", () => {
 		const legacyNotifier = new BgNotifier(legacyHost);
 		legacyNotifier.notify({
 			id: "bg-legacy-1",
-			status: "done",
+			status: "closed",
 			agent: "worker",
 			result: "ok",
 			startedAt: Date.now(),
@@ -171,7 +171,7 @@ describe("BgNotifier — isIdle gate 竞态修复", () => {
 		host.isIdle.mockReturnValue(false);
 		notifier.notify({
 			id: "bg-dispose-1",
-			status: "done",
+			status: "closed",
 			agent: "worker",
 			result: "ok",
 			startedAt: Date.now(),
@@ -199,7 +199,7 @@ describe("BgNotifier dedup 按轮次（G1 决策 9：对话模式豁免 60s dedu
 		notifier.dispose();
 	});
 
-	it("对话模式：同 id 不同 round 的两次 notify 都送达（不被 60s dedup 吞）", () => {
+	it("对话模式：同 id 不同 round 的两次 notify 被纯 id dedup 吞（SP-1 回归纯 id 去重）", () => {
 		notifier.notify({
 			id: "sa-chat", status: "idle", agent: "w", round: 1, result: "round1",
 			startedAt: 1, endedAt: 2,
@@ -209,8 +209,8 @@ describe("BgNotifier dedup 按轮次（G1 决策 9：对话模式豁免 60s dedu
 			startedAt: 3, endedAt: 4,
 		});
 
-		// 两条都送达（dedup key=id:round 不同 → G1 对话模式每轮回复不被吞）
-		expect(host.sendMessageCalls).toHaveLength(2);
+		// SP-1: dedup key 回归纯 id（删 round 豁免），同 id 60s 内第二条被吞
+		expect(host.sendMessageCalls).toHaveLength(1);
 	});
 
 	it("同 id 同 round 60s 内第二次被 dedup 吞（防重复通知）", () => {
@@ -230,11 +230,11 @@ describe("BgNotifier dedup 按轮次（G1 决策 9：对话模式豁免 60s dedu
 	it("非 chatMode（round undefined → key=id:0）行为同旧（向后兼容，60s 内同 id 吞）", () => {
 		// round undefined → dedup key="sa-once:0"，与旧 record.id 单 key 行为一致
 		notifier.notify({
-			id: "sa-once", status: "done", agent: "w", result: "done",
+			id: "sa-once", status: "closed", agent: "w", result: "done",
 			startedAt: 1, endedAt: 2,
 		});
 		notifier.notify({
-			id: "sa-once", status: "done", agent: "w", result: "done",
+			id: "sa-once", status: "closed", agent: "w", result: "done",
 			startedAt: 3, endedAt: 4,
 		});
 

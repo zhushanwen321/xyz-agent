@@ -52,7 +52,10 @@ const MIN_BORDER_WIDTH = BORDER_CHARS + INNER_PAD_TOTAL + 1;
  */
 interface BgNotifyRecord {
   id: string;
-  status: "done" | "failed" | "cancelled";
+  /** SP-1: done/failed/crashed 合并为 closed + closedReason L2 子枚举。 */
+  status: "closed" | "cancelled";
+  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。 */
+  closedReason?: import("../execution/types.ts").ClosedReason;
   agent: string;
   model?: string;
   result?: string;
@@ -212,12 +215,28 @@ function renderRecordLines(record: BgNotifyRecord, t: ThemeLike): string[] {
   const modelPart = record.model
     ? ` ${t.fg("dim", "·")} ${t.fg("accent", truncLine(record.model, MODEL_MAX_WIDTH))}`
     : "";
-  const verb = record.status === "done" ? "finished" : record.status === "failed" ? "failed" : "cancelled";
+  // SP-1: closed 统一终态。按 closedReason 派生文案。
+  const reason = record.closedReason ?? "gc";
+  let verb: string;
+  if (record.status === "cancelled") {
+    verb = "cancelled";
+  } else if (reason === "cancelled") {
+    verb = "cancelled";
+  } else if (reason === "gc" && record.error) {
+    verb = "failed";
+  } else {
+    verb = "finished";
+  }
   const idShort = shortId(record.id);
   const head = `${t.fg(glyph.color, icon)} ${t.bold(agent)}${modelPart}${t.fg("dim", ` — background subagent ${verb} - ${idShort}`)}`;
 
   switch (record.status) {
-    case "done": {
+    case "closed": {
+      // SP-1: closed 统一终态。失败场景（gc + error）显示错误信息。
+      const r = record.closedReason ?? "gc";
+      if (r === "gc" && record.error) {
+        return [head, t.fg("dim", truncLine(`Error: ${firstLineSanitized(record.error)}`, BODY_MAX_WIDTH))];
+      }
       if (!record.result && !record.patchFile) return [head];
       const lines: string[] = [];
       if (record.result) {
@@ -229,9 +248,8 @@ function renderRecordLines(record: BgNotifyRecord, t: ThemeLike): string[] {
       }
       return [head, ...lines];
     }
-    case "failed":
-      return [head, t.fg("dim", truncLine(`Error: ${record.error ? firstLineSanitized(record.error) : "(unknown)"}`, BODY_MAX_WIDTH))];
     case "cancelled":
+      return [head];
     default:
       return [head];
   }
@@ -263,7 +281,7 @@ function extractBgNotifyRecord(details: unknown): BgNotifyRecord | undefined {
   const status = d.status;
   const agent = d.agent;
   if (
-    (status !== "done" && status !== "failed" && status !== "cancelled") ||
+    (status !== "closed" && status !== "cancelled") ||
     typeof agent !== "string"
   ) {
     return undefined;

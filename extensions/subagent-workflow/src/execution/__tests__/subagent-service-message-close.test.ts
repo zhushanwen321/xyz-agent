@@ -147,7 +147,7 @@ describe("closeSubagent 行为分流", () => {
 
     await service.closeSubagent(record, false);
 
-    expect(record.status).toBe("done");
+    expect(record.status).toBe("closed");
     expect(store.getMutable(record.id)).toBeUndefined(); // archived
   });
 
@@ -162,11 +162,11 @@ describe("closeSubagent 行为分流", () => {
   });
 
   it("终态（done）→ 幂等 no-op（不改状态、不 archive）", async () => {
-    const record = makeRecord({ status: "done" });
+    const record = makeRecord({ status: "closed" });
     store.register(record);
 
     await service.closeSubagent(record, false);
 
-    expect(record.status).toBe("done"); // 不变
+    expect(record.status).toBe("closed"); // 不变
   });
 });

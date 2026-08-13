@@ -175,7 +175,7 @@ describe("runAndFinalize chatMode idle 分流 (M2-A)", () => {
     internals.store.register(record);
     await callRunAndFinalize(record, true);
 
-    expect(record.status).toBe("done");
+    expect(record.status).toBe("closed");
     expect(internals.store.getMutable(record.id)).toBeUndefined();
   });
 
@@ -206,7 +206,7 @@ describe("runAndFinalize chatMode idle 分流 (M2-A)", () => {
     internals.store.register(record);
     await callRunAndFinalize(record, true);
 
-    expect(record.status).toBe("done");
+    expect(record.status).toBe("closed");
     expect(record.closeAfterRound).toBeUndefined(); // 清标志
     // 终态化 → archive → 内存无（与 idle 分流「留内存」对比）
     expect(internals.store.getMutable(record.id)).toBeUndefined();

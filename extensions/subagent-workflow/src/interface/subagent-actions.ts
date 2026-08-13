@@ -133,12 +133,12 @@ export function mapExternalState(status: ExecutionStatus): ExternalState {
       return "active";
     case "idle":
       return "waiting";
-    case "done":
     case "cancelled":
       return "ended";
-    case "failed":
-    case "crashed":
-      return "error";
+    case "closed":
+      // SP-1: closed 统一终态。对外映射为 ended（通用完成/失败/crashed 合并）。
+      // 未来若需按 closedReason 区分 error/ended，可在此扩展。
+      return "ended";
     default:
       // 防御：未来新增状态兑底为 ended（保守，不再 active/waiting）
       return "ended";
@@ -357,7 +357,7 @@ export async function messageHandler(
     // idle 续聊（决策 6 idle 分支）：resume 重开 session + prompt，interrupt 自动退化（agent 无感）
     service.resumeRound(record, text);
   } else {
-    // 终态（done/failed/cancelled/crashed）：防御性兜底（终态 record 已 archive，正常走 not found）
+    // 终态（closed/cancelled）：防御性兜底（终态 record 已 archive，正常走 not found）
     throw new Error(
       `subagent ${id} has ended (status: ${record.status}), cannot message. ` +
       `Recovery: use action:'close' to clean up, then action:'start' a new subagent.`,

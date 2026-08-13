@@ -8,14 +8,20 @@
 //   - 通过 pi.sendMessage({ deliverAs:"followUp", triggerTurn:true }) 注入——
 //     当前 turn 结束后唤醒父 agent 处理结果（followUp 不打断 streaming、不锁滚动）
 
-/** 一条待发送的完成通知记录。 */
+/**
+ * 一条待发送的完成通知记录。
+ * SP-1: done/failed/crashed 合并为 closed + closedReason L2 子枚举。
+ */
 export interface BgNotifyRecord {
   id: string;
   /**
-   * 完成状态。idle = 对话模式轮次完成（每轮回复需送达，与一次性 done 区分）。
+   * 完成状态。idle = 对话模式轮次完成（每轮回复需送达，与一次性 closed 区分）。
    * toNotifyRecord 守卫放行 idle 后经此联合穷尽。
+   * closed = 统一终态（替代旧 done/failed/crashed），closedReason 表达 L2 原因。
    */
-  status: "done" | "failed" | "cancelled" | "idle";
+  status: "closed" | "cancelled" | "idle";
+  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。供通知文案按需展示。 */
+  closedReason?: import("./types.ts").ClosedReason;
   agent: string;
   /** 执行所用 model（RecordSnapshot.model），用于完成通知显示。 */
   model?: string;
@@ -117,9 +123,9 @@ export class BgNotifier {
         if (now - ts >= DEDUP_TTL_MS) this.dedup.delete(id);
       }
     }
-    // dedup key 按 `id:round` 去重：对话模式每轮 round 不同 → 60s 内多轮回复不被吞（G1）；
-    // 非 chatMode round 恒定（0/undefined）→ key 同旧 `id`，行为完全不变（向后兼容）。
-    const dedupKey = `${record.id}:${record.round ?? 0}`;
+    // dedup key 回归纯 id 去重（SP-1 决策 4：删 round 豁免）。
+    // 对话模式每轮 round 不同不再影响 dedup——id 本身已唯一标识一个 subagent record。
+    const dedupKey = record.id;
     const lastSeen = this.dedup.get(dedupKey);
     if (lastSeen !== undefined && now - lastSeen < DEDUP_TTL_MS) return;
     this.dedup.set(dedupKey, now);
@@ -222,15 +228,23 @@ export class BgNotifier {
     const agent = record.agent;
     const id = record.id;
     switch (record.status) {
-      case "done": {
+      case "closed": {
+        // SP-1: closed 统一终态。按 closedReason 派生通知文案。
+        const reason = record.closedReason ?? "gc";
+        if (reason === "cancelled") {
+          return `Subagent "${agent}" (${id}) cancelled.`;
+        }
+        // 成功完成（user-close）或通用结束（gc/parent-shutdown 等）：展示结果。
         const base = `Subagent "${agent}" (${id}) completed. Result:\n${record.result ?? "(empty)"}`;
         if (record.patchFile) {
           return `${base}\n\nThis subagent ran in an isolated worktree; its file changes were captured as a patch:\n  ${record.patchFile}\nTo bring these changes into the current repo, run: \`git apply ${record.patchFile}\``;
         }
+        // 失败场景（gc + 有 error）：展示错误。
+        if (record.error && reason === "gc") {
+          return `Subagent "${agent}" (${id}) failed: ${record.error}`;
+        }
         return base;
       }
-      case "failed":
-        return `Subagent "${agent}" (${id}) failed: ${record.error ?? "(unknown error)"}`;
       case "cancelled":
         return `Subagent "${agent}" (${id}) cancelled.`;
       case "idle":

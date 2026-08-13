@@ -100,24 +100,24 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
 
     const manifest = await manifestStore.readManifest("rec-cancelled");
     expect(manifest).not.toBeNull();
-    // 关键断言：cancelled 直接透传,不是 "failed"
+    // 关键断言：cancelled 直接透传,不是 "closed"
     expect(manifest?.status).toBe("cancelled");
   });
 
-  it("status=done → manifest 写 completed", async () => {
+  it("status=closed + user-close → manifest 写 closed", async () => {
     const record = makeMinimalRecord({ id: "rec-done" });
-    await doFinalizeRecord(makeDeps(), record, makeMinimalResult(), "done");
+    await doFinalizeRecord(makeDeps(), record, makeMinimalResult(), "closed", "user-close");
 
     const manifest = await manifestStore.readManifest("rec-done");
-    expect(manifest?.status).toBe("completed");
+    expect(manifest?.status).toBe("closed");
   });
 
-  it("status=failed → manifest 写 failed", async () => {
+  it("status=closed + gc → manifest 写 closed", async () => {
     const record = makeMinimalRecord({ id: "rec-failed" });
-    await doFinalizeRecord(makeDeps(), record, makeMinimalResult(), "failed");
+    await doFinalizeRecord(makeDeps(), record, makeMinimalResult(), "closed", "gc");
 
     const manifest = await manifestStore.readManifest("rec-failed");
-    expect(manifest?.status).toBe("failed");
+    expect(manifest?.status).toBe("closed");
   });
 
   it("manifest write 抛错时 cleanup-first 顺序仍执行（Step 3 before Step 4 throw）", async () => {

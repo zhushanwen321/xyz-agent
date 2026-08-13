@@ -572,7 +572,7 @@ describe("SubagentService", () => {
       // unregister(failed) 只记 registry 状态（通知由 BgNotifier 发，不在这条事件里）
       expect(pi.events.emit).toHaveBeenCalledWith(
         "pending:unregister",
-        expect.objectContaining({ reason: "failed" }),
+        expect.objectContaining({ reason: "closed" }),
       );
     });
 
@@ -613,15 +613,15 @@ describe("SubagentService", () => {
       // 每个 running record 都 emit 了 pending:unregister(reason=failed)
       expect(pi.events.emit).toHaveBeenCalledWith(
         "pending:unregister",
-        expect.objectContaining({ id: "bg-dispose-1", reason: "failed" }),
+        expect.objectContaining({ id: "bg-dispose-1", reason: "closed" }),
       );
       expect(pi.events.emit).toHaveBeenCalledWith(
         "pending:unregister",
-        expect.objectContaining({ id: "bg-dispose-2", reason: "failed" }),
+        expect.objectContaining({ id: "bg-dispose-2", reason: "closed" }),
       );
       expect(pi.events.emit).toHaveBeenCalledWith(
         "pending:unregister",
-        expect.objectContaining({ id: "bg-dispose-3", reason: "failed" }),
+        expect.objectContaining({ id: "bg-dispose-3", reason: "closed" }),
       );
     });
 

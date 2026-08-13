@@ -11,13 +11,13 @@ export interface ManifestRecord {
   parentRecordId?: string;
   agentName: string;
   /**
-   * 终态枚举：finalizeRecord 写 running/completed/failed/cancelled 四态；cancelled 不再
-   * 归并 failed。crashed 不进 manifest——crashed 是重启重建时靠 sidecar 四分支推断的派生态
-   * （见 record-store.ts reconstructAll），持久化会与 sidecar source of truth 形成双源；
-   * manifest 职责保持纯粹，只记录 finalize 明确产出的终态。
-   * 历史 "error" 值已移除——读侧 isValidManifest 守卫拒绝，mapManifestStatus 越界返回 null。
+   * 终态枚举：finalizeRecord 写 running/closed/cancelled 三态。
+   * SP-1 重构：旧 completed/failed 合并为 closed（L1 统一终态）。
+   * cancelled 保持独立（用户取消语义）。crashed 不进 manifest——
+   * crashed 是重启重建时靠 sidecar 四分支推断的派生态（见 record-store.ts reconstructAll）。
+   * 历史 "error"/"completed"/"failed" 值由读侧 mapManifestStatus 向后兼容映射。
    */
-  status: "running" | "completed" | "failed" | "cancelled";
+  status: "running" | "closed" | "cancelled";
   createdAt: number;
   completedAt?: number;
   sessionFile?: string;
@@ -30,12 +30,15 @@ export interface ManifestRecord {
 /** JSON.stringify 缩进空格数（no-magic-numbers 合规）。 */
 const MANIFEST_INDENT_SPACES = 2;
 
-/** 合法 manifest status 集合（4 态；运行时守卫用，磁盘文件可能陈旧/损坏）。crashed 不在其中。 */
+/** 合法 manifest status 集合（3 态；运行时守卫用，磁盘文件可能陈旧/损坏）。
+ * SP-1：completed/failed 合并为 closed。读侧 mapManifestStatus 向后兼容旧值。
+ * crashed 不在其中。 */
 const VALID_MANIFEST_STATUSES: ReadonlySet<string> = new Set([
   "running",
-  "completed",
-  "failed",
+  "closed",
   "cancelled",
+  "completed", // 向后兼容旧 manifest 数据
+  "failed",     // 向后兼容旧 manifest 数据
 ]);
 
 /**

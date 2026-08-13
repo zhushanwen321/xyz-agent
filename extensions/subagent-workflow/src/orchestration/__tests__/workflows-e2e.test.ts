@@ -279,7 +279,7 @@ interface ScriptOutcome {
 /**
  * 断言 runAndWait 返回成功完成的终态。
  *
- * - result.status === "done"（runAndWait 恒 done）
+ * - result.status === "closed"（runAndWait 恒 done）
  * - result.reason === "completed"（脚本正常 return，非 failed/aborted/time_limited）
  * - result.scriptResult.status 是 "ok" 或 "partial"（脚本层 outcome，非 "error"）
  * - result.error 为 undefined

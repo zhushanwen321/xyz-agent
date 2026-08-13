@@ -53,16 +53,13 @@ describe("mapExternalState 四态映射（决策 10 细则 3）", () => {
     expect(mapExternalState("idle")).toBe("waiting");
   });
   it("done → ended", () => {
-    expect(mapExternalState("done")).toBe("ended");
+    expect(mapExternalState("closed")).toBe("ended");
   });
   it("cancelled → ended", () => {
     expect(mapExternalState("cancelled")).toBe("ended");
   });
-  it("failed → error", () => {
-    expect(mapExternalState("failed")).toBe("error");
-  });
-  it("crashed → error", () => {
-    expect(mapExternalState("crashed")).toBe("error");
+  it("closed → ended", () => {
+    expect(mapExternalState("closed")).toBe("ended");
   });
 });
 
@@ -139,7 +136,7 @@ describe("messageHandler 非 chatMode 状态分流（回归防护，决策 6）"
 
   it("终态（done）→ throw ended（含恢复指引）", async () => {
     const service = makeMockService();
-    const record = makeRecord({ status: "done" });
+    const record = makeRecord({ status: "closed" });
     (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
 
     await expect(

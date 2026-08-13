@@ -104,7 +104,7 @@ describe("RecordStore", () => {
   describe("archive 立即移除", () => {
     it("archive 后 record 立即从内存移除（不再 linger）", () => {
       const store = new RecordStore(tmpDir);
-      const r = makeRecord({ id: "sync-1", mode: "sync", status: "done" });
+      const r = makeRecord({ id: "sync-1", mode: "sync", status: "closed" });
       store.register(r);
       expect(store.getMutable("sync-1")).toBeDefined();
       store.archive(r);
@@ -113,7 +113,7 @@ describe("RecordStore", () => {
 
     it("background record 同样立即移除（不再 FIFO）", () => {
       const store = new RecordStore(tmpDir);
-      const r = makeRecord({ id: "bg-1", mode: "background", status: "done" });
+      const r = makeRecord({ id: "bg-1", mode: "background", status: "closed" });
       store.register(r);
       store.archive(r);
       expect(store.getMutable("bg-1")).toBeUndefined();
@@ -156,7 +156,7 @@ describe("RecordStore", () => {
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === "bg-2");
       expect(found).toBeDefined();
-      expect(found?.status).toBe("done");
+      expect(found?.status).toBe("closed");
     });
 
     it("statusFilter='running' 只返回 running（磁盘终态被滤掉）", () => {
@@ -293,15 +293,14 @@ describe("RecordStore", () => {
       expect(store.getMutable("idle-1")).toBe(r);
     });
 
-    it("STATUS_PRIORITY 含 idle：idle 排在 failed 之后、done 之前（waiting 语义）", () => {
+    it("STATUS_PRIORITY 含 idle：idle 排在 closed 之前（waiting 语义）", () => {
       const store = new RecordStore(tmpDir);
-      // 三个内存 record，startedAt 相同 → 纯按 STATUS_PRIORITY 排序
-      store.register(makeRecord({ id: "failed-1", status: "failed", startedAt: 5000 }));
+      // 两个内存 record，startedAt 相同 → 纯按 STATUS_PRIORITY 排序
+      store.register(makeRecord({ id: "closed-1", status: "closed", startedAt: 5000 }));
       store.register(makeRecord({ id: "idle-1", status: "idle", startedAt: 5000 }));
-      store.register(makeRecord({ id: "done-1", status: "done", startedAt: 5000 }));
       const ids = store.collectRecords(100).map((r) => r.id);
-      // STATUS_PRIORITY: failed=1 < idle=2 < done=3
-      expect(ids).toEqual(["failed-1", "idle-1", "done-1"]);
+      // STATUS_PRIORITY: running=0 < idle=2 < closed=3
+      expect(ids).toEqual(["idle-1", "closed-1"]);
     });
 
     it("idle record 经 collectRecords(statusFilter=all) 可见", () => {
@@ -393,7 +392,7 @@ describe("RecordStore", () => {
       writeFinalized(sessionFile);
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
-      expect(found?.status).toBe("done");
+      expect(found?.status).toBe("closed");
     });
 
     // ── 分支 2: .finalized failed ──
@@ -425,7 +424,7 @@ describe("RecordStore", () => {
       writeFinalized(sessionFile);
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
-      expect(found?.status).toBe("failed");
+      expect(found?.status).toBe("closed");
     });
 
     // ── 分支 3: .alive + 活 pid → running + externalInstance ──
@@ -642,7 +641,7 @@ describe("RecordStore", () => {
         id: "broken-1",
         rootSessionId: "sess-current",
         agentName: "worker",
-        status: "crashed", // 越界值（union 不含 "crashed"）
+        status: "crashed", // 越界值（union 不含 "crashed"，SP-1 后 valid statuses = running/closed/cancelled）
         createdAt: 1000,
       } as unknown as ManifestRecord;
     }
@@ -739,7 +738,7 @@ describe("RecordStore", () => {
       const found = store.collectRecords(100, "all", "sess-sp2").find((r) => r.id === "sa-sp2-2");
       expect(found).toBeDefined();
       // 分支 2 仍归档为 done，不受 SP-2 影响
-      expect(found?.status).toBe("done");
+      expect(found?.status).toBe("closed");
       expect(found?.endedAt).toBeDefined();
     });
 

@@ -32,15 +32,14 @@ const logger = getLogger("subagents");
 // 常量
 // ============================================================
 
-/** status → 排序优先级（值小排前）：running < failed/crashed < idle/cancelled < done。
- *  idle = 对话模式等待续聊（waiting 语义），介于失败态与 done 之间。 */
+/** status → 排序优先级（值小排前）：running < idle/cancelled < closed。
+ *  idle = 对话模式等待续聊（waiting 语义），介于运行态与终态之间。
+ *  closed = 统一终态（替代旧 done/failed/crashed），按 closedReason 派生对外语义。 */
 const STATUS_PRIORITY: Record<ExecutionStatus, number> = {
   running: 0,
-  failed: 1,
-  crashed: 1,
   idle: 2,
   cancelled: 2,
-  done: 3,
+  closed: 3,
 };
 
 /** .alive sidecar 的 24 小时软超时（超过此时间即使 pid 存活也判 crashed）。 */
@@ -49,19 +48,21 @@ const ALIVE_SOFT_TIMEOUT_MS = 3_600_000; // 1h in ms (reduced from 24h to minimi
 /**
  * manifest status → ExecutionStatus 运行时守卫映射。
  *
- * manifest 写 running/completed/failed/cancelled 四态（ManifestRecord.status union），但磁盘
- * 文件可能陈旧（含历史 "error" 值、被外部篡改、或意外出现 crashed 值）。越界值返回 null——
+ * manifest 写 running/closed/cancelled 三态（ManifestRecord.status union），但磁盘
+ * 文件可能陈旧（含历史 "completed"/"failed"/"error" 值、被外部篡改）。越界值返回 null——
  * manifestToSubagent 据此返回 null，collectRecords 跳过损坏 record 并 console.warn，不因单个
- * 坏文件崩溃，也不把损坏 record 错误降级为 failed（failed 会触发重试/告警，是误报）。
+ * 坏文件崩溃，也不把损坏 record 错误降级为 closed（closed 触发告警，是误报）。
  *
  * 提取为纯函数：同时解决 PR#85 反射问题（三元 + `as ExecutionStatus` cast）。
+ * [HISTORICAL] SP-1 重构：旧 "completed" → closed，旧 "failed" → closed（L1 统一终态）。
  */
 function mapManifestStatus(s: string): ExecutionStatus | null {
-  if (s === "completed") return "done";
-  if (s === "failed") return "failed";
+  if (s === "closed") return "closed";
+  if (s === "completed") return "closed"; // 向后兼容旧 manifest 数据
+  if (s === "failed") return "closed";     // 向后兼容旧 manifest 数据
   if (s === "running") return "running";
   if (s === "cancelled") return "cancelled";
-  return null; // 越界=数据损坏（含历史 "error"、意外 crashed 值），返回 null 让调用方跳过
+  return null; // 越界=数据损坏（含历史 "error" 值），返回 null 让调用方跳过
 }
 
 /** store 变更监听器（返回取消订阅函数）。 */
@@ -369,9 +370,12 @@ export class RecordStore {
       }
       // ── 分支 2: .finalized ──
       else if (finalized) {
-        // done/failed 按 recon 推导的 stopReason（reconstructFromFile 已映射为 status）。
-        const status: ExecutionStatus = recon.status === "failed" ? "failed" : "done";
-        markReconstructedStatus(rec, status);
+        // closed 统一终态：SP-1 重构后 done/failed/crashed 合并为 closed + closedReason。
+        // recon.status 已由 reconstructFromFile 映射（stopReason=error/aborted → closed）。
+        markReconstructedStatus(rec, "closed");
+        // closedReason 从 recon 推导（stopReason=error/aborted → gc，其余 → gc）。
+        // 向后兼容：旧 recon 无 closedReason 字段，统 gc（通用完成/失败）。
+        rec.closedReason = recon.closedReason ?? "gc";
         // 用最后一条 entry 的时间戳作为 endedAt（避免重建后耗时随墙钟无限增长）。
         rec.endedAt = recon.endedAt;
       }
@@ -438,7 +442,7 @@ export class RecordStore {
       eventLog: [],
       displayItems: [],
       result: undefined,
-      error: status === "failed" ? "manifest record" : undefined,
+      error: undefined, // closed 统一终态，不再按 status 区分 error 字段
       sessionFile: m.sessionFile,
     };
   }
@@ -449,6 +453,7 @@ export class RecordStore {
       id: r.id,
       agent: r.agent,
       status: r.status,
+      closedReason: r.closedReason,
       mode: r.mode,
       slug: r.slug,
       startedAt: r.startedAt,

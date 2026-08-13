@@ -20,6 +20,7 @@ import type {
   AgentResult,
   AgentUsage,
   AgentUsageTotal,
+  ClosedReason,
   DisplayItem,
   ExecutionMode,
   ExecutionRecord,
@@ -548,21 +549,28 @@ export function getTotalUsage(record: ExecutionRecord): AgentUsageTotal | undefi
 /**
  * status 状态机的 CAS 互斥锁。仅当 `record.status === "running"` 时改为 target
  * 并返回 true，否则返回 false。**status 状态机本身就是互斥锁**——终态
- * （done/failed/cancelled/crashed）不可逆，check-then-set 在 JS 单线程事件循环里天然原子。
+ * （closed/cancelled）不可逆，check-then-set 在 JS 单线程事件循环里天然原子。
  *
  * 用途：executor 的收尾竞争。cancelBackground 与 background detached 完成回调
  * 都调 tryTransition 抢锁：抢到负责完整收尾，没抢到闭嘴不做事。
  *
- * target 仅限正常执行流的三终态。crashed 不作 target——它由重建路径推断
- * （alive marker 存在但 session 文件无终态），不走 CAS；重建路径用 markReconstructedStatus
- * 直接赋值。收窄 target 类型可在编译期拒绍误用 tryTransition(record, "crashed")。
+ * target 仅限正常执行流的两终态（closed + cancelled）。
+ * closed 携带 closedReason（L2 原因子枚举），由重建路径或正常执行流写入。
+ * 重建路径也可用 markReconstructedStatus 直接赋值（跳过 CAS）。
+ *
+ * @param closedReason closed 终态的 L2 关闭原因。仅 target="closed" 时有意义；
+ *   target="cancelled" 时忽略。缺省 "gc"（通用完成/失败）。
  */
 export function tryTransition(
   record: ExecutionRecord,
-  target: "done" | "failed" | "cancelled",
+  target: "closed" | "cancelled",
+  closedReason?: ClosedReason,
 ): boolean {
   if (record.status !== "running") return false;
   record.status = target;
+  if (target === "closed") {
+    record.closedReason = closedReason ?? "gc";
+  }
   return true;
 }
 
@@ -585,13 +593,20 @@ export function markReconstructedStatus(
  * 不修改 turns/totalTokens——已由 updateFromEvent 累积，completeRecord 只读不重置。
  *
  * ⚠ 前置条件：调用方必须先通过 tryTransition 抢到锁（status 已被 CAS 设为 target）。
+ *
+ * @param closedReason closed 终态的 L2 关闭原因。仅 status="closed" 时写入；
+ *   "cancelled" 时忽略。
  */
 export function completeRecord(
   record: ExecutionRecord,
   result: AgentResult,
-  status: "done" | "failed" | "cancelled",
+  status: "closed" | "cancelled",
+  closedReason?: ClosedReason,
 ): void {
   record.status = status;
+  if (status === "closed") {
+    record.closedReason = closedReason ?? "gc";
+  }
   record.endedAt = Date.now();
   record.agentResult = result;
   record.result = result.text;
