@@ -50,6 +50,8 @@
               :collapsed="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).collapsed : undefined"
               :working="sessionActive"
               :streaming="assistant.status === 'streaming'"
+              :status="assistant.status"
+              :error="assistant.error"
               :session-id="sessionId"
             />
           </template>

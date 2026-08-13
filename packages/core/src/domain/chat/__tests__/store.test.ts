@@ -179,14 +179,15 @@ describe('createChatStore factory', () => {
       expect(sut.store.getMessages(sid)[0].status).toBe('complete')
     })
 
-    it('error → status=error + errorText 合并到 content', () => {
+    it('error → status=error + errorText 写 msg.error（content 不动）', () => {
       const sid = 's1'
       sut.store.setMessages(sid, [streamingAssistant('a1', { content: '生成中' })])
       sut.store.finalizeSession(sid, 'error', '报错文本')
       const m = sut.store.getMessages(sid)[0]
       expect(m.status).toBe('error')
-      expect(m.content).toContain('生成中')
-      expect(m.content).toContain('报错文本')
+      // [M2 error-visibility] 追加形态双通道：content 保持崩溃前正文，errorText 写 msg.error
+      expect(m.content).toBe('生成中')
+      expect(m.error).toBe('报错文本')
     })
 
     it('非 streaming entity 不受 finalizeSession 影响（幂等 sealed）', () => {

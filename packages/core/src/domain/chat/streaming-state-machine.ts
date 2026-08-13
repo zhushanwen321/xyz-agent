@@ -166,10 +166,12 @@ export function createStreamingStateMachine(deps: StreamingStateMachineDeps) {
       // message 仍 streaming → 转终态 + 收口 toolCall
       const isErrorReason = reason === 'error' || reason === 'stream_error' || reason === 'timeout' || reason === 'disconnect' || reason === 'restart'
       const finalStatus = isErrorReason ? 'error' : 'complete'
-      const finalContent = errorText && m.role === 'assistant'
-        ? (m.content ? `${m.content}\n\n${errorText}` : errorText)
-        : m.content
-      return { ...m, status: finalStatus, content: finalContent, toolCalls } satisfies Message
+      // [M2 error-visibility] 追加形态双通道（SSOT docs/architecture/conversation-error-visibility.md §3.3.2）：
+      // errorText 写 Message.error 字段（message.ts:269 注释明确用途对口），content 保持崩溃前正常正文不动。
+      // 旧 `${content}\n\n${errorText}` 拼接把 errorText 混进 content，渲染层无法区分哪段是错误。
+      // 仅 assistant 消息写 error；非 assistant（user 提问等）保持 m.error 原值不写。
+      const finalError = errorText && m.role === 'assistant' ? errorText : m.error
+      return { ...m, status: finalStatus, content: m.content, error: finalError, toolCalls } satisfies Message
     })
     commitMessages(messages, sessionId, next)
   }

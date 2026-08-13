@@ -116,7 +116,7 @@ describe('finalizeSubagentStream', () => {
 })
 
 describe('finalizeMessages', () => {
-  it('TC4 error 收口：streaming assistant → error + errorText 追加；running toolCall → error + endTime；bash 跳过', () => {
+  it('TC4 error 收口：streaming assistant → error + errorText 写 msg.error（content 不动）；running toolCall → error + endTime；bash 跳过', () => {
     const { sm, messages } = makeMachine()
     const assistant = streamingAssistant('a1', { content: 'partial', toolCalls: [runningToolCall('tc1')] })
     const bash = bashMsg('b1')
@@ -126,10 +126,36 @@ describe('finalizeMessages', () => {
 
     const after = messages.value.get('s1')!
     expect(after[0].status).toBe('error')
-    expect(after[0].content).toBe('partial\n\nboom') // errorText 追加
+    // [M2 error-visibility] 追加形态双通道：content 保持崩溃前正文不动，errorText 写 msg.error（不拼 \n\n）
+    expect(after[0].content).toBe('partial')
+    expect(after[0].error).toBe('boom')
     expect(after[0].toolCalls![0].status).toBe('error')
     expect(after[0].toolCalls![0].endTime).toBeTypeOf('number') // 非 normal/aborted 设 endTime
     expect(after[1]).toBe(bash) // bash 消息原样跳过（引用不变）
+  })
+
+  it('TC2 追加形态空 content：errorText 仍写 msg.error，content 保持空（不兜底拼进 content）', () => {
+    const { sm, messages } = makeMachine()
+    // 流刚开始就崩（content 为空）：errorText 不兜底进 content，独立 error 字段承载
+    messages.value = new Map([['s1', [streamingAssistant('a1')]]])
+
+    sm.finalizeMessages('s1', 'error', 'boom')
+
+    const after = messages.value.get('s1')![0]
+    expect(after.status).toBe('error')
+    expect(after.content).toBe('')
+    expect(after.error).toBe('boom')
+  })
+
+  it('TC2b 非 assistant 消息不写 error 字段（user 提问不受 errorText 影响）', () => {
+    const { sm, messages } = makeMachine()
+    messages.value = new Map([['s1', [{ id: 'u1', role: 'user' as const, content: '提问', status: 'complete' as const, timestamp: 1 }]]])
+
+    sm.finalizeMessages('s1', 'error', 'boom')
+
+    const after = messages.value.get('s1')![0]
+    expect(after.content).toBe('提问')
+    expect(after.error).toBeUndefined()
   })
 
   it('TC4b 已终态 message 只收口 toolCall；无 running toolCall 引用稳定', () => {
@@ -181,7 +207,8 @@ describe('finalizeMessages', () => {
 
     const after = messages.value.get('s1')![0]
     expect(after.status).toBe('complete')
-    expect(after.content).toBe('full') // 无 errorText 不追加
+    expect(after.content).toBe('full') // 无 errorText 不写 error 字段
+    expect(after.error).toBeUndefined()
     expect(after.toolCalls![0].status).toBe('end_not_received')
     expect(after.toolCalls![0].endTime).toBeUndefined() // normal/aborted 不设 endTime
   })

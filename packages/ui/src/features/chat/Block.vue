@@ -44,9 +44,26 @@
 
     <!-- 正文 text 块：全 inline 统一正文样式（text-base/leading-7），颜色跟所属 assistant streaming 态
          （streaming→neutral-mid，complete/缺省→neutral-fg，单调不随兄弟 message 翻转）。
-         streaming-tail 光标在 Turn.vue trace 容器末尾（跟在所有 block 后，不受 contentBlocks 时序影响）。 -->
-    <div v-else-if="type === 'text'" class="pb-2 text-[length:var(--text-base)] leading-7" :class="streaming ? 'text-neutral-mid' : 'text-neutral-fg'">
-      <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" />
+         streaming-tail 光标在 Turn.vue trace 容器末尾（跟在所有 block 后，不受 contentBlocks 时序影响）。
+         [M2 error-visibility] status==='error' 形态判定（SSOT §3.3.2）：
+         纯 error（无 msg.error，errorText 即全文）→ 整条 danger（AlertCircle + text-danger）；
+         追加形态（msg.error 有值）→ content 崩溃前正常正文保持原色 + msg.error 独立 danger 行。 -->
+    <div v-else-if="type === 'text'" data-testid="block-text" class="pb-2 text-[length:var(--text-base)] leading-7" :class="textColorClass">
+      <!-- 纯 error：AlertCircle + 整条 danger（正文 text-danger，由 textColorClass 承担） -->
+      <div v-if="isPureError" class="flex items-start gap-1.5">
+        <AlertCircle data-testid="block-text-error-icon" class="mt-1.5 size-3.5 shrink-0 text-danger" />
+        <div class="min-w-0 flex-1">
+          <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" />
+        </div>
+      </div>
+      <template v-else>
+        <MarkdownRenderer v-if="content" :content="content ?? ''" :session-id="sessionId ?? undefined" />
+        <!-- 追加形态：msg.error 独立 danger 行（content 保持原色，不误染崩溃前正文） -->
+        <div v-if="isAppendError" data-testid="block-text-error" class="mt-1 flex items-start gap-1.5 text-danger">
+          <AlertCircle class="mt-1.5 size-3.5 shrink-0 text-danger" />
+          <span class="min-w-0 flex-1 whitespace-pre-wrap">{{ error }}</span>
+        </div>
+      </template>
     </div>
 
     <!-- tool_call 块：默认 1 行收起（streaming/running 也收起），header 含摘要，点击展开详情。
@@ -185,10 +202,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, Copy as CopyIcon } from '@lucide/vue'
+import { AlertCircle, Check, Copy as CopyIcon } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
-import type { ToolCall } from '@xyz-agent/shared'
+import type { MessageStatus, ToolCall } from '@xyz-agent/shared'
 import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
 import { AnsiText, GuiComponentRenderer } from '../../rendering-protocol'
 import MarkdownRenderer from './MarkdownRenderer.vue'
@@ -219,6 +236,12 @@ const props = defineProps<{
    *  complete/缺省→text-neutral-fg（单调，不随兄弟 message 到达翻转）。
    *  由 Turn.vue 传 assistant.status === 'streaming'。thinking/tool/agentgraph 分支不消费此 prop。 */
   streaming?: boolean
+  /** 所属 assistant 消息终态（text 分支 error 形态判定，SSOT §3.3.2）：
+   *  status==='error' 且 error 有值 → 追加形态（content 原色 + error 独立 danger 行）；
+   *  status==='error' 且无 error → 纯 error（整条 danger）。thinking/tool 分支不消费。 */
+  status?: MessageStatus
+  /** 追加形态错误文本（assistant Message.error 字段，status==='error' 时有值）。 */
+  error?: string
   /** 所属 session（透传给 MarkdownRenderer 供文件路径打开 DetailPane 用） */
   sessionId?: string | null
 }>()
@@ -238,6 +261,18 @@ const previewText = computed(() => {
   const c = props.content?.trim() ?? ''
   if (c.length <= PREVIEW_LIMIT) return c
   return `${c.slice(0, PREVIEW_LIMIT)}…`
+})
+
+/** 纯 error：status==='error' 且无 msg.error（markSessionError/registry 无 streaming 实体时
+ *  手动追加的整条 error 消息，errorText 即 content 全文）。 */
+const isPureError = computed(() => props.status === 'error' && !props.error)
+/** 追加形态：status==='error' 且 msg.error 有值（finalizeMessages 双通道写入的崩溃错误）。 */
+const isAppendError = computed(() => props.status === 'error' && !!props.error)
+
+/** text 分支颜色：纯 error 整条 danger；追加形态/正常正文 streaming→neutral-mid、complete→neutral-fg */
+const textColorClass = computed(() => {
+  if (isPureError.value) return 'text-danger'
+  return props.streaming ? 'text-neutral-mid' : 'text-neutral-fg'
 })
 
 const isFailed = computed(() => props.tool?.status === 'error')
