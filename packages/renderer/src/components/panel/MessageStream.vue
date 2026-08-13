@@ -13,7 +13,7 @@
   <div class="relative flex min-h-0 flex-1 flex-col">
     <div
       ref="scrollEl"
-      class="message-stream relative flex-1 overflow-y-auto px-5 pt-[var(--message-stream-pad-top)]"
+      class="message-stream relative flex-1 overflow-y-auto px-5 pt-[var(--message-stream-pad-top)] pb-[8px]"
       :style="{ overflowAnchor: 'none' }"
       @wheel="onWheel"
     >
