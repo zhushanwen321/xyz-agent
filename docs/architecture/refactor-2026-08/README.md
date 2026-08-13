@@ -76,7 +76,7 @@
 | E7 | electron | Speculative | preload 形态适配归位 + update 域口径统一 | W5 |
 | F1 | extensions | Strong | 跨包微型工具 12 处复制下沉 shared | W3 |
 | F2 | extensions | Strong | pi session JSONL 解析 adapter 唯一化 | W3 |
-| F3 | extensions | Strong | shared 层定位重整（quota-providers 死面，删除测试驱动） | W4 |
+| F3 | extensions | Strong | shared 层定位重整（quota-providers 死面，删除测试驱动 + DP-3） | W4（删除测试 + DP-3 裁决前移 W3 之前） |
 | F4 | extensions | Worth | Ajv schema 编译层收敛（审计先行，涉及 builtin） | W4 |
 | F5 | extensions | Worth | 裸 console 迁移决策（二选一） | W5 |
 | F6 | extensions | Speculative | formatDuration 同名异义（合法变体，记录即可） | W5 |
@@ -105,10 +105,11 @@ B3 + C5 + D5 + D6 + D7 + E1 + F1 + F2 + F7。九项都是"把逻辑从 A 层迁�
 - F2 与 F7 同构（外部 seam 唯一化），建议同批实施
 - E1 前置：orchestrator 已 DI 注入，验证现有测试基建后再收编
 - D7 前置：对照 ADR-0055 phase-1/phase-2 边界确认 dual-write 退出范围
+- **DP-3 前置（F1/F3 联动）**：F3 的删除测试独立先行（砍 0 消费者导出不依赖 F1），DP-3 裁决 shared 去留 → **再决定 F1 的 utils 建在 shared 还是 model-switch**。即 W3 开工前先完成 F3-①②③（删除测试 + DP-3 裁决），避免 F1 先建 shared utils 后 DP-3 判撤又搬家的返工（决策与实施反序）
 
 **W4 · 组织债 / 深模块（长期架构收益，大工程）**
 B4 + C6 + C7 + D8 + E4 + E5 + E6 + F3 + F4。九项中 C6/C7/E4 是纯组织重构（低风险），B4/D8/F3 是结构性（高风险）。
-- F3 前置：先做删除测试（砍 0 消费者导出），评估残存价值再裁决 shared 去留（DP-3）
+- F3 前置：删除测试 + DP-3 裁决已在 W3 之前完成（见上）；W4 只做裁决分支落地（保留瘦身 / 并回 model-switch）
 - D8 渐进切分，禁止大爆炸（审查报告明确警告）
 
 **W5 · 决策 / 收尾（低风险，需裁决项 + 文档对齐）**
@@ -122,7 +123,7 @@ B5 + B6 + B7 + D2 + D9 + E7 + F5 + F6。其中 D2（port 折叠 vs 集中，与 
 |----|------|------|---------|---------|
 | DP-1 | logic/ 纯函数下沉 core 与 renderer-target-architecture §2.2「留在原处」裁定冲突 | B3 | 包级 leverage 视角优先（移动端复用价值 > 包内七层纯净），下沉 | W3 实施前 |
 | DP-2 | port 折叠进消费方 vs 按域集中拆分（R9 决策相悖） | D2 | 单消费方 port 折叠（7 个），多消费方 port 留 ports/；与 R9 的"集中"是两种组织哲学，需一次显式裁决 | W5 实施前 |
-| DP-3 | shared/ 层去留（quota-providers 死面砍后残存价值） | F3 | 删除测试驱动：砍死面后若只剩 readCache 深接口 → 保留瘦身；若渗透率推不动 → 撤销 shared 定位，quota 并回 model-switch | W4 实施前 |
+| DP-3 | shared/ 层去留（quota-providers 死面砍后残存价值） | F3 | 删除测试驱动：砍死面后若只剩 readCache 深接口 → 保留瘦身；若渗透率推不动 → 撤销 shared 定位，quota 并回 model-switch。**裁决时机：W3 之前**（F3 删除测试独立先行，裁决结果决定 F1 utils 归位，避免决策与实施反序） |
 | DP-4 | 裸 console：全仓推广 extension-logger vs 承认私有依赖退出 shared | F5 | 真实数据支持推广（用了 logger 的包裸 console=0），推广优先 | W5 实施前 |
 | DP-5 | composer-shell 越层直连 dom-core：文档注记 vs 强制链式 | B6 | 注记（选项 b）——强制链式会为形式约束加一层纯转发 seam | W5 实施前 |
 | DP-6 | 包名 @xyz-agent/frontend vs 文档改口 frontend | B5 | 改包名 @xyz-agent/renderer（改口面更大，改包名一处） | W5 实施前 |
