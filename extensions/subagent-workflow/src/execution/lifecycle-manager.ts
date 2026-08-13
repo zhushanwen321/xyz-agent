@@ -266,11 +266,13 @@ export interface OrphanCandidate {
  * @param isProcessAlive pid 探活谓词（调用方注入，对齐 alive-store.isProcessAlive）
  * @returns 孤儿候选 recordId 列表
  *
- * TODO(Step 5c): 接入 session_start 编排收割。pid 持久化数据已就绪——.alive sidecar
- * 写 pid（alive-store.writeAliveMarker），reconstructAll 已读 alive.pid 判 running
- * 分支。接入尚缺两块：① reconstructAll 分支 3 回填 rec.pid（当前只存 externalInstance）
- * ② PID 复用校验（本函数注释上方 V2 §5.4 要求，防 OS 复用 pid 误杀——需跨平台读
- * 进程命令行确认含 pi --mode rpc，无 V2 精确 spec 不宜贸然接入高频启动路径）。
+ * **状态：deferred（defense-in-depth，当前 spawn 配置下不触发）**。本函数骨架 + 单测已就绪，
+ * 数据通路（`.alive` sidecar 写 pid / `reconstructAll` 分支 3 读 alive.pid）也已落地，但
+ * **不接入 session_start**。理由 + 接入设计草图见
+ * `docs/design/v2-defense-ii-iii-resolution.md`（防线 ii 章节）。要点：当前 spawn 用 piped
+ * stdio（非 detach），父进程死亡 → stdin EOF → 子进程自杀（F10）覆盖全部正常崩溃路径，
+ * 孤儿近乎不可能泄漏；安全收割需 PID 复用校验（跨平台进程命令行读取，防 OS 复用 pid 误杀），
+ * 属低频场景的中等复杂度工作，待 spawn 改 detach 时再接入。
  */
 export function scanOrphanProcesses(
   records: OrphanCandidate[],
@@ -315,11 +317,13 @@ const activateLockTails = new Map<string, Promise<void>>();
  * @returns release 函数——获得锁后**必须**调用它释放（finally 块），否则同 recordId
  *          的后续 acquire 永久挂起。
  *
- * TODO(Step 5c): 接入 runSpawn。需与既有并发控制协调——runSpawn 内 turnLimiter /
- * spawnedChildren 注册 / controller.abort 路径 / chatMode idle timer 已是复杂状态机；
- * release 必须覆盖所有退出路径（正常 close / error / abort / chatMode resolve），
- * 漏一处则同 recordId 后续 acquire 永久挂起（死锁）。锁粒度（runSpawn 全程 vs
- * spawn→register 窗口）待 spec 定。
+ * **状态：冗余，不接入 runSpawn**。单 activation 不变量已由 `resumeRound`（
+ * `subagent-service.ts:631/660`）的同步状态 CAS 覆盖：`status !== "idle"` 检查与
+ * `status = "running"` 翻转之间无 await，同一 recordId 的并发 message 只有一个能进入 spawn，
+ * 另一个 throw「not ready」。`acquireActivateLock` 只会把「第二个 throw」改成「第二个排队」，
+ * 是 reject→serialize 的语义改变，非安全修复。完整分析见
+ * `docs/design/v2-defense-ii-iii-resolution.md`（防线 iii 章节）。骨架保留（已实现 + 已测，
+ * 零维护成本）；未来若产品决定续聊从「被拒」改为「排队」，再接入并做退出路径全覆盖设计。
  */
 export function acquireActivateLock(recordId: string): Promise<() => void> {
   const prev = activateLockTails.get(recordId) ?? Promise.resolve();
