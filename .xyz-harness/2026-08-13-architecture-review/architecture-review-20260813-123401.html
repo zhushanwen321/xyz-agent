@@ -848,6 +848,44 @@ flowchart BT
         </div>
       </div>
     </article>
+
+    <!-- F7（2026-08-13 补录）：事件流分流唯一化 —— 与 F2 同款反模式（pi 协议多份实现），事件流层 -->
+    <article class="rounded-xl border border-slate-200 bg-white shadow-sm mb-6 overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100">
+        <div class="flex items-center gap-2 flex-wrap">
+          <h3 class="font-serif text-lg font-semibold">F7 · assistantMessageEvent 事件流分流唯一化<span class="text-sm font-normal text-slate-400">（与 F2 同款反模式 · 事件流层 · 补录）</span></h3>
+          <span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-700">Medium</span>
+          <span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-600">外部 seam 收敛</span>
+        </div>
+        <div class="mt-2 font-mono text-xs text-slate-500">runtime/infra/pi/event-adapter.ts:92-130（handleMessageUpdate · 主 agent 路径）· extensions/subagent-workflow/src/execution/session-runner.ts:78（mapAssistantMessageDelta · subagent/workflow 路径）</div>
+      </div>
+      <div class="px-5 py-4">
+        <div class="grid md:grid-cols-2 gap-3 mb-4">
+          <div class="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+            <p class="m-tag">Before · 2 份独立分流</p>
+            <div class="flex flex-col gap-1.5">
+              <div class="m-box leak-b">event-adapter <code>switch(sub.type)</code> 正向（runtime · 主 agent）</div>
+              <div class="m-box leak-b">session-runner 反向排除（extension · subagent/workflow）</div>
+            </div>
+            <p class="text-[11px] text-red-600 mt-1.5">两份各自维护 sub.type → 事件映射。session-runner 反向排除（只拦 thinking_delta）致 <code>toolcall_delta</code> 被当 <code>text_delta</code> → subagent overlay 末尾混入工具参数 JSON（commit <code>af237e464</code> 已修分流，但两套实现仍在）。</p>
+          </div>
+          <div class="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+            <p class="m-tag">After</p>
+            <div class="m-box deep-b">mapAssistantMessageDelta（sub.type → text_delta / thinking_delta / noop）下沉 shared</div>
+            <div class="m-arrow">↑</div>
+            <div class="m-box">event-adapter 复用 · session-runner 复用（消除两套实现）</div>
+          </div>
+        </div>
+        <div class="grid md:grid-cols-3 gap-4 text-sm">
+          <div><p class="lbl">问题</p><p class="text-slate-600">pi <code>assistantMessageEvent</code> 是外部协议 seam（text / thinking / toolcall / signature 等 typed delta）。两份独立分流 = 协议变更或新增 delta type 时各改各的，行为悄悄漂移——本次 bug 即 session-runner 漏判 toolcall_delta。</p></div>
+          <div><p class="lbl">方案</p><p class="text-slate-600">将已提取的 <code>mapAssistantMessageDelta</code>（session-runner 内）下沉到 shared 层，event-adapter 的 <code>handleMessageUpdate</code> 改为复用它，消除 runtime/extension 两份分裂。</p></div>
+          <div><p class="lbl">收益</p><ul class="list-disc pl-4 text-slate-600"><li>消除分流漂移（本次 bug 类不再复现）</li><li>pi 新增 delta type 单点维护</li><li>与 F2 同构收口（文件层 + 事件层 seam 各唯一化）</li></ul></div>
+        </div>
+        <div class="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <strong>补录背景</strong>：由 2026-08-13 subagent overlay JSON 混入 bug（<code>af237e464</code>）追溯发现。bug 临时修复已在 session-runner 内提取 <code>mapAssistantMessageDelta</code>（正向判定），但 event-adapter 仍是独立 switch——本项记录“彻底消除两套实现”的治本收口，<strong>未实施</strong>。实施时注意：event-adapter 产出 <code>message.text_delta</code> WS 帧、session-runner 产出 <code>AgentEvent</code>，下沉函数只管 sub.type 分类，产出态类型由各自调用方包装。
+        </div>
+      </div>
+    </article>
   </section>
 
   <!-- ============ §6 文档债 ============ -->
