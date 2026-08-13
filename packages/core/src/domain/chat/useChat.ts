@@ -380,11 +380,11 @@ export function createUseChat(deps: UseChatDeps) {
     // pending 气泡（S7）：steer 发出后立即入流，投递时（queue_update 移除）转 complete。
     // [W1] API 失败（WS 断连/steer_failed envelope/hook 拦截）回滚 pending + toast 提示，
     // 不 throw（错误已消化：pending 已回滚 + 用户已得反馈；throw 只会变 unhandled rejection）。
-    chat.appendPending(sid, segments, 'steer')
+    chat.pushPending(sid, segments, 'steer')
     try {
       await deps.chatApi.steer(sid, promptText)
     } catch (e) {
-      chat.removePending(sid, segments, 'steer')
+      chat.abortPending(sid, promptText, 'steer')
       const msg = e instanceof Error ? e.message : String(e)
       deps.toast.error(deps.t('composable.supplementSendFailed', { msg }))
     }
@@ -410,11 +410,11 @@ export function createUseChat(deps: UseChatDeps) {
 
     // pending 气泡（S7）：followUp 发出后立即入流，投递时（queue_update 移除）转 complete。
     // [W1] API 失败回滚 pending + toast 提示（同 steer，不 throw）。
-    chat.appendPending(sid, segments, 'follow-up')
+    chat.pushPending(sid, segments, 'follow-up')
     try {
       await deps.chatApi.followUp(sid, promptText)
     } catch (e) {
-      chat.removePending(sid, segments, 'follow-up')
+      chat.abortPending(sid, promptText, 'follow-up')
       const msg = e instanceof Error ? e.message : String(e)
       deps.toast.error(deps.t('composable.nextTurnSendFailed', { msg }))
     }

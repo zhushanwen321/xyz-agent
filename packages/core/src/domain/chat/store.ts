@@ -30,9 +30,22 @@ import type {
   ServerMessage,
   SteerFollowUpMode,
 } from '@xyz-agent/shared'
-import { normalizeContent } from '@xyz-agent/shared'
+import { normalizeContent, segmentsToText } from '@xyz-agent/shared'
 import type { RetryState, QueueState, FinalizeReason } from './store-types'
 import { isDevMode } from '../../platform/dev-mode'
+
+/**
+ * pendingBuffer 单项（m1 数据层，steer/follow-up 暂存）。
+ *
+ * text 用于匹配 pi 回流投递信号（normalizeContent + trim 归一化，复用 findPendingIndex 范式）；
+ * segments 是原始 Segment[]，drain 时取出交 appendUser 进对话流（m2 接线，m1 不接）。
+ * sendMode 区分 steer / follow-up，驱动气泡配色。
+ */
+interface PendingItem {
+  text: string
+  segments: Segment[]
+  sendMode: SteerFollowUpMode
+}
 
 /**
  * streaming 超时默认值：10min。
@@ -85,6 +98,15 @@ export function createChatStore() {
   const retryStates = ref<Map<string, RetryState>>(new Map())
   /** 按 sessionId 分区的消息队列态（W06-B，queue_update） */
   const queueStates = ref<Map<string, QueueState>>(new Map())
+  /**
+   * steer/follow-up 暂存缓冲（m1 数据层）。
+   *
+   * 与 messages 解耦——pushPending 只写本 buffer，不写 messages（m1 核心目标：pending 在 m1
+   * 阶段不进对话流）。投递信号 queue_update 到达时，drainPending 取出 segments 交 appendUser
+   * 进对话流（m2 接线；m1 阶段 queue_update 仍调 markPendingDelivered，drainPending 暂未接）。
+   * 与 queueStates 同层 ref<Map<string, T>>，disposeSession 一并清理（T2）。
+   */
+  const pendingBuffer = ref<Map<string, PendingItem[]>>(new Map())
   /** FileChanges 子域控制器（W10，ADR-0024 D5），委托 chat-changeset.ts。messages 由本 store 注入，设计见 ./README.md + chat-changeset.ts。 */
   const changeset = createChangeSetController(messages)
   const { changeSetStatuses, getChangeSetStatus, setChangeSetStatus, applyFileChanges, markChangeSetsSuperseded } = changeset
@@ -323,6 +345,58 @@ export function createChatStore() {
     commitMessages(messages, sessionId, prev.filter((_, i) => i !== idx))
   }
 
+  /**
+   * 暂存 steer/follow-up segments 到 pendingBuffer（m1 数据层）。
+   *
+   * 不碰 messages——与 appendPending（写 messages pending 气泡）解耦，pending 在 m1 阶段不进
+   * 对话流（核心目标）。投递时 drainPending 取出 segments 交 appendUser（m2 接线）。
+   * text = segmentsToText(segments).trim()，供 drainPending/abortPending 匹配 pi 回流投递信号。
+   */
+  function pushPending(sessionId: string, segments: Segment[], sendMode: SteerFollowUpMode): void {
+    const text = segmentsToText(segments).trim()
+    const prev = pendingBuffer.value.get(sessionId) ?? []
+    pendingBuffer.value = new Map(pendingBuffer.value).set(sessionId, [...prev, { text, segments, sendMode }])
+  }
+
+  /**
+   * FIFO 取出并移除匹配的 pending item（m1 数据层）。
+   *
+   * 匹配范式复用 findPendingIndex：normalizeContent + trim 归一化两边 text，sendMode 可选过滤。
+   * 命中返回 segments（交 appendUser 进对话流，m2）；无匹配返回 undefined（幂等）。FIFO——同 text
+   * 多次暂存时按入队顺序依次取出（design TC2）。
+   */
+  function drainPending(sessionId: string, text: string, sendMode?: SteerFollowUpMode): Segment[] | undefined {
+    const prev = pendingBuffer.value.get(sessionId)
+    if (!prev || prev.length === 0) return undefined
+    const target = normalizeContent(text).trim()
+    const idx = prev.findIndex(
+      (item) => normalizeContent(item.text).trim() === target
+        && (sendMode === undefined || item.sendMode === sendMode),
+    )
+    if (idx === -1) return undefined
+    const removed = prev[idx]
+    pendingBuffer.value = new Map(pendingBuffer.value).set(sessionId, prev.filter((_, i) => i !== idx))
+    return removed.segments
+  }
+
+  /**
+   * 移除匹配的 pending item（m1 数据层，steer/followUp RPC 失败回滚）。
+   *
+   * 与 drainPending 同匹配范式但不返回 segments。FIFO 移除第一条匹配项；无匹配 no-op（幂等）。
+   * sendMode 必填——abort 明确指定回滚的目标模式（与 drainPending 的可选 sendMode 互补）。
+   */
+  function abortPending(sessionId: string, text: string, sendMode: SteerFollowUpMode): void {
+    const prev = pendingBuffer.value.get(sessionId)
+    if (!prev || prev.length === 0) return
+    const target = normalizeContent(text).trim()
+    const idx = prev.findIndex(
+      (item) => normalizeContent(item.text).trim() === target
+        && item.sendMode === sendMode,
+    )
+    if (idx === -1) return
+    pendingBuffer.value = new Map(pendingBuffer.value).set(sessionId, prev.filter((_, i) => i !== idx))
+  }
+
   /** message.* 事件单一入口（F2 消除 double-dispatch）：经 dispatchMessageEvent 查 effects/registry.ts 执行全部副作用。非 message.* / 未注册 type no-op。重构等价性见 ./README.md。 */
   function applyMessageEvent(sessionId: string, msg: ServerMessage): void {
     dispatchMessageEvent(
@@ -338,6 +412,8 @@ export function createChatStore() {
         armBashTimer,
         clearBashTimer,
         markPendingDelivered,
+        appendUser,
+        drainPending,
       },
       sessionId,
       msg,
@@ -503,7 +579,7 @@ export function createChatStore() {
     // 是深 ref，此写法同样正确触发。统一用"构造新 Map → delete → 赋值"范式。
     // 显式结构类型（对齐原 disposeSession 编排参数）：数组元素统一为 Map<string, unknown>，
     // 避免 TS 将不同 Map 元素推断为具体联合类型导致 new Map(ref.value) 不兼容。
-    const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates]
+    const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates, pendingBuffer]
     const setRefs: { value: Set<string> }[] = [hydrated, pendingSend, compactingSessions, handingOffSessions, failedHistory]
     for (const ref of mapRefs) {
       if (ref.value.has(sessionId)) {
@@ -545,6 +621,7 @@ export function createChatStore() {
     handingOffSessions,
     retryStates,
     queueStates,
+    pendingBuffer,
     changeSetStatuses,
     failedHistory,
     hydrated,
@@ -561,6 +638,9 @@ export function createChatStore() {
     appendPending,
     markPendingDelivered,
     removePending,
+    pushPending,
+    drainPending,
+    abortPending,
     applyMessageEvent,
     isGenerating,
     isActive,

@@ -100,6 +100,56 @@ describe('createChatStore factory', () => {
     })
   })
 
+  describe('pendingBuffer 数据层（m1：pushPending / drainPending / abortPending）', () => {
+    it('TC1: pushPending 暂存到 buffer 不碰 messages', () => {
+      const sid = 's1'
+      sut.store.pushPending(sid, textToSegments('steer msg'), 'steer')
+      // buffer[sid] 含 1 项，记录 text + sendMode
+      const buf = sut.store.pendingBuffer.value.get(sid)
+      expect(buf).toHaveLength(1)
+      expect(buf![0].text).toBe('steer msg')
+      expect(buf![0].sendMode).toBe('steer')
+      // messages[sid] 不变（pending 不进对话流——m1 核心目标）
+      expect(sut.store.getMessages(sid)).toHaveLength(0)
+    })
+
+    it('TC2: drainPending FIFO + 幂等（同 text 多次暂存，依次取出，第 3 次返回 undefined）', () => {
+      const sid = 's1'
+      const seg = textToSegments('dup')
+      sut.store.pushPending(sid, seg, 'steer')
+      sut.store.pushPending(sid, seg, 'steer')
+
+      const r1 = sut.store.drainPending(sid, 'dup', 'steer')
+      const r2 = sut.store.drainPending(sid, 'dup', 'steer')
+      const r3 = sut.store.drainPending(sid, 'dup', 'steer')
+
+      expect(r1).toBeDefined()
+      expect(r2).toBeDefined()
+      expect(r3).toBeUndefined()
+      expect(sut.store.pendingBuffer.value.get(sid) ?? []).toHaveLength(0)
+    })
+
+    it('TC3: abortPending 移除匹配项 + 不碰 messages', () => {
+      const sid = 's1'
+      sut.store.pushPending(sid, textToSegments('abort me'), 'steer')
+      expect(sut.store.getMessages(sid)).toHaveLength(0)
+
+      sut.store.abortPending(sid, 'abort me', 'steer')
+
+      expect(sut.store.pendingBuffer.value.get(sid) ?? []).toHaveLength(0)
+      expect(sut.store.getMessages(sid)).toHaveLength(0)
+    })
+
+    it('drainPending 无 sendMode 时退化为仅 content 匹配（跨 sendMode 命中）', () => {
+      const sid = 's1'
+      sut.store.pushPending(sid, textToSegments('same'), 'steer')
+      // 不传 sendMode——仅按 text 匹配（复用 findPendingIndex 范式）
+      const r = sut.store.drainPending(sid, 'same')
+      expect(r).toBeDefined()
+      expect(sut.store.pendingBuffer.value.get(sid) ?? []).toHaveLength(0)
+    })
+  })
+
   describe('isGenerating 派生（streamingSessionIds scan）', () => {
     it('空 session isGenerating=false', () => {
       expect(sut.store.isGenerating('empty')).toBe(false)
@@ -214,6 +264,15 @@ describe('createChatStore factory', () => {
       sut.store.disposeSession(sid)
       expect(sut.store.getRetryState(sid)).toBeUndefined()
       expect(sut.store.getQueueState(sid)).toBeUndefined()
+    })
+
+    it('TC5: 清 pendingBuffer（与 queueStates 对称）', () => {
+      const sid = 's1'
+      sut.store.pushPending(sid, textToSegments('steer'), 'steer')
+      expect(sut.store.pendingBuffer.value.get(sid)).toHaveLength(1)
+
+      sut.store.disposeSession(sid)
+      expect(sut.store.pendingBuffer.value.get(sid)).toBeUndefined()
     })
   })
 

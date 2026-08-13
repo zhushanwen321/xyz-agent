@@ -12,6 +12,7 @@ import type {
   ChangeSetStatus,
   FileChange,
   Message,
+  Segment,
   SteerFollowUpMode,
 } from '@xyz-agent/shared'
 import type { RetryState, QueueState, FinalizeReason } from './store-types'
@@ -49,8 +50,19 @@ export interface MessageEffectContext {
   armBashTimer: (sessionId: string) => void
   /** bashResultEffect/markBashError 终态时清 bash 超时 timer（防 300s 后误触发，W3 遗留 bug）。 */
   clearBashTimer: (sessionId: string) => void
-  /** queue_update 投递信号 */
+  /** queue_update 投递信号（m1 阶段仍生效；m2 切换为 drainPending + appendUser） */
   markPendingDelivered: (sessionId: string, text: string, sendMode?: SteerFollowUpMode) => void
+  /**
+   * 追加 user 消息（Segment[]，ADR-0043）。
+   * m2 阶段 queue_update 投递时经 drainPending 取 segments 后 appendUser 进对话流。
+   */
+  appendUser: (sessionId: string, segments: Segment[]) => string
+  /**
+   * queue_update 投递信号：FIFO 取出匹配 pending segments（m1 数据层）。
+   * 与 markPendingDelivered 并存到 m2 切换——m1 阶段 queue_update handler 仍调 markPendingDelivered，
+   * drainPending 由 m2 handler 接线后启用。
+   */
+  drainPending: (sessionId: string, text: string, sendMode?: SteerFollowUpMode) => Segment[] | undefined
 }
 
 /**
