@@ -328,9 +328,30 @@ describe('TC7 failedCount 独立性（3 completed + 2 error）', () => {
 
 // ── G1：非末位 text 块不进 visible ────────────────────────────────────
 
-describe('G1 非末位 text 块不收集', () => {
-  it('两个 assistant 各含 text，仅末位 text(flatIndex 最大者)进 visible，前一个 text 被丢弃', () => {
-    // a1: text → flatIndex 0；a2: text → flatIndex 1
+describe('G1 text 收集规则：按 assistant 分组各保留末位 text', () => {
+  it('单 assistant 多个 text（过渡碎片）→ 仅末位 text 进 visible，前面的不收集', () => {
+    // a1 含 3 个 text block（流式过渡碎片）→ ①只留末位（flatIndex 2），前两个不收集
+    const a1 = makeAssistant({
+      id: 'a1',
+      status: 'complete',
+      content: 'third-text',
+      blocks: [
+        { type: 'text', refId: 'text' },
+        { type: 'text', refId: 'text' },
+        { type: 'text', refId: 'text' },
+      ],
+    })
+    const flat = flattenTurnBlocks([a1])
+    expect(flatIndices(flat)).toEqual([0, 1, 2])
+    const res = computeTraceWindow(flat, { windowSize: W, takeover: false })
+    // ①单 assistant 末位 text = flatIndex 2；前两个过渡碎片不收集
+    expect(flatIndices(res.visible)).toEqual([2])
+    expect(res.compactedCount).toBe(0)
+    expect(res.failedCount).toBe(0)
+  })
+
+  it('多 assistant 各含 text → 每个 assistant 的末位 text 都进 visible（不丢失完整回复）', () => {
+    // a1: text → flatIndex 0；a2: text → flatIndex 1（多 assistant turn，各自完整回复）
     const a1 = makeAssistant({
       id: 'a1',
       status: 'complete',
@@ -346,9 +367,119 @@ describe('G1 非末位 text 块不收集', () => {
     const flat = flattenTurnBlocks([a1, a2])
     expect(flatIndices(flat)).toEqual([0, 1])
     const res = computeTraceWindow(flat, { windowSize: W, takeover: false })
-    // ①末位text = flatIndex1；非末位 text(flatIndex0) 既不归①也不进 visible
-    expect(flatIndices(res.visible)).toEqual([1])
+    // ①每个 assistant 各保留末位 text → 两个都进 visible（非末位 assistant 完整回复不丢失）
+    expect(flatIndices(res.visible)).toEqual([0, 1])
     expect(res.compactedCount).toBe(0)
     expect(res.failedCount).toBe(0)
+  })
+})
+
+// ── TC-edge：边界态（0 streaming assistant）窗口稳定性（edges wave） ──────
+// CL1/CL2 裁决固化：ask-user / compacting / forceWorking / G5（离线重开全 complete）等边界态下
+// 无 streaming-status 的 assistant block，computeTraceWindow 的 ②进行中集合（inProgressByAssistant）
+// 恒空，全部非 text 非 error 块进 ③已完成池 → 窗口 by-construction 稳定（不滑动、不收编进行中块）。
+// core 纯函数按 assistant.status（而非 renderer 层 turn.isStreaming/forceWorking）判定进行中块，
+// 是正确的层次分离（forceWorking 是 renderer 为 keepMounted 设的标记，不代表 assistant 真在 streaming）。
+describe('TC-edge：边界态（0 streaming assistant）窗口稳定性', () => {
+  it('case1: 全 complete 多块单 assistant（thinking+completed tool+error tool+text）→ ②空、visible=末位text+已完成过程块、failedCount 独立计数', () => {
+    // 边界态 + error tool 组合（design-review sufficiency minor gap #2 加固）：
+    // 验证 failedCount 在 ②进行中集合为空时仍正确独立计数（不因 ②空而误归 visible）。
+    const a1 = makeAssistant({
+      id: 'a1',
+      status: 'complete',
+      content: 'final-text',
+      thinkingBlocks: [makeThinking({ id: 't1' })],
+      tools: [
+        makeTool({ id: 'tc1', status: 'completed' }),
+        makeTool({ id: 'tc2', status: 'error' }),
+      ],
+      blocks: [
+        { type: 'thinking', refId: 't1' },
+        { type: 'toolCall', refId: 'tc1' },
+        { type: 'toolCall', refId: 'tc2' },
+        { type: 'text', refId: 'text' },
+      ],
+    })
+    const flat = flattenTurnBlocks([a1])
+    // flat = [thinking(0), tool-completed(1), tool-error(2), text(3)]
+    expect(flatIndices(flat)).toEqual([0, 1, 2, 3])
+    const res = computeTraceWindow(flat, { windowSize: W, takeover: false })
+    // ②进行中集合空（无 streaming assistant）
+    // ③已完成池 = [thinking(0), tool-completed(1)]（error 不进③）；①末位text = text(3)
+    // error tool(2) 不在 visible → failedCount=1
+    expect(flatIndices(res.visible)).toEqual([0, 1, 3])
+    expect(res.compactedCount).toBe(0)
+    expect(res.failedCount).toBe(1)
+  })
+
+  it('case2: 全 complete 跨 assistant（flatIndex 连续）+ error tool → ②空、visible 跨 assistant 正确、failedCount 独立', () => {
+    const a1 = makeAssistant({
+      id: 'a1',
+      status: 'complete',
+      tools: [
+        makeTool({ id: 'tc1', status: 'completed' }),
+        makeTool({ id: 'tc2', status: 'error' }),
+      ],
+      blocks: [
+        { type: 'toolCall', refId: 'tc1' },
+        { type: 'toolCall', refId: 'tc2' },
+      ],
+    })
+    const a2 = makeAssistant({
+      id: 'a2',
+      status: 'complete',
+      content: 'final-text',
+      thinkingBlocks: [makeThinking({ id: 't2' })],
+      blocks: [
+        { type: 'thinking', refId: 't2' },
+        { type: 'text', refId: 'text' },
+      ],
+    })
+    const flat = flattenTurnBlocks([a1, a2])
+    // flat = [a1.tool-completed(0), a1.tool-error(1), a2.thinking(2), a2.text(3)]
+    expect(flatIndices(flat)).toEqual([0, 1, 2, 3])
+    const res = computeTraceWindow(flat, { windowSize: W, takeover: false })
+    // ②空；③已完成池 = [tool-completed(0), thinking(2)]；①末位text = text(3)
+    // error(1) → failedCount=1
+    expect(flatIndices(res.visible)).toEqual([0, 2, 3])
+    expect(res.compactedCount).toBe(0)
+    expect(res.failedCount).toBe(1)
+  })
+
+  it('case3: 空 assistants（dispatching 占位 → flatten→[]）→ visible 空、计数归零', () => {
+    // dispatching 空窗期：user 已发、message_start 未到，assistants=[]。
+    // flattenTurnBlocks([]) → []；computeTraceWindow 首行 return 空結果（窗口稳定，不崩）。
+    const flat = flattenTurnBlocks([])
+    expect(flat).toEqual([])
+    const res = computeTraceWindow(flat, { windowSize: W, takeover: false })
+    expect(res).toEqual({ visible: [], compactedCount: 0, failedCount: 0 })
+  })
+
+  it('case4: 纯函数稳定性——相同输入两次调用结果 deep equal（takeover false/true 均验）', () => {
+    const a1 = makeAssistant({
+      id: 'a1',
+      status: 'complete',
+      content: 'final-text',
+      thinkingBlocks: [makeThinking({ id: 't1' })],
+      tools: [
+        makeTool({ id: 'tc1', status: 'completed' }),
+        makeTool({ id: 'tc2', status: 'error' }),
+      ],
+      blocks: [
+        { type: 'thinking', refId: 't1' },
+        { type: 'toolCall', refId: 'tc1' },
+        { type: 'toolCall', refId: 'tc2' },
+        { type: 'text', refId: 'text' },
+      ],
+    })
+    const flat = flattenTurnBlocks([a1])
+    // takeover=false 两次调用 deep equal
+    const r1 = computeTraceWindow(flat, { windowSize: W, takeover: false })
+    const r2 = computeTraceWindow(flat, { windowSize: W, takeover: false })
+    expect(r1).toEqual(r2)
+    // takeover=true 两次调用 deep equal
+    const t1 = computeTraceWindow(flat, { windowSize: W, takeover: true })
+    const t2 = computeTraceWindow(flat, { windowSize: W, takeover: true })
+    expect(t1).toEqual(t2)
   })
 })

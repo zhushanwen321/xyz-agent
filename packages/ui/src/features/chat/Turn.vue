@@ -169,13 +169,21 @@ const traceWindow = computed(() =>
 
 /**
  * 实际渲染的块序列：
- * - 折叠态（!showTrace）：仅末位 text 正文（scope wave D1，computeTraceWindow 不参与——折叠态无 trace 细节）。
- * - 展开态（showTrace）：traceWindow.visible（窗口切片结果，含末位 text + 过程块）。
+ * - 折叠态（!showTrace）：每个 assistant 的末位 text（按 assistantId 分组各取 flatIndex 最大者）。
+ *   多 assistant turn 下每个 assistant 的最终回复默认可见（与 computeTraceWindow ①规则一致）；
+ *   computeTraceWindow 不参与折叠态（无 trace 细节）。
+ * - 展开态（showTrace）：traceWindow.visible（窗口切片结果，含各 assistant 末位 text + 过程块）。
  */
 const visibleBlocks = computed<FlatBlock[]>(() => {
   if (!showTrace.value) {
-    const texts = flatBlocks.value.filter((fb) => fb.block.kind === 'text')
-    return texts.slice(-1)
+    const lastTextByAssistant = new Map<string, FlatBlock>()
+    for (const fb of flatBlocks.value) {
+      if (fb.block.kind === 'text') {
+        const prev = lastTextByAssistant.get(fb.assistantId)
+        if (!prev || fb.flatIndex > prev.flatIndex) lastTextByAssistant.set(fb.assistantId, fb)
+      }
+    }
+    return [...lastTextByAssistant.values()].sort((a, b) => a.flatIndex - b.flatIndex)
   }
   return traceWindow.value.visible
 })

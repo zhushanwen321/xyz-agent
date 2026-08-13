@@ -329,3 +329,85 @@ describe('streaming-trace-window TraceCompactorRow', () => {
     expect(w.emitted('toggle')).toHaveLength(1)
   })
 })
+
+// ═════════════════════════════════════════════════════════════════
+// describe 4：edges wave D9 边界态窗口冻结（组件层）
+//
+// 固化 CL1/CL2 裁决：ask-user/compacting/dispatching/forceWorking 等边界态下
+// Turn.vue trace 区 + TraceCompactorRow 渲染正确（窗口冻结，无抖动、无空指针崩溃）。
+// 与 TC-edge-core（core 纯函数）分层守护同一核心断言：0 streaming assistant → 窗口稳定。
+// ═════════════════════════════════════════════════════════════════
+describe('streaming-trace-window edges: D9 边界态窗口冻结（组件层）', () => {
+  it('case1 ask-user/compacting 态（sessionActive + assistantStatus=complete）→ trace 区渲染 visible 窗口 + compactor 存在', () => {
+    // ask-user/compacting 期间：对话进行中（isSessionActive=true）但 assistant 已 complete（无 streaming 块）。
+    // 12 completed tool + text：②进行中集合空 → visible=last 8 tool + text = 9 块，compactedCount=4。
+    const wrapper = mountTurn({
+      turn: makeWindowTurn({ toolCount: 12, assistantStatus: 'complete' }),
+      isSessionActive: true,
+      isLastTurn: true,
+    })
+    // showTrace = sessionActive(true) && isLastTurn(true) = true → trace 展开
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    // visible = 8 tool（tc-4..tc-11）+ 1 text = 9 块
+    expect(wrapper.findAll('.trace .trace-blk').length).toBe(9)
+    // compactedCount=4 > 0 → compactor 渲染
+    expect(wrapper.find('[data-testid="trace-compactor"]').exists()).toBe(true)
+  })
+
+  it('case2 dispatching 占位（assistants=[]）→ trace 区空 + compactor 不渲染 + 无 console error', () => {
+    // dispatching 空窗期：user 已发、message_start 未到 → assistants=[]。
+    // flatten([]) → [] → traceWindow 计数全 0 → compactor v-if(showTrace && (0>0||0>0))=false。
+    // R3 防护：实测确认 Turn.vue 无空指针崩溃（lastAssistant/assistantById 均 ??/Map 容错）。
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const wrapper = mountTurn({
+        turn: { ...makeTurn(), assistants: [] },
+        isSessionActive: true,
+        isLastTurn: true,
+      })
+      // trace 容器恒渲染，但无任何块（visible=[]）
+      expect(wrapper.find('.trace').exists()).toBe(true)
+      expect(wrapper.findAll('.trace .trace-blk').length).toBe(0)
+      // compactedCount=0 && failedCount=0 → compactor v-if=false
+      expect(wrapper.find('[data-testid="trace-compactor"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="trace-compactor-failed"]').exists()).toBe(false)
+      // 无运行时错误（防空指针）
+      expect(errSpy).not.toHaveBeenCalled()
+    } finally {
+      errSpy.mockRestore()
+    }
+  })
+
+  it('case3 forceWorking 路径（turn.isStreaming=true + assistant.status=complete）→ streaming-tail 显示但 trace 无进行中块', () => {
+    // CL1 裁决固化（组件层）：forceWorking 是 renderer 为 keepMounted 设的 turn.isStreaming 标记，
+    // 不代表 assistant 真在 streaming。computeTraceWindow 按 assistant.status==='streaming' 判定进行中块
+    // → 全 complete 时②空、全部进③已完成池。Turn.vue streaming-tail 跟随 turn.isStreaming（显示），
+    // 但 Block 的 streaming prop = assistantStatus==='streaming'（全 false，无进行中块视觉）。
+    const wrapper = mountTurn({
+      turn: { ...makeWindowTurn({ toolCount: 12, assistantStatus: 'complete' }), isStreaming: true },
+      isLastTurn: true,
+      // isSessionActive 不传 → 回退 turn.isStreaming=true → sessionActive=true
+    })
+    // showTrace=true（sessionActive && isLastTurn）→ trace 展开
+    expect(wrapper.findAll('.trace .trace-blk').length).toBe(9) // 8 tool + text
+    expect(wrapper.find('[data-testid="trace-compactor"]').exists()).toBe(true) // compactedCount=4
+    // streaming-tail 显示（isStreaming=true，末位 text 非 running tool）
+    expect(wrapper.find('.streaming-tail').exists()).toBe(true)
+    // 关键：trace 区所有块的 streaming prop=false（assistantStatus 全 complete，无进行中块）
+    const streamingFlags = wrapper.findAll('.trace .trace-blk').map((b) => b.attributes('data-streaming'))
+    expect(streamingFlags.every((f) => f === 'false')).toBe(true)
+  })
+
+  it('case4 takeover 边界态切换 smoke：false→窗口策略 / true→全展', () => {
+    // 同一 forceWorking 边界态 turn，takeover false vs true 渲染差异
+    const turn = { ...makeWindowTurn({ toolCount: 12, assistantStatus: 'complete' }), isStreaming: true }
+    // takeover=false：窗口策略，visible=9（8 tool + text），compactor 渲染
+    const w1 = mountTurn({ turn, isLastTurn: true, isTakeover: () => false })
+    expect(w1.findAll('.trace .trace-blk').length).toBe(9)
+    expect(w1.find('[data-testid="trace-compactor"]').exists()).toBe(true)
+    // takeover=true：全展，visible=13（12 tool + text），计数归零 compactor 不渲染
+    const w2 = mountTurn({ turn, isLastTurn: true, isTakeover: () => true })
+    expect(w2.findAll('.trace .trace-blk').length).toBe(13)
+    expect(w2.find('[data-testid="trace-compactor"]').exists()).toBe(false)
+  })
+})

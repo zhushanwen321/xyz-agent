@@ -92,8 +92,9 @@ function isFailedProcessBlock(block: OrderedBlock): boolean {
  *
  * takeover=true → visible=全部 blocks（按 flatIndex 升序），compactedCount=0，failedCount=0。
  * takeover=false → visible 收集三类互斥块后合并按 flatIndex 升序：
- *   ① 末位 text 块：blocks 中最后一个 kind==='text' 的块（最多 1 个；仅末位 text 作为当前回复锚点
- *      保留全文，非末位 text 不收集——既不归①也不进 visible）
+ *   ① 每个 assistant 的末位 text：按 assistantId 分组，各保留 flatIndex 最大的 text 块。多 assistant
+ *      turn（ask-user 续写/compact 续写/subagent 接力）下每个 assistant 的最终回复默认可见；单 assistant
+ *      内的过渡碎片只留末位（design §3.3 D2「只留最后一条」针对单 assistant 过渡碎片，不套用到多 assistant）
  *   ② 进行中块：对每个 assistantStatus==='streaming' 的 assistant（按 assistantId 分组），取其拍平块中
  *      最后一个 kind ∈ {thinking,tool,agentgraph} 的块（flatIndex 最大者）
  *   ③ 已完成过程块（压缩候选）：所有满足 kind!=='text' 且不在②集合内 且（kind==='thinking' 或
@@ -118,11 +119,17 @@ export function computeTraceWindow(
     return { visible: [...blocks], compactedCount: 0, failedCount: 0 }
   }
 
-  // ① 末位 text 块（blocks 中最后一个 kind==='text' 的块）。
-  // 仅末位 text 作为当前回复锚点保留全文；非末位 text 既不归①也不进 visible（见上文注释）。
-  let lastText: FlatBlock | null = null
+  // ① 每个 assistant 的末位 text（按 assistantId 分组，各保留 flatIndex 最大的 text 块）。
+  // 多 assistant turn 下每个 assistant 的最终回复默认可见（非末位 assistant 完整回复不丢失）；
+  // 单 assistant 内的过渡碎片只留末位。
+  const lastTextByAssistant = new Map<string, FlatBlock>()
   for (const fb of blocks) {
-    if (fb.block.kind === 'text') lastText = fb
+    if (fb.block.kind === 'text') {
+      const prev = lastTextByAssistant.get(fb.assistantId)
+      if (!prev || fb.flatIndex > prev.flatIndex) {
+        lastTextByAssistant.set(fb.assistantId, fb)
+      }
+    }
   }
 
   // ② 进行中块：每个 streaming assistant 取其拍平块中最后一个非 text 块（flatIndex 最大者）。
@@ -155,7 +162,7 @@ export function computeTraceWindow(
 
   // 合并三类（按 flatIndex 去重），按 flatIndex 升序输出。
   const merged = new Map<number, FlatBlock>()
-  if (lastText) merged.set(lastText.flatIndex, lastText)
+  for (const fb of lastTextByAssistant.values()) merged.set(fb.flatIndex, fb)
   for (const fb of inProgressByAssistant.values()) merged.set(fb.flatIndex, fb)
   for (const fb of windowed) merged.set(fb.flatIndex, fb)
   const visible = [...merged.values()].sort((a, b) => a.flatIndex - b.flatIndex)

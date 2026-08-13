@@ -627,7 +627,7 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
 
   // 多 assistant turn（工具调用循环）折叠态只渲染最后一个 text block——过渡 text（被工具打断的
   // 碎片）随 trace 折叠，只保留最终回复 text（Turn.vue lastTextBlockKey 驱动）
-  it('折叠态多 assistant text turn 只渲染最后一个 text（过渡 text + tool 随 trace 折叠）', () => {
+  it('折叠态多 assistant text turn 渲染每个 assistant 的末位 text（各自完整回复不丢失）', () => {
     const wrapper = mountTurn({
       turn: makeTurn({
         isStreaming: false,
@@ -652,11 +652,101 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
         ],
       }),
     })
-    // 折叠态（!sessionActive && !expanded）：只渲染最后一个 text block（最终回复），
-    // 过渡 text（assistant[0]"我先查一下文件"）+ tool 随 trace 折叠
+    // 折叠态（!sessionActive && !expanded）：渲染每个 assistant 的末位 text（各自完整回复不丢失）。
+    // a1 的 text“我先查一下文件” + a2 的 text“已完成修改”都可见；tool 随 trace 折叠。
     const blocks = wrapper.findAllComponents({ name: 'Block' })
-    expect(blocks).toHaveLength(1)
+    expect(blocks).toHaveLength(2)
     expect(blocks[0].props('type')).toBe('text')
-    expect(blocks[0].props('content')).toBe('已完成修改')
+    expect(blocks[0].props('content')).toBe('我先查一下文件')
+    expect(blocks[1].props('type')).toBe('text')
+    expect(blocks[1].props('content')).toBe('已完成修改')
+  })
+})
+
+/**
+ * edges wave：forceWorking 虚拟 session working turn 回归（CL1 裁决固化）。
+ *
+ * subagent 虚拟 session：renderer 为保持 useStreamingPin keepMounted 设 turn.isStreaming=true，
+ * 但 assistant.status='complete'（非真在 streaming）。computeTraceWindow 按 assistant.status==='streaming'
+ * 判定进行中块 → ②空、全部非 text 非 error 块进③已完成池 → visible=末位text + last W completed。
+ * 窗口对 forceWorking 生效（objective ②），不是 bug（CL1 裁决，已源码核实 trace-window.ts:131）。
+ * 这组测试固化该裁决，防止 renderer 后续改动（如调整 isStreaming 判定）让 forceWorking 路径静默回归。
+ */
+describe('Turn · forceWorking 虚拟 session 回归（edges wave CL1）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    expandedTurns.clear()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('forceWorking 基础：turn.isStreaming=true + assistant.status=complete → trace 展开、streaming-tail 显示、无进行中块', () => {
+    // CL1：forceWorking 态 computeTraceWindow ②进行中集合空，全部过程块进③已完成池
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({
+        isStreaming: true, // forceWorking 标记（renderer 为 keepMounted 设）
+        hasFoldable: true,
+        assistants: [
+          msg({
+            status: 'complete', // 关键：非 streaming（虚拟 session 均为完成态）
+            content: '虚拟 session 回复',
+            thinking: [{ id: 'th1', content: '推理', collapsed: true }],
+            toolCalls: [{ id: 'tc1', toolName: 'read', input: {}, status: 'completed', startTime: 0 }],
+            contentBlocks: [
+              { type: 'thinking', refId: 'th1' },
+              { type: 'toolCall', refId: 'tc1' },
+              { type: 'text', refId: 'text' },
+            ],
+          }),
+        ],
+      }),
+    })
+    // sessionActive 回退 turn.isStreaming=true → showTrace=true（isLastTurn 默认 true）
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    // visible = thinking(0) + tool(1) + text(2) = 3（②空，W=8 全收）
+    expect(wrapper.findAll('.trace .trace-blk').length).toBe(3)
+    // streaming-tail 显示（isStreaming=true，末位 text 非 running tool）
+    expect(wrapper.find('.streaming-tail').exists()).toBe(true)
+  })
+
+  // 加固（review r2 mitigation）：forceWorking + >W 个完成块 → 窗口收编生效（CL1 反例场景）。
+  // subagent 虚拟 session 块多时仍受窗口策略约束（visible=last W + text，compactedCount>0）。
+  it('forceWorking + >W 完成块（10 tool）→ 窗口收编生效（visible=8 tool + text，compactedCount=2）', () => {
+    const tools = Array.from({ length: 10 }, (_, i) => ({
+      id: `tc${i}`,
+      toolName: 'read',
+      input: {},
+      status: 'completed' as const,
+      startTime: 0,
+    }))
+    const contentBlocks = [
+      ...tools.map((t) => ({ type: 'toolCall' as const, refId: t.id })),
+      { type: 'text' as const, refId: 'text' },
+    ]
+    const turn = makeTurn({
+      isStreaming: true,
+      hasFoldable: true,
+      assistants: [
+        msg({
+          status: 'complete',
+          content: '虚拟 session 回复',
+          toolCalls: tools,
+          contentBlocks,
+        }),
+      ],
+    })
+    // inline mount：stub Block + TraceCompactorRow（隔离 i18n，本文件未 mock vue-i18n）
+    const wrapper = mount(Turn, {
+      props: { turn, sessionId: 's1', isLastTurn: true },
+      global: {
+        plugins: [createPinia()],
+        provide: mockChatProvide(),
+        stubs: { ChangeSetCard: true, MarkdownRenderer: true, Block: true, TraceCompactorRow: true },
+      },
+    })
+    // visible = last 8 of 10 tool + text = 9（窗口对 forceWorking 生效）
+    const blocks = wrapper.findAllComponents({ name: 'Block' })
+    expect(blocks.length).toBe(9)
   })
 })
