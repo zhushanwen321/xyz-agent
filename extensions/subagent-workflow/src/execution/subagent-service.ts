@@ -1070,6 +1070,7 @@ export class SubagentService {
       parentRecordId,
       depth,
       chatMode: opts.conversation === true,
+      idleTimeoutMs: opts.idleTimeoutMs,
       controller,
     });
 

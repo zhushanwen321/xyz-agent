@@ -17,7 +17,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import type { ExtensionAPI, ExtensionContext, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent } from "@earendil-works/pi-coding-agent";
+import type { BeforeAgentStartEvent, BeforeAgentStartEventResult, ExtensionAPI, ExtensionContext, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 
@@ -32,7 +32,7 @@ import {
   setModelConfigService,
 } from "./execution/model-config-service.ts";
 import { IDENTITY_CUSTOM_TYPE, type SubagentIdentityData } from "./execution/session-reconstructor.ts";
-import type { ExecutionMode } from "./execution/types.ts";
+import type { ExecutionMode, SubagentRecord } from "./execution/types.ts";
 import { maybeCleanupExpiredSessionFiles } from "./execution/session-file-gc.ts";
 import {
   getSubagentService,
@@ -79,6 +79,37 @@ declare module "@earendil-works/pi-coding-agent" {
 
 // 模块级 logger（setPiHandle 注入后自动走 appendEntry）
 const logger = getLogger("subagents");
+
+// ── SP-3: subagent 状态快照格式化（before_agent_start 注入用） ──
+
+/** 活跃 subagent 数量上限（超过截断显示）。 */
+const MAX_STATUS_INJECTION = 10;
+
+/**
+ * 将活跃 subagent record 格式化为一行一条的快照文本。
+ *
+ * 格式：
+ *   [subagent-status] N active subagents:
+ *   - sa-xxx (slug): running, rounds 0
+ *   - sa-yyy (slug): idle, rounds 3
+ *   +2 more, use action:'list'
+ *
+ * @param records 已筛选的活跃 record（running + idle）
+ */
+export function formatSubagentStatusSnapshot(records: SubagentRecord[]): string {
+  const lines = [`[subagent-status] ${records.length} active subagent${records.length === 1 ? "" : "s"}:`];
+  const shown = records.slice(0, MAX_STATUS_INJECTION);
+  for (const r of shown) {
+    const slug = r.slug || r.agent;
+    const roundPart = r.round !== undefined && r.round > 0 ? `, rounds ${r.round}` : "";
+    lines.push(`- ${r.id} (${slug}): ${r.status}${roundPart}`);
+  }
+  const remaining = records.length - MAX_STATUS_INJECTION;
+  if (remaining > 0) {
+    lines.push(`+${remaining} more, use action:'list'`);
+  }
+  return lines.join("\n");
+}
 
 // ═══ [V2 决策 7 防线 i] process 级 shutdown hook ═══
 //
@@ -130,6 +161,40 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // ════════════════════════════════════════════════════════════
   setupSubagentListInjector(pi);
   setupWorkflowListInjector(pi);
+
+  // ════════════════════════════════════════════════════════════
+  //  SP-3: before_agent_start subagent 状态注入
+  //
+  //  有活跃 subagent（running + idle）时注入 customType:'subagent-status' 快照消息，
+  //  持久化到 session 文件。compact 后下一个 loop 自动恢复引用，不依赖摘要质量。
+  //  无活跃 subagent 时不注入（零成本）。设计见 D5 / SP-3。
+  // ════════════════════════════════════════════════════════════
+  pi.on(
+    "before_agent_start",
+    (
+      _event: BeforeAgentStartEvent,
+      _ctx: ExtensionContext,
+    ): BeforeAgentStartEventResult | void => {
+      try {
+        const service = getSubagentService();
+        if (!service) return;
+
+        // 收集全部 record 后筛选活跃态（running + idle）。
+        // collectRecords 按 rootSessionId 过滤，只看本 session 的 subagent。
+        const allRecords = service.collectRecords(1000);
+        const activeRecords = allRecords.filter(
+          (r) => r.status === "running" || r.status === "idle",
+        );
+        if (activeRecords.length === 0) return;
+
+        const content = formatSubagentStatusSnapshot(activeRecords);
+        return { message: { customType: "subagent-status", content, display: true } };
+      } catch {
+        // fail-safe：不阻断 agent turn
+        return;
+      }
+    },
+  );
 
   // 模块级缓存：主 session 的 sessionFile（fork source 解析用）。
   let cachedMainSessionFile: string | undefined;
