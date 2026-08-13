@@ -389,7 +389,7 @@ const result = await callLLM(ctx, {
 | E2 | 提供 auto，换排序依据（如 contextWindow 或显式 priority） | ❌ |
 | E3 | 提供 auto，强制要求填 cost | ❌ |
 
-**推荐 E1**。理由：auto 在当前环境不可靠（cost 普遍缺失），提供它等于给用户埋坑。显式 selector 行为确定、可预期。permission 的 `classifier.model: "auto"` 配置在 C1 收口后，**映射为 `{type:"scoped"}`**——从用户 settings.json 的 enabledModels 取首个可用 model（用户显式排序，比 getAvailable 取首个更可控）。这同时修复了"读不到 OAuth provider"的缺陷（走 `modelRegistry.getApiKeyAndHeaders`）。⛔ **探针**（P3 实施时）：确认 enabledModels 非空时 scoped 能取到 model；enabledModels 为空时 permission 降级为 fail-closed `ask`（与现状一致）。**（C4 回写，批次 3）**：实现采用更宽的兜底（CL-scoped-fallback）：**enabledModels 为空 → 先试 available fallback（getAvailable 首个）→ 仍 null 才 fail-closed `ask`**——保证「有 apiKey provider 但没配 enabledModels」的用户不退化（旧 auto 行为）。探针结论按实现回写：降级语义是「available 兜底失败后才 fail-closed」，非「空即 fail-closed」。
+**推荐 E1**。理由：auto 在当前环境不可靠（cost 普遍缺失），提供它等于给用户埋坑。显式 selector 行为确定、可预期。permission 的 `classifier.model: "auto"` 配置在 C1 收口后，**映射为 `{type:"scoped"}`**——从用户 settings.json 的 enabledModels 取首个可用 model（用户显式排序，比 getAvailable 取首个更可控）。这同时修复了"读不到 OAuth provider"的缺陷（走 `modelRegistry.getApiKeyAndHeaders`）。⛔ **探针**（P3 实施时）：确认 enabledModels 非空时 scoped 能取到 model；enabledModels 为空时实现采用更宽的兜底（CL-scoped-fallback）。**（C4 裁决，已接受，批次 3）**：**enabledModels 为空 → 先试 available fallback（getAvailable 首个）→ 仍 null 才 fail-closed `ask`**——保证「有 apiKey provider 但没配 enabledModels」的用户不退化（旧 auto 行为）；降级语义是「available 兜底失败后才 fail-closed」，非「空即 fail-closed」。测试覆盖 `extensions/permission/src/__tests__/production.test.ts` TC7。
 
 **「没配置模型就不能用 auto」= 天然门禁，无需额外代码**：scoped 在 enabledModels 为空 / 启用的 model 都没配 auth 时返回 `null` → permission 沿用现有 `CLASSIFY_FALLBACK_RESULT`（`classifier.ts:80`）降级为 `ask`。这与 permission 现有 fail-closed 设计一致，C1 收口不需要写新的门禁逻辑。
 
@@ -439,6 +439,7 @@ export interface CallLLMOptions {
   maxTokens?: number;
   signal?: AbortSignal;
   timeoutMs?: number;
+  sessionId?: string;                         // 透传给 provider 的 SimpleStreamOptions，用于 session 缓存/路由
   // 注意：不传 tools —— 默认不塞工具（rename/permission 都不需要）
 }
 
@@ -471,13 +472,18 @@ export function callLLM(
 export function resolveModel(ctx, selector) {
   const reg = ctx.modelRegistry;
   if (selector.type === "ref") {
-    const [provider, modelId] = selector.ref.split("/");
+    // 用 indexOf 取首个 "/" 分隔，不整串 split —— modelId 可能含 "/"，如 "a/b/c" → provider="a", modelId="b/c"；若用 split 按 "/" 全切分，modelId 会被截成 "b" 丢弃 "/c"
+    const slash = selector.ref.indexOf("/");
+    const provider = slash >= 0 ? selector.ref.slice(0, slash) : selector.ref;
+    const modelId = slash >= 0 ? selector.ref.slice(slash + 1) : "";
     const m = reg.find(provider, modelId);
     return m && reg.hasConfiguredAuth(m) ? m : null;
   }
   if (selector.type === "fallback") {
     for (const ref of selector.refs) {
-      const [p, id] = ref.split("/");
+      const slash = ref.indexOf("/");
+      const p = slash >= 0 ? ref.slice(0, slash) : ref;
+      const id = slash >= 0 ? ref.slice(slash + 1) : "";
       const m = reg.find(p, id);
       if (m && reg.hasConfiguredAuth(m)) return m;
     }
@@ -542,7 +548,7 @@ export async function callLLM(ctx, opts) {
 | `callLLM` 返回 `{ok:false, recoverable:true}` | 网络/超时/auth 失败 | rename 静默跳过；permission 降级为 `ask`（fail-closed） |
 | `callLLM` 返回 `{ok:false, recoverable:false}` | model 配置错误（如 api 类型不支持） | ~~修正 models.json 的 model 定义~~（**C2b 回写**：当前实现无此分支，catch/stopReason 路径统一 `recoverable:true`，细分待未来有消费者后再实现；`stopReason?: "error" \| "aborted"` 作为独立透传字段已就位，细分时可映射） |
 
-> **C2b 回写（批次 3）**：错误规格两级 recoverable 为设计目标，**当前实现统一 `true`**（catch 与 stopReason 归一化都不细分）。唯一消费者 rename 不区分值，细分属 YAGNI，待未来出现需要区分恢复性的消费者（如「model 配置错误立即失败不重试」）再实现，届时直接映射已就位的 stopReason 透传字段。
+> **C2b 回写（批次 3，实现现状）**：错误规格两级 recoverable 为设计目标，但**当前实现 catch 与 stopReason 归一化路径统一返回 `recoverable:true`，`false` 分支尚未实现**。唯一消费者 rename 不区分该值，细分属 YAGNI（与 followups C2 裁决一致）；`stopReason?: "error" | "aborted"` 透传字段已就位，未来出现需区分恢复性的消费者（如「model 配置错误立即失败不重试」）时可直接映射。
 
 **调用语义契约（fire-and-forget，审查 suggestion）**：rename-session 现状 `index.ts` 的 turn_end handler 是**真正的 fire-and-forget**——`void callRenameLLM(...).then(...).catch(...)`，handler 立即 resolve，LLM 调用与 setSessionName 在后台异步完成（不阻塞 agent 进入下一次迭代）。**改造后必须保留此契约**：turn_end handler 内调 `callLLM` 必须用 `void callLLM(...).then(...).catch(...)` 包裹，**禁止 `await callLLM`**（await 会阻塞 turn_end handler，与现有行为不符，可能导致 agent 循环卡顿）。permission 的 classifier 不受此约束（classifier 在请求处理链内同步等待结果是正确行为）。
 
@@ -589,7 +595,7 @@ interface RenameSessionConfig {
 |----|------|------|
 | `model-switch` | `config.ts:15` `join(homedir(), ".pi", "agent", "model-policy.json")` | 改走 `getAgentDir()` |
 | `vision` | `vision-model.ts:46` 硬编码 `os.homedir()/.pi/agent` 读 `vision-models.json` | 改走 `getAgentDir()`（**仅路径收口，schema 不动**——候选列表语义与 LLM 线开关不同） |
-| `scheduler` | `store.ts` 按 cwd 隔离，根目录硬编码 homedir | 改走 `getAgentDir()` 派生 |
+| `scheduler` | 已重构：`store.ts` 拆分为 backend/runtime/service 等，P4 目标（数据目录走 `getAgentDir`）在 `importer.ts:33` 实现（`scheduler/<root>/...` 从 `getAgentDir` 派生）；`importer.ts:34` 的 homedir legacyPath 是旧版（npm 0.1.1）数据迁移 fallback，有意保留 | 无需改动（P4 已在 `importer.ts` 落地） |
 | quota-providers 的 kimi/zhipu/opencode | 读 `~/.pi/agent/secrets/*.txt`（API key fallback）硬编码 homedir | 改走 `getAgentDir()` 派生（与决策 D 的 quota-providers 保留独立一致，仅修路径） |
 
 **注意**：这些都是独立改动（不依赖 llm-shared），可作为本设计的附带任务，也可拆成独立 follow-up。**建议本次一并做**（趁删包重整配置体系，一次性收敛）。**⚠️ 这些硬编码在 xyz-agent 环境下会读错目录**（读 `~/.pi/agent/` 而非隔离的 `~/.xyz-agent/pi/agent/`），是实例隔离的实际 bug，不只是整洁性问题——subagent 调研发现 6 个 extension 受影响（含 3 个 quota provider 的 secrets 文件）。
@@ -654,7 +660,7 @@ interface RenameSessionConfig {
 
 ### 场景 3：permission classifier 走共享库后能用到 OAuth provider（验证目标 2、3，依赖决策 C=C1）
 
-**前置**：用户只通过 `pi auth login` 配了官方 provider（没手写 models.json 的 provider）。`permission-config.json` 的 `classifier.model` 设为 `"auto"` 或某 OAuth provider 的 `"provider/model-id"` ref（**C3b 回写**：仅支持 string 形式；对象形式会被 normalize 忽略并 console.warn 回落 `auto`）。
+**前置**：用户只通过 `pi auth login` 配了官方 provider（没手写 models.json 的 provider）。`permission-config.json` 的 `classifier.model` 仅支持 string 形式（`"auto"` 或 OAuth provider 的 `"provider/model-id"` ref）；传对象会被 normalize 忽略并 `console.warn('[pi-permission] Ignoring invalid classifier.model ...')` 回落 `auto`（与实现 `config.ts:67-69` 一致，**C3b 回写**）。
 
 **步骤**：触发一次需要 classifier 的命令（如执行一个中等风险 bash 命令）。
 
@@ -725,7 +731,7 @@ interface RenameSessionConfig {
 - `extensions/rename-session/src/{index.ts, llm.ts, pure.ts, commands.ts}`（收口到 llm-shared）
 - `extensions/permission/src/classifier/{model-resolver.ts, classifier.ts}` + `production.ts`（若 C1）
 - `extensions/permission/package.json`（移除 statusline peerDep）
-- `extensions/model-switch/src/config.ts`、`extensions/vision/src/vision-model.ts`、`extensions/scheduler/src/store.ts`（路径改 getAgentDir）
+- `extensions/model-switch/src/config.ts`、`extensions/vision/src/vision-model.ts`（路径改 getAgentDir）；`extensions/scheduler/src/importer.ts`（已重构：`store.ts` 拆分为 backend/runtime/service 等，`importer.ts:33` 已走 `getAgentDir`，`:34` homedir legacyPath 为旧版迁移 fallback 有意保留）
 - `AGENTS.md`（Pi Extension 全集表格移除 3 行，17 → 14）
 - `extension-dependencies.json`（移除 3 个废弃包条目）
 - `docs/extensions/` 下引用废弃包的文档（分类处理，见 §2.6「docs 引用分类处理」）：
