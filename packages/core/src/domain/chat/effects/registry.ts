@@ -461,13 +461,10 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   },
 
   // ── 运行态 / 元信息（system 提示行，W05-A/W07-C）──
-  'message.status': () => {
-    // W05-A：运行时态推送（steer/aborted/sent/queued 等运行状态）。
-    // 区别于请求级 reply（send/steer/follow_up/abort 的 reply 已走 pending 通道，
-    // 不经 streamSubscribe）——此处是 pi status 事件经 event-adapter 直推。
-    // 当前最小化：仅接收记录，不改 Message.status（streaming/complete/error 是
-    // 消息生命周期，message.status 是运行过程态，两者正交）。
-  },
+  // message.status（pi status 事件经 event-adapter 直推：steer/aborted/sent/queued 等运行态）
+  // 未注册 handler——dispatchMessageEvent 对未注册 type 直接 no-op（保留事件接收，不消费）。
+  // 运行态语义未用：streaming/complete/error 是消息生命周期（finalizeSession 收口），
+  // 与 message.status 运行过程态正交（§3.3.6 死代码清理，原空 handler 删除）。
 
   'message.compactionSummary': (ctx, sid, payload) => {
     const { messages } = ctx
