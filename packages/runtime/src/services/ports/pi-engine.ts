@@ -143,6 +143,7 @@ export interface IPiEngine {
   followUp(content: string): Promise<PiMessage>
   setModel(provider: ProviderId, modelId: string): Promise<PiMessage>
   setThinkingLevel(level: string): Promise<PiMessage>
+  /** [DEAD] pi get_messages 死路径——见 RpcPiEngine.getHistory（生产零调用） */
   getHistory(): Promise<PiMessage>
   /**
    * 拉取 pi session 的完整 entry 树（get_entries RPC）。

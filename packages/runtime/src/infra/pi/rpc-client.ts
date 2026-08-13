@@ -508,6 +508,8 @@ export class RpcClient implements IPiEngine {
     return this.sendCommand('set_thinking_level', { level })
   }
 
+  /** [DEAD] pi get_messages 死路径——生产零调用（session-service.getHistory 走 client.getEntries entry 树重建）。
+   *  保留供未来扁平 message 列表场景；删除前确认无 mock/测试依赖。 */
   getHistory(): Promise<PiMessage> {
     return this.sendCommand('get_messages')
   }

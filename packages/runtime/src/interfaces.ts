@@ -133,7 +133,7 @@ export interface ISessionService {
   getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }>
   /**
    * 获取 session 全量历史（直读 JSONL 文件，不截断）。
-   * 与 getHistory 的区别：getHistory 优先走 RPC（pi client.getHistory），文件路径 fallback 截断尾读；
+   * 与 getHistory 的区别：getHistory 优先走 RPC（pi client.getEntries entry 树重建），文件路径 fallback 截断尾读；
    * getFullHistory 直接全量读文件，供前端「加载更多历史」按钮调用（FR-4）。
    */
   getFullHistory(sessionId: string): Promise<Message[]>

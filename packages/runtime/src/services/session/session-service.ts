@@ -519,7 +519,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   /**
    * W4 H4：全量读取 session 历史（加载更多 fallback）。
    *
-   * 与 getHistory 的区别：getHistory 优先走 RPC（pi client.getHistory），文件路径
+   * 与 getHistory 的区别：getHistory 优先走 RPC（pi client.getEntries entry 树重建），文件路径
    * fallback 走尾读（W1 tailReadHistory，只加载最近 20 turn）。本方法显式走全量
    * 文件读取（getHistoryFromFilePath），供前端「加载更多历史」按钮调用（FR-4）。
    */

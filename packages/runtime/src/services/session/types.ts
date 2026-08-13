@@ -201,7 +201,7 @@ export type PiTranslatedEvent =
    * - errorMessage 真值（failed）→ session.compacted{error} + message.error 对话流提示 + 复位
    *
    * 失败判据以 errorMessage 真值为准（非 aborted 字段、非 key 存在性）—— pi 三种 aborted:true
-   * 形态在 errorMessage 真值层面一致（都 falsy）。result 类型暂 unknown（M5 契约清理时收紧，CQ1）。
+   * 形态在 errorMessage 真值层面一致（都 falsy）。result 类型暂 unknown（M5 契约清理时收紧，CQ1——事件路径宽松形状 PiCompactionResult 在 infra/pi/pi-protocol，services/session import 会违分层）。
    * 孤儿 end 容错：overflow 早退路径无 preceding start，end handler 复位对「本来就 false 的 isCompacting」幂等无害。
    */
   | { kind: 'compaction-end'; reason: string; result?: unknown; aborted: boolean; errorMessage?: string }
