@@ -18,6 +18,7 @@ const {
   mockRenameSync,
   mockMkdirSync,
   mockExistsSync,
+  mockUnlinkSync,
   mockBuildRuntimeProviders,
   mockAvgSpeed,
 } = vi.hoisted(() => ({
@@ -26,6 +27,7 @@ const {
   mockRenameSync: vi.fn(),
   mockMkdirSync: vi.fn(),
   mockExistsSync: vi.fn(),
+  mockUnlinkSync: vi.fn(),
   mockBuildRuntimeProviders: vi.fn(),
   mockAvgSpeed: vi.fn().mockReturnValue(0),
 }));
@@ -35,6 +37,7 @@ vi.mock("node:fs", () => ({
   mkdirSync: mockMkdirSync,
   readFileSync: mockReadFileSync,
   renameSync: mockRenameSync,
+  unlinkSync: mockUnlinkSync,
   writeFileSync: mockWriteFileSync,
 }));
 
@@ -70,6 +73,106 @@ import {
 } from "../cache.js";
 
 // ── Tests ──────────────────────────────────────────────
+
+/** 旧路径常量（getAgentDir mock 为 /tmp/agent）。 */
+const LEGACY_CACHE_PATH = "/tmp/agent/statusline_cache.json";
+const NEW_CACHE_PATH = "/tmp/test-cache.json";
+
+describe("legacy cache migration", () => {
+  // 迁移用模块级 cacheMigrated 标志，需 resetModules + 动态 import 隔离
+  async function importFresh() {
+    vi.resetModules();
+    return import("../cache.js");
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  // 迁移测试设置 fs mock 实现（existsSync 按路径判定等），
+  // 防止实现泄漏到后续 describe（clearAllMocks 不清实现，只清调用记录）
+  afterEach(() => {
+    mockExistsSync.mockReset();
+    mockMkdirSync.mockReset();
+    mockRenameSync.mockReset();
+    mockUnlinkSync.mockReset();
+    mockReadFileSync.mockReset();
+    vi.restoreAllMocks();
+  });
+
+  it("moves legacy cache file to config/quota-cache.json on first load", async () => {
+    mockExistsSync.mockImplementation((p: unknown) => p === LEGACY_CACHE_PATH);
+    mockReadFileSync.mockImplementation(() => {
+      throw new Error("ENOENT");
+    });
+
+    const { readCache } = await importFresh();
+    readCache();
+
+    expect(mockRenameSync).toHaveBeenCalledWith(LEGACY_CACHE_PATH, NEW_CACHE_PATH);
+    // 写前确保新路径所在目录存在（mock 的 getCachePath 是平铺 /tmp/test-cache.json → dirname=/tmp）
+    expect(mockMkdirSync).toHaveBeenCalledWith("/tmp", { recursive: true });
+    expect(mockUnlinkSync).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite new cache when both exist, removes legacy file", async () => {
+    mockExistsSync.mockImplementation(
+      (p: unknown) => p === LEGACY_CACHE_PATH || p === NEW_CACHE_PATH,
+    );
+    mockReadFileSync.mockReturnValue(JSON.stringify({ updatedAt: Date.now() }));
+
+    const { readCache } = await importFresh();
+    readCache();
+
+    expect(mockRenameSync).not.toHaveBeenCalled();
+    expect(mockUnlinkSync).toHaveBeenCalledWith(LEGACY_CACHE_PATH);
+  });
+
+  it("is a noop when legacy cache file does not exist", async () => {
+    mockExistsSync.mockImplementation(() => false);
+    mockReadFileSync.mockImplementation(() => {
+      throw new Error("ENOENT");
+    });
+
+    const { readCache } = await importFresh();
+    readCache();
+
+    expect(mockRenameSync).not.toHaveBeenCalled();
+    expect(mockUnlinkSync).not.toHaveBeenCalled();
+  });
+
+  it("migrates only once per process", async () => {
+    mockExistsSync.mockImplementation(
+      (p: unknown) => p === LEGACY_CACHE_PATH || p === NEW_CACHE_PATH,
+    );
+    mockReadFileSync.mockReturnValue(JSON.stringify({ updatedAt: Date.now() }));
+
+    const { readCache } = await importFresh();
+    readCache();
+    // 第二次读不再触碰旧文件（标志已置位）
+    readCache();
+
+    expect(mockUnlinkSync).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps legacy file and continues when migration fails", async () => {
+    mockExistsSync.mockImplementation((p: unknown) => p === LEGACY_CACHE_PATH);
+    mockMkdirSync.mockImplementation(() => {
+      throw new Error("EACCES");
+    });
+    mockReadFileSync.mockImplementation(() => {
+      throw new Error("ENOENT");
+    });
+
+    const { readCache } = await importFresh();
+    expect(() => readCache()).not.toThrow();
+    expect(mockRenameSync).not.toHaveBeenCalled();
+    expect(mockUnlinkSync).not.toHaveBeenCalled();
+  });
+});
 
 describe("readCache", () => {
   beforeEach(() => {

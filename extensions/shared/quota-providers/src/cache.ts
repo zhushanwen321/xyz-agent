@@ -7,8 +7,8 @@
  *   - 新增 provider：实现 QuotaProvider 接口 → 在 PROVIDERS 注册（零改动 cache.ts）
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
@@ -40,9 +40,36 @@ const RECORD_MIN_FIELDS = 2;
 
 // ── Paths ──────────────────────────────────────────────
 
-const PI_DIR = getAgentDir();
 const CACHE_PATH = getCachePath();
 const SPEED_DIR = getSpeedDir();
+
+// ── 历史路径迁移 ────────────────────────────────────────
+// [HISTORICAL] statusline 包已删，其遗留的 <agentDir>/statusline_cache.json 由本库接管
+// 写入。旧文件名仍存在于已升级用户的磁盘上：首次加载时迁移到 config/quota-cache.json
+// 并删旧。只迁移一次（模块级标志）；失败不阻断——缓存是易失数据（TTL 2 分钟），
+// 下次 doUpdate 会重建，旧文件保留待下次进程启动重试。
+let cacheMigrated = false;
+
+function ensureCacheMigrated(): void {
+	if (cacheMigrated) return;
+	cacheMigrated = true;
+	const legacyPath = join(getAgentDir(), "statusline_cache.json");
+	if (!existsSync(legacyPath)) return;
+	try {
+		mkdirSync(dirname(CACHE_PATH), { recursive: true });
+		if (existsSync(CACHE_PATH)) {
+			// 新路径已有内容（已迁移或用户手动放置）→ 不覆盖，仅删旧
+			unlinkSync(legacyPath);
+			console.warn(`[quota-cache] legacy cache superseded, removed ${legacyPath}`);
+		} else {
+			renameSync(legacyPath, CACHE_PATH);
+			console.warn(`[quota-cache] migrated legacy cache: ${legacyPath} → ${CACHE_PATH}`);
+		}
+	} catch (e) {
+		// 迁移失败属容错路径（best-effort）：保留旧文件待下次进程启动重试；缓存是易失数据（TTL 2 分钟），不阻断读取
+		console.warn(`[quota-cache] legacy cache migration failed (keeping old file):`, e);
+	}
+}
 
 // ── CacheData（动态 schema，无需手动维护字段）───────
 // provider 数据以 provider.id 为 key 存储，类型安全由 provider normalize 保证。
@@ -113,7 +140,7 @@ async function doUpdate(): Promise<void> {
 
 	// 原子写入：先写临时文件再 rename，防止半写损坏
 	try {
-		mkdirSync(PI_DIR, { recursive: true });
+		mkdirSync(dirname(CACHE_PATH), { recursive: true });
 		const tmpPath = `${CACHE_PATH}.tmp`;
 		writeFileSync(tmpPath, JSON.stringify(cache, null, JSON_INDENT), "utf-8");
 		renameSync(tmpPath, CACHE_PATH);
@@ -124,6 +151,7 @@ async function doUpdate(): Promise<void> {
 }
 
 function readCacheSync(): CacheData {
+	ensureCacheMigrated();
 	try {
 		const parsed = JSON.parse(readFileSync(CACHE_PATH, "utf-8"));
 		if (typeof parsed !== "object" || parsed === null) return { ...EMPTY_CACHE };

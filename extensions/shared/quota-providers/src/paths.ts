@@ -9,7 +9,7 @@
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 
-/** 状态栏扩展的配置根目录（~/.pi/agent/config/） */
+/** quota-providers 配置根目录（<agentDir>/config/） */
 export function getConfigDir(): string {
 	return join(getAgentDir(), "config");
 }
@@ -24,9 +24,9 @@ export function getSecretsPath(): string {
 	return join(getConfigDir(), "secrets.json");
 }
 
-/** 用量缓存文件名（历史遗留自 statusline 接管期，保留以兼容既有缓存数据）。 */
+/** 用量缓存文件路径（<agentDir>/config/quota-cache.json）。 */
 export function getCachePath(): string {
-	return join(getAgentDir(), "statusline_cache.json");
+	return join(getConfigDir(), "quota-cache.json");
 }
 
 /** token-stats 目录 */
