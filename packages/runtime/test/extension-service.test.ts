@@ -6,15 +6,17 @@ import { ExtensionService, ExtensionInstallError } from '../src/services/extensi
 import { NpmGitInstaller } from '../src/infra/installers/npm-git-installer.js'
 import { ExtensionResolver } from '../src/infra/installers/extension-resolver.js'
 import { PiExtensionSettings } from '../src/infra/pi/pi-extension-settings.js'
+import { getPiAgentDir } from '../src/infra/pi/pi-paths.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
 
-import { installPackage, uninstallPackage, NpmInstallError } from '../src/infra/installers/npm-installer.js'
+import { installPackage, uninstallPackage, NpmInstallError, fetchLatestVersion } from '../src/infra/installers/npm-installer.js'
 import { execFileSync } from 'node:child_process'
 
 vi.mock('../src/infra/installers/npm-installer.js', () => ({
   installPackage: vi.fn(),
   uninstallPackage: vi.fn(),
   installDependencies: vi.fn(),
+  fetchLatestVersion: vi.fn(),
   NpmInstallError: class extends Error {
     code: 'not_found' | 'network' | 'extract' | 'integrity'
     constructor(code: 'not_found' | 'network' | 'extract' | 'integrity', message: string) {
@@ -29,6 +31,10 @@ vi.mock('../src/infra/installers/npm-installer.js', () => ({
 vi.mock('node:child_process', () => ({
   execSync: vi.fn(() => ''),
   execFileSync: vi.fn(() => ''),
+  // runMigrateScript 的 spawn 在单测中经原型 spy mock 掉，不真正 spawn
+  spawn: vi.fn(() => {
+    throw new Error('spawn should be mocked in tests')
+  }),
 }))
 
 const mockedInstallPackage = vi.mocked(installPackage)
@@ -390,6 +396,97 @@ describe('ExtensionService', () => {
       }), 'utf-8')
 
       await expect(service.installExtension('npm:invalid-pkg')).rejects.toThrow('not a valid pi extension')
+    })
+  })
+
+  describe('config migration hook (pi.migrate)', () => {
+    let migrateSpy: ReturnType<typeof vi.spyOn>
+
+    beforeEach(() => {
+      migrateSpy = vi.spyOn(NpmGitInstaller.prototype, 'runMigrateScript').mockResolvedValue(undefined)
+    })
+
+    afterEach(() => {
+      migrateSpy.mockRestore()
+    })
+
+    /** 造一个带 pi.migrate 声明的假包目录（含脚本文件）。 */
+    function seedMigratePackage(name: string, opts: { withMigrate?: boolean; withScriptFile?: boolean } = {}) {
+      const { withMigrate = true, withScriptFile = true } = opts
+      const pkgDir = join(testSettingsDir, 'npm', 'node_modules', name)
+      mkdirSync(pkgDir, { recursive: true })
+      const pkgJson: Record<string, unknown> = {
+        name,
+        version: '1.0.0',
+        description: 'migrate fixture',
+        keywords: ['pi-package'],
+        peerDependencies: { '@mariozechner/pi-coding-agent': '*' },
+      }
+      if (withMigrate) pkgJson.pi = { migrate: './scripts/migrate-config.mjs' }
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify(pkgJson), 'utf-8')
+      if (withScriptFile) {
+        mkdirSync(join(pkgDir, 'scripts'), { recursive: true })
+        writeFileSync(join(pkgDir, 'scripts', 'migrate-config.mjs'), 'export function migrateConfig() {}', 'utf-8')
+      }
+      return pkgDir
+    }
+
+    it('runs pi.migrate script after successful install with agentDir injected', async () => {
+      mockedInstallPackage.mockResolvedValue(undefined)
+      const pkgDir = seedMigratePackage('migrate-pkg')
+
+      await service.installExtension('npm:migrate-pkg')
+
+      expect(migrateSpy).toHaveBeenCalledTimes(1)
+      expect(migrateSpy).toHaveBeenCalledWith(
+        join(pkgDir, 'scripts', 'migrate-config.mjs'),
+        getPiAgentDir(),
+      )
+    })
+
+    it('skips migration when package has no pi.migrate declaration', async () => {
+      mockedInstallPackage.mockResolvedValue(undefined)
+      seedMigratePackage('no-migrate-pkg', { withMigrate: false })
+
+      await service.installExtension('npm:no-migrate-pkg')
+
+      expect(migrateSpy).not.toHaveBeenCalled()
+    })
+
+    it('skips migration when declared script file is missing (non-fatal)', async () => {
+      mockedInstallPackage.mockResolvedValue(undefined)
+      seedMigratePackage('missing-script-pkg', { withScriptFile: false })
+
+      await service.installExtension('npm:missing-script-pkg')
+
+      expect(migrateSpy).not.toHaveBeenCalled()
+    })
+
+    it('install still succeeds when migration script fails (best-effort)', async () => {
+      mockedInstallPackage.mockResolvedValue(undefined)
+      seedMigratePackage('fail-migrate-pkg')
+      migrateSpy.mockRejectedValue(new Error('script crashed'))
+
+      await expect(service.installExtension('npm:fail-migrate-pkg')).resolves.toBeUndefined()
+      expect(migrateSpy).toHaveBeenCalledTimes(1)
+    })
+
+    it('runs migration on upgrade path too (shared installAndValidate)', async () => {
+      mockedInstallPackage.mockResolvedValue(undefined)
+      vi.mocked(fetchLatestVersion).mockResolvedValue('9.9.9')
+      const pkgDir = seedMigratePackage('upgrade-migrate-pkg')
+      // 先安装（settings.json 写入 packages[]）
+      await service.installExtension('npm:upgrade-migrate-pkg')
+      expect(migrateSpy).toHaveBeenCalledTimes(1)
+
+      // 升级：已安装版本 1.0.0 < latest 9.9.9 → 重新安装 → 迁移再次执行
+      await service.upgradeExtension('upgrade-migrate-pkg')
+
+      expect(migrateSpy).toHaveBeenCalledTimes(2)
+      expect(migrateSpy).toHaveBeenLastCalledWith(
+        join(pkgDir, 'scripts', 'migrate-config.mjs'),
+        getPiAgentDir(),
+      )
     })
   })
 

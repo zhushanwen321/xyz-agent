@@ -29,7 +29,7 @@ import type { IConfigStore } from './ports/config.js'
 import { isStrictlyUnder, isUnderOrEqual, extractRepoName, expandHome } from '../utils/path-utils.js'
 import { toErrorMessage } from '../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../utils/runtime-env.js'
-import { getExtensionsDir, getNpmDir, getTmpDir } from '../infra/pi/pi-paths.js'
+import { getExtensionsDir, getNpmDir, getTmpDir, getPiAgentDir } from '../infra/pi/pi-paths.js'
 
 const log = {
   info: (...args: unknown[]) => console.log('[extension-service]', ...args),
@@ -954,6 +954,36 @@ export class ExtensionService {
         `"${pkgName}" is not a valid pi extension${contextLabel === 'upgrade' ? ' after upgrade' : ''}.`,
         'Check that the package has pi manifest fields (keywords: ["pi-package"], peerDependencies with pi-coding-agent, or a "pi" field in package.json).',
       )
+    }
+
+    // 装后配置迁移（best-effort）：包声明 pi.migrate 时执行其幂等迁移脚本，
+    // 把历史路径的配置文件搬到 <agentDir>/config/<简名>.json。
+    // 覆盖全部安装/升级路径（installExtension / upgradeExtension 都经此方法）。
+    await this.runConfigMigration(pkgInstallDir)
+  }
+
+  /**
+   * 执行包声明的配置迁移脚本（package.json `pi.migrate`，相对路径）。
+   * best-effort：脚本缺失/执行失败仅记日志，不阻断安装结果——
+   * 迁移脚本自身幂等，下次安装/升级会重试。
+   */
+  private async runConfigMigration(pkgInstallDir: string): Promise<void> {
+    try {
+      const pkgPath = join(pkgInstallDir, 'package.json')
+      if (!existsSync(pkgPath)) return
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { pi?: { migrate?: unknown } }
+      const migrateRel = pkg.pi?.migrate
+      if (typeof migrateRel !== 'string' || !migrateRel) return
+      const scriptPath = resolve(pkgInstallDir, migrateRel)
+      if (!existsSync(scriptPath)) {
+        log.warn(`[extension-service] package declares pi.migrate but script not found: ${scriptPath}`)
+        return
+      }
+      await this.installer.runMigrateScript(scriptPath, getPiAgentDir())
+      log.info(`[extension-service] config migration executed: ${scriptPath}`)
+    } catch (e) {
+      // best-effort：迁移失败不影响安装结果（脚本幂等，下次升级重试）
+      log.warn(`[extension-service] config migration failed (non-fatal): ${toErrorMessage(e)}`)
     }
   }
 

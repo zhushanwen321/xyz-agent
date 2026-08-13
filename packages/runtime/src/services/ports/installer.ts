@@ -43,6 +43,18 @@ export interface IInstaller {
   /** 从 npm registry 获取包的 latest 版本号。失败抛 InstallerError 形状的错误。
    *  timeout：可选，未传时实现使用默认值（版本检查应比 install 更快失败）。 */
   getLatestVersion(pkgName: string, timeout?: number): Promise<string>
+  /**
+   * 执行包声明的配置迁移脚本（package.json `pi.migrate`）。安装/升级成功后由
+   * ExtensionService 调用，完成历史配置文件的「安装时迁移」——extension 运行时只读
+   * 新路径（<agentDir>/config/<简名>.json），不双读旧路径。
+   *
+   * 实现以子进程隔离执行（超时保护，脚本失败不污染宿主进程）；调用方按 best-effort
+   * 处理（失败记日志，不阻断安装结果——脚本自身幂等，下次安装/升级重试）。
+   *
+   * @param scriptPath 迁移脚本绝对路径（.mjs）
+   * @param agentDir   pi agent 目录（注入 PI_CODING_AGENT_DIR + argv[2]，供脚本解析）
+   */
+  runMigrateScript(scriptPath: string, agentDir: string): Promise<void>
 }
 
 /**
