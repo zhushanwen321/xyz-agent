@@ -3,7 +3,7 @@
  *
  * 两级 TUI 选择：
  *  - 第一级（provider stage）：列出 'Auto' + 所有可用 provider（listAvailableModels）
- *  - 第二级（model stage）：选中具体 provider 后，列出该 provider 下的 model（按 cost 升序）
+ *  - 第二级（model stage）：选中具体 provider 后，列出该 provider 下的 model（按 provider + id 字典序）
  *  - 选 'Auto' 或具体 provider/model → done(SelectionResult)；Esc 回退 / 取消
  *
  * 三模式分发（pickModelViaOverlay）：
@@ -227,12 +227,12 @@ export class ProviderModelSelectorComponent extends Container {
 		this.addChild(this.currentList);
 	}
 
-	/** 构建 model stage 的 SelectList（按 cost 升序，由 modelsByProvider 保证）。 */
+	/** 构建 model stage 的 SelectList（按 provider + id 字典序，由 listAvailableModels 保证）。 */
 	private buildModelList(provider: string, models: readonly ResolvedModelEntry[]): SelectList {
 		const items: SelectItem[] = models.map((m) => ({
 			value: m.id,
 			label: m.id,
-			description: `input cost: ${m.cost.input}`,
+			description: `api: ${m.api}`,
 		}));
 		const list = new SelectList(items, MAX_VISIBLE_ITEMS, this.theme);
 		const preSelected = this.computeModelSelectedIndex(models);

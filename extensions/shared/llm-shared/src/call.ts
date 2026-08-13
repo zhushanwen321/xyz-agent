@@ -70,12 +70,14 @@ export function extractText(resp: {
  * 发起一次 LLM 调用（completeSimple），返回归一化结果。
  *
  * 流程：
- * 1. 凭证：getApiKeyAndHeaders(model) → narrow（auth.ok 判别联合）→ 失败返回 {ok:false, recoverable:true}
+ * 1. 凭证：getApiKeyAndHeaders(model) → narrow（auth.ok 判别联合）→ 返回 {ok:false} 提前返回；
+ *    reject（抛异常，非返回 {ok:false}）也落入步骤 5（B5：凭证注入与 completeSimple 同处 try，
+ *    保证 reject 归一为 {ok:false}，调用方日志前缀一致）
  * 2. 调用：completeSimple(model, {systemPrompt, messages, tools:[]}, {apiKey, headers?, env?, signal?, maxTokens?, timeoutMs?, sessionId?})
  * 3. 检查 resp.stopReason：error/aborted（completeSimple 对错误/中止也 resolve 带 stopReason，G3）
  *    → {ok:false, error: 提取错误文本, recoverable:true, stopReason}（不再当正常内容提取）
  * 4. 提取 text → {ok:true, content}
- * 5. throw（网络/超时/解析）→ catch → {ok:false, error:String(e), recoverable:true}
+ * 5. throw（getApiKeyAndHeaders reject / 网络 / 超时 / 解析）→ catch → {ok:false, error:String(e), recoverable:true}
  *    （C2b：catch 路径不细分 recoverable，统一 true；stopReason 不设——错误原因不可知）
  *
  * tools 显式传 []（不塞工具）—— 本库用于标题生成等 best-effort 场景，不需要工具调用。
@@ -84,15 +86,18 @@ export async function callLLM(
 	ctx: ExtensionContext,
 	opts: CallLLMOptions,
 ): Promise<CallLLMResult> {
-	// 1. 凭证（判别联合必须 narrow）
-	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(opts.model);
-	if (!auth.ok) {
-		return { ok: false, error: auth.error, recoverable: true };
-	}
-
-	// 2. 调用 completeSimple（字段名经探针⑤对齐：Context{systemPrompt?,messages,tools?},
-	//    SimpleStreamOptions extends StreamOptions{apiKey?,headers?,env?,signal?,maxTokens?,timeoutMs?,sessionId?}）
+	// 整个流程纳入 try：getApiKeyAndHeaders / completeSimple 任一 reject/throw 都归一为
+	// {ok:false, recoverable:true}，保证调用方日志前缀一致（B5：凭证注入原在 try 外，reject 时
+	// callLLM 直接 reject，上游走外层 .catch 输出不一致前缀，如 [pi-rename-session] 而非 [rename-session]）。
 	try {
+		// 1. 凭证（判别联合必须 narrow）：返回 {ok:false} → 提前返回；reject（抛异常）→ 进 catch
+		const auth = await ctx.modelRegistry.getApiKeyAndHeaders(opts.model);
+		if (!auth.ok) {
+			return { ok: false, error: auth.error, recoverable: true };
+		}
+
+		// 2. 调用 completeSimple（字段名经探针⑤对齐：Context{systemPrompt?,messages,tools?},
+		//    SimpleStreamOptions extends StreamOptions{apiKey?,headers?,env?,signal?,maxTokens?,timeoutMs?,sessionId?}）
 		const context: LlmContext = {
 			systemPrompt: opts.systemPrompt,
 			messages: opts.messages,

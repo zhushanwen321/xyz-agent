@@ -158,8 +158,12 @@ export function cleanTitle(content: string, maxLength: number): string {
 	const trimmed = content.trim();
 	if (!trimmed) return "";
 
+	// B1: 归一化内部空白——把所有连续空白（含 \n / \r / \t）压成单空格，
+	// 避免 LLM 返回多行标题（如 "重构API层\n更新文档"）原样落库破坏 UI 标题/列表渲染
+	const normalized = trimmed.replace(/\s+/g, " ");
+
 	// 去首尾成对引号（单/双/中文）和 markdown 强调标记（* ** ` _）
-	const cleaned = trimmed.replace(/^["“”'`*_]+|["“”'`*_]+$/g, "").trim();
+	const cleaned = normalized.replace(/^["“”'`*_]+|["“”'`*_]+$/g, "").trim();
 	if (!cleaned) return "";
 
 	// 按 Unicode 码点截断（避免截断多字节字符）

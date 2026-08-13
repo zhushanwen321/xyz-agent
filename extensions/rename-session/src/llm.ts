@@ -82,9 +82,6 @@ export async function callRenameLLM(
 		return null;
 	}
 
-	// A1 成功路径日志（R1 验收前提）：记录所选 model id，实证「改名用了配置的模型」。
-	console.warn(`[rename-session] rename with model ${model.id}`);
-
 	const sessionId = ctx.sessionManager.getSessionId();
 	const messages = buildMessages(
 		ctx.sessionManager.getEntries() as ReadonlyArray<EntryLike>,
@@ -106,6 +103,11 @@ export async function callRenameLLM(
 		console.warn(`[rename-session] rename LLM call failed: ${result.error ?? "unknown error"}`);
 		return null;
 	}
+
+	// A1 成功路径日志（B2+B3 修正）：
+	// - B2 位置：原在 callLLM 调用前打出，失败时会误导（日志已落但 rename 未发生）；移到 result.ok 确认后
+	// - B3 文案：补 provider 前缀，区分两个 provider 同名 model
+	console.warn(`[rename-session] rename with model ${model.provider}/${model.id}`);
 
 	const title = cleanTitle(result.content, config.maxTitleLength);
 	return title || null;

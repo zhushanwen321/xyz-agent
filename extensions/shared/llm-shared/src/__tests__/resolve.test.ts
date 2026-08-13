@@ -88,4 +88,36 @@ describe("resolveModel", () => {
 			expect(resolveModel(ctx, { type: "available" })).toBeNull();
 		});
 	});
+
+	describe("ref 非法格式（parseRef 防护）", () => {
+		it("C3: ref 无 '/'（如 'abc'）→ null，不调 find", () => {
+			const find = vi.fn((_provider: string, _modelId: string): Model<Api> | undefined => undefined);
+			const ctx = makeCtx({ find, hasConfiguredAuth: () => true });
+			expect(resolveModel(ctx, { type: "ref", ref: "abc" })).toBeNull();
+			expect(find).not.toHaveBeenCalled();
+		});
+
+		it("C3: ref 以 '/' 开头（如 '/model'）→ null，不调 find", () => {
+			const find = vi.fn((_provider: string, _modelId: string): Model<Api> | undefined => undefined);
+			const ctx = makeCtx({ find, hasConfiguredAuth: () => true });
+			expect(resolveModel(ctx, { type: "ref", ref: "/model" })).toBeNull();
+			expect(find).not.toHaveBeenCalled();
+		});
+
+		it("C3: ref 以 '/' 结尾（如 'provider/'）→ null，不调 find", () => {
+			const find = vi.fn((_provider: string, _modelId: string): Model<Api> | undefined => undefined);
+			const ctx = makeCtx({ find, hasConfiguredAuth: () => true });
+			expect(resolveModel(ctx, { type: "ref", ref: "provider/" })).toBeNull();
+			expect(find).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("fallback 空数组", () => {
+		it("C3: {type:'fallback', refs:[]} → null，不调 find", () => {
+			const find = vi.fn((_provider: string, _modelId: string): Model<Api> | undefined => undefined);
+			const ctx = makeCtx({ find, hasConfiguredAuth: () => true });
+			expect(resolveModel(ctx, { type: "fallback", refs: [] })).toBeNull();
+			expect(find).not.toHaveBeenCalled();
+		});
+	});
 });

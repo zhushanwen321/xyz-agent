@@ -100,6 +100,20 @@ describe("cleanTitle", () => {
 	it("标题长度等于 maxLength → 原样", () => {
 		expect(cleanTitle("abcde", 5)).toBe("abcde");
 	});
+
+	// ── B1: 内部空白归一化（多行标题不破坏 UI 渲染） ──
+
+	it("B1: 多行标题（含 \n）→ 换行压成单空格", () => {
+		expect(cleanTitle("重构API层\n更新文档", 50)).toBe("重构API层 更新文档");
+	});
+
+	it("B1: 混合空白（\r\n\t 多个）→ 全部压成单空格", () => {
+		expect(cleanTitle("重构\tAPI\r\n层  更新", 50)).toBe("重构 API 层 更新");
+	});
+
+	it("B1: 首尾空白仍被 trim（归一化不影响首尾裁剪）", () => {
+		expect(cleanTitle("  \n修复登录 bug\n  ", 50)).toBe("修复登录 bug");
+	});
 });
 
 // ────────────────────────────────────────────────────

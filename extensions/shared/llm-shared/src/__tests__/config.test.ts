@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -86,6 +86,44 @@ describe("loadConfig", () => {
 		const onWarning = vi.fn();
 		expect(loadConfig("bad", { a: 0 }, normalize, onWarning)).toEqual({ a: 0 });
 		expect(onWarning).toHaveBeenCalledTimes(1);
+	});
+
+	it("C1: mtime 变化（size 不变）→ 重新 readFileSync（缓存失效重读）", () => {
+		const cfgPath = join(dir, "config", "test.json");
+		// v1: {"a":1}（7 字节），mtime 固定 1s → mtimeMs=1000
+		writeFileSync(cfgPath, JSON.stringify({ a: 1 }));
+		utimesSync(cfgPath, 1, 1);
+		loadConfig("test", { a: 0 }, normalize); // 首次读，cache=(1000ms, 7)
+
+		// v2: {"a":2}（仍 7 字节，size 不变），mtime 改为 2s → mtimeMs=2000
+		writeFileSync(cfgPath, JSON.stringify({ a: 2 }));
+		utimesSync(cfgPath, 2, 2);
+
+		vi.mocked(fs.readFileSync).mockClear();
+		const loaded = loadConfig("test", { a: 0 }, normalize);
+
+		expect(loaded).toEqual({ a: 2 });
+		// mtime 变化 → 缓存失效 → 重读
+		expect(vi.mocked(fs.readFileSync)).toHaveBeenCalledTimes(1);
+	});
+
+	it("C1: size 变化但 mtime 不变（APFS 截断模拟）→ 触发重读（双 key 设计核心验证）", () => {
+		const cfgPath = join(dir, "config", "test.json");
+		// v1: {"a":1}（7 字节），mtime 固定 1s
+		writeFileSync(cfgPath, JSON.stringify({ a: 1 }));
+		utimesSync(cfgPath, 1, 1);
+		loadConfig("test", { a: 0 }, normalize); // cache=(1000ms, 7)
+
+		// v2: {"a":99}（8 字节，size 变），mtime 强制回 1s（模拟 APFS 精度截断：内容变了 mtime 没变）
+		writeFileSync(cfgPath, JSON.stringify({ a: 99 }));
+		utimesSync(cfgPath, 1, 1);
+
+		vi.mocked(fs.readFileSync).mockClear();
+		const loaded = loadConfig("test", { a: 0 }, normalize);
+
+		expect(loaded).toEqual({ a: 99 });
+		// size 变化 → 缓存失效 → 重读（即使 mtimeMs 相同，双 key 设计的核心价值）
+		expect(vi.mocked(fs.readFileSync)).toHaveBeenCalledTimes(1);
 	});
 });
 

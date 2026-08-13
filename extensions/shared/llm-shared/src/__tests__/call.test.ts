@@ -134,6 +134,60 @@ describe("callLLM", () => {
 		const optionsArg = mockComplete.mock.calls[0][2] as Record<string, unknown>;
 		expect("sessionId" in optionsArg).toBe(false);
 	});
+
+	it("B5: getApiKeyAndHeaders reject（抛异常）→ {ok:false, recoverable:true}（归一入 catch，不向上抛）", async () => {
+		const getApiKeyAndHeaders = vi.fn().mockRejectedValueOnce(new Error("registry exploded"));
+		const ctx = { modelRegistry: { getApiKeyAndHeaders } } as unknown as ExtensionContext;
+
+		const result = await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
+
+		expect(result).toEqual({ ok: false, error: "registry exploded", recoverable: true });
+		// 凭证阶段就 reject，completeSimple 未被调用
+		expect(mockComplete).not.toHaveBeenCalled();
+	});
+
+	it("review C2: signal 透传到 options 第三参数", async () => {
+		const ctx = makeCtx({ ok: true, apiKey: "k" });
+		mockComplete.mockResolvedValue({ content: [{ type: "text", text: "x" }] });
+		const ac = new AbortController();
+
+		await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [], signal: ac.signal });
+
+		const optionsArg = mockComplete.mock.calls[0][2];
+		expect(optionsArg).toMatchObject({ signal: ac.signal });
+	});
+
+	it("review C2: maxTokens 透传到 options 第三参数", async () => {
+		const ctx = makeCtx({ ok: true, apiKey: "k" });
+		mockComplete.mockResolvedValue({ content: [{ type: "text", text: "x" }] });
+
+		await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [], maxTokens: 1024 });
+
+		const optionsArg = mockComplete.mock.calls[0][2];
+		expect(optionsArg).toMatchObject({ maxTokens: 1024 });
+	});
+
+	it("review C2: timeoutMs 透传到 options 第三参数", async () => {
+		const ctx = makeCtx({ ok: true, apiKey: "k" });
+		mockComplete.mockResolvedValue({ content: [{ type: "text", text: "x" }] });
+
+		await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [], timeoutMs: 5000 });
+
+		const optionsArg = mockComplete.mock.calls[0][2];
+		expect(optionsArg).toMatchObject({ timeoutMs: 5000 });
+	});
+
+	it("review C2: 不传 signal/maxTokens/timeoutMs 时 options 不含这些字段（条件 spread）", async () => {
+		const ctx = makeCtx({ ok: true, apiKey: "k" });
+		mockComplete.mockResolvedValue({ content: [{ type: "text", text: "x" }] });
+
+		await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
+
+		const optionsArg = mockComplete.mock.calls[0][2] as Record<string, unknown>;
+		expect("signal" in optionsArg).toBe(false);
+		expect("maxTokens" in optionsArg).toBe(false);
+		expect("timeoutMs" in optionsArg).toBe(false);
+	});
 });
 
 describe("extractText", () => {

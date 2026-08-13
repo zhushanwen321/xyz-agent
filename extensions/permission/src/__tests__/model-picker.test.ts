@@ -269,7 +269,7 @@ describe("MPT5: ProviderModelSelectorComponent model onSelect", () => {
 		// 下移到 'co'，Enter 进 model stage
 		comp.handleInput("\x1b[B"); // Down
 		comp.handleInput("\r"); // Enter → model stage
-		// model stage 预选 m1（cost 升序第一个）
+		// model stage 预选 m1（provider + id 字典序第一个）
 		comp.handleInput("\r"); // Enter 选 m1
 		expect(done).toHaveBeenCalledWith({ kind: "specific", provider: "co", modelId: "m1" });
 	});

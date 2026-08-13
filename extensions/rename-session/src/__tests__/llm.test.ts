@@ -225,14 +225,37 @@ describe("callRenameLLM A1 日志", () => {
 		}
 	});
 
-	it("TC3: callLLM 成功 → console 输出 '[rename-session] rename with model <modelId>'（resolveModel 结果的 model.id），返回标题", async () => {
+	it("TC2b: callLLM {ok:false} → 不输出 'rename with model' 成功日志（B2 位置修正：成功日志已移到 result.ok 分支后），但仍输出 failed 日志", async () => {
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+			vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
+			const result = await callRenameLLM(createCtx(), BASE_CONFIG);
+			expect(result).toBeNull();
+			// 失败分支仍输出 failed 日志
+			expect(warnSpy).toHaveBeenCalledWith(
+				"[rename-session] rename LLM call failed: boom",
+			);
+			// 失败分支不应输出成功日志（B2：成功日志移到 result.ok=true 之后）
+			const successLogCalls = warnSpy.mock.calls.filter((c) =>
+				String(c[0]).includes("rename with model"),
+			);
+			expect(successLogCalls).toHaveLength(0);
+		} finally {
+			warnSpy.mockRestore();
+		}
+	});
+
+	it("TC3: callLLM 成功 → console 输出 '[rename-session] rename with model <provider>/<modelId>'（B3 带 provider 前缀），返回标题", async () => {
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		try {
 			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
 			vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "修复登录bug" });
 			const result = await callRenameLLM(createCtx(), BASE_CONFIG);
 			expect(result).toBe("修复登录bug");
-			expect(warnSpy).toHaveBeenCalledWith("[rename-session] rename with model stub-model");
+			expect(warnSpy).toHaveBeenCalledWith(
+				"[rename-session] rename with model stub/stub-model",
+			);
 		} finally {
 			warnSpy.mockRestore();
 		}
