@@ -21,6 +21,7 @@ import type {
   ContributionType,
   PluginContributes,
   PluginDescriptorLike,
+  ViewContributionSummary,
 } from './types'
 
 const PLACEMENT_BY_TYPE: Record<Exclude<ContributionType, 'view' | 'menu'>, string> = {
@@ -35,13 +36,18 @@ export class ContributionRegistry {
 
   constructor(private bus: InternalEventBus) {}
 
-  private key(pluginId: string, contributionId: string): string {
-    return pluginId + '::' + contributionId
+  /**
+   * 注册键：pluginId + type + contributionId 三维唯一（TC4）。
+   * 同 pluginId 下 view id 与 slashCommand name 等可同值（如 tasks 的 'todo'/'goal'），
+   * 无 type 维度时后者会覆盖前者（扁平 key 空间碰撞）。
+   */
+  private key(pluginId: string, type: ContributionType, contributionId: string): string {
+    return pluginId + '::' + type + '::' + contributionId
   }
 
-  /** 单条注册（同 pluginId+contributionId 覆盖）。 */
+  /** 单条注册（同 pluginId+type+contributionId 覆盖）。 */
   registerContribution(c: ContributionRecord): void {
-    this.contributions.set(this.key(c.pluginId, c.contributionId), c)
+    this.contributions.set(this.key(c.pluginId, c.type, c.contributionId), c)
   }
 
   /** 扫 builtin-contributions.ts 静态 manifest 注册（初始化即调用）。 */
@@ -121,6 +127,22 @@ export class ContributionRegistry {
         (!filter.pluginId || c.pluginId === filter.pluginId) &&
         (!filter.type || c.type === filter.type),
     )
+  }
+
+  /**
+   * 按 placement 查询视图贡献（IF1，视图宿主消费入口）。
+   * viewId=contributionId，title 缺省回退 contributionId，icon 显式 undefined，
+   * initialVisibility 取记录值（view payload 缺省时回退 'hidden'，legacy panels 固定 'hidden'）。
+   */
+  getViewsByPlacement(placement: string): ViewContributionSummary[] {
+    return this.getContributions({ type: 'view' })
+      .filter((c) => c.placement === placement)
+      .map((c) => ({
+        viewId: c.contributionId,
+        title: c.view?.title ?? c.contributionId,
+        icon: undefined,
+        initialVisibility: c.view?.initialVisibility ?? 'hidden',
+      }))
   }
 
   // ── 解析：PluginContributes v2 → ContributionRecord[] ──────────────

@@ -27,6 +27,10 @@ export const builtinContributions: BuiltinContribution[] = [
   {
     pluginId: 'tasks',
     contributes: {
+      views: [
+        { id: 'todo', title: '任务', placement: 'sidebar.tab', initialVisibility: 'visible' },
+        { id: 'goal', title: '目标', placement: 'sidebar.tab', initialVisibility: 'visible' },
+      ],
       slashCommands: [
         { name: 'goal', description: '创建目标' },
         { name: 'todo', description: '创建任务' },

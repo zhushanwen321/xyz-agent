@@ -129,6 +129,20 @@ export interface ContributionRecord {
   configuration?: { properties: unknown }
 }
 
+// ── ViewContributionSummary（IF1，视图宿主消费的扁平视图摘要）───────────
+
+/**
+ * getViewsByPlacement 的返回形状（IF1）。
+ * viewId=contributionId，title 缺省回退 contributionId，icon 显式 undefined（当前无图标源），
+ * initialVisibility 取记录值（legacy panels 固定 'hidden'）。
+ */
+export interface ViewContributionSummary {
+  viewId: string
+  title: string
+  icon?: string
+  initialVisibility: 'visible' | 'hidden'
+}
+
 // ── core 版 PluginContributes v2（对齐 s1 schema v2）──────────────────
 
 /** view contribution（s1 DM1）。 */

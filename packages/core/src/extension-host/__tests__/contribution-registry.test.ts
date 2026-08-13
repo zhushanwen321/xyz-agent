@@ -88,9 +88,10 @@ describe('ContributionRegistry.registerBuiltin（DM5）', () => {
     expect(statusline?.type).toBe('statusBarItem')
     expect(statusline?.contributionId).toBe('statusline') // id 在 contributionId（DM1 字段归位）
     expect(statusline?.statusBarItem).toMatchObject({ text: '', priority: 0 })
+    // 同 pluginId 下 view 与 slashCommand 共存（TC4），slashCommand 断言先按 type 过滤
     const tasks = all.filter((c) => c.pluginId === 'tasks')
-    expect(tasks.map((t) => t.type)).toEqual(['slashCommand', 'slashCommand'])
-    expect(tasks.map((t) => t.slashCommand?.name)).toEqual(['goal', 'todo'])
+    const taskSlash = tasks.filter((c) => c.type === 'slashCommand')
+    expect(taskSlash.map((t) => t.slashCommand?.name)).toEqual(['goal', 'todo'])
     registry.routeAll(mounts)
     expect(statusline?.available).toBe(true)
   })
@@ -99,6 +100,8 @@ describe('ContributionRegistry.registerBuiltin（DM5）', () => {
     expect(builtinContributions.map((b) => b.pluginId)).toEqual(['statusline', 'tasks'])
     expect(builtinContributions[0].contributes.statusBarItems).toHaveLength(1)
     expect(builtinContributions[1].contributes.slashCommands).toHaveLength(2)
+    expect(builtinContributions[1].contributes.views).toHaveLength(2)
+    expect(builtinContributions[1].contributes.views?.map((v) => v.id)).toEqual(['todo', 'goal'])
   })
 })
 
@@ -170,12 +173,54 @@ describe('ContributionRegistry.loadExternal（IF4/ERR5）', () => {
   })
 })
 
+describe('ContributionRegistry.getViewsByPlacement（IF1）', () => {
+  it('AC1: registerBuiltin 后 sidebar.tab 返回 builtin 两 view，字段与顺序正确', () => {
+    const { registry } = setup()
+    registry.registerBuiltin()
+    const views = registry.getViewsByPlacement('sidebar.tab')
+    expect(views).toHaveLength(2)
+    // manifest 数组序：todo 在前，goal 在后
+    expect(views.map((v) => v.viewId)).toEqual(['todo', 'goal'])
+    expect(views[0]).toEqual({
+      viewId: 'todo',
+      title: '任务',
+      icon: undefined,
+      initialVisibility: 'visible',
+    })
+    expect(views[1]).toEqual({
+      viewId: 'goal',
+      title: '目标',
+      icon: undefined,
+      initialVisibility: 'visible',
+    })
+  })
+
+  it('AC2: 非 sidebar.tab placement 返回空数组不抛错', () => {
+    const { registry } = setup()
+    registry.registerBuiltin()
+    expect(() => registry.getViewsByPlacement('foo.bar')).not.toThrow()
+    expect(registry.getViewsByPlacement('foo.bar')).toEqual([])
+  })
+
+  it('TC4: 同 pluginId 跨 type 同 id 共存（view 不被 slashCommand 覆盖）', () => {
+    const { registry } = setup()
+    registry.registerBuiltin()
+    // tasks 共 4 条：2 view + 2 slashCommand，view 未被 slashCommand 同名覆盖
+    const tasks = registry.getContributions({ pluginId: 'tasks' })
+    expect(tasks).toHaveLength(4)
+    expect(tasks.filter((c) => c.type === 'view')).toHaveLength(2)
+    expect(tasks.filter((c) => c.type === 'slashCommand')).toHaveLength(2)
+    // 视图查询不受影响，两 view 均在场
+    expect(registry.getViewsByPlacement('sidebar.tab')).toHaveLength(2)
+  })
+})
+
 describe('ContributionRegistry.getContributions（IF4）', () => {
   it('TC-5g: filter 按 pluginId/type 过滤；无 filter 返回全部', () => {
     const { registry } = setup()
     registry.registerBuiltin()
     expect(registry.getContributions({ type: 'slashCommand' }).map((c) => c.slashCommand?.name)).toEqual(['goal', 'todo'])
     expect(registry.getContributions({ pluginId: 'statusline' })).toHaveLength(1)
-    expect(registry.getContributions()).toHaveLength(3) // 1 statusline + 2 tasks
+    expect(registry.getContributions()).toHaveLength(5) // 1 statusline + 2 tasks views + 2 tasks slashCommands
   })
 })
