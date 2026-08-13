@@ -254,8 +254,8 @@ describe('dispatchMessageEvent message.customStart 完成通知 display 覆写�
     const m = lastSystem(ctx)
     expect(m.customType).toBe('subagent-bg-notify')
     expect(m.display).toBe(false)
-    // bgNotify 详情解析保留（消息仍进 store 供 fork/compact/replay 等其他消费）
-    expect(m.bgNotify?.id).toBe('job-1')
+    // details 原始字段仍保留（消息进 store 供 fork/compact/replay 等其他消费）
+    expect(m.details).toEqual({ id: 'job-1', status: 'done', agent: 'coder', startedAt: 1000, endedAt: 2000 })
   })
 
   it('TC2: workflow-result（完成通知）→ display 覆写为 false', () => {

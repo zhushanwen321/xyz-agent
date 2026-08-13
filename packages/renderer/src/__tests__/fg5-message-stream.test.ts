@@ -641,7 +641,7 @@ describe('FG5 chat store 块类型扩展', () => {
   })
 
   // ── customStart（pi CustomMessage 注入，如 subagent-bg-notify）──
-  it('customStart: subagent-bg-notify 单条 → system 消息 + customType + bgNotify', () => {
+  it('customStart: subagent-bg-notify 单条 → system 消息 + customType + 原始 details 保留', () => {
     const store = useChatStore()
     store.applyMessageEvent('sx', {
       type: 'message.customStart',
@@ -664,11 +664,19 @@ describe('FG5 chat store 块类型扩展', () => {
     expect(msgs).toHaveLength(1)
     expect(msgs[0].role).toBe('system')
     expect(msgs[0].customType).toBe('subagent-bg-notify')
-    expect(msgs[0].bgNotify).toBeDefined()
-    expect(!('batch' in (msgs[0].bgNotify as object))).toBe(true)
+    // bgNotify 字段已删（§3.3.6），details 原始透传保留
+    expect(msgs[0].details).toEqual({
+      id: 'job-1',
+      status: 'done',
+      agent: 'coder',
+      model: 'claude-4.5',
+      result: 'Done.',
+      startedAt: 1000,
+      endedAt: 13000,
+    })
   })
 
-  it('customStart: 其他 customType → system 消息 + customType，无 bgNotify', () => {
+  it('customStart: 其他 customType → system 消息 + customType，无 details 透传外字段', () => {
     const store = useChatStore()
     store.applyMessageEvent('sx', {
       type: 'message.customStart',
@@ -682,7 +690,6 @@ describe('FG5 chat store 块类型扩展', () => {
     const msgs = store.getMessages('sx')
     expect(msgs[0].role).toBe('system')
     expect(msgs[0].customType).toBe('other-extension')
-    expect(msgs[0].bgNotify).toBeUndefined()
   })
 
   it('customStart 产出的 system 消息经 toRenderItems 穿插为独立项（不并入 turn）', () => {

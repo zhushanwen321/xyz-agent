@@ -282,8 +282,6 @@ export interface Message {
    *  消费侧（renderer filterDisplayableMessages）按 `display !== false` 判断：
    *  仅 false 隐藏，undefined/true 都显示（undefined 来自无 customType 的普通消息或旧数据）。 */
   display?: boolean
-  /** Background subagent 完成通知（customType:"subagent-bg-notify" 时填充）。 */
-  bgNotify?: BgNotifyDetails
   /** Bash 执行结果（composer-bash-execute）。system 消息有值：实时经 message.bashResult
    *  effect 创建 system 消息，历史经 converter 还原为 system 消息，统一走 BashOutputBlock 渲染。
    *  与 toolCall 互斥（bash 不走工具链）。 */

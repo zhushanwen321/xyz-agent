@@ -60,7 +60,7 @@ describe('customStart details 保留（审计项 A）', () => {
     expect(details?.__gui__).toBeUndefined()
   })
 
-  it('customStart subagent-bg-notify 同时保留 details 与 bgNotify', () => {
+  it('customStart subagent-bg-notify 保留原始 details（bgNotify 字段已删，§3.3.6）', () => {
     const store = useChatStore()
     const bgDetails = {
       id: 'job-1',
@@ -82,9 +82,7 @@ describe('customStart details 保留（审计项 A）', () => {
     })
     const msgs = store.getMessages('sx')
     expect(msgs).toHaveLength(1)
-    // bgNotify 解析仍生效
-    expect(msgs[0].bgNotify).toBeDefined()
-    // details 原始字段也被保留
+    // details 原始字段被保留
     expect(msgs[0].details).toEqual(bgDetails)
   })
 })

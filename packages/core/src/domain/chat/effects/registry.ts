@@ -35,7 +35,7 @@ import type {
   ServerMessageType,
   ToolCall,
 } from '@xyz-agent/shared'
-import { COMPLETE_NOTIFY_CUSTOM_TYPES, parseBgNotifyDetails } from '@xyz-agent/shared'
+import { COMPLETE_NOTIFY_CUSTOM_TYPES } from '@xyz-agent/shared'
 import type { RetryState, QueueState, FinalizeReason } from '../store-types'
 import type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
 export type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
@@ -453,14 +453,9 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       status: 'complete',
       customType,
       display,
-      // 保留原始 details（含 __gui__），前端检测 details.__gui__ 路由到 GuiComponentRenderer
+      // 保留原始 details（含 __gui__），tool RPC 的 __gui__ 由 Block.vue extractGui 内联渲染
       details,
       timestamp: Date.now(),
-    }
-    // subagent-bg-notify：解析 details 为 BgNotifyDetails（单条或批量），渲染层据此出卡片
-    if (customType === 'subagent-bg-notify' && details) {
-      const bgNotify = parseBgNotifyDetails(details)
-      if (bgNotify) msg.bgNotify = bgNotify
     }
     commitMessages(messages, sid, [...prev, msg])
   },
