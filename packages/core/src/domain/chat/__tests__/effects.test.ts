@@ -36,7 +36,6 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     armStreamingTimer: vi.fn(),
     armBashTimer: vi.fn(),
     clearBashTimer: vi.fn(),
-    markPendingDelivered: vi.fn(),
     // m2：queue_update drain 接线 drainPending + appendUser
     drainPending: vi.fn(),
     appendUser: vi.fn(),

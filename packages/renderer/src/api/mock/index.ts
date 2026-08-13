@@ -208,6 +208,29 @@ function emitQueueUpdate(sessionId: string): void {
   })
 }
 
+/**
+ * steer/followUp drain（pi 投递）后补发 assistant turn（m4）：message_start → text_delta×N → complete。
+ *
+ * drain 只 emit queue_update 会让用户消息入流后无后续 assistant——dangling streaming bubble
+ * （demo / E2E 下 steer 后看不到回复）。补一个最小 assistant turn 让 mock 与真实 pi 行为同构
+ * （pi drain steer 后开新一轮 LLM turn，发 message_start + 流式回复 + complete）。
+ * 内容简化为固定文案逐字流式，让 streaming 气泡可见；全程检查 cancelled。
+ */
+async function emitDrainAssistantTurn(sessionId: string, steeredText: string): Promise<void> {
+  const messageId = nextId('m')
+  emit(sessionId, { type: 'message.message_start', id: messageId, payload: { sessionId, messageId } })
+  await sleep(TIMING.startGap)
+  const reply = `（mock）已处理："${steeredText}"`
+  for (const ch of reply) {
+    if (cancelled.has(sessionId)) return
+    await sleep(TIMING.chunk)
+    emit(sessionId, { type: 'message.text_delta', id: messageId, payload: { sessionId, messageId, delta: ch } })
+  }
+  if (cancelled.has(sessionId)) return
+  await sleep(TIMING.done)
+  emit(sessionId, { type: 'message.complete', id: messageId, payload: { sessionId, messageId, stopReason: 'complete' } })
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const t = setTimeout(() => {
@@ -579,13 +602,14 @@ export const chat = {
     q.steering.push(text)
     mockQueues.set(sessionId, q)
     emitQueueUpdate(sessionId)
-    // 延迟模拟 drain（投递后移除该项）
+    // 延迟模拟 drain（投递后移除该项）+ 补发 assistant turn（m4：避免 dangling streaming bubble）
     const t = setTimeout(() => {
       const cur = mockQueues.get(sessionId)
       if (!cur || cancelled.has(sessionId)) return
       const idx = cur.steering.indexOf(text)
       if (idx !== -1) cur.steering.splice(idx, 1)
       emitQueueUpdate(sessionId)
+      void emitDrainAssistantTurn(sessionId, text)
     }, TIMING.steerDrain)
     timers.add(t)
   },
@@ -603,6 +627,7 @@ export const chat = {
       const idx = cur.followUp.indexOf(text)
       if (idx !== -1) cur.followUp.splice(idx, 1)
       emitQueueUpdate(sessionId)
+      void emitDrainAssistantTurn(sessionId, text)
     }, TIMING.steerDrain)
     timers.add(t)
   },

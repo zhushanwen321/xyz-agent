@@ -543,9 +543,8 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // [W5] 带 sendMode 调 drainPending，避免跨类型同文本误取（steer「补」与 followUp「补」）。
     const prev = queueStates.value.get(sid)
     if (prev) {
-      // m2：drain 分支从 markPendingDelivered（m1）切换为 drainPending + appendUser——
-      // drainPending FIFO 取匹配 pending 的 segments，appendUser 追加进对话流（complete user）。
-      // markPendingDelivered 暂保留在 ctx/store（m4 清理）。
+      // m2：drain 分支接线 drainPending + appendUser——drainPending FIFO 取匹配 pending 的
+      // segments，appendUser 追加进对话流（complete user）。
       for (const text of countDrained(prev.steering ?? [], steering ?? [])) {
         const segs = drainPending(sid, text, 'steer')
         if (segs) appendUser(sid, segs)

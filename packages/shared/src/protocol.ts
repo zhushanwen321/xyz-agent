@@ -1415,7 +1415,7 @@ export function isMessage(value: unknown): value is Message {
     typeof v.id === 'string' &&
     (v.role === 'user' || v.role === 'assistant' || v.role === 'system') &&
     (typeof v.content === 'string' || Array.isArray(v.content)) &&
-    (v.status === 'streaming' || v.status === 'complete' || v.status === 'error' || v.status === 'pending') &&
+    (v.status === 'streaming' || v.status === 'complete' || v.status === 'error') &&
     typeof v.timestamp === 'number'
   )
 }

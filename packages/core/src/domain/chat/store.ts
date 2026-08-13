@@ -37,7 +37,7 @@ import { isDevMode } from '../../platform/dev-mode'
 /**
  * pendingBuffer 单项（m1 数据层，steer/follow-up 暂存）。
  *
- * text 用于匹配 pi 回流投递信号（normalizeContent + trim 归一化，复用 findPendingIndex 范式）；
+ * text 用于匹配 pi 回流投递信号（normalizeContent + trim 归一化）；
  * segments 是原始 Segment[]，drain 时取出交 appendUser 进对话流（m2 接线，m1 不接）。
  * sendMode 区分 steer / follow-up，驱动气泡配色。
  */
@@ -101,9 +101,8 @@ export function createChatStore() {
   /**
    * steer/follow-up 暂存缓冲（m1 数据层）。
    *
-   * 与 messages 解耦——pushPending 只写本 buffer，不写 messages（m1 核心目标：pending 在 m1
-   * 阶段不进对话流）。投递信号 queue_update 到达时，drainPending 取出 segments 交 appendUser
-   * 进对话流（m2 接线；m1 阶段 queue_update 仍调 markPendingDelivered，drainPending 暂未接）。
+   * 与 messages 解耦——pushPending 只写本 buffer，不写 messages（pending 不进对话流）。
+   * 投递信号 queue_update 到达时，drainPending 取出 segments 交 appendUser 进对话流（m2 接线）。
    * 与 queueStates 同层 ref<Map<string, T>>，disposeSession 一并清理（T2）。
    */
   const pendingBuffer = ref<Map<string, PendingItem[]>>(new Map())
@@ -273,84 +272,11 @@ export function createChatStore() {
   }
 
   /**
-   * 追加 pending user 消息（steer/followup 已入队 pi，待投递）。
-   * 投递时（queue_update → markPendingDelivered）转 complete。sendMode 区分 steer（追加当前回合）/ follow-up（回合后新轮），驱动气泡配色。
-   */
-  function appendPending(sessionId: string, segments: Segment[], sendMode: SteerFollowUpMode): void {
-    const prev = messages.value.get(sessionId) ?? []
-    commitMessages(messages, sessionId, [
-      ...prev,
-      {
-        id: `u-${crypto.randomUUID()}`,
-        role: 'user',
-        content: segments,
-        status: 'pending',
-        sendMode,
-        timestamp: Date.now(),
-      },
-    ])
-  }
-
-  /**
-   * 定位 session 里第一条匹配的 pending user 消息（FIFO，markPendingDelivered/removePending 共用）。
-   * matcher 接收 `string | Segment[]`（pi 回流 text / 前端发送 segments），经 normalizeContent
-   * 归一化后比较（FR-7，AC-5.1）。sendMode 可选——未传时退化为仅 content 匹配。
-   */
-  function findPendingIndex(
-    sessionId: string,
-    matcher: string | Segment[],
-    sendMode?: SteerFollowUpMode,
-  ): number {
-    const prev = messages.value.get(sessionId)
-    if (!prev) return -1
-    // 两边统一 trim 后比较：matcher 可能是 Segment[]（前端发送，segmentsToText 不 trim）
-    // 或 string（pi 回流，已 trim）；m.content 是 Segment[]（segmentsToText 不 trim）。
-    // trim 对齐防止首尾空白致匹配失败（pending 卡住无法转 complete）。
-    const target = normalizeContent(matcher).trim()
-    return prev.findIndex(
-      (m) =>
-        m.role === 'user'
-        && m.status === 'pending'
-        && normalizeContent(m.content).trim() === target
-        && (sendMode === undefined || m.sendMode === sendMode),
-    )
-  }
-
-  /**
-   * 匹配文本 + sendMode 的 pending user 消息标记为已投递（status → complete）。
-   * 按 content + sendMode 精确匹配（W5，避免跨类型同文本误转），仅转第一条（FIFO）。幂等。
-   */
-  function markPendingDelivered(
-    sessionId: string,
-    matcher: string | Segment[],
-    sendMode?: SteerFollowUpMode,
-  ): void {
-    const idx = findPendingIndex(sessionId, matcher, sendMode)
-    if (idx === -1) return
-    const prev = messages.value.get(sessionId)!
-    const next = [...prev]
-    next[idx] = { ...next[idx], status: 'complete' }
-    commitMessages(messages, sessionId, next)
-  }
-
-  /** 移除匹配文本 + sendMode 的 pending user 消息（steer/followUp API 失败回滚，W1）。仅移除第一条（FIFO），与 markPendingDelivered（投递成功）互补。 */
-  function removePending(
-    sessionId: string,
-    matcher: string | Segment[],
-    sendMode: SteerFollowUpMode,
-  ): void {
-    const idx = findPendingIndex(sessionId, matcher, sendMode)
-    if (idx === -1) return
-    const prev = messages.value.get(sessionId)!
-    commitMessages(messages, sessionId, prev.filter((_, i) => i !== idx))
-  }
-
-  /**
    * 暂存 steer/follow-up segments 到 pendingBuffer（m1 数据层）。
    *
-   * 不碰 messages——与 appendPending（写 messages pending 气泡）解耦，pending 在 m1 阶段不进
-   * 对话流（核心目标）。投递时 drainPending 取出 segments 交 appendUser（m2 接线）。
-   * text = segmentsToText(segments).trim()，供 drainPending/abortPending 匹配 pi 回流投递信号。
+   * 不碰 messages——pending 不进对话流（核心目标）。投递时 drainPending 取出 segments
+   * 交 appendUser（m2 接线）。text = segmentsToText(segments).trim()，供 drainPending/abortPending
+   * 匹配 pi 回流投递信号。
    */
   function pushPending(sessionId: string, segments: Segment[], sendMode: SteerFollowUpMode): void {
     const text = segmentsToText(segments).trim()
@@ -361,7 +287,7 @@ export function createChatStore() {
   /**
    * FIFO 取出并移除匹配的 pending item（m1 数据层）。
    *
-   * 匹配范式复用 findPendingIndex：normalizeContent + trim 归一化两边 text，sendMode 可选过滤。
+   * normalizeContent + trim 归一化两边 text，sendMode 可选过滤。
    * 命中返回 segments（交 appendUser 进对话流，m2）；无匹配返回 undefined（幂等）。FIFO——同 text
    * 多次暂存时按入队顺序依次取出（design TC2）。
    */
@@ -411,7 +337,6 @@ export function createChatStore() {
         armStreamingTimer,
         armBashTimer,
         clearBashTimer,
-        markPendingDelivered,
         appendUser,
         drainPending,
       },
@@ -635,9 +560,6 @@ export function createChatStore() {
     applySubagentStreamDelta: (virtualId: string, lines: string[]) => streamingStateMachine.applySubagentStreamDelta(virtualId, lines),
     finalizeSubagentStream: (virtualId: string) => streamingStateMachine.finalizeSubagentStream(virtualId),
     appendUser,
-    appendPending,
-    markPendingDelivered,
-    removePending,
     pushPending,
     drainPending,
     abortPending,

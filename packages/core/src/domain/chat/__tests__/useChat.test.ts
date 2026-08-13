@@ -176,7 +176,7 @@ describe('createUseChat factory 行为', () => {
     f.dispose()
   })
 
-  it('steer API 失败：toast.error + removePending（不 throw）', async () => {
+  it('steer API 失败：toast.error + abortPending（不 throw）', async () => {
     const f = makeFixture()
     await f.useChat.send('s8', textToSegments('hi'))
     f.emit('s8', msg('s8', 'message.message_start', { messageId: 'a1' }))

@@ -20,6 +20,7 @@ import {
 import { useChatStore } from '@/stores/chat'
 import * as mockApi from '@/api/mock'
 import type { Message } from '@xyz-agent/shared'
+import { textToSegments } from '@xyz-agent/shared'
 
 const NOW = Date.now()
 
@@ -349,29 +350,33 @@ describe('FG5 chat store 块类型扩展', () => {
     expect(store.getQueueState('sx')).toBeUndefined()
   })
 
-  it('queue_update drain 驱动 pending→complete（steer 投递）', () => {
+  it('queue_update drain 驱动 appendUser（steer 投递，m1/m2 新 API）', () => {
     const store = useChatStore()
-    // 模拟 steer 入队：appendPending + queue_update 入队
-    store.appendPending('sx', '补充注册页', 'steer')
+    // steer 入队：pushPending 暂存到 buffer（不进 messages）
+    store.pushPending('sx', textToSegments('补充注册页'), 'steer')
+    expect(store.getMessages('sx')).toHaveLength(0)
+    expect(store.pendingBuffer.get('sx')).toHaveLength(1)
+    // queue_update 入队（设置 queueState，prev 空故不 drain）
     store.applyMessageEvent('sx', {
       type: 'message.queue_update',
       payload: { sessionId: 'sx', steering: ['补充注册页'] },
     })
-    let msgs = store.getMessages('sx')
-    expect(msgs.some((m) => m.status === 'pending' && m.content === '补充注册页')).toBe(true)
-    // pi drain 投递：queue_update 移除该项
+    expect(store.getMessages('sx')).toHaveLength(0) // 仍未投递
+    // pi drain 投递：queue_update 移除该项 → drainPending + appendUser 追加 complete user
     store.applyMessageEvent('sx', {
       type: 'message.queue_update',
       payload: { sessionId: 'sx', steering: [] },
     })
-    msgs = store.getMessages('sx')
-    expect(msgs.some((m) => m.status === 'pending')).toBe(false)
-    expect(msgs.some((m) => m.status === 'complete' && m.content === '补充注册页')).toBe(true)
+    const msgs = store.getMessages('sx')
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].role).toBe('user')
+    expect(msgs[0].status).toBe('complete')
+    expect(store.pendingBuffer.get('sx') ?? []).toHaveLength(0)
   })
 
-  it('queue_update drain 驱动 pending→complete（followUp 投递）', () => {
+  it('queue_update drain 驱动 appendUser（followUp 投递）', () => {
     const store = useChatStore()
-    store.appendPending('sx', '下轮任务', 'follow-up')
+    store.pushPending('sx', textToSegments('下轮任务'), 'follow-up')
     store.applyMessageEvent('sx', {
       type: 'message.queue_update',
       payload: { sessionId: 'sx', followUp: ['下轮任务'] },
@@ -382,15 +387,17 @@ describe('FG5 chat store 块类型扩展', () => {
       payload: { sessionId: 'sx', followUp: [] },
     })
     const msgs = store.getMessages('sx')
-    expect(msgs.every((m) => m.status !== 'pending')).toBe(true)
-    expect(msgs.some((m) => m.content === '下轮任务' && m.status === 'complete')).toBe(true)
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].role).toBe('user')
+    expect(msgs[0].status).toBe('complete')
+    expect(store.pendingBuffer.get('sx') ?? []).toHaveLength(0)
   })
 
   it('queue_update 重复文本 drain（B1 回归：计数 diff 精确匹配）', () => {
     const store = useChatStore()
-    // 连发两条相同文本的 steer（appendPending 两条）
-    store.appendPending('sx', '继续', 'steer')
-    store.appendPending('sx', '继续', 'steer')
+    // 连发两条相同文本的 steer（pushPending 两条到 buffer）
+    store.pushPending('sx', textToSegments('继续'), 'steer')
+    store.pushPending('sx', textToSegments('继续'), 'steer')
     store.applyMessageEvent('sx', {
       type: 'message.queue_update',
       payload: { sessionId: 'sx', steering: ['继续', '继续'] },
@@ -401,55 +408,53 @@ describe('FG5 chat store 块类型扩展', () => {
       payload: { sessionId: 'sx', steering: ['继续'] },
     })
     let msgs = store.getMessages('sx')
-    const completed = msgs.filter((m) => m.content === '继续' && m.status === 'complete')
-    const pending = msgs.filter((m) => m.status === 'pending')
-    expect(completed).toHaveLength(1) // 恰好转一条
-    expect(pending).toHaveLength(1) // 还剩一条 pending
+    expect(msgs).toHaveLength(1) // 恰好 appendUser 一条
+    expect(store.pendingBuffer.get('sx') ?? []).toHaveLength(1) // buffer 剩一条
     // 再 drain 最后一条
     store.applyMessageEvent('sx', {
       type: 'message.queue_update',
       payload: { sessionId: 'sx', steering: [] },
     })
     msgs = store.getMessages('sx')
-    expect(msgs.filter((m) => m.status === 'pending')).toHaveLength(0)
-    expect(msgs.filter((m) => m.content === '继续' && m.status === 'complete')).toHaveLength(2)
+    expect(msgs).toHaveLength(2)
+    expect(store.pendingBuffer.get('sx') ?? []).toHaveLength(0)
   })
 
-  it('message_start 不转 pending（pi 保证 queue_update(drain) 先到，无需推测投递）', () => {
+  it('message_start 不干预 drain 结果（pi 保证 queue_update(drain) 先到）', () => {
     const store = useChatStore()
     // steer 入队
-    store.appendPending('sx', '补充', 'steer')
+    store.pushPending('sx', textToSegments('补充'), 'steer')
     store.applyMessageEvent('sx', {
       type: 'message.queue_update',
       payload: { sessionId: 'sx', steering: ['补充'] },
     })
-    // pi 保证的真实时序：queue_update(drain) 先到 → countDrained 精确转 pending→complete
+    // pi 保证的真实时序：queue_update(drain) 先到 → drainPending + appendUser（complete user）
     store.applyMessageEvent('sx', {
       type: 'message.queue_update',
       payload: { sessionId: 'sx', steering: [] },
     })
     let msgs = store.getMessages('sx')
-    expect(msgs.some((m) => m.content === '补充' && m.status === 'complete')).toBe(true)
-    expect(msgs.some((m) => m.status === 'pending')).toBe(false)
-    // message_start 随后到达：只清 queueStates 显示态，不干预消息状态（drain 已由 queue_update 完成）。
-    // 此前有 W2 flush（把残留 pending 强转 complete），基于错误前提「drain 可能晚于 message_start」——
-    // pi 源码（agent-session.ts:515-536 注释 "remove it BEFORE emitting"）同步保证不会乱序，故 W2 已删。
+    expect(msgs.some((m) => m.role === 'user' && m.status === 'complete')).toBe(true)
+    expect(store.pendingBuffer.get('sx') ?? []).toHaveLength(0)
+    // message_start 随后到达：建 streaming assistant，不干预已 complete 的 user 消息。
+    // pi 源码（agent-session.ts 注释 "remove it BEFORE emitting"）保证 drain 不晚于 message_start。
     store.applyMessageEvent('sx', {
       type: 'message.message_start',
       payload: { sessionId: 'sx', messageId: 'a1' },
     })
     msgs = store.getMessages('sx')
-    // 消息状态不受 message_start 影响（仍 complete，未被误改）
-    expect(msgs.some((m) => m.content === '补充' && m.status === 'complete')).toBe(true)
-    // queueStates 已清（message_start 清 QueueBubble 显示）
+    // user 消息仍 complete（未被误改）+ message_start 建 streaming assistant
+    expect(msgs.some((m) => m.role === 'user' && m.status === 'complete')).toBe(true)
+    expect(msgs.some((m) => m.role === 'assistant' && m.status === 'streaming')).toBe(true)
+    // queueStates 已清（queue_update 空载删除，message_start 不重加）
     expect(store.getQueueState('sx')).toBeUndefined()
   })
 
   it('跨类型同文本 drain（W5：sendMode 精确匹配，steer 与 followUp 不互误）', () => {
     const store = useChatStore()
-    // steer「补」和 followUp「补」文本相同
-    store.appendPending('sx', '补', 'steer')
-    store.appendPending('sx', '补', 'follow-up')
+    // steer「补」和 followUp「补」文本相同（buffer 各一条）
+    store.pushPending('sx', textToSegments('补'), 'steer')
+    store.pushPending('sx', textToSegments('补'), 'follow-up')
     store.applyMessageEvent('sx', {
       type: 'message.queue_update',
       payload: { sessionId: 'sx', steering: ['补'], followUp: ['补'] },
@@ -460,11 +465,14 @@ describe('FG5 chat store 块类型扩展', () => {
       payload: { sessionId: 'sx', steering: [], followUp: ['补'] },
     })
     const msgs = store.getMessages('sx')
-    // steer 那条转 complete，followUp 那条仍 pending（sendMode 精确匹配，不误转）
-    const steerMsg = msgs.find((m) => m.sendMode === 'steer')
-    const followUpMsg = msgs.find((m) => m.sendMode === 'follow-up')
-    expect(steerMsg?.status).toBe('complete')
-    expect(followUpMsg?.status).toBe('pending')
+    // steer 那条 appendUser 入流（complete user，无 sendMode——m3 后不驱动配色），
+    // followUp 那条仍在 buffer（sendMode 精确匹配，不误取）
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].role).toBe('user')
+    expect(msgs[0].status).toBe('complete')
+    const buf = store.pendingBuffer.get('sx') ?? []
+    expect(buf).toHaveLength(1)
+    expect(buf[0].sendMode).toBe('follow-up')
   })
 
   it('retry/queue 状态按 session 隔离（互不串扰）', () => {

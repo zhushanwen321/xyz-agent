@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ServerMessage } from '@xyz-agent/shared'
-import { textToSegments, normalizeContent } from '@xyz-agent/shared'
+import { textToSegments } from '@xyz-agent/shared'
 
 // vi.hoisted 保证 mock 工厂在模块加载前就绪；holder 捕获 streamSubscribe 注册的 handler
 const apiMock = vi.hoisted(() => {
@@ -213,19 +213,22 @@ describe('useChat pendingSend 合并态（空窗期）', () => {
     expect(apiMock.steer).not.toHaveBeenCalled()
   })
 
-  it('steer/followUp 调 appendPending 入流（pending 气泡可见）', async () => {
+  it('steer/followUp 调 pushPending 入 buffer（m1：pending 不进 messages）', async () => {
     const chat = useChatStore()
     const { send, steer, followUp } = useChat()
     await send('s-pending', textToSegments('first'))
     await steer('s-pending', textToSegments('steer 内容'))
     await followUp('s-pending', textToSegments('followup 内容'))
-    const msgs = chat.getMessages('s-pending')
-    // send 的 user + steer pending + followUp pending
-    const pendings = msgs.filter((m) => m.status === 'pending')
-    expect(pendings).toHaveLength(2)
-    expect(pendings[0].sendMode).toBe('steer')
-    expect(normalizeContent(pendings[0].content)).toBe('steer 内容')
-    expect(pendings[1].sendMode).toBe('follow-up')
+    // send 的 user 入流；steer/followUp 进 pendingBuffer（m1 解耦：pending 不进 messages）
+    const buf = chat.pendingBuffer.get('s-pending') ?? []
+    expect(buf).toHaveLength(2)
+    expect(buf[0].sendMode).toBe('steer')
+    expect(buf[0].text).toBe('steer 内容')
+    expect(buf[1].sendMode).toBe('follow-up')
+    expect(buf[1].text).toBe('followup 内容')
+    // messages 只有 send 的 user（steer/followUp 未投递不入流）
+    const users = chat.getMessages('s-pending').filter((m) => m.role === 'user')
+    expect(users).toHaveLength(1)
   })
 
   it('abort 乐观清 pendingSend（W4：失败路径不残留）', async () => {

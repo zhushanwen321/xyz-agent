@@ -3,7 +3,7 @@
  *
  * 测试 factory 产物不经 pinia defineStore 的纯行为（在 effectScope 内直接调 createChatStore），
  * 锁定 chat 域 store 层核心迁移面：
- * - messages 分区（hydrate 守卫 / setMessages 覆盖 / appendUser / appendPending）
+ * - messages 分区（hydrate 守卫 / setMessages 覆盖 / appendUser）
  * - isGenerating 派生（streamingSessionIds scan + applyMessageEvent 端到端）
  * - finalizeSession reason→终态映射（normal/error + toolCall 级联）
  * - disposeSession 清理全部 per-session ref
@@ -55,7 +55,7 @@ describe('createChatStore factory', () => {
     vi.useRealTimers()
   })
 
-  describe('messages 分区（hydrate / setMessages / appendUser / appendPending）', () => {
+  describe('messages 分区（hydrate / setMessages / appendUser）', () => {
     it('hydrate 注入历史 + isHydrated=true', () => {
       const sid = 's1'
       sut.store.hydrate(sid, [userMsg('m1')])
@@ -88,15 +88,6 @@ describe('createChatStore factory', () => {
       expect(msgs).toHaveLength(1)
       expect(msgs[0].role).toBe('user')
       expect(msgs[0].status).toBe('complete')
-    })
-
-    it('appendPending 注入 pending user 消息 + sendMode', () => {
-      const sid = 's1'
-      sut.store.appendPending(sid, textToSegments('follow'), 'follow-up')
-      const m = sut.store.getMessages(sid)[0]
-      expect(m.role).toBe('user')
-      expect(m.status).toBe('pending')
-      expect(m.sendMode).toBe('follow-up')
     })
   })
 
@@ -143,7 +134,7 @@ describe('createChatStore factory', () => {
     it('drainPending 无 sendMode 时退化为仅 content 匹配（跨 sendMode 命中）', () => {
       const sid = 's1'
       sut.store.pushPending(sid, textToSegments('same'), 'steer')
-      // 不传 sendMode——仅按 text 匹配（复用 findPendingIndex 范式）
+      // 不传 sendMode——仅按 text 匹配（normalizeContent + trim 归一化）
       const r = sut.store.drainPending(sid, 'same')
       expect(r).toBeDefined()
       expect(sut.store.pendingBuffer.value.get(sid) ?? []).toHaveLength(0)
