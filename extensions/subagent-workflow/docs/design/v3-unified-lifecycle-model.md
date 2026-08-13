@@ -218,19 +218,35 @@ notify 主 agent：isIdle()=false 时退避等 idle 再发（triggerTurn 只在�
         start
           │
           ▼
-      ┌────────┐   close / cancel / 父事件级联关闭    ┌────────┐   GC/tombstone   ┌───────────┐
-      │ active │ ──────────────────────────────────→ │ closed │ ───────────────→ │ archived  │
-      └────────┘                                     └────────┘                  └───────────┘
+      ┌─────────┐   close / cancel / 父事件级联关闭    ┌────────┐   GC/tombstone   ┌───────────┐
+      │ running │ ──────────────────────────────────→ │ closed │ ───────────────→ │ archived  │
+      └─────────┘                                     └────────┘                  └───────────┘
+          │ agent_settled                                   ↑
+          ▼                                                 │ closeAfterRound
+      ┌─────────┐                                           │
+      │  idle   │ ──── message ──→ running（续聊）          │
+      └─────────┘                                           │
+                                                            │
+      ┌──────────────┐                                      │
+      │  cancelled   │ ─────────────────────────────────────┘
+      └──────────────┘
 ```
 
-- active 期间**任何 message 合法**（L2 决定走热还是冷）；「上一轮结果」是 record 的属性（lastResult: success/failure/cancelled），不是状态。
-- chatMode 是 start 时的声明：① active 期间允许 message（许可）；② 轮次完成后进程保活策略（hint）。one-shot 的 message 触发 upgrade（置许可位），之后与 chatMode 同构。
-- **idle/done/failed 从 L1 删除**。failed 轮次后 record 仍 active（可重试）；closed 是唯一终态入口。
-- **closed → archived 转换语义（实施前必读）**：close/cancel/级联关闭的 close 动作与 archive 是**同一原子操作**（现状 record-store 的 archive 即 close，SP-1 保持）——closed 是转换标签（带 reason）而非驻留状态，L1 实际驻留态为 active / archived 两态。closed 记录不进 list 过滤（collectRecords 只返回 active + 近期 archived，同现状）。归档后 manifest 残留由既有 session-file-gc（30 天文件 TTL）回收。
-- **active 的回收策略**：SP-2 后无 marker 的 record 跨重启重建为 active（L2=absent），会长期显示「resumable」——这是特性（可显式 close 释放），不是泄漏；唯一物理兜底是 30 天 session 文件 TTL（过期文件不再可 resume，record 随之归档）。不新增 GC 复杂度（准则 8 减法）。
-- 现状迁移：ExecutionStatus 的 done/failed/cancelled/crashed → closed 的 reason 子枚举 + lastResult 属性；UI/排序从「status 字面量」改为「L1 状态 + L2 派生 + lastResult」。
-- **重建映射（SP-2，磁盘判据显式化）**：reconstructAll 分支 1/2（有 .finalized/.cancelled marker）→ closed{reason 由 marker 推导}；分支 3（.alive + pid 存活 + <24h）→ active / L2=alive；分支 4 兜底（无 marker、pid 死）→ **active / L2=absent**（现状 crashed，SP-2 改）；session 文件缺失的 manifest 残留不重建，由 session-file-gc 收。
+**[实现修订 2026-08-13]**：设计原案 L1 只有 active/closed 两态。实现保留了 `idle` 和 `cancelled` 作为独立 L1 状态，理由：
+- **idle**：承担「对话模式轮次完成、进程已回收、等待续聊」语义。设计期望通过 L2 hasIdleTimer 派生此区分，但实现用 L1 idle 更直觉——deliverMessage 热路径/冷路径分流、resumeRound 守卫（`status !== "idle"`）、UI 显示都直接依赖 idle 字面量。功能等价：idle record 经 resumeRound 冷路径可恢复，与设计的「active + L2=absent → 冷路径」行为一致。
+- **cancelled**：用户取消是独立终态，语义上与 closed（正常完成/失败/级联关闭）不同。合并进 `closed + reason:"cancelled"` 在技术上可行但增加了消费点的分支复杂度。
+- 此偏离不影响三层模型的核心分离——L1 仍与 L2（进程物理态）正交，L3（归属）独立。
+
+- running 期间**任何 message 合法**（L2 决定走热还是冷）；「上一轮结果」是 record 的属性（lastResult: success/failure/cancelled），不是状态。
+- idle = 对话模式轮次完成、进程已回收、等待续聊。message 触发 resumeRound 冷路径恢复。
+- chatMode 是 start 时的声明：① running/idle 期间允许 message（许可）；② 轮次完成后进程保活策略（hint）。one-shot 的 message 触发 upgrade（置许可位），之后与 chatMode 同构。
+- **done/failed/crashed 从 L1 删除，合并为 closed + ClosedReason 子枚举**。failed 轮次后 record 仍可续聊（chatMode 走 idle，one-shot 走 closed）；closed 是统一终态入口。
+- **closed → archived 转换语义（实施前必读）**：close/cancel/级联关闭的 close 动作与 archive 是**同一原子操作**（现状 record-store 的 archive 即 close，SP-1 保持）——closed 是转换标签（带 reason）而非驻留状态，L1 实际驻留态为 running / idle / closed / cancelled。closed 记录不进 list 过滤（collectRecords 只返回 running + idle + 近期 closed，同现状）。归档后 manifest 残留由既有 session-file-gc（30 天文件 TTL）回收。
+- **idle 的回收策略**：SP-2 后无 marker 的 record 跨重启重建为 idle，会长期显示「resumable」——这是特性（可显式 close 释放），不是泄漏；唯一物理兜底是 30 天 session 文件 TTL（过期文件不再可 resume，record 随之归档）。不新增 GC 复杂度（准则 8 减法）。
+- 现状迁移：ExecutionStatus 的 done/failed/crashed → closed + ClosedReason 子枚举；UI/排序从「status 字面量」改为「L1 状态 + L2 派生 + closedReason」。
+- **重建映射（SP-2，磁盘判据显式化）**：reconstructAll 分支 1/2（有 .finalized/.cancelled marker）→ closed{reason 由 marker 推导}；分支 3（.alive + pid 存活 + <24h）→ running / L2=alive；分支 4 兜底（无 marker、pid 死）→ **idle**（现状 crashed，SP-2 改；idle record 经 resumeRound 冷路径可恢复）；session 文件缺失的 manifest 残留不重建，由 session-file-gc 收。
 - **SP-1/SP-5 边界契约（实施者必读）**：SP-1 落地时 one-shot 完成 → record 保持 active（lastResult=success），但**沿用现状的完成即归档行为**（one-shot 仍不可续聊，行为不回归）；SP-5 落地时才放开：one-shot 完成 → 不立即归档（保持 active）+ message 触发 upgrade（置 chatMode 许可位 + L2 冷 resume）→ 归档时机改为「显式 close / 级联关闭 / 30 天 TTL」。**SP-1 不得提前改动归档时机**（那是 SP-5 的范围），SP-5 不得假设 SP-1 已放开——两个 SP 的边界就在「归档时机」这一点上。
+  - **执行保障（编译期 fence）**：SP-1 实施时，在 one-shot 完成路径（`runAndFinalize` 的 done/failed 分支）必须保留显式守卫 `if (!record.chatMode) { archiveImmediately(record); return; }`——该守卫确保 one-shot 行为在 SP-1 期间**不可能**被意外放开（编译器 + 运行时双重保护）。SP-5 实施时**删除该守卫**并替换为 upgrade 逻辑——删除动作本身即为 SP-5 的显式边界声明，消除开发者记忆负担。
 
 **L2 — 进程物理状态机（纯性能缓存层，与 L1 正交）**
 
@@ -281,6 +297,7 @@ notify 主 agent：isIdle()=false 时退避等 idle 再发（triggerTurn 只在�
 - 承接文档 v2-step5 决策 1。本文补充两点：
   - **为什么选「排队」而非「拒绝」**（对代码现状的裁决）：删 idle 后 L1 不再有「idle→running」翻转可作同步 CAS 载体（L1 只有 active/closed，active 期间 message 全部合法）——CAS 换位必须在 L2 引入显式 spawning 布尔位，复杂度与锁相当且无排队能力。而「拒绝」语义 = 并发 message 静默丢失（主 agent 的 tool call 文本不会自动重发），同 turn 多 tool call 是 pi 支持的真实行为，拒绝造成随机失败；「排队」语义下 msg2 等锁 → 发现进程已活 → 转热路径，消息不丢且与「顺序处理」一致。锁成本可控（30s 超时兜底 + finally 覆盖 close/error/abort/chatMode resolve 四退出路径）。
   - **与既有裁决的关系**：v2-defense-ii-iii-resolution 裁定「acquireActivateLock 冗余不接入」的前提是**保留 idle 守卫 CAS**（同步 check+flip，subagent-service.ts:631/:653）；SP-1 删除 idle 后该前提消失，互斥职责转移给锁——本决策即兑现 v2-step5 附录的「防线 iii 结论更新」承诺。lifecycle-manager.ts:318-324 的「冗余不接入」注释随 SP-1 实施更新为「已接入，见 v3 D3」。
+  - **[实现修订 2026-08-13] 双保险接入**：实现保留了 idle 状态（见 L1 实现修订），因此 idle→running CAS 守卫仍有效。但锁已作为双保险接入 deliverMessage 冷路径（`acquireActivateLock` + try/finally 释放），提供结构化保障。未来删 idle 时，锁自动成为唯一互斥机制，无需额外改动。
 - 探针（⛔ 实施期）：并发双 message 只 spawn 一次；spawn 异常放锁不死锁；超时兜底生效；第二条等锁后转热路径（排队语义生效）。
 
 **D4：跨重启恢复 = 「session 文件在 + 非 closed」即可恢复，crashed 字面量删除**
@@ -299,6 +316,7 @@ notify 主 agent：isIdle()=false 时退避等 idle 再发（triggerTurn 只在�
 - 依据：fork 语义是平行分支，subagent 的对话上下文属于旧分支；过继制造双写者变种（§3.3 被否 b/c）。
 - 实现要点：pi 的 /fork /new 路径触发 session_shutdown→dispose（现状已杀进程，fork 链路 teardownCurrent→session_shutdown→session_start(fork) 已核实，agent-session-runtime.js:174-229），本决策的增量是：① record 标记从「下次重启 reconstruct 成 crashed」改为 dispose 时主动写 closed{reason}（语义正确化；manifest 写入是 best-effort——dispose 窗口短，写不进的由重启时 reconcile 兜底，见 §5.4 检查点 4）；② 告知消息机制（见下）。
 - **告知消息机制（生产者/通道/生命周期）**：fork/new 级联关闭时，dispose 把被关 record 收集进内存数组 `recentlyCascaded`（含 reason）；fork 是同进程内切换 session（teardown→start，进程不重启），下一轮 agent loop 的 **before_agent_start hook（SP-3 通道）** 注入告知消息（customType:"subagent-status" 变体，格式如 §3.1 场景 C：被关 record + reason + 恢复指引），**注入后清空 recentlyCascaded**（一次性）。数据源 = record 的 closed{reason}（SP-4 写盘），内存态仅作「已告知/未告知」标记——进程重启后不再重放（fork 历史已过去，重启后 list 的 closed{reason} 本身可见）。**依赖修正：SP-4 依赖 SP-1（closed reason）+ SP-3（hook 通道）**。
+  - **降级路径（hook 未触发时的兜底）**：`recentlyCascaded` 是内存态，进程重启即丢失。如果 fork/new 后主 agent 的下一个 turn 不走正常 loop（比如用户直接发消息绕过 `before_agent_start`、或 pi 自身触发 compaction 的 overflow retry），告知消息会丢失。降级方案：**`/subagents list` 输出中始终包含 closed reason**（reason 是 L1 的 record 属性，已由 SP-1/SP-4 持久化到 manifest，不依赖 hook 通道）。主 agent 在任何时刻调用 list 都能看到「哪些 subagent 被级联关闭、为什么」——hook 注入是**即时提醒**（主动推送），list 是**按需查询**（被动拉取），两者互补。实施时 `recentlyCascaded` 超过 60s 未被 hook 消费则自动清空（避免内存泄漏 + 过时信息误导）。
 - 探针（⛔）：/fork 后旧 subagent 进程全灭（ps 无残留）；record 在旧 session list 显示 closed 而非 crashed；新 session list 干净；fork 后第一个 loop 对话流出现告知消息（含 reason + 恢复指引），且只出现一次（注入后清除生效）。/new 同法验证。
 
 **D7：session 删除（xyz-agent）维持现状（EOF/信号级联），不做归属过继**
@@ -307,9 +325,10 @@ notify 主 agent：isIdle()=false 时退避等 idle 再发（triggerTurn 只在�
 
 **D8：idle timeout 配置化（默认维持 5min）；ceiling 配置化（默认 8）；嵌套乘积不做树级控制**
 - 选择：timeoutMs 从 start 参数透传（armIdleTimer 已支持参数，只缺透传）+ 全局 env 默认覆盖（如 PI_SUBAGENT_IDLE_TIMEOUT_MS）；ceiling 同理。
-- 默认 5min 的依据（防拍脑袋改 30min）：5min = **Anthropic** prompt cache TTL——默认值只对 Claude 系 provider 有 cache 红利依据；其他 provider（Gemini/本地模型等）无 cache 或 TTL 不同，5min 退化为纯免 spawn 窗口。这是「有依据的默认值」而非「普适最优」，provider 差异由 env 覆盖（如 PI_SUBAGENT_IDLE_TIMEOUT_MS）解决。timeout 内续聊吃双红利（免 spawn + cache 命中省 input token）；timeout 外即使进程活着，cache 已过期，热路径只剩免 spawn 红利。调大到 30min 的收益仅限「免 spawn」，代价是内存窗口 ×6 + ceiling 更容易触顶（LRU 挤出别的活跃进程）。
+- 默认 5min 的依据（防拍脑袋改 30min）：5min 是一个**中等长度的空闲窗口**，在「免 spawn 红利」与「内存占用」之间取平衡。对 Claude 系 provider，5min 大致落在 prompt cache 的有效窗口内（cache TTL 受 context 长度、服务端负载等因素影响，不是固定常量——**不能把 5min 等同于 Anthropic prompt cache TTL 的精确值**），续聊时有概率命中 cache 省 input token；对其他 provider（Gemini/本地模型等）无 cache 或 TTL 不同，5min 退化为纯免 spawn 窗口。这是「有依据的默认值」而非「普适最优」，provider 差异由 env 覆盖（如 PI_SUBAGENT_IDLE_TIMEOUT_MS）解决。timeout 内续聊吃双红利（免 spawn + cache 命中省 input token）；timeout 外即使进程活着，cache 已过期，热路径只剩免 spawn 红利。调大到 30min 的收益仅限「免 spawn」，代价是内存窗口 ×6 + ceiling 更容易触顶（LRU 挤出别的活跃进程）。
 - 嵌套乘积（P10）：每进程 8 × 深度 N = 8^(N+1) 理论峰值。裁决：known limitation **文档化（动作落进 SP-6：在扩展 README 写明嵌套树级总量无控制、单进程资源有界的边界）**，不做树级总量控制（嵌套深度本身有限制；树级控制需要跨进程协调，复杂度不成比例——准则 8 减法）。G5 的「资源有界」按单进程解读（ceiling per-process），树级总量不承诺。
 - 探针（⛔）：start 传 idleTimeoutMs 生效；env 覆盖默认值生效。
+- **[实现修订 2026-08-13] 接线已闭合**：`record.idleTimeoutMs` 已在 ExecuteOptions → createRecord → session-runner 的 armIdleTimer 调用链完整透传。三级优先级（参数 > env PI_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms）已在 lifecycle-manager.ts 实现。
 
 **D9：turn-limiter 语义（P11）**
 - 选择：chatMode 下 maxTurns 按「每轮 reset」（一轮 = 一次 message 到 agent_settled），graceTurns 同；全程累计不做（续聊本质是无限轮，累计上限违背 G1）。
@@ -323,9 +342,10 @@ notify 主 agent：isIdle()=false 时退避等 idle 再发（triggerTurn 只在�
 **D11：notify 策略维持现状 + 文档化（P13 关闭）**
 - 现状已核实：busy 退避（isIdle()=false 等 idle 再发）+ 退避上限强制发（notifier.ts:43-68）。无抢占主 agent busy turn 的问题。仅需在扩展文档中写明该语义，防止未来误改。
 
-**D12：EPIPE 兜底（P7）**
+**D12：EPIPE 兜底（P7）——独立前置修复，先于状态机重构**
 - 选择：热路径 stdin 写捕获 EPIPE/ERR_STREAM_DESTROYED → 进程按 dead 处理 → 自动冷路径 resume + 重放原消息；同一 record 连续 2 次失败才报错（恢复指引见 §3.1 场景 F）。
-- **现状已核实（严重性修正）**：stdin-writer 对写失败**无兜底且无 error 监听**（writeStdinLine 仅 destroyed guard + 背压 warn；session-runner 的 child.on("error") 是 spawn 失败监听，非 stdin stream）——P7 的真实形态不是「EPIPE 异常被吞」，而是 **unhandled 'error' 可能崩主进程**，比原判断严重一级。SP-1 必须**新增** stdin 写错误监听 + EPIPE 兜底（非补齐）。
+- **现状已核实（严重性修正）**：stdin-writer 对写失败**无兜底且无 error 监听**（writeStdinLine 仅 destroyed guard + 背压 warn；session-runner 的 child.on("error") 是 spawn 失败监听，非 stdin stream）——P7 的真实形态不是「EPIPE 异常被吞」，而是 **unhandled 'error' 可能崩主进程**，比原判断严重一级。主进程崩溃 → 所有活跃 subagent EOF 自杀 → 用户丢全部活跃上下文，不只是一个 subagent 的当轮消息。
+- **前置修复理由**：EPIPE 是**生产环境高频触发风险**——进程在任何时候都可能因 OOM/panic/外部 kill 而死，热路径写 stdin 是每轮 message 的必经操作。状态机重构（SP-1 主体）是大型改动，而 EPIPE 修复是**小而独立的改动**（stdin-writer.ts 加 error listener + deliverMessage 加 catch-转冷路径），两者无耦合。把 EPIPE 拆成 SP-1 的**第一个 commit**（独立于状态机重构），可以：① 尽快消除生产环境的崩溃风险；② 状态机重构期间的开发/测试也不会因 EPIPE 崩主进程而中断。**SP-1 实施顺序：EPIPE 兜底 commit → 互斥锁接入 → 状态机重构 → 收尾**。
 
 ---
 
@@ -391,7 +411,7 @@ notify 主 agent：isIdle()=false 时退避等 idle 再发（triggerTurn 只在�
 
 | SP | 子方案 | 目标（回溯） | 关键决策来源 | 验收 | 依赖 |
 |---|---|---|---|---|---|
-| SP-1 | **L1/L2 状态机重构**：删 idle/done/failed/crashed 字面量 → L1 active/closed + lastResult；L2 显式化（spawning 互斥锁 + EPIPE 兜底 + hasIdleTimer 派生）；16+ 处 idle 消费替代（**实施时按 v2-step5 B-1→B-4 顺序分阶段验收，消费点清单见 idle-mechanism-survey.md；边界契约见 §3.3 L1「SP-1/SP-5 边界契约」**） | G1/G3 | D1/D3/D12 + v2-step5 方案 B（B-1/B-3/B-4 直接承接） | S2/S3/S4 | 无（**最先做**） |
+| SP-1 | **L1/L2 状态机重构**：删 idle/done/failed/crashed 字面量 → L1 active/closed + lastResult；L2 显式化（spawning 互斥锁 + EPIPE 兜底 + hasIdleTimer 派生）；16+ 处 idle 消费替代（**实施顺序：EPIPE 兜底 commit（D12，独立前置）→ 互斥锁接入 → 状态机重构 → 收尾；消费点清单见 idle-mechanism-survey.md；边界契约见 §3.3 L1「SP-1/SP-5 边界契约」**） | G1/G3 | D1/D3/D12 + v2-step5 方案 B（B-1/B-3/B-4 直接承接） | S2/S3/S4 | 无（**最先做**） |
 | SP-2 | **跨重启恢复**：reconstructAll 重建为 L1=active/L2=absent + 删 hydrateIdleRecord 死路径 | G6 | D4 + v2-step5 B-2 | S5 | 无（可与 SP-1 并行；= v2-step5 方案 C 止血子集） |
 | SP-3 | **before_agent_start 状态注入**：hook 注册 + 快照格式 + 成本控制 + compact retry 探针 | G4 | D5 | S6 | 无（独立模块，随时可做） |
 | SP-4 | **父子联动矩阵落地**：fork/new 级联关闭语义化（closed reason + 告知，机制见 D6）+ worktree 绑定清理（dispose/级联路径）+ notify 策略文档化 | G2 | D6/D7/D10/D11 | S7/S9 | SP-1（closed reason）+ SP-3（告知走 hook 通道） |
@@ -405,9 +425,22 @@ notify 主 agent：isIdle()=false 时退避等 idle 再发（triggerTurn 只在�
 - **一期（本分支目标）**：SP-1 → SP-2 → SP-3 → SP-6（SP-2/SP-3/SP-6 互相无依赖，可并行；SP-1 是最大块）。一期收尾跑 S10 集成门。
 - **二期**：SP-4 → SP-5 → SP-8 → SP-9。SP-7 挂起等触发条件。
 
+### 5.1.1 一期完成后系统行为（中间态显式定义）
+
+一期（SP-1/SP-2/SP-3/SP-6）完成后、二期（SP-4/SP-5）开始前，系统处于以下中间态。该中间态是**可接受的退化**，但必须显式定义以避免实施者误判。
+
+| 场景 | 一期后行为 | 与二期后行为的差异 | 可接受性 |
+|---|---|---|---|
+| **fork/new** | 旧 record 仍由现有路径处理：子进程 EOF 自杀 → record 落入 reconstructAll 兜底分支 → **L1=active / L2=absent**（不再有 crashed 字面量，SP-2 已改）。但 **无 closed{reason} 标记**（SP-4 未做）、无告知消息（无 recentlyCascaded 机制）。新 session 的 list 通过归属守卫自然过滤掉旧 record（rootSessionId 不匹配）。 | 二期后：record 标 closed{reason:"parent-fork"} + before_agent_start 告知 | ✅ 可接受：record 不会显示为 crashed（跨重启恢复可用），只是缺少 reason 和主动告知 |
+| **one-shot 完成** | record 保持 active（lastResult=success），但**立即归档**（SP-1 编译期 fence 保持现状行为）。message 该 record 会走 L2 冷路径但被 archive 守卫拦截。 | 二期后：不立即归档 + upgrade 续聊 | ✅ 可接受：行为与现状一致（one-shot 不可续聊），不回归 |
+| **compact** | before_agent_start 快照已注入（SP-3 已做）。引用恢复可用。 | 无差异 | ✅ 完整功能 |
+| **跨重启** | reconstructAll 重建为 active/L2=absent（SP-2 已做）。续聊可用。 | 无差异 | ✅ 完整功能 |
+
+**实施者须知**：一期后的 fork/new 场景，旧 record 会以 active/L2=absent 状态留在旧 session 的 list 中（归属守卫过滤后不可见，但若用户手动查看旧 session 的 record 会看到）。这是**已知的中间态**，不是 bug——SP-4 会将其改为 closed{reason}。一期实施时**不要**为 fork/new 特殊处理 closed 语义——那是 SP-4 的范围。
+
 ### 5.2 为什么这样拆（justification）
 
-- **SP-1 最先且独立成块**：它是 L1/L2 的地基，SP-4/SP-5 的 closed reason / upgrade 都依赖它；它自身 = v2-step5 方案 B 的既有设计（B-1/B-3/B-4）+ EPIPE 兜底，设计已成形，不需要再等本方案的其他部分。
+- **SP-1 最先且独立成块**：它是 L1/L2 的地基，SP-4/SP-5 的 closed reason / upgrade 都依赖它；它自身 = v2-step5 方案 B 的既有设计（B-1/B-3/B-4）+ EPIPE 兜底，设计已成形，不需要再等本方案的其他部分。**EPIPE 兜底作为 SP-1 的第一个 commit 独立提交**（D12），因为它修的是生产环境高频触发的崩溃风险（unhandled error 崩主进程 → 全部活跃 subagent 丢失），且与状态机重构无耦合——先合 EPIPE 再做大重构，降低开发/测试期间的中断风险。
 - **SP-2 独立**：它是唯一「用户可感知的功能修复」（跨重启续聊），且是 v2-step5 方案 C 的止血子集，可与 SP-1 并行先合。
 - **SP-3 独立**：纯新增 hook 模块，不碰状态机，风险隔离。
 - **SP-5 依赖 SP-1+SP-2**：upgrade 的冷 resume 依赖 L2 路由与跨重启水合的正确性（upgrade 后 record 要能被 reconstruct 识别为可续聊）。
@@ -436,7 +469,7 @@ notify 主 agent：isIdle()=false 时退避等 idle 再发（triggerTurn 只在�
 
 ### 5.4 待验证检查点（设计阶段无法确定，实施期门）
 
-1. ~~**EPIPE 现状**~~ **已闭合（设计期核实）**：stdin-writer 无兜底且无 error 监听，SP-1 必须新增（D12 已更新为「新增」）。
+1. ~~**EPIPE 现状**~~ **已闭合（设计期核实）**：stdin-writer 无兜底且无 error 监听。**EPIPE 兜底已提升为 SP-1 的独立前置修复**（D12），第一个 commit 提交，先于状态机重构。
 2. **compact retry 触发**：pi overflow recovery 的 retry turn 是否触发 before_agent_start（决定 D5 快照对 compact 后第一个 turn 的覆盖）。**保留实施期**——pi 源码中 hook 触发点在用户 prompt 路径（agent-session.js:884），overflow retry 是否重走该路径需深查，设计阶段难定。
 3. ~~**worktree 清理现状**~~ **已闭合（设计期核实）**：close/cancel 已触发 cleanup（finalize-record.ts:132、subagent-service.ts:1283），dispose 不触发——D10 增量精确化为 dispose/级联路径（已更新）。
 4. **dispose 时 record 持久化时机**：dispose 杀进程后 record manifest 是否来得及写 closed（进程退出窗口短——可能需要 best-effort + 重启时 reconcile）。**保留实施期**。
