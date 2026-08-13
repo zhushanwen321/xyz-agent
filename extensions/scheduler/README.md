@@ -14,7 +14,7 @@ pi-scheduler 是 **session 存活期间的 AI 提醒器**——在 pi 进程运�
 
 **任务归属创建它的 session**：任务物理存储在创建它的 session 的 JSONL 文件内，**只在 owner session 打开（继续对话 / resume）时才触发**。
 
-> **防误报提示**：如果你每天开新 session，昨天建的"明早检查 CI"任务今天不会响——除非你 resume 昨天创建该任务的那个 session。这不是"任务丢了"，是设计如此：任务随 session 持久化，session 不打开就不调度。
+> **这是设计决策，不是 bug（D9）**：本扩展从 cwd 级定时器改为 **session 级 AI 提醒器**——任务归属创建它的 session，只在 owner session 存活时触发。如果你每天开新 session，昨天建的"明早检查 CI"任务今天不会响，除非你 resume 昨天创建该任务的那个 session。这不是"任务丢了"：任务随 session 持久化，session 不打开就不调度。**用户若发现「昨天建的任务今天没响」，这是预期行为**，请 resume 创建该任务的 session。
 
 ## 简介与安装
 
@@ -207,6 +207,17 @@ pi 的 context 构建对 custom entry 无 case（被过滤）——任务数据�
 ### entry 累积
 
 recurring 长期 session 的 scheduler entry 会持续累积（每次 dispatch append 一条 advance）。量级可控：约 100B/条，1h 任务运行一年约 8760 条 ≈ 876KB。且 custom entry 不进 LLM context，不影响 token / 模型上下文。**不做物理裁剪**（append-only 约束 + advance 是 nextRunAt 正确性的必要记录，不可省）。未来若成问题，方向是等 pi 提供 compaction hook，不是本 extension 自建裁剪。
+
+## 依赖的 pi 行为清单
+
+本扩展的存储方案（custom entry event sourcing）依赖以下 pi 源码行为。这些是**实测存在但非 SDK 契约承诺**的隐式行为，pi 升级后需逐条复核：
+
+1. **`pi.appendEntry` / `ctx.sessionManager.getEntries()` 存在且 custom entry 不进 LLM context**：custom entry 在 pi 的 context 构建（`sessionEntryToContextMessages`）中无 case，被 flatMap 过滤，任务数据零污染对话上下文。若 pi 未来把 custom entry 纳入 context，会污染 token / 模型输入
+2. **fork（`forkFrom`）全文件复制 custom entry**：forkFrom 是全文件复制（含被放弃分支的 entries，无 fork 点概念），不是 fork 点路径复制。本扩展靠 owner 过滤兜底两条复制路径。若 pi 改为按分支选择性复制，fork 隔离逻辑需重新评估
+3. **`getEntries()` 返回全量 entries（不按当前分支过滤）**：实测 `getEntries()` 返回全部 fileEntries（session-manager.js:980-982），navigate 只改 leafId 指针不改 entries。因此任务不随 navigate 消失。若 pi 改为按 leafId / 分支过滤 getEntries，切换分支会导致任务丢失
+4. **navigate / 切换分支不改任务 entries**：navigate 只移动 leafId 指针，不增删 custom entry，任务 entries 跨分支稳定存在。若 pi 未来在 navigate 时裁剪 entries，任务持久性会破坏
+
+任一条行为变更都需重新验证 design 的 D1 / D2 断言与验收场景（尤其 resume、fork 场景）。
 
 ## 开发
 

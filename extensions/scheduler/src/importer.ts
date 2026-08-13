@@ -13,6 +13,12 @@ import type { ScheduledTask, SchedulerEntryOp, SchedulerStore, TaskSnapshot } fr
  * 不能 import 已删 store。workspace 路径隔离，不同 cwd 存不同文件。
  *
  * export 供测试推导期望路径（断言 renameSync/unlinkSync 参数）。
+ *
+ * ⚠️ 路径硬编码说明：硬编码 `~/.pi/agent/scheduler/` 是因为已发布版（npm 0.1.1）的 store.ts
+ * 即用此路径，旧数据确在此处，必须按此路径探测才能迁移。注意分支 `feat-auto-name-session-refactor`
+ * 的 commit 4b5513b5e 把 store 路径改为 getAgentDir()（读 PI_CODING_AGENT_DIR，用于 xyz-agent
+ * 数据目录隔离）；该分支合并后此处需改为双候选路径探测（先 getAgentDir() 再 fallback ~/.pi/agent），
+ * 否则 xyz-agent 隔离目录下的旧任务探测不到。
  */
 export function getLegacyStorePath(cwd: string): string {
   const home = os.homedir()
@@ -127,9 +133,13 @@ function importFromFile(
  * 并发 + 崩溃恢复交叉窗口（R-CONCURRENT-IMPORT）：若 .imported 存在，可能是
  *   a) 本进程上次崩溃留下的 .imported（崩溃恢复）→ 导入正确
  *   b) 另一进程 winner rename 后、unlinkSync 前的 .imported（并发）→ 本进程也会导入
- * 窗口极窄（rename→unlinkSync 毫秒级）+ 需两进程同时 session_start 同 cwd（罕见），
- * 实际危害有限（多 session 各副本各 owner，replay owner 过滤保证不重复触发同一 session）。
- * 接受此边界，不引入锁机制（过度工程）。
+ * 窗口极窄（rename→unlinkSync 毫秒级）+ 需两进程同时 session_start 同 cwd（罕见）。
+ *
+ * ⚠️ 双导入后果（如实记录，非「已被消除」）：情况 b 下 A/B 各自导入一份副本、owner 各为自己，
+ * 同一个逻辑任务会在两个 session 各触发一次（跨 session 双触发，正是 G5 要防的）。owner 过滤
+ * （按 ownerSessionFile）只保证「单一 session 内不重复」，并不能消除此跨 session 双触发——
+ * owner 过滤针对的是 fork 继承的「owner=他者」任务，而此处两副本的 owner 各自匹配本 session。
+ * 窗口极窄（毫秒级 + 双进程同时启动同 cwd），可接受，不引入锁机制（过度工程）。
  */
 function handleImportedResidue(
   importedPath: string,

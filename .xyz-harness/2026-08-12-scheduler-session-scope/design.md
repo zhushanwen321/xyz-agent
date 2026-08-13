@@ -183,15 +183,15 @@ Next run: in 1h
   重放折叠（`session_start` → `getEntries()` → 按 customType 过滤 → **per taskId 按 entry 顺序折叠**）：
   - `upsert` → `tasks[id] = {...快照}`（last-write-wins，含 ownerSessionFile / nextRunAt 初值）
   - `advance` → `tasks[id].nextRunAt = entry.nextRunAt`；`lastRunAt = entry.at`；`runCount++`；`history.push({at,status})` 并裁剪 20 条
-  - `toggle` → `tasks[id].enabled = entry.enabled`
-  - `delete` → 该 id 标记已删，后续该 id 的 op 忽略；once 任务 dispatch 后运行时 append delete，重放即消失
+  - `toggle` → `tasks[id].enabled = entry.enabled`；若 op 携带 `nextRunAt` 则一并应用（P1）。运行时 toggleTask 在 enable 时若 nextRunAt 已过期会重算到未来（`computeNextRunAt`，避免 enable 瞬间立即触发），清残留 pending（MF-1），**并把重算的 nextRunAt 携带到 toggle op 持久化**（仅 enable 重算分支携带；普通 toggle / cron 失效回退不带，重放保持 upsert 快照值）。重放时应用携带值，防 resume 从 upsert 快照回退到旧过期 nextRunAt 导致首 tick 立即重新触发（P1 修复）
+  - `delete` → **实现实际行为（非 tombstone）**：重放时从内存 Map 移除该 taskId（`tasks.delete(taskId)`）。同 taskId 后续的 advance/toggle 因 `tasks.get()` 返回 undefined 而自动 no-op（不是靠 tombstone 标记忽略）。同 taskId 后续若再 upsert 可复活，但 taskId 随机生成、不会复用，实际安全。运行时在 once dispatch 后 / 过期清理 / 用户 delete 时 append delete（CL9）；重放折叠到 delete 即从 Map 移除
   - 末态 = per taskId 最后一个非 delete op 的结果。运行时（发起方）每次操作内存态后立即 appendEntry 对应 op，内存态与 entry 顺序一致
 - 事实链（pi 0.82.1 源码实测）：`pi.appendEntry` 存在（extensions/types.d.ts:917、ExtensionActions:1165、runner.js:161 注入）；`ctx.sessionManager.getEntries()` 在 ReadonlySessionManager Pick 内（session-manager.d.ts:140）；CustomEntry 注释明示持久化用途 + "Does NOT participate in LLM context"；实现 `sessionEntryToContextMessages` 对 custom 无 case（flatMap 过滤，session-manager.js:166-186）——**任务数据零污染 LLM context**；compaction 只 append summary 不删物理 entry，getEntries 全量不受影响
 - **navigate 语义实测修正**：`getEntries()` 返回全部 fileEntries（不按分支过滤，session-manager.js:980-982），navigate 只改 leafId 指针 → **任务不随 navigate 消失**（比初判行为更好）
 - 运行时断言：⛔实施期门——resume 后重放任务状态与关闭前一致（探针：S5 实测）
 
 **D2：fork 隔离——task entry 带 ownerSessionFile，重放过滤**
-- 事实：`forkFrom` 复制 fork 点前的全部 entries（含 custom）到新 session 文件 → **fork 出的 session 天然继承任务副本**，若不处理会重复调度（F3 回归）
+- 事实（修正先前断言）：`forkFrom` 是**全文件复制**——把源 session 文件全部 entries（含 custom、含任何被放弃分支的 entries，无 fork 点概念）复制到新 session 文件；树内 `/fork`、`/clone` 才只复制 root→fork 点路径。因此 fork 出的 session 天然继承任务副本（全量），若不处理会重复调度（F3 回归）。owner 过滤（按 ownerSessionFile）对两条复制路径都兜底，故功能无影响，但文档断言要准确
 - 选择：upsert 的 task 快照内含 `ownerSessionFile`（创建时的 `ctx.sessionManager.getSessionFile()`）；重放时过滤 `ownerSessionFile !== 本 sessionFile` 的任务——fork 出的 session 不加载、不执行、不显示继承的任务；原 session（sessionFile 不变）resume 后照常
 - 语义：任务归属创建 session（G2 一致）；fork 出的分支是"对话副本"而非"任务副本"
 - 运行时断言：⛔实施期门——fork 后新 session 的 list 为空、任务到期不注入；原 session resume 任务仍在（探针：S11 实测）
@@ -207,7 +207,7 @@ Next run: in 1h
 - 对比 v2 的论证负担：v2 需证明 GC 不误删活跃任务（mtime 保护 + 首 turn 窗口分析）；v3 无此机制即无此问题
 
 **D5：延迟写入窗口——诚实标注 + 探针**
-- 事实（源码实测）：`appendEntry` → `_appendEntry` → `_persist`（session-manager.js:724-731）——fileEntries 无 assistant entry 时**不落盘**（flushed=false，等 assistant 到达全量写）。因此**新 session 首个 turn 内创建的任务 entry 在进程崩溃时丢失**（窗口 = 首 turn 内 appendEntry 之后到 message_end 之间）
+- 事实（源码实测）：`appendEntry` → `_appendEntry` → `_persist`（session-manager.js:724-731）——fileEntries 无 assistant entry 且 `flushed=false` 时**不落盘**（等 assistant 到达全量写）。但 `_persist` 的无-assistant 分支在 `flushed=true`（如 createBranchedSession 已重写过文件、或 session 文件已存在且含 assistant）时**仍会追加单行**。因此延迟写入窗口基本只限**全新 session 首 turn**（首 turn 内 appendEntry 之后到 message_end 之间）；fork 复制带 assistant 的完整文件，使被 fork 的 session 不受窗口影响
 - 对比：v2 分片创建即写盘（独立文件），耐久性更好；v3 依赖 pi flush 时机
 - 裁决：接受并文档化。窗口窄（首 turn 内 + 进程立刻崩溃）、概率极低；缓解不可行（appendEntry 无强制 flush 选项，不 hack pi 内部）。**README 明示**
 - 运行时断言：⛔实施期门——探针确认窗口存在且仅限首 turn（S13/S14 实测：首 turn 建任务后立即 kill 进程 → 任务丢失；已有 assistant 消息的 session 建任务后 kill → 任务保留）
@@ -306,6 +306,17 @@ Next run: in 1h
 | `src/store.ts` | **删除**（W3 死代码随文件消失，store.test.ts 相应删除/迁移） |
 | `src/__tests__/*` | service.test.ts（once 断言 + 时间源）；replay.test.ts（新增）；importer.test.ts（新增）；runtime.test.ts（onAfterTick/enabled） |
 | `README.md` | 产品定位与语义（D9） |
+
+### 实现期增补（design 未展开、代码已做）
+
+以下四项在实现期补强，design 正文未展开，回写记录以保持产物自包含：
+
+- **CL9（tick 过期清理 append delete）**：tickScheduler 步骤 1 对到期任务（`now >= expiresAt`）先 `tasks.delete` 再 append `delete` op。append-only 下 upsert entry 永久残留 JSONL（D10 不物理裁剪），若无 delete entry 抵消，resume 时 replayFoldEntries 会从残留 upsert 重放出已过期任务 → 每 resume 复活直到首个 tick 才清。append delete 让重放即移除，闭环（runtime.ts step1）
+- **gap2（advance 折叠恢复 lastStatus）**：replay 折叠 advance op 时除 `nextRunAt / lastRunAt / runCount / history` 外，**必须恢复 `lastStatus = op.status`**（之前漏）。漏掉则 resume 后任务 lastStatus 丢失，widget / 状态显示回退。replay.ts advance case 已补
+- **gap4（getEntries 迭代异常降级）**：replayFoldEntries 整体 try/catch，JSONL 损坏 / 迭代器抛错时 console.warn + 返回空 Map（降级为无任务），不让 session_start 崩溃。与 importer C1、backend ER-APPEND-FAIL 同款降级语义
+- **MF-1（toggle 重算后清残留 pending）**：toggleTask enable 重算 nextRunAt 到未来后，必须 `task.pending = false`。pending 是「到期待 dispatch」标记（busy tick step2 置位），nextRunAt 已推到未来则该标记过期；若不清，下个 tick step3 `pending && enabled` 会在重算的未来时间点之前提前 dispatch，违背「避免 enable 瞬间立即触发」承诺（runtime.ts toggleTask）
+
+> 注：P1（toggle 重算的 nextRunAt 持久化到 toggle op）已修复——toggle op 在 enable 重算分支携带重算值，replay 折叠时应用，防 resume 回退到 upsert 旧过期值导致首 tick 立即触发。见 D1 toggle 条目。
 
 ### 待验证检查点（设计阶段无法确定，诚实标注）
 
