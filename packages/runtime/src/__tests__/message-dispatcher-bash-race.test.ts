@@ -20,14 +20,9 @@ import type { ServerMessage } from '@xyz-agent/shared'
 import type { WorkspaceService } from '../services/workspace/workspace-service.js'
 
 type BashResultMsg = ServerMessage<'message.bashResult'>
-type CompactedMsg = ServerMessage<'session.compacted'>
 /** 返回所有 message.bashResult 广播（W1 竞态需断言「总数==1」故需数组而非首条）。 */
 function findBashResults(b: ServerMessage[]): BashResultMsg[] {
   return b.filter((m): m is BashResultMsg => m.type === 'message.bashResult')
-}
-/** 返回所有 session.compacted 广播。 */
-function findCompactedMsgs(b: ServerMessage[]): CompactedMsg[] {
-  return b.filter((m): m is CompactedMsg => m.type === 'session.compacted')
 }
 
 function makeMockSession(overrides: Partial<IManagedSessionView> = {}): IManagedSessionView {
@@ -181,7 +176,7 @@ describe('MessageDispatcher —— W1 abortBash/sendBash 竞态守卫', () => {
 describe('MessageDispatcher —— W3 compact busy 预检', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('W3a: isBashRunning=true 时 compact → 广播 session.compacted{error} + throw + 不调 client.compact', async () => {
+  it('W3a: isBashRunning=true 时 compact → throw + 零 compaction 广播（M4 事件驱动）+ 不调 client.compact', async () => {
     const { dispatcher, compactFn, broadcasts, session } = makeRaceMocks()
     session.isBashRunning = true
 
@@ -189,42 +184,42 @@ describe('MessageDispatcher —— W3 compact busy 预检', () => {
 
     // 不调 client.compact
     expect(compactFn).not.toHaveBeenCalled()
-    // 广播 session.compacted{error}
-    const compacted = findCompactedMsgs(broadcasts)
-    expect(compacted).toHaveLength(1)
-    expect(compacted[0]!.payload).toMatchObject({ sessionId: 's1', status: 'compacted' })
-    const compactErr = (compacted[0]!.payload as { error?: string }).error
-    expect(typeof compactErr).toBe('string')
-    expect(compactErr).toContain('bash')
-    // 不广播 session.compacting（busy 预检在 compacting 广播之前）
-    expect(broadcasts.some((m) => m.type === 'session.compacting')).toBe(false)
-    // 未置 isCompacting（被拒，未进入压缩流程）
+    // 零 compaction 广播（M4：dispatcher 退化为预检+RPC+复位，生命周期由 interpreter 唯一编排）
+    const compactionBroadcasts = broadcasts.filter((m) =>
+      ['session.compacting', 'session.compacted', 'message.compactionSummary'].includes(m.type),
+    )
+    expect(compactionBroadcasts).toHaveLength(0)
+    // 未置 isCompacting（被拒；置位归 interpreter 的 compaction_start）
     expect(session.isCompacting).toBe(false)
   })
 
-  it('W3b: isGenerating=true 时 compact → 广播 session.compacted{error} + throw + 不调 client.compact', async () => {
+  it('W3b: isGenerating=true 时 compact → throw + 零 compaction 广播 + 不调 client.compact', async () => {
     const { dispatcher, compactFn, broadcasts, session } = makeRaceMocks()
     session.isGenerating = true
 
     await expect(dispatcher.compact('s1')).rejects.toThrow(/generating/)
 
     expect(compactFn).not.toHaveBeenCalled()
-    const compacted = findCompactedMsgs(broadcasts)
-    expect(compacted).toHaveLength(1)
-    expect((compacted[0]!.payload as { error?: string }).error).toContain('generating')
+    const compactionBroadcasts = broadcasts.filter((m) =>
+      ['session.compacting', 'session.compacted', 'message.compactionSummary'].includes(m.type),
+    )
+    expect(compactionBroadcasts).toHaveLength(0)
     expect(session.isCompacting).toBe(false)
   })
 
-  it('W3c: idle 时 compact 正常进入压缩流程（预检不误拒）', async () => {
+  it('W3c: idle 时 compact 正常进入压缩流程（预检不误拒，零 compaction 广播）', async () => {
     const { dispatcher, compactFn, broadcasts, session } = makeRaceMocks()
     // idle（isBashRunning=false, isGenerating=false）
     await dispatcher.compact('s1')
 
-    // 调 client.compact
+    // 调 client.compact（RPC 触发保留）
     expect(compactFn).toHaveBeenCalledTimes(1)
-    // 广播 session.compacting（进入压缩流程）
-    expect(broadcasts.some((m) => m.type === 'session.compacting')).toBe(true)
-    // isCompacting 已复位（finally）
+    // 零 compaction 广播（compacting/compacted/summary 由 interpreter 从 pi 事件驱动）
+    const compactionBroadcasts = broadcasts.filter((m) =>
+      ['session.compacting', 'session.compacted', 'message.compactionSummary'].includes(m.type),
+    )
+    expect(compactionBroadcasts).toHaveLength(0)
+    // isCompacting 兜底复位（finally；置位归 interpreter，此处对 false 无害）
     expect(session.isCompacting).toBe(false)
   })
 })

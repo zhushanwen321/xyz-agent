@@ -174,6 +174,7 @@ async function main(): Promise<void> {
       }
     }
   } catch (e) {
+    // best-effort 降级：provider config migration 失败不阻塞启动（旧配置保留，用户可在 Settings 手动修正）。
     console.warn('[runtime] provider config migration failed:', e)
   }
   const configService = new ConfigService(effectiveRoot, configStore, authStorage)
@@ -280,6 +281,14 @@ async function main(): Promise<void> {
       // （abort 内部已 try/catch 广播终态，此处只防极端异常逃逸）。
       onSilentAbort: ({ sessionId: sid }) => {
         sessionService.abort(sid).catch(() => {})
+      },
+      // M4 compaction 事件驱动：interpreter 从 compaction_start/end 唯一置位/复位
+      // runtime active.isCompacting（sendPrompt/sendBash 预检互斥依据）。与原 dispatcher
+      // 手动路径置位对称——事件驱动后 dispatcher 不再置位，复位责任转移到 interpreter（三路对称）。
+      // getSession 返回 IManagedSessionView，isCompacting 为可写字段（types.ts 注释明言子模块可读写）。
+      onCompactingStateChange: (sid, v) => {
+        const s = sessionService.getSession(sid)
+        if (s) s.isCompacting = v
       },
       // [ADR-0047] ping get_state 进程健康探测（替代事件静默检测）。
       // 延迟解析 client：interpreter 在 session 创建时构造，那时 client 可能尚未 spawn。

@@ -20,11 +20,7 @@
  * - sendBash success → bus.publish(message.bashResult)
  * - sendBash error → bus.publish(message.bashResult + message.error)
  * - abortBash cancelled → bus.publish(message.bashResult{cancelled:true})
- * - compact busy reject → bus.publish(session.compacted{error})
- * - compact start → bus.publish(session.compacting)
- * - compact fail → bus.publish(session.compacted{error})
- * - compact summary → bus.publish(message.compactionSummary)
- * - compact success → bus.publish(session.compacted)
+ * - compact（M4 事件驱动）→ 零 compaction 广播（busy/start/fail/summary/success 各路径，生命周期归 interpreter）
  * - messageBus undefined → no crash（null-safety）
  *
  * mock 策略：全部依赖 mock，不 spawn pi。
@@ -241,56 +237,56 @@ describe('message-dispatcher bus integration', () => {
 
   // ── compact paths ──
 
-  it('compact busy reject → bus.publish(session.compacted{error})', async () => {
+  it('compact busy reject → 零 compaction 广播（M4：错误归 interpreter）', async () => {
     const { dispatcher, messageBus } = makeMocks({ isGenerating: true })
     await expect(dispatcher.compact('s1')).rejects.toThrow()
-    expect(messageBus.publish).toHaveBeenCalledWith('s1', expect.objectContaining({
-      type: 'session.compacted',
-      payload: expect.objectContaining({ error: expect.stringContaining('generating') }),
-    }))
+    // 零 compaction bus.publish（dispatcher 退化为预检+RPC+复位，生命周期由 interpreter 唯一编排）
+    const compactionCalls = messageBus.publish.mock.calls.filter(
+      (c: unknown[]) => ['session.compacting', 'session.compacted', 'message.compactionSummary'].includes((c[1] as ServerMessage).type),
+    )
+    expect(compactionCalls).toHaveLength(0)
   })
 
-  it('compact start → bus.publish(session.compacting)', async () => {
+  it('compact start → 零 compaction 广播（compacting 由 interpreter 从 compaction_start 驱动）', async () => {
     const { dispatcher, messageBus, compactFn } = makeMocks()
     compactFn.mockResolvedValue({ summary: '', tokensBefore: 0, estimatedTokensAfter: 0 })
     await dispatcher.compact('s1')
-    const compactingCall = messageBus.publish.mock.calls.find(
-      (c: any[]) => c[1].type === 'session.compacting',
+    expect(compactFn).toHaveBeenCalled()
+    const compactionCalls = messageBus.publish.mock.calls.filter(
+      (c: unknown[]) => ['session.compacting', 'session.compacted', 'message.compactionSummary'].includes((c[1] as ServerMessage).type),
     )
-    expect(compactingCall).toBeDefined()
-    expect(compactingCall![1].payload.status).toBe('compacting')
+    expect(compactionCalls).toHaveLength(0)
   })
 
-  it('compact fail → bus.publish(session.compacted{error})', async () => {
+  it('compact fail → 零 compaction 广播（失败提示归 interpreter 的 compaction_end{errorMessage}）', async () => {
     const { dispatcher, messageBus, compactFn } = makeMocks()
     compactFn.mockRejectedValue(new Error('compact exploded'))
     await expect(dispatcher.compact('s1')).rejects.toThrow('compact exploded')
-    const compactedCalls = messageBus.publish.mock.calls.filter(
-      (c: any[]) => c[1].type === 'session.compacted' && c[1].payload.error,
+    const compactionCalls = messageBus.publish.mock.calls.filter(
+      (c: unknown[]) => ['session.compacting', 'session.compacted', 'message.compactionSummary'].includes((c[1] as ServerMessage).type),
     )
-    expect(compactedCalls.length).toBeGreaterThanOrEqual(1)
+    expect(compactionCalls).toHaveLength(0)
   })
 
-  it('compact summary → bus.publish(message.compactionSummary)', async () => {
+  it('compact summary → 零 compaction 广播（compactionSummary 由 interpreter 从 compaction_end 驱动）', async () => {
     const { dispatcher, messageBus, compactFn } = makeMocks()
     compactFn.mockResolvedValue({ summary: 'Did stuff', tokensBefore: 200, estimatedTokensAfter: 100 })
     await dispatcher.compact('s1')
-    const summaryCall = messageBus.publish.mock.calls.find(
-      (c: any[]) => c[1].type === 'message.compactionSummary',
+    const compactionCalls = messageBus.publish.mock.calls.filter(
+      (c: unknown[]) => ['session.compacting', 'session.compacted', 'message.compactionSummary'].includes((c[1] as ServerMessage).type),
     )
-    expect(summaryCall).toBeDefined()
-    expect(summaryCall![1].payload.summary).toBe('Did stuff')
+    expect(compactionCalls).toHaveLength(0)
   })
 
-  it('compact success → bus.publish(session.compacted)', async () => {
+  it('compact success → 零 compaction 广播（compacted 由 interpreter 从 compaction_end 驱动）', async () => {
     const { dispatcher, messageBus, compactFn } = makeMocks()
     compactFn.mockResolvedValue({ summary: 'ok', tokensBefore: 100, estimatedTokensAfter: 50 })
     await dispatcher.compact('s1')
-    const compactedCalls = messageBus.publish.mock.calls.filter(
-      (c: any[]) => c[1].type === 'session.compacted' && !c[1].payload.error,
+    expect(compactFn).toHaveBeenCalled()
+    const compactionCalls = messageBus.publish.mock.calls.filter(
+      (c: unknown[]) => ['session.compacting', 'session.compacted', 'message.compactionSummary'].includes((c[1] as ServerMessage).type),
     )
-    expect(compactedCalls.length).toBeGreaterThanOrEqual(1)
-    expect(compactedCalls[0][1].payload.status).toBe('compacted')
+    expect(compactionCalls).toHaveLength(0)
   })
 
   // ── null safety ──
@@ -330,7 +326,7 @@ describe('message-dispatcher bus integration', () => {
     expect(broker.broadcast).toHaveBeenCalled()
   })
 
-  it('messageBus undefined → no crash on compact', async () => {
+  it('messageBus undefined → no crash on compact（零广播，null-safety）', async () => {
     const session = makeMockSession()
     const compactFn = vi.fn(async () => ({ summary: 'done', tokensBefore: 100, estimatedTokensAfter: 50 }))
     const client = { compact: compactFn } as unknown as IPiEngine
@@ -338,13 +334,13 @@ describe('message-dispatcher bus integration', () => {
     const broker = { broadcast: vi.fn((m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBroker
     const svc = {
       getSessionByClient: vi.fn(() => session),
-      applyContextUpdate: vi.fn(),
     } as unknown as ISessionServiceInternal
     const pm = { getClient: vi.fn(() => client) } as unknown as IProcessManager
     const workspace = { record: vi.fn() } as unknown as WorkspaceService
     const dispatcher = new MessageDispatcher(svc, pm, broker, workspace)
     await dispatcher.compact('s1')
-    expect(broadcasts.some(m => m.type === 'session.compacted')).toBe(true)
+    // M4：零 compaction 广播（no crash + 无 compaction 消息）
+    expect(broadcasts.some(m => ['session.compacting', 'session.compacted', 'message.compactionSummary'].includes(m.type))).toBe(false)
   })
 
   // ── msg object identity: bus.publish receives same object as broker.broadcast ──

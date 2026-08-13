@@ -97,6 +97,14 @@ export interface EventInterpreterOptions {
    */
   onSilentAbort?: (payload: { sessionId: string }) => void
   /**
+   * compaction 生命周期态切换（M4 事件驱动）—— interpreter 从 compaction_start/end 唯一置位/复位
+   * runtime active.isCompacting（sendPrompt/sendBash 预检互斥依据）。
+   *
+   * 组合根注入：(sid, v) => 写 sessionService.getSession(sid).isCompacting（与原 dispatcher 手动
+   * 路径置位对称）。事件驱动后 dispatcher 不再置位，复位责任转移到 interpreter（三路对称复位）。
+   */
+  onCompactingStateChange?: (sessionId: string, isCompacting: boolean) => void
+  /**
    * [ADR-0047] ping get_state 进程健康探测回调（组合根注入）。
    *
    * 延迟解析 client：interpreter 在 session 创建时构造，那时 client 可能尚未 spawn。
@@ -264,6 +272,12 @@ export class EventInterpreter {
           type: 'subagent.stream_delta' as ServerMessageType,
           payload: { sessionId: ev.sessionId, recordId: ev.recordId, lines: ev.lines },
         })
+        return
+      case 'compaction-start':
+        this.handleCompactionStart(ev)
+        return
+      case 'compaction-end':
+        this.handleCompactionEnd(ev)
         return
     }
   }
@@ -580,6 +594,81 @@ export class EventInterpreter {
         update,
       },
     })
+  }
+
+  // ── compaction 生命周期编排（M4 事件驱动：interpreter 唯一源）──
+
+  /**
+   * compaction_start → 广播 session.compacting{reason} + 置 runtime active.isCompacting=true。
+   *
+   * reason 透传给前端，驱动 compacting 浮层文案区分手动（'manual'）/自动（'threshold'|'overflow'）。
+   * runtime active.isCompacting 经 onCompactingStateChange 回调置位，sendPrompt/sendBash 预检据此互斥。
+   */
+  private handleCompactionStart(ev: PiTranslatedEvent & { kind: 'compaction-start' }): void {
+    this.opts.send({
+      type: 'session.compacting',
+      payload: { sessionId: this.sessionId, status: 'compacting', reason: ev.reason },
+    })
+    this.opts.onCompactingStateChange?.(this.sessionId, true)
+  }
+
+  /**
+   * compaction_end → 唯一驱动 compaction 终态（成功/aborted/failed 三路）。
+   *
+   * 失败判据：errorMessage 真值为 failed（非 aborted 字段、非 key 存在性）—— pi 三种 aborted:true
+   * 形态在 errorMessage 真值层面一致（extension cancel/signal abort 无 key；手动 catch 取消类
+   * errorMessage 为 undefined）。分叉干净。
+   *
+   * 三路均复位 isCompacting（与 compaction_start 置位对称，SUG-新2）—— 否则 auto compact 结束后
+   * active.isCompacting 永远 true，sendPrompt 预检永远拒，session 卡死。
+   *
+   * 孤儿 end 容错（SUG-新3）：overflow「已 retry 过一次」早退路径无 preceding start，end handler
+   * 复位对「本来就 false 的 isCompacting」幂等无害；不维护 start/end 配对状态机。
+   */
+  private handleCompactionEnd(ev: PiTranslatedEvent & { kind: 'compaction-end' }): void {
+    const hasError = !!ev.errorMessage
+    if (hasError) {
+      // failed：广播 session.compacted{error}（前端 compacted handler error 非空 → 不 flush，队列保留）
+      // + message.error 进对话流（错误作为 assistant 消息插入，AGENTS.md 规则 #3）。
+      this.opts.send({
+        type: 'session.compacted',
+        payload: { sessionId: this.sessionId, status: 'compacted', error: ev.errorMessage },
+      })
+      this.opts.send({
+        type: 'message.error',
+        payload: { sessionId: this.sessionId, message: `上下文压缩失败：${ev.errorMessage}` },
+      })
+    } else {
+      // 成功（result 真值）或 aborted（无 errorMessage 真值）—— 都不带 error，前端 compacted handler flush queue。
+      // 成功额外发 compactionSummary 进对话流 + applyContextUpdate 刷新 context 用量。
+      if (ev.result) {
+        const r = ev.result as { summary?: string; tokensBefore?: number; estimatedTokensAfter?: number }
+        if (r.summary) {
+          this.opts.send({
+            type: 'message.compactionSummary',
+            payload: {
+              sessionId: this.sessionId,
+              summary: r.summary,
+              tokensBefore: r.tokensBefore,
+              timestamp: Date.now(),
+            },
+          })
+        }
+        if (typeof r.estimatedTokensAfter === 'number' && r.estimatedTokensAfter > 0) {
+          // compact 后无 turn_end，context 用量不会自动刷新。用 pi 返回的估算值触发 applyContextUpdate。
+          this.opts.onContextUpdate?.(this.sessionId, {
+            inputTokens: r.estimatedTokensAfter,
+            totalTokens: r.estimatedTokensAfter,
+          })
+        }
+      }
+      this.opts.send({
+        type: 'session.compacted',
+        payload: { sessionId: this.sessionId, status: 'compacted' },
+      })
+    }
+    // 三路复位对称（SUG-新2）
+    this.opts.onCompactingStateChange?.(this.sessionId, false)
   }
 
   // ── [ADR-0047] ping 探测（进程健康检测，替代事件静默检测）──

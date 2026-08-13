@@ -430,71 +430,42 @@ export class MessageDispatcher {
 
     console.log('[message-dispatcher] compact: start, sessionId=' + sessionId + ', customInstructions=' + (customInstructions ? `"${customInstructions}"` : '(none)'))
 
-    // [W3] busy 预检：与 sendBash/sendMessage 的 isCompacting 拒绝对称。
-    // compact 期间若 isBashRunning（pi 单 bash slot，compact 重写上下文会读到半压缩状态）或
-    // isGenerating（pi 正在跑 LLM turn，compact 重写上下文会与 streaming 竞态），必须拒。
-    // 互斥此前只单向（sendBash/sendMessage 拒 isCompacting，但 compact 自身不预检 busy），
-    // 导致 compact 可在 bash/generating 进行中启动 → 竞态。此处补齐双向互斥。
+    // [W3 + M4] busy 预检：与 sendBash/sendMessage 的 isCompacting 拒绝对称 + 防并发 compact 重入。
+    // 补 isCompacting：A 置位（interpreter 从 compaction_start 事件）后，B 进来预检若无 isCompacting
+    // 看不到 A → 两个 client.compact RPC 并发 → 双 compaction 事件流。补上后事件层 P-dedup by construction 成立。
+    //
+    // 事件驱动（M4）：compaction 生命周期广播全删——由 interpreter 从 compaction_start/compaction_end
+    // 唯一编排（session.compacting / message.compactionSummary / session.compacted / 对话流错误提示）。
+    // dispatcher 退化为「预检 + RPC 触发 + 失败复位」三件事。
     const active = this.svc.getSessionByClient(client)
-    if (active && (active.isBashRunning || active.isGenerating)) {
-      const reason = active.isBashRunning ? 'bash running' : 'agent generating'
+    if (active && (active.isBashRunning || active.isGenerating || active.isCompacting)) {
+      const reason = active.isCompacting ? 'compaction already running'
+        : active.isBashRunning ? 'bash running'
+          : 'agent generating'
       const errMsg = `Cannot compact while ${reason}`
       console.warn(`[message-dispatcher] compact preemptive reject (busy), sid=${sessionId}, reason=${reason}`)
-      // 广播 session.compacted{error} 让前端流式通道收口（与下方 client.compact 失败路径对称）。
-      const busyMsg = { type: 'session.compacted' as const, payload: { sessionId, status: 'compacted' as const, error: errMsg } }
-      this.broker.broadcast(busyMsg)
-      this.messageBus?.publish(sessionId, busyMsg)
-      // 抛错让 session-message-handler 补请求级 error envelope（与 client.compact 失败路径对称）。
+      // 零广播：不广播 session.compacted{error}。预检在 RPC 前，pi 未发 compaction_start，interpreter 不参与；
+      // 错误经 throw → session-message-handler error envelope → 通用错误处理（useChat compact catch 已删 toast，MF-新1）。
       throw new Error(errMsg)
     }
 
-    const compactingMsg = { type: 'session.compacting' as const, payload: { sessionId, status: 'compacting' as const } }
-    this.broker.broadcast(compactingMsg)
-    this.messageBus?.publish(sessionId, compactingMsg)
-    // [W3, U6] compact 期间用 isCompacting 互斥 sendPrompt（pi 在压缩上下文，
-    // 此时 prompt 会与压缩竞态导致卡死）。与 isGenerating 不同：compact 不开 isGenerating，
-    // 否则前端会把 session 误显示为 active（实际在压缩）。finally 兜底确保异常/成功都复位。
-    // active 已在上方 busy 预检处取出（W3 复用）。
-    if (active) active.isCompacting = true
+    // 事件驱动（M4）：不广播 session.compacting、不置 active.isCompacting——均由 interpreter 从
+    // compaction_start 事件驱动。dispatcher 只做 RPC 触发 + 失败复位。
     try {
-      let result
-      try {
-        result = await client.compact(customInstructions)
-        console.log('[message-dispatcher] compact: complete, sessionId=' + sessionId + ', elapsed=' + (Date.now() - startTime) + 'ms')
-      } catch (e) {
-        const errMsg = toErrorMessage(e)
-        console.error('[message-dispatcher] compact: failed, sessionId=' + sessionId + ', error=' + errMsg + ', elapsed=' + (Date.now() - startTime) + 'ms')
-        const compactFailMsg = { type: 'session.compacted' as const, payload: { sessionId, status: 'compacted' as const, error: errMsg } }
-        this.broker.broadcast(compactFailMsg)
-        this.messageBus?.publish(sessionId, compactFailMsg)
-        throw e
-      }
-      // 压缩成功：广播 summary 进对话流（SystemNotice）+ 刷新 context 用量。
-      // 两件事都在 dispatcher 编排——compact 是主动命令，副作用归位命令编排层（非 event-adapter）。
-      // AGENTS.md 规则 7.5：对话流状态必须实时可见 + 可重开恢复（持久化由 pi 写入 JSONL，重开经 converter 还原）。
-      if (result?.summary) {
-        const summaryMsg = {
-          type: 'message.compactionSummary' as const,
-          payload: {
-            sessionId,
-            summary: result.summary,
-            tokensBefore: result.tokensBefore,
-            timestamp: Date.now(),
-          },
-        }
-        this.broker.broadcast(summaryMsg)
-        this.messageBus?.publish(sessionId, summaryMsg)
-      }
-      if (result?.estimatedTokensAfter != null && result.estimatedTokensAfter > 0) {
-        // compact 后无 turn_end，context 用量不会自动刷新。用 pi 返回的估算值触发 applyContextUpdate。
-        // 注意 estimatedTokensAfter 可能很小（压缩后），applyContextUpdate 对 0 会跳过，故判 > 0。
-        this.svc.applyContextUpdate(sessionId, result.estimatedTokensAfter)
-      }
-      const compactedMsg = { type: 'session.compacted' as const, payload: { sessionId, status: 'compacted' as const } }
-      this.broker.broadcast(compactedMsg)
-      this.messageBus?.publish(sessionId, compactedMsg)
+      await client.compact(customInstructions)
+      console.log('[message-dispatcher] compact: complete, sessionId=' + sessionId + ', elapsed=' + (Date.now() - startTime) + 'ms')
+    } catch (e) {
+      const errMsg = toErrorMessage(e)
+      console.error('[message-dispatcher] compact: failed, sid=' + sessionId + ', err=' + errMsg + ', elapsed=' + (Date.now() - startTime) + 'ms')
+      // 零广播：不广播 session.compacted{error}。pi 手动 compact 失败必发 compaction_end{errorMessage}
+      // （agent-session.js:1464-1483 无静默路径），interpreter 统一编排失败提示（session.compacted{error} +
+      // message.error 对话流提示）。此处只传播 RPC error，复位交由下方 finally（兜底防 transport 级失败
+      // ——RPC 未达 pi / pi 来不及发 compaction_end——时 session 卡死）。
+      throw e
     } finally {
-      // [W3, U6] 无论成功/失败/抛错都复位，避免 session 永远卡在 isCompacting（之后所有消息被拒）
+      // 兜底复位：interpreter 的 compaction_end 是复位主力（三路对称），此处防 transport 级失败时
+      // interpreter 未触发 compaction_end 导致 session 卡死。置位归 interpreter（compaction_start），
+      // dispatcher 不置 true，故此处只写 false（对 false 无害，幂等）。
       if (active) active.isCompacting = false
     }
   }

@@ -89,8 +89,13 @@ export function createChatStore() {
    * 与 isGenerating 正交：add 在 send 前，delete 在 message_start（正常）/ finalizeSession（异常）。
    */
   const pendingSend = ref<Set<string>>(new Set())
-  /** 正在压缩的 session 集合（#6：session.compacting/compacted 驱动，按 session 隔离） */
+  /** 正在压缩的 session 集合（#6：session.compacting/compacted 驱动，按 session 隔离）。
+   *  membership 查询（isCompacting）用此 Set；streaming-state-machine 遍历 finalize 候选也用此 Set。 */
   const compactingSessions = ref<Set<string>>(new Set())
+  /** compacting reason 平行表（M4：session.compacting{reason} 驱动，与 compactingSessions 同步维护）。
+   *  区分手动（'manual'）/自动（'threshold'|'overflow'），驱动 MessageStream compacting 浮层文案。
+   *  与 compactingSessions 同生共死：setCompacting 单点写入保证一致性。 */
+  const compactingReasons = ref<Map<string, string>>(new Map())
   /** handingOff 瞬时态子域控制器（对称 compactingSessions），委托 chat-handoff.ts。设计见 ./README.md + chat-handoff.ts。 */
   const handoff = createHandoffController()
   const { handingOffSessions, isHandingOff, setHandingOff, clearHandingOffTimer } = handoff
@@ -469,12 +474,27 @@ export function createChatStore() {
     return compactingSessions.value.has(sessionId)
   }
 
-  /** 设置压缩态（session.compacting→true / session.compacted→false），不可变 set 保证响应性 */
-  function setCompacting(sessionId: string, value: boolean): void {
-    const next = new Set(compactingSessions.value)
-    if (value) next.add(sessionId)
-    else next.delete(sessionId)
-    compactingSessions.value = next
+  /** 设置压缩态（session.compacting{reason}→true / session.compacted→false）。
+   *  不可变写保证响应性。reason 在 value=true 时挂入 compactingReasons（驱动文案），
+   *  value=false 时随 membership 一起清。Set 与 Map 同生共死，单点写入保证一致性。 */
+  function setCompacting(sessionId: string, value: boolean, reason?: string): void {
+    const nextSet = new Set(compactingSessions.value)
+    const nextMap = new Map(compactingReasons.value)
+    if (value) {
+      nextSet.add(sessionId)
+      nextMap.set(sessionId, reason ?? '')
+    } else {
+      nextSet.delete(sessionId)
+      nextMap.delete(sessionId)
+    }
+    compactingSessions.value = nextSet
+    compactingReasons.value = nextMap
+  }
+
+  /** 读取 compacting reason（手动 'manual' / 自动 'threshold'|'overflow'），未在压缩时返回 undefined。
+   *  MessageStream 据此切文案：手动→compressing / 自动→autoCompressing。 */
+  function getCompactingReason(sessionId: string): string | undefined {
+    return compactingReasons.value.get(sessionId)
   }
 
   // isHandingOff / setHandingOff / clearHandingOffTimer 委托 createHandoffController（chat-handoff.ts）。
@@ -504,7 +524,7 @@ export function createChatStore() {
     // 是深 ref，此写法同样正确触发。统一用"构造新 Map → delete → 赋值"范式。
     // 显式结构类型（对齐原 disposeSession 编排参数）：数组元素统一为 Map<string, unknown>，
     // 避免 TS 将不同 Map 元素推断为具体联合类型导致 new Map(ref.value) 不兼容。
-    const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates, pendingBuffer]
+    const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates, pendingBuffer, compactingReasons]
     const setRefs: { value: Set<string> }[] = [hydrated, pendingSend, compactingSessions, handingOffSessions, failedHistory]
     for (const ref of mapRefs) {
       if (ref.value.has(sessionId)) {
@@ -577,6 +597,7 @@ export function createChatStore() {
     markSessionError,
     isCompacting,
     setCompacting,
+    getCompactingReason,
     isHandingOff,
     setHandingOff,
     appendSystemNotice,

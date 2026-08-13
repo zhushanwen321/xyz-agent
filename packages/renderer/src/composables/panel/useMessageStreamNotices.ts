@@ -15,6 +15,7 @@
  * @param deps 容器侧响应式依赖（totalHeight / topOffset / hasWorkingTurn / sessionId）
  */
 import { computed, type ComputedRef } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useChatStore } from '@/stores/chat'
 import { useNoticeStack } from '@/composables/panel/useNoticeStack'
 
@@ -49,6 +50,8 @@ export interface MessageStreamNoticesDeps {
 export function useMessageStreamNotices(deps: MessageStreamNoticesDeps): {
   /** 是否正在压缩（驱动 compacting 浮层显隐） */
   isCompacting: ComputedRef<boolean>
+  /** compacting 浮层文案（M4：按 reason 区分手动/自动） */
+  compactingText: ComputedRef<string>
   /** dispatching 空窗期（已发送 prompt 但 message_start 未到）。
    *  [方案 D] 不再驱动独立浮层——占位已迁入末尾空 turn 的 TurnMeta；此值仅供 useForkNoticeStream 兜底。 */
   isDispatching: ComputedRef<boolean>
@@ -58,10 +61,22 @@ export function useMessageStreamNotices(deps: MessageStreamNoticesDeps): {
   forkNoticeBaseTop: ComputedRef<number>
   } {
   const chat = useChatStore()
+  const { t } = useI18n()
 
   /** 当前 session 是否正在压缩（session.compacting → true，compacted → false）。
-   *  完成后 dispatcher 广播 message.compactionSummary，插入持久化 system 消息，isCompacting 同步复位。 */
+   *  完成后 interpreter 发 message.compactionSummary（M4 事件驱动），插入持久化 system 消息，isCompacting 同步复位。 */
   const isCompacting = computed(() => chat.isCompacting(deps.sessionId.value))
+
+  /** compacting 浮层文案（M4：按 reason 区分手动/自动，事件驱动核心价值）。
+   *  reason='manual' 或未知/空 → 手动文案（compressing）；'threshold'|'overflow' → 自动文案（autoCompressing）。
+   *  未在压缩时返回空串（模板 v-if=isCompacting 已守卫，不会渲染）。 */
+  const compactingText = computed(() => {
+    if (!chat.isCompacting(deps.sessionId.value)) return ''
+    const reason = chat.getCompactingReason(deps.sessionId.value)
+    return reason === 'threshold' || reason === 'overflow'
+      ? t('panel.message.autoCompressing')
+      : t('panel.message.compressing')
+  })
 
   /** dispatching 空窗期：已发送 prompt 但 message_start 未到（无 streaming assistant，占位行给「思考中…」提示）。 */
   const isDispatching = computed(
@@ -83,6 +98,7 @@ export function useMessageStreamNotices(deps: MessageStreamNoticesDeps): {
 
   return {
     isCompacting,
+    compactingText,
     isDispatching,
     hasWorkingTurn,
     forkNoticeBaseTop,

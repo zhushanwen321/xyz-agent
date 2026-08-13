@@ -1,0 +1,169 @@
+/**
+ * EventInterpreter compaction 编排测试（M4 事件驱动：interpreter 唯一源）。
+ *
+ * 锁定（SSOT §3.3.4 编排表）：
+ * - TC1: compaction_start{reason} → 广播 session.compacting{reason} + onCompactingStateChange(sid,true)
+ * - TC2: compaction_end{result} 成功 → message.compactionSummary + session.compacted（无 error）
+ *        + onContextUpdate(estimatedTokensAfter) + onCompactingStateChange(sid,false)
+ * - TC3: compaction_end aborted（无 errorMessage 真值）→ session.compacted（不带 error）+ 复位，无 compactionSummary
+ * - TC4: compaction_end failed（errorMessage 真值）→ session.compacted{error} + message.error 对话流提示 + 复位
+ * - 孤儿 end 容错：无 preceding start 的 compaction_end → 复位对 false 幂等无害（不维护配对状态机）
+ * - errorMessage 真值判据：aborted:true + errorMessage 真值 → 走 failed（真值优先于 aborted 字段）
+ *
+ * 运行：npx vitest run src/__tests__/event-interpreter.test.ts
+ */
+import { describe, it, expect, vi } from 'vitest'
+import { EventInterpreter } from '../services/session/event-interpreter.js'
+import type { PiTranslatedEvent } from '../services/session/types.js'
+import type { ServerMessage } from '@xyz-agent/shared'
+
+function makeInterpreter(overrides: {
+  send?: (m: ServerMessage) => void
+  onCompactingStateChange?: (sid: string, v: boolean) => void
+  onContextUpdate?: (sid: string, data: { inputTokens: number; totalTokens: number }) => void
+} = {}) {
+  const sent: ServerMessage[] = []
+  const send = overrides.send ?? ((m: ServerMessage) => { sent.push(m) })
+  const onCompactingStateChange = overrides.onCompactingStateChange ?? vi.fn()
+  const onContextUpdate = overrides.onContextUpdate ?? vi.fn()
+  const interp = new EventInterpreter('s1', { send, onCompactingStateChange, onContextUpdate })
+  return { interp, sent, onCompactingStateChange, onContextUpdate }
+}
+
+describe('EventInterpreter compaction 编排 (M4 事件驱动)', () => {
+  it('TC1: compaction_start{reason} → session.compacting{reason} + isCompacting=true', () => {
+    const onCompactingStateChange = vi.fn()
+    const { interp, sent } = makeInterpreter({ onCompactingStateChange })
+
+    interp.interpret([{ kind: 'compaction-start', reason: 'manual' }])
+
+    expect(sent).toHaveLength(1)
+    expect(sent[0].type).toBe('session.compacting')
+    expect(sent[0].payload).toMatchObject({ sessionId: 's1', status: 'compacting', reason: 'manual' })
+    expect(onCompactingStateChange).toHaveBeenCalledWith('s1', true)
+  })
+
+  it('TC1-auto: compaction_start{reason:"threshold"} → reason 透传（驱动前端自动文案）', () => {
+    const { interp, sent } = makeInterpreter()
+    interp.interpret([{ kind: 'compaction-start', reason: 'threshold' }])
+    expect(sent[0].payload).toMatchObject({ reason: 'threshold' })
+  })
+
+  it('TC2: compaction_end{result} 成功 → compactionSummary + contextUpdate + session.compacted（无 error）+ 复位', () => {
+    const onContextUpdate = vi.fn()
+    const onCompactingStateChange = vi.fn()
+    const { interp, sent } = makeInterpreter({ onContextUpdate, onCompactingStateChange })
+
+    interp.interpret([{
+      kind: 'compaction-end',
+      reason: 'manual',
+      result: { summary: '压缩摘要', tokensBefore: 100, estimatedTokensAfter: 30 },
+      aborted: false,
+    }])
+
+    // compactionSummary 进对话流
+    const summary = sent.find((m) => m.type === 'message.compactionSummary')
+    expect(summary).toBeDefined()
+    expect(summary!.payload).toMatchObject({ sessionId: 's1', summary: '压缩摘要', tokensBefore: 100 })
+    // context 用量刷新（estimatedTokensAfter）
+    expect(onContextUpdate).toHaveBeenCalledWith('s1', { inputTokens: 30, totalTokens: 30 })
+    // session.compacted 不带 error → 前端 compacted handler flush queue
+    const compacted = sent.find((m) => m.type === 'session.compacted')
+    expect(compacted).toBeDefined()
+    expect(compacted!.payload).toMatchObject({ sessionId: 's1', status: 'compacted' })
+    expect((compacted!.payload as { error?: string }).error).toBeUndefined()
+    // 复位对称（SUG-新2）
+    expect(onCompactingStateChange).toHaveBeenCalledWith('s1', false)
+  })
+
+  it('TC3: compaction_end aborted（无 errorMessage 真值）→ session.compacted（不带 error）+ 复位，无 compactionSummary', () => {
+    const onContextUpdate = vi.fn()
+    const { interp, sent } = makeInterpreter({ onContextUpdate })
+
+    interp.interpret([{ kind: 'compaction-end', reason: 'threshold', result: undefined, aborted: true }])
+
+    // 无 compactionSummary（压缩未发生）+ 无 message.error（非失败）
+    expect(sent.find((m) => m.type === 'message.compactionSummary')).toBeUndefined()
+    expect(sent.find((m) => m.type === 'message.error')).toBeUndefined()
+    // context 不刷新
+    expect(onContextUpdate).not.toHaveBeenCalled()
+    // session.compacted 不带 error → 前端 flush（释放 compacting 期间积压消息）
+    const compacted = sent.find((m) => m.type === 'session.compacted')
+    expect(compacted).toBeDefined()
+    expect((compacted!.payload as { error?: string }).error).toBeUndefined()
+  })
+
+  it('TC4: compaction_end failed（errorMessage 真值）→ session.compacted{error} + message.error 对话流提示 + 复位', () => {
+    const onContextUpdate = vi.fn()
+    const { interp, sent } = makeInterpreter({ onContextUpdate })
+
+    interp.interpret([{
+      kind: 'compaction-end',
+      reason: 'manual',
+      aborted: false,
+      errorMessage: 'LLM 报错',
+    }])
+
+    // session.compacted 带 error → 前端 compacted handler error 非空 → 不 flush（队列保留）
+    const compacted = sent.find((m) => m.type === 'session.compacted')
+    expect(compacted).toBeDefined()
+    expect((compacted!.payload as { error?: string }).error).toBe('LLM 报错')
+    // message.error 进对话流（错误作为 assistant 消息插入，AGENTS.md 规则 #3）
+    const errMsg = sent.find((m) => m.type === 'message.error')
+    expect(errMsg).toBeDefined()
+    expect((errMsg!.payload as { message?: string }).message).toContain('上下文压缩失败')
+    expect((errMsg!.payload as { message?: string }).message).toContain('LLM 报错')
+    // 无 compactionSummary（压缩未成功）
+    expect(sent.find((m) => m.type === 'message.compactionSummary')).toBeUndefined()
+    // context 不刷新
+    expect(onContextUpdate).not.toHaveBeenCalled()
+  })
+
+  it('errorMessage 真值判据：aborted:true + errorMessage 真值 → 走 failed（真值优先于 aborted 字段）', () => {
+    // SSOT §3.3.4：失败判据以 errorMessage 真值为准（非 aborted 字段）。
+    // pi 三种 aborted:true 形态在 errorMessage 真值层面一致（都 falsy），但若 errorMessage 有值则属 failed。
+    const { interp, sent } = makeInterpreter()
+    interp.interpret([{ kind: 'compaction-end', reason: 'manual', aborted: true, errorMessage: '取消时附带错误' }])
+
+    const compacted = sent.find((m) => m.type === 'session.compacted')
+    expect((compacted!.payload as { error?: string }).error).toBe('取消时附带错误')
+    expect(sent.find((m) => m.type === 'message.error')).toBeDefined()
+  })
+
+  it('孤儿 compaction_end 容错：无 preceding start → 复位对 false 幂等无害（不维护配对状态机）', () => {
+    // SSOT SUG-新3：overflow「已 retry 过一次」早退路径无 compaction_start，直接发 compaction_end{errorMessage}。
+    // interpreter 不因「未收到 start」拒绝处理 end，自洽处理（复位 + 按 errorMessage 真值判分支）。
+    const onCompactingStateChange = vi.fn()
+    const { interp, sent } = makeInterpreter({ onCompactingStateChange })
+
+    interp.interpret([{
+      kind: 'compaction-end',
+      reason: 'overflow',
+      aborted: false,
+      errorMessage: 'overflow retry exhausted',
+    }])
+
+    // failed 分支：session.compacted{error} + message.error
+    expect((sent.find((m) => m.type === 'session.compacted')!.payload as { error?: string }).error).toBe('overflow retry exhausted')
+    expect(sent.find((m) => m.type === 'message.error')).toBeDefined()
+    // 复位（对本来 false 的 isCompacting 写 false，幂等无害）
+    expect(onCompactingStateChange).toHaveBeenCalledWith('s1', false)
+  })
+
+  it('完整生命周期：start → end 成功（置位/复位对称）', () => {
+    const onCompactingStateChange = vi.fn()
+    const { interp } = makeInterpreter({ onCompactingStateChange })
+
+    interp.interpret([{ kind: 'compaction-start', reason: 'manual' }])
+    interp.interpret([{
+      kind: 'compaction-end',
+      reason: 'manual',
+      result: { summary: 'S', tokensBefore: 50, estimatedTokensAfter: 20 },
+      aborted: false,
+    }])
+
+    // 置位 + 复位各一次，顺序 true → false
+    expect(onCompactingStateChange).toHaveBeenNthCalledWith(1, 's1', true)
+    expect(onCompactingStateChange).toHaveBeenNthCalledWith(2, 's1', false)
+  })
+})

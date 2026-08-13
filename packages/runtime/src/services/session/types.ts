@@ -188,4 +188,21 @@ export type PiTranslatedEvent =
    * lines 是累积全文（split('\n')），undefined = subagent 终态清除（setWidget(key, undefined)）。
    */
   | { kind: 'subagent-stream'; sessionId: string; recordId: string; lines: string[] | undefined }
+  /**
+   * compaction 生命周期开始（pi compaction_start{reason}）—— interpreter 编排：
+   * 广播 session.compacting{reason} + 置 runtime active.isCompacting=true（经 onCompactingStateChange 回调）。
+   * reason 驱动前端文案区分手动（'manual'）/自动（'threshold'|'overflow'）。
+   */
+  | { kind: 'compaction-start'; reason: string }
+  /**
+   * compaction 生命周期结束（pi compaction_end）—— interpreter 唯一驱动 compaction 全部前端态：
+   * - result 真值（成功）→ message.compactionSummary + applyContextUpdate + session.compacted + 复位 isCompacting
+   * - 无 errorMessage 真值（aborted）→ session.compacted（不带 error，前端 flush queue）+ 复位
+   * - errorMessage 真值（failed）→ session.compacted{error} + message.error 对话流提示 + 复位
+   *
+   * 失败判据以 errorMessage 真值为准（非 aborted 字段、非 key 存在性）—— pi 三种 aborted:true
+   * 形态在 errorMessage 真值层面一致（都 falsy）。result 类型暂 unknown（M5 契约清理时收紧，CQ1）。
+   * 孤儿 end 容错：overflow 早退路径无 preceding start，end handler 复位对「本来就 false 的 isCompacting」幂等无害。
+   */
+  | { kind: 'compaction-end'; reason: string; result?: unknown; aborted: boolean; errorMessage?: string }
 

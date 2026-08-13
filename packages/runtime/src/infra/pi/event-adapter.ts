@@ -44,6 +44,8 @@ import type {
   PiThinkingLevelChangedEvent,
   PiStatusEvent,
   PiErrorEvent,
+  PiCompactionStartEvent,
+  PiCompactionEndEvent,
 } from './pi-protocol.js'
 
 // ── Sub-handler types ──────────────────────────────────────────────
@@ -661,13 +663,46 @@ function handleError(event: PiErrorEvent, sid: string): PiTranslatedEvent[] {
   }]
 }
 
+/**
+ * compaction_start → compaction-start 中间事件（interpreter 编排 compaction 生命周期，M4 事件驱动）。
+ *
+ * pi 手动/自动 compact 都发此事件（agent-session.js:1370 手动 reason:'manual' / :1608 自动
+ * reason:'threshold'|'overflow'）。reason 原样透传，interpreter 据此广播 session.compacting{reason}
+ * 并驱动前端文案区分手动/自动。
+ */
+function handleCompactionStart(event: PiCompactionStartEvent, _sid: string): PiTranslatedEvent[] {
+  return [{ kind: 'compaction-start', reason: event.reason }]
+}
+
+/**
+ * compaction_end → compaction-end 中间事件（interpreter 唯一驱动 compaction 终态，M4 事件驱动）。
+ *
+ * result/aborted/errorMessage 原样透传，失败判据由 interpreter 以 errorMessage 真值为准
+ * （非 aborted 字段——pi 三种 aborted:true 形态在 errorMessage 真值层面一致，都 falsy）。
+ * result 类型暂 unknown（M5 契约清理时收紧，CQ1），interpreter 运行时读 summary/tokensBefore/estimatedTokensAfter。
+ */
+function handleCompactionEnd(event: PiCompactionEndEvent, _sid: string): PiTranslatedEvent[] {
+  return [
+    {
+      kind: 'compaction-end',
+      reason: event.reason,
+      result: event.result,
+      aborted: event.aborted,
+      ...(event.errorMessage !== undefined ? { errorMessage: event.errorMessage } : {}),
+    },
+  ]
+}
+
 // ── Null-event types (lifecycle events not forwarded to frontend) ──
 // 注意：turn_end 不在此列——它经 handleTurnEndPi 提取 usage 触发 context.update（见 DISPATCHER）。
 // agent_settled 是 pi 0.80.3 稳态事件（无待处理工具/消息），xyz-agent 不消费——显式登记忽略。
+// compaction_start/compaction_end 在 M4 移出此列（改事件驱动，interpreter 唯一编排 compaction 生命周期）。
+// agent_start 保留在 NULL_EVENTS 但其 hook 分支在 translate() 内单独可达（见下方 agent_start 分支）——
+// M5 契约清理时再评估是否移出（CQ2）。
 const NULL_EVENTS = new Set([
   'agent_start', 'turn_start', 'message_end',
   'extension_config', 'extension_ui_response', 'response',
-  'compaction_start', 'compaction_end', 'agent_settled',
+  'agent_settled',
 ])
 
 // ── Dispatcher map ─────────────────────────────────────────────────
@@ -694,6 +729,8 @@ const DISPATCHER = new Map<string, Handler>()
   // Simple passthrough handlers
   DISPATCHER.set('status', handleStatus as Handler)
   DISPATCHER.set('error', handleError as Handler)
+  DISPATCHER.set('compaction_start', handleCompactionStart as Handler)
+  DISPATCHER.set('compaction_end', handleCompactionEnd as Handler)
 })()
 
 /**

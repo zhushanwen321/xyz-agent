@@ -183,10 +183,13 @@ export function ensureStreamSubscription(
     switch (msg.type) {
       // [fix-handoff-with-message] session.handoffStarted 不再处理：前端已删除「正在交接…」
       // system notice（改由 composer stop 按钮提供取消入口）。runtime 仍广播此消息，前端忽略即可。
-      case 'session.compacting':
-        // #6：compact 生命周期开始（runtime server-push，走 session 通道）
-        chat.setCompacting(sid, true)
+      case 'session.compacting': {
+        // #6 + M4：compact 生命周期开始（interpreter 从 compaction_start 事件唯一驱动，走 session 通道）。
+        // reason 区分手动/自动，驱动 MessageStream compacting 浮层文案（M4 事件驱动核心价值）。
+        const compactingPayload = msg.payload as { reason?: string }
+        chat.setCompacting(sid, true, compactingPayload.reason)
         break
+      }
       case 'session.compacted': {
         // #6：compact 生命周期结束（成功/失败均广播）。错误反馈走 compact() 的 catch，此处仅复位态。
         chat.setCompacting(sid, false)
@@ -488,11 +491,13 @@ export function createUseChat(deps: UseChatDeps) {
   }
 
   /**
-   * 压缩上下文（#6）：确保会话级订阅（消费 session.compacting/compacted）→ 调 api.compact。
+   * 压缩上下文（#6 + M4）：确保会话级订阅（消费 session.compacting/compacted）→ 调 api.compact。
    *
-   * 错误反馈（§4.4 异常路径）：session 不存在 / pi 错误 → sendError（pending reject）→
-   * 在此 catch，以 toast 提示用户，不卡 UI（toast 非顶部 banner，不违反规则 #3）。compacting 态
-   * 由 session.compacted 广播复位（broadcast 必达：compacting 后无论成败都广播 compacted）。
+   * 错误反馈（MF-新1）：删 toast。错误提示统一归 interpreter（compaction_end{errorMessage} →
+   * message.error 对话流）。pi 手动 compact 失败必发 compaction_end{errorMessage}（无静默路径），
+   * interpreter 是确定可见的错误源；此处 toast 会与 interpreter 提示重叠（failed 双提示）且对 aborted
+   * 误提示（取消却显示失败）。transport 级失败（RPC 未达 pi）不触发 interpreter，靠 chatApi 通用错误
+   * 处理兑底——不在此单独 toast。compacting 态由 session.compacted 复位（interpreter 发，必达）。
    *
    * 显式接收 sessionId：per-panel 隔离，不读全局 activeId。
    */
@@ -502,8 +507,9 @@ export function createUseChat(deps: UseChatDeps) {
     try {
       await deps.chatApi.compact(sid, customInstructions)
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      deps.toast.error(deps.t('composable.compactFailed', { msg }))
+      // MF-新1：错误已由 interpreter 经 compaction_end{errorMessage} → message.error 进对话流提示。
+      // 此处仅记日志（调试诊断），不 toast 不 throw（consumer fire-and-forget，错误反馈在对话流）。
+      console.warn('[useChat] compact RPC failed (error surfaced via interpreter/dialog flow):', e)
     }
   }
 

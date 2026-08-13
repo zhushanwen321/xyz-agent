@@ -94,7 +94,7 @@
     >
       <span class="h-px flex-1 bg-border" />
       <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
-      <span class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ t('panel.message.compressing') }}</span>
+      <span class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ compactingText }}</span>
       <span class="h-px flex-1 bg-border" />
     </div>
 
@@ -267,6 +267,7 @@ const [loadMoreEl, compactingNoticeEl] = useConstantHeightAssert([
  *  topOffset 恒 0（W3C2 R2）。 */
 const {
   isCompacting,
+  compactingText,
   isDispatching,
   hasWorkingTurn,
   forkNoticeBaseTop,

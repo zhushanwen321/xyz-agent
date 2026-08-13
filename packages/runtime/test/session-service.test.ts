@@ -496,23 +496,25 @@ describe('SessionService · dispatcher', () => {
   })
 
   describe('compact', () => {
-    it('broadcasts compacting then compacted and calls client.compact', async () => {
+    it('M4 事件驱动：零 compaction 广播 + client.compact 调用', async () => {
       const client = setup.mountClient('sid-c')
       await setup.service.compact('sid-c')
       expect(client.compact).toHaveBeenCalledTimes(1)
+      // 零 compaction 广播（compacting/compacted/summary 由 interpreter 从 pi 事件唯一编排）
       const types = vi.mocked(setup.broker.broadcast).mock.calls.map(c => c[0].type)
-      expect(types).toContain('session.compacting')
-      expect(types).toContain('session.compacted')
-      const compacted = findBroadcast(setup, 'session.compacted')
-      expect(compacted?.payload).toMatchObject({ sessionId: 'sid-c', status: 'compacted' })
+      const compactionTypes = types.filter(t =>
+        ['session.compacting', 'session.compacted', 'message.compactionSummary'].includes(t),
+      )
+      expect(compactionTypes).toHaveLength(0)
     })
 
-    it('broadcasts compacted with error and rethrows when client.compact fails', async () => {
+    it('M4 事件驱动：client.compact 失败 → rethrow + 零 compaction 广播（失败提示归 interpreter）', async () => {
       const client = setup.mountClient('sid-c')
       client.compact.mockRejectedValueOnce(new Error('compact fail'))
       await expect(setup.service.compact('sid-c')).rejects.toThrow('compact fail')
+      // 零 compaction 广播（pi 手动失败必发 compaction_end{errorMessage}，interpreter 统一编排提示）
       const compacted = findBroadcast(setup, 'session.compacted')
-      expect(compacted?.payload).toMatchObject({ sessionId: 'sid-c', error: 'compact fail' })
+      expect(compacted).toBeUndefined()
     })
 
     it('throws when session has no client', async () => {

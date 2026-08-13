@@ -75,6 +75,7 @@ export default {
     cancel: '取消',
     viewCommandDoc: '查看命令文档',
     compressing: '压缩中',
+    autoCompressing: '正在自动压缩上下文',
     loadMore: '加载更多历史',
     dispatching: '思考中…',
     railInProgress: '进行中…',

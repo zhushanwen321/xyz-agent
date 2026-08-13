@@ -75,6 +75,7 @@ export default {
     cancel: 'Cancel',
     viewCommandDoc: 'View command docs',
     compressing: 'Compacting',
+    autoCompressing: 'Auto-compacting context…',
     loadMore: 'Load more history',
     dispatching: 'Thinking…',
     railInProgress: 'in progress…',
