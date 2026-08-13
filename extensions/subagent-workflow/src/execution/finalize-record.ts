@@ -234,6 +234,7 @@ export async function doFinalizeRoundToIdle(
   // 状态机：record 进 idle（覆盖 tryTransition 设的 done/failed），轮次计数 +1。
   record.status = "idle";
   record.round = (record.round ?? 0) + 1;
+  record.idleSince = Date.now();
 
   // 消费确认制补投（MF-1，设计决策 6 spec L251 安全网）：进程退出时残留 pendingMessages
   // 一律 resume 补投（不再静默清除——清除会让 busy→kill 竞态窗口的消息静默丢失）。

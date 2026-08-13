@@ -71,18 +71,18 @@ describe("[V2 决策 7 防线 i] process 级 shutdown hook", { timeout: 30000 },
     expect(registered["beforeExit"]).toBeDefined();
   });
 
-  it("SIGTERM handler 触发时调 killAllSpawnedChildren(\"SIGTERM\") + process.exit(0)", () => {
+  it("SIGTERM handler 触发时调 killAllSpawnedChildren(\"SIGTERM\") + process.exitCode = 0", () => {
     resetGuard();
     registered["SIGTERM"]!("SIGTERM");
     expect(killAllSpawnedChildrenMock).toHaveBeenCalledWith("SIGTERM");
-    expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(process.exitCode).toBe(0);
   });
 
-  it("SIGINT handler 触发时调 killAllSpawnedChildren + process.exit(0)", () => {
+  it("SIGINT handler 触发时调 killAllSpawnedChildren + process.exitCode = 0", () => {
     resetGuard();
     registered["SIGINT"]!("SIGINT");
     expect(killAllSpawnedChildrenMock).toHaveBeenCalledWith("SIGTERM");
-    expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(process.exitCode).toBe(0);
   });
 
   it("beforeExit handler 触发时调 killAllSpawnedChildren 但不 process.exit（自然退出）", () => {

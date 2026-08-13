@@ -409,6 +409,11 @@ export interface ExecutionRecord {
    */
   round?: number;
   /**
+   * record 进入 idle 态的时间戳（ms）。finalizeRoundToIdle 设值；GC 定时器据此计算
+   * 剩余 TTL。undefined = 非 idle 态（running/closed/cancelled）或旧 record 缺失字段。
+   */
+  idleSince?: number;
+  /**
    * 在途消息缓存（消费确认制，设计决策 6）。busy 投递（follow_up/steer）时缓存；
    * pi 消费确认（message_start/turn_start，M2-B2 实现）时清除；进程死亡时 M2-B2 补投。
    * M2-B1 只加字段 + 投递时 push，不做清除/补投。undefined/空 = 无在途消息。

@@ -187,7 +187,7 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
         );
 
         // SP-4: 检查级联关闭记录（fork/new 时被关的 subagent）
-        const cascaded = service.recentlyCascaded;
+        const cascaded = service.drainCascaded();
         if (activeRecords.length === 0 && cascaded.length === 0) return;
 
         const parts: string[] = [];
@@ -430,6 +430,9 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       setSubagentService(service);
     }
 
+    // S-2: 启动 idle record GC 定时器（30 天 TTL，每小时检查一次）
+    service.startGcTimer();
+
     cachedMainSessionFile = ctx.sessionManager.getSessionFile() ?? undefined;
 
     try {
@@ -555,6 +558,33 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   });
 
   // ════════════════════════════════════════════════════════════
+  //  SP-4: session_before_fork / session_before_tree（/new）级联关闭
+  // ════════════════════════════════════════════════════════════
+  //  主 session /fork 或 /new 时，清理旧子进程（disposeAllRecords + recentlyCascaded 记账）。
+  //  before 事件在树导航前触发，确保旧 session 的 subagent 在新 session 创建前被清理。
+  pi.on("session_before_fork", (_event, _ctx) => {
+    const service = getSubagentService();
+    if (service) {
+      const count = service.onParentFork();
+      if (count > 0) {
+        logger.warn(`[subagents] /fork 级联关闭 ${count} 个 subagent`);
+      }
+    }
+  });
+
+  pi.on("session_before_tree", (_event, _ctx) => {
+    // /new 创建全新 session（targetId 不在现有树中）→ 级联关闭旧子进程。
+    // /resume /fork 等树导航不触发（它们有各自的 handler 或 targetId 已存在）。
+    const service = getSubagentService();
+    if (service) {
+      const count = service.onParentNew();
+      if (count > 0) {
+        logger.warn(`[subagents] /new 级联关闭 ${count} 个 subagent`);
+      }
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════
   //  session_shutdown：dispose subagents + pause workflows + cleanup
   // ════════════════════════════════════════════════════════════
   pi.on("session_shutdown", async (_event: SessionShutdownEvent, _ctx: ExtensionContext) => {
@@ -601,11 +631,13 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // ════════════════════════════════════════════════════════════
   process.on("SIGTERM", () => {
     reapSpawnedChildrenOnShutdown();
-    process.exit(0);
+    // S-3: 改用 process.exitCode 而非 process.exit(0)，让子进程 cleanup 完成后再自然退出。
+    // process.exit(0) 会立即终止，可能在 reapSpawnedChildrenOnShutdown 完成前截断。
+    process.exitCode = 0;
   });
   process.on("SIGINT", () => {
     reapSpawnedChildrenOnShutdown();
-    process.exit(0);
+    process.exitCode = 0;
   });
   process.on("beforeExit", reapSpawnedChildrenOnShutdown);
 

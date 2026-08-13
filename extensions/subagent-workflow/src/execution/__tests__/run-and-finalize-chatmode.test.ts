@@ -170,13 +170,14 @@ describe("runAndFinalize chatMode idle 分流 (M2-A)", () => {
     expect(record.result).toBeTruthy();
   });
 
-  it("非 chatMode + done → record done，archived（现有一次性模式行为不变）", async () => {
+  it("非 chatMode + done → record idle（SP-5: 一次性完成后保持活跃，等待 message 触发升级）", async () => {
     const record = makeRecord(false);
     internals.store.register(record);
     await callRunAndFinalize(record, true);
 
-    expect(record.status).toBe("closed");
-    expect(internals.store.getMutable(record.id)).toBeUndefined();
+    // SP-5: one-shot 完成后 record 保持 idle（非终态归档），用户可通过 message 续聊。
+    expect(record.status).toBe("idle");
+    expect(internals.store.getMutable(record.id)).toBe(record); // 留内存
   });
 
   it("chatMode 第二轮 done → round 累加（1→2，续聊场景）", async () => {

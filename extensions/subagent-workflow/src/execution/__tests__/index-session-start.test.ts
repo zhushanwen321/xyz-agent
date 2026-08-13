@@ -91,6 +91,7 @@ vi.mock("../subagent-service.ts", () => ({
     initSession = mockInitSession;
     setUiRequestHandler = mockSetUiRequestHandler;
     recoverManifestTmpFiles = mockRecoverManifestTmpFiles;
+    startGcTimer = vi.fn();
     getStreamSink = () => null;
     dispose = vi.fn();
   },
@@ -253,6 +254,7 @@ describe("session_start UI handler 注入链路（SR-3）", () => {
       // ADR-035：与 SubagentService mock class 形状一致——session_start
       // 会调 service.recoverManifestTmpFiles()，缺方法会抛 TypeError 被吞为 console.warn
       recoverManifestTmpFiles: mockRecoverManifestTmpFiles,
+      startGcTimer: vi.fn(),
       getStreamSink: () => null,
       dispose: vi.fn(),
     };

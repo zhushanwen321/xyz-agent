@@ -82,6 +82,8 @@ vi.mock("../subagent-service.ts", () => ({
     initSession = mockInitSession;
     // W3: index.ts session_start 注入 UI handler 时调用
     setUiRequestHandler = mockSetUiRequestHandler;
+    startGcTimer = vi.fn();
+    recoverManifestTmpFiles = vi.fn(async () => ({ deleted: 0, recovered: 0 }));
     constructor(init: unknown) {
       capturedConstructorArg.current = init;
     }
@@ -167,14 +169,14 @@ describe("session_start worktree reaper", () => {
     vi.clearAllMocks();
   });
 
-  it("session_start 触发 WTM.scan 调用", () => {
+  it("session_start 触发 WTM.scan 调用", async () => {
     const { pi, getSessionStartHandler } = createMockPi();
     subagentsExtension(pi);
 
     const handler = getSessionStartHandler();
     expect(handler).toBeDefined();
 
-    handler!(
+    await handler!(
       { type: "session_start", reason: "startup" },
       createMockCtx(),
     );
@@ -184,7 +186,7 @@ describe("session_start worktree reaper", () => {
     expect(mockScan).toHaveBeenCalledWith();
   });
 
-  it("scan 抛错不阻断 session_start", () => {
+  it("scan 抛错不阻断 session_start", async () => {
     mockScan.mockImplementation(() => {
       throw new Error("git not found");
     });
@@ -196,23 +198,23 @@ describe("session_start worktree reaper", () => {
     expect(handler).toBeDefined();
 
     // 不应抛错
-    expect(() => {
+    await expect(
       handler!(
         { type: "session_start", reason: "startup" },
         createMockCtx(),
-      );
-    }).not.toThrow();
+      )
+    ).resolves.toBeUndefined();
 
     // service 仍然被注册（启动未被阻断）
     expect(mockSetSubagentService).toHaveBeenCalled();
   });
 
-  it("mainSessionFile 被缓存并传给 SubagentService", () => {
+  it("mainSessionFile 被缓存并传给 SubagentService", async () => {
     const { pi, getSessionStartHandler } = createMockPi();
     subagentsExtension(pi);
 
     const handler = getSessionStartHandler();
-    handler!(
+    await handler!(
       { type: "session_start", reason: "startup" },
       createMockCtx(),
     );

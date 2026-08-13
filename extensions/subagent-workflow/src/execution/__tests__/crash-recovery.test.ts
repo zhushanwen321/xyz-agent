@@ -90,6 +90,8 @@ vi.mock("../subagent-service.ts", () => ({
     initSession = vi.fn();
     // W3: index.ts session_start 注入 UI handler 时调用
     setUiRequestHandler = vi.fn();
+    recoverManifestTmpFiles = vi.fn(async () => ({ deleted: 0, recovered: 0 }));
+    startGcTimer = vi.fn();
   },
   getSubagentService: () => null,
   setSubagentService: vi.fn(),

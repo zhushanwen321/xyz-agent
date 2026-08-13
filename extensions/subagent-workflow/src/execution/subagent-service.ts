@@ -213,7 +213,7 @@ export class SubagentService {
    *  before_agent_start hook 据此注入告知消息，让主 agent 知道哪些子 agent 被清理。
    *  60s 超时自动清空（内存态，进程重启即丢失——设计已接受：fork 历史已过去，
    *  重启后 list 的 closed reason 本身可见）。 */
-  recentlyCascaded: Array<{ recordId: string; reason: ClosedReason }> = [];
+  private recentlyCascaded: Array<{ recordId: string; reason: ClosedReason }> = [];
   private readonly modelService: ModelConfigService;
   private readonly cwd: string;
   private readonly worktreeManager: WorktreeManager;
@@ -461,6 +461,51 @@ export class SubagentService {
     }, 60_000);
   }
 
+  /** SP-4: 消费级联关闭记录（fork/new 时被关的 subagent）。
+   *  返回并清空 recentlyCascaded 数组（drain 语义：读即清，防重复注入）。
+   *  调用方（before_agent_start hook）注入告知消息后自动清理。 */
+  drainCascaded(): Array<{ recordId: string; reason: ClosedReason }> {
+    const items = this.recentlyCascaded;
+    this.recentlyCascaded = [];
+    return items;
+  }
+
+  /** SP-4: idle record GC 定时器（30 天 TTL）。防止 idle record 永久驻留内存。
+   *  session_start 时启动，session_shutdown 时清理。每小时检查一次。 */
+  private gcTimer: NodeJS.Timeout | undefined;
+
+  /** 启动 idle record GC 定时器（session_start 调用）。 */
+  startGcTimer(): void {
+    if (this.gcTimer) return;
+    const GC_INTERVAL_MS = 60 * 60 * 1000; // 1 小时
+    const IDLE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 天
+    this.gcTimer = setInterval(() => {
+      const now = Date.now();
+      for (const record of this.store.listAllActive()) {
+        if (record.status === "idle" && record.idleSince) {
+          const age = now - record.idleSince;
+          if (age > IDLE_TTL_MS) {
+            logger.warn(`[subagents] GC: archiving idle record ${record.id} (idle for ${Math.round(age / 86400000)}d)`);
+            try {
+              this.store.archive(record);
+            } catch (err) {
+              bestEffort(err, `GC archive record ${record.id}`);
+            }
+          }
+        }
+      }
+    }, GC_INTERVAL_MS);
+    this.gcTimer.unref?.();
+  }
+
+  /** 停止 idle record GC 定时器（dispose 调用）。 */
+  private stopGcTimer(): void {
+    if (this.gcTimer) {
+      clearInterval(this.gcTimer);
+      this.gcTimer = undefined;
+    }
+  }
+
   /** session 结束清理（清定时器，丢弃 pending 通知）。幂等。
    *
    * [M-7] dispose 顺序假设：pending:unregister emit 依赖 pending-notifications 扩展的
@@ -470,6 +515,7 @@ export class SubagentService {
   dispose(): void {
     if (this._disposed) return;
     this._disposed = true;
+    this.stopGcTimer();
     // [dispose stub] 第一时间换 stub，防 trailing ui_request 调到 stale handler 闭包
     // （仍持有 disposed session 的 ctx）产生误导性 console.error。stub 干净降级为 cancelled。
     // 必须在 emit/abort 之前——这些步骤可能同步触发 trailing pump。
@@ -1305,7 +1351,14 @@ export class SubagentService {
         // record.result 由 finalizeRoundToIdle 设为 error 兜底文本，notify 经 idle 路径送达行动指引。
         // 注：close(force:true) 的 cancelled 由 cancelBackground 直接终态化（不走此分支）。
         await this.finalizeRoundToIdle(record, result);
+      } else if (!record.chatMode && status === "closed" && result.success) {
+        // [SP-5] one-shot 成功完成 → 不归档，走 idle 保持活跃，等待 message 触发 upgrade。
+        // 设计 v3 §3.3 SP-1/SP-5 边界契约：SP-5 删除编译期 fence（旧 !chatMode→archiveImmediately），
+        // one-shot 完成后 record 保持 active（idle 态），用户可通过 message 续聊（自动 upgrade chatMode）。
+        // 归档时机改为：显式 close / 级联关闭 / 30 天 TTL。
+        await this.finalizeRoundToIdle(record, result);
       } else {
+        // 非 chatMode 失败/取消 或其他终态：一次性销毁（archive + worktree cleanup）。
         await this.finalizeRecord(record, result, status, closedReason);
       }
     }

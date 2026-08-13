@@ -57,6 +57,7 @@ vi.mock("../subagent-service.ts", () => ({
     initSession = mockInitSession;
     setUiRequestHandler = mockSetUiRequestHandler;
     recoverManifestTmpFiles = mockRecoverManifestTmpFiles;
+    startGcTimer = vi.fn();
     getStreamSink = () => null;
     dispose = vi.fn();
   },
