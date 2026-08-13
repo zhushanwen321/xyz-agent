@@ -72,8 +72,8 @@ const SID_TAIL_LENGTH = 8
  * prev=['A','A'] → next=['A'] → 差集 ['A']（drain 了一条）。用 includes 会因 'A' 仍在 next 里
  * 漏判，导致第二条 pending 永久卡住。计数差集精确匹配出现次数差。
  *
- * 与 markPendingDelivered 的 findIndex FIFO 配合：countDrained 返回 N 条相同文本 →
- * 调 N 次 markPendingDelivered，每次转最早的 pending（FIFO，与 pi splice 顺序一致）。
+ * 与 drainPending 的 findIndex FIFO 配合：countDrained 返回 N 条相同文本 →
+ * 调 N 次 drainPending，每次取最早的 pending segments（FIFO，与 pi splice 顺序一致）。
  */
 function countDrained(prev: string[], next: string[]): string[] {
   const remaining = [...next]
@@ -528,7 +528,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   },
 
   'message.queue_update': (ctx, sid, payload) => {
-    const { queueStates, markPendingDelivered } = ctx
+    const { queueStates, drainPending, appendUser } = ctx
     // W06-B：消息队列更新。payload（event-adapter）：{ steering?, followUp? }。
     // pi 发空数组 []（_emitQueueUpdate 总展开为数组），空数组视为无内容（length 判断）。
     const state: QueueState = {}
@@ -540,14 +540,19 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // pending→complete 驱动：计数差集找出「被 drain 投递的」项（prev 比 new 多出的元素）。
     // [B1] 不能用 includes（子串语义）——重复文本 'A' 入队两条、drain 一条后 new=['A']，
     // includes('A')===true 会漏判，第二条 pending 永久卡住。计数差集按出现次数精确匹配。
-    // [W5] 带 sendMode 调 markPendingDelivered，避免跨类型同文本误转（steer「补」与 followUp「补」）。
+    // [W5] 带 sendMode 调 drainPending，避免跨类型同文本误取（steer「补」与 followUp「补」）。
     const prev = queueStates.value.get(sid)
     if (prev) {
+      // m2：drain 分支从 markPendingDelivered（m1）切换为 drainPending + appendUser——
+      // drainPending FIFO 取匹配 pending 的 segments，appendUser 追加进对话流（complete user）。
+      // markPendingDelivered 暂保留在 ctx/store（m4 清理）。
       for (const text of countDrained(prev.steering ?? [], steering ?? [])) {
-        markPendingDelivered(sid, text, 'steer')
+        const segs = drainPending(sid, text, 'steer')
+        if (segs) appendUser(sid, segs)
       }
       for (const text of countDrained(prev.followUp ?? [], followUp ?? [])) {
-        markPendingDelivered(sid, text, 'follow-up')
+        const segs = drainPending(sid, text, 'follow-up')
+        if (segs) appendUser(sid, segs)
       }
     }
 

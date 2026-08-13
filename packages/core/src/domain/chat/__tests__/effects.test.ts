@@ -19,7 +19,7 @@ import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { dispatchMessageEvent } from '../effects/registry'
 import type { MessageEffectContext } from '../effect-types'
-import type { Message, ServerMessage } from '@xyz-agent/shared'
+import type { Message, Segment, ServerMessage } from '@xyz-agent/shared'
 
 const SID = 's-test'
 
@@ -37,6 +37,9 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     armBashTimer: vi.fn(),
     clearBashTimer: vi.fn(),
     markPendingDelivered: vi.fn(),
+    // m2：queue_update drain 接线 drainPending + appendUser
+    drainPending: vi.fn(),
+    appendUser: vi.fn(),
   }
 }
 
@@ -177,5 +180,52 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
       { type: 'text', refId: 'text', contentIndex: 2 },
       { type: 'toolCall', refId: 'tc2', contentIndex: 3 },
     ])
+  })
+})
+
+describe('dispatchMessageEvent queue_update drain（m2 steer/followup 解耦）', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  // TC1-TC3：m2 把 queue_update drain 分支从 markPendingDelivered 切换为 drainPending + appendUser。
+  // drainPending FIFO 取匹配 pending 的 segments，appendUser 追加进对话流（complete user）。
+  // 此处为 integration——测 handler 接线（调对 ctx 方法 + 参数），appendUser 内部逻辑在 store 单测。
+
+  it('TC1: steering drain → drainPending 取 segments + appendUser 追加', () => {
+    const ctx = makeCtx()
+    // prev queueStates：steering 队列有 1 项（模拟之前 steer 入队）
+    ctx.queueStates.value = new Map([[SID, { steering: ['adjust plan'] }]])
+    // drainPending mock 返回 segments（模拟 pendingBuffer 命中）
+    const segs: Segment[] = [{ type: 'text', text: 'adjust plan' }]
+    vi.mocked(ctx.drainPending).mockReturnValue(segs)
+
+    dispatchMessageEvent(ctx, SID, msg('message.queue_update', { steering: [] }))
+
+    // countDrained(['adjust plan'], []) → ['adjust plan']（prev 有 next 没有）
+    expect(ctx.drainPending).toHaveBeenCalledWith(SID, 'adjust plan', 'steer')
+    expect(ctx.appendUser).toHaveBeenCalledWith(SID, segs)
+  })
+
+  it('TC2: followUp drain → drainPending 取 segments + appendUser 追加', () => {
+    const ctx = makeCtx()
+    ctx.queueStates.value = new Map([[SID, { followUp: ['next step'] }]])
+    const segs: Segment[] = [{ type: 'text', text: 'next step' }]
+    vi.mocked(ctx.drainPending).mockReturnValue(segs)
+
+    dispatchMessageEvent(ctx, SID, msg('message.queue_update', { followUp: [] }))
+
+    expect(ctx.drainPending).toHaveBeenCalledWith(SID, 'next step', 'follow-up')
+    expect(ctx.appendUser).toHaveBeenCalledWith(SID, segs)
+  })
+
+  it('TC3: drainPending 无匹配返回 undefined 时 appendUser 不调（幂等）', () => {
+    const ctx = makeCtx()
+    // prev queueStates 有项（drain 会触发 countDrained），但 pendingBuffer 空（drainPending 返回 undefined）
+    ctx.queueStates.value = new Map([[SID, { steering: ['x'] }]])
+    // drainPending 默认 vi.fn() 返回 undefined（模拟 pendingBuffer 空 / 已 abort）
+
+    dispatchMessageEvent(ctx, SID, msg('message.queue_update', { steering: [] }))
+
+    expect(ctx.drainPending).toHaveBeenCalledWith(SID, 'x', 'steer')
+    expect(ctx.appendUser).not.toHaveBeenCalled()
   })
 })
