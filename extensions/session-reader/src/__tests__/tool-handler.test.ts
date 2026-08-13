@@ -12,6 +12,7 @@ import {
   HAS_E6,
   HAS_REAL,
   HAS_REAL_SUBAGENTS_DIR,
+  hasAnyRealSession,
   hasRealSession,
 } from './real-data.js'
 
@@ -27,6 +28,8 @@ import {
  * renderExtractItems F9 截断是纯 fixture，无条件跑。
  */
 
+// 真实数据套件 timeout 说明：find 全扫描 + 5.6MB 文件解析在并发/高负载下可能超过
+// vitest 默认 5s（pnpm extensions:test 全量跑时多包集成测试并发 IO），显式放宽到 60s。
 describe.skipIf(!HAS_REAL)('handleSessionRead', () => {
   it('1. find by uuid fragment returns matching session', async () => {
     const r = await handleSessionRead({ action: 'find', query: 'e6c96' }, REAL)
@@ -54,6 +57,11 @@ describe.skipIf(!HAS_REAL)('handleSessionRead', () => {
   })
 
   it('4. family lists fork children and隔代 subagents', async () => {
+    // 数据守卫：fork 子代 019fe632（sessions/）与隔代 subagent 019fe635（subagents/）
+    // 位于活跃数据目录（subagents 目录随 GC/新建持续变化），文件被清理/重命名时跳过
+    // 而非失败——与 TC14-TC18 的「数据不存在则 return」守卫模式一致，避免偶发红。
+    // 注意必须用 hasAnyRealSession（双目录），hasRealSession 只扫 sessions/ 扫不到 019fe635。
+    if (!hasAnyRealSession('019fe632') || !hasAnyRealSession('019fe635')) return
     const r = await handleSessionRead({ action: 'family', session: FAM }, REAL)
     const d = r.details as {
       forks: Array<{ sessionId: string }>
@@ -114,7 +122,7 @@ describe.skipIf(!HAS_REAL)('handleSessionRead', () => {
     const dFrag = rFrag.details as { turns: unknown[] }
     expect(dFrag.turns.length).toBe(dFull.turns.length)
   })
-})
+}, 60000)
 
 describe.skipIf(!HAS_E6)('extract (v2 O4)', () => {
   it('user-messages returns 26 user entries with turn + full text', async () => {
@@ -292,7 +300,7 @@ describe.skipIf(!HAS_E6)('extract (v2 O4)', () => {
     expect(msg).not.toContain('用 outline 重看有效范围')
     expect(msg).toContain('该 session extract 共')
   })
-})
+}, 60000)
 
 // ---- fixture 工具（tmpdir 造最小 session 文件，供 F2/MF-5 用例）----
 
@@ -924,7 +932,7 @@ describe.skipIf(!HAS_REAL_SUBAGENTS_DIR)('真实数据：subagent sa-id（w2 TC1
       handleSessionRead({ action: 'outline', session: fakeId }, REAL),
     ).rejects.toThrow('无匹配 record')
   })
-})
+}, 60000)
 
 // ============================================================
 // w6: doWorkflow action（TC-w6-single-run/multi-run/runid-filter/runid-not-found/no-runs/snapshot-skip/call-jump）
@@ -1297,7 +1305,7 @@ describe.skipIf(!HAS_REAL_WF_SESSION)('doWorkflow - 真实数据守卫', () => {
     expect(r.content[0].text).toContain('run:')
     expect(r.content[0].text).toContain('budget:')
   }, 30000)
-})
+}, 60000)
 
 // ============================================================
 // m3b：doFamily recursive false/true（TC-m3b-dofamily-recursive-false/true）

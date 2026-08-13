@@ -1,5 +1,36 @@
 # @zhushanwen/pi-subagent-workflow
 
+## 7.3.2
+
+### Patch Changes
+
+- 2f38dbd86: Inject worktree guidance prompt so subagents know their cwd is a git worktree.
+
+  Subagents spawned with `worktree:true` received no prompt explaining their
+  cwd was a dedicated git worktree checkout. The worktree is placed under
+  `os.tmpdir()` (e.g. `/private/var/folders/.../pi-subagents/.../pi-sub-<id>`),
+  which looks like a temporary sandbox. Subagents misjudged it as an empty
+  isolation directory and `cd`'d elsewhere (e.g. the parent worktree),
+  abandoning their isolated workspace — observed in a cw wave-agent session
+  where the agent thought its worktree was an empty sandbox and operated in
+  the parent worktree instead.
+
+  Now when `worktree:true` is set, a `WORKTREE_GUIDANCE_PROMPT` is injected
+  into the subagent's append-system-prompt, stating: the cwd is a git worktree
+  with the complete project source, how to find the repo root
+  (`git rev-parse --git-common-dir`), that file changes are auto-captured as
+  a patch (no need to commit/push), and explicitly NOT to `cd` elsewhere
+  looking for "the real project".
+
+## 7.3.1
+
+### Patch Changes
+
+- 291d9645a: fix: register worktree pid synchronously after spawn + robust cw spawn errors
+
+  - `subagent-workflow` session-runner: register the worktree pid synchronously right after `spawn()` returns (`child.pid` is available synchronously), instead of only in the stdout header branch which never fires in RPC mode. Previously the pid stayed 0 and the orphan reaper deleted **live** worktrees after the 60s grace period — killing wave-agent cwds and breaking recursive orchestration. Adds warn logs for pid=0 entries past grace and pid-write failures (observability loop).
+  - `cw-tool` cw-spawn: check cwd exists before spawning, and include the cwd in ENOENT error messages (previously only the command name was shown, causing misdiagnosis of missing worktree directories).
+
 ## 7.3.0
 
 ### Minor Changes

@@ -138,5 +138,6 @@ describe('segmentTurns', () => {
     expect(turns.filter((t) => t.isCompaction).length).toBe(5)
     // 其中有 26 个 user turn
     expect(turns.filter((t) => t.userEntry !== undefined).length).toBe(26)
-  })
+    // 5.6MB 全量解析在并发/高负载下可能超 vitest 默认 5s，显式放宽
+  }, 60000)
 })

@@ -174,6 +174,30 @@ The \`ask_user\` tool is available in this session. When you call \`ask_user\`, 
 - Use ask_user only when you genuinely cannot resolve ambiguity yourself (see tool description for guidelines)
 `.trim();
 
+/**
+ * worktree 模式注入子 agent 的认知纠正提示。
+ *
+ * 背景：worktree checkout 放在 os.tmpdir()（如 `/private/var/folders/.../pi-subagents/.../pi-sub-<id>`），
+ * 路径形似临时沙箱。子 agent system prompt 无任何 worktree 语义说明时，会误判 cwd 为
+ * "空隔离目录"，主动 cd 别处（如主 worktree）放弃隔离——实测见 wave-agent 事故
+ *（session 019ff64c T001 自述 cwd 是 pi 隔离目录，实际是合法 worktree checkout）。
+ *
+ * 此提示在 worktree 模式下注入，明确告知子 agent：cwd 是含完整项目代码的 git worktree，
+ * 直接在此工作即可，不要 cd 别处找"真正的项目"。
+ */
+export const WORKTREE_GUIDANCE_PROMPT = `
+## Working Directory Is a Git Worktree
+
+Your working directory (the "Working directory" in the environment block above) is a **dedicated git worktree** — an isolated checkout of the repository at HEAD, NOT a temporary sandbox. It contains the **complete project source code**.
+
+**You should:**
+- Work directly in your current cwd — it already has the full project (every file). Read project files via relative paths as usual.
+- To locate the shared repository root: \`git rev-parse --git-common-dir\`.
+- Your file changes are automatically captured as a patch when you finish — just do the work; no need to commit, push, or merge.
+
+**Do NOT** \`cd\` to another directory looking for "the real project" — your cwd IS the project. A path like \`/private/var/folders/.../pi-subagents/.../pi-sub-<id>\` is your worktree checkout, not an empty sandbox.
+`.trim();
+
 // ============================================================
 // 孤儿进程兜底（C1）
 // ============================================================
@@ -662,6 +686,11 @@ export async function runSpawn(
   if (opts.agentConfig?.tools?.includes("ask_user") && willRespondToAskUser(ctx.mode)) {
     appendParts.push(ASK_USER_RPC_PROMPT);
   }
+  // worktree 认知纠正：告知子 agent cwd 是 git worktree（非临时沙箱），含完整项目代码，
+  // 直接在此工作。防 wave-agent 类误判 cwd 为空隔离目录后 cd 主 worktree 放弃隔离。
+  if (opts.worktree) {
+    appendParts.push(WORKTREE_GUIDANCE_PROMPT);
+  }
   if (appendParts.length > 0) {
     tempPromptFile = await writePromptToTempFile(record.agent, appendParts.join("\n\n"));
   }
@@ -723,6 +752,14 @@ export async function runSpawn(
       env: childEnv,
     });
     proc = child;
+    // [worktree-reaper-fix] 同步补全注册表 pid：spawn 返回后 child.pid 立即可得（Node.js
+    // 同步属性），无需等任何 stdout 事件。原补全点挂在 header 分支（下方 stdout handler 内），
+    // 而 RPC mode（buildSpawnArgs 固定 --mode rpc）不输出 header 行——pid 恒为 0，超
+    // SPAWN_GRACE_MS 后被 reaper 当孤儿误删活 worktree（2026-08-11 cw 递归编排整树失活事故）。
+    // header 分支调用保留：json mode 回切时仍能补全，updatePid 同 branch 覆盖写幂等，无副作用。
+    if (opts.worktree && child.pid) {
+      ctx.onWorktreePid?.(opts.worktree.branch, child.pid);
+    }
     // [C1] track 子进程供 dispose 兜底 kill（sync + background 均注册——sync 无 controller，
     // abortRunningControllers 跳过它，靠本 Set 兜底）。close/error 后移除（已退出无需再 kill）。
     spawnedChildren.add(child);

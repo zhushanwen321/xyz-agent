@@ -21,7 +21,7 @@ export const scheduleGuidelines = [
   'This tool creates a scheduled task.',
   'Schedule accepts duration (5m, 2h, 1d) for interval-based or cron expression for time-based.',
   'Default kind is recurring. Set kind="once" for one-time reminders.',
-  'After creation, the response includes task id and next 5 run times.',
+  'After creation, the response includes task id and next run time(s).',
   'Default expiry is 7 days. Use expires="never" for long-term tasks.',
 ]
 

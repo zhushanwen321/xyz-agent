@@ -44,6 +44,26 @@ export function hasRealSession(sid: string): boolean {
   }
 }
 
+/**
+ * 同步探测真实数据中任意 session 文件存在（main sessions/ 与 subagents/ 双目录）。
+ * 与 hasRealSession 的区别：subagent session 文件位于 subagents/<cwd>/sessions/ 下，
+ * hasRealSession 只扫主 sessions/ 目录扫不到。用于对活跃数据目录中具体文件（如 fork
+ * 子代/隔代 subagent）存在性的守卫探测。
+ */
+export function hasAnyRealSession(fragment: string): boolean {
+  if (!existsSync(REAL_AGENT_DIR)) return false
+  try {
+    return (
+      execSync(
+        `find ${REAL_AGENT_DIR}/sessions ${REAL_AGENT_DIR}/subagents -name '*${fragment}*' -name '*.jsonl' ! -name '*.finalized' 2>/dev/null | head -1`,
+        { encoding: 'utf8' },
+      ).trim().length > 0
+    )
+  } catch {
+    return false
+  }
+}
+
 export const HAS_REAL_AGENT_DIR = existsSync(REAL_AGENT_DIR)
 export const HAS_REAL_SUBAGENTS_DIR = existsSync(join(REAL_AGENT_DIR, 'subagents'))
 export const HAS_REAL_SESSION = existsSync(REAL_SESSION)
