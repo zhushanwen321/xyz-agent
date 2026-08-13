@@ -145,7 +145,7 @@ pi 子进程（JSONL session 文件 / RPC 事件流）
 ### 3.3 关键决策与权衡
 
 - **D1 折叠作用域降到 turn 级**：`showTrace = isWorkingTurn || isExpanded(turnKey)`，`isWorkingTurn = sessionActive && 本 turn 是最后一个 turn`。被否：维持 session 级（F1 的根源）。证据：§2.1 代码 + F1 复现链。`isLastTurn` 由 MessageStream 传入（`lastRenderTurn` 已存在，零新状态）。
-- **D2 窗口统一管理所有块类型**：text 过渡碎片也进窗口。被否：text 豁免。证据：完成态语义本来就只保留最后一条 text（`lastTextBlockKey`），streaming 与完成态规则一致反而简单；进行中的 text 永远在窗口尾部，天然可见。
+- **D2 窗口统一管理所有块类型**：text 也进窗口管理。被否：text 豁免。证据：①规则按 assistantId 分组，每个 assistant 各保留末位 text——多 assistant turn（ask-user 续写/compact 续写/subagent 接力）下各 assistant 的完整回复默认可见不丢失，单 assistant 内的过渡碎片只留末位（完成态语义）；进行中的 text 永远在窗口尾部，天然可见。[2026-08-13 修正] 原「只保留全 turn 最后一条 text」针对单 assistant 长程 run 的过渡碎片，未区分多 assistant turn，致非末位 assistant 完整回复默认丢失（edges wave T4 回归发现 4 个预存失败 TC-M0-1/TC-REG-1/2/3，路径 1 修复：computeTraceWindow `lastTextByAssistant` Map 按 assistantId 分组 + Turn.vue visibleBlocks 同步）。
 - **D3 收编行只有「展开全部 / 恢复精简」一个动作**：不支持收编区内单块定点展开。被否：单块 pin 机制。证据：准则「减法优先」——pin 机制引入新的状态面和边界 case，而「展开全部再找到那块」的成本只有一次点击；对齐 Claude Code verbose 开关的全或无语义。
 - **D4 failed tool 进入收编计数 + danger 高亮**：失败块与成功块一样进窗口收编，但收编行以 danger 色显示失败子计数（「含 M 次失败」）。被否：失败块豁免收编（始终以 1 行在场）。证据：失败是「跑偏没」核心信号不能埋，但 retry 循环下失败数可无界（反复重试失败操作是长程任务真实场景），豁免收编会让体积随失败数膨胀、破坏 G1。折中——计数高亮保证「展开可见 + 收编行可感知」，体积始终有界。块内部形态沿用现有语义（failed 终态 1 行 danger header），不改 Block.vue。
 - **D5 窗口零 chrome（G4 的实现约束）**：收编行 = 一行 `text-neutral-dim` 文字 + chevron 图标，样式对齐现有 tool header 安静行（hover 微亮）；禁止边框、背景块、分隔线、渐变遮罩。被否：fade 遮罩/卡片化——任何窗口可见物都违反「融为一体」。
