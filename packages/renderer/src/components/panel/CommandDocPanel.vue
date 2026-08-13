@@ -20,7 +20,8 @@
     <div class="min-h-0 flex-1 overflow-auto p-3">
       <template v-if="skill">
         <!-- skill 完整文档（SKILL.md 经 markdown 渲染） -->
-        <div v-if="skill.description" class="mb-3 text-[13px] text-neutral-mid">{{ skill.description }}</div>
+        <!-- description 改用 MarkdownRenderer：skill frontmatter description 普遍含行内 markdown（反引号/星号/链接），纯文本插值会原样显示标记符号 -->
+        <MarkdownRenderer v-if="skill.description" :content="skill.description" :session-id="sessionId ?? undefined" class="mb-3" />
         <MarkdownRenderer v-if="skill.content" :content="skill.content" :session-id="sessionId ?? undefined" />
         <div v-else class="py-6 text-center text-[12px] text-neutral-dim">{{ t('panel.command.noDocBody') }}</div>
         <!-- skill 元信息：sourcePath / tools / triggers -->
