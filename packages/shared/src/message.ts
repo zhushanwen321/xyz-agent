@@ -7,15 +7,13 @@ export type MessageRole = 'user' | 'assistant' | 'system'
 export type SteerFollowUpMode = 'steer' | 'follow-up'
 
 /**
- * 完成通知类 customType SSOT（从 core/message-turns.ts HIDDEN_NOTIFY_CUSTOM_TYPES 提升）。
+ * 完成通知类 customType SSOT（conversation-renderer-model-unification §3.3.2：
+ * 黑名单已删，收敛为 display 单一判别）。
  *
  * 这些 custom_message 触发 pi triggerTurn 唤醒 agent 在后续 turn 处理结果——对用户是噪声，
  * 结果由 agent 后续 turn 体现。两条消费通路共用此 SSOT，避免字面量漂移：
- * - runtime mapSessionEntries：完成通知类 custom_message 的 display 覆写为 false（converter M1）
- * - core filterDisplayableMessages：按 customType 过滤渲染（renderer-model slice 改引用 shared）
- *
- * M1（converter shared mapper）只提升到 shared；core/message-turns.ts 暂保留旧
- * HIDDEN_NOTIFY_CUSTOM_TYPES（未引用 shared），改引用在 renderer-model slice（M2 display 前置）。
+ * - core registry customStart：完成通知类覆写 display:false（实时链路）
+ * - runtime mapSessionEntries / entry-tree-builder：对称覆写 display:false（历史链路，方案 Z）
  */
 export const COMPLETE_NOTIFY_CUSTOM_TYPES = new Set(['subagent-bg-notify', 'workflow-result'])
 /** 消息生命周期状态（steer/followup 解耦后 pending 不再进消息流——m4 清理）。 */

@@ -47,9 +47,9 @@ describe('filterDisplayableMessages —— 按 display 字段过滤（FR-5 / AC-
     expect(filtered.map((m) => m.id)).toEqual(['u1', 'a1'])
   })
 
-  // [M2 display 前置] 黑名单已删（HIDDEN_NOTIFY_CUSTOM_TYPES），完成通知（subagent-bg-notify /
-  // workflow-result）由生产端（registry customStart / runtime mapper）统一写 display:false，
-  // filter 只按 display===false 纯字段过滤。用例输入对齐生产端契约：display:false。
+  // [M2 display 前置] customType 黑名单已删（§3.3.2 收敛为 display 单一判别），完成通知
+  // （subagent-bg-notify / workflow-result）由生产端（registry customStart / runtime mapper）
+  // 统一写 display:false，filter 只按 display===false 纯字段过滤。用例输入对齐生产端契约。
   // 消息仍进 store 供 fork/compact/replay（filter 不丢消息）。
   it('subagent-bg-notify 完成通知（display:false）被过滤', () => {
     const messages: Message[] = [
