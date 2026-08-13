@@ -83,7 +83,7 @@
 
 **Step 4 · 凭证 CRUD 改走 IConfigStore port**
 
-`services/ports/config.ts` 的 IConfigStore 是多消费方 port（11 消费文件，保留在 ports/），**已含** `getProviderConfig/upsertProvider/removeProvider/ensureProviderInWhitelist`（:39-41/:124）。quota-service/provider-importer 直连 pi-provider-store 是绕过既有 port：
+`services/ports/config.ts` 的 IConfigStore（interface 起于 :96）是多消费方 port（11 消费文件，保留在 ports/），**已含** `ensureProviderInWhitelist`（:124）/ `getProviderConfig`（:134）/ `upsertProvider`（:135）/ `removeProvider`（:136）。quota-service/provider-importer 直连 pi-provider-store 是绕过既有 port：
 
 - `IConfigStore` 扩展两个方法：`getApiKeyForProvider(providerId)`（quota-service:20 缺）、`listProviderNames()`（provider-importer:36 缺的 getProviderNames）
 - quota-service / provider-importer 构造函数注入 IConfigStore（当前均未注入，需加 DI 参数，组合根在 wiring 处传入既有实现）
@@ -100,15 +100,17 @@
 
 **新增 `.githooks/check_layer_boundaries.py`**，复用 `check_path_whitelist.py` 的成熟模式（TARGETS 文件列表 + 正则扫描 + 退出码 0/2 + 错误信息带修复提示）：
 
-检查逻辑（三条规则，全部基于 import 语句解析）：
+检查逻辑（三条规则，基于静态 `import` / `export … from` 语句正则解析）：
 
-1. **反向规则**：`infra/` 下文件 import 相对路径命中 `services/` → 硬错误（初始白名单为空，未来确需反向时先裁决再放行）
-2. **下钻规则**：`services/` 下文件 import 相对路径命中 `infra/` → 硬错误，**白名单 = runtime-three-layer-design.md 受控例外清单的机器可读版**：`infra/logger.js`、`infra/pi/pi-paths.js`、`infra/git/git-status-parser.js`、`infra/fs/ignore-parser.js`（例外清单 SSOT 放脚本头部常量，与 three-layer-design.md 双向注释互指）
+1. **反向规则**：`infra/` 下文件 import（或 `export … from` re-export）相对路径命中 `services/` → 硬错误（初始白名单为空，未来确需反向时先裁决再放行）
+2. **下钻规则**：`services/` 下文件 import 命中 `infra/` → 硬错误，**白名单 = `runtime-three-layer-design.md:156-200` 受控例外清单的文件级机器可读版**。⚠️ **粒度对齐（MF-3 修订）**：该文档例外清单是**文件级**——logger 8 条 / pi-paths 6 条 / 纯解析函数 2 条，共 16 个 `(services 文件, infra 模块, 行)` 三元组，脚本白名单**必须同粒度**：枚举允许的 `(services 文件, infra 模块)` 对（与文档 16 条严格一一对应），而非「任意 services 文件均可 import 某 infra 模块」的模块级放行。模块级放行会让两套 SSOT 必然漂移——新增一个 services 文件 import `logger` 时脚本放行、文档 8 条清单却未登记，守护与文档脱钩。**同步检查**：脚本启动时校验「脚本白名单三元组与文档清单一致」（参照 `check_env_whitelist_sync.py` 强制 `ENV_WHITELIST_PREFIXES` 单点定义的先例——文档清单是 SSOT，脚本是镜像，两者不一致即 exit 非 0 并提示补登记），防未来有人直接改脚本常量放行
 3. **PiXxx 符号规则**：`services/` 与 `transport/` 下任何 import 自 `infra/pi/pi-protocol.js` 的符号（含 type-only）→ 硬错误
 
 关键设计点：
 
 - **type-only 必须拦**（3 处 PiXxx 泄漏全是 type-only，只拦值导入守护即失效）：import 语句正则需区分 `import type {...}` 与 `import {...}`，两条路径分别判定，任何一条命中即报
+- **barrel re-export 也拦（MF-2 修订，堵最可能的意外 bypass）**：正则同时匹配 `export { ... } from '...'` / `export type { ... } from '...'`——有人为「方便」在 services 建类型 barrel `export { PiSessionEntry } from '../../infra/pi/pi-protocol.js'` 时同样命中规则 3。`import` 与 `export … from` 语句同构，一行正则成本即覆盖；当前代码零实例（`grep -rnE "^export.*(\\{|type).*from.*infra" packages/runtime/src/{services,transport}` 核实），属预防性拦截
+- **已知限制（best-effort 静态扫描，MF-2 修订）**：守护基于静态 `import`/`export … from` 语句正则，**不覆盖** `require()`（CJS）与动态 `import()` 两类 bypass。经核实（`grep -rn "require(\\|import(" packages/runtime/src/{services,transport}`），当前这两类**均无用于跨 services→infra 层访问的实例**——`plugin-bootstrap.ts:275` 的 `require('node:module')` 是 Worker Thread 内 node 内置、`:98` 的 `await import(moduleUrl)` 是同层动态加载插件、其余多为 TS 类型位置用法 `import('...').T`（编译后消失）或第三方/同层模块。故守护对**当下**跨层问题覆盖完整；但动态 import 是真实存在的语法（非假想的罕见），未来若有人写 `await import('../../infra/pi/pi-protocol.js')` 即可绕过——记入已知限制，引入时须同步扩正则或降级为 AST。守护定位是「拦住已知回潮模式」而非「架构边界完整守卫」（与下条「不引入完整 AST 依赖」的轻量实现自洽）
 - 相对路径解析用正则提取 `from '...'` 后做路径归一（`../` 折叠），不引入完整 AST 依赖（与 check_path_whitelist.py 同级的轻量实现）
 - 扫描范围 `packages/runtime/src/{transport,services,infra}/` 全部 `.ts`（排除 `*.test.ts`——测试可 mock 跨层，不属架构承诺）
 - 退出码：0 = 通过；2 = 检查失败（对齐 check_path_whitelist.py）；错误输出列出 文件:行 → import 内容 → 违反规则 → 修复指向（「受控例外判断准则见 runtime-three-layer-design.md:200」）
@@ -145,6 +147,7 @@
 - 性质：长期方案。locality 收益——一次消除 7 个跳转税，读消费方文件即见契约；seam 保留（依赖倒置方向没变），只是从「目录级集中」变为「文件级就近」
 - 代价：与 R9 决策（「ports 按域集中拆分」，runtime-module-map.md 快照时点标注）方向相悖——集中派认为 ports/ 目录是三层架构的可审计面，折叠后 ports/ 清单不再完整代表「service 需要什么」
 - 裁决判据：**seam 的真实价值 = 可替换性兑现**。7 个 port 替换场景为零（历史零换实现、测试用强转而非替身实现）、消费方唯一——目录级集中支付的 indirection 税没有对应收益；多消费方 port 保留集中（它们是真实 seam：方向控制 + 潜在多实现）
+- **反转成本评估（SUG 修订）**：折叠不是不可逆决策——若某 port 后续出现第二消费方，须重新抽出（接口声明从消费方文件搬回 ports/ + import 路径调整）。评估：抽 port 成本低（机械移动 + `rg` 改 import，单 port 约 3-4 处改动），且「第二消费方出现」本身是强信号（说明该能力确成 seam）——届时抽回是「响应真实需求」而非「过度设计被推翻」。即反转成本低且触发条件明确，不构成阻碍折叠的理由；但 DP-2 裁决须记录此反转约定，避免第二消费方出现时有人因为「已折叠」而勉强写第二处内联重复
 
 **选项 B · 维持集中并按域拆分（R9 现状）**
 
@@ -258,7 +261,7 @@ transport「零业务逻辑」边界规则被违反；注释自认是「消除 5
 
 #### 3.6.1 现状
 
-`services/app-config-store.ts:36-70` 手写 `existsSync → readFileSync → JSON.parse` 全骨架（含容错分支），`rg JsonStore` 在 app-config-store 零命中——P0-A 建好的深模块 `utils/json-store.ts`（337 行，吸收 ENOENT/原子写语义）被绕过重写浅版本；`JSON_INDENT` 常量在 4 个新文件各自重复。
+`services/app-config-store.ts:36-70` 手写 `existsSync → readFileSync → JSON.parse` 全骨架（含容错分支），`rg JsonStore` 在 app-config-store 零命中——P0-A 建好的深模块 `utils/json-store.ts`（337 行，吸收 ENOENT/原子写语义）被绕过重写浅版本；`JSON_INDENT` 常量重复散布——实测 `rg -rln JSON_INDENT packages/runtime/src` 命中 **9 文件**：6 处 `const JSON_INDENT =` 定义（`app-config-store.ts:17` 已 `export`、`session-service.ts:1326` 为函数内局部常量、`cli/commands.ts:12` / `preset-service.ts:31` / `project-store.ts:26` / `recent-workspaces-store.ts:27` 各一处模块级私有）+ 2 处 import 消费（`terminal-config-helper.ts:18` / `system-prompt-config-helper.ts:17` 从 app-config-store 取）+ 1 处注释提及（`utils/json-store.ts:29`，已在注释里预告「统一既有 JSON_INDENT / INDENT_SPACES 两套常量」但尚未落地）。
 
 **深模块与浅骨架的能力差**（二次核实）：JsonStore 吸收了 ENOENT→默认值、原子写（临时文件 + rename）、损坏 JSON 容错等语义；app-config-store 的手写骨架只覆盖「文件存在 → 读 → 解析」路径，容错分支（损坏 JSON 回退、写失败处理）各自实现且细节与 JsonStore 不同——两套语义并存，后续维护要同时记住两个行为。
 
@@ -271,7 +274,7 @@ transport「零业务逻辑」边界规则被违反；注释自认是「消除 5
 
 #### 3.6.3 实施步骤（1 commit）
 
-1. `rg "JSON_INDENT" packages/runtime/src` 定位 4 处重复定义 → 收敛为 utils/json-store.ts 单一导出（或 shared 常量位，按依赖方向裁决），4 处改 import
+1. `rg -rln JSON_INDENT packages/runtime/src` 定位 9 处命中（分类见 §3.6.1）→ 收敛为 `utils/json-store.ts` 单一导出（深模块已在注释里预告统一意图，且 services 多处已 `import { atomicWrite } from '../utils/json-store.js'`，同源收敛成本最低），6 处 `const` 定义删除改 import、2 处既有 import 改指向 utils、session-service:1326 函数内局部常量改 import
 2. app-config-store 的 `:36-70` 手写骨架替换为 JsonStore 调用：读路径对齐现有语义（ENOENT → 默认值、损坏 JSON → 容错），写路径由 JsonStore 原子写吸收
 3. 行为等价验证：删除 config.json 启动（ENOENT 路径）、损坏 JSON 启动（容错路径）、正常读写——三个场景与手写骨架行为一致（含现有测试全绿）
 
@@ -302,7 +305,10 @@ transport「零业务逻辑」边界规则被违反；注释自认是「消除 5
 #### 3.8.1 现状
 
 - `services/session/session-service.ts`（1413 行）God facade：60+ 方法约半数零决策委托（转发到 session-pool/scanner/store 等，如列表/详情/生命周期类方法多为直通）；夹带 token/usage 状态 8 方法 + 11 setter 注入（状态与 facade 职责混杂——状态本应归属 tracker，facade 却同时是状态持有者和转发器）
-- `services/preset-service.ts`（680 行）五职责混装：文件 IO / mtime 缓存 / coerce 校验 / builtin 守卫 / resolve 编排——任一职责变更都要读完 680 行才敢动；`VALID_TOOL_MODES` 等枚举是 shared 层同语义的本地副本（:40-48 注释自认「shared 同语义」）
+- `services/preset-service.ts`（680 行）五职责混装：文件 IO / mtime 缓存 / coerce 校验 / builtin 守卫 / resolve 编排——任一职责变更要读完 680 行才敢动；preset 合法性枚举有两套本地副本，**与 shared 的关系不同，须区别对待**（核实 `grep -rn VALID_TOOL_MODES packages/shared/src/` 零命中）：
+  - `VALID_TOOL_MODES`（preset-service.ts:40）——**shared 无对应**（shared 根本不导出 tool mode 枚举，该常量纯本地）；无任何 shared 注释
+  - `VALID_EXTENSION_MODES`（preset-service.ts:46）——对应 `shared/pi-preset.ts:200` 的 `EXTENSION_MODES`，但后者是 `const`（**未 `export`，私有**），:46 注释自认「shared 未导出，本地定义副本」
+  - 即：两者都非「改 import shared」可直接执行——前者 shared 压根没有，后者 shared 有但不导出
 - **切分边界**（与 D5 的依赖）：D5 要把 session-message-handler 的业务下沉 session-service——若先做 D5 会在 God facade 上继续堆方法，故 D8-①（抽方法重构）是 D5 的前置
 
 #### 3.8.2 方案对比
@@ -316,9 +322,11 @@ transport「零业务逻辑」边界规则被违反；注释自认是「消除 5
 
 **D8-① SessionUsageTracker 抽取**：token/usage 8 方法 + 11 setter 注入的字段/方法整体搬入 `services/session/usage-tracker.ts`；facade 保留对外方法签名（内部转调 tracker），setter 注入收敛为 tracker 构造参数；`rg "token|usage" session-service.ts` 确认 facade 不再持有状态字段；测试迁移（既有 token 断言改指 tracker）
 
-**D8-② 零决策委托内联**：逐方法排查——「无任何分支/变换、纯转发」的方法内联到被委托方（session-pool/scanner/store），rg 确认无外部直接调用后删 facade 方法；每批（≤5 方法）一个 commit，保持 diff 可 review
+**D8-② 零决策委托内联**：逐方法排查——「无任何分支/变换、纯转发」的方法内联到被委托方（session-pool/scanner/store），rg 确认无外部直接调用后删 facade 方法；每批（≤5 方法）一个 commit，保持 diff 可 review。**前置 gate（SUG 修订）**：内联删除前先产出 **facade 方法 → transport handler 消费映射表**（`sessionService.xxx() → { handlerA, handlerB }`），作为删除白名单——映射表为空（零外部消费）的方法才允许内联删除；映射表非空的转调链须显式改为 handler 直调被委托方（不能只删 facade 方法签名而不改调用点）。映射表同时是 17 handler 消费面的回归基线（每个被内联方法的消费点在表里可见，避免「删了 facade 方法、handler 调用点静默断裂」）
 
-**D8-③ preset-service 校验抽模块 + 消 shared 副本**：coerce 校验与 builtin 守卫抽 `services/preset-validation.ts`（纯函数，可直接单测）；`VALID_TOOL_MODES` 等枚举改 import shared（:40-48 本地副本删除）；resolve 编排留在 preset-service，文件 IO/mtime 缓存抽 `preset-store.ts`（如确认无外部消费方）
+**D8-③ preset-service 校验抽模块 + 消 shared 副本**：coerce 校验与 builtin 守卫抽 `services/preset-validation.ts`（纯函数，可直接单测）；枚举收敛须按 §3.8.1 区分的两套分别处理，**不能一句「改 import shared」带过**（执行顺序如下）；resolve 编排留在 preset-service，文件 IO/mtime 缓存抽 `preset-store.ts`（如确认无外部消费方）
+  - **前置子步（核实 + 创建权威源）**：先核实 shared 哪些枚举真导出（`grep -rn '^export.*MODES' packages/shared/src/`）；`VALID_TOOL_MODES` 在 shared 无对应，若设计上确需收敛，须**先在 `shared/src/pi-preset.ts` 创建并 `export`** 对应的 `TOOL_MODES`（或等价命名），再谈 import；`VALID_EXTENSION_MODES` 对应的 `EXTENSION_MODES` 当前是 shared 私有 `const`（pi-preset.ts:200），须**先改 `export const`** 才能被 import
+  - **收敛子步（核实完成后再动）**：shared 权威源就绪后，preset-service 两处本地副本（:40/:46）删除改 import；消费方（preset-service 内部 coerce 路径）随 import 源切换；`shared` 包改动触发 `pnpm extensions:typecheck` + renderer vitest 核实无下游类型破损
 
 每步完成后：`npx vitest run` 全绿 + `pnpm run dev` 冒烟（facade 拆不得破坏 17 个 transport handler 的消费面）。
 
@@ -343,7 +351,7 @@ transport「零业务逻辑」边界规则被违反；注释自认是「消除 5
 
 ### D1 验收
 
-1. **守护拦截实测（红线 13：运行时行为断言必须先验证）**：修复 9 处泄漏后，故意在 `services/` 下某文件加一行 `import { x } from '../infra/pi/pi-provider-store.js'`（或 infra 文件 import services 符号），`python3 .githooks/check_layer_boundaries.py` → **exit 非 0 且错误输出含 文件:行 + 违反规则 + 修复指向**；删除该行后 → exit 0。再验证 type-only 路径：加 `import type { PiSessionEntry } from '../infra/pi/pi-protocol.js'` 同样被拦（3 处 PiXxx 泄漏全是 type-only 的回归防护）
+1. **守护拦截实测（红线 13：运行时行为断言必须先验证）**：修复 9 处泄漏后，故意在 `services/` 下某文件加一行 `import { x } from '../infra/pi/pi-provider-store.js'`（或 infra 文件 import services 符号），`python3 .githooks/check_layer_boundaries.py` → **exit 非 0 且错误输出含 文件:行 + 违反规则 + 修复指向**；删除该行后 → exit 0。再验证 type-only 路径：加 `import type { PiSessionEntry } from '../infra/pi/pi-protocol.js'` 同样被拦（3 处 PiXxx 泄漏全是 type-only 的回归防护）。**再验证 barrel re-export bypass（MF-2 探针）**：加 `export { PiSessionEntry } from '../../infra/pi/pi-protocol.js'` 同样被拦——这是最可能的意外 bypass（有人建类型 barrel 文件时发生），`export … from` 正则覆盖见 §3.1.3 关键设计点
 2. **真实 commit 触发**：`git commit` 携带上述违规 → pre-commit 拦截，commit 失败；修复后 commit 通过（验证 install-hooks.sh 接入段生效）
 3. **9 处泄漏归零**：`rg "from '.*(services|infra)" packages/runtime/src/infra packages/runtime/src/services` 反向边为零（白名单例外除外）；`rg "Pi[A-Z]" packages/runtime/src/services packages/runtime/src/transport` 为空（R5 验收标准回归）
 4. **行为等价**：修复前后跑同一 provider 切换场景（settings → 切换 provider → 观察默认模型对账与广播），断言行为一致（纯函数下沉 + port 注入不得改变语义）

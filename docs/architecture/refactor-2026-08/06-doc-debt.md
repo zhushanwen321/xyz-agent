@@ -2,7 +2,7 @@
 
 > 本文件是 [README.md](README.md)（36 候选总纲）的文档债子文档，覆盖审查报告 §6 章节的 5 份文档。五段骨架：背景目标 → 现状与问题分析 → 解决方案 → 验收 → 下一层拆分。
 >
-> **事实修正说明**：数字均经二次核实（services 实际 132 文件/24,923 行；migration-progress:209「FULLY CLEAN」原文；COPY_MAP 在 git 跟踪源码零定义、14 处文档/.cw 提及——原「全仓零命中」措辞过宽）。
+> **事实修正说明**：数字均经二次核实，且**标注了生成命令**（与 §3 point4「生成式」纪律对齐，生成命令集中见 §2 末「数字方法论」）：services 132 文件/24,923 行（不含测试，含测试 167/33,825）；migration-progress:209「FULLY CLEAN」原文；COPY_MAP 在 git 跟踪源码零定义（提及计数口径敏感——精确 `rg` 26 行/10 文件，是否含审查报告自身 / `.zcode` 产物都会变计数；**稳定的结论是「源码零定义」，不稳定的数字本身正是 point4 要消灭的裸数字**）——原「全仓零命中」措辞过宽。
 
 ## §1 背景与目标
 
@@ -16,11 +16,23 @@
 
 | # | 文档 | 声明（现状） | 事实（实测） | 损害 |
 |---|------|-------------|-------------|------|
-| 1 | `runtime-module-map.md`（142 行） | services **48 文件/8165 行**；「**零 infra 直连**（R5/R7 达成）」；快照时点「R9 后」 | services 实际 **132 文件/24,923 行**（膨胀 3 倍）；D1 的 9 处漂移回潮（含 services→infra 6 处） | 导航价值已崩——按图找模块会踩空或找到过时规模；「零直连」声明给回潮打掩护 |
+| 1 | `runtime-module-map.md`（142 行） | services **48 文件/8165 行**；「**零 infra 直连**（R5/R7 达成）」；快照时点「R9 后」 | services 实际 **132 文件/24,923 行**（不含测试；含测试 167 文件/33,825 行；膨胀 3 倍；**生成命令见 §2 末「数字方法论」**）；D1 的 9 处漂移回潮（含 services→infra 6 处） | 导航价值已崩——按图找模块会踩空或找到过时规模；「零直连」声明给回潮打掩护 |
 | 2 | `runtime-migration-progress.md`（248 行） | :209「services/ → infra 直接 import → **✓ FULLY CLEAN**（零依赖，无任何例外）」 | D1 的 9 处漂移存在且无守护——「CLEAN」是手写断言，不是检查结果 | 漂移无人察觉的根源：文档声称干净，代码早已回潮，且无机制在两者间产生矛盾信号 |
 | 3 | `v6-architecture-refactor.md`（506 行） | B1-B9 欠债清单（现状审查时的待办） | 大多已落地（chat.ts 906→31 行、routeInbound 已迁 core 查表式、Sidebar 467→270、features 已按 14 域分组） | 文档停留在「欠债」状态，无落地标注——后续侦查反复把已落地项当未落地重新排查 |
 | 4 | `renderer-target-architecture.md`（797 行）§2.2 速查表 | 6 文件归属表（GuiComponentRenderer→components、extensions/registry→…） | **2/6 路径失效**：GuiComponentRenderer 已迁 ui 包、extensions/registry 已升格 core/extension-host | 归位判定表不可信——新代码按表放位置会放错层 |
-| 5 | `renderer-target-architecture.md` §2.0 五包图 + §2.3 sync 纪律 | 线性链（renderer 只经 ui 消费）；「sync 兼容纪律」描述 COPY_MAP 机制 | 实为 **DAG**（renderer 直连 core 96 文件、直连 shared 237 文件）；缺 extension-protocol 叶子（0.8k 行零依赖，被五方依赖）；**sync 脚本不存在**；COPY_MAP 在 git 跟踪源码**零定义**（仅 14 处文档/.cw 提及） | 分层图与事实不符——新成员按图理解依赖关系会误判「越层即违规」；纪律描述的机制不存在，读者无从执行 |
+| 5 | `renderer-target-architecture.md` §2.0 五包图 + §2.3 sync 纪律 | 线性链（renderer 只经 ui 消费）；「sync 兼容纪律」描述 COPY_MAP 机制 | 实为 **DAG**（renderer 直连 core 96 文件、直连 shared 237 文件）；缺 extension-protocol 叶子（0.8k 行零依赖，被五方依赖）；**sync 脚本不存在**；COPY_MAP 在 git 跟踪源码**零定义**（提及计数口径敏感，**生成命令见下「数字方法论」**） | 分层图与事实不符——新成员按图理解依赖关系会误判「越层即违规」；纪律描述的机制不存在，读者无从执行 |
+
+**数字方法论（与 §3 point4「生成式」纪律对齐，SUG 修订）**：上表规模/计数数字的生命周期是「审查快照」，后续以命令重跑为准，避免裸数字随代码漂移失准：
+
+| 数字 | 生成命令 | 实测值（本审查时点） |
+|------|---------|-----|
+| services 文件数（不含测试） | `find packages/runtime/src/services -name '*.ts' ! -name '*.test.ts' \| wc -l` | 132 |
+| services 行数（不含测试） | `find packages/runtime/src/services -name '*.ts' ! -name '*.test.ts' -exec cat {} + \| wc -l` | 24,923 |
+| services 文件数（含测试） | `find packages/runtime/src/services -name '*.ts' \| wc -l` | 167 |
+| services 行数（含测试） | 同上换 `-exec cat {} +` | 33,825 |
+| COPY_MAP 全仓提及 | `rg -rn COPY_MAP --include='*.md' --include='*.ts' --include='*.js' --include='*.py' . \| grep -v node_modules \| grep -v '/.git/'` | 26 行 / 10 文件 |
+
+> COPY_MAP 计数说明：口径敏感（是否含审查报告自身、`.zcode` 工具产物、`.cw` 运行时产物都会变计数）——原「14 处」与审查报告「11 处」与此处「26 行」的分岐均源于口径差异。**稳定的结论是「git 跟踪源码零定义」（`rg COPY_MAP packages/*/src apps/*/src` 零命中），不稳定的数字本身正是 point4 要消灭的裸数字**。
 
 **共性根因**：5 份文档都是「一次性审查的产物被当作长期现状文档使用」。审查产出的是**时点快照**（审查那一刻的事实），但文档没有快照标注、没有指向可执行验证——时间一过，声明与事实必然漂移。
 
