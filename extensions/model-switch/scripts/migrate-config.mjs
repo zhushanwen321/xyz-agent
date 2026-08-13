@@ -11,7 +11,7 @@
  * 幂等：旧路径不存在 → noop；新路径已存在 → 不覆盖（仅删旧）；失败 → warn + 不抛错（不阻断安装）。
  */
 
-import { existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -23,7 +23,8 @@ export function resolveAgentDir(argv2, env) {
 
 /**
  * 迁移单个文件：旧路径存在 → 原子搬移到新路径（renameSync，同盘跨目录）。
- * 新路径已存在 → 不覆盖（新文件优先），仅删旧；旧不存在 → noop。
+ * 新路径已存在 → 不覆盖也不删旧（新文件可能是已迁移副本或用户放置，旧文件保留
+ *   作为回退证据，仅 warn——宁可残留 stale 文件，不可丢用户数据）；旧不存在 → noop。
  * 失败 → warn + 返回 { migrated:false }，不抛错（best-effort，下次安装重试）。
  */
 export function migrateFile(agentDir, oldRel, newRel) {
@@ -33,9 +34,8 @@ export function migrateFile(agentDir, oldRel, newRel) {
 	try {
 		mkdirSync(dirname(newPath), { recursive: true });
 		if (existsSync(newPath)) {
-			unlinkSync(oldPath);
-			console.warn(`[migrate-config] removed superseded legacy file: ${oldPath}`);
-			return { migrated: false, removedLegacy: true };
+			console.warn(`[migrate-config] new config already exists, keeping legacy file: ${oldPath}`);
+			return { migrated: false, keptLegacy: true };
 		}
 		renameSync(oldPath, newPath);
 		console.warn(`[migrate-config] migrated: ${oldPath} -> ${newPath}`);

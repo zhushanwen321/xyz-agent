@@ -44,7 +44,7 @@ describe("migrateFile", () => {
 		expect(JSON.parse(readFileSync(newPath, "utf-8")).version).toBe(2);
 	});
 
-	it("新已存在 → 不覆盖新文件，仅删旧", () => {
+	it("新已存在 → 不覆盖新文件，保留旧文件（不删，防数据丢失）", () => {
 		const oldPath = join(agentDir, "model-policy.json");
 		const newPath = join(agentDir, "config", "model-switch.json");
 		mkdirSync(join(agentDir, "config"), { recursive: true });
@@ -54,7 +54,7 @@ describe("migrateFile", () => {
 		const result = migrateFile(agentDir, "model-policy.json", join("config", "model-switch.json"));
 
 		expect(result.migrated).toBe(false);
-		expect(existsSync(oldPath)).toBe(false);
+		expect(existsSync(oldPath)).toBe(true);
 		expect(JSON.parse(readFileSync(newPath, "utf-8")).version).toBe(2);
 	});
 

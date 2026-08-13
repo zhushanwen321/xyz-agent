@@ -2,12 +2,32 @@
  * WT8/WT9: 扩展入口注册 + 占位 tool_call 测试
  *
  * 用 mock pi 对象记录调用，不依赖真实 Pi 运行时。
+ * PI_CODING_AGENT_DIR 隔离到临时目录：permissionExtension 工厂初始化时会
+ * loadAndWatchConfig → ensureConfigFile 创建默认配置，不隔离会污染真实 agentDir。
  */
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // Mock Pi SDK 模块（extension.ts import 的 @earendil-works/pi-coding-agent 类型在 node_modules 有完整定义，
 // 这里 import 工厂函数，用 mock pi 调用它）
 import permissionExtension from "../index.js";
+
+let tempAgentDir: string;
+let originalAgentDirEnv: string | undefined;
+
+beforeEach(() => {
+	tempAgentDir = mkdtempSync(join(tmpdir(), "pi-perm-ext-test-"));
+	originalAgentDirEnv = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = tempAgentDir;
+});
+
+afterEach(() => {
+	if (originalAgentDirEnv === undefined) delete process.env.PI_CODING_AGENT_DIR;
+	else process.env.PI_CODING_AGENT_DIR = originalAgentDirEnv;
+	rmSync(tempAgentDir, { recursive: true, force: true });
+});
 
 /** 最小 mock：只记录 registerCommand 和 on 调用 */
 interface MockPi {
