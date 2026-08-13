@@ -152,7 +152,6 @@ export function computeTraceWindow(
   const windowed = [...completedProcessPool]
     .sort((a, b) => b.flatIndex - a.flatIndex)
     .slice(0, opts.windowSize)
-  const windowedSet = new Set<number>(windowed.map((fb) => fb.flatIndex))
 
   // 合并三类（按 flatIndex 去重），按 flatIndex 升序输出。
   const merged = new Map<number, FlatBlock>()
