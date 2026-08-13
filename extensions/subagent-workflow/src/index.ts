@@ -185,9 +185,35 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
         const activeRecords = allRecords.filter(
           (r) => r.status === "running" || r.status === "idle",
         );
-        if (activeRecords.length === 0) return;
 
-        const content = formatSubagentStatusSnapshot(activeRecords);
+        // SP-4: 检查级联关闭记录（fork/new 时被关的 subagent）
+        const cascaded = service.recentlyCascaded;
+        if (activeRecords.length === 0 && cascaded.length === 0) return;
+
+        const parts: string[] = [];
+
+        // 活跃 subagent 快照
+        if (activeRecords.length > 0) {
+          parts.push(formatSubagentStatusSnapshot(activeRecords));
+        }
+
+        // SP-4: 级联关闭告知
+        if (cascaded.length > 0) {
+          const reasonGroups = new Map<string, string[]>();
+          for (const item of cascaded) {
+            const ids = reasonGroups.get(item.reason) ?? [];
+            ids.push(item.recordId);
+            reasonGroups.set(item.reason, ids);
+          }
+          const summary = Array.from(reasonGroups.entries())
+            .map(([reason, ids]) => `${ids.length} due to ${reason} (${ids.join(", ")})`)
+            .join("; ");
+          parts.push(`[subagent-closed] ${cascaded.length} subagent${cascaded.length === 1 ? "" : "s"} closed: ${summary}`);
+          // 注入后清空（一次性消费）
+          cascaded.length = 0;
+        }
+
+        const content = parts.join("\n");
         return { message: { customType: "subagent-status", content, display: true } };
       } catch {
         // fail-safe：不阻断 agent turn

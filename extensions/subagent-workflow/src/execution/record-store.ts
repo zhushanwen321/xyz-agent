@@ -171,6 +171,13 @@ export class RecordStore {
       .map((r) => toSnapshot(r));
   }
 
+  /** SP-4: 列出所有活跃 record（running + idle）的可变引用。
+   *  供 SubagentService.disposeAllRecords 做级联关闭。 */
+  listAllActive(): ExecutionRecord[] {
+    return [...this.records.values()]
+      .filter((r) => r.status === "running" || r.status === "idle");
+  }
+
   /**
    * 合并内存(running) + 磁盘(sessions/*.jsonl 重建) → SubagentRecord[]。
    *

@@ -209,6 +209,11 @@ interface ResolvedIdentity {
 export class SubagentService {
   private readonly pool: ConcurrencyPool;
   private readonly store: RecordStore;
+  /** SP-4: 级联关闭收集器。fork/new 时记录被关 record 的 id 和 reason，
+   *  before_agent_start hook 据此注入告知消息，让主 agent 知道哪些子 agent 被清理。
+   *  60s 超时自动清空（内存态，进程重启即丢失——设计已接受：fork 历史已过去，
+   *  重启后 list 的 closed reason 本身可见）。 */
+  recentlyCascaded: Array<{ recordId: string; reason: ClosedReason }> = [];
   private readonly modelService: ModelConfigService;
   private readonly cwd: string;
   private readonly worktreeManager: WorktreeManager;
@@ -387,6 +392,75 @@ export class SubagentService {
     }
   }
 
+  /** SP-4: 关闭所有活跃 record 并收集到 recentlyCascaded。
+   *
+   *  遍历 store 中所有 running/idle record，逐个 CAS 转终态 + completeRecord + archive。
+   *  对有 worktreeHandle 的 record 触发 worktreeManager.cleanup（T3: worktree 绑定清理）。
+   *  被关 record 收集到 recentlyCascaded 供 before_agent_start hook 注入告知。
+   *
+   *  @param reason 关闭原因（parent-fork / parent-new / parent-shutdown）
+   *  @returns 被关闭的 record 数量
+   */
+  disposeAllRecords(reason: ClosedReason): number {
+    const activeRecords = this.store.listAllActive();
+    let count = 0;
+    for (const record of activeRecords) {
+      // tryTransition 只对 running 生效；idle 需要直接 completeRecord（无 CAS 保护）。
+      // 与 closeChatIdle 对称：idle 无在途 AgentResult，构造合成 result。
+      if (record.status === "running") {
+        if (!tryTransition(record, "closed", reason)) continue;
+      }
+      const result: AgentResult = {
+        text: "",
+        turns: record.turnCount,
+        durationMs: Date.now() - record.startedAt,
+        success: false,
+        error: `closed due to ${reason}`,
+        sessionId: record.id,
+        toolCalls: [],
+      };
+      completeRecord(record, result, "closed", reason);
+      this.store.archive(record);
+      // worktree 绑定清理（T3）
+      if (record.worktreeHandle) {
+        try {
+          this.worktreeManager.cleanup(record.worktreeHandle);
+        } catch (err) {
+          bestEffort(err, `worktree cleanup (${reason})`);
+        }
+      }
+      // pending-notifications 注销
+      emitPendingUnregister(this.pi, record.id, "closed");
+      // 收集到级联关闭列表
+      this.recentlyCascaded.push({ recordId: record.id, reason });
+      count++;
+    }
+    return count;
+  }
+
+  /** SP-4: fork 新 session 时清理旧子进程。
+   *  调用 disposeAllRecords("parent-fork") 并启动 60s 超时自动清空 recentlyCascaded。 */
+  onParentFork(): number {
+    const count = this.disposeAllRecords("parent-fork");
+    this.scheduleCascadedClear();
+    return count;
+  }
+
+  /** SP-4: 创建新 subagent 时清理旧子进程。
+   *  调用 disposeAllRecords("parent-new") 并启动 60s 超时自动清空 recentlyCascaded。 */
+  onParentNew(): number {
+    const count = this.disposeAllRecords("parent-new");
+    this.scheduleCascadedClear();
+    return count;
+  }
+
+  /** 60s 超时自动清空 recentlyCascaded（防止内存残留）。 */
+  private scheduleCascadedClear(): void {
+    setTimeout(() => {
+      this.recentlyCascaded.length = 0;
+    }, 60_000);
+  }
+
   /** session 结束清理（清定时器，丢弃 pending 通知）。幂等。
    *
    * [M-7] dispose 顺序假设：pending:unregister emit 依赖 pending-notifications 扩展的
@@ -400,20 +474,13 @@ export class SubagentService {
     // （仍持有 disposed session 的 ctx）产生误导性 console.error。stub 干净降级为 cancelled。
     // 必须在 emit/abort 之前——这些步骤可能同步触发 trailing pump。
     this.setUiRequestHandler(disposedUiRequestStub);
-    // [T2 AC-4.3 双重记账一致性] 为每个 running record emit pending:unregister(reason=failed)，
-    // 让 pending-notifications 清理 registry entry，避免进程退出后两侧状态不一致。
-    // 必须在 abortRunningControllers 之前——此时 record 仍 running，listRunning 能取到。
-    for (const record of this.store.listRunning()) {
-      emitPendingUnregister(this.pi, record.id, "closed");
-    }
-    // [R0/C1 孤儿进程修复] 两层兜底 kill 所有 spawned 子进程（sync + background）：
-    //   1. abortRunningControllers：background record 的 controller.abort → child.kill（CAS 收尾语义）。
-    //   2. killAllSpawnedChildren：遍历 session-runner spawnedChildren Set，对仍存活的发 SIGTERM
-    //      （sync record 的 controller 是 undefined，abortRunningControllers 跳过它们，此处补齐）。
-    // 必须在 store.dispose 之前（先 kill 再清场）。dispose 同步返回后主进程可能立即 exit，
-    // runSpawn 的 finally 清理可能来不及跑——可接受退化（session.jsonl 已由子进程写入）。
+    // [R0/C1 孤儿进程修复] 先 abort running controllers + kill spawned children，再 dispose 资源。
+    // abortRunningControllers 需要在 disposeAllRecords archive 之前执行（archive 后 store 找不到 record）。
     this.store.abortRunningControllers();
     killAllSpawnedChildren();
+    // SP-4: 级联关闭所有活跃 record（parent-shutdown reason）
+    // 在 abort/kill 之后执行：先终止子进程，再清理 record 状态。
+    this.disposeAllRecords("parent-shutdown");
     // EPIPE 连续失败计数器清零（防跨 session 泄漏）
     epipeConsecutiveFailures.clear();
     for (const s of this.throttleState.values()) {
