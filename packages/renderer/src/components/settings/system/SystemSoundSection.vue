@@ -38,13 +38,13 @@
           <Button
             variant="secondary"
             size="dense"
-            class="h-8 px-2.5 text-[11px]"
-            :disabled="!!previewingKey"
+            class="h-8 min-w-[6.5rem] px-3 text-[11px]"
+            :disabled="!!previewingKey && !previewingKey.startsWith('success:')"
             :aria-label="t('settings.system.soundPreview')"
             @click="previewSound('success', system.successSound || getDefaultSound(currentPlatform, 'success'), system.successSound || 'default')"
           >
-            <Volume2 v-if="previewingKey === null" class="size-3.5" />
-            <Loader2 v-else class="size-3.5 animate-spin" />
+            <Loader2 v-if="previewingKey?.startsWith('success:')" class="size-3.5 animate-spin text-accent" />
+            <Volume2 v-else class="size-3.5" />
             {{ previewingKey?.startsWith('success:') ? t('settings.system.soundPreviewing') : t('settings.system.soundPreview') }}
           </Button>
         </div>
@@ -86,13 +86,13 @@
           <Button
             variant="secondary"
             size="dense"
-            class="h-8 px-2.5 text-[11px]"
-            :disabled="!!previewingKey"
+            class="h-8 min-w-[6.5rem] px-3 text-[11px]"
+            :disabled="!!previewingKey && !previewingKey.startsWith('error:')"
             :aria-label="t('settings.system.soundPreview')"
             @click="previewSound('error', system.errorSound || getDefaultSound(currentPlatform, 'error'), system.errorSound || 'default')"
           >
-            <Volume2 v-if="previewingKey === null" class="size-3.5" />
-            <Loader2 v-else class="size-3.5 animate-spin" />
+            <Loader2 v-if="previewingKey?.startsWith('error:')" class="size-3.5 animate-spin text-accent" />
+            <Volume2 v-else class="size-3.5" />
             {{ previewingKey?.startsWith('error:') ? t('settings.system.soundPreviewing') : t('settings.system.soundPreview') }}
           </Button>
         </div>
