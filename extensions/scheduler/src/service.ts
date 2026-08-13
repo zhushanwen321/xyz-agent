@@ -3,6 +3,9 @@ import { computeNextRuns, parseSchedule } from './parsing.js'
 import type { SchedulerRuntime } from './runtime.js'
 import type { AddOptions, ScheduledTask } from './types.js'
 
+// recurring 预览行数（once 只回显 1 次）
+const PREVIEW_RUN_COUNT = 5
+
 // ── 结构化结果 ──
 
 export type ServiceErrorCode =
@@ -67,7 +70,7 @@ export class SchedulerService {
       return { success: false, errorCode: 'INTERNAL', message }
     }
 
-    const count = task.kind === 'once' ? 1 : 5
+    const count = task.kind === 'once' ? 1 : PREVIEW_RUN_COUNT
     const nextRuns = await computeNextRuns(task.schedule, this.now(), count)
     // once 单行内联回显（只执行 1 次，编号列表会误导）；recurring 保持 5 行编号列表
     const runPreview =
