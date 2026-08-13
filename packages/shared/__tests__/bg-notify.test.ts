@@ -87,5 +87,22 @@ describe('parseBgNotifyDetails', () => {
     expect(rec.result).toBeUndefined()
     expect(rec.endedAt).toBeUndefined()
     expect(rec.patchFile).toBeUndefined()
+    expect(rec.closedReason).toBeUndefined()
+    expect(rec.round).toBeUndefined()
+  })
+
+  it('idle 状态 + round + closedReason 字段正常解析', () => {
+    const idleRecord = { id: 'r1', status: 'idle', agent: 'coder', startedAt: 100, round: 3 }
+    const rec = parseBgNotifyDetails(idleRecord) as BgNotifyRecord
+    expect(rec.status).toBe('idle')
+    expect(rec.round).toBe(3)
+    expect(rec.closedReason).toBeUndefined()
+  })
+
+  it('closed 状态 + closedReason 正常解析', () => {
+    const closedRecord = { id: 'r2', status: 'closed', agent: 'coder', startedAt: 100, closedReason: 'gc' }
+    const rec = parseBgNotifyDetails(closedRecord) as BgNotifyRecord
+    expect(rec.status).toBe('closed')
+    expect(rec.closedReason).toBe('gc')
   })
 })

@@ -52,14 +52,16 @@ const MIN_BORDER_WIDTH = BORDER_CHARS + INNER_PAD_TOTAL + 1;
  */
 interface BgNotifyRecord {
   id: string;
-  /** SP-1: done/failed/crashed 合并为 closed + closedReason L2 子枚举。 */
-  status: "closed" | "cancelled";
+  /** SP-1: done/failed/crashed 合并为 closed + closedReason L2 子枚举；idle 为对话模式轮次完成。 */
+  status: "closed" | "cancelled" | "idle";
   /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。 */
-  closedReason?: import("../execution/types.ts").ClosedReason;
+  closedReason?: string;
   agent: string;
   model?: string;
   result?: string;
   error?: string;
+  /** 对话轮次计数（仅 idle 有意义）。 */
+  round?: number;
   /** [MF#1] worktree background 完成通知携带的 patch 文件路径。 */
   patchFile?: string;
 }
@@ -281,7 +283,7 @@ function extractBgNotifyRecord(details: unknown): BgNotifyRecord | undefined {
   const status = d.status;
   const agent = d.agent;
   if (
-    (status !== "closed" && status !== "cancelled") ||
+    (status !== "closed" && status !== "cancelled" && status !== "idle") ||
     typeof agent !== "string"
   ) {
     return undefined;
@@ -293,6 +295,8 @@ function extractBgNotifyRecord(details: unknown): BgNotifyRecord | undefined {
     model: typeof d.model === "string" ? d.model : undefined,
     result: typeof d.result === "string" ? d.result : undefined,
     error: typeof d.error === "string" ? d.error : undefined,
+    closedReason: typeof d.closedReason === "string" ? d.closedReason : undefined,
+    round: typeof d.round === "number" ? d.round : undefined,
     // [MF#1] 提取 patchFile（worktree background 完成通知携带）。
     patchFile: typeof d.patchFile === "string" ? d.patchFile : undefined,
   };

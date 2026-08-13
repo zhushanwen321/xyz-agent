@@ -28,6 +28,14 @@ describe('normalizeSubagentStatus', () => {
     expect(normalizeSubagentStatus('active')).toBe('running')
   })
 
+  it('idle → idle', () => {
+    expect(normalizeSubagentStatus('idle')).toBe('idle')
+  })
+
+  it('closed → closed', () => {
+    expect(normalizeSubagentStatus('closed')).toBe('closed')
+  })
+
   it('undefined / 空串 / 未知值 → running（兜底）', () => {
     expect(normalizeSubagentStatus(undefined)).toBe('running')
     expect(normalizeSubagentStatus('')).toBe('running')

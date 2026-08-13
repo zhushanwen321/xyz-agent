@@ -199,7 +199,7 @@ describe("BgNotifier dedup 按轮次（G1 决策 9：对话模式豁免 60s dedu
 		notifier.dispose();
 	});
 
-	it("对话模式：同 id 不同 round 的两次 notify 被纯 id dedup 吞（SP-1 回归纯 id 去重）", () => {
+	it("对话模式：同 id 不同 round 的两次 notify 不互相吞（round 参与 dedup key）", () => {
 		notifier.notify({
 			id: "sa-chat", status: "idle", agent: "w", round: 1, result: "round1",
 			startedAt: 1, endedAt: 2,
@@ -209,8 +209,8 @@ describe("BgNotifier dedup 按轮次（G1 决策 9：对话模式豁免 60s dedu
 			startedAt: 3, endedAt: 4,
 		});
 
-		// SP-1: dedup key 回归纯 id（删 round 豁免），同 id 60s 内第二条被吞
-		expect(host.sendMessageCalls).toHaveLength(1);
+		// MF-1 修复：dedup key=id:round，不同 round 不互相吞
+		expect(host.sendMessageCalls).toHaveLength(2);
 	});
 
 	it("同 id 同 round 60s 内第二次被 dedup 吞（防重复通知）", () => {

@@ -21,8 +21,12 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 CI_MODE=false
+DIR_ONLY=false
 if [ "${1:-}" = "--ci" ]; then
     CI_MODE=true
+fi
+if [ "${2:-}" = "--dir-only" ] || [ "${1:-}" = "--dir-only" ]; then
+    DIR_ONLY=true
 fi
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,12 +43,26 @@ FAILED=0
 echo ""
 echo -e "${BLUE}[1/5] Build artifacts...${NC}"
 
-ARTIFACT_COUNT=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "*.dmg" -o -name "*.zip" -o -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" \) | wc -l | tr -d ' ')
-if [ "$ARTIFACT_COUNT" -eq 0 ]; then
-    echo -e "  ${RED}✗ 未找到任何构建产物${NC}"
-    FAILED=1
+if [ "$DIR_ONLY" = true ]; then
+    # dir-only 模式：跳过安装器产物检查，只验证 unpacked 目录存在
+    UNPACKED_COUNT=0
+    [ -d "$OUTPUT_DIR/mac-arm64" ] && UNPACKED_COUNT=$((UNPACKED_COUNT + 1))
+    [ -d "$OUTPUT_DIR/win-unpacked" ] && UNPACKED_COUNT=$((UNPACKED_COUNT + 1))
+    [ -d "$OUTPUT_DIR/linux-unpacked" ] && UNPACKED_COUNT=$((UNPACKED_COUNT + 1))
+    if [ "$UNPACKED_COUNT" -eq 0 ]; then
+        echo -e "  ${RED}✗ dir-only 模式：未找到任何 unpacked 目录${NC}"
+        FAILED=1
+    else
+        echo -e "  ${GREEN}✓ dir-only 模式：找到 $UNPACKED_COUNT 个 unpacked 目录${NC}"
+    fi
 else
-    echo -e "  ${GREEN}✓ 找到 $ARTIFACT_COUNT 个产物${NC}"
+    ARTIFACT_COUNT=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "*.dmg" -o -name "*.zip" -o -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" \) | wc -l | tr -d ' ')
+    if [ "$ARTIFACT_COUNT" -eq 0 ]; then
+        echo -e "  ${RED}✗ 未找到任何构建产物${NC}"
+        FAILED=1
+    else
+        echo -e "  ${GREEN}✓ 找到 $ARTIFACT_COUNT 个产物${NC}"
+    fi
 fi
 
 # ── 2. macOS app 结构 ──────────────────────────────────────────────

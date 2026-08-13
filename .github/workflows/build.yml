@@ -152,7 +152,12 @@ jobs:
 
       - name: Postbuild validation
         shell: bash
-        run: bash scripts/postbuild-validate.sh --ci
+        run: |
+          if [ "${{ inputs.dir-only }}" = "true" ]; then
+            bash scripts/postbuild-validate.sh --ci --dir-only
+          else
+            bash scripts/postbuild-validate.sh --ci
+          fi
 
       - name: Runtime smoke test (macOS)
         if: matrix.platform == 'mac'

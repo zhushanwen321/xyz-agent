@@ -6,7 +6,7 @@
 //   1. ClosedReason 枚举完整性（6 个值）
 //   2. tryTransition → closed + closedReason 写入
 //   3. completeRecord → closed + closedReason 写入
-//   4. notifier dedupKey 回归纯 id（删 round 豁免）
+//   4. notifier dedupKey: round 参与去重（MF-1 修复，idle 按 id:round 去重）
 //   5. ExecutionStatus 不含 done/failed/crashed 字面量
 //   6. mapExternalState closed → ended
 //   7. statusGlyph closed → ✓ success
@@ -204,7 +204,7 @@ describe("completeRecord with closed + closedReason", () => {
 });
 
 // ============================================================
-// Notifier dedupKey 回归纯 id（删 round 豁免）
+// Notifier dedupKey: round 参与去重（MF-1 修复）
 // ============================================================
 
 describe("BgNotifier dedupKey", () => {
@@ -215,7 +215,7 @@ describe("BgNotifier dedupKey", () => {
     };
   }
 
-  it("同 id 不同 round 在 60s 内被去重（纯 id 去重）", () => {
+  it("同 id 不同 round 不被去重（round 参与 dedup key）", () => {
     const host = createMockHost(false);
     const notifier = new BgNotifier(host);
     const sent: unknown[] = [];
@@ -244,8 +244,8 @@ describe("BgNotifier dedupKey", () => {
     notifier.notify(record1);
     notifier.notify(record2);
 
-    // 纯 id 去重：同 id 第二条应被吞（60s TTL 内）
-    expect(sent).toHaveLength(1);
+    // MF-1 修复：dedup key=id:round，不同 round 不互相吞
+    expect(sent).toHaveLength(2);
   });
 
   it("不同 id 不被去重", () => {

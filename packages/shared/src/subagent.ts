@@ -18,9 +18,11 @@
 /**
  * subagent 状态。
  * crashed 为子进程崩溃终态（进程退出码非 0 且非正常 cancel）。
+ * idle = 对话模式轮次完成（等待续聊，非终态）。
+ * closed = 统一终态（替代旧 done/failed/crashed），closedReason 表达 L2 原因。
  * 对齐 pi-subagent-workflow ExecutionStatus。
  */
-export type SubagentStatus = 'running' | 'done' | 'failed' | 'cancelled' | 'crashed'
+export type SubagentStatus = 'running' | 'done' | 'failed' | 'cancelled' | 'crashed' | 'idle' | 'closed'
 
 /**
  * 单条 subagent 记录（列表项数据）。
@@ -92,6 +94,10 @@ export function normalizeSubagentStatus(status: string | undefined): SubagentSta
     case 'pending':
     case 'active':
       return 'running'
+    case 'idle':
+      return 'idle'
+    case 'closed':
+      return 'closed'
     default:
       // 未知状态：pi 扩展可能新增了未映射的状态，warn 一次便于排查
       console.warn(`[normalizeSubagentStatus] unknown status: ${JSON.stringify(status)}, falling back to 'running'`)

@@ -123,9 +123,9 @@ export class BgNotifier {
         if (now - ts >= DEDUP_TTL_MS) this.dedup.delete(id);
       }
     }
-    // dedup key 回归纯 id 去重（SP-1 决策 4：删 round 豁免）。
-    // 对话模式每轮 round 不同不再影响 dedup——id 本身已唯一标识一个 subagent record。
-    const dedupKey = record.id;
+    // dedup key：idle（对话模式每轮完成）按 id:round 去重——不同轮次不互相掩蔽；
+    // 非 idle（closed/cancelled）round 恒定 undefined，key 同旧行为不变。
+    const dedupKey = record.round != null ? `${record.id}:${record.round}` : record.id;
     const lastSeen = this.dedup.get(dedupKey);
     if (lastSeen !== undefined && now - lastSeen < DEDUP_TTL_MS) return;
     this.dedup.set(dedupKey, now);

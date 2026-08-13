@@ -104,8 +104,10 @@ export interface BashExecutionData {
  */
 export interface BgNotifyRecord {
   id: string
-  /** 'done' | 'failed' | 'cancelled'（pi-subagents 的状态枚举） */
-  status: 'done' | 'failed' | 'cancelled'
+  /** 扩展状态枚举：done/failed/cancelled（旧）+ idle/closed（SP-1 新增）。
+   *  idle = 对话模式轮次完成（每轮需送达，与一次性 closed 区分）；
+   *  closed = 统一终态（替代旧 done/failed/crashed），closedReason 表达 L2 原因。 */
+  status: 'done' | 'failed' | 'cancelled' | 'idle' | 'closed'
   agent: string
   /** 执行所用 model（用于通知展示） */
   model?: string
@@ -118,6 +120,10 @@ export interface BgNotifyRecord {
   /** fork+worktree 模式下子 agent 改动的 patch 路径（worktree cleanup 后留存）。
    *  done 时通知显式提示 git apply，否则改动会静默丢失。 */
   patchFile?: string
+  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。对齐 notifier.ts ClosedReason。 */
+  closedReason?: string
+  /** 对话轮次计数（仅 idle 有意义）。dedup key 按 id:round 去重。 */
+  round?: number
 }
 
 /**
@@ -156,7 +162,7 @@ export function parseBgNotifyDetails(details: unknown): BgNotifyDetails | null {
 /** 防御性解析单条 BgNotifyRecord（必需字段 id/status/agent/startedAt 缺失返回 null） */
 function parseSingleRecord(d: Record<string, unknown>): BgNotifyRecord | null {
   const id = typeof d.id === 'string' ? d.id : null
-  const status = d.status === 'done' || d.status === 'failed' || d.status === 'cancelled' ? d.status : null
+  const status = d.status === 'done' || d.status === 'failed' || d.status === 'cancelled' || d.status === 'idle' || d.status === 'closed' ? d.status : null
   const agent = typeof d.agent === 'string' ? d.agent : null
   const startedAt = typeof d.startedAt === 'number' ? d.startedAt : null
   if (!id || !status || !agent || startedAt === null) return null
@@ -166,6 +172,8 @@ function parseSingleRecord(d: Record<string, unknown>): BgNotifyRecord | null {
   if (typeof d.error === 'string') record.error = d.error
   if (typeof d.endedAt === 'number') record.endedAt = d.endedAt
   if (typeof d.patchFile === 'string') record.patchFile = d.patchFile
+  if (typeof d.closedReason === 'string') record.closedReason = d.closedReason
+  if (typeof d.round === 'number') record.round = d.round
   return record
 }
 

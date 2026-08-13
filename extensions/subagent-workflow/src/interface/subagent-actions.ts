@@ -18,6 +18,7 @@ import {
 
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
 import { computeElapsedSeconds } from "../execution/execution-record.ts";
+import type { ExecutionRecord } from "../execution/types.ts";
 import type { ModelInfo } from "../execution/model-resolver.ts";
 import type { SubagentService } from "../execution/subagent-service.ts";
 import type {
@@ -349,9 +350,11 @@ export async function messageHandler(
   // SP-5 one-shot upgrade：非 chatMode 的 active record（running/idle）收到 message 时
   // 自动升级为 chatMode，后续走 deliverMessage 统一投递路径（热路径或冷路径 resume）。
   // closed/cancelled 终态 record 不可 upgrade（getRecordForAction 已抛 not found）。
-  // chatMode 是 ExecutionRecord 的 readonly 字段，用 Object.assign 绕过 readonly 约束（upgrade 语义）。
+  // chatMode 是 ExecutionRecord 的 readonly 字段，用 Mutable<T> 显式断言绕过 readonly 约束（upgrade 语义）。
+  // Object.assign 隐式绕过 readonly 不可追踪，改为单字段显式赋值。
   if (!record.chatMode && (record.status === "running" || record.status === "idle")) {
-    Object.assign(record, { chatMode: true });
+    type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+    (record as Mutable<ExecutionRecord>).chatMode = true;
   }
 
   // [V2 决策 3] chatMode 统一投递：按进程死活分流（热路径 prompt+streamingBehavior / 冷路径 resume），
