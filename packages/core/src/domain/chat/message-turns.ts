@@ -57,20 +57,16 @@ export function renderKey(item: RenderItem): string {
   return item.kind === 'turn' ? `t-${item.turn.index}` : `s-${item.message.id}`
 }
 
-/** 不在对话流渲染的 customType（完成通知——agent 收到后会被唤醒在后续 turn 处理，
- *  对用户是噪声，结果由 agent 后续 turn 体现）。消息仍进 chat store 供 fork/compact/replay，
- *  agent 仍能读到；此处仅过滤渲染，不丢消息（AGENTS.md 规则 7.5）。 */
-const HIDDEN_NOTIFY_CUSTOM_TYPES = new Set(['subagent-bg-notify', 'workflow-result'])
+/** 不在对话流渲染的 customType 判定已删除 [M2 display 前置]：完成通知由生产端（registry
+ *  customStart / runtime mapper）统一写 display:false，filter 只认 display 字段，不再维护
+ *  customType 黑名单（conversation-renderer-model-unification §3.3.2，supersede ADR-0048）。
+ *  消息仍进 chat store 供 fork/compact/replay，agent 仍能读到；此处仅过滤渲染，不丢消息
+ *  （AGENTS.md 规则 7.5）。 */
 
-/** 过滤掉不在对话流展示的消息（ADR-0048：按 pi CustomMessage.display 字段过滤）。 */
+/** 过滤掉不在对话流展示的消息（display===false：完成通知由生产端写死，
+ *  goal/todo context 由 pi 扩展声明——纯字段过滤，无 customType 黑名单）。 */
 export function filterDisplayableMessages(messages: Message[]): Message[] {
-  return messages.filter((m) => {
-    if (m.display === false) return false
-    if (typeof m.customType === 'string' && HIDDEN_NOTIFY_CUSTOM_TYPES.has(m.customType)) {
-      return false
-    }
-    return true
-  })
+  return messages.filter((m) => m.display !== false)
 }
 
 export function groupTurns(messages: Message[]): MessageTurn[] {

@@ -228,3 +228,73 @@ describe('dispatchMessageEvent queue_update drain（m2 steer/followup 解耦）'
     expect(ctx.appendUser).not.toHaveBeenCalled()
   })
 })
+
+describe('dispatchMessageEvent message.customStart 完成通知 display 覆写（M2 display 前置）', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  /** customStart 追加消息的便捷断言：返回最后一条 system 消息 */
+  function lastSystem(ctx: MessageEffectContext): Message {
+    const list = getMsgs(ctx)
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      if (list[i].role === 'system') return list[i]
+    }
+    throw new Error('no system message')
+  }
+
+  it('TC1: subagent-bg-notify（完成通知）→ display 覆写为 false（即使 pi 扩展透传 display:true）', () => {
+    const ctx = makeCtx()
+    // pi-subagent-workflow notifier 生产端写 display:true（pi 原生语义）——消费端必须覆写
+    dispatchMessageEvent(ctx, SID, msg('message.customStart', {
+      customType: 'subagent-bg-notify',
+      content: '子代理完成',
+      display: true,
+      details: { id: 'job-1', status: 'done', agent: 'coder', startedAt: 1000, endedAt: 2000 },
+    }))
+
+    const m = lastSystem(ctx)
+    expect(m.customType).toBe('subagent-bg-notify')
+    expect(m.display).toBe(false)
+    // bgNotify 详情解析保留（消息仍进 store 供 fork/compact/replay 等其他消费）
+    expect(m.bgNotify?.id).toBe('job-1')
+  })
+
+  it('TC2: workflow-result（完成通知）→ display 覆写为 false', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.customStart', {
+      customType: 'workflow-result',
+      content: 'run done',
+      display: true,
+    }))
+
+    const m = lastSystem(ctx)
+    expect(m.customType).toBe('workflow-result')
+    expect(m.display).toBe(false)
+  })
+
+  it('TC3: 非完成通知 customType → display 原样透传（三态保留，undefined 安全显示）', () => {
+    const ctx = makeCtx()
+    // goal/todo context 类：pi 扩展声明 display:false → 透传隐藏
+    dispatchMessageEvent(ctx, SID, msg('message.customStart', {
+      customType: 'goal-context',
+      content: '<goal_context>...',
+      display: false,
+    }))
+    // 普通通知：display:true → 透传显示
+    dispatchMessageEvent(ctx, SID, msg('message.customStart', {
+      customType: 'future-extension-notify',
+      content: '显示',
+      display: true,
+    }))
+    // 无 display 字段 → undefined（!== false 即显示）
+    dispatchMessageEvent(ctx, SID, msg('message.customStart', {
+      customType: 'legacy-notify',
+      content: 'legacy',
+    }))
+
+    const list = getMsgs(ctx)
+    const sys = list.filter((m) => m.role === 'system')
+    expect(sys[0].display).toBe(false)
+    expect(sys[1].display).toBe(true)
+    expect(sys[2].display).toBeUndefined()
+  })
+})

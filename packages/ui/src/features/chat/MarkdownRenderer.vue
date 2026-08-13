@@ -451,7 +451,7 @@ onScopeDispose(() => {
 }
 
 /* ── thinking variant：次要过程信息的降级排版 ──
-   用于 thinking 块 / BgNotifyCard 详情等「过程性次要信息」语境。
+   用于 thinking 块等「过程性次要信息」语境。
    设计取向（impeccable critique 确认）：
    - 标题用 --reasoning（紫）而非 --fg（白），避免与正文 summary 白标题撞色，保持紫色语义族
    - li::marker / blockquote 压到 --subtle（三级灰），结构存在但不抢戏

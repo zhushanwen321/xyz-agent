@@ -35,7 +35,7 @@ import type {
   ServerMessageType,
   ToolCall,
 } from '@xyz-agent/shared'
-import { parseBgNotifyDetails } from '@xyz-agent/shared'
+import { COMPLETE_NOTIFY_CUSTOM_TYPES, parseBgNotifyDetails } from '@xyz-agent/shared'
 import type { RetryState, QueueState, FinalizeReason } from '../store-types'
 import type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
 export type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
@@ -434,7 +434,16 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // FR-2 依赖 event-adapter 已透传；extension 声明 display:false 的 context 消息据此在渲染层隐藏。
     // display 不能用 readBool（缺失时返回 false），需三态保留：
     // true/false 显式透传，undefined 安全保留显示（!== false 即显示，ADR-0048 决策点 3）。
-    const display = payload['display'] === true || payload['display'] === false ? payload['display'] : undefined
+    //
+    // [M2 display 前置] 完成通知（COMPLETE_NOTIFY_CUSTOM_TYPES）由消费端统一覆写 display:false，
+    // 不再依赖 filterDisplayableMessages 黑名单（conversation-renderer-model-unification §3.3.2）。
+    // pi 扩展生产端（pi-subagent-workflow notifier/helpers）写 display:true（pi 原生语义：
+    // 通知在 pi TUI 显示）——对 xyz-agent 用户是噪声（triggerTurn 唤醒 agent 后续 turn 处理，
+    // 结果由新 turn 体现），此处统一隐藏。与重开路径 mapper 覆写（session-entry-mapper.ts）对称。
+    const isCompleteNotify = COMPLETE_NOTIFY_CUSTOM_TYPES.has(customType)
+    const display = isCompleteNotify
+      ? false
+      : (payload['display'] === true || payload['display'] === false ? payload['display'] : undefined)
     const prev = messages.value.get(sid) ?? []
     // role:'system' → messageTurns 产出独立 RenderItem（穿插在 turn 间，不并入 user/assistant turn）
     const msg: Message = {

@@ -20,7 +20,6 @@ export * from './slash-icons'
 export type { MarkdownSegment } from './markdown-types'
 // 展示组件
 export { default as SystemNotice } from './SystemNotice.vue'
-export { default as BgNotifyCard } from './BgNotifyCard.vue'
 export { default as ImageThumb } from './ImageThumb.vue'
 export { default as AmbiguousFilePopover } from './AmbiguousFilePopover.vue'
 export { default as TurnRail } from './TurnRail.vue'

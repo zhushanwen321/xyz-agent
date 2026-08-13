@@ -7,9 +7,10 @@
  * - kind==='bashExecution' → BashOutputBlock
  * - 其余（systemNotice）   → SystemNotice
  *
- * 死分支回归防护：BgNotifyCard / gui（GuiComponentRenderer + extractGuiComponent）分支
- * 已随 M1 删除——kind 全集不含这两类，若未来有人加回 `item.message.bgNotify` /
- * extractGuiComponent 嗅探，本测通过「kind 全集三态互斥 + 无 bgNotify/gui 渲染」抓出。
+ * 死分支回归防护：bgNotify / gui（GuiComponentRenderer + extractGuiComponent）分支
+ * 已随 M1 删除（bgNotify 组件本体 M2 删除）——kind 全集不含这两类，若未来有人加回
+ * `item.message.bgNotify` / extractGuiComponent 嗅探，本测通过「kind 全集三态互斥 +
+ * 无 bgNotify/gui 渲染」抓出。
  *
  * 为什么 mock virtua/vue：happy-dom 无真实布局/ResizeObserver，真 <Virtualizer> 的
  * viewportSize=0 → 不窗口化渲染任何项（MessageStream-bash.test.ts T10/gap3 因同因 skip）。
@@ -238,13 +239,13 @@ describe('MessageStream kind 查表分发（M1）', () => {
     expect(ids).toEqual(['turn-stub-1', 'system-notice-stub', 'turn-stub-2', 'bash-output-stub'])
   })
 
-  it('TC2: bgNotify 消息（customType=subagent-bg-notify）不渲染任何专属组件（M1 死分支回归防护）', async () => {
-    // subagent-bg-notify 命中 filterDisplayableMessages 黑名单被移除 → 不进 renderItems。
-    // 若未来有人给 kind 全集加回 bgNotify 类分支/嗅探，本用例确保至少不渲染 BgNotifyCard
-    // （M1 已删其分支；组件本体删除归 M2）。
+  it('TC2: bgNotify 消息（customType=subagent-bg-notify, display:false）不渲染任何专属组件（M1 死分支回归防护）', async () => {
+    // [M2 display 前置] 黑名单已删：subagent-bg-notify 由生产端（registry customStart /
+    // runtime mapper）统一写 display:false → filterDisplayableMessages 按 display 字段过滤移除。
+    // 若未来有人给 kind 全集加回 bgNotify 类分支/嗅探，本用例确保至少不渲染专属卡片。
     const chat = useChatStore()
     chat.hydrate('sess-kind-bgnotify', [
-      makeMsg({ id: 'n1', customType: 'subagent-bg-notify', display: true, content: '子代理完成' }),
+      makeMsg({ id: 'n1', customType: 'subagent-bg-notify', display: false, content: '子代理完成' }),
       makeMsg({ id: 'u1', role: 'user', content: 'q' }),
       makeMsg({ id: 'a1', role: 'assistant', content: 'r' }),
     ])

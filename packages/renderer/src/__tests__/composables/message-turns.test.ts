@@ -46,33 +46,45 @@ describe('filterDisplayableMessages —— 按 display 字段过滤（FR-5 / AC-
     expect(filtered.map((m) => m.id)).toEqual(['u1', 'a1'])
   })
 
-  // [FEAT] 完成通知（subagent-bg-notify / workflow-result）不渲染——用户选择「不展示通知」，
-  // 通知触发 agent 后续 turn（triggerTurn:true）处理结果，结果由新 turn 体现，通知本身是噪声。
-  // 即使 display:true 也过滤；消息仍进 store 供 fork/compact/replay（filter 不丢消息）。
-  it('subagent-bg-notify customType 的消息被过滤（即使 display:true）', () => {
+  // [M2 display 前置] 黑名单已删（HIDDEN_NOTIFY_CUSTOM_TYPES），完成通知（subagent-bg-notify /
+  // workflow-result）由生产端（registry customStart / runtime mapper）统一写 display:false，
+  // filter 只按 display===false 纯字段过滤。用例输入对齐生产端契约：display:false。
+  // 消息仍进 store 供 fork/compact/replay（filter 不丢消息）。
+  it('subagent-bg-notify 完成通知（display:false）被过滤', () => {
     const messages: Message[] = [
       makeMsg({ id: 'u1', role: 'user', content: 'hi' }),
-      makeMsg({ id: 'n1', role: 'system', customType: 'subagent-bg-notify', display: true, content: '子代理完成' }),
+      makeMsg({ id: 'n1', role: 'system', customType: 'subagent-bg-notify', display: false, content: '子代理完成' }),
       makeMsg({ id: 'a1', role: 'assistant', content: 'ok' }),
     ]
     const filtered = filterDisplayableMessages(messages)
     expect(filtered.map((m) => m.id)).toEqual(['u1', 'a1'])
   })
 
-  it('workflow-result customType 的消息被过滤（即使 display:true）', () => {
+  it('workflow-result 完成通知（display:false）被过滤', () => {
     const messages: Message[] = [
       makeMsg({ id: 'u1', role: 'user', content: 'hi' }),
-      makeMsg({ id: 'w1', role: 'system', customType: 'workflow-result', display: true, content: 'done' }),
+      makeMsg({ id: 'w1', role: 'system', customType: 'workflow-result', display: false, content: 'done' }),
       makeMsg({ id: 'a1', role: 'assistant', content: 'ok' }),
     ]
     const filtered = filterDisplayableMessages(messages)
     expect(filtered.map((m) => m.id)).toEqual(['u1', 'a1'])
+  })
+
+  it('完成通知 customType 但 display:true/undefined 时保留（filter 只认 display 字段，不按 customType 拉黑）', () => {
+    // 黑名单删除后的关键回归：filter 不得再按 customType 过滤（M2 前置后 customType
+    // 语义回归普通 systemNotice——兼容旧数据/非 xyz-agent 消费方写入的 display:true 完成通知）。
+    const messages: Message[] = [
+      makeMsg({ id: 'n1', role: 'system', customType: 'subagent-bg-notify', display: true, content: '子代理完成' }),
+      makeMsg({ id: 'w1', role: 'system', customType: 'workflow-result', content: 'done' }),
+    ]
+    const filtered = filterDisplayableMessages(messages)
+    expect(filtered.map((m) => m.id)).toEqual(['n1', 'w1'])
   })
 
   it('普通 customType 消息（display:true）仍保留', () => {
     const messages: Message[] = [
       makeMsg({ id: 'u1', role: 'user', content: 'hi' }),
-      // 非 HIDDEN_NOTIFY_CUSTOM_TYPES 的 customType，display:true → 保留
+      // 非完成通知 customType，display:true → 保留
       makeMsg({ id: 'x1', role: 'system', customType: 'future-extension-notify', display: true, content: '显示' }),
       makeMsg({ id: 'a1', role: 'assistant', content: 'ok' }),
     ]

@@ -1,10 +1,9 @@
 /**
- * W1 + W2 红灯测试 - MarkdownRenderer thinking variant + thinking 块/BgNotifyCard 走 markdown。
+ * W1 + W2 红灯测试 - MarkdownRenderer thinking variant + thinking 块走 markdown。
  *
  * 防的 bug：
  * - thinking 块内容用纯文本插值，bold/列表/标题等 md 语法不渲染（W2）
  * - MarkdownRenderer 无 variant 机制，thinking 内的 md 元素颜色/字号与正文撞色（W1）
- * - BgNotifyCard fullContent 用 pre-wrap 纯文本，subagent 返回的 md 不渲染（W2）
  *
  * 三视角：
  * - 观察者（形态）：thinking variant root 有 .md-render--thinking class；标题颜色是 reasoning 而非 fg
@@ -20,7 +19,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, h } from 'vue'
-import { Block, BgNotifyCard, MarkdownRenderer } from '@xyz-agent/ui'
+import { Block, MarkdownRenderer } from '@xyz-agent/ui'
 import { mockChatProvide } from '@/__tests__/helpers/chat-view-deps'
 
 // renderMarkdown 经 deps 注入：同步返回 markdown 结构段（绕过 shiki 异步加载）
@@ -126,35 +125,5 @@ describe('W2: Block thinking 块走 MarkdownRenderer（不再纯文本插值）'
     // 当前实现有 italic class（红灯——改后应移除）
     const italicEls = wrapper.findAll('.italic')
     expect(italicEls.length).toBe(0)
-  })
-})
-
-describe('W2: BgNotifyCard fullContent 走 MarkdownRenderer', () => {
-  it('展开后 fullContent 的 **粗体** → 渲染为 <strong>（非字面星号）', async () => {
-    mockMarkdownSegments('<p>已完成<strong>3 个方案</strong></p>')
-    const message = {
-      id: 'm1',
-      role: 'system' as const,
-      content: '已完成 **3 个方案**',
-      status: 'complete' as const,
-      customType: 'subagent-bg-notify',
-      bgNotify: {
-        id: 'job-1',
-        status: 'done' as const,
-        agent: 'coder',
-        startedAt: 1000,
-        endedAt: 2000,
-      },
-      timestamp: 2000,
-    }
-    const wrapper = mountWithDeps(BgNotifyCard, { message })
-    // 点击展开
-    await wrapper.find('.cursor-pointer').trigger('click')
-    await nextTick()
-    await nextTick()
-    // 关键断言：fullContent 走 markdown，<strong> 存在（当前 pre-wrap 纯文本，红灯）
-    expect(wrapper.find('strong').exists()).toBe(true)
-    // 字面 ** 不应出现
-    expect(wrapper.text()).not.toContain('**')
   })
 })

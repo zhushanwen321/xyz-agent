@@ -193,7 +193,6 @@ const TurnXRay = defineComponent({
 const streamGlobalStubs = {
   Turn: TurnXRay,
   SystemNotice: { name: 'SystemNotice', template: '<div />' },
-  BgNotifyCard: { name: 'BgNotifyCard', template: '<div />' },
   GuiComponentRenderer: { name: 'GuiComponentRenderer', template: '<div />' },
 }
 

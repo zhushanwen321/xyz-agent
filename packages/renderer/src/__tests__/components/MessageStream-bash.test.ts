@@ -62,7 +62,6 @@ class NoopResizeObserver {
 const globalStubs = {
   Turn: { name: 'Turn', template: '<div />' },
   SystemNotice: { name: 'SystemNotice', template: '<div data-testid="system-notice-stub" />' },
-  BgNotifyCard: { name: 'BgNotifyCard', template: '<div />' },
   GuiComponentRenderer: { name: 'GuiComponentRenderer', template: '<div />' },
   ForkNotice: { name: 'ForkNotice', template: '<div />' },
 }
@@ -191,7 +190,6 @@ const TurnStub = defineComponent({
 const coexistStubs = {
   Turn: TurnStub,
   SystemNotice: { name: 'SystemNotice', template: '<div data-testid="system-notice-stub" />' },
-  BgNotifyCard: { name: 'BgNotifyCard', template: '<div />' },
   GuiComponentRenderer: { name: 'GuiComponentRenderer', template: '<div />' },
   ForkNotice: { name: 'ForkNotice', template: '<div />' },
 }
