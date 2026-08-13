@@ -32,7 +32,7 @@
 
 用户画像：开发者对 Agent 下达复杂任务后**周期性扫一眼**监控，而非逐 token 跟读。一次扫视要回答三个问题：活着吗、在干嘛、跑偏没。
 
-- **G1 监控信噪比恒定**：streaming 期间工作 turn 的视觉体积有界（目标 ≤ 约一屏半），与过程块总数无关。149 块和 1490 块占屏相同。
+- **G1 监控信噪比恒定**：streaming 期间工作 turn 的**过程块**（thinking/tool）贡献的视觉体积有界 O(W)（W=8 ≈ meta + 收编行 + 8 块），与过程块总数无关——149 块和 1490 块的过程块占屏相同。流式正文（agent 正在写的回复，全文渲染）与用户主动展开的运行中 tool 详情为有意全展示，不计入有界约束：它们正是「在干嘛」的本体，不该被压缩。
 - **G2 当前活动在场**：进行中的 thinking / tool / 流式正文始终可见，且能看到刚发生的最近几步（发现跑偏所需的全部上下文）。
 - **G3 可查证性零损失**：任何被收编的内容一键展开回全量日志；失败信号永不被埋。
 - **G4 无感窗口**：滚动窗口不带边框、背景、分隔线等任何独立 chrome，与对话流融为一体。用户感知不到「窗口」这个机制的存在，只看到流里有一条安静的计数行。
@@ -56,7 +56,7 @@
 const showTrace = computed(() => sessionActive.value || isExpanded(turnStableId(props.turn)))
 ```
 
-`sessionActive` 是 session 级信号（`useSessionActive.ts`）：derivedStatus 处于 `streaming / waiting / working / pending / compacting / retrying` 任一态即为 true。它**对所有 turn 一视同仁**——只要 session 在跑，每个 turn 的 trace 都展开。
+`sessionActive` 是 session 级信号（源于 renderer 的 `useSessionActive.ts`，derivedStatus 处于 `streaming / waiting / working / pending / compacting / retrying` 任一态即为 true），经 MessageStream 的 `:is-session-active` prop 透传给 Turn.vue（ui 包不直接持有该 composable，实施者勿在 packages/ui 内找它）。它**对所有 turn 一视同仁**——只要 session 在跑，每个 turn 的 trace 都展开。
 
 块级默认态（`Block.vue`）：
 
@@ -126,7 +126,7 @@ pi 子进程（JSONL session 文件 / RPC 事件流）
 **交互样例**：
 
 1. **下钻（G3）**：点击收编行 → 全部 295 步过程按现有块形态展开（用户接管，自动收编暂停）；收编行原地变为 `▾ 已展开全部 295 步 · 恢复精简`，点击回到窗口形态。
-2. **失败信号（G3）**：窗口外某 tool 失败 → 该块豁免收编，始终以 1 行 danger header 留在流里（streaming 中失败的工具本来就不展开详情，只占 1 行）。失败轨迹恰是「跑偏没」的核心信号，且真实 run 中失败稀少（实测样本为 0），豁免不破坏体积有界。
+2. **失败信号（G3）**：窗口外某 tool 失败 → 该块进入收编计数，收编行以 danger 色高亮「前面还有 N 步过程 · 含 M 次失败」永不静默；点击展开全部后失败块以 1 行 danger header 可见（streaming 中失败的工具本来就不展开详情，只占 1 行）。失败轨迹是「跑偏没」的核心信号——用计数高亮保证它「永不被埋」，同时 retry 循环下失败数无界也不破坏 G1（失败不豁免收编）。
 3. **run 结束**：turn 完成 → 现有完成骨架原样接管（TurnMeta + 最终正文），收编行与窗口消失（G5）。
 4. **多轮会话**：发新消息 → 上一 turn 保持骨架，不再重展开（修掉 F1）。
 5. **ask-user 等待**：等待期间当前 turn trace 保持展开、窗口冻结（无新块进入，天然稳定），用户看着上下文做决策。
@@ -147,9 +147,9 @@ pi 子进程（JSONL session 文件 / RPC 事件流）
 - **D1 折叠作用域降到 turn 级**：`showTrace = isWorkingTurn || isExpanded(turnKey)`，`isWorkingTurn = sessionActive && 本 turn 是最后一个 turn`。被否：维持 session 级（F1 的根源）。证据：§2.1 代码 + F1 复现链。`isLastTurn` 由 MessageStream 传入（`lastRenderTurn` 已存在，零新状态）。
 - **D2 窗口统一管理所有块类型**：text 过渡碎片也进窗口。被否：text 豁免。证据：完成态语义本来就只保留最后一条 text（`lastTextBlockKey`），streaming 与完成态规则一致反而简单；进行中的 text 永远在窗口尾部，天然可见。
 - **D3 收编行只有「展开全部 / 恢复精简」一个动作**：不支持收编区内单块定点展开。被否：单块 pin 机制。证据：准则「减法优先」——pin 机制引入新的状态面和边界 case，而「展开全部再找到那块」的成本只有一次点击；对齐 Claude Code verbose 开关的全或无语义。
-- **D4 failed tool 豁免收编**：失败块始终以 1 行 danger header 在场，不进收编计数。被否：一视同仁收编。证据：失败轨迹是「跑偏没」判断的核心信号；失败在真实 run 中稀少（§2.2 样本为 0），不破坏 G1 体积有界。豁免只决定「渲不渲染」，块内部形态沿用现有语义，不改 Block.vue。
+- **D4 failed tool 进入收编计数 + danger 高亮**：失败块与成功块一样进窗口收编，但收编行以 danger 色显示失败子计数（「含 M 次失败」）。被否：失败块豁免收编（始终以 1 行在场）。证据：失败是「跑偏没」核心信号不能埋，但 retry 循环下失败数可无界（反复重试失败操作是长程任务真实场景），豁免收编会让体积随失败数膨胀、破坏 G1。折中——计数高亮保证「展开可见 + 收编行可感知」，体积始终有界。块内部形态沿用现有语义（failed 终态 1 行 danger header），不改 Block.vue。
 - **D5 窗口零 chrome（G4 的实现约束）**：收编行 = 一行 `text-neutral-dim` 文字 + chevron 图标，样式对齐现有 tool header 安静行（hover 微亮）；禁止边框、背景块、分隔线、渐变遮罩。被否：fade 遮罩/卡片化——任何窗口可见物都违反「融为一体」。
-- **D6 takeover 状态用 Turn.vue 本地 ref**：不进 expansion store。被否：store 化。证据：窗口只作用于工作 turn，而工作 turn 被 virtua `keepMounted` 钉住不卸载（streaming pin 既有机制），本地状态生命周期足够；store 化要为 per-turn key 开新分区，收益为零。（探针 P1 门：实测钉住行为。）
+- **D6 takeover 状态进 expansion store（per-turn key）**：不进 Turn.vue 本地 ref。被否：本地 ref。证据三条：① 本地 ref 的前提「工作 turn 被 virtua `keepMounted` 钉住」条件性失效——`useStreamingPin` 的钉扎条件是 `turn.isStreaming === true`（`useStreamingPin.ts:65-68` `streamingTurnIdx` 仅 `isStreaming` 为真才进 `pinnedIndexes`），而本文 §1.1 定义的「工作 turn」含 ask-user / compacting / dispatching 等态，此时 `isStreaming === false`（`message-turns.ts:175` `turn.isStreaming = isLast && (forceWorking || last?.status==='streaming')`，注释明示 ask-user 等待期间 message 已 complete → false），工作 turn 不被钉住，上滚出视口即卸载、本地 ref 丢失；② split 多 pane 同 session 下，手动展开（`isExpanded`）经 store 跨 pane 同步，takeover 若用本地 ref 会行为割裂；③ `useTurnExpansion` 已是 per-session Map 分区范式（ADR-0049），加一个 takeover 字段成本极低，与 `isExpanded`/`collapse` 语义一致——展开状态归位 store 层。store 化一举消除卸载丢失与跨 pane 不同步两个问题。（探针 P1 门：实测卸载重挂载后从 store 恢复，含 ask-user 态。）
 - **D7 窗口宽度 W = 8 个块，常量**：不做用户设置。被否：设置项。证据：设置项把收编决策推给用户（同 C 的错）；8 约为「当前活动 + 刚发生的几步」的最小完整上下文，实施后经真实使用微调。
 - **D8 进行中 thinking 维持 60 字符 live 预览现状**：本设计不把 working 态 thinking 内容改为全文流。被否：趁机改全文。证据：超出 scope；60 字符预览恰好就是用户要的「loading 感」的最小形态，改动留待独立评估。
 - **D9 等待态窗口冻结**：ask-user / compacting 等 sessionActive 但无新块的态，窗口不滑动（无新块进入，by construction 稳定），takeover 状态保持。
@@ -166,7 +166,9 @@ pi 子进程（JSONL session 文件 / RPC 事件流）
 - **V4（G3，失败豁免）**：让 agent 读一个不存在的文件（制造 tool failed）→ 失败块滑出窗口后仍以 1 行 danger header 可见，收编行计数不含它。
 - **V5（G5，持久化链路）**：关闭该 session 再重开（离线 JSONL 路径）→ 历史呈现与改动前一致：完成骨架 + 最终正文，无收编行、无窗口残留。
 - **V6（G2，ask-user）**：触发一次 ask-user 等待 → 等待期间当前 turn trace 保持展开、窗口冻结不滑动，回答后正常推进。
-- **通过标准**：V1~V6 全部通过。单元测试（core 纯函数 + Turn 组件）仅作回归辅助，不计入验收。
+- **V7（G3，跨 pane 同步）**：同一 session 开两个 pane → A pane 点「展开全部」→ B pane 同步进入展开接管态；A pane 点「恢复精简」→ B pane 同步回窗口形态（takeover 经 store，验证不割裂）。
+- **V8（UX 副作用）**：streaming 中在窗口内某块选中文字（准备复制）→ 新块进入 / 旧块收编导致窗口滑动时，观察选区是否断裂；若断裂记录参数并评估缓解（如检测到 `window.getSelection` 非空时暂停滑动一拍）。
+- **通过标准**：V1~V8 全部通过。单元测试（core 纯函数 + Turn 组件）仅作回归辅助，不计入验收。
 
 ## 5. 下一层拆分
 
@@ -174,10 +176,10 @@ pi 子进程（JSONL session 文件 / RPC 事件流）
 |---|---|---|---|---|
 | 1 | core 纯函数 | `packages/core/src/domain/chat/` 新增 trace-window 纯函数：跨 assistant 拍平 OrderedBlock[]、计算窗口切片、收编计数、failed 豁免过滤 | 窗口规则是纯逻辑，落 core 符合「core = chat 域 SSOT 纯函数」的绞杀模式，可脱离 Vue 单测 | 纯函数单测（窗口边界 / failed 豁免 / 空块列表 / 单 assistant 与多 assistant 混合） |
 | 2 | 折叠作用域修正 | Turn.vue `showTrace` 改 turn 级；MessageStream.vue 传 `is-last-turn`（`lastRenderTurn` 现成） | F1 是独立 bug 级行为，单独交付立即可感 | V2 场景 |
-| 3 | 窗口渲染 + 收编行 | Turn.vue 接入窗口切片；新增 `TraceCompactorRow.vue`（收编/恢复精简双态行组件，零 chrome）；takeover 本地 ref；i18n 文案（`packages/renderer/src/i18n/locales/{zh-CN,en-US}/panel.ts`） | 收编行独立组件避免 Turn.vue template 超 400 行规范上限（现 83 行，有裕量但双态行 + 计数文案值得独立） | V1 / V3 / V4 |
+| 3 | 窗口渲染 + 收编行 + takeover store | Turn.vue 接入窗口切片；新增 `TraceCompactorRow.vue`（收编/恢复精简双态行组件，零 chrome，含失败子计数 danger 高亮）；takeover 状态加进 `useTurnExpansion` 的 per-turn store 分区（非本地 ref，见 D6）；i18n 文案（`packages/renderer/src/i18n/locales/{zh-CN,en-US}/panel.ts`） | 收编行独立组件避免 Turn.vue template 超 400 行规范上限（现 template 段 83 行 / 全文 213 行，有裕量但双态行 + 计数文案值得独立）；takeover 进 store 是 D6 决策，顺带满足跨 pane 同步（V7） | V1 / V3 / V4 / V7 |
 | 4 | 边界与回归 | ask-user / dispatching 占位 / compacting / subagent 虚拟 session（forceWorking 路径）适配确认；MessageStream.wire 测试与 ui 包 Turn 相关测试更新 | 边界态分散，集中一个单元防漏 | V5 / V6 + 回归测试 |
 
-**文件改动地图**：新增 `packages/core/src/domain/chat/trace-window.ts`（或并入 message-turns.ts）、`packages/ui/src/features/chat/TraceCompactorRow.vue`；修改 `Turn.vue`、`MessageStream.vue`、两个 locale 的 `panel.ts`；不动 `Block.vue`、不动 chat store / converter / runtime。
+**文件改动地图**：新增 `packages/core/src/domain/chat/trace-window.ts`（或并入 message-turns.ts）、`packages/ui/src/features/chat/TraceCompactorRow.vue`；修改 `Turn.vue`、`MessageStream.vue`、`useTurnExpansion`（加 takeover per-turn 字段，见 D6）、两个 locale 的 `panel.ts`；不动 `Block.vue`、不动 chat 消息 store（`stores/chat.ts` 的 messages）/ converter / runtime / pi 协议——数据层零改动，仅在视图展开状态层（useTurnExpansion）加一个字段。
 
 **待验证检查点**（设计期无法确定，实施期定）：W=8 的实际手感（V1 后微调常量）；窗口滑动瞬间的高度变化在 virtua RO 下的平滑度（探针 P2 若发现跳变，再评估是否给收编行加 min-height 补偿——届时实测驱动，不预设机制）。
 
@@ -187,7 +189,7 @@ pi 子进程（JSONL session 文件 / RPC 事件流）
 
 | ID | 断言 | 探针 | 状态 |
 |---|---|---|---|
-| P1 | 工作 turn 被 virtua keepMounted 钉住不卸载，takeover 本地 ref 不因滚动出视口丢失 | streaming 中点开「展开全部」→ 上滚使该 turn 出视口 → 滚回，断言仍处于展开接管态 | ⛔ 单元 3 交付前实测 |
+| P1 | takeover 进 store 后，工作 turn 组件因滚动出视口被 virtua 卸载、重挂载时，takeover 从 store 恢复（必覆盖非 streaming 态） | ① streaming 中点「展开全部」→ 上滚出视口 → 滚回，断言仍接管；② **ask-user 等待中**点「展开全部」→ 上滚出视口 → 滚回，断言仍接管（`isStreaming===false` 态是原 keepMounted 假设的失效路径，原探针漏测，必补） | ⛔ 单元 3 交付前实测 |
 | P2 | 窗口滑动（新块进、旧块收编）时 virtua RO 重测高度，follow 滚动无肉眼可见跳变 | V1 场景中贴底观察窗口滑动瞬间；如有跳变记录复现参数 | ⛔ 单元 3 交付前实测 |
 | P3 | streaming 期间工作 turn 的 DOM 节点数有界（O(W)，不随块总数增长） | V1 场景 devtools 对 trace 容器做元素计数，对比 run 开始与 100+ 块时 | ⛔ V1 验收时实测 |
 | P4 | 窗口不作用于非工作 turn：完成态、重开 session、手动展开历史 turn 的渲染与现状一致 | V5 场景 + 手动展开任一历史 turn 对比改动前截图 | ⛔ V5 验收时实测 |
