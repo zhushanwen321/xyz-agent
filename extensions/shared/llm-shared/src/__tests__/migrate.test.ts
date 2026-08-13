@@ -28,16 +28,15 @@ describe("migrateLegacyConfig", () => {
 		expect(readFileSync(join(dir, "config/new.json"), "utf-8")).toBe('{"mode":"strict"}');
 	});
 
-	it("旧路径存在 + 新路径已存在 → 保留旧文件不覆盖（keptLegacy: true，旧新都在）", () => {
+	it("旧路径存在 + 新路径已存在 → 删除旧文件（新的是当前配置，旧的是残留副本）", () => {
 		mkdirSync(join(dir, "config"), { recursive: true });
 		writeFileSync(join(dir, "old.json"), "OLD", "utf-8");
 		writeFileSync(join(dir, "config/new.json"), "NEW", "utf-8");
 		const result = migrateLegacyConfig(dir, "old.json", "config/new.json");
 		expect(result.migrated).toBe(false);
-		expect(result.keptLegacy).toBe(true);
-		// 旧文件作为备份保留，新文件不被覆盖
-		expect(existsSync(join(dir, "old.json"))).toBe(true);
-		expect(readFileSync(join(dir, "old.json"), "utf-8")).toBe("OLD");
+		expect(result.removedLegacy).toBe(true);
+		// 旧文件被删（清理残留），新文件保留不被覆盖
+		expect(existsSync(join(dir, "old.json"))).toBe(false);
 		expect(readFileSync(join(dir, "config/new.json"), "utf-8")).toBe("NEW");
 	});
 

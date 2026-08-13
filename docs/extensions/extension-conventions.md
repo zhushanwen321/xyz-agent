@@ -175,7 +175,7 @@ streamSink: ctx.mode === "rpc"
 - **幂等要求**（迁移逻辑复用 `@zhushanwen/pi-llm-shared` 的 `migrateLegacyConfig` 工具）：
   - 旧路径不存在 → noop
   - 旧路径存在 + 新路径不存在 → `renameSync`（同盘原子搬移）
-  - 旧路径存在 + 新路径已存在 → **保留旧文件**作备份（warn，不覆盖不删除——宁可残留 stale 文件，不可丢用户数据）
+  - 旧路径存在 + 新路径已存在 → **删除旧文件**（新的是当前配置，旧的是残留副本；pi 运行时只读新路径，保留旧只制造 warn 噪音）
   - 失败 → warn 不抛错（best-effort，下次启动重试）
 - **已废弃机制（禁止再用）**：`scripts/migrate-config.mjs` / `package.json#scripts.postinstall` / `pi.migrate` 字段是早期「安装时迁移」方案，已被 session_start 取代：
   - `postinstall` 在 pnpm workspace install（开发环境）会误触发，动开发者真实 `~/.pi/agent`
