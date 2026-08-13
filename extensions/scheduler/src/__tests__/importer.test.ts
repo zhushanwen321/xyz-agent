@@ -67,9 +67,10 @@ describe('importLegacyStore', () => {
       JSON.stringify({ version: 1, tasks: [taskA, taskB] }),
     )
     const appendEntry = vi.fn()
+    // resumed session：sessionFile 已存在（pi flushed=true，append 即时落盘）→ 立即 unlink 安全
+    vi.mocked(fs.existsSync).mockImplementation(p => p === sessionFile)
 
     importLegacyStore(cwd, { appendEntry }, sessionFile)
-
     // 1) rename 原子独占：scheduler.json → scheduler.json.imported
     expect(fs.renameSync).toHaveBeenCalledTimes(1)
     expect(fs.renameSync).toHaveBeenCalledWith(storePath, importedPath)
@@ -110,7 +111,8 @@ describe('importLegacyStore', () => {
     vi.mocked(fs.renameSync).mockImplementation(() => {
       throw enoentError()
     })
-    vi.mocked(fs.existsSync).mockImplementation(p => p === importedPath) // .imported 存在
+    // .imported 存在 + resumed session（sessionFile 已存在 → 已落盘 → 立即删）
+    vi.mocked(fs.existsSync).mockImplementation(p => p === importedPath || p === sessionFile)
     const taskA = makeTask({ id: 'cccc' })
     vi.mocked(fs.readFileSync).mockReturnValue(
       JSON.stringify({ version: 1, tasks: [taskA] }),
@@ -195,5 +197,49 @@ describe('importLegacyStore', () => {
     expect(op.ownerSessionFile).toBe(ownSession)
     expect(op.ownerSessionFile).not.toBe(storePath)
     expect(op.ownerSessionFile).not.toBe(importedPath)
+  })
+
+  // ── TC8：新 session 未 flush → 延迟 unlink（IMPORT-FLUSH-GUARD，MF-1）──
+  it('TC8: 新 session（sessionFile 不存在）→ 不立即 unlink，返回 cleanup；flush 后删，未 flush 保留', () => {
+    const taskA = makeTask({ id: 'eeee' })
+    vi.mocked(fs.readFileSync).mockReturnValue(
+      JSON.stringify({ version: 1, tasks: [taskA] }),
+    )
+    vi.mocked(fs.existsSync).mockReturnValue(false) // 新 session：sessionFile 尚不存在（pi 未 flush，entries 仅内存）
+    const appendEntry = vi.fn()
+
+    const cleanup = importLegacyStore(cwd, { appendEntry }, sessionFile)
+
+    // append 已发生，但 unlink 未执行——数据可能仅内存，销毁源文件 = 永久丢失
+    expect(appendEntry).toHaveBeenCalledTimes(1)
+    expect(fs.unlinkSync).not.toHaveBeenCalled()
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('deferring'))
+
+    // 情形1：flush 已发生（sessionFile 出现）→ cleanup 删除 .imported
+    vi.mocked(fs.existsSync).mockImplementation(p => p === sessionFile)
+    cleanup?.()
+    expect(fs.unlinkSync).toHaveBeenCalledTimes(1)
+    expect(fs.unlinkSync).toHaveBeenCalledWith(importedPath)
+
+    // 情形2：从未 flush → cleanup 保留 .imported（不 unlink，供崩溃恢复重导入）
+    vi.mocked(fs.unlinkSync).mockClear()
+    vi.mocked(fs.existsSync).mockReturnValue(false)
+    cleanup?.()
+    expect(fs.unlinkSync).not.toHaveBeenCalled()
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('keeping'))
+  })
+
+  // ── TC9：0 任务空 store → 无持久化依赖，仍立即 unlink ──
+  it('TC9: 空 store（tasks 空数组）→ 0 次 append，直接 unlink .imported（无数据可丢）', () => {
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ version: 1, tasks: [] }))
+    vi.mocked(fs.existsSync).mockReturnValue(false) // 新 session 也不影响：0 任务无持久化依赖
+    const appendEntry = vi.fn()
+
+    const cleanup = importLegacyStore(cwd, { appendEntry }, sessionFile)
+
+    expect(appendEntry).toHaveBeenCalledTimes(0)
+    expect(fs.unlinkSync).toHaveBeenCalledTimes(1)
+    expect(fs.unlinkSync).toHaveBeenCalledWith(importedPath)
+    expect(cleanup).toBeUndefined()
   })
 })

@@ -98,14 +98,31 @@ function isENOENT(err: unknown): boolean {
 }
 
 /**
- * 从 .imported 路径读取旧 store JSON、逐任务 pi.appendEntry upsert、删除 .imported。
+ * 从 .imported 路径读取旧 store JSON、逐任务 pi.appendEntry upsert、按 flush 状态删除 .imported。
  * read/parse/append 任一异常由外层 importLegacyStore 的 try/catch 兜底（C1 整体降级）。
+ *
+ * 返回值为延迟删除 cleanup（未 flush 的新 session 场景），由 session_shutdown 执行；
+ * 已安全删除或无需导入时返回 undefined。
+ *
+ * ⚠️ unlink 时机（IMPORT-FLUSH-GUARD，MF-1 修复）：pi SessionManager._persist 延迟写入——
+ * 新 session（sessionFile 尚不存在 → flushed=false）的 appendEntry 只进内存 fileEntries，
+ * 首个 assistant message 到达才 flush 落盘（openSync "wx" 全量写 fileEntries）。若紧随 append
+ * 循环 unlink，未 flush 即退出（打开未发消息即关闭、xyz-agent 自动打开/恢复的 session）→
+ * 全部旧任务永久丢失且源文件已销毁，崩溃恢复路径（.imported 残留）同时失效。
+ * resumed session（sessionFile 已存在 → _setSessionFile 载入时 flushed=true）每次 append
+ * 即时写盘，unlink 安全。
+ *
+ * 判定依据（pi SDK 源码，非推理）：dist/core/session-manager.js `_persist` 的 !hasAssistant
+ * 分支——flushed=true 时 appendFileSync 直写盘，flushed=false 时仅内存；flushed 仅在
+ * _setSessionFile 载入已存在文件（或零字节文件重写）时置 true，新 session 恒 false。
+ * sessionFile 进程内只可能由首次 flush 创建（openSync "wx" 全量写），故
+ * fs.existsSync(currentSessionFile) 在 session_start 时点与 flushed 状态等价。
  */
 function importFromFile(
   importedPath: string,
   pi: Pick<ExtensionAPI, 'appendEntry'>,
   currentSessionFile: string,
-): void {
+): (() => void) | undefined {
   const content = fs.readFileSync(importedPath, 'utf-8')
   const data = JSON.parse(content) as Partial<SchedulerStore>
   const tasks = (data.tasks ?? []).map(normalizeLegacyTask)
@@ -121,10 +138,31 @@ function importFromFile(
     pi.appendEntry('pi-scheduler:task', op)
   }
 
-  fs.unlinkSync(importedPath)
-  // 内部诊断日志（非用户可见消息）：用 console.warn 而非 console.log（项目 convention：
-  // extensions 禁 console.log/info 防泄漏到 TUI；诊断输出统一 console.warn）
-  console.warn(`[scheduler] imported ${tasks.length} legacy tasks from ${importedPath}`)
+  // 空 store（0 任务）无持久化依赖，直接删；resumed session（sessionFile 已存在）已即时落盘，删
+  if (tasks.length === 0 || fs.existsSync(currentSessionFile)) {
+    fs.unlinkSync(importedPath)
+    // 内部诊断日志（非用户可见消息）：用 console.warn 而非 console.log（项目 convention：
+    // extensions 禁 console.log/info 防泄漏到 TUI；诊断输出统一 console.warn）
+    console.warn(`[scheduler] imported ${tasks.length} legacy tasks from ${importedPath}`)
+    return undefined
+  }
+
+  // 新 session（未 flush）：延迟删除，cleanup 由 session_shutdown 执行——届时 sessionFile 已出现
+  // （flush 发生，entries 全量落盘）→ 删；仍未 flush → 保留 .imported 供下次 session_start 的
+  // handleImportedResidue 崩溃恢复重导入（跨 session 重导入窗口 = 崩溃发生在 flush 后与 shutdown
+  // 之间，与 R-CONCURRENT-IMPORT 已接受的并发窗口同权衡）
+  console.warn(
+    `[scheduler] imported ${tasks.length} legacy tasks (session not flushed; deferring ${importedPath} removal)`,
+  )
+  return () => {
+    if (fs.existsSync(currentSessionFile)) {
+      // flush 已发生（sessionFile 由首次 flush 创建，fileEntries 全量落盘）→ 安全删除
+      fs.unlinkSync(importedPath)
+    } else {
+      // 从未 flush：保留 .imported，下次 session_start 崩溃恢复重导入（不 unlink）
+      console.warn(`[scheduler] session closed before flush; keeping ${importedPath} for recovery`)
+    }
+  }
 }
 
 /**
@@ -145,11 +183,12 @@ function handleImportedResidue(
   importedPath: string,
   pi: Pick<ExtensionAPI, 'appendEntry'>,
   currentSessionFile: string,
-): void {
+): (() => void) | undefined {
   if (fs.existsSync(importedPath)) {
-    importFromFile(importedPath, pi, currentSessionFile)
+    return importFromFile(importedPath, pi, currentSessionFile)
   }
   // else: 双不存在（TC3），no-op
+  return undefined
 }
 
 /**
@@ -164,17 +203,23 @@ function handleImportedResidue(
  * fileEntries，design-review 已实测验证）。
  *
  * 整体降级（C1）：read/parse/appendEntry 任一异常 → console.warn + 不 rethrow，不让
- * session_start 崩溃（与 replay gap4 / ER-APPEND-FAIL 同款降级语义）。
+ * session_start 崩溃（与 replay gap4 / ER-APPEND-FAIL 同款降级语义）。append 中途失败时
+ * .imported 保留（不 unlink）——下次 session 的 handleImportedResidue 会重导入全部任务，
+ * 已成功 append 的子集可能跨 session 双触发；取舍：删除则失败任务永久丢失（更糟），
+ * 保留则与 R-CONCURRENT-IMPORT / IMPORT-FLUSH-GUARD 同属 at-least-once 已接受窗口（SG-1）。
  *
  * nextRunAt 原样保留不重算、不 gc 过滤（CL4）：导入后首个 tick 立即 dispatch（D3 立即触发语义）。
+ *
+ * 返回值：延迟删除 cleanup（新 session 未 flush 时保留 .imported 待 session_shutdown 确认
+ * flush 后删除），已安全处理时为 undefined。index.ts session_shutdown 调用它。
  */
 export function importLegacyStore(
   cwd: string,
   pi: Pick<ExtensionAPI, 'appendEntry'>,
   currentSessionFile: string | undefined,
-): void {
+): (() => void) | undefined {
   // TC5：--no-session 模式无 owner session 可归属，导入无意义，早 return 不碰 fs
-  if (currentSessionFile === undefined) return
+  if (currentSessionFile === undefined) return undefined
 
   const storePath = getLegacyStorePath(cwd)
   const importedPath = storePath + '.imported'
@@ -185,19 +230,19 @@ export function importLegacyStore(
     } catch (err) {
       if (isENOENT(err)) {
         // 并发 S10 / 崩溃恢复：scheduler.json 已不在（被别人 rename 走或上次崩溃）→ 残留恢复
-        handleImportedResidue(importedPath, pi, currentSessionFile)
-        return
+        return handleImportedResidue(importedPath, pi, currentSessionFile)
       }
       // 其他 fs 错误走整体降级 warn
       throw err
     }
 
     // 成功 rename → 导入 .imported
-    importFromFile(importedPath, pi, currentSessionFile)
+    return importFromFile(importedPath, pi, currentSessionFile)
   } catch (err) {
     // C1 整体降级：read/parse/appendEntry 任一异常不崩 session_start
     console.warn(
       `[scheduler] import failed: ${err instanceof Error ? err.message : String(err)}`,
     )
+    return undefined
   }
 }

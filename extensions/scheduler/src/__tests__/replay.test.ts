@@ -255,6 +255,54 @@ describe('replayFoldEntries', () => {
     expect(a.nextRunAt).toBe(100) // 保持 upsert 快照值
   })
 
+  // ── MF-2：守卫按变体校验必填字段——损坏 entry 只跳过该条，不清空全部任务 ──
+  it('MF-2: op 合法但缺必填字段的损坏 entry 被跳过，其余任务保留', () => {
+    const session = '/s.json'
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const entries: SchedulerEntryLike[] = [
+      { type: 'custom', customType: 'pi-scheduler:task', data: { op: 'upsert' } }, // 缺 taskId+task
+      { type: 'custom', customType: 'pi-scheduler:task', data: { op: 'upsert', taskId: 'A' } }, // 缺 task
+      { type: 'custom', customType: 'pi-scheduler:task', data: { op: 'advance', taskId: 'A', at: 1, status: 'success' } }, // 缺 nextRunAt
+      { type: 'custom', customType: 'pi-scheduler:task', data: { op: 'toggle', taskId: 'A' } }, // 缺 enabled
+      { type: 'custom', customType: 'pi-scheduler:task', data: { op: 'delete' } }, // 缺 taskId
+      // 合法 entry 应保留（此前这 5 条损坏 entry 会清空全部任务）
+      entry({ op: 'upsert', taskId: 'A', ownerSessionFile: session, task: snapshot({ id: 'A' }) }),
+    ]
+
+    const result = replayFoldEntries(entries, session)
+    expect(result.size).toBe(1)
+    expect(result.get('A')).toBeDefined()
+    warnSpy.mockRestore()
+  })
+
+  it('MF-2: upsert task 嵌套数据损坏（history 非数组）→ 逐条跳过该 entry，其余任务保留', () => {
+    const session = '/s.json'
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const entries: SchedulerEntryLike[] = [
+      {
+        type: 'custom',
+        customType: 'pi-scheduler:task',
+        data: {
+          op: 'upsert',
+          taskId: 'BAD',
+          ownerSessionFile: session,
+          task: { ...snapshot({ id: 'BAD' }), history: 'not-an-array' },
+        },
+      },
+      entry({ op: 'upsert', taskId: 'GOOD', ownerSessionFile: session, task: snapshot({ id: 'GOOD' }) }),
+    ]
+
+    const result = replayFoldEntries(entries, session)
+    expect(result.size).toBe(1)
+    expect(result.get('GOOD')).toBeDefined()
+    expect(result.has('BAD')).toBe(false)
+    // 逐条跳过 warn（非外层整体 catch 的 replayFoldEntries failed warn）
+    expect(warnSpy).toHaveBeenCalled()
+    const msg = warnSpy.mock.calls[0]![0] as string
+    expect(msg).toContain('skipping corrupted scheduler entry')
+    warnSpy.mockRestore()
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
   })

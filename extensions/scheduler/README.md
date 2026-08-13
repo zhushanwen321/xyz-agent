@@ -199,7 +199,7 @@ pi 的 context 构建对 custom entry 无 case（被过滤）——任务数据�
 
 ### 旧版迁移
 
-升级前任务存在 cwd 共享的旧 store（`~/.pi/agent/scheduler/<cwd>/scheduler.json`）。升级后首个检测到旧文件的 session 原子 `rename` 为 `scheduler.json.imported`，逐任务 appendEntry upsert 到自己的 JSONL，然后删除 `.imported`：
+升级前任务存在 cwd 共享的旧 store（`~/.pi/agent/scheduler/<cwd>/scheduler.json`）。升级后首个检测到旧文件的 session 原子 `rename` 为 `scheduler.json.imported`，逐任务 appendEntry upsert 到自己的 JSONL，然后删除 `.imported`（⚠️ 删除时机依赖 flush：resumed session 已落盘可立即删；新 session（pi 延迟写入，entries 仅内存）延迟到 session_shutdown 确认 flush 后删，未 flush 保留 `.imported` 供崩溃恢复重导入，避免源文件销毁 + 数据未落盘的双重丢失）：
 
 - **归属**：旧任务无 owner 信息，**归属首个完成导入的 session**（无更好近似）
 - **过期任务立即触发**：导入后若 nextRunAt 已过期，**首个 tick 立即 dispatch**（once 立即注入、recurring 补跑）

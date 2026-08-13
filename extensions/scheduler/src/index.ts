@@ -27,6 +27,10 @@ import { renderSchedulerWidget } from './widget.js'
  */
 export default function schedulerExtension(pi: ExtensionAPI): void {
   let service: SchedulerService | null = null
+  // IMPORT-FLUSH-GUARD（MF-1）：importLegacyStore 对未 flush 的新 session 返回延迟删除 .imported
+  // 的 cleanup，session_shutdown 时执行——确认 flush（sessionFile 已出现）则删，未 flush 保留
+  // 供崩溃恢复重导入（否则未 flush 即退出 → 全部旧任务丢失且源文件已销毁）
+  let importCleanup: (() => void) | undefined
 
   const getService = (): SchedulerService => {
     if (!service) throw new Error('Scheduler not initialized: session not started')
@@ -39,7 +43,7 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
     // 旧 store 原子导入（CL3 方案A）：必须在 backend.loadTasks() 之前执行——
     // append 的 upsert entry 进入 pi 内存 fileEntries，紧接的 loadTasks replay 统一重放读到导入任务。
     // ctx.cwd 类型为 string（SDK ExtensionContext 必填），无需 ?? process.cwd() 兜底（CL2）。
-    importLegacyStore(ctx.cwd, pi, ctx.sessionManager.getSessionFile())
+    importCleanup = importLegacyStore(ctx.cwd, pi, ctx.sessionManager.getSessionFile())
     const runtime = new SchedulerRuntime(backend, ctx)
     runtime.loadTasks(backend.loadTasks())
     // W2：tick 后回调刷新 widget（替代独立 widgetTimer + setInterval，节奏对齐 TICK_INTERVAL_MS）
@@ -58,6 +62,10 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
     if (service) {
       service.runtime.stopScheduler()
     }
+    // IMPORT-FLUSH-GUARD（MF-1）：延迟删除 .imported（新 session 未 flush 场景）——
+    // 此时 sessionFile 已出现（flush 发生）则删；未 flush 保留供崩溃恢复
+    importCleanup?.()
+    importCleanup = undefined
   })
 
   // 注册 schedule tool

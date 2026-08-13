@@ -17,6 +17,13 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { describe, expect, it, vi } from 'vitest'
 
+// MF-3：session_start handler 会真实执行 importLegacyStore(ctx.cwd, ...) —— fakeCtx cwd='/test'
+// 会触碰真实用户 FS（~/.pi/agent/scheduler/root/test/scheduler.json 的 renameSync/existsSync/
+// unlinkSync；该目录是活跃数据目录，一旦路径存在会 rename+unlink 真实用户数据且结果不确定）。
+// mock 掉 importer 模块：session_start 装配路径仍被调用（vi.fn 记录调用），FS 副作用为零；
+// 装配时序由 tools/verify-scheduler-e2e.cjs 的 S10/S12/S17 真实环境覆盖。
+vi.mock('../importer.js', () => ({ importLegacyStore: vi.fn() }))
+
 import schedulerExtension from '../index.js'
 
 /**
