@@ -52,9 +52,24 @@ export type RenderItem =
   | { kind: 'systemNotice'; message: Message }
   | { kind: 'bashExecution'; message: Message }
 
-/** 一个渲染回合的稳定 key（turn 索引从 1 起；system 类用 message.id） */
+/**
+ * turn 的稳定标识：首条消息 id（user 优先，assistant 自启 turn 用首条 assistant id）。
+ * 消息 id 由 runtime 在消息创建时生成（uuid，message-converter / event-adapter），
+ * 同一消息两次生成同 id、其他消息插入/删除不影响——key 不随渲染重建/列表增删漂移。
+ *
+ * [M5 stable-key] 旧实现用 MessageTurn.index（toRenderItems 每次从 0 重算的序号），
+ * 消息插入/删除（load-more、streaming 追加）会让全部后续 turn 的 key 平移，
+ * virtua 按 key 复用 DOM 时错位（组件状态串台）。改首条消息 id 后 key 恒稳定。
+ * 空串兜底理论不可达（toRenderItems 保证 turn 必有 user 或 assistants[0]），仅类型收窄用。
+ */
+export function turnStableId(turn: MessageTurn): string {
+  return turn.user?.id ?? turn.assistants[0]?.id ?? ''
+}
+
+/** 一个渲染回合的稳定 key（turn 用首条消息 id；system 类用 message.id）。
+ *  两个 key 空间前缀不同（t-/s-），消息 id 全局唯一，无碰撞。 */
 export function renderKey(item: RenderItem): string {
-  return item.kind === 'turn' ? `t-${item.turn.index}` : `s-${item.message.id}`
+  return item.kind === 'turn' ? `t-${turnStableId(item.turn)}` : `s-${item.message.id}`
 }
 
 /** 不在对话流渲染的 customType 判定已删除 [M2 display 前置]：完成通知由生产端（registry

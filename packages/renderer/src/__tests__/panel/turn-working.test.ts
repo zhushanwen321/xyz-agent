@@ -64,17 +64,17 @@ function mountTurn(props: { turn: MessageTurn; sessionId?: string; isSessionActi
  * 展开/折叠经 deps 注入（U19 手动展开需要状态化 toggleExpand/isExpanded mock，
  * 必须用 reactive Set——普通 Set 非响应式，computed 不重算）。
  */
-const expandedTurns = reactive(new Set<number>())
+const expandedTurns = reactive(new Set<string>())
 function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string }) {
   return mount(Turn, {
     props: { turn: props.turn, sessionId: props.sessionId ?? 's1' },
     global: {
       plugins: [createPinia()],
       provide: mockChatProvide({
-        isExpanded: (idx: number) => expandedTurns.has(idx),
-        toggleExpand: (idx: number) => {
-          if (expandedTurns.has(idx)) expandedTurns.delete(idx)
-          else expandedTurns.add(idx)
+        isExpanded: (key: string) => expandedTurns.has(key),
+        toggleExpand: (key: string) => {
+          if (expandedTurns.has(key)) expandedTurns.delete(key)
+          else expandedTurns.add(key)
         },
       }),
       stubs: { ChangeSetCard: true, MarkdownRenderer: true },
@@ -188,8 +188,10 @@ describe('Turn working 态 · 完成复位 + elapsed live', () => {
     expect(blocks[0].props('type')).toBe('text')
   })
 
-  // U14:纯文本回合 working 态（pi 流式纯文本，无 thinking）也须显示「思考中」+ spinner
-  it('U14: 纯文本回合 working 态显示「思考中」+ spinner + 无 chevron + trace 强制展开', () => {
+  // U14:纯文本回合 working 态（pi 流式纯文本，无 thinking）显示「工作中」+ spinner
+  // [HISTORICAL 3266931c8] working 文案已从「思考中」改为「工作中」：仅空窗占位
+  // （assistants 空）显示「思考中」，assistants 非空的生成中 turn 显示「工作中」。
+  it('U14: 纯文本回合 working 态显示「工作中」+ spinner + 无 chevron + trace 强制展开', () => {
     const wrapper = mountTurn({
       turn: makeTurn({
         isStreaming: true,
@@ -198,7 +200,7 @@ describe('Turn working 态 · 完成复位 + elapsed live', () => {
       }),
     })
     expect(wrapper.find('.turn-meta').exists()).toBe(true)
-    expect(wrapper.find('.lbl').text()).toBe('思考中')
+    expect(wrapper.find('.lbl').text()).toBe('工作中')
     // working 态用 spinner（Loader2 animate-spin），不再用 working-dot 脉冲点
     expect(wrapper.find('.turn-meta .animate-spin').exists()).toBe(true)
     expect(wrapper.find('.chev').exists()).toBe(false)
@@ -262,8 +264,9 @@ describe('Turn · T4 isWorking 拆分（isStreaming vs isSessionActive）', () =
     expect(wrapper.find('.turn-meta').attributes('disabled')).toBeDefined()
     // B 类进行中：sticky 贴顶（turn-meta 父 wrapper 带 sticky class）
     expect(wrapper.find('.sticky').exists()).toBe(true)
-    // C 类进行中：thinking 文案（对话在进行，显示「思考中」而非「已工作」）
-    expect(wrapper.find('.lbl').text()).toBe('思考中')
+    // C 类进行中：working 文案（对话在进行，显示「工作中」而非「已工作」；
+    // 3266931c8 后仅空窗占位显示「思考中」，此处 assistants 非空）
+    expect(wrapper.find('.lbl').text()).toBe('工作中')
     // A 类流式关闭：Loader 不转（isStreaming=false）
     expect(wrapper.find('.turn-meta .animate-spin').exists()).toBe(false)
     // A 类流式关闭：streaming 光标不闪（TurnSummary 去光标后改断言 Turn 尾部 streaming-tail）

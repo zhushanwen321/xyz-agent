@@ -47,7 +47,7 @@
       <div class="rail-list flex max-h-full flex-col gap-0.5 overflow-y-auto">
         <div
           v-for="(turn, idx) in turns"
-          :key="turn.index"
+          :key="turnStableId(turn)"
           data-testid="rail-node"
           class="group/rail-node rail-node relative flex cursor-pointer flex-col gap-0.5 rounded px-1.5 py-1 transition-colors hover:bg-surface-hover"
           :class="idx === activeTurnIndex ? 'active bg-accent-soft ring-1 ring-inset ring-accent-ring' : ''"
@@ -115,7 +115,7 @@ import { computed } from 'vue'
 import { Bot, ChevronDown, ChevronUp, User } from '@lucide/vue'
 import { Button } from '@xyz-agent/ui'
 import type { MessageTurn } from '@xyz-agent/core/domain/chat'
-import { hasFailedTool } from '@xyz-agent/core/domain/chat'
+import { hasFailedTool, turnStableId } from '@xyz-agent/core/domain/chat'
 import { summarizeTurnForRail, summarizeAssistantForRail } from '@xyz-agent/core/domain/chat'
 import { RUNNING_LOADER_SVG } from './block-icon'
 import { useI18n } from 'vue-i18n'
@@ -131,10 +131,11 @@ const props = defineProps<{
   sessionActive: boolean
   /** 面板右边缘 px（可选）：未传时 rail 贴视口右侧 8px */
   panelRightEdge?: number
-  /** 已展开的 turn index 集合（toggle 图标方向依据：展开=ChevronUp / 折叠=ChevronDown）。
+  /** 已展开的 turn 稳定 key 集合（toggle 图标方向依据：展开=ChevronUp / 折叠=ChevronDown）。
+   *  key = turnStableId(turn)（首条消息 id，M5 stable-key，不随消息插删漂移）。
    *  ReadonlySet：消费方只读（.has 查询），生产端 useMessageStreamRail 复用 EMPTY_SET 单例
    *  避免热路径无谓 new Set（W3 性能优化）。 */
-  expandedTurns?: ReadonlySet<number>
+  expandedTurns?: ReadonlySet<string>
 }>()
 
 const emit = defineEmits<{
@@ -146,12 +147,13 @@ const emit = defineEmits<{
 
 /**
  * 查询指定 turn（按 railTurns 下标）是否处于用户态展开（由 expandedTurns prop 决定）。
+ * [M5 stable-key] 集合 key 为 turnStableId(turn)（首条消息 id），非 MessageTurn.index。
  * expandedTurns 缺省时视为全折叠（默认折叠态，符合「默认极简」原则）。
  */
 function isExpanded(idx: number): boolean {
   if (!props.expandedTurns) return false
-  const turnIdx = props.turns[idx]?.index
-  return turnIdx != null && props.expandedTurns.has(turnIdx)
+  const turn = props.turns[idx]
+  return turn != null && props.expandedTurns.has(turnStableId(turn))
 }
 
 /**

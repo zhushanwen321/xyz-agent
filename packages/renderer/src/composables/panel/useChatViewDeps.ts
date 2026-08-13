@@ -89,11 +89,11 @@ export function useChatViewDeps(sessionId: Ref<string>): ChatViewDeps {
     isActive: (sid: string): boolean => chat.isActive(sid),
     isHandingOff: (sid: string): boolean => chat.isHandingOff(sid),
     getChangeSetStatus: (sid: string, messageId: string) => chat.getChangeSetStatus(sid, messageId),
-    isExpanded: (turnIndex: number): boolean => turnExpansion.isExpanded(turnIndex),
+    isExpanded: (turnKey: string): boolean => turnExpansion.isExpanded(turnKey),
 
     // ── 操作回调 ──
-    toggleExpand: (turnIndex: number): void => turnExpansion.toggle(turnIndex),
-    collapse: (turnIndex: number): void => turnExpansion.collapse(turnIndex),
+    toggleExpand: (turnKey: string): void => turnExpansion.toggle(turnKey),
+    collapse: (turnKey: string): void => turnExpansion.collapse(turnKey),
     abortBash: (sid: string, _messageId?: string): void => {
       // core abortBash 仅按 session 取消（api-port 单参），不区分消息；ui 接口的 messageId 为兼容占位
       void abortBash(sid)

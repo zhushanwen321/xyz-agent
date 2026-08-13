@@ -376,7 +376,7 @@ describe('方案 a: mount Block 组件 — 翻转 props.tool.status', () => {
 /* ─────────────────────── 方案 b：mount Turn，改 turn prop 内 tool ─────────────────────── */
 // 展开 trace 需状态化 toggleExpand/isExpanded（reactive Set，同 turn-working U19）
 describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0].status', () => {
-  const expandedTurns = reactive(new Set<number>())
+  const expandedTurns = reactive(new Set<string>())
   beforeEach(() => {
     expandedTurns.clear()
   })
@@ -389,10 +389,10 @@ describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0]
       props: { turn, sessionId: 's1' },
       global: {
         provide: mockChatProvide({
-          isExpanded: (idx: number) => expandedTurns.has(idx),
-          toggleExpand: (idx: number) => {
-            if (expandedTurns.has(idx)) expandedTurns.delete(idx)
-            else expandedTurns.add(idx)
+          isExpanded: (key: string) => expandedTurns.has(key),
+          toggleExpand: (key: string) => {
+            if (expandedTurns.has(key)) expandedTurns.delete(key)
+            else expandedTurns.add(key)
           },
         }),
         stubs: { ChangeSetCard: true, MarkdownRenderer: true },
@@ -424,7 +424,7 @@ describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0]
  * 「Turn 把 toolCall 引用的 status 变化（不可变替换）传给 Block」是否响应式。
  * ------------------------------------------------------------------------- */
 describe('方案 c（叶子）: traceBlocks 响应式验证（不可变替换翻转）', () => {
-  const expandedTurns = reactive(new Set<number>())
+  const expandedTurns = reactive(new Set<string>())
   beforeEach(() => {
     expandedTurns.clear()
   })
@@ -437,10 +437,10 @@ describe('方案 c（叶子）: traceBlocks 响应式验证（不可变替换翻
       props: { turn, sessionId: 's1' },
       global: {
         provide: mockChatProvide({
-          isExpanded: (idx: number) => expandedTurns.has(idx),
-          toggleExpand: (idx: number) => {
-            if (expandedTurns.has(idx)) expandedTurns.delete(idx)
-            else expandedTurns.add(idx)
+          isExpanded: (key: string) => expandedTurns.has(key),
+          toggleExpand: (key: string) => {
+            if (expandedTurns.has(key)) expandedTurns.delete(key)
+            else expandedTurns.add(key)
           },
         }),
         stubs: { ChangeSetCard: true, MarkdownRenderer: true },

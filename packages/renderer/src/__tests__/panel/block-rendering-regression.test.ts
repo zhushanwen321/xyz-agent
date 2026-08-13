@@ -54,17 +54,17 @@ function makeTurn(over: Partial<MessageTurn> = {}): MessageTurn {
  * 展开/折叠经 deps 注入（isExpanded/toggleExpand 必须用 reactive Set——普通 Set 非响应式，
  * computed 不重算）。
  */
-const expandedTurns = reactive(new Set<number>())
+const expandedTurns = reactive(new Set<string>())
 function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string }) {
   return mount(Turn, {
     props: { turn: props.turn, sessionId: props.sessionId ?? 's1' },
     global: {
       plugins: [createPinia()],
       provide: mockChatProvide({
-        isExpanded: (idx: number) => expandedTurns.has(idx),
-        toggleExpand: (idx: number) => {
-          if (expandedTurns.has(idx)) expandedTurns.delete(idx)
-          else expandedTurns.add(idx)
+        isExpanded: (key: string) => expandedTurns.has(key),
+        toggleExpand: (key: string) => {
+          if (expandedTurns.has(key)) expandedTurns.delete(key)
+          else expandedTurns.add(key)
         },
       }),
       stubs: {
@@ -225,7 +225,7 @@ describe('block-rendering 回归护栏（§8.3）', () => {
       turn: makeTurn({ isStreaming: false, hasFoldable: true, assistants: [a1, a2] }),
     })
     // 手动展开 trace（reactive Set 驱动 isExpanded → showTrace）
-    expandedTurns.add(1)
+    expandedTurns.add('u1')
     await nextTick()
     const blocks = wrapper.findAll('.trace .trace-blk')
     expect(blocks.length).toBe(3) // a1 text + a1 tool + a2 text

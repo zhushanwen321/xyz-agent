@@ -8,8 +8,13 @@
  * 所有调用方读写同一份 state，per-session 隔离由 store 内 sessionId 分区天然保证。
  *
  * 响应式策略：外层 plain Map + 内层 reactive Map（混合范式，原因见 getPartition 注释）。
- * - 外层 partitions（plain Map）：sessionId → 内层 reactive Map<turnIdx, boolean>，非响应式
- * - 内层分区（reactive Map）：turnIdx → expanded
+ * - 外层 partitions（plain Map）：sessionId → 内层 reactive Map<turnKey, boolean>，非响应式
+ * - 内层分区（reactive Map）：turnKey → expanded
+ *
+ * [M5 stable-key] key 类型从 MessageTurn.index（number）改为 turnStableId（string，首条消息 id）。
+ * 索引 key 在消息插入/删除（load-more、streaming）时漂移：同一 turn 的展开态会错绑到
+ * 别的 turn（展开态跟随索引而不是跟随 turn）。string key 由 @xyz-agent/core/domain/chat
+ * 的 turnStableId(turn) 派生，随 turn 首条消息 id 稳定，插删其他消息不影响。
  * Vue 3 reactive 对 Map 的 get/set/delete 均建立响应式追踪，故在 effect/computed 内
  * 读 `partition.get(idx)` 后，对同一 idx 的 set（expand/collapse/toggle）会让依赖失效重跑
  * （TC-w1-7 / TC-w1-9 契约：一次 mutate 一次重跑）。collapse 用赋值 false 而非 delete
@@ -25,8 +30,8 @@ import { defineStore } from 'pinia'
 import { reactive } from 'vue'
 import { registerSessionCleanup } from '@/composables/useSessionScopedState'
 
-/** 单个 session 的展开状态：turnIdx → 是否展开（DM1） */
-export type TurnExpansionPartition = Map<number, boolean>
+/** 单个 session 的展开状态：turnKey → 是否展开（DM1）。key = turnStableId(turn)（M5 stable-key） */
+export type TurnExpansionPartition = Map<string, boolean>
 
 export const useTurnExpansionStore = defineStore('turn-expansion', () => {
   // 外层 plain Map（非响应式）：sessionId → 内层 reactive Map<turnIdx, boolean>。
@@ -47,7 +52,7 @@ export const useTurnExpansionStore = defineStore('turn-expansion', () => {
   function getPartition(sid: string): TurnExpansionPartition {
     let p = partitions.get(sid)
     if (!p) {
-      p = reactive(new Map<number, boolean>())
+      p = reactive(new Map<string, boolean>())
       partitions.set(sid, p)
     }
     return p
@@ -58,50 +63,50 @@ export const useTurnExpansionStore = defineStore('turn-expansion', () => {
    * 走 getPartition（惰性创建分区）：保证 effect 首跑后 partition 已存在，
    * 后续 expand/collapse 对同 idx 的 set 才能精确触发该依赖失效（不双触发）。
    */
-  function isExpanded(sid: string, idx: number): boolean {
-    return getPartition(sid).get(idx) === true
+  function isExpanded(sid: string, key: string): boolean {
+    return getPartition(sid).get(key) === true
   }
 
   /** 翻转展开态 */
-  function toggle(sid: string, idx: number): void {
+  function toggle(sid: string, key: string): void {
     const p = getPartition(sid)
-    p.set(idx, !p.get(idx))
+    p.set(key, !p.get(key))
   }
 
   /** 设为展开 */
-  function expand(sid: string, idx: number): void {
-    getPartition(sid).set(idx, true)
+  function expand(sid: string, key: string): void {
+    getPartition(sid).set(key, true)
   }
 
   /**
-   * 设为折叠。用赋值 false 而非 delete：保 idx 的响应式链不断，
-   * 已订阅 isExpanded(sid, idx) 的下游在 false↔true 来回切时仍正确重算。
+   * 设为折叠。用赋值 false 而非 delete：保 key 的响应式链不断，
+   * 已订阅 isExpanded(sid, key) 的下游在 false↔true 来回切时仍正确重算。
    */
-  function collapse(sid: string, idx: number): void {
-    getPartition(sid).set(idx, false)
+  function collapse(sid: string, key: string): void {
+    getPartition(sid).set(key, false)
   }
 
   /** 批量展开 */
-  function expandAll(sid: string, idxs: number[]): void {
+  function expandAll(sid: string, keys: string[]): void {
     const p = getPartition(sid)
-    for (const i of idxs) {
-      p.set(i, true)
+    for (const k of keys) {
+      p.set(k, true)
     }
   }
 
   /** 批量折叠 */
-  function collapseAll(sid: string, idxs: number[]): void {
+  function collapseAll(sid: string, keys: string[]): void {
     const p = getPartition(sid)
-    for (const i of idxs) {
-      p.set(i, false)
+    for (const k of keys) {
+      p.set(k, false)
     }
   }
 
   /** 任一 turn 处于展开态 */
-  function hasAnyExpanded(sid: string, idxs: number[]): boolean {
-    if (idxs.length === 0) return false
+  function hasAnyExpanded(sid: string, keys: string[]): boolean {
+    if (keys.length === 0) return false
     const p = getPartition(sid)
-    return idxs.some((i) => p.get(i) === true)
+    return keys.some((k) => p.get(k) === true)
   }
 
   /**

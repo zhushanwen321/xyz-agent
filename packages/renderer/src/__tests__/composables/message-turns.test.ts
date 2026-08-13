@@ -19,6 +19,7 @@ import { describe, it, expect } from 'vitest'
 import {
   expandAssistantBlocks,
   filterDisplayableMessages,
+  renderKey,
   toRenderItems,
 } from '@/composables/logic/messageTurns'
 import type { Message } from '@xyz-agent/shared'
@@ -276,6 +277,109 @@ const KIND_COMPONENT_MAP: Record<RenderItem['kind'], string> = {
   systemNotice: 'SystemNotice',
   bashExecution: 'BashOutputBlock',
 }
+
+describe('renderKey 稳定生成（M5 stable-key）', () => {
+  /** 三 kind 全覆盖 fixture：turn(用户首条消息 id) + systemNotice + bashExecution */
+  function stableFixture(): Message[] {
+    return [
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'c1', role: 'system', content: '压缩记录' }),
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+      makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
+      bashMsg('bash-1'),
+    ]
+  }
+
+  it('TC1: 同一组消息两次 toRenderItems → 各 item 的 renderKey 一致（不随渲染重建漂移）', () => {
+    const messages = stableFixture()
+    const keysA = toRenderItems(messages).map(renderKey)
+    const keysB = toRenderItems(messages).map(renderKey)
+    expect(keysA).toEqual(keysB)
+    // 且 key 是稳定 id 派生（turn 用首条消息 id，system 类用 message.id），非索引
+    expect(keysA).toEqual(['t-u1', 's-c1', 't-u2', 's-bash-1'])
+  })
+
+  it('TC1: 顶部插入（load-more）后既有 turn 的 renderKey 不漂移', () => {
+    const base = [
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+      makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
+      makeMsg({ id: 'u3', role: 'user', content: 'q3' }),
+      makeMsg({ id: 'a3', role: 'assistant', content: 'r3' }),
+    ]
+    const before = toRenderItems(base).map(renderKey)
+    // load-more 在顶部插入更早的 turn（旧实现按索引生成 key 会让全部既有 key +1 漂移）
+    const withMore = [
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      ...base,
+    ]
+    const after = toRenderItems(withMore).map(renderKey)
+    // 既有 turn 的 key 值不变，只多出首项新 turn 的 key（稳定 id 非索引）
+    expect(after.slice(1)).toEqual(before)
+  })
+
+  it('TC1: 中间插入/删除后既有 turn 的 renderKey 不漂移', () => {
+    const base = [
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+      makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
+      makeMsg({ id: 'u3', role: 'user', content: 'q3' }),
+      makeMsg({ id: 'a3', role: 'assistant', content: 'r3' }),
+    ]
+    const before = toRenderItems(base).map(renderKey)
+    // 中间插入一条 user/assistant 对（新 turn 出现在 index 2 位置）
+    const inserted = [
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'uX', role: 'user', content: 'qX' }),
+      makeMsg({ id: 'aX', role: 'assistant', content: 'rX' }),
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+      makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
+      makeMsg({ id: 'u3', role: 'user', content: 'q3' }),
+      makeMsg({ id: 'a3', role: 'assistant', content: 'r3' }),
+    ]
+    const afterInsert = toRenderItems(inserted).map(renderKey)
+    // 新 turn 插在中间，u2/u3 两个既有 turn 的 key 保持 t-u2/t-u3（索引方案会变 t-3/t-4）
+    expect(afterInsert).toEqual(['t-u1', 't-uX', 't-u2', 't-u3'])
+    // 删除 u2 turn 后，u3 的 key 仍为 t-u3
+    const removed = [
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'u3', role: 'user', content: 'q3' }),
+      makeMsg({ id: 'a3', role: 'assistant', content: 'r3' }),
+    ]
+    expect(toRenderItems(removed).map(renderKey)).toEqual(['t-u1', 't-u3'])
+    expect(before).toEqual(['t-u1', 't-u2', 't-u3'])
+  })
+
+  it('TC1: assistant 自启 turn（首条即 assistant，无 user）用首条 assistant id 作稳定 key', () => {
+    const items = toRenderItems([
+      makeMsg({ id: 'a0', role: 'assistant', content: '首条 assistant' }),
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+    ])
+    expect(items.map(renderKey)).toEqual(['t-a0', 't-u1'])
+  })
+
+  it('TC1: 同 session 消息追加（streaming 中间态）不改变既有 turn 的 key 集合', () => {
+    const mid = toRenderItems([
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+    ])
+    const done = toRenderItems([
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+      makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
+    ])
+    // 末尾追加 assistant 只扩展 u2 turn，u1/u2 两个 turn 的 key 不变
+    expect(mid.map(renderKey)).toEqual(['t-u1', 't-u2'])
+    expect(done.map(renderKey)).toEqual(['t-u1', 't-u2'])
+  })
+})
 
 describe('toRenderItems kind 全集现算（renderer-model M1）', () => {
   it('TC1: user/assistant 消息 → turn（assistant 归入 user 开启的同一回合）', () => {

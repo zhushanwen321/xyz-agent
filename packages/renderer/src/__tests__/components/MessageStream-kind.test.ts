@@ -32,6 +32,11 @@ import type { Message } from '@xyz-agent/shared'
 // 注意 1：vi.mock factory 会被 hoist 到文件顶部，不能引用顶层变量——vue/vi 全部动态 import。
 // 注意 2：defineExpose 是 <script setup> 编译宏，普通 setup 函数里调用不生效（实测）。
 //   mock 改由 setup 返回 handle 对象（自动成为 setupState，proxy 可读）+ render 选项渲染 slot。
+// [M5 stable-key] slotKeyCollector：mock render 时记录每个 item 的 slot vnode key——
+//    virtua 生产实现用 slot vnode 的 key 作 item key（无 key 时 fallback `_${index}`，
+//    消息插删时按索引错位复用 DOM）。收集器用于断言 slot 三分支已绑定稳定 :key。
+const slotKeyCollector = vi.hoisted(() => ({ keys: [] as (string | number | symbol | null | undefined)[][] }))
+
 vi.mock('virtua/vue', async () => {
   const { defineComponent, h } = await import('vue')
   const { vi: vitest } = await import('vitest')
@@ -61,7 +66,11 @@ vi.mock('virtua/vue', async () => {
         return h(
           'div',
           { class: 'mock-virtualizer' },
-          (ctx.data as unknown[]).map((item, index) => ctx.$slots.default?.({ item, index })),
+          (ctx.data as unknown[]).map((item, index) => {
+            const vnodes = ctx.$slots.default?.({ item, index }) ?? []
+            slotKeyCollector.keys.push(vnodes.map((v) => v.key))
+            return vnodes
+          }),
         )
       },
     }),
@@ -165,6 +174,7 @@ describe('MessageStream kind 查表分发（M1）', () => {
     setActivePinia(createPinia())
     vi.stubGlobal('ResizeObserver', NoopResizeObserver)
     HTMLElement.prototype.scrollTo = vi.fn()
+    slotKeyCollector.keys.length = 0
   })
 
   it('TC2: kind=bashExecution → BashOutputBlock，SystemNotice/Turn 不渲染', async () => {
@@ -258,5 +268,40 @@ describe('MessageStream kind 查表分发（M1）', () => {
     expect(wrapper.find('[data-testid="turn-stub-1"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="system-notice-stub"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="bash-output-stub"]').exists()).toBe(false)
+  })
+
+  it('TC2: slot vnode 带稳定 :key（renderKey(item)，非索引——virtua item key 依据）', async () => {
+    // [M5 stable-key] virtua 生产实现：slot 返回单 vnode 时取其 key 作 item key，
+    // 无 key 时 fallback `_${index}`（消息插删/streaming 追加按索引错位复用 DOM）。
+    // 断言：每个 item 的 slot vnode key 存在且为稳定 id 派生（turn=首条消息 id，system=message.id），
+    // 且同一数据两次渲染 key 集合一致（不随渲染重建漂移）。
+    const chat = useChatStore()
+    chat.hydrate('sess-kind-key', [
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'c1', content: '压缩记录' }),
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+      makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
+      bashMsg('bash-1'),
+    ])
+
+    const wrapper = mountStream('sess-kind-key')
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    // 4 个渲染项（turn1 + notice + turn2 + bash），每个 slot vnode 都带 key
+    expect(slotKeyCollector.keys).toHaveLength(4)
+    const flatKeys = slotKeyCollector.keys.map((k) => k[0])
+    expect(flatKeys).toEqual(['t-u1', 's-c1', 't-u2', 's-bash-1'])
+    // 全部 key 非空（virtua 不会 fallback `_${index}`）
+    expect(flatKeys.every((k) => k != null && k !== '')).toBe(true)
+
+    // 同一数据重新 mount → key 集合一致（不随渲染重建漂移）
+    slotKeyCollector.keys.length = 0
+    const wrapper2 = mountStream('sess-kind-key')
+    await wrapper2.vm.$nextTick()
+    await wrapper2.vm.$nextTick()
+    expect(slotKeyCollector.keys.map((k) => k[0])).toEqual(['t-u1', 's-c1', 't-u2', 's-bash-1'])
+    wrapper2.unmount()
   })
 })

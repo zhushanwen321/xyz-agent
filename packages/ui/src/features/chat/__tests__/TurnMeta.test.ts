@@ -16,6 +16,7 @@ import { resolve } from 'node:path'
 import { mount } from '@vue/test-utils'
 import { TurnMeta } from '@xyz-agent/ui'
 import type { MessageTurn } from '@xyz-agent/core/domain/chat'
+import { turnStableId } from '@xyz-agent/core/domain/chat'
 import { mockChatProvide } from './helpers'
 
 const NOW = Date.now()
@@ -52,6 +53,7 @@ function mountMeta(props: {
       toolCount: props.toolCount ?? 1,
       elapsed: props.elapsed ?? '5s',
       turnIndex: turn.index,
+      turnKey: turnStableId(turn),
       sessionId: SID,
     },
     global: {
@@ -163,15 +165,15 @@ describe('W4TC2: TurnMeta sticky + streaming 状态', () => {
     expect(wrapper.find('.turn-meta').attributes('disabled')).toBeDefined()
   })
 
-  it('非 sessionActive + hasFoldable → 点击 turn-meta 触发 toggleExpand(turnIndex)', async () => {
+  it('非 sessionActive + hasFoldable → 点击 turn-meta 触发 toggleExpand(turnKey)', async () => {
     const turn = makeTurn()
     const toggleExpand = vi.fn()
     const wrapper = mount(TurnMeta, {
-      props: { turn, sessionActive: false, isStreaming: false, thinkCount: 1, toolCount: 1, elapsed: '5s', turnIndex: turn.index, sessionId: SID },
+      props: { turn, sessionActive: false, isStreaming: false, thinkCount: 1, toolCount: 1, elapsed: '5s', turnIndex: turn.index, turnKey: turnStableId(turn), sessionId: SID },
       global: { provide: mockChatProvide({ toggleExpand }) },
     })
     await wrapper.find('.turn-meta').trigger('click')
-    expect(toggleExpand).toHaveBeenCalledWith(turn.index)
+    expect(toggleExpand).toHaveBeenCalledWith(turnStableId(turn))
   })
 
   it('hasFoldable=false + 非 sessionActive → 无 chevron', () => {

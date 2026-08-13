@@ -30,6 +30,7 @@
         :elapsed="elapsed"
         :elapsed-secs="elapsedSecs"
         :turn-index="turn.index"
+        :turn-key="turnStableId(turn)"
         :session-id="sessionId"
       />
 
@@ -83,7 +84,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { MessageTurn, OrderedBlock } from '@xyz-agent/core/domain/chat'
-import { countThinking, countToolCalls, expandAssistantBlocks } from '@xyz-agent/core/domain/chat'
+import { countThinking, countToolCalls, expandAssistantBlocks, turnStableId } from '@xyz-agent/core/domain/chat'
 import type { ThinkingBlock, ToolCall } from '@xyz-agent/shared'
 import ChangeSetCard from './ChangeSetCard.vue'
 import UserBubble from './UserBubble.vue'
@@ -130,8 +131,10 @@ const thinkCount = computed(() => countThinking(props.turn))
 const toolCount = computed(() => countToolCalls(props.turn))
 
 // 折叠态经 ChatViewDeps inject（renderer 壳绑 useTurnExpansion store，isExpanded/collapse 已在上方解构）
-/** 对话进行中（含 ask-user）或手动 expanded 时展开 trace（B 类：sessionActive 驱动） */
-const showTrace = computed(() => sessionActive.value || isExpanded(props.turn.index))
+/** 对话进行中（含 ask-user）或手动 expanded 时展开 trace（B 类：sessionActive 驱动）
+ *  [M5 stable-key] 展开态按 turnStableId(turn)（首条消息 id）查询——消息插删时 index 漂移
+ *  会错绑展开态，稳定 id 随 turn 本身不变。 */
+const showTrace = computed(() => sessionActive.value || isExpanded(turnStableId(props.turn)))
 
 /**
  * 工作耗时 live 计时。
@@ -141,7 +144,7 @@ const { elapsed, elapsedSecs } = useTurnElapsed(
   () => isStreaming.value,
   () => sessionActive.value,
   () => {
-    collapse(props.turn.index)
+    collapse(turnStableId(props.turn))
   },
 )
 

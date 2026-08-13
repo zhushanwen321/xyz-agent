@@ -20,7 +20,7 @@
           : 'cursor-pointer hover:text-neutral-fg',
       ]"
       :disabled="sessionActive || !turn.hasFoldable"
-      @click="toggle(turnIndex)"
+      @click="toggle(turnKey)"
     >
       <!-- streaming 态：spinner（更显眼的流式生成指示），替代原脉冲点。仅文本流式生成时转（A 类） -->
       <!-- streaming 或 dispatching 占位（isPendingPlaceholder）时转 spinner；ask-user 等待态不转 -->
@@ -34,7 +34,7 @@
       <ChevronRight
         v-if="turn.hasFoldable && !sessionActive"
         class="chev size-[9px] text-neutral-dim transition-transform duration-[var(--duration)] ease-[var(--ease)]"
-        :class="isExpanded(turnIndex) ? 'rotate-90 text-accent' : ''"
+        :class="isExpanded(turnKey) ? 'rotate-90 text-accent' : ''"
       />
       <!-- H 设计 badge 灰阶化：bg-surface-2 text-neutral-mid 替代 bg-reasoning-soft/bg-info-soft。
            mid #96969c on surface-2 #27272a = 5.06:1 过 AA；dim #74747a = 3.21:1 不过（tokens SSOT） -->
@@ -66,8 +66,10 @@ const props = defineProps<{
   elapsed: string
   /** 已耗时秒数（与 elapsed 字符串同源，用于长时生成分级警示配色） */
   elapsedSecs: number
-  /** 当前 turn 在 session 内的序列下标（turn expansion key） */
+  /** 当前 turn 在 session 内的序列下标（仅展示/testid 用） */
   turnIndex: number
+  /** 当前 turn 的稳定 key（turnStableId(turn)，M5 stable-key：展开态查询按此，不随消息插删漂移） */
+  turnKey: string
   /** session id（透传保留） */
   sessionId: string
 }>()

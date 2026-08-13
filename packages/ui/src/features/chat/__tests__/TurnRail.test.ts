@@ -193,13 +193,14 @@ describe('TurnRail (IF4)', () => {
     expect(toggles[0].classes()).toContain('opacity-0')
   })
 
-  it('TC-w3-11: expandedTurns 含 turn index 1 时，idx=1 的 toggle data-expanded=true，其余 false', () => {
+  it('TC-w3-11: expandedTurns 含稳定 key u1 时，idx=1 的 toggle data-expanded=true，其余 false', () => {
     const wrapper = mount(TurnRail, {
-      props: defaultProps({ expandedTurns: new Set([1]) }),
+      props: defaultProps({ expandedTurns: new Set(['u1']) }),
     })
     const toggles = wrapper.findAll('[data-testid="rail-toggle"]')
-    // turns fixture：makeRailTurn(0/1/2) → turn.index = 0/1/2
-    // expandedTurns={1} → idx=1 展开态（ChevronUp），idx=0/2 折叠态（ChevronDown）
+    // turns fixture：makeRailTurn(0/1/2) → turn.user.id = u0/u1/u2（M5 stable-key，
+    // expandedTurns 集合按 turnStableId 索引，非 MessageTurn.index）
+    // expandedTurns={u1} → idx=1 展开态（ChevronUp），idx=0/2 折叠态（ChevronDown）
     expect(toggles[0].attributes('data-expanded')).toBe('false')
     expect(toggles[1].attributes('data-expanded')).toBe('true')
     expect(toggles[2].attributes('data-expanded')).toBe('false')

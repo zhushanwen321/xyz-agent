@@ -43,23 +43,28 @@
       @scroll="onVirtuaScroll"
       @scroll-end="onVirtuaScrollEnd"
     >
+      <!-- slot 内容注意：禁止在 <template #default> 内放任何注释/文本节点！
+           virtua 的 item key 提取要求 slot 返回恰好 1 个 vnode（P(): e.length===1 才取 e[0].key），
+           注释节点会让长度变 2 → fallback `_${index}` 索引 key（M5 stable-key 失效）。
+           三分支共用 :key="renderKey(item)"（稳定 id 非索引）：turn 用首条消息 id（turnStableId），
+           system 类用 message.id。 -->
       <template #default="{ item, index }">
         <Turn
           v-if="item.kind === 'turn'"
+          :key="renderKey(item)"
           :turn="item.turn"
           :session-id="sessionId"
           :can-edit="!!item.turn.user && index === lastUserTurnIdx"
           :is-session-active="isSessionActive"
           @edit-state-change="onEditStateChange(index, $event.editing)"
         />
-        <!-- bash 执行结果气泡（composer-bash-execute W3）：kind 全集内 bashExecution 项 -->
         <BashOutputBlock
           v-else-if="item.kind === 'bashExecution'"
+          :key="renderKey(item)"
           :message="item.message"
           :session-id="sessionId"
         />
-        <!-- 其余 system 消息（compaction/branchSummary/stream_warn 等）→ 一行通知 -->
-        <SystemNotice v-else :message="item.message" />
+        <SystemNotice v-else :key="renderKey(item)" :message="item.message" />
       </template>
     </Virtualizer>
 
@@ -151,7 +156,7 @@ import { Virtualizer, type VirtualizerHandle } from 'virtua/vue'
 import { useChatStore } from '@/stores/chat'
 import { useVirtuaFollow } from '@/composables/panel/useVirtuaFollow'
 import { useConstantHeightAssert } from '@/composables/panel/useConstantHeightAssert'
-import { toRenderItems, filterDisplayableMessages } from '@/composables/logic/messageTurns'
+import { toRenderItems, filterDisplayableMessages, renderKey } from '@/composables/logic/messageTurns'
 import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubagentStore } from '@/stores/subagent'
 // [w6 chat-ui-and-shell T6] chat 展示组件迁 @xyz-agent/ui/features/chat，壳层经
 // ChatViewDeps inject token 注入 store/composable 依赖（TD3 inject 裁决）。

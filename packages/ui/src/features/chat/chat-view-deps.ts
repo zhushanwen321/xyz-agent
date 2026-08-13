@@ -39,14 +39,15 @@ export interface ChatViewDeps {
   isHandingOff: (sessionId: string) => boolean
   /** 取 session 内某消息的 changeset 状态（Turn.vue ChangeSetCard 状态渲染，messageId 锁定具体消息） */
   getChangeSetStatus: (sessionId: string, messageId: string) => ChangeSetStatus | undefined
-  /** turn 是否展开（useTurnExpansion store 派生，Turn/TurnMeta 消费。key=turnIndex number） */
-  isExpanded: (turnIndex: number) => boolean
+  /** turn 是否展开（useTurnExpansion store 派生，Turn/TurnMeta 消费。key=turnStableId(turn)
+   *  首条消息 id，M5 stable-key——不随消息插删漂移） */
+  isExpanded: (turnKey: string) => boolean
 
   // ── 操作回调（触发 RPC / store action）──
-  /** 切换 turn 展开/折叠（useTurnExpansion store action） */
-  toggleExpand: (turnIndex: number) => void
-  /** 折叠 turn（useTurnExpansion collapse，Turn.vue 完成自动收起用） */
-  collapse: (turnIndex: number) => void
+  /** 切换 turn 展开/折叠（useTurnExpansion store action。key=turnStableId(turn)） */
+  toggleExpand: (turnKey: string) => void
+  /** 折叠 turn（useTurnExpansion collapse，Turn.vue 完成自动收起用。key=turnStableId(turn)） */
+  collapse: (turnKey: string) => void
   /** 中止 bash 执行（useChat.abortBash 经壳桥接） */
   abortBash: (sessionId: string, messageId?: string) => void
   /** 编辑并重发 user message（useChat.editAndResend，segments 是重建后的 Segment[]） */
