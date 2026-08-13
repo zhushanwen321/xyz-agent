@@ -9,10 +9,12 @@ description: "配置 @zhushanwen/pi-permission（四档权限模式 + AI 风险�
 
 ## 配置文件位置
 
-`<agentDir>/permission-config.json`
+`<agentDir>/config/permission.json`
 
-- 注意：在 agentDir **根**（不是 config/ 子目录）——保持向后兼容，未迁 llm-shared config 范式
-- 走 permission 自己的 config.ts（mtime+size 缓存 + 原子写 tmp+rename + normalize 容错）
+- `<agentDir>` = pi agent 目录（`PI_CODING_AGENT_DIR` 覆盖，默认 `~/.pi/agent`；xyz-agent 隔离环境为 `~/.xyz-agent/pi/agent`）
+- 走 llm-shared 泛型 config（config/ 子目录 + getAgentDir 派生 + mtime+size 缓存 + 原子写）
+- 文件缺失/坏 JSON 返回默认值，不抛错；首次加载自动创建默认配置文件
+- [HISTORICAL] 旧路径 `<agentDir>/permission-config.json`（agentDir 根）：npm 安装时经 `scripts/migrate-config.mjs` 自动迁移到新路径，运行时不双读旧路径
 
 ## Schema
 

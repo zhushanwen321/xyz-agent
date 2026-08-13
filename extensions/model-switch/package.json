@@ -18,6 +18,7 @@
     "index.ts",
     "src/**/*.ts",
     "skills/",
+    "scripts/",
     "README.md"
   ],
   "pi": {
@@ -26,7 +27,8 @@
     ],
     "skills": [
       "./skills"
-    ]
+    ],
+    "migrate": "./scripts/migrate-config.mjs"
   },
   "dependencies": {
     "@zhushanwen/pi-quota-providers": "workspace:*"
@@ -47,6 +49,7 @@
   },
   "scripts": {
     "typecheck": "npx tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "postinstall": "node scripts/migrate-config.mjs"
   }
 }

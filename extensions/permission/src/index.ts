@@ -19,7 +19,7 @@ import type {
 
 import { listAvailableModels } from "./classifier/model-resolver.js";
 import { handlePermissionCommand, handlePermissionModelCommand, handlePermissionRuleCommand } from "./commands.js";
-import { getConfigPath, loadAndWatchConfig, saveConfig } from "./config.js";
+import { loadAndWatchConfig, saveConfig } from "./config.js";
 import { setDefaultListAvailableModels } from "./model-picker.js";
 import { editRulesViaOverlay } from "./rule-editor.js";
 import { makeNextIdCounter } from "./rule-templates.js";
@@ -55,7 +55,7 @@ interface ToolCallResult {
  */
 export default function permissionExtension(pi: ExtensionAPI): void {
 	// ──────────────────────── 闭包状态（每 session 独立） ────────────────────────
-	let config: PermissionConfig = loadAndWatchConfig(getConfigPath(), (msg) => {
+	let config: PermissionConfig = loadAndWatchConfig((msg) => {
 		console.warn(msg);
 	});
 
@@ -67,7 +67,7 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 
 	/** 读取最新配置到闭包变量（mtime 缓存内部去重，未变化不读 fs） */
 	function refreshConfig(): void {
-		config = loadAndWatchConfig(getConfigPath(), (msg) => console.warn(msg));
+		config = loadAndWatchConfig((msg) => console.warn(msg));
 	}
 
 	// ──────────────────────── session_start：重载配置 ────────────────────────
@@ -76,7 +76,7 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 	});
 
 	// ──────────────────────── session_tree：分支切换后重载配置 ────────────────────────
-	// 分支切换（worktree/leaf 变化）后重载 config（用户可能在分支里手动改过 permission-config.json）。
+	// 分支切换（worktree/leaf 变化）后重载 config（用户可能在分支里手动改过 permission 配置）。
 	pi.on("session_tree", (_event: unknown) => {
 		refreshConfig();
 	});

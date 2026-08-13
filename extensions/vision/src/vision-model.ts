@@ -1,9 +1,11 @@
 /**
  * Vision model configuration and resolution for image analysis.
  *
- * Loads vision model entries from `<agentDir>/vision-models.json` (agentDir
+ * Loads vision model entries from `<agentDir>/config/vision.json` (agentDir
  * derived from pi's getAgentDir(), honoring PI_CODING_AGENT_DIR for instance
  * isolation), selects the best available model with fallback chain.
+ * [HISTORICAL] 2026-08 path convergence: vision-models.json -> config/vision.json
+ * (migrated at npm install time via scripts/migrate-config.mjs, no runtime fallback).
  *
  * State (cached config + timestamp) is encapsulated in the
  * `createVisionModelApi()` factory closure so multiple extension
@@ -43,7 +45,7 @@ export interface VisionModelApi {
 
 // ──────────────────────── Constants ────────────────────────
 
-export const VISION_MODELS_PATH = path.join(getAgentDir(), "vision-models.json");
+export const VISION_MODELS_PATH = path.join(getAgentDir(), "config", "vision.json");
 export const VISION_ALLOWED_TOOLS = "read,bash,grep";
 
 export const VISION_SYSTEM_PROMPT = [

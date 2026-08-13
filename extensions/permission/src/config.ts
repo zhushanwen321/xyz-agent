@@ -1,14 +1,27 @@
 /**
- * 配置加载 / 保存 / mtime 缓存
+ * 配置加载 / 保存（委托 llm-shared 泛型 config）
  *
  * 对应 I6 loadAndWatchConfig。参考 pi-permission-system extension-config.ts。
- * 文件位置：~/.pi/agent/permission-config.json（支持 PI_CODING_AGENT_DIR 覆盖）。
+ * 文件位置：<agentDir>/config/permission.json（PI_CODING_AGENT_DIR 覆盖，llm-shared 推导）。
+ *
+ * [HISTORICAL] 2026-08 路径收敛 + 范式统一：
+ * - 路径从 <agentDir>/permission-config.json 迁到 <agentDir>/config/permission.json。
+ *   迁移在 npm 安装时自动完成（pi.migrate 脚本，见 scripts/migrate-config.mjs），
+ *   运行时不双读旧路径——本文件没有任何旧路径 fallback。
+ * - 原实现自研 mtime+size 缓存 / 原子写 / tmp 清理，与 llm-shared 泛型 config 重复，
+ *   读/写/缓存全部委托 llm-shared；本文件只保留 permission 特有行为：
+ *   文件缺失时创建默认配置文件（llm-shared loadConfig 不建文件）。
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import {
+	clearConfigCache,
+	getConfigPath as getLlmConfigPath,
+	loadConfig,
+	saveConfig as saveLlmConfig,
+} from "@zhushanwen/pi-llm-shared";
 
 import {
 	DEFAULT_CLASSIFIER_CONFIG,
@@ -19,45 +32,14 @@ import {
 	type Rule,
 } from "./types.js";
 
+/** llm-shared 泛型 config 的包名（决定文件名 permission.json）。 */
+const CONFIG_PKG = "permission";
+
 // ──────────────────────── 路径解析 ────────────────────────
 
-/**
- * agent 根目录来自 pi 导出的 getAgentDir（尊重 PI_CODING_AGENT_DIR 覆盖）。
- *
- * P3 收口：原自实现 PI_CODING_AGENT_DIR 解析（与 model-resolver.ts 重复）改为复用 pi 导出
- * （CL-config-path）。permission-config.json 路径格式不变（<agentDir>/permission-config.json），
- * 不迁 llm-shared getConfigPath（其 <agentDir>/config/<pkg>.json 格式不兼容，会破坏向后兼容）。
- */
-
-/** 配置文件完整路径 */
+/** 配置文件完整路径：<agentDir>/config/permission.json（llm-shared 推导）。 */
 export function getConfigPath(): string {
-	return join(getAgentDir(), "permission-config.json");
-}
-
-// ──────────────────────── mtime 缓存 ────────────────────────
-
-interface CacheEntry {
-	mtimeMs: number;
-	size: number;
-	config: PermissionConfig;
-}
-
-/** 深拷贝 config（防止调用方修改污染缓存） */
-function cloneConfig(config: PermissionConfig): PermissionConfig {
-	return {
-		mode: config.mode,
-		enabled: config.enabled,
-		classifier: { ...config.classifier },
-		userRules: config.userRules.map((r) => ({ ...r })),
-	};
-}
-
-/** 模块级缓存：path → {mtimeMs, config}。单进程多 session 共享读缓存是安全的（配置只读） */
-const configCache = new Map<string, CacheEntry>();
-
-/** 测试用：清空缓存 */
-export function clearConfigCache(): void {
-	configCache.clear();
+	return getLlmConfigPath(CONFIG_PKG);
 }
 
 // ──────────────────────── 归一化 ────────────────────────
@@ -124,100 +106,29 @@ function ensureConfigFile(configPath: string, onWarning?: (msg: string) => void)
 	}
 }
 
-// ──────────────────────── 加载（带 mtime 缓存） ────────────────────────
+// ──────────────────────── 加载 ────────────────────────
 
 /**
- * 加载配置，文件未变化时返回缓存。
- *
- * @param configPath 配置文件路径（默认 getConfigPath()）
- * @param onWarning 非致命问题（创建失败、解析失败）的警告回调
+ * 加载配置：文件缺失时创建默认配置文件并返回默认值；
+ * 坏 JSON / normalize 失败回落默认值（onWarning 回调）。mtime+size 缓存由 llm-shared 提供。
  */
-export function loadAndWatchConfig(
-	configPath: string = getConfigPath(),
-	onWarning?: (msg: string) => void,
-): PermissionConfig {
+export function loadAndWatchConfig(onWarning?: (msg: string) => void): PermissionConfig {
+	const configPath = getConfigPath();
 	ensureConfigFile(configPath, onWarning);
-
-	let stat;
-	try {
-		stat = statSync(configPath);
-	} catch {
-		// 文件不可 stat（权限问题/被删除）→ 用缓存或默认
-		const cached = configCache.get(configPath);
-		return cached ? cloneConfig(cached.config) : cloneConfig(DEFAULT_CONFIG);
-	}
-
-	const cached = configCache.get(configPath);
-	// mtime + size 双 key：防止 APFS 等文件系统 mtime 精度截断导致快速连续保存后缓存失效。
-	//
-	// 已知 limitation（m5）：mtime + size 不是内容指纹，「同毫秒同字节大小但内容不同」的写入
-	// （如交换两条等长 userRules 的顺序）会误命中缓存返回旧 config。完整消除需内容哈希（如 sha256），
-	// 但每次 load 都算哈希成本过高（config 可能较大），且 permission-config 写入频率低（用户手动编辑
-	// 或 /permission 命令）、mtime 变化的概率远高于同毫秒同大小写不同内容，故权衡采用 mtime+size。
-	// saveConfig 已在写后立即用新 stat 更新缓存（见下方 saveConfig），覆盖最常见的「写后读」竞态。
-	if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
-		return cloneConfig(cached.config);
-	}
-
-	try {
-		const raw = readFileSync(configPath, "utf-8");
-		const parsed: unknown = JSON.parse(raw);
-		const config = normalizeConfig(parsed);
-		configCache.set(configPath, { mtimeMs: stat.mtimeMs, size: stat.size, config });
-		return cloneConfig(config);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		onWarning?.(`[pi-permission] Config parse failed at '${configPath}', using default: ${message}`);
-		const fallback = { ...DEFAULT_CONFIG, classifier: { ...DEFAULT_CLASSIFIER_CONFIG } };
-		// 解析失败也更新缓存 mtime+size，避免每次都重读损坏文件
-		configCache.set(configPath, { mtimeMs: stat.mtimeMs, size: stat.size, config: fallback });
-		return cloneConfig(fallback);
-	}
+	return loadConfig(CONFIG_PKG, DEFAULT_CONFIG, normalizeConfig, onWarning);
 }
 
 // ──────────────────────── 保存（原子写） ────────────────────────
 
 /**
- * 保存配置（原子写：tmp 文件 + rename）。
- *
+ * 保存配置（llm-shared 原子写：tmp + rename，0o600）。
  * @returns 成功返回 {success:true}；失败返回 {success:false, error}
  */
 export function saveConfig(
 	config: PermissionConfig,
-	configPath: string = getConfigPath(),
 ): { success: boolean; error?: string } {
-	// 信任调用方传入的已类型化对象，不重新 normalize（避免 normalizeRule 重分配 fallback id 覆盖用户意图）
-	const tmpPath = `${configPath}.tmp`;
-	const content = `${JSON.stringify(config, null, 2)}\n`;
-
-	try {
-		mkdirSync(dirname(configPath), { recursive: true });
-		writeFileSync(tmpPath, content, { encoding: "utf-8", mode: 0o600 });
-		renameSync(tmpPath, configPath);
-
-		// 更新缓存（用新文件的 mtime + size）
-		try {
-			const newStat = statSync(configPath);
-			configCache.set(configPath, { mtimeMs: newStat.mtimeMs, size: newStat.size, config: cloneConfig(config) });
-		} catch (statErr) {
-			// stat 失败不影响保存成功；缓存下次 load 时会重读。记录原因便于调试。
-			console.warn(`[pi-permission] saveConfig stat after write failed:`, statErr instanceof Error ? statErr.message : String(statErr));
-		}
-
-		return { success: true };
-	} catch (error) {
-		try {
-			if (existsSync(tmpPath)) unlinkSync(tmpPath);
-		} catch (cleanupErr) {
-			// tmp 清理失败不能阻塞保存失败的返回；记录原因
-			console.warn(`[pi-permission] saveConfig tmp cleanup failed:`, cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr));
-		}
-		const message = error instanceof Error ? error.message : String(error);
-		return { success: false, error: `Failed to save config at '${configPath}': ${message}` };
-	}
+	return saveLlmConfig(CONFIG_PKG, config);
 }
 
-/** 测试/内部用：设置特定路径的缓存（绕过文件系统） */
-export function setConfigCache(configPath: string, config: PermissionConfig, mtimeMs: number, size: number): void {
-	configCache.set(configPath, { mtimeMs, size, config });
-}
+/** 测试用：清空 llm-shared 模块级缓存。 */
+export { clearConfigCache };

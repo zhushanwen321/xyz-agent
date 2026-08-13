@@ -74,7 +74,7 @@ export default function modelSwitchExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("setup-model-policy", {
-		description: "Auto-generate model-policy.json from your configured models",
+		description: "Auto-generate config/model-switch.json from your configured models",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			if (state.config) {
 				ctx.ui.notify(`Config already exists at ${getConfigPath()}. Delete it first to regenerate.`, "info");
@@ -97,7 +97,7 @@ function registerSwitchTool(pi: ExtensionAPI, state: SessionState): void {
 		label: "Switch Model",
 		description:
 			"List configured models, search by alias/name, switch to another model, or show current data snapshot and rules. "
-			+ "Configured models are defined in model-policy.json. "
+			+ "Configured models are defined in <agentDir>/config/model-switch.json. "
 			+ "Setup sub-actions: 'setup delete' (remove config), 'setup list' (show config), 'setup edit' (LLM-guided edit), 'setup' (generate new).",
 		promptSnippet:
 			"Use this tool to manage models. TRIGGERS: "
@@ -259,14 +259,14 @@ function handleSetup(state: SessionState, ctx: ExtensionContext, query?: string)
 	if (subAction === "list") {
 		const result = readPolicyConfigContent();
 		if (!result.ok) return res(result.error, { error: true });
-		return res(`Current model-policy.json (${result.path}):\n\n\`\`\`json\n${result.content}\n\`\`\``);
+		return res(`Current config/model-switch.json (${result.path}):\n\n\`\`\`json\n${result.content}\n\`\`\``);
 	}
 
 	if (subAction === "edit") {
 		const result = readPolicyConfigContent();
 		if (!result.ok) return res(result.error, { error: true });
 		return res([
-			"Current model-policy.json for editing:\n",
+			"Current config/model-switch.json for editing:\n",
 			"```json",
 			result.content,
 			"```\n",
@@ -288,7 +288,7 @@ function handleSetup(state: SessionState, ctx: ExtensionContext, query?: string)
 	const genResult = generatePolicyConfig(ctx.modelRegistry, enabledModels);
 
 	return res([
-		"Auto-generated model-policy.json (v2).",
+		"Auto-generated config/model-switch.json (v2).",
 		"Review the config below. If it looks correct, write it to " + getConfigPath() + " using the write tool.",
 		"",
 		"```json",

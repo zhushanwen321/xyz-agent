@@ -4,7 +4,7 @@
 
 ## 功能
 
-- **多模型支持**：从 `~/.pi/agent/vision-models.json` 读取模型配置
+- **多模型支持**：从 `<agentDir>/config/vision.json` 读取模型配置（`<agentDir>` = pi agent 目录，`PI_CODING_AGENT_DIR` 覆盖，默认 `~/.pi/agent`）
 - **会话隔离**：spawn 独立 Pi 子进程执行视觉分析，不污染主会话
 - **上下文感知**：支持 `fork` 模式，继承父会话上下文理解图片
 - **自动清理**：定期清理临时文件
@@ -36,7 +36,7 @@ AI 可调用 `analyze_image` 工具：
 
 ## 配置
 
-创建 `~/.pi/agent/vision-models.json` 指定视觉模型：
+创建 `<agentDir>/config/vision.json` 指定视觉模型：
 
 ```json
 [

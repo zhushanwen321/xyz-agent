@@ -16,7 +16,7 @@ pi install npm:@zhushanwen/pi-model-switch
 
 ### 1. 生成配置
 
-首次使用需要生成 `~/.pi/agent/extensions/model-switch/model-policy.json` 配置文件。
+首次使用需要生成 `<agentDir>/config/model-switch.json` 配置文件（`<agentDir>` = pi agent 目录，`PI_CODING_AGENT_DIR` 覆盖，默认 `~/.pi/agent`）。
 
 **方式 A：自动生成（推荐）**
 
@@ -30,7 +30,7 @@ pi install npm:@zhushanwen/pi-model-switch
 
 **方式 B：手动创建**
 
-按照下方配置格式手动创建 `~/.pi/agent/extensions/model-switch/model-policy.json`。
+按照下方配置格式手动创建 `<agentDir>/config/model-switch.json`。
 
 ### 2. 配置生效
 
@@ -52,7 +52,7 @@ AI: (调用 switch_model action=switch query=ds-pro)
 
 ## 配置文件格式
 
-`~/.pi/agent/extensions/model-switch/model-policy.json`：
+`<agentDir>/config/model-switch.json`：
 
 ```json
 {
@@ -136,7 +136,7 @@ AI: (调用 switch_model action=switch query=ds-pro)
 
 ## /setup-model-policy 命令
 
-自动生成 `model-policy.json` 的流程：
+自动生成 `config/model-switch.json` 的流程：
 
 1. 读取 `settings.json` 中的 `enabledModels`（如果没有则降级到全部已配置 API key 的模型）
 2. 按 provider 分组
@@ -151,7 +151,7 @@ AI: (调用 switch_model action=switch query=ds-pro)
 配置文件不存在时：
 - 不注入推荐信息
 - `switch_model` 工具仍可使用 `list`/`search`/`switch`/`setup` action
-- 运行 `/setup-model-policy` 可自动生成配置
+- 运行 `/setup-model-policy` 可自动生成配置（写入 `<agentDir>/config/model-switch.json`）
 
 ## 依赖
 

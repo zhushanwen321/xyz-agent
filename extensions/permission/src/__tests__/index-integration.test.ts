@@ -9,7 +9,7 @@
  *  - fail-closed（异常 → block）
  *  - session_start 重载 config
  *
- * 用 PI_CODING_AGENT_DIR 指向临时目录，写入 controlled permission-config.json，
+ * 用 PI_CODING_AGENT_DIR 指向临时目录，写入 controlled permission.json，
  * 让 loadAndWatchConfig 读到指定 mode。mock pi 对象记录 handler 调用。
  */
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -102,10 +102,11 @@ function bashEvent(command: string): { toolName: string; input: { command: strin
 
 const TMP_ROOT = join(tmpdir(), "pi-perm-test-" + process.pid);
 const AGENT_DIR = join(TMP_ROOT, "agent");
-const CONFIG_PATH = join(AGENT_DIR, "permission-config.json");
+const CONFIG_PATH = join(AGENT_DIR, "config", "permission.json");
 
 function writeConfig(mode: string, enabled = true): void {
 	mkdirSync(AGENT_DIR, { recursive: true });
+	mkdirSync(join(AGENT_DIR, "config"), { recursive: true });
 	const config = {
 		mode,
 		enabled,

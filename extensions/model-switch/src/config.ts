@@ -1,8 +1,10 @@
 /**
  * Model Switch — 配置文件加载
  *
- * 从 <agentDir>/model-policy.json 加载配置（agentDir 由 pi 的 getAgentDir()
+ * 从 <agentDir>/config/model-switch.json 加载配置（agentDir 由 pi 的 getAgentDir()
  * 推导，尊重 PI_CODING_AGENT_DIR 实现实例隔离）。
+ * [HISTORICAL] 2026-08 路径收敛：<agentDir>/model-policy.json → config/model-switch.json，
+ * 迁移在 npm 安装时自动完成（scripts/migrate-config.mjs），运行时不双读旧路径。
  * v2 格式：models 以 provider 名为 key，内嵌 models 表；plans 以 plan 名为 key。
  * v1 格式自动迁移为 v2 内存结构。
  */
@@ -14,8 +16,10 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 import type { ModelPolicy, PlanConfig,ProviderConfig } from "./types";
 
+/** agentDir（pi 的 settings.json 等仍用 agentDir 根，保留导出） */
 const CONFIG_DIR = getAgentDir();
-const CONFIG_PATH = join(CONFIG_DIR, "model-policy.json");
+/** 模型策略配置文件完整路径：<agentDir>/config/model-switch.json */
+const CONFIG_PATH = join(CONFIG_DIR, "config", "model-switch.json");
 
 export { CONFIG_DIR, CONFIG_PATH };
 

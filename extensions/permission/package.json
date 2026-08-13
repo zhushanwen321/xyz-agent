@@ -10,7 +10,8 @@
     ],
     "skills": [
       "./skills"
-    ]
+    ],
+    "migrate": "./scripts/migrate-config.mjs"
   },
   "keywords": [
     "pi-package",
@@ -24,12 +25,14 @@
   "files": [
     "src/",
     "skills/",
+    "scripts/",
     "index.ts"
   ],
   "scripts": {
     "typecheck": "npx tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "postinstall": "node scripts/migrate-config.mjs"
   },
   "dependencies": {
     "@zhushanwen/pi-llm-shared": "workspace:*",

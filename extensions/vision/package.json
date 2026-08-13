@@ -10,7 +10,8 @@
     ],
     "skills": [
       "./skills"
-    ]
+    ],
+    "migrate": "./scripts/migrate-config.mjs"
   },
   "keywords": [
     "pi-package",
@@ -22,7 +23,8 @@
   "files": [
     "src/",
     "index.ts",
-    "skills/"
+    "skills/",
+    "scripts/"
   ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
@@ -40,6 +42,7 @@
   },
   "scripts": {
     "typecheck": "npx tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "postinstall": "node scripts/migrate-config.mjs"
   }
 }

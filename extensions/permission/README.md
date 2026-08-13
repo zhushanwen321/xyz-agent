@@ -27,7 +27,7 @@ ln -s /path/to/xyz-pi-extensions-workspace/feat-permission-and-auto-mode/extensi
 
 ## 配置
 
-配置文件位置：`~/.pi/agent/permission-config.json`（首次运行自动创建默认配置）。
+配置文件位置：`<agentDir>/config/permission.json`（`<agentDir>` = pi agent 目录，`PI_CODING_AGENT_DIR` 覆盖，默认 `~/.pi/agent`；首次运行自动创建默认配置）。
 
 可通过 `PI_CODING_AGENT_DIR` 环境变量覆盖基础路径。
 
@@ -117,7 +117,7 @@ ln -s /path/to/xyz-pi-extensions-workspace/feat-permission-and-auto-mode/extensi
 |------|-------------|------|------|------|
 | 内置安全白名单 | `builtin-safe` | 50 无条件 + 9 条件 | 函数实现（`isKnownSafeCommand`），不进 `Rule[]` 数组 | 不可改 |
 | 内置危险规则 | `builtin-danger` | 12 条正则 | `BUILTIN_DANGER_RULES` 常量，代码硬编码 | 不可改 |
-| 用户自定义规则 | `user` | 任意 | `permission-config.json` 的 `userRules` 数组 | 可改 |
+| 用户自定义规则 | `user` | 任意 | `config/permission.json` 的 `userRules` 数组 | 可改 |
 
 规则层在整个权限管道中的位置（auto / approve 模式）：
 
@@ -196,7 +196,7 @@ wc / whereis / who / whoami / which
 
 ### 4. 自定义规则（用户编辑指南）
 
-在 `~/.pi/agent/permission-config.json` 的 `userRules` 数组中添加。完整示例：
+在 `<agentDir>/config/permission.json` 的 `userRules` 数组中添加。完整示例：
 
 ```json
 {
@@ -341,7 +341,7 @@ publish 规则在后，last-match-wins 时 deny 胜出。
 
 ### 10. 配置文件管理
 
-- **路径**：`~/.pi/agent/permission-config.json`，可用 `PI_CODING_AGENT_DIR` 环境变量覆盖基础目录
+- **路径**：`<agentDir>/config/permission.json`（`<agentDir>` 可用 `PI_CODING_AGENT_DIR` 环境变量覆盖，默认 `~/.pi/agent`）
 - **首次创建**：扩展启动时若文件不存在，自动写入默认配置（`mode: "yolo"`、空 `userRules`）
 - **权限**：`0o600`（原子写：先写 `.tmp` 再 rename，避免半写状态）
 - **编辑方式**：目前需手动编辑 JSON 文件（未来计划提供 `/permission add-rule` 命令辅助编辑）
