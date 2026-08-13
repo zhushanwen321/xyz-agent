@@ -50,6 +50,7 @@ import {
   STATUS_BAR_SOURCE_KEY,
   UI_RESPONSE_TRANSPORT_KEY,
   VIEW_HOST_SOURCE_KEY,
+  VIEWS_SOURCE_KEY,
   OVERLAY_LIFECYCLE_KEY,
 } from '@xyz-agent/ui/extension-host'
 import { createDialogRequestSource, createUiResponseTransport } from './extension-host-dialog'
@@ -237,6 +238,23 @@ export function initExtensionHostBridge(app: App): {
   // ui 组件数据源（ViewHost/StatusBar 经 inject 取，壳 provide 真实实现；形状对齐 IF10/IF5）
   app.provide(VIEW_HOST_SOURCE_KEY, {
     getView: (sessionId, viewId) => viewHostStore.getView(sessionId, viewId),
+  })
+  // L2 二级 tab 数据源（PluginViewContainer 经 inject 取；sidebar.tab 视图贡献清单）。
+  // 不裸委托 getViewsByPlacement——它缺 pluginId，builtin 判定（tasks 不可关闭）需要
+  // pluginId，故从 getContributions 直接映射（design-review 已确认此设计）。
+  // icon 当前无图标源，透传 undefined（PluginViewContainer 按 viewId 内置字典兜底）。
+  app.provide(VIEWS_SOURCE_KEY, {
+    getViews: () =>
+      contributions
+        .getContributions({ type: 'view' })
+        .filter((c) => c.placement === 'sidebar.tab')
+        .map((c) => ({
+          viewId: c.contributionId,
+          title: c.view?.title ?? c.contributionId,
+          icon: undefined,
+          initialVisibility: c.view?.initialVisibility ?? 'hidden',
+          pluginId: c.pluginId,
+        })),
   })
   app.provide(STATUS_BAR_SOURCE_KEY, {
     // 两 scope 重载（ui 契约）：直接委托 StatusBarController（签名对齐 IF8）。

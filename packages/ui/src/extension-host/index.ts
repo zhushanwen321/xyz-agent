@@ -44,3 +44,11 @@ export {
   PERMISSION_TRANSPORT_KEY,
   type PermissionTransport,
 } from './permission-transport'
+export { default as L2TabBar } from './L2TabBar.vue'
+export type { L2TabItem } from './l2-tab-item'
+export { default as PluginViewContainer } from './PluginViewContainer.vue'
+export {
+  VIEWS_SOURCE_KEY,
+  type PluginViewsSource,
+  type PluginViewSummary,
+} from './views-source'

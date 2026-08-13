@@ -114,16 +114,14 @@
           </Transition>
         </template>
         <!-- ExtensionHost sidebar view 宿主（audit §12.1 sidebar.tab 挂载点）。
-             plugin 经 views.update 贡献 sidebar 视图 → ViewHostStore → ViewHost 渲染。
-             view-id 与 MountPointRegistry 挂载点名同名（'sidebar.tab'，MF-8 统一命名 SSOT）。
-             empty="hidden"：无贡献时整组件零 DOM（不破坏布局）。sessionId 绑定焦点 session。
-             见 02-extension-host-wiring.md 重构 2。 -->
+             L2 二级路由：PluginViewContainer 经 VIEWS_SOURCE_KEY 取 plugin view 清单
+             （ContributionRegistry sidebar.tab 贡献）→ L2TabBar 切 tab → ViewHost 渲染
+             （数据按 viewId 'todo'/'goal' 落，见 02-extension-host-wiring.md 重构 2）。
+             sessionId 绑定焦点 session。 -->
         <template v-else-if="sidebar.activeTab === 'plugins'">
-          <ViewHost
+          <PluginViewContainer
             v-if="focusedSessionId"
-            view-id="sidebar.tab"
             :session-id="focusedSessionId"
-            empty="hidden"
           />
           <!-- 无焦点 session 时（Overview 态）空态占位，与 files tab 同范式 -->
           <div
@@ -191,7 +189,7 @@ import { computed, inject, onMounted, ref } from 'vue'
 import { Plus, Search, Settings, FolderOpen, AlertCircle, Puzzle } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { SearchModal } from '@xyz-agent/ui'
-import { ViewHost } from '@xyz-agent/ui/extension-host'
+import { PluginViewContainer } from '@xyz-agent/ui/extension-host'
 import { useSearchModal } from '@xyz-agent/core'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'

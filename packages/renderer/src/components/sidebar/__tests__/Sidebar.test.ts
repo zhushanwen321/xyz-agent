@@ -2,10 +2,10 @@
  * Sidebar plugins tab 渲染测试（MF-10）。
  *
  * 验证第 5 plugin tab（本批次核心验收「tab 激活后渲染 plugin view」）：
- * - TC1: activeTab='plugins' + 有焦点 session → ViewHost 挂载且 view-id=挂载点名
- *   'sidebar.tab'（MF-8 统一命名后）、sessionId 绑定焦点 session、empty='hidden'
+ * - TC1: activeTab='plugins' + 有焦点 session → PluginViewContainer 挂载且
+ *   sessionId 绑定焦点 session（L2 二级路由容器，内部 L2TabBar + ViewHost）
  * - TC2: activeTab='plugins' + 无焦点 session（Overview 态）→ sidebar-plugin-no-session 占位 DOM
- * - TC3: activeTab='sessions'（非 plugins）→ 不挂 ViewHost（回归）
+ * - TC3: activeTab='sessions'（非 plugins）→ 不挂 PluginViewContainer（回归）
  *
  * mock 策略对齐 sidebar-ondeletefolder.test.ts 先例（Sidebar.vue 整体 mount 依赖
  * 10+ store/composable，shallowMount + store/composable mock；activeTab/focusedSessionId
@@ -17,7 +17,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { shallowMount } from '@vue/test-utils'
 import type { Ref } from 'vue'
-import { ViewHost } from '@xyz-agent/ui/extension-host'
+import { PluginViewContainer } from '@xyz-agent/ui/extension-host'
 
 // __APP_VERSION__ 是 vite define 注入的全局常量，vitest 下不存在，stub 之
 vi.stubGlobal('__APP_VERSION__', '0.0.0-test')
@@ -146,34 +146,32 @@ beforeEach(() => {
 })
 
 describe('Sidebar plugins tab（MF-10 渲染 gate）', () => {
-  it('TC1: activeTab=plugins + 焦点 session → ViewHost 挂载，view-id=sidebar.tab（挂载点名）、sessionId 绑定、empty=hidden', () => {
+  it('TC1: activeTab=plugins + 焦点 session → PluginViewContainer 挂载，sessionId 绑定焦点 session', () => {
     sidebarMocks.activeTab.value = 'plugins'
     sidebarMocks.focusedSessionId.value = 's1'
     const wrapper = shallowMount(Sidebar)
 
-    const viewHost = wrapper.findComponent(ViewHost)
-    expect(viewHost.exists()).toBe(true)
-    expect(viewHost.props('viewId')).toBe('sidebar.tab')
-    expect(viewHost.props('sessionId')).toBe('s1')
-    expect(viewHost.props('empty')).toBe('hidden')
+    const container = wrapper.findComponent(PluginViewContainer)
+    expect(container.exists()).toBe(true)
+    expect(container.props('sessionId')).toBe('s1')
     // 无焦点 session 占位不渲染
     expect(wrapper.find('[data-testid="sidebar-plugin-no-session"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('TC2: activeTab=plugins + 无焦点 session（Overview 态）→ sidebar-plugin-no-session 占位 DOM，不挂 ViewHost', () => {
+  it('TC2: activeTab=plugins + 无焦点 session（Overview 态）→ sidebar-plugin-no-session 占位 DOM，不挂 PluginViewContainer', () => {
     sidebarMocks.activeTab.value = 'plugins'
     const wrapper = shallowMount(Sidebar)
 
     expect(wrapper.find('[data-testid="sidebar-plugin-no-session"]').exists()).toBe(true)
-    expect(wrapper.findComponent(ViewHost).exists()).toBe(false)
+    expect(wrapper.findComponent(PluginViewContainer).exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('TC3: 回归——activeTab=sessions 不挂 ViewHost（plugins tab 独占）', () => {
+  it('TC3: 回归——activeTab=sessions 不挂 PluginViewContainer（plugins tab 独占）', () => {
     const wrapper = shallowMount(Sidebar)
 
-    expect(wrapper.findComponent(ViewHost).exists()).toBe(false)
+    expect(wrapper.findComponent(PluginViewContainer).exists()).toBe(false)
     wrapper.unmount()
   })
 })
