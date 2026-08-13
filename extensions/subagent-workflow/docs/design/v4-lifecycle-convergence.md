@@ -1,6 +1,6 @@
 # Subagent 生命周期终态收敛技术方案（V4）
 
-> **一句话结论**：V3 三层模型的 9 个子方案已落地 8 个（SP-7 按设计 deferred），但「最少副作用」目标尚未达成——残留 6 类问题：L1 `idle` 字面量（存储态与派生态并存）、互斥双保险（CAS + 锁，注释与代码矛盾）、**异步 EPIPE 无 error listener（可崩主进程连坐全部活跃 subagent）**、锁无超时兜底、跨重启 chatMode 恢复语义未定案（两条重建路径处理不一致）、文档-代码漂移 6 处。本方案以 dsh 的五条机制原则为对照锚，分两期收敛：**A 期可靠性收口（4 个独立小改）→ B 期状态收敛（L1 两态 + 单互斥源 + L2 两簿记）**，把「复杂状态机 / 并发 / 一致性孤儿 / hack session」四类副作用压到跨进程约束下的最小值。
+> **一句话结论**：V3 三层模型的 9 个子方案已落地 8 个（SP-7 按设计 deferred），但「最少副作用」目标尚未达成——残留 7 类问题：L1 `idle` 字面量（存储态与派生态并存）、互斥双保险（CAS + 锁，注释与代码矛盾）、**异步 EPIPE 无 error listener（可崩主进程连坐全部活跃 subagent）**、锁无超时兜底、跨重启 chatMode 恢复语义未定案（两条重建路径处理不一致）、**递归场景跨进程双 activation 风险（SP-8 全树可见后主进程可 message 孙级 record → 双写者窗口）**、文档-代码漂移 6 处。本方案以 dsh 的五条机制原则为对照锚，分两期收敛：**A 期可靠性收口（5 个独立小改，含递归直接父守卫）→ B 期状态收敛（L1 两态 + 单互斥源 + L2 两簿记）**，把「复杂状态机 / 并发 / 一致性孤儿 / hack session」四类副作用压到跨进程约束下的最小值。
 
 ## 层声明
 
@@ -16,9 +16,9 @@
 ### SCQA
 
 - **S（情境）**：subagent 多轮对话的终态架构已按 V2（进程长驻 + 文件兜底 + 统一投递）与 V3（三层生命周期模型）实现——9 个子方案中 8 个落地（SP-1~6、SP-8/9），多轮热路径（spawn 1 次、每轮 parentId 链连续）已在真实 pi 环境验证稳定；冷路径 resume、跨重启恢复（兜底重建为 idle）、fork/new 级联关闭 + 告知、compact 快照注入、one-shot upgrade、资源策略配置化全部可用。
-- **C（冲突）**：但用户最初设定的验收线「尽量少的副作用（复杂状态机 / 并发问题 / 一致性孤儿 / hack session）」尚未达成——对比 dsh（同进程子代理，零存储状态机、单队列、状态全部派生）后，盘点出 6 类残留问题（§2.2 P1~P6）：其中**异步 EPIPE 可崩主进程**是生产级可靠性敞口，**跨重启 chatMode 恢复语义未定案**是悬置的一致性探针，**idle 字面量**是「存储态漂移」这一历史 bug 模式（hydrateIdleRecord 死路径）的现役载体。
+- **C（冲突）**：但用户最初设定的验收线「尽量少的副作用（复杂状态机 / 并发问题 / 一致性孤儿 / hack session）」尚未达成——对比 dsh（同进程子代理，零存储状态机、单队列、状态全部派生）后，盘点出 7 类残留问题（§2.2 P1~P7）：其中**异步 EPIPE 可崩主进程**是生产级可靠性敞口，**递归场景跨进程双 activation**是 SP-8 可见性引入的双写者窗口，**跨重启 chatMode 恢复语义未定案**是悬置的一致性探针，**idle 字面量**是「存储态漂移」这一历史 bug 模式（hydrateIdleRecord 死路径）的现役载体。
 - **Q（问题）**：如何在「子代理必须跑独立 pi 子进程」的硬约束下，把生命周期收敛到最少副作用终态——每一笔为跨进程付出的机制税只交一次、每个状态都可派生不存储、每个失败都有恢复指引——并且每一步都能在真实环境验收？
-- **A（答案）**：以 dsh 的五条机制原则为对照锚（状态派生不存储 / 唯一队列 / 准入 cutoff / 结算经理化 / 身份自证），分两期落地：A 期可靠性收口（4 项独立小改，先合小修、再动状态机），B 期状态收敛（删 `idle`/`cancelled` 字面量 → L1 两态 + 派生谓词 + 单互斥源 + L2 两簿记）。本文展开。
+- **A（答案）**：以 dsh 的五条机制原则为对照锚（状态派生不存储 / 唯一队列 / 准入 cutoff / 结算经理化 / 身份自证），分两期落地：A 期可靠性收口（5 项独立小改，先合小修、再动状态机），B 期状态收敛（删 `idle`/`cancelled` 字面量 → L1 两态 + 派生谓词 + 单互斥源 + L2 两簿记）。本文展开。
 
 ### 系统是什么（给不懂内部的人）
 
@@ -37,18 +37,19 @@
 
 | # | 目标 | 使用者（主 agent / 用户）体验 |
 |---|---|---|
-| G1 | **可靠性**：子进程任何时候死亡、主进程高负载并发，一次 message 永不崩主进程、永不双写毁文件 | 崩溃时自动冷路径恢复 + 恢复指引，而不是整个应用消失 |
-| G2 | **可预测**：任何非 closed 的 subagent 都能 message；「空闲/忙碌」是派生事实，重启后语义不变 | 跨重启后 message 不报 "has ended"，upgrade 后的 record 重启仍可续聊 |
+| G1 | **可靠性**：子进程任何时候死亡、主进程高负载并发、递归场景多进程可及同一孙级 record，一次 message 永不崩主进程、永不双写毁文件 | 崩溃时自动冷路径恢复 + 恢复指引，而不是整个应用消失 |
+| G2 | **可预测**：任何非 closed 的 subagent 都能被**其直接父** message；「空闲/忙碌」是派生事实，重启后语义不变；跨层 message 被明确拒绝且带恢复指引 | 跨重启后 message 不报 "has ended"，upgrade 后的 record 重启仍可续聊，孙级 message 得到「经直接父转发」的指引 |
 | G3 | **最少机制**：L1 两态 + 单互斥源 + L2 两簿记；删的比写的多，每个状态要么可派生、要么有唯一权威源 | （开发者体验）状态机最小，无身兼两职的守卫 |
 | G4 | **可验收**：每项改动有真实 pi CLI 场景验收（不是单测/mock） | 实施者知道"做完怎么证明做对了" |
 
 ### In-scope / Out-of-scope
 
-**In-scope**：A 期 4 项（EPIPE error listener、锁超时兜底、upgrade 落盘、文档回写）+ B 期收敛（删 idle/cancelled 字面量、单互斥源、L2 簿记收敛）。
+**In-scope**：A 期 5 项（EPIPE error listener、锁超时兜底、upgrade 定案、文档回写、**递归直接父守卫**）+ B 期收敛（删 idle/cancelled 字面量、单互斥源、L2 簿记收敛）。
 
 **Out-of-scope**：
 - SP-7 孤儿扫描增强（触发条件 = spawn 改 detach，当前 piped stdio 下不实施，V3 已裁决）
-- 多 sender mailbox / broker（触发条件 = 第二个 sender 类型出现，V2 §3.5 已裁决）
+- 多 sender mailbox / broker（触发条件 = 第二个 sender 类型出现，V2 §3.5 已裁决；递归的直接父守卫正是让「sender 唯一性」by-construction 成立的手段）
+- **跨层 interrupt（祖代 → 孙级）**：dsh 有 ancestor interrupt，xyz 本期不做（A-5 守卫下跨层 message 已拒绝，interrupt 单独放开留到有真实需求时）
 - 树级资源总量控制（V3 D8 已裁决 known limitation）
 - pi 上游 session 文件锁（非本项目可控，V2 附录 B）
 - xyz-agent 应用侧（runtime/前端）编排——应用侧是旁观 + UI 同步层，不编排 pi 行为（项目规则 #17）
@@ -57,7 +58,7 @@
 
 ## §2 现状与问题分析
 
-**本章结论：多轮范式已可用（V3 九 SP 落地 8 个），但可靠性（P1/P2）与表达唯一性（P3/P4/P6）两个维度未收口，文档漂移（P5，已扩到 6 处）持续制造认知风险。**
+**本章结论：多轮范式已可用（V3 九 SP 落地 8 个），但可靠性（P1/P2）、表达唯一性（P3/P4/P6）与权限一致性（P7）三个维度未收口，文档漂移（P5，6 处）持续制造认知风险。**
 
 ### 2.1 现状：一次 message 的真实旅程（使用者视角 + 物理数据流）
 
@@ -89,7 +90,7 @@
 主 agent 眼前：/subagents 列表（record-store.ts:312 reconstructAll 四分支重建 + STATUS_PRIORITY 排序）
 ```
 
-### 2.2 问题清单（6 项，全部经源码核实；P# 与 §3 方案一一对应）
+### 2.2 问题清单（7 项，全部经源码核实；P# 与 §3 方案一一对应）
 
 | # | 问题 | 真实失败模式（触发条件 → 现象） | 根因 |
 |---|---|---|---|
@@ -99,13 +100,15 @@
 | P4 | **L1 `idle` 字面量残留（存储态与派生态并存）** | `ExecutionStatus = "running"|"idle"|"cancelled"|"closed"`（types.ts:45）；idle 同时被 status 字段存储、又被 `hasIdleTimer` 派生判定——两处不同步时（如 timer 被异常 disarm）列表显示与真实空闲态漂移 | 存储态漂移：V3 原案 L1 两态被「实现修订」回退成四态，偏离终态 |
 | P5 | **文档-代码漂移 6 处** | ① lifecycle-manager.ts:336-343 注释「锁冗余，不接入」与 :894 已接入矛盾；② index.ts:629「防线 iii 接入留 Step 5c」陈旧；③ finalize-record.ts:188 仍写「写 .idle sidecar」（.idle 模块已删，全仓无写/读运行时代码；另有 subagent-actions.ts:284、types.ts:381/444/669、subagent-service.ts:966/998/1646 等 .idle 注释残留）；④ V3 §5.1.1 分期表未随 SP-4/5/8/9 落地回写；⑤ V3 S2 验收「grep 无 idle」与实际保留 idle 矛盾；⑥ notifier.ts:33-36 仍为 `id:round` dedup（V3 §5.3 声称 SP-1 已「回归纯 id」，未落地） | 认知漂移：维护者读到矛盾注释会误删锁或误判状态机 |
 | P6 | **L2 探活横跨 4 个半独立簿记** | 判「进程活没活」有 4 个来源：`spawnedChildren` Map（句柄表）、`hasIdleTimer`（空闲派生）、`.alive` sidecar + `isProcessAlive`（跨重启探活）、`acquireActivateLock`（spawning 互斥）——任何一处不同步即误判热/冷路径 | 表达不唯一：同一事实多处簿记（与 P4 同根因） |
+| P7 | **递归场景跨进程双 activation 风险（SP-8 可见性引入）** | SP-8 后全树 record 的 `rootSessionId` 都贯穿真 ROOT（session-runner.ts:818-824），而 `getRecordForAction` 只校验 rootSessionId（subagent-service.ts:952）→ **主进程可 message 孙级 record**（A 的 child B、甚至 B 的 child C）。但 B 的子进程句柄只在 A 的进程里——主进程 message B 走冷路径 resume、再 spawn 一个 B 进程 → 若 A 进程里 B 还活着，**两个进程交错写同一 session 文件 = 双写者毁文件**（acquireActivateLock 是进程内锁，跨进程各自独立，救不了） | 权限与所有权脱节：message 权限按 root 级授予，进程句柄却只存在于 spawn 它的进程（根因 R3） |
 
 ### 2.3 根因分析：三个缺失
 
-6 个问题归到两个根因（对照 dsh 后归纳）：
+7 个问题归到三个根因（对照 dsh 后归纳）：
 
 - **R1（表达不唯一，存储态与派生态并存）**：P4（idle 既存储又派生）、P6（探活四源）、P3（跨重启两条重建路径对 chatMode 处理不一致、恢复语义未定案）同一根因——**同一事实应该只有一个权威表达**。dsh 的对应做法：ActivationState 三态完全派生（`agent.status + accepted + ownedChildren`，continuation.ts:870-873），持久化只有一个 descriptor 事件。xyz 的历史 bug（hydrateIdleRecord 死路径、crashed 兜底错判）全是存储态漂移，P4 是这个模式的现役载体。
 - **R2（可靠性修复与状态机重构捆绑，导致只做了一半）**：V3 D12 明确要求「EPIPE 兜底 commit 先于状态机重构独立提交」，实际实施时同步捕获做了、**error listener 没做**；D3 要求 30s 锁超时，实际只有链式 + finally。两个半成品都因为「大改已经合了，细节后补」而漏掉——**可靠性小修必须独立成 commit、独立验收**，不能与大型重构同捆。
+- **R3（权限模型与物理所有权脱节）**：P7 的根因——message/close 权限按 root 级（rootSessionId）授予，而子进程句柄只存在于 spawn 它的那个进程。权限交给了「可能没有句柄、只能冷路径再 spawn」的进程，双 activation 窗口由此而来。dsh 的对应做法：followup 要求精确 live 直接父（SessionHeader.parentSession），list 中只有 depth-1 是 send_message 候选、deeper 仅 interrupt 候选——**权限与所有权同一处**，by-construction 无双写者。
 - （P5 是 R1/R2 的伴随症状：实施与文档不同步，本质是「变更未回写」的纪律缺失，单独列为 A-4 单元。）
 
 ### 2.4 dsh 对照锚（为什么这是终态方向）
@@ -126,7 +129,7 @@ dsh（deepseek-harness，master @ 47f9438）在同进程约束下把同样的多
 
 ## §3 解决方案
 
-**本章结论：A 期 4 个独立小改收口可靠性（可并行先合），B 期删 idle/cancelled 字面量 + 单互斥源 + 两簿记收敛表达；每一步都在真实 pi 环境验收。**
+**本章结论：A 期 5 个独立小改收口可靠性（含递归直接父守卫，可并行先合），B 期删 idle/cancelled 字面量 + 单互斥源 + 两簿记收敛表达；每一步都在真实 pi 环境验收。**
 
 ### 3.1 终态（使用者视角）
 
@@ -171,11 +174,24 @@ dsh（deepseek-harness，master @ 47f9438）在同进程约束下把同样的多
 [结果] 列表无 "idle" 状态字面量（B 期后），显示由派生谓词驱动，与真实空闲永远一致
 ```
 
+**场景 E：递归两层多轮 + 跨层 message 拒绝（回溯 G1/G2，A-5）**
+
+```
+[主 agent] start {task:"协调 review", conversation:true} → A（chatMode，独立进程）
+[A]      start {task:"修 diff 的 3 个 must-fix", conversation:true} → B（A 的 child，A 进程 spawn）
+[A]      message B "第二轮：看测试" → A 进程内热路径（B 的句柄在 A 进程）→ B 续聊
+[B 完成] B 的 notifier（运行在 A 进程）triggerTurn → A 续跑汇总
+[A 完成] A 的 notifier（运行在主进程）triggerTurn → 主 agent 续跑
+[主 agent] message B → ❌ 拒绝（直接父守卫：B 的直接父是 A）👉 "subagent sa-B is owned by its
+           direct parent; message it through that parent (see /subagents list, parent=<A>)"
+[机制]   主进程没有 B 的句柄，若放行只能冷路径再 spawn → 与 A 进程里活着的 B 双写同一 session 文件
+```
+
 ### 3.2 多方案对比
 
 | 方案 | 长期架构合理性 | 短期实现成本 | 风险 | 裁决 |
 |---|---|---|---|---|
-| **A 两期收敛（本方案）**：A 期可靠性收口 4 项独立小改 → B 期删 idle/cancelled 字面量 + 单互斥源 + L2 两簿记 | ✅ 终态：L1 两态、互斥唯一源、探活两源——表达唯一，R1 根治；dsh 五原则全部映射 | 中：A 期 4 项各自 <100 行；B 期中重构（16+ 消费点替代 + 互斥移交） | 低-中：A 期无状态机改动、可独立回滚；B 期有编译期 Record 类型强制全覆盖 | ✅ **推荐** |
+| **A 两期收敛（本方案）**：A 期可靠性收口 5 项独立小改（含递归直接父守卫）→ B 期删 idle/cancelled 字面量 + 单互斥源 + L2 两簿记 | ✅ 终态：L1 两态、互斥唯一源、探活两源、message 权限=直接父——表达唯一 + 权限与所有权一致，R1/R3 根治；dsh 五原则全部映射 | 中：A 期 5 项各自 <100 行；B 期中重构（16+ 消费点替代 + 互斥移交） | 低-中：A 期无状态机改动、可独立回滚；B 期有编译期 Record 类型强制全覆盖 | ✅ **推荐** |
 | **B 只做 A 期收口，保留 L1 四态** | ⚠️ 修了 P1/P2/P3/P5，但 P4/P6（表达不唯一）留存——idle 字面量继续是「存储态漂移」模式（hydrateIdleRecord 死路径的前身）的载体 | 低：4 项小改 | 低 | ⚠️ 可作 A 期的临时停靠点 |
 | **C 点状修复（只修 P1）** | ❌ P2~P6 全部留存；下一个状态漂移 bug 随时出现（V3 对点状修复的裁决：补丁叠补丁） | 极低 | 中（技术债累积） | ❌ 否决 |
 | **D 照搬 dsh 同进程模型** | ✅ dsh 架构最合理 | —— | **不可行**：子代理必须独立 pi 子进程（沙箱/崩溃隔离/pi 生态是硬约束） | ❌ 边界外（见 §2.4） |
@@ -212,6 +228,13 @@ dsh（deepseek-harness，master @ 47f9438）在同进程约束下把同样的多
 - **选择**：6 处漂移逐一回写：①②③④⑤ 归本单元（① lifecycle-manager.ts:336-343、② index.ts:629、③ finalize-record.ts:188 + 全仓 `.idle` 注释残留清零——已核实 subagent-actions.ts:284、types.ts:381/444/669、subagent-service.ts:966/998/1646 等 8+ 处、④ V3 §5.1.1 分期表、⑤ V3 S2 验收改判），⑥（notifier dedup）归 B-1 的裁决修订。与 A-1/A-2 同 commit 或独立 doc commit。
 - **依据**：P5 清单经 read/grep 核实。文档是实施者的第二份代码；矛盾注释会诱导维护者误删锁或误判状态机（v0.3.8 PR #61 一 commit 多改动的教训延伸：变更必须回写文档）。
 - **探针**：无运行时探针，验收 = §4 场景 S5 的 grep 断言（注释与代码一致）。
+
+#### A-5：递归直接父守卫（修 P7，回溯 G1/G2）
+
+- **选择**：`getRecordForAction`（message/close 的统一入口，subagent-actions.ts:287/:348 共用）在 rootSessionId 校验之后增加**直接父校验**：`record.parentRecordId === (this.execCtxBaseline?.recordId ?? undefined)`——根进程 baseline=null → undefined → 只能操作顶层 record（parentRecordId 缺失者）；子进程 baseline.recordId=自己 → 只能操作自己 spawn 的孩子。校验失败 → 明确错误 + 恢复指引（「owned by its direct parent; message it through that parent (see /subagents list, parent=<id>)」——主进程已可见全树，不构成信息泄露）。**close/cancel 同受此守卫约束**（同一入口）：跨重启后主进程无法直接清理孙级 record，须经父链回弹（message 直接父 → 父进程恢复 → 父内 close 其子），清理成本 = 恢复整条父链，作为语义显式接受（孙级 record 的进程已随父进程死亡，不清理的残留由 session-file-gc 30 天 TTL 兜底）。
+- **依据**：① 物理所有权事实——B 的子进程句柄只在 spawn 它的进程里（`spawnedChildren` 是进程内 Map）；任何非直接父进程 message 活着的 B 只能冷路径再 spawn = 双写者（进程内锁救不了跨进程）。② dsh 同构——followup 要求精确 live 直接父（SessionHeader.parentSession），list_agents 明示只有 depth-1 是 send_message 候选、deeper 仅 interrupt 候选。③ **必须用 `execCtxBaseline` 而非 ALS store**：pi RPC 模式的 stdin JSONL 是事件回调式，ALS store 不贯穿 tool 调用事件（subagent-service.ts:236-245 已实测记录「递归第二层 parentRecordId/depth 丢失而 rootSessionId 正确」），baseline 在 initSession 从 env 读取、是权威回退。④ **回退语义**：身份缺省的旧/异常 record（identity 无 parentRecordId）重建后 parentRecordId=undefined → 视作根层、仅主进程可操作；当前版本 spawn 必写身份（session-runner.ts:818-838），无此现实 record，若需严格归属应重 spawn。
+- **被否**：允许跨层 message（双写者回归，G1 禁止）；全局注册表/broker 跨进程锁（V2 §3.5 触发条件未到，复杂度不成比例——准则 8）；冷路径前探测「他进程是否持有活进程」（无通道可探，等于造 broker）。
+- **探针**：⛔ P-parent-guard（§4 场景 S6：两层递归多轮全链路 + 跨层 message 拒绝 + 恢复指引 + 双写者零残留）。
 
 #### B-1：删 `idle` 字面量 → 派生谓词（修 P4，回溯 G2/G3）
 
@@ -250,14 +273,15 @@ dsh（deepseek-harness，master @ 47f9438）在同进程约束下把同样的多
 | P4 idle 字面量 | B-1 | S4/S5 |
 | P5 文档漂移 | A-4 | S5 |
 | P6 探活四源 | B-3 | S2/S5 |
+| P7 递归跨进程双 activation | A-5 | S6 |
 
 ---
 
 ## §4 验收（真实场景，非单测非 mock）
 
-**本章结论：5 个真实 pi CLI 场景逐一回溯 G1~G4，机制侧断言（spawn 次数 / parentId 链 / grep / 进程存活）优先于 LLM 表现。**
+**本章结论：6 个真实 pi CLI 场景逐一回溯 G1~G4，机制侧断言（spawn 次数 / parentId 链 / grep / 进程存活 / 拒绝信息）优先于 LLM 表现。**
 
-**验收环境**：本地 pi CLI 实测（项目规范 [MANDATORY]：pi extension 优先在本地 pi 实测，不优先在 xyz-agent 验证）——`pi --mode rpc --session-dir <dir> --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve --extension <ext-path>`，stdin JSONL 发 prompt，检查 session 文件 + `PI_EXT_DEBUG=1` 日志。测试模型用 `xiaomi-token-plan-cn/mimo-v2.5-pro`（禁止 kimi）。**改动规模：大（A 期 4 项 + B 期状态机重构）**；单测仅作回归辅助，不计入验收。**注入点声明**：S1/S2 的测试后门/注入只负责**制造竞态窗口**（真实的并发竞态与进程死亡无法天然编排），被验证的代码路径是真实 pi 子进程、真实锁、真实 session 文件——不是整体 mock；另以「自然发生（非注入）的长跑观察」（S1 步骤 ④、S2 步骤 ④）作为补充，避免验收被注入点局限。
+**验收环境**：本地 pi CLI 实测（项目规范 [MANDATORY]：pi extension 优先在本地 pi 实测，不优先在 xyz-agent 验证）——`pi --mode rpc --session-dir <dir> --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve --extension <ext-path>`，stdin JSONL 发 prompt，检查 session 文件 + `PI_EXT_DEBUG=1` 日志。测试模型用 `xiaomi-token-plan-cn/mimo-v2.5-pro`（禁止 kimi）。**改动规模：大（A 期 5 项 + B 期状态机重构）**；单测仅作回归辅助，不计入验收。**注入点声明**：S1/S2 的测试后门/注入只负责**制造竞态窗口**（真实的并发竞态与进程死亡无法天然编排），被验证的代码路径是真实 pi 子进程、真实锁、真实 session 文件——不是整体 mock；另以「自然发生（非注入）的长跑观察」（S1 步骤 ④、S2 步骤 ④）作为补充，避免验收被注入点局限。
 
 ### S1：子进程死亡 → message 自动冷路径恢复（回溯 G1，A-1）
 
@@ -284,17 +308,22 @@ dsh（deepseek-harness，master @ 47f9438）在同进程约束下把同样的多
 - **步骤**：全量 grep 断言（编译期 + 运行时双重）：`ExecutionStatus` 无 `idle`/`cancelled` 字面量；`child.stdin` 有 `on("error")` 监听；**互斥断言 = `acquireActivateLock` 的唯一调用点位于 resumeRound 内部（含超时兜底），且 resumeRound 的全部调用方（deliverMessage 冷路径 / EPIPE 环回 / 补投 / A-1 异步 error 路径）均无独立锁包装、无直接 spawn**；`.idle` 引用与注释残留为零（含 §2.2 P5③ 清单 8+ 处）；P5 的 6 处漂移（①-⑥）均已回写或裁决（⑥ 归 B-1）。
 - **通过标准**：上述 grep 全部零违例；tsc 通过（Record<ExecutionStatus, T> 强制全覆盖）；全测试通过（回归辅助）。
 
-> **每场景回溯**：S1→G1、S2→G1/G3、S3→G2、S4→G2/G3、S5→G3。G4（可验收）由本章自身满足。
+### S6：递归两层多轮 + 跨层 message 拒绝（回溯 G1/G2，A-5）
+
+- **步骤**：① 主进程 chatMode 起 A（task 含「起一个 chatMode B 并与其多轮协作」）；② A 起 B（conversation:true）→ 首轮完成后 A message B 第二轮（断言 A 进程内热路径、spawn 次数观察）；③ B 完成 → B 的 notifier triggerTurn 使 A 续跑 → A 汇总完成 → A 的 notifier triggerTurn 使主 agent 续跑（两层接力 notify 都到达）；④ **负例**：主进程先 `/subagents` 列出树（可见 B 及其 parent=<A>）取得 B 的 id，然后直接 message B → 断言被拒 + 错误含「direct parent」恢复指引；⑤ `kill -9` 主进程 → 同 session-dir 重启 → 主进程 message A（冷恢复）→ A message B（冷恢复）→ 两级上下文连续；⑥ 跨重启清理：重启后主进程直接 close B → 断言被拒（同守约束），改走父链（message A 让其 close B）→ B 被正常清理。
+- **通过标准**：② A→B 多轮 spawn 次数 = 1（A 进程内热路径，无重复 spawn）；B 的 session 文件 parentId 链完整；③ 两层 notify 接力到达（B→A→主）；④ 拒绝信息含恢复指引且双写者零残留（ps 断言同一时刻只有一个 B 进程；:⑤ 后同样断言）；⑤ 两级冷恢复后上下文连续、无 "has ended"、无孤儿残留；⑥ close 跨层被拒 + 父链回弹清理成功。LLM 侧（A 是否真的 message B 第二轮）为观察项，机制侧断言为主（V2 §4 原则）。
+
+> **每场景回溯**：S1→G1、S2→G1/G3、S3→G2、S4→G2/G3、S5→G3、S6→G1/G2。G4（可验收）由本章自身满足。
 
 ---
 
 ## §5 下一层拆分
 
-**本章结论：A 期 4 单元互相无依赖、可并行先合；B 期 3 单元依赖 A-2（锁超时兜底）依次收敛，每单元独立 commit + 独立验收。**
+**本章结论：A 期 5 单元互相无依赖、可并行先合；B 期 3 单元依赖 A-2（锁超时兜底）依次收敛，每单元独立 commit + 独立验收。**
 
 ### 5.1 实施路径（分两期，每单元独立 commit + 独立验收）
 
-**A 期（可靠性收口，4 单元，可并行，先于 B 期全部合入）**
+**A 期（可靠性收口，5 单元，可并行，先于 B 期全部合入）**
 
 | 单元 | 改动 | 验收 | justification |
 |---|---|---|---|
@@ -302,6 +331,7 @@ dsh（deepseek-harness，master @ 47f9438）在同进程约束下把同样的多
 | A-2 | `lifecycle-manager.ts`：锁 30s 超时 + 陈旧注释回写；`index.ts:629` 注释回写 | S2（spawn 异常注入部分） | 死锁兜底，同时消除 P5 ①② 漂移 |
 | A-3 | `subagent-service.ts`/`subagent-actions.ts`：两处恢复入口补语义注释（:943 跨重启入口 / :355-358 进程内 upgrade 入口 + 协同守护说明），零新机制；探针验证 | S3 | 消除悬置探针，定案现状机制（准则 8 减法：manifest 升格被否，见 §3.3 A-3） |
 | A-4 | 文档回写 6 处（P5 清单：①②③④⑤ 归本单元，⑥ 归 B-1 裁决） | S5（grep 部分） | 纪律：变更必回写文档 |
+| A-5 | `subagent-service.ts`：getRecordForAction 增加直接父校验（execCtxBaseline）；`subagent-actions.ts`：跨层拒绝错误文案 + 恢复指引 | S6 | 递归双写者 by-construction 消除（权限与所有权同一处，dsh 同构） |
 
 **B 期（状态收敛，依赖 A-2，3 单元）**
 
@@ -321,8 +351,8 @@ dsh（deepseek-harness，master @ 47f9438）在同进程约束下把同样的多
 | `src/index.ts` | A-2/A-4 | :629 注释回写；文档一致性 |
 | `execution/record-store.ts` | B-1/B-2 | STATUS_PRIORITY 收敛；reconstructAll 分支 4 重建映射改 L1=running；消费点替代 |
 | `execution/types.ts` | B-1/B-2 | ExecutionStatus 两态 + 派生谓词类型（isIdle / isResumable） |
-| `execution/subagent-service.ts` | B-1/B-3 | L1 只在三处转换（删 4 个 status 赋值点）；锁下沉 resumeRound + 锁内重检 + 三调用方删外层锁 + 删 CAS；簿记收敛 |
-| `interface/subagent-actions.ts` | A-3/B-1 | upgrade 幂等语义注释；idle 分支删除 |
+| `execution/subagent-service.ts` | A-3/A-5/B-1/B-3 | 恢复入口语义注释；getRecordForAction 直接父校验；L1 只在三处转换（删 4 个 status 赋值点）；锁下沉 resumeRound + 锁内重检 + 全部调用方删外层锁 + 删 CAS；簿记收敛 |
+| `interface/subagent-actions.ts` | A-3/A-5/B-1 | upgrade 幂等语义注释；跨层拒绝错误文案；idle 分支删除 |
 | `interface/gui-mappers.ts` / `format.ts` / `execution/notifier.ts` | B-1 | 显示/文案改派生谓词 |
 | `docs/design/v3-unified-lifecycle-model.md` | A-4 | §5.1.1 分期表回写、S2 验收改判 |
 
@@ -332,6 +362,7 @@ dsh（deepseek-harness，master @ 47f9438）在同进程约束下把同样的多
 2. **锁超时时长与 spawn 耗时关系**（A-2）：30s 是否在「spawn 正常耗时」与「用户可感知挂起」之间取到合理点——S2 步骤 ③ 实测 spawn 异常场景的兜底时延。
 3. **:943 无条件 chatMode=true 的语义边界**（A-3）：该机制把「任何可重建 active record」视为可续聊——与 V3 方案 A 终态语义一致；若未来引入「不可续聊的 active 中间态」会与之冲突，不做额外护栏，由 S3 + 代码注释守护。
 4. **跨重启与进程内两条升级路径的协同守护**（A-3）：跨重启 = getRecordForAction :943 无条件置位；进程内 = upgrade 分支 :355-358。任何改动这两处的 PR 必须带 S3 类回归场景——该守护写进两处代码注释（A-3 的落点）。
+5. **存量测试对跨层 message 的依赖**（A-5）：A-5 收紧守卫后，若现有测试/用例断言「主进程可 message 孙级 record」需同步改——实施时 grep `message` 相关测试确认；不改则行为回归（S6 步骤 ④ 覆盖该行为的正确形态）。
 
 ---
 
