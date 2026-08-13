@@ -197,7 +197,7 @@ Next run: in 1h
 - 运行时断言：⛔实施期门——fork 后新 session 的 list 为空、任务到期不注入；原 session resume 任务仍在（探针：S11 实测）
 
 **D3：旧 store 导入——rename 原子收敛（单成功者）**
-- 选择：session_start 检测 `<cwd>/scheduler.json` 存在 → `fs.renameSync(scheduler.json, scheduler.json + '.imported')`（原子，失败 ENOENT = 别人已导入 → 跳过）→ 成功者读 `.imported` 逐任务 appendEntry upsert → 删 `.imported`（⚠️ IMPORT-FLUSH-GUARD（MF-1）：unlink 需确认 flush——resumed session（sessionFile 已存在，pi flushed=true）append 即时落盘可立即删；新 session（sessionFile 不存在，entries 仅内存）延迟到 session_shutdown 确认 flush 后删，未 flush 保留 .imported 供崩溃恢复）
+- 选择：session_start 检测 `<cwd>/scheduler.json` 存在 → `fs.renameSync(scheduler.json, scheduler.json + '.imported')`（原子，失败 ENOENT = 别人已导入 → 跳过）→ 成功者读 `.imported` 逐任务 appendEntry upsert → 删 `.imported`（⚠️ IMPORT-FLUSH-GUARD（MF-1）：unlink 需确认 flush——resumed session（sessionFile 已存在，pi flushed=true）append 即时落盘可立即删；新 session（sessionFile 不存在，entries 仅内存）延迟到首个 turn_end（该轮 message_end 已全部持久化，flush 必已发生）确认 flush 后删，session_shutdown 兜底，未 flush 保留 .imported 供崩溃恢复）
 - 崩溃恢复：rename 后、删前崩溃 → `.imported` 残留 → 下次任一 session 检测到（且 `scheduler.json` 不存在）→ 读它导入自己 session → 删（幂等；与 v2 D3 同构）
 - 归属语义：旧任务无 owner 信息 → 归第一个完成导入的 session（无更好近似，与 v2 一致，README 说明）
 - **导入后任务立即触发语义**：旧任务若 nextRunAt 已过期，导入后首个 tick 立即 dispatch（once 立即注入、recurring 补跑）——README 说明

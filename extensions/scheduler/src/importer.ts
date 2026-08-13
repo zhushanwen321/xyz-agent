@@ -101,8 +101,8 @@ function isENOENT(err: unknown): boolean {
  * 从 .imported 路径读取旧 store JSON、逐任务 pi.appendEntry upsert、按 flush 状态删除 .imported。
  * read/parse/append 任一异常由外层 importLegacyStore 的 try/catch 兜底（C1 整体降级）。
  *
- * 返回值为延迟删除 cleanup（未 flush 的新 session 场景），由 session_shutdown 执行；
- * 已安全删除或无需导入时返回 undefined。
+ * 返回值为延迟删除 cleanup（未 flush 的新 session 场景），由 index.ts 在首个 turn_end 与
+ * session_shutdown 时调用（cleanup 幂等，可重复调用）；已安全删除或无需导入时返回 undefined。
  *
  * ⚠️ unlink 时机（IMPORT-FLUSH-GUARD，MF-1 修复）：pi SessionManager._persist 延迟写入——
  * 新 session（sessionFile 尚不存在 → flushed=false）的 appendEntry 只进内存 fileEntries，
@@ -147,21 +147,29 @@ function importFromFile(
     return undefined
   }
 
-  // 新 session（未 flush）：延迟删除，cleanup 由 session_shutdown 执行——届时 sessionFile 已出现
-  // （flush 发生，entries 全量落盘）→ 删；仍未 flush → 保留 .imported 供下次 session_start 的
-  // handleImportedResidue 崩溃恢复重导入（跨 session 重导入窗口 = 崩溃发生在 flush 后与 shutdown
-  // 之间，与 R-CONCURRENT-IMPORT 已接受的并发窗口同权衡）
+  // 新 session（未 flush）：延迟删除，cleanup 由 index.ts 在首个 turn_end（该轮 message_end 已全部
+  // 持久化，flush 必已发生——agent-session.js _handleAgentEvent 在 message_end 处理中调
+  // appendMessage 触发 _persist 全量落盘）与 session_shutdown 时重复调用——flush 后 sessionFile
+  // 出现 → 删；仍未 flush → 静默保留 .imported 供下次 session_start 的 handleImportedResidue
+  // 崩溃恢复重导入。跨 session 重导入窗口 = session_start → 首个 turn_end（秒级）：turn_end 后
+  // .imported 已删，后续 session 启动看不到残留 → 双导入窗口闭合（R-CONCURRENT-IMPORT 已更新）
   console.warn(
     `[scheduler] imported ${tasks.length} legacy tasks (session not flushed; deferring ${importedPath} removal)`,
   )
   return () => {
+    // 幂等：已删（本进程或并发另一进程已处理）→ no-op。cleanup 在每次 turn_end 都会调用，重复调用安全
+    if (!fs.existsSync(importedPath)) return
     if (fs.existsSync(currentSessionFile)) {
       // flush 已发生（sessionFile 由首次 flush 创建，fileEntries 全量落盘）→ 安全删除
-      fs.unlinkSync(importedPath)
-    } else {
-      // 从未 flush：保留 .imported，下次 session_start 崩溃恢复重导入（不 unlink）
-      console.warn(`[scheduler] session closed before flush; keeping ${importedPath} for recovery`)
+      try {
+        fs.unlinkSync(importedPath)
+      } catch (err) {
+        // MF-2：并发——另一进程（resumed B）已 unlink → ENOENT 静默；其他 fs 错误（EACCES）不吞
+        if (!isENOENT(err)) throw err
+      }
     }
+    // 从未 flush：保留 .imported，下次 session_start 崩溃恢复重导入（不 unlink；不告警——
+    // 每次 turn_end 都会走到这里，避免刷屏；保留依据见上方 IMPORT-FLUSH-GUARD 注释）
   }
 }
 
@@ -170,14 +178,18 @@ function importFromFile(
  *
  * 并发 + 崩溃恢复交叉窗口（R-CONCURRENT-IMPORT）：若 .imported 存在，可能是
  *   a) 本进程上次崩溃留下的 .imported（崩溃恢复）→ 导入正确
- *   b) 另一进程 winner rename 后、unlinkSync 前的 .imported（并发）→ 本进程也会导入
- * 窗口极窄（rename→unlinkSync 毫秒级）+ 需两进程同时 session_start 同 cwd（罕见）。
+ *   b) 另一进程 winner rename 后、unlinkSync 前的 .imported（rename 竞态）→ 本进程也会导入
+ *   c) 另一进程新 session 延迟删除窗口内的 .imported（IMPORT-FLUSH-GUARD：session_start →
+ *      首个 turn_end 之间）→ 本进程也会导入
+ * 窗口：b 为 rename→unlinkSync 毫秒级（需两进程同时 session_start 同 cwd，罕见）；c 为秒级
+ * （A 存活且首 turn 未完成时 B 启动）。c 由 turn_end 触发的清理收敛：A 首个 turn 完成后
+ * .imported 删除，此后 B 启动 → 双不存在 → skip。
  *
- * ⚠️ 双导入后果（如实记录，非「已被消除」）：情况 b 下 A/B 各自导入一份副本、owner 各为自己，
+ * ⚠️ 双导入后果（如实记录，非「已被消除」）：情况 b/c 下 A/B 各自导入一份副本、owner 各为自己，
  * 同一个逻辑任务会在两个 session 各触发一次（跨 session 双触发，正是 G5 要防的）。owner 过滤
  * （按 ownerSessionFile）只保证「单一 session 内不重复」，并不能消除此跨 session 双触发——
  * owner 过滤针对的是 fork 继承的「owner=他者」任务，而此处两副本的 owner 各自匹配本 session。
- * 窗口极窄（毫秒级 + 双进程同时启动同 cwd），可接受，不引入锁机制（过度工程）。
+ * 窗口（毫秒级竞态 + 秒级延迟删除窗口）远小于「.imported 全程驻留」，可接受，不引入锁机制（过度工程）。
  */
 function handleImportedResidue(
   importedPath: string,
@@ -210,8 +222,9 @@ function handleImportedResidue(
  *
  * nextRunAt 原样保留不重算、不 gc 过滤（CL4）：导入后首个 tick 立即 dispatch（D3 立即触发语义）。
  *
- * 返回值：延迟删除 cleanup（新 session 未 flush 时保留 .imported 待 session_shutdown 确认
- * flush 后删除），已安全处理时为 undefined。index.ts session_shutdown 调用它。
+ * 返回值：延迟删除 cleanup（新 session 未 flush 时保留 .imported 待首个 turn_end /
+ * session_shutdown 确认 flush 后删除；cleanup 幂等，可重复调用），已安全处理时为 undefined。
+ * index.ts 在 turn_end 与 session_shutdown 调用它。
  */
 export function importLegacyStore(
   cwd: string,

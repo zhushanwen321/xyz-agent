@@ -215,18 +215,56 @@ describe('importLegacyStore', () => {
     expect(fs.unlinkSync).not.toHaveBeenCalled()
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('deferring'))
 
-    // 情形1：flush 已发生（sessionFile 出现）→ cleanup 删除 .imported
-    vi.mocked(fs.existsSync).mockImplementation(p => p === sessionFile)
+    // 情形1：flush 已发生（sessionFile 出现，.imported 仍在）→ cleanup 删除 .imported
+    vi.mocked(fs.existsSync).mockImplementation(p => p === sessionFile || p === importedPath)
     cleanup?.()
     expect(fs.unlinkSync).toHaveBeenCalledTimes(1)
     expect(fs.unlinkSync).toHaveBeenCalledWith(importedPath)
 
-    // 情形2：从未 flush → cleanup 保留 .imported（不 unlink，供崩溃恢复重导入）
+    // 情形2：从未 flush → cleanup 保留 .imported（不 unlink、不抛错，供崩溃恢复重导入）
     vi.mocked(fs.unlinkSync).mockClear()
     vi.mocked(fs.existsSync).mockReturnValue(false)
-    cleanup?.()
+    expect(() => cleanup?.()).not.toThrow()
     expect(fs.unlinkSync).not.toHaveBeenCalled()
-    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('keeping'))
+  })
+
+  // ── TC8b：cleanup 幂等 + unlink ENOENT 守卫（MF-2，R2 修复）──
+  it('TC8b: cleanup 幂等（已删后 no-op）+ unlink 仅静默 ENOENT，其他 fs 错误向上抛', () => {
+    const taskA = makeTask({ id: 'ffff' })
+    vi.mocked(fs.readFileSync).mockReturnValue(
+      JSON.stringify({ version: 1, tasks: [taskA] }),
+    )
+    vi.mocked(fs.existsSync).mockReturnValue(false) // 新 session 未 flush → 延迟删除路径
+    const appendEntry = vi.fn()
+
+    const cleanup = importLegacyStore(cwd, { appendEntry }, sessionFile)!
+    expect(cleanup).toBeDefined()
+
+    // 情形1：flush 已发生 → 正常 unlink
+    vi.mocked(fs.existsSync).mockReturnValue(true)
+    cleanup()
+    expect(fs.unlinkSync).toHaveBeenCalledTimes(1)
+    expect(fs.unlinkSync).toHaveBeenCalledWith(importedPath)
+
+    // 情形2（MF-2）：并发——另一进程已 unlink（unlinkSync 抛 ENOENT）→ 静默吞掉不抛
+    vi.mocked(fs.unlinkSync).mockClear()
+    vi.mocked(fs.unlinkSync).mockImplementation(() => {
+      throw enoentError()
+    })
+    expect(() => cleanup()).not.toThrow()
+    expect(fs.unlinkSync).toHaveBeenCalledTimes(1)
+
+    // 情形3（MF-2）：非 ENOENT fs 错误（EACCES）→ 不吞，向上抛（index.ts try/finally 兜底复位）
+    vi.mocked(fs.unlinkSync).mockImplementation(() => {
+      throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+    })
+    expect(() => cleanup()).toThrow(/EACCES/)
+
+    // 情形4：幂等——.imported 已不存在（本进程或并发已删）→ no-op，不抛
+    vi.mocked(fs.unlinkSync).mockClear()
+    vi.mocked(fs.existsSync).mockReturnValue(false)
+    expect(() => cleanup()).not.toThrow()
+    expect(fs.unlinkSync).not.toHaveBeenCalled()
   })
 
   // ── TC9：0 任务空 store → 无持久化依赖，仍立即 unlink ──

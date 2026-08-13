@@ -28,8 +28,11 @@ import { renderSchedulerWidget } from './widget.js'
 export default function schedulerExtension(pi: ExtensionAPI): void {
   let service: SchedulerService | null = null
   // IMPORT-FLUSH-GUARD（MF-1）：importLegacyStore 对未 flush 的新 session 返回延迟删除 .imported
-  // 的 cleanup，session_shutdown 时执行——确认 flush（sessionFile 已出现）则删，未 flush 保留
-  // 供崩溃恢复重导入（否则未 flush 即退出 → 全部旧任务丢失且源文件已销毁）
+  // 的 cleanup——turn_end / session_shutdown 时执行：确认 flush（sessionFile 已出现）则删，
+  // 未 flush 保留供崩溃恢复重导入（否则未 flush 即退出 → 全部旧任务丢失且源文件已销毁）。
+  // 触发点用 turn_end（而非仅 session_shutdown）：turn_end 时该轮 message_end 已全部持久化
+  // （flush 必已发生），把跨 session 双导入窗口从「session 整个生命周期」缩回
+  // 「session_start → 首个 turn_end」秒级。cleanup 幂等（importer.ts importFromFile），重复调用安全。
   let importCleanup: (() => void) | undefined
 
   const getService = (): SchedulerService => {
@@ -56,16 +59,29 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
     refreshWidget(ctx)
   })
 
+  pi.on('turn_end', () => {
+    // IMPORT-FLUSH-GUARD（MF-1）：延迟删除的主触发点——turn_end 前该轮所有 message_end 已持久化
+    // （agent-session.js _handleAgentEvent 在 message_end 处理中调 appendMessage 触发 flush），
+    // sessionFile 已出现 → cleanup 删 .imported；仍未 flush（无 assistant 消息的轮次）→ 静默保留，
+    // 下次 turn_end / session_shutdown 重试。cleanup 幂等（importer.ts importFromFile）。
+    importCleanup?.()
+  })
+
   pi.on('session_shutdown', async () => {
     // append-only 模型无 persistSync（runtime 已按 op appendEntry 落盘到 owner session JSONL）；
     // widgetTimer 已移除（由 runtime.onAfterTick 替代）。仅停止 scheduler tick。
     if (service) {
       service.runtime.stopScheduler()
     }
-    // IMPORT-FLUSH-GUARD（MF-1）：延迟删除 .imported（新 session 未 flush 场景）——
-    // 此时 sessionFile 已出现（flush 发生）则删；未 flush 保留供崩溃恢复
-    importCleanup?.()
-    importCleanup = undefined
+    // IMPORT-FLUSH-GUARD（MF-1）：兜底清理——正常路径已由首个 turn_end 完成；此处覆盖
+    // 从未产生 turn 的 session（打开未发消息即关闭）。cleanup 确认 flush（sessionFile 已出现）
+    // 则删 .imported，未 flush 保留供崩溃恢复重导入
+    try {
+      importCleanup?.()
+    } finally {
+      // MF-2：cleanup 抛非 ENOENT 错误（如 EACCES）也必须复位，避免残留闭包
+      importCleanup = undefined
+    }
   })
 
   // 注册 schedule tool

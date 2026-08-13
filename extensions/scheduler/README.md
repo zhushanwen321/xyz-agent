@@ -53,7 +53,7 @@ session_start
 | `delete` | 删除；once 触发后自动 delete | taskId |
 
 - fork 出的 session 重放时按 `ownerSessionFile` 过滤，不加载、不执行继承的任务副本（原 session resume 照常）
-- `session_shutdown` 仅停止 tick——任务已 append 到 JSONL，无需额外写盘
+- `session_shutdown` 停止 tick + 兜底执行延迟删除 cleanup（正常路径已由首个 turn_end 完成）——任务已 append 到 JSONL，无需额外写盘
 
 ## /schedule 命令用法
 
@@ -199,7 +199,7 @@ pi 的 context 构建对 custom entry 无 case（被过滤）——任务数据�
 
 ### 旧版迁移
 
-升级前任务存在 cwd 共享的旧 store（`~/.pi/agent/scheduler/<cwd>/scheduler.json`）。升级后首个检测到旧文件的 session 原子 `rename` 为 `scheduler.json.imported`，逐任务 appendEntry upsert 到自己的 JSONL，然后删除 `.imported`（⚠️ 删除时机依赖 flush：resumed session 已落盘可立即删；新 session（pi 延迟写入，entries 仅内存）延迟到 session_shutdown 确认 flush 后删，未 flush 保留 `.imported` 供崩溃恢复重导入，避免源文件销毁 + 数据未落盘的双重丢失）：
+升级前任务存在 cwd 共享的旧 store（`~/.pi/agent/scheduler/<cwd>/scheduler.json`）。升级后首个检测到旧文件的 session 原子 `rename` 为 `scheduler.json.imported`，逐任务 appendEntry upsert 到自己的 JSONL，然后删除 `.imported`（⚠️ 删除时机依赖 flush：resumed session 已落盘可立即删；新 session（pi 延迟写入，entries 仅内存）延迟到首个 `turn_end`（该轮 message_end 已全部持久化，flush 必已发生）确认 flush 后删，`session_shutdown` 兜底；未 flush 保留 `.imported` 供崩溃恢复重导入，避免源文件销毁 + 数据未落盘的双重丢失）：
 
 - **归属**：旧任务无 owner 信息，**归属首个完成导入的 session**（无更好近似）
 - **过期任务立即触发**：导入后若 nextRunAt 已过期，**首个 tick 立即 dispatch**（once 立即注入、recurring 补跑）
