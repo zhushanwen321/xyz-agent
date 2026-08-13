@@ -94,7 +94,7 @@
           <!-- slug（accent，· 分隔，展开时 invisible 保留空间） -->
           <template v-if="workflowFields.slug">
             <span class="text-neutral-faint" :class="{ invisible: toolExpanded }">·</span>
-            <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent" :class="{ invisible: toolExpanded }">{{ workflowFields.slug }}</span>
+            <span class="min-w-0 truncate font-mono text-[length:var(--text-sm)] text-accent" :class="{ invisible: toolExpanded }">{{ workflowFields.slug }}</span>
           </template>
           <!-- runId 前 8 位（dim，展开时 invisible 保留空间） -->
           <span v-if="workflowFields.runId" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-xs)] text-neutral-dim" :class="{ invisible: toolExpanded }">{{ workflowFields.runId }}</span>
@@ -250,11 +250,10 @@ const props = defineProps<{
   sessionId?: string | null
 }>()
 
-/* ── thinking 折叠（SSOT §3.3.3）：默认展开由 collapsed 初值承担（working→false 展开，
- *    非 working→props.collapsed ?? true 收起），computed 不再带 props.working 短路；
- *    working 中也可手动收起/展开（删禁 toggle 提前 return）；
- *    working→false 完成态回落：未手动操作过的块自动收起（恢复 G3 完成态骨架）。── */
-const thinkingCollapsed = ref(props.working ? false : (props.collapsed ?? true))
+/* ── thinking 折叠（streaming-trace-window 验收修正）：working 态也默认折叠（60 字符预览），
+ *    与过程块收编理念一致（收编减体积 + thinking 折叠 = 视觉体积最小）；用户可手动展开，展开后保持。
+ *    原 SSOT §3.3.3「working→false 展开」导致 streaming 中所有 thinking 全展开，与收编减体积冲突。── */
+const thinkingCollapsed = ref(props.collapsed ?? true)
 const thinkingExpanded = computed(() => !thinkingCollapsed.value)
 /** 用户是否手动 toggle 过（收起/展开均置位）——置位后完成态不回落（显式意图优先，CQ1） */
 const userToggledThinking = ref(false)

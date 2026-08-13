@@ -44,7 +44,7 @@
         <SquareFunction class="size-2" />{{ t('panel.message.toolCount', { count: toolCount }) }}
       </span>
     </Button>
-    <hr v-if="!sessionActive" class="border-0 border-t border-border" />
+    <hr class="border-0 border-t border-border" />
   </div>
 </template>
 

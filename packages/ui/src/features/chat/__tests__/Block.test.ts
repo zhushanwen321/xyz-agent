@@ -198,10 +198,10 @@ describe('error-visibility M3: thinking 可收起 + 完成态回落（TC1-3）',
     })
   }
 
-  it('TC1: working=true 挂载默认展开（无需点击，去强制展开短路后由 collapsed 初值承担）', () => {
+  it('TC1: working=true 挂载默认折叠（60 字符预览；streaming-trace-window 验收修正：收编理念要求 thinking 折叠减体积）', () => {
     const wrapper = mountThinking({ working: true })
-    // 展开内容区直接渲染（thinkingExpanded=true）
-    expect(wrapper.find(THINK_EXPANDED_SEL).exists()).toBe(true)
+    // 展开内容区不渲染（折叠态，60 字符预览）
+    expect(wrapper.find(THINK_EXPANDED_SEL).exists()).toBe(false)
   })
 
   it('TC2: 非 working 挂载默认收起（1 行摘要），点击可展开', async () => {
@@ -213,18 +213,17 @@ describe('error-visibility M3: thinking 可收起 + 完成态回落（TC1-3）',
     expect(wrapper.find(THINK_EXPANDED_SEL).exists()).toBe(true)
   })
 
-  it('TC3: working→false 回落收起；手动展开过不回落（CQ1）', async () => {
-    // 场景 A：未手动操作 → working→false 自动回落收起
+  it('TC3: working 态折叠；手动展开后保持（用户意图优先，不因 working 变化回落）', async () => {
+    // 场景 A：working=true 挂载默认折叠，working→false 仍折叠（默认折叠态不因 working 变化）
     const autoWrapper = mountThinking({ working: true })
-    expect(autoWrapper.find(THINK_EXPANDED_SEL).exists()).toBe(true)
+    expect(autoWrapper.find(THINK_EXPANDED_SEL).exists()).toBe(false)
     // VTU setProps 的 $props 类型解析为 attrs-only（Block.vue 自定义 props 不可见），
     // cast 仅为满足 tsc（同 search-modal.test.ts:86 模式，见本文件 text 测试注释）
     await autoWrapper.setProps({ working: false } as never)
     expect(autoWrapper.find(THINK_EXPANDED_SEL).exists()).toBe(false)
 
-    // 场景 B：手动操作过（收起再展开，userToggled 置位且最终展开）→ working→false 不回落
+    // 场景 B：手动展开 → working→false 保持展开（用户意图优先）
     const manualWrapper = mountThinking({ working: true })
-    await manualWrapper.find(THINK_HEADER_SEL).trigger('click') // 手动收起
     await manualWrapper.find(THINK_HEADER_SEL).trigger('click') // 手动展开
     expect(manualWrapper.find(THINK_EXPANDED_SEL).exists()).toBe(true)
     await manualWrapper.setProps({ working: false } as never)
