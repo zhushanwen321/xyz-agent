@@ -163,6 +163,8 @@
               </div>
               <div class="tool-result font-mono text-[length:var(--text-sm)] leading-snug whitespace-pre-wrap pl-4 py-1.5 select-text text-neutral-mid">
                 <AnsiText v-if="outputRaw" :content="outputRaw" />
+                <!-- JSON output（如 bash 执行 cw 命令的结构化输出）格式化缩进，限高滚动避免撑爆对话流 -->
+                <pre v-else-if="parsedJsonOutput" class="m-0 max-h-80 overflow-auto whitespace-pre">{{ parsedJsonOutput }}</pre>
                 <span v-else>{{ displayContent }}</span>
               </div>
             </div>
@@ -181,6 +183,7 @@
               >
                 <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
                 <AnsiText v-else-if="outputRaw" :content="outputRaw" />
+                <pre v-else-if="parsedJsonOutput" class="m-0 max-h-80 overflow-auto whitespace-pre">{{ parsedJsonOutput }}</pre>
                 <span v-else>{{ displayContent }}</span>
               </div>
             </template>
@@ -301,6 +304,32 @@ const isBashTool = computed(() => toolName.value === 'bash')
 const result = computed(() => props.tool?.output)
 /** 展示用内容：output 优先，failed 时兜底 tool.error（如 read ENOENT 输出为空但 error 有值） */
 const displayContent = computed(() => result.value || (isFailed.value ? (props.tool?.error ?? '') : ''))
+
+/** JSON.stringify 缩进空格数（具名常量避 no-magic-numbers） */
+const JSON_INDENT = 2
+
+/**
+ * JSON output 格式化：displayContent 为合法 JSON 时返回 2 空格缩进格式化串，否则 null。
+ *
+ * 背景：subagent（cw 递归编排）大量用 bash 执行 `cw ...` 命令，其 stdout 是 JSON
+ *（cw execute/design/review 等结构化输出）。原样 whitespace-pre-wrap 渲染时，
+ * 单行 JSON 既长又不可读，展开工具卡片看到一整坨压缩 JSON。
+ * 格式化后缩进换行，可读性大幅提升；非 JSON（普通命令输出/文本）回退原样渲染。
+ *
+ * 判定：trim 后首字符为 `{` 或 `[` 才尝试 parse（避免对普通文本白跑 JSON.parse）。
+ * 大对象开销可接受——computed 缓存 + 仅 toolExpanded（tool-result 渲染）时求值。
+ */
+const parsedJsonOutput = computed<string | null>(() => {
+  const raw = displayContent.value
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  if (trimmed.length === 0 || (trimmed[0] !== '{' && trimmed[0] !== '[')) return null
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, JSON_INDENT)
+  } catch {
+    return null
+  }
+})
 /** 复制用内容：bash 包含命令+输出，其余同 displayContent */
 const copyContent = computed(() => {
   if (isBashTool.value && argPath.value) {

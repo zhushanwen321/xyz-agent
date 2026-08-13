@@ -232,3 +232,74 @@ describe('error-visibility M3: thinking 可收起 + 完成态回落（TC1-3）',
     expect(manualWrapper.find(THINK_EXPANDED_SEL).exists()).toBe(true)
   })
 })
+
+/* ── JSON output 格式化：cw 命令等结构化输出的可读性 ──
+ * 背景：subagent（cw 递归编排）常用 bash 执行 `cw ...` 命令，stdout 是 JSON
+ * （cw execute/design/review 等结构化输出）。原样 whitespace-pre-wrap 渲染时
+ * 单行压缩 JSON 不可读，展开工具卡片看到一整坨。修复：检测到合法 JSON 时
+ * 用 <pre> 缩进格式化 + 限高滚动；非 JSON（普通命令输出/文本）回退原样 span。
+ * 通用：非 bash 工具的 JSON output 同样适用（不绑定 cw）。 */
+describe('Block tool output: JSON 格式化（cw 等命令的结构化输出）', () => {
+  it('JSON 对象 output 渲染为 <pre> 格式化缩进（非原样压缩单行）', async () => {
+    const wrapper = mountTool({
+      toolName: 'bash',
+      input: { command: 'cw execute feat-x' },
+      output: '{"status":"ok","nextAction":"design","unitId":"feat-x"}',
+    })
+    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
+    const pre = wrapper.find('.tool-result pre')
+    expect(pre.exists()).toBe(true)
+    // 格式化后键值间有空格、换行缩进（原样压缩单行无换行）
+    expect(pre.text()).toContain('"status": "ok"')
+    expect(pre.text()).toContain('\n')
+  })
+
+  it('JSON 数组 output 同样格式化', async () => {
+    const wrapper = mountTool({
+      toolName: 'bash',
+      output: '[{"id":1,"name":"a"},{"id":2,"name":"b"}]',
+    })
+    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
+    const pre = wrapper.find('.tool-result pre')
+    expect(pre.exists()).toBe(true)
+    expect(pre.text()).toContain('"id": 1')
+  })
+
+  it('非 JSON output（普通命令文本）回退原样 span，无 <pre>', async () => {
+    const wrapper = mountTool({
+      toolName: 'bash',
+      input: { command: 'ls -la' },
+      output: 'total 0\ndrwxr-xr-x  3 user staff  96',
+    })
+    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
+    expect(wrapper.find('.tool-result pre').exists()).toBe(false)
+    expect(wrapper.find('.tool-result').text()).toContain('total 0')
+  })
+
+  it('首字符为 { 但非法 JSON 回退原样（不误判）', async () => {
+    const wrapper = mountTool({
+      toolName: 'bash',
+      output: '{ not valid json at all',
+    })
+    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
+    expect(wrapper.find('.tool-result pre').exists()).toBe(false)
+    expect(wrapper.find('.tool-result').text()).toContain('{ not valid json')
+  })
+
+  it('空 output 不触发 JSON 渲染（无 <pre>，无异常）', async () => {
+    const wrapper = mountTool({ toolName: 'bash', output: '' })
+    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
+    expect(wrapper.find('.tool-result pre').exists()).toBe(false)
+  })
+
+  it('非 bash 工具的 JSON output 同样格式化（通用，不限于 bash）', async () => {
+    const wrapper = mountTool({
+      toolName: 'cw_planning',
+      output: '{"layer":"wave","status":"created","waves":3}',
+    })
+    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
+    const pre = wrapper.find('.tool-result pre')
+    expect(pre.exists()).toBe(true)
+    expect(pre.text()).toContain('"layer": "wave"')
+  })
+})
