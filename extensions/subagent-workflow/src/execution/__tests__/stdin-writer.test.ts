@@ -459,3 +459,65 @@ describe("sendSteerCommand — busy 投递（抢占，steer）", () => {
     expect(() => sendSteerCommand(child, "msg")).not.toThrow();
   });
 });
+
+// ============================================================
+// writeStdinLine EPIPE / ERR_STREAM_DESTROYED 检测（R3）
+// ============================================================
+
+describe("writeStdinLine EPIPE 检测 — EPIPE / ERR_STREAM_DESTROYED throw", () => {
+  it("child.stdin.write 抛 {code:'EPIPE'} → throw 含 EPIPE 关键词", () => {
+    const fakeStdin = {
+      write: vi.fn(() => {
+        const err = Object.assign(new Error("write after end"), { code: "EPIPE" });
+        throw err;
+      }),
+      destroyed: false,
+    } as unknown as PassThrough;
+    const child = { stdin: fakeStdin } as unknown as ChildProcess;
+
+    expect(() => respond(child, "req-epipe", { value: "x" })).toThrow(/EPIPE/);
+  });
+
+  it("child.stdin.write 抛 {code:'ERR_STREAM_DESTROYED'} → throw 含 EPIPE 关键词", () => {
+    const fakeStdin = {
+      write: vi.fn(() => {
+        const err = Object.assign(new Error("Stream is destroyed"), {
+          code: "ERR_STREAM_DESTROYED",
+        });
+        throw err;
+      }),
+      destroyed: false,
+    } as unknown as PassThrough;
+    const child = { stdin: fakeStdin } as unknown as ChildProcess;
+
+    expect(() => sendPromptCommand(child, "task")).toThrow(/EPIPE/);
+  });
+
+  it("child.stdin.destroyed=true → 静默跳过（guard 生效，不触发 write）", () => {
+    const fakeStdin = {
+      write: vi.fn(),
+      destroyed: true,
+    } as unknown as PassThrough;
+    const child = { stdin: fakeStdin } as unknown as ChildProcess;
+
+    expect(() => respond(child, "req-destroyed", { value: "x" })).not.toThrow();
+    // destroyed guard 生效，write 不被调用
+    expect(fakeStdin.write).not.toHaveBeenCalled();
+  });
+
+  it("child.stdin.write 抛非 EPIPE 错误 → warn 降级不 throw（兜底）", () => {
+    const fakeStdin = {
+      write: vi.fn(() => {
+        throw new Error("some other error");
+      }),
+      destroyed: false,
+    } as unknown as PassThrough;
+    const child = { stdin: fakeStdin } as unknown as ChildProcess;
+
+    // 非 EPIPE 错误应 warn 降级，不 throw
+    expect(() => respond(child, "req-other-err", { value: "x" })).not.toThrow();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const warnMsg = warnSpy.mock.calls[0]?.[0] as string;
+    expect(warnMsg).toContain("unexpected stdin write error");
+  });
+});

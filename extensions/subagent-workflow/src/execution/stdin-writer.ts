@@ -155,17 +155,41 @@ export function sendGetStateCommand(child: ChildProcess): string {
 }
 
 /**
- * 向子进程 stdin 写一行（自动补换行），带背压检查。
+ * 向子进程 stdin 写一行（自动补换行），带背压检查 + EPIPE 检测。
  *
  * [R1] write 返回 false 时记 warn（不阻塞，内核缓冲会随后排空）。
+ * [R3] write 抛 EPIPE / ERR_STREAM_DESTROYED 时 throw 含 EPIPE 关键词的 Error，
+ *      让上层（deliverMessage）能捕获并自动转冷路径 resume。
  * stdin 已关闭/销毁时跳过——respond 已检查 signal，sendPromptCommand 已检查 destroyed。
  *
  * @param child 子进程
  * @param line JSON 行（不含换行）
  * @param warnTag warn 日志的语义标记
+ * @throws Error 含 "EPIPE" 关键词——stdin 管道已断（子进程已退出 / stdin 被销毁）
  */
 function writeStdinLine(child: ChildProcess, line: string, warnTag: string): void {
   if (!child.stdin || child.stdin.destroyed) return;
-  const ok = child.stdin.write(line + "\n");
-  if (!ok) logger.warn(`[subagents] stdin backpressure on ${warnTag}`);
+  try {
+    const ok = child.stdin.write(line + "\n");
+    if (!ok) logger.warn(`[subagents] stdin backpressure on ${warnTag}`);
+  } catch (err) {
+    // [R3] EPIPE / ERR_STREAM_DESTROYED：stdin 管道已断，子进程已退出或 stdin 被销毁。
+    // throw 让上层（deliverMessage）捕获并自动转冷路径 resume + 消息重放。
+    if (
+      err !== null &&
+      typeof err === "object" &&
+      "code" in err &&
+      ((err as NodeJS.ErrnoException).code === "EPIPE" ||
+        (err as NodeJS.ErrnoException).code === "ERR_STREAM_DESTROYED")
+    ) {
+      throw new Error(
+        `[subagents] EPIPE on stdin write (${warnTag}): pipe broken, child process likely exited. ` +
+          `Recovery: treat as dead process and resume via cold path.`,
+      );
+    }
+    // 非 EPIPE 错误（不应发生，但兜底降级为 warn 不崩溃）
+    logger.warn(`[subagents] unexpected stdin write error on ${warnTag}`, {
+      detail: err instanceof Error ? err.message : String(err),
+    });
+  }
 }

@@ -34,7 +34,7 @@ import { getSubagentRecordsDir, getSubagentSessionDir } from "./path-encoding.ts
 import type { StatusFilter } from "./record-store.ts";
 import { RecordStore } from "./record-store.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
-import { getChildByRecord, killAllSpawnedChildren, runSpawn, type SessionRunnerContext, type SpawnResumeOpts } from "./session-runner.ts";
+import { getChildByRecord, killAllSpawnedChildren, runSpawn, spawnedChildren, type SessionRunnerContext, type SpawnResumeOpts } from "./session-runner.ts";
 import { sendFollowUpCommand, sendPromptCommand, sendSteerCommand } from "./stdin-writer.ts";
 import type { StreamSink } from "./stream-sink.ts";
 import { SubagentStream } from "./stream-sink.ts";
@@ -58,6 +58,12 @@ import { registerGlobalObservability, UiRequestObservability } from "./ui-reques
 import { WorktreeManager } from "./worktree-manager.ts";
 
 const logger = getLogger("subagents");
+
+/** EPIPE 连续失败计数器（record.id → 连续 EPIPE 次数）。
+ * deliverMessage 热路径 stdin 写入 EPIPE 时递增；成功写入时清零。
+ * 连续 2 次 EPIPE 后 throw（不再尝试 resume，避免无限循环）。
+ */
+const epipeConsecutiveFailures = new Map<string, number>();
 
 /** dispose 后注入的 stub UI 请求 handler。
  *
@@ -407,6 +413,8 @@ export class SubagentService {
     // runSpawn 的 finally 清理可能来不及跑——可接受退化（session.jsonl 已由子进程写入）。
     this.store.abortRunningControllers();
     killAllSpawnedChildren();
+    // EPIPE 连续失败计数器清零（防跨 session 泄漏）
+    epipeConsecutiveFailures.clear();
     for (const s of this.throttleState.values()) {
       if (s.timer !== undefined) clearTimeout(s.timer);
     }
@@ -724,7 +732,38 @@ export class SubagentService {
       record.status = "running";
       // 刷新 pid 内存记账（resume spawn 后 child.pid 已变，顺便更新）
       if (child.pid !== undefined) record.pid = child.pid;
-      sendPromptCommand(child, text, { streamingBehavior: interrupt ? "steer" : "followUp" });
+      try {
+        sendPromptCommand(child, text, { streamingBehavior: interrupt ? "steer" : "followUp" });
+        // 热路径成功，清零 EPIPE 连续失败计数
+        epipeConsecutiveFailures.delete(record.id);
+      } catch (err) {
+        // EPIPE 兜底：stdin 管道已断，进程实际已死但 close 事件尚未到达。
+        // 检测 EPIPE 关键词 → 进程按 dead 处理 → 自动转冷路径 resume + 消息重放。
+        if (err instanceof Error && err.message.includes("EPIPE")) {
+          logger.warn(`[subagents] EPIPE on hot path for ${record.id}, falling back to cold path resume`, {
+            detail: err.message,
+          });
+          // 清理 spawnedChildren 中的死进程条目（让 resumeRound 能重新 spawn）
+          spawnedChildren.delete(record.id);
+          // 递增连续 EPIPE 计数
+          const count = (epipeConsecutiveFailures.get(record.id) ?? 0) + 1;
+          epipeConsecutiveFailures.set(record.id, count);
+          if (count >= 2) {
+            // 连续 2 次 EPIPE → 不再尝试 resume，throw 含恢复指引
+            epipeConsecutiveFailures.delete(record.id);
+            throw new Error(
+              `[subagents] EPIPE fallback exhausted for ${record.id}: ${count} consecutive EPIPE failures. ` +
+                `Recovery: use action:'close' to clean up, then action:'start' a new subagent.`,
+            );
+          }
+          // 冷路径 resume + 原消息重放（resumeRound 校验 idle 并自行设 running + spawn）
+          record.status = "idle";
+          this.resumeRound(record, text);
+          return;
+        }
+        // 非 EPIPE 错误——不应发生，重新抛出让调用方处理
+        throw err;
+      }
     } else {
       // 冷路径：进程死（idle timer reap / 崩溃 / 跨重启），record 应为 idle → resume spawn。
       // resumeRound 校验 idle 并自行设 running + spawn（不在上预设 running，否则 idle 检查 throw）。
