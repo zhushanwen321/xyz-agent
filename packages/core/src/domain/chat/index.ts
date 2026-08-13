@@ -22,6 +22,7 @@ export * from './effect-types'
 export * from './truncate-tool-output'
 export { dispatchMessageEvent } from './effects/registry'
 export { createChatStore, DEFAULT_STREAMING_TIMEOUT_MS } from './store'
+export * from './derive-status'
 export { createStreamingStateMachine, type StreamingStateMachineDeps } from './streaming-state-machine'
 export type { ChatStoreInstance } from './store'
 // w5 chat-use-chat：useChat composable 迁移（createUseChat factory + ChatApiPort）
