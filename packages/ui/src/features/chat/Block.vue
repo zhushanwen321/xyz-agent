@@ -3,7 +3,7 @@
     展示组件 · trace 块（message-stream 折叠区内的单个块）。Demo H 视觉：灰阶 + SVG ICON +
     唯一 accent 蓝（running）+ failed hover muted 暖橙。
     - thinking：lightbulb ICON + header 可点击 toggle，长块独立再折叠（本地折叠态）。
-    - tool：默认 1 行收起（streaming/running 也收起），点击展开详情。仅 failed 强制展开。
+    - tool：默认 1 行收起（streaming/running 也收起），点击展开详情。failed 终态默认展开（streaming 中失败不 remount，只 header 红）。
     - workflow：list-checks ICON + WORKFLOW. prefix + 状态动词 + workflow 名，详情区走 list-tree GUI / 文本。
     - subagent：渲染委托给 BlockSubagent（users ICON + SUBAGENT. prefix + 去卡片化）。
     - failed：无鲜红全展开（红框已删），改中性灰默认 + hover 染 warn，错误摘要进 body 文本。
@@ -285,11 +285,12 @@ const headerBlockIcon = computed(() => {
   return kind === 'running' ? BLOCK_ICON_LUCIDE['tool-other'] : BLOCK_ICON_LUCIDE[kind]
 })
 
-/** 普通 tool header 状态色：running 染 accent，failed/unfinished 中性灰，completed 中性。
+/** 普通 tool header 状态色：running 染 accent，failed 染 danger（错误醒目），
+ *  unfinished 中性灰（abort/中断非失败，不标红），completed 中性。
  *  unfinished 用 text-neutral-mid（6.78:1 过 AA），不用 dim（3.56:1 不过 AA，critique 第 3 轮）。 */
 const toolStatusClass = computed(() => {
   if (isRunning.value) return 'text-accent'
-  if (isFailed.value) return 'text-neutral-mid'
+  if (isFailed.value) return 'text-danger'
   if (isUnfinished.value) return 'text-neutral-mid'
   return 'text-neutral-fg'
 })
@@ -354,9 +355,11 @@ const guiComponent = computed<GuiComponent | undefined>(() => {
 
 /**
  * tool 折叠：默认 1 行收起（含 streaming/running 态——header 行已含摘要+状态指示，
- * 1 行即可观察进度，点击才展开详情）。failed 不再强制展开（摘要行已含错误状态色）。
+ * 1 行即可观察进度，点击才展开详情）。failed 终态默认展开（错误输出立即可见）。
+ * mount 快照：toolCollapsed 仅在挂载时求值，Block key 不含 status（running→error 不 remount），
+ * 故 streaming 中失败的工具不展开（只 header 染 danger），仅终态挂载（重开/回看）才展开（§3.3.1 选项 A）。
  */
-const toolCollapsed = ref(true)
+const toolCollapsed = ref(!isFailed.value)
 const toolExpanded = computed(() => !toolCollapsed.value)
 
 function toggleTool(): void {

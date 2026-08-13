@@ -10,7 +10,9 @@
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { h } from 'vue'
 import { Block } from '@xyz-agent/ui'
+import type { ToolCall } from '@xyz-agent/shared'
 
 function mountTextBlock(streaming?: boolean) {
   return mount(Block, {
@@ -51,5 +53,86 @@ describe('block-rendering M0: Block text 分支正文样式（TC-M0-4）', () =>
     // 运行时 setProps 走 Record<string, unknown>，cast 仅为满足 tsc（同 search-modal.test.ts:86 模式）。
     await wrapper.setProps({ streaming: true } as never)
     expect(wrapper.find('.trace-blk > div').classes()).toContain('text-neutral-mid')
+  })
+})
+
+/* ── error-visibility M1：failed tool header danger 色 + 终态默认展开（TC1-3）──
+ * SSOT: docs/architecture/conversation-error-visibility.md §3.3.1
+ * - T1: toolStatusClass failed 分支 text-neutral-mid → text-danger（unfinished 保持中性）
+ * - T2: toolCollapsed 终态分化——failed(error) 初值 false（展开），其余 true（收起）
+ * - CQ1: streaming 中失败不展开（mount 快照，running→error 不 remount），本测试覆盖终态挂载分支 */
+const GuiStub = {
+  name: 'GuiComponentRenderer',
+  props: { component: { type: Object, default: undefined } },
+  setup() {
+    return () => h('div', { 'data-testid': 'gui-renderer-stub' })
+  },
+}
+const AnsiStub = {
+  name: 'AnsiText',
+  props: { content: { type: String, default: '' } },
+  setup() {
+    return () => h('div', { 'data-testid': 'ansi-text-stub' })
+  },
+}
+const MdStub = {
+  name: 'MarkdownRenderer',
+  props: { content: { type: String, default: '' }, variant: { type: String, default: undefined } },
+  setup() {
+    return () => h('div', { class: 'stub-md-render' })
+  },
+}
+
+function makeTool(over: Partial<ToolCall> = {}): ToolCall {
+  return {
+    id: 'tc-1',
+    toolName: 'read',
+    input: { path: '/tmp/foo.txt' },
+    status: 'completed',
+    startTime: 1000,
+    endTime: 5000,
+    ...over,
+  }
+}
+
+function mountTool(toolOver: Partial<ToolCall>) {
+  return mount(Block, {
+    props: {
+      type: 'tool',
+      tool: makeTool(toolOver),
+    },
+    global: {
+      stubs: {
+        GuiComponentRenderer: GuiStub,
+        AnsiText: AnsiStub,
+        MarkdownRenderer: MdStub,
+      },
+    },
+  })
+}
+
+describe('error-visibility M1: failed tool header danger + 终态展开（TC1-3）', () => {
+  it('TC1: failed(error) tool header 染 text-danger（非中性灰）', () => {
+    const wrapper = mountTool({ status: 'error', output: 'ENOENT: no such file' })
+    const header = wrapper.find('[data-testid="tool-block-header"]')
+    expect(header.classes()).toContain('text-danger')
+    // 不再是中性灰
+    expect(header.classes()).not.toContain('text-neutral-mid')
+  })
+
+  it('TC2: failed(error) tool 终态挂载默认展开（错误输出可见，无需点击）', () => {
+    const wrapper = mountTool({ status: 'error', output: 'ENOENT: no such file' })
+    // toolCollapsed 初值 false → toolExpanded true → 详情区默认渲染（无需点击 header）
+    expect(wrapper.find('.tool-result').exists()).toBe(true)
+    // 错误输出文本可见
+    expect(wrapper.text()).toContain('ENOENT: no such file')
+  })
+
+  it('TC3: unfinished(end_not_received) tool header 保持中性灰（abort/中断非失败，不标红）', () => {
+    const wrapper = mountTool({ status: 'end_not_received' })
+    const header = wrapper.find('[data-testid="tool-block-header"]')
+    expect(header.classes()).toContain('text-neutral-mid')
+    // unfinished 不标红（区别于 failed）
+    expect(header.classes()).not.toContain('text-danger')
   })
 })
