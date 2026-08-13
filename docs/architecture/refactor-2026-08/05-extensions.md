@@ -46,7 +46,7 @@ extensions/ 是本项目维护的 `@zhushanwen/pi-*` 统一开发仓库：17 个
 |------|------|--------|------|------|
 | F1 | Strong | 跨包微型工具 12 处复制（safeStringify ×3 漂移 / escapeXml ×4 / 时间常量 9 份）下沉 shared | W3 | 下沉收敛 |
 | F2 | Strong | pi session JSONL 解析 adapter 唯一化（3 份独立解析循环） | W3 | 外部 seam 收敛 |
-| F3 | Strong | shared 层定位重整（quota-providers 死面，删除测试驱动 + DP-3） | W4 | 元决策 |
+| F3 | Strong | shared 层定位重整（quota-providers 死面，删除测试驱动 + DP-3） | W4（删除测试 + DP-3 裁决前移 W3 之前） | 元决策 |
 | F4 | Worth | Ajv schema 编译层收敛（审计先行，涉及 builtin） | W4 | 收敛（前置审计） |
 | F5 | Worth | 裸 console 迁移决策（⚠️ 修正后真实计数支持推广，DP-4） | W5 | 元决策 |
 | F6 | Speculative | formatDuration 同名异义（合法变体，记录即可） | W5 | 记录/改名 |
@@ -80,10 +80,17 @@ extensions/ 是本项目维护的 `@zhushanwen/pi-*` 统一开发仓库：17 个
 | A：shared 建通用 utils 模块，12 处改 import | **长期方案** | 在 shared 下新建通用 utils（如 `shared/pi-utils` 或并入既有 shared 包），导出 extension-logger 现成的 safeStringify + escapeXml/decodeXml（成对）+ 时间常量；12 处本地定义删除改 import | 一次收敛所有拷贝；但 shared 包增加一个，需同步 npm 发布面与依赖声明（各消费包加 dependency） |
 | B：只统一 safeStringify 的 catch 语义，escapeXml/常量不动 | 短期方案 | 三处 safeStringify 改为同一 catch 语义，其余维持 | 修症状不收敛拷贝，escapeXml 4 份与常量 9 份继续漂移，三个月后同样问题复发 |
 
-**推荐**：方案 A。理由：审查已证明漂移是真实发生的（safeStringify 三种 catch、escapeXml 逐字 vs 子集 vs 逆操作），且常量模块已存在（time.ts）却 0 消费——说明「拷贝就地」是默认行为，只有物理收敛才能止住；同时让 shared 从「2 个碰巧共址的包」变真共享层（F3 的 DP-3 评估也要用到这个事实）。escapeXml 统一为**单一 encode 方向**（escapeXml + decodeXml 成对导出，evolve-daily 的逆操作改调 decodeXml）。
+**推荐**：方案 A。理由：审查已证明漂移是真实发生的（safeStringify 三种 catch、escapeXml 逐字 vs 子集 vs 逆操作），且常量模块已存在（time.ts）却 0 消费——说明「拷贝就地」是默认行为，只有物理收敛才能止住；同时让 shared 从「2 个碰巧共址的包」变真共享层（F3 的 DP-3 评估也要用到这个事实）。**前置依赖（解决决策反序）**：F1 的 shared utils 归位依赖 **DP-3 先裁决**（见 §5 W3 前置节点 + F3 方案 A）——DP-3 判「保留 shared」则 utils 建在 shared；DP-3 判「撤销 shared」则 utils 建在 model-switch 包内。F1 不得在 DP-3 裁决前就把 utils 建进 shared（避免裁决后又搬家）。
+
+escapeXml **按下沉上下文区分两个 API**（非单一 encode，避免悄悄改变 goal 输出语义）：
+- `escapeXmlText`（3 连：`& < >`）——XML 文本节点语义，服务 goal 的 `<successCriteria>文本</successCriteria>` 包裹（goal 现状 3 连是上下文决定的刻意子集，文本节点无需转义引号）
+- `escapeXmlAttr`（5 连：`& < > " '`）——XML 属性值语义，服务 subagent-workflow 的 `<name>${...}` 等可能含引号的属性上下文
+- `decodeXml` 成对导出（evolve-daily 的逆操作改调 decodeXml）
+
+强统一为 5 连会改变 goal 的输出语义（文本节点多转义引号），故按 XML 规范分文本节点 / 属性值两 API 单源。
 
 **改动点**：
-1. shared 新建通用 utils（safeStringify、escapeXml/decodeXml、时间常量集合），safeStringify 以 extension-logger 现成实现为准（其余两处 catch 语义收敛到它）
+1. shared（或 model-switch，依 DP-3 裁决）新建通用 utils（safeStringify、**escapeXmlText/escapeXmlAttr/decodeXml**、时间常量集合），safeStringify 以 extension-logger 现成实现为准（其余两处 catch 语义收敛到它）；escapeXml 按文本节点 / 属性值分两 API 单源
 2. 12 处消费点改 import，删除本地定义；extension-logger 的 safeStringify 改为 re-export 或删除本地（防双源）
 3. 消费包 package.json 增加对新 shared 包的 dependency（或复用既有 shared 包名，视共享包形态）
 4. 各包测试中若断言了本地工具行为，同步更新
@@ -116,21 +123,26 @@ extensions/ 是本项目维护的 `@zhushanwen/pi-*` 统一开发仓库：17 个
 | A：下沉 pi-session-file adapter，两包保留语义层 | **长期方案** | shared 建 pi-session-file adapter：读文件 + header 解析 + 坏行防御 + sessionId 提取（一行一行的安全 parse）；session-reader 语义层（找 user message）与 subagent-workflow 语义层（重建 session/查 pending）只消费 adapter | 外部 seam 单点维护，pi 格式变更只改一处；adapter 是纯格式层无业务语义，天然可测 |
 | B：仅统一坏行防御逻辑，拷贝到另两处 | 短期方案 | 把 session-reconstructor 的坏行防御复制到 find.ts / session-pending.ts | 解析循环仍是 3 份，只是防御策略一致；下次 pi 格式变更仍改三处 |
 
-**推荐**：方案 A。与 F7 同构（事件流 seam 唯一化），同批实施（W3）。adapter 接口设计：`readSessionFile(path)` 返回 `{ header, entries, sessionId }`（坏行跳过 + 记 warning），`findFirstUserMessage(path)` 等语义查询留在各包语义层。
+**推荐**：方案 A。与 F7 同构（事件流 seam 唯一化），同批实施（W3）。**adapter 双签名设计**（覆盖三处消费方的不同语义）：
+- ① 全量 `readSessionFile(path)→{ header, entries, sessionId }`（坏行跳过 + 记 warning）——服务 session-reconstructor（全量重建 + 坏行防御）与 session-pending（全量 includes 扫描）
+- ② 流式 `findFirstMatchingLine(path, predicate)→Promise<string|undefined>`（createReadStream + 逐行读 + 命中即停 + stream.destroy）——服务 find.ts 的 `readFirstUserMessageText`（find.ts:104 现状的「不读全文，命中即停 stream」性能优化，对 MB 级长会话是关键路径）
+
+`findFirstUserMessage(path)` 等**业务语义查询**留在各包语义层（不进 adapter——adapter 是纯格式层 + 流式遍历基元，无业务判定）。
 
 **改动点**：
-1. shared 建 pi-session-file adapter（读文件 + header 解析 + 坏行防御 + sessionId 提取）
-2. session-reader 的 find.ts 改为消费 adapter（保留「命中即停」的流式语义——若 adapter 是全量读，需确认 find.ts 的流式提前停止不是性能关键路径；若 key，adapter 提供 stream 变体）
-3. subagent-workflow 的 session-reconstructor.ts:292-307 与 session-pending.ts:55 改为消费 adapter
+1. shared 建 pi-session-file adapter **双签名**：① 全量 `readSessionFile`（读文件 + header 解析 + 坏行防御 + sessionId 提取）；② 流式 `findFirstMatchingLine(path, predicate)`（createReadStream 逐行读 + 命中即 stream.destroy，保留 find.ts 的性能不变量）。含两条签名单测
+2. session-reader 的 find.ts:104 `readFirstUserMessageText` 改为消费 adapter 的**流式签名** `findFirstMatchingLine`（命中即停语义不变，predicate 判定「是否首条 user message 文本」）
+3. subagent-workflow 的 session-reconstructor.ts:292-307 与 session-pending.ts:55 改为消费 adapter 的**全量签名** `readSessionFile`
 4. 三处最小类型子集合并到 adapter 单一类型定义
 
-**风险**：find.ts 的「命中即停 stream」语义若被全量读 adapter 替代，大 session 文件（MB 级）会有性能回退——设计上保留流式变体；session-pending 的 includes 按值扫描与 header 解析语义不同，需确认 adapter 覆盖两种查询模式。
+**风险**：双签名设计已覆盖 find.ts 流式与另两处全量的语义差异，性能不变量由流式签名保留；session-pending 的 includes 按值扫描经全量 `readSessionFile` + 调用方 `entries.some(...)` 等价实现（语义不变，header 解析复用 adapter）。⚠️ 验收 5 专项测大文件性能，防 find.ts 误用全量签名导致数量级回退。
 
 **验收（真实场景）**：
 1. `pnpm extensions:typecheck` + `pnpm extensions:lint` + `pnpm extensions:test` 全绿
 2. 本地 pi CLI 实测 session-reader：用 mimo-v2.5-pro 在 RPC mode 跑一次 `session-reader` 的 find 流程读真实 session 文件（`~/.pi/agent/sessions/` 实际文件），输出与改动前一致
 3. 坏行防御专项：构造含一行非法 JSON 的 session JSONL（如截断行），pi CLI 实测 adapter 跳过坏行不抛错，sessionId 仍正确提取（对照改动前 session-reconstructor 行为）
 4. subagent-workflow 实测：完整跑一次 subagent 编排（真实模型），session-reconstructor 重建结果与改动前一致
+5. **大文件性能回归（流式不变量）**：构造 MB 级 session 文件（5MB 长会话，如拼接多份真实 session 至 ~5MB），对比改动前后 find.ts 的 `readFirstUserMessageText` 延迟——断言无数量级回退（流式命中即停 vs 全量读在 5MB 文件上差 10-50x；若 find.ts 误用全量签名 `readSessionFile`，此项 fail 暴露性能回归）
 
 **下一层拆分**：① adapter 建立（含坏行防御单测）② find.ts 消费改造 ③ session-reconstructor 消费改造 ④ session-pending 消费改造 ⑤ 语义层类型清理。
 
@@ -140,34 +152,39 @@ extensions/ 是本项目维护的 `@zhushanwen/pi-*` 统一开发仓库：17 个
 
 **级别**：Medium · 外部 seam 收敛（与 F2 同款反模式 · 事件流层）
 
-**补录背景**：由 2026-08-13 subagent overlay JSON 混入 bug（commit af237e464）追溯发现。pi assistantMessageEvent 是外部协议 seam（text / thinking / toolcall / signature 等 typed delta）。原 session-runner 反向排除（只拦 thinking_delta）致 toolcall_delta 被当 text_delta → subagent overlay 末尾混入工具参数 JSON。bug 临时修复已在 session-runner 内提取 `mapAssistantMessageDelta`（正向判定，session-runner.ts:87 导出、:612 使用），但 event-adapter 仍是独立 switch——**两套实现仍在**，本项记录「彻底消除两套实现」的治本收口。
+**补录背景**：由 2026-08-13 subagent overlay JSON 混入 bug（commit af237e464）追溯发现。pi assistantMessageEvent 是外部协议 seam（text / thinking / toolcall / signature 等 typed delta）。原 session-runner 反向排除（只拦 thinking_delta）致 toolcall_delta 被当 text_delta → subagent overlay 末尾混入工具参数 JSON。bug 临时修复已在 session-runner 内提取 `mapAssistantMessageDelta`（正向判定，session-runner.ts:87 导出、:612 使用），但 event-adapter 仍是独立 switch（且覆盖 9 种 sub.type，远多于 session-runner 的 2 种）——**对 sub.type 字符串的判断逻辑两处各持一份**，本项记录「下沉完整分类函数、消除字符串判断两套实现」的治本收口。
 
 **现状**：
-- `runtime/infra/pi/event-adapter.ts:92-130`：handleMessageUpdate · 主 agent 路径 · switch(sub.type) 正向
-- `extensions/subagent-workflow/src/execution/session-runner.ts:78`：mapAssistantMessageDelta · subagent/workflow 路径 · 反向排除（已改正向）
+- `runtime/infra/pi/event-adapter.ts:93-133`：handleMessageUpdate · 主 agent 路径 · switch(sub.type) 正向，覆盖 9 种已知 sub.type（text_start/text_delta/text_end/thinking_start/thinking_delta/thinking_end/toolcall_start/toolcall_delta/toolcall_end/error）
+- `extensions/subagent-workflow/src/execution/session-runner.ts:78`：mapAssistantMessageDelta · subagent/workflow 路径 · 反向排除（已改正向），**仅覆盖 text_delta/thinking_delta 2 种**——两处覆盖范围不对等
 
 **方案对比**：
 
 | 方案 | 性质 | 内容 | 取舍 |
 |------|------|------|------|
-| A：mapAssistantMessageDelta 下沉 shared，event-adapter 复用 | **长期方案** | 将 session-runner 内已提取的 mapAssistantMessageDelta 下沉到 shared 层（只管 sub.type 分类，产出态类型由各调用方包装）；event-adapter 的 handleMessageUpdate 改为复用它 | 消除分流漂移（本次 bug 类不再复现）；pi 新增 delta type 单点维护；与 F2 同构收口（文件层 + 事件层 seam 各唯一化） |
-| B：保留两套实现，仅同步修复语义 | 短期方案 | event-adapter 也改为正向判定（抄 mapAssistantMessageDelta 逻辑），两处各自维护 | 逻辑仍两份，pi 协议变更时各改各的，行为悄悄漂移——本次 bug 的根因模式原样保留 |
+| A：下沉完整 sub.type→kind 分类函数，两路径消费已分类结果 | **长期方案** | shared 下沉 `classifyAssistantMessageDelta(sub)→DeltaClassification`，**覆盖全部 9 种已知 sub.type**（text_start/text_delta/text_end/thinking_start/thinking_delta/thinking_end/toolcall_start/toolcall_delta/toolcall_end/error + default→noop），产出中立的判别联合类型（kind + 各 kind 的 payload，如 toolcall_start 带 toolCallId/contentIndex/content）；event-adapter 与 session-runner 各自对 DeltaClassification 做 switch 包装各自产物 | sub.type 字符串判断单点化——pi 新增 delta type 只改分类函数一处；event-adapter 的 handleMessageUpdate 不再自己判原始 sub.type 字符串（switch 从字符串层上移到已分类 kind 层）；本次 bug 类（toolcall 被当 text）不再复现。代价：shared 新增判别联合类型 + 分类函数，runtime 与 extension 都依赖它 |
+| B：下沉 text/thinking 二态分类，承认部分收敛 | 备选方案 | 仅下沉 text_delta/thinking_delta 的分类（session-runner 现成 mapAssistantMessageDelta 的范围），event-adapter 的 toolcall/thinking_start/end/error 仍各自 switch | text/thinking 分流统一，但 event-adapter 仍持有 toolcall_start/thinking_start/thinking_end/error 等分支——pi 新增 delta type 仍要改两处。收益如实下调为「部分收敛」，删去「消除两套实现」「单点维护」承诺 |
 
-**推荐**：方案 A。注意实施约束：event-adapter 产出 `message.text_delta` WS 帧、session-runner 产出 AgentEvent，**下沉函数只管 sub.type 分类（输出 `text_delta | thinking_delta | noop` 类判定），产出态类型由各自调用方包装**——不可把任何一方的产物类型带进 shared。
+**推荐**：方案 A。F7 的治本目标是「sub.type 的判断逻辑单点化」。方案 A 把全部 9 种 sub.type 的分类（含 toolcall_start 的 toolCallId/contentIndex 提取、error 的 content 提取）下沉到 shared，产出中立的 DeltaClassification 判别联合——event-adapter 与 session-runner 各自对其 switch 包装产物。关键设计约束：
+- **分类函数只判 sub.type 字符串 + 提取中立 payload**，不产出任何一方的最终类型（event-adapter 的 WS 帧、session-runner 的 AgentEvent 都不进 shared）
+- event-adapter 的 switch 从「原始 sub.type 字符串」上移到「已分类 kind」——switch 本身没消失，但**判断逻辑（哪个 sub.type 是 text、哪个带 toolCallId）单点化**，pi 新增 delta type 只改分类函数一处（兑现「单点维护」承诺）
+
+方案 B（部分收敛）是诚实降级：若团队评估认为完整分类函数的 9 分支判别联合维护成本过高，可选 B，但必须删去「消除两套实现」「单点维护」的承诺（否则验收时 event-adapter 仍可见 toolcall_start 分支，对不上「消除两套」的断言）。
 
 **改动点**：
-1. mapAssistantMessageDelta 从 session-runner.ts 迁至 shared（含其单测）
-2. session-runner.ts:612 改为 import shared 版本（行为不变）
-3. event-adapter.ts:92-130 的 switch 改为复用 shared 版本，产出仍包装为 WS 帧
-4. 删除 extension 侧旧实现，确认零残留引用
+1. shared 下沉 `classifyAssistantMessageDelta(sub)→DeltaClassification`，覆盖 9 种已知 sub.type + default noop；DeltaClassification 为判别联合（kind + 各 kind payload，如 `{ kind:'toolcall_start'; toolCallId; contentIndex; content? }`）。含单测（每种 sub.type 一例 + 未知 default）
+2. session-runner.ts:612 的 mapAssistantMessageDelta 改为消费 classifyAssistantMessageDelta 后包装 AgentEvent（行为不变）
+3. event-adapter.ts:93-133 的 handleMessageUpdate 改为消费 classifyAssistantMessageDelta 后包装 WS 帧（text_delta→message 帧、thinking_start/delta/end→各自帧、toolcall_start→tool-call-index 中间事件、error→stream_error、其余→noop）；**对原始 sub.type 字符串的 switch 全部移除**
+4. 删除两处旧实现，确认零残留对原始 sub.type 字符串的判断（event-adapter 内仅剩对 DeltaClassification.kind 的 switch）
 
-**风险**：event-adapter 位于 runtime 打包面（tsup bundle），新增 shared import 需确认 tsup noExternal 覆盖（shared 已是 workspace 包，追加依赖声明即可）；event-adapter 的现有 switch 可能有 sub.type 之外的分支逻辑（如签名/工具调用帧），合并时不得丢弃。
+**风险**：event-adapter 位于 runtime 打包面（tsup bundle），新增 shared import 需确认 tsup noExternal 覆盖（shared 已是 workspace 包，追加依赖声明即可）；event-adapter 的 toolcall_start→tool-call-index 帧带 toolCallId/contentIndex，分类函数提取这些字段时需逐字段等价（验收 1 的 overlay 场景覆盖）；**合并时不得丢失任一 sub.type 分支**——9 种全覆盖是方案 A 成立的前提，漏一个就退回「两套实现」。
 
 **验收（真实场景）**：
 1. **subagent overlay 场景**：本地 pi CLI 实测——`--extension <subagent-workflow 源码路径>` 跑一次真实 subagent 完成流程（mimo-v2.5-pro，subagent 调用含 toolcall 的工具如 read/bash），确认 overlay 面板输出**无工具参数 JSON 混入**（对照 af237e464 修复前复现路径）
 2. 主 agent 路径回归：runtime 侧 event-adapter 改动后跑 `bash scripts/validate-runtime-bundle.sh`（涉及 runtime 文件），再 `pnpm run dev` + Playwright 连 9222 实测一次完整对话（发消息 → 收 text_delta/thinking_delta 流式更新），确认流式 UI 无回归
 3. 新增 delta type 扩展性验证：单测覆盖未知 sub.type 的默认分类（noop），确认单一实现内闭环
-4. `pnpm extensions:typecheck` + `pnpm extensions:lint` + `pnpm extensions:test` 全绿
+4. **全 sub.type 分类覆盖**：分类函数单测对 9 种已知 sub.type 各一例 + 未知 default，断言分类正确；event-adapter 侧 `rg "case '" packages/runtime/src/infra/pi/event-adapter.ts` 对原始 sub.type 字符串的判断零残留（switch 已上移到 kind 层）
+5. `pnpm extensions:typecheck` + `pnpm extensions:lint` + `pnpm extensions:test` 全绿
 
 **下一层拆分**：① shared 下沉 + 单测迁移 ② session-runner 改 import ③ event-adapter 改造 + WS 帧包装 ④ runtime bundle 验证。
 
@@ -192,15 +209,16 @@ extensions/ 是本项目维护的 `@zhushanwen/pi-*` 统一开发仓库：17 个
 | A：删除测试驱动 → DP-3 裁决 | **长期方案** | 先砍 0 消费者导出（trackSpeed/getSecret/loadSecrets + secrets.ts），跑测试确认无回归；砍后若 shared 只剩 readCache 深接口 → 保留并瘦身（quota-providers 降为「model-switch 的 quota 服务包」，定位明确）；若渗透率推不动 → 撤销 shared 定位，quota 并回 model-switch 包内 | 数据驱动决策，先清死面再评估，避免「凭感觉留 shared」或「凭感觉拆 shared」 |
 | B：现状保留 + 注释说明 | 短期方案 | 死导出留着，只加注释「0 消费者待删」 | 死面继续占发布面与类型面，三个月的技术债原样沉淀 |
 
-**推荐**：方案 A。**前置条件**：先做删除测试（砍 0 消费者导出），评估残存价值再裁决 shared 去留（DP-3 裁决时机 = W4 实施前）。DP-3 两分支：
-- 保留瘦身：quota-providers 明确为「model-switch 私有 quota 服务」，readCache 是唯一对外契约，删除测试同步瘦身
-- 撤销 shared 定位：quota-providers 移入 model-switch（`packages/` 或 extensions/model-switch 下），shared 只留 extension-logger；连带 F1 的 utils 归位决策（若 F1 已建 shared utils，此分支需重新评估其归位）
+**推荐**：方案 A。**裁决时机调整（解决决策与实施反序）**：DP-3 裁决从原「W4 实施前」**前移到 W3 之前**——F3 的「删除测试」砍 0 消费者导出（trackSpeed/getSecret/loadSecrets + secrets.ts）**不依赖 F1**（这些导出与 F1 的 utils 无关），可独立先行：先跑删除测试 → 评估 shared 残存价值 → 裁决 shared 去留 → **再决定 F1 的 utils 建在哪**。这样 F1 的 shared utils 归位决策在裁决之后做出，避免「F1 先建 shared utils，DP-3 判撤后又搬家」的返工（决策与实施反序）。DP-3 两分支：
+- 保留瘦身：quota-providers 明确为「model-switch 私有 quota 服务」，readCache 是唯一对外契约；**F1 的 utils 建在 shared**（保留定位成立）
+- 撤销 shared 定位：quota-providers 移入 model-switch（`packages/` 或 extensions/model-switch 下），shared 只留 extension-logger；**F1 的 utils 直接建在 model-switch 包内**（或新建独立 utils 包），不进 shared——此分支下 F1 的依赖声明、消费点 import 全部指向 model-switch 而非 shared
 
 **改动点**：
-1. 删除测试：砍 index.ts 中 trackSpeed/getSecret/loadSecrets re-export，删除 secrets.ts 与对应测试，`pnpm extensions:test` 全绿
+1. **（W3 之前，独立先行）删除测试**：砍 index.ts 中 trackSpeed/getSecret/loadSecrets re-export，删除 secrets.ts 与对应测试，`pnpm extensions:test` 全绿——此步不依赖 F1，砍的是 0 消费者导出
 2. rg 确认跨包零引用（model-switch 只 import readCache/CacheData）
-3. DP-3 裁决后按分支落地（保留瘦身 or 并回 model-switch）
-4. 同步 shared 包 README/定位说明（若保留：写明「服务包」定位；若撤销：删除 shared/quota-providers 目录）
+3. **DP-3 裁决（W3 之前）**：据删除测试结果裁决 shared 去留 → **决定 F1 utils 归位**（保留分支→utils 建在 shared；撤销分支→utils 建在 model-switch）
+4. （W4）裁决分支落地（保留瘦身 or 并回 model-switch）
+5. 同步 shared 包 README/定位说明（若保留：写明「服务包」定位；若撤销：删除 shared/quota-providers 目录）
 
 **风险**：trackSpeed 若被未来 quota 功能依赖，删除后需从 git 历史恢复（风险低，可恢复）；删除测试阶段若误删 buildRuntimeProviders/PROVIDERS 会挂 registry 测试——以「rg 零引用」为准逐个验证，不靠猜。
 
@@ -209,7 +227,7 @@ extensions/ 是本项目维护的 `@zhushanwen/pi-*` 统一开发仓库：17 个
 2. 本地 pi CLI 实测 model-switch：`--extension <model-switch 源码路径>` 跑一次真实场景（模型推荐触发 quota 缓存读取），readCache 路径输出与改动前一致
 3. DP-3 裁决落地后：`pnpm install`（依赖声明变化）+ extensions:test 全绿；若撤销 shared 定位，验证 model-switch 打包后 quota 功能正常（pi CLI 实测一次完整推荐流程）
 
-**下一层拆分**：① 删除测试（死导出 + secrets.ts）② 引用扫描 + 测试修复 ③ DP-3 裁决（W4 实施前）④ 裁决分支落地 ⑤ 发布面与依赖声明同步。
+**下一层拆分**：① 删除测试（死导出 + secrets.ts，**W3 之前独立先行**）② 引用扫描 + 测试修复 ③ DP-3 裁决（**W3 之前，决定 F1 utils 归位**）④ 裁决分支落地（W4）⑤ 发布面与依赖声明同步。
 
 ---
 
@@ -230,22 +248,27 @@ extensions/ 是本项目维护的 `@zhushanwen/pi-*` 统一开发仓库：17 个
 | A：审计先行 → 下沉共享 schema-validator 模块 | **长期方案** | 先审计两处分叉语义（structured-output 的 strict:false 服务于权威 schema 校验 + 错误回显；subagent-workflow 的 coerceTypes:true 服务于 spec.args 原地规范化）；确认各自正确后，下沉共享 schema-validator（选项矩阵显式化：strict / coerceTypes / 缓存策略作为入参），两包改 import | 编译层单点；选项矩阵成为显式契约，未来分叉有据可查；builtin 风险通过审计 + 回归测试兜住 |
 | B：保持两处分叉 + 互引注释 | 短期方案 | 在 ajv-validator 与 args-validator 各自加注释互指，说明为何不合并 | 零风险但零收敛；选项分叉继续隐性存在，下一个包引入 ajv 时无权威可循 |
 
-**推荐**：方案 A，但**审计是硬前置**（不审计不做）。审计产出物：两处选项语义的对照结论（各自为何正确 / 是否真的正确），记录在 commit message 与代码注释。若审计发现某一处语义本身有误（如 coerceTypes 引入的隐式类型转换是 bug 源），先修语义再收敛。
+**推荐**：方案 A，但**审计是硬前置**（不审计不做）。审计产出物：两处选项语义的对照结论（各自为何正确 / 是否真的正确），记录在 commit message 与代码注释；**“确认各自正确”必须有可执行判据**（见验收 4 的两条可移除性证伪测试），不得停留在“审计过了就算正确”的主观判断。若审计发现某一处语义本身有误（如 coerceTypes 引入的隐式类型转换是 bug 源），先修语义再收敛。
 
 **改动点**：
-1. 审计两处选项矩阵与缓存策略（对照 schema 校验语义、调用方行为、历史 commit）
-2. 若审计确认各自正确：shared 建 schema-validator（选项矩阵入参：`compileSchema(schema, { strict, coerceTypes, cache })`）
+1. 审计两处选项矩阵与缓存策略（对照 schema 校验语义、调用方行为、历史 commit）；产出 strict:false / coerceTypes:true 的可移除性证伪测试（见验收 4）作为“各自正确”的可执行判据
+2. 若证伪测试 pass（即各自选项确为必需）：shared 建 schema-validator（选项矩阵入参：`compileSchema(schema, { strict, coerceTypes, cache })`）
 3. structured-output 改 import（保留 WeakMap 缓存语义 + 权威 schema 分支不动）
 4. subagent-workflow 改 import（保留无缓存 + coerceTypes 语义）
 5. 若审计发现分叉错误：先修对应包语义，再收敛
 
-**风险**：structured-output 是 infrastructure builtin——改动必须重放 2026-08-01 事故场景回归（见验收 2），否则收敛 = 复发；两包 publish 面同步（dependency 声明）。
+**风险**：structured-output 是 infrastructure builtin——改动必须通过权威 schema 分支的确定性回归（验收 1）+ 可移除性证伪测试（验收 4），否则收敛 = 复发；两包 publish 面同步（dependency 声明）。
 
 **验收（真实场景）**：
-1. **权威 schema 分支回归（强制）**：重放 2026-08-01 事故场景——4 条 channel 修复的权威 schema（含 add_channels.items 校验），让 LLM 提交一个 schema 重写请求，确认校验用权威 schema 而非 LLM 自报 schema，4 条 channel 修复**不静默丢失**（对照事故 commit 的复现路径）
-2. subagent-workflow 回归：本地 pi CLI 实测（mimo-v2.5-pro）——worker 启动 + pause/resume 流程，spec.args 经 coerceTypes 原地规范化行为与改动前一致（lifecycle.test.ts:210 的语义在真实 pi 场景复验）
-3. `pnpm extensions:typecheck` + `pnpm extensions:lint` + `pnpm extensions:test` 全绿
-4. structured-output 单测全绿（含权威 schema 分支测试）
+1. **权威 schema 分支回归（强制 · 确定性构造）**：不依赖 LLM 概率行为——直接构造一个“自报 schema ≠ 权威 schema”的 tool call 输入喂给 `executeStructuredOutput`（不经 LLM：测试桂里 LLM 自报 schema 把 add_channels.items 放宽为宽松类型，权威 schema 要求严格类型），断言：① 权威 schema 拒绝宽松自报 schema；② 4 条 channel 修复不静默丢失（对照 2026-08-01 事故 commit 的复现路径）。这是 testable 的主载体（明确通过标准、可重复执行）
+2. **pi CLI 冒烟（非断言主载体）**：`pi --mode rpc --session-dir /tmp/f4-smoke --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve --extension <structured-output 源码路径>`，stdin JSONL 发 prompt 让 LLM 调 structured-output 工具——仅冒烟确认扩展加载 + 工具调用链路通，**不对“LLM 是否重写 schema”做断言**（该行为是概率性的，pi CLI 实测不可靠触发）
+3. subagent-workflow 回归：本地 pi CLI 实测（mimo-v2.5-pro）——worker 启动 + pause/resume 流程，spec.args 经 coerceTypes 原地规范化行为与改动前一致（lifecycle.test.ts:210 的语义在真实 pi 场景复验）
+4. **审计判据量化（“确认各自正确”的可执行定义）**：产出两条回归测试作为可移除性的证伪基线——
+   - **strict:false 可移除性**：构造一个仅被 strict:false 放过的 schema（如含 ajv strict 模式拒绝的额外关键字 / 未知 format），断言“移除 strict:false 后该 schema 编译失败”。测试 pass（编译失败）→ 证伪“strict:false 可安全移除”（选项确为必需）；测试 fail（仍编译通过）→ 证明 structured-output 的 schema 不触发 strict 校验，strict:false 可移除
+   - **coerceTypes:true 可移除性**：构造一个仅靠 coerceTypes 完成类型转换的 spec.args（如字符串 "123" 需被当作 number），断言“移除 coerceTypes:true 后该输入校验失败”。测试 pass（校验失败）→ 证伪“coerceTypes 可安全移除”；测试 fail → 证明调用方已保证类型正确，coerceTypes 可移除
+   - 各自 pass（即证伪可移除）= "确认各自正确" 的可执行定义成立，方可下沉共享 schema-validator
+5. `pnpm extensions:typecheck` + `pnpm extensions:lint` + `pnpm extensions:test` 全绿
+6. structured-output 单测全绿（含权威 schema 分支测试 + 上述两条审计证伪测试）
 
 **下一层拆分**：① 审计（选项矩阵对照 + 历史 commit 追溯）② 审计结论记录 ③ shared schema-validator 建立 ④ 两包改 import + 依赖声明 ⑤ 事故场景回归测试固化。
 
@@ -347,10 +370,10 @@ extension-logger 是合格深模块（三层通道：debug/warn/error + pi handl
 | 候选 | 验收核心（真实场景） | 全量检查 | 波次 |
 |------|---------------------|---------|------|
 | F1 | pi CLI 实测 session-reader 读真实 session（含特殊字符）输出 diff 一致；goal/model-switch 各实测一次 | extensions 三件套全绿 | W3 |
-| F2 | pi CLI 实测 find 流程读真实 session 一致；构造坏行 JSONL 验证 adapter 防御；subagent 编排实测 | extensions 三件套全绿 | W3 |
+| F2 | pi CLI 实测 find 流程读真实 session 一致；构造坏行 JSONL 验证 adapter 防御；subagent 编排实测；**5MB 文件 find 性能无数量级回退（双签名保留流式命中即停）** | extensions 三件套全绿 | W3 |
 | F7 | **subagent overlay 场景：pi 实测 subagent 完成，overlay 无工具参数 JSON 混入**；主 agent 流式回归（Playwright 9222）；runtime bundle 验证 | extensions 三件套 + validate-runtime-bundle | W3 |
 | F3 | 删除测试后 rg 零引用；pi CLI 实测 model-switch quota 缓存读取一致；DP-3 裁决后打包验证 | extensions 三件套 + pnpm install | W4 |
-| F4 | **权威 schema 分支回归：重放 2026-08-01 事故（4 条 channel 修复）不静默丢失**；subagent-workflow coerceTypes 语义 pi 实测一致 | extensions 三件套 | W4 |
+| F4 | **权威 schema 分支回归：确定性构造（自报≠权威 schema 的 tool call）+ 4 条 channel 修复不丢失**；strict:false / coerceTypes:true 可移除性证伪测试；subagent-workflow coerceTypes 语义 pi 实测一致 | extensions 三件套 | W4 |
 | F5 | 迁移后 rg 裸 console 非注释零命中；pi CLI + PI_EXT_DEBUG=1 实测 permission/model-switch 日志落盘一致 | extensions 三件套 | W5 |
 | F6 | 改名后 goal 实测 "3m5s" 输出一致；scheduler 解析一致 | typecheck | W5 |
 | 附带 | extension-dependencies 对照检查通过；pi CLI 实测 subagent-workflow workflow 被发现；tool-handler 拆分后 session-reader 实测一致 | extensions 三件套 | W3 随行 |
@@ -360,13 +383,16 @@ extension-logger 是合格深模块（三层通道：debug/warn/error + pi handl
 ### 实施顺序与依赖
 
 ```
+W3 之前（DP-3 裁决，决定 F1 utils 归位）：
+  F3-①② 删除测试 + 引用扫描（独立先行，不依赖 F1——砍 0 消费者导出）
+  → DP-3 裁决（保留瘦身 / 撤销 shared 定位）→ 决定 F1 utils 建在 shared 还是 model-switch
 W3（本层第一批）：
-  F1  ← 独立，无前置（shared utils 建立先于一切，F5 的 logger 推广依赖其包形态）
+  F1  ← 依赖 DP-3 裁决结果（保留分支→utils 建 shared；撤销分支→utils 建 model-switch）。F5 的 logger 推广也依赖 F1 包形态
   F2  ← 与 F7 同构，建议同批（共享 adapter 的语义层划分经验互用）
   F7  ← 依赖 F2 的「shared 放格式层」先例（可选，独立可做）
   附带项 ← 独立，可并行（分类对照脚本建议先做，为后续所有 extensions 改动提供守护）
 W4：
-  F3  ← 硬前置：删除测试先行；DP-3 裁决（W4 实施前）
+  F3-④⑤ 裁决分支落地 + 发布面同步（删除测试 + DP-3 裁决已在 W3 前完成）
   F4  ← 硬前置：审计先行（builtin 风险，不审计不动）
 W5：
   F5  ← 依赖 DP-3 结果（若撤销 shared 定位 → F5 走方案 B，两决策不可反序）
@@ -380,7 +406,7 @@ W5：
 | 1 | F1-① shared utils 建立 + 导出（safeStringify/escapeXml/decodeXml/时间常量） | extensions:typecheck + test |
 | 2 | F1-②③④ 12 处消费点收敛（safeStringify → escapeXml → 时间常量，可再拆 2-3 个 commit 按包） | 每 commit 后 extensions:test + 对应包 pi CLI 实测 |
 | 3 | F1-⑤ 消费包 dependency 声明 + 发布面检查 | check-version-changes.sh |
-| 4 | F2-① pi-session-file adapter 建立（含坏行防御单测） | extensions:test |
+| 4 | F2-① pi-session-file adapter 建立双签名（全量 readSessionFile + 流式 findFirstMatchingLine，含坏行防御单测） | extensions:test |
 | 5 | F2-②③④ 三处消费改造（find.ts / session-reconstructor / session-pending） | 每处后 pi CLI 实测对应场景 |
 | 6 | F7-① shared 下沉 + 单测迁移 | extensions:test |
 | 7 | F7-②③ event-adapter 改造（涉及 runtime 打包面） | validate-runtime-bundle.sh + Playwright 9222 实测 |
@@ -388,10 +414,10 @@ W5：
 | 9 | 附带-2 tool-handler 拆分（1473 → ≤1000） | session-reader pi CLI 实测 |
 | 10 | 附带-3 plan peerDep 补全 | typecheck |
 | 11 | 附带-4 subagent-workflow pi.workflows 声明 | pi CLI workflow list 实测 |
-| 12 | F3-① 删除测试（死导出 + secrets.ts） | rg 零引用 + extensions:test |
-| 13 | F3-④ DP-3 裁决分支落地 | pnpm install + pi CLI model-switch 实测 |
-| 14 | F4-① 审计产出（commit 内记录对照结论） | - |
-| 15 | F4-③④ shared schema-validator + 两包改 import | extensions:test + 事故场景回归 |
+| 12 | F3-①②③ 删除测试 + 引用扫描 + DP-3 裁决（**W3 之前**，为 F1 utils 归位提供决策） | rg 零引用 + extensions:test + 裁决记录 |
+| 13 | F3-④⑤ DP-3 裁决分支落地 + 发布面同步（W4） | pnpm install + pi CLI model-switch 实测 |
+| 14 | F4-① 审计产出 + 两条可移除性证伪测试（strict:false / coerceTypes:true）固化 | 证伪测试 pass（编译/校验按预期失败） |
+| 15 | F4-③④ shared schema-validator + 两包改 import | extensions:test + 确定性构造回归（验收 1） |
 | 16 | F5-②③④ 35 处 console 迁移（按包 2-3 个 commit） | rg 零命中 + pi CLI 日志实测 |
 | 17 | F6 改名 + 注释 | typecheck + goal/scheduler 实测 |
 

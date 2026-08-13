@@ -48,9 +48,9 @@
 | 编号 | 级别 | 问题一句话 | 证据位置（已核实） | 波次 |
 |------|------|-----------|-------------------|------|
 | E1 | Strong | update-handlers 业务编排未归位：preDownloading 状态机 / 快慢路径 / 错误翻译 ×3 / testProxyConnection 全在 handler 层 | gateway/update-handlers.ts（483 行）vs update/orchestrator.ts（333 行） | W3 |
-| E2 | Strong | stderr sink 收尾责任被推给组合根：main.ts 直接 import flushStderrSink 穿透 IRuntimeSupervisor Facade，自然退出路径 sink 无人收尾 | main.ts:74 / :274-286；process-control.ts:95 | W2 |
-| E3 | Strong | 窗口枚举双权威：WindowManager registry Map 与 `BrowserWindow.getAllWindows()` 直枚举并存（3 文件 + 1 处 activate 判空） | bridge-handlers.ts:77、runtime-supervisor.ts:337、main.ts:265、privileged-handlers.ts:57/:97/:122-132 | W2 |
-| E4 | Worth | 组合根去内联化三处同类：① local-file 白名单前缀构造 ② BrowserViewManager 状态投影闭包 ③ update 自愈两步直接 import | main.ts:207-237 / :138-143 / :70+:244/:249 | W4 |
+| E2 | Strong | 自然退出路径（runtime 崩溃无 stop 调用）stderr sink 落盘保证缺失：spawn exit handler 不 flush，靠 before-quit await 兜底但无 spawn 侧尽早 drain | main.ts:74 / :279-289；process-control.ts:95 | W2 |
+| E3 | Strong | 窗口枚举双权威：WindowManager registry Map 与 `BrowserWindow.getAllWindows()` 直枚举并存（3 文件 + 1 处 activate 判空） | bridge-handlers.ts:77、runtime-supervisor.ts:337、main.ts:270、privileged-handlers.ts:57/:97/:122-132 | W2 |
+| E4 | Worth | 组合根去内联化三处同类：① local-file 白名单前缀构造 ② BrowserViewManager 状态投影闭包 ③ update 自愈两步直接 import | main.ts:212-241 / :138-143 / :70+:249/:254 | W4 |
 | E5 | Worth | interfaces.ts 契约层 session 域泄漏：WindowState 含 sessionIds + focusedPanelId，WindowOptions.sessionId 携带业务概念 | shared/panel.ts:18-25、interfaces.ts:17/:86/:143、window-manager.ts:108-110 | W4 |
 | E6 | Worth | supervisor 内部重复实现 + shell-env 目录孤儿：KILL_WAIT_MS 双定义、存活守卫复制粘贴、shell-env 零 supervisor 内引用 | port-discoverer.ts:12 vs process-control.ts:53、runtime-supervisor.ts:95 vs :166、main.ts:73/:82 | W4 |
 | E7 | Speculative | preload 形态适配归位 + update 域口径统一：chooseDirectory 转换、onBrowserState 类型 ×3、~ 缩写、EACCES 子串匹配 | preload.ts:293-294 / :82/:242/:251、bridge-handlers.ts:33-39、orchestrator.ts:202/:228 vs download-asset.ts:103 | W5 |
@@ -59,7 +59,7 @@
 
 - **E6 checkHealthEndpoint**：原报告「注释承认『刻意重复』」系曲解——liveness-probe.ts:19-20 论证的是**同名函数语义不同**（boolean 启动轮询 vs `{ok, ms?}` 存活监测），属有意分离。本设计按「双实现事实在，但设计正当性成立」描述，方案为**共享基元**而非合并函数
 - **E6 KILL_WAIT_MS**：双定义在**定义处**（port-discoverer.ts:12 vs process-control.ts:53），原报告 :127-131/:395-398 是使用处。一处改 200ms 另一处忘改是真实 bug 源，定义收敛仍成立
-- **E4 行号**：① local-file 白名单约 31 行（main.ts:207-237，原 :185-229 / ~45 行为行号偏移+规模夸大）；③ 自愈两步 import :70 / 编排 :244/:249（原 :29-30 为文件头注释、:235-240 偏前约 9 行）
+- **E4 行号**：① local-file 白名单约 30 行（main.ts:212-241，protocol.handle :212 → allowedPrefixes :231 → isPathInAllowedPrefixes :241；原 :185-229 / ~45 行为行号偏移+规模夸大）；③ 自愈两步 import :70 / 编排 :249/:254（原 :29-30 为文件头注释、:235-240 偏前约 9 行）
 - **E7 onBrowserState**：类型文件内重复 **3 次**（:82 接口声明 / :242 实现 / :251 handler 参数），原「两遍」低估
 - **E1 testProxyConnection**：原 :64-105 截在 finally——实际 :56-111 完整函数（含 dispatcher.close() 句柄回收）
 
@@ -113,38 +113,45 @@
 
 ### 3.2 E2 · stderr sink 收尾收进 supervisor（Strong，W2）
 
-**级别**：Strong（封装补完）
+**级别**：Strong（封装补完 · 时序竞态修复）
 
-**问题**：`flushStderrSink`（process-control.ts:95，幂等）的**生命周期收尾责任被推给组合根兜底**：
+**问题**：`flushStderrSink`（process-control.ts:95，幂等）的**自然退出路径（runtime 崩溃、无 stop 调用）落盘保证缺失**：
 
-- main.ts:74 `import { flushStderrSink }` 直接穿透 `IRuntimeSupervisor` Facade（interfaces.ts 自述「main.ts 不直接调子模块」被违反）
-- main.ts:274-286 before-quit 组合根三连编排：`ctx.runtime.stop().then(() => flushStderrSink()).finally(unregisterAll + quit)`（:281 为 flush 调用行）
-- main.ts:278-279 注释自证泄漏机理：「stop() 路径未触发（runtime 自然退出）时此 flush 是落盘的唯一保障」
+- main.ts:74 `import { flushStderrSink }` —— 组合根编排 sink 收尾（before-quit 是生命周期编排点，await 落盘完成是合理职责，不算 Facade 穿透泄漏）
+- main.ts:279-289 before-quit 组合根三连编排：`ctx.runtime.stop().then(() => flushStderrSink()).finally(unregisterAll + quit)`（:286 为 flush 调用行）
+- main.ts:283-284 注释自证泄漏机理：「W-Proc2 + W2：runtime stop 已 end() stderrSink；此处 flush 等 'finish' 落盘后再 quit」「stop() 路径未触发（runtime 自然退出）时此 flush 是落盘的唯一保障」
 
 根因在 supervisor 内部：`stopRuntimeProcess` 的 exit/timeout 两路径都走 `done()`，done 内 `await flushStderrSink()`（process-control.ts:412）——**但自然退出路径（runtime 自己崩溃，无 stop 调用）时，spawnRuntimeProcess 注册的 exit handler 只调 `onExit?.(code)`（→ runtime-supervisor.onRuntimeExit），不 flush**。stderrSink 是 append 模式 WriteStream（:72），app 退出前 buffer 未 flush 会丢尾部 stderr（崩溃期证据）。
+
+**幂等机制（方案设计的事实基础）**：`flushStderrSink`（process-control.ts:95）首次调用执行 `const sink = stderrSink; stderrSink = null; sink.end(); await finish`；**后续调用因 stderrSink===null 直接 `return Promise.resolve()`（不等真正 finish）**。此幂等语义是双路径协同的关键：spawn 侧 flush 触发首次 drain 并置 null，组合根 await 在幂等入口复用——drain 已完成则立即 resolve，未完成则真等 finish。
 
 **方案对比**：
 
 | 方案 | 性质 | 内容 | 取舍 |
 |------|------|------|------|
-| **A：flush 内化 spawn 侧**（推荐） | 长期方案 | 在 `spawnRuntimeProcess` 内注册的 child `exit`/`error` handler 里追加 `void flushStderrSink()`（幂等 no-op 安全）——无论谁触发退出（stop / 自然崩溃 / spawn error），sink 收尾都在 process-control 内发生；main.ts 删除 import + .then 编排，组合根只调 `runtime.stop()` | locality：sink 生命周期封闭在 process-control（sink 本就归它管）；interface 不变，implementation 加深；stop 路径的 done() flush 与 exit 路径 flush 幂等互不干扰。代价：无（改动 ~6 行 + 删 ~5 行） |
-| B：接口补方法 | 短期方案 | `IRuntimeSupervisor` 新增 `flushStderr()`，组合根保留编排但不再 import 实现符号 | 穿透消除，但「自然退出路径无人 flush」的根因不除（组合根 flush 只覆盖 before-quit 时机），收尾仍靠组合根记得调 |
+| **A：spawn 侧 flush 尽早 drain + 组合根保留 await 兜底**（推荐） | 长期方案 | ① `spawnRuntimeProcess` 的 child `exit`/`error` handler 追加 `void flushStderrSink()`（尽早触发 drain：首次执行置 stderrSink=null + 接管 drain，fire-and-forget 适合 exit handler）；② **保留** before-quit 的 `.then(() => flushStderrSink())`（main.ts:286 不删）作为 drain 完成的兜底 await。两路径经幂等语义协同：spawn 退出触发时已开始 drain 并置 null，before-quit 的 await 若 drain 已完成则 Promise 立即 resolve，若未完成则真等 'finish' | locality + 落盘可靠性双保证：sink owner 尽早触发 drain，组合根兜底等落盘；幂等语义下两路径互不干扰。代价：main.ts 保留 flushStderrSink import（:74）与 await 编排（:286）——但消除「自然退出路径 app.quit 不等 drain」的竞态，这是 E2 目标场景的安全保证 |
+| B：接口补 flushStderr + 组合根保留 await 编排 | 备选方案 | `IRuntimeSupervisor` 新增 `flushStderr(): Promise<void>`，spawn 侧 flush 经 supervisor 暴露可被 await 的 Promise；组合根保留 await 编排但不再 import process-control 实现符号 | 穿透彻底消除（main.ts 不再直接 import process-control 符号）；**对自然退出路径反而更安全**——spawn flush 经接口暴露完整 Promise 链，组合根 await 的不再是「幂等 no-op 兜底」而是 supervisor 承诺的 drain 完成。代价：IRuntimeSupervisor 接口扩展 +1 方法。⚠️ 方案 B 不应被简单判为「根因不除」——它对自然退出路径的落盘保证比方案 A 更强（A 的 before-quit await 依赖幂等 resolve 的时序假设，B 把 drain 完成做成接口契约） |
 
-**推荐：方案 A**。E2 的本质是「sink 的终结者应是它的所有者（process-control）而非调用方（组合根）」——方案 A 同时消除穿透与漏收尾两个问题。
+**推荐：方案 A**。E2 的本质是「自然退出路径（kill -9 → spawn exit → 用户关窗 → app.quit）下 app.quit 不能丢尾部 stderr」。方案 A 用幂等机制实现双路径协同：spawn exit handler 的 `void flush` 在进程退出时**尽早开始 drain**（置 stderrSink=null），before-quit 的 `await flushStderrSink()` 是**兜底等 finish**——幂等保证：若 spawn 路径已完成（stderrSink 已 null），await 立即 resolve；若未完成，await 真 drain 到 'finish'。自然退出路径时序（kill -9 → spawn exit flush 开始 drain → 用户关窗 → before-quit await 等 finish → app.quit）尾部 stderr 不丢。
+
+组合根保留 flushStderrSink import 是合理的：before-quit 是生命周期编排点，编排「等 sink 落盘完成再 quit」属组合根职责（与 `runtime.stop()` 编排同性质）。E2 要消除的是「自然退出路径无人等 drain」的时序漏洞，而非删掉组合根的等待——删 await 会引入新竞态（见风险段）。
+
+**方案 B 作为备选的合理性**：若团队认为 main.ts 不应直接 import process-control 符号（interfaces.ts 自述约束），方案 B 通过 `IRuntimeSupervisor.flushStderr()` 把 drain 完成做成接口契约，对自然退出路径的落盘保证更强（不依赖幂等 resolve 的时序假设）。
 
 **改动点**：
-1. `process-control.ts` `spawnRuntimeProcess`：child `exit` handler 与 `error` handler 内追加 `void flushStderrSink()`
-2. `main.ts`：删除 `flushStderrSink` import（:74）与 before-quit 的 `.then(() => flushStderrSink())`（:281），before-quit 恢复 `runtime.stop().finally(unregisterAll + quit)`
-3. 更新 :278 注释（泄漏机理不再成立，改为说明收尾归 process-control）
+1. `process-control.ts` `spawnRuntimeProcess`：child `exit` handler 与 `error` handler 内追加 `void flushStderrSink()`（尽早触发 drain，幂等安全）
+2. `main.ts`：**保留** `flushStderrSink` import（:74）与 before-quit 的 `.then(() => flushStderrSink())`（:286）；更新 :283-284 注释（说明 spawn 侧已尽早 drain，此 await 是幂等兜底等 finish，自然退出路径下保证 app.quit 在 drain 完成之后）
+3. 时序验证（幂等协同）：spawn exit 的 flush 首次执行（置 stderrSink=null + 开始 drain）→ before-quit 的 await 复用幂等入口：drain 已完成则 resolve，未完成则等 finish。两路径经 process-control.ts:95 幂等机制天然协同
 
-**风险**：低。flush 幂等已内置（stderrSink=null 后 no-op）；exit 先到时 flush 一次，stop 的 done() 再 flush 是 no-op。时序验证点：before-quit 的 quit 必须在 sink 'finish' 之后——方案 A 下 stop() 内部已 await flush（done 路径），语义不变。
+**风险**：低。flush 幂等已内置（stderrSink=null 后 no-op）。**时序验证点（E2 安全保证的核心）**：自然退出路径下 app.quit 必须在 sink 'finish' 之后——方案 A 通过 before-quit 保留的 `await flushStderrSink()` 兜底保证（spawn 路径 drain 未完成时 await 真等）；stop 路径下 done() 内的 flush 与 spawn 路径 flush 幂等互不干扰。⚠️ **关键反模式（验收 1 专门覆盖）**：若错误地删掉 before-quit 的 await（仅靠 spawn 路径 fire-and-forget 的 `void flush` 自行落盘），则 kill -9 后用户立即关窗时 `child.killed=true` 使 stopRuntimeProcess 直接 resolve（不走 done 不 await flush）→ `.finally(app.quit)` 抢在 drain 完成前 → 丢尾部 stderr。方案 A 通过保留 await 规避此竞态。
 
 **验收（真实场景）**（日志落盘规范：`<getDataDir()>/logs/`，dev = `~/.xyz-agent-dev/logs/electron-runtime-stderr.log`）：
-1. **自然退出（崩溃）**：dev 启动 → 找到 runtime 子进程 PID → `kill -9` → 触发 onRuntimeExit → 退出 app → 检查 `~/.xyz-agent-dev/logs/electron-runtime-stderr.log` 尾部：runtime 最后输出的 stderr 行完整落盘无截断
-2. **正常退出**：dev 启动 → 关窗退出（非 darwin window-all-closed 路径）→ 同一日志尾部完整（回归）
-3. **spawn error**：临时改坏 runtime 入口路径 → 启动 → spawn error 路径日志落盘
-4. **stop 路径回归**：`runtime-restart`（状态条重试）→ 日志无截断
-5. 既有测试：`supervisor-health-liveness.test.ts` 等 supervisor 套件全绿
+1. **自然退出竞态（E2 核心目标场景）**：构造 stderr 持续大量输出（dev 启动后触发 runtime 持续 warn，或临时调高日志级别让 stderr 量大）→ `kill -9 <runtime PID>` 触发 onRuntimeExit → **立即**关窗（不等待，模拟用户快速关闭）→ 检查 `~/.xyz-agent-dev/logs/electron-runtime-stderr.log` 尾部：runtime 崩溃期最后的 stderr 行完整落盘无截断。此场景专门测幂等兜底是否生效——若 before-quit 的 await 被错误删除，app.quit 抢在 drain 完成前，尾部截断（回归 bug）
+2. **自然退出（普通崩溃，stderr 量小）**：dev 启动 → `kill -9 <runtime PID>` → 退出 app → 同一日志尾部完整（验收 1 的退化情况）
+3. **正常退出**：dev 启动 → 关窗退出（非 darwin window-all-closed 路径）→ 日志尾部完整（回归）
+4. **spawn error**：临时改坏 runtime 入口路径 → 启动 → spawn error 路径日志落盘
+5. **stop 路径回归**：`runtime-restart`（状态条重试）→ 日志无截断
+6. 既有测试：`supervisor-health-liveness.test.ts` 等 supervisor 套件全绿
 
 **下一层拆分**：见 §5 任务 T-E2。
 
@@ -160,7 +167,7 @@
 |------|---------|------|
 | gateway/bridge-handlers.ts:77 | `BrowserWindow.getAllWindows()` | window-list 广播回调 |
 | supervisor/runtime-supervisor.ts:337 | `BrowserWindow.getAllWindows()` | broadcastToAllWindows（runtime-port / runtime-restarting / runtime-failed / runtime-error） |
-| main.ts:265 | `BrowserWindow.getAllWindows()` | activate 时判空重建窗口 |
+| main.ts:270 | `BrowserWindow.getAllWindows()` | activate 时判空重建窗口 |
 | gateway/privileged-handlers.ts:57/:97 | `BrowserWindow.getFocusedWindow()` | pickDirectory / pickFile 对话框宿主窗口 |
 | gateway/privileged-handlers.ts:122-132 | `BrowserWindow.fromWebContents(event.sender)` | window-minimize / window-toggle-maximize / window-close |
 
@@ -179,7 +186,7 @@ registry Map 漏登记时（如 activate 重建路径之外的窗口）两套真
 1. `interfaces.ts` `IWindowManager` 扩展：`broadcast(channel, payload)` + `minimize(windowId)` / `toggleMaximize(windowId)`（close/focus 已有）+ `fromWebContents(sender)` 查询
 2. `window-manager.ts`：实现 broadcast（复用现有遍历守卫模式）；closed 事件已触发 onWindowListChanged，广播逻辑与注册表天然同处
 3. `runtime-supervisor.ts`：构造注入 `IWindowManager`，broadcastToAllWindows 内部改调注入的 broadcast；删除 BrowserWindow 全局 import（若不再需要）
-4. `main.ts:265`：activate 判空改 `ctx.windows.windowCount === 0`；`:138` 构造 BrowserViewManager 与 RuntimeSupervisor 时传入 windows
+4. `main.ts:270`：activate 判空改 `ctx.windows.windowCount === 0`；`:138` 构造 BrowserViewManager 与 RuntimeSupervisor 时传入 windows
 5. `privileged-handlers.ts`：pickDirectory/pickFile 改经 windowManager 定位聚焦窗口；window-minimize/toggle-maximize/close 改经 fromWebContents→windowId→windowManager 方法
 6. `bridge-handlers.ts:77`：window-list 广播改用 windowManager.broadcast（或保持 onWindowListChanged 回调内调 broadcast）
 
@@ -203,9 +210,9 @@ registry Map 漏登记时（如 activate 重建路径之外的窗口）两套真
 
 **问题**：main.ts（286 行）作为纯编排脚本，仍内联三处「子域自己的逻辑」：
 
-1. **protocol.handle('local-file') 内联白名单前缀构造**（main.ts:207-237 约 31 行）：allowedPrefixes 列表（getAppPath / getDataDir / attachments / cwd / tmpdir / 用户子目录 + path.sep 后缀）构造在组合根；校验函数 `isPathInAllowedPrefixes` 已抽 input-validators，**仅前缀列表内联**
+1. **protocol.handle('local-file') 内联白名单前缀构造**（main.ts:212-241 约 30 行）：allowedPrefixes 列表（getAppPath / getDataDir / attachments / cwd / tmpdir / 用户子目录 + path.sep 后缀）构造在组合根；校验函数 `isPathInAllowedPrefixes` 已抽 input-validators，**仅前缀列表内联**
 2. **BrowserViewManager onStateChange 状态投影闭包内联**（main.ts:138-143）：`(sid, state) => { win = ctx.mainWindow; isDestroyed 守卫; send('browser:state', { sessionId: sid, ...state }) }`——状态投影（Main 窗口引用 + 守卫 + 事件发送）是 BrowserViewManager 的职责，闭包把 ctx 耦合进了 main.ts
-3. **update 自愈两步直接 import 组合根编排**（import :70 / 编排 :244/:249）：`maybeRollbackInterruptedUpdate()` + `cleanupCompletedUpdate()` 两步时序（先回滚后清理，注释自述顺序依赖）内联在 whenReady——update 域没有门面
+3. **update 自愈两步直接 import 组合根编排**（import :70 / 编排 :249/:254）：`maybeRollbackInterruptedUpdate()` + `cleanupCompletedUpdate()` 两步时序（先回滚后清理，注释自述顺序依赖）内联在 whenReady——update 域没有门面
 
 **方案对比**：
 
@@ -218,7 +225,7 @@ registry Map 漏登记时（如 activate 重建路径之外的窗口）两套真
 **推荐**：三项全走方案 A。③ 的时序依赖（「必须在 maybeRollback 之后（replacing 回滚完成转入终态后再清理）」）是 update 域的知识，不应由组合根记住；① 的白名单是安全敏感逻辑（注释自述「禁止把整个 homedir 加入白名单」），构造与校验同域后安全决策单点可审。
 
 **改动点**：
-1. `input-validators.ts`：新增 `buildLocalFileAllowedPrefixes()`（现 main.ts:207-237 逻辑整体迁移，含 path.sep 后缀规范化与注释）；main.ts protocol.handle 内剩 `isPathInAllowedPrefixes(resolved, buildLocalFileAllowedPrefixes())`
+1. `input-validators.ts`：新增 `buildLocalFileAllowedPrefixes()`（现 main.ts:212-241 逻辑整体迁移，含 path.sep 后缀规范化与注释）；main.ts protocol.handle 内剩 `isPathInAllowedPrefixes(resolved, buildLocalFileAllowedPrefixes())`
 2. `browser-view-manager.ts`：构造签名扩展（windows + mainWindow getter + 可选 onStateChange）；内部 `sendBrowserState(sid, state)` 私有方法封装守卫+发送；main.ts 闭包删除
 3. `update-self-healer.ts`：新增 `selfHealOnBoot(): Promise<void>`；main.ts whenReady 两步换一行
 
@@ -355,14 +362,14 @@ registry Map 漏登记时（如 activate 重建路径之外的窗口）两套真
 1. **真实场景冒烟**：`pnpm run dev` 启动 → 完整对话（新建 session → 发消息 → 收回复 → 切 session → 重开验证历史）→ 确认无回归。update 相关（E1/E7 ④）用 `XYZ_DEV_MOCK_UPDATE=1` 走 mock 升级流
 2. **全量检查**：`apps/electron` 的 vitest 全绿（`cd apps/electron && npx vitest run`）、`pnpm run lint` 通过、全仓 typecheck 通过
 3. **日志落盘验证**（E2 专属）：`~/.xyz-agent-dev/logs/electron-runtime-stderr.log` 尾部完整
-4. **打包链路**：E1 是 update 打包敏感区——W3 波次整体验收时跑一次 `bash scripts/validate-runtime-bundle.sh`；main/ 改动不触发 pre-commit 的 runtime bundle 验证，但 AGENTS.md §12「打包相关改动逐个 commit 逐个验证」精神适用（update 域改动每 commit 后跑 electron 测试）
+4. **E1 打包敏感功能域验证（非 runtime bundle）**：E1 改的是 update-handlers/orchestrator（main 进程内，**不进 runtime bundle**），属「打包敏感功能域」（升级行为正确）而非 AGENTS.md §12 的 bundle 打包语义。逐 commit 验证用：① `apps/electron` vitest 全绿（update-handlers-orchestration.test.ts / orchestrator.test.ts / proxy-handlers.test.ts）；② 真实升级冲烟（`XYZ_DEV_MOCK_UPDATE=1` mock 完整升级流）。**E1 不触发 `validate-runtime-bundle.sh`**——该脚本验 runtime bundle（packages/runtime），查不出 update 域回归
 
 ### 汇总表
 
 | 编号 | 级别 | 波次 | 方案 | 验收核心场景 | 风险 |
 |------|------|------|------|-------------|------|
 | E1 | Strong | W3 | 四类逻辑收进 orchestrator，handler 浅转发 | mock 完整升级流 / 预下载快路径 / 三错误路径等价 / 代理测试 | update 打包敏感区，逐 commit 验证 |
-| E2 | Strong | W2 | flush 内化 process-control spawn 侧，组合根删编排 | kill -9 runtime 后 stderr 完整落盘 / 正常退出回归 | 低（幂等已内置） |
+| E2 | Strong | W2 | spawn 侧 flush 尽早 drain + 组合根保留 await 兜底（幂等协同） | kill -9 + 立即关窗的竞态场景 stderr 完整落盘 / 正常退出回归 | 低（幂等已内置） |
 | E3 | Strong | W2 | 全部窗口枚举/操作经 IWindowManager | 重启广播 / 窗口列表 / 特权窗口操作 / 对话框降级 | 中（supervisor 注入无环） |
 | E4 | Worth | W4 | 白名单进 input-validators、投影内聚、selfHealOnBoot | local-file 图片与越权 403 / browser drawer / 中断升级回滚 | ① 是安全路径，逐行等价 |
 | E5 | Worth | W4 | 注册表瘦身 + 投影归 renderer（盘点先行） | session 生命周期回归 / window-list 契约 / URL 参数迁移 | 中（shared 跨包类型） |
@@ -392,7 +399,7 @@ W5（E7，②③ 盘点后定方案级别）
 
 | 任务 | 内容 | 依赖 | commit 建议 |
 |------|------|------|------------|
-| **T-E2** | flush 内化 spawn 侧 + 删组合根编排 | 无 | 单 commit（~10 行 + 注释更新） |
+| **T-E2** | spawn 侧 exit/error handler 追加 flush 尽早 drain + 保留组合根 await 兜底 + 注释更新 | 无 | 单 commit（~6 行追加 + 注释更新） |
 | **T-E3-1** | IWindowManager 扩展接口（broadcast/minimize/toggleMaximize/fromWebContents）+ window-manager 实现 | T-E2（同 W2，无硬依赖） | 单 commit（interface + 实现 + 测试） |
 | **T-E3-2** | RuntimeSupervisor 注入 windowManager，broadcastToAllWindows 改经注入 | T-E3-1 | 单 commit |
 | **T-E3-3** | privileged-handlers / bridge-handlers / main.ts activate 改经 windowManager | T-E3-1 | 单 commit（3 文件联动） |
@@ -420,5 +427,5 @@ W5（E7，②③ 盘点后定方案级别）
 ### 收尾
 
 - 全部完成后：更新 README.md 的 36 候选总览表状态列（E1-E7 → 已落地），修正 W5 段落误列 E5 的笔误
-- 每波次结束跑 §4 层内整体验收；W3 结束（E1 落定）跑一次 `bash scripts/validate-runtime-bundle.sh`
+- 每波次结束跑 §4 层内整体验收；W3 结束（E1 落定）跑 §4 第 4 项 E1 功能域验证（electron vitest + 升级冲烟），**不跑 `validate-runtime-bundle.sh`**（04 层候选均在 apps/electron，不进 runtime bundle）
 - 本层改动全部在 `apps/electron/` 与 `packages/shared/`（E5）+ `packages/renderer/`（E5/E7 消费方），不触碰 runtime 打包链路（E1 的 update 域除外——它不进 runtime bundle，但属于打包敏感功能域，逐 commit 验证原则适用）
