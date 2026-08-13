@@ -52,7 +52,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, provide, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Wrench } from '@lucide/vue'
 import type { Component } from 'vue'
@@ -61,8 +61,9 @@ import { getSettingsStore } from '@xyz-agent/core'
 import { useSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import * as fileApi from '@/api/domains/file'
+import { useChatViewDeps } from '@/composables/panel/useChatViewDeps'
 // [w6 chat-ui-and-shell T7] MarkdownRenderer 迁 ui 包（经 ChatViewDeps inject 消费 renderMarkdown）
-import { MarkdownRenderer } from '@xyz-agent/ui'
+import { MarkdownRenderer, ChatViewDepsKey } from '@xyz-agent/ui'
 
 const { t } = useI18n()
 
@@ -70,6 +71,12 @@ const props = defineProps<{
   /** drawer 所属 panel 的 session（查 commandStore + file.read cwd 守门用） */
   sessionId: string | null
 }>()
+
+// [w6 T6] ui MarkdownRenderer 经 ChatViewDeps inject 消费壳层依赖。CommandDocPanel 不在 MessageStream
+// provide 作用域内（走 DrawerPanel，与 DetailPane 同级），须自行 provide——否则子 MarkdownRenderer
+// setup 调 useChatViewDeps() inject 缺失抛错（description + content 两个 MR 都会崩）。与 DetailPane:283 同范式。
+// sessionId 可为 null，coalesce '' 后 renderMarkdown 无路径链接降级（安全）。
+provide(ChatViewDepsKey, useChatViewDeps(computed(() => props.sessionId ?? '')))
 
 const commandStore = useCommandStore()
 const settings = getSettingsStore()

@@ -12,13 +12,14 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { defineComponent } from 'vue'
+import { defineComponent, inject } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import CommandDocPanel from '@/components/panel/CommandDocPanel.vue'
 import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/command/useCommandStore'
 import { getSettingsStore } from '@xyz-agent/core'
 import { useSideDrawer, resetSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 import type { SkillInfo } from '@xyz-agent/shared'
+import { ChatViewDepsKey } from '@xyz-agent/ui'
 
 // file.read mock：捕获调用参数，返回预设 content。两路守门（带/不带 sessionId）都走这个 mock。
 const readMock = vi.fn()
@@ -58,6 +59,16 @@ const mdStub = defineComponent({
   name: 'MarkdownRenderer',
   props: { content: { type: String, default: '' } },
   template: '<div class="md-stub">{{ content }}</div>',
+})
+// MarkdownRenderer inject 探针：验证 CommandDocPanel provide 了 ChatViewDepsKey。
+// drawer 不在 MessageStream provide 作用域内，须自行 provide，否则 MarkdownRenderer setup 抛 inject 缺失。
+const mdProbe = defineComponent({
+  name: 'MarkdownRenderer',
+  setup() {
+    const deps = inject(ChatViewDepsKey, null)
+    return { hasDeps: !!deps }
+  },
+  template: '<div class="md-probe">{{ hasDeps }}</div>',
 })
 
 beforeEach(() => {
@@ -259,5 +270,24 @@ describe('CommandDocPanel', () => {
     expect(stubsAfter[0]!.text()).toContain('修复问题')
     expect(stubsAfter[1]!.text()).toContain('Fix Skill body')
     expect(wrapper.text()).not.toContain('无文档正文')
+  })
+
+  it('CommandDocPanel provide ChatViewDepsKey（drawer 不在 MessageStream 作用域，须自行 provide，子 MarkdownRenderer 才能 inject）', async () => {
+    await setup('s1')
+    readMock.mockResolvedValue({ content: '# body', truncated: false })
+
+    const drawer = useSideDrawer()
+    drawer.open('doc', { commandName: '/fix' })
+
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdProbe } },
+    })
+    await flushPromises()
+
+    // description + content 两个 MarkdownRenderer 都能 inject 到 ChatViewDeps（provide 生效，不抛 inject 缺失）
+    const probes = wrapper.findAll('.md-probe')
+    expect(probes.length).toBe(2)
+    expect(probes.every((p) => p.text() === 'true')).toBe(true)
   })
 })
