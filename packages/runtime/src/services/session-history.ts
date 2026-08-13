@@ -1,78 +1,41 @@
 /**
  * Session 文件历史读取工具
  *
- * 从 .jsonl session 文件解析消息历史。
- * 经 ISessionStore port 访问 scanSessions（发现）+ convertHistory（翻译），
- * 不直接 import infra。
+ * 从 .jsonl session 文件解析消息历史。经 ISessionStore port 访问 scanSessions（发现）+
+ * convertHistory（翻译，透传 entryIds）。entry → 伪消息映射复用 infra 共享单点
+ * mapSessionEntries（converter M3），与 RPC 路径（rebuildHistoryFromEntries）共用单点，
+ * by construction 保证两路径覆盖一致（AGENTS.md 规则 7.5：可重开恢复）。
  */
 
 import { readFile } from 'node:fs/promises'
 import { statSync } from 'node:fs'
 import type { ISessionStore } from './ports/session.js'
 import { isEnoent } from '../utils/errors.js'
+import { parseJsonl, readTailBytes } from '../utils/jsonl.js'
+import { mapSessionEntries } from '../infra/pi/session-entry-mapper.js'
+import type { PiSessionEntry } from '../infra/pi/pi-protocol.js'
 
 /** 尾读窗口默认保留的 turn 数上限（getHistoryTailFromFile / tailReadHistory 共用）。 */
 const DEFAULT_MAX_TURNS = 20
-import { parseJsonl, readTailBytes } from '../utils/jsonl.js'
 
 /**
- * 把 JSONL entry 过滤+映射为 pi message 数组（供 convertHistory 消费）。
- * 放行四类 entry：message / compaction / custom_message / branch_summary。
- * branch_summary 是 pi BranchSummaryEntry（session-manager.ts:80），转 role:'branchSummary' 伪消息，
- * 与 RPC 路径（pi get_messages 返回 role:'branchSummary'）在 convertPiHistory 汇合（规则 7.5）。
+ * 过滤出 object entry 并收窄为 PiSessionEntry[]（供 mapSessionEntries 消费）。
+ *
+ * parseJsonl/readTailBytes 可能返回非 object JSON 值（裸数字/字符串/null/畸形行 parse 出的非对象值），
+ * 而 mapSessionEntries 的 switch(entry.type) 要求 entry 是 object（非 object 访问 .type 会抛错）。
+ * 此处前置过滤，mapper 只处理 object entry。
+ *
+ * bashExecution 以 type:'message' + message.role:'bashExecution' 存储（W2 已验证：pi
+ * session-manager appendMessage 把 message 包成 SessionMessageEntry），走 mapper 的 message
+ * 分支透传，convertPiHistory 的 bashExecution 分支正确还原，无需单独处理。
  */
-function mapEntriesToPiMessages(entries: unknown[]): unknown[] {
-  return entries
-    .filter((e): e is Record<string, unknown> =>
-      typeof e === 'object' && e !== null && (
-        ((e as { type?: string }).type === 'message' && 'message' in e) ||
-        (e as { type?: string }).type === 'compaction' ||
-        (e as { type?: string }).type === 'custom_message' ||
-        (e as { type?: string }).type === 'branch_summary'
-        // [W2 已验证] bashExecution entries 以 type:'message' + message.role:'bashExecution' 存储。
-        // 验证来源：pi fork 源码（pi-mono-workspace/main/packages/coding-agent/src/）——
-        //   - core/agent-session.ts:2650 recordBashResult 构造 {role:"bashExecution", ...} message
-        //   - core/session-manager.ts:976 appendMessage 把 message 包成 SessionMessageEntry {type:"message", message}
-        //   - core/messages.ts:29 BashExecutionMessage 定义 role:"bashExecution"
-        // 因此 bashExecution 走上面的 `type === 'message' && 'message' in e` 通用分支透传：
-        //   map 时取 e.message（含 role:"bashExecution" + command/output/...），convertPiHistory
-        //   的 m.role === 'bashExecution' 分支（message-converter.ts:304）正确还原。
-        // filter 无需为 bashExecution 加单独条件。若 pi 未来改为独立顶层 entry 类型
-        // （如 type: 'bash_execution'），在此添加对应过滤条件 + map 分支转 role:'bashExecution'：
-        //   || (e as { type?: string }).type === 'bash_execution'
-      ))
-    .map((e) => {
-      if (e.type === 'compaction') {
-        return {
-          role: 'compactionSummary',
-          summary: e.summary,
-          tokensBefore: e.tokensBefore,
-          timestamp: e.timestamp ? new Date(e.timestamp as string).getTime() : Date.now(),
-        }
-      }
-      if (e.type === 'custom_message') {
-        const content = e.content
-        return {
-          role: 'custom',
-          customType: e.customType,
-          content: typeof content === 'string' ? content : '',
-          details: e.details,
-          display: typeof e.display === 'boolean' ? e.display : undefined,
-          timestamp: e.timestamp ? new Date(e.timestamp as string).getTime() : Date.now(),
-        }
-      }
-      if (e.type === 'branch_summary') {
-        return {
-          role: 'branchSummary',
-          summary: e.summary,
-          fromId: e.fromId,
-          timestamp: e.timestamp ? new Date(e.timestamp as string).getTime() : Date.now(),
-        }
-      }
-      // message entry：透传 message 体，附加 __entryId（pi JSONL entry id）供 fork 定位。
-      const msg = (e.message && typeof e.message === 'object' ? e.message : {}) as Record<string, unknown>
-      return { ...msg, __entryId: typeof e.id === 'string' ? e.id : undefined }
-    })
+function filterObjectEntries(entries: unknown[]): PiSessionEntry[] {
+  // parseJsonl/readTailBytes 可能返回非 object（裸数字/字符串/null），mapSessionEntries 的
+  // switch(entry.type) 要求 entry 是 object。前置过滤后 cast 为 PiSessionEntry[]（运行时降级，
+  // mapper 按 entry.type 结构访问，非合规字段走 default 跳过）。不用类型谓词，保留 unknown[]
+  // 到 PiSessionEntry[] 的 cast（TS 认为充分重叠；谓词会收窄成 Record<string,unknown>[] 导致
+  // 与 PiSessionEntry 联合不重叠报 TS2352）。
+  return entries.filter((e) => typeof e === 'object' && e !== null) as PiSessionEntry[]
 }
 
 /**
@@ -119,12 +82,14 @@ export async function getHistoryFromFilePath(filePath: string, sessionStore: ISe
     }
     throw e
   }
-  // G2: parseJsonl 统一「逐行 parse + 跳畸形行」骨架，消费方只做领域过滤。
-  // mapEntriesToPiMessages 放行四类 entry：message / compaction / custom_message / branch_summary
-  // （AGENTS.md 规则 7.5：可重开恢复——重开 session 时分支摘要/压缩记录/扩展通知都需还原）。
-  const piMessages = mapEntriesToPiMessages(parseJsonl(content))
+  // 经共享 mapper（mapSessionEntries）映射四类 entry → 伪消息 + 平行 entryIds（M3）。
+  // 替代旧本地 mapEntriesToPiMessages，与 RPC 路径（rebuildHistoryFromEntries）共用单点，
+  // by construction 保证两路径覆盖一致（AGENTS.md 规则 7.5：分支摘要/压缩记录/扩展通知都需还原）。
+  // filterObjectEntries 前置过滤非 object（parseJsonl 可能返回裸数字/字符串/null）。
+  const { messages, entryIds } = mapSessionEntries(filterObjectEntries(parseJsonl(content)))
 
-  return sessionStore.convertHistory(piMessages)
+  // 经 port 透传 entryIds（MF5），使 user/assistant message 带 piEntryId（fork 定位截断点用）。
+  return sessionStore.convertHistory(messages, entryIds)
 }
 
 /**
@@ -230,30 +195,24 @@ export async function tailReadHistory(
     windowStart = userMsgIndices[userMsgIndices.length - maxTurns]
   }
 
-  // 收集窗口内所有 message/compaction/custom_message/branch_summary entry（正序）
-  const messageEntries: unknown[] = []
+  // 收集窗口内全部 object entry（正序）——四类筛选交给 mapSessionEntries（共享单点，CQ1）。
+  // windowStart 基于 turn 边界（isTurnBoundary 在原始 entries 上算），此处只做 index 截窗；
+  // 非 object entry（parseJsonl/readTailBytes 可能返回裸数字/字符串/null）跳过，避免 mapper 抛错。
+  const windowEntries: PiSessionEntry[] = []
   for (let i = windowStart; i < entries.length; i++) {
     const entry = entries[i]
     if (typeof entry !== 'object' || entry === null) continue
-    const e = entry as Record<string, unknown>
-    const isMsg = e.type === 'message'
-    const isCompaction = e.type === 'compaction'
-    const isCustom = e.type === 'custom_message'
-    const isBranch = e.type === 'branch_summary'
-    if (isMsg || isCompaction || isCustom || isBranch) {
-      messageEntries.push(entry)
-    }
+    windowEntries.push(entry as PiSessionEntry)
   }
 
-  // AC-5 turn 外扩（D14）：若 messageEntries 首条是孤立 toolResult（窗口外有对应 assistant），
-  // 尝试从原始 entries 向前找 1 轮配对。仍无法配对则 convertHistory 会 warn 丢弃。
-  // 这里不额外拉取——外扩逻辑在 convertHistory 内部处理（toolResult 找不到 assistant 时 warn skip）。
+  // AC-5 turn 外扩（D14）：若窗口首条是孤立 toolResult（窗口外有对应 assistant），
+  // convertHistory 内部 warn 丢弃（不额外拉取，外扩逻辑在 convertHistory 处理）。
 
-  // 转换：复用 mapEntriesToPiMessages（与 getHistoryFromFilePath 同一份 filter+map 逻辑）
-  const piMessages = mapEntriesToPiMessages(messageEntries)
+  // 经共享 mapper 映射四类 entry → 伪消息 + 平行 entryIds（M3，替代 mapEntriesToPiMessages）。
+  const { messages, entryIds } = mapSessionEntries(windowEntries)
 
   // N1: truncated 判定。全量读时按 turn 数判定；只读了尾窗口时保守认定 true
   // （尾窗口外的 turn 数未知，宁可多显示「加载更多」也别漏）。
   const truncated = didFullRead ? (userMsgIndices.length > maxTurns) : true
-  return { messages: sessionStore.convertHistory(piMessages), truncated }
+  return { messages: sessionStore.convertHistory(messages, entryIds), truncated }
 }

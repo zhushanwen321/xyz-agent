@@ -64,8 +64,10 @@ export class PiSessionStore implements ISessionStore {
     return patchSessionCwd(filePath, newCwd)
   }
 
-  convertHistory(raw: unknown[]): Message[] {
-    return convertPiHistory(raw)
+  convertHistory(raw: unknown[], entryIds?: string[]): Message[] {
+    // MF5：透传平行 entryIds 给 convertPiHistory，使文件路径产出的 user/assistant message
+    // 带 piEntryId（fork 定位用）。entryIds 与 raw 按 index 对齐（mapSessionEntries 产出）。
+    return convertPiHistory(raw, entryIds)
   }
 
   rebuildHistoryFromEntries(entries: unknown[], segmentsMetadata: SegmentsMetadataFile | null): RebuiltHistory {

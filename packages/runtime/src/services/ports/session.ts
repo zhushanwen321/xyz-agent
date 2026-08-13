@@ -88,8 +88,14 @@ export interface ISessionStore {
   invalidateMetaCache(filePath: string): void
   /** 修正 session 文件的 cwd 字段。 */
   patchSessionCwd(filePath: string, newCwd: string): boolean
-  /** 翻译 pi 历史（unknown[] → Message[]）。pi 结构只在此实现内部断言。 */
-  convertHistory(raw: unknown[]): import('@xyz-agent/shared').Message[]
+  /**
+   * 翻译 pi 历史（unknown[] → Message[]）。pi 结构只在此实现内部断言。
+   *
+   * entryIds 与 raw 平行对齐的来源 entry id（文件路径经 mapSessionEntries 产出），
+   * 透传给 convertPiHistory 使 user/assistant message 带 piEntryId（fork 定位截断点用，MF5）。
+   * 不传时行为不变（兼容旧调用方 / 不需 piEntryId 的场景）。
+   */
+  convertHistory(raw: unknown[], entryIds?: string[]): import('@xyz-agent/shared').Message[]
   /**
    * 从 pi get_entries 返回的 entry 树重建 xyz-agent Message[]。
    *
