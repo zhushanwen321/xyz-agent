@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { rebuildHistoryFromEntries } from '../../../infra/pi/entry-tree-builder.js'
 import type { SegmentsMetadataFile } from '@xyz-agent/shared'
 import type {
@@ -7,6 +7,8 @@ import type {
   PiSessionCustomEntry,
   PiSessionLabelEntry,
   PiSessionCompactionEntry,
+  PiSessionBranchSummaryEntry,
+  PiSessionCustomMessageEntry,
   PiHistoryMessage,
   PiHistoryToolResult,
   PiHistoryContentPart,
@@ -127,6 +129,66 @@ function makeClientMsgIdEntry(overrides: {
     parentId: overrides.parentId ?? overrides.userEntryId,
     timestamp: overrides.timestamp ?? '2026-07-25T10:00:00.100Z',
     data,
+  }
+}
+
+/** 构造 compaction entry（真实 type:'compaction'，M2 前 RPC 路径丢弃，M2 后转 system 消息）。 */
+function makeCompactionEntry(overrides: {
+  id: string
+  parentId?: string | null
+  summary?: string
+  tokensBefore?: number
+  firstKeptEntryId?: string
+  timestamp?: string
+}): PiSessionCompactionEntry {
+  return {
+    type: 'compaction',
+    id: overrides.id,
+    parentId: overrides.parentId ?? null,
+    timestamp: overrides.timestamp ?? '2026-07-25T10:00:00.000Z',
+    summary: overrides.summary ?? '已压缩',
+    firstKeptEntryId: overrides.firstKeptEntryId ?? 'k1',
+    tokensBefore: overrides.tokensBefore ?? 1000,
+  }
+}
+
+/** 构造 branch_summary entry（真实 type:'branch_summary'，M2 前 RPC 路径丢弃，M2 后转 system 消息）。 */
+function makeBranchSummaryEntry(overrides: {
+  id: string
+  parentId?: string | null
+  fromId?: string
+  summary?: string
+  timestamp?: string
+}): PiSessionBranchSummaryEntry {
+  return {
+    type: 'branch_summary',
+    id: overrides.id,
+    parentId: overrides.parentId ?? null,
+    timestamp: overrides.timestamp ?? '2026-07-25T10:00:00.000Z',
+    fromId: overrides.fromId ?? 'from-1',
+    summary: overrides.summary ?? '分支摘要',
+  }
+}
+
+/** 构造 custom_message entry（真实 type:'custom_message'，M2 前 RPC 路径丢弃，M2 后转 system 消息）。 */
+function makeCustomMessageEntry(overrides: {
+  id: string
+  parentId?: string | null
+  customType: string
+  content?: string
+  display?: boolean
+  details?: Record<string, unknown>
+  timestamp?: string
+}): PiSessionCustomMessageEntry {
+  return {
+    type: 'custom_message',
+    id: overrides.id,
+    parentId: overrides.parentId ?? null,
+    timestamp: overrides.timestamp ?? '2026-07-25T10:00:00.000Z',
+    customType: overrides.customType,
+    content: overrides.content ?? '通知内容',
+    ...(overrides.display !== undefined && { display: overrides.display }),
+    ...(overrides.details !== undefined && { details: overrides.details }),
   }
 }
 
@@ -336,8 +398,10 @@ describe('rebuildHistoryFromEntries', () => {
     expect(messages[0].content).toEqual([{ type: 'text', text: '看图' }])
   })
 
-  // ── 用例 8：非 message 非 custom entry（label/summary）→ 跳过 ──────
-  it('case 8: label/compaction entries (non-message, non-client-msg-id) → skipped, do not affect messages', () => {
+  // ── 用例 8：label/other-custom 跳过；compaction M2 后转 system 消息 ──
+  // M2 语义变化：compaction（type:'compaction'）经 mapSessionEntries 转成 compactionSummary
+  // 伪消息 → convertPiHistory 产 system 消息。M2 前 RPC 路径丢弃它（违反规则 7.5）。
+  it('case 8: label/other-custom skipped; compaction → system message (M2: was dropped, now preserved)', () => {
     const labelEntry: PiSessionLabelEntry = {
       type: 'label',
       id: 'lbl00800',
@@ -346,7 +410,7 @@ describe('rebuildHistoryFromEntries', () => {
       label: '重要',
       targetId: 'msg00800',
     }
-    // compaction entry：pi compact 产生的摘要（type:'compaction'，本函数不消费，应跳过）
+    // compaction entry：M2 前被 RPC 路径丢弃，M2 后经 mapSessionEntries 转 system 消息（规则 7.5 修复）
     const compactionEntry: PiSessionCompactionEntry = {
       type: 'compaction',
       id: 'sum00800',
@@ -356,7 +420,7 @@ describe('rebuildHistoryFromEntries', () => {
       firstKeptEntryId: 'msg00800',
       tokensBefore: 1000,
     }
-    // 非 xyz.client-msg-id 的 custom entry（其他扩展的 custom）也应跳过
+    // 非 xyz.client-msg-id 的 custom entry → 进 customDataEntries，不进 messages，不影响 clientUuidMap
     const otherCustomEntry: PiSessionCustomEntry = {
       type: 'custom',
       customType: 'other.extension-type',
@@ -375,10 +439,14 @@ describe('rebuildHistoryFromEntries', () => {
 
     const { messages, clientUuidMap } = rebuildHistoryFromEntries(entries, null)
 
-    // 只有 1 个 message entry 被转，其余 label/compaction/其他 custom 全跳过
-    expect(messages).toHaveLength(1)
-    expect(clientUuidMap.size).toBe(0)
+    // message(user) + compaction(system) = 2 条；label 跳过；other custom 分流到 customDataEntries
+    expect(messages).toHaveLength(2)
+    expect(messages.map((m) => m.role)).toEqual(['user', 'system'])
     expect(messages[0].content).toEqual([{ type: 'text', text: '正常消息' }])
+    // compaction 转 system 消息 + compactionSummary 字段（M2 修复，规则 7.5）
+    expect(messages[1].compactionSummary).toMatchObject({ summary: '已压缩', tokensBefore: 1000 })
+    // other custom（非 xyz.client-msg-id）不影响 clientUuidMap
+    expect(clientUuidMap.size).toBe(0)
   })
 
   // ── 补充用例 9：assistant message 不回填 segments（只 user 回填）───
@@ -652,5 +720,93 @@ describe('rebuildHistoryFromEntries', () => {
     expect(messages[2].compactionSummary).toBeDefined()
     // custom system message
     expect(messages[3].customType).toBe('subagent-bg-notify')
+  })
+
+  // ════════════════════════════════════════════════════════════════════
+  // M2 integration 测试：mapSessionEntries 接入（真实 entry type / clientUuidMap / entryIds）
+  // ════════════════════════════════════════════════════════════════════
+  // 背景：M2 把 rebuildHistoryFromEntries 第一遍扫描改为 mapSessionEntries（共享单点）。
+  // C1 用例 3-6 用 type:'message' + 特殊 role 入口（绕过 entry type 分派），验证 convertPiHistory
+  // 的 role 分支；TC1-3 用真实 entry type（compaction/branch_summary/custom_message），验证
+  // mapSessionEntries 的 entry type → 伪消息映射 + clientUuidMap 从 customDataEntries 建 + entryIds 平行传。
+
+  // ── TC1：真实 entry type（compaction/branch_summary/custom_message）→ system 消息 ──
+  it('TC1: real entry types (compaction/branch_summary/custom_message) → system messages (was dropped before M2)', () => {
+    const entries: PiSessionEntry[] = [
+      makeMessageEntry({ id: 'tc1-1', role: 'user', text: '问题' }),
+      makeCompactionEntry({ id: 'tc1-2', summary: '上下文已压缩', tokensBefore: 8000 }),
+      makeBranchSummaryEntry({ id: 'tc1-3', fromId: 'msg-old', summary: '分支摘要内容' }),
+      makeCustomMessageEntry({ id: 'tc1-4', customType: 'subagent-bg-notify', content: '完成' }),
+      makeMessageEntry({ id: 'tc1-5', role: 'assistant', text: '回答' }),
+    ]
+
+    const { messages } = rebuildHistoryFromEntries(entries, null)
+
+    // user + system(compaction) + system(branch) + system(custom) + assistant = 5
+    // M2 前 RPC 路径只产 user + assistant = 2（丢三类，违反规则 7.5）
+    expect(messages).toHaveLength(5)
+    expect(messages.map((m) => m.role)).toEqual(['user', 'system', 'system', 'system', 'assistant'])
+    // compaction → system + compactionSummary 字段
+    expect(messages[1].compactionSummary).toMatchObject({ summary: '上下文已压缩', tokensBefore: 8000 })
+    // branch_summary → system + branchSummary 字段
+    expect(messages[2].branchSummary).toMatchObject({ summary: '分支摘要内容', fromId: 'msg-old' })
+    // custom_message → system + customType + display:false（完成通知类覆写，方案 Z，shared SSOT）
+    expect(messages[3].customType).toBe('subagent-bg-notify')
+    expect(messages[3].display).toBe(false)
+  })
+
+  // ── TC2：clientUuidMap 从 customDataEntries 建（含冲突 warn 防御）────────
+  it('TC2: clientUuidMap built from customDataEntries (incl. conflict warn defense, later wins)', () => {
+    const entries: PiSessionEntry[] = [
+      makeMessageEntry({ id: 'tc2-1', role: 'user', text: 'hi' }),
+      makeClientMsgIdEntry({ id: 'tc2-c1', clientUuid: 'uuid-a', userEntryId: 'tc2-1' }),
+      // 冲突：同一 userEntryId 两条 custom entry（extension 重试/重发场景）
+      makeClientMsgIdEntry({ id: 'tc2-c2', clientUuid: 'uuid-b', userEntryId: 'tc2-1' }),
+      // 非 xyz.client-msg-id 的 custom entry → 进 customDataEntries 但不进 clientUuidMap
+      {
+        type: 'custom',
+        customType: 'other.extension',
+        id: 'tc2-c3',
+        parentId: null,
+        timestamp: '2026-07-25T10:00:00.000Z',
+        data: { foo: 'bar' },
+      } as PiSessionCustomEntry,
+    ]
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { clientUuidMap } = rebuildHistoryFromEntries(entries, null)
+
+      // 后写覆盖前写（uuid-b 是后写的）
+      expect(clientUuidMap.get('tc2-1')).toBe('uuid-b')
+      expect(clientUuidMap.size).toBe(1)
+      // 冲突 warn 触发
+      expect(warnSpy).toHaveBeenCalled()
+      expect(warnSpy.mock.calls[0][0]).toContain('clientUuidMap conflict')
+      expect(warnSpy.mock.calls[0][0]).toContain('tc2-1')
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  // ── TC3：entryIds 平行传 convertPiHistory（user/assistant piEntryId 正确）──
+  it('TC3: entryIds passed in parallel to convertPiHistory → user/assistant piEntryId filled (fork positioning)', () => {
+    const entries: PiSessionEntry[] = [
+      makeMessageEntry({ id: 'tc3-m1', role: 'user', text: '第一句' }),
+      makeCompactionEntry({ id: 'tc3-c1', summary: '压缩', tokensBefore: 100 }),
+      makeBranchSummaryEntry({ id: 'tc3-b1', summary: '分支' }),
+      makeMessageEntry({ id: 'tc3-m2', role: 'assistant', text: '回复' }),
+    ]
+
+    const { messages } = rebuildHistoryFromEntries(entries, null)
+
+    // user + system(compaction) + system(branch) + assistant
+    expect(messages.map((m) => m.role)).toEqual(['user', 'system', 'system', 'assistant'])
+    // user/assistant piEntryId 从平行 entryIds 取（fork 定位截断点用）
+    expect(messages[0].piEntryId).toBe('tc3-m1')
+    expect(messages[3].piEntryId).toBe('tc3-m2')
+    // 伪消息（compaction/branch system 消息）无 piEntryId（convertPiHistory 只给 user/assistant 填）
+    expect(messages[1].piEntryId).toBeUndefined()
+    expect(messages[2].piEntryId).toBeUndefined()
   })
 })

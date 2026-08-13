@@ -1,10 +1,7 @@
 import type { Message, Segment, SegmentsMetadataFile } from '@xyz-agent/shared'
-import type {
-  PiSessionEntry,
-  PiSessionMessageEntry,
-  PiHistoryMessage,
-} from './pi-protocol.js'
+import type { PiSessionEntry } from './pi-protocol.js'
 import { convertPiHistory } from './message-converter.js'
+import { mapSessionEntries } from './session-entry-mapper.js'
 
 /**
  * entry-tree-builder —— 从 pi get_entries 返回的 entry 树重建 xyz-agent Message[]。
@@ -58,20 +55,23 @@ const CLIENT_MSG_ID_TYPE = 'xyz.client-msg-id'
  *
  * 三步（两遍扫 entry + 一遍回填）：
  *
- * 1. 第一遍扫 entries：
- *    a) 建 clientUuidMap：扫所有 "xyz.client-msg-id" custom entry，
- *       data = { clientUuid, userEntryId } → map[userEntryId] = clientUuid。
- *       data 形状不匹配（缺字段/类型错）→ 跳过该 entry（降级，不崩溃）。
- *    b) 从所有 message entry 提取 message 字段 + entryId（保持原始顺序，一一对应）。
+ * 1. mapSessionEntries 统一映射 entry 树（共享单点，与文件路径共用）：
+ *    message/compaction/custom_message/branch_summary → messages 伪消息（供 convertPiHistory 消费），
+ *    custom → customDataEntries（下方建 clientUuidMap 用），label/session_info 跳过。
+ *    同时产出与 messages 平行对齐的 entryIds（替代旧 __entryId 注入）。
  *
- * 2. 整个 message 列表走 convertPiHistory（复用 toolResult 合并 + compactionSummary /
- *    custom / branchSummary 系统消息处理），产出 Message[]。entryIds 与 messages 一一对应
- *    传入，使产出的 user/assistant Message 带 piEntryId（从 entryIds[i] 取）。
- *    ⚠️ 这是 C1 修复核心：之前直接调 convertSinglePiMessage 绕过了 convertPiHistory 的
- *    toolResult/系统消息处理，导致重开 session 时工具输出 / 压缩记录 / bg-notify / 分支摘要
- *    全部丢失（违反 AGENTS.md #7.5）。
+ * 2. clientUuidMap 从 customDataEntries 建：扫 xyz.client-msg-id custom entry，
+ *    data = { clientUuid, userEntryId } → map[userEntryId] = clientUuid。
+ *    data 形状不匹配（缺字段/类型错）→ 跳过该 entry（降级，不崩溃）；冲突 warn 防御保留。
  *
- * 3. 回填 segments：对 user message 按 piEntryId 查 clientUuidMap → 查 segmentsMetadata
+ * 3. 整个 message 列表走 convertPiHistory（复用 toolResult 合并 + compactionSummary /
+ *    custom / branchSummary 系统消息处理），产出 Message[]。entryIds 平行传入，使产出的
+ *    user/assistant Message 带 piEntryId（从 entryIds[i] 取）。
+ *    ⚠️ M2 前 RPC 路径手写两遍扫只提取 message entry，丢弃 compaction/branch/custom_message，
+ *    导致活跃 session 重开时这三类记录消失（违反 AGENTS.md #7.5「可重开恢复」）；
+ *    改用共享 mapper 后两路径覆盖 by construction 一致。
+ *
+ * 4. 回填 segments：对 user message 按 piEntryId 查 clientUuidMap → 查 segmentsMetadata
  *    → 命中且非空：msg.content = segments（完整结构化 Segment[]，含 image badge）
  *    → 未命中：保持 convertPiHistory 默认产出（textToSegments / parseSkillBlock）
  *
@@ -85,41 +85,42 @@ export function rebuildHistoryFromEntries(
   entries: PiSessionEntry[],
   segmentsMetadata: SegmentsMetadataFile | null,
 ): RebuiltHistory {
-  // 1. 第一遍：建 clientUuidMap + 从 message entry 提取 message 列表（顺序保留，带 entryId）
+  // 1. mapSessionEntries 统一映射（共享单点，M2 接入）。
+  //    四类 entry（message/compaction/custom_message/branch_summary）→ messages 伪消息，
+  //    供 convertPiHistory 单点消费（AGENTS.md 规则 7.5：RPC/文件两路径覆盖一致）；
+  //    custom → customDataEntries（下方建 clientUuidMap 用）；label/session_info 等跳过。
+  //    替代旧手写两遍扫（旧实现只提取 message entry，丢弃 compaction/branch/custom_message，
+  //    导致活跃 session 重开时这三类记录消失——违反规则 7.5「可重开恢复」）。
+  const { messages, entryIds, customDataEntries } = mapSessionEntries(entries)
+
+  // 2. clientUuidMap 从 customDataEntries 建（扫 xyz.client-msg-id custom entry）。
+  //    data = { clientUuid, userEntryId } → map[userEntryId] = clientUuid。
+  //    data 形状不匹配（缺字段/类型错）→ 跳过该 entry（降级，不崩溃）。
+  //    冲突 warn 防御保留（extension 重试/重发场景，同一 userEntryId 多条 custom entry，
+  //    后写覆盖前写；概率低但冲突时 warn 让问题可见，不阻断——错配只会导致 badge 回填到错误
+  //    user message，非崩溃）。
   const clientUuidMap = new Map<string, string>()
-  const messages: PiHistoryMessage[] = []
-  const entryIds: string[] = []
-  for (const entry of entries) {
-    if (entry.type === 'custom' && entry.customType === CLIENT_MSG_ID_TYPE) {
-      const data = entry.data as Partial<ClientMsgIdData> | null | undefined
-      // 防御：data 可能是任意形状（pi 不校验 custom entry data），字段类型不对就跳过
-      if (data && typeof data.clientUuid === 'string' && typeof data.userEntryId === 'string') {
-        // W3：同一 userEntryId 被写多条 custom entry 时（extension 重试/重发场景），
-        // 后写覆盖前写。设计上每条 user message 只写一条，概率低；但冲突时记录 warn
-        // 让问题可见（不阻断——错配只会导致 badge 回填到错误 user message，非崩溃）。
-        const existing = clientUuidMap.get(data.userEntryId)
-        if (existing !== undefined && existing !== data.clientUuid) {
-          console.warn(
-            `[entry-tree-builder] clientUuidMap conflict for userEntryId=${data.userEntryId}: ` +
-            `existing=${existing}, new=${data.clientUuid} (later wins)`,
-          )
-        }
-        clientUuidMap.set(data.userEntryId, data.clientUuid)
+  for (const entry of customDataEntries) {
+    if (entry.customType !== CLIENT_MSG_ID_TYPE) continue
+    const data = entry.data as Partial<ClientMsgIdData> | null | undefined
+    if (data && typeof data.clientUuid === 'string' && typeof data.userEntryId === 'string') {
+      const existing = clientUuidMap.get(data.userEntryId)
+      if (existing !== undefined && existing !== data.clientUuid) {
+        console.warn(
+          `[entry-tree-builder] clientUuidMap conflict for userEntryId=${data.userEntryId}: ` +
+          `existing=${existing}, new=${data.clientUuid} (later wins)`,
+        )
       }
-      continue
+      clientUuidMap.set(data.userEntryId, data.clientUuid)
     }
-    if (entry.type === 'message') {
-      const messageEntry = entry as PiSessionMessageEntry
-      messages.push(messageEntry.message)
-      entryIds.push(messageEntry.id)
-    }
-    // 非 message 非 xyz.client-msg-id entry（label/summary/其他 custom）→ 跳过（未来扩展点）
   }
 
-  // 2. 整个数组走 convertPiHistory（复用 toolResult 合并 + 系统消息完整处理，C1 修复核心）
+  // 3. 整个数组走 convertPiHistory（复用 toolResult 合并 + 系统消息完整处理，C1 修复核心）。
+  //    entryIds 与 messages 一一对应平行传入，使产出的 user/assistant Message 带 piEntryId
+  //    （从 entryIds[i] 取，供下方第 4 步回查 clientUuidMap + segmentsMetadata 回填 badge）。
   const converted = convertPiHistory(messages, entryIds)
 
-  // 3. 回填 segments：对 user message 按 piEntryId 查 clientUuidMap → segmentsMetadata
+  // 4. 回填 segments：对 user message 按 piEntryId 查 clientUuidMap → segmentsMetadata
   const segmentsByClientUuid = new Map<string, Segment[]>()
   if (segmentsMetadata) {
     for (const e of segmentsMetadata.entries) {
