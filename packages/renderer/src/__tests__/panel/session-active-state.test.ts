@@ -25,7 +25,6 @@ import type { SessionSummary } from '@xyz-agent/shared'
 /** Panel 子组件 stub（隔离 PanelHeader/MessageStream 等的重渲染，聚焦被测逻辑） */
 const panelStubs = {
   PanelHeader: { template: '<div />' },
-  ProgressZone: { template: '<div />' },
   MessageStream: { template: '<div data-testid="msg-stream" />' },
   Composer: { template: '<div data-testid="composer" />' },
   Landing: { template: '<div data-testid="landing">landing</div>' },

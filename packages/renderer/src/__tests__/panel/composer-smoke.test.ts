@@ -11,7 +11,7 @@
  * - mount(Panel, { sessionId: null })（Landing 态），Landing/Composer 均真实渲染
  * - 仅 mock useNewTaskFlow（Landing + Composer 的 session/cwd/branch 真源）+ useExtensionUI
  *   （Panel 的 ask-user 订阅）+ useChat（Composer 的 chat RPC）
- * - stub 重子组件（PanelHeader/ProgressZone/MessageStream/AskUserOverlay + Composer 子组件
+ * - stub 重子组件（PanelHeader/MessageStream/AskUserOverlay + Composer 子组件
  *   + Landing 的 popover/modal 子组件），保留 ComposerInput mock（testid 断言）
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/panel/composer-smoke.test.ts
@@ -147,7 +147,6 @@ const SIMPLE = defineComponent({ name: 'SimpleStub', template: '<div />' })
 const stubs = {
   // Panel 子组件
   PanelHeader: SIMPLE,
-  ProgressZone: SIMPLE,
   MessageStream: SIMPLE,
   AskUserOverlay: SIMPLE,
   // Landing 子组件（popover/modal 重依赖）

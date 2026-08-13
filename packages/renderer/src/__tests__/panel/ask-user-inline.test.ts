@@ -41,7 +41,6 @@ vi.mock('@/composables/useExtensionUI', () => ({
 // stub 子组件（除 AskUserOverlay，断言其挂载）
 const stubs = {
   PanelHeader: { template: '<div />' },
-  ProgressZone: { template: '<div />' },
   MessageStream: { template: '<div data-testid="msg-stream" />' },
   // Composer stub testid 对齐真实 Composer.vue（data-testid="composer-box"，见 Composer.vue L25）
   Composer: { template: '<div data-testid="composer-box" />' },

@@ -247,18 +247,6 @@ export default {
     compactDesc: 'Compact session context',
     noFullDoc: 'No full documentation (description only)',
   },
-  progress: {
-    running: 'Running',
-    completed: 'Completed',
-    failed: 'Failed',
-    queued: 'Queued',
-    allDone: 'All done',
-    expand: 'Expand',
-    collapse: 'Collapse',
-    done: 'Done',
-    active: 'Active',
-    pending: 'Pending',
-  },
   queue: {
     title: 'Queue',
     empty: 'Queue is empty',

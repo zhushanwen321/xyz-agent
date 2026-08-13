@@ -91,7 +91,6 @@ const DONE = 'done' as DerivedStatus
  *  Composer stub 带 testid 供「band composer 是否渲染」断言（恢复空 session 回归用）。 */
 const panelStubs = {
   PanelHeader: { template: '<div />' },
-  ProgressZone: { template: '<div />' },
   MessageStream: { template: '<div />' },
   Composer: { template: '<div data-testid="band-composer" />' },
   SideDrawer: { template: '<div />' },

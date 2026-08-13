@@ -1,7 +1,8 @@
 <template>
   <!--
     容器组件 · Panel（panel/spec.md zone 编排，承载一个 Session 的 body 区）。
-    自上而下：② message-stream → ③ progress-zone → ④ composer（companion 带）。
+    自上而下：② message-stream → ④ composer（companion 带，③ progress-zone 已删——
+    state 恒 null 自隐藏死代码，见 conversation-renderer-model-unification §3.3.6）。
     ① panel-header 已提升到 PanelContainer（共享横跨 main+drawer 全宽，D2 一体化），
     本组件只承载 body。git 状态移入 SideDrawer git tab，入口在共享 header 右侧 git 按钮。
     section 透明继承 MainPanel 的统一 surface 外壳（border/radius/shadow 只在最外层 MainPanel），
@@ -63,14 +64,11 @@
       <p class="text-[12px] text-neutral-dim opacity-70">{{ t('panel.panel.selectSession') }}</p>
     </div>
 
-    <!-- ③④ companion zones：progress / composer 垂直 6px 紧凑成「带」。
-         git 状态已移入 SideDrawer git tab（原 zone ⑤ 摘牌），此带仅 progress/composer。
+    <!-- ④ composer companion zone（③ progress-zone 已删——真实任务态未接入，state 恒 null
+         自隐藏死代码）。git 状态已移入 SideDrawer git tab（原 zone ⑤ 摘牌），此带仅 composer。
          ask-user 富交互（W2）：请求到达时 AskUserOverlay 覆盖 composer 位置（互斥），
          对话历史全程可见，composer 消失输入禁止（不再走全屏 modal）。 -->
     <div v-if="!isViewingSubagent" class="composer-band flex flex-shrink-0 flex-col gap-1.5 px-5 pb-3.5">
-      <!-- ③ progress-zone（composer 上方）：真实任务态未就绪时不渲染（组件内 v-if="state" 自隐藏） -->
-      <ProgressZone />
-
       <!-- ④ composer（FG5，S1/S2/S5/S6 主路径）/ ask-user overlay（互斥）。
            new-task landing 态由 Landing 内部渲染 composer 卡片，此处 band 不重复渲染
            （showPanelComposer：非 landing 才挂）。已绑空 session（恢复的僵尸空 session）
@@ -94,7 +92,6 @@ import { computed, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessageSquare, AlertCircle, RotateCcw } from '@lucide/vue'
 import { isAskUserQuestion, type AskUserQuestion } from '@xyz-agent/extension-protocol'
-import ProgressZone from './ProgressZone.vue'
 import MessageStream from './MessageStream.vue'
 import Composer from './Composer.vue'
 import { Button } from '@/components/ui/button'

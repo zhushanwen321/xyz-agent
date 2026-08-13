@@ -247,18 +247,6 @@ export default {
     compactDesc: '压缩会话上下文',
     noFullDoc: '无完整文档（仅 description）',
   },
-  progress: {
-    running: '运行中',
-    completed: '已完成',
-    failed: '失败',
-    queued: '排队中',
-    allDone: '全部完成',
-    expand: '展开',
-    collapse: '收起',
-    done: '完成',
-    active: '进行中',
-    pending: '待开始',
-  },
   queue: {
     title: '队列',
     empty: '队列为空',
