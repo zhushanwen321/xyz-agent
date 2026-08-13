@@ -54,19 +54,19 @@ design.md §4 的 6 个验收场景要求**真实环境验证（非单测）**�
 
 | 项 | 状态 | 缺口 |
 |----|------|------|
-| 场景 1（rename 用独立小模型真实生成标题） | ⚠️ 部分 | 仅有单测 + prompt 长度实测（llm.ts 注释 length=75）；无本地 pi CLI 端到端实测记录（真实 session 首 turn 后标题真实更新、真实用了配置的便宜模型） |
-| 场景 2（model 不可用静默跳过） | ⚠️ 部分 | 单测覆盖；真实环境未验（且 A1 的日志缺失会阻塞该场景的「日志记录」通过标准） |
-| 场景 3（permission classifier 用到 OAuth provider） | ❌ 未验 | 探针 2（`getAvailable()` 在 xyz-agent 环境含 OAuth provider）无实测证据；production.test.ts TC4 是 mock，不能替代 |
+| 场景 1（rename 用独立小模型真实生成标题） | ✅ | 批次 4 R1 实测通过：真实 session 首 turn 后标题更新为「MiMo自我介绍」+ 日志 `[rename-session] rename with model mimo-v2.5-pro`（见 §4 批次 4 验收记录） |
+| 场景 2（model 不可用静默跳过） | ✅ | 批次 4 R1 步骤 b 实测通过：ref 改 nonexistent/model 后标题保留默认 + 日志 `[rename-session] model not available, skipping`（见 §4） |
+| 场景 3（permission classifier 用到 OAuth provider） | ⚠️ 部分 | 批次 4 R2 实测通过 classifier 链路（using model 日志 + extension_ui_request 实证非 fail-closed），但本地无 OAuth provider（auth.json 全 api_key），以内置 provider 的 available 路径替代（classifier auto → deepseek-v4-flash），OAuth provider 链路待有 OAuth 凭证环境补验（见 §4） |
 | 场景 4（scoped 不依赖 cost） | ✅ | 单测覆盖（scoped.test.ts），实现按 enabledModels 顺序取首个，无 cost 读取 |
-| 场景 5（PI_CODING_AGENT_DIR 实例隔离） | ⚠️ 部分 | pure.test.ts:213-237 有落盘用例；rename 真实写配置到隔离目录的端到端未验 |
+| 场景 5（PI_CODING_AGENT_DIR 实例隔离） | ⚠️ 部分 | 批次 4 R3 实测通过：rename 配置 / plan 模板 / model-switch policy / subagent-workflow sessions 全落隔离目录，真实 ~/.pi/agent 未污染；subagent-workflow trace 导出（S 键）仅在 TUI 视图，RPC 模式无 UI 入口未实测（见 §4） |
 | 场景 6（删包无 broken reference） | ✅ | typecheck 全过 + grep 零硬引用 + 测试全绿 |
 | 探针 1（completeSimple 静态 import 不 throw） | ✅ | call.ts 注释记录 pi 0.84.0 实测 |
 | 探针 3（permission 全量回归） | ✅ | 25 文件 571 用例全绿（E4 删除后重跑：23 文件 541 用例） |
-| 探针 4（config.ts 原子写 Windows 行为） | ❌ 未验 | 全 macOS 开发，tmp+rename 在 Windows 目标文件占用时失败的行为未测；llm-shared/config.ts 是否有 fallback 未核对 |
+| 探针 4（config.ts 原子写 Windows 行为） | ✅ | 批次 4 P4 单测通过：ENOENT/EPERM 用例验证 catch 路径（{success:false} + onWarning `Failed to save config at '<path>'` + tmp 清理）；Windows 目标占用行为说明已补入 config.ts 注释；实机验证仍限 Windows 环境（见 §4） |
 | 探针 5（callLLM 参数字段名对齐） | ✅ | call.ts 注释记录探针⑤对齐结论 + tsc 通过 |
 | 探针 6（settings.json enabledModels 解析） | ✅ | scoped.test.ts 覆盖缺失/坏 JSON/顺序保持/glob |
 
-按项目 mandatory 规则（pi extension 改动优先本地 pi CLI 实测），场景 1/2/3/5 的端到端实测是**欠债**。
+按项目 mandatory 规则（pi extension 改动优先本地 pi CLI 实测），场景 1/2 已端到端实测，场景 3/5 已实测（部分缺口见上），**欠债仅剩：OAuth provider 环境下的 classifier 链路 + subagent-workflow trace 导出 TUI 实测**。
 
 ---
 
@@ -266,6 +266,39 @@ design.md §3.6 的 P4 清单只列了 6 处（已全部修完）。全仓扫描
 - 通过标准：所有文件落 `/tmp/agent-isolated/` 下，不碰 `~/.pi/agent/`（`ls -R /tmp/agent-isolated` + `stat ~/.pi/agent/<对应文件>` 不存在）
 
 **探针 4（Windows 原子写）**：核对 llm-shared/config.ts 的 tmp+rename 在 `renameSync` 失败时有无 fallback。**现状核对**：config.ts 的 save 已有 catch → onWarning（`[llm-shared] Failed to save config`）+ tmp 清理，错误日志已存在，无需补。待做：标注「Windows 目标占用场景会写失败」的行为说明 + 单测模拟 ENOENT/EPERM 验证 catch 路径（无 Windows 环境时以代码审读 + 单测代替实机验证）。
+
+### 批次 4 实测记录（2026-08-13，pi 0.84.0 + 模型 xiaomi-token-plan-cn/mimo-v2.5-pro）
+
+**R1（rename 端到端 + A1 日志实证）——✅ 通过**
+
+环境：`PI_CODING_AGENT_DIR=/tmp/r1-agent`（隔离 agent 目录，避免写真实 `~/.pi/agent`）+ `--session-dir /tmp/r1` + `--approve` + `--extension extensions/rename-session` + `PI_EXT_DEBUG=1`；凭据从 `~/.pi/agent/auth.json` 复制到隔离目录（读操作）。
+
+步骤 a（ref 指向配置模型）：`config/rename-session.json` = `{"enabled":true,"model":{"type":"ref","ref":"xiaomi-token-plan-cn/mimo-v2.5-pro"}}` → 发消息「写一句话介绍你自己。」等 assistant 完成。
+- 结果：session JSONL 出现 `session_info` entry，name=`MiMo自我介绍`（内容相关短标题，真实更新 ✅）；stderr 日志 `[rename-session] rename with model mimo-v2.5-pro`（A1 成功路径实证，ref 配置生效 ✅）。
+
+步骤 b（model 不可用）：ref 改 `nonexistent/model` 重测 → 标题保留默认（无 session_info 写入）；stderr 日志 `[rename-session] model not available, skipping`（A1 失败路径实证 ✅）；主对话不受影响。
+
+**R2（permission classifier 链路）——✅ 通过（OAuth 缺口标注）**
+
+环境：`PI_CODING_AGENT_DIR=/tmp/r2-agent` + `--session-dir /tmp/r2` + `--extension extensions/permission`；`permission-config.json` = `{"mode":"auto","classifier":{"model":"auto",...}}`（放隔离 agentDir 根，不碰真实 `~/.pi/agent/permission-config.json`）。
+
+步骤：prompt 让模型执行 `curl -s --max-time 10 https://example.com | head -1`（中等风险，无规则匹配 → ask → 层 3 racing）。
+- 结果：tool_call 拦截 → stderr 日志 `[pi-permission] classifier: using model deepseek-v4-flash`（classifier resolveModel 成功，非 fail-closed）；无 `no model resolved` / `LLM call failed` / `timed out` 日志（LLM 分类调用成功）；stdout 出现 `extension_ui_request`（method=select，title 含「awaiting approval (auto mode: AI classifier racing with user prompt)」）——classifier 返回 ask 后审批流程推进到用户，是「真实分类（非 fail-closed 降级）」的决定性证据（fail-closed 路径在 RPC 下直接 deny，不发 UI 请求）。低风险命令（echo）实测规则直通放行。
+- **缺口**：本地 `~/.pi/agent/auth.json` 全部为 api_key 类型（xiaomi-token-plan-cn/opencode-go/zai-coding-cn/deepseek/kimi-coding/minimax-cn），无 OAuth provider → 按 design tradeoff 用内置 provider 的 available 路径替代（classifier auto 解析到第一个可用模型 deepseek-v4-flash）。OAuth provider 链路（using model 日志为 OAuth 模型）待有 OAuth 凭证环境补验。
+
+**R3（PI_CODING_AGENT_DIR 实例隔离）——✅ 通过（trace 导出未验）**
+
+环境：`PI_CODING_AGENT_DIR=/tmp/agent-isolated` 启动 pi，同时加载 rename-session / plan / model-switch / subagent-workflow 四扩展；`/tmp/agent-isolated/config/rename-session.json`（enabled + ref）+ `plan-templates/r3-isolated-test.md` 预置。
+
+- rename：配置从隔离目录读取生效（日志 `[rename-session] rename with model mimo-v2.5-pro`）✅
+- plan：`templates.ts:44` 全局模板路径 = `getAgentDir()/plan-templates`（F1 修复后静态确认）；隔离目录模板文件就位（模板列表走 plan_tool action=list-template，需模型调用工具，未作为验收断言）
+- model-switch：`config.ts:17-18` `CONFIG_PATH = getAgentDir()/model-policy.json` 静态确认；预置 v2 文件后 `/setup-model-policy` 行为与「配置已存在」一致（未生成新文件 → state.config 从隔离目录加载成功）。注：setup-model-policy 命令本身不写盘（生成 summary 等用户 confirm），写盘走 switch_model tool 的交互确认流程，RPC 无 UI 未完整走通
+- subagent-workflow：`session_start` 后在隔离目录创建 `subagents/--<cwd-slug>--/records/` + `logs/subagents-<date>.log`（F2 修复后 getAgentDir 派生的实际写入证据）✅；trace 导出（WorkflowsView S 键）仅在 TUI 视图，RPC 模式无 UI 入口 → **未验证项**（design risk R3/low 预期内）
+- 隔离断言：`ls -R /tmp/agent-isolated` 全部文件落隔离目录；`~/.pi/agent/config/rename-session.json`、`~/.pi/agent/plan-templates` 不存在 ✅；`~/.pi/agent/model-policy.json`（2026-06-02）/`permission-config.json`（2026-07-29）为预存用户文件（stat 时间戳确认非本次测试写入）
+
+**P4（探针 4 单测）——✅ 通过**
+
+`extensions` 目录 `npx vitest run llm-shared/src/__tests__/config.test.ts`：13 用例全绿（新增 ENOENT/EPERM 两用例，断言 `{success:false}` + onWarning 输出 `[llm-shared] Failed to save config at '<path>': <message>` + tmp 清理 + 目标未创建）。config.ts save 文档注释补充「Windows 目标占用场景 renameSync 抛 EPERM，无 fallback，catch 返回失败 + 调用方重试」行为说明。
 
 ---
 

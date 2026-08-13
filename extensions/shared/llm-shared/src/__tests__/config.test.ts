@@ -132,6 +132,45 @@ describe("saveConfig", () => {
 		expect(existsSync(join(dir, "config", "fail.json"))).toBe(false);
 	});
 
+	it("探针 4: renameSync ENOENT → {success:false} + onWarning 含 Failed to save config + tmp 清理", () => {
+		// mock renameSync 抛 ENOENT（目标目录被删/路径无效场景）
+		vi.mocked(fs.renameSync).mockImplementationOnce(() => {
+			throw new Error("ENOENT: no such file or directory, rename");
+		});
+		const onWarning = vi.fn();
+
+		const result = saveConfig("enoent", { x: 1 }, onWarning);
+
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("ENOENT");
+		// onWarning 输出前缀契约：`[llm-shared] Failed to save config at '<path>': <message>`
+		expect(onWarning).toHaveBeenCalledTimes(1);
+		const warning = String(onWarning.mock.calls[0][0]);
+		expect(warning).toContain("[llm-shared] Failed to save config at '" + join(dir, "config", "enoent.json") + "'");
+		expect(warning).toContain("ENOENT");
+		// tmp 清理 + 目标未创建
+		expect(existsSync(join(dir, "config", "enoent.json.tmp"))).toBe(false);
+		expect(existsSync(join(dir, "config", "enoent.json"))).toBe(false);
+	});
+
+	it("探针 4: renameSync EPERM → onWarning 输出契约 + {success:false}（Windows 目标占用模拟）", () => {
+		vi.mocked(fs.renameSync).mockImplementationOnce(() => {
+			throw new Error("EPERM: operation not permitted, rename");
+		});
+		const onWarning = vi.fn();
+
+		const result = saveConfig("eperm", { x: 1 }, onWarning);
+
+		expect(result.success).toBe(false);
+		expect(onWarning).toHaveBeenCalledTimes(1);
+		const warning = String(onWarning.mock.calls[0][0]);
+		expect(warning).toContain("[llm-shared] Failed to save config at '" + join(dir, "config", "eperm.json") + "'");
+		expect(warning).toContain("EPERM");
+		// tmp 清理（Windows 目标占用场景 rename 失败后 tmp 残留被清理）
+		expect(existsSync(join(dir, "config", "eperm.json.tmp"))).toBe(false);
+		expect(existsSync(join(dir, "config", "eperm.json"))).toBe(false);
+	});
+
 	it("saveConfig 多次写同文件 → 每次成功 + 最新内容", () => {
 		expect(saveConfig("test", { v: 1 }).success).toBe(true);
 		expect(saveConfig("test", { v: 2 }).success).toBe(true);

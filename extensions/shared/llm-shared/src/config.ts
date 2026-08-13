@@ -111,6 +111,11 @@ export function loadConfig<T>(
  * tmp 失败清理（review RK3）：writeFileSync 或 renameSync 抛错时，catch 块 unlinkSync(tmp)
  * 清理残留 tmp 文件（unlink 本身 try/catch，避免二次抛错）。
  * 写后立即 statSync 更新缓存（覆盖最常见的「写后读」竞态）。
+ *
+ * Windows 行为说明（探针 4）：renameSync 在目标文件被占用（打开句柄未关闭）时抛 EPERM，
+ * 无 fallback —— catch 路径返回 {success:false} + onWarning + tmp 清理，调用方（配置写入方）
+ * 应视保存失败处理（如保留内存态、下次触发重写）。非致命：配置写入失败不影响运行，
+ * 下次 save 仍会重试。单测见 __tests__/config.test.ts 的 ENOENT/EPERM 用例。
  */
 export function saveConfig(
 	pkgName: string,
