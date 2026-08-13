@@ -17,9 +17,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { Transition } from 'vue'
 import { DrawerPanel } from '../index'
-import drawerPanelSource from '../DrawerPanel.vue?raw'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import type { SideDrawerTab } from '@xyz-agent/core/domain/drawer'
 
@@ -58,24 +56,6 @@ describe('DrawerPanel (AC9/AC12 首屏冒烟)', () => {
   })
 })
 
-describe('DrawerPanel (内容区 tab 切换过渡，W3 drawer-content-fade)', () => {
-  it('内容区包 Transition：name=drawer-content-fade + mode=out-in（源码类名双路径断言）', () => {
-    const wrapper = mount(DrawerPanel, { props: baseProps() })
-    // happy-dom 不执行真实 CSS transition，enter-active 类时序不稳；用「组件含 Transition + 源码含类名」双路径非阻塞断言
-    // 外层 drawer-slide-right（整体滑入）与内容区 drawer-content-fade 两个 Transition 并存，
-    // findComponent 取第一个（外层）；按 name prop 筛选定位内容区 Transition
-    const transition = wrapper
-      .findAllComponents({ name: 'Transition' })
-      .find((t) => t.props('name') === 'drawer-content-fade')
-    expect(transition).toBeTruthy()
-    expect(transition!.props('name')).toBe('drawer-content-fade')
-    expect(transition!.props('mode')).toBe('out-in')
-    expect(drawerPanelSource).toContain('.drawer-content-fade-enter-active')
-    expect(drawerPanelSource).toContain('.drawer-content-fade-leave-active')
-    expect(drawerPanelSource).toContain('.drawer-content-fade-enter-from')
-    expect(drawerPanelSource).toContain('.drawer-content-fade-leave-to')
-  })
-})
 
 describe('DrawerPanel (widget 内容区三分支)', () => {
   it('activeGuiComponent 优先：渲染 gui 渲染器，lines/空态不渲染', () => {

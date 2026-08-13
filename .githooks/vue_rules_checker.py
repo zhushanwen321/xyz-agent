@@ -76,6 +76,10 @@ RE_STYLE_SELECTOR = re.compile(r'^[.\w\-]+[\s,]*\{')
 # 覆盖 enter/leave/appear 三组 × from/active/to 三阶段。命名见 Vue 官方文档
 # https://vuejs.org/guide/built-ins/transition.html#css-based-transitions
 RE_VUE_TRANSITION_CLASS = re.compile(r'-?(?:enter|leave|appear)-(?:from|active|to)\b')
+# [HISTORICAL] 禁止 <Transition mode="out-in">：Vue 3.5.39 调度 bug（leave 完成后 enter 不触发，
+# 内容区永久空白死锁）。本仓已 3 处同构踩坑（DrawerPanel 内容区 / Sidebar workflow / SettingsModal）。
+# 匹配 <Transition ... mode="out-in" ...>（单/双引号、大小写标签），check_vue_file 检查 8 使用。
+RE_TRANSITION_OUT_IN = re.compile(r'<[Tt]ransition\b[^>]*?\bmode\s*=\s*["\']out-in["\']')
 
 # Emoji Unicode 范围
 EMOJI_RANGES = [
@@ -321,6 +325,48 @@ def check_vue_file(content: str, relative_path: str) -> tuple[int, list[str]]:
                     issues.append(f"  [第{i}行] 组件上使用 :value 绑定 — 请优先使用 v-model")
                     issues.append('    示例: <Input v-model="value" /> 而非 <Input :value="value" @input="handler" />')
                     exit_code = 2
+
+    # 检查 8: 禁止 <Transition mode="out-in">（Vue 3.5.39 调度 bug 死锁）
+    # [HISTORICAL] Transition out-in 的 leave 完成后 enter 不触发，内容区永久空白死锁
+    # （dev app 实测 DrawerPanel 8/8 复现）。跳过 HTML 注释（<!-- -->，含跨行）：
+    # SettingsModal.vue / DrawerPanel.vue 的注释里提及该写法属说明文字，非真实用法误报。
+    in_template = False
+    in_html_comment = False
+    for i, line in enumerate(lines, 1):
+        if '<template' in line and '</template>' not in line:
+            in_template = True
+            in_html_comment = False
+            continue
+        if '</template>' in line:
+            in_template = False
+            continue
+        if not in_template:
+            continue
+        # 切出本行非注释段（处理跨行 <!-- --> + 行内 <!-- -->），注释内文字不检查
+        segments = []
+        pos = 0
+        if in_html_comment:
+            end = line.find('-->', pos)
+            if end == -1:
+                continue
+            in_html_comment = False
+            pos = end + 3
+        while pos < len(line):
+            start = line.find('<!--', pos)
+            if start == -1:
+                segments.append(line[pos:])
+                break
+            segments.append(line[pos:start])
+            end = line.find('-->', start + 4)
+            if end == -1:
+                in_html_comment = True
+                break
+            pos = end + 3
+        if RE_TRANSITION_OUT_IN.search('\n'.join(segments)):
+            issues.append(f'  [第{i}行] 禁止 <Transition mode="out-in">')
+            issues.append('    Vue 3.5.39 调度 bug：leave 完成后 enter 不触发，内容区永久空白死锁')
+            issues.append('    请改用 v-if/v-else 瞬时切换（无动画）。已知踩坑：DrawerPanel/Sidebar/SettingsModal')
+            exit_code = 2
 
     # 检查 6: <template> / <script setup> 行数上限
     template_lines = 0

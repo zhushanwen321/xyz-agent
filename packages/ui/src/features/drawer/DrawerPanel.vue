@@ -22,14 +22,14 @@
   <Transition name="drawer-slide-right">
     <aside
       v-if="isOpen"
-      class="relative flex h-full min-w-0 flex-col bg-surface"
+      class="relative flex h-full min-w-0 flex-col bg-surface [box-shadow:var(--shadow-drawer)]"
       :aria-label="t('panel.sideDrawer.title')"
       data-testid="drawer-panel"
     >
       <!-- L1 tab 栏：drawer 内部子区（D2 一体化后不再作独立 header）。
            与 main 共享统一 surface 外壳，去 bg-surface-2 浮起分层，改用 border-b hairline 与内容区分隔（对齐 demo SideDrawer .sd-l1）。
            escape hatch scoped（见文件底部）：aside 投影构成 D2 一体化生长的弱分隔语义。 -->
-      <div class="flex items-center gap-1 border-b border-border px-2 py-1.5">
+      <div class="flex items-center gap-1 border-b border-hairline px-2 py-1.5">
         <div class="flex flex-1 gap-0.5">
           <Button
             v-for="tab in tabs"
@@ -75,13 +75,16 @@
            用 hasDesktopPanelContent() 而非 `<slot>` fallback：父组件提供 slot 函数但运行时为空时，
            Vue 的 slot fallback 不生效，需显式判断渲染结果。 -->
       <div class="min-h-0 flex-1 overflow-auto" data-testid="drawer-content">
-        <!-- 内容区四支（slot 面板 / gui / lines / 空态）tab 切换瞬时互切 → out-in 淡入淡出。
-             条件链分支包在 Transition 内（非外层恒存 div）：同一时刻仅单根渲染，满足 Transition 单根约束。 -->
-        <Transition name="drawer-content-fade" mode="out-in">
-          <slot v-if="hasDesktopPanelContent()" />
-          <!-- active tab 有结构化 GUI widget（extension:widgetGui）→ 优先 GuiComponentRenderer 渲染 -->
+        <!-- [HISTORICAL] 内容区四支（slot 面板 / gui / lines / 空态）曾用 <Transition mode="out-in">
+             做 tab 切换淡入（4f8399cac），2026-08 移除：Vue 3.5.39 下 Transition out-in leave 完成后
+             enter 不触发（调度 bug），内容区永久空白死锁（dev app 实测 8/8 复现）。同构踩坑已 3 处
+             （本处 / Sidebar workflow / SettingsModal）。vue_rules_checker.py 已加规则禁止该写法。
+             tab 切换改瞬时 v-if/v-else（无动画），稳定性优先。 -->
+        <slot v-if="hasDesktopPanelContent()" />
+        <!-- active tab 有结构化 GUI widget（extension:widgetGui）→ 优先 GuiComponentRenderer 渲染 -->
+        <template v-else>
           <div
-            v-else-if="activeGuiComponent"
+            v-if="activeGuiComponent"
             class="flex h-full flex-col gap-0 overflow-auto p-2"
             data-testid="drawer-widget-gui"
           >
@@ -89,7 +92,6 @@
           </div>
           <!-- active tab 有 widget 内容 → 渲染等宽文本输出（每行一个 div，font-mono + pre-wrap） -->
           <div
-            key="widget-lines"
             v-else-if="activeLines.length"
             class="flex h-full flex-col gap-0 overflow-auto p-2"
             :class="activeLinesMeta.unknown ? 'opacity-80' : ''"
@@ -111,7 +113,6 @@
           </div>
           <!-- active tab 无 widget 内容 → 空态占位 -->
           <div
-            key="widget-empty"
             v-else
             class="flex h-full flex-col items-center justify-center gap-2 p-4 text-center"
             data-testid="drawer-widget-empty"
@@ -120,14 +121,14 @@
             <p class="text-[12px] text-neutral-dim opacity-70">{{ activeTabMeta.emptyText }}</p>
             <p class="text-[11px] text-neutral-dim opacity-50">{{ activeTabMeta.emptyHint }}</p>
           </div>
-        </Transition>
+        </template>
       </div>
 
       <!-- extension status 底栏（按 statusKey 聚合最新 text）。
            无 status 推送时不占位，避免空态挤压内容区。 -->
       <footer
         v-if="statusEntries.length"
-        class="flex flex-col gap-0.5 border-t border-border px-2 py-1"
+        class="flex flex-col gap-0.5 border-t border-hairline px-2 py-1"
         data-testid="drawer-status-footer"
       >
         <div
@@ -262,25 +263,19 @@ const activeTabMeta = computed<TabMeta>(() => tabs.value.find((tab) => tab.key =
 </script>
 
 <style scoped>
-/* 抽屉淡入/淡出（panel/spec.md v2）。
-   内容 opacity 淡入足够柔和（布局瞬时切换配合 opacity 淡入）。
-   escape hatch：Vue Transition 类无法用 Tailwind 表达（需 enter-from/leave-to 同时设 opacity）。 */
+/* 抽屉从右缘滑入/滑回（panel/spec.md v2 + chat-flow-polish P1-1）。
+   语义「从右缘来、回右缘去」（Spatial consistency）：opacity 淡入 + translateX(16px→0) 位移。
+   transform 不触发布局（drawer 是 SplitterPanel，避免 width 动画引起 main reflow）。
+   escape hatch：Vue Transition 类无法用 Tailwind 表达（需 enter-from/leave-to 同时设 transform）。 */
 .drawer-slide-right-enter-from,
 .drawer-slide-right-leave-to {
   opacity: 0;
+  transform: translateX(16px);
 }
 .drawer-slide-right-enter-active,
 .drawer-slide-right-leave-active {
-  transition: opacity var(--duration-slow) var(--ease);
-}
-/* 内容区四支互切（slot 面板 / gui / lines / 空态）淡入淡出。
-   mode="out-in"：旧支 leave 完成才 enter 新支，避免双渲染重叠。 */
-.drawer-content-fade-enter-active,
-.drawer-content-fade-leave-active {
-  transition: opacity var(--duration-fast) var(--ease);
-}
-.drawer-content-fade-enter-from,
-.drawer-content-fade-leave-to {
-  opacity: 0;
+  transition:
+    opacity var(--duration-slow) var(--ease),
+    transform var(--duration-slow) var(--ease);
 }
 </style>
