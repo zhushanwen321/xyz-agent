@@ -101,6 +101,16 @@ const streamSubscriptions = new Map<string, () => void>()
 const historyTruncatedSessions = ref<Set<string>>(new Set())
 
 /**
+ * MF-1：manual compact 的 compaction_end 到达标记（per-session）。
+ * key 存在 = manual compact() in-flight；value=true = compaction_end 已到达（session.compacted
+ * handler 置）。compact() catch 据此区分失败类型：ended=true（compaction 级——pi 已处理，
+ * interpreter 经 message.error 进对话流，确定可见）→ 不 toast；ended=false（transport/busy 级——
+ * RPC 未达 pi / dispatcher busy 预检拒绝，pi 未发 compaction_end，interpreter 不参与，零反馈）→ toast 兜底。
+ * 仅 manual compact() 路径读写 key——auto-compaction 的 compaction_end handler 见 key 不在则跳过（不污染）。
+ */
+const manualCompactionState = new Map<string, boolean>()
+
+/**
  * 重置 useChat 模块级状态（仅供测试隔离）。
  *
  * 清 streamSubscriptions（逐个调 unsub 解除 WS 订阅 + 清 Map）+ historyTruncatedSessions
@@ -125,6 +135,8 @@ export function resetChatModuleStateForTest(): void {
   streamSubscriptions.clear()
   // 重置 history 截断标记
   historyTruncatedSessions.value = new Set()
+  // MF-1：清 manual compact 标记（测试间不 reset 会泄漏到下一用例）
+  manualCompactionState.clear()
   // wave:renderer-subscribe：重置 MessageBus 订阅状态（subscriptionStates 模块级 Map）。
   // 与 streamSubscriptions/historyTruncatedSessions 同理——测试间不 reset 会泄漏到下一用例
   //（subscriptionStates 残留 → routeInbound gap 检测误判）。
@@ -191,13 +203,17 @@ export function ensureStreamSubscription(
         break
       }
       case 'session.compacted': {
-        // #6：compact 生命周期结束（成功/失败均广播）。错误反馈走 compact() 的 catch，此处仅复位态。
+        // #6：compact 生命周期结束（成功/失败/取消均广播）。复位态 + 标记 compaction_end 已到达。
         chat.setCompacting(sid, false)
+        // MF-1：compaction_end 到达标记（供 compact() catch 区分失败类型）。仅 manual compact
+        // in-flight 时标记——auto-compaction 的 compaction_end handler 见 key 不在则跳过（不污染）。
+        // 成功/失败/aborted 均置 true：只要 compaction_end 到达，说明 pi 已处理 compact，结果（含错误）
+        // 由 interpreter 进对话流，catch 不再 toast（避免双提示 / 对 aborted 误提示失败）。
+        if (manualCompactionState.has(sid)) manualCompactionState.set(sid, true)
         // wave:compact-queued-messages：compact 成功后重放排队消息（session.compacted 无 error 字段）。
-        // - error 非空（compact 失败）：仅保留队列，不 flush 不 toast——compact() 的 RPC catch 已
-        //   toast（runtime 两条失败路径 busy 拒绝/compact 失败都会抛错走 error envelope → catch），
-        //   handler 再 toast 是双 toast（bug）。
-        // - error 为 undefined（compact 成功）：flush 重放；flush 返回 false（重放 RPC 失败）→
+        // - error 非空（compact 失败）：仅保留队列，不 flush——错误反馈归 interpreter
+        //   （compaction_end{errorMessage} → message.error 对话流），handler 不 toast（避免双提示）。
+        // - error 为 undefined（compact 成功 / aborted）：flush 重放；flush 返回 false（重放 RPC 失败）→
         //   toast 提示（队列保留，下次 compact 成功时重试）。
         const payload = msg.payload as { error?: string }
         if (payload.error === undefined) {
@@ -493,23 +509,36 @@ export function createUseChat(deps: UseChatDeps) {
   /**
    * 压缩上下文（#6 + M4）：确保会话级订阅（消费 session.compacting/compacted）→ 调 api.compact。
    *
-   * 错误反馈（MF-新1）：删 toast。错误提示统一归 interpreter（compaction_end{errorMessage} →
-   * message.error 对话流）。pi 手动 compact 失败必发 compaction_end{errorMessage}（无静默路径），
-   * interpreter 是确定可见的错误源；此处 toast 会与 interpreter 提示重叠（failed 双提示）且对 aborted
-   * 误提示（取消却显示失败）。transport 级失败（RPC 未达 pi）不触发 interpreter，靠 chatApi 通用错误
-   * 处理兑底——不在此单独 toast。compacting 态由 session.compacted 复位（interpreter 发，必达）。
+   * 错误反馈（MF-1）：区分两类失败。pi 的 compact() 对失败/aborted 均 emit compaction_end 后 throw
+   * （agent-session.js catch 块），故 RPC 必 reject 到此 catch。三类失败经同一 catch：
+   *   - compaction 级（pi 已处理）：compaction_end{errorMessage} → interpreter 广播 message.error 进
+   *     对话流（确定可见的错误源）；aborted → interpreter 视作非错误（不提示，取消语义）。compaction_end
+   *     均先于 RPC error reply 经 stdout 到达 → session.compacted handler 先置 manualCompactionState=true，
+   *     此处 catch 见 ended=true → 不 toast（避免与 interpreter 双提示 / 对 aborted 误提示失败）。
+   *   - transport/busy 级（RPC 未达 pi / dispatcher busy 预检拒绝）：pi 未发 compaction_end，interpreter
+   *     不参与 → 零反馈。此处 catch 见 ended=false → toast 兜底（AGENTS.md 规则 #3 错误必须可见）。
+   * 不 throw（consumer fire-and-forget）。compacting 态由 session.compacted 复位（interpreter 发，必达）。
    *
    * 显式接收 sessionId：per-panel 隔离，不读全局 activeId。
    */
   async function compact(sessionId: string, customInstructions?: string): Promise<void> {
     const sid = sessionId
     ensureStreamSubscription(sid, chat, session, subDeps)
+    // MF-1：标记 manual compact in-flight（key 存在），compaction_end 到达时 handler 置 value=true
+    manualCompactionState.set(sid, false)
     try {
       await deps.chatApi.compact(sid, customInstructions)
     } catch (e) {
-      // MF-新1：错误已由 interpreter 经 compaction_end{errorMessage} → message.error 进对话流提示。
-      // 此处仅记日志（调试诊断），不 toast 不 throw（consumer fire-and-forget，错误反馈在对话流）。
-      console.warn('[useChat] compact RPC failed (error surfaced via interpreter/dialog flow):', e)
+      const compactionEnded = manualCompactionState.get(sid) === true
+      if (!compactionEnded) {
+        // transport/busy 级失败：pi 未发 compaction_end（RPC 未达 pi / busy 预检拒绝），interpreter 不参与，
+        // 零用户反馈——toast 兜底（AGENTS.md 规则 #3）。compaction 级失败由 interpreter 进对话流，不在此 toast。
+        const msg = e instanceof Error ? e.message : String(e)
+        deps.toast.error(deps.t('composable.compactFailed', { msg }))
+      }
+      console.warn(`[useChat] compact RPC failed (compaction-ended=${compactionEnded}, surfaced via ${compactionEnded ? 'interpreter/dialog flow' : 'toast fallback'})`, e)
+    } finally {
+      manualCompactionState.delete(sid)
     }
   }
 
@@ -620,6 +649,7 @@ export function createUseChat(deps: UseChatDeps) {
       streamSubscriptions.delete(sessionId)
     }
     clearHistoryTruncated(sessionId) // SUGGESTION：已删 session 的截断标记不再有意义
+    manualCompactionState.delete(sessionId) // MF-1：清 manual compact 标记
     // wave:renderer-subscribe：清除 MessageBus 订阅状态（SubscriptionState）。
     // 与 streamSubscriptions.delete 配对——session 删除后若不清，routeInbound 的 gap 检测
     // 仍会读残留 state（lastSeenSeq 基线 stale），且 Map 永久增长。

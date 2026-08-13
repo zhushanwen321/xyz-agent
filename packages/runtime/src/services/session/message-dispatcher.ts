@@ -445,7 +445,8 @@ export class MessageDispatcher {
       const errMsg = `Cannot compact while ${reason}`
       console.warn(`[message-dispatcher] compact preemptive reject (busy), sid=${sessionId}, reason=${reason}`)
       // 零广播：不广播 session.compacted{error}。预检在 RPC 前，pi 未发 compaction_start，interpreter 不参与；
-      // 错误经 throw → session-message-handler error envelope → 通用错误处理（useChat compact catch 已删 toast，MF-新1）。
+      // 错误经 throw → session-message-handler error envelope → useChat compact catch（MF-1：busy/transport 级失败
+      // compaction_end 未到达 → catch toast 兜底；compaction 级失败由 interpreter 进对话流，catch 不 toast）。
       throw new Error(errMsg)
     }
 

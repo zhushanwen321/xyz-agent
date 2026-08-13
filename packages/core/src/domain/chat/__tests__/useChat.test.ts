@@ -238,6 +238,36 @@ describe('createUseChat factory 行为', () => {
     f.dispose()
   })
 
+  it('compact transport/busy 级失败（compaction_end 未到达）：toast 兜底（MF-1）', async () => {
+    const f = makeFixture()
+    // transport/busy 级失败：RPC 未达 pi / dispatcher busy 预检拒绝 → compaction_end 不发 →
+    // interpreter 不参与 → 零用户反馈（违反 AGENTS.md 规则 #3）
+    f.chatApi.compact.mockRejectedValueOnce(new Error('RPC 超时'))
+    await f.useChat.compact('s15')
+    // manualCompactionState 仍 false（compaction_end 未到达）→ catch toast 兜底
+    expect(f.toast.error).toHaveBeenCalledTimes(1)
+    expect(f.toast.error).toHaveBeenCalledWith(
+      expect.stringContaining('composable.compactFailed')
+    )
+    f.dispose()
+  })
+
+  it('compact compaction 级失败（compaction_end 先于 RPC reject 到达）：catch 不 toast（MF-1）', async () => {
+    const f = makeFixture()
+    // 模拟 pi 时序：compact() 失败时先 emit compaction_end 后 throw（agent-session.js catch 块）
+    // compaction_end 经 stdout 先于 RPC error reply 到达 → session.compacted handler 先 set
+    // manualCompactionState=true → catch 见 ended=true → 不 toast（interpreter 已进对话流提示）
+    f.chatApi.compact.mockImplementationOnce(() => {
+      f.emit('s16', msg('s16', 'session.compacted', { error: '上下文压缩失败' }))
+      return Promise.reject(new Error('上下文压缩失败'))
+    })
+    await f.useChat.compact('s16')
+    // compaction 级失败：interpreter 经 compaction_end{errorMessage} → message.error 进对话流（确定可见）
+    // catch 不 toast（避免与 interpreter 双提示）
+    expect(f.toast.error).not.toHaveBeenCalled()
+    f.dispose()
+  })
+
   it('abortBash API 失败：toast.error（markStreamingBashError 兼底，不 throw）', async () => {
     const f = makeFixture()
     f.chatApi.abortBash.mockRejectedValueOnce(new Error('pi死'))
