@@ -218,6 +218,7 @@
 - 这是「renderer 难测试模块」的唯一解——把不可测的 window 依赖推到 seam 之后
 - B 是"5 份代码维护一份语义"的纯亏损；C 的半收敛会留下"为什么 clipboard 有 seam 而 resize 没有"的疑问，审查口径仍然混乱
 - 收敛完成后，后续新增复制/缩放类功能只有一条路：useClipboard / useWindowResize——新的「单一真相源」有 seam 兜底，不会再次回潮为多份
+- 与 C2 的边界：clipboard 直连点在 BrowserPane（C3 范围）与 browser 控制函数（C2 范围）分属两个候选，实施时按候选边界分开提交，不要混在一个 commit
 
 **推荐**：方案 A（clipboard + resize 同批）。命名口径注意：useCopy 曾自称「单一真相源」但实际不是——新 useClipboard 才是，旧注释随旧实现删除。
 
@@ -262,7 +263,7 @@
 - guiComponent 案例证明「注释声称消除重复」这类声明会随时间漂移成谎言——删除比注释可靠
 - 若实施时 guiComponent 残留存在（其他分支/缓存），按报告建议处理：一行 extractGui 内联回唯一使用点 MessageStream.vue，恢复 locality
 
-**收益**：复杂度消失、调用点内聚（审查报告原文「复杂度消失，调用点内聚」）。TD7 迁 core 后 renderer 侧 summarize 路径归零，导航不再出现「假活跃」符号；guiComponent 已删证明此类漂移的标准结局就是删除。
+**收益**：复杂度消失、调用点内聚（审查报告原文「复杂度消失，调用点内聚」）。TD7 迁 core 后 renderer 侧 summarize 路径归零，导航不再出现「假活跃」符号；guiComponent 已删证明此类漂移的标准结局就是删除。C4 落地后，`composables/logic/` 目录只剩活跃纯函数，B3（logic 下沉 core）的盘点范围因此更干净。
 
 **方案对比**：
 
@@ -286,6 +287,8 @@
 1. 删 `composables/logic/summarizeTurn.ts` + 其测试文件（同目录 `__tests__/` 下）
 2. `rg "summarizeTurn"` 确认零命中（含测试目录）
 3. （残留情况下）guiComponent 的 extractGui 内联回 MessageStream.vue，删文件
+4. 完成后 `ls composables/logic/` 核对目录清单，确认无其他 TD 迁 core 残骸（若发现同类死文件，一并记录，不扩大本候选范围）
+5. 删除后跑一次 `pnpm run lint`，确认无未使用文件/悬空引用告警
 
 **风险**：零（纯删除；guiComponent 残留处理为 1 行内联，风险极低）。不涉及任何行为路径，无回滚需求——万一误删（理论不可能，零调用方已核实），git 恢复即可。
 
@@ -296,9 +299,9 @@
 1. 启动 dev 完成一次会话，消息折叠/展开交互正常（summarizeTurn 若被误删会在摘要路径暴露——实际零调用方故无影响路径，此验收是防误判）
 2. typecheck 通过；`rg "summarizeTurn"` 零命中（含测试目录）
 3. W0 删除类候选禁止以单测为唯一验收
-4. 与主文档 §4 全局验收联动：本波次（W0）完成后跑主文档全局验收第 1 条（真实场景冒烟）与第 2 条（全量检查）确认无回归
+4. 与主文档 §4 全局验收联动：本波次（W0）完成后跑主文档全局验收第 1 条（真实场景冒烟）与第 2 条（全量检查）确认无回归——C1/C4/B1/B2 同批验收，一次冒烟覆盖全部 W0 改动
 
-**下一层拆分**：无。与 C1/B1/B2 同波次 W0。
+**下一层拆分**：无。与 C1/B1/B2 同波次 W0。本候选无独立子任务，但实施顺序上排在 C1 之后（C1 删 useSidebar 壳涉及同波次 typecheck 面，先 C1 后 C4 可共享一次 dev 冒烟验证）。
 
 ---
 
