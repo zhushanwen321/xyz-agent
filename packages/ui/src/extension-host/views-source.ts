@@ -24,7 +24,7 @@ export interface PluginViewSummary {
 
 /** PluginViewContainer 数据源。 */
 export interface PluginViewsSource {
-  /** 取该 session 可见的 view 清单（静态声明 ∪ 动态 widget 发现，per-session）。 */
+  /** 取该 session 可见的 view 清单（静态声明；per-session 形参保留接口兼容，当前实现忽略）。 */
   getViews(sessionId: string): PluginViewSummary[]
 }
 

@@ -14,8 +14,7 @@
  * builtin 判定：view.pluginId === 'tasks'（与 core builtin-contributions.ts 的
  * tasks plugin 声明对齐）→ 不可关闭（L2TabBar 不渲染 close 按钮，容器侧再守卫）。
  *
- * icon 字典：viewId 匹配（todo→ListTodo、goal→Target）；view.icon 提供时优先按
- * icon 名查同一字典；均未命中 → 默认 LayoutGrid。
+ * icon：view.icon 当前无图标源（壳透传 undefined），统一以 default icon 兜底（见 DEFAULT_ICON）。
  *
  * 无注入 source / 无 views：静默空态不崩（对齐 ViewHost 的 inject null 语义）。
  */
@@ -37,7 +36,7 @@ const source = inject(VIEWS_SOURCE_KEY, null)
 /** builtin plugin（core builtin-contributions.ts 声明）——不可关闭 */
 const BUILTIN_PLUGIN_IDS = new Set(['tasks'])
 
-/** 通用 default icon（动态 view 无 icon 元数据，统一 LayoutGrid；不做 viewId 特化映射） */
+/** 通用 default icon（静态声明 view 未配 icon 时使用，统一 LayoutGrid） */
 const DEFAULT_ICON: Component = LayoutGrid
 
 /** 全部贡献 view（无 source 注入 → 空数组，静默空态） */

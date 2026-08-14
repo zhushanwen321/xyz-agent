@@ -23,7 +23,7 @@
  * 适配（见 extension-host-dialog.ts）经 DIALOG_REQUEST_SOURCE_KEY/UI_RESPONSE_TRANSPORT_KEY 注入。
  */
 import type { App } from 'vue'
-import { reactive, ref, shallowReactive, watch } from 'vue'
+import { reactive, shallowReactive, watch } from 'vue'
 import {
   ContributionRegistry,
   createSessionScopedMap,
@@ -302,21 +302,14 @@ export function initExtensionHostBridge(app: App): {
     // M17 WidgetArea 消费面：枚举该 session 全部缓存 viewId（纯透传 core store）
     getViewIds: (sessionId: string) => viewHostStore.getViewIds(sessionId),
   })
-  // L2 二级 tab 数据源（PluginViewContainer 经 inject 取；sidebar.tab 视图贡献清单）。
+  // L2 二级 tab 数据源（PluginViewContainer 经 inject 取；纯静态声明——sidebar.tab 视图贡献清单，
+  // widget 推送经 M17 对话流面板 WidgetArea 承接、不进 sidebar，M17 wave2 D5）。
   // 不裸委托 getViewsByPlacement——它缺 pluginId，builtin 判定（tasks 不可关闭）需要
   // pluginId，故从 getContributions 直接映射（design-review 已确认此设计）。
-  // icon 当前无图标源，透传 undefined（PluginViewContainer 按 viewId 内置字典兜底）。
-  // 通用 widget bridge：动态承接 extension:widget 推送——任何 extension 推了 widget 内容，
-  // 对应 viewId 自动暴露为 sidebar view tab，无需 extension 做 xyz-agent 适配、无需壳侧硬编码声明。
-  // 响应式粘合：ViewHostStore 缓存变化 → onChange bump version → PluginViewContainer computed 重算。
-  const dynamicViewsVersion = ref(0)
-  viewHostStore.onChange(() => {
-    dynamicViewsVersion.value++
-  })
+  // icon 当前无图标源，透传 undefined（PluginViewContainer 以统一 default icon 兜底）。
   app.provide(VIEWS_SOURCE_KEY, {
-    getViews: (sessionId: string) => {
-      // 读 version 建立响应式追踪（widget 变化 → version bump → computed 重算）
-      void dynamicViewsVersion.value
+    getViews: (_sessionId: string) => {
+      // per-session 形参保留接口兼容（ui 契约 IF5）：纯静态声明，当前实现忽略
       const staticViews = contributions
         .getContributions({ type: 'view' })
         .filter((c) => c.placement === 'sidebar.tab')
@@ -327,19 +320,7 @@ export function initExtensionHostBridge(app: App): {
           initialVisibility: c.view?.initialVisibility ?? 'hidden',
           pluginId: c.pluginId,
         }))
-      // 动态发现：ViewHostStore 中该 session 有 widget 内容的 viewId（与静态声明去重）
-      const staticIds = new Set(staticViews.map((v) => v.viewId))
-      const dynamicViews = viewHostStore
-        .getViewIds(sessionId)
-        .filter((id) => !staticIds.has(id))
-        .map((id) => ({
-          viewId: id,
-          title: id,
-          icon: undefined,
-          initialVisibility: 'visible' as const,
-          pluginId: '',
-        }))
-      return [...staticViews, ...dynamicViews]
+      return staticViews
     },
   })
   app.provide(STATUS_BAR_SOURCE_KEY, {

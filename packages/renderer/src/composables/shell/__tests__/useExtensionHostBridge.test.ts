@@ -10,10 +10,13 @@
  * TC5 白名单 5 项字面量 + 行为级验证（防与 core EXTENSION_HANDLERS 漂移）。
  * M17 追加：TC7 VIEW_HOST_SOURCE_KEY provide 值的 getViewIds 纯透传
  * （extension:widgetGui 帧 → ViewHostStore → provide 枚举一致）。
+ * M17 wave2 追加（D5：废弃 sidebar 动态 view 发现，getViews 纯静态）：
+ * M17w2-TC1 widget 推送不进 L2 tab 清单（getViewIds 对照仍含）/
+ * M17w2-TC2 静态声明 view 经 registerContribution 出现在 getViews。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { computed, nextTick } from 'vue'
-import { InternalEventBus, MessageBusBridge, providePlatform } from '@xyz-agent/core'
+import { InternalEventBus, MessageBusBridge, providePlatform, type ContributionRegistry } from '@xyz-agent/core'
 import type { InternalEvent } from '@xyz-agent/core'
 import { dispatchCrossSession, dispatchGlobal } from '@/api/events'
 import { createWsPluginMessageSource, EXTENSION_BRIDGE_TYPES, initExtensionHostBridge } from '../useExtensionHostBridge'
@@ -22,8 +25,10 @@ import {
   UI_RESPONSE_TRANSPORT_KEY,
   VIEW_HOST_SOURCE_KEY,
   STATUS_BAR_SOURCE_KEY,
+  VIEWS_SOURCE_KEY,
   type ViewHostSource,
   type StatusBarSource,
+  type PluginViewsSource,
 } from '@xyz-agent/ui/extension-host'
 import { connect, disconnect } from '@/lib/ws-client'
 import { createMockPlatform } from '@/mock/mock-ws'
@@ -218,7 +223,12 @@ describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
   })
 
   /** 装配真实 bridge 链（events → source → bus → store → provide），返回注入的数据源。 */
-  function initBridgeSources(): { viewHostSource: ViewHostSource; statusBarSource: StatusBarSource } {
+  function initBridgeSources(): {
+    viewHostSource: ViewHostSource
+    statusBarSource: StatusBarSource
+    viewsSource: PluginViewsSource
+    contributions: ContributionRegistry
+  } {
     const provided: Array<{ key: unknown; value: unknown }> = []
     const app = {
       provide(key: unknown, value: unknown) {
@@ -230,7 +240,8 @@ describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
     bridge = result.bridge
     const viewHostSource = provided.find((p) => p.key === VIEW_HOST_SOURCE_KEY)?.value as ViewHostSource
     const statusBarSource = provided.find((p) => p.key === STATUS_BAR_SOURCE_KEY)?.value as StatusBarSource
-    return { viewHostSource, statusBarSource }
+    const viewsSource = provided.find((p) => p.key === VIEWS_SOURCE_KEY)?.value as PluginViewsSource
+    return { viewHostSource, statusBarSource, viewsSource, contributions: result.contributions }
   }
 
   it('case B: 分区后建时序——computed 首次求值无分区，首个 viewUpdate 到达后重算命中', async () => {
@@ -297,6 +308,65 @@ describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
 
     // 其他 session 分区不受污染
     expect(viewHostSource.getViewIds('s2')).toEqual([])
+  })
+
+  it('M17w2-TC1: getViews 纯静态——extension:widgetGui 推送后不出现动态 view（getViewIds 对照仍含）', async () => {
+    const { viewHostSource, viewsSource } = initBridgeSources()
+    // builtin 无 view 声明 → 初始静态清单为空
+    expect(viewsSource.getViews('s1')).toEqual([])
+
+    // 推帧模式复用 TC7：events crossSession 通道 → source filter → bridge 归一 → ViewHostStore setView
+    dispatchCrossSession({
+      type: 'extension:widgetGui',
+      payload: {
+        sessionId: 's1',
+        widgetKey: 'goal',
+        gui: { type: 'ansi-text', props: { lines: ['goal: ship it'] } },
+      },
+    })
+    await nextTick()
+
+    // sidebar L2 tab 数据源纯静态（D5：M2 动态发现废弃）——widget 推送不进 getViews
+    expect(viewsSource.getViews('s1')).toEqual([])
+    expect(viewsSource.getViews('s1').map((v) => v.viewId)).not.toContain('goal')
+    // 对照断言：ViewHost 枚举（M17 对话流面板 WidgetArea 消费面）不受影响，仍含该 widgetKey
+    expect(viewHostSource.getViewIds('s1')).toEqual(['goal'])
+  })
+
+  it('M17w2-TC2: 静态声明 view（sidebar.tab 贡献）照常出现在 getViews', () => {
+    const { viewsSource, contributions } = initBridgeSources()
+    expect(viewsSource.getViews('s1')).toEqual([])
+
+    // 经 bridge 返回的 contributions.registerContribution（contribution-registry public API）
+    // 注入一条 sidebar.tab view 静态声明（形状对齐 parseContributes 的 view 分支）
+    contributions.registerContribution({
+      pluginId: 'demo-plugin',
+      contributionId: 'demo-view',
+      type: 'view',
+      placement: 'sidebar.tab',
+      available: false,
+      view: { viewType: 'gui', title: 'Demo', initialVisibility: 'hidden' },
+    })
+
+    // 静态映射路径被真实覆盖（防止移除动态段时改坏 staticViews 映射零报警）
+    expect(viewsSource.getViews('s1').map((v) => v.viewId)).toEqual(['demo-view'])
+    expect(viewsSource.getViews('s1')[0]).toMatchObject({
+      viewId: 'demo-view',
+      title: 'Demo',
+      pluginId: 'demo-plugin',
+      initialVisibility: 'hidden',
+    })
+
+    // placement 过滤保持：非 sidebar.tab 的 view 声明不进清单
+    contributions.registerContribution({
+      pluginId: 'demo-plugin',
+      contributionId: 'panel-view',
+      type: 'view',
+      placement: 'panel.header',
+      available: false,
+      view: { viewType: 'gui', title: 'Panel', initialVisibility: 'hidden' },
+    })
+    expect(viewsSource.getViews('s1').map((v) => v.viewId)).toEqual(['demo-view'])
   })
 })
 
