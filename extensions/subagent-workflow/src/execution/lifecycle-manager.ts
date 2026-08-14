@@ -333,14 +333,22 @@ const activateLockTails = new Map<string, Promise<void>>();
  * @returns release 函数——获得锁后**必须**调用它释放（finally 块），否则同 recordId
  *          的后续 acquire 永久挂起。
  *
- * **状态：冗余，不接入 runSpawn**。单 activation 不变量已由 `resumeRound`（
- * `subagent-service.ts:631/660`）的同步状态 CAS 覆盖：`status !== "idle"` 检查与
- * `status = "running"` 翻转之间无 await，同一 recordId 的并发 message 只有一个能进入 spawn，
- * 另一个 throw「not ready」。`acquireActivateLock` 只会把「第二个 throw」改成「第二个排队」，
- * 是 reject→serialize 的语义改变，非安全修复。完整分析见
- * `docs/design/v2-defense-ii-iii-resolution.md`（防线 iii 章节）。骨架保留（已实现 + 已测，
- * 零维护成本）；未来若产品决定续聊从「被拒」改为「排队」，再接入并做退出路径全覆盖设计。
+ * **状态：已接入（双保险，D3）**。`subagent-service.ts:894` 冷路径 resume 前调
+ * `acquireActivateLock(record.id)`，作为 idle CAS 守卫之外的结构化防护层：idle CAS
+ *（`status !== "idle"` 检查与 `status = "running"` 翻转间无 await）仍是一级守卫，
+ * reject 并发 message；锁把冷路径 resume spawn 的双写者交错升级为串行排队，防坏 session。
+ * 超时兜底见下方 `ACTIVATE_LOCK_TIMEOUT_MS`（V3 D3 / v4-lifecycle-convergence.md A-2）。
  */
+
+/**
+ * acquireActivateLock 等待前序锁释放的超时（v4 A-2）。
+ *
+ * 前 holder 崩溃/死锁导致 release 永不触发时，waiter 不无限挂起；30s 超时后抛含恢复指引
+ * 的错误（调用方可用 message action 重试）。30s 远超正常冷路径 resume spawn 耗时（~ms 级），
+ * 留足异常恢复余量而不误伤正常排队。
+ */
+const ACTIVATE_LOCK_TIMEOUT_MS = 30 * 1000;
+
 export function acquireActivateLock(recordId: string): Promise<() => void> {
   const prev = activateLockTails.get(recordId) ?? Promise.resolve();
   let releaseFn!: () => void;
@@ -350,8 +358,26 @@ export function acquireActivateLock(recordId: string): Promise<() => void> {
   // 链尾 = 等 prev 完成后挂 current；current 在 releaseFn 调用前保持 pending，
   // 让下一次 acquire 的 prev 等到本次 release。
   activateLockTails.set(recordId, prev.then(() => current));
-  // 调用方等 prev 完成后才拿到 releaseFn（即拿到锁）。
-  return prev.then(() => releaseFn);
+
+  // 30s 超时兜底（v4 A-2）：前序 holder 长期不 release（崩溃/死锁）时，waiter 不无限挂起，
+  // 超时抛含恢复指引的错误（调用方可用 message action 重试）。正常拿到锁时 clearTimeout
+  // 取消未触发的 timer 防泄漏。超时只 reject 本次 acquire 的返回 promise，不改 release 语义——
+  // 原 holder release 仍 resolve current，链尾照常推进，后续 waiter 各受同样 30s 保护。
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const acquirePromise = prev.then(() => {
+    clearTimeout(timeoutId);
+    return releaseFn;
+  });
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(
+        new Error(
+          `subagent ${recordId} activation timed out; retry action: message`,
+        ),
+      );
+    }, ACTIVATE_LOCK_TIMEOUT_MS);
+  });
+  return Promise.race([acquirePromise, timeoutPromise]);
 }
 
 // ============================================================
