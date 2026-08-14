@@ -28,7 +28,7 @@ import { isTerminalStatus } from "../engine/goal";
 import type { GoalRuntimeState } from "../engine/types";
 import type { UiPort } from "../ports";
 import type { GoalSession } from "../session";
-import { guiComponent, type GuiComponent } from "@xyz-agent/extension-protocol";
+import { buildGoalGui } from "./gui";
 
 /**
  * projection 层的 Theme 抽象。不 import Pi 的 ThemeColor。
@@ -193,100 +193,6 @@ export function renderWidgetLines(state: GoalRuntimeState, th: ThemeLike): strin
 	return lines;
 }
 
-// ── GUI 协议 widget（buildGoalGui，renderWidgetLines 的 GuiComponent 版）──────────
-
-/** GoalStatus → stats-line StatItem（severity 语义化，对标 TUI 的状态后缀着色）。 */
-function statusToStatItem(
-	state: GoalRuntimeState,
-): { value: string; severity: "ok" | "warn" | "danger" } | null {
-	switch (state.status) {
-		case "paused":
-			return { value: "Paused", severity: "warn" };
-		case "blocked":
-			return { value: "Blocked", severity: "danger" };
-		case "complete":
-			return { value: "Completed", severity: "ok" };
-		case "budget_limited":
-			return { value: "Budget exhausted", severity: "danger" };
-		default:
-			return null;
-	}
-}
-
-/**
- * 把 goal state 映射为 GuiComponent（card 容器 + stats-line 标题 + progress-bar token）。
- *
- * 对标 renderWidgetLines 的 TUI 文本行，用结构化原语表达：
- * - card.header = stats-line（◆ title | Turn N | Time | Token% | 状态后缀）
- * - card.body = successCriteria 摘要（stats-line icon:check）+ token progress-bar（有预算时）
- *
- * RPC 模式经 guiSetWidget 编码（marker 进 string[]），host 侧 event-adapter 解码还原成
- * GuiComponent → GuiComponentRenderer 渲染。TUI 模式不调本函数（走 renderWidgetLines）。
- */
-export function buildGoalGui(state: GoalRuntimeState): GuiComponent | undefined {
-	if (state.status === "cancelled") return undefined;
-
-	const title = getTitle(state);
-	const elapsed = formatMinutes(getElapsedSeconds(state));
-
-	interface HeaderItem {
-		label?: string;
-		value: string;
-		severity?: "ok" | "warn" | "danger";
-		icon?: string;
-	}
-	const headerItems: HeaderItem[] = [
-		{ value: `◆ ${title}` },
-		{ label: "Turn", value: `${state.currentTurnIndex}` },
-		{ label: "Time", value: elapsed },
-	];
-
-	const body: GuiComponent[] = [];
-
-	// successCriteria 摘要（对标 renderWidgetLines 的 ✓ 行）
-	if (state.successCriteria) {
-		const criteria = toSingleLine(state.successCriteria);
-		const trimmed =
-			criteria.length > OBJECTIVE_DISPLAY_LIMIT
-				? `${criteria.slice(0, OBJECTIVE_TRUNCATE_KEEP)}...`
-				: criteria;
-		body.push(
-			guiComponent("stats-line", {
-				items: [{ icon: "check", value: trimmed }],
-			}),
-		);
-	}
-
-	// Token：有预算 → progress-bar；无预算 → stats-line 绝对值
-	if (state.budget.tokenBudget && state.budget.tokenBudget > 0) {
-		const pct = Math.round(getTokenUsagePercent(state));
-		const severity: "ok" | "warn" | "danger" =
-			pct >= 95 ? "danger" : pct >= 80 ? "warn" : "ok";
-		headerItems.push({ label: "Token", value: `${pct}%`, severity });
-		body.push(
-			guiComponent("progress-bar", {
-				label: `Token ${formatTokens(state.tokensUsed)}/${formatTokens(state.budget.tokenBudget)}`,
-				current: state.tokensUsed,
-				total: state.budget.tokenBudget,
-				unit: "tokens",
-				severity,
-			}),
-		);
-	} else {
-		headerItems.push({ label: "Token", value: formatTokens(state.tokensUsed) });
-	}
-
-	// 状态后缀（对标 renderStatusLine 的 switch）
-	const statusItem = statusToStatItem(state);
-	if (statusItem) headerItems.push(statusItem);
-
-	return guiComponent("card", {
-		variant: "default",
-		header: guiComponent("stats-line", { items: headerItems }),
-		body,
-	});
-}
-
 // ── updateWidget（FR-6.6 hasUI 守卫）──
 
 /**
@@ -348,7 +254,8 @@ export function updateWidget(session: GoalSession, uiPort: UiPort): void {
 
 	uiPort.setStatus("goal", renderStatusLine(session.state, asTheme(uiPort)));
 	if (isGui) {
-		uiPort.setGuiWidget("goal", buildGoalGui(session.state));
+	// 复用 projection/gui.ts 的 buildGoalGui（与 M5 details.__gui__ 同源），取 .component 给 M2 widget
+		uiPort.setGuiWidget("goal", buildGoalGui(session.state).component);
 	} else {
 		uiPort.setWidget("goal", renderWidgetLines(session.state, asTheme(uiPort)));
 	}
