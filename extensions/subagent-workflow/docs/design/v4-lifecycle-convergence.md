@@ -1,6 +1,6 @@
 # Subagent 生命周期终态收敛技术方案（V4）
 
-> **一句话结论**：V3 三层模型的 9 个子方案已落地 8 个（SP-7 按设计 deferred），但「最少副作用」目标尚未达成——残留 7 类问题：L1 `idle` 字面量（存储态与派生态并存）、互斥双保险（CAS + 锁，注释与代码矛盾）、**异步 EPIPE 无 error listener（可崩主进程连坐全部活跃 subagent）**、锁无超时兜底、跨重启 chatMode 恢复语义未定案（两条重建路径处理不一致）、**递归场景跨进程双 activation 风险（SP-8 全树可见后主进程可 message 孙级 record → 双写者窗口）**、文档-代码漂移 6 处。本方案以 dsh 的五条机制原则为对照锚，分两期收敛：**A 期可靠性收口（5 个独立小改，含递归直接父守卫）→ B 期状态收敛（L1 两态 + 单互斥源 + L2 两簿记）**，把「复杂状态机 / 并发 / 一致性孤儿 / hack session」四类副作用压到跨进程约束下的最小值。**（审查修订）B-3「单互斥源」的同步单写者不变量设计待补——原「锁内重检 by-construction」论证经源码核实不成立（TOCTOU），B-3 阻塞至方向 a/b 定案，A 期先行。**
+> **一句话结论**：V3 三层模型的 9 个子方案已落地 8 个（SP-7 按设计 deferred），但「最少副作用」目标尚未达成——残留 7 类问题：L1 `idle` 字面量（存储态与派生态并存）、互斥双保险（CAS + 锁，注释与代码矛盾）、**异步 EPIPE 无 error listener（可崩主进程连坐全部活跃 subagent）**、锁无超时兜底、跨重启 chatMode 恢复语义未定案（两条重建路径处理不一致）、**递归场景跨进程双 activation 风险（SP-8 全树可见后主进程可 message 孙级 record → 双写者窗口）**、文档-代码漂移 6 处。本方案以 dsh 的五条机制原则为对照锚，分两期收敛：**A 期可靠性收口（6 个独立小改，含递归直接父守卫 + 砍注入改 list 拉取）→ B 期状态收敛（L1 两态 + 单互斥源 + L2 两簿记）**，把「复杂状态机 / 并发 / 一致性孤儿 / hack session」四类副作用压到跨进程约束下的最小值。**（审查修订）B-3「单互斥源」的同步单写者不变量设计待补——原「锁内重检 by-construction」论证经源码核实不成立（TOCTOU），B-3 阻塞至方向 a/b 定案，A 期先行；A-6 砍 SP-3 每 loop 注入、改 list 按需拉取（修盲点 + 上下文税）。**
 
 ## 层声明
 
@@ -240,10 +240,33 @@ dsh（deepseek-harness，master @ 47f9438）在同进程约束下把同样的多
 - **被否**：允许跨层 message（双写者回归，G1 禁止）；全局注册表/broker 跨进程锁（V2 §3.5 触发条件未到，复杂度不成比例——准则 8）；冷路径前探测「他进程是否持有活进程」（无通道可探，等于造 broker）。
 - **探针**：⛔ P-parent-guard（§4 场景 S6：两层递归多轮全链路 + 跨层 message 拒绝 + 恢复指引 + 双写者零残留）。
 
+#### A-6：砍 SP-3 每 loop 注入 → list 按需拉取（修盲点 + 上下文税，回溯 G3）
+
+> **审查讨论新增范围**：V4 原把 SP-3（before_agent_start 每 loop 注入活跃 subagent 快照）当作已落地基线继承，P1~P7 未质疑。审查暴露「注入全树范围与 A-5 直接父权限不一致」+「每 loop display:true message 持续占上下文」两个问题后，决定转变实现方式：从「hook 被动推送」改为「agent 按需调 list 工具拉取」。
+
+- **选择**：删除 `index.ts` 的 before_agent_start subagent-status 注入 hook（SP-3 产物）；活跃 subagent 清单改由 agent 按需调 `action:"list"` 获取。配套三处增强：
+  1. **list 输出补字段**（`recordToListItem`，subagent-actions.ts:150）：新增 `parent`（parentRecordId 派生，配合 A-5 直接父守卫——agent 一眼看出「哪些我能直接 message / 哪些要走父链」）+ `resumable`（isResumable 派生，B-1 后「可续聊」的对外表达，不依赖 chatMode 字面量）。现状 list 输出只有 subagentId/agent/slug/state/status/mode/duration/model/totalTokens/sessionFile——缺这两个 A-5/B-1 后决策必需的字段。
+  2. **tool description 补引导**（subagent-tool.ts）：start 前先 list 看有无可复用的活跃 subagent（对冲 compact 吞引用导致的重复 start）；这是砍掉被动注入后对抗 compact 的主动机制。现状 description 只说「use list only when you concretely need state」，无「start 前先查」引导。
+  3. **list 输出含 closed record + closedReason**（承接 SP-4 级联关闭告知，见代价/风险）。
+
+- **依据**：
+  1. **盲点根治**：原 SP-3 注入的 collectRecords 按 rootSessionId 过滤（SP-8 后全树贯穿），注入的是全树 record（含主 agent 够不到的孙级），与 A-5 直接父权限不一致——主 agent 看到孙级却 message 被拒。砍注入 + list 补 parent 后，agent 调 list 时看到 parent 字段自然知道操作边界，不一致消失。
+  2. **上下文税消除**：原每 loop 注入 `display:true` 的 `[subagent-status]` message 持续占用 LLM 上下文（长对话累积，compact 摘要后又重来——每 loop 重注入正是为了对抗摘要，形成「注入→累积→摘要→再注入」循环）。砍掉后上下文干净，符合 G3 最少机制。
+  3. **V4 收敛后状态足够清晰**：A-5（直接父守卫）+ B-1（isResumable 派生）+ list 补 parent/resumable 后，agent 按需调 list 即得完整决策信息（谁能操作、能否续聊、谁是父），无需被动塞快照。模式转变：push → pull，符合 agent 自主性。
+  4. **compact 对冲**：compact 吞引用风险仍在，但对冲从「被动每 loop 提醒」转为「agent 在决策点主动查」——tool description 引导「start 前先 list」。agent 不操作 subagent 时不需要清单（不发现遗漏的活跃 subagent 也无害，因为不操作就不会重复 start）；打算 start 时先 list 自然发现可复用的。
+
+- **代价/风险（诚实）**：
+  - compact 后 agent 若完全不触发「要用 subagent」的意图，不会调 list → 不发现遗漏的活跃 subagent。该场景下「不发现」无害（不操作即不重复 start）。真正风险 = agent 打算 start 做某事，但已有活跃 subagent 在做类似的事（compact 吞掉了其引用）→ 重复 start；由 tool description「start 前先 list」引导对冲，实测若发现引导力不够再加强。
+  - **级联关闭告知（SP-4）连带**：SP-4 的 recentlyCascaded → before_agent_start 注入 `[subagent-closed]` 告知，依赖被砍掉的 hook 通道。替代：list 输出含 closed record + closedReason（fork/new 级联关闭后，agent 调 list 时能看到「N 个因 parent-fork 关闭」），是按需拉取的自然延伸。**若实测发现 agent 在 fork/new 后不够主动调 list**，可补一个极轻量的一次性提醒（不含完整快照，仅一行「fork 关闭了 N 个 subagent，用 list 查看」），作为 push 的最小残留——默认先走纯 pull，实测驱动是否加。
+
+- **被否**：保留每 loop 注入——上下文税 + A-5 不一致（盲点 1）；改 systemPrompt 注入（before_agent_start 可返回 systemPrompt，不进对话流）——仍占 systemPrompt 空间且每 loop 刷新，不如按需拉取干净；保留注入但收窄到直接子范围——治标不治本（仍是每 loop 推送）。
+
+- **探针**：⛔ P-list-pull（① compact 后 agent 调 list 能看到活跃 subagent + parent + resumable 字段；② tool description 含「start 前先 list」引导；③ 砍注入后日志无 before_agent_start subagent-status 注入；④ fork/new 后 list 输出含 closed record + closedReason）。
+
 #### B-1：删 `idle` 字面量 → 派生谓词（修 P4，回溯 G2/G3）
 
 - **选择**：`ExecutionStatus` 收敛为 `"running" | "closed"`（running 语义 = active/可交互；「是否在跑 turn / 是否空闲 / 是否可恢复」全部是派生态，父进程不维护 busy 镜像——V2 决策 3）。**L1 只在三处转换：start → running；close/取消/级联关闭 → closed**——热路径的 `record.status="running"`（subagent-service.ts:855）、各写入点的 `record.status="idle"`（:883/:946/:1651、finalize-record.ts:235）、getRecordForAction 磁盘重建的 idle 过滤（:930 过滤条件改 running）全部删除。16+ 处 idle 消费点分类替代：路由分流（messageHandler 的 idle 分支是防御性兜底，chatMode 已优先分流，删除）、resumeRound 守卫（改锁 + 进程死活，见 B-3）、列表排序/UI 显示（改派生谓词，STATUS_PRIORITY 删 idle 键）、notifier 文案（按 closedReason/lastResult 表达）；**idle record GC 判据（subagent-service.ts:485 `status === "idle" && idleSince`）改写**——删 idle 后该条件恒 false、GC 不再触发；改写为 `isResumable(record) && record.idleSince && age > 30d`（isResumable = running && 无句柄），或 idleSince 时间戳独立保留为「最后空闲时刻」不依赖 status 字面量（实施时定，关键是 GC 不能因删字面量而失效——否则 idle record 永驻内存）。
-- **审查 MF-4 补的两处 idle 消费点**：index.ts:186（before_agent_start 活跃态过滤）、bg-notify-render.ts:56/:286（本地 union + 渲染守卫）——均归 B-1 收敛（原 16+ 清单遗漏，已补入 §5.2 地图）。
+- **审查 MF-4 补的两处 idle 消费点**：index.ts:186（before_agent_start 活跃态过滤，**随 A-6 删除整个 hook 而消失，不再归 B-1**）、bg-notify-render.ts:56/:286（本地 union + 渲染守卫）——后者归 B-1 收敛（原 16+ 清单遗漏，已补入 §5.2 地图）。
 - **显示派生态（非字面量，覆盖跨重启）**：
   - `isIdle(record) = hasIdleTimer(record.id)` —— 进程内空闲（timer 仅 agent_settled 后 armed，armed 时进程必活；只有 chatMode record 会 arm timer）；
   - `isResumable(record) = L1=running && 无活进程句柄` —— 跨重启 / idle 超时回收后，冷路径可 resume。**列表显示策略**：`isIdle`（进程活+空闲，无需冷启动）与 `isResumable`（进程死+可恢复，需冷启动）在列表视图统一标为可交互态——冷/热路径差异对用户透明（用户只关心「能不能继续聊」，不关心底层是否需要 respawn）；UI 可选附加标签区分（如「空闲」vs「可恢复」），但核心判定逻辑统一由派生谓词驱动，不回退字面量。**idle timer 超时行为定案（审查补）**：timer 超时 → SIGTERM kill 进程，record **不转 closed**、留 running（isResumable=true）——续聊走冷路径 resume（S4 步骤④覆盖）；timer 超时 ≠ close（前者性能回收仍可续聊，后者终态）；**不依赖 chatMode**——message 路径的磁盘重建已无条件置 chatMode=true（subagent-service.ts:943，现状已核实），「可续聊」是所有 active record 的默认能力（V3 方案 A 方向的现状兑现）；list 路径（reconstructAll）不映射 chatMode 的缺口由本谓词消除（显示不再按 chatMode 判断）；
@@ -328,7 +351,7 @@ dsh（deepseek-harness，master @ 47f9438）在同进程约束下把同样的多
 
 ### S6：递归两层多轮 + 跨层 message 拒绝（回溯 G1/G2，A-5）
 
-- **步骤**：① 主进程 chatMode 起 A（task 含「起一个 chatMode B 并与其多轮协作」）；② A 起 B（conversation:true）→ 首轮完成后 A message B 第二轮（断言 A 进程内热路径、spawn 次数观察）；③ B 完成 → B 的 notifier triggerTurn 使 A 续跑 → A 汇总完成 → A 的 notifier triggerTurn 使主 agent 续跑（两层接力 notify 都到达）；④ **负例**：主进程先 `/subagents` 列出树（可见 B 及其 parent=<A>）取得 B 的 id，然后直接 message B → 断言被拒 + 错误含「direct parent」恢复指引；⑤ `kill -9` 主进程 → 同 session-dir 重启 → 主进程 message A（冷恢复）→ A message B（冷恢复）→ 两级上下文连续。**前提验证（实施期门）**：kill 主进程后须先确认 A/B 子进程是否随 stdin EOF 连坐死亡（pi 子进程有独立事件循环，孤儿存活与否需实测）——若孤儿存活，重启后 message A 走冷路径再 spawn 会与存活老 A 双写同一 session 文件（P7 双 activation 作用于 A 自身）；该路径单写者保证依赖 B-3 补完后同步不变量（MF-1），B-3 未补完前以「A/B 连坐死亡」为前提（实施时 ps 验证无存活老进程）；⑥ 跨重启清理：重启后主进程直接 close B → 断言被拒（同守约束），改走父链（message A 让其 close B）→ B 被正常清理。
+- **步骤**：① 主进程 chatMode 起 A（task 含「起一个 chatMode B 并与其多轮协作」）；② A 起 B（conversation:true）→ 首轮完成后 A message B 第二轮（断言 A 进程内热路径、spawn 次数观察）；③ B 完成 → B 的 notifier triggerTurn 使 A 续跑 → A 汇总完成 → A 的 notifier triggerTurn 使主 agent 续跑（两层接力 notify 都到达）；④ **负例**：主进程先 `/subagents` 列出树（可见 B 及其 parent=<A>）取得 B 的 id，然后直接 message B → 断言被拒 + 错误含「direct parent」恢复指引；⑤ `kill -9` 主进程 → 同 session-dir 重启 → 主进程 message A（冷恢复）→ A message B（冷恢复）→ 两级上下文连续。**前提验证（实施期门）**：kill 主进程后须先确认 A/B 子进程是否随 stdin EOF 连坐死亡（pi 子进程有独立事件循环，孤儿存活与否需实测）——若孤儿存活，重启后 message A 走冷路径再 spawn 会与存活老 A 双写同一 session 文件（P7 双 activation 作用于 A 自身）；该路径单写者保证依赖 B-3 补完后同步不变量（MF-1），B-3 未补完前以「A/B 连坐死亡」为前提（实施时 ps 验证无存活老进程）；⑥ 跨重启清理：重启后主进程直接 close B → 断言被拒（同守约束），改走父链（message A 让其 close B）→ B 被正常清理。⑦ **（A-6）list 拉取验证**：agent 调 `action:"list"` → 断言输出含 A、B 两条 + 每条 `parent` 字段正确（B.parent=A，A.parent 缺省/根）+ `resumable` 字段（chatMode record 为 true）；砍注入后日志无 before_agent_start subagent-status 注入。
 - **通过标准**：② A→B 多轮 spawn 次数 = 1（A 进程内热路径，无重复 spawn）；B 的 session 文件 parentId 链完整；③ 两层 notify 接力到达（B→A→主）；④ 拒绝信息含恢复指引且双写者零残留（ps 断言同一时刻只有一个 B 进程；:⑤ 后同样断言）；⑤ 两级冷恢复后上下文连续、无 "has ended"、无孤儿残留；⑥ close 跨层被拒 + 父链回弹清理成功。LLM 侧（A 是否真的 message B 第二轮）为观察项，机制侧断言为主（V2 §4 原则）。
 
 > **每场景回溯**：S1→G1、S2→G1/G3、S3→G2、S4→G2/G3、S5→G3、S6→G1/G2。G4（可验收）由本章自身满足。
@@ -337,11 +360,11 @@ dsh（deepseek-harness，master @ 47f9438）在同进程约束下把同样的多
 
 ## §5 下一层拆分
 
-**本章结论：A 期 5 单元互相无依赖、可并行先合；B 期中 B-1/B-2 依赖 A-2 可独立推进，B-3 ⚠️ 阻塞（单写者同步不变量未闭合，见 §3.3 B-3 承重缺陷，实施前须二选一定方向 a/b）；每单元独立 commit + 独立验收。**
+**本章结论：A 期 6 单元互相无依赖、可并行先合；B 期中 B-1/B-2 依赖 A-2 可独立推进，B-3 ⚠️ 阻塞（单写者同步不变量未闭合，见 §3.3 B-3 承重缺陷，实施前须二选一定方向 a/b）；每单元独立 commit + 独立验收。**
 
 ### 5.1 实施路径（分两期，每单元独立 commit + 独立验收）
 
-**A 期（可靠性收口，5 单元，可并行，先于 B 期全部合入）**
+**A 期（可靠性收口，6 单元，可并行，先于 B 期全部合入）**
 
 | 单元 | 改动 | 验收 | justification |
 |---|---|---|---|
@@ -350,6 +373,7 @@ dsh（deepseek-harness，master @ 47f9438）在同进程约束下把同样的多
 | A-3 | `subagent-service.ts`/`subagent-actions.ts`：两处恢复入口补语义注释（:943 跨重启入口 / :355-358 进程内 upgrade 入口 + 协同守护说明），零新机制；探针验证 | S3 | 消除悬置探针，定案现状机制（准则 8 减法：manifest 升格被否，见 §3.3 A-3） |
 | A-4 | 文档回写 6 处（P5 清单：①②③④⑤ 归本单元，⑥ 归 B-1 裁决） | S5（grep 部分） | 纪律：变更必回写文档 |
 | A-5 | `subagent-service.ts`：getRecordForAction 增加直接父校验（execCtxBaseline）；`subagent-actions.ts`：跨层拒绝错误文案 + 恢复指引 | S6 | 递归双写者 by-construction 消除（权限与所有权同一处，dsh 同构）。**中间态安全性**：A-5 先合、B-3 后合的中间态（守卫阻止跨层 message，但锁仍在调用方、EPIPE 环回仍依赖 CAS）是安全的——A-5 的直接父守卫独立消除双写者窗口（主进程无法 message 孙级 record → 无法冷路径再 spawn 孙级），与锁位置正交；B-3 延迟合入不回退 A-5 的安全收益 |
+| A-6 | `index.ts`：删除 before_agent_start subagent-status 注入 hook（SP-3 产物）；`subagent-actions.ts`：recordToListItem 加 `parent` + `resumable` 字段；`subagent-tool.ts`：description 补「start 前先 list」引导 | S6（list 探针部分） | 修盲点（注入全树 vs A-5 权限不一致）+ 消除每 loop 上下文税；与 A-5 协同（list 补 parent 后 agent 知道操作边界）；compact 对冲靠 tool description 引导 |
 
 **B 期（状态收敛，B-1/B-2 依赖 A-2 可独立推进；B-3 ⚠️ 阻塞待补设计）**
 
@@ -366,11 +390,12 @@ dsh（deepseek-harness，master @ 47f9438）在同进程约束下把同样的多
 | `execution/session-runner.ts` | A-1/B-3 | stdin error listener + dead 标记（移出句柄表）；（B-3）在途 message 簿记 + 重放衔接 |
 | `execution/stdin-writer.ts` | A-1 | 错误语义注释（同步/异步两半面的契约说明） |
 | `execution/lifecycle-manager.ts` | A-2/B-3 | 锁超时；注释回写；（B-3）互斥唯一源（锁在 resumeRound 内部）的契约注释 |
-| `src/index.ts` | A-2/A-4/B-1 | :629 注释回写；文档一致性；**（B-1）:186 before_agent_start 活跃态过滤删 idle 分支**（审查 MF-4 补：原地图遗漏） |
+| `src/index.ts` | A-2/A-4/A-6 | :629 注释回写；文档一致性；**（A-6）删除 before_agent_start subagent-status 注入 hook**（SP-3 产物，含 :186 活跃态过滤随之删除） |
 | `execution/record-store.ts` | B-1/B-2 | STATUS_PRIORITY 收敛；reconstructAll 分支 4 重建映射改 L1=running；消费点替代 |
 | `execution/types.ts` | B-1/B-2 | ExecutionStatus 两态 + 派生谓词类型（isIdle / isResumable） |
 | `execution/subagent-service.ts` | A-3/A-5/B-1/B-3 | 恢复入口语义注释；getRecordForAction 直接父校验；L1 只在三处转换（删 4 个 status 赋值点）；锁下沉 resumeRound + 全部调用方删外层锁 + 删 CAS（⚠️ B-3 单写者同步不变量待补，见 §3.3）；簿记收敛；**（B-1）:485 idle record GC 判据改写 + idleSince 语义定案** |
-| `interface/subagent-actions.ts` | A-3/A-5/B-1 | upgrade 幂等语义注释；跨层拒绝错误文案；idle 分支删除 |
+| `interface/subagent-actions.ts` | A-3/A-5/A-6/B-1 | upgrade 幂等语义注释；跨层拒绝错误文案；**（A-6）recordToListItem 加 `parent` + `resumable` 字段**；idle 分支删除 |
+| `interface/subagent-tool.ts` | A-6 | **tool description 补「start 前先 list 看有无可复用」引导**（砍注入后对冲 compact 的主动机制） |
 | `interface/gui-mappers.ts` / `format.ts` / `execution/notifier.ts` | B-1 | 显示/文案改派生谓词 |
 | `interface/bg-notify-render.ts` | B-1/B-2 | **本地重声明 union `status: "closed" \| "cancelled" \| "idle"`（:56）收敛** + 渲染守卫（:286）删 idle/cancelled 分支（审查 MF-4 补：原地图遗漏该文件） |
 | `docs/design/v3-unified-lifecycle-model.md` | A-4 | §5.1.1 分期表回写、S2 验收改判 |
@@ -383,6 +408,7 @@ dsh（deepseek-harness，master @ 47f9438）在同进程约束下把同样的多
 4. **跨重启与进程内两条升级路径的协同守护**（A-3）：跨重启 = getRecordForAction :943 无条件置位；进程内 = upgrade 分支 :355-358。任何改动这两处的 PR 必须带 S3 类回归场景——该守护写进两处代码注释（A-3 的落点）。
 5. **存量测试对跨层 message 的依赖**（A-5）：A-5 收紧守卫后，若现有测试/用例断言「主进程可 message 孙级 record」需同步改——实施时 grep `message` 相关测试确认；不改则行为回归（S6 步骤 ④ 覆盖该行为的正确形态）。
 6. **B-3 单写者同步不变量方案决策**（B-3 承重，阻塞项）：删 CAS 后单写者由什么同步机制保证——必须在方向 (a) 同步 spawning 标志 / (b) 重构 runSpawn 拆同步注册段 之间二选一并补探针（并发双 message 下 msg2 重检点能看到 msg1 的占位/注册），否则不得删 CAS。详见 §3.3 B-3 承重缺陷与候选方向。
+7. **A-6 compact 对冲实测**（A-6）：砍掉每 loop 注入后，compact 吞引用的对冲完全依赖 tool description「start 前先 list」引导 + agent 自主调 list。实测重点：compact 后 agent 打算 start 新 subagent 时，是否会先 list 发现已有的可复用 record（而非重复 start）。若引导力不足（agent 不主动 list → 重复 start），按 §3.3 A-6 代价/风险节补极轻量一次性提醒。
 
 ---
 
