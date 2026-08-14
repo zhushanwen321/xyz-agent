@@ -9,6 +9,12 @@
   背景策略：diff-view 容器用 bg-bg-input 作独立 canvas 底色（暗 #1e1f24 / 亮 #f1f3f6），
   让色块对比度不随外层面板底色（surface vs bg-elevated）漂移。canvas 选用语义契合的
   已有 token（凹陷输入区），不新增设计 token。
+  canvas 必须覆盖完整内容宽度：diff 代码经 shiki <pre> 渲染，<pre> 的 UA white-space:pre
+  让长行不换行（盖过 diff-code span 的 whitespace-pre-wrap 意图），溢出 .diff-view 撑宽
+  detail-content（overflow-auto，透明背景）触发横向滚动。.diff-view 默认 block width:auto
+  只覆盖容器宽，bg-input 画不到溢出区，滚动后露出 detail-content 的 surface 背景，与 canvas
+  不一致。w-max min-w-full 让 .diff-view 撑到 max-content（最长行宽），min-w-full 兜底窄内容
+  撑满容器，canvas 完整覆盖滚动区，横向滚动后背景一致。
 
   三层着色：
     - 行级：bg-diff-add-bg / bg-diff-del-bg（color-mix success/danger 18%，叠加 canvas，对比度 ~1.2-1.4:1）
@@ -25,7 +31,7 @@
   首次 shiki 加载异步：未就绪时降级为纯文本行（无语法高亮，仍有 +/- 语义色）。
 -->
 <template>
-  <div v-if="parsed.hunks.length" class="diff-view bg-bg-input font-mono text-[12px] leading-[1.5]">
+  <div v-if="parsed.hunks.length" class="diff-view w-max min-w-full bg-bg-input font-mono text-[12px] leading-[1.5]">
     <div v-for="(hunk, hi) in parsed.hunks" :key="hi" class="diff-hunk">
       <!-- hunk 头：@@ -a,b +c,d @@ -->
       <div class="diff-hunk-header px-2 py-0.5 text-neutral-dim">
