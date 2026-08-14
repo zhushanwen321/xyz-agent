@@ -20,6 +20,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import permissionExtension from "../index.js";
+import { FOOTER_HANDSHAKE_KEY, REQUEST_RENDER_KEY } from "../footer-provider.js";
 
 // ──────────────────────── mock pi ────────────────────────
 
@@ -73,6 +74,15 @@ function getSessionStartHandler(calls: MockPiCalls): (event: unknown, ctx: unkno
 	return handlers[0];
 }
 
+/** 提取 session_tree handler。 */
+function getSessionTreeHandler(calls: MockPiCalls): (event: unknown, ctx: unknown) => unknown {
+	const handlers = calls.eventHandlers.get("session_tree");
+	if (!handlers || handlers.length === 0) {
+		throw new Error("session_tree handler not registered");
+	}
+	return handlers[0];
+}
+
 /** 构造 mock ctx（含 mode/ui/signal）。 */
 function makeCtx(mode: "tui" | "rpc" | "json" | "print" = "json"): unknown {
 	return {
@@ -117,6 +127,9 @@ function writeConfig(mode: string, enabled = true): void {
 }
 
 beforeEach(() => {
+	// 清理 footer 握手 slot（防 footer 测试跨用例污染）
+	Reflect.deleteProperty(globalThis, FOOTER_HANDSHAKE_KEY);
+	Reflect.deleteProperty(globalThis, REQUEST_RENDER_KEY);
 	process.env.PI_CODING_AGENT_DIR = AGENT_DIR;
 	mkdirSync(AGENT_DIR, { recursive: true });
 	// 默认 yolo config（大多数测试需要可预测起点）
@@ -125,6 +138,8 @@ beforeEach(() => {
 
 afterEach(() => {
 	delete process.env.PI_CODING_AGENT_DIR;
+	Reflect.deleteProperty(globalThis, FOOTER_HANDSHAKE_KEY);
+	Reflect.deleteProperty(globalThis, REQUEST_RENDER_KEY);
 	if (existsSync(TMP_ROOT)) rmSync(TMP_ROOT, { recursive: true, force: true });
 });
 
@@ -282,3 +297,64 @@ describe("W8 /permission rule 命令集成", () => {
 	});
 });
 
+
+
+// ──────────────────────── footer line 注册（consumer 端握手 + render 读时刷新）────────────────────────
+
+describe("footer line 注册", () => {
+	it("session_start：ctx.ui 无 theme → noop dispose，不抛异常、不写 slot", () => {
+		const { pi, calls } = createMockPi();
+		permissionExtension(pi);
+		const sessionHandler = getSessionStartHandler(calls);
+		const ctxNoTheme = { mode: "json", cwd: "/tmp", ui: {}, signal: undefined };
+		expect(() => sessionHandler({}, ctxNoTheme)).not.toThrow();
+		expect(Reflect.get(globalThis, FOOTER_HANDSHAKE_KEY)).toBeUndefined();
+	});
+
+	it("session_start：ctx.ui.theme.fg 非函数 → noop dispose，不写 slot", () => {
+		const { pi, calls } = createMockPi();
+		permissionExtension(pi);
+		const sessionHandler = getSessionStartHandler(calls);
+		const ctxBadFg = { mode: "json", cwd: "/tmp", ui: { theme: { fg: "not-a-fn" } }, signal: undefined };
+		expect(() => sessionHandler({}, ctxBadFg)).not.toThrow();
+		expect(Reflect.get(globalThis, FOOTER_HANDSHAKE_KEY)).toBeUndefined();
+	});
+
+	it("session_start：合法 theme → 注册 renderer，render 读时刷新反映最新 mode", () => {
+		writeConfig("yolo");
+		const { pi, calls } = createMockPi();
+		permissionExtension(pi);
+		const sessionHandler = getSessionStartHandler(calls);
+		const ctxWithTheme = {
+			mode: "json",
+			cwd: "/tmp",
+			ui: { theme: { fg: (_t: string, text: string): string => text } },
+			signal: undefined,
+		};
+		sessionHandler({}, ctxWithTheme);
+		// consumer 端：owner(pi-statusline) 未加载 → registry 未就绪 → renderer 进 pending
+		const slot = Reflect.get(globalThis, FOOTER_HANDSHAKE_KEY) as {
+			version: number;
+			pending: Array<{ id: string; renderer: unknown }>;
+		} | undefined;
+		expect(slot).toBeDefined();
+		expect(slot!.version).toBe(1);
+		expect(slot!.pending.length).toBe(1);
+		expect(slot!.pending[0]!.id).toBe("pi-permission");
+		const renderer = slot!.pending[0]!.renderer as { render: () => string };
+		// render 读最新 config（yolo）→ 含 YOLO label
+		expect(renderer.render()).toContain("YOLO");
+		// 读时刷新：改 config mode 后再次 render → 反映 Strict（验证 render 内 loadAndWatchConfig）
+		writeConfig("strict");
+		const out2 = renderer.render();
+		expect(out2).toContain("Strict");
+		expect(out2).not.toContain("YOLO");
+	});
+
+	it("session_tree：触发不抛异常（只 requestRender，不改注册状态）", () => {
+		const { pi, calls } = createMockPi();
+		permissionExtension(pi);
+		const sessionTreeHandler = getSessionTreeHandler(calls);
+		expect(() => sessionTreeHandler({}, undefined)).not.toThrow();
+	});
+});

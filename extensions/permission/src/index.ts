@@ -30,6 +30,13 @@ import { makeNextIdCounter } from "./rule-templates.js";
 import { checkPermission, type CheckPermissionDeps } from "./pipeline.js";
 import { createPipelineDeps } from "./production.js";
 import type { PermissionConfig } from "./types.js";
+import {
+	registerPermissionFooterLine,
+	requestFooterRender,
+	renderPermissionFooterLine,
+	type FooterLineRenderer,
+} from "./footer-provider.js";
+import { paletteFromTheme, type PermissionPalette } from "./statusline-palette.js";
 
 // ──────────────────────── [MIGRATION] 配置路径迁移（session_start 运行时） ────────────────────────
 // Added in v1.0.0. Remove after v2.0.0 (one major past).
@@ -81,13 +88,22 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 	// （历史：曾用 `let config` 闭包 + 手动 refreshConfig 调用点，架空了读时刷新，同一 session 改文件不生效。）
 
 	// ──────────────────────── session_start：迁移旧路径配置 ────────────────────────
-	pi.on("session_start", (_event: unknown) => {
+	pi.on("session_start", (_event: unknown, ctx: ExtensionContext) => {
 		// [MIGRATION] Added in v1.0.0. Remove after v2.0.0.
 		if (!configMigrationChecked) {
 			configMigrationChecked = true;
 			migrateLegacyConfig(getAgentDir(), "permission-config.json", "config/permission-ext-config.json");
 		}
 		// 无需手动刷新：去闭包后每次 loadAndWatchConfig 读时刷新；迁移改写文件后下次读取自动生效。
+		// 注册 footer line renderer（consumer 端握手，pi-statusline 是 canonical owner）。
+		// duck typing：headless/mock ctx 无 theme 时 registerFooterLineFor 返回 noop。
+		// renderer 覆盖式注册（registry.register 同 id 覆盖），无需存 dispose。
+		registerFooterLineFor(ctx);
+	});
+
+	// session_tree：分支切换后请求 statusline 重绘（renderer 无状态，render 时读新分支 config）。
+	pi.on("session_tree", () => {
+		requestFooterRender();
 	});
 
 	// ──────────────────────── /permission 命令 ────────────────────────
@@ -134,7 +150,11 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 					config,
 					makeNextIdCounter(config.userRules),
 					{
-						save: (newConfig) => saveConfig(newConfig),
+						save: (newConfig) => {
+							const r = saveConfig(newConfig);
+							if (r.success) requestFooterRender();
+							return r;
+						},
 						editRulesViaOverlay: (ctx, initialRules, sessionIdCounter, rpcDeps) =>
 							editRulesViaOverlay(ctx, initialRules, sessionIdCounter, rpcDeps),
 					},
@@ -166,7 +186,11 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 					config,
 					{
 						listModels: (pickerCtx) => listAvailableModels(pickerCtx, (m) => console.warn(m)),
-						save: (newConfig) => saveConfig(newConfig),
+						save: (newConfig) => {
+							const r = saveConfig(newConfig);
+							if (r.success) requestFooterRender();
+							return r;
+						},
 					},
 				);
 				return;
@@ -175,7 +199,11 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 			const message = handlePermissionCommand(
 				args,
 				config,
-				(newConfig: PermissionConfig) => saveConfig(newConfig),
+				(newConfig: PermissionConfig) => {
+					const r = saveConfig(newConfig);
+					if (r.success) requestFooterRender();
+					return r;
+				},
 			);
 			ctx.ui.notify(message, "info");
 		},
@@ -194,6 +222,45 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 		approvalChain = approvalChain.then(run, run);
 		return approvalChain;
 	});
+
+	// ──────────────────────── footer line 辅助 ────────────────────────
+
+	/**
+	 * 从 ctx.ui.theme 构造 palette 并注册 permission footer line renderer。
+	 * duck typing：headless/mock ctx 无 theme（或 theme.fg 非函数）时跳过，返回 noop dispose。
+	 * renderer 无状态：render 时 loadAndWatchConfig 读最新 config（mode/enabled/rules/model 切换后自动反映）。
+	 */
+	function registerFooterLineFor(ctx: ExtensionContext): () => void {
+		// duck typing 守卫：ctx.ui.theme.fg 存在且为函数才构造 palette（headless/mock 无 theme → noop dispose）
+		const ui: unknown = ctx.ui;
+		if (typeof ui !== "object" || ui === null || !("theme" in ui)) return () => {};
+		const theme: unknown = ui.theme;
+		if (typeof theme !== "object" || theme === null) return () => {};
+		if (!("fg" in theme) || typeof theme.fg !== "function") return () => {};
+		const palette = paletteFromTheme(theme as { fg(token: string, text: string): string });
+		return registerPermissionFooterLine(makePermissionFooterRenderer(palette));
+	}
+
+	/**
+	 * 构造 footer line renderer（order=2，pi-statusline 内联进 ctx 行）。
+	 * render 读时刷新：每次 statusline 重绘都 loadAndWatchConfig 读最新 config，
+	 * 故任意字段（mode/enabled/rules/model）切换后重绘立即可见。
+	 */
+	function makePermissionFooterRenderer(palette: PermissionPalette): FooterLineRenderer {
+		return {
+			order: 2,
+			render: () => {
+				const cfg = loadAndWatchConfig(defaultConfigWarn);
+				return renderPermissionFooterLine(
+					cfg.mode,
+					cfg.enabled,
+					cfg.userRules.length,
+					cfg.classifier.model,
+					palette,
+				);
+			},
+		};
+	}
 
 }
 
