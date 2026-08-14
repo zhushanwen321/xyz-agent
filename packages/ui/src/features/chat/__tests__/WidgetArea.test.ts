@@ -4,7 +4,9 @@
  * 覆盖：
  *  - TC1 首屏冒烟：list-tree 型 guiTree 经 GuiComponentRenderer 渲染原语 DOM + 卡头 widgetKey 标签
  *  - TC2 文本 widget：ansi-text 原语渲染 lines 内容
- *  - TC3 多 widgetKey 分栏：两卡并排 + 容器 flex/flex-wrap 布局
+ *  - TC3 多 widgetKey 分栏：两卡并排 + grid 容器 flex/flex-wrap 布局
+ *  - TC7 宽度对齐：band px-5 + grid mx-auto max-w-[var(--content-max-w)]（单卡/多卡联合宽 ≤ composer）
+ *  - TC8 折叠交互：点击卡头 → 卡体隐藏 + data-collapsed；再点 → 恢复展开
  *  - TC4 清除语义：mock 容器清空 → 同实例 computed 重算 → 整体零 DOM（无残留空容器）
  *  - TC5 无数据隐藏 + 无 provide 环境兜底（inject(key, null) 不崩，ES1）
  *  - TC6 空 guiTree 条目过滤（guiTree=[] 不出空卡，ES4 异常 payload 防护）
@@ -105,7 +107,7 @@ describe('WidgetArea（M17 对话流 widget 面板）', () => {
     expect(ansi.text()).toContain('plain text line')
   })
 
-  it('TC3 多 widgetKey 分栏：两卡并排 + 容器 flex/flex-wrap 布局', async () => {
+  it('TC3 多 widgetKey 分栏：两卡并排 + grid 容器 flex/flex-wrap 布局', async () => {
     const { source } = makeSource({
       todo: makeEntry('todo', [{ type: 'ansi-text', props: { lines: ['todo line'] } }]),
       goal: makeEntry('goal', [{ type: 'ansi-text', props: { lines: ['goal line'] } }]),
@@ -113,17 +115,64 @@ describe('WidgetArea（M17 对话流 widget 面板）', () => {
     const wrapper = mountArea(source)
     await nextTick()
 
-    // 容器 class 含 flex + flex-wrap（多卡分栏布局）+ gap
-    const areaClasses = wrapper.find('[data-testid="widget-area"]').classes()
-    expect(areaClasses).toContain('flex')
-    expect(areaClasses).toContain('flex-wrap')
-    expect(areaClasses).toContain('gap-2.5')
+    // grid 容器 class 含 flex + flex-wrap（多卡分栏布局）+ gap
+    const gridClasses = wrapper.find('[data-testid="widget-area-grid"]').classes()
+    expect(gridClasses).toContain('flex')
+    expect(gridClasses).toContain('flex-wrap')
+    expect(gridClasses).toContain('gap-2.5')
 
     // 两张卡，卡头标签分别为 todo / goal
     const cards = wrapper.findAll('[data-testid="widget-card"]')
     expect(cards).toHaveLength(2)
     expect(cards[0].text()).toContain('todo')
     expect(cards[1].text()).toContain('goal')
+  })
+
+  it('TC7 宽度对齐：band px-5 + grid mx-auto max-w-[var(--content-max-w)]（联合宽 ≤ composer）', async () => {
+    const { source } = makeSource({
+      todo: makeEntry('todo', [{ type: 'ansi-text', props: { lines: ['todo line'] } }]),
+    })
+    const wrapper = mountArea(source)
+    await nextTick()
+
+    // 外层 band：px-5 侧距对齐 composer-band
+    const areaClasses = wrapper.find('[data-testid="widget-area"]').classes()
+    expect(areaClasses).toContain('px-5')
+
+    // 内层 grid：与 Composer 相同的宽度约束三件套（mx-auto + w-full + max-w content 列）
+    const gridClasses = wrapper.find('[data-testid="widget-area-grid"]').classes()
+    expect(gridClasses).toContain('mx-auto')
+    expect(gridClasses).toContain('w-full')
+    expect(gridClasses).toContain('max-w-[var(--content-max-w)]')
+  })
+
+  it('TC8 折叠交互：点击卡头收起卡体（v-show 隐藏 + data-collapsed），再点恢复', async () => {
+    const { source } = makeSource({
+      todo: makeEntry('todo', [{ type: 'ansi-text', props: { lines: ['todo line'] } }]),
+    })
+    const wrapper = mountArea(source)
+    await nextTick()
+
+    const card = wrapper.find('[data-testid="widget-card"]')
+    const body = wrapper.find('[data-testid="widget-card-body"]')
+    const bodyStyle = () => body.attributes('style') ?? ''
+
+    // 初始展开：卡体无 display 隐藏 + 无 collapsed 标记。
+    // 直读 inline style 断言（jsdom 环境下 isVisible() 对 v-show 不可靠，实测 display:none 仍返回 true）
+    expect(bodyStyle()).not.toContain('display: none')
+    expect(card.attributes('data-collapsed')).toBe('false')
+
+    // 点击卡头 → 收起：卡体隐藏（v-show，DOM 保留），卡收缩为按内容宽窄条（flex-none）
+    await wrapper.find('[data-testid="widget-card-header"]').trigger('click')
+    expect(bodyStyle()).toContain('display: none')
+    expect(card.attributes('data-collapsed')).toBe('true')
+    expect(card.classes()).toContain('flex-none')
+
+    // 再点 → 恢复展开
+    await wrapper.find('[data-testid="widget-card-header"]').trigger('click')
+    expect(bodyStyle()).not.toContain('display: none')
+    expect(card.attributes('data-collapsed')).toBe('false')
+    expect(card.classes()).not.toContain('flex-none')
   })
 
   it('TC4 清除语义：mock 容器清空 → 同实例重算 → widget-area 整体消失', async () => {

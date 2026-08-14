@@ -4,14 +4,17 @@
  *
  * 消费 ViewHostStore 的 per-session widget 缓存（经注入 ViewHostSource）：
  * getViewIds 枚举该 session 全部 viewId（widgetKey），逐个 getView 拼装多卡视图，
- * 每卡卡头渲染 widgetKey 标签，卡体交 GuiComponentRenderer 渲染 guiTree。
+ * 每卡卡头渲染 widgetKey 标签 + 折叠开关，卡体交 GuiComponentRenderer 渲染 guiTree。
  * 常驻语义：extension 推 extension:widget/widgetGui 即缓存（同 key 覆盖更新），
  * gui:null 清除后条目消失（entries 为空时整体零 DOM，不残留空容器）。
  *
- * 数据源经 inject 注入（VIEW_HOST_SOURCE_KEY），壳 provide 真实实现，单测
+ * 宽度对齐 composer：外层 band px-5（同 composer-band），内层 grid
+ * mx-auto max-w-[var(--content-max-w)]（同 Composer）——单卡/多卡联合宽度恒 ≤ composer。
+ *
+ * 数据源经 inject 注入（VIEW_HOST_SOURCE_KEY），壳层 provide 真实实现，单测
  * global.provide mock；无注入时静默空态不崩（inject(key, null) 兜底）。
  */
-import { computed, inject } from 'vue'
+import { computed, inject, ref } from 'vue'
 import { VIEW_HOST_SOURCE_KEY } from '../../extension-host'
 import type { ViewCacheEntry } from '../../extension-host'
 import GuiComponentRenderer from '../../rendering-protocol/GuiComponentRenderer.vue'
@@ -44,31 +47,68 @@ const entries = computed<WidgetEntry[]>(() => {
     .map((viewId) => ({ viewId, entry: source.getView(props.sessionId, viewId) }))
     .filter((e): e is WidgetEntry => e.entry !== undefined && e.entry.guiTree.length > 0)
 })
+
+/** 已收起的 viewId 集合（纯 UI 偏好，跨推送/跨 session 保留；ref 包装的 Set 被 Vue 深层 reactive 化，add/delete 可追踪）。 */
+const collapsed = ref(new Set<string>())
+
+function toggleCollapsed(viewId: string): void {
+  if (collapsed.value.has(viewId)) collapsed.value.delete(viewId)
+  else collapsed.value.add(viewId)
+}
 </script>
 
 <template>
-  <div
-    v-if="entries.length > 0"
-    data-testid="widget-area"
-    class="flex flex-shrink-0 flex-wrap items-stretch gap-2.5 px-5 py-2"
-  >
+  <!-- 外层 band：px-5 对齐 composer-band 侧距；内层 grid 才是卡片容器（宽度对齐 Composer） -->
+  <div v-if="entries.length > 0" data-testid="widget-area" class="flex-shrink-0 px-5 py-2">
     <div
-      v-for="w in entries"
-      :key="w.viewId"
-      data-testid="widget-card"
-      class="flex min-w-0 flex-1 basis-60 self-stretch flex-col gap-1.5 rounded-card border border-border bg-surface p-3"
+      data-testid="widget-area-grid"
+      class="mx-auto flex w-full max-w-[var(--content-max-w)] flex-wrap items-stretch gap-2.5"
     >
-      <!-- 卡头：widgetKey 标签（mono 9px，对齐 demo M17 tool-label 规格） -->
-      <div class="font-mono text-[9px] tracking-wider text-neutral-dim">{{ w.viewId }}</div>
-      <!-- 卡体：guiTree 逐项交渲染协议。max-h 钳制防长列表 widget 撑高面板挤出
-           composer（Panel section overflow-hidden 会直接裁剪，常驻语义放大该风险）；
-           index key 的前提是 7 原语均 props-only 无内部状态，原语引入本地状态时需改稳定 key -->
-      <div class="flex max-h-64 min-h-0 flex-col gap-1.5 overflow-y-auto">
-        <GuiComponentRenderer
-          v-for="(component, i) in w.entry.guiTree"
-          :key="i"
-          :component="component"
-        />
+      <div
+        v-for="w in entries"
+        :key="w.viewId"
+        data-testid="widget-card"
+        :data-collapsed="collapsed.has(w.viewId)"
+        class="flex min-w-0 flex-col gap-1.5 rounded-card border border-border bg-surface p-3"
+        :class="collapsed.has(w.viewId) ? 'flex-none self-start' : 'flex-1 basis-60 self-stretch'"
+      >
+        <!-- 卡头：widgetKey 标签（mono 9px，对齐 demo M17 tool-label 规格）+ 折叠开关。
+             点击整行切换；chevron 展开态旋转 90° 下指（对齐 TraceCompactorRow 范式） -->
+        <div
+          data-testid="widget-card-header"
+          class="flex cursor-pointer select-none items-center justify-between gap-2 text-neutral-dim transition-colors hover:text-neutral-fg"
+          @click="toggleCollapsed(w.viewId)"
+        >
+          <span class="font-mono text-[9px] tracking-wider">{{ w.viewId }}</span>
+          <svg
+            class="size-3 shrink-0 transition-transform"
+            :class="collapsed.has(w.viewId) ? '' : 'rotate-90'"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <polyline points="9 6 15 12 9 18" />
+          </svg>
+        </div>
+        <!-- 卡体：guiTree 逐项交渲染协议。max-h 钳制防长列表 widget 撑高面板挤出
+             composer（Panel section overflow-hidden 会直接裁剪，常驻语义放大该风险）；
+             index key 的前提是 7 原语均 props-only 无内部状态，原语引入本地状态时需改稳定 key。
+             v-show 保折叠切换不重挂原语树 -->
+        <div
+          v-show="!collapsed.has(w.viewId)"
+          data-testid="widget-card-body"
+          class="flex max-h-64 min-h-0 flex-col gap-1.5 overflow-y-auto"
+        >
+          <GuiComponentRenderer
+            v-for="(component, i) in w.entry.guiTree"
+            :key="i"
+            :component="component"
+          />
+        </div>
       </div>
     </div>
   </div>
