@@ -1166,9 +1166,18 @@ export class SubagentService {
 
   /** 合并内存(running) + 磁盘(session.jsonl 重建) record（/subagents list + tool list 消费）。
    *  按 rootSessionId 过滤：根进程=本 session（sessionRootId===sessionId）；
-   *  子进程=env 贯穿的真 ROOT（sessionRootId≠sessionId）→ 看到整棵 ROOT 树（决策 3）。 */
+   *  子进程=env 贯穿的真 ROOT（sessionRootId≠sessionId）→ 看到整棵 ROOT 树（决策 3）。
+   *  [perf] 磁盘源为 light（头部 identity + 状态，无 eventLog/result/turns 等重数据）
+   *  ——列表/补全/hasRunning 够用；详情场景调 getFullRecord(id) 懒加载补齐。 */
   collectRecords(limit: number, statusFilter: StatusFilter = "all"): SubagentRecord[] {
     return this.store.collectRecords(limit, statusFilter, this.sessionRootId ?? this.sessionId ?? undefined);
+  }
+
+  /** [perf] 单 record 详情懒加载（全量：eventLog/displayItems/result/turns/tokens）。
+   *  内存 running record 直接投影；磁盘 record 全量重建（per-file 缓存，stat 戳校验）。
+   *  返回 undefined：id 不存在于内存与磁盘。 */
+  getFullRecord(id: string): SubagentRecord | undefined {
+    return this.store.getFullRecord(id);
   }
 
   // ── 执行内部：身份解析 + record 创建 ──────────

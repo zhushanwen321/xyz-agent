@@ -36,11 +36,13 @@ function makeTheme(): ThemeLike {
   } as ThemeLike;
 }
 
-/** service stub：list-component 只调 collectRecords(limit) 单参数。
+/** service stub：list-component 只调 collectRecords(limit) 单参数 + getFullRecord（[perf]
+ *  选中项详情懒加载，mock 回 undefined → fullRecordOf 回退 light record，与旧行为一致）。
  *  与 tool-action.test.ts 同模式：部分对象直接断言为 SubagentService（duck-type）。 */
 function makeService(records: SubagentRecord[] = []): SubagentService {
   return {
     collectRecords: vi.fn(() => records),
+    getFullRecord: vi.fn(() => undefined as SubagentRecord | undefined),
   } as SubagentService;
 }
 
@@ -50,7 +52,7 @@ function makeRecord(over: Partial<SubagentRecord> = {}): SubagentRecord {
     id: "run-1",
     agent: "worker",
     task: "do the thing",
-    status: "done",
+    status: "closed",
     mode: "sync",
     startedAt: 1000,
     endedAt: 2000,
@@ -158,9 +160,10 @@ describe("SubagentsListComponent", () => {
 
   // ── hasRunning ────────────────────────────────────────
   describe("hasRunning", () => {
-    it("records 全是 done → false", () => {
+    it("records 全是 closed（终态）→ false", () => {
       const { comp } = makeComponent({
-        records: [makeRecord({ status: "done" }), makeRecord({ status: "failed" })],
+        // v4 B-1：done/failed 等旧终态已收敛为 closed（fixture 同步迁移）
+        records: [makeRecord({ status: "closed" }), makeRecord({ status: "closed" })],
       });
       expect(comp.hasRunning()).toBe(false);
     });
@@ -168,7 +171,7 @@ describe("SubagentsListComponent", () => {
     it("records 含一个 running → true", () => {
       const { comp } = makeComponent({
         records: [
-          makeRecord({ id: "a", status: "done" }),
+          makeRecord({ id: "a", status: "closed" }),
           makeRecord({ id: "b", status: "running" }),
         ],
       });

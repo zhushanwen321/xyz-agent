@@ -241,7 +241,12 @@ export function listHandler(
   // 防截断（先多取再过滤）已下沉到 store 层——这里直接传 limit + filter。
   const filter = includeFinished ? "all" : "running";
   const all = service.collectRecords(limit, filter);
-  const items: SubagentListItem[] = all.map(recordToListItem);
+  // [perf] collectRecords 磁盘源是 light（无 totalTokens/model 等）：SubagentListItem 对
+  // LLM 消费方暴露 totalTokens/model，逐项 getFullRecord 补全（per-file 缓存，仅首次
+  // 全量解析；显式 tool 调用非渲染热路径，成本可接受）。
+  const items: SubagentListItem[] = all.map((r) =>
+    recordToListItem(service.getFullRecord(r.id) ?? r),
+  );
   const running = items.filter((i) => i.status === "running").length;
 
   return { response: { running, items } };

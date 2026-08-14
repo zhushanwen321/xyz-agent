@@ -142,9 +142,14 @@ describe("RecordStore", () => {
       expect(found).toBeDefined();
       expect(found?.status).toBe("running");
       expect(found?.agent).toBe("worker");
-      expect(found?.turns).toBe(1);
-      expect(found?.totalTokens).toBe(30);
-      expect(found?.result).toBe("result text");
+      // [perf] 列表是 light（头部 identity，详情字段缺省）——turns/tokens/result 走 getFullRecord 懒加载
+      expect(found?.turns).toBe(0);
+      expect(found?.result).toBeUndefined();
+      const full = store.getFullRecord("bg-1");
+      expect(full?.turns).toBe(1);
+      expect(full?.totalTokens).toBe(30);
+      expect(full?.result).toBe("result text");
+      expect(full?.status).toBe("running"); // 状态矩阵在全量路径同样套用
     });
 
     it("磁盘 session.jsonl + .finalized sidecar → done", () => {
@@ -318,20 +323,17 @@ describe("RecordStore", () => {
   // 重建缓存
   // ============================================================
   describe("重建缓存", () => {
-    it("notifyChange 后缓存失效（新 session.jsonl 可见）", () => {
+    it("新 session.jsonl 无需内存事件即立即可见（[perf] stat 校验取代 notifyChange 整体失效）", () => {
       const store = new RecordStore(tmpDir);
       // 首次 collect：空目录
       expect(store.collectRecords(100)).toHaveLength(0);
-      // 写新 session.jsonl
+      // 写新 session.jsonl（模拟外部进程/子进程写入——不经本进程任何内存事件）
       writeSessionJsonl(path.join(tmpDir, "new.jsonl"), {
         id: "bg-1", agent: "w", mode: "background", task: "t", startedAt: 1000,
       });
-      // 缓存仍命中旧结果（notifyChange 未触发）
-      expect(store.collectRecords(100)).toHaveLength(0);
-      // register 触发 notifyChange → 缓存失效
-      store.register(makeRecord({ id: "trigger", mode: "sync", startedAt: 2000 }));
-      store.archive(makeRecord({ id: "trigger", mode: "sync", startedAt: 2000 }));
-      // 现在 bg-1 可见
+      // [perf] 旧实现：reconCache 建立后只能靠 register/archive 触发 notifyChange 失效，
+      // 否则永远 stale（外部进程写入的文件对本进程不可见）。新实现：每次 collectRecords
+      // 都 readdir + stat 校验，新文件立即可见（同时修复跨进程可见性）。
       const ids = store.collectRecords(100).map((r) => r.id);
       expect(ids).toContain("bg-1");
     });
@@ -584,7 +586,7 @@ describe("RecordStore", () => {
   // endedAt 重建（问题 2 修复：终态耗时不再随墙钟增长）
   // ============================================================
   describe("endedAt 重建（耗时不再无限增长）", () => {
-    it(".finalized → endedAt 为最后 entry 时间戳（非 now）", () => {
+    it(".finalized → light endedAt 用 mtime 近似，全量 endedAt 为最后 entry 时间戳", () => {
       const sessionFile = path.join(tmpDir, "fin.jsonl");
       writeSessionJsonl(sessionFile, {
         id: "bg-1", agent: "w", mode: "background", task: "t",
@@ -593,7 +595,12 @@ describe("RecordStore", () => {
       writeFinalized(sessionFile);
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100, "all", "sess-A").find((r) => r.id === "bg-1");
-      expect(found?.endedAt).toBe(9000); // 不是 Date.now()
+      // [perf] light 分支 2：endedAt 用 jsonl mtime 近似（finalize 后文件不再变化，
+      // 与最后 entry ts 差 <1s）——不是 entry ts 9000，也不是随墙钟无限增长的 now 基准。
+      expect(found?.endedAt).toBeDefined();
+      expect(found?.endedAt).toBeGreaterThan(5000);
+      // 全量（getFullRecord）：精确用最后 entry 时间戳（非 now）。
+      expect(store.getFullRecord("bg-1")?.endedAt).toBe(9000);
     });
 
     it("无 sidecar（running, SP-2）→ endedAt 保持 undefined（非终态）", () => {

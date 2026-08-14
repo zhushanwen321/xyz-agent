@@ -120,6 +120,11 @@ export class SubagentsListComponent implements Component {
     return this.service.collectRecords(LIST_LIMIT).some((r) => r.status === "running");
   }
 
+  /** [perf] 选中项详情数据：优先全量（懒加载 + per-file 缓存），拿不到回退 light。 */
+  private fullRecordOf(r: SubagentRecord): SubagentRecord {
+    return this.service.getFullRecord(r.id) ?? r;
+  }
+
   invalidate(): void {
     this.cachedKey = undefined;
     this.cachedLines = undefined;
@@ -143,11 +148,12 @@ export class SubagentsListComponent implements Component {
     // 详情翻屏上下文：视口高 = 右侧 body 高（内框高 - SPLIT_FIXED_LINES），
     // contentLines = 详情内容总行数（含元数据/段头/eventLog/result/error，单一数据源）。
     // 与 renderRightDetail 的 viewH + max 计算保持一致。
+    // [perf] 详情长度需重数据：选中项懒加载全量（带缓存）。
     const innerRows = Math.max(MIN_INNER_ROWS, this.termRows() - PAD_ROWS);
     const bodyH = Math.max(1, innerRows - SPLIT_FIXED_LINES);
     const detailCtx: DetailKeyContext = {
       viewportHeight: bodyH,
-      contentLines: selected ? this.detailContentLength(selected) : 0,
+      contentLines: selected ? this.detailContentLength(this.fullRecordOf(selected)) : 0,
     };
 
     const result = this.keyHandler(data, records, this.state, selected, this.service, detailCtx, this.notify);
@@ -302,9 +308,12 @@ export class SubagentsListComponent implements Component {
 
     const selected = records[this.state.selectedIdx] ?? null;
     const inDetail = this.state.detailMode; // 阶段 2：右侧滚动焦点
+    // [perf] 预览/详情需重数据（displayItems/turns/tokens/result）：选中项按需全量加载
+    // （per-file 缓存，stat 校验）；列表其余行保持 light（identity+状态），列表扫描不开销全量解析。
+    const selectedFull = selected ? this.fullRecordOf(selected) : null;
     // 预构建详情内容（inDetail 时）：分区线标题(detailScrollInfo 算长度)与右列(renderRightDetail 渲染)
     // 共用同一份，避免每帧双倍构建（animTimer 250ms 触发，长 eventLog 下有感）。
-    const detailContent = inDetail && selected ? this.buildDetailContent(selected, rightWidth) : null;
+    const detailContent = inDetail && selectedFull ? this.buildDetailContent(selectedFull, rightWidth) : null;
 
     const lines: string[] = [];
 
@@ -322,7 +331,7 @@ export class SubagentsListComponent implements Component {
     // 分区线（嵌入左/右标题，分段着色）
     const leftTitleStyled = t.fg("accent", t.bold(` ${TITLE_LEFT} `));
     const rightTitleStyled = inDetail
-      ? t.fg("accent", t.bold(` ${TITLE_RIGHT}${this.detailScrollInfo(selected, bodyH, detailContent?.length)} `))
+      ? t.fg("accent", t.bold(` ${TITLE_RIGHT}${this.detailScrollInfo(selectedFull, bodyH, detailContent?.length)} `))
       : t.fg("accent", t.bold(` ${TITLE_RIGHT} `));
     lines.push(
       this.b("├") + segFillColored(leftTitleStyled, this.dash(), leftWidth)
@@ -346,8 +355,8 @@ export class SubagentsListComponent implements Component {
       ));
       leftLines = this.renderLeftColumn(records, leftWidth, leftStart, bodyH);
       rightLines = inDetail
-        ? this.renderRightDetail(selected, rightWidth, bodyH, detailContent)
-        : this.renderRightPreview(selected, rightWidth, bodyH);
+        ? this.renderRightDetail(selectedFull, rightWidth, bodyH, detailContent)
+        : this.renderRightPreview(selectedFull, rightWidth, bodyH);
     }
     const bodyRows = Math.max(leftLines.length, rightLines.length, bodyH);
     for (let i = 0; i < bodyRows; i++) {

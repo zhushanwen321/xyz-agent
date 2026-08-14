@@ -30,6 +30,21 @@ export interface ManifestRecord {
 /** JSON.stringify 缩进空格数（no-magic-numbers 合规）。 */
 const MANIFEST_INDENT_SPACES = 2;
 
+/** [perf] 缓存校验戳（与 record-store.ts Stamp 同构；manifest 是小文件，mtime+size 足够）。 */
+interface Stamp {
+  mtimeMs: number;
+  size: number;
+}
+
+function statStamp(p: string): Stamp | null {
+  try {
+    const s = fs.statSync(p);
+    return { mtimeMs: s.mtimeMs, size: s.size };
+  } catch {
+    return null;
+  }
+}
+
 /** 合法 manifest status 集合（3 态；运行时守卫用，磁盘文件可能陈旧/损坏）。
  * SP-1：completed/failed 合并为 closed。读侧 mapManifestStatus 向后兼容旧值。
  * crashed 不在其中。 */
@@ -60,6 +75,11 @@ function isValidManifest(value: unknown): value is ManifestRecord {
 
 export class ManifestStore {
   private readonly dir: string;
+
+  /** [perf] per-file 缓存：file → { stamp, record }。record=null 表示「已解析但非法」（缓存
+   *  负结果避免反复 parse 损坏文件）。stat 戳变化（writeManifest tmp→rename 后 mtime/size 变）
+   *  自动失效；删除的文件在下次扫描时修剪。 */
+  private readonly cache = new Map<string, { stamp: Stamp; record: ManifestRecord | null }>();
 
   constructor(dir: string) {
     this.dir = dir;
@@ -139,6 +159,9 @@ export class ManifestStore {
    * 同步读取所有 manifest 记录（best-effort，损坏/非法文件跳过）。
    * 供 RecordStore.collectRecords 投影 orphan 记录使用——替代对私有 dir 的反射访问。
    * 仅返回通过 isValidManifest 校验的记录。
+   *
+   * [perf] per-file 缓存 + stat 戳校验：collectRecords 每次渲染都调本方法，旧实现每次
+   * 全量 readFileSync + JSON.parse 千级 manifest（实测 ~300ms/次）。命中缓存的文件零读取。
    */
   listAllSync(): readonly ManifestRecord[] {
     let files: string[];
@@ -147,17 +170,36 @@ export class ManifestStore {
     } catch {
       return [];
     }
+    const names = files.filter((f) => f.endsWith(".json") && !f.includes(".tmp."));
+    const disk = new Set(names);
+
+    // 修剪已删除文件
+    for (const f of this.cache.keys()) {
+      if (!disk.has(f)) this.cache.delete(f);
+    }
+
     const results: ManifestRecord[] = [];
-    for (const file of files) {
-      if (!file.endsWith(".json") || file.includes(".tmp.")) continue;
+    for (const file of names) {
+      const filePath = path.join(this.dir, file);
+      const stamp = statStamp(filePath);
+      if (!stamp) {
+        this.cache.delete(file);
+        continue;
+      }
+      const cached = this.cache.get(file);
+      if (cached && cached.stamp.mtimeMs === stamp.mtimeMs && cached.stamp.size === stamp.size) {
+        if (cached.record) results.push(cached.record);
+        continue;
+      }
       try {
-        const content = fs.readFileSync(path.join(this.dir, file), "utf-8");
+        const content = fs.readFileSync(filePath, "utf-8");
         const parsed: unknown = JSON.parse(content);
-        if (isValidManifest(parsed)) {
-          results.push(parsed);
-        }
+        const record = isValidManifest(parsed) ? parsed : null;
+        this.cache.set(file, { stamp, record });
+        if (record) results.push(record);
       } catch (fileErr) {
-        // best-effort：损坏/非法文件跳过（debug 记录便于排查）
+        // best-effort：损坏/非法文件跳过（debug 记录便于排查）。缓存负结果防反复 parse。
+        this.cache.set(file, { stamp, record: null });
         bestEffort(fileErr, `read manifest ${file} (listAllSync)`);
       }
     }

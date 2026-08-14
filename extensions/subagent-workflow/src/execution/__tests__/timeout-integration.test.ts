@@ -35,6 +35,7 @@ vi.mock("node:child_process", async () => {
   class FakeChild extends EventEmitter {
     pid = 12345;
     stdout = new PassThrough();
+    stdin = new PassThrough(); // runSpawn 注册 stdin EPIPE handler（session-runner），FakeChild 必须提供
     stderr = new PassThrough();
     killed = false;
     killSignal: string | undefined;

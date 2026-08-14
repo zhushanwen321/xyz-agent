@@ -291,6 +291,9 @@ interface PendingToolCall {
  *
  * status 由最后一条 assistant message 的 stopReason 推导（error/aborted → failed，
  * 其余 → done）。cancelled 由 tombstone override（record-store 层），本函数不感知。
+ *
+ * [perf] 本函数是重路径（全文读 + 全 entry 解析）。列表扫描用 readIdentityHeader
+ * （只读头部 identity），详情才走本函数（RecordStore.getFullRecord 懒加载）。
  */
 export function reconstructFromFile(sessionFile: string): ReconstructedRecord | undefined {
   // 读文件 + 逐行 JSON.parse（session.jsonl = newline-delimited JSON）。
@@ -353,8 +356,6 @@ export function reconstructFromFile(sessionFile: string): ReconstructedRecord | 
   const pending: PendingToolCall[] = [];
   let lastError: string | undefined;
   let totalTokens = 0;
-  /** 最后一条 assistant message 的 stopReason（推导终态 status）。 */
-  let lastStopReason: string | undefined;
   /** 最后一条 entry 的时间戳（ms），推导 endedAt（避免重建 record 耗时随墙钟无限增长）。 */
   let lastEntryTsMs: number | undefined;
 
@@ -401,7 +402,7 @@ export function reconstructFromFile(sessionFile: string): ReconstructedRecord | 
       // stopReason 驱动 lastError（与 updateFromEvent 一致）：
       // error/aborted → 设 lastError；stop（正常结束）→ 清 lastError（镜像 turn_end 的清除语义，
       // 即前序 turn 的瞬态 error 在后续成功 turn 后恢复，不误判 success=false）。
-      lastStopReason = msg.stopReason;
+      // [v4 B-1] status 恒 closed 后 lastStopReason 不再参与推导，死变量已删。
       if (msg.stopReason === "error" || msg.stopReason === "aborted") {
         lastError = msg.errorMessage ?? msg.stopReason;
       } else if (msg.stopReason === "stop") {
@@ -473,5 +474,184 @@ export function reconstructFromFile(sessionFile: string): ReconstructedRecord | 
     result: resultText.length > 0 ? resultText : undefined,
     error: lastError,
     eventLog,
+  };
+}
+
+// ============================================================
+// 轻量头部读取（列表扫描用）
+// ============================================================
+
+/** 头部读取字节数。首轮会话 identity 在第 2-3 行；但续聊（resume）场景 session_start
+ *  再次触发，identity append 到文件尾部附近（实测真实目录 1186/1744 文件的 identity
+ *  不在头 64KB）。头部 miss 时由 RecordStore.scanFile 调 readIdentityAnywhere 全文 fallback。 */
+export const IDENTITY_HEAD_BYTES = 65536;
+
+/** 轻量重建产出：仅身份字段 + 头部可见的 model/thinkingLevel（详情字段一律缺省）。 */
+export interface IdentityHeaderRecon {
+  id: string;
+  agent: string;
+  mode: ExecutionMode;
+  task: string;
+  slug: string;
+  startedAt: number;
+  rootSessionId: string | undefined;
+  parentRecordId: string | undefined;
+  depth: number;
+  forkDepth: number | undefined;
+  chatMode?: boolean;
+  model: string;
+  thinkingLevel: string | undefined;
+  sessionFile: string;
+}
+
+/**
+ * 只读文件头部，解析 identity custom entry（+途经的 model/thinking_level change）。
+ *
+ * 列表扫描专用：单次 readSync 读头部 IDENTITY_HEAD_BYTES 字节，逐行解析到 identity
+ * 即停。不解析 message entries（turns/eventLog/result 等重数据由
+ * RecordStore.getFullRecord 懒加载 reconstructFromFile 补齐）。
+ *
+ * 与 reconstructFromFile 的行为差异（有意）：本函数只要头部有 identity 就返回，
+ * 不要求存在 assistant message——pi 延迟写入策略下无 assistant 的文件几乎不存在，
+ * 若存在（崩溃前 flush）也按分支 4 running 呈现（v4 B-1 可续聊语义），
+ * 而非静默不可见。
+ *
+ * 返回 undefined：文件缺失/读失败/头部无 identity。不抛。
+ * 头部无 identity ≠ 文件无 identity（续聊场景 identity 在尾部附近）——需要覆盖全文件
+ * 时用 readIdentityAnywhere。
+ */
+export function readIdentityHeader(sessionFile: string): IdentityHeaderRecon | undefined {
+  let text: string;
+  try {
+    const fd = fs.openSync(sessionFile, "r");
+    try {
+      const buf = Buffer.alloc(IDENTITY_HEAD_BYTES);
+      let total = 0;
+      while (total < buf.length) {
+        const n = fs.readSync(fd, buf, total, buf.length - total, total);
+        if (n <= 0) break;
+        total += n;
+      }
+      text = buf.toString("utf-8", 0, total);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return undefined; // 文件缺失/不可读 → 降级跳过
+  }
+  return parseIdentityFromText(text, sessionFile);
+}
+
+/**
+ * 全文件找 identity：头部/尾部都 miss 后的最后 fallback（真实数据仅 ~0.2% 走到）。
+ *
+ * 全量 readFileSync + indexOf 预筛（只有含特征串的行才 JSON.parse），从后往前找
+ * （续聊轮次的 identity 靠尾部，最后一次的 identity 最新鲜）。读全文是成本主体
+ * （预筛/parse 可忽略）——调用方（RecordStore）应缓存结果避免重复读。
+ */
+export function readIdentityAnywhere(sessionFile: string): IdentityHeaderRecon | undefined {
+  let text: string;
+  try {
+    text = fs.readFileSync(sessionFile, "utf-8");
+  } catch {
+    return undefined;
+  }
+  const lines = text.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const s = lines[i];
+    if (!s.includes(IDENTITY_CUSTOM_TYPE)) continue; // 预筛：identity 行必含特征串
+    const recon = parseIdentityFromText(s, sessionFile);
+    if (recon) return recon;
+  }
+  return undefined;
+}
+
+/**
+ * 只读文件尾部找 identity（续聊场景主力命中点：最后一轮 session_start 追加的
+ * identity 离文件尾近，实测真实目录 65% 文件 identity 在尾 64KB）。
+ *
+ * 尾部块首行可能残缺（从行中间开始）——JSON.parse 失败自然跳过，不影响后续行。
+ * model/thinking_level 在尾部块中拿不到 identity 之前的途经 entry，返回空/undefined
+ * （best-effort，详情场景由全量重建补齐）。
+ */
+export function readIdentityTail(sessionFile: string): IdentityHeaderRecon | undefined {
+  let text: string;
+  try {
+    const { size } = fs.statSync(sessionFile);
+    const start = Math.max(0, size - IDENTITY_HEAD_BYTES);
+    const fd = fs.openSync(sessionFile, "r");
+    try {
+      const buf = Buffer.alloc(size - start);
+      let total = 0;
+      while (total < buf.length) {
+        const n = fs.readSync(fd, buf, total, buf.length - total, start + total);
+        if (n <= 0) break;
+        total += n;
+      }
+      text = buf.toString("utf-8", 0, total);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return undefined;
+  }
+  const lines = text.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const s = lines[i];
+    if (!s.includes(IDENTITY_CUSTOM_TYPE)) continue;
+    const recon = parseIdentityFromText(s, sessionFile);
+    if (recon) return recon;
+  }
+  return undefined;
+}
+
+/** 从文本片段解析 identity（头部/全文两入口共享）。解析到 identity 即停（返回）；
+ *  找不到返回 undefined。model/thinking_level 仅在 identity 之前的途经 entry 中
+ *  best-effort 提取，详情场景由全量重建补齐。 */
+function parseIdentityFromText(text: string, sessionFile: string): IdentityHeaderRecon | undefined {
+  let identity: SubagentIdentityData | undefined;
+  let model = "";
+  let thinkingLevel: string | undefined;
+  for (const line of text.split("\n")) {
+    const s = line.trim();
+    if (!s) continue;
+    let entry: JsonlEntry;
+    try {
+      entry = JSON.parse(s) as JsonlEntry;
+    } catch {
+      continue; // 损坏行/截断行（头部读取边界）跳过
+    }
+    if (entry.type === "custom" && entry.customType === IDENTITY_CUSTOM_TYPE) {
+      if (isIdentityData(entry.data)) {
+        identity = entry.data;
+        break; // 找到即停（后续行不再解析）
+      }
+    } else if (entry.type === "model_change") {
+      if (typeof entry.provider === "string" && typeof entry.modelId === "string") {
+        model = `${entry.provider}/${entry.modelId}`;
+      }
+    } else if (entry.type === "thinking_level_change") {
+      if (typeof entry.thinkingLevel === "string") thinkingLevel = entry.thinkingLevel;
+    }
+  }
+  if (!identity) return undefined;
+
+  // 归一化与全量 recon 同源：rootSessionId fallback 旧字段、slug 兜底空串。
+  const rootSessionId = identity.rootSessionId ?? identity.parentSessionId;
+  return {
+    id: identity.id,
+    agent: identity.agent,
+    mode: identity.mode,
+    task: identity.task,
+    slug: identity.slug ?? "",
+    startedAt: identity.startedAt,
+    rootSessionId,
+    parentRecordId: identity.parentRecordId,
+    depth: identity.depth ?? 0,
+    forkDepth: identity.forkDepth,
+    chatMode: identity.chatMode,
+    model,
+    thinkingLevel,
+    sessionFile,
   };
 }
