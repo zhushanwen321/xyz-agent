@@ -5,7 +5,7 @@ Pi rename-session 扩展 — 新 session 首 turn 完成后，自动生成会话
 ## 功能
 
 - 新 session 的**首个 turn** 完成后自动生成简短标题（3-8 个词，跟随对话语言）
-- 复用主 turn 完整上下文发起独立 LLM 调用，命中 kvcache，几乎不产生额外成本
+- **独立选模**：标题生成用独立的 `ModelSelector` 配置（默认 `scoped`，取 `settings.json` enabledModels 首个可用），不搭便车主 session 的昂贵模型
 - 标题直接 `setSessionName` 落库，不进 session history（不污染对话记录）
 - fire-and-forget：任何失败（LLM 调用 / 提取 / auth / 读取）都静默跳过，保留原 label，绝不阻断 agent 循环
 - **子 session 自动排除**：subagent 子进程 session 不触发 rename（避免给临时产物起名）
@@ -16,25 +16,48 @@ Pi rename-session 扩展 — 新 session 首 turn 完成后，自动生成会话
 pi install npm:@zhushanwen/pi-rename-session
 ```
 
-## 开关
+## 配置
 
-文件存在 = 开启。默认**关闭**，需显式开启。
+配置文件：`<agentDir>/config/rename-session-ext-config.json`（`<agentDir>` 默认 `~/.pi/agent`，`PI_CODING_AGENT_DIR` 可覆盖；xyz-agent 隔离环境为 `~/.xyz-agent/pi/agent`）。
 
-- **原生 pi 用户**：手动创建开关文件
-  ```bash
-  touch ~/.pi/agent/auto-rename-enabled
-  ```
-- **xyz-agent 用户**：通过 settings 的开关控制（由 xyz-agent 桥接到同一个开关文件）
+```json
+{
+  "enabled": true,
+  "model": { "type": "scoped" },
+  "maxTitleLength": 50
+}
+```
 
-开关文件路径可通过 `PI_CODING_AGENT_DIR` 环境变量覆盖基础目录（默认 `~/.pi/agent`）。
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `enabled` | `boolean` | `false` | 自动重命名开关（受 flag 文件覆盖，见下） |
+| `model` | `ModelSelector` | `{ "type": "scoped" }` | 标题生成模型，四形式见 config skill（`ref` / `fallback` / `available` / `scoped`） |
+| `maxTitleLength` | `number` | `50` | 标题最大长度（Unicode 码点数，须正整数） |
+
+文件缺失/坏 JSON 返回默认值，不抛错。改完保存即生效（mtime 读时刷新，每个 `turn_end` 重新 load）。
+
+## 开关优先级（重要）
+
+`enabled` 有两层来源，优先级从高到低：
+
+1. **`<agentDir>/auto-rename-enabled` flag 文件**（存在 = 开）：xyz-agent runtime 的开关契约——桌面端 SystemPage 开关、首启默认开启都写这个文件。**xyz-agent 用户请通过桌面端开关或 `/auto-rename` 命令管理，不要手改 JSON 的 `enabled`**（flag 存在时永远视为开，手改会被覆盖）。
+2. **config 的 `enabled` 字段**（默认 false）：flag 不存在时生效，是原生 pi CLI 用户的开关。
+
+## 命令
+
+```
+/auto-rename          # 查看当前状态
+/auto-rename on       # 开启（创建 flag 文件）
+/auto-rename off      # 关闭（写 config.enabled=false + 删 flag，双写同步）
+```
 
 ## 工作原理
 
 1. **监听 `turn_end`**：每个 turn 完成时触发。
-2. **开关 + subagent 过滤**：开关关闭则直接返回；session 路径含 `subagents` 段则视为子进程 session，跳过。
+2. **开关 + subagent 过滤**：开关关闭（flag 不存在且 `enabled=false`）直接返回；session 路径含 `subagents` 段视为子进程 session，跳过。
 3. **首 turn 判定**：统计 session entries 中 `assistant` 回复数，===1 才是首 turn（后续 turn 不重复 rename）。
-4. **LLM 生成标题**：复用主 turn 的完整上下文（system prompt + tools + messages），追加一条 rename 指令的 user message，发起一次独立 LLM 调用。由于前缀与主 turn 字节级一致，能命中 kvcache，显著省成本。
-5. **落库**：调 `setSessionName` 写入标题。**不**写入 session history（不调用 `appendEntry`），对话记录不受影响。
+4. **LLM 生成标题**：复用对话 messages 前缀（与主 turn 字节级一致，命中 kvcache），但用**独立精简 system prompt**（<200 字符，非整个 agent prompt）+ 显式 `tools: []`（纯文本生成，不暴露工具），按 `config.model` 独立选模发起一次 LLM 调用。
+5. **落库**：调 `setSessionName` 写入清洗后的标题（去首尾引号/markdown 强调标记，按 Unicode 码点截断）。**不**写入 session history，对话记录不受影响。
 
 ## 子 session 自动排除
 
@@ -48,9 +71,11 @@ rename-session/
 ├── package.json
 ├── vitest.config.ts
 ├── README.md
+├── skills/rename-session-ext-config/SKILL.md   # 配置指南（pi 内 agent 可发现）
 └── src/
-    ├── index.ts          # 工厂入口（注册 turn_end handler）
-    ├── pure.ts           # 纯函数（countAssistantReplies / extractTitle / isEnabled / CONFIG）
-    ├── llm.ts            # callRenameLLM（动态 import completeSimple，复用主 turn 上下文）
-    └── __tests__/        # 单测（pure 纯函数 + llm mock + index 集成）
+    ├── index.ts          # 工厂入口（注册 turn_end handler + /auto-rename 命令）
+    ├── commands.ts       # /auto-rename on|off|status 命令
+    ├── llm.ts            # callRenameLLM / buildMessages / isSubagentSession
+    ├── pure.ts           # 纯函数（loadRenameConfig / setAutoRenameSwitch / countAssistantReplies / cleanTitle）
+    └── __tests__/        # 单测（pure / commands / llm mock / index 集成）
 ```

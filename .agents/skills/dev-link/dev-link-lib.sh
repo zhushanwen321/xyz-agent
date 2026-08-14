@@ -2,25 +2,19 @@
 # dev-link-lib.sh — dev-link skill 的共享库（pi 模式 + xyz-agent 模式脚本统一 source）
 #
 # 核心设计：短名 → 事实的映射从本项目 extensions/ 目录扫描构建（SSOT = 各包的 package.json）：
-#
 #   extensions/<short>/package.json
 #     ├─ name           → npm 包名（如 @zhushanwen/pi-subagent-workflow）
 #     ├─ pi.extensions  → 是否真 pi extension（库包如 quota-providers 没有该字段）
 #     └─ 目录本身        → 源码目录（symlink target / XYZ_EXTENSION_PATHS 条目）
 #
-# 脚本不再按命名约定推导 npm 包名（"@zhushanwen/pi-" + short），而是读 package.json 的 name 字段。
-# 新增/改名包自动进映射，脚本零改动。
-#
-# 另提供 settings.json packages 条目的备份/恢复：pi-link 清理 npm 条目时先备份，
-# pi-unlink 时恢复 —— 保证 link → unlink 往返后 extension 回到 npm 源（状态守恒）。
+# npm 包的安装/卸载交给 pi 原生命令（pi install / pi uninstall，同时管 settings 条目 + node_modules 包），
+# 本库不自己写 settings/node_modules 操作。
 #
 # 兼容性：macOS 自带 bash 3.2（无关联数组），避免使用 bash 4+ 特性。
 
 SCOPE="@zhushanwen"
 PI_EXT_DIR="$HOME/.pi/agent/extensions"
-SETTINGS="$HOME/.pi/agent/settings.json"
-# 备份文件放 agentDir 下（不在 extensions/ 里，避免被 pi loader 扫描）
-DL_BACKUP_FILE="$HOME/.pi/agent/.pi-link-backup.json"
+PI_SKILL_DIR="$HOME/.pi/agent/skills"
 
 red()    { printf "\033[31m%s\033[0m\n" "$*"; }
 green()  { printf "\033[32m%s\033[0m\n" "$*"; }
@@ -94,78 +88,36 @@ dl_lookup() {
 	return 0
 }
 
-# ── 清理 settings.json packages 残留并备份（pi-link 调用）────────────
-# 删除两类条目：
-#   1. npm 条目：精确匹配 "npm:<实际 npm 包名>"（读 package.json，不按命名约定拼）
-#   2. 旧本地路径残留：非 npm: 开头且 basename 恰好等于短名（兼容历史 pi install path 格式）
-# 删除的条目按 short 记入备份文件，供 dl_restore_backup 恢复。
-# stdout 输出删除条数。
-dl_backup_and_clean() {
-	local short="$1" npm_name="$2"
-	[ -f "$SETTINGS" ] || { echo "0"; return 0; }
-	SHORT="$short" NPM_NAME="$npm_name" SETTINGS="$SETTINGS" BACKUP="$DL_BACKUP_FILE" node -e '
-		const fs = require("fs");
-		const s = JSON.parse(fs.readFileSync(process.env.SETTINGS, "utf8"));
-		const short = process.env.SHORT, npmName = process.env.NPM_NAME;
-		const packages = s.packages || [];
-		const removed = [];
-		const kept = packages.filter(x => {
-			const isNpm = x === "npm:" + npmName;
-			const isLegacyPath = !x.startsWith("npm:") && x.split("/").pop() === short;
-			if (isNpm || isLegacyPath) { removed.push(x); return false; }
-			return true;
-		});
-		if (removed.length > 0) {
-			let backup = {};
-			if (fs.existsSync(process.env.BACKUP)) {
-				backup = JSON.parse(fs.readFileSync(process.env.BACKUP, "utf8"));
-			}
-			backup[short] = [...new Set([...(backup[short] || []), ...removed])];
-			s.packages = kept;
-			fs.writeFileSync(process.env.SETTINGS, JSON.stringify(s, null, 2));
-			fs.writeFileSync(process.env.BACKUP, JSON.stringify(backup, null, 2));
-		}
-		process.stdout.write(String(removed.length));
-	'
+# ── extension skills symlink 到 pi skill 目录（绕过 globalExtDir 不读 pi.skills）──
+# pi-link 时把 extension/skills/<skill> symlink 到 PI_SKILL_DIR/<skill>，
+# pi-unlink 时删（检查 symlink 存在）。stdout: 操作数。
+dl_link_skills() {
+	local src_dir="$1"
+	local skills_root="$src_dir/skills"
+	[ -d "$skills_root" ] || { echo "0"; return 0; }
+	local count=0
+	for skill_dir in "$skills_root"/*/; do
+		[ -d "$skill_dir" ] || continue
+		local skill_name; skill_name=$(basename "$skill_dir")
+		ln -sfn "${skill_dir%/}" "$PI_SKILL_DIR/$skill_name"
+		count=$((count + 1))
+	done
+	echo "$count"
 }
 
-# ── 恢复备份的 npm 条目（pi-unlink 调用）─────────────────────────────
-# 把该 short 备份的条目写回 settings.json packages（去重），恢复后删除备份记录。
-# stdout 输出恢复条数（0 = 无备份/无变化）。
-dl_restore_backup() {
-	local short="$1"
-	[ -f "$DL_BACKUP_FILE" ] || { echo "0"; return 0; }
-	SHORT="$short" SETTINGS="$SETTINGS" BACKUP="$DL_BACKUP_FILE" node -e '
-		const fs = require("fs");
-		const backup = JSON.parse(fs.readFileSync(process.env.BACKUP, "utf8"));
-		const short = process.env.SHORT;
-		const entries = backup[short];
-		if (!entries || entries.length === 0) {
-			delete backup[short];
-			if (Object.keys(backup).length > 0) {
-				fs.writeFileSync(process.env.BACKUP, JSON.stringify(backup, null, 2));
-			} else {
-				fs.unlinkSync(process.env.BACKUP);
-			}
-			process.stdout.write("0");
-			process.exit(0);
-		}
-		const s = JSON.parse(fs.readFileSync(process.env.SETTINGS, "utf8"));
-		const packages = s.packages || [];
-		let added = 0;
-		for (const e of entries) {
-			if (!packages.includes(e)) { packages.push(e); added++; }
-		}
-		if (added > 0) {
-			s.packages = packages;
-			fs.writeFileSync(process.env.SETTINGS, JSON.stringify(s, null, 2));
-		}
-		delete backup[short];
-		if (Object.keys(backup).length > 0) {
-			fs.writeFileSync(process.env.BACKUP, JSON.stringify(backup, null, 2));
-		} else {
-			fs.unlinkSync(process.env.BACKUP);
-		}
-		process.stdout.write(String(added));
-	'
+dl_unlink_skills() {
+	local src_dir="$1"
+	local skills_root="$src_dir/skills"
+	[ -d "$skills_root" ] || { echo "0"; return 0; }
+	local count=0
+	for skill_dir in "$skills_root"/*/; do
+		[ -d "$skill_dir" ] || continue
+		local skill_name; skill_name=$(basename "$skill_dir")
+		local link="$PI_SKILL_DIR/$skill_name"
+		if [ -L "$link" ]; then
+			rm "$link"
+			count=$((count + 1))
+		fi
+	done
+	echo "$count"
 }

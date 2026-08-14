@@ -1,11 +1,10 @@
 // statusline-palette.ts
 //
-// 从 statusline.ts 提取的色彩映射工具（statusline.ts 将被 footer-provider.ts 替代）。
-//
-// permission 的 footer line renderer 与 widget 共用此 palette：把 Pi Theme 的
-// 语义色 API（theme.fg(token, text)）包装为字符串着色器接口，便于纯函数渲染与单测。
+// permission footer renderer 的色彩映射工具。
+// 把 Pi Theme 的语义色 API（theme.fg(token, text)）包装为字符串着色器接口，
+// 便于纯函数渲染与单测。语义与 pi-statusline（~/Code/pi-statusline）的 Pallet 对齐。
 
-/** 语义色 token 到字符串着色器的映射（与 statusline 扩展的 Pallet 对齐）。 */
+/** 语义色 token 到字符串着色器的映射（与 pi-statusline 的 Pallet 对齐）。 */
 export interface PermissionPalette {
 	/** dim 文本（次要信息） */
 	dim(s: string): string;

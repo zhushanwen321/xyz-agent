@@ -1,4 +1,6 @@
 import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -279,5 +281,31 @@ describe('importLegacyStore', () => {
     expect(fs.unlinkSync).toHaveBeenCalledTimes(1)
     expect(fs.unlinkSync).toHaveBeenCalledWith(importedPath)
     expect(cleanup).toBeUndefined()
+  })
+})
+
+// ── getLegacyStorePath 双候选探测（合并 feat-auto-name-session-refactor 4b5513b5e 后落实）──
+// 候选 1：getAgentDir()（PI_CODING_AGENT_DIR 隔离目录）；候选 2：已发布版 npm 0.1.1 硬编码
+// ~/.pi/agent。getAgentDir() 每次调用读 process.env（非模块加载缓存），stubEnv 后直接调用即可。
+// fs 已 mock（模块顶部 vi.mock('node:fs')），existsSync 控制探测命中。
+describe('getLegacyStorePath 双候选探测', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('TC10a: PI_CODING_AGENT_DIR 隔离目录下旧 store 存在 → 优先 getAgentDir() 路径', () => {
+    vi.stubEnv('PI_CODING_AGENT_DIR', '/tmp/iso-agent')
+    const isoPath = path.join('/tmp/iso-agent', 'scheduler', 'root', 'fake', 'workspace', 'scheduler.json')
+    vi.mocked(fs.existsSync).mockImplementation(p => p === isoPath)
+
+    expect(getLegacyStorePath(cwd)).toBe(isoPath)
+  })
+
+  it('TC10b: 隔离目录下旧 store 不存在 → fallback 已发布版 ~/.pi/agent 路径', () => {
+    vi.stubEnv('PI_CODING_AGENT_DIR', '/tmp/iso-agent')
+    vi.mocked(fs.existsSync).mockReturnValue(false)
+    const legacyPath = path.join(os.homedir(), '.pi', 'agent', 'scheduler', 'root', 'fake', 'workspace', 'scheduler.json')
+
+    expect(getLegacyStorePath(cwd)).toBe(legacyPath)
   })
 })

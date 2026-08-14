@@ -1,5 +1,8 @@
 # 自进化机制全景对比：Evolve vs Hermes vs OpenClaw vs 社区
 
+> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。
+
+
 > 深度源码级分析，覆盖四个系统的自进化/自改进机制。
 
 ---

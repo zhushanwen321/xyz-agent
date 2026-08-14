@@ -764,6 +764,26 @@ export async function runSpawn(
     // abortRunningControllers 跳过它，靠本 Set 兜底）。close/error 后移除（已退出无需再 kill）。
     spawnedChildren.add(child);
 
+    // [worktree-reaper-fix] 同步补全注册表 pid：spawn 返回后 child.pid 立即可得（Node.js
+    // 同步属性），无需等任何 stdout 事件。原补全点挂在 header 分支（下方 stdout handler 内），
+    // 而 RPC mode（buildSpawnArgs 固定 --mode rpc）不输出 header 行——pid 恒为 0，超
+    // SPAWN_GRACE_MS 后被 reaper 当孤儿误删活 worktree（2026-08-11 cw 递归编排整树失活事故）。
+    // header 分支调用保留：json mode 回切时仍能补全，updatePid 同 branch 覆盖写幂等，无副作用。
+    // [S1] 防御：必须放在 spawnedChildren.add 之后（onWorktreePid 抛错时子进程已被跟踪，
+    // dispose 兜底 kill 不会泄漏），且包 try/catch（补全失败不阻断 spawn 主流程——
+    // 注册表写失败最坏后果是条目停留 pid=0，由 reaper 宽限回收兜底）。
+    if (opts.worktree && child.pid) {
+      try {
+        ctx.onWorktreePid?.(opts.worktree.branch, child.pid);
+      } catch (err) {
+        logger.warn("[worktree] worktree pid registration failed (defensive)", {
+          branch: opts.worktree.branch,
+          pid: child.pid,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     // stdout/stderr 用 utf8 编码：stream 自动按字符边界切分，避免多字节
     // UTF-8（CJK/emoji）跨 chunk 时 toString() 产生 U+FFFD 替换符导致 JSON.parse 失败。
     // [m2] 先 setEncoding 再注册 signal listener/watchdog：若 setEncoding 抛错，try/finally
@@ -997,9 +1017,12 @@ export async function runSpawn(
         // [worktree-reaper-fix] 拼 spawnCwd 进错误消息：ENOENT 的 err.message 只含 command 名，
         // 无 cwd 线索（worktree 被 reaper 误删后 cwd 指向虚空）会导致误诊——2026-08-11 事故
         // AI 误判"node 被卸载"的直接原因。
+        // [S3] code 读取带运行时 guard：非 ErrnoException（普通 Error）时 code 为 undefined，
+        // 不加 cwd hint（行为与修复前一致）；仅 ENOENT 才拼 cwd。
         spawnedChildren.delete(child);
         const errno = err as NodeJS.ErrnoException;
-        const cwdHint = errno.code === "ENOENT" ? ` (cwd: ${spawnCwd})` : "";
+        const errCode = "code" in err ? errno.code : undefined;
+        const cwdHint = errCode === "ENOENT" ? ` (cwd: ${spawnCwd})` : "";
         record.lastError = `${err.message}${cwdHint}`;
         resolve(SIGNAL_EXIT_CODE_THRESHOLD); // 非零退出
       });

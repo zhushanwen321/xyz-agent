@@ -7,6 +7,9 @@
   "pi": {
     "extensions": [
       "./index.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "keywords": [
@@ -20,6 +23,7 @@
   "license": "MIT",
   "files": [
     "src/",
+    "skills/",
     "index.ts"
   ],
   "scripts": {
@@ -28,28 +32,29 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@zhushanwen/pi-llm-shared": "workspace:*",
     "tree-sitter-bash": "^0.25.1",
     "web-tree-sitter": "^0.26.11"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
-    "@zhushanwen/pi-statusline": "*"
+    "@earendil-works/pi-tui": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-ai": {
       "optional": true
     },
-    "@earendil-works/pi-tui": {
+    "@earendil-works/pi-coding-agent": {
       "optional": true
     },
-    "@zhushanwen/pi-statusline": {
+    "@earendil-works/pi-tui": {
       "optional": true
     }
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "vitest": "^4.1.8"
   }

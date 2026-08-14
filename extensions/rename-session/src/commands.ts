@@ -1,9 +1,17 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { CONFIG, isEnabled, setSwitch } from "./pure.js";
+import { loadRenameConfig, saveRenameConfig, setAutoRenameSwitch } from "./pure.js";
 
 /**
- * 解析 /auto-rename 参数并执行开关操作。纯函数，返回反馈文本（供 handler notify）。
+ * 解析 /auto-rename 参数并执行开关操作。
+ *
+ * 开关双机制（见 pure.ts [COMPAT] 契约注释）：
+ * - `<agentDir>/auto-rename-enabled` flag 文件 = xyz-agent runtime 开关契约（live 覆盖源，存在即生效）
+ * - `config/rename-session-ext-config.json` 的 `enabled` = pi CLI 用户开关（flag 不存在时生效）
+ *
+ * 写入策略：
+ * - on → 只创建 flag（不写 config.enabled=true：避免 config 残留 true 导致旧 runtime 删 flag 后仍开启的错位）
+ * - off → 先写 config.enabled=false（覆盖手写的 true），再删 flag（flag 是覆盖源，必须移除才真正关闭）
  *
  * 用法：
  *   /auto-rename         — 查看当前状态
@@ -14,16 +22,20 @@ export function executeAutoRenameCommand(args: string): string {
 	const trimmed = args.trim().toLowerCase();
 
 	if (trimmed === "" || trimmed === "status") {
-		const state = isEnabled(CONFIG.switchFilePath) ? "已开启 ✓" : "已关闭 ✗";
+		const { enabled } = loadRenameConfig();
+		const state = enabled ? "已开启 ✓" : "已关闭 ✗";
 		return `自动重命名会话：${state}\n用法：/auto-rename on | off | status`;
 	}
 
 	if (trimmed === "on" || trimmed === "enable") {
-		return setSwitch(CONFIG.switchFilePath, true);
+		setAutoRenameSwitch(true);
+		return "已开启：自动重命名会话";
 	}
 
 	if (trimmed === "off" || trimmed === "disable") {
-		return setSwitch(CONFIG.switchFilePath, false);
+		const result = saveRenameConfig({ ...loadRenameConfig(), enabled: false });
+		setAutoRenameSwitch(false);
+		return result.success ? "已关闭：自动重命名会话" : `设置失败：${result.error}`;
 	}
 
 	return `未知参数 "${args.trim()}"。\n用法：/auto-rename on | off | status`;

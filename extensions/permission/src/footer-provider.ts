@@ -2,9 +2,9 @@
 //
 // permission 端的 footer line 注册入口（consumer 端握手协议）。
 //
-// 设计动机（沿用 ask-user #M4 修复模式，见 extensions/ask-user/src/channel-registry-register.ts，
-// 以及 ADR-036 Decision 4.1）：
-//  - statusline 是 registry 唯一创建方（canonical owner）
+// 设计动机（沿用 ask-user #M4 修复模式，见 extensions/ask-user/src/channel-registry-register.ts）：
+//  - statusline 是 registry 唯一创建方（canonical owner）—— pi-statusline 独立项目
+//    （~/Code/pi-statusline）的 footer-handshake-access.ts
 //  - permission 是 consumer：永不创建 registry 实例，永不写 slot.registry 字段
 //  - slot 形状 {version, registry?, pending:[]}；registry 未就绪时 consumer 只 push pending
 //
@@ -13,14 +13,15 @@
 //  - slot 存在但 registry 未就绪 → push pending（等 owner flush）
 //  - slot 存在且 registry 就绪 → 直接 register
 //
-// 纯 globalThis 反射实现：不静态 import statusline（permission 的可选 peerDep，
+// 纯 globalThis 反射实现：不静态 import pi-statusline（permission 的可选 peerDep，
 // 未安装时静态 import 会致整个 permission 加载失败），运行时结构兼容即可。
 
 import { MODE_LABELS, type PermissionMode } from "./types.js";
 import type { PermissionPalette } from "./statusline-palette.js";
 
-// ── 协议契约字面量（必须与 extensions/statusline/src/footer-handshake-access.ts 完全一致）──
-// ⚠️ 改名必须两端同步（Symbol.for 字符串匹配），否则握手静默失败。
+// ── 协议契约字面量（必须与 pi-statusline 的 footer-handshake-access.ts 完全一致）──
+// Symbol.for 字符串是跨包稳定契约：pi-statusline(owner) 与 permission(consumer) 通过同一
+// Symbol 读/写 globalThis slot。字符串不一致 → 握手静默失败（双方各持独立 slot，永不对齐）。
 export const FOOTER_HANDSHAKE_KEY = Symbol.for(
 	"@zhushanwen/pi-statusline.footerHandshake",
 );
@@ -34,11 +35,11 @@ const HANDSHAKE_VERSION = 1 as const;
 /** permission 在 footer registry 中的稳定 id。 */
 const FOOTER_LINE_ID = "pi-permission";
 
-// ── 本地等价接口（结构兼容 statusline 端，不静态 import）──
+// ── 本地等价接口（结构兼容 pi-statusline 端，不静态 import）──
 
 /**
- * footer line renderer 的本地等价接口（与 statusline 端 FooterLineRenderer 形状一致）。
- * 本模块不静态 import statusline；运行时结构兼容即可。
+ * footer line renderer 的本地等价接口（与 pi-statusline 端 FooterLineRenderer 形状一致）。
+ * 本模块不静态 import pi-statusline；运行时结构兼容即可。
  */
 export interface FooterLineRenderer {
 	/** 显示顺序权重：0=line1, 1=line2, 2=line3, ... */
@@ -47,7 +48,7 @@ export interface FooterLineRenderer {
 	render(ctx: unknown, theme: unknown): string | null;
 }
 
-/** registry 的本地等价接口（与 statusline 端 FooterLineRegistry 形状一致）。 */
+/** registry 的本地等价接口（与 pi-statusline 端 FooterLineRegistry 形状一致）。 */
 interface FooterLineRegistry {
 	register(id: string, renderer: FooterLineRenderer): void;
 	unregister(id: string): void;
@@ -69,23 +70,24 @@ interface FooterHandshakeSlot {
 /**
  * 从 globalThis 读 slot；version !== 1 或结构不合规视为无 slot（返回 undefined）。
  *
- * 与 statusline 端 readSlot 对称：version 不匹配时 warn（帮助诊断两端漂移），
+ * 与 pi-statusline 端 readSlot 对称：version 不匹配时 warn（帮助诊断两端漂移），
  * pending 非 Array 时丢弃（防御污染槽位）。
  */
 function readSlot(): FooterHandshakeSlot | undefined {
-	const slot = Reflect.get(globalThis, FOOTER_HANDSHAKE_KEY) as unknown;
+	const slot = Reflect.get(globalThis, FOOTER_HANDSHAKE_KEY);
 	if (slot === undefined) return undefined;
 	if (typeof slot !== "object" || slot === null) return undefined;
-	const version = (slot as { version?: unknown }).version;
-	if (version !== HANDSHAKE_VERSION) {
+	// 双字段 in 守卫：version + pending 都在才视为 slot 雏形（避免 as 到全可选类型的无校验断言）
+	if (!("version" in slot) || !("pending" in slot)) return undefined;
+	const loose = slot as { version: unknown; pending: unknown };
+	if (loose.version !== HANDSHAKE_VERSION) {
 		console.warn(
-			`[pi-permission] footer handshake version mismatch (got ${String(version)}, expected ${HANDSHAKE_VERSION}); discarding and recreating.`,
+			`[pi-permission] footer handshake version mismatch (got ${String(loose.version)}, expected ${HANDSHAKE_VERSION}); discarding and recreating.`,
 		);
 		return undefined;
 	}
-	const candidate = slot as FooterHandshakeSlot;
-	if (!Array.isArray(candidate.pending)) return undefined;
-	return candidate;
+	if (!Array.isArray(loose.pending)) return undefined;
+	return loose as FooterHandshakeSlot;
 }
 
 /**

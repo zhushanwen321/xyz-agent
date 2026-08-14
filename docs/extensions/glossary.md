@@ -112,7 +112,7 @@ Agent 定义文件的发现范围：`user`（`~/.pi/agent/agents/`）、`project
 **ThinkingLevel**
 模型的推理深度：`high`（标准推理）或 `max`（最大推理）。按 TaskComplexity 默认：low→high, medium→high, high→max。
 
-### Context Engineering（pi-context-engineering）
+### Context Engineering（pi-context-engineering，已删除）
 
 **L0 / L1 / L2**
 三级压缩管道：L0 零成本清理 / L1 规则化摘要 / L2 紧急截断。增强（不替代）原生 Compaction。
@@ -174,7 +174,7 @@ Goal 扩展的四种提示词模板：Continuation（每 turn 注入驱动下一
 **Stall（已废弃概念）**
 V2 重构删除了 stallCount/maxStallTurns 自动终态机制。停滞检测退化为基于单任务级 `lastUpdatedTurn` 的提示词提醒，不再自动转 blocked。
 
-### Evolve 自进化系统（pi-evolve-daily）
+### Evolve 自进化系统（pi-evolve-daily，已删除）
 
 **Detector**
 被动观测器。监听 Pi 事件 → match() → appendEntry() 写入数据，不解入 AI 行为。适用于纯统计场景。AI 不知道自己在被追踪。

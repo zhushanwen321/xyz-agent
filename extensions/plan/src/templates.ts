@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -39,8 +40,8 @@ export function listTemplates(projectDir?: string): TemplateInfo[] {
     templates.push(...scanTemplateDir(path.join(projectDir, ".pi", "plan-templates"), "project", seen));
   }
 
-  // 2. Global templates
-  templates.push(...scanTemplateDir(path.join(os.homedir(), ".pi", "agent", "plan-templates"), "global", seen));
+  // 2. Global templates（getAgentDir 派生，实例隔离：PI_CODING_AGENT_DIR 场景读隔离目录）
+  templates.push(...scanTemplateDir(path.join(getAgentDir(), "plan-templates"), "global", seen));
 
   // 3. Builtin templates (lowest priority)
   templates.push(...scanTemplateDir(getBuiltinTemplateDir(), "builtin", seen));

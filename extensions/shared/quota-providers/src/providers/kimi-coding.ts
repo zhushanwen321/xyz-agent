@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
 	INFINITE_WIN,
 	type NormalizedQuotaRow,
@@ -13,9 +14,8 @@ const FETCH_TIMEOUT_MS = 5000;
 /** 百分比标度 */
 const PERCENT_SCALE = 100;
 
-const HOME = homedir();
-const SECRETS_DIR = join(HOME, ".pi", "agent", "secrets");
-const KIMI_API_KEY_PATH = join(SECRETS_DIR, "kimi-coding-api-key.txt");
+export const SECRETS_DIR = join(getAgentDir(), "secrets");
+export const KIMI_API_KEY_PATH = join(SECRETS_DIR, "kimi-coding-api-key.txt");
 
 export interface KimiCodingWindow {
 	limit: number;

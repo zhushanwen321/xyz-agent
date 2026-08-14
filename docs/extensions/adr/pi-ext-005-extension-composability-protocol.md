@@ -1,5 +1,8 @@
 # ADR-005: Extension Composability Protocol（扩展可组合性协议）
 
+> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。
+
+
 > 状态：proposed
 > 日期：2026-05-25
 

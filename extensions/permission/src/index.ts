@@ -7,32 +7,29 @@
  *  - G5：显式 approvalChain promise chain 串行化（Pi 不保证 tool_call handler 串行，
  *    但权限检查涉及共享状态/UI 对话框，必须串行避免竞态）。
  *  - fail-closed：handler 异常 → block + reason（不放行）。
- *  - session 隔离：config 在 session_start 重建的闭包，每 session 独立。
+ *  - session 隔离：每 session 独立扩展工厂闭包；config 不持有跨调用缓存，每次读时刷新
+ *    （直接 loadAndWatchConfig，llm-shared mtime 去重零成本，见 config.ts「热重载契约」）。
  *  - yolo 快速路径：mode=yolo 或 enabled=false → 直接 return undefined（不跑管道）。
- *
- * W6 阶段（footer-provider 重构）：session_start / session_tree 通过握手协议注册 footer
- * line renderer（consumer 端，statusline 是 canonical owner），显示当前 mode + enabled +
- * rule count + classifier model（auto 模式）。所有权限信息聚合到 footer 一行（order=2），
- * 不再使用 setWidget，避免与 statusline widget 区域重复。
- *  - footer line 不再独占 Pi footer 槽位，而是作为 statusline footer 的一行（order=2），
- *    与 statusline 自身行共存（解决旧 setFooter 单例覆盖问题）。
- *  - session_tree：分支切换后重建 renderer 闭包，避免持有过期 config。
  */
 
-import type {
-	ExtensionAPI,
-	ExtensionCommandContext,
-	ExtensionContext,
-	} from "@earendil-works/pi-coding-agent";
+import {
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+	type ExtensionContext,
+	getAgentDir,
+} from "@earendil-works/pi-coding-agent";
+
+import { migrateLegacyConfig } from "@zhushanwen/pi-llm-shared";
 
 import { listAvailableModels } from "./classifier/model-resolver.js";
 import { handlePermissionCommand, handlePermissionModelCommand, handlePermissionRuleCommand } from "./commands.js";
-import { getConfigPath, loadAndWatchConfig, saveConfig } from "./config.js";
+import { loadAndWatchConfig, saveConfig } from "./config.js";
 import { setDefaultListAvailableModels } from "./model-picker.js";
 import { editRulesViaOverlay } from "./rule-editor.js";
 import { makeNextIdCounter } from "./rule-templates.js";
 import { checkPermission, type CheckPermissionDeps } from "./pipeline.js";
 import { createPipelineDeps } from "./production.js";
+import type { PermissionConfig } from "./types.js";
 import {
 	registerPermissionFooterLine,
 	requestFooterRender,
@@ -40,7 +37,16 @@ import {
 	type FooterLineRenderer,
 } from "./footer-provider.js";
 import { paletteFromTheme, type PermissionPalette } from "./statusline-palette.js";
-import type { PermissionConfig } from "./types.js";
+
+// ──────────────────────── [MIGRATION] 配置路径迁移（session_start 运行时） ────────────────────────
+// Added in v1.0.0. Remove after v2.0.0 (one major past).
+// session_start 首次触发时把旧路径 permission-config.json 迁到 config/permission-ext-config.json。
+// 幂等、best-effort（migrateLegacyConfig 见 @zhushanwen/pi-llm-shared）。
+// 模块级 once flag 防同进程重复触发；agentDir 由 getAgentDir() 推导（尊重 PI_CODING_AGENT_DIR）。
+let configMigrationChecked = false;
+
+/** 默认配置 warning 回调（loadAndWatchConfig 共用，透传 console.warn）。 */
+const defaultConfigWarn = (msg: string): void => console.warn(msg);
 
 // ──────────────────────── tool_call event 最小子集 ────────────────────────
 
@@ -65,48 +71,39 @@ interface ToolCallResult {
 // ──────────────────────── 扩展工厂 ────────────────────────
 
 /**
- * 扩展工厂。每个 session 独立闭包状态（遵循 Pi session 隔离约束，
- * 不用模块级 let 避免多 session 共享）。
+ * 扩展工厂。每个 session 独立工厂闭包；config 不持有跨调用缓存，每次读时刷新
+ * （llm-shared mtime 去重零成本，详见 config.ts「热重载契约」）。
  */
 export default function permissionExtension(pi: ExtensionAPI): void {
-	// ──────────────────────── 闭包状态（每 session 独立） ────────────────────────
-	let config: PermissionConfig = loadAndWatchConfig(getConfigPath(), (msg) => {
-		console.warn(msg);
-	});
-
 	// W7：注入 listAvailableModels 真实实现（model-picker.ts 默认返回空 Map）。
-	// G1 口径：(onWarning?, filePath?) → 封装读盘；warning 透传到 console.warn。
-	setDefaultListAvailableModels((onWarning, filePath) =>
-		listAvailableModels(onWarning ?? ((m) => console.warn(m)), filePath),
+	// E2 签名：(ctx, onWarning?) → ctx.modelRegistry.getAll() + hasConfiguredAuth 过滤；warning 透传到 console.warn。
+	setDefaultListAvailableModels((ctx, onWarning) =>
+		listAvailableModels(ctx, onWarning ?? defaultConfigWarn),
 	);
 
-	/** 读取最新配置到闭包变量（mtime 缓存内部去重，未变化不读 fs） */
-	function refreshConfig(): void {
-		config = loadAndWatchConfig(getConfigPath(), (msg) => console.warn(msg));
-	}
+	// ──────────────────────── 配置读取（读时刷新，回归 llm-shared 框架） ────────────────────────
+	// 不持有跨调用缓存：每次需要配置直接 loadAndWatchConfig()，llm-shared 内部 mtime+size 去重，
+	// 文件未变时零额外 IO（只 statSync）。这是 llm-shared config「热重载契约」的正确用法——
+	// 见 extensions/shared/llm-shared/src/config.ts 文件头。
+	// （历史：曾用 `let config` 闭包 + 手动 refreshConfig 调用点，架空了读时刷新，同一 session 改文件不生效。）
 
-	// W6 T2（footer-provider 重构）：footer line dispose 句柄。session_start /
-	// session_tree 注册 renderer 时由 registerPermissionFooterLine 返回（statusline 未安装
-	// 或 headless 时仍返回合法 dispose，内部 noop）。分支切换时调用以注销旧 renderer，
-	// 避免持有过期 config 闭包。mode/enabled 切换后调 requestFooterRender() 触发重绘。
-	let disposeFooterLine: () => void = () => {};
-
-	// ──────────────────────── session_start：重载配置 + 注册 footer line ────────────────────────
+	// ──────────────────────── session_start：迁移旧路径配置 ────────────────────────
 	pi.on("session_start", (_event: unknown, ctx: ExtensionContext) => {
-		refreshConfig();
-		// footer-provider：通过握手协议注册 footer line renderer（consumer 端）。
-		// statusline 是 canonical owner；permission 永不创建 registry，只 push pending 或
-		// 直接 register（owner 已就绪时）。duck typing：headless/mock ctx 无 theme 时跳过。
-		disposeFooterLine = registerFooterLineFor(ctx);
+		// [MIGRATION] Added in v1.0.0. Remove after v2.0.0.
+		if (!configMigrationChecked) {
+			configMigrationChecked = true;
+			migrateLegacyConfig(getAgentDir(), "permission-config.json", "config/permission-ext-config.json");
+		}
+		// 无需手动刷新：去闭包后每次 loadAndWatchConfig 读时刷新；迁移改写文件后下次读取自动生效。
+		// 注册 footer line renderer（consumer 端握手，pi-statusline 是 canonical owner）。
+		// renderer 无状态：render 时用 statusline 传入的 theme + loadAndWatchConfig 读最新 config。
+		// renderer 覆盖式注册（registry.register 同 id 覆盖），无需存 dispose。
+		registerFooterLineFor(ctx);
 	});
 
-	// ──────────────────────── session_tree：分支切换后重建 renderer 闭包 ────────────────────────
-	// 分支切换（worktree/leaf 变化）后，旧 renderer 闭包可能持有过期 config；重建确保读到新值。
-	// 同时重载 config（用户可能在分支里手动改过 permission-config.json）。
-	pi.on("session_tree", (_event: unknown, ctx: ExtensionContext) => {
-		refreshConfig();
-		disposeFooterLine();
-		disposeFooterLine = registerFooterLineFor(ctx);
+	// session_tree：分支切换后请求 statusline 重绘（renderer 无状态，render 时读新分支 config）。
+	pi.on("session_tree", () => {
+		requestFooterRender();
 	});
 
 	// ──────────────────────── /permission 命令 ────────────────────────
@@ -126,8 +123,8 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 			return trimmed === "" ? opts : opts.filter((o) => o.label.startsWith(trimmed));
 		},
 		handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
-			// 命令执行前重载配置（确保最新，用户可能手动改过文件）
-			refreshConfig();
+			// 读时刷新：命令执行时读最新 config（llm-shared mtime 去重）。
+			const config = loadAndWatchConfig(defaultConfigWarn);
 			const trimmed = (args ?? "").trim();
 			// W8：/permission rule → overlay CRUD 编辑 userRules（异步路径）
 			if (trimmed === "rule") {
@@ -154,13 +151,9 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 					makeNextIdCounter(config.userRules),
 					{
 						save: (newConfig) => {
-							const result = saveConfig(newConfig);
-							if (result.success) {
-								config = newConfig; // 更新闭包状态
-								// userRules 数量变化 → 请求 statusline 重绘 footer（rule count 部分）。
-								requestFooterRender();
-							}
-							return result;
+							const r = saveConfig(newConfig);
+							if (r.success) requestFooterRender();
+							return r;
 						},
 						editRulesViaOverlay: (ctx, initialRules, sessionIdCounter, rpcDeps) =>
 							editRulesViaOverlay(ctx, initialRules, sessionIdCounter, rpcDeps),
@@ -173,6 +166,8 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 				await handlePermissionModelCommand(
 					{
 						mode: ctx.mode,
+						// E2：model picker 数据源（listAvailableModels 走 modelRegistry）
+						modelRegistry: ctx.modelRegistry,
 						ui: {
 							notify: (msg: string, type?: "info" | "warning" | "error") => ctx.ui.notify(msg, type),
 							select: (title: string, options: string[], opts?: Parameters<typeof ctx.ui.select>[2]) =>
@@ -190,30 +185,26 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 					},
 					config,
 					{
-						listModels: () => listAvailableModels((m) => console.warn(m)),
+						listModels: (pickerCtx) => listAvailableModels(pickerCtx, (m) => console.warn(m)),
 						save: (newConfig) => {
-							const result = saveConfig(newConfig);
-							if (result.success) {
-								config = newConfig; // 更新闭包状态
-								// classifier model 变化 → 请求 statusline 重绘 footer（auto 模式显示 model）。
-								requestFooterRender();
-							}
-							return result;
+							const r = saveConfig(newConfig);
+							if (r.success) requestFooterRender();
+							return r;
 						},
 					},
 				);
 				return;
 			}
 			// 原同步路径（yolo/auto/approve/strict/status/无参）
-			const message = handlePermissionCommand(args, config, (newConfig) => {
-				const result = saveConfig(newConfig);
-				if (result.success) {
-					config = newConfig; // 更新闭包状态
-					// mode/enabled 切换后请求 statusline 重绘 footer，避免显示旧 mode 直到 resize/timer。
-					requestFooterRender();
-				}
-				return result;
-			});
+			const message = handlePermissionCommand(
+				args,
+				config,
+				(newConfig: PermissionConfig) => {
+					const r = saveConfig(newConfig);
+					if (r.success) requestFooterRender();
+					return r;
+				},
+			);
 			ctx.ui.notify(message, "info");
 		},
 	});
@@ -224,42 +215,60 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 	let approvalChain: Promise<ToolCallResult | undefined> = Promise.resolve(undefined);
 
 	pi.on("tool_call", (event: unknown, ctx: ExtensionContext): Promise<ToolCallResult | undefined> => {
-		const run = (): Promise<ToolCallResult | undefined> => processToolCall(event, ctx, () => config, refreshConfig);
+		// 读时刷新：每次 tool_call 读最新 config（llm-shared mtime 去重零成本；去闭包后改文件即生效）。
+		const run = (): Promise<ToolCallResult | undefined> =>
+			processToolCall(event, ctx, () => loadAndWatchConfig(defaultConfigWarn));
 		// 串行：前一个完成（无论 resolve/reject）后才跑下一个。失败不影响后续。
 		approvalChain = approvalChain.then(run, run);
 		return approvalChain;
 	});
 
-	// ──────────────────────── footer line 辅助（闭包内，捕获 config） ────────────────────────
+	// ──────────────────────── footer line 辅助 ────────────────────────
 
 	/**
-	 * 从 ctx.ui.theme 构造 palette 并注册 permission footer line renderer。
-	 * duck typing：headless/mock ctx 无 theme（或 theme.fg 非函数）时跳过，
-	 * 返回 noop dispose（不抛异常）。renderer 闭包读最新 config（refreshConfig/切换后生效）。
+	 * 注册 permission footer line renderer（consumer 端握手）。
+	 * 不依赖 ctx.ui：pi 的 ExtensionUIContext 无 theme 字段（类型权威），theme 由
+	 * pi-statusline 每次 render 时经 render(ctx, theme) 传入（render hook 的 theme 参数 = pi Theme 对象）。
+	 * headless（rpc/json mode）时 render 收不到有效 theme → 返回 null，statusline 跳过。
 	 */
-	function registerFooterLineFor(ctx: ExtensionContext): () => void {
-		const theme = (ctx.ui as { theme?: { fg?: unknown } }).theme;
-		if (!theme || typeof theme.fg !== "function") return () => {};
-		const palette = paletteFromTheme(theme as { fg(token: string, text: string): string });
-		return registerPermissionFooterLine(makePermissionFooterRenderer(palette));
+	function registerFooterLineFor(_ctx: ExtensionContext): () => void {
+		return registerPermissionFooterLine(makePermissionFooterRenderer());
 	}
 
 	/**
-	 * 构造 footer line renderer。render 闭包读最新 config.mode/enabled/userRules/classifier，
-	 * 故 session 内任意字段切换后 statusline 重绘即可见新值（无需重建 renderer）。
+	 * 构造 footer line renderer（order=2，pi-statusline 内联进 ctx 行）。
+	 * render 读时刷新：每次 statusline 重绘都 loadAndWatchConfig 读最新 config，
+	 * 故任意字段（mode/enabled/rules/model）切换后重绘立即可见。
+	 * theme 参数（pi Theme 对象）每次 render 传入，palette 即取即用（theme 切换也跟随）。
 	 */
-	function makePermissionFooterRenderer(palette: PermissionPalette): FooterLineRenderer {
+	function makePermissionFooterRenderer(): FooterLineRenderer {
 		return {
 			order: 2,
-			render: () => renderPermissionFooterLine(
-				config.mode,
-				config.enabled,
-				config.userRules.length,
-				config.classifier.model,
-				palette,
-			),
+			render: (ctx: unknown, theme: unknown) => {
+				const cfg = loadAndWatchConfig(defaultConfigWarn);
+				const palette = paletteFromThemeSafe(theme);
+				if (palette === null) return null;
+				return renderPermissionFooterLine(
+					cfg.mode,
+					cfg.enabled,
+					cfg.userRules.length,
+					cfg.classifier.model,
+					palette,
+				);
+			},
 		};
 	}
+
+	/**
+	 * theme 有效（含 fg 函数）→ 构造 PermissionPalette；否则 null（headless/无主题）。
+	 * theme 来自 pi-statusline render hook 传入的 pi Theme 对象（fg(token, text) 签名）。
+	 */
+	function paletteFromThemeSafe(theme: unknown): PermissionPalette | null {
+		if (typeof theme !== "object" || theme === null) return null;
+		if (!("fg" in theme) || typeof theme.fg !== "function") return null;
+		return paletteFromTheme(theme as { fg(token: string, text: string): string });
+	}
+
 }
 
 // ──────────────────────── processToolCall（单次工具调用处理） ────────────────────────
@@ -272,14 +281,12 @@ export default function permissionExtension(pi: ExtensionAPI): void {
  *
  * @param event tool_call event（duck typing 为 ToolCallEventLike）
  * @param ctx Pi ExtensionContext
- * @param getConfig 获取最新 config 的闭包（session 隔离）
- * @param _refreshConfig 重载配置（保留参数位，便于未来扩展）
+ * @param getConfig 获取最新 config（读时刷新：调用方每次传 loadAndWatchConfig，llm-shared mtime 去重）
  */
 async function processToolCall(
 	event: unknown,
 	ctx: ExtensionContext,
 	getConfig: () => PermissionConfig,
-	_refreshConfig: () => void,
 ): Promise<ToolCallResult | undefined> {
 	const cfg = getConfig();
 
@@ -300,7 +307,7 @@ async function processToolCall(
 		return { block: true, reason: "[pi-permission] tool_call event missing toolName" };
 	}
 
-	// 装配 deps（每次 tool_call 重新装配，捕获当前 ctx.mode/ui；classifier 单例在 createPipelineDeps 内）
+	// 装配 deps（每次 tool_call 重新装配，捕获当前 ctx.mode/ui；classifier 走 ctx.modelRegistry）
 	const approvalCtx = {
 		mode: ctx.mode,
 		ui: {
@@ -318,7 +325,7 @@ async function processToolCall(
 				: {}),
 		},
 	};
-	const deps: CheckPermissionDeps = createPipelineDeps(approvalCtx);
+	const deps: CheckPermissionDeps = createPipelineDeps(approvalCtx, ctx);
 
 	try {
 		const decision = await checkPermission(

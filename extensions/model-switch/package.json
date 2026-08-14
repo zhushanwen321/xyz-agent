@@ -17,14 +17,19 @@
   "files": [
     "index.ts",
     "src/**/*.ts",
+    "skills/",
     "README.md"
   ],
   "pi": {
     "extensions": [
       "./index.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "dependencies": {
+    "@zhushanwen/pi-llm-shared": "workspace:*",
     "@zhushanwen/pi-quota-providers": "workspace:*"
   },
   "peerDependencies": {

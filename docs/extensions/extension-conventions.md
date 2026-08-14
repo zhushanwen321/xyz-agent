@@ -136,6 +136,62 @@ streamSink: ctx.mode === "rpc"
 
 有 skills 目录的扩展还必须声明 `"pi.skills": ["./skills"]`。
 
+### 配置 skill 约定 [强制]
+
+凡 agent 可能需要协助配置/使用/排查的扩展，**必须**附带一个统一命名的 config skill，承载该扩展的配置/使用说明，让 agent 通过 pi 的 progressive disclosure（skill description 进 `<available_skills>`，正文按需 read）自动发现。
+
+**触发条件**（任一命中）：
+- 扩展读取磁盘配置文件（`<agentDir>/` 下的 .json 等）
+- 扩展有命令交互 / 复杂存储机制（如 event sourcing），agent 可能需要协助使用或排查
+
+**要求**：
+- **命名**：`skills/<extension简名>-ext-config/SKILL.md`（如 `permission` → `permission-ext-config`、`model-switch` → `model-switch-ext-config`）
+- **声明**：`package.json` 的 `pi.skills: ["./skills"]` + `files` 含 `"skills/"`（否则 npm publish 丢 skill）
+- **frontmatter**：`name` = 目录名 + `description` 双引号含触发词（决定 agent 能否正确匹配 read）
+- **内容**：
+  - 有磁盘配置文件 → 配置路径（getAgentDir 派生）+ schema + 默认值 + 配置示例
+  - 无配置文件但有命令交互/复杂存储 → 使用方式 + 存储机制（不硬套配置 schema 模板）
+
+**范例**：`extensions/{rename-session,permission,model-switch,scheduler}/skills/*-ext-config/`
+
+### 配置路径约定 [强制]
+
+所有扩展的磁盘配置文件统一放 `<agentDir>/config/<extension简名>-ext-config.json`。
+
+- **命名 = `<extension简名>-ext-config.json`**（从 extension 名直接推导）：`permission-ext-config.json` / `model-switch-ext-config.json` / `rename-session-ext-config.json`
+  - 后缀 `-ext-config` 与 config skill 名 `<简名>-ext-config` 对齐：skill（SKILL.md 指导文档）与它指导的配置文件（.json 数据）同名配对，agent 按 skill 名即可定位到配置文件，反之亦然
+  - 禁止语义名（`model-policy.json`）、无后缀简写（`permission.json`）与 `<名>-config.json`（`permission-config.json`）——统一经 `@zhushanwen/pi-llm-shared` 的 `getConfigPath(pkgName)` 生成路径，调用方不自拼文件名
+- `<agentDir>` = pi 的 `getAgentDir()`（`PI_CODING_AGENT_DIR` 覆盖，默认 `~/.pi/agent`；xyz-agent 隔离环境 `~/.xyz-agent/pi/agent`）
+- shared 库（如 quota-providers）的领域数据文件（providers.json / secrets.json / quota-cache.json）也放 `config/`，可用领域名（非包名）
+- 目录形态的配置（如 plan-templates/）不在此约定内
+
+**历史路径迁移（session_start 运行时迁移，过渡性——一个 major 后去除）**：
+
+- **迁移机制**：extension 在 `session_start` hook 里做**幂等一次性迁移**（模块级 once flag 防同进程重复触发）。运行时迁移**不是**双读 fallback——迁移完成后运行时只读新路径，session_start 只是触发迁移的时机
+- **为何用 session_start 而非安装时迁移**：session_start hook 在 pi 进程内运行，**跨原生 pi + xyz-agent 统一生效**（xyz-agent 启 pi 子进程时同样触发），不依赖包管理器是否执行 lifecycle 脚本。pi 无 install-time/first-load 钩子（pi 的 `readPiManifest` 只读 extensions/themes/skills/prompts，不认自定义字段），session_start 是最可靠的统一迁移时机
+- **过渡性标记 [强制]**：迁移 hook 是为平滑老用户升级而设的**过渡机制，不是永久逻辑**。每个迁移 hook 必须在代码注释里标注：
+  - `Added in v<X.Y.Z>`（加入此 hook 的版本）
+  - `Remove after v<N>.0.0`（计划去除版本 = 加入版本的下一个个 major release 之后；到达时必须删除迁移 hook——老用户已充分迁移，新用户不存在旧路径）
+- **幂等要求**（迁移逻辑复用 `@zhushanwen/pi-llm-shared` 的 `migrateLegacyConfig` 工具）：
+  - 旧路径不存在 → noop
+  - 旧路径存在 + 新路径不存在 → `renameSync`（同盘原子搬移）
+  - 旧路径存在 + 新路径已存在 → **删除旧文件**（新的是当前配置，旧的是残留副本；pi 运行时只读新路径，保留旧只制造 warn 噪音）
+  - 失败 → warn 不抛错（best-effort，下次启动重试）
+- **已废弃机制（禁止再用）**：`scripts/migrate-config.mjs` / `package.json#scripts.postinstall` / `pi.migrate` 字段是早期「安装时迁移」方案，已被 session_start 取代：
+  - `postinstall` 在 pnpm workspace install（开发环境）会误触发，动开发者真实 `~/.pi/agent`
+  - `pi.migrate` 是 xyz-agent runtime 私有字段，pi 原生不认（对原生 pi 用户无效）
+  - session_start 无此副作用，统一覆盖两环境
+- **升级场景自洽**：旧版本代码读旧路径、新版本代码读新路径 + session_start hook 迁移，任何版本运行时都不双读
+
+**已收敛清单**（2026-08，session_start hook 迁移，随包发布）：
+
+| 包 | 旧路径 | 新路径 |
+|---|---|---|
+| `pi-permission` | `<agentDir>/permission-config.json` | `<agentDir>/config/permission-ext-config.json` |
+| `pi-model-switch` | `<agentDir>/model-policy.json` | `<agentDir>/config/model-switch-ext-config.json` |
+| `pi-quota-providers`（cache） | `<agentDir>/statusline_cache.json`（statusline 遗留孤儿名） | `<agentDir>/config/quota-cache.json`（首次加载迁移） |
+| `pi-rename-session` | 已合规 | `<agentDir>/config/rename-session-ext-config.json`（llm-shared 派生，无迁移脚本） |
+
 ## Extension 依赖管理 [MANDATORY]
 
 所有 extension 之间的依赖关系必须在项目根的 `extension-dependencies.json` 中声明。新增、修改、删除 extension 时必须同步更新此文件。

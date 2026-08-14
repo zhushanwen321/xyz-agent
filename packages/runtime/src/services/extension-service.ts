@@ -955,6 +955,7 @@ export class ExtensionService {
         'Check that the package has pi manifest fields (keywords: ["pi-package"], peerDependencies with pi-coding-agent, or a "pi" field in package.json).',
       )
     }
+
   }
 
   /** 从 node_modules/<name>/package.json 读取实际安装版本。

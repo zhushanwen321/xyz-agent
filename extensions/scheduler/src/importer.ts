@@ -2,26 +2,26 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
+import { getAgentDir } from '@earendil-works/pi-coding-agent'
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
 
 import type { ScheduledTask, SchedulerEntryOp, SchedulerStore, TaskSnapshot } from './types.js'
 
 /**
- * 获取旧 store 文件路径：~/.pi/agent/scheduler/<root>/<segments>/scheduler.json。
+ * 获取旧 store 文件路径：scheduler/<root>/<segments>/scheduler.json，双候选探测。
  *
  * 内联自 store.ts getStorePath——store.ts 本 wave 删除后此函数是旧路径的唯一推导实现，
  * 不能 import 已删 store。workspace 路径隔离，不同 cwd 存不同文件。
  *
  * export 供测试推导期望路径（断言 renameSync/unlinkSync 参数）。
  *
- * ⚠️ 路径硬编码说明：硬编码 `~/.pi/agent/scheduler/` 是因为已发布版（npm 0.1.1）的 store.ts
- * 即用此路径，旧数据确在此处，必须按此路径探测才能迁移。注意分支 `feat-auto-name-session-refactor`
- * 的 commit 4b5513b5e 把 store 路径改为 getAgentDir()（读 PI_CODING_AGENT_DIR，用于 xyz-agent
- * 数据目录隔离）；该分支合并后此处需改为双候选路径探测（先 getAgentDir() 再 fallback ~/.pi/agent），
- * 否则 xyz-agent 隔离目录下的旧任务探测不到。
+ * 双候选探测（合并 feat-auto-name-session-refactor 分支 4b5513b5e 后落实）：
+ * 候选 1 用 pi 的 getAgentDir()（读 PI_CODING_AGENT_DIR，xyz-agent 数据目录隔离时指向隔离目录），
+ * 候选 2 是已发布版（npm 0.1.1）store.ts 的硬编码 `~/.pi/agent/scheduler/`。探测规则：
+ * 候选 1 存在则用候选 1（隔离实例的旧任务），否则 fallback 候选 2（0.1.1 版写入的真实数据源，
+ * 必须按此路径探测才能迁移）。getAgentDir() 未设置 env 时默认 ~/.pi/agent，两候选同路径，探测无副作用。
  */
 export function getLegacyStorePath(cwd: string): string {
-  const home = os.homedir()
   const resolved = path.resolve(cwd)
   const parsed = path.parse(resolved)
   const segments = resolved.slice(parsed.root.length)
@@ -30,7 +30,9 @@ export function getLegacyStorePath(cwd: string): string {
     .replaceAll(/[^a-zA-Z0-9]+/g, '-')
     .replaceAll(/^-+|-+$/g, '')
     .toLowerCase() || 'root'
-  return path.join(home, '.pi', 'agent', 'scheduler', root, ...segments, 'scheduler.json')
+  const agentDirPath = path.join(getAgentDir(), 'scheduler', root, ...segments, 'scheduler.json')
+  const legacyPath = path.join(os.homedir(), '.pi', 'agent', 'scheduler', root, ...segments, 'scheduler.json')
+  return fs.existsSync(agentDirPath) ? agentDirPath : legacyPath
 }
 
 /**

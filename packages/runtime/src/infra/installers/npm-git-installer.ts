@@ -48,4 +48,5 @@ export class NpmGitInstaller implements IInstaller {
   async getLatestVersion(pkgName: string, timeout?: number): Promise<string> {
     return fetchLatestVersion(pkgName, timeout ?? VERSION_CHECK_DEFAULT_TIMEOUT)
   }
+
 }

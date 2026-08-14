@@ -1,15 +1,55 @@
 /**
  * production.test.ts — createProductionClassifier + createPipelineDeps 装配测试。
  *
- * getApiProvider 来自 pi-ai，测试时用真实 SDK（vitest alias 到 @earendil-works/pi-ai）。
- * 装配后验证：classifyRisk 可调（走 fallback 路径，无真实 provider 时返回 ask）、
- * deps 字段齐全、analyzeBashStructure/matchRulesForArgv/getDefaultRules 是真实实现。
+ * C1a 收口后 createProductionClassifier(ctx) 的 resolveModel 注入走 llm-shared resolveModel
+ * （不再预检凭证），callLLM 注入闭包捕获 ctx（凭证在 callLLM 内部 getApiKeyAndHeaders）。
+ * 测试用 mock ctx.modelRegistry + vi.mock llm-shared（resolveModel + callLLM）精确控制，覆盖：
+ *  - TC1/TC2: toSelector 映射（'auto'→scoped / 'provider/model-id'→ref）
+ *  - TC3: scoped 全空 fail-closed（resolveModel null → classifyRisk fallback，不触达 callLLM）
+ *  - TC4（静态断言）: production.ts 收口完成——无 getApiProvider/streamSimple/@ts-ignore，走 callLLM
+ *  - TC4（装配）: resolveModel 命中 → callLLM 收到 model → ok:true 正常分类（链路通）
+ *  - TC5: callLLM 返回 ok:false（LLM 调用失败）→ classifier fail-closed fallback
+ *  - TC7: scoped 空 fallback available（CL-scoped-fallback 退化防护）
+ *  - m1: 每次 createPipelineDeps 创建独立 classifier（CL-classifier-singleton）
  */
-import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ApprovalContext } from "../approval.js";
 import type { CheckPermissionDeps } from "../pipeline.js";
-import { _resetClassifierSingletonForTest, createPipelineDeps, createProductionClassifier } from "../production.js";
+import { createPipelineDeps, createProductionClassifier, toSelector } from "../production.js";
+
+// vi.mock 必须在 import 之前（vitest hoisting）。替换 llm-shared 的 resolveModel + callLLM
+// 为可控 mock，默认透传 actual（真实实现），单测用 mockImplementation/mockResolvedValue 精确控制。
+vi.mock("@zhushanwen/pi-llm-shared", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@zhushanwen/pi-llm-shared")>();
+	return {
+		...actual,
+		resolveModel: vi.fn(actual.resolveModel),
+		callLLM: vi.fn(actual.callLLM),
+	};
+});
+
+// mock 后再 import，拿到的是 mock 版（用于单测配置返回值）
+const { resolveModel: resolveModelShared, callLLM: callLLMShared } = await import("@zhushanwen/pi-llm-shared");
+
+// ──────────────────────── fixtures ────────────────────────
+
+/** 测试用 model（resolveModel mock 的返回值；callLLM 已 mock，不触达真实 provider） */
+const MOCK_MODEL_A: Model<Api> = {
+	id: "model-a",
+	name: "Model A",
+	api: "bogus-api" as Api,
+	provider: "test-co",
+	baseUrl: "",
+	reasoning: false,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 128000,
+	maxTokens: 16384,
+};
 
 function makeApprovalCtx(): ApprovalContext {
 	return {
@@ -26,17 +66,56 @@ function makeApprovalCtx(): ApprovalContext {
 	};
 }
 
+/** 构造 mock ctx（仅 modelRegistry 相关方法，其余字段 createProductionClassifier 不用） */
+function makeMockCtx(over: {
+	getAll?: () => Model<Api>[];
+	getAvailable?: () => Model<Api>[];
+	hasConfiguredAuth?: (m: Model<Api>) => boolean;
+	find?: (provider: string, id: string) => Model<Api> | null;
+	getApiKeyAndHeaders?: (m: Model<Api>) => Promise<{ ok: true; apiKey: string; headers?: Record<string, string>; env?: Record<string, string> } | { ok: false; error: string }>;
+} = {}): ExtensionContext {
+	const modelRegistry = {
+		getAll: over.getAll ?? vi.fn(() => []),
+		getAvailable: over.getAvailable ?? vi.fn(() => []),
+		hasConfiguredAuth: over.hasConfiguredAuth ?? vi.fn(() => false),
+		find: over.find ?? vi.fn(() => null),
+		getApiKeyAndHeaders: over.getApiKeyAndHeaders ?? vi.fn(async () => ({ ok: false, error: "no auth" })),
+	};
+	return { modelRegistry } as unknown as ExtensionContext;
+}
+
+beforeEach(() => {
+	vi.mocked(resolveModelShared).mockReset();
+	vi.mocked(callLLMShared).mockReset();
+});
+
+// ──────────────────────── TC1/TC2: toSelector 映射 ────────────────────────
+
+describe("toSelector（C2：'auto'→scoped 向后兼容）", () => {
+	it("TC1: 'auto' 映射为 scoped", () => {
+		expect(toSelector("auto")).toEqual({ type: "scoped" });
+	});
+
+	it("TC2: 'provider/model-id' 映射为 ref", () => {
+		expect(toSelector("anthropic/claude-sonnet")).toEqual({ type: "ref", ref: "anthropic/claude-sonnet" });
+	});
+
+	it("任意非 'auto' 字符串都视为 ref（含边角格式，由 resolveRef 判合法性）", () => {
+		expect(toSelector("openai/gpt-4o")).toEqual({ type: "ref", ref: "openai/gpt-4o" });
+	});
+});
+
+// ──────────────────────── createProductionClassifier ────────────────────────
+
 describe("createProductionClassifier", () => {
 	it("返回带 classifyRisk 的对象", () => {
-		const classifier = createProductionClassifier();
+		const classifier = createProductionClassifier(makeMockCtx());
 		expect(typeof classifier.classifyRisk).toBe("function");
 	});
 
-	it("classifyRisk 在无模型时 fail-closed 返回 ask（不 throw）", async () => {
-		const classifier = createProductionClassifier();
-		// 用不存在的 provider/model 规格强制 resolveClassifierModel 返回 null → fallback ask。
-		// （真实环境磁盘存在带 apiKey 的 models.json，model:"auto" 会解析到真实模型并调用 LLM，
-		//   无法稳定走 fail-closed 路径，故用 bogus spec 确保无可用模型。）
+	it("ref 模式 resolveModel 返回 null → classifyRisk fail-closed 返回 ask（不 throw）", async () => {
+		vi.mocked(resolveModelShared).mockReturnValue(null);
+		const classifier = createProductionClassifier(makeMockCtx());
 		const result = await classifier.classifyRisk(
 			{ toolName: "bash", command: "ls", cwd: "/tmp" },
 			{ enabled: true, model: "nonexistent-provider/no-such-model", timeout: 5, autoApproveLowRisk: false, autoDenyHighRisk: true },
@@ -46,9 +125,107 @@ describe("createProductionClassifier", () => {
 	});
 });
 
+// ──────────────────────── resolveModel 装配（C3 + C1a 收口） ────────────────────────
+
+describe("resolveModel 装配（resolveModel + callLLM）", () => {
+	const CTX = { toolName: "bash", command: "ls", cwd: "/tmp" };
+	const CFG = { enabled: true, model: "auto", timeout: 5, autoApproveLowRisk: false, autoDenyHighRisk: true };
+
+	it("TC3: scoped enabledModels 空 + available 空 → resolveModel null → fail-closed ask（不触达 callLLM）", async () => {
+		vi.mocked(resolveModelShared).mockReturnValue(null);
+		const ctx = makeMockCtx();
+		const classifier = createProductionClassifier(ctx);
+		const result = await classifier.classifyRisk(CTX, CFG);
+		expect(result.outcome).toBe("ask");
+		expect(result.confidence).toBe(0);
+		// 关键：resolveModel null 时不应触达 callLLM（LLM 调用层）
+		expect(callLLMShared).not.toHaveBeenCalled();
+	});
+
+	it("TC4（静态断言）: production.ts 收口完成——无 getApiProvider/streamSimple/@ts-ignore，classifier 走 callLLM", () => {
+		const source = readFileSync(new URL("../production.ts", import.meta.url), "utf-8");
+		// 匹配代码形式（import 调用 / 字段定义），注释里的历史描述不算残留
+		expect(source).not.toMatch(/getApiProvider\s*\(/);
+		expect(source).not.toMatch(/streamSimple\s*[:=]/);
+		expect(source).not.toMatch(/\/\/\s*@ts-ignore/);
+		expect(source).not.toMatch(/import\s*\{[^}]*getApiProvider/);
+		// classifier LLM 调用收口到 llm-shared callLLM（注入闭包捕获 ctx）
+		expect(source).toMatch(/callLLM\s*:/);
+		expect(source).toContain('from "@zhushanwen/pi-llm-shared"');
+	});
+
+	it("TC4（装配）: resolveModel 命中 → callLLM 收到 model → ok:true 正常分类（收口链路通）", async () => {
+		vi.mocked(resolveModelShared).mockImplementation((_ctx, selector) =>
+			selector.type === "scoped" ? MOCK_MODEL_A : null,
+		);
+		vi.mocked(callLLMShared).mockResolvedValue({
+			ok: true,
+			content: '{"outcome":"allow","risk_level":"low","reasoning":"safe","confidence":0.9}',
+		});
+		const classifier = createProductionClassifier(makeMockCtx());
+		const result = await classifier.classifyRisk(CTX, CFG);
+		expect(result.outcome).toBe("allow");
+		// 关键：resolveModel 返回 model 后，callLLM 被调用且收到该 model（收口链路 resolve→callLLM 通）
+		expect(callLLMShared).toHaveBeenCalledOnce();
+		// callLLM(ctx, opts) 两个参数：mock.calls[0] = [ctx, opts]
+		const opts = vi.mocked(callLLMShared).mock.calls[0]![1];
+		expect(opts.model).toBe(MOCK_MODEL_A);
+		expect(opts.messages).toHaveLength(1);
+		expect(opts.systemPrompt.length).toBeGreaterThan(0);
+		// scoped 命中只调 1 次 resolveModel（不走 available fallback）
+		expect(vi.mocked(resolveModelShared)).toHaveBeenCalledTimes(1);
+	});
+
+	it("TC4b: resolveModel 成功（scoped 命中）→ onLog 输出 '[pi-permission] classifier: using model <modelId>'（契约 C2，R2 验收前提）", async () => {
+		vi.mocked(resolveModelShared).mockImplementation((_ctx, selector) =>
+			selector.type === "scoped" ? MOCK_MODEL_A : null,
+		);
+		vi.mocked(callLLMShared).mockResolvedValue({ ok: true, content: "x" });
+		const classifier = createProductionClassifier(makeMockCtx());
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			await classifier.classifyRisk(CTX, CFG);
+			// onLog 实装为 console.warn（production.ts），成功路径日志在 LLM 调用前输出
+			expect(warnSpy).toHaveBeenCalledWith("[pi-permission] classifier: using model model-a");
+		} finally {
+			warnSpy.mockRestore();
+		}
+	});
+
+	it("TC5: callLLM 返回 ok:false（LLM 调用失败）→ classifier fail-closed fallback（不 throw）", async () => {
+		vi.mocked(resolveModelShared).mockReturnValue(MOCK_MODEL_A);
+		vi.mocked(callLLMShared).mockResolvedValue({ ok: false, error: "token expired", recoverable: true });
+		const classifier = createProductionClassifier(makeMockCtx());
+		const result = await classifier.classifyRisk(CTX, CFG);
+		expect(result.outcome).toBe("ask");
+		expect(result.confidence).toBe(0);
+		expect(callLLMShared).toHaveBeenCalledOnce();
+	});
+
+	it("TC7: scoped 空 fallback available 命中（CL-scoped-fallback：有 auth provider 但无 enabledModels 不退化）", async () => {
+		// scoped（首次）返回 null，available（fallback）返回 MOCK_MODEL_A
+		vi.mocked(resolveModelShared).mockImplementation((_ctx, selector) =>
+			selector.type === "available" ? MOCK_MODEL_A : null,
+		);
+		vi.mocked(callLLMShared).mockResolvedValue({ ok: true, content: "x" });
+		const classifier = createProductionClassifier(makeMockCtx());
+		const result = await classifier.classifyRisk(CTX, CFG);
+		// fallback 命中 available → callLLM 收到 available model（非 scoped 的 null 直接返回）
+		expect(callLLMShared).toHaveBeenCalledOnce();
+		const opts = vi.mocked(callLLMShared).mock.calls[0]![1];
+		expect(opts.model).toBe(MOCK_MODEL_A);
+		// scoped 调 1 次（null）+ available fallback 调 1 次 = 2 次
+		expect(vi.mocked(resolveModelShared)).toHaveBeenCalledTimes(2);
+		// callLLM ok:true 但 content 非 JSON → parser fallback ask（链路已证明 resolve→callLLM 非 null）
+		expect(result.outcome).toBe("ask");
+	});
+});
+
+// ──────────────────────── createPipelineDeps ────────────────────────
+
 describe("createPipelineDeps", () => {
 	it("装配完整 CheckPermissionDeps（5 个字段齐全）", () => {
-		const deps = createPipelineDeps(makeApprovalCtx());
+		const deps = createPipelineDeps(makeApprovalCtx(), makeMockCtx());
 		expect(deps).toBeInstanceOf(Object);
 		expect(typeof deps.analyzeBashStructure).toBe("function");
 		expect(typeof deps.matchRulesForArgv).toBe("function");
@@ -58,21 +235,21 @@ describe("createPipelineDeps", () => {
 	});
 
 	it("getDefaultRules 返回内置危险规则（12 条）", () => {
-		const deps = createPipelineDeps(makeApprovalCtx());
+		const deps = createPipelineDeps(makeApprovalCtx(), makeMockCtx());
 		const rules = deps.getDefaultRules();
 		expect(rules.length).toBe(12);
 		expect(rules.every((r) => r.source === "builtin-danger")).toBe(true);
 	});
 
 	it("analyzeBashStructure 是真实实现（干净命令 → clean=true）", async () => {
-		const deps = createPipelineDeps(makeApprovalCtx());
+		const deps = createPipelineDeps(makeApprovalCtx(), makeMockCtx());
 		const analysis = await deps.analyzeBashStructure("ls -la");
 		expect(analysis.clean).toBe(true);
 		expect(analysis.commands).toEqual([["ls", "-la"]]);
 	});
 
 	it("requestUserApproval 走 headless 分支（M1：signal abort → fail-closed deny）", async () => {
-		const deps = createPipelineDeps(makeApprovalCtx());
+		const deps = createPipelineDeps(makeApprovalCtx(), makeMockCtx());
 		// M1：headless 无 signal 时永挂，故用已 aborted 的 signal 触发 fail-closed deny。
 		const controller = new AbortController();
 		controller.abort();
@@ -86,17 +263,17 @@ describe("createPipelineDeps", () => {
 	});
 
 	it("deps 满足 CheckPermissionDeps 类型（结构兼容）", () => {
-		const deps: CheckPermissionDeps = createPipelineDeps(makeApprovalCtx());
+		const deps: CheckPermissionDeps = createPipelineDeps(makeApprovalCtx(), makeMockCtx());
 		// 仅验证类型兼容（运行时已在上面测试）
 		expect(deps).toBeDefined();
 	});
 
-	it("m1：多次 createPipelineDeps 复用同一 classifier 单例", () => {
-		_resetClassifierSingletonForTest();
-		const deps1 = createPipelineDeps(makeApprovalCtx());
-		const deps2 = createPipelineDeps(makeApprovalCtx());
-		// classifier 是单例，两次装配应引用同一对象（classifyRisk 引用相同）
-		expect(deps1.classifier).toBe(deps2.classifier);
-		expect(deps1.classifier.classifyRisk).toBe(deps2.classifier.classifyRisk);
+	it("m1：每次 createPipelineDeps 创建独立 classifier（CL-classifier-singleton：modelRegistry 绑 ctx 不安全）", () => {
+		const ctx = makeMockCtx();
+		const deps1 = createPipelineDeps(makeApprovalCtx(), ctx);
+		const deps2 = createPipelineDeps(makeApprovalCtx(), ctx);
+		// 每次 createPipelineDeps 都新建 classifier（无模块级单例）
+		expect(deps1.classifier).not.toBe(deps2.classifier);
+		expect(deps1.classifier.classifyRisk).not.toBe(deps2.classifier.classifyRisk);
 	});
 });

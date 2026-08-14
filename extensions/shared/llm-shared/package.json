@@ -1,0 +1,41 @@
+{
+  "name": "@zhushanwen/pi-llm-shared",
+  "version": "0.1.0",
+  "description": "Shared LLM invocation library for Pi extensions — model resolution (ref/fallback/available/scoped), LLM calling (completeSimple), and config read/write with mtime caching. Shared library, not a Pi extension.",
+  "type": "module",
+  "main": "src/index.ts",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "llm",
+    "shared",
+    "model-resolution",
+    "config"
+  ],
+  "license": "MIT",
+  "files": [
+    "src/",
+    "index.ts"
+  ],
+  "scripts": {
+    "typecheck": "npx tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "vitest": "^4.1.8"
+  }
+}

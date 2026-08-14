@@ -1,19 +1,19 @@
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
 	type NormalizedQuotaRow,
 	type QuotaProvider,
 } from "./types.js";
 
-const HOME = homedir();
-const SECRETS_DIR = join(HOME, ".pi", "agent", "secrets");
+export const SECRETS_DIR = join(getAgentDir(), "secrets");
 
 /** 默认 fetch 超时（毫秒） */
 const FETCH_TIMEOUT_MS = 8000;
 /** HTTP 200 状态码 */
 const HTTP_OK = 200;
-const OPENCODE_COOKIE_PATH = join(SECRETS_DIR, "opencode-cookie.txt");
+export const OPENCODE_COOKIE_PATH = join(SECRETS_DIR, "opencode-cookie.txt");
 const OPENCODE_WORKSPACE_URL =
 	"https://opencode.ai/workspace/wrk_01KM5Q3EEQEHZJ3V5PXF5JCR62/go";
 

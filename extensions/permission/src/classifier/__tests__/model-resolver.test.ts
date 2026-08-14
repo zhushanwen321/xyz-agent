@@ -1,173 +1,149 @@
 /**
- * MRT 系列：model-resolver.ts 单元测试。
+ * MRT 系列：model-resolver.ts 单元测试（picker 相关 API）。
  *
- * 覆盖：
- *  - G2：agentDir 解析（env override / 默认）
- *  - loadModelsJson（文件缺失返回 null + onWarning）
- *  - flattenModels（拍平 + hasApiKey 推断）
- *  - findCheapestModel（过滤 hasApiKey + 按 input cost 升序）
- *  - resolveClassifierModel（'auto' / 'provider/model-id' / 非法格式）
+ * E2（CL-picker-scope 收口）后 listAvailableModels 改走 ctx.modelRegistry.getAll() +
+ * hasConfiguredAuth() 过滤（不再读 models.json），loadModelsJson / flattenModels 已删除。
+ * E1：ResolvedModelEntry.apiKey / hasApiKey 已删。
  *
- * 用真实 fs + 临时目录（不用 mock fs），与 config.test.ts 风格一致。
+ * 本测试覆盖：
+ *  - MRT1: listAvailableModels 走 modelRegistry（TC8：OAuth provider 可见 + hasConfiguredAuth 负向剔除）
+ *  - MRT2: 排序 provider+id 字典序（TC9，不再按 cost.input）
+ *  - MRT3: E1 零残留断言（TC7：源码无 apiKey 定义/填充）
+ *
+ * mock 策略：mock ctx.modelRegistry（getAll + hasConfiguredAuth），不触达真实 registry。
  */
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { describe, expect, it, vi } from "vitest";
 
-import { findCheapestModel, flattenModels, loadModelsJson, resolveClassifierModel } from "../model-resolver.js";
+import { listAvailableModels } from "../model-resolver.js";
 
-let tempDir: string;
-let modelsJsonPath: string;
+// ──────────────────────── fixtures ────────────────────────
 
-beforeEach(() => {
-	tempDir = mkdtempSync(join(tmpdir(), "pi-perm-mr-"));
-	modelsJsonPath = join(tempDir, "models.json");
-});
-
-afterEach(() => {
-	rmSync(tempDir, { recursive: true, force: true });
-});
-
-const MODELS_JSON = {
-	providers: {
-		"cheap-co": {
-			baseUrl: "http://x",
-			apiKey: "k1",
-			api: "openai-completions",
-			models: [
-				{ id: "mini", cost: { input: 0.1, output: 0.1, cacheRead: 0, cacheWrite: 0 } },
-				{ id: "big", cost: { input: 1.0, output: 1.0, cacheRead: 0, cacheWrite: 0 } },
-			],
-		},
-		"noauth-co": {
-			baseUrl: "http://y",
-			// 无 apiKey
-			api: "openai-completions",
-			models: [{ id: "ultra-cheap", cost: { input: 0.001, output: 0, cacheRead: 0, cacheWrite: 0 } }],
-		},
-		"noapi-co": {
-			baseUrl: "http://z",
-			apiKey: "k3",
-			// 无 api
-			models: [{ id: "ghost", cost: { input: 0.5, output: 0, cacheRead: 0, cacheWrite: 0 } }],
-		},
-	},
-};
-
-function writeModels(data: unknown): void {
-	writeFileSync(modelsJsonPath, JSON.stringify(data), "utf-8");
+function makeModel(provider: string, id: string, over: Partial<Model<Api>> = {}): Model<Api> {
+	return {
+		id,
+		name: id,
+		api: "openai-completions" as Api,
+		provider,
+		baseUrl: "",
+		reasoning: false,
+		...over,
+	} as Model<Api>;
 }
 
-describe("MRT1: loadModelsJson", () => {
-	it("文件不存在 → null（不抛错）", () => {
-		expect(existsSync(modelsJsonPath)).toBe(false);
-		expect(loadModelsJson(undefined, modelsJsonPath)).toBeNull();
+/** 构造 mock ctx：getAll 返回给定模型，hasConfiguredAuth 按 provider 白名单判定。 */
+function makeMockCtx(
+	models: Model<Api>[],
+	authProviders: string[],
+): { modelRegistry: { getAll(): Model<Api>[]; hasConfiguredAuth(m: Model<Api>): boolean } } {
+	return {
+		modelRegistry: {
+			getAll: vi.fn(() => models),
+			hasConfiguredAuth: vi.fn((m: Model<Api>) => authProviders.includes(m.provider)),
+		},
+	};
+}
+
+/** 两条同 provider 模型：cost 逆序（旧排序会倒过来），验证字典序不受 cost 影响 */
+const TWO_COST_MODELS = [
+	makeModel("co", "expensive", { cost: { input: 1.0, output: 0, cacheRead: 0, cacheWrite: 0 } }),
+	makeModel("co", "cheap", { cost: { input: 0.1, output: 0, cacheRead: 0, cacheWrite: 0 } }),
+];
+
+// ──────────────────────── MRT1: modelRegistry 数据源（TC8） ────────────────────────
+
+describe("MRT1: listAvailableModels 走 modelRegistry（TC8）", () => {
+	it("OAuth provider 模型可见：hasConfiguredAuth 通过 → 进 Map（不再读 models.json）", () => {
+		// 用户只经 pi auth login 配了官方 provider（模型来自 registry 内置 catalog）
+		const ctx = makeMockCtx(
+			[makeModel("anthropic", "claude-sonnet-4"), makeModel("anthropic", "claude-haiku")],
+			["anthropic"],
+		);
+		const map = listAvailableModels(ctx);
+		const models = map.get("anthropic") ?? [];
+		expect(models.map((m) => m.id)).toEqual(["claude-haiku", "claude-sonnet-4"]);
+		// hasConfiguredAuth 被调用（过滤依赖它）
+		expect(ctx.modelRegistry.hasConfiguredAuth).toHaveBeenCalled();
 	});
 
-	it("合法 JSON → 返回解析对象", () => {
-		writeModels(MODELS_JSON);
-		const data = loadModelsJson(undefined, modelsJsonPath);
-		expect(data?.providers).toBeDefined();
+	it("hasConfiguredAuth 负向：无 auth 的 provider 被剔除（不进 Map）", () => {
+		const ctx = makeMockCtx(
+			[makeModel("auth-co", "m1"), makeModel("noauth-co", "m2")],
+			["auth-co"], // 只有 auth-co 配了 auth
+		);
+		const map = listAvailableModels(ctx);
+		expect(map.has("auth-co")).toBe(true);
+		expect(map.has("noauth-co")).toBe(false); // 无 auth 剔除
 	});
 
-	it("损坏 JSON → null + onWarning 被调用", () => {
-		writeFileSync(modelsJsonPath, "{ broken json", "utf-8");
-		const warnings: string[] = [];
-		const data = loadModelsJson((m) => warnings.push(m), modelsJsonPath);
-		expect(data).toBeNull();
-		expect(warnings.length).toBe(1);
-		expect(warnings[0]).toContain("models.json");
-	});
-});
-
-describe("MRT2: flattenModels", () => {
-	it("拍平所有 provider.model，过滤无 api 的 model", () => {
-		const entries = flattenModels(MODELS_JSON);
-		const ids = entries.map((e) => e.id).sort();
-		// noapi-co/ghost 无 api → 过滤；其余保留
-		expect(ids).toEqual(["big", "mini", "ultra-cheap"]);
+	it("registry 空 → 空 Map（不 throw，调用方降级「无可选模型」）", () => {
+		const ctx = makeMockCtx([], []);
+		const map = listAvailableModels(ctx);
+		expect(map.size).toBe(0);
 	});
 
-	it("hasApiKey 从 provider.apiKey 推断", () => {
-		const entries = flattenModels(MODELS_JSON);
-		const cheap = entries.find((e) => e.id === "mini");
-		const noauth = entries.find((e) => e.id === "ultra-cheap");
-		expect(cheap?.hasApiKey).toBe(true);
-		expect(noauth?.hasApiKey).toBe(false);
-	});
-
-	it("apiKey 值从 provider.apiKey 透传（MRT2 补充：不只断言 hasApiKey 布尔）", () => {
-		const entries = flattenModels(MODELS_JSON);
-		const cheap = entries.find((e) => e.id === "mini");
-		const noauth = entries.find((e) => e.id === "ultra-cheap");
-		// 有 apiKey 的 provider：apiKey 字段透传真实值（"k1"）
-		expect(cheap?.apiKey).toBe("k1");
-		// 无 apiKey 的 provider：apiKey 字段为 undefined（而非空串）
-		expect(noauth?.apiKey).toBeUndefined();
-		// 同 provider 下所有 model 共享 provider.apiKey
-		const big = entries.find((e) => e.id === "big");
-		expect(big?.apiKey).toBe("k1");
-	});
-});
-
-describe("MRT3: findCheapestModel", () => {
-	it("过滤无 apiKey 的，返回 input cost 最低", () => {
-		const cheapest = findCheapestModel(MODELS_JSON);
-		// cheap-co/mini (0.1) < cheap-co/big (1.0)；noauth-co/ultra-cheap 被 hasApiKey 过滤掉
-		expect(cheapest?.id).toBe("mini");
-		expect(cheapest?.cost.input).toBeCloseTo(0.1);
-	});
-
-	it("全部无 apiKey → null", () => {
-		const data = {
-			providers: {
-				x: { baseUrl: "http://x", api: "openai-completions", models: [{ id: "m", cost: { input: 0.1, output: 0, cacheRead: 0, cacheWrite: 0 } }] },
-			},
-		};
-		expect(findCheapestModel(data)).toBeNull();
+	it("entry 不含 apiKey/hasApiKey 字段（E1 死字段已删）", () => {
+		const ctx = makeMockCtx([makeModel("co", "m1")], ["co"]);
+		const map = listAvailableModels(ctx);
+		const entry = map.get("co")?.[0];
+		expect(entry).toBeDefined();
+		expect("apiKey" in (entry as object)).toBe(false);
+		expect("hasApiKey" in (entry as object)).toBe(false);
+		// 基础字段齐全
+		expect(entry?.provider).toBe("co");
+		expect(entry?.id).toBe("m1");
+		expect(entry?.api).toBe("openai-completions");
 	});
 });
 
-describe("MRT4: resolveClassifierModel", () => {
-	it("'auto' → 最便宜可用模型", () => {
-		const r = resolveClassifierModel("auto", MODELS_JSON);
-		expect(r?.id).toBe("mini");
-		expect(r?.provider).toBe("cheap-co");
+// ──────────────────────── MRT2: 排序（TC9） ────────────────────────
+
+describe("MRT2: 排序 provider+id 字典序（TC9，不再按 cost.input）", () => {
+	it("provider 内 model 按 id 字典序（cost 逆序也不影响）", () => {
+		const ctx = makeMockCtx(TWO_COST_MODELS, ["co"]);
+		const map = listAvailableModels(ctx);
+		const models = map.get("co") ?? [];
+		// 旧实现按 cost.input 升序 → expensive(1.0) 在 cheap(0.1) 后；
+		// 新实现按 id 字典序 → cheap < expensive（字母序），与 cost 无关
+		expect(models.map((m) => m.id)).toEqual(["cheap", "expensive"]);
 	});
 
-	it("'provider/model-id' → 精确匹配", () => {
-		const r = resolveClassifierModel("cheap-co/big", MODELS_JSON);
-		expect(r?.id).toBe("big");
-		expect(r?.provider).toBe("cheap-co");
+	it("provider 间按字母序（Map 插入序）", () => {
+		const ctx = makeMockCtx(
+			[makeModel("zebra-co", "m1"), makeModel("alpha-co", "m2")],
+			["zebra-co", "alpha-co"],
+		);
+		const map = listAvailableModels(ctx);
+		expect([...map.keys()]).toEqual(["alpha-co", "zebra-co"]);
 	});
 
-	it("'provider/model-id' 未匹配 → null", () => {
-		expect(resolveClassifierModel("cheap-co/nonexistent", MODELS_JSON)).toBeNull();
+	it("全量排序：多 provider 多 model 整体 provider+id 字典序", () => {
+		const ctx = makeMockCtx(
+			[
+				makeModel("zebra-co", "b-model"),
+				makeModel("alpha-co", "z-model"),
+				makeModel("alpha-co", "a-model"),
+			],
+			["zebra-co", "alpha-co"],
+		);
+		const map = listAvailableModels(ctx);
+		expect([...map.keys()]).toEqual(["alpha-co", "zebra-co"]);
+		expect(map.get("alpha-co")?.map((m) => m.id)).toEqual(["a-model", "z-model"]);
+		expect(map.get("zebra-co")?.map((m) => m.id)).toEqual(["b-model"]);
 	});
+});
 
-	it("非法格式（无斜线）→ null", () => {
-		expect(resolveClassifierModel("just-a-name", MODELS_JSON)).toBeNull();
-	});
+// ──────────────────────── MRT3: E1 零残留（TC7） ────────────────────────
 
-	it("非法格式（斜线在首/尾）→ null", () => {
-		expect(resolveClassifierModel("/leading", MODELS_JSON)).toBeNull();
-		expect(resolveClassifierModel("trailing/", MODELS_JSON)).toBeNull();
-	});
-
-	it("ResolvedModel 携带 baseUrl/name/inputCost（G4）", () => {
-		const r = resolveClassifierModel("cheap-co/mini", MODELS_JSON);
-		expect(r?.baseUrl).toBe("http://x");
-		expect(r?.name).toBe("mini"); // 无 name → fallback 到 id
-		expect(r?.inputCost).toBeCloseTo(0.1);
-	});
-
-	it("ResolvedModel 携带 apiKey 值（MRT4 补充：透传给 streamSimple 用）", () => {
-		// reviewer 指出 MRT4 只断言 hasApiKey，没断言 apiKey 值。补断言。
-		const auto = resolveClassifierModel("auto", MODELS_JSON);
-		expect(auto?.apiKey).toBe("k1"); // cheap-co 的 apiKey
-		const explicit = resolveClassifierModel("cheap-co/big", MODELS_JSON);
-		expect(explicit?.apiKey).toBe("k1");
+describe("MRT3: E1 apiKey 死字段零残留（TC7）", () => {
+	it("model-resolver.ts 源码无 apiKey / hasApiKey 字段定义与填充", () => {
+		const source = readFileSync(new URL("../model-resolver.ts", import.meta.url), "utf-8");
+		// 匹配字段定义/填充形式（注释里的历史描述不算残留）
+		expect(source).not.toMatch(/apiKey\??\s*:/);
+		expect(source).not.toMatch(/hasApiKey\s*:/);
+		expect(source).not.toMatch(/loadModelsJson\s*\(/);
+		expect(source).not.toMatch(/flattenModels\s*\(/);
 	});
 });
