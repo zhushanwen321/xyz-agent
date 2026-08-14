@@ -101,7 +101,7 @@
 import { Comment, computed, useSlots } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { BookOpen, FileText, GitBranch, Globe, Pin, PinOff, Terminal as TerminalIcon, X } from '@lucide/vue'
+import { BookOpen, Bot, FileText, GitBranch, Globe, Pin, PinOff, Terminal as TerminalIcon, Workflow, X } from '@lucide/vue'
 import { Button } from '@xyz-agent/ui'
 import type { SideDrawerTab } from '@xyz-agent/core/domain/drawer'
 
@@ -187,6 +187,24 @@ const tabs = computed<TabMeta[]>(() => {
       icon: FileText,
       emptyText: t('panel.sideDrawer.noFileSelected'),
       emptyHint: t('panel.sideDrawer.detailHint'),
+    },
+    // subagent/workflow 一级 tab（2026-08-14 subagent-workflow-drawer-tab U2）：
+    // collapsed only chat 块点击 → openSubagent/openWorkflow 开对应 tab。
+    // 内容由壳层（PanelContainer）经默认 slot v-if chain 注入 SubagentTab/WorkflowTab
+    // （ui 库不 import renderer 组件，延续 D5 硬编码占位留壳 slot 挂载模式）。
+    {
+      key: 'subagent',
+      label: t('panel.sideDrawer.tabSubagent'),
+      icon: Bot,
+      emptyText: t('panel.sideDrawer.noSubagent'),
+      emptyHint: t('panel.sideDrawer.subagentHint'),
+    },
+    {
+      key: 'workflow',
+      label: t('panel.sideDrawer.tabWorkflow'),
+      icon: Workflow,
+      emptyText: t('panel.sideDrawer.noWorkflow'),
+      emptyHint: t('panel.sideDrawer.workflowHint'),
     },
   ]
   return base

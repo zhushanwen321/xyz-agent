@@ -40,15 +40,7 @@
       </Button>
     </div>
 
-    <MessageStream v-else-if="effectiveSessionId && effectiveMessageCount > 0" :session-id="effectiveSessionId" />
-    <!-- overlay 态（subagent/agent call）但消息为空：agent call 历史文件只有 header（pi 延迟写入）或执行失败无输出 -->
-    <div
-      v-else-if="isViewingSubagent"
-      class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center"
-    >
-      <MessageSquare class="size-6 text-neutral-dim opacity-40" />
-      <p class="text-[12px] text-neutral-dim opacity-70">{{ t('panel.message.noAgentCall') }}</p>
-    </div>
+    <MessageStream v-else-if="props.sessionId && messageCount > 0" :session-id="props.sessionId" />
     <Landing
       v-else-if="!isSessionActive && isLandingView"
       :session-id="sessionId"
@@ -72,8 +64,9 @@
     <!-- ④ composer companion zone（③ progress-zone 已删——真实任务态未接入，state 恒 null
          自隐藏死代码）。git 状态已移入 SideDrawer git tab（原 zone ⑤ 摘牌），此带仅 composer。
          ask-user 富交互（W2）：请求到达时 AskUserOverlay 覆盖 composer 位置（互斥），
-         对话历史全程可见，composer 消失输入禁止（不再走全屏 modal）。 -->
-    <div v-if="!isViewingSubagent" class="composer-band flex flex-shrink-0 flex-col gap-1.5 px-5 pb-3.5">
+         对话历史全程可见，composer 消失输入禁止（不再走全屏 modal）。
+         [U7] overlay 移除后 composer 常驻（不再 v-if="!isViewingSubagent"）。 -->
+    <div class="composer-band flex flex-shrink-0 flex-col gap-1.5 px-5 pb-3.5">
       <!-- ④ composer（FG5，S1/S2/S5/S6 主路径）/ ask-user overlay（互斥）。
            new-task landing 态由 Landing 内部渲染 composer 卡片，此处 band 不重复渲染
            （showPanelComposer：非 landing 才挂）。已绑空 session（恢复的僵尸空 session）
@@ -93,7 +86,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessageSquare, AlertCircle, RotateCcw, Trash2 } from '@lucide/vue'
 import { isAskUserQuestion, type AskUserQuestion } from '@xyz-agent/extension-protocol'
@@ -103,8 +96,6 @@ import { Button } from '@/components/ui/button'
 import Landing from '@/components/new-task/Landing.vue'
 import AskUserOverlay from '@/components/extension/ask-user/AskUserOverlay.vue'
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
-import { useSubagentStore } from '@/stores/subagent'
-import { useWorkflowStore } from '@/stores/workflow'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
@@ -124,8 +115,6 @@ const { t } = useI18n()
 const chat = useChatStore()
 const sessionStore = useSessionStore()
 const { error: toastError } = useToast()
-const subagentStore = useSubagentStore()
-const workflowStore = useWorkflowStore()
 
 const flow = useNewTaskFlow()
 
@@ -135,33 +124,13 @@ const { restoreSession, retryHistory, deleteSession } = useSidebarNew()
 /** restore 失败的错误 code（ghost session 判据）：SESSION_NOT_FOUND 时显示删除入口 */
 const restoreErrorCode = ref<string | null>(null)
 
-/** Panel 卸载时停止 subagent streaming 订阅（防止泄漏）。
- *  subagent overlay 的 header 展示与返回逻辑已随 PanelHeader 提升到 PanelContainer，
- *  本组件只保留 streaming 订阅的生命周期清理（订阅跟随 panel 内容）。 */
-onUnmounted(() => {
-  subagentStore.stopStream(props.panelId)
-})
-
 /**
- * overlay 模式：viewing subagent 或 agent call 时用虚拟 session ID 渲染 MessageStream，
- * 否则用主 session ID。panel store 的 sessionId 从不被替换（主 session 保持高亮、文件视图不变）。
- * subagent overlay 优先于 agent call overlay（两者互斥，不会同时 active）。
+ * 当前 session 的消息数（驱动 MessageStream 渲染分支：有消息显对话流，无消息显 landing/空态）。
+ * [U7] overlay 移除后 Panel 恒展示主 session（effectiveSessionId 回归 props.sessionId），
+ * subagent/agent call 详情走 drawer SubagentTab，不再替换 Panel body。
  */
-const effectiveSessionId = computed(
-  () => subagentStore.getActiveSubagentVirtualId(props.panelId, props.sessionId)
-    ?? workflowStore.getActiveAgentCallVirtualId(props.panelId)
-    ?? props.sessionId,
-)
-
-/** 本 panel 是否正在查看 overlay（subagent 或 agent call）。
- *  驱动 body 渲染分支（overlay 空消息占位）。header 展示逻辑已提升到 PanelContainer。 */
-const isViewingSubagent = computed(
-  () => subagentStore.isViewing(props.panelId) || workflowStore.isViewing(props.panelId),
-)
-
-/** subagent overlay 时的消息数（虚拟 session 的消息数） */
-const effectiveMessageCount = computed(() =>
-  effectiveSessionId.value ? chat.getMessages(effectiveSessionId.value).length : 0,
+const messageCount = computed(() =>
+  props.sessionId ? chat.getMessages(props.sessionId).length : 0,
 )
 
 // W1 useExtensionUI per-sessionId 订阅：本 Panel 绑定的 session 的 UI 请求队列。

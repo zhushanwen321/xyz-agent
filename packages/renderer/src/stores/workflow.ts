@@ -1,20 +1,24 @@
 /**
- * Workflow store —— workflow 列表 + 视图层级（列表/详情）+ agent call Panel overlay。
+ * Workflow store —— workflow 列表 + sidebar 视图层级（列表/详情）+ agentcall 虚拟 key 清理映射。
  *
  * 依赖方向：无（stores 间禁止互相 import）。跨 store 编排（chatStore.setMessages 等）
  * 由调用方通过回调注入，store 内不 import 其他 store。
  *
  * 职责：
  * - 共享 workflow 列表（records）—— Sidebar 管理，所有 panel 只读消费
- * - 视图层级：per-panel 两个正交状态字段
- *   - detailRunIdMap：侧边栏视图 2 选中的 workflow runId（仅影响 Sidebar 渲染）
- *   - agentCallMap：Panel overlay 的 agent call sessionId（仅影响 Panel 渲染）
+ * - sidebar 视图层级：detailRunIdMap（视图 2 选中的 workflow runId，仅影响 Sidebar 渲染）
+ * - agentcall 虚拟 key 清理映射（mainSessionAgentCalls）：deleteSession 时清 agentcall 虚拟分区
  *
- * [HISTORICAL] 两个状态字段拆分（2026-07-15）：
- * 旧实现用单个 panelViewingMap: Map<panelId, PanelViewing> 联合类型同时承载两个正交 UI 维度，
- * 导致 (1) selectWorkflow 设 workflow-detail → isViewing() 不区分 kind 返回 true → Panel 误进
- * 子代理态（隐藏输入框+子代理标签）；(2) selectAgentCall 覆盖 workflow-detail → getViewingRunId
- * 返回 null → 侧边栏跳回列表。拆分后两个维度独立，互不干扰。
+ * [HISTORICAL] overlay 展示层已于 U7 移除（drawer tab 化）：
+ * 原 agentCallMap（Panel overlay 的 agent call sessionId）+ isViewing/getViewingAgentCallId/
+ * getActiveAgentCallVirtualId + selectAgentCall/backFromAgentCall 均为 overlay 全屏替换模式产物。
+ * drawer tab 并排模型下，agent call 详情在 drawer SubagentTab 内自治（直接 getAgentCallHistory +
+ * setMessages），不再经 store overlay 状态机。agentcall 虚拟 key 的 deleteSession 清理映射
+ * （mainSessionAgentCalls + getAgentCallVirtualIdsByMain + clearAgentCallMapping）保留——
+ * isVirtualKeyOf 只匹配 subagent: 前缀不匹配 agentcall:，此映射是 agentcall 清理唯一通路
+ * （review MUST_FIX 1）。drawer SubagentTab agentcall 分支经 registerAgentCall 登记到此映射。
+ * sidebar 视图 2（detailRunIdMap + selectWorkflow/backToWorkflowList/getViewingRunId）保留——
+ * 那是 sidebar 内的 workflow 详情视图，与 overlay 无关。
  *
  * 虚拟 session ID 格式：`agentcall:<sessionId>`（agent call 对话流）
  * chatStore.messages Map 支持任意 string key，直接用虚拟 session ID 注入消息。
@@ -22,29 +26,16 @@
 import { defineStore } from 'pinia'
 import { computed, getCurrentScope, onScopeDispose, ref } from 'vue'
 import type { ComputedRef } from 'vue'
-import type { WorkflowRunRecord, Message } from '@xyz-agent/shared'
+import type { WorkflowRunRecord } from '@xyz-agent/shared'
+// 虚拟 session ID 工厂 SSOT 迁至 @xyz-agent/shared/virtual-session-id（跨层协议级约定）。
+// 此处 re-export 保持现有 import 路径向后兼容；本 store body 清理逻辑用本地 import。
+export {
+  AGENTCALL_PREFIX,
+  agentCallVirtualId,
+  isAgentCallVirtualId,
+  extractAgentCallSessionId,
+} from '@xyz-agent/shared'
 import { session as sessionApi } from '@/api'
-
-/** 虚拟 session ID 前缀（agent call 对话流） */
-const AGENTCALL_PREFIX = 'agentcall:'
-
-/** 构造 agent call 虚拟 session ID */
-export function agentCallVirtualId(sessionId: string): string {
-  return `${AGENTCALL_PREFIX}${sessionId}`
-}
-
-/** 判断 sessionId 是否为 agent call 虚拟 session */
-export function isAgentCallVirtualId(sessionId: string): boolean {
-  return sessionId.startsWith(AGENTCALL_PREFIX)
-}
-
-/** 从虚拟 session ID 提取 agent call 的 pi session ID */
-export function extractAgentCallSessionId(virtualId: string): string {
-  return virtualId.slice(AGENTCALL_PREFIX.length)
-}
-
-/** selectAgentCall 的 chat 注入回调类型（store 不 import chatStore，铁律） */
-export type SetMessagesFn = (virtualId: string, messages: Message[]) => void
 
 export const useWorkflowStore = defineStore('workflow', () => {
   // ── state ──
@@ -62,16 +53,9 @@ export const useWorkflowStore = defineStore('workflow', () => {
   /**
    * per-panel 侧边栏视图 2 选中状态（workflow detail）。
    * key = panelId, value = 该 panel 侧边栏正在查看的 workflow runId。
-   * 仅影响 Sidebar 渲染（列表 vs detail），不影响 Panel overlay。
+   * 仅影响 Sidebar 渲染（列表 vs detail）。
    */
   const detailRunIdMap = ref<Map<string, string>>(new Map())
-
-  /**
-   * per-panel agent call overlay 状态（Panel overlay）。
-   * key = panelId, value = 该 panel Panel overlay 正在查看的 agent call sessionId。
-   * 仅影响 Panel 渲染（overlay 对话流），不影响侧边栏视图。
-   */
-  const agentCallMap = ref<Map<string, string>>(new Map())
 
   /**
    * [M7 D6] mainSessionId → Set<agentCallVirtualId> 映射。
@@ -140,28 +124,9 @@ export const useWorkflowStore = defineStore('workflow', () => {
     return getRecordsBySession(sessionId).length
   }
 
-  /**
-   * 本 panel 当前是否在 Panel overlay 态（查看 agent call 对话流）。
-   * 只读 agentCallMap——侧边栏视图 2（detailRunIdMap）不触发 Panel overlay。
-   */
-  function isViewing(panelId: string): boolean {
-    return agentCallMap.value.has(panelId)
-  }
-
   /** 本 panel 当前查看的 runId（侧边栏视图 2 详情态），非详情态返回 null */
   function getViewingRunId(panelId: string): string | null {
     return detailRunIdMap.value.get(panelId) ?? null
-  }
-
-  /** 本 panel 当前查看的 agent call session ID（Panel overlay 态），非 overlay 态返回 null */
-  function getViewingAgentCallId(panelId: string): string | null {
-    return agentCallMap.value.get(panelId) ?? null
-  }
-
-  /** 本 panel 当前查看的 agent call 虚拟 session ID（Panel overlay 态） */
-  function getActiveAgentCallVirtualId(panelId: string): string | null {
-    const sid = getViewingAgentCallId(panelId)
-    return sid ? agentCallVirtualId(sid) : null
   }
 
   /** 本 panel 当前查看的 workflow record（视图 2 详情态，从 mainSessionId 分区查） */
@@ -225,18 +190,17 @@ export const useWorkflowStore = defineStore('workflow', () => {
     }
   }
 
-  /** 清空所有 workflow 分区 + 退出所有 panel viewing 状态（两个 Map 都清；全局重置场景用） */
+  /** 清空所有 workflow 分区 + 退出侧边栏视图 2 + 清 agentcall 映射（全局重置场景用） */
   function clearWorkflows(): void {
     recordsBySession.value = new Map()
     detailRunIdMap.value = new Map()
-    agentCallMap.value = new Map()
-    // W3-2：清非响应式的 mainSessionAgentCalls（selectAgentCall 写入，useWorkflowListSync 切 session 时调本函数）
+    // W3-2：清非响应式的 mainSessionAgentCalls（registerAgentCall 写入，deleteSession/clearWorkflows 调本函数清）
     mainSessionAgentCalls.clear()
   }
 
   /**
    * 进入侧边栏视图 2（workflow 详情，sidebar 内展示 phase/agent call）。
-   * 只写 detailRunIdMap，不影响 Panel overlay（agentCallMap）。
+   * 写 detailRunIdMap（sidebar 视图 2 状态）。
    */
   function selectWorkflow(panelId: string, runId: string): void {
     const next = new Map(detailRunIdMap.value)
@@ -244,34 +208,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     detailRunIdMap.value = next
   }
 
-  /**
-   * 进入 agent call Panel overlay（切 Panel 显示 agent call 对话流）。
-   * 只写 agentCallMap，不影响侧边栏视图 2（detailRunIdMap）——修复选中 agent call 后侧边栏跳回列表。
-   * store 不 import chatStore（铁律），setMessages 由调用方注入。
-   *
-   * Fail-fast：getAgentCallHistory 失败时 throw（不静默 setMessages([])）。
-   * 调用方负责 catch + toast + 回滚 viewing（调 backFromAgentCall）。
-   * agentCallMap 在 getAgentCallHistory 之前写入——失败时调用方需回滚。
-   */
-  async function selectAgentCall(
-    panelId: string,
-    mainSessionId: string,
-    agentCallSessionId: string,
-    setMessages: SetMessagesFn,
-  ): Promise<void> {
-    const virtualId = agentCallVirtualId(agentCallSessionId)
-    const next = new Map(agentCallMap.value)
-    next.set(panelId, agentCallSessionId)
-    agentCallMap.value = next
-    // [M7 D6] 记录 mainSessionId → virtualId 映射，供 deleteSession 精确清理 agentcall
-    const set = mainSessionAgentCalls.get(mainSessionId) ?? new Set<string>()
-    set.add(virtualId)
-    mainSessionAgentCalls.set(mainSessionId, set)
-    const history = await sessionApi.getAgentCallHistory(mainSessionId, agentCallSessionId)
-    setMessages(virtualId, history)
-  }
-
-  /** 视图 2 → 视图 1（从 workflow 详情返回列表）。只清 detailRunIdMap，不影响 Panel overlay。 */
+  /** 视图 2 → 视图 1（从 workflow 详情返回列表）。清 detailRunIdMap。 */
   function backToWorkflowList(panelId: string): void {
     const next = new Map(detailRunIdMap.value)
     next.delete(panelId)
@@ -279,48 +216,25 @@ export const useWorkflowStore = defineStore('workflow', () => {
   }
 
   /**
-   * Panel overlay → 返回（从 agent call 对话流返回）。
+   * [U7 MUST_FIX 1] 登记 agentcall 虚拟 key 到主 session 清理映射。
    *
-   * [M7 FR-4] 立即清 messages[virtualId]（对称 subagent backToMain，立即清+tombstone）。
-   * 保留 detailRunIdMap（侧边栏保持停在 workflow-detail）。
+   * drawer SubagentTab agentcall 分支（workflow tab 点 agent call 入口）拉取历史 + setMessages 后，
+   * 调本方法登记 virtualId → mainSessionId。deleteSession 时 cleanupSessionState 经
+   * getAgentCallVirtualIdsByMain(mainSid) 反查全部 agentcall virtualId，逐一 evictVirtualKey 清理。
    *
-   * [W2] mainSessionAgentCalls 的 Set 清理：backFromAgentCall 此前只清 agentCallMap（panel→sessionId），
-   * 不清 mainSessionAgentCalls 的 Set，导致非 deleteSession 路径（Panel 返回 / catch 回滚）下 Set 无界增长。
-   * deleteSession 路径经 clearAgentCallMapping 整条 delete 已覆盖，但返回主面板路径漏清。
-   * 调用方传 mainSessionId（panel 绑定 session）即可精确删该 virtualId。
-   *
-   * [B3] chatEvict 必须传带前缀的 agentCallVirtualId，不能传 raw sessionId：
-   * selectAgentCall 写入 messages 用的 key 是 `agentcall:<acsId>`（agentCallVirtualId），
-   * chatEvict 的实际实现是 chat.evictVirtualKey(virtualId) → deleteMessageKey(virtualId)，
-   * 若传 raw sessionId 会 delete 一个从未存在过的 key（no-op），导致 agentcall 虚拟 session
-   * 消息永久残留（内存泄漏）。对称参照 subagent.backToMain 传 chatEvict?.(virtualId)。
-   *
-   * @param chatEvict chat.evictVirtualKey 注入回调（接收带前缀的 virtualId，清 messages，store 不互 import）
-   * @param mainSessionId 主 session ID（清 mainSessionAgentCalls Set 用，调用方可获取）
+   * 必要性：agentcall 虚拟 key 是两段式（agentcall:<acsId>），不含 mainSid 命名空间，
+   * LRU isVirtualKeyOf 前缀清理（仅匹配 subagent:）覆盖不到，此映射是 agentcall 清理唯一通路。
+   * 原 overlay 时代由 selectAgentCall 内部维护此映射；overlay 移除后 SubagentTab 显式调本方法接管。
    */
-  function backFromAgentCall(
-    panelId: string,
-    chatEvict?: (virtualId: string) => void,
-    mainSessionId?: string,
-  ): void {
-    const agentCallSessionId = agentCallMap.value.get(panelId)
-    const next = new Map(agentCallMap.value)
-    next.delete(panelId)
-    agentCallMap.value = next
-    // 清 mainSessionAgentCalls 映射（防 Set 无界增长，W2）
-    if (agentCallSessionId && mainSessionId) {
-      mainSessionAgentCalls.get(mainSessionId)?.delete(agentCallVirtualId(agentCallSessionId))
-    }
-    // 立即清 messages[agentcallVirtualId]（FR-4，与 subagent backToMain 对称）
-    // [B3] 必须传 agentCallVirtualId(agentCallSessionId)——与 selectAgentCall 写入时的 key 一致
-    if (agentCallSessionId && chatEvict) {
-      chatEvict(agentCallVirtualId(agentCallSessionId))
-    }
+  function registerAgentCall(mainSessionId: string, virtualId: string): void {
+    const set = mainSessionAgentCalls.get(mainSessionId) ?? new Set<string>()
+    set.add(virtualId)
+    mainSessionAgentCalls.set(mainSessionId, set)
   }
 
   /**
    * [M7 D6] 查询主 session 名下的全部 agentcall virtualId（deleteSession 调，精确清理不泄漏）。
-   * 返回后调用方负责 delete messages[key]。
+   * 返回后调用方负责 delete messages[key]。virtualId 由 registerAgentCall 登记。
    */
   function getAgentCallVirtualIdsByMain(mainSessionId: string): string[] {
     return [...(mainSessionAgentCalls.get(mainSessionId) ?? [])]
@@ -338,10 +252,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     loadError,
     // getters
     workflowCount,
-    isViewing,
     getViewingRunId,
-    getViewingAgentCallId,
-    getActiveAgentCallVirtualId,
     getCurrentWorkflow,
     // per-session 分区读写（ADR-0049 Map 分区派）
     recordsOf,
@@ -354,9 +265,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
     triggerWorkflowReload,
     clearWorkflows,
     selectWorkflow,
-    selectAgentCall,
     backToWorkflowList,
-    backFromAgentCall,
+    registerAgentCall,
     getAgentCallVirtualIdsByMain,
     clearAgentCallMapping,
   }

@@ -1,18 +1,16 @@
 <template>
   <!--
-    subagent 块（@zhushanwen/pi-subagent-workflow，重写 fork）。
+    subagent 块（@zhushanwen/pi-subagent-workflow，重写 fork）—— collapsed only（spec §10 / design D2）。
     异步 background 执行：只展示发起参数（input），看不到执行过程（结果由 agent 后续 turn 总结）。
-    标题行：subagent + agent + · + slug + (model · thinking X)
-    第二行：task 首行预览（截断 60）
-    展开体：task 完整内容 + background 状态行
-    视觉：纯缩进无边框 + 默认收起无 chevron + subagent prefix tag（统一 uppercase-mono，无装饰点）
+    单行摘要：subagent prefix + agent · slug + (model · thinking X)。
+    running → 双环 loader；failed → icon + 文案降 neutral-mid。
+    点击整行 → openSubagent（drawer 开 subagent tab，主对话流保留）。subagentId 取自 toolResult.output。
   -->
   <div class="trace-subagent pb-2.5 mb-0.5" data-testid="subagent-block">
     <div
       class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[length:var(--text-base)] font-medium transition-opacity hover:opacity-80"
       :class="subagentHeaderColor"
-      :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
-      @click="toggleTool"
+      @click="openSubagentDrawer"
     >
       <!-- running 态 loader（双环 + accent），其余走 users ICON -->
       <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
@@ -24,83 +22,35 @@
       />
       <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">subagent</span>
       <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ subagentAgent }}</span>
-      <!-- slug + model：展开时 invisible 保留空间，摘要行高度不变 -->
       <template v-if="subagentSlug">
-        <span class="text-neutral-faint" :class="{ invisible: toolExpanded }">·</span>
-        <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent" :class="{ invisible: toolExpanded }">{{ subagentSlug }}</span>
+        <span class="text-neutral-faint">·</span>
+        <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ subagentSlug }}</span>
       </template>
       <template v-if="subagentModel">
-        <span class="text-neutral-dim font-mono text-[length:var(--text-xs)]" :class="{ invisible: toolExpanded }">&nbsp;(</span>
-        <span class="font-mono text-[length:var(--text-xs)] text-accent" :class="{ invisible: toolExpanded }">{{ subagentModel }}</span>
-        <span v-if="subagentThinkingLevel" class="text-neutral-dim font-mono text-[length:var(--text-xs)]" :class="{ invisible: toolExpanded }">&nbsp;· thinking {{ subagentThinkingLevel }})</span>
-        <span v-else class="text-neutral-dim font-mono text-[length:var(--text-xs)]" :class="{ invisible: toolExpanded }">)</span>
+        <span class="text-neutral-dim font-mono text-[length:var(--text-xs)]">&nbsp;(</span>
+        <span class="font-mono text-[length:var(--text-xs)] text-accent">{{ subagentModel }}</span>
+        <span v-if="subagentThinkingLevel" class="text-neutral-dim font-mono text-[length:var(--text-xs)]">&nbsp;· thinking {{ subagentThinkingLevel }})</span>
+        <span v-else class="text-neutral-dim font-mono text-[length:var(--text-xs)]">)</span>
       </template>
-      <!-- 终态指示已移除（统一交互模式：无末尾 icon） -->
     </div>
-    <!-- task 首行预览（展开时 invisible 保留空间） -->
-    <div v-if="subagentTaskPreview" class="mt-0.5 pl-4 truncate text-[length:var(--text-sm)] text-neutral-dim" :class="{ invisible: toolExpanded }">
-      {{ subagentTaskPreview }}
-    </div>
-    <template v-if="toolExpanded">
-      <!-- 展开体：task 完整内容 + background 状态行（异步执行看不到过程） -->
-      <div v-if="subagentTask || bgStatusText" class="group/result relative mt-1">
-        <Button
-          v-if="subagentCopyContent"
-          variant="ghost"
-          size="icon"
-          class="absolute top-0 left-1 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
-          :title="t('panel.message.copy')"
-          @click.stop="copy(subagentCopyContent, `subagent-${tool.id}`)"
-        >
-          <Check v-if="copied === `subagent-${tool.id}`" class="size-3 text-success" />
-          <CopyIcon v-else class="size-3" />
-        </Button>
-        <!-- task 完整内容（无标题，surface-2 代码块样式，pre-wrap 保留换行） -->
-        <div
-          v-if="subagentTask"
-          class="subagent-task-full pl-4 whitespace-pre-wrap py-1.5 text-[length:var(--text-sm)] leading-[1.65] text-neutral-mid"
-        >{{ subagentTask }}</div>
-        <!-- background 状态行（来自 output.bgResponse，带状态点 blink 动画） -->
-        <div
-          v-if="bgStatusText"
-          class="pl-4 mt-1.5 flex items-center gap-2 py-1.5 font-mono text-[length:var(--text-xs)] text-neutral-dim"
-        >
-          <span class="inline-block size-1.5 animate-blink rounded-full bg-accent"></span>
-          background · {{ bgStatusText }}
-        </div>
-      </div>
-    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { Check, Copy as CopyIcon } from '@lucide/vue'
+import { computed } from 'vue'
 import type { ToolCall } from '@xyz-agent/shared'
+import { subagentVirtualId } from '@xyz-agent/shared'
+import { openSubagent } from '@xyz-agent/core/domain/drawer'
 import { BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG } from './block-icon'
-import { Button } from '@xyz-agent/ui'
-import { useCopy } from './composables/useCopy'
-
-const { t } = useI18n()
-const { copied, copy } = useCopy()
 
 const props = defineProps<{
   tool: ToolCall
-  /** 所属 session（透传保留，当前 subagent 渲染未直接使用，向后兼容/未来扩展） */
+  /** 所属主 session ID（构造 subagent 虚拟 id 的 mainSid 段；点击开 drawer 用） */
   sessionId?: string | null
 }>()
 
 const isFailed = computed(() => props.tool.status === 'error')
 const isRunning = computed(() => props.tool.status === 'running')
-
-/** tool 折叠：默认收起，failed 不再强制展开（摘要行已含错误状态色）。 */
-const toolCollapsed = ref(true)
-const toolExpanded = computed(() => !toolCollapsed.value)
-
-function toggleTool(): void {
-  toolCollapsed.value = !toolCollapsed.value
-}
 
 /** Demo H：subagent header 色——failed 中性灰，其余中性 fg（去 reasoning 紫）。
  *  running 由 loader + accent 文案表达，header 整体仍中性。 */
@@ -137,59 +87,39 @@ const subagentThinkingLevel = computed(() => {
   return typeof level === 'string' && level.trim() ? level : ''
 })
 
-/** task 完整内容（顶层 input.task，长 prompt）。 */
-const subagentTask = computed(() => {
-  const task = inputObj.value.task
-  return typeof task === 'string' ? task : ''
-})
-
-/** task 首行预览截断长度（header 单行不撑爆；task 常含换行只取首行）。 */
-const TASK_PREVIEW_LIMIT = 60
-
-/** header 行 task 预览：取首个非空行，截断 60 字符。 */
-const subagentTaskPreview = computed(() => {
-  const firstLine = subagentTask.value.split('\n').find((l) => l.trim())?.trim() ?? ''
-  if (firstLine.length <= TASK_PREVIEW_LIMIT) return firstLine
-  return `${firstLine.slice(0, TASK_PREVIEW_LIMIT)}…`
-})
-
-/** output 解析（JSON 字符串 → bgResponse）。
- *  真实 output 形态：{ action, subagentId, sessionFile, slug, bgResponse: { status, mode, message } } */
-const bgResponse = computed<{ status?: string; message?: string } | null>(() => {
+/**
+ * subagentId（来自 toolResult.output 的顶层 subagentId 字段）。
+ *
+ * 数据来源（read 源码确认，非推测）：packages/shared/src/subagent.ts:36-37 —— subagentId 是
+ * toolResult.subagentId（pi-subagent-workflow start action 立即返回，即便 subagent 仍在 running）。
+ * input 不含 subagentId（start action 的 input 只有 task/slug/agent/model/thinkingLevel 等发起参数；
+ * 仅 cancel action 的 cancelParam.subagentId 有，但 cancel 块非本组件点击入口）。
+ *
+ * output 形态：{ action, subagentId, sessionFile, slug, bgResponse: { status, mode, message } }。
+ * running 早期 output 可能未就绪（空串/非 JSON）→ 此时点击为 no-op（不抛错）。
+ */
+const subagentId = computed<string | null>(() => {
   const raw = props.tool.output?.trim()
   if (!raw) return null
   try {
     const data = JSON.parse(raw)
-    if (data && typeof data === 'object' && 'bgResponse' in data) {
-      const bg = (data as Record<string, unknown>).bgResponse
-      if (bg && typeof bg === 'object') {
-        return bg as { status?: string; message?: string }
-      }
+    if (data && typeof data === 'object') {
+      const id = (data as Record<string, unknown>).subagentId
+      if (typeof id === 'string' && id.trim()) return id
     }
   } catch (err) {
-    // output 非合法 JSON（纯文本结果或空串），降级为无 background 状态行。
-    // 这是预期分支而非错误——subagent 结果可能是任意文本，不强制 JSON。
+    // output 非合法 JSON（纯文本结果或空串）→ 无 subagentId，点击 no-op。预期分支非错误。
     void err
   }
   return null
 })
 
-/** background 状态文案（优先取 bgResponse.message，running 时回退默认文案）。 */
-const bgStatusText = computed(() => {
-  if (bgResponse.value?.message) return bgResponse.value.message
-  if (bgResponse.value?.status === 'running') return 'running detached · will notify on completion'
-  return ''
-})
-
-/** 复制用内容：task + bgStatus 统一输出 */
-const subagentCopyContent = computed(() => {
-  const parts: string[] = []
-  if (subagentTask.value) parts.push(subagentTask.value)
-  if (bgStatusText.value) parts.push(`background: ${bgStatusText.value}`)
-  return parts.join('\n')
-})
+/** 点击整行 → drawer 开 subagent tab（D2/D4）。mainSid 来自 sessionId prop，subId 来自 output。
+ *  缺任一（running 早期 output 未就绪 / sessionId 缺）→ no-op，不阻断对话流。 */
+function openSubagentDrawer(): void {
+  const mainSid = props.sessionId
+  const subId = subagentId.value
+  if (!mainSid || !subId) return
+  openSubagent({ virtualId: subagentVirtualId(mainSid, subId), enteredFrom: 'chat' })
+}
 </script>
-
-<style scoped>
-/* background 状态点用 animate-blink（tailwind.config 内置），无需自定义 keyframes */
-</style>

@@ -1,93 +1,47 @@
 /**
- * Subagent store —— subagent 列表 + per-panel overlay 视图 + streaming 生命周期。
+ * Subagent store —— subagent 列表 + streaming 生命周期。
  *
  * 依赖方向：无（stores 间禁止互相 import）。跨 store 编排（chatStore.setMessages 等）
  * 由调用方通过回调注入，store 内不 import 其他 store。
  *
  * 职责：
  * - 共享 subagent 列表（records）—— Sidebar 管理，所有 panel 只读消费
- * - per-panel viewing 状态（panelViewingMap）—— split 后各 panel 独立
- * - streaming 订阅（panelStreamUnsub）—— 非响应式资源表
+ * - streaming 订阅（streamUnsub）—— 非响应式资源表，按 drawer scope token keyed（U8）
  *
- * 虚拟 session ID 格式：`subagent:<subagentId>`
+ * [HISTORICAL] overlay 展示层已于 U7 移除（drawer tab 化）：
+ * 原 per-panel viewing 状态机（panelViewingMap + isViewing/getViewingSubagentId/
+ * getActiveSubagentVirtualId/getCurrentSubagent/setViewingSubagentId + selectSubagent/backToMain）
+ * 与 tombstone 防复活（clearedVirtualIds/tryInjectIfNotCleared/clearSubagentTombstones）均为
+ * overlay 全屏替换模式的产物。drawer tab 并排模型下，subagent 详情在 drawer SubagentTab 内
+ * 自治（直接 fetchAndInject + subscribeStream），不再经 store viewing 状态机。
+ * 数据加载层（records / fetchAndInject / subscribeStream / stopStream / streaming delta/finalize）
+ * 完整保留，被 drawer SubagentTab 复用。
+ *
+ * 虚拟 session ID 格式：`subagent:<mainSessionId>:<subagentId>`（三段式）
  * chatStore.messages Map 支持任意 string key，直接用虚拟 session ID 注入消息。
+ * 工厂 SSOT 在 @xyz-agent/shared/virtual-session-id（跨层协议级约定），本文件 re-export 保持
+ * 现有 import 路径向后兼容。
  */
 import { defineStore } from 'pinia'
 import { computed, getCurrentScope, onScopeDispose, ref } from 'vue'
 import type { ComputedRef } from 'vue'
 import type { SubagentRecord, Message } from '@xyz-agent/shared'
+import { subagentVirtualId } from '@xyz-agent/shared'
+// 虚拟 session ID 工厂 SSOT 迁至 @xyz-agent/shared/virtual-session-id（跨层协议级约定，
+// ui chat 块 / drawer tab / runtime 均消费）。此处 re-export 保持现有 import 路径向后兼容。
+export {
+  SUBAGENT_PREFIX,
+  subagentVirtualId,
+  isSubagentVirtualId,
+  extractSubagentId,
+  extractMainSessionId,
+} from '@xyz-agent/shared'
 import { session as sessionApi } from '@/api'
 import * as events from '@/api/events'
 
-/** 虚拟 session ID 前缀 */
-const SUBAGENT_PREFIX = 'subagent:'
-
 /**
- * Tombstone 集合（FR-3/FR-7）：记录已被 backToMain 清除的虚拟 session ID。
- *
- * subscribeStream 终态分支的 fetchAndInject 是 fire-and-forget Promise，backToMain 后若该
- * Promise 在途，完成后会 setMessages 复活已清 messages。tombstone 让终态回调检查后短路。
- * 生命周期：backToMain 设 true，selectSubagent 重进时 delete（新一轮注入不受旧 tombstone 阻止）。
- */
-const clearedVirtualIds = new Set<string>()
-
-/**
- * 构造三段式虚拟 session ID：`subagent:<mainSessionId>:<subagentId>`。
- *
- * 三段式提供主 session 命名空间，chat-lru 的 isVirtualKeyOf 据此按前缀联动清理。
- * INVAR-1.1：任何写入 messages 的 subagent key 必须经此工厂，恰好 2 冒号 3 段非空。
- */
-export function subagentVirtualId(mainSessionId: string, subagentId: string): string {
-  return `${SUBAGENT_PREFIX}${mainSessionId}:${subagentId}`
-}
-
-/**
- * 判断 sessionId 是否为合法 subagent 虚拟 session（三段结构校验）。
- *
- * INVAR-1.4：不只 startsWith，必须校验三段结构（前缀 + 2 冒号 + 各段非空），
- * 排除旧两段式残留（subagent:foo）和误传字符串。职责：结构判定（非归属判定）。
- */
-export function isSubagentVirtualId(sessionId: string): boolean {
-  if (!sessionId.startsWith(SUBAGENT_PREFIX)) return false
-  const rest = sessionId.slice(SUBAGENT_PREFIX.length)
-  const sepIdx = rest.indexOf(':')
-  if (sepIdx <= 0) return false // 无第二冒号或 mainSid 段空
-  return sepIdx < rest.length - 1 // subId 段非空
-}
-
-/**
- * 从虚拟 session ID 提取 subagentId（第三段，DR9 保持消费契约不变）。
- * 消费方（MessageStream.vue:160 等）按 subId 契约，改三段式不破坏。
- */
-export function extractSubagentId(virtualId: string): string {
-  const rest = virtualId.slice(SUBAGENT_PREFIX.length)
-  return rest.slice(rest.indexOf(':') + 1)
-}
-
-/** 从虚拟 session ID 提取 mainSessionId（第二段，供 evictSessionWithVirtual 前缀清理复用）。 */
-export function extractMainSessionId(virtualId: string): string {
-  const rest = virtualId.slice(SUBAGENT_PREFIX.length)
-  return rest.slice(0, rest.indexOf(':'))
-}
-
-/**
- * 清理指定主 session 名下的所有 tombstone（deleteSession 调）。
- *
- * 主 session 删除后，其名下 subagent 的 tombstone 无意义（虚拟 key 已随 evictSessionWithVirtual
- * 前缀清理一并删 messages）。tombstone 是模块级 Set，不随 store 实例销毁，若不显式清则随 session
- * 建删单调增长（B8 内存泄漏）。按 extractMainSessionId 前缀精确匹配删除，不误清其他主 session。
- */
-export function clearSubagentTombstones(mainSessionId: string): void {
-  for (const id of [...clearedVirtualIds]) {
-    if (extractMainSessionId(id) === mainSessionId) {
-      clearedVirtualIds.delete(id)
-    }
-  }
-}
-
-/**
- * selectSubagent 的 chat 注入回调类型。
- * store 不 import chatStore（铁律），由调用方（features 层 Sidebar.vue）注入。
+ * fetchAndInject 的 chat 注入回调类型。
+ * store 不 import chatStore（铁律），由调用方（drawer SubagentTab）注入。
  *
  * W4：assistant content mutation 收口进 chat store（applySubagentStreamDelta /
  * finalizeSubagentStream），本 store 经回调委托，不再自己 applyStreamDelta。
@@ -98,8 +52,6 @@ export type SetMessagesFn = (virtualId: string, messages: Message[]) => void
 export type ApplyDeltaFn = (virtualId: string, lines: string[]) => void
 /** chat.finalizeSubagentStream 注入回调（W4：streaming → complete 收口进 chat store） */
 export type FinalizeStreamFn = (virtualId: string) => void
-/** chat.evictVirtualKey 注入回调（M7：backToMain 清单个 messages[virtualId]，store 不互 import） */
-export type ChatEvictFn = (virtualId: string) => void
 
 export const useSubagentStore = defineStore('subagent', () => {
   // ── state ──
@@ -114,29 +66,28 @@ export const useSubagentStore = defineStore('subagent', () => {
   /** 加载错误（M1：loadSubagents 失败时设错误消息，null = 无错误） */
   const loadError = ref<string | null>(null)
 
-  /**
-   * per-panel viewing 状态。split 后每个 panel 独立管理自己的 subagent overlay。
-   * key = panelId, value = 该 panel 当前正在查看的 subagentId（null = 未查看）。
-   */
-  const panelViewingMap = ref<Map<string, string | null>>(new Map())
-
   // ── 非响应式资源表（参照 chat.ts streamingTimers 模式）──
-  /** per-panel streaming 订阅取消函数 */
-  const panelStreamUnsub = new Map<string, () => void>()
+  /**
+   * streaming 订阅取消函数表。U8 起按 **drawer scope token** keyed（不再按 panelId）——
+   * overlay 全屏替换模式移除后，subagent 实时增量唯一消费方是 drawer SubagentTab，
+   * 它用固定 token（STREAM_SCOPE='drawer:subagent'）调 subscribeStream/stopStream。
+   * 同一 token 覆盖（subscribeStream 先 stopStream 再 set），drawer 单实例同一时刻只订阅一个 subagent。
+   */
+  const streamUnsub = new Map<string, () => void>()
 
-  // 防御性清理：正常由 Panel.vue onUnmounted→stopStream 清理，
-  // 此处防止非 Panel 组件调 subscribeStream 后未清。
+  // 防御性清理：正常由 SubagentTab onBeforeUnmount→stopStream 清理，
+  // 此处防止消费方未清的兜底。
   if (getCurrentScope()) {
     onScopeDispose(() => {
-      for (const unsub of panelStreamUnsub.values()) {
+      for (const unsub of streamUnsub.values()) {
         try {
           unsub()
         // eslint-disable-next-line taste/no-silent-catch -- 作用域销毁兜底清理：unsub 失败不应阻断其余清理，仅记录便于诊断
         } catch (e) {
-          console.warn('[subagent-store] panel stream unsub on scope dispose failed:', e)
+          console.warn('[subagent-store] stream unsub on scope dispose failed:', e)
         }
       }
-      panelStreamUnsub.clear()
+      streamUnsub.clear()
     })
   }
 
@@ -175,48 +126,9 @@ export const useSubagentStore = defineStore('subagent', () => {
     recordsBySession.value = next
   }
 
-  // ── getters ──
-  /** 本 panel 当前是否在查看 subagent 对话流 */
-  function isViewing(panelId: string): boolean {
-    return panelViewingMap.value.get(panelId) != null
-  }
-
-  /** 本 panel 当前查看的 subagentId */
-  function getViewingSubagentId(panelId: string): string | null {
-    return panelViewingMap.value.get(panelId) ?? null
-  }
-
-  /**
-   * 本 panel 当前查看的 subagent 的虚拟 session ID（三段式）。
-   * mainSessionId 从承载 panel 的 session 取（FR-6 INVAR-6.1），不由 overlay 状态推断。
-   */
-  function getActiveSubagentVirtualId(panelId: string, mainSessionId: string | null): string | null {
-    if (!mainSessionId) return null // INVAR-6.3 空 panel guard
-    const sid = getViewingSubagentId(panelId)
-    return sid ? subagentVirtualId(mainSessionId, sid) : null
-  }
-
-  /** 本 panel 当前查看的 subagent 记录（从 mainSessionId 分区查） */
-  function getCurrentSubagent(panelId: string, mainSessionId: string): SubagentRecord | null {
-    const sid = getViewingSubagentId(panelId)
-    if (!sid) return null
-    return getRecordsBySession(mainSessionId).find((s) => s.subagentId === sid) ?? null
-  }
-
   /** 指定主 session 名下的 subagent 是否仍在 running（读该 sid 分区，不全扫） */
   function isRunning(mainSessionId: string, subagentId: string): boolean {
     return getRecordsBySession(mainSessionId).find((s) => s.subagentId === subagentId)?.status === 'running'
-  }
-
-  // ── viewing 状态读写（内部）──
-  function setViewingSubagentId(panelId: string, subagentId: string | null): void {
-    const next = new Map(panelViewingMap.value)
-    if (subagentId === null) {
-      next.delete(panelId)
-    } else {
-      next.set(panelId, subagentId)
-    }
-    panelViewingMap.value = next
   }
 
   // ── actions ──
@@ -240,29 +152,30 @@ export const useSubagentStore = defineStore('subagent', () => {
     }
   }
 
-  /** 清空所有 subagent 分区 + 退出所有 panel overlay + 停止所有 streaming（全局重置场景用） */
+  /** 清空所有 subagent 分区 + 停止所有 streaming（全局重置场景用） */
   function clearSubagents(): void {
-    for (const pid of panelStreamUnsub.keys()) stopStream(pid)
+    for (const pid of streamUnsub.keys()) stopStream(pid)
     recordsBySession.value = new Map()
-    panelViewingMap.value = new Map()
   }
 
-  /** 停止指定 panel 的 streaming 订阅 */
-  function stopStream(targetPanelId?: string): void {
-    if (!targetPanelId) return
-    const unsub = panelStreamUnsub.get(targetPanelId)
+  /**
+   * 停止指定 scope 的 streaming 订阅。
+   * @param targetScope drawer scope token（U8：drawer SubagentTab 用 STREAM_SCOPE 常量）
+   */
+  function stopStream(targetScope?: string): void {
+    if (!targetScope) return
+    const unsub = streamUnsub.get(targetScope)
     if (unsub) {
       unsub()
-      panelStreamUnsub.delete(targetPanelId)
+      streamUnsub.delete(targetScope)
     }
   }
 
   /**
    * 拉取单个 subagent 的历史并注入 chatStore（经 setMessages 回调）。
    *
-   * [W2 / M5] fail-fast：失败时 throw（不静默 setMessages([])）。对齐 selectAgentCall 的
-   * fail-fast 契约——调用方（onSelectSubagent）负责 catch + toast + backToMain 回滚。
-   * 此前静默注入空数组会让用户看到空对话流，无错误态/重试入口。
+   * [W2 / M5] fail-fast：失败时 throw（不静默 setMessages([])）。调用方（drawer SubagentTab）
+   * 负责 catch + 显示错误态 + 重试入口。
    */
   async function fetchAndInject(
     mainSessionId: string,
@@ -280,10 +193,22 @@ export const useSubagentStore = defineStore('subagent', () => {
    * W4：delta / 终态收口均经注入的 chat store 回调（chatApplyDelta / chatFinalizeStream），
    * chat store 成为所有 assistant content mutation 的唯一入口。
    * - lines 非空 → chatApplyDelta（chat.applySubagentStreamDelta）
-   * - lines === undefined → 终态：停 streaming + 收口 + 拉完整历史覆盖（fetchAndInject，含 IO）
+   * - lines === undefined → 终态：停 streaming + 收口 + 拉完整历史覆盖（setMessages，含 IO）
+   *
+   * U8：第一个参数 `scope` 是 **drawer scope token**（非 panelId）——overlay 移除后唯一消费方是
+   * drawer SubagentTab，它传固定常量 STREAM_SCOPE='drawer:subagent'。streamUnsub 按此 token keyed，
+   * drawer 单实例同一时刻只订阅一个 subagent（切 subagent 时先 stopStream 清旧再 set 起新）。
+   *
+   * @param scope drawer scope token（消费方传固定常量，如 SubagentTab 的 STREAM_SCOPE）
+   * @param mainSessionId 主 session ID（WS 事件订阅键）
+   * @param recordId subagent record id（过滤 stream_delta payload.recordId）
+   * @param virtualId 虚拟 session ID（chatStore.messages 分区 key + streaming delta/finalize 目标）
+   * @param chatApplyDelta chatStore.applySubagentStreamDelta（注入，W4 streaming delta 收口入口）
+   * @param chatFinalizeStream chatStore.finalizeSubagentStream（注入，W4 终态收口入口）
+   * @param setMessages chatStore.setMessages（注入，终态拉完整历史覆盖用，不 import chatStore）
    */
   function subscribeStream(
-    pid: string,
+    scope: string,
     mainSessionId: string,
     recordId: string,
     virtualId: string,
@@ -291,99 +216,26 @@ export const useSubagentStore = defineStore('subagent', () => {
     chatFinalizeStream: FinalizeStreamFn,
     setMessages: SetMessagesFn,
   ): void {
-    stopStream(pid)
+    stopStream(scope)
     const unsub = events.on(mainSessionId, (msg) => {
       if (msg.type !== 'subagent.stream_delta') return
       const payload = msg.payload as { recordId?: string; lines?: string[] | undefined }
       if (payload.recordId !== recordId) return
 
       if (payload.lines === undefined) {
-        stopStream(pid)
+        stopStream(scope)
         // 收口 streaming 实体（chat store sealed 收口），再用权威历史覆盖
         chatFinalizeStream(virtualId)
-        // [M7 FR-7] tombstone 防复活：backToMain 后此终态回调若在途（fire-and-forget Promise），
-        // fetchAndInject 拉取完成后经 tryInjectIfNotCleared 检查 tombstone，已清则短路不 setMessages。
+        // 终态拉完整历史覆盖（fire-and-forget）。U7 后无 tombstone：drawer SubagentTab 不 evict
+        // 虚拟分区（D5：tab 切换/关闭不 evict），终态覆盖是正确行为而非「复活」。
         void sessionApi.getSubagentHistory(mainSessionId, recordId)
-          .then((history) => { tryInjectIfNotCleared(virtualId, history, setMessages) })
+          .then((history) => { setMessages(virtualId, history) })
           .catch((e) => console.error('[subagent] finalize refetch failed:', e))
         return
       }
       chatApplyDelta(virtualId, payload.lines)
     })
-    panelStreamUnsub.set(pid, unsub)
-  }
-
-  /**
-   * 选中 subagent → 进入 overlay 视图（per-panel）。
-   *
-   * @param panelId 目标 panel ID
-   * @param mainSessionId 主 session ID（panel 绑定的 session）
-   * @param subagentId 要查看的 subagent ID
-   * @param chatApplyDelta chatStore.applySubagentStreamDelta（注入，W4 streaming delta 收口入口）
-   * @param chatFinalizeStream chatStore.finalizeSubagentStream（注入，W4 终态收口入口）
-   * @param setMessages chatStore.setMessages（注入，fetchAndInject 用，不 import chatStore）
-   */
-  async function selectSubagent(
-    panelId: string,
-    mainSessionId: string,
-    subagentId: string,
-    chatApplyDelta: ApplyDeltaFn,
-    chatFinalizeStream: FinalizeStreamFn,
-    setMessages: SetMessagesFn,
-  ): Promise<void> {
-    const virtualId = subagentVirtualId(mainSessionId, subagentId)
-    setViewingSubagentId(panelId, subagentId)
-    // INVAR-3.4：重进时清 tombstone，允许新一轮 fetchAndInject 注入
-    clearedVirtualIds.delete(virtualId)
-
-    await fetchAndInject(mainSessionId, subagentId, setMessages)
-
-    // running 态启动 streaming（逐字增量，终态自动收口 + 拉完整历史）
-    const record = getRecordsBySession(mainSessionId).find((s) => s.subagentId === subagentId)
-    if (record?.status === 'running') {
-      subscribeStream(panelId, mainSessionId, subagentId, virtualId, chatApplyDelta, chatFinalizeStream, setMessages)
-    }
-  }
-
-  /**
-   * 返回主会话（per-panel）。停止 streaming + 立即清 messages[virtualId] + 设 tombstone。
-   *
-   * FR-3（立即清+tombstone，用户确认撤销等终态）：流程 stopStream → 设 tombstone → chatEvict 清 messages。
-   * 立即清不论 streaming——backToMain 后用户不看 overlay，messages 清了不影响 subagent runtime 运行，
-   * 用户重进时 fetchAndInject 重新拉取。幂等（INVAR-3.3）：清不存在 key 无副作用。
-   *
-   * @param panelId 面板 ID
-   * @param mainSessionId 主 session ID（构造三段式 virtualId + chatEvict 参数）
-   * @param subagentId subagent ID
-   * @param chatEvict chat.evictSessionWithVirtual 注入回调（清 messages[virtualId]）
-   */
-  function backToMain(
-    panelId: string,
-    mainSessionId?: string,
-    subagentId?: string,
-    chatEvict?: ChatEvictFn,
-  ): void {
-    stopStream(panelId)
-    setViewingSubagentId(panelId, null)
-    // 立即清 messages[virtualId] + 设 tombstone 防终态 fetchAndInject 复活（FR-3/FR-7）
-    // 注意：只删单个虚拟 key（evictVirtualKey），不调 evictSessionWithVirtual（会误删主 session 消息）
-    if (mainSessionId && subagentId) {
-      const virtualId = subagentVirtualId(mainSessionId, subagentId)
-      clearedVirtualIds.add(virtualId)
-      chatEvict?.(virtualId)
-    }
-  }
-
-  /**
-   * 尝试注入 messages，若 virtualId 已被 backToMain 清除（tombstone）则短路（FR-7 防复活）。
-   * subscribeStream 终态 fetchAndInject 完成后调此方法代替直接 setMessages。
-   *
-   * @returns true=已注入，false=被 tombstone 短路
-   */
-  function tryInjectIfNotCleared(virtualId: string, messages: Message[], setMessages: SetMessagesFn): boolean {
-    if (clearedVirtualIds.has(virtualId)) return false
-    setMessages(virtualId, messages)
-    return true
+    streamUnsub.set(scope, unsub)
   }
 
   /**
@@ -415,10 +267,6 @@ export const useSubagentStore = defineStore('subagent', () => {
     isLoading,
     loadError,
     // getters
-    isViewing,
-    getViewingSubagentId,
-    getActiveSubagentVirtualId,
-    getCurrentSubagent,
     isRunning,
     // per-session 分区读写（ADR-0049 Map 分区派）
     recordsOf,
@@ -429,11 +277,12 @@ export const useSubagentStore = defineStore('subagent', () => {
     // actions
     loadSubagents,
     clearSubagents,
-    selectSubagent,
-    backToMain,
     cancelSubagent,
     stopStream,
+    subscribeStream,
     fetchAndInject,
-    tryInjectIfNotCleared,
   }
 })
+
+// [HISTORICAL] extractMainSessionId 经顶部 re-export 块暴露，供 LRU 前缀清理等数据层路径消费。
+// 原 clearSubagentTombstones（overlay tombstone 防复活）已随 U7 overlay 移除删除。

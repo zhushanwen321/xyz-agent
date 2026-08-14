@@ -12,9 +12,11 @@
  * 零 DOM 约束：core tsconfig 未配置 DOM lib，本文件为纯类型定义，不引入 DOM/浏览器 API 类型。
  */
 
-/** SideDrawer 的 tab 枚举：terminal（终端）/ browser（浏览器）/ git（变更集）/ doc（命令文档）/ detail（文件详情）。
- * [P4 s5 drawer-widget-removal] tasks 成员已随 tasks 域删除移除（PluginViewContainer 承接）。 */
-export type SideDrawerTab = 'terminal' | 'browser' | 'git' | 'doc' | 'detail'
+/** SideDrawer 的 tab 枚举：terminal（终端）/ browser（浏览器）/ git（变更集）/ doc（命令文档）/ detail（文件详情）/ subagent（子代理只读对话流）/ workflow（workflow agent call 列表）。
+ * [P4 s5 drawer-widget-removal] tasks 成员已随 tasks 域删除移除（PluginViewContainer 承接）。
+ * subagent/workflow 一级 tab（2026-08-14 subagent-workflow-drawer-tab）：collapsed only chat 块点击 → openSubagent/openWorkflow 开对应 tab。
+ * subagent tab = 嵌套只读 MessageStream（复用主对话流渲染，D3）；workflow tab = agent call 列表（点 call 切 subagent tab）。 */
+export type SideDrawerTab = 'terminal' | 'browser' | 'git' | 'doc' | 'detail' | 'subagent' | 'workflow'
 
 /** drawer open 的可选参数：打开时指定要展示的 slash 命令名（Doc tab）/ 文件路径（Detail tab）/ URL（Browser tab） */
 export interface OpenDrawerOptions {
@@ -31,4 +33,18 @@ export interface DrawerControlState {
   isOpen: boolean
   activeTab: SideDrawerTab
   docked: boolean
+  /** subagent tab 当前展示的 subagent 虚拟 id（`subagent:<mainSid>:<subId>` 或 `agentcall:<acsId>`，由调用方算好传入）；null=未选中（subagent tab 显空态） */
+  selectedSubagentId: string | null
+  /** workflow tab 当前展示的 workflow 名；null=未选中（workflow tab 显空态） */
+  selectedWorkflowName: string | null
+  /** subagent tab 的进入来源：'chat'=从 chat subagent 块进入（无返回按钮）；'workflow'=从 workflow tab 点 agent call 进入（显←返回按钮）；null=未在 subagent tab */
+  enteredFrom: 'chat' | 'workflow' | null
+}
+
+/** openSubagent 的参数（D3/D4：drawer SubagentTab 复用 MessageStream，virtualId 由调用方算好传入） */
+export interface OpenSubagentOptions {
+  /** subagent 虚拟 id（subagentVirtualId/agentCallVirtualId 算好的字符串），core 不感知 id 结构，原样存为 selectedSubagentId */
+  virtualId: string
+  /** 进入来源：chat subagent 块='chat'；workflow tab 点 agent call='workflow' */
+  enteredFrom: 'chat' | 'workflow'
 }

@@ -55,7 +55,14 @@ export function getDrawerControlState(): DrawerControlState {
  * 违反 useSessionScopedState 响应式契约曾导致 todo/goal 自动打开能开、手动点击打不开。
  */
 function createDefaultControlState(): DrawerControlState {
-  return reactive({ isOpen: false, activeTab: 'terminal', docked: false })
+  return reactive({
+    isOpen: false,
+    activeTab: 'terminal',
+    docked: false,
+    selectedSubagentId: null,
+    selectedWorkflowName: null,
+    enteredFrom: null,
+  })
 }
 
 const controlState = useSessionScopedState<DrawerControlState>(
@@ -93,6 +100,22 @@ export const drawerControl = {
   toggleDock(): void {
     controlState.current.value.docked = !controlState.current.value.docked
   },
+  /** 设置 subagent tab 视图：切到 subagent tab + 记录选中的 subagent 虚拟 id + 进入来源 + 打开 drawer（D4）。
+   *  virtualId 由调用方算好（subagentVirtualId/agentCallVirtualId），core 不感知 id 结构。 */
+  setSubagentView(virtualId: string, enteredFrom: 'chat' | 'workflow'): void {
+    const cur = controlState.current.value
+    cur.activeTab = 'subagent'
+    cur.selectedSubagentId = virtualId
+    cur.enteredFrom = enteredFrom
+    cur.isOpen = true
+  },
+  /** 设置 workflow tab 视图：切到 workflow tab + 记录 workflow 名 + 打开 drawer */
+  setWorkflowView(workflowName: string): void {
+    const cur = controlState.current.value
+    cur.activeTab = 'workflow'
+    cur.selectedWorkflowName = workflowName
+    cur.isOpen = true
+  },
 }
 
 /**
@@ -103,11 +126,17 @@ export function useDrawerControl(): {
   isOpen: ComputedRef<boolean>
   activeTab: ComputedRef<SideDrawerTab>
   docked: ComputedRef<boolean>
+  selectedSubagentId: ComputedRef<string | null>
+  selectedWorkflowName: ComputedRef<string | null>
+  enteredFrom: ComputedRef<'chat' | 'workflow' | null>
 } {
   return {
     isOpen: computed(() => controlState.current.value.isOpen),
     activeTab: computed(() => controlState.current.value.activeTab),
     docked: computed(() => controlState.current.value.docked),
+    selectedSubagentId: computed(() => controlState.current.value.selectedSubagentId),
+    selectedWorkflowName: computed(() => controlState.current.value.selectedWorkflowName),
+    enteredFrom: computed(() => controlState.current.value.enteredFrom),
   }
 }
 

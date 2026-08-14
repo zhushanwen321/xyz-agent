@@ -46,7 +46,7 @@ import { useSidebarStore } from '@/stores/sidebar'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useFileTree } from '@/composables/features/file-tree/useFileTree'
 import { useFileTreeStore } from '@/stores/fileTree'
-import { useSubagentStore, clearSubagentTombstones } from '@/stores/subagent'
+import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useExtensionUIStore } from '@/stores/extension-ui'
 import { useChat, ensureStreamSubscription } from '@/composables/features/chat/useChat'
@@ -129,26 +129,7 @@ export function useSidebarNew() {
   }
 
   const hooks: SessionCleanupHooks = {
-    clearBoundPanelOverlays: (boundPanelId, sid) => {
-      const subagentStore = useSubagentStore()
-      const workflowStore = useWorkflowStore()
-      if (subagentStore.isViewing(boundPanelId)) {
-        const viewingSubId = subagentStore.getViewingSubagentId(boundPanelId)
-        subagentStore.backToMain(
-          boundPanelId,
-          sid,
-          viewingSubId ?? undefined,
-          (vsid) => useChatStore().evictVirtualKey(vsid),
-        )
-      }
-      if (workflowStore.isViewing(boundPanelId)) {
-        workflowStore.backFromAgentCall(
-          boundPanelId,
-          (acsId) => useChatStore().evictVirtualKey(acsId),
-          sid,
-        )
-      }
-    },
+    // [U7] clearBoundPanelOverlays 已随 overlay 移除从 SessionCleanupHooks 接口删除。
     clearFileTree: (sid) => useFileTreeStore().clearSession(sid),
     clearSubagent: (sid) => useSubagentStore().clearSession(sid),
     clearWorkflow: (sid) => useWorkflowStore().clearSession(sid),
@@ -157,7 +138,7 @@ export function useSidebarNew() {
     // 只订阅 session-destroyed bus 事件（该事件无生产者），经 bus 显式 emit 触发分区 cleanup
     clearExtensionHost: (sid) => getExtensionBus().emit({ kind: 'session-destroyed', sessionId: sid }),
     evictChat: (sid) => chat.evictSessionWithVirtual(sid),
-    clearSubagentTombstones: (sid) => clearSubagentTombstones(sid),
+    // [U7] clearSubagentTombstones 已随 overlay tombstone 移除从接口删除。
     evictVirtualKeys: (sid) => {
       const workflowStore = useWorkflowStore()
       for (const acsVirtualId of workflowStore.getAgentCallVirtualIdsByMain(sid)) {

@@ -63,6 +63,18 @@ export * from './file-tree'
 export type { RecentWorkspaceRecord } from './workspace'
 export type { Project, ProjectStoreState } from './project'
 export type { SubagentRecord, SubagentStatus } from './subagent'
+// 虚拟 session ID 工厂（subagent 三段式 / agent call 两段式）——跨层协议级 key 约定 SSOT
+export {
+  SUBAGENT_PREFIX,
+  subagentVirtualId,
+  isSubagentVirtualId,
+  extractSubagentId,
+  extractMainSessionId,
+  AGENTCALL_PREFIX,
+  agentCallVirtualId,
+  isAgentCallVirtualId,
+  extractAgentCallSessionId,
+} from './virtual-session-id'
 // Coding Plan 额度查询类型
 export type {
   QuotaWindow,

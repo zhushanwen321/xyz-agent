@@ -6,7 +6,7 @@
  * retryHistory/syncSessionToPanel + focusedSessionId/focusedSession）。原样迁移 + deps 注入：
  * 后端调用经 SessionApiPort（w2）、panel 编排经 PanelOrchestrationPort（w2 + w3 追加
  * activePanelId/findPanelBySession）、历史回填经 ChatHydratePort、导航经 NavigationPort、
- * 跨 store 清理经 SessionCleanupHooks（DM2 + w3 追加 clearBoundPanelOverlays）、
+ * 跨 store 清理经 SessionCleanupHooks（DM2；[U7] overlay 相关 hook 已移除）、
  * 新建任务流程经 NewTaskFlowPort（可选，C-W3-2）。core 不 import @/api / @/stores / @/composables。
  *
  * 保留契约：
@@ -69,10 +69,9 @@ export interface ChatHydratePort {
  * 跨 store 清理钩子集（DM2 + w3 追加）。deleteSession/deleteFolder 的 cleanupSessionState
  * 按 S3 顺序逐一调用；壳把 renderer 各 store 的清理方法包装传入，core 零跨包 import。
  *
+ * [HISTORICAL] clearBoundPanelOverlays + clearSubagentTombstones 已随 U7 overlay 移除从接口删除
+ * （overlay viewing 状态机 + tombstone 防复活均为 overlay 全屏替换模式产物，drawer tab 化后无用）。
  * 映射关系（renderer cleanupSessionState 原序）：
- * - clearBoundPanelOverlays（w3 追加）：useSidebar.clearBoundPanelOverlays 包装
- *   （subagentStore.backToMain / workflowStore.backFromAgentCall + chat evictVirtualKey 回调；
- *   renderer subagent/workflow 的 clearSession 只清 records 分区，panelViewingMap 必须独立清）
  * - clearFileTree → useFileTreeStore().clearSession（[P4 s5 w2] clearTasks 随 tasks 域删除）
  * - clearSubagent → subagentStore.clearSession；clearWorkflow → workflowStore.clearSession
  * - clearExtensionUI → extensionUIStore.clearSession
@@ -81,14 +80,12 @@ export interface ChatHydratePort {
  *   triggerSessionCleanups（那是 useSessionScopedState 机制），唯一清理路径是 bus 事件，
  *   而该事件零生产者（M1-03）：必须由本编排点经 hook 显式触发
  * - evictChat → chatStore.evictSessionWithVirtual（须先于 disposeChat，D5 时序）
- * - clearSubagentTombstones → clearSubagentTombstones(id)（模块级 Set 按 mainSid 前缀清）
+ * - [U7 已删] clearSubagentTombstones（overlay tombstone，随 overlay 移除）
  * - evictVirtualKeys → workflowStore.getAgentCallVirtualIdsByMain + chatStore.evictVirtualKey
  * - clearAgentCallMapping → workflowStore.clearAgentCallMapping
  * - disposeChat → useChat().disposeSession；invalidateStatus → invalidateStatusCache
  */
 export interface SessionCleanupHooks {
-  /** 清 bound panel 上残留的 subagent overlay / agent call overlay viewing 状态（含 streaming 订阅泄漏兜底） */
-  clearBoundPanelOverlays(boundPanelId: string, sid: string): void
   clearFileTree(sid: string): void
   clearSubagent(sid: string): void
   clearWorkflow(sid: string): void
@@ -98,7 +95,6 @@ export interface SessionCleanupHooks {
   clearExtensionHost(sid: string): void
   /** chat.evictSessionWithVirtual：先按 mainSid 前缀扫 subagent 虚拟 key，再 dispose 主 session */
   evictChat(sid: string): void
-  clearSubagentTombstones(sid: string): void
   /** agentcall 两段式无 mainSid 前缀，经 workflow 映射清全部 agentcall virtualId */
   evictVirtualKeys(sid: string): void
   clearAgentCallMapping(sid: string): void
@@ -306,10 +302,8 @@ export function createUseSession(deps: UseSessionDeps) {
     const boundPanel = panel.findPanelBySession(id)
     if (boundPanel) {
       panel.loadSession(boundPanel.id, null)
-      // 清 per-panel viewing 状态：删除 session 前该 panel 可能正停在 subagent overlay /
-      // agent call overlay，残留 viewing 指向已删 session 的 subagentId / agentCallId，
-      // 且 streaming 订阅泄漏。兜底清两个 overlay（M7 语义）。
-      hooks.clearBoundPanelOverlays(boundPanel.id, id)
+      // [U7] overlay viewing 状态机已移除，clearBoundPanelOverlays 兜底清理随之删除。
+      // 虚拟 key 清理走下面 evictChat（subagent: 前缀）+ evictVirtualKeys（agentcall 映射）两条独立路径。
     }
     store.removeFromList(id)
     // 跨 store 清理（S3）：fileTree + subagent + workflow + extensionUI + chat evict
@@ -325,9 +319,6 @@ export function createUseSession(deps: UseSessionDeps) {
     // evictSessionWithVirtual 在 disposeSession 之前：先按 mainSid 前缀扫 subagent 虚拟 key，
     // 再 dispose 主 session（dispose 后主记录已删，evict 无法反查）。D5 时序。
     hooks.evictChat(id)
-    // 主 session 已删，其名下 subagent tombstone（模块级 Set 不随 store 销毁）无意义，
-    // 按 mainSid 前缀精确清理，防 Set 随 session 建删单调增长（泄漏）。
-    hooks.clearSubagentTombstones(id)
     // agentcall 两段式无 mainSid 前缀，经 workflow 映射清全部 agentcall virtualId
     hooks.evictVirtualKeys(id)
     hooks.clearAgentCallMapping(id)

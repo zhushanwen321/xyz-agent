@@ -2,15 +2,20 @@
  * Sidebar subagent/workflow 操作 handler 集合（从 Sidebar.vue 提取，减行用）。
  *
  * 职责：subagent select/cancel + workflow select/back/action/agentCall 的事件处理。
- * 跨 store 编排（chatStore 注入）在此层完成（铁律：store 不 import chatStore）。
+ *
+ * [U6 drawer tab 化] onSelectSubagent / onSelectAgentCall 入口改向 drawer：
+ * 点击不再进 Panel overlay（全屏替换主对话流），而是 openSubagent 开 drawer subagent tab（并排）。
+ * 数据加载（fetchAndInject 拉历史 + subscribeStream 实时增量）由 drawer SubagentTab 挂载时自接管
+ * （SubagentTab watch(selectedSubagentId, immediate) → loadSubagentData），入口不重复拉取（DRY，
+ * 避免双 RPC 竞态）。原 selectSubagent/selectAgentCall 的 overlay viewing 状态机属 U7 移除范围。
  */
 import type { Ref } from 'vue'
-import { useChatStore } from '@/stores/chat'
 import { usePanelStore } from '@/stores/panel'
-import { useSubagentStore } from '@/stores/subagent'
-import { useWorkflowStore } from '@/stores/workflow'
+import { useSubagentStore, subagentVirtualId } from '@/stores/subagent'
+import { useWorkflowStore, agentCallVirtualId } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
+import { openSubagent } from '@xyz-agent/core/domain/drawer'
 import * as sessionApi from '@/api/domains/session'
 
 export function useSidebarSubagentActions(focusedSessionId: Ref<string | null>) {
@@ -20,31 +25,12 @@ export function useSidebarSubagentActions(focusedSessionId: Ref<string | null>) 
   const subagentStore = useSubagentStore()
   const workflowStore = useWorkflowStore()
 
-  /** 选中 subagent → active panel overlay 视图（chatStore streaming 回调注入） */
-  async function onSelectSubagent(subagentId: string): Promise<void> {
-    const activePanel = panelStore.currentLeaf
-    if (!activePanel?.sessionId) return
-    const chat = useChatStore()
-    try {
-      await subagentStore.selectSubagent(
-        panelStore.activePanelId,
-        activePanel.sessionId,
-        subagentId,
-        (virtualId, lines) => chat.applySubagentStreamDelta(virtualId, lines),
-        (virtualId) => chat.finalizeSubagentStream(virtualId),
-        (virtualId, msgs) => chat.setMessages(virtualId, msgs),
-      )
-    } catch (e) {
-      // [M7] catch 回滚：selectSubagent 失败时 backToMain 清理（幂等，messages 可能未注入）
-      subagentStore.backToMain(
-        panelStore.activePanelId,
-        activePanel.sessionId,
-        subagentId,
-        (sid) => chat.evictVirtualKey(sid),
-      )
-      const msg = e instanceof Error ? e.message : String(e)
-      toastError(t('sidebar.loadSubagentFailed', { msg }))
-    }
+  /** 选中 subagent → drawer 开 subagent tab（D1 统一入口，并排不遮主对话流）。
+   *  mainSid 取当前 leaf session；数据加载由 SubagentTab 挂载自接管。 */
+  function onSelectSubagent(subagentId: string): void {
+    const mainSid = panelStore.currentLeaf?.sessionId
+    if (!mainSid) return
+    openSubagent({ virtualId: subagentVirtualId(mainSid, subagentId), enteredFrom: 'chat' })
   }
 
   /** 取消 running subagent（调 RPC + 乐观更新，失败 toast） */
@@ -69,33 +55,14 @@ export function useSidebarSubagentActions(focusedSessionId: Ref<string | null>) 
     workflowStore.backToWorkflowList(panelStore.activePanelId)
   }
 
-  /** 选中 agent call → Panel overlay（Fail-fast：失败回滚 + toast） */
-  async function onSelectAgentCall(agentCallSessionId: string | undefined): Promise<void> {
+  /** 选中 agent call → drawer 开 subagent tab（agentcall 两段式虚拟 id，D4 快照只读）。
+   *  sidebar 点 agent call 直接进 subagent tab，无返回按钮（enteredFrom='chat'）。 */
+  function onSelectAgentCall(agentCallSessionId: string | undefined): void {
     if (!agentCallSessionId) {
       toastError(t('sidebar.agentCallFailed'))
       return
     }
-    const activePanel = panelStore.currentLeaf
-    if (!activePanel?.sessionId) return
-    const chat = useChatStore()
-    try {
-      await workflowStore.selectAgentCall(
-        panelStore.activePanelId,
-        activePanel.sessionId,
-        agentCallSessionId,
-        (virtualId, msgs) => chat.setMessages(virtualId, msgs),
-      )
-    } catch (e) {
-      // [M7] catch 回滚：backFromAgentCall 清理（幂等，messages 可能未注入）
-      // [W2] 传 mainSessionId 清 mainSessionAgentCalls Set（selectAgentCall 失败回滚也需清映射）
-      workflowStore.backFromAgentCall(
-        panelStore.activePanelId,
-        (acsId) => chat.evictVirtualKey(acsId),
-        activePanel.sessionId,
-      )
-      const msg = e instanceof Error ? e.message : String(e)
-      toastError(t('sidebar.agentCallLoadFailed', { msg }))
-    }
+    openSubagent({ virtualId: agentCallVirtualId(agentCallSessionId), enteredFrom: 'chat' })
   }
 
   /** workflow 操作（pause/resume/abort），调 runtime RPC + 刷新列表 */

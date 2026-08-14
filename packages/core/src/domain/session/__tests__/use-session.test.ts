@@ -25,8 +25,8 @@ function summary(id: string, cwd = '/a'): SessionSummary {
 
 function makeHooks(log: string[]): SessionCleanupHooks & Record<string, ReturnType<typeof vi.fn>> {
   const names = [
-    'clearBoundPanelOverlays', 'clearFileTree', 'clearSubagent', 'clearWorkflow',
-    'clearExtensionUI', 'clearExtensionHost', 'evictChat', 'clearSubagentTombstones', 'evictVirtualKeys',
+    'clearFileTree', 'clearSubagent', 'clearWorkflow',
+    'clearExtensionUI', 'clearExtensionHost', 'evictChat', 'evictVirtualKeys',
     'clearAgentCallMapping', 'disposeChat', 'invalidateStatus',
   ] as const
   const hooks = {} as SessionCleanupHooks & Record<string, ReturnType<typeof vi.fn>>
@@ -180,7 +180,7 @@ describe('deleteSession', () => {
     resetSessionListSubForTest()
   })
 
-  it('TC-4 S3 全 hooks 调用序：panel 解绑→overlay→removeFromList→12 hooks→triggerSessionCleanups', async () => {
+  it('TC-4 S3 全 hooks 调用序：panel 解绑→removeFromList→10 hooks→triggerSessionCleanups', async () => {
     const f = makeFixture()
     seed(f.store, [{ cwd: '/a', sessions: [summary('del')] }])
     f.store.activeId.value = 'del'
@@ -188,18 +188,16 @@ describe('deleteSession', () => {
 
     await f.session.deleteSession('del')
 
-    // panel 解绑 + overlay 清理
+    // panel 解绑（[U7] overlay 兜底清理已随 overlay 移除）
     expect(f.panel.loadSession).toHaveBeenCalledWith('p1', null)
-    expect(f.hooks.clearBoundPanelOverlays).toHaveBeenCalledWith('p1', 'del')
     // removeFromList 生效（列表空）
     expect(f.store.list.value).toHaveLength(0)
     // 删 active 后列表空 → push chat 空态
     expect(f.navigation.push).toHaveBeenCalledWith({ view: 'chat' })
     // S3 全序（log 数组精确顺序断言）
     const expectedOrder = [
-      'clearBoundPanelOverlays(p1,del)',
       'clearFileTree(del)', 'clearSubagent(del)', 'clearWorkflow(del)',
-      'clearExtensionUI(del)', 'clearExtensionHost(del)', 'evictChat(del)', 'clearSubagentTombstones(del)',
+      'clearExtensionUI(del)', 'clearExtensionHost(del)', 'evictChat(del)',
       'evictVirtualKeys(del)', 'clearAgentCallMapping(del)', 'disposeChat(del)', 'invalidateStatus(del)',
     ]
     expect(f.log).toEqual(expectedOrder)

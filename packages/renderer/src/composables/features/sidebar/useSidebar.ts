@@ -17,7 +17,7 @@
  * （核心粘合价值，deletion test 证明不可删）。
  */
 import { computed, onScopeDispose } from 'vue'
-import type { PanelLeaf, SessionGroup, BatchDeleteResult } from '@xyz-agent/shared'
+import type { SessionGroup, BatchDeleteResult } from '@xyz-agent/shared'
 import { chat as chatApi, session as sessionApi, extension as extensionApi } from '@/api'
 import * as events from '@/api/events'
 import { useChatStore } from '@/stores/chat'
@@ -29,7 +29,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useFileTree } from '@/composables/features/file-tree/useFileTree'
 import { useFileTreeStore } from '@/stores/fileTree'
-import { useSubagentStore, clearSubagentTombstones } from '@/stores/subagent'
+import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useExtensionUIStore } from '@/stores/extension-ui'
 import { useChat, ensureStreamSubscription } from '@/composables/features/chat/useChat'
@@ -77,35 +77,14 @@ export function resetAppBootstrap(): void {
 }
 
 /**
- * 清理 bound panel 上残留的 subagent overlay / agent call overlay viewing 状态。
- *
- * 从 deleteSession 主体提取（降 cyclomatic）：删 session 前该 panel 可能正停在 subagent
- * overlay 或 agent call overlay，残留 viewing 指向已删 session 的 subagentId / agentCallId，
- * 且 streaming 订阅（subagentStore.panelStreamUnsub）泄漏。此函数兜底清两个 overlay。
- *
- * [M7] backToMain 立即清 messages + tombstone（传 mainSessionId/chatEvict）。
- * 顺序与原内联块完全一致：先 subagent overlay 后 agent call overlay。
+ * [HISTORICAL] clearBoundPanelOverlays（清 bound panel 上残留的 subagent/agent call overlay
+ * viewing 状态 + streaming 订阅泄漏）已随 U7 overlay 移除删除。overlay viewing 状态机
+ * （panelViewingMap/agentCallMap + selectSubagent/selectAgentCall/backToMain/backFromAgentCall）
+ * 全部移除后，deleteSession 不再需要 overlay 兜底清理。虚拟 key 清理走两条独立路径：
+ * - subagent: 三段式 → chatStore.evictSessionWithVirtual（LRU isVirtualKeyOf 前缀清理）
+ * - agentcall: 两段式 → workflowStore.getAgentCallVirtualIdsByMain + clearAgentCallMapping
+ * 两者均在 cleanupSessionState 内独立调用，不依赖 overlay viewing 状态。
  */
-function clearBoundPanelOverlays(
-  boundPanel: PanelLeaf,
-  id: string,
-  subagentStore: ReturnType<typeof useSubagentStore>,
-  workflowStore: ReturnType<typeof useWorkflowStore>,
-): void {
-  if (subagentStore.isViewing(boundPanel.id)) {
-    const viewingSubId = subagentStore.getViewingSubagentId(boundPanel.id)
-    const chatStore = useChatStore()
-    subagentStore.backToMain(
-      boundPanel.id,
-      id,
-      viewingSubId ?? undefined,
-      (sid) => chatStore.evictVirtualKey(sid),
-    )
-  }
-  if (workflowStore.isViewing(boundPanel.id)) {
-    workflowStore.backFromAgentCall(boundPanel.id, (acsId) => useChatStore().evictVirtualKey(acsId), id)
-  }
-}
 
 export function useSidebar() {
   const navigation = useNavigationStore()
@@ -293,13 +272,11 @@ export function useSidebar() {
     // 删除的 session 若绑定到 panel，清空 panel 绑定，避免悬空引用指向已删 session。
     const boundPanel = panel.findPanelBySession(id)
     if (boundPanel) panel.loadSession(boundPanel.id, null)
-    // [W3 / W-S6] 清 per-panel viewing 状态：删除 session 前该 panel 可能正停在
-    // subagent overlay / agent call overlay，残留 viewing 指向已删 session 的 subagentId /
-    // agentCallId，且 streaming 订阅（subagentStore.panelStreamUnsub）泄漏。此处兜底清。
+    // [U7] overlay viewing 状态机已移除，clearBoundPanelOverlays 兜底清理随之删除。
+    // 虚拟 key 清理走下面 evictSessionWithVirtual（subagent: 前缀）+ agentcall 映射两条独立路径。
     const subagentStore = useSubagentStore()
     const workflowStore = useWorkflowStore()
     const extensionUIStore = useExtensionUIStore()
-    if (boundPanel) clearBoundPanelOverlays(boundPanel, id, subagentStore, workflowStore)
     session.removeFromList(id)
     // 跨 store 清理（S3）：fileTree + subagent + workflow + chat store + WS 流式订阅 + 派生状态缓存（[P4 s5 w2] tasks 已删）
     useFileTreeStore().clearSession(id)
@@ -312,9 +289,6 @@ export function useSidebar() {
     // 再 dispose 主 session（dispose 后主记录已删，evict 无法反查）。D5 时序。
     const chatStoreForEvict = useChatStore()
     chatStoreForEvict.evictSessionWithVirtual(id)
-    // [B8] 主 session 已删，其名下 subagent tombstone（模块级 Set 不随 store 销毁）无意义，
-    // 按 mainSid 前缀精确清理，防 Set 随 session 建删单调增长（泄漏）。
-    clearSubagentTombstones(id)
     // [M7 D6] agentcall 两段式无 mainSid 前缀，经 workflow 映射清全部 agentcall virtualId
     for (const acsVirtualId of workflowStore.getAgentCallVirtualIdsByMain(id)) {
       chatStoreForEvict.evictVirtualKey(acsVirtualId)

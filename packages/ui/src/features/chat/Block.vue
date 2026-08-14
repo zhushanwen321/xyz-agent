@@ -9,7 +9,7 @@
     - failed：无鲜红全展开（红框已删），改中性灰默认 + hover 染 warn，错误摘要进 body 文本。
     审批按钮 DEFERRED（G-018），v1 不渲染。failed 救生按钮不做（agent 自处理，design.md 决策 3）。
   -->
-  <div class="trace-blk py-2" :class="blockClass" :data-testid="testId">
+  <div class="trace-blk transition-[background-color,box-shadow] duration-[var(--duration)] ease-[var(--ease)] py-2" :class="blockClass" :data-testid="testId">
     <!-- thinking 块：同行展开（float 布局——第一行环绕 label，第二行起从最左侧开始） -->
     <div v-if="type === 'thinking'" class="trace-think">
       <div
@@ -25,6 +25,7 @@
           <span class="flex-1 min-w-0 truncate text-[length:var(--text-sm)] text-neutral-dim" :class="thinkingExpanded ? 'invisible' : ''">{{ previewText }}</span>
         </div>
         <!-- 展开内容区：copy 按钮在左上角，始终可见 -->
+        <Transition name="block-expand">
         <div v-if="thinkingExpanded" class="group/result relative mt-1 pl-4 text-[length:var(--text-sm)] leading-[1.7] text-neutral-mid">
           <Button
             variant="ghost"
@@ -39,6 +40,7 @@
           <MarkdownRenderer v-if="!working" :content="content ?? ''" :session-id="sessionId ?? undefined" variant="thinking" />
           <span v-else class="whitespace-pre-wrap">{{ content ?? '' }}</span>
         </div>
+        </Transition>
       </div>
     </div>
 
@@ -74,55 +76,24 @@
       <!-- ── subagent 块：委托 BlockSubagent ── -->
       <BlockSubagent v-if="isSubagent" :tool="tool!" :session-id="sessionId" />
 
-      <!-- ── workflow 块：action + name + slug + runId + list-tree GUI ── -->
+      <!-- ── workflow 块：collapsed only 单行（icon + workflow prefix + name · slug），点击开 drawer workflow tab（spec §11 / design D2）── -->
       <div v-else-if="isWorkflow" class="trace-workflow pb-2.5 mb-0.5" data-testid="workflow-block">
         <div
           data-testid="tool-block-header"
           class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[length:var(--text-base)] font-medium transition-opacity hover:opacity-80"
           :class="isFailed ? 'text-neutral-mid' : 'text-neutral-fg'"
-          :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
-          @click="toggleTool"
+          @click="openWorkflowDrawer"
         >
           <!-- running 态 loader（双环 + accent），其余走 list-checks ICON -->
           <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <component :is="BLOCK_ICON_LUCIDE.workflow" v-else class="size-3.5 shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
           <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.workflow') }}</span>
-          <!-- action（muted） -->
-          <span v-if="workflowFields.action" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-xs)] text-neutral-mid">{{ workflowFields.action }}</span>
-          <!-- name（accent） -->
           <span v-if="workflowFields.name" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ workflowFields.name }}</span>
-          <!-- slug（accent，· 分隔，展开时 invisible 保留空间） -->
           <template v-if="workflowFields.slug">
-            <span class="text-neutral-faint" :class="{ invisible: toolExpanded }">·</span>
-            <span class="min-w-0 truncate font-mono text-[length:var(--text-sm)] text-accent" :class="{ invisible: toolExpanded }">{{ workflowFields.slug }}</span>
+            <span class="text-neutral-faint">·</span>
+            <span class="min-w-0 shrink-0 truncate font-mono text-[length:var(--text-sm)] text-accent">{{ workflowFields.slug }}</span>
           </template>
-          <!-- runId 前 8 位（dim，展开时 invisible 保留空间） -->
-          <span v-if="workflowFields.runId" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-xs)] text-neutral-dim" :class="{ invisible: toolExpanded }">{{ workflowFields.runId }}</span>
         </div>
-        <!-- args.task 首行预览（展开时 invisible 保留空间） -->
-        <div v-if="workflowArgsTaskPreview" class="mt-0.5 pl-4 truncate text-[length:var(--text-sm)] text-neutral-dim" :class="{ invisible: toolExpanded }">
-          {{ workflowArgsTaskPreview }}
-        </div>
-        <template v-if="toolExpanded">
-          <!-- workflow 详情区：copy 按钮在左上角 + list-tree GUI 组件（来自 details.__gui__） -->
-          <div v-if="displayContent || guiComponent" class="group/result relative mt-1 text-[length:var(--text-sm)] leading-snug text-neutral-mid select-text">
-            <Button
-              variant="ghost"
-              size="icon"
-              class="absolute top-0 left-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
-              :title="t('panel.message.copy')"
-              @click.stop="copy(copyContent, `tool-${tool!.id}`)"
-            >
-              <Check v-if="copied === `tool-${tool!.id}`" class="size-3 text-success" />
-              <CopyIcon v-else class="size-3" />
-            </Button>
-            <div class="pl-4">
-              <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
-              <AnsiText v-else-if="outputRaw" :content="outputRaw" />
-              <span v-else class="whitespace-pre-wrap">{{ displayContent }}</span>
-            </div>
-          </div>
-        </template>
       </div>
 
       <!-- ── 普通 tool 块：1 行收起（header 含 toolName+argPath 摘要+状态），点击展开详情 ── -->
@@ -140,9 +111,9 @@
           <span class="shrink-0 normal-case tracking-normal">{{ toolName }}</span>
           <span v-if="argPath" class="min-w-0 normal-case tracking-normal text-neutral-dim truncate" :class="{ invisible: toolExpanded && isBashTool }">· {{ argPath }}</span>
         </div>
-        <template v-if="toolExpanded">
+        <Transition name="block-expand">
           <!-- 内容区：统一 group 包裹，copy 按钮浮在左上角复制全部内容 -->
-          <div v-if="displayContent || guiComponent" class="group/content relative mt-1">
+          <div v-if="toolExpanded && (displayContent || guiComponent)" class="group/content relative mt-1">
             <!-- copy 按钮：hover 显示，复制 copyContent（bash=命令+输出，其余=输出） -->
             <div class="absolute top-0 left-0 z-10 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/content:opacity-100">
               <Button
@@ -156,9 +127,9 @@
                 <CopyIcon v-else class="size-3" />
               </Button>
             </div>
-            <!-- bash 整体容器：命令+输出共用 border+bg -->
-            <div v-if="isBashTool" class="border border-neutral-faint rounded-sm bg-surface-2">
-              <div v-if="argPath" class="pl-4 py-1.5 font-mono text-[length:var(--text-sm)] text-neutral-fg border-b border-neutral-faint">
+            <!-- bash 整体容器：v6 §5 扁平凹槽（无 border + bg-input 深于父级，深度差即边界） -->
+            <div v-if="isBashTool" class="rounded-sm bg-bg-input">
+              <div v-if="argPath" class="border-b border-hairline pl-4 py-1.5 font-mono text-[length:var(--text-sm)] text-neutral-fg">
                 {{ argPath }}
               </div>
               <div class="tool-result font-mono text-[length:var(--text-sm)] leading-snug whitespace-pre-wrap pl-4 py-1.5 select-text text-neutral-mid">
@@ -196,7 +167,7 @@
               >{{ item.text }}</span>
             </div>
           </div>
-        </template>
+        </Transition>
       </div>
     </div>
   </div>
@@ -210,6 +181,7 @@ import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
 import type { MessageStatus, ToolCall } from '@xyz-agent/shared'
 import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
+import { openWorkflow } from '@xyz-agent/core/domain/drawer'
 import { AnsiText, GuiComponentRenderer } from '../../rendering-protocol'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import BlockSubagent from './BlockSubagent.vue'
@@ -380,32 +352,18 @@ const workflowInputObj = computed(() => {
   return input && typeof input === 'object' ? input : {}
 })
 
-/** workflow runId 显示截断长度（对齐 tool-render.ts 的 RUNID_SHORT） */
-const RUNID_DISPLAY_LENGTH = 8
-
-/** workflow 标题行字段：action / name / slug / runId-short */
+/** workflow 标题行字段：name / slug（collapsed only，spec §11） */
 const workflowFields = computed(() => {
   const input = workflowInputObj.value
-  const action = typeof input.action === 'string' ? input.action : ''
   const name = typeof input.name === 'string' ? input.name : ''
   const slug = typeof input.slug === 'string' ? input.slug : ''
-  const runIdRaw = typeof input.runId === 'string' ? input.runId : ''
-  const runIdShort = runIdRaw ? runIdRaw.slice(0, RUNID_DISPLAY_LENGTH) : ''
-  return { action, name, slug, runId: runIdShort }
+  return { name, slug }
 })
 
-/** workflow args.task 首行预览（run action，args 是对象取 task 字段，截断 60 字符） */
-const ARGS_TASK_PREVIEW_LIMIT = 60
-const workflowArgsTaskPreview = computed(() => {
-  const input = workflowInputObj.value
-  const args = input.args
-  if (!args || typeof args !== 'object') return ''
-  const task = (args as Record<string, unknown>).task
-  if (typeof task !== 'string') return ''
-  const firstLine = task.split('\n').find((l) => l.trim())?.trim() ?? ''
-  if (firstLine.length <= ARGS_TASK_PREVIEW_LIMIT) return firstLine
-  return `${firstLine.slice(0, ARGS_TASK_PREVIEW_LIMIT)}…`
-})
+/** 点击 workflow 块 → drawer 开 workflow tab（D1/D2）。name 为空时 openWorkflow 仅切 tab不记录选中。 */
+function openWorkflowDrawer(): void {
+  openWorkflow(workflowFields.value.name)
+}
 
 /**
  * 从 tool.details.__gui__ 提取结构化渲染组件（extension GUI 协议，spec §9.1）。
@@ -462,10 +420,16 @@ const argPath = computed(() => {
 })
 
 
-/** Demo H：failed 红框已删（blockClass 不再返回 border-danger/bg-danger-soft）。
- *  failed 块改中性灰默认 + hover 文字加深（hover:text-neutral-fg）。
- *  保留 blockClass 钩子以备未来整体块级视觉（如 running 高亮条），当前返回空串。 */
-const blockClass = computed(() => '')
+/** 活动 block 态（chat-flow-polish P0-1）：running 块左缘 accent rail（inset box-shadow，
+ *  不改布局）+ accent-soft 微染，让 streaming 中「当前跑到哪了」扫视可见；rail 是无彩色依赖的
+ *  第二通道（色弱友好）。完成（running→completed）时染色 200ms 淡出——根 div 常驻
+ *  transition-[background-color,box-shadow]，状态切换自动过渡。bash 展开容器 bg-bg-input 压盖
+ *  染色，容器内不被染脏（design §1.2 方案 A 风险已规避）。
+ *  failed/unfinished/completed 不染色（中性灰，header 已有状态指示）。 */
+const blockClass = computed(() => {
+  if (!isRunning.value) return ''
+  return 'bg-accent-soft [box-shadow:inset_2px_0_0_0_var(--accent)]'
+})
 
 /** data-testid 锚点：按块类型拼接可定位 id，供 E2E 精确断言特定块。
  *  格式：block-tool-${tool.id}（type==='tool'/'agentgraph' 且有 tool）/ block-thinking-${thinkingId}（type==='thinking'）。
@@ -482,4 +446,22 @@ const testId = computed(() => {
   return undefined
 })
 </script>
+
+<style scoped>
+/* 块展开/收起过渡（chat-flow-polish P0-2）：消除 v-if 瞬时切换的生硬感。
+   opacity + 轻微 translateY（从 header 方向淡入），120ms；保持 v-if 卸载折叠块的长输出
+   （不做 grid 恒渲染，避免 streaming 中折叠块长 bash 输出恒挂载的性能代价）。
+   escape hatch：Vue Transition 类用 scoped 表达（enter-from/leave-to 同时设 opacity+transform）。 */
+.block-expand-enter-active,
+.block-expand-leave-active {
+  transition:
+    opacity var(--duration-fast) var(--ease),
+    transform var(--duration-fast) var(--ease);
+}
+.block-expand-enter-from,
+.block-expand-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+</style>
 

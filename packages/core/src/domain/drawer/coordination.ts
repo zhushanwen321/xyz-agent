@@ -14,7 +14,7 @@
  */
 import { ref } from 'vue'
 import { drawerControl, getDrawerControlState, _resetDrawerControlForTest } from './control'
-import type { SideDrawerTab, OpenDrawerOptions } from './types'
+import type { SideDrawerTab, OpenDrawerOptions, OpenSubagentOptions } from './types'
 
 // ── 不分区的瞬时参数（模块级单例，消费后清空）──
 // 供 renderer 兼容层 re-export（useSideDrawer() 返回形状含这三个 ref + consumeBrowserUrl）。
@@ -72,6 +72,24 @@ export function setDrawerTab(tab: SideDrawerTab): void {
 /** 切换钉住态（仅当前分区） */
 export function toggleDrawerDock(): void {
   drawerControl.toggleDock()
+}
+
+/**
+ * 打开 subagent tab，展示指定 subagent 的只读对话流（D3：复用 MessageStream）。
+ * virtualId 由调用方（chat subagent 块 / sidebar SubagentList / workflow WorkflowTab）用
+ * subagentVirtualId(mainSid, subId) 或 agentCallVirtualId(acsId) 算好传入；core 不感知 id 结构。
+ * enteredFrom 驱动 SubagentTab 返回按钮显隐（D4）：'workflow'=从 workflow tab 进入显返回；'chat'=无返回。
+ */
+export function openSubagent(opts: OpenSubagentOptions): void {
+  drawerControl.setSubagentView(opts.virtualId, opts.enteredFrom)
+}
+
+/**
+ * 打开 workflow tab，展示指定 workflow 的 agent call 列表。
+ * workflowName 为空串时仅切到 workflow tab（不记录选中名，显空态或全部）。
+ */
+export function openWorkflow(workflowName?: string): void {
+  drawerControl.setWorkflowView(workflowName ?? '')
 }
 
 /**

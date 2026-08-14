@@ -394,7 +394,7 @@ export const session = {
     return sessionId === 's3' ? fixtureWorkflows.map((w) => ({ ...w })) : []
   },
 
-  /** Mock agent call 对话流历史（返回空数组，selectAgentCall 不 throw 即可） */
+  /** Mock agent call 对话流历史（返回空数组，drawer SubagentTab agentcall 分支加载不 throw 即可） */
   async getAgentCallHistory(_sessionId: string, _agentCallSessionId: string): Promise<Message[]> {
     await sleep(TIMING.ack)
     return []

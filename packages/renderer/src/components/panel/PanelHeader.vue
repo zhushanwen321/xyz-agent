@@ -61,27 +61,8 @@
         <ArrowRight class="size-[14px]" />
       </Button>
     </div>
-    <!-- subagent 视图返回按钮：viewingSubagent 态显示，替代正常态的 spinner+breadcrumb。
-         右侧按钮组（drawer/git/split/close）不受影响，继续保留。 -->
-    <Button
-      v-if="viewingSubagent"
-      variant="ghost"
-      size="icon"
-      class="h-[22px] w-[22px] shrink-0 gap-1 rounded-md text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [-webkit-app-region:no-drag]"
-      :title="t('panel.header.backToMain')"
-      data-testid="subagent-back-btn"
-      @click="emit('back')"
-    >
-      <ArrowLeft class="size-[14px]" />
-    </Button>
-    <span
-      v-if="viewingSubagent"
-      class="min-w-0 shrink truncate text-[12px] font-medium text-neutral-fg"
-      :title="subagentLabel"
-    >{{ subagentLabel }}</span>
     <component
       :is="ICON_COMPONENTS[iconConfig.icon]"
-      v-if="!viewingSubagent"
       data-testid="panel-session-icon"
       :data-icon="iconConfig.icon"
       class="size-[13px] shrink-0"
@@ -90,7 +71,7 @@
     <!-- breadcrumb（shell/spec §四：项目 ▸ 分支，落点在 main-header 内）。
          不显会话名（仅目录 + 分支两段），避免与目录视觉重复。
          shrink + min-w-0：长目录+分支时截断优先发生于此，绝不盖右侧 3 按钮（按钮组 ml-auto + shrink-0）。 -->
-    <nav v-if="!viewingSubagent" class="flex min-w-0 shrink items-center gap-1 [-webkit-app-region:no-drag]">
+    <nav class="flex min-w-0 shrink items-center gap-1 [-webkit-app-region:no-drag]">
       <ol class="flex min-w-0 items-center gap-1 text-[12px]">
         <li class="flex min-w-0 items-center gap-1.5">
           <Folder class="size-3 shrink-0 opacity-70 text-neutral-dim" />
@@ -124,15 +105,15 @@
         empty="hidden"
       />
       <!-- session JSONL 文件名（id 前 8 位 + .jsonl）：点击复制磁盘真实绝对路径。
-           正常态用主 sessionFile，overlay 态（subagent/agent call）用 overlaySessionFile。
-           路径为空（pi 延迟写入窗口，规则 #6）时不渲染。放右侧按钮组最前，正常态与 overlay 态复用同一位。 -->
+           路径为空（pi 延迟写入窗口，规则 #6）时不渲染。放右侧按钮组最前。
+           [U7] overlay 移除后恒用主 sessionFile（不再有 overlaySessionFile 两态）。 -->
       <Button
-        v-if="displayFile"
+        v-if="sessionFile"
         variant="ghost"
         data-testid="panel-session-file"
         class="h-5 shrink-0 gap-1 rounded px-1 font-mono text-[11px] text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg [-webkit-app-region:no-drag]"
         :title="t('panel.header.copySessionFile')"
-        @click="copy(displayFile, 'file')"
+        @click="copy(sessionFile, 'file')"
       >
         <Check v-if="copied === 'file'" class="size-3 text-accent" />
         <FileText v-else class="size-3 opacity-60" />
@@ -203,12 +184,6 @@ const props = defineProps<{
   /** git 脏状态指示（驱动右侧 git 图标按钮显隐 + 脏状态点色）。hasRepo=false 不渲染按钮 */
   gitIndicator?: GitIndicator
   status: DerivedStatus
-  /** 是否在查看 subagent 对话流（显示返回按钮，隐藏正常态内容） */
-  viewingSubagent?: boolean
-  /** subagent 视图标题（agent 名称 + subagentId 摘要） */
-  subagentLabel?: string
-  /** overlay 态 JSONL 路径（subagent/agent call 对话流文件，正常态不用） */
-  overlaySessionFile?: string
 }>()
 
 const emit = defineEmits<{
@@ -216,8 +191,6 @@ const emit = defineEmits<{
   openGit: []
   /** 切换 SideDrawer 开关（always-visible 按钮，不依赖 git 仓库） */
   toggleDrawer: []
-  /** 返回主会话（subagent 视图退出） */
-  back: []
 }>()
 
 const { t } = useI18n()
@@ -243,16 +216,8 @@ const dirName = computed(() => {
 /** 当前状态对应的语义图标配置（icon / color / animation） */
 const iconConfig = computed(() => STATUS_ICON[props.status])
 
-/**
- * 当前要展示/复制的 JSONL 路径：overlay 态用 overlaySessionFile（subagent/agent call 对话流），
- * 正常态用 sessionFile（主 session）。overlay 态无 overlaySessionFile 时不 fallback 主 sessionFile。
- */
-const displayFile = computed(() =>
-  props.viewingSubagent ? props.overlaySessionFile : props.sessionFile,
-)
-
-/** session JSONL 短文件名（前 8 位 + .jsonl）；displayFile 为空时返回空串 */
-const shortFileName = computed(() => (displayFile.value ? formatShortSessionFile(displayFile.value) : ''))
+/** session JSONL 短文件名（前 8 位 + .jsonl）；sessionFile 为空时返回空串 */
+const shortFileName = computed(() => (props.sessionFile ? formatShortSessionFile(props.sessionFile) : ''))
 
 /** 复制反馈（点击文件名后 1.2s 显示 Check 图标） */
 const { copied, copy } = useCopy()
