@@ -71,11 +71,6 @@
       ]
     },
     {
-      "name": "@zhushanwen/pi-vision",
-      "directory": "extensions/vision",
-      "dependsOn": []
-    },
-    {
       "name": "@zhushanwen/pi-unified-hooks",
       "directory": "extensions/unified-hooks",
       "dependsOn": [

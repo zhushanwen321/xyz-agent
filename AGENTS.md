@@ -70,7 +70,6 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 | `@zhushanwen/pi-subagent-workflow` | `subagent-workflow` | 统一 subagent 执行 + 多 agent workflow 编排（有状态工作流管理） |
 | `@zhushanwen/pi-todo` | `todo` | AI 驱动的 todo 列表（会话持久化 + /todos） |
 | `@zhushanwen/pi-unified-hooks` | `unified-hooks` | 统一 hooks 收集（散落 hook 集中维护） |
-| `@zhushanwen/pi-vision` | `vision` | 多模态视觉模型图片分析（带记忆 session） |
 
 **Settings 模块设计文档**:
 - [Settings 视觉 demo](docs/page-design/archive/settings-final.html) — Section Groups 风格 HTML demo（pre-v3 历史稿）
