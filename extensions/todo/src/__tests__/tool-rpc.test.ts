@@ -155,7 +155,7 @@ describe("executeTodoAction — tool result 无 __gui__（全模式）", () => {
 // ── refreshDisplay：GUI widget 推送（M17，真实实现）────
 
 describe("refreshDisplay — GUI widget 推送（setup 传真实实现）", () => {
-	it("G-1: rpc + add → setWidget 收到 ('todo', [GUI_WIDGET_MARKER + JSON])，解析后 type='card'", async () => {
+	it("G-1: rpc + add → setWidget 收到 ('todo', [GUI_WIDGET_MARKER + JSON])，解析后为 v1.1 信封（list-tree + meta）", async () => {
 		const { tool } = setup();
 		const { ctx, setWidget } = makeRpcCtx();
 		await tool.execute(
@@ -173,19 +173,18 @@ describe("refreshDisplay — GUI widget 推送（setup 传真实实现）", () =
 		// marker 前缀用协议常量断言（不手写编码）
 		expect(encoded.startsWith(GUI_WIDGET_MARKER)).toBe(true);
 		const parsed = JSON.parse(encoded.slice(GUI_WIDGET_MARKER.length)) as {
-			type: string;
-			props: {
-				body: Array<{
-					type: string;
-					props: { items?: Array<{ label: string; icon: string }> };
-				}>;
-			};
+			v: number;
+			component: { type: string; props: { numbered: boolean; items: Array<{ label: string }> } };
+			meta: { title: string; progress: { current: number; total: number } };
 		};
-		expect(parsed.type).toBe("card");
-		const tree = parsed.props.body.find((c) => c.type === "list-tree")!;
-		expect(tree.props.items).toHaveLength(2);
-		expect(tree.props.items[0]).toMatchObject({ label: "#1 task A", icon: "dot" });
-		expect(tree.props.items[1]).toMatchObject({ label: "#2 task B", icon: "dot" });
+		// v1.1 wire：GuiRenderResult 信封（component + meta 宿主元数据）
+		expect(parsed.v).toBe(1);
+		expect(parsed.component.type).toBe("list-tree");
+		expect(parsed.component.props.numbered).toBe(true);
+		expect(parsed.component.props.items).toHaveLength(2);
+		expect(parsed.component.props.items[0]).toMatchObject({ label: "task A" });
+		expect(parsed.component.props.items[1]).toMatchObject({ label: "task B" });
+		expect(parsed.meta).toMatchObject({ title: "Todo", progress: { current: 0, total: 2 } });
 	});
 
 	it("G-2: rpc + delete 清空列表 → setWidget 收到 ('todo', undefined)（清除语义）", async () => {

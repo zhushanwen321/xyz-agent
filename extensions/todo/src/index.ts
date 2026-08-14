@@ -55,7 +55,7 @@ export function makeRefreshDisplay(state: TodoSessionState): (ctx: ExtensionCont
 				ctx.ui.setWidget("todo", undefined);
 			}
 		} else if (isGui) {
-			guiSetWidget(ctx as unknown as GuiContext, "todo", buildGui(state.todos).component);
+			guiSetWidget(ctx as unknown as GuiContext, "todo", buildGui(state.todos));
 		} else {
 			ctx.ui.setWidget("todo", renderWidgetLines(state.todos, ctx.ui.theme));
 		}

@@ -27,6 +27,7 @@ import {
   TabBar,
   Card,
   Columns,
+  Group,
   ListTree,
 } from './primitives'
 import { PRIMITIVE_RENDER_KEY } from './primitive-render-key'
@@ -55,6 +56,7 @@ const BUILTIN_MAP: Record<RenderableBuiltinType, Component> = {
   'tab-bar': TabBar,
   'card': Card,
   'columns': Columns,
+  'group': Group,
   'list-tree': ListTree,
 }
 

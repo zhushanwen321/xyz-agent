@@ -254,8 +254,8 @@ export function updateWidget(session: GoalSession, uiPort: UiPort): void {
 
 	uiPort.setStatus("goal", renderStatusLine(session.state, asTheme(uiPort)));
 	if (isGui) {
-	// 复用 projection/gui.ts 的 buildGoalGui，取 .component 给 M17 对话流 widget 面板
-		uiPort.setGuiWidget("goal", buildGoalGui(session.state).component);
+	// 复用 projection/gui.ts 的 buildGoalGui（整个 GuiRenderResult：component + meta 宿主元数据）
+		uiPort.setGuiWidget("goal", buildGoalGui(session.state));
 	} else {
 		uiPort.setWidget("goal", renderWidgetLines(session.state, asTheme(uiPort)));
 	}

@@ -38,6 +38,34 @@ describe('ViewHostStore', () => {
       expect(view!.guiTree[0]).toMatchObject({ type: 'card', props: { body: [] } })
     })
 
+    it('meta（v1.1 widget 宿主元数据）合法（title: string）→ 缓存透传', () => {
+      const { bus, store } = makeStore()
+      const meta = { title: 'Todo', status: 'running', progress: { current: 1, total: 3 } }
+      bus.emit({
+        kind: 'extension-widget',
+        sessionId: 's1',
+        widget: { viewId: 'todo', pluginId: '', guiTree: [{ type: 'list-tree', props: { items: [] } }], meta },
+      })
+      const view = store.getView('s1', 'todo')
+      expect(view!.meta).toEqual(meta)
+    })
+
+    it.each([
+      ['undefined（v1 旧 wire 无 meta）', undefined],
+      ['null', null],
+      ['非对象（字符串）', 'Todo'],
+      ['缺 title 字符串', { status: 'running' }],
+    ])('meta %s → 缓存条目无 meta 键', (_label, meta) => {
+      const { bus, store } = makeStore()
+      bus.emit({
+        kind: 'extension-widget',
+        sessionId: 's1',
+        widget: { viewId: 'w', pluginId: '', guiTree: [{ type: 'ansi-text', props: { lines: [] } }], meta },
+      })
+      const view = store.getView('s1', 'w')
+      expect(view!.meta).toBeUndefined()
+    })
+
     it('widget（string 行）→ 窄化为 ansi-text GuiComponent', () => {
       const { bus, store } = makeStore()
       bus.emit({ kind: 'extension-widget', sessionId: 's1', widget: { viewId: 'terminal', pluginId: '', guiTree: ['line1', 'line2'] } })

@@ -11,13 +11,15 @@
  * GuiComponent[]，本接口按 S2 IF10 契约先行）。
  */
 import type { InjectionKey } from 'vue'
-import type { GuiComponent } from '@xyz-agent/extension-protocol'
+import type { GuiComponent, WidgetMeta } from '@xyz-agent/extension-protocol'
 
 /** plugin view 的 GuiComponent 树缓存条目（对齐 S2 IF10 ViewCacheEntry）。 */
 export interface ViewCacheEntry {
   viewId: string
   pluginId: string
   guiTree: GuiComponent[]
+  /** widget 宿主元数据（v1.1 wire 携带，WidgetArea head 渲染） */
+  meta?: WidgetMeta
   updatedAt: number
 }
 

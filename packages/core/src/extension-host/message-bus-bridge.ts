@@ -243,11 +243,12 @@ function parseExtensionWidget(msg: IncomingPluginMessage): InternalEvent | null 
     }
   }
   // extension:widgetGui —— gui 为 null 时保留清除语义（[null] 进 guiTree，消费端据此删条目）。
+  // meta（v1.1 wire 的 widget 宿主元数据）透传，ViewHostStore 窄化后供 WidgetArea head 渲染。
   if (!('gui' in payload)) return null
   return {
     kind: 'extension-widget',
     sessionId: resolveSessionId(msg, payload),
-    widget: { viewId: widgetKey, pluginId: '', guiTree: [payload.gui] },
+    widget: { viewId: widgetKey, pluginId: '', guiTree: [payload.gui], meta: payload.meta },
   }
 }
 

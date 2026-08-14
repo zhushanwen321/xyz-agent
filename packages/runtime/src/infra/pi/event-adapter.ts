@@ -21,7 +21,7 @@
  */
 import type { ServerMessage, ServerMessageType, ExtensionInteractMethod } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS } from '@xyz-agent/shared'
-import { GUI_WIDGET_MARKER, ASK_USER_MARKER, isGuiComponent } from '@xyz-agent/extension-protocol'
+import { GUI_WIDGET_MARKER, ASK_USER_MARKER, isGuiComponent, isGuiRenderResult } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import type { PiTranslatedEvent } from '../../services/session/types.js'
 import { randomUUID } from 'node:crypto'
@@ -320,18 +320,34 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
     if (rawLines.length === 1 && typeof rawLines[0] === 'string' && (rawLines[0] as string).startsWith(GUI_WIDGET_MARKER)) {
       try {
         const json = (rawLines[0] as string).slice(GUI_WIDGET_MARKER.length)
-        const gui: unknown = JSON.parse(json)
-        // 形状校验：防止异常结构进入渲染层（非合法 GuiComponent → 降级纯文本 widget）
-        if (isGuiComponent(gui)) {
+        const decoded: unknown = JSON.parse(json)
+        // v1.1 wire：GuiRenderResult 信封 {v, component, meta?} → 解包 component + meta
+        // （meta = widget 宿主元数据，前端 WidgetArea 渲染统一 head）
+        if (isGuiRenderResult(decoded)) {
           return [{
             kind: 'message',
             message: {
               type: EXTENSION_EVENTS.WIDGET_GUI as ServerMessageType,
-              payload: { sessionId: sid, widgetKey, gui },
+              payload: {
+                sessionId: sid,
+                widgetKey,
+                gui: decoded.component,
+                ...(decoded.meta !== undefined ? { meta: decoded.meta } : {}),
+              },
             },
           }]
         }
-        console.warn('[EventAdapter] widgetGui marker decoded but not a valid GuiComponent, falling back to text widget', gui)
+        // v1 wire（兼容窗口）：裸 GuiComponent（旧版 extension 发出的格式）
+        if (isGuiComponent(decoded)) {
+          return [{
+            kind: 'message',
+            message: {
+              type: EXTENSION_EVENTS.WIDGET_GUI as ServerMessageType,
+              payload: { sessionId: sid, widgetKey, gui: decoded },
+            },
+          }]
+        }
+        console.warn('[EventAdapter] widgetGui marker decoded but not a valid GuiComponent, falling back to text widget', decoded)
        
       } catch (e) {
         // marker 检测命中但 JSON 解析失败 → 降级为纯文本 widget

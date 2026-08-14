@@ -4,11 +4,11 @@
  */
 
 import {
-	type GuiComponent,
-	guiComponent,
 	type GuiRenderResult,
+	guiComponent,
 	guiResult,
 	type TreeItem,
+	type WidgetMeta,
 } from "@xyz-agent/extension-protocol";
 
 // ── 数据模型 ─────────────────────────────────────────
@@ -71,66 +71,45 @@ export function migrateTodo(raw: unknown): Todo {
 // ── GUI 渲染辅助 ─────────────────────────────────────
 
 /**
- * 把 todos 组装为 card(progress-bar + list-tree) GuiRenderResult（对齐 extension-protocol@0.2.0）。
+ * 把 todos 组装为 GuiRenderResult（v1.1 meta head 架构，对齐 extension-protocol@0.3.0）。
  *
- * - progress-bar 承担 TUI 版 renderStatusText 的 "N/M completed" 跨项摘要 + 进度可视化
- *   （此前 GUI 版缺失摘要，是「偏 TUI 文字式」观感的根因之一）。
- * - severity 显式传 "ok"：ProgressBar 未传时的推断是预算消耗语义（ratio<0.5 → danger），
- *   对完成度不成立（刚开工不是危险态）。
- * - 全完成 → card variant "success"（失败/完成语义交给容器表达）。
+ * - meta（标题/状态/进度）由宿主壳层渲染成唯一 head：进度计数 "N/M" + mini bar
+ *   替代 body 内 progress-bar（精简 body），全完成 status=done（head 绿点 + bar 变绿）。
+ * - 内容根 = numbered list-tree：行首弱化序号（编辑器行号范式，ListTree 渲染），
+ *   id 不再烧进 label——update/delete 锚点由模型经 list action 获取，用户引用
+ *   「第 N 项」即可；状态由行尾圆点单一表达（无 icon，v6 单一信息源裁决）。
  *
- * status → icon/status 映射：
- *   pending      → dot      / 无 status
- *   in_progress  → circle   / running
- *   completed    → check    / done
+ * status → 圆点映射：
+ *   pending      → 无圆点（常态归零）
+ *   in_progress  → running（accent）
+ *   completed    → done（success + label 弱化）
  */
 export function buildGui(todos: Todo[]): GuiRenderResult {
 	const total = todos.length;
 	const completed = todos.filter((t) => t.status === "completed").length;
-	const allDone = total > 0 && completed === total;
+	const inProgress = todos.filter((t) => t.status === "in_progress").length;
 
-	const body: GuiComponent[] = [];
-	if (total > 0) {
-		body.push(
-			guiComponent("progress-bar", {
-				label: "tasks",
-				current: completed,
-				total,
-				unit: "done",
-				severity: "ok",
-			}),
-		);
-	}
+	const status: WidgetMeta["status"] =
+		total > 0 && completed === total ? "done" : inProgress > 0 ? "running" : "idle";
 
-	const items: TreeItem[] = todos.map((t) => {
-		const icon =
-			t.status === "completed"
-				? "check"
-				: t.status === "in_progress"
-					? "circle"
-					: "dot"; // pending
-		const status =
+	const items: TreeItem[] = todos.map((t) => ({
+		label: t.text,
+		status:
 			t.status === "in_progress"
 				? "running"
 				: t.status === "completed"
 					? "done"
-					: undefined; // pending 无 status
-		return {
-			icon,
-			// id 保留（弱化 TUI 冒号格式）：update/delete 按 id 操作，用户引用需要锚点
-			label: `#${t.id} ${t.text}`,
-			status,
-			depth: 0,
-		};
-	});
-	body.push(guiComponent("list-tree", { items }));
+					: undefined, // pending 无 status
+		depth: 0,
+	}));
 
 	return guiResult(
-		guiComponent("card", {
-			header: "Todo",
-			variant: allDone ? "success" : "default",
-			body,
-		}),
+		guiComponent("list-tree", { numbered: true, items }),
+		{
+			title: "Todo",
+			status,
+			progress: total > 0 ? { current: completed, total } : undefined,
+		},
 	);
 }
 

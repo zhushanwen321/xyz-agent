@@ -20,6 +20,7 @@ import StatsLine from './StatsLine.vue'
 import TabBar from './TabBar.vue'
 import Card from './Card.vue'
 import Columns from './Columns.vue'
+import Group from './Group.vue'
 import ListTree from './ListTree.vue'
 import { GUI_CUSTOM_REGISTRY_KEY } from '../registry'
 import { resolveComponent } from '@xyz-agent/core/rendering-protocol'
@@ -38,6 +39,7 @@ const BUILTIN_MAP: Record<RenderableBuiltinType, Component> = {
   'tab-bar': TabBar,
   'card': Card,
   'columns': Columns,
+  'group': Group,
   'list-tree': ListTree,
 }
 

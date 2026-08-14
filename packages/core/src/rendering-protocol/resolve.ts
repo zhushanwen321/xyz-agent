@@ -32,10 +32,10 @@ export interface ResolvedRender {
   props: Record<string, unknown>
 }
 
-/** 已知 builtin type 集合（7 原语中除 custom/ansi-text 的 6 个布局原语）。
- * 新增原语时四同步：extension-protocol 类型 + 此处 + ui 组件 + v6 视觉（§7.4）。 */
+/** 已知 builtin type 集合（除 custom/ansi-text 的 7 个布局原语）。
+ *  新增原语时四同步：extension-protocol 类型 + 此处 + ui 组件 + v6 视觉（§7.4）。 */
 const BUILTIN_TYPES: ReadonlySet<string> = new Set([
-  'card', 'stats-line', 'progress-bar', 'list-tree', 'columns', 'tab-bar',
+  'card', 'stats-line', 'progress-bar', 'list-tree', 'columns', 'tab-bar', 'group',
 ])
 
 const JSON_INDENT = 2

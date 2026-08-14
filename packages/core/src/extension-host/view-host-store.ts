@@ -17,16 +17,17 @@
  * GuiComponent 类型从 @xyz-agent/extension-protocol import（P2 同源）。
  */
 import { isGuiComponent } from '@xyz-agent/extension-protocol'
-import type { GuiComponent } from '@xyz-agent/extension-protocol'
+import type { GuiComponent, WidgetMeta } from '@xyz-agent/extension-protocol'
 import type { InternalEventBus } from './internal-event-bus'
 import type { SessionScopedMap } from './utils/session-scoped-map'
 import type { WidgetPayload } from './types'
 
-/** view 缓存条目（IF10 契约）。 */
+/** view 缓存条目（IF10 契约）。meta 为 widget 宿主元数据（WidgetArea head 渲染），可选。 */
 export interface ViewCacheEntry {
   viewId: string
   pluginId: string
   guiTree: GuiComponent[]
+  meta?: WidgetMeta
   updatedAt: number
 }
 
@@ -107,13 +108,23 @@ export class ViewHostStore {
       return
     }
     const guiTree = this.narrowGuiTree(widget.guiTree)
+    const meta = this.narrowMeta(widget.meta)
     this.setView(sessionId, widget.viewId, {
       viewId: widget.viewId,
       pluginId: widget.pluginId,
       guiTree,
+      ...(meta !== undefined ? { meta } : {}),
       updatedAt: Date.now(),
     })
     this.notifyListeners()
+  }
+
+  /** 窄化 unknown → WidgetMeta：title 是 string 即认（最小形状校验，progress/status
+   *  深度字段由消费端 WidgetArea 按可选处理，脏数据不崩）。非法形状丢弃（undefined）。 */
+  private narrowMeta(raw: unknown): WidgetMeta | undefined {
+    if (raw === null || typeof raw !== 'object') return undefined
+    const obj = raw as Record<string, unknown>
+    return typeof obj.title === 'string' ? (raw as WidgetMeta) : undefined
   }
 
   /** 窄化 unknown[] → GuiComponent[]：isGuiComponent 直存；string 行包装 ansi-text（clarify Q1）。 */

@@ -7,7 +7,7 @@
  */
 
 import type { GoalRuntimeState } from "./engine/types";
-import type { GuiComponent } from "@xyz-agent/extension-protocol";
+import type { GuiRenderResult } from "@xyz-agent/extension-protocol";
 
 // ── GoalHistoryEntry（DTO，非 aggregate，D-09）─────────
 
@@ -38,10 +38,11 @@ export interface UiPort {
 	/** 设置 widget（undefined = 清除）。hasUI=false 时 adapter 跳过（FR-6.6） */
 	setWidget(name: string, content: string[] | string | undefined): void;
 	/**
-	 * 设置 GUI 协议 widget（GuiComponent，RPC 模式经 guiSetWidget marker 编码）。
-	 * TUI 模式 adapter 内部 no-op（走 setWidget 文本行）。undefined = 清除。
+	 * 设置 GUI 协议 widget（GuiRenderResult：component + meta 宿主元数据，
+	 * RPC 模式经 guiSetWidget marker 编码）。TUI 模式 adapter 内部 no-op
+	 * （走 setWidget 文本行）。undefined = 清除。
 	 */
-	setGuiWidget(name: string, component: GuiComponent | undefined): void;
+	setGuiWidget(name: string, result: GuiRenderResult | undefined): void;
 	/** 设置 status bar */
 	setStatus(name: string, text: string | undefined): void;
 	/** 弹通知 */

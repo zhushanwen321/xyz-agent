@@ -30,8 +30,8 @@ import {
 
 const SESSION = 's1'
 
-function makeEntry(viewId: string, guiTree: GuiComponent[]): ViewCacheEntry {
-  return { viewId, pluginId: 'p1', guiTree, updatedAt: 123 }
+function makeEntry(viewId: string, guiTree: GuiComponent[], meta?: ViewCacheEntry['meta']): ViewCacheEntry {
+  return { viewId, pluginId: 'p1', guiTree, updatedAt: 123, ...(meta ? { meta } : {}) }
 }
 
 /**
@@ -220,5 +220,105 @@ describe('WidgetArea（M17 对话流 widget 面板）', () => {
     expect(cards).toHaveLength(1)
     expect(cards[0].text()).toContain('b')
     expect(cards[0].text()).not.toContain('a')
+  })
+
+  // ── v1.1 meta head（单一 head：标题/状态点/进度/折叠）──
+
+  it('TC9 meta head：标题用 meta.title（优先于 viewId）+ 状态点 + 进度计数/mini bar', async () => {
+    const { source } = makeSource({
+      todo: makeEntry(
+        'todo',
+        [{ type: 'list-tree', props: { numbered: true, items: [{ label: 'a', depth: 0 }] } }],
+        { title: 'Todo', status: 'running', progress: { current: 1, total: 3 } },
+      ),
+    })
+    const wrapper = mountArea(source)
+    await nextTick()
+
+    const header = wrapper.find('[data-testid="widget-card-header"]')
+    expect(header.exists()).toBe(true)
+    // 标题：meta.title（"Todo" 大写形态），head 排版 mono 紧凑档
+    expect(header.text()).toContain('Todo')
+    // 进度计数文本（label 缺省 current/total）+ mini bar fill 存在
+    expect(header.text()).toContain('1/3')
+    expect(header.find('[data-testid="widget-head-progress-fill"]').exists()).toBe(true)
+    // 状态点存在（running → bg-accent）
+    const dot = header.find('[data-testid="widget-head-status-dot"]')
+    expect(dot.exists()).toBe(true)
+    expect(dot.classes()).toContain('bg-accent')
+  })
+
+  it('TC10 meta.progress.label 覆盖计数文本；severity 映射 fill 色；done → fill 绿', async () => {
+    const { source } = makeSource({
+      goal: makeEntry(
+        'goal',
+        [{ type: 'ansi-text', props: { lines: ['x'] } }],
+        { title: 'fix-auth', status: 'failed', progress: { current: 95, total: 100, label: '95%', severity: 'danger' } },
+      ),
+    })
+    const wrapper = mountArea(source)
+    await nextTick()
+
+    const header = wrapper.find('[data-testid="widget-card-header"]')
+    expect(header.text()).toContain('95%')
+    expect(header.text()).toContain('fix-auth')
+    const fill = header.find('[data-testid="widget-head-progress-fill"]')
+    expect(fill.classes()).toContain('bg-danger')
+    // failed 状态点 → bg-danger
+    expect(header.find('[data-testid="widget-head-status-dot"]').classes()).toContain('bg-danger')
+
+    // done + 无 severity → fill 绿（success）
+    const { source: s2 } = makeSource({
+      todo: makeEntry(
+        'todo',
+        [{ type: 'ansi-text', props: { lines: ['x'] } }],
+        { title: 'Todo', status: 'done', progress: { current: 3, total: 3 } },
+      ),
+    })
+    const w2 = mountArea(s2)
+    await nextTick()
+    const fill2 = w2.find('[data-testid="widget-head-progress-fill"]')
+    expect(fill2.classes()).toContain('bg-success')
+  })
+
+  it('TC11 无 meta（v1 旧 extension）→ head fallback viewId 标题，无进度无状态点异常', async () => {
+    const { source } = makeSource({
+      legacy: makeEntry('legacy', [{ type: 'ansi-text', props: { lines: ['x'] } }]),
+    })
+    const wrapper = mountArea(source)
+    await nextTick()
+
+    const header = wrapper.find('[data-testid="widget-card-header"]')
+    expect(header.text()).toContain('legacy')
+    // 无 progress → 无计数文本/fill（状态点仍渲染，idle 弱点降级）
+    expect(header.find('[data-testid="widget-head-progress-fill"]').exists()).toBe(false)
+    expect(header.find('[data-testid="widget-head-status-dot"]').classes()).toContain('bg-neutral-dim')
+  })
+
+  it('TC12 卡体可选中复制（select-text）+ head 不可选中（select-none）', async () => {
+    const { source } = makeSource({
+      todo: makeEntry('todo', [{ type: 'ansi-text', props: { lines: ['copy me'] } }]),
+    })
+    const wrapper = mountArea(source)
+    await nextTick()
+
+    // 全局 user-select:none（renderer style.css）下，卡体需显式 select-text 才可复制
+    expect(wrapper.find('[data-testid="widget-card-body"]').classes()).toContain('select-text')
+    expect(wrapper.find('[data-testid="widget-card-header"]').classes()).toContain('select-none')
+  })
+
+  it('TC13 底色层次：head bg-surface-2（header 浮起层）+ 卡体 bg-bg-input（composer 同款凹陷）', async () => {
+    const { source } = makeSource({
+      todo: makeEntry('todo', [{ type: 'ansi-text', props: { lines: ['x'] } }]),
+    })
+    const wrapper = mountArea(source)
+    await nextTick()
+
+    // head 浮起 + body 凹陷的两级 bg 层次（无 border，v6 靠 bg 分组）
+    expect(wrapper.find('[data-testid="widget-card-header"]').classes()).toContain('bg-surface-2')
+    expect(wrapper.find('[data-testid="widget-card"]').classes()).toContain('bg-bg-input')
+    // 卡壳无 border（对齐 Card 原语 v6 裁决：明度差替代边框）
+    const cardClasses = wrapper.find('[data-testid="widget-card"]').classes()
+    expect(cardClasses.some((c) => c.startsWith('border'))).toBe(false)
   })
 })

@@ -298,32 +298,37 @@ describe("updateWidget GUI 协议分支（isGui=true）", () => {
 		return { ui, calls };
 	}
 
-	it("active + isGui + 有预算 → setGuiWidget(card component) + 不调 setWidget TUI lines", () => {
+	it("active + isGui + 有预算 → setGuiWidget(v1.1 result: group + meta) + 不调 setWidget TUI lines", () => {
 		const { ui, calls } = makeGuiUiPort(true, true);
 		const session = createGoalSession();
 		session.state = makeState({ status: "active", budget: { tokenBudget: 10000 } });
 		updateWidget(session, ui);
 		const guiCall = calls.find((c) => c.method === "setGuiWidget" && c.args[0] === "goal");
 		expect(guiCall).toBeDefined();
-		// buildGoalGui().component：有 tokenBudget → card 容器
-		const comp = guiCall!.args[1] as { type: string; props: { body: unknown[] } };
-		expect(comp.type).toBe("card");
-		expect(Array.isArray(comp.props.body)).toBe(true);
+		// v1.1：整个 GuiRenderResult（group 组合根 + meta 宿主元数据，head 由壳层渲染）
+		const result = guiCall!.args[1] as {
+			component: { type: string };
+			meta: { title: string; progress?: { total: number } };
+		};
+		expect(result.component.type).toBe("group");
+		expect(result.meta.progress).toMatchObject({ total: 10000 });
 		// GUI 模式不走 TUI 文本行
 		expect(calls.some((c) => c.method === "setWidget" && c.args[0] === "goal")).toBe(false);
 	});
 
-	it("active + isGui 无预算 → setGuiWidget(card component，body 无 progress-bar)", () => {
+	it("active + isGui 无预算 → setGuiWidget(group，meta 无 progress)", () => {
 		const { ui, calls } = makeGuiUiPort(true, true);
 		const session = createGoalSession();
 		session.state = makeState({ status: "active" });
 		updateWidget(session, ui);
 		const guiCall = calls.find((c) => c.method === "setGuiWidget" && c.args[0] === "goal");
 		expect(guiCall).toBeDefined();
-		// 无 tokenBudget → buildGoalGui 仍统一 card 容器，差异只在 body 无 progress-bar
-		const comp = guiCall!.args[1] as { type: string; props: { body: { type: string }[] } };
-		expect(comp.type).toBe("card");
-		expect(comp.props.body.map((c) => c.type)).not.toContain("progress-bar");
+		const result = guiCall!.args[1] as {
+			component: { type: string };
+			meta: { title: string; progress?: unknown };
+		};
+		expect(result.component.type).toBe("group");
+		expect(result.meta.progress).toBeUndefined();
 	});
 
 	it("cancelled + isGui → setGuiWidget(undefined)", () => {

@@ -67,7 +67,6 @@ export class ContributionRegistry {
     for (const d of descriptors) {
       // ERR5：数据未就绪（runtime 透传归 s3），debug 日志降级，不抛错
       if (!d.contributes && !d.panels) {
-        // eslint-disable-next-line no-console
         console.debug(
           `[ContributionRegistry] ${d.pluginId}: no contributes in descriptor (ERR5 EXTERNAL_CONTRIBUTIONS_MISSING, s3 透传未完成)`,
         )

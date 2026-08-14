@@ -18,9 +18,10 @@ import {
 	type GuiRenderResult,
 	guiResult,
 	type TreeItem,
+	type WidgetMeta,
 } from "@xyz-agent/extension-protocol";
 
-import { SHORT_ID_LENGTH } from "../constants";
+import { PERCENT_FACTOR, SHORT_ID_LENGTH } from "../constants";
 import { getBudgetSeverity } from "../engine/budget";
 import type { GoalRuntimeState, GoalStatus } from "../engine/types";
 import { formatTokens } from "./widget";
@@ -50,15 +51,20 @@ export function goalStatusSeverity(status: GoalStatus): "ok" | "warn" | "danger"
 	}
 }
 
-/**
- * card variant 与 goalStatusSeverity 同语义（原实现只判 blocked，漏了
- * budget_limited/cancelled 两个 danger 级错误终态）：danger 级状态 → danger，
- * complete → success，其余（active/paused）→ default。
- */
-function cardVariant(status: GoalStatus): "default" | "danger" | "success" {
-	if (status === "complete") return "success";
-	if (goalStatusSeverity(status) === "danger") return "danger";
-	return "default";
+/** GoalStatus → head 状态点语义（WidgetMeta.status）。 */
+function metaStatus(status: GoalStatus): WidgetMeta["status"] {
+	switch (status) {
+		case "complete":
+			return "done";
+		case "blocked":
+		case "budget_limited":
+		case "cancelled":
+			return "failed";
+		case "paused":
+			return "idle";
+		case "active":
+			return "running";
+	}
 }
 
 /**
@@ -76,47 +82,28 @@ function splitCriteriaLines(criteria: string | undefined): string[] {
 }
 
 /**
- * 构造 goal 的 GUI 渲染描述符（RPC 模式下经 guiSetWidget 推送给 M17 对话流 widget 面板）。
+ * 构造 goal 的 GUI 渲染描述符（v1.1 meta head 架构）。
  *
- * 逻辑参考 projection/widget.ts 的 renderWidgetLines 预算计算，但此处只构造
- * 结构化数据（GuiComponent），不做 ANSI 渲染。
- *
- * 统一 card 容器（header=slug，variant 按 status 语义），body 组装共享、
- * 按 hasBudget 增减 progress-bar：
- * - 有 tokenBudget → [progress-bar(tokens), stats-line(status/turn), list-tree(criteria)]
- * - 无 budget     → [stats-line(status/turn/tokens), list-tree(criteria)]
+ * - meta（标题=slug / 状态点 / token 进度）由宿主壳层渲染成唯一 head；
+ *   有预算时进度计数用百分比 + 预算阈值 severity（70/90 warn/danger 单源）。
+ * - 内容根 = group（透明组合容器）：stats-line（status/turn，无预算时补 token
+ *   绝对值）+ list-tree（criteria 逐行，无 icon——所有行同 icon 是无信息量装饰，
+ *   不编号——criteria 文本常自带 "1. 2." 编号）。
  */
 export function buildGoalGui(state: GoalRuntimeState): GuiRenderResult {
 	const slug = state.slug ?? state.goalId.slice(0, SHORT_ID_LENGTH);
-	// statusSeverity 按 GoalStatus 完整覆盖（S#2）：
-	//   active/complete → ok；blocked → danger；paused → warn；
-	//   budget_limited/cancelled → danger（预算耗尽/取消是错误终态）
+	// statusSeverity 按 GoalStatus 完整覆盖（S#2），stats-line status item 消费
 	const statusSeverity = goalStatusSeverity(state.status);
 
-	// hasBudget 与进度条判定统一口径：用 > 0 而非 truthy（I#1：tokenBudget=0 不应触发预算展示）
+	// hasBudget 与进度判定统一口径：用 > 0 而非 truthy（I#1：tokenBudget=0 不应触发预算展示）
 	const tokenBudget = state.budget.tokenBudget;
 	const hasBudget = (tokenBudget ?? 0) > 0;
 
-	const body: GuiComponent[] = [];
+	const children: GuiComponent[] = [];
 
-	if (hasBudget) {
-		const tb = tokenBudget!;
-		// tokensUsed 是累计加权浮点（如 1454.8400…1），取整后再进 UI
-		body.push(
-			guiComponent("progress-bar", {
-				label: "tokens",
-				current: Math.round(state.tokensUsed),
-				total: tb,
-				unit: "tok",
-				// H4：阈值经 getBudgetSeverity 单源化（原内联 percent→severity 三元）
-				severity: getBudgetSeverity(state.tokensUsed / tb),
-			}),
-		);
-	}
-
-	// 状态 + turn 统计行；无预算时补 token 绝对值（有预算时进度条已表达，不重复）。
+	// 状态 + turn 统计行；无预算时补 token 绝对值（有预算时 head 进度已表达，不重复）。
 	// token 走 formatTokens（12000 → "12k"），避免浮点原样泄漏到 UI
-	body.push(
+	children.push(
 		guiComponent("stats-line", {
 			items: [
 				{ label: "status", value: state.status, severity: statusSeverity },
@@ -126,21 +113,31 @@ export function buildGoalGui(state: GoalRuntimeState): GuiRenderResult {
 		}),
 	);
 
-	// successCriteria 逐行 checklist（与 objective 成对，让用户看到「怎么算完成」）
+	// successCriteria 逐行呈现（用户看「怎么算完成」）
 	const criteriaLines = splitCriteriaLines(state.successCriteria);
 	if (criteriaLines.length > 0) {
-		body.push(
+		children.push(
 			guiComponent("list-tree", {
-				items: criteriaLines.map((line): TreeItem => ({ icon: "check", label: line, depth: 0 })),
+				items: criteriaLines.map((line): TreeItem => ({ label: line, depth: 0 })),
 			}),
 		);
 	}
 
-	return guiResult(
-		guiComponent("card", {
-			variant: cardVariant(state.status),
-			header: slug,
-			body,
-		}),
-	);
+	const meta: WidgetMeta = {
+		title: slug,
+		status: metaStatus(state.status),
+		...(hasBudget
+			? {
+					progress: {
+						// tokensUsed 是累计加权浮点（如 1454.8400…1），取整后再进 UI
+						current: Math.round(state.tokensUsed),
+						total: tokenBudget!,
+						label: `${Math.round((state.tokensUsed / tokenBudget!) * PERCENT_FACTOR)}%`,
+						severity: getBudgetSeverity(state.tokensUsed / tokenBudget!),
+					},
+				}
+			: {}),
+	};
+
+	return guiResult(guiComponent("group", { children }), meta);
 }
