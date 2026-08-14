@@ -56,14 +56,8 @@ import { findLastAssistantIndex, findToolCallOwner } from '../chunk-processor'
 import { commitMessages } from '../mutations'
 import { truncateToolCall } from '../truncate-tool-output'
 import { bashStartEffect, bashResultEffect } from '../bash-effects'
-import { isDevMode } from '../../../platform/dev-mode'
 // [TODO @i18n-migration] core/i18n 落地后恢复 i18n.global.t 调用（§0.3 列为后续迁移）。
 // 当前 compactionSummary/branchSummary 的 summary 兑底文案用硬编码英文占位（summary 几乎总在场，兑底军见）。
-
-/** debug 日志：status dump 显示最近多少条消息 */
-const DEBUG_TAIL_MSG_COUNT = 5
-/** debug 日志：sid 显示后多少位（截断长 UUID 便于阅读） */
-const SID_TAIL_LENGTH = 8
 
 /**
  * 计数差集：返回 prev 比 next 多出的元素（按出现次数，非子串匹配）。
@@ -142,14 +136,6 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // 且 abort 清空队列时强转会把「被丢弃」误标成「已投递」。已删除。
     queueStates.value.delete(sid)
     const prev = messages.value.get(sid) ?? []
-    // [DEBUG finalize] 场景A诊断：记录 message_start 建新 streaming assistant 时，当前已有多少
-    // streaming assistant。多 turn(tool_use)场景下应看到 streamingCount 递增（每 turn 累积一个），
-    // 若 message_start 到达前 streamingCount 突然变 0（上一轮被提前收口），即闪烁根因点。
-    if (isDevMode()) {
-      const streaming = prev.filter((m) => m.status === 'streaming')
-      const statusDump = prev.slice(DEBUG_TAIL_MSG_COUNT).map((m) => `${m.role[0]}:${m.status}${m.toolCalls ? `(${m.toolCalls.length}tc)` : ''}`)
-      console.log(`[chat-effect] message_start sid=${sid.slice(-SID_TAIL_LENGTH)} existingStreaming=${streaming.length} totalMsgs=${prev.length} lastStatus=[${statusDump.join(',')}]`)
-    }
     const messageId = readString(payload, 'messageId') ?? `a-${crypto.randomUUID()}`
     commitMessages(messages, sid, [
       ...prev,
@@ -172,15 +158,6 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const { messages, finalizeSession } = ctx
     const prev = messages.value.get(sid) ?? []
     const stopReason = readString(payload, 'stopReason')
-    // [DEBUG finalize] 场景A诊断：message.complete 到达时记录 stopReason + 当前所有 streaming
-    // assistant 的 toolCall 状态。复现「同一回合中间闪烁已完成」时，若此处 streamingBefore>0 且
-    // 仍有 toolCall running，说明 message.complete 提前到达（pi/runtime 在 tool 间隙误发了）。
-    if (isDevMode()) {
-      const streaming = prev.filter((m) => m.status === 'streaming')
-      const lastAssistant = prev[prev.length - 1]?.role === 'assistant' ? prev[prev.length - 1] : null
-      const lastTool = lastAssistant?.toolCalls?.[lastAssistant.toolCalls.length - 1]
-      console.warn(`[chat-effect] message.complete sid=${sid.slice(-SID_TAIL_LENGTH)} stopReason=${stopReason} streamingCount=${streaming.length} lastToolStatus=${lastTool?.status ?? 'none'}`, new Error('stack').stack)
-    }
     const isErrorStop = stopReason === 'error'
     // [HISTORICAL] 收口**所有** status==='streaming' 的 assistant 气泡，不只用
     // findLastAssistantIndex 收最后一条。一个 turn 可能产生多个 assistant 气泡
