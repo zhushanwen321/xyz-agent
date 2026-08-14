@@ -194,6 +194,9 @@ export class RecordStore {
   private readonly fileCache = new Map<string, FileCacheValue>();
   /** record id → sessionFile 索引（getFullRecord 按 id 定位文件）。随 fileCache 同步维护。 */
   private readonly idToFile = new Map<string, string>();
+  /** [perf] sessionsDir 最近一次全量扫描的 mtime（快路径判变，见 reconstructAll）。
+   *  null = 未扫过 / 已 dispose。 */
+  private dirStamp: { mtimeMs: number } | null = null;
 
   constructor(
     private readonly sessionsDir: string,
@@ -379,6 +382,7 @@ export class RecordStore {
     this.listeners.clear();
     this.fileCache.clear();
     this.idToFile.clear();
+    this.dirStamp = null;
   }
 
   /** /resume /fork /new 后复活（dispose 的逆操作）。 */
@@ -404,6 +408,34 @@ export class RecordStore {
    * rootSessionId 缺失（旧文件，未带身份字段）一律排除（无法判定归属）。
    */
   private reconstructAll(rootSessionFilter?: string): SubagentRecord[] {
+    // [perf] 目录 mtime 快路径：sessionsDir mtime 未变 ⇒ 文件集合与 sidecar 集合都未变
+    //（任何文件新建/删除/重命名都改目录 mtime），且 jsonl append 不影响 light 态
+    //（identity/status 由首行与 sidecar 决定，进度重数据走 getFullRecord 的独立 stat
+    //校验）→ 跳过 readdir + N×4 statSync，直接复用缓存 light。/subagents overlay 打开
+    //期间 250ms 动画 timer + 120ms debounce 双驱动高频扫描，快路径把 ~N×4 stat 降到
+    // 1 次（目录本身）+ 少量 pid 探活（refreshAlive，内存无 IO）。
+    // 已知局限（与 mtime 缓存同族）：目录 mtime 粒度粗糙的文件系统（NFS/2s FAT）
+    // 可能漏判——APFS 微秒级可靠；invalidate 语义由文件写入侧保证（sidecar 写入
+    //必改目录 mtime）。
+    let dirMtimeMs: number;
+    try {
+      dirMtimeMs = fs.statSync(this.sessionsDir).mtimeMs;
+    } catch {
+      return [];
+    }
+    if (this.dirStamp !== null && this.dirStamp.mtimeMs === dirMtimeMs) {
+      const now = Date.now();
+      const out: SubagentRecord[] = [];
+      for (const entry of this.fileCache.values()) {
+        if (entry.negative) continue;
+        RecordStore.refreshAlive(entry, now);
+        out.push(entry.light);
+      }
+      return rootSessionFilter === undefined
+        ? out
+        : out.filter((r) => r.rootSessionId === rootSessionFilter);
+    }
+
     let files: string[];
     try {
       files = fs.readdirSync(this.sessionsDir)
@@ -428,6 +460,7 @@ export class RecordStore {
       const entry = this.scanFile(file, now);
       if (entry) out.push(entry.light);
     }
+    this.dirStamp = { mtimeMs: dirMtimeMs };
     if (rootSessionFilter === undefined) return out;
     return out.filter((r) => r.rootSessionId === rootSessionFilter);
   }
@@ -460,14 +493,7 @@ export class RecordStore {
       if (cached.negative) return null; // 负缓存命中：确认无 identity，零读取跳过
       // pid 探活结果不落盘（进程死亡无 IO）——分支 3 的 running 项每扫重查，
       // 保留原语义（旧实现每次 collectRecords 都重新 isProcessAlive）。
-      if (cached.alive !== null && cached.light.status === "running") {
-        const marker = cached.aliveData;
-        if (marker) {
-          const live =
-            isProcessAlive(marker.pid) && now - marker.startedAt < ALIVE_SOFT_TIMEOUT_MS;
-          cached.light.externalInstance = live ? marker : undefined;
-        }
-      }
+      RecordStore.refreshAlive(cached, now);
       return cached;
     }
 
@@ -553,6 +579,17 @@ export class RecordStore {
       }
     }
     return entry.full;
+  }
+
+  /** alive 探活刷新（scanFile 缓存命中与 reconstructAll 快路径共用）：
+   *  分支 3 的 running + alive 条目每扫重查 pid（结果不落盘，进程死亡无 IO），
+   *  保留旧实现「每次 collectRecords 重新 isProcessAlive」的语义。 */
+  private static refreshAlive(entry: FileCacheEntry, now: number): void {
+    if (entry.alive === null || entry.light.status !== "running") return;
+    const marker = entry.aliveData;
+    if (!marker) return;
+    const live = isProcessAlive(marker.pid) && now - marker.startedAt < ALIVE_SOFT_TIMEOUT_MS;
+    entry.light.externalInstance = live ? marker : undefined;
   }
 
   /** identity 基底（头部 light 或全量 recon）+ 四分支 sidecar 状态矩阵 → SubagentRecord。 */

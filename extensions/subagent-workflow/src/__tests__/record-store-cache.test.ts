@@ -284,4 +284,43 @@ describe("RecordStore per-file cache + light scan [perf]", () => {
     expect(full?.result).toBe("live result");
     expect(full?.turns).toBe(7);
   });
+
+  // [perf] 目录 mtime 快路径：/subagents overlay 打开期间高频扫描（250ms 动画 timer
+  // + 120ms debounce），目录未变时跳过 readdir + N×4 statSync，直接复用缓存 light。
+  // 正确性依据：文件新建/删除/重命名/sidecar 写入都改目录 mtime；jsonl append 不改
+  // 目录 mtime 且不影响 light 态（identity/status 由首行与 sidecar 决定）。
+  it("D1: jsonl append（目录 mtime 不变）→ 快路径复用 light，记录不丢不变形", () => {
+    writeSession({ name: "a.jsonl", id: "sa-1", assistantTexts: ["r1"] });
+
+    const first = store.collectRecords(100, "all", "root-1");
+    expect(first).toHaveLength(1);
+
+    // running 文件持续 append（子进程写输出）——目录 mtime 不变 → 快路径
+    fs.appendFileSync(
+      path.join(sessionsDir, "a.jsonl"),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-08-14T00:02:00.000Z",
+        message: { role: "assistant", content: [{ type: "text", text: "streaming" }], usage: { input: 1, output: 1 }, stopReason: "stop", timestamp: 3000 },
+      }) + "\n",
+    );
+    const second = store.collectRecords(100, "all", "root-1");
+    expect(second).toHaveLength(1);
+    expect(second[0]?.id).toBe("sa-1");
+    expect(second[0]?.status).toBe("running"); // light 态不受 append 影响
+
+    // 详情走 getFullRecord 独立 stat 校验，仍能看到 append 后的完整数据
+    const full = store.getFullRecord("sa-1");
+    expect(full?.result).toContain("streaming");
+  });
+
+  it("D2: 新文件出现（目录 mtime 变）→ 快路径失效全扫发现（跨进程可见性保持）", () => {
+    writeSession({ name: "a.jsonl", id: "sa-1", assistantTexts: ["r1"] });
+    expect(store.collectRecords(100, "all", "root-1")).toHaveLength(1); // 建立快路径基准
+
+    // 外部进程写入新 session 文件
+    writeSession({ name: "ext.jsonl", id: "sa-ext", assistantTexts: ["ext"] });
+    const ids = store.collectRecords(100, "all", "root-1").map((r) => r.id).sort();
+    expect(ids).toEqual(["sa-1", "sa-ext"]);
+  });
 });

@@ -243,6 +243,30 @@ function findRunningToolCall(
 }
 
 /**
+ * [perf] running toolCall 倒序索引：tool_start push 位置入索引，tool_end 弹尾定位
+ *（尾部 = 最后 push 的同名项，与 findRunningToolCall 倒序全扫的语义等价），把每次
+ * tool_end 的 O(所有 turns × toolCalls) 扫描降为 O(1)。WeakMap 按 record 实例隔离
+ *（createRecord 新实例从空索引开始，不影响旧实例）。
+ * 索引 miss（重建 record 的历史 running toolCall / 外部注入工具无 tool_start）
+ * 回退 findRunningToolCall 全扫兜底——正确性不依赖索引完整性。
+ */
+const runningToolIndex = new WeakMap<ExecutionRecord, Map<string, Array<{ turn: Turn; idx: number }>>>();
+
+function indexToolStart(record: ExecutionRecord, turn: Turn, toolName: string): void {
+  let byName = runningToolIndex.get(record);
+  if (byName === undefined) {
+    byName = new Map();
+    runningToolIndex.set(record, byName);
+  }
+  const arr = byName.get(toolName);
+  if (arr === undefined) {
+    byName.set(toolName, [{ turn, idx: turn.toolCalls.length - 1 }]);
+  } else {
+    arr.push({ turn, idx: turn.toolCalls.length - 1 });
+  }
+}
+
+/**
  * 从 AgentEvent 更新 record。所有数据收口进 record.turns[]。
  *   - text/thinking：流式累积进 currentTurn()（完整内容，非切片）
  *   - tool_start/end：push 进 currentTurn().toolCalls（含完整 result）
@@ -280,13 +304,30 @@ export function updateFromEvent(record: ExecutionRecord, event: AgentEvent): voi
         _status: "running",
         startedTs: Date.now(),
       };
-      currentTurn(record).toolCalls.push(tc);
+      const turn = currentTurn(record);
+      turn.toolCalls.push(tc);
+      indexToolStart(record, turn, event.toolName);
       return;
     }
 
-    // ── tool_end：跨 turn 找 running 同名 toolCall，补全 result/isError/_status ──
+    // ── tool_end：索引弹尾 O(1) 定位 running 同名 toolCall，miss 回退全扫兜底 ──
     case "tool_end": {
-      const matched = findRunningToolCall(record, event.toolName);
+      let matched: readonly [Turn, number] | undefined;
+      const byName = runningToolIndex.get(record);
+      const arr = byName?.get(event.toolName);
+      if (arr !== undefined && arr.length > 0) {
+        const item = arr[arr.length - 1]!;
+        arr.pop();
+        const tc = item.turn.toolCalls[item.idx];
+        if (tc !== undefined && tc._status === "running") {
+          matched = [item.turn, item.idx] as const;
+        }
+      }
+      if (matched === undefined) {
+        // 兜底：重建 record 的历史 running toolCall（索引未覆盖）、索引项被外部路径
+        // 置非 running 等场景——保持与旧实现一致的跨 turn 倒序全扫。
+        matched = findRunningToolCall(record, event.toolName);
+      }
       if (matched !== undefined) {
         const [turn, i] = matched;
         const tc = turn.toolCalls[i]!;

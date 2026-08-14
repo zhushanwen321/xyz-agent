@@ -957,3 +957,54 @@ describe("projectLiveProgress (T3.21)", () => {
     expect(result.lastError).toBe("something went wrong");
   });
 });
+
+// ============================================================
+// tool_end running 索引 [perf]
+// ============================================================
+// 索引弹尾必须与旧实现「倒序全扫找最后一个 running 同名」语义等价：
+// 同名并发 toolCall 的 tool_end 交错到达时按 LIFO 配对，配对结果写回正确槽位。
+describe("tool_end running index [perf]", () => {
+  const start = (record: ExecutionRecord, name: string, args: Record<string, unknown> = {}) =>
+    updateFromEvent(record, { type: "tool_start", toolName: name, args });
+
+  const end = (record: ExecutionRecord, name: string, result: string) =>
+    updateFromEvent(record, { type: "tool_end", toolName: name, result, isError: false });
+
+  it("同名并发两个 toolCall：tool_end LIFO 配对，结果写回各自槽位", () => {
+    const record = makeRecord();
+    start(record, "bash", { cmd: "first" });
+    start(record, "bash", { cmd: "second" });
+
+    // 第一个 end 配对最后 push 的 running 同名（second）——与旧倒序全扫一致
+    end(record, "bash", "result-for-second");
+    const calls = record.turns[0]!.toolCalls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({ args: { cmd: "first" }, _status: "running" });
+    expect(calls[1]).toMatchObject({ result: "result-for-second", _status: "done" });
+
+    // 第二个 end 配对剩下的 first
+    end(record, "bash", "result-for-first");
+    expect(calls[0]).toMatchObject({ result: "result-for-first", _status: "done" });
+    expect(calls[1]).toMatchObject({ result: "result-for-second", _status: "done" });
+  });
+
+  it("索引 miss（无 tool_start 的外部注入 tool_end）→ fallback 全扫后 push 幽灵条目", () => {
+    const record = makeRecord();
+    end(record, "external_tool", "injected");
+    const calls = record.turns[0]!.toolCalls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ toolName: "external_tool", result: "injected", _status: "done" });
+  });
+
+  it("跨 turn 滞后 tool_end：索引跨 turn 命中（与旧全扫语义一致）", () => {
+    const record = makeRecord();
+    start(record, "read");            // turn 0 内 running
+    updateFromEvent(record, { type: "turn_end" }); // 闭合 turn 0，开 turn 1
+    start(record, "write");           // turn 1
+    end(record, "write", "w-done");   // 正常配对 turn 1
+    end(record, "read", "r-done");    // 滞后 end 配对 turn 0（跨 turn 兜底）
+
+    expect(record.turns[0]!.toolCalls[0]).toMatchObject({ toolName: "read", result: "r-done", _status: "done" });
+    expect(record.turns[1]!.toolCalls[0]).toMatchObject({ toolName: "write", result: "w-done", _status: "done" });
+  });
+});
