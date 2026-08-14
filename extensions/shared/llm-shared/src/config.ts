@@ -7,6 +7,16 @@
  *
  * 路径解析用 pi 导出的 getAgentDir（尊重 PI_CODING_AGENT_DIR 覆盖），禁止自实现 ——
  * permission/config.ts:18-22 有重复自实现待 P3 清理，本库直接用 pi 导出版。
+ *
+ * ── 热重载契约（consumer 必读） ──
+ * 本库的 loadConfig 提供「读时刷新（pull-based）热重载」：每次调用 statSync 文件 mtime+size，
+ * 变了才重读+重新 normalize，没变返回深拷贝（成本≈一次 metadata stat，不读文件内容）。
+ * 这是框架对 consumer 统一提供的热重载能力——consumer 应在【每次需要配置时直接调 loadConfig】，
+ * 禁止在上层套手动缓存/闭包缓存（如 `let config = loadXxx()` + 手动 refresh 调用点），否则阻断
+ * 读时刷新，导致「同进程内改文件不生效」。
+ * 历史教训：permission 曾用闭包缓存架空了 loadConfig 的读时刷新——tool_call handler 拿闭包
+ * 里的旧 config，传了 refresh 参数却未调用（_refreshConfig 下划线=未用），同一 session 改配置
+ * 文件后下次工具调用仍用旧 config。正确范式见 rename-session（每次 turn_end 直接 load）。
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
@@ -63,6 +73,10 @@ function clone<T>(value: T): T {
  *
  * 降级：文件不存在 → defaults；坏 JSON / normalize throw → defaults（onWarning 回调）。
  * 坏文件也更新缓存 mtime+size（缓存 defaults），避免每次重读损坏文件；mtime 变化时缓存自动失效。
+ *
+ * 【热重载契约】本函数自带读时刷新：文件 mtime/size 变化时自动重读。consumer 每次需要配置直接
+ * 调用本函数即可（文件未变时零额外 IO——只 statSync 不读内容），禁止在上层套闭包/手动缓存阻断
+ * 刷新。详见文件头「热重载契约」段。
  */
 export function loadConfig<T>(
 	pkgName: string,

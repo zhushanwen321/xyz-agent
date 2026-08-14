@@ -7,7 +7,8 @@
  *  - G5：显式 approvalChain promise chain 串行化（Pi 不保证 tool_call handler 串行，
  *    但权限检查涉及共享状态/UI 对话框，必须串行避免竞态）。
  *  - fail-closed：handler 异常 → block + reason（不放行）。
- *  - session 隔离：config 在 session_start 重建的闭包，每 session 独立。
+ *  - session 隔离：每 session 独立扩展工厂闭包；config 不持有跨调用缓存，每次读时刷新
+ *    （直接 loadAndWatchConfig，llm-shared mtime 去重零成本，见 config.ts「热重载契约」）。
  *  - yolo 快速路径：mode=yolo 或 enabled=false → 直接 return undefined（不跑管道）。
  */
 
@@ -37,6 +38,9 @@ import type { PermissionConfig } from "./types.js";
 // 模块级 once flag 防同进程重复触发；agentDir 由 getAgentDir() 推导（尊重 PI_CODING_AGENT_DIR）。
 let configMigrationChecked = false;
 
+/** 默认配置 warning 回调（loadAndWatchConfig 共用，透传 console.warn）。 */
+const defaultConfigWarn = (msg: string): void => console.warn(msg);
+
 // ──────────────────────── tool_call event 最小子集 ────────────────────────
 
 /**
@@ -60,41 +64,30 @@ interface ToolCallResult {
 // ──────────────────────── 扩展工厂 ────────────────────────
 
 /**
- * 扩展工厂。每个 session 独立闭包状态（遵循 Pi session 隔离约束，
- * 不用模块级 let 避免多 session 共享）。
+ * 扩展工厂。每个 session 独立工厂闭包；config 不持有跨调用缓存，每次读时刷新
+ * （llm-shared mtime 去重零成本，详见 config.ts「热重载契约」）。
  */
 export default function permissionExtension(pi: ExtensionAPI): void {
-	// ──────────────────────── 闭包状态（每 session 独立） ────────────────────────
-	let config: PermissionConfig = loadAndWatchConfig((msg) => {
-		console.warn(msg);
-	});
-
 	// W7：注入 listAvailableModels 真实实现（model-picker.ts 默认返回空 Map）。
 	// E2 签名：(ctx, onWarning?) → ctx.modelRegistry.getAll() + hasConfiguredAuth 过滤；warning 透传到 console.warn。
 	setDefaultListAvailableModels((ctx, onWarning) =>
-		listAvailableModels(ctx, onWarning ?? ((m) => console.warn(m))),
+		listAvailableModels(ctx, onWarning ?? defaultConfigWarn),
 	);
 
-	/** 读取最新配置到闭包变量（mtime 缓存内部去重，未变化不读 fs） */
-	function refreshConfig(): void {
-		config = loadAndWatchConfig((msg) => console.warn(msg));
-	}
+	// ──────────────────────── 配置读取（读时刷新，回归 llm-shared 框架） ────────────────────────
+	// 不持有跨调用缓存：每次需要配置直接 loadAndWatchConfig()，llm-shared 内部 mtime+size 去重，
+	// 文件未变时零额外 IO（只 statSync）。这是 llm-shared config「热重载契约」的正确用法——
+	// 见 extensions/shared/llm-shared/src/config.ts 文件头。
+	// （历史：曾用 `let config` 闭包 + 手动 refreshConfig 调用点，架空了读时刷新，同一 session 改文件不生效。）
 
-	// ──────────────────────── session_start：迁移配置 + 重载 ────────────────────────
+	// ──────────────────────── session_start：迁移旧路径配置 ────────────────────────
 	pi.on("session_start", (_event: unknown) => {
 		// [MIGRATION] Added in v1.0.0. Remove after v2.0.0.
-		// 先迁再 loadConfig（同进程首次 session_start 迁移改写文件后，refreshConfig 读到迁移后内容）。
 		if (!configMigrationChecked) {
 			configMigrationChecked = true;
 			migrateLegacyConfig(getAgentDir(), "permission-config.json", "config/permission-ext-config.json");
 		}
-		refreshConfig();
-	});
-
-	// ──────────────────────── session_tree：分支切换后重载配置 ────────────────────────
-	// 分支切换（worktree/leaf 变化）后重载 config（用户可能在分支里手动改过 permission 配置）。
-	pi.on("session_tree", (_event: unknown) => {
-		refreshConfig();
+		// 无需手动刷新：去闭包后每次 loadAndWatchConfig 读时刷新；迁移改写文件后下次读取自动生效。
 	});
 
 	// ──────────────────────── /permission 命令 ────────────────────────
@@ -114,8 +107,8 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 			return trimmed === "" ? opts : opts.filter((o) => o.label.startsWith(trimmed));
 		},
 		handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
-			// 命令执行前重载配置（确保最新，用户可能手动改过文件）
-			refreshConfig();
+			// 读时刷新：命令执行时读最新 config（llm-shared mtime 去重）。
+			const config = loadAndWatchConfig(defaultConfigWarn);
 			const trimmed = (args ?? "").trim();
 			// W8：/permission rule → overlay CRUD 编辑 userRules（异步路径）
 			if (trimmed === "rule") {
@@ -141,13 +134,7 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 					config,
 					makeNextIdCounter(config.userRules),
 					{
-						save: (newConfig) => {
-							const result = saveConfig(newConfig);
-							if (result.success) {
-								config = newConfig; // 更新闭包状态
-							}
-							return result;
-						},
+						save: (newConfig) => saveConfig(newConfig),
 						editRulesViaOverlay: (ctx, initialRules, sessionIdCounter, rpcDeps) =>
 							editRulesViaOverlay(ctx, initialRules, sessionIdCounter, rpcDeps),
 					},
@@ -179,25 +166,17 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 					config,
 					{
 						listModels: (pickerCtx) => listAvailableModels(pickerCtx, (m) => console.warn(m)),
-						save: (newConfig) => {
-							const result = saveConfig(newConfig);
-							if (result.success) {
-								config = newConfig; // 更新闭包状态
-							}
-							return result;
-						},
+						save: (newConfig) => saveConfig(newConfig),
 					},
 				);
 				return;
 			}
 			// 原同步路径（yolo/auto/approve/strict/status/无参）
-			const message = handlePermissionCommand(args, config, (newConfig) => {
-				const result = saveConfig(newConfig);
-				if (result.success) {
-					config = newConfig; // 更新闭包状态
-				}
-				return result;
-			});
+			const message = handlePermissionCommand(
+				args,
+				config,
+				(newConfig: PermissionConfig) => saveConfig(newConfig),
+			);
 			ctx.ui.notify(message, "info");
 		},
 	});
@@ -208,7 +187,9 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 	let approvalChain: Promise<ToolCallResult | undefined> = Promise.resolve(undefined);
 
 	pi.on("tool_call", (event: unknown, ctx: ExtensionContext): Promise<ToolCallResult | undefined> => {
-		const run = (): Promise<ToolCallResult | undefined> => processToolCall(event, ctx, () => config, refreshConfig);
+		// 读时刷新：每次 tool_call 读最新 config（llm-shared mtime 去重零成本；去闭包后改文件即生效）。
+		const run = (): Promise<ToolCallResult | undefined> =>
+			processToolCall(event, ctx, () => loadAndWatchConfig(defaultConfigWarn));
 		// 串行：前一个完成（无论 resolve/reject）后才跑下一个。失败不影响后续。
 		approvalChain = approvalChain.then(run, run);
 		return approvalChain;
@@ -226,14 +207,12 @@ export default function permissionExtension(pi: ExtensionAPI): void {
  *
  * @param event tool_call event（duck typing 为 ToolCallEventLike）
  * @param ctx Pi ExtensionContext
- * @param getConfig 获取最新 config 的闭包（session 隔离）
- * @param _refreshConfig 重载配置（保留参数位，便于未来扩展）
+ * @param getConfig 获取最新 config（读时刷新：调用方每次传 loadAndWatchConfig，llm-shared mtime 去重）
  */
 async function processToolCall(
 	event: unknown,
 	ctx: ExtensionContext,
 	getConfig: () => PermissionConfig,
-	_refreshConfig: () => void,
 ): Promise<ToolCallResult | undefined> {
 	const cfg = getConfig();
 
