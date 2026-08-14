@@ -414,6 +414,10 @@ export default {
     loadRecommendedFailed: 'Failed to load recommended extensions: {msg}',
     autoUpgradeFailed: 'Failed to set auto-upgrade: {msg}',
     cancelInstallTempHint: ' (temp files may not be cleaned)',
+    // Plugin contributions sub-page (M16, 04-settings-and-visual.md scenario E)
+    contributionsEntry: 'Plugin Contributions',
+    contributionsTitle: 'Plugin Contributions',
+    contributionsDesc: 'View plugin mount point contributions and availability',
   },
   // ── System page (SystemPage) ──
   system: {

@@ -35,6 +35,8 @@ describe('U10: settings UI 文案经 i18n 渲染', () => {
     // extension
     expect(i18n.global.t('settings.extension.recommendedTitle')).toBe('推荐扩展')
     expect(i18n.global.t('settings.extension.discoverResultTitle', { count: 2 })).toBe('发现 2 个候选')
+    expect(i18n.global.t('settings.extension.contributionsEntry')).toBe('插件贡献')
+    expect(i18n.global.t('settings.extension.contributionsDesc')).toBe('查看插件挂载点贡献与可用性')
     // system 页（含字体大小新增 key）
     expect(i18n.global.t('settings.system.fontLarge')).toBe('大')
     expect(i18n.global.t('settings.system.shortcutTitle')).toBe('快捷键')
@@ -62,6 +64,8 @@ describe('U10: settings UI 文案经 i18n 渲染', () => {
     expect(i18n.global.t('settings.providerEdit.testOk', { count: 3 })).toBe('Connection successful, found 3 models')
     expect(i18n.global.t('settings.extension.recommendedTitle')).toBe('Recommended')
     expect(i18n.global.t('settings.extension.discoverResultTitle', { count: 2 })).toBe('Found 2 candidates')
+    expect(i18n.global.t('settings.extension.contributionsEntry')).toBe('Plugin Contributions')
+    expect(i18n.global.t('settings.extension.contributionsDesc')).toBe('View plugin mount point contributions and availability')
     expect(i18n.global.t('settings.system.fontLarge')).toBe('Large')
     expect(i18n.global.t('settings.system.shortcutTitle')).toBe('Shortcuts')
     expect(i18n.global.t('settings.resource.discovered', { label: 'Skill' })).toBe('Discovered Skill')

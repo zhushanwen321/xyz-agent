@@ -11,6 +11,17 @@
         <h1 class="title">{{ t('settings.menu.extension') }}</h1>
         <p class="desc">{{ t('settings.menu.extensionDesc') }}</p>
       </div>
+      <!-- 插件贡献子页入口（M16）：SettingsModal 按 extensionView 切换子页，本页 emit 通知切换。 -->
+      <div class="head-actions">
+        <Button
+          size="dense"
+          class="rounded-sm text-[12px]"
+          data-testid="extension-contributions-entry"
+          @click="emit('open-contributions')"
+        >
+          {{ t('settings.extension.contributionsEntry') }}
+        </Button>
+      </div>
     </header>
 
     <!-- 加载路径（Phase 4）：共享 LoadPaths 组件，kind=extension。
@@ -37,6 +48,7 @@ import { provide } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { SkillDirConfig } from '@xyz-agent/shared'
 import { LoadPaths, SETTINGS_CONFIG_API_KEY, SETTINGS_CHOOSE_DIRECTORY_KEY } from '@xyz-agent/ui/features/settings'
+import { Button } from '@/components/ui/button'
 import { config } from '@/api'
 import { chooseDirectory } from '@/lib/ipc'
 
@@ -50,6 +62,7 @@ import ExtensionInstallFlow from './ExtensionInstallFlow.vue'
 import ExtensionList from './ExtensionList.vue'
 
 defineProps<{ extensions: ExtensionItem[] }>()
+const emit = defineEmits<{ 'open-contributions': [] }>()
 const settingsStore = getSettingsStore()
 const { extensionDirs } = settingsStore
 const { error: toastError } = useToast()

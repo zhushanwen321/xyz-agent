@@ -51,18 +51,22 @@ import {
 import { getState as getWsState } from '@/lib/ws-client'
 import {
   DIALOG_REQUEST_SOURCE_KEY,
+  PluginSettingsDataSourceKey,
   STATUS_BAR_SOURCE_KEY,
   UI_RESPONSE_TRANSPORT_KEY,
   VIEW_HOST_SOURCE_KEY,
   VIEWS_SOURCE_KEY,
   OVERLAY_LIFECYCLE_KEY,
+  type ContributionInfo,
 } from '@xyz-agent/ui/extension-host'
 import { SLASH_COMMAND_SOURCE_KEY } from '@/components/panel/command-popover-source'
 import { createDialogRequestSource, createUiResponseTransport } from './extension-host-dialog'
 import type { ServerMessage } from '@xyz-agent/shared'
 import { onCrossSession, onGlobal } from '@/api/events'
+import { onPlugins } from '@/api/domains/plugin'
 import * as transport from '@/api/transport'
 import { useToast } from '@/composables/useToast'
+import type { ContributionRecord } from '@xyz-agent/core'
 
 /** 把 renderer 的 WS 消息流（events 通道的 plugin:/extension: 下行）适配成 PluginMessageSource。 */
 
@@ -195,6 +199,24 @@ function ensureMountPointsSync(mountPoints: MountPointRegistry): void {
 }
 
 /**
+ * 挂载点注册态 → ContributionInfo 映射（M16，PluginSettingsPage 数据源）。
+ *
+ * available = 挂载点已注册（MountPointRegistry SSOT）；未注册 → available=false + reason
+ * （置灰 + 原因，04-settings-and-visual.md 场景 E AC3）。纯函数便于单测（TC2）。
+ */
+export function toContributionInfos(
+  records: ContributionRecord[],
+  mountPoints: MountPointRegistry,
+): ContributionInfo[] {
+  return records.map((c) => ({
+    id: c.contributionId,
+    type: c.type,
+    available: mountPoints.has(c.placement),
+    reason: mountPoints.has(c.placement) ? undefined : `挂载点 ${c.placement} 未注册`,
+  }))
+}
+
+/**
  * 装配 ExtensionHost bridge（main.ts 挂载前调用一次，app.provide 全局注入）。
  *
  * 返回 stores/registries 供调试与后续接线（§12.3 dialog 闭环复用同一 bus）。
@@ -307,6 +329,14 @@ export function initExtensionHostBridge(app: App): {
       // （重载签名要求 string，受控断言仅类型擦除，运行时 undefined 走兜底分区）
       return statusBarController.getItems('per-session', sessionId as string)
     },
+  })
+  // PluginSettingsPage 数据源（M16，04-settings-and-visual.md §3.1）：onPlugins 委托 api 域
+  // （config.plugins 广播订阅），getContributions 委托 ContributionRegistry + MountPointRegistry
+  // （toContributionInfos：未注册挂载点 → 置灰 + 原因，场景 E AC3）。
+  app.provide(PluginSettingsDataSourceKey, {
+    onPlugins,
+    getContributions: (pluginId) =>
+      toContributionInfos(contributions.getContributions({ pluginId }), mountPoints),
   })
   // CompanionBand 数据源：bus 'ui-request' 适配（无 sid 跳过 / askUser 过滤）+ 回传双通道（FR2/FR7）
   app.provide(DIALOG_REQUEST_SOURCE_KEY, createDialogRequestSource(bus))

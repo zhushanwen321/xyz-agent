@@ -414,6 +414,10 @@ export default {
     loadRecommendedFailed: '加载推荐扩展失败: {msg}',
     autoUpgradeFailed: '设置自动升级失败: {msg}',
     cancelInstallTempHint: '（临时文件可能未清理）',
+    // ── 插件贡献子页（M16，04-settings-and-visual.md 场景 E）──
+    contributionsEntry: '插件贡献',
+    contributionsTitle: '插件贡献',
+    contributionsDesc: '查看插件挂载点贡献与可用性',
   },
   // ── System 页（SystemPage）──
   system: {

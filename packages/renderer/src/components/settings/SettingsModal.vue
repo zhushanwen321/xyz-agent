@@ -114,7 +114,8 @@
             :dirs="agentDirs"
             @update-dirs="onUpdateAgentDirs"
           />
-          <ExtensionPage v-else-if="activeMenu === 'extension'" :key="activeMenu" :extensions="extensions" />
+          <ExtensionPage v-else-if="activeMenu === 'extension' && extensionView === 'main'" :key="activeMenu" :extensions="extensions" @open-contributions="extensionView = 'contributions'" />
+          <PluginContributionsPage v-else-if="activeMenu === 'extension' && extensionView === 'contributions'" :key="'plugin-contributions'" @back="extensionView = 'main'" />
           <SystemPage v-else-if="activeMenu === 'system'" :key="activeMenu" :system="system" @update="onSystemUpdate" />
           <SystemPromptPage v-else-if="activeMenu === 'system-prompt'" :key="activeMenu" />
           <TerminalPage v-else-if="activeMenu === 'terminal'" :key="activeMenu" />
@@ -140,6 +141,7 @@ import type { SkillDirConfig } from '@xyz-agent/shared'
 import ProviderPage from './provider/ProviderPage.vue'
 import SettingsResourcePage from './resource/SettingsResourcePage.vue'
 import ExtensionPage from './extension/ExtensionPage.vue'
+import PluginContributionsPage from './extension/PluginContributionsPage.vue'
 import SystemPage from './system/SystemPage.vue'
 import SystemPromptPage from './system/SystemPromptPage.vue'
 import TerminalPage from './terminal/TerminalPage.vue'
@@ -170,6 +172,8 @@ const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 
 const activeMenu = ref<MenuId>('provider')
+/** extension 域子视图（M16）：main=扩展管理 ExtensionPage / contributions=插件贡献 PluginContributionsPage。 */
+const extensionView = ref<'main' | 'contributions'>('main')
 const currentMenu = computed(() => menus.find((m) => m.id === activeMenu.value) ?? menus[0])
 
 const settingsStore = getSettingsStore()
@@ -217,6 +221,8 @@ function select(id: MenuId): void {
   activeMenu.value = id
   // 切 nav 时内容列滚动回顶部
   contentEl.value?.scrollTo({ top: 0 })
+  // 离开 extension 域时还原子视图（重进默认扩展管理页）
+  if (id !== 'extension') extensionView.value = 'main'
 }
 
 function getItemCount(id: string): number {
