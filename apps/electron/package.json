@@ -11,7 +11,7 @@
   "type": "module",
   "main": "dist/main/main.cjs",
   "scripts": {
-    "dev": "node scripts/electron-ensure.mjs && pnpm run prepare-builtin-extensions && node ../../scripts/verify-staged-extensions.mjs && concurrently \"pnpm run dev:vite\" \"pnpm run dev:electron\"",
+    "dev": "node scripts/electron-ensure.mjs && concurrently \"pnpm run dev:vite\" \"pnpm run dev:electron\"",
     "dev:mock": "node scripts/electron-ensure.mjs && VITE_MOCK=true XYZ_MOCK=1 concurrently \"pnpm run dev:vite\" \"pnpm run dev:electron\"",
     "dev:vite": "pnpm --filter @xyz-agent/frontend run dev",
     "dev:electron": "pnpm run build:main && pnpm run build:preload && node scripts/dev-electron.mjs . --remote-debugging-port=9222",

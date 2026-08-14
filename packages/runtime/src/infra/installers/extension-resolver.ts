@@ -19,6 +19,7 @@ import { join, dirname, basename, resolve } from 'node:path'
 import { getNpmDir, getExtensionsDir } from '../pi/pi-paths.js'
 import { canonicalizePath } from '../../utils/path-utils.js'
 import { readSettings } from '../pi/pi-settings-store.js'
+import { mandatoryExtensions } from '@xyz-agent/shared'
 import type { IExtensionResolver, ExtensionPaths, DiscoveredExtension, ExtensionSource } from '../../services/ports/installer.js'
 
 // re-export ExtensionPaths 供历史 import 此文件的消费者使用（类型归属 ports）
@@ -187,34 +188,48 @@ export class ExtensionResolver implements IExtensionResolver {
   }
 
   /**
-   * 扫描 bundled extensions（builtin pi-* 包，打包内置）
+   * 扫描 bundled extensions（builtin pi-* 包）
    *
-   * dev 与 packaged 同源——都读 prepare-builtin-extensions.sh 的 staged 产物：
-   *   packaged：Resources/extensions/@zhushanwen/<pkg>/（electron-builder extraResources 拷贝）
-   *   dev：apps/electron/resources/extensions/@zhushanwen/<pkg>/（脚本直接产出）
-   * 两者目录结构一致（@zhushanwen/pi-* scope + 真实运行时 deps，不含 peerDeps），
-   * 保证开发期所见即生产期所得。
+   * dev/build 加载路径分流（见 docs/architecture/builtin-extension-dev-build-split.md）：
+   *   - packaged（build）：读 electron-builder extraResources 拷贝的 staged bundle
+   *     （Resources/extensions/@zhushanwen/<pkg>/，esbuild 全量 bundle 的自包含 index.js）。
+   *   - dev：读源码目录 extensions/<pkg>/（repo root，pi 原生加载 .ts），
+   *     改源码后新建 session 即生效，无需跑 prepare-builtin-extensions.sh。
    *
-   * [HISTORICAL] dev 模式曾读 repoRoot/resources/pi/agent/extensions/（projectRoot/../..
-   * /resources/pi/agent/extensions/）。该目录只含 bridge（仅 index.ts，无 package.json，
-   * isValidPiExtension 返回 false），导致 dev 下 scanBundledExtensions 恒返回空，
-   * ExtensionPage 显示「暂无扩展」——而磁盘上 staged builtins 实有 9 个有效包。
-   * 修复：dev 分支指向同一 staged 目录（apps/electron/resources/ 被 .gitignore 忽略，
-   * 开发者需先跑 prepare-builtin-extensions.sh；未跑时 existsSync 兜底返回空，
-   * 与旧行为一致，不破坏全新 dev 环境）。
+   * dev 源码扫描只保留 mandatory 包（对齐 build staged 集合）：源码目录 extensions/ 含
+   * 17 个 @zhushanwen/pi-* 包，build 只 bundle 其中 10 个 mandatory（prepare 脚本按
+   * mandatory-extensions.json SSOT bundle）。若 dev 全量加载源码，会多出 evolve-daily
+   *（每日跑 Python 分析）等非 mandatory 包，与 build 产物集不一致。故按 mandatory SSOT
+   * 过滤，保证 dev/build 加载同一集合，仅路径分流（源码 .ts vs bundle .js）。这属「builtin
+   * 源集合界定」（静态定义），非 disabled/enabled/tier 运行时策略过滤（后者归 extension-filter）。
+   *
+   * [HISTORICAL] dev 模式历经三阶段：(1) 读 repoRoot/resources/pi/agent/extensions/
+   *（仅含 bridge，isValidPiExtension 返回 false，恒返回空）；(2) 改读 staged bundle
+   *（apps/electron/resources/extensions/@zhushanwen/），但 dev/build 同源导致改源码需跑
+   * prepare-builtin-extensions.sh 全量 bundle ~40s + 重启 dev；(3) 现行 dev 读源码，
+   * 彻底消除 dev 的 bundle 成本。
    */
   scanBundledExtensions(projectRoot: string, packaged: boolean): ExtensionMap {
     const result: ExtensionMap = new Map()
 
-    // builtin 包目录：packaged = Resources/extensions/@zhushanwen/，
-    // dev = apps/electron/resources/extensions/@zhushanwen/（projectRoot 皆为 apps/electron）
-    const builtinDir = packaged
-      ? join(projectRoot, 'extensions', '@zhushanwen')
-      : join(projectRoot, 'resources', 'extensions', '@zhushanwen')
+    if (packaged) {
+      // build：读 staged bundle（projectRoot = process.resourcesPath）
+      const builtinDir = join(projectRoot, 'extensions', '@zhushanwen')
+      if (!existsSync(builtinDir)) return result
+      this.scanDirectory(builtinDir, result, 'bundled')
+      return result
+    }
 
-    if (!existsSync(builtinDir)) return result
-
-    this.scanDirectory(builtinDir, result, 'bundled')
+    // dev：读源码目录（projectRoot = apps/electron，repoRoot = projectRoot/../..）。
+    // join(projectRoot, '..', '..', 'extensions') 运行时解析为 <repoRoot>/extensions。
+    const sourceExtDir = join(projectRoot, '..', '..', 'extensions')
+    if (!existsSync(sourceExtDir)) return result
+    this.scanDirectory(sourceExtDir, result, 'bundled')
+    // 只保留 mandatory 包，对齐 build staged 集合（见方法注释 + 设计文档 §2.3）
+    const mandatoryNames = new Set(mandatoryExtensions.map(e => e.name))
+    for (const name of [...result.keys()]) {
+      if (!mandatoryNames.has(name)) result.delete(name)
+    }
     return result
   }
 

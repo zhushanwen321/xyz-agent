@@ -23,17 +23,6 @@ ENV_VAR="XYZ_EXTENSION_PATHS"
 dl_git_root || { red "✗ 不在 git 仓库中"; exit 2; }
 ENV_FILE="$DL_GIT_ROOT/$ENV_FILE_NAME"
 
-# ── 检查是否 mandatory 包（SSOT: packages/shared/src/mandatory-extensions.json）──
-# mandatory 包删 npm 安装安全：unlink 后 xyz-agent 重启时 ensureMandatoryExtensions 自动重装。
-# 非 mandatory 包不删：link-npm.sh unlink 不重装，删除会导致扩展在 dev 模式彻底消失。
-is_mandatory() {
-	local short="$1"
-	MANDATORY_JSON="$GIT_ROOT/packages/shared/src/mandatory-extensions.json" SHORT="$short" node -e "
-		const list = require(process.env.MANDATORY_JSON);
-		process.exit(list.some(p => p.name === '@zhushanwen/pi-' + process.env.SHORT) ? 0 : 1);
-	" 2>/dev/null
-}
-
 # ── 主逻辑 ──────────────────────────────────────────────
 main() {
 	if [ $# -lt 1 ]; then
@@ -79,18 +68,6 @@ main() {
 			echo "  · ${short} 已 link，跳过"
 			((skipped++)) || true
 			continue
-		fi
-
-		# 检查并清理已有 npm 安装（dev 数据目录）——仅限 mandatory 包。
-		# 注：user 源（XYZ_EXTENSION_PATHS，优先级 2）高于 settings 源（npm 安装，优先级 4），
-		#     本地源码本就优先，并存无歧义。删除仅对 mandatory 有必要（boot 重装前的显式归位，
-		#     删后由 ensureMandatoryExtensions 重启自动重装兜底）。非 mandatory 包删除会破坏
-		#     link-npm.sh 的「回归 npm 版本」语义——unlink 不重装，npm 安装被删后扩展彻底消失。
-		local data_dir="${XYZ_AGENT_DATA_DIR:-$HOME/.xyz-agent-dev}"
-		local npm_pkg_dir="$data_dir/npm/node_modules/$SCOPE/pi-$short"
-		if [ -d "$npm_pkg_dir" ] && is_mandatory "$short"; then
-			rm -rf "$npm_pkg_dir"
-			echo "  · 清理已有 npm 安装（mandatory）：$npm_pkg_dir"
 		fi
 
 		# 追加到 XYZ_EXTENSION_PATHS

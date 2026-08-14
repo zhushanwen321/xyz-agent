@@ -18,8 +18,10 @@
 #  - package.json（pi.extensions 改指 ./index.js；源码 package.json 不动）
 #  - pi-permission 额外含 tree-sitter-bash.wasm + web-tree-sitter.wasm
 #
-# dev 与 build 同源：dev 直接读此目录，build 经 electron-builder extraResources
-# 逐字节拷进 Resources/extensions/。修一处即修两处。
+# dev/build 加载路径分流（见 docs/architecture/builtin-extension-dev-build-split.md）：
+# 本脚本只服务 build——产出的 staged bundle 供 electron-builder extraResources 拷贝进
+# Resources/extensions/。dev 模式 mandatory 扩展走源码（extensions/<pkg>/，pi 原生加载 .ts），
+# 改源码新建 session 即生效，不依赖本脚本。
 #
 # Usage: ./scripts/prepare-builtin-extensions.sh
 set -euo pipefail
