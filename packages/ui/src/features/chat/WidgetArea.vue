@@ -60,12 +60,16 @@ const entries = computed<WidgetEntry[]>(() => {
     >
       <!-- 卡头：widgetKey 标签（mono 9px，对齐 demo M17 tool-label 规格） -->
       <div class="font-mono text-[9px] tracking-wider text-neutral-dim">{{ w.viewId }}</div>
-      <!-- 卡体：guiTree 逐项交渲染协议 -->
-      <GuiComponentRenderer
-        v-for="(component, i) in w.entry.guiTree"
-        :key="i"
-        :component="component"
-      />
+      <!-- 卡体：guiTree 逐项交渲染协议。max-h 钳制防长列表 widget 撑高面板挤出
+           composer（Panel section overflow-hidden 会直接裁剪，常驻语义放大该风险）；
+           index key 的前提是 7 原语均 props-only 无内部状态，原语引入本地状态时需改稳定 key -->
+      <div class="flex max-h-64 min-h-0 flex-col gap-1.5 overflow-y-auto">
+        <GuiComponentRenderer
+          v-for="(component, i) in w.entry.guiTree"
+          :key="i"
+          :component="component"
+        />
+      </div>
     </div>
   </div>
 </template>
