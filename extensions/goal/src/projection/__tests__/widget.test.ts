@@ -313,16 +313,17 @@ describe("updateWidget GUI 协议分支（isGui=true）", () => {
 		expect(calls.some((c) => c.method === "setWidget" && c.args[0] === "goal")).toBe(false);
 	});
 
-	it("active + isGui 无预算 → setGuiWidget(stats-line component)", () => {
+	it("active + isGui 无预算 → setGuiWidget(card component，body 无 progress-bar)", () => {
 		const { ui, calls } = makeGuiUiPort(true, true);
 		const session = createGoalSession();
 		session.state = makeState({ status: "active" });
 		updateWidget(session, ui);
 		const guiCall = calls.find((c) => c.method === "setGuiWidget" && c.args[0] === "goal");
 		expect(guiCall).toBeDefined();
-		// 无 tokenBudget → buildGoalGui 返回 stats-line（非 card）
-		const comp = guiCall!.args[1] as { type: string };
-		expect(comp.type).toBe("stats-line");
+		// 无 tokenBudget → buildGoalGui 仍统一 card 容器，差异只在 body 无 progress-bar
+		const comp = guiCall!.args[1] as { type: string; props: { body: { type: string }[] } };
+		expect(comp.type).toBe("card");
+		expect(comp.props.body.map((c) => c.type)).not.toContain("progress-bar");
 	});
 
 	it("cancelled + isGui → setGuiWidget(undefined)", () => {

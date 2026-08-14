@@ -3,7 +3,13 @@
  * 三态: pending → in_progress → completed
  */
 
-import { guiComponent, type GuiRenderResult, guiResult, type TreeItem } from "@xyz-agent/extension-protocol";
+import {
+	type GuiComponent,
+	guiComponent,
+	type GuiRenderResult,
+	guiResult,
+	type TreeItem,
+} from "@xyz-agent/extension-protocol";
 
 // ── 数据模型 ─────────────────────────────────────────
 
@@ -65,13 +71,37 @@ export function migrateTodo(raw: unknown): Todo {
 // ── GUI 渲染辅助 ─────────────────────────────────────
 
 /**
- * 把 todos 映射为 list-tree GuiRenderResult（对齐 extension-protocol@0.2.0）。
+ * 把 todos 组装为 card(progress-bar + list-tree) GuiRenderResult（对齐 extension-protocol@0.2.0）。
+ *
+ * - progress-bar 承担 TUI 版 renderStatusText 的 "N/M completed" 跨项摘要 + 进度可视化
+ *   （此前 GUI 版缺失摘要，是「偏 TUI 文字式」观感的根因之一）。
+ * - severity 显式传 "ok"：ProgressBar 未传时的推断是预算消耗语义（ratio<0.5 → danger），
+ *   对完成度不成立（刚开工不是危险态）。
+ * - 全完成 → card variant "success"（失败/完成语义交给容器表达）。
+ *
  * status → icon/status 映射：
  *   pending      → dot      / 无 status
  *   in_progress  → circle   / running
  *   completed    → check    / done
  */
 export function buildGui(todos: Todo[]): GuiRenderResult {
+	const total = todos.length;
+	const completed = todos.filter((t) => t.status === "completed").length;
+	const allDone = total > 0 && completed === total;
+
+	const body: GuiComponent[] = [];
+	if (total > 0) {
+		body.push(
+			guiComponent("progress-bar", {
+				label: "tasks",
+				current: completed,
+				total,
+				unit: "done",
+				severity: "ok",
+			}),
+		);
+	}
+
 	const items: TreeItem[] = todos.map((t) => {
 		const icon =
 			t.status === "completed"
@@ -87,12 +117,21 @@ export function buildGui(todos: Todo[]): GuiRenderResult {
 					: undefined; // pending 无 status
 		return {
 			icon,
-			label: `#${t.id}: ${t.text}`,
+			// id 保留（弱化 TUI 冒号格式）：update/delete 按 id 操作，用户引用需要锚点
+			label: `#${t.id} ${t.text}`,
 			status,
 			depth: 0,
 		};
 	});
-	return guiResult(guiComponent("list-tree", { items }));
+	body.push(guiComponent("list-tree", { items }));
+
+	return guiResult(
+		guiComponent("card", {
+			header: "Todo",
+			variant: allDone ? "success" : "default",
+			body,
+		}),
+	);
 }
 
 export function getDisplayStatus(t: Todo): string {
