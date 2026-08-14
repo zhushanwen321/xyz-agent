@@ -188,6 +188,22 @@ async function getMarkdown(): Promise<MarkdownIt> {
     return defaultLinkOpen(tokens, idx, options, env, self)
   }
 
+  // ── table 横向滚动 wrapper：超宽表格自身 overflow-x:auto 滚动，不撑宽 .md-render / detail-content ──
+  // markdown-it 默认 table render 输出裸 <table>（无 overflow 容器），多列/长内容表格撑宽父级，
+  // 拖整个面板横向滚动（段落被拉开、表格边框裁切）。包一层 .md-table-wrap，离散块自带滚动容器
+  // （与 .md-codeblock 同策略）。保留默认 renderToken 链以透传 table attrs（未来插件加 class 不丢）。
+  // 滚动样式在 MarkdownRenderer scoped style 的 .md-table-wrap（overflow-x:auto + 接管 margin）。
+  const defaultTableOpen =
+    md.renderer.rules.table_open ??
+    ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+  const defaultTableClose =
+    md.renderer.rules.table_close ??
+    ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+  md.renderer.rules.table_open = (tokens, idx, options, env, self) =>
+    `<div class="md-table-wrap">\n` + defaultTableOpen(tokens, idx, options, env, self)
+  md.renderer.rules.table_close = (tokens, idx, options, env, self) =>
+    defaultTableClose(tokens, idx, options, env, self) + `\n</div>\n`
+
   // ── 文件路径识别（core rule，注册于 replacements 之后） ──
   // [HISTORICAL] 架构选型（2026-07-20 重构）：
   // 旧实现用 inline rule 在 `text` rule 之前抢跑、扫 state.src.slice(pos) 整段剩余文本，

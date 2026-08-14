@@ -410,11 +410,17 @@ onScopeDispose(() => {
   text-align: center;
 }
 
-/* 表格 */
+/* 表格横向滚动 wrapper（markdown.ts table_open rule 产出）：超宽表格自身 overflow-x:auto
+   滚动，不撑宽 .md-render / detail-content（与 .md-codeblock 同策略：离散块自带滚动容器）。
+   table 的 margin 移到 wrapper（避免双 margin）；table width:100% 在 wrapper 内仍撑满窄表格。 */
+.md-render :deep(.md-table-wrap) {
+  overflow-x: auto;
+  margin: 0.7em 0;
+}
 .md-render :deep(table) {
   width: 100%;
   border-collapse: collapse;
-  margin: 0.7em 0;
+  margin: 0;
   font-size: 0.92em;
 }
 .md-render :deep(th),
