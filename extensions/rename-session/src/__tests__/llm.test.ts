@@ -100,6 +100,7 @@ const BASE_CONFIG: RenameSessionConfig = {
 	enabled: true,
 	model: { type: "ref", ref: "stub/stub-model" },
 	maxTitleLength: 50,
+	thinkingLevel: "off",
 };
 
 function createCtx(): ExtensionContext {
@@ -188,6 +189,24 @@ describe("callRenameLLM", () => {
 		const ctx = createCtx();
 		await callRenameLLM(ctx, BASE_CONFIG);
 		expect(resolveModel).toHaveBeenCalledWith(ctx, BASE_CONFIG.model);
+	});
+
+	it("thinkingLevel=off → 不传 reasoning（provider 默认，旧版本行为）", async () => {
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
+		await callRenameLLM(createCtx(), { ...BASE_CONFIG, thinkingLevel: "off" });
+
+		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as { reasoning?: unknown };
+		expect(callOpts.reasoning).toBeUndefined();
+	});
+
+	it("thinkingLevel=high → 透传 reasoning=high", async () => {
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
+		await callRenameLLM(createCtx(), { ...BASE_CONFIG, thinkingLevel: "high" });
+
+		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as { reasoning?: unknown };
+		expect(callOpts.reasoning).toBe("high");
 	});
 });
 

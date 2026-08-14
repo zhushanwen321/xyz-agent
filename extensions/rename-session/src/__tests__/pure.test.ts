@@ -122,10 +122,11 @@ describe("cleanTitle", () => {
 // ────────────────────────────────────────────────────
 
 describe("DEFAULT_RENAME_CONFIG", () => {
-	it("默认值：enabled=false / model=scoped / maxTitleLength=50", () => {
+	it("默认值：enabled=false / model=scoped / maxTitleLength=50 / thinkingLevel=off", () => {
 		expect(DEFAULT_RENAME_CONFIG.enabled).toBe(false);
 		expect(DEFAULT_RENAME_CONFIG.model).toEqual({ type: "scoped" });
 		expect(DEFAULT_RENAME_CONFIG.maxTitleLength).toBe(50);
+		expect(DEFAULT_RENAME_CONFIG.thinkingLevel).toBe("off");
 	});
 });
 
@@ -145,7 +146,12 @@ describe("normalizeRenameConfig", () => {
 	});
 
 	it("合法完整配置 → 原样返回", () => {
-		const cfg = { enabled: true, model: { type: "ref", ref: "deepseek/chat" }, maxTitleLength: 30 };
+		const cfg = {
+			enabled: true,
+			model: { type: "ref", ref: "deepseek/chat" },
+			maxTitleLength: 30,
+			thinkingLevel: "high",
+		};
 		expect(normalizeRenameConfig(cfg)).toEqual(cfg);
 	});
 
@@ -178,6 +184,20 @@ describe("normalizeRenameConfig", () => {
 		).toEqual({ type: "scoped" });
 	});
 
+	it("thinkingLevel 合法值（minimal/max/off）→ 保留", () => {
+		expect(normalizeRenameConfig({ thinkingLevel: "minimal" }).thinkingLevel).toBe("minimal");
+		expect(normalizeRenameConfig({ thinkingLevel: "max" }).thinkingLevel).toBe("max");
+		expect(normalizeRenameConfig({ thinkingLevel: "off" }).thinkingLevel).toBe("off");
+	});
+
+	it("thinkingLevel 非法（未知值 / 非字符串）→ 回默认 off", () => {
+		expect(normalizeRenameConfig({ thinkingLevel: "ultra" }).thinkingLevel).toBe("off");
+		expect(normalizeRenameConfig({ thinkingLevel: 5 }).thinkingLevel).toBe("off");
+		expect(normalizeRenameConfig({ thinkingLevel: null }).thinkingLevel).toBe("off");
+		// 缺失字段 → 默认 off（旧配置文件兼容：无 thinkingLevel 字段的存量配置自动回填）
+		expect(normalizeRenameConfig({ enabled: true }).thinkingLevel).toBe("off");
+	});
+
 	it("model 四形式各自合法时原样返回", () => {
 		expect(normalizeRenameConfig({ model: { type: "ref", ref: "a/b" } }).model).toEqual({
 			type: "ref",
@@ -199,7 +219,12 @@ describe("normalizeRenameConfig", () => {
 			model: { type: "available" },
 			maxTitleLength: 20,
 		});
-		expect(r).toEqual({ enabled: false, model: { type: "available" }, maxTitleLength: 20 });
+		expect(r).toEqual({
+			enabled: false,
+			model: { type: "available" },
+			maxTitleLength: 20,
+			thinkingLevel: "off",
+		});
 	});
 });
 
@@ -236,7 +261,12 @@ describe("loadRenameConfig / saveRenameConfig", () => {
 	});
 
 	it("saveRenameConfig 后 loadRenameConfig 读回（跨缓存清空）", () => {
-		const cfg = { enabled: true, model: { type: "ref", ref: "deepseek/chat" }, maxTitleLength: 30 };
+		const cfg = {
+			enabled: true,
+			model: { type: "ref", ref: "deepseek/chat" },
+			maxTitleLength: 30,
+			thinkingLevel: "off",
+		};
 		const saveResult = saveRenameConfig(cfg);
 		expect(saveResult.success).toBe(true);
 		clearConfigCache();

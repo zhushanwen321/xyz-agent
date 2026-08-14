@@ -14,7 +14,11 @@
 
 // 顶层静态 import —— 探针①已验证加载阶段不 throw（见模块注释）
 import { completeSimple } from "@earendil-works/pi-ai/compat";
-import type { Context as LlmContext, SimpleStreamOptions } from "@earendil-works/pi-ai/compat";
+import type {
+	Context as LlmContext,
+	SimpleStreamOptions,
+	ThinkingLevel,
+} from "@earendil-works/pi-ai/compat";
 import type { Api, Message, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -33,6 +37,12 @@ export interface CallLLMOptions {
 	timeoutMs?: number;
 	/** 透传给 SimpleStreamOptions.sessionId（provider 用于 session 缓存 / 路由）。review TF1 新增。 */
 	sessionId?: string;
+	/**
+	 * thinking/reasoning 级别，透传给 SimpleStreamOptions.reasoning（pi 的 THINKING_ORDER SSOT：
+	 * minimal/low/medium/high/xhigh/max）。不传 = provider 默认。
+	 * 注意不含 "off" —— 关闭语义由调用方映射为「不传本字段」（如 rename-session 配置 thinkingLevel="off" 时不传）。
+	 */
+	reasoning?: ThinkingLevel;
 }
 
 /**
@@ -113,6 +123,7 @@ export async function callLLM(
 			...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
 			...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
 			...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+			...(opts.reasoning ? { reasoning: opts.reasoning } : {}),
 		};
 		const resp = await completeSimple(opts.model, context, options);
 		// G3/C1a：completeSimple 对 error/aborted 也 resolve（带 stopReason，不 reject）。

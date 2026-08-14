@@ -94,6 +94,9 @@ export async function callRenameLLM(
 		messages,
 		// 标题只需几个词，64 token 足够且省 quota
 		maxTokens: 64,
+		// thinkingLevel:"off" → 不传 reasoning（provider 默认，与旧版本行为一致）；
+		// "minimal"~"max" 透传 pi-ai SimpleStreamOptions.reasoning（provider 不支持时忽略）
+		reasoning: config.thinkingLevel === "off" ? undefined : config.thinkingLevel,
 		// 保留随 session abort 取消调用的语义（旧版 llm.ts 同样透传 ctx.signal）
 		signal: ctx.signal,
 		sessionId,

@@ -36,11 +36,13 @@ const ENABLED_CONFIG: RenameSessionConfig = {
 	enabled: true,
 	model: { type: "ref", ref: "stub/stub-model" },
 	maxTitleLength: 50,
+	thinkingLevel: "off",
 };
 const DISABLED_CONFIG: RenameSessionConfig = {
 	enabled: false,
 	model: { type: "scoped" },
 	maxTitleLength: 50,
+	thinkingLevel: "off",
 };
 
 function createMockPi(): MockSetup {
