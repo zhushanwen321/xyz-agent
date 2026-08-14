@@ -92,24 +92,21 @@
               data-testid="drawer-workflow-agent-call"
               @click="onSelectCall(call)"
             >
+              <!-- 第一行：status 圆点 + agent + 耗时/状态标签（同行，精简两行布局） -->
               <div class="flex items-center gap-2">
                 <Loader2 v-if="call.status === 'running'" class="size-[11px] shrink-0 animate-spin text-accent" />
                 <span v-else class="size-1.5 shrink-0 rounded-full" :class="callDotClass(call.status)" />
                 <span class="min-w-0 flex-1 truncate font-mono text-[11px] font-medium text-neutral-fg">
                   {{ call.agent }}
                 </span>
+                <span v-if="call.status === 'running'" class="shrink-0 font-mono text-[10px] text-accent">{{ t('panel.sideDrawer.workflowRunning') }}</span>
+                <span v-else-if="call.status === 'pending'" class="shrink-0 font-mono text-[10px] text-neutral-dim">{{ t('panel.sideDrawer.workflowPending') }}</span>
+                <span v-else-if="call.durationMs !== undefined" class="shrink-0 font-mono text-[10px] text-neutral-dim">{{ formatDuration(call.durationMs) }}</span>
               </div>
-              <!-- 摘要：model/tokens/turns/duration 或 running/pending 标签 -->
-              <div class="mt-0.5 flex items-center gap-1.5 pl-[19px] font-mono text-[10px] text-neutral-dim">
-                <span v-if="call.status === 'running'" class="text-accent">{{ t('panel.sideDrawer.workflowRunning') }}</span>
-                <span v-else-if="call.status === 'pending'">{{ t('panel.sideDrawer.workflowPending') }}</span>
-                <template v-else>
-                  <span v-if="call.model">{{ call.model === 'default' ? t('sidebar.workflowDetail.modelDefault') : call.model }}</span>
-                  <span v-if="call.inputTokens !== undefined">· {{ formatTokens(call.inputTokens, t('sidebar.workflowDetail.tokenInUnit')) }}</span>
-                  <span v-if="call.outputTokens !== undefined">· {{ formatTokens(call.outputTokens, t('sidebar.workflowDetail.tokenOutUnit')) }}</span>
-                  <span v-if="call.turns !== undefined">· {{ call.turns }} {{ t('sidebar.workflowDetail.turnsUnit') }}</span>
-                  <span v-if="call.durationMs !== undefined">· {{ formatDuration(call.durationMs) }}</span>
-                </template>
+              <!-- 第二行：token 总量 + turns（仅终态 completed/failed，避免 running/pending 多余行） -->
+              <div v-if="isCallDone(call.status) && (callTokenTotal(call) > 0 || call.turns !== undefined)" class="mt-0.5 flex items-center gap-1.5 pl-[19px] font-mono text-[10px] text-neutral-dim">
+                <span v-if="callTokenTotal(call) > 0">{{ formatTokens(callTokenTotal(call), 'tokens') }}</span>
+                <span v-if="call.turns !== undefined">· {{ call.turns }} {{ t('sidebar.workflowDetail.turnsUnit') }}</span>
               </div>
             </div>
           </div>
@@ -224,6 +221,16 @@ function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / MS_PER_SECOND)
   if (seconds >= SECONDS_PER_MINUTE) return `${Math.floor(seconds / SECONDS_PER_MINUTE)}m${seconds % SECONDS_PER_MINUTE}s`
   return `${seconds}s`
+}
+
+/** agent call 是否终态（completed/failed，显示 token/turns 第二行；running/pending 不显） */
+function isCallDone(status: WorkflowAgentCall['status']): boolean {
+  return status === 'completed' || status === 'failed'
+}
+
+/** agent call 的 token 总量（input + output 合并，精简显示） */
+function callTokenTotal(call: WorkflowAgentCall): number {
+  return (call.inputTokens ?? 0) + (call.outputTokens ?? 0)
 }
 
 /** 点 agent call → 切 subagent tab（D4：agent call 本质是 subagent，从 workflow 进入显返回按钮） */

@@ -579,22 +579,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * @throws 找不到主 session / 主 session 无 cwd / subagents 目录不存在 / 无匹配 sessionId 的文件
    */
   async getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]> {
-    const mainSession = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
-    if (!mainSession) {
-      throw new Error(`主 session ${sessionId} 不存在，无法查找 agent call 历史`)
-    }
-    if (!mainSession.cwd) {
-      throw new Error(`主 session ${sessionId} 无 cwd，无法推导 subagent session 目录`)
-    }
-
-    const filePath = findAgentCallFile(mainSession.cwd, agentCallSessionId, this.sessionStore)
-    if (!filePath) {
-      throw new Error(
-        `未找到 agent call 的 session 文件（sessionId=${agentCallSessionId}）。` +
-        `可能原因：agent call 执行失败未创建 session，或 session 文件尚未落盘。`,
-      )
-    }
-    return getHistoryFromFilePath(filePath, this.sessionStore)
+    // agent call 本质是 subagent（D4）：workflow trace[].sessionId 存的是 subagent record id
+    //（sa-xxx），不是 pi session uuidv7。复用 getSubagentHistory 的 record 查找路径
+    //（subagentId → 主 session JSONL 的 record.sessionFile），而非 findAgentCallFile（按 header.id
+    // 扫 subagents 目录，sa-xxx 永远不匹配 uuidv7 header）。找不到 record 返回 []（前端显空对话流）。
+    return this.getSubagentHistory(sessionId, agentCallSessionId)
   }
 
   /**
@@ -604,9 +593,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    *（PanelHeader overlay 文件名），找不到路径不应阻断 UI，前端 v-if 据空串隐藏按钮。
    */
   async getAgentCallFilePath(sessionId: string, agentCallSessionId: string): Promise<string> {
-    const mainSession = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
-    if (!mainSession?.cwd) return ''
-    return findAgentCallFile(mainSession.cwd, agentCallSessionId, this.sessionStore) ?? ''
+    // 同 getAgentCallHistory：agent call 是 subagent，trace.sessionId 是 subagentId（sa-xxx），
+    // 复用 record 查找（subagentId → record.sessionFile），不扫目录按 header.id 匹配。
+    const subagents = await this.getSubagents(sessionId)
+    const record = subagents.find((s) => s.subagentId === agentCallSessionId)
+    if (!record?.sessionFile) return ''
+    if (!isStrictlyUnder(getPiAgentDir(), record.sessionFile)) return ''
+    return record.sessionFile
   }
 
   /**
@@ -1387,6 +1380,12 @@ async function readSegmentsMetadataFile(sessionId: string): Promise<SegmentsMeta
  * 按 sessionId 匹配首行 header.id（不从文件名解析——文件名 ISO 格式不稳定）。
  *
  * 目录不存在或无匹配文件返回 null。
+ *
+ * [HISTORICAL] 本函数已不再被 getAgentCallHistory/getAgentCallFilePath 使用（2026-08-14：
+ * agent call 的 trace.sessionId 是 subagentId sa-xxx，两方法改复用 getSubagentHistory 的
+ * record.sessionFile 路径——sa-xxx 经主 session JSONL 的 subagent record 定位，不按 header.id
+ * 扫目录）。保留作参考：按 header.id 扫 subagents/<encCwd>/sessions/ 匹配 uuidv7 的直查场景
+ * 若未来需要可复用。
  */
 function findAgentCallFile(mainCwd: string, agentCallSessionId: string, sessionStore: ISessionStore): string | null {
   let dir: string

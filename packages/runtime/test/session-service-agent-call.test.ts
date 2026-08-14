@@ -1,64 +1,24 @@
 /**
  * SessionService.getAgentCallHistory 测试。
  *
- * 验证：agent call JSONL 在 subagents/<encodedCwd>/sessions/ 目录下（不在主 sessions 目录），
- * getAgentCallHistory 通过 findAgentCallFile 在该目录按 sessionId 查找文件。
+ * agent call 本质是 subagent（D4）：workflow trace[].sessionId 是 subagent record id（sa-xxx），
+ * getAgentCallHistory 复用 getSubagentHistory 的 record 查找路径（subagentId → 主 session JSONL
+ * 的 record.sessionFile），不再用 findAgentCallFile（按 header.id 扫目录，sa-xxx 不匹配 uuidv7）。
  *
- * 测试点：
- * - 正常：主 session 有 cwd + subagents 目录有匹配 sessionId 的文件 → 返回转换后消息
- * - 边界 1：主 session 不存在 → 空数组
- * - 边界 2：主 session 无 cwd → 空数组
- * - 边界 3：subagents 目录不存在 → 空数组
- * - 边界 4：目录下无匹配 sessionId 的文件 → 空数组
+ * 测试点：验证 getAgentCallHistory 委托 getSubagentHistory（同参透传 + 返回其结果，含空数组）。
+ * getSubagentHistory 的 record 查找/路径校验逻辑由其自身测试覆盖，此处只验委托关系。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import type { Message } from '@xyz-agent/shared'
-
-// ── vi.hoisted mock 句柄 ──────────────────────────────────────────
-const mocks = vi.hoisted(() => ({
-  mockScannedSessions: [] as Array<{
-    id: string
-    filePath: string
-    cwd: string
-    name: string | null
-    lastModified: number
-    timestamp: string
-    size: number
-  }>,
-  existsSyncMock: vi.fn(),
-  readdirSyncMock: vi.fn(),
-  parseSessionHeaderMock: vi.fn(),
-  getSubagentSessionDirMock: vi.fn(),
-  getHistoryFromFilePathMock: vi.fn().mockResolvedValue([]),
-}))
 
 vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/infra/pi/session-file-utils.js')>()
-  return {
-    ...actual,
-    scanPiSessions: () => mocks.mockScannedSessions,
-    parseSessionHeader: mocks.parseSessionHeaderMock,
-  }
+  return { ...actual, scanPiSessions: () => [], parseSessionHeader: vi.fn() }
 })
-
-vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
-  return {
-    ...actual,
-    getSubagentSessionDir: mocks.getSubagentSessionDirMock,
-  }
-})
-
-vi.mock('node:fs', () => ({
-  existsSync: mocks.existsSyncMock,
-  readdirSync: mocks.readdirSyncMock,
-}))
-
 vi.mock('../src/services/session-history.js', () => ({
   getHistoryFromFile: vi.fn().mockResolvedValue([]),
-  getHistoryFromFilePath: mocks.getHistoryFromFilePathMock,
+  getHistoryFromFilePath: vi.fn().mockResolvedValue([]),
 }))
-
 vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/infra/pi/pi-provider-store.js')>()
   return {
@@ -70,15 +30,12 @@ vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
     readSettings: () => ({}),
   }
 })
-
 vi.mock('../src/infra/system/trash.js', () => ({ trash: vi.fn() }))
 vi.mock('../src/infra/pi/message-converter.js', () => ({ convertPiHistory: vi.fn((r) => r) }))
 
 import { SessionService } from '../src/services/session/session-service.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { PiSessionStore } from '../src/infra/pi/session-store.js'
-
-const { mockScannedSessions } = mocks
 
 function createService(): SessionService {
   const pm = {
@@ -109,108 +66,25 @@ function createService(): SessionService {
 }
 
 describe('SessionService.getAgentCallHistory', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mockScannedSessions.length = 0
-  })
-
-  it('正常：subagents 目录有匹配 sessionId 的文件 → getHistoryFromFilePath 转换返回', async () => {
-    mockScannedSessions.push({
-      id: 'main-sess-001',
-      filePath: '/mock/sessions/main.jsonl',
-      cwd: '/project',
-      name: null,
-      lastModified: 0,
-      timestamp: '2026-07-13T00:00:00Z',
-      size: 0,
-    })
-    mocks.getSubagentSessionDirMock.mockReturnValue('/mock/subagents/enc/sessions')
-    mocks.existsSyncMock.mockReturnValue(true)
-    mocks.readdirSyncMock.mockReturnValue(['2026-07-13T05-41-22-097Z_019f59fe.jsonl', 'other.jsonl'])
-    // 第一个文件匹配，第二个不匹配
-    mocks.parseSessionHeaderMock
-      .mockReturnValueOnce({ id: 'agentcall-001', cwd: '/project', timestamp: '2026-07-13T05:41:22Z' })
-      .mockReturnValueOnce({ id: 'wrong-id', cwd: '/other', timestamp: '2026-07-13T06:00:00Z' })
+  it('委托 getSubagentHistory：同参透传 + 返回其结果（agent call 是 subagent，sa-xxx 经 record 查找）', async () => {
+    const service = createService()
     const fakeMessages: Message[] = [
       { id: 'm1', role: 'user', content: 'hello', status: 'complete', timestamp: 1689222883000 },
     ]
-    mocks.getHistoryFromFilePathMock.mockResolvedValue(fakeMessages)
+    const spy = vi.spyOn(service, 'getSubagentHistory').mockResolvedValue(fakeMessages)
 
-    const service = createService()
-    const result = await service.getAgentCallHistory('main-sess-001', 'agentcall-001')
+    const result = await service.getAgentCallHistory('main-sess-001', 'sa-agentcall-001')
 
+    expect(spy).toHaveBeenCalledWith('main-sess-001', 'sa-agentcall-001')
     expect(result).toEqual(fakeMessages)
-    // 确认用 subagent session 目录而非 scanSessions
-    expect(mocks.getSubagentSessionDirMock).toHaveBeenCalledWith('/project')
-    expect(mocks.getHistoryFromFilePathMock).toHaveBeenCalledWith(
-      '/mock/subagents/enc/sessions/2026-07-13T05-41-22-097Z_019f59fe.jsonl',
-      expect.anything(),
-    )
   })
 
-  it('Fail-fast：主 session 不存在 → throw（不静默返回空数组）', async () => {
+  it('getSubagentHistory 返回空数组时透传（找不到 record 不 throw，前端显空对话流非错误态）', async () => {
     const service = createService()
-    await expect(service.getAgentCallHistory('nonexistent', 'agentcall-001')).rejects.toThrow(
-      '主 session nonexistent 不存在',
-    )
-    expect(mocks.getSubagentSessionDirMock).not.toHaveBeenCalled()
-  })
+    vi.spyOn(service, 'getSubagentHistory').mockResolvedValue([])
 
-  it('Fail-fast：主 session 无 cwd → throw', async () => {
-    mockScannedSessions.push({
-      id: 'main-sess-002',
-      filePath: '/mock/sessions/main.jsonl',
-      cwd: '',
-      name: null,
-      lastModified: 0,
-      timestamp: '2026-07-13T00:00:00Z',
-      size: 0,
-    })
-    const service = createService()
-    await expect(service.getAgentCallHistory('main-sess-002', 'agentcall-001')).rejects.toThrow(
-      '无 cwd',
-    )
-  })
+    const result = await service.getAgentCallHistory('main-sess', 'sa-missing')
 
-  it('Fail-fast：subagents 目录不存在 → throw', async () => {
-    mockScannedSessions.push({
-      id: 'main-sess-003',
-      filePath: '/mock/sessions/main.jsonl',
-      cwd: '/project',
-      name: null,
-      lastModified: 0,
-      timestamp: '2026-07-13T00:00:00Z',
-      size: 0,
-    })
-    mocks.getSubagentSessionDirMock.mockReturnValue('/mock/subagents/enc/sessions')
-    mocks.existsSyncMock.mockReturnValue(false)
-
-    const service = createService()
-    await expect(service.getAgentCallHistory('main-sess-003', 'agentcall-001')).rejects.toThrow(
-      '未找到 agent call 的 session 文件',
-    )
-  })
-
-  it('Fail-fast：目录下无匹配 sessionId 的文件 → throw', async () => {
-    mockScannedSessions.push({
-      id: 'main-sess-004',
-      filePath: '/mock/sessions/main.jsonl',
-      cwd: '/project',
-      name: null,
-      lastModified: 0,
-      timestamp: '2026-07-13T00:00:00Z',
-      size: 0,
-    })
-    mocks.getSubagentSessionDirMock.mockReturnValue('/mock/subagents/enc/sessions')
-    mocks.existsSyncMock.mockReturnValue(true)
-    mocks.readdirSyncMock.mockReturnValue(['a.jsonl', 'b.jsonl'])
-    mocks.parseSessionHeaderMock
-      .mockReturnValue({ id: 'other-001', cwd: '/p', timestamp: '2026-07-13T00:00:00Z' })
-
-    const service = createService()
-    await expect(service.getAgentCallHistory('main-sess-004', 'agentcall-001')).rejects.toThrow(
-      '未找到 agent call 的 session 文件',
-    )
-    expect(mocks.getHistoryFromFilePathMock).not.toHaveBeenCalled()
+    expect(result).toEqual([])
   })
 })
