@@ -302,36 +302,46 @@ describe("W8 /permission rule 命令集成", () => {
 // ──────────────────────── footer line 注册（consumer 端握手 + render 读时刷新）────────────────────────
 
 describe("footer line 注册", () => {
-	it("session_start：ctx.ui 无 theme → noop dispose，不抛异常、不写 slot", () => {
+	it("session_start：ctx.ui 无 theme → 仍注册 renderer（不依赖 ctx.ui），render(null theme) 返回 null", () => {
 		const { pi, calls } = createMockPi();
 		permissionExtension(pi);
 		const sessionHandler = getSessionStartHandler(calls);
 		const ctxNoTheme = { mode: "json", cwd: "/tmp", ui: {}, signal: undefined };
 		expect(() => sessionHandler({}, ctxNoTheme)).not.toThrow();
-		expect(Reflect.get(globalThis, FOOTER_HANDSHAKE_KEY)).toBeUndefined();
+		// 不再依赖 ctx.ui.theme（pi 的 ExtensionUIContext 无此字段）：无条件注册
+		const slot = Reflect.get(globalThis, FOOTER_HANDSHAKE_KEY) as {
+			pending: Array<{ id: string; renderer: unknown }>;
+		} | undefined;
+		expect(slot).toBeDefined();
+		expect(slot!.pending.length).toBe(1);
+		const renderer = slot!.pending[0]!.renderer as {
+			render: (ctx: unknown, theme: unknown) => string | null;
+		};
+		// headless：theme 无效（undefined）→ null（statusline 跳过）
+		expect(renderer.render(undefined, undefined)).toBeNull();
 	});
 
-	it("session_start：ctx.ui.theme.fg 非函数 → noop dispose，不写 slot", () => {
+	it("render：theme 无 fg 函数 → 返回 null（不抛）", () => {
 		const { pi, calls } = createMockPi();
 		permissionExtension(pi);
 		const sessionHandler = getSessionStartHandler(calls);
-		const ctxBadFg = { mode: "json", cwd: "/tmp", ui: { theme: { fg: "not-a-fn" } }, signal: undefined };
-		expect(() => sessionHandler({}, ctxBadFg)).not.toThrow();
-		expect(Reflect.get(globalThis, FOOTER_HANDSHAKE_KEY)).toBeUndefined();
+		sessionHandler({}, { mode: "json", cwd: "/tmp", ui: {}, signal: undefined });
+		const slot = Reflect.get(globalThis, FOOTER_HANDSHAKE_KEY) as {
+			pending: Array<{ id: string; renderer: unknown }>;
+		} | undefined;
+		const renderer = slot!.pending[0]!.renderer as {
+			render: (ctx: unknown, theme: unknown) => string | null;
+		};
+		expect(renderer.render(undefined, { fg: "not-a-fn" })).toBeNull();
 	});
 
-	it("session_start：合法 theme → 注册 renderer，render 读时刷新反映最新 mode", () => {
+	it("session_start：注册 renderer，render(ctx, theme) 用传入 theme 构造 palette + 读时刷新", () => {
 		writeConfig("yolo");
 		const { pi, calls } = createMockPi();
 		permissionExtension(pi);
 		const sessionHandler = getSessionStartHandler(calls);
-		const ctxWithTheme = {
-			mode: "json",
-			cwd: "/tmp",
-			ui: { theme: { fg: (_t: string, text: string): string => text } },
-			signal: undefined,
-		};
-		sessionHandler({}, ctxWithTheme);
+		// 注册不依赖 ctx.ui.theme；theme 由 statusline 在 render 时传入
+		sessionHandler({}, { mode: "json", cwd: "/tmp", ui: {}, signal: undefined });
 		// consumer 端：owner(pi-statusline) 未加载 → registry 未就绪 → renderer 进 pending
 		const slot = Reflect.get(globalThis, FOOTER_HANDSHAKE_KEY) as {
 			version: number;
@@ -341,12 +351,16 @@ describe("footer line 注册", () => {
 		expect(slot!.version).toBe(1);
 		expect(slot!.pending.length).toBe(1);
 		expect(slot!.pending[0]!.id).toBe("pi-permission");
-		const renderer = slot!.pending[0]!.renderer as { render: () => string };
-		// render 读最新 config（yolo）→ 含 YOLO label
-		expect(renderer.render()).toContain("YOLO");
+		const renderer = slot!.pending[0]!.renderer as {
+			render: (ctx: unknown, theme: unknown) => string | null;
+		};
+		// statusline render hook 传入的 theme 参数（pi Theme 对象，fg(token, text)）
+		const theme = { fg: (_t: string, text: string): string => text };
+		// render 用传入 theme 构造 palette + 读最新 config（yolo）→ 含 YOLO label
+		expect(renderer.render(undefined, theme)).toContain("YOLO");
 		// 读时刷新：改 config mode 后再次 render → 反映 Strict（验证 render 内 loadAndWatchConfig）
 		writeConfig("strict");
-		const out2 = renderer.render();
+		const out2 = renderer.render(undefined, theme);
 		expect(out2).toContain("Strict");
 		expect(out2).not.toContain("YOLO");
 	});

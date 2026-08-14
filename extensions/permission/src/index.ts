@@ -96,7 +96,7 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 		}
 		// 无需手动刷新：去闭包后每次 loadAndWatchConfig 读时刷新；迁移改写文件后下次读取自动生效。
 		// 注册 footer line renderer（consumer 端握手，pi-statusline 是 canonical owner）。
-		// duck typing：headless/mock ctx 无 theme 时 registerFooterLineFor 返回 noop。
+		// renderer 无状态：render 时用 statusline 传入的 theme + loadAndWatchConfig 读最新 config。
 		// renderer 覆盖式注册（registry.register 同 id 覆盖），无需存 dispose。
 		registerFooterLineFor(ctx);
 	});
@@ -226,31 +226,28 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 	// ──────────────────────── footer line 辅助 ────────────────────────
 
 	/**
-	 * 从 ctx.ui.theme 构造 palette 并注册 permission footer line renderer。
-	 * duck typing：headless/mock ctx 无 theme（或 theme.fg 非函数）时跳过，返回 noop dispose。
-	 * renderer 无状态：render 时 loadAndWatchConfig 读最新 config（mode/enabled/rules/model 切换后自动反映）。
+	 * 注册 permission footer line renderer（consumer 端握手）。
+	 * 不依赖 ctx.ui：pi 的 ExtensionUIContext 无 theme 字段（类型权威），theme 由
+	 * pi-statusline 每次 render 时经 render(ctx, theme) 传入（render hook 的 theme 参数 = pi Theme 对象）。
+	 * headless（rpc/json mode）时 render 收不到有效 theme → 返回 null，statusline 跳过。
 	 */
-	function registerFooterLineFor(ctx: ExtensionContext): () => void {
-		// duck typing 守卫：ctx.ui.theme.fg 存在且为函数才构造 palette（headless/mock 无 theme → noop dispose）
-		const ui: unknown = ctx.ui;
-		if (typeof ui !== "object" || ui === null || !("theme" in ui)) return () => {};
-		const theme: unknown = ui.theme;
-		if (typeof theme !== "object" || theme === null) return () => {};
-		if (!("fg" in theme) || typeof theme.fg !== "function") return () => {};
-		const palette = paletteFromTheme(theme as { fg(token: string, text: string): string });
-		return registerPermissionFooterLine(makePermissionFooterRenderer(palette));
+	function registerFooterLineFor(_ctx: ExtensionContext): () => void {
+		return registerPermissionFooterLine(makePermissionFooterRenderer());
 	}
 
 	/**
 	 * 构造 footer line renderer（order=2，pi-statusline 内联进 ctx 行）。
 	 * render 读时刷新：每次 statusline 重绘都 loadAndWatchConfig 读最新 config，
 	 * 故任意字段（mode/enabled/rules/model）切换后重绘立即可见。
+	 * theme 参数（pi Theme 对象）每次 render 传入，palette 即取即用（theme 切换也跟随）。
 	 */
-	function makePermissionFooterRenderer(palette: PermissionPalette): FooterLineRenderer {
+	function makePermissionFooterRenderer(): FooterLineRenderer {
 		return {
 			order: 2,
-			render: () => {
+			render: (ctx: unknown, theme: unknown) => {
 				const cfg = loadAndWatchConfig(defaultConfigWarn);
+				const palette = paletteFromThemeSafe(theme);
+				if (palette === null) return null;
 				return renderPermissionFooterLine(
 					cfg.mode,
 					cfg.enabled,
@@ -260,6 +257,16 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 				);
 			},
 		};
+	}
+
+	/**
+	 * theme 有效（含 fg 函数）→ 构造 PermissionPalette；否则 null（headless/无主题）。
+	 * theme 来自 pi-statusline render hook 传入的 pi Theme 对象（fg(token, text) 签名）。
+	 */
+	function paletteFromThemeSafe(theme: unknown): PermissionPalette | null {
+		if (typeof theme !== "object" || theme === null) return null;
+		if (!("fg" in theme) || typeof theme.fg !== "function") return null;
+		return paletteFromTheme(theme as { fg(token: string, text: string): string });
 	}
 
 }
