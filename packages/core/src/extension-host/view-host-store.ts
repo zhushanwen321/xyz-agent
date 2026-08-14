@@ -57,6 +57,29 @@ export class ViewHostStore {
     return this.deps.sessionScoped.get(sessionId)?.get(viewId)
   }
 
+  /**
+   * 列出该 session 当前有缓存内容的全部 viewId（通用 widget bridge 动态发现用）。
+   *
+   * sidebar L2TabBar 据此动态暴露 view tab——任何 extension 推 extension:widget 后，
+   * 对应 viewId 自动出现在 tab 栏，无需壳侧硬编码声明、无需 extension 做 xyz-agent 适配。
+   */
+  getViewIds(sessionId: string): string[] {
+    const partition = this.deps.sessionScoped.get(sessionId)
+    return partition ? [...partition.keys()] : []
+  }
+
+  private listeners = new Set<() => void>()
+  /** 注册 view 缓存变化监听（renderer 响应式粘合：bump version 触发 computed 重算）。 */
+  onChange(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+  private notifyListeners(): void {
+    for (const fn of this.listeners) fn()
+  }
+
   setView(sessionId: string, viewId: string, entry: ViewCacheEntry): void {
     this.deps.sessionScoped.update(sessionId, (partition) => {
       partition.set(viewId, entry)
@@ -80,6 +103,7 @@ export class ViewHostStore {
     // gui:null 清除语义：guiTree=[null] → invalidate 该 viewId（clarify Q1）
     if (widget.guiTree.length === 1 && widget.guiTree[0] === null) {
       this.invalidate(sessionId, widget.viewId)
+      this.notifyListeners()
       return
     }
     const guiTree = this.narrowGuiTree(widget.guiTree)
@@ -89,6 +113,7 @@ export class ViewHostStore {
       guiTree,
       updatedAt: Date.now(),
     })
+    this.notifyListeners()
   }
 
   /** 窄化 unknown[] → GuiComponent[]：isGuiComponent 直存；string 行包装 ansi-text（clarify Q1）。 */
@@ -109,5 +134,6 @@ export class ViewHostStore {
   dispose(): void {
     for (const unsub of this.unsubscribe) unsub()
     this.unsubscribe = []
+    this.listeners.clear()
   }
 }

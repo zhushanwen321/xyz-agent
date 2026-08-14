@@ -21,7 +21,7 @@
  */
 import { computed, inject, ref } from 'vue'
 import type { Component } from 'vue'
-import { LayoutGrid, ListTodo, Target } from '@lucide/vue'
+import { LayoutGrid } from '@lucide/vue'
 import { VIEWS_SOURCE_KEY, type PluginViewSummary } from './views-source'
 import L2TabBar from './L2TabBar.vue'
 import type { L2TabItem } from './l2-tab-item'
@@ -37,16 +37,11 @@ const source = inject(VIEWS_SOURCE_KEY, null)
 /** builtin plugin（core builtin-contributions.ts 声明）——不可关闭 */
 const BUILTIN_PLUGIN_IDS = new Set(['tasks'])
 
-/** icon 内置字典：viewId/icon 名 → lucide 组件（R3 动态组件机制） */
-const ICON_BY_KEY: Record<string, Component> = {
-  todo: ListTodo,
-  goal: Target,
-}
-
+/** 通用 default icon（动态 view 无 icon 元数据，统一 LayoutGrid；不做 viewId 特化映射） */
 const DEFAULT_ICON: Component = LayoutGrid
 
 /** 全部贡献 view（无 source 注入 → 空数组，静默空态） */
-const views = computed<PluginViewSummary[]>(() => source?.getViews() ?? [])
+const views = computed<PluginViewSummary[]>(() => source?.getViews(props.sessionId) ?? [])
 
 // ── 本地状态（close/pin 不持久化，design T2/T3 约束）──
 const activeViewId = ref<string | null>(null)
@@ -63,7 +58,7 @@ const tabs = computed<L2TabItem[]>(() =>
   visibleViews.value.map((v) => ({
     viewId: v.viewId,
     title: v.title,
-    icon: resolveIcon(v),
+    icon: DEFAULT_ICON,
     pinned: pinnedViewIds.value.has(v.viewId),
     builtin: BUILTIN_PLUGIN_IDS.has(v.pluginId),
   })),
@@ -80,15 +75,6 @@ const activeView = computed<string | null>(() => {
 const activeTitle = computed<string | undefined>(() =>
   visibleViews.value.find((v) => v.viewId === activeView.value)?.title,
 )
-
-/** icon 解析：icon 名优先 → viewId 兜底 → 默认图标 */
-function resolveIcon(view: PluginViewSummary): Component {
-  if (view.icon) {
-    const byName = ICON_BY_KEY[view.icon]
-    if (byName) return byName
-  }
-  return ICON_BY_KEY[view.viewId] ?? DEFAULT_ICON
-}
 
 function onSelect(viewId: string): void {
   activeViewId.value = viewId

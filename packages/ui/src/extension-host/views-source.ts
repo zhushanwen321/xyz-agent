@@ -24,7 +24,8 @@ export interface PluginViewSummary {
 
 /** PluginViewContainer 数据源。 */
 export interface PluginViewsSource {
-  getViews(): PluginViewSummary[]
+  /** 取该 session 可见的 view 清单（静态声明 ∪ 动态 widget 发现，per-session）。 */
+  getViews(sessionId: string): PluginViewSummary[]
 }
 
 /** provide/inject key——壳 provide，组件 inject，单测 global.provide mock。 */

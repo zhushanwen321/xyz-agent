@@ -17,7 +17,7 @@ import { VIEWS_SOURCE_KEY, type PluginViewsSource, type PluginViewSummary } from
 import ViewHost from '../ViewHost.vue'
 
 function makeSource(views: PluginViewSummary[]): PluginViewsSource {
-  return { getViews: vi.fn(() => views) }
+  return { getViews: vi.fn((_sessionId: string) => views) }
 }
 
 function mountContainer(source?: PluginViewsSource, sessionId = 's1') {

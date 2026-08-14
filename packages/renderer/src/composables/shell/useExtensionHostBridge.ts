@@ -23,7 +23,7 @@
  * 适配（见 extension-host-dialog.ts）经 DIALOG_REQUEST_SOURCE_KEY/UI_RESPONSE_TRANSPORT_KEY 注入。
  */
 import type { App } from 'vue'
-import { reactive, shallowReactive, watch } from 'vue'
+import { reactive, ref, shallowReactive, watch } from 'vue'
 import {
   ContributionRegistry,
   createSessionScopedMap,
@@ -304,9 +304,18 @@ export function initExtensionHostBridge(app: App): {
   // 不裸委托 getViewsByPlacement——它缺 pluginId，builtin 判定（tasks 不可关闭）需要
   // pluginId，故从 getContributions 直接映射（design-review 已确认此设计）。
   // icon 当前无图标源，透传 undefined（PluginViewContainer 按 viewId 内置字典兜底）。
+  // 通用 widget bridge：动态承接 extension:widget 推送——任何 extension 推了 widget 内容，
+  // 对应 viewId 自动暴露为 sidebar view tab，无需 extension 做 xyz-agent 适配、无需壳侧硬编码声明。
+  // 响应式粘合：ViewHostStore 缓存变化 → onChange bump version → PluginViewContainer computed 重算。
+  const dynamicViewsVersion = ref(0)
+  viewHostStore.onChange(() => {
+    dynamicViewsVersion.value++
+  })
   app.provide(VIEWS_SOURCE_KEY, {
-    getViews: () =>
-      contributions
+    getViews: (sessionId: string) => {
+      // 读 version 建立响应式追踪（widget 变化 → version bump → computed 重算）
+      void dynamicViewsVersion.value
+      const staticViews = contributions
         .getContributions({ type: 'view' })
         .filter((c) => c.placement === 'sidebar.tab')
         .map((c) => ({
@@ -315,7 +324,21 @@ export function initExtensionHostBridge(app: App): {
           icon: undefined,
           initialVisibility: c.view?.initialVisibility ?? 'hidden',
           pluginId: c.pluginId,
-        })),
+        }))
+      // 动态发现：ViewHostStore 中该 session 有 widget 内容的 viewId（与静态声明去重）
+      const staticIds = new Set(staticViews.map((v) => v.viewId))
+      const dynamicViews = viewHostStore
+        .getViewIds(sessionId)
+        .filter((id) => !staticIds.has(id))
+        .map((id) => ({
+          viewId: id,
+          title: id,
+          icon: undefined,
+          initialVisibility: 'visible' as const,
+          pluginId: '',
+        }))
+      return [...staticViews, ...dynamicViews]
+    },
   })
   app.provide(STATUS_BAR_SOURCE_KEY, {
     // 两 scope 重载（ui 契约）：直接委托 StatusBarController（签名对齐 IF8）。

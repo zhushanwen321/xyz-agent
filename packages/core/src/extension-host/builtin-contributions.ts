@@ -25,12 +25,12 @@ export const builtinContributions: BuiltinContribution[] = [
     },
   },
   {
+    // tasks 的 slashCommands 仍静态声明（W3 CommandRegistry 收编需要）；其 views（todo/goal）
+    // 不再硬编码——由通用 widget bridge 动态承接：extension:widget 推送 widgetKey='todo'/'goal'
+    // 时，ViewHostStore.getViewIds 自动发现，sidebar L2TabBar 暴露对应 view tab。
+    // 任何支持 GUI 协议的 extension 都经此通道自动渲染，无需 xyz-agent 侧适配。
     pluginId: 'tasks',
     contributes: {
-      views: [
-        { id: 'todo', title: '任务', placement: 'sidebar.tab', initialVisibility: 'visible' },
-        { id: 'goal', title: '目标', placement: 'sidebar.tab', initialVisibility: 'visible' },
-      ],
       slashCommands: [
         { name: 'goal', description: '创建目标' },
         { name: 'todo', description: '创建任务' },
