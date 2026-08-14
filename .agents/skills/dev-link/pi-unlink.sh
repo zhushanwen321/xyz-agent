@@ -31,7 +31,15 @@ for input in "$@"; do
 		echo "  · ${short} 未 pi-link（${link} 不是 symlink），跳过 rm"
 	fi
 
-	# 2. pi install 重装 npm 版（需联网）
+	# 2. 删 pi skill 目录里该 extension 的 skill symlinks（extension 源码还在时遍历其 skills/）
+	if [ -n "${DL_SRC_DIR:-}" ] && [ -d "$DL_SRC_DIR/skills" ]; then
+		skill_count=$(dl_unlink_skills "$DL_SRC_DIR")
+		if [ "$skill_count" != "0" ]; then
+			green "  ✓ 删 ${skill_count} 个 skill symlink（$PI_SKILL_DIR）"
+		fi
+	fi
+
+	# 3. pi install 重装 npm 版（需联网）
 	if [ -n "${DL_NPM_NAME:-}" ]; then
 		if pi install "npm:$DL_NPM_NAME" >/dev/null 2>&1; then
 			green "  ✓ pi install 重装 ${DL_NPM_NAME}"

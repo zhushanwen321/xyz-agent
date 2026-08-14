@@ -50,6 +50,12 @@ for input in "$@"; do
 	#    exit code 不可靠（无条目时非 0），故不依赖，目标是确保 node_modules 无 npm 版。
 	pi uninstall "npm:$DL_NPM_NAME" >/dev/null 2>&1 || true
 	echo "  · pi uninstall 清 npm 版 ${DL_NPM_NAME}（settings + node_modules，如存在）"
+
+	# 3. symlink extension 的 skills 到 pi skill 目录（绕过 globalExtDir 不读 pi.skills）
+	skill_count=$(dl_link_skills "$DL_SRC_DIR")
+	if [ "$skill_count" != "0" ]; then
+		echo "  · symlink ${skill_count} 个 skill 到 $PI_SKILL_DIR"
+	fi
 done
 
 echo ""

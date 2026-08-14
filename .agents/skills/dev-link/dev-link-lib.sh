@@ -14,6 +14,7 @@
 
 SCOPE="@zhushanwen"
 PI_EXT_DIR="$HOME/.pi/agent/extensions"
+PI_SKILL_DIR="$HOME/.pi/agent/skills"
 
 red()    { printf "\033[31m%s\033[0m\n" "$*"; }
 green()  { printf "\033[32m%s\033[0m\n" "$*"; }
@@ -85,4 +86,38 @@ dl_lookup() {
 	DL_SRC_DIR="$(echo "$line" | cut -d'|' -f3)"
 	DL_IS_EXT="$(echo "$line" | cut -d'|' -f4)"
 	return 0
+}
+
+# ── extension skills symlink 到 pi skill 目录（绕过 globalExtDir 不读 pi.skills）──
+# pi-link 时把 extension/skills/<skill> symlink 到 PI_SKILL_DIR/<skill>，
+# pi-unlink 时删（检查 symlink 存在）。stdout: 操作数。
+dl_link_skills() {
+	local src_dir="$1"
+	local skills_root="$src_dir/skills"
+	[ -d "$skills_root" ] || { echo "0"; return 0; }
+	local count=0
+	for skill_dir in "$skills_root"/*/; do
+		[ -d "$skill_dir" ] || continue
+		local skill_name; skill_name=$(basename "$skill_dir")
+		ln -sfn "${skill_dir%/}" "$PI_SKILL_DIR/$skill_name"
+		count=$((count + 1))
+	done
+	echo "$count"
+}
+
+dl_unlink_skills() {
+	local src_dir="$1"
+	local skills_root="$src_dir/skills"
+	[ -d "$skills_root" ] || { echo "0"; return 0; }
+	local count=0
+	for skill_dir in "$skills_root"/*/; do
+		[ -d "$skill_dir" ] || continue
+		local skill_name; skill_name=$(basename "$skill_dir")
+		local link="$PI_SKILL_DIR/$skill_name"
+		if [ -L "$link" ]; then
+			rm "$link"
+			count=$((count + 1))
+		fi
+	done
+	echo "$count"
 }

@@ -29,7 +29,7 @@ bash .agents/skills/dev-link/pi-link.sh subagent-workflow      # symlink 本地 
 bash .agents/skills/dev-link/pi-unlink.sh subagent-workflow    # rm symlink + pi install 重装 npm 版（需联网）
 ```
 
-**机制**：symlink 本地源码 → `~/.pi/agent/extensions/pi-<short>`（globalExtDir，loader 第 2 步扫描，pi-statusline 同模式）。同时 `pi uninstall` 清 npm 版（settings 条目 + node_modules 包），避免 globalExtDir symlink 与 npm 包两源并存。unlink 时 `pi install` 重装 npm 版（从 npm registry 下载，需联网）。
+**机制**：symlink 本地源码 → `~/.pi/agent/extensions/pi-<short>`（globalExtDir，loader 第 2 步扫描，pi-statusline 同模式）。同时 `pi uninstall` 清 npm 版（settings 条目 + node_modules 包），避免 globalExtDir symlink 与 npm 包两源并存。**另把 extension 的 `skills/*/` 每个 skill symlink 到 `~/.pi/agent/skills/`**（绕过 pi globalExtDir 不读 `pi.skills` 的限制，让 skill 进 available_skills）。unlink 时 `pi install` 重装 npm 版 + 删 skill symlinks（从 npm registry 下载，需联网）。
 
 **生效**：新建 pi session（当前 session 已加载旧版，不重扫）。**注意 pi list 不显示** globalExtDir symlink——pi list 只列 `packages` 配置的，不列自动发现源，但 loader 会加载（正常现象）。
 
