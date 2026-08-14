@@ -621,36 +621,40 @@ body {
               </div>
 
               <!-- M17: 对话流 widget 面板（常驻 + 同 key 覆盖更新，TUI setWidget 的 GUI 对应）
-                   todo/goal 等常驻状态面板落点；每卡 = widgetKey 标签 + 原语组合 -->
+                   todo/goal 等常驻状态面板落点；多 widget 分栏并排（单 widget 占满，多 widget 等分/按内容） -->
               <div style="position:relative;">
-                <div class="widget-area" style="display:flex;flex-direction:column;gap:6px;">
-                  <!-- widgetKey: todo → list-tree -->
-                  <div class="gcard stage-default">
-                    <div class="gcard-hd"><span class="hd-dot" style="background:var(--accent);"></span><span class="hd-title">todo</span><span class="hd-badge b-accent">list-tree</span></div>
-                    <div class="gcard-bd" style="padding:8px;">
-                      <div class="gtree" style="font-size:10px;">
-                        <div class="gtree-node"><span class="gtree-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/></svg></span><span class="gtree-label">接入 GUI widget 协议</span><span class="gtree-status st-done"></span></div>
-                        <div class="gtree-node"><span class="gtree-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg></span><span class="gtree-label">迁移 widget 到 M17</span><span class="gtree-status st-running"></span></div>
-                        <div class="gtree-node"><span class="gtree-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg></span><span class="gtree-label">移除 sidebar 硬编码</span><span class="gtree-status st-pending"></span></div>
+                <div class="widget-area" style="display:flex;gap:10px;align-items:stretch;flex-wrap:wrap;">
+                  <!-- widgetKey: todo → list-tree（左栏） -->
+                  <div class="widget-area__card" style="flex:1 1 240px;min-width:0;">
+                    <div class="gcard stage-default" style="height:100%;">
+                      <div class="gcard-hd"><span class="hd-dot" style="background:var(--accent);"></span><span class="hd-title">todo</span><span class="hd-badge b-accent">list-tree</span></div>
+                      <div class="gcard-bd" style="padding:8px;">
+                        <div class="gtree" style="font-size:10px;">
+                          <div class="gtree-node"><span class="gtree-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/></svg></span><span class="gtree-label">接入 GUI widget 协议</span><span class="gtree-status st-done"></span></div>
+                          <div class="gtree-node"><span class="gtree-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg></span><span class="gtree-label">迁移 widget 到 M17</span><span class="gtree-status st-running"></span></div>
+                          <div class="gtree-node"><span class="gtree-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg></span><span class="gtree-label">移除 sidebar 硬编码</span><span class="gtree-status st-pending"></span></div>
+                        </div>
                       </div>
                     </div>
                   </div>
-                  <!-- widgetKey: goal → card(stats-line + progress-bar) -->
-                  <div class="gcard stage-default">
-                    <div class="gcard-hd"><span class="hd-dot" style="background:var(--success);"></span><span class="hd-title">goal</span><span class="hd-badge b-success">active</span></div>
-                    <div class="gcard-bd" style="display:flex;flex-direction:column;gap:8px;padding:8px;">
-                      <div class="gstats">
-                        <span class="gs-item"><span class="gs-label">turns</span><span class="gs-value sv-neutral">3</span></span>
-                        <span class="gs-item"><span class="gs-label">tokens</span><span class="gs-value sv-mid">48k</span></span>
-                        <span class="gs-item"><span class="gs-label">budget</span><span class="gs-value sv-mid">48k/200k</span></span>
-                      </div>
-                      <div class="gprog">
-                        <div class="gprog-hd"><span class="gprog-label">tokens</span><span class="gprog-val">24<span class="gprog-total">%</span></span></div>
-                        <div class="gprog-track"><div class="gprog-fill f-ok" style="width:24%;"></div></div>
+                  <!-- widgetKey: goal → card(stats-line + progress-bar)（右栏） -->
+                  <div class="widget-area__card" style="flex:1 1 240px;min-width:0;">
+                    <div class="gcard stage-default" style="height:100%;">
+                      <div class="gcard-hd"><span class="hd-dot" style="background:var(--success);"></span><span class="hd-title">goal</span><span class="hd-badge b-success">active</span></div>
+                      <div class="gcard-bd" style="display:flex;flex-direction:column;gap:8px;padding:8px;">
+                        <div class="gstats">
+                          <span class="gs-item"><span class="gs-label">turns</span><span class="gs-value sv-neutral">3</span></span>
+                          <span class="gs-item"><span class="gs-label">tokens</span><span class="gs-value sv-mid">48k</span></span>
+                          <span class="gs-item"><span class="gs-label">budget</span><span class="gs-value sv-mid">48k/200k</span></span>
+                        </div>
+                        <div class="gprog">
+                          <div class="gprog-hd"><span class="gprog-label">tokens</span><span class="gprog-val">24<span class="gprog-total">%</span></span></div>
+                          <div class="gprog-track"><div class="gprog-fill f-ok" style="width:24%;"></div></div>
+                        </div>
                       </div>
                     </div>
                   </div>
-                  <div style="font-family:var(--font-mono);font-size:9px;color:var(--neutral-dim);text-align:center;">↑ M17 对话流 widget 面板：常驻 · 同 key 覆盖更新 · guiSetWidget(key, undefined) 清除</div>
+                  <div style="flex-basis:100%;font-family:var(--font-mono);font-size:9px;color:var(--neutral-dim);text-align:center;">↑ M17 对话流 widget 面板：常驻 · 同 key 覆盖更新 · 多 widget 分栏（单 widget 占满）· guiSetWidget(key, undefined) 清除</div>
                 </div>
                 <span class="mtag mtag-float mb" style="top:-7px;right:-7px;">M17</span>
               </div>

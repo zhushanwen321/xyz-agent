@@ -257,7 +257,7 @@ renderResult(result, options, theme) {
 
 widget 通过 `guiSetWidget()` helper **直接编码进 string[]**——不需要 shim extension，不需要 monkey-patch。
 
-**挂载点（M17）**：widget 在 GUI 下渲染到**对话流 widget 面板**（MessageStream 与 composer 之间，对应 TUI「editor 上方常驻面板」）。语义与 pi 原生完全一致：**常驻 + 同 key 覆盖更新 + undefined 清除**。xyz-agent 前端按 widgetKey 分区缓存，多 key 垂直堆叠。任何 extension 推 widget 都走此挂载点（通用承接，不特化）。
+**挂载点（M17）**：widget 在 GUI 下渲染到**对话流 widget 面板**（MessageStream 与 composer 之间，对应 TUI「editor 上方常驻面板」）。语义与 pi 原生完全一致：**常驻 + 同 key 覆盖更新 + undefined 清除**。xyz-agent 前端按 widgetKey 分区缓存，**多 widgetKey 分栏并排**（flex wrap：单 widget 占满整行，多 widget 等分/按内容）。任何 extension 推 widget 都走此挂载点（通用承接，不特化）。
 
 #### 原理
 

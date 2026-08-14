@@ -56,7 +56,7 @@ Panel#main（自上而下）
 | 常驻 | 有 widget 数据时面板常驻显示（per-session 分区）；无数据隐藏 |
 | 覆盖更新 | 同 widgetKey 重复推送原地替换内容（不新增消息） |
 | 清除 | `guiSetWidget(key, undefined)` / `setWidget(key, undefined)` 移除该卡（已有 gui:null 清除语义） |
-| 多 key | 多 widgetKey 垂直堆叠（todo + goal + 未来 extension 各自一张卡） |
+| 多 widget | 多 widgetKey **分栏并排**（flex wrap：单 widget 占满，多 widget 等分/按内容），卡片高度拉伸对齐 |
 | 重开恢复 | extension 在 session_start 重新推 widget（todo handlers.ts / goal session-start.ts 已有），重开即恢复 |
 
 ### 2.3 视觉
@@ -64,7 +64,7 @@ Panel#main（自上而下）
 - 每卡 = **widgetKey 标签行**（mono 9px，对齐 demo tool-label 风格）+ 内容（GuiComponentRenderer）
 - 卡片容器 v6 风格（bg-surface + rounded-md，无 border 靠层级，对齐 gcard）
 - 宽度跟随对话流内容区（max-w 对齐 MessageStream）
-- 多 key 垂直堆叠 gap-2
+- **多 widget 分栏**：多 widgetKey 并排（flex wrap，gap 10px），单 widget 占满整行，多 widget 等分/按内容；卡片高度拉伸对齐（align-items:stretch）
 
 ## §3 数据链路（全复用，零新协议）
 
