@@ -264,11 +264,21 @@ export async function getWorkflow(name: string): Promise<CachedWorkflowMeta | un
  * - ~/ 前缀展开；相对路径/非 .js 引用返回 undefined（引用唯一形态 = 绝对路径）
  * - 任意路径（不限扫描源）：内置包内脚本、用户任意位置脚本均可执行
  * - meta 提取失败/文件不可读 → available=false（fail-safe，不抛）
+ * - [perf] 与 getWorkflow(name) 对称走 bucket 缓存（key=绝对路径，与 stem 名不冲突），
+ *   消除 workflow tool 主路径每次 run 的全文 regex + YAML.parse（mtime 判变失效）
  */
 export async function getWorkflowByPath(ref: string): Promise<CachedWorkflowMeta | undefined> {
   const filePath = normalizeRef(ref, WORKFLOW_REF_EXT);
   if (filePath === null) return undefined;
-  return toCachedMeta(filePath, "user-pi");
+  const bucket = getCacheBucket(findWorkspaceRoot());
+  const cached = bucket.get(filePath);
+  if (cached && isCacheValid(cached)) {
+    return cached.meta;
+  }
+  const meta = await toCachedMeta(filePath, "user-pi");
+  const file = getCachedFile(filePath);
+  if (file) bucket.set(filePath, { meta, mtimeMs: file.mtimeMs });
+  return meta;
 }
 
 /**

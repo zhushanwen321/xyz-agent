@@ -26,6 +26,7 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { getCurrentActivity, getDisplayItems, getEventLog, markReconstructedStatus, snapshot as toSnapshot } from "./execution-record.ts";
 import type { ManifestRecord, ManifestStore } from "./manifest-store.ts";
 import {
+  IDENTITY_HEAD_BYTES,
   type IdentityHeaderRecon,
   type ReconstructedRecord,
   readIdentityAnywhere,
@@ -472,7 +473,12 @@ export class RecordStore {
 
     // 重建：identity 三级定位——头部 64KB（首轮会话，~34%）→ 尾部 64KB（续聊场景
     // 最后一轮 session_start 追加，~65%）→ 全文 fallback（~0.2%）。均不解析 message entries。
-    const header = readIdentityHeader(file) ?? readIdentityTail(file) ?? readIdentityAnywhere(file);
+    // size ≤ 头部读取上限时 head 读到的即全文，tail/anywhere 只会重复读同一份内容——
+    // 直接判负（head miss = 全文无 identity），省去同内容两连读。
+    const header =
+      jsonl.size <= IDENTITY_HEAD_BYTES
+        ? readIdentityHeader(file)
+        : readIdentityHeader(file) ?? readIdentityTail(file) ?? readIdentityAnywhere(file);
     if (!header) {
       // 负缓存：确认无 identity。后续扫描 stat 命中直接跳过；戳变化（文件补写）自动重试。
       this.fileCache.set(file, { negative: true, jsonl, cancelled, finalized, alive });
@@ -499,6 +505,18 @@ export class RecordStore {
     this.fileCache.set(file, entry);
     this.idToFile.set(header.id, file);
     return entry;
+  }
+
+  /**
+   * [perf] byId 索引直查 light record（单文件 stat 校验，不触发 getFullRecord 的
+   * 全量重建）。idToFile 未热（进程重启后尚未扫描过）时返回 undefined，调用方
+   * 自行兜底全目录扫描——用于把「跨重启后每条 message 一次 collectRecords 全扫」
+   * 降为 O(1) 索引命中。
+   */
+  findLightById(id: string): SubagentRecord | undefined {
+    const file = this.idToFile.get(id);
+    if (!file) return undefined;
+    return this.scanFile(file, Date.now())?.light;
   }
 
   /**

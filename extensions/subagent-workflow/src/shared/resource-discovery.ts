@@ -84,6 +84,12 @@ interface MtimeCacheEntry {
 
 const mtimeCache = new Map<string, MtimeCacheEntry>();
 
+// [perf] findWorkspaceRoot 结果按 cwd memo——每次调用最多 3 phase × 20 层 existsSync
+//（30-60 次 stat），调用点（session_start、discoverWorkflows、getWorkflow）在 spawn/
+// tool 热路径上重复付。cwd 不变则祖先目录结构（.bare/.git/.pi）不变；变化场景由
+// clearFileCache 兜底（invalidateCache 语义，测试隔离也走这里）。
+const workspaceRootCache = new Map<string, string>();
+
 /**
  * stat + content 统一缓存。文件不存在/不可读 → null（并驱逐条目）。
  * mtime 未变 → 返回缓存 content（不重 read）；变 → readFileSync + 缓存。
@@ -120,10 +126,19 @@ export function getCachedFileContent(filePath: string): string | null {
 /** 清空（invalidateCache 语义——测试隔离 + mtime 漏判场景手动刷新兜底）。 */
 export function clearFileCache(): void {
   mtimeCache.clear();
+  workspaceRootCache.clear();
 }
 
 export function findWorkspaceRoot(cwd?: string): string {
   const dir = cwd ?? process.cwd();
+  const memo = workspaceRootCache.get(dir);
+  if (memo !== undefined) return memo;
+  const root = computeWorkspaceRoot(dir);
+  workspaceRootCache.set(dir, root);
+  return root;
+}
+
+function computeWorkspaceRoot(dir: string): string {
   const root = resolve("/");
 
   // Phase 1: bare repo 优先——先全路径扫一遍找 .bare

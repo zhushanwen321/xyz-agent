@@ -932,9 +932,15 @@ export class SubagentService {
     // reconstructAll 已将跨重启 record（无 sidecar + pid 死）标记为 idle（非 crashed），
     // 直接转为可变 ExecutionRecord register 进内存，供 message/close action 续操作。
     if (!record) {
-      const found = this.store
-        .collectRecords(1000, "all", undefined)
-        .find((r) => r.id === id && r.status === "running");
+      // [perf] SP-2 冷路径：先走 idToFile 索引直查（单文件 stat 校验），未命中
+      //（进程重启后尚未扫描、索引未热）才全目录 collectRecords 兜底建索引。
+      // 跨重启后每条 message 从「readdir + N×4 stat 全扫」降为单文件校验。
+      const direct = this.store.findLightById(id);
+      const found =
+        (direct?.status === "running" ? direct : undefined) ??
+        this.store
+          .collectRecords(1000, "all", undefined)
+          .find((r) => r.id === id && r.status === "running");
       if (found) {
         record = createRecord(id, {
           agent: found.agent,

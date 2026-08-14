@@ -615,6 +615,16 @@ function parseIdentityFromText(text: string, sessionFile: string): IdentityHeade
   for (const line of text.split("\n")) {
     const s = line.trim();
     if (!s) continue;
+    // 预筛（[S-4] 同款值匹配）：只有含三种目标 entry 值串的行才值得 JSON.parse——
+    // head 64KB 内大 toolResult 行（数十 KB/行）占多数，全量 parse 是冷扫描 CPU 大头。
+    // 值字符串在任意序列化格式下连续出现，不耦合 pi 的空格习惯。
+    if (
+      !s.includes(IDENTITY_CUSTOM_TYPE) &&
+      !s.includes('"model_change"') &&
+      !s.includes('"thinking_level_change"')
+    ) {
+      continue;
+    }
     let entry: JsonlEntry;
     try {
       entry = JSON.parse(s) as JsonlEntry;

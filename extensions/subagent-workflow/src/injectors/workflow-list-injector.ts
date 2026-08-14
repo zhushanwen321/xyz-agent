@@ -43,6 +43,18 @@ const logger = getLogger("injector");
  */
 let workflowCache: WorkflowEntry[] | null = null;
 
+/**
+ * 注入块渲染缓存（与 workflowCache 同步更新）：before_agent_start 每个 turn 都要注入，
+ * formatWorkflowList 在数据不变时输出完全相同——渲染一次随缓存复用。
+ */
+let workflowInjectionCache: string | null = null;
+
+/** workflowCache 唯一写点：数据与渲染缓存同步更新（null 清空两者）。 */
+function setWorkflowCache(entries: WorkflowEntry[] | null): void {
+	workflowCache = entries;
+	workflowInjectionCache = entries !== null ? formatWorkflowList(entries) : null;
+}
+
 /** 注入段中单个 workflow 的最大描述长度（控制每 turn prompt 体积） */
 const MAX_DESC_LEN = 160;
 
@@ -172,9 +184,11 @@ export function setupWorkflowListInjector(pi: ExtensionAPI): void {
 		"session_start",
 		async (_event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
 			try {
-				workflowCache = await discoverAllWorkflows(
-					findWorkspaceRoot(ctx.cwd),
-					getAgentDir(),
+				setWorkflowCache(
+					await discoverAllWorkflows(
+						findWorkspaceRoot(ctx.cwd),
+						getAgentDir(),
+					),
 				);
 			} catch (err) {
 				// fail-safe：发现异常不阻断 session，缓存保持 null（before_agent_start 会 fallback）
@@ -194,12 +208,15 @@ export function setupWorkflowListInjector(pi: ExtensionAPI): void {
 			try {
 				// 读缓存；miss（session_start 未触发/缓存被清）则 fallback 重新发现+赋值
 				if (workflowCache === null) {
-					workflowCache = await discoverAllWorkflows(
-						findWorkspaceRoot(ctx.cwd),
-						getAgentDir(),
+					setWorkflowCache(
+						await discoverAllWorkflows(
+							findWorkspaceRoot(ctx.cwd),
+							getAgentDir(),
+						),
 					);
 				}
-				const injection = formatWorkflowList(workflowCache);
+				// workflowInjectionCache 与 workflowCache 不变量同步（setWorkflowCache 保证），直接复用
+				const injection = workflowInjectionCache;
 				if (!injection) return;
 				return { systemPrompt: event.systemPrompt + injection };
 			} catch (err) {
@@ -213,7 +230,7 @@ export function setupWorkflowListInjector(pi: ExtensionAPI): void {
 	pi.on(
 		"session_shutdown",
 		(_event: SessionShutdownEvent, _ctx: ExtensionContext): void => {
-			workflowCache = null;
+			setWorkflowCache(null);
 		},
 	);
 }

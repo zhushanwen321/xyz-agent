@@ -44,7 +44,13 @@ const ARGV_FLAG_START = 2;
  * - positional 参数被忽略
  * - argv[0]/argv[1] 是 bun/pi binary 路径，从 argv[2:] 开始扫
  */
+// [perf] 进程内 process.argv 引用恒定（唯一调用点 session-runner 每次 spawn 传同一引用），
+// 解析结果按 argv 引用相等 memo——每次 spawn 免重复扫描/正则。测试传新数组引用不命中。
+let memoArgv: readonly string[] | undefined;
+let memoResult: MirrorFlags | undefined;
+
 export function mirrorMainProcessFlags(argv: readonly string[]): MirrorFlags {
+  if (memoResult !== undefined && memoArgv === argv) return memoResult;
   let hasNoExtensions = false;
   let hasApprove = false;
   const extensionPaths: string[] = [];
@@ -86,5 +92,8 @@ export function mirrorMainProcessFlags(argv: readonly string[]): MirrorFlags {
     // 其他情况（未知 flag、--flag=val 形式、positional）忽略
   }
 
-  return { noExtensions: hasNoExtensions, approve: hasApprove, extensionPaths };
+  const result = { noExtensions: hasNoExtensions, approve: hasApprove, extensionPaths };
+  memoArgv = argv;
+  memoResult = result;
+  return result;
 }
