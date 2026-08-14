@@ -352,6 +352,10 @@ export async function messageHandler(
   // closed/cancelled 终态 record 不可 upgrade（getRecordForAction 已抛 not found）。
   // chatMode 是 ExecutionRecord 的 readonly 字段，用 Mutable<T> 显式断言绕过 readonly 约束（upgrade 语义）。
   // Object.assign 隐式绕过 readonly 不可追踪，改为单字段显式赋值。
+  // [v4 A-3] 进程内 upgrade 入口（SP-5）——one-shot 首条 message 触发 upgrade 置位
+  // chatMode=true。与 subagent-service.ts getRecordForAction 磁盘重建（跨重启恢复入口）
+  // 分工：本入口服务进程内 one-shot，跨重启路径恒被 getRecordForAction 磁盘重建绕过
+  // （该处无条件 chatMode=true）。改动这两处必须协同，带 S3 回归。
   if (!record.chatMode && (record.status === "running" || record.status === "idle")) {
     type Mutable<T> = { -readonly [K in keyof T]: T[K] };
     (record as Mutable<ExecutionRecord>).chatMode = true;

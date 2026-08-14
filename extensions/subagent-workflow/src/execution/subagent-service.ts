@@ -945,6 +945,9 @@ export class SubagentService {
           rootSessionId: found.rootSessionId,
           parentRecordId: found.parentRecordId,
           depth: found.depth,
+          // [v4 A-3] 跨重启恢复入口——message 路径磁盘重建无条件置 chatMode=true（现状机制，
+          // V3 方案 A 方向兑现）。改动此处必须带 S3 回归场景（跨重启 message 续聊验证）。
+          // V3 SP-5 探针定案：机制已存在，本注释即定案，不再悬置。
           chatMode: true,
           controller: new AbortController(),
         });
