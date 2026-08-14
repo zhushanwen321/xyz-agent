@@ -77,12 +77,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
-import type { RawCommand } from '@xyz-agent/core'
+import { iconKeyForCommand, type RawCommand } from '@xyz-agent/core'
+import { SLASH_COMMAND_SOURCE_KEY } from './command-popover-source'
 import { useFileSearch } from '@/composables/features/search/useFileSearch'
 import { isInternalSkillName, isInternalSlashName } from '@/lib/internal-command-filter'
 import { useSessionEvents } from '@/composables/features/chat/useSessionEvents'
@@ -144,13 +145,17 @@ watch(() => props.sessionId, () => { loaded = false; void loadCandidates() })
 /** composer 形态归一化（默认 panel，兼容未透传 variant 的旧调用） */
 const variant = computed<ComposerVariant>(() => props.variant ?? 'panel')
 
-/** slash 命令源（ADR-0050：按 variant 分支）。
- * landing：globalSkills ∪ projectSkills（去重，skill 归一化 /skill:<name>，pi 要求路由前缀）。
- * panel：compact + commandStore（pi 真源，不并入全局缓存以免串 session）。
- * __ 前缀命令过滤（W5 内部命令不可见）。 */
+/** slash 命令源（W3 收编后：merged 源 = registry 声明 ∪ commandStore pi 真源，ADR-0050 按 variant 分支）。
+ * landing：merged（无 session 真源时声明即显示——slice TC2）+ globalSkills ∪ projectSkills 合并。
+ * panel：compact + merged（pi 真源存在性交叉校验）。
+ * __ 前缀命令过滤（W5 内部命令不可见）；无注入源（独立使用/测试）时降级 pi-only（现状行为兼容）。 */
+const slashSource = inject(SLASH_COMMAND_SOURCE_KEY, null)
 const slashCommands = computed(() => {
+  const piCmds = props.sessionId ? commandStore.getCommands(props.sessionId) : []
+  // merged：registry 声明 ∪ pi 真源（resolveSlashCommands 纯函数，壳注入；无注入时退化 pi 真源）
+  const merged = slashSource ? slashSource.resolveSlashCommands(piCmds) : piCmds
   if (variant.value === 'landing') {
-    const extCmds = props.sessionId ? commandStore.getCommands(props.sessionId) : []
+    const extCmds = merged
     const seen = new Set<string>()
     extCmds.forEach((c) => seen.add(normalizedSlashName(c.name)))
     // SkillInfo[] → slash 项（/skill:<name> 归一化），跳过 seen 同名 + __ 前缀
@@ -168,15 +173,14 @@ const slashCommands = computed(() => {
             description: s.description,
           }
         })
-    // 优先级：pi 源已在 seen，全局次之（globalSkills），项目最后（projectSkills 补独有项）
+    // 优先级：merged 源已在 seen，全局次之（globalSkills），项目最后（projectSkills 补独有项）
     const globalSkillCmds = mapSkillInfo(props.globalSkills ?? [])
     const projectSkillCmds = mapSkillInfo(props.projectSkills ?? [])
     return [...extCmds, ...globalSkillCmds, ...projectSkillCmds]
   }
-  // panel 态：compact + commandStore（pi 真源），不并入 globalSkills
+  // panel 态：compact + merged（pi 真源存在性交叉校验），不并入 globalSkills
   const compactCmd = { id: 'compact', name: 'compact', kind: 'builtin', icon: 'compact', description: t('panel.command.compactDesc') }
-  const piCmds = props.sessionId ? commandStore.getCommands(props.sessionId) : []
-  return [compactCmd, ...piCmds.filter((c) => !isInternalSlashName(c.name))]
+  return [compactCmd, ...merged.filter((c) => !isInternalSlashName(c.name))]
 })
 
 /** 订阅 session.commands（D8 走 session 通道）→ 写 commandStore（跨组件重建持久化）。重订归 useSessionEvents。 */
@@ -221,7 +225,8 @@ const items = computed(() => {
       // skill 去 /skill: 前缀显名（icon 已表示类型）；displayName 仅用于模板，onSelect 传完整 name
       displayName: c.kind === 'skill' ? skillDisplayName(c.name) : name,
       kind: c.kind,
-      icon: c.icon,
+      // 声明侧无 icon（schema v2 无 icon 字段）——iconKeyForCommand 按 name/source 推断（builtin 命中 / skill→star / extension→terminal）
+      icon: c.icon ?? iconKeyForCommand(c.name, c.kind),
       isSkill: c.kind === 'skill' || name.startsWith('/skill:'),
       description: c.description,
       dirPath: undefined,

@@ -37,6 +37,10 @@ import {
   NotificationHostController,
   ViewHostStore,
   OverlayLifecycle,
+  ActivationManager,
+  CommandRegistry,
+  type ActivationTrigger,
+  type CommandExecutor,
   type OverlayState,
   type IncomingPluginMessage,
   type PluginMessageSource,
@@ -53,6 +57,7 @@ import {
   VIEWS_SOURCE_KEY,
   OVERLAY_LIFECYCLE_KEY,
 } from '@xyz-agent/ui/extension-host'
+import { SLASH_COMMAND_SOURCE_KEY } from '@/components/panel/command-popover-source'
 import { createDialogRequestSource, createUiResponseTransport } from './extension-host-dialog'
 import type { ServerMessage } from '@xyz-agent/shared'
 import { onCrossSession, onGlobal } from '@/api/events'
@@ -202,6 +207,8 @@ export function initExtensionHostBridge(app: App): {
   notificationController: NotificationHostController
   mountPoints: MountPointRegistry
   contributions: ContributionRegistry
+  commandRegistry: CommandRegistry
+  activationManager: ActivationManager
 } {
   const bus = getExtensionBus() // IF1：复用模块级惰性单例（不再局部 new）
   const source = createWsPluginMessageSource()
@@ -230,6 +237,38 @@ export function initExtensionHostBridge(app: App): {
   // fire-and-forget：注册失败由 bootstrap 内部 warn 降级（ES2），不阻塞启动
   void registerMountPoints()
   void scanContributions()
+
+  // W3 slash 收编（D1 归一）：CommandRegistry 实例化（与 ViewHostStore/StatusBarController 并列，03 文档 D3-3）。
+  // ActivationManager 的 trigger 适配为 no-op——runtime 暂无激活 RPC 通道（plugin-message-handler 无
+  // triggerActivation case），builtin/声明型无 activationEvents 时 ensureActivated 短路，行为等价。
+  const activationManager = new ActivationManager({
+    trigger: { ensureActivated: async () => {} } satisfies ActivationTrigger,
+  })
+  // CommandExecutor 适配 = runtime plugin.executeCommand RPC（通道名已核实 plugin-message-handler.ts:50）。
+  // 惰性调用：execute 时才发 WS；commandId = registry 记录 id，pluginId 经闭包查 registry（CommandExecutor
+  // 接口签名只有 id——壳层补查）。未注册命令 no-op（CommandRegistry.execute 已先发 ERR6 error 事件）。
+  let commandRegistry: CommandRegistry
+  const commandExecutor: CommandExecutor = {
+    execute: async (id, args) => {
+      const cmd = commandRegistry.get(id)
+      if (!cmd) return
+      transport.send({
+        type: 'plugin.executeCommand',
+        payload: { pluginId: cmd.pluginId, commandId: id, args: args as Record<string, unknown> | undefined },
+      })
+    },
+  }
+  commandRegistry = new CommandRegistry({ bus, activationManager, executor: commandExecutor })
+  // 同步 ContributionRegistry 的 command + slashCommand 声明（scanContributions 同步段已 registerBuiltin）。
+  // 收编后 CommandRegistry 成为 slash 命令统一消费源（03 文档 D3-1：声明提供 description 元数据，执行仍走 pi）。
+  for (const c of contributions.getContributions()) {
+    if (c.type === 'command' || c.type === 'slashCommand') commandRegistry.registerFromContribution(c)
+  }
+  // CommandPopover 数据源：resolveSlashCommands 合并源（registry 声明 ∪ commandStore pi 真源）。
+  // 壳提供真实 registry 实现，组件注入（单测 global.provide mock）。
+  app.provide(SLASH_COMMAND_SOURCE_KEY, {
+    resolveSlashCommands: (piCommands) => commandRegistry.resolveSlashCommands(piCommands),
+  })
   // MF-3：把挂载点整表上报 runtime（AC10）——插件 views.listMountPoints() 依赖此中继查询，
   // 不上报则恒返回 []（registerMountPoints 内部同步注册，list() 已含全部挂载点）。
   // MF-1（R2）：发送时点见 ensureMountPointsSync——init 时 WS 未建连，send 必被静默丢弃。
@@ -304,5 +343,5 @@ export function initExtensionHostBridge(app: App): {
   })
   notificationController.subscribe()
 
-  return { bridge, viewHostStore, statusBarController, overlayLifecycle, notificationController, mountPoints, contributions }
+  return { bridge, viewHostStore, statusBarController, overlayLifecycle, notificationController, mountPoints, contributions, commandRegistry, activationManager }
 }

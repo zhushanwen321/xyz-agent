@@ -73,7 +73,7 @@ describe('CommandRegistry 统一命令表（TC-1 + registerCommand 幂等）', (
     expect(registry.get('x')?.title).toBe('B')
   })
 
-  it('TC-1d: registerFromContribution 非 command 型（view/slashCommand）→ ignore 不进表', () => {
+  it('TC-1d: registerFromContribution 非 command 型（view）→ ignore；slashCommand 型 → 归一进表（type=slashCommand）', () => {
     const { registry } = setup()
     registry.registerFromContribution({
       pluginId: 'p1',
@@ -84,14 +84,93 @@ describe('CommandRegistry 统一命令表（TC-1 + registerCommand 幂等）', (
       view: { viewType: 'gui', title: 'View', initialVisibility: 'hidden' },
     })
     registry.registerFromContribution({
-      pluginId: 'p1',
+      pluginId: 'tasks',
       contributionId: 'goal',
       type: 'slashCommand',
       placement: 'slash',
       available: true,
       slashCommand: { name: 'goal', description: '创建目标' },
     })
-    expect(registry.list()).toHaveLength(0)
+    // view ignore，slashCommand 归一进表（W3 收编：不再 ignore）
+    expect(registry.list()).toHaveLength(1)
+    const cmd = registry.get('goal')
+    expect(cmd).toMatchObject({
+      id: 'goal',
+      title: 'goal',
+      description: '创建目标',
+      pluginId: 'tasks',
+      type: 'slashCommand',
+    })
+  })
+})
+
+describe('CommandRegistry.resolveSlashCommands（W3 收编：声明 ∪ pi 真源 + 交叉校验）', () => {
+  /** slashCommand 型 contribution 样本（builtin tasks 声明形状）。 */
+  function slashContribution(name: string, description: string, pluginId = 'tasks'): ContributionRecord {
+    return {
+      pluginId,
+      contributionId: name,
+      type: 'slashCommand',
+      placement: 'slash',
+      available: true,
+      slashCommand: { name, description },
+    }
+  }
+
+  function registryWithDeclared(names: Array<[string, string]>): ReturnType<typeof setup>['registry'] {
+    const { registry } = setup()
+    for (const [name, description] of names) registry.registerFromContribution(slashContribution(name, description))
+    return registry
+  }
+
+  it('TC1a: 声明 goal/todo + pi 真源含 goal（缺 todo）→ 合并含 goal（description 取声明、source=both）、todo 被交叉校验隐藏', () => {
+    const registry = registryWithDeclared([
+      ['goal', '创建目标'],
+      ['todo', '创建任务'],
+    ])
+    const merged = registry.resolveSlashCommands([{ name: 'goal', description: 'pi 的 goal desc', kind: 'extension', icon: 'goal' }])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      id: 'goal',
+      name: 'goal',
+      // 元数据取声明（D3-1），非 pi 真源的 desc
+      description: '创建目标',
+      source: 'both',
+    })
+  })
+
+  it('TC1b: pi 真源为空（landing 无 session 真源）→ 交叉校验不生效，声明即显示（slice TC2 裁决）', () => {
+    const registry = registryWithDeclared([
+      ['goal', '创建目标'],
+      ['todo', '创建任务'],
+    ])
+    const merged = registry.resolveSlashCommands([])
+    expect(merged.map((c) => c.name)).toEqual(['goal', 'todo'])
+    expect(merged[0]).toMatchObject({ description: '创建目标', source: 'registry' })
+  })
+
+  it('TC1c: pi 独有项保留（真源为存在性/执行依据），声明在前 pi 独有在后', () => {
+    const registry = registryWithDeclared([['goal', '创建目标']])
+    const merged = registry.resolveSlashCommands([
+      { name: 'goal', description: 'pi desc', kind: 'extension', icon: 'goal' },
+      { name: 'commit', description: '提交', kind: 'extension', icon: 'terminal' },
+    ])
+    expect(merged.map((c) => c.name)).toEqual(['goal', 'commit'])
+    expect(merged[1]).toMatchObject({ name: 'commit', description: '提交', source: 'pi', icon: 'terminal' })
+  })
+
+  it('TC1d: 前缀归一——pi 真源带 / 前缀与声明同名 → 去重 1 项（name 统一裸名）', () => {
+    const registry = registryWithDeclared([['goal', '创建目标']])
+    const merged = registry.resolveSlashCommands([{ name: '/goal', kind: 'extension', icon: 'goal' }])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ name: 'goal', description: '创建目标', source: 'both' })
+  })
+
+  it('TC1e: 无声明（registry 空）→ 纯 pi 真源透传（退化=现状行为）', () => {
+    const registry = registryWithDeclared([])
+    const merged = registry.resolveSlashCommands([{ name: 'commit', description: '提交', kind: 'extension', icon: 'terminal' }])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ name: 'commit', source: 'pi' })
   })
 })
 
