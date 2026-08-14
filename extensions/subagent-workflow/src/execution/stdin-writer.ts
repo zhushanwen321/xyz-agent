@@ -17,6 +17,43 @@ import type { UiResponse } from "./dialog-queue.ts";
 const logger = getLogger("subagents");
 
 /**
+ * EPIPE 连续失败计数器（record.id → 连续 EPIPE 次数）。
+ *
+ * [v4 A-1] 计数器从 subagent-service.ts 迁移到本模块（stdin 错误域）。迁移原因：
+ * session-runner.ts 已被 subagent-service.ts import（runSpawn 等），若 session-runner
+ * 反向 import subagent-service 的 helper 会循环依赖。stdin-writer 不 import 两者，
+ * 是 stdin 域中立模块，epipe 计数属 stdin 错误域，职责合理。
+ *
+ * 错误处理两半面共用本计数器（合并计数，防 spawn→EPIPE→resume 死循环）：
+ *   ① 同步 write 抛错（writeStdinLine throw → deliverMessage catch 递增）
+ *   ② 异步 stream 'error' event（session-runner.ts child.stdin.on('error') 递增）
+ */
+const epipeConsecutiveFailures = new Map<string, number>();
+
+/** 连续 EPIPE 失败阈值：达到即不再尝试 resume（避免无限 spawn → EPIPE → resume 循环）。 */
+export const EPIPE_FAILURE_THRESHOLD = 2;
+
+/**
+ * 递增 recordId 的 EPIPE 连续失败计数，返回递增后的新计数。
+ * 同步 writeStdinLine throw 与异步 child.stdin 'error' event 共用此入口（合并计数）。
+ */
+export function recordEpipeFailure(recordId: string): number {
+  const count = (epipeConsecutiveFailures.get(recordId) ?? 0) + 1;
+  epipeConsecutiveFailures.set(recordId, count);
+  return count;
+}
+
+/** 成功写入时清零某 record 的 EPIPE 连续失败计数（热路径成功 → 重置，允许后续重新计数）。 */
+export function clearEpipeFailure(recordId: string): void {
+  epipeConsecutiveFailures.delete(recordId);
+}
+
+/** dispose 时清空所有 EPIPE 计数（防跨 session 泄漏）。 */
+export function resetAllEpipeFailures(): void {
+  epipeConsecutiveFailures.clear();
+}
+
+/**
  * 按 UiResponse 形状构造 Pi 原生 extension_ui_response 并写 stdin。
  *
  * SR-5：ack（fire-and-forget）不写 stdin——Pi 对 fire-and-forget method 不期待响应，
@@ -174,6 +211,10 @@ function writeStdinLine(child: ChildProcess, line: string, warnTag: string): voi
     if (!ok) logger.warn(`[subagents] stdin backpressure on ${warnTag}`);
   } catch (err) {
     // [R3] EPIPE / ERR_STREAM_DESTROYED：stdin 管道已断，子进程已退出或 stdin 被销毁。
+    // [v4 A-1] 错误处理两半面：① 同步 write 抛错（本 catch）——上层 deliverMessage 捕获后
+    //   调 recordEpipeFailure 递增计数；② 异步 stream 'error' event（session-runner.ts 的
+    //   child.stdin.on('error') listener）。两者共用本模块 export 的 recordEpipeFailure
+    //   helper 合并计数（防 spawn→EPIPE→resume 死循环）。
     // throw 让上层（deliverMessage）捕获并自动转冷路径 resume + 消息重放。
     if (
       err !== null &&

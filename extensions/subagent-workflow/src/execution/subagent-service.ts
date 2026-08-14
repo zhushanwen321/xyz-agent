@@ -35,7 +35,15 @@ import type { StatusFilter } from "./record-store.ts";
 import { RecordStore } from "./record-store.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import { getChildByRecord, killAllSpawnedChildren, runSpawn, spawnedChildren, type SessionRunnerContext, type SpawnResumeOpts } from "./session-runner.ts";
-import { sendFollowUpCommand, sendPromptCommand, sendSteerCommand } from "./stdin-writer.ts";
+import {
+  clearEpipeFailure,
+  EPIPE_FAILURE_THRESHOLD,
+  recordEpipeFailure,
+  resetAllEpipeFailures,
+  sendFollowUpCommand,
+  sendPromptCommand,
+  sendSteerCommand,
+} from "./stdin-writer.ts";
 import type { StreamSink } from "./stream-sink.ts";
 import { SubagentStream } from "./stream-sink.ts";
 import { writeCancelledTombstone } from "./tombstone-store.ts";
@@ -60,11 +68,9 @@ import { WorktreeManager } from "./worktree-manager.ts";
 
 const logger = getLogger("subagents");
 
-/** EPIPE 连续失败计数器（record.id → 连续 EPIPE 次数）。
- * deliverMessage 热路径 stdin 写入 EPIPE 时递增；成功写入时清零。
- * 连续 2 次 EPIPE 后 throw（不再尝试 resume，避免无限循环）。
- */
-const epipeConsecutiveFailures = new Map<string, number>();
+// [v4 A-1] EPIPE 连续失败计数器已迁移到 stdin-writer.ts（stdin 错误域，避免 session-runner
+// 反向 import 本文件 helper 产生循环依赖）。同步路径（deliverMessage）与异步路径
+//（session-runner child.stdin.on('error')）共用 stdin-writer 的同一计数器。
 
 /** dispose 后注入的 stub UI 请求 handler。
  *
@@ -527,8 +533,8 @@ export class SubagentService {
     // SP-4: 级联关闭所有活跃 record（parent-shutdown reason）
     // 在 abort/kill 之后执行：先终止子进程，再清理 record 状态。
     this.disposeAllRecords("parent-shutdown");
-    // EPIPE 连续失败计数器清零（防跨 session 泄漏）
-    epipeConsecutiveFailures.clear();
+    // [v4 A-1] EPIPE 连续失败计数器清零（计数器已迁移到 stdin-writer，防跨 session 泄漏）
+    resetAllEpipeFailures();
     for (const s of this.throttleState.values()) {
       if (s.timer !== undefined) clearTimeout(s.timer);
     }
@@ -857,8 +863,8 @@ export class SubagentService {
       if (child.pid !== undefined) record.pid = child.pid;
       try {
         sendPromptCommand(child, text, { streamingBehavior: interrupt ? "steer" : "followUp" });
-        // 热路径成功，清零 EPIPE 连续失败计数
-        epipeConsecutiveFailures.delete(record.id);
+        // 热路径成功，清零 EPIPE 连续失败计数（[v4 A-1] 计数器已迁移到 stdin-writer）
+        clearEpipeFailure(record.id);
       } catch (err) {
         // EPIPE 兜底：stdin 管道已断，进程实际已死但 close 事件尚未到达。
         // 检测 EPIPE 关键词 → 进程按 dead 处理 → 自动转冷路径 resume + 消息重放。
@@ -868,12 +874,11 @@ export class SubagentService {
           });
           // 清理 spawnedChildren 中的死进程条目（让 resumeRound 能重新 spawn）
           spawnedChildren.delete(record.id);
-          // 递增连续 EPIPE 计数
-          const count = (epipeConsecutiveFailures.get(record.id) ?? 0) + 1;
-          epipeConsecutiveFailures.set(record.id, count);
-          if (count >= 2) {
-            // 连续 2 次 EPIPE → 不再尝试 resume，throw 含恢复指引
-            epipeConsecutiveFailures.delete(record.id);
+          // 递增连续 EPIPE 计数（[v4 A-1] helper 合并同步/异步路径计数）
+          const count = recordEpipeFailure(record.id);
+          if (count >= EPIPE_FAILURE_THRESHOLD) {
+            // 连续达阈值 EPIPE → 不再尝试 resume，throw 含恢复指引
+            clearEpipeFailure(record.id);
             throw new Error(
               `[subagents] EPIPE fallback exhausted for ${record.id}: ${count} consecutive EPIPE failures. ` +
                 `Recovery: use action:'close' to clean up, then action:'start' a new subagent.`,

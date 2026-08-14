@@ -26,7 +26,7 @@ import { collectResult } from "./output-collector.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
-import { sendPromptCommand } from "./stdin-writer.ts";
+import { EPIPE_FAILURE_THRESHOLD, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
 import {
   deriveSessionFilePath,
   findSessionFileByHeaderId,
@@ -900,6 +900,26 @@ export async function runSpawn(
     //（下方）只清理 tempPromptFile，watchdog/signal listener 尚未注册则无需清理——避免泄漏。
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
+
+    // [v4 A-1] 异步 stdin 'error' listener。writeStdinLine 的 try/catch 只覆盖同步 write 抛错；
+    // 子进程退出后内核回写 EPIPE 会以异步 stream 'error' event 到达，若无 listener 会让 Node
+    // 抛 unhandled 'error' 崩主进程（P1）。必须在首次 stdin 写入（下方 sendPromptCommand）前注册。
+    // handler 行为：①移出 spawnedChildren 标记 dead（与 child.on('error') :1141 同模式）；
+    // ②recordEpipeFailure 合并同步/异步计数——达阈值即 throw（不再 resume，防死循环），
+    //   要求调用方 close + start 新 subagent；③logger.warn 记录一次。
+    child.stdin.on("error", (err: Error) => {
+      spawnedChildren.delete(record.id);
+      const count = recordEpipeFailure(record.id);
+      logger.warn(`[subagents] async stdin error for ${record.id}`, {
+        detail: err.message,
+        epipeCount: count,
+      });
+      if (count >= EPIPE_FAILURE_THRESHOLD) {
+        throw new Error(
+          `[subagents] subagent ${record.id} process unstable; action: close and start a new one`,
+        );
+      }
+    });
 
     // 喂 prompt 命令驱动子进程开始处理 task。pi runRpcMode 只消费 stdin RpcCommand，
     // 不读 positional arg；必须在 spawn 后主动写，否则子进程阻塞、totalTokens 恒 0。
