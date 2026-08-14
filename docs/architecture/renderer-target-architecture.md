@@ -286,6 +286,7 @@ AppShell (flex h-screen)
 | **B1** | tool result 渲染（M4） | tool 返回 `details.__gui__`，对话流内渲染 GuiComponent | L2 | **已实现** | 无（agent 特有） |
 | **B2** | 自定义消息卡片（M5） | plugin 推送 message，对话流穿插 GuiComponent | L2 | **已实现** | 无（agent 特有） |
 | **B3** | companion 交互（M11，统一出口） | **顶替 composer、阻塞式交互**，三种子形态：B3a 单向原语（进度提示）/ B3b dialog 原语（confirm/select/input）/ B3c ask-user 双向富交互（多问题/多选/评论） | L1（主，dialog 原语）兼容 L2（ask-user） | **已实现** | 无（agent 特有） |
+| **B4** | 对话流 widget 面板（M17） | TUI `setWidget`（editor 上方常驻面板）的 GUI 对应：**常驻 + 同 key 覆盖更新 + undefined 清除**，MessageStream 与 composer 之间。todo/goal 等常驻状态面板落点（不再走 M7 drawer / M2 sidebar，tool result 不再带 `__gui__`） | L2 | 数据通道已通（extension:widget/widgetGui → per-session 缓存），WidgetArea 渲染待实现 | 无（agent 特有） |
 | ~~C~~ | ~~全局 modal（M15）~~ | **降级**：仅致命错误/系统级强阻断（接近 Toast），非交互主出口 | L1 | 已实现（pi 侧），已降级 | window/dialogs |
 
 **当前状态**：维度 B 是最成熟的插件注入面——GuiComponent 7 原语 + ask-user 双向交互均已验证可用。companion-band 统一出口后，B3 是 plugin 交互的主入口（confirm/select/input/ask-user 都走这里）。

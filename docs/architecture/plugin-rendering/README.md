@@ -20,20 +20,22 @@
 
 ### 目标（从使用者体验倒推）
 
+> **2026-08-14 更新（M17 决策）**：用户拍板 todo/goal 的常驻状态展示走**对话流 widget 面板（M17）**，不走 M4（tool result 移除 `__gui__`）、不走 M2/M7（widget 不进 sidebar/drawer）。详细决策与实现见 [05-widget-area.md](05-widget-area.md)。
+
 | # | 使用者看到什么 | 对应挂载点 |
 |---|---|---|
-| G1 | 对话流里 todo/goal 工具结果渲染为结构化卡片（list-tree / card+stats-line+progress-bar） | M4（已实现，保持） |
-| G2 | 侧栏第 5 tab（Puzzle）内有**二级 view tab**（任务 / 目标…），点击切换，todo/goal 内容常驻可见 | M1+M2（本次补齐） |
+| G1 | ~~对话流里 todo/goal 工具结果渲染为结构化卡片~~（已移除，M4 不再带 `__gui__`，避免与 M17 双份） | — |
+| G2 | **对话流底部（composer 上方）常驻 widget 面板**：todo 列表 / goal 进度随状态实时更新（同 key 覆盖，不堆积），重开 session 即恢复 | **M17（本次新增）** |
 | G3 | main-panel 底部状态栏聚合显示 todo 数量、goal 状态行（带优先级排序） | M8（已实现，视觉对齐） |
 | G4 | composer `/` 菜单里 /goal /todo 正常出现（来自 plugin 声明，非 pi 硬编码双轨） | M10（本次收编） |
 | G5 | drawer 不再展示任何 extension widget/status 内容（旧适配废弃），terminal/browser/git/doc/detail 固定 tab 不受影响 | M6/M7（本次废弃旧适配） |
-| G6 | 未来外部 plugin 声明 `contributes.views` 后，侧栏自动出现新二级 tab；声明 `contributes.statusBarItems` 后底栏自动出现状态项 | A 维度全链路 |
+| G6 | 未来外部 plugin 声明 `contributes.views` 后，侧栏自动出现新二级 tab；声明 `contributes.statusBarItems` 后底栏自动出现状态项。**sidebar 不再承接 setWidget 推送**（widget 统一走 M17） | A 维度全链路 + M17 |
 
 ### Out of Scope
 
 - **E 维度（M14 独立 view 路由）**：L3 预编译组件仅 built-in 可用，external 强制 L1/L2；本次以 custom 逃生口 + 现有 chat/overview 路由覆盖，不做 plugin 可声明的独立 view 路由（设计文档 `renderer-target-architecture.md` §3.2 亦标注"未实现（仅 built-in）"）
 - **drawer tab（A2/M6）开放给 plugin**：v2 决策"proposed 暂不开放，避免一级 tab 泛滥"，维持
-- **runtime 侧 pi extension 改动**：todo/goal 的 widget/status 推送逻辑（`extensions/goal|todo/src/`）不动，消费侧前端承接
+- **runtime 侧 pi extension 改动**：todo 加 `guiSetWidget` GUI 分支（refreshDisplay）+ 移除 tool result `__gui__`；goal 移除 tool result `__gui__`（updateWidget 的 guiSetWidget 已就绪）。TUI 模式推送逻辑不动
 - **2026-08 架构审查 C1-C7 波次**（useSidebar 死壳 / summarizeTurn / composables 平铺等）：独立于本设计，不并入
 - **C3 overlay 窗口化的完整视觉**（最小化 badge 拖动还原）：OverlayLifecycle 状态机已就绪，视觉精修归视觉线，本次只保证状态机闭环
 
@@ -132,14 +134,10 @@ runtime event-adapter（packages/runtime/src/infra/pi/event-adapter.ts:268-355�
 **场景 1：agent 建 todo 列表**
 ```
 用户: "用 todo 工具添加 3 个任务：写设计文档、实现、测试"
-agent: [调用 todo tool → tool_call_end details.__gui__ = list-tree]
-对话流: ╭─────────────────────────────╮
-        │ ✓ 写设计文档    ⏸ 实现    ○ 测试 │  ← M4 list-tree 卡片
-        ╰─────────────────────────────╯
-侧栏:   [sessions|files|subagents|workflows|🔲]  ← 点 Puzzle tab
-        ╭─ 任务 │ 目标 ───────────────╮  ← M1+M2 二级 view tab（builtin tasks 声明）
-        │ ✓ 写设计文档                │
-        │ ⏸ 实现                      │  ← 来自 pi widget 推送（viewId='todo'）
+agent: [调用 todo tool → 状态更新 → guiSetWidget('todo', list-tree)]
+对话流底部（composer 上方）: ╭─ todo ────────────────╮   ← M17 常驻面板
+        │ ✓ 写设计文档                │      （同 key 覆盖更新，不堆积）
+        │ ⏸ 实现                      │
         │ ○ 测试                      │
         ╰─────────────────────────────╯
 底栏:   [📋 2 pending]   ← M8 status（extension:status 聚合）
@@ -148,10 +146,11 @@ agent: [调用 todo tool → tool_call_end details.__gui__ = list-tree]
 **场景 2：/goal create**
 ```
 用户: "/goal create 完成 plugin 体系落地"
-对话流: ╭─ ◆ 完成 plugin 体系落地 ─────────╮
-        │ Turn 1 | 0% tokens | 0m           │  ← M4 card + stats-line + progress-bar
-        ╰──────────────────────────────────╯
-侧栏 plugins tab: 二级 tab「目标」显示 goal 状态卡（进度/预算/耗时）
+对话流底部: ╭─ goal ─────────────────╮   ← M17 常驻面板
+        │ ◆ 完成 plugin 体系落地       │
+        │ Turn 1 | 48k/200k tokens    │   ← card + stats-line + progress-bar
+        │ ▓▓▓▓░░░░ 24%                │
+        ╰──────────────────────────────╯
 底栏:   [◆ 完成 plugin 体系落地 Turn 1 | 0% tokens]  ← M8
 ```
 
@@ -177,10 +176,11 @@ plugin A 声明 contributes.statusBarItems[{id:'pipeline', priority:10, alignmen
 
 | 子文档 | 内容 | 核心决策 |
 |---|---|---|
-| [01-view-host-routing.md](01-view-host-routing.md) | plugins tab 二级 view tab + 挂载点/view 概念分离 + builtin tasks views 声明 + 空态/无 session 语义 | 挂载点（placement）与 viewId 分离；tab 列表 = ContributionRegistry 中 placement='sidebar.tab' 的 views；内容 = ViewHostStore.getView(viewId) |
+| [01-view-host-routing.md](01-view-host-routing.md) | plugins tab 二级 view tab + 挂载点/view 概念分离 + builtin tasks views 声明 + 空态/无 session 语义 | 挂载点（placement）与 viewId 分离；tab 列表 = ContributionRegistry 中 placement='sidebar.tab' 的 views；内容 = ViewHostStore.getView(viewId)。**widget 推送不再暴露为动态 view**（M17 决策，D5） |
 | [02-drawer-widget-deprecation.md](02-drawer-widget-deprecation.md) | 废弃 drawer 旧适配（widget-buffers/DrawerPanel widget 区/status footer/PanelContainer 旧订阅） | 全删（含 terminal/browser widget 通道评估——固定 tab 不依赖 widget 数据）；status 显示完全移交 StatusBar |
 | [03-slash-command-unify.md](03-slash-command-unify.md) | CommandRegistry 实例化 + CommandPopover 消费归一 + builtin tasks slashCommands 生效 | plugin 声明提供元数据、session.commands 提供执行清单，合并去重；执行仍由 pi extension 承担 |
 | [04-settings-and-visual.md](04-settings-and-visual.md) | M16 设置页接线 + 7 原语/A1 二级 tab/A4 底栏 V6 视觉对齐 | PluginSettingsPage 挂 Settings；视觉数值以 v6-spec-plugin-rendering.html 为权威 |
+| [05-widget-area.md](05-widget-area.md) | **对话流 widget 面板（M17）**：todo/goal 常驻状态渲染 + M4 移除 + M2 动态 view 废弃 | setWidget 语义（常驻/覆盖更新/清除）映射 M17 对话流位置；不走 M5（append-only 消息）；WidgetArea 组件 + bridge 改造 |
 
 ### 3.4 关键决策与权衡
 

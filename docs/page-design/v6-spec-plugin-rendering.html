@@ -672,9 +672,9 @@ body {
           <td class="center"><span class="ext-yes">✓ 全部</span></td>
         </tr>
         <tr>
-          <td><span class="mt-dim">B 对话流内容</span><br><span class="mt-sub">tool result · 自定义消息 · ask-user</span></td>
+          <td><span class="mt-dim">B 对话流内容</span><br><span class="mt-sub">tool result · 自定义消息 · widget 面板 · ask-user</span></td>
           <td class="center"><span class="cell-partial">△</span><br><span class="cell-l l1">B3 ask</span></td>
-          <td class="center"><span class="cell-yes">✓</span><br><span class="cell-l l2">主用</span></td>
+          <td class="center"><span class="cell-yes">✓</span><br><span class="cell-l l2">主用（B1/B2/B4）</span></td>
           <td class="center"><span class="cell-no">—</span></td>
           <td class="center"><span class="ext-yes">✓ 全部</span></td>
         </tr>
@@ -726,6 +726,7 @@ body {
 │        │  ├─ <span class="t-node">MessageStream</span> (对话流)
 │        │  │  ├─ <span class="t-mount">M4</span> Turn → Block (tool/text/thinking)              <span class="t-dim-b">→ 维度 B1</span>
 │        │  │  ├─ <span class="t-mount">M5</span> custom message (__gui__)                        <span class="t-dim-b">→ 维度 B2</span>
+│        │  │  ├─ <span class="t-mount">M17</span> 对话流 widget 面板 (常驻 + 同 key 覆盖更新)   <span class="t-dim-b">→ 维度 B4</span>
 │        │  │  └─ <span class="t-mount">M13</span> 浮层 slot (load-more/fork/jump)               <span class="t-dim-b">→ 维度 B（低优）</span>
 │        │  ├─ <span class="t-node">companion-band</span> (顶替 composer 的阻塞交互位)
 │        │  │  └─ <span class="t-mount">M11</span> companion-band (ask-user <b>及 confirm/select/input</b>) <span class="t-dim-b">→ 维度 B3 / C1+C2</span>
@@ -1027,11 +1028,82 @@ body {
   </section>
 
   <!-- ================================================================
+       §2b 维度 B4 对话流 widget 面板（M17）
+       ================================================================ -->
+  <section class="spec" id="s2b">
+    <div class="spec-head"><span class="spec-num">§2b</span><h2 class="spec-title">维度 B4 · 对话流 widget 面板（M17）<span class="h3-tag">常驻 + 同 key 覆盖更新</span></h2></div>
+    <p class="spec-desc">TUI <code>setWidget</code>（editor 上方常驻面板）的 GUI 对应挂载点。pi 官方文档定位：<i>"Show persistent content above or below the input editor. Good for todo lists, progress."</i>——<b>常驻 + 覆盖更新</b>是 setWidget 的原生语义。xyz-agent 在<b>对话流内</b>提供等价区域（M17），任何 extension 推 widget 都渲染在此（通用承接，不特化）。</p>
+
+    <div class="change-points">
+      <span class="cp cp-now"><b>TUI</b> transcript → <b>widget 面板</b> → editor（常驻、同 key 覆盖）</span>
+      <span class="cp cp-v6"><b>GUI M17</b> MessageStream → <b>widget 区</b> → companion/composer（语义一致）</span>
+      <span class="cp cp-v6"><b>不映射</b> drawer(M7) / sidebar(M2)——产品诉求拒绝侧栏，widget 属对话流</span>
+      <span class="cp cp-v6"><b>非 M5</b> custom message 是 append-only 消息（每次推送新消息），不承担面板语义</span>
+    </div>
+
+    <div class="render-frame">
+      <div style="display:flex;flex-direction:column;gap:10px;max-width:560px;">
+        <!-- widget 区容器：常驻卡片堆叠，宽度跟随对话流 -->
+        <div class="widget-area" style="display:flex;flex-direction:column;gap:8px;">
+          <!-- widgetKey: todo → list-tree -->
+          <div class="gcard stage-default">
+            <div class="gcard-hd"><span class="hd-dot" style="background:var(--accent);"></span><span class="hd-title">todo</span><span class="hd-badge b-accent">list-tree · 常驻</span></div>
+            <div class="gcard-bd" style="padding:8px;">
+              <div class="gtree" style="font-size:10px;">
+                <div class="gtree-node"><span class="gtree-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/></svg></span><span class="gtree-label">调研 M17 挂载点</span><span class="gtree-status st-done"></span></div>
+                <div class="gtree-node"><span class="gtree-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg></span><span class="gtree-label">更新协议文档与 demo</span><span class="gtree-status st-running"></span></div>
+                <div class="gtree-node"><span class="gtree-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg></span><span class="gtree-label">实现 WidgetArea 渲染</span><span class="gtree-status st-pending"></span></div>
+              </div>
+            </div>
+          </div>
+          <!-- widgetKey: goal → card(stats-line + progress-bar) -->
+          <div class="gcard stage-default">
+            <div class="gcard-hd"><span class="hd-dot" style="background:var(--success);"></span><span class="hd-title">goal</span><span class="hd-badge b-success">active</span></div>
+            <div class="gcard-bd" style="display:flex;flex-direction:column;gap:10px;padding:8px;">
+              <div class="gstats">
+                <span class="gs-item"><span class="gs-label">turns</span><span class="gs-value sv-neutral">3</span></span>
+                <span class="gs-item"><span class="gs-label">tokens</span><span class="gs-value sv-mid">48k</span></span>
+                <span class="gs-item"><span class="gs-label">budget</span><span class="gs-value sv-mid">48k/200k</span></span>
+              </div>
+              <div class="gprog">
+                <div class="gprog-hd"><span class="gprog-label">tokens</span><span class="gprog-val">24<span class="gprog-total">%</span></span></div>
+                <div class="gprog-track"><div class="gprog-fill f-ok" style="width:24%;"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="font-family:var(--font-mono);font-size:9px;color:var(--neutral-dim);text-align:center;">↑ M17：对话流 widget 面板（MessageStream 底部 / composer 上方）· 每卡 = widgetKey 标签 + 原语组合 · 同 key 覆盖更新</div>
+      </div>
+    </div>
+
+    <div class="note-box">
+      <div class="note-box-head">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        M17 语义要点
+      </div>
+      <div class="note-cols">
+        <div class="note-col now">
+          <h4>数据通道（已存在）</h4>
+          <p><b>extension → <code>ctx.ui.setWidget(key, lines)</code></b>（TUI 文本行）或 <b><code>guiSetWidget(key, component)</code></b>（GUI 结构化，marker 编码）→ pi RPC extension_ui_request → event-adapter 解码（<code>extension:widget</code> / <code>extension:widgetGui</code>）→ 前端 per-session 缓存。</p>
+          <p><b>重开一致性</b>：todo/goal 在 session_start 时重新推 widget（todo handlers.ts / goal session-start.ts），常驻面板重开即恢复。</p>
+        </div>
+        <div class="note-col goal">
+          <h4>渲染语义</h4>
+          <p><b>常驻</b>：有 widget 数据时面板常驻显示（per-session），无数据隐藏。</p>
+          <p><b>覆盖更新</b>：同 widgetKey 重复推送原地替换内容（不新增消息）。</p>
+          <p><b>清除</b>：<code>guiSetWidget(key, undefined)</code> 移除该卡（已实现：gui:null 清除语义）。</p>
+          <p><b>通用</b>：前端只认 widgetKey + GuiComponent，不特化任何 extension。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================
        §3 维度 B 对话流注入 — GuiComponent 7 原语 v6 视觉（核心）
        ================================================================ -->
   <section class="spec" id="s3">
     <div class="spec-head"><span class="spec-num">§3</span><h2 class="spec-title">维度 B · 7 原语 v6 视觉（核心）</h2></div>
-    <p class="spec-desc">GuiComponent 是 pi extension + plugin 的共享渲染协议，7 个结构化原语（card / stats-line / progress-bar / list-tree / columns / tab-bar / ansi-text）替代 TUI ASCII 布局。这是最成熟、最核心的注入面（M4 tool result / M5 custom message / M7 drawer 内容）。v6 重设计 <b>只改 CSS/模板，不改协议类型</b>——已接入的 extension 零改动自动获得 v6 视觉。逐原语按 renderer-target-architecture §5.2 表定义 v6 目标。</p>
+    <p class="spec-desc">GuiComponent 是 pi extension + plugin 的共享渲染协议，7 个结构化原语（card / stats-line / progress-bar / list-tree / columns / tab-bar / ansi-text）替代 TUI ASCII 布局。这是最成熟、最核心的注入面（M4 tool result / M5 custom message / <b>M17 widget 面板</b>）。v6 重设计 <b>只改 CSS/模板，不改协议类型</b>——已接入的 extension 零改动自动获得 v6 视觉。逐原语按 renderer-target-architecture §5.2 表定义 v6 目标。</p>
 
     <!-- ── 3.1 card ── -->
     <h3>3.1 · card 原语 <span class="h3-tag">去边框 · 靠背景层级</span></h3>
@@ -1972,10 +2044,10 @@ body {
     <div class="render-frame">
       <div class="note-cols" style="grid-template-columns:1fr 1fr;">
         <div class="note-col goal">
-          <h4 style="color:var(--success);">✓ 完整闭环（5 挂载点）</h4>
+          <h4 style="color:var(--success);">✓ 完整闭环（6 挂载点）</h4>
           <p>入口 + 执行 + 反馈全通。这些挂载点 plugin 能真正「做交互」：</p>
-          <p><b>M4</b> tool result block · <b>M5</b> custom message（<code>__gui__</code> 推送）<br><b>M7</b> drawer widget · <b>M8</b> 底栏 status（<code>updateStatusBarItem</code>）<br><b>M11</b> companion-band（ask-user <b>及 confirm/select/input</b>）</p>
-          <p style="color:var(--success);">pi-extension 机制完整可用，plugin 经适配器复用。M15 已降级（仅致命错误），不计入完整闭环。</p>
+          <p><b>M4</b> tool result block · <b>M5</b> custom message（<code>__gui__</code> 推送）<br><b>M17</b> 对话流 widget 面板（常驻 + 覆盖更新，setWidget 语义）<br><b>M8</b> 底栏 status（<code>updateStatusBarItem</code>）<br><b>M11</b> companion-band（ask-user <b>及 confirm/select/input</b>）</p>
+          <p style="color:var(--success);">pi-extension 机制完整可用，plugin 经适配器复用。M7 drawer 保留为 plugin 静态 view 内容区（不再承接 setWidget 推送）；M15 已降级（仅致命错误），不计入完整闭环。</p>
         </div>
         <div class="note-col now">
           <h4 style="color:var(--danger);">✗ 声明式空壳（6 挂载点）</h4>
@@ -2015,7 +2087,8 @@ body {
         </thead>
         <tbody>
           <tr><td><span class="ca-mount">M4/M5 tool result + 自定义消息渲染</span></td><td class="ca-behavior">GuiComponentRenderer 已实现</td><td><span class="ca-status s-done">✅ 可直接落地</span></td></tr>
-          <tr><td><span class="ca-mount">M7 drawer widget</span></td><td class="ca-behavior">GuiComponentRenderer 已实现</td><td><span class="ca-status s-done">✅ 可直接落地</span></td></tr>
+          <tr><td><span class="ca-mount">M17 对话流 widget 面板（常驻 + 覆盖更新）</span></td><td class="ca-behavior">WidgetArea 待实现（数据通道已通：extension:widget/widgetGui → per-session 缓存）；todo/goal 待迁移</td><td><span class="ca-status s-warn">⚠️ 视觉态就绪，WidgetArea 待实现</span></td></tr>
+          <tr><td><span class="ca-mount">M7 drawer widget（plugin 静态 view 内容区）</span></td><td class="ca-behavior">GuiComponentRenderer 已实现；setWidget 推送已改走 M17</td><td><span class="ca-status s-done">✅ 可直接落地</span></td></tr>
           <tr><td><span class="ca-mount">M10 slash command（CommandPopover）</span></td><td class="ca-behavior">已实现（session.commands 双轨已通）</td><td><span class="ca-status s-done">✅ 可直接落地</span></td></tr>
           <tr><td><span class="ca-mount">M8 main-panel 局部底栏 status item</span></td><td class="ca-behavior">StatusBarController（pi status 已实现，plugin statusBarItems 待接入）</td><td><span class="ca-status s-warn">⚠️ 视觉态就绪，plugin 接入待架构</span></td></tr>
           <tr><td><span class="ca-mount">M11 companion-band 统一交互出口</span></td><td class="ca-behavior">companion-band 已实现 + MessageBusBridge（overlay lifecycle 统一管理）</td><td><span class="ca-status s-warn">⚠️ 视觉态就绪，lifecycle 待架构补约定</span></td></tr>

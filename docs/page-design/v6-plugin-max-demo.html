@@ -9,7 +9,7 @@
    v6 plugin 能力上限 demo
    ──────────────────────────────────────────────────────────────
    虚构 plugin「Pipeline Commander」（DevOps 流水线管理），在单个
-   AppShell 全景里同时点亮全部 16 挂载点（M1-M16），展示 plugin 通过
+   AppShell 全景里同时点亮全部 17 挂载点（M1-M17），展示 plugin 通过
    布局 + 7 原语到底能在哪些地方做定制、定制成什么样。
    token 逐字复用 v6-spec-tokens.html；原语 CSS 复用 plugin spec。
    ================================================================ */
@@ -420,7 +420,7 @@ body {
   <header class="doc-head">
     <div class="doc-eyebrow">v6 DEMO · plugin 能力上限全景</div>
     <h1 class="doc-title">Plugin 能定制哪些地方？ · Pipeline Commander</h1>
-    <p class="doc-sub">虚构一个最大化自定义的 plugin「<b>Pipeline Commander</b>」（DevOps 流水线管理），在<b>单个 AppShell 全景界面</b>里同时点亮全部 <b>16 个挂载点（M1-M16）</b>，展示 plugin 通过<b>布局位置</b>（5 维度）和<b>组件原语</b>（7 原语）到底能在哪些地方做定制、定制成什么样。每个挂载点贴 <code>M编号</code> 标签，颜色对应所属维度。<b>这不是产品截图</b>，是能力上限的视觉证明——假设一个 plugin 把所有能改的都改了，长这样。</p>
+    <p class="doc-sub">虚构一个最大化自定义的 plugin「<b>Pipeline Commander</b>」（DevOps 流水线管理），在<b>单个 AppShell 全景界面</b>里同时点亮全部 <b>17 个挂载点（M1-M17）</b>，展示 plugin 通过<b>布局位置</b>（5 维度）和<b>组件原语</b>（7 原语）到底能在哪些地方做定制、定制成什么样。每个挂载点贴 <code>M编号</code> 标签，颜色对应所属维度。<b>这不是产品截图</b>，是能力上限的视觉证明——假设一个 plugin 把所有能改的都改了，长这样。</p>
     <p class="doc-sub" style="margin-top:10px;font-size:var(--text-xs);color:var(--neutral-dim);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="color:var(--warn);vertical-align:-2px;margin-right:2px;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><b style="color:var(--warn);">范围声明：</b>本页是<b>缩放 mockup</b>（紧凑全景示意），为适配单页同时展示 16 挂载点，部分尺寸做了缩放（字号/间距/圆角偏小）。<b>不承载组件级 CSS 范式</b>——组件真实值（圆角/字号/间距/选中态等）一律以 <code>v6-spec-*.html</code> 为准，勿从此页抄取具体像素值。</p>
     <div class="legend">
       <span class="lg lg-a"><span class="lg-dot"></span>维度 A · 结构容器（sidebar/drawer tab · 工具条 · 底栏）</span>
@@ -435,8 +435,8 @@ body {
        §1 AppShell 全景（核心大图）
        ================================================================ -->
   <section class="section">
-    <div class="section-head"><span class="section-num">§1</span><h2 class="section-title">AppShell 全景 · 16 挂载点同时点亮</h2></div>
-    <p class="section-desc">单个界面里，plugin「Pipeline Commander」触达了它能触达的<b>每一个</b>位置。左 sidebar（M1/M2 一级+二级 tab）/ 中 main（M4/M5/M9/M10/M11/M12 对话流+工具条+命令+companion+<b>M8 main 局部底栏</b>）/ 右 drawer（M6/M7 plugin tab + 日志）。浮层 M13/M14/M15/M16 见 §2。每个 <code>M编号</code> 标签的颜色 = 所属维度。</p>
+    <div class="section-head"><span class="section-num">§1</span><h2 class="section-title">AppShell 全景 · 17 挂载点同时点亮</h2></div>
+    <p class="section-desc">单个界面里，plugin「Pipeline Commander」触达了它能触达的<b>每一个</b>位置。左 sidebar（M1/M2 一级+二级 tab）/ 中 main（M4/M5/M17/M9/M10/M11/M12 对话流+widget 面板+工具条+命令+companion+<b>M8 main 局部底栏</b>）/ 右 drawer（M6/M7 plugin tab + 日志）。浮层 M13/M14/M15/M16 见 §2。每个 <code>M编号</code> 标签的颜色 = 所属维度。<b>M17</b> 为对话流 widget 面板（常驻 + 同 key 覆盖更新，TUI setWidget 的 GUI 对应——todo/goal 等常驻状态面板落点）。</p>
 
     <div class="appshell">
       <div class="as-stage-label"><span class="as-prod">●</span> stage #0a0a0c 窗口底 · AppShell flex h-screen</div>
@@ -618,6 +618,41 @@ body {
                   </div>
                 </div>
                 <span class="mtag mtag-float mb" style="top:18px;right:-7px;">M5</span>
+              </div>
+
+              <!-- M17: 对话流 widget 面板（常驻 + 同 key 覆盖更新，TUI setWidget 的 GUI 对应）
+                   todo/goal 等常驻状态面板落点；每卡 = widgetKey 标签 + 原语组合 -->
+              <div style="position:relative;">
+                <div class="widget-area" style="display:flex;flex-direction:column;gap:6px;">
+                  <!-- widgetKey: todo → list-tree -->
+                  <div class="gcard stage-default">
+                    <div class="gcard-hd"><span class="hd-dot" style="background:var(--accent);"></span><span class="hd-title">todo</span><span class="hd-badge b-accent">list-tree</span></div>
+                    <div class="gcard-bd" style="padding:8px;">
+                      <div class="gtree" style="font-size:10px;">
+                        <div class="gtree-node"><span class="gtree-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/></svg></span><span class="gtree-label">接入 GUI widget 协议</span><span class="gtree-status st-done"></span></div>
+                        <div class="gtree-node"><span class="gtree-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg></span><span class="gtree-label">迁移 widget 到 M17</span><span class="gtree-status st-running"></span></div>
+                        <div class="gtree-node"><span class="gtree-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg></span><span class="gtree-label">移除 sidebar 硬编码</span><span class="gtree-status st-pending"></span></div>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- widgetKey: goal → card(stats-line + progress-bar) -->
+                  <div class="gcard stage-default">
+                    <div class="gcard-hd"><span class="hd-dot" style="background:var(--success);"></span><span class="hd-title">goal</span><span class="hd-badge b-success">active</span></div>
+                    <div class="gcard-bd" style="display:flex;flex-direction:column;gap:8px;padding:8px;">
+                      <div class="gstats">
+                        <span class="gs-item"><span class="gs-label">turns</span><span class="gs-value sv-neutral">3</span></span>
+                        <span class="gs-item"><span class="gs-label">tokens</span><span class="gs-value sv-mid">48k</span></span>
+                        <span class="gs-item"><span class="gs-label">budget</span><span class="gs-value sv-mid">48k/200k</span></span>
+                      </div>
+                      <div class="gprog">
+                        <div class="gprog-hd"><span class="gprog-label">tokens</span><span class="gprog-val">24<span class="gprog-total">%</span></span></div>
+                        <div class="gprog-track"><div class="gprog-fill f-ok" style="width:24%;"></div></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div style="font-family:var(--font-mono);font-size:9px;color:var(--neutral-dim);text-align:center;">↑ M17 对话流 widget 面板：常驻 · 同 key 覆盖更新 · guiSetWidget(key, undefined) 清除</div>
+                </div>
+                <span class="mtag mtag-float mb" style="top:-7px;right:-7px;">M17</span>
               </div>
 
               <!-- M11: companion-band（顶替 composer，ask-user + confirm/select/input 统一出口）-->
@@ -876,11 +911,11 @@ body {
   </section>
 
   <!-- ================================================================
-       §3 16 挂载点能力清单
+       §3 17 挂载点能力清单
        ================================================================ -->
   <section class="section">
-    <div class="section-head"><span class="section-num">§3</span><h2 class="section-title">16 挂载点能力清单 · Pipeline Commander 用了什么</h2></div>
-    <p class="section-desc">逐条列出这个 plugin 在每个挂载点用了什么原语、什么自定义级别、external 是否可用。这是「plugin 能力上限」的结构化总结——16 个位置就是 plugin 能改的全部地方，超出这个范围的事它做不到。</p>
+    <div class="section-head"><span class="section-num">§3</span><h2 class="section-title">17 挂载点能力清单 · Pipeline Commander 用了什么</h2></div>
+    <p class="section-desc">逐条列出这个 plugin 在每个挂载点用了什么原语、什么自定义级别、external 是否可用。这是「plugin 能力上限」的结构化总结——17 个位置就是 plugin 能改的全部地方，超出这个范围的事它做不到。</p>
 
     <table class="cap-table">
       <thead>
@@ -932,6 +967,14 @@ body {
           <td><span class="lg lg-b">B 对话流</span></td>
           <td><span class="ct-level l2">L2</span></td>
           <td class="ct-prim">主动推送 <code>__gui__</code> widget = <b>columns</b>(左 <b>list-tree</b> + 右 <b>card</b>+<b>progress-bar</b>)，证明 7 原语组合表达力</td>
+          <td class="ct-prim" style="color:var(--success);">✓ 全部</td>
+        </tr>
+        <tr>
+          <td><span class="mtag mb">M17</span></td>
+          <td><span class="ct-where">main · 对话流 widget 面板</span></td>
+          <td><span class="lg lg-b">B 对话流</span></td>
+          <td><span class="ct-level l2">L2</span></td>
+          <td class="ct-prim">常驻面板（composer 上方）：widgetKey 标签 + <b>list-tree</b> / <b>card</b>+<b>stats-line</b>+<b>progress-bar</b> 原语组合；同 key 覆盖更新（setWidget 语义）</td>
           <td class="ct-prim" style="color:var(--success);">✓ 全部</td>
         </tr>
         <tr>
@@ -1056,7 +1099,7 @@ body {
        ================================================================ -->
   <section class="section">
     <div class="section-head"><span class="section-num">§4</span><h2 class="section-title">点击后能干什么 · 交互闭环</h2></div>
-    <p class="section-desc">§1-§3 画了 plugin 能往<b>哪里</b>放东西（16 挂载点）。本节回答另一半：用户点了 M9 按钮 / M2 view tab / M8 底栏项之后，<b>plugin 能干什么、怎么扩展</b>。核心一句话——挂载点是入口（声明式 contribution），点击后的行为由 plugin 在 <code>activate()</code> 中注册的 <code>handler</code> 决定，handler 能调 SDK 全部 API 反馈到多个挂载点。</p>
+    <p class="section-desc">§1-§3 画了 plugin 能往<b>哪里</b>放东西（17 挂载点）。本节回答另一半：用户点了 M9 按钮 / M2 view tab / M8 底栏项之后，<b>plugin 能干什么、怎么扩展</b>。核心一句话——挂载点是入口（声明式 contribution），点击后的行为由 plugin 在 <code>activate()</code> 中注册的 <code>handler</code> 决定，handler 能调 SDK 全部 API 反馈到多个挂载点。</p>
 
     <h3 style="margin-bottom:12px;">① 点 deploy 按钮 → 发生了什么（序列图）</h3>
     <p style="font-size:var(--text-sm);color:var(--neutral-mid);margin-bottom:12px;">以 §1 里 M9 composer 工具条的 deploy 按钮为例。链路穿过 renderer → runtime → plugin Worker，handler 执行后可<b>同时</b>反馈到 M8/M15/M2/M4 多个挂载点（多路反馈，不限于触发它的位置）。<span style="color:var(--danger);font-family:var(--font-mono);">红色 = 当前未实现的环节</span>。</p>
@@ -1142,7 +1185,7 @@ body {
     </div>
 
     <h3 style="margin:24px 0 12px;">④ 闭环 vs 空壳（哪些按钮真能用）</h3>
-    <p style="font-size:var(--text-sm);color:var(--neutral-mid);margin-bottom:12px;">16 挂载点分两类。<b style="color:var(--success);">完整闭环</b> = 入口 + handler + 内容推送全通，plugin 能真正做交互。<b style="color:var(--danger);">声明式空壳</b> = 入口能声明渲染（按钮/tab 出现），但点击后无执行逻辑或无内容可推。</p>
+    <p style="font-size:var(--text-sm);color:var(--neutral-mid);margin-bottom:12px;">17 挂载点分两类。<b style="color:var(--success);">完整闭环</b> = 入口 + handler + 内容推送全通，plugin 能真正做交互。<b style="color:var(--danger);">声明式空壳</b> = 入口能声明渲染（按钮/tab 出现），但点击后无执行逻辑或无内容可推。</p>
     <div class="loop-grid">
       <div class="loop-card ok">
         <h4>
@@ -1193,7 +1236,7 @@ body {
 
   <footer class="doc-foot">
     <span>v6-plugin-max-demo.html · 能力上限视觉证明 · 非产品截图</span>
-    <span>依据 <a href="v6-spec-plugin-rendering.html">v6-spec-plugin-rendering.html</a>（16 挂载点 + 7 原语 + 5 维度 × 3 级别）</span>
+    <span>依据 <a href="v6-spec-plugin-rendering.html">v6-spec-plugin-rendering.html</a>（17 挂载点 + 7 原语 + 5 维度 × 3 级别）</span>
   </footer>
 
 </div>
