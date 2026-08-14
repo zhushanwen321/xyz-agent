@@ -92,26 +92,27 @@
           />
         </template>
         <template v-else-if="sidebar.activeTab === 'workflows'">
-          <!-- Transition: 列表 ↔ 详情切换的 slide 过渡（out-in 避免两个视图同时渲染）。
-               Escape hatch：Transition 类无法用 Tailwind 表达，走 <style scoped>（design-system §3）。 -->
-          <Transition name="wf-slide" mode="out-in">
-            <WorkflowDetail
-              v-if="currentWorkflow"
-              :workflow="currentWorkflow"
-              @back="onWorkflowBack"
-              @select-agent-call="onSelectAgentCall"
-              @action="onWorkflowAction"
-            />
-            <WorkflowList
-              v-else
-              :workflows="workflowList"
-              :is-loading="workflowStore.isLoading"
-              :load-error="workflowStore.loadError"
-              @select="onSelectWorkflow"
-              @action="onWorkflowAction"
-              @retry="onRetryWorkflows"
-            />
-          </Transition>
+          <!-- [HISTORICAL] 列表 ↔ 详情切换原用 wf-slide Transition（out-in + 120ms 滑动），
+               2026-08-14 移除：Electron 下 transitionend 偶发丢失（元素 detach 竞态）导致 out-in
+               卡在中间态——内容区空白、详情永不挂载（真实用户点击 workflow 后侧边栏空白）。
+               曾尝试 :duration 超时兜底（Vue 3.5 理论支持）实测仍卡；CDP 自动化下 3/3 复现，
+               去 Transition 后 3/3 正常。稳定性优先，直接 v-if/v-else 切换（无动画）。 -->
+          <WorkflowDetail
+            v-if="currentWorkflow"
+            :workflow="currentWorkflow"
+            @back="onWorkflowBack"
+            @select-agent-call="onSelectAgentCall"
+            @action="onWorkflowAction"
+          />
+          <WorkflowList
+            v-else
+            :workflows="workflowList"
+            :is-loading="workflowStore.isLoading"
+            :load-error="workflowStore.loadError"
+            @select="onSelectWorkflow"
+            @action="onWorkflowAction"
+            @retry="onRetryWorkflows"
+          />
         </template>
         <!-- ExtensionHost sidebar view 宿主（audit §12.1 sidebar.tab 挂载点）。
              L2 二级路由：PluginViewContainer 经 VIEWS_SOURCE_KEY 取 plugin view 清单
@@ -251,18 +252,4 @@ useAppUpdate().initAutoCheck() // setup 顶层同步调用（非 onMounted）：
 </script>
 
 <style scoped>
-/* Escape hatch（design-system §3）：Vue Transition 类无法用 Tailwind 表达，走 scoped style。
- * 列表 ↔ 详情切换：从右滑入/向右滑出，120ms fast（与 design-tokens --duration-fast 一致）。 */
-.wf-slide-enter-active,
-.wf-slide-leave-active {
-  transition: transform var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease);
-}
-.wf-slide-enter-from {
-  transform: translateX(16px);
-  opacity: 0;
-}
-.wf-slide-leave-to {
-  transform: translateX(-16px);
-  opacity: 0;
-}
 </style>
