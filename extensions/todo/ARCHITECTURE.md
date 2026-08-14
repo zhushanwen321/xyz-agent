@@ -130,6 +130,7 @@ tool execute 返回 {content, details:{todos, nextId}}
 
 tool result 不含 GUI 渲染字段（已移除）：状态展示由 widget 单一承载——RPC 模式走 `refreshDisplay` 的 `guiSetWidget` 推送（M17 对话流 widget 面板），TUI 模式走 `renderWidgetLines` 原生文本。
 
+```
 session_start / session_tree
         │
         ▼

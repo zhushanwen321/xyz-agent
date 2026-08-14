@@ -1,5 +1,5 @@
 /**
- * buildGoalGui 测试 — goal 的 GUI 渲染描述符构造（W3 Wave __gui__ 协议）
+ * buildGoalGui 测试 — goal 的 GUI 渲染描述符构造（经 guiSetWidget 推送 M17 对话流 widget 面板）
  *
  * 覆盖：
  * - 有 tokenBudget/timeBudget → card(progress-bar + stats-line)

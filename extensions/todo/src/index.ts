@@ -35,9 +35,9 @@ import { registerTodoTool } from "./tool";
 /**
  * 构造依赖 TodoSessionState 的 refreshDisplay（M17 widget 面板推送）。
  *
- * 双步断言根因（ctx as unknown as GuiContext）：pi 的 ExtensionContext.ui.custom
- * 是泛型方法，参数逆变使其与 GuiContext 结构不兼容，无法单步兼容
- * （goal adapters/ports.ts:54 同款先例）。
+ * 类型断言根因：pi 的 ExtensionContext.ui.custom 是泛型方法，参数逆变使其
+ * 与 GuiContext 不兼容，直接传参需断言收窄；双步 unknown 中转沿用 goal
+ * adapters/ports.ts setGuiWidget 同款先例。
  *
  * isGuiCapable 外层判定不可省略：guiSetWidget 内部无 isGui 守卫
  * （extension-protocol helpers.ts 仅查 ctx.ui?.setWidget 存在性），
