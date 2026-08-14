@@ -2,10 +2,10 @@
  * 配置加载 / 保存（委托 llm-shared 泛型 config）
  *
  * 对应 I6 loadAndWatchConfig。参考 pi-permission-system extension-config.ts。
- * 文件位置：<agentDir>/config/permission.json（PI_CODING_AGENT_DIR 覆盖，llm-shared 推导）。
+ * 文件位置：<agentDir>/config/permission-ext-config.json（PI_CODING_AGENT_DIR 覆盖，llm-shared 推导）。
  *
  * [HISTORICAL] 2026-08 路径收敛 + 范式统一：
- * - 路径从 <agentDir>/permission-config.json 迁到 <agentDir>/config/permission.json。
+ * - 路径从 <agentDir>/permission-config.json 迁到 <agentDir>/config/permission-ext-config.json。
  *   迁移在 session_start hook 运行时完成（migrateLegacyConfig，见 src/index.ts），
  *   幂等、过渡性（Added in v1.0.0, remove after v2.0.0）；运行时不双读旧路径。
  *   ensureConfigFile 仅在旧路径残留时 warn 提醒（降级兜底，见下方）。
@@ -39,7 +39,7 @@ const CONFIG_PKG = "permission";
 
 // ──────────────────────── 路径解析 ────────────────────────
 
-/** 配置文件完整路径：<agentDir>/config/permission.json（llm-shared 推导）。 */
+/** 配置文件完整路径：<agentDir>/config/permission-ext-config.json（llm-shared 推导）。 */
 export function getConfigPath(): string {
 	return getLlmConfigPath(CONFIG_PKG);
 }
@@ -119,7 +119,7 @@ function ensureConfigFile(configPath: string, onWarning?: (msg: string) => void)
 function warnLegacyConfigIfExists(): void {
 	const legacyPath = join(getAgentDir(), "permission-config.json");
 	if (!existsSync(legacyPath)) return;
-	const newPath = join(getAgentDir(), "config", "permission.json");
+	const newPath = join(getAgentDir(), "config", "permission-ext-config.json");
 	console.warn(
 		`[pi-permission] Legacy config detected at '${legacyPath}' but new config '${newPath}' is missing. ` +
 			`Migration did not run — defaulting to yolo mode, which may downgrade your previous strict/auto setting. ` +

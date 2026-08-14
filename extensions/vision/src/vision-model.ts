@@ -1,10 +1,11 @@
 /**
  * Vision model configuration and resolution for image analysis.
  *
- * Loads vision model entries from `<agentDir>/config/vision.json` (agentDir
+ * Loads vision model entries from `<agentDir>/config/vision-ext-config.json` (agentDir
  * derived from pi's getAgentDir(), honoring PI_CODING_AGENT_DIR for instance
- * isolation), selects the best available model with fallback chain.
- * [HISTORICAL] 2026-08 path convergence: vision-models.json -> config/vision.json
+ * isolation; path via llm-shared getConfigPath, unified with skill name `vision-ext-config`),
+ * selects the best available model with fallback chain.
+ * [HISTORICAL] 2026-08 path convergence: vision-models.json -> config/vision-ext-config.json
  * (migrated at session_start via migrateLegacyConfig since v0.2.0, no runtime fallback).
  *
  * State (cached config + timestamp) is encapsulated in the
@@ -13,9 +14,8 @@
  */
 
 import * as fs from "node:fs";
-import * as path from "node:path";
 
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getConfigPath } from "@zhushanwen/pi-llm-shared";
 
 // ──────────────────────── Types ────────────────────────
 
@@ -45,7 +45,7 @@ export interface VisionModelApi {
 
 // ──────────────────────── Constants ────────────────────────
 
-export const VISION_MODELS_PATH = path.join(getAgentDir(), "config", "vision.json");
+export const VISION_MODELS_PATH = getConfigPath("vision");
 export const VISION_ALLOWED_TOOLS = "read,bash,grep";
 
 export const VISION_SYSTEM_PROMPT = [

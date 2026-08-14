@@ -14,7 +14,7 @@ permission 扩展当前只有 `/permission` 一个 slash 命令作为用户入�
 | 裸跑 `/permission` | `formatStatusMessage`：当前 mode + 4 档模式列表 | 不解释 mode 含义、不告诉用户 `rule`/`model` 子命令存在 |
 | `/permission status` | `formatDetailedStatus`：所有字段值 | 字段无 hint，不知道每个字段干嘛用、什么时候调 |
 | 未知子命令 | 单行 `Usage: /permission [mode\|status\|rule\|model]` | 没引导到正确的下一步 |
-| 首次跑扩展 | 静默创建 `<agentDir>/config/permission.json`，mode=yolo | 用户不知道这个文件存在，更不知道能编辑 |
+| 首次跑扩展 | 静默创建 `<agentDir>/config/permission-ext-config.json`，mode=yolo | 用户不知道这个文件存在，更不知道能编辑 |
 | 决策被拦 | `block reason` 含 `source=rule` / `source=ai` | 用户看到 source 不知道 rule/ai 是什么、去哪改 |
 | TUI 视觉锚点 | 仅 footer（mode 标签 + enabled） | permission 没有自己的常驻操作面板，widget 填补这个空白 |
 
@@ -74,7 +74,7 @@ permission 扩展当前只有 `/permission` 一个 slash 命令作为用户入�
 
 **未来方案**：statusline 支持 mode 标签后，删除 `extensions/permission/src/statusline.ts`（整文件）+ 删除 `extensions/permission/src/index.ts:91-95` `registerPermissionFooter(...)` 调用 + 删除 `extensions/permission/src/__tests__/statusline.test.ts`（整文件）。当前 PR 不做。
 
-### 用户手动编辑 `config/permission.json` 后 widget 刷新
+### 用户手动编辑 `config/permission-ext-config.json` 后 widget 刷新
 
 **已知 limitation**（与现状对齐）：当前 `config.ts:142-153` mtime 缓存 + `index.ts:73-75` `refreshConfig()` 只在 `session_start` 和 `/permission` 命令执行前捕获文件变化。**session 中用户手动编辑文件不会触发 widget 刷新**——需要重启 session 或再跑一次 `/permission` 命令。
 
@@ -202,7 +202,7 @@ function refreshWidget(ctx: ExtensionContext): void {
 
 ### 设计
 
-在 `config/permission.json` 顶层加 `meta` 字段，记录用户首次访问时间和首次做出"主动决策"（切到非 yolo）的时间。
+在 `config/permission-ext-config.json` 顶层加 `meta` 字段，记录用户首次访问时间和首次做出"主动决策"（切到非 yolo）的时间。
 
 ```typescript
 interface PermissionConfigMeta {

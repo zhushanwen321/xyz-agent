@@ -19,9 +19,9 @@ const JSON_INDENT = 2;
 
 // ──────────────────────── 路径 ────────────────────────
 
-/** 配置文件完整路径：<agentDir>/config/<pkgName>.json。 */
+/** 配置文件完整路径：<agentDir>/config/<pkgName>-ext-config.json（与 config skill 名 `<简名>-ext-config` 统一）。 */
 export function getConfigPath(pkgName: string): string {
-	return join(getAgentDir(), "config", `${pkgName}.json`);
+	return join(getAgentDir(), "config", `${pkgName}-ext-config.json`);
 }
 
 // ──────────────────────── mtime+size 缓存 ────────────────────────

@@ -1,25 +1,26 @@
 /**
  * Model Switch — 配置文件加载
  *
- * 从 <agentDir>/config/model-switch.json 加载配置（agentDir 由 pi 的 getAgentDir()
- * 推导，尊重 PI_CODING_AGENT_DIR 实现实例隔离）。
- * [HISTORICAL] 2026-08 路径收敛：<agentDir>/model-policy.json → config/model-switch.json，
+ * 从 <agentDir>/config/model-switch-ext-config.json 加载配置（agentDir 由 pi 的 getAgentDir()
+ * 推导，尊重 PI_CODING_AGENT_DIR 实现实例隔离；路径经 llm-shared getConfigPath 推导，
+ * 与 config skill 名 `model-switch-ext-config` 统一）。
+ * [HISTORICAL] 2026-08 路径收敛：<agentDir>/model-policy.json → config/model-switch-ext-config.json，
  * 迁移在 session_start hook 完成（migrateLegacyConfig，v0.6.0 起），运行时不双读旧路径。
  * v2 格式：models 以 provider 名为 key，内嵌 models 表；plans 以 plan 名为 key。
  * v1 格式自动迁移为 v2 内存结构。
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getConfigPath } from "@zhushanwen/pi-llm-shared";
 
 import type { ModelPolicy, PlanConfig,ProviderConfig } from "./types";
 
 /** agentDir（pi 的 settings.json 等仍用 agentDir 根，保留导出） */
 const CONFIG_DIR = getAgentDir();
-/** 模型策略配置文件完整路径：<agentDir>/config/model-switch.json */
-const CONFIG_PATH = join(CONFIG_DIR, "config", "model-switch.json");
+/** 模型策略配置文件完整路径：<agentDir>/config/model-switch-ext-config.json（llm-shared 推导） */
+const CONFIG_PATH = getConfigPath("model-switch");
 
 export { CONFIG_DIR, CONFIG_PATH };
 

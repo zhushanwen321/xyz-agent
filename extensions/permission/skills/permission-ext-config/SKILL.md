@@ -9,7 +9,7 @@ description: "配置 @zhushanwen/pi-permission（四档权限模式 + AI 风险�
 
 ## 配置文件位置
 
-`<agentDir>/config/permission.json`
+`<agentDir>/config/permission-ext-config.json`
 
 - `<agentDir>` = pi agent 目录（`PI_CODING_AGENT_DIR` 覆盖，默认 `~/.pi/agent`；xyz-agent 隔离环境为 `~/.xyz-agent/pi/agent`）
 - 走 llm-shared 泛型 config（config/ 子目录 + getAgentDir 派生 + mtime+size 缓存 + 原子写）

@@ -187,11 +187,11 @@ streamSink: ctx.mode === "rpc"
 
 | 包 | 旧路径 | 新路径 |
 |---|---|---|
-| `pi-permission` | `<agentDir>/permission-config.json` | `<agentDir>/config/permission.json` |
-| `pi-model-switch` | `<agentDir>/model-policy.json` | `<agentDir>/config/model-switch.json` |
-| `pi-vision` | `<agentDir>/vision-models.json` | `<agentDir>/config/vision.json` |
+| `pi-permission` | `<agentDir>/permission-config.json` | `<agentDir>/config/permission-ext-config.json` |
+| `pi-model-switch` | `<agentDir>/model-policy.json` | `<agentDir>/config/model-switch-ext-config.json` |
+| `pi-vision` | `<agentDir>/vision-models.json` | `<agentDir>/config/vision-ext-config.json` |
 | `pi-quota-providers`（cache） | `<agentDir>/statusline_cache.json`（statusline 遗留孤儿名） | `<agentDir>/config/quota-cache.json`（首次加载迁移） |
-| `pi-rename-session` | 已合规 | `<agentDir>/config/rename-session.json`（llm-shared 派生，无迁移脚本） |
+| `pi-rename-session` | 已合规 | `<agentDir>/config/rename-session-ext-config.json`（llm-shared 派生，无迁移脚本） |
 
 ## Extension 依赖管理 [MANDATORY]
 

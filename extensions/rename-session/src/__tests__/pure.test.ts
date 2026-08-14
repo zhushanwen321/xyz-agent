@@ -224,9 +224,9 @@ describe("loadRenameConfig / saveRenameConfig", () => {
 		fs.rmSync(tmpAgentDir, { recursive: true, force: true });
 	});
 
-	it("配置路径 = <agentDir>/config/rename-session.json（走 getAgentDir，实例隔离）", () => {
+	it("配置路径 = <agentDir>/config/rename-session-ext-config.json（走 getAgentDir，实例隔离）", () => {
 		expect(getConfigPath("rename-session")).toBe(
-			path.join(tmpAgentDir, "config", "rename-session.json"),
+			path.join(tmpAgentDir, "config", "rename-session-ext-config.json"),
 		);
 	});
 
@@ -244,7 +244,7 @@ describe("loadRenameConfig / saveRenameConfig", () => {
 
 	it("saveRenameConfig 实际落盘到隔离目录（不写 ~/.pi/agent）", () => {
 		saveRenameConfig({ enabled: true, model: { type: "scoped" }, maxTitleLength: 50 });
-		const filePath = path.join(tmpAgentDir, "config", "rename-session.json");
+		const filePath = path.join(tmpAgentDir, "config", "rename-session-ext-config.json");
 		expect(fs.existsSync(filePath)).toBe(true);
 		const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
 		expect(raw.enabled).toBe(true);
@@ -252,7 +252,7 @@ describe("loadRenameConfig / saveRenameConfig", () => {
 
 	it("坏 JSON 文件 → 返回默认（onWarning 不阻断）", () => {
 		fs.mkdirSync(path.join(tmpAgentDir, "config"), { recursive: true });
-		fs.writeFileSync(path.join(tmpAgentDir, "config", "rename-session.json"), "{ bad json");
+		fs.writeFileSync(path.join(tmpAgentDir, "config", "rename-session-ext-config.json"), "{ bad json");
 		expect(loadRenameConfig()).toEqual(DEFAULT_RENAME_CONFIG);
 	});
 
@@ -275,7 +275,7 @@ describe("loadRenameConfig / saveRenameConfig", () => {
 
 		expect(cfg.enabled).toBe(true);
 		// 新配置已落盘且 enabled=true
-		const newConfigPath = path.join(tmpAgentDir, "config", "rename-session.json");
+		const newConfigPath = path.join(tmpAgentDir, "config", "rename-session-ext-config.json");
 		expect(fs.existsSync(newConfigPath)).toBe(true);
 		const raw = JSON.parse(fs.readFileSync(newConfigPath, "utf-8"));
 		expect(raw.enabled).toBe(true);
@@ -300,7 +300,7 @@ describe("loadRenameConfig / saveRenameConfig", () => {
 	it("TC7: E3 不迁移（无旧开关 + 无新配置 → enabled 默认 false，不创建任何文件）", () => {
 		const cfg = loadRenameConfig();
 		expect(cfg.enabled).toBe(false);
-		expect(fs.existsSync(path.join(tmpAgentDir, "config", "rename-session.json"))).toBe(false);
+		expect(fs.existsSync(path.join(tmpAgentDir, "config", "rename-session-ext-config.json"))).toBe(false);
 		expect(fs.existsSync(path.join(tmpAgentDir, "auto-rename-enabled"))).toBe(false);
 	});
 });

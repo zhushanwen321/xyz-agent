@@ -32,7 +32,7 @@ import type { PermissionConfig } from "./types.js";
 
 // ──────────────────────── [MIGRATION] 配置路径迁移（session_start 运行时） ────────────────────────
 // Added in v1.0.0. Remove after v2.0.0 (one major past).
-// session_start 首次触发时把旧路径 permission-config.json 迁到 config/permission.json。
+// session_start 首次触发时把旧路径 permission-config.json 迁到 config/permission-ext-config.json。
 // 幂等、best-effort（migrateLegacyConfig 见 @zhushanwen/pi-llm-shared）。
 // 模块级 once flag 防同进程重复触发；agentDir 由 getAgentDir() 推导（尊重 PI_CODING_AGENT_DIR）。
 let configMigrationChecked = false;
@@ -86,7 +86,7 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 		// 先迁再 loadConfig（同进程首次 session_start 迁移改写文件后，refreshConfig 读到迁移后内容）。
 		if (!configMigrationChecked) {
 			configMigrationChecked = true;
-			migrateLegacyConfig(getAgentDir(), "permission-config.json", "config/permission.json");
+			migrateLegacyConfig(getAgentDir(), "permission-config.json", "config/permission-ext-config.json");
 		}
 		refreshConfig();
 	});

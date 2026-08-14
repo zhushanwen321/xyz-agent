@@ -286,11 +286,11 @@ describe("VISION_MODELS_PATH derivation (getAgentDir)", () => {
     vi.unstubAllEnvs();
   });
 
-  it("TC1: derives config/vision.json from PI_CODING_AGENT_DIR", async () => {
+  it("TC1: derives config/vision-ext-config.json from PI_CODING_AGENT_DIR", async () => {
     vi.stubEnv("PI_CODING_AGENT_DIR", "/home/test/.pi/agent");
     const mod = await import("../vision-model.js");
     expect(mod.VISION_MODELS_PATH).toBe(
-      "/home/test/.pi/agent/config/vision.json",
+      "/home/test/.pi/agent/config/vision-ext-config.json",
     );
   });
 

@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { loadRenameConfig, saveRenameConfig } from "./pure.js";
 
 /**
- * 解析 /auto-rename 参数并执行开关操作。读/写 `<agentDir>/config/rename-session.json` 的 enabled 字段。
+ * 解析 /auto-rename 参数并执行开关操作。读/写 `<agentDir>/config/rename-session-ext-config.json` 的 enabled 字段。
  *
  * 用法：
  *   /auto-rename         — 查看当前状态

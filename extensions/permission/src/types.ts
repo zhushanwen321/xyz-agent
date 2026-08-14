@@ -100,7 +100,7 @@ export interface ClassifierConfig {
 
 // ──────────────────────── DM5: PermissionConfig ────────────────────────
 
-/** 扩展配置（<agentDir>/config/permission.json 持久化格式） */
+/** 扩展配置（<agentDir>/config/permission-ext-config.json 持久化格式） */
 export interface PermissionConfig {
 	/** 当前权限模式 */
 	mode: PermissionMode;

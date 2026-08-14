@@ -9,7 +9,7 @@ import { clearConfigCache } from "@zhushanwen/pi-llm-shared";
 import { executeAutoRenameCommand } from "../commands.js";
 
 /**
- * executeAutoRenameCommand 读写 `<agentDir>/config/rename-session.json`（经 llm-shared loadConfig/saveConfig，
+ * executeAutoRenameCommand 读写 `<agentDir>/config/rename-session-ext-config.json`（经 llm-shared loadConfig/saveConfig，
  * 路径走 getAgentDir）。用 PI_CODING_AGENT_DIR 隔离到临时目录，避免读写真实 ~/.pi/agent。
  * 每次写入后 clearConfigCache 确保读盘（不命中 mtime 缓存），验证真实落盘行为。
  */
@@ -32,7 +32,7 @@ describe("executeAutoRenameCommand", () => {
 	});
 
 	function configPath(): string {
-		return path.join(tmpAgentDir, "config", "rename-session.json");
+		return path.join(tmpAgentDir, "config", "rename-session-ext-config.json");
 	}
 
 	it("无参数 → 显示当前状态（默认关闭）+ 用法", () => {

@@ -3,7 +3,7 @@
  *
  * Spawns a dedicated Pi child process with a vision-capable model to analyze images.
  * Supports fork context: inherits parent session for context-aware analysis.
- * Reads model configuration from <agentDir>/config/vision.json (path derived from pi's getAgentDir).
+ * Reads model configuration from <agentDir>/config/vision-ext-config.json (path derived from pi's getAgentDir).
  */
 
 import * as fs from "node:fs";
@@ -211,12 +211,12 @@ export default function visionExtension(pi: ExtensionAPI) {
 	const visionModel = createVisionModelApi();
 
 	// [MIGRATION] Added in v0.2.0. Remove after v1.0.0 (one major past).
-	// session_start 迁移：vision-models.json → config/vision.json（幂等，过渡性）
+	// session_start 迁移：vision-models.json → config/vision-ext-config.json（幂等，过渡性）
 	let configMigrationChecked = false;
 	pi.on("session_start", () => {
 		if (!configMigrationChecked) {
 			configMigrationChecked = true;
-			migrateLegacyConfig(getAgentDir(), "vision-models.json", "config/vision.json");
+			migrateLegacyConfig(getAgentDir(), "vision-models.json", "config/vision-ext-config.json");
 		}
 	});
 
@@ -230,7 +230,7 @@ export default function visionExtension(pi: ExtensionAPI) {
 			"The image is processed by the vision model only — it never enters the main session context.",
 			"Returns text-only analysis conclusions.",
 			"",
-			"Requires <agentDir>/config/vision.json (PI_CODING_AGENT_DIR) with at least one vision model entry.",
+			"Requires <agentDir>/config/vision-ext-config.json (PI_CODING_AGENT_DIR) with at least one vision model entry.",
 			"",
 			"Context modes:",
 			"- 'fresh' (default): clean session, no prior context.",

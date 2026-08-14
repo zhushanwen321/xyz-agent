@@ -2,7 +2,7 @@
  * WT1-WT5/WT7: 配置加载/保存/mtime 缓存测试（委托 llm-shared 泛型 config）
  *
  * 用真实 fs + 临时目录（os.tmpdir + 随机子目录），PI_CODING_AGENT_DIR 指向临时目录隔离，
- * 配置文件路径 = <temp>/config/permission.json（llm-shared getConfigPath 推导）。
+ * 配置文件路径 = <temp>/config/permission-ext-config.json（llm-shared getConfigPath 推导）。
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,7 +24,7 @@ beforeEach(() => {
 	tempDir = mkdtempSync(join(tmpdir(), "pi-perm-test-"));
 	process.env.PI_CODING_AGENT_DIR = tempDir;
 	mkdirSync(join(tempDir, "config"), { recursive: true });
-	configPath = join(tempDir, "config", "permission.json");
+	configPath = join(tempDir, "config", "permission-ext-config.json");
 	clearConfigCache();
 });
 
@@ -260,10 +260,10 @@ describe("WT7: 保存配置", () => {
 });
 
 describe("getConfigPath", () => {
-	it("返回 <agentDir>/config/permission.json 路径", () => {
+	it("返回 <agentDir>/config/permission-ext-config.json 路径", () => {
 		const path = getConfigPath();
 		expect(path).toContain("config");
-		expect(path).toContain("permission.json");
+		expect(path).toContain("permission-ext-config.json");
 		// 受 PI_CODING_AGENT_DIR 隔离（本测试 beforeEach 已指向临时目录）
 		expect(path.startsWith(tempDir)).toBe(true);
 	});

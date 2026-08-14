@@ -102,7 +102,7 @@ function bashEvent(command: string): { toolName: string; input: { command: strin
 
 const TMP_ROOT = join(tmpdir(), "pi-perm-test-" + process.pid);
 const AGENT_DIR = join(TMP_ROOT, "agent");
-const CONFIG_PATH = join(AGENT_DIR, "config", "permission.json");
+const CONFIG_PATH = join(AGENT_DIR, "config", "permission-ext-config.json");
 
 function writeConfig(mode: string, enabled = true): void {
 	mkdirSync(AGENT_DIR, { recursive: true });

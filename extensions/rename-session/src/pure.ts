@@ -12,7 +12,7 @@ import {
 // ──────────────────────── 配置 ────────────────────────
 
 /**
- * rename-session 配置 schema（落盘到 `<agentDir>/config/rename-session.json`，路径由 llm-shared 推导）。
+ * rename-session 配置 schema（落盘到 `<agentDir>/config/rename-session-ext-config.json`，路径由 llm-shared 推导）。
  *
  * 收口自旧版 pure.ts 的 `RenameConfig`（switchFilePath/maxTitleLength/renameInstruction 硬编码常量）：
  * - 开关从「auto-rename-enabled 文件存在性」改为 `enabled` 字段（默认 false，沿用旧版「默认关闭」语义）
@@ -91,7 +91,7 @@ function normalizeModelSelector(raw: unknown): ModelSelector | null {
 /** 加载配置（mtime+size 缓存；文件缺失/损坏返回默认，不抛错）。 */
 export function loadRenameConfig(): RenameSessionConfig {
 	// [HISTORICAL] E3 一次性迁移（两个版本后可删）：
-	// 旧版开关是 <agentDir>/auto-rename-enabled 文件存在性，新版改为 config/rename-session.json
+	// 旧版开关是 <agentDir>/auto-rename-enabled 文件存在性，新版改为 config/rename-session-ext-config.json
 	// 的 enabled 字段（默认 false）。检测「旧文件存在且新配置不存在」→ enabled=true 写入新配置
 	// + 删旧文件，避免旧开启用户升级后开关被静默重置为关闭。
 	// 顺序保证（R1 mitigation）：先写新配置成功再 unlink 旧文件——写入失败保留旧文件不删，

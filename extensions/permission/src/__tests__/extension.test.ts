@@ -163,7 +163,7 @@ describe("WT9: tool_call handler（W5 三层管道接入）", () => {
 			ctx: unknown,
 		) => Promise<unknown>;
 
-		// 注：handler 实际读取磁盘上的 config/permission.json（无法从测试注入 config）。
+		// 注：handler 实际读取磁盘上的 config/permission-ext-config.json（无法从测试注入 config）。
 		// 默认 user config 含 allow 规则 `python *`（user-1），故 `python script.py` 命中 allow → resolve undefined。
 		// 此前测试断言「yolo 放行任意命令（含 git push --force）」依赖磁盘 config.mode==='yolo'，
 		// 但 config 已改为 auto 且 bd-005 危险规则即使 yolo 之外的模式会拦截 force push。
