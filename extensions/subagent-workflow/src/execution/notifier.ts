@@ -15,11 +15,11 @@
 export interface BgNotifyRecord {
   id: string;
   /**
-   * 完成状态。idle = 对话模式轮次完成（每轮回复需送达，与一次性 closed 区分）。
-   * toNotifyRecord 守卫放行 idle 后经此联合穷尽。
-   * closed = 统一终态（替代旧 done/failed/crashed），closedReason 表达 L2 原因。
+   * 完成状态。v4 B-1 两态收敛：closed（终态，含 cancelled，closedReason 表达 L2 原因）
+   * 或 running（对话模式轮次完成，旧 idle 折入 running，携带本轮结果送回主 agent）。
+   * toNotifyRecord 守卫放行后经此联合穷尽。
    */
-  status: "closed" | "cancelled" | "idle";
+  status: "running" | "closed";
   /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。供通知文案按需展示。 */
   closedReason?: import("./types.ts").ClosedReason;
   agent: string;
@@ -229,7 +229,7 @@ export class BgNotifier {
     const id = record.id;
     switch (record.status) {
       case "closed": {
-        // SP-1: closed 统一终态。按 closedReason 派生通知文案。
+        // v4 B-1: closed 统一终态（含 cancelled）。按 closedReason 派生通知文案。
         const reason = record.closedReason ?? "gc";
         if (reason === "cancelled") {
           return `Subagent "${agent}" (${id}) cancelled.`;
@@ -245,10 +245,8 @@ export class BgNotifier {
         }
         return base;
       }
-      case "cancelled":
-        return `Subagent "${agent}" (${id}) cancelled.`;
-      case "idle":
-        // 对话模式轮次完成：携带本轮结果（result）送回主 agent，等待下一轮 message。
+      case "running":
+        // v4 B-1: 对话模式轮次完成（旧 idle 折入 running）：携带本轮结果送回主 agent，等待下一轮 message。
         return `Subagent "${agent}" (${id}) finished a round. Reply:\n${record.result ?? "(empty)"}`;
     }
   }

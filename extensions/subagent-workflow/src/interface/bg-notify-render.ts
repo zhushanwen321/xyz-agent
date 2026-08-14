@@ -52,8 +52,8 @@ const MIN_BORDER_WIDTH = BORDER_CHARS + INNER_PAD_TOTAL + 1;
  */
 interface BgNotifyRecord {
   id: string;
-  /** SP-1: done/failed/crashed 合并为 closed + closedReason L2 子枚举；idle 为对话模式轮次完成。 */
-  status: "closed" | "cancelled" | "idle";
+  /** v4 B-1: closed（终态，含 cancelled）或 running（对话模式轮次完成，旧 idle）。 */
+  status: "running" | "closed";
   /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。 */
   closedReason?: string;
   agent: string;
@@ -217,12 +217,10 @@ function renderRecordLines(record: BgNotifyRecord, t: ThemeLike): string[] {
   const modelPart = record.model
     ? ` ${t.fg("dim", "·")} ${t.fg("accent", truncLine(record.model, MODEL_MAX_WIDTH))}`
     : "";
-  // SP-1: closed 统一终态。按 closedReason 派生文案。
+  // v4 B-1: closed 统一终态（含 cancelled）。按 closedReason 派生文案。
   const reason = record.closedReason ?? "gc";
   let verb: string;
-  if (record.status === "cancelled") {
-    verb = "cancelled";
-  } else if (reason === "cancelled") {
+  if (reason === "cancelled") {
     verb = "cancelled";
   } else if (reason === "gc" && record.error) {
     verb = "failed";
@@ -234,8 +232,11 @@ function renderRecordLines(record: BgNotifyRecord, t: ThemeLike): string[] {
 
   switch (record.status) {
     case "closed": {
-      // SP-1: closed 统一终态。失败场景（gc + error）显示错误信息。
+      // v4 B-1: closed 统一终态（含 cancelled）。cancelled 无正文；失败显示错误；否则结果/patch。
       const r = record.closedReason ?? "gc";
+      if (r === "cancelled") {
+        return [head];
+      }
       if (r === "gc" && record.error) {
         return [head, t.fg("dim", truncLine(`Error: ${firstLineSanitized(record.error)}`, BODY_MAX_WIDTH))];
       }
@@ -250,9 +251,9 @@ function renderRecordLines(record: BgNotifyRecord, t: ThemeLike): string[] {
       }
       return [head, ...lines];
     }
-    case "cancelled":
-      return [head];
+    case "running":
     default:
+      // v4 B-1: 对话模式轮次完成（旧 idle 折入 running）——仅标题行。
       return [head];
   }
 }
@@ -283,7 +284,7 @@ function extractBgNotifyRecord(details: unknown): BgNotifyRecord | undefined {
   const status = d.status;
   const agent = d.agent;
   if (
-    (status !== "closed" && status !== "cancelled" && status !== "idle") ||
+    (status !== "closed" && status !== "running") ||
     typeof agent !== "string"
   ) {
     return undefined;

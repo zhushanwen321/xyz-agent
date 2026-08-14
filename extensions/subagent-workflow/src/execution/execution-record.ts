@@ -563,14 +563,12 @@ export function getTotalUsage(record: ExecutionRecord): AgentUsageTotal | undefi
  */
 export function tryTransition(
   record: ExecutionRecord,
-  target: "closed" | "cancelled",
+  target: "closed",
   closedReason?: ClosedReason,
 ): boolean {
   if (record.status !== "running") return false;
   record.status = target;
-  if (target === "closed") {
-    record.closedReason = closedReason ?? "gc";
-  }
+  record.closedReason = closedReason ?? "gc";
   return true;
 }
 
@@ -600,13 +598,11 @@ export function markReconstructedStatus(
 export function completeRecord(
   record: ExecutionRecord,
   result: AgentResult,
-  status: "closed" | "cancelled",
+  status: "closed",
   closedReason?: ClosedReason,
 ): void {
   record.status = status;
-  if (status === "closed") {
-    record.closedReason = closedReason ?? "gc";
-  }
+  record.closedReason = closedReason ?? "gc";
   record.endedAt = Date.now();
   record.agentResult = result;
   record.result = result.text;

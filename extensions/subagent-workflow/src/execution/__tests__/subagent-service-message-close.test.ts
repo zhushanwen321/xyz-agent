@@ -30,6 +30,7 @@ import { RecordStore } from "../record-store.ts";
 import { SubagentService } from "../subagent-service.ts";
 import type { PiLike } from "../subagent-service.ts";
 import type { ExecutionRecord } from "../types.ts";
+import { getChildByRecord } from "../session-runner.ts";
 
 function makeTmpAgentDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "msg-close-svc-"));
@@ -129,7 +130,10 @@ describe("closeSubagent 行为分流", () => {
     fs.rmSync(agentDir, { recursive: true, force: true });
   });
 
-  it("running + force:false → 置 closeAfterRound=true（不立即终态，等轮完）", async () => {
+  it("running + force:false + 有活进程 → 置 closeAfterRound=true（不立即终态，等轮完）", async () => {
+    // v4 B-1：closeSubagent running 分支按 isResumable 区分——有活进程（isResumable=false）
+    // 走 closeAfterRound；无活进程（isResumable=true）走 closeChatIdle。本用例 mock 活进程。
+    vi.mocked(getChildByRecord).mockReturnValueOnce({ killed: false } as never);
     const record = makeRecord({ status: "running" });
     store.register(record);
 
@@ -140,8 +144,10 @@ describe("closeSubagent 行为分流", () => {
     expect(store.getMutable(record.id)).toBe(record); // 留内存
   });
 
-  it("idle → closeChatIdle（done 终态化 + archive）", async () => {
-    const record = makeRecord({ status: "idle", round: 1 });
+  it("running + 无活进程（旧 idle）→ closeChatIdle（closed 终态化 + archive）", async () => {
+    // v4 B-1：旧 idle 折入 running。running + force:false + isResumable=true（getChildByRecord
+    // 默认 mock 返回 undefined = 无活进程）→ closeChatIdle 立即终态化。
+    const record = makeRecord({ status: "running", round: 1 });
     record.sessionFile = path.join(agentDir, "test.jsonl");
     store.register(record);
 
@@ -151,13 +157,15 @@ describe("closeSubagent 行为分流", () => {
     expect(store.getMutable(record.id)).toBeUndefined(); // archived
   });
 
-  it("running + force:true → cancelBackground（cancelled 终态化 + archive）", async () => {
+  it("running + force:true → cancelBackground（closed+cancelled 终态化 + archive）", async () => {
     const record = makeRecord({ status: "running", sessionFile: path.join(agentDir, "run.jsonl") });
     store.register(record);
 
     await service.closeSubagent(record, true);
 
-    expect(record.status).toBe("cancelled");
+    // v4 B-1：cancelled 折入 closed（closedReason='cancelled' 区分用户取消语义）
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("cancelled");
     expect(store.getMutable(record.id)).toBeUndefined(); // archived
   });
 

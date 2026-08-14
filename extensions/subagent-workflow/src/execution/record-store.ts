@@ -32,13 +32,11 @@ const logger = getLogger("subagents");
 // 常量
 // ============================================================
 
-/** status → 排序优先级（值小排前）：running < idle/cancelled < closed。
- *  idle = 对话模式等待续聊（waiting 语义），介于运行态与终态之间。
- *  closed = 统一终态（替代旧 done/failed/crashed），按 closedReason 派生对外语义。 */
+/** status → 排序优先级（值小排前）：running < closed。
+ *  v4 B-1：idle/cancelled 折入 running/closed，两态收敛。closed = 统一终态
+ *  （done/failed/crashed/cancelled 合并），按 closedReason 派生对外语义。 */
 const STATUS_PRIORITY: Record<ExecutionStatus, number> = {
   running: 0,
-  idle: 2,
-  cancelled: 2,
   closed: 3,
 };
 
@@ -61,7 +59,7 @@ function mapManifestStatus(s: string): ExecutionStatus | null {
   if (s === "completed") return "closed"; // 向后兼容旧 manifest 数据
   if (s === "failed") return "closed";     // 向后兼容旧 manifest 数据
   if (s === "running") return "running";
-  if (s === "cancelled") return "cancelled";
+  if (s === "cancelled") return "closed"; // v4 B-1: manifest cancelled 折入 closed（closedReason 信息丢失，manifest 仅诊断辅助）
   return null; // 越界=数据损坏（含历史 "error" 值），返回 null 让调用方跳过
 }
 
@@ -175,7 +173,7 @@ export class RecordStore {
    *  供 SubagentService.disposeAllRecords 做级联关闭。 */
   listAllActive(): ExecutionRecord[] {
     return [...this.records.values()]
-      .filter((r) => r.status === "running" || r.status === "idle");
+      .filter((r) => r.status === "running");
   }
 
   /**
@@ -370,8 +368,10 @@ export class RecordStore {
       };
 
       // ── 分支 1: .cancelled ──
+      // v4 B-1: cancelled 折入 closed（closedReason='cancelled' 保留 L2 区分）。
       if (tomb) {
-        markReconstructedStatus(rec, "cancelled");
+        markReconstructedStatus(rec, "closed");
+        rec.closedReason = "cancelled";
         rec.error = "cancelled by user";
         rec.endedAt = tomb.endedAt;
       }
@@ -396,11 +396,11 @@ export class RecordStore {
         rec.externalInstance = alive;
       }
       // ── 分支 4: 兜底（都无 / .alive 但 pid 死 / 超 24h）──
-      // SP-2: idle（非 crashed）——跨重启后进程已死但 session.jsonl 完整，record
-      // 可经 deliverMessage → resumeRound 冷路径续聊。endedAt 保持 undefined（非终态，
-      // 耗时语义：idle record 待续聊，无"已结束"时间点）。
+      // v4 B-1：跨重启可续聊态落点 = running（旧 idle 折入 running）。进程已死但
+      // session.jsonl 完整，record 可经 deliverMessage → resumeRound 冷路径续聊。
+      // endedAt 保持 undefined（非终态，耗时语义：待续聊，无"已结束"时间点）。
       else {
-        markReconstructedStatus(rec, "idle");
+        markReconstructedStatus(rec, "running");
       }
 
       cache.set(file, rec);

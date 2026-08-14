@@ -179,11 +179,11 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
         const service = getSubagentService();
         if (!service) return;
 
-        // 收集全部 record 后筛选活跃态（running + idle）。
+        // [v4 B-1] 临时：idle 折入 running，筛选改 running。a6 独立 slice 删整个 before_agent_start hook 时随之消失。
         // collectRecords 按 rootSessionId 过滤，只看本 session 的 subagent。
         const allRecords = service.collectRecords(1000);
         const activeRecords = allRecords.filter(
-          (r) => r.status === "running" || r.status === "idle",
+          (r) => r.status === "running",
         );
 
         // SP-4: 检查级联关闭记录（fork/new 时被关的 subagent）

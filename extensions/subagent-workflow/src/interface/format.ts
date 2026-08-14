@@ -175,18 +175,8 @@ export function statusGlyph(status: ExecutionStatus): { icon: string | undefined
     case "running":
       return { icon: undefined, color: "accent" };
     case "closed":
-      // SP-1: closed 统一终态（done/failed/crashed 合并）。默认 ✓ success 色。
-      // 调用方可通过 closedReason 进一步区分（如 gc + error → error 色）。
+      // v4 B-1: closed 统一终态（含 cancelled）。默认 ✓ success 色。
       return { icon: "✓", color: "success" };
-    case "cancelled":
-      return { icon: "■", color: "muted" };
-    case "idle":
-      // 对话模式轮次完成、等待续聊（waiting 语义，决策 10 细则 3）。
-      // 暂停图标 + warning 色，与 running（spinner accent）和 closed（✓ success）区分。
-      return { icon: "⏸", color: "warning" };
-    default:
-      // 防御:运行时 status 可能是意外值(SDK 投影异常/未来新增状态),兜底为 running 语义
-      return { icon: undefined, color: "accent" };
   }
 }
 

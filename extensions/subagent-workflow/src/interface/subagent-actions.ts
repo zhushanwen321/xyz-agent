@@ -132,16 +132,8 @@ export function mapExternalState(status: ExecutionStatus): ExternalState {
   switch (status) {
     case "running":
       return "active";
-    case "idle":
-      return "waiting";
-    case "cancelled":
-      return "ended";
     case "closed":
-      // SP-1: closed 统一终态。对外映射为 ended（通用完成/失败/crashed 合并）。
-      // 未来若需按 closedReason 区分 error/ended，可在此扩展。
-      return "ended";
-    default:
-      // 防御：未来新增状态兑底为 ended（保守，不再 active/waiting）
+      // v4 B-1: closed 统一终态（含 cancelled）。对外映射为 ended。
       return "ended";
   }
 }
@@ -356,7 +348,7 @@ export async function messageHandler(
   // chatMode=true。与 subagent-service.ts getRecordForAction 磁盘重建（跨重启恢复入口）
   // 分工：本入口服务进程内 one-shot，跨重启路径恒被 getRecordForAction 磁盘重建绕过
   // （该处无条件 chatMode=true）。改动这两处必须协同，带 S3 回归。
-  if (!record.chatMode && (record.status === "running" || record.status === "idle")) {
+  if (!record.chatMode && record.status === "running") {
     type Mutable<T> = { -readonly [K in keyof T]: T[K] };
     (record as Mutable<ExecutionRecord>).chatMode = true;
   }

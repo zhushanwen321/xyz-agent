@@ -45,18 +45,9 @@ function makeMockService(): SubagentService {
 // mapExternalState 四态映射（决策 10 细则 3）
 // ============================================================
 
-describe("mapExternalState 四态映射（决策 10 细则 3）", () => {
+describe("mapExternalState 两态映射（v4 B-1：running/closed 收敛，决策 10 细则 3）", () => {
   it("running → active", () => {
     expect(mapExternalState("running")).toBe("active");
-  });
-  it("idle → waiting", () => {
-    expect(mapExternalState("idle")).toBe("waiting");
-  });
-  it("done → ended", () => {
-    expect(mapExternalState("closed")).toBe("ended");
-  });
-  it("cancelled → ended", () => {
-    expect(mapExternalState("cancelled")).toBe("ended");
   });
   it("closed → ended", () => {
     expect(mapExternalState("closed")).toBe("ended");
@@ -124,18 +115,18 @@ describe("messageHandler 非 chatMode 状态分流（SP-5 one-shot upgrade）", 
     expect(service.deliverToRunning).not.toHaveBeenCalled();
   });
 
-  it("idle → upgrade chatMode + deliverMessage（冷路径 resume）", async () => {
+  it("running（进程回收态，旧 idle）→ upgrade chatMode + deliverMessage", async () => {
     const service = makeMockService();
-    const record = makeRecord({ status: "idle" });
+    const record = makeRecord({ status: "running" });
     (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
 
     const result = await messageHandler(service, {
       subagentId: "sa-test",
       text: "continue",
-      interrupt: true, // idle 时 interrupt 透传 deliverMessage
+      interrupt: true,
     });
 
-    // SP-5：非 chatMode idle → upgrade chatMode → deliverMessage（非 resumeRound 直调）
+    // SP-5：非 chatMode running → upgrade chatMode → deliverMessage（v4 B-1：旧 idle 折入 running）
     expect(record.chatMode).toBe(true);
     expect(service.deliverMessage).toHaveBeenCalledWith(record, "continue", true);
     expect(service.resumeRound).not.toHaveBeenCalled();
@@ -187,9 +178,9 @@ describe("messageHandler chatMode 统一投递（V2 决策 3）", () => {
     expect(result.response).toEqual({ delivered: true });
   });
 
-  it("chatMode idle → deliverMessage（统一投递，不走 resumeRound——V2 进程长驻，判活分流）", async () => {
+  it("chatMode running（旧 idle）→ deliverMessage（统一投递，不走 resumeRound——V2 进程长驻，判活分流）", async () => {
     const service = makeMockService();
-    const record = makeRecord({ chatMode: true, status: "idle" });
+    const record = makeRecord({ chatMode: true, status: "running" });
     (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
 
     await messageHandler(service, { subagentId: "sa-test", text: "continue", interrupt: false });
@@ -221,7 +212,7 @@ describe("closeHandler", () => {
 
   it("正常 → closeSubagent 被调 + 返回 closed:true", async () => {
     const service = makeMockService();
-    const record = makeRecord({ status: "idle" });
+    const record = makeRecord({ status: "running" });
     (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
     (service.closeSubagent as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 

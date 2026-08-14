@@ -94,14 +94,14 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
     };
   }
 
-  it("status=cancelled → manifest 写 cancelled（不再归并 failed）", async () => {
+  it("status=closed + cancelled reason → manifest 写 closed（v4 B-1：cancelled 折入 closed）", async () => {
     const record = makeMinimalRecord({ id: "rec-cancelled" });
-    await doFinalizeRecord(makeDeps(), record, makeMinimalResult(), "cancelled");
+    await doFinalizeRecord(makeDeps(), record, makeMinimalResult(), "closed", "cancelled");
 
     const manifest = await manifestStore.readManifest("rec-cancelled");
     expect(manifest).not.toBeNull();
-    // 关键断言：cancelled 直接透传,不是 "closed"
-    expect(manifest?.status).toBe("cancelled");
+    // 关键断言：v4 B-1 manifest status 恒写 closed（cancelled 区分靠 tombstone sidecar）
+    expect(manifest?.status).toBe("closed");
   });
 
   it("status=closed + user-close → manifest 写 closed", async () => {
@@ -148,7 +148,7 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
 
     // ── 核心 claim 1：不抛错（cleanup-first → manifest write 失败不 throw）──
     await expect(
-      doFinalizeRecord(deps, record, makeMinimalResult(), "done"),
+      doFinalizeRecord(deps, record, makeMinimalResult(), "closed"),
     ).resolves.toBeUndefined();
 
     // ── 核心 claim 2：Step 3 cleanup 先执行 —— finalized marker 真实写入 ──
@@ -158,7 +158,7 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
     expect(fs.existsSync(`${sessionFile}.alive`)).toBe(false);
 
     // ── 核心 claim 4：pending-notifications 注销仍触发（emitUnregister）──
-    expect(deps.emitUnregister).toHaveBeenCalledWith("rec-cleanup-first", "done");
+    expect(deps.emitUnregister).toHaveBeenCalledWith("rec-cleanup-first", "closed");
 
     // ── 核心 claim 5：manifest 写失败被 logger.error 记录（含 record id + error）──
     expect(loggerMock.error).toHaveBeenCalledWith(expect.stringContaining("manifest 写入失败"));
@@ -216,7 +216,7 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     };
   }
 
-  it("record 带 sessionFile → 删 .alive + record.status=idle + round 0→1", async () => {
+  it("record 带 sessionFile → 删 .alive + record.status=running + round 0→1", async () => {
     const sessionFile = path.join(tmpDir, "session.jsonl");
     // 预写 .alive marker（验证 doFinalizeRoundToIdle 删除它——进程已回收）
     fs.writeFileSync(
@@ -226,12 +226,12 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     );
     const record = makeMinimalRecord({ id: "rec-idle", sessionFile, chatMode: true, round: 0 });
     // tryTransition 已把 status 设为 done，模拟 runAndFinalize 调用前的状态
-    record.status = "done";
+    record.status = "closed";
 
     await doFinalizeRoundToIdle(makeDeps(), record, makeMinimalResult());
 
-    // 状态机
-    expect(record.status).toBe("idle");
+    // 状态机（v4 B-1：旧 idle 折入 running，finalizeRoundToIdle 设 running）
+    expect(record.status).toBe("running");
     expect(record.round).toBe(1);
     // .alive marker 被删（进程已 SIGTERM 回收）
     expect(fs.existsSync(`${sessionFile}.alive`)).toBe(false);
@@ -239,16 +239,16 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
 
   it("record.round 已为 N → round 变 N+1", async () => {
     const record = makeMinimalRecord({ id: "rec-round", round: 3 });
-    record.status = "done";
+    record.status = "closed";
     await doFinalizeRoundToIdle(makeDeps(), record, makeMinimalResult());
     expect(record.round).toBe(4);
-    expect(record.status).toBe("idle");
+    expect(record.status).toBe("running");
   });
 
   it("不调 store.archive（record 留内存，getMutable 仍可查）", async () => {
     const deps = makeDeps();
     const record = makeMinimalRecord({ id: "rec-noarchive" });
-    record.status = "done";
+    record.status = "closed";
     await doFinalizeRoundToIdle(deps, record, makeMinimalResult());
     expect(deps.store.archive).not.toHaveBeenCalled();
   });
@@ -259,30 +259,30 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
       id: "rec-noworktree",
       worktreeHandle: { path: "/tmp/x", branch: "b", baseCommit: "c", mainCwd: "/tmp" } as never,
     });
-    record.status = "done";
+    record.status = "closed";
     await doFinalizeRoundToIdle(deps, record, makeMinimalResult());
     expect(deps.worktreeManager.cleanup).not.toHaveBeenCalled();
   });
 
-  it("emitUnregister 被调（status=idle，进程已死从 pending 活跃差集移除）", async () => {
+  it("emitUnregister 被调（status=running，进程已死从 pending 活跃差集移除）", async () => {
     const deps = makeDeps();
     const record = makeMinimalRecord({ id: "rec-emit" });
-    record.status = "done";
+    record.status = "closed";
     await doFinalizeRoundToIdle(deps, record, makeMinimalResult());
-    expect(deps.emitUnregister).toHaveBeenCalledWith("rec-emit", "idle");
+    expect(deps.emitUnregister).toHaveBeenCalledWith("rec-emit", "running");
   });
 
   it("clearThrottle 被调（防 trailing onUpdate）", async () => {
     const deps = makeDeps();
     const record = makeMinimalRecord({ id: "rec-throttle" });
-    record.status = "done";
+    record.status = "closed";
     await doFinalizeRoundToIdle(deps, record, makeMinimalResult());
     expect(deps.clearThrottle).toHaveBeenCalledWith("rec-throttle");
   });
 
   it("不调 completeRecord：record 不冻结（endedAt / agentResult 仍 undefined）", async () => {
     const record = makeMinimalRecord({ id: "rec-nofreeze" });
-    record.status = "done";
+    record.status = "closed";
     await doFinalizeRoundToIdle(makeDeps(), record, makeMinimalResult());
     expect(record.endedAt).toBeUndefined();
     expect(record.agentResult).toBeUndefined();
@@ -290,7 +290,7 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
 
   it("不写 manifest（idle 非终态，manifest 是终态诊断辅助）", async () => {
     const record = makeMinimalRecord({ id: "rec-nomanifest" });
-    record.status = "done";
+    record.status = "closed";
     await doFinalizeRoundToIdle(makeDeps(), record, makeMinimalResult());
     const manifest = await manifestStore.readManifest("rec-nomanifest");
     expect(manifest).toBeNull();
@@ -298,7 +298,7 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
 
   it("MF-2: record.result 设为 result.text（否则 notifier idle 回复恒为 (empty)，G1/G2 不成立）", async () => {
     const record = makeMinimalRecord({ id: "rec-result" });
-    record.status = "done";
+    record.status = "closed";
     const result = makeMinimalResult();
     result.text = "review done, found 3 issues";
     await doFinalizeRoundToIdle(makeDeps(), record, result);
@@ -308,7 +308,7 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
 
   it("MF-2 兑底：失败轮次 result.text 为空时用 result.error 填 record.result（MF-6 回退 idle 路径）", async () => {
     const record = makeMinimalRecord({ id: "rec-result-err" });
-    record.status = "done";
+    record.status = "closed";
     const result = makeMinimalResult();
     result.text = "";
     result.success = false;
@@ -321,7 +321,7 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
   it("残留 pendingMessages → 触发 redeliverPending 补投（MF-1 安全网，不再静默清除）", async () => {
     const redeliverPending = vi.fn();
     const record = makeMinimalRecord({ id: "rec-pending" });
-    record.status = "done";
+    record.status = "closed";
     record.pendingMessages = [
       { id: "m1", text: "unconsumed race-window msg", interrupt: false, sentAt: 1 },
       { id: "m2", text: "second queued", interrupt: true, sentAt: 2 },
@@ -340,7 +340,7 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
   it("无残留 pendingMessages → 不调 redeliverPending（正常路径）", async () => {
     const redeliverPending = vi.fn();
     const record = makeMinimalRecord({ id: "rec-no-pending" });
-    record.status = "done";
+    record.status = "closed";
     await doFinalizeRoundToIdle(makeDeps(redeliverPending), record, makeMinimalResult());
     expect(record.pendingMessages).toBeUndefined();
     // 给 setTimeout(0) 一个周期确认未被调

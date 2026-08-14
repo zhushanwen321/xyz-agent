@@ -33,16 +33,19 @@ export const DEFAULT_AGENT_NAME = "general-purpose";
 // ============================================================
 
 /**
- * 唯一执行状态。所有路径共用。
+ * 唯一执行状态。所有路径共用。v4 B-1 两态收敛：旧 idle 折入 running、
+ * 旧 cancelled 折入 closed（closedReason='cancelled' 区分）。
  *
- * idle = 对话模式（chatMode）轮次完成、子进程已回收、record 保留在内存、
- * 等待下一轮 message 续聊（非终态，close 后才进 closed 终态）。
+ * running = 活跃态。含两种子态（由派生谓词区分，见 lifecycle-predicates.ts）：
+ *   - 对话模式等待续聊（旧 idle）：进程可能保活（isIdle=hasIdleTimer）或已回收
+ *     待冷路径 resume（isResumable=running && 无活进程句柄）。
+ *   - 正在执行（有活进程句柄）。
  *
- * closed = 统一终态（done/failed/crashed 三态合并）。具体关闭原因由
+ * closed = 统一终态（done/failed/crashed/cancelled 合并）。具体关闭原因由
  * {@link ClosedReason} 子枚举表达（如 user-close / gc / cancelled / parent-shutdown）。
  * ExecutionRecord.closedReason 携带 L2 原因，投影层按需派生对外语义（error / ended）。
  */
-export type ExecutionStatus = "running" | "idle" | "cancelled" | "closed";
+export type ExecutionStatus = "running" | "closed";
 
 /**
  * closed 终态的 L2 关闭原因子枚举。
@@ -58,13 +61,12 @@ export type ExecutionStatus = "running" | "idle" | "cancelled" | "closed";
 export type ClosedReason = 'parent-shutdown' | 'parent-fork' | 'parent-new' | 'user-close' | 'cancelled' | 'gc';
 
 /**
- * 对外四态（设计决策 10 细则 3）：内部 ExecutionStatus 收敛为 agent 可理解的状态语义。
+ * 对外四态（设计决策 10 细则 3）：内部 ExecutionStatus（v4 B-1 两态）收敛为 agent
+ * 可理解的状态语义。
  *
- *   running              → active   （正在执行）
- *   idle                 → waiting  （对话模式轮次完成，等待续聊）
- *   cancelled            → ended    （已取消）
+ *   running              → active   （正在执行 / 对话模式活跃）
  *   closed + L2 reason   → ended 或 error（按 ClosedReason 派生）
- *     - closedReason=cancelled/parent-shutdown/parent-fork/parent-new/gc → ended
+ *     - closedReason=cancelled/parent-shutdown/parent-fork/parent-new/gc/user-close → ended
  *     - （未来扩展：如 closedReason=crash → error）
  *
  * 原始 ExecutionStatus 进 list item 的 status 字段供调试；state 是对外主字段。

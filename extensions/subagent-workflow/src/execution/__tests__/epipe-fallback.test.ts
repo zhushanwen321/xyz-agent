@@ -67,7 +67,7 @@ function makeResult(success: boolean): AgentResult {
   };
 }
 
-/** chatMode idle record（第一轮已完成，等待续聊）。 */
+/** chatMode running-resumable record（第一轮已完成，等待续聊；v4 B-1 旧 idle 折入 running）。 */
 function makeIdleRecord(id = "sa-epipe"): ExecutionRecord {
   const record = createRecord(id, {
     agent: "general-purpose",
@@ -80,7 +80,7 @@ function makeIdleRecord(id = "sa-epipe"): ExecutionRecord {
     rootSessionId: "root-session",
     chatMode: true,
   });
-  record.status = "idle";
+  record.status = "running";
   record.round = 1;
   record.controller = new AbortController();
   return record;
@@ -175,8 +175,8 @@ describe("deliverMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径 resu
     await service.deliverMessage(record, "first epipe", false);
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
 
-    // resume 完成后 record 回 idle（mock runSpawn done → finalizeRoundToIdle）
-    await vi.waitFor(() => expect(record.status).toBe("idle"));
+    // resume 完成后 record 回 running（v4 B-1：finalizeRoundToIdle 设 running，旧 idle 折入）
+    await vi.waitFor(() => expect(record.status).toBe("running"));
 
     // 第 2 次：再次注入 EPIPE child + EPIPE
     spawnedChildren.set(record.id, makeEpipeChild());
@@ -203,7 +203,7 @@ describe("deliverMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径 resu
     spawnedChildren.set(record.id, makeEpipeChild());
     await service.deliverMessage(record, "epipe msg", false);
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
-    await vi.waitFor(() => expect(record.status).toBe("idle"));
+    await vi.waitFor(() => expect(record.status).toBe("running"));
 
     // 第 2 轮：正常 child，成功写入（清零 EPIPE 计数）
     spawnedChildren.set(record.id, makeNormalChild());
@@ -212,8 +212,8 @@ describe("deliverMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径 resu
     expect(record.status).toBe("running");
 
     // 第 3 轮：再次 EPIPE → 但因为第 2 轮清零了计数，这次是首次 EPIPE（不 throw）
-    // 需要先让 record 回 idle
-    record.status = "idle";
+    // 需要先让 record 回 running（等待续聊态）
+    record.status = "running";
     spawnedChildren.set(record.id, makeEpipeChild());
     await expect(service.deliverMessage(record, "after reset", false)).resolves.toBeUndefined();
   });

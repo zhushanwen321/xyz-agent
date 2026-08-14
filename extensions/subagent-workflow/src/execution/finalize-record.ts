@@ -68,7 +68,7 @@ export async function doFinalizeRecord(
   deps: FinalizeDeps,
   record: ExecutionRecord,
   result: AgentResult,
-  status: "closed" | "cancelled",
+  status: "closed",
   closedReason?: ClosedReason,
 ): Promise<void> {
   // 终态清节流状态：防 trailing timer 在 record 归档后误发陈旧 onUpdate
@@ -112,8 +112,8 @@ export async function doFinalizeRecord(
   //   （否则 worktree 泄漏）。各件独立 try/catch，互不阻断。
   if (record.sessionFile) {
     try {
-      // MF-1 fix: cancelled 状态写 tombstone 而非 finalized，防重建丢失 cancelled
-      if (status === "cancelled") {
+      // MF-1 fix / v4 B-1: cancelled（closedReason='cancelled'）写 tombstone 而非 finalized，防重建丢失 cancelled
+      if (closedReason === "cancelled") {
         writeCancelledTombstone(record.sessionFile, {
           id: record.id,
           status: "cancelled",
@@ -158,8 +158,8 @@ export async function doFinalizeRecord(
       rootSessionId: record.rootSessionId ?? "",
       parentRecordId: record.parentRecordId,
       agentName: record.agent,
-      // SP-1: manifest status 统一为 closed/cancelled（旧 completed/failed 已合并为 closed）
-      status: status === "closed" ? "closed" : "cancelled",
+      // v4 B-1: manifest status 统一为 closed（cancelled 折入 closed，区分靠 tombstone sidecar）
+      status: "closed",
       createdAt: record.startedAt,
       completedAt: record.endedAt ?? Date.now(),
       sessionFile: record.sessionFile,
@@ -227,11 +227,12 @@ export async function doFinalizeRoundToIdle(
   }
 
   // pending-notifications：进程已死，从活跃后代差集移除（record 留内存不 archive，
-  // 但 pending 注册的是进程活跃性，进程死了需注销）。
-  deps.emitUnregister(record.id, "idle");
+  // v4 B-1：record 现为 running-resumable，但 pending 注册的是进程活跃性，进程死了需注销）。
+  deps.emitUnregister(record.id, "running");
 
-  // 状态机：record 进 idle（覆盖 tryTransition 设的 done/failed），轮次计数 +1。
-  record.status = "idle";
+  // 状态机（v4 B-1）：record 保持 running（旧 idle 折入 running，覆盖 tryTransition 设的 closed，
+  // 可冷路径 resume），轮次计数 +1。idleSince 时间戳独立保留供 GC 判据。
+  record.status = "running";
   record.round = (record.round ?? 0) + 1;
   record.idleSince = Date.now();
 

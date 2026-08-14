@@ -146,55 +146,52 @@ describe("runAndFinalize chatMode idle 分流 (M2-A)", () => {
     await internals.runAndFinalize(record, opts, ctx, identity, undefined, 0);
   }
 
-  it("chatMode + done → record idle，留内存，round 0→1", async () => {
+  it("chatMode + done → record running（旧 idle 折入），留内存，round 0→1", async () => {
     const record = makeRecord(true);
     internals.store.register(record);
     await callRunAndFinalize(record, true);
 
-    expect(record.status).toBe("idle");
+    expect(record.status).toBe("running");
     expect(record.round).toBe(1);
-    // record 留内存（未 archive）——idle 分流核心断言
+    // record 留内存（未 archive）——idle 分流核心断言（v4 B-1：idle 折入 running）
     expect(internals.store.getMutable(record.id)).toBe(record);
   });
 
-  it("chatMode + failed → MF-6：回退 idle（可恢复），不销毁对话（agent 可重试 message 或 close）", async () => {
+  it("chatMode + failed → MF-6：回退 running（可恢复），不销毁对话（agent 可重试 message 或 close）", async () => {
     const record = makeRecord(true);
     internals.store.register(record);
     await callRunAndFinalize(record, false);
 
-    // MF-6：chatMode 失败不终态销毁——record 回退 idle（留内存），agent 可重试 message 或 close。
-    expect(record.status).toBe("idle");
+    // MF-6：chatMode 失败不终态销毁——record 回退 running（留内存），agent 可重试 message 或 close。
+    expect(record.status).toBe("running");
     expect(internals.store.getMutable(record.id)).toBe(record); // 留内存（未 archive）
     // record.result 被 finalizeRoundToIdle 设值（MF-2：否则 notifier idle 恒 (empty)）。
     // makeResult(false) 返回 text:"err" + error:"boom"；text 非空 → record.result="err"。
     expect(record.result).toBeTruthy();
   });
 
-  it("非 chatMode + done → record idle（SP-5: 一次性完成后保持活跃，等待 message 触发升级）", async () => {
+  it("非 chatMode + done → record running（SP-5: 一次性完成后保持活跃，等待 message 触发升级）", async () => {
     const record = makeRecord(false);
     internals.store.register(record);
     await callRunAndFinalize(record, true);
 
-    // SP-5: one-shot 完成后 record 保持 idle（非终态归档），用户可通过 message 续聊。
-    expect(record.status).toBe("idle");
+    // SP-5: one-shot 完成后 record 保持 running（旧 idle，非终态归档），用户可通过 message 续聊。
+    expect(record.status).toBe("running");
     expect(internals.store.getMutable(record.id)).toBe(record); // 留内存
   });
 
   it("chatMode 第二轮 done → round 累加（1→2，续聊场景）", async () => {
-    // 模拟 resume 续聊：第一轮已 idle（round=1），第二轮 runAndFinalize 再次 done
+    // 模拟 resume 续聊：第一轮已完成（round=1，旧 idle 折入 running），第二轮 runAndFinalize 再次 done
     const record = makeRecord(true);
-    record.status = "idle"; // 第一轮已完成
+    record.status = "running"; // 第一轮已完成（v4 B-1：旧 idle 折入 running）
     record.round = 1;
     internals.store.register(record);
     await callRunAndFinalize(record, true);
 
-    // 注意：tryTransition 要求 status==="running" 才 CAS 成功。
-    // idle record 的 runAndFinalize：tryTransition(idle→done) 返回 false（非 running），
-    // 分流不执行，record 保持 idle。这是 M2-A 的预期边界——
-    // idle 续聊（prompt 触发新 run）由 M2-B 处理，届时 record 会被重新设为 running。
-    // 本用例锁定：idle record 直接进 runAndFinalize 不会误转态。
-    expect(record.status).toBe("idle");
-    expect(record.round).toBe(1);
+    // 续聊第二轮 done：tryTransition(running→closed) 成功 → chatMode 分流 → finalizeRoundToIdle
+    // → status 回到 running、round 1→2（record 保持活跃，等待下一轮续聊）。
+    expect(record.status).toBe("running");
+    expect(record.round).toBe(2);
     expect(mockRunSpawn).toHaveBeenCalled();
   });
 
@@ -213,13 +210,13 @@ describe("runAndFinalize chatMode idle 分流 (M2-A)", () => {
     expect(internals.store.getMutable(record.id)).toBeUndefined();
   });
 
-  it("chatMode + done + 无 closeAfterRound → 进 idle（现有 M2-A 行为不变）", async () => {
+  it("chatMode + done + 无 closeAfterRound → 进 running（旧 idle 折入，M2-A 行为不变）", async () => {
     const record = makeRecord(true);
     record.status = "running";
     internals.store.register(record);
     await callRunAndFinalize(record, true);
 
-    expect(record.status).toBe("idle");
+    expect(record.status).toBe("running");
     expect(record.round).toBe(1);
     expect(internals.store.getMutable(record.id)).toBe(record);
   });
