@@ -16,10 +16,11 @@
     BrowserPane 等，v-if chain 对齐旧 SideDrawer 内容区结构）。git 状态唯一数据源在此层 provide
     （按 panel 的 session），GitPanel 注入共享。
 
-    壳层职责（W3 C3 裁决，旧 SideDrawer 逻辑迁移至此）：widget 订阅编排（useSessionEvents 接
-    extension:widget/widgetGui/status → core createDrawerBuffers 喂数据，D3 留壳注入）+ ESC 关闭
+    壳层职责（W3 C3 裁决，旧 SideDrawer 逻辑迁移至此）：ESC 关闭
     （window keydown 桌面副作用）+ AC-13 unread badge（chatStore 消息数感知，经 DrawerPanel
-    header-extra slot 挂载）。控制态（isOpen/
+    header-extra slot 挂载）。[P4 s5 drawer-widget-removal] widget 订阅编排（extension:widget/
+    widgetGui/status → core createDrawerBuffers）已删：旧 widget 通道由 PluginViewContainer 承接。
+    控制态（isOpen/
     activeTab/docked）读 core drawer 域（useDrawerControl + coordination 公开 API），分区键经
     useSideDrawer 兼容层模块顶层 bindDrawerSessionId 维持（C1：兼容层本 wave 保留）。
 
@@ -76,10 +77,6 @@
           :active-tab="drawerTab"
           :docked="drawerDocked"
           :session-id="panelSessionId"
-          :active-gui-component="activeGuiComponent"
-          :active-lines="activeLines"
-          :active-lines-meta="activeLinesMeta"
-          :status-entries="statusEntries"
           @close="closeDrawer"
           @set-tab="setDrawerTab"
           @toggle-dock="toggleDrawerDock"
@@ -89,7 +86,7 @@
                Doc tab → CommandDocPanel（selectedCommandName 由 core 瞬时参数指定）
                Detail tab → DetailPane（useDetailPane watch selectedPath 自动加载）
                Browser tab 有 browserUrl → BrowserPane（嵌入式 WebContentsView 导航）；
-                 无 browserUrl → 不注入 → DrawerPanel 内置 widget 区 fallback（widget 通路）
+                 无 browserUrl → 不注入 → DrawerPanel 空态 fallback
                Terminal tab → TerminalView（PTY 优先，交互式终端） -->
           <GitPanel v-if="drawerTab === 'git'" />
           <CommandDocPanel v-else-if="drawerTab === 'doc'" :session-id="panelSessionId" />
@@ -126,7 +123,6 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PanelLeaf } from '@xyz-agent/shared'
-import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import {
   bindDrawerSessionId,
   useDrawerControl,
@@ -135,7 +131,6 @@ import {
   toggleDrawer,
   setDrawerTab,
   toggleDrawerDock,
-  createDrawerBuffers,
   browserUrl,
 } from '@xyz-agent/core/domain/drawer'
 import { DrawerPanel } from '@xyz-agent/ui/features/drawer'
@@ -143,7 +138,6 @@ import { StatusBar } from '@xyz-agent/ui/extension-host'
 import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
 import { useSessionDerivations } from '@/composables/features/chat/useSessionDerivations'
-import { useSessionEvents } from '@/composables/features/chat/useSessionEvents'
 import { provideGitStatus } from '@/composables/features/file-tree/useGitStatus'
 import type { GitIndicator } from '@/composables/features/file-tree/useGitStatus'
 import { useChatStore } from '@/stores/chat'
@@ -279,42 +273,14 @@ function onSubagentBack(): void {
  *  读 core drawer 域当前分区（isOpen/activeTab/docked）。分区键显式绑定 panel store 的
  *  focusedSessionId（惰性 computed，首次求值 pinia 已 active）——本容器自持绑定，不依赖
  *  useSideDrawer 兼容层的模块顶层 bind 副作用（C1：兼容层保留仅服务残留消费方，新代码直连 core）。
- *  方法委托 core coordination 公开 API（openDrawerTab 等，含 FR-9 pendingOpen 清理语义）。
+ *  方法委托 core coordination 公开 API（openDrawerTab 等）。
  *  bindDrawerSessionId 幂等：同语义 computed 重复绑定不报错（useSidebar 兼容层若已绑则覆盖，
  *  值等价）。 */
 bindDrawerSessionId(computed<string | null>(() => usePanelStore().focusedSessionId))
 const { isOpen: drawerOpen, activeTab: drawerTab, docked: drawerDocked } = useDrawerControl()
 
-/** panel 的 session（drawer widget 订阅 + git 状态数据源） */
+/** panel 的 session（git 状态数据源） */
 const panelSessionId = computed<string | null>(() => leaf.value?.sessionId ?? null)
-
-/**
- * widget/status 缓冲 + extension 事件订阅编排（壳层，D3）：原 useDrawerWidgetBuffers.ts 逻辑
- * 内联至此（W4 TR2）。core createDrawerBuffers 为 SSOT（reactive 分区 + computed 派生 + update
- * 方法），本壳只持订阅 + 调 update 喂数据。onMessage handler 收第二参数 sid（订阅时捕获的消息
- * 所属 session），调 updateFor(sid) 写该 sid 分区（M1 竞态修复：退订窗口内旧 sid 迟到消息
- * 不污染新 sid）。本容器单实例挂载（同旧 SideDrawer），subscription 随组件生命周期管理。
- */
-const buffers = createDrawerBuffers(panelSessionId, drawerTab)
-// 解构 view computed 供模板传 props 给 DrawerPanel（模板引用需 script 显式定义，否则渲染 undefined）
-const { activeGuiComponent, activeLines, activeLinesMeta, statusEntries } = buffers
-const onMessage = useSessionEvents(panelSessionId)
-// extension:widget：按 widgetKey 路由到 terminal/browser tab，未匹配走 fallback
-onMessage('extension:widget', (msg, sid) => {
-  const payload = msg.payload
-  buffers.updateWidget(sid, payload.widgetKey, payload.lines)
-})
-// extension:widgetGui（spec §9.1）：结构化 GUI 组件，按 widgetKey 路由到 tab，覆盖纯文本 lines。
-// gui === null 表示清除（core 容器内删 guiWidgetsByTab 条目 + 清对应 tab 纯文本 lines）
-onMessage('extension:widgetGui', (msg, sid) => {
-  const payload = msg.payload
-  buffers.updateWidgetGui(sid, payload.widgetKey, payload.gui as GuiComponent | null)
-})
-// extension:status：statusKey 维度聚合，同 key 覆盖（透传 textRaw 供 AnsiText 着色）
-onMessage('extension:status', (msg, sid) => {
-  const payload = msg.payload
-  buffers.updateStatus(sid, payload.statusKey, payload.text, payload.textRaw)
-})
 
 /** git 状态唯一数据源（panel/spec.md：git 移入抽屉后）。
  *  在 PanelContainer 层按 panel 的 session 持有实例 → GIT_STATUS_KEY provide →
@@ -331,7 +297,7 @@ function gitIndicatorOf(_l: PanelLeaf): GitIndicator | undefined {
 
 /** browserUrl 瞬时参数（core coordination 模块级单例，消费后清空）。
  *  browser tab 传给 BrowserPane 触发导航；为空（null）时传空字符串让 BrowserPane 显空态。
- *  注：无 browserUrl 时 browser tab 不注入 BrowserPane，走 DrawerPanel 内置 widget 区 fallback（C2）。 */
+ *  注：无 browserUrl 时 browser tab 不注入 BrowserPane，走 DrawerPanel 空态 fallback（C2）。 */
 const browserUrlForRender = computed(() => browserUrl.value ?? '')
 
 // ── AC-13：drawer 打开期间 agent 新消息感知（壳层职责，C3；旧 SideDrawer 逻辑迁移）──

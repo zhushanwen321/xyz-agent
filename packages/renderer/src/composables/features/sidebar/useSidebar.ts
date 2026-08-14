@@ -35,7 +35,6 @@ import { useExtensionUIStore } from '@/stores/extension-ui'
 import { useChat, ensureStreamSubscription } from '@/composables/features/chat/useChat'
 import { invalidateStatusCache } from '@/composables/features/chat/useSessionDerivations'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
-import { consumePendingOpen } from '@/composables/features/drawer/useSideDrawer'
 import { clearUnread } from '@/composables/useSessionMarkers'
 import { registerAppCommands } from '@/composables/features/command/useAppCommands'
 import { useForkActions } from '@/composables/features/fork-handoff/useForkActions'
@@ -205,12 +204,6 @@ export function useSidebar() {
         chat.markHistoryFailed(id)
       }
     }
-
-    // pendingOpen 消费（FR-3）：后台 session 的事件到达时若用户不在该 session，只置 pendingOpen
-    // 标记不弹 drawer。这里在切到该 session 后消费标记——若有则自动开对应 tab。
-    // 挂 selectSession 内部，不挂独立 watch(focusedSessionId)，避免撞 Runtime broadcast 时序竞争。
-    // consumePendingOpen 内部已含幂等（消费后清标记）。
-    consumePendingOpen(id)
 
     // 文件树预加载：切 session 即拉取，使侧栏「文件」tab 计数（fileCount 读 store.getTree）
     // 立即更新——不依赖用户切到文件 tab 才触发 FileView 的 loadTree。loadTree 内部缓存复用

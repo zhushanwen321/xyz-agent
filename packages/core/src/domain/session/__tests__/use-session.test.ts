@@ -17,7 +17,6 @@ import type { SessionGroup, SessionSummary, BatchDeleteResult } from '@xyz-agent
 import { createSessionStore } from '../store'
 import { createUseSession, resetSessionListSubForTest } from '../use-session'
 import type { UseSessionDeps, SessionCleanupHooks, ChatHydratePort } from '../use-session'
-import { getPendingOpenForSid, setPendingOpenForSid } from '../effects/panel-orchestration'
 
 /** 构造 SessionSummary 最小形状（类型收窄后字段由测试按需给全） */
 function summary(id: string, cwd = '/a'): SessionSummary {
@@ -118,11 +117,10 @@ function seed(store: Fixture['store'], groups: SessionGroup[]): void {
 }
 
 describe('selectSession', () => {
-  it('TC-1 成功：switchSession→activeId→hydrate→syncSessionToPanel→push→consumePendingOpen', async () => {
+  it('TC-1 成功：switchSession→activeId→hydrate→syncSessionToPanel→push', async () => {
     const f = makeFixture()
     const msgs = [{ id: 'm1' } as never]
     f.chat.getHistory.mockResolvedValue({ messages: msgs, historyTruncated: true })
-    setPendingOpenForSid('sid-1', 'tasks')
     await f.session.selectSession('sid-1')
 
     expect(f.api.switchSession).toHaveBeenCalledTimes(1)
@@ -137,10 +135,8 @@ describe('selectSession', () => {
     // panel 载入（经 activePanelId 端口）
     expect(f.panel.activePanelId).toHaveBeenCalled()
     expect(f.panel.loadSession).toHaveBeenCalledWith('p1', 'sid-1')
-    // 导航 + pendingOpen 消费
+    // 导航
     expect(f.navigation.push).toHaveBeenCalledWith({ view: 'chat', sessionId: 'sid-1' })
-    expect(getPendingOpenForSid('sid-1')).toBeNull()
-    expect(f.panel.openPanel).toHaveBeenCalledWith('tasks', 'sid-1')
     f.dispose()
   })
 
@@ -184,12 +180,11 @@ describe('deleteSession', () => {
     resetSessionListSubForTest()
   })
 
-  it('TC-4 S3 全 hooks 调用序：panel 解绑→overlay→removeFromList→clearPendingOpen→12 hooks→triggerSessionCleanups', async () => {
+  it('TC-4 S3 全 hooks 调用序：panel 解绑→overlay→removeFromList→12 hooks→triggerSessionCleanups', async () => {
     const f = makeFixture()
     seed(f.store, [{ cwd: '/a', sessions: [summary('del')] }])
     f.store.activeId.value = 'del'
     f.panel.findPanelBySession.mockReturnValue({ type: 'panel', id: 'p1', sessionId: 'del' })
-    setPendingOpenForSid('del', 'tasks')
 
     await f.session.deleteSession('del')
 
@@ -198,8 +193,6 @@ describe('deleteSession', () => {
     expect(f.hooks.clearBoundPanelOverlays).toHaveBeenCalledWith('p1', 'del')
     // removeFromList 生效（列表空）
     expect(f.store.list.value).toHaveLength(0)
-    // ES3：pendingOpen 标记已清
-    expect(getPendingOpenForSid('del')).toBeNull()
     // 删 active 后列表空 → push chat 空态
     expect(f.navigation.push).toHaveBeenCalledWith({ view: 'chat' })
     // S3 全序（log 数组精确顺序断言）

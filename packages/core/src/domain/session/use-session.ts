@@ -12,8 +12,9 @@
  * 保留契约：
  * - deleteSession 是「session 销毁唯一编排点」——triggerSessionCleanups(id)（ADR-0049 AC-8）
  *   只经本编排触发，跨 store 分区释放全在 cleanupSessionState 内按 S3 顺序执行
- * - selectSession 内接线 consumePendingOpen（C-SS-3：后台 session 事件仅置标记，切换时消费）
- * - cleanupSessionState 内清 clearPendingOpen（ES3：删 session 前清标记，防切回已删 session 误开 panel）
+ *
+ * [P4 s5 drawer-widget-removal] selectSession 内 consumePendingOpen / cleanupSessionState 内
+ * clearPendingOpen 已删除：pendingOpen 路由机制随 tasks 域移除（PluginViewContainer 承接）。
  *
  * w5 壳组合项（本次不进 core，C-W3-4）：ensureStreamSubscription / chat.touchLru /
  * evictIfNeeded / clearUnread / fileTree 预加载 / flow.cancelFlow——壳包装本 factory 时
@@ -26,7 +27,6 @@ import { computed, onScopeDispose } from 'vue'
 import type { BatchDeleteResult, Message, SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import { triggerSessionCleanups } from '../../foundation/use-session-scoped-state'
 import type { SessionApiPort } from './api-port'
-import { consumePendingOpen, clearPendingOpen } from './effects/panel-orchestration'
 import type { PanelOrchestrationPort } from './effects/panel-orchestration'
 import type { createSessionStore } from './store'
 
@@ -209,7 +209,7 @@ export function createUseSession(deps: UseSessionDeps) {
   }
 
   /**
-   * 选择 session：switchSession api + 更新 activeId + 载入 panel + 首次历史回填 + 消费 pendingOpen。
+   * 选择 session：switchSession api + 更新 activeId + 载入 panel + 首次历史回填。
    * switchSession 失败（mock id 不存在）抛错，UI 层捕获；不更新 activeId。
    *
    * 首次进入该 session 时拉取历史注入 chat store（UC-2 切换可见块类型丰富度）。
@@ -235,10 +235,7 @@ export function createUseSession(deps: UseSessionDeps) {
     }
     syncSessionToPanel(id)
     navigation.push({ view: 'chat', sessionId: id })
-    // pendingOpen 消费（FR-3 / C-SS-3）：后台 session 的 tasks 事件到达时若用户不在该 session，
-    // 只置 pendingOpen 标记不弹 drawer。这里在切到该 session 后消费标记——若有则自动开 tasks tab。
-    // consumePendingOpen 内部已含幂等（消费后清标记）。
-    consumePendingOpen(id, panel)  }
+  }
 
   /**
    * 重试加载历史（landing 重试按钮，#2 AC-2.6）：清失败态 + 重新拉取 hydrate。
@@ -301,7 +298,7 @@ export function createUseSession(deps: UseSessionDeps) {
    * 也不做 wasActive 回退（deleteFolder 统一在循环结束后回退）。
    *
    * S3 顺序（与 renderer cleanupSessionState 逐条对齐）：
-   * panel 解绑 → overlay 清理 → removeFromList → clearPendingOpen（ES3）→
+   * panel 解绑 → overlay 清理 → removeFromList →
    * 12 项跨 store 钩子（clearFileTree→…→invalidateStatus）→ triggerSessionCleanups。
    */
   function cleanupSessionState(id: string): void {
@@ -315,8 +312,6 @@ export function createUseSession(deps: UseSessionDeps) {
       hooks.clearBoundPanelOverlays(boundPanel.id, id)
     }
     store.removeFromList(id)
-    // ES3：删 session 前消费/清除 pendingOpen 标记，防切回已删 session 误开 panel
-    clearPendingOpen(id)
     // 跨 store 清理（S3）：fileTree + subagent + workflow + extensionUI + chat evict
     // + tombstones + agentcall virtuals + dispose + 派生状态缓存（[P4 s5 w2] tasks 已删）
     hooks.clearFileTree(id)

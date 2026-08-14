@@ -26,8 +26,8 @@
  * A 已直连 core、仅注释提及（无 import）：PanelContainer.vue（line 19/173 注释）、
  *   PanelContainer.test.ts（注释）、useSearchModal.ts（注释）、stores/panel.ts（注释）、
  *   turn-skill-badge.test.ts（注释）。无需迁移。
- * B 待 T5 解除（本 wave 不触碰）：useSidebar.ts:39 import { consumePendingOpen }
- *   ——T5 阻塞文件，consumePendingOpen 改指向 '@xyz-agent/core/domain/drawer' 后 B 清零。
+ * [P4 s5 drawer-widget-removal] 原 B 项（useSidebar.ts consumePendingOpen）已随本 wave 删除
+ *   （pendingOpen 机制整体移除）。
  * C 待 chat-w6 迁移（认知外文件，不触碰）：useChatViewDeps.ts:35 import
  *   { useSideDrawer, type SideDrawerTab }——chat-w6 迁移后改指向 core API。
  * D 可平滑迁移（改 import 指向 '@xyz-agent/core/domain/drawer' 即可，~11 生产 + ~14 测试）：
@@ -59,10 +59,6 @@ import {
   toggleDrawer,
   setDrawerTab,
   toggleDrawerDock,
-  consumePendingOpen,
-  setPendingOpenForSid,
-  getPendingOpenForSid,
-  openTasksDrawerOnFirstData,
   selectedCommandName,
   detailFilePath,
   browserUrl,
@@ -79,13 +75,10 @@ bindDrawerSessionId(computed<string | null>(() => usePanelStore().focusedSession
 // re-export 类型：SideDrawer.test / useDrawerWidgetBuffers 等类型消费方零改动
 export type { SideDrawerTab, OpenDrawerOptions }
 
-/** 手动 open / setPendingOpenForSid 等模块级 API 的 re-export（旧调用方零改动） */
-export { setPendingOpenForSid, getPendingOpenForSid, consumePendingOpen, openTasksDrawerOnFirstData }
-
 /**
  * SideDrawer 状态访问器（兼容层，返回形状与旧版逐字段一致）。
  * 控制态 computed 读 core 当前分区字段（切 session 切分区，响应式自动跟随）；
- * 方法逐字段委托 core 公开 API（openDrawerTab 等，含 FR-9 pendingOpen 清理语义）。
+ * 方法逐字段委托 core 公开 API（openDrawerTab 等）。
  */
 export function useSideDrawer() {
   const { isOpen, activeTab, docked } = useDrawerControl()
@@ -110,7 +103,7 @@ export function useSideDrawer() {
 
 /**
  * 重置 SideDrawer 状态（测试隔离用）。
- * 委托 core _resetDrawerForTest（清 control 分区 + pendingOpen + 瞬时参数）。
+ * 委托 core _resetDrawerForTest（清 control 分区 + 瞬时参数）。
  * 注：per-session 分区清理通过清 controlState 内部 Map 实现，生产代码不应调用。
  */
 export function resetSideDrawer(): void {

@@ -2,16 +2,16 @@
   DrawerPanel —— 跨端共享 drawer 容器（W3 · p3-strangler-domains::drawer）。
 
   迁移自 renderer components/panel/SideDrawer.vue 的「跨端共享容器」部分（drawer 域归位
-  第三步：W1 控制态/协同进 core、W2 widget 缓冲容器进 core、W3 容器组件进 ui 包）。
+  第三步：W1 控制态/协同进 core、W3 容器组件进 ui 包）。
   桌面独占内容面板（GitPanel/TerminalView/BrowserPane/CommandDocPanel/DetailPane）
   留壳 slot 挂载（D5 硬编码占位，不走 contribution 路由）——本组件经默认 slot 接收，
-  内置 widget 内容区（activeGuiComponent→activeLines→空态）作为 slot fallback（C2）。
+  空态（activeTabMeta 驱动）作为 slot fallback（C2）。
+  [P4 s5 drawer-widget-removal] 内置 widget 内容区（gui/lines/status footer）已删：
+  旧 extension:widget/widgetGui/status 通道由 PluginViewContainer 承接。
 
   状态/数据契约（IF2 + clarify C1）：
   - props{isOpen, activeTab, docked, sessionId} 为控制态（父组件 PanelContainer 管理），
     本组件只接收 + emit close/set-tab/toggle-dock，不持有状态（§6.3 点5 架构解耦）
-  - widget 缓冲数据（activeGuiComponent/activeLines/activeLinesMeta/statusEntries）
-    经 props 注入（D3 壳层 useDrawerWidgetBuffers computed 传入，core widget-buffers 为 SSOT）
   - [P4 s5 w2] hasTasksData 条件 tab（tasks store 壳裁剪）已随 tasks 域删除移除
 
   不纳入（C3 clarify）：ESC 关闭（window keydown 桌面副作用）+ AC-13 unread badge
@@ -71,80 +71,28 @@
       </div>
 
       <!-- 内容区：壳按 tab 经默认 slot 注入桌面独占面板（Git/Terminal/Browser 等）；
-           slot 无有效内容时（v-if chain 全 false / 跨端不传 slot）回退内置 widget 内容区（gui→lines→空态）。
+           slot 无有效内容时（v-if chain 全 false / 跨端不传 slot）回退空态占位（activeTabMeta 驱动）。
            用 hasDesktopPanelContent() 而非 `<slot>` fallback：父组件提供 slot 函数但运行时为空时，
            Vue 的 slot fallback 不生效，需显式判断渲染结果。 -->
       <div class="min-h-0 flex-1 overflow-auto" data-testid="drawer-content">
-        <!-- [HISTORICAL] 内容区四支（slot 面板 / gui / lines / 空态）曾用 <Transition mode="out-in">
-             做 tab 切换淡入（4f8399cac），2026-08 移除：Vue 3.5.39 下 Transition out-in leave 完成后
-             enter 不触发（调度 bug），内容区永久空白死锁（dev app 实测 8/8 复现）。同构踩坑已 3 处
+        <!-- [HISTORICAL] 内容区曾用 <Transition mode="out-in">做 tab 切换淡入（4f8399cac），
+             2026-08 移除：Vue 3.5.39 下 Transition out-in leave 完成后 enter 不触发（调度 bug），
+             内容区永久空白死锁（dev app 实测 8/8 复现）。同构踩坑已 3 处
              （本处 / Sidebar workflow / SettingsModal）。vue_rules_checker.py 已加规则禁止该写法。
-             tab 切换改瞬时 v-if/v-else（无动画），稳定性优先。 -->
+             tab 切换改瞬时 v-if/v-else（无动画），稳定性优先。
+             [P4 s5 drawer-widget-removal] 原 gui→lines→空态三支已删（widget 通道移除），仅剩空态。 -->
         <slot v-if="hasDesktopPanelContent()" />
-        <!-- active tab 有结构化 GUI widget（extension:widgetGui）→ 优先 GuiComponentRenderer 渲染 -->
-        <template v-else>
-          <div
-            v-if="activeGuiComponent"
-            class="flex h-full flex-col gap-0 overflow-auto p-2"
-            data-testid="drawer-widget-gui"
-          >
-            <GuiComponentRenderer :component="activeGuiComponent" />
-          </div>
-          <!-- active tab 有 widget 内容 → 渲染等宽文本输出（每行一个 div，font-mono + pre-wrap） -->
-          <div
-            v-else-if="activeLines.length"
-            class="flex h-full flex-col gap-0 overflow-auto p-2"
-            :class="activeLinesMeta.unknown ? 'opacity-80' : ''"
-            data-testid="drawer-widget-lines"
-          >
-            <div
-              v-if="activeLinesMeta.unknown"
-              class="mb-1 rounded-sm border border-border bg-surface px-1.5 py-0.5 text-[10px] text-neutral-mid"
-              data-testid="drawer-unknown-badge"
-            >
-              {{ t('panel.sideDrawer.unknownWidget') }}：{{ activeLinesMeta.key }}
-            </div>
-            <code
-              v-for="(line, i) in activeLines"
-              :key="i"
-              class="block whitespace-pre-wrap break-all font-mono text-[11px] leading-[1.45] text-neutral-fg/90"
-              >{{ line }}</code
-            >
-          </div>
-          <!-- active tab 无 widget 内容 → 空态占位 -->
-          <div
-            v-else
-            class="flex h-full flex-col items-center justify-center gap-2 p-4 text-center"
-            data-testid="drawer-widget-empty"
-          >
-            <component :is="activeTabMeta.icon" class="size-6 text-neutral-dim opacity-40" />
-            <p class="text-[12px] text-neutral-dim opacity-70">{{ activeTabMeta.emptyText }}</p>
-            <p class="text-[11px] text-neutral-dim opacity-50">{{ activeTabMeta.emptyHint }}</p>
-          </div>
-        </template>
-      </div>
-
-      <!-- extension status 底栏（按 statusKey 聚合最新 text）。
-           无 status 推送时不占位，避免空态挤压内容区。 -->
-      <footer
-        v-if="statusEntries.length"
-        class="flex flex-col gap-0.5 border-t border-hairline px-2 py-1"
-        data-testid="drawer-status-footer"
-      >
+        <!-- active tab 无内容面板 → 空态占位 -->
         <div
-          v-for="entry in statusEntries"
-          :key="entry.statusKey"
-          class="flex items-center gap-1.5 font-mono text-[10px]"
+          v-else
+          class="flex h-full flex-col items-center justify-center gap-2 p-4 text-center"
+          data-testid="drawer-widget-empty"
         >
-          <span class="shrink-0 text-neutral-dim">{{ entry.statusKey }}</span>
-          <!-- textRaw 有 ANSI 着色 → AnsiText 渲染保留颜色；否则纯文本兜底。
-               容器承载 truncate（min-w-0 + overflow-hidden + ellipsis），避免与 AnsiText 内部 whitespace-pre-wrap 冲突。 -->
-          <div v-if="entry.textRaw" class="min-w-0 flex-1 overflow-hidden">
-            <AnsiText :content="entry.textRaw" class="block truncate text-neutral-mid" />
-          </div>
-          <span v-else class="min-w-0 flex-1 truncate text-neutral-mid">{{ entry.text }}</span>
+          <component :is="activeTabMeta.icon" class="size-6 text-neutral-dim opacity-40" />
+          <p class="text-[12px] text-neutral-dim opacity-70">{{ activeTabMeta.emptyText }}</p>
+          <p class="text-[11px] text-neutral-dim opacity-50">{{ activeTabMeta.emptyHint }}</p>
         </div>
-      </footer>
+      </div>
     </aside>
   </Transition>
 </template>
@@ -155,8 +103,6 @@ import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { BookOpen, FileText, GitBranch, Globe, Pin, PinOff, Terminal as TerminalIcon, X } from '@lucide/vue'
 import { Button } from '@xyz-agent/ui'
-import { AnsiText, GuiComponentRenderer } from '../../rendering-protocol'
-import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import type { SideDrawerTab } from '@xyz-agent/core/domain/drawer'
 
 const slots = useSlots()
@@ -164,9 +110,9 @@ const slots = useSlots()
 /**
  * 默认 slot 是否有有效内容（非注释节点）。
  * C2 契约：桌面壳按 tab 经默认 slot 注入独占面板（Git/Doc/Detail/Browser/Terminal），
- * 无匹配面板时（如 browser 无 url）不注入 → 应回退内置 widget 内容区。但 Vue `<slot>` 的
+ * 无匹配面板时（如 browser 无 url）不注入 → 应回退空态占位。但 Vue `<slot>` 的
  * fallback 只在「父组件未提供 slot 函数」时生效——PanelContainer 的 v-if chain 使 slot 函数
- * 始终存在（运行时渲染为空/注释节点），故需在此显式判断渲染结果，空则走 widget 区。
+ * 始终存在（运行时渲染为空/注释节点），故需在此显式判断渲染结果，空则走空态。
  * 非 computed：slots.default() 返回的 VNode 无响应式依赖，computed 缓存不失效；
  * 模板表达式每次渲染求值才能反映 tab 切换后的 slot 内容。
  */
@@ -180,23 +126,10 @@ const props = withDefaults(
     isOpen: boolean
     activeTab: SideDrawerTab
     docked: boolean
-    /** widget 订阅的 session 标识（壳层透传，为 null 不订阅） */
+    /** 订阅的 session 标识（壳层透传） */
     sessionId: string | null
-    /** active tab 的结构化 GUI 组件（extension:widgetGui，壳 useDrawerWidgetBuffers 传入） */
-    activeGuiComponent?: GuiComponent | null
-    /** active tab 的文本行（extension:widget，terminal/browser/unknownWidget fallback） */
-    activeLines?: string[]
-    /** active 文本行的元信息（unknown 徽章） */
-    activeLinesMeta?: { unknown: boolean; key: string }
-    /** status footer 条目（extension:status，statusKey 维度聚合） */
-    statusEntries?: Array<{ statusKey: string; text: string; textRaw?: string }>
   }>(),
-  {
-    activeGuiComponent: null,
-    activeLines: () => [],
-    activeLinesMeta: () => ({ unknown: false, key: '' }),
-    statusEntries: () => [],
-  },
+  {},
 )
 
 const emit = defineEmits<{

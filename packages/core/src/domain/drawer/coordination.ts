@@ -1,56 +1,20 @@
 /**
- * drawer 协同层 —— 模块级公开 API（C2 契约）+ pendingOpen 守卫 + 瞬时参数。
+ * drawer 协同层 —— 模块级公开 API（C2 契约）+ 瞬时参数。
  *
- * 迁移自 renderer composables/features/useSideDrawer.ts 的协同部分（W1）：
- * - pendingOpenMap：事件驱动打开的 sid 守卫标记（后台 session 有「未展示给用户的 tasks
- *   到达事件」时置标记，selectSession 切回时 consumePendingOpen 消费）
- * - FR-9：用户手动 open（任意 tab）即清当前 session 的 pendingOpen（已注意，不再打扰）
- * - 瞬时参数（selectedCommandName/detailFilePath/browserUrl）：打开时的瞬时参数，
- *   消费后清空，不构成 session 级持久状态
- * - openTasksDrawerOnFirstData(sid, hasData)：tasks 数据守卫分发（core 零 tasks store
- *   依赖——hasData 由 renderer 调用方传入）
+ * 迁移自 renderer composables/features/useSideDrawer.ts 的协同部分（W1）。
+ * [P4 s5 drawer-widget-removal] pendingOpen 机制（pendingOpenMap/setPendingOpenForSid/
+ * getPendingOpenForSid/consumePendingOpen/openTasksDrawerOnFirstData）已随 tasks 域删除移除——
+ * PluginViewContainer 承接后无消费方（tasks tab 已从 SideDrawerTab 联合删除）。
+ *
+ * 瞬时参数（selectedCommandName/detailFilePath/browserUrl）：打开时的瞬时参数，
+ * 消费后清空，不构成 session 级持久状态。
  *
  * 分层（C4）：单向依赖 control.ts（drawerControl 原语 + getBoundSessionId + getDrawerControlState）。
- * control 不 import 本文件（防循环）。pendingOpen 是协同状态，FR-9 清理放本层。
- *
- * 单 registry：registerSessionCleanup 来自 core foundation（renderer 的
- * composables/useSessionScopedState 是其 re-export shim），本文件注册的 cleanup
- * 与 useSessionScopedState 实例共享同一 registry，triggerSessionCleanups(sid) 统一触发。
+ * control 不 import 本文件（防循环）。
  */
 import { ref } from 'vue'
-import { drawerControl, getBoundSessionId, getDrawerControlState, _resetDrawerControlForTest } from './control'
-import { registerSessionCleanup } from '../../foundation/use-session-scoped-state'
+import { drawerControl, getDrawerControlState, _resetDrawerControlForTest } from './control'
 import type { SideDrawerTab, OpenDrawerOptions } from './types'
-
-// ── pendingOpen：事件驱动打开的 sid 守卫标记（独立 Map，不复用 per-session isOpen）──
-// 语义：某 session 有「未展示给用户的 tasks 到达事件」。sid !== focusedSessionId 时事件
-// 不直接 open，只置此标记；selectSession 切回时 consumePendingOpen 消费（open tasks + 清标记）。
-// 用户手动 open（任意 tab）即清当前 session 标记（FR-9：已注意，不再打扰）。
-//
-// [ADR-0049 例外] 本模块级 Map 不套 useSessionScopedState。判据：coordination.ts 是纯函数模块
-// （setPendingOpenForSid/consumePendingOpen/openTasksDrawerOnFirstData/openDrawerTab 均为独立
-// 导出函数，非 composable，无 Vue setup 上下文、无 sidRef: Ref<string|null>）；Map 存的是路由
-// 标记（boolean，非 reactive 业务状态）。useSessionScopedState 是 setup-scoped 工厂（要求 sidRef
-// + reactive 容器契约），本模块无法满足——强套需把纯函数改造成 composable + 破坏所有调用方
-// 签名 + reactive 容器语义错位（路由标记不是响应式状态）。与 useChat/subscription-state 同属
-// ADR-0049「全局 sid 协调器例外类（模块级 Map 合理）」。session 销毁清理：registerSessionCleanup
-// 挂载（见文件尾 pendingOpenMap.delete(sid)）；测试隔离：_resetDrawerForTest()。
-const pendingOpenMap = new Map<string, boolean>()
-
-/** 置某 session 的 pendingOpen 标记（openTasksDrawerOnFirstData 调，sid 守卫不通过时） */
-export function setPendingOpenForSid(sid: string): void {
-  pendingOpenMap.set(sid, true)
-}
-
-/** 查询某 session 的 pendingOpen 标记（测试 / 调试用） */
-export function getPendingOpenForSid(sid: string): boolean {
-  return pendingOpenMap.get(sid) ?? false
-}
-
-/** 清某 session 的 pendingOpen 标记 */
-function clearPendingOpenForSid(sid: string): void {
-  pendingOpenMap.delete(sid)
-}
 
 // ── 不分区的瞬时参数（模块级单例，消费后清空）──
 // 供 renderer 兼容层 re-export（useSideDrawer() 返回形状含这三个 ref + consumeBrowserUrl）。
@@ -80,12 +44,9 @@ export function consumeBrowserUrl(): string | null {
 
 /**
  * 打开抽屉，可指定初始 tab + Doc tab 的选中命令 / Detail tab 的文件路径 / Browser tab 的 URL。
- * FR-9：手动 open（任意 tab）即清当前 session 的 pendingOpen（用户已注意，不再打扰）。
  * 瞬时参数写入对应 ref（消费后清空）。
  */
 export function openDrawerTab(tab?: SideDrawerTab, opts?: OpenDrawerOptions): void {
-  const sid = getBoundSessionId()
-  if (sid) clearPendingOpenForSid(sid)
   if (opts?.commandName !== undefined) selectedCommandName.value = opts.commandName
   if (opts?.filePath !== undefined) detailFilePath.value = opts.filePath
   if (opts?.url !== undefined) browserUrl.value = opts.url
@@ -103,7 +64,7 @@ export function toggleDrawer(tab?: SideDrawerTab): void {
   else openDrawerTab(tab)
 }
 
-/** 切换 tab（抽屉关闭时仅改 activeTab，不自动打开）。tasks tab 自动 docked（仅当前分区） */
+/** 切换 tab（抽屉关闭时仅改 activeTab，不自动打开） */
 export function setDrawerTab(tab: SideDrawerTab): void {
   drawerControl.setTab(tab)
 }
@@ -114,43 +75,11 @@ export function toggleDrawerDock(): void {
 }
 
 /**
- * 消费某 session 的 pendingOpen：为 true 则 open('tasks') 并清标记。
- * 挂在 useSidebar.selectSession 内部（与 commands/context 兜底拉取同位置），
- * 不挂独立 watch(focusedSessionId)——避免撞 Runtime broadcast 时序竞争。
- */
-export function consumePendingOpen(sid: string): void {
-  if (!pendingOpenMap.get(sid)) return
-  clearPendingOpenForSid(sid)
-  // 切到该 session 时，focusedSessionId 已是该 sid，open 操作作用于当前分区
-  openDrawerTab('tasks')
-}
-
-/**
- * tasks 首数据到达守卫分发（core 零 tasks store 依赖——hasData 由 renderer 调用方传入）。
- * - hasData=false 直接 return（调用方前置守卫，不 open 不置标记）
- * - hasData=true 时：绑定 sid === 入参 sid ? openDrawerTab('tasks') : setPendingOpenForSid(sid)
- */
-export function openTasksDrawerOnFirstData(sid: string, hasData: boolean): void {
-  if (!hasData) return
-  if (getBoundSessionId() === sid) {
-    openDrawerTab('tasks')
-  } else {
-    setPendingOpenForSid(sid)
-  }
-}
-
-// session 销毁时清理 pendingOpen（controlState 分区由 useSessionScopedState 自动注册）
-registerSessionCleanup((sid) => {
-  pendingOpenMap.delete(sid)
-})
-
-/**
- * 重置 drawer 全部状态（测试隔离用）：control 分区 + pendingOpenMap + 瞬时参数。
+ * 重置 drawer 全部状态（测试隔离用）：control 分区 + 瞬时参数。
  * 生产代码禁止调用。renderer 兼容层 resetSideDrawer() 委托本函数。
  */
 export function _resetDrawerForTest(): void {
   _resetDrawerControlForTest()
-  pendingOpenMap.clear()
   selectedCommandName.value = null
   detailFilePath.value = null
   browserUrl.value = null

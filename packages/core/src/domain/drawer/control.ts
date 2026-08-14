@@ -66,7 +66,7 @@ const controlState = useSessionScopedState<DrawerControlState>(
 /**
  * 内部原语命名空间（coordination 层专用，公开 API 之外的薄封装）。
  *
- * ⚠️ 直接调用会跳过 FR-9 pendingOpen 清理（手动 open 清当前 session 标记）——
+ * ⚠️ 直接调用会跳过瞬时参数写入（selectedCommandName/detailFilePath/browserUrl）——
  * 业务代码应使用 coordination 层的 openDrawerTab / closeDrawer / toggleDrawer /
  * setDrawerTab / toggleDrawerDock（C2 契约）。
  *
@@ -75,23 +75,19 @@ const controlState = useSessionScopedState<DrawerControlState>(
  * control 保持纯控制态（C4 单向依赖防循环）。
  */
 export const drawerControl = {
-  /** 打开抽屉（当前分区），可指定初始 tab。tasks tab 强制 docked（仅当前分区） */
+  /** 打开抽屉（当前分区），可指定初始 tab */
   open(tab?: SideDrawerTab): void {
     const cur = controlState.current.value
-    if (tab) {
-      cur.activeTab = tab
-      if (tab === 'tasks') cur.docked = true
-    }
+    if (tab) cur.activeTab = tab
     cur.isOpen = true
   },
   /** 关闭抽屉（钉住态亦可手动关闭） */
   close(): void {
     controlState.current.value.isOpen = false
   },
-  /** 切换 tab（抽屉关闭时仅改 activeTab，不自动打开）。tasks tab 自动 docked（仅当前分区） */
+  /** 切换 tab（抽屉关闭时仅改 activeTab，不自动打开） */
   setTab(tab: SideDrawerTab): void {
     controlState.current.value.activeTab = tab
-    if (tab === 'tasks') controlState.current.value.docked = true
   },
   /** 切换钉住态（仅当前分区） */
   toggleDock(): void {

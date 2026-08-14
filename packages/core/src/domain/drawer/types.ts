@@ -12,8 +12,9 @@
  * 零 DOM 约束：core tsconfig 未配置 DOM lib，本文件为纯类型定义，不引入 DOM/浏览器 API 类型。
  */
 
-/** SideDrawer 的 tab 枚举：terminal（终端）/ browser（浏览器）/ git（变更集）/ doc（命令文档）/ detail（文件详情）/ tasks（任务） */
-export type SideDrawerTab = 'terminal' | 'browser' | 'git' | 'doc' | 'detail' | 'tasks'
+/** SideDrawer 的 tab 枚举：terminal（终端）/ browser（浏览器）/ git（变更集）/ doc（命令文档）/ detail（文件详情）。
+ * [P4 s5 drawer-widget-removal] tasks 成员已随 tasks 域删除移除（PluginViewContainer 承接）。 */
+export type SideDrawerTab = 'terminal' | 'browser' | 'git' | 'doc' | 'detail'
 
 /** drawer open 的可选参数：打开时指定要展示的 slash 命令名（Doc tab）/ 文件路径（Detail tab）/ URL（Browser tab） */
 export interface OpenDrawerOptions {

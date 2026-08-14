@@ -11,9 +11,8 @@
  * - drawerOpen=true：DrawerPanel 作 SplitterPanel 子项挂载（split 布局）
  * - drawerOpen=false：连同 ResizeHandle 一起卸载，退化为单 panel（v-if 门控）
  * - ESC 关闭（window keydown）+ close 按钮关闭 → drawer 卸载（旧 side-drawer.test.ts 行为迁移）
- * - widget 缓冲壳路径渲染：mock useSessionEvents 捕获 handler → emit extension:widget →
- *   core createDrawerBuffers 经 props 喂 DrawerPanel → drawer-widget-lines 渲染
- *   （旧 SideDrawer.test.ts AC-4 壳路径版；per-session 隔离核心语义由 core W2 覆盖）
+ * - 内容区 fallback：browser tab 无 URL 不注入 BrowserPane → DrawerPanel 空态（drawer-widget-empty）
+ *   （旧 widget 缓冲通路已删，[P4 s5 drawer-widget-removal] 由 PluginViewContainer 承接）
  * - unread badge（AC-13）：chatStore 消息数增长 → header-extra slot 内 drawer-unread-badge
  *   出现并显示计数；关 drawer 清零
  *
@@ -25,7 +24,7 @@
  * 运行：cd packages/renderer && npx vitest run src/__tests__/panel/panel-container-drawer-mode.test.ts
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { mount, enableAutoUnmount } from '@vue/test-utils'
 import { defineComponent, ref, computed, nextTick, reactive } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
@@ -34,7 +33,6 @@ import {
   openDrawerTab,
   _resetDrawerForTest,
 } from '@xyz-agent/core/domain/drawer'
-import type { ServerMessage } from '@xyz-agent/shared'
 
 // ── mock 壳层依赖（PanelContainer setup 阶段执行，避免真实 WS/session 副作用）──
 vi.mock('@/composables/features/file-tree/useGitStatus', () => ({
@@ -72,39 +70,6 @@ vi.mock('@/stores/chat', () => ({
 // 注册 reader：工厂首次执行（PanelContainer 动态 import）时 read() 已能转发到响应式 Map
 chatMock.registerReader((sid) => reactiveMessages.get(sid) ?? [])
 
-// ── mock useSessionEvents：捕获 onMessage 注册的 handler（emitTo 模式，对齐旧 SideDrawer.test）──
-// 真实 useSessionEvents：subscribe(sid) 闭包捕获订阅时 sid，分发时把它传给 handler（第二参数）。
-// 本 mock 对齐此语义：注册时快照 sidRef.value，emitTo(sid) 只触发「快照 sid === sid」的 handler，
-// 并把快照 sid 作为第二参数传给 handler（调用方 updateFor(sid) 写该 sid 分区）。
-const mockState = vi.hoisted(() => ({
-  registrations: [] as Array<{ sidAtRegistration: string; type: string; handler: (msg: unknown, sid: string) => void }>,
-}))
-vi.mock('@/composables/features/chat/useSessionEvents', () => ({
-  useSessionEvents: (sidRef: { value: string | null }) => {
-    return (type: string, handler: (msg: unknown, sid: string) => void) => {
-      const sid = sidRef.value
-      if (sid == null) return
-      mockState.registrations.push({ sidAtRegistration: sid, type, handler })
-    }
-  },
-}))
-
-/** 向某 sid 的某 type 推送消息（只触发注册时快照 sid === sid 的 handler） */
-function emitTo(sid: string, type: string, msg: ServerMessage): void {
-  for (const entry of mockState.registrations) {
-    if (entry.sidAtRegistration === sid && entry.type === type) {
-      entry.handler(msg, entry.sidAtRegistration)
-    }
-  }
-}
-
-function mkWidgetMsg(widgetKey: string, lines: string[]): ServerMessage<'extension:widget'> {
-  return {
-    type: 'extension:widget' as const,
-    payload: { widgetKey, lines },
-  } as unknown as ServerMessage<'extension:widget'>
-}
-
 // ── 桌面独占面板 stub（DrawerPanel 默认 slot 注入的内容；真实组件依赖重，stub 为占位）──
 const DesktopStub = (name: string, testid: string) =>
   defineComponent({
@@ -141,7 +106,6 @@ beforeEach(() => {
   // 直连 core 控制态：绑定分区键（panel store focusedSessionId）+ 清模块级状态（测试隔离）
   bindDrawerSessionId(computed(() => usePanelStore().focusedSessionId))
   _resetDrawerForTest()
-  mockState.registrations.length = 0
   reactiveMessages.clear()
 })
 
@@ -216,28 +180,8 @@ describe('PanelContainer 壳行为迁移（旧 side-drawer.test.ts 行为断言�
   }, 60_000)
 })
 
-describe('PanelContainer widget 缓冲壳路径渲染（旧 SideDrawer.test.ts AC-4 壳路径版）', () => {
-  it('extension:widget 推送 → DrawerPanel 经 props 渲染缓冲行（browser tab 无 url 走内置 widget 区）', async () => {
-    const panel = usePanelStore()
-    panel.loadSession(ROOT_PANEL_ID, 's-widget')
-    openDrawerTab('browser') // browser tab；无 browserUrl → 不注入 BrowserPane → widget 区 fallback
-
-    const wrapper = await mountContainer()
-    await nextTick()
-
-    // C2 contract：browser 无 url 时不注入 BrowserPane，DrawerPanel 内置 widget 区 fallback
-    expect(wrapper.find('[data-testid="browser-pane"]').exists()).toBe(false)
-
-    // emit widget 消息 → 壳 handler → core createDrawerBuffers.updateFor(sid) → props → 渲染
-    emitTo('s-widget', 'extension:widget', mkWidgetMsg('browser', ['line-1', 'line-2']))
-    await nextTick()
-
-    const codeEls = wrapper.findAll('code')
-    expect(codeEls.length).toBe(2)
-    expect(codeEls[0].text()).toBe('line-1')
-  }, 60_000)
-
-  it('无 widget 数据时 DrawerPanel 空态 fallback（drawer-widget-empty）', async () => {
+describe('PanelContainer 内容区 fallback（browser 无 URL）', () => {
+  it('browser tab 无 browserUrl → 不注入 BrowserPane → DrawerPanel 空态（drawer-widget-empty）', async () => {
     const panel = usePanelStore()
     panel.loadSession(ROOT_PANEL_ID, 's-empty')
     openDrawerTab('browser')
@@ -245,6 +189,8 @@ describe('PanelContainer widget 缓冲壳路径渲染（旧 SideDrawer.test.ts A
     const wrapper = await mountContainer()
     await nextTick()
 
+    // C2 contract：browser 无 url 时不注入 BrowserPane，DrawerPanel 空态 fallback
+    expect(wrapper.find('[data-testid="browser-pane"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="drawer-widget-empty"]').exists()).toBe(true)
   }, 60_000)
 })

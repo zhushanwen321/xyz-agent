@@ -27,7 +27,6 @@ import type { SessionSummary } from '@xyz-agent/shared'
 import {
   createSessionStore,
   createUseSession,
-  consumePendingOpen,
   resetSessionListSubForTest,
 } from '@xyz-agent/core'
 import type {
@@ -104,11 +103,10 @@ export function useSidebarNew() {
     activePanelId: () => panel.activePanelId,
     findPanelBySession: (sid) => panel.findPanelBySession(sid),
     loadSession: (panelId, sid) => panel.loadSession(panelId, sid),
-    openPanel: (panelId, sid) => {
-      // tasks drawer 经 useSideDrawer.open('tasks')；sideDrawer 经 open（sid 由 drawer 内部路由）
+    // [P4 s5 drawer-widget-removal] tasks drawer 分支已删（tasks tab 移除），统一 open sideDrawer
+    openPanel: (sid) => {
       const { open } = useSideDrawerSafe()
-      if (panelId === 'tasks') open('tasks')
-      else open()
+      open()
       void sid // sideDrawer 内部按 focusedSessionId 路由，sid 透传无运行时消费（core 契约对齐）
     },
   }
@@ -206,11 +204,12 @@ export function useSidebarNew() {
   /**
    * selectSession——壳重编排（C-W5-1，不代理 core.selectSession）。
    *
-   * 完整 13 步时序（对照现 useSidebar.selectSession 逐条迁移）：
+   * 完整 12 步时序（对照现 useSidebar.selectSession 逐条迁移）：
    * flow.cancelFlow(若活跃) → api.switchSession → sessionStore.activeId=id → clearUnread →
    * ensureStreamSubscription → chat.touchLru → syncSessionToPanel → navigation.push →
-   * hydrate(若未 hydrate) → consumePendingOpen → fileTree.loadTree(火忘) →
+   * hydrate(若未 hydrate) → fileTree.loadTree(火忘) →
    * touchLru(panel绑定session) → evictIfNeeded。
+   * [P4 s5 drawer-widget-removal] consumePendingOpen 步骤已删（pendingOpen 机制随 tasks 域移除）。
    *
    * ensureStreamSubscription 须先于 syncSessionToPanel（C-W3-4）——panel 载入后 MessageStream
    * 挂载，订阅必须先就绪否则 snapshot 回放事件被丢（2026-07-29 handoff 回复丢失事故）。
@@ -218,9 +217,10 @@ export function useSidebarNew() {
   /**
    * postLoadSession —— session 载入后的通用编排（selectSession/restoreSession 共享）。
    * clearUnread → ensureStreamSubscription → touchLru → syncSessionToPanel → navigation →
-   * hydrate(getHistory) → consumePendingOpen → fileTree → evictIfNeeded。
+   * hydrate(getHistory) → fileTree → evictIfNeeded。
    * 前置约束：调用方须先 setActiveId(id)——ensureStreamSubscription/syncSessionToPanel 依赖
    * 当前 activeId 路由到正确 session 分区（ADR-0049 + 架构约定 #7）。
+   * [P4 s5 drawer-widget-removal] consumePendingOpen 步骤已删（pendingOpen 机制随 tasks 域移除）。
    */
   async function postLoadSession(id: string): Promise<void> {
     // 清除未读标记：用户主动查看该 session，不再显示未读 badge
@@ -242,8 +242,6 @@ export function useSidebarNew() {
         chat.markHistoryFailed(id)
       }
     }
-    // pendingOpen 消费（FR-3 / C-SS-3）：切到该 session 后消费标记——若有则自动开对应 tab
-    consumePendingOpen(id, panelPort)
     // 文件树预加载：切 session 即拉取，侧栏「文件」tab 计数立即更新。fire-and-forget 失败不阻断。
     void useFileTree().loadTree(id)
     // [lru-panel-exempt-fix] evictIfNeeded 前刷新 panel 绑定 session 的 LRU recency

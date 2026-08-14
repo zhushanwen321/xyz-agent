@@ -4,13 +4,16 @@
  * 三视角：
  * - 使用者（黑盒）：mount DrawerPanel（isOpen:true）断言 5 基础 tab 按钮 + 展开态内容区
  *   在 DOM 中存在；点关闭按钮触发 close emit（父组件消费 → isOpen=false → 收起）
- * - 构建者（白盒）：widget 数据 props 注入驱动内容区三态（gui 优先 / lines 兜底 / 空态）
- *   + unknown 徽章 + status footer + 内容面板 slot 注入替换 + 无 slot 时内置区 fallback
+ * - 构建者（白盒）：无内容面板 slot → 空态占位（icon + emptyText/emptyHint）；
+ *   内容面板 slot 注入替换（无 fallback 双渲染）
  * - 观察者（形态）：isOpen=false 时 aside 不渲染；5 基础 tab 常驻（[P4 s5 w2] tasks 条件 tab 已随 tasks 域删除）
  *
+ * [P4 s5 drawer-widget-removal] widget 三态（gui/lines/空态）+ status footer 用例已删：
+ * 旧 extension:widget/widgetGui/status 通道由 PluginViewContainer 承接，DrawerPanel 不再接收
+ * widget props，仅保留空态（slot fallback）+ slot 注入替换断言。
+ *
  * mock 策略（design-review mockStrategyNote）：零真 store——vitest.setup 已 mock vue-i18n
- * useI18n（t 返回 key，断言 DOM 结构不依赖文案）；GuiComponentRenderer/AnsiText 用真实
- * 组件（../../rendering-protocol，w6 基线已验证可渲染）；slot 注入用 template #default
+ * useI18n（t 返回 key，断言 DOM 结构不依赖文案）；slot 注入用 template #default
  * 放 testid 占位 div。
  *
  * 运行：cd packages/ui && npx vitest run src/features/drawer/
@@ -18,7 +21,6 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { DrawerPanel } from '../index'
-import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import type { SideDrawerTab } from '@xyz-agent/core/domain/drawer'
 
 /** 展开态基础 props（控制态四字段，widget 数据走默认空 → 空态分支） */
@@ -57,51 +59,15 @@ describe('DrawerPanel (AC9/AC12 首屏冒烟)', () => {
 })
 
 
-describe('DrawerPanel (widget 内容区三分支)', () => {
-  it('activeGuiComponent 优先：渲染 gui 渲染器，lines/空态不渲染', () => {
-    const gui: GuiComponent = { type: 'ansi-text', props: { lines: ['hello'] } }
-    const wrapper = mount(DrawerPanel, {
-      props: baseProps({ activeGuiComponent: gui, activeLines: ['ignored'] }),
-    })
-    expect(wrapper.find('[data-testid="drawer-widget-gui"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="drawer-widget-lines"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="drawer-widget-empty"]').exists()).toBe(false)
-  })
-
-  it('activeLines 文本兜底：等宽行渲染 + unknown 徽章', () => {
-    const wrapper = mount(DrawerPanel, {
-      props: baseProps({ activeLines: ['line1', 'line2'], activeLinesMeta: { unknown: true, key: 'my-widget' } }),
-    })
-    expect(wrapper.find('[data-testid="drawer-widget-lines"]').exists()).toBe(true)
-    const codes = wrapper.findAll('[data-testid="drawer-widget-lines"] code')
-    expect(codes).toHaveLength(2)
-    expect(wrapper.find('[data-testid="drawer-unknown-badge"]').exists()).toBe(true)
-  })
-
-  it('均空 → 空态占位（icon + emptyText/emptyHint 文案）', () => {
+describe('DrawerPanel (内容区 slot + 空态 fallback)', () => {
+  it('均无内容 → 空态占位（icon + emptyText/emptyHint 文案）', () => {
     const wrapper = mount(DrawerPanel, { props: baseProps() })
     expect(wrapper.find('[data-testid="drawer-widget-empty"]').exists()).toBe(true)
     // t mock 返回 key，断言空态文案 slot 存在（DOM 结构不依赖中文）
     expect(wrapper.find('[data-testid="drawer-widget-empty"] p').exists()).toBe(true)
   })
-})
 
-describe('DrawerPanel (status footer + 内容面板 slot)', () => {
-  it('statusEntries 渲染 footer（statusKey + text）', () => {
-    const wrapper = mount(DrawerPanel, {
-      props: baseProps({ statusEntries: [{ statusKey: 'git', text: 'clean' }] }),
-    })
-    const footer = wrapper.find('[data-testid="drawer-status-footer"]')
-    expect(footer.exists()).toBe(true)
-    expect(footer.text()).toContain('git')
-  })
-
-  it('statusEntries 为空时不渲染 footer（不占位）', () => {
-    const wrapper = mount(DrawerPanel, { props: baseProps() })
-    expect(wrapper.find('[data-testid="drawer-status-footer"]').exists()).toBe(false)
-  })
-
-  it('内容面板 slot 注入：slot 内容替换内置 widget 区（无 fallback 双渲染）', () => {
+  it('内容面板 slot 注入：slot 内容替换空态（无 fallback 双渲染）', () => {
     const wrapper = mount(DrawerPanel, {
       props: baseProps(),
       slots: { default: '<div data-testid="panel-slot" />' },
@@ -110,7 +76,7 @@ describe('DrawerPanel (status footer + 内容面板 slot)', () => {
     expect(wrapper.find('[data-testid="drawer-widget-empty"]').exists()).toBe(false)
   })
 
-  it('无 slot 时内置 widget 区作为 fallback 渲染', () => {
+  it('无 slot 时空态作为 fallback 渲染', () => {
     const wrapper = mount(DrawerPanel, { props: baseProps() })
     expect(wrapper.find('[data-testid="drawer-widget-empty"]').exists()).toBe(true)
   })
