@@ -1039,16 +1039,22 @@ body {
       <span class="cp cp-v6"><b>GUI M17</b> MessageStream → <b>widget 区</b> → companion/composer（语义一致）</span>
       <span class="cp cp-v6"><b>不映射</b> drawer(M7) / sidebar(M2)——产品诉求拒绝侧栏，widget 属对话流</span>
       <span class="cp cp-v6"><b>非 M5</b> custom message 是 append-only 消息（每次推送新消息），不承担面板语义</span>
+      <span class="cp cp-v6"><b>宽度对齐 composer</b> band px-5 + 内层 grid mx-auto max-w-[var(--content-max-w)]（720px）——单卡/多卡联合宽度恒 ≤ composer 列宽（2026-08-14 实现）</span>
+      <span class="cp cp-v6"><b>卡头折叠</b> 点击卡头收起/展开 · chevron 旋转 90° 下指 · 折叠卡 flex-none 收缩为内容宽细条（2026-08-14 实现）</span>
     </div>
 
     <div class="render-frame">
-      <div style="display:flex;flex-direction:column;gap:10px;max-width:620px;">
+      <!-- 内容列与 composer 同宽对齐（--content-max-w 720px 居中，band px-5 同 composer-band） -->
+      <div style="display:flex;flex-direction:column;gap:10px;max-width:var(--content-max-w);margin:0 auto;width:100%;">
         <!-- widget 区容器：多 widget 分栏并排（flex wrap，单 widget 占满） -->
         <div class="widget-area" style="display:flex;gap:10px;align-items:stretch;flex-wrap:wrap;">
-          <!-- widgetKey: todo → list-tree（左栏） -->
+          <!-- widgetKey: todo → list-tree（展开态：chevron 下指，卡体可见） -->
           <div class="widget-area__card" style="flex:1 1 240px;min-width:0;">
             <div class="gcard stage-default" style="height:100%;">
-              <div class="gcard-hd"><span class="hd-dot" style="background:var(--accent);"></span><span class="hd-title">todo</span><span class="hd-badge b-accent">list-tree · 常驻</span></div>
+              <div class="gcard-hd" style="cursor:pointer;" title="点击卡头折叠">
+                <span class="hd-dot" style="background:var(--accent);"></span><span class="hd-title">todo</span><span class="hd-badge b-accent">list-tree · 常驻</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;flex-shrink:0;transform:rotate(90deg);color:var(--neutral-dim);"><polyline points="9 6 15 12 9 18"/></svg>
+              </div>
               <div class="gcard-bd" style="padding:8px;">
                 <div class="gtree" style="font-size:10px;">
                   <div class="gtree-node"><span class="gtree-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/></svg></span><span class="gtree-label">调研 M17 挂载点</span><span class="gtree-status st-done"></span></div>
@@ -1058,11 +1064,15 @@ body {
               </div>
             </div>
           </div>
-          <!-- widgetKey: goal → card(stats-line + progress-bar)（右栏） -->
-          <div class="widget-area__card" style="flex:1 1 240px;min-width:0;">
-            <div class="gcard stage-default" style="height:100%;">
-              <div class="gcard-hd"><span class="hd-dot" style="background:var(--success);"></span><span class="hd-title">goal</span><span class="hd-badge b-success">active</span></div>
-              <div class="gcard-bd" style="display:flex;flex-direction:column;gap:10px;padding:8px;">
+          <!-- widgetKey: goal → card(stats-line + progress-bar)（折叠态：chevron 右指，无卡体，
+               收缩为内容宽细条，与另一卡头行对齐） -->
+          <div class="widget-area__card" style="flex:none;min-width:0;">
+            <div class="gcard stage-default">
+              <div class="gcard-hd" style="cursor:pointer;" title="点击卡头展开">
+                <span class="hd-dot" style="background:var(--success);"></span><span class="hd-title">goal</span><span class="hd-badge b-success">active</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;flex-shrink:0;color:var(--neutral-dim);"><polyline points="9 6 15 12 9 18"/></svg>
+              </div>
+              <div class="gcard-bd" style="display:none;flex-direction:column;gap:10px;padding:8px;">
                 <div class="gstats">
                   <span class="gs-item"><span class="gs-label">turns</span><span class="gs-value sv-neutral">3</span></span>
                   <span class="gs-item"><span class="gs-label">tokens</span><span class="gs-value sv-mid">48k</span></span>
@@ -1076,9 +1086,14 @@ body {
             </div>
           </div>
         </div>
-        <div style="font-family:var(--font-mono);font-size:9px;color:var(--neutral-dim);text-align:center;">↑ M17：对话流 widget 面板（MessageStream 底部 / composer 上方）· 每卡 = widgetKey 标签 + 原语组合 · 同 key 覆盖更新 · 多 widget 分栏（单 widget 占满）</div>
+        <div style="font-family:var(--font-mono);font-size:9px;color:var(--neutral-dim);text-align:center;">↑ M17：对话流 widget 面板（MessageStream 底部 / composer 上方）· 每卡 = widgetKey 标签 + 原语组合 · 同 key 覆盖更新 · 多 widget 分栏（单 widget 占满）· 内容列 max-w 对齐 composer（720px）· 卡头点击折叠/展开</div>
       </div>
     </div>
+
+    <div class="anno"><b>宽度对齐 composer [2026-08-14 实现]:</b><br><span class="v6">外层 band <code>px-5</code>（同 composer-band 侧距），内层 grid <code>mx-auto max-w-[var(--content-max-w)]</code>（720px 居中，同 Composer）——单卡/多卡联合宽度恒 ≤ composer 列宽（flex-wrap + 容器 max-w 盒模型保证子项不可能超容器）。</span></div>
+    <div class="anno"><b>卡头形态 [生产裁决]:</b><br><span class="v6">上图 <code>gcard-hd</code>（状态圆点 hd-dot + pill hd-badge + surface-2 底条）为 demo 画框的展示形态。<b>生产卡头取 tool-label 简版</b>（<code>font-mono 9px + chevron</code>，无 dot/badge/底条，见 05-widget-area.md §2.3）——widget 外壳协议上只有 widgetKey，无状态/类型元数据可填 dot 与 badge。</span></div>
+    <div class="anno"><b>卡壳 border [生产裁决]:</b><br><span class="v6">上图 <code>.gcard</code> 无 border、8px 圆角即生产规格——对齐渲染协议 Card 原语（<code>rendering-protocol/primitives/Card.vue</code>「去 border 靠 bg 层级」）。WidgetArea 壳同样无 border + <code>rounded-md</code>(8px)；goal 有预算 widget 顶层即 card 原语，壳带 border/更大圆角会内外双层卡。</span></div>
+    <div class="anno"><b>卡头折叠 [2026-08-14 实现]:</b><br><span class="v6">点击卡头收起/展开（cursor pointer + hover）；chevron 展开态旋转 90° 下指（对齐 TraceCompactorRow 范式）；折叠卡 <code>flex-none self-start</code> 收缩为内容宽细条（与其余卡头行对齐），卡体 <code>v-show</code> 隐藏不重挂原语树。</span></div>
 
     <div class="note-box">
       <div class="note-box-head">
@@ -1097,6 +1112,8 @@ body {
           <p><b>覆盖更新</b>：同 widgetKey 重复推送原地替换内容（不新增消息）。</p>
           <p><b>清除</b>：<code>guiSetWidget(key, undefined)</code> 移除该卡（已实现：gui:null 清除语义）。</p>
           <p><b>多 widget 分栏</b>：多 widgetKey 并排（flex wrap，单 widget 占满，多 widget 等分/按内容）；卡片高度拉伸对齐。</p>
+          <p><b>宽度对齐</b>：band px-5 + 内容列 mx-auto max-w-[var(--content-max-w)]（720px，同 Composer）——单卡/多卡联合宽度恒 ≤ composer 列宽（2026-08-14 实现）。</p>
+          <p><b>卡头折叠</b>：点击卡头收起/展开（chevron 旋转 90° 下指）；折叠卡 flex-none 收缩为内容宽细条，卡体 v-show 隐藏不重挂原语树（2026-08-14 实现）。</p>
           <p><b>通用</b>：前端只认 widgetKey + GuiComponent，不特化任何 extension。</p>
         </div>
       </div>
@@ -2092,7 +2109,7 @@ body {
         </thead>
         <tbody>
           <tr><td><span class="ca-mount">M4/M5 tool result + 自定义消息渲染</span></td><td class="ca-behavior">GuiComponentRenderer 已实现</td><td><span class="ca-status s-done">✅ 可直接落地</span></td></tr>
-          <tr><td><span class="ca-mount">M17 对话流 widget 面板（常驻 + 覆盖更新）</span></td><td class="ca-behavior">WidgetArea 待实现（数据通道已通：extension:widget/widgetGui → per-session 缓存）；todo/goal 待迁移</td><td><span class="ca-status s-warn">⚠️ 视觉态就绪，WidgetArea 待实现</span></td></tr>
+          <tr><td><span class="ca-mount">M17 对话流 widget 面板（常驻 + 覆盖更新）</span></td><td class="ca-behavior">WidgetArea 已实现（band px-5 + grid mx-auto max-w 对齐 composer；卡头折叠）；todo/goal 已迁移（guiSetWidget 推送，tool result __gui__ 已移除）；数据通道 extension:widget/widgetGui → per-session 缓存</td><td><span class="ca-status s-done">✅ 已落地</span></td></tr>
           <tr><td><span class="ca-mount">M7 drawer widget（plugin 静态 view 内容区）</span></td><td class="ca-behavior">GuiComponentRenderer 已实现；setWidget 推送已改走 M17</td><td><span class="ca-status s-done">✅ 可直接落地</span></td></tr>
           <tr><td><span class="ca-mount">M10 slash command（CommandPopover）</span></td><td class="ca-behavior">已实现（session.commands 双轨已通）</td><td><span class="ca-status s-done">✅ 可直接落地</span></td></tr>
           <tr><td><span class="ca-mount">M8 main-panel 局部底栏 status item</span></td><td class="ca-behavior">StatusBarController（pi status 已实现，plugin statusBarItems 待接入）</td><td><span class="ca-status s-warn">⚠️ 视觉态就绪，plugin 接入待架构</span></td></tr>

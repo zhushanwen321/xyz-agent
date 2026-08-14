@@ -64,12 +64,15 @@ function toggleCollapsed(viewId: string): void {
       data-testid="widget-area-grid"
       class="mx-auto flex w-full max-w-[var(--content-max-w)] flex-wrap items-stretch gap-2.5"
     >
+      <!-- 卡壳对齐 Card 原语（rendering-protocol/primitives/Card.vue 的 v6 裁决）：无 border
+           靠 bg 层级分组、rounded-md(8px)。goal 有预算 widget 顶层即 card 原语，壳若带
+           border/更大圆角会内外双层卡（卡中卡）且圆角差混尺寸 -->
       <div
         v-for="w in entries"
         :key="w.viewId"
         data-testid="widget-card"
         :data-collapsed="collapsed.has(w.viewId)"
-        class="flex min-w-0 flex-col gap-1.5 rounded-card border border-border bg-surface p-3"
+        class="flex min-w-0 flex-col gap-1.5 rounded-md bg-surface p-3"
         :class="collapsed.has(w.viewId) ? 'flex-none self-start' : 'flex-1 basis-60 self-stretch'"
       >
         <!-- 卡头：widgetKey 标签（mono 9px，对齐 demo M17 tool-label 规格）+ 折叠开关。
