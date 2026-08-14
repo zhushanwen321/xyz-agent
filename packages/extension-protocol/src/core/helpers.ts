@@ -52,7 +52,8 @@ export function guiComponent<T extends GuiComponentType>(
 /**
  * 设置 GUI widget。RPC 模式下用 marker 编码 GuiComponent JSON 进 string[]，
  * runtime event-adapter 检测 marker 解码为结构化 WS 帧。
- * TUI 模式下此函数无操作（extension 应在 TUI 分支调原生 ctx.ui.setWidget 传 Component factory）。
+ * 本函数无 isGui 守卫（仅查 ctx.ui?.setWidget 存在性），调用方需先判定
+ * isGuiCapable(ctx)——TUI 模式误调会把 marker 编码行推给原生 widget 造成乱码。
  *
  * 传 undefined 清除 widget。
  */

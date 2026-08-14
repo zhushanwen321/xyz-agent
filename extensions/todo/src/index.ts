@@ -14,19 +14,53 @@
  * - render.ts:   状态栏（status line）/ widget（单双列自适应）/ tool result 三层渲染
  * - component.ts: /todos 命令的 TodoListComponent TUI 视图（只读双列）
  * - commands.ts: /todos 命令注册
- * - index.ts（本文件）: 工厂入口（创建 state + 注册 tool/command/event + refreshDisplay）
+ * - index.ts（本文件）: 工厂入口（创建 state + 注册 tool/command/event + makeRefreshDisplay）
  *
  * 错误处理：handler 失败直接 throw（见 CLAUDE.md「Tool 设计」），不返回错误成功模式。
  * model 层纯函数返回 Result 对象（合法），dispatcher 拿到 error 时 throw。
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { guiSetWidget, isGuiCapable, type GuiContext } from "@xyz-agent/extension-protocol";
 
 import { registerTodosCommand } from "./commands";
 import { registerTodoEventHandlers } from "./handlers";
+import { buildGui } from "./model";
 import { renderStatusText, renderWidgetLines } from "./render";
-import { createTodoSessionState } from "./state";
+import { createTodoSessionState, type TodoSessionState } from "./state";
 import { registerTodoTool } from "./tool";
+
+// ── 刷新显示（导出供测试，生产路径与测试共用同一实现）──────
+
+/**
+ * 构造依赖 TodoSessionState 的 refreshDisplay（M17 widget 面板推送）。
+ *
+ * 双步断言根因（ctx as unknown as GuiContext）：pi 的 ExtensionContext.ui.custom
+ * 是泛型方法，参数逆变使其与 GuiContext 结构不兼容，无法单步兼容
+ * （goal adapters/ports.ts:54 同款先例）。
+ *
+ * isGuiCapable 外层判定不可省略：guiSetWidget 内部无 isGui 守卫
+ * （extension-protocol helpers.ts 仅查 ctx.ui?.setWidget 存在性），
+ * TUI 模式误调会把 marker 编码行推给原生 widget 造成乱码。
+ */
+export function makeRefreshDisplay(state: TodoSessionState): (ctx: ExtensionContext) => void {
+	return function refreshDisplay(ctx: ExtensionContext): void {
+		const statusText = renderStatusText(state.todos, ctx.ui.theme);
+		ctx.ui.setStatus("todo", statusText || undefined);
+		const isGui = isGuiCapable(ctx as unknown as GuiContext);
+		if (state.todos.length === 0) {
+			if (isGui) {
+				guiSetWidget(ctx as unknown as GuiContext, "todo", undefined);
+			} else {
+				ctx.ui.setWidget("todo", undefined);
+			}
+		} else if (isGui) {
+			guiSetWidget(ctx as unknown as GuiContext, "todo", buildGui(state.todos).component);
+		} else {
+			ctx.ui.setWidget("todo", renderWidgetLines(state.todos, ctx.ui.theme));
+		}
+	};
+}
 
 // ── 扩展入口 ─────────────────────────────────────────
 
@@ -37,16 +71,7 @@ export default function (pi: ExtensionAPI) {
 	// 全解耦：不再暴露 pi.__todoGetList 跨扩展 API（goal 不再读 todo 状态）。
 	// todo 进度由 AI 自行管理，goal 不做强制检查。
 
-	// ── 刷新显示（依赖闭包 state） ─────────────────────
-	function refreshDisplay(ctx: ExtensionContext): void {
-		const statusText = renderStatusText(state.todos, ctx.ui.theme);
-		ctx.ui.setStatus("todo", statusText || undefined);
-		if (state.todos.length === 0) {
-			ctx.ui.setWidget("todo", undefined);
-		} else {
-			ctx.ui.setWidget("todo", renderWidgetLines(state.todos, ctx.ui.theme));
-		}
-	}
+	const refreshDisplay = makeRefreshDisplay(state);
 
 	// ── 注册所有 handler / tool / command ──────────────
 	registerTodoEventHandlers(pi, state, refreshDisplay);

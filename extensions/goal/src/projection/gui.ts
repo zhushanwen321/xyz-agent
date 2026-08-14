@@ -2,11 +2,11 @@
  * GUI 渲染描述符构造（projection 层）— buildGoalGui + goalStatusSeverity
  *
  * H4 拆层：从 adapters/goal-control-adapter.ts 抽出。GUI 渲染描述符归 projection 层，
- * goal-control-adapter 回归 tool 注册 + RPC 模式调用本模块。
+ * goal-control-adapter 回归纯 tool 注册（M17 后不再调用本模块）。
  *
  * 与 projection/widget.ts 的分工：
  * - widget.ts：TUI 模式渲染（ANSI 字符串，经 ctx.ui.setWidget）
- * - gui.ts：RPC 模式渲染（结构化 GuiComponent 描述符，放进 details.__gui__）
+ * - gui.ts：RPC 模式渲染（结构化 GuiComponent 描述符，经 guiSetWidget 推送给 M17 对话流 widget 面板）
  *
  * 预算阈值经 engine/budget.ts 的 getBudgetSeverity 单源化（H4）：
  * buildGoalGui（percent→severity）与 widget.getBudgetColor（percent→color）共用阈值。
@@ -45,7 +45,7 @@ export function goalStatusSeverity(status: GoalStatus): "ok" | "warn" | "danger"
 }
 
 /**
- * 构造 goal 的 GUI 渲染描述符（RPC 模式下放进 details.__gui__）。
+ * 构造 goal 的 GUI 渲染描述符（RPC 模式下经 guiSetWidget 推送给 M17 对话流 widget 面板）。
  *
  * 逻辑参考 projection/widget.ts 的 renderWidgetLines 预算计算，但此处只构造
  * 结构化数据（GuiComponent），不做 ANSI 渲染。

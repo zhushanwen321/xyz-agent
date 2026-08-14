@@ -17,8 +17,6 @@ export interface TodoDetails {
 	action: "list" | "add" | "update" | "delete";
 	todos: Todo[];
 	nextId: number;
-	/** GUI 渲染结果（仅 RPC 模式填充，前端 list-tree 渲染）。对齐 extension-protocol@0.2.0。 */
-	__gui__?: GuiRenderResult;
 }
 
 export const VALID_STATUSES = ["pending", "in_progress", "completed"] as const;

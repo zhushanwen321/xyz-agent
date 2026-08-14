@@ -1,20 +1,26 @@
 /**
- * executeTodoAction handler 级测试 —— 覆盖 `if (ctx.mode === "rpc")` 分支
- * 和非 RPC 模式不附加 __gui__ 的路径。对齐 ask-user R-1~R-7 handler 级范式。
+ * executeTodoAction handler 级测试 —— M17 后的两条路径：
+ * 1. tool result 无 __gui__（全模式统一——状态展示不再进 details）
+ * 2. refreshDisplay GUI widget 推送（rpc 推 marker 编码 / tui 推纯文本行）
  *
  * 策略：executeTodoAction 未导出，通过 registerTodoTool + mock pi 捕获
- * 已注册 tool，再以不同 ctx.mode 调 execute。每个用例新建 state（隔离），
- * 无模块级状态需重置。
+ * 已注册 tool，再以不同 ctx.mode 调 execute。setup 第三参传真实
+ * makeRefreshDisplay(state)（与 index.ts 工厂共用同一实现，不测复制品）。
+ * 每个用例新建 state（隔离），无模块级状态需重置。
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import { GUI_WIDGET_MARKER } from "@xyz-agent/extension-protocol";
+import { describe, expect, it, vi, type Mock } from "vitest";
 
+import { makeRefreshDisplay } from "../index";
 import { createTodoSessionState, type TodoSessionState } from "../state";
 import { registerTodoTool } from "../tool";
 
 // ── Types for the registered tool ───────────────────────
 type TestMode = "tui" | "rpc" | "json" | "print";
+
+type SetWidgetFn = (name: string, content: string[] | undefined) => void;
 
 interface ExecuteResult {
 	content: Array<{ type: "text"; text: string }>;
@@ -22,10 +28,6 @@ interface ExecuteResult {
 		action: string;
 		todos: Array<{ id: number; text: string; status: string }>;
 		nextId: number;
-		__gui__?: {
-			v: number;
-			component: { type: string; props: { items: unknown[] } };
-		};
 	};
 }
 
@@ -47,7 +49,7 @@ interface MockPi {
 	registerTool(tool: RegisteredTool): void;
 }
 
-/** 捕获注册的 tool，返回 + 暴露 state 供断言。 */
+/** 捕获注册的 tool，返回 + 暴露 state 供断言。refreshDisplay 传真实实现（makeRefreshDisplay）。 */
 function setup(): { tool: RegisteredTool; state: TodoSessionState } {
 	const state = createTodoSessionState();
 	const pi: MockPi = {
@@ -55,7 +57,7 @@ function setup(): { tool: RegisteredTool; state: TodoSessionState } {
 			this.tool = tool;
 		},
 	};
-	registerTodoTool(pi as unknown as ExtensionAPI, state, () => {});
+	registerTodoTool(pi as unknown as ExtensionAPI, state, makeRefreshDisplay(state));
 	if (!pi.tool) throw new Error("registerTodoTool did not register a tool");
 	return { tool: pi.tool, state };
 }
@@ -76,133 +78,50 @@ const stubTheme = {
 	getBashModeBorderColor: () => (text: string) => text,
 } as unknown as Theme;
 
-/** RPC 模式 ctx：hasUI=false，refreshDisplay 调用 ui.theme/setStatus/setWidget。 */
-const makeRpcCtx = () => ({
-	mode: "rpc" as const,
-	hasUI: false,
-	ui: {
-		theme: stubTheme,
-		setStatus: () => {},
-		setWidget: () => {},
-	},
-});
+/** 构造指定 mode 的 ctx，setWidget 为 vi.fn 供断言（refreshDisplay 推送出口）。 */
+function makeCtx(mode: TestMode, hasUI: boolean): {
+	ctx: { mode: TestMode; hasUI: boolean; ui: { theme: Theme; setStatus: Mock; setWidget: Mock<SetWidgetFn> } };
+	setWidget: Mock<SetWidgetFn>;
+} {
+	const setWidget = vi.fn<SetWidgetFn>();
+	return {
+		ctx: {
+			mode,
+			hasUI,
+			ui: { theme: stubTheme, setStatus: vi.fn(), setWidget },
+		},
+		setWidget,
+	};
+}
+
+/** RPC 模式 ctx：hasUI=false。 */
+const makeRpcCtx = () => makeCtx("rpc", false);
 
 /** TUI 模式 ctx：hasUI=true。 */
-const makeTuiCtx = () => ({
-	mode: "tui" as const,
-	hasUI: true,
-	ui: {
-		theme: stubTheme,
-		setStatus: () => {},
-		setWidget: () => {},
-	},
-});
+const makeTuiCtx = () => makeCtx("tui", true);
 
-// ── RPC 模式：附加 __gui__ ────────────────────────────
+// ── tool result：无 __gui__（M17 后全模式统一）─────────
 
-describe("executeTodoAction — RPC mode attaches __gui__", () => {
-	it("R-1: rpc + add → details.__gui__ exists, type is list-tree", async () => {
-		const { tool } = setup();
-		const result = await tool.execute(
-			"id",
-			{ action: "add", texts: ["task A", "task B"] },
-			undefined,
-			undefined,
-			makeRpcCtx(),
-		);
-		expect(result.details.__gui__).toBeDefined();
-		expect(result.details.__gui__!.v).toBe(1);
-		expect(result.details.__gui__!.component.type).toBe("list-tree");
-		// 两条新增 todo 反映在 items 中
-		const items = result.details.__gui__!.component.props.items as Array<{
-			label: string;
-			icon: string;
-		}>;
-		expect(items).toHaveLength(2);
-		expect(items[0]).toMatchObject({ label: "#1: task A", icon: "dot" });
-		expect(items[1]).toMatchObject({ label: "#2: task B", icon: "dot" });
-	});
+describe("executeTodoAction — tool result 无 __gui__（全模式）", () => {
+	const MODES: TestMode[] = ["rpc", "tui", "json", "print"];
 
-	it("R-2: rpc + list → __gui__ reflects current todo state", async () => {
-		const { tool, state } = setup();
-		// 预置状态（绕开 add，直接构造 todos）
-		state.todos = [
-			{ id: 1, text: "pending task", status: "pending" },
-			{ id: 2, text: "active task", status: "in_progress" },
-			{ id: 3, text: "done task", status: "completed" },
-		];
-		state.nextId = 4;
-		const result = await tool.execute(
-			"id",
-			{ action: "list" },
-			undefined,
-			undefined,
-			makeRpcCtx(),
-		);
-		expect(result.details.__gui__).toBeDefined();
-		expect(result.details.__gui__!.component.type).toBe("list-tree");
-		const items = result.details.__gui__!.component.props.items as Array<{
-			label: string;
-			icon: string;
-			status?: string;
-		}>;
-		expect(items).toHaveLength(3);
-		// pending → dot 无 status
-		expect(items[0]).toMatchObject({ label: "#1: pending task", icon: "dot" });
-		expect(items[0]).not.toHaveProperty("status");
-		// in_progress → circle / running
-		expect(items[1]).toMatchObject({
-			label: "#2: active task",
-			icon: "circle",
-			status: "running",
-		});
-		// completed → check / done
-		expect(items[2]).toMatchObject({
-			label: "#3: done task",
-			icon: "check",
-			status: "done",
-		});
-	});
-
-	it("R-3: rpc + update → __gui__ reflects post-update status", async () => {
-		const { tool, state } = setup();
-		state.todos = [{ id: 1, text: "item", status: "pending" }];
-		state.nextId = 2;
-		const result = await tool.execute(
-			"id",
-			{ action: "update", updates: [{ id: 1, status: "in_progress" }] },
-			undefined,
-			undefined,
-			makeRpcCtx(),
-		);
-		expect(result.details.__gui__).toBeDefined();
-		const items = result.details.__gui__!.component.props.items as Array<{
-			icon: string;
-			status?: string;
-		}>;
-		expect(items[0]).toMatchObject({ icon: "circle", status: "running" });
-	});
-});
-
-// ── TUI 模式：不附加 __gui__ ──────────────────────────
-
-describe("executeTodoAction — non-RPC modes omit __gui__", () => {
-	it("T-1: tui + add → details.__gui__ is undefined", async () => {
+	it.each(MODES)("%s + add → details 无 __gui__ 字段，仍含 action/todos/nextId", async (mode) => {
 		const { tool } = setup();
 		const result = await tool.execute(
 			"id",
 			{ action: "add", texts: ["task A"] },
 			undefined,
 			undefined,
-			makeTuiCtx(),
+			makeCtx(mode, mode === "tui").ctx,
 		);
-		expect(result.details.__gui__).toBeUndefined();
+		expect("__gui__" in result.details).toBe(false);
 		// details 仍带原生文本路径数据（todos / nextId）
+		expect(result.details.action).toBe("add");
 		expect(result.details.todos).toHaveLength(1);
 		expect(result.content[0].text).toContain("Added");
 	});
 
-	it("T-2: tui + list → details.__gui__ is undefined", async () => {
+	it.each(MODES)("%s + list → details 无 __gui__ 字段，文本内容可读", async (mode) => {
 		const { tool, state } = setup();
 		state.todos = [{ id: 1, text: "x", status: "pending" }];
 		state.nextId = 2;
@@ -211,44 +130,86 @@ describe("executeTodoAction — non-RPC modes omit __gui__", () => {
 			{ action: "list" },
 			undefined,
 			undefined,
-			makeTuiCtx(),
+			makeCtx(mode, mode === "tui").ctx,
 		);
-		expect(result.details.__gui__).toBeUndefined();
-		// 文本内容仍可读
+		expect("__gui__" in result.details).toBe(false);
 		expect(result.content[0].text).toContain("#1");
 	});
 
-	it("T-3: print mode + add → details.__gui__ is undefined", async () => {
-		const { tool } = setup();
+	it("rpc + update → details 无 __gui__ 字段，状态变更仍生效", async () => {
+		const { tool, state } = setup();
+		state.todos = [{ id: 1, text: "item", status: "pending" }];
+		state.nextId = 2;
 		const result = await tool.execute(
 			"id",
-			{ action: "add", texts: ["task A"] },
+			{ action: "update", updates: [{ id: 1, status: "in_progress" }] },
 			undefined,
 			undefined,
-			{ mode: "print", hasUI: false, ui: { theme: stubTheme, setStatus: () => {}, setWidget: () => {} } },
+			makeRpcCtx().ctx,
 		);
-		expect(result.details.__gui__).toBeUndefined();
-	});
-
-	it("T-4: json mode + add → details.__gui__ is undefined", async () => {
-		const { tool } = setup();
-		const result = await tool.execute(
-			"id",
-			{ action: "add", texts: ["task A"] },
-			undefined,
-			undefined,
-			{ mode: "json", hasUI: false, ui: { theme: stubTheme, setStatus: () => {}, setWidget: () => {} } },
-		);
-		expect(result.details.__gui__).toBeUndefined();
+		expect("__gui__" in result.details).toBe(false);
+		expect(result.details.todos[0]!.status).toBe("in_progress");
 	});
 });
 
-// ── 共享 state：rpc 附加但 details.todos 是快照副本 ────
+// ── refreshDisplay：GUI widget 推送（M17，真实实现）────
+
+describe("refreshDisplay — GUI widget 推送（setup 传真实实现）", () => {
+	it("G-1: rpc + add → setWidget 收到 ('todo', [GUI_WIDGET_MARKER + JSON])，解析后 type='list-tree'", async () => {
+		const { tool } = setup();
+		const { ctx, setWidget } = makeRpcCtx();
+		await tool.execute(
+			"id",
+			{ action: "add", texts: ["task A", "task B"] },
+			undefined,
+			undefined,
+			ctx,
+		);
+		expect(setWidget).toHaveBeenCalledTimes(1);
+		const [key, value] = setWidget.mock.calls[0]!;
+		expect(key).toBe("todo");
+		expect(value).toHaveLength(1);
+		const encoded = value![0]!;
+		// marker 前缀用协议常量断言（不手写编码）
+		expect(encoded.startsWith(GUI_WIDGET_MARKER)).toBe(true);
+		const parsed = JSON.parse(encoded.slice(GUI_WIDGET_MARKER.length)) as {
+			type: string;
+			props: { items: Array<{ label: string; icon: string }> };
+		};
+		expect(parsed.type).toBe("list-tree");
+		expect(parsed.props.items).toHaveLength(2);
+		expect(parsed.props.items[0]).toMatchObject({ label: "#1: task A", icon: "dot" });
+		expect(parsed.props.items[1]).toMatchObject({ label: "#2: task B", icon: "dot" });
+	});
+
+	it("G-2: rpc + delete 清空列表 → setWidget 收到 ('todo', undefined)（清除语义）", async () => {
+		const { tool } = setup();
+		const { ctx, setWidget } = makeRpcCtx();
+		await tool.execute("id", { action: "add", texts: ["only"] }, undefined, undefined, ctx);
+		await tool.execute("id", { action: "delete", ids: [1] }, undefined, undefined, ctx);
+		expect(setWidget).toHaveBeenLastCalledWith("todo", undefined);
+	});
+
+	it("G-3: tui + add → setWidget 收到纯文本行数组（无 marker 前缀）", async () => {
+		const { tool } = setup();
+		const { ctx, setWidget } = makeTuiCtx();
+		await tool.execute("id", { action: "add", texts: ["task A"] }, undefined, undefined, ctx);
+		expect(setWidget).toHaveBeenCalledTimes(1);
+		const [, value] = setWidget.mock.calls[0]!;
+		expect(value!.length).toBeGreaterThan(0);
+		for (const line of value!) {
+			// isGuiCapable 外层判定生效：TUI 行不含 GUI marker 编码
+			expect(line.startsWith(GUI_WIDGET_MARKER)).toBe(false);
+		}
+	});
+});
+
+// ── 共享 state：details.todos 是快照副本 ───────────────
 
 describe("executeTodoAction — state isolation & snapshot", () => {
 	it("S-1: each setup() yields independent state (no module-level leak)", async () => {
 		const { tool: tool1 } = setup();
-		await tool1.execute("id", { action: "add", texts: ["first"] }, undefined, undefined, makeRpcCtx());
+		await tool1.execute("id", { action: "add", texts: ["first"] }, undefined, undefined, makeRpcCtx().ctx);
 		// 第二个 setup 起步，不应看到第一个的 todos
 		const { tool: tool2, state: state2 } = setup();
 		expect(state2.todos).toHaveLength(0);
@@ -257,29 +218,26 @@ describe("executeTodoAction — state isolation & snapshot", () => {
 			{ action: "list" },
 			undefined,
 			undefined,
-			makeRpcCtx(),
+			makeRpcCtx().ctx,
 		);
 		expect(result.content[0].text).toBe("No todos");
-		// 空 list 仍走 buildGui([])（rpc 分支无条件 attach）
-		expect(result.details.__gui__).toBeDefined();
-		expect(result.details.__gui__!.component.props.items).toEqual([]);
 	});
 
 	it("S-2: details.todos is a shallow array copy (splice-safe, element-shared)", async () => {
 		// executeTodoAction 用 [...state.todos] 做浅拷贝：数组独立、元素共享。
 		// add/delete 改数组长度时旧 details.todos 不受影响；但原地改元素会共享。
 		const { tool } = setup();
-		await tool.execute("id", { action: "add", texts: ["a", "b"] }, undefined, undefined, makeRpcCtx());
+		await tool.execute("id", { action: "add", texts: ["a", "b"] }, undefined, undefined, makeRpcCtx().ctx);
 		const before = (await tool.execute(
 			"id",
 			{ action: "list" },
 			undefined,
 			undefined,
-			makeRpcCtx(),
+			makeRpcCtx().ctx,
 		)).details.todos;
 		expect(before).toHaveLength(2);
 		// delete 改 state.todos 数组，已发出的 before 快照仍为 2 项
-		await tool.execute("id", { action: "delete", ids: [1, 2] }, undefined, undefined, makeRpcCtx());
+		await tool.execute("id", { action: "delete", ids: [1, 2] }, undefined, undefined, makeRpcCtx().ctx);
 		expect(before).toHaveLength(2);
 	});
 });

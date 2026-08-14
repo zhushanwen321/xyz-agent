@@ -50,7 +50,8 @@ export function buildPorts(pi: ExtensionAPI, ctx: ExtensionContext): ServicePort
 		setGuiWidget(name: string, component: GuiComponent | undefined): void {
 			// GUI 协议 widget：guiSetWidget 在 RPC 模式用 marker 编码 GuiComponent JSON 进 string[]，
 			// 复用 ctx.ui.setWidget 通道；host 侧 event-adapter 检测 marker 解码还原成 GuiComponent。
-			// TUI 模式 guiSetWidget 内部 no-op（isGuiCapable 守卫）。
+			// guiSetWidget 无 isGui 守卫（helpers.ts 仅查 ctx.ui?.setWidget 存在性），
+			// isGui 判定在 updateWidget 外层（projection/widget.ts）。
 			guiSetWidget(ctx as unknown as GuiContext, name, component);
 		},
 		setStatus(name: string, text: string | undefined): void {

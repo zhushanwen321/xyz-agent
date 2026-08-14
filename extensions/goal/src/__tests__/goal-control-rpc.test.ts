@@ -1,15 +1,11 @@
 /**
- * goal_control tool — execute handler RPC 分支 handler 级测试（W3 Wave __gui__ 协议）
- *
- * PR review 补测：registerGoalControlTool execute handler 中
- *   `if (ctx.mode === "rpc" && session.state)` 分支和 __gui__ 注入。
+ * goal_control tool — execute handler 级测试（M17 后：tool result 无 __gui__）
  *
  * 覆盖场景：
- * - RPC 模式 + session.state 非 null → details.__gui__ 存在（card 或 stats-line）
- * - RPC 模式 + session.state = null → 跳过路径守卫生效（前置 handler throw，验证分支不可达）
- * - TUI 模式 → __gui__ 不附加
- * - RPC 模式 + 有 budget → __gui__ 为 card 类型（progress-bar + stats-line）
- * - RPC 模式 + 无 budget → __gui__ 为 stats-line 类型
+ * - RPC 模式 create/complete/report_blocked → details 无 __gui__ 字段（状态展示改由
+ *   handle* 内 updateWidget 经 guiSetWidget 推送 M17 对话流 widget 面板）
+ * - RPC 模式 + session.state = null → 前置 handler throw（分支不可达）
+ * - 非 RPC 模式（tui/json/print）→ details 同样无 __gui__，content 文本正常
  *
  * 范式参考 ask-user/src/__tests__/index.test.ts R-1~R-7（handler 级：注册 → 捕获 → 直接调 execute）。
  * 不 mock handleCreate：走真实 createGoal 让 session.state 含完整字段（slug/objective/budget），
@@ -117,47 +113,36 @@ function createViaHandler(
 
 // ── 测试场景 ─────────────────────────────────────────
 
-describe("goal_control execute — RPC __gui__ 注入分支", () => {
-	it("RPC + 有 state（有 budget）→ details.__gui__ 存在且为 card 类型", async () => {
+describe("goal_control execute — RPC 模式 tool result 无 __gui__", () => {
+	it("RPC + 有 budget 的 create → details 无 __gui__ 字段（content 仍正常）", async () => {
 		const { pi, ctx } = makeFixture("rpc");
 		const tool = captureTool(pi);
-		// create 后 session.state 有 tokenBudget → buildGoalGui 走 card 分支
 		const result = await createViaHandler(tool, pi, ctx, {
 			slug: "rpc-card",
 			objective: "rpc card goal",
 			tokenBudget: 10000,
 		});
-		const gui = result.details.__gui__!;
-		expect(gui.component.type).toBe("card");
-		// card body 含 progress-bar（tokenBudget）+ stats-line
-		const body = gui.component.props.body as Array<{ type: string }>;
-		const types = body.map((c) => c.type);
-		expect(types).toContain("progress-bar");
-		expect(types).toContain("stats-line");
+		expect("__gui__" in result.details).toBe(false);
+		expect(result.details.action).toBe("create");
+		expect(result.details.status).toBe("active");
+		expect(result.content[0].text).toContain("Goal created");
 	});
 
-	it("RPC + 有 state（无 budget）→ details.__gui__ 存在且为 stats-line 类型", async () => {
+	it("RPC + 无 budget 的 create → details 无 __gui__ 字段", async () => {
 		const { pi, ctx } = makeFixture("rpc");
 		const tool = captureTool(pi);
-		// create 不传 budget → buildGoalGui 走 stats-line 分支
 		const result = await createViaHandler(tool, pi, ctx, {
 			slug: "rpc-stats",
 			objective: "rpc stats goal",
 		});
-		const gui = result.details.__gui__!;
-		expect(gui.component.type).toBe("stats-line");
-		// stats-line items 含 goal/status/turn/tokens
-		const items = gui.component.props.items as Array<{ label: string }>;
-		const labels = items.map((i) => i.label);
-		expect(labels).toContain("goal");
-		expect(labels).toContain("status");
+		expect("__gui__" in result.details).toBe(false);
+		expect(result.details.action).toBe("create");
 	});
 
-	it("RPC + session.state = null → 跳过路径守卫生效（前置 handler throw，分支不可达）", async () => {
-		// 源码 line 380: `if (ctx.mode === "rpc" && session.state)` 的 session.state 守卫。
+	it("RPC + session.state = null → 前置 handler throw（分支不可达）", async () => {
 		// execute 路径上，create 总会 set session.state；complete/report_blocked 前置守卫
-		// 要求 session.state 非 null 否则 throw——所以 session.state=null 时分支条件恒不成立。
-		// 验证：全新 session（state=null）下，complete 前置守卫先 throw，不进 __gui__ 注入逻辑。
+		// 要求 session.state 非 null 否则 throw——所以 session.state=null 时不会走到返回路径。
+		// 验证：全新 session（state=null）下，complete 前置守卫先 throw。
 		const { pi, ctx } = makeFixture("rpc");
 		let captured: CapturedTool | undefined;
 		const capturePi = {
@@ -168,7 +153,7 @@ describe("goal_control execute — RPC __gui__ 注入分支", () => {
 		} as unknown as ExtensionAPI;
 		registerGoalControlTool(capturePi, createGoalSession());
 		const tool2 = captured!;
-		// complete 在 state=null 时 throw（handleComplete 前置守卫）—— 不会走到 __gui__ 分支
+		// complete 在 state=null 时 throw（handleComplete 前置守卫）
 		await expect(
 			tool2.execute(
 				"id",
@@ -180,13 +165,12 @@ describe("goal_control execute — RPC __gui__ 注入分支", () => {
 		).rejects.toThrow(/not active/i);
 	});
 
-	it("RPC + complete 动作 → __gui__ 也附加（用终态 state 渲染）", async () => {
-		// 验证 __gui__ 注入不限于 create：complete 后 session.state 仍非 null（status=complete）
+	it("RPC + complete 动作 → details 无 __gui__ 字段（终态 status 正确）", async () => {
 		const { pi, ctx } = makeFixture("rpc");
 		const tool = captureTool(pi);
 		// 先 create（建 active state）
 		await createViaHandler(tool, pi, ctx, { slug: "comp", objective: "to complete" });
-		// 再 complete —— session.state.status=complete，buildGoalGui 走 card variant=success
+		// 再 complete —— session.state.status=complete
 		const result = await tool.execute(
 			"call-2",
 			{ action: "complete", evidence: "tests green" },
@@ -195,15 +179,10 @@ describe("goal_control execute — RPC __gui__ 注入分支", () => {
 			ctx,
 		);
 		expect(result.details.status).toBe("complete");
-		const gui = result.details.__gui__!;
-		// 无 budget → stats-line
-		expect(gui.component.type).toBe("stats-line");
-		const items = gui.component.props.items as Array<{ label: string; value: string }>;
-		const statusItem = items.find((i) => i.label === "status");
-		expect(statusItem!.value).toBe("complete");
+		expect("__gui__" in result.details).toBe(false);
 	});
 
-	it("RPC + report_blocked 动作 → __gui__ 附加，status severity danger", async () => {
+	it("RPC + report_blocked 动作 → details 无 __gui__ 字段（blocked status 正确）", async () => {
 		const { pi, ctx } = makeFixture("rpc");
 		const tool = captureTool(pi);
 		await createViaHandler(tool, pi, ctx, { slug: "blk", objective: "to block" });
@@ -215,21 +194,16 @@ describe("goal_control execute — RPC __gui__ 注入分支", () => {
 			ctx,
 		);
 		expect(result.details.status).toBe("blocked");
-		// 无 budget → stats-line；blocked status severity=danger
-		const gui = result.details.__gui__!;
-		expect(gui.component.type).toBe("stats-line");
-		const items = gui.component.props.items as Array<{ label: string; severity?: string }>;
-		const statusItem = items.find((i) => i.label === "status");
-		expect(statusItem!.severity).toBe("danger");
+		expect("__gui__" in result.details).toBe(false);
 	});
 
 });
 
-// ── 边界：非 RPC 模式（tui/json/print）也不注入 __gui__ ──
+// ── 边界：非 RPC 模式（tui/json/print）同样无 __gui__ ──
 
-describe("goal_control execute — 非 RPC 模式不注入 __gui__", () => {
+describe("goal_control execute — 非 RPC 模式无 __gui__", () => {
 	const NON_RPC_MODES: Array<"tui" | "json" | "print"> = ["tui", "json", "print"];
-	it.each(NON_RPC_MODES)("%s 模式 → __gui__ 不附加（content 仍正常）", async (mode) => {
+	it.each(NON_RPC_MODES)("%s 模式 → details 无 __gui__ 字段（content 仍正常）", async (mode) => {
 		const { pi, ctx } = makeFixture(mode);
 		const tool = captureTool(pi);
 		const result = await createViaHandler(tool, pi, ctx, {
@@ -237,7 +211,7 @@ describe("goal_control execute — 非 RPC 模式不注入 __gui__", () => {
 			objective: `${mode} goal`,
 			tokenBudget: 1000,
 		});
-		expect(result.details.__gui__).toBeUndefined();
-		expect(result.content[0]!.text).toContain("Goal created");
+		expect("__gui__" in result.details).toBe(false);
+		expect(result.content[0].text).toContain("Goal created");
 	});
 });
