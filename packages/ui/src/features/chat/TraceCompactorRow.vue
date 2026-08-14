@@ -7,7 +7,7 @@
     收编行位置：Turn.vue visible 块之前（design §3.1）。
   -->
   <div
-    class="flex cursor-pointer select-none items-center gap-1 py-1 text-[length:var(--text-2xs)] text-neutral-dim transition-colors hover:text-neutral-fg"
+    class="flex cursor-pointer select-none animate-notice-in items-center gap-1 py-1 text-[length:var(--text-2xs)] text-neutral-dim transition-colors hover:text-neutral-fg"
     data-testid="trace-compactor-row"
     @click="emit('toggle')"
   >

@@ -59,20 +59,22 @@
       class="mt-[3px] shrink-0 font-mono text-[10px] leading-[1.35] text-neutral-dim group-hover/item:invisible"
       data-testid="sidebar-session-meta"
     >
-      <!-- running：脉动小条 + 耗时（accent，同色同单元） -->
+      <!-- running：呼吸小条 + 耗时（accent，同色同单元）。
+           兑现顶部注释承诺的「running 脉动小条」——animate-pulse-dot 复用全局 pulse-dot
+           keyframes（opacity 1↔0.4，2s），竖条与耗时同节奏呼吸。 -->
       <span
         v-if="badgeKind === 'running'"
         data-testid="session-badge-running"
-        class="si-badge inline-flex items-center gap-1 rounded-sm bg-accent-soft px-1 leading-none text-accent"
+        class="inline-flex items-center gap-1 rounded-sm bg-accent-soft px-1 leading-none text-accent"
       >
-        <span class="inline-block h-[9px] w-[3px] rounded-[2px] bg-accent" />
+        <span class="inline-block h-[9px] w-[3px] animate-pulse-dot rounded-[2px] bg-accent" />
         <span v-if="timeLabel" class="text-[10px] text-neutral-dim">{{ timeLabel }}</span>
       </span>
-      <!-- waiting：… 胶囊（warn）— 需要用户介入 -->
+      <!-- waiting：… 胶囊（warn）— 需要用户介入，同节奏呼吸（animate-pulse-dot） -->
       <span
         v-else-if="badgeKind === 'waiting'"
         data-testid="session-badge-waiting"
-        class="inline-flex h-4 min-w-4 items-center justify-center rounded-sm bg-warn-soft px-1 text-[10px] font-semibold leading-none text-warn"
+        class="inline-flex h-4 min-w-4 animate-pulse-dot items-center justify-center rounded-sm bg-warn-soft px-1 text-[10px] font-semibold leading-none text-warn"
       >…</span>
       <!-- error：! 胶囊（danger）— 需要用户介入 -->
       <span

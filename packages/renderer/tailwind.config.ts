@@ -98,6 +98,8 @@ export default {
       // 此处仅保留 animation 简写，引用全局 @keyframes 名。
       animation: {
         'pulse-accent': 'pulse-accent 2s var(--ease) infinite',
+        // [chat-flow-polish] sidebar running/waiting badge 呼吸（复用全局 pulse-dot keyframes）
+        'pulse-dot': 'pulse-dot 2s ease-in-out infinite',
         blink: 'blink 1s step-end infinite',
         'loader-spin': 'loader-spin 1.4s linear infinite',
         'ask-user-slide-up': 'ask-user-slide-up var(--duration-slow) var(--ease)',
