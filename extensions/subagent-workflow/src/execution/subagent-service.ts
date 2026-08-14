@@ -955,6 +955,22 @@ export class SubagentService {
         `ended subagents cannot be messaged — start a new one; only subagents owned by the current session can be operated on.`,
       );
     }
+    // [v4 A-5 / P7] 直接父校验：rootSessionId 已确认 record 属于本 session 树，但递归场景下
+    // 孙级 record（parentRecordId = 某子进程的 self recordId）的子进程句柄只存在于其直接父
+    // 进程内存。主进程（execCtxBaseline=null）若仅凭 rootSessionId 通过就 message 孙级，会走
+    // 冷路径重新 spawn → 双写同一 session 文件（P7 双写者窗口）。统一用 baseline recordId 校验：
+    //   - 主进程 baseline=undefined → 只能操作 parentRecordId=undefined 的根层 record
+    //   - 子进程 baseline="sa-X"    → 只能操作 parentRecordId="sa-X" 的直接孩子
+    // record.parentRecordId===undefined 视作根层，仅主进程可操作（身份缺省的旧/异常 record 归此）。
+    const baselineRecordId = this.execCtxBaseline?.recordId ?? undefined;
+    if (record.parentRecordId !== baselineRecordId) {
+      throw new Error(
+        `subagent ${id} is owned by its direct parent; message it through that parent ` +
+        `(see /subagents list, parent=${record.parentRecordId ?? "(root layer)"}). [v4 A-5] cross-layer ` +
+        `ownership guard: this process's baseline=${baselineRecordId ?? "(root)"} is not the direct parent of ${id}; ` +
+        `operating here would race the owning child process's handle and double-write the session file.`,
+      );
+    }
     return record;
   }
 
