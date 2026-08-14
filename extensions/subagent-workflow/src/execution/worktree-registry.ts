@@ -57,7 +57,7 @@ export interface WorktreeEntry {
   /** 创建时间戳（ms，SPAWN_GRACE 判据 + 调试用）。 */
   readonly createdAt: number;
   /**
-   * 对应 subagent session jsonl 文件全路径（reaper .idle 豁免判据用）。
+   * 对应 subagent session jsonl 文件全路径（诊断/兼容字段，reaper 据 pid 死活判孤儿）。
    * session-runner first header 拿到 pid 时补全（create 时 record.sessionFile 尚未确定）。
    * 可选：旧 worktrees.json / 非 worktree 模式无此字段，向后兼容（undefined 时 reaper 走原 pid 判据）。
    */
@@ -95,7 +95,7 @@ export class WorktreeRegistry {
   /**
    * 更新 pid（runSpawn spawn() 返回后同步调）。
    * branch 不存在则忽略（create 后崩溃 + reaper 已清的竞态）。
-   * sessionFile 可选补全：传入时填入 entry 供 reaper .idle 豁免判据读取。
+   * sessionFile 可选补全：传入时填入 entry（reaper 据 pid 死活判孤儿，不读本字段）。
    */
   updatePid(branch: string, pid: number, sessionFile?: string): void {
     const entries = this.load();

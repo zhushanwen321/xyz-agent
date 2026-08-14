@@ -185,7 +185,6 @@ export async function doFinalizeRecord(
  *   - 不调 store.archive（record 留内存，getMutable 可查、list 可见）
  *   - 不 cleanup worktree（保留对话模式工作目录）
  *   - 不写 manifest（idle 非终态，manifest 是终态诊断辅助）
- *   - 写 .idle sidecar（含轮次计数，M3 重建矩阵命中 idle 分支用）
  *   - 删 .alive marker（进程已 SIGTERM 回收，不再是活进程）
  *   - emitUnregister（进程已死，从 pending 活跃后代差集移除；record 留内存不 archive）
  *

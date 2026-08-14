@@ -130,7 +130,7 @@ export class WorktreeManager {
    * 注册子进程 pid（runSpawn spawn() 返回后同步调）。
    * create 时 pid 未知写 0 占位，子进程 spawn 返回后（child.pid 同步可得）由此补全。
    * reaper 据 pid 死活判孤儿，pid=0 条目用 SPAWN_GRACE 宽限。
-   * sessionFile 可选补全：传入时填入 registry entry 供 reaper .idle 豁免读取。
+   * sessionFile 可选补全：传入时填入 registry entry（reaper 据 pid 死活判孤儿，不读本字段；保留供诊断）。
    */
   registerPid(branch: string, pid: number, sessionFile?: string): void {
     this.registry.updatePid(branch, pid, sessionFile);

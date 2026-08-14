@@ -987,11 +987,11 @@ export class SubagentService {
    *
    *   running + force:true  → cancelBackground（立即 SIGTERM + cancelled 终态）
    *   running + force:false → 置 closeAfterRound=true（等当前轮完成，runAndFinalize done 分流终态化为 done）
-   *   idle                  → closeChatIdle（无活进程，立即终态化为 done：删 .idle sidecar + finalize）
+   *   idle                  → closeChatIdle（无活进程，立即终态化为 done：finalize）
    *   其他终态              → 幂等 no-op（已结束）
    *
    * force 对 idle 无意义——idle 无在跑的工作可强制终止，统一走 closeChatIdle（done）。
-   * 与设计决策 5 一致：close = 正式终态（删 .idle + 走 finalize），force 只影响 running 时机。
+   * 与设计决策 5 一致：close = 正式终态（走 finalize），force 只影响 running 时机。
    *
    * @param record 目标 record（getRecordForAction 已校验归属）
    * @param force true=立即终止（running 时 SIGTERM）/ false=优雅关闭（running 时等轮完）
@@ -1019,7 +1019,7 @@ export class SubagentService {
    * idle record 无在途 AgentResult（轮次完成时 record 未冻结，turns[] 保留运行时状态），
    * 构造合成 done result（对齐 cancelBackground 的 cancelledResult 模式）。
    * 走 doFinalizeRecord 的完整终态化路径（completeRecord + archive + finalized + worktree
-   * cleanup + alive marker + manifest），并额外删 .idle sidecar（doFinalizeRecord 不删 .idle）。
+   * cleanup + alive marker + manifest）。
    *
    * 不走 tryTransition（idle record 的 status 不是 running，CAS 不通过）——直接由 doFinalizeRecord
    * 内部的 completeRecord 覆盖 status，与 cancelBackground 对 record 的处理同构。
@@ -1667,7 +1667,7 @@ export class SubagentService {
       rootCwd: this.rootCwd,
       // [V2 决策 2] chatMode 首轮闭环：agent_settled 时 session-runner 调本回调。
       // 轻量 idle 化（选项 1）：设 record.status=idle + round+=1 让 notify 守卫放行 + notify
-      // 主 agent，但**不调 doFinalizeRoundToIdle**（不写 .idle sidecar / 不 emitUnregister /
+      // 主 agent，但**不调 doFinalizeRoundToIdle**（不 emitUnregister /
       // 不 redeliver——V2 要删的副作用都不做）。runAndFinalize 检测到 status=idle 后 early return，
       // 不进现有 chatMode 分流。Step 5 删 idle 状态机时统一清理这个过渡 idle。
       // 防箭头函数 this 丢失：用箭头函数捕获 SubagentService 实例 this。

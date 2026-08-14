@@ -281,7 +281,7 @@ export async function cancelHandler(
     throw new Error(`Cannot cancel subagent ${id} (unsupported mode: ${rec.mode})`);
   }
   // 对话模式 cancel = close(force:true) 别名（设计决策 5）：chatMode record（running/idle）
-  // 走 close 行为路径（idle 删 .idle sidecar + 终态化 done；running 立即 SIGTERM cancelled），
+  // 走 close 行为路径（idle 终态化 done；running 立即 SIGTERM cancelled），
   // 返回 cancel 响应（向后兼容 cancel action 的返回类型）。非 chatMode 保持现有 cancel 行为。
   if (rec.chatMode) {
     const chatRecord = service.getRecordForAction(id);

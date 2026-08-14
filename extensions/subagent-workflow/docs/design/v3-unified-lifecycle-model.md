@@ -361,7 +361,8 @@ notify 主 agent：isIdle()=false 时退避等 idle 再发（triggerTurn 只在�
 ### S2：高频多轮热路径不回归（回溯 G1，SP-1）
 
 - 步骤：conversation:true 起 reviewer subagent，连发 3 轮 message，/subagents list 观察。
-- 通过标准：spawn 次数 = 1；parentId 链连续；每轮 notify 到达；进程空闲显示由 hasIdleTimer 派生（无 idle 字面量——grep ExecutionStatus 无 "idle"）。
+- 通过标准：spawn 次数 = 1；parentId 链连续；每轮 notify 到达。
+- **改判（V4 P5⑤ 回写）**：原标准末项「进程空闲显示由 hasIdleTimer 派生（无 idle 字面量——grep ExecutionStatus 无 "idle"）」与现状矛盾——`ExecutionStatus` 仍含 `"idle"` 字面量（types.ts:45），空闲显示仍由 `status === "idle"` 驱动。该收敛推迟至 V4 B-1（删 idle 字面量 → 派生谓词，待 b1 wave）；B-1 落地后本项改判为 hasIdleTimer 派生。当前 S2 以「spawn 次数 = 1 + parentId 连续 + 每轮 notify」三项为准（idle 字面量保留不阻塞本场景功能）。
 
 ### S3：并发 message 单写者（回溯 G3，SP-1）
 
@@ -425,7 +426,13 @@ notify 主 agent：isIdle()=false 时退避等 idle 再发（triggerTurn 只在�
 - **一期（本分支目标）**：SP-1 → SP-2 → SP-3 → SP-6（SP-2/SP-3/SP-6 互相无依赖，可并行；SP-1 是最大块）。一期收尾跑 S10 集成门。
 - **二期**：SP-4 → SP-5 → SP-8 → SP-9。SP-7 挂起等触发条件。
 
+> **落地状态（V4 P5④ 回写）**：一期（SP-1/SP-2/SP-3/SP-6）与二期（SP-4/SP-5/SP-8/SP-9）均已落地，SP-7 按设计 deferred（触发条件 spawn 改 detach 未到）。九 SP 落地 8 个后，进入 V4 收敛期（见 `v4-lifecycle-convergence.md`）：
+> - **V4 A 期（可靠性收口）**：A-1（EPIPE listener）、A-2（锁超时兜底）、A-3（upgrade 语义定案）、A-5（递归直接父守卫）已实施；A-4（文档-代码同步，含本回写）进行中。
+> - **V4 B 期（状态收敛）**：B-1（删 idle 字面量 → 派生谓词）、B-2（删 cancelled 字面量）待 b1 wave；**B-3（单互斥源 + L2 两簿记收敛）阻塞**——同步单写者不变量设计待补（TOCTOU，见 V4 §3.3 B-3 承重缺陷）。
+
 ### 5.1.1 一期完成后系统行为（中间态显式定义）
+
+> **⚠️ 历史快照（V4 P5④ 回写）**：本节描述的「一期完成、二期未开始」中间态已成历史——二期（SP-4/SP-5/SP-8/SP-9）已全部落地（见上文「落地状态」）。本节保留作设计决策追溯，**勿据本节中间态判断当前系统行为**；当前行为以 V4 收敛后状态为准。
 
 一期（SP-1/SP-2/SP-3/SP-6）完成后、二期（SP-4/SP-5）开始前，系统处于以下中间态。该中间态是**可接受的退化**，但必须显式定义以避免实施者误判。
 

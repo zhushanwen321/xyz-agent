@@ -1020,7 +1020,7 @@ export async function runSpawn(
           // create 时 pid 未知写 0 占位，此处拿到 child.pid 后回调 WorktreeManager.registerPid。
           // 取代旧的 .session mapping sidecar——注册表是 reaper 的唯一数据源。
           if (opts.worktree && child.pid) {
-            // 透传 record.sessionFile：reaper .idle 豁免判据需读 sidecar，
+            // 透传 record.sessionFile：填入 registry entry（reaper 据 pid 死活判孤儿），
             // first header 时 sessionFile 已回填（deriveSessionFilePath 在本分支上方）。
             ctx.onWorktreePid?.(opts.worktree.branch, child.pid, record.sessionFile);
           }
