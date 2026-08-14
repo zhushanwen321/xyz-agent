@@ -576,7 +576,7 @@ describe("SubagentService", () => {
       );
     });
 
-    it("cancel(background) → unregister(reason=cancelled) 被 emit，register 未被 emit", () => {
+    it("cancel(background) → unregister(reason=closed) 被 emit，register 未被 emit（v4 B-1 cancelled 折入 closed）", () => {
       const { service, pi } = makeReadyServiceWithPi();
       const record = injectRunningBackground(service, "bg-cancel-1");
       expect(record.status).toBe("running");
@@ -587,7 +587,7 @@ describe("SubagentService", () => {
       expect(ok).toBe(true);
       expect(pi.events.emit).toHaveBeenCalledWith(
         "pending:unregister",
-        expect.objectContaining({ id: "bg-cancel-1", reason: "cancelled" }),
+        expect.objectContaining({ id: "bg-cancel-1", reason: "closed" }),
       );
       // record 手动注入（未走 execute）→ register 不应被 emit
       expect(pi.events.emit).not.toHaveBeenCalledWith("pending:register", expect.anything());

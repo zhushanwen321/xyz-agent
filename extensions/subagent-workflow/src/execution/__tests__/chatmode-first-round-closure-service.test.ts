@@ -133,7 +133,7 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
 
   // ── 改动 2：onRoundSettled 回调注入 ──────────────────────────────────
 
-  it("buildSessionRunnerContext 注入 onRoundSettled：设 idle + round+=1 + notifyComplete", () => {
+  it("buildSessionRunnerContext 注入 onRoundSettled：设 running(idle 折入) + round+=1 + notifyComplete", () => {
     const ctx = internals.buildSessionRunnerContext();
     expect(typeof ctx.onRoundSettled).toBe("function");
 
@@ -142,10 +142,10 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
 
     ctx.onRoundSettled!(record);
 
-    // [改动 2] 轻量 idle 化：status=idle（notify 守卫放行）+ round 0→1（dedup key 递增）
-    expect(record.status).toBe("idle");
+    // [改动 2] 轻量 idle 化（v4 B-1：idle 折入 running）：status=running（notify 守卫放行）+ round 0→1（dedup key 递增）
+    expect(record.status).toBe("running");
     expect(record.round).toBe(1);
-    // notifyComplete 被调 1 次，入参是当前 record（此时 idle，toNotifyRecord 守卫放行）
+    // notifyComplete 被调 1 次，入参是当前 record（此时 running+isIdle，toNotifyRecord 守卫放行）
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy).toHaveBeenCalledWith(record);
   });
@@ -158,7 +158,7 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
 
     ctx.onRoundSettled!(record);
 
-    expect(record.status).toBe("idle");
+    expect(record.status).toBe("running");
     expect(record.round).toBe(2); // 第二轮 round 累加
   });
 
@@ -206,7 +206,7 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
     internals.store.register(record);
     await callRunAndFinalize(record, true);
 
-    expect(record.status).toBe("idle"); // finalizeRoundToIdle 设的（现有行为）
+    expect(record.status).toBe("running"); // finalizeRoundToIdle 设的（v4 B-1 idle 折入 running）
     expect(record.round).toBe(1); // finalizeRoundToIdle +1
     expect(internals.store.getMutable(record.id)).toBe(record);
   });

@@ -50,14 +50,9 @@ describe("ClosedReason enum", () => {
 // ============================================================
 
 describe("ExecutionStatus type", () => {
-  it("合法值只有 running/idle/cancelled/closed", () => {
-    const validStatuses: ExecutionStatus[] = [
-      "running",
-      "idle",
-      "cancelled",
-      "closed",
-    ];
-    expect(validStatuses).toHaveLength(4);
+  it("合法值只有 running/closed（v4 B-1 两态收敛）", () => {
+    const validStatuses: ExecutionStatus[] = ["running", "closed"];
+    expect(validStatuses).toHaveLength(2);
   });
 
   it("done/failed/crashed 不是合法 ExecutionStatus", () => {
@@ -115,12 +110,12 @@ describe("tryTransition with closed + closedReason", () => {
     expect(record.closedReason).toBe("gc");
   });
 
-  it("running → cancelled 不写 closedReason", () => {
+  it("running → closed + cancelled 写入 closedReason（cancelled 折入 closed）", () => {
     const record = makeRunningRecord();
-    const ok = tryTransition(record, "cancelled");
+    const ok = tryTransition(record, "closed", "cancelled");
     expect(ok).toBe(true);
-    expect(record.status).toBe("cancelled");
-    expect(record.closedReason).toBeUndefined();
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("cancelled");
   });
 
   it("closed 不可再转（CAS 互斥锁）", () => {
@@ -132,20 +127,13 @@ describe("tryTransition with closed + closedReason", () => {
     expect(record.closedReason).toBe("gc"); // 未被覆盖
   });
 
-  it("cancelled 不可再转（CAS 互斥锁）", () => {
+  it("closed + cancelled 不可再转（CAS 互斥锁，closedReason 不可覆盖）", () => {
     const record = makeRunningRecord();
-    tryTransition(record, "cancelled");
+    tryTransition(record, "closed", "cancelled");
     const ok = tryTransition(record, "closed", "gc");
     expect(ok).toBe(false);
-    expect(record.status).toBe("cancelled");
-  });
-
-  it("idle 不可转 closed（CAS 要求 running）", () => {
-    const record = makeRunningRecord();
-    record.status = "idle";
-    const ok = tryTransition(record, "closed", "gc");
-    expect(ok).toBe(false);
-    expect(record.status).toBe("idle");
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("cancelled"); // 未被覆盖
   });
 });
 
@@ -193,13 +181,13 @@ describe("completeRecord with closed + closedReason", () => {
     expect(record.closedReason).toBe("gc");
   });
 
-  it("cancelled 不写 closedReason", () => {
+  it("closed + cancelled 写入 closedReason（cancelled 折入 closed）", () => {
     const record = makeRunningRecord();
     const result = { text: "", turns: 0, durationMs: 0, success: false, error: "cancelled", sessionId: "s", toolCalls: [] };
-    completeRecord(record, result, "cancelled");
+    completeRecord(record, result, "closed", "cancelled");
 
-    expect(record.status).toBe("cancelled");
-    expect(record.closedReason).toBeUndefined();
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("cancelled");
   });
 });
 
@@ -307,16 +295,8 @@ describe("mapExternalState", () => {
     expect(mapExternalState("running")).toBe("active");
   });
 
-  it("idle → waiting", () => {
-    expect(mapExternalState("idle")).toBe("waiting");
-  });
-
   it("closed → ended", () => {
     expect(mapExternalState("closed")).toBe("ended");
-  });
-
-  it("cancelled → ended", () => {
-    expect(mapExternalState("cancelled")).toBe("ended");
   });
 });
 
@@ -336,18 +316,6 @@ describe("statusGlyph", () => {
     expect(glyph.icon).toBeUndefined();
     expect(glyph.color).toBe("accent");
   });
-
-  it("idle → ⏸ warning", () => {
-    const glyph = statusGlyph("idle");
-    expect(glyph.icon).toBe("⏸");
-    expect(glyph.color).toBe("warning");
-  });
-
-  it("cancelled → ■ muted", () => {
-    const glyph = statusGlyph("cancelled");
-    expect(glyph.icon).toBe("■");
-    expect(glyph.color).toBe("muted");
-  });
 });
 
 // ============================================================
@@ -355,10 +323,10 @@ describe("statusGlyph", () => {
 // ============================================================
 
 describe("BgNotifyRecord.status", () => {
-  it("合法值只有 closed/cancelled/idle", () => {
+  it("合法值只有 running/closed（v4 B-1 两态收敛）", () => {
     // 编译期验证
-    const valid: BgNotifyRecord["status"][] = ["closed", "cancelled", "idle"];
-    expect(valid).toHaveLength(3);
+    const valid: BgNotifyRecord["status"][] = ["running", "closed"];
+    expect(valid).toHaveLength(2);
   });
 
   it("closed + closedReason 可构造", () => {

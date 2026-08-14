@@ -254,11 +254,11 @@ describe("TC-2: collectRecords 返回全树（含深层）", () => {
     expect(byId.get("sa-c")!.parentRecordId).toBe("sa-b");
   });
 
-  it("statusFilter='running' 只返回内存 running record（深层磁盘 idle 被过滤）", () => {
+  it("statusFilter='running' 返回全树（v4 B-1：深层磁盘 idle 重建为 running）", () => {
     const ROOT_SESSION = "root-filter-001";
     const store = new RecordStore(tmpDir);
 
-    // 3 条磁盘 idle record（SP-2: 无 sidecar → idle）
+    // 3 条磁盘 idle record（SP-2: 无 sidecar → 旧 idle，v4 B-1 重建为 running）
     writeSessionJsonl(path.join(tmpDir, "a.jsonl"), {
       id: "sa-a", agent: "worker", mode: "background", task: "task A", startedAt: 1000,
       rootSessionId: ROOT_SESSION, depth: 0,
@@ -288,8 +288,11 @@ describe("TC-2: collectRecords 返回全树（含深层）", () => {
     const runningRecords = store.collectRecords(100, "running", ROOT_SESSION);
     const ids = runningRecords.map((r) => r.id);
 
-    // 只有 C 是 running（磁盘 A/B 是 idle，被过滤）
-    expect(ids).toEqual(["sa-c"]);
+    // v4 B-1：磁盘 A/B 旧 idle 现重建为 running（idle 折入 running），与内存 C 一起返回
+    expect(ids).toHaveLength(3);
+    expect(ids).toContain("sa-a");
+    expect(ids).toContain("sa-b");
+    expect(ids).toContain("sa-c");
   });
 
   it("无 rootSessionFilter 时不过滤（向后兼容）", () => {

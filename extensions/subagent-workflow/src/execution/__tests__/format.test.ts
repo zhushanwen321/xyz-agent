@@ -76,10 +76,6 @@ describe("statusGlyph", () => {
   it("closed → checkmark, success", () => {
     expect(statusGlyph("closed")).toEqual({ icon: "✓", color: "success" });
   });
-
-  it("cancelled → square, muted", () => {
-    expect(statusGlyph("cancelled")).toEqual({ icon: "■", color: "muted" });
-  });
 });
 
 // ============================================================

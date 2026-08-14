@@ -85,7 +85,8 @@ function makeIdleRecord(id = "sa-chat"): ExecutionRecord {
     rootSessionId: "root-session",
     chatMode: true,
   });
-  record.status = "idle";
+  // v4 B-1：idle 折入 running。"等待续聊"态现为 status="running"（isIdle/isResumable 派生谓词区分）。
+  record.status = "running";
   record.round = 1;
   record.controller = new AbortController();
   return record;
@@ -197,7 +198,7 @@ describe("resumeRound (M2-B1 idle 投递)", () => {
     fs.rmSync(agentDir, { recursive: true, force: true });
   });
 
-  it("idle → status=running → kickOff runSpawn 收到 resume 参数；chatMode+done 回 idle/round+1", async () => {
+  it("resumeRound(running) → kickOff runSpawn 收到 resume 参数；chatMode+done 回 running/round+1", async () => {
     mockRunSpawn.mockResolvedValueOnce(makeResult(true));
     const beforeRound = record.round;
 
@@ -218,13 +219,13 @@ describe("resumeRound (M2-B1 idle 投递)", () => {
     });
     expect((call[4] as { model: string }).model).toBe("test/test-model");
 
-    // 等 detached 完成：chatMode+done→idle（M2-A 分流），round 累加
-    await vi.waitFor(() => expect(record.status).toBe("idle"));
+    // 等 detached 完成：chatMode+done→running（v4 B-1 idle 折入 running，M2-A 分流），round 累加
+    await vi.waitFor(() => expect(record.status).toBe("running"));
     expect(record.round).toBe(beforeRound! + 1);
   });
 
-  it("非 idle record → throw 行动语言（MF-4，仅 idle 可续聊），不触发 kickOff", () => {
-    record.status = "running";
+  it("终态 closed record → throw 行动语言（MF-4，仅 running 可续聊），不触发 kickOff", () => {
+    record.status = "closed";
     // MF-4：行动语言（spec §3.1），不暴露 resume/controller 内部词汇
     expect(() => service.resumeRound(record, "msg")).toThrow(/not ready for a new message/);
     expect(mockRunSpawn).not.toHaveBeenCalled();
@@ -338,7 +339,7 @@ describe("deliverMessage (V2 决策 3 chatMode 统一投递)", () => {
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
   });
 
-  it("续聊后 agent_settled → onRoundSettled 设 idle + round+1（复用 Step 4a 链路）", () => {
+  it("续聊后 agent_settled → onRoundSettled 设 running + round+1（v4 B-1 idle 折入 running，复用 Step 4a 链路）", () => {
     // buildSessionRunnerContext 是 private，类型断言访问（测试专用）
     const ctx = (service as unknown as { buildSessionRunnerContext(): SessionRunnerContext }).buildSessionRunnerContext();
     record.status = "running"; // 模拟 deliverMessage 热路径设的新 turn 状态
@@ -347,7 +348,7 @@ describe("deliverMessage (V2 决策 3 chatMode 统一投递)", () => {
     // 模拟 session-runner 在 agent_settled 时调本回调（Step 4a 接入点）
     ctx.onRoundSettled!(record);
 
-    expect(record.status).toBe("idle");
+    expect(record.status).toBe("running");
     expect(record.round).toBe(beforeRound! + 1);
   });
 });

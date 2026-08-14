@@ -140,15 +140,15 @@ describe("FR-8: Orphan Recovery from Manifest", () => {
     });
 
     // M3: ManifestRecord.status 4 态（running/completed/failed/cancelled）。
-    // cancelled 不再归并 failed——finalize 直接透传 cancelled,mapManifestStatus 映射为
-    // cancelled ExecutionStatus。crashed 不进 manifest（crashed 是重启重建时靠 sidecar
-    // 四分支推断的派生态,见 record-store.ts reconstructAll）。
+    // v4 B-1：cancelled 不再是独立 ExecutionStatus——mapManifestStatus 映射为 closed
+    //（closedReason='cancelled' 由重建路径 sidecar 推断）。crashed 不进 manifest
+    //（crashed 是重启重建时靠 sidecar 四分支推断的派生态,见 record-store.ts reconstructAll）。
     const records = store.collectRecords(100, "all", "session-main");
     expect(records).toHaveLength(3);
 
     expect(records.find((r) => r.id === "status-completed")?.status).toBe("closed");
     expect(records.find((r) => r.id === "status-failed")?.status).toBe("closed");
-    expect(records.find((r) => r.id === "status-cancelled")?.status).toBe("cancelled");
+    expect(records.find((r) => r.id === "status-cancelled")?.status).toBe("closed");
   });
 
   it("mapManifestStatus 越界值返回 null：collectRecords 跳过损坏 record（不降级 failed）", async () => {

@@ -117,10 +117,10 @@ describe("renderBgNotifyMessage", () => {
     expect(lines[lines.length - 1]).toContain("╰");
   });
 
-  it("cancelled → 内容含 cancelled", () => {
+  it("closed + closedReason=cancelled → 内容含 cancelled（v4 B-1 cancelled 折入 closed）", () => {
     const { theme } = makeTheme();
     const comp = renderBgNotifyMessage(
-      { details: { status: "cancelled", agent: "w", id: "bg-3" } },
+      { details: { status: "closed", closedReason: "cancelled", agent: "w", id: "bg-3" } },
       { expanded: false },
       theme,
     );
@@ -235,7 +235,7 @@ describe("renderBgNotifyMessage", () => {
           items: [
             { status: "closed", agent: "alpha", id: "1", result: "r1" },
             { status: "closed", agent: "beta", id: "2", error: "e2" },
-            { status: "cancelled", agent: "gamma", id: "3" },
+            { status: "closed", closedReason: "cancelled", agent: "gamma", id: "3" },
           ],
         },
       },

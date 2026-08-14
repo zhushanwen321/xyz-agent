@@ -80,7 +80,7 @@ interface ServiceInternals {
 /** 非 chatMode background record（one-shot 模式）。 */
 function makeOneShotRecord(
   sessionRootId: string,
-  status: "running" | "idle" = "running",
+  status: "running" = "running",
   id = "sa-oneshot",
 ): ExecutionRecord {
   const record = createRecord(id, {
@@ -96,10 +96,10 @@ function makeOneShotRecord(
   });
   record.status = status;
   record.controller = new AbortController();
-  if (status === "idle") {
-    record.sessionFile = "/tmp/fake-session.jsonl";
-    record.round = 1;
-  }
+  // v4 B-1：one-shot 完成后 record 为 running（idle 折入 running）+ isResumable（无活进程）。
+  // sessionFile 总设（resumeRound 冷路径校验需要，热路径无害）。
+  record.sessionFile = "/tmp/fake-session.jsonl";
+  record.round = 1;
   return record;
 }
 
@@ -157,9 +157,9 @@ describe("SP-5 one-shot upgrade（message → chatMode + 冷 resume）", () => {
   // TC-2: upgrade 后走冷路径 resume
   // 场景：one-shot idle record（进程已死）→ message → chatMode=true → deliverMessage 冷路径 → resumeRound
   it("TC-2: one-shot idle record 收到 message → chatMode 升级 + 冷路径 resume", async () => {
-    // idle record 需要 sessionFile（resumeRound 校验）
+    // one-shot 完成态 record（running + isResumable）需要 sessionFile（resumeRound 冷路径校验）
     fs.writeFileSync("/tmp/fake-session.jsonl", "");
-    const record = makeOneShotRecord(sessionRootId, "idle");
+    const record = makeOneShotRecord(sessionRootId);
     store.register(record);
 
     // mock runSpawn 返回成功（resume 后的 spawn）
@@ -175,16 +175,15 @@ describe("SP-5 one-shot upgrade（message → chatMode + 冷 resume）", () => {
     expect(record.chatMode).toBe(true);
     // 验证走了 resumeRound → runSpawn（冷路径）
     expect(mockRunSpawn).toHaveBeenCalled();
-    // record 被 resumeRound 设回 running（idle → running），然后 runAndFinalize 完成后可能回到 idle
+    // record 被 resumeRound 设为 running，runAndFinalize 完成后保持 running（v4 B-1 idle 折入 running）
     // 关键是 record 不在终态
     expect(record.status).not.toBe("closed");
-    expect(record.status).not.toBe("cancelled");
   });
 
   // TC-3: upgrade 后 record 可续聊（非终态）
   // 场景：验证升级后的 record 不会被 finalize 为终态，仍可接受后续 message
   it("TC-3: upgrade 后 record 可续聊（非终态，仍在内存）", async () => {
-    const record = makeOneShotRecord(sessionRootId, "idle");
+    const record = makeOneShotRecord(sessionRootId);
     store.register(record);
 
     // runSpawn 返回成功
@@ -200,7 +199,7 @@ describe("SP-5 one-shot upgrade（message → chatMode + 冷 resume）", () => {
     expect(mutable).toBeDefined();
     expect(mutable!.chatMode).toBe(true);
 
-    // 验证 status 不是终态（closed/cancelled 是终态；running/idle 是非终态）
-    expect(["running", "idle"]).toContain(record.status);
+    // 验证 status 不是终态（closed 是终态；running 是非终态，v4 B-1 idle 折入 running）
+    expect(record.status).toBe("running");
   });
 });
