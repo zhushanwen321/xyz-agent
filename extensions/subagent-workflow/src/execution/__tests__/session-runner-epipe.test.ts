@@ -142,7 +142,7 @@ describe("[v4 A-1] session-runner 异步 stdin 'error' listener", () => {
     await promise;
   });
 
-  it("③ 同步预置计数 + 异步 stdin 'error' 合并到阈值 → throw（防死循环）", async () => {
+  it("③ 同步预置计数 + 异步 stdin 'error' 合并计数（handler 不 throw，防 listener 内 throw 崩进程）", async () => {
     const record = makeRecord("sa-threshold");
     const promise = runSpawn(record, "Task: threshold", makeOpts(), makeCtx());
 
@@ -152,20 +152,16 @@ describe("[v4 A-1] session-runner 异步 stdin 'error' listener", () => {
     // 预置 count=1（模拟 deliverMessage 同步路径已计 1 次失败——证明共用同一计数器）
     expect(recordEpipeFailure(record.id)).toBe(1);
 
-    // 再发一次异步 stdin 'error'：handler 调 recordEpipeFailure → count=2 ≥ 阈值 → throw。
-    // throw 在 stream 'error' listener 内，经 emit() 同步传播回本调用点，try/catch 捕获。
-    let thrown: unknown;
-    try {
-      child.stdin.emit("error", epipeError());
-    } catch (err) {
-      thrown = err;
-    }
-    expect(thrown).toBeInstanceOf(Error);
-    expect((thrown as Error).message).toContain("process unstable");
-    expect((thrown as Error).message).toContain(record.id);
+    // [v4 A-1 裁决] async handler 内不 throw（stream 'error' listener 内 throw 会经 emit
+    // 传播为 uncaughtException 崩主进程，违背 A-1 防崩）——达阈值 throw 留同步路径。
+    // emit 不抛错：
+    expect(() => child.stdin.emit("error", epipeError())).not.toThrow();
+
+    // handler 调 recordEpipeFailure → count=2（达阈值但 async 不 throw）；此处再调返回 3
+    expect(recordEpipeFailure(record.id)).toBe(3);
     expect(EPIPE_FAILURE_THRESHOLD).toBe(2);
 
-    // handler 也已移出 spawnedChildren
+    // handler 已移出 spawnedChildren（标记 dead，下次 deliverMessage 检测走冷路径）
     expect(spawnedChildren.has(record.id)).toBe(false);
 
     settleRunSpawn(child);

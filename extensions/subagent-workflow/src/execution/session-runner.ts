@@ -905,20 +905,24 @@ export async function runSpawn(
     // 子进程退出后内核回写 EPIPE 会以异步 stream 'error' event 到达，若无 listener 会让 Node
     // 抛 unhandled 'error' 崩主进程（P1）。必须在首次 stdin 写入（下方 sendPromptCommand）前注册。
     // handler 行为：①移出 spawnedChildren 标记 dead（与 child.on('error') :1141 同模式）；
-    // ②recordEpipeFailure 合并同步/异步计数——达阈值即 throw（不再 resume，防死循环），
-    //   要求调用方 close + start 新 subagent；③logger.warn 记录一次。
+    // ②recordEpipeFailure 合并同步/异步计数；③logger.warn 记录一次。
+    // [v4 A-1 裁决] handler 内**不 throw**——stream 'error' listener 内 throw 会经 Node 内部
+    // emit() 传播为 uncaughtException 崩主进程，违背 A-1 防崩核心目标。达阈值的 throw 留给
+    // 同步路径（deliverMessage catch 合并计数达 EPIPE_FAILURE_THRESHOLD 时同步 throw，不崩）。
+    // async handler 只移句柄 + 计数 + warn；进程已 dead（移句柄），下次 deliverMessage 检测
+    // dead 走冷路径，冷路径 write EPIPE 同步计数达阈值同步 throw——防死循环且不崩。
     child.stdin.on("error", (err: Error) => {
       spawnedChildren.delete(record.id);
       const count = recordEpipeFailure(record.id);
       logger.warn(`[subagents] async stdin error for ${record.id}`, {
         detail: err.message,
         epipeCount: count,
+        threshold: EPIPE_FAILURE_THRESHOLD,
+        hint:
+          count >= EPIPE_FAILURE_THRESHOLD
+            ? "sync path will throw on next write EPIPE"
+            : undefined,
       });
-      if (count >= EPIPE_FAILURE_THRESHOLD) {
-        throw new Error(
-          `[subagents] subagent ${record.id} process unstable; action: close and start a new one`,
-        );
-      }
     });
 
     // 喂 prompt 命令驱动子进程开始处理 task。pi runRpcMode 只消费 stdin RpcCommand，
