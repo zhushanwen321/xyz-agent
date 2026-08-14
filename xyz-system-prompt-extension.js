@@ -25,7 +25,7 @@
 
 import path from 'node:path'
 import { homedir } from 'node:os'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 
 const CONFIG_FILE = 'system-prompt.json'
 
@@ -74,10 +74,22 @@ function resolveGlobalAgentsDir() {
  */
 function readGlobalAgentsFile() {
   const dir = resolveGlobalAgentsDir()
+  // Match candidates against real directory entries (exact case) instead of
+  // existsSync-per-candidate: on case-insensitive filesystems (macOS APFS
+  // default) existsSync('AGENTS.md') would hit a file actually named
+  // AGENTS.MD, reporting an injected path that differs from the on-disk
+  // filename and shadowing the later exact-case candidate.
+  let entries
+  try {
+    entries = new Set(readdirSync(dir))
+  } catch {
+    return null
+  }
   for (const name of GLOBAL_AGENTS_CANDIDATES) {
+    if (!entries.has(name)) continue
     const filePath = path.join(dir, name)
     try {
-      if (existsSync(filePath) && statSync(filePath).isFile()) {
+      if (statSync(filePath).isFile()) {
         const content = readFileSync(filePath, 'utf-8')
         if (content.trim()) {
           return { path: filePath, content }
