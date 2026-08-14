@@ -28,6 +28,7 @@ import { isTerminalStatus } from "../engine/goal";
 import type { GoalRuntimeState } from "../engine/types";
 import type { UiPort } from "../ports";
 import type { GoalSession } from "../session";
+import { guiComponent, type GuiComponent } from "@xyz-agent/extension-protocol";
 
 /**
  * projection 层的 Theme 抽象。不 import Pi 的 ThemeColor。
@@ -192,6 +193,100 @@ export function renderWidgetLines(state: GoalRuntimeState, th: ThemeLike): strin
 	return lines;
 }
 
+// ── GUI 协议 widget（buildGoalGui，renderWidgetLines 的 GuiComponent 版）──────────
+
+/** GoalStatus → stats-line StatItem（severity 语义化，对标 TUI 的状态后缀着色）。 */
+function statusToStatItem(
+	state: GoalRuntimeState,
+): { value: string; severity: "ok" | "warn" | "danger" } | null {
+	switch (state.status) {
+		case "paused":
+			return { value: "Paused", severity: "warn" };
+		case "blocked":
+			return { value: "Blocked", severity: "danger" };
+		case "complete":
+			return { value: "Completed", severity: "ok" };
+		case "budget_limited":
+			return { value: "Budget exhausted", severity: "danger" };
+		default:
+			return null;
+	}
+}
+
+/**
+ * 把 goal state 映射为 GuiComponent（card 容器 + stats-line 标题 + progress-bar token）。
+ *
+ * 对标 renderWidgetLines 的 TUI 文本行，用结构化原语表达：
+ * - card.header = stats-line（◆ title | Turn N | Time | Token% | 状态后缀）
+ * - card.body = successCriteria 摘要（stats-line icon:check）+ token progress-bar（有预算时）
+ *
+ * RPC 模式经 guiSetWidget 编码（marker 进 string[]），host 侧 event-adapter 解码还原成
+ * GuiComponent → GuiComponentRenderer 渲染。TUI 模式不调本函数（走 renderWidgetLines）。
+ */
+export function buildGoalGui(state: GoalRuntimeState): GuiComponent | undefined {
+	if (state.status === "cancelled") return undefined;
+
+	const title = getTitle(state);
+	const elapsed = formatMinutes(getElapsedSeconds(state));
+
+	interface HeaderItem {
+		label?: string;
+		value: string;
+		severity?: "ok" | "warn" | "danger";
+		icon?: string;
+	}
+	const headerItems: HeaderItem[] = [
+		{ value: `◆ ${title}` },
+		{ label: "Turn", value: `${state.currentTurnIndex}` },
+		{ label: "Time", value: elapsed },
+	];
+
+	const body: GuiComponent[] = [];
+
+	// successCriteria 摘要（对标 renderWidgetLines 的 ✓ 行）
+	if (state.successCriteria) {
+		const criteria = toSingleLine(state.successCriteria);
+		const trimmed =
+			criteria.length > OBJECTIVE_DISPLAY_LIMIT
+				? `${criteria.slice(0, OBJECTIVE_TRUNCATE_KEEP)}...`
+				: criteria;
+		body.push(
+			guiComponent("stats-line", {
+				items: [{ icon: "check", value: trimmed }],
+			}),
+		);
+	}
+
+	// Token：有预算 → progress-bar；无预算 → stats-line 绝对值
+	if (state.budget.tokenBudget && state.budget.tokenBudget > 0) {
+		const pct = Math.round(getTokenUsagePercent(state));
+		const severity: "ok" | "warn" | "danger" =
+			pct >= 95 ? "danger" : pct >= 80 ? "warn" : "ok";
+		headerItems.push({ label: "Token", value: `${pct}%`, severity });
+		body.push(
+			guiComponent("progress-bar", {
+				label: `Token ${formatTokens(state.tokensUsed)}/${formatTokens(state.budget.tokenBudget)}`,
+				current: state.tokensUsed,
+				total: state.budget.tokenBudget,
+				unit: "tokens",
+				severity,
+			}),
+		);
+	} else {
+		headerItems.push({ label: "Token", value: formatTokens(state.tokensUsed) });
+	}
+
+	// 状态后缀（对标 renderStatusLine 的 switch）
+	const statusItem = statusToStatItem(state);
+	if (statusItem) headerItems.push(statusItem);
+
+	return guiComponent("card", {
+		variant: "default",
+		header: guiComponent("stats-line", { items: headerItems }),
+		body,
+	});
+}
+
 // ── updateWidget（FR-6.6 hasUI 守卫）──
 
 /**
@@ -220,16 +315,22 @@ export { asTheme };
 /**
  * 刷新 widget + status bar。
  *
- * FR-6.6：`uiPort.hasUI === false`（headless / RPC mode）时直接 return，
- * 不调 setWidget / setStatus，避免无 UI 环境崩溃或无意义写入。
+ * FR-6.6：`uiPort.hasUI === false`（headless）时直接 return。
  *
- * 终态折叠为单行 status bar；cancelled / 无 state 时清除 widget + status。
+ * GUI 模式（RPC，uiPort.isGui）：推送 buildGoalGui 的 GuiComponent（guiSetWidget marker
+ * 编码，host 侧解码 → GuiComponentRenderer 渲染）。
+ * TUI 模式：推送 renderWidgetLines 文本行（向后兼容）。
+ *
+ * 终态折叠为单行 status bar（widget 清除）；cancelled/无 state 清除 widget + status。
  */
 export function updateWidget(session: GoalSession, uiPort: UiPort): void {
 	if (!uiPort.hasUI) return;
 
+	const isGui = uiPort.isGui;
+
 	if (!session.state || session.state.status === "cancelled") {
-		uiPort.setWidget("goal", undefined);
+		if (isGui) uiPort.setGuiWidget("goal", undefined);
+		else uiPort.setWidget("goal", undefined);
 		uiPort.setStatus("goal", undefined);
 		return;
 	}
@@ -240,10 +341,15 @@ export function updateWidget(session: GoalSession, uiPort: UiPort): void {
 		if (statusText) {
 			uiPort.setStatus("goal", statusText);
 		}
-		uiPort.setWidget("goal", undefined);
+		if (isGui) uiPort.setGuiWidget("goal", undefined);
+		else uiPort.setWidget("goal", undefined);
 		return;
 	}
 
 	uiPort.setStatus("goal", renderStatusLine(session.state, asTheme(uiPort)));
-	uiPort.setWidget("goal", renderWidgetLines(session.state, asTheme(uiPort)));
+	if (isGui) {
+		uiPort.setGuiWidget("goal", buildGoalGui(session.state));
+	} else {
+		uiPort.setWidget("goal", renderWidgetLines(session.state, asTheme(uiPort)));
+	}
 }

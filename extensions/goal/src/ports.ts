@@ -7,6 +7,7 @@
  */
 
 import type { GoalRuntimeState } from "./engine/types";
+import type { GuiComponent } from "@xyz-agent/extension-protocol";
 
 // ── GoalHistoryEntry（DTO，非 aggregate，D-09）─────────
 
@@ -36,12 +37,19 @@ export interface PersistencePort {
 export interface UiPort {
 	/** 设置 widget（undefined = 清除）。hasUI=false 时 adapter 跳过（FR-6.6） */
 	setWidget(name: string, content: string[] | string | undefined): void;
+	/**
+	 * 设置 GUI 协议 widget（GuiComponent，RPC 模式经 guiSetWidget marker 编码）。
+	 * TUI 模式 adapter 内部 no-op（走 setWidget 文本行）。undefined = 清除。
+	 */
+	setGuiWidget(name: string, component: GuiComponent | undefined): void;
 	/** 设置 status bar */
 	setStatus(name: string, text: string | undefined): void;
 	/** 弹通知 */
 	notify(text: string, level: "info" | "warning" | "error"): void;
-	/** 是否有 UI（headless/RPC mode 为 false） */
+	/** 是否有 UI（headless 为 false） */
 	readonly hasUI: boolean;
+	/** 是否 GUI 渲染模式（RPC → GuiComponent；TUI → 原生文本行） */
+	readonly isGui: boolean;
 }
 
 // ── MessagingPort ────────────────────────────────────

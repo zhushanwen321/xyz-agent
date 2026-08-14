@@ -10,6 +10,8 @@
  */
 
 import type { ExtensionAPI, ExtensionContext, ThemeColor } from "@earendil-works/pi-coding-agent";
+import { guiSetWidget, isGuiCapable } from "@xyz-agent/extension-protocol";
+import type { GuiComponent, GuiContext } from "@xyz-agent/extension-protocol";
 
 import { ENTRY_TYPE, HISTORY_ENTRY_TYPE } from "../persistence";
 import type { MessagingPort, PersistencePort, SessionPort, UiPort } from "../ports";
@@ -45,6 +47,12 @@ export function buildPorts(pi: ExtensionAPI, ctx: ExtensionContext): ServicePort
 			const lines = typeof content === "string" ? [content] : content;
 			ctx.ui.setWidget(name, lines);
 		},
+		setGuiWidget(name: string, component: GuiComponent | undefined): void {
+			// GUI 协议 widget：guiSetWidget 在 RPC 模式用 marker 编码 GuiComponent JSON 进 string[]，
+			// 复用 ctx.ui.setWidget 通道；host 侧 event-adapter 检测 marker 解码还原成 GuiComponent。
+			// TUI 模式 guiSetWidget 内部 no-op（isGuiCapable 守卫）。
+			guiSetWidget(ctx as unknown as GuiContext, name, component);
+		},
 		setStatus(name: string, text: string | undefined): void {
 			ctx.ui.setStatus(name, text);
 		},
@@ -53,6 +61,10 @@ export function buildPorts(pi: ExtensionAPI, ctx: ExtensionContext): ServicePort
 		},
 		get hasUI(): boolean {
 			return Boolean(ctx.hasUI);
+		},
+		get isGui(): boolean {
+			// RPC 模式 = GUI 渲染通道有效；TUI/json/print 走 pi 原生渲染
+			return isGuiCapable(ctx as unknown as GuiContext);
 		},
 		// ThemeLike 形状：透传 ctx.ui.theme 的 fg/bold。
 		// Theme.fg 只接受 ThemeColor 字面量 union（SDK 契约）；projection 层保证传入 union 内字面量，
