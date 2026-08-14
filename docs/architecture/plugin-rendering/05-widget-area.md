@@ -49,6 +49,8 @@ Panel#main（自上而下）
 
 对应 TUI：transcript → widget 面板 → editor → footer。M17 物理位置在 Panel.vue（MessageStream 与 composer-band 之间），逻辑上属对话流区域（维度 B4）。
 
+挂载条件（实现补全，Panel.vue）：`v-if="sessionId && !isSessionDead"`——null session 无分区可枚举不渲染；dead session 主区已被重开占位接管，防状态矛盾；Landing 态（有 session 无消息）**渲染**，保 extension session_start 即推 widget 的常驻首屏可见。
+
 ### 2.2 语义
 
 | 能力 | 行为 |
@@ -62,9 +64,10 @@ Panel#main（自上而下）
 ### 2.3 视觉
 
 - 每卡 = **widgetKey 标签行**（mono 9px，对齐 demo tool-label 风格）+ 内容（GuiComponentRenderer）
-- 卡片容器 v6 风格（bg-surface + rounded-md，无 border 靠层级，对齐 gcard）
-- 宽度跟随对话流内容区（max-w 对齐 MessageStream）
+- 卡片容器 v6 风格（bg-surface + rounded-md 8px，**无 border 靠层级**，对齐渲染协议 Card 原语 `rendering-protocol/primitives/Card.vue`——goal 有预算 widget 顶层即 card 原语，壳带 border 会内外双层卡）
+- 宽度跟随对话流内容列：外层 band `px-5`（同 composer-band 侧距），内层 grid `mx-auto max-w-[var(--content-max-w)]`（720px，同 Composer/Turn 内容列）——单卡/多卡联合宽度恒 ≤ composer 列宽
 - **多 widget 分栏**：多 widgetKey 并排（flex wrap，gap 10px），单 widget 占满整行，多 widget 等分/按内容；卡片高度拉伸对齐（align-items:stretch）
+- 卡体高度钳制：`max-h-64`(256px) + `overflow-y-auto`——长列表 widget 防撑高面板挤出 composer（Panel section overflow-hidden 会直接裁剪，常驻语义放大该风险）
 
 ## §3 数据链路（全复用，零新协议）
 
@@ -89,7 +92,7 @@ extension（todo/goal）
 |---|---|---|
 | 新增 | `packages/ui/src/features/chat/WidgetArea.vue`（或 `rendering-protocol/` 旁） | 对话流 widget 面板：per-session 数据经 provide 注入（VIEW_HOST_SOURCE_KEY 扩展 getViewIds），多 key 卡片堆叠，每卡 = widgetKey 标签 + GuiComponentRenderer；gui:null 清除隐藏 |
 | 改造 | `packages/renderer/src/composables/shell/useExtensionHostBridge.ts` | VIEW_HOST_SOURCE_KEY 的 provide 值扩展 `getViewIds(sessionId)`（WidgetArea 枚举该 session widget 用）；widget 不再注入 sidebar 动态 view |
-| 改造 | `packages/renderer/src/core/extension-host/views-source.ts`（如存在） | 移除动态 widget view 发现（getViews 只返回静态声明） |
+| 改造 | `packages/ui/src/extension-host/views-source.ts` | 移除动态 widget view 发现（getViews 只返回静态声明） |
 | 改造 | `packages/renderer/src/components/panel/Panel.vue` | MessageStream 与 composer-band 之间挂 `<WidgetArea :session-id="...">` |
 | 改造 | `packages/ui/src/extension-host/PluginViewContainer.vue` | 移除动态 view 分支（若有），只渲染静态声明 view |
 
@@ -114,10 +117,10 @@ extension（todo/goal）
 
 | 层 | 用例 | 基线 |
 |---|---|---|
-| ui | WidgetArea：gui widget 渲染原语 DOM / 文本 widget ansi-text / 多 key 堆叠 / gui:null 清除隐藏 / 无数据隐藏 | 参照 ChatView.test.ts |
+| ui | WidgetArea：gui widget 渲染原语 DOM / 文本 widget ansi-text / 多 key 分栏 / gui:null 清除隐藏 / 无数据隐藏 | 参照 ChatView.test.ts |
 | core | ViewHostStore 不动（已有测试）；如 getViewIds 语义变化补测 | view-host-store.test.ts |
 | renderer | views-source 改造后无动态 view（回归）；WidgetArea 挂载链路 | 参照 MessageStream.wire.test.ts |
-| todo | refreshDisplay GUI 分支调 guiSetWidget（marker 编码断言）；tool result 无 __gui__ 断言 | gui.test.ts |
+| todo | refreshDisplay GUI 分支调 guiSetWidget（marker 编码断言）；tool result 无 __gui__ 断言 | tool-rpc.test.ts |
 | goal | updateWidget GUI 分支（已有 widget.test.ts，微调挂载语义）；tool result 无 __gui__ 断言 | widget.test.ts / ports.test.ts |
 
 ## §6 文档同步（本次已完成）

@@ -28,7 +28,8 @@ export function isGuiCapable(ctx: GuiContext): boolean {
 }
 
 /**
- * 构造 GuiRenderResult，放进 details.__gui__。
+ * 构造 GuiRenderResult。当前主用途是 guiSetWidget 的载荷（M17 对话流 widget 面板）；
+ * details.__gui__（tool result 通道）为遗留兼容路径，todo/goal 已不再使用。
  * stripUndefined 确保序列化不含 undefined（JSON.stringify 会丢弃 undefined 字段）。
  */
 export function guiResult(component: GuiComponent): GuiRenderResult {

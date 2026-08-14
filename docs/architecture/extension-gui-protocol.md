@@ -1043,7 +1043,7 @@ extension 用通用原语组合表达领域数据，不再有专属组件类型�
 | 渲染入口 | 当前能力 | DOM 结构 | 协议对接改动 |
 |---------|---------|---------|-------------|
 | **tool result** | 纯文本 `{{ result }}` | Block.vue: `<span>{{ result }}</span>` + `font-mono whitespace-pre-wrap` | 加 `GuiComponentRenderer` 分支 + `AnsiRenderer` 兜底 |
-| **widget（M17）** | 纯文本每行 `<code>`（SideDrawer 历史）/ 对话流 WidgetArea（目标） | WidgetArea.vue: 常驻卡片堆叠，`widgetKey` 标签 + `GuiComponentRenderer` | `extension:widget`/`extension:widgetGui` 订阅 + 渲染到对话流（MessageStream 与 composer 之间）；widget 不再进 SideDrawer/sidebar |
+| **widget（M17）** | 对话流 WidgetArea（已实现，Panel.vue 挂载于 MessageStream 与 composer 之间） | WidgetArea.vue: 常驻卡片分栏并排（flex wrap），`widgetKey` 标签 + `GuiComponentRenderer` | `extension:widget`/`extension:widgetGui` 订阅 + 渲染到对话流（MessageStream 与 composer 之间）；widget 不再进 SideDrawer/sidebar |
 | **status** | 纯文本 footer | SideDrawer.vue: `<footer><span>key</span><span>text</span></footer>` | 提取 `useExtensionStatus()` composable + 挂载到 Workspace 底部 |
 | **custom message** | BgNotifyCard（结构化）/ SystemNotice（纯文本）| MessageStream.vue: `v-else-if="bgNotify"` | 加 `message.details.__gui__` 检测 + `GuiComponentRenderer` |
 | **dialog** | **不存在** | — | 新建 `ExtensionUIDialog` + `extension.ui_request` handler |
@@ -1088,7 +1088,7 @@ P2 前，非 `ansi-text` 的通用原语降级为 JSON 序列化文本展示（�
 | 渲染入口 | 挂载位置 | 文件 |
 |---------|---------|------|
 | tool result GuiComponent | Block.vue 展开态详情内（`extractGui` 调用 ×2） | `Block.vue:191,198` |
-| widget GuiComponent（M17） | **对话流 WidgetArea**（MessageStream 与 composer 之间，常驻卡片堆叠；`extension:widgetGui`/`extension:widget` WS 事件 → ViewHostStore per-session 缓存 → WidgetArea 渲染） | `WidgetArea.vue`（目标）；历史：SideDrawer.vue:332-345（已废弃方向） |
+| widget GuiComponent（M17） | **对话流 WidgetArea**（MessageStream 与 composer 之间，常驻卡片分栏并排；`extension:widgetGui`/`extension:widget` WS 事件 → ViewHostStore per-session 缓存 → WidgetArea 渲染） | `WidgetArea.vue`（已实现）；历史：SideDrawer.vue:332-345（已废弃方向） |
 | custom message GuiComponent | MessageStream.vue system 消息分支（`extractGui` 调用 ×1） | `MessageStream.vue:130` |
 | ask-user 富交互 | **Panel.vue inline**（覆盖 composer 位置，与 Composer 互斥） | `Panel.vue:90-97` |
 | ExtensionUIDialog（confirm/select/input） | 全局 portal | `ExtensionUIDialog.vue` |

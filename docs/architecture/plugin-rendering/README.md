@@ -35,7 +35,7 @@
 
 - **E 维度（M14 独立 view 路由）**：L3 预编译组件仅 built-in 可用，external 强制 L1/L2；本次以 custom 逃生口 + 现有 chat/overview 路由覆盖，不做 plugin 可声明的独立 view 路由（设计文档 `renderer-target-architecture.md` §3.2 亦标注"未实现（仅 built-in）"）
 - **drawer tab（A2/M6）开放给 plugin**：v2 决策"proposed 暂不开放，避免一级 tab 泛滥"，维持
-- **runtime 侧 pi extension 改动**：todo 加 `guiSetWidget` GUI 分支（refreshDisplay）+ 移除 tool result `__gui__`；goal 移除 tool result `__gui__`（updateWidget 的 guiSetWidget 已就绪）。TUI 模式推送逻辑不动
+- ~~**runtime 侧 pi extension 改动**~~（已由 M17 wave 完成，见 05-widget-area.md §4.2：todo refreshDisplay 加 guiSetWidget GUI 分支 + 移除 tool result `__gui__`；goal 移除 tool result `__gui__`）
 - **2026-08 架构审查 C1-C7 波次**（useSidebar 死壳 / summarizeTurn / composables 平铺等）：独立于本设计，不并入
 - **C3 overlay 窗口化的完整视觉**（最小化 badge 拖动还原）：OverlayLifecycle 状态机已就绪，视觉精修归视觉线，本次只保证状态机闭环
 
@@ -211,28 +211,27 @@ plugin A 声明 contributes.statusBarItems[{id:'pipeline', priority:10, alignmen
 
 > 验收用真实场景：dev 模式（`pnpm dev`）+ 本地 pi 子进程 + 真实 todo/goal extension（staged builtin 版）。每场景标注回溯 §1 目标。
 
-### 场景 A：todo 全链路可见（回溯 G1+G2+G3）
+### 场景 A：todo 全链路可见（回溯 G2+G3）
 
 **步骤**：
 1. dev 启动（`pnpm dev`），新建 session
 2. 对话输入"用 todo 工具添加 3 个任务：写设计文档、实现、测试"
 3. agent 调用 todo tool 后，观察：
-   - 对话流 tool 块内出现 list-tree 卡片（✓/⏸/○ 状态圆点）——M4
-   - 侧栏点 Puzzle tab：出现「任务」「目标」二级 tab，「任务」下显示 3 条 todo（随状态变化刷新）——M1+M2
+   - 对话流 tool 块渲染为普通 tool result（**无结构化卡片**——M4 已移除 `__gui__`，状态展示由 M17 单一承载，避免双份）
+   - composer 上方的对话流 widget 面板出现「todo」卡：list-tree 渲染 3 条任务（✓/⏸/○ 状态圆点），同 key 覆盖更新不堆积——M17
    - main-panel 底部状态栏出现「📋 N pending」——M8
 
-**通过标准**：三处内容同时可见；todo 状态变更（agent 标记 completed）后三处同步刷新（对话流卡片、侧栏列表、底栏计数）。
+**通过标准**：两处内容同时可见；todo 状态变更（agent 标记 completed）后两处同步刷新（widget 卡原地覆盖更新、底栏计数）；关闭 session 重开后 widget 面板恢复（extension session_start 重推）。
 
-### 场景 B：goal 全链路可见（回溯 G1+G2+G3）
+### 场景 B：goal 全链路可见（回溯 G2+G3）
 
 **步骤**：
 1. 对话输入"/goal create 完成 plugin 体系落地"
 2. 观察：
-   - 对话流出现 goal card（标题 + Turn 计数 + token 预算进度条）——M4
-   - 侧栏 plugins tab「目标」二级 tab 显示 goal 状态卡（progress-bar/stats-line）——M1+M2
+   - 对话流 widget 面板出现「goal」卡（progress-bar + stats-line：Turn 计数 + token 预算进度条）——M17
    - 底栏显示 goal 状态行（◆ 标题 | Turn N | % tokens）——M8
 
-**通过标准**：三处同时可见；`/goal complete` 后三处同步更新为完成态（对话流 card、侧栏卡、底栏 ✓ Completed）。
+**通过标准**：两处同时可见；`/goal complete` 后两处同步更新（widget 卡按终态语义清除/更新、底栏 ✓ Completed）。
 
 ### 场景 C：drawer 旧适配废弃（回溯 G5）
 
@@ -248,7 +247,7 @@ plugin A 声明 contributes.statusBarItems[{id:'pipeline', priority:10, alignmen
 **步骤**：
 1. 在 composer 输入 `/`，观察命令列表
 2. /goal、/todo 出现且带 plugin 声明元数据（如 icon）
-3. 选中 /goal 发送，pi 正常执行（goal 卡片出现在对话流）
+3. 选中 /goal 发送，pi 正常执行（goal widget 出现在对话流 widget 面板）
 
 **通过标准**：/goal /todo 可见可触发；执行路径与 pi extension 一致（无功能回归）；`grep -rn "getSlashCommands" packages/` 显示 builtin 声明被消费。
 
@@ -274,6 +273,7 @@ plugin A 声明 contributes.statusBarItems[{id:'pipeline', priority:10, alignmen
 | W2 drawer 旧适配废弃 | 02 | 场景 C | W1 之后（先有展示位再删旧通道，避免内容真空） |
 | W3 slash 收编 | 03 | 场景 D | 无 |
 | W4 M16 接线 + V6 视觉对齐 | 04 | 场景 E + 视觉比对 | W1（二级 tab 视觉依赖 l2-tabbar） |
+| W5 M17 对话流 widget 面板 + extension 侧推送 | 05 | 场景 A/B 的 widget 面板部分 | W1 之后（方向修正：widget 不进侧栏，M2 废弃） |
 
 **依赖关系**：W1 → W2（先建新展示位，再删旧通道，保证任意时刻用户可见 todo/goal 内容）；W1 → W4（视觉对齐在结构落地后）；W3/W4 与 W1/W2 无文件冲突可并行。
 
