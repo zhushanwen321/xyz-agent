@@ -12,12 +12,12 @@
  * 用 PI_CODING_AGENT_DIR 指向临时目录，写入 controlled permission.json，
  * 让 loadAndWatchConfig 读到指定 mode。mock pi 对象记录 handler 调用。
  */
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import permissionExtension from "../index.js";
 import { FOOTER_HANDSHAKE_KEY, REQUEST_RENDER_KEY } from "../footer-provider.js";
@@ -370,5 +370,92 @@ describe("footer line 注册", () => {
 		permissionExtension(pi);
 		const sessionTreeHandler = getSessionTreeHandler(calls);
 		expect(() => sessionTreeHandler({}, undefined)).not.toThrow();
+	});
+});
+
+// ──────────────────────── session_start 配置路径迁移接线（index.ts migrateLegacyConfig 调用）────────────────────────
+// 模块级 once flag（configMigrationChecked）跨用例残留：用 vi.resetModules() + 动态 import
+// 取新鲜模块实例，否则前面用例已触发过 session_start，迁移分支永不执行（静默不测）。
+describe("session_start 配置路径迁移接线", () => {
+	const LEGACY_PATH = join(AGENT_DIR, "permission-config.json");
+
+	/** 重置模块 + 动态 import，返回新鲜 permissionExtension 工厂。 */
+	async function freshExtension(): Promise<(pi: Pick<ExtensionAPI, "on" | "registerCommand">) => void> {
+		vi.resetModules();
+		const mod = await import("../index.js");
+		return mod.default as (pi: Pick<ExtensionAPI, "on" | "registerCommand">) => void;
+	}
+
+		/** 写旧路径配置文件（permission-config.json）。 */
+	function writeLegacyConfig(mode: string): void {
+		mkdirSync(AGENT_DIR, { recursive: true });
+		writeFileSync(
+			LEGACY_PATH,
+			JSON.stringify({ mode, enabled: true, classifier: { enabled: true }, userRules: [] }, null, 2) + "\n",
+			{ mode: 0o600 },
+		);
+	}
+
+	it("旧路径存在 + 新路径不存在 → session_start 触发 renameSync 迁移（内容保留 + 旧文件消失）", async () => {
+		// 前置：beforeEach 已写新路径 yolo 配置，迁移场景要求新路径不存在
+		rmSync(CONFIG_PATH, { force: true });
+		writeLegacyConfig("strict");
+
+		const extension = await freshExtension();
+		const { pi, calls } = createMockPi();
+		extension(pi);
+		const handler = getSessionStartHandler(calls);
+		handler({}, makeCtx("json"));
+
+		// 新路径存在且内容来自旧文件（renameSync 保留内容），旧文件消失
+		expect(existsSync(CONFIG_PATH)).toBe(true);
+		const migrated = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
+		expect(migrated.mode).toBe("strict");
+		expect(existsSync(LEGACY_PATH)).toBe(false);
+	});
+
+	it("once flag：同进程第二次 session_start 不重复迁移（重建旧文件不动）", async () => {
+		rmSync(CONFIG_PATH, { force: true });
+		writeLegacyConfig("auto");
+
+		const extension = await freshExtension();
+		const { pi, calls } = createMockPi();
+		extension(pi);
+		const handler = getSessionStartHandler(calls);
+		handler({}, makeCtx("json"));
+		expect(existsSync(LEGACY_PATH)).toBe(false); // 首次已迁移
+
+		// 重建旧文件（模拟外部残留），再次触发 session_start → once flag 跳过迁移
+		writeLegacyConfig("yolo");
+		handler({}, makeCtx("json"));
+		expect(existsSync(LEGACY_PATH)).toBe(true); // 未被再次消费
+		expect(existsSync(CONFIG_PATH)).toBe(true);
+	});
+
+	it("旧路径存在 + 新路径已存在 → 删除旧文件（残留副本清理），新配置内容不变", async () => {
+		// beforeEach 已写新路径 yolo；再放旧文件 → session_start 删旧文件，新内容保持 yolo
+		writeLegacyConfig("strict");
+
+		const extension = await freshExtension();
+		const { pi, calls } = createMockPi();
+		extension(pi);
+		const handler = getSessionStartHandler(calls);
+		handler({}, makeCtx("json"));
+
+		expect(existsSync(LEGACY_PATH)).toBe(false);
+		const current = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
+		expect(current.mode).toBe("yolo");
+	});
+
+	it("旧路径不存在（全新安装）→ noop，不创建新路径之外的东西", async () => {
+		rmSync(CONFIG_PATH, { force: true });
+		expect(existsSync(LEGACY_PATH)).toBe(false);
+
+		const extension = await freshExtension();
+		const { pi, calls } = createMockPi();
+		extension(pi);
+		const handler = getSessionStartHandler(calls);
+		expect(() => handler({}, makeCtx("json"))).not.toThrow();
+		expect(existsSync(CONFIG_PATH)).toBe(false); // 迁移不凭空造新配置
 	});
 });

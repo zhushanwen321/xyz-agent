@@ -21,7 +21,7 @@ export default function renameSessionExtension(pi: ExtensionAPI): void {
 
 	pi.on("turn_end", async (_event: TurnEndLikeEvent, ctx: ExtensionContext) => {
 		try {
-			// 1. 开关检查（读 config.enabled，替代旧版 auto-rename-enabled 文件存在性）
+			// 1. 开关检查（loadRenameConfig：flag 文件 live 覆盖 + config.enabled 回落，见 pure.ts [COMPAT] 契约）
 			const config = loadRenameConfig();
 			if (!config.enabled) return;
 

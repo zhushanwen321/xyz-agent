@@ -46,12 +46,12 @@ describe("executeAutoRenameCommand", () => {
 		expect(executeAutoRenameCommand("status")).toContain("已关闭");
 	});
 
-	it("on → 开启并写 config.enabled=true 落盘", () => {
+	it("on → 创建 flag 文件（不写 config，避免残留 enabled=true）", () => {
 		const msg = executeAutoRenameCommand("on");
 		expect(msg).toContain("已开启");
-		clearConfigCache();
-		const raw = JSON.parse(fs.readFileSync(configPath(), "utf-8"));
-		expect(raw.enabled).toBe(true);
+		// 开启走 flag 契约（live 覆盖源），不落 config
+		expect(fs.existsSync(path.join(tmpAgentDir, "auto-rename-enabled"))).toBe(true);
+		expect(fs.existsSync(configPath())).toBe(false);
 	});
 
 	it("on 后 status 显示已开启（缓存一致，无需 clearConfigCache）", () => {
@@ -59,14 +59,14 @@ describe("executeAutoRenameCommand", () => {
 		expect(executeAutoRenameCommand("status")).toContain("已开启");
 	});
 
-	it("off → 关闭并写 config.enabled=false 落盘", () => {
+	it("off → 写 config.enabled=false 落盘 + 删除 flag（双写同步）", () => {
 		executeAutoRenameCommand("on");
-		clearConfigCache();
 		const msg = executeAutoRenameCommand("off");
 		expect(msg).toContain("已关闭");
 		clearConfigCache();
 		const raw = JSON.parse(fs.readFileSync(configPath(), "utf-8"));
 		expect(raw.enabled).toBe(false);
+		expect(fs.existsSync(path.join(tmpAgentDir, "auto-rename-enabled"))).toBe(false);
 	});
 
 	it("enable/disable 作为 on/off 别名", () => {
@@ -93,7 +93,7 @@ describe("executeAutoRenameCommand", () => {
 		expect(msg).toContain("用法");
 	});
 
-	it("on 保留 config 其他字段（不覆盖 model/maxTitleLength）", () => {
+	it("on 不动 config（手写 enabled/model/maxTitleLength 均保留）", () => {
 		// 预置含自定义 model + maxTitleLength 的配置
 		fs.mkdirSync(path.dirname(configPath()), { recursive: true });
 		fs.writeFileSync(
@@ -105,9 +105,11 @@ describe("executeAutoRenameCommand", () => {
 		executeAutoRenameCommand("on");
 		clearConfigCache();
 
+		// on 只建 flag，config 原封不动（enabled 仍 false，但 loadRenameConfig 被 flag 覆盖为 true）
 		const raw = JSON.parse(fs.readFileSync(configPath(), "utf-8"));
-		expect(raw.enabled).toBe(true);
+		expect(raw.enabled).toBe(false);
 		expect(raw.model).toEqual({ type: "available" });
 		expect(raw.maxTitleLength).toBe(30);
+		expect(executeAutoRenameCommand("status")).toContain("已开启");
 	});
 });

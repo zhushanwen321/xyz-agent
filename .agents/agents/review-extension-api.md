@@ -34,10 +34,10 @@ task prompt 中必须包含：
    - 命名：`skills/<extension简名>-ext-config/SKILL.md`（如 `permission-ext-config`、`model-switch-ext-config`）
    - `package.json`：`pi.skills: ["./skills"]` + `files` 含 `"skills/"`（否则 npm publish 丢 skill）
    - SKILL.md frontmatter：`name` = 目录名 + `description` 双引号含触发词（决定 agent 能否正确匹配 read）
-   - 范例：`extensions/{rename-session,permission,model-switch,vision,scheduler}/skills/*-ext-config/`
+   - 范例：`extensions/{rename-session,permission,model-switch,scheduler}/skills/*-ext-config/`
 
-**配置路径约定**（参考 extension-conventions §「配置路径约定」）：有磁盘配置文件的 extension，路径必须是 `<agentDir>/config/<extension简名>.json`（包名简写，禁语义名 / `-config` 后缀）。检查：
-   - 配置路径是否落在 `config/` 子目录 + 文件名 = 包名简写（如 `permission.json`、`model-switch.json`）
+**配置路径约定**（参考 extension-conventions §「配置路径约定」）：有磁盘配置文件的 extension，路径必须是 `<agentDir>/config/<extension简名>-ext-config.json`（与 config skill 名 `<简名>-ext-config` 对齐，禁语义名 / 无后缀简写 / `<名>-config.json`）。检查：
+   - 配置路径是否落在 `config/` 子目录 + 文件名 = `<简名>-ext-config.json`（如 `permission-ext-config.json`、`model-switch-ext-config.json`，llm-shared `getConfigPath` 派生）
    - 历史路径迁移是否用 session_start hook（幂等 + 模块级 once flag；参考 extension-conventions §「历史路径迁移」）：代码含 `migrateLegacyConfig` 调用 + 版本注释（`Added in vX.Y.Z` / `Remove after vN.0.0`）
    - **禁止** `postinstall` / `pi.migrate` / `scripts/migrate-config.mjs`（已废弃，session_start 取代）
    - 代码是否**只读新路径**（无旧路径 fallback / 双读）

@@ -145,7 +145,7 @@ export async function handlePermissionModelCommand(
 	const models = deps.listModels(ctx);
 	if (models.size === 0) {
 		ctx.ui.notify(
-			"[pi-permission] No available models. Configure ~/.pi/agent/models.json first.",
+			"[pi-permission] No available models. Run `pi auth login` or configure provider API keys, then retry.",
 			"warning",
 		);
 		return;

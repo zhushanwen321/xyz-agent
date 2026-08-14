@@ -1,6 +1,6 @@
 ---
 name: rename-session-ext-config
-description: "配置 @zhushanwen/pi-rename-session（会话自动重命名）时加载。含配置文件路径、RenameSessionConfig schema、ModelSelector 四形式、触发时机（首 turn）、maxTitleLength 约束、默认值、示例、生效时机、旧开关迁移。触发词：配置重命名、rename 配置、自动标题、rename-session config、auto-rename 设置、首 turn、触发时机。"
+description: "配置 @zhushanwen/pi-rename-session（会话自动重命名）时加载。含配置文件路径、RenameSessionConfig schema、ModelSelector 四形式、触发时机（首 turn）、maxTitleLength 约束、默认值、示例、生效时机、开关优先级（flag 覆盖）。触发词：配置重命名、rename 配置、自动标题、rename-session config、auto-rename 设置、首 turn、触发时机、开关不生效。"
 ---
 
 # rename-session 配置指南
@@ -85,9 +85,14 @@ interface RenameSessionConfig {
 
 subagent 子进程 session 不重命名（`isSubagentSession` 判定 session 目录）——子 session 是临时产物，重命名会产生噪音。如果你发现某个 session 没被重命名，先确认它不是 subagent session。
 
-## 旧开关迁移
+## 开关优先级（重要）
 
-旧版开关是 `<agentDir>/auto-rename-enabled` 文件存在性。升级后检测到旧文件 + 无新配置 → 自动迁移为 enabled:true 写入新配置 + 删旧文件。
+`enabled` 有两层来源，优先级从高到低：
+
+1. **`<agentDir>/auto-rename-enabled` flag 文件**（存在 = 开）：这是 xyz-agent runtime 的开关契约（SystemPage 开关 / 首启默认开启都写这个文件，live 检查每次 turn_end 生效）。**xyz-agent 用户不要手改 JSON 里的 enabled**——桌面端的开关状态存在 flag 文件里，手改 JSON 会被 flag 覆盖（flag 存在时永远视为开）。
+2. **config 的 `enabled` 字段**（默认 false）：flag 不存在时生效，是原生 pi CLI 用户的开关（手改 JSON 或 `/auto-rename on|off` 命令）。
+
+`/auto-rename on` 只创建 flag；`/auto-rename off` 写 config.enabled=false + 删 flag（双写同步）。旧版升级用户：旧 flag 文件保留不动，仍作为开关生效，无需任何迁移操作。
 
 ## LLM 调用特性
 

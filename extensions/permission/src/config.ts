@@ -34,7 +34,7 @@ import {
 	type Rule,
 } from "./types.js";
 
-/** llm-shared 泛型 config 的包名（决定文件名 permission.json）。 */
+/** llm-shared 泛型 config 的包名（决定文件名 permission-ext-config.json，llm-shared getConfigPath 追加 -ext-config.json 后缀）。 */
 const CONFIG_PKG = "permission";
 
 // ──────────────────────── 路径解析 ────────────────────────

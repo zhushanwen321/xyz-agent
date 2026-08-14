@@ -1,9 +1,8 @@
-import { existsSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
-	getConfigPath,
 	loadConfig,
 	saveConfig,
 	type ModelSelector,
@@ -15,7 +14,8 @@ import {
  * rename-session 配置 schema（落盘到 `<agentDir>/config/rename-session-ext-config.json`，路径由 llm-shared 推导）。
  *
  * 收口自旧版 pure.ts 的 `RenameConfig`（switchFilePath/maxTitleLength/renameInstruction 硬编码常量）：
- * - 开关从「auto-rename-enabled 文件存在性」改为 `enabled` 字段（默认 false，沿用旧版「默认关闭」语义）
+ * - 开关双机制：`enabled` 字段（pi CLI 用户主开关，默认 false）+ xyz-agent runtime 的
+ *   auto-rename-enabled flag 文件（live 覆盖源，存在即开，见下方 [COMPAT] 契约）
  * - model 从「搭便车 ctx.model」改为独立 `ModelSelector`（默认 scoped，取 enabledModels 首个可用）
  * - maxTitleLength 保留（默认 50）
  * - renameInstruction 不进配置（i18n 留未来），由代码常量 RENAME_INSTRUCTION 承载
@@ -36,8 +36,54 @@ export const DEFAULT_RENAME_CONFIG: RenameSessionConfig = {
 	maxTitleLength: 50,
 };
 
-/** llm-shared loadConfig/saveConfig 的包名（决定文件名 rename-session.json）。 */
+/** llm-shared loadConfig/saveConfig 的包名（决定文件名 rename-session-ext-config.json，llm-shared getConfigPath 追加 -ext-config.json 后缀）。 */
 const CONFIG_PKG = "rename-session";
+
+// ──────────────────────── xyz-agent runtime 开关契约（live 覆盖源） ────────────────────────
+
+/**
+ * [COMPAT] xyz-agent runtime 开关契约文件：<agentDir>/auto-rename-enabled（存在=开，不存在=关）。
+ * Added in v0.4.0. Remove after v1.0.0（旧 runtime 版本淘汰后随 flag 契约一并移除）。
+ *
+ * 背景：已发布的 xyz-agent runtime（worktree-config-helper.ts）只认这个 flag 文件——
+ * SystemPage 开关读写它、首启 ensureAutoRenameDefault 默认创建它，且这部分代码随桌面 app
+ * 发布、不随本 extension 升级。若本扩展单方面改为只读 config JSON 并在迁移时删除 flag，
+ * 则 mandatory 自动升级后所有未更新桌面 app 的用户：UI 显示 OFF 而 extension 实际 ON，
+ * 且 SystemPage toggle 永久失效（旧 runtime 只写 flag，新 extension 不再读）。
+ *
+ * 契约语义（loadRenameConfig 每次调用 live 检查，非一次性迁移）：
+ * - flag 存在 → enabled 强制 true（xyz-agent runtime 的开关打开，覆盖 config.enabled）
+ * - flag 不存在 → 回落 config.enabled（pi CLI 用户的主开关机制，见 config skill）
+ * - 扩展永不删除/创建该文件，除非用户通过 /auto-rename on|off 显式操作（commands.ts 双写同步）
+ */
+const AUTO_RENAME_FLAG_FILE = "auto-rename-enabled";
+
+/** flag 文件完整路径（getAgentDir 派生，尊重 PI_CODING_AGENT_DIR）。 */
+function getAutoRenameFlagPath(): string {
+	return join(getAgentDir(), AUTO_RENAME_FLAG_FILE);
+}
+
+/**
+ * 设置 xyz-agent runtime 开关契约 flag（/auto-rename on|off 命令调用，与 config 双写同步）。
+ * enabled=true 创建空 flag 文件；enabled=false 删除（不存在时视为成功）。best-effort 不抛错。
+ */
+export function setAutoRenameSwitch(enabled: boolean): void {
+	const flagPath = getAutoRenameFlagPath();
+	if (enabled) {
+		mkdirSync(dirname(flagPath), { recursive: true });
+		if (!existsSync(flagPath)) {
+			writeFileSync(flagPath, "", "utf-8");
+		}
+	} else {
+		try {
+			rmSync(flagPath);
+		} catch (e: unknown) {
+			// flag 不存在视为已关（吞 ENOENT）；其他错误（如权限）如实抛出，不静默
+			const code = (e as NodeJS.ErrnoException).code;
+			if (code !== "ENOENT") throw e;
+		}
+	}
+}
 
 /**
  * 把磁盘上的 unknown JSON 归一化成 RenameSessionConfig。
@@ -88,31 +134,18 @@ function normalizeModelSelector(raw: unknown): ModelSelector | null {
 	return null;
 }
 
-/** 加载配置（mtime+size 缓存；文件缺失/损坏返回默认，不抛错）。 */
+/**
+ * 加载配置（mtime+size 缓存；文件缺失/损坏返回默认，不抛错）。
+ *
+ * enabled 的取值优先级（见上方 [COMPAT] 契约注释）：flag 文件存在 → true；否则 config.enabled。
+ * flag 检查是 live 的（每次调用 existsSync），xyz-agent SystemPage 切开关立即生效。
+ */
 export function loadRenameConfig(): RenameSessionConfig {
-	// [HISTORICAL] E3 一次性迁移（两个版本后可删）：
-	// 旧版开关是 <agentDir>/auto-rename-enabled 文件存在性，新版改为 config/rename-session-ext-config.json
-	// 的 enabled 字段（默认 false）。检测「旧文件存在且新配置不存在」→ enabled=true 写入新配置
-	// + 删旧文件，避免旧开启用户升级后开关被静默重置为关闭。
-	// 顺序保证（R1 mitigation）：先写新配置成功再 unlink 旧文件——写入失败保留旧文件不删，
-	// 下次 load 再试，不丢状态；unlink 失败也不阻断（新配置已生效，残留旧文件无害）。
-	const configPath = getConfigPath(CONFIG_PKG);
-	const legacySwitchPath = join(getAgentDir(), "auto-rename-enabled");
-	if (!existsSync(configPath) && existsSync(legacySwitchPath)) {
-		const migrated: RenameSessionConfig = { ...DEFAULT_RENAME_CONFIG, enabled: true };
-		const saveResult = saveConfig(CONFIG_PKG, migrated);
-		if (saveResult.success) {
-			try {
-				unlinkSync(legacySwitchPath);
-			} catch {
-				// 旧文件删不掉不阻断（enabled 已落盘，下次 load 不会再触发迁移）
-			}
-			return migrated;
-		}
-		// 写入失败：保留旧文件，下次 load 再试迁移
+	const config = loadConfig(CONFIG_PKG, DEFAULT_RENAME_CONFIG, normalizeRenameConfig);
+	if (existsSync(getAutoRenameFlagPath())) {
+		return { ...config, enabled: true };
 	}
-
-	return loadConfig(CONFIG_PKG, DEFAULT_RENAME_CONFIG, normalizeRenameConfig);
+	return config;
 }
 
 /** 保存配置（原子写 tmp+rename）。返回 {success, error?}。 */

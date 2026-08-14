@@ -2,7 +2,7 @@
 # link-list.sh — 智能检测 dev-link 状态（pi 模式 + xyz-agent 模式）
 #
 # 增强点（相对旧版）：
-#   - source dev-link-lib.sh 复用 PI_EXT_DIR/SETTINGS/DL_BACKUP_FILE，与 link 建立位置一致
+#   - source dev-link-lib.sh 复用 PI_EXT_DIR，与 link 建立位置一致
 #   - 显示所有 pi-* symlink（不再只过滤 */extensions/* target，pi-statusline 等外部项目也显示）
 #   - 悬空 symlink 检测（worktree 删了 link 未清 → ✗ 警告）
 #   - worktree 归属标注（[当前worktree] / [其他worktree: name] / [外部]）—— 防"改了不生效"坑
@@ -96,19 +96,6 @@ else
 	done
 fi
 
-# ── npm 条目备份（pi-link 清的 npm 源，pi-unlink 会恢复）──
-echo ""
-cyan "─── npm 条目备份（pi-unlink 会恢复到 settings.json）───"
-if [ -f "$DL_BACKUP_FILE" ]; then
-	node -e '
-		const b = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-		for (const [short, entries] of Object.entries(b))
-			console.log(`  \x1b[32m✓\x1b[0m ${short.padEnd(22)} → ${entries.join(", ")}`);
-	' "$DL_BACKUP_FILE"
-else
-	echo "  （无备份）"
-fi
-
-echo ""
+	echo
 cyan "提示：pi 模式 → 新 pi session 生效；xyz 模式 → set -a && source .env.dev-extensions && set +a && pnpm dev"
 echo ""

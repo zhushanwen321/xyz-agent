@@ -13,6 +13,7 @@ import {
 	loadRenameConfig,
 	normalizeRenameConfig,
 	saveRenameConfig,
+	setAutoRenameSwitch,
 } from "../pure.js";
 
 // ────────────────────────────────────────────────────
@@ -265,42 +266,66 @@ describe("loadRenameConfig / saveRenameConfig", () => {
 		expect(loadRenameConfig().enabled).toBe(false);
 	});
 
-	// ── E3 旧开关一次性迁移（TC5-7：旧 auto-rename-enabled 文件 → 新 config enabled 字段） ──
+	// ── xyz-agent runtime 开关契约（flag live 覆盖源，见 pure.ts [COMPAT] 注释）──
 
-	it("TC5: E3 迁移触发（旧开关文件存在 + 新配置不存在 → enabled=true 写入新配置 + 删旧文件）", () => {
-		const legacyPath = path.join(tmpAgentDir, "auto-rename-enabled");
-		fs.writeFileSync(legacyPath, "");
+	it("TC5: flag 文件存在 → enabled 强制 true（不写 config、不删 flag，live 检查）", () => {
+		const flagPath = path.join(tmpAgentDir, "auto-rename-enabled");
+		fs.writeFileSync(flagPath, "");
 
 		const cfg = loadRenameConfig();
 
 		expect(cfg.enabled).toBe(true);
-		// 新配置已落盘且 enabled=true
-		const newConfigPath = path.join(tmpAgentDir, "config", "rename-session-ext-config.json");
-		expect(fs.existsSync(newConfigPath)).toBe(true);
-		const raw = JSON.parse(fs.readFileSync(newConfigPath, "utf-8"));
-		expect(raw.enabled).toBe(true);
-		// 旧开关文件被删（R1 mitigation：先写新配置成功再 unlink）
-		expect(fs.existsSync(legacyPath)).toBe(false);
+		// 不做一次性迁移：不写新配置、不删 flag（旧 runtime 只认 flag，删了它 UI 就显示 OFF）
+		expect(fs.existsSync(path.join(tmpAgentDir, "config", "rename-session-ext-config.json"))).toBe(false);
+		expect(fs.existsSync(flagPath)).toBe(true);
 	});
 
-	it("TC6: E3 不迁移（新配置已存在 + 旧开关存在 → enabled 按新配置，旧文件不动）", () => {
-		const legacyPath = path.join(tmpAgentDir, "auto-rename-enabled");
-		// 先写新配置 enabled=false，再放旧开关文件
+	it("TC6: flag 存在 + config enabled=false → flag 覆盖（runtime 开关优先于 config）", () => {
 		saveRenameConfig({ ...DEFAULT_RENAME_CONFIG, enabled: false });
-		fs.writeFileSync(legacyPath, "");
+		fs.writeFileSync(path.join(tmpAgentDir, "auto-rename-enabled"), "");
 		clearConfigCache();
 
-		const cfg = loadRenameConfig();
-
-		expect(cfg.enabled).toBe(false);
-		// 旧文件未被删、未被改写
-		expect(fs.existsSync(legacyPath)).toBe(true);
+		expect(loadRenameConfig().enabled).toBe(true);
 	});
 
-	it("TC7: E3 不迁移（无旧开关 + 无新配置 → enabled 默认 false，不创建任何文件）", () => {
+	it("TC6b: flag 不存在 + config enabled=true → true（pi CLI 用户 config 机制生效）", () => {
+		saveRenameConfig({ ...DEFAULT_RENAME_CONFIG, enabled: true });
+		clearConfigCache();
+
+		expect(loadRenameConfig().enabled).toBe(true);
+	});
+
+	it("TC6c: flag 删除后（xyz-agent SystemPage 关闭路径）→ 回落 config，且默认 false", () => {
+		// 预置 flag（模拟 rt 默认开启）+ 无 config
+		const flagPath = path.join(tmpAgentDir, "auto-rename-enabled");
+		fs.writeFileSync(flagPath, "");
+		expect(loadRenameConfig().enabled).toBe(true);
+
+		// 旧 runtime toggle OFF = 删除 flag，不动 config → 扩展应读到 false
+		fs.rmSync(flagPath);
+		clearConfigCache();
+		expect(loadRenameConfig().enabled).toBe(false);
+	});
+
+	it("TC7: 无 flag + 无 config → enabled 默认 false，不创建任何文件", () => {
 		const cfg = loadRenameConfig();
 		expect(cfg.enabled).toBe(false);
 		expect(fs.existsSync(path.join(tmpAgentDir, "config", "rename-session-ext-config.json"))).toBe(false);
 		expect(fs.existsSync(path.join(tmpAgentDir, "auto-rename-enabled"))).toBe(false);
+	});
+
+	it("setAutoRenameSwitch(true/false)：创建/删除 flag 文件（/auto-rename 命令的同步机制）", () => {
+		const flagPath = path.join(tmpAgentDir, "auto-rename-enabled");
+		setAutoRenameSwitch(true);
+		expect(fs.existsSync(flagPath)).toBe(true);
+		expect(loadRenameConfig().enabled).toBe(true);
+
+		setAutoRenameSwitch(false);
+		expect(fs.existsSync(flagPath)).toBe(false);
+		clearConfigCache();
+		expect(loadRenameConfig().enabled).toBe(false);
+
+		// 幂等：对不存在的 flag 再关一次不抛错
+		setAutoRenameSwitch(false);
 	});
 });

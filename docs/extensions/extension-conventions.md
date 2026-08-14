@@ -152,15 +152,15 @@ streamSink: ctx.mode === "rpc"
   - 有磁盘配置文件 → 配置路径（getAgentDir 派生）+ schema + 默认值 + 配置示例
   - 无配置文件但有命令交互/复杂存储 → 使用方式 + 存储机制（不硬套配置 schema 模板）
 
-**范例**：`extensions/{rename-session,permission,model-switch,vision,scheduler}/skills/*-ext-config/`
+**范例**：`extensions/{rename-session,permission,model-switch,scheduler}/skills/*-ext-config/`
 
 ### 配置路径约定 [强制]
 
-所有扩展的磁盘配置文件统一放 `<agentDir>/config/<extension简名>.json`。
+所有扩展的磁盘配置文件统一放 `<agentDir>/config/<extension简名>-ext-config.json`。
 
-- **命名 = 包名简写**（从 extension 名直接推导）：`permission.json` / `model-switch.json` / `vision.json`
-  - 禁止语义名（`model-policy.json`、`vision-models.json`）、禁止 `<名>-config.json`（`permission-config.json`）
-  - **不要**用 `xxx-ext-config.json` —— 会和 config skill 名 `xxx-ext-config` 混淆（skill 是 SKILL.md 指导文档，配置是 .json 数据）。`config/` 目录已隐含「配置」语义，文件名不叠 `-config` 后缀
+- **命名 = `<extension简名>-ext-config.json`**（从 extension 名直接推导）：`permission-ext-config.json` / `model-switch-ext-config.json` / `rename-session-ext-config.json`
+  - 后缀 `-ext-config` 与 config skill 名 `<简名>-ext-config` 对齐：skill（SKILL.md 指导文档）与它指导的配置文件（.json 数据）同名配对，agent 按 skill 名即可定位到配置文件，反之亦然
+  - 禁止语义名（`model-policy.json`）、无后缀简写（`permission.json`）与 `<名>-config.json`（`permission-config.json`）——统一经 `@zhushanwen/pi-llm-shared` 的 `getConfigPath(pkgName)` 生成路径，调用方不自拼文件名
 - `<agentDir>` = pi 的 `getAgentDir()`（`PI_CODING_AGENT_DIR` 覆盖，默认 `~/.pi/agent`；xyz-agent 隔离环境 `~/.xyz-agent/pi/agent`）
 - shared 库（如 quota-providers）的领域数据文件（providers.json / secrets.json / quota-cache.json）也放 `config/`，可用领域名（非包名）
 - 目录形态的配置（如 plan-templates/）不在此约定内
@@ -189,7 +189,6 @@ streamSink: ctx.mode === "rpc"
 |---|---|---|
 | `pi-permission` | `<agentDir>/permission-config.json` | `<agentDir>/config/permission-ext-config.json` |
 | `pi-model-switch` | `<agentDir>/model-policy.json` | `<agentDir>/config/model-switch-ext-config.json` |
-| `pi-vision` | `<agentDir>/vision-models.json` | `<agentDir>/config/vision-ext-config.json` |
 | `pi-quota-providers`（cache） | `<agentDir>/statusline_cache.json`（statusline 遗留孤儿名） | `<agentDir>/config/quota-cache.json`（首次加载迁移） |
 | `pi-rename-session` | 已合规 | `<agentDir>/config/rename-session-ext-config.json`（llm-shared 派生，无迁移脚本） |
 

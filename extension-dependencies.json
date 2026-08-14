@@ -35,6 +35,11 @@
           "package": "@zhushanwen/pi-quota-providers",
           "type": "package",
           "reason": "直接 import quota-providers 的 provider 解析逻辑"
+        },
+        {
+          "package": "@zhushanwen/pi-llm-shared",
+          "type": "package",
+          "reason": "top-level 静态 import getConfigPath/migrateLegacyConfig（src/config.ts、src/index.ts），缺失即模块加载抛 Cannot find module"
         }
       ]
     },
@@ -116,7 +121,13 @@
     {
       "name": "@zhushanwen/pi-permission",
       "directory": "extensions/permission",
-      "dependsOn": []
+      "dependsOn": [
+        {
+          "package": "@zhushanwen/pi-llm-shared",
+          "type": "package",
+          "reason": "top-level 静态 import callLLM/resolveModel/loadConfig/saveConfig/migrateLegacyConfig（src/config.ts、src/production.ts、src/classifier/classifier.ts、src/index.ts），缺失即模块加载抛 Cannot find module"
+        }
+      ]
     },
     {
       "name": "@zhushanwen/pi-scheduler",
@@ -126,7 +137,13 @@
     {
       "name": "@zhushanwen/pi-rename-session",
       "directory": "extensions/rename-session",
-      "dependsOn": []
+      "dependsOn": [
+        {
+          "package": "@zhushanwen/pi-llm-shared",
+          "type": "package",
+          "reason": "top-level 静态 import callLLM/resolveModel/loadConfig/saveConfig（src/pure.ts、src/llm.ts），缺失即模块加载抛 Cannot find module"
+        }
+      ]
     },
     {
       "name": "@zhushanwen/pi-cw-tool",
