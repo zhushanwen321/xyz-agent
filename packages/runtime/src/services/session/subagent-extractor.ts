@@ -218,8 +218,9 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
       const listItem = listItems.get(subagentId)
       const notify = bgNotifies.get(subagentId)
 
-      // status 归一：notify.status 是 pi 严格枚举（done/failed/cancelled），但走 normalizeSubagentStatus
-      // 统一兼容上游变体（completed/error/crashed 等）。notify 缺失时回落到 listItem/bgResponse。
+      // status 归一：v4 起 notify.status 是两态枚举（running/closed，详见 subagent-extractor.ts 头部
+      // 契约注释），legacy 值 done/failed/cancelled 仅为历史 session 数据保留；走
+      // normalizeSubagentStatus 统一兼容上游变体（completed/error/crashed 等）。notify 缺失时回落到 listItem/bgResponse。
       const status: SubagentStatus = notify
         ? normalizeSubagentStatus(notify.status)
         : normalizeSubagentStatus(listItem?.status) ?? normalizeSubagentStatus(tr.bgResponse.status)
@@ -246,7 +247,12 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
         startedAt: notify?.startedAt,
         endedAt: notify?.endedAt,
         error: notify?.error,
-        // L2 关闭原因（v4 B-1）：bg-notify 与 list item 都可能携带，notify 优先（终态时点更晚）
+        // L2 关闭原因（v4 B-1）：bg-notify 与 list item 都可能携带，notify 优先（终态时点更晚）。
+        // [已知不同构] 实时路径（event-interpreter handleSubagentBgNotify）按 status === 'closed'
+        // 条件守卫投影 closedReason，本磁盘路径无条件投影——最后一条 notify 为 running 时
+        // closedReason 会从 listItem 兜底，产出 running + closedReason 脏组合。当前 UI 无后果
+        // （running 记录走 spinner 分支不消费 closedReason，deriveClosedDisplay 仅 closed 分支调用），
+        // 投影逻辑维持现状不改；新消费方读取 closedReason 前必须先判 status === 'closed'。
         closedReason: notify?.closedReason ?? listItem?.closedReason,
       })
       continue

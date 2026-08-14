@@ -111,7 +111,8 @@ const expanded = ref(false)
 /**
  * record 展示状态派生（v4 B-1 两态契约）：
  * - running → 'round'：对话模式轮次完成（非终态，等待续聊），文案「finished a round」语义
- * - closed → deriveClosedDisplay：cancelled → 取消；有 error → 失败；其余 → 成功
+ * - closed → deriveClosedDisplay：cancelled → 取消；closedReason='gc'（缺失兜底）+ error → 失败；其余 → 成功
+ *   （规则与 extension TUI bg-notify-render / notifier LLM 文案三处同构，见 shared deriveClosedDisplay docstring）
  * - done/failed/cancelled 为 legacy 值直通（v4 之前旧版扩展的历史 session 数据）
  */
 type RecordDisplay = 'done' | 'failed' | 'cancelled' | 'round'

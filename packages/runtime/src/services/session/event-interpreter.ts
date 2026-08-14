@@ -457,7 +457,8 @@ export class EventInterpreter {
    * subagent bg-notify（custom_message）：更新已有记录的终态。
    *
    * details 两种形态（pi-subagent-workflow notifier 滑动窗口 60s 内合并）：
-   *   - 单条：BgNotifyRecord = {id, status:'done'|'failed'|'cancelled', agent, model, result, error, startedAt, endedAt}
+   *   - 单条：BgNotifyRecord = {id, status:'running'|'closed'（legacy 兼容
+   *     done/failed/cancelled）, agent, model, result, error, closedReason?, round?, startedAt, endedAt}
    *   - 批量：{batch:true, items: BgNotifyRecord[]}
    *
    * 用 parseBgNotifyDetails 解析（统一处理两种形态 + 防御性校验），
@@ -476,7 +477,7 @@ export class EventInterpreter {
     let changed = false
     for (const notify of records) {
       const existing = this.subagentRecords.get(notify.id)
-      // 只更新已存在的内存记录（running 记录由 handleSubagentEnd 建入），不新建
+      // 只更新已存在的内存记录（running 初始记录由 handleSubagentEnd 建入，v4 唯一非终态），不新建
       if (!existing) continue
 
       const status = normalizeSubagentStatus(notify.status)

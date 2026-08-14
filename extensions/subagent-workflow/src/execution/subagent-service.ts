@@ -21,6 +21,7 @@ import type { DialogGlobalQueue, UiRequestHandler } from "./dialog-queue.ts";
 import {
   completeRecord,
   createRecord,
+  getFullText,
   project,
   snapshot,
   tryTransition,
@@ -526,7 +527,8 @@ export class SubagentService {
   // ── 执行（subagent-tool 调）────────────────────────────
 
   /** background 完成回注（record → BgNotifyRecord 映射 + notifier.notify）。
-   *  非终态 status（running/idle except for chatMode）静默跳过——notify 只对 closed/cancelled/idle 有意义。
+   *  正在执行（running + 活进程 + 非 timer-armed）静默跳过——notify 只对 closed（终态）、
+   *  isIdle（chatMode 轮次完成）或 isResumable（SP-5 one-shot 成功完成 / MF-6 失败轮回退）有意义。
    *  SP-1: closed 统一终态（done/failed/crashed 合并），closedReason 携带 L2 原因。 */
   private notifyComplete(record: ExecutionRecord): void {
     const notify = this.toNotifyRecord(record);
@@ -554,16 +556,27 @@ export class SubagentService {
   }
 
   /** record → BgNotifyRecord（notifier.notify 入参映射，内部不外露）。
-   *  v4 B-1：守卫放行 closed（终态，含 cancelled）或 isIdle（对话模式轮次完成，notify 主 agent G1）。
-   *  正在执行（running 但非 isIdle）返回 undefined（调用方 notifyComplete 跳过）。
+   *  v4 B-1：守卫放行 closed（终态，含 cancelled）、isIdle（对话模式轮次完成，notify 主 agent G1）
+   *  或 isResumable（running + 无活进程——SP-5 one-shot 成功完成 / MF-6 失败轮回退）。
+   *  正在执行（running + 活进程 + 非 timer-armed）返回 undefined（调用方 notifyComplete 跳过）。
    *  SP-1: closed 统一终态，closedReason 由 BgNotifyRecord 携带。 */
   private toNotifyRecord(record: ExecutionRecord): BgNotifyRecord | undefined {
     const snap = snapshot(record);
     const s = snap.status;
-    // v4 B-1: closed（终态，含 cancelled）或 isIdle（轮次完成）才 notify；其余跳过。
-    if (s !== "closed" && !isIdle(record)) return undefined;
-    // closed → BgNotifyRecord.closed（cancelled 区分靠 closedReason）；isIdle → running（轮次完成）。
-    const notifyStatus: BgNotifyRecord["status"] = s === "closed" ? "closed" : "running";
+    // [N1] isResumable 放行：SP-5 one-shot 成功完成后 finalizeRoundToIdle 把 record 回退
+    // running-resumable——进程已死且永不 arm idle timer（armIdleTimer 只在 agent_settled 的
+    // chatMode 分支调用），旧守卫（closed / isIdle only）对其恒拒绝 → 完成通知静默丢失，
+    // 而 one-shot 失败走 finalizeRecord 保持 closed 反而通知——与 tool 契约「runs once,
+    // notifies on completion」完全倒置。isResumable = running + 无活进程，恰为该完成态；
+    // 在跑轮的 record 有活进程，不会被误放行。
+    if (s !== "closed" && !isIdle(record) && !isResumable(record)) return undefined;
+    // closed → BgNotifyRecord.closed（cancelled 区分靠 closedReason）；chatMode 的 isIdle/
+    // isResumable（轮次完成或 MF-6 失败轮回退，对话可续）→ running（轮次完成）。
+    // isResumable 且非 chatMode（SP-5 one-shot 成功完成）→ closed：对主 agent 的语义是
+    // completed（非对话轮次），且只有 closed 分支文案携带 worktree patchFile 的 git apply
+    // 提示——one-shot worktree 模式的改动回收依赖该提示（running 分支文案不含 patchFile）。
+    const notifyStatus: BgNotifyRecord["status"] =
+      s === "closed" || !record.chatMode ? "closed" : "running";
     return {
       id: snap.id,
       status: notifyStatus,
@@ -1738,9 +1751,19 @@ export class SubagentService {
         // round 可能初始 undefined（与 notifier.ts `record.round ?? 0` 兜底一致），
         // 首轮 0+1=1。round 是 notifier dedup key 的组成部分，递增后同 id 下一轮不被 60s dedup 吞。
         record.round = (record.round ?? 0) + 1;
+        // [N2] 轮次回复写点：成功轮次的 MF-2 原写点（doFinalizeRoundToIdle）不可达——
+        // agent_settled 恒 arm idle timer → runAndFinalize 恒 early return，record.result 在
+        // notify 时从未被写 → 轮次通知正文恒 "(empty)"（G1 核心价值断裂）。此处从 turns
+        // 派生回复文本（对齐 collectResult 的 getFullText 聚合派生：跨轮累积，含本轮全部
+        // 非空 turn 文本）写入 record.result 后再 notify；空文本兜底对齐 MF-2（lastError
+        // 让失败轮通知可读）。后续 closeAfterRoundSettled 的合成 result 读 record.result，
+        // 同样携带本轮真实文本。
+        const roundText = getFullText(record);
+        record.result = roundText ||
+          (record.lastError ? `round did not complete: ${record.lastError}` : record.result);
         // 先送达本轮回复（notify），再消费 closeAfterRound——终态化通知经 kickOffBackground.then
         // 的 notifyComplete 发出，与本次 round notify 同 dedup key（id:round）被 60s dedup 吞，
-        // 保证本轮回复文本不丢（closeAfterRoundSettled 的合成 result 不携带本轮文本）。
+        // 保证本轮回复文本先于终态化送达。
         this.notifyComplete(record);
         // [M5] closeAfterRound 消费点：chatMode 每轮完成的统一汇聚点（热路径轮不经
         // runAndFinalize CAS 分支——agent_settled 恒 arm idle timer → runAndFinalize 恒

@@ -122,18 +122,30 @@ export function normalizeSubagentStatus(status: string | undefined): SubagentSta
  * extension v4 起 bg-notify / list 只产出 status='closed'（含失败/取消），L2 原因由
  * closedReason 表达。渲染层（renderer BgNotifyCard / SubagentList）不再各自手写
  * 派生规则，统一消费本函数：
- * - closedReason='cancelled' → cancelled（取消，中性样式）
- * - error 有值 → failed（closedReason='gc' 失败终态携带 error；不限定 gc——
- *   closedReason 缺失的 legacy 数据 + error 同样是失败信号）
- * - 其余 → done（自然完成 / parent-fork / parent-new / user-close 等级联关闭）
+ * - closedReason='cancelled' → cancelled（取消，中性样式；error 不参与——取消分支优先）
+ * - closedReason='gc'（缺失兜底 'gc'）且 error 有值 → failed（gc 失败终态携带 error）
+ * - 其余 → done（自然完成 / parent-fork / parent-new / parent-shutdown / user-close 等级联关闭）
  *
- * 与 extension TUI 侧（bg-notify-render.ts renderRecordLines）的 verb 派生规则一致。
+ * 派生规则与 extension 侧两处实现同构（三处一致，改任一处须同步其余两处）：
+ * - TUI 渲染：extensions/subagent-workflow/src/interface/bg-notify-render.ts
+ *   renderRecordLines 的 verb 派发（cancelled / gc+error → failed / finished）
+ * - LLM 通知文案：extensions/subagent-workflow/src/execution/notifier.ts
+ *   buildLlmContent 的 closed 分支（cancelled / gc+error → failed / completed）
+ *
+ * 两个关键点（勿回退成「error 有值即 failed」的旧规则）：
+ * - closedReason 缺失兜底 'gc'（对齐 extension 侧 `record.closedReason ?? "gc"`）：
+ *   legacy 无 closedReason 的失败终态（error 有值）同样判 failed
+ * - closedReason 为 parent-fork / parent-new / parent-shutdown / user-close 且 error
+ *   有值判 done：级联关闭（disposeAllRecords）会合成 error: "closed due to parent-fork"
+ *   等，这是正常关闭语义而非 subagent 自身失败——若按 error 即 failed，xyz-agent
+ *   会把正常级联关闭显示为失败（与 TUI/LLM 文案显示 finished 分叉）
  */
 export type ClosedDisplayStatus = 'done' | 'failed' | 'cancelled'
 
 /** 从 closed 终态记录派生展示语义（输入 status 必须已是终态；running/round 由调用方自行处理） */
 export function deriveClosedDisplay(input: { closedReason?: string; error?: string }): ClosedDisplayStatus {
-  if (input.closedReason === 'cancelled') return 'cancelled'
-  if (input.error) return 'failed'
+  const reason = input.closedReason ?? 'gc'
+  if (reason === 'cancelled') return 'cancelled'
+  if (reason === 'gc' && input.error) return 'failed'
   return 'done'
 }

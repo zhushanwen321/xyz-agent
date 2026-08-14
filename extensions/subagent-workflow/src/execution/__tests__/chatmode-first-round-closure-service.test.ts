@@ -34,12 +34,12 @@ vi.mock("../session-runner.ts", () => ({
   getChildByRecord: vi.fn(() => ({ killed: false, kill: () => true })),
 }));
 
-import { runSpawn } from "../session-runner.ts";
+import { runSpawn, getChildByRecord } from "../session-runner.ts";
 import type { SessionRunnerContext } from "../session-runner.ts";
 import { armIdleTimer, disarmIdleTimer } from "../lifecycle-manager.ts";
-import { createRecord } from "../execution-record.ts";
+import { createRecord, updateFromEvent } from "../execution-record.ts";
 import { ModelConfigService } from "../model-config-service.ts";
-import type { ModelInfo } from "../model-resolver.ts";
+import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { RecordStore } from "../record-store.ts";
 import { SubagentService } from "../subagent-service.ts";
 import type { PiLike } from "../subagent-service.ts";
@@ -50,6 +50,7 @@ import type {
 } from "../types.ts";
 
 const mockRunSpawn = vi.mocked(runSpawn);
+const mockGetChildByRecord = vi.mocked(getChildByRecord);
 
 const STUB_MODEL: ModelInfo = {
   id: "test-model",
@@ -57,6 +58,11 @@ const STUB_MODEL: ModelInfo = {
   provider: "test",
   reasoning: false,
 };
+
+/** 最小合法 registry（initModel fail-fast 需要；resolveModel 第三层直接透传 ctxModel）。 */
+function makeEmptyRegistry(): ModelRegistryLike {
+  return { getAvailable: () => [], find: () => undefined, hasConfiguredAuth: () => true };
+}
 
 function makeTmpAgentDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "chatmode-closure-"));
@@ -185,19 +191,29 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
     await internals.runAndFinalize(record, opts, ctx, identity, undefined, 0);
   }
 
-  it("runAndFinalize chatMode 首轮（status=idle）early return：不进 finalize 分流，record 保持 idle", async () => {
-    // 模拟 onRoundSettled 已执行后的状态：chatMode + status=idle + round=1
+  it("runAndFinalize chatMode 首轮（isIdle：timer armed）early return：不进 finalize 分流，record 保持 running-resumable", async () => {
+    // [N3] 真实 isIdle 路径：守卫判据是 `record.chatMode && isIdle(record)`（isIdle = hasIdleTimer，
+    // 非 status 值）。旧用例手工赋 status="idle" 且未 arm timer——守卫求值 false 不 early return，
+    // 通过路径是「非法状态值被 tryTransition 拒绝」，与守卫无关（假覆盖）。此处构造生产可达状态：
+    // agent_settled 已执行（armIdleTimer + onRoundSettled round+1），status 保持 running。
     const record = makeRecord(true);
-    record.status = "idle";
-    record.round = 1;
+    record.status = "running";
+    record.round = 1; // onRoundSettled 已 +1
     internals.store.register(record);
-    await callRunAndFinalize(record, true);
+    armIdleTimer(record.id, () => {}); // 真实 arm（isIdle=true），模拟 agent_settled
+    try {
+      await callRunAndFinalize(record, true);
 
-    // [改动 3] chatMode 首轮 early return：record 保持 idle（不转 done）、round 不变（不二次 +1）、
-    // 未 archive（不进 finalizeRoundToIdle / finalizeRecord 的销毁路径）
-    expect(record.status).toBe("idle");
-    expect(record.round).toBe(1);
-    expect(internals.store.getMutable(record.id)).toBe(record);
+      // [改动 3] early return 守卫正分支生效：不进 finalize 分流——round 不被
+      // finalizeRoundToIdle 二次 +1（仍 1）、record.result 不被覆写（MF-2 写点会写
+      // makeResult.text="done"，early return 后保持 undefined）、未 archive、store 仍持有。
+      expect(record.status).toBe("running");
+      expect(record.round).toBe(1);
+      expect(record.result).toBeUndefined();
+      expect(internals.store.getMutable(record.id)).toBe(record);
+    } finally {
+      disarmIdleTimer(record.id);
+    }
   });
 
   it("runAndFinalize chatMode 首轮 early return 不依赖 tryTransition：close 后 done 分流仍对 running record 生效", async () => {
@@ -226,16 +242,23 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
     // 走真实 SubagentService.notifyComplete → BgNotifier → piAdapter（真实 host adapter），
     // 不再手搓 NotifierHost mock 绕过生产行为（旧用例 `hasRunningBackground: () => false`
     // 是对生产行为的 mock 绕过）。
+    //
+    // [N2] 禁止手工预置 record.result（这正是掩盖「通知正文恒 (empty)」断链的方式）——
+    // 轮次文本经真实 updateFromEvent 累积进 turns，真实 onRoundSettled 回调派生写入
+    // record.result（对齐 collectResult 的 getFullText）后 notify。
     const pi = makePi();
     service.initSession({ pi, sessionId: "root-session" }); // 换上带 spy 的 pi
     const record = makeRecord(true);
     record.status = "running";
-    record.round = 1;
-    record.result = "first-round-done";
+    updateFromEvent(record, { type: "text_delta", delta: "first-round-done" });
+    updateFromEvent(record, { type: "turn_end" });
     internals.store.register(record);
     armIdleTimer(record.id, () => {}); // 模拟 agent_settled：轮次完成、等待续聊（Path A）
     try {
-      internals.notifyComplete(record);
+      // 真实回调链：round 0→1 + record.result 从 turns 派生 + notifyComplete
+      internals.buildSessionRunnerContext().onRoundSettled!(record);
+      expect(record.round).toBe(1);
+      expect(record.result).toBe("first-round-done"); // 真实派生（非手工预置）
 
       // [M3] 立即 flush——同步断言 sendMessage 已发出（旧实现此处挂 60s timer，0 次调用）
       expect(pi.sendMessage).toHaveBeenCalledTimes(1);
@@ -264,6 +287,79 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
       expect(pi.sendMessage).toHaveBeenCalledTimes(1); // 未新增——busy 挂起合并窗口
     } finally {
       // busy/done 无 timer，无需 disarm；record 由 afterEach dispose 清理
+    }
+  });
+});
+
+// ── [N1] one-shot 成功完成通知（SP-5 回退 resumable 后仍送达）──────────────
+
+describe("[N1] one-shot 成功完成通知：SP-5 回退 resumable 后仍送达", () => {
+  let agentDir: string;
+  let modelService: ModelConfigService;
+  let service: SubagentService;
+  let internals: ServiceInternals;
+
+  beforeEach(() => {
+    agentDir = makeTmpAgentDir();
+    modelService = new ModelConfigService({ agentDir });
+    service = new SubagentService({ cwd: agentDir, modelService });
+    service.initSession({ pi: makePi(), sessionId: "root-session" });
+    internals = service as unknown as ServiceInternals;
+    mockRunSpawn.mockReset();
+  });
+
+  afterEach(() => {
+    service.dispose();
+    fs.rmSync(agentDir, { recursive: true, force: true });
+    // 还原默认活进程句柄实现（其他用例的 busy 判定依赖）
+    mockGetChildByRecord.mockImplementation(() => ({ killed: false, kill: () => true }));
+  });
+
+  it("真实 execute + mock runSpawn(success) → 恰 1 条 subagent-bg-notify（status=closed、正文含真实结果），record 保持可升级", async () => {
+    // 真实链路：execute → kickOffBackground → runAndFinalize（SP-5 分支 → finalizeRoundToIdle
+    // 回退 running-resumable）→ .then notifyComplete → BgNotifier → pi.sendMessage。
+    // round2 审查实证：旧守卫（closed/isIdle only）对 SP-5 完成态恒拒绝 → 发送数 0。
+    modelService.initModel({
+      modelRegistry: makeEmptyRegistry(),
+      sessionId: "root-session",
+      ctxModel: STUB_MODEL,
+    });
+    const pi = makePi();
+    service.initSession({ pi, sessionId: "root-session" }); // 换上带 spy 的 pi
+
+    // one-shot 成功完成态：进程已死（close 后 spawnedChildren 已清理）——getChildByRecord
+    // 返回 undefined，SP-5 回退的 record 因此 isResumable（running + 无活进程）。
+    mockRunSpawn.mockResolvedValueOnce(makeResult(true));
+    mockGetChildByRecord.mockImplementation(() => undefined);
+    try {
+      const handle = await service.execute({ task: "one shot task", slug: "oneshot-n1" });
+
+      await vi.waitFor(() => {
+        expect(pi.sendMessage).toHaveBeenCalledTimes(1);
+      });
+      const sentMsg = pi.sendMessage.mock.calls[0]![0] as {
+        customType: string;
+        content: string;
+        details?: { status?: string };
+      };
+      expect(sentMsg.customType).toBe("subagent-bg-notify");
+      // 完成语义：status=closed（对齐 tool 契约 "runs once, notifies on completion"；
+      // running 分支文案不含 worktree patchFile 提示，one-shot 需要 closed 分支）
+      expect(sentMsg.details?.status).toBe("closed");
+      expect(sentMsg.content).toContain("completed");
+      expect(sentMsg.content).toContain("done"); // makeResult(true).text，经 MF-2 写入 record.result
+
+      // 恰好 1 条：无第二个通知点（onRoundSettled 仅 chatMode；.then 后无再触发）
+      await new Promise((r) => setTimeout(r, 20));
+      expect(pi.sendMessage).toHaveBeenCalledTimes(1);
+
+      // SP-5 语义不破坏：record 回退 running-resumable（可 message 升级续聊），未终态化
+      const record = internals.store.getMutable(handle.subagentId);
+      expect(record).toBeDefined();
+      expect(record!.status).toBe("running");
+      expect(record!.result).toBe("done");
+    } finally {
+      mockGetChildByRecord.mockImplementation(() => ({ killed: false, kill: () => true }));
     }
   });
 });
