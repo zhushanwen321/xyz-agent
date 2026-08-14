@@ -8,12 +8,13 @@
   unmount 流程：xterm.dispose()（PTY + buffer 不动，切回重放）
 -->
 <template>
-  <div data-testid="terminal-view" class="flex h-full flex-col bg-black">
-    <!-- 工具栏：clear / kill -->
-    <div data-testid="terminal-toolbar" class="flex items-center gap-1 border-b border-white/10 px-2 py-1">
+  <div data-testid="terminal-view" class="flex h-full flex-col">
+    <!-- 工具栏：clear / kill。2026-08-14 裁决遵循 v6-drawer-tabs-demo：跟随 drawer 深底、
+         去 border-white/10（层级靠底色差不靠边框），按钮 neutral 配色（spec .tv-v6 的按钮规范）。 -->
+    <div data-testid="terminal-toolbar" class="flex items-center gap-1 px-2 py-1">
       <Button
         variant="ghost"
-        class="size-6 shrink-0 rounded-sm p-0 text-white/60 hover:text-white"
+        class="size-6 shrink-0 rounded-sm p-0 text-neutral-mid hover:text-neutral-fg"
         :title="t('panel.terminal.clear')"
         data-testid="terminal-btn-clear"
         @click="clear"
@@ -22,7 +23,7 @@
       </Button>
       <Button
         variant="ghost"
-        class="size-6 shrink-0 rounded-sm p-0 text-white/60 hover:text-white"
+        class="size-6 shrink-0 rounded-sm p-0 text-neutral-mid hover:text-neutral-fg"
         :class="state.ptyAlive ? '' : 'opacity-30'"
         :disabled="!state.ptyAlive"
         :title="t('panel.terminal.kill')"
@@ -32,9 +33,10 @@
         <Square class="size-3.5" />
       </Button>
     </div>
-    <!-- xterm 挂载点（relative 包裹浮动按钮） -->
-    <div class="relative min-h-0 flex-1">
-      <div data-testid="terminal-xterm" ref="xtermContainer" class="h-full p-1" />
+    <!-- xterm 挂载点（relative 包裹浮动按钮）。纯黑圆角块嵌在 drawer 深底上
+         （demo .terminal-mock：#000 + radius 8px + padding 12px）。 -->
+    <div class="relative m-2 min-h-0 flex-1 rounded bg-black">
+      <div data-testid="terminal-xterm" ref="xtermContainer" class="h-full p-3" />
       <!-- 选区浮动按钮（Phase 4 联动 1：选中输出 → 发给 AI） -->
       <Transition name="fade">
         <Button

@@ -22,20 +22,20 @@
   <Transition name="drawer-slide-right">
     <aside
       v-if="isOpen"
-      class="relative flex h-full min-w-0 flex-col bg-surface [box-shadow:var(--shadow-drawer)]"
+      class="relative flex h-full min-w-0 flex-col rounded-r bg-bg [box-shadow:var(--shadow-drawer)]"
       :aria-label="t('panel.sideDrawer.title')"
       data-testid="drawer-panel"
     >
-      <!-- L1 tab 栏：drawer 内部子区（D2 一体化后不再作独立 header）。
-           与 main 共享统一 surface 外壳，去 bg-surface-2 浮起分层，改用 border-b hairline 与内容区分隔（对齐 demo SideDrawer .sd-l1）。
-           escape hatch scoped（见文件底部）：aside 投影构成 D2 一体化生长的弱分隔语义。 -->
-      <div class="flex items-center gap-1 border-b border-hairline px-2 py-1.5">
+      <!-- L1 tab 栏：drawer 内部子区。2026-08-14 裁决遵循 v6-drawer-tabs-demo 层次语言
+           （推翻 spec D2 一体化同色）：aside 深底 bg（比 main surface 深一档）+ 右圆角 + 弱投影
+           构成与 main 的色差分隔；L1 栏继承 aside 深底、无 border-b（demo .drawer-l1 无分隔线）。 -->
+      <div class="flex items-center gap-1 px-2 py-1.5">
         <div class="flex flex-1 gap-0.5">
           <Button
             v-for="tab in tabs"
             :key="tab.key"
             variant="ghost"
-            class="size-7 shrink-0 justify-center rounded-sm p-0"
+            class="size-[30px] shrink-0 justify-center rounded-sm p-0"
             :class="activeTab === tab.key ? 'bg-surface-hover text-neutral-fg' : 'text-neutral-mid'"
             :title="tab.label"
             :data-testid="`drawer-tab-${tab.key}`"

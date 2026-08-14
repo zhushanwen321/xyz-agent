@@ -10,7 +10,7 @@
    ──────────────────────────────────────────────────────────────
    覆盖 §4.3：SideDrawer 容器 / 二级 tab 架构（形态 B）/
              DetailPane（多文件 tab）/ DiffView（12% 行背景）/
-             TerminalView（bg-bg-input + 多实例 tab）。
+             TerminalView（纯黑圆角块嵌深底 + 多实例 tab）。
    §1-§9 全写实（BrowserPane/GitPanel/CommandDocPanel/TasksPanel）。
    token 复用 v6-spec-tokens.html 同一集（含 v6 提案值）。
    ================================================================ */
@@ -92,7 +92,7 @@
   /* 阴影 */
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
-  --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);   /* R14 弱投影：0.25→0.16，D2 一体化后仅作弱分隔 */
+  --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);   /* R14 弱投影 0.16（2026-08-14 D2 反转后作深底 drawer 与 main 的浮起分隔）*/
   --shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
 
   /* 组件尺寸（v6 新增）*/
@@ -196,15 +196,17 @@ body {
    渲染用：组件样式（呈现 v6 目标态）
    ================================================================ */
 
-/* ── SideDrawer 容器（D2 一体化：与 main 共享 surface，弱投影 0.16 分隔，去硬 border-l）── */
+/* ── SideDrawer 容器（2026-08-14 反转 D2：深底色差分层，遵循 v6-drawer-tabs-demo 层次语言）──
+   drawer 底色 bg（比 main surface 深一档）+ 右圆角 + 弱投影，构成「深色块嵌在 surface 外壳内」
+   的明度层次；左缘贴 main（Splitter），故仅右侧圆角。 */
 .sd-drawer {
-  flex: 1; background: var(--surface); box-shadow: var(--shadow-drawer);
+  flex: 1; background: var(--bg); box-shadow: var(--shadow-drawer);
   border-radius: 0 var(--radius) var(--radius) 0;
   display: flex; flex-direction: column; overflow: hidden; min-width: 0;
 }
-/* 一级 icon tab 栏（方案 G：header 与 drawer 体同色 surface，靠底部 hairline 分隔；
-   选中态 surface-hover（差 surface 5.5%），hover 只变文字色不变底，消除 hover 比 selected 亮的反直觉）*/
-.sd-l1 { display: flex; align-items: center; gap: 2px; padding: 6px 8px; background: var(--surface); border-bottom: 1px solid var(--hairline); }
+/* 一级 icon tab 栏（2026-08-14 反转：继承 drawer 深底、无 border-b——demo .drawer-l1 无分隔线，
+   层次由深底与 main surface 的色差提供）*/
+.sd-l1 { display: flex; align-items: center; gap: 2px; padding: 6px 8px; }
 .sd-l1 .l1-icon {
   width: 30px; height: 30px; border-radius: var(--radius-sm); border: 0; cursor: pointer;
   background: transparent; color: var(--neutral-mid);
@@ -334,27 +336,26 @@ body {
 .diff-swatch.strong-add { background: var(--diff-add-strong); color: var(--success); }
 .diff-swatch.strong-del { background: var(--diff-del-strong); color: var(--danger); }
 
-/* ── TerminalView（v6：bg-bg-input 凹陷 + 工具栏同色，去 border-white/10）── */
-.tv-v6 { flex: 1; display: flex; flex-direction: column; background: var(--bg-input); min-height: 0; }
-.tv-toolbar { display: flex; align-items: center; gap: 4px; padding: 6px 8px; background: var(--bg-input); }
+/* ── TerminalView（2026-08-14 反转：纯黑圆角块嵌 drawer 深底，遵循 v6-drawer-tabs-demo）──
+   原「bg-input 凹陷铺满」方案推翻。容器透明跟随 drawer 深底；工具栏无 border、neutral 按钮；
+   屏幕是独立黑块（#000 + radius 8px + margin 8px + padding 12px），黑块与深底的明度差即层次。 */
+.tv-v6 { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.tv-toolbar { display: flex; align-items: center; gap: 4px; padding: 6px 8px; }
 .tv-btn { width: 24px; height: 24px; border-radius: var(--radius-sm); border: 0; cursor: pointer; background: transparent; color: var(--neutral-mid); display: flex; align-items: center; justify-content: center; transition: all var(--duration-fast); }
 .tv-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .tv-btn.disabled { opacity: 0.5; cursor: not-allowed; }
 .tv-spacer { flex: 1; }
 .tv-instance-label { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); }
-.tv-screen { flex: 1; min-height: 0; padding: 10px 14px; font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.6; color: var(--neutral-fg); overflow: auto; }
+.tv-screen { flex: 1; min-height: 0; margin: 8px; padding: 12px; background: #000; border-radius: var(--radius); font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.6; color: var(--neutral-fg); overflow: auto; }
 .tv-screen .tv-prompt { color: var(--accent); }
 .tv-screen .tv-cmd { color: var(--neutral-fg); }
 .tv-screen .tv-out { color: var(--neutral-mid); }
 .tv-screen .tv-ok { color: var(--success); }
 .tv-screen .tv-cursor { display: inline-block; width: 7px; height: 14px; background: var(--neutral-fg); vertical-align: middle; }
 
-/* 旧 terminal（纯黑 + border-white/10）对比 */
-.tv-old { background: #000; }
-.tv-old .tv-toolbar { border-bottom: 1px solid rgba(255,255,255,0.10); background: transparent; }
-.tv-old .tv-btn { color: rgba(255,255,255,0.6); }
-.tv-old .tv-btn:hover { color: #fff; }
-.tv-old .tv-screen { color: #e5e7eb; }
+/* 曾定方案（bg-input 凹陷铺满，2026-08-14 推翻）对比态 */
+.tv-old { background: var(--bg-input); }
+.tv-old .tv-screen { background: transparent; margin: 0; }
 
 /* footer */
 .doc-foot {
@@ -681,7 +682,7 @@ body {
   <header class="doc-head">
     <div class="doc-eyebrow">v6 SPEC · 05 / 07</div>
     <h1 class="doc-title">Drawer · 右侧抽屉</h1>
-    <p class="doc-sub">覆盖 §4.3 右侧 Drawer：容器（D2 一体化，与 main 共享 surface，弱投影 0.16 分隔）+ 形态 B 二级 tab 架构（icon 一级 + 内层二级，各 tab 自治）+ 7 个一级 tab（terminal/browser/git/doc/detail/subagent/workflow）各自的 v6 方案。tasks tab 已移除（goal/todo 回归对话流，见 §9）。</p>
+    <p class="doc-sub">覆盖 §4.3 右侧 Drawer：容器（<b>2026-08-14 反转 D2</b>：遵循 v6-drawer-tabs-demo 层次语言，drawer 深底 bg + 右圆角 + 弱投影，与 main surface 拉开色差）+ 形态 B 二级 tab 架构（icon 一级 + 内层二级，各 tab 自治）+ 7 个一级 tab（terminal/browser/git/doc/detail/subagent/workflow）各自的 v6 方案。tasks tab 已移除（goal/todo 回归对话流，见 §9）。</p>
     <div class="doc-meta">
       <span><b>SSOT</b> v6-design.md §4.3 + §3.4 分隔策略</span>
       <span><b>范式</b> v6-drawer-tabs-demo 形态 B</span>
@@ -712,11 +713,11 @@ body {
        ================================================================ -->
   <section class="spec" id="s1">
     <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">SideDrawer 容器</h2></div>
-    <p class="spec-desc">右侧抽屉容器，承载 7 个一级 tab（terminal/browser/git/doc/detail/subagent/workflow）。v6 核心改动（D2 一体化）：drawer 与主面板<b>共享 surface 底色</b>（同色一体，非画布色 bg-bg），去硬 <code>border-l</code> 改 <code>shadow-drawer</code> <b>弱投影 0.16</b> 分隔（R14，对标 Claude/Linear 的层级代边框）。一级 tab 栏是 icon-only（label 收进 title 供 hover 查看），右侧挂钉住/关闭。<b>宽度比例</b>：主面板与 drawer 默认 <code>1:1</code>（flex:1 等分，可拖拽），中间 <code>SplitterResizeHandle</code> 可拖动调整（透明，仅 hover/drag 显 accent）。<b>tasks tab 已移除</b>（goal/todo 回归对话流，见 §9）。</p>
+    <p class="spec-desc">右侧抽屉容器，承载 7 个一级 tab（terminal/browser/git/doc/detail/subagent/workflow）。<b>2026-08-14 决策反转</b>：原 D2「一体化同色 + 弱投影」被推翻——实测同色一体化层次感不足，用户裁决遵循 <code>v6-drawer-tabs-demo.html</code> 的层次语言：drawer 用<b>深底 <code>bg</code></b>（比 main surface 深一档，token 注释「drawer 内容区底」本即此义）+ <b>右侧圆角</b> + <code>shadow-drawer</code> 弱投影，构成「深色块嵌在 surface 外壳内」的明度分层；去硬 <code>border-l</code>（保留 D2 此项裁决）。一级 tab 栏 icon-only（label 收进 title 供 hover 查看），继承 drawer 深底、无 border-b，右侧挂钉住/关闭。<b>宽度比例</b>：主面板与 drawer 默认 <code>1:1</code>（flex:1 等分，可拖拽），中间 <code>SplitterResizeHandle</code> 可拖动调整（透明，仅 hover/drag 显 accent）。<b>tasks tab 已移除</b>（goal/todo 回归对话流，见 §9）。</p>
     <div class="change-points">
-      <span class="cp cp-now"><b>现</b> border-l border-border 硬分隔</span>
-      <span class="cp cp-v6"><b>v6</b> shadow-drawer 弱投影 0.16 分隔（D2 一体化）</span>
-      <span class="cp cp-v6"><b>v6</b> 与 main 共享 surface（一体化同色）</span>
+      <span class="cp cp-now"><b>旧</b> border-l border-border 硬分隔</span>
+      <span class="cp cp-v6"><b>曾定</b> D2 一体化同色 + 弱投影（2026-08-14 推翻）</span>
+      <span class="cp cp-v6"><b>v6</b> 深底 bg + 右圆角 + 弱投影（demo 层次语言）</span>
       <span class="cp cp-v6"><b>v6</b> SplitterResizeHandle 透明化</span>
     </div>
 
@@ -774,17 +775,17 @@ body {
       </div>
     </div>
 
-    <!-- 分隔策略对比：旧硬 border / 旧强投影 → v6 一体化 + 弱投影 -->
-    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">分隔策略：硬 border-l → D2 一体化同色体 + 弱投影 0.16</h3>
+    <!-- 分隔策略对比：硬 border-l（旧）/ D2 一体化（曾定，推翻）→ v6 深底色差分层 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">分隔策略：硬 border-l → D2 一体化（推翻）→ 深底色差分层（2026-08-14）</h3>
     <div class="render-frame">
       <div class="state-row">
-        <div class="state-tag">现状</div>
+        <div class="state-tag">曾定</div>
         <div class="state-demo">
-          <div class="workspace-stage sep-old">
+          <div class="workspace-stage">
             <div class="workspace-row" style="min-height:120px;">
               <div class="ws-panel">主面板 surface</div>
-              <div class="sd-drawer" style="border-left:1px solid var(--border-strong);box-shadow:none;border-radius:0;">
-                <div style="padding:16px;color:var(--neutral-dim);font-size:var(--text-xs);">drawer · 靠 1px 硬边线分隔（生硬，与三层明度冲突）</div>
+              <div class="sd-drawer" style="background:var(--surface);box-shadow:none;">
+                <div style="padding:16px;color:var(--neutral-dim);font-size:var(--text-xs);">drawer · D2 一体化：与 main 同色 surface + 弱投影 0.16（实测层次感不足，2026-08-14 推翻）</div>
               </div>
             </div>
           </div>
@@ -797,7 +798,7 @@ body {
             <div class="workspace-row" style="min-height:120px;">
               <div class="ws-panel">主面板 surface</div>
               <div class="sd-drawer">
-                <div style="padding:16px;color:var(--neutral-dim);font-size:var(--text-xs);">drawer · D2 一体化：与 main 同色 surface，弱投影 shadow-drawer 0.16 分隔（柔和，无硬边线）</div>
+                <div style="padding:16px;color:var(--neutral-mid);font-size:var(--text-xs);">drawer · 深底 bg + 右圆角 + shadow-drawer 弱投影（遵循 demo 层次语言：与 main surface 明度差一档）</div>
               </div>
             </div>
           </div>
@@ -806,11 +807,12 @@ body {
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>底色:</b><br><span class="old">var(--bg) [画布色]</span> <span class="v6">→ var(--surface)（D2 一体化，与 main 同色）</span></div>
+      <div class="anno"><b>底色:</b><br><span class="old">var(--surface)（D2 一体化同色）</span> <span class="v6">→ var(--bg)（深一档，色差分层）</span></div>
       <div class="anno"><b>左侧分隔:</b><br><span class="old">border-l 1px border-border</span> <span class="v6">→ shadow-drawer 弱投影 0.16</span></div>
       <div class="anno"><b>shadow-drawer:</b><br>-12px 0 24px rgba(0,0,0,.16)</div>
-      <div class="anno"><b>一级 tab:</b><br>icon-only 7 个 · size-7 (30px) rounded-sm<br>terminal/browser/git/doc/detail/<span class="v6">subagent</span>/<span class="v6">workflow</span></div>
-      <div class="anno"><b>一级 tab 栏底:</b><br><span class="v6">方案 G：header 同 surface + 底 hairline（暗色下 surface-2 浮起不可见，改 hairline 分层）</span></div>
+      <div class="anno"><b>圆角:</b><br><span class="v6">右侧 8px（0 radius radius 0）</span>——左缘贴 main 不圆</div>
+      <div class="anno"><b>一级 tab:</b><br>icon-only 7 个 · 30px rounded-sm<br>terminal/browser/git/doc/detail/<span class="v6">subagent</span>/<span class="v6">workflow</span></div>
+      <div class="anno"><b>一级 tab 栏底:</b><br><span class="v6">继承 drawer 深底 bg、无 border-b（demo .drawer-l1 无分隔线，靠底色差分层）</span></div>
       <div class="anno"><b>icon active:</b><br>bg-surface-hover + text-neutral-fg（方案 G：选中 surface-hover，差 surface 5.5%）</div>
       <div class="anno"><b>icon hover:</b><br>transparent + text-neutral-fg（方案 G：只变字色不变底，避免 hover 比 selected 亮）</div>
       <div class="anno"><b>icon default:</b><br>transparent + text-neutral-mid</div>
@@ -1195,11 +1197,12 @@ body {
        ================================================================ -->
   <section class="spec" id="s5">
     <div class="spec-head"><span class="spec-num">§5</span><h2 class="spec-title">TerminalView</h2></div>
-    <p class="spec-desc">drawer 集成终端。v6：黑色底改 <code>bg-bg-input</code>（与画布同源凹陷语义，非纯黑割裂）；工具栏去 <code>border-white/10</code> 改 <code>bg-bg-input</code> 同色（层级靠浮起非边框）；二级 tab 支持多终端实例（每个 tab 一个独立 PTY），二级 tab 栏放新增按钮（本期仅放按钮，新增功能后续实现）。</p>
+    <p class="spec-desc">drawer 集成终端。<b>2026-08-14 决策反转</b>：原「bg-bg-input 凹陷铺满」方案推翻，遵循 v6-drawer-tabs-demo——终端屏幕作为<b>纯黑 #000 圆角块</b>（radius 8px + margin 8px + padding 12px）嵌在 drawer 深底上，黑块与深底的明度差即层次（demo .terminal-mock 原样）；工具栏跟随 drawer 深底、无 border，按钮 neutral 配色；二级 tab 支持多终端实例（每个 tab 一个独立 PTY），二级 tab 栏放新增按钮（本期仅放按钮，新增功能后续实现）。</p>
     <div class="change-points">
-      <span class="cp cp-now"><b>现</b> bg-black 纯黑 + border-white/10</span>
-      <span class="cp cp-v6"><b>v6</b> bg-bg-input 凹陷（同源画布）</span>
-      <span class="cp cp-v6"><b>v6</b> 工具栏同色，去 border-white/10</span>
+      <span class="cp cp-now"><b>旧</b> bg-black 纯黑铺满 + border-white/10</span>
+      <span class="cp cp-v6"><b>曾定</b> bg-bg-input 凹陷铺满（2026-08-14 推翻）</span>
+      <span class="cp cp-v6"><b>v6</b> 纯黑 #000 圆角块嵌深底（demo）</span>
+      <span class="cp cp-v6"><b>v6</b> 工具栏深底同色，去 border-white/10</span>
       <span class="cp cp-v6"><b>v6</b> 多实例 tab + 新增按钮（占位）</span>
     </div>
 
@@ -1236,7 +1239,7 @@ body {
                 <button class="tv-btn" title="终止 PTY"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
                 <span class="tv-spacer"></span>
               </div>
-              <!-- 终端屏幕（bg-bg-input 同色）-->
+              <!-- 终端屏幕（纯黑 #000 圆角块嵌 drawer 深底）-->
               <div class="tv-screen">
                 <div><span class="tv-prompt">$</span> <span class="tv-cmd">npm run build</span></div>
                 <div class="tv-out">&gt; xyz-agent@0.1.0 build</div>
@@ -1252,11 +1255,11 @@ body {
       </div>
     </div>
 
-    <!-- 旧 vs v6 底色对比 -->
-    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">底色对比：纯黑割裂 → bg-bg-input 凹陷同源</h3>
+    <!-- 曾定 vs v6 底色对比 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">底色对比：bg-bg-input 凹陷铺满（曾定，推翻）→ 纯黑圆角块嵌深底（2026-08-14）</h3>
     <div class="render-frame">
       <div class="state-row">
-        <div class="state-tag">现状</div>
+        <div class="state-tag">曾定</div>
         <div class="state-demo">
           <div class="tv-old" style="border-radius:var(--radius);overflow:hidden;">
             <div class="tv-toolbar">
@@ -1264,7 +1267,7 @@ body {
             </div>
             <div class="tv-screen">
               <div><span style="color:var(--accent);">$</span> npm run dev</div>
-              <div style="color:var(--neutral-mid);">纯黑底 + border-white/10（与画布割裂）</div>
+              <div style="color:var(--neutral-mid);">bg-bg-input 凹陷铺满（与 drawer 深底层次不足，2026-08-14 推翻）</div>
             </div>
           </div>
         </div>
@@ -1272,13 +1275,13 @@ body {
       <div class="state-row" style="margin-bottom:0;">
         <div class="state-tag">v6</div>
         <div class="state-demo">
-          <div class="tv-v6" style="border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);">
+          <div class="tv-v6" style="border-radius:var(--radius);overflow:hidden;">
             <div class="tv-toolbar">
               <button class="tv-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button>
             </div>
             <div class="tv-screen">
               <div><span class="tv-prompt">$</span> <span class="tv-cmd">npm run dev</span></div>
-              <div class="tv-out">bg-bg-input 凹陷（与画布同源，工具栏同色无 border）</div>
+              <div class="tv-out">纯黑 #000 圆角块嵌 drawer 深底（demo .terminal-mock，工具栏深底无 border）</div>
             </div>
           </div>
         </div>
@@ -1286,9 +1289,10 @@ body {
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>屏幕底色:</b><br><span class="old">bg-black 纯黑</span> <span class="v6">→ var(--bg-input) 凹陷</span></div>
-      <div class="anno"><b>工具栏底色:</b><br><span class="v6">bg-bg-input（与屏幕同色）</span></div>
-      <div class="anno"><b>工具栏分隔:</b><br><span class="old">border-b border-white/10</span> <span class="v6">→ 删除（同色）</span></div>
+      <div class="anno"><b>屏幕底色:</b><br><span class="old">bg-bg-input 凹陷铺满（曾定）</span> <span class="v6">→ #000 纯黑圆角块嵌深底</span></div>
+      <div class="anno"><b>黑块:</b><br>#000 · radius 8px · margin 8px · padding 12px（demo .terminal-mock）</div>
+      <div class="anno"><b>工具栏底色:</b><br><span class="v6">透明跟随 drawer 深底</span></div>
+      <div class="anno"><b>工具栏分隔:</b><br><span class="old">border-b border-white/10</span> <span class="v6">→ 删除（同底）</span></div>
       <div class="anno"><b>多实例 tab:</b><br><span class="v6">每个 tab 一个独立 PTY 实例</span></div>
       <div class="anno"><b>新增按钮:</b><br><span class="v6">+ 新实例（本期仅占位，功能后续）</span></div>
       <div class="anno"><b>数据模型 · 视觉态（实现依赖阶段 B）:</b><br><span class="old">per-session 单 PTY</span> <span class="v6">→ 多 PTY 实例管理</span>（多终端实例为视觉态，实现依赖阶段 B：单 PTY→多 PTY）</div>
