@@ -30,8 +30,9 @@ function mountSelect(opts: { withAction?: boolean; value?: string } = {}) {
           {
             modelValue: v.value,
             open: true,
-            'onUpdate:modelValue': (x: string) => {
-              v.value = x
+            // reka AcceptableValue 含 number/boolean/null，测试仅用 string 值 → 收窄赋值
+            'onUpdate:modelValue': (x: unknown) => {
+              if (typeof x === 'string') v.value = x
             },
           },
           {

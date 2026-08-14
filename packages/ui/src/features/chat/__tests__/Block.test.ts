@@ -12,9 +12,9 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { h } from 'vue'
 import { Block } from '@xyz-agent/ui'
-import type { ToolCall } from '@xyz-agent/shared'
+import type { MessageStatus, ToolCall } from '@xyz-agent/shared'
 
-function mountTextBlock(over: { streaming?: boolean; status?: string; error?: string; content?: string } = {}) {
+function mountTextBlock(over: { streaming?: boolean; status?: MessageStatus; error?: string; content?: string } = {}) {
   return mount(Block, {
     props: {
       type: 'text',

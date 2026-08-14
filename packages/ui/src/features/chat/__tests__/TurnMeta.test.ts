@@ -42,6 +42,8 @@ function mountMeta(props: {
   /** 是否在挂载前预置该 turn 为展开（store 写入），驱动 chevron rotate-90 */
   expanded?: boolean
   elapsed?: string
+  /** 已耗时秒数（组件必填 prop，驱动长时生成分级配色） */
+  elapsedSecs?: number
 }) {
   const turn = props.turn ?? makeTurn()
   return mount(TurnMeta, {
@@ -52,6 +54,7 @@ function mountMeta(props: {
       thinkCount: props.thinkCount ?? 1,
       toolCount: props.toolCount ?? 1,
       elapsed: props.elapsed ?? '5s',
+      elapsedSecs: props.elapsedSecs ?? 0,
       turnIndex: turn.index,
       turnKey: turnStableId(turn),
       sessionId: SID,
@@ -167,7 +170,7 @@ describe('W4TC2: TurnMeta sticky + streaming 状态', () => {
     const turn = makeTurn()
     const toggleExpand = vi.fn()
     const wrapper = mount(TurnMeta, {
-      props: { turn, isWorkingTurn: false, isStreaming: false, thinkCount: 1, toolCount: 1, elapsed: '5s', turnIndex: turn.index, turnKey: turnStableId(turn), sessionId: SID },
+      props: { turn, isWorkingTurn: false, isStreaming: false, thinkCount: 1, toolCount: 1, elapsed: '5s', elapsedSecs: 5, turnIndex: turn.index, turnKey: turnStableId(turn), sessionId: SID },
       global: { provide: mockChatProvide({ toggleExpand }) },
     })
     await wrapper.find('.turn-meta').trigger('click')

@@ -48,8 +48,8 @@ describe('PluginViewContainer', () => {
     // 默认 activeViewId = 第一个可见 view → ViewHost view-id='todo'
     const host = wrapper.findComponent(ViewHost)
     expect(host.exists()).toBe(true)
-    expect((host.props() as Record<string, unknown>).viewId).toBe('todo')
-    expect((host.props() as Record<string, unknown>).sessionId).toBe('s1')
+    expect(host.props('viewId')).toBe('todo')
+    expect(host.props('sessionId')).toBe('s1')
     // todo tab 是 active 态（data-active DOM 断言）
     expect(wrapper.find('[data-testid="l2-tab-todo"]').attributes('data-active')).toBe('true')
     expect(wrapper.find('[data-testid="l2-tab-goal"]').attributes('data-active')).toBe('false')
@@ -57,7 +57,7 @@ describe('PluginViewContainer', () => {
     // 点击「目标」→ 切 tab 只改 activeViewId → ViewHost view-id='goal'
     await wrapper.find('[data-testid="l2-tab-goal"]').trigger('click')
     await wrapper.vm.$nextTick()
-    expect((wrapper.findComponent(ViewHost).props() as Record<string, unknown>).viewId).toBe('goal')
+    expect(wrapper.findComponent(ViewHost).props('viewId')).toBe('goal')
     expect(wrapper.find('[data-testid="l2-tab-goal"]').attributes('data-active')).toBe('true')
     expect(wrapper.find('[data-testid="l2-tab-todo"]').attributes('data-active')).toBe('false')
     wrapper.unmount()
@@ -106,7 +106,7 @@ describe('PluginViewContainer', () => {
     // 先切到 ext-view（使之为当前 active）→ 点击 close → tab 移除 + active 回退到第一个可见 view
     await wrapper.find('[data-testid="l2-tab-ext-view"]').trigger('click')
     await wrapper.vm.$nextTick()
-    expect((wrapper.findComponent(ViewHost).props() as Record<string, unknown>).viewId).toBe('ext-view')
+    expect(wrapper.findComponent(ViewHost).props('viewId')).toBe('ext-view')
 
     await wrapper.find('[data-testid="l2-tab-close-ext-view"]').trigger('click')
     await wrapper.vm.$nextTick()
@@ -114,7 +114,7 @@ describe('PluginViewContainer', () => {
     // tasks 的 tab 不受影响
     expect(wrapper.find('[data-testid="l2-tab-todo"]').exists()).toBe(true)
     // 关闭当前 active → 回退到第一个可见 view（todo）
-    expect((wrapper.findComponent(ViewHost).props() as Record<string, unknown>).viewId).toBe('todo')
+    expect(wrapper.findComponent(ViewHost).props('viewId')).toBe('todo')
     wrapper.unmount()
   })
 

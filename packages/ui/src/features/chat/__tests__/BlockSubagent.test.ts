@@ -1,21 +1,29 @@
 /**
- * BlockSubagent.vue 组件测试。
+ * BlockSubagent.vue 组件测试（v6 §10 collapsed-only 设计）。
  *
- * 适配 @zhushanwen/pi-subagent-workflow（重写 fork）的真实数据结构：
+ * 设计对齐（spec v6 §10 / aca29110c「subagent/workflow details via drawer tabs」）：
+ * - collapsed only：整个块单行精简摘要，无展开体、无 task 预览、无 bg 状态行（均已移除）
+ * - 单行：Bot icon + subagent prefix + agent · slug + (model · thinking X)
+ * - running 态双环 loader；failed 态整行降 neutral-mid（不切 icon）
+ * - 点击整行 → openSubagent（drawer 开 subagent tab 看完整对话流）；缺 subagentId/sessionId 时 no-op
+ *
+ * 数据形态（@zhushanwen/pi-subagent-workflow，重写 fork）：
  * - input 顶层拍平：action / agent / slug / model / thinkingLevel / task 都在顶层（非 startParam 嵌套）
- * - output 是 JSON 字符串，含 bgResponse: { status, mode, message }
- * - 异步 background 执行：只展示发起参数（input），看不到执行过程（detail 永远 undefined）
+ * - output 是 JSON 字符串，subagentId 在顶层（toolResult.subagentId，start action 立即返回）
  *
- * 标题行：subagent + agent + · + slug + (model · thinking X)
- * 第二行：task 首行预览（截断 60）
- * 展开体：task 完整内容 + background 状态行
- *
- * 运行：pnpm --filter @xyz-agent/frontend run test -- src/components/panel/message-stream/__tests__/BlockSubagent.test.ts
+ * 运行：cd packages/ui && npx vitest run src/features/chat/__tests__/BlockSubagent.test.ts
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { BlockSubagent } from '@xyz-agent/ui'
 import type { ToolCall } from '@xyz-agent/shared'
+import { subagentVirtualId } from '@xyz-agent/shared'
+
+// mock drawer 协同层：断言点击整行时 openSubagent 以 virtualId + enteredFrom 被调
+const { openSubagentMock } = vi.hoisted(() => ({ openSubagentMock: vi.fn() }))
+vi.mock('@xyz-agent/core/domain/drawer', () => ({
+  openSubagent: openSubagentMock,
+}))
 
 /** 构造真实形态的 subagent ToolCall（顶层拍平 input） */
 function makeSubagent(over: Partial<ToolCall> = {}): ToolCall {
@@ -35,13 +43,17 @@ function makeSubagent(over: Partial<ToolCall> = {}): ToolCall {
   }
 }
 
+beforeEach(() => {
+  openSubagentMock.mockReset()
+})
+
 describe('BlockSubagent: 标题行渲染（顶层 input 拍平字段）', () => {
   it('渲染 subagent prefix + agent（accent）+ · + slug（accent）', () => {
     const wrapper = mount(BlockSubagent, {
       props: { tool: makeSubagent(), sessionId: 's1' },
     })
     const text = wrapper.text()
-    // subagent prefix 文案（CSS 大写 SUBAGENT.）
+    // subagent prefix 文案
     expect(text).toContain('subagent')
     // agent 名（顶层 input.agent，非默认值）
     expect(text).toContain('researcher')
@@ -99,76 +111,31 @@ describe('BlockSubagent: 标题行渲染（顶层 input 拍平字段）', () => 
   })
 })
 
-describe('BlockSubagent: task 首行预览（截断 60）', () => {
-  it('task 取首个非空行，未超长不截断', () => {
+describe('BlockSubagent: collapsed only（§10：task 预览 / 展开体 / bg 状态行已移除）', () => {
+  it('task 不在对话流内展示（task 预览已移除，全文看 drawer subagent tab）', () => {
     const wrapper = mount(BlockSubagent, {
       props: {
         tool: makeSubagent({ input: { action: 'start', task: '单行短任务' } }),
       },
     })
-    expect(wrapper.text()).toContain('单行短任务')
+    expect(wrapper.text()).not.toContain('单行短任务')
   })
 
-  it('task 含换行时只取首行', () => {
+  it('无展开体：点击整行不出现 task 完整内容区', async () => {
     const wrapper = mount(BlockSubagent, {
       props: {
-        tool: makeSubagent({
-          input: {
-            action: 'start',
-            task: '首行任务描述\n第二行不该出现\n第三行也不该',
-          },
-        }),
+        tool: makeSubagent({ input: { action: 'start', task: '完整 task 内容' } }),
       },
     })
-    const text = wrapper.text()
-    expect(text).toContain('首行任务描述')
-    expect(text).not.toContain('第二行不该出现')
-    expect(text).not.toContain('第三行也不该')
-  })
-
-  it('首行超 60 字符时截断并以 … 结尾', () => {
-    const longFirstLine = 'a'.repeat(80)
-    const wrapper = mount(BlockSubagent, {
-      props: {
-        tool: makeSubagent({ input: { action: 'start', task: longFirstLine } }),
-      },
-    })
-    const text = wrapper.text()
-    expect(text).toContain('…')
-    // 截断后首行长度 = 60 + …，不应包含完整 80 字符
-    expect(text).not.toContain('a'.repeat(80))
-  })
-
-  it('task 首行为空时跳过空行取下一个非空行', () => {
-    const wrapper = mount(BlockSubagent, {
-      props: {
-        tool: makeSubagent({
-          input: { action: 'start', task: '\n\n实际首行\n其他' },
-        }),
-      },
-    })
-    expect(wrapper.text()).toContain('实际首行')
-  })
-})
-
-describe('BlockSubagent: 展开体（task 完整 + background 状态行）', () => {
-  it('completed 态默认收起，点击后展开 task 完整内容', async () => {
-    const wrapper = mount(BlockSubagent, {
-      props: {
-        tool: makeSubagent({
-          input: { action: 'start', task: '完整 task 内容' },
-        }),
-      },
-    })
-    // 默认收起：展开体不可见
+    // 默认无展开体
     expect(wrapper.find('.subagent-task-full').exists()).toBe(false)
-    // 点击 header 展开
+    // 点击后依然无展开体（collapsed only，点击行为是开 drawer 而非展开）
     await wrapper.find('[data-testid="subagent-block"] > div').trigger('click')
-    expect(wrapper.find('.subagent-task-full').exists()).toBe(true)
-    expect(wrapper.find('.subagent-task-full').text()).toContain('完整 task 内容')
+    expect(wrapper.find('.subagent-task-full').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('完整 task 内容')
   })
 
-  it('展开体渲染 background 状态行（output.bgResponse.message）', async () => {
+  it('output 有 bgResponse 也不渲染 bg 状态行（完成通知走 §10.5 BgNotifyCard）', () => {
     const wrapper = mount(BlockSubagent, {
       props: {
         tool: makeSubagent({
@@ -187,41 +154,69 @@ describe('BlockSubagent: 展开体（task 完整 + background 状态行）', () 
         }),
       },
     })
-    await wrapper.find('[data-testid="subagent-block"] > div').trigger('click')
     const text = wrapper.text()
-    expect(text).toContain('background ·')
-    expect(text).toContain('detached, will notify on completion')
-    // 状态点 blink 动画：当前用 Tailwind 内置 animate-blink（非自定义 .subagent-status-dot class）
-    expect(wrapper.find('.animate-blink').exists()).toBe(true)
+    expect(text).not.toContain('background ·')
+    expect(text).not.toContain('detached, will notify on completion')
+    // 无状态点 blink 动画
+    expect(wrapper.find('.animate-blink').exists()).toBe(false)
   })
+})
 
-  it('output.bgResponse 无 message 但 status=running 时回退默认文案', async () => {
+describe('BlockSubagent: 点击行为（开 drawer subagent tab）', () => {
+  it('output 含 subagentId + sessionId → openSubagent(virtualId, enteredFrom:chat)', async () => {
     const wrapper = mount(BlockSubagent, {
       props: {
         tool: makeSubagent({
-          input: { action: 'start', task: 'task' },
           output: JSON.stringify({
             action: 'start',
-            bgResponse: { status: 'running', mode: 'background' },
+            subagentId: '1338dda5',
+            sessionFile: null,
+            slug: 'rs',
           }),
         }),
+        sessionId: 's1',
       },
     })
     await wrapper.find('[data-testid="subagent-block"] > div').trigger('click')
-    expect(wrapper.text()).toContain('running detached · will notify on completion')
+    expect(openSubagentMock).toHaveBeenCalledTimes(1)
+    expect(openSubagentMock).toHaveBeenCalledWith({
+      virtualId: subagentVirtualId('s1', '1338dda5'),
+      enteredFrom: 'chat',
+    })
   })
 
-  it('output 非合法 JSON 时无 background 状态行', async () => {
+  it('缺 sessionId 时 no-op（不抛错、不调 openSubagent）', async () => {
     const wrapper = mount(BlockSubagent, {
       props: {
         tool: makeSubagent({
-          input: { action: 'start', task: 'task' },
-          output: 'plain text not json',
+          output: JSON.stringify({ action: 'start', subagentId: '1338dda5' }),
         }),
       },
     })
     await wrapper.find('[data-testid="subagent-block"] > div').trigger('click')
-    expect(wrapper.text()).not.toContain('background ·')
+    expect(openSubagentMock).not.toHaveBeenCalled()
+  })
+
+  it('output 非合法 JSON 时 no-op（running 早期 output 未就绪）', async () => {
+    const wrapper = mount(BlockSubagent, {
+      props: {
+        tool: makeSubagent({ output: 'plain text not json' }),
+        sessionId: 's1',
+      },
+    })
+    await wrapper.find('[data-testid="subagent-block"] > div').trigger('click')
+    expect(openSubagentMock).not.toHaveBeenCalled()
+  })
+
+  it('output JSON 无 subagentId 字段时 no-op', async () => {
+    const wrapper = mount(BlockSubagent, {
+      props: {
+        tool: makeSubagent({ output: JSON.stringify({ action: 'start', slug: 'rs' }) }),
+        sessionId: 's1',
+      },
+    })
+    await wrapper.find('[data-testid="subagent-block"] > div').trigger('click')
+    expect(openSubagentMock).not.toHaveBeenCalled()
   })
 })
 
@@ -248,23 +243,19 @@ describe('BlockSubagent: running / failed / unfinished 态', () => {
     expect(wrapper.find('.animate-loader-spin').exists()).toBe(true)
   })
 
-  it('failed 态默认收起，手动点击展开后 task 完整内容可见', async () => {
+  it('failed 态整行降 neutral-mid（不切 icon，颜色表达）', () => {
     const wrapper = mount(BlockSubagent, {
       props: {
         tool: makeSubagent({
           status: 'error',
-          input: { action: 'start', task: 'failed task' },
+          input: { action: 'start', agent: 'researcher', task: 'failed task' },
         }),
       },
     })
-    // failed 不再强制展开，默认收起
-    expect(wrapper.find('.subagent-task-full').exists()).toBe(false)
-    // header 中性灰
-    expect(wrapper.find('.text-neutral-mid').exists()).toBe(true)
-    // 手动点击展开后 task 完整体可见
-    await wrapper.find('[data-testid="subagent-block"] > div').trigger('click')
-    expect(wrapper.find('.subagent-task-full').exists()).toBe(true)
-    expect(wrapper.find('.subagent-task-full').text()).toContain('failed task')
+    // 整行 header 中性灰
+    expect(wrapper.find('[data-testid="subagent-block"] > div').classes()).toContain('text-neutral-mid')
+    // 仍展示 agent（不因 failed 隐藏）
+    expect(wrapper.text()).toContain('researcher')
   })
 
   it('unfinished 态不渲染终态指示（终态 icon 已移除）', () => {
