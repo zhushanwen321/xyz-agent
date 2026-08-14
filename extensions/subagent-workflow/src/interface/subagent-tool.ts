@@ -219,6 +219,10 @@ CRITICAL — executionMode "sequential": multiple \`subagent\` calls in the SAME
 
 Delegate when the task needs a distinct specialized role, context isolation (fork/worktree), or parallelism while you do other work. Delegate FIRST when the task involves any of: reading 3+ files, writing 100+ lines of implementation, parallel research, or specialized review — doing these yourself floods your context with implementation detail and loses the orchestration view.
 
+## Before starting — list first
+
+action:"list" before action:"start" — a reusable running subagent may exist; compaction can swallow its id.
+
 ## Actions
 
 - action:"start" — run a subagent. Pass task and slug as top-level fields (REQUIRED). Optional: agent, model, thinkingLevel, skillPath, appendSystemPrompt, schema, maxTurns, graceTurns, fork, worktree, cwd, conversation, idleTimeoutMs. Background only: returns a subagentId immediately, notifies on completion.
@@ -274,7 +278,7 @@ idleTimeoutMs: idle timeout in ms for conversation-mode subagents (default 30000
 
 ## Calling patterns
 
-Single (one subagent, one task) is the common case. Chain dependent tasks: send the next start after the prior completion. Run N independent tasks concurrently: send N action:"start" calls in the SAME message — each returns a subagentId at once. Start long tasks and move on; cancel if the direction changes.
+Chain dependent tasks: send the next start after prior completion. Run N independent tasks concurrently: N action:"start" calls in the SAME message. Cancel if direction changes.
 
 ## Nested spawning (recursion)
 

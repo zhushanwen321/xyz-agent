@@ -582,6 +582,16 @@ export interface SubagentListItem {
   totalTokens: number;
   /** session jsonl 文件名（窗口期内可能 undefined）。 */
   sessionFile?: string;
+  /** 直接父 subagent record ID（顶层 record 为 undefined）。[v4 A-6] 从
+   *  record.parentRecordId 派生，配合 A-5 直接父守卫（message/close 仅作用于直接子）。 */
+  parent?: string;
+  /** 可冷路径 resume（running 且无活进程句柄）。[v4 A-6] B-1「可续聊」对外表达，
+   *  agent 据 list 判断哪些 running subagent 实际可续聊（vs 正在忙）。 */
+  resumable?: boolean;
+  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。[v4 A-6] SP-4 级联关闭告知
+   *  替代——砍 before_agent_start 注入通道后，被级联关闭的 record 经 list
+   *  （includeFinished:true）可查，closedReason 显示 'parent-fork'/'parent-new' 等。 */
+  closedReason?: ClosedReason;
 }
 
 /** background 启动的内层响应（挂在 SubagentToolResult.bgResponse）。 */

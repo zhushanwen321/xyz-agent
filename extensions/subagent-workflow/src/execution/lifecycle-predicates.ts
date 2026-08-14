@@ -56,7 +56,10 @@ export function isIdle(record: ExecutionRecord): boolean {
  *
  * 与 {@link isIdle} 的关系：isResumable=true 蕴含 isIdle 可能为 false（Path B 进程
  * 已退出，timer 未 armed）；isIdle=true（Path A）则 isResumable=false（进程保活）。
+ *
+ * [v4 A-6] 签名泛化为 Pick<"id"|"status">：ExecutionRecord（活态）与 SubagentRecord
+ * （list 快照）均结构兼容——recordToListItem 据此为 list 输出派生 resumable 字段。
  */
-export function isResumable(record: ExecutionRecord): boolean {
+export function isResumable(record: Pick<ExecutionRecord, "id" | "status">): boolean {
   return record.status === "running" && !hasLiveProcessHandle(record.id);
 }

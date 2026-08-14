@@ -18,6 +18,7 @@ import {
 
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
 import { computeElapsedSeconds } from "../execution/execution-record.ts";
+import { isResumable } from "../execution/lifecycle-predicates.ts";
 import type { ExecutionRecord } from "../execution/types.ts";
 import type { ModelInfo } from "../execution/model-resolver.ts";
 import type { SubagentService } from "../execution/subagent-service.ts";
@@ -138,8 +139,11 @@ export function mapExternalState(status: ExecutionStatus): ExternalState {
   }
 }
 
-/** SubagentRecord → SubagentListItem（state 四态主字段 + status 调试字段，duration 实时计算）。 */
-function recordToListItem(r: SubagentRecord): SubagentListItem {
+/** SubagentRecord → SubagentListItem（state 四态主字段 + status 调试字段，duration 实时计算）。
+ *  [v4 A-6] 新增 parent/resumable/closedReason：parent 从 record.parentRecordId 派生
+ *  （配合 A-5 直接父守卫），resumable 从 isResumable 派生（B-1「可续聊」对外表达），
+ *  closedReason 透传（SP-4 级联关闭告知替代 before_agent_start 注入）。 */
+export function recordToListItem(r: SubagentRecord): SubagentListItem {
   return {
     subagentId: r.id,
     agent: r.agent,
@@ -151,6 +155,9 @@ function recordToListItem(r: SubagentRecord): SubagentListItem {
     model: r.model,
     totalTokens: r.totalTokens,
     sessionFile: r.sessionFile,
+    parent: r.parentRecordId,
+    resumable: isResumable(r),
+    closedReason: r.closedReason,
   };
 }
 

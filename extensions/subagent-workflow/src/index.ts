@@ -17,7 +17,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import type { BeforeAgentStartEvent, BeforeAgentStartEventResult, ExtensionAPI, ExtensionContext, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 
@@ -80,7 +80,12 @@ declare module "@earendil-works/pi-coding-agent" {
 // 模块级 logger（setPiHandle 注入后自动走 appendEntry）
 const logger = getLogger("subagents");
 
-// ── SP-3: subagent 状态快照格式化（before_agent_start 注入用） ──
+// ── subagent 状态快照格式化 ──
+//
+// [v4 A-6] before_agent_start 注入 hook 已删（活跃 subagent 清单改由 agent 按需调
+// action:'list' 拉取，消除每 loop 注入的上下文税与盲点）。本函数保留为纯格式化工具：
+// before-agent-start-injection / parent-child-matrix 测试覆盖其正确性，未来 list
+// 视图或其他注入点可复用。
 
 /** 活跃 subagent 数量上限（超过截断显示）。 */
 const MAX_STATUS_INJECTION = 10;
@@ -161,66 +166,6 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // ════════════════════════════════════════════════════════════
   setupSubagentListInjector(pi);
   setupWorkflowListInjector(pi);
-
-  // ════════════════════════════════════════════════════════════
-  //  SP-3: before_agent_start subagent 状态注入
-  //
-  //  有活跃 subagent（running + idle）时注入 customType:'subagent-status' 快照消息，
-  //  持久化到 session 文件。compact 后下一个 loop 自动恢复引用，不依赖摘要质量。
-  //  无活跃 subagent 时不注入（零成本）。设计见 D5 / SP-3。
-  // ════════════════════════════════════════════════════════════
-  pi.on(
-    "before_agent_start",
-    (
-      _event: BeforeAgentStartEvent,
-      _ctx: ExtensionContext,
-    ): BeforeAgentStartEventResult | void => {
-      try {
-        const service = getSubagentService();
-        if (!service) return;
-
-        // [v4 B-1] 临时：idle 折入 running，筛选改 running。a6 独立 slice 删整个 before_agent_start hook 时随之消失。
-        // collectRecords 按 rootSessionId 过滤，只看本 session 的 subagent。
-        const allRecords = service.collectRecords(1000);
-        const activeRecords = allRecords.filter(
-          (r) => r.status === "running",
-        );
-
-        // SP-4: 检查级联关闭记录（fork/new 时被关的 subagent）
-        const cascaded = service.drainCascaded();
-        if (activeRecords.length === 0 && cascaded.length === 0) return;
-
-        const parts: string[] = [];
-
-        // 活跃 subagent 快照
-        if (activeRecords.length > 0) {
-          parts.push(formatSubagentStatusSnapshot(activeRecords));
-        }
-
-        // SP-4: 级联关闭告知
-        if (cascaded.length > 0) {
-          const reasonGroups = new Map<string, string[]>();
-          for (const item of cascaded) {
-            const ids = reasonGroups.get(item.reason) ?? [];
-            ids.push(item.recordId);
-            reasonGroups.set(item.reason, ids);
-          }
-          const summary = Array.from(reasonGroups.entries())
-            .map(([reason, ids]) => `${ids.length} due to ${reason} (${ids.join(", ")})`)
-            .join("; ");
-          parts.push(`[subagent-closed] ${cascaded.length} subagent${cascaded.length === 1 ? "" : "s"} closed: ${summary}`);
-          // 注入后清空（一次性消费）
-          cascaded.length = 0;
-        }
-
-        const content = parts.join("\n");
-        return { message: { customType: "subagent-status", content, display: true } };
-      } catch {
-        // fail-safe：不阻断 agent turn
-        return;
-      }
-    },
-  );
 
   // 模块级缓存：主 session 的 sessionFile（fork source 解析用）。
   let cachedMainSessionFile: string | undefined;
