@@ -47,7 +47,7 @@
             <span
               v-else
               class="size-2 shrink-0 rounded-full"
-              :class="statusDotClass(record.status)"
+              :class="statusDotClass(record)"
             />
             <span class="min-w-0 flex-1 truncate text-[12px] font-medium leading-[1.35] text-neutral-fg">
               {{ record.agent }}
@@ -103,7 +103,8 @@ import { Loader2, Bot, AlertCircle, X, Check } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import type { SubagentRecord, SubagentStatus } from '@xyz-agent/shared'
+import type { SubagentRecord } from '@xyz-agent/shared'
+import { deriveClosedDisplay } from '@xyz-agent/shared'
 
 /** token 数超过此阈值显示 k 单位 */
 const TOKEN_K_THRESHOLD = 1000
@@ -140,9 +141,11 @@ function onCancelClick(subagentId: string): void {
   }
 }
 
-/** 状态点颜色映射（design-tokens 语义色） */
-function statusDotClass(status: SubagentStatus): string {
-  switch (status) {
+/** 状态点颜色映射（design-tokens 语义色）。
+ *  v4 两态：closed 是统一终态，成功/失败/取消按 closedReason/error 经 deriveClosedDisplay
+ *  派生（closed 落 default bg-accent 会丢失终态语义——成功/失败都显示 accent 点）。 */
+function statusDotClass(record: SubagentRecord): string {
+  switch (record.status) {
     case 'done':
       return 'bg-success'
     case 'failed':
@@ -152,7 +155,18 @@ function statusDotClass(status: SubagentStatus): string {
       return 'bg-danger'
     case 'cancelled':
       return 'bg-neutral-dim opacity-50'
+    case 'closed':
+      // v4 B-1 统一终态：cancelled→中性；gc 失败（error 有值）→红；自然完成/级联关闭→绿
+      switch (deriveClosedDisplay(record)) {
+        case 'cancelled':
+          return 'bg-neutral-dim opacity-50'
+        case 'failed':
+          return 'bg-danger'
+        default:
+          return 'bg-success'
+      }
     default:
+      // running 走 spinner 不会到这里；保留 accent 兜底防未知值无色
       return 'bg-accent'
   }
 }

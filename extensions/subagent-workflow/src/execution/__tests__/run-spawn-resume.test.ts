@@ -53,7 +53,7 @@ vi.mock("../temp-prompt.ts", () => ({
   cleanupTempPrompt: vi.fn(async () => {}),
 }));
 
-import { runSpawn } from "../session-runner.ts";
+import { getChildByRecord, runSpawn, spawnedChildren } from "../session-runner.ts";
 import {
   emitStdoutLine,
   type FakeChild,
@@ -217,5 +217,98 @@ describe("runSpawn resume（M1 基建）", () => {
     // 但 record.sessionFile 仍是 resume 锁定值，未被 response 覆盖
     expect(record.sessionFile).toBe(resumeSessionFile);
     expect(record.sessionFile).not.toBe(conflictingSessionFile);
+  });
+});
+
+// ============================================================
+// [M4] spawnedChildren 记账竞态：旧 child close/error 晚于 resume spawn
+// ============================================================
+
+describe("[M4] spawnedChildren 记账竞态守卫（旧 child close 晚于 resume spawn）", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockExistsSync.mockReturnValue(false);
+    spawnedChildren.clear();
+  });
+
+  afterEach(() => {
+    spawnedChildren.clear();
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * 竞态时序（PR #173 review 组 D）：idle timer 对旧 child 发 SIGTERM（killed=true 但
+   * close 事件异步未到）→ deliverMessage 判 child.killed 走冷路径 resumeRound → 新 child
+   * spawn 并 set 覆盖注册 → 旧 child 的 close 事件此刻到达。守卫前：close handler 无条件
+   * delete(record.id) 误删新注册 → 新活进程脱离记账（killAllSpawnedChildren 漏杀 +
+   * 二次 resume 双写 session 文件）。守卫后：按句相等跳过删除。
+   */
+  it("旧 child close 晚于 resume spawn 到达：不误删新 child 注册（按值守卫）", async () => {
+    const record = makeRecord("m4-race-1");
+    // 首轮 runSpawn（注册 child1）
+    const p1 = runSpawn(record, "first round", makeOpts(), makeCtx());
+    await waitForSpawn();
+    const child1 = lastSpawnedChild();
+    child1.stdin.on("data", () => {});
+    expect(getChildByRecord(record.id)).toBe(child1);
+
+    // 模拟 idle timer SIGTERM：killed=true 但 close 事件**未派发**（异步窗口）
+    child1.kill("SIGTERM");
+
+    // 冷路径 resume：同 record 第二次 runSpawn，spawn child2 覆盖注册
+    const resumeFile = "/sessions/sub/m4-race.jsonl";
+    const p2 = runSpawn(record, "resume round", makeOpts(), makeCtx(), {
+      sessionFile: resumeFile,
+    });
+    await waitForSpawn();
+    const child2 = lastSpawnedChild();
+    child2.stdin.on("data", () => {});
+    expect(getChildByRecord(record.id)).toBe(child2);
+
+    // 旧 child1 的 close 事件此刻到达——守卫必须跳过删除
+    emitStdoutLine(child1, { type: "turn_end" });
+    child1.stdout.end();
+    child1.emit("close", 0);
+    await p1;
+
+    // 关键断言：新 child2 的注册未被旧 child 的迟到 close 误删
+    expect(getChildByRecord(record.id)).toBe(child2);
+
+    // child2 正常退出：close 后注册清理（守卫对当前句柄仍生效）
+    mockExistsSync.mockImplementation((p: unknown) => String(p) === resumeFile);
+    emitStdoutLine(child2, { type: "turn_end" });
+    child2.stdout.end();
+    child2.emit("close", 0);
+    await p2;
+    expect(getChildByRecord(record.id)).toBeUndefined();
+  });
+
+  it("旧 child spawn error 晚于 resume spawn 到达：同样不误删新 child 注册", async () => {
+    const record = makeRecord("m4-race-2");
+    const p1 = runSpawn(record, "first round", makeOpts(), makeCtx());
+    await waitForSpawn();
+    const child1 = lastSpawnedChild();
+    child1.stdin.on("data", () => {});
+
+    const p2 = runSpawn(record, "resume round", makeOpts(), makeCtx(), {
+      sessionFile: "/sessions/sub/m4-race-2.jsonl",
+    });
+    await waitForSpawn();
+    const child2 = lastSpawnedChild();
+    child2.stdin.on("data", () => {});
+    expect(getChildByRecord(record.id)).toBe(child2);
+
+    // 旧 child1 的 error 事件迟到（spawn 失败回调晚到）
+    child1.emit("error", new Error("spawn ENOENT (late)"));
+    await p1;
+
+    expect(getChildByRecord(record.id)).toBe(child2);
+
+    mockExistsSync.mockImplementation((p: unknown) => String(p) === "/sessions/sub/m4-race-2.jsonl");
+    emitStdoutLine(child2, { type: "turn_end" });
+    child2.stdout.end();
+    child2.emit("close", 0);
+    await p2;
+    expect(getChildByRecord(record.id)).toBeUndefined();
   });
 });

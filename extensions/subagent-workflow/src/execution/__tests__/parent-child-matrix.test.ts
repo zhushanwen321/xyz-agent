@@ -1,434 +1,336 @@
 // src/execution/__tests__/parent-child-matrix.test.ts
 //
-// SP-4: 父子联动矩阵测试。
+// SP-4: 父子联动测试（真实 SubagentService + index.ts 事件接线）。
 //
-// 验证：
-//   TC-1: fork 级联关闭 → record 标 closed{reason:"parent-fork"}
-//   TC-2: recentlyCascaded 收集被关 record
-//   TC-3: before_agent_start hook 注入告知消息
-//   TC-4: 60s 超时自动清空 recentlyCascaded
+// [M2/M7 重写] 旧套件在测试内手写 tryTransition/completeRecord/recentlyCascaded 模拟
+// （平行复刻生产逻辑），生产代码任何回归恒绿。现改为两层真实驱动：
+//   Block 1: 真实 SubagentService.onParentFork / onParentNew / disposeAllRecords
+//            → 断言 record 转 closed + closedReason + archive + pending:unregister
+//   Block 2: 真实 index.ts factory 注册的 session_before_fork / session_before_switch
+//            handler 驱动同一真实 Service → 断言事件接线与 reason 门控
+//
+// 事件语义依据 SDK 0.82.1（core/agent-session-runtime.js + core/agent-session.js）：
+//   /fork          → session_before_fork(entryId, position) → teardown("fork")
+//   /new           → session_before_switch(reason:"new") → teardown("new")
+//                    （/new 从不触发 session_before_tree——旧实现误挂即 M2 bug）
+//   /resume /import → session_before_switch(reason:"resume")
+//   /tree          → session_before_tree（同 session 内分支导航，无 session 替换）
+//                    + session_tree（导航后）——均无级联关闭语义
 
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
-import {
-  completeRecord,
-  createRecord,
-  snapshot,
-  tryTransition,
-} from "../execution-record.ts";
-import type {
-  ClosedReason,
-  ExecutionRecord,
-  SubagentRecord,
-} from "../types.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+// mock logger（import 链需要 getLogger 存在；对齐 subagent-service-parent-guard.test.ts。
+// setPiHandle 是 index.ts factory 顶层调用（注入 pi handle 给全局 logger），需一并 stub）
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+  getLogger: () => loggerMock,
+  setPiHandle: vi.fn(),
+}));
+
+// mock session-runner（import 链需要 runSpawn/killAllSpawnedChildren/getChildByRecord；
+// 避免真实 kill，且 dispose 收割路径可断言）
+const { killAllSpawnedChildrenMock } = vi.hoisted(() => ({
+  killAllSpawnedChildrenMock: vi.fn(),
+}));
+vi.mock("../session-runner.ts", () => ({
+  runSpawn: vi.fn(),
+  killAllSpawnedChildren: killAllSpawnedChildrenMock,
+  getChildByRecord: vi.fn(() => undefined),
+}));
+
+import { createRecord } from "../execution-record.ts";
+import { ModelConfigService } from "../model-config-service.ts";
 import { RecordStore } from "../record-store.ts";
-import { formatSubagentStatusSnapshot } from "../../index.ts";
+import { SubagentService, setSubagentService } from "../subagent-service.ts";
+import type { PiLike } from "../subagent-service.ts";
+import type { ExecutionRecord } from "../types.ts";
+import subagentsExtension from "../../index.ts";
 
 // ── helpers ──
 
-/** 创建一个 running 状态的可变 ExecutionRecord（内存态）。 */
+function makeTmpAgentDir(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "parent-child-matrix-"));
+}
+
+/** 最小 mock PiLike（appendEntry/events.emit/sendMessage 全部可断言）。 */
+function makePi(): { pi: PiLike; eventsEmit: ReturnType<typeof vi.fn> } {
+  const eventsEmit = vi.fn();
+  const pi = {
+    appendEntry: vi.fn(),
+    events: { emit: eventsEmit },
+    sendMessage: vi.fn(),
+  } as unknown as PiLike;
+  return { pi, eventsEmit };
+}
+
+/** 暴露私有字段供测试注入 record（对齐 subagent-service-parent-guard.test.ts 模式）。 */
+interface ServiceInternals {
+  store: RecordStore;
+}
+
+/** 构造一个 running 状态的 ExecutionRecord（内存态，register 进真实 store）。 */
 function makeRunningRecord(id: string, overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
-  const record = createRecord(id, {
+  return createRecord(id, {
     agent: "general-purpose",
     model: "test/model",
     mode: "background",
     task: `task for ${id}`,
     slug: `slug-${id}`,
     startedAt: Date.now(),
-    rootSessionId: "session-main",
+    rootSessionId: "root-session",
     controller: new AbortController(),
     ...overrides,
   });
-  return record;
 }
 
-/** 创建一个 idle 状态的可变 ExecutionRecord（对话模式轮次完成）。 */
-function makeIdleRecord(id: string, overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
-  const record = makeRunningRecord(id, overrides);
-  record.status = "idle";
-  record.round = 1;
-  return record;
+/** 重置进程级 SubagentService 单例槽（setSubagentService 不接受 null，测试清理用）。
+ *  key 与生产 getServiceSlot 的 SERVICE_SLOT_KEY（subagent-service.ts）一致。 */
+function resetServiceSlot(): void {
+  const slot = Reflect.get(globalThis, Symbol.for("@zhushanwen/pi-subagents.service")) as
+    | { current: SubagentService | null }
+    | undefined;
+  if (slot) slot.current = null;
 }
 
-// ── SubagentRecord stub 工厂（formatSubagentStatusSnapshot 用）──
-
-function makeSubagentRecord(over: Partial<SubagentRecord> = {}): SubagentRecord {
-  return {
-    id: "sa-abc123",
-    agent: "general-purpose",
-    task: "test task",
-    slug: "test-slug",
-    status: "running",
-    mode: "background",
-    startedAt: Date.now(),
-    rootSessionId: "session-main",
-    parentRecordId: undefined,
-    depth: 0,
-    endedAt: undefined,
-    turns: 0,
-    totalTokens: 0,
-    model: "test/model",
-    thinkingLevel: undefined,
-    eventLog: [],
-    displayItems: [],
-    result: undefined,
-    error: undefined,
-    sessionFile: undefined,
-    round: 0,
-    ...over,
-  };
+/** 创建真实 SubagentService（tmp agentDir + mock pi），返回 service 与内部 store。 */
+function setupRealService(): { service: SubagentService; store: RecordStore } {
+  const agentDir = makeTmpAgentDir();
+  const modelService = new ModelConfigService({ agentDir });
+  const service = new SubagentService({ cwd: agentDir, modelService });
+  service.initSession({ pi: makePi().pi, sessionId: "root-session" });
+  const store = (service as unknown as ServiceInternals).store;
+  return { service, store, agentDir };
 }
 
 // ============================================================
-// TC-1: fork/new 级联关闭 → record 标 closed{reason}
+// Block 1: 真实 SubagentService 级联关闭
 // ============================================================
 
-describe("disposeAllRecords cascade close", () => {
-  it("TC-1a: running record 被关闭为 closed + parent-fork reason", () => {
-    const record = makeRunningRecord("sa-001");
-    expect(record.status).toBe("running");
+describe("SP-4 级联关闭（真实 SubagentService）", () => {
+  let agentDir: string;
+  let service: SubagentService;
+  let store: RecordStore;
+  let eventsEmit: ReturnType<typeof vi.fn>;
 
-    // 模拟 tryTransition + completeRecord 流程（SubagentService.disposeAllRecords 的核心逻辑）
-    const transitioned = tryTransition(record, "closed", "parent-fork");
-    expect(transitioned).toBe(true);
-
-    completeRecord(record, {
-      text: "",
-      turns: 0,
-      durationMs: 100,
-      success: false,
-      error: "closed due to parent-fork",
-      sessionId: record.id,
-      toolCalls: [],
-    }, "closed", "parent-fork");
-
-    expect(record.status).toBe("closed");
-    expect(record.closedReason).toBe("parent-fork");
-  });
-
-  it("TC-1b: idle record 被关闭为 closed + parent-new reason（直接 completeRecord）", () => {
-    const record = makeIdleRecord("sa-002");
-
-    // idle record 不经过 tryTransition（CAS 只对 running 生效），直接 completeRecord
-    // 与 SubagentService.disposeAllRecords 的 idle 分支一致
-    completeRecord(record, {
-      text: "",
-      turns: 1,
-      durationMs: 200,
-      success: false,
-      error: "closed due to parent-new",
-      sessionId: record.id,
-      toolCalls: [],
-    }, "closed", "parent-new");
-
-    expect(record.status).toBe("closed");
-    expect(record.closedReason).toBe("parent-new");
-  });
-
-  it("TC-1c: parent-shutdown reason 正确应用", () => {
-    const record = makeRunningRecord("sa-003");
-
-    tryTransition(record, "closed", "parent-shutdown");
-    completeRecord(record, {
-      text: "",
-      turns: 0,
-      durationMs: 50,
-      success: false,
-      error: "closed due to parent-shutdown",
-      sessionId: record.id,
-      toolCalls: [],
-    }, "closed", "parent-shutdown");
-
-    expect(record.status).toBe("closed");
-    expect(record.closedReason).toBe("parent-shutdown");
-  });
-
-  it("TC-1d: 已终态 record 不可再被 tryTransition", () => {
-    const record = makeRunningRecord("sa-004");
-    // 先转终态
-    expect(tryTransition(record, "closed", "gc")).toBe(true);
-    completeRecord(record, {
-      text: "",
-      turns: 0,
-      durationMs: 0,
-      success: false,
-      sessionId: record.id,
-      toolCalls: [],
-    }, "closed", "gc");
-
-    // 再次尝试应失败（CAS 保护）
-    expect(tryTransition(record, "closed", "parent-fork")).toBe(false);
-    expect(record.closedReason).toBe("gc"); // 保持原 reason
-  });
-});
-
-// ============================================================
-// TC-2: recentlyCascaded 收集被关 record
-// ============================================================
-
-describe("recentlyCascaded collection", () => {
-  it("TC-2a: 被关 record 收集到 recentlyCascaded", () => {
-    const recentlyCascaded: Array<{ recordId: string; reason: ClosedReason }> = [];
-
-    // 模拟 disposeAllRecords 的收集逻辑
-    const record = makeRunningRecord("sa-100");
-    if (tryTransition(record, "closed", "parent-fork")) {
-      completeRecord(record, {
-        text: "",
-        turns: 0,
-        durationMs: 0,
-        success: false,
-        error: "closed due to parent-fork",
-        sessionId: record.id,
-        toolCalls: [],
-      }, "closed", "parent-fork");
-      recentlyCascaded.push({ recordId: record.id, reason: "parent-fork" });
-    }
-
-    expect(recentlyCascaded).toHaveLength(1);
-    expect(recentlyCascaded[0]).toEqual({ recordId: "sa-100", reason: "parent-fork" });
-  });
-
-  it("TC-2b: 多条 record 收集正确", () => {
-    const recentlyCascaded: Array<{ recordId: string; reason: ClosedReason }> = [];
-
-    for (let i = 0; i < 3; i++) {
-      const record = makeRunningRecord(`sa-${i}`);
-      if (tryTransition(record, "closed", "parent-new")) {
-        completeRecord(record, {
-          text: "",
-          turns: 0,
-          durationMs: 0,
-          success: false,
-          error: "closed due to parent-new",
-          sessionId: record.id,
-          toolCalls: [],
-        }, "closed", "parent-new");
-        recentlyCascaded.push({ recordId: record.id, reason: "parent-new" });
-      }
-    }
-
-    expect(recentlyCascaded).toHaveLength(3);
-    expect(recentlyCascaded.every((c) => c.reason === "parent-new")).toBe(true);
-  });
-
-  it("TC-2c: idle record 也被收集（直接 completeRecord）", () => {
-    const recentlyCascaded: Array<{ recordId: string; reason: ClosedReason }> = [];
-
-    const record = makeIdleRecord("sa-idle");
-    // idle record: 不经 tryTransition，直接 completeRecord
-    completeRecord(record, {
-      text: "",
-      turns: 1,
-      durationMs: 100,
-      success: false,
-      error: "closed due to parent-fork",
-      sessionId: record.id,
-      toolCalls: [],
-    }, "closed", "parent-fork");
-    recentlyCascaded.push({ recordId: record.id, reason: "parent-fork" });
-
-    expect(recentlyCascaded).toHaveLength(1);
-    expect(recentlyCascaded[0]?.recordId).toBe("sa-idle");
-  });
-});
-
-// ============================================================
-// TC-3: before_agent_start hook 注入告知消息
-// ============================================================
-
-describe("before_agent_start cascade notification injection", () => {
-  it("TC-3a: 仅有级联关闭记录（无活跃 subagent）时注入告知消息", () => {
-    const cascaded = [
-      { recordId: "sa-001", reason: "parent-fork" as ClosedReason },
-      { recordId: "sa-002", reason: "parent-fork" as ClosedReason },
-    ];
-    const activeRecords: SubagentRecord[] = [];
-
-    // 模拟 hook 逻辑
-    const parts: string[] = [];
-    if (activeRecords.length > 0) {
-      parts.push(formatSubagentStatusSnapshot(activeRecords));
-    }
-    if (cascaded.length > 0) {
-      const reasonGroups = new Map<string, string[]>();
-      for (const item of cascaded) {
-        const ids = reasonGroups.get(item.reason) ?? [];
-        ids.push(item.recordId);
-        reasonGroups.set(item.reason, ids);
-      }
-      const summary = Array.from(reasonGroups.entries())
-        .map(([reason, ids]) => `${ids.length} due to ${reason} (${ids.join(", ")})`)
-        .join("; ");
-      parts.push(`[subagent-closed] ${cascaded.length} subagent${cascaded.length === 1 ? "" : "s"} closed: ${summary}`);
-    }
-
-    const content = parts.join("\n");
-
-    expect(content).toContain("[subagent-closed] 2 subagents closed:");
-    expect(content).toContain("2 due to parent-fork (sa-001, sa-002)");
-  });
-
-  it("TC-3b: 同时有活跃 subagent 和级联关闭记录", () => {
-    const cascaded = [
-      { recordId: "sa-old", reason: "parent-new" as ClosedReason },
-    ];
-    const activeRecords = [
-      makeSubagentRecord({ id: "sa-new", slug: "new-task", status: "running" }),
-    ];
-
-    const parts: string[] = [];
-    if (activeRecords.length > 0) {
-      parts.push(formatSubagentStatusSnapshot(activeRecords));
-    }
-    if (cascaded.length > 0) {
-      const reasonGroups = new Map<string, string[]>();
-      for (const item of cascaded) {
-        const ids = reasonGroups.get(item.reason) ?? [];
-        ids.push(item.recordId);
-        reasonGroups.set(item.reason, ids);
-      }
-      const summary = Array.from(reasonGroups.entries())
-        .map(([reason, ids]) => `${ids.length} due to ${reason} (${ids.join(", ")})`)
-        .join("; ");
-      parts.push(`[subagent-closed] ${cascaded.length} subagent${cascaded.length === 1 ? "" : "s"} closed: ${summary}`);
-    }
-
-    const content = parts.join("\n");
-
-    // 包含活跃 subagent 信息
-    expect(content).toContain("[subagent-status] 1 active subagent:");
-    expect(content).toContain("sa-new");
-    // 包含级联关闭信息
-    expect(content).toContain("[subagent-closed] 1 subagent closed:");
-    expect(content).toContain("1 due to parent-new (sa-old)");
-  });
-
-  it("TC-3c: 级联关闭为空、无活跃 subagent 时不注入", () => {
-    const cascaded: Array<{ recordId: string; reason: ClosedReason }> = [];
-    const activeRecords: SubagentRecord[] = [];
-
-    const shouldInject = activeRecords.length > 0 || cascaded.length > 0;
-    expect(shouldInject).toBe(false);
-  });
-
-  it("TC-3d: 不同 reason 分组正确", () => {
-    const cascaded = [
-      { recordId: "sa-001", reason: "parent-fork" as ClosedReason },
-      { recordId: "sa-002", reason: "parent-new" as ClosedReason },
-      { recordId: "sa-003", reason: "parent-fork" as ClosedReason },
-    ];
-
-    const reasonGroups = new Map<string, string[]>();
-    for (const item of cascaded) {
-      const ids = reasonGroups.get(item.reason) ?? [];
-      ids.push(item.recordId);
-      reasonGroups.set(item.reason, ids);
-    }
-
-    expect(reasonGroups.size).toBe(2);
-    expect(reasonGroups.get("parent-fork")).toEqual(["sa-001", "sa-003"]);
-    expect(reasonGroups.get("parent-new")).toEqual(["sa-002"]);
-
-    const summary = Array.from(reasonGroups.entries())
-      .map(([reason, ids]) => `${ids.length} due to ${reason} (${ids.join(", ")})`)
-      .join("; ");
-
-    expect(summary).toContain("2 due to parent-fork (sa-001, sa-003)");
-    expect(summary).toContain("1 due to parent-new (sa-002)");
-  });
-});
-
-// ============================================================
-// TC-4: 60s 超时自动清空 recentlyCascaded
-// ============================================================
-
-describe("recentlyCascaded auto-clear timeout", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    agentDir = makeTmpAgentDir();
+    const modelService = new ModelConfigService({ agentDir });
+    const { pi, eventsEmit: emit } = makePi();
+    eventsEmit = emit;
+    service = new SubagentService({ cwd: agentDir, modelService });
+    service.initSession({ pi, sessionId: "root-session" });
+    store = (service as unknown as ServiceInternals).store;
   });
 
   afterEach(() => {
-    vi.useRealTimers();
+    service.dispose();
+    fs.rmSync(agentDir, { recursive: true, force: true });
   });
 
-  it("TC-4a: 60s 后自动清空 recentlyCascaded", () => {
-    const recentlyCascaded = [
-      { recordId: "sa-001", reason: "parent-fork" as ClosedReason },
-      { recordId: "sa-002", reason: "parent-new" as ClosedReason },
+  it("onParentFork：running record 转 closed + closedReason=parent-fork，并从内存归档", () => {
+    const record = makeRunningRecord("sa-fork-1");
+    store.register(record);
+
+    const count = service.onParentFork();
+
+    expect(count).toBe(1);
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("parent-fork");
+    expect(record.endedAt).toBeDefined();
+    // completeRecord 冻结合成 AgentResult（disposeAllRecords 构造，无在途执行）
+    expect(record.error).toBe("closed due to parent-fork");
+    // archive 生效：终态 record 立即从内存移除（读时从 session.jsonl 重建）
+    expect(store.getMutable("sa-fork-1")).toBeUndefined();
+    expect(store.listAllActive()).toHaveLength(0);
+  });
+
+  it("onParentNew：running record 转 closed + closedReason=parent-new", () => {
+    const record = makeRunningRecord("sa-new-1");
+    store.register(record);
+
+    const count = service.onParentNew();
+
+    expect(count).toBe(1);
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("parent-new");
+    expect(store.getMutable("sa-new-1")).toBeUndefined();
+  });
+
+  it("多个 running record 全部级联关闭，返回 count 与 record 数一致", () => {
+    const records = [
+      makeRunningRecord("sa-multi-1"),
+      makeRunningRecord("sa-multi-2"),
+      makeRunningRecord("sa-multi-3"),
     ];
+    for (const r of records) store.register(r);
 
-    // 模拟 scheduleCascadedClear 逻辑
-    setTimeout(() => {
-      recentlyCascaded.length = 0;
-    }, 60_000);
+    const count = service.onParentNew();
 
-    // 59s 后仍存在
-    vi.advanceTimersByTime(59_000);
-    expect(recentlyCascaded).toHaveLength(2);
-
-    // 60s 后清空
-    vi.advanceTimersByTime(1_001);
-    expect(recentlyCascaded).toHaveLength(0);
+    expect(count).toBe(3);
+    for (const r of records) {
+      expect(r.status).toBe("closed");
+      expect(r.closedReason).toBe("parent-new");
+    }
+    expect(store.listAllActive()).toHaveLength(0);
   });
 
-  it("TC-4b: 多次 onParentFork 不叠加超时（各自独立清空）", () => {
-    const recentlyCascaded: Array<{ recordId: string; reason: ClosedReason }> = [];
+  it("级联关闭对每个被关 record 发 pending:unregister（reason=closed）", () => {
+    const record = makeRunningRecord("sa-pending-1");
+    store.register(record);
 
-    // 第一次 fork：添加 1 条
-    recentlyCascaded.push({ recordId: "sa-001", reason: "parent-fork" });
-    setTimeout(() => { recentlyCascaded.length = 0; }, 60_000);
+    service.onParentFork();
 
-    // 第二次 fork（30s 后）：添加 1 条
-    vi.advanceTimersByTime(30_000);
-    recentlyCascaded.push({ recordId: "sa-002", reason: "parent-new" });
-    setTimeout(() => { recentlyCascaded.length = 0; }, 60_000);
-
-    // 30s 后（60s 总时间）：第一次超时触发，清空
-    vi.advanceTimersByTime(30_001);
-    expect(recentlyCascaded).toHaveLength(0);
+    expect(eventsEmit).toHaveBeenCalledWith("pending:unregister", {
+      id: "sa-pending-1",
+      reason: "closed",
+    });
   });
 
-  it("TC-4c: 注入后立即清空（一次性消费）", () => {
-    const recentlyCascaded = [
-      { recordId: "sa-001", reason: "parent-fork" as ClosedReason },
-    ];
+  it("幂等：无活跃 record 返回 0；级联后再次调用返回 0（record 已归档）", () => {
+    expect(service.onParentNew()).toBe(0);
 
-    // 模拟 hook 注入后清空
-    const content = `[subagent-closed] ${recentlyCascaded.length} subagent closed`;
-    expect(content).toContain("[subagent-closed] 1 subagent closed");
-
-    // 注入后清空
-    recentlyCascaded.length = 0;
-    expect(recentlyCascaded).toHaveLength(0);
+    const record = makeRunningRecord("sa-idem-1");
+    store.register(record);
+    expect(service.onParentFork()).toBe(1);
+    expect(service.onParentFork()).toBe(0); // 已 closed + archived，不重复关
   });
 });
 
 // ============================================================
-// TC-5: RecordStore.listAllActive 集成验证
+// Block 2: index.ts 事件接线（真实 factory + 真实 Service）
 // ============================================================
 
-describe("RecordStore.listAllActive", () => {
-  it("TC-5a: 返回 running + idle record，排除终态", () => {
-    // 注意：RecordStore 需要 sessionsDir 等依赖，这里用 mock 验证行为
-    // 实际 listAllActive 的单元测试在 record-store.test.ts 中覆盖
-    const running = makeRunningRecord("sa-r");
-    const idle = makeIdleRecord("sa-i");
+describe("SP-4 index.ts 事件接线", () => {
+  type PiHandler = (...args: unknown[]) => void | Promise<void>;
+  const registered = new Map<string, PiHandler>();
+  let processOnSpy: ReturnType<typeof vi.spyOn>;
+  let agentDir: string;
+  let service: SubagentService;
+  let store: RecordStore;
 
-    // 模拟 listAllActive 过滤逻辑
-    const allRecords = [running, idle];
-    const closed = makeRunningRecord("sa-c");
-    tryTransition(closed, "closed", "gc");
-    completeRecord(closed, {
-      text: "", turns: 0, durationMs: 0, success: false, sessionId: "sa-c", toolCalls: [],
-    }, "closed", "gc");
-    allRecords.push(closed);
+  /** 最小 mock ExtensionAPI：捕获 pi.on 注册的 handler（对齐 process-shutdown-hook.test.ts 模式）。 */
+  function createMockPi(): ExtensionAPI {
+    const noop = (): void => {
+      /* mock */
+    };
+    return {
+      registerTool: vi.fn(),
+      registerCommand: vi.fn(),
+      registerMessageRenderer: vi.fn(),
+      on: (event: string, handler: PiHandler) => {
+        registered.set(event, handler);
+      },
+      appendEntry: vi.fn(),
+      events: { emit: vi.fn(), on: vi.fn() },
+    } as unknown as ExtensionAPI;
+  }
 
-    const active = allRecords.filter((r) => r.status === "running" || r.status === "idle");
+  beforeEach(() => {
+    // 捕获 process.on 注册（不真实注册，防 listener 跨用例泄漏）——factory 顶层注册
+    // SIGTERM/SIGINT/beforeExit 三个 process hook（见 process-shutdown-hook.test.ts）。
+    processOnSpy = vi.spyOn(process, "on").mockImplementation((() => process) as never);
 
-    expect(active).toHaveLength(2);
-    expect(active.map((r) => r.id)).toContain("sa-r");
-    expect(active.map((r) => r.id)).toContain("sa-i");
-    expect(active.map((r) => r.id)).not.toContain("sa-c");
+    registered.clear();
+    killAllSpawnedChildrenMock.mockReset();
+
+    const ctx = setupRealService();
+    agentDir = ctx.agentDir;
+    service = ctx.service;
+    store = ctx.store;
+    setSubagentService(service);
+
+    subagentsExtension(createMockPi());
+  });
+
+  afterEach(() => {
+    processOnSpy.mockRestore();
+    service.dispose();
+    fs.rmSync(agentDir, { recursive: true, force: true });
+    resetServiceSlot();
+  });
+
+  it("factory 注册 session_before_fork 与 session_before_switch handler", () => {
+    expect(registered.get("session_before_fork")).toBeTypeOf("function");
+    expect(registered.get("session_before_switch")).toBeTypeOf("function");
+  });
+
+  it("[M2] 不注册 session_before_tree——/tree 同 session 分支导航不得级联杀 subagent", () => {
+    // SDK 中 session_before_tree 只由 navigateTree（/tree）触发，与 /new 无关。
+    // 旧实现误挂此事件当 /new 级联入口 → 普通 /tree 导航误杀全部活跃 subagent。
+    // 本断言是 M2 回归守卫：该事件不得再注册级联 handler。
+    expect(registered.has("session_before_tree")).toBe(false);
+  });
+
+  it("[M2] session_before_switch(reason:'new') 触发 /new 级联：record 转 closed + parent-new", () => {
+    const record = makeRunningRecord("sa-wire-new-1");
+    store.register(record);
+    const onParentNewSpy = vi.spyOn(service, "onParentNew");
+
+    registered.get("session_before_switch")!(
+      { type: "session_before_switch", reason: "new" },
+      undefined,
+    );
+
+    expect(onParentNewSpy).toHaveBeenCalledTimes(1);
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("parent-new");
+    expect(store.getMutable("sa-wire-new-1")).toBeUndefined();
+  });
+
+  it("[M2] session_before_switch(reason:'resume') 不级联：/resume 回到已有 session，record 保持 running", () => {
+    const record = makeRunningRecord("sa-wire-resume-1");
+    store.register(record);
+    const onParentNewSpy = vi.spyOn(service, "onParentNew");
+
+    registered.get("session_before_switch")!(
+      {
+        type: "session_before_switch",
+        reason: "resume",
+        targetSessionFile: "/tmp/other-session.jsonl",
+      },
+      undefined,
+    );
+
+    expect(onParentNewSpy).not.toHaveBeenCalled();
+    expect(record.status).toBe("running");
+    expect(store.getMutable("sa-wire-resume-1")).toBe(record);
+  });
+
+  it("session_before_fork 触发 /fork 级联：record 转 closed + parent-fork", () => {
+    const record = makeRunningRecord("sa-wire-fork-1");
+    store.register(record);
+    const onParentForkSpy = vi.spyOn(service, "onParentFork");
+
+    registered.get("session_before_fork")!(
+      { type: "session_before_fork", entryId: "entry-1", position: "before" },
+      undefined,
+    );
+
+    expect(onParentForkSpy).toHaveBeenCalledTimes(1);
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("parent-fork");
+    expect(store.getMutable("sa-wire-fork-1")).toBeUndefined();
+  });
+
+  it("service 单例未初始化（getSubagentService()=null）时 handler 安全 no-op", () => {
+    resetServiceSlot();
+    expect(() => {
+      registered.get("session_before_switch")!(
+        { type: "session_before_switch", reason: "new" },
+        undefined,
+      );
+      registered.get("session_before_fork")!(
+        { type: "session_before_fork", entryId: "e", position: "before" },
+        undefined,
+      );
+    }).not.toThrow();
   });
 });

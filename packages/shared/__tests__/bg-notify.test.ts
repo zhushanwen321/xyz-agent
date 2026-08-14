@@ -74,8 +74,9 @@ describe('parseBgNotifyDetails', () => {
     expect(parseBgNotifyDetails({ id: 'x', status: 'done', agent: 'y' })).toBeNull() // 缺 startedAt
   })
 
-  it('status 非法值 → null', () => {
+  it('status 非法值 → null（idle 为 v4 已删除的死值，按非法处理）', () => {
     expect(parseBgNotifyDetails({ ...validRecord, status: 'unknown' })).toBeNull()
+    expect(parseBgNotifyDetails({ ...validRecord, status: 'idle' })).toBeNull()
   })
 
   it('可选字段缺失时正常解析', () => {
@@ -91,11 +92,12 @@ describe('parseBgNotifyDetails', () => {
     expect(rec.round).toBeUndefined()
   })
 
-  it('idle 状态 + round + closedReason 字段正常解析', () => {
-    const idleRecord = { id: 'r1', status: 'idle', agent: 'coder', startedAt: 100, round: 3 }
-    const rec = parseBgNotifyDetails(idleRecord) as BgNotifyRecord
-    expect(rec.status).toBe('idle')
+  it('running 状态（对话模式轮次完成）+ round 字段正常解析', () => {
+    const runningRecord = { id: 'r1', status: 'running', agent: 'coder', startedAt: 100, round: 3, result: 'Round 3 done.' }
+    const rec = parseBgNotifyDetails(runningRecord) as BgNotifyRecord
+    expect(rec.status).toBe('running')
     expect(rec.round).toBe(3)
+    expect(rec.result).toBe('Round 3 done.')
     expect(rec.closedReason).toBeUndefined()
   })
 

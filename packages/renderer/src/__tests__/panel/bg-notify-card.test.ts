@@ -116,4 +116,67 @@ describe('BgNotifyCard', () => {
     })
     expect(wrapper.text()).toContain('已取消')
   })
+
+  // ── v4 B-1 两态契约：closed（closedReason 派生）+ running（轮次完成）──
+
+  it('v4 closed + closedReason=gc + error → failed 样式（XCircle + danger 着色 + error 优先于 result 显示）', () => {
+    const wrapper = mount(BgNotifyCard, {
+      props: {
+        message: singleMessage({
+          status: 'closed',
+          closedReason: 'gc',
+          error: 'Model timeout',
+          result: 'partial result',
+        }),
+      },
+    })
+    // error 优先于 result 显示在摘要首行（历史 bug：closed+error 渲染为成功卡显示 result）
+    expect(wrapper.text()).toContain('Model timeout')
+    expect(wrapper.find('p').text()).not.toContain('partial result')
+    // danger 着色（卡片边框或图标文字色）
+    expect(wrapper.find('.border-danger\\/40').exists() || wrapper.html().includes('text-danger')).toBe(true)
+  })
+
+  it('v4 closed + closedReason=cancelled → cancelled 样式（已取消文案 + 中性边框）', () => {
+    const wrapper = mount(BgNotifyCard, {
+      props: {
+        message: singleMessage({ status: 'closed', closedReason: 'cancelled', result: undefined }),
+      },
+    })
+    expect(wrapper.text()).toContain('已取消')
+    expect(wrapper.find('.border-neutral-mid\\/30').exists()).toBe(true)
+  })
+
+  it('v4 closed 自然完成（无 closedReason/error）→ 成功样式（CheckCircle2 + 默认边框 + result 显示）', () => {
+    const wrapper = mount(BgNotifyCard, {
+      props: {
+        message: singleMessage({ status: 'closed', closedReason: 'parent-new', error: undefined }),
+      },
+    })
+    // 非失败非取消 → 默认边框（不落 danger/cancelled 边框）
+    expect(wrapper.find('.border-danger\\/40').exists()).toBe(false)
+    expect(wrapper.find('.border-neutral-mid\\/30').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Refactored auth module')
+  })
+
+  it('v4 running（轮次完成）→ 轮次文案 + accent 着色（非终态，等待续聊）', () => {
+    const wrapper = mount(BgNotifyCard, {
+      props: {
+        message: singleMessage({ status: 'running', round: 2, result: 'round 2 output', error: undefined }),
+      },
+    })
+    // 轮次文案（finished a round 语义，含轮次号）
+    expect(wrapper.text()).toContain('第 2 轮完成')
+    // accent 着色（区别于终态成功的 neutral-fg）
+    expect(wrapper.html()).toContain('text-accent')
+    // 本轮结果仍显示
+    expect(wrapper.text()).toContain('round 2 output')
+  })
+
+  it('v4 running 无 round → 退「完成一轮」文案', () => {
+    const wrapper = mount(BgNotifyCard, {
+      props: { message: singleMessage({ status: 'running', result: undefined, error: undefined }) },
+    })
+    expect(wrapper.text()).toContain('完成一轮')
+  })
 })

@@ -397,11 +397,14 @@ export type CloseHandlerResult = {
 };
 
 /**
- * close action handler：结束对话模式 subagent。
+ * close action handler：结束 subagent（对话模式为主，one-shot 同样支持）。
  *
- * force 语义（设计决策 5/10）：
- *   force:false（默认）= 优雅关闭——running 等当前轮完成后终态化，idle 立即终态化
- *   force:true = 立即终止——running 立即 SIGTERM，idle 立即终态化（force 对 idle 无意义）
+ * force 语义（设计决策 5/10，v4 B-1 两态收敛 + M5 修正）：
+ *   force:false（默认）= 优雅关闭——
+ *     无在跑轮（等待续聊 timer armed / 无活进程）→ 立即终态化（closed + user-close，回收保活进程）
+ *     有活进程在跑轮 → 置 closeAfterRound，轮完成时终态化（chatMode 消费点 onRoundSettled，
+ *     one-shot 在 runAndFinalize 轮完成分支）——返回 {closed:true} 即承诺轮结束后资源已释放
+ *   force:true = 立即终止——running 立即 SIGTERM（cancelBackground 显式 kill）+ closed+cancelled
  *
  * 行为分流委托 service.closeSubagent（归属守卫由 getRecordForAction 把关）。
  * 已终态 record 由 getRecordForAction throw not found（「已结束的不能再操作」语义）。

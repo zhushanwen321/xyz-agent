@@ -13,8 +13,9 @@ import type { AgentResult as WorkflowAgentResult } from "../orchestration/models
 import { mapToWorkflowAgentResult } from "./agent-result-mapper.ts";
 import { removeAliveMarker } from "./alive-store.ts";
 import { bestEffort } from "./best-effort.ts";
-// [V2 决策 3] lifecycle-manager idle timer：chatMode 统一投递新 turn disarm（防误杀活进程）
-import { acquireActivateLock, disarmIdleTimer } from "./lifecycle-manager.ts";
+// [V2 决策 3] lifecycle-manager idle timer：chatMode 统一投递新 turn disarm（防误杀活进程）。
+// [M3] hasIdleTimer：piAdapter.hasRunningBackground 排除等待续聊（timer armed）的 record。
+import { acquireActivateLock, disarmIdleTimer, hasIdleTimer } from "./lifecycle-manager.ts";
 import { type ConcurrencyPool,DefaultConcurrencyPool } from "./concurrency-pool.ts";
 import type { DialogGlobalQueue, UiRequestHandler } from "./dialog-queue.ts";
 import {
@@ -35,7 +36,7 @@ import type { StatusFilter } from "./record-store.ts";
 import { RecordStore } from "./record-store.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import { getChildByRecord, killAllSpawnedChildren, runSpawn, spawnedChildren, type SessionRunnerContext, type SpawnResumeOpts } from "./session-runner.ts";
-import { isIdle, isResumable } from "./lifecycle-predicates.ts";
+import { isIdle, isResumable, hasLiveProcessHandle } from "./lifecycle-predicates.ts";
 import {
   clearEpipeFailure,
   EPIPE_FAILURE_THRESHOLD,
@@ -216,11 +217,6 @@ interface ResolvedIdentity {
 export class SubagentService {
   private readonly pool: ConcurrencyPool;
   private readonly store: RecordStore;
-  /** SP-4: 级联关闭收集器。fork/new 时记录被关 record 的 id 和 reason，
-   *  before_agent_start hook 据此注入告知消息，让主 agent 知道哪些子 agent 被清理。
-   *  60s 超时自动清空（内存态，进程重启即丢失——设计已接受：fork 历史已过去，
-   *  重启后 list 的 closed reason 本身可见）。 */
-  private recentlyCascaded: Array<{ recordId: string; reason: ClosedReason }> = [];
   private readonly modelService: ModelConfigService;
   private readonly cwd: string;
   private readonly worktreeManager: WorktreeManager;
@@ -399,11 +395,13 @@ export class SubagentService {
     }
   }
 
-  /** SP-4: 关闭所有活跃 record 并收集到 recentlyCascaded。
+  /** SP-4: 关闭所有活跃 record。
    *
-   *  遍历 store 中所有 running/idle record，逐个 CAS 转终态 + completeRecord + archive。
+   *  遍历 store 中所有 running record，逐个 CAS 转终态 + completeRecord + archive。
    *  对有 worktreeHandle 的 record 触发 worktreeManager.cleanup（T3: worktree 绑定清理）。
-   *  被关 record 收集到 recentlyCascaded 供 before_agent_start hook 注入告知。
+   *
+   *  [v4 A-6] 旧实现的 recentlyCascaded 收集（供已删除的 before_agent_start 注入告知）
+   *  与 drainCascaded 已一并移除——被关 record 的告知改由 list 的 closedReason 表达。
    *
    *  @param reason 关闭原因（parent-fork / parent-new / parent-shutdown）
    *  @returns 被关闭的 record 数量
@@ -438,43 +436,22 @@ export class SubagentService {
       }
       // pending-notifications 注销
       emitPendingUnregister(this.pi, record.id, "closed");
-      // 收集到级联关闭列表
-      this.recentlyCascaded.push({ recordId: record.id, reason });
       count++;
     }
     return count;
   }
 
-  /** SP-4: fork 新 session 时清理旧子进程。
-   *  调用 disposeAllRecords("parent-fork") 并启动 60s 超时自动清空 recentlyCascaded。 */
+  /** SP-4: /fork 新 session 时清理旧 record。
+   *  调用 disposeAllRecords("parent-fork")。由 index.ts 的 session_before_fork handler 触发。 */
   onParentFork(): number {
-    const count = this.disposeAllRecords("parent-fork");
-    this.scheduleCascadedClear();
-    return count;
+    return this.disposeAllRecords("parent-fork");
   }
 
-  /** SP-4: 创建新 subagent 时清理旧子进程。
-   *  调用 disposeAllRecords("parent-new") 并启动 60s 超时自动清空 recentlyCascaded。 */
+  /** SP-4: /new 创建全新 session 时清理旧 record。
+   *  调用 disposeAllRecords("parent-new")。由 index.ts 的 session_before_switch
+   *  （reason==="new"）handler 触发。 */
   onParentNew(): number {
-    const count = this.disposeAllRecords("parent-new");
-    this.scheduleCascadedClear();
-    return count;
-  }
-
-  /** 60s 超时自动清空 recentlyCascaded（防止内存残留）。 */
-  private scheduleCascadedClear(): void {
-    setTimeout(() => {
-      this.recentlyCascaded.length = 0;
-    }, 60_000);
-  }
-
-  /** SP-4: 消费级联关闭记录（fork/new 时被关的 subagent）。
-   *  返回并清空 recentlyCascaded 数组（drain 语义：读即清，防重复注入）。
-   *  调用方（before_agent_start hook）注入告知消息后自动清理。 */
-  drainCascaded(): Array<{ recordId: string; reason: ClosedReason }> {
-    const items = this.recentlyCascaded;
-    this.recentlyCascaded = [];
-    return items;
+    return this.disposeAllRecords("parent-new");
   }
 
   /** SP-4: idle record GC 定时器（30 天 TTL）。防止 idle record 永久驻留内存。
@@ -563,7 +540,14 @@ export class SubagentService {
         this.pi?.sendMessage(message, options);
       },
       hasRunningBackground: () => {
-        return this.store.listRunning().some((r) => r.mode === "background");
+        // [M3] 「在跑的 background 工作」= 有活进程且非等待续聊（idle timer armed）。
+        // v4 B-1 把旧 idle 折入 running 且 record 留 store：轮次完成的 chatMode record
+        // （timer armed、无在跑轮）与 one-shot 完成后等待 message 升级的 record 都不再计入。
+        // 旧判定 `mode === "background"` 对这两类恒 true → 轮次完成通知恒挂 60s 合并窗口
+        // （notifier MERGE_WINDOW_MS），主 agent 的续聊回复固定延迟 60s 送达，持续对话（G1）失效。
+        return this.store.listRunning().some(
+          (r) => r.mode === "background" && hasLiveProcessHandle(r.id) && !hasIdleTimer(r.id),
+        );
       },
       isIdle: this.isIdleFn,
     };
@@ -873,8 +857,13 @@ export class SubagentService {
           logger.warn(`[subagents] EPIPE on hot path for ${record.id}, falling back to cold path resume`, {
             detail: err.message,
           });
-          // 清理 spawnedChildren 中的死进程条目（让 resumeRound 能重新 spawn）
-          spawnedChildren.delete(record.id);
+          // 清理 spawnedChildren 中的死进程条目（让 resumeRound 能重新 spawn）。
+          // [M4] 按值守卫：仅当 Map 当前值仍是本次写 EPIPE 的 child 才删——若已被 resume
+          // spawn 覆盖为新 child（close 事件先于本 catch 到达的极端时序），不误删新注册
+          //（与 session-runner removeChildRegistration 同语义）。
+          if (spawnedChildren.get(record.id) === child) {
+            spawnedChildren.delete(record.id);
+          }
           // 递增连续 EPIPE 计数（[v4 A-1] helper 合并同步/异步路径计数）
           const count = recordEpipeFailure(record.id);
           if (count >= EPIPE_FAILURE_THRESHOLD) {
@@ -982,14 +971,15 @@ export class SubagentService {
   }
 
   /**
-   * close action 的统一行为分流（running/idle/终态 × force）。
+   * close action 的统一行为分流（running 子态 × force）。
    *
-   *   running + force:true  → cancelBackground（立即 SIGTERM + cancelled 终态）
-   *   running + force:false → 置 closeAfterRound=true（等当前轮完成，runAndFinalize done 分流终态化为 done）
-   *   idle                  → closeChatIdle（无活进程，立即终态化为 done：finalize）
-   *   其他终态              → 幂等 no-op（已结束）
+   *   running + force:true                → cancelBackground（显式 SIGTERM + closed+cancelled 终态）
+   *   running + force:false + 无在跑轮    → closeChatIdle（立即终态化 done + 回收保活进程 + disarm timer）
+   *     （isIdle timer armed 或 isResumable 无活进程）
+   *   running + force:false + 有活进程在跑轮 → 置 closeAfterRound=true（轮完成时终态化：
+   *     chatMode 消费点在 onRoundSettled，非 chatMode 在 runAndFinalize CAS 分支）
+   *   其他终态                            → 幂等 no-op（已结束）
    *
-   * force 对 idle 无意义——idle 无在跑的工作可强制终止，统一走 closeChatIdle（done）。
    * 与设计决策 5 一致：close = 正式终态（走 finalize），force 只影响 running 时机。
    *
    * @param record 目标 record（getRecordForAction 已校验归属）
@@ -1001,11 +991,16 @@ export class SubagentService {
       if (force) {
         // 立即终止：cancelBackground（controller.abort + tryTransition closed+cancelled + finalize）
         this.cancelBackground(record);
-      } else if (isResumable(record)) {
-        // v4 B-1：旧 idle（无活进程，可冷路径 resume）→ 立即终态化为 done（force 对此态无意义）
+      } else if (isIdle(record) || isResumable(record)) {
+        // [M5] 无在跑轮：Path A（isIdle timer armed、进程保活等待续聊）/ Path B（isResumable
+        // 无活进程）→ 立即终态化 done（closeChatIdle 内回收保活进程 + disarm timer）。
+        // 旧代码 Path A 走 else 置 closeAfterRound，但唯一消费点（runAndFinalize CAS 分支）
+        // 对 chatMode 不可达——agent_settled 恒 arm idle timer → runAndFinalize 恒命中
+        // early return（isIdle 恒 true），标志置了无人消费，tool 却返回 {closed:true}（谎报）。
         await this.closeChatIdle(record);
       } else {
-        // 优雅关闭：正在执行（有活进程），标记 closeAfterRound，runAndFinalize done 分流时终态化
+        // 优雅关闭：正在执行（有活进程在跑轮），标记 closeAfterRound，轮完成时终态化
+        //（chatMode 消费点在 onRoundSettled，非 chatMode 在 runAndFinalize CAS 分支）
         record.closeAfterRound = true;
       }
     }
@@ -1013,18 +1008,27 @@ export class SubagentService {
   }
 
   /**
-   * idle record 手动终态化为 done（close action 的 idle 分支）。
+   * 无在跑轮 record 的手动终态化为 done（close action 的 isIdle/isResumable 分支）。
    *
-   * idle record 无在途 AgentResult（轮次完成时 record 未冻结，turns[] 保留运行时状态），
+   * 无在途 AgentResult（轮次完成时 record 未冻结，turns[] 保留运行时状态），
    * 构造合成 done result（对齐 cancelBackground 的 cancelledResult 模式）。
    * 走 doFinalizeRecord 的完整终态化路径（completeRecord + archive + finalized + worktree
    * cleanup + alive marker + manifest）。
    *
-   * 不走 tryTransition（idle record 的 status 不是 running，CAS 不通过）——直接由 doFinalizeRecord
-   * 内部的 completeRecord 覆盖 status，与 cancelBackground 对 record 的处理同构。
+   * [M5] 覆盖两路：Path B（无活进程，同旧行为）与 Path A（idle timer armed、进程保活等待
+   * 续聊）。Path A 必须先显式回收进程 + disarm timer——否则 record 已终态化但保活进程
+   * 继续驻留（终态后无人再杀它：closeSubagent 不再来、idle timer 已 disarm、runSpawn
+   * promise 早已 resolve），直到宿主进程退出。
+   *
+   * 不走 tryTransition（v4 B-1 此态 status=running，但由 doFinalizeRecord 内部的
+   * completeRecord 直接覆盖 status，与 cancelBackground 对 record 的处理同构）。
    */
   private async closeChatIdle(record: ExecutionRecord): Promise<void> {
-    // 合成 closed result（idle record 无在途 AgentResult，对齐 cancelBackground cancelledResult）
+    // [M5] Path A：回收保活进程 + disarm idle timer（终态化后无其他 kill 路径）
+    disarmIdleTimer(record.id);
+    const child = getChildByRecord(record.id);
+    if (child && !child.killed) child.kill("SIGTERM");
+    // 合成 closed result（无在途 AgentResult，对齐 cancelBackground cancelledResult）
     const doneResult: AgentResult = {
       text: "",
       turns: record.turnCount,
@@ -1048,6 +1052,37 @@ export class SubagentService {
       "closed",
       "user-close", // close action 主动关闭
     );
+  }
+
+  /**
+   * [M5] closeAfterRound 消费：chatMode 轮次完成时终态化 record（closed + user-close）。
+   *
+   * 由 onRoundSettled（agent_settled 回调）调用——chatMode 轮次完成的统一汇聚点（热路径轮
+   * 不经 runAndFinalize CAS 分支，旧消费点对 chatMode 不可达）。本轮回复已由调用方前置的
+   * notifyComplete 送达，故合成 result 不携带本轮文本（对齐 closeChatIdle 的合成模式）。
+   *
+   * 时序：同步前缀（disarm + kill + CAS）在 session-runner 的 resolveRun(0) 之前执行完——
+   * 冷路径轮的 runAndFinalize 续体因 timer 已 disarm 跳过 early return，但其 tryTransition
+   * CAS 对已 closed 的 record 失败 → 跳过二次 finalize（无双收尾）；热路径轮无 runAndFinalize
+   * 续体，本方法是唯一收尾。
+   */
+  private async closeAfterRoundSettled(record: ExecutionRecord): Promise<void> {
+    // 回收保活进程（Path A：轮次完成后进程仍活）+ disarm idle timer（终态化后无其他 kill 路径）
+    disarmIdleTimer(record.id);
+    const child = getChildByRecord(record.id);
+    if (child && !child.killed) child.kill("SIGTERM");
+    if (!tryTransition(record, "closed", "user-close")) {
+      return; // 已被 cancel/finalize 抢先（CAS 失败），标志已消费即可
+    }
+    const doneResult: AgentResult = {
+      text: record.result ?? "",
+      turns: record.turnCount,
+      durationMs: Date.now() - record.startedAt,
+      success: true,
+      sessionId: record.id,
+      toolCalls: [],
+    };
+    await this.finalizeRecord(record, doneResult, "closed", "user-close");
   }
 
   // ── 编排层专用接口（workflow 消费）──────────────────────
@@ -1376,10 +1411,26 @@ export class SubagentService {
         }
       } else if (record.chatMode && (!result.success || aborted)) {
         // MF-6：chatMode 轮次失败/取消不销毁对话——回退 running-resumable（旧 idle，可恢复）。
-        await this.finalizeRoundToIdle(record, result);
+        if (record.closeAfterRound) {
+          // [M5] 优雅关闭挂起的失败/取消轮：轮已完成即兑现 close 意图终态化（含本轮 result），
+          // 不再回退 resumable——否则标志残留到下一轮，record 已被 tool 谎报 closed。
+          record.closeAfterRound = undefined;
+          await this.finalizeRecord(record, result, "closed", closedReason);
+        } else {
+          await this.finalizeRoundToIdle(record, result);
+        }
       } else if (!record.chatMode && !aborted && result.success) {
-        // [SP-5] one-shot 成功完成 → 保持 running（旧 idle），等待 message 触发 upgrade。
-        await this.finalizeRoundToIdle(record, result);
+        if (record.closeAfterRound) {
+          // [M5] 非 chatMode（one-shot）busy 时 close(force:false) 置的标志在本轮完成时消费
+          // 终态化（对齐 close schema 文案 "release its resources"）。旧代码走
+          // finalizeRoundToIdle 不消费——tool 返回 {closed:true} 谎报，record 永久
+          // running-resumable、5min idle timer 杀进程、期间还能继续收 message。
+          record.closeAfterRound = undefined;
+          await this.finalizeRecord(record, result, "closed", "user-close");
+        } else {
+          // [SP-5] one-shot 成功完成 → 保持 running（旧 idle），等待 message 触发 upgrade。
+          await this.finalizeRoundToIdle(record, result);
+        }
       } else {
         // 非 chatMode 失败/取消 或其他终态：一次性销毁（archive + worktree cleanup）。
         await this.finalizeRecord(record, result, "closed", closedReason);
@@ -1430,6 +1481,17 @@ export class SubagentService {
   /** 取消 background record。CAS 抢锁——抢到则 notify + 写 tombstone。 */
   private cancelBackground(record: ExecutionRecord): boolean {
     record.controller?.abort();
+    // [M6] 显式 kill + disarm：chatMode 首轮 agent_settled 后 runSpawn 提前 resolveRun(0)
+    // 返回，`opts.signal.removeEventListener("abort", onAbort)`（session-runner runSpawn 尾部）
+    // 已移除 abort→kill listener；热路径续聊轮（deliverMessage 直接 sendPromptCommand）不再
+    // 进 runSpawn。此后 cancel 只有 controller.abort() 无人响应——record 已终态化 cancelled
+    // 但子进程继续跑完当前 turn（工具副作用继续发生），之后 agent_settled 还对已 archived
+    // record 触发脏通知（round+1 → 新 dedup key → "finished a round"），最终靠 5min idle
+    // timer 兜底 kill。故 cancel 必须显式 SIGTERM + disarm idle timer。非 chatMode 路径
+    // listener 仍在（abort 已 kill 一次），此处对已 killed child 是 no-op，无副作用。
+    const child = getChildByRecord(record.id);
+    if (child && !child.killed) child.kill("SIGTERM");
+    disarmIdleTimer(record.id);
     if (!tryTransition(record, "closed", "cancelled")) {
       return false; // detached 已 finalize，cancel 来晚了
     }
@@ -1676,7 +1738,17 @@ export class SubagentService {
         // round 可能初始 undefined（与 notifier.ts `record.round ?? 0` 兜底一致），
         // 首轮 0+1=1。round 是 notifier dedup key 的组成部分，递增后同 id 下一轮不被 60s dedup 吞。
         record.round = (record.round ?? 0) + 1;
+        // 先送达本轮回复（notify），再消费 closeAfterRound——终态化通知经 kickOffBackground.then
+        // 的 notifyComplete 发出，与本次 round notify 同 dedup key（id:round）被 60s dedup 吞，
+        // 保证本轮回复文本不丢（closeAfterRoundSettled 的合成 result 不携带本轮文本）。
         this.notifyComplete(record);
+        // [M5] closeAfterRound 消费点：chatMode 每轮完成的统一汇聚点（热路径轮不经
+        // runAndFinalize CAS 分支——agent_settled 恒 arm idle timer → runAndFinalize 恒
+        // early return，旧消费点对 chatMode 不可达，标志置了无人消费、tool 谎报 closed:true）。
+        if (record.closeAfterRound) {
+          record.closeAfterRound = undefined;
+          void this.closeAfterRoundSettled(record);
+        }
       },
     };
   }

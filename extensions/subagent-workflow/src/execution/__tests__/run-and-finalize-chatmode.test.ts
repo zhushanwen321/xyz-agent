@@ -220,4 +220,48 @@ describe("runAndFinalize chatMode idle 分流 (M2-A)", () => {
     expect(record.round).toBe(1);
     expect(internals.store.getMutable(record.id)).toBe(record);
   });
+
+  it("[M5] 非 chatMode（one-shot）+ done + closeAfterRound=true → 轮完成时消费标志终态化（不进 running-resumable）", async () => {
+    // one-shot busy 时 close(force:false) 置 closeAfterRound——旧代码非 chatMode 成功分支走
+    // finalizeRoundToIdle 不消费，tool 返回 {closed:true} 谎报：record 永久 running-resumable、
+    // 5min idle timer 杀进程、期间还能继续收 message。修复后在本分支消费终态化。
+    const record = makeRecord(false);
+    record.status = "running";
+    record.closeAfterRound = true;
+    internals.store.register(record);
+    await callRunAndFinalize(record, true);
+
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("user-close");
+    expect(record.closeAfterRound).toBeUndefined(); // 标志已消费
+    expect(internals.store.getMutable(record.id)).toBeUndefined(); // archived
+  });
+
+  it("[M5] chatMode + failed + closeAfterRound=true → 轮完成时消费标志终态化（不回退 resumable）", async () => {
+    // 失败轮也视为「轮已完成」：close 意图兑现终态化（closedReason=gc），否则标志残留、
+    // record 被 tool 谎报 closed 后仍可继续收 message。
+    const record = makeRecord(true);
+    record.status = "running";
+    record.closeAfterRound = true;
+    internals.store.register(record);
+    await callRunAndFinalize(record, false); // 失败轮
+
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("gc"); // !success → gc
+    expect(record.closeAfterRound).toBeUndefined();
+    expect(internals.store.getMutable(record.id)).toBeUndefined();
+  });
+
+  it("[S10] chatMode + failed（无 closeAfterRound）→ 回退 running 后 closedReason 不残留", async () => {
+    // tryTransition 先设 closed+gc，finalizeRoundToIdle 回退 running——旧代码 closedReason="gc"
+    // 残留在 running record 上（泄漏进 notify 载荷与 list 投影）。
+    const record = makeRecord(true);
+    record.status = "running";
+    internals.store.register(record);
+    await callRunAndFinalize(record, false);
+
+    expect(record.status).toBe("running"); // MF-6 回退 resumable
+    expect(record.closedReason).toBeUndefined(); // [S10] 不残留
+    expect(internals.store.getMutable(record.id)).toBe(record);
+  });
 });

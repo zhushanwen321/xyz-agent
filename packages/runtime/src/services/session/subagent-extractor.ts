@@ -9,8 +9,8 @@
  * 2. toolResult message 含 content[0].text = JSON 字符串，解析后含：
  *    - background 模式：{action:'start', subagentId, sessionFile:null, bgResponse:{status:'running', message:'detached...'}}
  *    - list 模式：{action:'list', subagentId:null, sessionFile:null, listResponse:{running, items:[{subagentId, agent, status, sessionFile, model, totalTokens, duration}]}}
- * 3. custom_message customType:'subagent-bg-notify' 含 details:{id, status:'done'|'failed'|'cancelled', agent, model, result, error, startedAt, endedAt}
- *    （background 模式完成时注入，可用来更新状态）
+ * 3. custom_message customType:'subagent-bg-notify' 含 details:{id, status:'running'|'closed'（legacy 兼容 done/failed/cancelled）, agent, model, result, error, startedAt, endedAt, closedReason?, round?}
+ *    （background 完成终态 / 对话模式轮次完成时注入，可用来更新状态）
  *
  * 提取策略：
  * - 遍历所有 message entry，收集 subagent toolCall（按 toolCallId 索引）和对应 toolResult
@@ -67,6 +67,8 @@ interface SubagentToolResultData {
       model?: string
       totalTokens?: number
       duration?: number
+      /** L2 关闭原因（仅 status='closed' 的 item 有值，pi-subagent-workflow v4 A-6） */
+      closedReason?: string
     }>
   }
 }
@@ -244,6 +246,8 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
         startedAt: notify?.startedAt,
         endedAt: notify?.endedAt,
         error: notify?.error,
+        // L2 关闭原因（v4 B-1）：bg-notify 与 list item 都可能携带，notify 优先（终态时点更晚）
+        closedReason: notify?.closedReason ?? listItem?.closedReason,
       })
       continue
     }

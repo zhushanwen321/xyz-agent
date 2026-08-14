@@ -60,7 +60,7 @@ export * from './file-tree'
 export * from './ignore-parser'
 export * from './git-status-parser'
 export type { RecentWorkspaceRecord } from './workspace'
-export type { SubagentRecord, SubagentStatus } from './subagent'
+export type { SubagentRecord, SubagentStatus, ClosedDisplayStatus } from './subagent'
 // Coding Plan 额度查询类型
 export type {
   QuotaWindow,
@@ -70,7 +70,7 @@ export type {
 } from './quota-types'
 export type { QuotaPreset } from './quota-presets'
 export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'
-export { normalizeSubagentStatus } from './subagent'
+export { normalizeSubagentStatus, deriveClosedDisplay } from './subagent'
 export type {
   WorkflowRunStatus,
   WorkflowDoneReason,

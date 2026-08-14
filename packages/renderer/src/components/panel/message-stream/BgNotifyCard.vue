@@ -4,6 +4,10 @@
     渲染 pi-subagents 扩展经 sendMessage(customType:"subagent-bg-notify") 注入的完成通知。
     数据来源：notifier.ts 的 BgNotifyRecord（单条）或 {batch, items}（批量合并）。
 
+    v4 B-1 两态：closed = 统一终态（成功/失败/取消按 closedReason/error 经
+    deriveClosedDisplay 派生展示）；running = 对话模式轮次完成（非终态，等待续聊）。
+    done/failed/cancelled 为 legacy 值直通（v4 之前历史 session 数据）。
+
     视觉定位：比 SystemNotice（弱化提示线）醒目，但弱于 user/assistant 气泡——
     体现"系统级异步通知"语义。卡片形态（带边框 + 浅底），区别于普通消息气泡。
 
@@ -25,6 +29,7 @@
         <component :is="recordIcon(record)" class="size-3 shrink-0" />
         <span class="font-semibold">{{ record.agent }}</span>
         <span v-if="record.model" class="text-neutral-dim">· {{ record.model }}</span>
+        <span v-if="roundLabel(record)">· {{ roundLabel(record) }}</span>
         <span v-if="elapsedLabel(record)" class="text-neutral-dim">— {{ elapsedLabel(record) }}</span>
       </div>
     </div>
@@ -41,6 +46,7 @@
         <component v-if="single" :is="recordIcon(single)" class="size-3 shrink-0" />
         <span v-if="single" class="font-semibold">{{ single.agent }}</span>
         <span v-if="single?.model" class="text-neutral-dim">· {{ single.model }}</span>
+        <span v-if="single && roundLabel(single)">· {{ roundLabel(single) }}</span>
         <span v-if="single && elapsedLabel(single)" class="text-neutral-dim">— {{ elapsedLabel(single) }}</span>
       </div>
 
@@ -65,9 +71,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { CheckCircle2, XCircle, Pause, ChevronRight } from '@lucide/vue'
+import { CheckCircle2, XCircle, Pause, MessageCircle, ChevronRight } from '@lucide/vue'
 import type { Component } from 'vue'
-import { normalizeContent } from '@xyz-agent/shared'
+import { normalizeContent, deriveClosedDisplay } from '@xyz-agent/shared'
 import type { BgNotifyRecord, Message } from '@xyz-agent/shared'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 
@@ -102,11 +108,34 @@ const records = computed<BgNotifyRecord[]>(() => {
 /** 展开/收起态（仅单条形态用） */
 const expanded = ref(false)
 
+/**
+ * record 展示状态派生（v4 B-1 两态契约）：
+ * - running → 'round'：对话模式轮次完成（非终态，等待续聊），文案「finished a round」语义
+ * - closed → deriveClosedDisplay：cancelled → 取消；有 error → 失败；其余 → 成功
+ * - done/failed/cancelled 为 legacy 值直通（v4 之前旧版扩展的历史 session 数据）
+ */
+type RecordDisplay = 'done' | 'failed' | 'cancelled' | 'round'
+
+function recordDisplay(record: BgNotifyRecord): RecordDisplay {
+  switch (record.status) {
+    case 'failed':
+      return 'failed'
+    case 'cancelled':
+      return 'cancelled'
+    case 'running':
+      return 'round'
+    case 'closed':
+      return deriveClosedDisplay(record)
+    default:
+      return 'done'
+  }
+}
+
 /** 卡片整体样式：按最差状态着色（批量取最差，单条取自身） */
 const cardClass = computed(() => {
   const recs = records.value
-  const hasFailed = recs.some((r) => r.status === 'failed')
-  const hasCancelled = recs.some((r) => r.status === 'cancelled')
+  const hasFailed = recs.some((r) => recordDisplay(r) === 'failed')
+  const hasCancelled = recs.some((r) => recordDisplay(r) === 'cancelled')
   if (hasFailed) {
     return 'border-danger/40 bg-danger-soft'
   }
@@ -116,13 +145,18 @@ const cardClass = computed(() => {
   return 'border-border bg-surface-hover/40'
 })
 
-/** 单条摘要首行（收起态可见）：done→result 首行，failed→error */
+/** 单条摘要首行（收起态可见）：failed→error（优先于 result），cancelled→取消文案，其余→result */
 const summaryLine = computed(() => {
   const s = single.value
   if (!s) return ''
-  if (s.status === 'failed') return s.error ?? ''
-  if (s.status === 'cancelled') return t('panel.bgNotify.cancelled')
-  return s.result ?? ''
+  switch (recordDisplay(s)) {
+    case 'failed':
+      return s.error ?? s.result ?? ''
+    case 'cancelled':
+      return t('panel.bgNotify.cancelled')
+    default:
+      return s.result ?? ''
+  }
 })
 
 /** 完整 content（展开后显示 LLM 看到的全文） */
@@ -135,18 +169,40 @@ const patchHint = computed(() => {
   return t('panel.bgNotify.patchHint', { file: s.patchFile })
 })
 
-/** record → 状态图标 */
+/** record → 状态图标（round 用对话气泡：轮次完成等待续聊，区别于终态成功的勾） */
 function recordIcon(record: BgNotifyRecord): Component {
-  if (record.status === 'failed') return XCircle
-  if (record.status === 'cancelled') return Pause
-  return CheckCircle2
+  switch (recordDisplay(record)) {
+    case 'failed':
+      return XCircle
+    case 'cancelled':
+      return Pause
+    case 'round':
+      return MessageCircle
+    default:
+      return CheckCircle2
+  }
 }
 
-/** record → 文字色（与图标语义一致） */
+/** record → 文字色（与图标语义一致；round 用 accent——活跃中间态非终态） */
 function recordTextClass(record: BgNotifyRecord): string {
-  if (record.status === 'failed') return 'text-danger'
-  if (record.status === 'cancelled') return 'text-neutral-mid'
-  return 'text-neutral-fg'
+  switch (recordDisplay(record)) {
+    case 'failed':
+      return 'text-danger'
+    case 'cancelled':
+      return 'text-neutral-mid'
+    case 'round':
+      return 'text-accent'
+    default:
+      return 'text-neutral-fg'
+  }
+}
+
+/** record → 轮次标签（仅 running 轮次完成通知显示；round 缺失退「完成一轮」文案）。空串不渲染 */
+function roundLabel(record: BgNotifyRecord): string {
+  if (record.status !== 'running') return ''
+  return record.round !== undefined
+    ? t('panel.bgNotify.roundLabel', { round: record.round })
+    : t('panel.bgNotify.roundDone')
 }
 
 /** record 耗时摘要（startedAt→endedAt 差值，秒；endedAt 缺失或异常返空串） */

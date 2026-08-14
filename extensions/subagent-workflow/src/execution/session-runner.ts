@@ -210,8 +210,9 @@ export const spawnedChildren = new Map<string, ChildProcess>();
  * kill 所有未退出的 spawned 子进程（dispose 兜底用）。
  *
  * 遍历 spawnedChildren Map 的 values()，对每个未 killed 的子进程发 `child.kill(signal)`。
- * 已退出的子进程在 close/error 事件时已从 Map 移除（按 record.id，`spawnedChildren.delete`），
- * 故 Map 中只剩「活着的」或「已被 kill 但 close 事件尚未回调的」。后者用 `child.killed`
+ * 已退出的子进程在 close/error 事件时已从 Map 移除（按句守卫 removeChildRegistration——
+ * Map 当前值仍是该 child 才删，防误删 resume spawn 的新注册），故 Map 中只剩「活着的」
+ * 或「已被 kill 但 close 事件尚未回调的」。后者用 `child.killed`
  * 跳过——避免对一个已 kill 的子进程重复 kill。
  *
  * 用于 SubagentService.dispose（进程退出路径）：覆盖 sync 子进程（controller 为 undefined，
@@ -255,6 +256,24 @@ export function killAllSpawnedChildren(signal: NodeJS.Signals = "SIGTERM"): numb
  */
 export function getChildByRecord(recordId: string): ChildProcess | undefined {
   return spawnedChildren.get(recordId);
+}
+
+/**
+ * [M4 记账竞态守卫] 仅当 Map 当前值仍是本 child 句柄时才删除注册。
+ *
+ * 背景：spawnedChildren 是 Map<recordId, ChildProcess>，resume spawn 会 set 覆盖旧句柄。
+ * 旧 child 的 close/error 事件异步到达（kill 后 close 回调可能晚数 tick），若 close/error
+ * handler 无条件 delete(record.id)，会误删 resume spawn 刚注册的**新** child——
+ * 时序：idle timer 对旧 child SIGTERM（killed=true 但 close 未到）→ deliverMessage 判
+ * child.killed 走冷路径 resumeRound → spawn 新 child set 覆盖 → 旧 child close 此刻到达 →
+ * 误删新注册。后果：新活进程脱离记账（killAllSpawnedChildren 漏杀孤儿 + getChildByRecord
+ * undefined → busy 投递再走冷路径二次 resume → 两进程写同一 session 文件，v4 A-5 注释
+ * 自述的 P7 双写者事故模式）。按句相等守卫：set 覆盖后旧句柄 ≠ Map 当前值，天然跳过。
+ */
+function removeChildRegistration(recordId: string, child: ChildProcess): void {
+  if (spawnedChildren.get(recordId) === child) {
+    spawnedChildren.delete(recordId);
+  }
 }
 
 // ============================================================
@@ -888,7 +907,7 @@ export async function runSpawn(
       ctx.onWorktreePid?.(opts.worktree.branch, child.pid);
     }
     // [C1] track 子进程供 dispose 兜底 kill（sync + background 均注册——sync 无 controller，
-    // abortRunningControllers 跳过它，靠本 Map 兜底）。close/error 后按 record.id 移除（已退出无需再 kill）。
+    // abortRunningControllers 跳过它，靠本 Map 兜底）。close/error 后按句守卫移除（已退出无需再 kill）。
     spawnedChildren.set(record.id, child);
     // [V2 决策 3] spawn 后 child.pid 同步立即可得，记录到 record 内存（lifecycle-manager
     // 孤儿扫描用，Step 5 接入持久化）。resume spawn 时此处同样覆盖更新（pid 可能已变）。
@@ -912,7 +931,8 @@ export async function runSpawn(
     // async handler 只移句柄 + 计数 + warn；进程已 dead（移句柄），下次 deliverMessage 检测
     // dead 走冷路径，冷路径 write EPIPE 同步计数达阈值同步 throw——防死循环且不崩。
     child.stdin.on("error", (err: Error) => {
-      spawnedChildren.delete(record.id);
+      // [M4] 按值守卫：resume spawn 已覆盖注册时不误删新 child（见 removeChildRegistration）
+      removeChildRegistration(record.id, child);
       const count = recordEpipeFailure(record.id);
       logger.warn(`[subagents] async stdin error for ${record.id}`, {
         detail: err.message,
@@ -1138,8 +1158,9 @@ export async function runSpawn(
       // 由 handleSdkEvent 提前调 resolveRun(0)，close 最终到达时 resolve(code) 是 no-op。
       resolveRun = resolve;
       child.on("close", async (code: number | null) => {
-        // [C1] 子进程已退出，从 orphan-tracking Map 移除（dispose 兜底无需再 kill 它）
-        spawnedChildren.delete(record.id);
+        // [C1] 子进程已退出，从 orphan-tracking Map 移除（dispose 兜底无需再 kill 它）。
+        // [M4] 按值守卫：close 事件晚于 resume spawn 到达时不误删新 child 注册。
+        removeChildRegistration(record.id, child);
         // FR-4: 清理 get_state 监听器（子进程已退出，无更多 response）
         get_stateListeners.clear();
         // FR-4: 子进程已退出，get_state response 不会再来。若握手仍未 settle，立即放弃
@@ -1164,7 +1185,8 @@ export async function runSpawn(
         // [worktree-reaper-fix] 拼 spawnCwd 进错误消息：ENOENT 的 err.message 只含 command 名，
         // 无 cwd 线索（worktree 被 reaper 误删后 cwd 指向虚空）会导致误诊——2026-08-11 事故
         // AI 误判"node 被卸载"的直接原因。
-        spawnedChildren.delete(record.id);
+        // [M4] 按值守卫：error 事件晚于 resume spawn 到达时不误删新 child 注册。
+        removeChildRegistration(record.id, child);
         const errno = err as NodeJS.ErrnoException;
         const cwdHint = errno.code === "ENOENT" ? ` (cwd: ${spawnCwd})` : "";
         record.lastError = `${err.message}${cwdHint}`;

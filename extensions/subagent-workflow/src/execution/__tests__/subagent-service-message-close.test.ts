@@ -8,6 +8,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { ChildProcess } from "node:child_process";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -31,6 +32,12 @@ import { SubagentService } from "../subagent-service.ts";
 import type { PiLike } from "../subagent-service.ts";
 import type { ExecutionRecord } from "../types.ts";
 import { getChildByRecord } from "../session-runner.ts";
+import {
+  armIdleTimer,
+  disarmIdleTimer,
+  hasIdleTimer,
+  _resetLifecycleState,
+} from "../lifecycle-manager.ts";
 
 function makeTmpAgentDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "msg-close-svc-"));
@@ -176,5 +183,144 @@ describe("closeSubagent 行为分流", () => {
     await service.closeSubagent(record, false);
 
     expect(record.status).toBe("closed"); // 不变
+  });
+
+  // ── [M5] Path A（isIdle timer armed + 保活进程）立即终态化 ─────────────
+
+  it("[M5] Path A（timer armed + 活进程）+ force:false → 立即终态化（closed+user-close + kill 进程 + disarm timer），不置 closeAfterRound", async () => {
+    // 旧代码 Path A 走 else 置 closeAfterRound，但 chatMode 轮完成恒经 agent_settled →
+    // onRoundSettled → runAndFinalize early return（isIdle 恒 true），标志无人消费，
+    // tool 却返回 {closed:true}（谎报）。
+    const killFn = vi.fn(() => true);
+    const child = { killed: false, kill: killFn } as unknown as ChildProcess;
+    vi.mocked(getChildByRecord).mockReturnValueOnce(child);
+    const record = makeRecord({ status: "running", round: 1 });
+    record.sessionFile = path.join(agentDir, "path-a.jsonl");
+    store.register(record);
+    armIdleTimer(record.id, () => {}); // Path A：轮次完成、进程保活等待续聊
+    expect(hasIdleTimer(record.id)).toBe(true);
+
+    try {
+      await service.closeSubagent(record, false);
+    } finally {
+      disarmIdleTimer(record.id); // 断言失败路径的兜底清理
+    }
+
+    expect(record.closeAfterRound).toBeUndefined(); // 不置标志
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("user-close");
+    expect(store.getMutable(record.id)).toBeUndefined(); // archived
+    expect(killFn).toHaveBeenCalledWith("SIGTERM"); // 保活进程回收
+    expect(hasIdleTimer(record.id)).toBe(false); // timer disarmed
+  });
+
+  it("[M5] Path B（无活进程、timer 未 armed）+ force:false → 立即终态化（同旧 isResumable 行为）", async () => {
+    const record = makeRecord({ status: "running", round: 1 });
+    record.sessionFile = path.join(agentDir, "path-b.jsonl");
+    store.register(record);
+
+    await service.closeSubagent(record, false);
+
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("user-close");
+    expect(store.getMutable(record.id)).toBeUndefined();
+  });
+
+  // ── [M6] cancelBackground 显式 kill（chatMode 热路径轮中 cancel）────────
+
+  it("[M6] running + force:true + 活进程（热路径轮中）→ cancelBackground 显式 SIGTERM + disarm idle timer", async () => {
+    // chatMode 首轮 agent_settled 后 runSpawn 提前 resolveRun(0) 返回，
+    // abort→kill listener 已被 removeEventListener——热路径轮中 cancel 只能靠显式 kill。
+    const killFn = vi.fn(() => true);
+    const child = { killed: false, kill: killFn } as unknown as ChildProcess;
+    vi.mocked(getChildByRecord).mockReturnValueOnce(child);
+    const record = makeRecord({ status: "running", sessionFile: path.join(agentDir, "hot.jsonl") });
+    record.controller = new AbortController();
+    store.register(record);
+    armIdleTimer(record.id, () => {}); // Path A 等待续聊态（cancel 时必须 disarm）
+    expect(hasIdleTimer(record.id)).toBe(true);
+
+    try {
+      await service.closeSubagent(record, true);
+    } finally {
+      disarmIdleTimer(record.id); // 断言失败路径的兜底清理
+    }
+
+    expect(killFn).toHaveBeenCalledWith("SIGTERM"); // 子进程收到 kill
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("cancelled");
+    expect(hasIdleTimer(record.id)).toBe(false); // timer disarmed
+    expect(store.getMutable(record.id)).toBeUndefined(); // archived
+  });
+});
+
+// ============================================================
+// [M5] closeAfterRound 消费点：onRoundSettled（chatMode 热路径轮完成）
+// ============================================================
+
+describe("[M5] closeAfterRound 消费点挂 onRoundSettled（chatMode 轮完成终态化）", () => {
+  let agentDir: string;
+  let service: SubagentService;
+  let store: RecordStore;
+
+  beforeEach(() => {
+    vi.mocked(getChildByRecord).mockReset();
+    vi.mocked(getChildByRecord).mockReturnValue(undefined);
+    ({ agentDir, service, store } = setup());
+  });
+
+  afterEach(() => {
+    service.dispose();
+    _resetLifecycleState();
+    fs.rmSync(agentDir, { recursive: true, force: true });
+  });
+
+  it("热路径轮完成（onRoundSettled）+ closeAfterRound=true → 消费标志终态化（closed+user-close + archive）", async () => {
+    // 热路径轮不经 runAndFinalize（deliverMessage 直接 sendPromptCommand），旧消费点
+    // （runAndFinalize CAS 分支）不可达——唯一可达的收尾点是 onRoundSettled。
+    const killFn = vi.fn(() => true);
+    const child = { killed: false, kill: killFn } as unknown as ChildProcess;
+    // mockReturnValue（非 Once）：notifyComplete → hasRunningBackground → hasLiveProcessHandle
+    // 也会读 getChildByRecord，Once mock 会被提前消费掉。
+    vi.mocked(getChildByRecord).mockReturnValue(child);
+    const internals = service as unknown as { buildSessionRunnerContext(): { onRoundSettled?: (r: ExecutionRecord) => void } };
+    const ctx = internals.buildSessionRunnerContext();
+    expect(typeof ctx.onRoundSettled).toBe("function");
+
+    const record = makeRecord({ id: "sa-m5", status: "running" });
+    record.sessionFile = path.join(agentDir, "m5.jsonl");
+    store.register(record);
+    record.closeAfterRound = true; // busy 轮中 close(force:false) 置的标志
+    armIdleTimer(record.id, () => {}); // session-runner 在 onRoundSettled 前已 arm（时序还原）
+    try {
+      ctx.onRoundSettled!(record);
+      // closeAfterRoundSettled 是 async（finalizeRecord 内 manifest 写入）——等微任务收尾完成
+      await vi.waitFor(() => expect(store.getMutable(record.id)).toBeUndefined());
+    } finally {
+      disarmIdleTimer(record.id);
+    }
+
+    expect(record.closeAfterRound).toBeUndefined(); // 标志已消费
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("user-close");
+    expect(killFn).toHaveBeenCalledWith("SIGTERM"); // 保活进程回收
+    expect(hasIdleTimer(record.id)).toBe(false);
+  });
+
+  it("onRoundSettled 无 closeAfterRound → 不终态化（record 保持 running-resumable，轮完成通知照常）", async () => {
+    const internals = service as unknown as { buildSessionRunnerContext(): { onRoundSettled?: (r: ExecutionRecord) => void } };
+    const ctx = internals.buildSessionRunnerContext();
+    const record = makeRecord({ id: "sa-m5-keep", status: "running" });
+    store.register(record);
+    armIdleTimer(record.id, () => {});
+    try {
+      ctx.onRoundSettled!(record);
+    } finally {
+      disarmIdleTimer(record.id);
+    }
+
+    expect(record.status).toBe("running"); // 不终态化
+    expect(record.round).toBe(1); // round 累加照常
+    expect(store.getMutable(record.id)).toBe(record); // 留内存
   });
 });

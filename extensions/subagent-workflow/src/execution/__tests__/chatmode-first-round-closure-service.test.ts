@@ -26,14 +26,17 @@ const { loggerMock } = vi.hoisted(() => ({
 vi.mock("@zhushanwen/pi-extension-logger", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：runSpawn 受控返回 result，killAllSpawnedChildren 空实现。
+// [M3] getChildByRecord 返回活进程假句柄：让 piAdapter.hasRunningBackground 的判定只能靠
+// 「!hasIdleTimer 排除等待续聊 record」通过（还原生产 Path A：轮次完成、进程保活）。
 vi.mock("../session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
+  getChildByRecord: vi.fn(() => ({ killed: false, kill: () => true })),
 }));
 
 import { runSpawn } from "../session-runner.ts";
 import type { SessionRunnerContext } from "../session-runner.ts";
-import { BgNotifier, type BgNotifyRecord, type NotifierHost } from "../notifier.ts";
+import { armIdleTimer, disarmIdleTimer } from "../lifecycle-manager.ts";
 import { createRecord } from "../execution-record.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo } from "../model-resolver.ts";
@@ -211,38 +214,56 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
     expect(internals.store.getMutable(record.id)).toBe(record);
   });
 
-  // ── double-notify 防护：notifier dedup 是天然防线 ────────────────────
+  // ── double-notify 防护 + [M3] 轮次完成通知立即送达 ───────────────────
 
-  it("chatMode 首轮 double-notify 防护：notifier dedup 同 id:round 60s 内吞第二次", () => {
-    // 场景：onRoundSettled notify（改动 2）+ kickOffBackground.then notifyComplete（现有）
-    // 两次 notify 同 id:round → notifier dedup key=`${id}:${round}` 60s 内吞第二次。
-    // 这是 double-notify 的天然防线（notifier.ts L122），无需调用层额外守卫。
-    const sent: Array<{ customType: string; content: string }> = [];
-    const host: NotifierHost = {
-      sendMessage: (m) => {
-        sent.push(m);
-      },
-      hasRunningBackground: () => false, // 无 running → 立即 flush（不排队）
-      isIdle: () => true, // 主 agent 空闲 → flush 立即发送（不退避）
-    };
-    const notifier = new BgNotifier(host);
-    const rec: BgNotifyRecord = {
-      id: "sa-dup",
-      status: "idle",
-      agent: "general-purpose",
-      model: "test-model",
-      result: "first-round-done",
-      error: undefined,
-      startedAt: 1000,
-      endedAt: 1100,
-      round: 1, // onRoundSettled 设的 round
-    };
+  it("[M3] chatMode 轮次完成通知立即送达（不挂 60s 合并窗口）+ 同 id:round dedup 吞第二次", () => {
+    // 生产场景：chatMode 轮次完成（agent_settled arm idle timer → onRoundSettled →
+    // notifyComplete），record 留 store、status=running、进程保活（Path A）。
+    // 旧 piAdapter.hasRunningBackground 按 mode==="background" 计数 → 对该 record 恒 true
+    // → notify 恒挂 60s 合并窗口，主 agent 的续聊回复固定延迟 60s（G1 失效）。
+    // 修复后排除 isIdle（timer armed）record → 立即 flush。
+    //
+    // 走真实 SubagentService.notifyComplete → BgNotifier → piAdapter（真实 host adapter），
+    // 不再手搓 NotifierHost mock 绕过生产行为（旧用例 `hasRunningBackground: () => false`
+    // 是对生产行为的 mock 绕过）。
+    const pi = makePi();
+    service.initSession({ pi, sessionId: "root-session" }); // 换上带 spy 的 pi
+    const record = makeRecord(true);
+    record.status = "running";
+    record.round = 1;
+    record.result = "first-round-done";
+    internals.store.register(record);
+    armIdleTimer(record.id, () => {}); // 模拟 agent_settled：轮次完成、等待续聊（Path A）
+    try {
+      internals.notifyComplete(record);
 
-    notifier.notify(rec); // 第一次：onRoundSettled 那次 → flush 发送
-    notifier.notify(rec); // 第二次：kickOffBackground.then 那次 → dedup 吞
+      // [M3] 立即 flush——同步断言 sendMessage 已发出（旧实现此处挂 60s timer，0 次调用）
+      expect(pi.sendMessage).toHaveBeenCalledTimes(1);
+      const sentMsg = pi.sendMessage.mock.calls[0]![0] as { customType: string; content: string };
+      expect(sentMsg.customType).toBe("subagent-bg-notify");
+      expect(sentMsg.content).toContain("finished a round");
+      expect(sentMsg.content).toContain("first-round-done");
 
-    // 只发送 1 条（第二次被 dedup 吞，未进 pending / 未 flush）
-    expect(sent).toHaveLength(1);
-    expect(sent[0]!.customType).toBe("subagent-bg-notify");
+      // double-notify 防护（原用例语义保留）：onRoundSettled notify + kickOffBackground.then
+      // notifyComplete 同 id:round → notifier dedup key=`${id}:${round}` 60s 内吞第二次。
+      internals.notifyComplete(record);
+      expect(pi.sendMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      disarmIdleTimer(record.id);
+    }
+
+    // 对照：真在跑的 background 工作（活进程 + 无 timer）仍计入合并窗口——closed 通知
+    // 挂 60s 不立即发送（合并窗口语义对真正的并发完成保留）。
+    const busy = makeRecord(false, "sa-busy");
+    busy.status = "running";
+    internals.store.register(busy); // 活进程（mock 恒返回）+ 无 timer = busy，计入
+    const done = makeRecord(false, "sa-done");
+    done.status = "closed"; // 终态 notify（toNotifyRecord 放行 closed）
+    try {
+      internals.notifyComplete(done);
+      expect(pi.sendMessage).toHaveBeenCalledTimes(1); // 未新增——busy 挂起合并窗口
+    } finally {
+      // busy/done 无 timer，无需 disarm；record 由 afterEach dispose 清理
+    }
   });
 });

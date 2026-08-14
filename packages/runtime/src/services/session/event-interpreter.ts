@@ -479,9 +479,10 @@ export class EventInterpreter {
       // 只更新已存在的内存记录（running 记录由 handleSubagentEnd 建入），不新建
       if (!existing) continue
 
+      const status = normalizeSubagentStatus(notify.status)
       const updated: SubagentRecord = {
         ...existing,
-        status: normalizeSubagentStatus(notify.status),
+        status,
         // notify.agent 是 pi 执行期回传的真实 agent（finalize 时从 record.agent 来），
         // 覆盖 startParam 兜底的 'general-purpose'
         agent: notify.agent ?? existing.agent,
@@ -489,6 +490,9 @@ export class EventInterpreter {
         error: notify.error ?? existing.error,
         startedAt: notify.startedAt ?? existing.startedAt,
         endedAt: notify.endedAt ?? existing.endedAt,
+        // closedReason 仅 closed 终态有意义（v4 B-1）；running 轮次完成通知显式清空，
+        // 防 extension 异常回退路径的 closedReason 残留脏组合（running + closedReason）。
+        closedReason: status === 'closed' ? (notify.closedReason ?? existing.closedReason) : undefined,
       }
       this.subagentRecords.set(notify.id, updated)
       changed = true

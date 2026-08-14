@@ -232,7 +232,12 @@ export async function doFinalizeRoundToIdle(
 
   // 状态机（v4 B-1）：record 保持 running（旧 idle 折入 running，覆盖 tryTransition 设的 closed，
   // 可冷路径 resume），轮次计数 +1。idleSince 时间戳独立保留供 GC 判据。
+  // [S10] closedReason 同步清除：调用方（runAndFinalize catch / MF-6 分支）先 tryTransition
+  // 设了 closed+closedReason 再回退 running——不清则 "gc"/"cancelled" 残留在 running record 上，
+  // 泄漏进 list 投影与后续 notify 载荷（toNotifyRecord 透传 record.closedReason），让一个
+  // 活跃 record 看起来像已被某原因关闭过。
   record.status = "running";
+  record.closedReason = undefined;
   record.round = (record.round ?? 0) + 1;
   record.idleSince = Date.now();
 
