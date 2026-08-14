@@ -24,6 +24,13 @@ export interface ViewCacheEntry {
 /** ViewHost 数据源（对齐 S2 IF10 ViewHostStore 消费面）。 */
 export interface ViewHostSource {
   getView(sessionId: string, viewId: string): ViewCacheEntry | undefined
+
+  /**
+   * 枚举该 session 当前缓存的全部 viewId（widgetKey 原值），供 widget 面板类
+   * 消费端（WidgetArea 等）枚举拼装多卡视图。core ViewHostStore 已有同名实现
+   * （view-host-store.ts getViewIds），壳侧 provide 纯透传。
+   */
+  getViewIds(sessionId: string): string[]
 }
 
 /** provide/inject key——壳 provide，组件 inject，单测 global.provide mock。 */

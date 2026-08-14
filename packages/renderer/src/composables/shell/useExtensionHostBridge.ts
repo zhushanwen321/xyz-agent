@@ -269,7 +269,6 @@ export function initExtensionHostBridge(app: App): {
   // CommandExecutor 适配 = runtime plugin.executeCommand RPC（通道名已核实 plugin-message-handler.ts:50）。
   // 惰性调用：execute 时才发 WS；commandId = registry 记录 id，pluginId 经闭包查 registry（CommandExecutor
   // 接口签名只有 id——壳层补查）。未注册命令 no-op（CommandRegistry.execute 已先发 ERR6 error 事件）。
-  let commandRegistry: CommandRegistry
   const commandExecutor: CommandExecutor = {
     execute: async (id, args) => {
       const cmd = commandRegistry.get(id)
@@ -280,7 +279,8 @@ export function initExtensionHostBridge(app: App): {
       })
     },
   }
-  commandRegistry = new CommandRegistry({ bus, activationManager, executor: commandExecutor })
+  // execute 闭包引用 commandRegistry，最早调用时序在本行创建 registry 实例之后，const 无 TDZ 风险
+  const commandRegistry = new CommandRegistry({ bus, activationManager, executor: commandExecutor })
   // 同步 ContributionRegistry 的 command + slashCommand 声明（scanContributions 同步段已 registerBuiltin）。
   // 收编后 CommandRegistry 成为 slash 命令统一消费源（03 文档 D3-1：声明提供 description 元数据，执行仍走 pi）。
   for (const c of contributions.getContributions()) {
@@ -299,6 +299,8 @@ export function initExtensionHostBridge(app: App): {
   // ui 组件数据源（ViewHost/StatusBar 经 inject 取，壳 provide 真实实现；形状对齐 IF10/IF5）
   app.provide(VIEW_HOST_SOURCE_KEY, {
     getView: (sessionId, viewId) => viewHostStore.getView(sessionId, viewId),
+    // M17 WidgetArea 消费面：枚举该 session 全部缓存 viewId（纯透传 core store）
+    getViewIds: (sessionId: string) => viewHostStore.getViewIds(sessionId),
   })
   // L2 二级 tab 数据源（PluginViewContainer 经 inject 取；sidebar.tab 视图贡献清单）。
   // 不裸委托 getViewsByPlacement——它缺 pluginId，builtin 判定（tasks 不可关闭）需要

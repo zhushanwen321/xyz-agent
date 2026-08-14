@@ -26,13 +26,14 @@ function makeTree(): GuiComponent[] {
   ]
 }
 
-/** mock ViewHostSource：getView 查表（可切换 undefined/树） */
+/** mock ViewHostSource：getView 查表（可切换 undefined/树）；getViewIds 补全接口 stub（M17 扩展） */
 function makeStore(entry?: ViewCacheEntry) {
   const store: ViewHostSource = {
     getView: vi.fn((sessionId: string, viewId: string) => {
       if (sessionId === SESSION && viewId === VIEW_ID) return entry
       return undefined
     }),
+    getViewIds: vi.fn(() => []),
   }
   return store
 }
@@ -101,6 +102,7 @@ describe('ViewHost', () => {
     const store = reactive<{ entry: ViewCacheEntry | undefined }>({ entry: undefined })
     const source: ViewHostSource = {
       getView: vi.fn(() => store.entry),
+      getViewIds: vi.fn(() => []),
     }
     const wrapper = mountHost(source)
     await wrapper.vm.$nextTick()

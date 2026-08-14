@@ -8,6 +8,8 @@
  * 覆盖：TC1 plugin:uiRequest 前缀放行 / TC2 extension.ui_request 白名单放行（归一 kind=ui-request）/
  * TC3 extension.error 非白名单拒绝 / TC4 plugin:statusBarUpdate 前缀回归 /
  * TC5 白名单 5 项字面量 + 行为级验证（防与 core EXTENSION_HANDLERS 漂移）。
+ * M17 追加：TC7 VIEW_HOST_SOURCE_KEY provide 值的 getViewIds 纯透传
+ * （extension:widgetGui 帧 → ViewHostStore → provide 枚举一致）。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { computed, nextTick } from 'vue'
@@ -268,6 +270,33 @@ describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
     await nextTick()
     // R1 前：controller 私有 raw 数组 replaceAllWith 原地 mutate 不经 proxy → 永不更新
     expect(items.value.map((i) => i.id)).toEqual(['g1'])
+  })
+
+  it('TC7 (M17): extension:widgetGui 帧 → provide 的 getViewIds 纯透传 ViewHostStore 枚举', async () => {
+    const { viewHostSource } = initBridgeSources()
+    // 初始该 session 无 widget：枚举为空
+    expect(viewHostSource.getViewIds('s1')).toEqual([])
+
+    // 经 bridge 的 WS 消息源推一条 extension:widgetGui（widgetKey=todo + 合法 GuiComponent）：
+    // events crossSession 通道 → source filter（白名单）→ MessageBusBridge 归一
+    // extension-widget（viewId←widgetKey）→ ViewHostStore setView
+    dispatchCrossSession({
+      type: 'extension:widgetGui',
+      payload: {
+        sessionId: 's1',
+        widgetKey: 'todo',
+        gui: { type: 'ansi-text', props: { lines: ['buy milk'] } },
+      },
+    })
+    await nextTick()
+
+    // provide 出的 getViewIds 返回该 widget 的 viewId（widgetKey 裸值），与 store 一致
+    expect(viewHostSource.getViewIds('s1')).toEqual(['todo'])
+    // 枚举出的 id 可经同一 source.getView 查到缓存条目（透传链路自洽）
+    expect(viewHostSource.getView('s1', 'todo')).toMatchObject({ viewId: 'todo', pluginId: '' })
+
+    // 其他 session 分区不受污染
+    expect(viewHostSource.getViewIds('s2')).toEqual([])
   })
 })
 

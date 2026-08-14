@@ -61,6 +61,12 @@
       <p class="text-[12px] text-neutral-dim opacity-70">{{ t('panel.panel.selectSession') }}</p>
     </div>
 
+    <!-- M17 对话流 widget 面板（todo/goal 等常驻状态卡，ViewHostStore 经 inject 消费）。
+         挂载条件：有 session 且非 dead——null session 无分区可枚举不渲染；dead session
+         主区已被重开占位接管，防状态矛盾；Landing 态（有 session 无消息）渲染，
+         保 session_start 即推 widget 的常驻首屏可见。 -->
+    <WidgetArea v-if="props.sessionId && !isSessionDead" :session-id="props.sessionId" />
+
     <!-- ④ composer companion zone（③ progress-zone 已删——真实任务态未接入，state 恒 null
          自隐藏死代码）。git 状态已移入 SideDrawer git tab（原 zone ⑤ 摘牌），此带仅 composer。
          ask-user 富交互（W2）：请求到达时 AskUserOverlay 覆盖 composer 位置（互斥），
@@ -90,6 +96,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessageSquare, AlertCircle, RotateCcw, Trash2 } from '@lucide/vue'
 import { isAskUserQuestion, type AskUserQuestion } from '@xyz-agent/extension-protocol'
+import { WidgetArea } from '@xyz-agent/ui'
 import MessageStream from './MessageStream.vue'
 import Composer from './Composer.vue'
 import { Button } from '@/components/ui/button'
