@@ -34,10 +34,11 @@ describe("subagent tool description — 行为约束器（非功能说明书）"
   it("词数 ≤ 650（高风险 description 密度上限）", () => {
     // 高风险 tool 的 description 应聚焦约束而非功能铺陈；过长会稀释信号。
     // 上限演进：400 → 550（补 start/list/cancel 三 action 完整 JSON 正例）→
-    // 650（M2-B3 新增 message/close 两 action + conversation 对话模式 + 例子）。
+    // 650（M2-B3 新增 message/close 两 action + conversation 对话模式 + 例子）→
+    // 800（递归指导：树形判据 + 自包含 task + 独立验收 + fork 成本警告）。
     // 每次 action 扩展必然增加必需描述；正例对弱模型首次用对参数的价值 > 节省 description 预算。
     const words = DESCRIPTION.trim().split(/\s+/).filter(Boolean).length;
-    expect(words).toBeLessThanOrEqual(650);
+    expect(words).toBeLessThanOrEqual(800);
   });
 
   it("含 'When to delegate' 调用条件段（何时委派 vs 自己做）", () => {
@@ -77,6 +78,15 @@ describe("subagent tool description — 行为约束器（非功能说明书）"
     // 这段防止 LLM 错误拒绝合法的 nested delegation。
     expect(DESCRIPTION).toMatch(/Nested spawning/);
     expect(DESCRIPTION).toMatch(/Depth: N\/10/);
+  });
+
+  it("递归指导含树形判据 + 自包含 task + 独立验收 + 深度定位", () => {
+    // 递归不是「能套就套」，必须有明确使用判据，否则 LLM 会滥用深递归。
+    const lower = DESCRIPTION.toLowerCase();
+    expect(lower).toContain("tree-shaped");          // 树形判据
+    expect(lower).toContain("self-contained");        // task 自包含
+    expect(lower).toContain("acceptance criteria");   // 独立验收
+    expect(lower).toContain("safety rail");           // 深度定位：10 是护栏非预算
   });
 
   it("保留 executionMode sequential 的 CRITICAL 说明", () => {

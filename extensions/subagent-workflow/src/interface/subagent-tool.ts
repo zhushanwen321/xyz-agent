@@ -276,9 +276,13 @@ idleTimeoutMs: idle timeout in ms for conversation-mode subagents (default 30000
 
 Single (one subagent, one task) is the common case. Chain dependent tasks: send the next start after the prior completion. Run N independent tasks concurrently: send N action:"start" calls in the SAME message — each returns a subagentId at once. Start long tasks and move on; cancel if the direction changes.
 
-## Nested spawning
+## Nested spawning (recursion)
 
-A subagent MAY call the \`subagent\` tool itself (each level spawns its own child process). Nesting depth appears in the environment block ("Depth: N/10") — spawn deeper while N < 10; the 11th level fails gracefully. Do NOT refuse a sub-subagent — only the depth limit applies.`,
+A subagent MAY call the \`subagent\` tool itself (each level spawns its own child process; depth appears in the environment block as "Depth: N/10"). The hard cap is 10 levels — depth 11 fails as a tool error, NOT a reason to avoid nesting entirely (Do NOT refuse a sub-subagent).
+
+Recursion is for TREE-SHAPED work only: a task that decomposes naturally into independent, independently-verifiable sub-tasks (e.g. layered orchestration, module-by-module development). Each level's \`task\` must be SELF-CONTAINED — the child does not see your conversation (unless fork:true). Each level must have its own acceptance criteria, or errors compound silently down the chain.
+
+Do NOT recurse when: the work is linear/flat (use chain or parallel instead); the child needs your context to do the job; or you are delegating the judgment/decision your own level is responsible for. Depth should match the task tree (2-3 levels for most work; deep trees only when the decomposition genuinely demands it) — 10 is a safety rail against infinite delegation loops, not a budget to spend. Favor depth 2-3 for ad-hoc tasks; deep nesting (>4) is reserved for structured orchestration frameworks. Prefer fork:false in recursion: fork chains copy parent history at every level and blow up context volume linearly.`,
     executionMode: "sequential",
     parameters: SubagentParams,
     renderCall: subagentRenderCall,
