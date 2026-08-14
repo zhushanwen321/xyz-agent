@@ -13,7 +13,10 @@
  */
 import type { InjectionKey } from 'vue'
 
-/** 状态栏条目（对齐 core DM3 StatusBarEntry）。 */
+/** 状态点五色（spec §2 A4：ok=success / warn / danger / neutral=neutral-ico / plugin-src=accent）。 */
+export type StatusDot = 'ok' | 'warn' | 'danger' | 'neutral' | 'plugin-src'
+
+/** 状态栏条目（对齐 core DM3 StatusBarEntry + A4 状态点扩展）。 */
 export interface StatusBarEntry {
   id: string
   pluginId: string
@@ -22,6 +25,8 @@ export interface StatusBarEntry {
   alignment: 'left' | 'right'
   priority: number
   commandId?: string
+  /** A4 状态点（spec §2 A4 五色）。可选——旧数据源不带则不渲染圆点。 */
+  status?: StatusDot
 }
 
 /** StatusBar 数据源（对齐 S2 IF8 StatusBarController 消费面）。 */

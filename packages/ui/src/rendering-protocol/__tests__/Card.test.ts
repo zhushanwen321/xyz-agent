@@ -136,8 +136,9 @@ describe('Card', () => {
     expect(wrapper.find('[data-testid="gui-card-badge"]').exists()).toBe(true)
   })
 
-  it('根容器圆角 rounded-card（10px）', () => {
+  it('根容器圆角 8px（spec .gcard border-radius: 8px，rounded-md 标准 scale）', () => {
     const wrapper = mount(Card, { props: { body: [] } })
-    expect(wrapper.find('[data-testid="gui-card"]').classes()).toContain('rounded-card')
+    expect(wrapper.find('[data-testid="gui-card"]').classes()).toContain('rounded-md')
+    expect(wrapper.find('[data-testid="gui-card"]').classes()).not.toContain('rounded-card')
   })
 })

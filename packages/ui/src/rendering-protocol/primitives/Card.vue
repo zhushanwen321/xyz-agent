@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
  * 卡片容器组件（v6）——去 border，靠 bg 层级表达分组。
+ * 圆角 8px（spec .gcard border-radius: 8px，rounded-md 标准 scale）；
  * variant 映射 bg 层级（default/danger/success→bg-surface，elevated→bg-surface-2）；
  * header 去 border-b 改 bg 浮起（default→bg-surface-2，elevated→bg-elevated）；
  * header dot 全 variant 显示（default/elevated=neutral-ico，danger/success=对应色），
@@ -59,7 +60,7 @@ const badge = computed<{ text: string; cls: string } | null>(() => {
 
 <template>
   <div
-    class="overflow-hidden rounded-card"
+    class="overflow-hidden rounded-md"
     :class="cardBgClass"
     data-testid="gui-card"
   >

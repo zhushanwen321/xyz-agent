@@ -17,6 +17,8 @@ describe('TabBar', () => {
     expect(bar.exists()).toBe(true)
     expect(bar.classes()).toContain('bg-bg-input')
     expect(bar.classes()).toContain('rounded-lg')
+    // v6: 容器 padding 3px（spec .gtabbar padding:3px）
+    expect(bar.classes()).toContain('p-[3px]')
     // v6: 去 border-b border-border
     expect(bar.classes()).not.toContain('border-b')
     expect(bar.classes()).not.toContain('border-border')

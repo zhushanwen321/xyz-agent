@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 标签栏组件（v6）——TC6 连体 pill 范式。
- * 容器 bg-bg-input + rounded-lg + padding（去 border-b）；
+ * 容器 bg-bg-input + rounded-lg + padding 3px（spec .gtabbar padding:3px）；
  * tab 项 rounded-sm，active 用 bg-elevated + neutral-fg 浮起（去 accent-soft 蓝染底）；
  * status=done 显 success 点，status=pending 显 neutral-dim 半透明点。
  */
@@ -20,7 +20,7 @@ const dotClass = (status?: 'done' | 'pending') => {
 
 <template>
   <div
-    class="tab-bar flex gap-0.5 rounded-lg bg-bg-input p-0.5"
+    class="tab-bar flex gap-0.5 rounded-lg bg-bg-input p-[3px]"
     data-testid="gui-tab-bar"
   >
     <div
