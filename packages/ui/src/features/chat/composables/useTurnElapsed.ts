@@ -4,8 +4,10 @@
  * 职责（纯计时关注点，原 misplaced 在展示组件 Turn.vue 内）：
  * - elapsed：streaming 态 setInterval 每秒重算 now-firstTs（live 计时）；
  *   完成态静态 lastTs-firstTs（定格）。
+ * - 可见性停表（Q1-7）：页面失焦（visibilitychange hidden）停止每秒 tick——elapsed 是
+ *   Date.now() 绝对差值，停 tick 不丢时间；恢复可见时一次重算即补算失焦期间耗时并重启 tick。
  * - formatElapsed：Xs / Xm SSs 格式化（含 streaming/completed 边界 + 无 assistant 兜底）。
- * - 生命周期：streaming 态挂载即 start；isStreaming true→false 停表定格；onUnmounted 清 interval 防泄漏。
+ * - 生命周期：streaming 态挂载即 start；isStreaming true→false 停表定格；onUnmounted 清 interval + visibility listener 防泄漏。
  *
  * CW wave `session-active-ssot` T4 拆分两个信号：
  * - 计时器 start/stop 看 **isStreaming**（文本流式生成耗时——ask-user 等待不算生成耗时）。
@@ -68,13 +70,38 @@ export function useTurnElapsed(
     }
   }
 
-  function startElapsedTimer(): void {
-    stopElapsedTimer()
-    elapsed.value = formatElapsed()
+  function scheduleTick(): void {
     elapsedTimer = setInterval(() => {
       elapsed.value = formatElapsed()
     }, MS_PER_SEC)
   }
+
+  function startElapsedTimer(): void {
+    stopElapsedTimer()
+    elapsed.value = formatElapsed()
+    // 页面失焦（document.hidden）时不挂每秒 tick：elapsed 是 Date.now() 绝对差值，
+    // 停 tick 不丢时间，恢复可见时由 handleVisibilityChange 一次 formatElapsed 补算
+    if (document.hidden) return
+    scheduleTick()
+  }
+
+  /**
+   * 可见性停表（Q1-7）：streaming 期间页面失焦 → 停止每秒 tick（后台不可见的
+   * 重算 + 渲染纯浪费）；恢复可见 → 立即补算 elapsed（Date.now() 差值天然覆盖
+   * 失焦期间的流逝时间）并重启每秒 tick。
+   * 「仍在 streaming 且 timer 为空」= 因失焦被停（完成定格停表时 isStreaming 已
+   * false，不满足重启条件，不会误重启）。
+   */
+  function handleVisibilityChange(): void {
+    if (document.visibilityState === 'hidden') {
+      stopElapsedTimer()
+    } else if (getIsStreaming() && elapsedTimer === null) {
+      elapsed.value = formatElapsed()
+      scheduleTick()
+    }
+  }
+
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 
   // 挂载时若已 streaming 即开始 live 计时
   if (getIsStreaming()) startElapsedTimer()
@@ -108,7 +135,10 @@ export function useTurnElapsed(
     )
   }
 
-  onUnmounted(stopElapsedTimer)
+  onUnmounted(() => {
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    stopElapsedTimer()
+  })
 
   return { elapsed, elapsedSecs }
 }

@@ -202,7 +202,9 @@ function scheduleFreshFade(id: string): void {
   freshTimers.set(id, handle)
 }
 
-/** mount + freshIds 变化时：为新增的 fresh id 启动计时 */
+/** mount + freshIds 变化时：为新增的 fresh id 启动计时。
+ *  浅 watch（Q1-9）：freshIds 更新约定经数组引用替换表达（父组件传新数组；本组件不 mutate prop），
+ *  原地 mutate 不触发。当前生产消费方（SessionList）未传该 prop（走默认空数组）。 */
 watch(
   () => props.freshIds,
   (ids, oldIds) => {
@@ -211,7 +213,7 @@ watch(
       if (!prev.has(id)) scheduleFreshFade(id)
     }
   },
-  { immediate: true, deep: true },
+  { immediate: true },
 )
 
 /** 当前 id 是否处于 fresh 高亮态 */

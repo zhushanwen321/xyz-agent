@@ -184,6 +184,16 @@ let pendingRestored = false
 let autoCheckTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
+ * visibility 守卫（Q1-6）：hidden 期间被跳过的周期联网检测标记。
+ * 恢复可见时据此立即补查一次，不必等下一个 20min 周期（应用隐藏一整天后回来，
+ * 最多再等 20min 才检测到新版是不可接受的延迟）。
+ */
+let skippedWhileHidden = false
+
+/** visibilitychange listener 挂载标记（initAutoCheck 可能被多消费者多次调用，幂等挂载防叠加） */
+let visibilityListenerAttached = false
+
+/**
  * 订阅 main 进程的进度 + 错误推送（引用计数管理生命周期）。
  * 首个消费者订阅，后续消费者只增计数；最后一个消费者 dispose 时退订。
  * onScopeDispose 注册在每个调用 useAppUpdate 的组件作用域上，随该作用域卸载而清理。
@@ -443,11 +453,38 @@ function clearAutoCheckTimer(): void {
 }
 
 /**
+ * visibilitychange 补查（Q1-6）：hidden 期间被跳过的联网检测，恢复可见时立即补一次。
+ * 清掉已排定的周期 timer 再跑 runAutoCheck（其内部会重排下一周期），避免补查 + 周期双跑。
+ */
+function onVisibilityChange(): void {
+  if (document.visibilityState !== 'visible' || !skippedWhileHidden) return
+  skippedWhileHidden = false
+  clearAutoCheckTimer()
+  void runAutoCheck()
+}
+
+/** 幂等挂载/卸载 visibilitychange listener（initAutoCheck 多次调用防叠加） */
+function attachVisibilityListener(): void {
+  if (visibilityListenerAttached) return
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  visibilityListenerAttached = true
+}
+
+function detachVisibilityListener(): void {
+  if (!visibilityListenerAttached) return
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  visibilityListenerAttached = false
+}
+
+/**
  * 自动检测单次执行：守卫检查 → 检测（force=true 绕过缓存）→ 排下一个周期定时器。
  *
  * 守卫：仅在 idle/available/error/unsupported 态调 checkForUpdate；downloading/verifying/
  * replacing/restarting/downloaded 态跳过本次检查（不打断升级流程），但仍排下一次定时器，
  * 保证升级完成后能继续周期检测。
+ *
+ * visibility 守卫（Q1-6）：document.hidden 时跳过联网检测（后台隐藏期间不发 20min 请求，
+ * 省 GitHub API 配额），置 skippedWhileHidden 标记，恢复可见时由 onVisibilityChange 补查。
  *
  * force=true：绕过 release-checker 的 1h 缓存，确保每次周期真正联网（避免缓存未命中新版）。
  */
@@ -458,7 +495,11 @@ async function runAutoCheck(): Promise<void> {
     state.state === 'available' ||
     state.state === 'error' ||
     state.state === 'unsupported'
-  if (canCheck) {
+  if (canCheck && document.hidden) {
+    // 后台隐藏期间不联网，恢复可见时补查
+    skippedWhileHidden = true
+  } else if (canCheck) {
+    skippedWhileHidden = false
     await checkForUpdate(true)
   }
   // 无论本次是否检查，都排下一次周期（保证升级完成后继续周期检测）
@@ -476,6 +517,8 @@ async function runAutoCheck(): Promise<void> {
 function initAutoCheck(): void {
   // 防重复 init：先清已有 timer（多消费者场景只保留最新周期，避免泄漏）
   clearAutoCheckTimer()
+  skippedWhileHidden = false
+  attachVisibilityListener()
   // 先恢复 preloaded（downloaded 态，优先级高于 pending）
   void restorePreloadedUpdate().then((restored) => {
     if (!restored) {
@@ -485,7 +528,10 @@ function initAutoCheck(): void {
   })
   // 30s 后首次联网检测（避开冷启动高峰 + 刷新 release info），首次完成后转 20min 周期
   autoCheckTimer = setTimeout(runAutoCheck, AUTO_CHECK_DELAY_MS)
-  onScopeDispose(clearAutoCheckTimer)
+  onScopeDispose(() => {
+    clearAutoCheckTimer()
+    detachVisibilityListener()
+  })
 }
 
 /**
@@ -516,6 +562,7 @@ export function useAppUpdate() {
  */
 export function _resetForTest(): void {
   clearAutoCheckTimer()
+  detachVisibilityListener()
   state.state = 'idle'
   state.latestRelease = null
   state.errorMessage = ''
@@ -525,4 +572,5 @@ export function _resetForTest(): void {
   refCount = 0
   renderToken = 0
   pendingRestored = false
+  skippedWhileHidden = false
 }

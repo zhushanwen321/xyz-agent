@@ -93,6 +93,11 @@ export const useProjectStore = defineStore('project', () => {
    * 运行时持久化（2026-08-04 迁 runtime projects.json）：deep watch 变化 → 全量 RPC save。
    * runtime WriteBackCache debounce 落盘；RPC 失败降级静默（下次变化重试）。
    * 初始化 watch 不触发（无 immediate），首启迁移由 init() 显式 save。
+   *
+   * [Q1-9 评估结论] deep 必须保留：写点存在原地变更（addProject push / removeProject splice /
+   * normalizeLoadedProjects unshift / setActiveProject 嵌套 lastUsedAt 赋值），改浅 watch 会漏
+   * 持久化（如删除非活跃项目时 activeProjectId 不变、数组引用不变 → 不触发 save → 重启后删除丢失）。
+   * 改浅的前提是全部写点先改为不可变替换（projects.value = [...]），不属于本次优化范围。
    */
   watch(
     [projects, activeProjectId],
