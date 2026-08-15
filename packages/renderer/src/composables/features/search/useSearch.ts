@@ -75,14 +75,15 @@ export function useSearch(activeSessionId: { value: string | null }) {
    * AC-4.10 stale cache 防护：SearchModal 挂载即 useSearch 存活，
    * 在此自绑 setupInvalidation watch（不依赖 CommandPopover 挂载）。
    * activeSessionId 可能为 null（Ref<string|null>），需转 Ref<string>：
-   * watch activeSessionId，非 null 时调 setupInvalidation（其内部 watch chatStore.messages），
+   * watch activeSessionId，非 null 时调 setupInvalidation（其内部 watch 当前 sid 的
+   * 消息分区 ref——R-16 后 per-sid 触发，异 sid 更新不再触发），
    * null 或切换时 teardown 旧 watch。onScopeDispose 时确保最终 unwatch。
    */
   let cleanupInvalidation: (() => void) | undefined
   const stopSidWatch = watch(
     () => activeSessionId.value,
     (sid) => {
-      // 切换 session 先 teardown 旧 watch，防重复订阅 chatStore.messages
+      // 切换 session 先 teardown 旧 watch，防重复订阅消息分区（per-sid 内层 ref，R-16）
       if (cleanupInvalidation) {
         cleanupInvalidation()
         cleanupInvalidation = undefined

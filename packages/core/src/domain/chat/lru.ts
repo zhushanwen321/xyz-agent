@@ -91,7 +91,7 @@ export interface LruEvictDeps {
   hydratedValue: () => Set<string>
   /** 判断 session 是否在豁免集（streaming/pending/compacting 中）。不含 panel 绑定判定——见文件头注释 */
   isExempt: (sessionId: string) => boolean
-  /** 删除 messages key（不可变写，返回新 Map） */
+  /** 删除 messages key（不可变写，返回新 Map）。makeLruEvictDeps 构造时内联同步清 streaming flag 派生缓存（D-3） */
   deleteMessageKey: (sessionId: string) => void
   /** 删除 hydrated 标记 */
   deleteHydrated: (sessionId: string) => void
@@ -197,6 +197,7 @@ export function makeLruEvictDeps(
   messages: { value: Map<string, unknown> },
   hydrated: { value: Set<string> },
   isExempt: (sid: string) => boolean,
+  deleteStreamingFlag: (sid: string) => void,
 ): LruEvictDeps {
   return {
     // [W7] getter 而非快照——deleteMessageKey/deleteHydrated 会替换 .value，
@@ -207,9 +208,12 @@ export function makeLruEvictDeps(
     // W14: 走 deleteMessages 不可变写入口（与 commitMessages 对称），收敛所有 messages
     // 写入到 chat-mutations，不再散落 new Map + delete + 赋值。
     // has 检查保留——避免无该 session 时也构造新 Map 触发无谓响应式。
+    // W11 D-3: 删 key 时同步清 streaming flag 派生缓存（内联在此处而非各驱逐点，
+    // 使 evictIfNeeded/evictSessionWithVirtual 的主 key 与虚拟 key 联动驱逐全路径覆盖）。
     deleteMessageKey: (sid) => {
       if (messages.value.has(sid)) {
         deleteMessages(messages, sid)
+        deleteStreamingFlag(sid)
       }
     },
     deleteHydrated: (sid) => {

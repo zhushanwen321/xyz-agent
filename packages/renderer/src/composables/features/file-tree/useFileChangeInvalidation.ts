@@ -27,8 +27,10 @@ export type FileChangeInvalidateFn = (sid: string, newPaths: string[]) => void
  * 监听 chat store 的 fileChanges 变化，提取最新 filePaths 并与上次快照 diff，
  * 仅当出现新 path 时回调 onInvalidate（避免每帧重复触发）。
  *
- * watch 触发条件、deep+immediate、session 切换重订阅、lastPaths 快照逻辑均与原
- * useFileTree / useFileSearch.setupInvalidation 逐一等价——纯重构，不改失效时机/范围。
+ * [R-16] watch source 读 per-sid 内层分区 ref（D-1 容器的内层 ShallowRef，非整 Map），
+ * 无 deep：同 sid 数组替换触发 / 异 sid 替换不触发（失效收敛，触发面从全部 session
+ * 收敛到当前 session；同 sid 消息数组依赖不可变替换语义）。session 切换重订阅、
+ * lastPaths 快照逻辑与原 useFileTree / useFileSearch.setupInvalidation 等价。
  *
  * @param sessionIdRef session id 的 ref（变化时 watch 自动重订阅）
  * @param onInvalidate 失效回调，调用方在此表达自己的 invalidate 语义
@@ -43,7 +45,15 @@ export function watchFileChangesForInvalidation(
   let lastPaths = new Set<string>()
 
   const unwatch = watch(
-    [() => sessionIdRef.value, () => chatStore.messages],
+    [
+      () => sessionIdRef.value,
+      // [R-16 / D-1 伴生] source 读 per-sid 内层分区 ref（非整 Map）：同 sid 消息数组替换
+      // （commitMessages 的不可变新数组）触发本 watcher；异 sid 分区替换不触发（失效收敛）。
+      // 原 `() => chatStore.messages` + deep:true 会 traverse 进所有 Map entry 读各分区
+      // ShallowRef.value 建立依赖——任何 session 更新都过度触发（P5 探针实证）。
+      // sid 增删（外层 Map 替换）仍触发，回调内 lastPaths diff 兜底（无新 path 时 no-op）。
+      () => chatStore.messages.get(sessionIdRef.value)?.value,
+    ],
     () => {
       const sid = sessionIdRef.value
       if (!sid) {
@@ -67,7 +77,7 @@ export function watchFileChangesForInvalidation(
       }
       lastPaths = currentPaths
     },
-    { deep: true, immediate: true },
+    { immediate: true },
   )
 
   return unwatch

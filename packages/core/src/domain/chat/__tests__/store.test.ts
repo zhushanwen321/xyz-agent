@@ -13,7 +13,7 @@
  * 运行：cd packages/core && npx vitest run src/domain/chat/__tests__/store.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { effectScope } from 'vue'
+import { effectScope, effect } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { createChatStore } from '../store'
 import type { ChatStoreInstance } from '../store'
@@ -141,7 +141,7 @@ describe('createChatStore factory', () => {
     })
   })
 
-  describe('isGenerating 派生（streamingSessionIds scan）', () => {
+  describe('isGenerating 派生（D-3 per-session 惰性派生，判定与旧全 Map scan 等价）', () => {
     it('空 session isGenerating=false', () => {
       expect(sut.store.isGenerating('empty')).toBe(false)
     })
@@ -168,6 +168,74 @@ describe('createChatStore factory', () => {
       // message.bashStart 创建 role:'system' streaming bash 消息
       sut.store.applyMessageEvent(sid, msg(sid, 'message.bashStart', { command: 'ls' }))
       expect(sut.store.isGenerating(sid)).toBe(false)
+    })
+
+    it('P3: A session 同 sid commit 不重算 B 的 isGenerating 派生（失效收敛）', () => {
+      sut.store.setMessages('A', [streamingAssistant('a1')])
+      sut.store.setMessages('B', [userMsg('b1')])
+      expect(sut.store.isGenerating('A')).toBe(true)
+      expect(sut.store.isGenerating('B')).toBe(false)
+
+      // effect 订阅 isGenerating('B')：其依赖只有 B 分区内层 ref + 外层 Map
+      const spy = vi.fn(() => { sut.store.isGenerating('B') })
+      const scope = effectScope(true)
+      scope.run(() => { effect(spy) })
+      expect(spy).toHaveBeenCalledTimes(1)
+
+      // A 的 token commit（同 sid：内层 ref 替换新数组，外层 Map 恒等）→ B 派生不重算
+      sut.store.setMessages('A', [streamingAssistant('a1'), streamingAssistant('a2')])
+      expect(spy).toHaveBeenCalledTimes(1)
+
+      // B 自己更新（B 分区内层 ref 替换为含 streaming）→ B 派生重算翻 true
+      sut.store.setMessages('B', [userMsg('b1'), streamingAssistant('b2')])
+      expect(spy).toHaveBeenCalledTimes(2)
+      expect(sut.store.isGenerating('B')).toBe(true)
+      scope.stop()
+    })
+  })
+
+  describe('D-3 生命周期：sessionStreamingFlags 与 messages 分区同生共死', () => {
+    it('LRU 显式驱逐（evictSessionWithVirtual）后 flags 同步清理，其他 session 不受影响', () => {
+      sut.store.setMessages('s1', [userMsg('m1')])
+      sut.store.setMessages('s2', [userMsg('m2')])
+      sut.store.isGenerating('s1') // 惰性建 flag（false，非豁免）
+      sut.store.isGenerating('s2')
+      expect(sut.store._sessionStreamingFlagsForTest.has('s1')).toBe(true)
+      expect(sut.store._sessionStreamingFlagsForTest.has('s2')).toBe(true)
+
+      sut.store.evictSessionWithVirtual('s1') // 非豁免（无 streaming）→ 驱逐
+      expect(sut.store.getMessages('s1')).toHaveLength(0)
+      expect(sut.store._sessionStreamingFlagsForTest.has('s1')).toBe(false)
+      expect(sut.store._sessionStreamingFlagsForTest.has('s2')).toBe(true)
+    })
+
+    it('evictVirtualKey 清虚拟 key 的 flags（subagent 分区驱逐泄漏防护）', () => {
+      const virtualId = 'subagent:s1:c1'
+      sut.store.setMessages(virtualId, [userMsg('m1')])
+      sut.store.isGenerating(virtualId)
+      expect(sut.store._sessionStreamingFlagsForTest.has(virtualId)).toBe(true)
+
+      sut.store.evictVirtualKey(virtualId)
+      expect(sut.store._sessionStreamingFlagsForTest.has(virtualId)).toBe(false)
+    })
+
+    it('disposeSession 清 flags', () => {
+      sut.store.setMessages('s1', [userMsg('m1')])
+      sut.store.isGenerating('s1')
+      expect(sut.store._sessionStreamingFlagsForTest.has('s1')).toBe(true)
+
+      sut.store.disposeSession('s1')
+      expect(sut.store._sessionStreamingFlagsForTest.has('s1')).toBe(false)
+    })
+
+    it('驱逐后再次 isGenerating 重建 flag 且行为正确（复访兜底）', () => {
+      sut.store.setMessages('s1', [userMsg('m1')])
+      sut.store.isGenerating('s1')
+      sut.store.evictSessionWithVirtual('s1')
+      // 驱逐后 flag 已清；重新写入消息后再问 → 重建 flag，派生值正确
+      sut.store.setMessages('s1', [streamingAssistant('a1')])
+      expect(sut.store.isGenerating('s1')).toBe(true)
+      expect(sut.store._sessionStreamingFlagsForTest.has('s1')).toBe(true)
     })
   })
 

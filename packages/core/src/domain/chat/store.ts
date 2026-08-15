@@ -4,7 +4,7 @@
  * FileChanges 通道 / 收口出口设计 / 子域控制器委托）见 ./README.md。
  * 本文件仅保留与代码行为直接绑定的短契约注释。
  */
-import { computed, onScopeDispose, ref, shallowRef, type ShallowRef } from 'vue'
+import { computed, onScopeDispose, ref, shallowRef, type ComputedRef, type ShallowRef } from 'vue'
 import { commitMessages, truncateMessagesFrom, prependHistory as prependHistoryMut } from './mutations'
 import { truncateToolOutputBatch } from './truncate-tool-output'
 import { dispatchMessageEvent } from './effects/registry'
@@ -169,35 +169,38 @@ export function createChatStore() {
     setHandingOff,
   })
 
-  // ── 派生态（computed scan，D-005，零手动维护）──
+  // ── 派生态（D-3 per-session 惰性派生，D-005 语义保留）──
 
   /**
-   * 当前所有含 streaming assistant 消息的 session 集合（computed 派生，ADR 0041，详见 ./README.md）。
-   * [B1] 仅扫 `m.role === 'assistant' && m.status === 'streaming'`——bash 消息是
-   * `role:'system'`，计入会破坏「bash 不阻塞」承诺（steer 误路由 / 停止按钮错动作）。
-   * D-1 后依赖外层 Map（增删 key）+ 各分区内层 ref（同 sid commit 的 existing.value 替换），
-   * 任一更新都触发重算（与旧整体替换语义等价）。W11 将惰性化为 per-session 派生（D-3）。
+   * per-session streaming flag 惰性派生缓存（D-3，07 文档 §3.3.1(4)）。
+   *
+   * 取代旧 `streamingSessionIds` 全 Map 重扫 computed（R2：状态未变也 O(Σ消息) 重算的
+   * 长对话卡顿放大器）。SSOT 仍是消息数组——每个 flag 是定义在其 sid 分区 ref 上的
+   * computed（零 drift），惰性创建（没人问过的 session 不建不算），A session 的 token
+   * 提交只失效 A 的 flag，B 的 flag 不重算。
+   *
+   * [生命周期] 本 Map 与 messages Map 同生共死：`disposeSession` 与 LRU 驱逐
+   * （lru.deleteMessageKey）都删对应条目——这是 D-3 引入的唯一新增生命周期状态，
+   * 漏删即慢泄漏（07 文档 §3.3.2 cleanup 契约）。
    */
-  const streamingSessionIds = computed(() => {
-    const ids = new Set<string>()
-    for (const [sid, partition] of messages.value) {
-      for (const m of partition.value) {
-        if (m.role === 'assistant' && m.status === 'streaming') {
-          ids.add(sid)
-          break
-        }
-      }
-    }
-    return ids
-  })
+  const sessionStreamingFlags = new Map<string, ComputedRef<boolean>>()
 
   /**
-   * 指定 session 是否有 streaming assistant 实体（派生，无 setter）。
+   * 指定 session 是否有 streaming assistant 实体（惰性派生，无 setter）。
    * 不变式：`isGenerating(sid) ≡ ∃ m ∈ messages[sid], m.role === 'assistant' && m.status === 'streaming'`。
    * 仅反映 assistant streaming——bash 消息（role:'system'）不计入（B1，见 ./README.md）。
+   * 判定与旧 streamingSessionIds 逐字等价（仅扫 assistant + status==='streaming'）。
    */
   function isGenerating(sessionId: string): boolean {
-    return streamingSessionIds.value.has(sessionId)
+    let flag = sessionStreamingFlags.get(sessionId)
+    if (!flag) {
+      flag = computed(() => {
+        const arr = messages.value.get(sessionId)?.value ?? []
+        return arr.some((m) => m.role === 'assistant' && m.status === 'streaming')
+      })
+      sessionStreamingFlags.set(sessionId, flag)
+    }
+    return flag.value
   }
 
   /** 活跃（派生）：`isActive(sid) ≡ isGenerating(sid) ∨ pendingSend.has(sid)`。驱动停止按钮 / steer guard / B 策略路由。 */
@@ -216,8 +219,9 @@ export function createChatStore() {
   const isLruExempt = (sid: string) => isGenerating(sid) || pendingSend.value.has(sid) || isCompacting(sid) || isHandingOff(sid)
   /** W3 H3：LRU recency 更新（AC-1 真 LRU），直接透传 lruTouch */
   const touchLru = lruTouch
-  /** LRU 驱逐依赖（setup 时构造一次复用，闭包经 getter 延迟读取无快照陈旧，详见 ./README.md）。 */
-  const lruEvictDeps = makeLruEvictDeps(messages, hydrated, isLruExempt)
+  /** LRU 驱逐依赖（setup 时构造一次复用，闭包经 getter 延迟读取无快照陈旧，详见 ./README.md）。
+   *  D-3：deleteStreamingFlag 注入——deleteMessageKey 删 key 时同步清 streaming flag 派生缓存。 */
+  const lruEvictDeps = makeLruEvictDeps(messages, hydrated, isLruExempt, (sid) => sessionStreamingFlags.delete(sid))
   /** W3 H3：LRU 驱逐（阈值触发）/ 显式驱逐（带虚拟 key）/ [M7] 单虚拟 key 删除 */
   function evictIfNeeded(): void { lruEvictIfNeeded(lruEvictDeps) }
   function evictSessionWithVirtual(sessionId: string): void { lruEvictSession(sessionId, lruEvictDeps) }
@@ -566,6 +570,9 @@ export function createChatStore() {
       }
       if (changed) changeSetStatuses.value = next
     }
+    // D-3 生命周期：streaming flag 惰性派生缓存随 messages 分区同点清理（漏删即慢泄漏，
+    // 07 文档 §3.3.2 cleanup 契约）。
+    sessionStreamingFlags.delete(sessionId)
     // timer 清理（模块级 Map，非响应式）
     for (const clear of [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId), () => clearBashTimer(sessionId), () => clearHandingOffTimer(sessionId)]) clear()
     disposeLruEntry(sessionId) // R5: 清理 LRU 时序记录，防止内存泄漏
@@ -621,6 +628,8 @@ export function createChatStore() {
     // 产物的 messages 类型鸿沟：pinia Store.messages 被解包为 Map，factory 产物为 ShallowRef）。
     markStreamingBashError: (sessionId: string, errorText: string) =>
       markBashError(messages, sessionId, errorText, clearBashTimer),
+    /** 测试专用：暴露 D-3 streaming flag 惰性派生缓存（断言 disposeSession/LRU 驱逐的清理语义用，生产代码勿读）。 */
+    _sessionStreamingFlagsForTest: sessionStreamingFlags,
     // W3 H3 LRU
     touchLru,
     evictIfNeeded,

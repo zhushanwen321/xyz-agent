@@ -52,7 +52,7 @@ describe('evictIfNeeded', () => {
     const messages = shallowRef(new Map(sids.map((s) => [s, {}])))
     const hydrated = shallowRef(new Set<string>())
     const isExempt = (sid: string) => (opts.exempt?.has(sid) ?? false)
-    const deps = makeLruEvictDeps(messages, hydrated, isExempt)
+    const deps = makeLruEvictDeps(messages, hydrated, isExempt, () => {})
     return { deps, messages }
   }
 
@@ -146,7 +146,7 @@ describe('evictSessionWithVirtual', () => {
       ['other', {}],
     ]))
     const hydrated = shallowRef(new Set<string>())
-    const deps = makeLruEvictDeps(messages, hydrated, () => false)
+    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {})
     evictSessionWithVirtual('s1', deps)
     expect(messages.value.has('s1')).toBe(false)
     expect(messages.value.has('subagent:s1:c1')).toBe(false)
@@ -156,7 +156,7 @@ describe('evictSessionWithVirtual', () => {
   it('streaming 豁免的 session 不驱逐（SR8 竞态防护）', () => {
     const messages = shallowRef(new Map([['s1', {}]]))
     const hydrated = shallowRef(new Set<string>())
-    const deps = makeLruEvictDeps(messages, hydrated, () => true) // 永远豁免
+    const deps = makeLruEvictDeps(messages, hydrated, () => true, () => {}) // 永远豁免
     evictSessionWithVirtual('s1', deps)
     expect(messages.value.has('s1')).toBe(true) // 未被驱逐
   })
@@ -172,7 +172,7 @@ describe('disposeLruEntry', () => {
     const hydrated = shallowRef(new Set<string>())
     // 其他 session 都 touch，s1 已 dispose 无记录
     for (let i = 0; i < LRU_MAX_SESSIONS; i++) touchLru(`f${i}`)
-    const deps = makeLruEvictDeps(messages, hydrated, () => false)
+    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {})
     evictIfNeeded(deps)
     // s1 无记录不被驱逐（dispose 已清）
     expect(messages.value.has('s1')).toBe(true)
@@ -184,7 +184,7 @@ describe('makeLruEvictDeps.deleteMessageKey', () => {
     const original = new Map([['s1', {}], ['s2', {}]])
     const messages = shallowRef(original)
     const hydrated = shallowRef(new Set<string>())
-    const deps = makeLruEvictDeps(messages, hydrated, () => false)
+    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {})
     deps.deleteMessageKey('s1')
     expect(messages.value.has('s1')).toBe(false)
     expect(messages.value.has('s2')).toBe(true)
@@ -195,7 +195,7 @@ describe('makeLruEvictDeps.deleteMessageKey', () => {
     const original = new Map([['s1', {}]])
     const messages = shallowRef(original)
     const hydrated = shallowRef(new Set<string>())
-    const deps = makeLruEvictDeps(messages, hydrated, () => false)
+    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {})
     deps.deleteMessageKey('not-exist')
     expect(messages.value).toBe(original) // 引用未变（has 检查拦截）
   })
@@ -204,7 +204,7 @@ describe('makeLruEvictDeps.deleteMessageKey', () => {
     const messages = shallowRef(new Map())
     const hydrated = shallowRef(new Set(['h1', 'h2']))
     const originalHydrated = hydrated.value
-    const deps = makeLruEvictDeps(messages, hydrated, () => false)
+    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {})
     deps.deleteHydrated('h1')
     expect(hydrated.value.has('h1')).toBe(false)
     expect(hydrated.value.has('h2')).toBe(true)
