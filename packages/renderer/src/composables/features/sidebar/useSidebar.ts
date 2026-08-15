@@ -400,8 +400,9 @@ export function useSidebar() {
    * 铁律 1：api 调用只在此 features 层，组件不直接 import api。
    *
    * sessionApi.list() 返 SessionGroup[]（按 cwd 分组，D7），setGroups 填入分组真源。
-   * 不再全量预 hydrate 各 session 历史——侧栏 status 由元数据 status（W5 session_end 终态）
-   * + 瞬态（W2 streamingSessionIds/compactingSessions Set）派生，用户点开 session 时按需 hydrate
+ * 不再全量预 hydrate 各 session 历史——侧栏 status 由元数据 status（W5 session_end 终态）
+ * + 瞬态（isGenerating per-session 惰性派生 flag（W11 D-3）/ compactingSessions Set）派生，
+ * 用户点开 session 时按需 hydrate
    * （selectSession 路径不变）。消除启动时 N 次 getHistory 全量读 JSONL 的卡顿峰值 + 内存膨胀。
    */
   async function loadSessions(): Promise<void> {

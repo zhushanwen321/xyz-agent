@@ -7,6 +7,7 @@
  * source 到 per-sid 内层 ref 并去 deep 后锁定：
  * - 同 sid 数组替换（commitMessages 不可变新数组）→ watcher 触发（不丢回调）
  * - 异 sid 分区替换 → 不触发（失效收敛到当前 session）
+ * - 挂载时 sid 尚无分区 → 首条消息建 key（外层 Map 替换）→ watcher 触发（首帧全量回调）
  * - fileChanges paths 增长才回调 onInvalidate（diff 语义不变）
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/useFileChangeInvalidation.test.ts
@@ -102,6 +103,31 @@ describe('watchFileChangesForInvalidation（R-16：per-sid 内层 ref 触发收�
       await nextTick()
       expect(onInvalidate).toHaveBeenCalledTimes(2)
       expect(onInvalidate).toHaveBeenLastCalledWith('s2', ['/b.ts'])
+    } finally {
+      unwatch()
+    }
+  })
+
+  it('watcher 挂载时 sid 尚无分区：首条消息建 key（外层 Map 替换）后 watcher 触发', async () => {
+    // 回归防护（Map 首建 key 路径，P5 探针已实证行为正确）：R-16 迁移后 source getter 读
+    // `messages.get(sid)?.value`——挂载时无分区返回 undefined（只依赖外层 Map 替换），
+    // 首条消息 commitMessages 走「新 Map + set」建 key 替换外层 Map → getter 重算
+    // （undefined → 数组）→ watcher 触发，已有 paths 作为首帧全量回调。
+    const chatStore = useChatStore()
+    const sidRef = ref('s-late')
+
+    const onInvalidate = vi.fn()
+    const unwatch = watchFileChangesForInvalidation(sidRef, onInvalidate)
+    try {
+      // immediate 首跑：无分区 → 空 paths → 无增量，不回调
+      await nextTick()
+      expect(onInvalidate).not.toHaveBeenCalled()
+
+      // 首条消息 commit：外层 Map 替换（建 key）→ watcher 触发（首帧全量）
+      chatStore.setMessages('s-late', [assistantWithChanges('a1', ['/a.ts'])])
+      await nextTick()
+      expect(onInvalidate).toHaveBeenCalledTimes(1)
+      expect(onInvalidate).toHaveBeenCalledWith('s-late', ['/a.ts'])
     } finally {
       unwatch()
     }

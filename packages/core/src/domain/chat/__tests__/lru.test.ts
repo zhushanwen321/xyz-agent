@@ -200,6 +200,27 @@ describe('makeLruEvictDeps.deleteMessageKey', () => {
     expect(messages.value).toBe(original) // 引用未变（has 检查拦截）
   })
 
+  it('deleteStreamingFlag 不受 has 守卫门控：keyless sid 同样清理（幂等，防 flag 残留慢泄漏）', () => {
+    // 场景：messages 无该 sid 分区，但 isGenerating(sid) 曾被查询过 → flag 已惰性创建。
+    // 若 flag 清理被 has 守卫门控，该 flag 永不清理（messages 分区不存在则 deleteMessages
+    // 路径不可达）→ 慢泄漏。flag delete（Map.delete）幂等无代价，故移出守卫无条件执行。
+    const original = new Map([['s1', {}]])
+    const messages = shallowRef(original)
+    const hydrated = shallowRef(new Set<string>())
+    const flagDeleted: string[] = []
+    const deps = makeLruEvictDeps(messages, hydrated, () => false, (sid) => flagDeleted.push(sid))
+    // keyless sid：Map 不替换（无谓响应式仍被 has 检查拦截），flag 清理仍执行
+    deps.deleteMessageKey('flag-only')
+    expect(messages.value).toBe(original)
+    expect(messages.value.has('flag-only')).toBe(false)
+    expect(flagDeleted).toEqual(['flag-only'])
+    // 有 key 的 sid：Map 删除 + flag 清理两者都执行
+    deps.deleteMessageKey('s1')
+    expect(messages.value.has('s1')).toBe(false)
+    expect(messages.value).not.toBe(original)
+    expect(flagDeleted).toEqual(['flag-only', 's1'])
+  })
+
   it('deleteHydrated 同样走 has 检查 + 不可变写', () => {
     const messages = shallowRef(new Map())
     const hydrated = shallowRef(new Set(['h1', 'h2']))

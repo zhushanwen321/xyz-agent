@@ -33,10 +33,15 @@ per-session 分区保持 `ref(Map<sessionId, T>)`（原样迁移）。ADR-0049 �
 `pendingSend` Set 取代 `dispatchingSessionId`（跨 session 顺序发送）。`finalizeSession` 统一
 收口出口（所有异常路径的单一收口，非翻 flag）。
 
-`streamingSessionIds` 是 computed 派生 Set——单一真相源，物理不可撕裂（任何 messages 写入
-路径自动覆盖，含 13+ 处写入点 + 3 个边界点 truncateFrom/disposeSession/hydrate）。messages
-变化时全量扫一次并缓存，服务所有 `isGenerating` 查询，消除「每个消费点重复 O(n) 扫描」。W2 改用
-该 computed 的 O(1) `has` 查询（ADR 0041），取代每次调用 O(n) `list.some` 扫描，仅加缓存层。
+streaming 派生两步演进：早期是 `streamingSessionIds` computed 派生 Set（ADR 0041 的 O(1) `has`
+缓存层，messages 变化时全量重扫一次）；W11（D-3）替换为 **per-session 惰性派生缓存**
+`sessionStreamingFlags`（`Map<sid, ComputedRef<boolean>>`）——每个 flag 是定义在其 sid 分区 ref
+上的 computed，SSOT 仍是消息数组（零 drift，物理不可撕裂），惰性创建（`isGenerating(sid)` 首次
+查询才建才算），判定谓词与旧全 Map 扫逐字等价：`m.role === 'assistant' && m.status === 'streaming'`。
+A session 的 token 提交只失效 A 的 flag，不再触发跨 session 的全 Map 重扫（长对话卡顿放大器，
+07 文档 R2）。**flags Map 与 messages Map 同生共死**：`disposeSession` 与 LRU 驱逐
+（`makeLruEvictDeps` 的 deleteMessageKey）删 messages 分区时同步删对应 flag——这是 D-3 引入的
+唯一新增生命周期状态，漏删即慢泄漏。
 
 **bash 不计入 streaming 派生（B1 PR#116 review）**：仅扫
 `m.role === 'assistant' && m.status === 'streaming'`。`bashStartEffect` 创建的 bash 消息是
@@ -142,7 +147,7 @@ delete + 赋值 `.value`）保证响应式；`changeSetStatuses` 按 `${sessionI
 
 ## 相关文档
 
-- ADR-0039（shallowRef 内存）、ADR-0041（streamingSessionIds 缓存）、ADR-0043（Segment[]）、
-  ADR-0049（per-session Map 分区派）、ADR-0024（FileChanges 协议）
+- ADR-0039（shallowRef 内存）、ADR-0041（streaming 派生缓存，已被 W11 D-3 per-session 惰性
+  flag 取代）、ADR-0043（Segment[]）、ADR-0049（per-session Map 分区派）、ADR-0024（FileChanges 协议）
 - 块处理：`chunk-processor.ts` / `bash-effects.ts` / `streaming-state-machine.ts`
 - 子域控制器：`handoff.ts` / `changeset.ts` / `timers.ts` / `lru.ts`

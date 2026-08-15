@@ -79,7 +79,7 @@ bindForkNoticeEffect()
 // 与 bindForkNoticeEffect 同范式（effect 层订阅，非 useChat switch）。onScopeDispose 随 App 卸载退订。
 bindHandoffEffect()
 // session 全量事件订阅编排：watch sessionStore.list，added → ensureStreamSubscription，removed → disposeSession。
-// 对齐派生态视野（isGenerating 扫描所有 session），消除惰性订阅盲区（非交互 session 终态事件丢失 → 侧栏卡 running）。
+// 对齐派生态视野（isGenerating 由消息实体 per-session 惰性派生，D-3），消除惰性订阅盲区（非交互 session 终态事件丢失 → 侧栏卡 running）。
 // flush:'sync' 保证 appendSession 同 tick 建订阅（fork-ask 路径 send 前订阅就绪）。onScopeDispose 随 App 卸载退订。
 bindSessionStreamSync()
 // compact-queued-messages：初始化 useCompactQueue 单例。App setup 是全局 effect 作用域，

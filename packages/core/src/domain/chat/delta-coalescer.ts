@@ -14,6 +14,10 @@
  * - flush 逐 buffer try/catch 隔离：一个 sid 失败不阻塞其余缓冲，console.warn 不 throw
  *   （对齐 useChat best-effort 策略）。
  *
+ * 跨类型交错顺序边界：text/thinking 交错到达时，flush 对两类缓冲的 dispatch 相对顺序
+ * 不保证（同类型内保序）——registry 对两类型独立累积（text 进 content、thinking 进
+ * trace 不同字段），dispatch 顺序颠倒不影响最终内容。
+ *
  * 合成对象形状（R-18）：首条消息浅拷贝 + payload.delta 覆盖为拼接结果——首条 id 与
  * payload 伴随字段（contentIndex 等）自然透传；seq 不合成（透传首条原值即为「不合成新序」，
  * 合成消息是 transient 消费，不回注 MessageBus，不参与 seq 去重）。registry 的
@@ -67,7 +71,7 @@ export function createMessageCoalescer(): MessageCoalescer {
         buf.dispatch(synthetic)
       // eslint-disable-next-line taste/no-silent-catch -- 逐 buffer 错误隔离（07 §3.3.3 (1)）：不 catch 则一个 buffer 抛错中断循环、其余 sid 缓冲滞留；仅 warn 不 throw（对齐 useChat best-effort）。
       } catch (e) {
-        console.warn(`[delta-coalescer] flush failed for session ${buf.sid} (${buf.firstMsg.type}):`, e)
+        console.warn(`[delta-coalescer] flush failed for session ${buf.sid} (${buf.firstMsg.type}) — this batch of deltas is dropped, subsequent deltas accumulate normally:`, e)
       }
     }
   }

@@ -313,4 +313,33 @@ describe('createUseChat factory 行为', () => {
     expect(f.chatStore.isGenerating('s21')).toBe(false)
     f.dispose()
   })
+
+  it('D-2 接线：complete 后迟到 delta（同窗口 2 条）被 sealed 守卫丢弃，content 不串改（P8 门槛）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('s22', textToSegments('hi'))
+    f.emit('s22', msg('s22', 'message.message_start', { messageId: 'a1' }))
+    f.emit('s22', msg('s22', 'message.text_delta', { delta: 'final' }))
+    // complete 同步 flush 前置 delta 并收口（上一用例锁定的时序），实体进入终态
+    f.emit('s22', msg('s22', 'message.complete', { stopReason: 'end_turn' }))
+    const sealed = f.chatStore.getMessages('s22').at(-1)
+    expect(sealed?.status).toBe('complete')
+    expect(sealed?.content).toBe('final')
+
+    // 迟到 delta：同 microtask 窗口 2 条 → flush 时合成为 1 条 'late-x' dispatch，
+    // 但 isLastAssistantStreaming sealed 守卫为 false（终态后无 streaming assistant）→
+    // 丢弃，已 complete 的 content 不被串改（07 文档 §3.4 P8 ⛔ 门槛）。
+    const applySpy = vi.spyOn(f.chatStore, 'applyMessageEvent')
+    f.emit('s22', msg('s22', 'message.text_delta', { delta: 'late' }))
+    f.emit('s22', msg('s22', 'message.text_delta', { delta: '-x' }))
+    expect(applySpy).not.toHaveBeenCalled() // microtask 前缓冲中
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
+    // 合成 delta 确实被 dispatch（1 次）——被丢弃是 sealed 守卫的行为，不是缓冲丢失
+    expect(applySpy).toHaveBeenCalledTimes(1)
+    const dispatched = applySpy.mock.calls[0][1] as ServerMessage
+    expect((dispatched.payload as Record<string, unknown>).delta).toBe('late-x')
+    const after = f.chatStore.getMessages('s22').at(-1)
+    expect(after?.content).toBe('final') // sealed：content 不变
+    expect(after?.status).toBe('complete')
+    f.dispose()
+  })
 })

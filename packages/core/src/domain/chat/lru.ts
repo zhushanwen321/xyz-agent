@@ -210,11 +210,13 @@ export function makeLruEvictDeps(
     // has 检查保留——避免无该 session 时也构造新 Map 触发无谓响应式。
     // W11 D-3: 删 key 时同步清 streaming flag 派生缓存（内联在此处而非各驱逐点，
     // 使 evictIfNeeded/evictSessionWithVirtual 的主 key 与虚拟 key 联动驱逐全路径覆盖）。
+    // flag 清理不受 has 守卫门控：keyless sid（messages 分区已不存在，但 flag 曾被
+    // isGenerating 查询创建）同样清理——Map.delete 幂等无代价，防 flag 残留慢泄漏。
     deleteMessageKey: (sid) => {
       if (messages.value.has(sid)) {
         deleteMessages(messages, sid)
-        deleteStreamingFlag(sid)
       }
+      deleteStreamingFlag(sid)
     },
     deleteHydrated: (sid) => {
       if (hydrated.value.has(sid)) {
