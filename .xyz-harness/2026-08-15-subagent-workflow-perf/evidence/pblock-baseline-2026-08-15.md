@@ -30,3 +30,17 @@
 同一插桩（改造后代码在 gitRunAsync 等价位置打点）+ 同场景复跑：
 - worktree add / status / rev-parse / remove / branch -D 窗口期间 B 事件持续到达（无 >500ms 空洞）
 - git 窗口本身的命令时长不变（异步化消除的是主进程冻结，不是 git 耗时）
+
+## Phase 1 合入后对照（commit c6d272935，2026-08-15T03:13-03:15 UTC）
+
+同场景复跑（同款 prompt/插桩/模型）。B 流正常间隔中位 56ms / p95 100ms。
+
+| 路径 | 命令 | 窗口时长 | 窗口内 B 事件 | 跨窗口空洞 | 判定 |
+|---|---|---|---|---|---|
+| **同步 gitRun（create，Phase 1 保留）** | status 135ms + rev-parse 20ms + worktree add 1336ms（连续 1492ms） | 1492ms | 0 | **1602ms** | 仍冻结（设计预期，Phase 2 消除） |
+| **异步 gitRunAsync（cancel cleanup，Phase 1 改造点）** | worktree remove | 312ms | **6** | 418ms | **不冻结**——窗口内 B 事件按 56ms 中位速率持续到达 |
+| 异步 gitRunAsync（cancel cleanup） | branch -D | 20ms | 0 | 82ms | 正常波动（窗口短于 B 事件中位间隔） |
+
+**对照结论**：Phase 1 目标（finalize/reaper/cancel-cleanup 路径的同步 git 阻塞消除）实测达成——异步路径的 git 窗口期间主进程事件持续流动；同步 create 窗口仍冻结（1602ms 空洞），与 Phase 1 范围定义一致（create 异步化属 Phase 2）。
+
+对照偏差记录：A（wtest）为 one-shot 成功任务，完成走 finalizeRoundToIdle（不触发 collectPatch），故本次对照的异步窗口来自 cancel 触发的 cancelBackground cleanup（fire-and-forget 路径）；finalize 主链（collectPatch + cleanup）的异步窗口由单测 W1TC6/8 与 integration 测试覆盖行为等价，主进程不阻塞的机制证据由 cancel cleanup 路径同构覆盖（同为 gitRunAsync）。
