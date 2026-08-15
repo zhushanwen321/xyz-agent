@@ -318,6 +318,39 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     expect(record.result).toBe("round did not complete: spawn timeout");
   });
 
+  it("C1TC10: chatMode 空增量轮占位——record.result 固定 (no output this round)，不含上一轮文本（D5）", async () => {
+    const record = makeMinimalRecord({ id: "rec-increment-empty", chatMode: true });
+    record.status = "closed";
+    // 预置上一轮通知文本（模拟增量语义前的 record.result 残留）
+    record.result = "PREV-ROUND-TEXT";
+    const result = makeMinimalResult();
+    result.text = "";
+    result.success = true;
+    result.error = undefined;
+    await doFinalizeRoundToIdle(makeDeps(), record, result);
+    // 空增量轮通知不含上一轮文本：沿用旧值会让父 agent 误读为原样重复回复（D5 判定）
+    expect(record.result).toBe("(no output this round)");
+    expect(record.result).not.toContain("PREV-ROUND-TEXT");
+  });
+
+  it("C1TC11: 非 chatMode 空文本沿用旧值——one-shot 空文本完成 record.result 保持 undefined（G2/G4）", async () => {
+    const record = makeMinimalRecord({ id: "rec-oneshot-empty", chatMode: false });
+    record.status = "closed";
+    // one-shot 成功空文本完成路径（collectResult getFullText 返回 ""、success=true）：
+    // result 前值 undefined
+    record.result = undefined;
+    const result = makeMinimalResult();
+    result.text = "";
+    result.success = true;
+    result.error = undefined;
+    await doFinalizeRoundToIdle(makeDeps(), record, result);
+    // 非 chatMode 侧维持现状（第三分支 record.chatMode ? 占位 : record.result）
+    expect(record.result).toBeUndefined();
+    // notifier buildLlmContent 的 record.result ?? "(empty)" 确定性链保 G4：
+    // 通知文案逐字节产出 "completed. Result:\n(empty)"，不漂移为 "(no output this round)"
+    expect(record.result ?? "(empty)").toBe("(empty)");
+  });
+
   it("残留 pendingMessages → 触发 redeliverPending 补投（MF-1 安全网，不再静默清除）", async () => {
     const redeliverPending = vi.fn();
     const record = makeMinimalRecord({ id: "rec-pending" });

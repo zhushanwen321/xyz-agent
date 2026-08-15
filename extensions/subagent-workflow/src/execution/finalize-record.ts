@@ -213,7 +213,15 @@ export async function doFinalizeRoundToIdle(
 
   // MF-2：设 record.result 供 notifier idle 回复正文（否则恒 "(empty)"，G1/G2 不成立）。
   // MF-6 兜底：失败轮次（success=false）的 result.text 可能为空，用 error 让 notify 可读。
-  record.result = result.text || (result.error ? `round did not complete: ${result.error}` : record.result);
+  // [增量 G2] 第三分支 chatMode 条件占位：本写点被 one-shot 成功路径共用（subagent-service
+  // runAndFinalize 的 `!record.chatMode && !aborted && result.success` 分支 → finalizeRoundToIdle），
+  // 非 chatMode 必须保持 `|| record.result` 现状——one-shot 空文本成功完成（collectResult
+  // getFullText 返回 ""、success=true、真实可达）时 result 前值 undefined → notifier
+  // buildLlmContent 的 `record.result ?? "(empty)"` 兜底确定性产出 "(empty)"，通知逐字节
+  // 不变（G4）；无条件替换会把文案漂移为占位。chatMode 空增量轮 → 固定占位
+  // "(no output this round)"（D5：增量语义下沿用旧 record.result = 上一轮增量，本轮通知
+  // 正文 = 上一轮内容，父 agent 误读为原样重复回复）。
+  record.result = result.text || (result.error ? `round did not complete: ${result.error}` : record.chatMode ? "(no output this round)" : record.result);
 
   // 删 .alive marker（进程已 SIGTERM 回收）。
   // sessionFile 窗口期可能 undefined（极少——对话模式轮次完成意味着 session 已跑过），

@@ -411,6 +411,32 @@ export interface ExecutionRecord {
    */
   round?: number;
   /**
+   * [增量通知] 当前轮次增量的 turns[] 起始下标（仅 chatMode 有意义；内存态记账，D4 不持久化）。
+   *
+   * - 生命周期：undefined 视为 0（首轮增量 = 全量，与改造前首轮通知逐字节一致，向后兼容旧
+   *   record）；唯一写点 onRoundSettled 第 5 步（notify 之后推进），唯一读点同回调第 2 步
+   *   （`getFullTextFrom(record, record.roundBaseTurnIndex ?? 0)`）。非 chatMode 恒
+   *   undefined（onRoundSettled 是 session-runner chatMode 分支专属回调）。
+   * - D1 滞后空 turn 防丢文本（防御性）：pi 当前事件序下该形态不可达——带 usage 的
+   *   message_end 恒先于 turn_end（@earendil-works/pi-agent-core dist/agent-loop.js
+   *   :240/:253/:548 三处 message_end emit 均在 :131 正常路径 turn_end 之前），settle 时
+   *   turn 全闭合。防 pi 未来事件序变化：若 settle 时刻末 turn 是滞后 message_end 开出的
+   *   空 turn（execution-record.ts message_end 分支经 currentTurn，需同时过两层 usage 守卫：
+   *   session-runner.ts 转发层 `if (msg?.usage)`（bare message_end 不转发）+ execution-record.ts
+   *   累积层 `if (event.usage)`（bare message_end 不开 turn）），推进公式
+   *   nextRoundBaseTurnIndex 把它留在下一轮增量内（新轮首个 text_delta 经 currentTurn 复用该
+   *   空 turn，复用累积被 slice 覆盖）；直用 turns.length 推进会把下轮首段文本挤出 slice
+   *   范围静默丢失。
+   * - D4 不持久化：磁盘重建走 createRecord（turns 仅为初始 [emptyTurn()]），base=0 对空 turn
+   *   的增量派生等价为空、天然产出仅新轮增量，持久化是死数据。故不写 manifest、不参与重建。
+   * - pi 内部序锚定依据（R1 mitigation）：@earendil-works/pi-agent-core 0.84.0
+   *   dist/agent-loop.js :106-113（error/aborted stopReason 也先 emit turn_end 再 agent_end）
+   *   与 :131（正常路径 turn_end 收尾）；agent_settled 在 agent_end 之后 emit，故未闭合
+   *   turn 只可能来自滞后事件。pi 升级若改变 turn_end/agent_end 时序，onRoundSettled 推进前
+   *   的观测哨（末 turn 未闭合且 text 非空 → logger.warn）会留痕。
+   */
+  roundBaseTurnIndex?: number;
+  /**
    * record 进入 idle 态的时间戳（ms）。finalizeRoundToIdle 设值；GC 定时器据此计算
    * 剩余 TTL。undefined = 非 idle 态（running/closed/cancelled）或旧 record 缺失字段。
    */

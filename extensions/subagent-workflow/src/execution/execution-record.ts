@@ -539,6 +539,51 @@ export function getFullText(record: ExecutionRecord): string {
 }
 
 /**
+ * [增量通知] 从 fromTurnIndex 起聚合 turn 文本（getFullText 的增量视图）。
+ *
+ * 语义：record.turns.slice(Math.max(0, fromTurnIndex)) 的 text 数组
+ * filter(text => text.length > 0)（判据与 getFullText 逐字对齐——空白串 " " 按非空
+ * 处理，不发散）后 join("\n\n")。
+ *
+ * 不变式（单测锁死）：
+ *   - fromTurnIndex = 0 与 getFullText(record) 逐字节等价（one-shot/首轮回退零成本）
+ *   - fromTurnIndex >= turns.length 返回 ""（不抛错、不回绕）
+ *   - fromTurnIndex < 0 规范化为 0（防御，Math.max 不产生 slice 负偏移语义）
+ *
+ * 纯函数只读；getFullText 本体与既有调用方（collectResult 等）零改动。
+ * 唯一调用点 onRoundSettled 的增量派生（record.roundBaseTurnIndex ?? 0）。
+ */
+export function getFullTextFrom(record: ExecutionRecord, fromTurnIndex: number): string {
+  return record.turns
+    .slice(Math.max(0, fromTurnIndex))
+    .map((t) => t.text)
+    .filter((text) => text.length > 0)
+    .join("\n\n");
+}
+
+/**
+ * [增量通知] 轮次边界推进公式（D1）：返回下一轮增量的 turns[] 起始下标。
+ *
+ * record.turns.length - (末 turn 存在且 !closed 且 text.length === 0 ? 1 : 0)
+ *
+ * - 末 turn 已闭合（pi 现序常态：带 usage 的 message_end 恒先于 turn_end，settle 时
+ *   全闭合）→ 返回 length，下一轮从新 turn 起。
+ * - 末 turn 是滞后 message_end 开出的空 turn（防御分支，pi 现序不可达）→ 不计入边界
+ *   （-1），留在下一轮增量内：新轮首个 text_delta 经 currentTurn 复用该空 turn，复用
+ *   累积被 slice(from) 覆盖；若直用 turns.length 会把这段文本挤出 slice 范围静默丢失（D1）。
+ * - 末 turn 未闭合且 text 非空（防御形态，pi 现序不可达）→ 计入本轮返回 length（该形态
+ *   即 onRoundSettled 推进前观测哨 logger.warn 的触发条件）。
+ *
+ * 纯函数只读不写 record；唯一调用点 onRoundSettled 第 5 步（notify 之后推进）。
+ */
+export function nextRoundBaseTurnIndex(record: ExecutionRecord): number {
+  const last = record.turns[record.turns.length - 1];
+  const trailingOpenEmpty =
+    last !== undefined && !last.closed && last.text.length === 0 ? 1 : 0;
+  return record.turns.length - trailingOpenEmpty;
+}
+
+/**
  * 聚合所有 turn 的 toolCalls（扁平化），并 strip InternalToolCall 的内部字段。
  * 供 collectResult / schema enforcement 读，替代旧闭包 toolCalls 旁路。
  *

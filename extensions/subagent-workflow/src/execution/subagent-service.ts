@@ -21,7 +21,8 @@ import type { DialogGlobalQueue, UiRequestHandler } from "./dialog-queue.ts";
 import {
   completeRecord,
   createRecord,
-  getFullText,
+  getFullTextFrom,
+  nextRoundBaseTurnIndex,
   project,
   snapshot,
   tryTransition,
@@ -1777,20 +1778,46 @@ export class SubagentService {
         // round 可能初始 undefined（与 notifier.ts `record.round ?? 0` 兜底一致），
         // 首轮 0+1=1。round 是 notifier dedup key 的组成部分，递增后同 id 下一轮不被 60s dedup 吞。
         record.round = (record.round ?? 0) + 1;
-        // [N2] 轮次回复写点：成功轮次的 MF-2 原写点（doFinalizeRoundToIdle）不可达——
-        // agent_settled 恒 arm idle timer → runAndFinalize 恒 early return，record.result 在
-        // notify 时从未被写 → 轮次通知正文恒 "(empty)"（G1 核心价值断裂）。此处从 turns
-        // 派生回复文本（对齐 collectResult 的 getFullText 聚合派生：跨轮累积，含本轮全部
-        // 非空 turn 文本）写入 record.result 后再 notify；空文本兜底对齐 MF-2（lastError
-        // 让失败轮通知可读）。后续 closeAfterRoundSettled 的合成 result 读 record.result，
-        // 同样携带本轮真实文本。
-        const roundText = getFullText(record);
+        // [N2][增量] 轮次回复写点（增量语义）：roundText 自 roundBaseTurnIndex 起派生本轮增量
+        //（undefined 视为 0——首轮增量 = 全量，与改造前首轮逐字节一致）。成功轮次的 MF-2 原写点
+        //（doFinalizeRoundToIdle）不可达——agent_settled 恒 arm idle timer → runAndFinalize 恒
+        // early return。写入 record.result 后再 notify；本轮无非空增量且无 lastError（纯工具轮 /
+        // interrupt 抢占轮 / 模型空回复）时固定占位 "(no output this round)"（D5：增量语义下沿用
+        // 旧 record.result = 上一轮增量 → 本轮通知正文 = 上一轮内容，父 agent 误读为原样重复回复；
+        // lastError 兜底保留让失败轮通知可读）。后续 closeAfterRoundSettled 的合成 result 读
+        // record.result，同样携带本轮增量。
+        const roundText = getFullTextFrom(record, record.roundBaseTurnIndex ?? 0);
         record.result = roundText ||
-          (record.lastError ? `round did not complete: ${record.lastError}` : record.result);
-        // 先送达本轮回复（notify），再消费 closeAfterRound——终态化通知经 kickOffBackground.then
-        // 的 notifyComplete 发出，与本次 round notify 同 dedup key（id:round）被 60s dedup 吞，
-        // 保证本轮回复文本先于终态化送达。
+          (record.lastError ? `round did not complete: ${record.lastError}` : "(no output this round)");
+        // 先送达本轮增量（notify），再推进 base / 消费 closeAfterRound——终态化通知经
+        // kickOffBackground.then 的 notifyComplete 发出，与本次 round notify 同 dedup key
+        // （id:round）被 60s dedup 吞，保证本轮增量文本先于终态化送达。
+        //
+        // 幂等性（覆盖面如实限定）：同步路径 at-least-once——notifyComplete（同步 void）抛错时
+        // 推进/消费被跳过 → base 不推进 → 增量未消费，下轮 roundText 必含本轮文本（重发载体为
+        // 后续轮次增量拼接）。kickOffBackground.then 的冷路径 notifyComplete 不构成重发通道
+        // （notifier dedup.set 与 pending.splice 均先于 sendMessage，同 key `${id}:${round}`——
+        // round 已递增——60s 窗内重入被吞）。异步 flush 窗口不保证：合并 timer armed（其他 busy
+        // background 在场）或 isIdle 退避期间 notify 的『成功』只是入队，实际 sendMessage 发生在
+        // base 推进之后的异步时机；该窗口进程崩溃或 sendMessage 失败 → 丢失不可重发（现状全量
+        // 重发的次轮自愈在增量语义下消失），wave1 期恢复通道仅父 agent 经 /subagents 详情读取
+        // record.result，wave2 指针行落地后补全。反序（先推进后 notify）在同步路径 notify 失败时
+        // 静默丢增量且无任何重算机会，故 notify 后推进是定案。重复发送由 notifier dedup key
+        // 60s 窗界定。
         this.notifyComplete(record);
+        // R1 观测哨（不变式违反形态）：推进前检查末 turn 未闭合且 text 非空——pi 现序下不可达
+        //（带 usage 的 message_end 恒先于 turn_end，settle 时 turn 全闭合，见 types.ts
+        // roundBaseTurnIndex 注释的行号锚定），ES1 单测自造事件序列锁不住 pi 层变化；pi 升级若
+        // 改变 turn_end/agent_end 时序，此哨兵留痕（该形态下公式仍把文本计入本轮，不丢数据）。
+        const lastTurn = record.turns[record.turns.length - 1];
+        if (lastTurn !== undefined && !lastTurn.closed && lastTurn.text.length > 0) {
+          logger.warn(
+            `[subagents] round settle with unclosed non-empty turn (record=${record.id}, turnIndex=${record.turns.length - 1}) — pi turn_end/agent_end ordering may have changed`,
+          );
+        }
+        // [增量] base 推进（notify 之后）：下一轮增量从本轮边界起。滞后空 turn 不计入边界
+        //（防御分支，留在下一轮增量内防丢文本——nextRoundBaseTurnIndex 注释）。
+        record.roundBaseTurnIndex = nextRoundBaseTurnIndex(record);
         // [M5] closeAfterRound 消费点：chatMode 每轮完成的统一汇聚点（热路径轮不经
         // runAndFinalize CAS 分支——agent_settled 恒 arm idle timer → runAndFinalize 恒
         // early return，旧消费点对 chatMode 不可达，标志置了无人消费、tool 谎报 closed:true）。
