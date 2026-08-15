@@ -136,7 +136,7 @@ export type PiTranslatedEvent =
   | { kind: 'message'; message: ServerMessage }
   /** 无输出（pi 内部记账事件，如 NULL_EVENTS / toolResult 抑制）。 */
   | { kind: 'noop' }
-  /** assistant turn 开始（message_start 无 role / 兜底）。interpreter 记 messageId + 采 baseline 快照。 */
+  /** assistant turn 开始（message_start 无 role / 兜底）。interpreter 记 messageId + 推进回合代际（turnGen，W18 帧序三件套）。 */
   | { kind: 'turn-start'; messageId: string }
   /** 工具调用开始 —— interpreter 跑 onBeforeToolCall hook（可阻断/改写 input）后产出 tool_call_start。 */
   | {
@@ -163,7 +163,7 @@ export type PiTranslatedEvent =
       toolName: string
       isError: boolean
     }
-  /** turn 结束（agent_end）—— interpreter 触发 context.update 回写 + file_changes ready diff + hook + baseline 清空。 */
+  /** turn 结束（agent_end）—— interpreter 触发 context.update 回写 + file_changes ready diff（排 diff 链尾）+ hook。 */
   | {
       kind: 'turn-end'
       message: ServerMessage

@@ -3,18 +3,20 @@
  *
  * [定位] service 层。承接 EventAdapter（infra 纯翻译器）产出的中间事件，做副作用：
  *   1. plugin hook 触发（onBeforeToolCall 阻断/改写、onAfterToolResult 改写、onPiEvent 观测）
- *   2. file_changes baseline diff（turn 内写操作实时 + agent_end 最终对账）—— 经 IFileChangeDiff port
+ *   2. file_changes diff（turn 内写操作实时 + agent_end 最终对账）—— 经 IFileChangeDiff port
+ *      （W18 采集异步化：diffChain 串行链 + turnGen 代际 + turnFinalizing 压制，03 D3-3）
  *   3. context.update 回写 session 缓存（sessionService.applyContextUpdate）
  *   4. thinkingLevel 回写 session 缓存（sessionService.setThinkingLevelCache）
  *   5. status/bridge/extension-ui 路由到 server（注册超时 / 处理 bridge 请求）
  *
  * 持有的可变态（从 event-adapter 迁来）：
  *   - currentMessageId（message_start 设置，file_changes 挂载目标）
- *   - statusBaseline（turn 开始 git status 快照，baseline diff 基准）
  *   - writeContents（本 turn write 工具写入的 content，untracked 行数回退用）
+ *   - diffChain / turnGen / turnFinalizing（W18 帧序三件套）
  *
- * [ADR-0024 D5] git 作为唯一真值源：turn 开始采 baseline，写操作后 diff，agent_end 推 ready 全集。
+ * [ADR-0024 D5] git 作为唯一真值源：写操作后 diff 当前 git status，agent_end 推 ready 全集。
  * 非 git 仓库 / cwd 缺省 → 跳过 diff（不推 file_changes）。
+ * [R-09] turn-start 不再采 baseline——diffSnapshots 输出只依赖 current（死参数已删）。
  *
  * 依赖经构造注入：send（WS 帧）、fileChangeDiff（port，git 纯函数经组合根注入）、
  * 各业务回调（executeHooks / contextUpdate / thinkingLevel / status/bridge/extension-ui 路由）。
@@ -38,7 +40,7 @@ import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, parseBgNotifyDetails } from '
 import { normalizeSubagentStatus } from './subagent-status.js'
 import type { SubagentRecord, SubagentStatus, BgNotifyRecord } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
-import type { IFileChangeDiff, FileChangeSnapshot } from '../ports/file-change-diff.js'
+import type { IFileChangeDiff } from '../ports/file-change-diff.js'
 import type { PiTranslatedEvent } from './types.js'
 
 /** plugin hook 执行回调（组合根注入，封装 pluginService.executeHooks + sessionId 注入）。 */
@@ -58,7 +60,7 @@ export interface EventInterpreterOptions {
   cwd?: string
   /** WS 帧发送。 */
   send: (msg: ServerMessage) => void
-  /** file_changes baseline diff 引擎（port，组合根注入 infra 实现）。 */
+  /** file_changes diff 引擎（port，组合根注入 infra 实现，采集经 GitStateService 异步）。 */
   fileChangeDiff?: IFileChangeDiff
   /** plugin hook 执行（onBeforeToolCall/onAfterToolResult/onPiEvent）。组合根注入 pluginService.executeHooks。 */
   executeHooks?: ExecuteHookFn
@@ -129,10 +131,18 @@ const FILE_MUTATING_TOOLS = new Set(['write', 'edit', 'bash'])
 export class EventInterpreter {
   /** 当前 assistant message 的 id（message_start 设置，file_changes 挂载目标，跨事件保持） */
   private currentMessageId: string | undefined
-  /** turn 开始时的 git status 快照（baseline diff 基准，message_start 采集，agent_end 清空） */
-  private statusBaseline: FileChangeSnapshot = null
-  /** 本 turn write 工具写入的 content（untracked 行数回退用，message_start 清空） */
+  /** 本 turn write 工具写入的 content（untracked 行数回退用，message_start 重置换新）。 */
   private writeContents: Map<string, string> = new Map()
+  /**
+   * [W18 帧序三件套，03 D3-3] per-session 串行 diff 链：file_changes 的 diff 计算按触发序
+   * 串行执行，turn-end 的 ready 排链尾 → ready 恒为该回合最后一帧（by-construction）。
+   * 链上每段 catch 兜底，diffChain 永不 reject（单帧失败不断链）。
+   */
+  private diffChain: Promise<void> = Promise.resolve()
+  /** 回合代际守卫：turn-start 自增；链上执行时 gen 不匹配 → 丢弃（上回合迟到 diff 不落新回合） */
+  private turnGen = 0
+  /** turn-end 压制标记：true 后到达的 accumulating 直接 no-op（同回合迟到 tool-call-end 不产生新帧） */
+  private turnFinalizing = false
   /**
    * subagent 内存态：subagentId → SubagentRecord。
    * tool-call-end 建 running 记录，bg-notify 更新终态。每次变更广播 session.subagents。
@@ -232,12 +242,16 @@ export class EventInterpreter {
         this.handleWorkflowResult(ev.message)
         return
       case 'turn-start':
-        // 记 messageId（file_changes 挂载目标）+ 采 baseline 快照（ADR-0024 D5）
+        // 记 messageId（file_changes 挂载目标）+ 推进回合代际（W18 帧序三件套）。
+        // [R-09 简化] 原 turn-start 同步采 baseline 快照已删除——diffSnapshots 的 baseline
+        // 参数是死参数（[HISTORICAL] dirty 漏报修复后输出只依赖 current），turn-start 采集
+        // 是每 turn 一次的纯浪费（W18 前为 execSync 同步阻塞）。
         this.currentMessageId = ev.messageId
-        this.statusBaseline = this.opts.cwd && this.opts.fileChangeDiff
-          ? this.opts.fileChangeDiff.snapshotGitStatus(this.opts.cwd)
-          : null
-        this.writeContents.clear()
+        this.turnGen += 1
+        this.turnFinalizing = false
+        // 替换新 Map（非原地 clear）：上一 turn 排在 diff 链上的 ready 计算闭包仍持有旧引用，
+        // 原地清空会让 untracked 行数回退拿不到 content。
+        this.writeContents = new Map()
         // [ADR-0047] turn 开始启动 ping 探测（每 60s get_state）。
         // ping 在 turn 进行中持续，turn-end / agent_end / onSilentAbort 停止（见各分支）。
         // turn 间不探测（AC-3）：startPingLoop 在 turn-start 调用，确保只在 turn 内跑。
@@ -378,7 +392,10 @@ export class EventInterpreter {
       // [已知限制] ev.writeContent 恒为 undefined（pi tool_execution_end 从不发 args，见
       // event-adapter handleToolExecutionEnd 注释），writeContents 累积逻辑暂不生效。
       if (FILE_MUTATING_TOOLS.has(toolName)) {
-        this.sendDiffFileChanges('accumulating')
+        // await 保持「file_changes(accumulating) 先于 tool_call_end」帧序（W18 前为同步实现
+        // 天然满足；异步化后显式 await——本 handler 本就是 fire-and-forget 异步路径，
+        // await 不阻塞 interpret 循环）。超时上限 = 采集超时（5000ms），之后照常推 tool_call_end。
+        await this.sendDiffFileChanges('accumulating')
       }
     }
 
@@ -424,42 +441,74 @@ export class EventInterpreter {
     // 观测 hook（agent_end）
     this.opts.executeHooks?.('onPiEvent', { event: 'agent_end', stopReason: ev.stopReason, usage: ev.usage }).catch(() => {})
 
-    // ADR-0024 D5：agent_end 推 ready 全集（baseline diff 最终结果），推后清空 baseline + writeContents
-    this.sendDiffFileChanges('ready')
-    this.statusBaseline = null
-    this.writeContents.clear()
+    // ADR-0024 D5：agent_end 推 ready 全集（diff 最终结果）。
+    // W18 帧序三件套：turn-end 置 turnFinalizing（其后迟到的 accumulating no-op）；
+    // ready 排 diff 链尾（fire-and-forget，禁止 await——await 会阻塞 turn-end 处理链），
+    // 天然晚于所有在途 accumulating → ready 恒为链尾；message.complete 已在上方同步先发。
+    this.turnFinalizing = true
+    void this.sendDiffFileChanges('ready')
+    // 替换新 Map（非原地 clear）：ready 排链后本 handler 立即返回，链上计算闭包持有旧引用
+    // 做 untracked 行数回退，原地清空会拿不到 content。
+    this.writeContents = new Map()
 
     // [ADR-0047] turn 结束停止 ping 探测（AC-3：turn 间不探测）。
     this.stopPingLoop()
   }
 
   /**
-   * 推送 baseline diff 结果的 file_changes 帧（从 event-adapter 迁来）。
+   * 推送 diff 结果的 file_changes 帧（W18 异步化 + 帧序三件套，03 D3-3）。
    *
-   * 机制：diff 当前 git status vs turn 开始 baseline → 本 turn 变更。
-   * isFullSet=true（baseline diff 每次全量结果，前端全集替换）。
-   * 非 git 仓库 / cwd 缺省 → 跳过。
+   * 机制：采集当前 git status（异步，经 GitStateService 单飞）→ diff → 行数填充 → 推帧。
+   * isFullSet=true（每次全量结果，前端全集替换）。非 git 仓库 / cwd 缺省 → 跳过。
+   *
+   * 帧序不变量（by-construction）：
+   * 1. 单飞串行链——diff 计算入 per-session promise 链按触发序串行，turn-end 的 ready
+   *    排链尾 → 恒晚于所有在途 accumulating；
+   * 2. 回合代际守卫——捕获排链时的 turnGen，链上执行时（含 await 窗口后 send 前）不匹配
+   *    即丢弃，上回合迟到 diff 不落新回合；
+   * 3. turnFinalizing 压制——turn-end 后到达的 accumulating 直接 no-op。
+   *
+   * 返回链尾 promise：handleToolCallEnd await 它以保持「accumulating 先于 tool_call_end」；
+   * handleTurnEnd 不 await（禁止阻塞 turn-end 处理链）。
    */
-  private sendDiffFileChanges(changeSetStatus: 'accumulating' | 'ready'): void {
-    if (!this.currentMessageId) return
+  private sendDiffFileChanges(changeSetStatus: 'accumulating' | 'ready'): Promise<void> {
+    if (this.turnFinalizing && changeSetStatus === 'accumulating') return Promise.resolve()
+    const messageId = this.currentMessageId
+    if (!messageId) return Promise.resolve()
     const { cwd, fileChangeDiff } = this.opts
-    if (!cwd || !fileChangeDiff) return
-    const current = fileChangeDiff.snapshotGitStatus(cwd)
-    if (!current) return
-    const changes: FileChange[] = fileChangeDiff.diffSnapshots(this.statusBaseline, current)
-    if (changes.length === 0) return
-    // 行数：numstat（已跟踪）+ writeContents 回退（untracked）
-    fileChangeDiff.computeLineCounts(cwd, changes, this.writeContents)
-    this.opts.send({
-      type: 'message.file_changes',
-      payload: {
-        sessionId: this.sessionId,
-        messageId: this.currentMessageId,
-        fileChanges: changes,
-        changeSetStatus,
-        isFullSet: true,
-      },
+    if (!cwd || !fileChangeDiff) return Promise.resolve()
+    const gen = this.turnGen
+    // writeContents 捕获引用快照：turn-end / turn-start 排链后替换新 Map，链上计算仍持旧引用
+    const writeContents = this.writeContents
+    const run = async (): Promise<void> => {
+      // 回合代际守卫：排链到执行之间可能已跨 turn（新 turn-start turnGen++）
+      if (gen !== this.turnGen) return
+      const current = await fileChangeDiff.snapshotGitStatus(cwd)
+      if (!current) return
+      const changes: FileChange[] = fileChangeDiff.diffSnapshots(current)
+      if (changes.length === 0) return
+      const numstatMap = await fileChangeDiff.numstat(cwd)
+      // 二次 gen 校验：采集 await 窗口内跨 turn 的迟到帧不发出（守卫覆盖整个链上生命周期）
+      if (gen !== this.turnGen) return
+      // 行数：numstat（已跟踪）+ writeContents 回退（untracked）
+      fileChangeDiff.computeLineCounts(changes, numstatMap, writeContents)
+      this.opts.send({
+        type: 'message.file_changes',
+        payload: {
+          sessionId: this.sessionId,
+          messageId,
+          fileChanges: changes,
+          changeSetStatus,
+          isFullSet: true,
+        },
+      })
+    }
+    // 单段失败不断链：catch 后 diffChain 保持 resolved，后续帧照常排队
+    const next = this.diffChain.then(run).catch((e: unknown) => {
+      console.debug(`[event-interpreter] file_changes diff failed (frame dropped): ${toErrorMessage(e)}`)
     })
+    this.diffChain = next
+    return next
   }
 
   // ── subagent 内存态 + session.subagents 广播 ──

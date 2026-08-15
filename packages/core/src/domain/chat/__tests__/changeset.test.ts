@@ -251,6 +251,62 @@ describe('createChangeSetController — applyFileChanges isFullSet 全集替换 
   })
 })
 
+describe('createChangeSetController — applyFileChanges 单向守卫（W18 纵深防御，03 D3-3）', () => {
+  it('ready 后迟到的 accumulating 帧：status 不回退 + fileChanges 不合并（整体丢弃）', () => {
+    const { controller, messages } = makeController(
+      new Map([['s1', [assistantMsg('m1', { fileChanges: [fc('ready.ts')] })]]]),
+    )
+    controller.applyFileChanges('s1', 'm1', [fc('ready.ts')], 'ready', true)
+
+    // 迟到的 accumulating：若未守卫会把 status 写回 accumulating 且增量合并污染 ready 全集
+    controller.applyFileChanges('s1', 'm1', [fc('late.ts', { status: 'added' })], 'accumulating', false)
+
+    expect(controller.getChangeSetStatus('s1', 'm1')).toBe('ready') // 不回退
+    const after = messages.value.get('s1')!.value[0].fileChanges!
+    expect(after.map((c) => c.filePath)).toEqual(['ready.ts']) // 不合并
+  })
+
+  it('审查态（partially-reviewed/resolved/superseded）后 accumulating 同样丢弃', () => {
+    const { controller } = makeController(new Map([['s1', [assistantMsg('m1')]]]))
+    for (const status of ['partially-reviewed', 'resolved', 'superseded'] as const) {
+      controller.setChangeSetStatus('s1', 'm-review', status)
+      controller.applyFileChanges('s1', 'm-review', [fc('x.ts')], 'accumulating', false)
+      expect(controller.getChangeSetStatus('s1', 'm-review')).toBe(status)
+    }
+  })
+
+  it('accumulating → accumulating（正常流）允许；accumulating → ready 允许', () => {
+    const { controller, messages } = makeController(
+      new Map([['s1', [assistantMsg('m1')]]]),
+    )
+    controller.applyFileChanges('s1', 'm1', [fc('a.ts')], 'accumulating', false)
+    controller.applyFileChanges('s1', 'm1', [fc('b.ts')], 'accumulating', false)
+    expect(controller.getChangeSetStatus('s1', 'm1')).toBe('accumulating')
+    expect(messages.value.get('s1')!.value[0].fileChanges).toHaveLength(2)
+
+    controller.applyFileChanges('s1', 'm1', [fc('final.ts')], 'ready', true)
+    expect(controller.getChangeSetStatus('s1', 'm1')).toBe('ready')
+    expect(messages.value.get('s1')!.value[0].fileChanges!.map((c) => c.filePath)).toEqual(['final.ts'])
+  })
+
+  it('守卫按 messageId 分区：m1 已 ready 不影响 m2 的 accumulating 首帧', () => {
+    const { controller } = makeController(
+      new Map([['s1', [assistantMsg('m1'), assistantMsg('m2')]]]),
+    )
+    controller.applyFileChanges('s1', 'm1', [fc('a.ts')], 'ready', true)
+    controller.applyFileChanges('s1', 'm2', [fc('b.ts')], 'accumulating', false)
+    expect(controller.getChangeSetStatus('s1', 'm1')).toBe('ready')
+    expect(controller.getChangeSetStatus('s1', 'm2')).toBe('accumulating')
+  })
+
+  it('accumulating 首帧（prevStatus undefined）不受守卫影响', () => {
+    const { controller } = makeController(new Map([['s1', [assistantMsg('m1')]]]))
+    controller.applyFileChanges('s1', 'm1', [fc('a.ts')], 'accumulating', false)
+    expect(controller.getChangeSetStatus('s1', 'm1')).toBe('accumulating')
+    expect(controller.changeSetStatuses.value.size).toBe(1)
+  })
+})
+
 describe('createChangeSetController — markChangeSetsSuperseded resolved 豁免', () => {
   it('非 resolved 态推 superseded（accumulating/ready/partially-reviewed/superseded 全覆盖）', () => {
     const { controller } = makeController()

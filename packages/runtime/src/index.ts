@@ -238,7 +238,14 @@ async function main(): Promise<void> {
   // creation time, so sessionService is always set by then.
   //
 
-  const fileChangeDiff = new FileChangeDiffAdapter()
+  // GitExecutor + GitStateService：git 状态统一读取基础设施（perf W16，03 D4-1）。
+  // 在 fileChangeDiff 之前创建——W18 起 FileChangeDiffAdapter 的采集（snapshotStatus/numstat）
+  // 委托 GitStateService；GitService（下方，依赖 sessionService）与 GitMessageHandler 的
+  // 写操作失效共享同一实例（in-flight 单飞 + sessionId+cwd TTL 缓存 + 非仓库负缓存）。
+  const gitExecutor = new GitExecutor()
+  const gitStateService = new GitStateService({ executor: gitExecutor })
+
+  const fileChangeDiff = new FileChangeDiffAdapter(gitStateService)
   const createAdapter = (sessionId: string, send: (msg: import('@xyz-agent/shared').ServerMessage) => void, cwd?: string) => {
     // EventInterpreter 持有业务态（currentMessageId/statusBaseline/writeContents）+ 业务回调，
     // 消费 EventAdapter 翻译出的 PiTranslatedEvent[]，执行 hook / diff / 回写 / 路由副作用。
@@ -348,10 +355,8 @@ async function main(): Promise<void> {
   pluginService.setSessionService(sessionService)
   // GitService：composition root 注入 infra executor（数组参数防注入）+ sessionService（取 cwd）。
   // 经 server.setServices 注入到 GitMessageHandler（git.* 路由）。
-  // perf W17（03 D4-4 U2）：GitStateService 统一 git 状态读取（in-flight 去重 + sessionId+cwd
-  // TTL 缓存 + 非仓库负缓存）——gitService.getStatus 收编走它，与 GitExecutor 共享同一 executor 实例。
-  const gitExecutor = new GitExecutor()
-  const gitStateService = new GitStateService({ executor: gitExecutor })
+  // perf W17（03 D4-4 U2）：gitService.getStatus 收编走 GitStateService（上方已创建，
+  // 与 FileChangeDiffAdapter 共享同一实例——file_changes 采集与面板状态读取共享单飞/负缓存）。
   const gitService = new GitService({ sessionService, executor: gitExecutor, stateService: gitStateService })
   // FileService：对称注入 infra FsExecutor（node:fs/promises adapter）+ sessionService（取 cwd 做越界守门）。
   // 经 server.setServices 注入到 FileMessageHandler（file.tree/expand/write.* 路由）。

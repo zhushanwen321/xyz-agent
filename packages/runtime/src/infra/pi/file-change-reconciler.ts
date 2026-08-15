@@ -1,20 +1,21 @@
 /**
  * # FileChange baseline diff 引擎（ADR-0024 D5 重构：git 作为唯一真值源）
  *
- * 核心机制：turn 开始时快照 git status 作为 baseline，每次写操作后 diff 当前状态
- * vs baseline，得到「本 turn 引入的变更」。git 是唯一真值源，不再从工具参数硬解析行数。
+ * 核心机制：turn 内写操作后采集 git status，diff 得「当前工作区变更」。git 是唯一真值源，
+ * 不再从工具参数硬解析行数。
  *
- * 三层能力：
- * 1. snapshotGitStatus — 采集 cwd 的 git status 快照（filePath → status）
- * 2. diffSnapshots — diff 两个快照，返回 baseline 之后新增/变化的文件
- * 3. computeLineCounts — 行数填充：numstat（已跟踪）+ content 回退（untracked）
+ * W18（perf 03 D4-5）采集异步化后本模块只保留**纯函数**：
+ * 1. parseGitStatusPorcelain / xyToStatus — porcelain 输出解析（GitStateService 复用）
+ * 2. diffSnapshots — 快照 → 变更清单
+ * 3. computeLineCounts — 行数填充（numstat 结果注入 + content 回退），零子进程
  *
- * 依赖：git CLI（child_process execSync）。非 git 仓库时返回 null（调用方跳过 baseline diff）。
+ * 采集（git status / git diff --numstat）已收进 GitStateService（services/git/，W16 基础设施），
+ * 经 IFileChangeDiff port 的 FileChangeDiffAdapter 注入 EventInterpreter。
+ * 本模块不再 spawn 任何进程（主线程零同步 git）。
  */
-import { execSync } from 'node:child_process'
 import type { FileChange, FileChangeStatus } from '@xyz-agent/shared'
+import { xyToGitStatus } from '../git/git-status-parser.js'
 import type { NumstatEntry } from '../git/git-status-parser.js'
-import { parseNumstatEntries, xyToGitStatus } from '../git/git-status-parser.js'
 
 /** git status --porcelain 的单行解析结果（XY 码 + 路径） */
 interface GitStatusEntry {
@@ -82,103 +83,51 @@ export function xyToStatus(xy: string): FileChangeStatus {
 export type StatusSnapshot = Map<string, FileChangeStatus> | null
 
 /**
- * 采集当前 cwd 的 git status 快照（baseline diff 的基础）。
+ * 快照 → 变更清单（W18 R-09 简化：单参数）。
  *
- * @param cwd pi session 工作目录
- * @returns filePath → status 的 Map；非 git 仓库 / git 不可用 / 超时 → null
+ * [HISTORICAL] 原签名 diffSnapshots(baseline, current) 双参数，但 baseline 对输出零影响——
+ * 「baseline 有 current 无 → 不报告（已 commit/revert）」的差集语义早在 dirty 文件漏报修复
+ * （见下）时被移除，两个分支（baseline null / 非 null）实际都输出 current 全集。baseline
+ * 参数是死参数。W18 按 R-09 裁决直接删除：turn-start 的 baseline 采集（execSync）一并移除
+ * （每次 turn 白跑一次 git status 的纯浪费），不引入「异步不 await 的 baseline 采集」。
+ *
+ * current 全集即变更清单的原因：turn 开始前工作区已有 dirty 文件时（开发场景极常见：
+ * worktree 普遍有未提交改动），pi 改了这些文件后 git status 仍是 modified，若按差集只报
+ * 「status 变化的文件」会漏报 → fileChanges 为空 → 变更集卡不显示（"全程几乎看不到"事故）。
+ * 代价是 turn 开始前已 dirty 但 turn 内未碰的文件会误报，但误报（多列几个文件）的危害
+ * 远低于漏报（整个变更集卡消失）。误报文件在各帧一致报告，不产生状态跳变。
+ *
+ * @param current 当前快照（null = 非仓库 / 采集失败 → 空数组，调用方跳过推帧）
  */
-export function snapshotGitStatus(cwd: string): StatusSnapshot {
-  try {
-    const output = execSync('git status --porcelain', {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 5000,
-    })
-    const entries = parseGitStatusPorcelain(output)
-    const snapshot = new Map<string, FileChangeStatus>()
-    for (const { xy, path } of entries) {
-      snapshot.set(path, xyToStatus(xy))
-    }
-    return snapshot
-  } catch (e) {
-    // 非 git 仓库 / git 未安装 / 超时 → null（调用方跳过 baseline diff）。降级路径，记 debug 不阻断。
-    console.debug(`[file-change-reconciler] git status failed: ${e instanceof Error ? e.message : String(e)}`)
-    return null
-  }
-}
-
-/**
- * diff 两个快照，返回 baseline 之后新增/变化的文件清单。
- *
- * 规则：
- * - current 有 baseline 无 → 新变更文件（用 current 的 status）
- * - 两者都有 → 报告（取 current 的 status）。不区分 status 是否变化——
- *   [HISTORICAL] 原实现要求 status 不同才报告，但 turn 开始前工作区已有 dirty 文件时
- *   （开发场景极常见：worktree 普遍有未提交改动），pi 改了这些文件后 git status 仍是 modified，
- *   status 相同 → 漏报 → fileChanges 为空 → 变更集卡不显示（"全程几乎看不到"事故）。
- *   改为只要 current 中存在就报告，代价是 turn 开始前已 dirty 但 turn 内未碰的文件会误报，
- *   但误报（多列几个文件）的危害远低于漏报（整个变更集卡消失）。误报文件在 ready 帧一致报告，
- *   不会产生状态跳变。
- * - baseline 有 current 无 → 已 commit/revert，不报告
- * - baseline 为 null（非仓库）→ 返回 current 全集（首次进入仓库等场景）
- *
- * @param baseline turn 开始时的快照（可能 null）
- * @param current 当前快照
- */
-export function diffSnapshots(baseline: StatusSnapshot, current: StatusSnapshot): FileChange[] {
+export function diffSnapshots(current: StatusSnapshot): FileChange[] {
   if (!current) return []
-  // baseline 为 null（非仓库）→ current 全集作为变更
-  if (!baseline) {
-    return Array.from(current.entries()).map(([filePath, status]) => ({ filePath, status }))
-  }
-
-  // current 全集即变更清单（baseline 仅用于排除「baseline 有 current 无」的已 commit/revert 文件）。
-  const changes: FileChange[] = []
-  for (const [filePath, currentStatus] of current) {
-    changes.push({ filePath, status: currentStatus })
-  }
-  return changes
+  return Array.from(current.entries()).map(([filePath, status]) => ({ filePath, status }))
 }
 
 /**
- * 为 FileChange[] 填充行数（addLines/delLines）。
+ * 为 FileChange[] 填充行数（addLines/delLines）——纯函数（W18 D4-5：numstat 结果注入，零子进程）。
  *
  * 两路行数来源（ADR-0024 重构）：
- * 1. 已跟踪文件：`git diff --numstat HEAD`（git 真值，含 staged + unstaged）
+ * 1. 已跟踪文件：numstat（git 真值，含 staged + unstaged）—— 由调用方经 GitStateService.numstat
+ *    异步采集后注入（numstatMap）；null / 缺项 → 跳过该路
  * 2. untracked 文件（numstat 不报告）：从 writeContents 回退（write 工具的 content 分行计）
  *
  * numstat 不报告 untracked 文件是已知限制。bash 创建的 untracked 文件无行数来源——
  * 卡片显示文件名但不显示 +N（与现状一致，接受此限制）。
  *
- * @param cwd pi session 工作目录
  * @param changes 待填充行数的 FileChange[]（原地修改）
+ * @param numstatMap `git diff --numstat HEAD` 的解析结果（null = 采集失败，行数靠 writeContents 回退）
  * @param writeContents 本 turn write 工具写入的 content（filePath → content），untracked 行数回退
  */
 export function computeLineCounts(
-  cwd: string,
   changes: FileChange[],
+  numstatMap: Map<string, NumstatEntry> | null,
   writeContents?: Map<string, string>,
 ): void {
   if (changes.length === 0) return
 
-  // 已跟踪文件行数：numstat（git 真值）
-  let numstatMap = new Map<string, NumstatEntry>()
-  try {
-    const output = execSync('git diff --numstat HEAD', {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 5000,
-    })
-    numstatMap = new Map(parseNumstatEntries(output).map((e) => [e.path, e]))
-    // eslint-disable-next-line taste/no-silent-catch -- 降级路径：numstat 失败不能中断 changeSet 推送，行数靠 content 回退
-  } catch (e) {
-    console.debug(`[file-change-reconciler] git diff --numstat failed: ${e instanceof Error ? e.message : String(e)}`)
-  }
-
   for (const change of changes) {
-    const ns = numstatMap.get(change.filePath)
+    const ns = numstatMap?.get(change.filePath)
     if (ns) {
       if (ns.add !== undefined) change.addLines = ns.add
       if (ns.del !== undefined) change.delLines = ns.del

@@ -97,6 +97,11 @@ export function createChangeSetController(
    * ready 帧（isFullSet=true）用 git 对账后的全集替换（真值收口）。
    * 同 filePath 合并、status 取最新。变更集卡 5 态状态机的审查态
    * （partially-reviewed/resolved/superseded）由前端用户交互驱动，不经此函数。
+   *
+   * 单向守卫（W18 纵深防御，03 D3-3）：变更集状态只允许 accumulating → ready → 审查态
+   * 单向推进。runtime 侧串行 diff 链是帧序的主保证；此处防御未来任何顺序漏洞——
+   * 迟到的 accumulating 帧（目标 message 已 ready/进入审查态）整体丢弃：既不回写 status
+   * （「待审查」徽章回退「生成中」），也不合并 fileChanges（避免污染 ready 全集真值）。
    */
   function applyFileChanges(
     sessionId: string,
@@ -105,6 +110,13 @@ export function createChangeSetController(
     changeSetStatus: ChangeSetStatus,
     isFullSet: boolean,
   ): void {
+    // 单向守卫：accumulating 只能作为首帧或承接 accumulating；已推进到 ready/审查态后不再回退
+    const guardKey = `${sessionId}:${messageId}`
+    const prevStatus = changeSetStatuses.value.get(guardKey)
+    if (changeSetStatus === 'accumulating' && prevStatus !== undefined && prevStatus !== 'accumulating') {
+      return
+    }
+
     const prev = messages.value.get(sessionId)?.value ?? []
     if (prev.length === 0) return
     const idx = prev.findIndex((m) => m.id === messageId)
@@ -122,9 +134,8 @@ export function createChangeSetController(
     next[targetIdx] = { ...target, fileChanges: merged }
     commitMessages(messages, sessionId, next)
 
-    // 记录变更集状态（供 ChangeSetCard 渲染 5 态）
-    const statusKey = `${sessionId}:${messageId}`
-    changeSetStatuses.value = new Map(changeSetStatuses.value).set(statusKey, changeSetStatus)
+    // 记录变更集状态（供 ChangeSetCard 渲染 5 态；guardKey 同 `${sessionId}:${messageId}`）
+    changeSetStatuses.value = new Map(changeSetStatuses.value).set(guardKey, changeSetStatus)
   }
 
   /**
