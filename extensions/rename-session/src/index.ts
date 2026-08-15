@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { registerAutoRenameCommand } from "./commands.js";
-import { callRenameLLM, isSubagentSession } from "./llm.js";
+import { callRenameLLM, debugLog as llmDebugLog, isSubagentSession } from "./llm.js";
 import { countSuccessfulAssistantReplies, loadRenameConfig } from "./pure.js";
 
 /**
@@ -18,11 +18,6 @@ interface TurnEndLikeEvent {
 	toolResults: unknown[];
 }
 
-/** debug 开关 live 读（每次调用查 process.env，非模块加载时读——vi.stubEnv 可测 + 运行时可切换，D9）。 */
-function isRenameDebugEnabled(): boolean {
-	return process.env.PI_RENAME_DEBUG === "1";
-}
-
 /**
  * pi-rename-session extension 工厂函数。
  * 新 session 首个成功 turn 完成后，用独立模型生成会话标题并 setSessionName 落库。
@@ -32,13 +27,10 @@ export default function renameSessionExtension(pi: ExtensionAPI): void {
 
 	pi.on("turn_end", async (event: TurnEndLikeEvent, ctx: ExtensionContext) => {
 		// handler 侧 debug 日志（C3）：skip 文案 + t=<ISO> + turnIndex=<n>
-		// （turnIndex 只在此侧输出——该字段只在 handler 作用域可达，不为日志字段扩 callRenameLLM 签名）
+		// （turnIndex 只在此侧输出——该字段只在 handler 作用域可达，不为日志字段扩 callRenameLLM 签名；
+		// 复用 llm.ts 的 debugLog，前缀 turnIndex 后输出格式与旧实现逐字节一致）
 		const debugLog = (message: string): void => {
-			if (isRenameDebugEnabled()) {
-				console.warn(
-					`[rename-session] t=${new Date().toISOString()} turnIndex=${event.turnIndex} ${message}`,
-				);
-			}
+			llmDebugLog(`turnIndex=${event.turnIndex} ${message}`);
 		};
 		try {
 			// 1. 开关检查（loadRenameConfig：flag 文件 live 覆盖 + config.enabled 回落，见 pure.ts [COMPAT] 契约）

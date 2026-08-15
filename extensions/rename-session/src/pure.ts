@@ -37,8 +37,8 @@ export interface RenameSessionConfig {
 	thinkingLevel: ModelThinkingLevel;
 }
 
-/** 合法 thinking 级别清单（与 pi-ai ModelThinkingLevel 一致；normalize 校验用）。 */
-const THINKING_LEVELS: readonly ModelThinkingLevel[] = [
+/** 合法 thinking 级别清单（与 pi-ai ModelThinkingLevel 一致；normalize 校验用）。Set 免 as 断言。 */
+const THINKING_LEVELS: ReadonlySet<string> = new Set([
 	"off",
 	"minimal",
 	"low",
@@ -46,14 +46,14 @@ const THINKING_LEVELS: readonly ModelThinkingLevel[] = [
 	"high",
 	"xhigh",
 	"max",
-];
+]);
 
 /**
  * 类型谓词：unknown 是否为合法 thinking 级别（normalizeRenameConfig 校验用，单点断言）。
- * includes 运行时兜底 + 类型收窄，调用方无需再断言。
+ * Set.has 运行时兜底 + 类型收窄，调用方无需再断言。
  */
 function isThinkingLevel(raw: unknown): raw is ModelThinkingLevel {
-	return typeof raw === "string" && (THINKING_LEVELS as readonly string[]).includes(raw);
+	return typeof raw === "string" && THINKING_LEVELS.has(raw);
 }
 
 /** 默认配置：关闭、scoped 选模、标题上限 50、不启用 thinking。 */

@@ -24,7 +24,7 @@ import {
 	isSubagentSession,
 	truncateForTitle,
 } from "../llm.js";
-import { DEFAULT_RENAME_CONFIG, type RenameSessionConfig } from "../pure.js";
+import { type RenameSessionConfig } from "../pure.js";
 
 // 每用例收尾统一还原：console spy 恢复 + stub 的 PI_RENAME_DEBUG 还原，
 // 防泄漏到后续用例（debug 开关 live 读 process.env，依赖 stubEnv/unstubAllEnvs 成对）
@@ -245,6 +245,17 @@ describe("RENAME_SYSTEM_PROMPT / RENAME_INSTRUCTION", () => {
 // callRenameLLM（mock resolveModel + callLLM @ llm-shared 边界）
 // ────────────────────────────────────────────────────
 
+/** 开 debug 开关 + 静音 warn，返回 spy 供日志断言（还原由顶层 afterEach 统一负责）。 */
+function debugWarnSpy(): ReturnType<typeof vi.spyOn> {
+	vi.stubEnv("PI_RENAME_DEBUG", "1");
+	return vi.spyOn(console, "warn").mockImplementation(() => {});
+}
+
+/** warn spy 的全部调用文本行（debug 日志断言用）。 */
+function warnLines(warnSpy: ReturnType<typeof vi.spyOn>): string[] {
+	return warnSpy.mock.calls.map((c) => String(c[0]));
+}
+
 /** resolveModel 的合法 Model<Api> 常量（pi-ai Model 接口全字段，消除 unsafe-cast 强断言）。 */
 const STUB_MODEL: Model<Api> = {
 	id: "stub-model",
@@ -400,8 +411,7 @@ describe("callRenameLLM", () => {
 	});
 
 	it("TC5: debug 日志内省在 callLLM 之前打出；长文本 head200…tail100 截断格式", async () => {
-		vi.stubEnv("PI_RENAME_DEBUG", "1");
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const warnSpy = debugWarnSpy();
 		// 甲乙丙三段唯一定位符：甲=首200 丙=尾100 乙=中段100（RENAME_INSTRUCTION 与夹具均不含这三字）
 		const head = "甲".repeat(200);
 		const middle = "乙".repeat(100);
@@ -414,7 +424,7 @@ describe("callRenameLLM", () => {
 		// mockImplementation 在被调时刻快照日志状态——若日志后置到 callLLM 之后，快照为空则本用例红
 		let logAtCallTime = "";
 		vi.mocked(callLLM).mockImplementation(async () => {
-			logAtCallTime = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+			logAtCallTime = warnLines(warnSpy).join("\n");
 			return { ok: true, content: "修复登录超时" };
 		});
 
@@ -430,13 +440,12 @@ describe("callRenameLLM", () => {
 		expect(logAtCallTime).not.toContain("乙");
 		// 「renamed to」日志已移位到 index.ts handler 侧（setSessionName 之后）——
 		// callRenameLLM 全流程（含成功路径）不再打出该日志
-		const logAfter = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+		const logAfter = warnLines(warnSpy).join("\n");
 		expect(logAfter).not.toContain("renamed to");
 	});
 
 	it("TC5b: preview 截断按 Unicode 码点——emoji（代理对）在 head/tail 边界不被劈开", async () => {
-		vi.stubEnv("PI_RENAME_DEBUG", "1");
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const warnSpy = debugWarnSpy();
 		const emoji = "😀"; // U+1F600：2 个 UTF-16 码元 = 1 码点
 		// head 200 码点（末位 emoji）+ middle 100 + tail 100 码点（末位 emoji）= 401 码点 > 300。
 		// 若按 UTF-16 码元截断，head/tail 末位会把 emoji 劈成孤立高/低代理
@@ -452,7 +461,7 @@ describe("callRenameLLM", () => {
 		await callRenameLLM(ctx, BASE_CONFIG, FINAL_MESSAGE);
 
 		const marker = "LLM request messages: ";
-		const reqLine = warnSpy.mock.calls.map((c) => String(c[0])).find((l) => l.includes(marker));
+		const reqLine = warnLines(warnSpy).find((l) => l.includes(marker));
 		expect(reqLine).toBeDefined();
 		const jsonPart = reqLine !== undefined ? reqLine.slice(reqLine.indexOf(marker) + marker.length) : "";
 		const json = JSON.parse(jsonPart) as Array<{ role: string; text: string }>;
@@ -463,8 +472,7 @@ describe("callRenameLLM", () => {
 	});
 
 	it("TC6: entries 无 user message → 返回 null 不调 callLLM，debug 输出 skip: no user prompt", async () => {
-		vi.stubEnv("PI_RENAME_DEBUG", "1");
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const warnSpy = debugWarnSpy();
 		// resolveModel 先 stub 可用模型（extract 在 resolveModel 之后，不 stub 会走 model not available 分支）
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 
@@ -473,9 +481,7 @@ describe("callRenameLLM", () => {
 		expect(result).toBeNull();
 		expect(callLLM).not.toHaveBeenCalled();
 		// C3 契约：[rename-session] + t=<ISO>（llm.ts 侧不含 turnIndex）
-		const line = warnSpy.mock.calls
-			.map((c) => String(c[0]))
-			.find((l) => l.includes("skip: no user prompt"));
+		const line = warnLines(warnSpy).find((l) => l.includes("skip: no user prompt"));
 		expect(line).toMatch(/^\[rename-session\] t=\d{4}-\d{2}-\d{2}T/);
 	});
 
@@ -486,8 +492,7 @@ describe("callRenameLLM", () => {
 	});
 
 	it("TC9: debug 开启 + callLLM 空 content → 输出 skip: title empty 且返回 null", async () => {
-		vi.stubEnv("PI_RENAME_DEBUG", "1");
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const warnSpy = debugWarnSpy();
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "   " });
 
@@ -495,9 +500,7 @@ describe("callRenameLLM", () => {
 
 		expect(result).toBeNull();
 		// 该日志在 cleanTitle 清洗为空、返回 null 前打出（7 条契约文案之一）
-		const line = warnSpy.mock.calls
-			.map((c) => String(c[0]))
-			.find((l) => l.includes("skip: title empty"));
+		const line = warnLines(warnSpy).find((l) => l.includes("skip: title empty"));
 		expect(line).toMatch(/^\[rename-session\] t=\d{4}-\d{2}-\d{2}T/);
 	});
 

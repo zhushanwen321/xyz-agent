@@ -47,6 +47,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
+/** 拼接 content 内 type==="text" blocks 的文本（join(" ")，跳过非 text block 与非 string text）。 */
+function joinTextBlocks(content: unknown): string {
+	if (!Array.isArray(content)) return "";
+	const texts: string[] = [];
+	for (const block of content) {
+		if (isRecord(block) && block.type === "text" && typeof block.text === "string") {
+			texts.push(block.text);
+		}
+	}
+	return texts.join(" ");
+}
+
 /**
  * 取 session entries 中首条 user message 的 prompt 文本（标题输入信号之一，设计 D1）。
  *
@@ -61,17 +73,8 @@ export function extractUserPromptText(entries: ReadonlyArray<EntryLike>): string
 		const message = entry.message;
 		if (message.role !== "user") continue;
 		if (typeof message.content === "string") return message.content;
-		if (Array.isArray(message.content)) {
-			const texts: string[] = [];
-			for (const block of message.content) {
-				if (isRecord(block) && block.type === "text" && typeof block.text === "string") {
-					texts.push(block.text);
-				}
-			}
-			return texts.join(" ");
-		}
-		// 找到首条 user 但 content 形态未知（异常数据）：按无文本处理返回空串，不继续扫后续 user
-		return "";
+		// blocks 数组拼接 text blocks；其他形态（异常数据）按无文本处理返回空串，不继续扫后续 user
+		return joinTextBlocks(message.content);
 	}
 	return null;
 }
@@ -82,11 +85,7 @@ export function extractUserPromptText(entries: ReadonlyArray<EntryLike>): string
  * 参数为 unknown（callRenameLLM 的 finalMessage 契约），非对象 / content 形态未知按无 text 处理。
  */
 export function extractFinalText(message: unknown): string {
-	if (!isRecord(message) || !Array.isArray(message.content)) return "";
-	return message.content
-		.filter((block) => isRecord(block) && block.type === "text")
-		.map((block) => (isRecord(block) && typeof block.text === "string" ? block.text : ""))
-		.join(" ");
+	return isRecord(message) ? joinTextBlocks(message.content) : "";
 }
 
 /** 输入段截断上限（Unicode 码点数，设计 D3：中文场景约 4k token/段，任何现代模型窗口都远超此值）。 */
@@ -95,15 +94,12 @@ const MAX_TITLE_INPUT_CODE_POINTS = 4000;
 /**
  * 按 Unicode 码点截断标题输入段（设计 D3：两段信号各 4000 码点，中文场景约 4k token/段，成本可控）。
  * Array.from 按码点切分，星面字符（emoji 等，占 2 个 UTF-16 码元）不会被劈成半个代理对；
- * 超长才追加 '…' 后缀，≤ maxCodePoints（含恰好等于）原样返回。
+ * 超长才追加 '…' 后缀，≤ 上限（含恰好等于）原样返回。
  */
-export function truncateForTitle(
-	text: string,
-	maxCodePoints = MAX_TITLE_INPUT_CODE_POINTS,
-): string {
+export function truncateForTitle(text: string): string {
 	const chars = Array.from(text);
-	if (chars.length <= maxCodePoints) return text;
-	return chars.slice(0, maxCodePoints).join("") + "…";
+	if (chars.length <= MAX_TITLE_INPUT_CODE_POINTS) return text;
+	return chars.slice(0, MAX_TITLE_INPUT_CODE_POINTS).join("") + "…";
 }
 
 /**
@@ -154,15 +150,16 @@ export function buildTitleMessages(
 const RENAME_TIMEOUT_MS = 30_000;
 
 /** debug 开关 live 读（每次调用查 process.env，非模块加载时读——vi.stubEnv 可测 + 运行时可切换）。 */
-function isRenameDebugEnabled(): boolean {
+export function isRenameDebugEnabled(): boolean {
 	return process.env.PI_RENAME_DEBUG === "1";
 }
 
 /**
- * llm.ts 侧 debug 日志（C3 契约）：[rename-session] + t=<ISO时间> + 文案。
- * 不含 turnIndex——该字段只在 handler 作用域可达，不为日志字段扩 callRenameLLM 签名。
+ * debug 日志（C3 契约）：[rename-session] + t=<ISO时间> + 文案。
+ * 本体不含 turnIndex——该字段只在 index.ts handler 作用域可达，handler 侧以包装函数
+ * 前缀 turnIndex 后复用本函数（不为日志字段扩 callRenameLLM 签名）。
  */
-function debugLog(message: string): void {
+export function debugLog(message: string): void {
 	if (isRenameDebugEnabled()) {
 		console.warn(`[rename-session] t=${new Date().toISOString()} ${message}`);
 	}
@@ -190,11 +187,7 @@ function previewText(text: string): string {
 
 /** 取 message content 内 text blocks 的拼接文本（debug 内省用，与发给 LLM 的数据同源）。 */
 function messageText(message: Message): string {
-	if (typeof message.content === "string") return message.content;
-	return message.content
-		.filter((block) => block.type === "text")
-		.map((block) => (block.type === "text" ? block.text : ""))
-		.join(" ");
+	return typeof message.content === "string" ? message.content : joinTextBlocks(message.content);
 }
 
 // ──────────────────────── LLM 调用 ────────────────────────

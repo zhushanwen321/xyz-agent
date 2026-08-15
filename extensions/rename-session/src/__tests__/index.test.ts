@@ -135,9 +135,20 @@ function fire(setup: MockSetup, ctx: ExtensionContext, message?: unknown): Promi
 	) as Promise<void>;
 }
 
+/** 开 debug 开关 + 静音 warn，返回 spy 供日志断言（还原由顶层 afterEach 统一负责）。 */
+function debugWarnSpy(): ReturnType<typeof vi.spyOn> {
+	vi.stubEnv("PI_RENAME_DEBUG", "1");
+	return vi.spyOn(console, "warn").mockImplementation(() => {});
+}
+
+/** warn spy 的全部调用文本行（debug 日志断言用）。 */
+function warnLines(warnSpy: ReturnType<typeof vi.spyOn>): string[] {
+	return warnSpy.mock.calls.map((c) => String(c[0]));
+}
+
 /** 拼接 warn spy 的全部调用为单行文本（debug 日志断言用）。 */
 function warnText(warnSpy: ReturnType<typeof vi.spyOn>): string {
-	return warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+	return warnLines(warnSpy).join("\n");
 }
 
 // ────────────────────────────────────────────────────
@@ -198,8 +209,7 @@ describe("renameSessionExtension", () => {
 	// ────────────────────────────────────────────────────
 
 	it("TC1: 五种非 stop stopReason（toolUse/error/aborted/length/缺失）→ 不触发 rename，debug 输出 skip: stopReason=<r>", async () => {
-		vi.stubEnv("PI_RENAME_DEBUG", "1");
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const warnSpy = debugWarnSpy();
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
 
 		// stopReason 缺失（undefined）也走快速路径——只认显式 stop，防误触发
@@ -210,9 +220,7 @@ describe("renameSessionExtension", () => {
 			// C3 契约：[rename-session] + t=<ISO> + turnIndex=<n> + skip 文案
 			const expected = `turnIndex=${FIRE_TURN_INDEX} skip: stopReason=${String(r)}`;
 			expect(warnText(warnSpy)).toContain(expected);
-			const line = warnSpy.mock.calls
-				.map((c) => String(c[0]))
-				.find((l) => l.includes(`skip: stopReason=${String(r)}`));
+			const line = warnLines(warnSpy).find((l) => l.includes(`skip: stopReason=${String(r)}`));
 			expect(line).toMatch(/^\[rename-session\] t=\d{4}-\d{2}-\d{2}T/);
 		}
 
@@ -225,8 +233,7 @@ describe("renameSessionExtension", () => {
 	// ────────────────────────────────────────────────────
 
 	it("TC2: 四组混合 entries——[user,toolUse,stop] 触发 / [user,error,stop] 触发 / 纯 error 不触发 / 2 stop 不触发", async () => {
-		vi.stubEnv("PI_RENAME_DEBUG", "1");
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const warnSpy = debugWarnSpy();
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		// ok:false 即可满足断言需要（callLLM 被调 + 不落库），聚焦触发判定本身
@@ -375,8 +382,7 @@ describe("renameSessionExtension", () => {
 	// ────────────────────────────────────────────────────
 
 	it("TC3: LLM 调用窗口内手动命名 → 落库前重查命中，不调 setSessionName（skip: name exists）", async () => {
-		vi.stubEnv("PI_RENAME_DEBUG", "1");
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const warnSpy = debugWarnSpy();
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		// deferred promise 打开 LLM 调用窗口（不 mock llm.js，在 pi-llm-shared 的 callLLM 边界拦截）
@@ -403,8 +409,7 @@ describe("renameSessionExtension", () => {
 	});
 
 	it("TC3 对照组: getSessionName 始终 undefined → 正常落库 + renamed to 日志（setSessionName 之后、handler 侧带 turnIndex）", async () => {
-		vi.stubEnv("PI_RENAME_DEBUG", "1");
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const warnSpy = debugWarnSpy();
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "自动生成的标题" });
@@ -412,9 +417,7 @@ describe("renameSessionExtension", () => {
 		await fire(setup, createMockCtx());
 		await vi.waitFor(() => expect(setup.setSessionNameMock).toHaveBeenCalledWith("自动生成的标题"));
 
-		const renamedIdx = warnSpy.mock.calls
-			.map((c) => String(c[0]))
-			.findIndex((l) => l.includes('renamed to "自动生成的标题"'));
+		const renamedIdx = warnLines(warnSpy).findIndex((l) => l.includes('renamed to "自动生成的标题"'));
 		expect(renamedIdx).toBeGreaterThanOrEqual(0);
 		// handler 侧日志契约（C3）：[rename-session] + t=<ISO> + turnIndex=<n> + renamed to "<title>"
 		expect(String(warnSpy.mock.calls[renamedIdx][0])).toMatch(
@@ -464,14 +467,12 @@ describe("renameSessionExtension", () => {
 		}
 		// 「零调用」的精确口径：剔除既有 A1 日志（model not available / call failed / rename with model，
 		// 非本轮 debug 契约、本用例数据 ok:true 不触发前两类）后，其余 warn 调用必须为 0
-		const nonA1Calls = warnSpy.mock.calls
-			.map((c) => String(c[0]))
-			.filter(
-				(l) =>
-					!l.includes("model not available") &&
-					!l.includes("rename LLM call failed") &&
-					!l.includes("rename with model"),
-			);
+		const nonA1Calls = warnLines(warnSpy).filter(
+			(l) =>
+				!l.includes("model not available") &&
+				!l.includes("rename LLM call failed") &&
+				!l.includes("rename with model"),
+		);
 		expect(nonA1Calls).toHaveLength(0);
 	});
 });
