@@ -327,21 +327,24 @@ last-writer-wins（首现定义）= 多写者互不协商、后完成 rename 的
 ENC=$(ls ~/.pi/agent/subagents | head -1)   # 任取一个真实 <enc> 段
 mkdir -p /tmp/bench-enc && cp -R ~/.pi/agent/subagents/$ENC /tmp/bench-enc/
 
-# 1. 基线（无索引）：删掉索引文件，新进程跑首次 collectRecords 并计时
-rm -f /tmp/bench-enc/$ENC/sessions-index.json
-tsx bench/cold-scan.bench.ts /tmp/bench-enc/$ENC/sessions --rounds 5
-#    每轮：new RecordStore(dir) → collectRecords(2000, "all") 计时 → dispose
-#    预期（基线）：中位数 ~2.7s（与 2026-08 实测一致）
+# 1. 基线（无索引）：新进程跑首次 collectRecords 并计时。
+#    注意：每轮扫描结束会异步落盘索引（§3.3.3-⑤，dispose 不取消挂起写）——
+#    基线模式必须【每轮 rm 索引后再计时】，否则轮 2-5 命中索引走快速路径，
+#    中位数会测成 ~0.3s（与预期自相矛盾）。
+tsx bench/cold-scan.bench.ts /tmp/bench-enc/$ENC/sessions --rounds 5 --baseline
+#    --baseline 语义：每轮开始时 rm -f sessions-index.json，模拟真正的冷启动
+#    每轮：rm 索引 → new RecordStore(dir) → collectRecords(2000, "all") 计时 → dispose
+#    预期（基线）：中位数 ~2.7s（与 2026-08 实测一致）；轮 1 输出留存为 ground truth
 
-# 2. 冷启动（索引命中）：上一轮扫描已落盘索引，重跑同一命令
+# 2. 冷启动（索引命中）：上一轮扫描已落盘索引，重跑同一命令（无 --baseline）
 tsx bench/cold-scan.bench.ts /tmp/bench-enc/$ENC/sessions --rounds 5
 #    判定：中位数 ≤ 300ms（预期 100-200ms：7k stat + 350KB 索引解析 + sidecar 小文件）
 ```
 
 脚本内置断言（不满足即 exit 非 0）：
 
-- 两模式输出的 `(id, agent, task, rootSessionId, status)` 列表**完全一致**（正确性等价，目标 2）；
-- 索引命中模式下，对 chmod 000 的 jsonl 仍能返回全部记录（证明零内容读取，技术同现有 A1 用例 `extensions/subagent-workflow/src/__tests__/record-store-cache.test.ts:94-106`）；
+- 两模式输出的 `(id, agent, task, rootSessionId, status)` 列表与**步骤 1 轮 1（无索引全量探测）的输出**（ground truth）**完全一致**（正确性等价，目标 2——对比基准必须是真全量探测的输出，不能是另一次索引路径的自比）；
+- 索引命中模式下，对 chmod 000 的 jsonl 仍能返回全部记录（证明零内容读取）。**注意这是与无索引冷扫的行为差异点**：无索引冷扫对不可读文件探测失败 → 记录消失；索引命中返回上次探测结果（保留）——差异方向良性（保留优于消失，视为鲁棒性提升），故该断言单独成轮执行、不参与两模式输出等价对比；技术同现有 A1 用例 `extensions/subagent-workflow/src/__tests__/record-store-cache.test.ts:94-106`；
 - 索引文件出现在 `<enc>/sessions-index.json`（兄弟位置），sessionsDir 内 readdir 无新增文件。
 
 ### 4.2 多进程并发验收（回溯 §1 目标 3、目标 4）
@@ -359,7 +362,7 @@ tsx bench/concurrent-scan.bench.ts /tmp/bench-enc/$ENC/sessions --workers 3 --it
 1. 3 个实例全程无未捕获异常；
 2. 结束后 `sessions-index.json` 是合法 JSON（`JSON.parse` 成功且 `version` 字段存在）——原子写不被竞争破坏；
 3. 目录内无残留 `.tmp.` 文件（或仅存在于写入失败注入的负向用例中）；
-4. 每个实例每轮输出与「单进程全量探测」的 ground truth id 集一致（戳校验兜住了陈旧索引）。
+4. 每个实例每轮输出与「单进程全量探测」的 ground truth **五元组 `(id, agent, task, rootSessionId, status)`** 一致（戳校验兜住了陈旧索引；并发 + 随机 touch/append 恰是最可能暴露戳校验漏网的场景，id 集一致不足以捕获 identity 字段级漂移）。
 
 ### 4.3 单测清单（新增 `src/__tests__/record-store-index.test.ts`；回归防护网与探针载体，不计入验收主体）
 

@@ -201,8 +201,10 @@ export function getFullTextFrom(record: ExecutionRecord, fromTurnIndex: number):
 证据：settle 时刻末尾可能存在一个由滞后 `message_end` 开出的**空 turn**（`currentTurn()` 在 message_end 分支被调用，`execution-record.ts:372-386` + `:212-218`）。下一轮首个 text_delta 会**复用**这个空 turn 累积（currentTurn 返回未闭合的末 turn）。若边界越过它，本轮文本在下轮 slice 范围外——静默丢文本。正确推进：`turns.length - (末 turn 未闭合且 text 为空 ? 1 : 0)`。
 探针：单测构造「turn_end → 滞后 message_end（开空 turn）→ agent_settled → 新轮 text_delta」序列，断言新轮增量含新文本。⛔ 实施期门——本断言必须落地为单测并真实运行通过。
 
-**D2 终态（close）通知同样发增量 + 指针，不发全量**
-选择：`closeAfterRoundSettled` 的合成 result 沿用 `record.result`（= 本轮增量，`subagent-service.ts:1097`），closed 分支文案附轮次统计 + sessionFile 提示。
+**D2 终态（close）通知按路径分别定案，不发全量**
+选择：close 有两条路径（`subagent-service.ts:1007-1027` 分流），分别定案：
+- 路径 ① 有在跑轮 → `closeAfterRoundSettled`（`:1088-1105`）：合成 result 沿用 `record.result`（= 本轮增量，`:1097`），closed 分支文案附轮次统计 + sessionFile 提示。
+- 路径 ② idle 下 close（用户最常见的 close 时机）→ `closeChatIdle`（`:1045-1059`）：其合成 `doneResult.text` **恒为空串**（现状即如此，经 completeRecord 覆写后终态通知正文为空 + 指针行）。维持现状空正文——idle 下末轮增量已由该轮的轮次通知送达，终态再补一份属重复；指针行保证全量可达。
 被否：终态一次性发全量（O(N) 单条）。
 理由：父 agent 已通过逐轮增量看过全部内容，终态再灌全量会重现层 ②/③ 的一次性大注入（N 轮全文单条进父上下文）；父 compaction 后确需全量的场景走指针读文件，成本按需支付。
 
@@ -212,9 +214,14 @@ export function getFullTextFrom(record: ExecutionRecord, fromTurnIndex: number):
 
 **D4 非 chatMode 路径不动 + 边界不持久化**
 选择：`roundBaseTurnIndex` 仅 chatMode 推进；一次性任务恒 0；该字段只存内存，不写入磁盘 manifest / session 重建路径。
-理由：G4。`getFullTextFrom(record, 0)` 与 `getFullText` 逐字节一致，终态 `collectResult`（`output-collector.ts:77`）不改，一次性任务的通知 / result / schema enforcement 路径零变化。跨重启磁盘重建 record（`getRecordForAction` 用 `createRecord` 新建，`subagent-service.ts:945-964`）时字段为 undefined → 回退 0 → 下一轮通知发全量——**向现状方向的安全降级**（多发冗余，不丢文本），可接受，不值得为省一次冗余把边界塞进持久化链路。
+理由：G4。`getFullTextFrom(record, 0)` 与 `getFullText` 逐字节一致，终态 `collectResult`（`output-collector.ts:77`）不改，一次性任务的通知 / result / schema enforcement 路径零变化。跨重启磁盘重建 record（`getRecordForAction` 用 `createRecord` 新建，`subagent-service.ts:945-964`）时字段为 undefined → 回退 0；且重建的 `turns` 为**空数组**（`createRecord` 不回填历史 turns，子进程 stdout 也只流 resume 后的新事件，无历史重放）——base=0 与空 turns 组合天然产出「仅新轮增量」的语义，与改造后的正常行为一致，**无冗余降级发生**。不持久化的理由即在于此：重建路径 turns 本就为空，边界信息无从恢复、也无须恢复。
 
-**D5 内存驻留（turns[] 的 thinking / toolCalls result 全量累积）不在本次处理**
+**D5 空增量轮的通知正文固定占位，禁止沿用旧 result（防重发上一轮内容）**
+选择：本轮无非空 text 且无 lastError（纯工具轮 / interrupt 抢占轮 / 模型空回复）时，`record.result` 固定为 `"(no output this round)"`。
+被否：沿用现状 fallback。现状 `onRoundSettled` 的写点是 `roundText || (record.lastError ? \`round did not complete: …\` : record.result)`（`subagent-service.ts:1767-1769`）——全量语义下该兜底无害（空轮重发全量 ≈ 上轮全量 + 0）；**增量语义下它变成 bug**：`roundText=""` 且无 lastError 时 fallback 沿用旧 `record.result` = 上一轮增量 → 本轮通知正文 = 上一轮内容，父 agent 误以为子 agent 原样重复回复，且 notifier 的 `record.result ?? "(empty)"` 兜底（`notifier.ts:250`）因 result 非空永不触发。`finalize-record.ts:216`（doFinalizeRoundToIdle）的同款 `|| record.result` fallback 必须同步修改。
+验收锚点：任务 2 单测补「空增量轮通知不含上一轮文本」断言。
+
+**D6 内存驻留（turns[] 的 thinking / toolCalls result 全量累积）不在本次处理**
 选择：out of scope。
 理由：它是 O(N) 内存 + 投影遍历成本，不是 O(N²) 通知膨胀；且 turns[] 是投影数据源，裁剪需与 eventLog / 详情视图联动设计（方案 B 已论证贸然裁剪的破坏性）。单独立项。
 
@@ -244,13 +251,13 @@ export function getFullTextFrom(record: ExecutionRecord, fromTurnIndex: number):
 
 ### 场景 4【回溯通道】终态指针可达（回溯 G3、G2）
 
-1. 3 轮后 `action:"close"`，收终态通知。
-2. **通过标准**：终态通知含 sessionFile 路径；`cat` 该文件能依次看到 3 轮 user prompt 与 assistant 回复全文。
+1. 3 轮后 idle 状态下 `action:"close"`（走 closeChatIdle 路径，即 D2 路径②），收终态通知。
+2. **通过标准**：终态通知含 sessionFile 路径；正文为空串占位、**不含上一轮增量文本**（D2 路径②语义——idle 下 close 时末轮增量已由该轮轮次通知送达）；`cat` 该文件能依次看到 3 轮 user prompt 与 assistant 回复全文。
 
 ### 场景 5【回归护栏】一次性任务零影响（回溯 G4）
 
 1. 不带 `conversation:true` 跑一个普通 background subagent 至完成。
-2. **通过标准**：完成通知 content 与改动前同 task 的输出逐字节一致（无 transcript 行、全文语义不变）。
+2. **通过标准（结构级 + 语义级，替代不可执行的「跨 run 逐字节一致」——真实模型同 task 两次运行输出非确定）**：① 结构级：content 前缀文案与现状一致、**无** `Full transcript:` 行；② 语义级：content === 该 record 的全量派生文本——用 `/subagents` 详情（getFullRecord）读同一 record 的 result，与父 JSONL 中通知 entry 的 content 对照一致（同一执行的数据派生层面等价）。
 
 ---
 
@@ -261,7 +268,7 @@ export function getFullTextFrom(record: ExecutionRecord, fromTurnIndex: number):
 | # | 任务 | 文件 | justification |
 |---|------|------|---------------|
 | 1 | `ExecutionRecord` 增加 `roundBaseTurnIndex?: number` 字段 + `getFullTextFrom(record, fromTurnIndex)` 派生函数（fromTurnIndex=0 等价 getFullText）；单测覆盖滞后空 turn 边界（D1 探针）、多 turn 单轮、空文本轮过滤 | `execution/types.ts`、`execution/execution-record.ts` | 数据层先行；纯函数可独立验收（单测），边界 case 集中在此隔离 |
-| 2 | `onRoundSettled`：`roundText = getFullTextFrom(record, record.roundBaseTurnIndex ?? 0)`；推进边界（按 D1 公式）；record.result 写点语义随之变为「本轮增量」 | `execution/subagent-service.ts:1754-1781` | 唯一通知正文来源，改一处即覆盖热 / 冷两种轮路径（均汇聚于 onRoundSettled） |
+| 2 | `onRoundSettled`：`roundText = getFullTextFrom(record, record.roundBaseTurnIndex ?? 0)`；推进边界（按 D1 公式）；`record.result` 写点改为 D5 语义（空增量轮固定 `"(no output this round)"`，**移除** `|| record.result` fallback；`finalize-record.ts:216` 同款 fallback 同步移除） | `execution/subagent-service.ts:1754-1781` | 唯一通知正文来源，改一处即覆盖热 / 冷两种轮路径（均汇聚于 onRoundSettled）；单测须含「空增量轮通知不含上一轮文本」断言（D5 验收锚点） |
 | 3 | `buildLlmContent` running 分支 + chatMode closed 分支追加 `Full transcript: <sessionFile>` 行（sessionFile 缺失省略）；一次性 closed 分支不动 | `execution/notifier.ts:227-252`、`BgNotifyRecord` 补 `sessionFile` 字段（`toNotifyRecord` 透传） | 指针必须在 LLM 可见的 content 内（D3）；notifier 是文案唯一收口 |
 | 4 | `closeAfterRoundSettled` / `doFinalizeRoundToIdle` 确认 result 语义（D2：增量 + 指针，不回归全量）；梳理 `record.result` 下游展示（list-component / bg-notify-render）确认增量语义可接受 | `execution/subagent-service.ts:1088-1105`、`execution/finalize-record.ts:216` | 终态与轮次通知语义一致性；显式记录消费方影响而非静默变更 |
 | 5 | 真实场景验收：按 §4 场景 1 先跑基线存证，改动后跑场景 2-5 | 本地 pi CLI | 设计阶段验证（§4）即实施 DoD，先基线后修复防「无对照的通过」 |
