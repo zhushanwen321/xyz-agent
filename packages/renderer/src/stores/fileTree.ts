@@ -10,6 +10,9 @@
  * 4 facet per-session（D-019 rehydrate）：tree / expandedPaths / nodeStates / gitOverlay 都按 sessionId
  * 分桶，切回 session 时展开态恢复（graceful 跳过已删路径）。
  *
+ * [W15/D-7.1] dirChangeCounts 是 gitOverlay 的预聚合派生（sid → dirPath → count，随 setGitOverlay
+ * 一次构建）——非独立权威源，getDirChangeCount 行级读取 O(1)。
+ *
  * [K-9 反哺] 跨 store 编排在 composable 层：store 暴露 invalidate 接口，不自行 subscribe chat store
  * （stores 间禁止互相 import，见 sidebar.ts:4 约束）。
  *
@@ -52,6 +55,12 @@ export const useFileTreeStore = defineStore('fileTree', () => {
   const nodeStates: Ref<SessionPathMap<NodeState>> = ref(new Map())
   /** git 标注 overlay（D-012 树/标注分离 + D-021 per-session）：sessionId → path → GitFileStatus */
   const gitOverlay: Ref<SessionPathMap<GitFileStatus>> = ref(new Map())
+  /**
+   * [W15/D-7.1] 目录改动数预聚合：sessionId → dirPath → count。
+   * 随 setGitOverlay 一次 O(n) 构建（n=改动文件数），行级读取 O(1)——
+   * 消除旧 getDirChangeCount 的 per-directory-row O(n) 前缀扫描（D 个目录行 × N 个改动文件 = O(D×N)）。
+   */
+  const dirChangeCounts: Ref<Map<string, Map<string, number>>> = ref(new Map())
   /** 显示忽略项开关（D-020，默认 false） */
   const showIgnored = ref(false)
   /** 当前选中文件路径（全局，非 per-session——单选焦点） */
@@ -82,20 +91,37 @@ export const useFileTreeStore = defineStore('fileTree', () => {
   }
 
   /**
-   * [W2] 统计目录子树内改动文件数（用于目录行的改动数徽章）。
-   * 遍历 session 的 gitOverlay，统计 path 以 `dirPath + '/'` 开头的条目数。
-   * 精确前缀匹配（'src/'），兄弟目录（如 'src-other/'）不误算。O(n)，n=改动文件数（通常 <100）。
-   * 空 overlay / session 不存在 → 0。
+   * [W15/D-7.1] 预聚合目录改动数——随 setGitOverlay 一次 O(n) 构建（n=改动文件数）。
+   * 语义与旧 per-row 前缀扫描（path.startsWith(`${dirPath}/`)) 等价：
+   * 对每个改动文件 path 'a/b/c.ts'，其所有非空祖先目录（'a'、'a/b'）计数 +1；
+   * 根目录（dirPath=''，旧算法 prefix='/' 不匹配相对路径）不计数。
+   */
+  function rebuildDirChangeCounts(sessionId: string): void {
+    const overlay = gitOverlay.value.get(sessionId)
+    const counts = new Map<string, number>()
+    if (overlay) {
+      for (const path of overlay.keys()) {
+        // 沿 '/' 切出全部祖先目录（不含 path 自身），逐级 +1
+        let idx = path.indexOf('/')
+        while (idx !== -1) {
+          const dir = path.slice(0, idx)
+          // 空 dir（path 以 '/' 开头）防御性跳过，保持与旧前缀语义一致
+          if (dir) counts.set(dir, (counts.get(dir) ?? 0) + 1)
+          idx = path.indexOf('/', idx + 1)
+        }
+      }
+    }
+    dirChangeCounts.value.set(sessionId, counts)
+    dirChangeCounts.value = new Map(dirChangeCounts.value)
+  }
+
+  /**
+   * [W2/W15] 统计目录子树内改动文件数（用于目录行的改动数徽章）。
+   * [W15/D-7.1] 改读预聚合 Map（O(1)）——精确前缀语义（'src/'，兄弟目录 'src-other/' 不误算）
+   * 由 rebuildDirChangeCounts 的祖先目录投影保证。空 overlay / session 不存在 → 0。
    */
   function getDirChangeCount(sessionId: string, dirPath: string): number {
-    const map = gitOverlay.value.get(sessionId)
-    if (!map || map.size === 0) return 0
-    const prefix = `${dirPath}/`
-    let count = 0
-    for (const path of map.keys()) {
-      if (path.startsWith(prefix)) count++
-    }
-    return count
+    return dirChangeCounts.value.get(sessionId)?.get(dirPath) ?? 0
   }
 
   /** 当前选中文件节点（computed，跨 tree 查找——selectedPath 全局，tree per-session） */
@@ -200,6 +226,8 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     }
     gitOverlay.value.set(sessionId, map)
     gitOverlay.value = new Map(gitOverlay.value)
+    // [W15/D-7.1] 同步预聚合目录改动数（后续 loadTree 之外的 setGitOverlay 调用点天然携带新计数）
+    rebuildDirChangeCounts(sessionId)
   }
 
   /** 设置过滤关键词（#4） */
@@ -235,10 +263,12 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     expandedPaths.value.delete(sessionId)
     nodeStates.value.delete(sessionId)
     gitOverlay.value.delete(sessionId)
+    dirChangeCounts.value.delete(sessionId)
     tree.value = new Map(tree.value)
     expandedPaths.value = new Map(expandedPaths.value)
     nodeStates.value = new Map(nodeStates.value)
     gitOverlay.value = new Map(gitOverlay.value)
+    dirChangeCounts.value = new Map(dirChangeCounts.value)
   }
 
   return {

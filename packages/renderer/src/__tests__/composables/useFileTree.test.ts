@@ -13,8 +13,9 @@
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useFileTree.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { watch } from 'vue'
 
 // mock @/api 门面（useFileTree 经 `import { file as fileApi, git as gitApi } from '@/api'` 依赖）
 const mockFileTree = vi.fn()
@@ -169,5 +170,90 @@ describe('useFileTree.expandNode T2.3/T2.4/T2.5', () => {
 
     expect(store.getNodeState('s1', 'src').status).toBe('error')
     expect(store.getNodeState('s1', 'src').reason).toBe('out_of_cwd')
+  })
+})
+
+describe('useFileTree.setFilter W15/D-7.1 过滤防抖', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    // 清掉模块级 pending timer，避免跨用例触发（filterText 是全局单值）
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  })
+
+  it('防抖窗口内连续 setFilter 只触发一次 store.filterText 更新（trailing 取最后一次）', () => {
+    const store = useFileTreeStore()
+    const { setFilter } = useFileTree()
+
+    // 过滤重算的触发源是 store.filterText（FileView.visibleNodes 依赖它），watch 计次数
+    // flush:'sync' 保证同步断言能读到回调计数（默认 pre 是微任务调度）
+    let filterCommits = 0
+    watch(
+      () => store.filterText,
+      () => {
+        filterCommits++
+      },
+      { flush: 'sync' },
+    )
+
+    // 模拟连续击键 's' → 'st' → 'sto' → 'store'
+    setFilter('s')
+    setFilter('st')
+    setFilter('sto')
+    setFilter('store')
+
+    // 防抖窗口内：store 未被写（过滤零重算）
+    expect(store.filterText).toBe('')
+    expect(filterCommits).toBe(0)
+
+    vi.advanceTimersByTime(200)
+
+    // trailing：只透传最后一次，且只触发一次
+    expect(store.filterText).toBe('store')
+    expect(filterCommits).toBe(1)
+  })
+
+  it('超过防抖间隔的两次输入各自触发（间隔 200ms 以上不合并）', () => {
+    const store = useFileTreeStore()
+    const { setFilter } = useFileTree()
+
+    setFilter('src')
+    vi.advanceTimersByTime(200)
+    expect(store.filterText).toBe('src')
+
+    setFilter('lib')
+    vi.advanceTimersByTime(200)
+    expect(store.filterText).toBe('lib')
+  })
+
+  it('模块级聚合：多个 useFileTree 实例（split mode 多 panel）连续 setFilter 仍只触发一次', () => {
+    const store = useFileTreeStore()
+    const panelA = useFileTree()
+    const panelB = useFileTree()
+
+    let filterCommits = 0
+    watch(
+      () => store.filterText,
+      () => {
+        filterCommits++
+      },
+      { flush: 'sync' },
+    )
+
+    panelA.setFilter('a-query')
+    panelB.setFilter('b-query')
+
+    expect(store.filterText).toBe('')
+    vi.advanceTimersByTime(200)
+    expect(store.filterText).toBe('b-query') // 后到者胜（与旧直通行为终态一致）
+    expect(filterCommits).toBe(1)
+  })
+
+  it('对外签名不变：setFilter 同步返回 void', () => {
+    const { setFilter } = useFileTree()
+    expect(setFilter('x')).toBeUndefined()
   })
 })

@@ -4,7 +4,8 @@
  * 职责（单一变化轴「文件树用户交互编排」）：
  * - loadTree：首加载（api/domains/file.tree + git.status overlay 并行）+ 展开态 rehydrate（D-019）
  * - expandNode：展开/折叠（loaded 复用缓存 / loading 幂等去重 / error 重试 / stale 丢弃）
- * - selectFile / setFilter / toggleShowIgnored：薄包装 store action
+ * - selectFile / toggleShowIgnored：薄包装 store action
+ * - setFilter：200ms trailing debounce 后透传 store（[W15/D-7.1] 过滤防抖）
  *
  * [K-9] 跨 store 失效编排（W6）：invalidateOnFileChanges watch chat store 的 file_changes ready 事件
  * → 按 sessionId 过滤 → store.invalidate。store 不自行监听（stores 间禁止 import）。
@@ -20,6 +21,16 @@ import { findNodeByPath, findNodePath } from '@/composables/logic/file-tree-util
 
 /** 在途请求追踪（expandNode 幂等去重：同 path loading 时不重发） */
 const inFlight = new Map<string, Set<string>>() // sessionId → Set<path>
+
+/**
+ * [W15/D-7.1] 过滤防抖（模块级）：store.filterText 是全局单值（非 per-session），
+ * timer 必须聚合在模块级——多个 useFileTree() 实例（split mode 多 panel）连续 setFilter
+ * 也只触发一次 store.setFilter → 一次 visibleNodes 过滤重算。trailing 语义，取 09 文档
+ * 定案区间 150-200ms 的上限。
+ */
+const FILTER_DEBOUNCE_MS = 200
+let filterTimer: ReturnType<typeof setTimeout> | null = null
+let pendingFilterText: string | null = null
 
 function isInFlight(sessionId: string, path: string): boolean {
   return inFlight.get(sessionId)?.has(path) ?? false
@@ -140,9 +151,21 @@ export function useFileTree() {
     store.selectFile(path)
   }
 
-  /** 设置过滤关键词（#4，debounce 由调用方或组件处理） */
+  /**
+   * 设置过滤关键词（#4）——[W15/D-7.1] 200ms trailing debounce。
+   * 对外签名不变（同步 void）；防抖窗口内连续输入只透传最后一次给 store.setFilter，
+   * FileView.visibleNodes（依赖 store.filterText）只重算一次。
+   */
   function setFilter(text: string): void {
-    store.setFilter(text)
+    pendingFilterText = text
+    if (filterTimer !== null) clearTimeout(filterTimer)
+    filterTimer = setTimeout(() => {
+      filterTimer = null
+      if (pendingFilterText !== null) {
+        store.setFilter(pendingFilterText)
+        pendingFilterText = null
+      }
+    }, FILTER_DEBOUNCE_MS)
   }
 
   /** 切换 showIgnored（D-020，W7 UI 接此） */

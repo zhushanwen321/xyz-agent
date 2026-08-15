@@ -16,7 +16,7 @@
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/stores/fileTree.test.ts
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useFileTreeStore } from '@/stores/fileTree'
 import type { GitFileStatus } from '@xyz-agent/shared'
@@ -188,6 +188,107 @@ describe('fileTreeStore W2 getDirChangeCount（目录改动文件数徽章）', 
       { path: 'README.md', xyCode: 'M ', status: 'modified' },
     ])
     expect(store.getDirChangeCount('s1', 'src')).toBe(0)
+  })
+})
+
+describe('fileTreeStore W15/D-7.1 徽章预聚合', () => {
+  /**
+   * reference 实现 = 旧算法（setGitOverlay 前 per-row O(n) 前缀扫描），
+   * 用于行为等价断言：预聚合后各目录计数与旧算法一致。
+   */
+  function legacyDirChangeCount(paths: string[], dirPath: string): number {
+    const prefix = `${dirPath}/`
+    return paths.filter((p) => p.startsWith(prefix)).length
+  }
+
+  it('行为等价：同 overlay 下各目录计数与旧前缀扫描算法一致', () => {
+    const store = useFileTreeStore()
+    const paths = [
+      'src/a.ts',
+      'src/b.ts',
+      'src/utils/c.ts',
+      'src/utils/deep/d.ts',
+      'src-other/e.ts',
+      'README.md',
+      'docs/page-design/x.md',
+    ]
+    store.setGitOverlay('s1', paths.map((p) => ({ path: p, xyCode: ' M', status: 'modified' })))
+
+    // 覆盖：命中目录 / 嵌套目录 / 深层链 / 兄弟前缀 / 根（''）/ 无命中目录 / 文件路径入参
+    const dirs = [
+      '',
+      'src',
+      'src/utils',
+      'src/utils/deep',
+      'src-other',
+      'docs',
+      'docs/page-design',
+      'nonexistent',
+      'README.md',
+    ]
+    for (const dir of dirs) {
+      expect(store.getDirChangeCount('s1', dir)).toBe(legacyDirChangeCount(paths, dir))
+    }
+  })
+
+  it('O(1) 读取：getDirChangeCount 不触发 overlay 遍历（keys spy 零调用）', () => {
+    const store = useFileTreeStore()
+    store.setGitOverlay('s1', [
+      { path: 'src/a.ts', xyCode: ' M', status: 'modified' },
+      { path: 'src/utils/b.ts', xyCode: ' M', status: 'modified' },
+    ])
+
+    // spy 预聚合完成后 overlay Map 的迭代入口——O(1) 路径不应触发任何遍历
+    const overlayMap = store.gitOverlay.get('s1')!
+    const keysSpy = vi.spyOn(overlayMap, 'keys')
+    const valuesSpy = vi.spyOn(overlayMap, 'values')
+    const entriesSpy = vi.spyOn(overlayMap, 'entries')
+    const forEachSpy = vi.spyOn(overlayMap, 'forEach')
+
+    // 多次行级读取（模拟多个目录行渲染）
+    for (let i = 0; i < 10; i++) {
+      store.getDirChangeCount('s1', 'src')
+      store.getDirChangeCount('s1', 'src/utils')
+    }
+    expect(store.getDirChangeCount('s1', 'src')).toBe(2)
+
+    expect(keysSpy).not.toHaveBeenCalled()
+    expect(valuesSpy).not.toHaveBeenCalled()
+    expect(entriesSpy).not.toHaveBeenCalled()
+    expect(forEachSpy).not.toHaveBeenCalled()
+  })
+
+  it('setGitOverlay 覆盖更新 → 预聚合重建（新计数替换旧计数）', () => {
+    const store = useFileTreeStore()
+    store.setGitOverlay('s1', [
+      { path: 'src/a.ts', xyCode: ' M', status: 'modified' },
+      { path: 'src/b.ts', xyCode: ' M', status: 'modified' },
+    ])
+    expect(store.getDirChangeCount('s1', 'src')).toBe(2)
+
+    // overlay 被新状态覆盖（如 ready 回写 / 重拉），计数跟随重建而非累加
+    store.setGitOverlay('s1', [{ path: 'lib/c.ts', xyCode: ' M', status: 'modified' }])
+    expect(store.getDirChangeCount('s1', 'src')).toBe(0)
+    expect(store.getDirChangeCount('s1', 'lib')).toBe(1)
+  })
+
+  it('clearSession 清理预聚合分桶', () => {
+    const store = useFileTreeStore()
+    store.setGitOverlay('s1', [{ path: 'src/a.ts', xyCode: ' M', status: 'modified' }])
+    expect(store.getDirChangeCount('s1', 'src')).toBe(1)
+    store.clearSession('s1')
+    expect(store.getDirChangeCount('s1', 'src')).toBe(0)
+  })
+
+  it('预聚合 per-session 分桶互不串扰', () => {
+    const store = useFileTreeStore()
+    store.setGitOverlay('s1', [{ path: 'src/a.ts', xyCode: ' M', status: 'modified' }])
+    store.setGitOverlay('s2', [
+      { path: 'src/a.ts', xyCode: ' M', status: 'modified' },
+      { path: 'src/b.ts', xyCode: ' M', status: 'modified' },
+    ])
+    expect(store.getDirChangeCount('s1', 'src')).toBe(1)
+    expect(store.getDirChangeCount('s2', 'src')).toBe(2)
   })
 })
 
