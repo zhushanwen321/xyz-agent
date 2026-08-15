@@ -468,7 +468,9 @@ function buildScanTargets(config: ScanConfig): ScanTarget[] {
  * 按优先级低→高扫描所有源，同名资源靠后覆盖靠前（last-writer-wins）。
  * npm/dev 包内：有 manifest 只走 manifest（路径不存在则失败），无 manifest 扫约定目录。
  *
- * Never throws. 解析失败/不可读的资源以 available=false 返回。
+ * Throws on unrecoverable scan errors——未捕获异常向上抛（Promise.all 首个 reject
+ * 即整体拒绝，与串行版 discoverResourcesSync 的传播语义一致，见实现内 [perf] 注释）。
+ * 预期失败不抛：目录不存在/不可读返回空列表，manifest 声明路径缺失以 available=false 返回。
  *
  * @returns 去重后的资源列表（按优先级合并，高优先级覆盖低优先级同名）
  */
