@@ -8,7 +8,7 @@
 
 ## 1. 背景与目标
 
-**S（情境）**：`@zhushanwen/pi-subagent-workflow` 的对话模式（chatMode，`conversation:true`）subagent 是长驻对话伙伴：父 agent 用 `action:"start"` 启动后，可反复 `action:"message"` 续聊，每轮完成时扩展自动把子 agent 回复通知回父 agent（`subagent-tool.ts:229`："the reply auto-notifies when the round completes"）。子进程 session 文件保留完整多轮上下文，续聊不丢前文。
+**S（情境）**：`@zhushanwen/pi-subagent-workflow` 的对话模式（chatMode，`conversation:true`）subagent 是长驻对话伙伴：父 agent 用 `action:"start"` 启动后，可反复 `action:"message"` 续聊，每轮完成时扩展自动把子 agent 回复通知回父 agent（`interface/subagent-tool.ts:229`："the reply auto-notifies when the round completes"）。子进程 session 文件保留完整多轮上下文，续聊不丢前文。
 
 **C（冲突）**：每轮通知的正文不是「本轮回复」，而是 `getFullText(record)`——**从第 1 轮到当前轮的全部 turn 文本拼接**。第 k 轮通知体积 ∝ 前 k 轮文本总量，N 轮对话的通知总体积 O(N²)。
 
@@ -17,6 +17,11 @@
 **A（答案）**：本轮增量。因为每轮通知 = 上一轮通知 + 本轮新增，历史部分在父 agent 上下文中已经存在——重发是纯冗余。全量快照的唯一「好处」（父 agent compaction 后看最新一条仍能拿到全量）代价是与 compaction 正面对抗，属于反模式；正确兜底是 sessionFile 回溯指针。
 
 ### 1.1 系统背景（读者假设：会用 subagent-workflow，未读过本次分析）
+
+两个计数术语（后文 D1 公式与全部行号依赖此区分，首次出现即定义）：
+
+- **turn**：pi 的执行单元——子 agent 的一段「输出文本 + 工具调用」循环，以 `turn_end` 事件闭合，逐个累积进 `record.turns[]`。**一个轮次内可有多个 turn**（例：子 agent 先说话、再调 read 工具、再总结 = 3 个 turn）。
+- **轮次（round）**：父 agent 视角的对话周期——一次 `start`/`message` 到该轮 `agent_settled` 为止，完成时 `record.round` +1。**一个轮次 = `turns[]` 里新追加的 0..n 个 turn**（本轮空转/失败轮可为 0 个）。
 
 chatMode 一次执行的生命周期：
 
@@ -35,6 +40,8 @@ chatMode 一次执行的生命周期：
 | G3 | 父 agent 保留全量回溯通道 | 通知携带 sessionFile 指针，父 agent 可按需读全文 |
 | G4 | 一次性任务（非 chatMode）零影响 | 无 conversation 场景的通知与终态 result 与现状逐字节一致 |
 
+使用者锚点（G1-G4 的最终受益者是使用者而非扩展内部）：G1/G3 让**父 agent** 的上下文不再被历史快照挤占、compaction 收益不再被下一轮全量前缀抵消；G1 同时让**用户**的 cache-miss 重复计费（随轮次平方增长）消失；G2/G4 保证既有使用者（续聊决策、一次性任务）可感知行为零变化。
+
 **In scope**：轮次通知 / 终态通知的正文内容定义；增量边界的记账机制。
 **Out of scope**：`record.turns[]` 的内存驻留治理（thinking / toolCalls result 全量驻留是 O(N) 内存问题且是投影数据源，需单独设计归档策略，与通知膨胀不是同一问题，见 §3.2 方案 B 讨论）；notifier 合并窗口 / dedup 机制本身（现有 `id:round` 去重已正确，`notifier.ts:128`）。
 
@@ -43,6 +50,17 @@ chatMode 一次执行的生命周期：
 ## 2. 现状与问题分析
 
 **结论：通知正文取自跨轮累积的 `record.turns[]` 全量派生，且通知作为 custom message 永久进入父 agent 的 LLM 上下文——膨胀发生在「发送、父 session 文件、父 LLM 上下文」三层，后两层比单次发送成本更重。**
+
+先看使用者（父 agent）今天实际收到什么。3 轮 chatMode 对话，第 2 轮完成时父 agent 收到的通知正文（真实模板拼接，非示意：running 分支文案取自 `notifier.ts:250` 的 `Subagent "x" (id) finished a round. Reply:\n${record.result}`，其中 `record.result` = `getFullText(record)` 全量拼接——含第 1+2 轮全部非空 turn 文本，轮间以 `\n\n` 连接）：
+
+```
+Subagent "reviewer" (sa-xxx) finished a round. Reply:
+<第 1 轮回复全文>
+
+<第 2 轮回复全文>
+```
+
+第 1 轮的内容在这条通知里是**第二次出现**（第 1 轮完成时已作为首条通知全文发过一次）。第 3 条通知同理含 1+2+3 轮全文。改造后的对照样例见 §3.1。
 
 ### 2.1 现状链路（行号取自 extensions/subagent-workflow/src/）
 
@@ -70,14 +88,16 @@ sendMessage({customType:"subagent-bg-notify", content, display:true},
             {triggerTurn:true, deliverAs:"steer"})
                                             execution/notifier.ts:213-224
   ▼
-父 agent：新 turn 被触发，content 进入父上下文 + 持久化到父 session 文件
+父 agent：新 turn 被触发（triggerTurn）
+  ├─ content 作为 custom entry 持久化 → 父 session JSONL 文件（每轮追加一条，物理落盘）
+  └─ content 进入父 LLM 后续每轮的 prompt 上下文（膨胀真正的归宿）
 ```
 
 关键事实（均已核实到代码）：
 
 1. **turns[] 跨轮不清理**：`agent_settled` 只做 `limiter.reset()` + `record.turnCount = 0`（`session-runner.ts:699-700`）。注释明示设计意图——「不调 completeRecord（record 不冻结，保留 turns[] 等运行时状态供续聊累积）」（`finalize-record.ts:184` 附近）。
 2. **getFullText 聚合全部历史**：`record.turns.map(t => t.text).filter(非空).join("\n\n")`（`execution-record.ts:534-539`）。`onRoundSettled` 的注释自述「跨轮累积，含本轮全部非空 turn 文本」（`subagent-service.ts:1763-1764`）。
-3. **通知参与父 LLM 上下文**：pi SDK 契约——`sendMessage` 是 "Send a custom message to the session"（CustomMessage，`role:"custom"`），与 `appendEntry` 的 "not sent to LLM" 形成对照（`node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts:904-917`、`core/messages.d.ts:29-39`）。即通知 content 不仅一次性发送，还**持久化到父 session 文件并进入父 LLM 后续每轮的上下文**。
+3. **通知参与父 LLM 上下文**：pi SDK 契约——`sendMessage` 是 "Send a custom message to the session"（CustomMessage，`role:"custom"`），与 `appendEntry` 的 "not sent to LLM" 形成对照（`node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts:904-917`、`core/messages.d.ts:29-39`；且 `CustomMessage` 无 `excludeFromContext` 字段，不落排除路径）。即通知 content 不仅一次性发送，还**持久化到父 session 文件并进入父 LLM 后续每轮的上下文**。探针：类型契约 ✅ 已核实（如上）；「父 session 文件逐轮追加 custom entry」的落盘事实 ⛔ 实施期随 §4 场景 1 打开父 JSONL 实测确认。
 
 ### 2.2 量化：三层放大器
 
@@ -91,7 +111,7 @@ sendMessage({customType:"subagent-bg-notify", content, display:true},
 
 层 ③ 是真正的痛点：cache miss 时按 token 重复计费，且持续挤占父 agent 的有效上下文窗口（长对话中父 agent 可能比子 agent 更早触发 compaction）。层 ③ 还与 compaction 正面对抗——父 agent 刚 compaction 压缩掉历史通知，下一轮通知又灌入全量前缀，compaction 收益被立刻抵消。
 
-附带成本（非本题主因，顺带记录）：`project()` 每 200ms 节流触发 `getEventLog`/`getDisplayItems` 遍历全部历史 turns（`execution-record.ts:426-448`、`subagent-service.ts:1652-1685`），CPU 随历史线性增长。
+附带成本（非本题主因，顺带记录）：`project()` 每 200ms 节流触发 `getEventLog`/`getDisplayItems` 遍历全部历史 turns（✅ 已核实：节流常量 `ON_UPDATE_MIN_INTERVAL_MS = 200`，`subagent-service.ts:197`；投影调用点 `subagent-service.ts:1652-1685`；派生实现 `execution-record.ts:426-448`、`:467-484`），CPU 随历史线性增长。
 
 ### 2.3 真实失败模式
 
@@ -109,7 +129,7 @@ sendMessage({customType:"subagent-bg-notify", content, display:true},
 |------|---------|---------|
 | 本轮完成事件 + 本轮回复 | **需要**（决策依据） | 通知正文 |
 | 第 1..k-1 轮内容 | **不需要重发**——已作为前 k-1 条通知在父上下文中 | 通知正文冗余重发 |
-| 全量回溯（父 compaction 后 / 终态汇总） | 偶发需要 | 现状无显式通道（靠重发「顺带」覆盖）；子 sessionFile 本就是权威全量（list action 已引导 "Read an item's sessionFile for full detail"，`subagent-tool.ts:231`） |
+| 全量回溯（父 compaction 后 / 终态汇总） | 偶发需要 | 现状无显式通道（靠重发「顺带」覆盖）；子 sessionFile 本就是权威全量（list action 已引导 "Read an item's sessionFile for full detail"，`interface/subagent-tool.ts:231`） |
 
 结论：**每轮通知 = 完成事件 + 本轮增量 + 回溯指针**，信息论上与现状无损等价（现状的额外部分是纯重复），且不再对抗 compaction。
 
@@ -121,17 +141,19 @@ sendMessage({customType:"subagent-bg-notify", content, display:true},
 
 ### 3.1 终态（使用者视角）
 
-父 agent 启动 chatMode subagent 并对话 3 轮，看到的 3 条通知：
+父 agent 启动 chatMode subagent 并对话 3 轮，看到的第 2 条通知（对照 §2 章首的现状样例）：
 
 ```
-Subagent "reviewer" (sa-xxx) finished round 2. Reply:
+Subagent "reviewer" (sa-xxx) finished a round. Reply:
 <仅第 2 轮回复正文>
-(Full transcript across all rounds: /path/to/subagents/<enc>/sessions/<sid>.jsonl)
+
+Full transcript: /path/to/subagents/<enc>/sessions/<sid>.jsonl
 ```
 
+- 前缀文案与现状逐字节相同（`finished a round. Reply:`，不改 notifier 现有措辞）；与现状的差异只有两处：正文范围从「全历史」缩为「本轮增量」、末尾追加 `Full transcript:` 指针行。
 - 每条通知只含当轮回复；第 3 条不再重复第 1、2 轮内容。
 - 父 agent 需要全量（如终态汇总）时，用 read 工具读通知尾部的 sessionFile 路径。
-- 失败路径：若 sessionFile 尚未回填（极早期轮次），指针行省略，通知正文与现状一致（增量=首轮全文），不阻塞。
+- 失败路径（sessionFile 尚未回填，极早期轮次）：指针行省略，通知正文与现状一致（增量=首轮全文），不阻塞。恢复指引：父 agent 随时可用 `action:"list"` 拿到该 subagent 的 sessionFile（tool description 已引导 "Read an item's sessionFile for full detail"，`interface/subagent-tool.ts:231`）——全量回溯通道不依赖指针行存在。
 
 ### 3.2 方案对比
 
@@ -148,7 +170,7 @@ export function getFullTextFrom(record: ExecutionRecord, fromTurnIndex: number):
 - **对父 agent 决策信息完整度的影响**：无损。父上下文信息总量与现状一致（现状是重复，增量是恰好一次）。唯一行为差异：父 compaction 吞掉早期通知后，父 agent 无法从「最新一条通知」恢复全量——由指针行兜底（主动读 sessionFile），且这本来就是 compaction 的应有语义（要压缩就别重灌）。
 - **长期架构合理性**：高。修根因（通知内容定义错误），不碰数据模型（turns[] 仍是单一数据源，eventLog/usage/详情投影全部不受影响）；一次性任务路径 `fromTurnIndex=0` 天然回退为 getFullText，G4 零成本满足。
 - **短期实现成本**：中低。改动集中在 3 个文件（execution-record 加派生函数 + record 字段、subagent-service 的 onRoundSettled、notifier 文案），预计 1 天含测试。核心复杂度在边界推进的滞后事件处理（见 §3.3 D1）。
-- **风险**：边界记账错误会导致丢文本（比重复更严重）——用单测锁死滞后空 turn 边界 + 真实场景验收（§4 场景 3 的「跨轮记忆」测试能抓住）；消费方 `record.result` 语义从「全历史」变「本轮」影响 list 视图展示（`list-component.ts:609-613` 显示的 result 变短）——list 本就引导读 sessionFile，可接受，需在变更说明中记录。
+- **风险**：边界记账错误会导致丢文本（比重复更严重）——用单测锁死滞后空 turn 边界 + 真实场景验收（§4 场景 3 的「跨轮记忆」测试能抓住）；消费方 `record.result` 语义从「全历史」变「本轮」影响 list 视图展示（`interface/list-component.ts:609-613` 显示的 result 变短）——list 本就引导读 sessionFile，可接受，需在变更说明中记录。
 
 #### 方案 B：通知发全文但 turns 历史每轮裁剪【否决】
 
@@ -168,6 +190,7 @@ export function getFullTextFrom(record: ExecutionRecord, fromTurnIndex: number):
 - **长期架构合理性**：低。吞症状不修根因（重复发送的根因还在，只是加了盖子）；cap 是魔法数，取值无原则依据。
 - **短期实现成本**：极低（约 10 行）。
 - **风险**：中。信息静默丢失改变父 agent 决策质量；两处截断点（onRoundSettled vs notifier）容易发散。
+- **若用它**：§2 章首样例的第 2 轮通知变成「第 1 轮全文截断后的 8KB 尾部 + 第 2 轮全文」——父 agent 知道「被截了」但拿不回第 1 轮结论；§2.3 的 20 轮对话里第 20 轮通知仍丢失开头约 52KB，且每条仍带 cap 大小的重复尾部，父上下文继续线性膨胀。
 - **定位**：仅当线上事故需要当天止血时使用，且必须带 TODO 指向本设计。非当前需要——A 的成本本身可控。
 
 ### 3.3 关键决策与权衡
@@ -185,7 +208,7 @@ export function getFullTextFrom(record: ExecutionRecord, fromTurnIndex: number):
 
 **D3 指针提示行进通知正文（LLM 可见），不止 details**
 选择：`buildLlmContent` running / closed(chatMode) 分支正文末尾追加 `Full transcript: <sessionFile>` 行。
-理由：details 字段（`BgNotifyRecord`）不经 LLM 渲染路径消费（TUI 渲染器 `bg-notify-render.ts` 读 details 但只显示首行摘要）；指针必须在 content 里，父 LLM 才知道全量在哪。sessionFile 缺失（极早期轮）时省略该行，不阻塞通知。
+理由：details 字段（`BgNotifyRecord`）不经 LLM 渲染路径消费（TUI 渲染器 `interface/bg-notify-render.ts` 读 details 但只服务终端显示：running 轮次分支仅渲染标题行、closed 分支也只显示 result 首行摘要，`bg-notify-render.ts:246`、`:254-257`）；指针必须在 content 里，父 LLM 才知道全量在哪。sessionFile 缺失（极早期轮）时省略该行，不阻塞通知。
 
 **D4 非 chatMode 路径不动 + 边界不持久化**
 选择：`roundBaseTurnIndex` 仅 chatMode 推进；一次性任务恒 0；该字段只存内存，不写入磁盘 manifest / session 重建路径。
@@ -247,4 +270,4 @@ export function getFullTextFrom(record: ExecutionRecord, fromTurnIndex: number):
 
 **待验证检查点（实施期必须落实）**：
 - D1 滞后空 turn 边界：单测 + 场景 2/3 双保险（通知丢文本会被场景 3 的跨轮问答抓到——子 agent 答不上说明轮文本没进增量）。
-- 合并窗口内两轮同 flush：notifier `doSend` 把多条 pending 拼一条消息（`notifier.ts:205-208`），两条各自是各自增量，无重复——场景 2 天然覆盖（轮次完成即 flush，`hasRunningBackground()` 对 timer-armed record 为 false，`subagent-service.ts:544-553`）。
+- 合并窗口内两轮同 flush：notifier `doSend` 把多条 pending 拼一条消息（`notifier.ts:205-208`），两条各自是各自增量，无重复。「轮次完成即 flush」✅ 已核实代码：`hasRunningBackground()` 对 timer-armed record 返回 false（`!hasIdleTimer(r.id)` 判据，`subagent-service.ts:544-553`，判据在 `:551`）；⛔ 运行时实测随场景 2 确认。
