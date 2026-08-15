@@ -44,3 +44,20 @@
 **对照结论**：Phase 1 目标（finalize/reaper/cancel-cleanup 路径的同步 git 阻塞消除）实测达成——异步路径的 git 窗口期间主进程事件持续流动；同步 create 窗口仍冻结（1602ms 空洞），与 Phase 1 范围定义一致（create 异步化属 Phase 2）。
 
 对照偏差记录：A（wtest）为 one-shot 成功任务，完成走 finalizeRoundToIdle（不触发 collectPatch），故本次对照的异步窗口来自 cancel 触发的 cancelBackground cleanup（fire-and-forget 路径）；finalize 主链（collectPatch + cleanup）的异步窗口由单测 W1TC6/8 与 integration 测试覆盖行为等价，主进程不阻塞的机制证据由 cancel cleanup 路径同构覆盖（同为 gitRunAsync）。
+
+## Phase 2 合入后对照（commit 8b4636b16，2026-08-15T03:32-03:33 UTC）——方案 A 终态
+
+同场景复跑。create 三条 git 全走 gitRunAsync（status 与 rev-parse 并行发起，间隔 3ms）。B 流正常间隔中位 54ms。
+
+**冻结判据修正说明**：此前轮次的「跨窗口 gap>500ms 判 FROZEN」在窗口内有事件时误判（gap 含窗口时长本身）。本节采用正确判据：窗口内事件数对比预期速率（窗口时长/中位间隔）+ 窗口内最大事件间隔。
+
+| git 命令（gitRunAsync） | 时长 | 窗口内事件/预期 | 窗口内最大间隔 | 判定 |
+|---|---|---|---|---|
+| status（create） | 21ms | 1 / 0.4 | 21ms | NO-FREEZE |
+| **worktree add（create）** | **642ms** | **12 / 11.9（ratio 1.01）** | 154ms | **NO-FREEZE** |
+| worktree remove（cancel cleanup） | 306ms | 6 / 5.7（ratio 1.06） | 57ms | NO-FREEZE |
+| branch -D（cancel cleanup） | 24ms | 1 / 0.4 | 24ms | NO-FREEZE |
+
+对照 Phase 1 基线的同步 worktree add（1336ms 窗口 0 事件）：异步化后同命令窗口内事件按正常速率流动（ratio 1.01）。
+
+**方案 A 终态实测达成**：全部 git 窗口（create 3 条 + cleanup 2 条）期间主进程事件循环零冻结。功能回归：worktrees.json 清零、git worktree list 无 pi-sub 残留、tmp checkout 清理（pi 退出 dispose 异步清理完成）。
