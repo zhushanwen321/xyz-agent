@@ -17,6 +17,10 @@
 //   3. per-file 缓存 + stat 戳校验（mtime+size）：register/archive 等内存事件
 //      不再整体失效缓存；任何磁盘写入（jsonl append / sidecar 覆盖）只重建对应
 //      单文件，其余 N-1 个文件复用缓存（stat 校验毫秒级）。
+//   4. [perf L-1] sessions-index.json（sessionsDir 兄弟位置）：identity 探测结果的
+//      磁盘种子——冷启动首扫读一次（惰性装载），dirty 扫描后按 60s 节流落盘
+//      （fileCache 投影，fire-and-forget）；运行期 L0/L1 语义不变，损坏/低版本
+//      静默回退全扫，高版本忽略不重写。见 sessions-index.ts。
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -25,6 +29,8 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { getCurrentActivity, getDisplayItems, getEventLog, markReconstructedStatus, snapshot as toSnapshot } from "./execution-record.ts";
 import type { ManifestRecord, ManifestStore } from "./manifest-store.ts";
+import { INDEX_WRITE_MIN_INTERVAL_MS, loadIndex, saveIndex } from "./sessions-index.ts";
+import type { SessionsIndexEntry, SessionsIndexNegativeEntry } from "./sessions-index.ts";
 import {
   IDENTITY_HEAD_BYTES,
   type IdentityHeaderRecon,
@@ -197,6 +203,19 @@ export class RecordStore {
   /** [perf] sessionsDir 最近一次全量扫描的 mtime（快路径判变，见 reconstructAll）。
    *  null = 未扫过 / 已 dispose。 */
   private dirStamp: { mtimeMs: number } | null = null;
+
+  /** [perf L-1] 首扫惰性装载的磁盘索引只读映像（key = jsonl basename）。
+   *  扫描尾（flushIndexAfterScan）与 readdir 失败路径释放——运行期索引不再被读（L1 接管）。 */
+  private indexEntries: Map<string, SessionsIndexEntry | SessionsIndexNegativeEntry> | null = null;
+  /** [perf L-1] 本轮起未落盘的探测标志：scanFile 走过探测分支即置位。发起写时消费
+   *  （置 false）、写失败恢复；未写路径不清位——未落盘的探测成果跨轮携带直至真正写入。 */
+  private indexDirty = false;
+  /** [perf L-1] 上次成功落盘墙钟（节流基准）。0 = 从未写过 → 首扫 dirty 必写；
+   *  仅成功分支推进（写失败不推进节流窗，下轮过窗重试）。 */
+  private lastIndexWriteAt = 0;
+  /** [perf L-1] loadIndex 高版本标志的进程级持久态：true 时本进程所有后续扫描均不
+   *  落盘（防 v1/v2 last-writer-wins 覆盖振荡），直至下次 loadIndex 重新评估。 */
+  private indexHigherVersion = false;
 
   constructor(
     private readonly sessionsDir: string,
@@ -383,6 +402,12 @@ export class RecordStore {
     this.fileCache.clear();
     this.idToFile.clear();
     this.dirStamp = null;
+    // [perf L-1] 索引状态重置为初始值（「清内存」语义完备）。不取消挂起的 fire-and-forget
+    // 写——in-flight 写的丢失显式接受（revive 后 dirStamp===null 重扫会重新装载/重写）。
+    this.indexEntries = null;
+    this.indexDirty = false;
+    this.lastIndexWriteAt = 0;
+    this.indexHigherVersion = false;
   }
 
   /** /resume /fork /new 后复活（dispose 的逆操作）。 */
@@ -423,6 +448,14 @@ export class RecordStore {
     } catch {
       return [];
     }
+    // [perf L-1] 首扫（dirStamp===null）惰性装载磁盘索引。必须位于 statSync 之后：
+    // sessionsDir 不存在的 early-return 不装载映像（防解析产物滞留内存）；首扫时
+    // 下方快路径条件必不成立，插在快路径 if 前后等价。
+    if (this.dirStamp === null) {
+      const loaded = loadIndex(path.dirname(this.sessionsDir));
+      this.indexEntries = loaded.entries;
+      this.indexHigherVersion = loaded.higherVersion;
+    }
     if (this.dirStamp !== null && this.dirStamp.mtimeMs === dirMtimeMs) {
       const now = Date.now();
       const out: SubagentRecord[] = [];
@@ -442,6 +475,7 @@ export class RecordStore {
         .filter((f) => f.endsWith(".jsonl"))
         .map((f) => path.join(this.sessionsDir, f));
     } catch {
+      this.indexEntries = null; // [perf L-1] 该 early-return 路径同样释放映像（内存卫生）
       return [];
     }
 
@@ -461,6 +495,7 @@ export class RecordStore {
       if (entry) out.push(entry.light);
     }
     this.dirStamp = { mtimeMs: dirMtimeMs };
+    this.flushIndexAfterScan();
     if (rootSessionFilter === undefined) return out;
     return out.filter((r) => r.rootSessionId === rootSessionFilter);
   }
@@ -497,6 +532,42 @@ export class RecordStore {
       return cached;
     }
 
+    // [perf L-1] 磁盘索引查询（首扫惰性装载，miss/空索引时 get 恒 undefined = 无索引）。
+    // 条目戳匹配 jsonl 当前 stat → 零内容读取构造缓存条目。sidecar payload（tombstone/
+    // alive）是活态数据，沿用探测分支的每轮重读语义。
+    if (this.indexEntries !== null) {
+      const hit = this.indexEntries.get(path.basename(file));
+      if (hit !== undefined && hit.mtimeMs === jsonl.mtimeMs && hit.size === jsonl.size) {
+        if (hit.negative === true) {
+          // 负条目命中：「确认无 identity」跨实例持久，零探测跳过（与下方负缓存同款形态）。
+          this.fileCache.set(file, { negative: true, jsonl, cancelled, finalized, alive });
+          return null;
+        }
+        const tomb = cancelled !== null ? readCancelledTombstone(file) : undefined;
+        const aliveData = alive !== null ? readAliveMarker(file) : undefined;
+        const entry: FileCacheEntry = {
+          light: RecordStore.buildRecord(
+            { ...hit, forkDepth: undefined, sessionFile: file },
+            { tomb, finalized: finalized !== null, alive: aliveData, jsonlMtimeMs: jsonl.mtimeMs, now },
+          ),
+          full: undefined,
+          jsonl,
+          cancelled,
+          finalized,
+          alive,
+          tomb,
+          aliveData,
+        };
+        this.fileCache.set(file, entry);
+        this.idToFile.set(hit.id, file);
+        return entry;
+      }
+    }
+
+    // [perf L-1] 索引 miss/戳不匹配落到原三级探测：本轮探测结果必须进索引（含负探测）。
+    // 覆盖两种形态：首扫（映像已装载但 miss/不匹配）与后续轮次（映像已释放，凡进重建分支必是戳变化）。
+    this.indexDirty = true;
+
     // 重建：identity 三级定位——头部 64KB（首轮会话，~34%）→ 尾部 64KB（续聊场景
     // 最后一轮 session_start 追加，~65%）→ 全文 fallback（~0.2%）。均不解析 message entries。
     // size ≤ 头部读取上限时 head 读到的即全文，tail/anywhere 只会重复读同一份内容——
@@ -531,6 +602,64 @@ export class RecordStore {
     this.fileCache.set(file, entry);
     this.idToFile.set(header.id, file);
     return entry;
+  }
+
+  /**
+   * [perf L-1] 扫描尾索引落盘（节流）：释放映像 → dirty/高版本/60s 节流窗三重门 →
+   * fire-and-forget saveIndex（fileCache 全量投影）。写决策与发起在同步栈（collectRecords
+   * 返回后不会再有本轮写）；仅写完成的回调（推进节流窗）是异步的。所有 return 路径均
+   * 不清 dirty——未落盘的探测成果跨轮携带，直至真正写入。
+   */
+  private flushIndexAfterScan(): void {
+    this.indexEntries = null; // 释放映像：运行期索引不再被读（L1 接管）
+    if (!this.indexDirty) return; // 纯命中轮零探测，不写
+    if (this.indexHigherVersion) return; // 磁盘是更高版本：只忽略不重写（防 v1/v2 互相覆盖）
+    if (Date.now() - this.lastIndexWriteAt < INDEX_WRITE_MIN_INTERVAL_MS) return; // 60s 节流窗内
+    const entries = this.projectIndexEntries();
+    this.indexDirty = false; // 发起时消费（写失败在 .catch 恢复）
+    const encDir = path.dirname(this.sessionsDir);
+    saveIndex(encDir, { entries })
+      .then(() => {
+        this.lastIndexWriteAt = Date.now(); // 仅成功分支推进节流窗
+      })
+      .catch((err: unknown) => {
+        this.indexDirty = true; // 失败恢复 dirty，下轮过窗重试
+        logger.debug("[subagents] sessions-index write failed", {
+          detail: { dir: encDir, error: err instanceof Error ? err.message : String(err) },
+        });
+      });
+  }
+
+  /**
+   * [perf L-1] fileCache 全量投影 → 索引快照（basename → 正/负条目）。
+   * 投影式单一 SSOT：不维护第二份可变索引映像（防双轨漂移）；fileCache 已被
+   * reconstructAll 修剪掉消失文件，快照天然自清洁。
+   */
+  private projectIndexEntries(): Map<string, SessionsIndexEntry | SessionsIndexNegativeEntry> {
+    const entries = new Map<string, SessionsIndexEntry | SessionsIndexNegativeEntry>();
+    for (const [file, cached] of this.fileCache) {
+      const base = path.basename(file);
+      if (cached.negative) {
+        entries.set(base, { negative: true, mtimeMs: cached.jsonl.mtimeMs, size: cached.jsonl.size });
+      } else {
+        entries.set(base, {
+          mtimeMs: cached.jsonl.mtimeMs,
+          size: cached.jsonl.size,
+          id: cached.light.id,
+          agent: cached.light.agent,
+          mode: cached.light.mode,
+          task: cached.light.task,
+          slug: cached.light.slug,
+          startedAt: cached.light.startedAt,
+          rootSessionId: cached.light.rootSessionId,
+          parentRecordId: cached.light.parentRecordId,
+          depth: cached.light.depth,
+          model: cached.light.model,
+          thinkingLevel: cached.light.thinkingLevel,
+        });
+      }
+    }
+    return entries;
   }
 
   /**

@@ -153,7 +153,9 @@ describe("[M10] getRecordForAction 跨重启磁盘重建（S3 回归场景）", 
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    // maxRetries：collectRecords 触发的 fire-and-forget sessions-index 写可能与删除
+    // 并发（ENOTEMPTY 竞态，全量并行跑时机器负载高会放大窗口）
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     for (const k of IDENTITY_ENV_KEYS) delete process.env[k];
   });
 

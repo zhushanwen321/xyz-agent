@@ -7,19 +7,25 @@ import { ManifestStore } from "../execution/manifest-store";
 import { RecordStore } from "../execution/record-store";
 
 describe("FR-8: Orphan Recovery from Manifest", () => {
+  let rootDir: string;
   let sessionsDir: string;
   let recordsDir: string;
   let manifestStore: ManifestStore;
 
   beforeEach(() => {
-    sessionsDir = fs.mkdtempSync(path.join(os.tmpdir(), "sessions-"));
-    recordsDir = fs.mkdtempSync(path.join(os.tmpdir(), "records-"));
+    // [DS3] 两层布局：sessions/records 平级落同一 rootDir（对齐生产 <enc> 段结构），
+    // sessions-index.json 落 dirname(sessionsDir)=rootDir 内随 afterEach 清理，
+    // 不写 os.tmpdir() 本身（并行 worker 共写会跨文件污染）。
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "fr8-"));
+    sessionsDir = path.join(rootDir, "sessions");
+    fs.mkdirSync(sessionsDir);
+    recordsDir = path.join(rootDir, "records");
     manifestStore = new ManifestStore(recordsDir);
   });
 
   afterEach(() => {
-    fs.rmSync(sessionsDir, { recursive: true, force: true });
-    fs.rmSync(recordsDir, { recursive: true, force: true });
+    // maxRetries：fire-and-forget 的 sessions-index 写可能与删除并发（ENOTEMPTY 竞态）
+    fs.rmSync(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("should recover orphan records from manifest when session.jsonl is missing", async () => {

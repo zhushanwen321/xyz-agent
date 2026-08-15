@@ -89,13 +89,19 @@ function writeSessionJsonl(
 }
 
 describe("RecordStore", () => {
+  let rootDir: string;
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rs-test-"));
+    // [DS3] 两层布局：tmpDir 深一层（对齐生产 <enc> 段结构），sessions-index.json 落
+    // dirname(tmpDir)=rootDir 内随 afterEach 清理（含 MF-3/S-20 的嵌套 <enc> 段索引）。
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "rs-test-"));
+    tmpDir = path.join(rootDir, "sessions");
+    fs.mkdirSync(tmpDir);
   });
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    // maxRetries：fire-and-forget 的 sessions-index 写可能与删除并发（ENOTEMPTY 竞态）
+    fs.rmSync(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   // ============================================================

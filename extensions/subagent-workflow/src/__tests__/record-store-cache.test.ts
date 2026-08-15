@@ -22,11 +22,17 @@ import { RecordStore } from "../execution/record-store";
 import type { ExecutionRecord } from "../execution/types";
 
 describe("RecordStore per-file cache + light scan [perf]", () => {
+  let rootDir: string;
   let sessionsDir: string;
   let store: RecordStore;
 
   beforeEach(() => {
-    sessionsDir = fs.mkdtempSync(path.join(os.tmpdir(), "subagents-cache-"));
+    // [DS3] 两层布局：sessionsDir 深一层（对齐生产 <enc> 段结构），sessions-index.json
+    // 落 dirname(sessionsDir)=rootDir 内随 afterEach 清理，不写 os.tmpdir() 本身
+    // （并行 vitest worker 共写同一文件会跨文件污染）。
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "subagents-cache-"));
+    sessionsDir = path.join(rootDir, "sessions");
+    fs.mkdirSync(sessionsDir);
     store = new RecordStore(sessionsDir);
   });
 
@@ -35,7 +41,7 @@ describe("RecordStore per-file cache + light scan [perf]", () => {
     for (const f of fs.readdirSync(sessionsDir)) {
       try { fs.chmodSync(path.join(sessionsDir, f), 0o644); } catch { /* best-effort */ }
     }
-    fs.rmSync(sessionsDir, { recursive: true, force: true });
+    fs.rmSync(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /** 构造一个 session.jsonl（header + identity + N 条 assistant message）+ 可选 sidecar。 */

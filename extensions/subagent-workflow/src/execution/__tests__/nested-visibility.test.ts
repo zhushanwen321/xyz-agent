@@ -82,14 +82,19 @@ function writeSessionJsonl(
 // ============================================================
 
 describe("TC-1: 嵌套 A→B→C 的 rootSessionId 全部指向 ROOT", () => {
+  let rootDir: string;
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nested-vis-tc1-"));
+    // [DS3] 两层布局：tmpDir 深一层（对齐生产 <enc> 段结构），sessions-index.json 落
+    // dirname(tmpDir)=rootDir 内随 afterEach 清理，不写 os.tmpdir() 本身。
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "nested-vis-tc1-"));
+    tmpDir = path.join(rootDir, "sessions");
+    fs.mkdirSync(tmpDir);
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("三层嵌套 record 的 rootSessionId 全部指向同一 ROOT（磁盘重建 + collectRecords 过滤）", () => {
@@ -157,14 +162,18 @@ describe("TC-1: 嵌套 A→B→C 的 rootSessionId 全部指向 ROOT", () => {
 // ============================================================
 
 describe("TC-2: collectRecords 返回全树（含深层）", () => {
+  let rootDir: string;
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nested-vis-tc2-"));
+    // [DS3] 两层布局：同 TC-1（sessions-index.json 落 rootDir 内随清理）。
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "nested-vis-tc2-"));
+    tmpDir = path.join(rootDir, "sessions");
+    fs.mkdirSync(tmpDir);
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("磁盘重建 + 内存 running 合并：全树 A→B→C 全部可见（深度 ≥2）", () => {
