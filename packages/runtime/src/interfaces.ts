@@ -538,6 +538,11 @@ export interface IGitService {
   checkout(sessionId: string, name: string): Promise<void>
   checkoutByCwd(cwd: string, name: string): Promise<void>
   createBranch(sessionId: string, name: string): Promise<void>
+  /**
+   * 写操作成功后的状态缓存失效（perf W17）：handler 在 stage/unstage/commit/checkout/
+   * createBranch（sessionId）与 checkoutCwd（cwd，session-less）成功后调用。
+   */
+  invalidateStatusCache(target: { sessionId?: string; cwd?: string }): void
 }
 
 // ── IFileService ──────────────────────────────────────────────────

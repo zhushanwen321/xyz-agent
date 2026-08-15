@@ -17,6 +17,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { GitService, GitError, type GitServiceOptions } from '../../src/services/git-service.js'
 import { GitExecutorError } from '../../src/services/ports/git-executor.js'
 import type { IGitExecutor, GitExecutorResult } from '../../src/services/ports/git-executor.js'
+import { GitStateService } from '../../src/services/git/git-state-service.js'
 
 const executor = { exec: vi.fn() }
 const sessionService = { getSummary: vi.fn() }
@@ -25,6 +26,9 @@ function svc(): GitService {
   return new GitService({
     sessionService: sessionService as unknown as GitServiceOptions['sessionService'],
     executor: executor as unknown as IGitExecutor,
+    // perf W17 收编：getStatus 走真 GitStateService（共享 executor mock）——下方 getStatus
+    // 用例即为「收编后行为等价」回归（分支列表 / per-file 行数 / -uall 参数语义不变）
+    stateService: new GitStateService({ executor: executor as unknown as IGitExecutor }),
   })
 }
 
@@ -151,10 +155,11 @@ describe('GitService.getStatus per-file 行数（W1 文件树 +N −M 角标）'
     // 展开后的每个 untracked 文件单独报告（无尾斜杠目录折叠）
     expect(r.files.map((f) => f.path)).toEqual(['redis-learn/a.py', 'redis-learn/b.md'])
     expect(r.files.every((f) => f.status === 'untracked')).toBe(true)
-    // 验证 status 命令确实带了 --untracked-files=all
+    // 验证 status 命令确实带了 --untracked-files=all（perf W17 收编后经 GitStateService
+    // 执行，第 4 参为 D3-1 定案的 8000ms 超时）
     expect(executor.exec).toHaveBeenNthCalledWith(1, '/repo', 'status', [
       '--porcelain=v1', '-z', '-b', '--untracked-files=all',
-    ])
+    ], { timeoutMs: 8000 })
   })
 })
 

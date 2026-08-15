@@ -381,8 +381,7 @@ describe('GitStateService.getStatus', () => {
     expect(fake.calls).toHaveLength(9)
   })
 
-  it('invalidate 与在飞执行的竞态：飞行中被失效的执行完成后不回写缓存（旧值不复活）', async () => {
-    const fake = createFakeExecutor()
+  it('invalidate 与在飞执行的竞态：飞行中被失效的执行完成后不回写缓存（旧值不复活）', async () => {    const fake = createFakeExecutor()
     const svc = createService(fake.executor)
 
     let releaseStatus: ((res: GitExecutorResult) => void) | undefined
@@ -416,5 +415,48 @@ describe('GitStateService.getStatus', () => {
     const fresh = await svc.getStatus('sid-1', '/repo')
     expect(fake.calls.length).toBeGreaterThan(callsBefore)
     expect(fresh.isRepo).toBe(true)
+  })
+
+  it('invalidateByCwd（perf W17）：清同 cwd 全部 session 的缓存，其他 cwd 不受影响', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    stubRepo(fake)
+
+    await svc.getStatus('sid-a', '/repo')
+    await svc.getStatus('sid-b', '/repo')
+    await svc.getStatus('sid-c', '/other')
+    expect(fake.calls).toHaveLength(9) // 3 组聚合
+
+    // session-less 写操作（checkoutCwd）按 cwd 失效
+    svc.invalidateByCwd('/repo')
+    await svc.getStatus('sid-c', '/other')
+    expect(fake.calls).toHaveLength(9) // 其他 cwd 缓存不受影响
+
+    await svc.getStatus('sid-a', '/repo')
+    await svc.getStatus('sid-b', '/repo')
+    expect(fake.calls).toHaveLength(15) // /repo 两 session 均重新执行
+  })
+
+  it('微项 8（perf W17）单趟解析边界：二进制/半二进制行不进 per-file，聚合只计数字列（与 parseNumstat/parseNumstatByFile 行为等价）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    // numstat 输出：正常条目 + 全二进制（- -）+ 半二进制（add 有 del -）
+    fake.setImpl(async (_cwd, command) => {
+      if (command === 'status') {
+        return { stdout: '## main\0 M a.ts\0 M bin.dat\0 M mixed.bin\0', stderr: '', exitCode: 0 }
+      }
+      if (command === 'diff') {
+        return { stdout: '3\t1\ta.ts\n-\t-\tbin.dat\n5\t-\tmixed.bin\n', stderr: '', exitCode: 0 }
+      }
+      return { stdout: 'main\n', stderr: '', exitCode: 0 }
+    })
+
+    const result = await svc.getStatus('sid-1', '/repo')
+    // 聚合：a.ts 全计；bin.dat 全跳过；mixed.bin 只计 add（del undefined 独立跳过）
+    expect(result.stats).toEqual({ add: 8, del: 1 })
+    // per-file：双值均数字才收录（bin.dat / mixed.bin 不进 Map → 行数字段保持 undefined）
+    expect(result.files.find((f) => f.path === 'a.ts')).toMatchObject({ additions: 3, deletions: 1 })
+    expect(result.files.find((f) => f.path === 'bin.dat')?.additions).toBeUndefined()
+    expect(result.files.find((f) => f.path === 'mixed.bin')?.additions).toBeUndefined()
   })
 })

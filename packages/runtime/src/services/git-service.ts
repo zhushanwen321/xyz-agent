@@ -4,8 +4,9 @@
  * 深度：调用方只传 sessionId（+ 可选路径/message）；cwd 解析、路径越界校验、git CLI 调用、
  * XY 码解析、numstat 聚合、冲突判定全部隐藏。handler 只需 catch → error envelope。
  *
- * 分层：GitService 调 IGitExecutor（port）做 IO，调 git-status-parser（纯函数 kernel，本仓 infra/git/）做解析，
- * 经 ISessionService 取 cwd。不直接 import infra。
+ * 分层：GitService 调 IGitExecutor（port）做写操作 IO，调 git-status-parser（纯函数 kernel，
+ * 本仓 infra/git/）做 commit 冲突预检解析，经 ISessionService 取 cwd，getStatus 经
+ * IGitStateService（状态统一读取：去重/缓存/失效，perf W16-W17）。不直接 import infra 实现。
  *
  * 安全：
  * - cwd 取自 sessionService.getSession(sid).cwd（session.create 时确立的受信工作目录）
@@ -18,10 +19,11 @@
  */
 import { resolve as resolvePath } from 'node:path'
 import type { GitStatusResult } from '@xyz-agent/shared'
-import { parseGitStatus, deriveCounts, parseNumstat, parseNumstatByFile } from '../infra/git/git-status-parser.js'
+import { parseGitStatus, deriveCounts } from '../infra/git/git-status-parser.js'
 import type { ISessionService, IGitService } from '../interfaces.js'
 import type { GitCommand, GitExecutorResult, IGitExecutor } from './ports/git-executor.js'
 import { GitExecutorError } from './ports/git-executor.js'
+import type { IGitStateService } from './ports/git-state.js'
 import { isUnderOrEqual } from '../utils/path-utils.js'
 import { toErrorMessage } from '../utils/errors.js'
 
@@ -38,6 +40,11 @@ export class GitError extends Error {
 export interface GitServiceOptions {
   sessionService: ISessionService
   executor: IGitExecutor
+  /**
+   * git 状态统一读取服务（perf W17 收编）：getStatus 经它享受 in-flight 去重 +
+   * sessionId+cwd 短 TTL 缓存 + 非仓库负缓存；写操作后经 invalidateStatusCache 失效。
+   */
+  stateService: IGitStateService
 }
 
 /**
@@ -47,18 +54,7 @@ export interface GitServiceOptions {
  */
 const VALID_BRANCH_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/
 
-/** 非 git 仓库 / git 不可用时的降级结果（GitZone 隐藏）。 */
-function notRepoResult(sessionId: string): GitStatusResult {
-  return {
-    sessionId,
-    isRepo: false,
-    stagedCount: 0,
-    unstagedCount: 0,
-    stats: { add: 0, del: 0 },
-    hasConflict: false,
-    files: [],
-  }
-}
+/** 非 git 仓库 / git 不可用时的降级结果（GitZone 隐藏）已下沉 GitStateService.fallbackResult。 */
 
 export class GitService implements IGitService {
   constructor(private opts: GitServiceOptions) {}
@@ -90,77 +86,29 @@ export class GitService implements IGitService {
    * 查询 cwd 的全量 git 状态（FR-12）。
    * - session 不存在 → 抛 GitError('session_not_found')（handler 转 error envelope）
    * - cwd 为空 / 非 git 仓库 / git 不可用 → 返回 isRepo=false 降级结果
+   *
+   * perf W17 收编（03-git-state-service D4-4 U2）：执行/聚合/解析下沉 GitStateService
+   * （status+numstat+branch，in-flight 去重 + sessionId+cwd TTL 缓存 + 非仓库负缓存），
+   * session→cwd 解析留在本层（GitStateService 保持只依赖 IGitExecutor 的纯状态服务）。
+   * 返回形状与原「三命令串行 execSafe」实现逐段等价（GitStatusResult 全字段不变），
+   * reply 形状零变化——renderer 无感。
    */
   async getStatus(sessionId: string): Promise<GitStatusResult> {
     const cwd = this.getCwd(sessionId)
     if (!cwd) {
       throw new GitError('session_not_found', `Session 不存在或无 cwd: ${sessionId}`)
     }
+    return this.opts.stateService.getStatus(sessionId, cwd)
+  }
 
-    try {
-      // status --porcelain=v1 -z -b --untracked-files=all：
-      // -z NUL 分隔（路径安全），-b 带 branch 头，-uall 强制展开 untracked 目录到单文件。
-      //   默认 git 把整个 untracked 目录折叠成一行 `?? dir/`（带尾斜杠），文件树 node.path 无尾斜杠
-      //   → overlay key 失配，目录徽章误显、子文件无角标。展开后每个 untracked 文件单独报告，
-      //   与 FileNode.path 一致。忽略规则（.gitignore）仍生效，只展开未忽略的 untracked。
-      const statusRes = await this.execSafe(cwd, 'status', ['--porcelain=v1', '-z', '-b', '--untracked-files=all'])
-      if (statusRes.exitCode !== 0) {
-        // 非 git 仓库（git status 在非仓库返回 128 + "not a git repository"）
-        return notRepoResult(sessionId)
-      }
-
-      const { branch, files } = parseGitStatus(statusRes.stdout)
-      const { stagedCount, unstagedCount, hasConflict } = deriveCounts(files)
-
-      // stats：tracked 改动行数（staged+unstaged vs HEAD）。无 HEAD（空仓库）时 diff 失败 → 0。
-      let stats = { add: 0, del: 0 }
-      const diffRes = await this.execSafe(cwd, 'diff', ['--numstat', 'HEAD'])
-      if (diffRes.exitCode === 0) {
-        stats = parseNumstat(diffRes.stdout)
-        // W1 文件树 +N −M 角标：per-file 行数填充 files[]。numstat 不含 untracked/unmerged/二进制
-        // → 这些文件 numstatMap 无匹配，additions/deletions 保持 undefined（前端降级展示）。
-        // rename 文件 numstat 输出新路径（与 porcelain path 一致），正常匹配。
-        const numstatMap = parseNumstatByFile(diffRes.stdout)
-        for (const file of files) {
-          const ns = numstatMap.get(file.path)
-          if (ns) {
-            file.additions = ns.add
-            file.deletions = ns.del
-          }
-        }
-      }
-
-      // 本地分支列表（#6 选分支 popover 数据源，架构 §4.3 GitStatusResult 含分支列表）。
-      // --format=%(refname:short) 输出干净的短分支名（无 `*` 当前标记、无缩进），每行一个；
-      // unborn HEAD（无 commit）/ 列举失败 → []。currentBranch 由上方 parseBranchHeader 给出。
-      let branches: string[] = []
-      const branchRes = await this.execSafe(cwd, 'branch', ['--list', '--format=%(refname:short)'])
-      if (branchRes.exitCode === 0) {
-        branches = branchRes.stdout
-          .split('\n')
-          .map((b) => b.trim())
-          .filter((b) => b.length > 0)
-      }
-
-      return {
-        sessionId,
-        isRepo: true,
-        branch,
-        branches,
-        stagedCount,
-        unstagedCount,
-        stats,
-        hasConflict,
-        files,
-      }
-    } catch (e) {
-      // git 不可用 / 超时（git_unavailable）或未知底层错误（git_failed）→ 降级 isRepo:false（spec G-R2-05）。
-      // session_not_found 在上方已提前抛出，不会进到此 catch；写操作不走 getStatus，仍交 handler 发 error envelope。
-      if (e instanceof GitError && (e.code === 'git_unavailable' || e.code === 'git_failed')) {
-        return notRepoResult(sessionId)
-      }
-      throw e
-    }
+  /**
+   * 写操作后的状态缓存失效入口（perf W17，03 D4-3）。handler 在 stage/unstage/commit/
+   * checkout/createBranch（按 sessionId）与 checkoutCwd（按 cwd，session-less）成功后调用，
+   * 下一次 getStatus 拿到新状态（无 2s 陈旧窗口）。失败路径不失效（状态未变）。
+   */
+  invalidateStatusCache(target: { sessionId?: string; cwd?: string }): void {
+    if (target.sessionId !== undefined) this.opts.stateService.invalidate(target.sessionId)
+    if (target.cwd !== undefined) this.opts.stateService.invalidateByCwd(target.cwd)
   }
 
   /**

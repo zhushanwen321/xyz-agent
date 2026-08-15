@@ -35,6 +35,8 @@ import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
 import { PluginService } from './services/plugin-service/plugin-service.js'
 import { GitService } from './services/git-service.js'
 import { GitExecutor } from './infra/git-executor.js'
+import { GitStateService } from './services/git/git-state-service.js'
+import { createContextWindowResolver } from './services/model-context-cache.js'
 import { GitInfoReader } from './infra/system/git-info-reader.js'
 import { ShellRunner } from './infra/shell-runner.js'
 import { WorktreeService } from './services/worktree/worktree-service.js'
@@ -346,7 +348,11 @@ async function main(): Promise<void> {
   pluginService.setSessionService(sessionService)
   // GitService：composition root 注入 infra executor（数组参数防注入）+ sessionService（取 cwd）。
   // 经 server.setServices 注入到 GitMessageHandler（git.* 路由）。
-  const gitService = new GitService({ sessionService, executor: new GitExecutor() })
+  // perf W17（03 D4-4 U2）：GitStateService 统一 git 状态读取（in-flight 去重 + sessionId+cwd
+  // TTL 缓存 + 非仓库负缓存）——gitService.getStatus 收编走它，与 GitExecutor 共享同一 executor 实例。
+  const gitExecutor = new GitExecutor()
+  const gitStateService = new GitStateService({ executor: gitExecutor })
+  const gitService = new GitService({ sessionService, executor: gitExecutor, stateService: gitStateService })
   // FileService：对称注入 infra FsExecutor（node:fs/promises adapter）+ sessionService（取 cwd 做越界守门）。
   // 经 server.setServices 注入到 FileMessageHandler（file.tree/expand/write.* 路由）。
   // allowedReadDirs：file.read 的 BC-3 白名单（~/.agents/skills、piAgentDir/skills、piAgentDir/npm），
@@ -395,12 +401,15 @@ async function main(): Promise<void> {
   // 需读 model contextWindow 才能 switchModel / applyContextUpdate 时算 usagePercent。
   // 直接注入 modelService/configService 会形成依赖环（modelService 反过来依赖 sessionService），
   // 故注入窄 resolver（纯数据查询，等价 configService.listProviders + modelService.aggregateModels）。
-  sessionService.setModelContextWindowResolver((provider, modelId) => {
-    const providers = configService.listProviders()
-    const models = modelService.aggregateModels(providers)
-    const model = models.find(m => m.providerId === provider && m.id === modelId)
-    return model?.contextWindow ?? 0
-  })
+  // 微项 5（perf W17）：resolver 经 createContextWindowResolver 加 TTL 缓存——原实现每次
+  // context.update / switchModel 都全量重算 listProviders + aggregateModels（streaming 期高频），
+  // 缓存后聚合每 5s 至多一次，查询热点只剩 find。
+  sessionService.setModelContextWindowResolver(
+    createContextWindowResolver({
+      listProviders: () => configService.listProviders(),
+      aggregateModels: (providers) => modelService.aggregateModels(providers),
+    }),
+  )
 
   // 注入 ConfigService 供 getReplaceSystemPrompt 委托（spawn pi 时透传替换系统提示词）。
   // 与 setModelContextWindowResolver 同模式：避免构造参数破坏 SessionService 的测试调用点。

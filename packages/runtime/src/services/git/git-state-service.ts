@@ -14,21 +14,15 @@
  * 3. invalidate(sessionId)（D4-3）：写操作后调用，清该 session 的缓存与在飞条目。在飞条目被标记
  *    dead——完成后不回写缓存，防止「失效后旧值复活」竞态。
  *
- * W16 阶段说明：本实现暂不被生产路径消费（组合根不实例化），仅由单测实例化验证；
- * W17（git-service.getStatus 收编）接线。
+ * W17 起 getStatus 生产接线：组合根实例化并注入 GitService（getStatus 收编）与
+ * GitMessageHandler（写操作失效）；W18 再收编 file-change-reconciler 的采集。
  *
  * 🔒 三层架构：本文件属 services（编排 + 缓存策略），IO 经 IGitExecutor port；
  * 解析复用 infra 纯函数（git-status-parser / file-change-reconciler 的 parseGitStatusPorcelain、
  * xyToStatus——无 IO 纯计算，与 git-service.ts import infra/git/git-status-parser 同款豁免）。
  */
 import type { FileChangeStatus, GitStatusResult } from '@xyz-agent/shared'
-import {
-  parseGitStatus,
-  deriveCounts,
-  parseNumstat,
-  parseNumstatByFile,
-  parseNumstatEntries,
-} from '../../infra/git/git-status-parser.js'
+import { parseGitStatus, deriveCounts, parseNumstatEntries } from '../../infra/git/git-status-parser.js'
 import { parseGitStatusPorcelain, xyToStatus } from '../../infra/pi/file-change-reconciler.js'
 import type { GitCommand, GitExecutorResult, IGitExecutor } from '../ports/git-executor.js'
 import type { IGitStateService, NumstatEntry, StatusSnapshot } from '../ports/git-state.js'
@@ -189,12 +183,22 @@ export class GitStateService implements IGitStateService {
       const numstatRes = numstatSettled.value
       const branchRes = branchSettled.value
 
-      // stats：tracked 改动行数聚合。无 HEAD（空仓库）时 diff 失败 → 0（现状语义）
-      let stats = { add: 0, del: 0 }
+      // stats：tracked 改动行数聚合。无 HEAD（空仓库）时 diff 失败 → 0（现状语义）。
+      // 微项 8（perf W17）：单趟解析——一次遍历 parseNumstatEntries 同时产出聚合 stats 与
+      // per-file Map（原 parseNumstat + parseNumstatByFile 双趟各跑一遍行解析）。
+      // 聚合语义：add/del 各自独立跳过 undefined（二进制 `-`）；per-file：双值均数字才收录
+      // （与 parseNumstat / parseNumstatByFile 的既有行为逐条等价）。
+      const stats = { add: 0, del: 0 }
       if (numstatRes.exitCode === 0) {
-        stats = parseNumstat(numstatRes.stdout)
+        const numstatMap = new Map<string, { add: number; del: number }>()
+        for (const e of parseNumstatEntries(numstatRes.stdout)) {
+          if (e.add !== undefined) stats.add += e.add
+          if (e.del !== undefined) stats.del += e.del
+          if (e.add !== undefined && e.del !== undefined) {
+            numstatMap.set(e.path, { add: e.add, del: e.del })
+          }
+        }
         // per-file 行数填充（+N −M 角标）：numstat 不含 untracked/unmerged/二进制 → 保持 undefined
-        const numstatMap = parseNumstatByFile(numstatRes.stdout)
         for (const file of files) {
           const ns = numstatMap.get(file.path)
           if (ns) {
@@ -230,13 +234,24 @@ export class GitStateService implements IGitStateService {
   }
 
   invalidate(sessionId: string): void {
-    const prefix = `${sessionId}${KEY_SEP}`
+    this.dropKeysWith((key) => key.startsWith(`${sessionId}${KEY_SEP}`))
+  }
+
+  /** perf W17：session-less 写操作（checkoutCwd）按 cwd 后缀失效，覆盖共享该 cwd 的所有 session。 */
+  invalidateByCwd(cwd: string): void {
+    this.dropKeysWith((key) => key.endsWith(`${KEY_SEP}${cwd}`))
+  }
+
+  /**
+   * 失效公共路径：清缓存键 + 在飞条目标 dead（完成后不回写缓存，防「失效后旧值复活」竞态）
+   * + 移出去重表（下一次调用重新执行，不拿旧值）。仅删除匹配条目，防误删 invalidate 后新发起的条目。
+   */
+  private dropKeysWith(match: (key: string) => boolean): void {
     for (const key of this.statusCache.keys()) {
-      if (key.startsWith(prefix)) this.statusCache.delete(key)
+      if (match(key)) this.statusCache.delete(key)
     }
     for (const [key, entry] of this.inflightGetStatus) {
-      if (key.startsWith(prefix)) {
-        // 标 dead（完成后不回写缓存）+ 移出去重表（下一次调用重新执行，不拿旧值）
+      if (match(key)) {
         entry.dead = true
         this.inflightGetStatus.delete(key)
       }
