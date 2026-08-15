@@ -9,8 +9,8 @@
  * 主对话 --model mimo-v2.5-pro 不受影响。
  *
  * 断言：主 round 正常完成（turn_end stop）；rename LLM 调用约 30s 超时后 stderr 出现
- * 行前缀 `rename LLM call failed:`（探针 5：超时路径 error 为空串 → 文案落 unknown error
- * 兜底，故只匹配前缀不匹配具体文案）；从 LLM request 到失败日志 ≥25s（区分超时路径与
+ * 子串 `rename LLM call failed:`（探针 5：超时路径 error 为空串 → 文案落 unknown error
+ * 兜底，故只匹配该子串不匹配具体文案）；从 LLM request 到失败日志 ≥25s（区分超时路径与
  * 连接错误路径）；无自动 session_info；pi 存活（getState 正常响应）。
  */
 
@@ -63,7 +63,7 @@ export async function runA5() {
 
 			// rename LLM request 发出（指向 hang server）
 			const llmReq = await pi.rpc.waitForStderr("LLM request messages: ", { timeoutMs: 30_000 });
-			// 等 ≥30s 超时失败日志（行前缀匹配；探针 5：约 30s，上限 45s 含余量）
+			// 等 ≥30s 超时失败日志（子串匹配 includes；探针 5：约 30s，上限 45s 含余量）
 			const fail = await pi.rpc.waitForStderr("rename LLM call failed:", { timeoutMs: 45_000 });
 			const hangMs = fail.t - llmReq.t;
 			assert(

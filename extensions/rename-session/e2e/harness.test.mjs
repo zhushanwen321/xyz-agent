@@ -2,7 +2,8 @@
  * harness 断言纯函数单测（T1）。
  *
  * 运行：cd extensions/rename-session && npx vitest run e2e/harness.test.mjs
- * （vitest.config.ts include 已加 "e2e/*.test.mjs"，既有 src/__tests__ 不受影响）
+ * （vitest.config.ts include 是精确文件名 "e2e/harness.test.mjs"，既有 src/__tests__ 不受影响；
+ *  场景脚本 run-aN.mjs 不在 CI 内——glob 写法会误导未来把 scenarios.test.mjs 收进 CI）
  */
 
 import { describe, expect, it } from "vitest";
@@ -43,23 +44,28 @@ describe("rebuildPreview 三分支边界", () => {
 		expect(out[200]).toBe("…");
 	});
 
-	it("UTF-16 slice 代理对劈开的行为锁定（与 llm.ts String.slice 同款，同构即正确）", () => {
-		const emoji = "😀"; // U+1F600，占 2 个 UTF-16 码元
-		// 300 ASCII + emoji（总 302 码元）：tail 100 = 98 个 a + 完整 emoji（劈不开）
+	it("码点截断不劈开代理对：emoji 在 head/tail 边界完整保留（无孤立代理）", () => {
+		const emoji = "😀"; // U+1F600，占 2 个 UTF-16 码元 = 1 码点
+		// tail 边界：301 码点（300 ASCII + emoji）→ tail 100 = 99 个 a + 完整 emoji
 		const out1 = rebuildPreview("a".repeat(300) + emoji);
-		expect(out1).toBe("a".repeat(200) + "…" + "a".repeat(98) + emoji);
-		// head 边界劈开：第 200 码元落在 emoji 的高代理上 → 孤立高代理保留在 head 末尾
-		// （llm.ts 用 UTF-16 不感知的 slice，preview 只作日志/断言用途，劈开不破坏同构——锁定现状）
-		const head = "a".repeat(199) + emoji; // length 201
-		const text = head + "b".repeat(200); // length 401
-		const out2 = rebuildPreview(text);
-		expect(out2.length).toBe(301);
-		const headPart = out2.slice(0, 200);
-		expect(headPart.slice(0, 199)).toBe("a".repeat(199));
-		const code = headPart.charCodeAt(199);
-		expect(code >= 0xd800 && code <= 0xdbff).toBe(true); // 孤立高代理
-		expect(out2[200]).toBe("…");
-		expect(out2.slice(201)).toBe("b".repeat(100));
+		expect(out1).toBe("a".repeat(200) + "…" + "a".repeat(99) + emoji);
+		// head 边界：第 200 码点是 emoji → head 末尾完整保留
+		// （UTF-16 码元实现会把该 emoji 劈成孤立高代理——本用例锁定码点实现）
+		const head = "a".repeat(199) + emoji; // 200 码点
+		const out2 = rebuildPreview(head + "b".repeat(200)); // 400 码点
+		const chars2 = Array.from(out2);
+		expect(chars2).toHaveLength(200 + 1 + 100);
+		expect(chars2.slice(0, 200).join("")).toBe(head);
+		expect(chars2[200]).toBe("…");
+		expect(chars2.slice(201).join("")).toBe("b".repeat(100));
+		// 无孤立代理：Array.from 后不存在落在代理区间的码点（代理都成对包含在星面码点内）
+		const hasLoneSurrogate = (s) =>
+			Array.from(s).some((ch) => {
+				const c = ch.codePointAt(0);
+				return c >= 0xd800 && c <= 0xdfff;
+			});
+		expect(hasLoneSurrogate(out1)).toBe(false);
+		expect(hasLoneSurrogate(out2)).toBe(false);
 	});
 
 	it("非 string 输入抛 TypeError", () => {

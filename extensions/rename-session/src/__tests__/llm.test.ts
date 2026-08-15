@@ -415,9 +415,38 @@ describe("callRenameLLM", () => {
 		expect(logAtCallTime).toContain(head);
 		expect(logAtCallTime).toContain(tail);
 		expect(logAtCallTime).not.toContain("乙");
-		// resolve 后输出落库侧日志（renamed to "<title>"）
+		// 「renamed to」日志已移位到 index.ts handler 侧（setSessionName 之后）——
+		// callRenameLLM 全流程（含成功路径）不再打出该日志
 		const logAfter = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
-		expect(logAfter).toContain('renamed to "修复登录超时"');
+		expect(logAfter).not.toContain("renamed to");
+	});
+
+	it("TC5b: preview 截断按 Unicode 码点——emoji（代理对）在 head/tail 边界不被劈开", async () => {
+		vi.stubEnv("PI_RENAME_DEBUG", "1");
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const emoji = "😀"; // U+1F600：2 个 UTF-16 码元 = 1 码点
+		// head 200 码点（末位 emoji）+ middle 100 + tail 100 码点（末位 emoji）= 401 码点 > 300。
+		// 若按 UTF-16 码元截断，head/tail 末位会把 emoji 劈成孤立高/低代理
+		const head = "甲".repeat(199) + emoji;
+		const middle = "乙".repeat(100);
+		const tail = "丙".repeat(99) + emoji;
+		const ctx = createCtx([
+			{ type: "message", message: { role: "user", content: [{ type: "text", text: head + middle + tail }] } },
+		]);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
+
+		await callRenameLLM(ctx, BASE_CONFIG, FINAL_MESSAGE);
+
+		const marker = "LLM request messages: ";
+		const reqLine = warnSpy.mock.calls.map((c) => String(c[0])).find((l) => l.includes(marker));
+		expect(reqLine).toBeDefined();
+		const jsonPart = reqLine !== undefined ? reqLine.slice(reqLine.indexOf(marker) + marker.length) : "";
+		const json = JSON.parse(jsonPart) as Array<{ role: string; text: string }>;
+		const preview = json[0]?.text ?? "";
+		// 码点截断契约：head 200 码点（末位完整 emoji）+ 字面 … + tail 100 码点（末位完整 emoji）
+		expect(preview).toBe(head + "…" + tail);
+		expect(preview).not.toContain("乙");
 	});
 
 	it("TC6: entries 无 user message → 返回 null 不调 callLLM，debug 输出 skip: no user prompt", async () => {

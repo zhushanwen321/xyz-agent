@@ -126,20 +126,25 @@ export function lastSessionInfoEntry(lines) {
 	return last;
 }
 
-// previewText 同构常量（extensions/rename-session/src/llm.ts D9 契约）
-const PREVIEW_MAX_CHARS = 300;
-const PREVIEW_HEAD_CHARS = 200;
-const PREVIEW_TAIL_CHARS = 100;
+// previewText 同构常量（extensions/rename-session/src/llm.ts D9 契约，Unicode 码点单位）
+const PREVIEW_MAX_CODE_POINTS = 300;
+const PREVIEW_HEAD_CODE_POINTS = 200;
+const PREVIEW_TAIL_CODE_POINTS = 100;
 
 /**
  * 与 llm.ts previewText 同构的预览重构（A1 内容匹配主判别器）：
- * ≤300 字符（UTF-16 length）全文；>300 → head 200 + 字面 `…` + tail 100（UTF-16 slice 同款，
- * 代理对可能被劈开——与 llm.ts 行为一致即同构，单测锁定此现状）。
+ * ≤300 码点全文；>300 → head 200 码点 + 字面 `…` + tail 100 码点（Array.from 码点切分，
+ * 代理对/emoji 不被劈开——与 llm.ts 行为一致即同构，单测锁定此行为）。
  */
 export function rebuildPreview(text) {
 	if (typeof text !== "string") throw new TypeError("rebuildPreview: text must be string");
-	if (text.length <= PREVIEW_MAX_CHARS) return text;
-	return text.slice(0, PREVIEW_HEAD_CHARS) + "…" + text.slice(-PREVIEW_TAIL_CHARS);
+	const chars = Array.from(text);
+	if (chars.length <= PREVIEW_MAX_CODE_POINTS) return text;
+	return (
+		chars.slice(0, PREVIEW_HEAD_CODE_POINTS).join("") +
+		"…" +
+		chars.slice(-PREVIEW_TAIL_CODE_POINTS).join("")
+	);
 }
 
 /** LLM request debug 日志行标记（llm.ts debugLog 文案）。 */

@@ -385,9 +385,11 @@ describe("renameSessionExtension", () => {
 		await vi.waitFor(() => expect(warnText(warnSpy)).toContain("skip: name exists"));
 
 		expect(setup.setSessionNameMock).not.toHaveBeenCalled();
+		// 移位契约：renamed to 在 setSessionName 之后才打——竞态命中（未落库）时该日志不出现
+		expect(warnText(warnSpy)).not.toContain("renamed to");
 	});
 
-	it("TC3 对照组: getSessionName 始终 undefined → 正常落库 + renamed to 日志", async () => {
+	it("TC3 对照组: getSessionName 始终 undefined → 正常落库 + renamed to 日志（setSessionName 之后、handler 侧带 turnIndex）", async () => {
 		vi.stubEnv("PI_RENAME_DEBUG", "1");
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
@@ -397,7 +399,18 @@ describe("renameSessionExtension", () => {
 		await fire(setup, createMockCtx());
 		await vi.waitFor(() => expect(setup.setSessionNameMock).toHaveBeenCalledWith("自动生成的标题"));
 
-		expect(warnText(warnSpy)).toContain('renamed to "自动生成的标题"');
+		const renamedIdx = warnSpy.mock.calls
+			.map((c) => String(c[0]))
+			.findIndex((l) => l.includes('renamed to "自动生成的标题"'));
+		expect(renamedIdx).toBeGreaterThanOrEqual(0);
+		// handler 侧日志契约（C3）：[rename-session] + t=<ISO> + turnIndex=<n> + renamed to "<title>"
+		expect(String(warnSpy.mock.calls[renamedIdx][0])).toMatch(
+			new RegExp(`^\\[rename-session\\] t=\\d{4}-\\d{2}-\\d{2}T.* turnIndex=${FIRE_TURN_INDEX} renamed to "自动生成的标题"$`),
+		);
+		// 移位契约（时序）：日志调用序晚于 setSessionName——先落库后报捷
+		expect(warnSpy.mock.invocationCallOrder[renamedIdx]).toBeGreaterThan(
+			setup.setSessionNameMock.mock.invocationCallOrder[0],
+		);
 	});
 
 	// ────────────────────────────────────────────────────

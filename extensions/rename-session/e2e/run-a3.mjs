@@ -87,12 +87,14 @@ async function seg3bOnce(log) {
 		await pi.rpc.setSessionName(RACE_NAME);
 		log(`3b 抢入命名：LLM request 后 ${tGrab - llmReq.t}ms 完成 set_session_name`);
 		await settledP;
-		// rename 终态时序（实测）：llm.ts 先打 `renamed to "<title>"`（返回 title 前），
-		// 随后 handler .then() 落库前重查命中防覆盖才打 `skip: name exists`。
-		// 故成功防覆盖 = renamed to 之后紧跟 skip: name exists；真 miss（标题先落库）时
-		// skip 不会出现——5s 窗口未现即判 miss，交重跑
-		await pi.rpc.waitForStderr('renamed to "', { timeoutMs: 45_000 });
-		await pi.rpc.waitForStderr("skip: name exists", { timeoutMs: 5_000 });
+		// rename 终态时序（日志契约更新后）：`renamed to` 在 handler .then() 的 setSessionName
+		// 之后打出——竞态命中防覆盖时提前 return 打 `skip: name exists`，renamed to 不出现。
+		// 故成功防覆盖 = skip: name exists；renamed to 出现 = 标题已抢先落库（miss），交重跑
+		const outcome = await pi.rpc.waitForStderr(/skip: name exists|renamed to "/, { timeoutMs: 45_000 });
+		assert(
+			outcome.line.includes("skip: name exists"),
+			`3b 竞态 miss：rename 先于手动命名落库（${outcome.line}）`,
+		);
 		await sleep(10_500); // ≥10s 观察窗口
 		assert(lastSessionInfoEntry(await pi.readSessionLines())?.name === RACE_NAME, "3b 等待 10s 后竞态命名被覆盖");
 		log(`3b OK: rename 返回时 skip: name exists + 名字未被覆盖（仍为「${RACE_NAME}」）`);

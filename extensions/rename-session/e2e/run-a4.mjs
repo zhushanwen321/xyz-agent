@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { assert, runScenario, spawnPi } from "./harness.mjs";
+import { assert, assertTitleGuards, runScenario, spawnPi } from "./harness.mjs";
 
 /** fixture：含 ts 文件的临时工作目录（阶段 2 prompt 引用「刚才目录」）。 */
 function makeTsFixture() {
@@ -110,6 +110,18 @@ export async function runA4() {
 			assert(lastInfo && typeof lastInfo.name === "string" && lastInfo.name.length > 0, "阶段2 session_info 无标题");
 			const logTitle = rename2.line.match(/renamed to "(.*)"$/)?.[1];
 			assert(logTitle === lastInfo.name, `阶段2 日志标题与落库不一致: "${logTitle}" vs "${lastInfo.name}"`);
+			// 落库标题须为 slug 形态（与 A2 同款两层断言：kebab 遵从是模型问题只记录，
+			// 其余（代词开头/时态结尾/超长/句尾标点）是 cleanTitle 契约回归，硬失败）
+			const guards = assertTitleGuards(lastInfo.name);
+			const kebabViol = guards.violations.find((v) => v.rule === "english-kebab-case");
+			const hardViol = guards.violations.filter((v) => v.rule !== "english-kebab-case");
+			if (kebabViol) {
+				log(`KEBAB_NON_COMPLIANT [A4] 实际标题: "${lastInfo.name}"`);
+			}
+			assert(
+				hardViol.length === 0,
+				`阶段2 标题 "${lastInfo.name}" slug guard 失败:\n${hardViol.map((v) => `  [${v.layer}/${v.rule}] ${v.message}`).join("\n")}`,
+			);
 			log(`阶段2 OK: LLM request 出现 + session_info 落库标题「${lastInfo.name}」`);
 		} finally {
 			h2.cleanup();

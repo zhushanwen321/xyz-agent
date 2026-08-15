@@ -77,6 +77,9 @@ export default function renameSessionExtension(pi: ExtensionAPI): void {
 						return;
 					}
 					pi.setSessionName(title);
+					// 落库成功才打「renamed to」（移位自 llm.ts：日志必须晚于 setSessionName——
+					// 防覆盖 return 在前，竞态命中时本日志不出现，避免「日志称 renamed 但未落库」）
+					debugLog(`renamed to "${title}"`);
 				})
 				.catch((e) => console.error("[pi-rename-session] rename LLM failed:", e));
 			// rename 是 best-effort，任何 LLM 失败（网络/提取/auth/model 不可用）都静默跳过保留原 label，

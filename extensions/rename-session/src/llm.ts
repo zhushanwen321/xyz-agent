@@ -157,18 +157,24 @@ function debugLog(message: string): void {
 	}
 }
 
-/** preview 阈值（字符数，D9 契约）：≤300 全文；>300 输出 head 200 + 字面 … + tail 100。 */
-const PREVIEW_MAX_CHARS = 300;
-const PREVIEW_HEAD_CHARS = 200;
-const PREVIEW_TAIL_CHARS = 100;
+/** preview 阈值（Unicode 码点数，D9 契约）：≤300 码点全文；>300 输出 head 200 码点 + 字面 … + tail 100 码点。 */
+const PREVIEW_MAX_CODE_POINTS = 300;
+const PREVIEW_HEAD_CODE_POINTS = 200;
+const PREVIEW_TAIL_CODE_POINTS = 100;
 
 /**
- * debug 日志的文本预览（D9）：≤300 字符直接全文；超长输出 head 200 + 字面 … + tail 100
- * （head/tail 双段支撑 E2E 对长 prompt 首尾片段的断言）。
+ * debug 日志的文本预览（D9）：≤300 码点直接全文；超长输出 head 200 码点 + 字面 … + tail 100 码点
+ * （head/tail 双段支撑 E2E 对长 prompt 首尾片段的断言）。按码点截断（与 truncateForTitle 同单位，
+ * Array.from 切分，代理对/emoji 不被劈开）；e2e/harness.mjs 的 rebuildPreview 是同构实现，两处必须同步改。
  */
 function previewText(text: string): string {
-	if (text.length <= PREVIEW_MAX_CHARS) return text;
-	return text.slice(0, PREVIEW_HEAD_CHARS) + "…" + text.slice(-PREVIEW_TAIL_CHARS);
+	const chars = Array.from(text);
+	if (chars.length <= PREVIEW_MAX_CODE_POINTS) return text;
+	return (
+		chars.slice(0, PREVIEW_HEAD_CODE_POINTS).join("") +
+		"…" +
+		chars.slice(-PREVIEW_TAIL_CODE_POINTS).join("")
+	);
 }
 
 /** 取 message content 内 text blocks 的拼接文本（debug 内省用，与发给 LLM 的数据同源）。 */
@@ -271,6 +277,7 @@ export async function callRenameLLM(
 		debugLog("skip: title empty");
 		return null;
 	}
-	debugLog(`renamed to "${title}"`);
+	// 落库报捷日志由 index.ts handler 侧在 setSessionName 之后打出——此处只返回候选标题，
+	// 防覆盖检查未过时并未落库，不能在 LLM 层提前报捷
 	return title;
 }
