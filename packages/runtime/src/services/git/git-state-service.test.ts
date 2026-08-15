@@ -8,9 +8,18 @@
  * 测试框架 vitest（从 vitest 导入 describe/it/expect/vi），运行命令 npx vitest run。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { GitStatusResult } from '@xyz-agent/shared'
 import { GitExecutorError } from '../ports/git-executor.js'
 import type { GitCommand, GitExecutorResult, IGitExecutor } from '../ports/git-executor.js'
 import { GitStateService } from './git-state-service.js'
+
+/**
+ * 白盒访问私有 statusCache（Fix-3 验收要求断言 Map size 与驱逐序——「过期后 size 不增长」
+ * 在行为层不可观测）。仅测试断言用，生产代码不得仿效。
+ */
+function statusCacheOf(svc: GitStateService): Map<string, { result: GitStatusResult; ts: number }> {
+  return (svc as unknown as { statusCache: Map<string, { result: GitStatusResult; ts: number }> }).statusCache
+}
 
 /** fake executor 记录的单次调用。 */
 interface ExecCall {
@@ -163,6 +172,27 @@ describe('GitStateService.snapshotStatus', () => {
     expect(fake.calls).toHaveLength(2)
   })
 
+  it('force 重探成功后清负缓存：后续非 force 调用重新执行而非命中负缓存（Fix-4）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+
+    // ① 误判为非仓库（负缓存写入）
+    fake.setImpl(async () => ({ stdout: '', stderr: NOT_REPO_STDERR, exitCode: 128 }))
+    expect(await svc.snapshotStatus('/becomes-repo')).toBeNull()
+    expect(fake.calls).toHaveLength(1)
+
+    // ② 目录变为仓库后 force 重探成功 → 应清负缓存
+    fake.setImpl(async () => ({ stdout: ' M a.ts\n', stderr: '', exitCode: 0 }))
+    const forced = await svc.snapshotStatus('/becomes-repo', { force: true })
+    expect(forced?.get('a.ts')).toBe('modified')
+    expect(fake.calls).toHaveLength(2)
+
+    // ③ 非 force 调用不命中旧负缓存（清了才走执行；没清会直接返回 null 零 spawn）
+    const after = await svc.snapshotStatus('/becomes-repo')
+    expect(after?.get('a.ts')).toBe('modified')
+    expect(fake.calls).toHaveLength(3)
+  })
+
   it('瞬态失败（非「not a repository」的退出失败）不写负缓存：下次仍重试', async () => {
     const fake = createFakeExecutor()
     const svc = createService(fake.executor)
@@ -171,6 +201,16 @@ describe('GitStateService.snapshotStatus', () => {
     expect(await svc.snapshotStatus('/repo')).toBeNull()
     expect(await svc.snapshotStatus('/repo')).toBeNull()
     expect(fake.calls).toHaveLength(2)
+  })
+
+  it('stderr 含同文案但 exitCode 非 128 → 不写负缓存（Fix-2：排除 wrapper 等非 git fatal 形态）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    fake.setImpl(async () => ({ stdout: '', stderr: NOT_REPO_STDERR, exitCode: 1 }))
+
+    expect(await svc.snapshotStatus('/repo')).toBeNull()
+    expect(await svc.snapshotStatus('/repo')).toBeNull()
+    expect(fake.calls).toHaveLength(2) // 每次都重试 = 未写负缓存
   })
 
   it('git 不可用 / 超时（GitExecutorError）→ null 且不写负缓存', async () => {
@@ -458,5 +498,49 @@ describe('GitStateService.getStatus', () => {
     expect(result.files.find((f) => f.path === 'a.ts')).toMatchObject({ additions: 3, deletions: 1 })
     expect(result.files.find((f) => f.path === 'bin.dat')?.additions).toBeUndefined()
     expect(result.files.find((f) => f.path === 'mixed.bin')?.additions).toBeUndefined()
+  })
+
+  it('TTL 过期重写不增长 statusCache（Fix-3：TTL miss 即删，重写不产生重复滞留条目）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    stubRepo(fake)
+
+    await svc.getStatus('sid-1', '/repo')
+    await svc.getStatus('sid-2', '/repo')
+    expect(statusCacheOf(svc).size).toBe(2)
+
+    vi.advanceTimersByTime(2001) // 双双过期
+    // 只重查 sid-1：其旧条目应被「过期即删」清掉再重写，size 不变
+    await svc.getStatus('sid-1', '/repo')
+    expect(statusCacheOf(svc).size).toBe(2)
+  })
+
+  it('超帽驱逐最老写入条目，过期重写移位后驱逐序仍正确（Fix-3：容量帽 oldest-insert）', async () => {
+    const fake = createFakeExecutor()
+    const svc = new GitStateService({
+      executor: fake.executor,
+      statusTtlMs: 2000,
+      notRepoTtlMs: 60_000,
+      statusCacheMaxSize: 2,
+    })
+    stubRepo(fake)
+
+    await svc.getStatus('sid-1', '/repo') // 写 key1 → Map 序 [key1]
+    await svc.getStatus('sid-2', '/repo') // 写 key2 → Map 序 [key1, key2]（帽满）
+    expect(statusCacheOf(svc).size).toBe(2)
+
+    vi.advanceTimersByTime(2001) // key1/key2 过期
+    await svc.getStatus('sid-1', '/repo') // key1 TTL miss 即删 + 尾部重写 → Map 序 [key2, key1]
+    expect(fake.calls).toHaveLength(9) // 3 组执行（3+3+3）
+
+    await svc.getStatus('sid-3', '/repo') // 帽满驱逐 first key = key2（最旧写入）
+    expect(fake.calls).toHaveLength(12)
+
+    // key1 刚重写（TTL 窗口内）应命中缓存零 spawn；key2 已被驱逐应重新执行
+    await svc.getStatus('sid-1', '/repo')
+    expect(fake.calls).toHaveLength(12) // key1 命中
+    await svc.getStatus('sid-2', '/repo')
+    expect(fake.calls).toHaveLength(15) // key2 被驱逐后重执行
+    expect(statusCacheOf(svc).size).toBe(2)
   })
 })

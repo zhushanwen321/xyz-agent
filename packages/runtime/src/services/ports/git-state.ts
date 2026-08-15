@@ -59,8 +59,9 @@ export interface IGitStateService {
    */
   numstat(cwd: string): Promise<Map<string, NumstatEntry> | null>
   /**
-   * 前端 git.status 面板聚合：一次调用内并发执行 status + numstat + branch，返回形状与
-   * git-service.getStatus 现状一致（W17 收编时 git-service 委托此方法）。
+   * 前端 git.status 面板聚合：status 先行串行（非仓库判定依赖其退出码/文案），成功后 numstat
+   * 与 branch 两路并发执行，返回形状与 git-service.getStatus 现状一致（W17 收编时
+   * git-service 委托此方法）。
    *
    * 签名偏差说明（相对 03 文档 D4-1 的 getStatus(sessionId)）：增加显式 cwd 参数——服务不持有
    * ISessionService 依赖（保持只依赖 IGitExecutor 的纯状态服务；session→cwd 解析是调用方

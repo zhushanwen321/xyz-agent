@@ -228,6 +228,8 @@ export function detectBareWorkspaceCached(cwd: string): boolean {
   // 最老条目淘汰（oldest-insert，非真 LRU——命中不刷新 ts）—— O(1)：JS Map 迭代序 = 插入序，
   // 过期重写路径（下方 delete+set）保证「迭代序 = 最后写入时间升序」不变量，故 first key 恒为
   // ts 最小条目，与原 O(n) 扫描 ts 最小的语义精确等价（perf 微项 10）。
+  // 已知边界（W16 审查 Fix-8）：该不变量以 Date.now 单调为前提，时钟回拨下 first-key 驱逐可能
+  // 非最旧——5min TTL 窗口内秒级回拨的影响可忽略，不做补偿。
   if (bareCache.size >= BARE_CACHE_MAX_SIZE) {
     const oldest = bareCache.keys().next().value
     if (oldest !== undefined) bareCache.delete(oldest)

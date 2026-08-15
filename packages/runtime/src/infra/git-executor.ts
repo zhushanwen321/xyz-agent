@@ -3,7 +3,8 @@
  *
  * [perf W16 / 03-git-state-service D3-1]：execFileSync → execFile 异步化。同步子进程会阻塞 runtime
  * 事件循环（streaming 期间后续 token / 其他 session 消息全部排队）；execFile 保持行为契约不变——
- * 错误形状、超时语义、防注入数组参数均与同步版等价。
+ * 防注入数组参数与错误形状均与同步版等价；超时语义有一处已知偏差（下方 timeout 分支注释），
+ * 后果等价（调用方 execSafe / GitStateService 对 timeout 与 git_unavailable 两种 code 的处置一致）。
  *
  * 安全：
  * - 数组参数形式 `[command, ...args]` 直接交给 execFile，不经 shell，路径/message 中的特殊字符
@@ -55,7 +56,10 @@ export class GitExecutor implements IGitExecutor {
             reject(new GitExecutorError('git_unavailable', 'git CLI 未安装或不在 PATH 中'))
             return
           }
-          // 超时（execFile timeout 触发 kill → killed + SIGTERM）
+          // 超时（execFile timeout 触发 kill → killed + SIGTERM）。已知偏差：外部 SIGTERM kill（如
+          // 系统关机/父进程被 kill）与 timeout kill 错误对象同形（killed+SIGTERM），此处无法区分，
+          // 会被归类为 timeout——后果等价：消费方（git-service execSafe / GitStateService catch）
+          // 对两种 code 统一降级（git_unavailable / null），不依赖二者的区分。
           if (err.killed && err.signal === 'SIGTERM') {
             reject(new GitExecutorError('timeout', `git ${command} 执行超时（${timeoutMs}ms）`))
             return
