@@ -209,7 +209,7 @@ llm-shared `callLLM` 已支持 `timeoutMs`（✅源码核实，透传 `SimpleStr
 
 debug 日志（`console.warn`，前缀 `[rename-session]`；**文案字面值是 E2E 断言的硬契约，实施时锁定不得漂移**。开关 helper 每次 live 读 `process.env.PI_RENAME_DEBUG`，非模块加载时读——保证可测与运行时切换）：
 
-1. 触发跳过时（handler 阶段，含 `t=<ISO时间>` 与 `turnIndex=<n>`）：`skip: stopReason=<r>` / `skip: count=<n>` / `skip: no user prompt`（定位判定路径。turnIndex 只在此侧输出——它只在 handler 作用域可达，不为日志字段扩 callRenameLLM 签名；**此阶段不查 getSessionName**，防覆盖检查只在落库前——见 D5）；
+1. 触发跳过时（handler 侧，含 `t=<ISO时间>` 与 `turnIndex=<n>`）：`skip: stopReason=<r>` / `skip: count=<n>`（定位判定路径。turnIndex 只在此侧输出——它只在 handler 作用域可达，不为日志字段扩 callRenameLLM 签名；**此阶段不查 getSessionName**，防覆盖检查只在落库前——见 D5。另 `skip: no user prompt` 从 llm.ts 侧发出（extractUserPromptText null 时），格式同第 2 组只含 `t=`、无 turnIndex）；
 2. 发请求时（**必须在 callLLM 调用之前打出**——构造 messages 后、发起请求前；A3 3b 竞态场景依赖轮询此日志在 rename 返回前抢入手动命名；含 `t=<ISO时间>`）：`LLM request messages: <JSON>`——每条 message 输出 `role + text 的 head 200 + tail 100 字符`（超长文本格式 `<head200>…<tail100>`，字面 `…` 连接；head/tail 双段支撑 E2E 对长 prompt 首尾片段的断言）；
 3. 落库/跳过时（含 `t=<ISO时间>`）：`renamed to "<title>"` 或 `skip: title empty`（cleanTitle 清洗后为空时在 callRenameLLM 内打出）/ `skip: name exists`（唯一文案，防覆盖命中，index 侧 `.then` 内打出）。
 
