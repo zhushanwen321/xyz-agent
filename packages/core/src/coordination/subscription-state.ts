@@ -9,6 +9,8 @@
  * - getSubscriptionState：routeInbound 用此判是否启用 gap 检测
  * - clearSubscription：session 销毁时清理（useChat.disposeSession 调用）
  * - updateLastSeenSeq：live push 收到合法递进 seq 时更新基线
+ * - resubscribeAll：WS 重连后恢复全部订阅（M1/W09 follow-up，use-connection 在 connected
+ *   false→true 迁移时调——runtime 侧 onDisconnect 已清空订阅，core 侧幂等守卫需外部触发重建）
  *
  * 为什么用模块级单例 Map 而非 useSessionScopedState（ADR-0049 例外）：
  * - routeInbound 在配置闭包需同步访问（不能依赖组件/实例生命周期）
@@ -127,6 +129,13 @@ export async function subscribeSession(sessionId: string, fromSeq?: number): Pro
 
   const run = (async (): Promise<void> => {
     try {
+      // 登记「订阅意图」条目（M1/W09 follow-up）：RPC 失败时留存 subscribed=false 的意图记录，
+      // 供 WS 重连后 resubscribeAll 重发（否则断线期间新 session 的订阅意图丢失——
+      // useChat 侧 streamSubscriptions 已同步记录，core 侧无条目则重连恢复遍历不到该 sid）。
+      // subscribed=false 走 gap 检测兼容路径（evalSeqGap 分支 1/2），行为与「无条目」一致。
+      if (!subscriptionStates.has(sessionId)) {
+        subscriptionStates.set(sessionId, { lastSeenSeq: 0, subscribed: false })
+      }
       let reply: { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
       try {
         reply = await subscribeImpl(sessionId, fromSeq)
@@ -162,6 +171,9 @@ export async function subscribeSession(sessionId: string, fromSeq?: number): Pro
       // 的 lastSeenSeq（reconcile 期间 live 消息已推进基线），取 max 保证基线不回退。
       // stateSnapshot 内消息的 seq 也纳入 max 计算——state topic 消息同样占用 bus seqCounter。
       // （MF-3：gap 触发后基线推进在此发生——reconcile 成功才推进，失败则保持原位可重试）
+      // [M1/W09 follow-up] 新 bus（runtime 重启，seqCounter 归零）的基线收缩不在此处理——
+      // 「reply.lastSeq < prevLastSeen」无法区分「新 seq 空间」与「同 bus RPC 快照落后于 live 推进」
+      //（后者取 min 会错误回退基线），由 resubscribeAll 在发 RPC 前重置条目解决（prevLastSeen=0）。
       const existingNow = subscriptionStates.get(sessionId)
       const prevLastSeen = existingNow?.lastSeenSeq ?? 0
       const maxSnapshotSeq = reply.snapshot.reduce((max, m) => (typeof m.seq === 'number' && m.seq > max ? m.seq : max), 0)
@@ -210,6 +222,46 @@ export function updateLastSeenSeq(sessionId: string, seq: number): void {
   const state = subscriptionStates.get(sessionId)
   if (state) {
     state.lastSeenSeq = seq
+  }
+}
+
+/**
+ * WS 重连后恢复全部订阅（M1 / W09 follow-up，connected false→true 迁移时由 use-connection 调）。
+ *
+ * 背景：runtime 侧 ws onDisconnect → bus.unsubscribeAll(ws) 清空该连接全部订阅；而 core 侧
+ * 幂等守卫（subscribed 标记 / useChat.streamSubscriptions）在重连后依然短路，导致订阅永不
+ * 重建、session 级消息（含不可回放的 transient 类）永久丢失。W09 删除 broadcast 兜底腿后
+ * 此问题升级为 critical——publish 定向推送是唯一通道。
+ *
+ * 恢复语义（按条目状态分流）：
+ * - subscribed=true：捕获 fromSeq=lastSeenSeq 后**先把条目重置为 {lastSeenSeq: 0, subscribed:
+ *   false}** 再发 subscribe(sid, fromSeq)。重置的目的：
+ *   a) 绕过「已 subscribed 不重订」幂等守卫（带显式 fromSeq 本也绕过，重置是双保险）；
+ *   b) 让收敛公式的 prevLastSeen=0——新 bus（runtime 重启，seqCounter 归零）场景 reply.lastSeq
+ *      远小于断线前基线，若 prevLastSeen 保留旧值，max() 收敛会把基线钉在旧 seq 空间，后续
+ *      新消息 seq(1..) <= 旧基线被 evalSeqGap 永久 drop。重置后：同一 bus → 基线收敛到
+ *      reply.lastSeq（增量回放断线期间消息）；新 bus → 基线收敛到新空间原点。
+ *   c) RPC in-flight 窗口内（subscribed=false）live 消息走 evalSeqGap 兼容路径正常 dispatch，
+ *      不丢消息（可能与 snapshot 回放重复，订阅端幂等兜底，与 gap reconcile 的 R2 竞态同策略）。
+ * - subscribed=false：断线期间订阅失败的意图条目（subscribeSession 失败时登记），无 fromSeq
+ *   正常（重）发（守卫对 subscribed=false 不拦截）。
+ *
+ * fire-and-forget（对齐 subscribeSession 调用约定）：失败由 subscribeSession 内部 console.warn
+ * 消化，条目保持 subscribed=false，下次重连或 gap 消息可再触发。
+ */
+export function resubscribeAll(): void {
+  for (const [sessionId, state] of subscriptionStates) {
+    if (state.subscribed) {
+      const fromSeq = state.lastSeenSeq
+      subscriptionStates.set(sessionId, { lastSeenSeq: 0, subscribed: false })
+      void subscribeSession(sessionId, fromSeq).catch((e) =>
+        console.warn(`[core/subscription-state] resubscribe failed for session ${sessionId}:`, e),
+      )
+    } else {
+      void subscribeSession(sessionId).catch((e) =>
+        console.warn(`[core/subscription-state] resubscribe failed for session ${sessionId}:`, e),
+      )
+    }
   }
 }
 

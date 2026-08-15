@@ -110,14 +110,16 @@ describe('S2: 行为等价冒烟——经 shim 走 core 订阅流程（原 TC1 �
 })
 
 describe('S3: RPC 失败防御路径（core 语义经 shim 透传）', () => {
-  it('subscribe RPC 失败：不标记 subscribed（可重试）', async () => {
+  it('subscribe RPC 失败：不标记 subscribed（意图条目留存，可重试）', async () => {
     portSpy.subscribe.mockRejectedValue(new Error('RPC failed'))
     setSubscriptionPorts({ subscribe: portSpy.subscribe, events: { dispatchSession: portSpy.dispatchSession } })
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     await subscribeSession('s1')
 
-    expect(getSubscriptionState('s1')).toBeUndefined()
+    // M1/W09 follow-up：失败留存 subscribed=false 意图条目（供 WS 重连后 resubscribeAll
+    // 重发），gap 检测走兼容路径，行为与「无条目」一致
+    expect(getSubscriptionState('s1')).toEqual({ lastSeenSeq: 0, subscribed: false })
     expect(warnSpy).toHaveBeenCalledTimes(1)
     expect(warnSpy.mock.calls[0]![0]).toContain('subscribe failed')
     warnSpy.mockRestore()

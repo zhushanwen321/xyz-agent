@@ -186,8 +186,10 @@ const subagentStore = useSubagentStore()
 /** W4 H4 + cw wave w3 / IF8：加载更多历史 loading 状态 + isPrepend（virta :shift 信号）+ handler。 */
 const { loadingMore, showLoadMore, handleLoadMore, isPrepend } = useLoadMoreHistory(() => props.sessionId)
 
-/** 当前 session 的消息（直接 Map.get 建立 Map 依赖，storeToRefs 等价；Map.set 触发更新）。 */
-const currentMessages = computed(() => chat.messages.get(props.sessionId) ?? [])
+/** 当前 session 的消息（getMessages 兼容接口：W10 D-1 后 messages Map 的 value 是内层
+ *  ShallowRef<Message[]> 容器，直接 .get() 会拿到 ref 而非数组——getMessages 内部
+ *  unwrap（.value ?? []），Map.get + 内层 .value 依赖均被 computed track，响应性不变）。 */
+const currentMessages = computed(() => chat.getMessages(props.sessionId))
 
 /** session id（template 内多处引用：Turn :session-id / rail 等）。 */
 const sessionId = computed(() => props.sessionId)

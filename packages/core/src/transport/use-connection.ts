@@ -30,6 +30,7 @@ import {
   type InboundEffects,
   type TransportPorts,
 } from '../coordination/route-inbound'
+import { resubscribeAll } from '../coordination/subscription-state'
 import { BASE_PORT, DEV_PORT_OFFSET } from '@xyz-agent/shared'
 
 // ── 端口契约（§10.2 D-1：renderer 装配点注入实现） ─────────────────
@@ -183,9 +184,17 @@ export function useConnection() {
 
     // L10：WS 连接状态监听在任何模式都安装（含 mock），确保 mock 断连时也 rejectAll pending。
     // 此前在 mock 分支之后，mock 模式跳过安装 → mock 断连时 pending 永不 reject。
+    // M1（W09 follow-up）：connected false→true 迁移时恢复全部 bus 订阅——runtime 侧
+    // ws onDisconnect → bus.unsubscribeAll(ws) 已清空该连接订阅，core 侧幂等守卫
+    // （subscribed 标记）不会自行失效，不主动重发则重连后 session 级消息永久丢失
+    // （W09 删除 broadcast 兜底腿后 publish 定向推送是唯一通道）。首次连接时
+    // subscriptionStates 为空 → no-op，无副作用。
     const stopStateWatch = watch(getState(), (newState, oldState) => {
       if (oldState === 'connected' && newState !== 'connected') {
         ports.pending.rejectAll(new Error(ports.t('connection.disconnectedError')))
+      }
+      if (newState === 'connected' && oldState !== 'connected') {
+        resubscribeAll()
       }
     })
     removeStateWatch = stopStateWatch

@@ -145,13 +145,15 @@ describe('subscribeSession', () => {
     expect(getSubscriptionState('s3')?.lastSeenSeq).toBe(20)
   })
 
-  it('⑤ subscribe RPC 失败 → console.warn + 不标记 subscribed（下次可重试）', async () => {
+  it('⑤ subscribe RPC 失败 → console.warn + 不标记 subscribed（意图条目留存，下次可重试）', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { subscribe } = setup()
     subscribe.mockRejectedValue(new Error('connection lost'))
     await subscribeSession('s1')
     expect(warnSpy).toHaveBeenCalled()
-    expect(getSubscriptionState('s1')).toBeUndefined() // 不标记
+    // M1/W09 follow-up：失败时留存 subscribed=false 的意图条目（供 WS 重连后 resubscribeAll
+    // 重发），gap 检测走兼容路径（evalSeqGap 分支 1/2），行为与「无条目」一致
+    expect(getSubscriptionState('s1')).toEqual({ lastSeenSeq: 0, subscribed: false })
     // 重试成功
     subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 8 })
     await subscribeSession('s1')

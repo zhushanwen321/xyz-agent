@@ -215,8 +215,9 @@ describe('TC6: 未 subscribe session 不做 gap 检测（兼容旧路径）', ()
     subscribeMock.subscribe.mockRejectedValue(new Error('RPC down'))
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     await subscribeSession('s3')
-    // 失败不标记 subscribed（state 不存在）
-    expect(getSubscriptionState('s3')).toBeUndefined()
+    // 失败不标记 subscribed——意图条目留存 {lastSeenSeq:0, subscribed:false}
+    //（M1/W09 follow-up：供重连后 resubscribeAll 重发），gap 检测走兼容路径
+    expect(getSubscriptionState('s3')).toEqual({ lastSeenSeq: 0, subscribed: false })
 
     pushInbound(liveMsg(50, 'message.chunk', 's3'))
 
