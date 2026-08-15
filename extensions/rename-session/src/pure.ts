@@ -186,13 +186,16 @@ export function saveRenameConfig(
 /** entry 的宽松类型（structural typing，兼容 pi 的 SessionEntry[] 但不依赖 pi 类型）。 */
 interface EntryLike {
 	type: string;
-	message?: { role?: string };
+	message?: { role?: string; stopReason?: string };
 }
 
 /**
  * 数 session 中 assistant 回复数。用于判定首 turn（===1）。
  * 判定条件：entry.type === "message" && entry.message.role === "assistant"
  * （pi 内部 session-manager.ts 同款模式）。
+ *
+ * 注意：触发判定已改用 countSuccessfulAssistantReplies（不看 stopReason 无法区分
+ * 「iteration 结束」与「轮次结束」，见设计 D6）。本函数保留导出兼容既有调用方。
  */
 export function countAssistantReplies(entries: ReadonlyArray<EntryLike>): number {
 	let count = 0;
@@ -204,10 +207,32 @@ export function countAssistantReplies(entries: ReadonlyArray<EntryLike>): number
 	return count;
 }
 
+/**
+ * 数 session 中「成功完成」的 assistant 回复数（stopReason === "stop"），触发判定用（===1 触发 rename）。
+ *
+ * 只数 stop 的理由（设计 D6）：pi 的 turn_end 每个 iteration 发一次，中间 iteration 的
+ * stopReason 是 toolUse；error/aborted 轮的错误上下文不该用来命名（延迟到下一个成功轮）；
+ * length（输出被 max token 截断）截断文本质量无保证，与 error 同等对待。
+ * 无 stopReason 字段的宽松数据不计（只认显式 stop，防误触发）。
+ */
+export function countSuccessfulAssistantReplies(entries: ReadonlyArray<EntryLike>): number {
+	let count = 0;
+	for (const entry of entries) {
+		if (
+			entry.type === "message" &&
+			entry.message?.role === "assistant" &&
+			entry.message.stopReason === "stop"
+		) {
+			count++;
+		}
+	}
+	return count;
+}
+
 // ──────────────────────── 标题清洗 ────────────────────────
 
 /**
- * rename 专属后处理：去首尾成对引号（单/双/中文）+ markdown 强调标记（* ** ` _），按 Unicode 码点截断。
+ * rename 专属后处理：去首尾成对引号（单/双/中文）+ markdown 强调标记（* ** ` _）+ 尾部标点，按 Unicode 码点截断。
  *
  * 输入是 callLLM 已 extractText+trim 的 string（llm-shared/call.ts 的 extractText 负责从
  * AssistantMessage.content 提取 text block 拼接并 trim）。本函数只做 rename 特有的包装清理，
@@ -221,8 +246,12 @@ export function cleanTitle(content: string, maxLength: number): string {
 	// 避免 LLM 返回多行标题（如 "重构API层\n更新文档"）原样落库破坏 UI 标题/列表渲染
 	const normalized = trimmed.replace(/\s+/g, " ");
 
-	// 去首尾成对引号（单/双/中文）和 markdown 强调标记（* ** ` _）
-	const cleaned = normalized.replace(/^["“”'`*_]+|["“”'`*_]+$/g, "").trim();
+	// 去首部引号/markdown 标记 + 尾部引号/markdown/标点（。．.，,、;；!！?？：:）。
+	// 尾部标点是 D4 slug 风格的兜底（prompt 已约束「不要句尾标点」，LLM 漏遵从时在此清除）；
+	// 只清首尾——中间标点保留（如 version 号 'v1.2.3' 中间的点）。
+	const cleaned = normalized
+		.replace(/^["“”'`*_]+|["“”'`*_。．.，,、;；!！?？：:]+$/g, "")
+		.trim();
 	if (!cleaned) return "";
 
 	// 按 Unicode 码点截断（避免截断多字节字符）

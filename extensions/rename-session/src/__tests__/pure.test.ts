@@ -10,6 +10,7 @@ import {
 	DEFAULT_RENAME_CONFIG,
 	cleanTitle,
 	countAssistantReplies,
+	countSuccessfulAssistantReplies,
 	loadRenameConfig,
 	normalizeRenameConfig,
 	saveRenameConfig,
@@ -56,6 +57,60 @@ describe("countAssistantReplies", () => {
 			{ type: "toolResult" },
 		];
 		expect(countAssistantReplies(entries)).toBe(1);
+	});
+});
+
+// ────────────────────────────────────────────────────
+// countSuccessfulAssistantReplies（D6：触发判定改用的成功-turn 计数）
+// ────────────────────────────────────────────────────
+
+describe("countSuccessfulAssistantReplies", () => {
+	it("TC-D6-1: 混合 stopReason（stop×1/toolUse/error/length/user/compaction）→ 只数 stop 的 assistant，返回 1", () => {
+		const entries = [
+			{ type: "message", message: { role: "user" } },
+			{ type: "message", message: { role: "assistant", stopReason: "toolUse" } },
+			{ type: "message", message: { role: "assistant", stopReason: "error" } },
+			{ type: "message", message: { role: "assistant", stopReason: "length" } },
+			{ type: "message", message: { role: "assistant", stopReason: "stop" } },
+			{ type: "compaction" },
+		];
+		expect(countSuccessfulAssistantReplies(entries)).toBe(1);
+	});
+
+	it("TC-D6-2: 工具型首轮（多 toolUse + 最终 1 stop）→ 1（轮末最终 iteration 才触发）", () => {
+		const entries = [
+			{ type: "message", message: { role: "user" } },
+			{ type: "message", message: { role: "assistant", stopReason: "toolUse" } },
+			{ type: "message", message: { role: "assistant", stopReason: "toolUse" } },
+			{ type: "message", message: { role: "assistant", stopReason: "stop" } },
+		];
+		expect(countSuccessfulAssistantReplies(entries)).toBe(1);
+	});
+
+	it("TC-D6-3: 仅 error 轮 → 0（error 轮不命名，延迟到下一成功轮）", () => {
+		const entries = [
+			{ type: "message", message: { role: "user" } },
+			{ type: "message", message: { role: "assistant", stopReason: "error" } },
+		];
+		expect(countSuccessfulAssistantReplies(entries)).toBe(0);
+	});
+
+	it("TC-D6-4: 2 个 stop（已有成功轮后的新 session round）→ 2（不再触发）", () => {
+		const entries = [
+			{ type: "message", message: { role: "user" } },
+			{ type: "message", message: { role: "assistant", stopReason: "stop" } },
+			{ type: "message", message: { role: "user" } },
+			{ type: "message", message: { role: "assistant", stopReason: "stop" } },
+		];
+		expect(countSuccessfulAssistantReplies(entries)).toBe(2);
+	});
+
+	it("TC-D6-5: assistant 无 stopReason 字段 → 不计（只认显式 stop，宽松数据不误触发）", () => {
+		const entries = [
+			{ type: "message", message: { role: "user" } },
+			{ type: "message", message: { role: "assistant" } },
+		];
+		expect(countSuccessfulAssistantReplies(entries)).toBe(0);
 	});
 });
 
@@ -114,6 +169,36 @@ describe("cleanTitle", () => {
 
 	it("B1: 首尾空白仍被 trim（归一化不影响首尾裁剪）", () => {
 		expect(cleanTitle("  \n修复登录 bug\n  ", 50)).toBe("修复登录 bug");
+	});
+
+	// ── 尾部标点清理（D4 配套：slug 标题不带句尾标点，LLM 漏遵从时兜底） ──
+
+	it("尾部中文句号清除 → '修复登录超时'", () => {
+		expect(cleanTitle("修复登录超时。", 50)).toBe("修复登录超时");
+	});
+
+	it("尾部英文逗号清除 → 'refactor-loader'", () => {
+		expect(cleanTitle("refactor-loader,", 50)).toBe("refactor-loader");
+	});
+
+	it("尾部感叹号清除（中间全角冒号保留）→ '重构：配置'", () => {
+		expect(cleanTitle("重构：配置！", 50)).toBe("重构：配置");
+	});
+
+	it("中间标点保留（version 号的点不在首尾）→ 'v1.2.3'", () => {
+		expect(cleanTitle("v1.2.3", 50)).toBe("v1.2.3");
+	});
+
+	it("尾部标点+引号连排一次清干净 → '修复登录超时'", () => {
+		expect(cleanTitle('修复登录超时。”"', 50)).toBe("修复登录超时");
+	});
+
+	it("全尾部标点标题 → ''（清完为空）", () => {
+		expect(cleanTitle("。。。", 50)).toBe("");
+	});
+
+	it("尾部标点后随空白 → 标点清除后 trim 仍干净 → '重构配置'", () => {
+		expect(cleanTitle("重构配置。 ", 50)).toBe("重构配置");
 	});
 });
 
