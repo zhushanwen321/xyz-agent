@@ -346,7 +346,26 @@ pi.on("turn_end", async (event, ctx) => {
 3. **模型对 slug 约束的遵从率**——若 prompt 微调一次后英文仍非 kebab-case，启用 cleanTitle 硬转换预案（仅对纯 ASCII 标题做空格→连字符 + 小写化，避免中英混合误伤）；
 4. **debug 日志对交错时间轴的粒度**——若 stderr 缓冲导致到达时间戳失真，改用 pi 扩展日志文件（`PI_EXT_DEBUG=1` 落盘路径）与 stdout 事件流的文件 mtime + 行序双证据。
 
+## 12. xyz-agent GUI 联动影响评估（实施后审查结论）
+
+**本章结论：无 must-fix 级影响；两个存量「需注意」项与本次改动的交互面已知，可作后续独立 issue。**
+
+审查范围：session 标题进入 GUI 的双数据源链路（runtime 内存 label + 磁盘扫描 `extractSessionName` 取最后一条 session_info）、`session_info_changed` 事件全链（pi → RPC stdout → event-adapter 翻译 `session.renamed` → renderer `updateLabel`）、GUI 手动重命名入口（`RenameSessionDialog` → WS `session.rename` → runtime out-of-band 直接 append JSONL）、`auto-rename-enabled` flag 契约两侧对齐。
+
+| 变化点 | 定级 | 依据 |
+|---|---|---|
+| 触发时机变晚（round 末） | 需注意（存量） | 新 session 创建即有 GUI 派生 label（首条 prompt 前 10 码点），无「未命名 session」依赖；标题晚几秒出现只是派生 label 显示时间变长 |
+| slug/kebab 标题风格 | 无影响 | 显示纯 CSS truncate，无格式正则/排序/去重假设；手动重命名校验仅长度 1-60（maxTitleLength 50 < 60）；prompt 约束语言跟随对话，中文对话仍得中文标题 |
+| 两段输入 | 无影响 | extension 内部输入构造，不触 GUI 链路 |
+| 防覆盖 guard | 需注意（存量缺口） | guard 查 `pi.getSessionName()`（pi 进程内存）；GUI 手动改名是 runtime out-of-band 直接 append JSONL，pi 不知情 → 首轮竞态窗口内 GUI 手动改名仍会被 auto 标题覆盖。**非本次回归**（旧版无 guard 同样覆盖，新版至少保护 pi 可见改名）；修复方向：runtime `renameSession` 时同步通知 pi，或 extension guard 兼查 JSONL 尾部 |
+| 30s 超时 | 无影响 | fire-and-forget 静默跳过，GUI 无等待态 |
+| PI_RENAME_DEBUG 日志 | 无影响 | pi stderr 被 runtime 收集进 Electron 日志（无 UI 通道），默认关闭零输出 |
+| 配置 schema/flag 契约 | 无影响 | SystemPage 开关 → flag 文件 ↔ extension live 读，两侧对齐未动 |
+
+另发现一个与本次改动无关的存量现象：auto-rename 落库后 runtime 内存 `ManagedSession.label` 不随 `session.renamed` 事件更新，后续 `config.sessions` 全量广播可能把侧栏已显示的 auto 标题回退成派生 label（直到重启从磁盘读回）。本次命名时机变晚会拉长该现象的观察窗口，机制本身非本次引入。
+
 ## 附录：变更历史
 
 - v1：初版（注入两段信号 + slug 风格 + 可靠性补齐 + E2E 验收设计）。
 - v2：按对抗式审查修正——turn 语义模型（turn=iteration，turn_end 每 iteration 一次；重写 §3.2 失败模式 A/D-3、§4 数据流、D2 论证为 stopReason 快速路径）；防覆盖检查移至 `.then()` 落库前重查（D5/§7.3，堵 LLM 调用窗口竞态）；证据链论证修正（内容匹配为主判别器 + 双流交错时序，JSONL 行序降为佐证；日志加时间戳/turnIndex + head/tail 双段）；length stopReason 处理文档化（D6）；A2 kebab-case 失败处置路径；A4 补重启续跑机制；U3 补 changeset；token 估算修正；测试销毁范围与 null 路径补全。
+- v3：实施后补充——D9 日志契约与实现对齐（turnIndex 仅 handler 侧、skip: no user prompt 归类修正、head200+tail100 截断格式）、§12 GUI 联动影响评估（无 must-fix；防覆盖对 GUI out-of-band 改名的存量缺口与修复方向）。

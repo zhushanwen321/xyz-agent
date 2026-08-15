@@ -15,7 +15,9 @@
  * 自动规则对中文词组 vs 句子无完备判别力，正式验收以人工为准）。
  */
 
-import { appendFileSync, existsSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { HarnessError, assertTitleGuards, runScenario, spawnPi } from "./harness.mjs";
@@ -31,7 +33,18 @@ function assert(cond, message) {
 const CASES = [
 	{ label: "中文任务", tag: "a2-zh", prompt: "帮我写一个防抖函数并加单测" },
 	{ label: "英文任务", tag: "a2-en", prompt: "Refactor the config loader to support env overrides" },
-	{ label: "跟进型", tag: "a2-follow", prompt: "继续刚才的，改成支持 leading 选项" },
+	// 跟进型：prompt 本身无上下文（「继续刚才的」），空 tmp cwd 会诱发模型长时间探索自造上下文
+	// （2026-08-15 两次全量实测：跟进型 case 在空目录下跑满 600s settled 上限，模型延迟变慢时更甚）。
+	// fixture 目录给一个 notes.md 让「刚才的讨论」有最小锚点，模型快速收敛——跟进语义不变
+	// （首条 prompt 仍是模糊跟进型），只是消除无谓探索。
+	{
+		label: "跟进型",
+		tag: "a2-follow",
+		prompt: "继续刚才的，改成支持 leading 选项",
+		fixture: "notes.md",
+		fixtureContent:
+			"# 工作笔记\n\n正在实现 debounce 工具函数（debounce.ts），当前版本只有 trailing 触发。\n\n下一步：增加 leading 选项（首次调用立即执行）。\n",
+	},
 ];
 
 /** 从 session JSONL 行数组取最后一条 session_info（name SSOT；坏行跳过）。 */
@@ -50,11 +63,18 @@ function lastSessionInfoName(lines) {
 
 /** 跑单个 session，返回 { label, prompt, title }。标题以 JSONL session_info 为 SSOT，日志标题交叉校验。 */
 async function runOneCase(c, log) {
-	const pi = await spawnPi({ tag: c.tag });
+	// 跟进型 case 用带 fixture 的独立 cwd（见 CASES 注释），其余用默认 tmp cwd
+	let cwd;
+	if (c.fixture) {
+		cwd = mkdtempSync(join(tmpdir(), `rename-e2e-${c.tag}-cwd.`));
+		writeFileSync(join(cwd, c.fixture), c.fixtureContent, "utf-8");
+	}
+	const pi = await spawnPi({ tag: c.tag, cwd });
 	try {
-		// 300s 上限：重构/编码类 prompt 的工具循环较长（空 tmp cwd 下模型会探索后作答），
-		// 仍有界（真挂死按 timeout 分类失败）
-		const settledP = pi.rpc.waitAgentSettled(300_000);
+		// 600s 上限：重构/编码类 prompt 的工具循环较长（空 tmp cwd 下模型会探索后作答），
+		// 仍有界（真挂死按 timeout 分类失败）。2026-08-15 实测模型延迟系统性变慢（前日三 case
+		// 共 192s，当日单 case 超 300s 旧上限两次击穿——英文与跟进型各一次），按前日最坏值 3 倍上调
+		const settledP = pi.rpc.waitAgentSettled(600_000);
 		await pi.rpc.prompt(c.prompt);
 		await settledP;
 		// 显式等 renamed to（多 iteration 工具型 prompt 会先产生 skip: stopReason=toolUse 日志）
