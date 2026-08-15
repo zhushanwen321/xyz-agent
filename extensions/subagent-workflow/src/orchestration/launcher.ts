@@ -77,7 +77,13 @@ export interface LauncherDeps extends LifecycleDeps {
 
 /** 轮询间隔 Promise。 */
 function pollInterval(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, STATUS_POLL_INTERVAL_MS));
+  // IF10(#16)：unref 使轮询等待 tick 不钉住事件循环（对齐 subagent-service
+  // gcTimer.unref?.() 先例的防御 duck-type 写法）。resolve 语义不变——unref
+  // 只影响进程退出判定，已注册 timer 仍按 500ms 触发。
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, STATUS_POLL_INTERVAL_MS);
+    timer.unref?.();
+  });
 }
 
 /**

@@ -35,8 +35,25 @@ function getNpmSkillCandidates(npmSkillsDir: string): string[] {
  * 2. Global: ~/.pi/agent/skills/<name>/
  * 3. npm packages: ~/.pi/agent/npm/node_modules/<pkg>/skills/<name>/
  * Returns the directory path if found, undefined otherwise.
+ *
+ * IF8(#14)：结果按 skillName 缓存（含未命中 undefined 也缓存，DM3）——调用点
+ * agent-opts-resolver 每次 agent({skill}) call 一次，同 skill 名重复的逐候选
+ * existsSync 全部消重。失效语义与同文件 skillCandidatesCache 先例一致：进程
+ * 生命周期内不失效（pi 进程 per-session，skill 安装发生在 session 间）。
  */
+const skillMemo = new Map<string, string | undefined>();
+
+/** 清空 resolveSkillPath 结果缓存（仅测试隔离用；生产无清理点，对齐先例）。 */
+export function clearSkillPathCache(): void {
+  skillMemo.clear();
+}
+
 export function resolveSkillPath(skillName: string): string | undefined {
+  // has 先行区分「缓存了未命中(undefined)」与「无条目」——未命中也缓存（DM3）
+  if (skillMemo.has(skillName)) {
+    return skillMemo.get(skillName);
+  }
+
   const candidates = [
  // Project-level
     path.resolve(process.cwd(), ".agents/skills", skillName),
@@ -52,9 +69,12 @@ export function resolveSkillPath(skillName: string): string | undefined {
 
   for (const dir of candidates) {
     if (fs.existsSync(dir)) {
+      skillMemo.set(skillName, dir);
       return dir;
     }
   }
 
+  // 未命中也缓存：防止不存在的 skill 名反复全候选 existsSync（DM3）
+  skillMemo.set(skillName, undefined);
   return undefined;
 }

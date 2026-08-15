@@ -446,6 +446,44 @@ describe("getWorkflowByPath — 按绝对路径加载（S2 路径统一核心新
     expect(meta!.phases).toEqual([]);
     expect(meta!.path).toBe("/nonexistent/ghost.js");
   });
+
+  // ── IF4（外部 #5 残留）：source 按路径推导（.tmp → tmp） ──
+  // 修复前：任意路径硬编码 "user-pi" → .tmp 下脚本按路径加载被错标 saved，
+  // 与 discoverWorkflows 对 project-pi-tmp 源的正确映射矛盾。
+
+  it("IF4: workspaceRoot/.pi/workflows/.tmp 下的脚本按路径加载 source = tmp", async () => {
+    // findWorkspaceRoot 指向临时工作区 → tmp 前缀判定生效
+    mockedFindWorkspaceRoot.mockReturnValue(ws.root);
+    const tmpScriptPath = await writeScript(ws.tmpDir, "adhoc.js", validScript("adhoc"));
+
+    const meta = await getWorkflowByPath(tmpScriptPath);
+
+    expect(meta).toBeDefined();
+    expect(meta!.available).toBe(true);
+    expect(meta!.source).toBe("tmp");
+  });
+
+  it("IF4: 非 .tmp 路径按路径加载 source = saved（输出不变，DS4）", async () => {
+    mockedFindWorkspaceRoot.mockReturnValue(ws.root);
+    const savedPath = await writeScript(ws.projectDir, "byfile.js", validScript("byfile"));
+
+    const meta = await getWorkflowByPath(savedPath);
+
+    expect(meta).toBeDefined();
+    expect(meta!.available).toBe(true);
+    expect(meta!.source).toBe("saved");
+  });
+
+  it("IF4: tmp 前缀判定不误伤同名前缀目录（.tmp-other/ 非 .tmp/）", async () => {
+    mockedFindWorkspaceRoot.mockReturnValue(ws.root);
+    const siblingDir = join(ws.projectDir, ".tmp-other");
+    await mkdir(siblingDir, { recursive: true });
+    const siblingPath = await writeScript(siblingDir, "sib.js", validScript("sib"));
+
+    const meta = await getWorkflowByPath(siblingPath);
+
+    expect(meta!.source).toBe("saved");
+  });
 });
 
 describe("WorkflowScanConfig 类型接口", () => {

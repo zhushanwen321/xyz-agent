@@ -17,7 +17,7 @@
  *
  * 关键实现点：(a) overlay 第二参数必须传，否则 view 不全屏；(b) trace 必须 per-render
  * 重读（run.state.trace.toArray 返回内部数组引用，trace.append 后下次 render 可见），
- * 配 1s tick invalidate + requestRender 保证运行中刷新；(c) 's' save 模式无条件可用
+ * 配条件失效 tick（签名比对，IF11）+ requestRender 保证运行中刷新；(c) 's' save 模式无条件可用
  * （saveWorkflow 内部对非 tmp workflow 返回错误消息）；(d) pause/resume/abort 失败时
  * notify 反馈，不静默吞。
  */
@@ -130,6 +130,54 @@ export interface ViewActions {
   abort: (runId: string) => Promise<void>;
 }
 
+// ── 渲染签名（IF11/TC7/DM6：tick 条件失效的判据，渲染动态字段 SSOT）──────
+
+/**
+ * computeRenderSignature — 渲染输出中全部动态决定字段的签名（纯函数，供测试）。
+ *
+ * 用途：200ms tick 用它与上次签名比对——相同则该帧内容无可见变化，跳过清缓存 +
+ * requestRender（纯等待场景零重建零重绘）；不同则走现状失效路径。可见行为逐帧
+ * 等价的前提 = 签名字段集覆盖当前渲染的全部动态字段（漏字段 = 该字段渲染滞后一拍，
+ * ES7；签名取原始值时粒度细于显示量化值，只多失效不多绘不漏绘）。
+ *
+ * **字段核对表**（每字段 ↔ 渲染消费点 file:line，完备性唯一证据——测试只能证
+ * 「已入字段变 → 签名变」，不能证无漏字段）：
+ *
+ * | 签名字段 | 消费点 |
+ * |---|---|
+ * | run.state.status | WorkflowsView.ts renderHeader :581 / detail-content.ts :75（statusDotStr+statusLabel）/ renderFooter :625 |
+ * | 秒桶 Math.floor(now/1000) | renderHeader :580 formatElapsed（现算 elapsed）+ detail-content.ts :69-72（now 参与未完成节点 elapsed）|
+ * | completed/total（节点 status 推导）| renderHeader :578-581 |
+ * | budget 量化值（tokens round-k + cost toFixed(4)=BUDGET_COST_DECIMALS，与 :583 同精度——第 3-4 位小数变化是可见变化）| renderHeader :583 / saveTraceToFile :871 |
+ * | 节点 stepIndex | 节点行 :760 / detail :117（trace 导出）|
+ * | 节点 status | 节点行 :761 statusDotStr / detail :75 |
+ * | live.totalTokens | 节点行 :765 / detail :79 / :275 |
+ * | 工具计数 getAllToolCalls(node.live).length（projectLiveProgress 投影无 toolCallCount 字段，不得引用）| 节点行 :766 / detail :80 / :223 |
+ * | live.elapsedSeconds | 节点行 :767 / detail :81 / :276 |
+ * | live.turns | detail :224 / :276 |
+ * | live.eventLog.length（append-only，长度变化即尾部窗口右移出新事件）| detail :222（filter turn_end）+ :231-235 |
+ * | live.currentActivity（type+label 均入签名）| detail :227-228 |
+ * | live.lastError（内容入签名，防同存在性不同文本漏绘）| detail :277-278 |
+ *
+ * 维护约定（DS8）：WorkflowsView/detail-content 新增任何动态展示字段必须同步
+ * 并入本签名并更新上表，否则该字段渲染滞后一拍。
+ */
+/** 秒桶宽度（ms）：签名取 Math.floor(now / SECOND_MS)，秒桶推进 = 可见 elapsed 变化。 */
+const SECOND_MS = 1000;
+
+export function computeRenderSignature(run: WorkflowRun, now: number): string {
+  const traceArr = run.state.trace.toArray();
+  const completed = traceArr.filter((n) => n.status === "completed").length;
+  const budget = run.state.budget;
+  // budget 量化串与 renderHeader :583 同源同精度（round-k token / toFixed(4) cost）
+  const budgetPart = `${Math.round(budget.usedTokens / BUDGET_TOKENS_DIVISOR)}k/${budget.maxTokens ? `${Math.round(budget.maxTokens / BUDGET_TOKENS_DIVISOR)}k` : "∞"}::$${budget.usedCost.toFixed(BUDGET_COST_DECIMALS)}`;
+  const nodeParts = traceArr.map((n) => {
+    const live = n.live ? projectLiveProgress(n.live) : undefined;
+    return `${n.stepIndex}:${n.status}:${live?.totalTokens ?? -1}:${n.live ? getAllToolCalls(n.live).length : -1}:${live?.elapsedSeconds ?? -1}:${live?.turns ?? -1}:${live?.eventLog.length ?? -1}:${live?.currentActivity ? `${live.currentActivity.type}:${live.currentActivity.label}` : "-"}:${live?.lastError ?? "-"}`;
+  });
+  return [run.state.status, Math.floor(now / SECOND_MS), `${completed}/${traceArr.length}`, budgetPart, ...nodeParts].join("|");
+}
+
 // ── View state ────────────────────────────────────────────────
 
 interface ViewState {
@@ -212,10 +260,17 @@ export function createWorkflowsView(
     const requestRender = () => tui.requestRender();
 
  // ── 轮询 tick：engine 无事件推送，view 自轮询 trace 变化 ──
- // 每 200ms 重绘，保证 header 动态数据（elapsed/tokens）实时更新。
- // 行数固定后，diff-redraw 引擎能正确逐行对比，不会出现残影。
+ // 每 200ms 条件失效（IF11/TC7）：先算渲染签名（computeRenderSignature，
+ // 覆盖 header/节点行/L2 detail 全部动态字段），与上次相同 → 该帧内容无可见
+ // 变化，直接 return（不清 cache、不 requestRender——纯等待场景零重建零重绘）；
+ // 不同 → 现状路径（清缓存 + requestRender）。lastSignature 初始 undefined，
+ // 首 tick 必失效（保证首绘）。签名计算 O(N)（N=trace 节点数）远低于全量 render。
+    let lastSignature: string | undefined;
     const tick = setInterval(() => {
       if (state.disposed) return;
+      const signature = computeRenderSignature(run, Date.now());
+      if (signature === lastSignature) return;
+      lastSignature = signature;
       cache.key = undefined;
       cache.lines = undefined;
       requestRender();

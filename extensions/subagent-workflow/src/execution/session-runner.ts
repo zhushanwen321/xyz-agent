@@ -25,6 +25,7 @@ import type { AgentConfig, ResolvedModel } from "./model-resolver.ts";
 import { collectResult } from "./output-collector.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
+import { stringifySchemaCached } from "../shared/schema-jsonify.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import { EPIPE_FAILURE_THRESHOLD, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
 import {
@@ -431,12 +432,13 @@ export function applySchemaEnvToChildEnv(
 // Schema 指令
 // ============================================================
 
-/** formatSchemaInstruction 的 JSON pretty-print 缩进。 */
-const SCHEMA_JSON_INDENT = 2;
-
 /**
  * 构造 schema 指令模板（拼入 task 末尾 + steer reminder 复用）。
  * 指令明确要求 agent 调用 structured-output tool，而非直接输出 JSON 文本。
+ *
+ * schema JSON 的 pretty-print（indent=2）由 shared/schema-jsonify.ts 的
+ * stringifySchemaCached(schema, "pretty") 产出（IF7：与 resolver 的 compact 版
+ * 共享 WeakMap 缓存条目，输出与 JSON.stringify(schema, null, 2) 逐字节一致）。
  */
 export function formatSchemaInstruction(schema: Record<string, unknown>): string {
   return [
@@ -447,7 +449,9 @@ export function formatSchemaInstruction(schema: Record<string, unknown>): string
     "Do NOT pass a `schema` parameter; the system validates `data` against the authoritative schema automatically.",
     "The schema for your `data` is:",
     "```json",
-    JSON.stringify(schema, null, SCHEMA_JSON_INDENT),
+    // IF7(#13)：同 schema 对象引用的 pretty stringify 走 WeakMap 缓存
+    // （与 agent-opts-resolver 的 compact 版共享缓存条目，输出逐字节不变）
+    stringifySchemaCached(schema, "pretty"),
     "```",
   ].join("\n");
 }
