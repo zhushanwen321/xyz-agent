@@ -15,6 +15,7 @@ import { DirtyWorktreeError } from "../types.ts";
 
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(),
+  execFile: vi.fn(),
 }));
 
 vi.mock("node:fs", () => ({
@@ -71,7 +72,7 @@ vi.mock("../worktree-registry.ts", () => ({
 }));
 
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -81,8 +82,28 @@ import { encodeCwd } from "../path-encoding.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 
 const mockExec = vi.mocked(execFileSync);
+const mockExecFile = vi.mocked(execFile);
 const mockExistsSync = vi.mocked(fs.existsSync);
 const mockIsProcessAlive = vi.mocked(isProcessAlive);
+
+/**
+ * gitRunAsync（execFile callback 风格）mock 装配。
+ * impl 返回 {err?, stdout?, stderr?}；err 模拟失败路径（exitCode=killed/signal 挂在 err 上）。
+ */
+type ExecFileResult = {
+  err?: (Error & { code?: unknown; killed?: boolean; signal?: string }) | null;
+  stdout?: string;
+  stderr?: string;
+};
+function setupExecFile(impl?: (args: readonly string[]) => ExecFileResult): void {
+  mockExecFile.mockImplementation(
+    (_cmd: string, args: readonly string[], _opts: unknown, cb: (err: Error | null, stdout?: string, stderr?: string) => void) => {
+      const r = impl ? impl(args) : { stdout: "" };
+      if (r.err) cb(r.err, r.stdout ?? "", r.stderr ?? "");
+      else cb(null, r.stdout ?? "", r.stderr ?? "");
+    },
+  );
+}
 
 const MAIN_CWD = "/home/user/project";
 const AGENT_DIR = "/home/user/.pi/agent";
@@ -240,42 +261,45 @@ describe("WorktreeManager", () => {
   });
 
   describe("cleanup", () => {
-    it("worktree remove + branch -D + 注册表移除（cwd 用 handle.mainCwd）", () => {
-      mockExec.mockReturnValue("");
+    it("worktree remove + branch -D + 注册表移除（cwd 用 handle.mainCwd）", async () => {
+      setupExecFile();
       const handle = makeHandle();
 
-      mgr.cleanup(handle);
+      await mgr.cleanup(handle);
 
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(mockExecFile).toHaveBeenCalledWith(
         "git",
         ["worktree", "remove", "--force", handle.path],
         expect.objectContaining({ cwd: MAIN_CWD }),
+        expect.anything(),
       );
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(mockExecFile).toHaveBeenCalledWith(
         "git",
         ["branch", "-D", handle.branch],
         expect.objectContaining({ cwd: MAIN_CWD }),
+        expect.anything(),
       );
       expect(mockRemove).toHaveBeenCalledWith(handle.branch);
     });
 
-    it("worktree remove 失败时 branch -D + 注册表移除仍执行（best-effort 分离）", () => {
-      // 第一条 git（worktree remove）抛错，第二条（branch -D）应仍执行
-      let callCount = 0;
-      mockExec.mockImplementation(() => {
-        callCount++;
-        if (callCount === 1) throw new Error("worktree locked");
-        return "";
+    it("worktree remove 失败时 branch -D + 注册表移除仍执行（best-effort 分离）", async () => {
+      // 第一条 git（worktree remove）失败，第二条（branch -D）应仍执行
+      setupExecFile((args) => {
+        if (args[1] === "remove") {
+          return { err: Object.assign(new Error("Command failed: git worktree remove"), { code: 128 }), stderr: "fatal: worktree locked" };
+        }
+        return { stdout: "" };
       });
       const handle = makeHandle();
 
       // 不应抛错
-      expect(() => mgr.cleanup(handle)).not.toThrow();
+      await expect(mgr.cleanup(handle)).resolves.toBeUndefined();
 
       // branch -D 仍被调用
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(mockExecFile).toHaveBeenCalledWith(
         "git",
         ["branch", "-D", handle.branch],
+        expect.anything(),
         expect.anything(),
       );
       // 注册表仍被移除
@@ -284,29 +308,123 @@ describe("WorktreeManager", () => {
   });
 
   describe("collectPatch", () => {
-    it("有改动返回 patch 文件", () => {
-      mockExec.mockReturnValue("diff --git a/src\n+// new");
+    it("有改动返回 patch 文件", async () => {
+      setupExecFile((args) => (args[0] === "diff" ? { stdout: "diff --git a/src\n+// new" } : { stdout: "" }));
 
       const handle = makeHandle();
       const patchFile = path.join(os.tmpdir(), `outside-${RECORD_ID}.patch`);
 
-      const result = mgr.collectPatch(handle, patchFile);
+      const result = await mgr.collectPatch(handle, patchFile);
 
       expect(result.failed).toBe(false);
       expect(result.written).toBe(true);
-      expect(mockExec).toHaveBeenCalledWith("git", ["add", "-A"], expect.anything());
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(mockExecFile).toHaveBeenCalledWith("git", ["add", "-A"], expect.anything(), expect.anything());
+      expect(mockExecFile).toHaveBeenCalledWith(
         "git",
         ["diff", "--cached", BASE_COMMIT],
+        expect.anything(),
         expect.anything(),
       );
     });
 
-    it("无改动返回 failed=false, written=false（不写文件）", () => {
-      mockExec.mockReturnValue("");
-      const result = mgr.collectPatch(makeHandle(), "/tmp/x.patch");
+    it("无改动返回 failed=false, written=false（不写文件）", async () => {
+      setupExecFile();
+      const result = await mgr.collectPatch(makeHandle(), "/tmp/x.patch");
       expect(result.failed).toBe(false);
       expect(result.written).toBe(false);
+    });
+  });
+
+  // ============================================================
+  // gitRunAsync 包装与 per-repo mutex（Phase 1 异步化新增）
+  // ============================================================
+  describe("gitRunAsync（经 collectPatch/cleanup 公共面触达）", () => {
+    it("非零退出：message 同构 + exitCode/stderr 属性（P-errshape：stderr 在 callback 第三参）", async () => {
+      setupExecFile((args) => {
+        if (args[0] === "diff") {
+          return {
+            err: Object.assign(new Error("Command failed: git diff --cached abc123def456\nfatal: bad object"), { code: 128 }),
+            stderr: "fatal: bad object",
+          };
+        }
+        return { stdout: "" };
+      });
+
+      // diff 无 try/catch，直接向上抛（与旧同步 gitRun 行为一致）
+      const err = await mgr.collectPatch(makeHandle(), "/tmp/x.patch").catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain("git diff failed: Command failed: git diff --cached");
+      expect((err as { exitCode?: number }).exitCode).toBe(128);
+      expect((err as { stderr?: string }).stderr).toBe("fatal: bad object");
+    });
+
+    it("超时路径：killed+SIGTERM 标记 timedOut，不挂误导性 exitCode", async () => {
+      setupExecFile((args) => {
+        if (args[0] === "diff") {
+          return { err: Object.assign(new Error("Command failed: git diff --cached"), { killed: true, signal: "SIGTERM", code: null }) };
+        }
+        return { stdout: "" };
+      });
+
+      const err = await mgr.collectPatch(makeHandle(), "/tmp/x.patch").catch((e: unknown) => e);
+      expect((err as Error).message).toContain("git diff failed:");
+      expect((err as { timedOut?: boolean }).timedOut).toBe(true);
+      expect((err as { exitCode?: number }).exitCode).toBeUndefined();
+    });
+
+    it("per-repo mutex：同 repo 写类命令串行（最大并发 1），全部完成无饥饿", async () => {
+      let active = 0;
+      let maxActive = 0;
+      // 异步完成 cb：若队列失效，后继命令的 impl 入口会先于前驱 cb 到达 → active=2
+      mockExecFile.mockImplementation(
+        (_cmd: string, args: readonly string[], _opts: unknown, cb: (err: Error | null, stdout?: string, stderr?: string) => void) => {
+          active++;
+          maxActive = Math.max(maxActive, active);
+          setTimeout(() => {
+            active--;
+            cb(null, "", "");
+          }, 5);
+          void args;
+        },
+      );
+
+      const distinct = [1, 2, 3].map((i) =>
+        Object.freeze({ ...makeHandle(path.join(os.tmpdir(), `pi-sub-mut-${i}`)), branch: `pi-sub-mut-${i}` }),
+      );
+      await Promise.all(distinct.map((h) => mgr.cleanup(h)));
+
+      // 同 repo 6 条写命令（3×(remove+branch -D)）全部执行（无饥饿）
+      const writeCalls = mockExecFile.mock.calls.filter(
+        (c) => (c[1]?.[0] === "worktree" && c[1]?.[1] === "remove") || (c[1]?.[0] === "branch" && c[1]?.[1] === "-D"),
+      );
+      expect(writeCalls).toHaveLength(6);
+      // 队列生效：任何时刻至多 1 条写命令在途
+      expect(maxActive).toBe(1);
+    });
+
+    it("mutex 前驱失败不传染后继：第一个 remove 失败，后续同 repo 写命令正常执行", async () => {
+      let removeCount = 0;
+      setupExecFile((args) => {
+        if (args[0] === "worktree" && args[1] === "remove") {
+          removeCount++;
+          if (removeCount === 1) {
+            return { err: Object.assign(new Error("Command failed: git worktree remove"), { code: 128 }) };
+          }
+        }
+        return { stdout: "" };
+      });
+
+      const h1 = Object.freeze({ ...makeHandle(), branch: "pi-sub-fail-1" });
+      const h2 = Object.freeze({ ...makeHandle(), branch: "pi-sub-fail-2" });
+      await Promise.all([mgr.cleanup(h1), mgr.cleanup(h2)]);
+
+      // h2 的 remove 正常执行（第 2 次），h1/h2 的 branch -D 各自执行
+      expect(removeCount).toBe(2);
+      const branchCalls = mockExecFile.mock.calls.filter((c) => c[1]?.[0] === "branch" && c[1]?.[1] === "-D");
+      expect(branchCalls).toHaveLength(2);
+      // 两个注册表条目都移除（各自 cleanup 尾部执行）
+      expect(mockRemove).toHaveBeenCalledWith("pi-sub-fail-1");
+      expect(mockRemove).toHaveBeenCalledWith("pi-sub-fail-2");
     });
   });
 
@@ -314,111 +432,126 @@ describe("WorktreeManager", () => {
   // scan：全局注册表 + pid 死活判据（核心重构）
   // ============================================================
   describe("scan", () => {
-    it("pid 已死的条目被清理（正常退出未 cleanup / 崩溃残留）", () => {
+    it("pid 已死的条目被清理（正常退出未 cleanup / 崩溃残留）", async () => {
+      setupExecFile();
       injectEntry({ branch: "pi-sub-dead", pid: 11111 });
       mockIsProcessAlive.mockReturnValue(false); // pid 死
 
-      mgr.scan();
+      await mgr.scan();
 
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(mockExecFile).toHaveBeenCalledWith(
         "git",
         ["worktree", "remove", "--force", expect.any(String)],
         expect.objectContaining({ cwd: MAIN_CWD }),
+        expect.anything(),
       );
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(mockExecFile).toHaveBeenCalledWith(
         "git",
         ["branch", "-D", "pi-sub-dead"],
         expect.objectContaining({ cwd: MAIN_CWD }),
+        expect.anything(),
       );
       expect(mockRemove).toHaveBeenCalledWith("pi-sub-dead");
     });
 
-    it("pid 活的条目不删（绝不删活进程）", () => {
+    it("pid 活的条目不删（绝不删活进程）", async () => {
+      setupExecFile();
       injectEntry({ branch: "pi-sub-alive", pid: 22222 });
       mockIsProcessAlive.mockReturnValue(true); // pid 活
 
-      mgr.scan();
+      await mgr.scan();
 
-      const removeCalls = mockExec.mock.calls.filter(
+      const removeCalls = mockExecFile.mock.calls.filter(
         (c) => c[1]?.[0] === "worktree" && c[1]?.[1] === "remove",
       );
       expect(removeCalls).toHaveLength(0);
       expect(mockRemove).not.toHaveBeenCalled();
     });
 
-    it("崩溃残留：无终态 + pid 死 → 清理（原 P0 缺陷场景）", () => {
+    it("崩溃残留：无终态 + pid 死 → 清理（原 P0 缺陷场景）", async () => {
       // 这是原 reaper 永远泄漏的场景：进程崩溃无人写终态 marker
+      setupExecFile();
       injectEntry({ branch: "pi-sub-crash", pid: 33333 });
       mockIsProcessAlive.mockReturnValue(false); // 崩溃后进程已死
 
-      mgr.scan();
+      await mgr.scan();
 
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(mockExecFile).toHaveBeenCalledWith(
         "git",
         ["branch", "-D", "pi-sub-crash"],
+        expect.anything(),
         expect.anything(),
       );
       expect(mockRemove).toHaveBeenCalledWith("pi-sub-crash");
     });
 
-    it("pid=0 + 未超 SPAWN_GRACE → 跳过（可能正在 spawn）", () => {
+    it("pid=0 + 未超 SPAWN_GRACE → 跳过（可能正在 spawn）", async () => {
+      setupExecFile();
       injectEntry({ branch: "pi-sub-spawning", pid: 0, createdAt: Date.now() });
 
-      mgr.scan();
+      await mgr.scan();
 
-      const removeCalls = mockExec.mock.calls.filter(
+      const removeCalls = mockExecFile.mock.calls.filter(
         (c) => c[1]?.[0] === "worktree" && c[1]?.[1] === "remove",
       );
       expect(removeCalls).toHaveLength(0);
     });
 
-    it("pid=0 + 超 SPAWN_GRACE → 清理（create 后崩溃）", () => {
+    it("pid=0 + 超 SPAWN_GRACE → 清理（create 后崩溃）", async () => {
+      setupExecFile();
       const sixtyOneMinAgo = Date.now() - 61 * 60 * 1000;
       injectEntry({ branch: "pi-sub-spawn-crash", pid: 0, createdAt: sixtyOneMinAgo });
 
-      mgr.scan();
+      await mgr.scan();
 
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(mockExecFile).toHaveBeenCalledWith(
         "git",
         ["branch", "-D", "pi-sub-spawn-crash"],
+        expect.anything(),
         expect.anything(),
       );
       expect(mockRemove).toHaveBeenCalledWith("pi-sub-spawn-crash");
     });
 
-    it("跨 repo 清理：条目 repo 字段作为 git -C 目标", () => {
+    it("跨 repo 清理：条目 repo 字段作为 git -C 目标", async () => {
+      setupExecFile();
       const OTHER_REPO = "/home/user/other-repo";
       injectEntry({ branch: "pi-sub-cross", pid: 44444, repo: OTHER_REPO });
       mockIsProcessAlive.mockReturnValue(false);
 
-      mgr.scan();
+      await mgr.scan();
 
       // git 命令的 cwd 应为 OTHER_REPO，非 MAIN_CWD
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(mockExecFile).toHaveBeenCalledWith(
         "git",
         expect.arrayContaining(["branch", "-D", "pi-sub-cross"]),
         expect.objectContaining({ cwd: OTHER_REPO }),
+        expect.anything(),
       );
     });
 
-    it("空注册表时无操作", () => {
+    it("空注册表时无操作", async () => {
+      setupExecFile();
       // registryEntries 已在 beforeEach 清空
-      mgr.scan();
-      expect(mockExec).not.toHaveBeenCalled();
+      await mgr.scan();
+      expect(mockExecFile).not.toHaveBeenCalled();
       expect(mockRemove).not.toHaveBeenCalled();
     });
 
-    it("worktree remove 失败时 branch -D + 注册表移除仍执行（best-effort）", () => {
+    it("worktree remove 失败时 branch -D + 注册表移除仍执行（best-effort）", async () => {
+      setupExecFile((args) => {
+        if (args[0] === "worktree") {
+          return { err: Object.assign(new Error("Command failed: git worktree remove"), { code: 128 }) };
+        }
+        return { stdout: "" };
+      });
       injectEntry({ branch: "pi-sub-stubborn", pid: 55555 });
       mockIsProcessAlive.mockReturnValue(false);
-      mockExec.mockImplementation(() => {
-        throw new Error("worktree locked");
-      });
 
-      mgr.scan();
+      await mgr.scan();
 
       // branch -D 仍被调用（两次 git 调用各自独立）
-      const branchDeleteCalls = mockExec.mock.calls.filter(
+      const branchDeleteCalls = mockExecFile.mock.calls.filter(
         (c) => c[1]?.[0] === "branch" && c[1]?.[1] === "-D",
       );
       expect(branchDeleteCalls).toHaveLength(1);

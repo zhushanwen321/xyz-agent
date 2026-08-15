@@ -85,7 +85,7 @@ export async function doFinalizeRecord(
       );
       fs.mkdirSync(sessionsDir, { recursive: true });
       const patchFile = path.join(sessionsDir, `${record.worktreeHandle.branch}.patch`);
-      const patch = deps.worktreeManager.collectPatch(record.worktreeHandle, patchFile);
+      const patch = await deps.worktreeManager.collectPatch(record.worktreeHandle, patchFile);
       if (patch.written) record.patchFile = patchFile;
     } catch (pe: unknown) {
       bestEffort(pe, "collectPatch (finalizeRecord Step0)");
@@ -130,7 +130,7 @@ export async function doFinalizeRecord(
   }
   if (record.worktreeHandle) {
     try {
-      deps.worktreeManager.cleanup(record.worktreeHandle);
+      await deps.worktreeManager.cleanup(record.worktreeHandle);
     } catch (err) {
       bestEffort(err, "worktree cleanup (finalizeRecord Step3)");
     }

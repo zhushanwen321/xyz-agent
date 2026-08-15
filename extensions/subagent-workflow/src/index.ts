@@ -403,7 +403,7 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
 
     try {
       const wtm = new WorktreeManager(agentDir);
-      wtm.scan();
+      await wtm.scan();
     } catch (err) {
       logger.warn("[subagents] worktree reaper scan failed", {
         reason: err instanceof Error ? err.message : String(err),

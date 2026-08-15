@@ -15,7 +15,7 @@
 // WorktreeRegistry（<agentDir>/subagents/worktrees.json）。判据从终态 marker
 // 状态机降为 pid 死活一条——进程崩溃无人写终态时也能正确回收。
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -36,9 +36,47 @@ const SAFE_ID_RE = /^[\w-]+$/;
 // 默认 git 命令超时（ms）
 const GIT_TIMEOUT_MS = 30_000;
 
+/**
+ * gitRunAsync 的包装错误：message 格式与旧同步 gitRun 逐字一致（下游
+ * DirtyWorktreeError 判定与测试 toThrow 匹配零改动）；exitCode/stderr/timedOut
+ * 为新增诊断属性（探针 P-errshape 实测 Node 24：execFile 的 err.stderr 为
+ * undefined——stderr 在 callback 第三参；退出码在 err.code（数字））。
+ */
+export class GitRunError extends Error {
+  readonly exitCode?: number;
+  readonly stderr?: string;
+  readonly timedOut?: boolean;
+
+  constructor(
+    message: string,
+    props: { exitCode?: number; stderr?: string; timedOut?: boolean },
+  ) {
+    super(message);
+    this.name = "GitRunError";
+    this.exitCode = props.exitCode;
+    this.stderr = props.stderr;
+    this.timedOut = props.timedOut;
+  }
+}
+
+/**
+ * 写类 git 命令判定（per-repo mutex 串行对象）。读类（status/rev-parse/diff）
+ * 无副作用不加锁——并发读 git 自身安全，P-lock 实测冲突仅是写窗口假设。
+ */
+function isWriteCommand(args: string[]): boolean {
+  if (args[0] === "worktree") return args[1] === "add" || args[1] === "remove";
+  if (args[0] === "branch") return args[1] === "-D";
+  return args[0] === "add";
+}
+
 export class WorktreeManager {
   // 全局注册表：跨 repo 记录所有活 worktree，reaper 遍历此表判孤儿。
   private readonly registry: WorktreeRegistry;
+  // per-repo 写命令串行队列：value = 队尾（已吞 rejection 的）Promise。
+  // 入队形态 prev.catch(()=>{}).then(run)——后继只关心「自己已排队」，
+  // 不继承前驱错误（否则 1 个 worktree add 失败会传染同 repo 后续全部写命令，
+  // 替代旧 execFileSync 单线程天然全局串行的「各命令独立失败」语义）。
+  private readonly writeQueues = new Map<string, Promise<void>>();
 
   constructor(agentDir: string) {
     this.registry = new WorktreeRegistry(agentDir);
@@ -143,9 +181,9 @@ export class WorktreeManager {
    *
    * @param handle 要清理的 worktree handle（含 mainCwd，不靠路径反推）
    */
-  cleanup(handle: WorktreeHandle): void {
+  async cleanup(handle: WorktreeHandle): Promise<void> {
     try {
-      this.gitRun(["worktree", "remove", "--force", handle.path], {
+      await this.gitRunAsync(["worktree", "remove", "--force", handle.path], {
         cwd: handle.mainCwd,
       });
     } catch (err) {
@@ -153,7 +191,7 @@ export class WorktreeManager {
     }
 
     try {
-      this.gitRun(["branch", "-D", handle.branch], {
+      await this.gitRunAsync(["branch", "-D", handle.branch], {
         cwd: handle.mainCwd,
       });
     } catch (err) {
@@ -177,15 +215,15 @@ export class WorktreeManager {
    *   written=true 仅当 diff 非空且写盘成功；空 diff 或写失败均 written=false，
    *   调用方据此回填 record.patchFile，避免悬空路径（`git apply` 不存在的文件）。
    */
-  collectPatch(handle: WorktreeHandle, patchFile: string): PatchResult {
+  async collectPatch(handle: WorktreeHandle, patchFile: string): Promise<PatchResult> {
     // git add -A：暂存全部改动（含未跟踪新文件），使后续 --cached diff 能捕获新建文件
     try {
-      this.gitRun(["add", "-A"], { cwd: handle.path });
+      await this.gitRunAsync(["add", "-A"], { cwd: handle.path });
     } catch (err) {
       // add 失败不致命：继续尝试 diff，最差得到部分 diff（仅已跟踪文件的改动）
       bestEffort(err, "git add -A (collectPatch)");
     }
-    const diff = this.gitRun(
+    const diff = await this.gitRunAsync(
       ["diff", "--cached", handle.baseCommit],
       { cwd: handle.path },
     );
@@ -215,15 +253,16 @@ export class WorktreeManager {
    *   pid == 0 且超 SPAWN_GRACE_MS      → 孤儿（create 后崩溃，pid 永未补全）
    *   pid == 0 且未超宽限               → 跳过（可能正在 spawn）
    */
-  scan(): void {
+  async scan(): Promise<void> {
     const entries = this.registry.load();
     const now = Date.now();
 
+    // 逐孤儿串行 await（保持 for 循环串行语义，防止一次 reaper 打出 N 个并发 git）
     for (const entry of entries) {
       if (!this.isOrphan(entry, now)) {
         continue;
       }
-      this.cleanupOrphan(entry);
+      await this.cleanupOrphan(entry);
     }
   }
 
@@ -249,14 +288,14 @@ export class WorktreeManager {
   }
 
   /** 清理单个孤儿条目：worktree remove + branch -D + 注册表移除，三步各自 best-effort。 */
-  private cleanupOrphan(entry: WorktreeEntry): void {
+  private async cleanupOrphan(entry: WorktreeEntry): Promise<void> {
     try {
-      this.gitRun(["worktree", "remove", "--force", entry.checkout], { cwd: entry.repo });
+      await this.gitRunAsync(["worktree", "remove", "--force", entry.checkout], { cwd: entry.repo });
     } catch (err) {
       bestEffort(err, "worktree remove (orphan reaper)");
     }
     try {
-      this.gitRun(["branch", "-D", entry.branch], { cwd: entry.repo });
+      await this.gitRunAsync(["branch", "-D", entry.branch], { cwd: entry.repo });
     } catch (err) {
       bestEffort(err, "branch delete (orphan reaper)");
     }
@@ -268,7 +307,56 @@ export class WorktreeManager {
   // ============================================================
 
   /**
+   * git 命令异步执行器。与 gitRun 同一超时/错误包装约定（message 格式逐字一致），
+   * 差异仅在错误属性形态（GitRunError 挂 exitCode/stderr/timedOut）。
+   * 写类命令经 per-repo mutex 串行（不依赖 git 锁实现细节 + 并发限流 + 行为确定性）。
+   */
+  private async gitRunAsync(args: string[], opts: { cwd: string; timeout?: number }): Promise<string> {
+    const run = (): Promise<string> =>
+      new Promise((resolve, reject) => {
+        execFile(
+          "git",
+          args,
+          { cwd: opts.cwd, timeout: opts.timeout ?? GIT_TIMEOUT_MS, encoding: "utf-8" },
+          (err, stdout, stderr) => {
+            if (err) {
+              const execErr = err as Error & { code?: unknown; killed?: boolean; signal?: string };
+              reject(
+                new GitRunError(`git ${args[0]} failed: ${execErr.message}`, {
+                  // P-errshape 实测：execFile 退出码在 err.code（数字时）；超时 killed+SIGTERM
+                  exitCode: typeof execErr.code === "number" ? execErr.code : undefined,
+                  stderr: typeof stderr === "string" ? stderr : undefined,
+                  timedOut: execErr.killed === true && execErr.signal === "SIGTERM",
+                }),
+              );
+              return;
+            }
+            resolve(stdout.trim());
+          },
+        );
+      });
+
+    if (!isWriteCommand(args)) return run();
+    // per-repo 队列：吞前驱 rejection 后接续本命令；队尾比对自清理防 Map 泄漏
+    const repo = opts.cwd;
+    const prev = this.writeQueues.get(repo) ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(run);
+    const tail: Promise<void> = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.writeQueues.set(repo, tail);
+    void tail.finally(() => {
+      if (this.writeQueues.get(repo) === tail) this.writeQueues.delete(repo);
+    });
+    return next;
+  }
+
+  /**
    * git 命令执行器。统一超时 + 错误包装。
+   *
+   * [Phase 1 过渡双轨] 同步版仅供 create（含 assertCleanTree/回滚）与
+   * buildEnvBlock 使用——它们随 Phase 2 create 异步化一并迁移后删除本方法。
    */
   private gitRun(args: string[], opts: { cwd: string; timeout?: number }): string {
     try {

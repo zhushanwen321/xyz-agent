@@ -427,13 +427,12 @@ export class SubagentService {
       };
       completeRecord(record, result, "closed", reason);
       this.store.archive(record);
-      // worktree 绑定清理（T3）
+      // worktree 绑定清理（T3）。cleanup 已 async 化——同步签名（返回计数）不变，
+      // 清理 fire-and-forget：失败经 bestEffort 留痕，不阻塞/不影响计数返回。
       if (record.worktreeHandle) {
-        try {
-          this.worktreeManager.cleanup(record.worktreeHandle);
-        } catch (err) {
+        void this.worktreeManager.cleanup(record.worktreeHandle).catch((err: unknown) => {
           bestEffort(err, `worktree cleanup (${reason})`);
-        }
+        });
       }
       // pending-notifications 注销
       emitPendingUnregister(this.pi, record.id, "closed");
@@ -1530,13 +1529,12 @@ export class SubagentService {
       });
     }
     this.store.archive(record);
-    // worktree cleanup + removeAliveMarker（cancel 不写 finalized，BC-4 互斥）
+    // worktree cleanup + removeAliveMarker（cancel 不写 finalized，BC-4 互斥）。
+    // cleanup 已 async 化——boolean 同步返回语义不变，清理 fire-and-forget。
     if (record.worktreeHandle) {
-      try {
-        this.worktreeManager.cleanup(record.worktreeHandle);
-      } catch (err) {
+      void this.worktreeManager.cleanup(record.worktreeHandle).catch((err: unknown) => {
         bestEffort(err, "worktree cleanup (cancelBackground)");
-      }
+      });
     }
     if (record.sessionFile) {
       try {

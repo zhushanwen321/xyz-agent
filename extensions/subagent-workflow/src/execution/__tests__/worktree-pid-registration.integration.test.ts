@@ -97,7 +97,7 @@ async function waitForPid(branch: string, timeoutMs = 5000): Promise<number> {
 }
 
 /** 清理：kill 子进程 + worktree cleanup + 删除临时目录。 */
-function cleanup(): void {
+async function cleanup(): Promise<void> {
   if (spawnedPid) {
     try {
       process.kill(spawnedPid, "SIGKILL");
@@ -108,7 +108,7 @@ function cleanup(): void {
   }
   if (handle) {
     try {
-      wtm.cleanup(handle);
+      await wtm.cleanup(handle);
     } catch (err) {
       // best-effort：git worktree remove 失败不阻断测试清理
       // eslint-disable-next-line no-console
@@ -131,9 +131,9 @@ beforeEach(() => {
   registry = new WorktreeRegistry(agentDir);
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers();
-  cleanup();
+  await cleanup();
 });
 
 // ── 用例 ──
@@ -170,7 +170,7 @@ describe("worktree pid 注册链路（真实 spawn 集成）", () => {
     vi.setSystemTime(Date.now() + SPAWN_GRACE_MS + 1000);
 
     // 5. scan()：活 worktree 必须不被清（修复前：pid=0 超宽限 → 误删 → 红）
-    wtm.scan();
+    await wtm.scan();
     expect(fs.existsSync(handle.path)).toBe(true);
 
     // 6. 收尾：真实时钟恢复 + kill 子进程让 runPromise settle
@@ -183,7 +183,7 @@ describe("worktree pid 注册链路（真实 spawn 集成）", () => {
     await runPromise;
 
     // 7. 反向：进程死后 scan 回收真孤儿
-    wtm.scan();
+    await wtm.scan();
     expect(fs.existsSync(handle.path)).toBe(false);
     const entryAfter = readEntry(handle.branch);
     expect(entryAfter).toBeUndefined();
@@ -218,7 +218,7 @@ describe("worktree pid 注册链路（真实 spawn 集成）", () => {
     spawnedPid = entry!.pid;
 
     // 4. scan：pid>0 且进程死 → 立即判孤儿回收（无需等宽限）
-    wtm.scan();
+    await wtm.scan();
     expect(fs.existsSync(handle.path)).toBe(false);
     expect(readEntry(handle.branch)).toBeUndefined();
   }, 15000);
