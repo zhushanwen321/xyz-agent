@@ -159,7 +159,7 @@
 
 - 问题：watch 是 `{deep:true}`（useFileChangeInvalidation.ts:70 附近），source 为整 messages Map；Vue deep traverse 会进 Map entry 读内层 ShallowRef 的 `.value` 建立依赖 → D-1 后其他 session 分区 ref 替换仍触发 watcher（失效不收敛）；去掉 deep 则同 sid 消息数组原地变更不触发（功能回归）。
 - 裁决：watch source 改为 `() => chatStore.messages.get(sid)?.value`（per-sid 内层 ref），去掉 deep；依赖「消息数组不可变替换」语义（commitMessages 产出新数组，07 文档 D-1 的既有设计）保证同 sid 更新仍触发。此改动越出 07 文档「不改它们逻辑」的边界——**本裁决显式扩展边界**，与 useSearch（共用同一 helper 模式）同批迁移。不放到 D-9（W19）做，因为阶段 1 落地 D-1 后若不迁移，fileChanges/搜索失效在阶段 1-2 间处于「过度触发」状态且 D-9 改造又要动同一片代码。
-- 理由：07 文档 §5.2 U7（审查新增）已认定这是 D-1 伴生必改；评估确认 deep watch 断言错误。
+- 理由：07 文档 §5.2 U7（审查新增）已认定这是 D-1 伴生必改；评估确认 deep watch 断言错误。**现状行为的不确定性声明**：D-1 落地后 deep watcher 的实际表现（「过度触发」还是「静默停更」）存在两种可能，取决于 Vue traverse 对 shallowRef 内层 raw 对象的处理——07 文档 §2.3.5 断言「deep 救不了，触发源被切断（停更）」，本条问题陈述则推断「traverse 进 Map entry 读内层 ref `.value`（仍触发）」；两者互斥且均未实证。**W11 实施第一步先跑 P5 探针实证再动手**；裁决方案（去 deep + watch 内层 ref）在两种情况下均正确，不受该不确定性影响。
 - 影响 wave：W11（含 useSearch.ts）。W19（D-9）在此之上再改触发源（见 R-23），两次改造串行无冲突。
 
 **R-17（07-G3）`mutations.test.ts` 核心断言重写（非适配）**
@@ -178,9 +178,9 @@
 
 **R-19（08-G1）增量协议落成「前缀 segments 数组缓存 + tail segments 拼接」，稳定边界判定作用在 segment 层**
 
-- 问题：文档 `IncrementalRenderResult {prefixHtml, tailHtml}` 是字符串语义，但 MarkdownRenderer.vue:74 消费的是 `MarkdownSegment[]`（text/mermaid 段交错、v-for :key="i" 每段独立 v-html）——字符串协议会迫使 MarkdownRenderer 重写为整段 v-html，推翻现有渲染结构。
-- 裁决：增量协议改为 segments 数组语义：`renderIncremental` 返回 `{prefixSegments: MarkdownSegment[], tailSegments: MarkdownSegment[]}`；稳定边界判定（findStableBoundary）作用在 segment 层（边界必须落在两个 segment 之间或某 text segment 内部的块级闭合点）；前缀 segments 数组按 index 缓存（index-key 下 key 不动即 DOM 复用，v-for :key="i" 规则不变）；tail 段每帧重建。非 turn 项（如 systemNotice）建议纳入 cachedItems 缓存（消化文档伪代码自洽缺口）。
-- 理由：协议必须贴合消费方形态；index-key 的 DOM 复用规则（前缀段 key 稳定 → 复用）是增量化在 v-for 下的正确落点。
+- 问题：08 初稿的 `IncrementalRenderResult {prefixHtml, tailHtml}` 是字符串语义，但 MarkdownRenderer.vue:74 消费的是 `MarkdownSegment[]`（text/mermaid 段交错、每段独立渲染）——字符串协议会迫使 MarkdownRenderer 重写为整段 v-html，推翻现有渲染结构。**08 文档磁盘版 §3.3.2 已含审查修正（协议已是 `prefixSegments/tailSegments` 数组 + segId 稳定键），本裁决确认现行版**。
+- 裁决：增量协议按文档现行版执行——segments 数组语义：`renderIncremental` 返回 `{prefixSegments: MarkdownSegment[], tailSegments: MarkdownSegment[]}`；稳定边界判定（findStableBoundary）作用在 segment 层（边界必须落在两个 segment 之间或某 text segment 内部的块级闭合点）；前缀 segments 按引用恒等缓存，segment 首次产出时分配单调递增 `segId`（跨帧稳定），渲染树 `v-for :key="seg.segId"`——前缀段引用与 segId 稳定即 DOM 复用（text 段 v-html 子树不触碰、mermaid 段组件实例跨帧保活）；tail 段每帧重建。非 turn 项（如 systemNotice）建议纳入 cachedItems 缓存（消化文档伪代码自洽缺口）。
+- 理由：协议必须贴合消费方形态；segId 稳定键的 DOM 复用规则（前缀段 key 稳定 → 复用）是增量化在 v-for 下的正确落点。
 - 影响 wave：W22（协议与边界函数）、W23（MarkdownRenderer 消费）。
 
 **R-20（08-G2）边界判定规格：纯函数 + markdown-it token 流/行级扫描 + 9 形态单测矩阵锁定**
@@ -262,7 +262,7 @@
 | Wave | 名称 | 覆盖决策 | 涉及文件（packages/ 起算） | 依赖 | 验证命令 | 文档章节 |
 |---|---|---|---|---|---|---|
 | W01 | D2 核心：request 直连 + result 腿清理 | D2 | runtime/src/services/plugin-service/plugin-bootstrap.ts、hook-api.ts、hook-pipeline.ts | — | runtime vitest | 01 §3.3 D2-1/D2-3 |
-| W02 | D2 observe 层 + e2e + 阶段0微项×2 | D2 + 微项6/7 | services/plugin-service/bridge-interop.ts、plugin-service.ts、plugin-host.ts、plugin-host-process.ts、api/notify-api.ts + services/session/event-interpreter.ts + 新增 plugin-hooks-e2e.test.ts | W01 | runtime vitest | 01 §3.3 D2-2/D2-4/D2-5/D2-6 |
+| W02 | D2 observe 层 + e2e + 阶段0微项×2 | D2 + 微项6/7 | services/plugin-service/bridge-interop.ts、plugin-service.ts、plugin-host.ts、plugin-host-process.ts、hook-pipeline.ts、api/notify-api.ts + services/session/event-interpreter.ts + 新增 plugin-hooks-e2e.test.ts | W01 | runtime vitest | 01 §3.3 D2-2/D2-4/D2-5/D2-6 |
 | W03 | Q1-A：markers/i18n/声音 | Q1-1/2/3 | renderer/src/composables/useSessionMarkers.ts、renderer/src/i18n/index.ts、renderer/src/composables/effects/useCompletionSound.ts、renderer/src/composables/sound-platform.ts | — | renderer vitest | 10 §3.6 Q1-1~3 |
 | W04 | Q1-B：core 快赢 | Q1-4/5/8/9(core) | core/src/coordination/route-inbound.ts、renderer/src/api/pending.ts、renderer/src/composables/useToast.ts、core/src/domain/chat/bash-effects.ts、core/src/domain/chat/lru.ts | — | core+renderer vitest | 10 §3.6 Q1-4/5/8/9 |
 | W05 | Q1-C：可见性/停表/死副本 | Q1-6/7/9(renderer) | renderer/src/composables/features/settings/useAppUpdate.ts、ui/src/features/chat/composables/useTurnElapsed.ts、删 renderer/src/composables/panel/useTurnElapsed.ts、renderer/src/components/sidebar/ForkGroup.vue、renderer/src/stores/project.ts | — | renderer+ui vitest | 10 §3.6 Q1-6/7/9 |
@@ -282,11 +282,11 @@
 | W19 | D-9 overlay 回写 | D-9 | renderer/src/composables/features/file-tree/useFileChangeInvalidation.ts、useFileTree.ts（+useFileSearch/useSearchModalDeps 消费确认） | W15+W18 | renderer vitest | 09 §5 D-9 |
 | W20 | D6 历史增量（纯 runtime）+ switch reply 瘦身 | D6 + R-11/R-12 + 微项2/9 | runtime/src/services/session/session-service.ts、transport/session-message-handler.ts、shared/src/protocol.ts、runtime/src/infra/pi/message-converter.ts（微项2）、runtime/src/infra/pi/session-file-utils.ts（微项9）+ 前置验证脚本（临时） | W09 | runtime vitest + 验证脚本 exit 0 | 04 §3.3 D6-1~D6-5 |
 | W21 | D-4 turn 派生增量化 | D-4 | core/src/domain/chat/message-turns.ts、renderer/src/composables/logic/messageTurns.ts（re-export）、renderer/src/components/panel/MessageStream.vue、ui/src/features/chat/Turn.vue + 新增 message-turns.incremental.test.ts | W10 | core+renderer vitest | 08 §3.3 D-4 + §5 U1-U3 |
-| W22 | D-5 边界判定 + 增量协议 | D-5 | renderer/src/composables/logic/markdown.ts + 新增 markdown-incremental.test.ts | W21（可并行启动，协议对齐 W21 后合入） | renderer vitest | 08 §3.3 D-5 + §5 U4/U6 |
+| W22 | D-5 边界判定 + 增量协议 | D-5 | renderer/src/composables/logic/markdown.ts + 新增 markdown-incremental.test.ts | —（可与 W21 并行启动；segments 协议形状对齐 W23 消费方后合入，R-19） | renderer vitest | 08 §3.3 D-5 + §5 U4/U6 |
 | W23 | MarkdownRenderer 增量消费 | D-5 | ui/src/features/chat/MarkdownRenderer.vue | W21+W22 | ui+renderer vitest | 08 §5 U5 |
 | W24 | matcher 缓存 + 短路径直通 | D7（R-13 后缩围） | runtime/src/services/file-service.ts、runtime/src/infra/fs/ignore-parser.ts + 新增剪枝/缓存测试 | — | runtime vitest | 05 §3.3 D7-1 + D7-2（缩围） |
 | W25 | listDir 参数化 + 有界并发 | D7 | runtime/src/infra/fs-executor.ts、runtime/src/services/ports/file-executor.ts、runtime/src/services/file-service.ts | W24 | runtime vitest | 05 §3.3 D7-3/D7-4 |
-| W26 | session 扫描缓存 + find 合并 + quota | D9 + 微项11/12 | runtime/src/infra/pi/session-file-utils.ts、runtime/src/services/session/session-lifecycle.ts、session-service.ts、services/session/session-fork.ts、runtime/src/services/quota-cache.ts | — | runtime vitest | 05 §3.3 D9-1 + §5 U5 |
+| W26 | session 扫描缓存 + find 合并 + quota | D9 + 微项11/12 | runtime/src/infra/pi/session-file-utils.ts、runtime/src/services/session-history.ts（force 透传）、runtime/src/services/session/session-lifecycle.ts、session-service.ts、services/session/session-fork.ts、runtime/src/services/quota-cache.ts | W20（同文件序） | runtime vitest | 05 §3.3 D9-1 + §5 U5 |
 | W27 | D-6.2 命令式 buffer + 回放 | D-6 第二步 | renderer useTerminal.ts、TerminalView.vue、runtime/src/services/terminal/terminal-service.ts | W09+W14 | renderer+runtime vitest | 09 §5 D-6.2 |
 | W28 | D-7.2 扁平投影 + virtua | D-7 第二步 | renderer/src/stores/fileTree.ts、renderer/src/components/sidebar/FileView.vue、sidebar/FileTreeRow.vue | W15 | renderer vitest | 09 §5 D-7.2 |
 | W29 | 启动编排重排 | D8 | runtime/src/index.ts、runtime/src/transport/message-broker.ts、runtime/src/services/session/session-lifecycle.ts | — | runtime vitest + dev 启动验证 | 06 §3.3 D8-1~D8-3 |
@@ -302,7 +302,7 @@
 ### W01 — D2 核心：Worker request 直连 + result 腿清理（阶段 0）
 
 - **目标**：修复 hook 执行链路断裂的主体——block/transform 语义走 request 直连拿结果。不做 observe 改造（W02）、不动 event-interpreter。
-- **文件**：`packages/runtime/src/services/plugin-service/plugin-bootstrap.ts`（handleIncomingRequest 增加 `plugin.hooks.invoke` 分支）；`services/plugin-service/api/hook-api.ts`（导出按 handlerId 执行的入口，如 `executeHookRequest(params)`；闭包 handlers Map 经模块级胶水如 setHookExecutor 桥接到 bootstrap）；`services/plugin-service/hook-pipeline.ts`（响应 `{proceed, modifiedData, reason}` → `HookResult {blocked, blockedBy, reason, transformedData}` 映射层）。
+- **文件**：`packages/runtime/src/services/plugin-service/plugin-bootstrap.ts`（handleIncomingRequest 增加 `plugin.hooks.invoke` 分支）；`services/plugin-service/hook-api.ts`（**plugin-service/ 直下，非 api/ 子目录——api/ 下只有 notify-api.ts 等**；导出按 handlerId 执行的入口，如 `executeHookRequest(params)`；闭包 handlers Map 经模块级胶水如 setHookExecutor 桥接到 bootstrap）；`services/plugin-service/hook-pipeline.ts`（响应 `{proceed, modifiedData, reason}` → `HookResult {blocked, blockedBy, reason, transformedData}` 映射层）。
 - **步骤要点**：① hook-api 导出执行入口 + 模块级胶水注册；② bootstrap 分支查 Map → 调 handler → catch 回 `{proceed:true}`（异常放行语义）→ 原样回传；③ hook-pipeline 映射层；④ **删除 hook-api.ts:144-162 的 `plugin.hooks.invoke.result` 回传腿**（R-02）。
 - **注意事项**：hook-types.ts 实际路径含 plugin-types/ 目录层级；`handleBridgeIntercept` 的 `injectedMessages` 返回语义与 HookResult 字段对齐（01 §5 检查点）。
 - **验收**：`cd packages/runtime && npx vitest run` 全绿（现有 plugin-hooks-serial / plugin-api-hooks 不红）；新增单测：mock 传输下 executeHookRequest 返回 block 与 transform 两形态 + 映射层断言 `transformedData === modifiedData`；grep 确认 `plugin.hooks.invoke.result` 字符串在 src 内零命中。
@@ -311,7 +311,7 @@
 ### W02 — D2 observe 层 + e2e + 阶段 0 微项（阶段 0）
 
 - **目标**：observe 类走 notify（零往返）、注册/调用 key 统一泛型、排序与索引优化、e2e 测试消灭 mock 盲区；顺带两项阶段 0 微项（同文件）。
-- **文件**：`services/plugin-service/bridge-interop.ts`（observe 组 7 事件映射改挂 `onPiEvent` 泛型——R-01；微项：tool 执行 name 索引 Map.get，bridge-interop.ts:82）；`plugin-service.ts`（executeHooks observe 快捷路径）；`plugin-host.ts`/`plugin-host-process.ts`（pluginId→workerId 反向索引维护）；`services/session/event-interpreter.ts`（5 处 onPiEvent 调用点核对——已是泛型则零改动，以 grep 为准）；`services/plugin-service/api/notify-api.ts`（微项：notify 改真 notification，notify-api.ts:112）；新增 `plugin-hooks-e2e.test.ts`。
+- **文件**：`services/plugin-service/bridge-interop.ts`（observe 组 7 事件映射改挂 `onPiEvent` 泛型——R-01；微项：tool 执行 name 索引 Map.get，bridge-interop.ts:82）；`plugin-service.ts`（executeHooks observe 快捷路径）；`plugin-host.ts`/`plugin-host-process.ts`（pluginId→workerId 反向索引维护）；`services/plugin-service/hook-pipeline.ts`（删 :66 的每次执行排序——步骤③）；`services/session/event-interpreter.ts`（5 处 onPiEvent 调用点核对——已是泛型则零改动，以 grep 为准）；`services/plugin-service/api/notify-api.ts`（微项：notify 改真 notification，notify-api.ts:112）；新增 `plugin-hooks-e2e.test.ts`。
 - **步骤要点**：① observe 映射改泛型 + plugin-service observe 快捷路径（调 `rpcServer.notify`）；② 反向索引（assign/terminate/crash 同步维护）；③ 删 hook-pipeline.ts:66 的每次执行排序（注册时保序是现状 hook-api.ts:93 已 sort，勿重复实现）；④ e2e：真实 plugin-bootstrap.handleMessage + 真实 PluginRpcServer + worker_threads MessageChannel 内存端口，覆盖 block 生效 / transform 生效 / observe 通知不产生响应三断言 + 双宿主（bootstrap 与 bootstrap-process）各跑一遍。
 - **注意事项**：V1 真实验收时先确认 demo 插件已激活再发消息。
 - **验收**：`cd packages/runtime && npx vitest run` 全绿，其中新 e2e 文件三语义断言全过；`PI_HOOK_EVENT_MAP` 内无 `'onMessage'` 字面量（grep 断言）。
@@ -458,22 +458,22 @@
 - **文件**：`useFileChangeInvalidation.ts`（触发源 + 职责分离）、`useFileTree.ts`（消费方确认；useFileSearch/useSearchModalDeps 只做签名不变确认）。
 - **步骤要点**：① 在 W11 迁移后的 watch source 上加 changeSetStatus 扫描（末条或末 N 条 assistant 消息）；② ready 判定 → debounce 300ms → git.status RPC（享受 W16-W17 的 GitStateService 缓存）→ setGitOverlay；③ 目录失效走 ready 的路径清单（**只删 watch 不补目录失效 = 新文件不出现的功能回归**，09 文档 D-9 已警告）。
 - **注意事项**：setGitOverlay 第二调用点（loadTree + ready 回写）与 W15 预聚合兼容；debounce 窗口在真实 AI 多文件时序下复核（09 待验证 3）。
-- **验收**：`cd packages/renderer && npx vitest run` 全绿；新增单测：token 路径零触发 + ready 后 onInvalidate（目录失效）与 setGitOverlay 均走通（P-D9-3 脚本化）；dev 实测 AI 改 5 文件后角标数秒内刷新（P-D9-2）。
+- **验收**：`cd packages/renderer && npx vitest run` 全绿；新增单测：**token 路径零 RPC 调用 / 零缓存失效副作用**（浅 watch 在 token commit 数组替换时仍会触发回调，但回调内扫描后 no-op——口径与 09 文档 P-D9-3 探针判定一致：零 git.status RPC、零 onInvalidate 调用，非零 watch 回调）+ ready 后 onInvalidate（目录失效）与 setGitOverlay 均走通（P-D9-3 脚本化）；dev 实测 AI 改 5 文件后角标数秒内刷新（P-D9-2）。
 - **关联裁决**：R-23。
 
 ### W20 — D6 历史增量 + switch reply 瘦身（阶段 3）
 
 - **目标**：runtime 侧重建缓存（容量帽 8）+ lastLeafId 记录 + `getEntries(since)` 增量 + piEntryId 去重合并 + "Entry not found" fallback；**switch reply 移除 messages 字段**（R-11）；微项 2（contentBlocks.some→布尔）+ 微项 9（parseSessionHeader 首行读）。
 - **文件**：`session-service.ts`（getHistory 三分支：缓存命中 / since 增量 / 全量 + 空 entries 短路 R-12 + clearSession 清缓存与 lastLeafId）、`transport/session-message-handler.ts`（switch handler reply 瘦身）、`shared/src/protocol.ts`（switch reply 类型拆分——新形状不含 messages；session.history reply 不动）、`infra/pi/message-converter.ts`（微项 2）、`infra/pi/session-file-utils.ts`（微项 9）；前置验证脚本（临时，验证后移除——项目规则 #4）。
-- **步骤要点**：**先验证再编码**（04 §5 检查点 + 项目规则）：① 写独立脚本实测 pi `get_entries(since)` 行为——leafId 随 append 更新、branch 报错文案（"Entry not found" 大小写以实测为准）、空增量响应形状、**compact 后 since 语义**（重复 or 只回新条目）；② 缓存与合并实现（去重键 piEntryId，无 piEntryId 防御性顺序追加 + debug 日志）；③ fallback：错误文案匹配 → 丢缓存 → 全量重建；④ switch reply 瘦身 + 协议拆分；⑤ pi 进程退出感知清 lastLeafId（session dispose / clearSession 编排点）。
+- **步骤要点**：**先验证再编码**（04 §5 检查点 + 项目规则）：① 写独立脚本实测 pi `get_entries(since)` 行为——leafId 随 append 更新、branch 报错文案（"Entry not found" 大小写以实测为准）、空增量响应形状、**compact 后 since 语义**（重复 or 只回新条目）；**条件动作（04 §5 检查点定案）**：若实测 pi compact 后返回与缓存重复的 entry，增量合并按 piEntryId 去重兜底（D6-3 已设计）之外，**补 V7 场景断言**（compact 后切回的历史正确性进单测）；② 缓存与合并实现（去重键 piEntryId，无 piEntryId 防御性顺序追加 + debug 日志）；③ fallback：错误文案匹配 → 丢缓存 → 全量重建；④ switch reply 瘦身 + 协议拆分；⑤ pi 进程退出感知清 lastLeafId（session dispose / clearSession 编排点）。
 - **注意事项**：renderer **零改动**（switchSession 两调用点本就丢弃 reply，[代码验证]）；reply 瘦身后 grep renderer 无消费 switch reply messages 的路径（防御性复核）；缓存是纯派生数据可随时丢弃。
-- **验收**：`cd packages/runtime && npx vitest run` 全绿；验证脚本 exit 0 且结论写入汇报（四项行为实测）；新增单测：增量合并 piEntryId 去重（同 id 跳过）、空 entries 短路不走尾读（R-12）、fallback 触发后缓存被覆盖、switch reply 形状不含 messages（类型断言）；dev 实测 V1/V2（LRU 驱逐重进：缓存命中零 get_entries / leafId 前进走 since 且日志可见）。
+- **验收**：`cd packages/runtime && npx vitest run` 全绿；验证脚本 exit 0 且结论写入汇报（四项行为实测）；新增单测：增量合并 piEntryId 去重（同 id 跳过）、空 entries 短路不走尾读（R-12）、fallback 触发后缓存被覆盖、switch reply 形状不含 messages（类型断言）；dev 实测 V1/V2（LRU 驱逐重进：缓存命中零 get_entries / leafId 前进走 since 且日志可见）。**总纲 V7 按 04 文档重范围后新口径执行——LRU 窗口内切回本就零请求（isHydrated 守卫），计时场景限「被驱逐重进」**。
 - **关联裁决**：R-11、R-12；微项 2/9。
 
 ### W21 — D-4 turn 派生增量化（阶段 3）
 
 - **目标**：`toRenderItemsIncremental`（含 TurnRenderCache）落地，历史 turn 按消息对象身份增量复用；Turn.vue trace 区 v-memo。
-- **文件**：`core/src/domain/chat/message-turns.ts`（增量版 + TurnRenderCache，全量版保留为 cache=undefined 退化路径）、`renderer/src/composables/logic/messageTurns.ts`（**re-export 同步导出新函数**——minor 消化）、`renderer/src/components/panel/MessageStream.vue`（per-instance `shallowRef<TurnRenderCache>`，renderItems 改增量版）、`ui/src/features/chat/Turn.vue`（trace v-for 包 v-memo，键 = [块身份, 状态, 本地折叠 ref]）+ 新增 `message-turns.incremental.test.ts`。
+- **文件**：`core/src/domain/chat/message-turns.ts`（增量版 + TurnRenderCache，全量版保留为 cache=undefined 退化路径）、`renderer/src/composables/logic/messageTurns.ts`（**re-export 同步导出新函数**——minor 消化）、`renderer/src/components/panel/MessageStream.vue`（**缓存经 `useSessionScopedState` 工厂分区持有（`Map<sid, shallowRef<TurnRenderCache|null>>`），组件内只读当前 sid 分区**——08 §3.3.1 失效条件 3 定案；`<MessageStream :session-id>` 无 `:key`，组件实例不随 session 销毁，实例级缓存会跨 session 残留，违反 ADR-0049。08 §5.2 U2 表格下方的「per-instance 缓存」措辞是文档内部残留矛盾，以 §3.3.1 为准）、`ui/src/features/chat/Turn.vue`（trace v-for 包 v-memo，键 = [块身份, 状态, 本地折叠 ref]）+ 新增 `message-turns.incremental.test.ts`。
 - **注意事项**：依赖 07 已落地的消息对象不可变身份（W10-W13）；完整探针验收（复用率 100%）依赖 07，本 wave 先做单测级验收；TurnRenderCache 补 cachedItems 字段缓存非 turn 项（08 minor）。
 - **验收**：`cd packages/core && npx vitest run` + `cd packages/renderer && npx vitest run` 全绿；新增单测：追加 1 条消息时历史 turn renderItems 引用复用（身份相等断言）、cache=undefined 时与全量版输出 deepEqual；re-export 链新函数可从 renderer 导入（import 断言）。
 - **关联裁决**：无（照 08 §5 U1-U3）。
@@ -489,18 +489,18 @@
 
 ### W23 — MarkdownRenderer 增量消费（阶段 3）
 
-- **目标**：MarkdownRenderer.vue 改增量渲染——前缀 segments 数组按 index 缓存（key 稳定即 DOM 复用）、tail 每帧重建、静默/complete 转完整渲染、未闭合段占位（语言名 + spinner 行，xyz-ui 组件）。
+- **目标**：MarkdownRenderer.vue 改增量渲染——前缀 segments 按引用恒等缓存（segment 单调递增 `segId` 跨帧稳定，引用与 segId 不动即 DOM 复用）、tail 每帧重建、静默/complete 转完整渲染、未闭合段占位（语言名 + spinner 行，xyz-ui 组件）。
 - **文件**：`ui/src/features/chat/MarkdownRenderer.vue`。
-- **注意事项**：v-for :key="i" 规则不变（前缀段 key 不动即复用——R-19 裁决的 DOM 复用规则）；不触碰 MermaidRenderer 成图逻辑（只加未闭合守卫）。
+- **注意事项**：渲染树 `v-for :key="seg.segId"`（08 §3.3.2 现行版——前缀段引用与 segId 稳定 → text 段 v-html 子树不触碰、mermaid 段组件实例跨帧保活，R-19 裁决的 DOM 复用规则）；不触碰 MermaidRenderer 成图逻辑（只加未闭合守卫）。
 - **验收**：`cd packages/ui && npx vitest run`（如有）+ `cd packages/renderer && npx vitest run` 全绿；dev 实测（P3/P4/P5 探针）：流式期 md.render 入参 = tail 段、稳定边界单调不减、mermaid/fence 流式期重渲 ≈0；降级仅发生在超大单行等预期形态。
 - **关联裁决**：R-19。
 
 ### W24 — matcher 缓存 + 短路径直通（阶段 4）
 
-- **目标**：D7-1 matcher mtime 缓存（key = 目录 + .gitignore mtimeMs + size，expandDir 双目录组合键）+ matchPath 短路径直通（无 `/` 跳过 allPrefixes）。**R-13 后 D7-2 安全条件剪枝不做，现状剪枝语义不动**。
+- **目标**：D7-1 matcher mtime 缓存——**按单个 .gitignore 文件 `(path, mtimeMs, size)` 作 key（05 §3.3 D7-1 审查修正定案）**；不按调用方目录集合分键——expandDir 传 (cwd,dir) 两目录时按目录分键会使 20 个不同目录产生 20 个不同 key、根 .gitignore 被重读重编译 ~20 次（05 文档已否决该方案）；缓存 miss 路径先 stat 该文件取 (mtime,size) 再决定重读/重编译。+ matchPath 短路径直通（无 `/` 跳过 allPrefixes）。**R-13 后 D7-2 安全条件剪枝不做，现状剪枝语义不动**。
 - **文件**：`services/file-service.ts`（loadMatcher 加缓存）、`infra/fs/ignore-parser.ts`（短路径直通）+ 新增缓存/剪枝行为测试。
 - **注意事项**：V2 的 strace 验证在 macOS 不可用，改日志打点（.gitignore 读取/编译次数）；fast-glob 有真实消费点（plugin-rpc-setup.ts:279），**不删依赖**（总纲检查点 5 关闭）；V6 验收措辞对齐「与改造前一致」。
-- **验收**：`cd packages/runtime && npx vitest run` 全绿；新增单测：同目录二次 loadMatcher 零读盘零编译（mtime 未变 spy）；mtime 变化后缓存 miss；短路径 matchPath 结果与全路径展开等价。
+- **验收**：`cd packages/runtime && npx vitest run` 全绿；新增单测：同一 .gitignore 文件（mtime 未变）二次 loadMatcher 零读盘零编译（spy）；文件 mtime/size 变化后缓存 miss 重读重编译；**expandDir 双目录共享同一根 .gitignore 时命中同一编译结果（单文件 key，读盘/编译计数 = 1）**；短路径 matchPath 结果与全路径展开等价。
 - **关联裁决**：R-13。
 
 ### W25 — listDir 参数化 + searchFiles 有界并发（阶段 4）
@@ -513,10 +513,10 @@
 
 ### W26 — session 扫描缓存 + find 合并 + quota（阶段 4）
 
-- **目标**：D9-1——scanPiSessions 目录列举层 1s TTL 缓存 + create/fork/delete/rename 显式失效；同 handler 多次 `scanSessions().find()` 合并（**非顺手项**：涉及 session-service 多方法签名，独立 commit）；微项 11（quota 缓存内存层）。
-- **文件**：`infra/pi/session-file-utils.ts`（目录缓存层，per-file scanSessionMeta 缓存保持现状 + 微项 9 已改的首行读已在 W20 落地）、`services/session/session-lifecycle.ts`（失效点）、`services/session/session-service.ts`（find 合并 + 多方法签名）、`services/session/session-fork.ts`（失效点）、`services/quota-cache.ts`（微项 11）。
-- **注意事项**：微项 12（find 合并）总纲标阶段 3，因与 W20 同文件（session-service.ts）冲突调整至本 wave——两 wave 避免同文件并行改动；D9 的 rename 失效点未探明，任务内 grep rename 路径补挂；1s TTL 保证新建 session 落盘后秒级可见（pi 首 assistant 前不落盘是既定行为）。
-- **验收**：`cd packages/runtime && npx vitest run` 全绿；新增单测：1s 内重复 scanPiSessions 目录列举零 IO（spy）；create/delete 后立即 scan 可见性正确（显式失效）；find 合并后同 handler 单次请求 scan 计数 = 1；quota 重复查询命中内存层。
+- **目标**：D9-1——scanPiSessions 目录列举层 1s TTL 缓存 + create/fork/delete/rename 显式失效；**消费方分层（05 §3.3 D9-1 审查修正定案，必须落地）**：TTL 只作用**列表构建消费方**（SessionScanner.listAll / listPersistedSessions，侧栏列表）；**单 session 路径解析消费方必须绕过缓存强制刷新**——分层 API 落在 session-file-utils.ts 扫描入口（force 旁路），调用点透传 force。否则刚落盘 session 的历史/子代理/workflow 查找会在 TTL 窗口内静默返回空（pi 是外部进程写文件，不在显式失效覆盖内，05 D9-1 已论证该路径正确性敏感不可节流）。同 handler 多次 `scanSessions().find()` 合并（**非顺手项**：涉及 session-service 多方法签名，独立 commit）；微项 11（quota 缓存内存层）。
+- **文件**：`infra/pi/session-file-utils.ts`（目录缓存层 + force 旁路 API，per-file scanSessionMeta 缓存保持现状 + 微项 9 已改的首行读已在 W20 落地）、`services/session-history.ts`（**路径解析消费方调用点**：:46 `getHistoryFromFile` / :61 `getHistoryTailFromFile` 的 `scanSessions().find()` 透传 force 绕过 TTL——M-3 补入；getSubagents/getWorkflows 等同类按文件路径查找的调用点同批透传）、`services/session/session-lifecycle.ts`（失效点）、`services/session/session-service.ts`（find 合并 + 多方法签名）、`services/session/session-fork.ts`（失效点）、`services/quota-cache.ts`（微项 11）。
+- **注意事项**：微项 12（find 合并）总纲标阶段 3，因与 W20 同文件（session-service.ts）冲突调整至本 wave——两 wave 避免同文件并行改动；D9 的 rename 失效点未探明，任务内 grep rename 路径补挂；1s TTL 保证新建 session 落盘后秒级可见（pi 首 assistant 前不落盘是既定行为）；列表构建与路径解析两类消费方的判定以 05 D9-1 的清单为准，实施时 grep `scanSessions(` 全部调用点逐一归类写入汇报。
+- **验收**：`cd packages/runtime && npx vitest run` 全绿；新增单测：1s 内重复 scanPiSessions 目录列举零 IO（spy）；**路径解析消费方透传 force——刚落盘 session 的 getHistoryFromFile 在 TTL 窗口内不返回空（先 fill TTL 缓存再落盘新 session 文件，force 调用仍能查到）**；create/delete 后立即 scan 可见性正确（显式失效）；find 合并后同 handler 单次请求 scan 计数 = 1；quota 重复查询命中内存层。
 - **关联裁决**：微项 11/12（阶段调整已述）。
 
 ### W27 — D-6.2 命令式 buffer + 版本回放（阶段 4）
@@ -540,7 +540,7 @@
 
 - **目标**：D8-1/8-2/8-3——listen 提前（同步迁移 + 服务构造 + setServices + start 保持紧密连续，其余后置）、piVersion 惰性 + app.info 补发、迁移 promise gate（**create/restore/fork 三处**——R-14）。
 - **文件**：`index.ts`（重排 + gate + appInfo mutate 补发）、`transport/message-broker.ts`（buildAppInfoMsg 增加 public 入口）、`session-lifecycle.ts`（三处 spawn 前 await migrationReady）。
-- **步骤要点**：① 保持「三个同步迁移 → 服务构造 → setServices → server.start()」顺序；② 后台初始化块：migrateProviderConfig（存 migrationReady）→ migrateBuiltinExtensions → checkAndAutoUpgrade（**顺序约束：migrateBuiltin 必须在 autoUpgrade 前**）→ getPiVersion → skillRegistry.initGlobal → pluginService.initialize；migrateSettingsSkillsToDiscovery 重排位置按依赖判断并汇报；③ appInfo.piVersion 初始 unknown，getPiVersion 返回后 mutate 同对象 + 补发 app.info。
+- **步骤要点**：**⓪ 启动延迟实测分解探针（06 §5 审查补充，⛔ 实施前首步）**：在 `main()` 内 listen 前各段打点（三个同步迁移 / await 迁移A / await 迁移B / getPiVersion 各自耗时），确认被后置项确为可感知主导项；**若实测缩短量 < 100-200ms，重估 D8 是否值得其重排 + gate 注入的风险**（迁移幂等快速常态 no-op 时收益可能仅数百 ms），结论写入汇报再动手。① 保持「三个同步迁移 → 服务构造 → setServices → server.start()」顺序；② 后台初始化块：migrateProviderConfig（存 migrationReady）→ migrateBuiltinExtensions → checkAndAutoUpgrade（**顺序约束：migrateBuiltin 必须在 autoUpgrade 前**）→ getPiVersion → skillRegistry.initGlobal → pluginService.initialize；migrateSettingsSkillsToDiscovery 重排位置按依赖判断并汇报；③ appInfo.piVersion 初始 unknown，getPiVersion 返回后 mutate 同对象 + 补发 app.info。
 - **注意事项**：迁移失败已 catch → gate 恒 resolve（不阻塞）；启动时恢复路径（restoreSession）同样过 gate。
 - **验收**：`cd packages/runtime && npx vitest run` 全绿；dev 启动验证：/health 就绪时刻显著提前（waitForHealth 日志对比）；版本标签先应用版本后 1-2s 补全（V2）；迁移窗口内抢建 session 行为正常（V3）；gate 三处 spawn 点单测（fake promise resolve 前 create 挂起、resolve后通过）。
 - **关联裁决**：R-14。
@@ -549,7 +549,7 @@
 
 - **目标**：D10-1/10-2——pi session log 与主日志改 createWriteStream 缓冲写；轮转按写入字节计数（替代 statSync）；退出 flush（SIGINT/SIGTERM + closeLogger）；PiSessionLog 接口形状不变（end 后 write no-op）。
 - **文件**：`infra/logger.ts`（单文件：writeLogEntry/createPiSessionLog/rotateIfNeeded/closeLogger）。
-- **步骤要点**：① 写流按日期惰性打开；② **轮转顺序必须「end 旧流 → rename → 开新流」**（rename 时流持旧 inode——minor 消化）；③ 退出钩子调 end() 强制 flush；④ 字节计数轮转。
+- **步骤要点**：① 写流按日期惰性打开；② **轮转顺序必须「end 旧流 → rename → 开新流」**（rename 时流持旧 inode——minor 消化）；③ 退出钩子调 end() 强制 flush，**shutdown 链必须 `await` 写流 `end()`（pi session log 与主日志）完成后再 `process.exit(0)`**——现状 `closeLogger(); process.exit(0)` 同步链必须改等待（06 §3.3 D10-1 定案：pi session log 是 pi 静默卡死的唯一决定性证据，丢尾部几行 = 丢「pi 挂在最后哪一步」的冒烟证据，缓冲写必须与优雅退出 await flush 配套）；④ 字节计数轮转。
 - **注意事项**：与 W29 并行（文件不相交）；Electron supervisor kill 若为 SIGKILL 接受丢尾（风险已声明，session JSONL 不受影响）；异常崩溃丢缓冲窗口内几行日志尾部可接受。
 - **验收**：`cd packages/runtime && npx vitest run` 全绿；新增单测：退出 flush 后文件尾部含退出前最后条目（fake timers + 临时目录）；轮转触发条件按字节计数；end 后 write 为 no-op；跨天轮转 end→rename→开新流顺序（fs mock 断言调用序）。
 - **关联裁决**：无。
@@ -560,7 +560,7 @@
 - **文件**：`renderer/vite.config.ts`、`AppShell.vue`、`PanelContainer.vue` + 新增 `AsyncErrorFallback.vue`。
 - **步骤要点**：**第一步 = 最小构建验证（总纲检查点 6）**：先只加 manualChunks 配置跑一次 `pnpm build`，确认 rolldown 1.1.4 下键名行为（`rollupOptions.output.manualChunks` vs `rolldownOptions.output.advancedChunks`），以实际生效的写法为准，结论写入汇报；② 三组件 defineAsyncComponent + error/loading 组件；③ 产物断言。
 - **注意事项**：AsyncErrorFallback 守 xyz-ui 规范（禁原生元素/emoji，loading 用 UI 组件）；PanelContainer 其余条件挂载组件（BrowserPane/SubagentTab/WorkflowTab/CommandDocPanel/GitPanel）逐个评估后决定是否纳入，默认不纳入（评估结论写汇报）；katex css 保持静态 import（字体首屏必需）；markdown-it 不拆组（10 §3.4）。
-- **验收**：`pnpm build` exit 0；产物断言：存在独立 xterm-*/shiki-*/katex-*/vendor-* chunk 且 xterm 不进主 chunk；主 chunk gzip < 400KB（基线 684KB）；shiki 语法 chunk 仍按需分离；Electron loadFile 实测切 tab/开设置三懒加载点功能正常、chunk 首次触发才加载、无 404（file:// 相对路径——10 §3.5）；切英文即时（en-US 不进首屏）。
+- **验收**：`pnpm build` exit 0；产物断言（10 §4 A2 口径）：**manualChunks/advancedChunks 配置生效后，首屏入口 chunk 与重依赖 chunk 分离存在（具体 chunk 命名以实施期探针 1 收敛的实际产物名为准，不把 `xterm-*` 等臆测命名固化为硬断言——rolldown 键名未验证）且 xterm 不进主 chunk、不进首屏初始请求集合（Network 首屏无 xterm）**；shiki/katex 分组 chunk 仍在首屏初始请求集合（静态 import，符合 10 §2.2 声明）；主 chunk gzip < 400KB（entry-only 口径，基线 684KB）；shiki 语法 chunk 仍按需分离；Electron loadFile 实测切 tab/开设置三懒加载点功能正常、chunk 首次触发才加载、无 404（file:// 相对路径——10 §3.5）；切英文即时（en-US 不进首屏）。
 - **关联裁决**：无（首步验证 = 总纲检查点 6 的关闭动作）。
 
 ## §5 全覆盖映射表
@@ -639,11 +639,12 @@
 阶段 3：
   W09 → W20（session-message-handler/session-service 同文件串行）
   W10 → W21 → ┬→ W23
-        W22 ──┘（W22 协议对齐 W21 后可与 W21 并行开发；W23 需两者）
+        W22 ──┘（W22 协议对齐 W23 消费方后可与 W21 并行开发；W23 需两者）
 
 阶段 4：
   W24 → W25（file-service 同文件串行）
-  W26 独立（与 W24/W25 并行；注意 W20 → W26 的 session-file-utils/session-service 同文件序）
+  W20 → W26（session-file-utils/session-service 同文件序）；W26 与 W24/W25 可并行
+  W26 ↔ W29 在 session-lifecycle.ts 上互斥（§6.2），不得并行、须串行执行
   W09 + W14 → W27（transient 契约 + rAF 队列前置）
   W15 → W28（D-7.1 先于 D-7.2）
 
@@ -670,18 +671,21 @@
 | useFileChangeInvalidation.ts | W11→W19 | 依赖链已固化 |
 | session-file-utils.ts | W20→W26 | 依赖链已固化 |
 | file-service.ts | W24→W25 | 依赖链已固化 |
+| session-lifecycle.ts | W26↔W29 | 批次顺序兜底：W26 已移出批次 2 并行候选，须与 W29 串行（W29 先或后均可，不得并行） |
+| changeset.ts（core） | W10↔W18 | 批次顺序兜底（W10 批次 4 / W18 批次 5，无直接依赖边，靠批次序串行） |
+| message-broker.ts | W09↔W29 | 批次顺序兜底（W09 批次 3 / W29 批次 2 或 8，无直接依赖边，靠批次序串行；并行派发时须显式串行） |
 
 ### 6.3 推荐执行批次
 
 | 批次 | wave | 说明 |
 |---|---|---|
 | 1 | W01、W03、W04、W05（并行）+ W02（W01 后接力） | 阶段 0 全量，最多 4 个 subagent 并行 |
-| 2 | W06、W14、W15、W24、W26、W29、W30、W31（并行候选） | 若追求最短总工期，阶段 1-5 中无跨层依赖的独立 wave（W14/W15/W24/W26/W29/W30/W31）可提前并行；保守执行则按阶段顺序 |
+| 2 | W06、W14、W15、W24、W29、W30、W31（并行候选） | 若追求最短总工期，阶段 1-5 中无跨层依赖的独立 wave（W14/W15/W24/W29/W30/W31）可提前并行；保守执行则按阶段顺序。**W26 不入本批次**——与 W29 同改 session-lifecycle.ts（§6.2 互斥），不得同批并行 |
 | 3 | W07、W08（并行）→ W9 | 阶段 1 runtime 侧收口 |
 | 4 | W10 →（W11、W12 并行）→ W13 | 阶段 1 renderer 侧 |
 | 5 | W16 → W17 → W18 → W19 | 阶段 2 串行链 |
 | 6 | W20、W21、W22（W22 与 W21 并行）→ W23 | 阶段 3 |
-| 7 | W24 → W25；W26 并行；W27、W28 | 阶段 4 |
+| 7 | W24 → W25；W26；W27、W28 | 阶段 4。W26 依赖 W20（同文件序，批次 6 已完成）；W26 与 W29 的 session-lifecycle.ts 互斥（§6.2）靠批次顺序兜底——W29 要么已在批次 2 提前完成、要么在批次 8 晚于本批次，两种路径下均不同批并行 |
 | 8 | W29、W30、W31（并行） | 阶段 5（若未在批次 2 提前） |
 
 保守路径（推荐）：严格按阶段 0→5，每阶段内按 6.1 依赖图并行。激进路径：批次 2 的独立 wave 提前，可压缩总工期，但增加同时活跃分支数与 review 负担。
