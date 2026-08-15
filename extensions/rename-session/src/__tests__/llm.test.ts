@@ -1,5 +1,6 @@
 /* eslint-disable taste/no-unsafe-cast */
 
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -244,7 +245,19 @@ describe("RENAME_SYSTEM_PROMPT / RENAME_INSTRUCTION", () => {
 // callRenameLLM（mock resolveModel + callLLM @ llm-shared 边界）
 // ────────────────────────────────────────────────────
 
-const STUB_MODEL = { id: "stub-model", provider: "stub" };
+/** resolveModel 的合法 Model<Api> 常量（pi-ai Model 接口全字段，消除 unsafe-cast 强断言）。 */
+const STUB_MODEL: Model<Api> = {
+	id: "stub-model",
+	name: "Stub Model",
+	api: "anthropic-messages",
+	provider: "stub",
+	baseUrl: "https://stub.invalid",
+	reasoning: false,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 128_000,
+	maxTokens: 4096,
+};
 
 const BASE_CONFIG: RenameSessionConfig = {
 	enabled: true,
@@ -288,28 +301,28 @@ describe("callRenameLLM", () => {
 	});
 
 	it("callLLM 返回 {ok:false} → 返回 null（静默跳过，不抛错）", async () => {
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
 		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 		expect(result).toBeNull();
 	});
 
 	it("callLLM 返回 {ok:true, content} → cleanTitle 后返回", async () => {
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "  修复登录bug  " });
 		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 		expect(result).toBe("修复登录bug");
 	});
 
 	it("callLLM 返回空 content（cleanTitle 空串）→ 返回 null", async () => {
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "   " });
 		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 		expect(result).toBeNull();
 	});
 
 	it("传给 callLLM 的 opts：model/systemPrompt(<200)/maxTokens=64/timeoutMs=30000/signal/sessionId/无 tools，messages 三段式", async () => {
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
 		await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 
@@ -343,7 +356,7 @@ describe("callRenameLLM", () => {
 	});
 
 	it("TC4: 两段输入构造——entries 多轮混排只取首 user prompt + finalMessage 文本；finalText 空时降级两条", async () => {
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
 		// 多轮混排：中间 assistant 轮 / toolResult entry 都不该进入标题输入
 		const entries = [
@@ -397,7 +410,7 @@ describe("callRenameLLM", () => {
 		const ctx = createCtx([
 			{ type: "message", message: { role: "user", content: [{ type: "text", text: longPrompt }] } },
 		]);
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		// mockImplementation 在被调时刻快照日志状态——若日志后置到 callLLM 之后，快照为空则本用例红
 		let logAtCallTime = "";
 		vi.mocked(callLLM).mockImplementation(async () => {
@@ -433,7 +446,7 @@ describe("callRenameLLM", () => {
 		const ctx = createCtx([
 			{ type: "message", message: { role: "user", content: [{ type: "text", text: head + middle + tail }] } },
 		]);
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
 
 		await callRenameLLM(ctx, BASE_CONFIG, FINAL_MESSAGE);
@@ -453,7 +466,7 @@ describe("callRenameLLM", () => {
 		vi.stubEnv("PI_RENAME_DEBUG", "1");
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		// resolveModel 先 stub 可用模型（extract 在 resolveModel 之后，不 stub 会走 model not available 分支）
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 
 		const result = await callRenameLLM(createCtx([]), BASE_CONFIG, FINAL_MESSAGE);
 
@@ -467,7 +480,7 @@ describe("callRenameLLM", () => {
 	});
 
 	it("TC7: callLLM ok:false（超时/模型错误）→ 返回 null 不抛错（失败归一静默跳过）", async () => {
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "timeout", recoverable: true });
 		await expect(callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE)).resolves.toBeNull();
 	});
@@ -475,7 +488,7 @@ describe("callRenameLLM", () => {
 	it("TC9: debug 开启 + callLLM 空 content → 输出 skip: title empty 且返回 null", async () => {
 		vi.stubEnv("PI_RENAME_DEBUG", "1");
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "   " });
 
 		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
@@ -489,7 +502,7 @@ describe("callRenameLLM", () => {
 	});
 
 	it("maxTitleLength 截断生效（config.maxTitleLength 透传给 cleanTitle）", async () => {
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		const longTitle = "一二三四五六七八九十一二三四五六七八九十";
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: longTitle });
 		const result = await callRenameLLM(createCtx(), { ...BASE_CONFIG, maxTitleLength: 5 }, FINAL_MESSAGE);
@@ -504,7 +517,7 @@ describe("callRenameLLM", () => {
 	});
 
 	it("thinkingLevel=off → 不传 reasoning（provider 默认，旧版本行为）", async () => {
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
 		await callRenameLLM(createCtx(), { ...BASE_CONFIG, thinkingLevel: "off" }, FINAL_MESSAGE);
 
@@ -513,7 +526,7 @@ describe("callRenameLLM", () => {
 	});
 
 	it("thinkingLevel=high → 透传 reasoning=high", async () => {
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
 		await callRenameLLM(createCtx(), { ...BASE_CONFIG, thinkingLevel: "high" }, FINAL_MESSAGE);
 
@@ -546,7 +559,7 @@ describe("callRenameLLM A1 日志", () => {
 	it("TC2: callLLM {ok:false} → console 输出 '[rename-session] rename LLM call failed: <error>'，返回 null", async () => {
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		try {
-			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 			vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
 			const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 			expect(result).toBeNull();
@@ -559,7 +572,7 @@ describe("callRenameLLM A1 日志", () => {
 	it("TC2b: callLLM {ok:false} → 不输出 'rename with model' 成功日志（B2 位置修正：成功日志已移到 result.ok 分支后），但仍输出 failed 日志", async () => {
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		try {
-			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 			vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
 			const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 			expect(result).toBeNull();
@@ -580,7 +593,7 @@ describe("callRenameLLM A1 日志", () => {
 	it("TC3: callLLM 成功 → console 输出 '[rename-session] rename with model <provider>/<modelId>'（B3 带 provider 前缀），返回标题", async () => {
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		try {
-			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 			vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "修复登录bug" });
 			const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 			expect(result).toBe("修复登录bug");

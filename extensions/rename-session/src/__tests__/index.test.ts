@@ -1,5 +1,6 @@
 /* eslint-disable taste/no-unsafe-cast */
 
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -42,7 +43,19 @@ interface MockSetup {
 	turnEndHandler: (event: unknown, ctx: ExtensionContext) => void | Promise<void>;
 }
 
-const STUB_MODEL = { id: "stub-model", provider: "stub" };
+/** resolveModel 的合法 Model<Api> 常量（pi-ai Model 接口全字段，消除 unsafe-cast 强断言）。 */
+const STUB_MODEL: Model<Api> = {
+	id: "stub-model",
+	name: "Stub Model",
+	api: "anthropic-messages",
+	provider: "stub",
+	baseUrl: "https://stub.invalid",
+	reasoning: false,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 128_000,
+	maxTokens: 4096,
+};
 
 const ENABLED_CONFIG: RenameSessionConfig = {
 	enabled: true,
@@ -215,7 +228,7 @@ describe("renameSessionExtension", () => {
 		vi.stubEnv("PI_RENAME_DEBUG", "1");
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		// ok:false 即可满足断言需要（callLLM 被调 + 不落库），聚焦触发判定本身
 		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "by-design", recoverable: true });
 
@@ -291,7 +304,7 @@ describe("renameSessionExtension", () => {
 
 	it("LTC8: callLLM 返回 {ok:false} → callRenameLLM 返回 null，不调 setSessionName", async () => {
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
 
 		await fire(setup, createMockCtx());
@@ -314,7 +327,7 @@ describe("renameSessionExtension", () => {
 
 	it("LTC10: callLLM 返回 {ok:true,content} → cleanTitle 后 setSessionName 落库", async () => {
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "  修复登录bug  " });
 
 		await fire(setup, createMockCtx());
@@ -327,7 +340,7 @@ describe("renameSessionExtension", () => {
 
 	it("LTC11: callLLM 返回空 content（cleanTitle 空串）→ 不调 setSessionName", async () => {
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "   " });
 
 		await fire(setup, createMockCtx());
@@ -338,7 +351,7 @@ describe("renameSessionExtension", () => {
 
 	it("LTC12: callLLM reject → handler 不抛，setSessionName 未调用（detached catch 兜底）", async () => {
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockRejectedValue(new Error("llm down"));
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -365,7 +378,7 @@ describe("renameSessionExtension", () => {
 		vi.stubEnv("PI_RENAME_DEBUG", "1");
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		// deferred promise 打开 LLM 调用窗口（不 mock llm.js，在 pi-llm-shared 的 callLLM 边界拦截）
 		let resolveLLM!: (value: { ok: true; content: string }) => void;
 		vi.mocked(callLLM).mockImplementation(
@@ -393,7 +406,7 @@ describe("renameSessionExtension", () => {
 		vi.stubEnv("PI_RENAME_DEBUG", "1");
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "自动生成的标题" });
 
 		await fire(setup, createMockCtx());
@@ -422,7 +435,7 @@ describe("renameSessionExtension", () => {
 		vi.stubEnv("PI_RENAME_DEBUG", undefined);
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
-		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 
 		// 组1：有内容 → 全流程落库
 		vi.mocked(callLLM).mockResolvedValueOnce({ ok: true, content: "标题一" });

@@ -42,14 +42,23 @@ function toGate(result) {
 	}
 }
 
-// timeout 按实测耗时 3 倍以上余量：A1 11.4s / A2 192.2s / A3 33.3s / A4 11.7s / A5 34.1s。
-// A2 用 2100s：2026-08-15 实测模型延迟系统性变慢（前日 A2 全程 192s，当日单 case 超 300s
-// 两次击穿旧上限），run-a2.mjs 场景内 settled 上限随之调至 600s；本值按新理论最坏
-// （3 case × (settled 600s + rename wait 45s + spawn 开销) ≈ 1950s）取整。
+// 包装超时按「场景内部等待最坏和 × 1.2 余量」取值（模型延迟变慢日也会被 vitest 掐断的场景，
+// 独立 runner 能跑完——wrapper 契约必须 ≥ 场景契约，否则 spawnPi 子进程/tmp 在 finally 前泄漏）：
+//   A1：settled/message_end 并行 180s + renamed 45s + 落盘轮询 10s = 235s → ×1.2 ≈ 282s
+//   A2：3 case × (settled 600s + rename 45s + spawn) ≈ 1950s（2026-08-15 单 case 超 300s
+//       击穿旧上限两次，settled 随之调至 600s）→ 取 2100s
+//   A3：3a+3c = 180+45+10.5+180+45 = 460.5s；3b 最坏 3 次尝试 × (180+180+45+10.5) = 1246.5s
+//       → 合计 1707s → ×1.2 ≈ 2049s → 取 2100s
+//   A4：阶段1（errEnd/settled 并行 120s + skip 45s）= 120s + 阶段2（180+120+45+10）= 355s
+//       → 合计 520s → ×1.2 = 624s
+//   A5：stopEnd/settled 并行 120s + LLM request 30s + 超时失败 45s = 195s → ×1.2 = 234s
+// 清理兜底说明：各 run-aN 场景函数内部 try/finally 已负责 pi/fixture 清理；wrapper 超时
+// ≥ 内部最坏和后 vitest 不会在场景自身清理前掐断，无需额外 afterEach（场景句柄不外泄，
+// 全局注册表需改 harness 内部，成本与收益不成比例）。
 describe("E2E 场景 A1-A5（真实 pi + 真实模型）", () => {
 	it("A1 工具型首轮：round 末触发 + 两段输入证据链", async () => {
 		toGate(await runA1());
-	}, 120_000);
+	}, 300_000);
 
 	it("A2 slug 标题风格：中文 / 英文 / 跟进型 ×3 prompt 标题守卫", async () => {
 		toGate(await runA2());
@@ -57,13 +66,13 @@ describe("E2E 场景 A1-A5（真实 pi + 真实模型）", () => {
 
 	it("A3 防覆盖手动命名：3a 静态 + 3b 竞态 + 3c 一次性语义", async () => {
 		toGate(await runA3());
-	}, 120_000);
+	}, 2_100_000);
 
 	it("A4 error 轮不命名 + --session 续跑后下一成功轮命名", async () => {
 		toGate(await runA4());
-	}, 120_000);
+	}, 630_000);
 
 	it("A5 超时兜底：hang provider 30s 超时不落库 + pi 存活", async () => {
 		toGate(await runA5());
-	}, 120_000);
+	}, 240_000);
 });

@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import type { Message } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { callLLM, resolveModel } from "@zhushanwen/pi-llm-shared";
 
@@ -107,6 +107,16 @@ export function truncateForTitle(
 }
 
 /**
+ * 合成 assistant 条目的输入侧类型：剥掉 pi 输出侧记账必填字段
+ * （api/provider/model/usage/stopReason/timestamp），只留输入路径消费的字段。
+ * 构造处标注本类型——多写/漏写字段（如误加 usage）编译报错；最终单点 as Message。
+ */
+type AssistantTextInput = Omit<
+	AssistantMessage,
+	"api" | "provider" | "model" | "usage" | "stopReason" | "timestamp"
+>;
+
+/**
  * 构造标题 LLM 的 messages：[user(prompt), assistant(finalText 仅非空时), user(instruction)]（设计 D1）。
  * 两段文本信号（任务意图 + 轮次结论）恰好与标题语义对齐，不含 toolCall/toolResult 等过程数据。
  * finalText 为空（纯工具结束的 round）时降级为两条——标题主信号本就是 prompt，不因此跳过 rename。
@@ -124,10 +134,11 @@ export function buildTitleMessages(
 		// （已核 anthropic-messages/google-shared/openai-completions 三家 convertMessages：
 		// assistant 输入只读 role + content blocks；google 对 msg.provider/model 的读取仅在
 		// thinking 块保留分支，本合成条目 text-only 不经过）→ 单点 as Message（沿用项目既有注释惯例）。
-		messages.push({
+		const assistantText: AssistantTextInput = {
 			role: "assistant",
 			content: [{ type: "text", text: finalText }],
-		} as Message);
+		};
+		messages.push(assistantText as Message);
 	}
 	messages.push({
 		role: "user",

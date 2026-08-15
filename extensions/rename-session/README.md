@@ -26,7 +26,8 @@ pi install npm:@zhushanwen/pi-rename-session
 {
   "enabled": true,
   "model": { "type": "scoped" },
-  "maxTitleLength": 50
+  "maxTitleLength": 50,
+  "thinkingLevel": "off"
 }
 ```
 

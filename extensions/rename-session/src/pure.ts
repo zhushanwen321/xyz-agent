@@ -48,6 +48,14 @@ const THINKING_LEVELS: readonly ModelThinkingLevel[] = [
 	"max",
 ];
 
+/**
+ * 类型谓词：unknown 是否为合法 thinking 级别（normalizeRenameConfig 校验用，单点断言）。
+ * includes 运行时兜底 + 类型收窄，调用方无需再断言。
+ */
+function isThinkingLevel(raw: unknown): raw is ModelThinkingLevel {
+	return typeof raw === "string" && (THINKING_LEVELS as readonly string[]).includes(raw);
+}
+
 /** 默认配置：关闭、scoped 选模、标题上限 50、不启用 thinking。 */
 export const DEFAULT_RENAME_CONFIG: RenameSessionConfig = {
 	enabled: false,
@@ -128,11 +136,9 @@ export function normalizeRenameConfig(raw: unknown): RenameSessionConfig {
 
 	const model = normalizeModelSelector(obj.model) ?? DEFAULT_RENAME_CONFIG.model;
 
-	const thinkingLevel =
-		typeof obj.thinkingLevel === "string" &&
-		(THINKING_LEVELS as readonly string[]).includes(obj.thinkingLevel)
-			? (obj.thinkingLevel as ModelThinkingLevel)
-			: DEFAULT_RENAME_CONFIG.thinkingLevel;
+	const thinkingLevel = isThinkingLevel(obj.thinkingLevel)
+		? obj.thinkingLevel
+		: DEFAULT_RENAME_CONFIG.thinkingLevel;
 
 	return { enabled, model, maxTitleLength, thinkingLevel };
 }

@@ -181,6 +181,14 @@ export async function runA1() {
 				"JSONL 中无 stop assistant 文本（finalText 为空）",
 			);
 			const rebuilt = rebuildPreview(finalText);
+			// 同构前提：finalText ≤ 4000 码点（truncateForTitle 截断上界）——真实日志链路是
+			// previewText(truncateForTitle(finalText))，超过上界时截断版尾部（码点 3901-4000）
+			// ≠ 全文尾部（码点 N-99..N），rebuildPreview 对原始文本的 preview 断言会假失败。
+			// 取舍：不引入 mjs↔ts 同构截断函数（避免扩大维护面），改为前置断言锁定输入规模。
+			assert(
+				Array.from(finalText).length <= 4000,
+				`finalText 超过 4000 码点（${Array.from(finalText).length}），rebuildPreview 同构断言前提失效`,
+			);
 			assert(
 				messages[1].text === rebuilt,
 				`内容不匹配（中途触发或注入内容错误）:\n  日志 assistant 段: ${JSON.stringify(messages[1].text)}\n  重构 preview:    ${JSON.stringify(rebuilt)}`,
