@@ -277,4 +277,40 @@ describe('createUseChat factory 行为', () => {
     expect(f.toast.error).toHaveBeenCalled()
     f.dispose()
   })
+
+  // ── D-2 token 合帧接线（W12）：经 streamSubscribe 回调 → coalescer → store 全链路 ──
+
+  it('D-2 接线：同窗口 N 条 text_delta 只进一次 applyMessageEvent，内容有序拼接', async () => {
+    const f = makeFixture()
+    await f.useChat.send('s20', textToSegments('hi'))
+    f.emit('s20', msg('s20', 'message.message_start', { messageId: 'a1' }))
+    const applySpy = vi.spyOn(f.chatStore, 'applyMessageEvent')
+    f.emit('s20', msg('s20', 'message.text_delta', { delta: 'He', contentIndex: 0 }))
+    f.emit('s20', msg('s20', 'message.text_delta', { delta: 'll', contentIndex: 0 }))
+    f.emit('s20', msg('s20', 'message.text_delta', { delta: 'o', contentIndex: 0 }))
+    expect(applySpy).not.toHaveBeenCalled() // microtask 前全部缓冲中
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
+    expect(applySpy).toHaveBeenCalledTimes(1) // N 条 → 1 次合成提交
+    const last = f.chatStore.getMessages('s20').at(-1)
+    expect(last?.content).toBe('Hello')
+    // contentIndex 透传：text contentBlock 带 contentIndex（R-18）
+    expect(last?.contentBlocks?.some((b) => b.type === 'text' && b.contentIndex === 0)).toBe(true)
+    f.dispose()
+  })
+
+  it('D-2 接线：message.complete 到达时同步 flush（先 delta 后终态，不等 microtask）', () => {
+    const f = makeFixture()
+    void f.useChat.send('s21', textToSegments('hi'))
+    f.emit('s21', msg('s21', 'message.message_start', { messageId: 'a1' }))
+    f.emit('s21', msg('s21', 'message.text_delta', { delta: 'par' }))
+    f.emit('s21', msg('s21', 'message.text_delta', { delta: 'tial' }))
+    // complete 不带 content（权威覆盖关闭）→ content 只能来自 flush 落地的 delta 累积。
+    // 若 flush 未先于 complete 执行，sealed 守卫（isLastAssistantStreaming）会丢弃 delta，content 为空。
+    f.emit('s21', msg('s21', 'message.complete', { stopReason: 'end_turn' }))
+    const last = f.chatStore.getMessages('s21').at(-1)
+    expect(last?.content).toBe('partial') // flush 先行证据：delta 累积值已落地
+    expect(last?.status).not.toBe('streaming') // complete 同步收口
+    expect(f.chatStore.isGenerating('s21')).toBe(false)
+    f.dispose()
+  })
 })

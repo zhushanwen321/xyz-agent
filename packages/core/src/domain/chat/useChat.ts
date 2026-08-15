@@ -28,6 +28,7 @@ import {
 } from '../../coordination/subscription-state'
 import type { ChatStoreInstance } from './store'
 import type { ChatApiPort, WriteSegmentsFn } from './api-port'
+import { createMessageCoalescer } from './delta-coalescer'
 
 /**
  * SessionStoreLike —— useChat 消费 session store 的最小结构类型。
@@ -94,6 +95,17 @@ export interface UseChatDeps {
 const streamSubscriptions = new Map<string, () => void>()
 
 /**
+ * D-2 token 合帧器（W12，perf 07 §3.3.1 (7)）：模块级单例（与 streamSubscriptions 同模式）。
+ *
+ * 为什么模块级而非 per-subscription 实例：合帧窗口跨 sid 共享同一个 microtask
+ * （异 sid 各自独立缓冲 key，互不阻塞），且 dispatch 闭包随消息携带（buffer 记首条的），
+ * coalescer 自身不绑定 store 实例——多 fixture/多 store 场景天然安全。
+ * 生命周期：enqueue 于 streamSubscribe 回调（下方）、flush(sid) 于 disposeSession（收口兜底）、
+ * clear 于 resetChatModuleStateForTest（测试隔离）。
+ */
+const coalescer = createMessageCoalescer()
+
+/**
  * W4/N1：记录哪些 session 的历史被尾读截断了（有更早的 turn 可加载）。
  * MessageStream 据此显隐「加载更多历史」按钮。hydrate 时设置。
  * 用 ref<Set> 保证响应式（MessageStream 的 computed showLoadMore 能自动更新）。
@@ -133,6 +145,9 @@ export function resetChatModuleStateForTest(): void {
     }
   }
   streamSubscriptions.clear()
+  // D-2：清 coalescer 待刷缓冲——残留 buffer 会把上一用例 fixture 的 dispatch 闭包
+  // （指向已 dispose 的 store）带进下一用例的 microtask flush，跨 fixture 污染。
+  coalescer.clear()
   // 重置 history 截断标记
   historyTruncatedSessions.value = new Set()
   // MF-1：清 manual compact 标记（测试间不 reset 会泄漏到下一用例）
@@ -186,8 +201,11 @@ export function ensureStreamSubscription(
     // applyMessageEvent 内部经 effect 注册表执行该 type 的全部副作用（chunk 状态更新
     // + finalizeSession 收口），useChat 不再自己 switch message.*。message.* 处理完即 return，
     // 下方 session.* 分支仅处理跨 store 事件（compacting/renamed 等）。
+    // [D-2/W12] text/thinking delta 经 coalescer microtask 合帧（同 sid 同 type 保序合并）；
+    // 非 delta 消息在 coalescer 内先 flush 该 sid 缓冲再同步 dispatch（终态即时，保序）。
+    // 只改 message.* 分发路径，订阅编排（streamSubscriptions/subscribeSession）不动。
     if (msg.type.startsWith('message.')) {
-      chat.applyMessageEvent(sid, msg)
+      coalescer.enqueue(sid, msg, (m) => chat.applyMessageEvent(sid, m))
       return
     }
     // session.* → 跨 store 协调（sessionStore.updateLabel/updateSessionState/setCompacting），
@@ -648,6 +666,9 @@ export function createUseChat(deps: UseChatDeps) {
       unsub()
       streamSubscriptions.delete(sessionId)
     }
+    // D-2：收口兜底——unsub 后不会再有新消息入缓冲，把该 sid 残留 delta 落地后再删分区。
+    // 用 flush(sid) 而非 flushAll：其他 session 的合并窗口不应被本 session 的销毁提前打断。
+    coalescer.flush(sessionId)
     clearHistoryTruncated(sessionId) // SUGGESTION：已删 session 的截断标记不再有意义
     manualCompactionState.delete(sessionId) // MF-1：清 manual compact 标记
     // wave:renderer-subscribe：清除 MessageBus 订阅状态（SubscriptionState）。
