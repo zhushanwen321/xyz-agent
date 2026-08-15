@@ -267,6 +267,8 @@ pi.on("turn_end", async (event, ctx) => {
 			// 防 LLM 调用窗口竞态：落库前重查（D5）
 			if (pi.getSessionName()) { debug日志 "skip: name exists"; return; }
 			pi.setSessionName(title);
+			// 落库后打出（handler 侧，带 t= + turnIndex=；竞态命中时只打 skip、无此行）
+			debug日志 `renamed to "${title}"`;
 		})
 		.catch((e) => console.error("[pi-rename-session] rename LLM failed:", e));
 });

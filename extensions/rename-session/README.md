@@ -128,6 +128,7 @@ rename-session/
 │   ├── harness.test.mjs  # 断言纯函数单测（随 vitest 跑）
 │   ├── run-a1.mjs ~ run-a5.mjs   # A1-A5 场景脚本
 │   ├── run-all.mjs       # 总结 runner（汇总 + exit code）
+│   ├── scenarios.test.mjs        # A1-A5 的 vitest 包装（仅 e2e config 收录，不进常规 CI）
 │   ├── vitest.e2e.config.ts  # E2E 专用 vitest 入口（--config 显式指定，include 含 scenarios.test.mjs）
 │   └── RESULTS.md        # A2 标题记录 + 人工抽查表
 ├── skills/rename-session-ext-config/SKILL.md   # 配置指南（pi 内 agent 可发现）

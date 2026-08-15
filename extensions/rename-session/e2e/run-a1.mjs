@@ -3,7 +3,7 @@
  * A1 场景：工具型首轮 —— 触发时机 + 输入内容证据链（设计 §8.3 A1 / 契约 C1）。
  *
  * 流程：真实 pi + mimo，在有 ts 文件的 fixture 目录发「列出当前目录的 ts 文件并统计行数」
- * （触发多 iteration 工具调用），round 完成后等 rename 落库，然后四重断言：
+ * （触发多 iteration 工具调用），round 完成后等 rename 落库，然后五重断言：
  *   ① 流序判别（主）：交错时间轴上 LLM request 行之后无任何 turn_start/message_start/
  *      message_end/turn_end 事件（中途触发的特征是其后仍有后续 turn 事件）；时刻辅助
  *      t(LLM request) ≥ t(最终 message_end) − 1s；round 中间 iteration 的 turn_end 后
