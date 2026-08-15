@@ -249,7 +249,9 @@ export class BgNotifier {
         // 成功完成（user-close）或通用结束（gc/parent-shutdown 等）：展示结果。
         const base = `Subagent "${agent}" (${id}) completed. Result:\n${record.result ?? "(empty)"}`;
         if (record.patchFile) {
-          return `${base}\n\nThis subagent ran in an isolated worktree; its file changes were captured as a patch:\n  ${record.patchFile}\nTo bring these changes into the current repo, run: \`git apply ${record.patchFile}\`${transcriptPointer}`;
+          // [wave2 review] 长 return 拆行：模板串内不可直接换行（会改变输出内容），提取 patchHint 中转变量
+          const patchHint = `\n\nThis subagent ran in an isolated worktree; its file changes were captured as a patch:\n  ${record.patchFile}\nTo bring these changes into the current repo, run: \`git apply ${record.patchFile}\``;
+          return `${base}${patchHint}${transcriptPointer}`;
         }
         // 失败场景（gc + 有 error）：展示错误。
         if (record.error && reason === "gc") {

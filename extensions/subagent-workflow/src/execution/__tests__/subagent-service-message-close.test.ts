@@ -142,9 +142,10 @@ describe("closeSubagent 行为分流", () => {
   let agentDir: string;
   let service: SubagentService;
   let store: RecordStore;
+  let pi: MockPi;
 
   beforeEach(() => {
-    ({ agentDir, service, store } = setup());
+    ({ agentDir, service, store, pi } = setup());
   });
 
   afterEach(() => {
@@ -239,6 +240,9 @@ describe("closeSubagent 行为分流", () => {
     expect(record.status).toBe("closed");
     expect(record.closedReason).toBe("user-close");
     expect(store.getMutable(record.id)).toBeUndefined();
+    // [C2TC2] close 后无新增通知的 unit 级断言（closeChatIdle 只终态化，终态通知发送点
+    // 不存在）——与 Path A 消费点用例（closeAfterRoundSettled）补齐两路径 unit 覆盖
+    expect(pi.sendMessage).not.toHaveBeenCalled();
   });
 
   // ── [M6] cancelBackground 显式 kill（chatMode 热路径轮中 cancel）────────

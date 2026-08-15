@@ -28,7 +28,7 @@
 - 第 3 条同时含 ROUND1 与 ROUND2：通过（且含 ROUND3，全量语义下第 k 条含前 k 轮全部）
 - 三条长度逐条叠加增长（145/198/251，量级 1L/2L/3L）：通过
 
-数字分解：145 = 94（通知头）+ 51（R1）；198 = 145 + 53（`\n\n` + R2）；251 = 198 + 53（`\n\n` + R3）。N 轮下第 k 条通知体积 ∝ 94 + 53k，总体积 O(N²)。
+数字分解：145 = 94（通知头）+ 51（R1）；198 = 145 + 53（`\n\n` + R2）；251 = 198 + 53（`\n\n` + R3）。N 轮下第 k 条通知体积 = 92 + 53k（k=1 代入 145、k=2 代入 198，均与实测吻合），总体积 O(N²)。
 
 采集产物（临时目录，不随 commit）：`/tmp/c1t0-baseline/`（pi-stdout.jsonl 事件流 / pi-stderr.log / notifies.json 三条通知原文 / event-summary.json）。
 
@@ -59,7 +59,7 @@ Subagent "general-purpose" (sa-3da92d97-…) finished a round. Reply:\nROUND1-T7
 
 长度分解：321 = 94（通知头）+ 51（当轮标记）+ 2（`\n\n`）+ 17（`Full transcript: `）+ 157（子 session 绝对路径）。
 
-总量说明（如实记录，修正预留节的 435 预期）：3 轮总量 963 > 基线 594——指针行是每条通知的固定开销（本环境 176 字符，随路径长度变化），预留节的「≈145×3=435 量级」预期未计指针行。增长阶才是判定锚点：wave2 每条 = 94+L+176 固定 → 总量 O(N)；基线第 k 条 = 94+53k → 总量 O(N²)。固定开销回本点 ≈ N=7（321N vs 94N+53·N(N+1)/2），N≥7 后 wave2 总量低于基线且差距随 N 扩大。
+总量说明（如实记录，修正预留节的 435 预期）：3 轮总量 963 > 基线 594——指针行是每条通知的固定开销（本环境 176 字符，随路径长度变化），预留节的「≈145×3=435 量级」预期未计指针行。增长阶才是判定锚点：wave2 每条 = 94+L+176 固定 → 总量 O(N)；基线第 k 条 = 92+53k → 总量 O(N²)。固定开销回本点 ≈ N=7.6（321N vs 92N+53·N(N+1)/2）：N=7 时 wave2 总量 321×7=2247 仍高于基线精确值 92×7+53×28=2128，N≥8 起 wave2 总量低于基线且差距随 N 扩大。
 
 ### 场景 4 idle close 现状语义（同一次运行判定，通过）
 
@@ -85,6 +85,6 @@ one-shot background subagent（无 conversation flag）完成通知：
 
 ### ES7 合并窗口检查点（结构性论证关闭，未实测）
 
-单 subagent 协议下每次 notify 时 `hasRunningBackground` 对 timer-armed record 返回 false（subagent-service.ts:543-552，v4 B-1 判定排除 idle 等待续聊态）→ 立即 flush，合并窗口（notifier.ts:205-208 多 pending 拼 `\n\n---\n\n`）结构性不出现。ES7 的多 subagent 并发触发场景超出本 wave 实测预算，为已知未实测项留 feature 层复盘决策。
+单 subagent 协议下每次 notify 时 `hasRunningBackground` 对 timer-armed record 返回 false（subagent-service.ts:543-552，v4 B-1 判定排除 idle 等待续聊态）→ 立即 flush，合并窗口（notifier.ts:210-213 多 pending 拼 `\n\n---\n\n`）结构性不出现。ES7 的多 subagent 并发触发场景超出本 wave 实测预算，为已知未实测项留 feature 层复盘决策。
 
 采集产物（临时目录，不随 commit）：`/tmp/c2t6-run/`（driver.js 驱动 + judge.js 判定 + run-s2/s3/s5 三次运行的 pi-stdout.jsonl / 父子 session 副本路径）。
