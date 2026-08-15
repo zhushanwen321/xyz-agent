@@ -129,8 +129,13 @@ function reapSpawnedChildrenOnShutdown(): void {
   processShutdownHookFired = true;
   try {
     killAllSpawnedChildren("SIGTERM");
-  } catch {
-    // best-effort：收割失败不阻断退出流程
+  } catch (err) {
+    // best-effort：收割失败不阻断退出流程——debug 留痕（孤儿子进程排查线索），
+    // 不静默吞错，对齐「错误必须可操作」。
+    logger.debug(
+      "[subagents] process shutdown reap best-effort failed (killAllSpawnedChildren SIGTERM)",
+      { reason: err instanceof Error ? err.message : String(err) },
+    );
   }
 }
 
@@ -565,8 +570,14 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
         running.map((run) => pauseRun(run.runId, makeDeps(state, _ctx))),
       );
       // dispose 自身恒 resolve，catch 兜底防御——handler 内抛错会中断后续 session
-      // 条目清理。
-      await state.store.dispose().catch(() => {});
+      // 条目清理。不留静默吞错（错误必须可操作）：debug 留痕带 sessionId/sessionDir，
+      // 排查「shutdown 后 run 状态不落盘」类问题时有迹可循。
+      await state.store.dispose().catch((err: unknown) => {
+        logger.debug(
+          `[subagent-workflow] session_shutdown store.dispose failed (sessionId=${sessionId}, sessionDir=${state.sessionDir})`,
+          { reason: err instanceof Error ? err.message : String(err) },
+        );
+      });
       sessionState.delete(sessionId);
     }
 

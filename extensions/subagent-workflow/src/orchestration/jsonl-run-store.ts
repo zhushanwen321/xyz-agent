@@ -242,7 +242,12 @@ export const DEFAULT_SAVE_DEBOUNCE_MS = 200;
  */
 interface PendingSaveBatch {
   latestRun: WorkflowRun;
-  timer: NodeJS.Timeout;
+  /**
+   * 批的去抖 timer。类型上可选（批对象先构造、timer 后赋值再入 Map——timer 回调
+   * 闭包需持有自身批引用做身份守卫，见 save 热路径）；运行时凡从 pending Map 取出
+   * 的批 timer 恒已赋值。
+   */
+  timer?: NodeJS.Timeout;
   settlers: Array<{ resolve: () => void; reject: (e: unknown) => void }>;
 }
 
@@ -354,20 +359,24 @@ export class JsonlRunStore {
     const promise = new Promise<void>((resolve, reject) => {
       settlers.push({ resolve, reject });
     });
-    const timer = setTimeout(() => {
-      // ES3 幂等守卫：Map.delete 交接语义——批已被冷路径/flushPendingSaves/dispose
-      // 原子取走（clearTimeout 与回调触发在 fake timers 下可能交错）时拿不到批，
-      // 拿到者负责 flush，此处直接 return。
-      const batch = this.pending.get(runId);
-      if (!batch) return;
+    // 批对象先构造、timer 后赋值：timer 回调闭包需持有自身批引用做身份守卫。
+    const batch: PendingSaveBatch = { latestRun: run, timer: undefined, settlers };
+    batch.timer = setTimeout(() => {
+      // ES3 幂等守卫（批身份比较）：回调闭包持自身批引用，与 pending Map 现值做
+      // 身份比较而非仅按键存在性判断。除「批已被冷路径/flushPendingSaves/dispose
+      // 原子取走（clearTimeout 与回调触发在 fake timers 下可能交错）」的交接语义外，
+      // 还防「旧 timer 撞新批」交错：本批被取走后同 runId 的新批已入 Map 时，若只看
+      // 键存在性，旧 timer 会误取走新批提前 flush（缩短新批去抖窗口）。身份不匹配
+      // 直接 return，批由取走方负责 flush。
+      if (this.pending.get(runId) !== batch) return;
       this.pending.delete(runId);
       // 孤儿 Promise（无调用方持有）：错误只经 settlers 传播给 save() 调用方，
       // 此处 catch 防止 unhandled rejection。
       this.enqueueFlush(runId, batch.latestRun, batch.settlers, false).catch(() => {});
     }, this.saveDebounceMs);
     // DS5：timer 必须 unref——不 unref 会钉住空转的 extension 进程不退出。
-    timer.unref();
-    this.pending.set(runId, { latestRun: run, timer, settlers });
+    batch.timer.unref();
+    this.pending.set(runId, batch);
     return promise;
   }
 
@@ -434,9 +443,12 @@ export class JsonlRunStore {
       for (const s of settlers) s.resolve();
     } catch (err) {
       // ES9 失败回滚：应写指针的 flush 未写成时回滚首写资格——下次 save 判
-      // !writtenOnce.has 重走冷路径、writePointer 再判 true 重试指针。堵住
+      // !writtenOnce.has(runId) 重走冷路径、writePointer 再判 true 重试指针。堵住
       // 「首写失败后热路径 writePointer 恒 false → 指针永失 → run 对重启后
       // loadAll 不可见」窗口（loadAll 仅经指针发现文件）。
+      // 残余窗口（已知接受）：回滚后若仅剩 writePointer=false 的热批 flush 成功且
+      // 再无任何 save（随即崩溃/退出），指针仍可能缺失——窗口远窄于 ES9 所堵场景，
+      // 由崩溃等价论证覆盖（kill-9 恢复兜底）。
       if (writePointer) {
         this.writtenOnce.delete(runId);
       }

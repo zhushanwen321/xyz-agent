@@ -97,6 +97,12 @@ vi.mock("../orchestration/jsonl-run-store.ts", () => ({
   JsonlRunStore: class {
     loadAll = mockLoadAll;
     save = vi.fn(async () => {});
+    // dispose/flushPendingSaves：session_shutdown handler 会调 state.store.dispose()
+    // （W2C5）。本文件用例不触发 shutdown，防御性补齐防 mock 缺方法 TypeError
+    // （对齐 index-session-start / crash-recovery / index-session-start-identity 三文件口径）。
+    // dispose 真实契约是同步函数返回缓存 Promise——mock 侧保持简单 no-op 即可。
+    dispose = vi.fn(() => Promise.resolve());
+    flushPendingSaves = vi.fn(async () => {});
   },
 }));
 
