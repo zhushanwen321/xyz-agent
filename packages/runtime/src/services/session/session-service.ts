@@ -1052,8 +1052,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const inputTokens = this.getInputTokens(sessionId)
     const { usagePercent, contextLimit } = this.computeUsage(sessionId, `${provider}/${modelId}`)
     // wave:runtime-wiring：session.state_changed 是 session 级状态，双写走 bus + broker。
-    //（state_changed 不在 bus stateTypeKey 占位映射表，仅进 streamRing 不进 stateSnapshot——
-    // 完整映射在后续 wave 扩展，本 wave 不动占位实现，GAP3 决策。）
+    //（wave:perf-w06：state_changed 已入 bus 的 STATE_TYPE_KEY_MAP（D5-2 补全，修 ADR-0055 3b）——
+    // publish 分配 seq 写 stateSnapshot、不入 streamRing，重连由 stateSnapshot 恢复。）
     const stateMsg: ServerMessage = {
       type: 'session.state_changed',
       id: `push_${Date.now()}`,
@@ -1385,9 +1385,9 @@ async function readSegmentsMetadataFile(sessionId: string): Promise<SegmentsMeta
  * agent call 的 trace.sessionId 是 subagentId sa-xxx，两方法改复用 getSubagentHistory 的
  * record.sessionFile 路径——sa-xxx 经主 session JSONL 的 subagent record 定位，不按 header.id
  * 扫目录）。保留作参考：按 header.id 扫 subagents/<encCwd>/sessions/ 匹配 uuidv7 的直查场景
- * 若未来需要可复用。
+ * 若未来需要可复用。`_` 前缀标记有意保留的未引用符号（ESLint no-unused-vars 的 /^_/u 豁免）。
  */
-function findAgentCallFile(mainCwd: string, agentCallSessionId: string, sessionStore: ISessionStore): string | null {
+function _findAgentCallFile(mainCwd: string, agentCallSessionId: string, sessionStore: ISessionStore): string | null {
   let dir: string
   try {
     dir = getSubagentSessionDir(mainCwd)

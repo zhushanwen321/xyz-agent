@@ -320,10 +320,16 @@ export class SessionMessageHandler {
       case 'session.subscribe': {
         // wave:runtime-wiring（IF6）：订阅某 session 的 live 事件流。
         // 调 bus.subscribe 注册当前 ws 为订阅者 + 拉 ring 全量 snapshot + stateSnapshot + 最新 seq。
-        // fromSeq 可选（重连场景）：若提供且 < ring 最旧 seq（旧消息已被 FIFO 淘汰）→ gap=true
+        // fromSeq 可选（重连场景）：若提供且 < ring 最旧 seq（旧 stream 消息已被环形覆盖淘汰）→ gap=true
         // 返全量 snapshot；否则过滤 snapshot 只返 seq > fromSeq 的（增量 backfill）。
-        // stateSnapshot（wave:remove-bandaids）是 4 个 state topic 的 last-value，不受 fromSeq
+        // stateSnapshot（wave:remove-bandaids）是 state topic 的 last-value，不受 fromSeq
         // 增量过滤影响（last-value 语义无历史概念），renderer 始终拿到最新状态 reconcile。
+        //
+        // gap 判定基准（wave:perf-w06，R-03）：本 handler 是 gap 的唯一判定点——
+        // `fromSeq < snapshot[0].seq（ring 最旧 seq）`。D5 topic 分类后 ring 只存 stream 类
+        // （state 类分配 seq 但不入 ring、由 stateSnapshot 覆盖重连；transient 类不分配 seq），
+        // 该判定语义自洽：state 消息不入 ring 不产生「假最旧 seq」，混合 session 正常重连
+        // （fromSeq ≥ ring 最旧）不误报 gap；只有 ring 真实溢出（长断线）才 gap=true 全量重拉。
         const { sessionId, fromSeq } = msg.payload
         const bus = this.ctx.messageBus
         if (!bus) {
@@ -340,6 +346,7 @@ export class SessionMessageHandler {
             gap = true
           } else {
             // 增量模式：过滤掉 seq <= fromSeq 的（已处理过的），只返 seq > fromSeq。
+            // state 消息不在 ring 内，其增量覆盖由 stateSnapshot（last-value）保证。
             snapshot = snapshot.filter(m => (m.seq ?? 0) > fromSeq)
           }
         }
