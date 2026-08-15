@@ -242,3 +242,103 @@ describe("BgNotifier dedup 按轮次（G1 决策 9：对话模式豁免 60s dedu
 		expect(host.sendMessageCalls).toHaveLength(1);
 	});
 });
+
+describe("BgNotifier buildLlmContent 指针行（wave2：chatMode sessionFile 透传）", () => {
+	let host: ReturnType<typeof makeMockHost>;
+	let notifier: BgNotifier;
+
+	beforeEach(() => {
+		host = makeMockHost();
+		// hasRunningBackground=false → notify 立即 flush，sendMessageCalls 恰 1 条
+		notifier = new BgNotifier(host);
+	});
+
+	afterEach(() => {
+		notifier.dispose();
+	});
+
+	/** 取唯一一条已发消息的 content（前置断言恰 1 条）。 */
+	function sentContent(): string {
+		expect(host.sendMessageCalls).toHaveLength(1);
+		return (host.sendMessageCalls[0]!.message as { content: string }).content;
+	}
+
+	it("running（轮次通知）+ sessionFile → 末尾追加 \\n\\n 空行分隔的指针行", () => {
+		notifier.notify({
+			id: "sa-ptr-1", status: "running", agent: "w", round: 1, result: "round1 text",
+			sessionFile: "/tmp/sessions/child-1.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe(
+			'Subagent "w" (sa-ptr-1) finished a round. Reply:\nround1 text' +
+			"\n\nFull transcript: /tmp/sessions/child-1.jsonl",
+		);
+	});
+
+	it("closed 成功文案 + sessionFile → 指针行追加在最终串末尾", () => {
+		notifier.notify({
+			id: "sa-ptr-2", status: "closed", agent: "w", result: "final result",
+			sessionFile: "/tmp/sessions/child-2.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe(
+			'Subagent "w" (sa-ptr-2) completed. Result:\nfinal result' +
+			"\n\nFull transcript: /tmp/sessions/child-2.jsonl",
+		);
+	});
+
+	it("closed + patchFile + sessionFile → 指针行追加在 patch 提示串末尾（最终串）", () => {
+		notifier.notify({
+			id: "sa-ptr-3", status: "closed", agent: "w", result: "did work",
+			patchFile: "/tmp/patches/sa-ptr-3.patch",
+			sessionFile: "/tmp/sessions/child-3.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		const content = sentContent();
+		expect(content).toContain("git apply /tmp/patches/sa-ptr-3.patch");
+		expect(content.endsWith("\n\nFull transcript: /tmp/sessions/child-3.jsonl")).toBe(true);
+	});
+
+	it("sessionFile 缺失 → 省略整行（running 通知正文与无指针形态逐字节一致）", () => {
+		notifier.notify({
+			id: "sa-ptr-4", status: "running", agent: "w", round: 2, result: "round2 text",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe('Subagent "w" (sa-ptr-4) finished a round. Reply:\nround2 text');
+	});
+
+	it("cancelled → 不追加指针行（即使 sessionFile 有值）", () => {
+		notifier.notify({
+			id: "sa-ptr-5", status: "closed", closedReason: "cancelled", agent: "w",
+			sessionFile: "/tmp/sessions/child-5.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe('Subagent "w" (sa-ptr-5) cancelled.');
+	});
+
+	it("gc-failed（closed + closedReason=gc + error 有值）→ 不追加指针行", () => {
+		notifier.notify({
+			id: "sa-ptr-6", status: "closed", closedReason: "gc", agent: "w",
+			error: "spawn EPIPE",
+			sessionFile: "/tmp/sessions/child-6.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe('Subagent "w" (sa-ptr-6) failed: spawn EPIPE');
+	});
+
+	it("one-shot（sessionFile 未透传 → undefined）→ closed 通知与改造前逐字节一致（基线常量锚定）", () => {
+		notifier.notify({
+			id: "sa-ptr-7", status: "closed", agent: "worker", result: "done",
+			startedAt: 1, endedAt: 2,
+		});
+
+		// 改造前形态：sessionFile undefined 时指针为空串，追加不改变输出——逐字节锁定
+		expect(sentContent()).toBe('Subagent "worker" (sa-ptr-7) completed. Result:\ndone');
+	});
+});

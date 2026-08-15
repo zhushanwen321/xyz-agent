@@ -201,5 +201,12 @@ describe("[N2] chatMode 轮次通知正文：真实 session-runner 链路", () =
     child.emit("close", 0);
     await new Promise((r) => setTimeout(r, 30));
     expect(pi.sendMessage).toHaveBeenCalledTimes(1);
+
+    // [C2] close 现状语义扩展：终态化不再发新通知（总数仍 1），末条轮次通知含
+    // Full transcript 指针行——真实链路 sessionHeader 已回填 record.sessionFile
+    //（session-runner.ts:1039），chatMode:true 经 toNotifyRecord 条件透传到通知正文。
+    const lastMsg = pi.sendMessage.mock.calls[0]![0] as { content: string; details?: { sessionFile?: string } };
+    expect(lastMsg.details?.sessionFile).toBe(record!.sessionFile);
+    expect(lastMsg.content).toContain(`\n\nFull transcript: ${record!.sessionFile}`);
   });
 });

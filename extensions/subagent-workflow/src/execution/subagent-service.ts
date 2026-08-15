@@ -591,6 +591,11 @@ export class SubagentService {
       round: record.round,
       // SP-1: closedReason 透传给 notifier（L2 原因，供通知文案按需展示）。
       closedReason: record.closedReason,
+      // [wave2] chatMode 条件透传 sessionFile：通知末尾追加 Full transcript 指针行
+      //（增量语义的全文恢复通道，见 notifier.buildLlmContent）。one-shot（chatMode
+      // falsy）不透传——通知输出逐字节不变（G4），该条件由 message-close 测试的
+      // 必选用例锁死（漏加条件时 notifier 单测不红——notifier 层只见最终字段）。
+      sessionFile: record.chatMode ? record.sessionFile : undefined,
     };
   }
 

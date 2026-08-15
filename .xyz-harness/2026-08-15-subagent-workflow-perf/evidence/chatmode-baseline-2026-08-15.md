@@ -32,10 +32,59 @@
 
 采集产物（临时目录，不随 commit）：`/tmp/c1t0-baseline/`（pi-stdout.jsonl 事件流 / pi-stderr.log / notifies.json 三条通知原文 / event-summary.json）。
 
-## wave2 场景 2 对照判定（预留，增量改造合入后回填）
+## wave2 场景 2 对照判定（增量改造 + 指针行合入后实测，2026-08-15 20:39-20:52 本地）
 
-同协议复跑（增量语义下）判定判据：
+采集环境与基线一致（pi 0.84.0 RPC + mimo + `--extension` 本 worktree 源码，PI_EXT_DEBUG=1，临时干净 cwd）。同协议复跑（3 轮 chatMode + close + DONE），判定判据（双向）：
 
-- 第 2 条 content **不含** ROUND1 字样、第 3 条不含 ROUND1/ROUND2
-- 每条只含当轮标记，三条长度大致相等（≈ 94 + 51 = 145 上下）
-- 总量对比本基线（145+198+251=594）显著下降（预期 ≈ 145×3=435 量级）
+- 不重：第 2 条 content **不含** ROUND1 字样、第 3 条不含 ROUND1/ROUND2
+- 不丢：第 k 条 content 含当轮标记 `ROUNDk_TEXT` 正断言（k=1,2,3）
+- 每条末尾 `Full transcript: <path>` 指针行且文件存在
+- 三条长度大致相等（G1 判据 + O(N) 量化锚点）
+
+### 判定结果（全部通过，16/16 断言）
+
+| # | content 长度 | 含当轮标记 | 不含前轮标记 | 指针行 + 文件存在 |
+|---|---|---|---|---|
+| 1 | 321 | ROUND1 是 | （首轮无前置） | 是 |
+| 2 | 321 | ROUND2 是 | 是（无 ROUND1） | 是 |
+| 3 | 321 | ROUND3 是 | 是（无 ROUND1/2） | 是 |
+
+三条通知原文形态（唯一差异是当轮标记）：
+
+```
+Subagent "general-purpose" (sa-3da92d97-…) finished a round. Reply:\nROUND1-T7G2-…-F3S8\n\nFull transcript: /Users/…/subagents/--private-tmp-c2t6-run-run-s2-BAiH93-cwd--/sessions/2026-08-15T12-39-34-575Z_….jsonl
+```
+
+与基线对照：基线 145/198/251（逐条 +53 叠加，第 k 条含前 k 轮全量）→ 321/321/321（每条恰含当轮增量 + 固定指针行）。增量语义实测成立。
+
+长度分解：321 = 94（通知头）+ 51（当轮标记）+ 2（`\n\n`）+ 17（`Full transcript: `）+ 157（子 session 绝对路径）。
+
+总量说明（如实记录，修正预留节的 435 预期）：3 轮总量 963 > 基线 594——指针行是每条通知的固定开销（本环境 176 字符，随路径长度变化），预留节的「≈145×3=435 量级」预期未计指针行。增长阶才是判定锚点：wave2 每条 = 94+L+176 固定 → 总量 O(N)；基线第 k 条 = 94+53k → 总量 O(N²)。固定开销回本点 ≈ N=7（321N vs 94N+53·N(N+1)/2），N≥7 后 wave2 总量低于基线且差距随 N 扩大。
+
+### 场景 4 idle close 现状语义（同一次运行判定，通过）
+
+- 父 close action 调用后父 JSONL **无新增** `subagent-bg-notify` entry（总数仍 3，close 终态化不发自适应通知——现状机制，终态通知发送点不存在，上报 feature 层）
+- 末条轮次通知指针行指向子 session 文件，cat 该文件含 3 轮全部标记（ROUND1/2/3 全文在子 session 中完整保留——增量通知丢全文风险的恢复通道实测可用）
+
+### 场景 3 跨轮暗号（父侧判定，通过，8/8 断言）
+
+编排：子第 1 轮回 ready → 第 2 轮自选暗号 `CODE-K7R2XN9B`（父未预知内容）→ 父第 3 轮 message 文本为 `The secret code you gave was CODE-K7R2XN9B. Repeat exactly that code and nothing else.` → 子第 3 轮重复同一暗号。
+
+- 父第 3 轮 prompt 引用的暗号 == 第 2 轮通知 content 中的暗号（父的唯一信息源是第 2 轮通知文本——增量若丢第 2 轮文本，父无法引用）：通过
+- 第 2 条通知不含第 1 轮文本 ready（增量不重发）：通过
+- 第 3 条通知含同一暗号（子重复）：通过
+
+### 场景 5 one-shot 零影响（通过，4/4 断言，结构级 + 语义级并列）
+
+one-shot background subagent（无 conversation flag）完成通知：
+
+- 结构级：通知 `details` 无 `sessionFile` 字段（keys = id/status/agent/model/result/startedAt/round）：通过
+- 语义级：content 不含指针行；且与改造前形态**逐字节相等**——改造前 `buildLlmContent` 是纯函数，用实际 details 重建 `Subagent "<agent>" (<id>) completed. Result:\n<result>` 与实际 content 完全一致：通过
+
+（首次 s5 跑子进程停在 thinking 无输出属模型侧偶发 hang，重跑通过；同一时段 chatMode 场景正常，与本次改动无关——改动仅在通知构造层，不触子进程推理链路。）
+
+### ES7 合并窗口检查点（结构性论证关闭，未实测）
+
+单 subagent 协议下每次 notify 时 `hasRunningBackground` 对 timer-armed record 返回 false（subagent-service.ts:543-552，v4 B-1 判定排除 idle 等待续聊态）→ 立即 flush，合并窗口（notifier.ts:205-208 多 pending 拼 `\n\n---\n\n`）结构性不出现。ES7 的多 subagent 并发触发场景超出本 wave 实测预算，为已知未实测项留 feature 层复盘决策。
+
+采集产物（临时目录，不随 commit）：`/tmp/c2t6-run/`（driver.js 驱动 + judge.js 判定 + run-s2/s3/s5 三次运行的 pi-stdout.jsonl / 父子 session 副本路径）。

@@ -38,6 +38,11 @@ export interface BgNotifyRecord {
    *  done 时通知文本显式提示 `git apply`，否则 background 子 agent 在隔离 worktree 的改动
    *  会静默丢失——父 LLM 不知 patch 路径，无法应用。 */
   patchFile?: string;
+  /** [wave2] 子 agent session 文件路径（增量语义的全文恢复通道）。
+   *  仅 chatMode 透传（toNotifyRecord 条件透传）——轮次/完成通知末尾追加
+   *  "Full transcript: <path>" 指针行，父 LLM 可按需读全文；one-shot 不透传，
+   *  通知输出逐字节不变。缺失时 buildLlmContent 省略整行。 */
+  sessionFile?: string;
 }
 
 /** notifier 依赖的 pi 最小接口（解耦，便于测试）。 */
@@ -227,6 +232,13 @@ export class BgNotifier {
   private buildLlmContent(record: BgNotifyRecord): string {
     const agent = record.agent;
     const id = record.id;
+    // [wave2 指针行] 增量语义下轮次通知只携带本轮增量，异步 flush 窗口丢失时不可重发
+    //（见 subagent-service.ts onRoundSettled 注释），恢复通道是 session 文件全文。
+    // 仅 chatMode 透传 sessionFile，one-shot 通知不含该行；cancelled/gc-failed 不追加
+    //（无成功结果可读，指针无意义）；缺失时省略整行（追加空串 = 输出逐字节不变）。
+    const transcriptPointer = record.sessionFile
+      ? `\n\nFull transcript: ${record.sessionFile}`
+      : "";
     switch (record.status) {
       case "closed": {
         // v4 B-1: closed 统一终态（含 cancelled）。按 closedReason 派生通知文案。
@@ -237,17 +249,17 @@ export class BgNotifier {
         // 成功完成（user-close）或通用结束（gc/parent-shutdown 等）：展示结果。
         const base = `Subagent "${agent}" (${id}) completed. Result:\n${record.result ?? "(empty)"}`;
         if (record.patchFile) {
-          return `${base}\n\nThis subagent ran in an isolated worktree; its file changes were captured as a patch:\n  ${record.patchFile}\nTo bring these changes into the current repo, run: \`git apply ${record.patchFile}\``;
+          return `${base}\n\nThis subagent ran in an isolated worktree; its file changes were captured as a patch:\n  ${record.patchFile}\nTo bring these changes into the current repo, run: \`git apply ${record.patchFile}\`${transcriptPointer}`;
         }
         // 失败场景（gc + 有 error）：展示错误。
         if (record.error && reason === "gc") {
           return `Subagent "${agent}" (${id}) failed: ${record.error}`;
         }
-        return base;
+        return `${base}${transcriptPointer}`;
       }
       case "running":
         // v4 B-1: 对话模式轮次完成（旧 idle 折入 running）：携带本轮结果送回主 agent，等待下一轮 message。
-        return `Subagent "${agent}" (${id}) finished a round. Reply:\n${record.result ?? "(empty)"}`;
+        return `Subagent "${agent}" (${id}) finished a round. Reply:\n${record.result ?? "(empty)"}${transcriptPointer}`;
     }
   }
 

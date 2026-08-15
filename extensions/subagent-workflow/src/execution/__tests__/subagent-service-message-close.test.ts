@@ -43,12 +43,16 @@ function makeTmpAgentDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "msg-close-svc-"));
 }
 
-function makePi(): PiLike {
-  return {
-    appendEntry: vi.fn(),
-    events: { emit: vi.fn() },
-    sendMessage: vi.fn(),
-  } as unknown as PiLike;
+function makePi(): PiLike & {
+  appendEntry: ReturnType<typeof vi.fn>;
+  events: { emit: ReturnType<typeof vi.fn> };
+  sendMessage: ReturnType<typeof vi.fn>;
+} {
+  return { appendEntry: vi.fn(), events: { emit: vi.fn() }, sendMessage: vi.fn() } as unknown as PiLike & {
+    appendEntry: ReturnType<typeof vi.fn>;
+    events: { emit: ReturnType<typeof vi.fn> };
+    sendMessage: ReturnType<typeof vi.fn>;
+  };
 }
 
 /** 构造 chatMode background record（带 controller，模拟真实 background record）。 */
@@ -74,13 +78,24 @@ interface ServiceInternals {
   sessionRootId: string | null;
 }
 
-function setup(): { agentDir: string; service: SubagentService; store: RecordStore; sessionRootId: string } {
+type MockPi = ReturnType<typeof makePi>;
+
+function setup(): {
+  agentDir: string;
+  service: SubagentService;
+  store: RecordStore;
+  sessionRootId: string;
+  pi: MockPi;
+} {
   const agentDir = makeTmpAgentDir();
   const modelService = new ModelConfigService({ agentDir });
   const service = new SubagentService({ cwd: agentDir, modelService });
-  service.initSession({ pi: makePi(), sessionId: "root-session" });
+  // [C2] pi 提为外层引用（对照 real-chain :139-140 形态）——close 现状语义断言需读
+  // pi.sendMessage.mock.calls（末条通知 content 指针行），内联构造不保留引用。
+  const pi = makePi();
+  service.initSession({ pi, sessionId: "root-session" });
   const internals = service as unknown as ServiceInternals;
-  return { agentDir, service, store: internals.store, sessionRootId: internals.sessionRootId! };
+  return { agentDir, service, store: internals.store, sessionRootId: internals.sessionRootId!, pi };
 }
 
 // ============================================================
@@ -322,5 +337,95 @@ describe("[M5] closeAfterRound 消费点挂 onRoundSettled（chatMode 轮完成�
     expect(record.status).toBe("running"); // 不终态化
     expect(record.round).toBe(1); // round 累加照常
     expect(store.getMutable(record.id)).toBe(record); // 留内存
+  });
+});
+
+// ============================================================
+// [C2 wave2] close 现状语义 + sessionFile 条件透传
+// ============================================================
+
+describe("[C2] close 现状语义 + sessionFile 条件透传", () => {
+  let agentDir: string;
+  let service: SubagentService;
+  let store: RecordStore;
+  let pi: MockPi;
+
+  beforeEach(() => {
+    vi.mocked(getChildByRecord).mockReset();
+    // 默认无活进程（Path B / isResumable 形态）；hasRunningBackground 亦读此 mock
+    vi.mocked(getChildByRecord).mockReturnValue(undefined);
+    ({ agentDir, service, store, pi } = setup());
+  });
+
+  afterEach(() => {
+    service.dispose();
+    _resetLifecycleState();
+    fs.rmSync(agentDir, { recursive: true, force: true });
+  });
+
+  it("close 现状语义：轮次通知（含指针行）发出后 closeAfterRoundSettled 终态化，无新增 sendMessage，末条通知含指针行", async () => {
+    // 现状机制：终态通知发送点不存在（上报 feature 层，本 slice 不新增）——close 只终态化
+    // record，不再发通知。指针断言在 C2T1/C2T2 合入前必 red（无指针行），合入后 green。
+    const internals = service as unknown as { buildSessionRunnerContext(): { onRoundSettled?: (r: ExecutionRecord) => void } };
+    const ctx = internals.buildSessionRunnerContext();
+    const record = makeRecord({ id: "sa-c2-close", status: "running" });
+    record.sessionFile = path.join(agentDir, "c2-close.jsonl");
+    store.register(record);
+    record.closeAfterRound = true; // busy 轮中 close(force:false) 置的标志
+    armIdleTimer(record.id, () => {});
+    try {
+      ctx.onRoundSettled!(record);
+      await vi.waitFor(() => expect(store.getMutable(record.id)).toBeUndefined());
+    } finally {
+      disarmIdleTimer(record.id);
+    }
+
+    // close 后 sendMessage 总数不变（轮次通知 1 条后无新增）
+    expect(pi.sendMessage).toHaveBeenCalledTimes(1);
+    // 末条轮次通知含 Full transcript 指针行（chatMode:true + sessionFile 有值 → 透传）
+    const sent = pi.sendMessage.mock.calls[0]![0] as { content: string };
+    expect(sent.content).toContain(`\n\nFull transcript: ${record.sessionFile}`);
+  });
+
+  it("one-shot 条件透传（R4 必选）：chatMode:false + sessionFile 有值 → 通知不透传 sessionFile、content 无指针行", () => {
+    // 锁死 toNotifyRecord 的 chatMode 条件（C2C2 契约）——漏加条件时 notifier 单测不红
+    //（notifier 层只见最终字段），此用例走真实 SubagentService + toNotifyRecord 路径必红。
+    // 同时服务 C2TC6 结构级断言。
+    const record = makeRecord({ id: "sa-c2-oneshot", status: "running", chatMode: false, result: "done" });
+    record.sessionFile = path.join(agentDir, "c2-oneshot.jsonl");
+    store.register(record);
+
+    // running + 无活进程（getChildByRecord mock undefined）→ isResumable 放行 →
+    // 非 chatMode 映射 closed 通知，立即 flush（无其他 running background）
+    const svc = service as unknown as { notifyComplete(r: ExecutionRecord): void };
+    svc.notifyComplete(record);
+
+    expect(pi.sendMessage).toHaveBeenCalledTimes(1);
+    const msg = pi.sendMessage.mock.calls[0]![0] as {
+      content: string;
+      details?: { sessionFile?: string };
+    };
+    // 结构级：one-shot 通知的 BgNotifyRecord 不含 sessionFile
+    expect(msg.details?.sessionFile).toBeUndefined();
+    // 语义级：正文无指针行，且与改造前逐字节一致（G4）
+    expect(msg.content).not.toContain("Full transcript");
+    expect(msg.content).toBe('Subagent "general-purpose" (sa-c2-oneshot) completed. Result:\ndone');
+  });
+
+  it("chatMode:true 对照透传：isResumable 放行的轮次通知携带 sessionFile + 指针行（漏加 chatMode 条件时本用例红）", () => {
+    const record = makeRecord({ id: "sa-c2-chat", status: "running", result: "round reply" });
+    record.sessionFile = path.join(agentDir, "c2-chat.jsonl");
+    store.register(record);
+
+    const svc = service as unknown as { notifyComplete(r: ExecutionRecord): void };
+    svc.notifyComplete(record);
+
+    expect(pi.sendMessage).toHaveBeenCalledTimes(1);
+    const msg = pi.sendMessage.mock.calls[0]![0] as {
+      content: string;
+      details?: { sessionFile?: string };
+    };
+    expect(msg.details?.sessionFile).toBe(path.join(agentDir, "c2-chat.jsonl"));
+    expect(msg.content).toContain(`\n\nFull transcript: ${path.join(agentDir, "c2-chat.jsonl")}`);
   });
 });
