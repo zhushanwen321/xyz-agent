@@ -5,7 +5,7 @@ E2E wave（P0 探针 + T1 harness + A1-A5 场景）的探针结论与运行指�
 - 测试模型固定 `xiaomi-token-plan-cn/mimo-v2.5-pro`（项目规范，禁 kimi）
 - 本 E2E 定位为**本地人工触发的验收资产**（真实模型 API，不进常规 CI）
 - 场景 runner：`node e2e/run-a1.mjs` ~ `node e2e/run-a5.mjs`（单场景独立可跑）、`node e2e/run-all.mjs`（顺序全跑 + 汇总 + exit code），harness 见 `e2e/harness.mjs`
-- run-all 两种模式：默认全量 A1-A5（真实 pi + 真实模型，约 2-15 分钟，人工验收用）；`E2E_QUICK=1` 只跑 harness 断言工具单测（秒级，cw test gate 用——cw testRunner 硬编码 120s 命令超时，真实模型全量必超；E2E 场景正式验收证据 = RESULTS.md + 各场景跑记录）；vitest 入口等价物：`npx vitest run e2e/scenarios.test.mjs`（A1-A5 各一个 test）
+- run-all 两种模式：默认全量 A1-A5（真实 pi + 真实模型，约 2-15 分钟，人工验收用）；`E2E_QUICK=1` 只跑 harness 断言工具单测（秒级，cw test gate 用——cw testRunner 硬编码 120s 命令超时，真实模型全量必超；E2E 场景正式验收证据 = RESULTS.md + 各场景跑记录）；vitest 入口等价物：`npx vitest run --config e2e/vitest.e2e.config.ts`（A1-A5 各一个 test；专用 e2e config 的 include 才含 scenarios.test.mjs，根 vitest.config.ts 白名单不含，不带 `--config` 直跑会 No test files found）
 
 ## P0 探针结论（2026-08-15 实测）
 
@@ -126,7 +126,7 @@ env PI_CODING_AGENT_DIR=$TMP/agent PI_RENAME_DEBUG=1 \
 [rename-session] rename LLM call failed: unknown error
 ```
 
-**注意**：超时路径 `result.error` 为空串 → 文案落到 `unknown error` 兜底。A5 断言匹配用**行前缀** `rename LLM call failed:`，不要匹配具体超时文案。超时后 pi 进程存活、后续 RPC 正常、session JSONL 无自动 session_info（实测 0 条）。
+**注意**：超时时 callLLM 内部（llm-shared call.ts 的 extractText）将空错误文本归一为 `unknown error`——extension 侧 `result.error ?? "unknown error"` 只兜 null/undefined，空串兜底发生在 llm-shared 层。A5 断言匹配用**行前缀** `rename LLM call failed:`，不要匹配具体超时文案。超时后 pi 进程存活、后续 RPC 正常、session JSONL 无自动 session_info（实测 0 条）。
 
 ## T1 harness 使用指南
 
@@ -137,7 +137,7 @@ env PI_CODING_AGENT_DIR=$TMP/agent PI_RENAME_DEBUG=1 \
 - **断言纯函数**（场景脚本与单测共用）：`rebuildPreview` / `parseLogMessages` / `extractLastStopAssistant` / `assertTitleGuards` / `classifyFailure`
 - **清理**：handle 的 `kill()`（按 PID）与 `cleanup()`（kill + 删 tmp；`E2E_KEEP_TMP=1` 保留现场）
 
-单测：`cd extensions/rename-session && npx vitest run e2e/harness.test.mjs`（vitest include 已加 `e2e/*.test.mjs`）。
+单测：`cd extensions/rename-session && npx vitest run e2e/harness.test.mjs`（根 vitest.config.ts 的 include 白名单精确列 `e2e/harness.test.mjs`；scenarios.test.mjs 只在专用 e2e/vitest.e2e.config.ts 的 include 里）。
 
 环境要求：`~/.pi/agent/auth.json` 存在且含 `xiaomi-token-plan-cn` key（缺失时改用 `XIAOMI_TOKEN_PLAN_CN_API_KEY` env，见探针 1）。
 
@@ -147,8 +147,8 @@ env PI_CODING_AGENT_DIR=$TMP/agent PI_RENAME_DEBUG=1 \
 |---|---|
 | session_info entry 位于 round 全部 entry 之后（佐证 rename 在 round 末触发） | 探针 1 实测行序 |
 | 手动 set_session_name 追加第二条 session_info，**最后一条生效** | 探针 1 实测 |
-| rename 结果日志三条：`renamed to "<title>"` / `rename LLM call failed: <err>` / `skip: <原因>`（no user prompt / title empty / name exists / count=N / stopReason=X） | src/llm.ts + src/index.ts |
-| handler 侧日志带 `turnIndex=<n>`，llm.ts 侧日志不带 | src/index.ts vs src/llm.ts |
+| rename 结果日志三条：`renamed to "<title>"`（src/index.ts，`setSessionName` 之后打出）/ `rename LLM call failed: <err>`（src/llm.ts）/ `skip: <原因>`（no user prompt / title empty 在 llm.ts；name exists / count=N / stopReason=X 在 index.ts） | src/index.ts + src/llm.ts |
+| handler 侧日志带 `turnIndex=<n>`（含 `renamed to`），llm.ts 侧日志不带 | src/index.ts vs src/llm.ts |
 | `turnIndex` 每进程从 0 重新计（--session 续跑后第二轮日志仍 turnIndex=0） | 探针 3 实测 |
 | error 轮：turn_end stopReason=error + errorMessage="Connection error."，pi 存活 | 探针 4 实测 |
-| 超时轮：约 30s 后 `rename LLM call failed: unknown error`（error 空串兜底） | 探针 5 实测 |
+| 超时轮：约 30s 后 `rename LLM call failed: unknown error`（空串归一发生在 llm-shared extractText 层） | 探针 5 实测 |

@@ -61,7 +61,7 @@ pi install npm:@zhushanwen/pi-rename-session
 3. **O(1) 快速路径**：只有 `stopReason === "stop"` 的 turn 才继续——**rename 一定在 round 末触发**（最终 turn 的 message 即最终 assistant 回复，final text 零遍历可得），不会在首个 iteration 中途命名。
 4. **首 round 判定**：session entries 中成功（stop）assistant 回复数 === 1 才触发（后续 round 不重复 rename；error 轮的 assistant 回复不计数，延迟到下一个成功轮）。
 5. **两段输入构造**：`[user(首条 prompt), assistant(最终回复文本), user(instruction)]`——任务意图 + 轮次结论恰好与标题语义对齐，不含 toolCall/toolResult 过程数据；两段文本各截断 4000 Unicode 码点（中文场景约 4k token/段，成本可控且不随工具数增长）。assistant 段为空（纯工具结束的 round）时降级为两条。
-6. **LLM 生成 slug 标题**：独立精简 system prompt（<200 字符的 slug 词组约束 + 正反例 few-shot，非整个 agent prompt）+ `tools: []` + `maxTokens: 64`，按 `config.model` 独立选模发起一次 LLM 调用；固定 30s 超时（超时归一为失败，走静默跳过）。
+6. **LLM 生成 slug 标题**：独立精简 system prompt（<200 字符的 slug 词组约束，非整个 agent prompt）+ instruction（正反例 few-shot，作为追加 user message 发送）+ `tools: []` + `maxTokens: 64`，按 `config.model` 独立选模发起一次 LLM 调用；固定 30s 超时（超时归一为失败，走静默跳过）。
 7. **落库**：cleanTitle 清洗（去首尾引号 / markdown 强调标记 / 句尾标点、空白归一、按码点截断）后 `setSessionName` 写入。**落库前重查** `pi.getSessionName()`——LLM 调用窗口（2-30s）内用户手动命名的竞态由此兜住，已有名则 skip 不覆盖。**不**写入 session history，对话记录不受影响。
 
 ### 可靠性行为
@@ -87,21 +87,21 @@ rename 是 best-effort 副作用，任何失败静默跳过、绝不阻断 agent
 | 1 | `skip: stopReason=<r>` | handler（带 `turnIndex=<n>`） | 快速路径拦截（toolUse/error/aborted/length） |
 | 2 | `skip: count=<n>` | handler（带 turnIndex） | 非首成功 round |
 | 3 | `skip: name exists` | handler（带 turnIndex） | 落库前防覆盖命中 |
-| 4 | `skip: no user prompt` | llm | session 无 user message（理论不发生） |
-| 5 | `skip: title empty` | llm | cleanTitle 清洗后为空 |
-| 6 | `LLM request messages: <JSON>` | llm | 传给 callLLM 的 messages 内省（role + text 的 head200+…+tail100 预览），在请求发起前打出 |
-| 7 | `renamed to "<title>"` | llm | 标题生成成功（在落库前打出，落库与否另见 #3） |
+| 4 | `renamed to "<title>"` | handler（带 turnIndex） | 标题生成并落库成功（index.ts `.then()` 内 `setSessionName` 之后打出；竞态命中时只打 #3，无此条） |
+| 5 | `skip: no user prompt` | llm | session 无 user message（理论不发生） |
+| 6 | `skip: title empty` | llm | cleanTitle 清洗后为空 |
+| 7 | `LLM request messages: <JSON>` | llm | 传给 callLLM 的 messages 内省（role + text 的 head 200 码点 + … + tail 100 码点预览，截断单位与 truncateForTitle 统一为 Unicode 码点），在请求发起前打出 |
 
-另有三条**非 debug 常开**日志：`rename LLM call failed: <err>`（调用失败/超时，超时路径 error 为空串时落 `unknown error` 兜底）、`rename with model <provider>/<id>`（成功路径模型记录）、`model not available, skipping`（选模失败）。handler 侧日志带 `t=<ISO时间>` 与 `turnIndex`；llm 侧带 `t=<ISO时间>`、无 turnIndex。
+另有三条**非 debug 常开**日志：`rename LLM call failed: <err>`（调用失败/超时；超时时 llm-shared callLLM 内部的 extractText 将空错误文本归一为 `unknown error`——extension 侧 `result.error ?? "unknown error"` 只兜 null/undefined，空串兜底发生在 llm-shared 层）、`rename with model <provider>/<id>`（成功路径模型记录）、`model not available, skipping`（选模失败）。handler 侧日志带 `t=<ISO时间>` 与 `turnIndex`；llm 侧带 `t=<ISO时间>`、无 turnIndex。
 
 ## E2E 验收
 
-E2E 是本地人工触发的验收资产（真实 pi 进程 + 真实模型，不进常规 CI），覆盖五个场景：A1 触发时机证据链（流序/内容匹配/负向/行序四重）、A2 slug 风格 ×3、A3 防覆盖（静态/竞态/一次性）、A4 error 轮两阶段（`--session` 续跑）、A5 超时兜底（hang provider）。
+E2E 是本地人工触发的验收资产（真实 pi 进程 + 真实模型，不进常规 CI），覆盖五个场景：A1 触发时机证据链（流序/内容匹配/负向/行序/结构五重——结构断言 = 仅一条 LLM request + [user,assistant,user] 三元组）、A2 slug 风格 ×3、A3 防覆盖（静态/竞态/一次性）、A4 error 轮两阶段（`--session` 续跑）、A5 超时兜底（hang provider）。
 
 ```bash
 cd extensions/rename-session
 node e2e/run-a1.mjs    # 单场景独立可跑（run-a1 ~ run-a5）
-node e2e/run-all.mjs   # 顺序全跑：单场景失败不阻断后续，汇总表 + exit code（任一 assertion 类失败 → 1）
+node e2e/run-all.mjs   # 顺序全跑：单场景失败不阻断后续，汇总表 + exit code（任一失败（含 KEBAB_NON_COMPLIANT）→ 1）
 ```
 
 - 环境要求与探针结论（auth 迁移 / RPC 协议格式 / `--session` 续跑 / 坏 provider 与 stub socket 配置写法）：`e2e/README.md`
@@ -128,6 +128,7 @@ rename-session/
 │   ├── harness.test.mjs  # 断言纯函数单测（随 vitest 跑）
 │   ├── run-a1.mjs ~ run-a5.mjs   # A1-A5 场景脚本
 │   ├── run-all.mjs       # 总结 runner（汇总 + exit code）
+│   ├── vitest.e2e.config.ts  # E2E 专用 vitest 入口（--config 显式指定，include 含 scenarios.test.mjs）
 │   └── RESULTS.md        # A2 标题记录 + 人工抽查表
 ├── skills/rename-session-ext-config/SKILL.md   # 配置指南（pi 内 agent 可发现）
 └── src/

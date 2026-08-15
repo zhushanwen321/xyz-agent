@@ -131,7 +131,7 @@ round 完成后（约 2-5 秒），session 列表中该 session 的名字从日�
 
 | 失败 | 行为 | 恢复指引 |
 |---|---|---|
-| 标题模型不可用（未配置 auth） | 跳过 rename，session 保留默认名，日志 `[rename-session] model not available` | `pi config` 配置模型凭证，或改 config JSON 的 `model` selector；已开头的 session 无法补命名，新 session 生效 |
+| 标题模型不可用（未配置 auth） | 跳过 rename，session 保留默认名，日志 `[rename-session] model not available, skipping` | `pi config` 配置模型凭证，或改 config JSON 的 `model` selector；已开头的 session 无法补命名，新 session 生效 |
 | LLM 调用超时（30s） | 中止调用，session 保留默认名，日志含超时记录 | 无需操作；频繁超时则换轻量模型（改 `model` selector） |
 | LLM 返回空/清洗后为空 | 跳过落库 | 无需操作 |
 | 用户已手动命名（含 LLM 调用进行中手动命名） | 跳过 rename（落库前重查，尊重手动命名），debug 日志说明 | 无 |
@@ -210,10 +210,10 @@ llm-shared `callLLM` 已支持 `timeoutMs`（✅源码核实，透传 `SimpleStr
 debug 日志（`console.warn`，前缀 `[rename-session]`；**文案字面值是 E2E 断言的硬契约，实施时锁定不得漂移**。开关 helper 每次 live 读 `process.env.PI_RENAME_DEBUG`，非模块加载时读——保证可测与运行时切换）：
 
 1. 触发跳过时（handler 侧，含 `t=<ISO时间>` 与 `turnIndex=<n>`）：`skip: stopReason=<r>` / `skip: count=<n>`（定位判定路径。turnIndex 只在此侧输出——它只在 handler 作用域可达，不为日志字段扩 callRenameLLM 签名；**此阶段不查 getSessionName**，防覆盖检查只在落库前——见 D5。另 `skip: no user prompt` 从 llm.ts 侧发出（extractUserPromptText null 时），格式同第 2 组只含 `t=`、无 turnIndex）；
-2. 发请求时（**必须在 callLLM 调用之前打出**——构造 messages 后、发起请求前；A3 3b 竞态场景依赖轮询此日志在 rename 返回前抢入手动命名；含 `t=<ISO时间>`）：`LLM request messages: <JSON>`——每条 message 输出 `role + text 的 head 200 + tail 100 字符`（超长文本格式 `<head200>…<tail100>`，字面 `…` 连接；head/tail 双段支撑 E2E 对长 prompt 首尾片段的断言）；
-3. 落库/跳过时（含 `t=<ISO时间>`）：`renamed to "<title>"` 或 `skip: title empty`（cleanTitle 清洗后为空时在 callRenameLLM 内打出）/ `skip: name exists`（唯一文案，防覆盖命中，index 侧 `.then` 内打出）。
+2. 发请求时（**必须在 callLLM 调用之前打出**——构造 messages 后、发起请求前；A3 3b 竞态场景依赖轮询此日志在 rename 返回前抢入手动命名；含 `t=<ISO时间>`）：`LLM request messages: <JSON>`——每条 message 输出 `role + text 的 head 200 + tail 100 Unicode 码点`（v4 修正：截断单位与 truncateForTitle 统一为 Unicode 码点，非 UTF-16 码元；超长文本格式 `<head200>…<tail100>`，字面 `…` 连接；head/tail 双段支撑 E2E 对长 prompt 首尾片段的断言）；
+3. 落库/跳过时（含 `t=<ISO时间>`）：`renamed to "<title>"`（v4 更新：移至 index 侧 `.then()` 内 `setSessionName` **之后**打出，handler 侧带 `t=` + `turnIndex=`——竞态命中时只打 `skip: name exists`、无 `renamed to`，日志不再出现「声称 renamed 但未落库」的矛盾）/ `skip: title empty`（cleanTitle 清洗后为空时在 callRenameLLM 内打出）/ `skip: name exists`（唯一文案，防覆盖命中，index 侧 `.then` 内打出）。
 
-默认关闭，生产环境零噪音。这是 E2E 验收（§8）的证据基础：**日志内省的是传给 `callLLM` 的同一对象**（同进程同函数序列化同一变量），日志内容即 LLM 收到的内容。
+默认关闭时上述 7 条 debug 日志零输出；另有 3 条**常开** `console.warn`（不受 `PI_RENAME_DEBUG` 控制，供生产 stderr 诊断）：成功路径无条件记录 `rename with model <provider>/<id>`（llm.ts 发出）、失败路径 `rename LLM call failed: <err>`、选模失败 `model not available, skipping`。debug 日志是 E2E 验收（§8）的证据基础：**日志内省的是传给 `callLLM` 的同一对象**（同进程同函数序列化同一变量），日志内容即 LLM 收到的内容。
 
 ## 7. 实现机制（把终态落到代码层）
 
@@ -226,7 +226,7 @@ debug 日志（`console.warn`，前缀 `[rename-session]`；**文案字面值是
 export function countSuccessfulAssistantReplies(entries: ReadonlyArray<EntryLike>): number
 // EntryLike 扩展：message?: { role?: string; stopReason?: string }
 
-// cleanTitle 增强：尾部标点（。．.，,、;；!！?：:）加入现有首尾清理正则
+// cleanTitle 增强：尾部标点（。．.，,、;；!！?？：:——半角 ? 与全角 ？ 两者）加入现有首尾清理正则
 ```
 
 `countAssistantReplies` 保留导出（兼容），触发判定不再使用。
@@ -272,6 +272,8 @@ pi.on("turn_end", async (event, ctx) => {
 });
 ```
 
+handler 同步段另有 try/catch 兜底：同步路径任何抛错只 `console.error` 记录，不阻断 pi 的 agent 循环。
+
 发起调用前不查 `getSessionName()`（那时查不能防竞态，落库前重查才是权威检查点）。`TurnEndLikeEvent.message` 从 `unknown` 收紧为带 `stopReason?: string` 的宽松结构类型。**测试销毁范围**：`index.test.ts` 中依赖 `countAssistantReplies===1` 旧判定的触发用例全部改造。
 
 ### 7.4 prompt 常量与测试改造
@@ -298,21 +300,21 @@ pi.on("turn_end", async (event, ctx) => {
 **回应用户三问（验收方法的可验证性依据）**：
 
 1. **「如何验证一定是（round）结束后输入了 LLM」**——三重互补证据：
-   - **双流交错时序**（发起时序的直接证据）：交错时间轴上，`LLM request` 日志行的到达时间必须晚于 stdout 事件流中该 round 最终 assistant `message_end` 事件的到达时间；且 round 中间每个 iteration 的 `turn_end` 之后只有 `skip: stopReason=toolUse` 类日志、无 `LLM request`；
+   - **双流交错时序**（发起时序的直接证据；v4 口径修正——「日志行到达时刻严格晚于 message_end 到达时刻」不可靠，pi 先调 handler 再写 stdout 有 ~1ms 通道伪影）：**流序判别为主**——交错时间轴上 `LLM request` 日志行之后无后续 turn_start/message_start/message_end 事件（turn_end 除外）；**时刻辅助**——`llmReq.t >= 最终 message_end.t - 1000ms` 容差；且 round 中间每个 iteration 的 `turn_end` 之后只有 `skip: stopReason=toolUse` 类日志、无 `LLM request`；
    - **内容匹配**（判别器，能证伪中途触发）：若实现在中途 iteration 触发，注入的 assistant 文本 ≠ 该 round 最终 assistant message 文本——断言日志中 assistant 段 text 与 session JSONL 最后一条 `stopReason:"stop"` assistant message 的文本一致，中途触发必不满足；
    - **JSONL 行序**（完成时序佐证）：`session_info` entry 位于该 round 全部 entry 之后（中途发起、稍后完成的调用也满足行序，故仅作佐证不作判别器）。
-2. **「如何验证 LLM 收到了用户 prompt 和 turn last text」**——debug 日志内省：日志打出传给 `callLLM` 的每条 message 的 role + text（head 200 + tail 100 字符，同一对象序列化，日志即请求体）。断言：user 段含 prompt 首部特征片段、assistant 段含 final text 特征片段，且**不含**任何 toolResult 内容片段（负向断言，证伪全量注入残留）。
+2. **「如何验证 LLM 收到了用户 prompt 和 turn last text」**——debug 日志内省：日志打出传给 `callLLM` 的每条 message 的 role + text（head 200 + tail 100 码点，同一对象序列化，日志即请求体；截断单位与 truncateForTitle 统一为 Unicode 码点）。断言：user 段含 prompt 首部特征片段、assistant 段含 final text 特征片段，且**不含**任何 toolResult 内容片段（负向断言，证伪全量注入残留）。
 3. **「system prompt 是否优化 rename 质量」**——是，D4 重写为 slug 约束 + 正反例 few-shot，验收场景 A2 用规则断言（词组形态、无句尾标点、无代词开头）+ 人工抽查语义相关性。
 
 ### 8.3 验收场景
 
 | # | 场景 | 回溯目标 | 真实流程/数据/路径 | 通过标准 |
 |---|---|---|---|---|
-| A1 | 工具型首轮：触发时机 + 输入内容 | G1 G4 | 真实 pi + 真实模型，发「列出当前目录的 ts 文件并统计行数」（触发多个 iteration），等 round 完成 + rename 完成 | ① 交错时间轴：`LLM request` 晚于最终 `message_end`；中间 iteration 的 turn_end 后只有 skip 日志；② request 日志仅一条，其 user 段含「ts 文件」片段、assistant 段含 final text 特征片段、无 toolResult 内容片段（如文件列表原始输出）；③ 日志 assistant 段与 JSONL 最后一条 stop assistant message 文本一致；④ `session_info` 行位于 round 全部 entry 之后 |
-| A2 | slug 标题风格 | G2 | 3 个真实 prompt：中文任务（「帮我写一个防抖函数并加单测」）、英文任务（"Refactor the config loader to support env overrides"）、跟进型模糊 prompt（新 session 首条即「继续刚才的，改成支持 leading 选项」） | 每个 session 的标题：词组形态（非完整句子）、无句尾标点、不以代词/「我」开头、≤50 码点；人工抽查语义相关。**kebab-case 断言依赖模型遵从**：英文标题若非 kebab-case，按 §11.3 处置（prompt 微调后重跑一次），再不满足则升级为 cleanTitle 硬转换预案，不无限重试 |
-| A3 | 防覆盖手动命名（含竞态窗口） | G3 | 3a 静态：先经 RPC `set_session_name` 命名「我的手动名字」，再发 prompt 触发首轮；3b 竞态：发 prompt 后轮询 debug 日志（50-100ms 间隔），`LLM request` 一出现立即 RPC `set_session_name` 命名「竞态命名」，等 rename 返回 | 3a/3b 均满足：turn 完成且等待 ≥10s 后，JSONL 最后一条 `session_info` 的 name 仍为手动名（3b 为「竞态命名」），debug 日志出现 `skip: name exists`。3b 固有时序 flakiness：若 rename 返回快于「轮询间隔 + RPC 往返」，日志断言 miss 则重跑一次（mimo 标题生成通常 1-3s，轮询 50-100ms 足以覆盖，偶发即可） |
-| A4 | error 轮不命名、下一成功轮仍命名 | G3 | 两阶段：阶段 1 用指向 `http://127.0.0.1:1` 的 provider 配置发首条 prompt → round error；阶段 2 改回正常配置，**重启 pi 并以 `--session <文件>` 恢复同一 session**（配置在进程启动时读取，必须重启续跑），发第二条 prompt → 成功 | 阶段 1 后无 `LLM request` 日志、无自动 `session_info`（error turn 的 turn_end 被 stopReason 快速路径挡掉）；阶段 2 round 成功后 `session_info` 出现且为 slug 标题 |
-| A5 | 超时兜底 | G3 | 本地起一个接受 TCP 连接但不响应的 socket（node 一行脚本），标题 provider baseURL 指向它（主模型正常），发 prompt 触发 rename 调用 | 主 round 正常完成；≥30s 后 debug 日志出现超时失败记录；session 无自动 `session_info`；pi 进程不退出、后续命令正常响应 |
+| A1 | 工具型首轮：触发时机 + 输入内容 | G1 G4 | 真实 pi + 真实模型，发「列出当前目录的 ts 文件并统计行数」（触发多个 iteration），等 round 完成 + rename 完成 | ① 交错时间轴（流序判别为主）：`LLM request` 行之后无后续 turn 事件（turn_end 除外），时刻辅助 `llmReq.t >= 最终 message_end.t - 1000ms` 容差；中间 iteration 的 turn_end 后只有 skip 日志；② request 日志仅一条，其 user 段含「ts 文件」片段、assistant 段含 final text 特征片段、无 toolResult 内容片段（如文件列表原始输出）；③ 日志 assistant 段与 JSONL 最后一条 stop assistant message 文本一致；④ `session_info` 行位于 round 全部 entry 之后 |
+| A2 | slug 标题风格 | G2 | 3 个真实 prompt：中文任务（「帮我写一个防抖函数并加单测」）、英文任务（"Refactor the config loader to support env overrides"）、跟进型 prompt（fixture 依赖：tmp cwd 放 notes.md 锚点「正在实现 debounce，下一步加 leading」，新 session 首条即「继续刚才的，改成支持 leading 选项」——空 tmp cwd 会诱发模型自由探索、击穿 runner 的 600s settled 等待上限，fixture 控时长且保留跟进语义；场景由「无上下文模糊跟进」调整为「有最小锚点的跟进」） | 每个 session 的标题过 assertTitleGuards 代理规则：≤50 码点；无句尾标点（断言集为 cleanTitle 清洗集的标点子集）；不以代词或「我」开头（中文）+ 不以 we/i/this 开头（英文，带 `\b` 词边界）；英文 kebab-case 正则；不以时态助词「了/过/中」结尾；人工抽查语义相关与词组形态（非完整句子）。**kebab-case 断言依赖模型遵从**：英文标题若非 kebab-case，按 §11.3 处置（prompt 微调后重跑），再不满足则升级为 cleanTitle 硬转换预案，不无限重试 |
+| A3 | 防覆盖手动命名（含竞态窗口）+ 一次性语义 | G3 | 3a 静态：先经 RPC `set_session_name` 命名「我的手动名字」，再发 prompt 触发首轮；3b 竞态：发 prompt 后事件驱动等待（waitForStderr 行到达即触发，时间轴回查防丢早到日志），`LLM request` 一出现立即 RPC `set_session_name` 命名「竞态命名」，等 rename 返回；3c 一次性：3a 后同 session 发第二条 prompt | 3a/3b：turn 完成且等待 ≥10s 后，JSONL 最后一条 `session_info` 的 name 仍为手动名（3b 为「竞态命名」），debug 日志出现 `skip: name exists`；3c：无新 LLM request、无新自动 `session_info`，正向证据 `skip: count=2`。3b 固有时序 flakiness：若 rename 返回快于「等待触发 + RPC 往返」，日志断言 miss 则重跑（上限 2 次、共 3 次尝试；mimo 标题生成通常 1-3s，偶发即可） |
+| A4 | error 轮不命名、下一成功轮仍命名 | G3 | 两阶段：阶段 1 用指向 `http://127.0.0.1:1` 的 provider 配置发首条 prompt → round error；阶段 2 改回正常配置，**重启 pi 并以 `--session <文件>` 恢复同一 session**（配置在进程启动时读取，必须重启续跑），发第二条 prompt → 成功 | 阶段 1 后无 `LLM request` 日志、无自动 `session_info`（error turn 的 turn_end 被 stopReason 快速路径挡掉）；阶段 2 round 成功后 `session_info` 出现且为 slug 标题（assertTitleGuards 断言） |
+| A5 | 超时兜底 | G3 | 本地起一个接受 TCP 连接但不响应的 socket（node 一行脚本），标题 provider baseURL 指向它（主模型正常），发 prompt 触发 rename 调用 | 主 round 正常完成；≥25s 下限后超时失败日志出现（25s 下限用于区分超时路径与亚秒级连接错误路径；RENAME_TIMEOUT_MS 仍为 30s，runner 等待上限 45s 覆盖；该日志为常开 warn，非 debug 专属）；session 无自动 `session_info`；pi 进程不退出、后续命令正常响应 |
 
 补充门禁（非验收）：`pnpm extensions:typecheck` / `pnpm extensions:lint` / `pnpm extensions:test` 全绿；新纯函数单测覆盖 §7 列举的分支。
 
@@ -320,6 +322,15 @@ pi.on("turn_end", async (event, ctx) => {
 
 - 不在 xyz-agent 桌面端验证（按项目规范，pi extension 优先本地 pi 实测；桌面端集成是发布后事项）；
 - 不 mock `callLLM` 充当 E2E（mock 只出现在集成测试层）。
+
+### 8.5 runner 基础设施（v4 实施期补记）
+
+场景 runner（`run-aN.mjs` / `run-all.mjs`，基于 `harness.mjs`）落地时固化的基础设施约定：
+
+- **失败四分类**：`assertion` / `timeout` / `pi-crash` / `api-error`；RPC 失败归并规则——pi 进程已死 → `pi-crash`，否则 → `assertion`。任一失败（含 KEBAB_NON_COMPLIANT）exit code → 1。
+- **session_info 落盘等待**：`waitSessionInfoEntry` 轮询 session JSONL（300ms 间隔 / 10s 上限）——pi 的 append→flush 延迟不定，固定 sleep 不可靠，必须轮询到行出现。
+- **E2E/CI 隔离**：根 `vitest.config.ts` include 为精确白名单（`src/__tests__/**` + `e2e/harness.test.mjs`），不含 `scenarios.test.mjs`；E2E 场景的 vitest 入口是专用 `e2e/vitest.e2e.config.ts`（`npx vitest run --config e2e/vitest.e2e.config.ts`）。E2E 为本地人工验收资产，不进常规 CI。
+- **E2E_QUICK 分流**：cw testRunner 硬编码 120s 命令超时，真实模型全量必超——`E2E_QUICK=1` 只验单测骨架（秒级），全量 A1-A5 人工触发；正式验收证据 = RESULTS.md + 各场景跑记录。
 
 ## 9. 实施
 
@@ -354,12 +365,12 @@ pi.on("turn_end", async (event, ctx) => {
 
 | 变化点 | 定级 | 依据 |
 |---|---|---|
-| 触发时机变晚（round 末） | 需注意（存量） | 新 session 创建即有 GUI 派生 label（首条 prompt 前 10 码点），无「未命名 session」依赖；标题晚几秒出现只是派生 label 显示时间变长 |
+| 触发时机变晚（round 末） | 需注意（存量） | 新 session 创建即有 label（创建时传入，或 basename(sessionCwd) 兜底），无「未命名 session」依赖；标题晚几秒出现只是初始 label 显示时间变长 |
 | slug/kebab 标题风格 | 无影响 | 显示纯 CSS truncate，无格式正则/排序/去重假设；手动重命名校验仅长度 1-60（maxTitleLength 50 < 60）；prompt 约束语言跟随对话，中文对话仍得中文标题 |
 | 两段输入 | 无影响 | extension 内部输入构造，不触 GUI 链路 |
 | 防覆盖 guard | 需注意（存量缺口） | guard 查 `pi.getSessionName()`（pi 进程内存）；GUI 手动改名是 runtime out-of-band 直接 append JSONL，pi 不知情 → 首轮竞态窗口内 GUI 手动改名仍会被 auto 标题覆盖。**非本次回归**（旧版无 guard 同样覆盖，新版至少保护 pi 可见改名）；修复方向：runtime `renameSession` 时同步通知 pi，或 extension guard 兼查 JSONL 尾部 |
 | 30s 超时 | 无影响 | fire-and-forget 静默跳过，GUI 无等待态 |
-| PI_RENAME_DEBUG 日志 | 无影响 | pi stderr 被 runtime 收集进 Electron 日志（无 UI 通道），默认关闭零输出 |
+| PI_RENAME_DEBUG 日志 | 无影响 | pi stderr 被 runtime 收集进 Electron 日志（无 UI 通道）；7 条 debug 日志默认关闭零输出，另有 3 条常开 warn（model not available / call failed / rename with model） |
 | 配置 schema/flag 契约 | 无影响 | SystemPage 开关 → flag 文件 ↔ extension live 读，两侧对齐未动 |
 
 另发现一个与本次改动无关的存量现象：auto-rename 落库后 runtime 内存 `ManagedSession.label` 不随 `session.renamed` 事件更新，后续 `config.sessions` 全量广播可能把侧栏已显示的 auto 标题回退成派生 label（直到重启从磁盘读回）。本次命名时机变晚会拉长该现象的观察窗口，机制本身非本次引入。
@@ -369,3 +380,4 @@ pi.on("turn_end", async (event, ctx) => {
 - v1：初版（注入两段信号 + slug 风格 + 可靠性补齐 + E2E 验收设计）。
 - v2：按对抗式审查修正——turn 语义模型（turn=iteration，turn_end 每 iteration 一次；重写 §3.2 失败模式 A/D-3、§4 数据流、D2 论证为 stopReason 快速路径）；防覆盖检查移至 `.then()` 落库前重查（D5/§7.3，堵 LLM 调用窗口竞态）；证据链论证修正（内容匹配为主判别器 + 双流交错时序，JSONL 行序降为佐证；日志加时间戳/turnIndex + head/tail 双段）；length stopReason 处理文档化（D6）；A2 kebab-case 失败处置路径；A4 补重启续跑机制；U3 补 changeset；token 估算修正；测试销毁范围与 null 路径补全。
 - v3：实施后补充——D9 日志契约与实现对齐（turnIndex 仅 handler 侧、skip: no user prompt 归类修正、head200+tail100 截断格式）、§12 GUI 联动影响评估（无 must-fix；防覆盖对 GUI out-of-band 改名的存量缺口与修复方向）。
+- v4：对抗式审查回填，性质 = 实施期演进 + 实现细节对齐（约 20 处文档/发布物与代码不一致的记录漂移）。D9：`renamed to` 移至 index 侧 `setSessionName` 之后（竞态命中只打 skip: name exists）、preview 截断单位统一 Unicode 码点、补 3 条常开 warn 口径；§7.1 cleanTitle 尾部标点补全角 ？；§5.2 日志文案对齐（model not available, skipping）；§7.3 补 handler 同步段 try/catch 兜底；§8：A1 时序口径改流序判别为主 + 1000ms 时刻容差、A2 补 fixture 依赖与完整代理规则、A3 改事件驱动等待 + 重跑上限 2 次 + 补 3c 一次性语义、A4 补 assertTitleGuards、A5 改 ≥25s 下限、新增 §8.5 runner 基础设施；§12：label 来源修正 + 常开日志口径限定。
