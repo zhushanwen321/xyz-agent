@@ -1,0 +1,420 @@
+/**
+ * GitStateService 单测（perf W16 验收）：in-flight 单飞去重 / 分层 TTL 缓存 /
+ * 非仓库负缓存 / invalidate 失效（含在飞竞态防护）。
+ *
+ * executor 用手写 fake（记录调用 + 可编程结果），不真 spawn git——验证的是缓存与
+ * 去重策略本身；真实 git 执行链路经 git-executor.test.ts 单独覆盖。
+ *
+ * 测试框架 vitest（从 vitest 导入 describe/it/expect/vi），运行命令 npx vitest run。
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { GitExecutorError } from '../ports/git-executor.js'
+import type { GitCommand, GitExecutorResult, IGitExecutor } from '../ports/git-executor.js'
+import { GitStateService } from './git-state-service.js'
+
+/** fake executor 记录的单次调用。 */
+interface ExecCall {
+  cwd: string
+  command: GitCommand
+  args: string[]
+  timeoutMs: number | undefined
+}
+
+type ExecImpl = (cwd: string, command: GitCommand, args: string[]) => Promise<GitExecutorResult>
+
+/** 手写 fake IGitExecutor：记录全部调用（含 timeoutMs），行为可编程。 */
+function createFakeExecutor() {
+  const calls: ExecCall[] = []
+  let impl: ExecImpl = async () => ({ stdout: '', stderr: '', exitCode: 0 })
+  const exec = vi.fn(
+    async (cwd: string, command: GitCommand, args: string[] = [], opts?: { timeoutMs?: number }) => {
+      calls.push({ cwd, command, args, timeoutMs: opts?.timeoutMs })
+      return impl(cwd, command, args)
+    },
+  )
+  const executor: IGitExecutor = { exec }
+  return {
+    executor,
+    calls,
+    /** 断言前过滤出指定子命令的调用次数 */
+    countOf: (command: GitCommand) => calls.filter((c) => c.command === command).length,
+    setImpl(next: ExecImpl) {
+      impl = next
+    },
+  }
+}
+
+/** 构造被测服务（TTL 用真实短值 + fake timers 推进）。 */
+function createService(executor: IGitExecutor) {
+  return new GitStateService({ executor, statusTtlMs: 2000, notRepoTtlMs: 60_000 })
+}
+
+const NOT_REPO_STDERR = 'fatal: not a git repository (or any of the parent directories): .git'
+
+let flush: () => Promise<void>
+
+beforeEach(() => {
+  vi.useFakeTimers()
+  // microtask flush（fake timers 不影响微任务队列，await 一次即排空一级微任务）
+  flush = async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  }
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+describe('GitStateService.snapshotStatus', () => {
+  it('同 cwd 并发请求共享一次执行（in-flight 去重：spawn 计数 = 1）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+
+    let releaseExec: ((res: GitExecutorResult) => void) | undefined
+    fake.setImpl(
+      () =>
+        new Promise<GitExecutorResult>((resolve) => {
+          releaseExec = resolve
+        }),
+    )
+
+    const p1 = svc.snapshotStatus('/repo')
+    const p2 = svc.snapshotStatus('/repo')
+    const p3 = svc.snapshotStatus('/repo')
+    await flush()
+    // 三请求已并发发起，但执行只挂起一次
+    expect(fake.calls).toHaveLength(1)
+    releaseExec?.({ stdout: ' M a.ts\n', stderr: '', exitCode:0 })
+    const [r1, r2, r3] = await Promise.all([p1, p2, p3])
+    expect(fake.calls).toHaveLength(1)
+    expect(r1).toEqual(r2)
+    expect(r1).toEqual(r3)
+    expect(r1?.get('a.ts')).toBe('modified')
+  })
+
+  it('结果不做 TTL 缓存：顺序两次调用各执行一次（每次 diff 需当前真实状态）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    fake.setImpl(async (_cwd, command) =>
+      command === 'status' ? { stdout: '', stderr: '', exitCode: 0 } : { stdout: '', stderr: '', exitCode: 0 },
+    )
+
+    await svc.snapshotStatus('/repo')
+    await svc.snapshotStatus('/repo')
+    expect(fake.countOf('status')).toBe(2)
+  })
+
+  it('裸 --porcelain 参数 + 5000ms 超时（D3-1：沿用 reconciler 现状，与 getStatus 的 -uall 有意区分）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    await svc.snapshotStatus('/repo')
+    expect(fake.calls[0]?.args).toEqual(['--porcelain'])
+    expect(fake.calls[0]?.timeoutMs).toBe(5000)
+  })
+
+  it('解析 XY 码为 4 态 status（untracked 折叠为 added，与 reconciler 基线一致）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    fake.setImpl(async (_cwd, command) =>
+      command === 'status'
+        ? { stdout: ' M src/a.ts\n?? new.txt\nD  gone.ts\n', stderr: '', exitCode: 0 }
+        : { stdout: '', stderr: '', exitCode: 0 },
+    )
+
+    const snapshot = await svc.snapshotStatus('/repo')
+    expect(snapshot?.get('src/a.ts')).toBe('modified')
+    expect(snapshot?.get('new.txt')).toBe('added')
+    expect(snapshot?.get('gone.ts')).toBe('deleted')
+    expect(snapshot?.size).toBe(3)
+  })
+
+  it('非仓库负缓存：首次失败后 60s 内零 spawn（snapshotStatus / numstat 同享 cwd 级判定）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    fake.setImpl(async (_cwd, command) =>
+      command === 'status' || command === 'diff'
+        ? { stdout: '', stderr: NOT_REPO_STDERR, exitCode: 128 }
+        : { stdout: '', stderr: '', exitCode: 0 },
+    )
+
+    expect(await svc.snapshotStatus('/not-repo')).toBeNull()
+    expect(await svc.snapshotStatus('/not-repo')).toBeNull()
+    expect(await svc.numstat('/not-repo')).toBeNull()
+    expect(fake.calls).toHaveLength(1) // 仅首次探测，后续全部负缓存命中
+
+    vi.advanceTimersByTime(59_999)
+    expect(await svc.snapshotStatus('/not-repo')).toBeNull()
+    expect(fake.calls).toHaveLength(1)
+
+    vi.advanceTimersByTime(1) // 累计 60s，负缓存过期 → 重新探测
+    expect(await svc.snapshotStatus('/not-repo')).toBeNull()
+    expect(fake.calls).toHaveLength(2)
+  })
+
+  it('force 绕过负缓存强制重探', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    fake.setImpl(async () => ({ stdout: '', stderr: NOT_REPO_STDERR, exitCode: 128 }))
+
+    await svc.snapshotStatus('/not-repo')
+    expect(fake.calls).toHaveLength(1)
+    await svc.snapshotStatus('/not-repo', { force: true })
+    expect(fake.calls).toHaveLength(2)
+  })
+
+  it('瞬态失败（非「not a repository」的退出失败）不写负缓存：下次仍重试', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    fake.setImpl(async () => ({ stdout: '', stderr: 'fatal: unable to access', exitCode: 128 }))
+
+    expect(await svc.snapshotStatus('/repo')).toBeNull()
+    expect(await svc.snapshotStatus('/repo')).toBeNull()
+    expect(fake.calls).toHaveLength(2)
+  })
+
+  it('git 不可用 / 超时（GitExecutorError）→ null 且不写负缓存', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    fake.setImpl(async () => {
+      throw new GitExecutorError('timeout', '执行超时')
+    })
+
+    expect(await svc.snapshotStatus('/repo')).toBeNull()
+    expect(await svc.snapshotStatus('/repo')).toBeNull()
+    expect(fake.calls).toHaveLength(2)
+  })
+})
+
+describe('GitStateService.numstat', () => {
+  it('解析 numstat 为 path → 条目 Map（二进制 `-` 条目保留 undefined，lossless）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    fake.setImpl(async (_cwd, command) =>
+      command === 'diff'
+        ? { stdout: '1\t2\tsrc/a.ts\n-\t-\tbin.dat\n', stderr: '', exitCode: 0 }
+        : { stdout: '', stderr: '', exitCode: 0 },
+    )
+
+    const map = await svc.numstat('/repo')
+    expect(map?.get('src/a.ts')).toEqual({ add: 1, del: 2, path: 'src/a.ts' })
+    expect(map?.get('bin.dat')).toEqual({ add: undefined, del: undefined, path: 'bin.dat' })
+    expect(map?.size).toBe(2)
+  })
+
+  it('同 cwd 并发请求共享一次执行（in-flight 去重）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+
+    let releaseExec: ((res: GitExecutorResult) => void) | undefined
+    fake.setImpl(
+      () =>
+        new Promise<GitExecutorResult>((resolve) => {
+          releaseExec = resolve
+        }),
+    )
+
+    const p1 = svc.numstat('/repo')
+    const p2 = svc.numstat('/repo')
+    await flush()
+    expect(fake.calls).toHaveLength(1)
+    releaseExec?.({ stdout: '1\t2\ta.ts\n', stderr: '', exitCode: 0 })
+    await Promise.all([p1, p2])
+    expect(fake.calls).toHaveLength(1)
+  })
+
+  it('numstat 失败 → null（调用方走 writeContents 回退，现状语义）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    fake.setImpl(async () => ({ stdout: '', stderr: 'fatal: bad object HEAD', exitCode: 128 }))
+
+    expect(await svc.numstat('/repo')).toBeNull()
+  })
+
+  it('5000ms 超时透传（D3-1）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    await svc.numstat('/repo')
+    expect(fake.calls[0]?.command).toBe('diff')
+    expect(fake.calls[0]?.timeoutMs).toBe(5000)
+  })
+})
+
+describe('GitStateService.getStatus', () => {
+  /** 标准 mock：仓库 status / numstat / branch 三命令的典型输出。 */
+  function stubRepo(fake: ReturnType<typeof createFakeExecutor>) {
+    fake.setImpl(async (_cwd, command) => {
+      if (command === 'status') {
+        return { stdout: '## main...origin/main\0 M src/a.ts\0?? new.txt\0', stderr: '', exitCode: 0 }
+      }
+      if (command === 'diff') {
+        return { stdout: '3\t1\tsrc/a.ts\n', stderr: '', exitCode: 0 }
+      }
+      return { stdout: 'feat-x\nmain\n', stderr: '', exitCode: 0 } // branch --list
+    })
+  }
+
+  it('聚合 status + numstat + branch，返回形状与 git-service.getStatus 现状一致', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    stubRepo(fake)
+
+    const result = await svc.getStatus('sid-1', '/repo')
+    expect(result.isRepo).toBe(true)
+    expect(result.sessionId).toBe('sid-1')
+    expect(result.branch).toBe('main')
+    expect(result.branches).toEqual(['feat-x', 'main'])
+    expect(result.stats).toEqual({ add: 3, del: 1 })
+    expect(result.files).toHaveLength(2)
+    expect(result.files[0]).toMatchObject({ path: 'src/a.ts', status: 'modified', additions: 3, deletions: 1 })
+    // untracked 无 numstat → 无行数字段（前端降级展示）
+    expect(result.files[1]).toMatchObject({ path: 'new.txt', status: 'untracked' })
+    expect(result.files[1]).not.toHaveProperty('additions')
+    // -uall 展开参数 + 8000ms 超时（D3-1：getStatus 沿用 git-executor 默认）
+    const statusCall = fake.calls.find((c) => c.command === 'status')
+    expect(statusCall?.args).toEqual(['--porcelain=v1', '-z', '-b', '--untracked-files=all'])
+    expect(statusCall?.timeoutMs).toBe(8000)
+  })
+
+  it('TTL 命中：窗口内二次调用零 spawn；过期后重取', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    stubRepo(fake)
+
+    await svc.getStatus('sid-1', '/repo')
+    expect(fake.calls).toHaveLength(3) // status + diff + branch
+
+    const second = await svc.getStatus('sid-1', '/repo')
+    expect(fake.calls).toHaveLength(3) // 缓存命中零 spawn
+    expect(second.sessionId).toBe('sid-1')
+
+    vi.advanceTimersByTime(2001) // TTL 2000ms 过期
+    await svc.getStatus('sid-1', '/repo')
+    expect(fake.calls).toHaveLength(6)
+  })
+
+  it('缓存键含 sessionId：同 cwd 不同 session 各自执行（D4-3 防跨 session 串扰）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    stubRepo(fake)
+
+    const [a, b] = await Promise.all([
+      svc.getStatus('sid-a', '/repo'),
+      svc.getStatus('sid-b', '/repo'),
+    ])
+    expect(a.sessionId).toBe('sid-a')
+    expect(b.sessionId).toBe('sid-b')
+    expect(fake.calls).toHaveLength(6) // 两 session 各自一组
+  })
+
+  it('并发同 key 请求共享一次执行（in-flight 去重）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+
+    let releaseExec: ((res: GitExecutorResult) => void) | undefined
+    fake.setImpl(
+      (_cwd, command) =>
+        new Promise<GitExecutorResult>((resolve) => {
+          if (command === 'status') {
+            releaseExec = resolve
+          } else {
+            resolve(command === 'diff' ? { stdout: '', stderr: '', exitCode: 0 } : { stdout: '', stderr: '', exitCode: 0 })
+          }
+        }),
+    )
+
+    const p1 = svc.getStatus('sid-1', '/repo')
+    const p2 = svc.getStatus('sid-1', '/repo')
+    await flush()
+    expect(fake.countOf('status')).toBe(1)
+    releaseExec?.({ stdout: '## main\0', stderr: '', exitCode: 0 })
+    const [r1, r2] = await Promise.all([p1, p2])
+    expect(fake.countOf('status')).toBe(1)
+    expect(r1).toEqual(r2)
+  })
+
+  it('非仓库 → isRepo=false 降级 + 负缓存：二次调用零 spawn', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    fake.setImpl(async (_cwd, command) =>
+      command === 'status' ? { stdout: '', stderr: NOT_REPO_STDERR, exitCode: 128 } : { stdout: '', stderr: '', exitCode: 0 },
+    )
+
+    const result = await svc.getStatus('sid-1', '/not-repo')
+    expect(result.isRepo).toBe(false)
+    expect(result.sessionId).toBe('sid-1')
+    expect(fake.calls).toHaveLength(1) // status 失败即短路，diff/branch 不执行
+
+    const second = await svc.getStatus('sid-1', '/not-repo')
+    expect(second.isRepo).toBe(false)
+    expect(fake.calls).toHaveLength(1) // 负缓存命中零 spawn
+  })
+
+  it('git 不可用 → 降级 isRepo=false 且不写 TTL 缓存（缓存不因失败写入错误值）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    fake.setImpl(async () => {
+      throw new GitExecutorError('git_unavailable', 'git CLI 未安装')
+    })
+
+    expect((await svc.getStatus('sid-1', '/repo')).isRepo).toBe(false)
+    // 失败结果未缓存：二次调用重新执行（仍是失败，但语义上「不缓存错误值」）
+    expect((await svc.getStatus('sid-1', '/repo')).isRepo).toBe(false)
+    expect(fake.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('invalidate 后缓存 miss：下一次 getStatus 重新执行；不影响其他 session', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    stubRepo(fake)
+
+    await svc.getStatus('sid-a', '/repo')
+    await svc.getStatus('sid-b', '/repo')
+    expect(fake.calls).toHaveLength(6)
+
+    svc.invalidate('sid-a')
+    // sid-b 的缓存不受影响（零新 spawn）
+    await svc.getStatus('sid-b', '/repo')
+    expect(fake.calls).toHaveLength(6)
+    // sid-a 缓存已失效（重新执行一组）
+    await svc.getStatus('sid-a', '/repo')
+    expect(fake.calls).toHaveLength(9)
+  })
+
+  it('invalidate 与在飞执行的竞态：飞行中被失效的执行完成后不回写缓存（旧值不复活）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+
+    let releaseStatus: ((res: GitExecutorResult) => void) | undefined
+    fake.setImpl(
+      (_cwd, command) =>
+        new Promise<GitExecutorResult>((resolve) => {
+          if (command === 'status') {
+            releaseStatus = resolve
+          } else {
+            resolve({ stdout: '', stderr: '', exitCode: 0 })
+          }
+        }),
+    )
+
+    const inflight = svc.getStatus('sid-1', '/repo')
+    await flush()
+    // 执行飞行中触发失效（模拟写操作在读取过程中完成）
+    svc.invalidate('sid-1')
+    releaseStatus?.({ stdout: '## main\0 M a.ts\0', stderr: '', exitCode: 0 })
+    const stale = await inflight
+    expect(stale.isRepo).toBe(true) // 发起于失效前的调用方仍拿到结果（promise 语义）
+
+    // 恢复立即返回的实现（deferred 版会让第二个 getStatus 永久挂起）
+    fake.setImpl(async (_cwd, command) =>
+      command === 'status'
+        ? { stdout: '## main\0 M a.ts\0', stderr: '', exitCode: 0 }
+        : { stdout: '', stderr: '', exitCode: 0 },
+    )
+    // 失效后旧值未回写缓存：新调用重新执行而非命中旧值
+    const callsBefore = fake.calls.length
+    const fresh = await svc.getStatus('sid-1', '/repo')
+    expect(fake.calls.length).toBeGreaterThan(callsBefore)
+    expect(fresh.isRepo).toBe(true)
+  })
+})
