@@ -1,7 +1,7 @@
 /* eslint-disable taste/no-unsafe-cast */
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // 只 override resolveModel + callLLM（callRenameLLM 的依赖）；保留 loadConfig/saveConfig 等
 // 真实实现，pure.ts 顶层 import 不受影响。vi.mock 被提升到文件顶部执行。
@@ -24,6 +24,13 @@ import {
 	truncateForTitle,
 } from "../llm.js";
 import { DEFAULT_RENAME_CONFIG, type RenameSessionConfig } from "../pure.js";
+
+// 每用例收尾统一还原：console spy 恢复 + stub 的 PI_RENAME_DEBUG 还原，
+// 防泄漏到后续用例（debug 开关 live 读 process.env，依赖 stubEnv/unstubAllEnvs 成对）
+afterEach(() => {
+	vi.restoreAllMocks();
+	vi.unstubAllEnvs();
+});
 
 // ────────────────────────────────────────────────────
 // extractUserPromptText（D1：标题输入信号之一——首条 user prompt 提取）
@@ -52,6 +59,27 @@ describe("extractUserPromptText", () => {
 			},
 		];
 		expect(extractUserPromptText(entries)).toBe("帮我修复登录超时 最好加单测");
+	});
+
+	it("LTC7b: 纯 image blocks（无 text）→ ''（找到首条 user 但无文本，按空文本处理不返回 null）", () => {
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "user",
+					content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+				},
+			},
+		];
+		expect(extractUserPromptText(entries)).toBe("");
+	});
+
+	it("LTC7c: content 形态未知（非 string 非 array）→ ''（异常数据按无文本处理，不继续扫后续 user）", () => {
+		const entries = [
+			{ type: "message", message: { role: "user", content: 42 } },
+			{ type: "message", message: { role: "user", content: "第二条不该被取到" } },
+		];
+		expect(extractUserPromptText(entries)).toBe("");
 	});
 
 	it("LTC8: 无 user message（compaction + assistant only）→ null", () => {
@@ -165,6 +193,10 @@ describe("buildTitleMessages", () => {
 		const result = buildTitleMessages("继续刚才的", "", "生成标题指令");
 		expect(result).toHaveLength(2);
 		expect(result.map((m) => m.role)).toEqual(["user", "user"]);
+		// 第二条 content 为 instruction（wave-1 followup 补强：降级路径的文本断言）
+		const second = result[1] as { content: { type: string; text: string }[] };
+		expect(second.content[0].type).toBe("text");
+		expect(second.content[0].text).toBe("生成标题指令");
 	});
 });
 
@@ -200,9 +232,10 @@ describe("RENAME_SYSTEM_PROMPT / RENAME_INSTRUCTION", () => {
 		expect(RENAME_INSTRUCTION).toContain("我帮你修复了登录 bug");
 	});
 
-	it("LTC19: 两常量均含 slug 风格约束词（kebab-case / 名词或动名词）", () => {
+	it("LTC19: 两常量均含 slug 风格约束词（逐常量 toContain 强断言，不用 or 弱断言）", () => {
 		for (const c of [RENAME_SYSTEM_PROMPT, RENAME_INSTRUCTION]) {
-			expect(c.includes("kebab-case") || c.includes("名词或动名词")).toBe(true);
+			expect(c).toContain("kebab-case");
+			expect(c).toContain("名词或动名词");
 		}
 	});
 });
@@ -220,12 +253,22 @@ const BASE_CONFIG: RenameSessionConfig = {
 	thinkingLevel: "off",
 };
 
-function createCtx(): ExtensionContext {
+/** 触发 turn 的最终 assistant message（turn_end 的 event.message，D2）——thinking 混排验证只取 text。 */
+const FINAL_MESSAGE = {
+	stopReason: "stop",
+	content: [
+		{ type: "thinking", thinking: "思考过程不进标题输入" },
+		{ type: "text", text: "已修复：调整了超时配置" },
+	],
+};
+
+function createCtx(entries?: unknown[]): ExtensionContext {
 	return {
 		sessionManager: {
-			getEntries: () => [
-				{ type: "message", message: { role: "user", content: [{ type: "text", text: "hi" }] } },
-			],
+			getEntries: () =>
+				entries ?? [
+					{ type: "message", message: { role: "user", content: [{ type: "text", text: "hi" }] } },
+				],
 			getSessionId: () => "test-session-id",
 		},
 		signal: new AbortController().signal,
@@ -239,7 +282,7 @@ describe("callRenameLLM", () => {
 
 	it("resolveModel 返回 null（model 不可用）→ 返回 null，不调 callLLM（静默跳过）", async () => {
 		vi.mocked(resolveModel).mockReturnValue(null);
-		const result = await callRenameLLM(createCtx(), BASE_CONFIG);
+		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 		expect(result).toBeNull();
 		expect(callLLM).not.toHaveBeenCalled();
 	});
@@ -247,35 +290,36 @@ describe("callRenameLLM", () => {
 	it("callLLM 返回 {ok:false} → 返回 null（静默跳过，不抛错）", async () => {
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
 		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
-		const result = await callRenameLLM(createCtx(), BASE_CONFIG);
+		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 		expect(result).toBeNull();
 	});
 
 	it("callLLM 返回 {ok:true, content} → cleanTitle 后返回", async () => {
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "  修复登录bug  " });
-		const result = await callRenameLLM(createCtx(), BASE_CONFIG);
+		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 		expect(result).toBe("修复登录bug");
 	});
 
 	it("callLLM 返回空 content（cleanTitle 空串）→ 返回 null", async () => {
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "   " });
-		const result = await callRenameLLM(createCtx(), BASE_CONFIG);
+		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 		expect(result).toBeNull();
 	});
 
-	it("传给 callLLM 的 opts：model=resolveModel 结果 / systemPrompt=RENAME_SYSTEM_PROMPT(<200) / maxTokens=64 / signal / sessionId / 无 tools", async () => {
+	it("传给 callLLM 的 opts：model/systemPrompt(<200)/maxTokens=64/timeoutMs=30000/signal/sessionId/无 tools，messages 三段式", async () => {
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
-		await callRenameLLM(createCtx(), BASE_CONFIG);
+		await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 
 		expect(callLLM).toHaveBeenCalledTimes(1);
 		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as {
 			model: unknown;
 			systemPrompt: string;
-			messages: { role: string }[];
+			messages: { role: string; content: { type: string; text: string }[] }[];
 			maxTokens: number;
+			timeoutMs: number;
 			signal: AbortSignal;
 			sessionId: string;
 			tools?: unknown;
@@ -284,34 +328,156 @@ describe("callRenameLLM", () => {
 		expect(callOpts.systemPrompt).toBe(RENAME_SYSTEM_PROMPT);
 		expect(callOpts.systemPrompt.length).toBeLessThan(200);
 		expect(callOpts.maxTokens).toBe(64);
+		// D7：固定 30s 超时（超时归一 ok:false 走静默跳过）
+		expect(callOpts.timeoutMs).toBe(30000);
 		expect(callOpts.signal).toBeInstanceOf(AbortSignal);
 		expect(callOpts.sessionId).toBe("test-session-id");
-		// messages 含前缀（user hi）+ RENAME_INSTRUCTION 追加的 user message
-		expect(callOpts.messages).toHaveLength(2);
-		expect(callOpts.messages[1]).toMatchObject({ role: "user" });
+		// 三段式（D1/D2）：user(prompt) + assistant(finalText) + user(instruction)
+		expect(callOpts.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+		expect(callOpts.messages[0].content[0].text).toBe("hi");
+		// finalText 只取 text block（FINAL_MESSAGE 内 thinking 跳过）
+		expect(callOpts.messages[1].content[0].text).toBe("已修复：调整了超时配置");
+		expect(callOpts.messages[2].content[0].text).toBe(RENAME_INSTRUCTION);
 		// tools 不在 opts（callLLM 内部显式传 tools:[]，调用方不传）
 		expect(callOpts.tools).toBeUndefined();
+	});
+
+	it("TC4: 两段输入构造——entries 多轮混排只取首 user prompt + finalMessage 文本；finalText 空时降级两条", async () => {
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
+		// 多轮混排：中间 assistant 轮 / toolResult entry 都不该进入标题输入
+		const entries = [
+			{ type: "message", message: { role: "user", content: [{ type: "text", text: "帮我修复登录超时" }] } },
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					stopReason: "toolUse",
+					content: [{ type: "toolCall", id: "t1", name: "bash", arguments: {} }],
+				},
+			},
+			{ type: "toolResult", message: { role: "toolResult" } },
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					stopReason: "stop",
+					content: [{ type: "text", text: "entries 里的 stop 轮不作为 final" }],
+				},
+			},
+		];
+		await callRenameLLM(createCtx(entries), BASE_CONFIG, FINAL_MESSAGE);
+
+		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as {
+			messages: { role: string; content: { type: string; text: string }[] }[];
+		};
+		expect(callOpts.messages).toHaveLength(3);
+		expect(callOpts.messages[0].content[0].text).toBe("帮我修复登录超时");
+		// assistant 条目来自 finalMessage（第三参），不来自 entries 反扫
+		expect(callOpts.messages[1].content[0].text).toBe("已修复：调整了超时配置");
+		expect(callOpts.messages[2].content[0].text).toBe(RENAME_INSTRUCTION);
+
+		// finalText 空（text blocks 为空的 stop 轮）→ 两条降级（prompt + instruction）
+		vi.mocked(callLLM).mockClear();
+		await callRenameLLM(createCtx(entries), BASE_CONFIG, { stopReason: "stop", content: [] });
+		const downgraded = vi.mocked(callLLM).mock.calls[0][1] as {
+			messages: { role: string }[];
+		};
+		expect(downgraded.messages.map((m) => m.role)).toEqual(["user", "user"]);
+	});
+
+	it("TC5: debug 日志内省在 callLLM 之前打出；长文本 head200…tail100 截断格式", async () => {
+		vi.stubEnv("PI_RENAME_DEBUG", "1");
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		// 甲乙丙三段唯一定位符：甲=首200 丙=尾100 乙=中段100（RENAME_INSTRUCTION 与夹具均不含这三字）
+		const head = "甲".repeat(200);
+		const middle = "乙".repeat(100);
+		const tail = "丙".repeat(100);
+		const longPrompt = head + middle + tail; // 401 字符 > 300
+		const ctx = createCtx([
+			{ type: "message", message: { role: "user", content: [{ type: "text", text: longPrompt }] } },
+		]);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		// mockImplementation 在被调时刻快照日志状态——若日志后置到 callLLM 之后，快照为空则本用例红
+		let logAtCallTime = "";
+		vi.mocked(callLLM).mockImplementation(async () => {
+			logAtCallTime = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+			return { ok: true, content: "修复登录超时" };
+		});
+
+		const result = await callRenameLLM(ctx, BASE_CONFIG, FINAL_MESSAGE);
+
+		expect(result).toBe("修复登录超时");
+		// 内省日志在请求发起前已打出（D9 时序契约）
+		expect(logAtCallTime).toContain("LLM request messages:");
+		expect(logAtCallTime).toContain('"role":"user"');
+		// 截断格式（C3）：head 200 + 字面 … + tail 100，中段被截掉
+		expect(logAtCallTime).toContain(head);
+		expect(logAtCallTime).toContain(tail);
+		expect(logAtCallTime).not.toContain("乙");
+		// resolve 后输出落库侧日志（renamed to "<title>"）
+		const logAfter = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+		expect(logAfter).toContain('renamed to "修复登录超时"');
+	});
+
+	it("TC6: entries 无 user message → 返回 null 不调 callLLM，debug 输出 skip: no user prompt", async () => {
+		vi.stubEnv("PI_RENAME_DEBUG", "1");
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		// resolveModel 先 stub 可用模型（extract 在 resolveModel 之后，不 stub 会走 model not available 分支）
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+
+		const result = await callRenameLLM(createCtx([]), BASE_CONFIG, FINAL_MESSAGE);
+
+		expect(result).toBeNull();
+		expect(callLLM).not.toHaveBeenCalled();
+		// C3 契约：[rename-session] + t=<ISO>（llm.ts 侧不含 turnIndex）
+		const line = warnSpy.mock.calls
+			.map((c) => String(c[0]))
+			.find((l) => l.includes("skip: no user prompt"));
+		expect(line).toMatch(/^\[rename-session\] t=\d{4}-\d{2}-\d{2}T/);
+	});
+
+	it("TC7: callLLM ok:false（超时/模型错误）→ 返回 null 不抛错（失败归一静默跳过）", async () => {
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "timeout", recoverable: true });
+		await expect(callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE)).resolves.toBeNull();
+	});
+
+	it("TC9: debug 开启 + callLLM 空 content → 输出 skip: title empty 且返回 null", async () => {
+		vi.stubEnv("PI_RENAME_DEBUG", "1");
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "   " });
+
+		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
+
+		expect(result).toBeNull();
+		// 该日志在 cleanTitle 清洗为空、返回 null 前打出（7 条契约文案之一）
+		const line = warnSpy.mock.calls
+			.map((c) => String(c[0]))
+			.find((l) => l.includes("skip: title empty"));
+		expect(line).toMatch(/^\[rename-session\] t=\d{4}-\d{2}-\d{2}T/);
 	});
 
 	it("maxTitleLength 截断生效（config.maxTitleLength 透传给 cleanTitle）", async () => {
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
 		const longTitle = "一二三四五六七八九十一二三四五六七八九十";
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: longTitle });
-		const result = await callRenameLLM(createCtx(), { ...BASE_CONFIG, maxTitleLength: 5 });
+		const result = await callRenameLLM(createCtx(), { ...BASE_CONFIG, maxTitleLength: 5 }, FINAL_MESSAGE);
 		expect(Array.from(result as string).length).toBe(5);
 	});
 
 	it("resolveModel 收到 config.model（验证 selector 透传）", async () => {
 		vi.mocked(resolveModel).mockReturnValue(null);
 		const ctx = createCtx();
-		await callRenameLLM(ctx, BASE_CONFIG);
+		await callRenameLLM(ctx, BASE_CONFIG, FINAL_MESSAGE);
 		expect(resolveModel).toHaveBeenCalledWith(ctx, BASE_CONFIG.model);
 	});
 
 	it("thinkingLevel=off → 不传 reasoning（provider 默认，旧版本行为）", async () => {
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
-		await callRenameLLM(createCtx(), { ...BASE_CONFIG, thinkingLevel: "off" });
+		await callRenameLLM(createCtx(), { ...BASE_CONFIG, thinkingLevel: "off" }, FINAL_MESSAGE);
 
 		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as { reasoning?: unknown };
 		expect(callOpts.reasoning).toBeUndefined();
@@ -320,7 +486,7 @@ describe("callRenameLLM", () => {
 	it("thinkingLevel=high → 透传 reasoning=high", async () => {
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
-		await callRenameLLM(createCtx(), { ...BASE_CONFIG, thinkingLevel: "high" });
+		await callRenameLLM(createCtx(), { ...BASE_CONFIG, thinkingLevel: "high" }, FINAL_MESSAGE);
 
 		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as { reasoning?: unknown };
 		expect(callOpts.reasoning).toBe("high");
@@ -328,7 +494,7 @@ describe("callRenameLLM", () => {
 });
 
 // ────────────────────────────────────────────────────
-// A1 日志（TC1-3：失败路径 + 成功路径可排查，契约 C1 文案锁定）
+// A1 日志（失败路径 + 成功路径可排查，契约 C1 文案锁定）
 // ────────────────────────────────────────────────────
 
 describe("callRenameLLM A1 日志", () => {
@@ -340,7 +506,7 @@ describe("callRenameLLM A1 日志", () => {
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		try {
 			vi.mocked(resolveModel).mockReturnValue(null);
-			const result = await callRenameLLM(createCtx(), BASE_CONFIG);
+			const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 			expect(result).toBeNull();
 			expect(warnSpy).toHaveBeenCalledWith("[rename-session] model not available, skipping");
 		} finally {
@@ -353,7 +519,7 @@ describe("callRenameLLM A1 日志", () => {
 		try {
 			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
 			vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
-			const result = await callRenameLLM(createCtx(), BASE_CONFIG);
+			const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 			expect(result).toBeNull();
 			expect(warnSpy).toHaveBeenCalledWith("[rename-session] rename LLM call failed: boom");
 		} finally {
@@ -366,7 +532,7 @@ describe("callRenameLLM A1 日志", () => {
 		try {
 			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
 			vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
-			const result = await callRenameLLM(createCtx(), BASE_CONFIG);
+			const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 			expect(result).toBeNull();
 			// 失败分支仍输出 failed 日志
 			expect(warnSpy).toHaveBeenCalledWith(
@@ -387,7 +553,7 @@ describe("callRenameLLM A1 日志", () => {
 		try {
 			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL as never);
 			vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "修复登录bug" });
-			const result = await callRenameLLM(createCtx(), BASE_CONFIG);
+			const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 			expect(result).toBe("修复登录bug");
 			expect(warnSpy).toHaveBeenCalledWith(
 				"[rename-session] rename with model stub/stub-model",

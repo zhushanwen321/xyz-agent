@@ -194,8 +194,8 @@ interface EntryLike {
  * 判定条件：entry.type === "message" && entry.message.role === "assistant"
  * （pi 内部 session-manager.ts 同款模式）。
  *
- * 注意：触发判定已改用 countSuccessfulAssistantReplies（不看 stopReason 无法区分
- * 「iteration 结束」与「轮次结束」，见设计 D6）。本函数保留导出兼容既有调用方。
+ * 注意：触发判定使用 countSuccessfulAssistantReplies（index.ts 已切换；不看 stopReason
+ * 无法区分「iteration 结束」与「轮次结束」，见设计 D6）。本函数仅为兼容保留。
  */
 export function countAssistantReplies(entries: ReadonlyArray<EntryLike>): number {
 	let count = 0;

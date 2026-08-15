@@ -40,24 +40,6 @@ interface EntryLike {
 	message?: unknown;
 }
 
-/**
- * 从 session entries 构造 messages 前缀，末尾追加 rename 指令 user message。
- * 取 type==='message' 的 entry.message，按原顺序保留（前缀与主 turn 字节级一致，命中 kvcache）。
- *
- * 返回 pi-ai 的 Message[]（callLLM 的 messages 契约）。前缀来自 entry.message
- * （SessionMessageEntry.message 即 AgentMessage，是 Message 的超集），末尾的 rename 指令
- * 补齐 UserMessage 必填的 timestamp 字段。
- */
-export function buildMessages(entries: ReadonlyArray<EntryLike>, instruction: string): Message[] {
-	const prefix = entries
-		.filter((e) => e.type === "message" && e.message !== undefined)
-		.map((e) => e.message as Message);
-	return [
-		...prefix,
-		{ role: "user", content: [{ type: "text", text: instruction }], timestamp: Date.now() },
-	];
-}
-
 // ──────────────────────── 标题输入构造（两段信号，D1/D2/D3） ────────────────────────
 
 /** unknown → Record 的运行时守卫：extractUserPromptText 逐字段消费 session entries 的宽松数据，字段存在性与类型由守卫核实（不使用 as any）。 */
@@ -97,14 +79,13 @@ export function extractUserPromptText(entries: ReadonlyArray<EntryLike>): string
 /**
  * 从触发 turn 的 assistant message（turn_end 的 event.message）提取最终回复文本（设计 D2）。
  * 拼接 content 内 type==='text' 的 text（join(' ')，跳过 thinking/toolCall）；无 text 返回 ''。
- * 参数用结构类型（不直接依赖 AssistantMessage），便于测试 mock。
+ * 参数为 unknown（callRenameLLM 的 finalMessage 契约），非对象 / content 形态未知按无 text 处理。
  */
-export function extractFinalText(message: {
-	content?: ReadonlyArray<{ type: string; text?: string }>;
-}): string {
-	return (message.content ?? [])
-		.filter((block) => block.type === "text")
-		.map((block) => block.text ?? "")
+export function extractFinalText(message: unknown): string {
+	if (!isRecord(message) || !Array.isArray(message.content)) return "";
+	return message.content
+		.filter((block) => isRecord(block) && block.type === "text")
+		.map((block) => (isRecord(block) && typeof block.text === "string" ? block.text : ""))
 		.join(" ");
 }
 
@@ -142,7 +123,7 @@ export function buildTitleMessages(
 		// AssistantMessage 的 api/usage/stopReason 等是 pi 侧输出记账字段，输入路径不消费
 		// （已核 anthropic-messages/google-shared/openai-completions 三家 convertMessages：
 		// assistant 输入只读 role + content blocks；google 对 msg.provider/model 的读取仅在
-		// thinking 块保留分支，本合成条目 text-only 不经过）→ 单点 as Message（同 buildMessages 既有模式）。
+		// thinking 块保留分支，本合成条目 text-only 不经过）→ 单点 as Message（沿用项目既有注释惯例）。
 		messages.push({
 			role: "assistant",
 			content: [{ type: "text", text: finalText }],
@@ -156,14 +137,62 @@ export function buildTitleMessages(
 	return messages;
 }
 
+// ──────────────────────── debug 证据链（D9）+ 超时（D7） ────────────────────────
+
+/** rename LLM 超时（D7 固定值：输入 ≤8k token + 输出 64 token，30s 宽裕；超时归一 ok:false 静默跳过）。 */
+const RENAME_TIMEOUT_MS = 30_000;
+
+/** debug 开关 live 读（每次调用查 process.env，非模块加载时读——vi.stubEnv 可测 + 运行时可切换）。 */
+function isRenameDebugEnabled(): boolean {
+	return process.env.PI_RENAME_DEBUG === "1";
+}
+
+/**
+ * llm.ts 侧 debug 日志（C3 契约）：[rename-session] + t=<ISO时间> + 文案。
+ * 不含 turnIndex——该字段只在 handler 作用域可达，不为日志字段扩 callRenameLLM 签名。
+ */
+function debugLog(message: string): void {
+	if (isRenameDebugEnabled()) {
+		console.warn(`[rename-session] t=${new Date().toISOString()} ${message}`);
+	}
+}
+
+/** preview 阈值（字符数，D9 契约）：≤300 全文；>300 输出 head 200 + 字面 … + tail 100。 */
+const PREVIEW_MAX_CHARS = 300;
+const PREVIEW_HEAD_CHARS = 200;
+const PREVIEW_TAIL_CHARS = 100;
+
+/**
+ * debug 日志的文本预览（D9）：≤300 字符直接全文；超长输出 head 200 + 字面 … + tail 100
+ * （head/tail 双段支撑 E2E 对长 prompt 首尾片段的断言）。
+ */
+function previewText(text: string): string {
+	if (text.length <= PREVIEW_MAX_CHARS) return text;
+	return text.slice(0, PREVIEW_HEAD_CHARS) + "…" + text.slice(-PREVIEW_TAIL_CHARS);
+}
+
+/** 取 message content 内 text blocks 的拼接文本（debug 内省用，与发给 LLM 的数据同源）。 */
+function messageText(message: Message): string {
+	if (typeof message.content === "string") return message.content;
+	return message.content
+		.filter((block) => block.type === "text")
+		.map((block) => (block.type === "text" ? block.text : ""))
+		.join(" ");
+}
+
 // ──────────────────────── LLM 调用 ────────────────────────
 
 /**
  * 发起 rename LLM 调用，返回提取+清洗后的标题（空串/异常返回 null 表示应跳过 rename）。
  *
+ * finalMessage：触发 turn 的 event.message（D2——stopReason==='stop' 的 turn_end 自带最终
+ * assistant message，final text 零遍历可得）。
+ *
  * 收口要点（对比旧版搭便车逻辑）：
  * - model：`resolveModel(ctx, config.model)` 独立选模（旧版 `ctx.model` 搭便车主 session 模型）
  * - systemPrompt：`RENAME_SYSTEM_PROMPT` 精简版（旧版 `ctx.getSystemPrompt()` 整个 agent prompt）
+ * - messages：两段信号 [user(prompt), assistant(finalText), user(instruction)]（D1/D2/D3，
+ *   替换旧版全量前缀方案——过程数据稀释标题信号且 token 成本随工具数增长）
  * - tools：不传（callLLM 内部显式 tools:[]；旧版 `pi.getAllTools()` 塞全部工具，纯浪费 token）
  * - model 不可用（resolveModel 返回 null）→ 静默跳过返回 null，不报错不阻断
  * - signal：透传 ctx.signal（保留旧版随 session abort 取消的语义）
@@ -175,26 +204,50 @@ export function buildTitleMessages(
 export async function callRenameLLM(
 	ctx: ExtensionContext,
 	config: RenameSessionConfig,
+	finalMessage: unknown,
 ): Promise<string | null> {
-	// 独立选模：config.model（默认 scoped）。不可用静默跳过（A1 日志：不静默，可排查）。
+	// 内部顺序不可调换（E2E 竞态断言依赖「内省日志在请求发起前打出」）：
+	// resolveModel → extract prompt → extract finalText → truncate ×2 → build → debug 内省 → callLLM
 	const model = resolveModel(ctx, config.model);
 	if (!model) {
+		// A1 日志：不可用不静默（可排查）
 		console.warn("[rename-session] model not available, skipping");
 		return null;
 	}
 
-	const sessionId = ctx.sessionManager.getSessionId();
-	const messages = buildMessages(
+	const userPrompt = extractUserPromptText(
 		ctx.sessionManager.getEntries() as ReadonlyArray<EntryLike>,
+	);
+	if (userPrompt === null) {
+		// 理论不发生（round 由 user message 触发），null = 连 user message 都没有
+		debugLog("skip: no user prompt");
+		return null;
+	}
+	const finalText = extractFinalText(finalMessage);
+
+	// 两段输入信号各截断 4000 码点（D3：成本可控，标题语义足够）
+	const messages = buildTitleMessages(
+		truncateForTitle(userPrompt),
+		truncateForTitle(finalText),
 		RENAME_INSTRUCTION,
 	);
 
+	// debug 内省（D9）：日志与 callLLM 收到的是同一 messages 对象，日志内容即 LLM 收到的内容；
+	// 必须在 callLLM 之前打出（E2E 轮询此日志在 rename 返回前抢入手动命名）
+	if (isRenameDebugEnabled()) {
+		const preview = messages.map((m) => ({ role: m.role, text: previewText(messageText(m)) }));
+		debugLog(`LLM request messages: ${JSON.stringify(preview)}`);
+	}
+
+	const sessionId = ctx.sessionManager.getSessionId();
 	const result = await callLLM(ctx, {
 		model,
 		systemPrompt: RENAME_SYSTEM_PROMPT,
 		messages,
 		// 标题只需几个词，64 token 足够且省 quota
 		maxTokens: 64,
+		// D7：固定 30s 超时（网络抖动归一为 ok:false 走静默跳过，不悬挂 fire-and-forget promise）
+		timeoutMs: RENAME_TIMEOUT_MS,
 		// thinkingLevel:"off" → 不传 reasoning（provider 默认，与旧版本行为一致）；
 		// "minimal"~"max" 透传 pi-ai SimpleStreamOptions.reasoning（provider 不支持时忽略）
 		reasoning: config.thinkingLevel === "off" ? undefined : config.thinkingLevel,
@@ -214,5 +267,10 @@ export async function callRenameLLM(
 	console.warn(`[rename-session] rename with model ${model.provider}/${model.id}`);
 
 	const title = cleanTitle(result.content, config.maxTitleLength);
-	return title || null;
+	if (!title) {
+		debugLog("skip: title empty");
+		return null;
+	}
+	debugLog(`renamed to "${title}"`);
+	return title;
 }
