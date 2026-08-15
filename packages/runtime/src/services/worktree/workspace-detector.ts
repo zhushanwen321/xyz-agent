@@ -225,14 +225,12 @@ export function detectBareWorkspaceCached(cwd: string): boolean {
   const cached = bareCache.get(cwd)
   if (cached && (now - cached.ts) < BARE_CACHE_TTL_MS) return cached.isBare
 
-  // 最老条目淘汰（oldest-insert，非真 LRU——命中不刷新 ts）：超过上限时删 ts 最小的条目
+  // 最老条目淘汰（oldest-insert，非真 LRU——命中不刷新 ts）—— O(1)：JS Map 迭代序 = 插入序，
+  // 过期重写路径（下方 delete+set）保证「迭代序 = 最后写入时间升序」不变量，故 first key 恒为
+  // ts 最小条目，与原 O(n) 扫描 ts 最小的语义精确等价（perf 微项 10）。
   if (bareCache.size >= BARE_CACHE_MAX_SIZE) {
-    let oldestKey: string | null = null
-    let oldestTs = Infinity
-    for (const [key, val] of bareCache) {
-      if (val.ts < oldestTs) { oldestTs = val.ts; oldestKey = key }
-    }
-    if (oldestKey) bareCache.delete(oldestKey)
+    const oldest = bareCache.keys().next().value
+    if (oldest !== undefined) bareCache.delete(oldest)
   }
 
   let isBare = false
@@ -244,6 +242,8 @@ export function detectBareWorkspaceCached(cwd: string): boolean {
     // 兜底 false：session 摘要不能因 workspace 检测失败而中断
     isBare = false
   }
+  // 过期重写先 delete 再 set：把条目移到 Map 尾部，维持上述不变量（set 对已有 key 不换位）
+  bareCache.delete(cwd)
   bareCache.set(cwd, { isBare, ts: now })
   return isBare
 }

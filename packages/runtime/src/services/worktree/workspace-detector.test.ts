@@ -230,6 +230,59 @@ describe('detectBareWorkspaceCached()', () => {
     // 清理后重新查询
     expect(detectBareWorkspaceCached('/tmp/prune-test')).toBe(false)
   })
+
+  // ── perf 微项 10：LRU 淘汰 O(n)→O(1)（容量 500，观察 detectSync 调用计数）──────
+
+  it('容量满时 O(1) 驱逐最老条目（first-key 淘汰）', () => {
+    __resetBareCacheForTests()
+    const spy = vi.spyOn(WorkspaceDetector.prototype, 'detectSync')
+    try {
+      detectBareWorkspaceCached('/lru-wt-0')
+      // 填满缓存（模块常量 CACHE_MAX_SIZE=500）：第 501 个 key 插入时驱逐最老的 /lru-wt-0
+      for (let i = 1; i <= 500; i++) detectBareWorkspaceCached(`/lru-wt-${i}`)
+      expect(spy).toHaveBeenCalledTimes(501)
+
+      // 被驱逐的最老条目：重新读取 → 缓存 miss → 重新检测
+      detectBareWorkspaceCached('/lru-wt-0')
+      expect(spy).toHaveBeenCalledTimes(502)
+      // 未驱逐条目 TTL 内命中：零新检测
+      detectBareWorkspaceCached('/lru-wt-250')
+      expect(spy).toHaveBeenCalledTimes(502)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('过期重写把条目移到 Map 尾部：容量淘汰按最后写入时间（与原 ts 扫描语义等价）', () => {
+    vi.useFakeTimers()
+    __resetBareCacheForTests()
+    const spy = vi.spyOn(WorkspaceDetector.prototype, 'detectSync')
+    try {
+      detectBareWorkspaceCached('/lru-a') // t0 写入
+      detectBareWorkspaceCached('/lru-b') // t0 写入
+      vi.advanceTimersByTime(5 * 60 * 1000 + 1) // TTL（5min）过期
+      detectBareWorkspaceCached('/lru-a') // 过期重算 → delete+set 移尾（最后写入时间更新）
+      // 填满剩余容量（当前 2 条 → 再插 498 到 500）
+      for (let i = 0; i < 498; i++) detectBareWorkspaceCached(`/lru-fill-${i}`)
+      expect(spy).toHaveBeenCalledTimes(501) // 2 + 1（a 重算）+ 498
+
+      // 新 key 触发淘汰：first key 是 /lru-b（最后写入时间最旧——虽比 /lru-a 后插入，
+      // 但 /lru-a 过期重写过更"新"），与原 O(n) 扫描 ts 最小的语义精确等价
+      detectBareWorkspaceCached('/lru-new')
+      expect(spy).toHaveBeenCalledTimes(502)
+
+      // /lru-a 未被驱逐（重写过，较新）：TTL 内命中（此断言须在 /lru-b 重读之前——
+      // b 重读会让缓存回到满容量，届时 first key（a）才会被挤出）
+      detectBareWorkspaceCached('/lru-a')
+      expect(spy).toHaveBeenCalledTimes(502)
+      // /lru-b 被驱逐：重新读取重算
+      detectBareWorkspaceCached('/lru-b')
+      expect(spy).toHaveBeenCalledTimes(503)
+    } finally {
+      spy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
 })
 
 // ── GitRevParser 调用验证 ──────────────────────────────────
