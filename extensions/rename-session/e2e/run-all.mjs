@@ -1,12 +1,30 @@
 #!/usr/bin/env node
 /**
  * rename-session E2E 总结 runner：顺序跑 A1-A5，单场景失败不阻断后续，
- * 最后汇总表 + 总 exit code（任一 assertion 类失败 → 1；A2 的 KEBAB_NON_COMPLIANT
- * 是模型遵从问题，不翻 exit code 但在汇总中如实呈现）。
+ * 最后汇总表 + 总 exit code（任一失败——含 KEBAB_NON_COMPLIANT——→ 1）。
+ *
+ * 两种模式：
+ * - 默认（无 env）：全量 A1-A5（真实 pi + 真实模型，约 2-15 分钟）——人工验收用。
+ * - E2E_QUICK=1：只跑 harness 断言工具单测（vitest，秒级）——cw test gate 用。
+ *   cw 的 testRunner 硬编码 120s 命令超时，真实模型的 E2E 全量必超；E2E 场景的
+ *   正式验收证据是 RESULTS.md + 各场景独立跑记录（见 README），gate 跑快速集
+ *   验证 harness 逻辑与 runner 健康。
  *
  * 用法：cd extensions/rename-session && node e2e/run-all.mjs
  * 调试保留现场：E2E_KEEP_TMP=1 node e2e/run-all.mjs
  */
+
+import { spawnSync } from "node:child_process";
+
+if (process.env.E2E_QUICK === "1") {
+	// 快速集：harness 断言工具单测（vitest 输出原生含统计行，gate 正则直接消费）
+	const r = spawnSync("npx", ["vitest", "run", "e2e/harness.test.mjs"], {
+		stdio: "inherit",
+		encoding: "utf8",
+		timeout: 110_000, // cw testRunner 硬上限 120s 内留余量
+	});
+	process.exit(r.status ?? 1);
+}
 
 import { runA1 } from "./run-a1.mjs";
 import { runA2 } from "./run-a2.mjs";

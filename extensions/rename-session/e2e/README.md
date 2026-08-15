@@ -5,6 +5,7 @@ E2E wave（P0 探针 + T1 harness + A1-A5 场景）的探针结论与运行指�
 - 测试模型固定 `xiaomi-token-plan-cn/mimo-v2.5-pro`（项目规范，禁 kimi）
 - 本 E2E 定位为**本地人工触发的验收资产**（真实模型 API，不进常规 CI）
 - 场景 runner：`node e2e/run-a1.mjs` ~ `node e2e/run-a5.mjs`（单场景独立可跑）、`node e2e/run-all.mjs`（顺序全跑 + 汇总 + exit code），harness 见 `e2e/harness.mjs`
+- run-all 两种模式：默认全量 A1-A5（真实 pi + 真实模型，约 2-15 分钟，人工验收用）；`E2E_QUICK=1` 只跑 harness 断言工具单测（秒级，cw test gate 用——cw testRunner 硬编码 120s 命令超时，真实模型全量必超；E2E 场景正式验收证据 = RESULTS.md + 各场景跑记录）；vitest 入口等价物：`npx vitest run e2e/scenarios.test.mjs`（A1-A5 各一个 test）
 
 ## P0 探针结论（2026-08-15 实测）
 
