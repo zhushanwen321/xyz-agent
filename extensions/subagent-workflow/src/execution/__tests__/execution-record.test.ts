@@ -687,11 +687,14 @@ describe("nextRoundBaseTurnIndex", () => {
     // 按防御分支构造仍有效，锁住公式在滞后交错下的正确性，防 pi 未来事件序变化）。
     // 两层 usage 守卫：session-runner.ts 转发层 if (msg?.usage)（bare message_end 不转发）
     // + execution-record.ts 累积层 if (event.usage)（bare message_end 不开 turn）——
-    // 故本探针的 message_end 必须携带 usage（如 { input: 10, output: 5 }）才能开出空 turn。
+    // 故本探针的 message_end 必须携带 usage（如 { input: 10, output: 5, cacheRead: 0, cacheWrite: 0 }）才能开出空 turn。
     const r = makeRecord();
     updateFromEvent(r, { type: "text_delta", delta: "R1" });
     updateFromEvent(r, { type: "turn_end" }); // 闭合本轮
-    updateFromEvent(r, { type: "message_end", usage: { input: 10, output: 5 } }); // 滞后 message_end 开新空 turn
+    updateFromEvent(r, {
+      type: "message_end",
+      usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0 },
+    }); // 滞后 message_end 开新空 turn
     expect(r.turns.length).toBe(2);
     expect(r.turns[1]!.closed).toBe(false);
     expect(r.turns[1]!.text).toBe("");

@@ -419,7 +419,7 @@ export interface ExecutionRecord {
    *   undefined（onRoundSettled 是 session-runner chatMode 分支专属回调）。
    * - D1 滞后空 turn 防丢文本（防御性）：pi 当前事件序下该形态不可达——带 usage 的
    *   message_end 恒先于 turn_end（@earendil-works/pi-agent-core dist/agent-loop.js
-   *   :240/:253/:548 三处 message_end emit 均在 :131 正常路径 turn_end 之前），settle 时
+   *   :240/:253/:547 三处 message_end emit 均在 :131 正常路径 turn_end 之前），settle 时
    *   turn 全闭合。防 pi 未来事件序变化：若 settle 时刻末 turn 是滞后 message_end 开出的
    *   空 turn（execution-record.ts message_end 分支经 currentTurn，需同时过两层 usage 守卫：
    *   session-runner.ts 转发层 `if (msg?.usage)`（bare message_end 不转发）+ execution-record.ts

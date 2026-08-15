@@ -221,7 +221,17 @@ export async function doFinalizeRoundToIdle(
   // 不变（G4）；无条件替换会把文案漂移为占位。chatMode 空增量轮 → 固定占位
   // "(no output this round)"（D5：增量语义下沿用旧 record.result = 上一轮增量，本轮通知
   // 正文 = 上一轮内容，父 agent 误读为原样重复回复）。
-  record.result = result.text || (result.error ? `round did not complete: ${result.error}` : record.chatMode ? "(no output this round)" : record.result);
+  let nextResult: string | undefined;
+  if (result.text) {
+    nextResult = result.text;
+  } else if (result.error) {
+    nextResult = `round did not complete: ${result.error}`;
+  } else if (record.chatMode) {
+    nextResult = "(no output this round)";
+  } else {
+    nextResult = record.result;
+  }
+  record.result = nextResult;
 
   // 删 .alive marker（进程已 SIGTERM 回收）。
   // sessionFile 窗口期可能 undefined（极少——对话模式轮次完成意味着 session 已跑过），
