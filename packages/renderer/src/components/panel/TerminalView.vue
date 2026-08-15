@@ -188,17 +188,22 @@ function initXterm(): FitAddon | null {
   return fit
 }
 
-/** 回放 scrollback（mount 时全量，之后增量）。 */
+/** 回放 scrollback（mount 时全量，之后增量）。未回放部分合并为单次 write（D-6.1：每帧一次）。 */
 function replayScrollback(): void {
   if (!xterm) return
-  const partition = state.value
-  const lines = partition.scrollback
-  // 只 write 未回放的部分
-  // 注意：scrollback 是按 PTY 输出 chunk 累积（非按行），replayedScrollbackLength 跟踪 chunk 数
-  for (let i = replayedScrollbackLength; i < lines.length; i++) {
-    xterm.write(lines[i])
+  const lines = state.value.scrollback
+  // scrollback 按 PTY 输出 chunk 累积（非按行），replayedScrollbackLength 跟踪 chunk 数。
+  // rAF flush 批量 append 后 watch 每帧至多触发一次，这里把本批 chunk join 成一次 write
+  // （xterm.write 是字节流语义，write(a);write(b) ≡ write(a+b)，合并只减少调用次数）。
+  if (replayedScrollbackLength >= lines.length) {
+    // 指针超过当前长度只在 scrollback 被裁剪（超 SCROLLBACK_LIMIT splice 前缀）时发生：
+    // 钳制回当前末尾（被裁掉的部分已 write 过），与旧逐 chunk 回放的行为一致
+    replayedScrollbackLength = lines.length
+    return
   }
+  const merged = lines.slice(replayedScrollbackLength).join('')
   replayedScrollbackLength = lines.length
+  xterm.write(merged)
 }
 
 /** 清屏（清 xterm + scrollback 当前分区）。 */

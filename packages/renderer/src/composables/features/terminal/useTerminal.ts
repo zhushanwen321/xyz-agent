@@ -2,7 +2,7 @@
  * useTerminal —— drawer 集成终端的 per-session 状态 + PTY 控制（Phase 3）。
  *
  * 职责：
- * 1. per-session scrollback buffer + PTY 存活态 + 写队列（useSessionScopedState，ADR-0049）
+ * 1. per-session scrollback buffer + rAF 输出写队列 + PTY 存活态 + 命令写队列（useSessionScopedState，ADR-0049）
  * 2. 订阅 terminal.data/exit/alive（useSessionEvents），WS handler 用 updateFor 防竞态
  * 3. 对外暴露 spawn/write/resize/kill/enqueueWrite（TerminalView 调用）
  *
@@ -12,6 +12,12 @@
  * - xterm 组件：跟随 terminal tab 可见性（TerminalView mount/unmount）
  * 切走 terminal tab 时 xterm unmount，但 PTY + buffer 不动；切回 mount 时回放 buffer。
  * WS handler 无条件 append scrollback（updateFor capturedSid），切走期间输出不丢。
+ *
+ * rAF 输出写队列（D-6.1，2026-08 perf）：
+ * - terminal.data 不再逐 chunk push scrollback，改入 outputQueue，rAF 回调 flushPending
+ *   批量 append scrollback → TerminalView 的 watch(scrollback.length) 每帧至多触发一次 →
+ *   replayScrollback 合并为一次 xterm.write。消除「每 chunk 一次 watch + 一次 write」的高频掉帧。
+ * - 用户输入（writeToTerminal）不走此队列，直连 terminalApi.write（击键即时回显）。
  *
  * 联动 2 写队列（enqueueWrite）：
  * - PTY 已活（ptyAlive=true）→ 立即 write
@@ -31,6 +37,15 @@ import { terminalApi } from '@/api/domains/terminal'
 interface TerminalPartition {
   /** scrollback 历史输出（PTY 切走期间继续累积，切回回放）。上限由 scrollback 配置裁剪。 */
   scrollback: string[]
+  /**
+   * rAF 写队列（D-6.1）：一帧内待 flush 的 PTY 输出 chunk 暂存。
+   * terminal.data handler 只 push 这里，等 rAF flush 时批量进 scrollback——
+   * 高频输出时 N 次 data 合并为每帧一次 scrollback 批量 append + 一次 xterm.write。
+   * 命名避开 terminal-write-queue 的 pendingWrites（那是命令队列，drop-oldest 语义）。
+   */
+  outputQueue: string[]
+  /** rAF 是否已置位（per-sid 防重入：置位期间新 chunk 只入队不再调度）。 */
+  rafPending: boolean
   /** PTY 是否存活（spawn 后置 true，exit 后置 false）。联动 2 的 ptyAlive 判断在全局 store（terminal-write-queue）。 */
   ptyAlive: boolean
   /** 当前 PTY 尺寸（xterm fit 后记录）。 */
@@ -42,6 +57,8 @@ interface TerminalPartition {
 function createPartition(): TerminalPartition {
   return reactive({
     scrollback: [],
+    outputQueue: [],
+    rafPending: false,
     ptyAlive: false,
     cols: 80,
     rows: 24,
@@ -50,6 +67,13 @@ function createPartition(): TerminalPartition {
 
 /** scrollback 上限（Phase 6 后由 settings 配置，当前固定 5000）。 */
 const SCROLLBACK_LIMIT = 5000
+
+/**
+ * outputQueue 防御上限（E6-a）：rAF 被后台节流（窗口最小化/隐藏）长时间不触发时，
+ * 队列按 join 合并成单块而非丢弃——输出侧语义是「保序全量」，丢 chunk 会在历史留空洞。
+ * 与命令队列 terminal-write-queue 的 drop-oldest（保最新命令）语义刻意分离。
+ */
+const MAX_OUTPUT_QUEUE = 1000
 
 /**
  * terminal per-session 状态 + PTY 控制。
@@ -64,16 +88,56 @@ export function useTerminal(sessionIdRef: Ref<string | null>) {
   // 订阅 terminal.* 广播（useSessionEvents 管理 session 级订阅生命周期）
   const onMessage = useSessionEvents(sessionIdRef)
 
-  // terminal.data：PTY 输出 → append scrollback（无条件，切走也不丢输出）
+  // terminal.data：PTY 输出 → 入 rAF 写队列（updateFor capturedSid，D-6.1 批量合帧）
   onMessage('terminal.data', (msg, sid) => {
+    appendChunk(sid, msg.payload.data)
+  })
+
+  /**
+   * terminal.data chunk 入队（D-6.1 rAF 写队列入口）。
+   * 只 push 进 outputQueue 并置位 rAF；scrollback 累积与 xterm 写入都推迟到 flush——
+   * 高频输出（如 build 日志）时 N 次 data 只产生每帧一次的 watch 触发 + 一次 xterm.write。
+   * E6-a：rAF 被后台节流导致队列超限时 join 合并成单块（保序全量，不丢弃）。
+   */
+  function appendChunk(sid: string, chunk: string): void {
+    let schedule = false
     state.updateFor(sid, (s) => {
-      s.scrollback.push(msg.payload.data)
-      // 裁剪 scrollback 上限（保留最新 N 行）
+      s.outputQueue.push(chunk)
+      if (s.outputQueue.length > MAX_OUTPUT_QUEUE) {
+        s.outputQueue = [s.outputQueue.join('')]
+      }
+      if (!s.rafPending) {
+        s.rafPending = true
+        schedule = true
+      }
+    })
+    if (schedule) {
+      requestAnimationFrame(() => flushPending(sid))
+    }
+  }
+
+  /**
+   * rAF 回调：把 outputQueue 批量刷进 scrollback（D-6.1）。
+   * scrollback 是唯一累积点——无论 xterm 挂载与否都先写这里（E6-c：组件切走时 watch 已销毁，
+   * 本函数照常累积，只是无人消费 xterm 写入；数据不丢）。xterm 写入不经本函数，由 TerminalView
+   * 既有的 watch(scrollback.length) → replayScrollback 承接：每帧一次批量 append 只触发一次
+   * watch、一次合并 write（该 watch 从此只承载「flush 后写 buffer」单一职责，09 §5 检查点）。
+   * 逐 chunk push（非整体 join）保持回放粒度，为 W27/D-6.2 版本回放留语义。
+   */
+  function flushPending(sid: string): void {
+    state.updateFor(sid, (s) => {
+      s.rafPending = false
+      if (s.outputQueue.length === 0) return
+      for (const queued of s.outputQueue) {
+        s.scrollback.push(queued)
+      }
+      s.outputQueue.length = 0
+      // 裁剪 scrollback 上限（保留最新 N chunk，语义同改造前的 per-push 裁剪）
       if (s.scrollback.length > SCROLLBACK_LIMIT) {
         s.scrollback.splice(0, s.scrollback.length - SCROLLBACK_LIMIT)
       }
     })
-  })
+  }
 
   // terminal.alive：PTY 就绪 → 置 ptyAlive + markAlive（flush 全局写队列，联动 2）
   onMessage('terminal.alive', (_msg, sid) => {
