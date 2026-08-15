@@ -13,8 +13,17 @@
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { ScannedSessionMeta } from '../ports/session.js'
 
-/** SendMessage hook:消息发送前触发,可阻止发送。 */
-export type SendMessageHook = (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>
+/**
+ * SendMessage hook:消息发送前触发,可阻止发送或改写内容。
+ *
+ * modifiedContent:onBeforeSendMessage 拦截器经 modifiedData 改写后的消息文本
+ * （D2-3 transform 语义消费侧出口，01 文档 §3.1 成功路径第 4 步）——消费点
+ * （message-dispatcher.sendPrompt）用它替代原文发 pi；blocked 优先级高于改写。
+ */
+export type SendMessageHook = (
+  sessionId: string,
+  content: string,
+) => Promise<{ blocked: boolean; reason?: string; modifiedContent?: string } | null>
 
 /** scanPiSessions 返回的元素类型（经 ISessionStore.scanSessions）。 */
 export type ScannedSession = ScannedSessionMeta

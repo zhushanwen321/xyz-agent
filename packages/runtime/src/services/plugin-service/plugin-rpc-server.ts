@@ -132,9 +132,13 @@ export class PluginRpcServer {
     if (this.permissionCheck) {
       const pluginId = (message.params?.pluginId as string) || 'unknown'
       if (!this.permissionCheck(pluginId, message.method)) {
-        if (!isNotification) {
-          worker.postMessage({ type: 'rpc', response: this.makeErrorResponse(message.id, PluginRpcErrorCodes.PERMISSION_DENIED, `PERMISSION_DENIED: ${message.method}`) })
+        // notification 被拒：无回包通道（JSON-RPC 语义），拒绝必须落日志——
+        // 否则插件通知静默消失，排查时无迹可循（Fix-4）
+        if (isNotification) {
+          console.warn(`[plugin-rpc-server] notification denied (PERMISSION_DENIED): plugin=${pluginId} method=${message.method}`)
+          return
         }
+        worker.postMessage({ type: 'rpc', response: this.makeErrorResponse(message.id, PluginRpcErrorCodes.PERMISSION_DENIED, `PERMISSION_DENIED: ${message.method}`) })
         return
       }
     }

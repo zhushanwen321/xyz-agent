@@ -38,6 +38,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 import { registerHookRpcHandlers, disposePluginHooks } from '../src/services/plugin-service/hook-api.js'
+import { dispatchHostRpcMessage } from '../src/services/plugin-service/plugin-host.js'
 import {
   handleMessage,
   setPostMessage,
@@ -46,8 +47,6 @@ import {
 } from '../src/services/plugin-service/plugin-bootstrap.js'
 import type {
   HostToWorkerMessage,
-  RpcResponse,
-  RpcRequest,
   HookEntry,
   PluginDescriptor,
 } from '../src/services/plugin-service/plugin-types.js'
@@ -80,7 +79,11 @@ interface E2eHarness {
   pluginId: string
 }
 
-/** 主线程消息泵：等价 PluginHost 的 worker.on('message') rpc 分发逻辑（传输适配层） */
+/**
+ * 主线程消息泵：等价 PluginHost 的 worker.on('message') rpc 分发逻辑（传输适配层）。
+ * Fix-3：rpc 分支复用 plugin-host 导出的 dispatchHostRpcMessage——与
+ * plugin-host / plugin-host-process 生产实现单一真相，主线程分发链变更即时覆盖。
+ */
 function hostMessagePump(
   port: MessagePort,
   workerId: string,
@@ -90,17 +93,7 @@ function hostMessagePump(
   port.on('message', (m: Record<string, unknown>) => {
     hostReceived.push(m)
     if (m.type !== 'rpc') return
-    const rpcMsg = m
-    if (rpcMsg.response && typeof (rpcMsg.response as Record<string, unknown>).id !== 'undefined') {
-      void service.rpcServer.handleResponse(rpcMsg.response as unknown as RpcResponse)
-    } else if (('result' in rpcMsg || 'error' in rpcMsg) && typeof rpcMsg.id === 'number') {
-      void service.rpcServer.handleResponse(rpcMsg as unknown as RpcResponse)
-    } else if (rpcMsg.request && typeof (rpcMsg.request as Record<string, unknown>).method === 'string') {
-      void service.rpcServer.dispatch(workerId, rpcMsg.request as unknown as RpcRequest)
-    } else if (typeof rpcMsg.method === 'string') {
-      // 扁平 RpcRequest/notification（PluginRpcClient 发出的形状）
-      void service.rpcServer.dispatch(workerId, m as unknown as RpcRequest)
-    }
+    dispatchHostRpcMessage(service.rpcServer, workerId, m)
   })
 }
 

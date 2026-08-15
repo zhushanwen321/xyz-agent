@@ -182,8 +182,10 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
     })
 
     it('ObserverHookType includes expected values', () => {
-      const hook: ObserverHookType = 'onMessage'
-      expect(hook).toBe('onMessage')
+      // Fix-6：'onMessage'/'onSessionCreate'/'onSessionDestroy' 死字面量已删除，
+      // onPiEvent 是唯一 observe 通道（D2-4 泛型事件观察）
+      const hook: ObserverHookType = 'onPiEvent'
+      expect(hook).toBe('onPiEvent')
     })
 
     it('HookResult can be success or blocked', () => {

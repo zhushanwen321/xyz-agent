@@ -303,11 +303,16 @@ export function createHookApi(
      * （event-interpreter / bridge-interop）的泛型调用对齐，事件名经 context 传给
      * handler，插件在 handler 内自行按事件名过滤。
      *
-     * context 形状适配（三类调用方统一解析）：
-     * - bridge（handleBridgeEvent）/ 标准 HookContext：`data: { eventName, data, ... }`
-     *   ——事件名与负载嵌套在 ctx.data 内
-     * - event-interpreter：`{ event, ...payload }` ——事件字段平铺、无 data 包装
-     * - 平铺变体：`{ eventName, data }` 直接在 ctx 顶层
+     * context 形状适配（三类调用方统一解析，Fix-2）：
+     * - bridge 包装 / 标准 HookContext：`data: { eventName, data, ... }` ——事件名与
+     *   负载嵌套在 ctx.data 内，payload 解包为内层 data
+     * - 平铺变体：`{ eventName, data }` 直接在 ctx 顶层 ——payload 取顶层 data
+     * - event-interpreter 平铺：`{ event, ...payload }` ——payload 为剥离 event/eventName
+     *   元字段后的剩余字段（handler 的 data 不再混入 event 字段本身）
+     *
+     * eventName 解析优先级：实际收到的 `event` 字段 > 顶层 `eventName` > bridge 包装内
+     * `data.eventName` > 注册时 eventName（最后兜底）。payload.data 存在但其内无
+     * eventName 时不会覆盖实际收到的 event 字段（Fix-2 错报边界）。
      * handler 统一收到 `(eventName, data)`。
      */
     onPiEvent: (eventName: string, handler: PiEventCallback) =>
@@ -320,16 +325,24 @@ export function createHookApi(
             eventName?: unknown
             data?: { eventName?: unknown; data?: unknown }
           }
-          const nested = c.data ?? {}
+          const nested = c.data
           const resolvedEventName =
             (typeof c.event === 'string' ? c.event : undefined)
             ?? (typeof c.eventName === 'string' ? c.eventName : undefined)
-            ?? (typeof nested.eventName === 'string' ? nested.eventName : undefined)
+            ?? (typeof nested?.eventName === 'string' ? nested.eventName : undefined)
             ?? eventName
-          const payload =
-            nested.data !== undefined ? nested.data
-              : c.data !== undefined ? c.data
-                : c
+          let payload: unknown
+          if (typeof nested?.eventName === 'string') {
+            // bridge 包装 {eventName, data, ...}：解包内层 data
+            payload = nested.data !== undefined ? nested.data : nested
+          } else if (typeof c.eventName === 'string' && c.data !== undefined) {
+            // 平铺变体 {eventName, data}：取顶层 data
+            payload = c.data
+          } else {
+            // event-interpreter 平铺 {event, ...payload}：剥离元字段后透传业务负载
+            const { event: _event, eventName: _eventName, ...rest } = c as Record<string, unknown>
+            payload = rest
+          }
           await handler(resolvedEventName, payload)
           return undefined
         },

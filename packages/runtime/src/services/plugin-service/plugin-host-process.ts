@@ -14,9 +14,9 @@
  */
 
 import { fork, type ChildProcess, type Serializable } from 'node:child_process'
-import type { ProcessHandle, RpcRequest, RpcResponse } from './plugin-types.js'
+import type { ProcessHandle } from './plugin-types.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
-import { resolveAndValidateFile } from './plugin-host.js'
+import { resolveAndValidateFile, dispatchHostRpcMessage } from './plugin-host.js'
 
 const MAX_PLUGINS_PER_TRUSTED_PROCESS = 10
 const LOAD_PLUGIN_TIMEOUT_MS = 10_000
@@ -413,20 +413,9 @@ export class PluginHostProcess implements PluginHostProcessContract {
     child.on('message', (msg: unknown) => {
       const m = msg as Record<string, unknown>
       if (m.type === 'rpc') {
-        // 子进程发来的 RPC 消息格式与 Worker 版一致（TR1：分发逻辑复制，独立维护）：
-        // 1. { type: 'rpc', response: RpcResponse } — 对 invoke 的响应
-        // 2. { type: 'rpc', request: RpcRequest } — 子进程主动发来的请求
-        // 3. 扁平格式 { type: 'rpc', method, params, id }
-        const rpcMsg = m as Record<string, unknown>
-        if (rpcMsg.response && typeof (rpcMsg.response as Record<string, unknown>).id !== 'undefined') {
-          this.rpcServer.handleResponse(rpcMsg.response as unknown as RpcResponse)
-        } else if (('result' in rpcMsg || 'error' in rpcMsg) && typeof rpcMsg.id === 'number') {
-          this.rpcServer.handleResponse(rpcMsg as unknown as RpcResponse)
-        } else if (rpcMsg.request && typeof (rpcMsg.request as Record<string, unknown>).method === 'string') {
-          this.rpcServer.dispatch(processId, rpcMsg.request as unknown as RpcRequest)
-        } else if (typeof rpcMsg.method === 'string') {
-          this.rpcServer.dispatch(processId, m as unknown as RpcRequest)
-        }
+        // 子进程发来的 RPC 消息格式与 Worker 版一致——统一分发单一真相（Fix-3，
+        // 原 TR1「分发逻辑复制，独立维护」改为与 plugin-host / e2e 共享实现）
+        dispatchHostRpcMessage(this.rpcServer, processId, m)
       } else if (m.type === 'fatal_error') {
         this.handleProcessCrash(processId, String(m.error ?? 'unknown'))
       } else if (

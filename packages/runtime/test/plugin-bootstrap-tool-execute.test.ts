@@ -316,3 +316,52 @@ describe('plugin-bootstrap plugin.hooks.invoke request branch (D2-1)', () => {
     expect(postedMessages).toEqual([])
   })
 })
+
+// ── Fix-7: 'deactivate' 分支清理本地 tool handler（与主线程清 toolRegistry 对偶） ──
+
+describe('plugin-bootstrap deactivate clears local tool handlers (Fix-7)', () => {
+  it("deactivate removes the plugin's tool handlers; other plugins' handlers survive", async () => {
+    const handlerP1: ToolExecuteHandler = vi.fn().mockResolvedValue({ content: 'p1' })
+    const handlerP2: ToolExecuteHandler = vi.fn().mockResolvedValue({ content: 'p2' })
+    registerToolHandlerTracked('p1:toolA', handlerP1)
+    registerToolHandlerTracked('p2:toolB', handlerP2)
+
+    // 'deactivate' 分支（无 loadedModule 时 mod?.deactivate 跳过，仍执行清理 + 回 deactivated）
+    await handleMessage({ type: 'deactivate', pluginId: 'p1' } as HostToWorkerMessage)
+    await new Promise(resolve => setImmediate(resolve))
+
+    // p1 的 handler 摘除：tool.execute 落 METHOD_NOT_FOUND（迟到的工具调用不可达）
+    postedMessages.length = 0
+    await dispatchRpcRequest({
+      jsonrpc: '2.0',
+      id: 51,
+      method: 'plugin.tool.execute',
+      params: { pluginId: 'p1', toolName: 'toolA', arguments: {} },
+    })
+    expect(postedMessages).toEqual([{
+      type: 'rpc',
+      response: {
+        jsonrpc: '2.0',
+        id: 51,
+        error: {
+          code: PluginRpcErrorCodes.METHOD_NOT_FOUND,
+          message: 'Tool handler not found: p1:toolA',
+        },
+      },
+    }])
+    expect(handlerP1).not.toHaveBeenCalled()
+
+    // 其他插件的 handler 不受影响
+    postedMessages.length = 0
+    await dispatchRpcRequest({
+      jsonrpc: '2.0',
+      id: 52,
+      method: 'plugin.tool.execute',
+      params: { pluginId: 'p2', toolName: 'toolB', arguments: {} },
+    })
+    expect(postedMessages).toEqual([{
+      type: 'rpc',
+      response: { jsonrpc: '2.0', id: 52, result: { content: 'p2' } },
+    }])
+  })
+})

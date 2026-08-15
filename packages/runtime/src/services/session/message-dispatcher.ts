@@ -54,7 +54,7 @@ export class MessageDispatcher {
    * pending.reject，不得 reply success（round7 must-fix #3：避免「composer 清空 + 错误气泡」矛盾态）。
    */
   async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }> {
-    return this.sendPrompt(sessionId, content, () => content, images)
+    return this.sendPrompt(sessionId, content, (content) => content, images)
   }
 
   /** 构造 subagent 隐藏标记并发送 prompt(hook 审核用户原文,marker 仅发给 pi)。 */
@@ -63,26 +63,28 @@ export class MessageDispatcher {
     const encoded = Buffer.from(payload, 'utf-8').toString('base64')
     const marker = `<!-- xyz-agent-force-subagent:${encoded} -->`
     const promptText = content || `Execute task using agent '${agent}'`
-    return this.sendPrompt(sessionId, promptText, () => `${marker}\n${promptText}`)
+    return this.sendPrompt(sessionId, promptText, (promptBody) => `${marker}\n${promptBody}`)
   }
 
   /**
    * sendMessage / sendSubagentMessage 共享骨架。
-   * @param sessionId   会话 id
-   * @param hookContent hook 审核的文本(用户原文,不含 marker)
-   * @param buildPrompt 返回实际发给 pi 的文本(subagent 时含 marker 前缀)
-   * @param images      shared 形状图片附件（{data;mimeType}），透传给 client.prompt。
-   *                    仅 sendMessage 主路径传入；sendSubagentMessage 不传（范围外）。
+   * @param sessionId    会话 id
+   * @param hookContent  hook 审核的文本(用户原文,不含 marker)
+   * @param buildPrompt  输入(hook 改写后的)文本,返回实际发给 pi 的文本(subagent 时含 marker 前缀)
+   * @param images       shared 形状图片附件（{data;mimeType}），透传给 client.prompt。
+   *                     仅 sendMessage 主路径传入；sendSubagentMessage 不传（范围外）。
    */
   private async sendPrompt(
     sessionId: string,
     hookContent: string,
-    buildPrompt: () => string,
+    buildPrompt: (content: string) => string,
     images?: Array<{ data: string; mimeType: string }>,
   ): Promise<{ blocked: boolean; rejected?: boolean }> {
     // ── BeforeSend hook ──
     // blocked: 已广播 message.error（错误气泡），此处返回 {blocked:true} 让 handler 改发 error envelope。
-    if ((await this.runBeforeSendHook(sessionId, hookContent)).blocked) {
+    // modifiedContent: hook 改写后的文本（transform 语义，Fix-1），未改写时回退原文。
+    const hookOutcome = await this.runBeforeSendHook(sessionId, hookContent)
+    if (hookOutcome.blocked) {
       return { blocked: true }
     }
 
@@ -131,7 +133,7 @@ export class MessageDispatcher {
       }
     }
     // ── 发送 prompt + 错误广播 ──
-    const promptText = buildPrompt()
+    const promptText = buildPrompt(hookOutcome.modifiedContent ?? hookContent)
     try {
       await client.prompt(promptText, images)
     } catch (e) {
@@ -149,13 +151,14 @@ export class MessageDispatcher {
   }
 
   /**
-   * 运行 BeforeSend hook：返回 { blocked: true } 时调用方应中止发送。
+   * 运行 BeforeSend hook：返回 { blocked: true } 时调用方应中止发送；
+   * 返回 { modifiedContent } 时调用方应以改写后的文本发送（transform 语义，Fix-1）。
    * 统一处理 hook 拦截（blocked）与 hook 自身异常（广播 message.error 后视作 blocked）。
    */
   private async runBeforeSendHook(
     sessionId: string,
     hookContent: string,
-  ): Promise<{ blocked: boolean }> {
+  ): Promise<{ blocked: boolean; modifiedContent?: string }> {
     if (!this.sendMessageHook) return { blocked: false }
     try {
       const hookResult = await this.sendMessageHook(sessionId, hookContent)
@@ -164,6 +167,9 @@ export class MessageDispatcher {
         this.broker.broadcast(msg)
         this.messageBus?.publish(sessionId, msg)
         return { blocked: true }
+      }
+      if (typeof hookResult?.modifiedContent === 'string') {
+        return { blocked: false, modifiedContent: hookResult.modifiedContent }
       }
       return { blocked: false }
     } catch (e) {

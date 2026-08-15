@@ -321,6 +321,65 @@ describe('PluginService: registerSendMessageHook', () => {
     await service.shutdown()
   })
 
+  // Fix-1：transform 语义透传——executeHooks 返回 transformedData（D2-3 映射层产出的
+  // Worker modifiedData）时，hook 以 modifiedContent 出口交给 message-dispatcher 消费
+  it('hook returns modifiedContent when executeHooks yields transformedData {content}', async () => {
+    const { registry, broker, sessionService, setSendMessageHook } = createMocks()
+
+    const service = new PluginService(
+      registry as PluginRegistry,
+      broker as never,
+      { sessionService: sessionService as never },
+    )
+
+    vi.spyOn(service, 'executeHooks').mockResolvedValue({
+      blocked: false,
+      transformedData: { content: 'hello IMPORTANT world' },
+    })
+
+    await service.initialize()
+
+    const hookFn = setSendMessageHook.mock.calls[0][0] as (
+      sessionId: string,
+      content: string,
+    ) => Promise<{ blocked: boolean; reason?: string; modifiedContent?: string } | null>
+
+    const result = await hookFn('sess-3', 'hello !important world')
+
+    expect(result).toEqual({ blocked: false, modifiedContent: 'hello IMPORTANT world' })
+
+    await service.shutdown()
+  })
+
+  it('hook ignores transformedData whose content is not a string', async () => {
+    const { registry, broker, sessionService, setSendMessageHook } = createMocks()
+
+    const service = new PluginService(
+      registry as PluginRegistry,
+      broker as never,
+      { sessionService: sessionService as never },
+    )
+
+    vi.spyOn(service, 'executeHooks').mockResolvedValue({
+      blocked: false,
+      transformedData: { content: { nested: true } },
+    })
+
+    await service.initialize()
+
+    const hookFn = setSendMessageHook.mock.calls[0][0] as (
+      sessionId: string,
+      content: string,
+    ) => Promise<{ blocked: boolean; reason?: string; modifiedContent?: string } | null>
+
+    const result = await hookFn('sess-4', 'plain')
+
+    // 非字符串 content 不构成改写，按「无 hook 结果」透传（不猜形状）
+    expect(result).toBeNull()
+
+    await service.shutdown()
+  })
+
   it('does not register hook when sessionService is absent', async () => {
     const { registry, broker } = createMocks()
 

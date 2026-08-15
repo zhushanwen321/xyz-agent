@@ -511,4 +511,87 @@ describe('PluginService.executeHooks (BG1 T2)', () => {
     expect(reg.rpcServer.invoke).not.toHaveBeenCalled()
     expect(result).toEqual({ blocked: false })
   })
+
+  // ── TC-SH-17: Fix-7 — togglePlugin(false) 清 tool/command 注册，bridge 不再路由该插件工具 ──
+  it('TC-SH-17: togglePlugin(false) removes tool/command entries; bridge tool call returns not found (Fix-7)', async () => {
+    const broker = createMockBroker()
+    const service = new PluginService({} as never, broker)
+    const reg = internals(service)
+    const toolRegistry = (service as unknown as { toolRegistry: Map<string, import('../src/services/plugin-service/plugin-types.js').ToolEntry> }).toolRegistry
+    const commandRegistry = (service as unknown as { commandRegistry: Map<string, import('../src/services/plugin-service/api/commands-api.js').CommandRegistration> }).commandRegistry
+
+    // p-disabled 与 p-alive 各持一个工具 + 命令
+    const schema = (name: string) => ({ name, description: '', parameters: {} })
+    toolRegistry.set('p-disabled:toolA', { pluginId: 'p-disabled', handlerId: 'p-disabled:toolA', schema: schema('toolA') })
+    toolRegistry.set('p-alive:toolB', { pluginId: 'p-alive', handlerId: 'p-alive:toolB', schema: schema('toolB') })
+    commandRegistry.set('cmd-a', { pluginId: 'p-disabled', commandId: 'cmd-a', title: 'A' } as import('../src/services/plugin-service/api/commands-api.js').CommandRegistration)
+    commandRegistry.set('cmd-b', { pluginId: 'p-alive', commandId: 'cmd-b', title: 'B' } as import('../src/services/plugin-service/api/commands-api.js').CommandRegistration)
+
+    ;(service as unknown as { registry: unknown }).registry = {
+      getDescriptor: vi.fn().mockReturnValue({ pluginId: 'p-disabled', status: 'ACTIVE' }),
+      getAllDescriptors: vi.fn().mockReturnValue([]),
+    }
+    ;(service as unknown as { activator: unknown }).activator = {
+      deactivatePlugin: vi.fn().mockResolvedValue(undefined),
+      stopWatching: vi.fn(),
+      getState: vi.fn().mockReturnValue('ACTIVE'),
+    }
+    const syncSpy = vi.spyOn(service, 'syncToolsToBridge').mockResolvedValue(undefined)
+
+    await service.togglePlugin('p-disabled', false)
+
+    // 该插件的工具/命令条目清除；其他插件的保留
+    expect([...toolRegistry.keys()]).toEqual(['p-alive:toolB'])
+    expect([...commandRegistry.keys()]).toEqual(['cmd-b'])
+    // bridge schema 缓存同步刷新（禁用插件的工具不再出现在同步负载）
+    expect(syncSpy).toHaveBeenCalled()
+    syncSpy.mockRestore()
+
+    // bridge 调用禁用插件的工具 → not found（不再路由到已 deactivate 的 worker）
+    const bridgeResult = await service.handleBridgeToolExecute({ toolName: 'toolA', parameters: {} } as never)
+    expect(bridgeResult.isError).toBe(true)
+    expect(String(bridgeResult.content)).toContain('Tool not found: toolA')
+    // 其他插件工具不受影响（有 worker handle 时正常路由；此处断言 not-found 语义只针对 toolA）
+    const bridgeAlive = await service.handleBridgeToolExecute({ toolName: 'toolB', parameters: {} } as never)
+    expect(String(bridgeAlive.content)).not.toContain('Tool not found: toolB')
+  })
+
+  // ── TC-SH-18: Fix-5 — uninstallPlugin 时 deactivate 抛错不阻断清理 ──
+  it('TC-SH-18: uninstallPlugin continues cleanup when deactivatePlugin rejects (Fix-5)', async () => {
+    const broker = createMockBroker()
+    const service = new PluginService({} as never, broker)
+    const reg = internals(service)
+    const toolRegistry = (service as unknown as { toolRegistry: Map<string, import('../src/services/plugin-service/plugin-types.js').ToolEntry> }).toolRegistry
+    toolRegistry.set('p-gone:toolX', { pluginId: 'p-gone', handlerId: 'p-gone:toolX', schema: { name: 'toolX', description: '', parameters: {} } })
+    reg.hookRegistry.set('onBeforeToolCall', [
+      { pluginId: 'p-gone', handlerId: 'h-gone', priority: 100 },
+    ])
+
+    ;(service as unknown as { registry: unknown }).registry = {
+      getDescriptor: vi.fn().mockReturnValue({ pluginId: 'p-gone', status: 'ACTIVE' }),
+      getAllDescriptors: vi.fn().mockReturnValue([]),
+      removeDescriptor: vi.fn(),
+    }
+    ;(service as unknown as { activator: unknown }).activator = {
+      deactivatePlugin: vi.fn().mockRejectedValue(new Error('deactivate timeout')),
+      stopWatching: vi.fn(),
+      getState: vi.fn().mockReturnValue('ACTIVE'),
+    }
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const syncSpy = vi.spyOn(service, 'syncToolsToBridge').mockResolvedValue(undefined)
+
+    try {
+      // 不抛错：清理是 uninstall 的核心语义，deactivate 失败仅记日志
+      await expect(service.uninstallPlugin('p-gone')).resolves.toBeTruthy()
+      expect(errorSpy).toHaveBeenCalled()
+      // 清理全部完成：descriptor 移除 + tool/hook 注册清空 + bridge 同步刷新
+      expect((service as unknown as { registry: { removeDescriptor: ReturnType<typeof vi.fn> } }).registry.removeDescriptor).toHaveBeenCalledWith('p-gone')
+      expect(toolRegistry.size).toBe(0)
+      expect(reg.hookRegistry.has('onBeforeToolCall')).toBe(false)
+      expect(syncSpy).toHaveBeenCalled()
+    } finally {
+      errorSpy.mockRestore()
+      syncSpy.mockRestore()
+    }
+  })
 })

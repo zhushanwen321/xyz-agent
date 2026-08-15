@@ -327,6 +327,83 @@ describe('Hook API — createHookApi (Worker side)', () => {
   })
 })
 
+// ── Fix-2: onPiEvent context 形状适配（三类调用方 payload/eventName 解析） ──
+
+describe('onPiEvent context shape adaptation (Fix-2)', () => {
+  let mockClient: MockRpcClient & PluginRpcClient
+
+  beforeEach(() => {
+    mockClient = createMockRpcClient()
+  })
+
+  /** 注册 onPiEvent 并返回（handlerId 采集器 + 收集到的 (eventName, data)） */
+  async function registerObserver(registeredAs: string): Promise<{
+    handlerId: () => string
+    collected: Array<{ eventName: string; data: unknown }>
+  }> {
+    const hookApi = createHookApi(mockClient, 'shape-plugin')
+    const collected: Array<{ eventName: string; data: unknown }> = []
+    await hookApi.onPiEvent(registeredAs, async (eventName, data) => {
+      collected.push({ eventName, data })
+    })
+    const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')!
+    return { handlerId: () => registerCall.params.handlerId as string, collected }
+  }
+
+  it('interpreter flat shape {event, ...payload}: data excludes the event field itself', async () => {
+    const { handlerId, collected } = await registerObserver('agent_start')
+    await executeHookRequest({
+      handlerId: handlerId(),
+      // event-interpreter 平铺形状（event-interpreter.ts:310 等）
+      context: { event: 'tool_execution_start', toolCallId: 'tc-1', toolName: 'bash', input: { cmd: 'ls' } },
+    })
+    expect(collected).toEqual([{
+      eventName: 'tool_execution_start',
+      // handler 的 data 只含业务负载，不混入 event 元字段（Fix-2 主断言）
+      data: { toolCallId: 'tc-1', toolName: 'bash', input: { cmd: 'ls' } },
+    }])
+  })
+
+  it('interpreter flat shape with top-level data field: eventName stays the received event, not the registered one', async () => {
+    const { handlerId, collected } = await registerObserver('agent_start')
+    await executeHookRequest({
+      handlerId: handlerId(),
+      // 平铺 payload 恰含顶层 data 字段且其内无 eventName——不得误判为 bridge 包装、
+      // 不得用注册时事件名覆盖实际收到的 event 字段（Fix-2 错报边界）
+      context: { event: 'tool_execution_end', toolCallId: 'tc-2', data: { output: 'ok' } },
+    })
+    expect(collected).toEqual([{
+      eventName: 'tool_execution_end',
+      data: { toolCallId: 'tc-2', data: { output: 'ok' } },
+    }])
+  })
+
+  it('bridge wrapped shape data:{eventName, data}: unwraps inner data (unchanged semantics)', async () => {
+    const { handlerId, collected } = await registerObserver('agent_start')
+    await executeHookRequest({
+      handlerId: handlerId(),
+      // bridge（handleBridgeEvent）/ 标准 HookContext 形状
+      context: { data: { eventName: 'session_start', data: { sessionId: 's-9' } } },
+    })
+    expect(collected).toEqual([{
+      eventName: 'session_start',
+      data: { sessionId: 's-9' },
+    }])
+  })
+
+  it('flat variant {eventName, data} at top level: takes top-level data', async () => {
+    const { handlerId, collected } = await registerObserver('agent_start')
+    await executeHookRequest({
+      handlerId: handlerId(),
+      context: { eventName: 'session_tree', data: { nodes: 3 } },
+    })
+    expect(collected).toEqual([{
+      eventName: 'session_tree',
+      data: { nodes: 3 },
+    }])
+  })
+})
+
 // ── D2-1 request 直连：executeHookRequest 形态 ──────────────────────
 
 describe('executeHookRequest (D2-1 request direct path)', () => {

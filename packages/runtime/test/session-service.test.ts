@@ -379,6 +379,32 @@ describe('SessionService · dispatcher', () => {
       expect(client.prompt).toHaveBeenCalledWith('go', undefined)
     })
 
+    // Fix-1：onBeforeSendMessage 的 transform 语义消费侧——hook 返回 modifiedContent
+    // 时 dispatcher 用改写后的文本发 pi（demo 插件 !important → IMPORTANT 的消费链路）
+    it('sends the hook-modified content when hook returns modifiedContent', async () => {
+      const client = setup.mountClient('sid-1')
+      setup.service.setSendMessageHook(async (_sid, content) => ({
+        blocked: false,
+        modifiedContent: content.replace('!important', 'IMPORTANT'),
+      }))
+      await setup.service.sendMessage('sid-1', 'hello !important world')
+      expect(client.prompt).toHaveBeenCalledTimes(1)
+      expect(client.prompt).toHaveBeenCalledWith('hello IMPORTANT world', undefined)
+    })
+
+    it('blocks take precedence over modifiedContent (no prompt sent)', async () => {
+      const client = setup.mountClient('sid-1')
+      setup.service.setSendMessageHook(async () => ({
+        blocked: true,
+        reason: 'denied',
+        modifiedContent: 'should not be sent',
+      }))
+      await setup.service.sendMessage('sid-1', 'go')
+      expect(client.prompt).not.toHaveBeenCalled()
+      const err = findBroadcast(setup, 'message.error')
+      expect(err?.payload).toMatchObject({ message: 'denied' })
+    })
+
     it('broadcasts message.error and skips prompt when hook throws', async () => {
       const client = setup.mountClient('sid-1')
       setup.service.setSendMessageHook(async () => { throw new Error('hook boom') })
@@ -423,6 +449,19 @@ describe('SessionService · dispatcher', () => {
       await setup.service.sendSubagentMessage('sid-sub', 'coder', 't', 'do this please')
       const arg = client.prompt.mock.calls[0][0] as string
       expect(arg.endsWith('\ndo this please')).toBe(true)
+    })
+
+    // Fix-1：subagent 路径同样消费 modifiedContent——改写后的正文拼在 marker 之后
+    it('sends hook-modified body with marker prefix when hook returns modifiedContent', async () => {
+      const client = setup.mountClient('sid-sub')
+      setup.service.setSendMessageHook(async () => ({
+        blocked: false,
+        modifiedContent: 'rewritten body',
+      }))
+      await setup.service.sendSubagentMessage('sid-sub', 'coder', 't', 'raw body')
+      const arg = client.prompt.mock.calls[0][0] as string
+      expect(arg.startsWith('<!-- xyz-agent-force-subagent:')).toBe(true)
+      expect(arg.endsWith('\nrewritten body')).toBe(true)
     })
 
     it('hook audits the prompt text (not the marker) and blocks send', async () => {

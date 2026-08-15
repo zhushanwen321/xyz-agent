@@ -232,8 +232,8 @@ export interface ISessionService {
   listPersistedSessions(): SessionGroup[]
   destroyAll(): Promise<void>
 
-  /** 注册 onBeforeSendMessage hook，由 PluginService 调用 */
-  setSendMessageHook(hook: (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>): void
+  /** 注册 onBeforeSendMessage hook，由 PluginService 调用（可阻止发送或改写内容） */
+  setSendMessageHook(hook: (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string; modifiedContent?: string } | null>): void
   /** Set thinking level for a session's pi subprocess */
   setThinkingLevel(sessionId: string, level: string): Promise<void>
   /** Steer an actively generating session */

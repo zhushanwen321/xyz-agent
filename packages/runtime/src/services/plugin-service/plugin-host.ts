@@ -9,7 +9,7 @@ import { Worker } from 'node:worker_threads'
 import { resolve, dirname } from 'node:path'
 import { existsSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import type { WorkerHandle, RpcRequest } from './plugin-types.js'
+import type { WorkerHandle, RpcRequest, RpcResponse } from './plugin-types.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
 import { PluginHostProcess, type PluginPoolOptions } from './plugin-host-process.js'
 
@@ -109,6 +109,39 @@ const LOAD_PLUGIN_TIMEOUT_MS = 10_000
 const MEMORY_MONITOR_DEFAULT_INTERVAL_MS = 30_000
 const MAX_REBUILD_ATTEMPTS = 3
 const REBUILD_COOLDOWN_MS = 5_000
+
+/**
+ * Host 侧收到 Worker/子进程 `{type:'rpc'}` 消息后的统一分发（单一真相，Fix-3）。
+ *
+ * Worker 发来的 RPC 消息可能有三种格式：
+ * 1. `{ type: 'rpc', response: RpcResponse }` — 对 invoke 的响应（plugin-bootstrap postRpcResponse）
+ * 2. `{ type: 'rpc', request: RpcRequest }` — Worker 主动发来的请求
+ * 3. 扁平格式 `{ type: 'rpc', method, params, id }` — PluginRpcClient
+ *
+ * 消费方：PluginHost（Worker 版）、PluginHostProcess（fork 版）、e2e 测试 hostMessagePump
+ * ——三处复用同一实现，主线程分发链变更时 e2e 即时覆盖。
+ * 非 rpc 消息（fatal_error / activated / deactivated / error）由各宿主自行处理
+ * （crash / reply 回调在两宿主指向不同实现）。
+ */
+export function dispatchHostRpcMessage(
+  rpcServer: Pick<PluginRpcServer, 'handleResponse' | 'dispatch'>,
+  workerId: string,
+  msg: Record<string, unknown>,
+): void {
+  if (msg.response && typeof (msg.response as Record<string, unknown>).id !== 'undefined') {
+    // 嵌套 response 格式: { type: 'rpc', response: RpcResponse }
+    rpcServer.handleResponse(msg.response as unknown as RpcResponse)
+  } else if (('result' in msg || 'error' in msg) && typeof msg.id === 'number') {
+    // 扁平 response 格式: { type: 'rpc', id, result/error }
+    rpcServer.handleResponse(msg as unknown as RpcResponse)
+  } else if (msg.request && typeof (msg.request as Record<string, unknown>).method === 'string') {
+    // Incoming RPC request from Worker
+    void rpcServer.dispatch(workerId, msg.request as unknown as RpcRequest)
+  } else if (typeof msg.method === 'string') {
+    // Direct RpcRequest-style message
+    void rpcServer.dispatch(workerId, msg as unknown as RpcRequest)
+  }
+}
 
 type CrashCallback = (workerId: string, pluginIds: string[], error: string) => void
 type ReplyCallback = (msg: unknown) => void
@@ -447,24 +480,8 @@ export class PluginHost implements PluginHostContract {
     worker.on('message', (msg: unknown) => {
       const m = msg as Record<string, unknown>
       if (m.type === 'rpc') {
-        // Worker 发来的 RPC 消息可能有三种格式：
-        // 1. { type: 'rpc', response: RpcResponse } — 对 invoke 的响应（plugin-bootstrap postRpcResponse）
-        // 2. { type: 'rpc', request: RpcRequest } — Worker 主动发来的请求
-        // 3. 扁平格式 { type: 'rpc', method, params, id } — PluginRpcClient
-        const rpcMsg = m as Record<string, unknown>
-        if (rpcMsg.response && typeof (rpcMsg.response as Record<string, unknown>).id !== 'undefined') {
-          // 嵌套 response 格式: { type: 'rpc', response: RpcResponse }
-          this.rpcServer.handleResponse(rpcMsg.response as unknown as import('./plugin-types.js').RpcResponse)
-        } else if (('result' in rpcMsg || 'error' in rpcMsg) && typeof rpcMsg.id === 'number') {
-          // 扁平 response 格式: { type: 'rpc', id, result/error }
-          this.rpcServer.handleResponse(rpcMsg as unknown as import('./plugin-types.js').RpcResponse)
-        } else if (rpcMsg.request && typeof (rpcMsg.request as Record<string, unknown>).method === 'string') {
-          // Incoming RPC request from Worker
-          this.rpcServer.dispatch(workerId, (rpcMsg.request as unknown as RpcRequest))
-        } else if (typeof rpcMsg.method === 'string') {
-          // Direct RpcRequest-style message
-          this.rpcServer.dispatch(workerId, m as unknown as RpcRequest)
-        }
+        // 三种 RPC 消息格式的统一分发（Fix-3：与 plugin-host-process / e2e 共享单一真相）
+        dispatchHostRpcMessage(this.rpcServer, workerId, m)
       } else if (m.type === 'fatal_error') {
         this.handleWorkerCrash(workerId, String(m.error ?? 'unknown'))
       } else if (

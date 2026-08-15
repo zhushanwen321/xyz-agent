@@ -22,8 +22,12 @@ export type InterceptorHookType =
  * @proposed — 只观察的 hook 类型，插件只能读取数据不能阻止。
  * onPiEvent 是泛型 observe 通道（D2-4）：事件名经 context 传给 handler，
  * 插件在 handler 内自行按事件名过滤。
+ *
+ * [HISTORICAL] Fix-6：曾含 'onMessage' | 'onSessionCreate' | 'onSessionDestroy' 三个
+ * 字面量——无注册面（createHookApi 不暴露对应方法）、无调用面（event-interpreter /
+ * bridge-interop 不以此 key 调 executeHooks），属死类型，已删除（2026-08-15 W02 审查）。
  */
-export type ObserverHookType = 'onMessage' | 'onSessionCreate' | 'onSessionDestroy' | 'onPiEvent'
+export type ObserverHookType = 'onPiEvent'
 
 /** @proposed — 所有 hook 类型 */
 export type HookType = InterceptorHookType | ObserverHookType

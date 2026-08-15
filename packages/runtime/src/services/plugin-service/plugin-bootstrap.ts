@@ -80,6 +80,22 @@ export function unregisterToolHandler(toolKey: string): void {
   toolHandlers.delete(toolKey)
 }
 
+/**
+ * 清理指定插件的全部本地 tool handler（Fix-7，'deactivate' 消息分支消费）。
+ *
+ * toolKey 约定 `${pluginId}:${toolName}`（tool-api.ts），按前缀整组清除——与主线程
+ * togglePlugin(false)/uninstallPlugin 清 toolRegistry 对偶：插件禁用后主线程不再路由
+ * 该插件的 plugin.tool.execute，Worker 侧残留 handler 也一并摘除（禁用插件不可达）。
+ */
+export function disposePluginTools(pluginId: string): void {
+  const prefix = `${pluginId}:`
+  for (const toolKey of toolHandlers.keys()) {
+    if (toolKey.startsWith(prefix)) {
+      toolHandlers.delete(toolKey)
+    }
+  }
+}
+
 if (parentPort) {
   rpcClient.attach(parentPort)
 
@@ -143,6 +159,9 @@ export async function handleMessage(msg: HostToWorkerMessage): Promise<void> {
       // P-1：deactivate 成功后清理该插件全部本地 hook handler + 摘除执行器——
       // 与主线程 togglePlugin(false) 清 hookRegistry 对偶，禁用插件的 hook 不再执行
       disposePluginHooks(msg.pluginId)
+      // Fix-7：对偶清理本地 tool handler——与主线程清 toolRegistry 对称，
+      // 禁用插件的工具 handler 不残留（迟到的 tool.execute 落「handler not found」）
+      disposePluginTools(msg.pluginId)
       post({ type: 'deactivated', pluginId: msg.pluginId })
       break
     }

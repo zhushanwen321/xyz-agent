@@ -284,6 +284,13 @@ export class PluginService implements IPluginService {
           timestamp: Date.now(),
         })
         if (result.blocked) return { blocked: true, reason: result.reason }
+        // transform 语义消费侧（01 文档 §3.1 第 4 步）：拦截器经 modifiedData 改写的
+        // {content} 由 HookPipeline 映射为 transformedData（D2-3），此处透传给
+        // message-dispatcher 作为实际发送内容（demo 插件 !important → IMPORTANT 即此链路）
+        const modifiedContent = (result.transformedData as { content?: unknown } | undefined)?.content
+        if (typeof modifiedContent === 'string') {
+          return { blocked: false, modifiedContent }
+        }
         return null
       })
     }
@@ -309,6 +316,11 @@ export class PluginService implements IPluginService {
         this.activator.stopWatching(pluginId) // 停止热重载监听
         this.statusBarRegistry.clearForPlugin(pluginId) // 清理 status bar items
         this.removeHookEntriesFor(pluginId) // P-1：清 hook 注册，禁用插件的 hook 不再执行
+        // Fix-7：禁用插件的工具/命令同步清注册——与 P-1 的 hook 清理对称，否则禁用插件的
+        // 工具仍可被 bridge 调用、命令 invoke 仍发向该插件（worker 已 deactivate，必超时）
+        this.removeToolEntriesFor(pluginId)
+        this.removeCommandEntriesFor(pluginId)
+        await this.syncToolsToBridge()
       }
      
     } catch (err: unknown) {
@@ -329,25 +341,22 @@ export class PluginService implements IPluginService {
   }
 
   async uninstallPlugin(pluginId: string): Promise<PluginInfo[]> {
-    // 停用插件
-    await this.activator.deactivatePlugin(pluginId, this.host)
+    // 停用插件。Fix-5：deactivate 失败不阻断后续清理——注册表/工具/hook/命令清理是
+    // uninstall 的核心语义，Worker 侧 deactivate 抛错（如超时）时仍必须完成本地拆除
+    try {
+      await this.activator.deactivatePlugin(pluginId, this.host)
+    } catch (err: unknown) {
+      console.error(`[plugin-service] deactivate during uninstall failed (continuing cleanup) for ${pluginId}:`, toErrorMessage(err))
+    }
 
     // 从注册表中移除
     this.registry.removeDescriptor(pluginId)
 
     // 清理工具和 hook 注册
-    for (const [key, entry] of this.toolRegistry) {
-      if (entry.pluginId === pluginId) {
-        this.toolRegistry.delete(key)
-      }
-    }
+    this.removeToolEntriesFor(pluginId)
     this.removeHookEntriesFor(pluginId)
     // 清理命令注册表（插件卸载后残留命令会导致 invoke 通知发向已死 worker）
-    for (const [commandId, reg] of this.commandRegistry) {
-      if (reg.pluginId === pluginId) {
-        this.commandRegistry.delete(commandId)
-      }
-    }
+    this.removeCommandEntriesFor(pluginId)
 
     // 清理 status bar items
     this.statusBarRegistry.clearForPlugin(pluginId)
@@ -370,6 +379,33 @@ export class PluginService implements IPluginService {
         this.hookPipeline.registry.delete(hookType)
       } else {
         this.hookPipeline.registry.set(hookType, filtered)
+      }
+    }
+  }
+
+  /**
+   * 清理指定插件的全部工具注册条目（Fix-7：与 removeHookEntriesFor 同模式）。
+   *
+   * togglePlugin(false) 与 uninstallPlugin 共用——禁用插件的工具不再出现在 bridge
+   * schema 同步（syncToolsToBridge）与 bridge 执行路由中。Worker 侧对偶清理在
+   * plugin-bootstrap 的 'deactivate' 分支（disposePluginTools）。
+   */
+  private removeToolEntriesFor(pluginId: string): void {
+    for (const [toolKey, entry] of this.toolRegistry) {
+      if (entry.pluginId === pluginId) {
+        this.toolRegistry.delete(toolKey)
+      }
+    }
+  }
+
+  /**
+   * 清理指定插件的全部命令注册条目（Fix-7：与 removeHookEntriesFor 同模式）。
+   * 禁用/卸载后 command invoke 不再投递给该插件。
+   */
+  private removeCommandEntriesFor(pluginId: string): void {
+    for (const [commandId, reg] of this.commandRegistry) {
+      if (reg.pluginId === pluginId) {
+        this.commandRegistry.delete(commandId)
       }
     }
   }

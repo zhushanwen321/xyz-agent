@@ -42,7 +42,7 @@ const PI_BRIDGE_EVENTS = [
   'before_agent_start',
 ]
 
-/** 合法 HookType 全集（plugin-types/hook-types.ts：InterceptorHookType + ObserverHookType，含 D2-4 新增 onPiEvent） */
+/** 合法 HookType 全集（plugin-types/hook-types.ts：InterceptorHookType + ObserverHookType；Fix-6 删除三个死字面量后 ObserverHookType 仅剩 onPiEvent） */
 const VALID_HOOK_TYPES = new Set([
   'onToolCall',
   'onSlashCommand',
@@ -51,9 +51,6 @@ const VALID_HOOK_TYPES = new Set([
   'onBeforeToolCall',
   'onBeforeAgentStart',
   'onAfterToolResult',
-  'onMessage',
-  'onSessionCreate',
-  'onSessionDestroy',
   'onPiEvent',
 ])
 
