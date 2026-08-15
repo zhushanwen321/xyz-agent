@@ -14,9 +14,17 @@
  * 连接错误路径）；无自动 session_info；pi 存活（getState 正常响应）。
  */
 
-import { pathToFileURL } from "node:url";
-
-import { E2E_MODEL, assert, runScenario, sleep, spawnPi, startHangServer } from "./harness.mjs";
+import {
+	E2E_MODEL,
+	LLM_REQUEST_MARKER,
+	assert,
+	parseJsonlEntries,
+	runScenario,
+	runStandalone,
+	sleep,
+	spawnPi,
+	startHangServer,
+} from "./harness.mjs";
 
 const STUB_MODEL = "stub-hang/hang-model";
 
@@ -62,7 +70,7 @@ export async function runA5() {
 			log("主 round 正常完成（turn_end stopReason=stop）");
 
 			// rename LLM request 发出（指向 hang server）
-			const llmReq = await pi.rpc.waitForStderr("LLM request messages: ", { timeoutMs: 30_000 });
+			const llmReq = await pi.rpc.waitForStderr(LLM_REQUEST_MARKER, { timeoutMs: 30_000 });
 			// 等 ≥30s 超时失败日志（子串匹配 includes；探针 5：约 30s，上限 45s 含余量）
 			const fail = await pi.rpc.waitForStderr("rename LLM call failed:", { timeoutMs: 45_000 });
 			const hangMs = fail.t - llmReq.t;
@@ -74,14 +82,7 @@ export async function runA5() {
 
 			await sleep(600);
 			const lines = await pi.readSessionLines();
-			let infoCount = 0;
-			for (const line of lines ?? []) {
-				try {
-					if (JSON.parse(line)?.type === "session_info") infoCount++;
-				} catch {
-					// 坏行跳过
-				}
-			}
+			const infoCount = parseJsonlEntries(lines).filter((e) => e?.type === "session_info").length;
 			assert(infoCount === 0, `出现 ${infoCount} 条自动 session_info（超时不应落库）`);
 
 			// pi 存活：超时后 RPC 命令仍正常响应
@@ -97,9 +98,4 @@ export async function runA5() {
 }
 
 // ── 独立执行入口（node e2e/run-a5.mjs）──
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isMain) {
-	runA5().then((r) => {
-		process.exitCode = r.ok ? 0 : 1;
-	});
-}
+runStandalone(import.meta.url, runA5);

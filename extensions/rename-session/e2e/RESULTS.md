@@ -55,3 +55,19 @@
 | 跟进型 | 继续刚才的，改成支持 leading 选项 | debounce-leading-support | PASS（小写 kebab-case 动名词链） | PASS（debounce leading 支持，贴 prompt 的「支持 leading 选项」） | BORDERLINE（同前 run：中文 prompt 但英文 fixture 上下文，模型按上下文主语言输出英文，记边界不判失败） |
 
 **人工抽查结论（2026-08-15，验收人：主 agent，复验 run）**：三场景结论与终版 run 一致。本 run 为 helper 重构 bug（`lastSessionInfoEntry` 返回 entry 对象后未取 `.name`）修复后的复验——顺带把固定 `sleep(600)` 换成 `waitSessionInfoEntry` 轮询，跟进型标题从上轮的 `debounce-leading-implementation` 变为 `debounce-leading-support`，语义反而更贴 prompt。
+
+## 2026-08-15 12:24:21 run
+
+| 场景 | prompt | 实际标题 | 词组形态 | 语义相关 | 语言跟随 |
+|---|---|---|---|---|---|
+| 中文任务 | 帮我写一个防抖函数并加单测 | 防抖函数实现与单元测试 |  |  |  |
+| 英文任务 | Refactor the config loader to support env overrides | config-loader-env-override-refactor |  |  |  |
+| 跟进型 | 继续刚才的，改成支持 leading 选项 | debounce-leading-option |  |  |  |
+
+## 2026-08-15 12:32:14 run
+
+| 场景 | prompt | 实际标题 | 词组形态 | 语义相关 | 语言跟随 |
+|---|---|---|---|---|---|
+| 中文任务 | 帮我写一个防抖函数并加单测 | javascript-防抖函数实现与测试 |  |  |  |
+| 英文任务 | Refactor the config loader to support env overrides | refactor-config-loader-env-overrides |  |  |  |
+| 跟进型 | 继续刚才的，改成支持 leading 选项 | debounce-leading-选项支持 |  |  |  |

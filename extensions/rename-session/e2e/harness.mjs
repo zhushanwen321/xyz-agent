@@ -25,13 +25,12 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
-	readdirSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import net from "node:net";
 
 // ──────────────────────── 常量 ────────────────────────
@@ -41,15 +40,15 @@ export const E2E_MODEL = "xiaomi-token-plan-cn/mimo-v2.5-pro";
 
 const E2E_DIR = fileURLToPath(new URL(".", import.meta.url));
 /** 本 extension 目录（--extension 参数目标）。 */
-export const EXT_DIR = join(E2E_DIR, "..");
+const EXT_DIR = join(E2E_DIR, "..");
 /** 仓库根（node_modules 内 pi cli 与各场景 cwd 用）。 */
-export const REPO_ROOT = join(EXT_DIR, "..", "..");
+const REPO_ROOT = join(EXT_DIR, "..", "..");
 
 /** pi cli 真身（node_modules/.bin/pi 是指向它的 symlink；直接 require 真身避开 shebang/权限问题）。 */
 const PI_CLI = join(REPO_ROOT, "node_modules/@earendil-works/pi-coding-agent/dist/cli.js");
 
 /** rename LLM 超时（D7 固定 30s）+ 余量，waitForStderr 等 rename 结果日志的默认上限。 */
-export const RENAME_SETTLE_TIMEOUT_MS = 45_000;
+const RENAME_SETTLE_TIMEOUT_MS = 45_000;
 
 // ──────────────────────── 错误与失败分类 ────────────────────────
 
@@ -126,6 +125,19 @@ export function lastSessionInfoEntry(lines) {
 	return last;
 }
 
+/** 逐行 JSON.parse，坏行跳过（session JSONL 可能含中断残行）。 */
+export function parseJsonlEntries(lines) {
+	const entries = [];
+	for (const line of lines ?? []) {
+		try {
+			entries.push(JSON.parse(line));
+		} catch {
+			// 坏行跳过
+		}
+	}
+	return entries;
+}
+
 // previewText 同构常量（extensions/rename-session/src/llm.ts D9 契约，Unicode 码点单位）
 const PREVIEW_MAX_CODE_POINTS = 300;
 const PREVIEW_HEAD_CODE_POINTS = 200;
@@ -148,7 +160,7 @@ export function rebuildPreview(text) {
 }
 
 /** LLM request debug 日志行标记（llm.ts debugLog 文案）。 */
-const LLM_REQUEST_MARKER = "LLM request messages: ";
+export const LLM_REQUEST_MARKER = "LLM request messages: ";
 
 /**
  * 从 stderr 日志行解析 LLM request messages：`[rename-session] t=<ISO> LLM request messages: [{role,text}]`。
@@ -160,20 +172,21 @@ export function parseLogMessages(line) {
 	const idx = line.indexOf(LLM_REQUEST_MARKER);
 	if (idx === -1) return null;
 	const jsonPart = line.slice(idx + LLM_REQUEST_MARKER.length);
+	// try 只包 JSON.parse：结构校验失败的 HarnessError 直接上抛，无需 catch 内 rethrow 舞步
+	let parsed;
 	try {
-		const parsed = JSON.parse(jsonPart);
-		if (!Array.isArray(parsed)) return null;
-		// 宽松校验：成员须形如 {role, text}（防御日志格式漂移时给出可读失败而非静默 undefined）
-		return parsed.map((m) => {
-			if (typeof m?.role !== "string" || typeof m?.text !== "string") {
-				throw new HarnessError("assertion", `parseLogMessages: bad message entry ${JSON.stringify(m)}`);
-			}
-			return { role: m.role, text: m.text };
-		});
-	} catch (e) {
-		if (e instanceof HarnessError) throw e;
-		return null;
+		parsed = JSON.parse(jsonPart);
+	} catch {
+		return null; // JSON 损坏
 	}
+	if (!Array.isArray(parsed)) return null;
+	// 宽松校验：成员须形如 {role, text}（防御日志格式漂移时给出可读失败而非静默 undefined）
+	return parsed.map((m) => {
+		if (typeof m?.role !== "string" || typeof m?.text !== "string") {
+			throw new HarnessError("assertion", `parseLogMessages: bad message entry ${JSON.stringify(m)}`);
+		}
+		return { role: m.role, text: m.text };
+	});
 }
 
 /**
@@ -270,7 +283,7 @@ export function assertTitleGuards(title, opts = {}) {
  * 交错时间轴：stdout/stderr 每行带到达时刻与流标记追加写同一文件。
  * appendFileSync 同步写——两流 handler 同线程串行执行，文件行序 = 到达序（A1 流序断言前提）。
  */
-export function createTimeline(filePath) {
+function createTimeline(filePath) {
 	const lines = [];
 	return {
 		/** @param {"out"|"err"} stream */
@@ -283,14 +296,6 @@ export function createTimeline(filePath) {
 		all() {
 			return lines.slice();
 		},
-		/** 从磁盘重读（进程结束后的一致视图）。 */
-		read() {
-			if (!existsSync(filePath)) return [];
-			return readFileSync(filePath, "utf8")
-				.split("\n")
-				.filter((l) => l.length > 0)
-				.map((l) => JSON.parse(l));
-		},
 	};
 }
 
@@ -298,7 +303,12 @@ export function createTimeline(filePath) {
  * 手写 JSONL reader（rpc.md 明确 Node readline 不合规：会按 U+2028/U+2029 切行）。
  * LF 分隔、容忍 \r\n、末尾无换行的残余行在 end 时 flush。
  */
-export function attachJsonlReader(stream, onLine) {
+function attachJsonlReader(stream, onLine) {
+	// 行级交付统一闭包：剥 \r、跳空行——主循环与 end flush 共用同一实现，避免两处近似复制各自漂移
+	const emit = (line) => {
+		if (line.endsWith("\r")) line = line.slice(0, -1);
+		if (line.length > 0) onLine(line);
+	};
 	let buffer = "";
 	stream.setEncoding("utf8");
 	stream.on("data", (chunk) => {
@@ -306,17 +316,14 @@ export function attachJsonlReader(stream, onLine) {
 		while (true) {
 			const i = buffer.indexOf("\n");
 			if (i === -1) break;
-			let line = buffer.slice(0, i);
+			emit(buffer.slice(0, i));
 			buffer = buffer.slice(i + 1);
-			if (line.endsWith("\r")) line = line.slice(0, -1);
-			if (line.length > 0) onLine(line);
 		}
 	});
 	stream.on("end", () => {
-		if (buffer.length > 0) {
-			const line = buffer.endsWith("\r") ? buffer.slice(0, -1) : buffer;
-			if (line.length > 0) onLine(line);
-		}
+		// 末尾无换行的残余行在此 flush（空 buffer 由 emit 的空行检查自行跳过）
+		emit(buffer);
+		buffer = "";
 	});
 }
 
@@ -357,7 +364,7 @@ export function startHangServer(host = "127.0.0.1") {
  * - auto-rename-enabled flag 文件（extension 开关 live 覆盖源）
  * - 可选覆盖：modelsJson（A4 坏 provider / A5 stub provider）、renameConfig（A5 标题模型指向）
  */
-export function initAgentDir(agentDir, opts = {}) {
+function initAgentDir(agentDir, opts = {}) {
 	mkdirSync(agentDir, { recursive: true });
 
 	const srcAuth = join(homedir(), ".pi/agent/auth.json");
@@ -411,10 +418,12 @@ export function initAgentDir(agentDir, opts = {}) {
  * @returns pi handle（见函数尾部注释）
  */
 export async function spawnPi(opts = {}) {
-	if (!existsSync(opts.piCli ?? PI_CLI)) {
+	// 一次求值复用：原实现检查与 args 各求一遍，且报错固定打印默认路径——自定义 piCli 失败时误导恢复方向
+	const piCli = opts.piCli ?? PI_CLI;
+	if (!existsSync(piCli)) {
 		throw new HarnessError(
 			"pi-crash",
-			`pi cli 不存在: ${PI_CLI}（恢复：在仓库根跑 pnpm install 后重跑，或用 opts.piCli 指定路径）`,
+			`pi cli 不存在: ${piCli}（恢复：在仓库根跑 pnpm install 后重跑，或用 opts.piCli 指定路径）`,
 		);
 	}
 
@@ -431,11 +440,10 @@ export async function spawnPi(opts = {}) {
 	}
 
 	const timelinePath = join(tmpDir, "timeline.ndjson");
-	writeFileSync(timelinePath, "", "utf-8"); // 占位确保 read() 在零事件时不 ENOENT
 	const timeline = createTimeline(timelinePath);
 
 	const args = [
-		opts.piCli ?? PI_CLI,
+		piCli,
 		"--mode",
 		"rpc",
 		"--session-dir",
@@ -604,14 +612,12 @@ export async function spawnPi(opts = {}) {
 		});
 
 	// ── 高层 helper ──
-	const prompt = (message, opts2 = {}) => request({ type: "prompt", message, ...opts2 }, opts2.timeoutMs);
+	// 单参契约：调用方只传 message；旧签名第二参会展开进 RPC 命令体，把 timeoutMs 等控制字段泄漏给 pi
+	const prompt = (message) => request({ type: "prompt", message });
 	const setSessionName = (name) => request({ type: "set_session_name", name });
 	const getState = () => request({ type: "get_state" });
 	/** 等 round 完成（agent_settled；注意 error 轮也发 settled——成败要看 turn_end 的 stopReason）。 */
 	const waitAgentSettled = (timeoutMs = 120_000) => waitFor("agent_settled", { timeoutMs });
-	/** 等 rename 结果（成功 renamed to / 失败 failed / 任何 skip）。 */
-	const waitRenameSettled = (timeoutMs = RENAME_SETTLE_TIMEOUT_MS) =>
-		waitForStderr(/renamed to |rename LLM call failed|skip: /, { timeoutMs });
 
 	// ── 清理 ──
 	let killed = false;
@@ -660,15 +666,9 @@ export async function spawnPi(opts = {}) {
 		if (!p || !existsSync(p)) return null;
 		return readFileSync(p, "utf8").split("\n").filter((l) => l.length > 0);
 	};
-	/** 列 session 目录下全部 jsonl（无活跃 session 时的兜底发现）。 */
-	const listSessionFiles = () =>
-		readdirSync(sessionsDir)
-			.filter((f) => f.endsWith(".jsonl"))
-			.map((f) => join(sessionsDir, f));
 
 	return {
 		proc,
-		pid: proc.pid,
 		tmpDir,
 		agentDir,
 		sessionsDir,
@@ -689,12 +689,10 @@ export async function spawnPi(opts = {}) {
 			setSessionName,
 			getState,
 			waitAgentSettled,
-			waitRenameSettled,
 		},
 		sessionJsonlPath,
 		readSessionLines,
 		waitSessionInfoEntry,
-		listSessionFiles,
 		kill,
 		cleanup,
 	};
@@ -714,15 +712,34 @@ export async function runScenario(name, fn) {
 	const t0 = Date.now();
 	try {
 		await fn(log);
-		const secs = ((Date.now() - t0) / 1000).toFixed(1);
-		log(`PASS (${secs}s)`);
-		return { name, ok: true, logs, durationMs: Date.now() - t0 };
+		// 单次取值复用（原实现日志与返回值各算一遍 Date.now()-t0，两处毫秒位还会互相漂移）
+		const durationMs = Date.now() - t0;
+		log(`PASS (${(durationMs / 1000).toFixed(1)}s)`);
+		return { name, ok: true, logs, durationMs };
 	} catch (err) {
 		const kind = classifyFailure(err);
-		const secs = ((Date.now() - t0) / 1000).toFixed(1);
-		log(`FAIL [${kind}] (${secs}s): ${err?.message ?? err}`);
+		const durationMs = Date.now() - t0;
+		log(`FAIL [${kind}] (${(durationMs / 1000).toFixed(1)}s): ${err?.message ?? err}`);
 		if (err?.detail !== undefined) log(`detail: ${JSON.stringify(err.detail)}`);
 		if (err?.stack) logs.push(err.stack);
-		return { name, ok: false, kind, error: err, logs, durationMs: Date.now() - t0 };
+		return { name, ok: false, kind, error: err, logs, durationMs };
 	}
+}
+
+/**
+ * 独立执行入口判定 + exit code 映射（run-aN.mjs 尾部共用，消除各场景重复样板）。
+ * import.meta.url 必须由调用方传入——harness 模块内拿不到场景文件自身的 meta。
+ */
+export function runStandalone(moduleUrl, run) {
+	const invoked = process.argv[1] && moduleUrl === pathToFileURL(process.argv[1]).href;
+	if (!invoked) return;
+	run().then((r) => {
+		process.exitCode = r.ok ? 0 : 1;
+	});
+}
+
+/** 从 `renamed to "..."` 日志行提取标题并断言与 session_info 落库一致。 */
+export function assertLogTitleMatches(renameLine, persistedName) {
+	const logTitle = renameLine.match(/renamed to "(.*)"$/)?.[1];
+	assert(logTitle === persistedName, `日志标题与落库不一致: "${logTitle}" vs "${persistedName}"`);
 }

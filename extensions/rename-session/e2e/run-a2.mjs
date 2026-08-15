@@ -18,9 +18,17 @@
 import { appendFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
-import { HarnessError, assertTitleGuards, assert, runScenario, spawnPi } from "./harness.mjs";
+import {
+	HarnessError,
+	assert,
+	assertLogTitleMatches,
+	assertTitleGuards,
+	runScenario,
+	runStandalone,
+	spawnPi,
+} from "./harness.mjs";
 
 const RESULTS_PATH = fileURLToPath(new URL("./RESULTS.md", import.meta.url));
 
@@ -40,7 +48,6 @@ const CASES = [
 			"# 工作笔记\n\n正在实现 debounce 工具函数（debounce.ts），当前版本只有 trailing 触发。\n\n下一步：增加 leading 选项（首次调用立即执行）。\n",
 	},
 ];
-
 
 /** 跑单个 session，返回 { label, prompt, title }。标题以 JSONL session_info 为 SSOT，日志标题交叉校验。 */
 async function runOneCase(c, log) {
@@ -65,8 +72,7 @@ async function runOneCase(c, log) {
 		const info = await pi.waitSessionInfoEntry(10_000);
 		const title = info?.name ?? null;
 		assert(typeof title === "string" && title.length > 0, "session_info.name 为空");
-		const logTitle = renameRes.line.match(/renamed to "(.*)"$/)?.[1];
-		assert(logTitle === title, `日志标题与落库不一致: "${logTitle}" vs "${title}"`);
+		assertLogTitleMatches(renameRes.line, title);
 		log(`[${c.label}] 标题: ${title}`);
 		return { label: c.label, prompt: c.prompt, title };
 	} finally {
@@ -132,9 +138,4 @@ export async function runA2() {
 }
 
 // ── 独立执行入口（node e2e/run-a2.mjs）──
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isMain) {
-	runA2().then((r) => {
-		process.exitCode = r.ok ? 0 : 1;
-	});
-}
+runStandalone(import.meta.url, runA2);

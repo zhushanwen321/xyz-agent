@@ -16,6 +16,14 @@
 
 import { spawnSync } from "node:child_process";
 
+// 场景模块置顶 import（ESM 静态 import 无论书写位置都被 hoist——下面的 E2E_QUICK 早退
+// 分支放在 import 后也不会跳过模块加载，置顶声明消除「quick 模式不加载场景模块」的误读）
+import { runA1 } from "./run-a1.mjs";
+import { runA2 } from "./run-a2.mjs";
+import { runA3 } from "./run-a3.mjs";
+import { runA4 } from "./run-a4.mjs";
+import { runA5 } from "./run-a5.mjs";
+
 if (process.env.E2E_QUICK === "1") {
 	// 快速集：harness 断言工具单测（vitest 输出原生含统计行，gate 正则直接消费）
 	const r = spawnSync("npx", ["vitest", "run", "e2e/harness.test.mjs"], {
@@ -25,12 +33,6 @@ if (process.env.E2E_QUICK === "1") {
 	});
 	process.exit(r.status ?? 1);
 }
-
-import { runA1 } from "./run-a1.mjs";
-import { runA2 } from "./run-a2.mjs";
-import { runA3 } from "./run-a3.mjs";
-import { runA4 } from "./run-a4.mjs";
-import { runA5 } from "./run-a5.mjs";
 
 const SCENARIOS = [
 	{ name: "A1", run: runA1 },
@@ -65,9 +67,9 @@ if (failed.length > 0) {
 // 正则解析汇总（取最后一个匹配）。KEBAB_NON_COMPLIANT 场景 r.ok 仍为 true（人工处置路径），
 // 但机器统计须计为 failed——与 e2e/scenarios.test.mjs 的 gate 语义（该情况 test 失败）一致。
 const passed = results.filter((r) => r.ok && !r.kebabNonCompliant).length;
-const failedCount = results.length - passed;
-const exit = failedCount > 0 ? 1 : 0;
+const gateFailedCount = results.length - passed;
+const exit = gateFailedCount > 0 ? 1 : 0;
 console.log(`\nexit code: ${exit}`);
-console.log(`\nTest Files  1 ${failedCount > 0 ? "failed" : "passed"} (1)`);
-console.log(`Tests  ${passed} passed${failedCount > 0 ? ` | ${failedCount} failed` : ""} (${results.length})`);
+console.log(`\nTest Files  1 ${gateFailedCount > 0 ? "failed" : "passed"} (1)`);
+console.log(`Tests  ${passed} passed${gateFailedCount > 0 ? ` | ${gateFailedCount} failed` : ""} (${results.length})`);
 process.exitCode = exit;

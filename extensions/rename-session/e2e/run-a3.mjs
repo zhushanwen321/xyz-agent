@@ -13,30 +13,27 @@
  * 3a+3c 共用一个 session（3c 依赖 3a 的既有手动名），3b 独立 session。
  */
 
-import { pathToFileURL } from "node:url";
-
-import { HarnessError, assert, lastSessionInfoEntry, runScenario, sleep, spawnPi } from "./harness.mjs";
+import {
+	HarnessError,
+	LLM_REQUEST_MARKER,
+	assert,
+	lastSessionInfoEntry,
+	parseJsonlEntries,
+	runScenario,
+	runStandalone,
+	sleep,
+	spawnPi,
+} from "./harness.mjs";
 
 /** 时间轴中 LLM request 日志条数（3c「无新 LLM request」断言用）。 */
 function countLlmRequests(pi) {
-	return pi.timeline.all().filter((e) => e.stream === "err" && e.line.includes("LLM request messages: ")).length;
+	return pi.timeline.all().filter((e) => e.stream === "err" && e.line.includes(LLM_REQUEST_MARKER)).length;
 }
 
 /** session JSONL 中 session_info 条数（3c「无新自动 session_info」断言用）。 */
 async function countSessionInfos(pi) {
-	const lines = await pi.readSessionLines();
-	if (!Array.isArray(lines)) return 0;
-	let count = 0;
-	for (const line of lines) {
-		try {
-			if (JSON.parse(line)?.type === "session_info") count++;
-		} catch {
-			// 坏行跳过
-		}
-	}
-	return count;
+	return parseJsonlEntries(await pi.readSessionLines()).filter((e) => e?.type === "session_info").length;
 }
-
 
 /** 3a + 3c：静态防覆盖 + 一次性语义（同一 session 两轮）。 */
 async function seg3aAnd3c(log) {
@@ -48,7 +45,8 @@ async function seg3aAnd3c(log) {
 		const settled1P = pi.rpc.waitAgentSettled(180_000);
 		await pi.rpc.prompt("1+1等于几？只回答数字");
 		await settled1P;
-		// 显式等 skip: name exists（waitRenameSettled 的 skip 分支可能匹配到中间 iteration 日志）
+		// 显式等 skip: name exists 精确文案——宽松匹配 skip 日志可能命中中间 iteration 的
+		// skip: stopReason=toolUse 提前返回，那不是 rename 的最终决定
 		await pi.rpc.waitForStderr("skip: name exists", { timeoutMs: 45_000 });
 		await sleep(10_500); // ≥10s 观察窗口（迟到覆盖检测）
 		assert(lastSessionInfoEntry(await pi.readSessionLines())?.name === MANUAL, "3a 等待 10s 后手动名被覆盖");
@@ -81,7 +79,7 @@ async function seg3bOnce(log) {
 		const settledP = pi.rpc.waitAgentSettled(180_000);
 		await pi.rpc.prompt("3+5等于几？只回答数字");
 		// 等 LLM request 日志（debug 内省在 callLLM 之前打出——此刻 rename LLM 调用进行中）
-		const llmReq = await pi.rpc.waitForStderr("LLM request messages: ", { timeoutMs: 180_000 });
+		const llmReq = await pi.rpc.waitForStderr(LLM_REQUEST_MARKER, { timeoutMs: 180_000 });
 		// 立即抢入手动命名（竞态窗口内，llmReq.t 到 rename 返回通常 1-3s）
 		const tGrab = Date.now();
 		await pi.rpc.setSessionName(RACE_NAME);
@@ -128,9 +126,4 @@ export async function runA3() {
 }
 
 // ── 独立执行入口（node e2e/run-a3.mjs）──
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isMain) {
-	runA3().then((r) => {
-		process.exitCode = r.ok ? 0 : 1;
-	});
-}
+runStandalone(import.meta.url, runA3);

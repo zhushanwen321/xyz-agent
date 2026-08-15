@@ -21,14 +21,17 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 import {
+	LLM_REQUEST_MARKER,
 	assert,
+	assertLogTitleMatches,
 	extractLastStopAssistant,
+	parseJsonlEntries,
 	parseLogMessages,
 	rebuildPreview,
 	runScenario,
+	runStandalone,
 	spawnPi,
 } from "./harness.mjs";
 
@@ -49,19 +52,6 @@ function makeTsFixture() {
 	);
 	writeFileSync(join(dir, "notes.md"), "# notes\n\n非 ts 文件，用于验证过滤。\n");
 	return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
-}
-
-/** 从 session JSONL 行数组解析 entry（坏行跳过）。 */
-function parseEntries(lines) {
-	const entries = [];
-	for (const line of lines ?? []) {
-		try {
-			entries.push(JSON.parse(line));
-		} catch {
-			// session 文件按行独立，单行损坏不整体失败（与 extractLastStopAssistant 同策略）
-		}
-	}
-	return entries;
 }
 
 /** 收集 toolResult message 的原始输出行（A1 ④ 负向断言的特征候选来源）。 */
@@ -94,8 +84,8 @@ export async function runA1() {
 			await pi.rpc.prompt(PROMPT);
 			await finalStopEndP;
 			await settledP;
-			// 等 rename 最终结果（显式等 renamed to——waitRenameSettled 的 skip 分支会匹配到
-			// 中间 iteration 的 skip: stopReason=toolUse 提前返回，不是最终结果）
+			// 等 rename 最终结果（显式等 renamed to 终态标记——宽松匹配 skip 日志会命中
+			// 中间 iteration 的 skip: stopReason=toolUse 提前返回，那不是最终结果）
 			const renameRes = await pi.rpc.waitForStderr('renamed to "', { timeoutMs: 45_000 });
 			// 轮询等 session_info 落盘再读全量行（pi append→flush 有延迟，日志先于落库）
 			await pi.waitSessionInfoEntry(10_000);
@@ -104,7 +94,7 @@ export async function runA1() {
 
 			// ── ② 仅一条 LLM request ──
 			const llmReqEntries = timeline.filter(
-				(e) => e.stream === "err" && e.line.includes("LLM request messages: "),
+				(e) => e.stream === "err" && e.line.includes(LLM_REQUEST_MARKER),
 			);
 			assert(
 				llmReqEntries.length === 1,
@@ -195,7 +185,7 @@ export async function runA1() {
 			);
 
 			// ── ④ 负向：不含 toolResult 原始输出特征行 ──
-			const entries = parseEntries(lines);
+			const entries = parseJsonlEntries(lines);
 			const toolRawLines = collectToolResultLines(entries);
 			// 特征选择：含 .ts 且不出现在结论文本中的行（「仅原始输出才有的形态」，剔除会进结论的词）
 			const features = toolRawLines.filter(
@@ -222,8 +212,7 @@ export async function runA1() {
 			);
 			const lastInfo = entries[infoIdx[infoIdx.length - 1]];
 			assert(typeof lastInfo.name === "string" && lastInfo.name.length > 0, "session_info.name 为空");
-			const logTitle = renameRes.line.match(/renamed to "(.*)"$/)?.[1];
-			assert(logTitle === lastInfo.name, `日志标题与落库不一致: "${logTitle}" vs "${lastInfo.name}"`);
+			assertLogTitleMatches(renameRes.line, lastInfo.name);
 			log(`标题: ${lastInfo.name}`);
 			log(
 				`证据链: 流序①OK / 仅1条request+user段②OK / 内容匹配③OK（preview ${messages[1].text.length} 字符）/ 负向④OK（${features.length} 条特征行零泄漏）/ 行序⑤OK`,
@@ -236,10 +225,4 @@ export async function runA1() {
 }
 
 // ── 独立执行入口（node e2e/run-a1.mjs）──
-const isMain =
-	process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isMain) {
-	runA1().then((r) => {
-		process.exitCode = r.ok ? 0 : 1;
-	});
-}
+runStandalone(import.meta.url, runA1);

@@ -261,11 +261,15 @@ describe("classifyFailure", () => {
 	});
 
 	it("AssertionError → assertion", () => {
+		// 先落变量再断言：原空 catch 写法在 expect(1).toBe(2) 意外不抛时会静默通过
+		let caught;
 		try {
 			expect(1).toBe(2);
 		} catch (e) {
-			expect(classifyFailure(e)).toBe("assertion");
+			caught = e;
 		}
+		expect(caught).toBeInstanceOf(Error);
+		expect(classifyFailure(caught)).toBe("assertion");
 	});
 
 	it("超时特征 → timeout", () => {
