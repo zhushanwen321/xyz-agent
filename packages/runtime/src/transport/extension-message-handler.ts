@@ -3,8 +3,9 @@
  * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
+import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService, IExtensionService } from '../interfaces.js'
+import type { MessageBus } from '../services/message-bus/message-bus.js'
 import type { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { ExtensionInstallError } from '../services/extension-service.js'
 import { toErrorMessage } from '../utils/errors.js'
@@ -17,9 +18,14 @@ export interface ExtensionHandlerContext extends MessageHandlerContext {
   extensionService: IExtensionService | undefined
   extensionTimeoutMgr: ExtensionTimeoutManager
   /** 广播给所有连接（extension.ui_timeout 超时通知用）。 */
-  broadcast(msg: import('@xyz-agent/shared').ServerMessage): void
+  broadcast(msg: ServerMessage): void
   /** push 消息 id 生成器（extension.ui_timeout 广播 id）。 */
   nextPushId(): string
+  /**
+   * MessageBus（wave:perf-w08，02 文档 D1-1）：extension.ui_timeout 的定向发布通道。
+   * 由 server.setServices 装配（this.messageBus，setMessageBus 保证先于 setServices）。
+   */
+  messageBus?: MessageBus
 }
 
 export class ExtensionMessageHandler {
@@ -67,11 +73,17 @@ export class ExtensionMessageHandler {
     if (client) {
       client.sendExtensionUiResponse(requestId, method === 'confirm' ? false : null, method)
     }
-    this.ctx.broadcast({
+    const timeoutMsg: ServerMessage = {
       type: 'extension.ui_timeout',
       id: this.ctx.nextPushId(),
       payload: { sessionId, requestId },
-    })
+    }
+    // wave:perf-w08（02 文档 D1-1）：payload 恒含 sessionId（handleExtensionTimeout 的
+    // sessionId 参数）→ bus.publish 定向发布（extension.ui_timeout 归 stream 类：分配
+    // seq + 入 ring，重连可回放）。broadcast 保留为双写过渡态（W09 按全量审计统一收口）；
+    // 同一消息对象 publish 时被赋 seq，renderer routeInbound 按 seq 去重消除双收。
+    this.ctx.messageBus?.publish(sessionId, timeoutMsg)
+    this.ctx.broadcast(timeoutMsg)
   }
 
   async handleExtensionMessage(msg: ClientMessage, ws: WsType): Promise<void> {

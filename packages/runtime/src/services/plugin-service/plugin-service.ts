@@ -24,6 +24,8 @@ import { PermissionStorage } from './plugin-permission-storage.js'
 import { EXTERNAL_PLUGIN_ENABLED, EXTERNAL_PLUGIN_DISABLED_MESSAGE } from './plugin-security.js'
 import { join } from 'node:path'
 import { toErrorMessage } from '../../utils/errors.js'
+// type-only：MessageBus 不反向依赖 plugin-service，无运行时环（与 message-dispatcher 同款约束）
+import type { MessageBus } from '../message-bus/message-bus.js'
 
 
 const COMMAND_EXECUTE_TIMEOUT_MS = 10_000
@@ -110,6 +112,14 @@ export class PluginService implements IPluginService {
   /** 挂载点集合（renderer 经 plugin.mountPoints.sync 上报，views.listMountPoints 中继查询，AC10） */
   private mountPoints: string[] = []
 
+  /**
+   * MessageBus（wave:perf-w08，02 文档 D1-1）：plugin 的 session 级广播接 bus 定向发布。
+   * 经 setMessageBus 后置注入（与 SessionService.setMessageBus 同模式）——PluginService
+   * 构造点（index.ts 组合根）在 messageBus 创建之后但经 server.setServices wire，
+   * 避免本 wave 触碰并行 wave 占用的组合根注入区。未注入时所有 bus 调用回退全局广播。
+   */
+  private messageBus: MessageBus | null = null
+
   constructor(registry: PluginRegistry, broker: IMessageBroker, deps?: IPluginServiceDeps) {
     this.registry = registry
     this.broker = broker
@@ -148,12 +158,22 @@ export class PluginService implements IPluginService {
     // MF-2：广播 payload 注入当前活跃 sessionId（与 views.update 同源，ActiveSessionResolver 求值时点）——
     // 前端 DialogRequestQueue/useExtensionUI 均按 sessionId 分区消费，无 sid 的 uiRequest 会被双消费方
     // 丢弃（C2 守卫），plugin dialog 永不弹出。resolve 时点求值：同一会话串行队列内 resolve 稳定。
+    // wave:perf-w08（02 文档 D1-1）：sid 为 string 且 bus 已装配 → bus.publish(sid) 定向发布
+    // （plugin:uiRequest 归 stream 类，分配 seq + 入 ring 可回放），不再 broadcast；
+    // sid undefined（无活跃 session 的弹窗仍须必达全部连接）或 bus 未装配 → 保持全局广播。
     this.uiRequestQueue = new UiRequestQueue((type, payload) => {
       const active = this.activeSessionResolver.resolve()
-      this.broadcastOrBroker(type, `ui_${payload.requestId}`, {
-        ...payload,
-        sessionId: active?.id,
-      })
+      const sid = active?.id
+      const fullPayload = { ...payload, sessionId: sid }
+      if (sid !== undefined && this.messageBus) {
+        this.messageBus.publish(sid, {
+          type,
+          id: `ui_${payload.requestId}`,
+          payload: fullPayload,
+        } as ServerMessage)
+        return
+      }
+      this.broadcastOrBroker(type, `ui_${payload.requestId}`, fullPayload)
     })
 
     // Status bar 注册表：广播保持 `plugin:statusBarUpdate` 契约（ADR-0015）。
@@ -192,6 +212,43 @@ export class PluginService implements IPluginService {
   /** Wire sessionService after construction (breaks circular dependency at creation time) */
   setSessionService(sessionService: ISessionService): void {
     this.deps.sessionService = sessionService
+  }
+
+  /**
+   * Wire MessageBus（wave:perf-w08，02 文档 D1-1）：plugin 的 session 级广播点
+   * （plugin:viewUpdate / plugin:uiRequest）接 bus 定向发布。由 server.setServices
+   * wire（组合根顺序：setMessageBus 在 setServices 前完成，见 RuntimeServer 注释）。
+   * 未注入时广播点回退全局广播（broker.broadcast 兜底，消息不丢）。
+   */
+  setMessageBus(bus: MessageBus): void {
+    this.messageBus = bus
+  }
+
+  /**
+   * views.update 的广播出口（wave:perf-w08，02 文档 D1-1；rpc-setup 的
+   * handleViewUpdate 构造 payload 后经此发布）。
+   *
+   * payload.sessionId 由调用方保证存在（rpc-setup ES2：无活跃 session 已提前丢弃）。
+   * bus 已装配 → publish 定向（plugin:viewUpdate 归 transient 类：高频 UI 流，不占
+   * seq、不入 ring，直传订阅者——丢失可接受，ExtensionHost 不靠 ring 回放重建状态），
+   **不再 broadcast**；bus 未装配（测试构造）→ 回退全局广播，保持消息不丢。
+   */
+  publishViewUpdate(payload: {
+    sessionId: string
+    viewId: string
+    pluginId: string
+    guiTree: import('@xyz-agent/extension-protocol').GuiComponent[]
+    updatedAt: number
+  }): void {
+    if (this.messageBus) {
+      this.messageBus.publish(payload.sessionId, {
+        type: 'plugin:viewUpdate',
+        id: `vu_${Date.now()}`,
+        payload,
+      } as ServerMessage)
+      return
+    }
+    this.broadcastOrBroker('plugin:viewUpdate', `vu_${Date.now()}`, payload)
   }
 
   async initialize(): Promise<void> {
@@ -346,6 +403,8 @@ export class PluginService implements IPluginService {
     try {
       await this.activator.deactivatePlugin(pluginId, this.host)
     } catch (err: unknown) {
+      // best-effort 降级（Fix-5）：deactivate 失败不阻断清理——uninstall 的注册表/工具/
+      // hook/命令拆除必须完成（Worker 已 deactivate 抛超时等错误时仍要拆本地状态）
       console.error(`[plugin-service] deactivate during uninstall failed (continuing cleanup) for ${pluginId}:`, toErrorMessage(err))
     }
 
@@ -496,6 +555,7 @@ export class PluginService implements IPluginService {
       activeSessionResolver: this.activeSessionResolver,
       commandRegistry: this.commandRegistry,
       mountPoints: this.mountPoints,
+      publishViewUpdate: (payload) => this.publishViewUpdate(payload),
     })
   }
 

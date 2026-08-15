@@ -63,6 +63,22 @@ export interface RpcSetupContext {
   commandRegistry: Map<string, CommandRegistration>
   /** 挂载点集合（renderer 经 plugin.mountPoints.sync 上报的副本，AC10） */
   mountPoints: string[]
+  /**
+   * views.update 的广播出口（wave:perf-w08，02 文档 D1-1）：PluginService 实现的
+   * bus 定向发布（transient）/ 全局广播兜底分流，见 publishViewUpdate 实现。
+   */
+  publishViewUpdate: PluginServiceLike['publishViewUpdate']
+}
+
+/** 仅用于 RpcSetupContext.publishViewUpdate 的类型（避免 rpc-setup 反向 import plugin-service 成环） */
+interface PluginServiceLike {
+  publishViewUpdate(payload: {
+    sessionId: string
+    viewId: string
+    pluginId: string
+    guiTree: GuiComponent[]
+    updatedAt: number
+  }): void
 }
 
 export function registerAllRpcMethods(ctx: RpcSetupContext): void {
@@ -244,6 +260,9 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
   // ── Views RPC handlers ───────────────────────────────────
   // views.update → handleViewUpdate（ES2：无活跃 session 丢弃广播 + warning）；
   // listMountPoints → 读挂载点集合副本（AC10：sync 注入→查询一致）。
+  // wave:perf-w08（02 文档 D1-1，R-06）：广播出口改 ctx.publishViewUpdate——
+  // bus 已装配时按 payload.sessionId 定向 publish（plugin:viewUpdate 归 transient 类，
+  // 不占 seq 不入 ring），不再全局 broadcast。
   registerViewRpcHandlers(rpcServer, {
     mountPoints: ctx.mountPoints,
     handleViewUpdate: (pluginId: string, viewId: string, guiTree: GuiComponent[]) => {
@@ -253,11 +272,7 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
         console.warn(`[plugin-rpc-setup] views.update dropped: no active session (plugin=${pluginId}, view=${viewId})`)
         return
       }
-      if (!deps.broadcastFn) {
-        console.warn('[plugin-rpc-setup] views.update broadcast dropped: no broadcastFn configured')
-        return
-      }
-      deps.broadcastFn('plugin:viewUpdate', {
+      ctx.publishViewUpdate({
         sessionId: active.id,
         viewId,
         pluginId,

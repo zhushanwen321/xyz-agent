@@ -25,6 +25,7 @@ import type { SkillRegistry } from '../services/skill-registry.js'
 // MessageBus（wave:runtime-wiring）：注入到 SessionMessageHandler ctx（subscribe/unsubscribe RPC）。
 import type { MessageBus } from '../services/message-bus/message-bus.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
+import { PluginService } from '../services/plugin-service/plugin-service.js'
 import { ConnectionManager } from './connection-manager.js'
 import { ServerMessageBroker } from './message-broker.js'
 import { BridgeHandler } from './bridge-handler.js'
@@ -133,6 +134,13 @@ export class RuntimeServer implements IMessageBroker {
     this.skillRegistry = skillRegistry
     if (extension) this.extensionService = extension
     if (plugin) this.pluginService = plugin
+    // wave:perf-w08（02 文档 D1-1）：plugin 的 session 级广播点（plugin:viewUpdate /
+    // plugin:uiRequest）接 MessageBus 定向发布。setMessageBus 在 setServices 前调
+    // （见类头注释），此处 wire 给 plugin。组合根注入区（index.ts）为并行 wave
+    // 占用，wire 收在 server 装配点；W09 接口收敛时与 dispatcher 等统一归位。
+    if (this.messageBus && plugin instanceof PluginService) {
+      plugin.setMessageBus(this.messageBus)
+    }
 
     // broker 在此构造：依赖 services（broadcast helper / sendInitialState 取数据）+ 连接池（conn.clients）。
     this.broker = new ServerMessageBroker(this.conn, {
@@ -197,6 +205,8 @@ export class RuntimeServer implements IMessageBroker {
       extensionTimeoutMgr: this.extensionTimeoutMgr,
       broadcast: (msg) => this.broker.broadcast(msg),
       nextPushId: () => this.broker.nextPushId(),
+      // wave:perf-w08（02 文档 D1-1）：extension.ui_timeout 的定向发布通道
+      messageBus: this.messageBus,
     })
     this.pluginMessageHandler = new PluginMessageHandler({
       ...messaging,
