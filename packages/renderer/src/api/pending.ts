@@ -14,12 +14,74 @@ import type { ServerMessage } from '@xyz-agent/shared'
 export interface PendingRequest<T = unknown> {
   resolve: (value: T) => void
   reject: (error: unknown) => void
+  /**
+   * [Q1-5] 惰性超时判定的绝对 deadline（ms epoch）。undefined = 无超时（timeoutMs=0）。
+   * 超时不再挂 per-request setTimeout，改由共享 sweep timer 到期批量清理（见 sweepExpired）。
+   */
+  deadline?: number
+  /** 超时错误消息保留原格式（`request timeout after ${timeoutMs}ms`） */
+  timeoutMs?: number
 }
 
 /** per-request 超时（ms）。需 ≥ runtime rpc-client CMD_TIMEOUT_MS（60s）+ 余量，防误超时。 */
 const DEFAULT_TIMEOUT_MS = 65_000
 
+/**
+ * [Q1-5] pendingMap 容量上限：超限时驱逐最老（Map 迭代序 = 插入序，首个 key 即最老）。
+ * 防异常场景（高频 RPC + runtime 不回）下 map 无限增长。
+ */
+const MAX_PENDING = 256
+
 const pendingMap = new Map<string, PendingRequest>()
+
+/**
+ * [Q1-5] 共享超时 sweep timer：全 map 只挂 ≤1 个，指向最近的 deadline。
+ * 取代旧实现的 per-request setTimeout（N 个 pending = N 个 timer）。
+ * - armSweepTimer：只在「新 deadline 更早」或「timer 已不存在」时重挂（常规顺序注册零重挂）
+ * - sweepExpired 到期批量 reject 过期条目后，为剩余条目重新 arm
+ */
+let sweepTimer: ReturnType<typeof setTimeout> | undefined
+let sweepTimerDeadline: number | undefined
+
+function armSweepTimer(): void {
+  let nearest: number | undefined
+  for (const entry of pendingMap.values()) {
+    if (entry.deadline === undefined) continue
+    if (nearest === undefined || entry.deadline < nearest) nearest = entry.deadline
+  }
+  if (nearest === undefined) {
+    disarmSweepTimer()
+    return
+  }
+  // 已 armed 的触发点不晚于最近 deadline → 不重挂（触发时 sweepExpired 会重算）
+  if (sweepTimer !== undefined && sweepTimerDeadline !== undefined && sweepTimerDeadline <= nearest) {
+    return
+  }
+  if (sweepTimer) clearTimeout(sweepTimer)
+  sweepTimerDeadline = nearest
+  sweepTimer = setTimeout(sweepExpired, Math.max(0, nearest - Date.now()))
+}
+
+function disarmSweepTimer(): void {
+  if (sweepTimer) {
+    clearTimeout(sweepTimer)
+    sweepTimer = undefined
+  }
+  sweepTimerDeadline = undefined
+}
+
+function sweepExpired(): void {
+  sweepTimer = undefined
+  sweepTimerDeadline = undefined
+  const now = Date.now()
+  for (const [id, entry] of pendingMap) {
+    if (entry.deadline !== undefined && entry.deadline <= now) {
+      // 复用 reject（get → delete → req.reject），已删条目的迟到响应在 resolve/reject 处静默丢弃
+      reject(id, Object.assign(new Error(`request timeout after ${entry.timeoutMs}ms`), { code: 'timeout' }))
+    }
+  }
+  armSweepTimer()
+}
 
 /** 生成新命令 id（crypto.randomUUID） */
 export function create(): string {
@@ -27,35 +89,37 @@ export function create(): string {
 }
 
 /**
+ * [Q1-5] 超限驱逐最老：Map 迭代序 = 插入序，首个 key 即最早注册的 pending。
+ * reject 前先 delete（原子：JS 单线程无并发窗口），迟到的响应对已驱逐 id 静默丢弃。
+ */
+function evictOldestIfOverflow(): void {
+  while (pendingMap.size >= MAX_PENDING) {
+    const oldest = pendingMap.keys().next().value
+    if (oldest === undefined) break
+    reject(
+      oldest,
+      Object.assign(new Error(`pending requests overflow (max ${MAX_PENDING}), evicted oldest`), { code: 'overflow' }),
+    )
+  }
+}
+
+/**
  * 注册 pending 请求，返回与之关联的 Promise。
  *
  * @param id 命令 id（create() 生成）
- * @param timeoutMs 超时毫秒数，默认 30s。超时后自动 reject（error.code='timeout'）+ 清理。
+ * @param timeoutMs 超时毫秒数，默认 65s。超时后自动 reject（error.code='timeout'）+ 清理。
  *                 传 0 禁用超时（向后兼容极少数长操作场景，如 compact 300s）。
  */
 export function register<T>(id: string, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<T> {
+  evictOldestIfOverflow()
   return new Promise<T>((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout> | undefined
     const entry: PendingRequest = {
-      resolve: (value: unknown) => {
-        if (timer) clearTimeout(timer)
-        resolve(value as T)
-      },
-      reject: (error: unknown) => {
-        if (timer) clearTimeout(timer)
-        reject(error)
-      },
-    }
-    if (timeoutMs > 0) {
-      timer = setTimeout(() => {
-        if (pendingMap.has(id)) {
-          pendingMap.delete(id)
-          const err = Object.assign(new Error(`request timeout after ${timeoutMs}ms`), { code: 'timeout' })
-          reject(err)
-        }
-      }, timeoutMs)
+      resolve: resolve as (value: unknown) => void,
+      reject,
+      ...(timeoutMs > 0 ? { deadline: Date.now() + timeoutMs, timeoutMs } : {}),
     }
     pendingMap.set(id, entry)
+    armSweepTimer()
   })
 }
 
@@ -134,4 +198,6 @@ export function rejectAll(error: unknown): void {
     req.reject(error)
   }
   pendingMap.clear()
+  // [Q1-5] map 已空，sweep timer 无事可做，一并清掉（无 timer 泄漏）
+  disarmSweepTimer()
 }

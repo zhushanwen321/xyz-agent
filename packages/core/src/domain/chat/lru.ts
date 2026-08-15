@@ -138,7 +138,10 @@ export function evictIfNeeded(deps: LruEvictDeps): void {
     sessionLastAccessed.delete(sid)
 
     // AC-2：同步驱逐关联的 subagent:sid:xxx 三段式虚拟 key（agentcall 两段式无 mainSid 前缀，由 workflow store 映射清理）
-    for (const virtualKey of [...deps.messagesValue().keys()]) {
+    // [Q1-9] 直接迭代 Map keys（免 [...keys()] 二次拷贝）：deleteMessageKey 是不可变替换
+    // （new Map + 赋 .value，旧 Map 不被 mutate），for...of 迭代器绑定取值时的 Map 对象，
+    // 循环内替换 .value 不影响迭代安全，行为与快照拷贝版一致。
+    for (const virtualKey of deps.messagesValue().keys()) {
       if (isVirtualKeyOf(virtualKey, sid)) {
         deps.deleteMessageKey(virtualKey)
         sessionLastAccessed.delete(virtualKey)
@@ -162,7 +165,8 @@ export function evictSessionWithVirtual(sessionId: string, deps: LruEvictDeps): 
   sessionLastAccessed.delete(sessionId)
 
   // AC-2：同步驱逐关联的 subagent:sid:xxx 三段式虚拟 key（agentcall 两段式无 mainSid 前缀，由 workflow store 映射清理）
-  for (const virtualKey of [...deps.messagesValue().keys()]) {
+  // [Q1-9] 同 evictIfNeeded：直接迭代 keys，deleteMessageKey 不可变替换不影响迭代安全。
+  for (const virtualKey of deps.messagesValue().keys()) {
     if (isVirtualKeyOf(virtualKey, sessionId)) {
       deps.deleteMessageKey(virtualKey)
       sessionLastAccessed.delete(virtualKey)

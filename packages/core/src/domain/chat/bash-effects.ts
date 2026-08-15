@@ -31,8 +31,13 @@ type Payload = Record<string, unknown>
 export function findLastStreamingBashIndex(messages: Message[], sessionId?: string): number {
   // sessionId 仅作日志/可读性占位，定位靠 messages 内容（与原三处实现一致）。
   void sessionId
-  const reversedIdx = [...messages].reverse().findIndex(m => m.bashExecution && m.status === 'streaming')
-  return reversedIdx === -1 ? -1 : messages.length - 1 - reversedIdx
+  // [Q1-9] 倒序 for 替代 [...messages].reverse().findIndex（免数组拷贝 + 反转，语义等价：
+  // 反向首个匹配 = 原数组最后一个匹配）。
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.bashExecution && m.status === 'streaming') return i
+  }
+  return -1
 }
 
 /**

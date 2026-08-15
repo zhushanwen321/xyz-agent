@@ -100,10 +100,9 @@ export interface InboundEffects {
  * 路由表条目：精确 type 字符串匹配（TC1）。
  *
  * handle 内部：seq gap 中间件（session 通道）→ dispatchSession → effect 回调。
- * 表内条目顺序无依赖（type 互斥，精确匹配同一消息只命中一条）。
+ * type 即 Record key（type 互斥，精确匹配同一消息只命中一条）。
  */
 type RouteTableEntry = {
-  type: string
   handle: (msg: ServerMessage, ctx: RouteContext) => void
 }
 
@@ -151,15 +150,19 @@ function applySeqGap(sid: string, msg: ServerMessage): boolean {
 }
 
 /**
- * ROUTE_TABLE —— 精确 type 匹配条目数组（DM3，TC1）。
+ * ROUTE_TABLE —— 精确 type 匹配条目表（DM3，TC1；Q1-4：Record 直查 O(1)）。
  *
  * 只收编现状 4 个 effect 类 type（slice design-review sufficiency gaps）：
  * remote-use 的 busy/idle/presence/deleting/deleted 分支未迁入（feat-remote-use 未合并），
  * 由 connection-lifecycle slice 承接（届时作为新条目追加，不修改路由核心）。
+ *
+ * [Q1-4] 从数组 `.find(e => e.type === msg.type)` 线性扫描改为 Record 下标直查。
+ * 行为等价性守卫：查表必须经 hasOwnProperty.call 判定自有键——裸 `ROUTE_TABLE[msg.type]`
+ * 在 type 为 'constructor'/'toString' 等原型成员名时会命中 Object 原型（truthy 但
+ * .handle 为 undefined → TypeError），原 .find 语义只匹配自有 type 字段。
  */
-const ROUTE_TABLE: RouteTableEntry[] = [
-  {
-    type: 'session.exited',
+const ROUTE_TABLE: Record<string, RouteTableEntry> = {
+  'session.exited': {
     handle(msg, { ports, effects, sid }) {
       if (!sid) return // 无 sid 由 FALLBACK 处理（不会走到这里，防御）
       if (!applySeqGap(sid, msg)) return
@@ -169,8 +172,7 @@ const ROUTE_TABLE: RouteTableEntry[] = [
       effects.onSessionExited?.(sid, msg.payload as { code: number | null; reason: string })
     },
   },
-  {
-    type: 'message.complete',
+  'message.complete': {
     handle(msg, { ports, effects, sid }) {
       if (!sid) return
       if (!applySeqGap(sid, msg)) return
@@ -179,8 +181,7 @@ const ROUTE_TABLE: RouteTableEntry[] = [
       effects.onMessageComplete?.(sid, msg.payload as { sessionId?: string; stopReason?: string })
     },
   },
-  {
-    type: 'session.subagents',
+  'session.subagents': {
     handle(msg, { ports, effects, sid }) {
       if (!sid) return
       if (!applySeqGap(sid, msg)) return
@@ -193,8 +194,7 @@ const ROUTE_TABLE: RouteTableEntry[] = [
       }
     },
   },
-  {
-    type: 'session.workflowUpdate',
+  'session.workflowUpdate': {
     handle(msg, { ports, effects, sid }) {
       if (!sid) return
       if (!applySeqGap(sid, msg)) return
@@ -207,7 +207,7 @@ const ROUTE_TABLE: RouteTableEntry[] = [
       effects.onWorkflowUpdate?.(sid, payload.update)
     },
   },
-]
+}
 
 /**
  * CROSS_SESSION_TYPES —— 带 sid 但需同时分发到全局消费者的消息 type 白名单（ADR-0060 决策1）。
@@ -322,7 +322,12 @@ export function configureRouteInbound(
 
     // ── 2. ROUTE_TABLE 精确 type 匹配（TC1，仅 session 通道；无 sid 直接落 FALLBACK） ──
     if (typeof sid === 'string' && sid) {
-      const entry = ROUTE_TABLE.find((e) => e.type === msg.type)
+      // [Q1-4] Record 直查（O(1)）。hasOwnProperty.call 守卫原型成员名（'constructor' 等），
+      // 语义与旧数组 .find 严格等价（只匹配自有 type 键）。不用 Object.hasOwn：renderer
+      // vue-tsc 的 lib 不含 ES2022（TS2550）。
+      const entry = Object.prototype.hasOwnProperty.call(ROUTE_TABLE, msg.type)
+        ? ROUTE_TABLE[msg.type]
+        : undefined
       if (entry) {
         entry.handle(msg, { ...ctx, sid })
         return

@@ -309,6 +309,61 @@ describe('configureRouteInbound — global 通道 + L9 + effects（⑤/⑦）', 
   })
 })
 
+describe('configureRouteInbound — ROUTE_TABLE Record 直查等价（Q1-4）', () => {
+  beforeEach(() => {
+    resetSubscriptionStates()
+  })
+
+  it('Q1-4a 同一 type 的多条消息（热路径）每条路由到同一 handler：同消息同路由', () => {
+    const ports = makePorts()
+    const effects = makeEffects()
+    const dispatcher = configureRouteInbound(ports, effects)
+
+    // message.complete 是每 turn 高频热路径，模拟连续多条同 type 入站
+    for (let i = 0; i < 50; i++) {
+      dispatcher(sessionMsg('message.complete', { stopReason: 'stop' }))
+    }
+    // 全部 50 条都经同一条目路由：dispatchSession 与 effect 回调计数一致，无漏发/重发
+    expect(ports.events.dispatchSession).toHaveBeenCalledTimes(50)
+    expect(effects.onMessageComplete).toHaveBeenCalledTimes(50)
+    expect(ports.events.dispatchGlobal).not.toHaveBeenCalled()
+  })
+
+  it('Q1-4b 全部 4 个注册 type 逐一命中各自条目（无 sid 时全部落 FALLBACK，不误命中）', () => {
+    const registeredTypes = ['session.exited', 'message.complete', 'session.subagents', 'session.workflowUpdate'] as const
+    for (const type of registeredTypes) {
+      const ports = makePorts()
+      const effects = makeEffects()
+      const dispatcher = configureRouteInbound(ports, effects)
+      // 有 sid → 命中 Record 条目（dispatchSession + 对应 effect 回调）
+      dispatcher(sessionMsg(type, type === 'session.subagents' ? { subagents: [] } : {}))
+      expect(ports.events.dispatchSession).toHaveBeenCalledTimes(1)
+      // 无 sid → 不命中条目，落 FALLBACK 的 global 分支（行为与 Record 化前一致）
+      dispatcher({ type, payload: {} } as unknown as ServerMessage)
+      expect(ports.events.dispatchGlobal).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it('Q1-4c 原型成员名 type（constructor/toString）不误命中路由表（hasOwnProperty 守卫）', () => {
+    const ports = makePorts()
+    const effects = makeEffects()
+    const dispatcher = configureRouteInbound(ports, effects)
+
+    // 裸 Record 下标访问会命中 Object 原型成员（truthy 但无 handle → TypeError）。
+    // hasOwn 守卫后语义与旧 .find 严格等价：视为未注册 type。
+    expect(() =>
+      dispatcher(sessionMsg('constructor', {})),
+    ).not.toThrow()
+    expect(() =>
+      dispatcher(sessionMsg('toString', {})),
+    ).not.toThrow()
+    // 有 sid → 落 FALLBACK session 分支正常 dispatchSession，effects 无回调
+    expect(ports.events.dispatchSession).toHaveBeenCalledTimes(2)
+    expect(effects.onSessionExited).not.toHaveBeenCalled()
+    expect(effects.onMessageComplete).not.toHaveBeenCalled()
+  })
+})
+
 describe('configureRouteInbound — crossSession 通道（ADR-0060）', () => {
   beforeEach(() => {
     resetSubscriptionStates()
