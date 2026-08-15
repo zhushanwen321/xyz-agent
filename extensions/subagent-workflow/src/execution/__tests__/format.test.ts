@@ -257,6 +257,134 @@ describe("truncLine", () => {
 });
 
 // ============================================================
+// truncLine — legacy 对拍（indexOf 化重构的逐字节等价锚定）
+// ============================================================
+
+/**
+ * 旧实现参照：改造前的 per-char 版本，逐字取自 git 历史（093e28fe3~1 的
+ * format.ts truncLine）。现行实现（indexOf("\\x1b") 段跳过）必须与其逐字节
+ * 等价——本函数即对拍 oracle，与 helpers-bounded-serialize.test.ts 的
+ * legacySerialize 同形态（参照物随测试落盘，防「验证只存在于改造当时」）。
+ */
+const legacySegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+function legacyTruncLine(text: string, maxWidth: number): string {
+  if (maxWidth <= 0) return "";
+  const flat = text.replace(/[\r\n]+/g, " ");
+  if (visibleWidth(flat) <= maxWidth) return flat;
+
+  const targetWidth = Math.max(0, maxWidth - 1);
+  let result = "";
+  let currentWidth = 0;
+  let activeStyles: string[] = [];
+  let i = 0;
+
+  while (i < flat.length) {
+    // 捕获 ANSI SGR 序列
+    const ansiMatch = flat.slice(i).match(/^\x1b\[[0-9;]*m/);
+    if (ansiMatch) {
+      const code = ansiMatch[0];
+      result += code;
+
+      if (code === "\x1b[0m" || code === "\x1b[m") {
+        activeStyles = []; // reset → 清空栈
+      } else {
+        activeStyles.push(code);
+      }
+      i += code.length;
+      continue;
+    }
+
+    // 找到下一段纯文本(非 ANSI)的边界
+    let end = i;
+    while (end < flat.length && !flat.slice(end).match(/^\x1b\[[0-9;]*m/)) {
+      end++;
+    }
+
+    // 按 grapheme 迭代这段文本,累加到 targetWidth
+    const textPortion = flat.slice(i, end);
+    for (const seg of legacySegmenter.segment(textPortion)) {
+      const grapheme = seg.segment;
+      const graphemeWidth = visibleWidth(grapheme);
+
+      if (currentWidth + graphemeWidth > targetWidth) {
+        return result + activeStyles.join("") + "…" + (activeStyles.length ? "\x1b[0m" : "");
+      }
+
+      result += grapheme;
+      currentWidth += graphemeWidth;
+    }
+    i = end;
+  }
+
+  // 理论上 visibleWidth 检查已提前返回,此行兜底
+  return result + activeStyles.join("") + "…" + (activeStyles.length ? "\x1b[0m" : "");
+}
+
+/** 确定性 PRNG（mulberry32）：fuzz 用例固定 seed 生成，失败可按 case 编号 + seed 复现。 */
+function mulberry32(seed: number): () => number {
+  let s = seed | 0;
+  return () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** 定向混排片段池：ASCII / CJK / emoji（含肤色修饰与 ZWJ 组合）/ SGR / 非 SGR ESC（OSC、CSI-K、裸 ESC）/ 换行。 */
+const FUZZ_PIECES = [
+  "plain", " ", "a", "0", "MiXeD-Case_123",
+  "你好世界", "汉字宽度测试", "日本語テキスト",
+  "😀", "😁😂🤣", "👍🏽", "👨‍👩‍👧‍👦", "é", "é",
+  "\x1b[31m", "\x1b[0m", "\x1b[m", "\x1b[1;32m", "\x1b[38;5;196m",
+  "\x1b[K", "\x1b]0;title\x07", "\x1bZ", "\x1b",
+  "\n", "\r\n",
+];
+
+function genFuzzText(rand: () => number): string {
+  const pieceCount = Math.floor(rand() * 40);
+  let out = "";
+  for (let p = 0; p < pieceCount; p++) {
+    out += FUZZ_PIECES[Math.floor(rand() * FUZZ_PIECES.length)];
+  }
+  return out;
+}
+
+describe("truncLine — legacy 对拍（per-char 参照逐字节等价）", () => {
+  it("定向 fuzz：300 随机 ESC/SGR/CJK/emoji 混排用例（固定 seed 可复现）与旧实现逐字节一致", () => {
+    const rand = mulberry32(20260815);
+    let truncated = 0;
+    for (let i = 0; i < 300; i++) {
+      const text = genFuzzText(rand);
+      const maxWidth = Math.floor(rand() * 61); // 0..60，含 0/1 边界
+      const actual = truncLine(text, maxWidth);
+      expect(
+        actual,
+        `case #${i} text=${JSON.stringify(text)} maxWidth=${maxWidth}`,
+      ).toBe(legacyTruncLine(text, maxWidth));
+      if (actual.endsWith("…")) truncated++;
+    }
+    // 前置有效性：fuzz 确实命中了截断路径（否则对拍只测了「宽度内原样返回」早退分支）
+    expect(truncated).toBeGreaterThan(100);
+  });
+
+  it("手工对抗用例：SGR 重叠 / OSC 内截断 / CSI-K 混排 / 串尾裸 ESC", () => {
+    const cases: Array<[string, number]> = [
+      ["\x1b[31m红\x1b[32m绿\x1b[1;4m加粗下划线尾巴超宽截断点", 9],
+      ["AB\x1b]0;title\x07CDEFGHIJKLMNOP", 10],
+      ["\x1b[31mred\x1b[K\x1b[32mgreen tail past width", 10],
+      ["text almost at width limit\x1b", 22],
+      ["before \x1bZ after bare esc tail", 12],
+      ["\x1b[m你\x1b[0m好\x1b[38;5;196m世👨‍👩‍👧‍👦界".repeat(3), 14],
+    ];
+    for (const [text, maxWidth] of cases) {
+      expect(truncLine(text, maxWidth)).toBe(legacyTruncLine(text, maxWidth));
+    }
+  });
+});
+
+// ============================================================
 // wrapText
 // ============================================================
 describe("wrapText", () => {

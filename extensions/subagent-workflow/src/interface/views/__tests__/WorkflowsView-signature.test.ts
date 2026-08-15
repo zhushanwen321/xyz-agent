@@ -1,19 +1,20 @@
 /**
- * computeRenderSignature（IF11/TC7/DM6）— 渲染签名纯函数单测。
+ * computeRenderSignature（IF11/TC7/DM6）— 渲染签名单测（now 参数化）。
  *
  * 契约：tick 条件失效的判据——签名字段集覆盖 header（renderHeader）/节点行
  * （renderLevel1 agent list）/L2 detail（buildDetailContent）当前消费的全部动态
  * 字段。本测试证明「已入字段变化 → 签名变」+「静态 run 不变」（完备性无法靠
  * 测试证明，字段核对表见 WorkflowsView.ts computeRenderSignature doc）。
  *
- * fake timers 控制 Date.now()（projectLiveProgress 的 elapsedSeconds 现算用
- * record.endedAt ?? Date.now()），now 参数与系统时间同源推进，保证确定性。
+ * 确定性说明：签名非完全纯——live 节点 elapsedSeconds 由 projectLiveProgress 内
+ * computeElapsedSeconds 现算（record.endedAt ?? Date.now()）。fake timers 控制
+ * Date.now() 与 now 参数同源推进，保证确定性。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { computeRenderSignature } from "../WorkflowsView.ts";
 import type { ExecutionRecord } from "../../../execution/types.ts";
-import type { ExecutionTraceNode } from "../../../orchestration/models/types.ts";
+import type { ExecutionTraceNode, WorkerLogEntry } from "../../../orchestration/models/types.ts";
 import type { WorkflowRun } from "../../../orchestration/models/workflow-run.ts";
 
 // ── Fixtures（duck typing，对齐 detail-content-session-file.test.ts 先例）──
@@ -61,6 +62,7 @@ interface RunShape {
   status?: string;
   budget?: { usedTokens: number; maxTokens?: number; usedCost: number };
   nodes?: ExecutionTraceNode[];
+  errorLogs?: WorkerLogEntry[];
 }
 
 function makeRun(shape: RunShape = {}): WorkflowRun {
@@ -69,6 +71,7 @@ function makeRun(shape: RunShape = {}): WorkflowRun {
       status: shape.status ?? "running",
       budget: shape.budget ?? { usedTokens: 0, maxTokens: 200_000, usedCost: 0 },
       trace: { toArray: () => shape.nodes ?? [] },
+      errorLogs: shape.errorLogs ?? [],
     },
   } as unknown as WorkflowRun;
 }
@@ -122,6 +125,25 @@ describe("computeRenderSignature — run 级字段", () => {
     // 0.0100 vs 0.0101：量化展示相同到第 3 位，第 4 位是渲染可见精度
     const a = makeRun({ budget: { usedTokens: 0, maxTokens: 200_000, usedCost: 0.0100 } });
     const b = makeRun({ budget: { usedTokens: 0, maxTokens: 200_000, usedCost: 0.0101 } });
+    expect(computeRenderSignature(a, T0)).not.toBe(computeRenderSignature(b, T0));
+  });
+
+  it("run.state.errorLogs 追加 → 签名变（末条内容入指纹）", () => {
+    const a = makeRun({ errorLogs: [{ level: "error", message: "E-0" }] });
+    const b = makeRun({ errorLogs: [{ level: "error", message: "E-0" }, { level: "warn", message: "W-1" }] });
+    expect(computeRenderSignature(a, T0)).not.toBe(computeRenderSignature(b, T0));
+  });
+
+  it("errorLogs 封顶后 length 不变内容移（push+slice(-MAX_ERROR_LOGS)）→ 签名仍变（指纹非 length）", () => {
+    // 模拟 error-recovery 的变异路径：push 后 slice(-500) 截断。两次 state 均 500 条
+    // （length 相同），仅末条/窗口内容不同——指纹含末条内容才不漏失效。
+    const MAX_ERROR_LOGS = 500;
+    const mk = (n: number): WorkerLogEntry[] => ({ level: "error", message: `E-${n}` });
+    const before: WorkerLogEntry[] = Array.from({ length: MAX_ERROR_LOGS }, (_, i) => mk(i));
+    const after = [...before, mk(MAX_ERROR_LOGS)].slice(-MAX_ERROR_LOGS); // E-1..E-500
+    expect(after).toHaveLength(MAX_ERROR_LOGS); // 前置校验：封顶后 length 不变
+    const a = makeRun({ errorLogs: before });
+    const b = makeRun({ errorLogs: after });
     expect(computeRenderSignature(a, T0)).not.toBe(computeRenderSignature(b, T0));
   });
 });
@@ -204,6 +226,12 @@ describe("computeRenderSignature — 节点级字段（live 投影）", () => {
     const b = makeRun({ nodes: [makeNode({ live: makeLive({ lastError: "EPIPE: broken pipe" }) })] });
     expect(computeRenderSignature(a, T0)).not.toBe(computeRenderSignature(b, T0));
   });
+
+  it("node.sessionFile 出现 → 签名变", () => {
+    const a = makeRun({ nodes: [makeNode({})] });
+    const b = makeRun({ nodes: [makeNode({ sessionFile: "/tmp/sessions/run-0.jsonl" })] });
+    expect(computeRenderSignature(a, T0)).not.toBe(computeRenderSignature(b, T0));
+  });
 });
 
 describe("computeRenderSignature — 多节点与无 live 终态", () => {
@@ -215,12 +243,22 @@ describe("computeRenderSignature — 多节点与无 live 终态", () => {
       ],
     });
     const sig = computeRenderSignature(run, T0);
-    expect(sig).toContain("0:completed:-1:-1:-1:-1:-1:-:-");
-    expect(sig).toContain("1:running:500:0:5:0:0:-:-");
+    expect(sig).toContain("0:completed:-:-1:-1:-1:-1:-1:-:-");
+    expect(sig).toContain("1:running:-:500:0:5:0:0:-:-");
   });
 
-  it("无节点 run 签名仅含 run 级四段", () => {
+  it("节点重排（trace 数组序对调，stepIndex 维度）→ 签名变", () => {
+    // 同一节点集、字段值均不变，仅 trace 数组顺序对调——nodeParts 按 trace 序拼接，
+    // 首字段 stepIndex 随之换位，签名必变（不漏失效）。
+    const first = makeNode({ stepIndex: 0, status: "completed" });
+    const second = makeNode({ stepIndex: 1, status: "running", live: makeLive() });
+    const a = makeRun({ nodes: [first, second] });
+    const b = makeRun({ nodes: [second, first] });
+    expect(computeRenderSignature(a, T0)).not.toBe(computeRenderSignature(b, T0));
+  });
+
+  it("无节点 run 签名仅含 run 级五段（status/秒桶/completed-total/budget/errorLogs）", () => {
     const sig = computeRenderSignature(makeRun({ nodes: [] }), T0);
-    expect(sig.split("|")).toHaveLength(4);
+    expect(sig.split("|")).toHaveLength(5);
   });
 });

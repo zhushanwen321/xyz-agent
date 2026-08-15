@@ -30,6 +30,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
 
 import {
+  countAllToolCalls,
   getAllToolCalls,
   projectLiveProgress,
 } from "../../execution/execution-record.ts";
@@ -133,7 +134,12 @@ export interface ViewActions {
 // ── 渲染签名（IF11/TC7/DM6：tick 条件失效的判据，渲染动态字段 SSOT）──────
 
 /**
- * computeRenderSignature — 渲染输出中全部动态决定字段的签名（纯函数，供测试）。
+ * computeRenderSignature — 渲染输出中全部动态决定字段的签名（now 参数化，供测试）。
+ *
+ * 纯度说明：now 是显式参数，但 live 节点的 elapsedSeconds 经 projectLiveProgress
+ * 内的 computeElapsedSeconds 现算（record.endedAt 缺省时取 Date.now()）——即使两次
+ * 调用传同一 now，跨秒的真实时钟也会使签名变。该内含实时源只朝「多失效」方向
+ * 偏离（多失效、不多绘、更不漏绘），对「签名同 → 跳过重绘」的单向判据安全。
  *
  * 用途：200ms tick 用它与上次签名比对——相同则该帧内容无可见变化，跳过清缓存 +
  * requestRender（纯等待场景零重建零重绘）；不同则走现状失效路径。可见行为逐帧
@@ -145,22 +151,25 @@ export interface ViewActions {
  *
  * | 签名字段 | 消费点 |
  * |---|---|
- * | run.state.status | WorkflowsView.ts renderHeader :581 / detail-content.ts :75（statusDotStr+statusLabel）/ renderFooter :625 |
- * | 秒桶 Math.floor(now/1000) | renderHeader :580 formatElapsed（现算 elapsed）+ detail-content.ts :69-72（now 参与未完成节点 elapsed）|
- * | completed/total（节点 status 推导）| renderHeader :578-581 |
- * | budget 量化值（tokens round-k + cost toFixed(4)=BUDGET_COST_DECIMALS，与 :583 同精度——第 3-4 位小数变化是可见变化）| renderHeader :583 / saveTraceToFile :871 |
- * | 节点 stepIndex | 节点行 :760 / detail :117（trace 导出）|
- * | 节点 status | 节点行 :761 statusDotStr / detail :75 |
- * | live.totalTokens | 节点行 :765 / detail :79 / :275 |
- * | 工具计数 getAllToolCalls(node.live).length（projectLiveProgress 投影无 toolCallCount 字段，不得引用）| 节点行 :766 / detail :80 / :223 |
- * | live.elapsedSeconds | 节点行 :767 / detail :81 / :276 |
+ * | run.state.status | WorkflowsView.ts renderHeader :652 / detail-content.ts :75（statusDotStr+statusLabel）/ renderFooter :695-699 |
+ * | 秒桶 Math.floor(now/1000) | renderHeader :651 formatElapsed（现算 elapsed）+ detail-content.ts :69-72（now 参与未完成节点 elapsed）|
+ * | completed/total（节点 status 推导）| renderHeader :649-652 |
+ * | budget 量化值（tokens round-k + cost toFixed(4)=BUDGET_COST_DECIMALS，与 :654 同精度——第 3-4 位小数变化是可见变化）| renderHeader :654 / saveTraceToFile :942 |
+ * | run.state.errorLogs 指纹 = length+末条 level:message（errorLogs 仅经 push + slice(-MAX_ERROR_LOGS) 变异——append-only + 前向淘汰、条目不可变；封顶后 length 不变内容移，单取 length 会漏失效，而任何可见变化必伴随 length 变或末条变，故 length+末条是完备且最小的指纹）| detail-content.ts :174-191（renderWorkerLogSection：total 标签 + 末 20 条）|
+ * | 节点 stepIndex | nodeParts 首字段（trace 数组序参与拼接，节点重排→签名变）/ saveTraceToFile :947（trace 导出 `### [#stepIndex]` 标题）|
+ * | 节点 sessionFile | detail-content.ts :314-317（renderSessionSection）|
+ * | 节点 status | 节点行 :832 statusDotStr / detail :75 |
+ * | live.totalTokens | 节点行 :836 / detail :79 / :275 |
+ * | 工具计数（签名路径用 countAllToolCalls 免克隆计数，与 getAllToolCalls(node.live).length 恒等——projectLiveProgress 投影无 toolCallCount 字段，不得引用）| 节点行 :837 / detail :80 / :223 |
+ * | live.elapsedSeconds | 节点行 :838 / detail :81 / :276 |
  * | live.turns | detail :224 / :276 |
  * | live.eventLog.length（append-only，长度变化即尾部窗口右移出新事件）| detail :222（filter turn_end）+ :231-235 |
  * | live.currentActivity（type+label 均入签名）| detail :227-228 |
  * | live.lastError（内容入签名，防同存在性不同文本漏绘）| detail :277-278 |
  *
  * 维护约定（DS8）：WorkflowsView/detail-content 新增任何动态展示字段必须同步
- * 并入本签名并更新上表，否则该字段渲染滞后一拍。
+ * 并入本签名并更新上表，否则该字段渲染滞后一拍。本文件编辑会使表内 WorkflowsView
+ * 行号漂移——改动核对表下方代码后必须 grep 实际位置刷新本表。
  */
 /** 秒桶宽度（ms）：签名取 Math.floor(now / SECOND_MS)，秒桶推进 = 可见 elapsed 变化。 */
 const SECOND_MS = 1000;
@@ -169,13 +178,20 @@ export function computeRenderSignature(run: WorkflowRun, now: number): string {
   const traceArr = run.state.trace.toArray();
   const completed = traceArr.filter((n) => n.status === "completed").length;
   const budget = run.state.budget;
-  // budget 量化串与 renderHeader :583 同源同精度（round-k token / toFixed(4) cost）
+  // budget 量化串与 renderHeader budgetStr 同源同精度（round-k token / toFixed(4) cost）
   const budgetPart = `${Math.round(budget.usedTokens / BUDGET_TOKENS_DIVISOR)}k/${budget.maxTokens ? `${Math.round(budget.maxTokens / BUDGET_TOKENS_DIVISOR)}k` : "∞"}::$${budget.usedCost.toFixed(BUDGET_COST_DECIMALS)}`;
+  // errorLogs 指纹：detail 只渲染 total 标签 + 末 20 条（renderWorkerLogSection），
+  // 而 errorLogs 仅经 push + slice(-MAX_ERROR_LOGS) 变异（append-only + 前向淘汰、
+  // 条目不可变）——封顶后 length 不变内容移，单取 length 漏失效；任何可见变化必
+  // 伴随「length 变」或「末条变」，故 length+末条（level:message）是完备最小指纹。
+  const logs = run.state.errorLogs;
+  const lastLog = logs && logs.length > 0 ? `${logs[logs.length - 1].level}:${logs[logs.length - 1].message}` : "-";
+  const errorLogsPart = `${logs?.length ?? 0}:${lastLog}`;
   const nodeParts = traceArr.map((n) => {
     const live = n.live ? projectLiveProgress(n.live) : undefined;
-    return `${n.stepIndex}:${n.status}:${live?.totalTokens ?? -1}:${n.live ? getAllToolCalls(n.live).length : -1}:${live?.elapsedSeconds ?? -1}:${live?.turns ?? -1}:${live?.eventLog.length ?? -1}:${live?.currentActivity ? `${live.currentActivity.type}:${live.currentActivity.label}` : "-"}:${live?.lastError ?? "-"}`;
+    return `${n.stepIndex}:${n.status}:${n.sessionFile ?? "-"}:${live?.totalTokens ?? -1}:${n.live ? countAllToolCalls(n.live) : -1}:${live?.elapsedSeconds ?? -1}:${live?.turns ?? -1}:${live?.eventLog.length ?? -1}:${live?.currentActivity ? `${live.currentActivity.type}:${live.currentActivity.label}` : "-"}:${live?.lastError ?? "-"}`;
   });
-  return [run.state.status, Math.floor(now / SECOND_MS), `${completed}/${traceArr.length}`, budgetPart, ...nodeParts].join("|");
+  return [run.state.status, Math.floor(now / SECOND_MS), `${completed}/${traceArr.length}`, budgetPart, errorLogsPart, ...nodeParts].join("|");
 }
 
 // ── View state ────────────────────────────────────────────────
