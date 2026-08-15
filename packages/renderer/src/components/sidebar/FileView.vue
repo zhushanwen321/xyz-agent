@@ -40,10 +40,12 @@
              top-1/2=15px 会让图标相对整个容器居中而偏低 3px（padding/2）。 -->
         <Search class="pointer-events-none absolute left-4 top-3 size-3 -translate-y-1/2 text-neutral-dim" />
         <Input
-          :model-value="store.filterText"
+          :model-value="filterDisplay"
           class="h-6 pl-6 pr-2 text-[11px]"
           :placeholder="t('sidebar.fileView.filterPlaceholder')"
           data-testid="file-filter-input"
+          @focus="filterFocused = true"
+          @blur="filterFocused = false"
           @update:model-value="onFilter"
         />
       </div>
@@ -94,7 +96,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch, onMounted, onBeforeUnmount, toRef } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, toRef } from 'vue'
 import { FolderOpen, Search, SearchX, Loader2, AlertCircle, Eye, EyeOff } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -149,8 +151,35 @@ const visibleNodes = computed<FileNode[]>(() => {
   return afterIgnore.filter((n) => nodeMatchesFilter(n, q))
 })
 
-/** 过滤输入：透传 useFileTree.setFilter（#4） */
+/**
+ * [W15 审查] 输入框显示值与提交值解绑：
+ * filterDisplay 是本地显示 ref（击键即时更新），store.filterText 是 200ms 防抖后的
+ * 提交值（visibleNodes 过滤重算的依赖源）。解绑消除窄窗口竞态——commit 的渲染 flush
+ * 与新击键交错时，受控 prop（上一次提交值）不得把用户正在输入的显示拉回旧值。
+ * Input 内部 useVModel(passive) 会让 prop 更新覆盖本地击键值，绑定 store.filterText
+ * 直连时该竞态表现为输入框瞬回退（≤200ms 后下次 commit 自愈）。
+ */
+const filterDisplay = ref('')
+
+/** 过滤框聚焦态：聚焦中 store.filterText 的变化不回写显示值（用户击键优先） */
+const filterFocused = ref(false)
+
+/**
+ * store → 显示同步：仅非聚焦态（程序改 filterText 等场景）。聚焦中跳过——聚焦期间
+ * store 的唯一写入源就是自己的防抖 commit（值与 filterDisplay 一致），跳过无损；
+ * 若未来出现聚焦中的外部写入方，blur 后下一次 store 变化才会同步（已知取舍）。
+ */
+watch(
+  () => store.filterText,
+  (v) => {
+    if (!filterFocused.value) filterDisplay.value = v
+  },
+  { immediate: true },
+)
+
+/** 过滤输入：本地显示即时更新 + 透传 useFileTree.setFilter 防抖提交（#4） */
 function onFilter(value: string | number): void {
+  filterDisplay.value = String(value)
   setFilter(String(value))
 }
 

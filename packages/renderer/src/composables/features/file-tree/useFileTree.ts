@@ -29,6 +29,10 @@ const inFlight = new Map<string, Set<string>>() // sessionId → Set<path>
  * 定案区间 150-200ms 的上限。
  */
 const FILTER_DEBOUNCE_MS = 200
+// [W15 审查] 生命周期约束：filterTimer / pendingFilterText 是模块级全局，unmount / 切 session
+// 均不 flush pending——这是既有语义的一部分：filterText 是全局单值且跨 session 持久（切回
+// session 仍保持上次过滤词）。未来若引入「切 session 清空过滤」，必须同步处理 pending flush
+// （清空后 200ms 内迟到的 pending commit 会把旧词回写、覆盖清空值）。
 let filterTimer: ReturnType<typeof setTimeout> | null = null
 let pendingFilterText: string | null = null
 

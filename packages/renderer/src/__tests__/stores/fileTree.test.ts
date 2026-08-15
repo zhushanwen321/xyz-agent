@@ -211,10 +211,14 @@ describe('fileTreeStore W15/D-7.1 徽章预聚合', () => {
       'src-other/e.ts',
       'README.md',
       'docs/page-design/x.md',
+      // [W15 审查] git status porcelain 默认把 untracked 目录折叠为带尾斜杠一条（'newdir/'），
+      // 两种算法都应把目录自身计入 newdir（legacy：startsWith('newdir/') 命中自身；
+      // 预聚合：首个 '/' 前缀即 'newdir'），父链无额外影响。
+      'newdir/',
     ]
     store.setGitOverlay('s1', paths.map((p) => ({ path: p, xyCode: ' M', status: 'modified' })))
 
-    // 覆盖：命中目录 / 嵌套目录 / 深层链 / 兄弟前缀 / 根（''）/ 无命中目录 / 文件路径入参
+    // 覆盖：命中目录 / 嵌套目录 / 深层链 / 兄弟前缀 / 根（''）/ 无命中目录 / 文件路径入参 / 尾斜杠目录
     const dirs = [
       '',
       'src',
@@ -225,6 +229,7 @@ describe('fileTreeStore W15/D-7.1 徽章预聚合', () => {
       'docs/page-design',
       'nonexistent',
       'README.md',
+      'newdir',
     ]
     for (const dir of dirs) {
       expect(store.getDirChangeCount('s1', dir)).toBe(legacyDirChangeCount(paths, dir))
