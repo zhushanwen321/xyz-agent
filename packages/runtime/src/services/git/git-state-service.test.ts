@@ -403,6 +403,42 @@ describe('GitStateService.getStatus', () => {
     expect(fake.calls.length).toBeGreaterThanOrEqual(2)
   })
 
+  it('W17 审查 Fix-1：未知异常（非 GitExecutorError）→ 仍降级 isRepo:false，且 console.warn 出声（含 sessionId/cwd）', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    fake.setImpl(async () => {
+      throw new TypeError('cannot read properties of undefined')
+    })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const result = await svc.getStatus('sid-x', '/repo')
+      expect(result.isRepo).toBe(false) // 降级语义保持（不 rethrow）
+      expect(result.sessionId).toBe('sid-x')
+      expect(warnSpy).toHaveBeenCalledTimes(1) // 但必须出声
+      // 出声内容可定位：含 sessionId 与 cwd（错误栈经 console.warn 第二参数透传）
+      expect(String(warnSpy.mock.calls[0]?.[0])).toContain('sid-x')
+      expect(String(warnSpy.mock.calls[0]?.[0])).toContain('/repo')
+      expect(warnSpy.mock.calls[0]?.[1]).toBeInstanceOf(TypeError)
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it('W17 审查 Fix-1：GitExecutorError（已知降级路径）→ 静默降级不 warn', async () => {
+    const fake = createFakeExecutor()
+    const svc = createService(fake.executor)
+    fake.setImpl(async () => {
+      throw new GitExecutorError('timeout', '执行超时')
+    })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect((await svc.getStatus('sid-1', '/repo')).isRepo).toBe(false)
+      expect(warnSpy).not.toHaveBeenCalled()
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
   it('invalidate 后缓存 miss：下一次 getStatus 重新执行；不影响其他 session', async () => {
     const fake = createFakeExecutor()
     const svc = createService(fake.executor)
@@ -421,7 +457,8 @@ describe('GitStateService.getStatus', () => {
     expect(fake.calls).toHaveLength(9)
   })
 
-  it('invalidate 与在飞执行的竞态：飞行中被失效的执行完成后不回写缓存（旧值不复活）', async () => {    const fake = createFakeExecutor()
+  it('invalidate 与在飞执行的竞态：飞行中被失效的执行完成后不回写缓存（旧值不复活）', async () => {
+    const fake = createFakeExecutor()
     const svc = createService(fake.executor)
 
     let releaseStatus: ((res: GitExecutorResult) => void) | undefined
@@ -477,7 +514,7 @@ describe('GitStateService.getStatus', () => {
     expect(fake.calls).toHaveLength(15) // /repo 两 session 均重新执行
   })
 
-  it('微项 8（perf W17）单趟解析边界：二进制/半二进制行不进 per-file，聚合只计数字列（与 parseNumstat/parseNumstatByFile 行为等价）', async () => {
+  it('微项 8（perf W17）单趟解析边界：二进制/半二进制行不进 per-file，聚合只计数字列（parseNumstat 薄包装删除后的等价行为锚点，W17 审查 Fix-5）', async () => {
     const fake = createFakeExecutor()
     const svc = createService(fake.executor)
     // numstat 输出：正常条目 + 全二进制（- -）+ 半二进制（add 有 del -）

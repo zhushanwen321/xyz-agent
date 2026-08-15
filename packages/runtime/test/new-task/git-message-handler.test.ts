@@ -17,7 +17,9 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { GitMessageHandler } from '../../src/transport/git-message-handler.js'
-import { GitError } from '../../src/services/git-service.js'
+import { GitError, GitService } from '../../src/services/git-service.js'
+import { GitStateService } from '../../src/services/git/git-state-service.js'
+import type { IGitExecutor, GitCommand, GitExecutorResult } from '../../src/services/ports/git-executor.js'
 import type { ClientMessage } from '@xyz-agent/shared'
 
 interface Captured {
@@ -39,6 +41,15 @@ function makeHandler(impls: GitImpls = {}) {
   const cap: Captured = { replies: [], errors: [] }
   /** 捕获 broadcastChangeSetInvalidated 调用（D5 重构：commit 后广播） */
   const invalidations: { sessionId: string; reason: 'committed' }[] = []
+  /**
+   * W17 审查 Fix-4：暴露 reply 原始 mock——cap.replies 只记内容不记调用序，
+   * 「invalidate 在 reply 前」需 invocationCallOrder（全局单调递增）断言。
+   */
+  const reply = vi.fn((_ws: unknown, id: string | undefined, type: string, payload: Record<string, unknown>) => {
+    cap.replies.push({ id, type, payload })
+  })
+  /** W17 审查 Fix-2：checkout 失效需经 getSummary 解析 cwd，暴露 mock 供用例编程返回值 */
+  const sessionService = { getSummary: vi.fn() }
   const gitService = {
     getStatus: vi.fn(),
     stage: impls.stage ?? vi.fn().mockResolvedValue(undefined),
@@ -52,20 +63,18 @@ function makeHandler(impls: GitImpls = {}) {
   }
   const ctx = {
     send: vi.fn(),
-    reply: vi.fn((_ws: unknown, id: string | undefined, type: string, payload: Record<string, unknown>) => {
-      cap.replies.push({ id, type, payload })
-    }),
+    reply,
     sendError: vi.fn((_ws: unknown, code: string, message: string, id?: string, details?: Record<string, unknown>) => {
       cap.errors.push({ id, code, message, details })
     }),
-    sessionService: { getSummary: vi.fn() },
+    sessionService,
     gitService,
     broadcastChangeSetInvalidated: vi.fn((sessionId: string, reason: 'committed') => {
       invalidations.push({ sessionId, reason })
     }),
   }
   const handler = new GitMessageHandler(ctx as unknown as ConstructorParameters<typeof GitMessageHandler>[0])
-  return { cap, handler, gitService, invalidations }
+  return { cap, handler, gitService, invalidations, reply, sessionService }
 }
 
 function checkoutMsg(sessionId: string, name: string, id = 'm1'): ClientMessage {
@@ -153,7 +162,7 @@ describe('GitMessageHandler git.commit 路由（D5 重构：commit 后广播 cha
   })
 
   it('commit 成功→gitService.commit 调用 + 广播 changeSetInvalidated + reply committed', async () => {
-    const { cap, handler, gitService, invalidations } = makeHandler()
+    const { cap, handler, gitService, invalidations, reply } = makeHandler()
     await handler.handleGitMessage(commitMsg('s1', 'fix: changeSet baseline diff'), WS)
     expect(gitService.commit).toHaveBeenCalledWith('s1', 'fix: changeSet baseline diff')
     // 广播必须在 reply 之前（避免前端短暂停留在 ready 态）
@@ -164,6 +173,13 @@ describe('GitMessageHandler git.commit 路由（D5 重构：commit 后广播 cha
       payload: { sessionId: 's1', status: 'committed' },
     })
     expect(cap.errors).toHaveLength(0)
+    // W17 审查 Fix-4：invocationCallOrder（全局单调递增调用序）钉死「invalidate 在 reply 前」——
+    // 前端收到 committed ack 后可能立即刷新 git zone，失效晚于 reply 会让刷新命中 2s 旧缓存
+    const invalidateOrder = gitService.invalidateStatusCache.mock.invocationCallOrder[0] ?? -1
+    const replyOrder = reply.mock.invocationCallOrder[0] ?? -1
+    expect(invalidateOrder).toBeGreaterThan(0) // 已调用（invocationCallOrder 从 1 起）
+    expect(replyOrder).toBeGreaterThan(0)
+    expect(invalidateOrder).toBeLessThan(replyOrder)
   })
 
   it('commit 失败(GitError nothing_to_commit)→error envelope，不广播不 reply', async () => {
@@ -207,7 +223,14 @@ describe('GitMessageHandler 写操作失效（perf W17，03 D4-3 U2）', () => {
     expect(invalidations).toEqual([{ sessionId: 's1', reason: 'committed' }])
   })
 
-  it('git.checkout 成功→invalidateStatusCache({sessionId})', async () => {
+  it('git.checkout 成功→invalidateStatusCache({sessionId, cwd})（W17 审查 Fix-2：checkout 改 worktree HEAD，按 cwd 失效与 checkoutCwd 对称）', async () => {
+    const { handler, gitService, sessionService } = makeHandler()
+    vi.mocked(sessionService.getSummary).mockReturnValue({ cwd: '/repo' })
+    await handler.handleGitMessage(checkoutMsg('s1', 'main'), WS)
+    expect(gitService.invalidateStatusCache).toHaveBeenCalledWith({ sessionId: 's1', cwd: '/repo' })
+  })
+
+  it('git.checkout 成功但 getSummary 竞态返回空→退回 {sessionId}（至少保住单 session 失效）', async () => {
     const { handler, gitService } = makeHandler()
     await handler.handleGitMessage(checkoutMsg('s1', 'main'), WS)
     expect(gitService.invalidateStatusCache).toHaveBeenCalledWith({ sessionId: 's1' })
@@ -234,5 +257,54 @@ describe('GitMessageHandler 写操作失效（perf W17，03 D4-3 U2）', () => {
     await handler.handleGitMessage(msg('git.stage', { sessionId: 's1' }), WS)
     expect(gitService.invalidateStatusCache).not.toHaveBeenCalled()
     expect(cap.errors).toHaveLength(1)
+  })
+})
+
+describe('W17 审查 Fix-2 全链：checkout(sessionId) 按 cwd 失效（同 worktree HEAD 对全部同 cwd session 可见）', () => {
+  /**
+   * 真实链条 GitMessageHandler → GitService → GitStateService（executor 用 fake，不真 spawn git）。
+   * 可证伪性：TTL 设 60s——若 handler 仍只 invalidate(sessionId)，session B 的二次 status
+   * 会命中缓存零 spawn，下方 spawn 数断言失败。
+   */
+  it('session A checkout 后，同 cwd 的 session B 缓存也失效（重新执行而非命中旧缓存）', async () => {
+    const exec = vi.fn(async (_cwd: string, command: GitCommand): Promise<GitExecutorResult> => {
+      if (command === 'status') return { stdout: '## main\0 M a.ts\0', stderr: '', exitCode: 0 }
+      if (command === 'diff') return { stdout: '3\t1\ta.ts\n', stderr: '', exitCode: 0 }
+      if (command === 'branch') return { stdout: 'feat-x\nmain\n', stderr: '', exitCode: 0 }
+      return { stdout: '', stderr: '', exitCode: 0 } // checkout 等
+    })
+    const executor: IGitExecutor = { exec }
+    const stateService = new GitStateService({ executor, statusTtlMs: 60_000 })
+    const summaries: Record<string, { cwd: string }> = { 'sid-a': { cwd: '/repo' }, 'sid-b': { cwd: '/repo' } }
+    const gitService = new GitService({
+      sessionService: { getSummary: (sid: string) => summaries[sid] },
+      executor,
+      stateService,
+    } as unknown as ConstructorParameters<typeof GitService>[0])
+    const reply = vi.fn()
+    const handler = new GitMessageHandler({
+      send: vi.fn(),
+      reply,
+      sendError: vi.fn(),
+      sessionService: { getSummary: (sid: string) => summaries[sid] },
+      gitService,
+      broadcastChangeSetInvalidated: vi.fn(),
+    } as unknown as ConstructorParameters<typeof GitMessageHandler>[0])
+    const statusMsg = (sessionId: string): ClientMessage =>
+      ({ type: 'git.status', id: `st-${sessionId}`, payload: { sessionId } }) as unknown as ClientMessage
+
+    // 双 session 各预热一组缓存（status+diff+branch = 3 spawn/组）
+    await handler.handleGitMessage(statusMsg('sid-a'), WS)
+    await handler.handleGitMessage(statusMsg('sid-b'), WS)
+    expect(exec.mock.calls.length).toBe(6)
+
+    // TTL 窗口内 session A checkout（+1 checkout spawn）
+    await handler.handleGitMessage(checkoutMsg('sid-a', 'feat-x'), WS)
+    expect(exec.mock.calls.length).toBe(7)
+    expect(reply).toHaveBeenCalledWith(WS, 'm1', 'message.status', { sessionId: 'sid-a', status: 'switched' })
+
+    // session B 再取 status：按 cwd 失效 ⇒ 重执行一组（6+1+3=10）；只 invalidate(sid-a) 则命中缓存停在 7
+    await handler.handleGitMessage(statusMsg('sid-b'), WS)
+    expect(exec.mock.calls.length).toBe(10)
   })
 })

@@ -24,6 +24,7 @@
 import type { FileChangeStatus, GitStatusResult } from '@xyz-agent/shared'
 import { parseGitStatus, deriveCounts, parseNumstatEntries } from '../../infra/git/git-status-parser.js'
 import { parseGitStatusPorcelain, xyToStatus } from '../../infra/pi/file-change-reconciler.js'
+import { GitExecutorError } from '../ports/git-executor.js'
 import type { GitCommand, GitExecutorResult, IGitExecutor } from '../ports/git-executor.js'
 import type { IGitStateService, NumstatEntry, StatusSnapshot } from '../ports/git-state.js'
 
@@ -211,9 +212,9 @@ export class GitStateService implements IGitStateService {
 
       // stats：tracked 改动行数聚合。无 HEAD（空仓库）时 diff 失败 → 0（现状语义）。
       // 微项 8（perf W17）：单趟解析——一次遍历 parseNumstatEntries 同时产出聚合 stats 与
-      // per-file Map（原 parseNumstat + parseNumstatByFile 双趟各跑一遍行解析）。
-      // 聚合语义：add/del 各自独立跳过 undefined（二进制 `-`）；per-file：双值均数字才收录
-      // （与 parseNumstat / parseNumstatByFile 的既有行为逐条等价）。
+      // per-file Map（原 parseNumstat / parseNumstatByFile 双趟薄包装已删除，W17 审查 Fix-5，
+      // 聚合与 per-file 语义收敛到此处单趟实现）。
+      // 聚合语义：add/del 各自独立跳过 undefined（二进制 `-`）；per-file：双值均数字才收录。
       const stats = { add: 0, del: 0 }
       if (numstatRes.exitCode === 0) {
         const numstatMap = new Map<string, { add: number; del: number }>()
@@ -253,8 +254,18 @@ export class GitStateService implements IGitStateService {
         hasConflict,
         files,
       }
-    } catch {
-      // git 不可用 / 超时 / 未知错误 → 降级 isRepo:false（与 git-service.getStatus catch 降级一致）
+    } catch (e) {
+      if (e instanceof GitExecutorError) {
+        // git 不可用 / 超时（executor 已知降级路径）→ 静默 null（与 git-service.getStatus catch 降级一致）
+        return null
+      }
+      // W17 审查 Fix-1：未知异常（TypeError 等编程错误）不得无声吞成 isRepo:false——降级语义保持
+      // （不 rethrow：rethrow 会改变 handler 行为链，降级 + 出声是「失败要出声」的最小正确实现），
+      // 但必须留痕供事后诊断（runtime 内 console 经 initLogger monkey-patch 落盘，非仅终端）
+      console.warn(
+        `[git-state] getStatus 未知异常，降级 isRepo:false: sessionId=${sessionId} cwd=${cwd}`,
+        e,
+      )
       return null
     }
   }

@@ -16,6 +16,11 @@
  * 2. create: bare-workspace 模式走现有逻辑；plain-repo 模式计算专用目录布局；not-repo 抛 NOT_GIT_REPO
  * 3. listBranches: git branch --list + remote show origin + 读默认分支
  * 4. list: git worktree list --porcelain 解析输出
+ *
+ * 与 GitStateService 缓存失效的关系（perf W17 审查 Fix-6 记录的刻意取舍）：本服务的 worktree
+ * add/remove 不触发 GitStateService 失效——声明接受陈旧（03 §5 检查点定案）。影响面：仅原地
+ * worktree 的 getStatus branches 列表在 ≤2s TTL 内少/多一条；新建 worktree 面板是新 cwd = 新
+ * 缓存键，天然不受影响。若未来要求即时一致，需经 gitService.invalidateStatusCache({ cwd }) 挂失效。
  */
 import { join, basename } from 'node:path'
 import { createHash } from 'node:crypto'

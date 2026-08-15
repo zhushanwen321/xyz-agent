@@ -163,8 +163,9 @@ export interface NumstatEntry {
  * 每行格式：`<added>\t<deleted>\t<path>`；二进制文件计数为 `-` → add/del 解析为 undefined。
  * path 取第 3 列起 join('\t')（路径可含 tab/空格，numstat 用 tab 分隔前 2 列故安全）。
  *
- * 这是 numstat 解析的唯一真值源；parseNumstat（聚合）与 parseNumstatByFile（per-file Map）
- * 均为基于此的薄包装，避免行解析逻辑重复。
+ * numstat 解析的唯一真值源。原薄包装 parseNumstat（聚合）与 parseNumstatByFile（per-file Map）
+ * 自 W17 单趟收编后无生产消费方，已删除（W17 审查 Fix-5）；聚合与 per-file 语义由消费方
+ * git-state-service.runGetStatus 基于本函数单趟遍历承担，等价覆盖见 git-state-service.test.ts。
  *
  * 调用方负责选择 diff 范围（HEAD / --cached / 无参 working tree）。
  */
@@ -188,41 +189,4 @@ export function parseNumstatEntries(output: string): NumstatEntry[] {
     })
   }
   return entries
-}
-
-/**
- * 解析 `git diff --numstat [...]` stdout → {add, del} 聚合行数。
- * 每行格式：`<added>\t<deleted>\t<path>`；二进制文件计数为 `-`，跳过。
- *
- * parseNumstatEntries 的薄包装（聚合）：累加所有 add/del 均为数字的条目。
- *
- * 调用方负责选择 diff 范围（HEAD / --cached / 无参 working tree）；本函数纯聚合。
- */
-export function parseNumstat(output: string): { add: number; del: number } {
-  let add = 0
-  let del = 0
-  for (const e of parseNumstatEntries(output)) {
-    if (e.add !== undefined) add += e.add
-    if (e.del !== undefined) del += e.del
-  }
-  return { add, del }
-}
-
-/**
- * 解析 `git diff --numstat [...]` stdout → per-file {add, del} Map（W1 文件树 +N −M 角标数据源）。
- * 每行格式：`<added>\t<deleted>\t<path>`；path 用 tab 分隔取第 3 列起（路径可含空格/tab，numstat 用 tab 分隔故安全）。
- *
- * parseNumstatEntries 的薄包装（per-file Map）：仅收录 add/del 均为数字的条目（二进制跳过）。
- * rename 文件：numstat 输出新路径，与 porcelain 的 path 一致，正常匹配。
- *
- * 调用方负责选择 diff 范围（HEAD / --cached / 无参 working tree）；本函数不聚合，只拆解 per-file。
- */
-export function parseNumstatByFile(output: string): Map<string, { add: number; del: number }> {
-  const map = new Map<string, { add: number; del: number }>()
-  for (const e of parseNumstatEntries(output)) {
-    // 二进制（add 或 del 为 undefined）跳过，不进 Map
-    if (e.add === undefined || e.del === undefined) continue
-    map.set(e.path, { add: e.add, del: e.del })
-  }
-  return map
 }

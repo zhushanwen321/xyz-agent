@@ -102,9 +102,10 @@ export class GitService implements IGitService {
   }
 
   /**
-   * 写操作后的状态缓存失效入口（perf W17，03 D4-3）。handler 在 stage/unstage/commit/
-   * checkout/createBranch（按 sessionId）与 checkoutCwd（按 cwd，session-less）成功后调用，
-   * 下一次 getStatus 拿到新状态（无 2s 陈旧窗口）。失败路径不失效（状态未变）。
+   * 写操作后的状态缓存失效入口（perf W17，03 D4-3）。handler 在 stage/unstage/commit/createBranch
+   * （按 sessionId）、checkout 与 checkoutCwd（按 cwd——checkout 改变整个 worktree HEAD，对共享该
+   * cwd 的所有 session 可见，W17 审查 Fix-2）成功后调用，下一次 getStatus 拿到新状态（无 2s 陈旧
+   * 窗口）。失败路径不失效（状态未变）。
    */
   invalidateStatusCache(target: { sessionId?: string; cwd?: string }): void {
     if (target.sessionId !== undefined) this.opts.stateService.invalidate(target.sessionId)
