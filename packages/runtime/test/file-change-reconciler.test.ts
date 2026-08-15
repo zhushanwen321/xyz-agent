@@ -93,12 +93,16 @@ describe('file-change-reconciler', () => {
       expect(diffSnapshots(snap({}))).toEqual([])
     })
 
-    it('与双参数版输出等价：同 current 下 baseline 有无均得全集（R-09 死参数验证）', () => {
-      // 死参数验证：R-09 删除 baseline 的依据是「baseline 对输出零影响」。锁定该等价性，
-      // 若未来有人恢复差集语义（baseline 有 current 无 → 排除），此测试提醒其行为变化。
+    it('R-09 死参数验证：输出形状只含 filePath/status，全集即清单（若恢复差集语义此测试提醒行为变化）', () => {
+      // R-09 删除 baseline 的依据是「baseline 对输出零影响、current 全集即变更清单」。
+      // 锁定输出形状与全集语义（W18 review：原断言 diffSnapshots(current) 自比较恒真，改为
+      // 有实值的形状断言）；未来若有人恢复差集语义（baseline 有 current 无 → 排除），
+      // 'gone-from-nowhere.ts'（仅 current 有）会从输出消失，此测试报警。
       const current = snap({ 'keep.ts': 'modified', 'gone-from-nowhere.ts': 'added' })
-      expect(diffSnapshots(current)).toEqual(diffSnapshots(current))
-      expect(diffSnapshots(current)).toHaveLength(2)
+      expect(diffSnapshots(current)).toEqual([
+        { filePath: 'keep.ts', status: 'modified' },
+        { filePath: 'gone-from-nowhere.ts', status: 'added' },
+      ])
     })
   })
 
@@ -164,11 +168,18 @@ describe('file-change-reconciler', () => {
   })
 
   describe('源码零同步子进程（W18 主线程零同步 git 验收）', () => {
-    it('file-change-reconciler.ts 不含 child_process import 与 execSync/execFileSync 调用（采集已收进 GitStateService 异步路径）', () => {
-      const source = readFileSync(
-        fileURLToPath(new URL('../src/infra/pi/file-change-reconciler.ts', import.meta.url)),
-        'utf8',
-      )
+    // W18 review 扩范围：热路径 3 文件——采集/纯函数层（reconciler）+ 编排层（interpreter，
+    // sendDiffFileChanges 链上采集点）+ port 适配层（diff-adapter，委托 GitStateService）。
+    // 任何一处回流 execSync/execFileSync 都会在 streaming 期间阻塞事件循环（所有 session
+    // 的 token 流排队等待）。
+    const HOT_PATH_SOURCES = [
+      '../src/infra/pi/file-change-reconciler.ts',
+      '../src/services/session/event-interpreter.ts',
+      '../src/infra/pi/file-change-diff-adapter.ts',
+    ]
+
+    it.each(HOT_PATH_SOURCES)('%s 不含 child_process import 与 execSync/execFileSync 调用（采集已收进 GitStateService 异步路径）', (rel) => {
+      const source = readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
       // 断言 import 与调用形态（注释中的历史说明不误伤）
       expect(source).not.toMatch(/from\s+'node:child_process'/)
       expect(source).not.toMatch(/\bexecSync\s*\(/)

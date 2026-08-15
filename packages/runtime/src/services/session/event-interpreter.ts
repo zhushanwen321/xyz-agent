@@ -139,7 +139,7 @@ export class EventInterpreter {
    * 链上每段 catch 兜底，diffChain 永不 reject（单帧失败不断链）。
    */
   private diffChain: Promise<void> = Promise.resolve()
-  /** 回合代际守卫：turn-start 自增；链上执行时 gen 不匹配 → 丢弃（上回合迟到 diff 不落新回合） */
+  /** 回合代际守卫：turn-start 自增；链上执行时 gen 不匹配 → 丢弃 accumulating（ready 绕过恒推，见 sendDiffFileChanges） */
   private turnGen = 0
   /** turn-end 压制标记：true 后到达的 accumulating 直接 no-op（同回合迟到 tool-call-end 不产生新帧） */
   private turnFinalizing = false
@@ -390,11 +390,14 @@ export class EventInterpreter {
     // ADR-0024 D5：失败的调用不触发 diff（避免噪声）；实时 diff
     if (!isError) {
       // [已知限制] ev.writeContent 恒为 undefined（pi tool_execution_end 从不发 args，见
-      // event-adapter handleToolExecutionEnd 注释），writeContents 累积逻辑暂不生效。
+      // event-adapter handleToolExecutionEnd 注释），writeContents 累积逻辑保护的是当前无数据
+      // 流经的路径——后续 pi 若透出 writeContent 则自动激活（untracked 行数回退）。
       if (FILE_MUTATING_TOOLS.has(toolName)) {
         // await 保持「file_changes(accumulating) 先于 tool_call_end」帧序（W18 前为同步实现
         // 天然满足；异步化后显式 await——本 handler 本就是 fire-and-forget 异步路径，
-        // await 不阻塞 interpret 循环）。超时上限 = 采集超时（5000ms），之后照常推 tool_call_end。
+        // await 不阻塞 interpret 循环）。等待的是整个 diff 链尾 = 前序链段 + 自身（每段最坏
+        // = status + numstat 两个采集超时之和，各 5000ms）；fire-and-forget 语义下不阻塞
+        // 事件循环，仅延迟 tool_call_end 相对时序。
         await this.sendDiffFileChanges('accumulating')
       }
     }
@@ -464,15 +467,22 @@ export class EventInterpreter {
    * 帧序不变量（by-construction）：
    * 1. 单飞串行链——diff 计算入 per-session promise 链按触发序串行，turn-end 的 ready
    *    排链尾 → 恒晚于所有在途 accumulating；
-   * 2. 回合代际守卫——捕获排链时的 turnGen，链上执行时（含 await 窗口后 send 前）不匹配
-   *    即丢弃，上回合迟到 diff 不落新回合；
+   * 2. 回合代际守卫（仅 accumulating）——捕获排链时的 turnGen，链上执行时（含 await 窗口后
+   *    send 前）不匹配即丢弃，上回合迟到 accumulating 不落新回合。ready 绕过守卫恒推
+   *    （03 §3.1「ready 恒推」；W18 review）：pi followUp 续跑（triggerTurn）会立即开新 turn
+   *    （turnGen++），若 ready 也按代际丢弃，本回合变更集卡永久停在 accumulating——前端无
+   *    恢复路径（markChangeSetsSuperseded 仅 git.commit 触发、hydrate 不写 changeSetStatus）。
+   *    迟到的 ready 挂排链时捕获的旧 messageId，前端按 messageId 分区 + 单向守卫幂等；
    * 3. turnFinalizing 压制——turn-end 后到达的 accumulating 直接 no-op。
    *
    * 返回链尾 promise：handleToolCallEnd await 它以保持「accumulating 先于 tool_call_end」；
    * handleTurnEnd 不 await（禁止阻塞 turn-end 处理链）。
    */
   private sendDiffFileChanges(changeSetStatus: 'accumulating' | 'ready'): Promise<void> {
-    if (this.turnFinalizing && changeSetStatus === 'accumulating') return Promise.resolve()
+    if (this.turnFinalizing && changeSetStatus === 'accumulating') {
+      console.debug(`[event-interpreter] file_changes accumulating suppressed by turnFinalizing sid=${this.sessionId}`)
+      return Promise.resolve()
+    }
     const messageId = this.currentMessageId
     if (!messageId) return Promise.resolve()
     const { cwd, fileChangeDiff } = this.opts
@@ -481,15 +491,21 @@ export class EventInterpreter {
     // writeContents 捕获引用快照：turn-end / turn-start 排链后替换新 Map，链上计算仍持旧引用
     const writeContents = this.writeContents
     const run = async (): Promise<void> => {
-      // 回合代际守卫：排链到执行之间可能已跨 turn（新 turn-start turnGen++）
-      if (gen !== this.turnGen) return
+      // 回合代际守卫（仅 accumulating，见上方 JSDoc 第 2 条）：排链到执行之间可能已跨 turn
+      if (changeSetStatus === 'accumulating' && gen !== this.turnGen) {
+        console.debug(`[event-interpreter] file_changes accumulating dropped by turn-generation guard sid=${this.sessionId}`)
+        return
+      }
       const current = await fileChangeDiff.snapshotGitStatus(cwd)
       if (!current) return
       const changes: FileChange[] = fileChangeDiff.diffSnapshots(current)
       if (changes.length === 0) return
       const numstatMap = await fileChangeDiff.numstat(cwd)
-      // 二次 gen 校验：采集 await 窗口内跨 turn 的迟到帧不发出（守卫覆盖整个链上生命周期）
-      if (gen !== this.turnGen) return
+      // 二次 gen 校验（仅 accumulating）：采集 await 窗口内跨 turn 的迟到帧不发出（守卫覆盖整个链上生命周期）
+      if (changeSetStatus === 'accumulating' && gen !== this.turnGen) {
+        console.debug(`[event-interpreter] file_changes accumulating dropped by turn-generation guard (post-await) sid=${this.sessionId}`)
+        return
+      }
       // 行数：numstat（已跟踪）+ writeContents 回退（untracked）
       fileChangeDiff.computeLineCounts(changes, numstatMap, writeContents)
       this.opts.send({
@@ -503,9 +519,10 @@ export class EventInterpreter {
         },
       })
     }
-    // 单段失败不断链：catch 后 diffChain 保持 resolved，后续帧照常排队
+    // 单段失败不断链：catch 后 diffChain 保持 resolved，后续帧照常排队。
+    // warn（非 debug）：链段失败 = 一帧 file_changes 静默丢失，prod info 级日志下应可见
     const next = this.diffChain.then(run).catch((e: unknown) => {
-      console.debug(`[event-interpreter] file_changes diff failed (frame dropped): ${toErrorMessage(e)}`)
+      console.warn(`[event-interpreter] file_changes diff failed (frame dropped): ${toErrorMessage(e)}`)
     })
     this.diffChain = next
     return next

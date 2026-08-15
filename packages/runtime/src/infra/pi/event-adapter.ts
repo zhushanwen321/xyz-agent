@@ -6,7 +6,7 @@
  *   ✗ 不做 file_changes baseline diff（snapshotGitStatus/diffSnapshots）
  *   ✗ 不回写 session 状态（context.update / thinkingLevel 缓存）
  *   ✗ 不路由 status/bridge/extension-ui 到 server
- *   ✗ 不持有可变态（statusBaseline/writeContents/currentMessageId）
+ *   ✗ 不持有可变态（currentMessageId/writeContents/diffChain 帧序态全在 interpreter）
  *   ✓ 只产出结构化中间事件（PiTranslatedEvent[]），交由 service 层 EventInterpreter 编排。
  *
  * pi RPC events have this structure:
@@ -816,7 +816,7 @@ export type WsSender = (msg: ServerMessage) => void
 /**
  * 绑定一个 pi session 的事件适配器：订阅事件 → 翻译 → 经 interpreter 回调消费。
  *
- * 纯订阅器：不持有业务态（statusBaseline/writeContents/currentMessageId 全部移到 interpreter），
+ * 纯订阅器：不持有业务态（currentMessageId/writeContents/diffChain 帧序态全部移到 interpreter），
  * 不直接 send —— 把翻译结果交给注入的 interpreter 回调（interpreter 决定副作用：转发/hook/diff/回写）。
  */
 export class EventAdapter {

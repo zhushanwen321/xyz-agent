@@ -275,6 +275,35 @@ describe('createChangeSetController — applyFileChanges 单向守卫（W18 纵�
     }
   })
 
+  it('审查态（partially-reviewed/resolved/superseded）后迟到的 ready 帧同样丢弃：status 不回退 + fileChanges 不替换', () => {
+    // W18 review：runtime 的 ready 绕过 turnGen 代际守卫恒推（否则卡片永久停在 accumulating），
+    // 迟到 ready 可能晚于用户审查操作到达——前端守卫拦其覆盖审查态
+    for (const status of ['partially-reviewed', 'resolved', 'superseded'] as const) {
+      const { controller, messages } = makeController(
+        new Map([['s1', [assistantMsg('m1', { fileChanges: [fc('reviewed.ts')] })]]]),
+      )
+      controller.setChangeSetStatus('s1', 'm1', status)
+
+      // 迟到的 ready：若未扩展守卫会把 status 写回 ready 且全集替换污染已审查内容
+      controller.applyFileChanges('s1', 'm1', [fc('late-ready.ts', { status: 'added' })], 'ready', true)
+
+      expect(controller.getChangeSetStatus('s1', 'm1')).toBe(status) // 不回退
+      const after = messages.value.get('s1')!.value[0].fileChanges!
+      expect(after.map((c) => c.filePath)).toEqual(['reviewed.ts']) // 不替换
+    }
+  })
+
+  it('ready → ready 幂等重放放行（runtime 绕过代际守卫恒推的重推场景）：status 保持 + 全集替换', () => {
+    const { controller, messages } = makeController(
+      new Map([['s1', [assistantMsg('m1', { fileChanges: [fc('stale.ts')] })]]]),
+    )
+    controller.applyFileChanges('s1', 'm1', [fc('first.ts')], 'ready', true)
+    controller.applyFileChanges('s1', 'm1', [fc('second.ts')], 'ready', true)
+
+    expect(controller.getChangeSetStatus('s1', 'm1')).toBe('ready')
+    expect(messages.value.get('s1')!.value[0].fileChanges!.map((c) => c.filePath)).toEqual(['second.ts'])
+  })
+
   it('accumulating → accumulating（正常流）允许；accumulating → ready 允许', () => {
     const { controller, messages } = makeController(
       new Map([['s1', [assistantMsg('m1')]]]),

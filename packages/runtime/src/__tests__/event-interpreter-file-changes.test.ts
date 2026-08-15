@@ -6,7 +6,9 @@
  * - F2: ready 恒为链尾——accumulating 采集慢于 turn-end 到达时，ready 仍最后发出
  *       （串行链 by-construction；fire-and-forget 实现会让 ready 抢先 → 断言失败）
  * - F3: message.complete 先于 ready（complete 同步转发，ready 排链尾异步）
- * - F4: 跨回合代际守卫——上回合挂起的 diff 在新 turn-start 后 resolve，帧被丢弃（不串帧）
+ * - F4: 跨回合代际守卫（仅 accumulating）——上回合挂起的 accumulating 在新 turn-start 后
+ *       resolve，帧被丢弃（不串帧）；迟到的 ready 绕过守卫恒推，挂旧 messageId
+ *       （W18 review：ready 被 gen 丢弃会让变更集卡永久停在 accumulating）
  * - F5: turnFinalizing 压制——turn-end 后迟到的写工具 tool-call-end 不产生 accumulating 帧
  * - F6: 非 git 仓库（snapshot → null）→ 零 file_changes 帧
  *
@@ -154,7 +156,27 @@ describe('EventInterpreter file_changes 帧序（W18 D3-3）', () => {
     expect(seq.indexOf('message.complete')).toBeLessThan(seq.lastIndexOf('message.file_changes'))
   })
 
-  it('F4: 跨回合代际守卫——上回合挂起的 diff 在新 turn-start 后 resolve，帧被丢弃（不串帧）', async () => {
+  it('F4a: 跨回合代际守卫（仅 accumulating）——上回合挂起的 accumulating 在新 turn-start 后 resolve，帧被丢弃（不串帧）', async () => {
+    const mock = createDiffMock()
+    mock.setBehaviors([HOLD])
+    const { interp, sent } = makeInterpreter(mock.impl)
+
+    interp.interpret([TURN_START('m1'), WRITE_TOOL_END('t1')])
+    await flushMicrotasks()
+    // 回合 2 开始（turnGen++），回合 1 的 accumulating 采集仍挂起（链上排队）
+    interp.interpret([TURN_START('m2')])
+    await flushMicrotasks()
+
+    // 回合 1 的 accumulating 采集完成，但 gen 已不匹配 → 丢弃，零 file_changes 帧
+    mock.resolveHeld(0, snap({ 'a.ts': 'modified' }))
+    await flushMicrotasks()
+
+    expect(sent.filter((m) => m.type === 'message.file_changes')).toHaveLength(0)
+    // 丢的是 file_changes 帧，tool_call_end 事件本身照常转发（await 链尾后送出）
+    expect(sent.filter((m) => m.type === 'message.tool_call_end')).toHaveLength(1)
+  })
+
+  it('F4b: 迟到的 ready 绕过代际守卫恒推——ready 排链后 turnGen++ 再 flush，ready 不丢且挂旧 messageId', async () => {
     const mock = createDiffMock()
     // 回合 1 的 accumulating + ready 采集都挂起
     mock.setBehaviors([HOLD, HOLD])
@@ -162,17 +184,23 @@ describe('EventInterpreter file_changes 帧序（W18 D3-3）', () => {
 
     interp.interpret([TURN_START('m1'), WRITE_TOOL_END('t1'), TURN_END()])
     await flushMicrotasks()
-    // 回合 2 开始（turnGen++），回合 1 的 ready 尚在链上排队
+    // 回合 2 开始（turnGen++）——模拟 pi followUp 续跑（triggerTurn）抢在 ready 链段执行前
     interp.interpret([TURN_START('m2')])
     await flushMicrotasks()
 
-    // 回合 1 的 accumulating + ready 采集相继完成，但 gen 已不匹配 → 全部丢弃，零 file_changes 帧
+    // 回合 1 的 accumulating + ready 采集相继完成：accumulating 被 gen 丢弃，ready 恒推
     mock.resolveHeld(0, snap({ 'a.ts': 'modified' }))
     await flushMicrotasks()
-    mock.resolveHeld(1, snap({ 'a.ts': 'modified' }))
+    mock.resolveHeld(1, snap({ 'a.ts': 'modified', 'b.ts': 'added' }))
     await flushMicrotasks()
 
-    expect(sent.filter((m) => m.type === 'message.file_changes')).toHaveLength(0)
+    // ready 不丢：若无「ready 绕过守卫」，本帧被 gen 静默丢弃 → 卡片永久停在 accumulating
+    const fcFrames = sent.filter((m) => m.type === 'message.file_changes')
+    expect(fcFrames).toHaveLength(1)
+    const ready = fcFrames[0].payload as { changeSetStatus: string; messageId: string; fileChanges: FileChange[] }
+    expect(ready.changeSetStatus).toBe('ready')
+    expect(ready.messageId).toBe('m1') // 挂排链时捕获的旧 messageId，不串新回合
+    expect(ready.fileChanges.map((c) => c.filePath).sort()).toEqual(['a.ts', 'b.ts'])
   })
 
   it('F5: turnFinalizing 压制——turn-end 后迟到的写工具 tool-call-end 不产生 accumulating 帧', async () => {

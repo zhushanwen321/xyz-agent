@@ -247,7 +247,7 @@ async function main(): Promise<void> {
 
   const fileChangeDiff = new FileChangeDiffAdapter(gitStateService)
   const createAdapter = (sessionId: string, send: (msg: import('@xyz-agent/shared').ServerMessage) => void, cwd?: string) => {
-    // EventInterpreter 持有业务态（currentMessageId/statusBaseline/writeContents）+ 业务回调，
+    // EventInterpreter 持有业务态（currentMessageId/writeContents/diffChain 帧序三件套）+ 业务回调，
     // 消费 EventAdapter 翻译出的 PiTranslatedEvent[]，执行 hook / diff / 回写 / 路由副作用。
     const interpreter = new EventInterpreter(sessionId, {
       // #8 G1 cwd：注入 session cwd（write 工具 added/modified 判定 + agent_end git 对账用）。
