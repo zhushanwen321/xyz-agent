@@ -299,8 +299,8 @@ last-writer-wins（首现定义）= 多写者互不协商、后完成 rename 的
 | P-safety-b | 戳匹配的命中路径零内容读取仍返回正确记录（不依赖文件内容） | 单测 C1：建索引后 chmod 000 jsonl，新 RecordStore 首次 collectRecords 返回全部记录（复刻既有 A1 手法 `record-store-cache.test.ts:94-106`） | ⛔ 实施期门 |
 | P-safety-c | 并发 rename 竞争下读到的都是完整 JSON | §4.2 判定 2：结束后 `JSON.parse` 成功且 `version` 存在 | ⛔ 实施期门 |
 | P-l0 | 索引写兄弟位置不改 sessionsDir mtime（不击穿 L0 快路径） | POSIX 语义：rename 只改父目录 `<enc>` 的 mtime，sessionsDir 自身不变（推理）+ 单测 C6 断言快路径未失效 | 推理 + ⛔ C6 门 |
-| P-index-cost | 350KB 索引 readFileSync + JSON.parse ~10ms | §4.1 bench 冷轮耗时分解回填本文 | ⛔ 实施期回填 |
-| P-throttle | 60s 节流下写放大远低于上限 | §4.1/§4.2 bench 统计实际写入次数 | ⛔ 实施期观察 |
+| P-index-cost | 索引读入+解析成本（估算 350KB ≈ 10ms 量级） | §4.1 bench 冷轮耗时分解回填本文 | ✅ 实测（2026-08-15）：真实索引 6.4MB（task 文本远长于估算），readFileSync+JSON.parse 隔离中位数 30.4ms；冷启动全程中位数 80.6ms ≤300ms，见 §4.1 实测结果 |
+| P-throttle | 60s 节流下写放大远低于上限 | §4.1/§4.2 bench 统计实际写入次数 | ✅ 实测（2026-08-15）：3 实例 × 20 轮共 60 次扫描仅 1 次索引重写（节流 + 纯命中轮不写），见 §4.1 实测结果 |
 
 **核心安全性质的论证链与验证状态**：「陈旧索引只导致多余探测、永不产生错误数据」由三环构成——
 
@@ -346,6 +346,18 @@ tsx bench/cold-scan.bench.ts /tmp/bench-enc/$ENC/sessions --rounds 5
 - 两模式输出的 `(id, agent, task, rootSessionId, status)` 列表与**步骤 1 轮 1（无索引全量探测）的输出**（ground truth）**完全一致**（正确性等价，目标 2——对比基准必须是真全量探测的输出，不能是另一次索引路径的自比）；
 - 索引命中模式下，对 chmod 000 的 jsonl 仍能返回全部记录（证明零内容读取）。**注意这是与无索引冷扫的行为差异点**：无索引冷扫对不可读文件探测失败 → 记录消失；索引命中返回上次探测结果（保留）——差异方向良性（保留优于消失，视为鲁棒性提升），故该断言单独成轮执行、不参与两模式输出等价对比；技术同现有 A1 用例 `extensions/subagent-workflow/src/__tests__/record-store-cache.test.ts:94-106`；
 - 索引文件出现在 `<enc>/sessions-index.json`（兄弟位置），sessionsDir 内 readdir 无新增文件。
+
+**实测结果（2026-08-15，性能验收回填。副本 = 最大真实 `<enc>` 段，1744 个 jsonl / sessions 目录 671MB，其中 1633 条记录 + 111 个无 identity 文件；命令即上述两步，exit 0）**：
+
+| 模式 | 轮 1 | 轮 2-5 | 5 轮中位数 | 判定 |
+|---|---|---|---|---|
+| 基线（每轮 rm 索引） | 2069.7ms | 874.6-1232.0ms | **972.8ms** | 仅报告，无阈值 |
+| 索引命中（冷启动） | 80.6ms | 69.1-97.8ms | **80.6ms** | **≤300ms PASS**（A2） |
+
+- **提速 12.1x**（972.8ms → 80.6ms），目标 1（≤300ms）达成。基线轮 1（2.1s，页缓存全冷）与文首 2.7s 基线同量级（差异来自副本复制已预热部分页缓存）；轮 2-5 两模式共享热页缓存，对比同轴公平。
+- A1/A3/A4 全 PASS：五元组与 ground truth 完全一致（1633 条）；索引落 `<enc>/sessions-index.json` 兄弟位置、sessionsDir readdir 无新增；chmod 000 后 1633 条记录全部经索引返回（零内容读取，P-safety-b 复证）。
+- **P-index-cost 实测**：真实索引 **6.4MB**（1744 条，均值 ~3.7KB/条——真实 task 文本远长于 §3.4-⑥ 估算的 ~200B/条），`readFileSync+JSON.parse` 隔离测量 5 轮中位数 **30.4ms**（19.4-34.1ms）；冷启动 80.6ms 的其余部分为 ~7k stat syscall + sidecar 小文件 + 记录构造。§3.4-⑥「体积涨一个量级仍在 50ms 量级」的结论经实测成立（估 350KB → 实 6.4MB 约 18x，仍远低于预算）。
+- **P-throttle 实测**（§4.2 bench，2026-08-15）：3 实例 × 20 轮共 60 次扫描 + 单进程 gt 扫描，索引仅重写 **1 次**（60s 节流 + 纯命中轮不写），写放大远低于上限。
 
 ### 4.2 多进程并发验收（回溯 §1 目标 3、目标 4）
 

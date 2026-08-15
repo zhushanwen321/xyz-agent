@@ -45,6 +45,10 @@ pi --tools todo,goal_control,workflow,subagent \
 
 系统内置 `n = 10` 深度护栏（fork 链 + 嵌套取 max），超过抛 `ForkDepthExceededError`。实测建议控制在 **3-4 层**以内——更深层会因上下文逐层压缩导致信息失真。
 
+## 性能：sessions-index.json 持久化索引
+
+冷启动首扫的 identity 探测结论持久化为 `<enc>/sessions-index.json`（stat 戳自校验、tmp(pid)+rename 原子写、60s 节流、损坏/版本不符静默回退全量探测），真实目录（1744 jsonl / 671MB）实测冷扫描中位数 972.8ms → 80.6ms（12.1x，预算 ≤300ms）。可复现验收脚本：`bench/cold-scan.bench.ts`（冷扫描计时 + 输出等价断言）、`bench/concurrent-scan.bench.ts`（3 实例并发 + 随机变异四判定），设计文档见 `.xyz-harness/2026-08-15-subagent-workflow-perf/sessions-index-design.md`。
+
 ## 安装
 
 ```bash
