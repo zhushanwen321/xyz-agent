@@ -1,43 +1,50 @@
 /**
- * messages ref 的不可变写入 helper（W1 shallowRef 适配）。
+ * messages ref 的写入 helper（W1 shallowRef 适配 → W10 D-1 容器范式升级）。
  *
- * 背景：chat store 的 messages 改用 shallowRef 后，Map mutation（messages.value.set）不再
- * 触发响应式更新——shallowRef 只对 .value 整体替换敏感。所有 messages 写入必须改为
- * "新 Map → set → 赋值 .value"的不可变范式，才能触发 W2 的 streamingSessionIds computed
- * 重算及所有 messages 消费点的响应式更新。
+ * 背景（D-1，07 文档 §3.3）：messages 是 `ShallowRef<Map<string, ShallowRef<Message[]>>>`
+ * ——外层 Map 恒等稳定（只在增删 sid key 时替换），每个 sid 持有独立的内层 ShallowRef。
+ * 同 sid commit 只替换该分区的内层 ref（`existing.value = next`），A session 更新不再让
+ * 依赖 B session 分区的 watcher / computed 失效（Map 整体替换的连带重算被消除）。
  *
- * 本 helper 收敛 messages 写入的不可变写法，避免散落的手动 new Map 调用。
- * 与原有的"新对象 → 新数组"不可变范式对齐（数组层早已不可变，Map 层此前靠深 ref 的
- * mutation 触发，shallowRef 下改为整体替换）。
+ * 不变式（07 文档 §3.3.2）：
+ * 1. 外层 Map 引用只在「增删 sid key」时替换；sid 已存在时 commit 只替换 existing.value。
+ * 2. 每 sid 的分区 ref 一旦创建（首次 commit），引用在 session 存活期间稳定。
+ *
+ * 浅代理边界对齐 ADR-0039：浅到「外层 Map + 每 sid 数组」两层，内层用 shallowRef
+ * （Message 对象本身不代理；用 ref 会深代理整条数组，违反 ADR-0039）。
  */
 
+import { shallowRef, type ShallowRef } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 
-/** messages ref 的结构类型（兼容 Vue Ref 与裸 { value } 结构） */
-export type MessagesRef = { value: Map<string, Message[]> }
+/** messages ref 的结构类型（兼容 Vue Ref 与裸 { value } 结构）。 */
+export type MessagesRef = { value: Map<string, ShallowRef<Message[]>> }
 
 /**
- * 不可变写入：构造新 Map，set 后整体赋值 .value，触发 shallowRef 响应式。
- * 替代 `messages.value.set(sid, next)`（shallowRef 下 Map mutation 不触发）。
+ * 写入：同 sid 替换该分区内层 ref（外层 Map 引用不变，恒等稳定）；
+ * 首次建 key（含 subagent:* 与 agentcall:* 虚拟 session 动态 id）替换外层 Map
+ * （增删 session 是外层 Map 替换的唯一触发点）。
  */
 export function commitMessages(
   messages: MessagesRef,
   sessionId: string,
   next: Message[],
 ): void {
-  messages.value = new Map(messages.value).set(sessionId, next)
+  const existing = messages.value.get(sessionId)
+  if (existing) {
+    existing.value = next
+  } else {
+    messages.value = new Map(messages.value).set(sessionId, shallowRef(next))
+  }
 }
 
 /**
- * 不可变删除：构造新 Map，delete 后整体赋值 .value，触发 shallowRef 响应式。
- * 替代 `messages.value.delete(sid)`（shallowRef 下 Map mutation 不触发）。
+ * 不可变删除：构造新 Map，delete 后整体赋值 .value（减 key 的合法 Map 替换情形）。
+ * LRU 驱逐（lru.deleteMessageKey）/ disposeSession 经此或等价的 Map 替换路径。
  *
- * 与 commitMessages 对称的删除入口——所有 messages 写入（含 delete）收敛到本模块，
- * 不再散落 `messages.value = new Map(...)`。LRU 驱逐（chat-lru.deleteMessageKey）经此 helper。
- *
- * 类型参数 V 默认 Message[]，但允许泛化（chat-lru 的 deps 用 Map<string, unknown> 宽类型）。
+ * 类型参数 V 默认 ShallowRef<Message[]>，但允许泛化（lru 的 deps 用 Map<string, unknown> 宽类型）。
  */
-export function deleteMessages<V = Message[]>(messages: { value: Map<string, V> }, sessionId: string): void {
+export function deleteMessages<V = ShallowRef<Message[]>>(messages: { value: Map<string, V> }, sessionId: string): void {
   const next = new Map(messages.value)
   next.delete(sessionId)
   messages.value = next
@@ -53,7 +60,7 @@ export function truncateMessagesFrom(
   messageId: string,
   inclusive: boolean,
 ): void {
-  const prev = messages.value.get(sessionId) ?? []
+  const prev = messages.value.get(sessionId)?.value ?? []
   const idx = prev.findIndex((m) => m.id === messageId)
   if (idx === -1) return
   const end = inclusive ? idx : idx + 1
@@ -69,7 +76,7 @@ export function prependHistory(
   sessionId: string,
   fullHistory: Message[],
 ): void {
-  const prev = messages.value.get(sessionId) ?? []
+  const prev = messages.value.get(sessionId)?.value ?? []
   const existingIds = new Set(prev.map((m) => m.id))
   const newMsgs = fullHistory.filter((m) => !existingIds.has(m.id))
   if (newMsgs.length === 0) return

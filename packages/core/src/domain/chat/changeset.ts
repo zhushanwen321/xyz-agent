@@ -20,9 +20,9 @@
  */
 import { ref } from 'vue'
 import type { Ref } from 'vue'
-import type { ChangeSetStatus, FileChange, Message } from '@xyz-agent/shared'
+import type { ChangeSetStatus, FileChange } from '@xyz-agent/shared'
 import { findLastAssistantIndex } from './chunk-processor'
-import { commitMessages } from '@xyz-agent/core'
+import { commitMessages, type MessagesRef } from '@xyz-agent/core'
 
 /**
  * 合并 FileChange[]（accumulating 增量合并）。同 filePath 取最新项（后者覆盖前者），
@@ -75,7 +75,7 @@ export interface ChangeSetController {
  * chat store 把返回的成员原样挂到 store 的 return 上，公共 API 与原实现完全一致。
  */
 export function createChangeSetController(
-  messages: Ref<Map<string, Message[]>>,
+  messages: MessagesRef,
 ): ChangeSetController {
   /** 按 `${sessionId}:${messageId}` 分区的变更集状态（W10，ChangeSetCard 5 态） */
   const changeSetStatuses = ref<Map<string, ChangeSetStatus>>(new Map())
@@ -105,7 +105,7 @@ export function createChangeSetController(
     changeSetStatus: ChangeSetStatus,
     isFullSet: boolean,
   ): void {
-    const prev = messages.value.get(sessionId) ?? []
+    const prev = messages.value.get(sessionId)?.value ?? []
     if (prev.length === 0) return
     const idx = prev.findIndex((m) => m.id === messageId)
     // messageId 未命中时挂到最后一条 assistant message（防御：runtime/前端 id 偶发不一致）

@@ -47,7 +47,7 @@ export function createStreamingStateMachine(deps: StreamingStateMachineDeps) {
    */
   function applySubagentStreamDelta(virtualId: string, lines: string[]): void {
     const fullText = lines.join('\n')
-    const prev = messages.value.get(virtualId) ?? []
+    const prev = messages.value.get(virtualId)?.value ?? []
     const lastAssistantIdx = findLastAssistantIndex(prev)
     const next = [...prev]
     if (lastAssistantIdx >= 0 && next[lastAssistantIdx].status === 'streaming') {
@@ -79,7 +79,7 @@ export function createStreamingStateMachine(deps: StreamingStateMachineDeps) {
    * timer 生命周期（由 subagent store 的 panelStreamUnsub 管理），只翻 status。
    */
   function finalizeSubagentStream(virtualId: string): void {
-    const prev = messages.value.get(virtualId)
+    const prev = messages.value.get(virtualId)?.value
     if (!prev || prev.length === 0) return
     const lastAssistantIdx = findLastAssistantIndex(prev)
     if (lastAssistantIdx < 0 || prev[lastAssistantIdx].status !== 'streaming') return
@@ -134,7 +134,7 @@ export function createStreamingStateMachine(deps: StreamingStateMachineDeps) {
    * 同步收口 running toolCall。幂等（sealed 后实体不变）。
    */
   function finalizeMessages(sessionId: string, reason: FinalizeReason, errorText?: string): void {
-    const prev = messages.value.get(sessionId)
+    const prev = messages.value.get(sessionId)?.value
     if (!prev) return
     const next = prev.map((m) => {
       // [M1 PR#116 review] 跳过 bash 消息：bash 消息（role:'system' + bashExecution）的生命周期

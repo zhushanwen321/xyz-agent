@@ -53,7 +53,7 @@ import {
   readChangeSetStatus,
 } from '../readers'
 import { findLastAssistantIndex, findToolCallOwner } from '../chunk-processor'
-import { commitMessages } from '../mutations'
+import { commitMessages, type MessagesRef } from '../mutations'
 import { truncateToolCall } from '../truncate-tool-output'
 import { bashStartEffect, bashResultEffect } from '../bash-effects'
 // [TODO @i18n-migration] core/i18n 落地后恢复 i18n.global.t 调用（§0.3 列为后续迁移）。
@@ -94,10 +94,10 @@ function countDrained(prev: string[], next: string[]): string[] {
  * finalizeSession 后实体已终态 → 此函数返回 false → delta handler 早 return。
  */
 function isLastAssistantStreaming(
-  messages: { value: Map<string, Message[]> },
+  messages: MessagesRef,
   sid: string,
 ): boolean {
-  const list = messages.value.get(sid)
+  const list = messages.value.get(sid)?.value
   if (!list || list.length === 0) return false
   for (let i = list.length - 1; i >= 0; i--) {
     if (list[i].role === 'assistant') return list[i].status === 'streaming'
@@ -135,7 +135,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // 基于错误前提「queue_update 可能晚于 message_start 乱序」——pi 同步保证不会乱序，
     // 且 abort 清空队列时强转会把「被丢弃」误标成「已投递」。已删除。
     queueStates.value.delete(sid)
-    const prev = messages.value.get(sid) ?? []
+    const prev = messages.value.get(sid)?.value ?? []
     const messageId = readString(payload, 'messageId') ?? `a-${crypto.randomUUID()}`
     commitMessages(messages, sid, [
       ...prev,
@@ -156,7 +156,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
 
   'message.complete': (ctx, sid, payload) => {
     const { messages, finalizeSession } = ctx
-    const prev = messages.value.get(sid) ?? []
+    const prev = messages.value.get(sid)?.value ?? []
     const stopReason = readString(payload, 'stopReason')
     const isErrorStop = stopReason === 'error'
     // [HISTORICAL] 收口**所有** status==='streaming' 的 assistant 气泡，不只用
@@ -200,7 +200,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const { messages, finalizeSession } = ctx
     const errorText = readString(payload, 'message') ?? 'Unknown error'
     // 检查是否有前置 streaming assistant（finalizeSession 会收口它）
-    const prev = messages.value.get(sid) ?? []
+    const prev = messages.value.get(sid)?.value ?? []
     const idx = findLastAssistantIndex(prev)
     const hasStreaming = idx >= 0 && prev[idx].status === 'streaming'
     // 统一收口：finalizeSession 做 streaming entity error 化 + 清 pendingSend + 清 timer
@@ -217,7 +217,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   'message.stream_error': (ctx, sid, payload) => {
     const { messages, finalizeSession } = ctx
     const streamErrContent = readString(payload, 'content') ?? 'Stream error'
-    const prev = messages.value.get(sid) ?? []
+    const prev = messages.value.get(sid)?.value ?? []
     const idx = findLastAssistantIndex(prev)
     const hasStreaming = idx >= 0 && prev[idx].status === 'streaming'
     // 统一收口
@@ -237,7 +237,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   'message.stream_warn': (ctx, sid, payload) => {
     const { messages } = ctx
     const warnContent = readString(payload, 'content') ?? '长时间无响应'
-    const prev = messages.value.get(sid) ?? []
+    const prev = messages.value.get(sid)?.value ?? []
     commitMessages(messages, sid, [
       ...prev,
       { id: `s-${crypto.randomUUID()}`, role: 'system', content: warnContent, status: 'complete', timestamp: Date.now() },
@@ -249,7 +249,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const { messages } = ctx
     // [D-010 sealed] finalizeSession 后晚到 delta 幂等丢弃
     if (!isLastAssistantStreaming(messages, sid)) return
-    const prev = messages.value.get(sid) ?? []
+    const prev = messages.value.get(sid)?.value ?? []
     const idx = findLastAssistantIndex(prev)
     if (idx < 0) return
     const delta = readString(payload, 'delta') ?? ''
@@ -269,7 +269,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const { messages } = ctx
     // [D-010 sealed]
     if (!isLastAssistantStreaming(messages, sid)) return
-    const prev = messages.value.get(sid) ?? []
+    const prev = messages.value.get(sid)?.value ?? []
     const idx = findLastAssistantIndex(prev)
     if (idx < 0) return
     const blockId = readString(payload, 'thinkingId') ?? `th-${crypto.randomUUID()}`
@@ -286,7 +286,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const { messages } = ctx
     // [D-010 sealed]
     if (!isLastAssistantStreaming(messages, sid)) return
-    const prev = messages.value.get(sid) ?? []
+    const prev = messages.value.get(sid)?.value ?? []
     // W05-A：给最后 ThinkingBlock 设 endTime（字段已存在 message.ts:30）。
     // payload 仅 {sessionId}（event-adapter thinking_end 不带额外字段）。
     const idx = findLastAssistantIndex(prev)
@@ -305,7 +305,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const { messages } = ctx
     // [D-010 sealed]
     if (!isLastAssistantStreaming(messages, sid)) return
-    const prev = messages.value.get(sid) ?? []
+    const prev = messages.value.get(sid)?.value ?? []
     const idx = findLastAssistantIndex(prev)
     if (idx < 0) return
     const delta = readString(payload, 'delta') ?? ''
@@ -322,7 +322,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const { messages } = ctx
     // [D-010 sealed]
     if (!isLastAssistantStreaming(messages, sid)) return
-    const prev = messages.value.get(sid) ?? []
+    const prev = messages.value.get(sid)?.value ?? []
     const idx = findLastAssistantIndex(prev)
     if (idx < 0) return
     const callId = readString(payload, 'toolCallId') ?? `tc-${crypto.randomUUID()}`
@@ -347,7 +347,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
 
   'message.tool_call_end': (ctx, sid, payload) => {
     const { messages } = ctx
-    const prev = messages.value.get(sid) ?? []
+    const prev = messages.value.get(sid)?.value ?? []
     const callId = readString(payload, 'toolCallId')
     // ID 锚定：按 toolCallId 精确定位所属 assistant message（见 findToolCallOwner 注释），
     // 不靠 findLastAssistantIndex（位置定位会被乱序/噪声 message 干扰）。
@@ -380,7 +380,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const { messages } = ctx
     // [D-010 sealed]
     if (!isLastAssistantStreaming(messages, sid)) return
-    const prev = messages.value.get(sid) ?? []
+    const prev = messages.value.get(sid)?.value ?? []
     // W05-A：Extension 工具调用进度更新。event-adapter tool_execution_update
     // 生产端只发 detail（string | object），消费对齐生产端（不臆造 progress）。
     const callId = readString(payload, 'toolCallId')
@@ -421,7 +421,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const display = isCompleteNotify
       ? false
       : (payload['display'] === true || payload['display'] === false ? payload['display'] : undefined)
-    const prev = messages.value.get(sid) ?? []
+    const prev = messages.value.get(sid)?.value ?? []
     // role:'system' → messageTurns 产出独立 RenderItem（穿插在 turn 间，不并入 user/assistant turn）
     const msg: Message = {
       id: `cm-${crypto.randomUUID()}`,
@@ -445,7 +445,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
 
   'message.compactionSummary': (ctx, sid, payload) => {
     const { messages } = ctx
-    const prev = messages.value.get(sid) ?? []
+    const prev = messages.value.get(sid)?.value ?? []
     // W07-C：上下文压缩摘要。作 system 提示行。
     const summary = readCompactionSummary(payload)
     commitMessages(messages, sid, [
@@ -463,7 +463,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
 
   'message.branchSummary': (ctx, sid, payload) => {
     const { messages } = ctx
-    const prev = messages.value.get(sid) ?? []
+    const prev = messages.value.get(sid)?.value ?? []
     // W07-C：分支摘要。作 system 提示行。
     const summary = readBranchSummary(payload)
     commitMessages(messages, sid, [

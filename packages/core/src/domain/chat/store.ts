@@ -4,7 +4,7 @@
  * FileChanges 通道 / 收口出口设计 / 子域控制器委托）见 ./README.md。
  * 本文件仅保留与代码行为直接绑定的短契约注释。
  */
-import { computed, onScopeDispose, ref, shallowRef } from 'vue'
+import { computed, onScopeDispose, ref, shallowRef, type ShallowRef } from 'vue'
 import { commitMessages, truncateMessagesFrom, prependHistory as prependHistoryMut } from './mutations'
 import { truncateToolOutputBatch } from './truncate-tool-output'
 import { dispatchMessageEvent } from './effects/registry'
@@ -77,10 +77,12 @@ function readStreamingTimeoutMs(): number {
  */
 export function createChatStore() {
   /** 按 sessionId 分区的消息表（UC-2 隔离） */
-  // W1: shallowRef——messages 更新全部走 commitMessages（新 Map + set + 赋值 .value），
-  // 不再用 messages.value.set（shallowRef 下 Map mutation 不触发响应式）。
-  // 消除万级深 proxy（每条 Message 的嵌套对象不再被代理），降低长对话内存与 GC 压力（ADR 0039）。
-  const messages = shallowRef<Map<string, Message[]>>(new Map())
+  // W10 D-1 容器范式：`ShallowRef<Map<string, ShallowRef<Message[]>>>`——外层 Map 恒等稳定
+  // （只在增删 sid key 时替换），每 sid 持有独立内层 ShallowRef。同 sid commit 只替换该分区
+  // 的内层 ref（commitMessages existing.value = next），A session 更新不触发依赖 B session
+  // 分区的 watcher/computed 重算。写入全部走 commitMessages（见 mutations.ts）。
+  // 浅代理边界对齐 ADR-0039：浅到「外层 Map + 每 sid 数组」两层，Message 对象不代理。
+  const messages = shallowRef(new Map<string, ShallowRef<Message[]>>())
   /** 已 hydrate 的 session（避免切换时重复注入历史） */
   const hydrated = ref<Set<string>>(new Set())
   /**
@@ -173,12 +175,13 @@ export function createChatStore() {
    * 当前所有含 streaming assistant 消息的 session 集合（computed 派生，ADR 0041，详见 ./README.md）。
    * [B1] 仅扫 `m.role === 'assistant' && m.status === 'streaming'`——bash 消息是
    * `role:'system'`，计入会破坏「bash 不阻塞」承诺（steer 误路由 / 停止按钮错动作）。
-   * shallowRef 下依赖 messages.value 的整体替换（commitMessages 已保证），computed 正确重算。
+   * D-1 后依赖外层 Map（增删 key）+ 各分区内层 ref（同 sid commit 的 existing.value 替换），
+   * 任一更新都触发重算（与旧整体替换语义等价）。W11 将惰性化为 per-session 派生（D-3）。
    */
   const streamingSessionIds = computed(() => {
     const ids = new Set<string>()
-    for (const [sid, msgs] of messages.value) {
-      for (const m of msgs) {
+    for (const [sid, partition] of messages.value) {
+      for (const m of partition.value) {
         if (m.role === 'assistant' && m.status === 'streaming') {
           ids.add(sid)
           break
@@ -202,9 +205,9 @@ export function createChatStore() {
     return isGenerating(sessionId) || pendingSend.value.has(sessionId)
   }
 
-  /** 取指定 session 的消息数组（空时返回空数组，不写入 Map） */
+  /** 取指定 session 的消息数组（空时返回空数组，不写入 Map）。D-1 后读内层 ref 的 .value（接口形状不变，消费方零改动） */
   function getMessages(sessionId: string): Message[] {
-    return messages.value.get(sessionId) ?? []
+    return messages.value.get(sessionId)?.value ?? []
   }
 
   /** W3 H3：session 是否在 LRU 豁免集（streaming/pending/compacting/handoff 不驱逐，AC-9）。
@@ -269,7 +272,7 @@ export function createChatStore() {
 
   /** 追加 user 消息（Segment[]，ADR-0043）。返回 id：useChat 用作 clientUuid 建立重开回填映射。 */
   function appendUser(sessionId: string, segments: Segment[]): string {
-    const prev = messages.value.get(sessionId) ?? []
+    const prev = messages.value.get(sessionId)?.value ?? []
     const id = `u-${crypto.randomUUID()}`
     commitMessages(messages, sessionId, [
       ...prev,
@@ -379,7 +382,7 @@ export function createChatStore() {
 
   /** bash timer 专用收口（W1 timer-decouple，C2 回归防护）：只把 streaming bash 消息推 error 态，**不**清 streaming timer / pendingSend / 调 finalizeSession。幂等（无 streaming bash 时 no-op）。背景见 ./README.md。 */
   function finalizeBashOnly(sessionId: string): void {
-    const prev = messages.value.get(sessionId) ?? []
+    const prev = messages.value.get(sessionId)?.value ?? []
     // [S7] 复用 findLastStreamingBashIndex，与 bashResultEffect/markBashError 一致。
     const realIdx = findLastStreamingBashIndex(prev, sessionId)
     if (realIdx === -1) return
@@ -452,7 +455,7 @@ export function createChatStore() {
    * 用于 session.exited（进程退出）/ error envelope（有 sessionId 时）/ restore 失败等场景。
    */
   function markSessionError(sessionId: string, errorText: string): void {
-    const prev = messages.value.get(sessionId) ?? []
+    const prev = messages.value.get(sessionId)?.value ?? []
     const idx = findLastAssistantIndex(prev)
     if (idx >= 0 && prev[idx].status === 'streaming') {
       finalizeSession(sessionId, 'error', errorText)
@@ -509,7 +512,7 @@ export function createChatStore() {
 
   /** 追加 system 提示行（与规则 #3「错误作为消息插入聊天流」一致：不用顶部 banner）。 */
   const appendSystemNotice = (sessionId: string, text: string): void => {
-    const prev = messages.value.get(sessionId) ?? []
+    const prev = messages.value.get(sessionId)?.value ?? []
     commitMessages(messages, sessionId, [
       ...prev,
       {
@@ -528,8 +531,9 @@ export function createChatStore() {
   /** 清理指定 session 的全部 per-session 状态（deleteSession 调用，S3）：messages/hydrated/pendingSend/compactingSessions/retryStates/queueStates/failedHistory/changeSetStatuses + timer + LRU 记录。背景见 ./README.md。 */
   function disposeSession(sessionId: string): void {
     // Map ref：不可变写保证响应式（new Map + delete + 赋值新 Map）。
-    // W1 后 messages 是 shallowRef，必须整体替换 .value 才触发；retryStates/queueStates
-    // 是深 ref，此写法同样正确触发。统一用"构造新 Map → delete → 赋值"范式。
+    // D-1 后 messages 的 Map entry 是 per-session ShallowRef 分区——本循环删的是 Map entry
+    // （该 sid 分区连同其内层 ref 整体移除），减 key 属外层 Map 合法替换情形（07 §3.3.2）。
+    // retryStates/queueStates 是深 ref，此写法同样正确触发。统一用"构造新 Map → delete → 赋值"范式。
     // 显式结构类型（对齐原 disposeSession 编排参数）：数组元素统一为 Map<string, unknown>，
     // 避免 TS 将不同 Map 元素推断为具体联合类型导致 new Map(ref.value) 不兼容。
     const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates, pendingBuffer, compactingReasons]

@@ -52,7 +52,7 @@ export const bashStartEffect: MessageEffectHandler = (ctx: MessageEffectContext,
   const command = readString(payload, 'command') ?? ''
   const excludeFromContext = readBool(payload, 'excludeFromContext') ?? false
   const timestamp = readNumber(payload, 'timestamp') ?? Date.now()
-  const prev = messages.value.get(sid) ?? []
+  const prev = messages.value.get(sid)?.value ?? []
   const bashMsg: Message = {
     id: `bash-${crypto.randomUUID()}`,
     role: 'system',
@@ -74,7 +74,7 @@ export const bashStartEffect: MessageEffectHandler = (ctx: MessageEffectContext,
  */
 export const bashResultEffect: MessageEffectHandler = (ctx: MessageEffectContext, sid: string, payload: Payload) => {
   const { messages, clearBashTimer } = ctx
-  const prev = messages.value.get(sid) ?? []
+  const prev = messages.value.get(sid)?.value ?? []
   // [S7] 复用 findLastStreamingBashIndex，与 markBashError/finalizeBashOnly 一致。
   const realIdx = findLastStreamingBashIndex(prev, sid)
   if (realIdx === -1) return
@@ -120,7 +120,7 @@ export function markBashError(
   errorText: string,
   clearBashTimer?: (sid: string) => void,
 ): void {
-  const prev = messages.value.get(sessionId) ?? []
+  const prev = messages.value.get(sessionId)?.value ?? []
   // [S7] 复用 findLastStreamingBashIndex，与 bashResultEffect/finalizeBashOnly 一致。
   const realIdx = findLastStreamingBashIndex(prev, sessionId)
   if (realIdx === -1) return

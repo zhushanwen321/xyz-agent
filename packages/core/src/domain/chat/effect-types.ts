@@ -11,11 +11,11 @@
 import type {
   ChangeSetStatus,
   FileChange,
-  Message,
   Segment,
   SteerFollowUpMode,
 } from '@xyz-agent/shared'
 import type { RetryState, QueueState, FinalizeReason } from './store-types'
+import type { MessagesRef } from './mutations'
 
 /**
  * message.* 事件副作用上下文（store refs + 跨方法回调，模块级函数据此更新）。
@@ -25,7 +25,8 @@ import type { RetryState, QueueState, FinalizeReason } from './store-types'
  * - finalizeSession + clearPendingSend：统一收口出口（替代 setStreaming flag 翻转）。
  */
 export interface MessageEffectContext {
-  messages: { value: Map<string, Message[]> }
+  /** D-1 容器范式：读数组需 `.value.get(sid)?.value ?? []`（内层是 per-session ShallowRef） */
+  messages: MessagesRef
   retryStates: { value: Map<string, RetryState> }
   queueStates: { value: Map<string, QueueState> }
   /** file_changes case 调 store.applyFileChanges（合并逻辑在 store 内） */
