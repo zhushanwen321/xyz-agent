@@ -125,11 +125,19 @@ vi.mock("../session-file-gc.ts", () => ({
   maybeCleanupExpiredSessionFiles: vi.fn(),
 }));
 
-// JsonlRunStore mock：loadAll 默认空数组（session_start 后段不抛即可）
+// JsonlRunStore mock：loadAll 默认空数组（session_start 后段不抛即可）。
+// dispose/flushPendingSaves：session_shutdown handler 会调 state.store.dispose()（W2C5）；
+// dispose 用 hoisted spy 以便 W2TC16 断言（instance.dispose 即 spy）。
+const { mockStoreDispose, mockStoreFlushPendingSaves } = vi.hoisted(() => ({
+  mockStoreDispose: vi.fn(async () => {}),
+  mockStoreFlushPendingSaves: vi.fn(async () => {}),
+}));
 vi.mock("../../orchestration/jsonl-run-store.ts", () => ({
   JsonlRunStore: class {
     loadAll = mockLoadAll;
     save = vi.fn(async () => {});
+    dispose = mockStoreDispose;
+    flushPendingSaves = mockStoreFlushPendingSaves;
   },
 }));
 
@@ -161,13 +169,15 @@ import subagentsExtension from "../../index.ts";
 
 // ── helpers ──
 
-/** 创建可观察的 mock ExtensionAPI，捕获 session_start handler。
+/** 创建可观察的 mock ExtensionAPI，捕获 session_start / session_shutdown handler。
  *  Proxy 兜底：未显式处理的 pi.xxx 返回 noop，避免抛错。 */
 function createMockPi(): {
   pi: ExtensionAPI;
   getSessionStartHandler: () => ((event: unknown, ctx: unknown) => Promise<void>) | undefined;
+  getSessionShutdownHandler: () => ((event: unknown, ctx: unknown) => Promise<void>) | undefined;
 } {
   let sessionStartHandler: ((event: unknown, ctx: unknown) => Promise<void>) | undefined;
+  let sessionShutdownHandler: ((event: unknown, ctx: unknown) => Promise<void>) | undefined;
   const events = { emit: vi.fn() };
   const noop = (): void => {
     /* mock */
@@ -179,6 +189,9 @@ function createMockPi(): {
           if (event === "session_start") {
             sessionStartHandler = handler as (event: unknown, ctx: unknown) => Promise<void>;
           }
+          if (event === "session_shutdown") {
+            sessionShutdownHandler = handler as (event: unknown, ctx: unknown) => Promise<void>;
+          }
         };
       }
       if (prop === "events") return events;
@@ -187,7 +200,11 @@ function createMockPi(): {
       return noop;
     },
   });
-  return { pi, getSessionStartHandler: () => sessionStartHandler };
+  return {
+    pi,
+    getSessionStartHandler: () => sessionStartHandler,
+    getSessionShutdownHandler: () => sessionShutdownHandler,
+  };
 }
 
 /** 最小 ExtensionContext mock。mode 由参数控制（决定 handler 注入行为）。 */
@@ -339,5 +356,28 @@ describe("session_start UI handler 注入链路（SR-3）", () => {
 
     // ADR-035 接线断言：session_start 必须调 service.recoverManifestTmpFiles（防死代码回退）
     expect(mockRecoverManifestTmpFiles).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("session_shutdown: store.dispose 接线（W2TC16）", () => {
+  it("W2TC16: session_shutdown 触发后 store 实例 dispose 被调用（pause 之后、sessionState 清理之前）", async () => {
+    // 预热：session_start 建立一个 sessionState 条目（含 mock store 实例）
+    mockStoreDispose.mockClear();
+    const { pi, getSessionStartHandler, getSessionShutdownHandler } = createMockPi();
+    subagentsExtension(pi);
+
+    const startHandler = getSessionStartHandler();
+    expect(startHandler).toBeDefined();
+    await startHandler!({ type: "session_start" }, createMockCtx("tui"));
+
+    // 触发 session_shutdown（event 触发模式对齐本文件 session_start 既有写法）
+    const shutdownHandler = getSessionShutdownHandler();
+    expect(shutdownHandler).toBeDefined();
+    await shutdownHandler!({ type: "session_shutdown" }, createMockCtx("tui"));
+
+    // 每 sessionState 条目一次：session_start 建了 1 个 session → dispose 调用 1 次
+    expect(mockStoreDispose).toHaveBeenCalledTimes(1);
+    // handler 正常完成不抛错（上文 await 未 reject 即证）；dispose 之后的
+    // sessionState.delete / dialogQueue.rejectAll 均无 pi 依赖，不在此重复断言。
   });
 });

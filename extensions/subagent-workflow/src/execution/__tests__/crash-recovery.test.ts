@@ -52,11 +52,15 @@ const { mockLoadAll, mockRegisterSubagentTool, mockScan } = vi.hoisted(() => ({
   mockRegisterSubagentTool: vi.fn(),
 }));
 
-// JsonlRunStore mock：loadAll 由各 test 配置。构造参数忽略（sessionDir/pi/ctx 都 mock 掉）
+// JsonlRunStore mock：loadAll 由各 test 配置。构造参数忽略（sessionDir/pi/ctx 都 mock 掉）。
+// dispose/flushPendingSaves：session_shutdown handler 会调 state.store.dispose()（W2C5），
+// 本文件用例虽不触发 handler body，防御性补齐防 mock 缺方法 TypeError。
 vi.mock("../../orchestration/jsonl-run-store.ts", () => ({
   JsonlRunStore: class {
     loadAll = mockLoadAll;
     save = vi.fn(async () => {});
+    dispose = vi.fn(async () => {});
+    flushPendingSaves = vi.fn(async () => {});
   },
 }));
 

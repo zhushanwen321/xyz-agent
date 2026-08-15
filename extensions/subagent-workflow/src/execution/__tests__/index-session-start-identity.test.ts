@@ -91,10 +91,14 @@ vi.mock("../session-file-gc.ts", () => ({
   maybeCleanupExpiredSessionFiles: vi.fn(),
 }));
 
+// dispose/flushPendingSaves：session_shutdown handler 会调 state.store.dispose()（W2C5），
+// 防御性补齐（identity 语义与 dispose 无关，不加新用例）。
 vi.mock("../../orchestration/jsonl-run-store.ts", () => ({
   JsonlRunStore: class {
     loadAll = mockLoadAll;
     save = vi.fn(async () => {});
+    dispose = vi.fn(async () => {});
+    flushPendingSaves = vi.fn(async () => {});
   },
 }));
 

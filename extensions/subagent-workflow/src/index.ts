@@ -540,20 +540,33 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   });
 
   // ════════════════════════════════════════════════════════════
-  //  session_shutdown：dispose subagents + pause workflows + cleanup
+  //  session_shutdown：dispose subagents + pause workflows + store 收尾 + cleanup
+  //
+  //  store 收尾：每 session 的 JsonlRunStore 在 pauseRun 之后 dispose（刷 pending
+  //  去抖批 + await in-flight 链，见 W2C5）。R3 声明：SIGTERM/SIGINT 走下方 process
+  //  handler 不触发本路径，pending 去抖丢失等价崩溃链（重启后 kill-9 恢复收编
+  //  running 残留——终态/paused/创建均冷路径已落盘，丢的只有 ≤saveDebounceMs 的
+  //  running 尾巴，ES1 已接受）；不做 best-effort SIGTERM dispose（需同步 IO 改造，
+  //  超出 wave 边界）。
   // ════════════════════════════════════════════════════════════
   pi.on("session_shutdown", async (_event: SessionShutdownEvent, _ctx: ExtensionContext) => {
     // ── subagents 域：dispose SubagentService ──
     getSubagentService()?.dispose();
 
-    // ── workflow 域：pause 所有 running run + 清理 temp files ──
+    // ── workflow 域：pause 所有 running run + store 收尾 + 清理 temp files ──
     // H-5: 遍历所有 sessionState 条目清理（而不只 lastSessionId——
     // 防御 session 切换但 session_tree 未先触发导致 lastSessionId 指向已删除 session 的情况）。
     for (const [sessionId, state] of sessionState) {
       const running = Array.from(state.runs.values()).filter((r) => r.state.status === "running");
+      // 编排顺序（W2C5）：pauseRun（await，paused 冷路径同步 flush——run 转 paused
+      // 落盘，kill-9 恢复不误判）→ store.dispose（await，刷 pending 去抖批 + await
+      // in-flight 链，关「shutdown 时刻 pending 去抖写丢失」窗口）→ delete。
       await Promise.allSettled(
         running.map((run) => pauseRun(run.runId, makeDeps(state, _ctx))),
       );
+      // dispose 自身恒 resolve，catch 兜底防御——handler 内抛错会中断后续 session
+      // 条目清理。
+      await state.store.dispose().catch(() => {});
       sessionState.delete(sessionId);
     }
 
