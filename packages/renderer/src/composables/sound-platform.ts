@@ -29,8 +29,19 @@ export type DetectedPlatform = SoundPlatform | 'other'
  * 浏览器侧平台检测（main 进程 process.platform 的 renderer 同义）。
  * 基于 navigator.platform：'MacIntel' / 'Win32' / 'Linux x86_64' 等。
  * SSR / 测试无 navigator 时返回 'other'。
+ *
+ * Q1-3：结果模块级 memo——navigator.platform 在页面生命周期内不变，
+ * 无状态纯探测却被每次播放重算；调用方（useCompletionSound.resolveName 等）无需各自缓存。
  */
+let platformMemo: DetectedPlatform | undefined
+
 export function detectPlatform(): DetectedPlatform {
+  if (platformMemo !== undefined) return platformMemo
+  platformMemo = computePlatform()
+  return platformMemo
+}
+
+function computePlatform(): DetectedPlatform {
   if (typeof navigator === 'undefined') return 'other'
   const p = navigator.platform.toLowerCase()
   // navigator.platform: 'MacIntel' / 'Win32' / 'Linux x86_64' 等
@@ -38,6 +49,11 @@ export function detectPlatform(): DetectedPlatform {
   if (p.includes('win')) return 'win32'
   if (p.includes('linux')) return 'linux'
   return 'other'
+}
+
+/** 测试专用：清空平台探测 memo（navigator 桩变更后重探测，测试隔离用）。 */
+export function __resetPlatformMemoForTest(): void {
+  platformMemo = undefined
 }
 
 /**

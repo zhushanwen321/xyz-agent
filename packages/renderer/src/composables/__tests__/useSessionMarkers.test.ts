@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { computed, effect } from 'vue'
 import {
   markUnread,
@@ -125,8 +125,53 @@ describe('useSessionMarkers', () => {
     // 验证返回值正确（空 Map 意味着都是默认值）
     expect(isUnread('s1')).toBe(false)
     expect(isMarkedDone('s1')).toBe(false)
-    // 后续 markUnread 后 hydrated 仍为 true，不再读 localStorage（写入走 writeAll，与 ensureCache 无关）
+    // 后续 markUnread 后 hydrated 仍为 true，不再读 localStorage（写入走内存 cache，与 ensureCache 无关）
     markUnread('s1')
     expect(isUnread('s1')).toBe(true)
+  })
+
+  it('[Q1-1] 连续写操作不再 readAll：hydrate 后写路径零 getItem（走内存 cache）', () => {
+    markUnread('s1')  // 首次写触发 ensureCache hydrate（1 次 getItem）
+    const getItemSpy = vi.spyOn(localStorage, 'getItem')
+    const setItemSpy = vi.spyOn(localStorage, 'setItem')
+    // spy 生效性自检：spy 贴在 localStorage 实例上，若拦截失效（0 次调用）后续断言无意义
+    expect(getItemSpy.mock.calls).toHaveLength(0)
+
+    markUnread('s2')
+    markUnread('s3')
+    clearUnread('s2')
+    toggleMarkedDone('s3')
+    toggleMarkedDone('s3')
+    clearAll('s1')
+
+    // 写路径完全走内存 cache：零 readAll（getItem 不被调用）
+    expect(getItemSpy).not.toHaveBeenCalled()
+    // 保留立即写盘语义：每次实际变更一次 setItem（clearUnread 移除 s2 / clearAll 移除 s1 均为实际变更）
+    expect(setItemSpy).toHaveBeenCalledTimes(6)
+    // 语义等价：最终状态正确
+    expect(isUnread('s1')).toBe(false)
+    expect(isUnread('s2')).toBe(false)
+    expect(isMarkedDone('s3')).toBe(false)
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')).toEqual({})
+    // spy 期间确有写盘动作（证明 setItem spy 本身生效，上面计数非空转）
+    expect(setItemSpy.mock.calls.length).toBeGreaterThan(0)
+  })
+
+  it('[Q1-1] 无条目时 clearUnread/clearAll 不写盘（保持 no-op 语义）', () => {
+    markUnread('s1')  // hydrate
+    const setItemSpy = vi.spyOn(localStorage, 'setItem')
+    clearUnread('nonexistent')
+    clearAll('nonexistent')
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(isUnread('s1')).toBe(true)  // 原数据不受影响
+  })
+
+  it('[Q1-1] 写路径基于内存 cache 突变：不读盘也能看到先前写入的标记', () => {
+    markUnread('s1')
+    // 不经过任何读操作，直接再写同 sid —— 旧标记（unread）不应被内存路径丢失
+    toggleMarkedDone('s1')
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
+    // 标记完成时自动清除 unread，且 markedDone=true 保留条目
+    expect(stored.s1).toEqual({ unread: false, markedDone: true })
   })
 })

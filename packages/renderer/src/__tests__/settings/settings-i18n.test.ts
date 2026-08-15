@@ -12,8 +12,8 @@ import { describe, it, expect } from 'vitest'
 import i18n, { setLocale } from '@/i18n'
 
 describe('U10: settings UI 文案经 i18n 渲染', () => {
-  it('zh-CN locale 含完整 settings namespace 且 t() 返回中文', () => {
-    setLocale('zh-CN')
+  it('zh-CN locale 含完整 settings namespace 且 t() 返回中文', async () => {
+    await setLocale('zh-CN')
     // 菜单标题/描述
     expect(i18n.global.t('settings.title')).toBe('设置')
     expect(i18n.global.t('settings.dialogDescription')).toBe('配置供应商 / 技能 / 子代理 / Pi 扩展 / 系统提示词 / 系统')
@@ -49,8 +49,8 @@ describe('U10: settings UI 文案经 i18n 渲染', () => {
     expect(i18n.global.t('settings.command.toggle-sidebar')).toBe('收起侧栏')
   })
 
-  it('en-US locale 含完整 settings namespace 且 t() 返回英文', () => {
-    setLocale('en-US')
+  it('en-US locale 含完整 settings namespace 且 t() 返回英文', async () => {
+    await setLocale('en-US')
     expect(i18n.global.t('settings.title')).toBe('Settings')
     expect(i18n.global.t('settings.dialogDescription')).toBe('Configure Provider / Skill / Agent / Pi Extension / System Prompt / System')
     expect(i18n.global.t('settings.menu.providerDesc')).toBe('Configure model providers and API keys')
@@ -74,15 +74,15 @@ describe('U10: settings UI 文案经 i18n 渲染', () => {
     expect(i18n.global.t('settings.command.toggle-sidebar')).toBe('Toggle sidebar')
   })
 
-  it('切换 locale 后同一 key 返回不同文案（响应式切换生效）', () => {
-    setLocale('zh-CN')
+  it('切换 locale 后同一 key 返回不同文案（响应式切换生效）', async () => {
+    await setLocale('zh-CN')
     expect(i18n.global.t('settings.title')).toBe('设置')
-    setLocale('en-US')
+    await setLocale('en-US')
     expect(i18n.global.t('settings.title')).toBe('Settings')
   })
 
-  it('missing key 回退到 key 本身（非 undefined，便于发现遗漏）', () => {
-    setLocale('en-US')
+  it('missing key 回退到 key 本身（非 undefined，便于发现遗漏）', async () => {
+    await setLocale('en-US')
     // 用一个不存在的 key 验证 fallback 行为（vue-i18n 默认返回 key 字符串）
     expect(i18n.global.t('settings.nonexistent.key')).toBe('settings.nonexistent.key')
   })

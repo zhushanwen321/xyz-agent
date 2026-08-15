@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
+// 注意：本文件禁止顶层静态 import 被测模块 —— lib/ipc 在模块加载时捕获
+// window.electronAPI（const api = window.electronAPI），静态 import 会在
+// beforeEach 注入 mock 之前求值导致 api 永远 undefined。一律经动态 import。
+
 // Mock window.electronAPI.playSystemSound
 const mockPlaySystemSound = vi.fn<(name: string) => Promise<{ audioData?: string; mimeType?: string }>>()
 mockPlaySystemSound.mockResolvedValue({}) // mac/linux 默认空对象（main spawn 播）
@@ -8,14 +12,14 @@ mockPlaySystemSound.mockResolvedValue({}) // mac/linux 默认空对象（main sp
 const mockAudioPlay = vi.fn().mockResolvedValue(undefined)
 
 // Audio 必须是 constructor（new Audio()）→ vi.fn 包裹普通 function
-const mockAudioCtor = vi.fn(function (this: { play: typeof mockAudioPlay }) {
+const mockAudioCtor = vi.fn(function (this: { play: typeof mockAudioPlay; currentTime?: number }) {
   this.play = mockAudioPlay
 })
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks()
   mockPlaySystemSound.mockResolvedValue({})
-  // @ts-expect-error 测试桩：注入 electronAPI
+  // @ts-expect-error 测试桩：注入 electronAPI（必须先于被测模块首次求值）
   globalThis.window = globalThis.window || {}
   // @ts-expect-error 测试桩
   globalThis.window.electronAPI = {
@@ -23,6 +27,11 @@ beforeEach(() => {
   }
   // @ts-expect-error 测试桩：mock Audio 为 constructor
   globalThis.Audio = mockAudioCtor as unknown as typeof Audio
+  // Q1-3 缓存隔离：探测 memo / 默认音解析 / Audio 复用 Map 全清，用例间互不渗透
+  const soundMod = await import('../useCompletionSound')
+  soundMod.__resetSoundCachesForTest()
+  const platformMod = await import('../../sound-platform')
+  platformMod.__resetPlatformMemoForTest()
 })
 
 afterEach(() => {
@@ -96,5 +105,66 @@ describe('useCompletionSound', () => {
     mockAudioPlay.mockRejectedValueOnce(new Error('autoplay blocked'))
     const { playByName } = await loadModule()
     await expect(playByName('Windows Notify System Generic')).resolves.toBeUndefined()
+  })
+
+  it('[Q1-3] win 路径连续播放同音复用 Audio（不重复 new Audio）', async () => {
+    mockPlaySystemSound.mockResolvedValue({ audioData: 'dGVzdA==', mimeType: 'audio/wav' })
+    const { playByName } = await loadModule()
+    await playByName('Windows Notify System Generic')
+    await playByName('Windows Notify System Generic')
+    await playByName('Windows Notify System Generic')
+    // Audio 构造只发生一次（Map<name, Audio> 复用），每次播放都触发 play
+    expect(mockAudioCtor).toHaveBeenCalledTimes(1)
+    expect(mockAudioPlay).toHaveBeenCalledTimes(3)
+  })
+
+  it('[Q1-3] 不同音名 / data URI 变化时重建 Audio（缓存键正确）', async () => {
+    const { playByName } = await loadModule()
+    mockPlaySystemSound.mockResolvedValueOnce({ audioData: 'dGVzdA==', mimeType: 'audio/wav' })
+    await playByName('Windows Notify System Generic')
+    mockPlaySystemSound.mockResolvedValueOnce({ audioData: 'dGVzdA==', mimeType: 'audio/wav' })
+    await playByName('Windows Notify Email')
+    mockPlaySystemSound.mockResolvedValueOnce({ audioData: 'eHl6', mimeType: 'audio/wav' })
+    await playByName('Windows Notify System Generic')
+    // 3 个不同 (name, uri) 组合 → 3 次构造
+    expect(mockAudioCtor).toHaveBeenCalledTimes(3)
+  })
+
+  it('[Q1-3] 平台探测被 memo：navigator.platform 变化后默认音解析仍用首次探测结果', async () => {
+    const ownDesc = Object.getOwnPropertyDescriptor(navigator, 'platform')
+    expect(ownDesc?.configurable ?? true).toBe(true)
+    Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
+    try {
+      const { playSuccess } = await loadModule()
+      await playSuccess() // 首次探测 darwin → 默认成功音 Glass
+      // 探测结果已 memo：navigator 变成 Win32 也不重探测（否则默认音会变 Windows Notify System Generic）
+      Object.defineProperty(navigator, 'platform', { value: 'Win32', configurable: true })
+      await playSuccess()
+      expect(mockPlaySystemSound).toHaveBeenNthCalledWith(1, 'Glass', 'success')
+      expect(mockPlaySystemSound).toHaveBeenNthCalledWith(2, 'Glass', 'success')
+    } finally {
+      // 还原 navigator，避免污染其他用例
+      if (ownDesc) Object.defineProperty(navigator, 'platform', ownDesc)
+      else delete (navigator as { platform?: string }).platform
+    }
+  })
+
+  it('[Q1-3] 默认音解析按 kind memo：success/error 各解析一次', async () => {
+    const ownDesc = Object.getOwnPropertyDescriptor(navigator, 'platform')
+    Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
+    try {
+      const { playSuccess, playError } = await loadModule()
+      await playSuccess()
+      await playSuccess()
+      await playError()
+      await playError()
+      expect(mockPlaySystemSound).toHaveBeenNthCalledWith(1, 'Glass', 'success')
+      expect(mockPlaySystemSound).toHaveBeenNthCalledWith(2, 'Glass', 'success')
+      expect(mockPlaySystemSound).toHaveBeenNthCalledWith(3, 'Funk', 'error')
+      expect(mockPlaySystemSound).toHaveBeenNthCalledWith(4, 'Funk', 'error')
+    } finally {
+      if (ownDesc) Object.defineProperty(navigator, 'platform', ownDesc)
+      else delete (navigator as { platform?: string }).platform
+    }
   })
 })

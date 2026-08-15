@@ -85,11 +85,11 @@ describe('U12: 快捷键配置（降级只读展示）', () => {
   it('i18n command namespace 含三个命令的显示名', async () => {
     const { setLocale } = await import('@/i18n')
     const i18n = (await import('@/i18n')).default
-    setLocale('zh-CN')
+    await setLocale('zh-CN')
     expect(i18n.global.t('settings.command.new-session')).toBe('新建任务')
     expect(i18n.global.t('settings.command.toggle-sidebar')).toBe('收起侧栏')
     expect(i18n.global.t('settings.command.go-overview')).toBe('概览')
-    setLocale('en-US')
+    await setLocale('en-US')
     expect(i18n.global.t('settings.command.new-session')).toBe('New session')
     expect(i18n.global.t('settings.command.toggle-sidebar')).toBe('Toggle sidebar')
     expect(i18n.global.t('settings.command.go-overview')).toBe('Overview')
