@@ -1,6 +1,6 @@
-# P0 状态层：容器范式 + per-session 派生 + token 合帧（子文档 01）
+# P0 状态层：容器范式 + per-session 派生 + token 合帧（子文档 07）
 
-> **一句话结论**：把 `messages` 从「Map 恒等不稳定 + 全局 streaming computed + 逐 token 提交」改为「Map 恒等稳定 + 每 session 独立 ref + per-session 惰性 computed + microtask 合帧」，让每个 token 的失效范围从「全部 session」收敛到「当前 session 一个 ref」，且提交次数从「每 token 一次」降到「每 microtask 一次」——这是失败模式 A 的第一根因（根因 1）的唯一修法，也是子文档 02 的地基。
+> **一句话结论**：把 `messages` 从「Map 恒等不稳定 + 全局 streaming computed + 逐 token 提交」改为「Map 恒等稳定 + 每 session 独立 ref + per-session 惰性 computed + microtask 合帧」，让每个 token 的失效范围从「全部 session」收敛到「当前 session 一个 ref」，且提交次数从「每 token 一次」降到「每 microtask 一次」——这是失败模式 A 的第一根因（根因 1）的唯一修法，也是子文档 08 的地基。
 
 - **S（情境）**：xyz-agent 开发者看 AI 流式回复时，每个 token 都要走 `WS → core transport → chat store → 消息组件 → markdown` 全链路。这条链路的头部是 `packages/core` 的 chat 域状态层（`store.ts` 的 `messages` 可变状态 + 派生），本文档只改这一层。
 - **C（冲突）**：`messages = shallowRef<Map<string, Message[]>>` 每次 commit 都整体替换 Map 身份（`mutations.ts` 的 `new Map` 全表拷贝），导致所有读 `messages.value` 的 computed 跨 session 失效；同时 `streamingSessionIds` 是全 Map 重扫的全局 computed，且每个 token 单独提交一次 `commitMessages`——无效写 + 无效算 + 无效失效。
@@ -15,7 +15,7 @@
 
 ### 1.1 层次定位（本层 vs 下一层）
 
-父文档 §5 已定：子文档各是「技术方案设计」层。所谓**技术方案设计层**，指本文不落到「改哪一行」，而是落在「改完后的接口长什么样、数据模型怎么组织、边界条件怎么处理」，让实施者（下一个 agent）能**直接照写代码与测试**；落到具体行号、具体函数体的，是下一层「实现计划」。本文与父文档是「衍生关系」，不需要读者回头读父文档——凡引用父文档处均就地复述。
+父 00 已定：各子文档是「技术方案设计」层。所谓**技术方案设计层**，指本文不落到「改哪一行」，而是落在「改完后的接口长什么样、数据模型怎么组织、边界条件怎么处理」，让实施者（下一个 agent）能**直接照写代码与测试**；落到具体行号、具体函数体的，是下一层「实现计划」。本文与父文档是「衍生关系」，不需要读者回头读父文档——凡引用父文档处均就地复述。
 
 - **本层（本文）**：接口签名草案、数据模型结构、错误/恢复规格、多方案对比、验收场景、探针清单、下一层拆分地图。
 - **下一层（实施计划 / 代码任务）**：`commitMessages` 新签名落地、`store.ts` 的 `messages` 声明与 `streamingSessionIds` 删除、`lru.ts` 的 `messagesValue` 适配、`useChat.ts` 的 coalescer 落点、5 个测试文件的适配策略、每个文件的具体 diff。
@@ -31,7 +31,7 @@
   - `packages/core/src/domain/chat/effects/registry.ts`（`text_delta`/`thinking_delta` 的 handler 走向与 flush 语义）
   - 2 个整-ref watcher：`packages/renderer/src/composables/features/file-tree/useFileChangeInvalidation.ts`、`features/search/useSearch.ts`（失效频率收敛，接口不变）
   - 5 个直接断言 `messages.value` 的测试文件（见 §5）
-- **Out**：D-4/D-5（渲染层、子文档 02）、D-6/D-7/D-9（面板层、子文档 03）、D-8（构建、子文档 04）；pi 进程与 runtime 侧任何改动；功能需求变更；样式与视觉。
+- **Out**：D-4/D-5（渲染层、子文档 08）、D-6/D-7/D-9（面板层、子文档 09）、D-8（构建、子文档 10）；pi 进程与 runtime 侧任何改动；功能需求变更；样式与视觉。
 
 ### 1.3 本层目标与 G 回溯
 
@@ -84,8 +84,8 @@
                           │     └─ watch([sidRef, chatStore.messages]) ×2:
                           │           useFileChangeInvalidation.ts:46（每 token 全量重扫 fileChanges）
                           │           useSearch.ts:78（每 token 重扫，但实际逐 sid 重建 watcher）
-                          ├→ [失效扇出 2] currentMessages/renderItems → toRenderItems 全量重建（02 的事）
-                          └→ [渲染] virtua diff → 视口内 Turn patch → markdown 重渲染（02 的事）
+                          ├→ [失效扇出 2] currentMessages/renderItems → toRenderItems 全量重建（08 的事）
+                          └→ [渲染] virtua diff → 视口内 Turn patch → markdown 重渲染（08 的事）
 ```
 
 第 2.3 小节把这条图里 `R1/R2/R3` 三个根因对应到代码级证据。
@@ -114,7 +114,7 @@ const messages = shallowRef<Map<string, Message[]>>(new Map())
 
 `shallowRef` 只对 `.value` 整体替换敏感，所以 `commitMessages` **必须** `new Map(...)` 才能触发响应式（`store.ts:80-82` 注释明确了这个约束）。后果是**每个 token**：① 拷贝整个 Map（所有 session 的 key→数组引用）；② 替换 `.value` → 外层 Map 身份变化 → 所有读 `messages.value` 的依赖失效，**包括只关心别的 session 的依赖**。
 
-**为什么这是「无效」而非「贵」**：F1 实测证伪了拷贝成本本身——S=10/M=500 @25 commit/s 仅 0.1ms/秒。所以 R1 的**真实代价不是 `new Map` 的 CPU，而是它制造的失效扇出范围**。D-1 的收益定位必须写清楚：**收益＝失效扇出收敛，而非省拷贝**（父文档 §2.4 F1 行）。
+**为什么这是「无效」而非「贵」**：F1 实测证伪了拷贝成本本身——S=10/M=500 @25 commit/s 仅 0.1ms/秒。所以 R1 的**真实代价不是 `new Map` 的 CPU，而是它制造的失效扇出范围**。D-1 的收益定位必须写清楚：**收益＝失效扇出收敛，而非省拷贝**（父 00 §2.2 F1）。
 
 #### 2.3.2 R2：`streamingSessionIds` 全局 computed 全 Map 重扫
 
@@ -263,7 +263,7 @@ const unwatch = watch(
 **推荐 A。被否方案「若用了它会怎样」**：
 - 若用 B：省 20 行改动，但 `triggerRef` 仍是整 Map 失效——D-1 的「失效扇出收敛」目标**完全落空**，等于白做；且 `streamingSessionIds`（R2）仍在整 Map 重扫。
 - 若用 C：违反 ADR-0039，长对话的内存/GC 问题（70-500MB 深 proxy）复现，G5 直接挂；且遗漏一处 `markRaw` 就是静默不刷新。
-- 若用 D：为一个「非共享实体」造归一化表，工程成本数倍于 A，收益为零甚至为负（索引维护 + drift），违背父文档 §3.4「D-4 选择缓存而非归一化」的同款权衡。
+- 若用 D：为一个「非共享实体」造归一化表，工程成本数倍于 A，收益为零甚至为负（索引维护 + drift），违背父 00 §3.1 D-4 决策（缓存而非归一化）的同款权衡。
 
 #### 3.2.2 D-3 streaming 派生
 
@@ -283,11 +283,11 @@ const unwatch = watch(
 |---|---|---|---|
 | **A（选定）useChat 层 microtask 批量（同类型保序，终态即时 flush）** | **高**：store 保持「纯状态 + 动作」不担调度职责；coalescing 是「入站编排」问题，归 useChat（订阅编排层）最合适 | **中**：在 `ensureStreamSubscription` 回调加缓冲 Map + microtask flush；需处理「非 delta 先 flush」边界 | **低**：合帧逻辑集中一处，测试面只需加「coalescer」单测，不碰 store 测试 |
 | B store 层批量（`commitMessages` 内缓冲） | **低**：store 从「无状态转换器」变成「含调度器」，职责越界；且 store 的所有 commit 入口（含 hydrate 等低频写）都要过缓冲，语义混乱 | **中**：改 store 多处 | **高**：测试面需适配「同步 commit 变异步 flush」，5 个测试文件 + 13 个消费方的「写入即读取」假设全部破坏 |
-| C 仅渲染层节流（rAF） | **低**：渲染层合并**不减少** store 的 commit 次数与失效扇出——R1/R2 仍在每 token 触发，只是把「重渲染」拖到下一帧；根因 1 未动 | **低**：渲染层加 rAF 节流 | **中**：治标不治本，且与 02 的渲染改动叠加会引入「谁在节流」的重复调度 |
+| C 仅渲染层节流（rAF） | **低**：渲染层合并**不减少** store 的 commit 次数与失效扇出——R1/R2 仍在每 token 触发，只是把「重渲染」拖到下一帧；根因 1 未动 | **低**：渲染层加 rAF 节流 | **中**：治标不治本，且与 08 的渲染改动叠加会引入「谁在节流」的重复调度 |
 
 **推荐 A。被否方案「若用了它会怎样」**：
 - 若用 B：测试面全面适配「提交异步化」——现有单测大量假设 `commitMessages` 同步生效后立即读 `messages.value`，改成异步后这些断言全挂，且会掩盖真实的「写入到底有没有生效」问题。父文档 D-2 已明确「store 层批量（测试面需适配）」为被否理由。
-- 若用 C：渲染层省了 markdown 重渲染的次数（那是 02 的事），但 store 侧每个 token 的 `new Map` + 全量失效扇出原样保留，R1/R2 未收敛——「不够」（父文档 D-2 被否理由原文）。
+- 若用 C：渲染层省了 markdown 重渲染的次数（那是 08 的事），但 store 侧每个 token 的 `new Map` + 全量失效扇出原样保留，R1/R2 未收敛——「不够」（父文档 D-2 被否理由原文）。
 
 ### 3.3 关键决策与权衡（接口先行）
 
@@ -414,7 +414,7 @@ function createCoalescer(chat: ChatStoreInstance) {
 
 > **保序语义**（D-2 核心）：delta 缓冲与「非 delta 消息」的关系是「先 flush（把前面所有 delta 落盘）再处理非 delta」，保证 complete/error 到达时，前面所有 delta 已一次性提交——渲染看到的中间态是「整段合并后的文本」，终态消息**绝不迟到**。同 sid 不同 type 的 delta（text 与 thinking）分 key 缓存，互不合并。
 
-**[待验证] 合并窗口上限**：`queueMicrotask` 的合并窗口是「当前同步任务到 microtask checkpoint」，在高频 token（真实 pi 假设 80/s）下一个 microtask 能合并的数量取决于 WS 事件是否在一个任务里连续派发。父文档 §5 已把「真实 pi token 到达率」标为待查点——**若实测一个 microtask 合并窗口太窄（几乎每次只凑到 1 条），需在 flush 里加一个小的 rAF/协程级延迟上限**（如「microtask 立刻 flush 与下一帧之间择一」）。这是唯一一处需实施期验证的阈值，不影响方案选择（D-2 收益上界受影响，下限不变）。
+**[待验证] 合并窗口上限**：`queueMicrotask` 的合并窗口是「当前同步任务到 microtask checkpoint」，在高频 token（真实 pi 假设 80/s）下一个 microtask 能合并的数量取决于 WS 事件是否在一个任务里连续派发。父 00 §5 待验证检查点 1 已把「真实 pi token 到达率」标为待查点——**若实测一个 microtask 合并窗口太窄（几乎每次只凑到 1 条），需在 flush 里加一个小的 rAF/协程级延迟上限**（如「microtask 立刻 flush 与下一帧之间择一」）。这是唯一一处需实施期验证的阈值，不影响方案选择（D-2 收益上界受影响，下限不变）。
 
 #### 3.3.2 数据模型：`Map<string, ShallowRef<Message[]>>` 结构与生命周期
 
@@ -502,7 +502,7 @@ messages.value : Map<string, ShallowRef<Message[]>>
 
 ```
 M1 容器骨架（D-1）──┬→ mutations.ts 新签名 + store.ts 声明/getMessages/isGenerating 惰性化
-                    ├→ 删 streamingSessionIds（D-3 与 D-1 合并，父文档 §3.4）
+                    ├→ 删 streamingSessionIds（D-3 与 D-1 合并，父 00 §3.1）
                     └→ lru.ts messagesValue 适配
 M2 合帧（D-2）──────  core useChat coalescer + registry delta handler 不变
 M3 watcher 收敛验证 ──  确认 useFileChangeInvalidation / useSearch 失效频率下降（不改逻辑）
@@ -537,7 +537,7 @@ M4 清理/测试收口 ────  disposeSession/LRU 增补 sessionStreamingF
 ### 5.4 待验证检查点（设计阶段诚实标注，不编造结论）
 
 1. **真实 pi token 到达率**（父文档 §5 检查点 1）：决定 D-2 的 `queueMicrotask` 合并窗口是否够宽，若不够需加 rAF 级上限（§3.3.1 [待验证]）。影响 D-2 收益上界，不影响方案选择。
-2. **V1-01/V1-03 的真实模型可用性**（父文档 §5 检查点 3）：mock 只能验证结构，不能验证真实速率与迟到时机。
+2. **V1-01/V1-03 的真实模型可用性**（父 00 §5 待验证检查点 7）：mock 只能验证结构，不能验证真实速率与迟到时机。
 3. **`sessionStreamingFlags` 是否与 `messages` 同生共死**：唯一新增生命周期状态（§3.3.2），探针 P9 覆盖，实施期重点回归。
 
 ---
@@ -545,7 +545,7 @@ M4 清理/测试收口 ────  disposeSession/LRU 增补 sessionStreamingF
 ## 附录：与父文档术语/事实/决策的一致性对照
 
 - **事实复用**：F1（拷贝证伪 → D-1 收益=失效扇出收敛）、F8（status 写入点 3+1 处）、F9（整 Map 消费者 3 处/watch 2 处/getMessages 13 处/测试 5 文件）、F12（ADR-0039/0049 兼容）、F13（token 速率区间）均直接引用，未改结论。
-- **决策对齐**：D-1 选定 `Map<sid, ShallowRef<Message[]>>`（Map 恒等稳定 + 每 session 独立 ref）；D-3 选定 per-session 惰性 computed，否决显式计数器/维持全局；D-2 选定 useChat 层 microtask 批量，否决 store 层/仅渲染层——三处均与父文档 §3.2 一致，被否方案均写明「若用了它会怎样」。
+- **决策对齐**：D-1 选定 `Map<sid, ShallowRef<Message[]>>`（Map 恒等稳定 + 每 session 独立 ref）；D-3 选定 per-session 惰性 computed，否决显式计数器/维持全局；D-2 选定 useChat 层 microtask 批量，否决 store 层/仅渲染层——三处均与父 00 §3.1 决策矩阵一致，被否方案均写明「若用了它会怎样」。
 - **目标回溯**：本层只接 G1/G5（父文档已定 D-1/D-2/D-3 → G1/G5），§1.3 表格 + §4 验收场景均回溯。
 
 ---

@@ -1,6 +1,6 @@
-# P3 构建与加载 + 快赢集（子文档 04）
+# P3 构建与加载 + 快赢集（子文档 10）
 
-> **一句话结论**：冷启动首屏过重的根因是重依赖（xterm+4 addon、shiki、katex、双份 locale）被静态 import 进首屏图（F6），本子文档用 D-8（defineAsyncComponent 拆三个非首屏组件 + manualChunks 分组 vendor/xterm/shiki/katex）把首屏 gzip JS 从 684KB 降到 <400KB，并用 Q1 快赢集（9 项单点修复）顺带消除后台多 session 完成时的主线程抖动与若干低价值重扫，全部与 01-03 零依赖、可随时并行。
+> **一句话结论**：冷启动首屏过重的根因是重依赖（xterm+4 addon、shiki、katex、双份 locale）被静态 import 进首屏图（F6），本子文档用 D-8（defineAsyncComponent 拆三个非首屏组件 + manualChunks 分组 vendor/xterm/shiki/katex）把首屏 gzip JS 从 684KB 降到 <400KB，并用 Q1 快赢集（9 项单点修复）顺带消除后台多 session 完成时的主线程抖动与若干低价值重扫，全部与 01-09 零依赖、可随时并行。
 
 ## 开篇（SCQA）
 

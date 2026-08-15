@@ -1,17 +1,17 @@
-# 03 P2 面板层 —— D-6 终端输出模型、D-7 文件树数据模型、D-9 runtime 跨层配合
+# 09 面板层 —— D-6 终端输出模型、D-7 文件树数据模型、D-9 git overlay 回写（renderer 侧）
 
-> **一句话结论**：高频终端输出掉帧、万级文件树展开卡顿、AI 写文件后树角标永不刷新，三个失败模式的根因分别是「PTY chunk 逐条触发 watch + xterm.write 无合帧」「递归组件全量渲染 + 每行 O(n) 徽章扫描」「git status execSync 同步阻塞 + overlay 只在 loadTree 拉一次」——本文以三个互不依赖的决策（D-6 终端两步走、D-7 文件树两步走、D-9 跨层 debounce + RPC 回写）各成章修复，共享 §1/§2 框架，各章可独立验收。
+> **一句话结论**：高频终端输出掉帧、万级文件树展开卡顿、AI 写文件后树角标永不刷新，三个失败模式的根因分别是「PTY chunk 逐条触发 watch + xterm.write 无合帧」「递归组件全量渲染 + 每行 O(n) 徽章扫描」「git 同步阻塞（runtime 侧）+ overlay 只在 loadTree 拉一次」——本文以三个决策（D-6 终端两步走、D-7 文件树两步走、D-9 overlay 回写）各成章修复，共享 §1/§2 框架；D-9 的 runtime 侧（execSync 异步化、file_changes 帧序）已由父 00 裁决让位于 runtime D3/D4（见 `03-git-state-service.md`），本文只承载 renderer 侧。
 
 - **S（情境）**：开发者在 xyz-agent 的面板（Panel）里用终端跑 `npm run build`，在侧栏文件树里浏览本仓（>5000 文件）展开大目录，看 AI 连续写文件。renderer 侧终端由 `useTerminal`（per-session scrollback + PTY 控制，ADR-0049 Map 分区）配 `TerminalView`（xterm.js）、文件树由 `fileTreeStore`（4 facet per-session：tree/expandedPaths/nodeStates/gitOverlay）配 `FileView`/`FileTreeRow`、git 角标由 `git.status` RPC + `setGitOverlay` 承载；runtime 侧 `event-interpreter` 在每个 mutating tool 后同步调 `snapshotGitStatus`（execSync git status）推 file_changes。
 - **C（冲突）**：失败模式 C（高频终端输出掉帧，G3 反面）、失败模式 B（大仓库文件树卡顿，G2 反面）、失败模式 E（AI 连续写文件主线程抖动 + 角标不刷新，G2/G5 反面）分别击中三个真实根因，且各有历史上的「理论优化假设」被实测证伪——F3 证伪了 scrollback splice 前删成本（5000 稳态 1 万 push 仅 6.3ms），说明终端真实成本在 watch/xterm.write/WS 帧数而非数组裁剪；F7 实测 git status execSync 0.35s/次、AI 写 10 文件 ≈ 11 次 ≈ 4s 同步阻塞。
 - **Q（问题）**：如何在「结构上正确」（不引入与现存数据漂移的第二份状态，G5）的前提下，让这三个面板层模块对高频输入、大数据量、跨层协作都保持流畅，且每一步有独立验收点？
-- **A（答案）**：D-6 终端分两步——第一步 rAF 写队列合并 xterm.write，第二步 scrollback 脱离响应式、改命令式 buffer + 版本回放并在本步落位 attach 流量控制；D-7 文件树分两步——第一步徽章预聚合 + 过滤防抖，第二步扁平可见列表 + virtua 虚拟滚动；D-9 跨层——runtime 侧 execSync→execFile + accumulating 300ms debounce、ready 即时，renderer 侧 ready 后 debounce 300ms 调 git.status RPC 回写 overlay。三项各自成章、各自可独立验收。
+- **A（答案）**：D-6 终端分两步——第一步 rAF 写队列合并 xterm.write，第二步 scrollback 脱离响应式、改命令式 buffer + 版本回放并在本步落位 attach 流量控制；D-7 文件树分两步——第一步徽章预聚合 + 过滤防抖，第二步扁平可见列表 + virtua 虚拟滚动；D-9 overlay 回写（renderer 侧）——file_changes ready 后 debounce 300ms 调 `git.status` RPC（经 runtime D4 GitStateService 缓存）回写 `setGitOverlay`，runtime 侧 git 异步化与帧序保证见 `03-git-state-service.md`（D3/D4）。三项各自成章、各自可独立验收。
 
 ---
 
 ## §1 背景与目标
 
-**本节的结论：本层是「技术方案设计」层，下一层产物是三大决策各自可实现的接口/数据模型/代码任务；范围含 renderer 三包 + D-9 触碰的 packages/runtime 跨层配合，D-9 的 runtime 改动按项目规范须单独验证（runtime 用 tsx 非 watch，改后重启 dev 才生效）。**
+**本节的结论：本层是「技术方案设计」层，下一层产物是三大决策各自可实现的接口/数据模型/代码任务；范围含 renderer 三包。D-9 的 runtime 侧（git 异步化 + file_changes 帧序）已由父 00 裁决并入 runtime D3/D4（`03-git-state-service.md`，含「改 runtime 后须重启 dev」的项目验证规范），本文 D-9 为纯 renderer 改动，走 vite HMR 即时可见。**
 
 ### 1.1 本子文档在总纲中的位置
 
@@ -21,9 +21,9 @@
 |---|---|---|---|
 | D-6 终端输出模型 | C 高频终端掉帧 | 根因 3（事件无批处理） | F3 证伪 splice；F6 bundle |
 | D-7 文件树数据模型 | B 大仓库树卡顿 | 根因 4（树无虚拟化） | F11 消费面收敛 |
-| D-9 runtime 跨层配合 | E 主线程抖动 + 角标 stale | 根因 3 + 根因 1（失效扇出副作用） | F7 git status 实测 |
+| D-9 overlay 回写（renderer 侧） | E 主线程抖动 + 角标 stale | 根因 3 + 根因 1（失效扇出副作用）；runtime 侧归 D3/D4 | F7 git status 实测 |
 
-依赖关系：三者相互独立（父 00 §5.2「03 面板层三项可并行」）。D-7 的失效链（`useFileChangeInvalidation` 每 token 全量重扫）会随 00 的 D-1（per-session 消息 ref）受益——D-1 落地后 `chatStore.messages` 不再每次 commit 整体替换 Map 身份，`{deep:true}` watch 的触发频率下降；但 D-7/D-9 不依赖 D-1 才能成立，可先行实施（D-9 本身就把 `useFileChangeInvalidation` 的 wasteful 成本转正产出）。
+依赖关系：D-6/D-7 相互独立（父 00 §3.4：D-6/D-7 第一步属阶段 1、第二步属阶段 4）。D-9 依赖 runtime D3/D4（`03-git-state-service.md`，阶段 2 联动）——renderer 侧的 overlay 回写以 runtime 侧「异步 git + ready 帧序」为前置。D-7 的失效链（`useFileChangeInvalidation` 每 token 全量重扫）会随 00 的 D-1（per-session 消息 ref）受益——D-1 落地后 `chatStore.messages` 不再每次 commit 整体替换 Map 身份，`{deep:true}` watch 的触发频率下降；但 D-7/D-9 不依赖 D-1 才能成立，可先行实施（D-9 本身就把 `useFileChangeInvalidation` 的 wasteful 成本转正产出）。
 
 ### 1.2 设计目标（继承父文档 G1-G5，本层聚焦 G2/G3/G5）
 
@@ -33,21 +33,21 @@
 | G3 | 开发者在终端跑高频输出命令，输出流畅、界面不冻结 | D-6 |
 | G5 | 修复结构上正确：不引入与树数据/scrollback 重复的漂移风险状态 | D-6 第二步、D-7 第二步 |
 
-> G1（流式对话流畅）归 01/02 子文档；G4（首屏）归 04。本层不直接承载 G1/G4，但 D-7 第二步受益于 01 的失效收敛（见 §3.3 关键权衡），D-6 与 01 无依赖。
+> G1（流式对话流畅）归 07/08 子文档；G4（首屏）归 10。本层不直接承载 G1/G4，但 D-7 第二步受益于 07 的失效收敛（见 §3.3 关键权衡），D-6 与 07 无依赖。
 
 ### 1.3 In / Out of Scope
 
 - **In**：
   - renderer 侧终端：`useTerminal.ts`、`TerminalView.vue` 的写队列与命令式 buffer 重构。
   - renderer 侧文件树：`fileTree.ts`、`FileView.vue`、`FileTreeRow.vue`、`useFileTree.ts` 的预聚合/防抖/扁平化/虚拟化。
-  - D-9 跨层：`packages/runtime` 的 `file-change-reconciler.ts`（execSync→execFile）、`event-interpreter.ts`（debounce），renderer 侧的 `useFileChangeInvalidation.ts`（debounce + RPC 回写）。
+  - D-9 overlay 回写（renderer 侧）：`useFileChangeInvalidation.ts`（ready 后 debounce + RPC 回写）。runtime 侧（`file-change-reconciler.ts` execSync→execFile、`event-interpreter.ts` 帧序）见 `03-git-state-service.md`（D3/D4），不在本文范围。
 - **Out**：pi 进程内部行为；electron 主进程；终端/文件树的任何功能需求变更（新增命令、新增树交互）；xterm 版本升级或替换；文件树后端 `file-service.ts` 的加载策略变更（保留 ADR-0026 懒加载，见 §2.3）。与父 00 §1.3 一致。
 
 ### 1.4 scope 声明（层定位）
 
 - **当前层 = 技术方案**：接口先行 + 数据模型 + 错误规格 + 多方案对比 + 真实场景验收（本层最严格标准，父 skill 层适配表的「可实现的接口/数据模型/技术方案」）。
-- **下一层 = 可实现的接口/数据模型/代码任务**：D-6 的 `pendingChunks/flush/replay(version)` 接口与命令式 buffer 语义、D-7 的 `VisibleRow` 数据结构与 `projectVisibleRows` 投影函数签名、D-9 的 debounce 归属与 `git.status` RPC 复用契约，每章落到「文件改动地图 + 待验证检查点」（§5）。
-- **D-9 跨 packages/runtime 验证规范**（项目约束，AGENTS.md）：runtime 用 `tsx`（非 `tsx watch`）跑，**改 runtime 源码后必须重启 `pnpm dev` 才生效**；renderer 走 vite HMR 自动热重载。因此 D-9 的 runtime 侧改动与 renderer 侧改动须分两段验证：runtime 部分改完 → 重启 dev → 用探针确认 runtime 侧生效（§7 探针 P-runtime-*）；renderer 部分走 HMR 即时可见。D-6/D-7 纯 renderer，无此约束。
+- **下一层 = 可实现的接口/数据模型/代码任务**：D-6 的 `pendingChunks/flush/replay(version)` 接口与命令式 buffer 语义、D-7 的 `VisibleRow` 数据结构与 `projectVisibleRows` 投影函数签名、D-9 的 renderer 侧 debounce 与 `git.status` RPC 复用契约，每章落到「文件改动地图 + 待验证检查点」（§5）。
+- **D-9 跨层验证规范**（项目约束，AGENTS.md，指向 03 文档）：runtime 用 `tsx`（非 `tsx watch`）跑，**改 runtime 源码后必须重启 `pnpm dev` 才生效**——该约束适用于 `03-git-state-service.md` 的 D3/D4 实施；本文 D-9 为纯 renderer 改动，走 vite HMR 即时可见。D-6/D-7 同为纯 renderer，无此约束。
 
 ---
 
@@ -225,7 +225,7 @@ watch([() => sessionIdRef.value, () => chatStore.messages], () => { ... },
 
 - **终端（D-6 后）**：开发者跑 `npm run build`，输出在每帧（rAF）合并写入 xterm，主线程空闲、界面可交互；切走 terminal tab 再回来，历史完好回放；PTY 未活时 AI 命令仍入队（联动 2 写队列），alive 后 flush。
 - **文件树（D-7 后）**：开发者展开几千文件目录，只渲染视口 ± 缓冲行；过滤输入 150-200ms 防抖内即时；AI 写文件后树角标在文件回合结束数秒内刷新。
-- **AI 连续写文件（D-9 后）**：runtime 主线程不再因 git 同步阻塞（改异步 execFile）；树角标随 file_changes ready → debounce → git.status RPC → 回写 overlay 刷新。
+- **AI 连续写文件（D-9 后）**：runtime 主线程不再因 git 同步阻塞（由 runtime D3/D4 达成，见 `03-git-state-service.md`）；树角标随 file_changes ready → debounce → git.status RPC → 回写 overlay 刷新。
 
 **失败路径 + 恢复指引（每个错误配恢复，规则 #8）：**
 
@@ -261,16 +261,16 @@ watch([() => sessionIdRef.value, () => chatStore.messages], () => { ... },
 
 **被否方案「若用它会怎样」**：方案 A 若上——展开 1 万文件目录时懒渲染阈值只是「分帧渲染」而非「少渲染」，DOM 总量不变、滚动仍掉帧，且阈值成为脆弱魔数；方案 B 若上——递归 `FileTreeRow` + virtua 两层各自算可见性，展开态、聚焦、滚动锚点三处双源，短期能跑长期必漂（正是 G5 要杜绝的）。
 
-#### D-9 runtime 跨层配合：多方案对比
+#### D-9 git overlay 回写（renderer 侧）：多方案对比
 
-| 维度 | 方案 A：新增专用 WS 广播通道（被否）| 方案 B：renderer 无节流直接刷新（被否）| **方案 C：execSync→execFile + 双 debounce + 复用 git.status RPC（选定）** |
+| 维度 | 方案 A：新增专用 WS 广播通道（被否）| 方案 B：renderer 无节流直接刷新（被否）| **方案 C：ready 后 debounce + 复用 git.status RPC 回写 overlay（选定）** |
 |---|---|---|---|
-| 长期架构合理性 | 中：专用通道更「实时」但多一条维护链，且 git.status RPC 已能回全量 overlay，减法优先 | 差：file_changes accumulating 每 tool 1 次直接触发 renderer 拉 git.status，等于把 F7 的 11 次阻塞从 runtime 搬到 renderer（且引入 F2 同款抖动） | **优**：runtime 侧异步化消除主线程阻塞；renderer 侧 debounce 收敛刷新频次并复用现存 `git.status` RPC（`git.status:result` reply 已有契约），零新增通道 |
-| 短期实现成本 | 高（新 server-push 类型 + renderer 订阅 + 前端 refresh 编排） | 低（去掉 debounce） | 中：runtime execFile 改动 + accumulating debounce ~40 行；renderer debounce + RPC 回写 ~50 行 |
-| 风险 | 通道 + RPC 双路径并存，branch 名/行数等字段两处维护易漂移 | 每 mutating tool 一次刷新，写 5 文件 = 5 次 git.status RPC ≈ 高频抖动 + 4s 级 runtime 阻塞残留（若 runtime 侧不异步） | 需 reboot dev 验证 runtime（项目规范）；debounce 窗口若与 turn 结束重叠有「最后一次 accumulating 被 ready 覆盖」需合并逻辑（§3.3） |
-| 推荐 | ✗ | ✗ | **✅ 复用 RPC + 双 debounce** |
+| 长期架构合理性 | 中：专用通道更「实时」但多一条维护链，且 git.status RPC 已能回全量 overlay，减法优先 | 差：file_changes 每帧直接触发 renderer 拉 git.status，把刷新抖动搬进 renderer（且 runtime 侧未就绪时读不到最终态） | **优**：renderer 侧 debounce 收敛刷新频次并复用现存 `git.status` RPC（`git.status:result` reply 已有契约，且享受 runtime D4 GitStateService 的 TTL 缓存与 in-flight 去重），零新增通道；runtime 侧异步化与帧序保证由 D3/D4 承担（`03-git-state-service.md`） |
+| 短期实现成本 | 高（新 server-push 类型 + renderer 订阅 + 前端 refresh 编排） | 低（去掉 debounce） | 低：renderer debounce + RPC 回写 ~50 行（runtime 侧另计 D3/D4 成本） |
+| 风险 | 通道 + RPC 双路径并存，branch 名/行数等字段两处维护易漂移 | 多 session/多 turn 快速连续时高频 RPC 抖动，且「ready 尚未到达」时读到中间态 | debounce 窗口与 turn 结束时序需真实数据验证（§5 检查点）；依赖 D3/D4 先行（阶段 2 联动） |
+| 推荐 | ✗ | ✗ | **✅ 复用 RPC + debounce** |
 
-**被否方案「若用它会怎样」**：方案 A 若上——多出一条 `git:broadcast` 通道与 `git.status:result` RPC 并行，字段契约双份维护，违反「减法优先」；方案 B 若上——`file_changes` accumulating 阶段每 tool 一次同步刷新，直接把 F7 的阻塞转嫁到 renderer，且角标在 AI 逐文件写时疯狂闪烁（F2 同款抖动）。
+**被否方案「若用它会怎样」**：方案 A 若上——多出一条 `git:broadcast` 通道与 `git.status:result` RPC 并行，字段契约双份维护，违反「减法优先」；方案 B 若上——`file_changes` 每帧一次同步刷新，直接把刷新抖动搬进 renderer，角标在 AI 逐文件写时疯狂闪烁。
 
 ### 3.3 关键决策与权衡（接口先行 + 数据模型 + 错误规格）
 
@@ -379,59 +379,33 @@ function projectVisibleRows(
 - **E7-b 懒加载目录的展开语义**：投影时遇 `nodeStates[path].status!=='loaded'` 且未展开的目录，不产出其子行（与递归版「展开才拉」一致）；展开后 `expandNode` 拉完 children → `setNodeState(loaded)+children` 触发投影缓存失效 → 新行进入可见列表。
 - **E7-c 过滤空结果**：`filterText` 命中仅祖先链保留（`nodeMatchesFilter` 语义），投影后 `VisibleRow[]` 为空 → 维持 `FileView` 现有空态（`file-empty` testid）不变，不需要新组件。
 
-#### 3.3.3 D-9 跨层：debounce 归属 + RPC 复用契约
+#### 3.3.3 D-9 overlay 回写：renderer 侧接口与 RPC 复用契约
 
-**runtime 侧**：
+**runtime 侧（不在本文，见 `03-git-state-service.md` D3/D4）**：git 子进程异步化（execFile + timeout 5000 + 失败 null）、GitStateService（in-flight 去重 + TTL 缓存 + 写失效钩子）、file_changes 帧序以 baseline promise 保证（baseline 未就绪跳过本次 accumulating、ready 全量兜底；accumulating 无 debounce——帧序契约不允许）。本文只消费其结果：ready 帧是每 turn 一次的最终全量 diff。
 
-```ts
-// file-change-reconciler.ts:90-109 —— snapshotGitStatus execSync → 异步 execFile
-export function snapshotGitStatus(cwd: string): StatusSnapshot   // 同步签名改为：
-export async function snapshotGitStatus(cwd: string): Promise<StatusSnapshot>  // execFile + timeout 5000, 失败 null
-
-// event-interpreter.ts:425-444 —— sendDiffFileChanges 变 async + accumulating debounce
-private accumulatingTimer?: ReturnType<typeof setTimeout>   // per-interpreter 实例
-private pendingAccumulating: { cwd: string } | null = null
-
-async sendDiffFileChanges(changeSetStatus: 'accumulating' | 'ready'): Promise<void> {
-  if (changeSetStatus === 'accumulating') {
-    // 300ms trailing debounce：多个 mutating tool 的 accumulating 合并为窗口内最后一次
-    this.pendingAccumulating = null
-    clearTimeout(this.accumulatingTimer)
-    this.accumulatingTimer = setTimeout(() => void this.diffAndSend('accumulating'), 300)
-    return
-  }
-  // 'ready'（:410）即时不合并：清空 pending debounce，立即全量 diff + send
-  clearTimeout(this.accumulatingTimer)
-  void this.diffAndSend('ready')
-  this.statusBaseline = null; this.writeContents.clear()
-}
-```
-
-**renderer 侧**（修复 F4 stale 角标）：
+**renderer 侧（修复 F4 stale 角标）**：
 
 ```ts
 // useFileChangeInvalidation.ts —— 从「每 token 全量重扫」改为「file_changes ready 后 debounce → git.status RPC → setGitOverlay」
 // watch 不再挂 chatStore.messages deep，改为按 message.file_changes ready 事件：
 // ready 后 debounce 300ms → gitApi.status(sid) → store.setGitOverlay(sid, result.files)
 async function refreshOverlayOnReady(sid: string): Promise<void> {
-  const result = await gitApi.status(sid)             // 复用现有 git.status RPC
+  const result = await gitApi.status(sid)             // 复用现有 git.status RPC（经 runtime D4 GitStateService 缓存）
   if (result.isRepo) store.setGitOverlay(sid, result.files)
 }
 ```
 
 **debounce 归属与 RPC 复用契约**：
 
-- **runtime accumulating 300ms debounce**：合并 AI 一轮内多个 mutating tool 的 `file_changes` 推送（10 文件从 11 帧降到「ready 1 帧 + accumulating 若干合并窗」）。
-- **renderer ready 后 300ms debounce**：等 runtime ready 帧（全量最终 diff 已含 numstat 行数）到达后，再等 300ms 让可能尾随的 accumulating 收敛，然后调 `git.status` 拿**现在态全量**（含未被 file_changes 覆盖的既有 dirty 文件），写 `setGitOverlay`。
-- **RPC 复用契约**：用现存 `git.status`（`git-message-handler.ts:43-51` → `gitService.getStatus` → reply `git.status:result`，命令已带 `--untracked-files=all`，AGENTS.md #15）——**不为角标新增通道**。`git.status:result` 返回 `GitStatusResult{isRepo, files: GitFileStatus[]}`，`renderer` 侧 `git.status()`（`api/domains/git.ts:18-20`）已封装好 promise 形式，直接 `setGitOverlay(sid, result.files)`。
+- **renderer ready 后 300ms debounce**：防多 session/多 turn 快速连续完成时的高频 RPC 抖动（每 turn 只有一次 ready，debounce 是防抖而非帧合并）；到点后调 `git.status` 拿**现在态全量**（含未被 file_changes 覆盖的既有 dirty 文件），写 `setGitOverlay`。
+- **RPC 复用契约**：用现存 `git.status`（`git-message-handler.ts:43-51` → `gitService.getStatus` → reply `git.status:result`，命令已带 `--untracked-files=all`，AGENTS.md #15）——**不为角标新增通道**。`git.status:result` 返回 `GitStatusResult{isRepo, files: GitFileStatus[]}`，`renderer` 侧 `git.status()`（`api/domains/git.ts:18-20`）已封装好 promise 形式，直接 `setGitOverlay(sid, result.files)`。D4 落地后此 RPC 命中 GitStateService 缓存，多次调用零额外 spawn。
 - **`useFileChangeInvalidation` 的成本转正**：原 `{deep:true}` watch 每 token 全量重扫的 wasteful 成本改为「只在 file_changes ready 后 debounce 一次 RPC」——既消除根因 1 在文件树的扇出副作用，又把刷新动作接上「产出 UI 价值」（角标真刷新）的断点。
 
 **错误规格（D-9）**：
 
-- **E9-a accumulating/ready 窗口重叠**：若 turn 很短（单 tool 即 agent_end），accumulating 300ms 窗口未触发时 ready 到来 → ready 分支 `clearTimeout` 吞掉 pending accumulating，只发 ready 全量帧（正确，ready 是全量 diff，覆盖 accumulating 语义）。
-- **E9-b runtime execFile 超时/非 repo**：`snapshotGitStatus` reject 或超时 5s → 返回 null，`sendDiffFileChanges` 跳过（与现状 execSync catch null 一致），不推 file_changes，不影响 turn 其余编排。
-- **E9-c renderer git.status RPC reject**：非 repo / 越 cwd / 超时 → `refreshOverlayOnReady` catch，降级为不写 overlay（角标保持旧值），不打断 renderer 主循环；用户可手动重开抽屉 git 面板刷新。
-- **E9-d stale 竞态**：切 session 后 `refreshOverlayOnReady` 的 async result 回来时 sId 已变 → 用闭包捕获的 sid 校验（`setGitOverlay(capturedSid, ...)` 写原 sid 分桶），与 `useFileTree.expandNode` 的 AC-3.7 stale 丢弃一致。
+- **E9-a 高频连续完成**：多 session 快速连续 ready → debounce 窗口内多次触发只执行最后一次（trailing 语义），不会产生 RPC 风暴。
+- **E9-b renderer git.status RPC reject**：非 repo / 越 cwd / 超时 → `refreshOverlayOnReady` catch，降级为不写 overlay（角标保持旧值），不打断 renderer 主循环；用户可手动重开抽屉 git 面板刷新（`useGitStatus` 既有路径）。
+- **E9-c stale 竞态**：切 session 后 `refreshOverlayOnReady` 的 async result 回来时 sid 已变 → 用闭包捕获的 sid 校验（`setGitOverlay(capturedSid, ...)` 写原 sid 分桶），与 `useFileTree.expandNode` 的 AC-3.7 stale 丢弃一致。
 
 ---
 
@@ -439,13 +413,13 @@ async function refreshOverlayOnReady(sid: string): Promise<void> {
 
 **本节的结论：4 个真实场景直接在 dev 环境跑真实用例，每个回溯 G2/G3/G5；终端场景用真实高频命令，文件树用本仓 >5000 文件目录，D-9 用真实 AI 写文件（标注验证缺口）。**
 
-> 验证环境：`pnpm dev` 真实 Electron（renderer 9222 / runtime 3310），真实仓库本仓。D-6/D-7 纯前端可立即验；D-9 的 runtime 改动需重启 dev。
+> 验证环境：`pnpm dev` 真实 Electron（renderer 9222 / runtime 3310），真实仓库本仓。D-6/D-7 纯前端可立即验；D-9 纯 renderer 可立即验，但其前置（runtime 异步 git + ready 帧序）由 03 文档 D3/D4 先行落地并重启 dev。
 
 | 场景 | 步骤 | 通过标准 | 回溯目标 |
 |---|---|---|---|
 | V-P2-1 高频终端输出流畅 | ① 开终端 tab 跑 `npm run build`（或 `find / -name x` 高频输出）；② 输出期间滚动消息流、点侧栏文件；③ Performance 录输出密集段 | 终端输出流畅、界面可交互；CPU 峰值明显低于基线；每个 rAF 帧合并多次 write（探针 P-D6-1）；切 tab 回来历史完整（探针 P-D6-2） | G3 |
 | V-P2-2 万文件目录展开即时 | ① 在本仓展开 `packages/` 大目录（数千文件）；② 过滤框敲 `store`；③ 展开多层子目录滚动 | 展开/滚动首帧 <100ms；过滤 150-200ms 防抖内即时；万级可见行只渲染视口 ± 缓冲（探针 P-D7-1）；目录徽章 O(1)（探针 P-D7-2） | G2 |
-| V-P2-3 AI 一轮改 5 文件后角标刷新 | ① 让真实 AI 一轮修改 ≥5 个文件；② 观察侧栏文件树角标；③ 观察 runtime 进程 CPU | 角标在 file_changes ready 后数秒内刷新（探针 P-D9-2）；runtime 主线程无 >100ms git 阻塞（探针 P-D9-1）；fileChanges 不在 token 路径触发重扫（探针 P-D9-3） | G2、G5 |
+| V-P2-3 AI 一轮改 5 文件后角标刷新 | ① 让真实 AI 一轮修改 ≥5 个文件；② 观察侧栏文件树角标；③ 观察 runtime 进程 CPU | 角标在 file_changes ready 后数秒内刷新（探针 P-D9-2）；runtime 主线程无 >100ms git 阻塞（探针见 03 文档 P-git-*，由 D3/D4 验收）；fileChanges 不在 token 路径触发重扫（探针 P-D9-3） | G2、G5 |
 | V-P2-4 终端切 tab 回放 + PTY 未活背压 | ① 跑长输出命令时切走 terminal tab 30s 再切回；② 首次打开终端（PTY 未活）时从 Block 点「在终端运行」连发命令；③ 观察输出完整性与顺序 | 切回历史完整按序回放；PTY 未活时命令入队、alive 后按序 flush；无 chunk 丢失（探针 P-D6-1 验证 pendingChunks flush） | G3、G5 |
 
 **验证缺口说明**：V-P2-3 依赖真实 AI 工具调用链（真实 pi session），无法 mock——实施时优先争取真实模型会话；V-P2-1 若 `npm run build` 输出不够高频可用 `find / -name x 2>/dev/null` 补足。这些场景对应父 00 §4 的 V3（终端）/V2（文件树）/V5（AI 写文件），本层是它们的面板层细分。
@@ -474,20 +448,21 @@ async function refreshOverlayOnReady(sid: string): Promise<void> {
 
 **检查点**：D-7.2 后 `projectVisibleRows` 是唯一「树→可见行」投影点，`expandNode/collapseNode/setFilter/toggleShowIgnored/setGitOverlay` 都通过触发投影缓存失效生效；`FileTreeRow` 不再 import `useFileTree` 的 `expandNode`（展开态由投影传入 `expanded` + 事件回调），消除递归组件的 per-node store 依赖。
 
-### D-9 跨层两步走
+### D-9 overlay 回写（renderer 侧一步）
 
 | 单元 | 内容 | justification | 文件改动 |
 |---|---|---|---|
-| D-9.1 runtime 异步化 + accumulating debounce | `snapshotGitStatus` execSync→异步 execFile；`sendDiffFileChanges('accumulating')` 300ms trailing debounce；`ready` 即时不合并 | 消除 F7 的 4s 同步阻塞；减少 accumulating 帧数；**需重启 dev 验证**（runtime 非热重载） | `file-change-reconciler.ts:90-109`、`event-interpreter.ts:425-444`（+. 实例字段） |
-| D-9.2 renderer debounce + RPC 回写 overlay | `useFileChangeInvalidation` 改「ready 后 debounce 300ms → `gitApi.status` → `setGitOverlay`」；移除 `{deep:true}` watch messages | 修复 F4 stale 角标断点；消除根因 1 在文件树的 wasteful 全量重扫；复用 git.status RPC | `useFileChangeInvalidation.ts`、`useFileTree.ts`（setupInvalidation 回调语义） |
+| D-9 renderer debounce + RPC 回写 overlay | `useFileChangeInvalidation` 改「file_changes ready 后 debounce 300ms → `gitApi.status` → `setGitOverlay`」；移除 `{deep:true}` watch messages | 修复 F4 stale 角标断点；消除根因 1 在文件树的 wasteful 全量重扫；复用 git.status RPC（经 D4 GitStateService 缓存） | `useFileChangeInvalidation.ts`、`useFileTree.ts`（setupInvalidation 回调语义） |
 
-**检查点**：D-9.1 后 runtime 日志/探针确认 accumulating 合并（一次多 tool 只发一帧 + ready 一帧）；D-9.2 后 `setGitOverlay` 有两个调用点（loadTree + ready 回写），`useFileChangeInvalidation` 不再 import `chatStore.messages` deep watch。
+> runtime 侧（git 异步化 + baseline promise 帧序 + GitStateService）属 `03-git-state-service.md` 的 D3/D4（阶段 2 联动，先于本单元验收）。本单元纯 renderer，走 vite HMR 即时可见。
+
+**检查点**：D-9 后 `setGitOverlay` 有两个调用点（loadTree + ready 回写），`useFileChangeInvalidation` 不再挂 `chatStore.messages` deep watch；runtime 侧探针（git 无同步阻塞）在 03 文档的探针清单中验收。
 
 **待验证检查点（设计阶段诚实标注）**：
 
 1. **D-6 第二步的 version 回放粒度**：命令式 buffer 按 chunk 还是按行存储直接影响 `replay` 的 fromVersion 语义与 xterm scrollback 上限（xterm 的 `scrollback` 选项 vs app 层 `SCROLLBACK_LIMIT` 由谁裁决）——需实施时确认哪个是 SSOT（当前 app 层 `SCROLLBACK_LIMIT=5000` 按 chunk 计，xterm 侧 `DEFAULT_SCROLLBACK=5000` 按行计，双层语义易混）。
 2. **D-7 第二步 virtua 滚动锚点**：展开/折叠目录导致可见行数剧变时，virtua 的滚动位置与键盘导航焦点保持需实测（项数动态增删 vs 稳定列表）。
-3. **D-9 renderer debounce 窗口与 turn 结束时序**：300ms 窗口是否覆盖全部 mutating tool 的 ready 前收敛，需真实 AI 一轮多文件的时序验证（V-P2-3）。
+3. **D-9 renderer debounce 窗口与 turn 结束时序**：ready 每 turn 一次，300ms debounce 只防多 turn/多 session 连续完成的 RPC 抖动；是否保留窗口或改为即时刷新，需真实 AI 一轮多文件的时序验证（V-P2-3）。
 
 ---
 
@@ -501,9 +476,10 @@ async function refreshOverlayOnReady(sid: string): Promise<void> {
 | D-6 切 tab 回放完整 | P-D6-2（切回后 replay 覆盖版本差） | ✅ 切回一次 replay(0) 后 buffer 与 xterm 内容对齐 | ⛔ 回放后内容缺漏/重复 |
 | D-7 万级节点 DOM 受控 | P-D7-1（DOM 中 `file-tree-*` 节点数 vs 视口） | ✅ 展开 5000 文件目录时 DOM 行数 ≈ 视口+buffer（<200） | ⛔ DOM 行数 ≈ 全量 |
 | D-7 徽章 O(1) | P-D7-2（getDirChangeCount 命中 Map） | ✅ 目录徽章不再启动 per-row 扫描（预聚合命中） | ⛔ 仍走 startsWith 全扫 |
-| D-9 runtime 无 >100ms git 阻塞 | P-D9-1（event-interpreter 内 git 调用耗时分布） | ✅ execFile 异步，无同步 >100ms 段 | ⛔ 仍有 execSync 同步阻塞段 |
 | D-9 角标刷新 | P-D9-2（ready 后 setGitOverlay 调用） | ✅ AI 写文件后 ready→debounce→RPC→overlay 链路走通 | ⛔ overlay 未更新（断点仍在） |
 | D-9 无 token 路径重扫 | P-D9-3（useFileChangeInvalidation 触发点在 token vs ready） | ✅ 不再每 token 触发全量重扫 | ⛔ token 路径仍触发 deep watch |
+
+> runtime 侧「git 无同步阻塞」断言与探针在 `03-git-state-service.md` 的探针清单（P-git-*），本层不重复。
 
 ---
 
@@ -515,16 +491,17 @@ async function refreshOverlayOnReady(sid: string): Promise<void> {
 | P-D6-2 | `replay(xterm, fromVersion)` 记录 fromVersion→version 覆盖差，`console.debug('[terminal] replay', {from, to})` | 切 tab 回来看日志 | from=0 全量回放且无重复即 ✅ |
 | P-D7-1 | `FileView` 挂载后 `document.querySelectorAll('[data-testid^="file-tree-"]').length` 打印 | devtools 展开 5000 文件目录后 evaluate | 节点数 < 视口+buffer（约 <200）即 ✅ |
 | P-D7-2 | `getDirChangeCount` 入口断言命中预聚合 Map（`if (map.has(dirPath)) return map.get(dirPath)` 分支打日志） | 展开大目录遍历徽章 | 无 startsWith 全扫分支命中即 ✅ |
-| P-D9-1 | `snapshotGitStatus` 首尾 `performance.now()` diff，`console.debug('[git] status', {cwd, ms, sync:false})` | runtime 侧日志（重启 dev 后） | 无同步 >100ms 段、async 返回即 ✅ |
 | P-D9-2 | `refreshOverlayOnReady` 内 `console.debug('[fileTree] overlay refreshed', {sid, count})` | renderer console，AI 改文件后观察 | 出现该日志且角标更新即 ✅ |
 | P-D9-3 | `useFileChangeInvalidation` 移除 deep watch 后，在 ready 事件 handler 打印触发点 | renderer console | 触发点只在 ready、token 无触发即 ✅ |
+
+> P-D9-1（runtime 侧 git 调用耗时分布）已随 D3/D4 移交 `03-git-state-service.md` 探针清单。
 
 ---
 
 ## 附录：本子文档与父文档/linting 一致性自查
 
 - **事实编号**：F3（splice 证伪）、F6（bundle）、F7（git status 0.35s/11 次）、F11（fileTree 消费面）全部按父 00 §2.4 原文引用，未改口径。
-- **决策编号**：D-6/D-7/D-9 的「选定方案 + 被否方案」与父 00 §3.2 总表逐一对应（D-6 两步走/被否环形+纯 rAF；D-7 两步走/被否递归 virtua+懒阈值；D-9 execSync→execFile+双 debounce/被否专用通道+无节流）。
+- **决策编号**：D-6/D-7/D-9 的「选定方案 + 被否方案」与父 00 §3.1/§3.2 总表逐一对应（D-6 两步走/被否环形+纯 rAF；D-7 两步走/被否递归 virtua+懒阈值；D-9 renderer 侧 ready→debounce→RPC 回写/被否专用通道+无节流，runtime 侧经父 00 裁决 1 让位于 03 文档 D3/D4）。
 - **目标回溯**：G2（D-7+D-9 角标）、G3（D-6）、G5（D-6 第二步+D-7 第二步）在 §1.2 与 §4 验收场景明确回溯。
 - **代码引用**：所有代码片段均来自 read 真实文件（`useTerminal.ts:68-76/52`、`TerminalView.vue:260-265/60-64/113`、`terminal-service.ts:159-161`、`fileTree.ts:90-102/196-203`、`FileView.vue:83-91/143-150`、`FileTreeRow.vue:65-71/179-182/222`、`useFileTree.ts:49-80`、`useGitStatus.ts:162`、`event-interpreter.ts:362-363/410/425-444`、`file-change-reconciler.ts:90-109/92`），未编造行号。
 - **五段骨架**：背景目标（§1）→ 现状问题（§2）→ 方案对比（§3.2 三组 ≥2 方案 + 推荐 + 被否「若用它会怎样」）→ 验收真实场景（§4）→ 下一层拆分（§5），恢复指引（§3.1 + 错误规格）、探针（§6/§7）、每章首句结论加粗均已满足。
