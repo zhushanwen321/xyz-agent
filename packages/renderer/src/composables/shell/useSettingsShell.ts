@@ -103,11 +103,19 @@ export function useSettingsShell(): void {
   // 此处兜底首次 apply（init 的 setSystem 与本调用竞态时，watch 会再纠正）。
   applyCurrent()
 
-  // watch system 外观字段（theme/themePreset/fontSize）→ applyCurrent 同步 <html data-*> 属性。
+  // watch system 外观字段（theme/themePreset/fontSize/locale）→ applyCurrent 同步 <html data-*> 属性。
   // 修复：原仅 watch theme=system 的 matchMedia，light↔dark 切换、太极主题（themePreset）切换、
   // 字号切换都不触发 applySystemToDom，导致系统页选主题后 data-theme/data-theme-preset 不更新，整页主题不变。
+  // locale 必须在 watch 源内：setSystem({locale}) 是用户切语言的唯一真实路径（SettingsModal
+  // 语言选择 → store.setSystem），漏看会导致切语言后 UI 不变，直到改主题/字号或重启。
+  // setLocale 自身幂等且失败内部处理（不抛），applyCurrent fire-and-forget 安全。
   watch(
-    () => [store.system.value.theme, store.system.value.themePreset, store.system.value.fontSize] as const,
+    () => [
+      store.system.value.theme,
+      store.system.value.themePreset,
+      store.system.value.fontSize,
+      store.system.value.locale,
+    ] as const,
     () => applyCurrent(),
     { flush: 'pre' },
   )

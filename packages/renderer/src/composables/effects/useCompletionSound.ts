@@ -68,12 +68,12 @@ export async function playByName(name: string, kind?: 'success' | 'error'): Prom
     if (result.audioData && result.mimeType) {
       const uri = `data:${result.mimeType};base64,${result.audioData}`
       const audio = getOrCreateAudio(name, uri)
-      try {
-        // 从头重播：暂停态续播会从中断处继续，重置到起点（元数据未加载前赋值可能抛错，best-effort）
+      // 从头重播：暂停态续播会从中断处继续，重置到起点。
+      // readyState >= 1（HAVE_METADATA）才赋值 currentTime：HAVE_NOTHING 时赋值是设置
+      // default playback start position（不重置、也不抛），语义不是「回到起点」——守卫
+      // 替代原 try/catch best-effort（无异常可捕获，赋值时机本身就是判据）。
+      if (audio.readyState >= 1) {
         audio.currentTime = 0
-        // eslint-disable-next-line taste/no-silent-catch -- 重播起点重置是 best-effort：元数据未加载时赋值会抛错，按当前位置播放不影响发声；每次重播打日志是纯噪音
-      } catch {
-        // 赋值失败按当前位置播放，不影响发声
       }
       void audio.play().catch(() => {
         // autoplay policy 拒绝时静默（后台完成场景，用户已交互过通常不会拒）

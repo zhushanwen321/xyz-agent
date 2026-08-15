@@ -134,8 +134,11 @@ describe('useSessionMarkers', () => {
     markUnread('s1')  // 首次写触发 ensureCache hydrate（1 次 getItem）
     const getItemSpy = vi.spyOn(localStorage, 'getItem')
     const setItemSpy = vi.spyOn(localStorage, 'setItem')
-    // spy 生效性自检：spy 贴在 localStorage 实例上，若拦截失效（0 次调用）后续断言无意义
-    expect(getItemSpy.mock.calls).toHaveLength(0)
+    // 正向对照：先做一次已知 getItem 调用确认 spy 拦截生效，再清零计数——否则下方
+    // 「零 getItem」断言无法区分「写路径不读盘」与「spy 根本没挂上」
+    void localStorage.getItem(STORAGE_KEY)
+    expect(getItemSpy).toHaveBeenCalledTimes(1)
+    getItemSpy.mockClear()
 
     markUnread('s2')
     markUnread('s3')
