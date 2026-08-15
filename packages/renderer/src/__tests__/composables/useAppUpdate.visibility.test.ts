@@ -7,6 +7,7 @@
  * - 补查后周期检测继续（runAutoCheck 重排下一次定时器）
  * - 状态守卫优先于 visibility 补查：升级流程态（downloaded）hidden 期间跳过不标记，恢复可见不补查
  * - onScopeDispose：scope 卸载后 visibilitychange 不再触发检测
+ * - 补查 await 窗口 dispose：runAutoCheck await 恢复后不排新周期 timer（W05 review）
  *
  * Mock 策略对齐 useAppUpdate.test.ts（vi.mock @/lib/ipc + markdown，effectScope 包 useAppUpdate）。
  *
@@ -178,5 +179,34 @@ describe('useAppUpdate 可见性守卫（Q1-6）', () => {
     setHidden(false)
     fireVisibilityChange()
     expect(hoisted.checkForUpdate).not.toHaveBeenCalled()
+  })
+
+  it('补查 await 期间 dispose：await 恢复后不排新周期 timer（卸载后 20min 不联网，W05 review）', async () => {
+    // 让 checkForUpdate 挂起，制造 runAutoCheck 的 await 窗口（此窗口无 pending timer）
+    let resolveCheck!: (v: LatestReleaseInfo | null) => void
+    hoisted.checkForUpdate.mockImplementation(
+      () =>
+        new Promise<LatestReleaseInfo | null>((res) => {
+          resolveCheck = res
+        }),
+    )
+
+    setHidden(true)
+    const { stop } = setupWithAutoCheck()
+    await vi.advanceTimersByTimeAsync(30_000) // hidden 跳过，标记 skippedWhileHidden
+    expect(hoisted.checkForUpdate).not.toHaveBeenCalled()
+
+    setHidden(false)
+    fireVisibilityChange() // 补查发起：runAutoCheck 进入 await checkForUpdate（挂起中）
+    expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1)
+
+    stop() // await 挂起期间 dispose（clearAutoCheckTimer 无 pending timer 可清）
+    resolveCheck(null) // await 恢复：disposed 已置位 → 不排下一周期 timer
+    await vi.advanceTimersByTimeAsync(0) // flush microtasks
+
+    // 无新周期 timer 排上：推进 20min 不再联网
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
+    expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1) // 仍只有补查那一次
   })
 })

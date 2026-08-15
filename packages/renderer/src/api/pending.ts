@@ -129,6 +129,9 @@ export function resolve<T>(id: string, value: T): void {
   if (!req) return
   pendingMap.delete(id)
   req.resolve(value)
+  // [W04 review] 条目删除后重算 sweep timer：最后一个带 deadline 的 pending 正常
+  // 完成时立即 disarm，不再空转到原触发点（最长 65s）
+  armSweepTimer()
 }
 
 /**
@@ -149,6 +152,10 @@ export function reject(id: string, error: unknown): void {
   if (!req) return
   pendingMap.delete(id)
   req.reject(error)
+  // [W04 review] 与 resolve 对称：删除后重算 sweep timer（map 空时 disarm）。
+  // sweepExpired 循环内复用 reject 时同样受益——末次 reject 后 map 空 → disarm，
+  // 循环后的 armSweepTimer 是 no-op，不会多排空转 timer
+  armSweepTimer()
 }
 
 /**

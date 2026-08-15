@@ -7,7 +7,10 @@
  * - 可见性停表（Q1-7）：页面失焦（visibilitychange hidden）停止每秒 tick——elapsed 是
  *   Date.now() 绝对差值，停 tick 不丢时间；恢复可见时一次重算即补算失焦期间耗时并重启 tick。
  * - formatElapsed：Xs / Xm SSs 格式化（含 streaming/completed 边界 + 无 assistant 兜底）。
- * - 生命周期：streaming 态挂载即 start；isStreaming true→false 停表定格；onUnmounted 清 interval + visibility listener 防泄漏。
+ * - 生命周期：streaming 态挂载即 start；isStreaming true→false 停表定格；onUnmounted 兜底清 interval + listener 防泄漏。
+ * - listener 挂载策略（W05 review）：visibilitychange listener 仅 streaming 期间挂载
+ *   （startElapsedTimer 挂、stopElapsedTimer 摘）——每个 Turn 实例（含早已完成的）
+ *   完成态零 document listener，避免 N 实例 N listener 挂在 document 上。
  *
  * CW wave `session-active-ssot` T4 拆分两个信号：
  * - 计时器 start/stop 看 **isStreaming**（文本流式生成耗时——ask-user 等待不算生成耗时）。
@@ -63,11 +66,33 @@ export function useTurnElapsed(
     return m > 0 ? `${m}m ${String(s).padStart(SEC_PAD_WIDTH, '0')}s` : `${s}s`
   }
 
-  function stopElapsedTimer(): void {
+  /** visibilitychange listener 挂载标记（幂等挂/摘，防重复注册） */
+  let visibilityListenerAttached = false
+
+  function attachVisibilityListener(): void {
+    if (visibilityListenerAttached) return
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    visibilityListenerAttached = true
+  }
+
+  function detachVisibilityListener(): void {
+    if (!visibilityListenerAttached) return
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    visibilityListenerAttached = false
+  }
+
+  /** 停止每秒 tick（保留 visibility listener：恢复可见时靠它补算重启） */
+  function stopTick(): void {
     if (elapsedTimer) {
       clearInterval(elapsedTimer)
       elapsedTimer = null
     }
+  }
+
+  /** 完全停表：清 tick + 摘 visibility listener（完成定格/卸载时调） */
+  function stopElapsedTimer(): void {
+    stopTick()
+    detachVisibilityListener()
   }
 
   function scheduleTick(): void {
@@ -77,8 +102,11 @@ export function useTurnElapsed(
   }
 
   function startElapsedTimer(): void {
-    stopElapsedTimer()
+    stopTick()
     elapsed.value = formatElapsed()
+    // listener 仅 streaming 期间挂载（W05 review）：hidden 分支同样要挂——
+    // 失焦进入的 streaming 恢复可见时靠它补算重启 tick
+    attachVisibilityListener()
     // 页面失焦（document.hidden）时不挂每秒 tick：elapsed 是 Date.now() 绝对差值，
     // 停 tick 不丢时间，恢复可见时由 handleVisibilityChange 一次 formatElapsed 补算
     if (document.hidden) return
@@ -94,14 +122,12 @@ export function useTurnElapsed(
    */
   function handleVisibilityChange(): void {
     if (document.visibilityState === 'hidden') {
-      stopElapsedTimer()
+      stopTick()
     } else if (getIsStreaming() && elapsedTimer === null) {
       elapsed.value = formatElapsed()
       scheduleTick()
     }
   }
-
-  document.addEventListener('visibilitychange', handleVisibilityChange)
 
   // 挂载时若已 streaming 即开始 live 计时
   if (getIsStreaming()) startElapsedTimer()
@@ -136,7 +162,7 @@ export function useTurnElapsed(
   }
 
   onUnmounted(() => {
-    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    // 兜底清理：streaming 中卸载也清干净（stopElapsedTimer 内含 tick + listener）
     stopElapsedTimer()
   })
 

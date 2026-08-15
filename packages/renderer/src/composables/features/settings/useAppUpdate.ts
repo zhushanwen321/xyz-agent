@@ -194,6 +194,15 @@ let skippedWhileHidden = false
 let visibilityListenerAttached = false
 
 /**
+ * dispose 标志（W05 review）：onScopeDispose / _resetForTest 置位，initAutoCheck 复位。
+ * runAutoCheck 在 await checkForUpdate 期间无 pending timer（autoCheckTimer 已置 null、
+ * 下一周期尚未排）——此窗口内 scope dispose 后 clearAutoCheckTimer 无 timer 可清，
+ * await 恢复仍会排上 20min timer → 卸载后继续联网。runAutoCheck 排下一周期前检查
+ * 本标志，已 dispose 则直接返回。
+ */
+let disposed = false
+
+/**
  * 订阅 main 进程的进度 + 错误推送（引用计数管理生命周期）。
  * 首个消费者订阅，后续消费者只增计数；最后一个消费者 dispose 时退订。
  * onScopeDispose 注册在每个调用 useAppUpdate 的组件作用域上，随该作用域卸载而清理。
@@ -502,6 +511,9 @@ async function runAutoCheck(): Promise<void> {
     skippedWhileHidden = false
     await checkForUpdate(true)
   }
+  // await 期间 scope 可能已 dispose（此时无 pending timer 可清）：
+  // 已 dispose 则不排下一周期，防卸载后 20min 仍联网（W05 review）
+  if (disposed) return
   // 无论本次是否检查，都排下一次周期（保证升级完成后继续周期检测）
   autoCheckTimer = setTimeout(runAutoCheck, AUTO_CHECK_INTERVAL_MS)
 }
@@ -518,6 +530,7 @@ function initAutoCheck(): void {
   // 防重复 init：先清已有 timer（多消费者场景只保留最新周期，避免泄漏）
   clearAutoCheckTimer()
   skippedWhileHidden = false
+  disposed = false // 新 init 复活周期检测（此前 scope dispose 置位过则清除）
   attachVisibilityListener()
   // 先恢复 preloaded（downloaded 态，优先级高于 pending）
   void restorePreloadedUpdate().then((restored) => {
@@ -531,6 +544,7 @@ function initAutoCheck(): void {
   onScopeDispose(() => {
     clearAutoCheckTimer()
     detachVisibilityListener()
+    disposed = true // 标记已卸载：在跑的 runAutoCheck await 恢复后不再排下一周期
   })
 }
 
@@ -573,4 +587,5 @@ export function _resetForTest(): void {
   renderToken = 0
   pendingRestored = false
   skippedWhileHidden = false
+  disposed = false
 }

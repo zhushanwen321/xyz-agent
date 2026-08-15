@@ -8,6 +8,8 @@
  * - 恢复可见：elapsed 立即以 Date.now() 差值补算失焦期间耗时，并重启每秒 tick
  * - 失焦期间完成定格：恢复可见不误重启 tick（isStreaming 已 false）
  * - 卸载：移除 visibilitychange listener + 清 interval（无泄漏）
+ * - listener 生命周期与 streaming 对齐（W05 review）：完成态实例零 listener，
+ *   开始计时挂载、完成定格摘除、二次周期幂等不叠加
  *
  * 时间模型：vi.useFakeTimers() 同时接管 Date.now；advanceTimersByTime 同步推进系统时间，
  * elapsed 是 now - firstTs 的绝对差值，停 tick 不丢时间，恢复可见一次重算即补全。
@@ -164,5 +166,43 @@ describe('useTurnElapsed 可见性停表（Q1-7）', () => {
     vi.advanceTimersByTime(10_000)
     expect(exposed.elapsed.value).toBe('1s')
     expect(() => fireVisibilityChange()).not.toThrow()
+  })
+
+  it('完成态实例零 listener：未开始计时不挂 visibilitychange（W05 review，N 实例不叠 N listener）', () => {
+    const addSpy = vi.spyOn(document, 'addEventListener')
+    const { wrapper } = mountElapsed([makeAssistant(T0)], false)
+    // 早已完成/未开始的 Turn：不进入 startElapsedTimer → 不挂 document listener
+    expect(addSpy).not.toHaveBeenCalledWith('visibilitychange', expect.any(Function))
+    wrapper.unmount()
+  })
+
+  it('listener 生命周期与 streaming 对齐：开始计时挂载、完成定格摘除、二次周期不叠加', async () => {
+    const addSpy = vi.spyOn(document, 'addEventListener')
+    const removeSpy = vi.spyOn(document, 'removeEventListener')
+    const addedCount = () => addSpy.mock.calls.filter(([t]) => t === 'visibilitychange').length
+    const removedCount = () =>
+      removeSpy.mock.calls.filter(([t]) => t === 'visibilitychange').length
+
+    const { wrapper, streaming } = mountElapsed([makeAssistant(T0)], false)
+    expect(addedCount()).toBe(0) // 初始完成态：零 listener
+
+    // 完成 → streaming：startElapsedTimer 挂 listener
+    streaming.value = true
+    await nextTick()
+    expect(addedCount()).toBe(1)
+
+    // streaming → 完成：定格停表摘 listener
+    streaming.value = false
+    await nextTick()
+    expect(removedCount()).toBe(1)
+
+    // 二次 streaming 周期：再挂再摘，数量对齐（无叠加残留）
+    streaming.value = true
+    await nextTick()
+    streaming.value = false
+    await nextTick()
+    expect(addedCount()).toBe(2)
+    expect(removedCount()).toBe(2)
+    wrapper.unmount()
   })
 })

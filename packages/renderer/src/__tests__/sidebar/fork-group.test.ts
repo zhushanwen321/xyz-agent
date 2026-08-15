@@ -236,4 +236,40 @@ describe('U20: ForkGroup fresh 高亮 3.2s 后淡出', () => {
     expect(branchItemAfter.exists()).toBe(true)
     expect(branchItemAfter.classes()).not.toContain('fresh')
   })
+
+  it('mount 后 freshIds 数组引用更新：新增 id 启动计时出现 fresh class（浅 watch 增量触发，W05 review）', async () => {
+    const branches: SessionSummary[] = [
+      makeSession({ id: 'sess-branch-a', label: '分支 A' }),
+      makeSession({ id: 'sess-branch-b', label: '分支 B' }),
+    ] as SessionSummary[]
+
+    const ForkGroup = await loadForkGroup()
+    const wrapper = mount(ForkGroup, {
+      props: {
+        branches,
+        parentId: 'sess-active',
+        freshIds: [], // mount 时无 fresh
+      },
+    })
+
+    // 初始：两个分支项均无 fresh class
+    let items = wrapper.findAll('[data-testid="fork-group-branch"]')
+    expect(items).toHaveLength(2)
+    expect(items[0].classes()).not.toContain('fresh')
+    expect(items[1].classes()).not.toContain('fresh')
+
+    // 父组件替换 freshIds 数组引用（浅 watch 约定：更新经引用替换表达，原地 mutate 不触发）
+    // → 新增 id（sess-branch-b）启动计时，出现 fresh class
+    await wrapper.setProps({ freshIds: ['sess-branch-b'] })
+    items = wrapper.findAll('[data-testid="fork-group-branch"]')
+    expect(items[1].classes()).toContain('fresh')
+    // 不在 freshIds 中的 a 不受影响
+    expect(items[0].classes()).not.toContain('fresh')
+
+    // 增量触发的计时同样受 FRESH_FADE_MS 管辖：3.2s 后淡出
+    vi.advanceTimersByTime(FRESH_FADE_MS)
+    await nextTick()
+    items = wrapper.findAll('[data-testid="fork-group-branch"]')
+    expect(items[1].classes()).not.toContain('fresh')
+  })
 })

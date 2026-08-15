@@ -6,6 +6,9 @@
  * 2. 被驱逐 id 的迟到响应静默丢弃（resolveEnvelope 契约：no-op 不抛错）
  * 3. N 个 pending 只挂 ≤1 个共享 sweep timer（不再 per-request 一个 timer）
  * 4. timeoutMs=0 的请求不挂 timer 参与 sweep（无超时语义保持）
+ * 5. resolve/reject 删除条目后重算 sweep timer（W04 review：最后带 deadline 的
+ *    pending 正常完成时 timer 立即 disarm，不空转到原触发点）
+ * 6. 被驱逐 id 的迟到 error envelope 同样静默丢弃（对称路径）
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as pending from '@/api/pending'
@@ -107,5 +110,59 @@ describe('pending 容量上限 + 共享 sweep timer（Q1-5）', () => {
     vi.advanceTimersByTime(120_000)
     // 无 deadline 条目，sweep 无事可做
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('resolve/reject 后重算 sweep timer：最后带 deadline 的 pending settle 时 timer 立即清除（W04 review）', async () => {
+    // resolve 路径：唯一带 deadline 的 pending 正常完成 → disarm，不空转到原触发点
+    const id1 = pending.create()
+    const p1 = pending.register<string>(id1, 60_000)
+    expect(vi.getTimerCount()).toBe(1)
+    pending.resolve(id1, 'done')
+    await expect(p1).resolves.toBe('done')
+    expect(vi.getTimerCount()).toBe(0)
+
+    // reject 路径对称：settle 后 timer 同步清除
+    const id2 = pending.create()
+    const p2 = pending.register(id2, 60_000)
+    expect(vi.getTimerCount()).toBe(1)
+    pending.reject(id2, new Error('boom'))
+    await expect(p2).rejects.toThrow('boom')
+    expect(vi.getTimerCount()).toBe(0)
+
+    // 部分 settle：resolve 最早 deadline 条目后，剩余条目仍被 timer 管（不误 disarm）
+    const a = pending.create()
+    const b = pending.create()
+    void pending.register<string>(a, 1_000).catch(() => {})
+    void pending.register<string>(b, 60_000).catch(() => {})
+    expect(vi.getTimerCount()).toBe(1)
+    pending.resolve(a, 'early-done')
+    expect(vi.getTimerCount()).toBe(1) // b 的 deadline 仍被管
+    vi.advanceTimersByTime(60_000)
+    expect(vi.getTimerCount()).toBe(0) // b 超时 sweep 后 map 空 → disarm
+  })
+
+  it('被驱逐 id 的迟到 error envelope 经 resolveEnvelope 静默丢弃（对称路径：error type 不抛错不误伤其他请求）', async () => {
+    const victim = pending.create()
+    const victimPromise = pending.register(victim, 60_000)
+    // 填满至 256
+    for (let i = 0; i < 255; i++) {
+      registerSwallowed(pending.create(), 60_000)
+    }
+    // 下一个注册驱逐 victim（最老）
+    const newcomer = pending.create()
+    const pNew = pending.register<string>(newcomer, 60_000)
+
+    await expect(victimPromise).rejects.toMatchObject({ code: 'overflow' })
+
+    // 迟到的 error envelope 到达（runtime 慢回错误）：resolveEnvelope 的 pendingMap.has
+    // 前置守卫对 error 分支同样生效——已驱逐 id 不进 reject 展开，no-op
+    expect(() =>
+      pending.resolveEnvelope(
+        envelopeMsg('error', victim, { code: 'permission_denied', message: 'denied' }),
+      ),
+    ).not.toThrow()
+    // newcomer 不受影响（未被误 reject），仍可正常 settle
+    pending.resolve(newcomer, 'ok')
+    await expect(pNew).resolves.toBe('ok')
   })
 })
