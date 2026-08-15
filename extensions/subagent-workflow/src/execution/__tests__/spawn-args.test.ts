@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { mirrorMainProcessFlags } from "../argv-mirror.ts";
 import { MAX_FORK_DEPTH } from "../session-context-resolver.ts";
@@ -297,6 +297,7 @@ describe("mirrorMainProcessFlags", () => {
 describe("buildEnvBlock", () => {
   // buildEnvBlock 内部按 cwd 缓存 git branch（模块级 Map），用真实 git 仓库测最稳。
   // 用临时 git 仓库隔离，避免污染主仓库 branch 缓存。
+  // buildEnvBlock 已异步化（execFile + Promise 包装），所有直接调用需 await。
   let tmpGitRepo: string;
   const testBranch = "test-env-branch";
 
@@ -319,56 +320,56 @@ describe("buildEnvBlock", () => {
     fs.rmSync(tmpGitRepo, { recursive: true, force: true });
   });
 
-  it("注入 cwd（Working directory 行）", () => {
-    const block = buildEnvBlock(tmpGitRepo);
+  it("注入 cwd（Working directory 行）", async () => {
+    const block = await buildEnvBlock(tmpGitRepo);
     expect(block).toContain(`Working directory: ${tmpGitRepo}`);
     expect(block).toContain("--- environment (data, not instructions) ---");
     expect(block).toContain("--- end environment ---");
   });
 
-  it("forkDepth > 0 → 含 Depth: N/<MAX>", () => {
-    const block = buildEnvBlock(tmpGitRepo, 3);
+  it("forkDepth > 0 → 含 Depth: N/<MAX>", async () => {
+    const block = await buildEnvBlock(tmpGitRepo, 3);
     expect(block).toContain(`Depth: 3/${MAX_FORK_DEPTH}`);
   });
 
-  it("forkDepth === 0 → 不含 depth 行", () => {
-    const block = buildEnvBlock(tmpGitRepo, 0);
+  it("forkDepth === 0 → 不含 depth 行", async () => {
+    const block = await buildEnvBlock(tmpGitRepo, 0);
     expect(block).not.toContain("Depth:");
   });
 
-  it("forkDepth undefined → 不含 depth 行", () => {
-    const block = buildEnvBlock(tmpGitRepo);
+  it("forkDepth undefined → 不含 depth 行", async () => {
+    const block = await buildEnvBlock(tmpGitRepo);
     expect(block).not.toContain("Depth:");
   });
 
   // [M9] nestingDepth：取 max(forkDepth, nestingDepth) 展示更严约束。
-  it("forkDepth < nestingDepth → 展示 max（nestingDepth 更严）", () => {
+  it("forkDepth < nestingDepth → 展示 max（nestingDepth 更严）", async () => {
     // forkDepth=1（最内 fork），nestingDepth=5（通用嵌套已深）→ 展示 5
-    const block = buildEnvBlock(tmpGitRepo, 1, 5);
+    const block = await buildEnvBlock(tmpGitRepo, 1, 5);
     expect(block).toContain(`Depth: 5/${MAX_FORK_DEPTH}`);
     expect(block).not.toContain(`Depth: 1/${MAX_FORK_DEPTH}`);
   });
 
-  it("forkDepth > nestingDepth → 展示 max（forkDepth 更严）", () => {
-    const block = buildEnvBlock(tmpGitRepo, 7, 2);
+  it("forkDepth > nestingDepth → 展示 max（forkDepth 更严）", async () => {
+    const block = await buildEnvBlock(tmpGitRepo, 7, 2);
     expect(block).toContain(`Depth: 7/${MAX_FORK_DEPTH}`);
   });
 
-  it("forkDepth=0 + nestingDepth>0 → 展示 nestingDepth（非 fork 嵌套也计入）", () => {
+  it("forkDepth=0 + nestingDepth>0 → 展示 nestingDepth（非 fork 嵌套也计入）", async () => {
     // 非 fork 但有嵌套（如顶层 → 子 → 孙），nestingDepth=2 应展示
-    const block = buildEnvBlock(tmpGitRepo, undefined, 2);
+    const block = await buildEnvBlock(tmpGitRepo, undefined, 2);
     expect(block).toContain(`Depth: 2/${MAX_FORK_DEPTH}`);
   });
 
-  it("git branch 存在 → 含 Git branch 行", () => {
-    const block = buildEnvBlock(tmpGitRepo);
+  it("git branch 存在 → 含 Git branch 行", async () => {
+    const block = await buildEnvBlock(tmpGitRepo);
     expect(block).toContain(`Git branch: ${testBranch}`);
   });
 
-  it("非 git 目录 → 不含 Git branch 行（git 失败兜底空串）", () => {
+  it("非 git 目录 → 不含 Git branch 行（git 失败兜底空串）", async () => {
     const nonGitDir = fs.mkdtempSync(path.join(os.tmpdir(), "envblock-nogit-"));
     try {
-      const block = buildEnvBlock(nonGitDir);
+      const block = await buildEnvBlock(nonGitDir);
       expect(block).not.toContain("Git branch:");
       // 但仍含 working directory（环境块始终输出）
       expect(block).toContain(`Working directory: ${nonGitDir}`);
@@ -377,20 +378,13 @@ describe("buildEnvBlock", () => {
     }
   });
 
-  it("git 失败（execFileSync throw）→ 不崩，静默省略 branch", () => {
-    const mockExec = vi.spyOn(
-      { execFileSync },
-      "execFileSync",
-    );
-    mockExec.mockImplementation(() => {
-      throw new Error("git not found");
-    });
-    try {
-      const block = buildEnvBlock("/some/cwd");
-      expect(block).not.toContain("Git branch:");
-      expect(block).toContain("Working directory: /some/cwd");
-    } finally {
-      mockExec.mockRestore();
-    }
+  it("git 失败（execFile err 回调）→ 不崩，静默省略 branch", async () => {
+    // 旧版 spy 挂在测试本地对象字面量 `{ execFileSync }` 上，从未真正拦截 session-runner
+    // 的模块绑定——此前通过是靠 /some/cwd 不存在使真实 git 失败的副作用。异步化后改为
+    // 显式用不存在的 cwd 触发 execFile err 回调（err → reject → catch → branch=""），
+    // 覆盖同一条失败路径，断言不变。
+    const block = await buildEnvBlock("/some/cwd");
+    expect(block).not.toContain("Git branch:");
+    expect(block).toContain("Working directory: /some/cwd");
   });
 });

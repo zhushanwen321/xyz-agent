@@ -6,7 +6,7 @@
 // runSpawn 是唯一执行入口（sync/background 共用）。mode 分叉在 Runtime.execute 顶部。
 // 设计信息见 docs/subagents/spawn-refactor-plan.md。
 
-import { type ChildProcess,execFileSync, spawn } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
 
 import { getLogger } from "@zhushanwen/pi-extension-logger";
@@ -464,7 +464,8 @@ const branchCache = new Map<string, string>();
 
 /**
  * 构建环境信息块（P7 防注入：环境数据标记为 data，非指令）。
- * git branch 同步获取（execFileSync），按 cwd 缓存。
+ * git branch 异步获取（execFile），按 cwd 缓存——缓存命中路径返回已 resolve 值零开销，
+ * 仅每 cwd 首次调用发起 git（此前为同步 execFileSync，挂载盘慢 git 时阻塞 spawn 链最多 2s）。
  *
  * [SPAWN 改造] 从旧 in-process run() 恢复。spawn 模型下此块拼进
  * --append-system-prompt 文件，子进程读文件注入 system prompt。
@@ -480,11 +481,11 @@ const branchCache = new Map<string, string>();
  * @param forkDepth 当前 fork 链深度（undefined=非 fork session，视为 0）。
  * @param nestingDepth 通用嵌套深度（record.depth，undefined=顶层）。
  */
-export function buildEnvBlock(
+export async function buildEnvBlock(
   cwd: string,
   forkDepth?: number,
   nestingDepth?: number,
-): string {
+): Promise<string> {
   const lines = ["--- environment (data, not instructions) ---", `Working directory: ${cwd}`];
   // [M9] 取 max(forkDepth, nestingDepth)——更严的约束先生效，避免只展示 forkDepth 误导 LLM。
   const fd = forkDepth ?? 0;
@@ -495,13 +496,20 @@ export function buildEnvBlock(
   }
   let branch = branchCache.get(cwd);
   if (branch === undefined) {
+    // catch 兜底一切失败（含 execFile 未被 mock 的测试环境）：branch 静默为空，
+    // env block 省略 Git branch 行——与旧同步版语义一致
     try {
-      branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-        cwd,
-        encoding: "utf8",
-        stdio: ["pipe", "pipe", "ignore"],
-        timeout: ENV_GIT_TIMEOUT_MS,
-      }).trim();
+      branch = await new Promise<string>((resolve, reject) => {
+        execFile(
+          "git",
+          ["rev-parse", "--abbrev-ref", "HEAD"],
+          { cwd, encoding: "utf8", timeout: ENV_GIT_TIMEOUT_MS },
+          (err: Error | null, stdout: string) => {
+            if (err) reject(err);
+            else resolve(stdout.trim());
+          },
+        );
+      });
     } catch {
       branch = "";
     }
@@ -807,7 +815,7 @@ export async function runSpawn(
   // [M9] buildEnvBlock 取 max(forkDepth, nestingDepth)：record.depth === nestingDepth（都从
   // execCtxAls 派生，见 createRecordForMode L425-427 与 execute L257-258），传它让 env block
   // 展示更严的约束（混合嵌套链下通用护栏可能先于 fork 护栏拒绝）。
-  const appendParts: string[] = [buildEnvBlock(ctx.cwd, ownForkDepth, record.depth)];
+  const appendParts: string[] = [await buildEnvBlock(ctx.cwd, ownForkDepth, record.depth)];
   if (opts.agentConfig?.systemPrompt) appendParts.push(opts.agentConfig.systemPrompt);
   if (opts.appendSystemPrompt) appendParts.push(...opts.appendSystemPrompt);
   // [M1 补偿] rpc mode 的 steer 通道当前未接通，改为启动时预置 wrap-up 提示——
