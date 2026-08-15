@@ -184,10 +184,14 @@ export class EventInterpreter {
         // 两者的 payload 是 { sessionId, delta, contentIndex? }（event-adapter :99-106），
         // 永不带 customType，跳过的两个检查函数（handleSubagentBgNotify / handleWorkflowResult
         // 首行 customType 守卫）对它们恒 early-return，行为与走 handle 完全一致。
+        // 运行时护栏（W09 review 补）：快速路径条件额外要求 payload 无 customType——
+        // 未来若新增带 customType 的 delta 产出点，缺此护栏会静默绕过两个检查函数，
+        // 此处强制其回落完整 handle 路径。
         // 仍在 W1 try 内：send 抛错不中断批次。
         if (ev.kind === 'message') {
           const t = ev.message.type
-          if (t === 'message.text_delta' || t === 'message.thinking_delta') {
+          if ((t === 'message.text_delta' || t === 'message.thinking_delta')
+            && !('customType' in (ev.message.payload ?? {}))) {
             this.opts.send(ev.message)
             continue
           }

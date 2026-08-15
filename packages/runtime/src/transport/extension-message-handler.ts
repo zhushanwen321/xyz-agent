@@ -21,9 +21,15 @@ export interface ExtensionHandlerContext extends MessageHandlerContext {
   nextPushId(): string
   /**
    * IMessageBus（wave:perf-w08 接入，wave:perf-w09 单通道化）：extension.ui_timeout 的
-   * 唯一发布通道（broadcast 依赖已随 D1-2 删双写移除）。由 server.setServices 装配。
+   * 主发布通道（broadcast 依赖已随 D1-2 删双写移除）。由 server.setServices 装配。
    */
   messageBus?: IMessageBus
+  /**
+   * 全局广播兜底（server.setServices 注入 broker.broadcast 封装）：bus 未装配
+   * （测试构造 / 组合根装配顺序异常）时 extension.ui_timeout 回退此通道——保持
+   * 「消息不丢」兜底哲学，对齐 plugin-service publishViewUpdate 的 broadcastOrBroker 回退。
+   */
+  broadcast(msg: ServerMessage): void
 }
 
 export class ExtensionMessageHandler {
@@ -77,10 +83,16 @@ export class ExtensionMessageHandler {
       payload: { sessionId, requestId },
     }
     // wave:perf-w09（02 文档 D1-2）：payload 恒含 sessionId（handleExtensionTimeout 的
-    // sessionId 参数）→ bus.publish 定向发布是唯一通道（extension.ui_timeout 归 stream 类：
-    // 分配 seq + 入 ring，重连可回放）。W08 的 broadcast 双写腿已删——盲广播会推给未订阅
-    // 该 sid 的连接，且已订阅 renderer 靠 seq-gap drop 第二条的兼容负担随之消失。
-    this.ctx.messageBus?.publish(sessionId, timeoutMsg)
+    // sessionId 参数）→ bus.publish 定向发布是主通道（extension.ui_timeout 归 stream 类：
+    // 分配 seq + 入 ring，重连可回放），不再盲广播——盲广播会推给未订阅该 sid 的连接，
+    // 且已订阅 renderer 靠 seq-gap drop 第二条的兼容负担随之消失。
+    // bus 未装配 → 回退 broker.broadcast 兜底（W09 review 修正：不能静默丢弃，对齐
+    // plugin-service 的「消息不丢」哲学；组合根恒装配 bus，此为防御路径）。
+    if (this.ctx.messageBus) {
+      this.ctx.messageBus.publish(sessionId, timeoutMsg)
+      return
+    }
+    this.ctx.broadcast(timeoutMsg)
   }
 
   async handleExtensionMessage(msg: ClientMessage, ws: WsType): Promise<void> {

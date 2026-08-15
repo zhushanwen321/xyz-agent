@@ -45,7 +45,8 @@ import { getSkillDirs } from './infra/pi/discovery-store.js'
 import { expandHome } from './utils/path-utils.js'
 import { HandoffService } from './services/handoff-service.js'
 // MessageBus（wave:bus-core 产物）：per-session 消息广播核心。
-// wave:runtime-wiring 在组合根创建单例并注入到 SessionService（session 级消息双写走 bus.publish）+
+// wave:runtime-wiring 在组合根创建单例并注入到 SessionService（session 级消息单通道走
+// bus.publish——wave:perf-w09 D1-2 删双写后唯一通道）+
 // RuntimeServer（subscribe/unsubscribe RPC handler + ConnectionManager.onClose → unsubscribeAll）。
 // 保留 re-export 供外部消费（renderer-subscribe wave 等可能 import 类型）。
 import { MessageBus } from './services/message-bus/message-bus.js'
@@ -322,7 +323,8 @@ async function main(): Promise<void> {
     // 与 GitExecutor 同为 git 域 infra，但语义不同（窄查询 vs 通用 exec）——故独立 port（services/ports/git-info.ts）。
     new GitInfoReader(),
     workspaceService,
-    // messageBus：注入 dispatcher 的 session 级事件双写（dispatcher 内部 bus?.publish after broker.broadcast）。
+    // messageBus：注入 dispatcher 的 session 级事件通道（wave:perf-w09 D1-2 后单通道——
+    // dispatcher 只依赖 publish 抽象，bus.publish 是唯一出口，broker 依赖已随接口收敛删除）。
     messageBus,
   )
 
@@ -406,9 +408,13 @@ async function main(): Promise<void> {
   // 注入 PresetService 供 getLaunchPresetOptions 委托（spawn pi 时按 launch preset 构建 args）。
   // 与 setConfigService 同模式（pi-launch-presets 设计 §8.1 + §4.3）。
   sessionService.setPresetService(presetService)
-  // 注入 MessageBus（wave:runtime-wiring）：session 级消息（带 sessionId payload）双写走 bus.publish
-  //（bus 负责 per-session seq 分配 + ring buffer + 订阅者广播），session 销毁时 removeSessionEntry
-  // 调 bus.clearSession。与 setConfigService 同模式（setter 注入，避免破坏 SessionService 测试构造点）。
+  // 注入 MessageBus（wave:runtime-wiring）：session 级消息（带 sessionId payload）单通道走
+  // bus.publish（wave:perf-w09 D1-2 删双写后唯一通道；bus 负责 per-session seq 分配 + ring
+  // buffer + 订阅者广播），session 销毁时 removeSessionEntry 调 bus.clearSession。
+  // 与 setConfigService 同模式（setter 注入，避免破坏 SessionService 测试调用点）。
+  // bus 两条注入通道（构造参数 + 本 setter）组合根都走：构造参数经 SessionService 构造器
+  // 传导给 dispatcher；setter 内部同步回填 dispatcher（仅走 setter 路径时保证 dispatcher
+  // 不持 undefined bus，见 session-service.setMessageBus）。
   sessionService.setMessageBus(messageBus)
 
   // ── SkillRegistry（W1）：全局 + 项目级 skill 缓存 + chokidar 文件监听 ──
@@ -428,7 +434,8 @@ async function main(): Promise<void> {
   // wave:perf-w07（D1-1 / R-05）：发布通道从 broker.broadcast 改为 MessageBus——terminal 三类
   // 消息按 topicOf 分类（data=transient 直传、alive/exit=stream 入 ring）定向推给订阅该 sid 的 ws。
   // publish-only 不叠加 broadcast：terminal.data 无 seq，叠加盲广播会被已订阅 renderer 双 dispatch
-  // （终端输出重复渲染），见 TerminalServiceDeps.publish 注释。W09 删双写时统一收口。
+  // （终端输出重复渲染），见 TerminalServiceDeps.publish 注释。W09（D1-2）删双写已落地——
+  // bus.publish 是 session 级消息唯一通道，publish-only 即终态语义（非过渡态）。
   // Phase 6 接入 configService 读 shell 配置（当前用 $SHELL fallback）。
   const terminalService = new TerminalService({
     publish: (sid, msg) => messageBus.publish(sid, msg),

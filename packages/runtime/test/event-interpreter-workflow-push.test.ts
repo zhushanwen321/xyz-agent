@@ -135,4 +135,48 @@ describe('EventInterpreter · workflow 实时推送 session.workflowUpdate', () 
 
     expect(findWorkflowUpdate()).toBeUndefined()
   })
+
+  // ── W09 review：微项 4 快速路径的 customType 运行时护栏 ──────
+  describe('W09 微项 4 快速路径 customType 护栏', () => {
+    /** 构造 text_delta message 事件（可选注入 customType 模拟未来新增产出点） */
+    function textDelta(payloadExtra?: Record<string, unknown>): PiTranslatedEvent {
+      return {
+        kind: 'message',
+        message: {
+          type: 'message.text_delta',
+          payload: { sessionId: 'sid-wf', delta: 'x', ...payloadExtra },
+        },
+      }
+    }
+
+    it('无 customType 的 text_delta 走快速路径：只 send 一次，零 workflowUpdate（纯转发）', () => {
+      const interpreter = new EventInterpreter('sid-wf', { send })
+
+      interpreter.interpret([textDelta()])
+
+      expect(sent).toHaveLength(1)
+      expect(sent[0]!.type).toBe('message.text_delta')
+      expect(findWorkflowUpdate()).toBeUndefined()
+    })
+
+    it('带 customType 的 text_delta 回落完整检查路径：handleWorkflowResult 生效，广播 session.workflowUpdate', () => {
+      const interpreter = new EventInterpreter('sid-wf', { send })
+
+      // 模拟未来新增「带 customType 的 delta 产出点」：护栏必须使其绕开快速路径，
+      // 否则 workflow-result 检查被静默跳过（W09 review 指出的绕过风险）。
+      interpreter.interpret([
+        textDelta({ customType: 'workflow-result', details: { runId: 'wf-guard-1', status: 'done', reason: 'completed' } }),
+      ])
+
+      // delta 本身仍被转发（完整路径的 message 分支同样 send）+ workflowUpdate 被广播
+      expect(sent).toHaveLength(2)
+      expect(sent[0]!.type).toBe('message.text_delta')
+      const update = findWorkflowUpdate()
+      expect(update).toBeDefined()
+      expect(update!.payload).toMatchObject({
+        sessionId: 'sid-wf',
+        update: { runId: 'wf-guard-1', status: 'done', reason: 'completed' },
+      })
+    })
+  })
 })

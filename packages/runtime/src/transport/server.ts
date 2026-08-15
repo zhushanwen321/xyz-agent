@@ -201,7 +201,9 @@ export class RuntimeServer implements IMessageBroker {
       extensionService: this.extensionService,
       extensionTimeoutMgr: this.extensionTimeoutMgr,
       nextPushId: () => this.broker.nextPushId(),
-      // wave:perf-w09（D1-2）：extension.ui_timeout 单通道走 bus.publish（broadcast 注入已删）
+      // wave:perf-w09（D1-2）：extension.ui_timeout 主通道走 bus.publish；broadcast 是
+      // bus 未装配时的「消息不丢」兜底（对齐 plugin-service 的回退哲学）
+      broadcast: (msg) => this.broker.broadcast(msg),
       messageBus: this.messageBus,
     })
     this.pluginMessageHandler = new PluginMessageHandler({

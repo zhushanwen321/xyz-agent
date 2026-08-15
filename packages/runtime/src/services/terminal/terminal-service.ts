@@ -31,12 +31,12 @@ export interface TerminalServiceDeps {
    * 组合根注入 bus.publish 封装——topicOf 三分类自动分流：terminal.data=transient（不占
    * seq 不入 ring 直传）、terminal.alive/exit=stream（分配 seq 入 ring，可回放）。
    *
-   * [过渡态语义：publish-only，不叠加 broker.broadcast] terminal.data 是 transient 无 seq，
+   * [终态语义：publish-only，不叠加 broker.broadcast] terminal.data 是 transient 无 seq，
    * 若叠加盲广播，已订阅 renderer 会双 dispatch（seq-gap 对无 seq 消息不去重，分支 3 直通）
    * → 终端输出重复渲染。与 02 文档 D1-1 对 plugin:viewUpdate（同为 transient）的
    * 「publish 且不再 broadcast」定案同判据。renderer 侧 useSessionStreamSync 对 list 内
    * session 全量订阅（terminal 只在 session panel 打开时 spawn，该 session 必然已订阅）。
-   * W09（D1-2）删双写时统一收口其余 session 级 broadcast。
+   * W09（D1-2）删双写已落地——bus.publish 是 session 级消息唯一通道，publish-only 即终态。
    */
   publish: (sessionId: string, msg: ServerMessage) => void
   /**

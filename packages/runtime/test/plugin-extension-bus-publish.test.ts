@@ -6,8 +6,8 @@
  *   不入 ring、seq 计数不推进、不再全局 broadcast；bus 未装配回退全局广播。
  * - plugin:uiRequest（stream）：sid 为 string 且 bus 装配 → publish 定向（有 seq、
  *   入 ring 可回放）且不再 broadcast；sid undefined（无活跃 session）保持全局 broadcast。
- * - extension.ui_timeout（stream）：payload 恒含 sessionId → bus publish（有 seq、
- *   入 ring）+ broadcast 双写过渡态（W09 按全量审计统一收口）；bus 未装配仅 broadcast。
+ * - extension.ui_timeout（stream）：payload 恒含 sessionId → bus publish 单通道
+ *   （有 seq、入 ring；W09 D1-2 已收口）；bus 未装配回退 broadcast 兜底（消息不丢）。
  *
  * 测试框架：vitest（禁止 node:test）。运行：
  * cd packages/runtime && npx vitest run test/plugin-extension-bus-publish.test.ts
@@ -146,7 +146,8 @@ describe('W08: plugin:viewUpdate 经 bus publish（transient）', () => {
     // 直接调 publishViewUpdate 两次（rpc dispatch 路径等价，绕开 worker 回环更聚焦 id 语义）
     const mkPayload = (viewId: string) => ({
       sessionId: 's1', viewId, pluginId: 'p1',
-      guiTree: [] as unknown[], updatedAt: Date.now(),
+      // 空树字面量推断 never[]，可赋给 GuiComponent[]（原 `as unknown[]` 逃逸类型检查，tsc 报错）
+      guiTree: [], updatedAt: Date.now(),
     })
     service.publishViewUpdate(mkPayload('v1'))
     service.publishViewUpdate(mkPayload('v2'))
@@ -242,7 +243,7 @@ describe('W08: plugin:uiRequest 经 bus publish（stream）', () => {
 })
 
 // ══════════════════════════════════════════════════════════════
-// extension.ui_timeout —— stream 类（publish + broadcast 双写过渡态）
+// extension.ui_timeout —— stream 类（bus 单通道 + broadcast 兜底）
 // ══════════════════════════════════════════════════════════════
 
 describe('W08/W09: extension.ui_timeout 经 bus publish（stream，单通道）', () => {
@@ -289,12 +290,18 @@ describe('W08/W09: extension.ui_timeout 经 bus publish（stream，单通道）'
     expect(broadcast).not.toHaveBeenCalled()
   })
 
-  it('bus 未装配 → 不抛错（publish no-op；组合根恒装配 bus，此为防御语义）', () => {
+  it('bus 未装配 → 回退 broadcast 兜底（消息不丢，对齐 plugin-service 语义）', () => {
     const { broadcast, handler } = makeTimeoutHandler(false)
 
-    // wave:perf-w09（D1-2）：broadcast 腿已删，bus 未装配时 ui_timeout 静默 no-op
+    // W09 review 修正：bus 未装配时不能静默丢弃——回退 broker.broadcast 盲广播，
+    // 与 plugin-service publishViewUpdate 的 broadcastOrBroker 兜底同「消息不丢」哲学
+    //（组合根恒装配 bus，此为防御路径的真实兜底行为断言）。
     handler.handleExtensionTimeout('s1', 'r1', 'confirm')
 
-    expect(broadcast).not.toHaveBeenCalled()
+    expect(broadcast).toHaveBeenCalledTimes(1)
+    const msg = broadcast.mock.calls[0][0] as { type: string; payload: { sessionId: string; requestId: string } }
+    expect(msg.type).toBe('extension.ui_timeout')
+    expect(msg.payload.sessionId).toBe('s1')
+    expect(msg.payload.requestId).toBe('r1')
   })
 })

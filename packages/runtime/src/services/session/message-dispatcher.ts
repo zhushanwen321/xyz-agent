@@ -40,8 +40,19 @@ export class MessageDispatcher {
     private readonly svc: ISessionServiceInternal,
     private readonly pm: IProcessManager,
     private readonly workspaceService: WorkspaceService,
-    private readonly messageBus?: IMessageBus,
+    private messageBus?: IMessageBus,
   ) {}
+
+  /**
+   * 后置注入 / 回填 MessageBus（SessionService.setMessageBus 同步回填调用）。
+   *
+   * bus 的两条注入通道：①构造参数（index.ts 构造 SessionService 时传导）；
+   * ②SessionService.setMessageBus 后置注入路径——该路径下 dispatcher 已构造（bus 为
+   * undefined），必须回填，否则全部 session 级发布静默 no-op（null-safe 但消息丢失）。
+   */
+  setMessageBus(bus: IMessageBus): void {
+    this.messageBus = bus
+  }
 
   /** 注册消息发送前 hook(PluginService 调用,实现 beforeSend 拦截)。 */
   setSendMessageHook(hook: SendMessageHook): void {

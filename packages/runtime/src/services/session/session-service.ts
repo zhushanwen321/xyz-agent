@@ -147,10 +147,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   /**
    * MessageBus 引用（组合根注入，wave:runtime-wiring）。
    *
-   * session 级消息（带 sessionId payload）走 bus.publish（per-session 单调 seq + ring buffer +
-   * 订阅者广播），全局消息（无 sessionId）仍走 broker.broadcast 盲广播。过渡期双写
-   * （R1 mitigation：bus.publish + broker.broadcast 都发，移除 bandaids wave 后评估删除
-   * broker.broadcast 的 session 级路径）。session 销毁时调 bus.clearSession 彻底清理
+   * session 级消息（带 sessionId payload）单通道走 bus.publish（per-session 单调 seq +
+   * ring buffer + 订阅者广播；wave:perf-w09 D1-2 删双写后唯一通道），全局消息（无 sessionId）
+   * 仍走 broker.broadcast 盲广播。session 销毁时调 bus.clearSession 彻底清理
    * （removeSessionEntry 触发，所有删除路径汇聚处）。
    *
    * 经 setter 注入（同 setConfigService/setPresetService/setOnMessageComplete 模式），
@@ -264,12 +263,19 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   /**
    * 注入 MessageBus 单例（组合根在所有服务构造后调用，wave:runtime-wiring）。
    *
-   * session 级消息（带 sessionId payload）经 send 回调 / fetchAndBroadcast* 双写走 bus.publish；
-   * session 销毁时 removeSessionEntry 调 bus.clearSession。未注入时所有 bus 调用 no-op，
-   * 与 setConfigService/setOnMessageComplete 同模式（nullable 注入，不破坏现有测试构造点）。
+   * session 级消息（带 sessionId payload）单通道走 bus.publish（wave:perf-w09 D1-2 删双写后
+   * 唯一通道）；session 销毁时 removeSessionEntry 调 bus.clearSession。未注入时所有 bus 调用
+   * no-op，与 setConfigService/setOnMessageComplete 同模式（nullable 注入，不破坏现有测试构造点）。
+   *
+   * bus 有两条注入通道：①构造参数（index.ts 构造 SessionService 时传入，经构造器传导给
+   * dispatcher）；②本 setter（后置注入）。走 ② 时 dispatcher 已在构造器中创建（持有旧 bus
+   * 或 undefined），故此处必须同步回填 dispatcher.setMessageBus——否则 dispatcher 的全部
+   * session 级发布静默 no-op（null-safe 但消息丢失）。组合根两条通道都走（幂等：回填同一
+   * 引用无副作用）。
    */
   setMessageBus(bus: IMessageBus): void {
     this.messageBus = bus
+    this.dispatcher.setMessageBus(bus)
   }
 
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────
