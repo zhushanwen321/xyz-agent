@@ -91,7 +91,9 @@ describe('deleteMessages', () => {
 
   it('删除不存在的 key：Map 仍整体替换，其他条目内容不变', () => {
     const ref = makeRef({ s0: [makeMessage('m0')] })
+    const before = ref.value
     deleteMessages(ref, 'nope')
+    expect(ref.value).not.toBe(before) // deleteMessages 无条件 new Map 整体替换（不查 key 是否存在）
     expect(ref.value.has('nope')).toBe(false)
     expect(ref.value.get('s0')!.value).toHaveLength(1)
   })
