@@ -17,7 +17,7 @@ import type { CommandRegistration } from './api/commands-api.js'
 import type { InstallResult } from '../ports/plugin-installer.js'
 import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept, BridgeToolCache, PI_HOOK_EVENT_MAP } from './bridge-interop.js'
 import { toConfigKey, fromConfigKey, isConfigKey } from './api/config-api.js'
-import { HookPipeline } from './hook-pipeline.js'
+import { HookPipeline, OBSERVE_HOOK_TYPES } from './hook-pipeline.js'
 import { UiRequestQueue } from './ui-request-queue.js'
 import { StatusBarRegistry } from './status-bar-registry.js'
 import { PermissionStorage } from './plugin-permission-storage.js'
@@ -308,6 +308,7 @@ export class PluginService implements IPluginService {
         await this.activator.deactivatePlugin(pluginId, this.host)
         this.activator.stopWatching(pluginId) // 停止热重载监听
         this.statusBarRegistry.clearForPlugin(pluginId) // 清理 status bar items
+        this.removeHookEntriesFor(pluginId) // P-1：清 hook 注册，禁用插件的 hook 不再执行
       }
      
     } catch (err: unknown) {
@@ -340,9 +341,7 @@ export class PluginService implements IPluginService {
         this.toolRegistry.delete(key)
       }
     }
-    for (const [hookType, entries] of this.hookPipeline.registry) {
-      this.hookPipeline.registry.set(hookType, entries.filter(e => e.pluginId !== pluginId))
-    }
+    this.removeHookEntriesFor(pluginId)
     // 清理命令注册表（插件卸载后残留命令会导致 invoke 通知发向已死 worker）
     for (const [commandId, reg] of this.commandRegistry) {
       if (reg.pluginId === pluginId) {
@@ -356,6 +355,23 @@ export class PluginService implements IPluginService {
     await this.syncToolsToBridge()
     this.broadcastPluginList()
     return this.getDiscoveredPlugins()
+  }
+
+  /**
+   * 清理指定插件的全部 hook 注册条目（P-1：togglePlugin(false) 与 uninstallPlugin 共用）。
+   *
+   * filter 重建数组保序（注册时的 priority 排序不受影响）；清空的 hookType 条目整键删除。
+   * Worker 侧对偶清理在 plugin-bootstrap 的 'deactivate' 分支（disposePluginHooks）。
+   */
+  private removeHookEntriesFor(pluginId: string): void {
+    for (const [hookType, entries] of this.hookPipeline.registry) {
+      const filtered = entries.filter(e => e.pluginId !== pluginId)
+      if (filtered.length === 0) {
+        this.hookPipeline.registry.delete(hookType)
+      } else {
+        this.hookPipeline.registry.set(hookType, filtered)
+      }
+    }
   }
 
   async approvePermissions(pluginId: string, permissions: string[]): Promise<void> {
@@ -447,8 +463,18 @@ export class PluginService implements IPluginService {
     })
   }
 
-  /** 执行 hookType 的钩子管道（委托 HookPipeline：排序/串行/5s 超时/block/transform） */
+  /**
+   * 执行 hookType 的钩子管道。
+   *
+   * observe 类 hookType（OBSERVE_HOOK_TYPES，D2-2）走零往返快捷路径：notifyObservers
+   * 经 rpcServer.notify 派发后立即返回（无 pending/超时定时器/响应等待）；block/transform
+   * 类委托 HookPipeline.execute（排序/串行/5s 超时/block/transform）。
+   */
   async executeHooks(hookType: string, context: HookContext): Promise<HookResult> {
+    if (OBSERVE_HOOK_TYPES.has(hookType)) {
+      this.hookPipeline.notifyObservers(hookType, context)
+      return { blocked: false }
+    }
     return this.hookPipeline.execute(hookType, context)
   }
 
@@ -471,9 +497,10 @@ export class PluginService implements IPluginService {
 
   /**
    * 处理 bridge 发起的工具执行请求（ADR-0012 契约不变）。委托 bridge-interop。
+   * 传 bridgeToolCache 的 name 索引（微项 7：O(1) 路由；索引随 syncToolsToBridge 刷新）。
    */
   async handleBridgeToolExecute(request: BridgeToolExecuteRequest): Promise<BridgeToolExecuteResponse> {
-    return handleBridgeToolExecute(request, this.toolRegistry, this.host, this.rpcServer)
+    return handleBridgeToolExecute(request, this.toolRegistry, this.host, this.rpcServer, this.bridgeToolCache)
   }
 
   handleBridgeEvent(eventName: string, data: unknown, sessionId: string): void {

@@ -142,6 +142,13 @@ export class PluginHost implements PluginHostContract {
   private memoryMonitorTimer: ReturnType<typeof setInterval> | null = null
   private trustedCounter = 0
 
+  /**
+   * pluginId → workerId 反向索引（D2-5：getWorkerHandle O(1)，替代全 worker 线性扫）。
+   * assign/terminate/crash/rebuild/shutdown 同步维护；sandbox 插件不进此索引
+   * （getWorkerHandle 未命中时转调子进程宿主）。
+   */
+  private pluginToWorker = new Map<string, string>()
+
   /** sandbox 插件子进程宿主（fork 版，惰性创建；无 sandbox 插件时不创建） */
   private processHost: PluginHostProcess | null = null
   private readonly processHostOptions?: PluginPoolOptions
@@ -231,6 +238,7 @@ export class PluginHost implements PluginHostContract {
         handle.pluginIds.length < MAX_PLUGINS_PER_TRUSTED_WORKER
       ) {
         handle.pluginIds.push(pluginId)
+        this.pluginToWorker.set(pluginId, handle.workerId)
         return handle.workerId
       }
     }
@@ -284,6 +292,9 @@ export class PluginHost implements PluginHostContract {
     const worker = this.workerInstances.get(workerId)
     if (!worker) return
 
+    const handle = this.workers.get(workerId)
+    if (handle) this.removeIndexEntries(workerId, handle.pluginIds)
+
     this.rpcServer.unregisterWorker(workerId)
     await worker.terminate()
     this.workerInstances.delete(workerId)
@@ -292,15 +303,15 @@ export class PluginHost implements PluginHostContract {
 
   /**
    * 满足 PluginHostContract 接口：按 pluginId 查找 Worker，返回带 postMessage 的句柄。
+   * 反向索引 O(1) 命中（D2-5）；未命中转调子进程宿主（sandbox 插件）。
    */
   getWorkerHandle(pluginId: string): { workerId: string; postMessage(message: unknown): void } | undefined {
-    for (const handle of this.workers.values()) {
-      if (handle.pluginIds.includes(pluginId)) {
-        const worker = this.workerInstances.get(handle.workerId)
-        return {
-          workerId: handle.workerId,
-          postMessage: (message: unknown) => worker?.postMessage(message),
-        }
+    const workerId = this.pluginToWorker.get(pluginId)
+    if (workerId !== undefined) {
+      const worker = this.workerInstances.get(workerId)
+      return {
+        workerId,
+        postMessage: (message: unknown) => worker?.postMessage(message),
       }
     }
     // sandbox 插件：转调子进程宿主（字段映射 processId → workerId，activator 消费 handle.workerId）
@@ -312,6 +323,15 @@ export class PluginHost implements PluginHostContract {
       }
     }
     return undefined
+  }
+
+  /** 反向索引删除（带归属守卫：只删当前映射仍指向 workerId 的条目，防误删重建后的新映射） */
+  private removeIndexEntries(workerId: string, pluginIds: string[]): void {
+    for (const pid of pluginIds) {
+      if (this.pluginToWorker.get(pid) === workerId) {
+        this.pluginToWorker.delete(pid)
+      }
+    }
   }
 
   /** 按 workerId 查找 WorkerHandle（内部和测试用） */
@@ -354,6 +374,7 @@ export class PluginHost implements PluginHostContract {
     )
     this.workerInstances.clear()
     this.workers.clear()
+    this.pluginToWorker.clear()
     this.rpcServer.dispose()
   }
 
@@ -420,6 +441,7 @@ export class PluginHost implements PluginHostContract {
 
     this.workers.set(workerId, handle)
     this.workerInstances.set(workerId, worker)
+    this.pluginToWorker.set(pluginId, workerId)
     this.rpcServer.registerWorker(workerId, worker)
 
     worker.on('message', (msg: unknown) => {
@@ -481,6 +503,7 @@ export class PluginHost implements PluginHostContract {
     const pluginIds = [...handle.pluginIds]
     const trustLevel = handle.trustLevel
     this.rpcServer.unregisterWorker(workerId)
+    this.removeIndexEntries(workerId, pluginIds)
 
     if (trustLevel === 'trusted') {
       // Save plugin info for potential rebuild before cleanup
@@ -533,6 +556,7 @@ export class PluginHost implements PluginHostContract {
     // Add remaining plugins to the shared worker
     for (let i = 1; i < pluginIds.length; i++) {
       handle.pluginIds.push(pluginIds[i])
+      this.pluginToWorker.set(pluginIds[i], newWorkerId)
     }
 
     console.log(`[plugin-host] rebuilt trusted worker ${oldWorkerId} as ${newWorkerId} for plugins: ${pluginIds.join(',')}`)

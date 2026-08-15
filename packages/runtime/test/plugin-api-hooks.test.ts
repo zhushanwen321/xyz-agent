@@ -16,6 +16,7 @@ import {
   registerHookRpcHandlers,
   createHookApi,
   executeHookRequest,
+  disposePluginHooks,
 } from '../src/services/plugin-service/hook-api.js'
 import type { PluginRpcClient } from '../src/services/plugin-service/plugin-rpc-client.js'
 import type { HookEntry, PluginDescriptor, Disposable } from '../src/services/plugin-service/plugin-types.js'
@@ -241,7 +242,8 @@ describe('Hook API — createHookApi (Worker side)', () => {
     const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')!
     expect(registerCall).toBeTruthy()
     expect(registerCall.params.pluginId).toBe('test-plugin')
-    expect(registerCall.params.hookType).toBe('onPiEvent:session:create')
+    // D2-4：注册 key 统一泛型 'onPiEvent'（事件名经 context 传给 handler，插件自滤）
+    expect(registerCall.params.hookType).toBe('onPiEvent')
     expect(typeof registerCall.params.handlerId === 'string').toBeTruthy()
 
     const handlerId = registerCall.params.handlerId as string
@@ -383,5 +385,72 @@ describe('executeHookRequest (D2-1 request direct path)', () => {
   it('returns { proceed: true } for malformed params (no handlerId)', async () => {
     const result = await executeHookRequest({})
     expect(result).toEqual({ proceed: true })
+  })
+})
+
+// ── P-5: 多执行器互不串扰（NOT_CLAIMED 链式认领） ──────────────────────
+
+describe('multiple hook executors (P-5)', () => {
+  it('two createHookApi instances claim their own handlerIds without cross-talk', async () => {
+    const clientA = createMockRpcClient()
+    const clientB = createMockRpcClient()
+    const apiA = createHookApi(clientA, 'plugin-a')
+    const apiB = createHookApi(clientB, 'plugin-b')
+
+    const callsA: string[] = []
+    const callsB: string[] = []
+    await apiA.onBeforeSendMessage(async () => {
+      callsA.push('a')
+      return { proceed: true, modifiedData: 'FROM_A' }
+    })
+    await apiB.onBeforeSendMessage(async () => {
+      callsB.push('b')
+      return { proceed: false, reason: 'FROM_B' }
+    })
+
+    const handlerIdA = (clientA.requestCalls.find(c => c.method === 'plugin.hooks.register')!).params.handlerId as string
+    const handlerIdB = (clientB.requestCalls.find(c => c.method === 'plugin.hooks.register')!).params.handlerId as string
+    expect(handlerIdA).not.toBe(handlerIdB)
+
+    // 分别 invoke：各自 executor 认领，另一 executor 返回 {claimed:false} 链式跳过
+    const resultA = await executeHookRequest({ handlerId: handlerIdA, context: {} })
+    const resultB = await executeHookRequest({ handlerId: handlerIdB, context: {} })
+
+    expect(resultA).toEqual({ proceed: true, modifiedData: 'FROM_A' })
+    expect(resultB).toEqual({ proceed: false, reason: 'FROM_B' })
+    expect(callsA).toEqual(['a'])
+    expect(callsB).toEqual(['b'])
+  })
+
+  it('disposePluginHooks removes one plugin entirely; the other executor keeps working (P-1/P-2)', async () => {
+    const clientA = createMockRpcClient()
+    const clientB = createMockRpcClient()
+    const apiA = createHookApi(clientA, 'stays-alive')
+    const apiB = createHookApi(clientB, 'gets-deactivated')
+
+    const callsA: number[] = []
+    const callsB: number[] = []
+    await apiA.onBeforeToolCall(async () => {
+      callsA.push(1)
+      return { proceed: true }
+    })
+    await apiB.onBeforeToolCall(async () => {
+      callsB.push(1)
+      return { proceed: true }
+    })
+    const handlerIdA = (clientA.requestCalls.find(c => c.method === 'plugin.hooks.register')!).params.handlerId as string
+    const handlerIdB = (clientB.requestCalls.find(c => c.method === 'plugin.hooks.register')!).params.handlerId as string
+
+    // 'deactivate'：plugin-b 的全部本地 handler 被清 + 执行器从 Set 摘除
+    disposePluginHooks('gets-deactivated')
+
+    const resultB = await executeHookRequest({ handlerId: handlerIdB, context: {} })
+    expect(resultB).toEqual({ proceed: true }) // 未认领 → 放行
+    expect(callsB).toEqual([]) // handler 不再执行（P-1：禁用插件的 hook 不再执行）
+
+    // 另一插件的执行器不受影响
+    const resultA = await executeHookRequest({ handlerId: handlerIdA, context: {} })
+    expect(resultA).toEqual({ proceed: true })
+    expect(callsA).toEqual([1])
   })
 })

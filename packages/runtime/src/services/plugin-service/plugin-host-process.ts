@@ -78,6 +78,9 @@ export class PluginHostProcess implements PluginHostProcessContract {
   private readonly execArgv: string[]
   private readonly loadTimeoutMs: number
 
+  /** pluginId → processId 反向索引（D2-5：getProcessHandle O(1)，替代全进程线性扫） */
+  private pluginToProcess = new Map<string, string>()
+
   constructor(rpcServer: PluginRpcServer, options?: PluginPoolOptions) {
     this.rpcServer = rpcServer
     this.bootstrapPathOverride = options?.bootstrapPathOverride
@@ -112,6 +115,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
         if (!existing.pluginIds.includes(pluginId)) {
           existing.pluginIds.push(pluginId)
         }
+        this.pluginToProcess.set(pluginId, processId)
         return processId
       }
       return this.createProcess(processId, 'sandbox', pluginId, pluginDir).processId
@@ -125,6 +129,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
         handle.pluginIds.length < MAX_PLUGINS_PER_TRUSTED_PROCESS
       ) {
         handle.pluginIds.push(pluginId)
+        this.pluginToProcess.set(pluginId, handle.processId)
         return handle.processId
       }
     }
@@ -182,7 +187,10 @@ export class PluginHostProcess implements PluginHostProcessContract {
     if (!child) return
 
     const handle = this.processes.get(processId)
-    if (handle) handle.status = 'terminated'
+    if (handle) {
+      handle.status = 'terminated'
+      this.removeIndexEntries(processId, handle.pluginIds)
+    }
 
     this.rpcServer.unregisterWorker(processId)
     this.processInstances.delete(processId)
@@ -191,25 +199,34 @@ export class PluginHostProcess implements PluginHostProcessContract {
     await this.killChildGracefully(child)
   }
 
-  /** 满足 PluginHostProcessContract：按 pluginId 查找子进程，返回带 postMessage 的句柄 */
+  /**
+   * 满足 PluginHostProcessContract：按 pluginId 查找子进程，返回带 postMessage 的句柄。
+   * 反向索引 O(1) 命中（D2-5），索引与 processes Map 同步维护。
+   */
   getProcessHandle(pluginId: string): { processId: string; postMessage(message: unknown): void } | undefined {
-    for (const handle of this.processes.values()) {
-      if (handle.pluginIds.includes(pluginId)) {
-        const child = this.processInstances.get(handle.processId)
-        return {
-          processId: handle.processId,
-          postMessage: (message: unknown) => {
-            try {
-              child?.send(message as Serializable)
-            } catch (e: unknown) {
-              // IPC channel 已关闭（子进程崩溃/terminated 后的 in-flight 消息）不抛
-              console.debug(`[plugin-host-process] send failed for ${handle.processId}:`, e)
-            }
-          },
+    const processId = this.pluginToProcess.get(pluginId)
+    if (processId === undefined) return undefined
+    const child = this.processInstances.get(processId)
+    return {
+      processId,
+      postMessage: (message: unknown) => {
+        try {
+          child?.send(message as Serializable)
+        } catch (e: unknown) {
+          // IPC channel 已关闭（子进程崩溃/terminated 后的 in-flight 消息）不抛
+          console.debug(`[plugin-host-process] send failed for ${processId}:`, e)
         }
+      },
+    }
+  }
+
+  /** 反向索引删除（带归属守卫：只删当前映射仍指向 processId 的条目，防误删重建后的新映射） */
+  private removeIndexEntries(processId: string, pluginIds: string[]): void {
+    for (const pid of pluginIds) {
+      if (this.pluginToProcess.get(pid) === processId) {
+        this.pluginToProcess.delete(pid)
       }
     }
-    return undefined
   }
 
   /** 按 processId 查找 ProcessHandle（内部和测试用） */
@@ -229,6 +246,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
     )
     this.processInstances.clear()
     this.processes.clear()
+    this.pluginToProcess.clear()
     this.rpcServer.dispose()
   }
 
@@ -288,6 +306,8 @@ export class PluginHostProcess implements PluginHostProcessContract {
     // 监听 + 删 map + 反注册，使旧进程的任何晚到事件都无法再触碰新 handle。
     const staleChild = this.processInstances.get(processId)
     if (staleChild) {
+      const staleHandle = this.processes.get(processId)
+      if (staleHandle) this.removeIndexEntries(processId, staleHandle.pluginIds)
       this.processInstances.delete(processId)
       this.processes.delete(processId)
       staleChild.removeAllListeners()
@@ -377,6 +397,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
 
     this.processes.set(processId, handle)
     this.processInstances.set(processId, child)
+    this.pluginToProcess.set(pluginId, processId)
     // WorkerPort 适配：child.send → postMessage（IPC channel 与 Worker postMessage 语义同构）
     this.rpcServer.registerWorker(processId, {
       postMessage: (message: unknown) => {
@@ -452,6 +473,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
     handle.status = 'crashed'
     const pluginIds = [...handle.pluginIds]
     this.rpcServer.unregisterWorker(processId)
+    this.removeIndexEntries(processId, pluginIds)
 
     // M6a-03：kill 兜底——fatal_error 消息路径子进程可能仍存活（发完消息不退出 = 进程
     // 泄漏）。崩溃时强制终止。kill 后晚到的 exit 被上方 status='crashed' 幂等守卫拦截，

@@ -26,7 +26,7 @@ import { PluginRpcClient } from './plugin-rpc-client.js'
 import { createRequireInterceptor, createEnvProxy } from './plugin-sandbox.js'
 import { errorWithCode } from '../../utils/errors.js'
 import { createToolApi } from './tool-api.js'
-import { createHookApi, executeHookRequest } from './hook-api.js'
+import { createHookApi, executeHookRequest, disposePluginHooks } from './hook-api.js'
 import { createSessionApi } from './api/session-api.js'
 import { createConfigApi } from './api/config-api.js'
 import { createSessionDataApi } from './api/session-data-api.js'
@@ -42,6 +42,15 @@ import { toErrorMessage } from '../../utils/errors.js'
 
 const rpcClient = new PluginRpcClient()
 const loadedModules = new Map<string, PluginModule>()
+
+/**
+ * Worker 侧 RPC client（模块级单例）。
+ *
+ * 导出供子进程宿主（plugin-bootstrap-process.ts）attach process IPC——它在自己的
+ * 模块作用域里无法触达本实例；同时供 e2e 测试 attach 内存端口。两个宿主共用同一
+ * client（消息路由单一真相：handleMessage 的 rpc 分支收到的 response 也路由到这里）。
+ */
+export const workerRpcClient = rpcClient
 
 /**
  * post 通道（模块级注入）：Worker 版默认 parentPort.postMessage，
@@ -131,6 +140,9 @@ export async function handleMessage(msg: HostToWorkerMessage): Promise<void> {
           break
         }
       }
+      // P-1：deactivate 成功后清理该插件全部本地 hook handler + 摘除执行器——
+      // 与主线程 togglePlugin(false) 清 hookRegistry 对偶，禁用插件的 hook 不再执行
+      disposePluginHooks(msg.pluginId)
       post({ type: 'deactivated', pluginId: msg.pluginId })
       break
     }
@@ -141,9 +153,21 @@ export async function handleMessage(msg: HostToWorkerMessage): Promise<void> {
       }
       if (msg.notification) {
         rpcClient.handleNotification(msg.notification)
+        // D2-2 observe 快捷路径：主线程 observe 类 hook 经无 id 通知到达，直接执行
+        // handler，fire-and-forget（不产生响应，零往返）。handler 抛错按「异常放行」
+        // 语义记 Worker 侧日志丢弃。
+        if (msg.notification.method === 'plugin.hooks.invoke') {
+          executeHookRequest(msg.notification.params).catch((e: unknown) => {
+            console.error('[plugin-bootstrap] hook notification handler error:', toErrorMessage(e))
+          })
+        }
       }
       if (msg.request) {
-        handleIncomingRequest(msg.request)
+        // P-8：handleIncomingRequest 分支内已逐分支兜底，这里再挂一层 catch 防御
+        // 未来新增分支遗漏导致的 unhandled rejection
+        handleIncomingRequest(msg.request).catch((e: unknown) => {
+          console.error('[plugin-bootstrap] incoming request failed:', toErrorMessage(e))
+        })
       }
       break
     }

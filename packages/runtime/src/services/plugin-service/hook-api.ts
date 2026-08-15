@@ -10,10 +10,12 @@
  *   等 5 个方法，每个方法生成 handlerId、保存到本地 map、发 RPC 注册，
  *   并返回 Disposable。
  *
- * Worker 侧 hook 执行：主线程经 `plugin.hooks.invoke` **request** 直连（D2-1），
- * 结果作为 RPC 响应原样回传；executeHookRequest 是该 request 的执行入口
- * （plugin-bootstrap.handleIncomingRequest 调用，闭包 handlers Map 经
- * setHookExecutor 模块级胶水桥接）。
+ * Worker 侧 hook 执行：主线程经 `plugin.hooks.invoke` 到达 Worker 有两腿（D2）：
+ *   - request 腿（block/transform 类）：结果作为 RPC 响应原样回传主线程，
+ *     executeHookRequest 是该 request 的执行入口（plugin-bootstrap.handleIncomingRequest
+ *     调用，闭包 handlers Map 经 setHookExecutor 模块级胶水桥接）；
+ *   - observe notification 腿（observe 类，D2-2）：无 id 通知，executeHookRequest
+ *     执行后 fire-and-forget（不产生响应，零往返）。
  */
 
 import type { PluginRpcServer } from './plugin-rpc-server.js'
@@ -45,45 +47,73 @@ interface StoredHandler {
   original: HookInterceptor | HookObserver | PiEventCallback
 }
 
-// ── D2-1 request 直连桥接（plugin.hooks.invoke request 分支） ──────────────
+// ── D2-1 request 直连桥接（plugin.hooks.invoke request/notification 分支） ──────────────
 
-/** 执行器「未认领」哨兵：handlerId 不在该执行器的闭包 Map 中（模块私有，仅桥接内部使用） */
-const NOT_CLAIMED = Symbol('hook-not-claimed')
+/**
+ * 执行器返回的精确联合类型（P-6）。
+ *
+ * `{claimed: false}` = handlerId 不在该执行器的闭包 Map（NOT_CLAIMED 哨兵的对象化），
+ * 交由下一个执行器认领（多插件共享 trusted Worker 场景）；`{claimed: true, value}` =
+ * 认领并执行完成，value 为 handler 返回值（原样作为 RPC 响应回传）。
+ * 不写成 `unknown | typeof NOT_CLAIMED`——TS 中 unknown 会吸收整个联合，类型层
+ * 失去区分度，只能靠运行时哨兵比较。
+ */
+export type HookExecutorOutcome = { claimed: false } | { claimed: true; value: unknown }
 
 /**
  * 按 handlerId 执行 hook handler 的执行器签名。
  *
  * createHookApi 把闭包 handlers Map 包装成执行器，经 setHookExecutor 注册到模块级胶水；
- * plugin-bootstrap 的 `plugin.hooks.invoke` request 分支经 executeHookRequest 调用。
- * 多插件可共享同一个 trusted Worker（每插件一次 createHookApi 调用、一份闭包 Map），
- * handlerId 全局唯一（`hook_${pluginId}_${counter}`），逐执行器认领。
+ * plugin-bootstrap 的 `plugin.hooks.invoke` request/observe notification 分支经
+ * executeHookRequest 调用。多插件可共享同一个 trusted Worker（每插件一次 createHookApi
+ * 调用、一份闭包 Map），handlerId 全局唯一（`hook_${pluginId}_${counter}`），逐执行器认领。
  */
-type HookExecutor = (params: { handlerId: string; context: unknown }) => Promise<unknown | typeof NOT_CLAIMED>
+type HookExecutor = (params: { handlerId: string; context: unknown }) => Promise<HookExecutorOutcome>
 
 /** 模块级胶水：当前 Worker 内全部活跃 hook 执行器 */
 const hookExecutors = new Set<HookExecutor>()
 
-/** 注册 hook 执行器（createHookApi 调用；plugin-bootstrap 经 executeHookRequest 消费） */
-export function setHookExecutor(executor: HookExecutor): void {
+/** 注册 hook 执行器（createHookApi 调用；返回拆除函数，P-2：dispose 后从 Set 移除） */
+export function setHookExecutor(executor: HookExecutor): () => void {
   hookExecutors.add(executor)
+  return () => {
+    hookExecutors.delete(executor)
+  }
+}
+
+/** 模块级胶水：pluginId → 该插件全部本地 hook 资源的拆除函数（P-1，deactivate 时消费） */
+const pluginHookDisposers = new Map<string, () => void>()
+
+/**
+ * 清理指定插件的 Worker 本地 hook 资源（P-1：禁用插件的 hook 不再执行）。
+ *
+ * plugin-bootstrap 的 'deactivate' 消息分支调用：清空该插件闭包 Map 中全部 handler
+ * 并从 hookExecutors 摘除执行器（P-2：Set 只增不减的泄漏点）。与主线程侧
+ * togglePlugin(false) 清 hookRegistry 对偶——两侧同时清，禁用插件的 handlerId
+ * 既无注册条目也无本地 handler，任何迟到 invoke 都落到「未认领 → 放行」。
+ */
+export function disposePluginHooks(pluginId: string): void {
+  const dispose = pluginHookDisposers.get(pluginId)
+  if (!dispose) return
+  pluginHookDisposers.delete(pluginId)
+  dispose()
 }
 
 /**
- * `plugin.hooks.invoke` request 的 Worker 侧执行入口（plugin-bootstrap.handleIncomingRequest 调用）。
+ * `plugin.hooks.invoke` 的 Worker 侧执行入口（plugin-bootstrap.handleMessage 调用：
+ * request 分支的结果作为 RPC 响应回传主线程；observe notification 分支 fire-and-forget）。
  *
- * 按 handlerId 查活跃执行器并调用 hook handler，返回值作为 RPC 响应原样回传主线程
- * （InterceptorResult `{proceed, reason, modifiedData}`；到 HookResult 的字段映射在主线程
- * HookPipeline 完成，D2-3）。
- * - handler 不存在（未注册 / 已 dispose）→ 返回 `{proceed: true}` 放行，对齐主线程
- *   「Worker crashed → skip handler」的放行语义
+ * 按 handlerId 查活跃执行器并调用 hook handler：
+ * - handler 不存在（未注册 / 已 dispose）→ 全部执行器未认领，返回 `{proceed: true}` 放行，
+ *   对齐主线程「Worker crashed → skip handler」的放行语义
  * - handler 抛错 → 向上抛，由 bootstrap 分支按「异常放行」兜底回 `{proceed: true}`
  */
 export async function executeHookRequest(params: unknown): Promise<unknown> {
   const p = params as { handlerId?: unknown; context?: unknown }
   if (p && typeof p.handlerId === 'string') {
     for (const executor of hookExecutors) {
-      const result = await executor({ handlerId: p.handlerId, context: p.context })
-      if (result !== NOT_CLAIMED) return result
+      const outcome = await executor({ handlerId: p.handlerId, context: p.context })
+      if (outcome.claimed) return outcome.value
     }
   }
   return { proceed: true }
@@ -186,17 +216,25 @@ export function createHookApi(
 } {
   const handlers = new Map<string, StoredHandler>()
 
-  // 闭包 handlers Map → 模块级胶水桥接（plugin-bootstrap 的 request 分支消费）。
-  // 未认领返回 NOT_CLAIMED，交由下一个执行器（多插件共享 trusted Worker 场景）。
-  setHookExecutor(async ({ handlerId, context }) => {
+  // 闭包 handlers Map → 模块级胶水桥接（plugin-bootstrap 的 request/notification 分支消费）。
+  // 未认领返回 {claimed:false}，交由下一个执行器（多插件共享 trusted Worker 场景）。
+  const removeExecutor = setHookExecutor(async ({ handlerId, context }) => {
     const stored = handlers.get(handlerId)
-    if (!stored) return NOT_CLAIMED
-    return stored.invoke(context)
+    if (!stored) return { claimed: false }
+    return { claimed: true, value: await stored.invoke(context) }
+  })
+
+  // P-1/P-2：登记该插件全部本地 hook 资源的拆除函数（'deactivate' 消息经
+  // disposePluginHooks 消费）——清空闭包 Map 并从 hookExecutors 摘除执行器。
+  pluginHookDisposers.set(pluginId, () => {
+    handlers.clear()
+    removeExecutor()
   })
 
   /**
-   * 注册一个 hook handler：保存到本地 map + 发 RPC 到主线程。
-   * 返回 Disposable 用于取消注册。
+   * 注册一个 hook handler：先保存到本地 map，再发 RPC 到主线程（P-7：反转后的顺序
+   * 消除竞态——主线程注册成功即可 invoke，本地 handler 必已就绪；RPC 失败则回滚本地
+   * 注册并向上抛）。返回 Disposable 用于取消注册。
    */
   async function registerHook(
     hookType: string,
@@ -205,19 +243,28 @@ export function createHookApi(
   ): Promise<Disposable> {
     const handlerId = `hook_${pluginId}_${++hookCounter}`
 
-    await rpcClient.request('plugin.hooks.register', {
-      pluginId,
-      hookType,
-      handlerId,
-    })
-
-    return registerHandler(handlers, handlerId, { invoke, original: handler }, () => {
+    const disposable = registerHandler(handlers, handlerId, { invoke, original: handler }, () => {
       rpcClient
         .request('plugin.hooks.unregister', { pluginId, hookType, handlerId })
         .catch((e: unknown) => {
           console.error('[hook-api] hook unregister failed:', toErrorMessage(e))
         })
     })
+
+    try {
+      await rpcClient.request('plugin.hooks.register', {
+        pluginId,
+        hookType,
+        handlerId,
+      })
+    } catch (e: unknown) {
+      // P-7 失败回滚：主线程无此注册条目，dispose 触发的 unregister RPC 对不存在的
+      // handlerId 是 no-op（findIndex -1 跳过），无副作用
+      disposable.dispose()
+      throw e
+    }
+
+    return disposable
   }
 
   return {
@@ -241,25 +288,49 @@ export function createHookApi(
       registerHook('onBeforeAgentStart', handler, async (ctx) => handler(ctx as Parameters<HookInterceptor>[0])),
 
     /**
-     * 注册工具结果后观察者。只能读取数据，不能阻止。
+     * 注册工具结果后观察者。只能读取数据，不能阻止；可选返回
+     * InterceptorResult.modifiedData 改写 output（D2-3 transform 语义，包装透传返回值）。
      */
     onAfterToolResult: (handler: HookObserver) =>
       registerHook('onAfterToolResult', handler, async (ctx) => {
-        await handler(ctx as Parameters<HookObserver>[0])
-        return undefined
+        return await handler(ctx as Parameters<HookObserver>[0])
       }),
 
     /**
-     * 注册 pi 事件观察者。监听指定 eventName 的事件。
-     * handler 接收 (eventName, data) 两个参数。
+     * 注册 pi 事件观察者。
+     *
+     * D2-4：注册 key 统一为泛型 `'onPiEvent'`（不按事件名细分）——与调用侧
+     * （event-interpreter / bridge-interop）的泛型调用对齐，事件名经 context 传给
+     * handler，插件在 handler 内自行按事件名过滤。
+     *
+     * context 形状适配（三类调用方统一解析）：
+     * - bridge（handleBridgeEvent）/ 标准 HookContext：`data: { eventName, data, ... }`
+     *   ——事件名与负载嵌套在 ctx.data 内
+     * - event-interpreter：`{ event, ...payload }` ——事件字段平铺、无 data 包装
+     * - 平铺变体：`{ eventName, data }` 直接在 ctx 顶层
+     * handler 统一收到 `(eventName, data)`。
      */
     onPiEvent: (eventName: string, handler: PiEventCallback) =>
       registerHook(
-        `onPiEvent:${eventName}`,
+        'onPiEvent',
         handler,
         async (ctx) => {
-          const data = ctx as { eventName: string; data: unknown }
-          await handler(data.eventName ?? eventName, data.data)
+          const c = (ctx ?? {}) as {
+            event?: unknown
+            eventName?: unknown
+            data?: { eventName?: unknown; data?: unknown }
+          }
+          const nested = c.data ?? {}
+          const resolvedEventName =
+            (typeof c.event === 'string' ? c.event : undefined)
+            ?? (typeof c.eventName === 'string' ? c.eventName : undefined)
+            ?? (typeof nested.eventName === 'string' ? nested.eventName : undefined)
+            ?? eventName
+          const payload =
+            nested.data !== undefined ? nested.data
+              : c.data !== undefined ? c.data
+                : c
+          await handler(resolvedEventName, payload)
           return undefined
         },
       ),

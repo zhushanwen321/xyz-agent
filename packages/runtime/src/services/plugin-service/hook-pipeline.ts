@@ -23,6 +23,13 @@ import { toErrorMessage } from '../../utils/errors.js'
 /** 每个 hook handler 的执行超时（ms） */
 const HOOK_HANDLER_TIMEOUT_MS = 5_000
 
+/**
+ * observe 类 hookType 集合（D2-2）：fire-and-forget 语义，经 notifyObservers 以
+ * rpcServer.notify 零往返派发（无 pending 登记、无超时定时器、不等响应）。
+ * block/transform 类不在集合内，走 execute 的 request 腿（同步拿结果）。
+ */
+export const OBSERVE_HOOK_TYPES: ReadonlySet<string> = new Set(['onPiEvent'])
+
 /** HookPipeline 所需的派发依赖（最小接口，便于单测 mock） */
 export interface HookPipelineDeps {
   /** 共享的 hook 注册表（注册侧与本类消费侧同一实例） */
@@ -50,9 +57,11 @@ export class HookPipeline {
   }
 
   /**
-   * 执行指定 hookType 的钩子管道。
+   * 执行指定 hookType 的钩子管道（request 腿：block/transform 类）。
    *
-   * 从 hookRegistry 获取 handlers，按 priority 升序排序后串行执行。
+   * 从 hookRegistry 获取 handlers 后串行执行——entries 在注册时已按 priority 升序
+   * 保序（hook-api.ts registerHookRpcHandlers 的 entries.sort，D2-5：执行侧不再重复
+   * 排序；unregister 的 splice 与卸载清理的 filter 均保序）。
    * 支持 block（proceed === false 终止链路）和 content transform（modifiedData 传递）。
    * 每个 handler 超时 5s，超时/异常视为放行。Worker crashed → skip 该 handler。
    *
@@ -64,16 +73,13 @@ export class HookPipeline {
     const entries = this.hookRegistry.get(hookType)
     if (!entries || entries.length === 0) return { blocked: false }
 
-    // 按 priority 排序：built-in (0) → trusted (100) → sandbox (200)
-    const sorted = [...entries].sort((a, b) => a.priority - b.priority)
-
     // D2-3 映射层：Worker 响应 {proceed, reason, modifiedData} → HookResult
     // {blocked, blockedBy, reason, transformedData}。transformedData 取链上最后一个
     // 非 undefined 的 modifiedData（与下游 handler 间 context.data 的传递终值一致）。
     let transformedData: unknown
 
     // 串行执行：await 每个 handler，支持 transform 和 block
-    for (const entry of sorted) {
+    for (const entry of entries) {
       const handle = this.host.getWorkerHandle(entry.pluginId)
       if (!handle) continue // Worker crashed → skip
 
@@ -119,5 +125,28 @@ export class HookPipeline {
     return transformedData !== undefined
       ? { blocked: false, transformedData }
       : { blocked: false }
+  }
+
+  /**
+   * observe 类 hook 的零往返派发（D2-2）：对每个注册 handler 发无 id 通知后立即返回。
+   *
+   * 与 execute 的差异：rpcServer.notify（无 pending 登记、无超时定时器、不等响应），
+   * Worker 侧 handleMessage 的 notification 分支执行 handler 后丢弃结果（fire-and-forget）。
+   * Worker crashed → skip 该 handler（与 execute 语义一致）。entries 注册时已按
+   * priority 保序（D2-5），postMessage FIFO 保证到达顺序。
+   */
+  notifyObservers(hookType: string, context: HookContext): void {
+    const entries = this.hookRegistry.get(hookType)
+    if (!entries || entries.length === 0) return
+
+    for (const entry of entries) {
+      const handle = this.host.getWorkerHandle(entry.pluginId)
+      if (!handle) continue // Worker crashed → skip
+      this.rpcServer.notify(handle.workerId, 'plugin.hooks.invoke', {
+        handlerId: entry.handlerId,
+        hookType,
+        context,
+      })
+    }
   }
 }

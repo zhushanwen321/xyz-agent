@@ -39,6 +39,7 @@ function internals(service: PluginService) {
   const host = (service as unknown as { host: { getWorkerHandle: ReturnType<typeof vi.fn> } }).host
   const rpcServer = (service as unknown as { rpcServer: {
     invoke: ReturnType<typeof vi.fn>
+    notify: ReturnType<typeof vi.fn>
     broadcast: ReturnType<typeof vi.fn>
   } }).rpcServer
   return { hookRegistry: hookPipeline.registry, rpcServer, host }
@@ -135,10 +136,12 @@ describe('PluginService.executeHooks (BG1 T2)', () => {
     const service = new PluginService({} as never, broker)
     const reg = internals(service)
 
-    // Register out of order
+    // D2-5：执行侧不再排序（hook-pipeline.execute 直接遍历），排序职责在注册侧
+    // （registerHookRpcHandlers 的 entries.sort，由 plugin-api-hooks.test.ts TC-HK-02 覆盖）。
+    // 此处按注册产出的既定顺序（trusted 100 → sandbox 200）set registry。
     reg.hookRegistry.set('onBeforeSendMessage', [
-      { pluginId: 'p-sandbox', handlerId: 'h-sandbox', priority: 200 },
       { pluginId: 'p-trusted', handlerId: 'h-trusted', priority: 100 },
+      { pluginId: 'p-sandbox', handlerId: 'h-sandbox', priority: 200 },
     ])
 
     reg.host.getWorkerHandle = vi.fn()
@@ -431,5 +434,81 @@ describe('PluginService.executeHooks (BG1 T2)', () => {
       .executeHooks('onBeforeToolCall', makeContext())
 
     expect(result).toEqual({ blocked: true, blockedBy: 'p-blocker', reason: 'not allowed' })
+  })
+
+  // ── TC-SH-15: P-1 — togglePlugin(false) 清 hook 注册，禁用插件的 hook 不再执行 ──
+  it('TC-SH-15: togglePlugin(false) removes hook entries; disabled plugin hooks stop executing (P-1)', async () => {
+    const broker = createMockBroker()
+    const service = new PluginService({} as never, broker)
+    const reg = internals(service)
+
+    // 两个插件各持一个 hook（同 hookType）+ 一个只属于 p-disabled 的 hookType
+    reg.hookRegistry.set('onBeforeSendMessage', [
+      { pluginId: 'p-disabled', handlerId: 'h-dis', priority: 100 },
+      { pluginId: 'p-alive', handlerId: 'h-alive', priority: 200 },
+    ])
+    reg.hookRegistry.set('onBeforeToolCall', [
+      { pluginId: 'p-disabled', handlerId: 'h-dis-2', priority: 100 },
+    ])
+
+    // stub registry（getDescriptor）+ activator（deactivate/stopWatching），隔离生命周期细节
+    ;(service as unknown as { registry: unknown }).registry = {
+      getDescriptor: vi.fn().mockReturnValue({ pluginId: 'p-disabled', status: 'ACTIVE' }),
+      getAllDescriptors: vi.fn().mockReturnValue([]),
+    }
+    ;(service as unknown as { activator: unknown }).activator = {
+      deactivatePlugin: vi.fn().mockResolvedValue(undefined),
+      stopWatching: vi.fn(),
+      getState: vi.fn().mockReturnValue('ACTIVE'),
+    }
+
+    await service.togglePlugin('p-disabled', false)
+
+    // registry 中该 pluginId 的 entries 全部清除；其他插件的保留；清空的 hookType 整键删除
+    expect(reg.hookRegistry.get('onBeforeSendMessage')).toEqual([
+      { pluginId: 'p-alive', handlerId: 'h-alive', priority: 200 },
+    ])
+    expect(reg.hookRegistry.has('onBeforeToolCall')).toBe(false)
+
+    // 禁用后 executeHooks 不再为 p-disabled 派发 invoke
+    reg.host.getWorkerHandle = vi.fn().mockReturnValue({ workerId: 'worker-1', postMessage: vi.fn() })
+    reg.rpcServer.invoke = vi.fn().mockResolvedValue({ proceed: true })
+    await (service as unknown as { executeHooks: (t: string, c: HookContext) => Promise<HookResult> })
+      .executeHooks('onBeforeSendMessage', makeContext())
+    expect(reg.rpcServer.invoke).toHaveBeenCalledTimes(1)
+    expect(reg.rpcServer.invoke).toHaveBeenCalledWith(
+      'worker-1',
+      'plugin.hooks.invoke',
+      expect.objectContaining({ handlerId: 'h-alive' }),
+      5_000,
+    )
+  })
+
+  // ── TC-SH-16: D2-2 — observe 类 hookType（onPiEvent）走 notify 零往返快捷路径 ──
+  it('TC-SH-16: observe hookType dispatches via rpcServer.notify without invoke (D2-2)', async () => {
+    const broker = createMockBroker()
+    const service = new PluginService({} as never, broker)
+    const reg = internals(service)
+
+    reg.hookRegistry.set('onPiEvent', [
+      { pluginId: 'p-observer', handlerId: 'h-obs', priority: 100 },
+    ])
+
+    reg.host.getWorkerHandle = vi.fn().mockReturnValue({ workerId: 'worker-1', postMessage: vi.fn() })
+    reg.rpcServer.notify = vi.fn()
+    reg.rpcServer.invoke = vi.fn()
+
+    const result = await (service as unknown as { executeHooks: (t: string, c: HookContext) => Promise<HookResult> })
+      .executeHooks('onPiEvent', makeContext({ eventName: 'agent_start', data: {} }))
+
+    // notify 派发（无 pending/超时），不创建 invoke；返回恒不 block
+    expect(reg.rpcServer.notify).toHaveBeenCalledTimes(1)
+    expect(reg.rpcServer.notify).toHaveBeenCalledWith(
+      'worker-1',
+      'plugin.hooks.invoke',
+      expect.objectContaining({ handlerId: 'h-obs', hookType: 'onPiEvent' }),
+    )
+    expect(reg.rpcServer.invoke).not.toHaveBeenCalled()
+    expect(result).toEqual({ blocked: false })
   })
 })

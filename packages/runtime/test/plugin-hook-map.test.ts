@@ -42,7 +42,7 @@ const PI_BRIDGE_EVENTS = [
   'before_agent_start',
 ]
 
-/** 合法 HookType 全集（plugin-types/hook-types.ts：InterceptorHookType + ObserverHookType） */
+/** 合法 HookType 全集（plugin-types/hook-types.ts：InterceptorHookType + ObserverHookType，含 D2-4 新增 onPiEvent） */
 const VALID_HOOK_TYPES = new Set([
   'onToolCall',
   'onSlashCommand',
@@ -54,6 +54,7 @@ const VALID_HOOK_TYPES = new Set([
   'onMessage',
   'onSessionCreate',
   'onSessionDestroy',
+  'onPiEvent',
 ])
 
 // ══════════════════════════════════════════════════════════════════
@@ -82,6 +83,16 @@ describe('PI_HOOK_EVENT_MAP', () => {
     expect(PI_HOOK_EVENT_MAP['tool_call'].kind).toBe('observe')
     expect(PI_HOOK_EVENT_MAP['agent_start'].kind).toBe('observe')
     expect(PI_HOOK_EVENT_MAP['turn_end'].kind).toBe('observe')
+  })
+
+  it('TC-w4-1e: observe 组 7 事件挂泛型 onPiEvent（R-01），tool 两项保持 onAfterToolResult（D2-2 分流）', () => {
+    // observe 组走 notify（零往返），唯一可注册 observe 通道是泛型 onPiEvent
+    for (const evt of ['agent_start', 'agent_end', 'message_end', 'turn_end', 'session_start', 'session_compact', 'session_tree']) {
+      expect(PI_HOOK_EVENT_MAP[evt].hookType, `${evt} 应挂泛型 onPiEvent`).toBe('onPiEvent')
+    }
+    // tool_call/tool_result 保持 request 腿（transform 语义需同步回传）
+    expect(PI_HOOK_EVENT_MAP['tool_call'].hookType).toBe('onAfterToolResult')
+    expect(PI_HOOK_EVENT_MAP['tool_result'].hookType).toBe('onAfterToolResult')
   })
 })
 
