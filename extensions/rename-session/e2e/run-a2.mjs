@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { HarnessError, assertTitleGuards, assert, lastSessionInfoEntry, runScenario, sleep, spawnPi } from "./harness.mjs";
+import { HarnessError, assertTitleGuards, assert, runScenario, spawnPi } from "./harness.mjs";
 
 const RESULTS_PATH = fileURLToPath(new URL("./RESULTS.md", import.meta.url));
 
@@ -60,11 +60,9 @@ async function runOneCase(c, log) {
 		await settledP;
 		// 显式等 renamed to（多 iteration 工具型 prompt 会先产生 skip: stopReason=toolUse 日志）
 		const renameRes = await pi.rpc.waitForStderr('renamed to "', { timeoutMs: 45_000 });
-		await sleep(600); // setSessionName 落库 flush 余量
-
-		const lines = await pi.readSessionLines();
-		assert(Array.isArray(lines), "session JSONL 不存在或不可读");
-		const title = lastSessionInfoEntry(lines);
+		// 轮询等落盘（pi append→flush 有延迟，固定 sleep 慢日不够）
+		const info = await pi.waitSessionInfoEntry(10_000);
+		const title = info?.name ?? null;
 		assert(typeof title === "string" && title.length > 0, "session_info.name 为空");
 		const logTitle = renameRes.line.match(/renamed to "(.*)"$/)?.[1];
 		assert(logTitle === title, `日志标题与落库不一致: "${logTitle}" vs "${title}"`);

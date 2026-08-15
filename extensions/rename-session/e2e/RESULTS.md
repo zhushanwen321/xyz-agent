@@ -45,3 +45,13 @@
 | 跟进型 | 继续刚才的，改成支持 leading 选项 | debounce-leading-implementation | PASS（小写 kebab-case 动名词链） | PASS（debounce leading 实现，fixture 上下文准确概括） | BORDERLINE（prompt 为中文但 fixture notes.md 为英文，模型按上下文主语言输出英文——语言跟随判定对象含上下文而非仅 prompt，记边界情况不判失败） |
 
 **人工抽查结论（2026-08-15，验收人：主 agent，fixture 修复后终版 run）**：三场景 PASS（跟进型语言跟随记 BORDERLINE 并说明理由）。跟进型 case 的 cwd 加了最小 fixture（notes.md 锚点「正在实现 debounce，下一步加 leading 选项」）——空 tmp cwd 会诱发模型长时间探索自造上下文（两次全量实测击穿 600s settled 上限），fixture 消除探索且保留跟进语义，断言不变。历史 run（04:19-05:08）为调试过程记录，验收以本 run 为准。
+
+## 2026-08-15 06:50:30 run
+
+| 场景 | prompt | 实际标题 | 词组形态 | 语义相关 | 语言跟随 |
+|---|---|---|---|---|---|
+| 中文任务 | 帮我写一个防抖函数并加单测 | 防抖函数实现和单元测试 | PASS（名词词组） | PASS（防抖函数+单测） | PASS（中文） |
+| 英文任务 | Refactor the config loader to support env overrides | refactor-config-loader-env-overrides | PASS（小写 kebab-case 动名词链） | PASS（refactor config loader + env overrides 全要素） | PASS（英文） |
+| 跟进型 | 继续刚才的，改成支持 leading 选项 | debounce-leading-support | PASS（小写 kebab-case 动名词链） | PASS（debounce leading 支持，贴 prompt 的「支持 leading 选项」） | BORDERLINE（同前 run：中文 prompt 但英文 fixture 上下文，模型按上下文主语言输出英文，记边界不判失败） |
+
+**人工抽查结论（2026-08-15，验收人：主 agent，复验 run）**：三场景结论与终版 run 一致。本 run 为 helper 重构 bug（`lastSessionInfoEntry` 返回 entry 对象后未取 `.name`）修复后的复验——顺带把固定 `sleep(600)` 换成 `waitSessionInfoEntry` 轮询，跟进型标题从上轮的 `debounce-leading-implementation` 变为 `debounce-leading-support`，语义反而更贴 prompt。

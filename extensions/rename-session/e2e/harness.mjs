@@ -417,8 +417,13 @@ export async function spawnPi(opts = {}) {
 	const tmpDir = mkdtempSync(join(tmpdir(), `rename-e2e-${opts.tag ?? "run"}.`));
 	const agentDir = join(tmpDir, "agent");
 	const sessionsDir = join(tmpDir, "sessions");
-	mkdirSync(sessionsDir, { recursive: true });
-	initAgentDir(agentDir, opts);
+	try {
+		mkdirSync(sessionsDir, { recursive: true });
+		initAgentDir(agentDir, opts);
+	} catch (err) {
+		if (!keepTmp) rmSync(tmpDir, { recursive: true, force: true });
+		throw err;
+	}
 
 	const timelinePath = join(tmpDir, "timeline.ndjson");
 	writeFileSync(timelinePath, "", "utf-8"); // 占位确保 read() 在零事件时不 ENOENT
@@ -589,7 +594,7 @@ export async function spawnPi(opts = {}) {
 				if (i >= 0) stderrWaiters.splice(i, 1);
 				reject(new HarnessError("timeout", `waitForStderr(${pattern}) 超时 ${timeoutMs}ms`));
 			}, timeoutMs);
-			const w = { match, resolve, timer };
+			const w = { match, resolve, reject, timer };
 			stderrWaiters.push(w);
 		});
 
@@ -628,6 +633,21 @@ export async function spawnPi(opts = {}) {
 	const sessionJsonlPath = async () => {
 		const resp = await getState();
 		return resp.data?.sessionFile ?? null;
+	};
+	/**
+	 * 轮询等待最后一条 session_info 落盘（pi 的 append→flush 存在延迟——固定 sleep
+	 * 在模型/IO 慢的日子不够，2026-08-15 A2 实测 renamed to 日志已出但 JSONL 尚无条目）。
+	 * 返回最后一条 session_info entry；超时返回 null（调用方 assert 非空）。
+	 */
+	const waitSessionInfoEntry = async (timeoutMs = 10_000) => {
+		const deadline = Date.now() + timeoutMs;
+		for (;;) {
+			const lines = await readSessionLines();
+			const entry = lines ? lastSessionInfoEntry(lines) : null;
+			if (entry) return entry;
+			if (Date.now() >= deadline) return null;
+			await sleep(300);
+		}
 	};
 	/** 读 session JSONL 行数组（文件不存在返回 null——pi 延迟写入契约）。 */
 	const readSessionLines = async () => {
@@ -668,6 +688,7 @@ export async function spawnPi(opts = {}) {
 		},
 		sessionJsonlPath,
 		readSessionLines,
+		waitSessionInfoEntry,
 		listSessionFiles,
 		kill,
 		cleanup,

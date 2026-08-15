@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { assert, lastSessionInfoEntry, runScenario, sleep, spawnPi } from "./harness.mjs";
+import { assert, runScenario, spawnPi } from "./harness.mjs";
 
 /** fixture：含 ts 文件的临时工作目录（阶段 2 prompt 引用「刚才目录」）。 */
 function makeTsFixture() {
@@ -103,13 +103,10 @@ export async function runA4() {
 			await settled2P;
 			await h2.rpc.waitForStderr("LLM request messages: ", { timeoutMs: 120_000 });
 			const rename2 = await h2.rpc.waitForStderr('renamed to "', { timeoutMs: 45_000 });
-			await sleep(600); // setSessionName 落库 flush 余量
-
 			const st2 = await h2.rpc.getState();
 			assert(st2.data?.sessionFile === sessionFile, `阶段2 sessionFile 不一致: ${st2.data?.sessionFile} vs ${sessionFile}`);
-			const lines2 = await h2.readSessionLines();
-			assert(Array.isArray(lines2), "阶段2 session JSONL 不存在或不可读");
-			const lastInfo = lastSessionInfoEntry(lines2);
+			// 轮询等落盘（pi append→flush 有延迟）
+			const lastInfo = await h2.waitSessionInfoEntry(10_000);
 			assert(lastInfo && typeof lastInfo.name === "string" && lastInfo.name.length > 0, "阶段2 session_info 无标题");
 			const logTitle = rename2.line.match(/renamed to "(.*)"$/)?.[1];
 			assert(logTitle === lastInfo.name, `阶段2 日志标题与落库不一致: "${logTitle}" vs "${lastInfo.name}"`);

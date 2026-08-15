@@ -29,12 +29,8 @@ import {
 	parseLogMessages,
 	rebuildPreview,
 	runScenario,
-	sleep,
 	spawnPi,
 } from "./harness.mjs";
-
-/** A1/A4 共用的有界 sleep。 */
-
 
 /** fixture：含多个 ts 文件的临时工作目录（行数错开，让工具原始输出特征可辨别）。 */
 function makeTsFixture() {
@@ -101,7 +97,8 @@ export async function runA1() {
 			// 等 rename 最终结果（显式等 renamed to——waitRenameSettled 的 skip 分支会匹配到
 			// 中间 iteration 的 skip: stopReason=toolUse 提前返回，不是最终结果）
 			const renameRes = await pi.rpc.waitForStderr('renamed to "', { timeoutMs: 45_000 });
-			await sleep(600); // setSessionName 落库 flush 余量（日志先于落库）
+			// 轮询等 session_info 落盘再读全量行（pi append→flush 有延迟，日志先于落库）
+			await pi.waitSessionInfoEntry(10_000);
 
 			const timeline = pi.timeline.all();
 
