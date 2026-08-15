@@ -421,10 +421,13 @@ async function main(): Promise<void> {
 
   // TerminalService：drawer 集成终端的 PTY 生命周期管理（node-pty spawn + per-session 映射）。
   // 声明在生命周期挂钩之前（session 销毁回调引用它，TDZ 要求先声明）。
-  // 依赖：broker.broadcast（PTY 输出/退出/就绪广播）+ broker.nextPushId（广播消息 id）。
+  // wave:perf-w07（D1-1 / R-05）：发布通道从 broker.broadcast 改为 MessageBus——terminal 三类
+  // 消息按 topicOf 分类（data=transient 直传、alive/exit=stream 入 ring）定向推给订阅该 sid 的 ws。
+  // publish-only 不叠加 broadcast：terminal.data 无 seq，叠加盲广播会被已订阅 renderer 双 dispatch
+  // （终端输出重复渲染），见 TerminalServiceDeps.publish 注释。W09 删双写时统一收口。
   // Phase 6 接入 configService 读 shell 配置（当前用 $SHELL fallback）。
   const terminalService = new TerminalService({
-    broadcast: (msg) => server.broadcast(msg),
+    publish: (sid, msg) => messageBus.publish(sid, msg),
     configService,
   })
 

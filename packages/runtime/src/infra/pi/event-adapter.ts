@@ -101,7 +101,9 @@ function handleMessageUpdate(event: PiMessageUpdateEvent, sid: string): PiTransl
     case 'thinking_start':
       return [{ kind: 'message', message: { type: 'message.thinking_start', payload: { sessionId: sid, ...(sub.contentIndex !== undefined ? { contentIndex: sub.contentIndex } : {}) } } }]
     case 'thinking_delta':
-      return [{ kind: 'message', message: { type: 'message.thinking_delta', payload: { sessionId: sid, delta: sub.delta ?? '' } } }]
+      // 微项 1（wave:perf-w07）：contentIndex 透传对齐 text_delta——为 D-2 token coalescing（W12
+      // DeltaBuffer 合帧）保住 thinking 块的有序插入锚点；renderer 现状 handler 未消费该字段，多余字段无害。
+      return [{ kind: 'message', message: { type: 'message.thinking_delta', payload: { sessionId: sid, delta: sub.delta ?? '', ...(sub.contentIndex !== undefined ? { contentIndex: sub.contentIndex } : {}) } } }]
     case 'thinking_end':
       return [{ kind: 'message', message: { type: 'message.thinking_end', payload: { sessionId: sid } } }]
     case 'toolcall_start': {

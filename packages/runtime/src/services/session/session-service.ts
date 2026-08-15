@@ -182,6 +182,20 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       const session = this.sessions.get(sessionId)
       if (!session) return
       session.adapter.detach()
+
+      // 构建人类可读的退出原因（含 stderr 尾部，诊断价值 > 敏感性风险，本地工具场景）
+      const reason = stderr
+        ? `Session process exited (code: ${code})\n\n${stderr}`
+        : `Session process exited (code: ${code})`
+
+      // wave:perf-w07（D1-1）：session.exited 补 bus publish（stream 类：分配 seq 入 ring）。
+      // 顺序约束：必须在 removeSessionEntry 之前——它内部调 bus.clearSession 清订阅者集合，
+      // clearSession 之后再 publish 等于送空集合，订阅 renderer 一条也收不到（进程退出标记
+      // dead + toast 丢失）。双写过渡态（W09 收口）：publish 先 mutate msg.seq，broadcast
+      // 同对象后发，已订阅 renderer 靠 seq-gap 分支 4 drop 第二条，无重复消费。
+      const exitedMsg: ServerMessage = { type: 'session.exited', payload: { sessionId, code, reason } }
+      this.messageBus?.publish(sessionId, exitedMsg)
+
       // 注意：此处 session 是 delete 前缓存的引用，removeSessionEntry 后 Map 条目已删除
       // 统一经 removeSessionEntry（触发 onSessionDelete 清 pendingReload 等残留）
       this.removeSessionEntry(sessionId)
@@ -205,15 +219,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         }
       }
 
-      // 构建人类可读的退出原因（含 stderr 尾部，诊断价值 > 敏感性风险，本地工具场景）
-      const reason = stderr
-        ? `Session process exited (code: ${code})\n\n${stderr}`
-        : `Session process exited (code: ${code})`
-
       this.broker.broadcast({ type: 'config.sessions', payload: { groups: this.listPersistedSessions() } })
       // session.exited（独立事件，区别于 message.error 的「单次消息失败」语义）：
       // 前端据此标记 session dead 态 + 插入 error 消息 + toast 提示。
-      this.broker.broadcast({ type: 'session.exited', payload: { sessionId, code, reason } })
+      this.broker.broadcast(exitedMsg)
     })
   }
 
@@ -690,11 +699,17 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     if (typeof totalTokens === 'number') session.tokenCount = totalTokens
     // 算 usagePercent + 广播
     const { usagePercent, contextLimit } = this.computeUsage(sessionId, session.modelId)
-    this.broker.broadcast({
+    // wave:perf-w07（D1-1）：turn-end 路径补 bus publish，对齐 restore 路径 fetchAndBroadcastContext
+    // 的双写模式。context.update 是 state topic（分配 seq 写 stateSnapshot（'context' typeKey
+    // 同 key 覆盖）、不入 ring），重连订阅由快照恢复。双写过渡态（W09 收口）：publish 先 mutate
+    // msg.seq，broadcast 同对象后发，已订阅 renderer 靠 seq-gap drop 第二条，无重复消费。
+    const msg: ServerMessage = {
       type: 'context.update',
       id: `ctx_${Date.now()}`,
       payload: { sessionId, usagePercent, inputTokens, contextLimit },
-    })
+    }
+    this.messageBus?.publish(sessionId, msg)
+    this.broker.broadcast(msg)
   }
 
   /**

@@ -5,7 +5,7 @@
  *
  * 职责：
  * 1. per-session PTY 映射（ptyMap: Map<sessionId, IPty>）
- * 2. spawn：node-pty spawn shell → onData 广播 terminal.data → onExit 广播 terminal.exit + 清理 → 广播 terminal.alive
+ * 2. spawn：node-pty spawn shell → onData 发布 terminal.data（transient）→ onExit 发布 terminal.exit + 清理 → 发布 terminal.alive（wave:perf-w07 接 MessageBus）
  * 3. write/resize/kill/attach：转发到对应 PTY（无 PTY 时 no-op）
  * 4. destroyPty：session 销毁时 kill + 清理
  *
@@ -26,8 +26,19 @@ import type { ITerminalService } from '../ports/terminal-service.js'
 
 /** TerminalService 依赖。 */
 export interface TerminalServiceDeps {
-  /** 广播 ServerMessage 给所有连接（PTY 输出/退出/就绪信号）。由 server.broadcast 提供。 */
-  broadcast: (msg: ServerMessage) => void
+  /**
+   * session 级消息发布通道（wave:perf-w07 D1-1，R-05）：terminal.* 三类消息接 MessageBus。
+   * 组合根注入 bus.publish 封装——topicOf 三分类自动分流：terminal.data=transient（不占
+   * seq 不入 ring 直传）、terminal.alive/exit=stream（分配 seq 入 ring，可回放）。
+   *
+   * [过渡态语义：publish-only，不叠加 broker.broadcast] terminal.data 是 transient 无 seq，
+   * 若叠加盲广播，已订阅 renderer 会双 dispatch（seq-gap 对无 seq 消息不去重，分支 3 直通）
+   * → 终端输出重复渲染。与 02 文档 D1-1 对 plugin:viewUpdate（同为 transient）的
+   * 「publish 且不再 broadcast」定案同判据。renderer 侧 useSessionStreamSync 对 list 内
+   * session 全量订阅（terminal 只在 session panel 打开时 spawn，该 session 必然已订阅）。
+   * W09（D1-2）删双写时统一收口其余 session 级 broadcast。
+   */
+  publish: (sessionId: string, msg: ServerMessage) => void
   /**
    * Phase 6：terminal 配置（shell/shellArgs 偏好）。可选——Phase 6 前的测试构造时不传，
    * resolveShell 走环境变量 fallback。生产路径由 index.ts 注入（configService 同源）。
@@ -94,28 +105,28 @@ export class TerminalService implements ITerminalService {
 
     this.ptyMap.set(sid, proc)
 
-    // PTY 输出 → 广播 terminal.data（高频流）
+    // PTY 输出 → 发布 terminal.data（transient 高频流：不占 seq 不入 ring）
     proc.onData((data) => {
-      this.deps.broadcast({
+      this.deps.publish(sid, {
         type: 'terminal.data',
         id: nextPushId(),
         payload: { sessionId: sid, data },
       })
     })
 
-    // PTY 退出 → 广播 terminal.exit + 清理 ptyMap
+    // PTY 退出 → 发布 terminal.exit（stream：入 ring 可回放）+ 清理 ptyMap
     proc.onExit(({ exitCode }) => {
       console.log(`[terminal] exit: sid=${sid} exitCode=${exitCode}`)
       this.ptyMap.delete(sid)
-      this.deps.broadcast({
+      this.deps.publish(sid, {
         type: 'terminal.exit',
         id: nextPushId(),
         payload: { sessionId: sid, exitCode },
       })
     })
 
-    // 就绪信号（renderer flush 写队列——联动 2 异步写时序）
-    this.deps.broadcast({
+    // 就绪信号（stream：renderer flush 写队列——联动 2 异步写时序）
+    this.deps.publish(sid, {
       type: 'terminal.alive',
       id: nextPushId(),
       payload: { sessionId: sid },
