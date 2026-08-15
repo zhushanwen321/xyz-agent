@@ -182,7 +182,8 @@ export class MessageBus {
    * 单个 ws.send 抛错 try/catch 兜底（ES4），不影响其它 ws 与 publish 主流程。
    *
    * @param sessionId 目标 session
-   * @param message 待发布消息（广播时 JSON.stringify，不修改 message 自身字段）
+   * @param message 待发布消息（广播时 JSON.stringify；注意 state/stream 类会原地写入
+   *   message.seq（mutate 入参），transient 类保持原样不写字段）
    */
   publish(sessionId: string, message: ServerMessage): void {
     const state = this.getOrCreateSession(sessionId)

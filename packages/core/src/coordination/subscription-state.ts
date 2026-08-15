@@ -148,7 +148,8 @@ export async function subscribeSession(sessionId: string, fromSeq?: number): Pro
         dispatchSessionImpl(sessionId, msg)
       }
 
-      // stateSnapshot（wave:remove-bandaids）：4 个 state topic（commands/context/subagents/workflows）
+      // stateSnapshot（wave:remove-bandaids）：5 个 state topic
+      // （commands/context/subagents/workflows/state_changed，见 message-bus STATE_TYPE_KEY_MAP）
       // 的 last-value 数组，逐条 dispatchSession 让 routeInbound 兜底分支据此更新对应 store。
       // stateSnapshot 与 snapshot 独立（snapshot 受 fromSeq 增量过滤，stateSnapshot 是 last-value
       // 不受影响），可能与 snapshot 末尾消息重叠，重复 dispatch 由订阅端幂等兜底（与 snapshot 重叠同 R2 策略）。

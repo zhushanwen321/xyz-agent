@@ -342,6 +342,9 @@ export class SessionMessageHandler {
         if (fromSeq !== undefined) {
           const oldestSeq = snapshot[0]?.seq ?? 0
           // ES2/gap 检测：fromSeq 早于 ring 最旧 seq → 旧消息已被淘汰，本次存在缺口。
+          // [W06 审查] 判定偏保守（宁可误报不漏报）：state 消息分配 seq 但不入 ring，
+          // fromSeq 与 ring 最旧 seq 之间若只隔了 state 消息（stream 未淘汰），也会判
+          // gap=true——代价是多一次全量回放，由订阅端幂等 dispatch 兜底，无正确性影响。
           if (fromSeq < oldestSeq) {
             gap = true
           } else {
