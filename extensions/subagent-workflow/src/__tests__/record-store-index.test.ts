@@ -485,7 +485,16 @@ describe("RecordStore 索引接入 [perf L-1]（S1TC1-9/13）", () => {
       // 第一段：首扫必写（lastIndexWriteAt=0 过节流窗），索引含 a
       writeSession({ name: "a.jsonl", id: "sa-1", assistantTexts: ["r1"] });
       store.collectRecords(100, "all", "root-1");
-      await settleUntil(() => fs.existsSync(indexPath));
+      // settle 必须等「节流打戳完成」而非仅「文件出现」：打戳在 saveIndex 成功 .then 里
+      // 异步推进（rename → 目录 fsync 的 open/sync/close → resolve 之后），高负载下可能
+      // 晚于文件出现。若先推进 fake 时钟，打戳读到推进后的 Date.now()（T0+30s）→ 节流
+      // 基准被污染 → 第三段永判窗内 → settle 超时（全量并行偶发失败的根因）。打戳无
+      // 公共 API 可观测，轮询软私有字段本身（Reflect.get + typeof guard，免类型断言）；
+      // 比固定空转轮数（目录 fsync 的 IO 完成时间无上界）这是确定性等待。
+      await settleUntil(() => {
+        const stamped = Reflect.get(store, "lastIndexWriteAt");
+        return fs.existsSync(indexPath) && typeof stamped === "number" && stamped > 0;
+      });
       expect(loadIndex(encDir).entries.get("a.jsonl")).toBeDefined();
 
       // 第二段：T0+30s（距成功写 30s < 60s）新文件 b → 慢路径 → b 探测 dirty，但窗内不写
