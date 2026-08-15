@@ -26,7 +26,7 @@ import { PluginRpcClient } from './plugin-rpc-client.js'
 import { createRequireInterceptor, createEnvProxy } from './plugin-sandbox.js'
 import { errorWithCode } from '../../utils/errors.js'
 import { createToolApi } from './tool-api.js'
-import { createHookApi } from './hook-api.js'
+import { createHookApi, executeHookRequest } from './hook-api.js'
 import { createSessionApi } from './api/session-api.js'
 import { createConfigApi } from './api/config-api.js'
 import { createSessionDataApi } from './api/session-data-api.js'
@@ -175,6 +175,17 @@ async function handleIncomingRequest(request: RpcRequest): Promise<void> {
         code: PluginRpcErrorCodes.INTERNAL_ERROR,
         message: `Tool execution error: ${msg}`,
       })
+    }
+  } else if (request.method === 'plugin.hooks.invoke') {
+    // D2-1 request 直连：查 hook handler Map → 调 handler → 结果作为 RPC 响应原样回传。
+    // handler 抛错 → 回 {proceed:true}（异常放行语义，与主线程超时/异常放行一致），
+    // 错误记 Worker 侧日志；字段到 HookResult 的映射在主线程 HookPipeline（D2-3）。
+    try {
+      const result = await executeHookRequest(request.params)
+      postRpcResponse(request.id, result, undefined)
+    } catch (e: unknown) {
+      console.error('[plugin-bootstrap] hook handler error:', toErrorMessage(e))
+      postRpcResponse(request.id, { proceed: true }, undefined)
     }
   } else {
     postRpcResponse(request.id, undefined, {

@@ -10,7 +10,10 @@
  *   等 5 个方法，每个方法生成 handlerId、保存到本地 map、发 RPC 注册，
  *   并返回 Disposable。
  *
- * Worker 同时监听 `plugin.hooks.invoke` 通知，用于主线程回调 hook handler。
+ * Worker 侧 hook 执行：主线程经 `plugin.hooks.invoke` **request** 直连（D2-1），
+ * 结果作为 RPC 响应原样回传；executeHookRequest 是该 request 的执行入口
+ * （plugin-bootstrap.handleIncomingRequest 调用，闭包 handlers Map 经
+ * setHookExecutor 模块级胶水桥接）。
  */
 
 import type { PluginRpcServer } from './plugin-rpc-server.js'
@@ -24,7 +27,7 @@ import type {
   Disposable,
 } from './plugin-types.js'
 import { toErrorMessage } from '../../utils/errors.js'
-import { registerHandler, dispatchHandler } from './handler-registry.js'
+import { registerHandler } from './handler-registry.js'
 
 /** Hook 注册服务依赖（主线程侧） */
 export interface HookService {
@@ -40,6 +43,50 @@ interface StoredHandler {
   invoke: (context: unknown) => Promise<unknown>
   /** 原始 handler 引用（用于 dispose 时清理） */
   original: HookInterceptor | HookObserver | PiEventCallback
+}
+
+// ── D2-1 request 直连桥接（plugin.hooks.invoke request 分支） ──────────────
+
+/** 执行器「未认领」哨兵：handlerId 不在该执行器的闭包 Map 中（模块私有，仅桥接内部使用） */
+const NOT_CLAIMED = Symbol('hook-not-claimed')
+
+/**
+ * 按 handlerId 执行 hook handler 的执行器签名。
+ *
+ * createHookApi 把闭包 handlers Map 包装成执行器，经 setHookExecutor 注册到模块级胶水；
+ * plugin-bootstrap 的 `plugin.hooks.invoke` request 分支经 executeHookRequest 调用。
+ * 多插件可共享同一个 trusted Worker（每插件一次 createHookApi 调用、一份闭包 Map），
+ * handlerId 全局唯一（`hook_${pluginId}_${counter}`），逐执行器认领。
+ */
+type HookExecutor = (params: { handlerId: string; context: unknown }) => Promise<unknown | typeof NOT_CLAIMED>
+
+/** 模块级胶水：当前 Worker 内全部活跃 hook 执行器 */
+const hookExecutors = new Set<HookExecutor>()
+
+/** 注册 hook 执行器（createHookApi 调用；plugin-bootstrap 经 executeHookRequest 消费） */
+export function setHookExecutor(executor: HookExecutor): void {
+  hookExecutors.add(executor)
+}
+
+/**
+ * `plugin.hooks.invoke` request 的 Worker 侧执行入口（plugin-bootstrap.handleIncomingRequest 调用）。
+ *
+ * 按 handlerId 查活跃执行器并调用 hook handler，返回值作为 RPC 响应原样回传主线程
+ * （InterceptorResult `{proceed, reason, modifiedData}`；到 HookResult 的字段映射在主线程
+ * HookPipeline 完成，D2-3）。
+ * - handler 不存在（未注册 / 已 dispose）→ 返回 `{proceed: true}` 放行，对齐主线程
+ *   「Worker crashed → skip handler」的放行语义
+ * - handler 抛错 → 向上抛，由 bootstrap 分支按「异常放行」兜底回 `{proceed: true}`
+ */
+export async function executeHookRequest(params: unknown): Promise<unknown> {
+  const p = params as { handlerId?: unknown; context?: unknown }
+  if (p && typeof p.handlerId === 'string') {
+    for (const executor of hookExecutors) {
+      const result = await executor({ handlerId: p.handlerId, context: p.context })
+      if (result !== NOT_CLAIMED) return result
+    }
+  }
+  return { proceed: true }
 }
 
 let hookCounter = 0
@@ -123,10 +170,9 @@ export function registerHookRpcHandlers(
  * 3. 发 RPC 到主线程注册
  * 4. 返回 Disposable（取消注册时发 RPC 并清理本地 map）
  *
- * 同时注册 `plugin.hooks.invoke` 通知处理器：
- * - 收到通知后从本地 map 查找 handler
- * - 调用 handler(context)
- * - 将结果通过 `plugin.hooks.invoke.result` RPC 返回主线程
+ * 同时把闭包 handlers Map 包装成执行器，经 setHookExecutor 注册到模块级胶水，
+ * 供 plugin-bootstrap 的 `plugin.hooks.invoke` request 分支经 executeHookRequest
+ * 调用（D2-1 request 直连；结果作为 RPC 响应回传，不再走独立的 result 回传 RPC）。
  */
 export function createHookApi(
   rpcClient: PluginRpcClient,
@@ -140,25 +186,12 @@ export function createHookApi(
 } {
   const handlers = new Map<string, StoredHandler>()
 
-  // 注册 invoke 通知处理器（主线程回调 Worker 中的 hook handler）（C8: dispatchHandler 统一派发骨架）
-  rpcClient.onNotification('plugin.hooks.invoke', (params: unknown) => {
-    const p = params as { handlerId: string; context: unknown }
-    dispatchHandler(handlers, p, stored => {
-      Promise.resolve(stored.invoke(p.context))
-        .then((result) => {
-          rpcClient
-            .request('plugin.hooks.invoke.result', {
-              handlerId: p.handlerId,
-              result,
-            })
-            .catch((e: unknown) => {
-              console.error('[hook-api] hook invoke result delivery failed:', toErrorMessage(e))
-            })
-        })
-        .catch((e: unknown) => {
-          console.error('[hook-api] hook handler error:', toErrorMessage(e))
-        })
-    })
+  // 闭包 handlers Map → 模块级胶水桥接（plugin-bootstrap 的 request 分支消费）。
+  // 未认领返回 NOT_CLAIMED，交由下一个执行器（多插件共享 trusted Worker 场景）。
+  setHookExecutor(async ({ handlerId, context }) => {
+    const stored = handlers.get(handlerId)
+    if (!stored) return NOT_CLAIMED
+    return stored.invoke(context)
   })
 
   /**

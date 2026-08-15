@@ -382,4 +382,54 @@ describe('PluginService.executeHooks (BG1 T2)', () => {
     // Second handler should still see ORIGINAL (not undefined)
     expect((capturedContexts[1] as HookContext).data).toBe('ORIGINAL')
   })
+
+  // ── TC-SH-13: D2-3 映射层 — modifiedData → transformedData ──
+  it('TC-SH-13: mapping layer exposes modifiedData as HookResult.transformedData', async () => {
+    const broker = createMockBroker()
+    const service = new PluginService({} as never, broker)
+    const reg = internals(service)
+
+    reg.hookRegistry.set('onAfterToolResult', [
+      { pluginId: 'p-transformer', handlerId: 'h1', priority: 100 },
+    ])
+
+    reg.host.getWorkerHandle = vi.fn().mockReturnValue({
+      workerId: 'worker-1',
+      postMessage: vi.fn(),
+    })
+
+    const modifiedData = { output: 'REDACTED' }
+    reg.rpcServer.invoke = vi.fn().mockResolvedValue({ proceed: true, modifiedData })
+
+    const result = await (service as unknown as { executeHooks: (t: string, c: HookContext) => Promise<HookResult> })
+      .executeHooks('onAfterToolResult', makeContext({ output: 'secret' }))
+
+    // Worker 响应的 modifiedData 经映射层暴露为 transformedData（引用恒等）
+    expect(result.blocked).toBe(false)
+    expect(result.transformedData).toBe(modifiedData)
+  })
+
+  // ── TC-SH-14: D2-3 映射层 — block 形态字段映射 ──
+  it('TC-SH-14: mapping layer maps proceed:false/reason to blocked/blockedBy/reason', async () => {
+    const broker = createMockBroker()
+    const service = new PluginService({} as never, broker)
+    const reg = internals(service)
+
+    reg.hookRegistry.set('onBeforeToolCall', [
+      { pluginId: 'p-blocker', handlerId: 'h1', priority: 100 },
+    ])
+
+    reg.host.getWorkerHandle = vi.fn().mockReturnValue({
+      workerId: 'worker-1',
+      postMessage: vi.fn(),
+    })
+
+    // Worker 响应 {proceed:false, reason} → HookResult {blocked:true, blockedBy, reason}
+    reg.rpcServer.invoke = vi.fn().mockResolvedValue({ proceed: false, reason: 'not allowed' })
+
+    const result = await (service as unknown as { executeHooks: (t: string, c: HookContext) => Promise<HookResult> })
+      .executeHooks('onBeforeToolCall', makeContext())
+
+    expect(result).toEqual({ blocked: true, blockedBy: 'p-blocker', reason: 'not allowed' })
+  })
 })

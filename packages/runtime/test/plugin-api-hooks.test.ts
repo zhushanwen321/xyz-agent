@@ -4,7 +4,8 @@
  * 验证主线程侧 registerHookRpcHandlers 和 Worker 侧 createHookApi：
  * - plugin.hooks.register 注册成功 → 返回 { registered: true }
  * - 多个 handler 按优先级排序存储
- * - createHookApi.onPiEvent 注册并触发回调
+ * - createHookApi.onPiEvent 注册并经 executeHookRequest 触发回调（D2-1 request 直连）
+ * - executeHookRequest 的 block / transform / 放行三形态
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
@@ -14,6 +15,7 @@ import type { WorkerPort } from '../src/services/plugin-service/plugin-rpc-serve
 import {
   registerHookRpcHandlers,
   createHookApi,
+  executeHookRequest,
 } from '../src/services/plugin-service/hook-api.js'
 import type { PluginRpcClient } from '../src/services/plugin-service/plugin-rpc-client.js'
 import type { HookEntry, PluginDescriptor, Disposable } from '../src/services/plugin-service/plugin-types.js'
@@ -226,7 +228,7 @@ describe('Hook API — createHookApi (Worker side)', () => {
 
   // ── TC-HK-03: onPiEvent 注册并触发 ────────────────────────────
 
-  it('TC-HK-03: onPiEvent registers handler and triggers on invoke notification', async () => {
+  it('TC-HK-03: onPiEvent registers handler and triggers via executeHookRequest', async () => {
     const hookApi = createHookApi(mockClient, 'test-plugin')
 
     // 注册 onPiEvent handler
@@ -244,26 +246,19 @@ describe('Hook API — createHookApi (Worker side)', () => {
 
     const handlerId = registerCall.params.handlerId as string
 
-    // 模拟主线程发送 hook.invoke 通知
-    const invokeHandler = mockClient.onNotificationHandlers.get('plugin.hooks.invoke')!
-    expect(invokeHandler).toBeTruthy()
-
-    // 触发 invoke
-    invokeHandler({
+    // 模拟主线程的 plugin.hooks.invoke request（D2-1 request 直连执行入口）
+    const result = await executeHookRequest({
       handlerId,
       context: { eventName: 'session:create', data: { sessionId: 's1' } },
     })
 
-    // 验证 handler 被调用（等待微任务）
-    await new Promise(resolve => setTimeout(resolve, 10))
+    // handler 被调用
     expect(collected.length).toBe(1)
     expect(collected[0].eventName).toBe('session:create')
     expect(collected[0].data).toEqual({ sessionId: 's1' })
 
-    // 验证 invoke result 已返回
-    const resultCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.invoke.result')!
-    expect(resultCall).toBeTruthy()
-    expect(resultCall.params.handlerId).toBe(handlerId)
+    // observer 类 hook 不产拦截结果（invoke 包装器返回 undefined，主线程按放行处理）
+    expect(result).toBeUndefined()
 
     // 清理
     disposable.dispose()
@@ -271,12 +266,13 @@ describe('Hook API — createHookApi (Worker side)', () => {
 
   // ── TC-HK-04: onBeforeSendMessage 注册并触发 ───────────────────
 
-  it('TC-HK-04: onBeforeSendMessage registers and intercepts on invoke', async () => {
+  it('TC-HK-04: onBeforeSendMessage registers and intercepts via executeHookRequest', async () => {
     const hookApi = createHookApi(mockClient, 'test-plugin')
 
+    const interceptorResult = { blocked: true, proceed: false, modifiedContent: 'SECRET' } as const
     const disposable = await hookApi.onBeforeSendMessage(async (ctx) => {
       invokedParams.push(ctx)
-      return { blocked: true, proceed: false, modifiedContent: ctx.data }
+      return interceptorResult
     })
 
     const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')!
@@ -284,29 +280,24 @@ describe('Hook API — createHookApi (Worker side)', () => {
     expect(registerCall.params.hookType).toBe('onBeforeSendMessage')
 
     const handlerId = registerCall.params.handlerId as string
-    const invokeHandler = mockClient.onNotificationHandlers.get('plugin.hooks.invoke')!
-    expect(invokeHandler).toBeTruthy()
 
-    invokeHandler({
+    const result = await executeHookRequest({
       handlerId,
       context: { pluginId: 'test-plugin', hookType: 'onBeforeSendMessage', data: { text: 'hello' }, timestamp: Date.now() },
     })
 
-    await new Promise(resolve => setTimeout(resolve, 10))
     expect(invokedParams.length).toBe(1)
     expect((invokedParams[0] as Record<string, unknown>).hookType).toBe('onBeforeSendMessage')
 
-    // 验证结果已返回
-    const resultCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.invoke.result')!
-    expect(resultCall).toBeTruthy()
-    expect((resultCall.params.result as Record<string, unknown>).blocked).toBeTruthy()
+    // InterceptorResult 原样回传（字段映射在主线程 HookPipeline，D2-3）
+    expect(result).toEqual(interceptorResult)
 
     disposable.dispose()
   })
 
   // ── TC-HK-05: dispose 清理本地 handler ─────────────────────────
 
-  it('TC-HK-05: dispose removes handler, no invoke response sent after dispose', async () => {
+  it('TC-HK-05: dispose removes handler, executeHookRequest proceeds after dispose', async () => {
     const hookApi = createHookApi(mockClient, 'test-plugin')
 
     const collected: number[] = []
@@ -322,17 +313,75 @@ describe('Hook API — createHookApi (Worker side)', () => {
     // dispose
     disposable.dispose()
 
-    // 再次触发 invoke → 不触发 handler（已清除）
-    const invokeHandler = mockClient.onNotificationHandlers.get('plugin.hooks.invoke')!
-    expect(invokeHandler).toBeTruthy()
-    invokeHandler({ handlerId, context: {} })
-
-    await new Promise(resolve => setTimeout(resolve, 10))
+    // 再次执行 invoke → 不触发 handler（已清除），返回放行
+    const result = await executeHookRequest({ handlerId, context: {} })
     expect(collected.length).toBe(0) // handler should not be called after dispose
+    expect(result).toEqual({ proceed: true })
 
     // 验证 unregister 请求已发送
     const unregisterCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.unregister')!
     expect(unregisterCall).toBeTruthy()
     expect(unregisterCall.params.handlerId).toBe(handlerId)
+  })
+})
+
+// ── D2-1 request 直连：executeHookRequest 形态 ──────────────────────
+
+describe('executeHookRequest (D2-1 request direct path)', () => {
+  let mockClient: MockRpcClient & PluginRpcClient
+
+  beforeEach(() => {
+    mockClient = createMockRpcClient()
+  })
+
+  /** 注册一个 onBeforeSendMessage 拦截器并返回其 handlerId */
+  async function registerInterceptor(
+    handler: (ctx: unknown) => Promise<{ proceed: boolean; reason?: string; modifiedData?: unknown }>,
+  ): Promise<{ handlerId: string; dispose: () => void }> {
+    const hookApi = createHookApi(mockClient, 'direct-plugin')
+    const disposable = await hookApi.onBeforeSendMessage(handler)
+    const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')!
+    return { handlerId: registerCall.params.handlerId as string, dispose: () => disposable.dispose() }
+  }
+
+  // ── block 形态 ─────────────────────────────────────────────────
+
+  it('returns block form when handler returns proceed:false', async () => {
+    const { handlerId, dispose } = await registerInterceptor(async () => ({
+      proceed: false,
+      reason: 'API key detected',
+    }))
+
+    const result = await executeHookRequest({ handlerId, context: { data: 'x' } })
+
+    expect(result).toEqual({ proceed: false, reason: 'API key detected' })
+    dispose()
+  })
+
+  // ── transform 形态 ─────────────────────────────────────────────
+
+  it('returns transform form when handler returns modifiedData', async () => {
+    const { handlerId, dispose } = await registerInterceptor(async () => ({
+      proceed: true,
+      modifiedData: { content: 'IMPORTANT' },
+    }))
+
+    const result = await executeHookRequest({ handlerId, context: { data: { content: '!important' } } })
+
+    expect(result).toEqual({ proceed: true, modifiedData: { content: 'IMPORTANT' } })
+    dispose()
+  })
+
+  // ── 放行形态 ───────────────────────────────────────────────────
+
+  it('returns { proceed: true } for unknown handlerId', async () => {
+    await registerInterceptor(async () => ({ proceed: true }))
+    const result = await executeHookRequest({ handlerId: 'hook_nobody_999', context: {} })
+    expect(result).toEqual({ proceed: true })
+  })
+
+  it('returns { proceed: true } for malformed params (no handlerId)', async () => {
+    const result = await executeHookRequest({})
+    expect(result).toEqual({ proceed: true })
   })
 })
