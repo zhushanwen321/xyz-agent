@@ -1,6 +1,6 @@
 # P0 状态层：容器范式 + per-session 派生 + token 合帧（子文档 07）
 
-> **一句话结论**：把 `messages` 从「Map 恒等不稳定 + 全局 streaming computed + 逐 token 提交」改为「Map 恒等稳定 + 每 session 独立 ref + per-session 惰性 computed + microtask 合帧」，让每个 token 的失效范围从「全部 session」收敛到「当前 session 一个 ref」，且提交次数从「每 token 一次」降到「每 microtask 一次」——这是失败模式 A 的第一根因（根因 1）的唯一修法，也是子文档 08 的地基。
+> **一句话结论**：把 `messages` 从「Map 恒等不稳定 + 全局 streaming computed + 逐 token 提交」改为「Map 恒等稳定 + 每 session 独立 ref + per-session 惰性 computed + microtask 合帧」，让每个 token 的失效范围从「全部 session」收敛到「当前 session 一个 ref」，且提交次数从「每 token 一次」降到「每 microtask 一次」——这是失败模式 A 失效扇出根因（根因 1）的修法，也是子文档 08 的地基。**收益定位（审查修正）**：D-1 的失效收敛是**多 session** 属性（单 session 长对话时只有目标 session 自己在变，本无跨 session 扇出可收敛）；单 session 长对话的流畅由 D-2（提交次数）+ D-3（去全局扫描）+ 08 的 D-4/D-5（渲染）共同达成。**D-1 必须同时迁移两个整-ref watcher 的依赖源**（§2.3.5），否则其触发源被切断。
 
 - **S（情境）**：xyz-agent 开发者看 AI 流式回复时，每个 token 都要走 `WS → core transport → chat store → 消息组件 → markdown` 全链路。这条链路的头部是 `packages/core` 的 chat 域状态层（`store.ts` 的 `messages` 可变状态 + 派生），本文档只改这一层。
 - **C（冲突）**：`messages = shallowRef<Map<string, Message[]>>` 每次 commit 都整体替换 Map 身份（`mutations.ts` 的 `new Map` 全表拷贝），导致所有读 `messages.value` 的 computed 跨 session 失效；同时 `streamingSessionIds` 是全 Map 重扫的全局 computed，且每个 token 单独提交一次 `commitMessages`——无效写 + 无效算 + 无效失效。
@@ -29,7 +29,7 @@
   - `packages/core/src/domain/chat/streaming-state-machine.ts`（`finalizeMessages`/`applySubagentStreamDelta`/`finalizeSubagentStream` 经 `commitMessages` 间接受影响，签名不变）
   - `packages/core/src/domain/chat/useChat.ts` 的 `ensureStreamSubscription`（D-2 台帧落点）
   - `packages/core/src/domain/chat/effects/registry.ts`（`text_delta`/`thinking_delta` 的 handler 走向与 flush 语义）
-  - 2 个整-ref watcher：`packages/renderer/src/composables/features/file-tree/useFileChangeInvalidation.ts`、`features/search/useSearch.ts`（失效频率收敛，接口不变）
+  - 2 个整-ref watcher：`packages/renderer/src/composables/features/file-tree/useFileChangeInvalidation.ts`、`features/search/useSearch.ts`（**依赖源从整 `chatStore.messages` 迁移到 per-sid 分区 ref——D-1 伴生必改项，逻辑不变**，见 §2.3.5）
   - 5 个直接断言 `messages.value` 的测试文件（见 §5）
 - **Out**：D-4/D-5（渲染层、子文档 08）、D-6/D-7/D-9（面板层、子文档 09）、D-8（构建、子文档 10）；pi 进程与 runtime 侧任何改动；功能需求变更；样式与视觉。
 
@@ -39,8 +39,8 @@
 
 | 目标 | 本文档如何服务它 |
 |---|---|
-| **G1**（200+ 消息长 session 流式不掉帧、不随对话增长变卡） | D-1 使 token 失效范围=单 session；D-3 使 `isGenerating` 只依赖本 session ref；D-2 使提交次数降一个数量级 |
-| **G5**（结构上正确：不引入漂移状态、不靠脆弱缓存、不修补症状） | D-3 明确否决「显式计数器」；D-1 明确否决 `markRaw`/`triggerRef` 修补；D-2 明确否决 store 层批量 |
+| **G1**（200+ 消息长 session 流式不掉帧、不随对话增长变卡） | D-2 使提交次数降一个数量级、D-3 使 `isGenerating` 只依赖本 session ref（单 session 长对话的主因解）；D-1 的失效收敛在多 session 场景生效（单 session 场景本无跨 session 扇出） |
+| **G5**（结构上正确：不引入漂移状态、不靠脆弱缓存、不修补症状） | D-1 让失效粒度=单 session ref（多 session 正确性 + 08 地基）；D-3 明确否决「显式计数器」；D-1 明确否决 `markRaw`/`triggerRef` 修补；D-2 明确否决 store 层批量 |
 
 ---
 
@@ -52,7 +52,7 @@
 
 读者会看到几个反复出现但未必有共识的词，先一次性定义（后文不再重复定义，直接用）：
 
-- **失效扇出（invalidation fan-out）**：一次响应式写入触发的依赖重算范围。例：`commitMessages` 替换整个 Map → `messages.value` 的每个 `get()` 调用点（`streamingSessionIds`、`getMessages`、两个 watcher、13 个 `getMessages` 消费方）全部重新求值，哪怕它们只关心**另一个** session。这就是「跨 session 失效」——失败模式 A 的第一根因。
+- **失效扇出（invalidation fan-out）**：一次响应式写入触发的依赖重算范围。例：`commitMessages` 替换整个 Map → `messages.value` 的每个 `get()` 调用点（`streamingSessionIds`、`getMessages`、两个 watcher、全部 `getMessages` 消费方）全部重新求值，哪怕它们只关心**另一个** session。这就是「跨 session 失效」——失败模式 A 的第一根因。
 - **Map 恒等稳定**：Map 对象的引用只在「增删 session」时变化，同一 session 内消息更新时 Map 引用不变。例：A、B 两个 session 都在流式，A 收到 delta → 只有 A 的分区 ref 被替换，外层 Map 引用不动，因此读 Map 的代码不会因 A 的更新而重算。
 - **惰性缓存 computed**：不参与总体渲染的派生值，在首次被访问时才计算并缓存，依赖变化时仅失效、不再主动计算。与「eager computed」相对——eager 是在定义时就被上游依赖图订阅，任何一个依赖抖动都触发重算，哪怕结果暂时无人读。
 - **reactive proxy（深响应式代理）**：Vue `reactive()`/`ref()` 对对象递归建代理，每个字段的读写都可追踪。ADR-0039 用 `shallowRef` 的动机就是消除这条链路上万级深 proxy。
@@ -80,7 +80,7 @@
                           ├→ [失效扇出 1] 所有读 messages.value 的 computed 重算：
                           │     ├─ streamingSessionIds (store.ts:178-189)  ← R2：全 Map 重扫 O(Σ消息)
                           │     ├─ isGenerating/isActive/isLruExempt → 依赖 streamingSessionIds
-                          │     ├─ getMessages(sid) 的 13 个消费方
+                          │     ├─ getMessages(sid) 的 全部生产消费方（组件/composable）+ 测试消费方
                           │     └─ watch([sidRef, chatStore.messages]) ×2:
                           │           useFileChangeInvalidation.ts:46（每 token 全量重扫 fileChanges）
                           │           useSearch.ts:78（每 token 重扫，但实际逐 sid 重建 watcher）
@@ -194,7 +194,14 @@ const unwatch = watch(
 )
 ```
 
-`packages/renderer/src/composables/features/search/useSearch.ts:78-98` 里 `setupInvalidation`（`useFileSearch`）同样 watch 整 `chatStore.messages`，且每次 `activeSessionId` 变化 rebuild 该 watcher。两者目前**每个 token 都会重扫当前 session 的全部消息的 fileChanges**（见失败模式 E：`useFileChangeInvalidation` 每 token 全量重扫无产出的 stale 角标）。D-1 落地后，这两个 watcher 的失效信号从「整 .value 替换」收敛为「当前 sid 的分区 ref 替换」，且批量（D-2）后每 microtask 才触发一次。**注意：本子文档不改它们的逻辑（那是 D-9 的 overlay 刷新），只保证它们的失效频率降下来**。
+`packages/renderer/src/composables/features/search/useSearch.ts:78-98` 里 `setupInvalidation`（`useFileSearch`）同样 watch 整 `chatStore.messages`，且每次 `activeSessionId` 变化 rebuild 该 watcher。两者目前**每个 token 都会重扫当前 session 的全部消息的 fileChanges**（见失败模式 E：`useFileChangeInvalidation` 每 token 全量重扫无产出的 stale 角标）。
+
+**⚠️ D-1 伴生必改项（审查修正，本项是 MUST 级而非「自动受益」）**：D-1 落地后这两个 watcher 的触发源**被切断**——`() => chatStore.messages` 读的是外层 Map 身份，D-1 后同 sid 更新只替换 `get(sid).value`、外层 Map 身份不变 → watcher 不再随 token 更新触发；且 `{deep:true}` 救不了它（Vue `traverse` 对 ref 类值不深入遍历，分区值换成 `ShallowRef` 后 deep 遍历零依赖）。若不加处理，fileChanges 的 stale 缓存失效与搜索缓存失效会**静默停更**（角标不再随 AI 写文件刷新），且 D-9（09，阶段 2）晚于本文档（阶段 1）落地，中间存在明确回归窗口。
+
+- **必改方案（选定）**：两个 watcher 的依赖源从「外层 Map」改为「当前 sid 的 per-sid 分区 ref」——`watch([() => sessionIdRef.value, () => chatStore.getMessages(sessionIdRef.value ?? '')], ..., { deep: true, immediate: true })`。getter 内部读 `get(sid).value` 会精确追踪该 sid 分区 ref 的替换，同 sid 更新触发、他 sid 更新不触发；`deep:true` 对返回的普通数组无副作用（保持与现状一致的「读当前 sid 全消息扫 fileChanges」逻辑，**逻辑不变，只换依赖源**）。
+- 由此获得的频率收益是 D-2 带来的（每 microtask 批只触发一次），而非「依赖迁移」本身。
+- 被否：(a) 不改依赖、声明「阶段 1 到 D-9 之间 fileChanges 失效停更」为已知副作用——把功能回归当已知项，违反 G5；(b) 等 D-9 一并改——回归窗口横跨阶段 1/2，不可接受。
+- 注意：这两个 watcher 只是**失效触发**；目录失效/角标刷新本身的改造（overlay 化）属 D-9（09 文档），本文档不改其回调逻辑。
 
 ### 2.4 失败模式与根因映射
 
@@ -217,7 +224,7 @@ const unwatch = watch(
 3. **整 Map 直接消费者 3 处**（F9）：`lru.ts`（`messagesValue` getter）、`streamingSessionIds`（将删除）、`streaming-state-machine.ts`（`collectFinalizeCandidates` 遍历 `messages.value.keys()`）。D-1 后前两者需适配，第三个遍历 key 的行为不变。
 4. **`status:'streaming'` 写入点仅 3 处**（F8）：`message_start`（`registry.ts:146`，新建 streaming assistant）、`bash-effects.ts:55`（新建 streaming bash）、`registry.ts` thinking/tool 相关（但含 `status:'streaming'` 字面量的主要三处即这几处）＋ `finalizeMessages` 单点终态翻转。这决定了 R2 的重算 99% 是徒劳。
 5. **D-010 sealed 幂等**（F8）：`text_delta` handler 开头 `if (!isLastAssistantStreaming(messages, sid)) return`（`registry.ts:251`）——finalize 后晚到 delta 被丢弃。D-2 的 flush 边界必须与此交互（见 §3.3.3）。
-6. **`getMessages` 消费方 13 个接口不变**（F9）：`getMessages(sid)` 当前返回 `Message[]`（`store.ts:206-208`），D-1 后签名/返回类型不变，13 个消费方零改动。
+6. **`getMessages` 消费方接口不变**（F9）：`getMessages(sid)` 当前返回 `Message[]`（`store.ts:206-208`），D-1 后签名/返回类型不变，全部生产消费方（组件/composable）+ 测试消费方零改动（grep 全仓 50+ 处、多为测试，不承诺精确计数）。
 7. **5 个测试文件直接断言 `messages.value`**（F9）：见 §5 适配策略。
 8. **ADR-0039/0049 兼容**（F12）：ADR-0039 动机＝消除深 proxy；ADR-0049 要求 Map 分区派。D-1 是「更彻底的 Map 分区」——外层 Map 保持，每 session 值由「普通数组」升级为「shallowRef 数组」，代理深度不变（仍是浅）。
 
@@ -282,7 +289,7 @@ const unwatch = watch(
 | 方案 | 长期架构合理性 | 短期实现成本 | 风险 |
 |---|---|---|---|
 | **A（选定）useChat 层 microtask 批量（同类型保序，终态即时 flush）** | **高**：store 保持「纯状态 + 动作」不担调度职责；coalescing 是「入站编排」问题，归 useChat（订阅编排层）最合适 | **中**：在 `ensureStreamSubscription` 回调加缓冲 Map + microtask flush；需处理「非 delta 先 flush」边界 | **低**：合帧逻辑集中一处，测试面只需加「coalescer」单测，不碰 store 测试 |
-| B store 层批量（`commitMessages` 内缓冲） | **低**：store 从「无状态转换器」变成「含调度器」，职责越界；且 store 的所有 commit 入口（含 hydrate 等低频写）都要过缓冲，语义混乱 | **中**：改 store 多处 | **高**：测试面需适配「同步 commit 变异步 flush」，5 个测试文件 + 13 个消费方的「写入即读取」假设全部破坏 |
+| B store 层批量（`commitMessages` 内缓冲） | **低**：store 从「无状态转换器」变成「含调度器」，职责越界；且 store 的所有 commit 入口（含 hydrate 等低频写）都要过缓冲，语义混乱 | **中**：改 store 多处 | **高**：测试面需适配「同步 commit 变异步 flush」，5 个测试文件 + 全部生产消费方（组件/composable）+ 测试消费方的「写入即读取」假设全部破坏 |
 | C 仅渲染层节流（rAF） | **低**：渲染层合并**不减少** store 的 commit 次数与失效扇出——R1/R2 仍在每 token 触发，只是把「重渲染」拖到下一帧；根因 1 未动 | **低**：渲染层加 rAF 节流 | **中**：治标不治本，且与 08 的渲染改动叠加会引入「谁在节流」的重复调度 |
 
 **推荐 A。被否方案「若用了它会怎样」**：
@@ -335,7 +342,7 @@ function getMessages(sessionId: string): Message[] {
 }
 ```
 
-返回类型仍是 `Message[]`，13 个消费方**零改动**（F9）。这是 D-1 最重要的兼容保证。
+返回类型仍是 `Message[]`，全部消费方**零改动**（F9；全仓 grep `getMessages(` 命中 50+ 处、多为测试——精确计数不可靠，兼容契约是「签名/返回类型不变」，不承诺计数）。这是 D-1 最重要的兼容保证。
 
 **（4）`isGenerating` 新签名（替代 `streamingSessionIds`）**：
 
@@ -375,6 +382,7 @@ interface DeltaBuffer {
   sid: string
   texts: string[]        // 同类型合并的 delta 片段（text 或 thinking）
   type: 'message.text_delta' | 'message.thinking_delta'
+  contentIndex?: number  // 保留 buffer 首条的 contentIndex（见下方「contentIndex 保留」）
 }
 
 function createCoalescer(chat: ChatStoreInstance) {
@@ -385,7 +393,13 @@ function createCoalescer(chat: ChatStoreInstance) {
     for (const [key, buf] of pending) {
       if (sid !== undefined && buf.sid !== sid) continue  // 只 flush 目标 sid（终态消息场景）
       // 把 texts 合并成一次 commit（沿用 registry 的 content 拼接语义：content + texts.join('')）
-      chat.applyMessageEvent(buf.sid, { type: buf.type, payload: { delta: buf.texts.join('') } })
+      chat.applyMessageEvent(buf.sid, {
+        type: buf.type,
+        payload: {
+          delta: buf.texts.join(''),
+          ...(buf.contentIndex !== undefined && { contentIndex: buf.contentIndex }),
+        },
+      })
       pending.delete(key)
     }
   }
@@ -396,7 +410,7 @@ function createCoalescer(chat: ChatStoreInstance) {
         const key = `${sid}:${msg.type}`
         const buf = pending.get(key)
         if (buf) buf.texts.push(msg.payload.delta)
-        else pending.set(key, { sid, type: msg.type, texts: [msg.payload.delta] })
+        else pending.set(key, { sid, type: msg.type, texts: [msg.payload.delta], contentIndex: msg.payload.contentIndex })
         if (!scheduled) {
           scheduled = true
           queueMicrotask(() => { scheduled = false; flush() })
@@ -411,6 +425,8 @@ function createCoalescer(chat: ChatStoreInstance) {
   }
 }
 ```
+
+> **contentIndex 保留**（审查补充）：`text_delta` handler（`registry.ts:262`）读 `contentIndex` 做 `insertContentBlockByIndex` 定位 text 块；合成 delta 若丢掉首条的 contentIndex，text 块会退化 append 定位，在 tool_call 块穿插时可能产生排序差异。定案：DeltaBuffer 记录首条 delta 的 contentIndex 并在 flush 时透传（后续合并的 delta 同 contentIndex 或 undefined 均可，首条即定位依据）。
 
 > **保序语义**（D-2 核心）：delta 缓冲与「非 delta 消息」的关系是「先 flush（把前面所有 delta 落盘）再处理非 delta」，保证 complete/error 到达时，前面所有 delta 已一次性提交——渲染看到的中间态是「整段合并后的文本」，终态消息**绝不迟到**。同 sid 不同 type 的 delta（text 与 thinking）分 key 缓存，互不合并。
 
@@ -469,12 +485,12 @@ messages.value : Map<string, ShallowRef<Message[]>>
 | P2 | 首建 key 才替换 Map | 对陌生 sid commit → 外层 Map 引用变化 + 新增 key；已有 sid 不变化 | 单测 spy 外层 `.value` setter | ⛔ M1 |
 | P3 | `isGenerating` 只依赖本 session ref | A 流式时 `isGenerating(B)` 的重算次数 = 0（B 的分区 ref 未动） | 单测用 `effect`+计数，或 devtools ref 依赖图 | ⛔ M1 |
 | P4 | `streamingSessionIds` 已删除，无全局重扫 | grep 确认 `streamingSessionIds` 定义与引用归零 | 静态 grep | ✅ 设计期 |
-| P5 | watcher 失效频率=单 session 变更 | `useFileChangeInvalidation` 在「B 流式、A 静止」时 watcher 回调不触发 | devtools Performance 或单测 spy `onInvalidate` | ⛔ M3 |
+| P5 | watcher 触发源迁移正确性 | `useFileChangeInvalidation`/`useSearch` 依赖源改为 per-sid 分区 ref 后：**同 sid 更新时 watcher 仍按 D-2 批量节奏触发（回调不丢）**、他 sid 更新时不触发；devtools 依赖图确认无残留的「外层 messages Map 身份」依赖 | devtools ref 依赖图 + 单测 spy `onInvalidate` | ⛔ M3 |
 | P6 | coalescing 后 commit 次数=mu 秒级批量 | 连续 N 条 delta → `commitMessages` 调用次数 << N | 单测 spy `commitMessages` 计数 | ⛔ M2 |
 | P7 | 终态即时（不依赖 microtask） | `message.complete` 到达时，前面 delta 已 flush + complete 已 apply | 单测按序断言 `getMessages` 终态 status | ⛔ M2 |
 | P8 | sealed 幂等不因 coalescing 破坏 | finalize 后迟到 delta（含合成的）被丢弃，消息不串改 | 单测复现 D-010 场景 | ⛔ M2 |
 | P9 | 虚拟 key 动态建 + 清理 | `applySubagentStreamDelta` 首写建 key；`evictVirtualKey` 后 `sessionStreamingFlags` 同步清 | 单测 + 内存断言 | ⛔ M4 |
-| P10 | getMessages 13 消费方零改动 | `getMessages` 返回 `Message[]` 签名不变，13 处调用点编译通过 | 全仓 typecheck | ✅ 设计期 |
+| P10 | getMessages 全部消费方零改动 | `getMessages` 返回 `Message[]` 签名不变，全部调用点（生产+测试）编译通过 | 全仓 typecheck | ✅ 设计期 |
 
 ---
 
@@ -486,7 +502,7 @@ messages.value : Map<string, ShallowRef<Message[]>>
 
 | 场景 | 步骤 | 通过标准 | 回溯 |
 |---|---|---|---|
-| **V1-01 长 session 流式（失效收敛）** | ① 在一条 200+ 消息的 session 里让 AI 生成一段带代码块的回复；② 流式期间用 devtools Performance 录 token 密集段；③ 在另一 panel 打开第二个 session（静止）；④ 观察 devtools 里 store 提交链 | 流式期间每个 token 的 commit 只触发「目标 sid」的 computed 重算；第二个 session 的 `isGenerating`/渲染/watch 不随第一个 session 的 token 重算（devtools ref 依赖图或 Performance 火焰图确认无来源第二个 session 的长任务） | G1 |
+| **V1-01 长 session 流式（失效收敛）** | ① 在一条 200+ 消息的 session 里让 AI 生成一段带代码块的回复；② 流式期间用 devtools Performance 录 token 密集段；③ 在另一 panel 打开第二个 session（静止）；④ 观察 devtools 里 store 提交链 | 流式期间每个 token 的 commit 只触发「目标 sid」的 computed 重算；第二个 session 的 `isGenerating`/渲染/watch 不随第一个 session 的 token 重算（devtools ref 依赖图或 Performance 火焰图确认无来源第二个 session 的长任务）；**量化门槛（对齐父 00 V1）**：录制的 token 密集段帧率 ≥55fps 且 longest task < 100ms，并限定长任务来源为 store 提交链（排除 GC/外部噪声后再判定） | G1 |
 | **V1-02 双 session 并行互不干扰** | ① 两个 panel 各开一个 session，同时各自发消息触发流式；② 交替观察两个 panel 的流式进度；③ 在 A 流式时切走 B，再切回 B | 两个 session 的消息互不串分区；A 的 token 不动 B 的消息；切走再切回 B，B 历史与流式进度完整（无 LRU 误驱逐） | G1、G5 |
 | **V1-03 切 session 后迟到消息不串分区** | ① A 流式中途，快速切到 B；② 观察 A 的收尾 delta 是否误写进 B | 迟到的 A delta 只写 A 分区（若 A 已 finalize 则被 sealed 丢弃），B 分区无任何 A 的 token | G5（结构性竞态消除，ADR-0049 同款） |
 
@@ -505,7 +521,7 @@ M1 容器骨架（D-1）──┬→ mutations.ts 新签名 + store.ts 声明/ge
                     ├→ 删 streamingSessionIds（D-3 与 D-1 合并，父 00 §3.1）
                     └→ lru.ts messagesValue 适配
 M2 合帧（D-2）──────  core useChat coalescer + registry delta handler 不变
-M3 watcher 收敛验证 ──  确认 useFileChangeInvalidation / useSearch 失效频率下降（不改逻辑）
+M3 watcher 依赖迁移 ──  useFileChangeInvalidation / useSearch 依赖源迁到 per-sid 分区 ref（改依赖不改逻辑，§2.3.5 审查修正）+ 探针 P5
 M4 清理/测试收口 ────  disposeSession/LRU 增补 sessionStreamingFlags 清理 + 5 测试适配
 ```
 
@@ -515,12 +531,13 @@ M4 清理/测试收口 ────  disposeSession/LRU 增补 sessionStreamingF
 
 | 单元 | 内容 | 文件改动地图 | justification |
 |---|---|---|---|
-| **U1 容器骨架（D-1）** | `MessagesRef` 升级 + `commitMessages`/`deleteMessages` 新实现 + `store.ts` 声明 + `getMessages` 加 `.value` | `mutations.ts`（23-29、40-44、`MessagesRef` 类型）；`store.ts`（83 声明、206-208） | F1（证伪拷贝）后 D-1 收益=失效收敛，必须先把失效粒度切开；接口 `getMessages` 不变保 13 消费方零改（F9） |
+| **U1 容器骨架（D-1）** | `MessagesRef` 升级 + `commitMessages`/`deleteMessages` 新实现 + `store.ts` 声明 + `getMessages` 加 `.value` | `mutations.ts`（23-29、40-44、`MessagesRef` 类型）；`store.ts`（83 声明、206-208） | F1（证伪拷贝）后 D-1 收益=失效收敛，必须先把失效粒度切开；接口 `getMessages` 不变保全部消费方零改（F9） |
 | **U2 惰性派生（D-3）** | 删 `streamingSessionIds` + 新增 `sessionStreamingFlags` Map + `isGenerating` 惰性化 | `store.ts`（178-189 删、196-198 改、570-625 返回对象不变） | R2 全 Map 重扫是长期卡顿放大器；SSOT 仍是消息数组，零 drift（父文档 G5） |
 | **U3 LRU 适配（D-1 伴生）** | `messagesValue` 类型 + `deleteMessageKey` 不变语义 | `lru.ts`（89、200-210） | 整 Map 直接消费者之一（F9），改类型不改遍历语义 |
 | **U4 coalescer（D-2）** | `ensureStreamSubscription` 回调加缓冲 + microtask flush + 非 delta 先 flush | `core/useChat.ts`（177-192 回调内）；`registry.ts` 不改 | 真实 handler 位置已确认在 core（§2.3.4）；store 不担调度职责（D-2 被否方案 B 的教训） |
 | **U5 测试适配** | 5 文件「直接断言 `messages.value`」改为「经 getMessages / `.value`」 | 见 §5.3 | F9；测试是「接口变化的消费方」，不随代码正确性自动对 |
 | **U6 清理收口** | `disposeSession`/LRU 驱逐增补 `sessionStreamingFlags.delete` | `store.ts`（529-568）、`lru.ts`（131-147） | D-3 新增惰性 computed 的唯一生命周期状态，漏删即慢泄漏 |
+| **U7 watcher 依赖迁移（D-1 伴生必改，审查新增）** | `useFileChangeInvalidation` / `useSearch` 的 watch 依赖源从整 `chatStore.messages` 改为 `chatStore.getMessages(sid)`（per-sid 分区 ref） | `packages/renderer/src/composables/features/file-tree/useFileChangeInvalidation.ts:45-71`、`packages/renderer/src/composables/features/search/useSearch.ts:78-98` | §2.3.5：D-1 切断整-ref 触发源，不迁则 fileChanges/搜索失效静默停更直到 D-9（阶段 2），回归窗口不可接受 |
 
 ### 5.3 5 个测试文件的适配策略
 
@@ -544,7 +561,7 @@ M4 清理/测试收口 ────  disposeSession/LRU 增补 sessionStreamingF
 
 ## 附录：与父文档术语/事实/决策的一致性对照
 
-- **事实复用**：F1（拷贝证伪 → D-1 收益=失效扇出收敛）、F8（status 写入点 3+1 处）、F9（整 Map 消费者 3 处/watch 2 处/getMessages 13 处/测试 5 文件）、F12（ADR-0039/0049 兼容）、F13（token 速率区间）均直接引用，未改结论。
+- **事实复用**：F1（拷贝证伪 → D-1 收益=失效扇出收敛）、F8（status 写入点 3+1 处）、F9（整 Map 消费者 3 处/watch 2 处/getMessages 生产+测试消费方/测试 5 文件）、F12（ADR-0039/0049 兼容）、F13（token 速率区间）均直接引用，未改结论。
 - **决策对齐**：D-1 选定 `Map<sid, ShallowRef<Message[]>>`（Map 恒等稳定 + 每 session 独立 ref）；D-3 选定 per-session 惰性 computed，否决显式计数器/维持全局；D-2 选定 useChat 层 microtask 批量，否决 store 层/仅渲染层——三处均与父 00 §3.1 决策矩阵一致，被否方案均写明「若用了它会怎样」。
 - **目标回溯**：本层只接 G1/G5（父文档已定 D-1/D-2/D-3 → G1/G5），§1.3 表格 + §4 验收场景均回溯。
 

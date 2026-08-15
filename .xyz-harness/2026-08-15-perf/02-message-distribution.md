@@ -57,7 +57,7 @@ this.broker.broadcast(msg)                     // 序列化 #2 + 盲发全部连
 2. **6 类「只走盲广播、从未接 bus」的 session 级消息**（探明清单，删除盲广播后必丢）：
    - `terminal.data/alive/exit`（`terminal-service.ts:99-122`）——PTY 高频输出流，完全依赖盲广播；
    - `context.update` 的 turn-end 路径（`session-service.ts:693` 的 `applyContextUpdate` 只 broadcast）；
-   - `plugin:viewUpdate/uiRequest`（plugin-service 只 broadcast）；
+   - `plugin:viewUpdate/uiRequest`（plugin-service 只 broadcast；**payload 已在广播点注入 `sessionId: active?.id`**——`plugin-service.ts:151-157` 经 ActiveSessionResolver 求值注入，无活跃 session 时为 undefined，D1-1 按此分支接法）；
    - `extension.ui_timeout`（`extension-message-handler.ts:70` 只 broadcast）；
    - `session.exited`（`session-service.ts:216` 只 broadcast，但有 ROUTE_TABLE 无条件兜底，只要消息有源就安全）；
    - `session.handoffStarted`（前端已无消费方，可直接删除广播）。
@@ -70,6 +70,7 @@ this.broker.broadcast(msg)                     // 序列化 #2 + 盲发全部连
 
 - renderer 已实现「session 进列表即全量订阅」（`useSessionStreamSync` 监听 sessionStore.list，added → `ensureStreamSubscription`），且**订阅持久**（切走不退订、dispose 才退、session 级幂等）——删除盲广播的 renderer 前提大体就绪。
 - `routeInbound` 对**无 seq 消息不做 gap 检测、直接 dispatch**（`route-inbound.ts` / `seq-gap.ts:37-39`：`!state || !state.subscribed → pass`）——transient 类（不分配 seq）天然兼容，无需改 renderer。
+- 跨 session 全局消费者（ExtensionHost / DialogRequestQueue）不随 session 切换退订，靠 renderer `route-inbound.ts` FALLBACK 的 **CROSS_SESSION_TYPES 白名单**（`route-inbound.ts:227-238`）在 dispatchSession 后额外 dispatchCrossSession：`extension:widget/widgetGui/status/notify`、`extension.ui_request`、`extension.ui_timeout`、`plugin:uiRequest`、`plugin:viewUpdate`。**该白名单是 renderer 侧、传输无关的路由机制**——单通道化后这些消息改经 bus 定向推送，只要目标 session 处于订阅态（「session 进 list 即全量订阅」覆盖），dispatchSession + dispatchCrossSession 照常触发，全局消费者语义不变；对未订阅 session 的覆盖分析归入 D1-3。
 - 残余风险（探明清单 R6/R8）：未订阅 session 的 message.error/send.rejected、subagent 虚拟 session 的 stream_delta——依赖「全量订阅」覆盖，其中虚拟 session 订阅情况标注待验证。
 
 ### 2.4 物理数据流（现状）
@@ -99,7 +100,7 @@ pi 事件流 → EventAdapter/Interpreter → send(msg)
 
 | 方案 | 长期架构合理性 | 短期实现成本 | 风险 | 裁决 |
 |---|---|---|---|---|
-| **A：完全单通道（选）**：bus 成为 session 级唯一通道，删除盲广播 session 级路径 | ✅ 分发模型唯一、接口统一（ADR-0055 7d）；每 token 省 50% 序列化 | 中：6 类消息接 bus + 删一行 broadcast + renderer 验证 | 中：依赖「6 类消息全部有源 + renderer 全量订阅」两前提，探明已大体就绪 | ✅ |
+| **A：完全单通道（选）**：bus 成为 session 级唯一通道，删除盲广播 session 级路径 | ✅ 分发模型唯一、接口统一（ADR-0055 7d）；每 token 省 50% 序列化 | 中：6 类消息接 bus + 删 ~15 处双写点（send 回调 + dispatcher ×14）+ 接口收敛 + renderer 验证 | 中：依赖「6 类消息全部有源 + renderer 全量订阅」两前提，探明已大体就绪 | ✅ |
 | B：保留 lifecycle 4 类（exited/complete/subagents/workflowUpdate）走全局广播，其余单通道 | ⚠️ 类型分裂、两套通道长期并存，新消息类型永远要问「走哪条」 | 中 | 低 | ❌ 若用它：§3.1 终态变成「大部分消息单通道 + 4 类特殊全局」，每加一种消息类型都要查一遍白名单 |
 | C：双写状态共享一次序列化结果（publish 与 broadcast 复用同一字符串） | ❌ 双通道仍在，只是少一次 stringify；架构问题未解决 | 低 | 低 | ❌ 若用它：每 token 仍盲发所有连接，多 panel 放大依旧 |
 
@@ -109,11 +110,17 @@ pi 事件流 → EventAdapter/Interpreter → send(msg)
 
 **D5-1：topic 三分类表（本次设计的核心数据模型）**
 
-| 类 | 语义 | seq | ring | state 快照 | 消息全集（按现有 ServerMessageType 归类） |
+| 类 | 语义 | seq | ring | state 快照 | 消息全集（session 级 push 型 ServerMessageType，含 D1-1 接 bus 的 6 类） |
 |---|---|---|---|---|---|
-| **state** | last-value 状态，新订阅者必须立即拿到当前值 | 分配 | 不入 | 写快照（同 key 覆盖） | session.commands、context.update、session.subagents、session.workflowUpdate、**session.state_changed（补，修 3b）** |
-| **stream** | 可回放的消息型事件 | 分配 | 入（O(1) 环形） | 不写 | message.message_start、message.complete、tool_call_start/end、message.error、send.rejected、bashStart/bashResult、message.compactionSummary、message.customStart、message.changeSetInvalidated、message.file_changes、session.compacting/compacted、session.renamed、thinkingLevelSet |
-| **transient** | 高频瞬时流，丢失可接受 | **不分配** | 不入 | 不写 | message.text_delta、message.thinking_delta、message.thinking_start/end、subagent.stream_delta、**terminal.data（新接 bus 后归此类）**、message.stream_warn |
+| **state** | last-value 状态，新订阅者必须立即拿到当前值 | 分配 | 不入 | 写快照（同 key 覆盖） | session.commands、context.update、session.subagents、session.workflowUpdate、session.state_changed（补，修 3b） |
+| **stream** | 可回放的消息型事件 | 分配 | 入（O(1) 环形） | 不写 | message.message_start、message.complete、message.tool_call_start/end、message.tool_call_update、message.error、message.status、send.rejected、message.bashStart/bashResult、message.compactionSummary、message.branchSummary、message.customStart、message.changeSetInvalidated、message.file_changes、message.auto_retry_start/end、message.queue_update、message.stream_error、session.compacting/compacted、session.exited、terminal.alive/exit/ack、plugin:uiRequest、extension.ui_request、extension.ui_timeout、extension:widget/widgetGui/status/notify |
+| **transient** | 高频瞬时流，丢失可接受 | **不分配** | 不入 | 不写 | message.text_delta、message.thinking_delta、message.thinking_start/end、subagent.stream_delta、terminal.data（新接 bus 后归此类）、message.stream_warn、plugin:viewUpdate |
+
+- **不参与分类（Out of scope，逐类已核实来源）**：
+  - **RPC reply 型**走 `reply` 通道不经 publish/broadcast，无 seq/ring 语义：`*.result`、session.subscribe、session.history/fullHistory、session.created/deleted/deletedByCwd（session-message-handler.ts:110/195/212）、session.subagentHistory（:267）、session.agentCallHistory（:275）、session.agentCallFilePath（:279）、session.workflowActionDone（:283）、session.subagentActionDone（:287）、session.renamed（:385）、session.setProject（:392）、session.thinkingLevelSet（settings-message-handler.ts:381）、model.switched（:306）、project.loaded（project-message-handler.ts:26）。
+  - **全局消息（payload 无 sessionId 字段）**仍走 `broker.broadcast`，不进 bus：config.*、app.info、plugin:statusBarUpdate、plugin:permissionRequest（payload 仅 `{pluginId, permissions}`，plugin-activator.ts:180）、plugin:statusChange/crashed/notification/messageDecoration/config/statusSetUpdate、extension.discovered/installCancelled/recommended/pendingRequests/error、config.extensions、session.forkNotice（payload 仅 src/newSessionId，session-message-handler.ts:116-120）、session.handoffComplete/handoffAborted（W5 显式无 sessionId 走 dispatchGlobal，handoff-service.ts:300-315）。**D1-2 只删「带 sessionId 的 broadcast」，这些广播全部保留。**
+  - `session.handoffStarted`：D1-1 定案删除该广播（前端无消费方），不进分类表。
+- 归类修正记录（相对初稿）：`plugin:viewUpdate` 从 stream 改归 transient——高频 UI 流，与 terminal.data 同判据（高频瞬时、丢失可接受、ExtensionHost 不靠 ring 回放重建状态）；`plugin:uiRequest` 保留 stream——对话框请求丢失会让插件等满 60s 超时走默认值，属可见退化，且频率低不构成 ring 压力。`extension:*` 全族归 stream：widget 是 per-widgetKey 行累积语义（event-adapter.ts:302-370），state 快照模型是「每 type 单 key last-value」，硬塞快照会丢非最新 widgetKey 的内容，重连回放需 ring 保序。
 
 - 选择：transient 不分配 seq。被否：transient 分配 seq 但不入 ring——seq 语义是「gap 检测 + 回放序」，瞬态消息两者都不需要，分配只会让 renderer 基线推进逻辑复杂化。
 - 证据：routeInbound 对无 seq 消息直接 dispatch（`seq-gap.ts:37-39` 兼容路径），无 seq 是安全的；`terminal.data` 若占 seq 会把 seq 计数器与 gap 检测混入 PTY 高频流。
@@ -125,7 +132,8 @@ pi 事件流 → EventAdapter/Interpreter → send(msg)
 - 保留 compactionSummary 不进快照（3d：靠 JSONL 持久化兜底，符合规则 #7.5）。
 
 **D5-3：streamRing 改 O(1) 环形缓冲**。
-- 选择：定长数组 + head/tail 索引（覆盖写）或等价双端结构；`subscribe` 的 snapshot 按 seq 顺序导出；gap 判定（`seqCounter > ring 长度`）逻辑保持。
+- 选择：定长数组 + head/tail 索引（覆盖写）或等价双端结构；`subscribe` 的 snapshot 按 seq 顺序导出。
+- **gap 判定机制核实（初稿在此处写错，已修正）**：renderer 真正消费的 gap 不是 bus 内部 gauge，而是 handler 侧 `session.subscribe` 的 `fromSeq < snapshot[0].seq` 比较（`session-message-handler.ts:333-349`：`let gap = false`，`fromSeq !== undefined` 时取 `oldestSeq = snapshot[0]?.seq ?? 0`，`fromSeq < oldestSeq → gap = true`）。`message-bus.ts:146` 的 `seqCounter > streamRing.length` gauge 被 handler 用 `let gap = false` **覆盖丢弃，是死代码**——且 D5 的 transient 不分配 seq 后，该 gauge 的分子分母语义分裂（seqCounter 只计 stream/state，ring 只存 stream），任何 ≥1 条 state 消息都会使 `seqCounter > ring.length` 恒真，假 gap 必发。定案：**删除 bus 内该死 gauge**，gap 只由 handler 的「fromSeq < ring 最旧 seq」判定（基于 ring 拓扑，D5 下不受影响、语义正确）。实施 U1 以探针验证：对含 state 消息的 session 调 subscribe，断言 gap===false 且 snapshot 完整。
 - 证据：transient 移除后 ring 只存 stream 类，容量压力大减，但 stream 类在高频 turn 下仍会满载，O(n) shift 每消息一次仍不可接受。
 - 风险：`message-bus.test.ts` 已覆盖 FIFO/seq/快照语义，重构数据结构需同步更新 snapshot 导出。
 
@@ -135,7 +143,7 @@ pi 事件流 → EventAdapter/Interpreter → send(msg)
 |---|---|---|
 | terminal.data / alive / exit | transient（data）/ stream（alive、exit） | terminal-service 注入 bus（或经 send 回调同款封装），data 直传、alive/exit 入 ring |
 | context.update（turn-end 路径） | state | `applyContextUpdate` 补 publish（对齐 restore 路径 `fetchAndBroadcastContext` 的双写） |
-| plugin:viewUpdate / uiRequest | stream | plugin-service 的广播点补 publish |
+| plugin:viewUpdate / uiRequest | viewUpdate=transient、uiRequest=stream（归类修正见 D5-1） | plugin-service 广播点补 publish：payload 已注入 `sessionId: active?.id`（`plugin-service.ts:151-157`）——**sid 为 string 时走 bus.publish(sid, msg) 且不再 broadcast；sid 为 undefined 时保持全局 broadcast**（无活跃 session 的弹窗仍须必达全部连接）。两者均在 CROSS_SESSION_TYPES，renderer 侧 dispatchCrossSession 不受传输方式影响 |
 | extension.ui_timeout | stream | extension-message-handler 补 publish |
 | session.exited | stream | session-service 补 publish（ROUTE_TABLE 无条件兜底仍生效） |
 | session.handoffStarted | — | **删除该广播**（前端已无消费方，探明确认） |
@@ -143,7 +151,18 @@ pi 事件流 → EventAdapter/Interpreter → send(msg)
 **D1-2：删除 `broker.broadcast(msg)` 的 session 级路径**。
 - 在 `session-service.ts` send 回调与 `message-dispatcher.ts` 14 处双写点中，删除 broadcast 调用，只留 publish；`broadcast()` 退化为纯全局消息通道。
 - 接口统一（ADR-0055 7d）：`IMessageBroker` 与 MessageBus 收敛为同一「发布」抽象——SessionService / Dispatcher / HandoffService 只依赖 `publish`；broker 只服务无 sessionId 的全局消息。
-- 运行时断言（✅已探明）：所有 session 级 push 点的全集已枚举（探明报告消息类型表）；6 类例外已逐类接法；renderer 全量订阅 + 持久订阅已就绪（`useSessionStreamSync`）。
+- **删除广播的前置 DoR：type → 投递路径全集审计表**（本表即「全集已枚举」的证据，实施 U4 前逐行 ✅ 复核；任一 push 型 session 级消息不在本表 → 不删其 broadcast）：
+
+| 投递路径（现状） | 覆盖的 type | 证据位置 | 单通道后 |
+|---|---|---|---|
+| send 回调双写（publish+broadcast，覆盖 pi 事件流转发的全部 session 级 push） | message.*（含 delta/complete/error/file_changes 等）、session.compacting/compacted、session.subagents、session.workflowUpdate、subagent.stream_delta、session.exited 等 | `session-service.ts:956-965`（send 回调）；`message-bus.ts` publish 实现 | 只留 publish |
+| dispatcher 命令副作用双写 ×14 | send.rejected、message.error、message.complete、message.bashStart/bashResult 等命令编排消息 | `message-dispatcher.ts:101/115/143/165/173/193/208/239/259/275` 等 | 只留 publish |
+| 6 类「只走盲广播」（D1-1 逐类接法） | terminal.data/alive/exit、context.update（turn-end）、plugin:viewUpdate/uiRequest、extension.ui_timeout、session.exited | `terminal-service.ts:99-122`、`session-service.ts:693`、`plugin-service.ts:151-157`、`extension-message-handler.ts:70`、`session-service.ts:216` | 补 publish（D1-1 表） |
+| 只广播、且删除（非桥接） | session.handoffStarted | `handoff-service.ts:249-255` | 删除广播 |
+| 全局广播（无 sessionId 字段，保留 broadcast） | config.*、app.info、plugin:statusBarUpdate/permissionRequest/statusChange/crashed/notification/messageDecoration/config/statusSetUpdate、extension.discovered/installCancelled/recommended/pendingRequests/error、config.extensions、session.forkNotice、session.handoffComplete/handoffAborted | 见 D5-1 排除清单各证据位置 | 保留 broadcast |
+| RPC reply（不走 publish/broadcast，无改动） | `*.result`、session.subscribe/history/fullHistory/created/deleted/deletedByCwd/subagentHistory/agentCallHistory/agentCallFilePath/workflowActionDone/subagentActionDone/renamed/setProject/thinkingLevelSet、model.switched、project.loaded | 见 D5-1 排除清单各证据位置 | 无改动 |
+
+  - renderer 侧前提：全量订阅 + 持久订阅（`useSessionStreamSync`，§2.3）已就绪；未订阅 session 的残余风险见 D1-3。
 
 **D1-3：renderer 残余风险处理**。
 - R6（未订阅 session 的 error/rejected）：「session 进 list 即订阅」已覆盖 list 内全部 session；「刚 create 未进 list」窗口的消息靠 ring 回放兜底（stream 类）。接受。
@@ -155,7 +174,7 @@ pi 事件流 → EventAdapter/Interpreter → send(msg)
 
 | # | 场景 | 步骤 | 通过标准 | 回溯目标 |
 |---|---|---|---|---|
-| V1 | 大仓库中 agent 做多工具任务，同时开 2 个 panel | 观察 streaming 全程 + 监控 runtime CPU | token 连续输出；runtime 进程 streaming 期间 CPU 较改造前显著下降（改造前基线采样对比）；每个 panel 只收到自己 session 的消息（可在 ws 层打点验证） | 目标 1 |
+| V1 | 大仓库中 agent 做多工具任务，同时开 2 个 panel | 观察 streaming 全程 + ws 层打点 | token 连续输出；**确定性断言：同一 session 级消息在 send/bus 层只被 `JSON.stringify` 一次、且只推给订阅该 sid 的连接（ws 层计数 = 1 序列化 / 1 订阅者，可直接复核）**；runtime CPU 较改造前显著下降作为辅助参考（受 GC/后台任务噪声影响，不作唯一标准）；每个 panel 只收到自己 session 的消息 | 目标 1 |
 | V2 | 用户在 panel A 开着 terminal 跑 `npm install`，panel B 正在 streaming | 观察两个 panel | terminal 输出正常到达 A；B 的 streaming 不受影响；B 的 ring 未被 terminal 数据填充（通过 subscribe snapshot 长度验证） | 目标 2 |
 | V3 | streaming 中断开 renderer WS，5 秒后重连 | 重连后观察对话流与状态 | 重连后：state 快照（commands/context/subagents/workflowUpdate/state_changed）立即恢复；stream 类消息按 seq 回放；delta 类不回放但后续 delta 正常继续；无重复消息（seq 去重生效） | 目标 3 |
 | V4 | 后台 session 的 agent 跑完（当前用户正在看另一个 panel） | 观察提示音/侧栏状态 | message.complete 提示与 subagent 终态照常到达（ROUTE_TABLE 兜底 + 订阅持久生效） | 目标 4 |

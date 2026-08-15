@@ -171,10 +171,10 @@ pi 进程 token
   → 末位 Turn patch
        → Turn.vue flatBlocks（:168）→ computeTraceWindow（:170，含 sort）
        → visibleBlocks（:184）→ v-for Block
-            [D-4] Block 级 v-memo 键 = [块身份, 状态, 本地折叠 ref] → 未变块跳过 patch
+            [D-4] Block 级 v-memo 键 = [块身份, 内容/状态]（折叠态由 Block 内部驱动）→ 未变块跳过 patch
        → MarkdownRenderer.watch(content)（:217）→ rAF 节流 → doRender
             [现状] renderMarkdown(全文) → md.render(全文) → segments → v-html 替换
-            [D-5]  findStableBoundary(全文) → 前缀缓存 HTML + renderMarkdown(tail) → v-html = 前缀 + tail
+            [D-5]  findStableBoundary(全文) → 前缀段缓存（引用恒等）+ renderMarkdownSegments(tail) → 渲染树 = 前缀段 + tail 段
        → MermaidRenderer.watch(source)（:206）→ renderMermaid(整图)
             [现状] 每帧整图重渲
             [D-5]  未闭合 mermaid fence 流式期占位，静默 ≥T ms / complete 后完整渲染
@@ -192,7 +192,7 @@ pi 进程 token
 
 开发者让 AI 生成一个带代码块的 50KB 回答。每 token 到达时：
 
-1. **历史 turn 完全不动**：前面 199 个 turn 的成员消息引用都没变，`toRenderItems` 直接复用它们上次的 `MessageTurn` 对象 → virtua diff 判定「turn 对象引用相同」→ 兄弟 Turn 不 patch。视口内唯一受影响的只有末位 turn。
+1. **历史 turn 完全不动**：前面 199 个 turn 的成员消息引用都没变，`toRenderItemsIncremental` 直接复用它们上次的 `MessageTurn` 对象 → virtua diff 判定「turn 对象引用相同」→ 兄弟 Turn 不 patch。视口内唯一受影响的只有末位 turn。（**边界说明**：「完全不动」仅在纯流式追加下成立；load-more 前插会使 turn 位置平移 → 同位置匹配失配 → 该次全量重建。这是一次性突发，不属每 token 热路径。）
 2. **末位 turn 里绝大多数 block 也不动**：已完成的 thinking/tool/text 块的身份字段（thinking id / tool id）与状态（running→complete 那次才变）未变，`v-memo` 键命中 → 这些 Block 跳过 patch；只有正在增长的那个 text block 与它的 MarkdownRenderer 继续更新。
 3. **markdown 只渲染尾巴**：MarkdownRenderer 找到「最后一个稳定结构边界」，边界之前的前缀 HTML 已缓存，每帧只 `markdown-it` 渲染边界之后的 tail 段（通常是几十到几百字节），v-html = 缓存前缀 + tail HTML。代码块的 fence 若未闭合，流式期间渲染为占位（一个简洁的「语言名 + 转圈」行），token 静默 ≥T ms 或消息 complete 后，才一次性完整渲染并高亮。
 4. **mermaid 不整图重渲**：未闭合的 mermaid fence 同样占位，闭合且静默后一次渲染成 SVG。
@@ -236,10 +236,11 @@ pi 进程 token
 **函数签名**（落在 `message-turns.ts`，保持纯函数、零 Vue 依赖的现有归属）：
 
 ```ts
-// 增量派生（带缓存）版 toRenderItems。缓存按 session 隔离（外部传 cache 句柄），
-// 或内部用 WeakMap 由调用方持有；设计取舍见下。
+// 增量派生（带缓存）版 toRenderItems。缓存按 session 隔离（外部传 cache 句柄，
+// 由调用方经 useSessionScopedState 分区持有，见失效条件 3）。
 export function toRenderItemsIncremental(
-  messages: Message[],            // 扁平消息列表（已 filterDisplayable）
+  sourceMessages: Message[],            // 源消息数组（per-sid 分区数组，D-1 下 commit 才替换引用、恒等稳定）
+  filter: (msgs: Message[]) => Message[],  // 现状 filterDisplayableMessages（每调用产出新数组）
   forceWorking: boolean,
   cache: TurnRenderCache | undefined,  // 可复用缓存；undefined 时退化为全量（等价现状 toRenderItems）
 ): RenderItem[]
@@ -253,30 +254,37 @@ export function toRenderItemsIncremental(
 // 判定：某 turn 的 [user, ...assistants] 的引用与上次逐一对齐（顺序 + 引用相等），
 //       则复用上次的 MessageTurn 对象；否则重建该 turn 并重算 isStreaming/hasFoldable。
 interface TurnRenderCache {
-  // listKey 之上的 turn 序列：每个 turn 由「成员引用数组」标识
-  // 用数组引用做第一层快判：整个 messages 数组引用未变 → 所有 turn 直接复用，零遍历。
-  lastMessagesRef: Message[] | null
+  // 快路径键 = 源数组引用（NOT filter 产物）：filterDisplayableMessages 每调用产出新数组，
+  // 若键在 filter 结果上，快路径恒 miss、变死代码。源数组在 D-1 下 commit 才替换引用——
+  // 「源引用未变」= 本 sid 无新 commit（本次重算由 forceWorking/env 等其他依赖触发）。
+  lastSourceRef: Message[] | null
   // 每个 turn 的成员引用签名（浅数组，元素是消息对象引用）
   turnSignatures: Message[][]
   // 与 turnSignatures 一一对应：上次产出的 MessageTurn
   turnObjects: MessageTurn[]
+  // 上次整体产出（快路径直接复用）
+  cachedItems: RenderItem[]
 }
 ```
 
-**复用判定（核心逻辑伪代码）**：
+**复用判定（核心逻辑伪代码，快路径已按审查修正）**：
 
 ```
-function toRenderItemsIncremental(messages, forceWorking, cache):
+function toRenderItemsIncremental(sourceMessages, filter, forceWorking, cache):
   if cache == null:                          # 无缓存 → 全量（等价现状）
-    return toRenderItems(messages, forceWorking)
+    return toRenderItems(filter(sourceMessages), forceWorking)
 
-  if cache.lastMessagesRef === messages:     # 数组引用未变 → 上次结果仍有效（D-1 下常见于「非本 session 的无关 token」）
-    但 forceWorking/末位 isStreaming 仍需按 forceWorking 重算末位 turn 的派生字段
-    return cache.cachedItems
+  if cache.lastSourceRef === sourceMessages:  # 源数组引用未变 → 本 sid 无新 commit
+    # 快路径：全部 turn 复用，但末位 turn 的 isStreaming 必须按当前 forceWorking 重算——
+    # SubagentTab 的 forceWorking（subagentStore.isRunning 翻转）在源数组不变时触发本函数，
+    # 不重算则「思考中/working」UI 陈旧（初稿直接 return cachedItems 是错的，已修正）。
+    # 产出 = 复用全部历史 turn 对象 + 末位 isStreaming 变化时**替换末位 turn 对象**（不可变，不原地改）。
+    return withLastTurnDerived(cache.cachedItems, forceWorking)
 
-  # 数组引用变了 → 重扫，但只重建「成员引用变化」的 turn
+  # 源数组引用变了 → 有新的 commit：先 filter（新数组），再重扫，只重建「成员引用变化」的 turn
+  filtered = filter(sourceMessages)
   新 items = []
-  遍历 messages 分组出「turn 边界」（与 toRenderItems 相同的 user/assistant/system 分类）
+  遍历 filtered 分组出「turn 边界」（与 toRenderItems 相同的 user/assistant/system 分类）
   对每个 turn t：
     sig_t = [t.user, ...t.assistants] 的引用序列
     if cache 里存在同位置且 signature 相同的 turnObject:
@@ -287,38 +295,43 @@ function toRenderItemsIncremental(messages, forceWorking, cache):
   # 末位 turn 的派生字段（isStreaming/hasFoldable）无论如何重算：
   末位 turn.isStreaming = forceWorking || 末位 assistant.status==='streaming'
   末位 turn.hasFoldable = 末位 turn 的成员是否含 thinking/toolCalls（成员变化时重算）
-  更新 cache 并 return items
+  更新 cache（lastSourceRef = sourceMessages）并 return items
 ```
 
 **失效条件（缓存何时失效/清理）**：
 
 1. **成员引用变化** → 该 turn 重建（上面已处理）。
 2. **turn 边界变化**（插入/删除 user/system 消息，如 load-more、streaming 追加 assistant）→ 受影响位置之后的 turn 序号平移，但其**成员引用签名仍可按内容对齐**；为简化，缓存采用「位置 + 签名」双匹配：同位置签名相同即复用，位置变化但签名在新位置出现也可复用（可选优化，首版可只做同位置匹配，位置平移的 turn 重算成本是 O(转向量)，可接受）。
-3. **session 切换/销毁** → 缓存必须随 session 清理。归属决策：**缓存放在 `MessageStream.vue` 组件实例 `ref`（或 `shallowRef`）内，天然随组件（= session）销毁**，不落 store——因为它是纯派生缓存（可从消息数组无损重建），不是需要跨组件共享的领域状态；放进 store 反而要管理 session 分区生命周期（重复 D-1/ADR-0049 的清理负担）。这同时满足 G5：缓存可随时丢弃重建，无 drift 风险。
+3. **session 切换/销毁** → 缓存必须随 session 隔离与清理。归属决策（审查修正——初稿放 `MessageStream.vue` 组件实例 ref，**生命周期前提错误**）：`Panel.vue:43` / `SubagentTab.vue:73` 的 `<MessageStream :session-id>` **无 `:key`**——Vue 切 sessionId 时不销毁组件实例、只更新 prop，组件实例 ref 会跨 session 残留上一会话的 Message 引用、且无任何清理钩子。这正是 AGENTS.md 规则 7 / ADR-0049 明令禁止的「实例级状态 + 无清理」反模式（恰是 ADR-0049 用 `useSessionScopedState` 工厂消灭的脆弱形态）。定案：**缓存经 `useSessionScopedState` 工厂管理**——`Map<sid, shallowRef<TurnRenderCache | null>>` 分区，工厂在 setup 时自动注册 cleanup（`triggerSessionCleanups`），`useSidebar.deleteSession` 时自动释放分区；组件内只读当前 sid 分区。它是纯派生缓存（可从消息数组无损重建），不需要跨组件共享，但**必须**走 ADR-0049 的分区/清理范式而非组件实例生命周期。这同时满足 G5：缓存可随时丢弃重建，无 drift 风险。
 
 **`v-memo` 键的具体清单**（`Turn.vue` trace 区 `v-for` Block 的包装，或每个 Block 根节点）：
 
-`v-memo` 键 = **[块身份字段, 状态字段, 本地折叠 ref]**，逐块类型：
+`v-memo` 键 = **[块身份字段, 内容/状态字段]**（审查修正：**不含 Block 本地折叠 ref**——v-memo 的 deps 数组在**父组件（Turn.vue）渲染作用域**求值，无法引用 Block 组件内部的私有 ref（`thinkingCollapsed`/`userToggledThinking`/`toolCollapsed` 均为 Block 内 `ref()`，Block.vue:228/231/399），「折叠态入键」结构上不可实现，照初稿字面实现必然在编译/求值层失败）：
 
-| 块类型 | 身份字段（结构稳定） | 状态字段（变化才重渲） | 本地折叠 ref（vi: 组件内本地 ref，memo 必须覆盖否则折叠切换不重渲） |
-|---|---|---|---|
-| text | `flatIndex`（turn 内时序稳定序） | `content` 引用（`normalizeContent(msg.content)` 结果）、`status`（streaming/complete/error） | —（text 无本地折叠） |
-| thinking | `thinking.id` | `working`（running→complete）、`status` | `thinkingCollapsed`（Block.vue:228）、`userToggledThinking`（:231） |
-| tool | `tool.id` | `tool.status`（running→complete/error，F8 终态）、`working` | `toolCollapsed`（Block.vue:399） |
+| 块类型 | 身份字段（结构稳定） | 内容/状态字段（变化才重渲） |
+|---|---|---|
+| text | `flatIndex`（turn 内时序稳定序） | `content` 引用（`normalizeContent(msg.content)` 结果）、`status`（streaming/complete/error） |
+| thinking | `thinking.id` | `working`（running→complete）、`status` |
+| tool | `tool.id` | `tool.status`（running→complete/error，F8 终态）、`working` |
 
-> **关键约束（F10）**：thinking/tool 的折叠态是 **Block 组件本地 ref**（`thinkingCollapsed`/`userToggledThinking`/`toolCollapsed`），展开态是 store（`turn-expansion.ts`，驱动 `showTrace`，不属单个块）。`v-memo` 键**必须包含这些本地 ref**——否则用户点开/折叠一个块时，memo 判定「键未变」而跳过 patch，折叠/展开的视觉不会更新（这是 `v-memo` 最常见的翻车点）。展开态（`showTrace` → `visibleBlocks` 长度变化）是父级结构变化，会自然触发 v-for 重渲染，不需进单个 block 的 memo 键。
+> **折叠态为什么不需要入键（审查修正，初稿误解了 v-memo 语义）**：v-memo 只 gate「父级 patch 传播到该子树」，不 gate 子组件**自身**的响应式更新。Block 组件实例被 `:key="fb.flatIndex"`（Turn.vue:59）保活，`thinkingCollapsed`/`toolCollapsed` 是 Block 自己的响应式 ref——用户点击折叠时 **Block 自身**的依赖触发其独立重渲染，与父级 v-memo 无关，折叠/展开视觉正常更新。展开态（`showTrace` → `visibleBlocks` 长度变化）是父级结构变化，自然触发 v-for 重渲染，也不进单个 block 的 memo 键。若实施中实测折叠不更新，排查方向是 Block 内部 ref 的响应式链路，而非「把本地 ref 塞进键」（那在结构上不可能）。
 
 #### 3.3.2 D-5 的接口草案：markdown 增量渲染协议
 
 **协议接口（`markdown.ts` 新增，`MarkdownRenderer.vue` 消费）**：
 
 ```ts
-// 增量渲染结果：前缀（已稳定、缓存复用）+ tail（本次新渲染）。
-// 约定：prefixHtml 由调用方缓存（不随每帧重算），tailHtml 每帧渲染。
+// 增量渲染结果：前缀段（已稳定、引用恒等缓存复用）+ tail 段（本次新渲染）。
+// 协议是 MarkdownSegment[]（text/mermaid 交替，与现状 renderMarkdownSegments 同构），
+// 不是裸 HTML 字符串对——初稿 {prefixHtml, tailHtml} 字符串拼接会把组件架构降级：
+// ① tail 内闭合的 mermaid fence 经 md.render 产出 <div class="md-mermaid"> 占位 HTML，
+//    直塞 v-html 无法成为持有 svg/status/renderSeq 内部态的 <MermaidRenderer> 组件；
+// ② 前缀按「HTML 字符串」跨帧缓存后，前缀里已挂载的 MermaidRenderer 不再被重建 → 前缀 mermaid 图渲染停止。
+// 段结构下 mermaid 保持组件形态，前缀段按引用恒等复用 + 稳定 key 保活实例。
 export interface IncrementalRenderResult {
-  prefixHtml: string          // 稳定边界之前的 HTML（已含代码块/链接等）
-  tailHtml: string            // 稳定边界之后的 HTML（本帧 md.render(tailText) 产出）
-  stableBoundary: number      // 稳定边界的字符 offset（诊断用）
+  prefixSegments: MarkdownSegment[]   // 稳定边界之前的段（含已闭合 mermaid 段；由调用方按引用恒等缓存，本函数不返回新前缀）
+  tailSegments: MarkdownSegment[]     // 稳定边界之后的段（本帧 renderMarkdownSegments(tailText) 产出）
+  stableBoundary: number              // 稳定边界的字符 offset（诊断用）
   mode: 'incremental' | 'fallback-full'   // 是否走了降级
 }
 
@@ -334,44 +347,48 @@ export function renderIncremental(
 export async function renderIncremental(content, env) {
   const boundary = findStableBoundary(content)   // §3.3.3 的规则
   if (boundary == null) {
-    // 降级：全量渲染（等价现状 renderMarkdown）
-    return { prefixHtml: '', tailHtml: await renderMarkdown(content, env),
+    // 降级：全量渲染（等价现状 renderMarkdownSegments）
+    return { prefixSegments: [], tailSegments: await renderMarkdownSegments(content, env),
              stableBoundary: 0, mode: 'fallback-full' }
   }
   const prefixText = content.slice(0, boundary)
   const tailText   = content.slice(boundary)
-  const tailHtml   = await renderMarkdown(tailText, env)
-  // 前缀 HTML 由调用方缓存（上一次的 prefixHtml），不在本函数内持有
-  return { prefixHtml: '', tailHtml, stableBoundary: boundary, mode: 'incremental' }
+  const tailSegments = await renderMarkdownSegments(tailText, env)
+  // 前缀段由调用方缓存（上一帧的 prefix 段引用），本函数不持有、不重建：
+  // 边界前移时，调用方对新增前缀部分（上一帧 tail 中已稳定的部分）渲染并入前缀缓存。
+  return { prefixSegments: [], tailSegments, stableBoundary: boundary, mode: 'incremental' }
 }
 ```
 
-**调用方（MarkdownRenderer.vue）的缓存语义**：
+**调用方（MarkdownRenderer.vue）的缓存与渲染语义**：
 
-- `segments` 由「前缀段（缓存）+ tail 段（每帧）」组成；前缀 HTML 在「稳定边界前移」时单调增长，上一帧的前缀 HTML 若仍是本帧边界之前的前缀，直接复用（字符串引用不变 → v-html 只重写 tail 子区，前缀 DOM 子树不触碰）。
-- 用「边界 offset 单调不后退」保证前缀缓存的有效性：若某帧边界比上一帧**后退**（理论上 markdown 稳定边界可能随新增内容后移，但已闭合结构不会重新打开——见 §3.3.3 的「闭合单调性」），则该帧降级全量并重建缓存。
-- fence 占位：`findStableBoundary`/渲染时检测「未闭合 code fence 或 mermaid fence」（fence 开头 ``` 无配对的闭合 ```），流式期间把该 fence 及之后渲染为占位（不含 shiki/mermaid 调用）；当 token 静默 ≥T ms **或** message 进入 complete（`status` 非 streaming）时，转为完整渲染。T 为待验证阈值（§5）。
+- **渲染树 = `[...prefixSegments(缓存), ...tailSegments(每帧)]`**，segment 首次产出时分配单调递增 `segId`（跨帧稳定），`v-for :key="seg.segId"`——前缀段的引用与 segId 稳定 → text 段的 v-html DOM 子树不触碰，**mermaid 段的 `<MermaidRenderer>` 组件实例跨帧保活**（内部 svg/status/renderSeq 态不重建、前缀 mermaid 图持续成图）。
+- 边界 offset 单调不后退保证前缀缓存有效：若某帧边界比上一帧**后退**（防御性检测），该帧降级全量并重建缓存（见 §3.3.3「闭合单调性」）。
+- **env 变化 → 前缀缓存失效重建**：`env.filePaths`/`localFiles` 引用变化（文件搜索加载完成）时，前缀中未链接化的路径需要重新链接化（现状 `markdown.ts:44` 注释的「首渲染空集 → 加载后响应式重渲染」语义），前缀缓存必须随 env 签名失效——env 签名 = `filePaths`/`localFiles` 的引用恒等；签名变化则该帧全量重渲染并重建前缀缓存。
+- fence/mermaid 占位：`findStableBoundary`/渲染时检测「tail 以未闭合 code/mermaid fence 开头」（fence 开头 ``` 无配对闭合 ```），流式期把该 fence 渲染为占位 **text 段**（「语言名 + 转圈」行，不含 shiki/mermaid 调用）；token 静默 ≥T ms **或** message 进入 complete（`status` 非 streaming）时转为完整渲染（闭合 fence 正常走 shiki/mermaid 组件）。未闭合 fence 恒整体位于 tail（边界规则保证 prefix 全闭合）。T 为待验证阈值（§5）。
 
 #### 3.3.3 稳定边界判定规则（草案 + 降级兜底）
 
 **定义**：「最后稳定结构边界」= 从文档末尾向前找，最近的满足以下**全部条件**的字符位置：
 
 1. **行首锚点**：处于某行的行首（即该位置要么是文档起始，要么前一个字符是 `\n`）——不在行内（不在某个块级结构的中段）。
-2. **前段全闭合**：该位置之前的**所有** markdown 块级结构（fence、列表项、blockquote、表格行、缩进代码、setext/标题）在该位置处均处于**闭合状态**（无未闭合的 ``` fence、无未闭合的列表/blockquote 前缀、无未闭合表格行）。
-3. **后段无开放结构**：该位置之后（tail 段）不含「在 tail 内部仍保持未闭合」的结构——即 tail 从一个干净的块级边界开始，能独立解析而不需要前缀上下文。
+2. **前段全闭合（含段落闭合）**：该位置之前的**所有** markdown 块级结构（fence、列表项、blockquote、表格行、缩进代码、setext/标题）在该位置处均处于**闭合状态**。**且段落必须闭合**：markdown-it 的 `<p>` 只在空行/块级边界闭合——边界前必须是空行（`\n\n`）或已闭合块级结构的后缘，否则 prefix 以悬空 `<p>` 结尾，`prefix + tail` 拼接后段落错并。
+3. **后段 = 单一独立开放块**（审查修正：初稿「后段无开放结构」与最热 streaming 场景自相矛盾——增长中的普通段落/未闭合 fence/未闭合 mermaid 恰是 §5.3 矩阵 row1/3/4 的常态输入，若按字面「tail 不含未闭合结构」判定，这三个主导场景的 `findStableBoundary` 恒返回 null → 每帧全量渲染，D-5 对最热场景失效且多了边界扫描开销）：tail 从干净的块级边界开始，**允许含一个持续增长的未闭合结构**（增长中的普通段落 / 未闭合 fence / 未闭合 mermaid / 增长中的列表项或 blockquote）——该开放块不依赖前缀上下文即可独立解析。**不允许**的形态是「续行」：tail 以缩进续行开头（依赖前缀的代码块/列表缩进）、以表格分隔行 `|---|---|` 开头、是前缀列表项/blockquote 的续行而非新块——这些形态下 tail 独立渲染与全文渲染不一致，继续向前找边界或降级。
+4. **拼接等价判据（正确性的唯一定义）**：`renderMarkdownSegments(prefixText + tailText)` 与 `renderMarkdownSegments(prefixText) + renderMarkdownSegments(tailText)` 在段层级等价（text 段 HTML 逐段一致、mermaid 段 source 一致）。**一切边界规则实现与测试都以该判据为准**——不满足判据的边界候选一律作废（§5.3 矩阵每行断言此判据，R5 验收做端到端 DOM 等价）。
 
 **判定伪代码（草案）**：
 
 ```
 function findStableBoundary(content): number | null:
   n = content.length
-  # 从后向前找最近的「行首 + 前缀闭合」点
+  # 从后向前找最近的「行首 + 前缀全闭合（含段落闭合）+ tail 独立开放块」点
   for i from n down to 1:                 # 逐字符回扫，O(n)
     if content[i-1] == '\n':              # i 是行首
       prefix = content[0..i]
-      if isAllClosed(prefix):             # 前缀块级结构全闭合
-        if tailStartsWithCleanBlock(content[i..]):   # tail 无开放结构
-          return i
+      if isAllClosed(prefix):             # 前缀块级结构全闭合 + 段落闭合（边界前为空行或闭合块后缘）
+        if tailStartsIndependentBlock(content[i..]):   # tail = 单一独立开放块（允许一个未闭合结构，拒绝续行形态）
+          if 拼接等价(prefix, content[i..]):            # 判据 4：md(prefix+tail) == md(prefix)+md(tail)
+            return i
   # 兜底：无任何行首满足 → 尝试文档起始
   if content 开头即干净块级边界的退化情况: return 0
   return null                             # 无法 O(n) 内确定 → 降级
@@ -379,10 +396,11 @@ function findStableBoundary(content): number | null:
 function isAllClosed(prefix): boolean:
   # 维护一个块级状态栈：扫描 prefix，fence 开/闭配对、列表缩进栈、
   # blockquote 前缀、表格行连续、缩进代码(4 空格)块是否闭合
-  # 全部配对闭合 → true
+  # 全部配对闭合 且 prefix 以段落边界（空行/闭合块后缘）结尾 → true
 
-function tailStartsWithCleanBlock(tail): boolean:
-  # tail 的首个非空行是否是一个干净的块级起始（无缩进残留、无未闭合前缀）
+function tailStartsIndependentBlock(tail): boolean:
+  # tail 的首个非空行是否是「独立的块级起始」：非缩进续行、非表格分隔行、
+  # 非列表/blockquote 续行；tail 内部允许一个未闭合结构持续增长
   # 极端情况：tail 是超大单行（无 \n）→ 判定不干净 → 触发降级
 ```
 
@@ -407,9 +425,10 @@ function tailStartsWithCleanBlock(tail): boolean:
 | # | 场景 | 步骤 | 通过标准 | 回溯目标 |
 |---|---|---|---|---|
 | R1 | **真实 50KB 带代码块回复流式 60fps** | ① 在真实 200+ 消息 session 让 AI 生成 50KB 带代码块/mermaid 的回复；② devtools Performance 录 token 密集段；③ 观察 Performance 里 `toRenderItems` 调用堆（D-4）与 `md.render` 入参长度（D-5） | 流式帧率 ≥55fps；无 >100ms 长任务来自 markdown 渲染链；`md.render` 每帧入参长度 = tail 段（数十~数百字节），非全文；历史 turn 未出现在 patch 火焰 | G1 |
-| R2 | **折叠/展开 thinking 与工具块，状态不冻结** | ① 让 AI 生成含多个 thinking（多步）+ tool 调用（含 running→complete）的回复；② 流式中点击展开/收起某 thinking、某 tool；③ 流式结束回看历史 turn，再次展开/收起 | 展开/收起即时生效（`v-memo` 键含本地 ref，不冻结）；running→complete 时块状态头正确翻转（不 remount 丢态）；历史 turn 回看展开态正确（store 展开态 + 本地折叠态都不串台） | G1 + G5 |
+| R2 | **折叠/展开 thinking 与工具块，状态不冻结** | ① 让 AI 生成含多个 thinking（多步）+ tool 调用（含 running→complete）的回复；② 流式中点击展开/收起某 thinking、某 tool；③ 流式结束回看历史 turn，再次展开/收起 | 展开/收起即时生效（Block 内部响应式驱动，v-memo 不 gate 子组件内部更新）；running→complete 时块状态头正确翻转（不 remount 丢态）；历史 turn 回看展开态正确（store 展开态 + 本地折叠态都不串台） | G1 + G5 |
 | R3 | **200KB 文档打开不卡（全量/降级路径）** | ① 打开一条含 200KB 文本的历史回复（或让 AI 生成 200KB）；② 观察首帧渲染时间；③ 若触发降级，观察降级后内容完整无缺 | 首帧可见内容 <250ms；F5 基线 253ms（200KB 全量）在增量路径下显著下降；降级路径下内容 100% 完整（正确性不减） | G1 + G5 |
-| R4 | **mermaid 流式不整图重渲** | ① 让 AI 生成一个 mermaid 图（```mermaid ...），流式期间观察；② 图闭合且静默后成图；③ 主题切换一次 | 流式期间 mermaid 块显示占位（不每帧调 `renderMermaid`，探针 P5 计数 ≈ 0）；闭合静默 ≥T ms 或 complete 后渲染一次成图；主题切换重渲一次（保留现有行为） | G1 |
+| R5 | **增量渲染正确性等价（DOM 级）** | 同一条 50KB 回复流式结束后：① 记录增量路径的最终 DOM；② 强制关闭增量（降级全量）重新渲染同一消息，对比两 DOM | 两 DOM 在关键标记（fence/列表/表格/mermaid 占位→图/路径链接）上逐点一致；前缀中的 mermaid 成图；「增量路径拼接 == 全文渲染」在真实 DOM 层成立 | G5 |
+| R4 | **mermaid 流式不整图重渲 + 前缀保活** | ① 让 AI 生成一个 mermaid 图（```mermaid ...），流式期间观察；② 图闭合且静默后成图；③ 继续流式一段文本（前缀含该 mermaid）；④ 主题切换一次 | 流式期间 mermaid 块显示占位（不每帧调 `renderMermaid`，探针 P5 计数 ≈ 0）；闭合静默 ≥T ms 或 complete 后渲染一次成图；**前缀中的 mermaid 在后续帧持续成图（MermaidRenderer 实例跨帧保活，不被重建）**；主题切换重渲一次（保留现有行为） | G1 |
 
 **验证缺口**：R1/R2/R4 若无真实模型，用 mock 流（70ms/chunk）可覆盖渲染路径但无法压真实 token 速率上限——优先真实 pi；R3 的 200KB 回复可用历史会话文件离线加载模拟（`getHistoryFromFile` 路径）。
 
@@ -424,8 +443,8 @@ function tailStartsWithCleanBlock(tail): boolean:
 | 任务 | 内容 | 文件 | justification |
 |---|---|---|---|
 | U1 | 实现 `toRenderItemsIncremental`（含 `TurnRenderCache`），保持 `toRenderItems` 全量版作为 `cache=undefined` 退化路径 | `packages/core/src/domain/chat/message-turns.ts` | 纯函数、零 Vue 依赖，可独立单测，复用键正确性是 D-4 根基 |
-| U2 | `MessageStream.vue` 引入 per-instance 缓存 `shallowRef<TurnRenderCache>`，`renderItems` 改调增量版 | `packages/renderer/src/components/panel/MessageStream.vue` | 缓存随组件（session）生命周期，session 切换自然清空 |
-| U3 | `Turn.vue` trace 区 `v-for` 包 `v-memo`，键 = [块身份, 状态, 本地折叠 ref]（§3.3.1 清单） | `packages/ui/src/features/chat/Turn.vue` | F10 本地 ref 必须入键，否则折叠态冻结 |
+| U2 | `MessageStream.vue` 引入 per-session 分区缓存（`useSessionScopedState` 工厂：`Map<sid, shallowRef<TurnRenderCache \| null>>` + 自动 cleanup），`renderItems` 改调增量版（传源数组 + filter） | `packages/renderer/src/components/panel/MessageStream.vue` | ADR-0049 分区/清理范式——`<MessageStream>` 无 `:key`、实例不随 session 销毁，实例级缓存会跨 session 残留；快路径键 = 源数组引用（filter 产物每调用新数组，键其上快路径恒 miss） |
+| U3 | `Turn.vue` trace 区 `v-for` 包 `v-memo`，键 = [块身份, 内容/状态]（**不含 Block 本地折叠 ref**，§3.3.1 清单） | `packages/ui/src/features/chat/Turn.vue` | 折叠态由 Block 内部响应式驱动（实例被 `:key` 保活）；本地 ref 在父作用域不可求值，「折叠态入键」结构上不可实现 |
 | U4 | 实现 `findStableBoundary` + `renderIncremental` + fence/mermaid 未闭合占位 | `packages/renderer/src/composables/logic/markdown.ts` | D-5 核心，边界规则正确性靠 U6 单测矩阵 |
 | U5 | `MarkdownRenderer.vue` 改增量渲染 + 前缀缓存 + 静默/complete 转完整渲染 | `packages/ui/src/features/chat/MarkdownRenderer.vue` | 消费 U4 协议，前缀缓存单调复用 |
 | U6 | 稳定边界判定单测矩阵（§5.3） | `packages/core` 或 `packages/renderer` 测试 | 边界规则的回归防线 |
@@ -453,13 +472,13 @@ packages/renderer/src/composables/logic/markdown.ts  findStableBoundary + render
 | 已闭合 fence + 进行中段落 | ```` ```ts\ncode\n```\n` + 进行中文本 | 闭合 ``` 之后的 `\n` |
 | 未闭合 fence（占位触发） | `...\n```ts\n  part of code`（无闭合 ```） | fence 开头 ``` 之前（fence 整体进占位） |
 | 未闭合 mermaid fence | `...\n```mermaid\ngraph LR` | 同上，mermaid 整体进占位 |
-| 已完成列表 + 进行中列表项 | `- a\n- b\n` + `- 进行中半句` | 已完成 `- b\n` 之后 |
+| 已完成列表 + 进行中列表项 | `- a\n- b\n` + `- 进行中半句` | **列表起始前**（`- a` 之前）——整个开放列表作为 tail 的单一独立开放块：在 `- b` 后切分会把一个列表拆成两个 `<ul>`，违反拼接等价判据 |
 | 已完成 blockquote + 进行中正文 | `> q\n` + `进行中正文` | blockquote 闭合后 |
 | 表格行不完整（无管道闭合） | `| a | b |` + 进行中续行 | 表格起始前 |
 | **超大单行（降级）** | 几十 KB 无 `\n` 的单行 | `null`（降级 full） |
 | 空文档 / 仅空白 | `` / `   ` | `0`（或降级，首版从简） |
 
-**断言强规则**：每行断言「边界 offset 处前缀的块级结构全闭合」+「tail 可独立 `md.render` 且产出合法 HTML」；降级行断言 `mode === 'fallback-full'` 且输出等同全量渲染结果。
+**断言强规则**：每行断言「边界 offset 处前缀的块级结构全闭合**（含段落闭合：边界前为空行或闭合块后缘）**」+「**拼接等价判据：`renderMarkdownSegments(prefix+tail)` 与 `renderMarkdownSegments(prefix) + renderMarkdownSegments(tail)` 段级等价**」；降级行断言 `mode === 'fallback-full'` 且输出等同全量渲染结果。矩阵 row1/3/4（增长中段落/未闭合 fence/未闭合 mermaid）按 §3.3.3 条件 3 修订语义成立：tail 是「单一独立开放块」，边界落在开放块之前的行首。
 
 ### 5.4 待验证检查点（诚实标注，不编造）
 

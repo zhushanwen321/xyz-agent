@@ -62,7 +62,7 @@
 
 Worker/子进程 handleMessage case 'rpc'（plugin-bootstrap.ts:138-149）
   → msg.request 存在 → handleIncomingRequest(request)
-  → request.method ≠ 'plugin.tool.execute' → 立即 METHOD_NOT_FOUND 回包（:179-183）
+  → request.method ≠ 'plugin.tool.execute' → 立即 METHOD_NOT_FOUND 回包（:179-184）
   → onNotification listener 永不触发（它只在 msg.notification 分支被调用）
 
 主线程收到 error 响应 → pendingInvokes.reject → HookPipeline catch → 放行
@@ -70,7 +70,7 @@ Worker/子进程 handleMessage case 'rpc'（plugin-bootstrap.ts:138-149）
 
 **三个错配**：
 1. **request vs notification 错配**：调用方发带 id 的 request，监听方只挂在无 id 的 notification 分支。
-2. **结果回传腿缺失**：Worker 侧设计（`hook-api.ts:148-157`）是在收到 invoke 后通过**独立 request** `plugin.hooks.invoke.result` 回传结果——但主线程没有任何该方法的 handler（全仓 grep 仅 Worker 侧一处引用）。即使修好第一腿，第二腿也是断的。
+2. **结果回传腿缺失**：Worker 侧设计（`hook-api.ts:149-153`）是在收到 invoke 后通过**独立 request** `plugin.hooks.invoke.result` 回传结果——但主线程没有任何该方法的 handler（全仓 grep 仅 Worker 侧一处引用）。即使修好第一腿，第二腿也是断的。
 3. **两条宿主路径同断**：fork 沙箱（`plugin-bootstrap-process.ts:17`）复用同一份 `handleMessage`/`handleIncomingRequest`，断裂与 Worker 线程完全同源。
 
 ### 2.3 两个次生 bug（修好路由后仍会让功能失效）
@@ -82,6 +82,10 @@ Worker/子进程 handleMessage case 'rpc'（plugin-bootstrap.ts:138-149）
 
 - `plugin-hooks-serial.test.ts`：`vi.fn()` mock 掉 `rpcServer.invoke` 与 `host.getWorkerHandle`，只验 HookPipeline 纯逻辑（排序/串行/block）。
 - `plugin-api-hooks.test.ts`：mock 整个 `PluginRpcClient`，手工从 `onNotificationHandlers` Map 取出 listener 直接调用，只验 createHookApi 本地骨架。
+- **mock 盲区全集（审查补充枚举，≥5 文件，每个都切断了传输层或假注册）**：
+  1. `plugin-hooks-integration.test.ts`：TC-HKP-11/13/14 用假 registry；TC-HKP-14 用 snake_case `before_agent_start` 键验 `handleBridgeIntercept`，压根没验 `onBeforeAgentStart` 映射——通过是假通过。
+  2. `plugin-hook-bridge.test.ts`：全部 `vi.spyOn(service,'executeHooks')` / `hookFn` mock。
+  3. `plugin-demo-e2e.test.ts` 的 TC-D06（239-265 行）：**已断言 `!important → IMPORTANT` 改写，但把整个 `context.api.hooks` mock 成 `vi.fn` 直接取 handler 直调**——与 §4 V1/V3 修的目标场景同名，且修复后依旧恒绿。
 - **没有任何测试把「主线程 invoke → Worker handleIncomingRequest → hook-api listener」串起来**。mock 恰好切断了唯一能暴露 request/notification 错配的连接点。
 
 ### 2.5 物理数据流（现状）
@@ -138,10 +142,14 @@ executeHooks('onBeforeSendMessage')
 - 证据：block/transform 必须同步拿结果；主线程 `invoke` 已具备 pending/超时/错误处理全套设施，复用零成本；worker 侧 `handler-registry.ts` 的 `dispatchHandler` 骨架（查 Map → 调 handler）已就绪。
 - 注意：createHookApi 的 handler Map 是闭包私有，需从 `createHookApi` 导出「按 handlerId 执行并返回 Promise<结果>」的入口（如 `executeHookRequest(params)`），供 `handleIncomingRequest` 调用——这是本决策唯一的接口新增点。
 
-**D2-2：observe 类 hook 一律走 `rpcServer.notify`（无 id）**。
-- 选择：`onPiEvent`（event-interpreter 5 处调用点）与 bridge observe 类事件（`bridge-interop.ts` 的 `kind:'observe'` 映射组）改走 notify。
+**D2-2：observe 类 hook 一律走 `rpcServer.notify`（无 id），bridge observe 组逐类分流（审查修正——初稿的「bridge observe 组改走 notify」与「onAfterToolResult 保持 request」自相矛盾，已按映射表现状逐类定案）**。
+- 选择：`onPiEvent`（event-interpreter 5 处调用点）改走 notify。
+- **bridge observe 组分流（`PI_HOOK_EVENT_MAP`，bridge-interop.ts:33-44，逐类定案）**：
+  - `agent_start`/`agent_end`/`message_end`/`turn_end`/`session_start`/`session_compact`/`session_tree` 共 **7 项**，现状映射到 `hookType:'onMessage'`——**该 hookType 没有任何插件注册面**（`createHookApi` 只暴露 5 个方法：onBeforeSendMessage/onBeforeToolCall/onBeforeAgentStart/onAfterToolResult/onPiEvent，hook-api.ts:131-140），路径本身就是死的。定案：**这 7 项的 hookType 改指 `onPiEvent`**（唯一可注册的 observe 通道，事件名已随 `context.data.eventName` 传入 handler），随 D2-2 走 notify——既修活路径、又获得免往返收益。
+  - `tool_call`/`tool_result` 两项，现状映射到 `hookType:'onAfterToolResult'` 且 `kind:'observe'`——**保持映射与 request 腿不变**（`onAfterToolResult` 的 transform 语义需要回传改写 output，必须 request）；其 observe 需求由同事件的 `onPiEvent` 通知覆盖（event-interpreter 在 tool 事件点已有 onPiEvent 调用点）。分流裁决：**同一 pi 事件既有 transform 面又有 observe 面时，transform 面走 request、observe 面走 notify，两腿并存而非二选一**。
 - 证据：调用点全部 fire-and-forget（`.catch(() => {})`），不读 `blocked`/`transformedData`；`PI_HOOK_EVENT_MAP` 已明确标注 `kind: 'intercept' | 'observe'`（`bridge-interop.ts:33-44`），分类依据现成。
 - 边界：`onAfterToolResult` 既是 transform 又是 observe——它需要 `transformedData`（output 改写），**保持 request**；其观察需求由同事件的 `onPiEvent` 通知覆盖。
+- **旧 notification 回传腿的处置（审查补充）**：`createHookApi` 内 `onNotification('plugin.hooks.invoke')` 监听器里的 `request('plugin.hooks.invoke.result', ...)` 回传分支（hook-api.ts:149-153）在「observe 走 notify + 结果不回传」的新语义下变为死分支——observe handler 的结果 fire-and-forget 丢弃；block/transform 的结果改由 request 腿的响应直接回传。定案：**删除该回传分支**，避免与 D2-1 新增的 `executeHookRequest` 形成两处执行/回传入口并存（U1 文件地图包含此删除）。
 
 **D2-3：字段契约统一——`modifiedData` → `transformedData` 映射层**。
 - 选择：`HookPipeline.execute` 收到 Worker 响应 `{proceed, modifiedData, reason}` 后，映射为 `HookResult = { blocked: !proceed, blockedBy, reason, transformedData: modifiedData }`；下游 handler 间的 `context.data` 传递保持不变。
@@ -150,16 +158,17 @@ executeHooks('onBeforeSendMessage')
 
 **D2-4：onPiEvent 注册/调用 key 统一**。
 - 选择：调用侧与注册侧统一为**泛型 `onPiEvent`**（不按事件名细分）。事件名已作为 `context` 内的 `event` 字段传给 handler，插件可在 handler 内自行按事件名过滤。
-- 被否：注册侧改为泛型而调用侧按 `onPiEvent:${eventName}` 逐事件调用——主线程需要在每个事件点构造动态 key，且 `PI_HOOK_EVENT_MAP` 的映射结构不匹配。
-- 证据：`event-interpreter.ts:267,310,315,356,407` 全部用泛型 `onPiEvent` 调用；`hook-api.ts:225` 用 `onPiEvent:${eventName}` 注册。统一后事件名短路（无匹配 handler 时 `entries.length === 0` 直接 return）仍生效。
+- **被否方案（审查补充记录）**：保持注册键 `onPiEvent:${eventName}` 不变、只改调用侧构造 per-event key（`executeHooks(`onPiEvent:${ev.eventType}`)`）——可保留逐事件短路与插件注册契约，代价是调用侧动态拼 key + `PI_HOOK_EVENT_MAP` 的映射结构不匹配。统一泛型被选的理由：事件名短路粒度从「逐事件」降为「零注册」（`entries.length === 0` 直接 return 仍生效），注册了 onPiEvent 的插件会被每个 pi 事件命中、自滤责任转嫁插件侧——这是原 API 意图（`onPiEvent(eventName, ...)`）的语义变更，**显式记录为决策权衡**；当前整链断裂、无存量插件可破兼容，统一是修复成本最低且契约最简的选项。
+- 证据：`event-interpreter.ts:267,310,315,356,407` 全部用泛型 `onPiEvent` 调用；`hook-api.ts:225` 用 `onPiEvent:${eventName}` 注册。
 
 **D2-5：性能优化并入修复**。
-- 注册时排序：`HookPipeline.execute` 每次 `[...entries].sort()`（`hook-pipeline.ts:66`）→ 改为 `hookRegistry` 注册时插入有序（`hook-api.ts:75` 的 register 处理中保序），execute 直接遍历。
+- 删 execute 侧冗余 sort（审查修正表述：注册侧已保序——`hook-api.ts:93` 的 `registerHookRpcHandlers` 注册时已 `entries.sort(...)` 按 priority 保序；`execute` 侧 `[...entries].sort()`（`hook-pipeline.ts:66`）是**冗余重排**。D2-5 的实质改动 = **删除 execute 侧冗余 sort**，不是「改为注册时插入有序」）。核对点：`unregister` 经 `splice` 删条目不破坏已排序序。
 - `pluginId → workerId` 反向索引：`getWorkerHandle` 线性扫全 worker（`plugin-host.ts:296-315`）→ 维护 `Map<pluginId, handle>`，assign/terminate/crash 时同步维护。
 - 证据：两处均为每 handler 一次的全量扫描/排序，在修复后的真实执行路径上才会显形。
 
 **D2-6：端到端测试（防盲区复发）**。
 - 选择：新增 e2e 测试，用**真实** `plugin-bootstrap.handleMessage` + 真实 `PluginRpcServer`（内存 MessagePort 对）串起「invoke → handleIncomingRequest → handler → 响应」，断言：block 生效、transform 生效、observe 通知不产生响应。现有单测保留（验纯逻辑）。
+- **与 TC-D06 的显式区分（审查补充）**：新 e2e 必须用真实 `plugin-bootstrap.handleMessage` + 真实 `PluginRpcServer` 跑全链路，**独立于并区别于** `plugin-demo-e2e.test.ts` TC-D06（其 `context.api.hooks` 整体 mock、直调 handler，修复后恒绿、不代表链路通）。验收 V5 的通过标准据此写明：TC-D06 恒绿 ≠ 链路覆盖，新增 e2e 绿才是。
 - 证据：盲区根因是「两个测试文件各自 mock 掉传输层」；e2e 测试用真实路由正是消除盲区的唯一手段。
 
 ---
@@ -172,7 +181,9 @@ executeHooks('onBeforeSendMessage')
 | V2 | 写一个测试插件注册 `onBeforeToolCall`，对某工具返回 `proceed: false` | 在真实会话中触发该工具调用 | 工具调用被阻断，对话流显示插件给出的拒绝原因，agent 不再继续该工具 | 目标 1 |
 | V3 | 测试插件注册 `onAfterToolResult` 改写 output | 触发一次工具调用 | 对话流中工具结果展示的是改写后的文本 | 目标 1 |
 | V4 | 测试插件注册 `onPiEvent`（agent_start）并写入自己的日志文件 | 跑一个真实 agent turn | 插件日志出现 agent_start 记录；主线程无该事件相关的 pending 超时告警 | 目标 2（observe 免往返） |
-| V5 | e2e 测试套件跑通 | `npx vitest run <新增 e2e 测试文件>` | 新 e2e 测试绿；现有 `plugin-hooks-serial.test.ts`/`plugin-api-hooks.test.ts` 不因重构而红（或按需小改断言） | 目标 3（防盲区） |
+| V5 | e2e 测试套件跑通 | `npx vitest run <新增 e2e 测试文件>` | 新 e2e 测试绿（真实 bootstrap + PluginRpcServer 全链路，**独立于并区别于 TC-D06 的假传输**）；现有 `plugin-hooks-serial.test.ts`/`plugin-api-hooks.test.ts` 不因重构而红（或按需小改断言） | 目标 3（防盲区） |
+
+**依赖缺口声明（审查补充）**：V2/V3 需真实模型触发工具调用、V4 需真实 pi 事件（agent_start）、V1 虽用内置 demo 插件仍需真实会话——上述场景依赖真实 pi 模型/插件，缺位时按父 00 §4 的验证缺口约定标注 `[需手工]` 或降级为「mock 流 + 真实插件」的组合（传输链路仍真、模型侧 mock），不编造通过。
 
 ---
 
@@ -182,9 +193,9 @@ executeHooks('onBeforeSendMessage')
 
 | # | 拆分单元 | justification | 文件改动地图 |
 |---|---|---|---|
-| U1 | Worker 侧 request 分支 + 执行入口导出 | 最小修复点：让 request 直连 handler | `plugin-bootstrap.ts`（handleIncomingRequest 加分支）；`hook-api.ts`（导出 executeHookRequest） |
+| U1 | Worker 侧 request 分支 + 执行入口导出 | 最小修复点：让 request 直连 handler | `plugin-bootstrap.ts`（handleIncomingRequest 加分支）；`hook-api.ts`（导出 executeHookRequest + **删除 notification 监听器内 `plugin.hooks.invoke.result` 死回传分支，D2-2**） |
 | U2 | 主线程字段映射层 | 修 transform 被丢弃的次生 bug | `hook-pipeline.ts`（响应 → HookResult 映射） |
-| U3 | observe 走 notification + key 统一 | 性能分层 + 修 key 错配 | `event-interpreter.ts`（5 处 onPiEvent 调用点 + 观察类调 notify）；`bridge-interop.ts`（observe 组）；`plugin-service.ts`（executeHooks 增加 observe 快捷路径） |
+| U3 | observe 走 notification + key 统一 | 性能分层 + 修 key 错配 | `event-interpreter.ts`（5 处 onPiEvent 调用点 + 观察类调 notify）；`bridge-interop.ts`（**PI_HOOK_EVENT_MAP 的 7 项 onMessage 改指 onPiEvent，tool_call/tool_result 保持 onAfterToolResult，D2-2**）；`plugin-service.ts`（executeHooks 增加 observe 快捷路径） |
 | U4 | 注册时排序 + worker 反向索引 | 修复后性能优化（每 handler 免 sort + 免线性扫描） | `hook-api.ts`（register 保序）；`plugin-host.ts` / `plugin-host-process.ts`（反向索引维护） |
 | U5 | 端到端测试 | 消灭 mock 盲区 | 新增 `plugin-hooks-e2e.test.ts`（真实 bootstrap + 内存 MessagePort 对） |
 

@@ -30,7 +30,7 @@
 | 编号 | 目标（谁、在什么上下文、达成什么） | 对应决策 |
 |---|---|---|
 | G1 | 开发者在 200+ 消息长 session 里看流式回复，token 连续输出无停顿，不随对话增长变卡 | runtime D1/D5；renderer D-1/D-2/D-3/D-4/D-5 |
-| G2 | 文件树展开、composer `#` 候选、git 面板、切回长 session 的响应从秒级降到百毫秒级 | runtime D6/D7/D9；renderer D-7/D-9 |
+| G2 | 文件树展开、composer `#` 候选、git 面板、重建长 session（LRU 驱逐/重开/重载）的响应从秒级降到百毫秒级 | runtime D6/D7/D9；renderer D-7/D-9 |
 | G3 | 终端跑 `npm run build` 等高频输出命令时输出流畅、界面不冻结 | runtime D5（transient）；renderer D-6 |
 | G4 | 冷启动到可交互显著缩短（runtime 监听端口即就绪 + 首屏 JS 显著变小） | runtime D8；renderer D-8 |
 | G5 | 修复结构上正确：无重复漂移状态、消息分发单通道收敛、失效范围收敛到单 session | runtime D1/D4；renderer D-1/D-3/D-4 |
@@ -63,8 +63,8 @@
 
 | 梯队 | 触发频率 | 代表性发现 | 决策 |
 |---|---|---|---|
-| 第一梯队 | 每 token/每事件 | 双写广播（每事件 2 次 JSON.stringify + 盲广播全连接）；`streamRing` 用 `Array.shift()` O(n) 淘汰；pi 日志每行 `appendFileSync`；turn-start/每写工具结束同步 `execSync('git status')` | D1、D5、D3/D4、D10、微项 |
-| 第二梯队 | 每请求/每操作 | `git.status` 3 次串行 `execFileSync` 无缓存；`searchFiles` 串行递归 + 每文件 stat；`.gitignore` 每请求重读重编译；长 session 每次切回全量 `get_entries`；`scanPiSessions` 目录级无缓存 | D3/D4、D7、D9、D6 |
+| 第一梯队 | 每 token/每事件 | 双写广播（每事件 2 次 JSON.stringify + 盲广播全连接）；pi 日志每行 `appendFileSync`；turn-start/每写工具结束同步 `execSync('git status')`（`streamRing` 的 O(n) shift 仅在**溢出淘汰时**触发，非逐 token——归 D5 一并修，不属每事件成本） | D1、D5、D3/D4、D10、微项 |
+| 第二梯队 | 每请求/每操作 | `git.status` 3 次串行 `execFileSync` 无缓存；`searchFiles` 串行递归 + 每文件 stat；`.gitignore` 每请求重读重编译；长 session 重建路径每次全量 `get_entries`（LRU 窗口内切回已零请求）；`scanPiSessions` 目录级无缓存 | D3/D4、D7、D9、D6 |
 | 第三梯队 | 随插件使用 | hook 执行链路**断裂**（功能性 bug：所有插件 block/transform/observe 语义 100% 失效）；串行 RPC 三重浪费 | **D2（先修 bug）** |
 | 第四梯队 | 启动一次/低频 | `server.start()` 前串行跑迁移 + `getPiVersion()` 子进程探测 | D8、微项 |
 
@@ -85,7 +85,7 @@
 
 1. **git 状态链路缝**：runtime `event-interpreter` 同步 git → file_changes 帧 → renderer `useFileChangeInvalidation` deep watch + `fileTreeStore.gitOverlay` 从不刷新。runtime 侧决策（D3/D4：GitStateService）与 renderer 侧决策（D-9：overlay 回写）在此交汇。
 2. **消息分发契约缝**：runtime D1/D5（单通道 + topic 三分类）改变 session 级消息的 seq/快照/transient 语义；renderer `routeInbound` 的 gap 检测与订阅前提是正确性依赖（已探明兼容：无 seq 消息直接 dispatch）。
-3. **历史增量缝**：runtime D6（`get_entries(since=lastLeafId)` 增量拉取）需要 renderer chat store 新增 append 合并入口（现有 hydrate/prepend 无 append）；renderer D-1 的容器范式让 append 落地更简单。
+3. **历史重建缝**：`getHistory` 只在无基底路径被调（LRU 驱逐重进 / dispose 重开 / renderer 重载——isHydrated 三重守卫 + LRU 消息常驻使窗口内切回零请求）；增量落在 runtime 侧的「已重建消息缓存 + lastLeafId」（04 文档，审查重范围），renderer 协议与行为零改动——初稿的「renderer append」方案已撤回（无基底路径 append 无处安放）。
 
 ---
 
@@ -104,7 +104,7 @@
 | D3 | git 执行模型（runtime） | 异步化（execFile 替换 execSync/execFileSync） | 03 | ③ | 2 |
 | D4 | git 状态统一（runtime） | GitStateService：异步 + in-flight 去重 + TTL 缓存 + 写失效钩子 | 03 | ③ | 2 |
 | D5 | MessageBus topic 分类（runtime） | state（seq+快照）/ stream（seq+ring）/ transient（无 seq 直传） | 02 | ③ | 1 |
-| D6 | 历史增量加载（runtime+renderer） | since=lastLeafId 增量 + renderer append + branch 失效 fallback | 04 | ③ | 3 |
+| D6 | 历史重建缓存 + leafId 增量（runtime） | runtime 侧「已重建消息缓存 + lastLeafId」：缓存命中零 pi 序列化、leafId 前进时 `getEntries(since)` 只重建增量窗口；renderer 零改动（审查重范围：初稿 renderer append 撤回） | 04 | ③ | 3 |
 | D7 | 文件扫描缓存（runtime） | matcher mtime 缓存 + 目录剪枝 + 有界并发 + searchFiles 免 stat | 05 | ③ | 4 |
 | D8 | 启动编排（runtime） | 先 listen 后初始化；piVersion 惰性；迁移 promise gate | 06 | ① | 5 |
 | D9 | session 扫描缓存（runtime） | scanPiSessions 目录列举 1s TTL + 显式失效 | 05 | ① | 4 |
@@ -142,7 +142,7 @@
 |---|---|---|
 | D1 + D5 消息单通道 | 6 类消息接 bus + 全 push 点枚举 + renderer 订阅验证 | 每 token 省 50% 序列化 + 消除 O(clients) 盲发——runtime 最大常数倍放大点 |
 | D3 + D4 GitStateService | 4 个 git 调用点下沉统一服务 | 事件流热路径同步阻塞清零 + 缓存去重 |
-| D6 历史增量 | runtime 增量逻辑 + renderer append 入口 + fallback | 长 session 切回从秒级到百毫秒 |
+| D6 历史重建缓存 | runtime 重建缓存 + lastLeafId + since 增量重建 + fallback | 长 session 重建路径从秒级到百毫秒（LRU 内切回已零请求） |
 | D7 文件扫描四件套 | 自建缓存/剪枝/并发 | `#` 候选、搜索从秒级到百毫秒 |
 | D-1 + D-3 容器范式 | 全部写入面 + 5 个测试文件适配 | 跨 session 失效扇出结构性消除——renderer 最大根因 |
 | D-4 turn 增量化 | 缓存键/失效设计 + v-memo 键清单 | 每 token 只 patch 末位 turn |
@@ -157,11 +157,11 @@
 
 ### 3.3 跨层缝裁决（整合新增的决策，均已定案）
 
-**裁决 1（git 链路）**：D-9 的 runtime 侧设计（execSync→execFile + accumulating 300ms debounce）**撤销并让位于 runtime D3/D4**——GitStateService 以「baseline promise 帧序保证」替代 debounce（accumulating 帧序契约保序：baseline 未就绪跳过本次 accumulating、ready 全量兜底）。D-9 保留 renderer 侧：ready 后 debounce 300ms → `git.status` RPC（享受 GitStateService 缓存）→ `setGitOverlay`。理由：帧序契约是 ADR-0024 的正确性约束，不能靠 debounce 破坏；异步化后 accumulating 帧不再阻塞事件循环，节流失去必要性。
+**裁决 1（git 链路）**：D-9 的 runtime 侧设计（execSync→execFile + accumulating 300ms debounce）**撤销并让位于 runtime D3/D4**——GitStateService 以「baseline promise 帧序保证」替代 debounce（accumulating 帧序契约保序：baseline 未就绪跳过本次 accumulating、ready 全量兜底）。D-9 保留 renderer 侧：ready 后 debounce 300ms → `git.status` RPC（享受 GitStateService 缓存）→ `setGitOverlay`。理由：帧序契约是 ADR-0024 的正确性约束，不能靠 debounce 破坏；异步化后 accumulating 帧不再阻塞事件循环，**runtime 侧**的帧节流失去必要性。**措辞区分**：runtime 侧不 debounce（帧序契约保序），renderer 侧 D-9 仍保留「ready 后 debounce 300ms」——那是合并**角标刷新 RPC 频次**（每 turn 至多一次）的节流，两者作用对象不同、不冲突。
 
 **裁决 2（terminal）**：runtime 不做 WS 批量合并（D5 transient 直传已消除序列化/ring 放大）；renderer D-6 的 rAF 写队列与命令式 buffer 独立成立（合并的是 xterm.write 频率，不是 WS 帧）——两者不冲突，各自生效。
 
-**裁决 3（历史增量）**：D6 的 renderer append 入口与 D-1 容器范式兼容且更简单（per-session ref 直接赋值新数组即可实现 appendHistory），04 文档的 renderer 部分与 07 文档互为补充；实施 D6 前需验证 pi 版本 `since` 行为（04 文档已列为待验证）。
+**裁决 3（历史重建，审查修订）**：对抗式审查核实初稿前提不成立——`getHistory` 只在无基底路径被调（isHydrated 三重守卫 + LRU 消息常驻），「每次切回都全量」错误、renderer append 在无基底路径无处安放（append 空数组丢头部、branch fallback 被 hydrate 守卫 no-op、重建消息 id 随机不可去重）。D6 重范围为 runtime 侧重建缓存（04 文档附重范围记录），renderer 协议与行为零改动；实施 D6 前仍需验证 pi 版本 `since` 行为与 compact 后增量语义（04 文档待验证）。
 
 **裁决 4（编号与目标）**：决策编号保留两套命名空间（D1–D10 / D-1~D-9，语法天然可区分，§3.1 是唯一映射点）；目标统一为 G1-G6（原 renderer G1-G5 语义不变，新增 G6 插件可用；原 runtime「目标 1-4」映射 G1/G2/G4/G6）。
 
@@ -169,10 +169,10 @@
 
 ```
 阶段 0（bug + 快赢，零依赖）：D2（01）+ Q1/微项集（10 + §5 微项表）
-阶段 1（消息热路径双层）：runtime D5+D1（02）先定 transient/seq 契约
+阶段 1（消息热路径双层 + 面板快赢第一步）：runtime D5+D1（02）先定 transient/seq 契约；**并含 D-6 第一步（rAF 写队列，09）与 D-7 第一步（徽章预聚合 + 防抖，09）两项零依赖快赢**（矩阵象限①与阶段清单对齐）
                           → renderer D-1/D-2/D-3（07）
 阶段 2（git 跨层联动）：runtime D3/D4（03）+ renderer D-9 侧（09 §D-9）同批验收
-阶段 3（渲染与历史）：renderer D-4/D-5（08）+ runtime D6（04）
+阶段 3（渲染与历史重建）：renderer D-4/D-5（08）+ runtime D6（04，runtime 侧重建缓存，renderer 零改动）
 阶段 4（扫描与面板）：runtime D7/D9（05）+ renderer D-6 第二步/D-7 第二步（09）
 阶段 5（启动与构建）：runtime D8/D10（06）+ renderer D-8（10）
 ```
@@ -196,9 +196,9 @@
 | V5 AI 写文件链路 | 让 AI 一轮修改 ≥5 文件；观察 runtime 进程与树角标 | runtime 主线程无 >100ms git 阻塞；角标在 file_changes ready 后数秒内刷新 | G5/G2 |
 | V6 插件 hook 可用 | 安装注册 `onBeforeSendMessage` 的插件，发送含关键词消息 | hook 真实执行（拦截/改写生效）；runtime 日志无 failed/timed out 告警 | G6 |
 | V7 长 session 切回 | 几百轮 session 切走再切回，观察历史加载 | 秒级→百毫秒级；runtime 日志可见 get_entries 带 since 且返回条目 < 全量 | G2 |
-| V8 断线重连 | streaming 中断开 renderer WS，5 秒后重连 | state 快照立即恢复；stream 按 seq 回放；delta 不回放但后续继续；无重复消息 | G1/G5 |
+| V8 断线重连（**依赖 D1/D5 落地后才可验收**，属阶段 1 产物，非全局收尾） | streaming 中断开 renderer WS，5 秒后重连 | state 快照立即恢复；stream 按 seq 回放；delta 不回放但后续继续；无重复消息 | G1/G5 |
 
-**验证缺口**：V1/V5/V6 依赖真实 pi 模型与插件，无法 mock——实施时优先争取真实 pi 会话；mock 流（70ms/chunk）可验证渲染路径但覆盖不了真实 token 速率上限。
+**验证缺口**：V1/V5/V6 依赖真实 pi 模型与插件，无法 mock——实施时优先争取真实 pi 会话；mock 流（70ms/chunk）可验证渲染路径但覆盖不了真实 token 速率上限。**G1 确定性 fallback（审查补充）**：拿不到真实模型时，用「固定 fixture pi 会话（预置 200+ 消息 JSONL）+ 预录 token 流按 70ms/帧回放」跑 V1——可确定性执行、覆盖失效扇出/增量渲染的因果链，偏差边界 = 不覆盖真实 token 速率上限（该上限由实施期真实会话另行补测，不编造通过）。
 
 ---
 
@@ -211,7 +211,7 @@
 | `01-plugin-hook-fix.md` | D2 | plugin-service 全模块（hook-pipeline/hook-api/plugin-bootstrap/plugin-host-process） | 0 |
 | `02-message-distribution.md` | D1 + D5 | MessageBus/message-broker/session-service send 回调/message-dispatcher/terminal-service 广播点/renderer routeInbound 契约 | 1 |
 | `03-git-state-service.md` | D3 + D4 | 4 个 git 调用点 + EventInterpreter 的 file_changes 帧序 | 2 |
-| `04-history-incremental.md` | D6 | session-service.getHistory/entry-tree-builder/renderer chat store append | 3 |
+| `04-history-incremental.md` | D6 | session-service.getHistory/entry-tree-builder/runtime 重建缓存（renderer 零改动） | 3 |
 | `05-scan-caching.md` | D7 + D9 | file-service/ignore-parser/fs-executor/session-file-utils 扫描 | 4 |
 | `06-startup-logging.md` | D8 + D10 | index.ts 启动链/logger/runtime-supervisor 契约 | 5 |
 | `07-state-layer.md` | D-1 + D-2 + D-3 | renderer core 消息容器范式/coalescing/per-session computed（D-1 是 08 的地基） | 1 |
@@ -241,7 +241,7 @@
 1. 真实 pi token 到达率（renderer F13 假设区间）——影响 D-2 合并窗口收益上界，不影响方案选择。
 2. D-5 稳定边界阈值（静默时长、长度切点）——需真实使用数据 tuning。
 3. subagent 虚拟 session 是否经 subscribeSession 订阅——影响 D1 的 R8 风险项，实施 D1 时验证。
-4. pi 版本 `since` 行为与 AGENTS.md「leafId 从 JSONL 解析」描述的差异——D6 实施前确认。
+4. pi 版本 `since` 行为与 AGENTS.md「leafId 从 JSONL 解析」描述的差异，及 **compact 后增量 since 语义**（⛔）——D6 实施前确认。
 5. fast-glob 在 runtime 的现有消费点——决定 D7 是否可移除该依赖。
 6. rolldown 下 manualChunks 实际行为——D-8 实施期验证。
 7. V1/V5/V6 验收场景的真实模型可用性。

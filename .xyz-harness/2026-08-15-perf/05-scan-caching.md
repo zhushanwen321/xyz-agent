@@ -51,9 +51,9 @@
 | 全仓 .gitignore 取反规则 | 仅根 `.gitignore` 2 条 `!`（`.env.example`、`.pi/workflows/`），其余 6 个文件 0 条 |
 | 嵌套 .gitignore | 不支持：searchFiles/listTree 只读 cwd 根（expandDir 额外读展开目录），递归下钻不重载子目录 matcher |
 | size 字段消费 | renderer 唯一消费点 = `FileTreeRow.vue` 的 untracked 降级显示 `~size`；composer 候选与 markdown 路径链接不显示 size → **searchFiles 可免 stat**（但 listDir 当前无条件 stat，需参数化） |
-| fast-glob | 已是 runtime 依赖（`fast-glob@^3.3.3`）但 file-service/ignore-parser 未使用；实际消费点未探明 |
+| fast-glob | 已是 runtime 依赖（`fast-glob@^3.3.3`）但 file-service/ignore-parser 未使用；**消费点已探明：`plugin-rpc-setup.ts:279-280` 的插件 `findFiles`**（不可移除，见 §5 检查点） |
 | ADR 约束 | ADR-0026 否决「全量加载」「全量+虚拟滚动」，基调自建懒加载；ADR-0027 要求 FileService 三层 port + ignore 纯函数；ADR-0030 复用匹配算法。ADR 未禁止第三方库 |
-| session 扫描调用点 | `session-service.ts:527/534/560/839`、`session-history.ts:46/61`、`session-lifecycle.ts:331/464` 各自独立 `scanSessions().find()`；`sendInitialState` 每次 renderer 重连触发一次全量扫描 |
+| session 扫描调用点 | `session-service.ts:322/527/534/560/839`、`session-history.ts:46/61`、`session-lifecycle.ts:331/465`（465 为 `findScannedSession` 服务方法；464 是注释行）各自独立 `scanSessions().find()`；`sendInitialState` 每次 renderer 重连触发一次全量扫描 |
 | per-file meta 缓存 | 已有（(mtimeMs,size) 键），目录列举层无 |
 | `invalidateSessionMetaCache` | 仅 delete 路径调用（session-lifecycle.ts:295/306）；rename/persist 不失效（靠 mtime 键自然失效） |
 | pi 写 session 文件时机 | 延迟写入：首个 assistant 消息前不落盘（规则 #6）——新建 session 的发现靠目录重扫 |
@@ -101,13 +101,14 @@ file.search RPC
 
 ### 3.3 关键决策与权衡
 
-**D7-1：IgnoreMatcher 缓存（key = 目录 + .gitignore 的 mtimeMs + size）**。
-- 选择：`loadMatcher` 结果按 (目录, mtime, size) 缓存（复用 sessionMetaCache 同款键策略）；命中免读免编译。
+**D7-1：IgnoreMatcher 缓存（key = 单个 .gitignore 文件路径 + mtimeMs + size，文件级缓存）**。
+- 选择（审查修正：初稿按「目录元组」组合键，V2「只读一次」不可达成——`expandDir` 传 (cwd, dir) 两个目录 → 目录元组键 20 个不同目录 = 20 个不同 key → 根 .gitignore 被重读重编译 ~20 次）：`loadMatcher` 结果按**单个 `.gitignore` 文件** `(path, mtimeMs, size)` 作 key 缓存——cwd 根与各展开目录共享同一根 .gitignore 时命中同一编译结果（缓存 miss 路径先 `stat` 该文件取 (mtime,size) 再决定重读/重编译；一次 stat 代价远低于重编译，且与 sessionMetaCache 同款键策略）。命中免读免编译。
 - 证据：`.gitignore` 会话内几乎不变；mtime 键天然失效（文件被写工具改动即 miss，无需手动 invalidate）。
-- 边界：expandDir 传两个目录 → 组合键（两个文件的 mtime 对）。
+- 边界：嵌套 .gitignore 现状不支持（Out of scope 已声明），缓存层不引入新语义；expandDir 读的两个目录各自解析到「同一根 .gitignore 文件路径」时共享命中。
 
-**D7-2：matchPath 剪枝 + 短路径直通**。
-- 剪枝语义（安全条件）：**仅当某目录被「非取反规则」命中且该规则之后无任何取反规则可能覆盖时，才整目录跳过下钻**。实现为：预计算「是否存在取反规则」——无取反规则的 matcher（覆盖探明事实中 99%+ 场景）直接启用剪枝；有取反规则的 matcher 走保守路径（不剪枝或仅对 BUILTIN_IGNORE_DIRS 硬短路，后者本就不受取反影响）。
+**D7-2：matchPath 剪枝 + 短路径直通（审查修正：明确「新增 vs 已有」边界与负向影响）**。
+- **已有行为边界**：目录剪枝（ignored 目录 `continue` 整目录跳过下钻）是 searchFiles **现状已有**行为（`file-service.ts:209`）——D7-2 的增量是：① 短路径直通（无 `/` 的路径跳过 `allPrefixes`）；② 对「无取反 matcher」的剪枝**安全条件背书**（现状无论有无取反规则都剪枝——对含取反规则的仓库，现状行为是「被忽略但可取反的目录已被误剪」；本文档按保守语义区分处理）。
+- 剪枝语义（安全条件）：**仅当某目录被「非取反规则」命中且该规则之后无任何取反规则可能覆盖时，才整目录跳过下钻**。实现为：预计算「是否存在取反规则」——无取反规则的 matcher（覆盖探明事实中 99%+ 场景）直接启用剪枝；**有取反规则的 matcher 走保守路径（不剪枝或仅对 BUILTIN_IGNORE_DIRS 硬短路，后者本就不受取反影响）——这是相对现状的行为变化：取反仓库会变慢（正确性优先于速度），如实标注为已知负向影响**。
 - 短路径直通：无 `/` 的路径跳过 `allPrefixes`（`[path]` 直接测试）。
 - 被否：无条件剪枝——违反「最后匹配规则生效」（`!` 取反可重新包含被忽略目录）。
 - 证据：探明事实「取反规则仅根 .gitignore 2 条」+「BUILTIN_IGNORE_DIRS 独立短路不可取反」。
@@ -117,11 +118,13 @@ file.search RPC
 - 证据：size 唯一消费点是 FileTreeRow 的 untracked 降级（文件树路径），searchFiles 结果不显示 size（探明事实）。
 
 **D7-4：searchFiles 有界并发**。
-- 选择：目录遍历改为 8~16 路有界并发（信号量），保持 MAX_SEARCH_RESULTS=5000 截断与 per-dir 容错语义；结果顺序按「深度优先 + 目录内字典序」收集后排序输出（与现状排序语义对齐，`file-service.ts` 现有排序逻辑保留）。
-- 证据：现状串行 `await walk` 是深目录树的延迟主因；有界并发不改变结果集，只改变完成时间。
+- 选择：目录遍历改为 8~16 路有界并发（信号量），保持 MAX_SEARCH_RESULTS=5000 截断与 per-dir 容错语义；**输出顺序仍由现有 `sortNodes` 确定（确定性）**——有界并发改变的是**发现顺序**而非输出顺序。
+- **截断成员不确定性（审查修正，显式声明）**：`MAX_SEARCH_RESULTS=5000` 截断发生在收集期——超限仓库（>5000 命中）下「命中前 5000 的成员」随并发调度而异（深度优先严格顺序与有界并发不可兼得）；`sortNodes` 只保证输出顺序、**不恢复截断成员**。定案：① **未超限仓库结果集与现状完全一致**（并发不影响集合成员）；② 超限仓库**截断成员可能不同**，显式声明为可接受范围（候选是「前 N 个按序结果」的近似，语义不变）；③ 头部常驻性：字典序最前的已发现成员必在结果中（收集完成前不会被更晚发现的成员挤出……以实施期实现为准，V1 截断健壮性场景验收「同批重跑结果集稳定」）。
+- 证据：现状串行 `await walk` 是深目录树的延迟主因。
 
-**D9-1：session 目录列举 1s TTL 缓存 + 显式失效**。
-- 选择：`scanPiSessions` 的目录列举层（readdirSync 递归 + statSync 部分）加 **1s TTL 缓存**；per-file `scanSessionMeta` 缓存保持现状。create/fork/delete/rename 路径调用 `invalidateSessionMetaCache` 之外新增目录缓存失效。
+**D9-1：session 目录列举 1s TTL 缓存 + 显式失效（审查修正：缓存只作用列表构建消费方，不污染路径解析消费方）**。
+- 选择：`scanPiSessions` 的**目录列举层**（readdirSync 递归 + statSync 部分）加 **1s TTL 缓存**；per-file `scanSessionMeta` 缓存保持现状。create/fork/delete/rename 路径调用 `invalidateSessionMetaCache` 之外新增目录缓存失效。
+- **消费方分层（审查修正，初稿笼统缓存在共享 scanPiSessions 上，会节流正确性敏感的单 session 路径解析）**：`scanSessions()`（session-store.ts:31-33）被两类消费方共用——**列表构建消费方**（`SessionScanner.listAll` / `listPersistedSessions`，侧栏列表）与**单 session 路径解析消费方**（`session-history.ts:46/61` 的 `getHistoryFromFile`/`getFullHistory`、`getSubagents`/`getWorkflows` 等按文件路径查找）。TTL 只作用前者；后者**绕过缓存强制刷新**（或提供 `force` 参数）。理由：外部 pi 写文件（规则 #6：新 session 文件首个 assistant 后才落盘）不在显式失效覆盖内——若路径解析也走 1s 缓存，刚落盘的持久化 session 的历史/子代理/workflow 查找会在窗口内静默返回 []/not_found（较现状「始终最新」新增退化窗口，正确性敏感路径不可接受）。列表构建消费方 1s 陈旧可接受（新建 session 落盘后秒级可见）。
 - TTL 取值依据：新建 session 的 pi 文件「首个 assistant 前不落盘」（规则 #6）——列表本来就无法在文件落盘前发现它；1s TTL 保证落盘后秒级可见，且不会因外部进程写文件而需要事件驱动（探明结论：「新建 session 秒级可见」的关键是目录重扫，1s 重扫满足）。
 - 被否：fs.watch 事件驱动——pi 是外部进程写文件，watch 全目录的语义维护复杂，收益不抵；TTL 更长（分钟级）——新建 session 可见性延迟不可接受。
 - 顺手项：同 handler 内多次 `scanSessions().find()` 合并为一次扫描复用（session-service.ts 多处）。
@@ -132,8 +135,8 @@ file.search RPC
 
 | # | 场景 | 步骤 | 通过标准 | 回溯目标 |
 |---|---|---|---|---|
-| V1 | 大仓库（≥5 万文件）打开 composer 输 `#` | 计时候选列表出现 | 候选 < 1s（改造前基线对比）；结果集与改造前完全一致（同一目录、同一 .gitignore 下 diff 验证） | 目标 1 |
-| V2 | 文件树连续展开 20 个目录 | 观察响应与 runtime 日志 | 每次展开 < 100ms；runtime 日志中 .gitignore 读取/编译只发生一次（缓存命中，可用日志打点或 strace 验证） | 目标 1 |
+| V1 | 大仓库打开 composer 输 `#` | 计时候选列表出现；**精确等价 diff 在 <5000 命中仓库验证**（结果集与改造前逐条一致）；超上限仓库（≥5 万文件命中 >5000，可用构造仓库或本仓 >5000 子集近似）单列「截断健壮性」：同批重跑结果集稳定、头部（字典序最前已发现成员）常驻 | 候选 < 1s（改造前基线对比）；<5000 仓库 diff 逐条一致；超限仓库结果集稳定 + 截断成员不确定性为已声明可接受范围（D7-4） | 目标 1 |
+| V2 | 文件树连续展开 20 个目录 | 观察响应与 runtime 日志 | 每次展开 < 100ms；**每个唯一 `.gitignore` 文件只读取/编译一次**（缓存按文件级 (path,mtime,size) 键，20 个目录共享同一根 .gitignore 时命中同一编译结果；日志打点或 strace 验证） | 目标 1 |
 | V3 | 文件树显示一个 untracked 文件 | 观察行数降级显示 | untracked 文件仍显示 `~size` 降级（listDir 默认 withSize 保持文件树行为） | 目标 3 |
 | V4 | 修改 `.gitignore`（agent 用 edit 工具改动）后再次展开目录 | 观察 ignore 行为 | 新规则立即生效（mtime 键失效，缓存 miss 后重读重编译） | 目标 3 |
 | V5 | 新建一个 session（发送首条消息等 pi 落盘） | 观察侧栏列表 | 文件落盘后 1s 内新 session 出现在列表；删除 session 后立即从列表消失（显式失效） | 目标 2 |
@@ -154,6 +157,6 @@ file.search RPC
 | U5 | session 目录列举缓存 + 失效 + find 合并 | 独立子域 | `session-file-utils.ts`（目录缓存）、`session-lifecycle.ts`/`session-service.ts`（失效点 + find 合并） |
 
 **待验证检查点**：
-- fast-glob 的现有消费点（若无人使用，D7 实施后顺带移除依赖，减少打包体积）。
+- **fast-glob 依赖不可移除（审查修正：消费点已探明）**——`plugin-rpc-setup.ts:279-280` 在插件 `findFiles` 中 `import('fast-glob')`，移除会破坏插件 findFiles；§5 检查点定案「保留依赖」，除非另行替换插件 findFiles 的实现。
 - 剪枝安全条件的实现细节：「规则之后无取反规则可能覆盖」的精确判定——保守实现为「matcher 含任何取反规则则整体禁用剪枝」，覆盖探明事实的 99%+ 场景；精确实现留待后续。
-- 有界并发下「结果上限 5000」的截断时机变化对候选列表内容的影响（深度优先顺序保持时影响为零，实施时以 V1 的 diff 验证确认）。
+- 有界并发下「结果上限 5000」的截断时机变化对候选列表内容的影响：未超限仓库结果集不变（V1 diff 验证）；超限仓库截断成员不确定性按 D7-4 声明为可接受（V1 截断健壮性场景验收）。

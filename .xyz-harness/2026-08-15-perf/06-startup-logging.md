@@ -1,6 +1,6 @@
 # D8+D10：启动编排（先 listen 后初始化）+ 日志异步化
 
-> **一句话结论**：两个「可感知延迟」治理项。①启动：Electron 主进程靠 HTTP `/health` 判定 runtime 就绪（listen 即就绪），而 `index.ts` 在 `server.start()` 前串行跑了与监听无关的 `getPiVersion()` 子进程探测和两个磁盘迁移——定案「先 listen 后初始化」+ piVersion 惰性 + session 创建的迁移 gate。②日志：pi session log（每事件 appendFileSync）与 console patch 在热路径同步写盘——定案改 WriteStream 缓冲写 + 退出前 flush（探明：日志仅人类诊断用，无任何自动化读取，丢尾风险可接受）。
+> **一句话结论**：两个「可感知延迟」治理项。①启动：Electron 主进程靠 HTTP `/health` 判定 runtime 就绪（listen 即就绪），而 `index.ts` 在 `server.start()` 前串行跑了与监听无关的 `getPiVersion()` 子进程探测和两个磁盘迁移——定案「先 listen 后初始化」+ piVersion 惰性 + session 创建的迁移 gate（**后台初始化块内 migrateBuiltinExtensions 必须先于 checkAndAutoUpgrade 串行执行，保留既有硬约束**）。②日志：主日志 console patch 改 WriteStream 缓冲写 + 退出前 flush；**pi session log 单独处理丢尾容忍度**——它是「pi 卡死诊断的决定性证据」，缓冲写只与「优雅退出 await flush」配套、硬崩溃丢尾如实声明为取证能力削弱（审查修正：初稿以「session JSONL 不受影响」为由接受丢尾，该依据恰在 pi 卡死场景不成立——卡死时 session JSONL 同样缺位）。
 
 **当前层 → 下一层**：技术方案设计（下一层产物 = 可实现的时序编排/写入模型）。涉及运行时行为，准则 5/7 适用。
 
@@ -101,8 +101,9 @@ streaming：pi stdout 每行 → createPiSessionLog.write → appendFileSync（�
 ### 3.3 关键决策与权衡
 
 **D8-1：listen 提前的位置**。
-- 选择：`initLogger → 三个同步迁移（必须在首次配置读取前）→ 全部服务构造 → setServices → server.start()` 保持紧密连续；随后并发/串行执行：`migrateProviderConfig`、`migrateBuiltinExtensions`、`getPiVersion`、`skillRegistry.initGlobal`、`checkAndAutoUpgrade`、`pluginService.initialize`。
-- 证据：三个同步迁移必须在首次配置读取前（`index.ts:118-120` 注释）；服务构造依赖 configStore（依赖同步迁移）；setServices 依赖服务构造；listen 依赖 setServices（broker 装配）。其余全部无「listen 前」依赖（探明事实）。
+- 选择：`initLogger → 三个同步迁移（必须在首次配置读取前）→ 全部服务构造 → setServices → server.start()` 保持紧密连续；随后进入后台初始化块：**`migrateBuiltinExtensions` 先于 `checkAndAutoUpgrade` 串行执行（既有硬约束，见下）**，`migrateProviderConfig`、`getPiVersion`、`skillRegistry.initGlobal`、`pluginService.initialize` 相互可并行。
+- **次序硬约束（审查修正：初稿写「并发/串行」含糊，未保留既有先后依赖）**：`index.ts:190` 注释明确 `migrateBuiltinExtensions`「必须在 checkAndAutoUpgrade 前跑（否则 autoUpgrade 仍会尝试升级打包内置包）」，且 `extension-service.ts:670` 的 `checkAndAutoUpgrade` 读 `getAutoUpgrade()`——正是 `migrateBuiltinExtensions` 要清理的数据。若把两者放进同一「并发」块，会重演「autoUpgrade 升级打包内置包」回归。**定案：两者必须串行且迁移在前，文字写死；§5 待验证加「migrateBuiltinExtensions 先于 checkAndAutoUpgrade」门禁。**
+- 证据：三个同步迁移必须在首次配置读取前（`index.ts:118-120` 注释——**该注释只针对 `migrateToPiSubdir`**；`cleanLeakedPackages`/`sanitizeInvalidProviders` 各有独立理由，至少 `migrateToPiSubdir` 有硬性次序要求）；服务构造依赖 configStore（依赖同步迁移）；setServices 依赖服务构造；listen 依赖 setServices（broker 装配）。其余全部无「listen 前」依赖（探明事实）。
 - 被否：把同步迁移也后置——违反「首次配置读取前」的硬约束。
 
 **D8-2：piVersion 惰性推送**。
@@ -111,15 +112,19 @@ streaming：pi stdout 每行 → createPiSessionLog.write → appendFileSync（�
 - 运行时断言（✅已探明）：`pm.getPiVersion()` 带缓存；`app.info` 推送路径 `sendInitialState` 首推 + 本次补发，前端行为无差。
 
 **D8-3：迁移 promise gate**。
-- 选择：`migrateProviderConfig` 返回的 promise 存入 `migrationReady`（`Promise` 单例）；`createSession`/`restoreSession` 路径在 spawn pi 前 `await migrationReady`（迁移失败已 catch → gate 恒 resolve）。
+- 选择：`migrationReady = migrateProviderConfig(...).catch(() => {})`（**审查修正：必须显式 catch——迁移失败时 caller 层 try/catch 的 reject 若不吞掉，`await migrationReady` 会 reject，「gate 恒 resolve」的承诺落空**）；`createSession`/`restoreSession` 路径在 spawn pi 前 `await migrationReady`。
 - 证据：注释约束「首次 session spawn 前完成」；迁移通常 < 100ms，gate 等待不可感知；失败不阻塞的既有语义保持（gate 在失败路径仍 resolve）。
+- **迁移窗口的瞬时陈旧（审查补充，显式声明）**：gate 只挡 session spawn，不挡 provider 查询——`config.providers`/`model.list`（`listProviders` 实时读文件，无内存缓存）在迁移完成前到达的 renderer 可能读到迁移前列表。窗口 < 100ms：声明「首连用户极小概率读到迁移前 provider 列表、随后重连/下次拉取即正确」为可接受；若实测不可接受，再加 provider 查询 gate（本设计默认不加）。
 - 被否：gate 只挡 createSession 不挡 restore——两者都会 spawn pi 进程，都必须 gate。
 
-**D10-1：日志写模型 = WriteStream 缓冲 + 退出 flush**。
-- 选择：pi session log 与主日志均改为 `createWriteStream(flags:'a')` 常驻写流（按日期惰性打开）；轮转判定改为「按写入字节计数」替代 statSync（消除同步写的唯一理由）；`closeLogger()`/进程 exit 钩子（SIGINT/SIGTERM + pi 进程 exit）调 `end()` 强制 flush。
-- 证据：无自动化读取日志（探明）；关键证据源是 session JSONL（pi 自己的持久化），日志是 tee 副本；`logger.ts:84-85` 的同步理由（size 读真）被字节计数方案替代。
+**D10-1：日志写模型 = WriteStream 缓冲 + 退出 flush（两条日志的丢尾容忍度分开处理，审查修正）**。
+- 选择：主日志与 pi session log 均改为 `createWriteStream(flags:'a')` 常驻写流（按日期惰性打开）；轮转判定改为「按写入字节计数」替代 statSync（消除同步写的唯一理由）。
+- **丢尾容忍度分档（初稿把「纯人类诊断可丢尾」从主日志推广到 pi session log，已修正）**：
+  - **主日志**：纯诊断，缓冲写 + 退出 flush，硬崩溃丢缓冲尾可接受。
+  - **pi session log**：使命是「pi 卡死诊断的决定性证据」（logger.ts 第 4-7 行 [HISTORICAL]）——**pi 静默卡死时 session JSONL 并不持久化**（无 assistant 首条消息不 flush，规则 #6），tee 日志是唯一证据；丢尾部几行 = 丢掉「pi 挂在最后哪一步」的冒烟证据。定案：**缓冲写必须与「优雅退出 await flush」配套**——SIGINT/SIGTERM/pi 进程 exit 的 shutdown 链改为 `await piSessionLog.end()（及主日志 end）→ process.exit(0)`（现状 `closeLogger(); process.exit(0)` 同步链必须改等待）；**硬崩溃（SIGKILL/断电）丢尾如实声明为取证能力削弱**，且声明「卡死场景 session JSONL 同样缺位」——**不再以「session JSONL 不受影响」兜底**。
+- **轮转的 rename-with-open-stream（审查补充）**：字节计数只解决「阈值判定」，不解决「rename 一个写流已打开的文件」——macOS 允许 rename 打开中文件，Windows 失败。定案：轮转时先 `await` 旧流 `end()/close` 再 rename（或轮转时重建流指向新 fd），并把该平台路径列入 §5 验证点。
+- 证据：无自动化读取日志（探明）；`logger.ts:84-85` 的同步理由（size 读真）被字节计数方案替代。
 - 被否：内存队列批量 flush——多一层缓冲与定时器，WriteStream 已内置缓冲，无增益。
-- 风险声明：异常崩溃（SIGKILL/断电）时缓冲内几行日志丢失——诊断场景可接受，session JSONL 不受影响。
 
 **D10-2：pi session log 的 end() 语义保持**。
 - 选择：保留现有「end 后 write 为 no-op」接口形状（`PiSessionLog`），内部从 appendFileSync 换成写流引用；`end()` 关闭该 session 的写流。
@@ -133,8 +138,8 @@ streaming：pi stdout 每行 → createPiSessionLog.write → appendFileSync（�
 |---|---|---|---|---|
 | V1 | 冷启动应用，测量到 runtime ready 的时长 | 计时（主进程日志的 waitForHealth 成功时刻，或直接观察 UI 出现时间） | ready 时长较改造前缩短（改造前基线 = 三个同步迁移 + 两个 await 迁移 + getPiVersion + 构造）；缩短量 ≈ 迁移与 piVersion 探测耗时之和 | 目标 1 |
 | V2 | 启动后立即观察侧栏版本标签 | 看标签内容变化 | 先显示应用版本（pi 版本为 unknown），1-2 秒内自动变为完整版本串，无手动刷新 | 目标 2 |
-| V3 | 启动后立刻（迁移完成前）创建 session | 抢在迁移窗口内发消息 | session 正常创建（gate 等待），配置正确（迁移已完成）；无竞态错误 | 目标 4 |
-| V4 | streaming 全程监控事件循环阻塞 | agent 跑一轮多工具任务，探针记录阻塞 | streaming 期间无每事件同步盘写（改造前基线对比）；`pi-*.jsonl` 日志内容与改造前一致（行级 diff 抽样） | 目标 3 |
+| V3 | 启动后立刻（迁移完成前）创建 session | 抢在迁移窗口内发消息（**迁移窗口 <100ms 难以手动稳定复现——实施时注入临时延迟（如迁移前 sleep 1s 的调试开关）制造可控窗口，验收后移除**） | session 正常创建（gate 等待），配置正确（迁移已完成）；无竞态错误 | 目标 4 |
+| V4 | streaming 全程监控事件循环阻塞 | agent 跑一轮多工具任务，探针记录阻塞（**具体化：event-loop lag 打点 + 每次 write 前打点对比改造前后 IO 次数；`pi-*.jsonl` 行级 diff 抽样验证内容一致**） | streaming 期间无每事件同步盘写（改造前基线对比）；`pi-*.jsonl` 日志内容与改造前一致（行级 diff 抽样） | 目标 3 |
 | V5 | 正常退出应用后检查日志文件 | 退出后查看 `pi-*.jsonl` 尾部 | 尾部包含退出前最后的 pi 事件（flush 生效，无丢失窗口） | 目标 3 |
 | V6 | 日志轮转：让日志文件跨天/超阈值 | 观察轮转行为 | 轮转按写入字节计数正确触发（异步化后不依赖 statSync） | 目标 3 |
 
@@ -152,6 +157,9 @@ streaming：pi stdout 每行 → createPiSessionLog.write → appendFileSync（�
 | U4 | 日志 WriteStream 化（pi log + 主日志）+ 字节计数轮转 + 退出 flush | 热路径 IO 治理 | `logger.ts`（writeLogEntry/createPiSessionLog/rotateIfNeeded/closeLogger） |
 
 **待验证检查点**：
-- `closeLogger` 的退出钩子覆盖：runtime 进程被 Electron supervisor kill 时是否走得到 flush（SIGTERM 处理）；若 kill 是 SIGKILL，接受丢尾（已在风险声明）。
+- **「启动延迟 = 串行等待之和」的实测分解探针（审查补充，⛔ 实施前）**：在 `main()` 内 listen 前各段打点（三个同步迁移 / await 迁移A / await 迁移B / getPiVersion 各自耗时），确认被后置项确为可感知主导项。若实测缩短量 < 100-200ms，重估 D8 是否值得其重排 + gate 注入的风险（迁移幂等快速常态 no-op 时 D8 收益可能仅为数百 ms）。
+- `closeLogger` 的退出钩子覆盖：runtime 进程被 Electron supervisor kill 时是否走得到 flush（SIGTERM 处理）；**shutdown 链必须 `await` 写流 `end()` 后再 `process.exit(0)`（D10-1 分档承诺的配套）**；若 kill 是 SIGKILL，接受丢尾（已在风险声明，且 pi session log 的取证削弱已如实声明）。
+- **「migrateBuiltinExtensions 先于 checkAndAutoUpgrade」门禁（⛔）**：实施 U1 时以代码注释 + 测试断言双重固定该串行次序，防止未来重排回归「autoUpgrade 升级打包内置包」。
+- **轮转 rename-with-open-stream 平台路径（⛔）**：Windows 下 rename 打开中的文件失败——轮转实现必须先 end/close 旧流再 rename（或重建流），三平台各验一次。
 - 迁移 gate 与 `restoreSession` 的启动时恢复路径的交互（启动时恢复的 session 是否也要等迁移——应一致 gate）。
 - 写流按日期惰性打开的并发语义（多个 session 同日同文件？——pi session log 每 session 独立文件，主日志单文件，无并发冲突；跨天轮转的竞态以单写流串行处理）。
