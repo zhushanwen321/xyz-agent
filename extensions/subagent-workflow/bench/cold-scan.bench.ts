@@ -300,12 +300,23 @@ async function main(): Promise<number> {
 		return 1;
 	}
 	const { sessionsDir, rounds, limit, baseline } = parsedArgv.value;
-	const encDir = path.dirname(path.resolve(sessionsDir));
+	const resolvedSessionsDir = path.resolve(sessionsDir);
+	const encDir = path.dirname(resolvedSessionsDir);
 	const indexPath = path.join(encDir, INDEX_FILENAME);
 
 	// 目录校验（fail fast，错误可操作）
 	if (!fs.existsSync(sessionsDir) || !fs.statSync(sessionsDir).isDirectory()) {
 		process.stderr.write(`sessionsDir 不是目录: ${sessionsDir}\n先复制真实 <enc> 段副本：cp -R ~/.pi/agent/subagents/<enc> /tmp/bench-enc/\n`);
+		return 1;
+	}
+	// 原目录防护：真实 pi subagents 数据目录禁止跑 bench（本 bench 会 chmod 000 jsonl、
+	// rm/重写索引，都会触碰真实 session 数据），必须先复制副本。路径从 homedir 动态推导
+	const realSubagentsDir = path.join(os.homedir(), ".pi", "agent", "subagents");
+	if (resolvedSessionsDir === realSubagentsDir || resolvedSessionsDir.startsWith(`${realSubagentsDir}${path.sep}`)) {
+		process.stderr.write(
+			`拒绝在真实数据目录运行 bench: ${resolvedSessionsDir}\n` +
+			`bench 会 chmod jsonl / rm 索引，污染真实 session 数据；请先复制副本：cp -R ${realSubagentsDir}/<enc> /tmp/bench-enc/\n`,
+		);
 		return 1;
 	}
 	const jsonlCount = fs.readdirSync(sessionsDir).filter((f) => f.endsWith(".jsonl")).length;
@@ -328,7 +339,16 @@ async function main(): Promise<number> {
 			times.push(result.ms);
 			if (i === 0) {
 				gt = result.fiveTuple;
-				writeGtFile(gtFilePath(sessionsDir), path.resolve(sessionsDir), gt);
+				// 判 0 恒真防护：空 ground truth 会让 A1 的 sameRows 与 A4 的 id 集对比都
+				// 退化为「空集对空集」恒真，断言失去防护意义——直接拒绝
+				if (gt.length === 0) {
+					process.stderr.write(
+						`ground truth 为空（0 条记录）：${resolvedSessionsDir} 的 jsonl 均无 subagent 记录，` +
+						`A1/A4 判 0 恒真失去防护。请换一个含 jsonl 记录的段复制：cp -R ${realSubagentsDir}/<enc> /tmp/bench-enc/\n`,
+					);
+					return 1;
+				}
+				writeGtFile(gtFilePath(sessionsDir), resolvedSessionsDir, gt);
 			} else if (!sameRows(result.fiveTuple, gt!)) {
 				process.stderr.write(`A1 失败（基线轮 ${i + 1} 与轮 1 输出不一致）：${firstDiff(result.fiveTuple, gt!)}\n`);
 				return 1;
@@ -342,7 +362,7 @@ async function main(): Promise<number> {
 		process.stdout.write(`  ground truth 已写入: ${gtFilePath(sessionsDir)}（${gt!.length} 条五元组）\n`);
 	} else {
 		// ── 冷启动模式：索引命中，中位数断言 <=300ms ──
-		const gtLoaded = readGtFile(gtFilePath(sessionsDir), path.resolve(sessionsDir));
+		const gtLoaded = readGtFile(gtFilePath(sessionsDir), resolvedSessionsDir);
 		if (gtLoaded !== undefined) {
 			gt = gtLoaded.fiveTuple;
 		} else {
@@ -351,9 +371,17 @@ async function main(): Promise<number> {
 			rmIndexArtifacts(encDir);
 			const gen = runColdScan(sessionsDir, limit);
 			gt = gen.fiveTuple;
-			writeGtFile(gtFilePath(sessionsDir), path.resolve(sessionsDir), gt);
+			writeGtFile(gtFilePath(sessionsDir), resolvedSessionsDir, gt);
 			await waitIndexSettle(encDir, SETTLE_TIMEOUT_MS); // 全探扫描 dirty → 落盘索引（即下面计时轮的命中源）
 			process.stdout.write(`  ground truth 由本次无索引全量探测生成（${fmtMs(gen.ms)}）并写入 ${gtFilePath(sessionsDir)}\n`);
+		}
+		// 判 0 恒真防护（与 baseline 分支同款）：空 gt 让 A1/A4 恒真——直接拒绝
+		if (gt.length === 0) {
+			process.stderr.write(
+				`ground truth 为空（0 条记录）：${resolvedSessionsDir} 的 jsonl 均无 subagent 记录，` +
+				`A1/A4 判 0 恒真失去防护。请换一个含 jsonl 记录的段复制后重跑 --baseline\n`,
+			);
+			return 1;
 		}
 		if (!fs.existsSync(indexPath)) {
 			// gt 来自早前 --baseline（其末轮写仍在磁盘上则不会进这里；被清过则热身一次）
@@ -419,9 +447,19 @@ async function main(): Promise<number> {
 		process.stderr.write(`A3 失败：索引未落在兄弟位置 ${indexPath}\n`);
 		return 1;
 	}
-	const idxParsed: unknown = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+	let idxParsed: unknown;
+	try {
+		idxParsed = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+	} catch (err) {
+		// 损坏/不可读索引必须命中声明的 A3 文案（不 catch 会让异常冒泡到顶层 catch，声明的判定文案不可达）
+		process.stderr.write(
+			`A3 失败：索引不是合法 JSON 或不可读: ${indexPath}（${err instanceof Error ? err.message : String(err)}）\n` +
+			`建议动作：rm "${indexPath}" 后重跑（索引为派生缓存，首次扫描会自动重建）\n`,
+		);
+		return 1;
+	}
 	if (!hasNumberVersion(idxParsed) || typeof idxParsed.version !== "number") {
-		process.stderr.write(`A3 失败：索引不是合法 JSON 或缺 version 字段: ${indexPath}\n`);
+		process.stderr.write(`A3 失败：索引缺 version 字段: ${indexPath}\n建议动作：rm "${indexPath}" 后重跑（索引为派生缓存，首次扫描会自动重建）\n`);
 		return 1;
 	}
 	const sessionsAfter = fs.readdirSync(sessionsDir).sort();

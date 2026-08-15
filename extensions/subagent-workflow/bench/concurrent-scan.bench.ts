@@ -4,10 +4,11 @@
 // 上游 .xyz-harness/2026-08-15-subagent-workflow-perf/sessions-index-design.md）。
 //
 // 场景：模拟 xyz-agent session-pool 的多个 pi 进程共享同一 sessionsDir——同进程内起
-// N 个 RecordStore 实例各循环 M 轮 collectRecords，外部随机 append/touch 制造文件变化
-// （append 只追加不含 "subagent-identity" 特征串的纯日志行——identity 探测结论不变，
-// ground truth 固定；touch 只改 mtime）。写入侧为 tmp(pid+seq)+rename 原子写（无锁），
-// 本 bench 验证并发下读侧只见完整 JSON、输出不错。
+// N 个 RecordStore 实例各循环 M 轮 collectRecords（同进程多实例交错，非跨进程并发：
+// 写路径 tmp(pid)+fsync+rename 与跨进程相同，交错已覆盖 rename 竞争窗口），外部随机
+// append/touch 制造文件变化（append 只追加不含 "subagent-identity" 特征串的纯日志行——
+// identity 探测结论不变，ground truth 固定；touch 只改 mtime）。写入侧为 tmp(pid+seq)+rename
+// 原子写（无锁），本 bench 验证并发下读侧只见完整 JSON、输出不错。
 //
 // 可复现命令（先 cp 真实目录副本，不污染原目录）：
 //
@@ -26,6 +27,7 @@
 // 不进 vitest（vitest.config.ts include 仅 src/**/__tests__/**/*.test.ts）、不进 CI。
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 
@@ -248,13 +250,24 @@ async function main(): Promise<number> {
 		return 1;
 	}
 	const { sessionsDir, workers, iters, limit, seed } = parsedArgv.value;
-	const encDir = path.dirname(path.resolve(sessionsDir));
+	const resolvedSessionsDir = path.resolve(sessionsDir);
+	const encDir = path.dirname(resolvedSessionsDir);
 	const indexPath = path.join(encDir, INDEX_FILENAME);
 	const rng = mulberry32(seed);
 	const randInt = (n: number): number => Math.floor(rng() * n);
 
 	if (!fs.existsSync(sessionsDir) || !fs.statSync(sessionsDir).isDirectory()) {
 		process.stderr.write(`sessionsDir 不是目录: ${sessionsDir}\n先复制真实 <enc> 段副本：cp -R ~/.pi/agent/subagents/<enc> /tmp/bench-enc/\n`);
+		return 1;
+	}
+	// 原目录防护：真实 pi subagents 数据目录禁止跑 bench（本 bench 会 append 污染 session 文件），
+	// 必须先复制副本。路径从 homedir 动态推导
+	const realSubagentsDir = path.join(os.homedir(), ".pi", "agent", "subagents");
+	if (resolvedSessionsDir === realSubagentsDir || resolvedSessionsDir.startsWith(`${realSubagentsDir}${path.sep}`)) {
+		process.stderr.write(
+			`拒绝在真实数据目录运行 bench（concurrent 会 append 污染 session 文件）: ${resolvedSessionsDir}\n` +
+			`请先 cp -R 到 /tmp 副本：cp -R ${realSubagentsDir}/<enc> /tmp/bench-enc/\n`,
+		);
 		return 1;
 	}
 	const jsonlFiles = fs
@@ -276,6 +289,15 @@ async function main(): Promise<number> {
 		gtStore.dispose();
 	}
 	const gt = projectRecords(gtRecords);
+	// 判 0 恒真防护：空 ground truth 会让 D4 的 sameRows 退化为「空集对空集」恒真，
+	// 断言失去防护意义——直接拒绝
+	if (gt.length === 0) {
+		process.stderr.write(
+			`ground truth 为空（0 条记录）：${resolvedSessionsDir} 的 jsonl 均无 subagent 记录，` +
+			`该 enc 段无 subagent 记录，请换一个含 jsonl 记录的段复制：cp -R ${realSubagentsDir}/<enc> /tmp/bench-enc/\n`,
+		);
+		return 1;
+	}
 	await waitIndexSettle(encDir, SETTLE_TIMEOUT_MS);
 	process.stdout.write(
 		`[concurrent-scan bench] 目录=${sessionsDir}\n  ground truth: 单进程全量探测 ${gtRecords.length} 条（jsonl=${jsonlFiles.length}）\n`,
@@ -322,7 +344,8 @@ async function main(): Promise<number> {
 				mutateOne(jsonlFiles[randInt(jsonlFiles.length)]!, iter);
 			}
 			await sleep(MUTATION_SETTLE_MS);
-			// 观测写放大（P-throttle 探针）：索引 mtime 变化即发生了一次成功落盘
+			// 观测写放大（P-throttle 探针，mtime 口径）：每 iter 末观测一次索引 mtime，
+			// 变化即观测到一次成功落盘（两次观测间的多次落盘会被合并计为 1 次）
 			const mtimeNow = fs.existsSync(indexPath) ? fs.statSync(indexPath).mtimeMs : -1;
 			if (mtimeNow !== lastIndexMtime) {
 				indexRewrites++;
@@ -349,9 +372,21 @@ async function main(): Promise<number> {
 		process.stderr.write(`D2 失败：索引不存在 ${indexPath}（并发写全部失败？查目录权限）\n`);
 		failed = true;
 	} else {
-		const idxParsed: unknown = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
-		if (!hasNumberVersion(idxParsed) || typeof idxParsed.version !== "number") {
-			process.stderr.write(`D2 失败：索引 JSON.parse 失败或缺 version 字段: ${indexPath}\n`);
+		let idxParsed: unknown;
+		try {
+			idxParsed = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+		} catch (err) {
+			// 损坏/不可读索引必须命中声明的 D2 文案（不 catch 会让异常冒泡到顶层 catch，
+			// 声明的判定文案不可达）；沿用 failed 汇总模式让 D3/D4 继续报告
+			process.stderr.write(
+				`D2 失败：索引不是合法 JSON 或不可读: ${indexPath}（${err instanceof Error ? err.message : String(err)}）\n` +
+				`建议动作：rm "${indexPath}" 后重跑（索引为派生缓存，首次扫描会自动重建）\n`,
+			);
+			failed = true;
+			idxParsed = undefined;
+		}
+		if (idxParsed !== undefined && (!hasNumberVersion(idxParsed) || typeof idxParsed.version !== "number")) {
+			process.stderr.write(`D2 失败：索引缺 version 字段: ${indexPath}\n建议动作：rm "${indexPath}" 后重跑（索引为派生缓存，首次扫描会自动重建）\n`);
 			failed = true;
 		}
 	}
@@ -372,7 +407,7 @@ async function main(): Promise<number> {
 	process.stdout.write(
 		`  并发: ${workers} 实例 × ${iters} 轮（总 ${workers * iters} 次扫描）耗时 ${fmtMs(elapsed)}\n` +
 			`  变异: append=${appendCount} touch=${touchCount}（覆盖 ${mutated.size} 个不同文件，seed=${seed}）\n` +
-			`  索引观测: 重写 ${indexRewrites} 次，终态 ${indexBytes} bytes（节流下写次数 << 扫描轮数）\n`,
+			`  索引观测: 观测到 ${indexRewrites} 次索引变化（mtime 口径，每 iter 末观测一次），终态 ${indexBytes} bytes（节流下写次数 << 扫描轮数）\n`,
 	);
 	if (failed) {
 		process.stderr.write("四判定存在失败项（见上）；修复后重跑本命令验证\n");

@@ -300,7 +300,7 @@ last-writer-wins（首现定义）= 多写者互不协商、后完成 rename 的
 | P-safety-c | 并发 rename 竞争下读到的都是完整 JSON | §4.2 判定 2：结束后 `JSON.parse` 成功且 `version` 存在 | ⛔ 实施期门 |
 | P-l0 | 索引写兄弟位置不改 sessionsDir mtime（不击穿 L0 快路径） | POSIX 语义：rename 只改父目录 `<enc>` 的 mtime，sessionsDir 自身不变（推理）+ 单测 C6 断言快路径未失效 | 推理 + ⛔ C6 门 |
 | P-index-cost | 索引读入+解析成本（估算 350KB ≈ 10ms 量级） | §4.1 bench 冷轮耗时分解回填本文 | ✅ 实测（2026-08-15）：真实索引 6.4MB（task 文本远长于估算），readFileSync+JSON.parse 隔离中位数 30.4ms；冷启动全程中位数 80.6ms ≤300ms，见 §4.1 实测结果 |
-| P-throttle | 60s 节流下写放大远低于上限 | §4.1/§4.2 bench 统计实际写入次数 | ✅ 实测（2026-08-15）：3 实例 × 20 轮共 60 次扫描仅 1 次索引重写（节流 + 纯命中轮不写），见 §4.1 实测结果 |
+| P-throttle | 60s 节流下写放大远低于上限 | §4.1/§4.2 bench 统计实际写入次数 | ✅ 实测（2026-08-15）：3 实例 × 20 轮共 60 次扫描仅观测到 1 次索引变化（mtime 口径，每 iter 末观测一次；节流 + 纯命中轮不写），见 §4.1 实测结果 |
 
 **核心安全性质的论证链与验证状态**：「陈旧索引只导致多余探测、永不产生错误数据」由三环构成——
 
@@ -349,6 +349,8 @@ tsx bench/cold-scan.bench.ts /tmp/bench-enc/$ENC/sessions --rounds 5
 
 **实测结果（2026-08-15，性能验收回填。副本 = 最大真实 `<enc>` 段，1744 个 jsonl / sessions 目录 671MB，其中 1633 条记录 + 111 个无 identity 文件；命令即上述两步，exit 0）**：
 
+**体积口径**：文首「586MB」是历史基线测量时（2026-08 早前）对原目录的测量值；本次「671MB」是 `cp -R` 到 /tmp 的副本值——文件数相同（均 1744 个 jsonl），差额来自 cp 后的块对齐/文件系统差异（原目录与 /tmp 所在卷的分配粒度不同），非数据量变化。
+
 | 模式 | 轮 1 | 轮 2-5 | 5 轮中位数 | 判定 |
 |---|---|---|---|---|
 | 基线（每轮 rm 索引） | 2069.7ms | 874.6-1232.0ms | **972.8ms** | 仅报告，无阈值 |
@@ -356,14 +358,18 @@ tsx bench/cold-scan.bench.ts /tmp/bench-enc/$ENC/sessions --rounds 5
 
 - **提速 12.1x**（972.8ms → 80.6ms），目标 1（≤300ms）达成。基线轮 1（2.1s，页缓存全冷）与文首 2.7s 基线同量级（差异来自副本复制已预热部分页缓存）；轮 2-5 两模式共享热页缓存，对比同轴公平。
 - A1/A3/A4 全 PASS：五元组与 ground truth 完全一致（1633 条）；索引落 `<enc>/sessions-index.json` 兄弟位置、sessionsDir readdir 无新增；chmod 000 后 1633 条记录全部经索引返回（零内容读取，P-safety-b 复证）。
-- **P-index-cost 实测**：真实索引 **6.4MB**（1744 条，均值 ~3.7KB/条——真实 task 文本远长于 §3.4-⑥ 估算的 ~200B/条），`readFileSync+JSON.parse` 隔离测量 5 轮中位数 **30.4ms**（19.4-34.1ms）；冷启动 80.6ms 的其余部分为 ~7k stat syscall + sidecar 小文件 + 记录构造。§3.4-⑥「体积涨一个量级仍在 50ms 量级」的结论经实测成立（估 350KB → 实 6.4MB 约 18x，仍远低于预算）。
-- **P-throttle 实测**（§4.2 bench，2026-08-15）：3 实例 × 20 轮共 60 次扫描 + 单进程 gt 扫描，索引仅重写 **1 次**（60s 节流 + 纯命中轮不写），写放大远低于上限。
+- **P-index-cost 实测**：真实索引 **6.4MB**（1744 条，均值 ~3.7KB/条——真实 task 文本远长于 §3.4-⑥ 估算的 ~200B/条），`readFileSync+JSON.parse` 隔离测量 5 轮中位数 **30.4ms**（19.4-34.1ms）；冷启动 80.6ms 的其余部分为 ~7k stat syscall + sidecar 小文件 + 记录构造。§3.4-⑥「体积涨一个量级仍在 50ms 量级」的结论经实测成立（估 350KB → 实 6.4MB 约 18x，仍远低于预算）。30.4ms 的最小复现命令（`<indexPath>` = 副本的 `<enc>/sessions-index.json`，如 `/tmp/bench-enc/<enc>/sessions-index.json`；跑 5 轮各计一次 `readFileSync+JSON.parse` 墙钟，排序后取 `t[2]` 即 5 轮中位数）：
+
+  ```bash
+  node -e 'const f=require("fs");const t=[];for(let i=0;i<5;i++){const s=Date.now();JSON.parse(f.readFileSync("<indexPath>","utf8"));t.push(Date.now()-s)};t.sort((a,b)=>a-b);console.log(t[2])'
+  ```
+- **P-throttle 实测**（§4.2 bench，2026-08-15）：3 实例 × 20 轮共 60 次扫描 + 单进程 gt 扫描，索引仅观测到 **1 次**变化（mtime 口径，每 iter 末观测一次；60s 节流 + 纯命中轮不写），写放大远低于上限。
 
 ### 4.2 多进程并发验收（回溯 §1 目标 3、目标 4）
 
 **结论：并发场景的正确性标准是「无异常 + 最终索引是完整 JSON + 输出与单进程一致」，不要求写入不竞争。**
 
-用脚本在同一目录上并发起 3 个 RecordStore 实例（模拟 xyz-agent session-pool 的 3 个 pi 进程），各自循环 20 次 `collectRecords`，其间外部随机 append/touch 文件制造变化：
+用脚本在同一目录上起 3 个 RecordStore 实例（模拟 xyz-agent session-pool 的 3 个 pi 进程；实现为**同进程多实例交错，非跨进程并发**——写路径 tmp(pid)+fsync+rename 与跨进程完全相同，交错调度已覆盖 rename 竞争窗口，跨进程真并发的成本高得多且不会改变写协议），各自循环 20 次 `collectRecords`，其间外部随机 append/touch 文件制造变化：
 
 ```bash
 tsx bench/concurrent-scan.bench.ts /tmp/bench-enc/$ENC/sessions --workers 3 --iters 20
