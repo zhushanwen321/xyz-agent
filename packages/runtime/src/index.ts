@@ -222,6 +222,10 @@ async function main(): Promise<void> {
     pluginInstaller,
     broadcastFn: (type, payload) => server.broadcast({ type: type as 'config.sessions', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
   })
+  // wave:perf-w09（接口收敛 wire 归位）：plugin 的 session 级广播点（plugin:viewUpdate /
+  // plugin:uiRequest）接 bus 定向发布。原在 server.setServices 内 wire（wave:perf-w08 的
+  // 过渡位置），services 间依赖注入统一归组合根——与下方 sessionService.setMessageBus 同模式。
+  pluginService.setMessageBus(messageBus)
 
   // ── R1 重构：EventAdapter（infra 纯翻译）+ EventInterpreter（service 编排）──
   // adapterFactory closure captures pluginService / sessionService / server by reference.

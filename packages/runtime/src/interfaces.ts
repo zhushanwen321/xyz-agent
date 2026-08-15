@@ -60,9 +60,16 @@ export type IRpcClient = IPiEngine
  *
  * Uses `unknown` for the WebSocket parameter to avoid coupling
  * the Service layer to the `ws` module.
+ *
+ * wave:perf-w09（02 文档 D1-2 / ADR-0055 7d）：`broadcast` 退化为**纯全局通道**——
+ * 只服务 payload 无 sessionId 的全局消息（config.*、app.info、plugin:statusBar*、
+ * session.forkNotice、session.handoffComplete/handoffAborted 等，见 02 文档 D5-1 排除清单）。
+ * session 级 push 型消息（payload 带 sessionId）一律走 `IMessageBus.publish`
+ * （services/message-bus，seq/ring/snapshot + 只推订阅该 sid 的连接），双写已收口。
  */
 export interface IMessageBroker {
   send(ws: unknown, msg: ServerMessage): void
+  /** 纯全局通道：盲推所有连接。session 级消息禁止走此方法（见接口注释）。 */
   broadcast(msg: ServerMessage): void
   /** D10/P0-B: 第 5 参数从 sessionId(string) 改为 details(ErrorDetails)，sessionId 进 details.sessionId。 */
   sendError(ws: unknown, code: string, message: string, id?: string, details?: { sessionId?: string; [key: string]: unknown }): void
@@ -158,7 +165,7 @@ export interface ISessionService {
    */
   getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]>
   /**
-   * 解析 agent call 对话流 JSONL 绝对路径（与 getAgentCallHistory 共用 findAgentCallFile）。
+   * 解析 agent call 对话流 JSONL 绝对路径（与 getAgentCallHistory 共用 _findAgentCallFile）。
    * 找不到返回空串（展示型功能，不 throw）。
    */
   getAgentCallFilePath(sessionId: string, agentCallSessionId: string): Promise<string>

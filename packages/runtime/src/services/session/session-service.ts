@@ -48,7 +48,7 @@ import { PresetService, type PresetResolution } from '../preset-service.js'
 // MessageBus（wave:runtime-wiring）：per-session 消息广播核心。setter 注入（同 setConfigService 模式），
 // 未注入时所有 bus 调用 no-op（this.messageBus?.publish）。type-only import 避免运行时环
 //（MessageBus 不反向依赖 SessionService）。
-import type { MessageBus } from '../message-bus/message-bus.js'
+import type { IMessageBus } from '../message-bus/message-bus.js'
 
 /** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter)。 */
 interface ManagedSession extends IManagedSessionView {
@@ -156,7 +156,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 经 setter 注入（同 setConfigService/setPresetService/setOnMessageComplete 模式），
    * 避免破坏 SessionService 的 25+ 测试构造调用点。未注入时所有 bus 调用 no-op（this.messageBus?.*）。
    */
-  private messageBus: MessageBus | null = null
+  private messageBus: IMessageBus | null = null
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
@@ -167,14 +167,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     private readonly sessionStore: ISessionStore,
     private readonly gitInfoReader: IGitInfoReader,
     private readonly workspaceService: WorkspaceService,
-    messageBus?: MessageBus,
+    messageBus?: IMessageBus,
   ) {
     // 打包模式:extension 在 Resources 根;开发模式:在 repo root(apps/electron/ 父目录)
     this.extensionPath = getExtensionFilePath(this.projectRoot, isPackaged())
 
     // 子模块注入 this(Facade 半构造时仅存引用,其方法在 Facade 完全构造后才被调用)
     this.lifecycle = new SessionLifecycle(this, this.pm, this.configStore, this.sessionStore, this.workspaceService)
-    this.dispatcher = new MessageDispatcher(this, this.pm, this.broker, this.workspaceService, messageBus)
+    this.dispatcher = new MessageDispatcher(this, this.pm, this.workspaceService, messageBus)
     this.scanner = new SessionScanner(this, this.sessionStore, this.gitInfoReader)
 
     // 进程崩溃清理:协调 adapter detach / Map 删 / 列表刷新 / session.exited 广播
@@ -191,8 +191,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       // wave:perf-w07（D1-1）：session.exited 补 bus publish（stream 类：分配 seq 入 ring）。
       // 顺序约束：必须在 removeSessionEntry 之前——它内部调 bus.clearSession 清订阅者集合，
       // clearSession 之后再 publish 等于送空集合，订阅 renderer 一条也收不到（进程退出标记
-      // dead + toast 丢失）。双写过渡态（W09 收口）：publish 先 mutate msg.seq，broadcast
-      // 同对象后发，已订阅 renderer 靠 seq-gap 分支 4 drop 第二条，无重复消费。
+      // dead + toast 丢失）。wave:perf-w09（D1-2）：broadcast 腿已删，publish 是唯一通道
+      //（renderer 全量订阅覆盖 list 内全部 session，见 useSessionStreamSync）。
       const exitedMsg: ServerMessage = { type: 'session.exited', payload: { sessionId, code, reason } }
       this.messageBus?.publish(sessionId, exitedMsg)
 
@@ -222,7 +222,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       this.broker.broadcast({ type: 'config.sessions', payload: { groups: this.listPersistedSessions() } })
       // session.exited（独立事件，区别于 message.error 的「单次消息失败」语义）：
       // 前端据此标记 session dead 态 + 插入 error 消息 + toast 提示。
-      this.broker.broadcast(exitedMsg)
+      //（wave:perf-w09：exitedMsg 的 broadcast 腿已删——session 级单通道，上方 publish 唯一出口。）
     })
   }
 
@@ -268,7 +268,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * session 销毁时 removeSessionEntry 调 bus.clearSession。未注入时所有 bus 调用 no-op，
    * 与 setConfigService/setOnMessageComplete 同模式（nullable 注入，不破坏现有测试构造点）。
    */
-  setMessageBus(bus: MessageBus): void {
+  setMessageBus(bus: IMessageBus): void {
     this.messageBus = bus
   }
 
@@ -590,13 +590,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   async getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]> {
     // agent call 本质是 subagent（D4）：workflow trace[].sessionId 存的是 subagent record id
     //（sa-xxx），不是 pi session uuidv7。复用 getSubagentHistory 的 record 查找路径
-    //（subagentId → 主 session JSONL 的 record.sessionFile），而非 findAgentCallFile（按 header.id
+    //（subagentId → 主 session JSONL 的 record.sessionFile），而非 _findAgentCallFile（按 header.id
     // 扫 subagents 目录，sa-xxx 永远不匹配 uuidv7 header）。找不到 record 返回 []（前端显空对话流）。
     return this.getSubagentHistory(sessionId, agentCallSessionId)
   }
 
   /**
-   * 解析 agent call 对话流 JSONL 绝对路径（与 getAgentCallHistory 共用 findAgentCallFile）。
+   * 解析 agent call 对话流 JSONL 绝对路径（与 getAgentCallHistory 共用 _findAgentCallFile）。
    *
    * 与 getAgentCallHistory 的区别：找不到时返回空串而非 throw——这是展示型功能
    *（PanelHeader overlay 文件名），找不到路径不应阻断 UI，前端 v-if 据空串隐藏按钮。
@@ -699,17 +699,17 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     if (typeof totalTokens === 'number') session.tokenCount = totalTokens
     // 算 usagePercent + 广播
     const { usagePercent, contextLimit } = this.computeUsage(sessionId, session.modelId)
-    // wave:perf-w07（D1-1）：turn-end 路径补 bus publish，对齐 restore 路径 fetchAndBroadcastContext
-    // 的双写模式。context.update 是 state topic（分配 seq 写 stateSnapshot（'context' typeKey
-    // 同 key 覆盖）、不入 ring），重连订阅由快照恢复。双写过渡态（W09 收口）：publish 先 mutate
-    // msg.seq，broadcast 同对象后发，已订阅 renderer 靠 seq-gap drop 第二条，无重复消费。
+    // wave:perf-w07（D1-1）：turn-end 路径补 bus publish，对齐 restore 路径 fetchAndBroadcastContext。
+    // context.update 是 state topic（分配 seq 写 stateSnapshot（'context' typeKey
+    // 同 key 覆盖）、不入 ring），重连订阅由快照恢复。
+    // wave:perf-w09（D1-2）：broadcast 腿已删——publish 是唯一通道，消息只序列化一次、
+    // 只推给订阅该 sid 的连接。
     const msg: ServerMessage = {
       type: 'context.update',
       id: `ctx_${Date.now()}`,
       payload: { sessionId, usagePercent, inputTokens, contextLimit },
     }
     this.messageBus?.publish(sessionId, msg)
-    this.broker.broadcast(msg)
   }
 
   /**
@@ -968,16 +968,19 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     parentSession?: string, forkEntryId?: string, modelOverride?: string,
   ): Promise<IManagedSessionView> {
     const send = (msg: ServerMessage) => {
-      // wave:runtime-wiring：session 级消息（payload 带 sessionId）双写走 bus.publish。
-      // bus 负责 per-session 单调 seq 分配 + ring buffer 缓存 + 广播给订阅该 session 的 ws；
-      // broker.broadcast 盲广播保留（R1 双写过渡：未迁移到 subscribe 的 renderer 仍能收到）。
-      // 判断依据：payload 是否含 sessionId 字段（全局消息如 config.sessions 无 sessionId 不走 bus）。
-      // remove-bandaids wave 后评估是否删除 broker.broadcast 的 session 级路径。
+      // wave:perf-w09（02 文档 D1-2）：session 级消息单通道——payload 带 sessionId 的消息
+      // 只走 bus.publish（per-session 单调 seq + ring/snapshot + 定向推给订阅该 sid 的 ws），
+      // 盲广播腿已删除。broker.broadcast 退化为纯全局通道：只承接无 sessionId 的消息
+      // （理论上 pi 事件流转发的消息恒带 sid，此分支是防御兜底，丢了比静默好）。
+      // R8 验证结论（W09）：subagent.stream_delta 的 payload.sessionId 实为主 session id
+      // （EventAdapter 以主 session 绑定翻译，extension setWidget 从主进程上报），
+      // publish 目标即主 session，renderer 全量订阅（useSessionStreamSync）覆盖，无需 R-04。
       const sid = (msg.payload as { sessionId?: string } | null)?.sessionId
       if (sid) {
         this.messageBus?.publish(sid, msg)
+      } else {
+        this.broker.broadcast(msg)
       }
-      this.broker.broadcast(msg)
       // W5：message.complete 广播后通知 reload-orchestrator（消费 pendingReload 队）。
       // 覆盖所有 message.complete 路径（event-interpreter turn-end 主路径 + dispatcher abort
       // 手动广播）。onMessageComplete 未注入时为 no-op。
@@ -1066,7 +1069,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     }
     const inputTokens = this.getInputTokens(sessionId)
     const { usagePercent, contextLimit } = this.computeUsage(sessionId, `${provider}/${modelId}`)
-    // wave:runtime-wiring：session.state_changed 是 session 级状态，双写走 bus + broker。
+    // wave:perf-w09（D1-2）：session.state_changed 单通道走 bus publish
     //（wave:perf-w06：state_changed 已入 bus 的 STATE_TYPE_KEY_MAP（D5-2 补全，修 ADR-0055 3b）——
     // publish 分配 seq 写 stateSnapshot、不入 streamRing，重连由 stateSnapshot 恢复。）
     const stateMsg: ServerMessage = {
@@ -1082,7 +1085,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       },
     }
     this.messageBus?.publish(sessionId, stateMsg)
-    this.broker.broadcast(stateMsg)
   }
 
   /**
@@ -1135,11 +1137,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     try {
       const commands = await this.getCommands(id)
       console.log(`[session-service] getCommands returned ${commands.length} commands:`, commands.map(c => c.name))
-      // wave:runtime-wiring：session.commands 是 session 级状态（state topic），双写走 bus
-      //（bus stateSnapshot 用 'commands' typeKey 去重缓存，subscribe 时 reconcile）+ broker（过渡兼容）。
+      // wave:perf-w09（D1-2）：session.commands 是 session 级状态（state topic），单通道走
+      // bus publish（stateSnapshot 用 'commands' typeKey 去重缓存，subscribe 时 reconcile）。
       const msg: ServerMessage = { type: 'session.commands', payload: { sessionId: id, commands } }
       this.messageBus?.publish(id, msg)
-      this.broker.broadcast(msg)
     // eslint-disable-next-line taste/no-silent-catch -- getCommands failure must not block session
     } catch (e) {
       console.warn('[session-service] getCommands failed:', e)
@@ -1191,15 +1192,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     try {
       const payload = await this.fetchContext(sessionId)
       if (!payload) return
-      // wave:runtime-wiring：context.update 是 session 级状态（state topic），双写走 bus
-      //（bus stateSnapshot 用 'context' typeKey 去重缓存）+ broker（过渡兼容）。
+      // wave:perf-w09（D1-2）：context.update 是 session 级状态（state topic），单通道走
+      // bus publish（stateSnapshot 用 'context' typeKey 去重缓存）。
       const msg: ServerMessage = {
         type: 'context.update',
         id: `ctx_restore_${Date.now()}`,
         payload: { sessionId, ...payload },
       }
       this.messageBus?.publish(sessionId, msg)
-      this.broker.broadcast(msg)
     // eslint-disable-next-line taste/no-silent-catch -- 兜底广播失败无影响（前端主动拉是主路径）
     } catch (e) {
       console.warn('[session-service] fetchAndBroadcastContext failed:', e)

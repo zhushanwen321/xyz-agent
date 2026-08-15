@@ -5,7 +5,7 @@
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService, IExtensionService } from '../interfaces.js'
-import type { MessageBus } from '../services/message-bus/message-bus.js'
+import type { IMessageBus } from '../services/message-bus/message-bus.js'
 import type { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { ExtensionInstallError } from '../services/extension-service.js'
 import { toErrorMessage } from '../utils/errors.js'
@@ -17,15 +17,13 @@ export interface ExtensionHandlerContext extends MessageHandlerContext {
   sessionService: ISessionService
   extensionService: IExtensionService | undefined
   extensionTimeoutMgr: ExtensionTimeoutManager
-  /** 广播给所有连接（extension.ui_timeout 超时通知用）。 */
-  broadcast(msg: ServerMessage): void
-  /** push 消息 id 生成器（extension.ui_timeout 广播 id）。 */
+  /** push 消息 id 生成器（extension.ui_timeout 消息 id）。 */
   nextPushId(): string
   /**
-   * MessageBus（wave:perf-w08，02 文档 D1-1）：extension.ui_timeout 的定向发布通道。
-   * 由 server.setServices 装配（this.messageBus，setMessageBus 保证先于 setServices）。
+   * IMessageBus（wave:perf-w08 接入，wave:perf-w09 单通道化）：extension.ui_timeout 的
+   * 唯一发布通道（broadcast 依赖已随 D1-2 删双写移除）。由 server.setServices 装配。
    */
-  messageBus?: MessageBus
+  messageBus?: IMessageBus
 }
 
 export class ExtensionMessageHandler {
@@ -78,12 +76,11 @@ export class ExtensionMessageHandler {
       id: this.ctx.nextPushId(),
       payload: { sessionId, requestId },
     }
-    // wave:perf-w08（02 文档 D1-1）：payload 恒含 sessionId（handleExtensionTimeout 的
-    // sessionId 参数）→ bus.publish 定向发布（extension.ui_timeout 归 stream 类：分配
-    // seq + 入 ring，重连可回放）。broadcast 保留为双写过渡态（W09 按全量审计统一收口）；
-    // 同一消息对象 publish 时被赋 seq，renderer routeInbound 按 seq 去重消除双收。
+    // wave:perf-w09（02 文档 D1-2）：payload 恒含 sessionId（handleExtensionTimeout 的
+    // sessionId 参数）→ bus.publish 定向发布是唯一通道（extension.ui_timeout 归 stream 类：
+    // 分配 seq + 入 ring，重连可回放）。W08 的 broadcast 双写腿已删——盲广播会推给未订阅
+    // 该 sid 的连接，且已订阅 renderer 靠 seq-gap drop 第二条的兼容负担随之消失。
     this.ctx.messageBus?.publish(sessionId, timeoutMsg)
-    this.ctx.broadcast(timeoutMsg)
   }
 
   async handleExtensionMessage(msg: ClientMessage, ws: WsType): Promise<void> {

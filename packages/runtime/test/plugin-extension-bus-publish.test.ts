@@ -222,7 +222,7 @@ describe('W08: plugin:uiRequest 经 bus publish（stream）', () => {
 // extension.ui_timeout —— stream 类（publish + broadcast 双写过渡态）
 // ══════════════════════════════════════════════════════════════
 
-describe('W08: extension.ui_timeout 补 publish（stream，双写过渡态）', () => {
+describe('W08/W09: extension.ui_timeout 经 bus publish（stream，单通道）', () => {
   function makeTimeoutHandler(withBus: boolean) {
     const bus = withBus ? new MessageBus() : undefined
     const broadcast = vi.fn()
@@ -241,7 +241,7 @@ describe('W08: extension.ui_timeout 补 publish（stream，双写过渡态）', 
     return { bus: bus as MessageBus, broadcast, handler }
   }
 
-  it('bus 装配 → publish 定向（订阅者收到、有 seq、入 ring）+ broadcast 仍调（双写）', () => {
+  it('bus 装配 → publish 定向（订阅者收到、有 seq、入 ring）+ broadcast 不再被调（D1-2 收口）', () => {
     const { bus, broadcast, handler } = makeTimeoutHandler(true)
     const ws = createMockClient()
     bus.subscribe('s1', ws)
@@ -262,19 +262,16 @@ describe('W08: extension.ui_timeout 补 publish（stream，双写过渡态）', 
     expect(snap.snapshot).toHaveLength(1)
     expect(snap.snapshot[0]!.type).toBe('extension.ui_timeout')
 
-    // 双写过渡态：broadcast 保留（W09 收口删）
-    expect(broadcast).toHaveBeenCalledTimes(1)
-    const bcast = broadcast.mock.calls[0][0] as { type: string; payload: { sessionId: string } }
-    expect(bcast.type).toBe('extension.ui_timeout')
-    expect(bcast.payload.sessionId).toBe('s1')
+    // wave:perf-w09（D1-2）：broadcast 双写腿已删——不再盲广播
+    expect(broadcast).not.toHaveBeenCalled()
   })
 
-  it('bus 未装配 → 仅 broadcast，超时通知不丢', () => {
+  it('bus 未装配 → 不抛错（publish no-op；组合根恒装配 bus，此为防御语义）', () => {
     const { broadcast, handler } = makeTimeoutHandler(false)
 
+    // wave:perf-w09（D1-2）：broadcast 腿已删，bus 未装配时 ui_timeout 静默 no-op
     handler.handleExtensionTimeout('s1', 'r1', 'confirm')
 
-    expect(broadcast).toHaveBeenCalledTimes(1)
-    expect((broadcast.mock.calls[0][0] as { type: string }).type).toBe('extension.ui_timeout')
+    expect(broadcast).not.toHaveBeenCalled()
   })
 })

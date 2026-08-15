@@ -32,6 +32,7 @@ import type {
   IEventAdapter,
   IExtensionService,
 } from '../src/interfaces.js'
+import type { IMessageBus } from '../src/services/message-bus/message-bus.js'
 import type { IProcessManager, IPiEngine, PiEventListener } from '../src/services/ports/pi-engine.js'
 import type { SessionSummary, SessionGroup, Message, ServerMessage, ProviderId, SegmentsMetadataEntry, SegmentsMetadataFile } from '@xyz-agent/shared'
 import { getAttachmentsDir } from '@xyz-agent/shared/paths'
@@ -200,6 +201,8 @@ interface Setup {
   service: SessionService
   pm: IProcessManager
   broker: IMessageBroker
+  /** mock IMessageBus（wave:perf-w09 单通道：session 级消息的发布目标） */
+  messageBus: IMessageBus
   extensionService: IExtensionService
   clientMap: Map<string, MockClient>
   /** mock 的 IGitInfoReader（readGitInfo 恒 undefined → 摘要 git 字段留空）。供 localSession 复用。 */
@@ -257,6 +260,16 @@ function createSetup(): Setup {
     sendError: vi.fn(),
   } as unknown as IMessageBroker
 
+  // wave:perf-w09（02 文档 D1-2）：session 级消息单通道走 bus.publish（broker 双写腿已删）。
+  // dispatcher（构造参数注入）与 session-service 自身（setMessageBus，对齐组合根）共用此 mock。
+  const messageBus: IMessageBus = {
+    publish: vi.fn(),
+    subscribe: vi.fn(),
+    unsubscribe: vi.fn(),
+    unsubscribeAll: vi.fn(),
+    clearSession: vi.fn(),
+  } as unknown as IMessageBus
+
   const extensionService: IExtensionService = {
     getExtensionPaths: vi.fn().mockResolvedValue([]),
   } as unknown as IExtensionService
@@ -289,7 +302,9 @@ function createSetup(): Setup {
     new PiSessionStore(),
     gitInfoReader,
     workspaceService as unknown as ConstructorParameters<typeof SessionService>[8],
+    messageBus,
   )
+  service.setMessageBus(messageBus)
 
   const mountClient = (sessionId: string, client?: MockClient): MockClient => {
     const c = client ?? makeMockClient()
@@ -314,14 +329,19 @@ function createSetup(): Setup {
   }
 
   return {
-    service, pm, broker, extensionService, clientMap, gitInfoReader,
+    service, pm, broker, messageBus, extensionService, clientMap, gitInfoReader,
     triggerExit: (sid, code, stderr = '') => exitCb?.(sid, code, stderr),
     mountClient, seedSession,
   }
 }
 
-/** 辅助：从 broadcast 调用里找指定 type 的消息（按 type 收窄返回 payload 类型）。 */
+/** 辅助：找指定 type 的已发布消息（按 type 收窄返回 payload 类型）。
+ * wave:perf-w09（D1-2）双通道查询：session 级消息走 bus.publish（call[1]），
+ * 全局消息（config.sessions 等）仍走 broker.broadcast（call[0]）。 */
 function findBroadcast<T extends ServerMessage['type']>(setup: Setup, type: T): ServerMessage<T> | undefined {
+  for (const call of vi.mocked(setup.messageBus.publish).mock.calls) {
+    if (call[1].type === type) return call[1] as ServerMessage<T>
+  }
   for (const call of vi.mocked(setup.broker.broadcast).mock.calls) {
     if (call[0].type === type) return call[0] as ServerMessage<T>
   }
@@ -540,7 +560,10 @@ describe('SessionService · dispatcher', () => {
       await setup.service.compact('sid-c')
       expect(client.compact).toHaveBeenCalledTimes(1)
       // 零 compaction 广播（compacting/compacted/summary 由 interpreter 从 pi 事件唯一编排）
-      const types = vi.mocked(setup.broker.broadcast).mock.calls.map(c => c[0].type)
+      const types = [
+        ...vi.mocked(setup.broker.broadcast).mock.calls.map(c => c[0].type),
+        ...vi.mocked(setup.messageBus.publish).mock.calls.map(c => c[1].type),
+      ]
       const compactionTypes = types.filter(t =>
         ['session.compacting', 'session.compacted', 'message.compactionSummary'].includes(t),
       )
@@ -796,6 +819,7 @@ describe('SessionService · Facade', () => {
       setup.service.setInputTokens(id, 12000)
       vi.mocked(client.setModel).mockClear()
       vi.mocked(setup.broker.broadcast).mockClear()
+      vi.mocked(setup.messageBus.publish).mockClear()
       // get_state 返回 thinkingLevel（broadcastSessionState 查 pi get_state）
       // W2 收口后用 client.getState()，返回归一后的 state 对象
       vi.mocked(client.getState).mockResolvedValueOnce({ thinkingLevel: 'high' })
@@ -874,6 +898,7 @@ describe('SessionService · Facade', () => {
       setup.service.setModelContextWindowResolver(() => 100000)
       // modelId 初始为 default 'test-provider/test-model'，resolver 按 provider/model 查 contextWindow
       vi.mocked(setup.broker.broadcast).mockClear()
+      vi.mocked(setup.messageBus.publish).mockClear()
 
       setup.service.applyContextUpdate(id, 25000)
 

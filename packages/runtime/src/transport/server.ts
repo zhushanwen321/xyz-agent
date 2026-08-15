@@ -22,10 +22,10 @@ const noopAuthService: IAuthService = {
 import type { GitService } from '../services/git-service.js'
 import type { FileService } from '../services/file-service.js'
 import type { SkillRegistry } from '../services/skill-registry.js'
-// MessageBus（wave:runtime-wiring）：注入到 SessionMessageHandler ctx（subscribe/unsubscribe RPC）。
-import type { MessageBus } from '../services/message-bus/message-bus.js'
+// IMessageBus（wave:perf-w09 接口收敛）：注入到 SessionMessageHandler ctx（subscribe RPC）+
+// ConnectionManager.onDisconnect 清理 + changeSetInvalidated 定向发布。
+import type { IMessageBus } from '../services/message-bus/message-bus.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
-import { PluginService } from '../services/plugin-service/plugin-service.js'
 import { ConnectionManager } from './connection-manager.js'
 import { ServerMessageBroker } from './message-broker.js'
 import { BridgeHandler } from './bridge-handler.js'
@@ -72,7 +72,7 @@ export class RuntimeServer implements IMessageBroker {
    * 供 session.subscribe/unsubscribe RPC 注册/取消订阅。ws 断开时 onDisconnect 回调调
    * bus.unsubscribeAll(ws) 清理订阅。经 setMessageBus 注入（组合根在 setServices 前调）。
    */
-  private messageBus?: MessageBus
+  private messageBus?: IMessageBus
 
   // ── Message handlers (extracted) ────────────────────────────────
   // Constructed in setServices() — not at field-init time — so `this` is fully
@@ -120,7 +120,7 @@ export class RuntimeServer implements IMessageBroker {
    * unsubscribe RPC 用 + ConnectionManager.onDisconnect 调 unsubscribeAll。
    * 必须在 setServices 前调（setServices 装配 sessionHandler 时读 this.messageBus）。
    */
-  setMessageBus(bus: MessageBus): void {
+  setMessageBus(bus: IMessageBus): void {
     this.messageBus = bus
   }
 
@@ -134,13 +134,10 @@ export class RuntimeServer implements IMessageBroker {
     this.skillRegistry = skillRegistry
     if (extension) this.extensionService = extension
     if (plugin) this.pluginService = plugin
-    // wave:perf-w08（02 文档 D1-1）：plugin 的 session 级广播点（plugin:viewUpdate /
-    // plugin:uiRequest）接 MessageBus 定向发布。setMessageBus 在 setServices 前调
-    // （见类头注释），此处 wire 给 plugin。组合根注入区（index.ts）为并行 wave
-    // 占用，wire 收在 server 装配点；W09 接口收敛时与 dispatcher 等统一归位。
-    if (this.messageBus && plugin instanceof PluginService) {
-      plugin.setMessageBus(this.messageBus)
-    }
+    //（wave:perf-w09 接口收敛）plugin.setMessageBus 的 wire 已归位组合根（index.ts，
+    // 与 sessionService.setMessageBus 并列）——services 间依赖注入不经 transport 层中转。
+    // server 保留的 bus 消费只剩自身 transport 职责：sessionHandler ctx（subscribe RPC）、
+    // extensionHandler ctx（ui_timeout publish）、onDisconnect 清理、changeSetInvalidated 定向发布。
 
     // broker 在此构造：依赖 services（broadcast helper / sendInitialState 取数据）+ 连接池（conn.clients）。
     this.broker = new ServerMessageBroker(this.conn, {
@@ -203,9 +200,8 @@ export class RuntimeServer implements IMessageBroker {
       sessionService: this.sessionService,
       extensionService: this.extensionService,
       extensionTimeoutMgr: this.extensionTimeoutMgr,
-      broadcast: (msg) => this.broker.broadcast(msg),
       nextPushId: () => this.broker.nextPushId(),
-      // wave:perf-w08（02 文档 D1-1）：extension.ui_timeout 的定向发布通道
+      // wave:perf-w09（D1-2）：extension.ui_timeout 单通道走 bus.publish（broadcast 注入已删）
       messageBus: this.messageBus,
     })
     this.pluginMessageHandler = new PluginMessageHandler({
@@ -218,8 +214,10 @@ export class RuntimeServer implements IMessageBroker {
         sessionService: this.sessionService,
         gitService: this.gitService,
         broadcastChangeSetInvalidated: (sessionId, reason) => {
-          // 广播给所有连接（session 级消息，前端按 payload.sessionId 路由到正确 panel）。
-          this.broker.broadcast({
+          // wave:perf-w09（R-08 审计发现的清单外 session 级 push 型消息）：原走
+          // broker.broadcast 盲广播，收口为 bus.publish 定向发布（message.changeSetInvalidated
+          // 归 stream 类：分配 seq + 入 ring，已订阅该 sid 的连接照常收到，未订阅连接不再被打扰）。
+          this.messageBus?.publish(sessionId, {
             type: 'message.changeSetInvalidated',
             id: this.broker.nextPushId(),
             payload: { sessionId, reason },

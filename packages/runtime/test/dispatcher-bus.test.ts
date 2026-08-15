@@ -1,11 +1,10 @@
 /**
- * MessageDispatcher + MessageBus 双写集成测试。
+ * MessageDispatcher × MessageBus 单通道集成测试（wave:perf-w09，02 文档 D1-2）。
  *
- * 锁定 dispatcher 内所有 19 处 broker.broadcast 后同步调
- * messageBus?.publish(sessionId, msg) 的行为——确保 session 级事件
- * （message.error / send.rejected / message.bashStart / message.bashResult /
- * message.complete / session.compacting / session.compacted / message.compactionSummary）
- * 进入 bus ring buffer。
+ * 删双写后 dispatcher 只依赖 publish 抽象（broker 依赖已删除）——锁定全部 session 级
+ * 命令编排消息（message.error / send.rejected / message.bashStart / message.bashResult /
+ * message.complete）经 bus.publish 定向发布且恰好发布一次（无双发）；compaction 生命周期
+ * 消息零发布（M4：归 interpreter 唯一编排）。
  *
  * 覆盖：
  * - sendMessage error path → bus.publish(message.error)
@@ -31,7 +30,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MessageDispatcher } from '../src/services/session/message-dispatcher.js'
 import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
 import type { IManagedSessionView } from '../src/services/session/types.js'
-import type { IMessageBroker } from '../src/interfaces.js'
+import type { IMessageBus } from '../src/services/message-bus/message-bus.js'
 import type { IPiEngine, IProcessManager } from '../src/services/ports/pi-engine.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { WorkspaceService } from '../src/services/workspace/workspace-service.js'
@@ -87,9 +86,6 @@ function makeMocks(opts: {
     compact: compactFn,
   } as unknown as IPiEngine
 
-  const broadcasts: ServerMessage[] = []
-  const broker = { broadcast: vi.fn((m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBroker
-
   const svc = {
     ensureActive: vi.fn(async () => client),
     getSessionByClient: vi.fn(() => session),
@@ -105,8 +101,9 @@ function makeMocks(opts: {
 
   const messageBus = opts.messageBus ?? { publish: vi.fn() }
 
-  const dispatcher = new MessageDispatcher(svc, pm, broker, workspace, messageBus as any)
-  return { dispatcher, session, promptFn, bashFn, abortFn, abortBashFn, compactFn, broadcasts, broker, svc, pm, messageBus }
+  // wave:perf-w09（D1-2）：broker 双写腿已删，dispatcher 只依赖 publish 抽象（4 参构造）
+  const dispatcher = new MessageDispatcher(svc, pm, workspace, messageBus as unknown as IMessageBus)
+  return { dispatcher, session, promptFn, bashFn, abortFn, abortBashFn, compactFn, svc, pm, messageBus }
 }
 
 describe('message-dispatcher bus integration', () => {
@@ -295,15 +292,13 @@ describe('message-dispatcher bus integration', () => {
     const session = makeMockSession()
     const promptFn = vi.fn(async () => ({}) as unknown as Awaited<ReturnType<IPiEngine['prompt']>>)
     const client = { prompt: promptFn } as unknown as IPiEngine
-    const broadcasts: ServerMessage[] = []
-    const broker = { broadcast: vi.fn((m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBroker
     const svc = {
       ensureActive: vi.fn(async () => client),
       getSessionByClient: vi.fn(() => session),
     } as unknown as ISessionServiceInternal
     const pm = {} as unknown as IProcessManager
     const workspace = { record: vi.fn() } as unknown as WorkspaceService
-    const dispatcher = new MessageDispatcher(svc, pm, broker, workspace)
+    const dispatcher = new MessageDispatcher(svc, pm, workspace)
     // Should not throw
     const result = await dispatcher.sendMessage('s1', 'hello')
     expect(result.blocked).toBe(false)
@@ -312,48 +307,46 @@ describe('message-dispatcher bus integration', () => {
   it('messageBus undefined → no crash on abort', async () => {
     const session = makeMockSession()
     const client = { abort: vi.fn(async () => {}) } as unknown as IPiEngine
-    const broadcasts: ServerMessage[] = []
-    const broker = { broadcast: vi.fn((m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBroker
     const svc = {
       getSessionByClient: vi.fn(() => session),
       persistSessionOutcome: vi.fn(),
     } as unknown as ISessionServiceInternal
     const pm = { getClient: vi.fn(() => client) } as unknown as IProcessManager
     const workspace = { record: vi.fn() } as unknown as WorkspaceService
-    const dispatcher = new MessageDispatcher(svc, pm, broker, workspace)
+    const dispatcher = new MessageDispatcher(svc, pm, workspace)
     await dispatcher.abort('s1')
-    // Should broadcast but not throw
-    expect(broker.broadcast).toHaveBeenCalled()
+    // wave:perf-w09：messageBus 未注入时 abort 的 complete 终态静默丢失（旧 broadcast 腿已删），
+    // 但不得 throw——组合根恒注入 bus，此处只锁 null-safety
   })
 
   it('messageBus undefined → no crash on compact（零广播，null-safety）', async () => {
     const session = makeMockSession()
     const compactFn = vi.fn(async () => ({ summary: 'done', tokensBefore: 100, estimatedTokensAfter: 50 }))
     const client = { compact: compactFn } as unknown as IPiEngine
-    const broadcasts: ServerMessage[] = []
-    const broker = { broadcast: vi.fn((m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBroker
+    const messageBus = { publish: vi.fn() }
     const svc = {
       getSessionByClient: vi.fn(() => session),
     } as unknown as ISessionServiceInternal
     const pm = { getClient: vi.fn(() => client) } as unknown as IProcessManager
     const workspace = { record: vi.fn() } as unknown as WorkspaceService
-    const dispatcher = new MessageDispatcher(svc, pm, broker, workspace)
+    const dispatcher = new MessageDispatcher(svc, pm, workspace, messageBus as unknown as IMessageBus)
     await dispatcher.compact('s1')
-    // M4：零 compaction 广播（no crash + 无 compaction 消息）
-    expect(broadcasts.some(m => ['session.compacting', 'session.compacted', 'message.compactionSummary'].includes(m.type))).toBe(false)
+    // M4：零 compaction 发布（no crash + 无 compaction 消息）
+    const compactionCalls = messageBus.publish.mock.calls.filter(
+      (c: unknown[]) => ['session.compacting', 'session.compacted', 'message.compactionSummary'].includes((c[1] as ServerMessage).type),
+    )
+    expect(compactionCalls).toHaveLength(0)
   })
 
-  // ── msg object identity: bus.publish receives same object as broker.broadcast ──
+  // ── 单通道语义（wave:perf-w09 D1-2）──
 
-  it('bus.publish receives the same msg object reference as broker.broadcast', async () => {
-    const { dispatcher, broker, messageBus } = makeMocks({
+  it('sendMessage error path → messageBus.publish 恰好 1 次（单通道，无双发）', async () => {
+    const { dispatcher, messageBus } = makeMocks({
       promptError: new Error('test'),
     })
     await dispatcher.sendMessage('s1', 'hello')
-    const broadcastMsg = (broker.broadcast as ReturnType<typeof vi.fn>).mock.calls[0][0]
-    const publishMsg = messageBus.publish.mock.calls[0][1]
-    // Same object reference — bus.publish mutates seq on the shared object
-    expect(broadcastMsg).toBe(publishMsg)
+    expect(messageBus.publish).toHaveBeenCalledTimes(1)
+    expect(messageBus.publish.mock.calls[0][1].type).toBe('message.error')
   })
 
   // ── sessionId passes through correctly ──

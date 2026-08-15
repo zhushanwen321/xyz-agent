@@ -57,6 +57,15 @@ export class ServerMessageBroker implements IMessageBroker {
   }
 
   broadcast(msg: ServerMessage): void {
+    // wave:perf-w09（02 文档 D1-2）：broadcast 是纯全局通道——session 级 push 型消息
+    //（payload 带 sessionId）必须走 IMessageBus.publish（seq/ring/订阅定向），禁止盲广播。
+    // 误用告警（不 throw，不阻断发送）：新增消息类型接错通道时日志立即可见，
+    // 是 V1「只推给订阅该 sid 的连接」不变量的运行时哨兵。合法的全局消息 payload 均无
+    // sessionId 字段（见 02 文档 D5-1 排除清单）；uiRequest 无 sid 兜底时值为 undefined 不触发。
+    const sid = (msg.payload as { sessionId?: unknown } | undefined)?.sessionId
+    if (sid !== undefined) {
+      console.warn(`[broadcast] session-scoped message "${msg.type}" went through global broadcast — use IMessageBus.publish instead (02 §3.3 D1-2)`)
+    }
     // L6（perf-quick-batch）：循环外序列化一次。
     // 旧实现循环内调 this.send → send 内 JSON.stringify(msg)，N 客户端 = N 次重复
     // 序列化同一对象。session.list 等大 payload 广播时主线程被重复 stringify 阻塞。

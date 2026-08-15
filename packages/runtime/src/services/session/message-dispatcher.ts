@@ -9,14 +9,15 @@
  * 「实际发给 pi 的文本」构造方式(subagent 注入 base64 marker)。
  *
  * 依赖经构造注入:svc(Facade 内部协议,访问 sessions/共享 helper)、
- * pm(getClient / 进程操作)、broker(broadcast)。
+ * pm(getClient / 进程操作)、messageBus(发布,wave:perf-w09 接口收敛——
+ * dispatcher 只依赖 publish 抽象,broker 依赖已删除:命令编排消息全部是
+ * session 级 push 型,单通道走 bus 定向发布,broadcast 双写腿已收口)。
  */
-import type { IMessageBroker } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IPiEngine, IProcessManager } from '../ports/pi-engine.js'
 import type { SendMessageHook } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
-import type { MessageBus } from '../message-bus/message-bus.js'
+import type { IMessageBus } from '../message-bus/message-bus.js'
 import { toErrorMessage } from '../../utils/errors.js'
 
 /** 生成代次 token 用的进制（base-36：数字 + 小写字母，紧凑且无符号字符）。 */
@@ -38,9 +39,8 @@ export class MessageDispatcher {
   constructor(
     private readonly svc: ISessionServiceInternal,
     private readonly pm: IProcessManager,
-    private readonly broker: IMessageBroker,
     private readonly workspaceService: WorkspaceService,
-    private readonly messageBus?: MessageBus,
+    private readonly messageBus?: IMessageBus,
   ) {}
 
   /** 注册消息发送前 hook(PluginService 调用,实现 beforeSend 拦截)。 */
@@ -99,7 +99,6 @@ export class MessageDispatcher {
       // 之前只靠 server.ts 外层 handler_error envelope（走 pending.reject，不进聊天流），
       // 导致 ensureActive 失败（如 pi 进程已死、restore 再 spawn 再 exit）时用户在对话流看不到错误。
       const msg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
-      this.broker.broadcast(msg)
       this.messageBus?.publish(sessionId, msg)
       throw e
     }
@@ -113,7 +112,6 @@ export class MessageDispatcher {
       if (activeSession.isGenerating || activeSession.isCompacting || activeSession.isBashRunning) {
         console.warn(`[message-dispatcher] preemptive reject (busy), sid=${sessionId}`)
         const msg = { type: 'send.rejected' as const, payload: { sessionId, reason: 'busy' as const, message: 'Agent 正在处理' } }
-        this.broker.broadcast(msg)
         this.messageBus?.publish(sessionId, msg)
         return { blocked: true, rejected: true }
       }
@@ -141,7 +139,6 @@ export class MessageDispatcher {
       console.error(`[message-dispatcher] prompt failed: sessionId=${sessionId}`, errMsg)
       if (activeSession) activeSession.isGenerating = false
       const errMsgMsg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
-      this.broker.broadcast(errMsgMsg)
       this.messageBus?.publish(sessionId, errMsgMsg)
       // 与 hook 拦截同等对待：已广播 message.error 气泡，返回 blocked 让 handler 走 error envelope（sendError），
       // renderer pending.reject 触发 Composer 恢复草稿。否则 handler reply success → pending.resolve 误判发送成功。
@@ -164,7 +161,6 @@ export class MessageDispatcher {
       const hookResult = await this.sendMessageHook(sessionId, hookContent)
       if (hookResult?.blocked) {
         const msg = { type: 'message.error' as const, payload: { sessionId, message: hookResult.reason ?? 'Message blocked by plugin hook' } }
-        this.broker.broadcast(msg)
         this.messageBus?.publish(sessionId, msg)
         return { blocked: true }
       }
@@ -175,7 +171,6 @@ export class MessageDispatcher {
     } catch (e) {
       console.error('[message-dispatcher] sendMessage hook error:', e)
       const msg = { type: 'message.error' as const, payload: { sessionId, message: 'Plugin hook error: ' + (toErrorMessage(e)) } }
-      this.broker.broadcast(msg)
       this.messageBus?.publish(sessionId, msg)
       return { blocked: true }
     }
@@ -195,7 +190,6 @@ export class MessageDispatcher {
       // W4：abort 失败（异常退出）写 stopped 终态
       this.svc.persistSessionOutcome(sessionId, 'stopped', `Abort failed: ${errMsg}`)
       const abortErrMsg = { type: 'message.error' as const, payload: { sessionId, message: `Abort failed: ${errMsg}` } }
-      this.broker.broadcast(abortErrMsg)
       this.messageBus?.publish(sessionId, abortErrMsg)
       return
     }
@@ -210,7 +204,6 @@ export class MessageDispatcher {
     // W4：用户主动 abort 写 stopped 终态
     this.svc.persistSessionOutcome(sessionId, 'stopped', 'User aborted')
     const completeMsg = { type: 'message.complete' as const, payload: { sessionId, stopReason: 'aborted' as const } }
-    this.broker.broadcast(completeMsg)
     this.messageBus?.publish(sessionId, completeMsg)
   }
 
@@ -241,7 +234,6 @@ export class MessageDispatcher {
       const errMsg = `Failed to restore session: ${toErrorMessage(e)}`
       console.error(`[message-dispatcher] sendBash: ${errMsg}`)
       const errMsgObj = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
-      this.broker.broadcast(errMsgObj)
       this.messageBus?.publish(sessionId, errMsgObj)
       throw e
     }
@@ -261,7 +253,6 @@ export class MessageDispatcher {
       if (activeSession.isCompacting || activeSession.isBashRunning) {
         console.warn(`[message-dispatcher] sendBash preemptive reject (busy), sid=${sessionId}`)
         const rejectMsg = { type: 'send.rejected' as const, payload: { sessionId, reason: 'busy' as const, message: 'Agent 正在处理' } }
-        this.broker.broadcast(rejectMsg)
         this.messageBus?.publish(sessionId, rejectMsg)
         return { blocked: true, rejected: true }
       }
@@ -277,7 +268,6 @@ export class MessageDispatcher {
     // ── bashStart 广播（实时反馈，与 bashResult 终态对称）──
     const excludeFlag = !!excludeFromContext
     const bashStartMsg = { type: 'message.bashStart' as const, payload: { sessionId, command, excludeFromContext: excludeFlag, timestamp: Date.now() } }
-    this.broker.broadcast(bashStartMsg)
     this.messageBus?.publish(sessionId, bashStartMsg)
 
     // ── 调 pi bash + 广播终态 ──
@@ -305,7 +295,6 @@ export class MessageDispatcher {
           ...(result.fullOutputPath !== undefined && { fullOutputPath: result.fullOutputPath }),
         },
       }
-      this.broker.broadcast(bashResultMsg)
       this.messageBus?.publish(sessionId, bashResultMsg)
     } catch (e) {
       const errMsg = toErrorMessage(e)
@@ -334,10 +323,8 @@ export class MessageDispatcher {
           timestamp: Date.now(),
         },
       }
-      this.broker.broadcast(bashResultErrMsg)
       this.messageBus?.publish(sessionId, bashResultErrMsg)
       const bashErrMsg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
-      this.broker.broadcast(bashErrMsg)
       this.messageBus?.publish(sessionId, bashErrMsg)
       return { blocked: true }
     } finally {
@@ -396,7 +383,6 @@ export class MessageDispatcher {
         timestamp: Date.now(),
       },
     }
-    this.broker.broadcast(cancelMsg)
     this.messageBus?.publish(sessionId, cancelMsg)
   }
 

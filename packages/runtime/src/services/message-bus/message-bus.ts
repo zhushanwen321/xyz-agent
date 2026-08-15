@@ -92,6 +92,8 @@ const TOPIC_TABLE: Readonly<Record<string, TopicKind>> = {
   'extension:widgetGui': 'stream',
   'extension:status': 'stream',
   'extension:notify': 'stream',
+  // extension:* 全族（event-adapter.ts setEditorText → session 级 push 型，W06-M1 补录）
+  'extension:setEditorText': 'stream',
   // ── transient 类：不分配 seq、不入 ring、不写快照、直传 ──
   'message.text_delta': 'transient',
   'message.thinking_delta': 'transient',
@@ -146,6 +148,31 @@ function stateTypeKey(message: ServerMessage): string | null {
 }
 
 /**
+ * IMessageBus —— session 级发布抽象（wave:perf-w09，02 文档 D1-2 / ADR-0055 7d 接口收敛）。
+ *
+ * 与 IMessageBroker 构成两个正交的发布通道（「同一发布抽象」的对偶面）：
+ * - IMessageBus.publish(sessionId, msg)：**定向**通道——seq/ring/snapshot + 只推订阅该 sid 的连接。
+ *   所有 session 级 push 型消息（payload 带 sessionId）的唯一出口。
+ * - IMessageBroker.broadcast(msg)：**全局**通道——盲推所有连接，只服务无 sessionId 的全局消息
+ *   （config.*、app.info、plugin:statusBar* 等，见 02 文档 D5-1 排除清单）。
+ *
+ * 消费方（SessionService / MessageDispatcher / PluginService / handlers）依赖本接口而非
+ * MessageBus 具体类，与 IMessageBroker 的注入模式对齐。
+ */
+export interface IMessageBus {
+  /** 发布 session 级消息（topic 三分类分流，见实现注释）。 */
+  publish(sessionId: string, message: ServerMessage): void
+  /** 订阅 session（返回 ring/state 快照 + lastSeq，gap 判定在 handler）。 */
+  subscribe(sessionId: string, ws: BusClient): { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number }
+  /** 取消单个 session 订阅（幂等）。 */
+  unsubscribe(sessionId: string, ws: BusClient): void
+  /** 取消该 ws 的所有 session 订阅（连接断开时调用，幂等）。 */
+  unsubscribeAll(ws: BusClient): void
+  /** 清除整个 session 状态（session 销毁时调用，幂等）。 */
+  clearSession(sessionId: string): void
+}
+
+/**
  * per-session 消息广播核心。
  *
  * 两个 Map 显式管理 session 与订阅者：
@@ -154,7 +181,7 @@ function stateTypeKey(message: ServerMessage): string | null {
  *
  * ringCapacity 是 ring 上限，构造时固定（默认 1000）。
  */
-export class MessageBus {
+export class MessageBus implements IMessageBus {
   /** sessionId → SessionBusState。 */
   private readonly sessions = new Map<string, SessionBusState>()
   /** ws → Set<sessionId>（反查表，双向不变量维护 + unsubscribeAll 用）。 */

@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MessageDispatcher } from '../services/session/message-dispatcher.js'
 import type { ISessionServiceInternal } from '../services/session/session-internal.js'
 import type { IManagedSessionView } from '../services/session/types.js'
-import type { IMessageBroker } from '../interfaces.js'
+import type { IMessageBus } from '../services/message-bus/message-bus.js'
 import type { IPiEngine, IProcessManager } from '../services/ports/pi-engine.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { WorkspaceService } from '../services/workspace/workspace-service.js'
@@ -59,8 +59,9 @@ function makeMocks(opts: MockOpts = {}) {
 
   const client = { compact: compactFn } as unknown as IPiEngine
 
+  // wave:perf-w09（D1-2）：dispatcher 只依赖 publish 抽象（broker 双写腿已删），mock bus 收集发布消息
   const broadcasts: ServerMessage[] = []
-  const broker = { broadcast: vi.fn((m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBroker
+  const bus = { publish: vi.fn((_sid: string, m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBus
 
   const svc = {
     ensureActive: vi.fn(async () => client),
@@ -70,7 +71,7 @@ function makeMocks(opts: MockOpts = {}) {
   const pm = { getClient: vi.fn(() => client) } as unknown as IProcessManager
   const workspace = { record: vi.fn() } as unknown as WorkspaceService
 
-  const dispatcher = new MessageDispatcher(svc, pm, broker, workspace)
+  const dispatcher = new MessageDispatcher(svc, pm, workspace, bus)
   return { dispatcher, session, compactFn, broadcasts }
 }
 

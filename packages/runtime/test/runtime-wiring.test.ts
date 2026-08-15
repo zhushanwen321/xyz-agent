@@ -2,7 +2,8 @@
  * wave:runtime-message-bus::runtime-wiring 集成测试。
  *
  * 覆盖 MessageBus 接入 runtime 的 5 个接线点（TC1-TC9）：
- * - TC1/TC2：session-service send 回调双写（session 级走 bus.publish + broker.broadcast；全局只 broker）。
+ * - TC1/TC2：session-service send 回调（wave:perf-w09 单通道：session 级只走 bus.publish；
+ *   全局无 sid 消息走 broker.broadcast 兜底）。
  * - TC3/TC4/TC5：session-message-handler 的 session.subscribe/unsubscribe RPC（含 fromSeq gap 检测）。
  * - TC6：ConnectionManager.onClose → bus.unsubscribeAll。
  * - TC7：session-service removeSessionEntry → bus.clearSession。
@@ -110,7 +111,7 @@ describe('wave:runtime-wiring · TC1/TC2 session-service send 回调双写', () 
     return { send: captured, svc }
   }
 
-  it('TC1: session 级消息（带 sessionId payload）双写——bus.publish + broker.broadcast', async () => {
+  it('TC1: session 级消息（带 sessionId payload）单通道——只 bus.publish，broker.broadcast 不再被调', async () => {
     const { send } = await captureSend(true)
     // 清空 fetchAndBroadcastCommands 阶段的 broker.broadcast 调用记录（避免噪音）
     broker.broadcast.mockClear()
@@ -118,12 +119,11 @@ describe('wave:runtime-wiring · TC1/TC2 session-service send 回调双写', () 
 
     const msg: ServerMessage = { type: 'message.text_delta', payload: { sessionId: 's1', delta: 'hello' } }
     send(msg)
-    // session 级：bus.publish 被调（'s1', msg）
+    // session 级：bus.publish 被调（'s1', msg），恰好一次（D1-2 单通道）
     expect(messageBus.publish).toHaveBeenCalledTimes(1)
     expect(messageBus.publish).toHaveBeenCalledWith('s1', msg)
-    // 双写：broker.broadcast 也被调
-    expect(broker.broadcast).toHaveBeenCalledTimes(1)
-    expect(broker.broadcast).toHaveBeenCalledWith(msg)
+    // wave:perf-w09（D1-2）：broadcast 腿已删——盲广播不再发生
+    expect(broker.broadcast).not.toHaveBeenCalled()
   })
 
   it('TC2: 全局消息（无 sessionId payload）只走 broker.broadcast，不经 bus', async () => {
@@ -151,17 +151,19 @@ describe('wave:runtime-wiring · TC1/TC2 session-service send 回调双写', () 
     send(msg)
     expect(cb).toHaveBeenCalledWith('s-complete')
     expect(messageBus.publish).toHaveBeenCalledWith('s-complete', msg)
-    expect(broker.broadcast).toHaveBeenCalledWith(msg)
+    // wave:perf-w09（D1-2）：broadcast 腿已删
+    expect(broker.broadcast).not.toHaveBeenCalled()
   })
 
-  it('未注入 messageBus 时（nullable）session 级消息只走 broker，不抛错', async () => {
+  it('未注入 messageBus 时（nullable）session 级消息不抛错（publish no-op，broker 也不走）', async () => {
     const { send } = await captureSend(false)
     broker.broadcast.mockClear()
 
     const msg: ServerMessage = { type: 'message.text_delta', payload: { sessionId: 's1' } }
+    // wave:perf-w09（D1-2）：bus 未注入时 this.messageBus?.publish 静默 no-op——不抛错；
+    // sid 存在故不走 broker 兜底分支（else 只接无 sid 消息）。组合根恒注入 bus，此为防御语义。
     expect(() => send(msg)).not.toThrow()
-    expect(broker.broadcast).toHaveBeenCalledWith(msg)
-    // bus 未注入，publish 不应被调（messageBus 是 mock 但未注入 service，service 内 this.messageBus 为 null）
+    expect(broker.broadcast).not.toHaveBeenCalled()
     expect(messageBus.publish).not.toHaveBeenCalled()
   })
 })
@@ -378,8 +380,8 @@ describe('wave:runtime-wiring · TC7 removeSessionEntry → bus.clearSession', (
 // TC8：fetchAndBroadcastCommands 双写（session.commands 走 bus + broker）
 // ───────────────────────────────────────────────────────────────────
 
-describe('wave:runtime-wiring · TC8 fetchAndBroadcastCommands 双写', () => {
-  it('fetchAndBroadcastCommands 调 bus.publish(sessionId, msg) + broker.broadcast(msg)', async () => {
+describe('wave:runtime-wiring · TC8 fetchAndBroadcastCommands（wave:perf-w09 单通道）', () => {
+  it('fetchAndBroadcastCommands 只调 bus.publish(sessionId, msg)，broker.broadcast 不再被调', async () => {
     const messageBus = createMockMessageBus()
     const broadcast = vi.fn()
     // 构造 SessionService + mock pm.getClient 返回带 getCommands 的 client
@@ -399,14 +401,13 @@ describe('wave:runtime-wiring · TC8 fetchAndBroadcastCommands 双写', () => {
     // 改用 (service as unknown as ...) 直接调 private 方法（测试专用 escape hatch，与 session-service-w3.test.ts 同范式）。
     await (service as unknown as { fetchAndBroadcastCommands: (id: string) => Promise<void> }).fetchAndBroadcastCommands('s-cmd')
 
-    // session.commands 双写：bus.publish + broker.broadcast
+    // session.commands 单通道（wave:perf-w09 D1-2）：只 bus.publish，broadcast 腿已删
     expect(messageBus.publish).toHaveBeenCalledTimes(1)
     const publishCall = vi.mocked(messageBus.publish).mock.calls[0]
     expect(publishCall[0]).toBe('s-cmd')
     expect(publishCall[1]).toMatchObject({ type: 'session.commands', payload: { sessionId: 's-cmd', commands } })
 
-    expect(broadcast).toHaveBeenCalledTimes(1)
-    expect(broadcast.mock.calls[0][0]).toMatchObject({ type: 'session.commands', payload: { sessionId: 's-cmd' } })
+    expect(broadcast).not.toHaveBeenCalled()
   })
 })
 

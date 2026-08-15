@@ -10,7 +10,7 @@ import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND, REST
 import type { MessageHandlerContext } from './message-context.js'
 // MessageBus（wave:runtime-wiring）：session.subscribe/unsubscribe RPC handler 用它注册订阅。
 // type-only import（handler 不持有 bus 实例的创建，只调它的方法）。
-import type { MessageBus } from '../services/message-bus/message-bus.js'
+import type { IMessageBus } from '../services/message-bus/message-bus.js'
 // BusClient（wave:bus-core）：ws 适配为 bus 订阅者的最小契约 { readyState, send }。
 // ws 库的 WebSocket 天然满足，但类型不完全一致，用 as unknown as BusClient 显式标记边界（R2）。
 import type { BusClient } from '../services/message-bus/types.js'
@@ -24,7 +24,7 @@ export interface SessionHandlerContext extends MessageHandlerContext {
    * MessageBus 单例（wave:runtime-wiring）：session.subscribe/unsubscribe RPC 用它注册/取消订阅。
    * 可选：未注入时 subscribe/unsubscribe case 报 unsupported（组合根保证注入）。
    */
-  messageBus?: MessageBus
+  messageBus?: IMessageBus
   nextPushId(): string
   broadcastSessionList(): void
   clearExtensionTimeoutsForSession(sessionId: string): void

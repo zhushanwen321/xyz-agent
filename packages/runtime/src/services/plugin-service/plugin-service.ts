@@ -24,8 +24,9 @@ import { PermissionStorage } from './plugin-permission-storage.js'
 import { EXTERNAL_PLUGIN_ENABLED, EXTERNAL_PLUGIN_DISABLED_MESSAGE } from './plugin-security.js'
 import { join } from 'node:path'
 import { toErrorMessage } from '../../utils/errors.js'
-// type-only：MessageBus 不反向依赖 plugin-service，无运行时环（与 message-dispatcher 同款约束）
-import type { MessageBus } from '../message-bus/message-bus.js'
+// type-only：IMessageBus 不反向依赖 plugin-service，无运行时环（与 message-dispatcher 同款约束）
+// wave:perf-w09（接口收敛）：依赖 publish 抽象而非 MessageBus 具体类
+import type { IMessageBus } from '../message-bus/message-bus.js'
 
 
 const COMMAND_EXECUTE_TIMEOUT_MS = 10_000
@@ -113,12 +114,11 @@ export class PluginService implements IPluginService {
   private mountPoints: string[] = []
 
   /**
-   * MessageBus（wave:perf-w08，02 文档 D1-1）：plugin 的 session 级广播接 bus 定向发布。
-   * 经 setMessageBus 后置注入（与 SessionService.setMessageBus 同模式）——PluginService
-   * 构造点（index.ts 组合根）在 messageBus 创建之后但经 server.setServices wire，
-   * 避免本 wave 触碰并行 wave 占用的组合根注入区。未注入时所有 bus 调用回退全局广播。
+   * IMessageBus（wave:perf-w08，02 文档 D1-1）：plugin 的 session 级广播接 bus 定向发布。
+   * 经 setMessageBus 后置注入（与 SessionService.setMessageBus 同模式）。wave:perf-w09
+   * 接口收敛后 wire 归组合根（index.ts，pluginService 构造后直调）。未注入时回退全局广播。
    */
-  private messageBus: MessageBus | null = null
+  private messageBus: IMessageBus | null = null
 
   constructor(registry: PluginRegistry, broker: IMessageBroker, deps?: IPluginServiceDeps) {
     this.registry = registry
@@ -215,12 +215,12 @@ export class PluginService implements IPluginService {
   }
 
   /**
-   * Wire MessageBus（wave:perf-w08，02 文档 D1-1）：plugin 的 session 级广播点
-   * （plugin:viewUpdate / plugin:uiRequest）接 bus 定向发布。由 server.setServices
-   * wire（组合根顺序：setMessageBus 在 setServices 前完成，见 RuntimeServer 注释）。
+   * Wire IMessageBus（02 文档 D1-1）：plugin 的 session 级广播点（plugin:viewUpdate /
+   * plugin:uiRequest）接 bus 定向发布。wave:perf-w09 接口收敛：wire 归组合根
+   *（index.ts 在 pluginService 构造后直调，不再经 server.setServices 中转）。
    * 未注入时广播点回退全局广播（broker.broadcast 兜底，消息不丢）。
    */
-  setMessageBus(bus: MessageBus): void {
+  setMessageBus(bus: IMessageBus): void {
     this.messageBus = bus
   }
 

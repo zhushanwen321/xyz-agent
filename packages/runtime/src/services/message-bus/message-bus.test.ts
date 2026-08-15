@@ -482,6 +482,8 @@ describe('MessageBus', () => {
     expect(topicOf('session.exited')).toBe('stream')
     expect(topicOf('terminal.alive')).toBe('stream')
     expect(topicOf('extension.ui_timeout')).toBe('stream')
+    // extension:* 全族（setEditorText 为 session 级 push 型，W06-M1 补录）
+    expect(topicOf('extension:setEditorText')).toBe('stream')
     // transient 类（全量）
     expect(topicOf('message.text_delta')).toBe('transient')
     expect(topicOf('message.thinking_delta')).toBe('transient')

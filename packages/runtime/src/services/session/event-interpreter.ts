@@ -178,6 +178,20 @@ export class EventInterpreter {
       //   - message.complete 不送达前端（streaming 永远不停）
       // 故单事件失败仅记日志不中断批次（复用 event-adapter.logInterpretFailure 的隔离思路）。
       try {
+        // 微项 4（wave:perf-w09）：高频 delta 帧快速路径——kind 路由（handle 的大 switch）
+        // 与 subagent-bg-notify / workflow-result 的 payload 检查全部跳过，纯转发。
+        // text_delta / thinking_delta 占 streaming 期事件量绝对大头，等价性依据：
+        // 两者的 payload 是 { sessionId, delta, contentIndex? }（event-adapter :99-106），
+        // 永不带 customType，跳过的两个检查函数（handleSubagentBgNotify / handleWorkflowResult
+        // 首行 customType 守卫）对它们恒 early-return，行为与走 handle 完全一致。
+        // 仍在 W1 try 内：send 抛错不中断批次。
+        if (ev.kind === 'message') {
+          const t = ev.message.type
+          if (t === 'message.text_delta' || t === 'message.thinking_delta') {
+            this.opts.send(ev.message)
+            continue
+          }
+        }
         this.handle(ev)
       } catch (err: unknown) {
         // B2（PR#86 review）：终态事件（turn-end）自身 handler 抛错时，onTurnFinalize 未执行 →

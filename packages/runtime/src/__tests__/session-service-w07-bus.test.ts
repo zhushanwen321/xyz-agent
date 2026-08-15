@@ -7,8 +7,8 @@
  * - session.exited（onSessionExit 进程退出路径）：stream topic——带 seq，且 publish 必须发生在
  *   removeSessionEntry（内部 bus.clearSession 清订阅者集合）之前，否则订阅 renderer 收不到。
  *
- * 双写过渡态（W09 收口）：两处均保留 broker.broadcast——publish 先 mutate msg.seq、broadcast
- * 同对象后发，已订阅 renderer 靠 seq-gap drop 第二条。
+ * wave:perf-w09（D1-2）已收口：broadcast 双写腿已删——context.update / session.exited 只走
+ * bus.publish（恰好一次），broker 只收 config.sessions（全局消息）。
  *
  * 运行：cd packages/runtime && npx vitest run src/__tests__/session-service-w07-bus.test.ts
  */
@@ -117,10 +117,8 @@ describe('SessionService × MessageBus（wave:perf-w07）', () => {
     expect(ctxFromSnapshot!.payload).toMatchObject({ inputTokens: 5000, usagePercent: 4 })
     expect(findMsg(late.snapshot, 'context.update')).toBeUndefined()
 
-    // 双写过渡态：broker.broadcast 也收到同一条（同对象，seq 已被 publish 写入）
-    const brokerCtx = findMsg(broadcasts, 'context.update')
-    expect(brokerCtx).toBeDefined()
-    expect(brokerCtx!.seq).toBe(ctxMsg!.seq)
+    // wave:perf-w09（D1-2）：broadcast 腿已删——context.update 不再进 broker 盲广播
+    expect(findMsg(broadcasts, 'context.update')).toBeUndefined()
   })
 
   it('W07-4: onSessionExit publish session.exited（stream）——订阅者在 bus.clearSession 之前收到', async () => {
@@ -140,8 +138,8 @@ describe('SessionService × MessageBus（wave:perf-w07）', () => {
     expect(exited!.payload).toMatchObject({ sessionId: 's-exit', code: 1 })
     expect((exited!.payload as { reason: string }).reason).toContain('boom stderr tail')
 
-    // 双写过渡态：broker.broadcast 也收到 config.sessions + session.exited
-    expect(findMsg(broadcasts, 'session.exited')).toBeDefined()
+    // wave:perf-w09（D1-2）：session.exited 的 broadcast 腿已删；config.sessions（全局）仍走 broker
+    expect(findMsg(broadcasts, 'session.exited')).toBeUndefined()
     expect(findMsg(broadcasts, 'config.sessions')).toBeDefined()
 
     // 退出后 bus 分区已清（clearSession）：新订阅拿到空 ring，无泄漏
