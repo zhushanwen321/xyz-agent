@@ -15,7 +15,7 @@
  * 运行：cd packages/core && npx vitest run src/domain/chat/__tests__/effects.test.ts
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { dispatchMessageEvent } from '../effects/registry'
 import type { MessageEffectContext } from '../effect-types'
@@ -23,10 +23,10 @@ import type { Message, Segment, ServerMessage } from '@xyz-agent/shared'
 
 const SID = 's-test'
 
-/** 构造 ctx：真实 vue ref + 回调 mock */
+/** 构造 ctx：真实 vue ref + 回调 mock（D-1 容器：分区值为 ShallowRef<Message[]>） */
 function makeCtx(initial: Message[] = []): MessageEffectContext {
   return {
-    messages: ref(new Map([[SID, initial]])),
+    messages: ref(new Map([[SID, shallowRef(initial)]])),
     retryStates: ref(new Map()),
     queueStates: ref(new Map()),
     applyFileChanges: vi.fn(),
@@ -47,7 +47,7 @@ function msg(type: string, payload: Record<string, unknown> = {}): ServerMessage
 }
 
 function getMsgs(ctx: MessageEffectContext): Message[] {
-  return ctx.messages.value.get(SID) ?? []
+  return ctx.messages.value.get(SID)?.value ?? []
 }
 
 function lastAssistant(ctx: MessageEffectContext): Message {
@@ -109,9 +109,9 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
     const ctx = makeCtx()
     dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
     dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'before' }))
-    // 模拟 finalizeSession 把 assistant 改为 complete（sealed）
+    // 模拟 finalizeSession 把 assistant 改为 complete（sealed）——同 sid 走内层 ref 数组替换
     const list = getMsgs(ctx)
-    ctx.messages.value.set(SID, list.map(m => m.role === 'assistant' ? { ...m, status: 'complete' as const } : m))
+    ctx.messages.value.get(SID)!.value = list.map(m => m.role === 'assistant' ? { ...m, status: 'complete' as const } : m)
     dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'AFTER' }))
     // 收口后 delta 被丢弃，content 不变
     expect(lastAssistant(ctx).content).toBe('before')

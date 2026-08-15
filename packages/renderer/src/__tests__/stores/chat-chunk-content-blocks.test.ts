@@ -12,7 +12,7 @@
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/stores/chat-chunk-content-blocks.test.ts
  */
 import { describe, it, expect, vi } from 'vitest'
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 import { dispatchMessageEvent } from '@xyz-agent/core'
 import type { MessageEffectContext } from '@xyz-agent/core'
 import type { Message, ServerMessage } from '@xyz-agent/shared'
@@ -22,7 +22,7 @@ const SID = 's-test'
 /** 构造 MessageEffectContext：真实 vue ref + 回调 mock（流式 contentBlocks 不走 file_changes） */
 function makeCtx(initial: Message[] = []): MessageEffectContext {
   return {
-    messages: ref(new Map([[SID, initial]])),
+    messages: ref(new Map([[SID, shallowRef(initial)]])),
     retryStates: ref(new Map()),
     queueStates: ref(new Map()),
     applyFileChanges: vi.fn(),
@@ -43,7 +43,7 @@ function msg(type: string, payload: Record<string, unknown> = {}): ServerMessage
 }
 
 function getMsgs(ctx: MessageEffectContext): Message[] {
-  return ctx.messages.value.get(SID) ?? []
+  return ctx.messages.value.get(SID)?.value ?? []
 }
 
 /** 取最后一条 assistant message */

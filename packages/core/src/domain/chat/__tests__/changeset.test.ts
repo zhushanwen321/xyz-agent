@@ -93,9 +93,11 @@ function userMsg(id: string): Message {
   return { id, role: 'user', content: '', status: 'complete', timestamp: 1 }
 }
 
-/** 构造一个持有 messages ref 的 controller 实例（参照 streaming-state-machine.test.ts 风格） */
+/** 构造一个持有 messages ref 的 controller 实例（D-1 容器：内层分区为 ShallowRef） */
 function makeController(initial: Map<string, Message[]> = new Map()) {
-  const messages = shallowRef<Map<string, Message[]>>(initial)
+  const messages = shallowRef<Map<string, ShallowRef<Message[]>>>(
+    new Map([...initial].map(([sid, msgs]) => [sid, shallowRef(msgs)])),
+  )
   const controller = createChangeSetController(messages)
   return { controller, messages }
 }
@@ -145,7 +147,7 @@ describe('createChangeSetController — applyFileChanges messageId 命中/未命
     )
     controller.applyFileChanges('s1', 'm1', [fc('a.ts', { status: 'added' })], 'accumulating', false)
 
-    const after = messages.value.get('s1')!
+    const after = messages.value.get('s1')!.value
     expect(after[0].fileChanges).toEqual([fc('a.ts', { status: 'added' })])
   })
 
@@ -156,7 +158,7 @@ describe('createChangeSetController — applyFileChanges messageId 命中/未命
     )
     controller.applyFileChanges('s1', 'wrongId', [fc('new.ts', { status: 'added' })], 'accumulating', false)
 
-    const after = messages.value.get('s1')!
+    const after = messages.value.get('s1')!.value
     expect(after[2].id).toBe('a2') // fallback 命中最后一条 assistant（未变 id）
     // 增量合并：incoming new.ts 与旧 old.ts 并集
     expect(after[2].fileChanges!.map((c) => c.filePath).sort()).toEqual(['new.ts', 'old.ts'])
@@ -171,7 +173,7 @@ describe('createChangeSetController — applyFileChanges messageId 命中/未命
     const before = messages.value
     controller.applyFileChanges('s1', 'wrongId', [fc('a.ts')], 'accumulating', false)
     expect(messages.value).toBe(before) // 引用稳定，未写入
-    expect(messages.value.get('s1')![1].fileChanges).toBeUndefined()
+    expect(messages.value.get('s1')!.value[1].fileChanges).toBeUndefined()
   })
 
   it('session 无消息（prev.length===0）：no-op return', () => {
@@ -198,7 +200,7 @@ describe('createChangeSetController — applyFileChanges isFullSet 全集替换 
     )
     controller.applyFileChanges('s1', 'm1', [fc('a.ts', { status: 'deleted' }), fc('c.ts')], 'accumulating', false)
 
-    const after = messages.value.get('s1')![0].fileChanges!
+    const after = messages.value.get('s1')!.value[0].fileChanges!
     const byPath = new Map(after.map((c) => [c.filePath, c]))
     expect([...byPath.keys()].sort()).toEqual(['a.ts', 'b.ts', 'c.ts'])
     expect(byPath.get('a.ts')!.status).toBe('deleted') // incoming 覆盖
@@ -213,7 +215,7 @@ describe('createChangeSetController — applyFileChanges isFullSet 全集替换 
     )
     controller.applyFileChanges('s1', 'm1', [fc('fresh.ts', { status: 'added' })], 'ready', true)
 
-    const after = messages.value.get('s1')![0].fileChanges!
+    const after = messages.value.get('s1')!.value[0].fileChanges!
     expect(after).toHaveLength(1)
     expect(after[0].filePath).toBe('fresh.ts') // 只剩 incoming
     expect(after[0].status).toBe('added')
@@ -224,16 +226,21 @@ describe('createChangeSetController — applyFileChanges isFullSet 全集替换 
       new Map([['s1', [assistantMsg('m1', { fileChanges: [fc('old.ts')] })]]]),
     )
     controller.applyFileChanges('s1', 'm1', [], 'ready', true)
-    expect(messages.value.get('s1')![0].fileChanges).toEqual([])
+    expect(messages.value.get('s1')!.value[0].fileChanges).toEqual([])
   })
 
-  it('applyFileChanges 写入后 messages ref 不可变替换（新 Map 引用，触发 shallowRef 响应）', () => {
+  it('applyFileChanges 写入后容器不可变替换：外层 Map 恒等 + 分区 ref 恒等 + 内层 .value 数组替换', () => {
     const { controller, messages } = makeController(
       new Map([['s1', [assistantMsg('m1')]]]),
     )
-    const before = messages.value
+    const mapBefore = messages.value
+    const partition = messages.value.get('s1')!
+    const arrBefore = partition.value
     controller.applyFileChanges('s1', 'm1', [fc('a.ts')], 'accumulating', false)
-    expect(messages.value).not.toBe(before) // commitMessages 整体替换
+    // D-1（07 文档 §3.3.2）：同 sid commit 不替换外层 Map，只替换分区 ref 的 .value
+    expect(messages.value).toBe(mapBefore)
+    expect(messages.value.get('s1')).toBe(partition)
+    expect(partition.value).not.toBe(arrBefore) // 数组整体替换触发 shallowRef 响应
   })
 
   it('applyFileChanges 记录 changeSetStatus 到 `${sid}:${msgId}` key', () => {

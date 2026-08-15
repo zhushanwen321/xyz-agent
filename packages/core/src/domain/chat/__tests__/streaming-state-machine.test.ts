@@ -27,7 +27,8 @@ function runningToolCall(id: string) {
 }
 
 function makeMachine() {
-  const messages = shallowRef<Map<string, Message[]>>(new Map())
+  // W10 D-1 容器范式：外层 Map 恒等稳定，每 sid 分区是独立 ShallowRef
+  const messages = shallowRef<Map<string, ShallowRef<Message[]>>>(new Map())
   const compactingSessions = ref<Set<string>>(new Set())
   const handingOffSessions = ref<Set<string>>(new Set())
   const retryStates = ref<Map<string, unknown>>(new Map())
@@ -52,11 +53,11 @@ describe('applySubagentStreamDelta', () => {
   it('TC1 替换路径：已有 streaming assistant 时替换 content，text block 幂等不重复 push', () => {
     const { sm, messages } = makeMachine()
     const existing = streamingAssistant('a1', { content: 'old', contentBlocks: [{ type: 'text', refId: 'text' }] })
-    messages.value = new Map([['subagent:x', [existing]]])
+    messages.value = new Map([['subagent:x', shallowRef([existing])]])
 
     sm.applySubagentStreamDelta('subagent:x', ['line1', 'line2'])
 
-    const after = messages.value.get('subagent:x')!
+    const after = messages.value.get('subagent:x')!.value
     expect(after).toHaveLength(1) // 不新增消息
     expect(after[0].id).toBe('a1') // 同一消息
     expect(after[0].content).toBe('line1\nline2') // 替换非追加
@@ -66,11 +67,11 @@ describe('applySubagentStreamDelta', () => {
 
   it('TC2 新建路径：无 streaming assistant 时 push sa- 新消息', () => {
     const { sm, messages } = makeMachine()
-    messages.value = new Map([['subagent:x', [streamingAssistant('a1', { status: 'complete' })]]]) // 最后 assistant 已 complete
+    messages.value = new Map([['subagent:x', shallowRef([streamingAssistant('a1', { status: 'complete' })])]]) // 最后 assistant 已 complete
 
     sm.applySubagentStreamDelta('subagent:x', ['hello'])
 
-    const after = messages.value.get('subagent:x')!
+    const after = messages.value.get('subagent:x')!.value
     expect(after).toHaveLength(2)
     const pushed = after[1]
     expect(pushed.role).toBe('assistant')
@@ -85,7 +86,7 @@ describe('applySubagentStreamDelta', () => {
 
     sm.applySubagentStreamDelta('subagent:empty', ['x'])
 
-    const after = messages.value.get('subagent:empty')!
+    const after = messages.value.get('subagent:empty')!.value
     expect(after).toHaveLength(1)
     expect(after[0].id.startsWith('sa-')).toBe(true)
   })
@@ -94,24 +95,24 @@ describe('applySubagentStreamDelta', () => {
 describe('finalizeSubagentStream', () => {
   it('TC3 收口 + sealed 幂等：streaming 翻 complete，重复调 no-op', () => {
     const { sm, messages } = makeMachine()
-    messages.value = new Map([['subagent:x', [streamingAssistant('a1')]]])
+    messages.value = new Map([['subagent:x', shallowRef([streamingAssistant('a1')])]])
 
     sm.finalizeSubagentStream('subagent:x')
-    expect(messages.value.get('subagent:x')![0].status).toBe('complete')
+    expect(messages.value.get('subagent:x')!.value[0].status).toBe('complete')
 
     // 重复收口：sealed 守卫，不再变化（引用稳定）
-    const snapshot = messages.value.get('subagent:x')![0]
+    const snapshot = messages.value.get('subagent:x')!.value[0]
     sm.finalizeSubagentStream('subagent:x')
-    expect(messages.value.get('subagent:x')![0]).toBe(snapshot)
+    expect(messages.value.get('subagent:x')!.value[0]).toBe(snapshot)
   })
 
   it('TC3b 无 streaming 实体时幂等 no-op（complete 消息不翻）', () => {
     const { sm, messages } = makeMachine()
-    messages.value = new Map([['subagent:x', [streamingAssistant('a1', { status: 'complete' })]]])
+    messages.value = new Map([['subagent:x', shallowRef([streamingAssistant('a1', { status: 'complete' })])]])
 
     sm.finalizeSubagentStream('subagent:x')
 
-    expect(messages.value.get('subagent:x')![0].status).toBe('complete')
+    expect(messages.value.get('subagent:x')!.value[0].status).toBe('complete')
   })
 })
 
@@ -120,11 +121,11 @@ describe('finalizeMessages', () => {
     const { sm, messages } = makeMachine()
     const assistant = streamingAssistant('a1', { content: 'partial', toolCalls: [runningToolCall('tc1')] })
     const bash = bashMsg('b1')
-    messages.value = new Map([['s1', [assistant, bash]]])
+    messages.value = new Map([['s1', shallowRef([assistant, bash])]])
 
     sm.finalizeMessages('s1', 'error', 'boom')
 
-    const after = messages.value.get('s1')!
+    const after = messages.value.get('s1')!.value
     expect(after[0].status).toBe('error')
     // [M2 error-visibility] 追加形态双通道：content 保持崩溃前正文不动，errorText 写 msg.error（不拼 \n\n）
     expect(after[0].content).toBe('partial')
@@ -137,11 +138,11 @@ describe('finalizeMessages', () => {
   it('TC2 追加形态空 content：errorText 仍写 msg.error，content 保持空（不兜底拼进 content）', () => {
     const { sm, messages } = makeMachine()
     // 流刚开始就崩（content 为空）：errorText 不兜底进 content，独立 error 字段承载
-    messages.value = new Map([['s1', [streamingAssistant('a1')]]])
+    messages.value = new Map([['s1', shallowRef([streamingAssistant('a1')])]])
 
     sm.finalizeMessages('s1', 'error', 'boom')
 
-    const after = messages.value.get('s1')![0]
+    const after = messages.value.get('s1')!.value[0]
     expect(after.status).toBe('error')
     expect(after.content).toBe('')
     expect(after.error).toBe('boom')
@@ -149,11 +150,11 @@ describe('finalizeMessages', () => {
 
   it('TC2b 非 assistant 消息不写 error 字段（user 提问不受 errorText 影响）', () => {
     const { sm, messages } = makeMachine()
-    messages.value = new Map([['s1', [{ id: 'u1', role: 'user' as const, content: '提问', status: 'complete' as const, timestamp: 1 }]]])
+    messages.value = new Map([['s1', shallowRef([{ id: 'u1', role: 'user' as const, content: '提问', status: 'complete' as const, timestamp: 1 }])]])
 
     sm.finalizeMessages('s1', 'error', 'boom')
 
-    const after = messages.value.get('s1')![0]
+    const after = messages.value.get('s1')!.value[0]
     expect(after.content).toBe('提问')
     expect(after.error).toBeUndefined()
   })
@@ -162,11 +163,11 @@ describe('finalizeMessages', () => {
     const { sm, messages } = makeMachine()
     const completeWithRunningTc = streamingAssistant('a1', { status: 'complete', toolCalls: [runningToolCall('tc1')] })
     const completeNoTc = streamingAssistant('a2', { status: 'complete' })
-    messages.value = new Map([['s1', [completeWithRunningTc, completeNoTc]]])
+    messages.value = new Map([['s1', shallowRef([completeWithRunningTc, completeNoTc])]])
 
     sm.finalizeMessages('s1', 'disconnect')
 
-    const after = messages.value.get('s1')!
+    const after = messages.value.get('s1')!.value
     expect(after[0].toolCalls![0].status).toBe('end_not_received') // 非 error reason → end_not_received
     expect(after[0].toolCalls![0].endTime).toBeTypeOf('number')
     expect(after[1]).toBe(completeNoTc) // 无 running toolCall 保持引用稳定
@@ -175,11 +176,11 @@ describe('finalizeMessages', () => {
   it('TC4c stream_error 收口：streaming → error；toolCall → error + endTime', () => {
     const { sm, messages } = makeMachine()
     const assistant = streamingAssistant('a1', { content: 'partial', toolCalls: [runningToolCall('tc1')] })
-    messages.value = new Map([['s1', [assistant]]])
+    messages.value = new Map([['s1', shallowRef([assistant])]])
 
     sm.finalizeMessages('s1', 'stream_error')
 
-    const after = messages.value.get('s1')![0]
+    const after = messages.value.get('s1')!.value[0]
     expect(after.status).toBe('error') // stream_error ∈ isErrorReason
     expect(after.toolCalls![0].status).toBe('error') // stream_error ∈ tcIsError
     expect(after.toolCalls![0].endTime).toBeTypeOf('number') // 非 normal/aborted 设 endTime
@@ -188,11 +189,11 @@ describe('finalizeMessages', () => {
   it('TC4d timeout 收口：streaming → error；toolCall → end_not_received + endTime（restart 同族）', () => {
     const { sm, messages } = makeMachine()
     const assistant = streamingAssistant('a1', { content: 'partial', toolCalls: [runningToolCall('tc1')] })
-    messages.value = new Map([['s1', [assistant]]])
+    messages.value = new Map([['s1', shallowRef([assistant])]])
 
     sm.finalizeMessages('s1', 'timeout')
 
-    const after = messages.value.get('s1')![0]
+    const after = messages.value.get('s1')!.value[0]
     expect(after.status).toBe('error') // timeout ∈ isErrorReason（restart 同分支）
     expect(after.toolCalls![0].status).toBe('end_not_received') // 非 error/stream_error → end_not_received
     expect(after.toolCalls![0].endTime).toBeTypeOf('number')
@@ -201,11 +202,11 @@ describe('finalizeMessages', () => {
   it('TC5 normal 收口：streaming → complete；toolCall → end_not_received 且不设 endTime；无 errorText 不追加', () => {
     const { sm, messages } = makeMachine()
     const assistant = streamingAssistant('a1', { content: 'full', toolCalls: [runningToolCall('tc1')] })
-    messages.value = new Map([['s1', [assistant]]])
+    messages.value = new Map([['s1', shallowRef([assistant])]])
 
     sm.finalizeMessages('s1', 'normal')
 
-    const after = messages.value.get('s1')![0]
+    const after = messages.value.get('s1')!.value[0]
     expect(after.status).toBe('complete')
     expect(after.content).toBe('full') // 无 errorText 不写 error 字段
     expect(after.error).toBeUndefined()
@@ -223,7 +224,7 @@ describe('finalizeMessages', () => {
 describe('collectFinalizeCandidates', () => {
   it('TC6 并集：messages ∪ compacting ∪ handingOff ∪ retry ∪ queue ∪ pendingSend', () => {
     // 6 源各贡献一个独有 sid，验证并集不漏
-    const messages = shallowRef<Map<string, Message[]>>(new Map([['a', [streamingAssistant('a1')]]]))
+    const messages = shallowRef<Map<string, ShallowRef<Message[]>>>(new Map([['a', shallowRef([streamingAssistant('a1')])]]))
     const compacting = ref<Set<string>>(new Set(['b']))
     const handingOff = ref<Set<string>>(new Set(['c']))
     const retryStates = ref<Map<string, unknown>>(new Map([['d', {}]]))
