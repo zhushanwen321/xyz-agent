@@ -15,7 +15,7 @@
  * 自动规则对中文词组 vs 句子无完备判别力，正式验收以人工为准）。
  */
 
-import { appendFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -50,8 +50,9 @@ async function runOneCase(c, log) {
 		cwd = mkdtempSync(join(tmpdir(), `rename-e2e-${c.tag}-cwd.`));
 		writeFileSync(join(cwd, c.fixture), c.fixtureContent, "utf-8");
 	}
-	const pi = await spawnPi({ tag: c.tag, cwd });
+	let pi = null;
 	try {
+		pi = await spawnPi({ tag: c.tag, cwd });
 		// 600s 上限：重构/编码类 prompt 的工具循环较长（空 tmp cwd 下模型会探索后作答），
 		// 仍有界（真挂死按 timeout 分类失败）。2026-08-15 实测模型延迟系统性变慢（前日三 case
 		// 共 192s，当日单 case 超 300s 旧上限两次击穿——英文与跟进型各一次），按前日最坏值 3 倍上调
@@ -69,7 +70,16 @@ async function runOneCase(c, log) {
 		log(`[${c.label}] 标题: ${title}`);
 		return { label: c.label, prompt: c.prompt, title };
 	} finally {
-		pi.cleanup();
+		pi?.cleanup();
+		// 跟进型 fixture cwd 独立于 pi tmpDir，pi.cleanup() 不覆盖它——不单独清理则每次 run
+		// 泄漏一个系统 tmp 目录；E2E_KEEP_TMP=1 时保留现场（对齐 harness cleanup 约定）
+		if (cwd) {
+			if (process.env.E2E_KEEP_TMP === "1") {
+				console.warn(`[a2] E2E_KEEP_TMP=1，保留现场: ${cwd}`);
+			} else {
+				rmSync(cwd, { recursive: true, force: true });
+			}
+		}
 	}
 }
 
