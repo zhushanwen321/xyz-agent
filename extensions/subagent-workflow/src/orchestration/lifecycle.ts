@@ -392,7 +392,7 @@ export async function abortRun(
   deps.onRunDone?.(run);
 }
 
-// ── evictDoneRunsBeyondCap（done run 内存淘汰纯函数） ────────
+// ── evictDoneRunsBeyondCap（done run 内存淘汰，原地裁剪函数） ────────
 
 /**
  * 淘汰 runs Map 中超出保留窗口的 done run，返回本次淘汰数量。
@@ -424,14 +424,14 @@ export function evictDoneRunsBeyondCap(
   runs: Map<string, WorkflowRun>,
   keepDone: number,
 ): number {
- // 显式白名单：仅 done 参与淘汰（running/paused 误删即功能破坏）
+  // 显式白名单：仅 done 参与淘汰（running/paused 误删即功能破坏）
   const done = Array.from(runs.values()).filter((r) => r.state.status === "done");
   const excess = done.length - keepDone;
   if (excess <= 0) return 0;
- // ISO 字典序=时间序；缺失 fallback 空串（ISO 串恒以 '2' 开头非空，空串严格最小=最旧）
+  // ISO 字典序=时间序；缺失 fallback 空串（ISO 串恒以 '2' 开头非空，空串严格最小=最旧）
   const keyOf = (r: WorkflowRun): string => r.meta.completedAt ?? "";
- // 三态比较器 + sort 稳定性：tie 保持 Array.from 的 Map 插入序（=创建序）——
- // 先插入者更旧先淘汰，禁止按插入序直接 slice 淘汰（边界不变式 5）
+  // 三态比较器 + sort 稳定性：tie 保持 Array.from 的 Map 插入序（=创建序）——
+  // 先插入者更旧先淘汰，禁止按插入序直接 slice 淘汰（边界不变式 5）
   done.sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0));
   for (const r of done.slice(0, excess)) {
     runs.delete(r.runId);
