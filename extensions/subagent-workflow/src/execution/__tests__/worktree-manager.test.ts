@@ -1,7 +1,7 @@
 // src/__tests__/worktree-manager.test.ts
 //
 // WorktreeManager 单元测试。
-// mock execFileSync（git 命令）+ WorktreeRegistry（注册表）+ alive-store（进程探活）。
+// mock execFile（git 命令）+ WorktreeRegistry（注册表）+ alive-store（进程探活）。
 //
 // [全局注册表重构] scan 不再读 sidecar / 不再依赖 cwd 是否 git repo。
 // 判据从「终态 marker 状态机」改为「pid 死活」。

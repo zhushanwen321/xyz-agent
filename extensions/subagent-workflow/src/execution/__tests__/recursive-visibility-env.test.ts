@@ -36,7 +36,16 @@ vi.mock("node:child_process", async () => {
 
   return {
     spawn: vi.fn(() => new FakeChild()),
-    execFileSync: vi.fn(() => ""),
+    // buildEnvBlock 用 execFile 异步取 git branch：默认 err-first 兜底（catch → branch=""），
+    // 形态同 worktree-manager.test.ts 的 setupExecFile
+    execFile: vi.fn(
+      (
+        _cmd: string,
+        _args: readonly string[],
+        _opts: unknown,
+        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
+      ) => cb(new Error("execFile not configured in this test")),
+    ),
   };
 });
 
@@ -72,14 +81,14 @@ vi.mock("../temp-prompt.ts", () => ({
   cleanupTempPrompt: vi.fn(async () => {}),
 }));
 
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 
+import { waitForSpawn } from "./helpers/spawn-mock.ts";
 import { createRecord } from "../execution-record.ts";
 import { type RunOptions, runSpawn, type SessionRunnerContext } from "../session-runner.ts";
 
 const mockSpawn = vi.mocked(spawn);
-const mockExec = vi.mocked(execFileSync);
 const mockExistsSync = vi.mocked(fs.existsSync);
 
 interface FakeChild {
@@ -100,17 +109,6 @@ function getLastSpawnedChild(): FakeChild {
 
 function getLastSpawnEnv(): Record<string, string | undefined> {
   return (mockSpawn.mock.calls.at(-1)?.[2]?.env as Record<string, string | undefined>) ?? {};
-}
-
-/** 等待 runSpawn 内部调到 spawn（async，spawn 在 writePromptToTempFile await 之后才调）。 */
-async function waitForSpawn(timeoutMs = 1000): Promise<void> {
-  const start = Date.now();
-  while (mockSpawn.mock.results.length === 0) {
-    if (Date.now() - start > timeoutMs) {
-      throw new Error(`spawn was not called within ${timeoutMs}ms`);
-    }
-    await new Promise((r) => setTimeout(r, 5));
-  }
 }
 
 // ── fixture ──
@@ -161,7 +159,6 @@ describe("runSpawn 跨进程身份 env 注入（递归可见性场景 1b）", ()
   beforeEach(() => {
     vi.clearAllMocks();
     mockExistsSync.mockReturnValue(false);
-    mockExec.mockReturnValue("");
   });
 
   afterEach(() => {
@@ -174,7 +171,7 @@ describe("runSpawn 跨进程身份 env 注入（递归可见性场景 1b）", ()
     const opts = makeRunOpts({ fork: false });
 
     const resultPromise = runSpawn(record, "test task", opts, ctx);
-    await waitForSpawn();
+    await waitForSpawn(mockSpawn);
     const childEnv = getLastSpawnEnv();
 
     expect(childEnv.PI_SUBAGENT_ROOT_SESSION_ID).toBe("root-main");
@@ -196,7 +193,7 @@ describe("runSpawn 跨进程身份 env 注入（递归可见性场景 1b）", ()
     const opts = makeRunOpts({ fork: true, parentForkDepth: 1 });
 
     const resultPromise = runSpawn(record, "test task", opts, ctx);
-    await waitForSpawn();
+    await waitForSpawn(mockSpawn);
     const childEnv = getLastSpawnEnv();
 
     // 身份 env 无条件存在（决策 2）
@@ -217,7 +214,7 @@ describe("runSpawn 跨进程身份 env 注入（递归可见性场景 1b）", ()
     const ctx = makeCtx({ sessionRootId: "root-topmost" });
 
     const resultPromise = runSpawn(record, "test task", makeRunOpts(), ctx);
-    await waitForSpawn();
+    await waitForSpawn(mockSpawn);
     const childEnv = getLastSpawnEnv();
 
     expect(childEnv.PI_SUBAGENT_DEPTH).toBe("3");
@@ -237,7 +234,7 @@ describe("runSpawn 跨进程身份 env 注入（递归可见性场景 1b）", ()
     const ctx = makeCtx({ sessionRootId: "real-root-session" });
 
     const resultPromise = runSpawn(record, "test task", makeRunOpts(), ctx);
-    await waitForSpawn();
+    await waitForSpawn(mockSpawn);
     const childEnv = getLastSpawnEnv();
 
     // env 用 ctx.sessionRootId，不是 record.rootSessionId
@@ -259,7 +256,7 @@ describe("runSpawn 跨进程身份 env 注入（递归可见性场景 1b）", ()
     const ctx = makeCtx({ cwd: checkoutPath, mainCwd: checkoutPath, rootCwd, agentDir });
 
     const resultPromise = runSpawn(record, "test task", makeRunOpts(), ctx);
-    await waitForSpawn();
+    await waitForSpawn(mockSpawn);
     const childEnv = getLastSpawnEnv();
     const spawnArgs = mockSpawn.mock.calls.at(-1)?.[1] as string[];
 

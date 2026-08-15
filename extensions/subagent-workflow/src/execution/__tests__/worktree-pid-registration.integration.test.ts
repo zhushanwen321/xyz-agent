@@ -15,13 +15,13 @@
 //   真实注册表文件，仅 mock ./pi-invocation.ts（把 pi 二进制替换为 node -e 脚本）。
 //
 // mock 最小化原则：
-//   - node:child_process 不 mock（真实 spawn / execFileSync git）
+//   - node:child_process 不 mock（真实 spawn / spawnSync git）
 //   - node:fs 不 mock（真实目录/文件：worktree checkout、注册表 JSON）
 //   - alive-store 不 mock（真实 process.kill(pid, 0) 探活）
 //   - 仅 vi.mock("./pi-invocation.ts")：getPiInvocation 返回 node -e 脚本
 //   - fake timers 仅 toFake: ["Date"]：推进注册表宽限判定用，不干扰真实 I/O 事件
 
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -67,7 +67,8 @@ let handle: WorktreeHandle | undefined;
 let spawnedPid: number | undefined;
 
 function git(args: string[], cwd: string): string {
-  return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+  const r = spawnSync("git", args, { cwd, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+  return (r.stdout ?? "").trim();
 }
 
 /** 初始化临时 git repo（至少一个 commit，worktreeManager.create 需要 clean tree + HEAD）。 */

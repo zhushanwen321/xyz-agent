@@ -11,7 +11,7 @@
 // mock 结构与 run-spawn-edges.test.ts 一致（FakeChild + session-pending 受控 count=0）。
 // lifecycle-manager 用真实模块（hasIdleTimer / _resetLifecycleState 可观测 + 隔离）。
 
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,7 +20,15 @@ vi.mock("node:child_process", async () => {
   const { FakeChild } = await import("./helpers/spawn-mock.ts");
   return {
     spawn: vi.fn(() => new FakeChild()),
-    execFileSync: vi.fn(() => ""),
+    // buildEnvBlock 的 git branch 调用（execFile 异步）：默认 err-first 兜底 → catch → branch=""
+    execFile: vi.fn(
+      (
+        _cmd: string,
+        _args: readonly string[],
+        _opts: unknown,
+        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
+      ) => cb(new Error("execFile not configured in this test")),
+    ),
   };
 });
 

@@ -465,7 +465,7 @@ const branchCache = new Map<string, string>();
 /**
  * 构建环境信息块（P7 防注入：环境数据标记为 data，非指令）。
  * git branch 异步获取（execFile），按 cwd 缓存——缓存命中路径返回已 resolve 值零开销，
- * 仅每 cwd 首次调用发起 git（此前为同步 execFileSync，挂载盘慢 git 时阻塞 spawn 链最多 2s）。
+ * 仅每 cwd 首次调用发起 git（此前为同步阻塞调用，挂载盘慢 git 时阻塞 spawn 链最多 2s）。
  *
  * [SPAWN 改造] 从旧 in-process run() 恢复。spawn 模型下此块拼进
  * --append-system-prompt 文件，子进程读文件注入 system prompt。
@@ -510,7 +510,13 @@ export async function buildEnvBlock(
           },
         );
       });
-    } catch {
+    } catch (err) {
+      // 非 git 目录 / git 不在 PATH 是高频正常路径，debug 级留诊断线索即可，不刷 info/warn
+      logger.debug(
+        `[session-runner] buildEnvBlock: git branch lookup failed for ${cwd}, fallback to empty: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
       branch = "";
     }
     branchCache.set(cwd, branch);

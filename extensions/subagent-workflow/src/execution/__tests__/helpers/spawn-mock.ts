@@ -24,7 +24,16 @@
 //     const { FakeChild } = await import("./helpers/spawn-mock.ts");
 //     return {
 //       spawn: vi.fn(() => new FakeChild()),
-//       execFileSync: vi.fn(() => ""),
+//       // buildEnvBlock 用 execFile 异步取 git branch：默认 err-first 兜底（catch → branch=""），
+//       // 形态同 worktree-manager.test.ts 的 setupExecFile
+//       execFile: vi.fn(
+//         (
+//           _cmd: string,
+//           _args: readonly string[],
+//           _opts: unknown,
+//           cb: (err: Error | null, stdout?: string, stderr?: string) => void,
+//         ) => cb(new Error("execFile not configured in this test")),
+//       ),
 //     };
 //   });
 //   vi.mock("node:fs", async () => {
@@ -116,7 +125,7 @@ export function lastSpawnedChild<
  * vitest 版本下更可靠（vi.waitFor 偶发过早 resolve 导致后续读取竞态）。
  *
  * [快照语义] 等待的是「调用时刻之后**新发生**的一次 spawn」，而非「任意历史 spawn」。
- * 旧实现判 `results.length === 0`，只在文件/测试内首次 spawn 时有效：同一文件第二次
+ * 旧实现只在 results 为空时等待（即只在文件/测试内首次 spawn 有效）：同一文件第二次
  * runSpawn 时立即返回，而新 runSpawn 尚未跨过 await 到达 spawn → lastSpawnedChild 取回
  * **上一次**的 child，stdout/close 事件发给已死的旧 child，当前 runSpawn 永远收不到
  * close → 测试超时。buildEnvBlock 异步化（多一个 await 微任务）后该隐式时序假设失效，

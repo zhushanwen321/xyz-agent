@@ -15,7 +15,8 @@
 //
 // mock 策略（与 run-spawn-integration.test.ts / run-spawn-edges.test.ts 一致）：
 //   - node:child_process.spawn → 返回 FakeChild（EventEmitter + PassThrough）。
-//   - node:child_process.execFileSync → 返回空串（buildEnvBlock git branch 兜底）。
+//   - node:child_process.execFile → err-first callback 默认兜底（buildEnvBlock git branch
+//     失败 → catch → branch=""）。
 //   - node:fs 同步方法 → mock（避免触碰真实文件系统），promises 保留真实实现。
 //   - temp-prompt → mock（返回固定路径，消除 fake-timers flaky）。
 //   - alive-store.writeAliveMarker → mock。
@@ -48,7 +49,15 @@ vi.mock("node:child_process", async () => {
 
   return {
     spawn: vi.fn(() => new FakeChild()),
-    execFileSync: vi.fn(() => ""),
+    // buildEnvBlock 用 execFile 异步取 git branch：默认 err-first 兜底（catch → branch=""）
+    execFile: vi.fn(
+      (
+        _cmd: string,
+        _args: readonly string[],
+        _opts: unknown,
+        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
+      ) => cb(new Error("execFile not configured in this test")),
+    ),
   };
 });
 
@@ -84,14 +93,13 @@ vi.mock("../temp-prompt.ts", () => ({
   cleanupTempPrompt: vi.fn(async () => {}),
 }));
 
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 
 import { createRecord } from "../execution-record.ts";
 import { type RunOptions, runSpawn, type SessionRunnerContext } from "../session-runner.ts";
 
 const mockSpawn = vi.mocked(spawn);
-const mockExec = vi.mocked(execFileSync);
 const mockExistsSync = vi.mocked(fs.existsSync);
 
 /**
@@ -187,33 +195,39 @@ function makeCtx(overrides: Partial<SessionRunnerContext> = {}): SessionRunnerCo
 }
 
 /**
- * fake timers 下推进时间直到 spawn 被调用。
+ * fake timers 下推进时间直到 spawn 被调用（返回 child 控制器，与共享 helper 的 void 返回
+ * 不同，故就地维护）。
+ *
+ * [快照语义] 同 helpers/spawn-mock.ts 的 waitForSpawn：记调用时 baseline，等待其后的
+ * **新** spawn——支持同一测试/文件内多次 runSpawn（旧 `length === 0` 只对首次有效）。
  *
  * runSpawn 在 mkdirSync + writePromptToTempFile（mock 的 async I/O）之后才调 spawn。
  * 每次推进 10ms 让轮询 setTimeout 触发，advanceTimersByTimeAsync 同时 flush 已 resolve
  * 的 I/O promise，使 runSpawn 继续走到 spawn。
  */
 async function waitForSpawnFake(timeoutSteps = 200): Promise<FakeChild> {
+  const baseline = mockSpawn.mock.results.length;
   for (let i = 0; i < timeoutSteps; i++) {
-    if (mockSpawn.mock.results.length > 0) break;
+    if (mockSpawn.mock.results.length > baseline) break;
     await vi.advanceTimersByTimeAsync(10);
   }
-  if (mockSpawn.mock.results.length === 0) {
+  if (mockSpawn.mock.results.length <= baseline) {
     throw new Error("spawn was not called (fake timers did not progress to spawn)");
   }
   return lastSpawnedChild();
 }
 
 /**
- * 真实 timers 下轮询直到 spawn 被调用（用于 signal abort 测试——不需要推进 watchdog，
- * 用 queueMicrotask 触发 abort，真实 timers 下 mock I/O 正常 resolve）。
+ * 真实 timers 下轮询直到 spawn 被调用（返回 child 控制器；用于 signal abort 测试——
+ * 不需要推进 watchdog，用 queueMicrotask 触发 abort，真实 timers 下 mock I/O 正常 resolve）。
  *
- * 与 run-spawn-edges.test.ts 的 waitForSpawn 同模式：setInterval 轮询 mockSpawn.mock.results，
- * 比 vi.waitFor 在该 vitest 版本下更可靠（偶发过早 resolve）。
+ * [快照语义] 同 helpers/spawn-mock.ts 的 waitForSpawn：记 baseline 等**新** spawn，
+ * 支持同文件多次 runSpawn。
  */
 async function waitForSpawnReal(timeoutMs = 1000): Promise<FakeChild> {
   const start = Date.now();
-  while (mockSpawn.mock.results.length === 0) {
+  const baseline = mockSpawn.mock.results.length;
+  while (mockSpawn.mock.results.length <= baseline) {
     if (Date.now() - start > timeoutMs) {
       throw new Error(`spawn was not called within ${timeoutMs}ms`);
     }
@@ -229,7 +243,6 @@ async function waitForSpawnReal(timeoutMs = 1000): Promise<FakeChild> {
 describe("timeoutMs / signal abort → child.kill 端到端路径", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockExec.mockReturnValue("");
     mockExistsSync.mockReturnValue(false);
   });
 

@@ -36,7 +36,15 @@ vi.mock("node:child_process", async () => {
 
   return {
     spawn: vi.fn(() => new FakeChild()),
-    execFileSync: vi.fn(() => ""),
+    // buildEnvBlock 用 execFile 异步取 git branch：默认 err-first 兜底（catch → branch=""）
+    execFile: vi.fn(
+      (
+        _cmd: string,
+        _args: readonly string[],
+        _opts: unknown,
+        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
+      ) => cb(new Error("execFile not configured in this test")),
+    ),
   };
 });
 
@@ -129,16 +137,6 @@ function lastSpawnedChild(): FakeChild {
 
 function getLastSpawnEnv(): Record<string, string | undefined> {
   return (mockSpawn.mock.calls.at(-1)?.[2]?.env as Record<string, string | undefined>) ?? {};
-}
-
-async function waitForSpawn(timeoutMs = 1000): Promise<void> {
-  const start = Date.now();
-  while (mockSpawn.mock.results.length === 0) {
-    if (Date.now() - start > timeoutMs) {
-      throw new Error(`spawn was not called within ${timeoutMs}ms`);
-    }
-    await new Promise((r) => setTimeout(r, 2));
-  }
 }
 
 function sessionHeader(id = "env-prop-session"): Record<string, unknown> {

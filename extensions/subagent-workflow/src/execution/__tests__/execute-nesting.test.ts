@@ -18,7 +18,8 @@
 //   mock 模式参考 run-spawn-integration.test.ts（该文件是 spawn 改造后的正确 mock 范式）：
 //     - node:child_process.spawn → FakeChild（EventEmitter + PassThrough），测试控制器
 //       emit stdout JSON 行（header + SdkEvent）/ stderr / close 时序。
-//     - node:child_process.execFileSync → ""（buildEnvBlock 的 git branch 调用避免副作用）。
+//     - node:child_process.execFile → err-first callback 默认兜底（buildEnvBlock 的 git
+//       branch 调用失败 → catch → branch=""，避免副作用）。
 //     - node:fs 同步方法 → mock（mkdirSync/existsSync/appendFileSync/writeFileSync/readdirSync），
 //       避免 sessionDir/sessionFile 触碰真实文件系统。
 //     - fs.promises.* → 保留真实实现（temp-prompt 整体被 mock，不触发真实 I/O）。
@@ -60,7 +61,15 @@ vi.mock("node:child_process", async () => {
 
   return {
     spawn: vi.fn(() => new FakeChild()),
-    execFileSync: vi.fn(() => ""), // buildEnvBlock 的 git branch 调用，返回空避免副作用
+    // buildEnvBlock 的 git branch 调用（execFile 异步）：默认 err-first 兜底 → catch → branch=""
+    execFile: vi.fn(
+      (
+        _cmd: string,
+        _args: readonly string[],
+        _opts: unknown,
+        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
+      ) => cb(new Error("execFile not configured in this test")),
+    ),
   };
 });
 
@@ -133,6 +142,7 @@ vi.mock("../temp-prompt.ts", () => ({
 
 import { spawn } from "node:child_process";
 
+import { waitForSpawn } from "./helpers/spawn-mock.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { MAX_FORK_DEPTH } from "../session-context-resolver.ts";
@@ -160,23 +170,6 @@ function lastSpawnedChild(): FakeChild {
   const result = mockSpawn.mock.results.at(-1);
   if (!result) throw new Error("spawn was not called yet");
   return result.value as FakeChild;
-}
-
-/**
- * 等待 execute → runSpawn 内部调到 spawn（拿到 child 控制器）。
- *
- * runSpawn 是 async，spawn 在 mkdirSync + writePromptToTempFile 之后才调（均有微任务/
- * I/O 延迟）。用 setInterval 轮询 mockSpawn.mock.results，比 vi.waitFor 在该 vitest 版本
- * 下更可靠（vi.waitFor 偶发过早 resolve 导致后续读取竞态）。
- */
-async function waitForSpawn(timeoutMs = 1000): Promise<void> {
-  const start = Date.now();
-  while (mockSpawn.mock.results.length === 0) {
-    if (Date.now() - start > timeoutMs) {
-      throw new Error(`spawn was not called within ${timeoutMs}ms`);
-    }
-    await new Promise((r) => setTimeout(r, 2));
-  }
 }
 
 // ============================================================
@@ -271,7 +264,7 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
 
     const execPromise = service.execute({ task: "bg in pool", ctxModel });
     // detached runAndFinalize → acquire。等 spawn 拿到 child 再驱动完成。
-    await waitForSpawn();
+    await waitForSpawn(mockSpawn);
     await driveChildToCompletion(lastSpawnedChild());
 
     // 等 detached promise 链跑完（kickOffBackground 的 .then notify）
@@ -312,7 +305,7 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
     const execPromise = execCtxAls.run({ recordId: "parent", depth: MAX_FORK_DEPTH - 1 }, () =>
       service.execute({ task: "at limit", ctxModel }),
     );
-    await waitForSpawn();
+    await waitForSpawn(mockSpawn);
     await driveChildToCompletion(lastSpawnedChild(), [
       { type: "turn_end" },
       { type: "message_end", message: { usage: { input: 1 } } },
@@ -335,7 +328,7 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
     const execPromise = execCtxAls.run({ recordId: "parent", depth: 1 }, () =>
         service.execute({ task: "nested sync", ctxModel, onUpdate: (d) => updates.push(d) }),
     );
-    await waitForSpawn();
+    await waitForSpawn(mockSpawn);
     // emit 会触发 onUpdate 的事件（tool_start/tool_end 是 TRIGGERING_EVENT），
     // 但嵌套层 onUpdate 被抑制（undefined）→ onEventThrottled 包装不挂载 → 0 次
     await driveChildToCompletion(lastSpawnedChild(), [
@@ -361,7 +354,7 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
       ctxModel,
       onUpdate: () => {},
     });
-    await waitForSpawn();
+    await waitForSpawn(mockSpawn);
     await driveChildToCompletion(lastSpawnedChild(), [
       { type: "tool_execution_end", toolCallId: "t1", toolName: "read" },
       { type: "message_end", message: { usage: { input: 1 } } },

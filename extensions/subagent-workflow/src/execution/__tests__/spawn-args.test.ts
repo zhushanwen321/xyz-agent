@@ -1,5 +1,5 @@
 // src/__tests__/spawn-args.test.ts
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -306,14 +306,14 @@ describe("buildEnvBlock", () => {
     // 初始化 git 仓库 + checkout 已知分支名。
     // 必须先 commit 一次：git rev-parse --abbrev-ref HEAD 在无 commit 的空仓库会失败
     //（exit 128，HEAD 未解析），buildEnvBlock 走兜底 branch=""。
-    execFileSync("git", ["init", "-q"], { cwd: tmpGitRepo, stdio: "ignore" });
-    execFileSync("git", ["checkout", "-q", "-b", testBranch], { cwd: tmpGitRepo, stdio: "ignore" });
+    spawnSync("git", ["init", "-q"], { cwd: tmpGitRepo, stdio: "ignore" });
+    spawnSync("git", ["checkout", "-q", "-b", testBranch], { cwd: tmpGitRepo, stdio: "ignore" });
     // git commit 需要 user.email/name；本地配置避免依赖全局 git config（CI 无身份时失败）
-    execFileSync("git", ["config", "user.email", "test@test.local"], { cwd: tmpGitRepo, stdio: "ignore" });
-    execFileSync("git", ["config", "user.name", "Test"], { cwd: tmpGitRepo, stdio: "ignore" });
+    spawnSync("git", ["config", "user.email", "test@test.local"], { cwd: tmpGitRepo, stdio: "ignore" });
+    spawnSync("git", ["config", "user.name", "Test"], { cwd: tmpGitRepo, stdio: "ignore" });
     fs.writeFileSync(path.join(tmpGitRepo, "README.md"), "init\n", "utf-8");
-    execFileSync("git", ["add", "."], { cwd: tmpGitRepo, stdio: "ignore" });
-    execFileSync("git", ["commit", "-q", "-m", "init"], { cwd: tmpGitRepo, stdio: "ignore" });
+    spawnSync("git", ["add", "."], { cwd: tmpGitRepo, stdio: "ignore" });
+    spawnSync("git", ["commit", "-q", "-m", "init"], { cwd: tmpGitRepo, stdio: "ignore" });
   });
 
   afterEach(() => {
@@ -379,10 +379,10 @@ describe("buildEnvBlock", () => {
   });
 
   it("git 失败（execFile err 回调）→ 不崩，静默省略 branch", async () => {
-    // 旧版 spy 挂在测试本地对象字面量 `{ execFileSync }` 上，从未真正拦截 session-runner
-    // 的模块绑定——此前通过是靠 /some/cwd 不存在使真实 git 失败的副作用。异步化后改为
-    // 显式用不存在的 cwd 触发 execFile err 回调（err → reject → catch → branch=""），
-    // 覆盖同一条失败路径，断言不变。
+    // 旧版 spy 挂在测试本地对象字面量上（同名同步 git API 的对象包装），从未真正拦截
+    // session-runner 的模块绑定——此前通过是靠 /some/cwd 不存在使真实 git 失败的副作用。
+    // 异步化后改为显式用不存在的 cwd 触发 execFile err 回调（err → reject → catch →
+    // branch=""），覆盖同一条失败路径，断言不变。
     const block = await buildEnvBlock("/some/cwd");
     expect(block).not.toContain("Git branch:");
     expect(block).toContain("Working directory: /some/cwd");

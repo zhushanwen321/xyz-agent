@@ -75,7 +75,7 @@ export class WorktreeManager {
   // per-repo 写命令串行队列：value = 队尾（已吞 rejection 的）Promise。
   // 入队形态 prev.catch(()=>{}).then(run)——后继只关心「自己已排队」，
   // 不继承前驱错误（否则 1 个 worktree add 失败会传染同 repo 后续全部写命令，
-  // 替代旧 execFileSync 单线程天然全局串行的「各命令独立失败」语义）。
+  // 替代旧同步版单线程天然全局串行的「各命令独立失败」语义）。
   private readonly writeQueues = new Map<string, Promise<void>>();
 
   constructor(agentDir: string) {

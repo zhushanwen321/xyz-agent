@@ -11,7 +11,7 @@
 // mock 工厂 + FakeChild + 工具函数共享自 helpers/spawn-mock.ts（详见该文件头注释）。
 // vi.mock 必须各文件独立声明（文件作用域），工厂内用 `await import` 取回 FakeChild。
 
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,7 +20,15 @@ vi.mock("node:child_process", async () => {
   const { FakeChild } = await import("./helpers/spawn-mock.ts");
   return {
     spawn: vi.fn(() => new FakeChild()),
-    execFileSync: vi.fn(() => ""),
+    // buildEnvBlock 的 git branch 调用（execFile 异步）：默认 err-first 兜底 → catch → branch=""
+    execFile: vi.fn(
+      (
+        _cmd: string,
+        _args: readonly string[],
+        _opts: unknown,
+        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
+      ) => cb(new Error("execFile not configured in this test")),
+    ),
   };
 });
 
@@ -75,7 +83,6 @@ import {
 } from "./helpers/spawn-mock.ts";
 
 const mockSpawn = vi.mocked(spawn);
-const mockExec = vi.mocked(execFileSync);
 const mockExistsSync = vi.mocked(fs.existsSync);
 
 // 绑定到本文件 mockSpawn 的 lastSpawnedChild/waitForSpawn（需读 mockSpawn.mock.results）
@@ -89,8 +96,6 @@ const waitForSpawn = (timeoutMs = 1000): Promise<void> => waitForSpawnOf(mockSpa
 describe("runSpawn", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // execFileSync 默认返回空串（git branch 兜底）
-    mockExec.mockReturnValue("");
     // existsSync 默认 false（sessionFile 不存在兜底路径）
     mockExistsSync.mockReturnValue(false);
   });
@@ -159,10 +164,6 @@ describe("runSpawn", () => {
 
     it("多个未退出 child（sync + bg）→ killAllSpawnedChildren 全部 kill", async () => {
       // spawn 两个 child（模拟 sync + background 并发），都未退出。
-      // 注意：waitForSpawn 等待 results.length===0→非0 转换，只适用于首次 spawn。
-      // 第二次 spawn 需等待 results.length 递增到 2，否则 lastSpawnedChild 取回的是 c1。
-      const beforeCount = mockSpawn.mock.results.length;
-
       const rec1 = makeRecord("spawn-c1");
       const p1 = runSpawn(rec1, "Task: c1", makeOpts(), makeCtx());
       await waitForSpawn();
@@ -170,12 +171,8 @@ describe("runSpawn", () => {
 
       const rec2 = makeRecord("spawn-c2");
       const p2 = runSpawn(rec2, "Task: c2", makeOpts(), makeCtx());
-      // 等待第二次 spawn：results.length 从 beforeCount+1 涨到 beforeCount+2
-      const start = Date.now();
-      while (mockSpawn.mock.results.length < beforeCount + 2) {
-        if (Date.now() - start > 1000) throw new Error("second spawn not called");
-        await new Promise((r) => setTimeout(r, 5));
-      }
+      // waitForSpawn 是快照语义（记 baseline 等新 spawn），天然支持二次等待
+      await waitForSpawn();
       const c2 = lastSpawnedChild();
 
       // c1 和 c2 是不同实例
@@ -216,14 +213,10 @@ describe("runSpawn", () => {
       await waitForSpawn();
       const c1 = lastSpawnedChild();
 
-      const beforeCount = mockSpawn.mock.results.length;
       const rec2 = makeRecord("clear-c2");
       const p2 = runSpawn(rec2, "Task: clear-2", makeOpts(), makeCtx());
-      const start = Date.now();
-      while (mockSpawn.mock.results.length < beforeCount + 1) {
-        if (Date.now() - start > 1000) throw new Error("second spawn not called");
-        await new Promise((r) => setTimeout(r, 5));
-      }
+      // 快照语义二次等待：等 rec2 的 runSpawn 调到 spawn
+      await waitForSpawn();
       const c2 = lastSpawnedChild();
 
       // 两个 child 都在 Set 中

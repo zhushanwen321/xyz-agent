@@ -8,7 +8,7 @@
 // mock 工厂 + FakeChild + 工具函数共享自 helpers/spawn-mock.ts（详见该文件头注释）。
 // vi.mock 必须各文件独立声明（文件作用域），工厂内用 `await import` 取回 FakeChild。
 
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,7 +17,15 @@ vi.mock("node:child_process", async () => {
   const { FakeChild } = await import("./helpers/spawn-mock.ts");
   return {
     spawn: vi.fn(() => new FakeChild()),
-    execFileSync: vi.fn(() => ""),
+    // buildEnvBlock 的 git branch 调用（execFile 异步）：默认 err-first 兜底 → catch → branch=""
+    execFile: vi.fn(
+      (
+        _cmd: string,
+        _args: readonly string[],
+        _opts: unknown,
+        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
+      ) => cb(new Error("execFile not configured in this test")),
+    ),
   };
 });
 
@@ -66,7 +74,6 @@ import {
 } from "./helpers/spawn-mock.ts";
 
 const mockSpawn = vi.mocked(spawn);
-const mockExec = vi.mocked(execFileSync);
 const mockExistsSync = vi.mocked(fs.existsSync);
 const mockAppendFileSync = vi.mocked(fs.appendFileSync);
 
@@ -82,7 +89,6 @@ const mockSessionFileExists = (p: string): void => mockSessionFileExistsOf(mockE
 describe("runSpawn", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockExec.mockReturnValue("");
     mockExistsSync.mockReturnValue(false);
   });
 
