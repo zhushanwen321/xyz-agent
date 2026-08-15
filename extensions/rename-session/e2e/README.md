@@ -1,0 +1,153 @@
+# rename-session E2E 验收资产
+
+E2E wave（P0 探针 + T1 harness + A1-A5 场景）的探针结论与运行指南。
+
+- 测试模型固定 `xiaomi-token-plan-cn/mimo-v2.5-pro`（项目规范，禁 kimi）
+- 本 E2E 定位为**本地人工触发的验收资产**（真实模型 API，不进常规 CI）
+- 场景 runner：`node e2e/run-a1.mjs` ~ `node e2e/run-a5.mjs`（单场景独立可跑）、`node e2e/run-all.mjs`（顺序全跑 + 汇总 + exit code），harness 见 `e2e/harness.mjs`
+
+## P0 探针结论（2026-08-15 实测）
+
+环境：macOS darwin24 arm64 / Node v24.11.1 / pi binary = repo `node_modules/.bin/pi`（symlink → `node_modules/@earendil-works/pi-coding-agent/dist/cli.js`，devDependency 提供）。探针脚本为一次性产物（/tmp 已清理），下述命令样例即复现路径。
+
+### 1. auth 迁移（GAP-1 硬前提）——可行，无降级需求
+
+**结论**：`xiaomi-token-plan-cn` 是 **pi-ai 内置 provider**（`pi-ai/dist/providers/xiaomi-token-plan-cn.js`，`envApiKeyAuth(["XIAOMI_TOKEN_PLAN_CN_API_KEY"])`）。迁移只需把 `~/.pi/agent/auth.json`（含 `xiaomi-token-plan-cn` key）复制到 tmp 的 `PI_CODING_AGENT_DIR/auth.json`。实测：tmp 隔离环境起 pi 发真实 prompt，主模型与 rename LLM（同 provider）均真实调通，标题「基础算术计算」落库。
+
+无需迁移 customProvider 定义（provider 是内置的，models-store.json 是 pi 自管的 catalog 缓存，会自建）。无 settings.json `packages` 时不触发 npm 安装。
+
+**最小样例**：
+
+```bash
+TMP=$(mktemp -d /tmp/rename-e2e.XXXXXX)
+mkdir -p $TMP/agent $TMP/sessions
+cp ~/.pi/agent/auth.json $TMP/agent/auth.json          # 唯一必需的迁移物
+printf '%s' '{"enabledModels":["xiaomi-token-plan-cn/mimo-v2.5-pro"],"retry":{"enabled":false}}' > $TMP/agent/settings.json
+touch $TMP/agent/auto-rename-enabled                    # rename 开关 flag（live 覆盖源）
+env PI_CODING_AGENT_DIR=$TMP/agent PI_RENAME_DEBUG=1 PI_SKIP_VERSION_CHECK=1 \
+  <repo>/node_modules/.bin/pi --mode rpc --session-dir $TMP/sessions \
+  --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve \
+  --extension <repo>/extensions/rename-session
+# stdin: {"id":"p-1","type":"prompt","message":"1+1等于几？只回答数字。"}
+```
+
+**降级路径（若 auth.json 不存在/key 在别处）**：环境变量注入 `XIAOMI_TOKEN_PLAN_CN_API_KEY`（pi-ai `env-api-keys.ts` 的 provider→env 映射，auth.json 优先、env 兜底）。本机不需要。
+
+### 2. RPC 协议格式——实测确认，与 docs/rpc.md 一致
+
+**结论**：stdin/stdout 严格 JSONL（LF 分隔）。命令带 `id` 可关联响应；事件流无 id。注意两点：
+
+1. **Node `readline` 不合规**（会按 U+2028/U+2029 切行，JSON 字符串内合法）——必须手写 LF splitter（harness 已实现）。
+2. **原始 RPC `turn_end` 事件不含 `turnIndex` 字段**（只有 `message` + `toolResults`）；extension 内部事件才有 turnIndex（debug 日志 `turnIndex=0` 可见）。断言 turnIndex 只能走 stderr 日志，不能走 stdout 事件。
+
+**实测样例**：
+
+```jsonl
+→ {"id":"p-1","type":"prompt","message":"1+1等于几？只回答数字。"}
+← {"id":"p-1","type":"response","command":"prompt","success":true}
+← {"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"2"}],"stopReason":"stop",...}}
+← {"type":"turn_end","message":{...,"stopReason":"stop"},"toolResults":[]}
+← {"type":"agent_settled"}
+→ {"id":"gs-1","type":"get_state"}
+← {"id":"gs-1","type":"response","command":"get_state","success":true,"data":{"sessionFile":"...","sessionId":"...","sessionName":"...","messageCount":3,...}}
+→ {"id":"sn-1","type":"set_session_name","name":"probe-manual-name"}
+← {"id":"sn-1","type":"response","command":"set_session_name","success":true}
+```
+
+时序要点：`response(prompt)` 在 prompt 被**接受**时即返回（异步）；round 完成以 `agent_settled` 为准；**rename 是 fire-and-forget，settled 后仍需等 stderr 的 rename 结果日志**（`renamed to` / `rename LLM call failed` / `skip: ...`，上限 30s 超时 + 余量）。
+
+### 3. `--session` 续跑——可行（A4 阶段 2 前提）
+
+**结论**：`pi --mode rpc --session <绝对路径>` 重启后 `get_state` 确认 `sessionFile` 与目标一致、`messageCount` 恢复、`sessionName` 保留。发第二条 prompt 正常完成，rename 正确跳过并留痕 `skip: count=2`（turnIndex 每进程重新从 0 计）。
+
+**最小样例**：
+
+```bash
+F=<tmp>/sessions/2026-08-15T..._<uuid>.jsonl
+env PI_CODING_AGENT_DIR=$TMP/agent PI_RENAME_DEBUG=1 \
+  <repo>/node_modules/.bin/pi --mode rpc --session-dir $TMP/sessions \
+  --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve \
+  --extension <repo>/extensions/rename-session --session "$F"
+# get_state → sessionFile===F；prompt 第二条 → turn_end(stop) → stderr: skip: count=2
+```
+
+**降级方案**（本次未触发）：同进程 `switch_session` RPC 命令加载 session 文件（docs/rpc.md 有此命令），但失去「重启进程」语义；A4 阶段 2 优先用 `--session`。
+
+### 4. 坏 provider 配置——turn_end 携带 stopReason=error（A4 断言前提成立，无需降级）
+
+**结论**：tmp `agentDir/models.json` 覆盖内置 provider 的 baseUrl 即可让请求失败：
+
+```json
+{ "providers": { "xiaomi-token-plan-cn": { "baseUrl": "http://127.0.0.1:1/v1" } } }
+```
+
+（settings.json 需 `retry.enabled=false`，否则 auto-retry 退避重试拉长 error 轮。）
+
+实测 error 轮行为（对 A4 的断言面）：
+
+- `message_end` 与 `turn_end` 的 `message.stopReason === "error"`，`message.errorMessage === "Connection error."`，`content: []`
+- `agent_end` `willRetry:false` → `agent_settled` 照常发出（**settled 不代表成功**，断言必须看 stopReason）
+- rename handler 走快速路径：stderr `[rename-session] t=... turnIndex=0 skip: stopReason=error`，无 LLM request 日志、无 session_info
+- **pi 进程存活**，error 轮后 RPC 命令（get_state）正常响应
+
+**降级方案**（本次未触发）：若 turn_end 不发，改用 `agent_end` 事件 + session JSONL error entry 行序替代；实测不需要。
+
+### 5. stub socket（hang provider）——可行（A5 前提）
+
+**结论**：node `net.createServer` accept 后不响应即可 hang 住 openai-completions 请求。三件套配置：
+
+1. `agentDir/models.json` 新增独立 customProvider（不动主 provider）：
+
+```json
+{
+  "providers": {
+    "stub-hang": {
+      "name": "Stub Hang Provider",
+      "baseUrl": "http://127.0.0.1:<port>/v1",
+      "api": "openai-completions",
+      "apiKey": "stub-dummy",
+      "models": [
+        { "id": "hang-model", "name": "Hang Model", "reasoning": false, "input": ["text"],
+          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+          "contextWindow": 128000, "maxTokens": 4096 }
+      ]
+    }
+  }
+}
+```
+
+2. `settings.json` 的 `enabledModels` 追加 `"stub-hang/hang-model"`
+3. `agentDir/config/rename-session-ext-config.json` 写 `"model": {"type":"ref","ref":"stub-hang/hang-model"}`（标题模型指向 stub；主对话 `--model mimo-v2.5-pro` 不受影响）
+
+实测（A5 全链路语义）：主 round 正常完成（`turn_end` stop + `agent_settled`）；rename LLM request 发出后 hang，**约 30s 超时**；失败日志为：
+
+```
+[rename-session] rename LLM call failed: unknown error
+```
+
+**注意**：超时路径 `result.error` 为空串 → 文案落到 `unknown error` 兜底。A5 断言匹配用**行前缀** `rename LLM call failed:`，不要匹配具体超时文案。超时后 pi 进程存活、后续 RPC 正常、session JSONL 无自动 session_info（实测 0 条）。
+
+## T1 harness 使用指南
+
+`e2e/harness.mjs` 导出：
+
+- **进程编排**：`spawnPi(opts)`（tmp 初始化 + auth 迁移 + 交错时间轴 + RPC client）、`startHangServer()`（A5 stub socket）
+- **RPC client**（spawnPi 返回值的 `rpc`）：`request(cmd)`（id 关联）、`waitFor(type, opts)`、`waitForStderr(pattern, opts)`、`prompt(msg)`、`setSessionName(name)`、`getState()`
+- **断言纯函数**（场景脚本与单测共用）：`rebuildPreview` / `parseLogMessages` / `extractLastStopAssistant` / `assertTitleGuards` / `classifyFailure`
+- **清理**：handle 的 `kill()`（按 PID）与 `cleanup()`（kill + 删 tmp；`E2E_KEEP_TMP=1` 保留现场）
+
+单测：`cd extensions/rename-session && npx vitest run e2e/harness.test.mjs`（vitest include 已加 `e2e/*.test.mjs`）。
+
+环境要求：`~/.pi/agent/auth.json` 存在且含 `xiaomi-token-plan-cn` key（缺失时改用 `XIAOMI_TOKEN_PLAN_CN_API_KEY` env，见探针 1）。
+
+## 已知事实备忘（场景脚本断言时引用）
+
+| 事实 | 出处 |
+|---|---|
+| session_info entry 位于 round 全部 entry 之后（佐证 rename 在 round 末触发） | 探针 1 实测行序 |
+| 手动 set_session_name 追加第二条 session_info，**最后一条生效** | 探针 1 实测 |
+| rename 结果日志三条：`renamed to "<title>"` / `rename LLM call failed: <err>` / `skip: <原因>`（no user prompt / title empty / name exists / count=N / stopReason=X） | src/llm.ts + src/index.ts |
+| handler 侧日志带 `turnIndex=<n>`，llm.ts 侧日志不带 | src/index.ts vs src/llm.ts |
+| `turnIndex` 每进程从 0 重新计（--session 续跑后第二轮日志仍 turnIndex=0） | 探针 3 实测 |
+| error 轮：turn_end stopReason=error + errorMessage="Connection error."，pi 存活 | 探针 4 实测 |
+| 超时轮：约 30s 后 `rename LLM call failed: unknown error`（error 空串兜底） | 探针 5 实测 |
