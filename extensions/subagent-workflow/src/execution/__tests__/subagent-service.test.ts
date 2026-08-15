@@ -25,6 +25,7 @@ import type { UiRequest, UiRequestHandler } from "../dialog-queue.ts";
 import type { PiLike } from "../subagent-service.ts";
 import { getSubagentService, setSubagentService,SubagentService } from "../subagent-service.ts";
 import type { ExecutionRecord } from "../types.ts";
+import type { WorktreeManager } from "../worktree-manager.ts";
 
 // ── 工具:建临时 agentDir + 真实 ModelConfigService ──
 
@@ -468,11 +469,49 @@ describe("SubagentService", () => {
         expect((err as Error).message).not.toMatch(/requires fork/);
       }
     });
-  });
 
-  // ============================================================
-  // pending-notifications emit 断言 (H4)
-  // ============================================================
+    // ============================================================
+    // create-await 竞态守卫（Phase 2）：create 的 await 窗口内 dispose/cancel
+    // 可把 record CAS 成 closed——守卫须主动 cleanup + early-failed 返回，不 kickOff。
+    // 实现约束固化：「赋值 record.worktreeHandle → 终态检查 → kickOffBackground」
+    // 必须同一同步段（中间禁止 await），本用例即该不变量的回归锚点。
+    // ============================================================
+    it("守卫：create await 窗口内 dispose 抢先 → cleanup 被调 + early-failed 返回（不 kickOff）", async () => {
+      const service = makeReadyService();
+      const wtm = Reflect.get(service, "worktreeManager") as WorktreeManager;
+      const handle = Object.freeze({
+        path: "/tmp/wt-guard",
+        branch: "pi-sub-guard",
+        baseCommit: "abc123",
+        mainCwd: "/repo",
+      }) as Parameters<WorktreeManager["cleanup"]>[0];
+      let resolveCreate!: (h: unknown) => void;
+      vi.spyOn(wtm, "create").mockImplementation(
+        () => new Promise((r) => { resolveCreate = r; }) as ReturnType<WorktreeManager["create"]>,
+      );
+      const cleanupSpy = vi.spyOn(wtm, "cleanup").mockResolvedValue(undefined);
+
+      const execP = service.execute({
+        task: "guard test",
+        worktree: true,
+        fork: false,
+        ctxModel: { id: "ctx-model", name: "Ctx", provider: "p", reasoning: false },
+      });
+      // 微任务推进：record 已建 + execute 挂在 pending create 上
+      await new Promise((r) => { setTimeout(r, 0); });
+      // dispose 抢先（无需 record id）：CAS running → closed，此时 worktreeHandle 仍
+      // undefined（dispose 的 fire-and-forget cleanup 跳过）——守卫是唯一的清理点
+      service.disposeAllRecords("parent-shutdown");
+      resolveCreate(handle);
+
+      const ret = await execP;
+      // 守卫生效：handle 被主动清理（不等 60s reaper）
+      expect(cleanupSpy).toHaveBeenCalledWith(handle);
+      // 返回 early-failed 形态（details.status 已 closed），而非 kickOff 的 running 形态
+      expect(ret.mode).toBe("background");
+      expect(ret.details).toMatchObject({ status: "closed" });
+    });
+  });
   //
   // [背景] PR #82 在 subagent-service.ts 新增 emitPendingRegister/Unregister 调用，
   // 5 个 emit 点：register（execute L309）、unregister(failed)（finalizeFailed 经

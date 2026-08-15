@@ -14,7 +14,6 @@ import { DirtyWorktreeError } from "../types.ts";
 // ── mock modules ──
 
 vi.mock("node:child_process", () => ({
-  execFileSync: vi.fn(),
   execFile: vi.fn(),
 }));
 
@@ -72,7 +71,7 @@ vi.mock("../worktree-registry.ts", () => ({
 }));
 
 
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -81,7 +80,6 @@ import { isProcessAlive } from "../alive-store.ts";
 import { encodeCwd } from "../path-encoding.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 
-const mockExec = vi.mocked(execFileSync);
 const mockExecFile = vi.mocked(execFile);
 const mockExistsSync = vi.mocked(fs.existsSync);
 const mockIsProcessAlive = vi.mocked(isProcessAlive);
@@ -126,12 +124,9 @@ function makeHandle(checkoutPath: string = expectedCreatePath(RECORD_ID)) {
 }
 
 function setupCleanTree(): void {
-  mockExec.mockImplementation((_cmd: string, args?: readonly string[]) => {
-    if (args?.[0] === "status") return "";
-    if (args?.[0] === "rev-parse" && args?.[1] === "HEAD") return BASE_COMMIT;
-    if (args?.[0] === "worktree") return "";
-    if (args?.[0] === "branch") return "";
-    return "";
+  setupExecFile((_args: readonly string[]) => {
+    if (_args?.[0] === "rev-parse" && _args?.[1] === "HEAD") return { stdout: BASE_COMMIT };
+    return { stdout: "" };
   });
   // worktreePath 不存在（无需前置清理）；node_modules 存在
   mockExistsSync.mockImplementation((p: unknown) => {
@@ -164,10 +159,10 @@ describe("WorktreeManager", () => {
   });
 
   describe("create", () => {
-    it("正常流程返回冻结 handle（path 在 tmpdir，含 mainCwd）", () => {
+    it("正常流程返回冻结 handle（path 在 tmpdir，含 mainCwd）", async () => {
       setupCleanTree();
 
-      const handle = mgr.create(MAIN_CWD, RECORD_ID);
+      const handle = await mgr.create(MAIN_CWD, RECORD_ID);
 
       expect(handle.path).toBe(expectedCreatePath(RECORD_ID));
       expect(handle.branch).toBe(`pi-sub-${RECORD_ID}`);
@@ -176,10 +171,10 @@ describe("WorktreeManager", () => {
       expect(Object.isFrozen(handle)).toBe(true);
     });
 
-    it("成功后写入注册表（pid=0 占位）", () => {
+    it("成功后写入注册表（pid=0 占位）", async () => {
       setupCleanTree();
 
-      mgr.create(MAIN_CWD, RECORD_ID);
+      await mgr.create(MAIN_CWD, RECORD_ID);
 
       expect(mockAdd).toHaveBeenCalledTimes(1);
       const entry = mockAdd.mock.calls[0][0] as { repo: string; branch: string; pid: number };
@@ -188,30 +183,35 @@ describe("WorktreeManager", () => {
       expect(entry.pid).toBe(0);
     });
 
-    it("脏树抛 DirtyWorktreeError 且不写注册表", () => {
-      mockExec.mockImplementation((_cmd: string, args?: readonly string[]) => {
-        if (args?.[0] === "status") return "M src/index.ts\n";
-        return "";
+    it("脏树抛 DirtyWorktreeError 且不写注册表（status 与 rev-parse 并行，均发起）", async () => {
+      setupExecFile((args: readonly string[]) => {
+        if (args[0] === "status") return { stdout: "M src/index.ts\n" };
+        return { stdout: "" };
       });
 
-      expect(() => mgr.create(MAIN_CWD, RECORD_ID)).toThrow(DirtyWorktreeError);
+      // async create：同步 throw 变 rejected promise
+      await expect(mgr.create(MAIN_CWD, RECORD_ID)).rejects.toThrow(DirtyWorktreeError);
       expect(mockAdd).not.toHaveBeenCalled();
+      // allSettled 并行：两条读命令都发起（rev-parse 结果在脏树时被丢弃）
+      const cmds = mockExecFile.mock.calls.map((c) => `${c[1]?.[0]} ${c[1]?.[1] ?? ""}`);
+      expect(cmds).toContain("status --porcelain");
+      expect(cmds).toContain("rev-parse HEAD");
     });
 
-    it("recordId 含特殊字符抛 DirtyWorktreeError", () => {
-      expect(() => mgr.create(MAIN_CWD, "../evil-path")).toThrow(DirtyWorktreeError);
-      expect(() => mgr.create(MAIN_CWD, "hello world")).toThrow(DirtyWorktreeError);
-      expect(() => mgr.create(MAIN_CWD, "")).toThrow(DirtyWorktreeError);
-      expect(() => mgr.create(MAIN_CWD, "a;b")).toThrow(DirtyWorktreeError);
+    it("recordId 含特殊字符抛 DirtyWorktreeError", async () => {
+      await expect(mgr.create(MAIN_CWD, "../evil-path")).rejects.toThrow(DirtyWorktreeError);
+      await expect(mgr.create(MAIN_CWD, "hello world")).rejects.toThrow(DirtyWorktreeError);
+      await expect(mgr.create(MAIN_CWD, "")).rejects.toThrow(DirtyWorktreeError);
+      await expect(mgr.create(MAIN_CWD, "a;b")).rejects.toThrow(DirtyWorktreeError);
     });
 
-    it("recordId 单字符 / 连续短横线合法", () => {
+    it("recordId 单字符 / 连续短横线合法", async () => {
       setupCleanTree();
-      expect(mgr.create(MAIN_CWD, "a").branch).toBe("pi-sub-a");
-      expect(mgr.create(MAIN_CWD, "--test--").branch).toBe("pi-sub---test--");
+      expect((await mgr.create(MAIN_CWD, "a")).branch).toBe("pi-sub-a");
+      expect((await mgr.create(MAIN_CWD, "--test--")).branch).toBe("pi-sub---test--");
     });
 
-    it("残留 checkout 目录存在时前置清理（fs.rmSync）", () => {
+    it("残留 checkout 目录存在时前置清理（fs.rmSync）", async () => {
       setupCleanTree();
       // worktreePath 已存在 → 触发前置 rmSync
       mockExistsSync.mockImplementation((p: unknown) => {
@@ -221,7 +221,7 @@ describe("WorktreeManager", () => {
         return false;
       });
 
-      mgr.create(MAIN_CWD, RECORD_ID);
+      await mgr.create(MAIN_CWD, RECORD_ID);
 
       expect(fs.rmSync).toHaveBeenCalledWith(
         expectedCreatePath(RECORD_ID),
@@ -229,27 +229,68 @@ describe("WorktreeManager", () => {
       );
     });
 
-    it("symlink 失败时回滚 worktree + 分支 + 注册表", () => {
+    it("symlink 失败时回滚 worktree + 分支 + 注册表（回滚经 gitRunAsync）", async () => {
       setupCleanTree();
       // symlink 抛错触发 MF#3 回滚
       vi.mocked(fs.symlinkSync).mockImplementation(() => {
         throw new Error("symlink permission denied");
       });
 
-      expect(() => mgr.create(MAIN_CWD, RECORD_ID)).toThrow("symlink permission denied");
+      await expect(mgr.create(MAIN_CWD, RECORD_ID)).rejects.toThrow("symlink permission denied");
 
-      // 回滚：worktree remove + branch delete + registry remove
-      expect(mockExec).toHaveBeenCalledWith(
+      // 回滚：worktree remove + branch delete（异步路径）+ registry remove
+      expect(mockExecFile).toHaveBeenCalledWith(
         "git",
         expect.arrayContaining(["worktree", "remove", "--force"]),
         expect.anything(),
+        expect.anything(),
       );
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(mockExecFile).toHaveBeenCalledWith(
         "git",
         expect.arrayContaining(["branch", "-D"]),
         expect.anything(),
+        expect.anything(),
       );
       expect(mockRemove).toHaveBeenCalledWith(`pi-sub-${RECORD_ID}`);
+    });
+    it("per-repo mutex：同 repo 并发 create 的 worktree add 串行（maxActive=1）", async () => {
+      // clearAllMocks 不清 mockImplementation——重置前例注入的 symlinkSync throw，本用例走完整 create
+      vi.mocked(fs.symlinkSync).mockImplementation(() => {});
+      mockExistsSync.mockImplementation((p: unknown) => {
+        const s = String(p);
+        if (s.includes("node_modules")) return true;
+        return false;
+      });
+      let writeActive = 0;
+      let maxWriteActive = 0;
+      let addCount = 0;
+      mockExecFile.mockImplementation(
+        (_cmd: string, args: readonly string[], _opts: unknown, cb: (err: Error | null, stdout?: string, stderr?: string) => void) => {
+          const isAdd = args[0] === "worktree" && args[1] === "add";
+          if (isAdd) {
+            // 只对写命令（worktree add）计并发——读命令（status/rev-parse）无锁可并行是设计预期
+            writeActive++;
+            maxWriteActive = Math.max(maxWriteActive, writeActive);
+            addCount++;
+          }
+          setTimeout(() => {
+            if (isAdd) writeActive--;
+            cb(null, args[0] === "rev-parse" ? BASE_COMMIT : "", "");
+          }, 5);
+        },
+      );
+
+      const handles = await Promise.all([
+        mgr.create(MAIN_CWD, "con-a"),
+        mgr.create(MAIN_CWD, "con-b"),
+      ]);
+
+      // 两个 create 全部成功、branch 不同
+      expect(handles[0].branch).toBe("pi-sub-con-a");
+      expect(handles[1].branch).toBe("pi-sub-con-b");
+      // 同 repo 的 2 个 worktree add 全部执行且互斥（per-repo mutex）
+      expect(addCount).toBe(2);
+      expect(maxWriteActive).toBe(1);
     });
   });
 

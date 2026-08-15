@@ -142,7 +142,7 @@ describe("worktree pid 注册链路（真实 spawn 集成）", () => {
   it("正向：spawn 返回后注册表 pid 同步补全，活 worktree 超宽限不被 scan 误清", async () => {
     // 0. 长驻脚本（子进程 90s 内不退出，模拟长跑子 agent）
     scriptHolder.script = LONG_RUNNING_SCRIPT;    // 1. 真实创建 worktree（pid=0 占位）
-    handle = wtm.create(repoDir, "rec-1");
+    handle = await wtm.create(repoDir, "rec-1");
     expect(readEntry(handle.branch)).toMatchObject({ pid: 0 });
 
     // 2. runSpawn 挂后台（不 await——长驻子进程 close 不触发，await 会挂死），
@@ -193,7 +193,7 @@ describe("worktree pid 注册链路（真实 spawn 集成）", () => {
     // 0. 短命脚本（子进程立即退出，模拟快速完成的子 agent）
     scriptHolder.script = SHORT_LIVED_SCRIPT;
     // 1. 真实创建 worktree
-    handle = wtm.create(repoDir, "rec-2");
+    handle = await wtm.create(repoDir, "rec-2");
 
     // 2. 短命脚本子进程：spawn 后同步补 pid（修复前 pid=0，且未超宽限 → 不回收 → 红）
     const ctx = makeCtx({

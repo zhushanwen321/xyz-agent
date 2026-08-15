@@ -15,7 +15,7 @@
 // WorktreeRegistry（<agentDir>/subagents/worktrees.json）。判据从终态 marker
 // 状态机降为 pid 死活一条——进程崩溃无人写终态时也能正确回收。
 
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -89,16 +89,30 @@ export class WorktreeManager {
    * @param recordId 执行记录 ID（必须匹配 `^[\w-]+$`）
    * @returns 冻结的 WorktreeHandle
    */
-  create(mainCwd: string, recordId: string): WorktreeHandle {
+  async create(mainCwd: string, recordId: string): Promise<WorktreeHandle> {
     if (!SAFE_ID_RE.test(recordId)) {
       throw new DirtyWorktreeError(
         `recordId contains unsafe characters: "${recordId}" (must match ^[\\w-]+$)`,
       );
     }
 
-    this.assertCleanTree(mainCwd);
+    // 脏树校验与 base commit 并行（读类无锁可并发）。allSettled 而非 all：
+    // status 先 reject 时 all 会短路，rev-parse 的后续 rejection 无人处理 →
+    // unhandledRejection。判定顺序固定：status 错误 → 脏树 → rev-parse 错误
+    // （脏树语义不变：仍先于 worktree add，rev-parse 结果在脏树时被丢弃）。
+    const [statusR, revR] = await Promise.allSettled([
+      this.gitRunAsync(["status", "--porcelain"], { cwd: mainCwd }),
+      this.gitRunAsync(["rev-parse", "HEAD"], { cwd: mainCwd }),
+    ]);
+    if (statusR.status === "rejected") throw statusR.reason;
+    if (statusR.value.length > 0) {
+      throw new DirtyWorktreeError(
+        `Working tree is dirty in ${mainCwd}:\n${statusR.value}`,
+      );
+    }
+    if (revR.status === "rejected") throw revR.reason;
+    const baseCommit = revR.value;
 
-    const baseCommit = this.gitRun(["rev-parse", "HEAD"], { cwd: mainCwd });
     const branch = `pi-sub-${recordId}`;
     // checkout 放 tmpdir，脱离 .git/ 目录结构。
     // 这样 git 自行把元数据注册到 <commonDir>/worktrees/<branch>/，
@@ -117,7 +131,7 @@ export class WorktreeManager {
       }
     }
 
-    this.gitRun(["worktree", "add", "-b", branch, worktreePath, "HEAD"], {
+    await this.gitRunAsync(["worktree", "add", "-b", branch, worktreePath, "HEAD"], {
       cwd: mainCwd,
     });
 
@@ -150,12 +164,12 @@ export class WorktreeManager {
     } catch (err) {
       // 回滚已创建的 worktree+分支+注册表条目，best-effort 吞清理异常（原始 err 仍外抛）
       try {
-        this.gitRun(["worktree", "remove", "--force", worktreePath], { cwd: mainCwd });
+        await this.gitRunAsync(["worktree", "remove", "--force", worktreePath], { cwd: mainCwd });
       } catch (cleanErr) {
         bestEffort(cleanErr, "worktree remove (create rollback MF#3)");
       }
       try {
-        this.gitRun(["branch", "-D", branch], { cwd: mainCwd });
+        await this.gitRunAsync(["branch", "-D", branch], { cwd: mainCwd });
       } catch (cleanErr) {
         bestEffort(cleanErr, "branch delete (create rollback MF#3)");
       }
@@ -351,39 +365,4 @@ export class WorktreeManager {
     });
     return next;
   }
-
-  /**
-   * git 命令执行器。统一超时 + 错误包装。
-   *
-   * [Phase 1 过渡双轨] 同步版仅供 create（含 assertCleanTree/回滚）与
-   * buildEnvBlock 使用——它们随 Phase 2 create 异步化一并迁移后删除本方法。
-   */
-  private gitRun(args: string[], opts: { cwd: string; timeout?: number }): string {
-    try {
-      return execFileSync("git", args, {
-        cwd: opts.cwd,
-        timeout: opts.timeout ?? GIT_TIMEOUT_MS,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      }).trim();
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        throw new Error(`git ${args[0]} failed: ${err.message}`);
-      }
-      throw new Error(`git ${args[0]} failed: unknown error`);
-    }
-  }
-
-  /**
-   * 校验工作目录是 clean tree。
-   */
-  private assertCleanTree(cwd: string): void {
-    const status = this.gitRun(["status", "--porcelain"], { cwd });
-    if (status.length > 0) {
-      throw new DirtyWorktreeError(
-        `Working tree is dirty in ${cwd}:\n${status}`,
-      );
-    }
-  }
-
 }

@@ -651,8 +651,17 @@ export class SubagentService {
     } else if (opts.worktree === true) {
       // worktree===true（显式要求）——创建新 worktree。与 fork 正交（worktree 文件隔离不依赖 fork 上下文继承）。
       try {
-        worktreeHandle = this.worktreeManager.create(this.cwd, record.id);
+        worktreeHandle = await this.worktreeManager.create(this.cwd, record.id);
         record.worktreeHandle = worktreeHandle;
+        // [create-await 竞态守卫] create 的 await 窗口内 cancel/dispose 可 CAS 把 record
+        // 转成 closed 终态——cancelBackground 当时读到的 worktreeHandle 可能仍是 undefined
+        // （cleanup 被跳过）。赋值后同同步段检查终态：closed 则主动 cleanup（幂等，抢先的
+        // fire-and-forget 清理无害）+ early-failed 返回，不进 kickOffBackground（避免子进程白跑）。
+        // 实现约束：赋值 → 终态检查 → kickOffBackground 必须在同一同步段，中间禁止插入 await。
+        if (record.status === "closed") {
+          await this.worktreeManager.cleanup(worktreeHandle);
+          return this.buildEarlyFailedHandle(record);
+        }
       } catch (err) {
         // create 失败→不进入 run，finalizeFailed 统一收尾（含 emitPendingUnregister failed）
         const _result = await this.finalizeFailed(record, err);
@@ -1148,16 +1157,29 @@ export class SubagentService {
     // throw lets SAR.run() convert it to an AgentResult.error (not return-handle like execute()).
     let worktreeHandle: WorktreeHandle | undefined;
     if (opts.worktree === true) {
+      // [create-await 竞态守卫] 与 execute 同款（见其 worktree 分支注释）——差异仅在
+      // 失败语义：executeAndAwait 对齐「失败 throw」，SAR.run 的 catch 会转成 AgentResult.error
+      // （cancelled 呈现对齐 cancel 抢先路径）。赋值→终态检查→runAndFinalize 同一同步段。
+      // 检查结果经标志位带出 try（守卫 throw 不能落在 try 内——会被下方 catch 当作
+      // create 失败再走 finalizeFailed，对已 closed 的 record 语义未定义）。
+      let cancelledDuringCreate = false;
       try {
-        worktreeHandle = this.worktreeManager.create(this.cwd, record.id);
+        worktreeHandle = await this.worktreeManager.create(this.cwd, record.id);
         record.worktreeHandle = worktreeHandle;
+        if (record.status === "closed") {
+          cancelledDuringCreate = true;
+        }
       } catch (err) {
         // finalizeFailed: CAS→finalizeRecord→emitUnregister (record already registered above).
         // throw (not return-handle): executeAndAwait's caller SAR.run() catches and wraps into
-        // AgentResult.error. Diverges from execute() :455-456 which returns buildEarlyFailedHandle
+        // AgentResult.error. Diverges from execute() which returns buildEarlyFailedHandle
         // because the two methods have different return types.
         await this.finalizeFailed(record, err);
         throw err;
+      }
+      if (cancelledDuringCreate) {
+        await this.worktreeManager.cleanup(worktreeHandle);
+        throw new Error(`subagent ${record.id} cancelled during worktree creation`);
       }
     }
 
