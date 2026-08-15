@@ -5,7 +5,7 @@ description: "配置 @zhushanwen/pi-rename-session（会话自动重命名）时
 
 # rename-session 配置指南
 
-> @zhushanwen/pi-rename-session：新 session 首 turn 完成后，用独立小模型生成会话标题（不搭便车主 session 的昂贵模型）。
+> @zhushanwen/pi-rename-session：新 session 首个成功 round 完成后，用独立小模型生成会话标题（不搭便车主 session 的昂贵模型）。
 
 ## 配置文件位置
 
@@ -17,13 +17,14 @@ description: "配置 @zhushanwen/pi-rename-session（会话自动重命名）时
 
 ## 何时触发重命名（重要）
 
-**仅在新 session 的第一个 turn 完成后触发一次**（判定条件：session 内 assistant 回复数 === 1）。
+**仅在新 session 的首个成功 round 完成后触发一次**（判定条件：round 最终 turn 的 `stopReason === "stop"`，且 session 内成功（stop）assistant 回复数 === 1）。
 
 - 已存在的多 turn session **不会回溯重命名**——开启 `enabled` 后只对之后新建的 session 生效
-- 每个 session 最多重命名一次（首 turn 后不再触发）
-- 若首 turn 时 LLM 调用失败，静默跳过保留原标题，不重试
+- 每个 session 最多重命名一次（首个成功 round 后不再触发）
+- 工具中间轮（`stopReason === "toolUse"`）不评估；error/aborted/length 轮延迟到下一个成功轮再命名
+- 若首个成功 round 时 LLM 调用失败，静默跳过保留原标题，不重试
 
-> 改完配置「没看到 session 被重命名」的常见原因：当前 session 已过首 turn。新建一个 session 测试。
+> 改完配置「没看到 session 被重命名」的常见原因：当前 session 已过首个成功 round。新建一个 session 测试。
 
 ## Schema
 
@@ -32,6 +33,7 @@ interface RenameSessionConfig {
   enabled: boolean;        // 自动重命名开关，默认 false
   model: ModelSelector;    // 标题生成模型，默认 { type: "scoped" }
   maxTitleLength: number;  // 标题最大长度（Unicode 码点），默认 50
+  thinkingLevel: ModelThinkingLevel;  // 标题 LLM 的 thinking 级别，默认 "off"
 }
 ```
 
@@ -50,10 +52,14 @@ interface RenameSessionConfig {
 
 必须是**正整数**（`Number.isInteger && > 0`）。传小数（`50.5`）、0、负数、非数字都会回落默认值 50。截断按 Unicode 码点（不会截断多字节字符）。
 
+### thinkingLevel 取值
+
+标题 LLM 的 thinking 级别，枚举 `off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`（pi 的 `ModelThinkingLevel`）。默认 `"off"`：不传 pi-ai reasoning，走 provider 默认行为（与旧版本一致）；`minimal`~`max` 透传给 reasoning（provider 不支持时静默忽略）。缺失或非法值回落 `"off"`。
+
 ## 默认值
 
 ```json
-{ "enabled": false, "model": { "type": "scoped" }, "maxTitleLength": 50 }
+{ "enabled": false, "model": { "type": "scoped" }, "maxTitleLength": 50, "thinkingLevel": "off" }
 ```
 
 ## 配置示例
@@ -63,7 +69,8 @@ interface RenameSessionConfig {
 {
   "enabled": true,
   "model": { "type": "ref", "ref": "deepseek/deepseek-chat" },
-  "maxTitleLength": 50
+  "maxTitleLength": 50,
+  "thinkingLevel": "off"
 }
 ```
 
@@ -79,7 +86,7 @@ interface RenameSessionConfig {
 
 ## 配置生效时机
 
-配置走 mtime+size 读时刷新（每个 `turn_end` 都重新 load）。改完 JSON 保存后，**下一个新 session 的首 turn** 即按新配置触发（已过首 turn 的 session 不受影响）。
+配置走 mtime+size 读时刷新（每个 `turn_end` 都重新 load）。改完 JSON 保存后，**下一个新 session 的首个成功 round** 即按新配置触发（已过首个成功 round 的 session 不受影响）。
 
 ## 排除项
 
@@ -97,7 +104,7 @@ subagent 子进程 session 不重命名（`isSubagentSession` 判定 session 目
 ## LLM 调用特性
 
 - 独立 model（不搭便车主 session 模型）
-- 独立精简 system prompt（~75 字符，非整个 agent prompt）
+- 独立精简 system prompt（<200 字符的 slug 词组约束 + 正反例 few-shot，非整个 agent prompt）
 - 不传 tools（纯文本标题生成）
 - fire-and-forget（不阻塞 turn_end handler）
 - model 不可用 → 静默跳过（日志 `[rename-session] model not available, skipping`），不阻断主对话

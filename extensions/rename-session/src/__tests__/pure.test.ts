@@ -359,7 +359,12 @@ describe("loadRenameConfig / saveRenameConfig", () => {
 	});
 
 	it("saveRenameConfig 实际落盘到隔离目录（不写 ~/.pi/agent）", () => {
-		saveRenameConfig({ enabled: true, model: { type: "scoped" }, maxTitleLength: 50 });
+		saveRenameConfig({
+			enabled: true,
+			model: { type: "scoped" },
+			maxTitleLength: 50,
+			thinkingLevel: "off",
+		});
 		const filePath = path.join(tmpAgentDir, "config", "rename-session-ext-config.json");
 		expect(fs.existsSync(filePath)).toBe(true);
 		const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
