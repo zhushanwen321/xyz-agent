@@ -40,8 +40,6 @@ export interface FinalizeDeps {
   modelService: ModelConfigService;
   /** Pi ExtensionAPI（仅用 appendEntry 记录 manifest 写失败事件）。null 在 dispose 后。 */
   pi: { appendEntry?: (type: string, data: unknown) => void } | null;
-  /** 清节流状态（防 trailing timer 在 record 归档后误发陈旧 onUpdate）。 */
-  clearThrottle(id: string): void;
   /** pending-notifications 终态注销（绑定 pi.events.emit，由调用方闭包提供）。 */
   emitUnregister(id: string, status: string): void;
   /**
@@ -71,9 +69,6 @@ export async function doFinalizeRecord(
   status: "closed",
   closedReason?: ClosedReason,
 ): Promise<void> {
-  // 终态清节流状态：防 trailing timer 在 record 归档后误发陈旧 onUpdate
-  deps.clearThrottle(record.id);
-
   // ── Step 0: collectPatch（best-effort）──
   // [MF#3] patchFile 写到 worktree 之外（sessionsDir/<branch>.patch），避免被 cleanup 删除；
   //        路径回填 record.patchFile，供调用方（tool result / /subagents list）应用。
@@ -208,9 +203,6 @@ export async function doFinalizeRoundToIdle(
   record: ExecutionRecord,
   result: AgentResult,
 ): Promise<void> {
-  // 清节流状态：防 trailing timer 在 record idle 后误发陈旧 onUpdate。
-  deps.clearThrottle(record.id);
-
   // MF-2：设 record.result 供 notifier idle 回复正文（否则恒 "(empty)"，G1/G2 不成立）。
   // MF-6 兜底：失败轮次（success=false）的 result.text 可能为空，用 error 让 notify 可读。
   // [增量 G2] 第三分支 chatMode 条件占位：本写点被 one-shot 成功路径共用（subagent-service

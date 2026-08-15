@@ -207,8 +207,7 @@ export async function startHandler(
     idleTimeoutMs: input.idleTimeoutMs,
     ctxModel,
     signal,
-    // background 不回流 onUpdate：detached 运行，完成由 notify 驱动新 turn。
-    onUpdate: undefined,
+    // background detached 运行，完成由 notify 驱动新 turn。
   });
 
   return {

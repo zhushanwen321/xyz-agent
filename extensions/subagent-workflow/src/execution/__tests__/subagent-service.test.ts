@@ -785,5 +785,4 @@ describe("ModelConfigService ctxModel 缓存", () => {
 //   - run() 事件累积（turn_end / message_end usage / tool_start+end / error stopReason）
 //   - sync signal abort → cancelled
 //   - schema enforcement steer（漏调 structured-output）
-//   - onUpdate 回流（TRIGGERING_EVENT_TYPES）
 // 同时覆盖 session-runner.run() —— event-bridge 合并进 run() 后的事件处理回归。

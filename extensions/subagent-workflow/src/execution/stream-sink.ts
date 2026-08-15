@@ -25,7 +25,7 @@ export interface StreamSink {
   setWidget(key: string, lines: string[] | undefined): void;
 }
 
-/** delta 合并窗口时间（ms）。与 onEventThrottled 的节流间隔对齐。 */
+/** delta 合并窗口时间（ms）。 */
 const STREAM_FLUSH_MS = 100;
 
 /** widget 发送的最大行数上限。

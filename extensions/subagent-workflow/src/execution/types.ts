@@ -549,8 +549,6 @@ export interface ExecuteOptions {
   signal?: AbortSignal;
   /** 主 agent 当前模型（模型解析第三层兼底）。execute 调用方从 ctx.model 传入。 */
   ctxModel?: ModelInfo;
-  /** live 状态回流（对话流 block 实时刷新）。 */
-  onUpdate?: (details: SubagentToolDetails) => void;
   /** background 完成回调（sync 不调）。 */
   onComplete?: (record: RecordSnapshot) => void;
   /** 是否继承父会话上下文（fork 模式，只继承上下文）。 */

@@ -63,7 +63,6 @@ import type {
   PendingMessage,
   RecordSnapshot,
   SubagentRecord,
-  SubagentToolDetails,
 } from "./types.ts";
 import { ForkDepthExceededError } from "./types.ts";
 import { DEFAULT_AGENT_NAME } from "./types.ts";
@@ -178,24 +177,6 @@ const ENV_ROOT_SESSION_ID = "PI_SUBAGENT_ROOT_SESSION_ID";
 const ENV_SELF_RECORD_ID = "PI_SUBAGENT_SELF_RECORD_ID";
 const ENV_DEPTH = "PI_SUBAGENT_DEPTH";
 const ENV_ROOT_CWD = "PI_SUBAGENT_ROOT_CWD";
-
-/** 触发 onUpdate 的事件类型（streaming delta 不触发，避免每 token 刷新）。 */
-const TRIGGERING_EVENT_TYPES = new Set<AgentEvent["type"]>([
-  "tool_start",
-  "tool_end",
-  "turn_end",
-  "message_end",
-  "error",
-  "compaction",
-]);
-
-/**
- * onUpdate 最小发射间隔（ms）。leading + trailing 时间窗节流：窗口内首次事件立即发，
- * 后续合并到窗口末尾补发一次。与 tool-render.ts SPINNER_INTERVAL_MS 对齐——视觉刷新
- * 200ms 一帧，onUpdate 比这更快无感知增益，反而密集打 Pi tool_execution_update
- * （嵌套场景内层一秒可产生 10+ 事件）触发 chatContainer 重绘残影。
- */
-const ON_UPDATE_MIN_INTERVAL_MS = 200;
 
 /** resolveIdentity 的产物——一次确定、写入 record 后不再变。 */
 interface ResolvedIdentity {
@@ -514,10 +495,6 @@ export class SubagentService {
     this.disposeAllRecords("parent-shutdown");
     // [v4 A-1] EPIPE 连续失败计数器清零（计数器已迁移到 stdin-writer，防跨 session 泄漏）
     resetAllEpipeFailures();
-    for (const s of this.throttleState.values()) {
-      if (s.timer !== undefined) clearTimeout(s.timer);
-    }
-    this.throttleState.clear();
     // flush 待发通知后 dispose（防丢失）
     this.notifier.flushPendingNotifications();
     this.notifier.dispose();
@@ -680,11 +657,9 @@ export class SubagentService {
     const priority = PRIORITY_BACKGROUND;
 
     // ── 4-7. background 包 detached 立即返回 id ──
-    // background 不回流 onUpdate（任何嵌套 subagent 的 onUpdate 都须 undefined，防
-    // SubagentResultComponent spinner setInterval 堆叠）。detached 运行对 tool 层不可见，
-    // 完成由 notify 驱动新 turn。
+    // background detached 运行对 tool 层不可见，完成由 notify 驱动新 turn。
     const bgDetails = project(record);
-    this.kickOffBackground(record, { ...opts, onUpdate: undefined, worktree: worktreeHandle }, ctx, identity, signal, priority);
+    this.kickOffBackground(record, { ...opts, worktree: worktreeHandle }, ctx, identity, signal, priority);
     return { mode: "background", subagentId: record.id, sessionFile: record.sessionFile, details: bgDetails };
   }
 
@@ -1077,7 +1052,6 @@ export class SubagentService {
         store: this.store,
         modelService: this.modelService,
         pi: this.pi,
-        clearThrottle: (id) => this.clearThrottle(id),
         emitUnregister: (id, st) => emitPendingUnregister(this.pi, id, st),
       },
       record,
@@ -1195,10 +1169,10 @@ export class SubagentService {
     // ── 步骤 4: signal 决议 ──
     const effectiveSignal = signal ?? record.controller?.signal;
 
-    // 步骤 5: runAndFinalize（await，不 detached）。onUpdate=undefined（BC-11），onEvent 独立传，stream 透传。
+    // 步骤 5: runAndFinalize（await，不 detached）。onEvent 独立传，stream 透传。
     const result = await this.runAndFinalize(
       record,
-      { ...opts, onUpdate: undefined, worktree: worktreeHandle },
+      { ...opts, worktree: worktreeHandle },
       ctx,
       identity,
       effectiveSignal,
@@ -1356,11 +1330,11 @@ export class SubagentService {
         return this.finalizeFailed(record, new Error("aborted"));
       }
     }
-    // onEvent 包装：AgentEvent → onUpdate(project(record)) 回流调用方
-    const onEvent = rawOnEvent
-      ?? (opts.onUpdate
-        ? (event: AgentEvent): void => this.onEventThrottled(record, event, opts.onUpdate!)
-        : undefined);
+    // onEvent 直通（原此处曾有 onUpdate(project(record)) 节流回流包装——生产死路径，
+    // 三调用点恒 onUpdate: undefined、仅测试触达，已按 swf-perf-impl ledger #22 删除
+    // （决策 TC4/IF14，详见 .cw/swf-perf-impl/cleanup-slice-design.json；git 历史可完整恢复）。
+    // ExecuteOptions.onUpdate 字段一并删除，未来误用将编译期失败而非静默无效。
+    const onEvent = rawOnEvent;
 
     // 解析 worktree 参数：boolean → WorktreeHandle | undefined（true/undefined 由 run 内部处理）
     let worktreeHandle: WorktreeHandle | undefined;
@@ -1594,7 +1568,6 @@ export class SubagentService {
         store: this.store,
         modelService: this.modelService,
         pi: this.pi,
-        clearThrottle: (id) => this.clearThrottle(id),
         emitUnregister: (id, st) => emitPendingUnregister(this.pi, id, st),
       },
       record,
@@ -1619,7 +1592,6 @@ export class SubagentService {
         store: this.store,
         modelService: this.modelService,
         pi: this.pi,
-        clearThrottle: (id) => this.clearThrottle(id),
         emitUnregister: (id, st) => emitPendingUnregister(this.pi, id, st),
         // MF-1：残留 pendingMessages 经 resume 补投（设计决策 6 spec L251 消费确认安全网）。
         // redeliverPendingMessages 合并消息文本 → resumeRound 重开 session 续聊。
@@ -1664,57 +1636,6 @@ export class SubagentService {
       await this.finalizeRecord(record, cancelledResult, "closed", "cancelled");
     }
     return cancelledResult;
-  }
-
-  // onUpdate 节流状态（per-record Map）。每条 record 独立节流，避免嵌套（fork 链：主→A→B）
-  // 多条 onUpdate 链争用同一份状态。旧实现用单实例字段——trailing timer 异步导致跨链争用
-  // → onUpdate 被吞/延迟 → 主 agent 对话流残影。per-record 化让 A/B 各自独立节流。
-  private readonly throttleState = new Map<string, { lastEmitAt: number; timer?: ReturnType<typeof setTimeout> }>();
-
-  /** AgentEvent 节流回流到 onUpdate（streaming delta 不触发 + 时间窗节流）。
-   *  名为 Throttled 必须真节流——否则嵌套场景一秒 10+ 事件密集回流 → Pi tool_execution_update
-   *  密集重绘 → 流式 tool 组件残影。leading + trailing：首次立即发（响应性），窗口内后续合并
-   *  到末尾补发一次（保证终态事件不丢）。节流状态 per-record，trailing timer 不会跨链污染。 */
-  private onEventThrottled(
-    record: ExecutionRecord,
-    event: AgentEvent,
-    onUpdate: (details: SubagentToolDetails) => void,
-  ): void {
-    if (!TRIGGERING_EVENT_TYPES.has(event.type)) return;
-    const state = this.throttleState.get(record.id) ?? { lastEmitAt: 0 };
-    const now = Date.now();
-    if (now - state.lastEmitAt >= ON_UPDATE_MIN_INTERVAL_MS) {
-      // leading：窗口外立即发，清掉该 record 残留的 trailing timer（避免补发陈旧状态）
-      if (state.timer !== undefined) {
-        clearTimeout(state.timer);
-        state.timer = undefined;
-      }
-      state.lastEmitAt = now;
-      this.throttleState.set(record.id, state);
-      onUpdate(project(record));
-      // 终态清 entry（与 trailing 分支对称）：防 CAS 后到 leading 误发陈旧状态 + Map 无限增长。
-      if (record.status !== "running") this.throttleState.delete(record.id);
-      return;
-    }
-    // trailing：窗口末尾补发最新（per-record timer，不与其他 record 的 trailing 争用）。
-    if (state.timer === undefined) {
-      const wait = ON_UPDATE_MIN_INTERVAL_MS - (now - state.lastEmitAt);
-      state.timer = setTimeout(() => {
-        state.timer = undefined;
-        state.lastEmitAt = Date.now();
-        onUpdate(project(record));
-        // record 已终态且无 pending trailing → 清 entry 防 Map 无限增长
-        if (record.status !== "running") this.throttleState.delete(record.id);
-      }, wait);
-      this.throttleState.set(record.id, state);
-    }
-  }
-
-  /** 清指定 record 的节流状态（finalizeRecord 调，防终态后 trailing 误发陈旧状态）。 */
-  private clearThrottle(recordId: string): void {
-    const state = this.throttleState.get(recordId);
-    if (state?.timer !== undefined) clearTimeout(state.timer);
-    this.throttleState.delete(recordId);
   }
 
   // ── 内部 ────────────────────────────────────────────────

@@ -89,7 +89,6 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
       store: { archive: vi.fn() } as never,
       modelService: {} as never,
       pi: { appendEntry: vi.fn() },
-      clearThrottle: vi.fn(),
       emitUnregister: vi.fn(),
     };
   }
@@ -210,7 +209,6 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
       store: { archive: vi.fn() } as never,
       modelService: {} as never,
       pi: { appendEntry: vi.fn() } as never,
-      clearThrottle: vi.fn(),
       emitUnregister: vi.fn(),
       redeliverPending,
     };
@@ -270,14 +268,6 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     record.status = "closed";
     await doFinalizeRoundToIdle(deps, record, makeMinimalResult());
     expect(deps.emitUnregister).toHaveBeenCalledWith("rec-emit", "running");
-  });
-
-  it("clearThrottle 被调（防 trailing onUpdate）", async () => {
-    const deps = makeDeps();
-    const record = makeMinimalRecord({ id: "rec-throttle" });
-    record.status = "closed";
-    await doFinalizeRoundToIdle(deps, record, makeMinimalResult());
-    expect(deps.clearThrottle).toHaveBeenCalledWith("rec-throttle");
   });
 
   it("不调 completeRecord：record 不冻结（endedAt / agentResult 仍 undefined）", async () => {

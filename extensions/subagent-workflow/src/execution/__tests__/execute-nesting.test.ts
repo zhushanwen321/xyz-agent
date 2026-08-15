@@ -5,8 +5,8 @@
 // 用例：
 //   D-032  background 进并发池（分层配额：max(1, maxConcurrent - depth)）
 //   D-033  execute 入口通用嵌套护栏（execCtxAls 计 fork+非 fork 嵌套，深度>MAX 拒）
-//   嵌套抑制 background onUpdate 恒 undefined（防 spinner 堆叠）
-//   节流清理 background finalize 后 throttleState 无残留（clearThrottle 生效）
+//   （原「嵌套抑制 onUpdate」「节流清理 throttleState」用例组已随 onEventThrottled
+//   死路径删除一并移除——swf-perf-impl ledger #22 / cleanup-slice TC4）
 //
 // ── mock 策略 ──
 //
@@ -27,7 +27,7 @@
 //     - alive-store.writeAliveMarker → mock（避免写 .alive sidecar）。
 //
 //   所有断言语义不变：它们测的是 SubagentService 的 **编排逻辑**
-//   （pool.acquire / execCtxAls 深度 / onUpdate 抑制 / throttle 清理），这些逻辑
+//   （pool.acquire / execCtxAls 深度），这些逻辑
 //   无论事件来自 fakeSession.subscribe 还是 FakeChild.stdout 都一致。
 
 import type { PassThrough } from "node:stream";
@@ -316,53 +316,8 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
   });
 
   // ============================================================
-  // 嵌套 sync onUpdate 抑制（nestingDepth>0 → onUpdate undefined）
+  // 原嵌套抑制 onUpdate / 节流清理 throttleState 用例组（:322-355）已删除——
+  // onEventThrottled 死路径删除（swf-perf-impl ledger #22 / cleanup-slice TC4/IF14，
+  // 详见 .cw/swf-perf-impl/cleanup-slice-design.json）。恢复点：本 slice 前的 git 历史。
   // ============================================================
-
-  it("[嵌套抑制] 嵌套 sync（execCtxAls depth>0）不回流 onUpdate", async () => {
-    const { service } = setup();
-
-    const execCtxAls = Reflect.get(service, "execCtxAls") as ExecCtxAls;
-
-    const updates: unknown[] = [];
-    const execPromise = execCtxAls.run({ recordId: "parent", depth: 1 }, () =>
-        service.execute({ task: "nested sync", ctxModel, onUpdate: (d) => updates.push(d) }),
-    );
-    await waitForSpawn(mockSpawn);
-    // emit 会触发 onUpdate 的事件（tool_start/tool_end 是 TRIGGERING_EVENT），
-    // 但嵌套层 onUpdate 被抑制（undefined）→ onEventThrottled 包装不挂载 → 0 次
-    await driveChildToCompletion(lastSpawnedChild(), [
-      { type: "tool_execution_start", toolCallId: "t1", toolName: "read" },
-      { type: "tool_execution_end", toolCallId: "t1", toolName: "read" },
-      { type: "message_end", message: { usage: { input: 1 } } },
-    ]);
-    await execPromise;
-
-    // tool_end 是 TRIGGERING_EVENT，但嵌套层 onUpdate 被抑制（undefined）→ 0 次
-    expect(updates).toHaveLength(0);
-  });
-
-  // ============================================================
-  // clearThrottle：sync 完成后 throttleState 清理
-  // ============================================================
-
-  it("[节流清理] sync 完成后 throttleState 无残留（clearThrottle 生效）", async () => {
-    const { service } = setup();
-
-    const execPromise = service.execute({
-      task: "throttle clear",
-      ctxModel,
-      onUpdate: () => {},
-    });
-    await waitForSpawn(mockSpawn);
-    await driveChildToCompletion(lastSpawnedChild(), [
-      { type: "tool_execution_end", toolCallId: "t1", toolName: "read" },
-      { type: "message_end", message: { usage: { input: 1 } } },
-    ]);
-    await execPromise;
-
-    // finalizeRecord → clearThrottle 清掉该 record 的节流 entry（防 Map 无限增长 + trailing 误发陈旧）
-    const throttleState = Reflect.get(service, "throttleState") as Map<string, unknown>;
-    expect(throttleState.size).toBe(0);
-  });
 });

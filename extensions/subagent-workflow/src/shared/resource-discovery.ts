@@ -90,6 +90,33 @@ const mtimeCache = new Map<string, MtimeCacheEntry>();
 // clearFileCache 兜底（invalidateCache 语义，测试隔离也走这里）。
 const workspaceRootCache = new Map<string, string>();
 
+// [perf] npm/dev 包 package.json manifest 缓存（swf-perf-impl cleanup TC1/IF1）。
+// key = package.json 绝对路径；缓存 parse 后的整个 pi 对象（agents/workflows 两 kind
+// 共享一次 parse，不按 kind 分裂条目）。失效 = mtimeMs 严格相等判定（与 mtimeCache 同构，
+// 『内容变 mtime 未变』漏判局限共享 C3 声明，clearFileCache 兜底）。
+// 失败语义（消歧，三方 TC1/DM1/IF1 同一口径）：
+// - stat 失败（文件不存在/不可 stat）→ 驱逐该 path 条目 + undefined（对齐 getCachedFile：
+//   文件已删条目无意义）
+// - read 失败（stat 与 read 间竞态删除/EACCES）或 JSON.parse 失败（坏 JSON）→
+//   不缓存（不写新条目、不驱逐已有好条目）+ undefined，下次调用重试——毒条目永不入缓存，
+//   坏文件被修复且 mtime 变化后正常覆写。
+// pi === undefined 条目仅在『read+parse 成功且 manifest 无 pi 字段』时写入（合法解析结果）。
+interface ManifestCacheEntry {
+  mtimeMs: number;
+  pi: Record<string, unknown> | undefined;
+}
+
+const manifestCache = new Map<string, ManifestCacheEntry>();
+
+/** 从缓存的 pi 对象派生 kind manifest（廉价操作，每次调用新数组——语义与旧直读版一致）。 */
+function piToManifest(pi: Record<string, unknown> | undefined, kind: ResourceKind): string[] | undefined {
+  if (!pi) return undefined;
+  const entries = pi[kind];
+  if (!Array.isArray(entries)) return undefined;
+  // 过滤非字符串元素
+  return entries.filter((p): p is string => typeof p === "string");
+}
+
 /**
  * stat + content 统一缓存。文件不存在/不可读 → null（并驱逐条目）。
  * mtime 未变 → 返回缓存 content（不重 read）；变 → readFileSync + 缓存。
@@ -127,6 +154,7 @@ export function getCachedFileContent(filePath: string): string | null {
 export function clearFileCache(): void {
   mtimeCache.clear();
   workspaceRootCache.clear();
+  manifestCache.clear();
 }
 
 export function findWorkspaceRoot(cwd?: string): string {
@@ -235,22 +263,32 @@ async function scanDirectory(dirPath: string, kind: ResourceKind): Promise<strin
 
 /**
  * 读取 package.json 的 pi.{kind} manifest（pi.agents / pi.workflows）。
- * 返回 undefined 表示无 manifest 声明。
+ * 返回 undefined 表示无 manifest 声明（无 pi / pi[kind] 非数组 / 解析失败）。
+ * 内部走 manifestCache（与 readPackageManifestSync 共享同一 Map，失败语义见声明处）。
  */
 async function readPackageManifest(pkgDir: string, kind: ResourceKind): Promise<string[] | undefined> {
   const pkgJsonPath = resolve(pkgDir, "package.json");
+  let mtimeMs: number;
+  try {
+    mtimeMs = (await stat(pkgJsonPath)).mtimeMs;
+  } catch {
+    // stat 失败：文件不存在/不可 stat → 驱逐条目（对齐 getCachedFile 语义）
+    manifestCache.delete(pkgJsonPath);
+    return undefined;
+  }
+  const entry = manifestCache.get(pkgJsonPath);
+  if (entry && entry.mtimeMs === mtimeMs) return piToManifest(entry.pi, kind);
+  let pi: Record<string, unknown> | undefined;
   try {
     const content = await readFile(pkgJsonPath, "utf-8");
     const pkg = JSON.parse(content) as Record<string, unknown>;
-    const pi = pkg.pi as Record<string, unknown> | undefined;
-    if (!pi) return undefined;
-    const entries = pi[kind];
-    if (!Array.isArray(entries)) return undefined;
-    // 过滤非字符串元素
-    return entries.filter((p): p is string => typeof p === "string");
+    pi = pkg.pi as Record<string, unknown> | undefined;
   } catch {
+    // read 失败或坏 JSON → 不缓存不驱逐已有好条目，下次调用重试
     return undefined;
   }
+  manifestCache.set(pkgJsonPath, { mtimeMs, pi });
+  return piToManifest(pi, kind);
 }
 
 /**
@@ -320,32 +358,33 @@ async function scanNpmDir(
     return [];
   }
 
-  const results: DiscoveredResource[] = [];
+  // [perf] 包级并行（swf-perf-impl cleanup TC2/IF2）：entries.map + Promise.all，
+  // perEntry.flat() 按原 readdir 序 concat——输出序与串行逐包 push 等价。
+  // 不加新增 catch：每包失败面由 processPackage 内部既有 catch 承担，未捕获异常
+  // 传播语义与串行版一致（Promise.all 整体 reject ↔ 串行版向上抛）。
+  const perEntry = await Promise.all(
+    entries.map(async (entry): Promise<DiscoveredResource[]> => {
+      const entryPath = resolve(nodeModulesDir, entry);
 
-  for (const entry of entries) {
-    const entryPath = resolve(nodeModulesDir, entry);
-
-    if (entry.startsWith("@")) {
-      // scoped 包——迭代子包
-      let scopedEntries: string[];
-      try {
-        scopedEntries = await readdir(entryPath);
-      } catch {
-        continue;
+      if (entry.startsWith("@")) {
+        // scoped 包——迭代子包（子包级同样并行，flat 保序）
+        let scopedEntries: string[];
+        try {
+          scopedEntries = await readdir(entryPath);
+        } catch {
+          return [];
+        }
+        const perScoped = await Promise.all(
+          scopedEntries.map((scopedPkg) => processPackage(resolve(entryPath, scopedPkg), kind)),
+        );
+        return perScoped.flat();
       }
-      for (const scopedPkg of scopedEntries) {
-        const scopedPkgDir = resolve(entryPath, scopedPkg);
-        const pkgResults = await processPackage(scopedPkgDir, kind);
-        results.push(...pkgResults);
-      }
-    } else {
       // unscoped 包
-      const pkgResults = await processPackage(entryPath, kind);
-      results.push(...pkgResults);
-    }
-  }
+      return processPackage(entryPath, kind);
+    }),
+  );
 
-  return results;
+  return perEntry.flat();
 }
 
 // ── 扫描源构建 ───────────────────────────────────────────────
@@ -436,28 +475,34 @@ function buildScanTargets(config: ScanConfig): ScanTarget[] {
 export async function discoverResources(config: ScanConfig): Promise<DiscoveredResource[]> {
   const targets = buildScanTargets(config);
 
-  // 逐源扫描，收集结果（保留 source 标签用于优先级合并）
-  const allBySource: Array<{ source: ResourceSource; resources: DiscoveredResource[] }> = [];
-
-  for (const target of targets) {
-    if (target.source === "npm" || target.source === "npm-dev") {
-      // npm/dev 目录：迭代包，走 manifest 或约定目录
-      const resources = await scanNpmDir(target.dir, config.kind);
-      // 覆盖 source 标签（scanNpmDir 内部统一标 "npm"，这里修正为实际源）
-      const tagged = resources.map((r) => ({ ...r, source: target.source }));
-      allBySource.push({ source: target.source, resources: tagged });
-    } else if (target.source === "user-extension-paths") {
-      // XYZ_EXTENSION_PATHS（dev-link）：每个 dir 是单个包目录，走 processPackage
-      const resources = await processPackage(target.dir, config.kind);
-      const tagged = resources.map((r) => ({ ...r, source: target.source }));
-      allBySource.push({ source: target.source, resources: tagged });
-    } else {
+  // [perf] 源级并行（swf-perf-impl cleanup TC2/IF2）：targets.map + Promise.all，
+  // Promise.all 对 map 数组保序——allBySource 顺序 = targets 优先级序（低→高），
+  // 与串行逐源 push 完全一致 → 下方合并去重逻辑零改动、输出逐字节等价。
+  // 不加新增 catch：每源预期失败路径由内部既有 catch 面承担（scanDirectory access
+  // catch / scanNpmDir readdir catch / processPackage 全链 catch），未捕获异常
+  // 传播语义与串行版等价（ES2：串行版 target k 抛错中断后续源，并行版全部源已并发
+  // 启动、以首个 reject 拒绝——两版对调用方同为 discoverResources 抛出，各源只读无副作用）。
+  const allBySource: Array<{ source: ResourceSource; resources: DiscoveredResource[] }> = await Promise.all(
+    targets.map(async (target) => {
+      if (target.source === "npm" || target.source === "npm-dev") {
+        // npm/dev 目录：迭代包，走 manifest 或约定目录
+        const resources = await scanNpmDir(target.dir, config.kind);
+        // 覆盖 source 标签（scanNpmDir 内部统一标 "npm"，这里修正为实际源）
+        const tagged = resources.map((r) => ({ ...r, source: target.source }));
+        return { source: target.source, resources: tagged };
+      }
+      if (target.source === "user-extension-paths") {
+        // XYZ_EXTENSION_PATHS（dev-link）：每个 dir 是单个包目录，走 processPackage
+        const resources = await processPackage(target.dir, config.kind);
+        const tagged = resources.map((r) => ({ ...r, source: target.source }));
+        return { source: target.source, resources: tagged };
+      }
       // 普通目录：直接扫
       const files = await scanDirectory(target.dir, config.kind);
       const resources = files.map((f) => ({ path: f, source: target.source, available: true }));
-      allBySource.push({ source: target.source, resources });
-    }
-  }
+      return { source: target.source, resources };
+    }),
+  );
 
   // 按优先级合并：targets 数组顺序即优先级（低→高），高优先级后写覆盖
   // 用文件名 stem 作为去重 key（与旧逻辑一致：同名资源高优先级覆盖）
@@ -507,21 +552,31 @@ export function scanDirectorySync(dirPath: string, kind: ResourceKind): string[]
 
 /**
  * 同步版：读取 package.json 的 pi.{kind} manifest。
- * 供 agent-registry 同步路径使用。
+ * 供 agent-registry 同步路径使用。与 async 版共享 manifestCache（双读者同一 Map）。
  */
 export function readPackageManifestSync(pkgDir: string, kind: ResourceKind): string[] | undefined {
   const pkgJsonPath = resolve(pkgDir, "package.json");
+  let mtimeMs: number;
+  try {
+    mtimeMs = fsSync.statSync(pkgJsonPath).mtimeMs;
+  } catch {
+    // stat 失败：文件不存在/不可 stat → 驱逐条目（对齐 getCachedFile 语义）
+    manifestCache.delete(pkgJsonPath);
+    return undefined;
+  }
+  const entry = manifestCache.get(pkgJsonPath);
+  if (entry && entry.mtimeMs === mtimeMs) return piToManifest(entry.pi, kind);
+  let pi: Record<string, unknown> | undefined;
   try {
     const content = fsSync.readFileSync(pkgJsonPath, "utf-8");
     const pkg = JSON.parse(content) as Record<string, unknown>;
-    const pi = pkg.pi as Record<string, unknown> | undefined;
-    if (!pi) return undefined;
-    const entries = pi[kind];
-    if (!Array.isArray(entries)) return undefined;
-    return entries.filter((p): p is string => typeof p === "string");
+    pi = pkg.pi as Record<string, unknown> | undefined;
   } catch {
+    // read 失败或坏 JSON → 不缓存不驱逐已有好条目，下次调用重试
     return undefined;
   }
+  manifestCache.set(pkgJsonPath, { mtimeMs, pi });
+  return piToManifest(pi, kind);
 }
 
 /**
