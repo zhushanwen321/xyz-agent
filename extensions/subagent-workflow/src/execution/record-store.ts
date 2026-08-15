@@ -479,12 +479,15 @@ export class RecordStore {
       return [];
     }
 
-    // 修剪：磁盘上已消失的文件（GC/手动删）同步移出缓存与索引。
+    // 修剪：磁盘上已消失的文件（GC/手动删）同步移出缓存与索引。删了条目必须置
+    // indexDirty——否则纯修剪轮（无其他探测）flush 第一道门 !dirty return，磁盘索引的
+    // 陈旧条目永不清除（fileCache 已删仅影响内存投影，落盘快照不会自发跟随）。
     const disk = new Set(files);
     for (const [file, entry] of this.fileCache) {
       if (!disk.has(file)) {
         this.fileCache.delete(file);
         if (!entry.negative) this.idToFile.delete(entry.light.id);
+        this.indexDirty = true;
       }
     }
 
@@ -609,6 +612,11 @@ export class RecordStore {
    * fire-and-forget saveIndex（fileCache 全量投影）。写决策与发起在同步栈（collectRecords
    * 返回后不会再有本轮写）；仅写完成的回调（推进节流窗）是异步的。所有 return 路径均
    * 不清 dirty——未落盘的探测成果跨轮携带，直至真正写入。
+   *
+   * 并发安全：节流基准只在写成功后推进，W1 在途时新一轮过窗扫描可再 dispatch W2（不做
+   * 进程内排队——fire-and-forget 语义保持）。安全性由 saveIndex 的 tmp 唯一性
+   * （pid+单调序号）保证：交错 rename 的终态必为某一次的完整快照（last-writer-wins，
+   * 陈旧快照胜出时下轮戳不匹配自愈），不依赖本方法串行化。
    */
   private flushIndexAfterScan(): void {
     this.indexEntries = null; // 释放映像：运行期索引不再被读（L1 接管）
@@ -633,7 +641,8 @@ export class RecordStore {
   /**
    * [perf L-1] fileCache 全量投影 → 索引快照（basename → 正/负条目）。
    * 投影式单一 SSOT：不维护第二份可变索引映像（防双轨漂移）；fileCache 已被
-   * reconstructAll 修剪掉消失文件，快照天然自清洁。
+   * reconstructAll 修剪掉消失文件（修剪时置 indexDirty），下次过窗写时快照清除
+   * 磁盘上的陈旧条目。
    */
   private projectIndexEntries(): Map<string, SessionsIndexEntry | SessionsIndexNegativeEntry> {
     const entries = new Map<string, SessionsIndexEntry | SessionsIndexNegativeEntry>();

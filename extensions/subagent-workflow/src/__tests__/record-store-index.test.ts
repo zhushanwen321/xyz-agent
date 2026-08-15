@@ -17,12 +17,19 @@
 //   S1TC11     模块级 loadIndex 三级校验链与版本分支
 //   S1TC12     模块级单条目字段损坏仅丢弃该条目
 //   S1TC13     dispose→revive 后重扫惰性重载索引命中
+//   S1TC14     索引命中 + .cancelled sidecar 冷启动——命中分支读取 tombstone 置 closed
 //
 // 异步落盘等待约定：断言「写完成」用 vi.waitFor(existsSync/内容)（rename 原子性保证
 // 文件出现即完整）；断言「未写」用 bounded settle（50ms 检测窗口——正确实现的写决策
 // 在 collectRecords 同步段已被排除，窗口内不会有任何写发生）；禁止固定长 sleep 等
 // 待写完成。例外：S1TC9 fake Date 模式下 vi.waitFor 会推进 fake 时钟破坏时间线，
 // 改用手写轮询 settleUntil（真实 setTimeout，仅计数限界）。
+//
+// 清理约定：真实 jsonl fixture 的 afterEach rmSync 必带 maxRetries（fire-and-forget
+// 索引写与清理的 ENOTEMPTY 竞态，见 get-record-for-action-restart.test.ts）。
+//
+// 环境守卫约定：chmod 000 零探测用例（S1TC1/2/7/13）用 chmodProbeIt——win32 的
+// chmod 000 仅映射 read-only、root 无视 000，断言会静默退化为恒真，须跳过。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -32,6 +39,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RecordStore } from "../execution/record-store";
 import { INDEX_FILENAME, INDEX_VERSION, loadIndex, saveIndex } from "../execution/sessions-index";
 import type { SessionsIndexEntry, SessionsIndexNegativeEntry } from "../execution/sessions-index";
+
+/** chmod 000 零探测用例的环境守卫：win32 上 chmod 000 仅映射 read-only（读仍被允许）、
+ *  root 无视 000——两种环境下「零内容读取」断言静默退化为恒真（实现退化回读也不失败），
+ *  跳过防假绿。平台短路在前，getuid 仅 POSIX 存在。 */
+const chmodProbeIt = process.platform === "win32" || process.getuid?.() === 0 ? it.skip : it;
 
 /** bounded 轮询：真实 setTimeout（20ms/轮），rounds 上限防挂死。fake Date 模式专用
  *  （vi.waitFor 在 fake timers 下会 advanceTimersByTime 推进 fake Date，破坏节流时间线）。
@@ -256,7 +268,7 @@ describe("RecordStore 索引接入 [perf L-1]（S1TC1-9/13）", () => {
     }, { timeout: 8_000 });
   }
 
-  it("S1TC1: 索引命中零探测——chmod 000 后新 RecordStore 首次 collectRecords 仍返回全部记录", { timeout: 15_000 }, async () => {
+  chmodProbeIt("S1TC1: 索引命中零探测——chmod 000 后新 RecordStore 首次 collectRecords 仍返回全部记录", { timeout: 15_000 }, async () => {
     const f1 = writeSession({ name: "a.jsonl", id: "sa-1", assistantTexts: ["r1"] });
     writeSession({ name: "b.jsonl", id: "sa-2", assistantTexts: ["r2"] });
 
@@ -277,7 +289,7 @@ describe("RecordStore 索引接入 [perf L-1]（S1TC1-9/13）", () => {
     fs.chmodSync(f1, 0o644);
   });
 
-  it("S1TC2: 戳不匹配单文件重探测——append 后仅该文件重探测、其余零读取、索引条目更新", { timeout: 15_000 }, async () => {
+  chmodProbeIt("S1TC2: 戳不匹配单文件重探测——append 后仅该文件重探测、其余零读取、索引条目更新", { timeout: 15_000 }, async () => {
     // a.jsonl 续聊形态（identity 在尾部）：append 新 identity 后 readIdentityTail 重探测
     // 取最后一条 → task 更新为 "resumed"（若从头部取第一条 identity 则拿到旧值，断言失败）。
     const fA = writeTailIdentitySession("a.jsonl", "sa-1", "initial");
@@ -415,7 +427,7 @@ describe("RecordStore 索引接入 [perf L-1]（S1TC1-9/13）", () => {
     }
   });
 
-  it("S1TC7: 双实例顺序共享——A 落盘后 B 首次扫描零探测", { timeout: 15_000 }, async () => {
+  chmodProbeIt("S1TC7: 双实例顺序共享——A 落盘后 B 首次扫描零探测", { timeout: 15_000 }, async () => {
     const fa = writeSession({ name: "a.jsonl", id: "sa-1", assistantTexts: ["r1"] });
     const fb = writeSession({ name: "b.jsonl", id: "sa-2", assistantTexts: ["r2"] });
     const fj = writeJunk("junk.jsonl");
@@ -497,7 +509,7 @@ describe("RecordStore 索引接入 [perf L-1]（S1TC1-9/13）", () => {
     }
   });
 
-  it("S1TC13: dispose→revive 后重扫惰性重载索引命中（/resume /fork 高频路径）", { timeout: 15_000 }, async () => {
+  chmodProbeIt("S1TC13: dispose→revive 后重扫惰性重载索引命中（/resume /fork 高频路径）", { timeout: 15_000 }, async () => {
     const fa = writeSession({ name: "a.jsonl", id: "sa-1", assistantTexts: ["r1"] });
     const fb = writeSession({ name: "b.jsonl", id: "sa-2", assistantTexts: ["r2"] });
     const store = new RecordStore(sessionsDir);
@@ -511,5 +523,29 @@ describe("RecordStore 索引接入 [perf L-1]（S1TC1-9/13）", () => {
     fs.chmodSync(fb, 0o000);
     const records = store.collectRecords(100, "all", "root-1");
     expect(records.map((r) => r.id).sort()).toEqual(["sa-1", "sa-2"]); // 重扫 → loadIndex 重载 → 正条目命中零内容读取
+  });
+
+  it("S1TC14: 索引命中 + .cancelled sidecar 冷启动——命中分支读取 tombstone 置 closed", { timeout: 15_000 }, async () => {
+    const f1 = writeSession({ name: "a.jsonl", id: "sa-1", assistantTexts: ["r1"] });
+
+    const storeA = new RecordStore(sessionsDir);
+    storeA.collectRecords(100, "all", "root-1");
+    await waitForIndex();
+
+    // jsonl 戳不变，仅在旁路放 .cancelled sidecar（cancel 后 jsonl 截断、状态只能靠
+    // tombstone 重建；sidecar 形态复刻 record-store-cache.test.ts A3 用例）
+    fs.writeFileSync(
+      `${f1}.cancelled`,
+      JSON.stringify({ id: "sa-1", status: "cancelled", agent: "worker", startedAt: 1000, endedAt: 3000 }) + "\n",
+    );
+
+    // 冷启动新实例：jsonl 戳命中索引条目 → 走命中分支，但 cancelled sidecar stat 变化
+    // 必须被感知——命中分支读 tombstone override 状态（否则退回兜底 running）
+    const storeB = new RecordStore(sessionsDir);
+    const sa1 = storeB.collectRecords(100, "all", "root-1").find((r) => r.id === "sa-1");
+    expect(sa1?.status).toBe("closed");
+    expect(sa1?.closedReason).toBe("cancelled");
+    expect(sa1?.error).toBe("cancelled by user");
+    expect(sa1?.endedAt).toBe(3000); // tombstone 的精确结束时间，非 mtime 近似
   });
 });

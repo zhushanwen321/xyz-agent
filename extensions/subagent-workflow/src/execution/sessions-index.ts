@@ -12,7 +12,7 @@
 //     全量行为，下轮 dirty 重写自愈）；版本高于自身 → 空索引 + higherVersion 标志
 //     （整体忽略不消费，RecordStore 据此抑制本轮及后续落盘，防 v1/v2 last-writer-wins
 //     覆盖振荡）。
-//   - 写侧（saveIndex）：tmp(pid)+fsync+rename+目录 fsync 原子写（逐环复刻
+//   - 写侧（saveIndex）：tmp(pid+seq)+fsync+rename+目录 fsync 原子写（逐环复刻
 //     ManifestStore.writeManifest 的生产模式）。失败本身向上抛；fire-and-forget 的
 //     .catch 兜底在 RecordStore 侧。
 //   - 损坏/降级走 logger.debug（PI_EXT_DEBUG=1 可见，默认 no-op），不 console.error
@@ -43,6 +43,13 @@ export const INDEX_VERSION = 1;
 
 /** 两次成功落盘的最小墙钟间隔（节流：overlay 打开期间的高频扫描不放大磁盘写）。 */
 export const INDEX_WRITE_MIN_INTERVAL_MS = 60_000;
+
+/** tmp 文件单调计数：同一进程内并发的 saveIndex 各用独立 tmp。节流基准只在写成功后
+ *  推进——W1 在途时新一轮过窗扫描可再 dispatch W2，共用同一 tmp 会交错（W2 truncate
+ *  落在 W1 write 与 rename 之间 → 半成品被 rename / rename 后失败 → 假失败日志）。
+ *  pid+seq 双后缀保证 tmp 唯一：交错 rename 的终态必为某次完整快照（last-writer-wins，
+ *  与跨进程 pid 隔离同语义；陈旧快照胜出时下轮戳不匹配自愈）。 */
+let tmpSeq = 0;
 
 // ============================================================
 // 类型（DM1 磁盘顶层 + DM2 条目）
@@ -171,8 +178,16 @@ export function loadIndex(encDir: string): LoadedSessionsIndex {
   let raw: string;
   try {
     raw = fs.readFileSync(indexPath, "utf-8");
-  } catch {
-    return empty; // 文件不存在（正常首跑）/读失败
+  } catch (err) {
+    // ENOENT = 正常首跑，保持静默；其余读失败（EACCES 等长期权限异常）留 debug 线索
+    // ——空索引回退本身可自愈，但权限类异常不会自己消失，需可诊断。
+    const code = err instanceof Error && "code" in err && typeof err.code === "string" ? err.code : undefined;
+    if (code !== "ENOENT") {
+      logger.debug("[subagents] sessions-index read failed, fallback to empty", {
+        detail: { dir: encDir, code },
+      });
+    }
+    return empty;
   }
 
   let parsed: unknown;
@@ -230,16 +245,18 @@ export function loadIndex(encDir: string): LoadedSessionsIndex {
 // ============================================================
 
 /**
- * 原子写索引（tmp(pid) → fsync → rename → fsync 目录；逐环复刻
- * ManifestStore.writeManifest 的生产模式）。tmp 带 pid 后缀防两进程共用同一 tmp；
- * rename 原子性保证读侧看到旧版或完整新版，绝无半成品。
+ * 原子写索引（tmp(pid+seq) → fsync → rename → fsync 目录；逐环复刻
+ * ManifestStore.writeManifest 的生产模式）。tmp 带 pid+单调序号双后缀：pid 防两进程
+ * 共用同一 tmp，seq 防同进程内并发 saveIndex（节流基准在写成功后才推进，W1 在途时
+ * 新一轮过窗扫描可 dispatch W2）共用同一 tmp；rename 原子性保证读侧看到旧版或完整
+ * 新版，绝无半成品。
  *
  * 失败向上抛——RecordStore 的 flushIndexAfterScan 以 fire-and-forget .catch 消费
  * （写失败不影响任何扫描结果，恢复 dirty 待下轮过窗重试）。
  */
 export async function saveIndex(encDir: string, data: SessionsIndexData): Promise<void> {
   const filePath = path.join(encDir, INDEX_FILENAME);
-  const tmpPath = `${filePath}.tmp.${process.pid}`;
+  const tmpPath = `${filePath}.tmp.${process.pid}.${++tmpSeq}`;
   const file: SessionsIndexFile = {
     version: INDEX_VERSION,
     pid: process.pid,
