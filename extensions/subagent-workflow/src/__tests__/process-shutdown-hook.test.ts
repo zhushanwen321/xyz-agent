@@ -38,6 +38,8 @@ describe("[V2 决策 7 防线 i] process 级 shutdown hook", { timeout: 30000 },
   let exitSpy: ReturnType<typeof vi.spyOn>;
   let resetGuard: () => void;
 
+  // hook 显式 timeout：describe 级 { timeout } 不传播给 hook（vitest 4 行为），
+  // 动态 import("../index.ts") 大模块图在全量并行高负载下偶发超默认 10s
   beforeEach(async () => {
     killAllSpawnedChildrenMock.mockReset();
     for (const k of Object.keys(registered)) delete registered[k];
@@ -58,7 +60,7 @@ describe("[V2 决策 7 防线 i] process 级 shutdown hook", { timeout: 30000 },
       mod as unknown as { _resetProcessShutdownGuardForTest: () => void }
     )._resetProcessShutdownGuardForTest;
     mod.default(createMockExtensionAPI());
-  });
+  }, 30000);
 
   afterEach(() => {
     onSpy.mockRestore();
