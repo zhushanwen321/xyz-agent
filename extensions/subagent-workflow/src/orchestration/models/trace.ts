@@ -30,6 +30,10 @@ export const TRACE_RESULT_MAX_CHARS = 8000;
 /**
  * 裁剪保留的头/尾长度（各半）。
  *
+ * 耦合声明：TRIM_HEAD_CHARS + TRIM_TAIL_CHARS === TRACE_RESULT_MAX_CHARS
+ * （各半相等）是 doc 示例「8001 → 裁后 8000+标记 ≈ 8057」的前提
+ * （rt-w1-design.json W1C2 / trimTraceResult 注释同款表述）——改 MAX 时
+ * 需同步检查 head/tail 是否仍各半，及上述注释/文档示例数字。
  * 比例钉死在 trace.test.ts 断言中；变更需复查 detail-content.ts
  * 尾 5 行消费点（TUI 尾部预览依赖 tail 段）。
  */
@@ -78,6 +82,9 @@ export class Trace {
  * 不验证节点顺序/唯一性（调用方保证快照来源可信）。
  * 不做裁剪——落盘快照已是 write 路径裁剪后形态，旧版本未裁剪长
  * content 重水合保持原样（read 路径无二次信息损失）。
+ * 重水合后 call.traceNode（来自快照 calls[].traceNode，
+ * jsonl-run-store.ts:156 直接传入）与 Trace.nodes 副本非同引用——
+ * D-10 引用共享仅 live append 路径成立。
  */
   static fromArray(nodes: readonly ExecutionTraceNode[]): Trace {
     const trace = new Trace();
@@ -125,9 +132,14 @@ export class Trace {
  /**
  * 查找指定 stepIndex 的节点（byIndex O(1)，trace 中 stepIndex 应唯一）。
  *
- * 语义差异声明：现行线性扫 first-match → Map last-wins，仅
- * 『append 重复 stepIndex 且未 remove』的违规使用下可见；唯一性由
- * pause 先 remove 再 append 路径保证。
+ * 语义差异声明（旧线性扫 first-match → Map last-wins）：仅在破坏
+ * stepIndex 唯一性的违规使用下可见，两组场景——
+ * 1. 重复 append 同 stepIndex 且未 remove：返回最后一个节点（last-wins；
+ *    旧线性扫 first-match 会返回第一个）。
+ * 2. 重复 append 后 removeByStepIndex：remove 的 findIndex 命中首个旧节点
+ *    splice，而 byIndex.delete 把整个 stepIndex 键删掉——nodes 残留第二个
+ *    节点成为孤儿（find/update 不可达，length/toArray 仍可见）。
+ * 合法路径无差异：唯一性由 pause 先 remove 再 append 保证（W1TC12 锚定）。
  */
   private findByStepIndex(stepIndex: number): ExecutionTraceNode | undefined {
     return this.byIndex.get(stepIndex);
@@ -154,7 +166,11 @@ export class Trace {
     this.byIndex.delete(stepIndex);
   }
 
- /** readonly 视图——外部不应直接 mutate（不变式保护）。 */
+ /**
+ * readonly 视图——返回内部 nodes 数组引用（仅类型级 readonly，运行时无
+ * 防御）。消费方禁止结构化 mutate（push/splice/重排/覆盖元素）：byIndex
+ * 引入后外部结构化 mutate 会使 nodes 与倒排索引 desync。字段级变更走 update()。
+ */
   toArray(): readonly ExecutionTraceNode[] {
     return this.nodes;
   }

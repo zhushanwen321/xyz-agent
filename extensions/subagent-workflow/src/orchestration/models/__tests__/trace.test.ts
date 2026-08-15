@@ -1,10 +1,11 @@
 // 测试框架：vitest
 // 运行命令：npx vitest run src/orchestration/models/__tests__/trace.test.ts
 //
-// Trace 首个直接单测（W1TC1-W1TC11，.cw/swf-perf-impl/rt-w1-design.json）：
+// Trace 首个直接单测（W1TC1-W1TC12，.cw/swf-perf-impl/rt-w1-design.json）：
 // - W1TC1-3/9：byIndex 倒排索引一致性与 no-op 防御语义
 // - W1TC4-8：result.content 裁剪（append/update 入口、8000 边界、patch 缺省、fromArray 原样保留）
 // - W1TC10-11：集成——executeAgentCall 真链路 / jsonl save-load round-trip
+// - W1TC12：重复 stepIndex 违规语义锚定（last-wins + remove 后 desync 孤儿）
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -84,6 +85,36 @@ describe("Trace remove 后 re-append 同 stepIndex", () => {
     expect(trace.find(0)).toBe(nodeB);
     expect(trace.toArray()).toHaveLength(1);
     expect(trace.toArray()[0]).toBe(nodeB);
+  });
+});
+
+// ── 重复 stepIndex 违规语义锚定（W1TC12）──────────────────────
+
+describe("Trace 重复 stepIndex 违规语义锚定（W1TC12）", () => {
+  it("W1TC12: 重复 append find last-wins；重复 append 后 remove 呈 desync 孤儿", () => {
+    // ① 重复 append 同 stepIndex 且未 remove：find 返回第二个节点（Map
+    //    last-wins；旧线性扫 first-match 会返回第一个）
+    const t1 = new Trace();
+    const first = makeTraceNode(0);
+    const second = makeTraceNode(0);
+    t1.append(first);
+    t1.append(second);
+    expect(t1.find(0)).toBe(second);
+    expect(t1.length).toBe(2);
+
+    // ② 重复 append 后 removeByStepIndex：findIndex 命中首个旧节点 splice、
+    //    byIndex.delete 删掉整个键——第二个节点残留为孤儿（find 不可达但
+    //    nodes.length=1）。desync 行为锚定：防未来改回线性扫时静默漂移
+    //    （线性扫实现下 find(0) 会命中残留节点 second，本断言即失败）
+    const t2 = new Trace();
+    const a = makeTraceNode(0);
+    const b = makeTraceNode(0);
+    t2.append(a);
+    t2.append(b);
+    t2.removeByStepIndex(0);
+    expect(t2.find(0)).toBeUndefined();
+    expect(t2.length).toBe(1);
+    expect(t2.toArray()[0]).toBe(b);
   });
 });
 
