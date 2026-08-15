@@ -57,6 +57,15 @@ const RUNID_RADIX = 36;
 const RUNID_SLICE_START = 2;
 const RUNID_SLICE_END = 8;
 
+/**
+ * done run 内存保留窗口（K=20）。
+ *
+ * 本淘汰是 done run 内存有界性的唯一来源：calls.result 不裁、单聚合大小不随 wave1
+ * 裁剪缩小，故内存上限 = K × 实际聚合大小。同时定义 actionStatus 可查刚完成 run
+ * 的窗口（超出窗口的 done run 不再出现在列表中——已接受的用户可见变化）。
+ */
+export const MAX_RETAINED_DONE_RUNS = 20;
+
 function generateRunId(): string {
   return `wf-${Date.now()}-${Math.random().toString(RUNID_RADIX).slice(RUNID_SLICE_START, RUNID_SLICE_END)}`;
 }
@@ -381,4 +390,51 @@ export async function abortRun(
   deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
   deps.log?.("debug", "workflow:lifecycle", "emit pending:unregister done", { runId });
   deps.onRunDone?.(run);
+}
+
+// ── evictDoneRunsBeyondCap（done run 内存淘汰纯函数） ────────
+
+/**
+ * 淘汰 runs Map 中超出保留窗口的 done run，返回本次淘汰数量。
+ *
+ * 规则（契约 W3C1）：
+ * 1. **状态白名单**：仅 `state.status === "done"` 可淘汰（RunStatus 封闭三态，
+ *    显式白名单而非「非 running/paused」——未来新增状态不落淘汰端）。running
+ *    （活跃执行，isScriptRunning 遍历依赖）与 paused（resumeRun 可恢复）永不淘汰，
+ *    即使 completedAt 缺失也绝不参与排序淘汰。
+ * 2. **排序**：done 项按 `meta.completedAt` ISO 字符串字典序升序（toISOString 恒
+ *    UTC 毫秒格式，字典序=时间序）。completedAt 缺失（防御旧格式/异常快照）fallback
+ *    排序键为空串——字典序最小=最旧，先被淘汰。
+ * 3. **tie 稳定排序**：比较器三态返回（相等返回 0），Array#sort 稳定性（Node≥12）
+ *    保持元素原序——原序 = Map 插入序 = 创建序，tie 组内先创建者视为更旧先被淘汰
+ *    （kill-9 批量恢复同 ms completedAt 场景的确定性保证）。
+ * 4. **淘汰执行**：超限数 excess = doneCount - keepDone（<=0 时 no-op 返回 0），
+ *    对升序前 excess 项逐个 `runs.delete(runId)`。
+ * 5. **边界不变式**：禁止按 Map 插入序直接淘汰——嵌套 workflow 父 run 创建最早、
+ *    完成最晚，插入序淘汰会在其自身 onRunDone 同步裁剪中淘汰它，runAndWait 轮询
+ *    窗口内 get 不到 → 误返 "Run not found"。
+ * 6. **副作用边界**：只清内存 runs Map，不动磁盘 state 文件、不删
+ *    workflow-state-link 指针条目、不发任何事件。
+ *
+ * @param runs per-session 的 run 注册表（原地裁剪）
+ * @param keepDone done run 保留数（生产传 MAX_RETAINED_DONE_RUNS）
+ * @returns 本次淘汰的 run 数量
+ */
+export function evictDoneRunsBeyondCap(
+  runs: Map<string, WorkflowRun>,
+  keepDone: number,
+): number {
+ // 显式白名单：仅 done 参与淘汰（running/paused 误删即功能破坏）
+  const done = Array.from(runs.values()).filter((r) => r.state.status === "done");
+  const excess = done.length - keepDone;
+  if (excess <= 0) return 0;
+ // ISO 字典序=时间序；缺失 fallback 空串（ISO 串恒以 '2' 开头非空，空串严格最小=最旧）
+  const keyOf = (r: WorkflowRun): string => r.meta.completedAt ?? "";
+ // 三态比较器 + sort 稳定性：tie 保持 Array.from 的 Map 插入序（=创建序）——
+ // 先插入者更旧先淘汰，禁止按插入序直接 slice 淘汰（边界不变式 5）
+  done.sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0));
+  for (const r of done.slice(0, excess)) {
+    runs.delete(r.runId);
+  }
+  return excess;
 }

@@ -154,6 +154,8 @@ vi.mock("../../orchestration/lifecycle.ts", async (importOriginal) => {
 
 // interface 层 mock：避免触发真实 pi.registerTool（pi 是 Proxy，真实模块访问 pi
 // 属性时可能抛错）。路径相对 src/execution/__tests/ → ../../interface/...
+// registerWorkflowTool / registerWorkflowsCommand 用 hoisted spy——W3TC7/8 需在
+// it 内读 mock.calls 捕获 lazyDeps 与 runs getter（对齐 mockStoreDispose 先例）。
 vi.mock("../../interface/subagent-tool.ts", () => ({
   registerSubagentTool: vi.fn(),
 }));
@@ -163,21 +165,27 @@ vi.mock("../../interface/subagents.ts", () => ({
 vi.mock("../../interface/bg-notify-render.ts", () => ({
   renderBgNotifyMessage: vi.fn(),
 }));
+const { mockRegisterWorkflowTool, mockRegisterWorkflowsCommand } = vi.hoisted(() => ({
+  mockRegisterWorkflowTool: vi.fn(),
+  mockRegisterWorkflowsCommand: vi.fn(),
+}));
 vi.mock("../../interface/tool-workflow.ts", () => ({
-  registerWorkflowTool: vi.fn(),
+  registerWorkflowTool: mockRegisterWorkflowTool,
 }));
 vi.mock("../../interface/tool-workflow-script.ts", () => ({
   registerWorkflowScriptTool: vi.fn(),
 }));
 vi.mock("../../interface/commands.ts", () => ({
-  registerWorkflowsCommand: vi.fn(),
+  registerWorkflowsCommand: mockRegisterWorkflowsCommand,
 }));
 
 // ── import 被测工厂 ──
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import subagentsExtension from "../../index.ts";
-import type { WorkflowRun } from "../../orchestration/models/workflow-run.ts";
+import { Budget } from "../../orchestration/models/budget.ts";
+import { Trace } from "../../orchestration/models/trace.ts";
+import { WorkflowRun } from "../../orchestration/models/workflow-run.ts";
 
 // ── helpers ──
 
@@ -416,5 +424,155 @@ describe("session_shutdown: store.dispose 接线（W2TC16）", () => {
     // 空 Map 不再二次 dispose。若清理被跳过，此处 dispose 会涨到 2 次。
     await shutdownHandler!({ type: "session_shutdown" }, createMockCtx("tui"));
     expect(mockStoreDispose).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── W-N: done run 淘汰接线（loadAll 裁剪 + onRunDone 裁剪） ──
+
+/** fixture 基准时刻（过去时刻，保证 now 恒晚于全部 fixture completedAt）。 */
+const W3_T0 = Date.parse("2020-01-01T00:00:00.000Z");
+function w3IsoAt(min: number): string {
+  return new Date(W3_T0 + min * 60_000).toISOString();
+}
+
+/** loadAll 重水合输入 fixture：done run（status done reason completed + completedAt）。 */
+function makeLoadedDoneRun(runId: string, completedAt: string): WorkflowRun {
+  return WorkflowRun.reconstruct(
+    runId,
+    {
+      scriptSource: "execute() {}",
+      args: {},
+      scriptName: "test",
+      scriptPath: "/fake/test.js",
+    },
+    {
+      status: "done",
+      reason: "completed",
+      budget: new Budget({ maxTokens: 1000 }),
+      calls: new Map(),
+      trace: new Trace(),
+      errorLogs: [],
+    },
+    { startedAt: completedAt, completedAt },
+  );
+}
+
+/** loadAll 重水合输入 fixture：running run（kill-9 恢复输入，reconstruct 跳 I1 合法）。 */
+function makeLoadedRunningRun(runId: string): WorkflowRun {
+  return WorkflowRun.reconstruct(
+    runId,
+    {
+      scriptSource: "execute() {}",
+      args: {},
+      scriptName: "test",
+      scriptPath: "/fake/test.js",
+    },
+    {
+      status: "running",
+      budget: new Budget({ maxTokens: 1000 }),
+      calls: new Map(),
+      trace: new Trace(),
+      errorLogs: [],
+    },
+    { startedAt: w3IsoAt(0) },
+  );
+}
+
+describe("W-3: done run 淘汰接线（loadAll 裁剪 + onRunDone 裁剪）", () => {
+  it("W3TC7: session_start loadAll 灌入后裁剪到 K（21 done + 1 running kill-9 恢复）", async () => {
+    // 21 个 done（completedAt 递增）+ 1 个 running（kill-9 恢复输入）
+    const doneRuns = Array.from({ length: 21 }, (_, i) =>
+      makeLoadedDoneRun(`wf-loaded-${i}`, w3IsoAt(i)));
+    const runningRun = makeLoadedRunningRun("wf-recovered-1");
+    mockLoadAll.mockResolvedValue([...doneRuns, runningRun]);
+
+    const { pi, getSessionStartHandler } = createMockPi();
+    subagentsExtension(pi);
+    const handler = getSessionStartHandler();
+    expect(handler).toBeDefined();
+    await handler!({ type: "session_start" }, createMockCtx("tui"));
+
+    // runs Map 观察点 = registerWorkflowsCommand 第二参数的 runs getter
+    //（工厂入口同步调用，mock.calls[0] 恒存在）
+    const getRuns = mockRegisterWorkflowsCommand.mock.calls[0]?.[1] as
+      | (() => Map<string, WorkflowRun>)
+      | undefined;
+    expect(typeof getRuns).toBe("function");
+    const runs = getRuns!();
+
+    // kill-9 恢复链把 running 转 done,failed（既有语义）后共 22 done → 裁到 20
+    expect(runs.size).toBe(20);
+    // 恢复 run 的 completedAt 为 transition 时刻（now，晚于全部 fixture 过去时间戳）
+    // → 必在保留端
+    expect(runs.has("wf-recovered-1")).toBe(true);
+    expect(runs.get("wf-recovered-1")?.state.status).toBe("done");
+    expect(runs.get("wf-recovered-1")?.state.reason).toBe("failed");
+    // 被淘汰 2 个 = fixture 最旧两个
+    expect(runs.has("wf-loaded-0")).toBe(false);
+    expect(runs.has("wf-loaded-1")).toBe(false);
+    for (let i = 2; i < 21; i++) {
+      expect(runs.has(`wf-loaded-${i}`)).toBe(true);
+    }
+  });
+
+  it("W3TC8: onRunDone 回调接线——notify → track → evict，本轮 run 不被自身触发的裁剪淘汰", async () => {
+    // session_start 预热：恰好 20 个 done（completedAt t0..t19）
+    const doneRuns = Array.from({ length: 20 }, (_, i) =>
+      makeLoadedDoneRun(`wf-pre-${i}`, w3IsoAt(i)));
+    mockLoadAll.mockResolvedValue(doneRuns);
+
+    const { pi, getSessionStartHandler } = createMockPi();
+    subagentsExtension(pi);
+    const handler = getSessionStartHandler();
+    expect(handler).toBeDefined();
+    await handler!({ type: "session_start" }, createMockCtx("tui"));
+
+    // lazyDeps = registerWorkflowTool 第二参数（getter 转发 makeDeps 的 onRunDone）
+    const lazyDeps = mockRegisterWorkflowTool.mock.calls[0]?.[1] as
+      | { onRunDone: (run: WorkflowRun) => void }
+      | undefined;
+    expect(lazyDeps).toBeDefined();
+
+    // 本轮 newDoneRun：completedAt = now（晚于全部 fixture 过去时间戳）
+    const newDoneRun = WorkflowRun.reconstruct(
+      "wf-current-1",
+      {
+        scriptSource: "execute() {}",
+        args: {},
+        scriptName: "test",
+        scriptPath: "/fake/test.js",
+      },
+      {
+        status: "done",
+        reason: "completed",
+        budget: new Budget({ maxTokens: 1000 }),
+        calls: new Map(),
+        trace: new Trace(),
+        errorLogs: [],
+      },
+      { startedAt: w3IsoAt(999), completedAt: new Date().toISOString() },
+    );
+
+    // 模拟真实流程的注册步骤：lifecycle.ts runWorkflow 在创建时 deps.runs.set(runId, run)
+    //（onRunDone 回调只裁剪不注册——本轮 run 必须先在 Map 中，「保留端」断言才有对象）
+    const getRuns = mockRegisterWorkflowsCommand.mock.calls[0]?.[1] as
+      | (() => Map<string, WorkflowRun>)
+      | undefined;
+    expect(typeof getRuns).toBe("function");
+    const runs = getRuns!();
+    runs.set("wf-current-1", newDoneRun);
+
+    // 回调不抛错（notifyDone 对 mock pi Proxy 安全：sendMessage 返回 noop；
+    // toGuiCtx(tui ctx) isGuiCapable false 走无 __gui__ 分支）
+    expect(() => lazyDeps!.onRunDone(newDoneRun)).not.toThrow();
+
+    // 21 done 裁 1：size 回到 20
+    expect(runs.size).toBe(20);
+    // 被淘汰的是 t0 最旧 run 而非本轮 run（completedAt 最新恒在保留端）
+    expect(runs.has("wf-current-1")).toBe(true);
+    expect(runs.has("wf-pre-0")).toBe(false);
+    for (let i = 1; i < 20; i++) {
+      expect(runs.has(`wf-pre-${i}`)).toBe(true);
+    }
   });
 });

@@ -47,7 +47,7 @@ import { setupWorkflowListInjector } from "./injectors/workflow-list-injector.ts
 import { renderBgNotifyMessage } from "./interface/bg-notify-render.ts";
 import { registerWorkflowsCommand } from "./interface/commands.ts";
 import { toGuiCtx } from "./interface/gui-mappers.ts";
-import { notifyDone } from "./interface/helpers.ts";
+import { notifyDone, trackNotifiedRunId } from "./interface/helpers.ts";
 import { registerSubagentTool } from "./interface/subagent-tool.ts";
 // ═══ interface/ 层（tools/commands/tui 合并） ═══
 import { registerSubagentsCommand } from "./interface/subagents.ts";
@@ -57,7 +57,12 @@ import { JsonlRunStore } from "./orchestration/jsonl-run-store.ts";
 // ═══ orchestration/ 层（workflow engine + infra） ═══
 import type { LauncherDeps } from "./orchestration/launcher.ts";
 import { executeNestedWorkflow, runAndWait, type WorkflowRunResult } from "./orchestration/launcher.ts";
-import { pauseRun, scheduleTimeBudget } from "./orchestration/lifecycle.ts";
+import {
+  evictDoneRunsBeyondCap,
+  MAX_RETAINED_DONE_RUNS,
+  pauseRun,
+  scheduleTimeBudget,
+} from "./orchestration/lifecycle.ts";
 import type { WorkflowRun } from "./orchestration/models/workflow-run.ts";
 import { WorkerHostImpl } from "./orchestration/worker-host.ts";
 import { WorkflowScriptRegistryImpl } from "./orchestration/workflow-script-registry-impl.ts";
@@ -259,7 +264,23 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       runner: state.runner,
       runs: state.runs,
       registry,
-      onRunDone: (run: WorkflowRun) => notifyDone(pi, run.runId, run, notifiedRunIds, toGuiCtx(sessionCtx)),
+      // onRunDone 是全部 done 路径的单点汇聚（abortRun + error-recovery），顺序固化为
+      // notify → track → evict：notifyDone 先发完整聚合通知（淘汰后聚合根仍在闭包参数
+      // run 引用上不受影响），trackNotifiedRunId 有界化去重窗口，最后裁剪 done run 内存。
+      // 本轮 run 的 completedAt 在 transition("done") 时同步设为当前时刻=全局最新，
+      // 恒在保留端——结构性保证其不被自身触发的裁剪淘汰，无需 protectRunId。
+      onRunDone: (run: WorkflowRun) => {
+        notifyDone(pi, run.runId, run, notifiedRunIds, toGuiCtx(sessionCtx));
+        trackNotifiedRunId(notifiedRunIds, run.runId);
+        const evicted = evictDoneRunsBeyondCap(state.runs, MAX_RETAINED_DONE_RUNS);
+        if (evicted > 0) {
+          logger.debug("[subagent-workflow] evicted done runs beyond cap", {
+            evicted,
+            keep: MAX_RETAINED_DONE_RUNS,
+            sessionId: lsRef.lastSessionId,
+          });
+        }
+      },
       eventBus: pi.events,
       scheduleTimeBudget: (runId: string, budgetTimeMs: number) =>
         scheduleTimeBudget(runId, deps, budgetTimeMs),
@@ -443,6 +464,22 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
           });
         }
         runs.set(run.runId, run);
+      }
+      // done run 内存有界性：loadAll 全量重水合后立即裁剪到 K。kill-9 恢复（上方
+      // running → transition("done","failed")）的 run completedAt 为 transition 时刻
+      // （当前时间=全局最新）参与排序且必在保留端；多条恢复 run 同 ms completedAt →
+      // tie 稳定排序。淘汰只 delete runs Map 条目——磁盘 state 文件与
+      // workflow-state-link 指针条目均不动（历史审计保留）；下次 session_start loadAll
+      // 从指针全量重水合后再次裁剪，该循环每次 session 启动重复且可接受：内存峰值只在
+      // 启动期，常驻 O(K + 活跃 run)。消除启动峰值需指针 compaction，属 append+replay
+      // 长期方案问题域，非本范围。
+      const evicted = evictDoneRunsBeyondCap(runs, MAX_RETAINED_DONE_RUNS);
+      if (evicted > 0) {
+        logger.debug("[subagent-workflow] evicted done runs beyond cap after loadAll", {
+          evicted,
+          keep: MAX_RETAINED_DONE_RUNS,
+          sessionId,
+        });
       }
     } catch (err) {
       // QMF-4 fix: store.loadAll 失败是关键路径错误，workflow 域将未初始化

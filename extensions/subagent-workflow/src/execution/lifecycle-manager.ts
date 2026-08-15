@@ -320,6 +320,12 @@ export function scanOrphanProcesses(
  * 同一 recordId 的第二次 acquireActivateLock 会 await 链尾，直到前者 release 才 resolve，
  * 从而串行化并发 activate，保证「同一 recordId 全局最多一个活进程」不变量（V2 决策 7
  * 防线 iii：双写者交错 append 会写坏整个 session 文件，比脏 entry 致命一个量级）。
+ *
+ * **tail-identity 自清**（防长进程 recordId 条目泄漏）：release 后经 queueMicrotask
+ * 异步检查——Map 链尾仍是本链尾（identity 匹配）时 delete 回收；有 waiter 排队时其
+ * acquire 已用新链尾覆盖 Map（identity 不匹配）→ 不删，条目由最后释放者回收。waiter
+ * 持 acquire 时刻捕获的 prev Promise 引用而非 Map 查询，delete 不影响其等待。30s
+ * 超时兜底与 _resetLifecycleState（全量 clear）语义不变。
  */
 const activateLockTails = new Map<string, Promise<void>>();
 
@@ -353,11 +359,25 @@ export function acquireActivateLock(recordId: string): Promise<() => void> {
   const prev = activateLockTails.get(recordId) ?? Promise.resolve();
   let releaseFn!: () => void;
   const current = new Promise<void>((resolve) => {
-    releaseFn = resolve;
+    // tail-identity 自清（ES7/LOCK_TAIL_GC_RACE）：resolve 后经 microtask 异步回收——
+    // 仅当 Map 链尾仍是本链尾（tail）时 delete。自清检查只读 Map 引用比较、不依赖
+    // 链尾 Promise 是否已 settle——release() 同步 resolve 后 microtask 执行时，无论
+    // then 链推进到哪一步，identity 比较结果一致；同 recordId 快速 acquire→release→
+    // acquire 序下，后继 acquire 的 set 已覆盖 Map，先行 release 的自清检查
+    // get !== 旧 tail → 不删（正确保留新链）。
+    releaseFn = () => {
+      resolve();
+      queueMicrotask(() => {
+        if (activateLockTails.get(recordId) === tail) {
+          activateLockTails.delete(recordId);
+        }
+      });
+    };
   });
   // 链尾 = 等 prev 完成后挂 current；current 在 releaseFn 调用前保持 pending，
-  // 让下一次 acquire 的 prev 等到本次 release。
-  activateLockTails.set(recordId, prev.then(() => current));
+  // 让下一次 acquire 的 prev 等到本次 release。tail 引用同时作为自清的 identity key。
+  const tail = prev.then(() => current);
+  activateLockTails.set(recordId, tail);
 
   // 30s 超时兜底（v4 A-2）：前序 holder 长期不 release（崩溃/死锁）时，waiter 不无限挂起，
   // 超时抛含恢复指引的错误（调用方可用 message action 重试）。正常拿到锁时 clearTimeout
@@ -399,4 +419,15 @@ export function _resetLifecycleState(): void {
   idleTimers.clear();
   activeProcesses.clear();
   activateLockTails.clear();
+}
+
+/**
+ * 测试钩子：返回 activateLockTails 当前条目数。
+ *
+ * activateLockTails 是模块私有 const，自清语义（tail-identity 回收）的断言需要
+ * 观察点——本导出仅测试使用，命名对齐 _resetLifecycleState（本文件）与
+ * _resetProcessShutdownGuardForTest（index.ts）先例。
+ */
+export function _getActivateLockTailCountForTest(): number {
+  return activateLockTails.size;
 }

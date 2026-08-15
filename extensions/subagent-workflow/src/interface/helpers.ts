@@ -25,6 +25,14 @@ import { mapRunIcon, mapRunStatus } from "./gui-mappers.ts";
 const JSON_INDENT = 2;
 const MAX_RESULT_LENGTH = 8000;
 
+/**
+ * notifiedRunIds 去重窗口大小。
+ *
+ * 最近该数量的已通知 runId 可去重，更旧挤出后不再去重——runId 全局唯一
+ * （wf-<Date.now>-<rand>），旧 id 重现概率为零，语义无损。
+ */
+export const MAX_NOTIFIED_RUN_IDS = 1000;
+
 /** runId 前 8 字符用于显示（与 buildWorkflowGui 的 label 格式一致）。 */
 const RUN_ID_DISPLAY_LENGTH = 8;
 
@@ -150,4 +158,37 @@ export function notifyDone(
     },
     { triggerTurn: true, deliverAs: "steer" },
   );
+}
+
+/**
+ * 把 runId 纳入 notifiedRunIds 去重窗口，超 cap 时删最旧（契约 W3C2）。
+ *
+ * 职责拆分：**去重判定**留在 notifyDone 的 has 读（本体零改动），
+ * 本函数只持**有界化**职责——返回 void，不引入双重去重判定语义。
+ *
+ * 语义：
+ * - 幂等 add：Set.add 对已存在元素不改变其迭代位置（重复 track 同一 id，
+ *   其「最旧」地位不变）。
+ * - FIFO 有界：Set 迭代序=插入序，超 cap 时删迭代器首元素=最旧。
+ *   被挤出窗口的旧 id 再经 notifyDone 会重新发送（runId 全局唯一，旧 id
+ *   重现概率为零，该边界由 W3TC12 单测钉死）。
+ *
+ * 调用点：index.ts onRunDone 回调内、notifyDone 之后（notifyDone 内部已 add，
+ * 此处 track 的 add 是幂等二次添加）。
+ *
+ * @param notifiedRunIds 去重 Set（调用方持有，scope 到 factory 实例）
+ * @param runId run 标识
+ * @param cap 窗口大小（默认 MAX_NOTIFIED_RUN_IDS）
+ */
+export function trackNotifiedRunId(
+  notifiedRunIds: Set<string>,
+  runId: string,
+  cap: number = MAX_NOTIFIED_RUN_IDS,
+): void {
+  notifiedRunIds.add(runId);
+  while (notifiedRunIds.size > cap) {
+    const oldest = notifiedRunIds.values().next().value;
+    if (oldest === undefined) break;
+    notifiedRunIds.delete(oldest);
+  }
 }

@@ -105,16 +105,27 @@ vi.mock("../../orchestration/jsonl-run-store.ts", () => ({
 vi.mock("../../interface/subagent-tool.ts", () => ({ registerSubagentTool: vi.fn() }));
 vi.mock("../../interface/subagents.ts", () => ({ registerSubagentsCommand: vi.fn() }));
 vi.mock("../../interface/bg-notify-render.ts", () => ({ renderBgNotifyMessage: vi.fn() }));
+// registerWorkflowsCommand 用 hoisted spy——W3TC9 需在 it 内读 mock.calls 捕获
+// runs getter（对齐 index-session-start.test.ts 的 mockStoreDispose 先例）。
+const { mockRegisterWorkflowsCommand } = vi.hoisted(() => ({
+  mockRegisterWorkflowsCommand: vi.fn(),
+}));
 vi.mock("../../interface/tool-workflow.ts", () => ({ registerWorkflowTool: vi.fn() }));
 vi.mock("../../interface/tool-workflow-script.ts", () => ({
   registerWorkflowScriptTool: vi.fn(),
 }));
-vi.mock("../../interface/commands.ts", () => ({ registerWorkflowsCommand: vi.fn() }));
+vi.mock("../../interface/commands.ts", () => ({
+  registerWorkflowsCommand: mockRegisterWorkflowsCommand,
+}));
 
 // ── import 被测工厂 ──
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import subagentsExtension from "../../index.ts";
+import { Budget } from "../../orchestration/models/budget.ts";
+import { Trace } from "../../orchestration/models/trace.ts";
+import type { WorkflowRun } from "../../orchestration/models/workflow-run.ts";
+import { WorkflowRun as WorkflowRunCtor } from "../../orchestration/models/workflow-run.ts";
 import { IDENTITY_CUSTOM_TYPE } from "../session-reconstructor.ts";
 
 // ── helpers ──
@@ -301,5 +312,54 @@ describe("session_start identity 子进程写入（M4 / V2 决策 5）", () => {
     expect(data.slug).toBeUndefined();
     expect(data.parentRecordId).toBeUndefined();
     expect(data.forkDepth).toBeUndefined();
+  });
+
+  it("W3TC9: 主进程分支 session_start 裁剪接线——21 done 经 loadAll 裁到 20（identity 与淘汰共存）", async () => {
+    // identity handler 前段（appendEntry）与裁剪接线（loadAll 循环后）共存于同一
+    // session_start handler——主进程分支（PI_SUBAGENT_SELF_RECORD_ID 未设，beforeEach
+    // 已清）验证裁剪同样生效。
+    const T0 = Date.parse("2020-01-01T00:00:00.000Z");
+    const doneRuns = Array.from({ length: 21 }, (_, i) =>
+      WorkflowRunCtor.reconstruct(
+        `wf-id-${i}`,
+        {
+          scriptSource: "execute() {}",
+          args: {},
+          scriptName: "test",
+          scriptPath: "/fake/test.js",
+        },
+        {
+          status: "done",
+          reason: "completed",
+          budget: new Budget({ maxTokens: 1000 }),
+          calls: new Map(),
+          trace: new Trace(),
+          errorLogs: [],
+        },
+        {
+          startedAt: new Date(T0 + i * 60_000).toISOString(),
+          completedAt: new Date(T0 + i * 60_000).toISOString(),
+        },
+      ));
+    mockLoadAll.mockResolvedValue(doneRuns);
+
+    const { pi, getSessionStartHandler } = createMockPi();
+    subagentsExtension(pi);
+    const handler = getSessionStartHandler();
+    expect(handler).toBeDefined();
+    await handler!({ type: "session_start" }, createMockCtx());
+
+    // runs Map 观察：registerWorkflowsCommand 第二参数的 runs getter
+    const getRuns = mockRegisterWorkflowsCommand.mock.calls[0]?.[1] as
+      | (() => Map<string, WorkflowRun>)
+      | undefined;
+    expect(typeof getRuns).toBe("function");
+    const runs = getRuns!();
+    // 21 done 裁 1：最旧（wf-id-0）被裁
+    expect(runs.size).toBe(20);
+    expect(runs.has("wf-id-0")).toBe(false);
+    for (let i = 1; i < 21; i++) {
+      expect(runs.has(`wf-id-${i}`)).toBe(true);
+    }
   });
 });

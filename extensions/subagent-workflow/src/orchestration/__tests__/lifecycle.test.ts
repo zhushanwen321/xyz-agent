@@ -17,6 +17,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   abortRun,
+  evictDoneRunsBeyondCap,
+  MAX_RETAINED_DONE_RUNS,
   pauseRun,
   resumeRun,
   runWorkflow,
@@ -438,5 +440,201 @@ describe("abortRun", () => {
   it("runId 不存在 → 抛错", async () => {
     const deps = makeDeps();
     await expect(abortRun("wf-missing", deps)).rejects.toThrow("not found");
+  });
+});
+
+// ── evictDoneRunsBeyondCap ────────────────────────────────────
+
+/**
+ * 构造可重水合的 WorkflowRun 快照（对齐 crash-recovery.test.ts makeRun 模式——
+ * WorkflowRun.reconstruct 跳过 I1 校验，running/paused 快照合法）。
+ *
+ * @param runId run 标识
+ * @param opts.completedAt 完成时刻 ISO 串（缺省=缺失场景，模拟旧格式/异常快照）
+ * @param opts.status 状态（默认 done；running/paused 用于白名单验证）
+ */
+function makeEvictableRun(
+  runId: string,
+  opts: { completedAt?: string; status?: "running" | "paused" | "done" } = {},
+): WorkflowRun {
+  const status = opts.status ?? "done";
+  return WorkflowRun.reconstruct(
+    runId,
+    {
+      scriptSource: "execute() {}",
+      args: {},
+      scriptName: "test",
+      scriptPath: "/fake/test.js",
+    },
+    {
+      status,
+      reason: status === "done" ? "completed" : undefined,
+      budget: new Budget({ maxTokens: 1000 }),
+      calls: new Map(),
+      trace: new Trace(),
+      errorLogs: [],
+    },
+    {
+      startedAt: opts.completedAt ?? "2026-08-15T00:00:00.000Z",
+      ...(opts.completedAt !== undefined ? { completedAt: opts.completedAt } : {}),
+    },
+  );
+}
+
+/** ISO 基准时刻（过去时刻），isoAt(n) = 基准 + n 分钟。 */
+const EVICT_T0 = Date.parse("2020-01-01T00:00:00.000Z");
+function isoAt(min: number): string {
+  return new Date(EVICT_T0 + min * 60_000).toISOString();
+}
+
+describe("evictDoneRunsBeyondCap（done run 内存淘汰，K=MAX_RETAINED_DONE_RUNS）", () => {
+  it("W3TC1: 状态白名单——仅 done 可淘汰，running/paused 永不删", () => {
+    const runs = new Map<string, WorkflowRun>();
+    runs.set("wf-done-1", makeEvictableRun("wf-done-1", { completedAt: isoAt(1) }));
+    runs.set("wf-done-2", makeEvictableRun("wf-done-2", { completedAt: isoAt(2) }));
+    runs.set("wf-done-3", makeEvictableRun("wf-done-3", { completedAt: isoAt(3) }));
+    runs.set("wf-run-1", makeEvictableRun("wf-run-1", { status: "running" }));
+    runs.set("wf-run-2", makeEvictableRun("wf-run-2", { status: "running" }));
+    runs.set("wf-paused-1", makeEvictableRun("wf-paused-1", { status: "paused" }));
+    runs.set("wf-paused-2", makeEvictableRun("wf-paused-2", { status: "paused" }));
+
+    const evicted = evictDoneRunsBeyondCap(runs, 2);
+
+    // 3 done 超保留数 2 → 淘汰最旧 1 个
+    expect(evicted).toBe(1);
+    // running/paused 全部仍在 Map（白名单外，即使 completedAt 缺失也不参与排序淘汰）
+    for (const id of ["wf-run-1", "wf-run-2", "wf-paused-1", "wf-paused-2"]) {
+      expect(runs.has(id)).toBe(true);
+    }
+    // done 仅剩 t2/t3 两个（t1 最旧被淘汰）
+    expect(runs.has("wf-done-1")).toBe(false);
+    expect(runs.has("wf-done-2")).toBe(true);
+    expect(runs.has("wf-done-3")).toBe(true);
+    expect(runs.size).toBe(6);
+  });
+
+  it("W3TC2: 按 meta.completedAt 升序淘汰最旧超限项 + 返回淘汰计数（非插入序）", () => {
+    const runs = new Map<string, WorkflowRun>();
+    // 插入序刻意与 completedAt 序无关：先倒序插入 t24→t0，再 delete+set 重排几个
+    // 中段条目（移到 Map 尾部）模拟一般性「完成序≠插入序」——若实现退化为按 Map
+    // 迭代首 excess 个淘汰，删的将不是 t0-t4，本用例失败
+    for (let i = 24; i >= 0; i--) {
+      runs.set(`wf-t${i}`, makeEvictableRun(`wf-t${i}`, { completedAt: isoAt(i) }));
+    }
+    for (const i of [5, 15, 20]) {
+      const run = runs.get(`wf-t${i}`)!;
+      runs.delete(`wf-t${i}`);
+      runs.set(`wf-t${i}`, run);
+    }
+
+    const evicted = evictDoneRunsBeyondCap(runs, MAX_RETAINED_DONE_RUNS);
+
+    expect(evicted).toBe(5);
+    expect(runs.size).toBe(MAX_RETAINED_DONE_RUNS);
+    // 被删的恰是 completedAt 最小的 5 个（t0-t4）
+    for (let i = 0; i < 5; i++) {
+      expect(runs.has(`wf-t${i}`)).toBe(false);
+    }
+    for (let i = 5; i < 25; i++) {
+      expect(runs.has(`wf-t${i}`)).toBe(true);
+    }
+  });
+
+  it("W3TC3: 反序 fixture——创建最早、完成最晚的 run 不被淘汰（GAP-1 回归锚点）", () => {
+    // 嵌套 workflow 竞态背景：父 run 创建最早（Map 首元素）、完成最晚（completedAt
+    // 全局最新）。同 session 累计 21 个 done 时父 run 完成瞬间触发同步裁剪——若按
+    // Map 插入序淘汰，父 run 被淘汰，runAndWait 轮询窗口内 get 不到 → 误返
+    // "Run not found"。completedAt 排序结构性消除。
+    const runs = new Map<string, WorkflowRun>();
+    // 插入序 = 创建序：wf-parent 最先插入，completedAt=t100 全局最新（先创建后完成）
+    runs.set("wf-parent", makeEvictableRun("wf-parent", { completedAt: isoAt(100) }));
+    for (let i = 0; i < 20; i++) {
+      // child(i+1) 后插入，completedAt=t0..t19（父 run 之前完成）
+      runs.set(`wf-child${i + 1}`, makeEvictableRun(`wf-child${i + 1}`, { completedAt: isoAt(i) }));
+    }
+
+    const evicted = evictDoneRunsBeyondCap(runs, MAX_RETAINED_DONE_RUNS);
+
+    expect(evicted).toBe(1);
+    // 被淘汰的是 child1（completedAt 最旧 t0），非 Map 首元素 wf-parent
+    expect(runs.has("wf-child1")).toBe(false);
+    expect(runs.has("wf-parent")).toBe(true);
+    for (let i = 2; i <= 20; i++) {
+      expect(runs.has(`wf-child${i}`)).toBe(true);
+    }
+  });
+
+  it("W3TC4: completedAt 缺失 fallback 视为最旧（排序键空串字典序最小）", () => {
+    const runs = new Map<string, WorkflowRun>();
+    // 插入序 [runC, runA, runB]——缺失者 runA 居中，防「碰巧首元素」假通过
+    runs.set("wf-runC", makeEvictableRun("wf-runC", { completedAt: isoAt(2) }));
+    runs.set("wf-runA", makeEvictableRun("wf-runA"));
+    runs.set("wf-runB", makeEvictableRun("wf-runB", { completedAt: isoAt(1) }));
+
+    const evicted = evictDoneRunsBeyondCap(runs, 2);
+
+    // runA 缺失 completedAt = 空串排序键 → 字典序最小=最旧 → 先被淘汰
+    expect(evicted).toBe(1);
+    expect(runs.has("wf-runA")).toBe(false);
+    expect(runs.has("wf-runB")).toBe(true);
+    expect(runs.has("wf-runC")).toBe(true);
+  });
+
+  it("W3TC5: tie 稳定排序——同 completedAt 按 Map 插入序确定性淘汰", () => {
+    function buildTieFixture(): Map<string, WorkflowRun> {
+      const runs = new Map<string, WorkflowRun>();
+      const tie = isoAt(50);
+      for (const id of ["wf-w1", "wf-w2", "wf-w3", "wf-w4"]) {
+        runs.set(id, makeEvictableRun(id, { completedAt: tie }));
+      }
+      return runs;
+    }
+
+    const runs = buildTieFixture();
+    const evicted = evictDoneRunsBeyondCap(runs, 2);
+
+    // tie 组内先插入者视为更旧先被淘汰
+    expect(evicted).toBe(2);
+    expect(runs.has("wf-w1")).toBe(false);
+    expect(runs.has("wf-w2")).toBe(false);
+    expect(runs.has("wf-w3")).toBe(true);
+    expect(runs.has("wf-w4")).toBe(true);
+
+    // 确定性：同 fixture 二次运行断言同一淘汰集合
+    const runs2 = buildTieFixture();
+    const evicted2 = evictDoneRunsBeyondCap(runs2, 2);
+    expect(evicted2).toBe(2);
+    expect(runs2.has("wf-w1")).toBe(false);
+    expect(runs2.has("wf-w2")).toBe(false);
+    expect(runs2.has("wf-w3")).toBe(true);
+    expect(runs2.has("wf-w4")).toBe(true);
+  });
+
+  it("W3TC6: done 数 <= keepDone 时 no-op 返回 0（恰好 K / 不足 K 两场景）", () => {
+    // 场景①：恰好 20 个 done（=K）
+    const exact = new Map<string, WorkflowRun>();
+    for (let i = 0; i < MAX_RETAINED_DONE_RUNS; i++) {
+      exact.set(`wf-ex-${i}`, makeEvictableRun(`wf-ex-${i}`, { completedAt: isoAt(i) }));
+    }
+    const evictedExact = evictDoneRunsBeyondCap(exact, MAX_RETAINED_DONE_RUNS);
+    expect(evictedExact).toBe(0);
+    expect(exact.size).toBe(MAX_RETAINED_DONE_RUNS);
+    for (let i = 0; i < MAX_RETAINED_DONE_RUNS; i++) {
+      expect(exact.has(`wf-ex-${i}`)).toBe(true);
+    }
+
+    // 场景②：5 个 done（<K）+ 混入 running/paused
+    const under = new Map<string, WorkflowRun>();
+    for (let i = 0; i < 5; i++) {
+      under.set(`wf-un-${i}`, makeEvictableRun(`wf-un-${i}`, { completedAt: isoAt(i) }));
+    }
+    under.set("wf-un-run", makeEvictableRun("wf-un-run", { status: "running" }));
+    under.set("wf-un-paused", makeEvictableRun("wf-un-paused", { status: "paused" }));
+    const evictedUnder = evictDoneRunsBeyondCap(under, MAX_RETAINED_DONE_RUNS);
+    expect(evictedUnder).toBe(0);
+    expect(under.size).toBe(7);
+    for (const id of ["wf-un-run", "wf-un-paused"]) {
+      expect(under.has(id)).toBe(true);
+    }
   });
 });
