@@ -109,8 +109,12 @@ const selectionPos = ref({ top: 0, left: 0 })
 let xterm: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let resizeObserver: ResizeObserver | null = null
-// scrollback 回放标记：mount 后把 buffer 全量 write 一次，之后只 write 增量
-let replayedScrollbackLength = 0
+// scrollback 回放指针（逻辑索引，W14 审查 Fix-1）：已回放的「累计 append chunk 总数」。
+// 逻辑索引 - (totalAppended - scrollback.length) = 物理索引。旧实现用物理绝对索引
+// (replayedScrollbackLength)，稳态轮转（达 LIMIT 后 push N + splice N）时 length 净值守恒、
+// 物理索引失义 → 新输出永不回放（实时输出冻结）。逻辑指针随 totalAppended 单调前进。
+// mount / 切 session 时归零（全量回放）。
+let replayedUpTo = 0
 
 /** 取 session cwd（spawn 用）。 */
 function getSessionCwd(): string | undefined {
@@ -191,18 +195,23 @@ function initXterm(): FitAddon | null {
 /** 回放 scrollback（mount 时全量，之后增量）。未回放部分合并为单次 write（D-6.1：每帧一次）。 */
 function replayScrollback(): void {
   if (!xterm) return
-  const lines = state.value.scrollback
-  // scrollback 按 PTY 输出 chunk 累积（非按行），replayedScrollbackLength 跟踪 chunk 数。
+  const p = state.value
+  const lines = p.scrollback
+  const total = p.totalAppended
+  const cropped = total - lines.length // 累计被裁剪数（append 总数 - 现存数）
   // rAF flush 批量 append 后 watch 每帧至多触发一次，这里把本批 chunk join 成一次 write
   // （xterm.write 是字节流语义，write(a);write(b) ≡ write(a+b)，合并只减少调用次数）。
-  if (replayedScrollbackLength >= lines.length) {
-    // 指针超过当前长度只在 scrollback 被裁剪（超 SCROLLBACK_LIMIT splice 前缀）时发生：
-    // 钳制回当前末尾（被裁掉的部分已 write 过），与旧逐 chunk 回放的行为一致
-    replayedScrollbackLength = lines.length
+  if (replayedUpTo < cropped) {
+    // 指针落后于裁剪线：部分未回放 chunk 已被裁掉，物理上不可恢复。跳过本批不 write——
+    // 宁缺勿重复（重复 write 会造成内容失真）。实际不可达：单次 flush 的 chunk 数受
+    // MAX_OUTPUT_QUEUE=1000 < SCROLLBACK_LIMIT=5000 限制，指针每帧对齐时落后量不可能
+    // 超过裁剪增量。防御性保留（等价旧实现的钳制分支语义）。
+    replayedUpTo = total
     return
   }
-  const merged = lines.slice(replayedScrollbackLength).join('')
-  replayedScrollbackLength = lines.length
+  if (replayedUpTo >= total) return
+  const merged = lines.slice(replayedUpTo - cropped).join('')
+  replayedUpTo = total
   xterm.write(merged)
 }
 
@@ -258,12 +267,15 @@ onBeforeUnmount(() => {
   xterm?.dispose()
   xterm = null
   fitAddon = null
-  replayedScrollbackLength = 0
+  replayedUpTo = 0
 })
 
-// 监听 scrollback 变化，增量 write 到 xterm（PTY 切走期间累积的输出，切回后实时 write）
+// 监听 flush 版本变化（W14 审查 Fix-1），增量 write 到 xterm。
+// 不用 scrollback.length 作源：达 SCROLLBACK_LIMIT 稳态后每次 flush「push N + splice 回 N」
+// 净值守恒（5000→5000），length 不变 watch 跳过回调 → 新输出永不写入 xterm（实时输出冻结）。
+// flushVersion 每次有内容的 flush 单调 +1，稳定触发。
 watch(
-  () => state.value.scrollback.length,
+  () => state.value.flushVersion,
   () => {
     if (xterm) replayScrollback()
   },
@@ -300,7 +312,7 @@ watch(
     xterm?.dispose()
     xterm = null
     fitAddon = null
-    replayedScrollbackLength = 0
+    replayedUpTo = 0
     await nextTick()
     const fit2 = initXterm()
     if (!xterm || !fit2) return

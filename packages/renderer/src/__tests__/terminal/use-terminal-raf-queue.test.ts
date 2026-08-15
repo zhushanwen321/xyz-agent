@@ -14,7 +14,7 @@
  * 运行：cd packages/renderer && npx vitest run src/__tests__/terminal/use-terminal-raf-queue.test.ts
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { defineComponent, h, ref } from 'vue'
+import { defineComponent, h, ref, type Ref } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ServerMessage } from '@xyz-agent/shared'
@@ -71,9 +71,27 @@ vi.mock('@/stores/session', () => ({
   }),
 }))
 
+// ── wrap useSessionScopedState：init 工厂计数（W14 Fix-4 断言支撑）──────────
+// createPartition 每被调一次 = 新建一个分区。session 销毁后迟到 rAF 若按 sid 走
+// updateFor → getOrCreatePartition 会复活分区（init 再 +1）；闭包持分区引用则零调用。
+// wrap 只计数透传，行为不变，不影响其他用例。
+const partitionInits = vi.hoisted(() => ({ count: 0 }))
+vi.mock('@/composables/useSessionScopedState', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useSessionScopedState')>()
+  return {
+    ...actual,
+    useSessionScopedState: <T,>(sid: Ref<string | null>, init: () => T) =>
+      actual.useSessionScopedState<T>(sid, () => {
+        partitionInits.count += 1
+        return init()
+      }),
+  }
+})
+
 import { useTerminal } from '@/composables/features/terminal/useTerminal'
 import TerminalView from '@/components/panel/TerminalView.vue'
 import { dispatchSession } from '@/api/events'
+import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
 
 // happy-dom 无 ResizeObserver（TerminalView 依赖），polyfill
 class MockResizeObserver {
@@ -117,6 +135,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['requestAnimationFrame'] })
   msgSeq = 0
   xtermInstances.length = 0
+  partitionInits.count = 0
   terminalApiMock.spawn.mockClear()
   terminalApiMock.write.mockClear()
   terminalApiMock.attach.mockClear()
@@ -216,6 +235,31 @@ describe('D-6.1 rAF 写队列（useTerminal 层）', () => {
     expect(sb[0]).toBe('x30')
     expect(sb[sb.length - 1]).toBe(`x${total - 1}`)
   })
+
+  it('RQ-10: Fix-4 —— deleteSession 后迟到 rAF 不复活分区（init 零调用，Map 不新增）', () => {
+    const Host = makeHost('s1')
+    const wrapper = mount(Host)
+    wrappers.push(wrapper)
+    const terminal = wrapper.vm.terminal as UseTerminalReturn
+
+    // 正常一轮 flush（分区存活），确认链路工作
+    dispatchSession('s1', makeDataMsg('s1', 'pre'))
+    advanceFrame()
+    expect(terminal.current.value.scrollback).toEqual(['pre'])
+    expect(terminal.current.value.totalAppended).toBe(1)
+    expect(terminal.current.value.flushVersion).toBe(1)
+
+    const before = partitionInits.count
+
+    // session 销毁（deleteSession 编排）：删分区 → 已调度的 rAF 变成迟到回调
+    dispatchSession('s1', makeDataMsg('s1', 'doomed'))
+    triggerSessionCleanups('s1')
+    advanceFrame()
+
+    // 迟到回调只写孤儿分区对象（随 GC 回收），不经 updateFor→getOrCreatePartition
+    // 重建分区——init 工厂零调用。修复前（按 sid 走 updateFor）此处会 +1 复活空分区。
+    expect(partitionInits.count).toBe(before)
+  })
 })
 
 // ── Part 2：TerminalView 组件级（data → rAF → watch → xterm.write 端到端）──
@@ -286,5 +330,67 @@ describe('D-6.1 rAF 写队列（TerminalView 端到端）', () => {
     // 回放为单次合并 write，内容 = s1 分区全量（完整无缺漏）
     expect(xterm.write).toHaveBeenCalledTimes(1)
     expect(xterm.write).toHaveBeenCalledWith('out1out2out3')
+  })
+
+  it('RQ-9: Fix-1 —— LIMIT 稳态下连续 flush（length 净值守恒 5000→5000）仍触发 watch → xterm.write', async () => {
+    const wrapper = mount(TerminalView, { props: { sessionId: 's1' } })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    // 预填至稳态：分帧喂超上限 chunk，scrollback 达 LIMIT 后每次 flush「push N + splice 回 5000」
+    const total = 5030
+    for (let i = 0; i < total; i++) {
+      dispatchSession('s1', makeDataMsg('s1', `x${i}`))
+      if (i % 100 === 99) advanceFrame()
+    }
+    advanceFrame()
+    await flushPromises() // 让预填阶段的 watch 全部对齐（replayedUpTo = totalAppended）
+
+    const xterm = xtermInstances[xtermInstances.length - 1]!
+    xterm.write.mockClear()
+
+    // 稳态下 3 次独立 flush：每次 push 1 + splice 1，scrollback.length 净值 5000→5000 不变。
+    // 修复前：watch(() => scrollback.length) 不触发 → write 零调用（实时输出冻结）；
+    // 修复后：watch(flushVersion) 每次单调 +1 稳定触发。
+    for (const c of ['steady-1\n', 'steady-2\n', 'steady-3\n']) {
+      dispatchSession('s1', makeDataMsg('s1', c))
+      advanceFrame()
+      await flushPromises()
+    }
+
+    expect(xterm.write).toHaveBeenCalledTimes(3)
+    expect(xterm.write).toHaveBeenNthCalledWith(1, 'steady-1\n')
+    expect(xterm.write).toHaveBeenNthCalledWith(2, 'steady-2\n')
+    expect(xterm.write).toHaveBeenNthCalledWith(3, 'steady-3\n')
+  })
+
+  it('RQ-11: Fix-5 —— 真实 v-if unmount → remount：onMounted 全量回放路径走通', async () => {
+    // 第一实例：累积输出并 flush
+    const w1 = mount(TerminalView, { props: { sessionId: 's1' } })
+    await flushPromises()
+    for (const c of ['old-1', 'old-2']) {
+      dispatchSession('s1', makeDataMsg('s1', c))
+    }
+    advanceFrame()
+    await flushPromises()
+    w1.unmount() // 真实 tab 切走（PanelContainer v-if）：订阅退订 + 分区随实例销毁
+
+    // 第二实例：v-if 切回 remount（RQ-8 的 setProps 切换不销毁实例，绕过了此路径）
+    const w2 = mount(TerminalView, { props: { sessionId: 's1' } })
+    wrappers.push(w2)
+    await flushPromises()
+    const xterm2 = xtermInstances[xtermInstances.length - 1]!
+    xterm2.write.mockClear()
+
+    // 已知缺口行为固化（W14 审查 Fix-2）：旧分区随旧实例销毁，remount 是全新分区——
+    // 旧数据不回放（「切走期间照常累积」前提不成立，分区生命周期上提归 W27/D-6.2）
+    expect(xterm2.write).not.toHaveBeenCalled()
+
+    // remount 后链路完整：新输出 → 新分区 → rAF flush → watch → write
+    dispatchSession('s1', makeDataMsg('s1', 'fresh-1'))
+    advanceFrame()
+    await flushPromises()
+    expect(xterm2.write).toHaveBeenCalledTimes(1)
+    expect(xterm2.write).toHaveBeenCalledWith('fresh-1')
   })
 })

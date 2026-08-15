@@ -68,6 +68,10 @@ vi.mock('@xterm/xterm/css/xterm.css', () => ({}))
 // TerminalView 用 terminal.current（ComputedRef）访问状态，模板自动 unwrap，需用真 ref。
 const mockState = {
   scrollback: [] as string[],
+  outputQueue: [] as string[],
+  rafPending: false,
+  flushVersion: 0,
+  totalAppended: 0,
   ptyAlive: false,
   cols: 80,
   rows: 24,
@@ -102,6 +106,10 @@ beforeEach(() => {
   setActivePinia(createPinia())
   // 重置 mock 状态（每例隔离）
   mockState.scrollback = []
+  mockState.outputQueue = []
+  mockState.rafPending = false
+  mockState.flushVersion = 0
+  mockState.totalAppended = 0
   mockState.ptyAlive = false
   mockState.cols = 80
   mockState.rows = 24
