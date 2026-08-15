@@ -1,8 +1,9 @@
 ---
 name: trim-cot-leakage
 description: >-
-  清理 prompt 文本/文档中的推理过程泄露。触发词："cot 泄露"、"leakage"、
-  "清理草稿痕迹"、"审 prompt 措辞"、"trim cot"。仅用于 xyz-agent 项目。
+  Use when 清理 prompt 文本/文档中的推理过程泄露。触发词："cot 泄露"、
+  "leakage"、"清理草稿痕迹"、"审 prompt 措辞"、"trim cot"。
+  不用于 数据/安全泄漏（data leakage）、或 prompt 结构与设计审查（用 code-review）。
 ---
 
 # trim-cot-leakage

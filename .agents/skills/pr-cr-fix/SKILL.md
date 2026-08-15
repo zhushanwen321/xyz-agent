@@ -1,14 +1,11 @@
 ---
 name: pr-cr-fix
 description: >-
-  Use when finishing a worktree branch and wanting all three — open the PR,
-  run a multi-dim review on its diff, fix must-fix issues, and re-push —
-  in one coordinated run. Triggers "review and open PR", "review 完开 PR",
-  "把 review 问题修了开 PR", "pr-cr-fix", "review → PR". 路由 skill：PR 操作委托
-  pull-request，review+fix 委托 code-review（路径 1 调 review-fix-loop workflow）。
-  Only for xyz-agent worktree. Not for non-PR review (use code-review skill),
-  not for raw PR submission without review (use pull-request skill), not for
-  other projects.
+  Use when 一个分支要走完「开 PR → 多维 review → 修 must-fix → 重新 push」
+  的完整流程。触发词："review and open PR"、"review 完开 PR"、
+  "把 review 问题修了开 PR"、"pr-cr-fix"、"review → PR"。路由 skill：PR 操作
+  委托 pull-request，review 委托 code-review。
+  不用于 单独 review（用 code-review）、单独提交 PR（用 pull-request）。
 ---
 
 # Pr-Cr-Fix — 路由 skill：开 PR → review+fix → 推 PR

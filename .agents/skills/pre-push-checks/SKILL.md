@@ -1,8 +1,9 @@
 ---
 name: pre-push-checks
 description: >-
-  push 前的最小验证。触发词："push 前检查"、"pre-push"、"提交前验证"、
-  "要 push 了"、"检查再推"。仅用于 xyz-agent 项目。
+  Use when push 前需要跑最小验证。触发词："push 前检查"、"pre-push"、
+  "提交前验证"、"要 push 了"、"检查再推"。
+  不用于 push 失败排查/CI 故障诊断、或开 PR 的完整门禁（用 pull-request）。
 ---
 
 # pre-push-checks
