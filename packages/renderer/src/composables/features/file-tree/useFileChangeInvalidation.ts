@@ -1,38 +1,111 @@
 /**
- * useFileChangeInvalidation —— 跨 store 失效编排的共享 helper（消除 D3 重复）。
+ * useFileChangeInvalidation —— file_changes ready 帧驱动的失效编排共享 helper（D-9，perf W19）。
  *
- * 背景：useFileTree.setupInvalidation 与 useFileSearch.setupInvalidation 曾近乎复制——
- * 都 watch [sessionIdRef, chatStore.messages]，提取 assistant 消息的 fileChanges paths，
- * diff lastPaths 快照，仅在 paths 集合增长时触发 store.invalidate。两者唯一差异是
- * invalidate 的语义（增量 changed paths vs 全量 sid）。此处抽出共同 watch + 提取 + diff
- * 逻辑，由调用方经 onInvalidate 回调各自表达失效语义。
+ * 历史：W6 抽取的共享 helper（消除 useFileTree/useFileSearch 的 watch 重复），W11（R-16）把
+ * watch source 迁到 per-sid 内层 ref 并去 deep；W19（D-9 / R-23）把触发语义从「消息数组替换即
+ * 全量重扫 diff paths」改为「扫尾部消息的 changeSetStatus，仅 ready 转变时动作」，并补上
+ * overlay 回写断点。两职责共用同一触发（09 文档 §3.3.3 职责分离定案）：
  *
- * 多实例隔离：lastPaths 为每次调用闭包内的局部状态（原实现亦是闭包局部，非模块级缓存），
- * 故每个 setup 调用拥有独立的快照，多实例互不干扰。
+ * - 职责一（目录/搜索缓存失效）：ready 帧是每 turn 一次的权威全集（isFullSet=true），直接用
+ *   该消息的 fileChanges 路径清单调 onInvalidate——比旧的「全消息累积 diff」更准（同文件二次
+ *   修改也会再失效）；RPC 失败不阻断（本地清单先行，不依赖 RPC 结果）。
+ * - 职责二（git 角标刷新）：ready 后 debounce 300ms（trailing，per-sid）→ git.status RPC
+ *   （复用现有通道，runtime 侧经 GitStateService TTL 缓存）→ fileTreeStore.setGitOverlay
+ *   （W15 预聚合随 setGitOverlay 自动重建）。修复「AI 写文件后树角标 stale 直到重开」断点。
  *
- * 依赖方向：本 helper 仅 watch chatStore（不直接 import 任何业务 store），调用方负责
- * 决定如何 invalidate 自己的 store——保持「stores 间禁止 import」约束。
+ * 触发源（R-23）：浅 watch `() => chatStore.messages.get(sid)?.value`（数组替换触发，W11 既有
+ * source 不变）+ 回调内扫尾部 N 条 assistant 消息的 changeSetStatus。file_changes 无独立可订阅
+ * 的 composable 层事件（WS 帧经 useChat → effect registry 写 store，本 helper 只能读 store 派生），
+ * 而 applyFileChanges 每帧（accumulating/ready）都经 commitMessages 替换消息数组，status map
+ * 写在其后同步完成——回调扫描时两者均已就绪。
+ *
+ * token 路径零副作用：text_delta commit / accumulating 帧同样触发本回调（数组替换），但扫描
+ * 无 ready 转变即 no-op——零 RPC、零 onInvalidate（口径与 09 文档 P-D9-3 一致：非零 watch 回调、
+ * 零副作用），扫描成本有界（尾部固定窗口，O(窗口) 非 O(全部消息)）。
+ *
+ * [代码现实偏差，R-23 措辞修正] changeSetStatus 并非消息内嵌字段，而是 chat store 的
+ * changeSetStatuses Map（key `${sid}:${messageId}`，changeset.ts 控制器独占）。扫描经
+ * chatStore.getChangeSetStatus(sid, messageId) 读 map——「扫末条消息的 changeSetStatus」的
+ * 等价实现。hydrate（重开 session 历史回填）不重建该 map，故重开后历史变更集不再触发
+ * 失效/刷新（旧实现按累积 paths 在每次切 sid 时全量重失效）；活跃会话的切走切回仍重扫重失效。
+ *
+ * 多实例隔离：processedReadyKeys 为每次调用的闭包局部状态，多消费方实例各自独立快照。
+ *
+ * 依赖方向：本 helper 读 chatStore + 写 fileTreeStore（composable → store 合法方向，非
+ * stores 间互 import）。onInvalidate 回调仍由调用方表达自己的失效语义。
  */
 import { watch, type Ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
+import { useFileTreeStore } from '@/stores/fileTree'
+import { git as gitApi } from '@/api'
 
 /**
- * 失效回调：当检测到 fileChanges paths 集合增长时触发。
+ * 失效回调：检测到新的 ready 变更集时触发（ready 路径清单语义，非全量重扫 diff）。
  * @param sid        当前 session id（已确保非空）
- * @param newPaths   本次相比上次新增的 paths（即 diff 出的增量，非空）
+ * @param newPaths   本次新 ready 变更集（可能多个）并集的 paths（非空）
  */
 export type FileChangeInvalidateFn = (sid: string, newPaths: string[]) => void
 
 /**
- * 监听 chat store 的 fileChanges 变化，提取最新 filePaths 并与上次快照 diff，
- * 仅当出现新 path 时回调 onInvalidate（避免每帧重复触发）。
+ * 尾部扫描窗口：ready 帧挂在 turn 的最后一条 assistant 消息（agent_end 时 applyFileChanges
+ * 按 messageId 定位、miss 时兜底挂最后一条 assistant），turn 结束后只在尾部。固定窗口保证
+ * 每 token 回调的扫描成本 O(1) 级（而非旧实现的 O(全部消息)）。
+ */
+const READY_SCAN_WINDOW = 8
+
+/** overlay 回写 debounce（09 D-9 定案 300ms trailing：防多 turn/多 session 连续完成的 RPC 抖动） */
+const OVERLAY_DEBOUNCE_MS = 300
+
+/**
+ * 模块级 per-sid debounce timer。3 个消费方（useFileTree/useFileSearch/useSearchModalDeps）
+ * 各自实例化本 helper，同一 sid 的多次 ready 调度在此合并为一次 RPC。
  *
- * [R-16] watch source 读 per-sid 内层分区 ref（D-1 容器的内层 ShallowRef，非整 Map），
- * 无 deep：同 sid 数组替换触发 / 异 sid 替换不触发（失效收敛，触发面从全部 session
- * 收敛到当前 session；同 sid 消息数组依赖不可变替换语义）。session 切换重订阅、
- * lastPaths 快照逻辑与原 useFileTree / useFileSearch.setupInvalidation 等价。
+ * 生命周期取舍（不随 unwatch 取消）：timer 到点写「捕获 sid」的 overlay 分桶（E9-c 语义，
+ * 与 loadTree/expandNode 的迟到响应写 store 同模式，T2.6 overlay 先到后挂载天然支持），
+ * 组件卸载后触发只写一个 store 分桶、无 UI 副作用，one-shot 300ms 自清——取消反而会丢掉
+ * 已确认 turn 的最终态刷新。sid 切换互不影响（timer 按 sid 分桶，各写各的）。
+ */
+const overlayTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+/** ready 后调度 overlay 回写（trailing debounce，窗口内多次 ready 只保留最后一次） */
+function scheduleOverlayRefresh(sid: string): void {
+  const existing = overlayTimers.get(sid)
+  if (existing) clearTimeout(existing)
+  overlayTimers.set(
+    sid,
+    setTimeout(() => {
+      overlayTimers.delete(sid)
+      void refreshOverlay(sid)
+    }, OVERLAY_DEBOUNCE_MS),
+  )
+}
+
+/** 拉 git.status 现在态全量并回写 fileTree overlay（含 file_changes 未覆盖的既有 dirty 文件） */
+async function refreshOverlay(sid: string): Promise<void> {
+  try {
+    const result = await gitApi.status(sid)
+    // E9-c：写闭包捕获的 sid 分桶——异步回来时组件可能已切 session，仍落到正确 session 的桶
+    if (result.isRepo) {
+      useFileTreeStore().setGitOverlay(sid, result.files)
+      // P-D9-2 探针：V-P2-3（AI 一轮改 5 文件后角标刷新）dev 实测观测点
+      console.debug('[fileTree] overlay refreshed (D-9)', { sid, count: result.files.length })
+    }
+  } catch (e) {
+    // E9-b 降级：git.status 失败（非 repo / 越界 / 超时 / 断连）不写 overlay，角标保持旧值，
+    // 不打断 renderer 主循环；用户可打开 git 抽屉（useGitStatus 既有路径）手动刷新恢复。
+    console.warn('[fileTree] overlay refresh failed (D-9), keeping stale overlay — reopen git panel to refresh:', e)
+  }
+}
+
+/**
+ * 监听 chat store 该 session 的消息分区，扫尾部消息的 changeSetStatus——检测到新的 ready
+ * 变更集时：① 用其 fileChanges 路径清单回调 onInvalidate（职责一）；② 调度 debounced
+ * overlay 回写（职责二）。其余更新（token commit / accumulating 帧）回调内 no-op。
  *
- * @param sessionIdRef session id 的 ref（变化时 watch 自动重订阅）
+ * [R-16] watch source 保持 W11 版（per-sid 内层分区 ref，无 deep）：同 sid 数组替换触发 /
+ * 异 sid 替换不触发（失效收敛）。
+ *
+ * @param sessionIdRef session id 的 ref（变化时 watch 自动重订阅 + 快照重置，切回重失效）
  * @param onInvalidate 失效回调，调用方在此表达自己的 invalidate 语义
  * @returns unwatch 函数（组件 onBeforeUnmount 调用，避免泄漏）
  */
@@ -41,41 +114,53 @@ export function watchFileChangesForInvalidation(
   onInvalidate: FileChangeInvalidateFn,
 ): () => void {
   const chatStore = useChatStore()
-  // 上次处理的 fileChanges paths 快照（去重：仅 paths 集合变化时才 invalidate）
-  let lastPaths = new Set<string>()
+  // 已消费的 ready 变更集 messageId 快照（sid 切换时重置 → 切回时尾部 ready 重新失效，
+  // 对齐旧实现「切走后切回从全量开始 diff」的语义）
+  let processedReadyKeys = new Set<string>()
+  let lastSid: string | null = null
 
   const unwatch = watch(
     [
       () => sessionIdRef.value,
       // [R-16 / D-1 伴生] source 读 per-sid 内层分区 ref（非整 Map）：同 sid 消息数组替换
       // （commitMessages 的不可变新数组）触发本 watcher；异 sid 分区替换不触发（失效收敛）。
-      // 原 `() => chatStore.messages` + deep:true 会 traverse 进所有 Map entry 读各分区
-      // ShallowRef.value 建立依赖——任何 session 更新都过度触发（P5 探针实证）。
-      // sid 增删（外层 Map 替换）仍触发，回调内 lastPaths diff 兜底（无新 path 时 no-op）。
+      // sid 增删（外层 Map 替换）仍触发，回调内 ready 扫描兜底（无新 ready 时 no-op）。
       () => chatStore.messages.get(sessionIdRef.value)?.value,
     ],
     () => {
       const sid = sessionIdRef.value
       if (!sid) {
-        // session 清空 → 重置快照（原实现行为：切走后下次切回从全量开始 diff）
-        lastPaths = new Set()
+        // session 清空 → 重置快照（下次切回从尾部全量重扫）
+        processedReadyKeys = new Set()
+        lastSid = null
         return
       }
-      // 提取该 session 所有 assistant message 的 fileChanges paths
+      if (sid !== lastSid) {
+        // session 切换 → 重置快照：切回的 session 尾部 ready 变更集重新失效 + 刷新
+        processedReadyKeys = new Set()
+        lastSid = sid
+      }
+
+      // 尾部有界扫描（新到旧）：收集本次新转变为 ready 的变更集路径（职责一数据源）
       const msgs = chatStore.getMessages(sid)
-      const currentPaths = new Set<string>()
-      for (const m of msgs) {
+      const newPaths = new Set<string>()
+      let foundReady = false
+      const start = Math.max(0, msgs.length - READY_SCAN_WINDOW)
+      for (let i = msgs.length - 1; i >= start; i--) {
+        const m = msgs[i]
         if (m.role !== 'assistant') continue
-        for (const fc of m.fileChanges ?? []) {
-          currentPaths.add(fc.filePath)
-        }
+        if (chatStore.getChangeSetStatus(sid, m.id) !== 'ready') continue
+        if (processedReadyKeys.has(m.id)) continue
+        processedReadyKeys.add(m.id)
+        foundReady = true
+        for (const fc of m.fileChanges ?? []) newPaths.add(fc.filePath)
       }
-      // 仅当出现新 path 时才 invalidate（相对上次快照的增量）
-      const changed = [...currentPaths].filter((p) => !lastPaths.has(p))
-      if (changed.length > 0) {
-        onInvalidate(sid, changed)
-      }
-      lastPaths = currentPaths
+
+      // 职责一：ready 路径清单直接失效（RPC 无关，先行）
+      if (newPaths.size > 0) onInvalidate(sid, [...newPaths])
+      // 职责二：debounce 后 git.status RPC → setGitOverlay（空清单 ready 也刷新，兜底
+      // runtime 帧序外路径；命中 runtime 缓存零额外 spawn）
+      if (foundReady) scheduleOverlayRefresh(sid)
     },
     { immediate: true },
   )

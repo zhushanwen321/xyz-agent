@@ -7,11 +7,14 @@
  * - selectFile / toggleShowIgnored：薄包装 store action
  * - setFilter：200ms trailing debounce 后透传 store（[W15/D-7.1] 过滤防抖）
  *
- * [K-9] 跨 store 失效编排（W6）：invalidateOnFileChanges watch chat store 的 file_changes ready 事件
- * → 按 sessionId 过滤 → store.invalidate。store 不自行监听（stores 间禁止 import）。
+ * [K-9] 跨 store 失效编排（W6 起，W19/D-9 改 ready 帧驱动）：setupInvalidation 经共享 helper
+ * watch chat store 的 file_changes ready 转变 → 按 sessionId 过滤 → store.invalidate。
+ * store 不自行监听（stores 间禁止 import）。overlay 回写（setGitOverlay 第二调用点，
+ * loadTree 之外）由 useFileChangeInvalidation 内部职责二承担——ready 后 debounce 300ms →
+ * git.status RPC → setGitOverlay（W15 预聚合自动重建）。
  *
  * 依赖方向：useFileTree → fileTreeStore + api/domains（file/git）。不直接 import chat store
- * （W6 的 invalidateOnFileChanges 经 composable 层 watch，不违反 stores 间禁 import）。
+ * （失效编排经 composable 层 watch，不违反 stores 间禁 import）。
  */
 import type { Ref } from 'vue'
 import { useFileTreeStore } from '@/stores/fileTree'
@@ -205,12 +208,13 @@ export function useFileTree() {
   }
 
   /**
-   * [K-9/W6 #3.11] 跨 store 失效编排：watch chat store 该 session 的 fileChanges 变化
-   * → store.invalidate（loaded→invalidated）。
+   * [K-9/W6 #3.11 → W19/D-9] 跨 store 失效编排：扫 chat store 该 session 尾部消息的
+   * changeSetStatus，ready 转变时以该变更集路径清单 → store.invalidate（loaded→invalidated）。
    *
-   * 共享 watch + 提取 + diff 逻辑抽至 useFileChangeInvalidation（消除与 useFileSearch 的重复）。
-   * 此处仅表达 fileTree 的增量语义——把 diff 出的 changed paths 传给 store.invalidate，
-   * invalidated 节点下次展开时重发请求（expandNode 的 invalidated 分支）。
+   * 共享触发 + ready 扫描逻辑在 useFileChangeInvalidation（与 useFileSearch/
+   * useSearchModalDeps 共用；helper 内部另承担 overlay 回写职责）。此处仅表达 fileTree
+   * 的增量语义——把 ready 清单 paths 传给 store.invalidate，invalidated 节点下次展开时
+   * 重发请求（expandNode 的 invalidated 分支）。
    *
    * @param sessionIdRef session id 的 ref（变化时重订阅）
    * @returns unwatch 函数（组件 onBeforeUnmount 调用，避免泄漏）

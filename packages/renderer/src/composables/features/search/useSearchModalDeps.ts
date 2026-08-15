@@ -60,7 +60,8 @@ export function useSearchModalDeps(shell: SearchModalShellDeps): SearchDeps {
       sessionList: sessionApi.list,
       // C-W3-2：SessionSelectPort 接收点归实现域（useSidebarNew().selectSession）
       selectSession: shell.selectSession,
-      // C-W3-3：FileChangeWatchPort 替代 chatStore.messages watch（stale cache 防护）
+      // C-W3-3：FileChangeWatchPort 替代 chatStore.messages watch（stale cache 防护；
+      // W19/D-9 后 helper 内部为 ready 帧驱动——ready 清单到达时回调）
       watchFileChanges: (sid, cb) =>
         watchFileChangesForInvalidation(ref(sid), (s) => cb(s)),
       t: i18n.global.t,

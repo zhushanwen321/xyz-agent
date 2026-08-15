@@ -4,7 +4,7 @@
  * 职责（单一变化轴「composer 文件候选加载编排」）：
  * - load：缓存命中直接返回，否则调 composer.getFileCandidates + 写 store
  * - debouncedLoad：debounce 包装（300ms），防浮层快速开关/输入抖动重复请求
- * - setupInvalidation：watch chatStore fileChanges 变化 → store.invalidate（G9：删缓存不重拉）
+ * - setupInvalidation：file_changes ready 转变（经共享 helper）→ store.invalidate（G9：删缓存不重拉）
  *
  * 范式对称 useFileTree（同属 composables/features，跨 store 编排在 composable 层 watch，
  * stores 间禁止 import）。
@@ -52,12 +52,12 @@ export function useFileSearch() {
   }
 
   /**
-   * 跨 store 失效编排（G9）：watch chatStore 该 session 的 fileChanges 变化
+   * 跨 store 失效编排（G9）：file_changes ready 转变（共享 helper 扫尾部消息 changeSetStatus）
    * → store.invalidate（删缓存，不重拉）。
    *
-   * 共享 watch + 提取 + diff 逻辑抽至 useFileChangeInvalidation（消除与 useFileTree 的重复）。
-   * 此处仅表达 fileSearch 的全量语义——只要 paths 集合变化就以 sid 整体失效缓存，
-   * 下次 load 重拉。
+   * 共享触发 + ready 扫描逻辑在 useFileChangeInvalidation（W19/D-9 改 ready 帧驱动，与
+   * useFileTree 共用）。此处仅表达 fileSearch 的全量语义——只要有新 ready 清单就以 sid
+   * 整体失效缓存，下次 load 重拉。
    *
    * @param sessionIdRef session id 的 ref（变化时重订阅）
    * @returns unwatch 函数（组件 onBeforeUnmount 调用，避免泄漏）
