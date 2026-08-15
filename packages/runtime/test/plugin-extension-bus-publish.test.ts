@@ -135,6 +135,29 @@ describe('W08: plugin:viewUpdate 经 bus publish（transient）', () => {
     expect(payload.sessionId).toBe('s1')
     expect(payload.viewId).toBe('v1')
   })
+
+  it('m3: 同 tick 连续 views.update → push id 单调递增不碰撞（原 vu_${Date.now()} 同毫秒碰撞）', async () => {
+    const bus = new MessageBus()
+    const { service } = wiredPluginService({ sessionService: createActiveSessionStub('s1') })
+    service.setMessageBus(bus)
+    const ws = createMockClient()
+    bus.subscribe('s1', ws)
+
+    // 直接调 publishViewUpdate 两次（rpc dispatch 路径等价，绕开 worker 回环更聚焦 id 语义）
+    const mkPayload = (viewId: string) => ({
+      sessionId: 's1', viewId, pluginId: 'p1',
+      guiTree: [] as unknown[], updatedAt: Date.now(),
+    })
+    service.publishViewUpdate(mkPayload('v1'))
+    service.publishViewUpdate(mkPayload('v2'))
+
+    expect(ws.sent).toHaveLength(2)
+    const id1 = (JSON.parse(ws.sent[0]!) as { id: string }).id
+    const id2 = (JSON.parse(ws.sent[1]!) as { id: string }).id
+    expect(id1).toMatch(/^vu_\d+$/)
+    expect(id2).toMatch(/^vu_\d+$/)
+    expect(id1).not.toBe(id2)
+  })
 })
 
 // ══════════════════════════════════════════════════════════════

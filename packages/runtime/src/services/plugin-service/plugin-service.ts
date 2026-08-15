@@ -166,11 +166,14 @@ export class PluginService implements IPluginService {
       const sid = active?.id
       const fullPayload = { ...payload, sessionId: sid }
       if (sid !== undefined && this.messageBus) {
+        // m2：'plugin:uiRequest' 已收录 ServerMessageMap 具名条目（requestId 必带 + 索引签名
+        // 透传 dialog 字段），UiBroadcastFn payload 同步收紧——免 as ServerMessage 断言，
+        // payload 形状漂移在编译期被 shared 契约拦截。
         this.messageBus.publish(sid, {
           type,
           id: `ui_${payload.requestId}`,
           payload: fullPayload,
-        } as ServerMessage)
+        })
         return
       }
       this.broadcastOrBroker(type, `ui_${payload.requestId}`, fullPayload)
@@ -241,14 +244,27 @@ export class PluginService implements IPluginService {
     updatedAt: number
   }): void {
     if (this.messageBus) {
+      // m2/m3：'plugin:viewUpdate' 已是 ServerMessageMap 精确条目（payload 形状一致），
+      // 免 as ServerMessage 断言；push id 改单调计数（Date.now() 同毫秒多视图更新会碰撞，
+      // 前端按 id 去重/追踪场景下碰撞导致更新被误判重复）。
       this.messageBus.publish(payload.sessionId, {
         type: 'plugin:viewUpdate',
-        id: `vu_${Date.now()}`,
+        id: this.nextViewUpdateId(),
         payload,
-      } as ServerMessage)
+      })
       return
     }
-    this.broadcastOrBroker('plugin:viewUpdate', `vu_${Date.now()}`, payload)
+    this.broadcastOrBroker('plugin:viewUpdate', this.nextViewUpdateId(), payload)
+  }
+
+  /**
+   * viewUpdate push id 单调计数（m3，对齐 broker.nextPushId 语义）。
+   * `vu_${Date.now()}` 在同一毫秒内多次 views.update（批量刷新多视图）会产出相同 id。
+   */
+  private viewUpdateIdCounter = 0
+  private nextViewUpdateId(): string {
+    this.viewUpdateIdCounter += 1
+    return `vu_${this.viewUpdateIdCounter}`
   }
 
   async initialize(): Promise<void> {

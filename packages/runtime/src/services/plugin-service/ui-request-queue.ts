@@ -30,8 +30,16 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>
 }
 
-/** 广播回调：把 UI 请求推给前端（type 固定为 'plugin:uiRequest'） */
-export type UiBroadcastFn = (type: 'plugin:uiRequest', payload: Record<string, unknown>) => void
+/**
+ * 广播回调：把 UI 请求推给前端（type 固定为 'plugin:uiRequest'）。
+ * payload 收紧为 requestId 必带（dispatch 的 broadcastPayload 恒含）——m2：与 shared
+ * ServerMessageMap['plugin:uiRequest'] 契约对齐，消费方（plugin-service 广播回调）可免
+ * `as ServerMessage` 断言直接构造类型化消息。
+ */
+export type UiBroadcastFn = (
+  type: 'plugin:uiRequest',
+  payload: { requestId: string } & Record<string, unknown>,
+) => void
 
 export class UiRequestQueue {
   /** 当前活跃的 UI 请求 ID（串行排队，同一时刻仅一个） */

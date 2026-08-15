@@ -748,6 +748,13 @@ export interface ServerMessageMapBase {
     guiTree: unknown[]
     updatedAt: number
   }
+  // plugin:uiRequest：plugin dialog 交互请求下行（runtime UiRequestQueue 广播回调生产，
+  // payload 注入当前活跃 sessionId 后经 bus.publish 定向发布，无活跃 session 时回退全局广播）。
+  // requestId 必带（前端 message-bus-bridge.parseUiRequest 缺失即丢弃整条）；method/title 等
+  // dialog 字段（select/confirm/input 及各自扩展字段）由 plugin 侧透传，用索引签名保持形状开放
+  //（消费端 parseUiRequest 对 method 超界兜底 'input'，未知字段原样保留），与 runtime
+  // UiBroadcastFn 的 Record<string, unknown> 同形。
+  'plugin:uiRequest': { requestId: string; sessionId?: string } & Record<string, unknown>
   'model.list': { models: ModelInfo[] }
   'config.sessions': { groups: SessionGroup[] }
   /** config.systemPrompt：reply + broadcast + 初始推送三用。corrupted=true 表示磁盘配置损坏已回退默认（SR5）。 */
