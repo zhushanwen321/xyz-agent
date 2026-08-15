@@ -17,13 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { HarnessError, runScenario, spawnPi } from "./harness.mjs";
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function assert(cond, message) {
-	if (!cond) throw new HarnessError("assertion", message);
-}
+import { assert, lastSessionInfoEntry, runScenario, sleep, spawnPi } from "./harness.mjs";
 
 /** fixture：含 ts 文件的临时工作目录（阶段 2 prompt 引用「刚才目录」）。 */
 function makeTsFixture() {
@@ -52,30 +46,21 @@ function hasAutoSessionInfo(lines) {
 	return false;
 }
 
-/** 最后一条 session_info entry（阶段 2 标题断言用）。 */
-function lastSessionInfo(lines) {
-	let last = null;
-	for (const line of lines ?? []) {
-		try {
-			const entry = JSON.parse(line);
-			if (entry?.type === "session_info") last = entry;
-		} catch {
-			// 坏行跳过
-		}
-	}
-	return last;
-}
 
 export async function runA4() {
 	return runScenario("A4", async (log) => {
 		const fixture = makeTsFixture();
-
-		// ── 阶段 1：坏 provider → error 轮 ──
+		// 两阶段共享 fixture/h1 资源；阶段 1 失败时阶段 2 不执行，
+		// 若只在阶段 2 的 finally 清理，失败路径会泄漏 h1.tmp 与 fixture 目录——
+		// 用 stage2Reached 标记让外层 finally 兜底（成功路径由阶段 2 finally 精确清理）
+		let stage2Reached = false;
 		const h1 = await spawnPi({
 			tag: "a4p1",
 			cwd: fixture.dir,
 			modelsJson: { providers: { "xiaomi-token-plan-cn": { baseUrl: "http://127.0.0.1:1/v1" } } },
 		});
+		try {
+			// ── 阶段 1：坏 provider → error 轮 ──
 		let sessionFile = null;
 		try {
 			const errEndP = h1.rpc.waitFor("turn_end", {
@@ -111,21 +96,20 @@ export async function runA4() {
 
 		// ── 阶段 2：正常配置 + --session 续跑 → 下一成功轮命名 ──
 		const h2 = await spawnPi({ tag: "a4p2", cwd: fixture.dir, sessionFile });
+		stage2Reached = true; // h2 spawn 成功后内层 finally 负责全部清理
 		try {
 			const settled2P = h2.rpc.waitAgentSettled(180_000);
 			await h2.rpc.prompt("现在把刚才目录里的 ts 文件数一下");
 			await settled2P;
-			const llmReq = await h2.rpc.waitForStderr("LLM request messages: ", { timeoutMs: 120_000 });
-			assert(!!llmReq, "阶段2 未见 LLM request 日志");
+			await h2.rpc.waitForStderr("LLM request messages: ", { timeoutMs: 120_000 });
 			const rename2 = await h2.rpc.waitForStderr('renamed to "', { timeoutMs: 45_000 });
-			assert(rename2.line.includes('renamed to "'), `阶段2 期望 renamed to，实际: ${rename2.line}`);
 			await sleep(600); // setSessionName 落库 flush 余量
 
 			const st2 = await h2.rpc.getState();
 			assert(st2.data?.sessionFile === sessionFile, `阶段2 sessionFile 不一致: ${st2.data?.sessionFile} vs ${sessionFile}`);
 			const lines2 = await h2.readSessionLines();
 			assert(Array.isArray(lines2), "阶段2 session JSONL 不存在或不可读");
-			const lastInfo = lastSessionInfo(lines2);
+			const lastInfo = lastSessionInfoEntry(lines2);
 			assert(lastInfo && typeof lastInfo.name === "string" && lastInfo.name.length > 0, "阶段2 session_info 无标题");
 			const logTitle = rename2.line.match(/renamed to "(.*)"$/)?.[1];
 			assert(logTitle === lastInfo.name, `阶段2 日志标题与落库不一致: "${logTitle}" vs "${lastInfo.name}"`);
@@ -134,6 +118,14 @@ export async function runA4() {
 			h2.cleanup();
 			h1.cleanup(); // 阶段 2 已结束，此时才删阶段 1 tmp（session 文件已用完）
 			fixture.cleanup();
+		}
+		} finally {
+			// 失败路径兜底：阶段 1 断言失败（阶段 2 未执行）时清理 h1 与 fixture；
+			// 成功/阶段 2 失败路径已由内层 finally 清理，cleanup 幂等可重入
+			if (!stage2Reached) {
+				h1.cleanup();
+				fixture.cleanup();
+			}
 		}
 	});
 }

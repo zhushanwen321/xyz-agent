@@ -15,13 +15,7 @@
 
 import { pathToFileURL } from "node:url";
 
-import { HarnessError, runScenario, spawnPi } from "./harness.mjs";
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function assert(cond, message) {
-	if (!cond) throw new HarnessError("assertion", message);
-}
+import { HarnessError, assert, lastSessionInfoEntry, runScenario, sleep, spawnPi } from "./harness.mjs";
 
 /** 时间轴中 LLM request 日志条数（3c「无新 LLM request」断言用）。 */
 function countLlmRequests(pi) {
@@ -43,21 +37,6 @@ async function countSessionInfos(pi) {
 	return count;
 }
 
-/** 最后一条 session_info.name（等待 ≥10s 后的防覆盖终态断言用）。 */
-async function lastSessionInfoName(pi) {
-	const lines = await pi.readSessionLines();
-	assert(Array.isArray(lines), "session JSONL 不存在或不可读");
-	let last = null;
-	for (const line of lines) {
-		try {
-			const entry = JSON.parse(line);
-			if (entry?.type === "session_info") last = entry;
-		} catch {
-			// 坏行跳过
-		}
-	}
-	return last?.name ?? null;
-}
 
 /** 3a + 3c：静态防覆盖 + 一次性语义（同一 session 两轮）。 */
 async function seg3aAnd3c(log) {
@@ -72,7 +51,7 @@ async function seg3aAnd3c(log) {
 		// 显式等 skip: name exists（waitRenameSettled 的 skip 分支可能匹配到中间 iteration 日志）
 		await pi.rpc.waitForStderr("skip: name exists", { timeoutMs: 45_000 });
 		await sleep(10_500); // ≥10s 观察窗口（迟到覆盖检测）
-		assert((await lastSessionInfoName(pi)) === MANUAL, "3a 等待 10s 后手动名被覆盖");
+		assert(lastSessionInfoEntry(await pi.readSessionLines())?.name === MANUAL, "3a 等待 10s 后手动名被覆盖");
 		log(`3a OK: skip: name exists + 10s 后仍为「${MANUAL}」`);
 
 		// ── 3c 一次性（同 session 第二轮）──
@@ -87,7 +66,7 @@ async function seg3aAnd3c(log) {
 			(await countSessionInfos(pi)) === infoBefore,
 			`3c 出现新自动 session_info（${infoBefore} → ${await countSessionInfos(pi)}）`,
 		);
-		assert((await lastSessionInfoName(pi)) === MANUAL, "3c 第二轮后手动名被覆盖");
+		assert(lastSessionInfoEntry(await pi.readSessionLines())?.name === MANUAL, "3c 第二轮后手动名被覆盖");
 		log("3c OK: skip: count=2 + 无新 LLM request + 无新 session_info");
 	} finally {
 		pi.cleanup();
@@ -115,7 +94,7 @@ async function seg3bOnce(log) {
 		await pi.rpc.waitForStderr('renamed to "', { timeoutMs: 45_000 });
 		await pi.rpc.waitForStderr("skip: name exists", { timeoutMs: 5_000 });
 		await sleep(10_500); // ≥10s 观察窗口
-		assert((await lastSessionInfoName(pi)) === RACE_NAME, "3b 等待 10s 后竞态命名被覆盖");
+		assert(lastSessionInfoEntry(await pi.readSessionLines())?.name === RACE_NAME, "3b 等待 10s 后竞态命名被覆盖");
 		log(`3b OK: rename 返回时 skip: name exists + 名字未被覆盖（仍为「${RACE_NAME}」）`);
 	} finally {
 		pi.cleanup();

@@ -60,14 +60,14 @@ if (failed.length > 0) {
 	console.log(`\n失败明细（${failed.length} 个）:`);
 	for (const r of failed) console.log(`  ${r.name} [${r.kind ?? "assertion"}]: ${r.error?.message ?? ""}`);
 }
-const exit = failedCount > 0 ? 1 : 0;
-console.log(`\nexit code: ${exit}`);
 
 // vitest 兼容统计行（机器可消费）：cw test gate 等工具链用 `N passed` / `N failed`
 // 正则解析汇总（取最后一个匹配）。KEBAB_NON_COMPLIANT 场景 r.ok 仍为 true（人工处置路径），
 // 但机器统计须计为 failed——与 e2e/scenarios.test.mjs 的 gate 语义（该情况 test 失败）一致。
 const passed = results.filter((r) => r.ok && !r.kebabNonCompliant).length;
 const failedCount = results.length - passed;
+const exit = failedCount > 0 ? 1 : 0;
+console.log(`\nexit code: ${exit}`);
 console.log(`\nTest Files  1 ${failedCount > 0 ? "failed" : "passed"} (1)`);
 console.log(`Tests  ${passed} passed${failedCount > 0 ? ` | ${failedCount} failed` : ""} (${results.length})`);
 process.exitCode = exit;

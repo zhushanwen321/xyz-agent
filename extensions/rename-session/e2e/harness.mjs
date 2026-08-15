@@ -101,6 +101,31 @@ export function classifyFailure(err) {
 
 // ──────────────────────── 断言纯函数 ────────────────────────
 
+/** 场景通用 sleep（场景脚本共用，避免 5 处重复定义）。 */
+export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** 场景通用 assert：失败抛 assertion 分类的 HarnessError（classifyFailure 归类）。 */
+export function assert(cond, message) {
+	if (!cond) throw new HarnessError("assertion", message);
+}
+
+/**
+ * 从 session JSONL 行数组取最后一条 session_info entry（name SSOT；坏行跳过）。
+ * 各场景原先各自维护近似实现（a2/a4 取 lines、a3 包了 pi 读取），统一到此处。
+ */
+export function lastSessionInfoEntry(lines) {
+	let last = null;
+	for (const line of lines ?? []) {
+		try {
+			const entry = JSON.parse(line);
+			if (entry?.type === "session_info") last = entry;
+		} catch {
+			// 坏行跳过
+		}
+	}
+	return last;
+}
+
 // previewText 同构常量（extensions/rename-session/src/llm.ts D9 契约）
 const PREVIEW_MAX_CHARS = 300;
 const PREVIEW_HEAD_CHARS = 200;
@@ -441,6 +466,13 @@ export async function spawnPi(opts = {}) {
 			w.reject(err);
 		}
 		eventWaiters.length = 0;
+		// stderr 等待同批 reject：pi 意外退出时，waitForStderr 若只靠自身 timer 超时，
+		// 失败会被误分类为 timeout 而非 pi-crash，误导诊断
+		for (const w of stderrWaiters) {
+			clearTimeout(w.timer);
+			w.reject(err);
+		}
+		stderrWaiters.length = 0;
 	};
 
 	proc.on("exit", (code, signal) => {

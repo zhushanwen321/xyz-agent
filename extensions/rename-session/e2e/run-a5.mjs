@@ -16,13 +16,7 @@
 
 import { pathToFileURL } from "node:url";
 
-import { E2E_MODEL, HarnessError, runScenario, spawnPi, startHangServer } from "./harness.mjs";
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function assert(cond, message) {
-	if (!cond) throw new HarnessError("assertion", message);
-}
+import { E2E_MODEL, assert, runScenario, sleep, spawnPi, startHangServer } from "./harness.mjs";
 
 const STUB_MODEL = "stub-hang/hang-model";
 

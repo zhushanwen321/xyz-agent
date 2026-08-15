@@ -20,15 +20,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { HarnessError, assertTitleGuards, runScenario, spawnPi } from "./harness.mjs";
+import { HarnessError, assertTitleGuards, assert, lastSessionInfoEntry, runScenario, sleep, spawnPi } from "./harness.mjs";
 
 const RESULTS_PATH = fileURLToPath(new URL("./RESULTS.md", import.meta.url));
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function assert(cond, message) {
-	if (!cond) throw new HarnessError("assertion", message);
-}
 
 const CASES = [
 	{ label: "中文任务", tag: "a2-zh", prompt: "帮我写一个防抖函数并加单测" },
@@ -47,19 +41,6 @@ const CASES = [
 	},
 ];
 
-/** 从 session JSONL 行数组取最后一条 session_info（name SSOT；坏行跳过）。 */
-function lastSessionInfoName(lines) {
-	let last = null;
-	for (const line of lines ?? []) {
-		try {
-			const entry = JSON.parse(line);
-			if (entry?.type === "session_info") last = entry;
-		} catch {
-			// 坏行跳过
-		}
-	}
-	return last?.name ?? null;
-}
 
 /** 跑单个 session，返回 { label, prompt, title }。标题以 JSONL session_info 为 SSOT，日志标题交叉校验。 */
 async function runOneCase(c, log) {
@@ -83,7 +64,7 @@ async function runOneCase(c, log) {
 
 		const lines = await pi.readSessionLines();
 		assert(Array.isArray(lines), "session JSONL 不存在或不可读");
-		const title = lastSessionInfoName(lines);
+		const title = lastSessionInfoEntry(lines);
 		assert(typeof title === "string" && title.length > 0, "session_info.name 为空");
 		const logTitle = renameRes.line.match(/renamed to "(.*)"$/)?.[1];
 		assert(logTitle === title, `日志标题与落库不一致: "${logTitle}" vs "${title}"`);

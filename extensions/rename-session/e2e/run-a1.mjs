@@ -24,20 +24,17 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
-	HarnessError,
+	assert,
 	extractLastStopAssistant,
 	parseLogMessages,
 	rebuildPreview,
 	runScenario,
+	sleep,
 	spawnPi,
 } from "./harness.mjs";
 
 /** A1/A4 共用的有界 sleep。 */
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function assert(cond, message) {
-	if (!cond) throw new HarnessError("assertion", message);
-}
 
 /** fixture：含多个 ts 文件的临时工作目录（行数错开，让工具原始输出特征可辨别）。 */
 function makeTsFixture() {
