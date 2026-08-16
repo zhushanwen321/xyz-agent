@@ -25,7 +25,7 @@ vi.mock("../session-runner.ts", () => ({
   getChildByRecord: vi.fn(() => undefined),
 }));
 
-import { createRecord } from "../execution-record.ts";
+import { createRecord, updateFromEvent } from "../execution-record.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import { RecordStore } from "../record-store.ts";
 import { SubagentService } from "../subagent-service.ts";
@@ -230,7 +230,7 @@ describe("closeSubagent 行为分流", () => {
     expect(hasIdleTimer(record.id)).toBe(false); // timer disarmed
   });
 
-  it("[M5] Path B（无活进程、timer 未 armed）+ force:false → 立即终态化（同旧 isResumable 行为）", async () => {
+  it("[M5] Path B（无活进程、timer 未 armed）+ force:false → 立即终态化（同旧 isResumable 行为）+ 终态通知", async () => {
     const record = makeRecord({ status: "running", round: 1 });
     record.sessionFile = path.join(agentDir, "path-b.jsonl");
     store.register(record);
@@ -240,9 +240,12 @@ describe("closeSubagent 行为分流", () => {
     expect(record.status).toBe("closed");
     expect(record.closedReason).toBe("user-close");
     expect(store.getMutable(record.id)).toBeUndefined();
-    // [C2TC2] close 后无新增通知的 unit 级断言（closeChatIdle 只终态化，终态通知发送点
-    // 不存在）——与 Path A 消费点用例（closeAfterRoundSettled）补齐两路径 unit 覆盖
-    expect(pi.sendMessage).not.toHaveBeenCalled();
+    // [C-1] close 终态通知（设计 D2 路径②）：chatMode close 后父 agent 收到终态通知——
+    // 正文空串（doneResult.text 恒空）+ 轮次统计 + Full transcript 指针行
+    expect(pi.sendMessage).toHaveBeenCalledTimes(1);
+    const sent = pi.sendMessage.mock.calls[0]![0] as { content: string };
+    expect(sent.content).toContain("completed after 1 round.");
+    expect(sent.content).toContain(`\n\nFull transcript: ${record.sessionFile}`);
   });
 
   // ── [M6] cancelBackground 显式 kill（chatMode 热路径轮中 cancel）────────
@@ -367,29 +370,37 @@ describe("[C2] close 现状语义 + sessionFile 条件透传", () => {
     fs.rmSync(agentDir, { recursive: true, force: true });
   });
 
-  it("close 现状语义：轮次通知（含指针行）发出后 closeAfterRoundSettled 终态化，无新增 sendMessage，末条通知含指针行", async () => {
-    // 现状机制：终态通知发送点不存在（上报 feature 层，本 slice 不新增）——close 只终态化
-    // record，不再发通知。指针断言在 C2T1/C2T2 合入前必 red（无指针行），合入后 green。
-    const internals = service as unknown as { buildSessionRunnerContext(): { onRoundSettled?: (r: ExecutionRecord) => void } };
-    const ctx = internals.buildSessionRunnerContext();
-    const record = makeRecord({ id: "sa-c2-close", status: "running" });
-    record.sessionFile = path.join(agentDir, "c2-close.jsonl");
-    store.register(record);
-    record.closeAfterRound = true; // busy 轮中 close(force:false) 置的标志
-    armIdleTimer(record.id, () => {});
-    try {
-      ctx.onRoundSettled!(record);
-      await vi.waitFor(() => expect(store.getMutable(record.id)).toBeUndefined());
-    } finally {
-      disarmIdleTimer(record.id);
-    }
+	it("close 语义：轮次通知（含指针行）发出后 closeAfterRoundSettled 终态化 + 终态通知，两条都送达", async () => {
+		// [C-1] 修复后语义：终态通知经 notifyClosed 显式发送（dedup 身份 = 裸 id，与轮次通知
+		// 的 id:round key 区分）——close 后父 agent 收到「最后一轮轮次通知 + 终态通知」两条。
+		const internals = service as unknown as { buildSessionRunnerContext(): { onRoundSettled?: (r: ExecutionRecord) => void } };
+		const ctx = internals.buildSessionRunnerContext();
+		const record = makeRecord({ id: "sa-c2-close", status: "running" });
+		record.sessionFile = path.join(agentDir, "c2-close.jsonl");
+		store.register(record);
+		record.closeAfterRound = true; // busy 轮中 close(force:false) 置的标志
+		armIdleTimer(record.id, () => {});
+		try {
+			ctx.onRoundSettled!(record);
+			// closeAfterRoundSettled 是 async（finalizeRecord 链）——终态通知在链末尾的
+			// notifyClosed，等它发出而不是只等 archive（archive 在链中段，先于通知）
+			await vi.waitFor(() => expect(pi.sendMessage).toHaveBeenCalledTimes(2));
+			await vi.waitFor(() => expect(store.getMutable(record.id)).toBeUndefined());
+		} finally {
+			disarmIdleTimer(record.id);
+		}
 
-    // close 后 sendMessage 总数不变（轮次通知 1 条后无新增）
-    expect(pi.sendMessage).toHaveBeenCalledTimes(1);
-    // 末条轮次通知含 Full transcript 指针行（chatMode:true + sessionFile 有值 → 透传）
-    const sent = pi.sendMessage.mock.calls[0]![0] as { content: string };
-    expect(sent.content).toContain(`\n\nFull transcript: ${record.sessionFile}`);
-  });
+		// 轮次通知 1 条 + 终态通知 1 条（dedup 不吞）
+		expect(pi.sendMessage).toHaveBeenCalledTimes(2);
+		// 第 1 条：轮次通知含 Full transcript 指针行（chatMode:true + sessionFile 有值 → 透传）
+		const roundMsg = pi.sendMessage.mock.calls[0]![0] as { content: string };
+		expect(roundMsg.content).toContain("finished a round");
+		expect(roundMsg.content).toContain(`\n\nFull transcript: ${record.sessionFile}`);
+		// 第 2 条：终态通知含轮次统计 + 指针行
+		const closeMsg = pi.sendMessage.mock.calls[1]![0] as { content: string };
+		expect(closeMsg.content).toContain("completed after 1 round.");
+		expect(closeMsg.content).toContain(`\n\nFull transcript: ${record.sessionFile}`);
+	});
 
   it("one-shot 条件透传（R4 必选）：chatMode:false + sessionFile 有值 → 通知不透传 sessionFile、content 无指针行", () => {
     // 锁死 toNotifyRecord 的 chatMode 条件（C2C2 契约）——漏加条件时 notifier 单测不红
@@ -431,5 +442,157 @@ describe("[C2] close 现状语义 + sessionFile 条件透传", () => {
     };
     expect(msg.details?.sessionFile).toBe(path.join(agentDir, "c2-chat.jsonl"));
     expect(msg.content).toContain(`\n\nFull transcript: ${path.join(agentDir, "c2-chat.jsonl")}`);
+  });
+});
+
+// ============================================================
+// [C-4] chatMode 轮次增量（onRoundSettled 写点）+ close 终态通知
+// ============================================================
+
+describe("[C-4] onRoundSettled 轮次增量 + [C-1] close 终态通知", () => {
+  let agentDir: string;
+  let service: SubagentService;
+  let store: RecordStore;
+  let pi: MockPi;
+
+  beforeEach(() => {
+    vi.mocked(getChildByRecord).mockReset();
+    // 默认无活进程：hasRunningBackground=false → notify 立即 flush，sendMessage 同步可断言
+    vi.mocked(getChildByRecord).mockReturnValue(undefined);
+    ({ agentDir, service, store, pi } = setup());
+  });
+
+  afterEach(() => {
+    service.dispose();
+    _resetLifecycleState();
+    fs.rmSync(agentDir, { recursive: true, force: true });
+  });
+
+  /** 真实回调链（与生产一致：agent_settled → onRoundSettled），turns 经 updateFromEvent 累积。 */
+  function settleRound(record: ExecutionRecord): void {
+    (service as unknown as {
+      buildSessionRunnerContext(): { onRoundSettled?: (r: ExecutionRecord) => void };
+    }).buildSessionRunnerContext().onRoundSettled!(record);
+  }
+
+  it("空增量轮：通知正文占位 (no output this round)，不含上一轮文本（D5，onRoundSettled 写点）", () => {
+    const record = makeRecord({ id: "sa-empty-round", status: "running" });
+    record.sessionFile = path.join(agentDir, "empty-round.jsonl");
+    store.register(record);
+    armIdleTimer(record.id, () => {});
+    try {
+      // 第 1 轮：有真实回复
+      updateFromEvent(record, { type: "text_delta", delta: "ROUND-ONE-REPLY" });
+      updateFromEvent(record, { type: "turn_end" });
+      settleRound(record);
+
+      // 第 2 轮：零新事件（纯空转/工具轮形态）→ 空增量
+      settleRound(record);
+    } finally {
+      disarmIdleTimer(record.id);
+    }
+
+    expect(pi.sendMessage).toHaveBeenCalledTimes(2);
+    const round1 = pi.sendMessage.mock.calls[0]![0] as { content: string };
+    expect(round1.content).toContain("ROUND-ONE-REPLY");
+    // D5 核心：空增量轮占位，不沿用旧 result（= 上一轮增量 → 父 agent 误读为原样重复回复）
+    const round2 = pi.sendMessage.mock.calls[1]![0] as { content: string };
+    expect(round2.content).toContain("(no output this round)");
+    expect(round2.content).not.toContain("ROUND-ONE-REPLY");
+  });
+
+  it("多轮增量：第 2 条通知只含第 2 轮文本、不含第 1 轮（D1/G1，roundBaseTurnIndex 推进）", () => {
+    const record = makeRecord({ id: "sa-multi-round", status: "running" });
+    record.sessionFile = path.join(agentDir, "multi-round.jsonl");
+    store.register(record);
+    armIdleTimer(record.id, () => {});
+    try {
+      // 第 1 轮
+      updateFromEvent(record, { type: "text_delta", delta: "ALPHA-ROUND-ONE" });
+      updateFromEvent(record, { type: "turn_end" });
+      settleRound(record);
+
+      // 第 2 轮：turn_end 已闭合前轮 turn → text_delta 开新 turn
+      updateFromEvent(record, { type: "text_delta", delta: "BETA-ROUND-TWO" });
+      updateFromEvent(record, { type: "turn_end" });
+      settleRound(record);
+    } finally {
+      disarmIdleTimer(record.id);
+    }
+
+    expect(pi.sendMessage).toHaveBeenCalledTimes(2);
+    const round1 = pi.sendMessage.mock.calls[0]![0] as { content: string };
+    expect(round1.content).toContain("ALPHA-ROUND-ONE");
+    expect(round1.content).not.toContain("BETA-ROUND-TWO");
+    const round2 = pi.sendMessage.mock.calls[1]![0] as { content: string };
+    expect(round2.content).toContain("BETA-ROUND-TWO");
+    expect(round2.content).not.toContain("ALPHA-ROUND-ONE");
+    // base 推进写点：第 2 轮后边界 = 2 个 turn（第 3 轮增量将从新 turn 起）
+    expect(record.roundBaseTurnIndex).toBe(2);
+  });
+
+  it("[C-1] idle close（closeChatIdle）后父侧收到终态通知：正文空串 + Full transcript 指针行，轮次通知与终态通知都送达（dedup 不吞）", async () => {
+    const record = makeRecord({ id: "sa-idle-close", status: "running" });
+    record.sessionFile = path.join(agentDir, "idle-close.jsonl");
+    store.register(record);
+    armIdleTimer(record.id, () => {}); // Path A：轮次完成、进程保活等待续聊
+    try {
+      updateFromEvent(record, { type: "text_delta", delta: "LAST-ROUND-INCREMENT" });
+      updateFromEvent(record, { type: "turn_end" });
+      settleRound(record); // 第 1 条：轮次通知
+      await service.closeSubagent(record, false); // idle close（D2 路径②）
+    } finally {
+      disarmIdleTimer(record.id);
+    }
+
+    // dedup 不吞：轮次通知（key=id:1）+ 终态通知（key=裸 id）两条都送达
+    expect(pi.sendMessage).toHaveBeenCalledTimes(2);
+    const roundMsg = pi.sendMessage.mock.calls[0]![0] as { content: string };
+    expect(roundMsg.content).toContain("finished a round");
+    expect(roundMsg.content).toContain("LAST-ROUND-INCREMENT");
+    // 终态通知：正文空串占位（不含上一轮增量，D2 路径②）+ 轮次统计 + 指针行
+    const closeMsg = pi.sendMessage.mock.calls[1]![0] as { content: string };
+    expect(closeMsg.content).toContain("completed after 1 round.");
+    expect(closeMsg.content).toContain(`\n\nFull transcript: ${record.sessionFile}`);
+    expect(closeMsg.content).not.toContain("LAST-ROUND-INCREMENT");
+  });
+
+  it("[C-1] 路径①（closeAfterRoundSettled）：轮次通知与终态通知两条都送达，终态携带本轮增量 + 轮次统计 + 指针行", async () => {
+    const record = makeRecord({ id: "sa-path-one", status: "running" });
+    record.sessionFile = path.join(agentDir, "path-one.jsonl");
+    store.register(record);
+    record.closeAfterRound = true; // busy 轮中 close(force:false) 置的标志
+    armIdleTimer(record.id, () => {});
+    try {
+      updateFromEvent(record, { type: "text_delta", delta: "PATH-ONE-ROUND-REPLY" });
+      updateFromEvent(record, { type: "turn_end" });
+      settleRound(record); // 轮次通知 + 消费标志 → closeAfterRoundSettled 终态化
+      // 终态通知在 async finalize 链末尾的 notifyClosed——直接等它发出
+      await vi.waitFor(() => expect(pi.sendMessage).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(store.getMutable(record.id)).toBeUndefined());
+    } finally {
+      disarmIdleTimer(record.id);
+    }
+
+    expect(pi.sendMessage).toHaveBeenCalledTimes(2);
+    const roundMsg = pi.sendMessage.mock.calls[0]![0] as { content: string };
+    expect(roundMsg.content).toContain("finished a round");
+    expect(roundMsg.content).toContain("PATH-ONE-ROUND-REPLY");
+    // 路径①终态：合成 result 沿用 record.result（= 本轮增量，D2 路径①）+ 统计 + 指针
+    const closeMsg = pi.sendMessage.mock.calls[1]![0] as { content: string };
+    expect(closeMsg.content).toContain("completed after 1 round.");
+    expect(closeMsg.content).toContain("PATH-ONE-ROUND-REPLY");
+    expect(closeMsg.content).toContain(`\n\nFull transcript: ${record.sessionFile}`);
+  });
+
+  it("[G4] 对照：one-shot（chatMode:false）close → 不发终态通知（现状行为字节不变）", async () => {
+    const record = makeRecord({ id: "sa-oneshot-close", status: "running", chatMode: false });
+    record.sessionFile = path.join(agentDir, "oneshot-close.jsonl");
+    store.register(record);
+
+    await service.closeSubagent(record, false); // resumable → closeChatIdle → notifyClosed 拒绝
+
+    expect(record.status).toBe("closed");
+    expect(pi.sendMessage).not.toHaveBeenCalled();
   });
 });

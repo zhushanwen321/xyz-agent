@@ -512,6 +512,28 @@ export class SubagentService {
     if (notify) this.notifier.notify(notify);
   }
 
+  /** [C-1] chatMode close 终态通知（设计 D2：正文空/本轮增量 + sessionFile 指针行）。
+   *
+   *  与 notifyComplete 的差异只在 dedup 身份与轮次统计：终态通知必须与最后一轮的轮次通知
+   *  区分（轮次通知 key=`id:round`），否则同 key 被 60s dedup 吞——close 后父 agent 永远
+   *  收不到带指针行的终态通知（审查 C-1）。故 round 置 undefined（key 回退为裸 id），
+   *  轮数改经 totalRounds 进文案 "completed after N rounds."（C-2）。
+   *
+   *  仅 chatMode close 语义调用（closeChatIdle / closeAfterRoundSettled 终态化成功后）。
+   *  one-shot 显式拒绝（G4：one-shot close 路径现状无终态通知，字节不变）；cancel 走
+   *  cancelBackground 自己的 notifyComplete，不经本方法。幂等性：两条 close 路径均由
+   *  closeSubagent 的 status 分流守卫（closed 后幂等 no-op）/ CAS 抢锁保证只执行一次，
+   *  本方法自身不重复发送；迟到的 kickOffBackground.then 通知与轮次通知同 key=`id:round`，
+   *  60s 窗内仍被吞，不构成第三条。 */
+  private notifyClosed(record: ExecutionRecord): void {
+    if (!record.chatMode) return;
+    const notify = this.toNotifyRecord(record);
+    if (!notify) return;
+    notify.round = undefined;
+    if (record.round != null) notify.totalRounds = record.round;
+    this.notifier.notify(notify);
+  }
+
   /** notifier 的 NotifierHost 适配器（绑定到 pi.sendMessage + store 查询）。 */
   private piAdapter(): NotifierHost {
     return {
@@ -1059,19 +1081,26 @@ export class SubagentService {
       "closed",
       "user-close", // close action 主动关闭
     );
+    // [C-1] 终态通知（设计 D2 路径②）：doneResult.text 恒空串 → 终态通知正文空 +
+    // sessionFile 指针行（idle 下末轮增量已由该轮轮次通知送达，终态再发属重复）。
+    // dedup 身份独立于轮次通知（notifyClosed 置 round=undefined），60s 窗内不被吞。
+    // 防重入：closeSubagent 对 closed record 幂等 no-op，本路径不会被二次进入。
+    this.notifyClosed(record);
   }
 
   /**
    * [M5] closeAfterRound 消费：chatMode 轮次完成时终态化 record（closed + user-close）。
    *
    * 由 onRoundSettled（agent_settled 回调）调用——chatMode 轮次完成的统一汇聚点（热路径轮
-   * 不经 runAndFinalize CAS 分支，旧消费点对 chatMode 不可达）。本轮回复已由调用方前置的
-   * notifyComplete 送达，故合成 result 不携带本轮文本（对齐 closeChatIdle 的合成模式）。
+   * 不经 runAndFinalize CAS 分支，旧消费点对 chatMode 不可达）。合成 result 沿用 record.result
+   *（= 本轮增量，设计 D2 路径①）：本轮增量已由调用方前置的轮次通知送达，终态通知正文因此
+   * 是同一段增量 + 轮次统计 + sessionFile 指针行（notifyClosed），不重发全历史。
    *
    * 时序：同步前缀（disarm + kill + CAS）在 session-runner 的 resolveRun(0) 之前执行完——
    * 冷路径轮的 runAndFinalize 续体因 timer 已 disarm 跳过 early return，但其 tryTransition
    * CAS 对已 closed 的 record 失败 → 跳过二次 finalize（无双收尾）；热路径轮无 runAndFinalize
-   * 续体，本方法是唯一收尾。
+   * 续体，本方法是唯一收尾。冷路径续体 .then 的 notifyComplete 与轮次通知同 key=`id:round`，
+   * 60s dedup 吞（不与下方终态通知叠加成第三条——后者 key 是裸 id）。
    */
   private async closeAfterRoundSettled(record: ExecutionRecord): Promise<void> {
     // 回收保活进程（Path A：轮次完成后进程仍活）+ disarm idle timer（终态化后无其他 kill 路径）
@@ -1079,7 +1108,7 @@ export class SubagentService {
     const child = getChildByRecord(record.id);
     if (child && !child.killed) child.kill("SIGTERM");
     if (!tryTransition(record, "closed", "user-close")) {
-      return; // 已被 cancel/finalize 抢先（CAS 失败），标志已消费即可
+      return; // 已被 cancel/finalize 抢先（CAS 失败），标志已消费即可——不发终态通知（幂等）
     }
     const doneResult: AgentResult = {
       text: record.result ?? "",
@@ -1090,6 +1119,9 @@ export class SubagentService {
       toolCalls: [],
     };
     await this.finalizeRecord(record, doneResult, "closed", "user-close");
+    // [C-1] 终态通知（设计 D2 路径①）：与前置轮次通知（key=`id:round`）dedup 身份区分，
+    // 「最后一轮轮次通知 + 终态通知」两条都送达父 agent。
+    this.notifyClosed(record);
   }
 
   // ── 编排层专用接口（workflow 消费）──────────────────────
@@ -1715,9 +1747,11 @@ export class SubagentService {
         const roundText = getFullTextFrom(record, record.roundBaseTurnIndex ?? 0);
         record.result = roundText ||
           (record.lastError ? `round did not complete: ${record.lastError}` : "(no output this round)");
-        // 先送达本轮增量（notify），再推进 base / 消费 closeAfterRound——终态化通知经
-        // kickOffBackground.then 的 notifyComplete 发出，与本次 round notify 同 dedup key
-        // （id:round）被 60s dedup 吞，保证本轮增量文本先于终态化送达。
+        // 先送达本轮增量（notify），再推进 base / 消费 closeAfterRound——终态通知由
+        // closeAfterRoundSettled / closeChatIdle 的 notifyClosed 显式发出（dedup 身份为裸 id，
+        // 与本次 round notify 的 id:round key 区分），保证「本轮增量 + 终态通知」都送达；
+        // kickOffBackground.then 的冷路径 notifyComplete 仍与本次 round notify 同 key 被 60s
+        // dedup 吞（不构成第三条）。
         //
         // 幂等性（覆盖面如实限定）：同步路径 at-least-once——notifyComplete（同步 void）抛错时
         // 推进/消费被跳过 → base 不推进 → 增量未消费，下轮 roundText 必含本轮文本（重发载体为

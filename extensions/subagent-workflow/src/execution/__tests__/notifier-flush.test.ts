@@ -341,4 +341,33 @@ describe("BgNotifier buildLlmContent 指针行（wave2：chatMode sessionFile �
 		// 改造前形态：sessionFile undefined 时指针为空串，追加不改变输出——逐字节锁定
 		expect(sentContent()).toBe('Subagent "worker" (sa-ptr-7) completed. Result:\ndone');
 	});
+
+	it("[C-2] closed + totalRounds（chatMode close 终态通知）→ 文案附轮次统计 after N rounds", () => {
+		notifier.notify({
+			id: "sa-rounds-1", status: "closed", agent: "w", totalRounds: 3, result: "",
+			sessionFile: "/tmp/sessions/child-rounds.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		// 设计 D2 路径①：closed 分支文案附轮次统计 + sessionFile 提示；
+		// 路径②正文空串（idle close）形态也走本分支（result 空串非 nullish，不触发 (empty)）
+		expect(sentContent()).toBe(
+			'Subagent "w" (sa-rounds-1) completed after 3 rounds. Result:\n' +
+			"\n\nFull transcript: /tmp/sessions/child-rounds.jsonl",
+		);
+	});
+
+	it("[C-2] 对照：totalRounds 缺失（one-shot 完成通知）→ 无轮次统计，文案逐字节保持 completed. Result:", () => {
+		notifier.notify({
+			id: "sa-rounds-2", status: "closed", agent: "w", result: "done",
+			sessionFile: "/tmp/sessions/child-oneshot.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		// one-shot record 无轮次语义（totalRounds 不设置）——G4：文案不含统计
+		expect(sentContent()).toBe(
+			'Subagent "w" (sa-rounds-2) completed. Result:\ndone' +
+			"\n\nFull transcript: /tmp/sessions/child-oneshot.jsonl",
+		);
+	});
 });

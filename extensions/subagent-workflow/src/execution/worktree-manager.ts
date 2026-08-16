@@ -3,7 +3,7 @@
 // git worktree 生命周期管理：创建、清理、patch 回传、孤儿 reaper。
 //
 // 设计约束：
-//   - gitRun 是唯一 git 命令出口，统一超时/错误包装
+//   - gitRunAsync 是唯一 git 命令出口，统一超时/错误包装（旧同步 gitRun 已在 phase 2 删除）
 //   - recordId 白名单 `^[\w-]+$` 防止路径注入
 //   - clean tree 前置校验防止创建脏 worktree
 //   - checkout 放 os.tmpdir()（脱离 .git/），兼容普通 repo 与 bare+worktree 结构

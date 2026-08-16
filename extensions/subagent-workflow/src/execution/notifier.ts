@@ -43,6 +43,11 @@ export interface BgNotifyRecord {
    *  "Full transcript: <path>" 指针行，父 LLM 可按需读全文；one-shot 不透传，
    *  通知输出逐字节不变。缺失时 buildLlmContent 省略整行。 */
   sessionFile?: string;
+  /** [C-2] close 终态通知的轮次统计（文案 "completed after N rounds." 用）。
+   *  仅 chatMode close 语义（notifyClosed）构造时携带——此时 dedup 身份 round 已被
+   *  置 undefined（与轮次通知的 id:round key 区分，终态不被吞），轮数改由本字段进
+   *  文案。one-shot 完成通知不设置，文案保持 "completed. Result:" 逐字节（G4）。 */
+  totalRounds?: number;
 }
 
 /** notifier 依赖的 pi 最小接口（解耦，便于测试）。 */
@@ -247,7 +252,14 @@ export class BgNotifier {
           return `Subagent "${agent}" (${id}) cancelled.`;
         }
         // 成功完成（user-close）或通用结束（gc/parent-shutdown 等）：展示结果。
-        const base = `Subagent "${agent}" (${id}) completed. Result:\n${record.result ?? "(empty)"}`;
+        // [C-2] chatMode close 终态通知附轮次统计（设计 D2 路径①"completed after N rounds"）。
+        // totalRounds 仅 close 语义携带（notifyClosed）；one-shot 完成通知不设置（round 无轮次
+        // 语义），文案保持 "completed. Result:" 逐字节（G4 硬约束，one-shot 字节锁测试锚定）。
+        const roundsSuffix =
+          record.totalRounds != null && record.totalRounds > 0
+            ? ` after ${record.totalRounds} round${record.totalRounds === 1 ? "" : "s"}`
+            : "";
+        const base = `Subagent "${agent}" (${id}) completed${roundsSuffix}. Result:\n${record.result ?? "(empty)"}`;
         if (record.patchFile) {
           // [wave2 review] 长 return 拆行：模板串内不可直接换行（会改变输出内容），提取 patchHint 中转变量
           const patchHint = `\n\nThis subagent ran in an isolated worktree; its file changes were captured as a patch:\n  ${record.patchFile}\nTo bring these changes into the current repo, run: \`git apply ${record.patchFile}\``;
