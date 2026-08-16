@@ -46,6 +46,17 @@ export async function command<K extends keyof ReplyPayloadMap>(
   const result = pending.register<ReplyPayloadMap[K]>(id, timeoutMs)
   // ClientMessage 是 discriminated union（type ↔ payload 对应），helper 的泛型 payload
   // 无法满足精确联合约束，用断言绕过——type 字面量已由 ReplyPayloadMap key 约束，安全。
-  transport.send({ type, id, payload } as ClientMessage)
+  const sent = transport.send({ type, id, payload } as ClientMessage)
+  if (!sent) {
+    // send false = WS 非 OPEN（reconnecting/restarting/connecting），消息根本没送出，
+    // 该 id 永远等不到 reply。use-connection 的 rejectAll 只覆盖「connected → 断开」转变；
+    // 请求发出时本就处于断开态则后续永不触发，promise 只能等 65s sweep 超时——期间调用方
+    // 的 in-flight 标记（如文件树 inFlight/loading）持续拦截用户操作（V8 实测：runtime
+    // 重启窗口内点击目录零反馈，reload 才恢复）。立即 reject 让调用方进入可重试的 error 态。
+    pending.reject(
+      id,
+      Object.assign(new Error('transport unavailable (ws not open)'), { code: 'disconnected' }),
+    )
+  }
   return result
 }

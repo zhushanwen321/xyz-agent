@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { watch } from 'vue'
+import type { FileNode } from '@xyz-agent/shared'
 
 // mock @/api 门面（useFileTree 经 `import { file as fileApi, git as gitApi } from '@/api'` 依赖）
 const mockFileTree = vi.fn()
@@ -170,6 +171,60 @@ describe('useFileTree.expandNode T2.3/T2.4/T2.5', () => {
 
     expect(store.getNodeState('s1', 'src').status).toBe('error')
     expect(store.getNodeState('s1', 'src').reason).toBe('out_of_cwd')
+  })
+
+  // V8 实测 bug 回归锁定（runtime 重启后文件树点击零反馈）：断开期间 expand promise
+  // 被 reject（request 层 send-fail 立即 reject 或 use-connection rejectAll）后，
+  // loading 态必须复位为 error，且后续点击不被 inFlight/loading 幂等去重拦截。
+  // nodeState.status 是 FileView 渲染 loading/error 图标的依据（用户可见）。
+  it('V8 断开恢复：expand 在途时连接断开（promise reject）→ loading 复位为 error → 二次 expand 重发可达', async () => {
+    const store = useFileTreeStore()
+    store.setTree('s1', [{ path: 'packages', name: 'packages', type: 'dir' }])
+    // 第一次 expand 挂起在途——模拟请求已发出、runtime 被 kill（promise 未 settle）
+    let rejectInFlight: ((e: Error) => void) | undefined
+    mockFileExpand.mockImplementationOnce(
+      () => new Promise<FileNode[]>((_resolve, reject) => { rejectInFlight = reject }),
+    )
+
+    const { expandNode } = useFileTree()
+    const first = expandNode('s1', 'packages')
+    await Promise.resolve() // 等 markInFlight + setNodeState(loading) 同步生效
+    expect(store.getNodeState('s1', 'packages').status).toBe('loading') // 用户看到 loading
+
+    // WS 断开：在途 promise 被 reject（pending.rejectAll / send-fail reject 的下游效果）
+    rejectInFlight!(Object.assign(new Error('ws closed'), { code: 'disconnected' }))
+    await first
+
+    // loading 复位为 error：用户看到错误态而非永久 spinner，点击不再被拦截
+    expect(store.getNodeState('s1', 'packages').status).toBe('error')
+    expect(store.getNodeState('s1', 'packages').reason).toBe('disconnected')
+
+    // 重连成功后二次点击：新请求可达（不被 inFlight/loading 残留吞掉），成功展开
+    mockFileExpand.mockResolvedValueOnce([{ path: 'packages/core', name: 'core', type: 'dir' }])
+    await expandNode('s1', 'packages')
+    expect(mockFileExpand).toHaveBeenCalledTimes(2)
+    expect(store.getNodeState('s1', 'packages').status).toBe('loaded')
+    expect(store.getExpanded('s1').has('packages')).toBe(true)
+  })
+
+  it('V8 断开窗口：请求发出时 WS 已非 OPEN（request 层立即 reject）→ error 态 → 二次点击重试成功', async () => {
+    const store = useFileTreeStore()
+    store.setTree('s1', [{ path: 'packages', name: 'packages', type: 'dir' }])
+    // request.command 对 send false 立即 reject（code='disconnected'）——mock 在 api 门面
+    // 模拟其下游效果：expand promise 同步失败
+    mockFileExpand.mockRejectedValueOnce(Object.assign(new Error('transport unavailable'), { code: 'disconnected' }))
+
+    const { expandNode } = useFileTree()
+    await expandNode('s1', 'packages')
+
+    // 不悬挂：立即进入 error 态（用户可见），而非停在 loading 拦截后续点击
+    expect(store.getNodeState('s1', 'packages').status).toBe('error')
+
+    // 重连后重试成功
+    mockFileExpand.mockResolvedValueOnce([{ path: 'packages/ui', name: 'ui', type: 'dir' }])
+    await expandNode('s1', 'packages')
+    expect(mockFileExpand).toHaveBeenCalledTimes(2)
+    expect(store.getNodeState('s1', 'packages').status).toBe('loaded')
   })
 })
 

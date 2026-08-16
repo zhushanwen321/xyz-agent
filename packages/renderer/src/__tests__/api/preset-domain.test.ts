@@ -15,12 +15,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { PiLaunchPreset } from '@xyz-agent/shared'
 
 // 捕获 transport.send 收到的消息 + pending 返回的可控 reply
+// （send 返回 true = 消息已送出，符合 transport.send 的 boolean 契约：
+// request.command 对 send false 会走 fast-fail reject）
 const transportMock = vi.hoisted(() => {
   const sent: Array<{ type: string; id: string; payload: Record<string, unknown> }> = []
   return {
     sent,
-    send: vi.fn((msg: { type: string; id: string; payload: Record<string, unknown> }) => {
+    send: vi.fn((msg: { type: string; id: string; payload: Record<string, unknown> }): boolean => {
       sent.push(msg)
+      return true
     }),
   }
 })
@@ -34,6 +37,7 @@ vi.mock('@/api/transport', () => ({ send: transportMock.send }))
 vi.mock('@/api/pending', () => ({
   create: vi.fn(() => 'pid-1'),
   register: pendingMock.register,
+  reject: vi.fn(),
 }))
 
 import { list, getDefault, setDefault, create, update, remove } from '@/api/domains/preset'

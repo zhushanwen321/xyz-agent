@@ -12,8 +12,9 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// 捕获 transport.send 的调用
-const sendMock = vi.fn()
+// 捕获 transport.send 的调用（返回 true = 消息已送出；request.command 对 send false
+// 会走 fast-fail reject，mock 须符合 transport.send 的真实 boolean 契约）
+const sendMock = vi.fn((): boolean => true)
 vi.mock('@/api/transport', () => ({
   send: (...args: unknown[]) => sendMock(...args),
 }))
@@ -23,6 +24,7 @@ const registerMock = vi.fn()
 vi.mock('@/api/pending', () => ({
   create: () => 'test-id',
   register: (id: string) => registerMock(id),
+  reject: vi.fn(),
 }))
 
 import { getFileCandidates, getMentionCandidates } from '@/api/domains/composer'
