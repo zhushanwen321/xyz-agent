@@ -93,7 +93,7 @@ describe("validateRunArgs — 校验语义", () => {
     const args = { targetType: "git-diff", target: "main", autoCommit: "false", maxRounds: "10" };
     const spec = makeSpec(reviewFixLoopParameters(), args);
     expect(() => validateRunArgs(spec)).not.toThrow();
-    expect(spec.args).toBe(args); // 原地 mutate，引用不变（worker/resume 同一对象）
+    expect(spec.args).toBe(args); // 原地 mutate，引用不变（worker 启动/崩溃重跑同一对象）
     expect(spec.args.autoCommit).toBe(false);
     expect(spec.args.maxRounds).toBe(10);
   });

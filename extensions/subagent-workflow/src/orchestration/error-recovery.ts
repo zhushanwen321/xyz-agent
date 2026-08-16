@@ -264,7 +264,7 @@ function dispatchAgentCall(
     return;
   }
 
- // 已缓存的调用直接 replay（跨 pause/resume）
+ // 已缓存的调用直接 replay（跨 rebuild——崩溃重建后重跑脚本，已完成调用按 callId 命中缓存）
   const cached = run.state.calls.get(msg.callId);
   if (cached && cached.status === "done") {
     postAgentResult(run, msg.callId, cached.result!, true);
@@ -344,7 +344,7 @@ function dispatchAgentCall(
  // runner（runner.run）管 spawn pi 子进程。
  // assignRuntime/replaceRuntime 保证 status==="running" ⟺ runtime defined，
  // 故 run.runtime 在此必存在（dispatchAgentCall 仅从 handleWorkerMessage 调用，
- // 后者已守 paused/terminal 早期 return）。fallback new AbortController 已移除。
+ // 后者已守 terminal（isTerminal）早期 return）。fallback new AbortController 已移除。
   const runtime = run.runtime!;
   const signal = runtime.controller.signal;
   // D-005: onEvent 签名升级——executeAndAwait 直接出 AgentEvent（强类型，

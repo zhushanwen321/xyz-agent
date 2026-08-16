@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | U1 行为删除 | orchestration + index + interface | committed | 2cff4d3f8（R6 后基线） | verifier PASS（.orchestration/acceptance/u1-report.md） |
 | U2 类型与持久化收窄 | models + jsonl-run-store + gui 视图 | committed | ce9302111 | verifier PASS（.orchestration/acceptance/u2-report.md）；builder 两项裁决（abortRun 死分支删除不可达论证 / v1 fixture 用 running）均复核成立 |
-| U3 文档回写 | README + CHANGELOG | pending | — | 前置 U2 ✓；含 U1 verifier 3 条环境注记（S7 脚本 @pi-meta / rebuild 日志 / 补全探测）+ U2 验收文档 fixture 描述修正 |
+| U3 文档回写 | README + CHANGELOG | committed | 963fddae8 | verifier PASS（.orchestration/acceptance/u3-report.md）；R8 扩权（SKILL.md 宣传修正 + 8 处注释）+ ports.ts:132 保留裁决复核成立 |
 
 ## Milestone Gate
 
@@ -23,7 +23,9 @@
 
 ## 事件流水（时间倒序追加，永不覆盖）
 
-- 2026-08-16 U1 verified→committed：verifier PASS（防篡改 diff 空 + 契约 7 条全过 + 真实 pi E2E S1/S2/S4/S7 三路全过：second 路 alpha session 恰 1 份 + beta 2 份 = discard 生效铁证、always 路 3 次耗尽、throwAt 分账）。存量 4 失败归因双重证实。commit 889a798f9。
+- 2026-08-16 U3 verified→committed：builder 首轮 3 文件（README/CHANGELOG/手册修订）+ R8 扩权 8 文件（SKILL.md:244 pause/resume 能力宣传改写为一次性语义——G3 违例修正 + 注释 8 处）；verifier PASS（288 处 grep 命中独立归类无现役能力残留；「previously auto-paused」经 pre-U1 代码抽验非杜撰）。minor：README reason 列举补 time_limited（verifier 观察①，主 agent 流转时修）；ports.ts:132 历史转述保留裁决复核成立。commit <U3待填>。
+- 2026-08-16 外部事件：认知外改动确认为用户并行开发 displayAgentName 功能并自行 commit（7c4061e0a，9 文件）——U2 流转已用精确 add 排除，无污染；protocol §5.4 git 纪律由此固化进 cw-orchestrator skill（useful-dev-tools 683c1bc）。
+- 2026-08-16 U2 verified→committed：verifier PASS（基线 ce9302111 防篡改、U1 领地 5 文件零触碰、契约 7 条全过、两项 builder 裁决复核成立、真实 pi E2E S3/S5/S6/S8b 全过——S5 父子预算 24371.16==24371.16 铁证）。R7 勘误：v1 跳过 fixture status=running（S8b 双零 grep 断言优先，语义等价）。commit 931e219a0（精确 add 排除当时在场的 8 个认知外文件）。
 - 2026-08-16 U1 R6 裁决：builder 上报 3 冲突（command-actions.test.ts / robustness-low-batch1.test.ts 规格遗漏、S8a grep 全域不可达）→ 测试清单扩 2 文件、S8a 改领地内断言、全域零命中挪 S8b；基线 2cff4d3f8。存量失败 4 用例待 verifier 核验归因。
 - 2026-08-16 U1 builder 首轮交付：14 文件（7 源 + 7 测试），typecheck 0 / lint 0 error / 目标测试 76 绿；3 冲突停手上报（正确行为）。打回修复 C1/C2 后 16 文件全绿（2171/2175，4 豁免存量）。
 - 2026-08-16 设计定稿：R3-R5 对抗审查收敛（R5: 0 must-fix），子文档 impl-spec 交付（commit 9ccfd44e1）。U1 acceptance 基线 commit 313005e1c。

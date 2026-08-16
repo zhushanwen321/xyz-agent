@@ -62,8 +62,8 @@ function formatMessage(name: string, errors: readonly unknown[]): string {
  * 校验 spec.parameters（JSON Schema draft-07）对 spec.args 的约束。
  *
  * - spec.parameters === undefined → 跳过（安全退化：漏拷 parameters 退化是「不校验」非「校验错」）
- * - coerceTypes 原地规范化 spec.args（worker 启动 + pause/resume 重建共用同一对象，
- *   run.spec === spec，保证恢复路径参数一致）
+ * - coerceTypes 原地规范化 spec.args（worker 启动 + 崩溃重建重跑共用同一对象，
+ *   run.spec === spec，保证重跑路径参数一致）
  * - 失败 throw ArgsValidationError（非原始 ajv 错误）
  *
  * @throws ArgsValidationError 参数不合法或 schema 无效

@@ -73,7 +73,7 @@ describe("Trace byIndex 索引一致性", () => {
 // ── remove 后 re-append 同 stepIndex 覆盖 ─────────────────────
 
 describe("Trace remove 后 re-append 同 stepIndex", () => {
-  it("W1TC2: pause 清理后 resume 重发同 callId——旧节点不再可达", () => {
+  it("W1TC2: rebuild discard 清理后重跑重发同 callId——旧节点不再可达", () => {
     const trace = new Trace();
     const nodeA = makeTraceNode(0);
     trace.append(nodeA);

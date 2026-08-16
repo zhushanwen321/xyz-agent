@@ -211,13 +211,23 @@ XYZ_AGENT_DEBUG=1 pi --mode rpc --session-dir "$SESSION_DIR" \
 # 首次执行时把实际 prompt 报文记入验收报告）
 ```
 
-**注入脚本**（S7 专用，验收前写入 `/tmp/crash-mid-flight.js`；schema 最小化为 word 单字段。**「仅首次注入」判别**：以 a 的返回耗时区分真跑与 replay——真跑为 LLM 调用（秒级），replay 命中为同步 Map 查找（<50ms）；重跑时 a 秒回故不再注入，保证 b 重跑成功 → completed 自愈路径可达（F7））：
+**注入脚本**（S7 专用，验收前写入 `/tmp/crash-mid-flight.js`；schema 最小化为 word 单字段。**脚本必须带 `@pi-meta` 头且声明 `phases`**——registry 经 config-loader 的 `parseResourceMeta`（`src/shared/meta-parser.ts`）解析脚本 meta，meta 必填字段为 name（非空）/ description / phases（数组），任一缺失则 parse null → registry 标 `available=false` → `sourceCode=""`，runWorkflow 以空脚本启动、秒完成 completed（scriptResult=null、零 agent 调用——U1 verifier 实测裸脚本两次复现，注记 ①）。**「仅首次注入」判别**：以 a 的返回耗时区分真跑与 replay——真跑为 LLM 调用（秒级），replay 命中为同步 Map 查找（<50ms）；重跑时 a 秒回故不再注入，保证 b 重跑成功 → completed 自愈路径可达（F7））。最终脚本全文（U1 verifier 实测跑通版本）：
 
 ```js
 // /tmp/crash-mid-flight.js
 // $ARGS.crashAt: "second"（PHASE_B 在飞时 worker 退出，仅首次执行注入）
 //                | "always"（每次执行（含重跑）都在 PHASE_A 前退出）| "none"（不注入）
 // $ARGS.throwAt: "always"（顶层 throw，脚本错误路）
+/* @pi-meta
+name: crash-mid-flight
+description: S7 崩溃自愈验收注入脚本（crashAt/throwAt 控制注入路径）
+phases: [agents]
+parameters:
+  type: object
+  properties:
+    crashAt: { type: string, enum: ["second", "always", "none"] }
+    throwAt: { type: string, enum: ["always"] }
+*/
 const SCHEMA = { type: "object", properties: { word: { type: "string" } }, required: ["word"] }
 if ($ARGS.throwAt === "always") throw new Error("injected script error")
 if ($ARGS.crashAt === "always") process.exit(1)
@@ -244,10 +254,10 @@ return { inner }
 | S1 | 正常完成回归（U1） | 发 prompt 令主 agent 调 `{"action":"run","name":"<WF>/workflows/chain.js","args":{"task":"分析当前目录结构"}}` → 等完成通知 | status done/completed；result 含三步产出；**U2 后追加**：`$SESSION_DIR/workflow-state/<runId>.jsonl` 首行含 `"version":"wf-run-v2"` |
 | S2 | 主动 abort（U1） | run `<WF>/workflows/review-fix-loop.js`（args targetType:"text" 长任务）→ 进行中发 `{"action":"abort","runId":"<id>"}` | done/aborted；`ps aux \| grep -i "pi\|worker"` 无残留 worker 与 pi 子进程；`{"action":"status"}` 列表显示 aborted |
 | S3 | 崩溃与切换作废（U2） | ① run review-fix-loop → 进行中 `kill -9` 主 pi 进程 → 同 SESSION_DIR 重启 pi；②a run review-fix-loop → **分支导航**（优先 TUI `/tree` 选择另一分支；RPC `navigateTree` 需先从 session 树获取目标 branchId，步骤繁复不推荐）→ 切回；②b run review-fix-loop → **切 session**（TUI `/new`，或 RPC `switch_session`）→ 切回 | ① 残留 run 显示 done/failed 且 state.error 含 "Process killed"；无 running 幽灵；②a 切回后 run 显示 failed、state.error 含 **"Session switched"**（session_tree 路径）；②b 同显 failed、state.error 含 **"Session shutdown"**（session_shutdown 路径——`/new` 与 `switch_session` 都走 before_switch + shutdown，不触发 session_tree）；resume 任何形态不可达 |
-| S4 | 已删能力指引（U1） | ① 工具调 `{"action":"pause","runId":"<id>"}`；② 命令 `/workflows pause <id>`（RPC 通道） | ① 结构化错误，文本匹配 `Validation failed for tool "workflow"`（enum 拒绝），无成功 payload；② 提示 `Workflow pause has been removed — runs are one-shot. To stop a run early: /workflows abort <runId>`；命令补全列表无 pause/resume |
+| S4 | 已删能力指引（U1） | ① 工具调 `{"action":"pause","runId":"<id>"}`；② 命令 `/workflows pause <id>`（RPC 通道） | ① 结构化错误，文本匹配 `Validation failed for tool "workflow"`（enum 拒绝），无成功 payload；② 提示 `Workflow pause has been removed — runs are one-shot. To stop a run early: /workflows abort <runId>`；③ 命令补全列表无 pause/resume（注记：pi rpc-mode 无补全探测入口——rpc-mode 无 completion 命令，不可 E2E 探测，以源码 diff 为证：`getArgumentCompletions` 补全列表仅剩 `abort`，二段条件 `parts[0] === "abort"`——U1 verifier 注记 ③） |
 | S5 | 嵌套回归（U2） | run `/tmp/nested-chain.js` | 父子均 done/completed；子 run 的 token 消耗计入父（`{"action":"status"}` 父 run 预算字段含子消耗；对照单独跑 chain.js 的量级） |
 | S6 | 预算终态（U2） | `{"action":"run","name":"<WF>/workflows/chain.js","args":{...},"tokens":100}` | done/budget_limited；无 pause 分支残留行为 |
-| S7 | 崩溃自愈（U1） | ① `crashAt:"second"` run → 观察自愈完成；② `crashAt:"always"` run → 观察重试耗尽；③ `throwAt:"always"` run → script error 重试。token 对照前先 `touch /tmp/wf-marker`（`-newer` 基准） | ① `result = {a:{word:"alpha"}, b:{word:"beta"}}`——**b 重跑成功即 discard 生效**（若 discard 失效，b replay 假失败/abort 错误）；**a 不重复消耗 token**：`find ~/.pi/agent/subagents -name "*.jsonl" -newer /tmp/wf-marker` 中 PHASE_A 对应子进程 session 文件恰 1 份（重跑不新增）；扩展日志（`~/.pi/agent/logs/`，XYZ_AGENT_DEBUG=1）含 rebuild 1 次；② 3 次重建后 done/failed（workerErrorCount 耗尽）；③ 同为重试后 failed（scriptErrorCount 分账，两条计数互不污染——日志可证） |
+| S7 | 崩溃自愈（U1） | ① `crashAt:"second"` run → 观察自愈完成；② `crashAt:"always"` run → 观察重试耗尽；③ `throwAt:"always"` run → script error 重试。token 对照前先 `touch /tmp/wf-marker`（`-newer` 基准） | ① `result = {a:{word:"alpha"}, b:{word:"beta"}}`——**b 重跑成功即 discard 生效**（若 discard 失效，b replay 假失败/abort 错误）；**a 不重复消耗 token**：`find ~/.pi/agent/subagents -name "*.jsonl" -newer /tmp/wf-marker` 中 PHASE_A 对应子进程 session 文件恰 1 份（重跑不新增）、PHASE_B 恰 2 份（崩溃前 + 重跑）；**rebuild 以行为证据判定**——rebuild 路径（handleWorkerExit/scheduleRebuild/rebuildRuntime）无 deps.log 调用，扩展日志查不到 rebuild 字样（U1 verifier 实测注记 ②）：`meta.workerErrorCount=1`（崩溃 1 次 + rebuild 1 次）+ 上述 session 文件计数 + 最终 scriptResult 正确；② 3 次重建后 done/failed（workerErrorCount 计数至 4 耗尽）；③ 同为重试后 failed（scriptErrorCount 分账，两条计数互不污染——快照 meta 计数可证：always 路 worker=4/script 未设，throwAt 路 script=4/worker 未设） |
 | S8 | 静态断言（U1=S8a / U2=S8b） | `grep -rn "pauseRun\|resumeRun" src/`；`grep -rn '"paused"' src/`；启动含旧 v1 快照的 session；`pnpm extensions:typecheck && pnpm extensions:lint && pnpm extensions:test` | S8a（U1 后）：pauseRun/resumeRun 零命中 + 三命令全绿（"paused" 死值仍在，允许）。S8b（U2 后）：`"paused"` 零命中（types/workflow-run/run-runtime/jsonl-run-store/gui-mappers/format/run-state/run-spec 及全部 src 注释；CHANGELOG 与本 docs/ 除外）+ 旧 v1 快照不崩不显示 + 新快照 v2 + 三命令全绿 |
 
 ---
