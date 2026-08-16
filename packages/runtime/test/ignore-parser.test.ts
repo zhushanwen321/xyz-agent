@@ -5,7 +5,7 @@
  * 语义对齐 git：多条规则按顺序求值，最后匹配规则决定结果（取反覆盖正向）。
  */
 import { describe, it, expect } from 'vitest'
-import { compileIgnoreRules, matchPath } from '../src/infra/fs/ignore-parser.js'
+import { compileIgnoreRules, matchPath, type IgnoreMatcher } from '../src/infra/fs/ignore-parser.js'
 
 describe('compileIgnoreRules / matchPath', () => {
   describe('empty content', () => {
@@ -173,6 +173,76 @@ describe('compileIgnoreRules / matchPath', () => {
     it('empty matcher: short path never matched', () => {
       const m = compileIgnoreRules('')
       expect(matchPath(m, 'x')).toBe(false)
+    })
+
+    it('empty path / root path: never matched even under * rule (A-2 空串守卫)', () => {
+      // W24 审查 A-2：''（与归一化后的根路径 '/'）必须保持旧 allPrefixes 语义（恒 false）。
+      // 旧版 allPrefixes('') 返回 []；直通分支若放行 ['']，`*` 规则 regex 命中空串且
+      // isSelf 成立 → 错误判 true。空串/根路径出现在 matchPath 的典型来源：cwd 自身守门
+      // 与 normalizePath 对 '/'、'//'、'/  ' 的归一化。
+      const m = compileIgnoreRules('*')
+      expect(matchPath(m, '')).toBe(false)
+      expect(matchPath(m, '/')).toBe(false)
+      expect(matchPath(m, '//')).toBe(false)
+
+      // 根路径（仅斜杠）在具体规则下同样恒 false（无祖先前缀可命中）
+      expect(matchPath(compileIgnoreRules('dist'), '/')).toBe(false)
+      expect(matchPath(compileIgnoreRules('**'), '/')).toBe(false)
+    })
+  })
+
+  /**
+   * 短路径直通 vs 手工 allPrefixes 展开对照（W24 审查 A-6）：
+   * matchPath 对含 '/' 路径走 allPrefixes 分支；直通分支是「无 '/' 路径跳过展开」的优化。
+   * 等价性：对单规则 matcher，整体 matchPath(path) ⟺ 手工展开 path 的全部祖先前缀后
+   * 逐前缀求值（短路径前缀走直通分支）的 OR——任一前缀命中该规则即整体命中。
+   * 防回归：直通分支若漏前缀/多前缀，或 allPrefixes 展开语义漂移，此对照即暴露。
+   */
+  describe('short-path fast path vs manual allPrefixes expansion (A-6)', () => {
+    /** 手工 allPrefixes（公开语义：'a/b/c' → ['a/b/c','a/b','a']；'x' → ['x']）。 */
+    function allPrefixes(path: string): string[] {
+      const segments = path.split('/').filter((s) => s.length > 0)
+      const result: string[] = []
+      for (let end = segments.length; end >= 1; end -= 1) {
+        result.push(segments.slice(0, end).join('/'))
+      }
+      return result
+    }
+
+    /** 对照实现：手工展开全部祖先前缀后逐前缀 matchPath（前缀无 '/' 时走直通分支）取 OR。 */
+    function matchViaExpansion(matcher: IgnoreMatcher, path: string): boolean {
+      return allPrefixes(path).some((prefix) => matchPath(matcher, prefix))
+    }
+
+    it('对同一 matcher 与一组含 / 路径：直通实现与手工 allPrefixes 展开结果一致', () => {
+      // plain / wildcard / dirOnly / anchored / ** 五类规则 × 祖先命中、自身命中、不命中、
+      // dirOnly 同名文件不命中、anchored 非根不命中等形态
+      const cases: Array<[string, string]> = [
+        ['dist', 'a/dist'], // plain：祖先命中
+        ['dist', 'a/b/dist'], // plain：深层祖先命中
+        ['dist', 'src/dist/x'], // plain：dist 目录内容
+        ['dist', 'a/b'], // plain：不命中
+        ['*.log', 'a/b/app.log'], // wildcard：段命中
+        ['*.log', 'a/b/app.logs'], // wildcard：不命中
+        ['build/', 'a/build/out'], // dirOnly：祖先目录命中
+        ['build/', 'a/build'], // dirOnly：同名文件不命中
+        ['/dist', 'a/dist'], // anchored：非根不命中
+        ['/dist', 'dist'], // anchored：根命中（短路径自身）
+        ['node_modules', 'node_modules'], // plain：自身命中（短路径直通）
+        ['node_modules', 'src/node_modules/x'], // plain：任意层级
+        ['**/test', 'src/a/test'], // ** 多层：命中
+        ['**/test', 'src/a/test/extra'], // ** 前缀目录内容：命中（test 是祖先目录）
+      ]
+      for (const [pattern, path] of cases) {
+        const m = compileIgnoreRules(pattern)
+        expect(matchPath(m, path), `pattern=${pattern} path=${path}`).toBe(matchViaExpansion(m, path))
+      }
+    })
+
+    it('空串经手工展开（无前缀）同样恒 false，与直通守卫一致（A-2/A-6 交叉验证）', () => {
+      const m = compileIgnoreRules('*')
+      expect(matchViaExpansion(m, '')).toBe(false)
+      expect(matchPath(m, '')).toBe(matchViaExpansion(m, ''))
     })
   })
 })

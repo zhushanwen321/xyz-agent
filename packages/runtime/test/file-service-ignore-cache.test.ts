@@ -182,6 +182,62 @@ describe('FileService ignore matcher cache (D7-1)', () => {
     expect(ignoreReads(`/repo/${dirs[0]}/.gitignore`)).toBe(2)
   })
 
+  it('LRU touch：访问最旧 entry 后再插入新 entry，被驱逐的是次旧者而非被 touch 者（A-3）', async () => {
+    // W24 审查 A-3：现有驱逐用例只验证「最旧被驱逐」，无法区分 LRU（touch 移尾）与
+    // FIFO（touch 无效）——本用例 touch 最旧 entry 后再超限插入：LRU 下被驱逐者是
+    // 次旧 entry（touch 过的留在缓存）；FIFO 下被驱逐者仍是 touch 过的 entry（断言失败）。
+    const s = svc()
+    executor.stat.mockImplementation(async () => statShape(1, 2))
+    executor.readFile.mockImplementation(async (p: string) =>
+      p.endsWith('.gitignore') ? 'x\n' : Promise.reject(fsErr('ENOENT')),
+    )
+    executor.listDir.mockResolvedValue([] as FsEntry[])
+
+    // 填满 IGNORE_MATCHER_CACHE_MAX 个 entry：499 个目录 key + 根 .gitignore key
+    // （根 key 每次 expandDir 被 touch 移尾，目录 key 按插入序 d0..d498 排列，d0 最旧）
+    const dirs = Array.from({ length: IGNORE_MATCHER_CACHE_MAX - 1 }, (_, i) => `d${i}`)
+    for (const d of dirs) await s.expandDir('s1', d)
+
+    // touch 最旧 d0（命中缓存 + delete/set 移尾）→ Map 序 = d1..d498, 根, d0
+    await s.expandDir('s1', dirs[0])
+    expect(ignoreReads(`/repo/${dirs[0]}/.gitignore`)).toBe(1) // 命中缓存（未被驱逐）
+
+    // 插入第 501 个 entry（新目录 d500）→ 触发驱逐：最旧 = d1（次旧），不是被 touch 的 d0
+    await s.expandDir('s1', 'd500')
+
+    // 被驱逐者 d1：重访问触发重读
+    await s.expandDir('s1', dirs[1])
+    expect(ignoreReads(`/repo/${dirs[1]}/.gitignore`)).toBe(2)
+    // 被 touch 的 d0 仍在缓存：重访问零读（FIFO 实现下此处 reads=2，断言失败）
+    await s.expandDir('s1', dirs[0])
+    expect(ignoreReads(`/repo/${dirs[0]}/.gitignore`)).toBe(1)
+  })
+
+  it('cwd 尾斜杠归一化：cwd=/repo/ 与 cwd=/repo 共享同一缓存条目（A-4）', async () => {
+    // W24 审查 A-4：loadMatcher key 构造前未 resolvePath 归一化时，cwd 带尾斜杠（'/repo/'）
+    // 拼出 '/repo//.gitignore'，与 '/repo/.gitignore' 分叉成两个缓存 key——同一 .gitignore
+    // 文件被重读重编译，D7-1 文件级缓存退化为目录级缓存。归一化后两者共享同一 entry。
+    const s = svc()
+    mockRootIgnore(100, 'dist\n')
+    executor.listDir.mockResolvedValue([
+      { name: 'dist', type: 'dir' },
+      { name: 'a.ts', type: 'file', size: 1 },
+    ] as FsEntry[])
+
+    // 无尾斜杠 cwd：根 .gitignore 读 1 次，dist 被标 ignored
+    const r1 = await s.expandDir('s1', 'src')
+    expect(r1.find((n) => n.name === 'dist')?.ignored).toBe(true)
+    expect(ignoreReads('/repo/.gitignore')).toBe(1)
+
+    // 切到尾斜杠 cwd（用户配置/拼接产生尾斜杠的常见形态）：key 归一化后命中同一 entry
+    sessionService.getSummary.mockReturnValue({ cwd: '/repo/' })
+    const r2 = await s.expandDir('s1', 'src')
+    // 共享根 matcher：dist 仍被标 ignored（未归一化时走 '/repo//.gitignore' 哨兵空 matcher，
+    // 此处 ignored 为 undefined，断言失败）；零重读
+    expect(r2.find((n) => n.name === 'dist')?.ignored).toBe(true)
+    expect(ignoreReads('/repo/.gitignore')).toBe(1)
+  })
+
   it('stat 无 mtimeMs（旧式 executor）→ 降级直接读不缓存（与旧 readIgnoreSafe 行为等价）', async () => {
     const s = svc()
     executor.stat.mockImplementation(async (p: string) =>

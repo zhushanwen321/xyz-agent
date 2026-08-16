@@ -330,7 +330,10 @@ export class FileService implements IFileService {
   private async loadMatcher(...dirs: string[]): Promise<IgnoreMatcher> {
     const collected: IgnoreMatcher[] = []
     for (const d of dirs) {
-      const m = await this.loadFileMatcher(`${d}/.gitignore`)
+      // key 构造前 resolvePath 归一化（A-4 审查）：cwd 带尾斜杠（'/repo/'）与不带（'/repo'）
+      // 必须解析到同一缓存条目——否则同一 .gitignore 文件因尾斜杠分叉成两个 key，
+      // 各读各编译，D7-1 文件级缓存退化为目录级缓存
+      const m = await this.loadFileMatcher(`${resolvePath(d)}/.gitignore`)
       if (m.rules.length > 0) collected.push(m)
     }
     if (collected.length === 0) return EMPTY_MATCHER
@@ -349,6 +352,10 @@ export class FileService implements IFileService {
    * 降级路径（不缓存，行为与旧 readIgnoreSafe 等价）：stat resolve 但形状不完整
    * （无 mtimeMs——旧式/自定义 executor）、stat 抛非 ENOENT 错误（EACCES/timeout 等，
    * 文件身份不可确认）→ 直接读取，readFile 失败贡献空。
+   *
+   * 固有局限（D7-1 已接受）：(mtimeMs, size) 双键基于文件系统时间戳粒度——同一毫秒内
+   * 对同一 .gitignore 做两次相同长度的写（mtimeMs/size 均不变）会命中陈旧 matcher。
+   * 会话内 .gitignore 几乎不变（证据：05 §3.3 D7-1），该窗口可忽略，不引入手动失效。
    */
   private async loadFileMatcher(gitignorePath: string): Promise<IgnoreMatcher> {
     let mtimeMs = -1
@@ -379,6 +386,11 @@ export class FileService implements IFileService {
 
   /** 降级路径：直接读取并编译，不入缓存（身份键不可用）。 */
   private async compileUncached(gitignorePath: string): Promise<IgnoreMatcher> {
+    // V2 日志打点（05 §4 V2，plan.md W24 注意事项）：strace 在 macOS 不可用，.gitignore
+    // 读取/编译次数由 debug 日志验证——每次 miss/降级路径（真实 readFile+compile）打点，
+    // 缓存命中（stat 身份一致，无 readFile/compile）不打点。console 经 infra/logger.ts
+    // monkey-patch tee 到 <dataDir>/logs/（debug 级，XYZ_LOG_LEVEL=debug 时可见）。
+    console.debug(`[file-service] .gitignore 读取/编译: ${gitignorePath}`)
     return compileIgnoreRules(await this.readIgnoreFile(gitignorePath))
   }
 
@@ -395,7 +407,9 @@ export class FileService implements IFileService {
 
   /**
    * 读 .gitignore 文件内容，失败/不存在/非 string → ''（不抛）。
-   * 非 string 兜底与旧实现的 `if (c)` truthy 过滤等价（异常 executor 返回值不进编译）。
+   * 非 string 兜底：对合法契约（executor.readFile 返回 string）与 `undefined` 等价；
+   * 对病态返回值（非 string）比旧 `if (c)` truthy 过滤更安全——truthy 非 string
+   * （数字/对象等）不再被误当作内容进编译。
    */
   private async readIgnoreFile(gitignorePath: string): Promise<string> {
     try {
