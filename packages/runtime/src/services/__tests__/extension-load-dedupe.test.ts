@@ -22,7 +22,10 @@ import type { IInstaller } from '../ports/installer.js'
 import type { IExtensionSettings } from '../ports/extension-settings.js'
 import type { IConfigStore } from '../ports/config.js'
 
-const EXT_NAME = '@zhushanwen/pi-session-reader'
+// 测试包名必须是非 builtin 包：builtin（mandatory-extensions.json SSOT）中的 infrastructure
+// 级（pi-session-reader 等 3 包）不可禁（disabled 记录无效、强加载），「受管版 disabled 占位」
+// 语义只适用于 user/feature 级扩展。pi-vision 不在 builtin 清单。
+const EXT_NAME = '@zhushanwen/pi-vision'
 
 /** 写一个有效 pi extension 的 package.json（keywords 含 pi-package）。 */
 function writeExtensionPkg(dir: string, name: string): void {
@@ -168,10 +171,13 @@ describe('ExtensionService.getExtensionPaths 同名去重（P7）', () => {
       disabled: [],
     })
     writeDiscoveryExtension(discoveryDirs[0], 'pi-session-reader', EXT_NAME)
-    const otherDiscoveryEntry = join(writeDiscoveryExtension(discoveryDirs[0], 'pi-vision', '@zhushanwen/pi-vision'), 'index.ts')
+    const otherDiscoveryEntry = join(writeDiscoveryExtension(discoveryDirs[0], 'pi-model-switch', '@zhushanwen/pi-model-switch'), 'index.ts')
 
     const paths = await service.getExtensionPaths()
-    expect(paths).toEqual([npmPkgDir, otherDiscoveryEntry])
+    // resolver 按包名字母序输出（pi-model-switch < pi-vision → discovery 版在前），
+    // 去重不改变源顺序——断言顺序无关（两条都在、不误杀）
+    expect(paths).toHaveLength(2)
+    expect([...paths].sort()).toEqual([npmPkgDir, otherDiscoveryEntry].sort())
   })
 
   it('受管版被禁用时占位：npm 版 disabled → discovery 版不顶上（UI 禁用语义生效）', async () => {

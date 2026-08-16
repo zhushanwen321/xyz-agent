@@ -125,49 +125,10 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
 
   // ════════════════════════════════════════════════════════════════════
   // FR-2: message_start role-based routing
+  // [M5 删除] role=compactionSummary/branchSummary 的 message_start 分支已删（411608945）：
+  // grep 历史 session JSONL 确认 pi 从不 emit 这两种 role（死分支）。压缩/分支摘要由
+  // compaction_end 事件 + entry 树重建两条通路覆盖，不经 message_start。
   // ════════════════════════════════════════════════════════════════════
-
-  describe('FR-2: message_start — compactionSummary role', () => {
-    it('translates role=compactionSummary to message.compactionSummary', async () => {
-      dispatchOne(adapter, {
-        type: 'message_start',
-        message: {
-          role: 'compactionSummary',
-          summary: 'compacted',
-          tokensBefore: 50000,
-        },
-      })
-      await flushAsync()
-
-      expect(sent).toHaveLength(1)
-      expect(sent[0].type).toBe('message.compactionSummary')
-      expect(sent[0].payload).toMatchObject({
-        summary: 'compacted',
-        tokensBefore: 50000,
-      })
-    })
-  })
-
-  describe('FR-2: message_start — branchSummary role', () => {
-    it('translates role=branchSummary to message.branchSummary', async () => {
-      dispatchOne(adapter, {
-        type: 'message_start',
-        message: {
-          role: 'branchSummary',
-          summary: 'branched',
-          fromId: 'e1',
-        },
-      })
-      await flushAsync()
-
-      expect(sent).toHaveLength(1)
-      expect(sent[0].type).toBe('message.branchSummary')
-      expect(sent[0].payload).toMatchObject({
-        summary: 'branched',
-        fromId: 'e1',
-      })
-    })
-  })
 
   describe('FR-2: message_start — customType with details/display', () => {
     it('passes through details and display for customType messages', async () => {
