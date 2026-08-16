@@ -17,7 +17,7 @@ export * from './block-icon'
 export * from './format-utils'
 export * from './slash-icons'
 // 类型
-export type { MarkdownSegment } from './markdown-types'
+export type { MarkdownSegment, IncrementalMarkdownResult, IncrementalMarkdownCache } from './markdown-types'
 // 展示组件
 export { default as SystemNotice } from './SystemNotice.vue'
 export { default as ImageThumb } from './ImageThumb.vue'

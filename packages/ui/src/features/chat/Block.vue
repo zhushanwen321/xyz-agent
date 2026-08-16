@@ -55,11 +55,11 @@
       <div v-if="isPureError" class="flex items-start gap-1.5">
         <AlertCircle data-testid="block-text-error-icon" class="mt-1.5 size-3.5 shrink-0 text-danger" />
         <div class="min-w-0 flex-1">
-          <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" />
+          <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" :streaming="streaming" />
         </div>
       </div>
       <template v-else>
-        <MarkdownRenderer v-if="content" :content="content ?? ''" :session-id="sessionId ?? undefined" />
+        <MarkdownRenderer v-if="content" :content="content ?? ''" :session-id="sessionId ?? undefined" :streaming="streaming" />
         <!-- 追加形态：msg.error 独立 danger 行（content 保持原色，不误染崩溃前正文） -->
         <div v-if="isAppendError" data-testid="block-text-error" class="mt-1 flex items-start gap-1.5 text-danger">
           <AlertCircle class="mt-1.5 size-3.5 shrink-0 text-danger" />

@@ -37,7 +37,13 @@ import { useFileTreeStore } from '@/stores/fileTree'
 import { useFileSearch } from '@/composables/features/search/useFileSearch'
 import { triggerEnterForkMode } from '@/composables/panel/useForkModeChannel'
 import { triggerEnterHandoffMode } from '@/composables/panel/useHandoffModeChannel'
-import { renderMarkdownSegments } from '@/composables/logic/markdown'
+import {
+  createIncrementalRenderCache,
+  renderIncremental,
+  renderMarkdownSegments,
+  shouldFinalizeStreamingFence,
+  STREAMING_FENCE_SILENCE_MS,
+} from '@/composables/logic/markdown'
 import { renderMermaid } from '@/composables/logic/mermaid'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
 import { collectBasenames, collectFilePaths } from '@/lib/file-basename'
@@ -151,6 +157,22 @@ export function useChatViewDeps(sessionId: Ref<string>): ChatViewDeps {
         localFiles: localFiles.value,
       })
     },
+    /** D-5 增量渲染（W22 协议 / W23 消费）：前缀段引用恒等缓存 + tail 段每帧重建 + streaming-fence
+     *  占位。cache 为 opaque 句柄（ui 组件 per-instance 持有）：首次 null 由本桥接创建，随返回值
+     *  带回；env（filePaths/localFiles）引用变化由 renderIncremental 内部全量重建处理。 */
+    renderMarkdownIncremental: async (source, cache, sid, opts) => {
+      void sid // 同 renderMarkdown：白名单由 watch(sessionId) 统一刷新
+      const c = cache ?? createIncrementalRenderCache()
+      const result = await renderIncremental(
+        source,
+        c,
+        { filePaths: filePaths.value, localFiles: localFiles.value },
+        opts,
+      )
+      return { ...result, cache: c }
+    },
+    shouldFinalizeStreamingFence,
+    streamingFenceSilenceMs: STREAMING_FENCE_SILENCE_MS,
     renderMermaid: (source: string, theme: 'dark' | 'light') => renderMermaid(source, theme),
     toMarkdown: (msg: Message): string => assistantToMarkdown(msg),
   }

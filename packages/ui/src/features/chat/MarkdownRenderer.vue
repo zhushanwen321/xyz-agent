@@ -17,9 +17,22 @@
     代码源码经 base64 编码进 data 属性。故在此受控渲染点局部放开 taste-lint vue/no-v-html。仅此组件。
   -->
   <div class="md-render select-text" :class="{ 'md-render--thinking': variant === 'thinking' }" @click="onClick">
-    <template v-for="(seg, i) in segments" :key="i">
+    <!-- v-for key：增量路径用段稳定键 segId（前缀段引用与 segId 跨帧不变 → DOM 复用，R-19）；
+         全量/降级路径不携带 segId → 回退 index（等价旧版行为）。s/i 前缀隔离防两类 key 撞号。 -->
+    <template v-for="(seg, i) in segments" :key="seg.segId !== undefined ? `s${seg.segId}` : `i${i}`">
       <!-- eslint-disable-next-line vue/no-v-html -- text 段是 shiki+markdown-it(html:false) 安全输出，仅此受控点放开。 -->
       <div v-if="seg.type === 'text'" v-html="seg.content" />
+      <!-- streaming-fence 占位（D-5/W23，R-20）：未闭合 fence 流式期不跑 shiki/mermaid——语言标签 +
+           loader 行；token 静默 ≥阈值或消息 complete 后 finalize 转完整渲染（.md-codeblock/MermaidRenderer） -->
+      <div
+        v-else-if="seg.type === 'streaming-fence'"
+        data-testid="md-streaming-fence"
+        class="my-2.5 flex items-center gap-1.5 rounded border border-border bg-surface-2 px-2.5 py-1.5"
+      >
+        <!-- eslint-disable-next-line vue/no-v-html -- 硬编码常量 loader SVG（block-icon.ts，同 Block.vue running 态用法） -->
+        <span class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" />
+        <span data-testid="md-streaming-fence-lang" class="font-mono text-[length:var(--text-2xs)] font-semibold lowercase tracking-[0.08em] text-neutral-dim">{{ seg.lang }}</span>
+      </div>
       <MermaidRenderer v-else :source="seg.content" />
     </template>
     <!-- 歧义文件选择浮层：裸 basename 多匹配时弹出（锚定到点击的 <a>，portal 到 body） -->
@@ -37,7 +50,8 @@
 <script setup lang="ts">
 /**
  * Markdown 渲染器（w6 迁 ui，deps 注入重构）。
- * - renderMarkdown 经 ChatViewDeps 注入（renderer 壳 renderMarkdownSegments，含 shiki + 路径链接化）
+ * - D-5 增量消费（W23）：优先经 deps.renderMarkdownIncremental 前缀段引用恒等缓存 + tail 段每帧重建
+ *   （rAF 节流之上）；未闭合 fence 流式期渲染 streaming-fence 占位，静默 ≥阈值/complete 后 finalize
  * - 文件路径/歧义选择经 deps.onFileClick/onAmbiguousSelect/openDrawer 桥接
  * - 代码块复制是 DOM 副作用（v-html 内），ui 内本地处理（base64 解码 data-code + is-copied class）
  * - mermaid 段走 <MermaidRenderer>（经 deps.renderMermaid 渲染 SVG）
@@ -45,8 +59,9 @@
  */
 import { onScopeDispose, ref, watch } from 'vue'
 import type { FileNode } from '@xyz-agent/shared'
-import type { MarkdownSegment } from './markdown-types'
+import type { IncrementalMarkdownCache, MarkdownSegment } from './markdown-types'
 import { findByBasename } from '../../lib/file-basename'
+import { RUNNING_LOADER_SVG } from './block-icon'
 import AmbiguousFilePopover from './AmbiguousFilePopover.vue'
 import MermaidRenderer from './MermaidRenderer.vue'
 import { useChatViewDeps } from './chat-view-deps'
@@ -57,6 +72,9 @@ const props = defineProps<{
   sessionId?: string | null
   /** 渲染变体：默认 undefined（正文级排版）；'thinking' 用于 thinking 块/次要过程信息。 */
   variant?: 'thinking'
+  /** 所属 assistant 是否正在流式（Block text 分支透传）。true 期间未闭合 fence 走 streaming-fence
+   *  占位（静默 ≥阈值或翻 false 时 finalize 转完整渲染）；false/undefined（complete/静态内容）直接完整渲染。 */
+  streaming?: boolean
 }>()
 
 const deps = useChatViewDeps()
@@ -74,9 +92,20 @@ function decodeB64(b64: string): string {
 const segments = ref<MarkdownSegment[]>([])
 let renderSeq = 0
 
+// ── D-5 增量渲染状态（W23）──
+// 前缀缓存是 opaque 句柄（创建/原地更新都在壳的 renderIncremental 内），组件只持有透传。
+// per-instance 归属（08 U5）：MarkdownRenderer 随消息内容重建、卸载即弃，无跨 session 残留
+// （对比 TurnRenderCache 需 per-session 分区——MessageStream 实例不随 session 销毁，ADR-0049）。
+let incrementalCache: IncrementalMarkdownCache | null = null
+/** 上次 content 变化时刻（streaming-fence 静默判定基准 = 距上一 token 到达的时长） */
+let lastContentAt = 0
+/** streaming-fence 占位的静默 finalize 定时器（fence 闭合前 token 停止时转完整渲染） */
+let fenceFinalizeTimer: ReturnType<typeof setTimeout> | null = null
+
 // ── H2 流式 markdown 渲染 rAF trailing 节流 ──
 // 每个 text_delta token 触发 watch → deps.renderMarkdown 全量重解析。rAF trailing 把一帧内
-// 多次 content 变化合并为单次渲染，消除流式卡顿。
+// 多次 content 变化合并为单次渲染，消除流式卡顿。D-5 增量渲染（前缀缓存 + tail 段）叠加在该
+// 节流之上：每帧渲染的只是稳定边界之后的 tail。
 let rafId: number | null = null
 let pendingContent = ''
 
@@ -181,24 +210,94 @@ function onClick(e: MouseEvent): void {
 }
 
 /**
- * 实际执行 markdown 渲染。经 deps.renderMarkdown 桥接 renderer 壳的 renderMarkdownSegments
- * （含 shiki 高亮 + 路径/basename 链接化，renderer 壳内部管 filePaths/localFiles）。
- * 序号守卫防旧渲染覆盖新内容；失败降级转义纯文本兜底。
+ * 实际执行 markdown 渲染（D-5 增量消费，W23）——latest-wins 串行入口。
+ * 增量缓存是单个可变对象（W22 原地更新），并发调用会交叉改写（旧渲染 resume 后按陈旧
+ * boundary 追加 → 前缀段重复，append-only 校验对「重复但文本一致」无法自愈）→ 必须串行：
+ * in-flight 期间新请求合并为待执行项（latest-wins），完成后只跑最新一条。
  */
-async function doRender(text: string): Promise<void> {
+let renderInFlight = false
+let queuedRender: { text: string; opts?: { forceFinalize?: boolean } } | null = null
+
+function doRender(text: string, opts?: { forceFinalize?: boolean }): void {
+  if (renderInFlight) {
+    queuedRender = { text, opts }
+    return
+  }
+  renderInFlight = true
+  void runRender(text, opts).finally(() => {
+    renderInFlight = false
+    if (queuedRender) {
+      const next = queuedRender
+      queuedRender = null
+      doRender(next.text, next.opts)
+    }
+  })
+}
+
+/**
+ * 渲染执行体：优先 deps.renderMarkdownIncremental（前缀缓存 + tail 增量 + streaming-fence 占位），
+ * 未 provide 时回退 renderMarkdown 全量（等价旧版）。序号守卫 + 失败降级转义纯文本。
+ */
+async function runRender(text: string, opts?: { forceFinalize?: boolean }): Promise<void> {
   if (!text.trim()) {
     segments.value = []
+    incrementalCache = null
+    clearFenceFinalizeTimer()
     return
   }
   const seq = ++renderSeq
   try {
-    const segs = await deps.renderMarkdown(text, props.sessionId ?? undefined)
-    if (seq === renderSeq) segments.value = segs
+    if (deps.renderMarkdownIncremental) {
+      // complete 语义：streaming !== true（false/undefined = 消息完成或静态内容，占位判定直接 finalize）
+      const complete = props.streaming !== true
+      const silenceMs = performance.now() - lastContentAt
+      const finalize =
+        opts?.forceFinalize === true ||
+        (deps.shouldFinalizeStreamingFence?.({ complete, silenceMs }) ?? complete)
+      const r = await deps.renderMarkdownIncremental(text, incrementalCache, props.sessionId ?? undefined, {
+        finalizeOpenFence: finalize,
+      })
+      incrementalCache = r.cache
+      if (seq === renderSeq) {
+        segments.value = [...r.prefixSegments, ...r.tailSegments]
+        armFenceFinalizeTimer(r.tailSegments, complete)
+      }
+    } else {
+      const segs = await deps.renderMarkdown(text, props.sessionId ?? undefined)
+      if (seq === renderSeq) segments.value = segs
+    }
   } catch {
     if (seq === renderSeq) {
       segments.value = [{ type: 'text', content: escapeHtmlForFallback(text) }]
+      // 增量缓存可能已被半途污染（renderIncremental 抛错前原地改写），作废重建保证下帧正确
+      incrementalCache = null
+      clearFenceFinalizeTimer()
     }
   }
+}
+
+function clearFenceFinalizeTimer(): void {
+  if (fenceFinalizeTimer !== null) {
+    clearTimeout(fenceFinalizeTimer)
+    fenceFinalizeTimer = null
+  }
+}
+
+/**
+ * tail 含 streaming-fence 占位且消息未完成时安排静默 finalize 定时器（每帧渲染后重排）。
+ * 壳未提供阈值时不激活（complete-only 判定）。
+ */
+function armFenceFinalizeTimer(tailSegments: MarkdownSegment[], complete: boolean): void {
+  clearFenceFinalizeTimer()
+  if (complete) return
+  if (!tailSegments.some((s) => s.type === 'streaming-fence')) return
+  const threshold = deps.streamingFenceSilenceMs
+  if (threshold === undefined) return
+  const remaining = Math.max(0, threshold - (performance.now() - lastContentAt))
+  fenceFinalizeTimer = setTimeout(() => {
+    fenceFinalizeTimer = null
+    void doRender(pendingContent || props.content, { forceFinalize: true })
+  }, remaining)
 }
 
 /** rAF 回调：执行 pending 渲染（延迟求值守卫，一帧内多次 content 变化只渲染末次值） */
@@ -213,22 +312,35 @@ function scheduleRender(text: string): void {
   if (rafId === null) rafId = requestAnimationFrame(flushRender)
 }
 
-// content 变化（流式增量）→ rAF 节流渲染
+// content 变化（流式增量）→ rAF 节流渲染；记录到达时刻（streaming-fence 静默判定基准）
 watch(
   () => props.content,
   (text) => {
+    lastContentAt = performance.now()
     scheduleRender(text)
   },
   { immediate: true },
 )
 
-// 卸载时取消 pending rAF + 清复制反馈定时器
+// streaming true→false（消息 complete）：未闭合 fence 占位立即转完整渲染，不等静默阈值
+watch(
+  () => props.streaming,
+  (s, prev) => {
+    if (prev === true && s !== true) {
+      clearFenceFinalizeTimer()
+      scheduleRender(props.content)
+    }
+  },
+)
+
+// 卸载时取消 pending rAF + 清复制反馈/fence finalize 定时器
 onScopeDispose(() => {
   if (rafId !== null) {
     cancelAnimationFrame(rafId)
     rafId = null
   }
   if (copiedTimer) clearTimeout(copiedTimer)
+  clearFenceFinalizeTimer()
 })
 </script>
 

@@ -24,3 +24,26 @@ export interface MarkdownSegment {
   /** streaming-fence 专属：是否 mermaid fence */
   mermaid?: boolean
 }
+
+/** D-5 增量渲染结果（renderer 壳 renderIncremental 输出的镜像类型，W22 协议 / W23 消费）。
+ *  渲染树 = [...prefixSegments, ...tailSegments]；前缀段引用恒等（缓存命中帧零重渲染），
+ *  tail 段每帧重建。与 renderer composables/logic/markdown.ts 的 IncrementalRenderResult
+ *  结构对齐（字段漂移会被结构化类型在编译期拦下，镜像失效防护）。 */
+export interface IncrementalMarkdownResult {
+  prefixSegments: MarkdownSegment[]
+  tailSegments: MarkdownSegment[]
+  stableBoundary: number
+  mode: 'incremental' | 'fallback-full'
+}
+
+/** D-5 增量渲染缓存句柄（renderer 壳 IncrementalRenderCache 的结构镜像）。
+ *  ui 侧只持有/透传（opaque handle）：创建与原地更新都在 renderer 壳的 renderIncremental 内，
+ *  ui 不读写其字段。结构镜像（而非 unknown）保证壳侧实现与协议同步。 */
+export interface IncrementalMarkdownCache {
+  boundary: number
+  prefixText: string
+  prefixSegments: MarkdownSegment[]
+  nextSegId: number
+  envFilePaths?: Set<string>
+  envLocalFiles?: Set<string>
+}

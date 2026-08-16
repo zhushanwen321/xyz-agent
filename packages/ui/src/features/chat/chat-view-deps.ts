@@ -16,7 +16,7 @@
 import type { InjectionKey } from 'vue'
 import { inject } from 'vue'
 import type { FileNode, Message, Segment, ChangeSetStatus } from '@xyz-agent/shared'
-import type { MarkdownSegment } from './markdown-types'
+import type { IncrementalMarkdownCache, IncrementalMarkdownResult, MarkdownSegment } from './markdown-types'
 
 /** drawer 打开参数（按 tab 携带不同上下文） */
 export interface DrawerOpenOptions {
@@ -82,6 +82,26 @@ export interface ChatViewDeps {
   // ── 渲染桥接（重库渲染经壳注入，ui 不带 shiki/mermaid 依赖）──
   /** 渲染 markdown 为 segments（renderer 壳 renderMarkdownSegments，含 shiki 高亮 + 路径链接化） */
   renderMarkdown: (source: string, sessionId?: string) => MarkdownSegment[] | Promise<MarkdownSegment[]>
+  /**
+   * D-5 增量渲染（W22 协议 / W23 消费，renderer 壳 renderIncremental）：前缀段引用恒等缓存 +
+   * tail 段每帧重建。cache 是 opaque 句柄——首次传 null 由壳创建（随返回值带回，组件持有后透传），
+   * 壳内原地更新；env（filePaths/localFiles）引用变化由壳内全量重建处理。
+   * optional：未 provide（mock 壳/降级）时 MarkdownRenderer 回退 renderMarkdown 全量渲染（等价旧版）。
+   */
+  renderMarkdownIncremental?: (
+    source: string,
+    cache: IncrementalMarkdownCache | null,
+    sessionId?: string,
+    opts?: { finalizeOpenFence?: boolean },
+  ) => Promise<IncrementalMarkdownResult & { cache: IncrementalMarkdownCache }>
+  /**
+   * streaming-fence 占位转完整渲染判定（renderer 壳 shouldFinalizeStreamingFence）：
+   * message complete 或 token 静默 ≥ 阈值。未 provide 时组件按 complete-only 判定。
+   */
+  shouldFinalizeStreamingFence?: (state: { complete: boolean; silenceMs: number }) => boolean
+  /** streaming-fence 静默阈值 ms（renderer 壳 STREAMING_FENCE_SILENCE_MS，SSOT 在 renderer）；
+   *  组件据此安排 finalize 定时器。未提供则静默路径不激活（仅 complete 触发）。 */
+  streamingFenceSilenceMs?: number
   /** 渲染 mermaid 为 SVG（renderer 壳 renderMermaid，依赖 mermaid 库） */
   renderMermaid: (source: string, theme: 'dark' | 'light') => Promise<{ svg: string }>
   /** 把 assistant 消息转为 markdown（copy-as-MD 功能，依赖 i18n 文案） */
