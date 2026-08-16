@@ -58,7 +58,7 @@ vi.mock('../src/infra/pi/pi-paths.js', () => ({
 }))
 
 // import 在 mock 之后（mock 提升，import 时已是 mock 版本）
-import { scanPiSessions, _resetSessionMetaCacheForTest } from '../src/infra/pi/session-file-utils.js'
+import { scanPiSessions, invalidateScanDirCache, _resetSessionMetaCacheForTest } from '../src/infra/pi/session-file-utils.js'
 
 describe('W3 scanPiSessions mtime+size 缓存', () => {
   let tmpSessionsDir: string
@@ -131,6 +131,10 @@ describe('W3 scanPiSessions mtime+size 缓存', () => {
     realFs.writeFileSync(filePath, lines.join('\n') + '\n', 'utf-8')
     realFs.utimesSync(filePath, fixedMtime, fixedMtime)
 
+    // W26（D9-1）适配：目录列举层 1s TTL——文件变更后 1s 内重扫会命中目录快照。
+    // 显式失效目录缓存（delete/rename/fork 的失效语义），隔离目录层后本用例只验证
+    // per-file mtime+size 键（文件级缓存层行为不变）。
+    invalidateScanDirCache()
     scanPiSessions()
     const readsAfterSecond = getFileReads()
     // 核心：mtime 不变但 size 变 → 必须 miss（键含 size）
@@ -149,6 +153,9 @@ describe('W3 scanPiSessions mtime+size 缓存', () => {
 
     realFs.rmSync(join(tmpSessionsDir, 'encodedCwd', 's1.jsonl'), { force: true })
 
+    // W26（D9-1）适配：文件删除不经显式失效时目录 TTL 快照 1s 内仍含已删条目——
+    // 显式失效（session delete 路径的调用点语义）后立即重扫，per-file 层返回空。
+    invalidateScanDirCache()
     result = scanPiSessions()
     expect(result).toHaveLength(0)
   })

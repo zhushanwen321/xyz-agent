@@ -55,6 +55,7 @@ import {
   readPresetBinding,
   presetSidecarPath,
   scanPiSessions,
+  invalidateScanDirCache,
   _resetSessionMetaCacheForTest,
 } from '../src/infra/pi/session-file-utils.js'
 
@@ -147,6 +148,10 @@ describe('preset sidecar IO', () => {
 
     // persistPresetBinding 写 sidecar + 失效缓存
     persistPresetBinding(filePath, 'builtin:full')
+    // W26（D9-1）适配：sidecar 写入只失效 per-file 层（sessionMetaCache）；目录列举层
+    // 1s TTL 快照内 launchPresetId 仍为旧值。显式失效目录缓存（TTL 过期语义），
+    // 隔离目录层后验证 per-file 层失效（tc3 核心断言）。
+    invalidateScanDirCache()
 
     // 第三次 scan：缓存已失效 → 重新读 → launchPresetId 更新
     result = scanPiSessions()

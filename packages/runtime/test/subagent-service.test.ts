@@ -32,6 +32,8 @@ function createMockSessionStore(mainSessionFile: string, mainSessionId: string, 
   }
   return {
     scanSessions: () => [meta],
+    // W26（D9-1）：ISessionStore 接口新增目录 TTL 缓存失效成员
+    invalidateScanCache: () => {},
     refreshAll: () => {},
     persistSessionName: () => {},
     persistSessionEnd: () => {},

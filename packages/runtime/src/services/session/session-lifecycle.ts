@@ -17,7 +17,7 @@ import type { SessionSummary, BatchDeleteResult, ThinkingLevel } from '@xyz-agen
 import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
-import type { IManagedSessionView } from './types.js'
+import type { IManagedSessionView, ScannedSession } from './types.js'
 import type { PresetResolution } from '../preset-service.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
@@ -276,6 +276,10 @@ export class SessionLifecycle {
       }
     }
 
+    // wave:perf-w26（D9-1 rename 失效点）：persistSessionName append session_info 改变文件
+    // mtime/size（sessionMetaCache 键控自然 miss），但目录列举 TTL 快照 1s 内仍返回旧 name——
+    // rename 后侧栏刷新立即显示新名，显式失效目录缓存。
+    this.sessionStore.invalidateScanCache()
     this.sessionStore.refreshAll()
   }
 
@@ -305,6 +309,9 @@ export class SessionLifecycle {
       // W-Runtime4：清理 sessionMetaCache 中的 stale 条目（避免无界增长）
       this.sessionStore.invalidateMetaCache(target.filePath)
     }
+    // wave:perf-w26（D9-1 delete 失效点）：session 文件已 trash，目录 TTL 快照 1s 内仍含
+    // 已删条目——显式失效，删除后立即从侧栏列表消失（05 文档 V5 验收）。
+    this.sessionStore.invalidateScanCache()
     this.sessionStore.refreshAll()
   }
 
@@ -455,6 +462,12 @@ export class SessionLifecycle {
       modelOverride?: string
       /** Staging Mode（ADR-0056）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
       thinkingOverride?: string
+      /**
+       * wave:perf-w26（微项 12 find 合并）：调用方（SessionService.forkSession facade）已解析的
+       * 源 session 扫描结果。传入时本方法不再自扫（同 handler 单次 scanSessions）；
+       * 直接调用方（测试）未传时保持原行为自行扫描。
+       */
+      source?: ScannedSession
     },
   ): Promise<SessionSummary> {
     if (!this.configStore.getDefaultModel()) {
@@ -462,7 +475,8 @@ export class SessionLifecycle {
     }
 
     // 1. 查源 session 文件路径（scanSessions 合并磁盘 + 内存 active）
-    const source = this.svc.findScannedSession(srcSessionId)
+    // wave:perf-w26（微项 12）：facade 传入 source 时复用（find 合并），未传时自扫（force 旁路 TTL）。
+    const source = options?.source ?? this.svc.findScannedSession(srcSessionId)
     if (!source) {
       throw new Error(`fork: source session not found: ${srcSessionId}`)
     }
@@ -484,6 +498,9 @@ export class SessionLifecycle {
       fromPiEntryId,
       fallbackParentId,
     )
+    // wave:perf-w26（D9-1 fork 失效点）：fork 新文件由 runtime 直接写出（非 pi 延迟落盘），
+    // 显式失效目录 TTL 缓存让下一次列表构建立即包含新 session（不依赖 active 内存合并兜底）。
+    this.sessionStore.invalidateScanCache()
 
     // 3. spawn 新 pi 进程（与 restore 同模式）
     // fork 继承源 session 的 preset（设计文档 §4.5）。
@@ -546,6 +563,9 @@ export class SessionLifecycle {
       // L5: switchSession 失败时清理孤儿 fork 文件（已写出但 pi 未能加载）
       await this.safeDestroy(forkedId)
       await unlink(forkedFilePath).catch(() => {})
+      // wave:perf-w26（D9-1）：fork 文件已删，失效目录 TTL 缓存（步骤 2 的失效到此刻的
+      // 窗口内可能已被其他消费方扫进快照）。
+      this.sessionStore.invalidateScanCache()
       throw e
     }
 
@@ -568,6 +588,8 @@ export class SessionLifecycle {
       // L5: initializeManagedSession 失败时清理孤儿 fork 文件（已写出但 session 未进 Map）
       await this.safeDestroy(forkedId)
       await unlink(forkedFilePath).catch(() => {})
+      // wave:perf-w26（D9-1）：同 switchSession 失败分支——孤儿文件已删，失效目录 TTL 缓存。
+      this.sessionStore.invalidateScanCache()
       throw initErr
     }
 

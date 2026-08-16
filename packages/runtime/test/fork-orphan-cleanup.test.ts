@@ -127,6 +127,8 @@ function makeLifecycle(opts: MakeOpts = {}) {
 
   const sessionStore = {
     refreshAll: vi.fn(),
+    // W26（D9-1）：fork 成功/失败清理路径新增目录 TTL 缓存失效调用点（ISessionStore 接口新成员）
+    invalidateScanCache: vi.fn(),
     // forkSession/create 调 persistPresetBinding 写 .preset.json sidecar（session-lifecycle L170/L411）。
     // fork 清理测试不验证 sidecar 内容，noop 即可。
     persistPresetBinding: vi.fn(),

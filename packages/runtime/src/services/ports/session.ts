@@ -74,11 +74,32 @@ export interface RebuiltHistory {
 }
 
 /**
+ * scanSessions 的分层选项（wave:perf-w26，05-scan-caching D9-1 消费方分层）。
+ *
+ * 列表构建消费方（侧栏列表）不传 opts 走目录 TTL 缓存；单 session 路径解析消费方
+ * （历史/子代理/workflow/fork 源等按 id 查文件路径）传 force 强制刷新——pi 是外部进程
+ * 写文件，刚落盘 session 在 TTL 窗口内也必须解析到，否则静默返回空（plan M-3）。
+ */
+export interface ScanSessionsOptions {
+  /** 绕过目录列举 TTL 缓存强制刷新（单 session 路径解析消费方专用）。 */
+  force?: boolean
+}
+
+/**
  * session 存储 port。service 经此 port 访问，不直接 import infra。
  */
 export interface ISessionStore {
-  /** 扫描 pi sessions 目录，返回持久化会话列表。 */
-  scanSessions(): ScannedSessionMeta[]
+  /**
+   * 扫描 pi sessions 目录，返回持久化会话列表。
+   * opts.force=true 绕过目录 TTL 缓存（单 session 路径解析消费方）；缺省走缓存（列表构建）。
+   */
+  scanSessions(opts?: ScanSessionsOptions): ScannedSessionMeta[]
+  /**
+   * 显式失效目录列举 TTL 缓存（wave:perf-w26 D9-1）。
+   * session delete / fork / rename（runtime 自写文件的操作）后调用；create 走 pi 延迟
+   * 落盘靠 TTL 自然过期，不调。
+   */
+  invalidateScanCache(): void
   /** 刷新 pi 配置缓存（models + settings 全量重读）。 */
   refreshAll(): void
   /** 持久化 session 名称。 */

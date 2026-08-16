@@ -111,6 +111,8 @@ function makeMocks(opts: {
   const persistPresetBindingFn = vi.fn()
   const sessionStore = {
     refreshAll: vi.fn(),
+    // W26（D9-1）：delete/fork/rename 路径新增目录 TTL 缓存失效调用点（ISessionStore 接口新成员）
+    invalidateScanCache: vi.fn(),
     persistPresetBinding: persistPresetBindingFn,
     trash: vi.fn(),
     invalidateMetaCache: vi.fn(),

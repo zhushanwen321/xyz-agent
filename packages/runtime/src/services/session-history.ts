@@ -43,7 +43,10 @@ function filterObjectEntries(entries: unknown[]): PiSessionEntry[] {
  * 文件不存在或为空时返回空数组。
  */
 export async function getHistoryFromFile(sessionId: string, sessionStore: ISessionStore): Promise<import('@xyz-agent/shared').Message[]> {
-  const target = sessionStore.scanSessions().find(s => s.id === sessionId)
+  // wave:perf-w26（D9-1 消费方分层，plan M-3）：单 session 路径解析消费方 force 旁路目录
+  // TTL 缓存——pi 是外部进程写文件（首个 assistant 后落盘），刚落盘 session 在 TTL 窗口内
+  // 也必须解析到文件路径，否则 getFullHistory（加载更多）静默返回空。
+  const target = sessionStore.scanSessions({ force: true }).find(s => s.id === sessionId)
   if (!target) return []
   return getHistoryFromFilePath(target.filePath, sessionStore)
 }
@@ -58,7 +61,9 @@ export async function getHistoryFromFile(sessionId: string, sessionStore: ISessi
  * getHistoryFromFile（全量读）——两者语义互补。
  */
 export async function getHistoryTailFromFile(sessionId: string, sessionStore: ISessionStore, maxTurns = DEFAULT_MAX_TURNS): Promise<TailReadResult> {
-  const target = sessionStore.scanSessions().find(s => s.id === sessionId)
+  // wave:perf-w26（D9-1 消费方分层，plan M-3）：同 getHistoryFromFile——路径解析 force 旁路，
+  // 离线 session 的尾读 fallback 不受 TTL 窗口陈旧影响。
+  const target = sessionStore.scanSessions({ force: true }).find(s => s.id === sessionId)
   if (!target) return { messages: [], truncated: false }
   return tailReadHistory(target.filePath, sessionStore, maxTurns)
 }

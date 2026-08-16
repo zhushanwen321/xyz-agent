@@ -672,18 +672,76 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
 }
 
 /**
+ * wave:perf-w26（D9-1）：sessions 目录列举层 TTL 缓存有效期（1s）。
+ *
+ * 列表构建消费方（SessionScanner.listAll → listPersistedSessions，侧栏列表）在 TTL 窗口内
+ * 直接命中缓存快照（零 readdirSync/statSync）。1s 保证 pi 落盘新 session 文件后秒级出现在
+ * 列表（pi 延迟写入：首个 assistant 前不落盘，列表本就无法更早发现，TTL 过期即重扫）。
+ *
+ * 正确性敏感的**单 session 路径解析消费方**（getHistoryFromFile / getFullHistory /
+ * getSubagents / getWorkflows / findScannedSession 等）必须传 force 旁路——pi 是外部进程
+ * 写文件，不在显式失效覆盖内，若走 TTL 缓存，刚落盘 session 的查找会在窗口内静默返回
+ * 空（05-scan-caching D9-1 审查修正，plan M-3）。
+ */
+const SCAN_DIR_TTL_MS = 1000
+
+/** 目录列举缓存条目。dir 不匹配（XYZ_AGENT_DATA_DIR 切换 / 测试隔离）即整体失效。 */
+interface ScanDirCacheEntry {
+  dir: string
+  entries: ScannedSessionMeta[]
+  expiresAt: number
+}
+let scanDirCache: ScanDirCacheEntry | null = null
+
+/** scanPiSessions 的分层选项（wave:perf-w26 D9-1 消费方分层）。 */
+export interface ScanSessionsOptions {
+  /**
+   * 单 session 路径解析消费方传 true：绕过目录 TTL 缓存强制刷新（正确性优先，
+   * 刚落盘 session 在 TTL 窗口内也必须解析到）。
+   */
+  force?: boolean
+}
+
+/**
+ * 显式失效目录列举 TTL 缓存（wave:perf-w26 D9-1）。
+ *
+ * session delete / fork / rename（runtime 自写文件的操作）后调用——这些写不经 pi 延迟
+ * 落盘，显式失效让下一次列表构建立即可见。create 走 pi 延迟落盘，靠 TTL 自然过期，
+ * 不调此函数。亦供测试重置（测试间目录隔离）。
+ */
+export function invalidateScanDirCache(): void {
+  scanDirCache = null
+}
+
+/**
  * 扫描 pi 的 sessions 目录（按 cwd 分组的子目录结构）。
  * 返回扁平化的 session 列表。
  *
  * W3：scanSessionMeta 三读合一 + 缓存。每文件 miss 时 1 次提取 header+name+outcome，
  * hit 时零读取（仅 statSync）。
+ *
+ * wave:perf-w26（D9-1）：目录列举层 1s TTL 缓存——默认（列表构建消费方）窗口内返回
+ * 缓存快照；opts.force=true（路径解析消费方）绕过缓存强制刷新。
  */
-export function scanPiSessions(): ScannedSessionMeta[] {
-  if (!existsSync(getSessionsDir())) return []
+export function scanPiSessions(opts?: ScanSessionsOptions): ScannedSessionMeta[] {
+  const dir = getSessionsDir()
+  const now = Date.now()
+  if (!opts?.force && scanDirCache && scanDirCache.dir === dir && now < scanDirCache.expiresAt) {
+    // 浅拷贝数组：消费者可安全 sort/splice，不污染缓存本体（meta 元素引用与
+    // sessionMetaCache 共享，现状已是只读契约）。
+    return [...scanDirCache.entries]
+  }
+  const results = scanPiSessionsFromDisk(dir)
+  // force 刷新同样写缓存：随后 1s 内的列表构建消费方零 IO 读到最新视图。
+  scanDirCache = { dir, entries: results, expiresAt: now + SCAN_DIR_TTL_MS }
+  return [...results]
+}
+
+function scanPiSessionsFromDisk(sessionsDir: string): ScannedSessionMeta[] {
+  if (!existsSync(sessionsDir)) return []
 
   const results: ScannedSessionMeta[] = []
 
-  const sessionsDir = getSessionsDir()
   let entries: string[]
   try {
     entries = readdirSync(sessionsDir)

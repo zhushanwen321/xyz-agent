@@ -7,7 +7,7 @@
  * message-converter 的 convertPiHistory + system/trash。
  * service 经此 port 访问这些 session 域操作，不直接 import 各 infra 模块。
  */
-import type { ISessionStore, ScannedSessionMeta, SessionOutcome, SessionHeader, RebuiltHistory } from '../../services/ports/session.js'
+import type { ISessionStore, ScannedSessionMeta, SessionOutcome, SessionHeader, RebuiltHistory, ScanSessionsOptions } from '../../services/ports/session.js'
 import type { Message, SegmentsMetadataFile } from '@xyz-agent/shared'
 import type { PiSessionEntry } from './pi-protocol.js'
 import {
@@ -19,6 +19,7 @@ import {
   extractSessionOutcome,
   patchSessionCwd,
   invalidateSessionMetaCache,
+  invalidateScanDirCache,
   parseSessionHeader,
   persistHandedOff,
 } from './session-file-utils.js'
@@ -28,8 +29,12 @@ import { rebuildHistoryFromEntries } from './entry-tree-builder.js'
 import { trash } from '../system/trash.js'
 
 export class PiSessionStore implements ISessionStore {
-  scanSessions(): ScannedSessionMeta[] {
-    return scanPiSessions()
+  scanSessions(opts?: ScanSessionsOptions): ScannedSessionMeta[] {
+    return scanPiSessions(opts)
+  }
+
+  invalidateScanCache(): void {
+    invalidateScanDirCache()
   }
 
   refreshAll(): void {

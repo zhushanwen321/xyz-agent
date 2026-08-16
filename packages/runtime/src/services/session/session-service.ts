@@ -322,43 +322,51 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       thinkingOverride?: string
     },
   ): Promise<SessionSummary> {
+    // wave:perf-w26（微项 12 find 合并）：整个 fork handler 只扫一次磁盘。
+    // 原链路 resolveEntryIdByTimestamp 与 lifecycle.forkSession 各自 scanSessions().find()
+    // （同 handler 两次全量扫描），合并为 facade 单次解析后贯穿传递。
+    // findScannedSession 内部 force：路径解析消费方（fork 源文件定位，正确性敏感，plan M-3）。
+    const source = this.findScannedSession(srcSessionId)
+    if (!source) throw new Error(`fork: source session not found: ${srcSessionId}`)
     // piEntryId 缺失（RPC 路径读取的 session）时，读 JSONL 按 timestamp + role 匹配 entryId
     let resolvedEntryId = fromPiEntryId
     if (!resolvedEntryId) {
       resolvedEntryId = await this.resolveEntryIdByTimestamp(
-        srcSessionId,
+        source,
         opts?.fromMessageTimestamp,
         opts?.fromMessageRole,
       )
     }
     // override 透传给 lifecycle.forkSession（而非 resolveEntryIdByTimestamp——override 与 entry 解析无关，
-    // 仅作用于新 session 的 pi 启动参数）。
+    // 仅作用于新 session 的 pi 启动参数）；source 同传（find 合并，lifecycle 不再自扫）。
     return this.lifecycle.forkSession(srcSessionId, resolvedEntryId, includeFrom, label, {
       modelOverride: opts?.modelOverride,
       thinkingOverride: opts?.thinkingOverride,
+      source,
     })
   }
 
   /**
    * RPC 路径加载的 session 无 piEntryId，读 JSONL 按 timestamp + role 匹配 entryId。
    * [HISTORICAL] 2026-07-16：历史 session 通过 RPC 加载后 fork 报“缺少 piEntryId”。
+   *
+   * wave:perf-w26（微项 12）：source 由调用方（forkSession）单次扫描解析后传入，
+   * 本函数不再自扫（同 handler 的 scanSessions 合并为一次）。
    */
   private async resolveEntryIdByTimestamp(
-    sessionId: string,
+    source: ScannedSession,
     messageTimestamp?: number,
     messageRole?: string,
   ): Promise<string> {
-    const target = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
-    if (!target) throw new Error(`fork: source session not found for resolve: ${sessionId}`)
     // AGENTS.md 规则 #6：所有读取 session 文件必须处理「不存在」（scan 与读间竞态——
     // 文件可能已被外部删除：pi 异常退出未 flush / 用户手动清理）。模式对齐 getHistoryFromFilePath。
     let content: string
     try {
-      content = await readFile(target.filePath, 'utf-8')
+      content = await readFile(source.filePath, 'utf-8')
     } catch (e) {
       if (isEnoent(e)) {
-        console.warn(`[session-service] resolveEntryIdByTimestamp: session file missing: ${target.filePath}`)
-        throw new Error(`fork: source session file missing for resolve: ${target.filePath}`)
+        console.warn(`[session-service] resolveEntryIdByTimestamp: session file missing: ${source.filePath}`)
+        throw new Error(`fork: source session file missing for resolve: ${source.filePath}`)
       }
       throw e
     }
@@ -370,7 +378,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       && e.message && typeof e.message === 'object'
     )
     if (msgEntries.length === 0) {
-      throw new Error(`fork: source session has no message entries: ${target.filePath}`)
+      throw new Error(`fork: source session has no message entries: ${source.filePath}`)
     }
     // 按 timestamp + role 匹配（JSONL timestamp 是 ISO 字符串，前端是 Unix ms）
     // ±TIMESTAMP_TOLERANCE_MS（模块顶层常量，W7）容差：历史 session 可能秒级精度，1000ms 容差兜底
@@ -629,14 +637,18 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 文件读取（getHistoryFromFilePath），供前端「加载更多历史」按钮调用（FR-4）。
    */
   async getFullHistory(sessionId: string): Promise<Message[]> {
-    const target = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
+    // wave:perf-w26（D9-1 消费方分层，plan M-3）：路径解析消费方 force 旁路 TTL——
+    // 刚落盘 session 的「加载更多」在 TTL 窗口内也不静默返回空。
+    const target = this.sessionStore.scanSessions({ force: true }).find((s) => s.id === sessionId)
     if (!target) return []
     return getHistoryFromFilePath(target.filePath, this.sessionStore)
   }
 
   async getSubagents(sessionId: string): Promise<SubagentRecord[]> {
-    // 找主 session 文件路径（scanSessions 扫 pi/sessions/，含 cwd-encoded 子目录）
-    const target = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
+    // 找主 session 文件路径（scanSessions 扫 pi/sessions/，含 cwd-encoded 子目录）。
+    // wave:perf-w26（plan M-3）：路径解析消费方 force 旁路 TTL（刚落盘 session 的
+    // subagent 面板在窗口内不静默返回空）。
+    const target = this.sessionStore.scanSessions({ force: true }).find((s) => s.id === sessionId)
     if (!target) return []
     return extractSubagentsFromSessionFile(target.filePath)
   }
@@ -662,7 +674,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 纯磁盘读取，不依赖 pi 进程活跃。文件不存在或无 workflow 调用时返回空数组。
    */
   async getWorkflows(sessionId: string): Promise<WorkflowRunRecord[]> {
-    const target = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
+    // wave:perf-w26（plan M-3）：路径解析消费方 force 旁路 TTL（与 getSubagents 同理）。
+    const target = this.sessionStore.scanSessions({ force: true }).find((s) => s.id === sessionId)
     if (!target) return []
     return extractWorkflowsFromSessionFile(target.filePath)
   }
@@ -947,7 +960,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   findScannedSession(sessionId: string): ScannedSession | undefined {
-    return this.sessionStore.scanSessions().find(s => s.id === sessionId)
+    // wave:perf-w26（D9-1 消费方分层，plan M-3）：本方法的全部消费方（rename/delete/restore/
+    // fork 的源文件解析、setProject 的 sidecar 写入）都是单 session 路径解析——统一 force
+    // 旁路 TTL，刚落盘 session 在窗口内也能解析到。
+    return this.sessionStore.scanSessions({ force: true }).find(s => s.id === sessionId)
   }
 
   /**
