@@ -46,8 +46,10 @@ export async function create(cwd?: string, label?: string, presetId?: string, pr
 }
 
 /** 切换到指定 session（id 无效时由 runtime/pending reject） */
-export function switchSession(sessionId: string): Promise<void> {
-  return command('session.switch', { sessionId })
+export async function switchSession(sessionId: string): Promise<void> {
+  // wave:perf-w20（R-11）：switch reply 拆分为 session.switched（无 messages），调用方
+  // 本就丢弃 reply——await 显式丢弃（Promise<session.switched> 不能直接 return 给 Promise<void>）。
+  await command('session.switch', { sessionId })
 }
 
 /**

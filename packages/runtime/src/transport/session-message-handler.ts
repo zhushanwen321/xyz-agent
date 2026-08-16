@@ -215,20 +215,15 @@ export class SessionMessageHandler {
       case 'config.sessions':
         return this.ctx.reply(ws, msg.id, 'config.sessions', { groups: this.ctx.sessionService.listPersistedSessions() })
       case 'session.switch': {
+        // wave:perf-w20（R-11 瘦身）：switch reply 不再无条件全量 getHistory 塞 messages。
+        // renderer switchSession 返回 void 不读 reply payload，历史消费路径是 selectSession
+        // 内显式 chat.getHistory（session.history RPC）——reply 里的 messages 是纯浪费的
+        // 全量序列化（长 session 数 MB）。被驱逐 session 切回由显式 history RPC（享受 D6
+        // 重建缓存增量）拉取；LRU 窗口内切回本就零请求（isHydrated 守卫）。
         const switchId = msg.payload.sessionId
         const summary = this.ctx.sessionService.getSummary(switchId)
         if (summary) {
-          try {
-            const { messages, truncated } = await this.ctx.sessionService.getHistory(switchId)
-            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: summary, messages, historyTruncated: truncated })
-          } catch (e) {
-            // W5：历史加载失败时绝不能 reply messages:[] + historyTruncated:false——
-            // 前端会误判「全部历史已加载且未截断」并把空列表当真。改走 sendError（统一 error
-            // envelope），与项目「错误作为 assistant 消息/可见告警插入」模式一致，前端据此渲染失败态。
-            const errMsg = toErrorMessage(e)
-            console.error('[runtime] failed to load history for switch:', errMsg)
-            this.ctx.sendError(ws, 'history_load_failed', errMsg, msg.id, { sessionId: switchId })
-          }
+          this.ctx.reply(ws, msg.id, 'session.switched', { sessionId: switchId, session: summary })
         } else {
           try {
             await this.ctx.sessionService.ensureActive(switchId)
@@ -236,8 +231,7 @@ export class SessionMessageHandler {
             if (!restored) {
               throw new Error(`Session ${switchId} restored but summary unavailable`)
             }
-            const { messages, truncated } = await this.ctx.sessionService.getHistory(switchId)
-            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: restored, messages, historyTruncated: truncated })
+            this.ctx.reply(ws, msg.id, 'session.switched', { sessionId: switchId, session: restored })
           } catch (e) {
             const errMsg = toErrorMessage(e)
             const isENOENT = isEnoent(e)

@@ -26,12 +26,18 @@ const domainsDir = resolve(__dirname, '../../api/domains')
 // ════════════════════════════════════════════════════════════════════════
 
 describe('U1: ReplyPayloadMap — key 覆盖 RPC request type', () => {
-  it('session.switch 映射存在且为 void（ack 型，前端不读 payload）', () => {
-    // session.switch 的 reply 是 session.history（带 session summary），
-    // 但前端 request<void> 不读 payload，故 ReplyPayloadMap['session.switch']=void
+  it('session.switch 映射存在且为 session.switched（R-11 瘦身：无 messages，前端不读 payload）', () => {
+    // wave:perf-w20（R-11）：session.switch 的 reply 拆分为 session.switched
+    // （{ sessionId, session }，不再全量 getHistory 塞 messages——历史消费路径是
+    // selectSession 内显式 session.history RPC）。前端 switchSession 返回 void 不读 payload。
     type SwitchReply = ReplyPayloadMap['session.switch']
-    const _check: SwitchReply = undefined as void
-    expect(_check).toBeUndefined()
+    // 编译期形状断言：含 session、不含 messages/historyTruncated（瘦身锁定）
+    const hasSession: 'session' extends keyof SwitchReply ? true : false = true
+    const hasMessages: 'messages' extends keyof SwitchReply ? true : false = false
+    const hasTruncated: 'historyTruncated' extends keyof SwitchReply ? true : false = false
+    expect(hasSession).toBe(true)
+    expect(hasMessages).toBe(false)
+    expect(hasTruncated).toBe(false)
   })
 
   it('session.history 映射存在且含 messages + historyTruncated', () => {

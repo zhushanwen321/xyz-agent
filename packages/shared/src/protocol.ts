@@ -585,7 +585,7 @@ export type WorktreeUnknownErrorCode = 'worktree_failed'
 export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 
 export type ServerMessageType =
-  | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.fullHistory'
+  | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.fullHistory' | 'session.switched'
   | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted' | 'session.setProject'
   | 'project.loaded'
   | 'session.subagents' | 'session.subagentHistory'
@@ -1016,14 +1016,22 @@ export interface ServerMessageMapBase {
   // （内部 client.abort + 清 inflight）→ 广播此帧让前端复位源 session 的 handingOff 态。
   // srcSessionId：被中断的源 session id（与 handoffComplete 的 srcSessionId 同义，统一字段名）。
   'session.handoffAborted': { srcSessionId: string }
-  // session.history：session.history / session.switch 的成功 reply（session-message-handler.ts:83/96/111）。
-  // session optional——switch 路径带 SessionSummary（已 restore 的 session），getHistory 路径不带。
+  // session.history：session.history 的成功 reply（显式历史拉取 RPC；wave:perf-w20 后 switch
+  // reply 已拆分到 session.switched，不再复用本类型）。session optional 保留向后兼容。
   // historyTruncated：历史超上限截断标志（前端据此提示「历史已截断」）。
   'session.history': {
     sessionId: string
     session?: SessionSummary
     messages: Message[]
     historyTruncated: boolean
+  }
+  // session.switched：session.switch 的成功 reply（wave:perf-w20 R-11 瘦身——switch reply 不再
+  // 无条件全量 getHistory 塞 messages，被驱逐 session 切回走显式 session.history RPC（全量），
+  // LRU 内切回本就零请求）。renderer switchSession 返回 void 不读 payload，历史消费路径是
+  // selectSession 内显式 chat.getHistory。与 session.history 类型拆分（历史 reply 形状不动）。
+  'session.switched': {
+    sessionId: string
+    session: SessionSummary
   }
   // session.fullHistory：session.getFullHistory reply（session-message-handler.ts:115 reply { sessionId, messages }，全量无截断）。
   'session.fullHistory': { sessionId: string; messages: Message[] }
@@ -1380,7 +1388,7 @@ export interface ReplyPayloadMap {
   'session.setProject': void      // reply session.setProject
   'session.setThinkingLevel': void // reply session.thinkingLevelSet
   'session.subagentAction': void  // reply session.subagentActionDone
-  'session.switch': void          // reply session.history（前端不读 payload）
+  'session.switch': ServerMessageMap['session.switched'] // reply session.switched（R-11 瘦身：无 messages；前端 register<void> 不读 payload）
   'session.workflowAction': void  // reply session.workflowActionDone
   // terminal.* 都是 ack 型，统一 reply 'terminal.ack'（空 payload，前端 command() 按 id 匹配 resolve）
   'terminal.attach': ServerMessageMap['terminal.ack']

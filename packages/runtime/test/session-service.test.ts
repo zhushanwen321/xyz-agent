@@ -1178,15 +1178,16 @@ describe('SessionService · Facade', () => {
       expect(result).toEqual({ messages: ['rebuilt'], truncated: false })
     })
 
-    it('falls back to file read when getEntries returns empty and session is idle', async () => {
+    it('R-12: returns empty array (short-circuit) when getEntries returns empty and session is idle', async () => {
       const { id } = await setup.seedSession()
       const client = setup.clientMap.get(id)!
       client.getEntries.mockResolvedValueOnce({ data: { entries: [], leafId: null } })
-      // idle session getEntries 空 → fallback 走 getHistoryTailFromFile（尾读，返回 {messages, truncated}）
-      mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [{ role: 'user', content: 'f' } as unknown as Message], truncated: false })
+      // wave:perf-w20（R-12）：pi RPC 是活跃 session 的权威视图，空 entries 短路返回空列表，
+      // 不走尾读 fallback（尾读会给最多 20 turn 的文件尾部视图，与 RPC 视图闪变不一致）。
+      // 尾读降级仅在 getEntries 抛错时触发（见下方 throws 用例）。
       const result = await setup.service.getHistory(id)
-      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(id, expect.anything())
-      expect(result.messages.length).toBe(1)
+      expect(result).toEqual({ messages: [], truncated: false })
+      expect(mocks.getHistoryTailFromFileMock).not.toHaveBeenCalled()
     })
 
     it('returns empty array when getEntries empty and session is generating', async () => {

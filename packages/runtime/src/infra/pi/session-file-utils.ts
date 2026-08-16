@@ -5,7 +5,7 @@
  * 从 pi-config-bridge.ts 提取以控制文件行数（pi-config-bridge 已删除）。
  */
 
-import { existsSync, readFileSync, statSync, openSync, writeSync, closeSync, readdirSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, openSync, readSync, writeSync, closeSync, readdirSync, unlinkSync } from 'node:fs'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { parseJsonl, readTailEntries } from '../../utils/jsonl.js'
 import { join } from 'node:path'
@@ -25,10 +25,38 @@ export interface SessionHeader {
 
 // ── 解析工具 ─────────────────────────────────────────────────
 
+/**
+ * parseSessionHeader 的头部读块大小（4KB）。
+ *
+ * session header（type:"session"，含 cwd/parentSession/forkEntryId）固定在 JSONL 首行，
+ * 4KB 覆盖正常 header（cwd 长路径 + 路径型字段）；JSONL 行内无换行，4KB 内无换行时
+ * 按无首行终止处理（JSON.parse 截断行失败返回 null，与旧全量读实现对超长首行的行为一致）。
+ */
+const HEADER_READ_CHUNK_BYTES = 4096
+
+/** LF（'\n'）字节值——JSONL 行终止符，Buffer.indexOf 用字节比较。 */
+const NEWLINE_BYTE = 0x0a
+
+/**
+ * 解析 session JSONL 首行的 session header。
+ *
+ * wave:perf-w20 微项 9：只读文件头部一小块（而非 readFileSync 全量读再 split('\n')[0]）。
+ * header 固定在首行，长 session 文件（数 MB）全量读只为取第一行是纯浪费；扫描器对每个
+ * 候选文件调一次本函数，节省随文件数线性放大。
+ */
 export function parseSessionHeader(filePath: string): SessionHeader | null {
   try {
-    const content = readFileSync(filePath, 'utf-8')
-    const firstLine = content.split('\n')[0]
+    const fd = openSync(filePath, 'r')
+    let head: Buffer
+    try {
+      const chunk = Buffer.alloc(HEADER_READ_CHUNK_BYTES)
+      const bytesRead = readSync(fd, chunk, 0, chunk.length, 0)
+      head = chunk.subarray(0, bytesRead)
+    } finally {
+      closeSync(fd)
+    }
+    const nlIndex = head.indexOf(NEWLINE_BYTE)
+    const firstLine = (nlIndex === -1 ? head : head.subarray(0, nlIndex)).toString('utf-8')
     if (!firstLine) return null
     const entry = JSON.parse(firstLine)
     if (entry.type !== 'session') return null

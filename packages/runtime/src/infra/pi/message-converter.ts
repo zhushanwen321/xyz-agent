@@ -92,6 +92,9 @@ export function convertSinglePiMessage(
   const thinking: ThinkingBlock[] = []
   const toolCalls: ToolCall[] = []
   const contentBlocks: import('@xyz-agent/shared').ContentBlock[] = []
+  // wave:perf-w20 微项 2：text 块只 push 一次的哨兵——用布尔标志替代循环内
+  // contentBlocks.some() 的 O(n) 重扫（长 content 数组的累积 O(n²)），行为等价。
+  let hasTextBlock = false
 
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i]
@@ -99,7 +102,8 @@ export function convertSinglePiMessage(
       textContent += part.text ?? ''
       // text 块按真实到达顺序 push（首次遇到时 push 一次，多次 text part 只累加不重复 push）。
       // contentIndex = parts 下标（pi content array 顺序），与 streaming 路径对称（§11 检查点 3）。
-      if (!contentBlocks.some((b) => b.type === 'text')) {
+      if (!hasTextBlock) {
+        hasTextBlock = true
         contentBlocks.push({ type: 'text', refId: 'text', contentIndex: i })
       }
     } else if (part.type === 'thinking') {

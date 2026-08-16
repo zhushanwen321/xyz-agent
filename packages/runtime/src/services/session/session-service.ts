@@ -41,6 +41,7 @@ import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { SessionLifecycle } from './session-lifecycle.js'
 import { MessageDispatcher } from './message-dispatcher.js'
 import { SessionScanner } from './session-scanner.js'
+import { HistoryRebuildCache, mergeIncrementalMessages } from './history-rebuild-cache.js'
 import { toErrorMessage, isEnoent } from '../../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
 import { detectBareWorkspaceCached } from '../worktree/workspace-detector.js'
@@ -156,6 +157,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 避免破坏 SessionService 的 25+ 测试构造调用点。未注入时所有 bus 调用 no-op（this.messageBus?.*）。
    */
   private messageBus: IMessageBus | null = null
+  /**
+   * wave:perf-w20（D6）：per-session 历史重建缓存 + lastLeafId（LRU 容量帽 8）。
+   * getHistory 命中缓存时走 getEntries(since=lastLeafId) 增量；removeSessionEntry
+   * （session 删除 + pi 进程退出汇聚点）清除。纯派生数据，可随时丢弃退化为全量重建。
+   */
+  private readonly historyCache = new HistoryRebuildCache()
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
@@ -487,47 +494,86 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /**
-   * 拉取 session 历史。
+   * 拉取 session 历史（wave:perf-w20 D6：重建缓存 + lastLeafId 增量）。
    *
    * 优先走 pi get_entries RPC + entry 树重建（rebuildHistoryFromEntries）：从完整 entry 树
    * （含 message + custom entry）重建 Message[]，按 clientUuid ↔ userEntryId 映射回填
    * 结构化 Segment[]（image/file/skill badge，读 segments.json sidecar）。
    *
-   * 与原 get_messages 路径的区别：get_messages 只返回扁平 message 列表，无 custom entry，
-   * 无法回填 badge（降级为占位文本）。get_entries 含 custom entry，可精确还原 badge。
+   * 三分支（04-history-incremental.md §3.3）：
+   * 1. 缓存命中 → getEntries(since=lastLeafId) 增量。空增量 = leafId 未变 = 缓存新鲜，
+   *    直接返回缓存（R-12 短路：不走尾读 fallback）。pi 侧成本 = findIndex + 空/小窗口序列化，
+   *    全量 entry 树序列化（主要卡顿源）被消除。
+   * 2. 增量非空 → 重建增量窗口 + piEntryId 去重合并入缓存（D6-3）。
+   * 3. 无缓存（首次进入 / LRU 驱逐重进 / "Entry not found" fallback 后）→ 全量重建 + 写缓存。
    *
-   * 降级链：get_entries 空/失败 → fallback 文件尾读（getHistoryTailFromFile）。
-   * 返回 { messages, truncated }——truncated=true 表示文件尾读截断了早期 turn（N1）。
+   * 错误处理（D6-4）：
+   * - 增量报 "Entry not found"（pi 实测文案，E 大写 not 小写）→ 丢缓存 → 全量重拉。
+   *   触发面：缓存跨 pi 进程存活且 session 文件被外部改写（D6-1 的 removeSessionEntry
+   *   清理已结构性消除常态触发，此为防御兜底）。
+   * - 其他错误（超时/pi 内部错误）→ 与现状同链降级（尾读），缓存不动（下次重试仍走 since）。
+   *
+   * R-12：pi RPC 成功但 entries 为空 → 短路返回空列表。pi 的 get_entries 是活跃 session
+   * 的权威视图（内存 fileEntries，restore 时从文件加载），空就是空；尾读会给出与 RPC
+   * 视图不一致的文件尾部（最多 20 turn），两次 getHistory 结果闪变。
+   *
+   * 返回 { messages, truncated }——truncated=true 仅出现在尾读降级路径（N1）。
    */
   async getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }> {
     const client = this.pm.getClient(sessionId)
     if (client) {
+      // ── 分支 1/2：缓存命中 → since 增量 ──
+      const cached = this.historyCache.get(sessionId)
+      if (cached && cached.leafId !== null) {
+        try {
+          const inc = await client.getEntries(cached.leafId) as { data?: { entries?: PiSessionEntry[]; leafId?: string | null } }
+          const incEntries = inc.data?.entries ?? []
+          if (incEntries.length === 0) {
+            // R-12 短路：空增量 = leafId 未变 = 缓存新鲜。零重建直接返回（不走尾读 fallback）。
+            console.log(`[session-service] getHistory cache fresh (empty delta) for ${sessionId}, returning ${cached.messages.length} cached messages`)
+            return { messages: cached.messages, truncated: cached.truncated }
+          }
+          const segmentsMetadata = await readSegmentsMetadataFile(sessionId)
+          const rebuilt = this.sessionStore.rebuildHistoryFromEntries(incEntries, segmentsMetadata)
+          const merged = mergeIncrementalMessages(cached.messages, rebuilt.messages)
+          const newLeafId = inc.data?.leafId ?? null
+          this.historyCache.set(sessionId, { leafId: newLeafId, messages: merged, truncated: false })
+          console.log(`[session-service] getHistory incremental for ${sessionId}: ${incEntries.length} delta entries, merged ${cached.messages.length} -> ${merged.length} messages`)
+          return { messages: merged, truncated: false }
+        } catch (e) {
+          if (isEntryNotFoundError(e)) {
+            // D6-4 fallback：since 失效（缓存基线不在 pi 当前 entry 集合）→ 丢缓存 → 全量重拉
+            console.warn(`[session-service] getHistory incremental Entry-not-found for ${sessionId}, dropping cache and full rebuild`)
+            this.historyCache.delete(sessionId)
+          } else {
+            // 其他错误：现有降级链（尾读），缓存不动（下次重试仍走 since）
+            console.warn(`[session-service] getHistory via getEntries(since) failed: ${toErrorMessage(e)}, falling back to tail read`)
+            return await getHistoryTailFromFile(sessionId, this.sessionStore)
+          }
+        }
+      }
+      // ── 分支 3：全量重建（无缓存或 fallback 丢缓存后）──
       try {
         const result = await client.getEntries() as { data?: { entries?: PiSessionEntry[]; leafId?: string | null } }
-        // leafId 是 session 当前叶子 entry id（branch 后指向新叶子）。当前 getHistory 全量拉取不消费它，
-        // 保留供未来增量拉取（getEntries(since=leafId)）或 branch 历史完整性判断用。
         const entries = result.data?.entries ?? []
         if (entries.length > 0) {
           // 读 segments.json sidecar（runtime 直接读文件，不经 IPC——IPC 是 renderer→main，runtime 是独立进程）。
           // 文件缺失/损坏 → null（rebuildHistoryFromEntries 全降级为占位文本，非硬错误）。
           const segmentsMetadata = await readSegmentsMetadataFile(sessionId)
           const rebuilt = this.sessionStore.rebuildHistoryFromEntries(entries, segmentsMetadata)
+          // leafId 是 session 当前叶子 entry id，记录为下次增量拉取的 since 基准（D6-1）。
+          this.historyCache.set(sessionId, { leafId: result.data?.leafId ?? null, messages: rebuilt.messages, truncated: false })
           // entry 树重建返回全量历史（get_entries 不截断），truncated=false
           return { messages: rebuilt.messages, truncated: false }
         }
-        // entries 空 → 仅闲置 session fallback 到磁盘尾读
-        const session = this.sessions.get(sessionId)
-        if (session && !session.isGenerating) {
-          console.warn(`[session-service] getHistory via getEntries returned empty for idle session ${sessionId}, falling back to tail read`)
-          return await getHistoryTailFromFile(sessionId, this.sessionStore)
-        }
+        // R-12：entries 空 → 短路返回空列表（pi RPC 是活跃 session 的权威视图，不走尾读）。
         return { messages: [], truncated: false }
       } catch (e) {
         console.warn(`[session-service] getHistory via getEntries failed: ${toErrorMessage(e)}, falling back to tail read`)
         return await getHistoryTailFromFile(sessionId, this.sessionStore)
       }
     }
-    // 无 RPC client（离线 session）：走尾读，避免大文件全量读
+    // 无 RPC client（离线 session）：走尾读，避免大文件全量读（不读不写缓存——文件路径无 leafId 概念）
     return await getHistoryTailFromFile(sessionId, this.sessionStore)
   }
 
@@ -938,6 +984,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // R3：所有删除路径（lifecycle.delete 主动删 + onSessionExit 进程异常退）汇聚于此，
     // 触发 onSessionDelete 清 ReloadOrchestrator.pendingReload 残留。
     this.onSessionDelete?.(sessionId)
+    // wave:perf-w20（D6-1）：session 删除 / pi 进程退出时清历史重建缓存 + lastLeafId。
+    // pi 进程退出后缓存基线（lastLeafId）不再与新进程的 entry 集合对应，保留只会
+    // 走 "Entry not found" fallback（防御兜底存在，但清理是正路径）。
+    this.historyCache.delete(sessionId)
     // wave:runtime-wiring（GAP1 决策）：session 销毁时清理 MessageBus 的该 session 状态
     // （ring buffer + state snapshot + 订阅者集合 + 反查表）。幂等（ES1：session 不存在 no-op）。
     // 不在 pi flush / turn 结束时清理——ring 容量 1000 会自然 FIFO 淘汰旧 turn delta，
@@ -1390,6 +1440,19 @@ async function readSegmentsMetadataFile(sessionId: string): Promise<SegmentsMeta
   } catch {
     return null
   }
+}
+
+/**
+ * 判定 getEntries(since) 的 "Entry not found" 错误（wave:perf-w20 D6-4 fallback 触发条件）。
+ *
+ * pi 实测文案（2026-08-16，pi 0.84.0）：`Entry not found: <since-id>`——E 大写 not 小写
+ * （pi rpc-mode.ts:615 模板字符串）。rpc-client 对 success:false 的响应 reject
+ * `new Error(msg.error)`，错误原文进 Error.message。匹配用大小写宽容的 includes
+ * （防御 pi 上游微调文案大小写）+ 前缀锚定（避免误吞其他含 "entry" 字样的错误）。
+ */
+function isEntryNotFoundError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e)
+  return /^entry not found/i.test(msg)
 }
 
 /**

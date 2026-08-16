@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { persistSessionEnd, extractSessionOutcome, persistProjectBinding, readProjectBinding } from '../infra/pi/session-file-utils.js'
+import { persistSessionEnd, extractSessionOutcome, persistProjectBinding, readProjectBinding, parseSessionHeader } from '../infra/pi/session-file-utils.js'
 
 describe('session-file-utils sidecar', () => {
   let dir: string
@@ -102,5 +102,38 @@ describe('session-file-utils sidecar', () => {
     rmSync(filePath)
     persistProjectBinding(filePath, '')
     expect(existsSync(filePath + '.project.json')).toBe(false)
+  })
+
+  // ── parseSessionHeader 首行读（wave:perf-w20 微项 9）──
+  // 只读文件头部 4KB 而非全量 readFileSync，行为与旧实现等价：多行大文件只取首行 header。
+  it('H1: parseSessionHeader 多行长文件只读首行——header 解析正确且不触碰后续行', () => {
+    const filePath = join(dir, 'long.jsonl')
+    const header = JSON.stringify({ type: 'session', id: 'sess-h1', cwd: '/test', timestamp: '2026-08-16T00:00:00.000Z', parentSession: '/old.jsonl', forkEntryId: 'e-9' })
+    // 首行 header + 大量后续 entry（超过 4KB 读块，验证只取首行不受影响）
+    const tail = Array.from({ length: 200 }, (_, i) => JSON.stringify({ type: 'message', id: `m-${i}`, content: 'x'.repeat(80) })).join('\n')
+    writeFileSync(filePath, `${header}\n${tail}\n`)
+    const parsed = parseSessionHeader(filePath)
+    expect(parsed).toEqual({
+      id: 'sess-h1', cwd: '/test', timestamp: '2026-08-16T00:00:00.000Z',
+      parentSession: '/old.jsonl', forkEntryId: 'e-9',
+    })
+  })
+
+  it('H2: parseSessionHeader 首行非 session 类型 / 空文件 / 不存在文件 → null', () => {
+    const notSession = join(dir, 'not-session.jsonl')
+    writeFileSync(notSession, '{"type":"message","id":"m1"}\n')
+    expect(parseSessionHeader(notSession)).toBeNull()
+
+    const empty = join(dir, 'empty.jsonl')
+    writeFileSync(empty, '')
+    expect(parseSessionHeader(empty)).toBeNull()
+
+    expect(parseSessionHeader(join(dir, 'missing.jsonl'))).toBeNull()
+  })
+
+  it('H3: parseSessionHeader 无换行单行文件（首行即全内容）仍可解析', () => {
+    const filePath = join(dir, 'single-line.jsonl')
+    writeFileSync(filePath, JSON.stringify({ type: 'session', id: 'sess-h3', cwd: '/x', timestamp: 't' }))
+    expect(parseSessionHeader(filePath)?.id).toBe('sess-h3')
   })
 })
