@@ -140,7 +140,7 @@ describe('Block working 态 · tool 块', () => {
     expect(detailLines.length).toBe(0)
   })
 
-  it('U8: 失败 tool 默认收起，手动点击展开后显示 error output（Demo H：无鲜红框，AlertTriangle ICON）', async () => {
+  it('U8: 失败 tool 终态挂载默认展开（error-visibility M1 §3.3.1 选项 A），点击可收起（Demo H：无鲜红框，AlertTriangle ICON）', async () => {
     const wrapper = mount(Block, {
       props: { type: 'tool', tool: makeTool({ status: 'error', output: 'command failed' }), working: false },
     })
@@ -150,12 +150,12 @@ describe('Block working 态 · tool 块', () => {
     // header 含 svg 图标（AlertTriangle ICON，lucide 渲染为 svg）
     const alertIcon = wrapper.find('[data-lucide="alert-triangle"], svg')
     expect(alertIcon.exists()).toBe(true)
-    // failed 不再强制展开，默认收起
-    expect(wrapper.text()).not.toContain('command failed')
-    // 手动点击展开后 error output 可见（displayContent 兜底 tool.error）
+    // 584869378（error-visibility M1）：failed 终态挂载默认展开，错误输出立即可见
+    expect(wrapper.text()).toContain('command failed')
+    // 手动点击可收起
     const header = wrapper.find('.cursor-pointer')
     await header.trigger('click')
-    expect(wrapper.text()).toContain('command failed')
+    expect(wrapper.text()).not.toContain('command failed')
   })
 })
 

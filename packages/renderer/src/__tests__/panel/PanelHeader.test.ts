@@ -2,9 +2,9 @@
  * PanelHeader 组件单测：session JSONL 文件名展示与复制。
  *
  * 覆盖：
- * - 正常态：右侧按钮组内展示短文件名（前 8 位 + .jsonl），点击复制绝对路径
- * - overlay 态（subagent/agent call）：用 overlaySessionFile 渲染，也复制对应路径
- * - sessionFile/overlaySessionFile 均为空时不渲染
+ * - 右侧按钮组内展示短文件名（前 8 位 + .jsonl），点击复制绝对路径
+ * - sessionFile 为空时不渲染（aca29110c 移除 overlay 两态后恒用主 sessionFile；
+ *   subagent/agent call 详情改由 drawer primary tabs 承接）
  * - i18n 契约
  *
  * 三视角（AGENTS.md 测试规范 #5-8）：
@@ -41,8 +41,6 @@ vi.mock('@/composables/effects/usePlatformChrome', async () => {
 
 const SESSION_FILE_PATH =
   '/Users/u/.xyz-agent/pi/agent/sessions/cwd-hash/2026-07-09T11-16-46-632Z_019f4698-2fa8-791c-858f-d02ba39d9676.jsonl'
-const OVERLAY_FILE_PATH =
-  '/Users/u/.xyz-agent/pi/agent/subagents/cwd-hash/sessions/2026-07-13T05-41-22-097Z_019f59fe-aaaa-bbbb.jsonl'
 
 function mountHeader(overrides: Record<string, unknown> = {}) {
   return mount(PanelHeader, {
@@ -74,7 +72,7 @@ describe('PanelHeader session 文件名展示（正常态）', () => {
     expect(el.text()).toContain('019f4698.jsonl')
   })
 
-  it('U2: 无 sessionFile 且无 overlaySessionFile 时不渲染', () => {
+  it('U2: 无 sessionFile 时不渲染', () => {
     const wrapper = mountHeader({ sessionFile: undefined })
     expect(wrapper.find('[data-testid="panel-session-file"]').exists()).toBe(false)
   })
@@ -98,42 +96,6 @@ describe('PanelHeader session 文件名展示（正常态）', () => {
     expect(fileBtn.element.compareDocumentPosition(drawerBtn.element as Node)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     )
-  })
-})
-
-describe('PanelHeader overlay 态文件名展示', () => {
-  it('U5: overlay 态用 overlaySessionFile 渲染短文件名', () => {
-    const wrapper = mountHeader({
-      viewingSubagent: true,
-      subagentLabel: 'sub',
-      sessionFile: undefined,
-      overlaySessionFile: OVERLAY_FILE_PATH,
-    })
-    const el = wrapper.find('[data-testid="panel-session-file"]')
-    expect(el.exists()).toBe(true)
-    expect(el.text()).toContain('019f59fe.jsonl')
-  })
-
-  it('U6: overlay 态点击复制 overlay 文件路径', async () => {
-    const wrapper = mountHeader({
-      viewingSubagent: true,
-      subagentLabel: 'sub',
-      sessionFile: undefined,
-      overlaySessionFile: OVERLAY_FILE_PATH,
-    })
-    await wrapper.find('[data-testid="panel-session-file"]').trigger('click')
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(OVERLAY_FILE_PATH)
-  })
-
-  it('U7: overlay 态无 overlaySessionFile 时不渲染', () => {
-    const wrapper = mountHeader({
-      viewingSubagent: true,
-      subagentLabel: 'sub',
-      sessionFile: SESSION_FILE_PATH,
-      overlaySessionFile: undefined,
-    })
-    // overlay 态优先 overlaySessionFile，为空则不渲染（不 fallback 到主 sessionFile）
-    expect(wrapper.find('[data-testid="panel-session-file"]').exists()).toBe(false)
   })
 })
 

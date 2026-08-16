@@ -625,9 +625,10 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
     expect(wrapper.find('.trace-tool').exists()).toBe(false)
   })
 
-  // 多 assistant turn（工具调用循环）折叠态只渲染最后一个 text block——过渡 text（被工具打断的
-  // 碎片）随 trace 折叠，只保留最终回复 text（Turn.vue lastTextBlockKey 驱动）
-  it('折叠态多 assistant text turn 渲染每个 assistant 的末位 text（各自完整回复不丢失）', () => {
+  // 多 assistant turn（工具调用循环）折叠态只渲染全 turn 最后一个 text block——8be96c5dc
+  // 修正（tool-loop 防爆炸）：末位 text 不再按 assistant 分组，非末位回复经 takeover 或
+  // 展开（完成态全量 flatBlocks）查看
+  it('折叠态多 assistant text turn 渲染全 turn 末位 text（8be96c5dc：不按 assistant 分组）', () => {
     const wrapper = mountTurn({
       turn: makeTurn({
         isStreaming: false,
@@ -652,14 +653,12 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
         ],
       }),
     })
-    // 折叠态（!sessionActive && !expanded）：渲染每个 assistant 的末位 text（各自完整回复不丢失）。
-    // a1 的 text“我先查一下文件” + a2 的 text“已完成修改”都可见；tool 随 trace 折叠。
+    // 折叠态（!sessionActive && !expanded）：仅全 turn 末位 text（a2「已完成修改」）可见；
+    // a1 非末位 text 收编（Turn.vue visibleBlocks 折叠分支），tool 随 trace 折叠
     const blocks = wrapper.findAllComponents({ name: 'Block' })
-    expect(blocks).toHaveLength(2)
+    expect(blocks).toHaveLength(1)
     expect(blocks[0].props('type')).toBe('text')
-    expect(blocks[0].props('content')).toBe('我先查一下文件')
-    expect(blocks[1].props('type')).toBe('text')
-    expect(blocks[1].props('content')).toBe('已完成修改')
+    expect(blocks[0].props('content')).toBe('已完成修改')
   })
 })
 
@@ -704,7 +703,7 @@ describe('Turn · forceWorking 虚拟 session 回归（edges wave CL1）', () =>
     })
     // sessionActive 回退 turn.isStreaming=true → showTrace=true（isLastTurn 默认 true）
     expect(wrapper.find('.trace').exists()).toBe(true)
-    // visible = thinking(0) + tool(1) + text(2) = 3（②空，W=8 全收）
+    // visible = thinking(0) + tool(1) + text(2) = 3（②空，W=6 全收）
     expect(wrapper.findAll('.trace .trace-blk').length).toBe(3)
     // streaming-tail 显示（isStreaming=true，末位 text 非 running tool）
     expect(wrapper.find('.streaming-tail').exists()).toBe(true)
@@ -712,7 +711,8 @@ describe('Turn · forceWorking 虚拟 session 回归（edges wave CL1）', () =>
 
   // 加固（review r2 mitigation）：forceWorking + >W 个完成块 → 窗口收编生效（CL1 反例场景）。
   // subagent 虚拟 session 块多时仍受窗口策略约束（visible=last W + text，compactedCount>0）。
-  it('forceWorking + >W 完成块（10 tool）→ 窗口收编生效（visible=8 tool + text，compactedCount=2）', () => {
+  // W=8→6：e9651bfa6（design D7 V1 tuning）
+  it('forceWorking + >W 完成块（10 tool）→ 窗口收编生效（visible=6 tool + text=7，compactedCount=4）', () => {
     const tools = Array.from({ length: 10 }, (_, i) => ({
       id: `tc${i}`,
       toolName: 'read',
@@ -745,8 +745,8 @@ describe('Turn · forceWorking 虚拟 session 回归（edges wave CL1）', () =>
         stubs: { ChangeSetCard: true, MarkdownRenderer: true, Block: true, TraceCompactorRow: true },
       },
     })
-    // visible = last 8 of 10 tool + text = 9（窗口对 forceWorking 生效）
+    // visible = last 6 of 10 tool + text = 7（W=6，窗口对 forceWorking 生效）
     const blocks = wrapper.findAllComponents({ name: 'Block' })
-    expect(blocks.length).toBe(9)
+    expect(blocks.length).toBe(7)
   })
 })

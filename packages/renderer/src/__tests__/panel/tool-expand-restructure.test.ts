@@ -81,7 +81,7 @@ describe('W3: 普通 tool 展开体去重复 + 加补充细节条', () => {
     expect(wrapper.text()).toContain('file content here')
   })
 
-  it('失败 tool 展开后 error 仍直显（错误文本可见，无鲜红框——Demo H 去鲜红）', async () => {
+  it('失败 tool 终态挂载默认展开 error 直显（584869378 §3.3.1 选项 A），无鲜红框——Demo H 去鲜红', async () => {
     const wrapper = mount(Block, {
       props: {
         type: 'tool',
@@ -89,17 +89,16 @@ describe('W3: 普通 tool 展开体去重复 + 加补充细节条', () => {
         working: false,
       },
     })
-    // failed 不再强制展开，默认收起
-    expect(wrapper.text()).not.toContain('old_string not found')
-    // 手动点击展开
-    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
-    // 展开后 error text 通过 displayContent 兜底显示
+    // failed 终态挂载默认展开（错误输出立即可见），error text 通过 displayContent 兜底显示
     expect(wrapper.text()).toContain('old_string not found')
     // Demo H：鲜红框已删（无 border-danger / bg-danger-soft）
     expect(wrapper.find('.border-danger').exists()).toBe(false)
     expect(wrapper.find('.bg-danger-soft').exists()).toBe(false)
     // 无重复 toolName(args) 行
     expect(wrapper.text()).not.toMatch(/edit\s*\(src\/App\.vue\)/)
+    // 手动点击可收起
+    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
+    expect(wrapper.text()).not.toContain('old_string not found')
   })
 })
 
@@ -172,7 +171,7 @@ describe('W3 补充：read/bash 工具特化 meta（行数/字符数自算）', 
     expect(text).toContain('500ms')
   })
 
-  it('read 失败时错误移至内容区（displayContent 兜底 tool.error），meta 不含错误摘要', async () => {
+  it('read 失败时错误移至内容区（displayContent 兜底 tool.error，终态挂载默认展开），meta 不含错误摘要', async () => {
     const wrapper = mount(Block, {
       props: {
         type: 'tool',
@@ -186,14 +185,13 @@ describe('W3 补充：read/bash 工具特化 meta（行数/字符数自算）', 
         working: false,
       },
     })
-    // failed 不再强制展开，默认收起
-    expect(wrapper.text()).not.toContain('File not found: src/missing.ts')
-    // 手动点击展开
-    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
-    // 错误文本通过 displayContent（兜底 tool.error）在内容区可见
+    // failed 终态挂载默认展开（584869378）：错误文本通过 displayContent（兜底 tool.error）在内容区可见
     expect(wrapper.text()).toContain('File not found: src/missing.ts')
     // meta 不含错误摘要（已移至内容区），无 text-neutral-mid.font-semibold meta 项
     expect(wrapper.find('.text-neutral-mid.font-semibold').exists()).toBe(false)
-    expect(wrapper.find('.text-danger').exists()).toBe(false)
+    // M1 T1（584869378）：failed tool header 状态色染 danger（唯一 text-danger 来源），不含错误摘要文本
+    const danger = wrapper.find('.text-danger')
+    expect(danger.exists()).toBe(true)
+    expect(danger.text()).not.toContain('File not found')
   })
 })

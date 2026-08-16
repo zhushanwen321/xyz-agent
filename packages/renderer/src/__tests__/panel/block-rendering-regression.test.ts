@@ -89,9 +89,12 @@ describe('block-rendering 回归护栏（§8.3）', () => {
     vi.useRealTimers()
   })
 
-  // TC-REG-1：零跳变回归——message_start 序列下 a1 text 节点全程同一 DOM 引用。
+  // TC-REG-1：零跳变回归——message_start 序列下窗口内块节点全程同一 DOM 引用。
   // T1=[a1 text streaming] → T2=[a1 text+tool running] → T3=[a1 text+tool, a2 text streaming]。
-  it('TC-REG-1: 零跳变 — a1 text DOM 引用在 T1→T3 全程同一节点，顺序不变，textContent 无丢失', async () => {
+  // [8be96c5dc 适配] 窗口语义：末位 text 全 turn 单个（不按 assistant 分组）——T3 时 a1 text
+  // （非末位）被收编出 visible，visible=[a1 tool, a2 text]；零跳变断言改为「T1→T2 a1 text 引用
+  // 稳定 + T2→T3 窗口内 a1 tool 引用稳定」（key=flatIndex keyed v-for 复用）。
+  it('TC-REG-1: 零跳变 — 窗口内块 DOM 引用在 T1→T3 全程同一节点，顺序不变，末位 text 无丢失', async () => {
     const a1Text = (over: Partial<Message> = {}): Message =>
       msg({
         id: 'a1',
@@ -128,7 +131,7 @@ describe('block-rendering 回归护栏（§8.3）', () => {
         ],
       }),
     })
-    // a1 text 引用同一节点（keyed v-for 复用 a1-text-0），textContent 无丢失
+    // a1 text 引用同一节点（keyed v-for 按 flatIndex=0 复用），textContent 无丢失
     expect(wrapper.find('.trace .trace-blk > div').exists()).toBe(true)
     expect(wrapper.find('.trace .trace-blk > div').element).toBe(a1TextEl)
     expect(a1TextEl.textContent).toBe('我先读文件')
@@ -138,9 +141,10 @@ describe('block-rendering 回归护栏（§8.3）', () => {
     expect(blocksT2[0].find('.md-stub').exists()).toBe(true)
     expect(blocksT2[0].find('.md-stub').text()).toBe('我先读文件')
     expect(blocksT2[1].find('.trace-tool').exists()).toBe(true)
-    expect(wrapper.find('.trace').text()).toContain('我先读文件')
+    // 记录 T2 的 a1 tool DOM 引用（T3 窗口收编 a1 text 后 tool 仍在窗口内）
+    const a1ToolEl = blocksT2[1].element as HTMLElement
 
-    // T3：message_start(a2)——a1 同 text+tool，a2 text streaming
+    // T3：message_start(a2)——a1 text 收编（非末位），visible=[a1 tool, a2 text]
     await wrapper.setProps({
       turn: makeTurn({
         isStreaming: true,
@@ -157,24 +161,22 @@ describe('block-rendering 回归护栏（§8.3）', () => {
         ],
       }),
     })
-    // a1 text 引用仍同一节点（a1 块未被新 a2 顶走或重建）
-    expect(wrapper.find('.trace .trace-blk > div').exists()).toBe(true)
-    expect(wrapper.find('.trace .trace-blk > div').element).toBe(a1TextEl)
-    expect(a1TextEl.textContent).toBe('我先读文件')
-    // 相对顺序不变：a1 text 在 a1 tool 前，a2 text 在 a1 块后
+    // a1 tool 引用仍同一节点（flatIndex=1 不变，窗口内块零跳变）
     const blocksT3 = wrapper.findAll('.trace .trace-blk')
-    expect(blocksT3.length).toBe(3)
-    expect(blocksT3[0].find('.md-stub').text()).toBe('我先读文件')
-    expect(blocksT3[1].find('.trace-tool').exists()).toBe(true)
-    expect(blocksT3[2].find('.md-stub').text()).toBe('内容是...')
-    // textContent 无丢失（两条 assistant 的 text 都在 trace 内）
-    expect(wrapper.find('.trace').text()).toContain('我先读文件')
+    expect(blocksT3.length).toBe(2)
+    expect(blocksT3[0].find('.trace-tool').exists()).toBe(true)
+    expect(blocksT3[0].element).toBe(a1ToolEl)
+    // 相对顺序不变：a1 tool 在 a2 text（末位 text = 流式正文）前
+    expect(blocksT3[1].find('.md-stub').exists()).toBe(true)
+    expect(blocksT3[1].find('.md-stub').text()).toBe('内容是...')
+    // 末位 text 无丢失（a1 非末位 text 已收编，经 takeover/展开查看——8be96c5dc）
     expect(wrapper.find('.trace').text()).toContain('内容是...')
   })
 
-  // TC-REG-2：折叠态多 assistant 文字可见——showTrace=false 时所有 text 块 DOM 存在，
-  // thinking/tool 不存在，.trace 容器恒渲染。防「非末位 text 被折叠隐藏」历史回归。
-  it('TC-REG-2: 折叠态多 assistant — 全 text 块可见（含非末位 a1），thinking/tool 隐藏', () => {
+  // TC-REG-2：折叠态多 assistant 文字可见——showTrace=false 时仅全 turn 末位 text 可见
+  // （8be96c5dc：不按 assistant 分组，防 tool-loop 多 assistant visible 爆炸），thinking/tool
+  // 不存在，.trace 容器恒渲染；非末位 text 经展开（完成态全量 flatBlocks「回看就是全量」）恢复。
+  it('TC-REG-2: 折叠态多 assistant — 仅末位 text 可见，thinking/tool 隐藏；展开后全量恢复', async () => {
     const a1 = msg({
       id: 'a1',
       status: 'complete',
@@ -194,19 +196,25 @@ describe('block-rendering 回归护栏（§8.3）', () => {
     })
     // .trace 容器恒渲染（v-if 下沉 Block 级）
     expect(wrapper.find('.trace').exists()).toBe(true)
-    // 两个 text 块 DOM 均存在（含非末位 a1 的 text）
+    // 折叠态仅全 turn 末位 text（a2「正文B」）可见；a1 非末位 text 收编
     const blocks = wrapper.findAll('.trace .trace-blk')
-    expect(blocks.length).toBe(2)
+    expect(blocks.length).toBe(1)
     expect(blocks[0].find('.md-stub').exists()).toBe(true)
-    expect(blocks[0].find('.md-stub').text()).toBe('正文A')
-    expect(blocks[1].find('.md-stub').exists()).toBe(true)
-    expect(blocks[1].find('.md-stub').text()).toBe('正文B')
+    expect(blocks[0].find('.md-stub').text()).toBe('正文B')
     // thinking/tool 节点不存在（showTrace=false 隐藏）
     expect(wrapper.find('.trace-think').exists()).toBe(false)
     expect(wrapper.find('.trace-tool').exists()).toBe(false)
-    // 折叠态文字完整可见（无丢失）
+    expect(wrapper.find('.trace').text()).toContain('正文B')
+
+    // 展开后（showTrace && !isWorkingTurn → 全量 flatBlocks）：a1 thinking/text/tool + a2 text 全恢复
+    expandedTurns.add('u1')
+    await nextTick()
+    const expanded = wrapper.findAll('.trace .trace-blk')
+    expect(expanded.length).toBe(4)
     expect(wrapper.find('.trace').text()).toContain('正文A')
     expect(wrapper.find('.trace').text()).toContain('正文B')
+    expect(wrapper.find('.trace-think').exists()).toBe(true)
+    expect(wrapper.find('.trace-tool').exists()).toBe(true)
   })
 
   // TC-REG-3：样式统一——展开态多 assistant，所有 text block 含正文 token 锚点
