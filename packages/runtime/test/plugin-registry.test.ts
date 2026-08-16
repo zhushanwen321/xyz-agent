@@ -232,4 +232,63 @@ describe('PluginRegistry', () => {
     expect(descriptors.find(d => d.pluginId === 'escape-plugin')).toBe(undefined)
     expect(descriptors.find(d => d.pluginId === 'absolute-plugin')).toBe(undefined)
   })
+
+  // ── built-in 扫描路径两形态（F4 dev 缺口回归防护）────────────────
+  // 布局辅助：在 <root>/resources/plugins/<name>/ 下造一个最小 built-in 插件
+  async function createBuiltinPlugin(root: string, name: string): Promise<string> {
+    const pluginDir = join(root, 'resources', 'plugins', name)
+    await mkdir(pluginDir, { recursive: true })
+    await writeFile(join(pluginDir, 'package.json'), JSON.stringify({
+      name,
+      version: '1.0.0',
+      xyzAgent: { manifestVersion: 1, main: 'index.js', activationEvents: ['onStartupFinished'] },
+    }), 'utf-8')
+    return pluginDir
+  }
+
+  // TC-1-09: dev 形态（pnpm dev，cwd=apps/electron，仓库根在上两层）
+  it('TC-1-09: built-in dir resolves via ../.. when cwd is apps/electron (dev form)', async () => {
+    const root = join(tmpDir, 'builtin-dev-form')
+    await createBuiltinPlugin(root, 'builtin-dev')
+    // projectRoot 模拟 pnpm dev 的 runtime cwd：<root>/apps/electron
+    const projectRoot = join(root, 'apps', 'electron')
+    await mkdir(projectRoot, { recursive: true })
+
+    const registry = new PluginRegistry(projectRoot, join(root, 'config'))
+    const descriptors = await registry.scan()
+
+    const desc = descriptors.find(d => d.pluginId === 'builtin-dev')
+    expect(desc).toBeTruthy()
+    expect(desc!.source).toBe('built-in')
+    expect(desc!.pluginPath).toBe(join(root, 'resources', 'plugins', 'builtin-dev', 'index.js'))
+  })
+
+  // TC-1-10: 仓库根形态（隔离 tsx / 本地 dist / 打包 cwd=Resources，resources 就在 cwd 下）
+  it('TC-1-10: built-in dir resolves directly under projectRoot (repo-root/packaged form)', async () => {
+    const root = join(tmpDir, 'builtin-root-form')
+    await createBuiltinPlugin(root, 'builtin-root')
+
+    const registry = new PluginRegistry(root, join(root, 'config'))
+    const descriptors = await registry.scan()
+
+    const desc = descriptors.find(d => d.pluginId === 'builtin-root')
+    expect(desc).toBeTruthy()
+    expect(desc!.source).toBe('built-in')
+    expect(desc!.pluginPath).toBe(join(root, 'resources', 'plugins', 'builtin-root', 'index.js'))
+  })
+
+  // TC-1-11: 两候选同时存在时 projectRoot 本地目录优先（候选顺序锁定）
+  it('TC-1-11: local resources/plugins wins over ../.. candidate when both exist', async () => {
+    const root = join(tmpDir, 'builtin-prio-form')
+    await createBuiltinPlugin(root, 'up-level-builtin')
+    const projectRoot = join(root, 'apps', 'electron')
+    // projectRoot 本地也放一个 built-in
+    await createBuiltinPlugin(projectRoot, 'local-builtin')
+
+    const registry = new PluginRegistry(projectRoot, join(root, 'config'))
+    const descriptors = await registry.scan()
+
+    expect(descriptors.find(d => d.pluginId === 'local-builtin')).toBeTruthy()
+    expect(descriptors.find(d => d.pluginId === 'up-level-builtin')).toBe(undefined)
+  })
 })
