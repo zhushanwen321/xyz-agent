@@ -23,7 +23,7 @@
 
 ## 事件流水（时间倒序追加，永不覆盖）
 
-- 2026-08-16 U1 verified→committed：verifier PASS（防篡改 diff 空 + 契约 7 条全过 + 真实 pi E2E S1/S2/S4/S7 三路全过：second 路 alpha session 恰 1 份 + beta 2 份 = discard 生效铁证、always 路 3 次耗尽、throwAt 分账）。存量 4 失败归因双重证实。commit <待填>。
+- 2026-08-16 U1 verified→committed：verifier PASS（防篡改 diff 空 + 契约 7 条全过 + 真实 pi E2E S1/S2/S4/S7 三路全过：second 路 alpha session 恰 1 份 + beta 2 份 = discard 生效铁证、always 路 3 次耗尽、throwAt 分账）。存量 4 失败归因双重证实。commit 889a798f9。
 - 2026-08-16 U1 R6 裁决：builder 上报 3 冲突（command-actions.test.ts / robustness-low-batch1.test.ts 规格遗漏、S8a grep 全域不可达）→ 测试清单扩 2 文件、S8a 改领地内断言、全域零命中挪 S8b；基线 2cff4d3f8。存量失败 4 用例待 verifier 核验归因。
 - 2026-08-16 U1 builder 首轮交付：14 文件（7 源 + 7 测试），typecheck 0 / lint 0 error / 目标测试 76 绿；3 冲突停手上报（正确行为）。打回修复 C1/C2 后 16 文件全绿（2171/2175，4 豁免存量）。
 - 2026-08-16 设计定稿：R3-R5 对抗审查收敛（R5: 0 must-fix），子文档 impl-spec 交付（commit 9ccfd44e1）。U1 acceptance 基线 commit 313005e1c。
