@@ -149,8 +149,11 @@ function delay(ms: number): Promise<void> {
  * cached replay 把 abort 产生的 failed 结果当作已完成结果回放（原 MUST_FIX
  * round-4 #1，自 pause 路径移入崩溃重建路径）。genuinely-done 的 call（成功或
  * 失败均 "done"）保留，重跑时按原语义 replay（不重复耗 token）。
+ *
+ * 返回被丢弃的 callId 数组（升序——Map 迭代按插入序，排序保证返回值与
+ * rebuildRuntime 的 L3 日志 payload 形态稳定），供调用方记日志。
  */
-function discardInFlightCalls(run: WorkflowRun): void {
+function discardInFlightCalls(run: WorkflowRun): number[] {
   const inFlight: number[] = [];
   for (const [callId, call] of run.state.calls) {
     if (call.status !== "done") inFlight.push(callId);
@@ -159,6 +162,7 @@ function discardInFlightCalls(run: WorkflowRun): void {
     run.state.calls.delete(callId);
     run.state.trace.removeByStepIndex(callId);
   }
+  return inFlight.sort((a, b) => a - b);
 }
 
 /**
@@ -180,6 +184,12 @@ export function rebuildRuntime(
   deps: LifecycleDeps,
   handlers: WorkerHandlers,
 ): void {
+ // OB3（可观察性）：rebuild 关键节点 debug 日志——此前函数体 0 处 deps.log，
+ // 崩溃自愈只能靠行为证据诊断（L1 入口 / L2 重排 / L3 discard / L4 完成）。
+  deps.log?.("debug", "workflow:error-recovery", "runtime rebuild start", {
+    runId: run.runId,
+    budgetTimeMs: run.spec.budgetTimeMs,
+  });
   const controller = new AbortController();
   const gate = new ConcurrencyGate({ maxConcurrency: DEFAULT_CONCURRENCY });
   const worker = deps.workerHost.start(run.spec, run.spec.args, handlers);
@@ -189,10 +199,16 @@ export function rebuildRuntime(
  // 时间预算静默失效（直到 rebuildRuntime 才重排——本函数即唯一重排点）。
  // deps.scheduleTimeBudget 由 Interface 层注入；未注入时（旧测试）跳过重排（兼容，
  // 不影响无时间预算的 run）。
-  const timeBudgetTimer =
-    run.spec.budgetTimeMs && run.spec.budgetTimeMs > 0 && deps.scheduleTimeBudget
-      ? deps.scheduleTimeBudget(run.runId, run.spec.budgetTimeMs)
-      : undefined;
+ // 重排分支改为 if——语义与原三元一致（同一条件调 scheduleTimeBudget），仅为在
+ // 分支内记 L2 日志，控制流/异常语义零变化。
+  let timeBudgetTimer: ReturnType<typeof setTimeout> | undefined;
+  if (run.spec.budgetTimeMs && run.spec.budgetTimeMs > 0 && deps.scheduleTimeBudget) {
+    timeBudgetTimer = deps.scheduleTimeBudget(run.runId, run.spec.budgetTimeMs);
+    deps.log?.("debug", "workflow:error-recovery", "time budget rescheduled", {
+      runId: run.runId,
+      budgetTimeMs: run.spec.budgetTimeMs,
+    });
+  }
   run.replaceRuntime(new RunRuntime(worker, gate, controller, timeBudgetTimer));
  // 清除被旧 runtime abort 的在飞 call——必须在 replaceRuntime 之后同步执行（无
  // await 间隔）：replaceRuntime 同步 abort 旧 controller + terminate 旧 worker，
@@ -207,8 +223,17 @@ export function rebuildRuntime(
  // S7-second 竞态：旧失败结果被 worker 侧 resolve 为空串 → 脚本假成功）；
  // finalizeCall 的 trace.update 在重跑已 append 同 stepIndex 新节点时命中新节点
  // （瞬时污染，由重跑完成时的 update 覆盖）。该投递由 dispatchAgentCall 的
- // 孤儿守卫（isOrphanedCall）拦截，此处不重复设防。
-  discardInFlightCalls(run);
+ // 孤儿守卫（isOrphanedCall）拦截，trace.update 的瞬时污染由 executeAgentCall
+ // 的 isOrphaned 谓词（OB2）拦截，此处不重复设防。
+  const discardedCallIds = discardInFlightCalls(run);
+  deps.log?.("debug", "workflow:error-recovery", "in-flight calls discarded", {
+    runId: run.runId,
+    callIds: discardedCallIds,
+    count: discardedCallIds.length,
+  });
+  deps.log?.("debug", "workflow:error-recovery", "runtime rebuild complete", {
+    runId: run.runId,
+  });
 }
 
 // ── handleWorkerMessage（消息路由） ──────────────────────────
@@ -391,7 +416,10 @@ function dispatchAgentCall(
     .withSlot(
       async () => {
         try {
-          await executeAgentCall(call, deps.runner, run.state.budget, signal, run.state.trace, onEvent, stream);
+ // OB2（S7 残留）：isOrphaned 谓词注入——旧代际 finalize 在 trace.update 前被
+ // 拦截（判定语义与下方 .then/.catch 守卫同一 isOrphanedCall，详见
+ // execute-agent-call.ts finalizeCall 文档注释）。
+          await executeAgentCall(call, deps.runner, run.state.budget, signal, run.state.trace, onEvent, stream, () => isOrphanedCall(run, msg.callId, call));
         } finally {
           stream?.dispose();
         }

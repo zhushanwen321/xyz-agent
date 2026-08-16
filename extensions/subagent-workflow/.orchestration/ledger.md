@@ -9,6 +9,8 @@
 | U1 行为删除 | orchestration + index + interface | committed | 2cff4d3f8（R6 后基线） | verifier PASS（.orchestration/acceptance/u1-report.md） |
 | U2 类型与持久化收窄 | models + jsonl-run-store + gui 视图 | committed | ce9302111 | verifier PASS（.orchestration/acceptance/u2-report.md）；builder 两项裁决（abortRun 死分支删除不可达论证 / v1 fixture 用 running）均复核成立 |
 | U3 文档回写 | README + CHANGELOG | committed | 963fddae8 | verifier PASS（.orchestration/acceptance/u3-report.md）；R8 扩权（SKILL.md 宣传修正 + 8 处注释）+ ports.ts:132 保留裁决复核成立 |
+| obs-fixes 观察项根除 | execution/orchestration | committed | d2853b11b | verifier PASS（.orchestration/acceptance/obs-fixes-report.md）；S7 残留瞬时污染守卫（executeAgentCall 尾参 isOrphaned 实例比对前移至 trace.update 前）+ rebuildRuntime L1-L4 debug 日志；U6 红性验证闭环 |
+| slice5 conformance 复核 | 全包（只读验收） | closed（复核 PASS） | —（实施 093e28fe3/459202f25/dcee2c9b6/f4f4f9f9f，2026-08-16 05:16-06:23 用户侧交付） | verifier PASS（.orchestration/acceptance/slice5-conformance-report.md）：14/14 接口项符合（3 PASS-with-note）、勿动清单 9/9 零触碰、对抗抽查 3/3（worker 快照独立重算 byte-identical / IF13 fuzz 200 例 / IF2 并行保序 30 轮） |
 
 ## Milestone Gate
 
@@ -18,12 +20,18 @@
 
 ## 观察项（不阻塞，流转时如实记录）
 
-- 存量测试失败 4 用例（skill-discovery ×2 / spawn-worktree-guidance ×2）：与本次 diff 无关已经 verifier 双重证实（文件交集空 + stash 基线复现）；属认知外存量问题，待单独决策修复或豁免
-- U1 verifier 环境注记 3 条（U3 已处置）：①手册 S7 注入脚本 @pi-meta 头已补（U3）；②rebuild 路径无 deps.log 调用，断言已改行为证据口径（U3）——若需日志可观察性另立小改动；③pi rpc-mode 无补全探测入口，补全断言以源码 diff 为证（U3 已注记）
-- S7 修复已知残留：executeAgentCall 内部 finalizeCall 的 trace.update 对重跑新节点瞬时污染，由重跑完成时覆盖（终态无污染；execute-agent-call.ts 在打回边界外）——如需根除另立小改动
+- ~~存量测试失败 4 用例（skill-discovery ×2 / spawn-worktree-guidance ×2）~~ **已关闭**：用户侧 commit b843a5f49（2026-08-17 00:32）修复（mock 补 stdin 字段 / getAgentDir 直 mock），包全量 2187 绿复核成立（本 automation run exit 0 复证）
+- U1 verifier 环境注记 3 条（U3 已处置）：①手册 S7 注入脚本 @pi-meta 头已补（U3）；②~~rebuild 路径无 deps.log 调用~~ **已关闭**（obs-fixes 补 L1-L4 日志）；③pi rpc-mode 无补全探测入口，补全断言以源码 diff 为证（U3 已注记）
+- ~~S7 修复已知残留：executeAgentCall 内部 finalizeCall 的 trace.update 对重跑新节点瞬时污染~~ **已关闭**（obs-fixes：isOrphaned 谓词守卫，U6 红性验证锚定）
+- 用户侧 pi-scheduler 扩展崩溃排查：**待用户确认是否仍在复现**（2026-08-17 automation run 无法向用户求证，未擅自深入；复现时建议收集 `~/.pi/agent/logs/` 该扩展日志）
 
 ## 事件流水（时间倒序追加，永不覆盖）
 
+- 2026-08-17 02:17 automation run（定时任务 automation-a9c769d0）执行 handoff 两任务：
+  - **交接文档纠错**：handoff 称「slice5 wave1 零起点、wave2 未开始」——实际 wave1（093e28fe3 + 459202f25）与 wave2（dcee2c9b6 + f4f4f9f9f）已于 2026-08-16 05:16-06:23 完整交付（含 exec-review followups），主 agent git 考古 + 全符号现状核查证实。任务 B 转为独立符合性复核：verifier PASS（14/14 接口项 + 勿动清单 9/9 零触碰 + 对抗抽查 3/3，报告 slice5-conformance-report.md）。slice5 就此闭环；feature 层 retrospect/closeout 归用户决策未自发执行。
+  - **obs-fixes unit 交付**：任务 A 项 2/3（S7 残留根除 + rebuild 可观察性）。基线 d2853b11b → builder 4 文件（+9 测试，2196 全绿）→ verifier PASS（U6 红性：谓词改 () => false → 'failed' ≠ 'running' 精确红；差异点 a-d 全裁决接受）→ 主 agent 核对（diff 基线为空 + sha256 一致 + 无越界）→ 流转。
+  - 认知外改动处置：handoff §1 的 2 文件（model-resolver.ts / tool-render.ts）经查已由用户侧 commit 1fb48731b（00:25:02）正式提交，工作区 clean，无待确认事项。
+  - 任务 A 项 4（pi-scheduler 排查）跳过：需用户确认是否仍复现，automation 场景无法求证（见观察项节）。
 - 2026-08-16 gate FAIL→复判 PASS：首轮 15 项 14 过，S7-second 暴露概率性竞态（rebuild 后旧 dispatch 的迟到 completion 经 postAgentResult 投给新 worker 同 callId pending，劫持重跑 → 假 completed b=""）——F2 定稿时「orphan 无外部副作用」断言与实测相反，被 gate 抓出。修复：isOrphanedCall 实例比对守卫（.then/.catch 双路，跳过投递/持久化/预算检查）+ 4 回归用例 + 错误注释修正。针对性复审 PASS：红性验证（守卫恒 false → 3 用例红）、真实复跑铁证（debug 日志 orphan drop 落在重跑 finalize 前 18ms = 竞态窗口重演且被拦截，非幸运通过）；builder 4 次复跑 + 复审 1 次全过 b=beta + PHASE_A 恰 1 份。commit 8353f6b60。
 - 2026-08-16 环境事件（非被测物责任）：用户全局 pi-scheduler 扩展在 session 替换后 stale ctx 崩掉 pi 主进程两次（中断 gate C3 首轮，重启重跑成功）——已向用户披露，建议反馈该扩展。
 

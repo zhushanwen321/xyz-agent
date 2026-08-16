@@ -169,3 +169,98 @@ describe("U3: executeAgentCall retry 透传 stream", () => {
     vi.useRealTimers();
   });
 });
+
+// ── isOrphaned 守卫（OB2：S7 残留瞬时污染根除） ──
+//
+// 谓词为 true 时 finalizeCall 跳过 trace.update，但 markDone 与
+// sessionId/sessionFile 同步保留。U4 锁定不传谓词时的现状回归。
+
+describe("isOrphaned 守卫", () => {
+  it("U1: 谓词 () => true + 终态成功路径 → trace.update 0 次，markDone 保留（status done + result 已设置）", async () => {
+    const { call, trace } = makeAgentCallAndTrace();
+    const updateSpy = vi.spyOn(trace, "update");
+    const runner = createMockRunner(); // 默认成功 result
+    const budget = new Budget();
+
+    await executeAgentCall(call, runner, budget, new AbortController().signal, trace, undefined, undefined, () => true);
+
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(call.status).toBe("done");
+    expect(call.result).toBeDefined();
+    expect(call.result?.content).toBe("OK");
+  });
+
+  it("U2: 谓词 true + stale-context 失败路径 → trace.update 0 次，markDone 保留（覆盖 stale finalize 调用点）", async () => {
+    const { call, trace } = makeAgentCallAndTrace();
+    const updateSpy = vi.spyOn(trace, "update");
+    const runner = createMockRunner(
+      vi.fn().mockResolvedValue(makeMockResult({ error: "context canceled" })),
+    );
+    const budget = new Budget();
+
+    await executeAgentCall(call, runner, budget, new AbortController().signal, trace, undefined, undefined, () => true);
+
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(call.status).toBe("done");
+    expect(call.result?.error).toBe("context canceled");
+  });
+
+  it("U3: 谓词 true + 信号 abort 路径 → trace.update 0 次，markDone 保留（覆盖 abort finalize 调用点）", async () => {
+    const { call, trace } = makeAgentCallAndTrace();
+    const updateSpy = vi.spyOn(trace, "update");
+    // 错误文案不含 stale 模式词，确保走 signal.aborted 分支而非 stale 分支
+    const runner = createMockRunner(
+      vi.fn().mockResolvedValue(makeMockResult({ error: "old generation failure" })),
+    );
+    const controller = new AbortController();
+    controller.abort();
+    const budget = new Budget();
+
+    await executeAgentCall(call, runner, budget, controller.signal, trace, undefined, undefined, () => true);
+
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(call.status).toBe("done");
+    expect(call.result?.error).toBe("old generation failure");
+  });
+
+  it("U4: 谓词 undefined（不传）→ trace.update 恰被调用 1 次（现状回归锁定）", async () => {
+    const { call, trace } = makeAgentCallAndTrace();
+    const updateSpy = vi.spyOn(trace, "update");
+    const runner = createMockRunner();
+    const budget = new Budget();
+
+    await executeAgentCall(call, runner, budget, new AbortController().signal, trace);
+
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+    expect(trace.find(0)?.status).toBe("completed");
+    expect(call.status).toBe("done");
+  });
+
+  it("U5: 递归重试透传——可重试失败后成功，谓词 true → 重试后终态 trace.update 仍 0 次", async () => {
+    vi.useFakeTimers();
+    try {
+      const { call, trace } = makeAgentCallAndTrace();
+      const updateSpy = vi.spyOn(trace, "update");
+      const runner = createMockRunner(
+        vi.fn()
+          .mockResolvedValueOnce(makeMockResult({ error: "transient error" }))
+          .mockResolvedValueOnce(makeMockResult()),
+      );
+      const budget = new Budget();
+
+      const promise = executeAgentCall(call, runner, budget, new AbortController().signal, trace, undefined, undefined, () => true);
+      // 推进首退避 1s（BACKOFF_BASE_MS = 1000）
+      await vi.advanceTimersByTimeAsync(2000);
+      await promise;
+
+      expect(runner.run).toHaveBeenCalledTimes(2);
+      expect(call.attempts).toBe(2);
+      // 谓词穿透递归层：重试后终态也不写 trace
+      expect(updateSpy).not.toHaveBeenCalled();
+      expect(call.status).toBe("done");
+      expect(call.result?.error).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

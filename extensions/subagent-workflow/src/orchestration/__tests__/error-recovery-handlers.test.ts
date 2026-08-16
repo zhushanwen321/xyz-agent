@@ -405,7 +405,7 @@ async function flushMicrotasks(ticks = 10): Promise<void> {
 }
 
 /** 构造真实 WorkflowRun（真实状态机/replaceRuntime/Trace/Budget）+ 初始 RunRuntime。 */
-function makeRealRun(runId: string): WorkflowRun {
+function makeRealRun(runId: string, opts: { budgetTimeMs?: number } = {}): WorkflowRun {
   const run = new WorkflowRun(
     runId,
     {
@@ -413,6 +413,7 @@ function makeRealRun(runId: string): WorkflowRun {
       scriptSource: "agent('hi')",
       args: {},
       scriptPath: "/tmp/test-wf.js",
+      budgetTimeMs: opts.budgetTimeMs,
     },
     {
       status: "running",
@@ -570,5 +571,154 @@ describe("orphan call guard（rebuild 后迟到 completion 不投递新 worker�
     expect(posted?.result.content).toBe("real result");
     expect(run.state.calls.get(4)?.status).toBe("done");
     expect(run.state.trace.find(4)?.status).toBe("completed");
+  });
+
+  it("U6/S3 场景重放：discard + 重跑替换后，旧 finalize 不污染重跑新 trace 节点（旧 call 实例仍 markDone）", async () => {
+    const run = makeRealRun("wf-orphan-s3");
+    const deps = makeDeps();
+    const newWorkerPost = vi.fn();
+    deps.workerHost.start.mockImplementation(
+      () => ({ postMessage: newWorkerPost, terminate: vi.fn(async () => {}) }) as unknown as WorkerHandle,
+    );
+    const handlers = makeHandlers();
+
+    // 旧代际 dispatch callId=9：runner 挂起（模拟在飞子进程）
+    const deferredA = createDeferred<AgentResult>();
+    deps.runner.run.mockImplementation(() => deferredA.promise);
+    await handleWorkerMessage(run, makeAgentCallMsg(9), deps, handlers);
+    await flushMicrotasks();
+    const oldCall = run.state.calls.get(9);
+    expect(oldCall?.status).toBe("running");
+
+    // rebuild：discard 移除旧 call 条目 + trace 节点（replaceRuntime 同步 abort 旧 signal）
+    rebuildRuntime(run, deps, handlers);
+    expect(run.state.calls.has(9)).toBe(false);
+    expect(run.state.trace.find(9)).toBeUndefined();
+
+    // 重跑 dispatch 同 callId=9：新实例 + 新 trace 节点 running，挂起在飞
+    const deferredB = createDeferred<AgentResult>();
+    deps.runner.run.mockImplementation(() => deferredB.promise);
+    await handleWorkerMessage(run, makeAgentCallMsg(9), deps, handlers);
+    await flushMicrotasks();
+    const rerunCall = run.state.calls.get(9);
+    expect(rerunCall).toBeDefined();
+    expect(rerunCall).not.toBe(oldCall);
+    expect(run.state.trace.find(9)?.status).toBe("running");
+
+    // 旧 runner promise 以非 stale 失败 resolve——rebuild 已 abort 旧 signal，旧
+    // executeAgentCall 醒来走 signal.aborted finalize 调用点（错误文案不含 stale
+    // 模式词，确保不进 stale 分支）。红性锚点：无 OB2 守卫时此处 trace.update(9)
+    // 命中重跑新节点 → 短暂污染为 failed。
+    deferredA.resolve({ content: "", durationMs: 3, error: "old generation failure", toolCalls: [] });
+    await flushMicrotasks();
+
+    // 新 trace 节点未被旧 finalize 污染：仍 running、无 result、无 completedAt
+    const newNode = run.state.trace.find(9);
+    expect(newNode?.status).toBe("running");
+    expect(newNode?.result).toBeUndefined();
+    expect(newNode?.completedAt).toBeUndefined();
+    // 旧实例 markDone 保留（dispatch 层 catch 路径依赖 call.status 语义）
+    expect(oldCall?.status).toBe("done");
+    expect(oldCall?.result?.error).toBe("old generation failure");
+    // 重跑实例仍在飞，未被旧 completion 干扰；孤儿结果不投新 worker
+    expect(rerunCall?.status).toBe("running");
+    expect(findAgentResultPost(newWorkerPost, 9)).toBeUndefined();
+
+    // 收尾：resolve 重跑 deferred，让挂起的 promise 链走完（非孤儿 → 正常完成路径）
+    deferredB.resolve({ content: "rerun ok", durationMs: 1, error: undefined, toolCalls: [] });
+    await flushMicrotasks();
+    expect(run.state.trace.find(9)?.status).toBe("completed");
+  });
+});
+
+// ── rebuildRuntime 可观察性（OB3 日志点 L1-L4） ─────────────
+
+/** 从 deps.log 的 mock 调用记录提取 (message, payload)——message 非字符串时置空串（断言自然失败）。 */
+function toLogEntries(calls: unknown[][]): Array<{ message: string; payload: unknown }> {
+  return calls.map((c) => ({
+    message: typeof c[2] === "string" ? c[2] : "",
+    payload: c[3],
+  }));
+}
+
+describe("rebuildRuntime 可观察性（OB3 日志点）", () => {
+  it("U7: 无 budgetTimeMs 时按序打 L1 start → L4 complete（payload 含 runId），无 L2 重排日志", () => {
+    const run = makeRealRun("wf-rebuild-log-1");
+    const deps = makeDeps();
+
+    rebuildRuntime(run, deps, makeHandlers());
+
+    const entries = toLogEntries(deps.log.mock.calls);
+    const messages = entries.map((e) => e.message);
+    expect(messages).toContain("runtime rebuild start");
+    expect(messages).toContain("runtime rebuild complete");
+    // L4 在 L1 之后（顺序锚）
+    expect(messages.indexOf("runtime rebuild complete")).toBeGreaterThan(
+      messages.indexOf("runtime rebuild start"),
+    );
+    // 无 budgetTimeMs → 该分支本就跳过重排，L2 不打
+    expect(messages).not.toContain("time budget rescheduled");
+    // L1/L4 payload 含 runId
+    const l1 = entries.find((e) => e.message === "runtime rebuild start");
+    expect(l1?.payload).toMatchObject({ runId: "wf-rebuild-log-1" });
+    const l4 = entries.find((e) => e.message === "runtime rebuild complete");
+    expect(l4?.payload).toEqual({ runId: "wf-rebuild-log-1" });
+  });
+
+  it("U7: 带 budgetTimeMs + scheduleTimeBudget 注入时含 L2（在 L1 之后、L3 之前，payload 含 budgetTimeMs）", () => {
+    const run = makeRealRun("wf-rebuild-log-2", { budgetTimeMs: 5000 });
+    const scheduleTimeBudget = vi.fn(() => undefined);
+    const deps = makeDeps({ scheduleTimeBudget });
+
+    rebuildRuntime(run, deps, makeHandlers());
+
+    const entries = toLogEntries(deps.log.mock.calls);
+    const messages = entries.map((e) => e.message);
+    expect(messages).toContain("time budget rescheduled");
+    expect(messages.indexOf("time budget rescheduled")).toBeGreaterThan(
+      messages.indexOf("runtime rebuild start"),
+    );
+    expect(messages.indexOf("time budget rescheduled")).toBeLessThan(
+      messages.indexOf("in-flight calls discarded"),
+    );
+    const l2 = entries.find((e) => e.message === "time budget rescheduled");
+    expect(l2?.payload).toEqual({ runId: "wf-rebuild-log-2", budgetTimeMs: 5000 });
+  });
+
+  it("U8: 含 2 个在飞 call 的 run 经 rebuild → L3 callIds 升序、count === 2，与实际被弃 callId 一致", async () => {
+    const run = makeRealRun("wf-rebuild-log-3");
+    const deps = makeDeps();
+    const handlers = makeHandlers();
+
+    // 两个在飞 call（dispatch 插入序 5 → 3，验证 L3 callIds 是升序而非插入序）
+    const deferreds = [createDeferred<AgentResult>(), createDeferred<AgentResult>()];
+    let next = 0;
+    deps.runner.run.mockImplementation(() => {
+      const d = deferreds[next];
+      next += 1;
+      return d!.promise;
+    });
+    await handleWorkerMessage(run, makeAgentCallMsg(5), deps, handlers);
+    await handleWorkerMessage(run, makeAgentCallMsg(3), deps, handlers);
+    await flushMicrotasks();
+    expect(run.state.calls.get(5)?.status).toBe("running");
+    expect(run.state.calls.get(3)?.status).toBe("running");
+
+    rebuildRuntime(run, deps, makeHandlers());
+
+    // L3 payload：callIds 升序 [3, 5]、count === 2（即 discardInFlightCalls 返回值）
+    const entries = toLogEntries(deps.log.mock.calls);
+    const l3 = entries.find((e) => e.message === "in-flight calls discarded");
+    expect(l3?.payload).toEqual({ runId: "wf-rebuild-log-3", callIds: [3, 5], count: 2 });
+    // 返回值（经 L3 暴露）与实际被弃 callId 一致：Map/trace 条目均已移除
+    expect(run.state.calls.has(5)).toBe(false);
+    expect(run.state.calls.has(3)).toBe(false);
+    expect(run.state.trace.find(5)).toBeUndefined();
+    expect(run.state.trace.find(3)).toBeUndefined();
+
+    // 收尾：resolve 两个挂起的 deferred（孤儿守卫 drop，无投递无污染）
+    deferreds[0]!.resolve({ content: "", durationMs: 1, error: undefined, toolCalls: [] });
+    deferreds[1]!.resolve({ content: "", durationMs: 1, error: undefined, toolCalls: [] });
+    await flushMicrotasks();
   });
 });
