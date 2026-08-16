@@ -22,6 +22,9 @@
  * - 退出 flush（D10-1 分档承诺的配套）：shutdown 链必须 `await closeLogger()`（主日志 +
  *   全部 pi session 写流 end 并等 flush 完成）后再 process.exit(0)；硬崩溃（SIGKILL/断电）
  *   丢缓冲窗口内尾部几行已声明为取证能力削弱
+ * - 挂起兜底（审查 W30 Fix-1）：endAndAwait 等 'close' 有 5s 超时降级——超时强制销毁流 +
+ *   记 error 级日志（fs 挂起时 closeLogger/轮转不永久阻塞），轮转窗口 pendingLines 有
+ *   10_000 行容量上限（超限丢弃、合并记一次 warn）
  *
  * 用法（组合根 index.ts 初始化）：
  *   initLogger(getDataDir())                // 初始化全局 logger + patch console
@@ -78,6 +81,13 @@ let mainBytesWritten = 0
 let rotationInFlight: Promise<void> | null = null
 /** 轮转窗口内到达的写入行（新流就绪后按序回放；窗口通常 <1ms）。 */
 const pendingLines: Array<{ line: string; bytes: number }> = []
+/** pendingLines 容量上限：fs 挂起时轮转窗口无限拉长，无界入队会内存膨胀（审查 W30 Fix-1）。 */
+const MAX_PENDING_LINES = 10_000
+/** 当前轮转窗口内因超限丢弃的行数（轮转结束后合并记一次 warn，不在热路径递归记日志）。 */
+let pendingDroppedCount = 0
+
+/** endAndAwait 等待写流 'close' 的超时：fs 挂起时 close 永不触发，超时降级 resolve（防永久挂起）。 */
+const END_AWAIT_TIMEOUT_MS = 5_000
 
 // ── pi session 写流注册表（D10-1 退出 flush：closeLogger 统一 end + 等待）──
 interface PiStreamState {
@@ -85,6 +95,8 @@ interface PiStreamState {
   stream: WriteStream | undefined
   /** end() 已调（write 后续为 no-op）。保留注册直到 closeLogger，确保退出 flush 覆盖。 */
   ended: boolean
+  /** 目标文件路径（closeLogger 端 endAndAwait 超时报告的 label 用）。 */
+  file: string
 }
 const openPiStreams = new Set<PiStreamState>()
 
@@ -131,6 +143,12 @@ function writeLogEntry(level: LogLevel, message: string, meta?: Record<string, u
   try {
     // 轮转进行中（end 旧流等待 flush 的窗口）：行先入队，续体在新流就绪后回放。
     if (rotationInFlight) {
+      // 容量上限（审查 W30 Fix-1）：fs 挂起时轮转窗口无限拉长，无界入队会内存膨胀；
+      // 超限行丢弃并计数，轮转结束后合并记一次 warn（见 rotateMain，不在热路径递归记日志）。
+      if (pendingLines.length >= MAX_PENDING_LINES) {
+        pendingDroppedCount++
+        return
+      }
       pendingLines.push({ line, bytes })
       return
     }
@@ -154,6 +172,8 @@ function writeLogEntry(level: LogLevel, message: string, meta?: Record<string, u
     }
     const stream = mainStream
     if (!stream) return // 打开失败（异常路径）→ 本轮丢弃，不抛
+    // write 返回 false = 背压（缓冲堆积）。日志行量级 KB、磁盘正常不触发；慢盘时内存
+    // 增长与轮转窗口 pendingLines 同源，已由容量上限兜底（审查 W30 Fix-6）。
     stream.write(line)
     mainBytesWritten += bytes
   // eslint-disable-next-line taste/no-silent-catch -- logger 自身写入失败（磁盘满/权限等）不能杀进程；console 已被 patch，无可靠诊断出口，吞没是刻意容错
@@ -181,7 +201,7 @@ function rotateMain(nextToday: string, renameOld: boolean): Promise<void> {
   mainStreamFile = undefined
   mainBytesWritten = 0
   rotationInFlight = (async () => {
-    if (oldStream) await endAndAwait(oldStream)
+    if (oldStream) await endAndAwait(oldStream, `main-rotation:${oldFile ?? 'unnamed'}`)
     if (renameOld && oldFile) {
       try {
         renameSync(oldFile, `${oldFile}.1`)
@@ -200,8 +220,33 @@ function rotateMain(nextToday: string, renameOld: boolean): Promise<void> {
       mainBytesWritten += p.bytes
     }
     rotationInFlight = null
+    // 轮转窗口超长（fs 挂起）导致的超限丢弃：合并记一次 warn。此时 rotationInFlight 已清，
+    // writeLogEntry 走正常路径（写新流），不递归。受影响的只是缓冲窗口内的日志行——降级可接受。
+    if (pendingDroppedCount > 0) {
+      const dropped = pendingDroppedCount
+      pendingDroppedCount = 0
+      writeLogEntry('warn', `[logger] dropped ${dropped} log lines (pending queue overflow during rotation)`)
+    }
   })()
   return rotationInFlight
+}
+
+/**
+ * 为 WriteStream 挂容错 'error' 监听器（磁盘满/权限等异步写错误，无监听器会升级为
+ * uncaughtException）。
+ *
+ * 静默吞、不记 console：console 已被 patch（console.error → writeLogEntry），error 处理
+ * 里再记 console 会与写失败互相触发形成递归。仅丢日志、不杀进程（与旧 appendFileSync
+ * 的 try/catch 容错契约一致）。首个 error 降级记一次**受限出口**——writeLogEntry 直写
+ * 主日志文件、不经 console，其自身失败静默（写失败路径已由本监听器吞掉），不构成递归。
+ */
+function attachStreamErrorHandler(stream: WriteStream, label: string): void {
+  let first = true
+  stream.on('error', () => {
+    if (!first) return
+    first = false
+    writeLogEntry('warn', `[logger] write stream error (${label}); further errors suppressed`)
+  })
 }
 
 /**
@@ -226,9 +271,7 @@ function openMainStream(today: string): WriteStream | undefined {
     // no-op
   }
   const stream = createWriteStream(file, { flags: 'a' })
-  // WriteStream 的写错误是异步 'error' 事件，无监听器会升级为 uncaughtException。
-  // 与旧 appendFileSync try/catch 的容错契约一致（磁盘满/权限）——仅丢日志，不杀进程。
-  stream.on('error', () => {})
+  attachStreamErrorHandler(stream, `main:${file}`)
   mainStream = stream
   mainStreamFile = file
   mainBytesWritten = 0
@@ -363,19 +406,30 @@ export function createPiSessionLog(sessionId: string): PiSessionLog {
   // 文件名：pi-<date>-<sessionId>.jsonl（date 防跨天 session 冲突）
   const safeSid = sessionId.replace(/[^a-zA-Z0-9-]/g, '').slice(0, SESSION_ID_MAX_LENGTH)
   const file = join(logsDir, `pi-${date}-${safeSid}.jsonl`)
-  const state: PiStreamState = { stream: undefined, ended: false }
+  const state: PiStreamState = { stream: undefined, ended: false, file }
   openPiStreams.add(state)
   return {
     write: (line: string) => {
       if (state.ended) return // end 后 no-op
+      if (!currentLevel || !logsDir) return // closeLogger 后 no-op（与 writeLogEntry 一致，审查 W30 Fix-8）
       const data = line.endsWith('\n') ? line : line + '\n'
       try {
-        if (!state.stream) {
+        // 写入前守卫（审查 W30 Fix-9）：writableEnded = end() 已调、flush 未完（正常被
+        // state.ended 拦截，此处防御外部直接调 stream.end() 的场景）——等同 end 语义，no-op。
+        if (state.stream?.writableEnded) return
+        // 自愈（审查 W30 Fix-2）：流 error 后 autoDestroy，write 静默丢弃；pi session log
+        // 是 pi 卡死诊断的决定性证据，静默丢失后续行 = 失去冒烟证据（主日志有轮转自愈、
+        // pi 流没有）——destroyed 时重建（flags:'a' 续写同文件 + 重新挂 error 监听器）。
+        if (!state.stream || state.stream.destroyed) {
+          // 重建前摘掉旧流的 error 监听（审查 W30 Fix-9）：destroyed 流不会再 emit，
+          // 但显式移除避免悬挂监听器持有旧流引用（防监听器泄漏/重复注册）。
+          // 可选链：首次惰性打开时 stream 为 undefined（此分支为 true 的主路径）。
+          state.stream?.removeAllListeners('error')
           state.stream = createWriteStream(file, { flags: 'a' })
-          // 异步 'error' 事件无监听器会升级为 uncaughtException——与旧 appendFileSync
-          // try/catch 容错契约一致（磁盘满/权限）：仅丢日志，不杀进程。
-          state.stream.on('error', () => {})
+          attachStreamErrorHandler(state.stream, `pi:${file}`)
         }
+        // write 返回 false = 背压（缓冲堆积）。日志行量级 KB、磁盘正常不触发；慢盘时
+        // 内存增长与轮转窗口 pendingLines 同源，已由容量上限兜底（审查 W30 Fix-6）。
         state.stream.write(data)
       // eslint-disable-next-line taste/no-silent-catch -- pi stdout 落盘失败（磁盘满/权限）不影响 runtime 主流程；best-effort 容错
       } catch {
@@ -408,17 +462,59 @@ function existsSyncSafe(path: string): boolean {
  * 在退出时丢失 / 轮转边界在途写被 orphaning。
  *
  * 永不 reject（best-effort）：'error' 也 resolve，避免日志模块阻塞进程退出。
+ *
+ * 超时降级（审查 W30 Fix-1）：fs 挂起时 'close' 永不触发，等待 END_AWAIT_TIMEOUT_MS 后
+ * resolve 并**强制销毁流**（destroy 释放 fd、丢弃在途缓冲）——轮转续体照常 rename
+ * （rename 失败可容忍、数据不丢，见 rotateMain），closeLogger 不会永久挂起阻塞 SIGTERM
+ * 处理器（supervisor 无需升级 SIGKILL）。代价：超时销毁丢弃在途缓冲尾部几行（与硬崩溃
+ * 取证能力削弱同档，已声明可接受）。
  */
-function endAndAwait(stream: WriteStream | undefined): Promise<void> {
+function endAndAwait(stream: WriteStream | undefined, label: string): Promise<void> {
   if (!stream) return Promise.resolve()
   if (stream.closed) return Promise.resolve() // 已关闭（含已 error 销毁的流）
   if (!stream.writableEnded) stream.end()
   if (stream.closed) return Promise.resolve() // 同步关闭路径（如测试用 fake 流）
   return new Promise<void>((resolve) => {
-    const done = () => resolve()
-    stream.once('close', done)
-    stream.once('error', done)
+    let settled = false
+    const finish = (timedOut: boolean) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      // 清理 once 链（审查 W30 Fix-9）：'close' 先触发时 'error' 监听器仍挂残留，
+      // 超时/事件到达后手动移除，避免悬挂监听器持有已关闭流的引用。
+      stream.removeListener('close', onClose)
+      stream.removeListener('error', onError)
+      if (timedOut) {
+        // 强制销毁（审查 W30 Fix-1）：不 destroy 则 fd 悬挂、「close」永不触发，
+        // 后续轮转/退出若再 end 同一流仍会挂满一个超时窗口。无参 destroy 不 emit
+        // 'error'（上面的 error 监听器也已摘除），不会产生未捕获异常。
+        stream.destroy()
+        reportEndAwaitTimeout(label)
+      }
+      resolve()
+    }
+    const onClose = () => finish(false)
+    const onError = () => finish(false)
+    const timer = setTimeout(() => finish(true), END_AWAIT_TIMEOUT_MS)
+    timer.unref?.() // 超时定时器不 holding 事件循环（fs 正常时 close 远早于超时到达）
+    stream.once('close', onClose)
+    stream.once('error', onError)
   })
+}
+
+/**
+ * endAndAwait 超时的错误出口（审查 W30 Fix-1：记 error 级日志，防「静默降级」放大日志丢失）。
+ *
+ * 双出口：writeLogEntry 走常规写路径（轮转场景入 pendingLines、轮转后回放落盘；
+ * closeLogger 后 currentLevel 已清则 no-op）；originalConsole.error 是**未 patch 的原生
+ * console**（不递归进 writeLogEntry），stderr 由 supervisor 捕获落盘——超时意味着 fs
+ * 本身可能挂起，文件路径不可靠时 stderr 是兜底出口。轮转窗口队列满时文件路被丢弃
+ * （计入 pendingDroppedCount，随合并 warn 报数），stderr 恒可达。
+ */
+function reportEndAwaitTimeout(label: string): void {
+  const msg = `[logger] endAndAwait timeout after ${END_AWAIT_TIMEOUT_MS}ms (${label}); stream force-destroyed, in-flight buffer tail lost`
+  writeLogEntry('error', msg)
+  originalConsole.error(msg)
 }
 
 /**
@@ -434,8 +530,10 @@ export async function closeLogger(): Promise<void> {
   if (rotationInFlight) await rotationInFlight
   // 先捕获所有写流引用再清状态——await 窗口内新写入应直接 no-op，
   // 捕获的旧流照常 end + 等待（退出前最后几行不丢）。
-  const streams: Array<WriteStream | undefined> = [mainStream]
-  for (const s of openPiStreams) streams.push(s.stream)
+  const streams: Array<{ stream: WriteStream | undefined; label: string }> = [
+    { stream: mainStream, label: `main-shutdown:${mainStreamFile ?? 'unnamed'}` },
+  ]
+  for (const s of openPiStreams) streams.push({ stream: s.stream, label: `pi-shutdown:${s.file}` })
   mainStream = undefined
   mainStreamFile = undefined
   mainBytesWritten = 0
@@ -446,5 +544,5 @@ export async function closeLogger(): Promise<void> {
   currentDate = ''
   // 各写流独立且 endAndAwait 永不 reject——allSettled 与 all 等价，但符合
   // taste/prefer-allsettled（独立数据源允许部分降级，不互相阻塞）。
-  await Promise.allSettled(streams.map(endAndAwait))
+  await Promise.allSettled(streams.map(({ stream, label }) => endAndAwait(stream, label)))
 }
