@@ -9,7 +9,7 @@
 | 门 1 cancel-during-create | P-guard + §4.2 场景 4 | **通过** | worktree add 人为延迟 5s 窗口内触发 `/new` 级联 dispose（warn 日志与派发时刻差 4ms），create 返回后守卫主动 remove+branch -D（13ms/25ms 内完成），无孤儿、无子进程白跑 |
 | 门 2 per-repo mutex | P-mutex + §4.2 场景 5 | **通过** | 两个并发 create 的读命令同毫秒并发（绕锁）、两个 `worktree add` 严格串行（#2 START = #1 END + 9~11ms）；注入首个 add 失败（rc=128）后继 add 9ms 后照常执行且成功（前驱失败不传染） |
 | 门 3 kill 重启 reaper | P-ffcleanup | **通过** | kill -9 主 pi（child 3s 内随管道断裂死亡）→ 孤儿现场固化（worktree/branch/registry 三处残留）→ 重启 pi 6s 后 session_start reaper 完成 remove（30ms）+ branch -D（19ms），三处全清 |
-| 门 4 patch 回收 | §4.2 功能回归 1 | **不通过** | patch 文件产出且内容正确，但缺尾部换行 → 干净副本 `git apply --check` exit 128（corrupt patch at line 7）；补一个换行后 exit 0。**存量 bug 非本次异步化回归**：旧同步 gitRun 同样 `.trim()`（phase 2 前代码 `execFileSync(...).trim()`），异步化保持了语义等价但把该缺陷一并继承 |
+| 门 4 patch 回收 | §4.2 功能回归 1 | **不通过（初测）→ 通过（修复后复测）** | 初测：patch 产出且内容正确但缺尾部换行 → 干净副本 `git apply --check` exit 128（corrupt patch at line 7）。根因 = `gitRunAsync` resolve `stdout.trim()` 裁掉 diff 尾换行（存量 bug，同步时代同在）。修复 = `gitRunAsync` 输出保真不 trim + 消费点自行 trim；复测（同方法）：patch 末字节 `0a`、`git apply --check` exit 0、真实 apply 成功、资源全清。详见 §1 修复与复测子节 |
 
 采集环境：pi 0.84.0（RPC mode，`--approve`）、模型 `xiaomi-token-plan-cn/mimo-v2.5-pro`、git 2.50.1（Apple Git-155，真身 `/usr/bin/git`）、macOS 15 arm64。extension 经 dev-link symlink（`~/.pi/agent/extensions/pi-subagent-workflow` → 本 worktree `extensions/subagent-workflow`，源码工作区 clean，worktree-manager 最新 commit 8b4636b16 = phase 2 终态）。实验全部在 `/tmp/pblock-gates/` 下临时 repo（`git init` + 单文件提交），未触碰本项目仓库的 git 状态。
 
@@ -55,6 +55,28 @@ worktree subagent 正常完成并终态化后，`record.patchFile` 存在且在�
 ### 判定与归因
 
 **不通过**——`git apply --check` 未通过。根因：`worktree-manager.ts` 的 `gitRunAsync` resolve `stdout.trim()`（worktree-manager.ts:348），把 `diff --cached` 输出的尾部换行裁掉，落盘 patch 非法。**非本次异步化引入**：phase 2 之前的同步 `gitRun` 同样 `.trim()`（`git show 8b4636b16^:...worktree-manager.ts` 第 368 行 `execFileSync(...).trim()`）——异步化对失败路径语义保持等价（设计目标 2 达成），但把存量缺陷一并继承，绝对验收标准（apply --check 通过）不满足。修复方向（供后续 issue）：collectPatch 路径不 trim 或写盘前补尾换行。
+
+### 修复与复测（2026-08-16，门 4 复测通过，初测记录保留于上）
+
+**根因复核定案**：`gitRunAsync` 对所有命令的 stdout 统一 `.trim()`，`git diff` 输出按格式约定以 `\n` 结尾，被裁后 collectPatch 落盘的 patch 末行无结尾换行 → `git apply` 报 corrupt patch。
+
+**修复**（`extensions/subagent-workflow/src/execution/worktree-manager.ts`，方案 = 执行器保真 + 消费点净化）：
+
+- `gitRunAsync` resolve 改为保真返回原始 stdout（`resolve(stdout)`，worktree-manager.ts:357）——执行器不再裁剪输出；错误包装（message 格式 / exitCode / stderr / timedOut 属性）、超时行为、per-repo mutex 语义零改动。
+- 需要干净文本的仅两个消费点，自行 trim（`create` 内，worktree-manager.ts:111/:119）：`status --porcelain` 结果 trim 后做脏树判定与错误 message 拼接；`rev-parse HEAD` 结果 trim 后作为 baseCommit（不 trim 会把换行带进后续 git args）。
+- 其余 8 处 `gitRunAsync` 调用（worktree add/remove、branch -D、add -A）不消费返回值，零影响。被否决备选：① diff 专用 `raw` 参数——输出形态决策塞进执行器签名，多一个分叉维度；② 写盘前补 `\n`——「补救」而非「保真」，会静默掩盖执行器对输出两端的裁剪，且无法断言写盘字节与 git stdout 逐字节一致。
+- 回归断言（`worktree-manager.test.ts` collectPatch 块）：「patch 内容 = git diff stdout 原文（含尾部换行不被裁剪），git apply --check 兼容」——断言 `writeFileSync` 收到的字节与 mock diff stdout 逐字节一致且以 `\n` 结尾；同时 rev-parse mock 改为真实输出形态（hash + `\n`），由既有断言 `handle.baseCommit === BASE_COMMIT` 锁死消费点 trim。vitest 162 文件 / 2175 测试全绿，`pnpm extensions:typecheck` exit 0，改动文件 eslint 0 新增问题。
+
+**复测**（方法同初测：临时 repo + pi RPC + 单条 prompt 驱动 start(worktree) → 完成通知 → close）：
+
+1. repo：`/tmp/pblock-gates-fix/repo-g4`（`git init -b main` + `data.txt` 单提交，树干净）；pi 0.84.0（RPC mode，`--approve`）、模型 `xiaomi-token-plan-cn/mimo-v2.5-pro`、`--extension` 指向本仓 `extensions/subagent-workflow`（加载工作区当前源码，含未提交修复；该包 `main: "index.ts"`，pi 直接加载 TS 源码）。
+2. driver（`/tmp/pblock-gates-fix/driver.mjs`，node spawn pi）：+2.5s 发单条 prompt（start worktree subagent，task=`echo gate4-fix-line >> data.txt` → 收完成通知 → close 终态化）→ +16.0s stdout 观察到 `{"closed":true}` → +24.0s 关 stdin，pi exit 0。subagentId `sa-25a504c3-638c-4330-82af-97114c8e1583`。
+3. 终态核验：
+   - patch 产出：`~/.pi/agent/subagents/--private-tmp-pblock-gates-fix-repo-g4--/sessions/pi-sub-sa-25a504c3-....patch`（144 字节），7 行完整 diff（`+gate4-fix-line`），**末字节 hex `0a`（\n）**——初测同一位置为 `...6c696e65` 后直接 EOF。
+   - 干净副本（`mktemp -d` + 同初始提交）`git apply --check <patch>` → **exit 0**（初测 exit 128 "corrupt patch at line 7"）；继续真实 `git apply` 后 `data.txt` = `base content for g4` + `gate4-fix-line` 两行。
+   - 资源回收：`git worktree list` 仅 main、`git branch` 仅 main、`worktrees.json` entries=[]、`.finalized` marker 已写、无残留 pi 进程。
+
+**判定：通过**。
 
 ### 附带观察
 
@@ -217,7 +239,7 @@ create 的 await 窗口（git 变慢时人为拉长）内 cancel/dispose 抢先 
 
 | # | 问题 | 性质 | 建议 |
 |---|---|---|---|
-| 1 | collectPatch 产物缺尾换行，`git apply --check` 失败（门 4 不通过的根因） | 存量 bug（同步时代同样存在），非异步化回归 | `gitRunAsync` 对 diff 输出不 trim，或 collectPatch 写盘前确保尾换行；补一条「patch 尾换行」回归断言 |
+| 1 | ~~collectPatch 产物缺尾换行，`git apply --check` 失败（门 4 不通过的根因）~~ **已修复**（2026-08-16）：`gitRunAsync` 输出保真不 trim + 消费点自行 trim + patch 尾换行回归断言；复测 `git apply --check` exit 0，详见 §1 修复与复测子节 | 存量 bug（同步时代同样存在），非异步化回归 | 已完成，无需后续动作 |
 | 2 | start 的 `bgResponse.status` 硬编码 `"running"`，守卫 early-failed 时文案不区分 | 观察项 | 从 `handle.details.status` 取值 |
 | 3 | Round A 的「不可见清理」路径未定位 | 待查项 | 用 PI_EXT_DEBUG 定向插桩 idle-timeout / error-recovery 链路复现 |
 | 4 | workflow run 完成通知未到达主 agent（两轮复现） | workflow 域，超出本四门 | 单独 issue |

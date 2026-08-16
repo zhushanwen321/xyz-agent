@@ -4,6 +4,8 @@
 //
 // 设计约束：
 //   - gitRunAsync 是唯一 git 命令出口，统一超时/错误包装（旧同步 gitRun 已在 phase 2 删除）
+//   - gitRunAsync 输出保真（不 trim）：diff stdout 直接落盘为 patch，裁掉尾换行会让
+//     `git apply` 报 corrupt patch；需要干净文本的消费点（baseCommit/status 拼接）自行 trim
 //   - recordId 白名单 `^[\w-]+$` 防止路径注入
 //   - clean tree 前置校验防止创建脏 worktree
 //   - checkout 放 os.tmpdir()（脱离 .git/），兼容普通 repo 与 bare+worktree 结构
@@ -105,13 +107,16 @@ export class WorktreeManager {
       this.gitRunAsync(["rev-parse", "HEAD"], { cwd: mainCwd }),
     ]);
     if (statusR.status === "rejected") throw statusR.reason;
-    if (statusR.value.length > 0) {
+    // 消费点自行 trim：gitRunAsync 返回原始 stdout（保真），status 输出以 \n 结尾
+    const statusText = statusR.value.trim();
+    if (statusText.length > 0) {
       throw new DirtyWorktreeError(
-        `Working tree is dirty in ${mainCwd}:\n${statusR.value}`,
+        `Working tree is dirty in ${mainCwd}:\n${statusText}`,
       );
     }
     if (revR.status === "rejected") throw revR.reason;
-    const baseCommit = revR.value;
+    // 消费点自行 trim：rev-parse 输出 "hash\n"，不 trim 会把换行带进后续 git args
+    const baseCommit = revR.value.trim();
 
     const branch = `pi-sub-${recordId}`;
     // checkout 放 tmpdir，脱离 .git/ 目录结构。
@@ -324,6 +329,10 @@ export class WorktreeManager {
    * git 命令异步执行器。与 gitRun 同一超时/错误包装约定（message 格式逐字一致），
    * 差异仅在错误属性形态（GitRunError 挂 exitCode/stderr/timedOut）。
    * 写类命令经 per-repo mutex 串行（不依赖 git 锁实现细节 + 并发限流 + 行为确定性）。
+   *
+   * stdout 保真返回（不 trim）：collectPatch 把 diff 输出原样落盘为 patch 文件，
+   * 裁掉尾换行会产出 `git apply` 拒绝的 corrupt patch（2026-08-16 门 4 实测）。
+   * 需要干净文本的消费点（baseCommit / 脏树 status 拼接）自行 trim。
    */
   private async gitRunAsync(args: string[], opts: { cwd: string; timeout?: number }): Promise<string> {
     const run = (): Promise<string> =>
@@ -345,7 +354,7 @@ export class WorktreeManager {
               );
               return;
             }
-            resolve(stdout.trim());
+            resolve(stdout);
           },
         );
       });

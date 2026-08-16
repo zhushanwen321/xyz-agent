@@ -125,7 +125,8 @@ function makeHandle(checkoutPath: string = expectedCreatePath(RECORD_ID)) {
 
 function setupCleanTree(): void {
   setupExecFile((_args: readonly string[]) => {
-    if (_args?.[0] === "rev-parse" && _args?.[1] === "HEAD") return { stdout: BASE_COMMIT };
+    // rev-parse 真实输出形态：hash + \n（gitRunAsync 不 trim，消费点 trim 后才得干净 hash）
+    if (_args?.[0] === "rev-parse" && _args?.[1] === "HEAD") return { stdout: `${BASE_COMMIT}\n` };
     return { stdout: "" };
   });
   // worktreePath 不存在（无需前置清理）；node_modules 存在
@@ -275,7 +276,8 @@ describe("WorktreeManager", () => {
           }
           setTimeout(() => {
             if (isAdd) writeActive--;
-            cb(null, args[0] === "rev-parse" ? BASE_COMMIT : "", "");
+            // rev-parse 真实输出带尾换行；baseCommit 由消费点 trim
+            cb(null, args[0] === "rev-parse" ? `${BASE_COMMIT}\n` : "", "");
           }, 5);
         },
       );
@@ -373,6 +375,28 @@ describe("WorktreeManager", () => {
       const result = await mgr.collectPatch(makeHandle(), "/tmp/x.patch");
       expect(result.failed).toBe(false);
       expect(result.written).toBe(false);
+    });
+
+    it("patch 内容 = git diff stdout 原文（含尾部换行不被裁剪），git apply --check 兼容", async () => {
+      // 真实 git diff 输出以 \n 结尾；旧实现 gitRunAsync resolve(stdout.trim())
+      // 裁掉尾换行 → 落盘 patch 在干净副本上 `git apply --check` 报
+      // "corrupt patch at line N"（2026-08-16 门 4 实测，exit 128）
+      const rawDiff =
+        "diff --git a/data.txt b/data.txt\n" +
+        "index c690e0d..f858a88 100644\n" +
+        "--- a/data.txt\n" +
+        "+++ b/data.txt\n" +
+        "@@ -1 +1,2 @@\n" +
+        " base content\n" +
+        "+appended\n";
+      setupExecFile((args) => (args[0] === "diff" ? { stdout: rawDiff } : { stdout: "" }));
+
+      await mgr.collectPatch(makeHandle(), "/tmp/x.patch");
+
+      // 写盘字节与 diff stdout 逐字节一致（保真 = 不裁剪两端空白）
+      const written = vi.mocked(fs.writeFileSync).mock.calls[0][1] as string;
+      expect(written).toBe(rawDiff);
+      expect(written.endsWith("\n")).toBe(true);
     });
   });
 
