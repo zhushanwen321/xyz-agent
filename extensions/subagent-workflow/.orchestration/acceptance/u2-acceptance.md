@@ -1,8 +1,10 @@
 # U2 验收标准 — 类型与持久化收窄（RunStatus 两态 + 创建即 running + 快照 v2）
 
+> **R7 勘误（2026-08-16，主 agent，验收后）**：单测验收 #1「v1 头 + paused → 跳过」的 fixture status 以 **running** 落地——`"paused"` 字面量与 S8b 双零 grep 断言冲突（验收条款自身矛盾），且版本守卫与 status 值无关、v1 running 残留跳过正是 D-5 边界声明的接受语义。verifier 复核成立（u2-report 裁决复核节），验收语义等价。
+
 > **builder 与 verifier 禁止修改本文件。** 权威规格：`docs/design/workflow-one-shot-lifecycle-impl-spec.md` §0（F4 第二段/F5/F6/F8/F9）+ §2（U2 改动清单）。前置：U1 已 committed（889a798f9）。
 >
-> status: pending
+> status: verified（PASS，见 u2-report.md）
 
 ## 目标
 
