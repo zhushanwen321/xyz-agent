@@ -7,6 +7,8 @@
  * - 增量渲染树 = 前缀段 + 尾段；前缀段 DOM 引用跨帧稳定（v-for :key=segId 复用）
  * - streaming-fence 占位：语言名可见 + 不加载 mermaid（R-20 占位形态）
  * - 静默 ≥阈值 / streaming 翻 false → finalizeOpenFence:true 转完整渲染
+ * - W23 review：finalize 粘滞（停顿后继续不回占位横跳）/ 占位段固定哨兵 key（DOM 恒等）/
+ *   latest-wins 串行（in-flight 合并）/ 卸载清理（disposed 短路 rAF、queued、timer）
  * - 增量渲染抛错 → 降级转义纯文本可见 + 缓存句柄作废
  *
  * rAF 处理：手动队列模拟真实异步 rAF（mount 后 flushRaf() 触发帧回调）。不用同步 rAF 覆盖
@@ -73,6 +75,20 @@ function mountMd(props: Record<string, unknown>, depsOverrides: Partial<ChatView
       },
     },
   })
+}
+
+/** finalize 感知 mock：记录每次调用的 finalize 标志；finalize=true 出完整代码块，否则出占位段 */
+function finalizeAwareMock() {
+  const calls: { source: string; finalize: boolean }[] = []
+  const renderMarkdownIncremental = vi.fn(
+    async (source: string, _cache: IncrementalMarkdownCache | null, _sid?: string, opts?: { finalizeOpenFence?: boolean }): Promise<IncrementalMarkdownResult & { cache: IncrementalMarkdownCache }> => {
+      const finalize = opts?.finalizeOpenFence === true
+      calls.push({ source, finalize })
+      if (finalize) return incResult([], [seg('text', '<div class="md-codeblock">code</div>', 0)], emptyCache(1))
+      return incResult([], [seg('streaming-fence', 'code', 0, { lang: 'ts' })], emptyCache(1))
+    },
+  )
+  return { calls, renderMarkdownIncremental }
 }
 
 describe('W23: 壳未提供增量能力 → 回退全量渲染（mock 壳兼容）', () => {
@@ -165,19 +181,6 @@ describe('W23 ②: streaming-fence 占位渲染（R-20：语言名 + loader 行�
 })
 
 describe('W23 ③: 静默/complete 转完整渲染（finalizeOpenFence:true）', () => {
-  function finalizeAwareMock() {
-    const calls: { source: string; finalize: boolean }[] = []
-    const renderMarkdownIncremental = vi.fn(
-      async (source: string, _cache: IncrementalMarkdownCache | null, _sid?: string, opts?: { finalizeOpenFence?: boolean }): Promise<IncrementalMarkdownResult & { cache: IncrementalMarkdownCache }> => {
-        const finalize = opts?.finalizeOpenFence === true
-        calls.push({ source, finalize })
-        if (finalize) return incResult([], [seg('text', '<div class="md-codeblock">code</div>', 0)], emptyCache(1))
-        return incResult([], [seg('streaming-fence', 'code', 0, { lang: 'ts' })], emptyCache(1))
-      },
-    )
-    return { calls, renderMarkdownIncremental }
-  }
-
   it('token 静默 ≥ 阈值 → 定时器触发 finalize 完整渲染', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const { calls, renderMarkdownIncremental } = finalizeAwareMock()
@@ -234,6 +237,151 @@ describe('W23 ③: 静默/complete 转完整渲染（finalizeOpenFence:true）',
     // 静默路径未激活：仍只有首帧渲染，无 finalize
     expect(calls).toHaveLength(1)
     expect(calls[0].finalize).toBe(false)
+  })
+})
+
+describe('W23 review Fix-1: finalize 粘滞（停顿后继续不回占位横跳）', () => {
+  it('finalize 后新 token 到达 → 保持完整渲染不回占位（DOM 断言）', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const { calls, renderMarkdownIncremental } = finalizeAwareMock()
+    const shouldFinalizeStreamingFence = vi.fn(({ complete, silenceMs }: { complete: boolean; silenceMs: number }) =>
+      complete || silenceMs >= 200,
+    )
+    const wrapper = mountMd(
+      { content: '```ts\ncode', streaming: true },
+      { renderMarkdownIncremental, shouldFinalizeStreamingFence, streamingFenceSilenceMs: 200 },
+    )
+    await flushRaf()
+    expect(wrapper.find('[data-testid="md-streaming-fence"]').exists()).toBe(true)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].finalize).toBe(false)
+
+    // 静默 250ms ≥ 阈值 200ms → finalize 定时器触发 → 完整代码块（占位消失）
+    await vi.advanceTimersByTimeAsync(250)
+    await nextTick()
+    await nextTick()
+    expect(calls[calls.length - 1].finalize).toBe(true)
+    expect(wrapper.find('[data-testid="md-streaming-fence"]').exists()).toBe(false)
+    expect(wrapper.find('.md-codeblock').exists()).toBe(true)
+
+    // 新 token 到达（silenceMs≈0 → 判定 false）→ 粘滞保持 finalize=true，占位不回归
+    await wrapper.setProps({ content: '```ts\ncode more' } as never)
+    await flushRaf()
+    expect(calls[calls.length - 1].finalize).toBe(true)
+    expect(wrapper.find('[data-testid="md-streaming-fence"]').exists()).toBe(false)
+    expect(wrapper.find('.md-codeblock').exists()).toBe(true)
+  })
+})
+
+describe('W23 review Fix-2: 占位段固定哨兵 key（spinner 动画不因重建重启）', () => {
+  it('连续两帧占位渲染 → 占位 DOM 节点引用恒等（segId 每帧递增也复用节点）', async () => {
+    // 协议层行为：streaming-fence 占位段 segId 每帧 nextSegId++ 重分配
+    let nextId = 0
+    const renderMarkdownIncremental = vi.fn(async () => {
+      nextId += 1
+      return incResult([], [seg('streaming-fence', 'code', nextId, { lang: 'ts' })], emptyCache(nextId + 1))
+    })
+    const wrapper = mountMd(
+      { content: '```ts\ncode v1', streaming: true },
+      { renderMarkdownIncremental },
+    )
+    await flushRaf()
+    const el1 = wrapper.find('[data-testid="md-streaming-fence"]').element
+
+    await wrapper.setProps({ content: '```ts\ncode v2' } as never)
+    await flushRaf()
+    expect(renderMarkdownIncremental).toHaveBeenCalledTimes(2)
+    const el2 = wrapper.find('[data-testid="md-streaming-fence"]').element
+    // 固定哨兵 key 'sf' → v-for 复用同一 DOM 节点（CSS 动画不中断）；segId key 会重建
+    expect(el2).toBe(el1)
+  })
+})
+
+describe('W23 review Fix-3/4: latest-wins 串行 + 卸载清理', () => {
+  /** deferred 版增量 mock：首帧挂起（in-flight），后续帧立即返回 */
+  function deferredMock() {
+    const sources: string[] = []
+    let resolveFirst: ((r: IncrementalMarkdownResult & { cache: IncrementalMarkdownCache }) => void) | null = null
+    const renderMarkdownIncremental = vi.fn(
+      async (source: string): Promise<IncrementalMarkdownResult & { cache: IncrementalMarkdownCache }> => {
+        sources.push(source)
+        if (sources.length === 1) {
+          return new Promise<IncrementalMarkdownResult & { cache: IncrementalMarkdownCache }>((res) => {
+            resolveFirst = res
+          })
+        }
+        return incResult([], [seg('text', `<p>${source}</p>`, sources.length - 1)], emptyCache(sources.length))
+      },
+    )
+    return {
+      sources,
+      /** 首帧挂起 promise 的 resolver（getter 惰性取值：mock 首次调用后才可用，不能解构） */
+      get resolveFirst(): ((r: IncrementalMarkdownResult & { cache: IncrementalMarkdownCache }) => void) | null {
+        return resolveFirst
+      },
+      renderMarkdownIncremental,
+    }
+  }
+
+  it('latest-wins：in-flight 期间新请求合并，完成后只跑最新一条', async () => {
+    const mock = deferredMock()
+    const wrapper = mountMd({ content: 'v1', streaming: true }, { renderMarkdownIncremental: mock.renderMarkdownIncremental })
+    await flushRaf()
+    // in-flight 期间连续两次变更 → 合并为最新（v2 被 v3 覆盖）
+    await wrapper.setProps({ content: 'v2' } as never)
+    await flushRaf()
+    await wrapper.setProps({ content: 'v3' } as never)
+    await flushRaf()
+    expect(mock.renderMarkdownIncremental).toHaveBeenCalledTimes(1)
+
+    // 首帧落定 → 只消费最新 queued，v2 丢弃
+    mock.resolveFirst?.(incResult([], [seg('text', '<p>v1</p>', 0)], emptyCache(1)))
+    await flushRaf()
+    await flushRaf()
+    expect(mock.sources).toEqual(['v1', 'v3'])
+    expect(wrapper.text()).toContain('v3')
+    expect(wrapper.text()).not.toContain('v2')
+  })
+
+  it('卸载后挂起的 rAF 不再渲染（disposed 短路入口）', async () => {
+    const renderMarkdownIncremental = vi.fn(async () => incResult([], [], emptyCache(0)))
+    const wrapper = mountMd({ content: 'hello', streaming: true }, { renderMarkdownIncremental })
+    // immediate watch 已排队 rAF，未 flush 即卸载；测试 harness 的 cancelAnimationFrame 是 no-op，
+    // 队列里回调仍会被 flushRaf 执行——disposed 短路必须拦下渲染
+    wrapper.unmount()
+    await flushRaf()
+    expect(renderMarkdownIncremental).not.toHaveBeenCalled()
+  })
+
+  it('卸载后 in-flight 落定不消费 queued、不再渲染', async () => {
+    const mock = deferredMock()
+    const wrapper = mountMd({ content: 'v1', streaming: true }, { renderMarkdownIncremental: mock.renderMarkdownIncremental })
+    await flushRaf()
+    await wrapper.setProps({ content: 'v2' } as never)
+    await flushRaf() // v2 进 queued
+    wrapper.unmount()
+
+    mock.resolveFirst?.(incResult([], [seg('text', '<p>v1</p>', 0)], emptyCache(1)))
+    await flushRaf()
+    await flushRaf()
+    // queued 被丢弃（disposed 短路 finally 分支），v2 永不渲染
+    expect(mock.sources).toEqual(['v1'])
+  })
+
+  it('卸载后 in-flight 落定不重挂静默 finalize 定时器', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const mock = deferredMock()
+    const wrapper = mountMd(
+      { content: '```ts\ncode', streaming: true },
+      { renderMarkdownIncremental: mock.renderMarkdownIncremental, streamingFenceSilenceMs: 200 },
+    )
+    await flushRaf()
+    wrapper.unmount()
+    // 首帧结果带 streaming-fence 占位段：若 in-flight 落定后照常 arm 定时器 → 推进时间会触发
+    // 第二次渲染（旧实现无 disposed 守卫）。新实现短路，定时器不重挂。
+    mock.resolveFirst?.(incResult([], [seg('streaming-fence', 'code', 0, { lang: 'ts' })], emptyCache(1)))
+    await vi.advanceTimersByTimeAsync(500)
+    expect(mock.renderMarkdownIncremental).toHaveBeenCalledTimes(1)
   })
 })
 

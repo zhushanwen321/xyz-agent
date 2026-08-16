@@ -12,14 +12,17 @@
  *
  * 协议镜像同步：与 renderer composables/logic/markdown.ts 的 MarkdownSegment 扩展（W22 的
  * segId/lang/mermaid/streaming-fence）做结构对齐，防壳侧漂移——镜像不只为 deps 赋值提供
- * 类型，更是增量协议在 ui 侧的形状契约（字段漂移会被结构化类型在编译期拦下）：
+ * 类型，更是增量协议在 ui 侧的形状契约（壳侧删字段/改字段类型方向的漂移会被结构化类型在
+ * 编译期拦下；壳侧新增字段不拦截——结构性子类型允许超集，需人工同步本镜像）：
  * segId 是 D-5 增量渲染的段稳定键（renderIncremental 首次产出时分配，前缀段跨帧不变），
- * 渲染树 v-for :key="seg.segId"（全量渲染路径不携带，undefined）。
+ * 渲染树 v-for 按 segId 取 key（全量渲染路径不携带，undefined）。
  */
 export interface MarkdownSegment {
   type: 'text' | 'mermaid' | 'streaming-fence'
   content: string
-  /** 段稳定键（D-5 增量渲染）：单调递增、前缀段跨帧不变；全量路径不携带 */
+  /** 段稳定键（D-5 增量渲染）：单调递增、前缀段跨帧不变；全量路径不携带。
+   *  例外：streaming-fence 占位段的 segId 每帧重分配（tail 段每帧重建），组件侧对该类型
+   *  用固定哨兵 key 跨帧复用 DOM（spinner 不因重建重启），不依赖 segId。 */
   segId?: number
   /** streaming-fence 专属：fence 语言名（info 首词；空 info 归一为 'text'） */
   lang?: string
@@ -30,7 +33,8 @@ export interface MarkdownSegment {
 /** D-5 增量渲染结果（renderer 壳 renderIncremental 输出的镜像类型，W22 协议 / W23 消费）。
  *  渲染树 = [...prefixSegments, ...tailSegments]；前缀段引用恒等（缓存命中帧零重渲染），
  *  tail 段每帧重建。与 renderer composables/logic/markdown.ts 的 IncrementalRenderResult
- *  结构对齐（字段漂移会被结构化类型在编译期拦下，镜像失效防护）。 */
+ *  结构对齐（壳侧删字段/改字段类型方向的漂移会被结构化类型在编译期拦下；壳侧新增字段
+ *  不拦截——结构性子类型允许超集，需人工同步本镜像）。 */
 export interface IncrementalMarkdownResult {
   prefixSegments: MarkdownSegment[]
   tailSegments: MarkdownSegment[]

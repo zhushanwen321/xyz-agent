@@ -507,7 +507,9 @@ export interface MarkdownSegment {
   segId?: number
   /** streaming-fence 专属：fence 语言名（info string 首词；空 info 归一为 'text'） */
   lang?: string
-  /** streaming-fence 专属：是否 mermaid fence（W23 用不同占位形态） */
+  /** streaming-fence 专属：是否 mermaid fence。占位 UI 与代码 fence 同形态（语言名 + loader
+   *  行，MarkdownRenderer 不按此字段分支）；字段仅数据携带，finalize 后 mermaid 源码走
+   *  MermaidRenderer 完整渲染的区分在 fence 规则（md-mermaid 占位）而非占位期。 */
   mermaid?: boolean
 }
 
