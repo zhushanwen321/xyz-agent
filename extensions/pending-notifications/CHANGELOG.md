@@ -1,5 +1,14 @@
 # @zhushanwen/pi-pending-notifications
 
+## 0.3.2
+
+### Patch Changes
+
+- 2a724190c: **extension-logger / pending-notifications / subagent-workflow: unify debug env switches on XYZ_AGENT_DEBUG**
+
+  - File-log gating in `extension-logger` now reads `XYZ_AGENT_DEBUG=1` (previously `PI_EXT_DEBUG`); `pending-notifications` console debug logs switch from `PENDING_DEBUG` to `XYZ_AGENT_DEBUG`; `subagent-workflow` debug traces likewise moved to `XYZ_AGENT_DEBUG`.
+  - One switch now toggles debug logging across all extensions that follow the logging conventions doc — no per-extension env vars to remember.
+
 ## 0.3.1
 
 ### Patch Changes

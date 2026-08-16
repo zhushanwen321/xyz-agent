@@ -72,19 +72,8 @@
             @update:model-value="emit('update', { completionSound: $event === true })"
           />
         </div>
-        <!-- 会话自动重命名 -->
-        <div class="flex items-center justify-between border-t border-border px-4 py-3">
-          <div class="flex flex-col gap-0.5">
-            <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.autoRenameSession') }}</Label>
-            <span class="text-[10px] text-neutral-mid">{{ t('settings.system.autoRenameSessionHint') }}</span>
-          </div>
-          <Switch
-            data-testid="setting-auto-rename-session"
-            :model-value="autoRenameEnabled"
-            :disabled="togglingAutoRename"
-            @update:model-value="onSaveAutoRename"
-          />
-        </div>
+        <!-- 会话自动重命名（开关 + 标题生成模型；自包含子组件，见 AutoRenameSection.vue） -->
+        <AutoRenameSection />
       </div>
     </div>
 
@@ -270,9 +259,8 @@ import { playByName } from '@/composables/useCompletionSound'
 import { getDefaultSound, detectPlatform } from '@/composables/sound-defaults'
 import SoundPreviewButton from './SoundPreviewButton.vue'
 import UpdateCheckCard from './UpdateCheckCard.vue'
+import AutoRenameSection from './AutoRenameSection.vue'
 import type { SystemSettings } from '@/stores/settings'
-import { getAutoRenameEnabled, setAutoRenameEnabled } from '@/api/domains/settings'
-import { useToast } from '@/composables/useToast'
 
 /** 系统声音清单项（id=播放标识，name=显示名） */
 interface SoundInfo { id: string; name: string }
@@ -286,7 +274,6 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const { info: toastInfo, error: toastError } = useToast()
 
 // ── 系统提示音 ──
 
@@ -505,34 +492,4 @@ const colorfulSwatches = [
   { id: 'blue', label: 'Blue', color: 'oklch(62% 0.15 250)' },
   { id: 'violet', label: 'Violet', color: 'oklch(62% 0.15 280)' },
 ]
-
-// ── 会话自动重命名（独立 flag file，不走 SystemSettings 体系）──
-const autoRenameEnabled = ref(true)
-const togglingAutoRename = ref(false)
-
-onMounted(async () => {
-  try {
-    const res = await getAutoRenameEnabled()
-    autoRenameEnabled.value = res.enabled
-  } catch (e) {
-    // best-effort：拉取失败保持默认 true（与 ensureAutoRenameDefault 一致），不阻塞页面
-    console.warn('[SystemPage] failed to load auto-rename state:', e)
-  }
-})
-
-async function onSaveAutoRename(enabled: boolean) {
-  if (togglingAutoRename.value) return
-  togglingAutoRename.value = true
-  const prev = autoRenameEnabled.value
-  autoRenameEnabled.value = enabled
-  try {
-    await setAutoRenameEnabled(enabled)
-    toastInfo(t('settings.system.saved'))
-  } catch (_e) {
-    autoRenameEnabled.value = prev
-    toastError(t('settings.system.saveFailed'))
-  } finally {
-    togglingAutoRename.value = false
-  }
-}
 </script>

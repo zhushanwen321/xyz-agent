@@ -27,7 +27,7 @@
 | 🔵 通用 | 所有 Pi extension 适用 |
 | 🟠 子代理专项 | 仅 spawn/manage 子 Pi 进程的复杂扩展适用（进阶，子代理扩展才需要） |
 
-> 对于简单的 Tool/Command 型扩展（如 `pi-todo`、`pi-statusline`），只需关注 🔵 标记的章节即可。
+> 对于简单的 Tool/Command 型扩展（如 `pi-todo`），只需关注 🔵 标记的章节即可。
 
 ---
 

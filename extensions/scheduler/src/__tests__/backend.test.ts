@@ -2,9 +2,27 @@ import { describe, expect, it } from 'vitest'
 
 import { MockSchedulerBackend } from '../backend.js'
 import { SchedulerRuntime } from '../runtime.js'
-import type { SchedulerStore } from '../types.js'
+import type { SchedulerEntryOp, TaskSnapshot } from '../types.js'
 
 const mockCtx = { isIdle: () => true, hasPendingMessages: () => false }
+
+/** 构造 base task 快照（upsert op 用）。 */
+function snapshot(overrides: Partial<TaskSnapshot> = {}): TaskSnapshot {
+  return {
+    id: 'aaa',
+    name: 'test',
+    prompt: 'p',
+    kind: 'recurring',
+    schedule: { mode: 'interval', intervalMs: 60000 },
+    enabled: true,
+    force: false,
+    createdAt: 0,
+    nextRunAt: 100,
+    runCount: 0,
+    history: [],
+    ...overrides,
+  }
+}
 
 describe('MockSchedulerBackend', () => {
   it('records sendMessage calls', async () => {
@@ -22,17 +40,17 @@ describe('MockSchedulerBackend', () => {
     expect(backend.sentMessages[0]!.opts).toEqual({ deliverAs: 'followUp', triggerTurn: true })
   })
 
-  it('records persist calls and throws injected persistError', async () => {
+  it('records appendEntry calls and throws injected appendError', () => {
     const backend = new MockSchedulerBackend()
-    const store: SchedulerStore = { version: 1, tasks: [] }
+    const op: SchedulerEntryOp = { op: 'delete', taskId: 'aaa' }
 
-    await backend.persist(store)
-    expect(backend.persistedStores).toHaveLength(1)
-    expect(backend.persistedStores[0]).toBe(store)
+    backend.appendEntry(op)
+    expect(backend.appendedOps).toHaveLength(1)
+    expect(backend.appendedOps[0]).toBe(op)
 
-    // persistError 注入：persist 抛该错（ERR-6 语义——错误必须能传到调用栈）
-    backend.persistError = new Error('disk full')
-    await expect(backend.persist(store)).rejects.toThrow('disk full')
+    // appendError 注入：appendEntry 抛该错（ER-APPEND-FAIL 语义——错误必须能传到调用栈供 runtime 捕获）
+    backend.appendError = new Error('pi internal')
+    expect(() => backend.appendEntry(op)).toThrow('pi internal')
   })
 
   it('now() returns injected nowValue or Date.now()', () => {
@@ -40,6 +58,44 @@ describe('MockSchedulerBackend', () => {
     expect(Math.abs(backend.now() - Date.now())).toBeLessThan(1000)
     backend.nowValue = 123456
     expect(backend.now()).toBe(123456)
+  })
+
+  // ── TC-W-BACKEND-REPLAY：loadTasks 委托 replayFoldEntries（IF-BACKEND-REPLAY）──
+  it('TC-W-BACKEND-REPLAY: loadTasks 经 replayFoldEntries 恢复 owner 匹配的任务', () => {
+    const backend = new MockSchedulerBackend()
+    backend.fakeSessionFile = '/a.json'
+    backend.fakeEntries = [
+      // 非 scheduler entry：应被折叠忽略
+      { type: 'message', data: {} },
+      { type: 'custom', customType: 'other-ext', data: {} },
+      // owner 匹配的 upsert
+      {
+        type: 'custom',
+        customType: 'pi-scheduler:task',
+        data: { op: 'upsert', taskId: 'X', ownerSessionFile: '/a.json', task: snapshot({ id: 'X' }) },
+      },
+      // owner 不匹配的 upsert（fork 继承）：应被过滤
+      {
+        type: 'custom',
+        customType: 'pi-scheduler:task',
+        data: { op: 'upsert', taskId: 'Y', ownerSessionFile: '/other.json', task: snapshot({ id: 'Y' }) },
+      },
+    ]
+
+    const tasks = backend.loadTasks()
+
+    expect(tasks).toHaveLength(1)
+    expect(tasks[0]!.id).toBe('X')
+    expect(tasks[0]!.ownerSessionFile).toBe('/a.json')
+  })
+
+  it('TC-W-BACKEND-REPLAY: getSessionFile 返回 fakeSessionFile（缺省值）', () => {
+    const backend = new MockSchedulerBackend()
+    expect(backend.getSessionFile()).toBe('/test/session.json')
+    backend.fakeSessionFile = '/custom.json'
+    expect(backend.getSessionFile()).toBe('/custom.json')
+    backend.fakeSessionFile = undefined
+    expect(backend.getSessionFile()).toBeUndefined()
   })
 
   // ── TC2：new SchedulerRuntime(mockBackend) 可注入单测，零 FS ──
@@ -50,8 +106,9 @@ describe('MockSchedulerBackend', () => {
     const runtime = new SchedulerRuntime(backend, mockCtx)
     const task = await runtime.addTask('probe', { mode: 'interval', intervalMs: 60000 })
     expect(task).toBeDefined()
-    // addTask 的 persist 走了 mock backend（零 FS）
-    expect(backend.persistedStores).toHaveLength(1)
+    // addTask 后 append upsert op（append-only，零 FS）
+    expect(backend.appendedOps).toHaveLength(1)
+    expect(backend.appendedOps[0]!.op).toBe('upsert')
 
     await runtime.dispatchTask(task)
 

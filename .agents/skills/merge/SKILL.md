@@ -1,8 +1,10 @@
 ---
 name: merge
 description: >-
-  合并分支并发布。触发词："合并"、"merge"、"发布"、"release"、
-  "上线"。仅用于 xyz-agent 项目。
+  Use when 合并分支并发布（GitHub Release 交付 Electron 产物 + 可选 npm 发布）。
+  触发词："合并"、"merge"、"发布"、"release"、"上线"。
+  不用于 纯分支合并（不发布）、日常编码中的合并操作（合并数组/对象等）、
+  或 npm 预发布 / 测试版发布（用 npm-prerelease / prerelease-test）。
 ---
 
 # merge

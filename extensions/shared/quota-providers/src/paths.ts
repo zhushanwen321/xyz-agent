@@ -9,7 +9,7 @@
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 
-/** 状态栏扩展的配置根目录（~/.pi/agent/config/） */
+/** quota-providers 配置根目录（<agentDir>/config/） */
 export function getConfigDir(): string {
 	return join(getAgentDir(), "config");
 }
@@ -24,9 +24,9 @@ export function getSecretsPath(): string {
 	return join(getConfigDir(), "secrets.json");
 }
 
-/** statusline_cache.json 路径 */
+/** 用量缓存文件路径（<agentDir>/config/quota-cache.json）。 */
 export function getCachePath(): string {
-	return join(getAgentDir(), "statusline_cache.json");
+	return join(getConfigDir(), "quota-cache.json");
 }
 
 /** token-stats 目录 */
@@ -45,7 +45,7 @@ export function resolveEnvRef(value: string): string {
 	const envVal = process.env[name];
 	if (envVal === undefined) {
 		if (!warnedEnvVars.has(name)) {
-			console.warn(`[statusline] env var ${name} is not set`);
+			console.warn(`[quota-providers] env var ${name} is not set`);
 			warnedEnvVars.add(name);
 		}
 		return "";

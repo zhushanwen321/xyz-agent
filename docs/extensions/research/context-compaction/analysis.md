@@ -1,5 +1,8 @@
 # Pi 原生 Compaction vs context-engineering 事件：执行链路分析
 
+> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。
+
+
 ## 1. 核心结论
 
 **不存在双重压缩风险。** compaction 和 context 事件在不同阶段操作，且互斥：

@@ -159,7 +159,7 @@ B 子进程(B_sess) → C 同样错位 …
 
 **恢复指引（失败路径）**：
 
-- **record 详情 `parent: (root)` 但预期有父**：identity entry 缺 `parentRecordId`。查 `PI_EXT_DEBUG=1` 的 `[subagents] execCtxAls initialized: recordId=X` 日志，确认 `PI_SUBAGENT_SELF_RECORD_ID` env 是否贯穿到该子进程。
+- **record 详情 `parent: (root)` 但预期有父**：identity entry 缺 `parentRecordId`。查 `XYZ_AGENT_DEBUG=1` 的 `[subagents] execCtxAls initialized: recordId=X` 日志，确认 `PI_SUBAGENT_SELF_RECORD_ID` env 是否贯穿到该子进程。
 - **B/C 等 record 根本不出现**（更常见失败）：identity entry 的 `rootSessionId` 不等于主 session id、被过滤丢弃。排查链：`cat <session>.jsonl | grep subagent-identity` 看 `rootSessionId` 值 → 若不等于主 session id，查 `[subagents] execCtxAls initialized: rootSessionId=Z` 日志确认 env 是否贯穿 → 指向注入点（`runSpawn` 的 childEnv）或读取点（`initSession`）。
 - **[MF-3] 全树可见但 worktree 分支的深层 record 缺失**：identity entry 的 `rootSessionId` 正确仍找不到时，查 session 文件落盘位置——`subagent-identity` 所在文件是否在 `subagents/<enc(ROOT cwd)>/sessions/` 下。若在 `enc(<checkout 路径>)` 段（旧版 worktree 布局），是落盘目录未统一（`PI_SUBAGENT_ROOT_CWD` 未贯穿）；恢复指引：确认 `runSpawn` 注入点与 `subagent-service` 构造读取点均使用 `ENV_ROOT_CWD`（旧文件本身不可迁移，会被 GC 按 TTL 清理）。
 
@@ -242,7 +242,7 @@ this.sessionRootId = envRoot ?? init.sessionId;  // 有 env = 子进程（贯穿
 
 子进程只有一个身份（自己的 record），`enterWith` 贯穿整个 session 生命周期，进程内所有 async 链都能读到。这与 `forkDepthAls` 的 initSession 初始化模式完全一致。
 
-> **探针（实施期门，准则 7）**：`initSession` 读 env 后，在 `PI_EXT_DEBUG=1` 时输出 `[subagents] execCtxAls initialized: recordId=X depth=Y rootSessionId=Z`。验收场景 1 用它确认基线建立。⛔ 实施期补探针实测。
+> **探针（实施期门，准则 7）**：`initSession` 读 env 后，在 `XYZ_AGENT_DEBUG=1` 时输出 `[subagents] execCtxAls initialized: recordId=X depth=Y rootSessionId=Z`。验收场景 1 用它确认基线建立。⛔ 实施期补探针实测。
 
 ## 4. 验收
 
@@ -327,7 +327,7 @@ this.sessionRootId = envRoot ?? init.sessionId;  // 有 env = 子进程（贯穿
     this.execCtxAls.enterWith({ recordId: envSelfRecord, depth: Number.isNaN(envDepth) ? 0 : envDepth });
   }
   ```
-- **探针**：`PI_EXT_DEBUG=1` 时输出初始化日志（决策 4）。
+- **探针**：`XYZ_AGENT_DEBUG=1` 时输出初始化日志（决策 4）。
 - **justification**：子进程启动即建立"我是谁"的执行上下文，后续 `createRecordForMode` 读 ALS 自动正确。
 - **验收**：场景 1。
 

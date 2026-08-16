@@ -12,7 +12,6 @@ Pi permission 扩展 — 四档权限模式（yolo / auto / approve / strict）+
 - **AI Classifier**：auto 模式下用 LLM 评估未知命令风险（low/medium/high）
 - **用户审批 UI**：TUI（自定义 Component）/ RPC（select 对话框）/ headless（fail-closed deny）
 - **Reject-with-Reason**：用户拒绝时可输入真实理由（回传 agent 辅助理解）
-- **statusline 集成**：TUI 底部 footer 显示当前权限模式标签（通过 globalThis Symbol 握手协议向 statusline 注册一行 footer line renderer）
 - **fail-closed**：任何异常路径 → block（绝不静默放行）
 
 ## 安装
@@ -28,7 +27,7 @@ ln -s /path/to/xyz-pi-extensions-workspace/feat-permission-and-auto-mode/extensi
 
 ## 配置
 
-配置文件位置：`~/.pi/agent/permission-config.json`（首次运行自动创建默认配置）。
+配置文件位置：`<agentDir>/config/permission-ext-config.json`（`<agentDir>` = pi agent 目录，`PI_CODING_AGENT_DIR` 覆盖，默认 `~/.pi/agent`；首次运行自动创建默认配置）。
 
 可通过 `PI_CODING_AGENT_DIR` 环境变量覆盖基础路径。
 
@@ -54,7 +53,7 @@ ln -s /path/to/xyz-pi-extensions-workspace/feat-permission-and-auto-mode/extensi
 | `mode` | `"yolo"` | 当前权限模式（yolo/auto/approve/strict） |
 | `enabled` | `true` | 扩展是否启用（false=完全放行，等同 yolo 但保留配置） |
 | `classifier.enabled` | `true` | 是否启用 AI 层（auto 模式自动 true） |
-| `classifier.model` | `"auto"` | AI 模型（`auto` 选最便宜，或 `provider/model-id`） |
+| `classifier.model` | `"auto"` | AI 模型（`auto` = scoped：取 settings.json enabledModels 首个可用，或 `provider/model-id`） |
 | `classifier.timeout` | `90` | AI 分类超时秒数 |
 | `classifier.autoApproveLowRisk` | `true` | 低风险是否自动放行（false=转人工） |
 | `classifier.autoDenyHighRisk` | `true` | 高风险是否自动拦截（true=强制 deny） |
@@ -118,7 +117,7 @@ ln -s /path/to/xyz-pi-extensions-workspace/feat-permission-and-auto-mode/extensi
 |------|-------------|------|------|------|
 | 内置安全白名单 | `builtin-safe` | 50 无条件 + 9 条件 | 函数实现（`isKnownSafeCommand`），不进 `Rule[]` 数组 | 不可改 |
 | 内置危险规则 | `builtin-danger` | 12 条正则 | `BUILTIN_DANGER_RULES` 常量，代码硬编码 | 不可改 |
-| 用户自定义规则 | `user` | 任意 | `permission-config.json` 的 `userRules` 数组 | 可改 |
+| 用户自定义规则 | `user` | 任意 | `config/permission-ext-config.json` 的 `userRules` 数组 | 可改 |
 
 规则层在整个权限管道中的位置（auto / approve 模式）：
 
@@ -197,7 +196,7 @@ wc / whereis / who / whoami / which
 
 ### 4. 自定义规则（用户编辑指南）
 
-在 `~/.pi/agent/permission-config.json` 的 `userRules` 数组中添加。完整示例：
+在 `<agentDir>/config/permission-ext-config.json` 的 `userRules` 数组中添加。完整示例：
 
 ```json
 {
@@ -342,7 +341,7 @@ publish 规则在后，last-match-wins 时 deny 胜出。
 
 ### 10. 配置文件管理
 
-- **路径**：`~/.pi/agent/permission-config.json`，可用 `PI_CODING_AGENT_DIR` 环境变量覆盖基础目录
+- **路径**：`<agentDir>/config/permission-ext-config.json`（`<agentDir>` 可用 `PI_CODING_AGENT_DIR` 环境变量覆盖，默认 `~/.pi/agent`）
 - **首次创建**：扩展启动时若文件不存在，自动写入默认配置（`mode: "yolo"`、空 `userRules`）
 - **权限**：`0o600`（原子写：先写 `.tmp` 再 rename，避免半写状态）
 - **编辑方式**：目前需手动编辑 JSON 文件（未来计划提供 `/permission add-rule` 命令辅助编辑）
@@ -360,7 +359,7 @@ publish 规则在后，last-match-wins 时 deny 胜出。
 
 auto 模式下层 3 用 LLM 评估未知命令风险：
 
-- **模型**：`classifier.model`（`auto` 自动选最便宜，或指定 `provider/model-id`）
+- **模型**：`classifier.model`（`auto` = scoped：取 enabledModels 首个可用（空则 fallback available），或指定 `provider/model-id`）
 - **输出**：`risk_level`（low/medium/high）+ `outcome`（allow/deny/ask）+ `reasoning` + `confidence`
 - **override**（WT7 偏差补丁）：
   - `low + allow + autoApproveLowRisk=false` → 强制 `ask`（转人工）
@@ -371,7 +370,7 @@ auto 模式下层 3 用 LLM 评估未知命令风险：
 
 `/permission model` 弹出 overlay 选择 AI classifier 使用的模型，写回 `classifier.model`：
 
-- **第一级 provider 选择**：列出 `Auto`（自动选最便宜可用模型）+ 所有可用 provider（来自 `~/.pi/agent/models.json`，按字母序）。当前 `classifier.model` 预选高亮。
+- **第一级 provider 选择**：列出 `Auto`（自动：scoped 取 enabledModels 首个可用）+ 所有可用 provider（来自 `~/.pi/agent/models.json`，按字母序）。当前 `classifier.model` 预选高亮。
 - **第二级 model 选择**：选中具体 provider 后，列出该 provider 下所有可用 model（按 `cost.input` 升序，并列按 id 字母序）。`Esc` 回退到 provider 列表。
 - **键位**：`↑/↓` 导航、`Enter` 确认、`Esc` 取消（provider stage）或回退（model stage）。
 - **三模式分发**：
@@ -381,42 +380,8 @@ auto 模式下层 3 用 LLM 评估未知命令风险：
 - **无可用模型**：`models.json` 不存在 / 无 provider 配 `apiKey` / 解析失败时，`listAvailableModels` 返回空 Map，命令降级为提示 `No available models. Configure ~/.pi/agent/models.json first.`（不阻塞，不修改配置）。
 - **结果写回**：选中后 `classifier.model` 更新为 `auto` 或 `provider/model-id`，其余字段（mode/enabled/timeout/userRules）保留。
 
-## statusline 集成
-
-permission 不再自管 footer，而是通过 **globalThis Symbol 握手协议** 向 `@zhushanwen/pi-statusline` 注册一行 footer line renderer（`session_start` 时调用 `registerPermissionFooterLine`）：
-
-- **statusline 是 footer canonical owner**：唯一创建 footer registry（`getOrCreateFooterRegistry`）。
-- **permission 是 consumer**：永不创建 registry 实例，永不写 `slot.registry` 字段；只通过 `FOOTER_HANDSHAKE_KEY = Symbol.for('@zhushanwen/pi-statusline.footerHandshake')` 读写 slot。
-- **插入位置**：renderer `order=2`，聚合排序后落在 line2（model）和 line3（ctx）之间。
-- **加载顺序无关**：slot 形状 `{version, registry?, pending:[]}`。registry 未就绪时 consumer 只 push pending，等 statusline 后到时 flush（沿用 ask-user 的 pending-flush 修复模式）。
-- **无代码层 import**：permission 仅对 statusline 做运行时 `globalThis` 反射，statusline 是可选 `peerDep`，未安装时静态 import 不会破坏 permission。
-- **重绘触发**：mode/enabled 切换后调用 `requestFooterRender()`（`REQUEST_RENDER_KEY`），statusline 立即重绘 footer。
-
-footer line 内容（精简版，避免 footer 拥挤）：
-
-```
-[permission] Auto · enabled
-[permission] disabled
-```
-
-模式标签：YOLO / Auto / Approve / Strict（对应 yolo/auto/approve/strict）。
-
-**未安装 statusline 时 silent 降级**：permission 功能完整，仅 footer 不显示 mode 标签。可用 `/permission status` 查看 mode。
-
-## 升级须知
-
-**v0.0.1 → v0.1.0 breaking change**：本扩展不再自管 footer，权限模式标签现在由 `@zhushanwen/pi-statusline` 聚合提供（通过 globalThis Symbol 握手协议）。此前 footer 由各扩展各自调用 `ctx.ui.setFooter` 单例渲染、互相覆盖。
-
-- **同时安装 statusline 的用户**：无需任何操作。mode 标签自动作为 statusline footer 的一行出现（line2 和 line3 之间）。
-- **未安装 statusline 的用户**：footer 不再显示 mode 标签。两种恢复方式：
-  - 安装 statusline：`pi install npm:@zhushanwen/pi-statusline`，mode 标签回到 footer。
-  - 或随时用 `/permission status` 查看/切换 mode（不依赖 footer）。
-
-详见下方「statusline 集成」章节。
-
 ## 已知限制
 
-- **Footer 由 statusline 聚合**：本扩展不再自管 footer，mode 标签通过 globalThis Symbol 握手协议向 `@zhushanwen/pi-statusline` 注册（见「statusline 集成」）。未安装 statusline 时 footer 不显示 mode 标签（silent 降级，不影响功能）。
 - **TUI Reject-with-Reason**：当前 RPC 分支已完整接入 `ctx.ui.input` 采集拒绝理由；TUI 分支因 pi-tui Input 组件集成成本较高，暂保留简化 deny（固定文案），后续迭代补齐内联文本输入。
 - **headless 模式**：json/print 模式无交互 UI，所有审批请求 fail-closed deny（不阻塞自动化流程，但 strict/approve 模式下无法放行）。
 - **wasm 加载**：AST 分析依赖 tree-sitter-bash wasm，加载失败时 fail-closed（clean=false, parseError=true）。

@@ -107,9 +107,7 @@ JSON Schema of 'type: "object"', got 'type: null'.
 | ask-user | `InputSchema` | `Type.Object` | ✓ |
 | pending-notifications | `PendingNotificationsParams` | `Type.Object` | ✓ |
 | plan / model-switch | 内联 | `Type.Object` | ✓ |
-| context-engineering | `RecallParams` | `Type.Object` | ✓ |
 | vision | `AnalyzeImageParams` | `Type.Object` | ✓ |
-| evolve-daily | `TrackerParams` | `Type.Object` | ✓ |
 
 **只有 goal + todo 中招**（已逐个核实）。其余 extension 的 `Type.Union`/`StringEnum` 都在字段级（如 `action: Type.Union([...])`，等价 enum），合规。
 

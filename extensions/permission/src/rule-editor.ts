@@ -64,7 +64,7 @@ export async function editRulesViaOverlay(
 		case "json":
 		case "print":
 		default:
-			ctx.ui.notify("[pi-permission] Rule editor not available in headless mode. Edit ~/.pi/agent/permission-config.json directly.", "warning");
+			ctx.ui.notify("[pi-permission] Rule editor not available in headless mode. Edit <agentDir>/config/permission-ext-config.json directly.", "warning");
 			return undefined;
 	}
 }

@@ -117,8 +117,8 @@ function modeHighlight(mode: PermissionMode): string {
 
 /** handlePermissionModelCommand 的依赖（DI 便于测试 mock）。 */
 export interface PermissionModelCommandDeps {
-	/** 列出可用模型（按 provider 分组）。 */
-	listModels: () => Map<string, ResolvedModelEntry[]>;
+	/** 列出可用模型（按 provider 分组）。E2 后走 ctx.modelRegistry（签名带 ctx）。 */
+	listModels: (ctx: ModelPickerContext) => Map<string, ResolvedModelEntry[]>;
 	/** 保存新配置，返回 {success, error?}。 */
 	save: (config: PermissionConfig) => { success: boolean; error?: string };
 }
@@ -141,11 +141,11 @@ export async function handlePermissionModelCommand(
 ): Promise<void> {
 	const current = config.classifier.model;
 
-	// 1. listModels
-	const models = deps.listModels();
+	// 1. listModels（E2：ctx 传 modelRegistry 数据源）
+	const models = deps.listModels(ctx);
 	if (models.size === 0) {
 		ctx.ui.notify(
-			"[pi-permission] No available models. Configure ~/.pi/agent/models.json first.",
+			"[pi-permission] No available models. Run `pi auth login` or configure provider API keys, then retry.",
 			"warning",
 		);
 		return;

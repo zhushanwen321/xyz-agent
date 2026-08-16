@@ -5,6 +5,8 @@
  * 对应 slice plan 的 DM1-DM5 数据模型。
  */
 
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+
 // ──────────────────────── DM1: PermissionMode ────────────────────────
 
 /** 四档权限模式，按严格等级排序（yolo 最低，strict 最高） */
@@ -88,7 +90,7 @@ export type RiskLevel = "low" | "medium" | "high";
 export interface ClassifierConfig {
 	/** 是否启用 AI 层（auto 模式自动 true，其他模式忽略） */
 	enabled: boolean;
-	/** 模型：'auto'（选最便宜）或 'provider/model-id'（如 'zhipu/glm-4-flash'） */
+	/** 模型：'auto'（=scoped：读 settings.json enabledModels 取首个可用，空则 fallback available）或 'provider/model-id'（如 'zhipu/glm-4-flash'） */
 	model: string;
 	/** 超时秒数 */
 	timeout: number;
@@ -96,11 +98,17 @@ export interface ClassifierConfig {
 	autoApproveLowRisk: boolean;
 	/** 高风险是否自动拦截（转人工审批） */
 	autoDenyHighRisk: boolean;
+	/**
+	 * 标题生成 LLM 的 thinking 级别（pi 的 ModelThinkingLevel，THINKING_ORDER SSOT）。
+	 * 默认 "off"：不传 pi-ai reasoning（provider 默认行为）；
+	 * "minimal"~"max" 透传给 SimpleStreamOptions.reasoning（provider 不支持时静默忽略）。
+	 */
+	thinkingLevel: ModelThinkingLevel;
 }
 
 // ──────────────────────── DM5: PermissionConfig ────────────────────────
 
-/** 扩展配置（~/.pi/agent/permission-config.json 持久化格式） */
+/** 扩展配置（<agentDir>/config/permission-ext-config.json 持久化格式） */
 export interface PermissionConfig {
 	/** 当前权限模式 */
 	mode: PermissionMode;
@@ -120,6 +128,7 @@ export const DEFAULT_CLASSIFIER_CONFIG: ClassifierConfig = {
 	timeout: 90,
 	autoApproveLowRisk: true,
 	autoDenyHighRisk: true,
+	thinkingLevel: "off",
 };
 
 export const DEFAULT_CONFIG: PermissionConfig = {

@@ -17,7 +17,7 @@ import type { QuotaProvider } from "./types.js";
 import { zhipuProvider } from "./zhipu.js";
 
 /**
- * 注册顺序即 statusline 显示顺序。
+ * 注册顺序即显示顺序（顺序约定沿用自 statusline 时期，保持既有显示顺序稳定）。
  * 显示在套餐用量行的 provider（normalize 不返回 null）。
  * tavily 也在列表里但 normalize 返回 null，由 index.ts 单独从 cache 读取 available/total。
  */

@@ -1,33 +1,41 @@
 /**
  * CT 系列：classifier.ts 单元测试（createClassifier + classifyRisk 主流程）。
  *
- * mock 策略：鸭子类型 mock streamSimple（返回只带 result() 的 AssistantMessageEventStream）。
+ * C1a 收口后 classifier 的 LLM 调用走 llm-shared callLLM（依赖注入 deps.callLLM，
+ * mock 返回 CallLLMResult 判别联合）。stopReason 归一化在 callLLM 层完成，
+ * classifier 消费 ok:false + stopReason 透传字段保留日志区分。
  *
  * 重点验证：
- *  - C1-C4 主流程 happy path（allow/deny/ask）
- *  - C5-C7 fail-closed（resolveModel null / streamSimple 抛错 / 解析失败）
- *  - C8 timeout 兜底
+ *  - C1-C4 主流程 happy path（allow/deny/ask + code fence）
+ *  - C5-C7 fail-closed（resolveModel null / callLLM ok:false / 解析失败）
+ *  - C8 timeout 兜底（callLLM 永挂 + 外层 race）
  *  - C9 abort signal
- *  - C10 timeout 秒→毫秒传递
- *  - C11 G3 关键修正：stopReason='error' / 'aborted' → fallback（即使 result() resolve）
+ *  - C10 timeout 秒→毫秒传递（callLLM opts.timeoutMs）
+ *  - TC5（G3 语义承接）：callLLM ok:false + stopReason='error'/'aborted' → fallback，
+ *    日志保留 abort/error 区分（onLog 含 aborted 或 stopReason）
  */
-import type { AssistantMessageEventStream, SimpleStreamOptions } from "@earendil-works/pi-ai";
-import { describe, expect, it } from "vitest";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { CallLLMResult } from "@zhushanwen/pi-llm-shared";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ClassifierConfig, ToolInvocationContext } from "../../types.js";
 import type { ClassifierDeps } from "../classifier.js";
 import { createClassifier } from "../classifier.js";
-import type { ResolvedModel } from "../model-resolver.js";
 
 // ──────────────────────── fixtures ────────────────────────
 
-const FIXED_MODEL: ResolvedModel = {
-	provider: "test-co",
+/** 测试用 Model<Api>（resolveModel 注入点直接返回 Model<Api>） */
+const FIXED_MODEL_OBJ: Model<Api> = {
 	id: "test-model",
-	api: "openai-completions",
 	name: "Test Model",
+	api: "openai-completions" as Api,
+	provider: "test-co",
 	baseUrl: "http://localhost",
-	inputCost: 0,
+	reasoning: false,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 128000,
+	maxTokens: 16384,
 };
 
 const CONFIG: ClassifierConfig = {
@@ -46,66 +54,47 @@ const CTX: ToolInvocationContext = {
 
 // ──────────────────────── mock helpers ────────────────────────
 
-/** 构造「立刻 resolve 给定 AssistantMessage」的 mock EventStream（鸭子类型） */
-function mockStreamFromMessage(message: unknown): AssistantMessageEventStream {
-	return {
-		result: () => Promise.resolve(message),
-	};
+/** 构造「立即返回给定 CallLLMResult」的 mock callLLM */
+function okResult(content: string): CallLLMResult {
+	return { ok: true, content };
 }
 
-/** 构造「永不 resolve」的 mock EventStream（用于 timeout/abort 测试） */
-function mockStreamNever(): AssistantMessageEventStream {
-	return {
-		result: () => new Promise(() => {}),
-	};
+function failResult(error: string, stopReason?: "error" | "aborted"): CallLLMResult {
+	return { ok: false, error, recoverable: true, ...(stopReason !== undefined ? { stopReason } : {}) };
 }
 
-/** 构造「streamSimple 同步抛错」的 mock 函数 */
-function throwingStreamSimple(error: Error): ClassifierDeps["streamSimple"] {
-	return () => {
-		throw error;
-	};
-}
-
-interface AssistantMessageMock {
-	stopReason?: string;
-	content?: { type: string; text?: string }[];
-}
-
-function textMessage(text: string, stopReason = "stop"): AssistantMessageMock {
-	return {
-		stopReason,
-		content: [{ type: "text", text }],
-	};
+/** 构造「永不 resolve」的 mock callLLM（用于 timeout/abort 测试） */
+function neverCallLLM(): ClassifierDeps["callLLM"] {
+	return () => new Promise<CallLLMResult>(() => {});
 }
 
 function makeDeps(over: Partial<ClassifierDeps> = {}): ClassifierDeps {
 	return {
-		resolveModel: () => FIXED_MODEL,
-		streamSimple: () => mockStreamFromMessage(textMessage('{"outcome":"allow","risk_level":"low","reasoning":"ok","confidence":0.9}')),
+		resolveModel: async () => FIXED_MODEL_OBJ,
+		callLLM: async () => okResult('{"outcome":"allow","risk_level":"low","reasoning":"ok","confidence":0.9}'),
 		...over,
 	};
 }
 
-/** 捕获 streamSimple 调用参数的 spy（options 含 apiKey 等）。 */
-function capturingStreamSimple(message: unknown): {
-	spy: ClassifierDeps["streamSimple"];
-	getLastOptions: () => SimpleStreamOptions | undefined;
+/** 捕获 callLLM 调用参数（model / opts）的 spy。 */
+function capturingCallLLM(result: CallLLMResult): {
+	spy: ClassifierDeps["callLLM"];
+	getLastOpts: () => Parameters<ClassifierDeps["callLLM"]>[0] | undefined;
 } {
-	let lastOptions: SimpleStreamOptions | undefined;
-	const spy: ClassifierDeps["streamSimple"] = (_model, _context, options?) => {
-		lastOptions = options;
-		return mockStreamFromMessage(message);
+	let lastOpts: Parameters<ClassifierDeps["callLLM"]>[0] | undefined;
+	const spy: ClassifierDeps["callLLM"] = (opts) => {
+		lastOpts = opts;
+		return Promise.resolve(result);
 	};
-	return { spy, getLastOptions: () => lastOptions };
+	return { spy, getLastOpts: () => lastOpts };
 }
 
 // ──────────────────────── C1-C4: happy path ────────────────────────
 
-describe("CT1: happy path — streamSimple resolve 正常文本", () => {
+describe("CT1: happy path — callLLM ok:true 正常文本", () => {
 	it("allow JSON → ClassifierResult.allow", async () => {
 		const classifier = createClassifier(makeDeps({
-			streamSimple: () => mockStreamFromMessage(textMessage('{"outcome":"allow","risk_level":"low","reasoning":"safe","confidence":0.9}')),
+			callLLM: async () => okResult('{"outcome":"allow","risk_level":"low","reasoning":"safe","confidence":0.9}'),
 		}));
 		const r = await classifier.classifyRisk(CTX, CONFIG);
 		expect(r.outcome).toBe("allow");
@@ -115,7 +104,7 @@ describe("CT1: happy path — streamSimple resolve 正常文本", () => {
 
 	it("deny JSON → ClassifierResult.deny", async () => {
 		const classifier = createClassifier(makeDeps({
-			streamSimple: () => mockStreamFromMessage(textMessage('{"outcome":"deny","risk_level":"high","reasoning":"rm -rf /","confidence":0.95}')),
+			callLLM: async () => okResult('{"outcome":"deny","risk_level":"high","reasoning":"rm -rf /","confidence":0.95}'),
 		}));
 		const r = await classifier.classifyRisk(CTX, CONFIG);
 		expect(r.outcome).toBe("deny");
@@ -124,7 +113,7 @@ describe("CT1: happy path — streamSimple resolve 正常文本", () => {
 
 	it("ask JSON → ClassifierResult.ask", async () => {
 		const classifier = createClassifier(makeDeps({
-			streamSimple: () => mockStreamFromMessage(textMessage('{"outcome":"ask","risk_level":"medium","reasoning":"uncertain","confidence":0.5}')),
+			callLLM: async () => okResult('{"outcome":"ask","risk_level":"medium","reasoning":"uncertain","confidence":0.5}'),
 		}));
 		const r = await classifier.classifyRisk(CTX, CONFIG);
 		expect(r.outcome).toBe("ask");
@@ -132,7 +121,7 @@ describe("CT1: happy path — streamSimple resolve 正常文本", () => {
 
 	it("LLM 输出带 code fence → 正则提取仍成功", async () => {
 		const classifier = createClassifier(makeDeps({
-			streamSimple: () => mockStreamFromMessage(textMessage('```json\n{"outcome":"allow","risk_level":"low","reasoning":"x","confidence":0.8}\n```')),
+			callLLM: async () => okResult('```json\n{"outcome":"allow","risk_level":"low","reasoning":"x","confidence":0.8}\n```'),
 		}));
 		const r = await classifier.classifyRisk(CTX, CONFIG);
 		expect(r.outcome).toBe("allow");
@@ -142,24 +131,30 @@ describe("CT1: happy path — streamSimple resolve 正常文本", () => {
 // ──────────────────────── C5-C7: fail-closed ────────────────────────
 
 describe("CT2: fail-closed 路径", () => {
-	it("C5: resolveModel 返回 null → fallback ask", async () => {
-		const classifier = createClassifier(makeDeps({ resolveModel: () => null }));
+	it("C5: resolveModel 返回 null → fallback ask（不调 callLLM）", async () => {
+		const callLLM = vi.fn(async () => okResult("x"));
+		const classifier = createClassifier(makeDeps({
+			resolveModel: async () => null,
+			callLLM,
+		}));
+		const r = await classifier.classifyRisk(CTX, CONFIG);
+		expect(r.outcome).toBe("ask");
+		expect(r.confidence).toBe(0);
+		expect(callLLM).not.toHaveBeenCalled();
+	});
+
+	it("C6: callLLM 返回 ok:false（LLM 调用失败）→ fallback ask", async () => {
+		const classifier = createClassifier(makeDeps({
+			callLLM: async () => failResult("network down"),
+		}));
 		const r = await classifier.classifyRisk(CTX, CONFIG);
 		expect(r.outcome).toBe("ask");
 		expect(r.confidence).toBe(0);
 	});
 
-	it("C6: streamSimple 同步抛错 → fallback ask", async () => {
-		const classifier = createClassifier(makeDeps({
-			streamSimple: throwingStreamSimple(new Error("network down")),
-		}));
-		const r = await classifier.classifyRisk(CTX, CONFIG);
-		expect(r.outcome).toBe("ask");
-	});
-
 	it("C7: LLM 输出无法解析 → parser fallback ask", async () => {
 		const classifier = createClassifier(makeDeps({
-			streamSimple: () => mockStreamFromMessage(textMessage("totally not json")),
+			callLLM: async () => okResult("totally not json"),
 		}));
 		const r = await classifier.classifyRisk(CTX, CONFIG);
 		expect(r.outcome).toBe("ask");
@@ -170,10 +165,10 @@ describe("CT2: fail-closed 路径", () => {
 // ──────────────────────── C8-C10: timeout / abort ────────────────────────
 
 describe("CT3: timeout 与 abort 兜底", () => {
-	it("C8: result() 永挂 + 短 timeout → fallback ask（不卡死）", async () => {
+	it("C8: callLLM 永挂 + 短 timeout → fallback ask（不卡死）", async () => {
 		const shortTimeoutConfig: ClassifierConfig = { ...CONFIG, timeout: 1 };
 		const classifier = createClassifier(makeDeps({
-			streamSimple: () => mockStreamNever(),
+			callLLM: neverCallLLM(),
 		}));
 		const r = await classifier.classifyRisk(CTX, shortTimeoutConfig);
 		expect(r.outcome).toBe("ask");
@@ -183,103 +178,99 @@ describe("CT3: timeout 与 abort 兜底", () => {
 		const ac = new AbortController();
 		ac.abort();
 		const classifier = createClassifier(makeDeps({
-			streamSimple: () => mockStreamNever(),
+			callLLM: neverCallLLM(),
 		}));
 		const r = await classifier.classifyRisk(CTX, CONFIG, ac.signal);
 		expect(r.outcome).toBe("ask");
 	});
 
-	it("C10: timeout=0 → 不设外层超时，result() 正常返回", async () => {
+	it("C10: timeout=0 → 不设外层超时，callLLM 正常返回", async () => {
 		const noTimeoutConfig: ClassifierConfig = { ...CONFIG, timeout: 0 };
-		const classifier = createClassifier(makeDeps({
-			streamSimple: () => mockStreamFromMessage(textMessage('{"outcome":"allow","risk_level":"low","reasoning":"x","confidence":0.5}')),
-		}));
+		const classifier = createClassifier(makeDeps());
 		const r = await classifier.classifyRisk(CTX, noTimeoutConfig);
 		expect(r.outcome).toBe("allow");
 	});
 });
 
-// ──────────────────────── C11: G3 stopReason 修正（关键） ────────────────────────
+// ──────────────────────── TC5: stopReason 透传（G3 语义承接） ────────────────────────
 
-describe("CT4 / C11: G3 — result() 不 reject，必须显式检查 stopReason", () => {
-	it("stopReason='error' → fallback ask（即使 result() 成功 resolve）", async () => {
+describe("CT4 / TC5: callLLM ok:false + stopReason 透传 → fallback + 日志区分", () => {
+	it("stopReason='error' → fallback ask + onLog 含 error 与 stopReason", async () => {
+		const onLog = vi.fn();
 		const classifier = createClassifier(makeDeps({
-			streamSimple: () => mockStreamFromMessage(textMessage('{"outcome":"allow","risk_level":"low","reasoning":"x","confidence":0.9}', "error")),
+			callLLM: async () => failResult("API error: 429", "error"),
+			onLog,
 		}));
 		const r = await classifier.classifyRisk(CTX, CONFIG);
-		// 关键：result() resolve 了，但 stopReason=error → 不能当成功 allow
+		// 关键：ok:false（无论 stopReason）→ 不能当成功 allow
 		expect(r.outcome).toBe("ask");
 		expect(r.confidence).toBe(0);
+		// 日志保留 stopReason 区分（G3 语义不丢）
+		expect(onLog).toHaveBeenCalledWith(expect.stringContaining("stopReason=error"));
 	});
 
-	it("stopReason='aborted' → fallback ask", async () => {
+	it("stopReason='aborted' → fallback ask + onLog 含 aborted（TC5 abort 路径）", async () => {
+		const onLog = vi.fn();
 		const classifier = createClassifier(makeDeps({
-			streamSimple: () => mockStreamFromMessage(textMessage('{"outcome":"deny","risk_level":"high","reasoning":"x","confidence":0.9}', "aborted")),
+			callLLM: async () => failResult("aborted", "aborted"),
+			onLog,
 		}));
 		const r = await classifier.classifyRisk(CTX, CONFIG);
 		expect(r.outcome).toBe("ask");
+		expect(r.confidence).toBe(0);
+		// abort 与 error 分开记（aborted 专用日志）
+		expect(onLog).toHaveBeenCalledWith(expect.stringContaining("aborted"));
 	});
 
-	it("stopReason='stop'（正常）→ 正常解析，不受 G3 影响", async () => {
+	it("ok:false 无 stopReason（catch 路径）→ fallback + 日志含 failed", async () => {
+		const onLog = vi.fn();
 		const classifier = createClassifier(makeDeps({
-			streamSimple: () => mockStreamFromMessage(textMessage('{"outcome":"allow","risk_level":"low","reasoning":"x","confidence":0.9}', "stop")),
+			callLLM: async () => failResult("network timeout"),
+			onLog,
 		}));
 		const r = await classifier.classifyRisk(CTX, CONFIG);
-		expect(r.outcome).toBe("allow");
+		expect(r.outcome).toBe("ask");
+		expect(onLog).toHaveBeenCalledWith(expect.stringContaining("LLM call failed"));
 	});
 
-	it("stopReason 缺省（undefined）→ 不触发 G3 兜底，走正常解析", async () => {
-		const classifier = createClassifier(makeDeps({
-			streamSimple: () => mockStreamFromMessage(textMessage('{"outcome":"allow","risk_level":"low","reasoning":"x","confidence":0.9}')),
-		}));
+	it("ok:true（stopReason 正常或未设）→ 正常解析，不受 stopReason 兜底影响", async () => {
+		const classifier = createClassifier(makeDeps());
 		const r = await classifier.classifyRisk(CTX, CONFIG);
 		expect(r.outcome).toBe("allow");
 	});
 });
 
-// ──────────────────────── CT5: apiKey 透传到 streamSimple options ────────────────────────
+// ──────────────────────── CT5: callLLM opts 构造 ────────────────────────
 
-describe("CT5: resolved.apiKey 透传到 streamSimple options", () => {
-	it("resolved model 含 apiKey → streamSimple 收到的 options.apiKey 是该值", async () => {
-		const { spy, getLastOptions } = capturingStreamSimple(
-			textMessage('{"outcome":"allow","risk_level":"low","reasoning":"x","confidence":0.9}'),
-		);
-		const classifier = createClassifier(makeDeps({
-			resolveModel: () => ({ ...FIXED_MODEL, apiKey: "sk-test-secret-key-12345" }),
-			streamSimple: spy,
-		}));
+describe("CT5: callLLM opts 构造（model/messages/timeoutMs/signal）", () => {
+	it("callLLM 收到解析出的 model + systemPrompt + messages（单轮 user）", async () => {
+		const { spy, getLastOpts } = capturingCallLLM(okResult('{"outcome":"allow","risk_level":"low","reasoning":"x","confidence":0.9}'));
+		const classifier = createClassifier(makeDeps({ callLLM: spy }));
 		const r = await classifier.classifyRisk(CTX, CONFIG);
 		expect(r.outcome).toBe("allow");
-		const options = getLastOptions();
-		expect(options).toBeDefined();
-		expect(options?.apiKey).toBe("sk-test-secret-key-12345");
+		const opts = getLastOpts();
+		expect(opts).toBeDefined();
+		expect(opts?.model).toBe(FIXED_MODEL_OBJ);
+		expect(opts?.systemPrompt.length).toBeGreaterThan(0);
+		expect(opts?.messages).toHaveLength(1);
+		expect(opts?.messages[0]?.role).toBe("user");
+		expect(opts?.messages[0]?.content).toEqual([{ type: "text", text: expect.stringContaining("ls") }]);
 	});
 
-	it("resolved model 无 apiKey → streamSimple options 不含 apiKey 字段", async () => {
-		// FIXED_MODEL 无 apiKey → options 不含 apiKey 键（spread 条件不触发）
-		const { spy, getLastOptions } = capturingStreamSimple(
-			textMessage('{"outcome":"allow","risk_level":"low","reasoning":"x","confidence":0.9}'),
-		);
-		const classifier = createClassifier(makeDeps({ streamSimple: spy }));
+	it("timeout 秒→毫秒传递：CONFIG.timeout=90 → opts.timeoutMs=90000", async () => {
+		const { spy, getLastOpts } = capturingCallLLM(okResult('{"outcome":"allow","risk_level":"low","reasoning":"x","confidence":0.9}'));
+		const classifier = createClassifier(makeDeps({ callLLM: spy }));
 		await classifier.classifyRisk(CTX, CONFIG);
-		const options = getLastOptions();
-		expect(options).toBeDefined();
-		expect("apiKey" in (options as object)).toBe(false);
+		const opts = getLastOpts();
+		expect(opts?.timeoutMs).toBe(90_000);
 	});
 
-	it("apiKey 与 timeoutMs/signal 共存于 options", async () => {
-		// 验证 apiKey 与 timeoutMs 同时透传不互相覆盖（spread 合并正确）
-		const { spy, getLastOptions } = capturingStreamSimple(
-			textMessage('{"outcome":"allow","risk_level":"low","reasoning":"x","confidence":0.9}'),
-		);
-		const classifier = createClassifier(makeDeps({
-			resolveModel: () => ({ ...FIXED_MODEL, apiKey: "k9" }),
-			streamSimple: spy,
-		}));
-		// CONFIG.timeout=90 → timeoutMs=90000
-		await classifier.classifyRisk(CTX, CONFIG);
-		const options = getLastOptions();
-		expect(options?.apiKey).toBe("k9");
-		expect(options?.timeoutMs).toBe(90_000);
+	it("signal 透传：classifyRisk 的 signal 进 callLLM opts.signal（abort 双保险）", async () => {
+		const { spy, getLastOpts } = capturingCallLLM(okResult('{"outcome":"allow","risk_level":"low","reasoning":"x","confidence":0.9}'));
+		const classifier = createClassifier(makeDeps({ callLLM: spy }));
+		const ac = new AbortController();
+		await classifier.classifyRisk(CTX, CONFIG, ac.signal);
+		const opts = getLastOpts();
+		expect(opts?.signal).toBe(ac.signal);
 	});
 });

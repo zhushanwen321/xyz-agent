@@ -363,6 +363,15 @@ export class SettingsMessageHandler {
         this.ctx.reply(ws, msg.id, 'config.autoRenameEnabled', { enabled: this.ctx.configService.getAutoRenameEnabled() })
         return true
       }
+      case 'config.setRenameModel': {
+        this.ctx.configService.setRenameModel(msg.payload.model)
+        this.ctx.reply(ws, msg.id, 'config.renameModel', { model: this.ctx.configService.getRenameModel() })
+        return true
+      }
+      case 'config.getRenameModel': {
+        this.ctx.reply(ws, msg.id, 'config.renameModel', { model: this.ctx.configService.getRenameModel() })
+        return true
+      }
       // tool.approve / tool.deny / tool.always_allow：已删除的 no-op 占位。
       // 这些 type 此前只是 `return true` 以避免 unknown_type，但工具审批的实际路径是
       // pi 的 extension_ui_request（method:'confirm'）→ extension.ui_request/ui_response 流

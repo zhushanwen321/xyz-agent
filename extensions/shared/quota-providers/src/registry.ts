@@ -47,7 +47,7 @@ export function buildRuntimeProviders(): QuotaProvider[] {
 		const impl = PROVIDER_BY_FETCHER.get(decl.fetcher);
 		if (!impl) {
 			if (!warnedFetchers.has(decl.fetcher)) {
-				console.warn(`[statusline] unknown fetcher: ${decl.fetcher} (provider ${decl.id})`);
+				console.warn(`[quota-providers] unknown fetcher: ${decl.fetcher} (provider ${decl.id})`);
 				warnedFetchers.add(decl.fetcher);
 			}
 			continue;

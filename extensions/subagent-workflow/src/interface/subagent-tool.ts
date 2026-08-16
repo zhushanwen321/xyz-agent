@@ -301,7 +301,7 @@ Do NOT recurse when: the work is linear/flat (use chain or parallel instead); th
 
 // ponytail: renderCall 每次 TUI invalidate 都触发。streaming 中 args 是 partial JSON
 // 解析结果（如 model="deep" 来自未流完的 "deepseek-router/ds-pro"），解析失败是预期。
-// 不走 appendEntry（非真实错误），只走 logger.debug（默认 no-op，PI_EXT_DEBUG=1 写文件）。
+// 不走 appendEntry（非真实错误），只走 logger.debug（默认 no-op，XYZ_AGENT_DEBUG=1 写文件）。
 const renderCallLogger = getLogger("subagents");
 
 const subagentRenderCall: SubagentRenderCallCb = (args, theme, ctx) => {
@@ -321,7 +321,7 @@ const subagentRenderCall: SubagentRenderCallCb = (args, theme, ctx) => {
     if (r) resolved = { model: `${r.model.provider}/${r.model.id}`, thinkingLevel: r.thinkingLevel };
   } catch (err) {
     // streaming 中间态（partial JSON）或 service 未就绪 → 降级不显示 model（renderCall 不应崩）。
-    // 不阻断渲染，不污染 TUI。开发期开 PI_EXT_DEBUG=1 可写文件日志排查。
+    // 不阻断渲染，不污染 TUI。开发期开 XYZ_AGENT_DEBUG=1 可写文件日志排查。
     renderCallLogger.debug("renderCall model resolution failed, degrading", {
       reason: err instanceof Error ? err.message : String(err),
     });

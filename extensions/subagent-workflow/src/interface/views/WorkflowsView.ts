@@ -23,10 +23,10 @@
  */
 
 import { promises as fsPromises } from "node:fs";
-import { homedir } from "node:os";
 import { join as pathJoin } from "node:path";
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
 
 import {
@@ -929,11 +929,11 @@ const TRACE_ACTIVITY_WIDTH = 80;
 
 /**
  * 导出完整 workflow trace 到 Markdown 文件。
- * 路径：~/.pi/agent/workflow-traces/{runId}.md
+ * 路径：<agentDir>/workflow-traces/{runId}.md（agentDir = getAgentDir()，实例隔离）
  * 对齐 main 的 saveTraceToFile（WorkflowsView.ts:365-396）。
  */
 function saveTraceToFile(run: WorkflowRun, ctx: ExtensionContext): void {
-  const dir = pathJoin(homedir(), ".pi", "agent", "workflow-traces");
+  const dir = pathJoin(getAgentDir(), "workflow-traces");
   const filePath = pathJoin(dir, `${run.runId}.md`);
   const lines: string[] = [];
   lines.push(`# Workflow Trace: ${run.spec.scriptName} (${run.runId})`, "");

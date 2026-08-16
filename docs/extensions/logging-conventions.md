@@ -91,10 +91,12 @@ try {
 默认 no-op。开发期开启：
 
 ```bash
-PI_EXT_DEBUG=1 pi   # 所有用 getLogger 的 extension 都写文件日志
+XYZ_AGENT_DEBUG=1 pi   # 所有用 getLogger 的 extension 都写文件日志
 ```
 
 日志位置：`~/.pi/agent/logs/<extName>-YYYY-MM-DD.log`（或 `$PI_AGENT_DIR/logs/`）。
+
+> **统一开关**：所有 extension 的 debug 开关统一使用 `XYZ_AGENT_DEBUG=1`，不要新增 `PI_*_DEBUG` / `PENDING_DEBUG` 这类 per-extension 变量；未接入共享 logger 的 extension 也应读取同一个变量。
 
 ### best-effort 清理失败默认静默 [IMPORTANT]
 
@@ -102,7 +104,7 @@ PI_EXT_DEBUG=1 pi   # 所有用 getLogger 的 extension 都写文件日志
 
 这是**预期设计**：best-effort 清理失败属预期路径（session 已完成或正在收尾），失败不影响主流程，故不刷屏、不持久化。代价是生产排障看不到这些失败。
 
-**排障方法**：怀疑清理未生效时，用 `PI_EXT_DEBUG=1` 重启 pi，相关失败会写入 `~/.pi/agent/logs/subagents-YYYY-MM-DD.log`，grep `best-effort` 即可定位（如 `best-effort sidecar teardown failed` / `best-effort worktree cleanup failed`）。
+**排障方法**：怀疑清理未生效时，用 `XYZ_AGENT_DEBUG=1` 重启 pi，相关失败会写入 `~/.pi/agent/logs/subagents-YYYY-MM-DD.log`，grep `best-effort` 即可定位（如 `best-effort sidecar teardown failed` / `best-effort worktree cleanup failed`）。
 
 > 迁移注记：历史上 `bestEffort` 用 `console.debug`（始终可见），迁移到共享 logger 后改为 `logger.debug`（默认 no-op）。这是 logging-conventions 收敛的副作用——次要清理噪音不再默认可见，换取 TUI 不被污染。
 

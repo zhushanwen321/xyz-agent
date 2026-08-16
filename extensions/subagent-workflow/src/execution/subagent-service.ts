@@ -353,7 +353,7 @@ export class SubagentService {
       // 基线是 createRecordForMode / 护栏读 ALS store 失败时的权威回退。
       this.execCtxBaseline = { recordId: envSelfRecord, depth: nestingDepth };
       this.execCtxAls.enterWith({ recordId: envSelfRecord, depth: nestingDepth });
-      if (process.env.PI_EXT_DEBUG) {
+      if (process.env.XYZ_AGENT_DEBUG) {
         logger.debug(
           `[subagents] execCtxAls initialized: recordId=${envSelfRecord} depth=${nestingDepth} rootSessionId=${envRoot ?? init.sessionId}`,
         );

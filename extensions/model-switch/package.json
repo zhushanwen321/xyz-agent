@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-model-switch",
-  "version": "0.6.0",
+  "version": "0.7.1",
   "description": "Intelligent model recommendation and switching for Pi coding agent",
   "type": "module",
   "main": "index.ts",
@@ -17,14 +17,19 @@
   "files": [
     "index.ts",
     "src/**/*.ts",
+    "skills/",
     "README.md"
   ],
   "pi": {
     "extensions": [
       "./index.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "dependencies": {
+    "@zhushanwen/pi-llm-shared": "workspace:*",
     "@zhushanwen/pi-quota-providers": "workspace:*"
   },
   "peerDependencies": {
