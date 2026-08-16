@@ -312,7 +312,7 @@ lsof -i :1420 -P | grep node
 ### 11. Plugin System 架构约束
 
 - **Plugin Service 是唯一的适配层**: 所有前端 ↔ 插件系统通信必须通过 WS → server.ts → PluginService 路径。前端不直接与 Worker 通信
-- **Worker Thread 隔离**: 每个插件运行在独立的 Worker Thread 中。插件崩溃不影响其他插件或主进程
+- **执行隔离（两层）**: trusted 插件运行在 Worker Thread 中；sandbox 插件运行在独立 fork 子进程中（`XYZ_PLUGIN_SANDBOX_DIR` + ESM loader 路径边界，plugin-host-process.ts）。插件崩溃不影响其他插件或主进程
 - **Hook 串行执行**: executeHooks 按 priority 排序串行 invoke 每个 handler。单个 handler 超时 5s 视为放行。blocked 终止链
 - **Tool RPC 路由**: handleBridgeToolExecute 通过 toolRegistry 查找 → Worker RPC invoke（超时 30s）→ 返回结果。不是 stub
 - **sessionData 缓存**: 读取走内存缓存，写入先缓存（per-write 500ms debounce + 5s 周期 flush），runtime shutdown 时先 flushAll 再停 timer（正常关停零丢失）。容量上限 10MB/plugin

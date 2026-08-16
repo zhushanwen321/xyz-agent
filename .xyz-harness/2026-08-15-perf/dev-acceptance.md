@@ -13,7 +13,7 @@
 | V3 终端高频输出 | **通过** | 2000 行输出全程 29.2s 采样 60fps / 零 >100ms；切走切回历史完整 |
 | V4 启动与首屏 | **通过**（产物引用既有硬证据 + 本轮 runtime 日志） | runtime listen 即就绪 total=20.2ms（后台异步 561ms 不阻塞）；build 产物 entry gzip **75.2KB**（基线 684KB，降 89%） |
 | V5 AI 写文件链路 | **通过** | AI 创建 2 文件 → file_changes ready 后 **302ms** 树角标刷新（P-D9-2/P-D9-3 探针实测）；写文件时窗无 git 异常日志 |
-| V6 插件 hook | **未测（dev 环境技术不可行，根因已定位）** | sandbox Worker fork 报 `ERR_MODULE_NOT_FOUND: plugin-bootstrap.js`（dev tsx 模式无编译产物）→ 插件无法激活；hook 语义由 8 个测试文件背书 |
+| V6 插件 hook | **通过（2026-08-16 补测，前置 F1+插件系统修复）** | sandbox 插件激活 active → onBeforeSendMessage 真实执行 → pi session JSONL user 消息为 `hello [V6-HOOK-APPLIED] end-to-end`（原始 `v6magic` 0 次出现）；无 failed/timed out、无 ERR_MODULE_NOT_FOUND |
 | V7 长 session 切回 | **部分通过（口径如实）** | 切回 81ms/115ms（零请求路径）；冷加载 2253ms；「驱逐重进」路径两轮构造未触发（如实记录）；日志有 `cache fresh (empty delta)` since 机制运行证据 |
 | V8 断线重连 | **通过（两轮实证）** | SIGTERM → 90s supervisor 重启 → **ready 后 0.4s** renderer 重连 → state 快照恢复（消息数一致、无重复、无断线横幅） |
 
@@ -113,25 +113,31 @@
 
 **证据**：探针输出（evaluate 返回值，上文时间线）；文件 `v5b-perf-test-a.md` / `v5b-perf-test-b.md`（仓库根，验收残留保留作证据）；截图 `v5-filetree-badges.png`（树中 v5 系列文件行）；前段会话同链路产物 `v5-perf-test-a/b.md`（15:22）。
 
-## V6 插件 hook — 未测（dev 环境技术不可行，根因已定位）
+## V6 插件 hook — 通过（2026-08-16 补测；前置：F1 dev sandbox fork 修复 9068e2692 + 插件系统 F2-F4 修复）
 
-**步骤与尝试**：
-1. dev 数据目录已有前段会话构造的验收插件 `~/.xyz-agent-dev/plugins/v6-hook-test/`（onBeforeSendMessage 拦截器：把 `v6magic` 改写为 `[V6-HOOK-APPLIED]`）
-2. WS 直连 runtime（3310）发 `plugin.list`：插件**已被发现**（`{pluginId:'v6-hook-test', status:'discovered', trustLevel:'sandbox', enabled:false}`）
-3. 发 `plugin.toggle {enabled:true}` 激活 → **失败**，enabled 回滚 false
-4. runtime 日志根因（09:16:04.245）：
+**补测背景**：初测时（2026-08-16 下午）dev tsx 形态 sandbox Worker fork 因 `ERR_MODULE_NOT_FOUND: plugin-bootstrap.js` 无法激活插件（初测记录见本节末尾），判定「dev 环境技术不可行」。后续插件系统修复 F1（commit 9068e2692：fork 传递 tsx loader + pluginPath 入口文件化 + 激活状态回写）打通该链路，本节按原场景补测。
+
+**补测环境**：隔离 runtime（`XYZ_AGENT_DATA_DIR=$(mktemp -d)` + tsx 直跑 `packages/runtime/src/index.ts`，随机端口，不占用 dev app）；sandbox 测试插件 `e2e-hook`（onBeforeSendMessage 拦截器：`v6magic` → `[V6-HOOK-APPLIED]`，permissions 预批准模拟用户已授权）；模型配置拷贝自 dev 数据目录（`xiaomi-token-plan-cn/mimo-v2-pro`）。
+
+**步骤与实测**：
+1. boot 自动激活：`plugin.list` 返回 `e2e-hook status=active`（sandbox、带权限声明，permissions.json 预批准路径）
+2. 创建真实 session（`session.create` cwd=/tmp/v6-e2e-cwd → `session.created`）+ 发消息 `hello v6magic end-to-end` → reply `message.status status=sent`
+3. **hook 真实执行**（runtime 日志，worker stdout 经 host 转发）：
    ```
-   [ERROR] [plugin-process:sandbox-v6-hook-test] Error [ERR_MODULE_NOT_FOUND]:
-   Cannot find module '.../plugin-service/plugin-bootstrap.js' imported from
-   '.../plugin-service/plugin-bootstrap-process.ts'
-   [ERROR] [plugin-host-process] process sandbox-v6-hook-test exited with code 1
+   [plugin-process:sandbox-e2e-hook] [e2e-hook] onBeforeSendMessage fired: hello v6magic end-to-end
    ```
-   sandbox Worker fork 引用 `plugin-bootstrap.js`（打包产物路径），dev 模式 runtime 用 tsx 直跑 `.ts` 源码、无编译产物 → Worker 启动即崩 → 激活失败。**非本次 perf 改动引入**（dev/prod 路径差异），按纪律记录不修。
-5. 行为旁证：激活失败状态下发含 `v6magic` 消息 → 消息正常送达（模型回复「收到」），hook 未改写（符合插件未激活预期），功能无损、runtime 有 ERROR 出声。
+4. **transform 端到端送达 pi**（pi session JSONL `pi/sessions/…_01a00b1e….jsonl`）：
+   ```
+   role=user   content=[{"type":"text","text":"hello [V6-HOOK-APPLIED] end-to-end"}]
+   ```
+   原始标记 `v6magic` 在整个 JSONL 中 **0 次出现**——hook 改写在 prompt 派发前完成并持久化。
+5. **无失败证据**：runtime 日志 0 次 `failed/timed out`、0 次 `ERR_MODULE_NOT_FOUND`（初测根因特征）、0 次 `PERMISSION_DENIED`。
 
-**替代证据**：onBeforeSendMessage 的拦截/改写/超时语义由既有测试套件背书（`packages/runtime/test/plugin-hooks-e2e.test.ts`、`plugin-hook-bridge.test.ts`、`plugin-api-hooks.test.ts`、`plugin-hooks-integration.test.ts` 等 8 个文件）。
+**如实声明**：assistant turn `stopReason=error`（隔离环境模型调用失败，与 hook 链路无关——user 消息已按改写后内容送达 pi 并持久化；transform→pi 链路证据已闭环）。
 
-**结论**：dev 环境不可验收；需在打包产物（`pnpm build` 后）环境重跑本场景——插件文件已就位，复测成本低。
+**自动化沉淀**：本场景已固化为 `scripts/verify-plugin-e2e.sh` D 步（fake-session 触发，断言 hook 执行 + transform 副作用 + 无失败日志），挂入 `scripts/validate-runtime-bundle.sh` 第 7 步（pre-commit 于 runtime src 变更时触发）。真实 session 全链路（含 pi JSONL 断言）为本次手工实测，未自动化。
+
+**初测记录（2026-08-16 下午，历史保留）**：dev 数据目录插件 `~/.xyz-agent-dev/plugins/v6-hook-test/` 被 plugin.list 发现（discovered/enabled:false），toggle 激活失败，runtime 日志（09:16:04.245）报 `ERR_MODULE_NOT_FOUND: Cannot find module '.../plugin-bootstrap.js' imported from '.../plugin-bootstrap-process.ts'` → sandbox fork 引用编译产物路径而 dev tsx 无产物。激活失败状态下发含 `v6magic` 消息可正常送达（hook 未执行，功能无损）。该根因由 F1 修复。初测时的替代证据（plugin-hooks-e2e 等 8 个测试文件背书）仍有效。
 
 ## V7 长 session 切回 — 部分通过（口径如实）
 
@@ -187,12 +193,13 @@
 ## 遗留问题清单（记录不修，本任务范围外）
 
 1. **[V2 关联] runtime 重启后文件树目录点击无响应**：expand 在途请求悬挂（WS 断线期间 promise 不 settle）→ `loading`/inFlight 残留拦截后续点击且无 UI 反馈；刷新 renderer 恢复。建议：WS 重连事件清理 fileTree nodeState/inFlight。
-2. **[V6 根因] dev（tsx）模式 sandbox 插件 Worker 无法启动**：fork 引用编译产物 `plugin-bootstrap.js`，源码模式不存在该文件。V6 验收需在打包产物环境补测（插件已就位）。
+2. ~~**[V6 根因] dev（tsx）模式 sandbox 插件 Worker 无法启动**~~ **已解决**：F1 修复（9068e2692，fork 传递 tsx loader）打通 dev sandbox 链路，V6 已补测通过（见 V6 节）。
 3. **[V7 口径] 「几百轮 session 被驱逐重进」未实证**：dev 环境无长 session + 驱逐构造未成功；W20 机制有 `cache fresh (empty delta)` 运行证据与确定性测试背书。
 4. **[V4] 冷启动 TTI 对比缺失**：无优化前基线版本可对照。
 
 ## 测试残留说明
 
 - 仓库根 `v5-perf-test-a/b.md`、`v5b-perf-test-a/b.md`：V5 验收文件产物，保留作证据
-- `~/.xyz-agent-dev/plugins/v6-hook-test/`：V6 验收插件（enabled:false 未激活），保留供打包环境复测
+- `~/.xyz-agent-dev/plugins/v6-hook-test/`：V6 初测插件（补测时已不存在，被 `scripts/verify-plugin-e2e.sh` 内置 heredoc 测试插件取代）
 - dev session 列表新增的测试 session（V1 流式 / v7 测试消息系列）：验收过程产物
+- V6 补测（2026-08-16）用隔离数据目录 + 随机端口，测后临时目录/进程已全部清理，无残留
