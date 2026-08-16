@@ -36,7 +36,8 @@ export class QuotaCache {
    * quota-cache.json）；null = 未加载。镜像与磁盘的一致性维护：
    *   - 首次 getEntry / 内存 miss → 从磁盘 read() 加载
    *   - doUpdate 读磁盘（保持跨实例「读-改-写」合并语义不变）写盘成功后同步为合并结果
-   * 内存 miss 回退磁盘重载（外部/多实例写入可见，行为与改造前「每次读磁盘」不劣化）。
+   * 内存 miss 回退磁盘重载（可见性口径：仅 miss 时重载磁盘——外部写入对已缓存 provider
+   * 不可见，直到 update() 同步内存镜像或进程重启；改造前每次读磁盘，缓存命中零读为收益）。
    */
   private memoryCache: QuotaCacheFile | null = null
 
@@ -71,9 +72,11 @@ export class QuotaCache {
     }
     const entry = cache.providers[providerId]
     if (entry) return entry
-    // 内存 miss：重载一次内存镜像（外部修改 / 多实例写入可见；读失败返回空对象不抛）。
-    // 单次重载后仍 miss = provider 确实无缓存，下次查询重复此路径（与改造前每次读磁盘等价，
-    // 不劣化）；存在的 provider 恒命中内存零读（微项 11 收益点）。
+    // 内存 miss：重载一次内存镜像（读失败返回空对象不抛）。
+    // 可见性口径（审查修正）：仅内存 miss 时重载磁盘——外部写入对已缓存 provider 不可见，
+    // 直到 update() 同步内存镜像或进程重启；未缓存 provider 的 miss 重载可见磁盘最新。
+    // 单次重载后仍 miss = provider 确实无缓存，下次查询重复此路径；存在的 provider 恒命中
+    // 内存零读（微项 11 收益点）。
     this.memoryCache = this.read()
     return this.memoryCache.providers[providerId] ?? null
   }

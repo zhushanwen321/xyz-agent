@@ -329,13 +329,18 @@ export class SessionLifecycle {
    * 故意包含 hidden session（与 SessionScanner.listAll 的 !s.hidden 过滤不同）：
    * folder 删除是按 cwd 的彻底清理，hidden session 也属于该 cwd。
    * 若未来要改为排除 hidden，需同步评估前端列表（listAll 过滤）与删除的语义对齐。
+   *
+   * wave:perf-w26 修正（审查）：scanSessions 传 { force: true } 旁路目录 TTL 快照——
+   * deleteByCwd 是写语义的彻底清理：走快照会漏删（TTL 窗口内刚落盘的 session 不在快照里）
+   * 且误报失败（快照含已删条目时 delete 内 findScannedSession 找不到 → Session not found
+   * → failed 数组 → 前端误报）。该调用点低频（用户点 folder 删除按钮），无性能顾虑。
    */
   async deleteByCwd(cwd: string): Promise<BatchDeleteResult> {
     const cwdSessions = new Set<string>()
     for (const s of this.svc.getActiveSummaries()) {
       if (s.cwd === cwd) cwdSessions.add(s.id)
     }
-    for (const s of this.sessionStore.scanSessions()) {
+    for (const s of this.sessionStore.scanSessions({ force: true })) {
       if (s.cwd === cwd) cwdSessions.add(s.id)
     }
     const deleted: string[] = []
@@ -490,14 +495,24 @@ export class SessionLifecycle {
 
     // 2. 截断源 JSONL → 写新文件（parentSession 指回源文件/源 sessionId，形成父子链）
     // forkEntryId 字段写入新 header（= 截断锚点 fromPiEntryId），供后续 merge 定位 fork 点
-    const { filePath: forkedFilePath, sessionId: forkedId } = await createForkedSessionFile(
-      source.filePath,
-      fromPiEntryId,
-      includeFrom,
-      getSessionsDir(),
-      fromPiEntryId,
-      fallbackParentId,
-    )
+    let forked: { filePath: string; sessionId: string }
+    try {
+      forked = await createForkedSessionFile(
+        source.filePath,
+        fromPiEntryId,
+        includeFrom,
+        getSessionsDir(),
+        fromPiEntryId,
+        fallbackParentId,
+      )
+    } catch (e) {
+      // wave:perf-w26（D9-1，审查修正）：createForkedSessionFile 写文件半程失败时可能留下
+      // 残缺 fork 文件——失效目录 TTL 缓存避免快照收录残缺条目（与 switchSession/initialize
+      // 失败分支的失效对称，见下）。
+      this.sessionStore.invalidateScanCache()
+      throw e
+    }
+    const { filePath: forkedFilePath, sessionId: forkedId } = forked
     // wave:perf-w26（D9-1 fork 失效点）：fork 新文件由 runtime 直接写出（非 pi 延迟落盘），
     // 显式失效目录 TTL 缓存让下一次列表构建立即包含新 session（不依赖 active 内存合并兜底）。
     this.sessionStore.invalidateScanCache()

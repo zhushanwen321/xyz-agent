@@ -129,4 +129,23 @@ describe('W1: SessionLifecycle.deleteByCwd — folder 维度批量删除', () =>
     // delete 被调 2 次（每个 session 一次，第一个失败不阻断第二个）
     expect(deleteSpy).toHaveBeenCalledTimes(2)
   })
+
+  it('W1TC4 持久化枚举走 force 旁路 TTL——TTL 窗口内刚落盘 session 不漏删', async () => {
+    // 回归防护（W26 审查修正）：deleteByCwd 是写语义彻底清理，scanSessions 必须传
+    // { force: true } 绕过目录 TTL 快照——快照漏掉刚落盘 session → 漏删；快照含已删条目
+    // → delete 内 findScannedSession 找不到 → Session not found → 误报 failed。
+    const { lifecycle, svc, sessionStore, deleteSpy } = makeHarness()
+    ;(sessionStore.scanSessions as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: 's-fresh', cwd: '/p', filePath: '/p/s-fresh.jsonl' } as ScannedSessionMeta,
+    ])
+    ;(svc.getActiveSummaries as ReturnType<typeof vi.fn>).mockReturnValue([])
+
+    const result = await lifecycle.deleteByCwd('/p')
+
+    // 枚举必须走 force（若回退 TTL 快照，本用例语义即破坏——漏删/误报）
+    expect(sessionStore.scanSessions).toHaveBeenCalledWith({ force: true })
+    // 刚落盘 session 被枚举并删除，无 failed 误报
+    expect(deleteSpy).toHaveBeenCalledWith('s-fresh')
+    expect(result).toEqual({ cwd: '/p', deleted: ['s-fresh'], failed: [] })
+  })
 })

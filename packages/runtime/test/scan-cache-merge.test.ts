@@ -104,9 +104,13 @@ describe('W3 scanPiSessions mtime+size 缓存', () => {
     const readsAfterFirst = getFileReads()
     expect(readsAfterFirst).toBeGreaterThan(0)
 
+    // W26（D9-1）适配：目录列举层 1s TTL——紧接重扫会命中目录快照，readFileSync 不增加
+    // 是「目录层 + per-file 层」两层缓存的叠加结果。显式失效目录缓存（与 AC-cache-2/3
+    // 同模式），隔离目录层后本用例只验证 per-file mtime+size 键（文件未变 → 命中，仍零读）。
+    invalidateScanDirCache()
     scanPiSessions()
     const readsAfterSecond = getFileReads()
-    // 核心：第二次文件未变（mtime+size 相同）→ 命中缓存 → readFileSync 不增加
+    // 核心：第二次文件未变（mtime+size 相同）→ 命中 per-file 缓存 → readFileSync 不增加
     // 注意：若实现用 openSync 尾读而非 readFileSync，readCount 可能不增——
     // 此用例聚焦 readFileSync 路径；openSync 路径在 AC-merge-1 覆盖
     expect(readsAfterSecond).toBe(readsAfterFirst)
