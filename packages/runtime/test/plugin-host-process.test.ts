@@ -107,7 +107,7 @@ describe('PluginHostProcess', () => {
 
     const processId = await host.assignProcess('load-test', 'sandbox')
     await expect(
-      host.loadPlugin(processId, '/fake/plugin.js', 'sandbox'),
+      host.loadPlugin(processId, 'load-test', '/fake/plugin.js', 'sandbox'),
     ).resolves.toBeUndefined()
   })
 
@@ -172,7 +172,7 @@ describe('PluginHostProcess', () => {
     // 先让 mock 进入 hang 态（后续 load 不响应）
     handle.postMessage({ type: 'hang' })
 
-    await expect(host.loadPlugin(processId, '/fake/hang.js', 'sandbox')).rejects.toThrow(
+    await expect(host.loadPlugin(processId, 'hang-test', '/fake/hang.js', 'sandbox')).rejects.toThrow(
       /timeout/i,
     )
 

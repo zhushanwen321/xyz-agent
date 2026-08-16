@@ -161,7 +161,9 @@ export interface PluginHostContract {
    *   trusted 走 Worker 线程，忽略此参数）
    */
   assignWorker(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginDir?: string): Promise<string>
-  loadPlugin(workerId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void>
+  /** pluginId 显式传入：load 消息的 pluginId 是子进程/Worker loadedModules 分区键，
+   *  activate 按真实 pluginId 查找——从 pluginPath 推导在入口文件语义下会失配。 */
+  loadPlugin(workerId: string, pluginId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void>
   terminateWorker(workerId: string): Promise<void>
   getWorkerHandle(pluginId: string): { workerId: string; postMessage(message: unknown): void } | undefined
 }
@@ -283,11 +285,12 @@ export class PluginHost implements PluginHostContract {
 
   /**
    * 向指定 Worker 发送 load 指令，等待 loaded/error 响应。
+   * pluginId 显式传入（loadedModules 分区键，见 PluginHostContract.loadPlugin 注释）。
    * 超时 10 秒后 reject。
    */
-  async loadPlugin(workerId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void> {
+  async loadPlugin(workerId: string, pluginId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void> {
     if (workerId.startsWith('sandbox-')) {
-      await this.ensureProcessHost().loadPlugin(workerId, pluginPath, trustLevel ?? 'sandbox')
+      await this.ensureProcessHost().loadPlugin(workerId, pluginId, pluginPath, trustLevel ?? 'sandbox')
       return
     }
     const worker = this.workerInstances.get(workerId)
@@ -310,7 +313,7 @@ export class PluginHost implements PluginHostContract {
       worker.on('message', onMessage)
       worker.postMessage({
         type: 'load',
-        pluginId: pluginPath.split('/').pop() ?? 'unknown',
+        pluginId,
         pluginPath,
         trustLevel: trustLevel ?? this.inferTrustLevel(workerId),
       })

@@ -10,6 +10,7 @@
  */
 
 import { parentPort } from 'node:worker_threads'
+import { Module } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import type {
   HostToWorkerMessage,
@@ -323,17 +324,27 @@ function createStateStorageProxy(
  * 确保后续插件代码的 require 受到 BLOCKED_BUILTINS 和路径边界约束。
  * 导出供 plugin-bootstrap-process.ts 复用（子进程版与 Worker 版同一实现）。
  */
+/**
+ * Node 文档外 API 的局部类型补全：CJS resolver 钩子 `_resolveFilename`
+ * （@types/node 未声明，自 Node 0.x 起稳定存在；原实现经 require('node:module')
+ * 的 any 返回值隐式使用，此处显式声明收敛类型）。
+ */
+type ModuleWithResolveFilename = typeof Module & {
+  _resolveFilename: (this: unknown, request: string, ...args: unknown[]) => string
+}
+
 export function initSandbox(pluginDir: string): void {
-  // Worker Thread 中可用 require()，此处是同步操作
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const Module = require('node:module')
   const interceptor = createRequireInterceptor(pluginDir)
 
-  const _originalResolveFilename = Module._resolveFilename
-  Module._resolveFilename = function (
+  // F1 配套：dev 模式（tsx）下本模块经 ESM 加载（fork 子进程无全局 require），
+  // 改为顶层 `import { Module } from 'node:module'` 获取构造器——node:module 的
+  // ESM 入口 re-export 同一 CJS 类对象，_resolveFilename monkey-patch 语义不变；
+  // 生产 CJS bundle 中 esbuild 将该 import 编译为 require('node:module') 解构，等价。
+  const ModuleApi = Module as ModuleWithResolveFilename
+  const _originalResolveFilename = ModuleApi._resolveFilename
+  ModuleApi._resolveFilename = function (
     request: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Module._resolveFilename has variadic args
-    ...args: any[]
+    ...args: unknown[]
   ): string {
     const resolved = _originalResolveFilename.call(this, request, ...args) as string
     interceptor(request, resolved)

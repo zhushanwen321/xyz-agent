@@ -63,7 +63,7 @@ describe('PluginHost sandbox wiring', () => {
   it('TC3: sandbox loadPlugin 经 mock 宿主成功加载', async () => {
     await host.assignWorker('p1', 'sandbox')
     await expect(
-      host.loadPlugin('sandbox-p1', FAKE_PLUGIN_PATH, 'sandbox'),
+      host.loadPlugin('sandbox-p1', 'p1', FAKE_PLUGIN_PATH, 'sandbox'),
     ).resolves.toBeUndefined()
   })
 
@@ -77,12 +77,12 @@ describe('PluginHost sandbox wiring', () => {
 
   it('TC5: sandbox terminateWorker 清理子进程', async () => {
     await host.assignWorker('p1', 'sandbox')
-    await host.loadPlugin('sandbox-p1', FAKE_PLUGIN_PATH, 'sandbox')
+    await host.loadPlugin('sandbox-p1', 'p1', FAKE_PLUGIN_PATH, 'sandbox')
     await host.terminateWorker('sandbox-p1')
     expect(host.getWorkerHandle('p1')).toBeUndefined()
     // 已清理：再次 load 报 Process not found
     await expect(
-      host.loadPlugin('sandbox-p1', FAKE_PLUGIN_PATH, 'sandbox'),
+      host.loadPlugin('sandbox-p1', 'p1', FAKE_PLUGIN_PATH, 'sandbox'),
     ).rejects.toThrow(/Process not found/)
   })
 

@@ -154,7 +154,7 @@ export class PluginActivator {
     // 开关回退 false 时重新生效。
     if (descriptor.source === 'external' && !EXTERNAL_PLUGIN_ENABLED) {
       console.warn(`[plugin-activator] skipping ${pluginId}: external plugin activation locked (sandbox isolation not yet implemented)`)
-      this.pluginStates.set(pluginId, 'UNLOADED')
+      this.setState(pluginId, 'UNLOADED')
       return
     }
 
@@ -181,7 +181,7 @@ export class PluginActivator {
           // 等待审批结果
           const approved = await approvalPromise
           if (!approved) {
-            this.pluginStates.set(pluginId, 'UNLOADED')
+            this.setState(pluginId, 'UNLOADED')
             return
           }
         }
@@ -191,13 +191,13 @@ export class PluginActivator {
       // ESM loader initialize() 在进程启动时读此 env 做路径边界判定）
       const workerId = await host.assignWorker(pluginId, descriptor.trustLevel, descriptor.pluginPath)
 
-      // 2. 加载插件模块到 Worker
-      await host.loadPlugin(workerId, descriptor.pluginPath)
+      // 2. 加载插件模块到 Worker（pluginId 显式传：loadedModules 分区键）
+      await host.loadPlugin(workerId, pluginId, descriptor.pluginPath)
 
       // 3. 发送 activate 消息并等待 Worker 回复
       const handle = host.getWorkerHandle(pluginId)
       if (!handle) {
-        this.pluginStates.set(pluginId, 'UNLOADED')
+        this.setState(pluginId, 'UNLOADED')
         return
       }
 
@@ -210,13 +210,13 @@ export class PluginActivator {
 
       if (success) {
         this.contexts.set(pluginId, { subscriptions: [] })
-        this.pluginStates.set(pluginId, 'ACTIVE')
+        this.setState(pluginId, 'ACTIVE')
       } else {
-        this.pluginStates.set(pluginId, 'UNLOADED')
+        this.setState(pluginId, 'UNLOADED')
       }
     } catch (err: unknown) {
       console.error(`[plugin-activator] failed to activate ${pluginId}:`, err)
-      this.pluginStates.set(pluginId, 'UNLOADED')
+      this.setState(pluginId, 'UNLOADED')
     }
   }
 
@@ -243,7 +243,7 @@ export class PluginActivator {
 
     // dispose subscriptions
     this.disposeContext(pluginId)
-    this.pluginStates.set(pluginId, 'UNLOADED')
+    this.setState(pluginId, 'UNLOADED')
   }
 
   /** 停用所有已激活的插件 */
@@ -266,7 +266,7 @@ export class PluginActivator {
 
   /** 将插件状态标记为 CRASHED（由 PluginService crash callback 调用） */
   markCrashed(pluginId: string): void {
-    this.pluginStates.set(pluginId, 'CRASHED')
+    this.setState(pluginId, 'CRASHED')
   }
 
   /**
@@ -455,6 +455,21 @@ export class PluginActivator {
   }
 
   // ── Private helpers ─────────────────────────────────────────────
+
+  /**
+   * 稳定态状态回写：pluginStates 与 descriptor.status 同步。
+   *
+   * activator.descriptors 与 registry cache 持有同一 descriptor 对象引用，
+   * PluginService.toPluginInfo 经 descriptor.status 映射 PluginInfo.status——
+   * 只写 pluginStates 不回写 descriptor 会导致 toggle/激活后 UI 状态恒为
+   * discovered（存量缺口：激活链路从未回写）。仅稳定态（ACTIVE/UNLOADED/
+   * CRASHED）回写，ACTIVATING/DEACTIVATING 中间态不落 descriptor，避免 UI 闪烁。
+   */
+  private setState(pluginId: string, state: PluginState): void {
+    this.pluginStates.set(pluginId, state)
+    const descriptor = this.descriptors.get(pluginId)
+    if (descriptor) descriptor.status = state
+  }
 
   /** 根据 ActivationEvent 解析匹配的 pluginId 列表 */
   private resolveCandidates(event: ActivationEvent): string[] {

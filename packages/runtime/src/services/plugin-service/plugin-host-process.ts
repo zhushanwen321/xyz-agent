@@ -38,7 +38,7 @@ export interface PluginHostProcessContract {
    *   故 sandbox 进程必须在 fork 前拿到 pluginDir——loadPlugin 时机太晚）。
    */
   assignProcess(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginDir?: string): Promise<string>
-  loadPlugin(processId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void>
+  loadPlugin(processId: string, pluginId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void>
   terminateProcess(processId: string): Promise<void>
   getProcessHandle(pluginId: string): { processId: string; postMessage(message: unknown): void } | undefined
 }
@@ -141,9 +141,14 @@ export class PluginHostProcess implements PluginHostProcessContract {
 
   /**
    * 向指定子进程发送 load 指令，等待 loaded/error 响应。
+   *
+   * pluginId 必须显式传入（F1 修复链路）：load 消息的 pluginId 是子进程
+   * loadedModules 的分区键，activate 消息按真实 pluginId 查找。旧实现从
+   * pluginPath 末段推导（目录时代假设），pluginPath 改为入口文件后 pop 出
+   * 'index.js' 之类文件名 → loadedModules 键失配 → activate 报 Module not loaded。
    * 超时（loadTimeoutMs）后 reject 并清理该子进程（E2：宿主清理）。
    */
-  async loadPlugin(processId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void> {
+  async loadPlugin(processId: string, pluginId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void> {
     const child = this.processInstances.get(processId)
     if (!child) throw new Error(`Process not found: ${processId}`)
 
@@ -168,7 +173,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
       child.on('message', onMessage)
       child.send({
         type: 'load',
-        pluginId: pluginPath.split('/').pop() ?? 'unknown',
+        pluginId,
         pluginPath,
         trustLevel: trustLevel ?? this.inferTrustLevel(processId),
       })
