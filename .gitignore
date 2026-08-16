@@ -29,6 +29,10 @@ target/
 # package.json), skills are user/project-level — neither is bundled here.
 apps/electron/resources/
 
+# built-in xyz plugins 编译产物（scripts/prepare-builtin-plugins.sh 构建期生成，
+# 源 index.ts 是 SSOT，产物与源同目录但不进 git）
+resources/plugins/*/index.js
+
 # .pi/ 目录：只跟踪源码（workflows），忽略运行时缓存/会话数据。
 # check_directory_rules.py 会强制只允许 .pi/workflows/ 进 git（见 PI_ALLOWED 检查）。
 # pi extension 相关内容（如 extension-dependencies.json）不在 .pi/ 下，是 npm 包。

@@ -225,6 +225,32 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
             echo -e "  ${RED}✗${NC} builtin ext 目录缺失: $BUILTIN_EXT_DIR（检查 prepare-builtin-extensions.sh + electron-builder.yml）"
             FAILED=1
         fi
+        # builtin xyz plugins 完整性校验（resources/plugins/<name>，如 statusline）
+        # prepare-builtin-plugins.sh 预编译 index.js + electron-builder extraResources 拷贝。
+        # registry 打包后扫描 <cwd>/resources/plugins；缺入口文件则插件静默不被发现或
+        # 激活必炸（ERR_UNSUPPORTED_DIR_IMPORT，2026-08-16 statusline 从未激活成功事故）。
+        # 入口 SSOT = 各插件 package.json 的 xyzAgent.main（缺省 index.js）。
+        BUILTIN_PLUGINS_DIR="$APP_PATH/Contents/Resources/resources/plugins"
+        if [ -d "$BUILTIN_PLUGINS_DIR" ]; then
+            PLUGINS_MISSING=0
+            for plugin_dir in "$BUILTIN_PLUGINS_DIR"/*/; do
+                plugin_name="$(basename "$plugin_dir")"
+                main_entry=$(node -e "const p=require(process.argv[1]);process.stdout.write(p.xyzAgent?.main ?? 'index.js')" "${plugin_dir}package.json" 2>/dev/null || echo "")
+                if [ -z "$main_entry" ] || [ ! -f "${plugin_dir}${main_entry}" ]; then
+                    echo -e "  ${RED}✗${NC} builtin plugin ${plugin_name} 缺入口 ${main_entry:-<manifest 无效>}"
+                    PLUGINS_MISSING=1
+                fi
+            done
+            if [ "$PLUGINS_MISSING" -ne 0 ]; then
+                FAILED=1
+            else
+                PLUGIN_COUNT=$(find "$BUILTIN_PLUGINS_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+                echo -e "  ${GREEN}✓${NC} builtin plugins 完整性校验通过（$PLUGIN_COUNT plugins）"
+            fi
+        else
+            echo -e "  ${RED}✗${NC} builtin plugins 目录缺失: ${BUILTIN_PLUGINS_DIR}（检查 prepare-builtin-plugins.sh + electron-builder.yml）"
+            FAILED=1
+        fi
     else
         echo -e "  ${YELLOW}⚠ 未找到 .app 目录${NC}"
     fi
@@ -271,6 +297,27 @@ if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
         fi
     else
         echo -e "  ${RED}✗${NC} builtin ext 目录缺失: $WIN_BUILTIN"
+        FAILED=1
+    fi
+    # builtin xyz plugins（Windows 同 mac 校验：每插件 manifest main 入口存在）
+    WIN_PLUGINS_DIR="$WIN_RESOURCES/resources/plugins"
+    if [ -d "$WIN_PLUGINS_DIR" ]; then
+        WIN_PLUGINS_MISSING=0
+        for plugin_dir in "$WIN_PLUGINS_DIR"/*/; do
+            plugin_name="$(basename "$plugin_dir")"
+            main_entry=$(node -e "const p=require(process.argv[1]);process.stdout.write(p.xyzAgent?.main ?? 'index.js')" "${plugin_dir}package.json" 2>/dev/null || echo "")
+            if [ -z "$main_entry" ] || [ ! -f "${plugin_dir}${main_entry}" ]; then
+                echo -e "  ${RED}✗${NC} builtin plugin ${plugin_name} 缺入口 ${main_entry:-<manifest 无效>}"
+                WIN_PLUGINS_MISSING=1
+            fi
+        done
+        if [ "$WIN_PLUGINS_MISSING" -ne 0 ]; then
+            FAILED=1
+        else
+            echo -e "  ${GREEN}✓${NC} builtin plugins 完整性校验通过"
+        fi
+    else
+        echo -e "  ${RED}✗${NC} builtin plugins 目录缺失: $WIN_PLUGINS_DIR"
         FAILED=1
     fi
 

@@ -99,6 +99,15 @@ extraResources:
       - "!**/__tests__/**"
       - "!**/*.test.*"
       - "!**/*.d.ts"
+  # built-in xyz plugins（resources/plugins/<name>，如 statusline）。
+  # prepare-builtin-plugins.sh 预编译 index.ts → index.js（与源同目录）；plugin-registry
+  # 打包后扫描 <cwd>/resources/plugins（cwd=Resources），故 to 保持 resources/plugins 嵌套。
+  # 排除 .ts 源码（运行时不需要，防体积浪费；入口以 manifest main 的 index.js 为准）。
+  - from: ../../resources/plugins
+    to: resources/plugins
+    filter:
+      - "**/*"
+      - "!**/*.ts"
   # xyz-settings CLI（从 tsup 打包的 cli.cjs）
   # packaged app 中位置：resources/bin/xyz-settings
   # pi Skill 通过绝对路径引用此文件
