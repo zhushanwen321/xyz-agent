@@ -23,10 +23,11 @@
 - ~~存量测试失败 4 用例（skill-discovery ×2 / spawn-worktree-guidance ×2）~~ **已关闭**：用户侧 commit b843a5f49（2026-08-17 00:32）修复（mock 补 stdin 字段 / getAgentDir 直 mock），包全量 2187 绿复核成立（本 automation run exit 0 复证）
 - U1 verifier 环境注记 3 条（U3 已处置）：①手册 S7 注入脚本 @pi-meta 头已补（U3）；②~~rebuild 路径无 deps.log 调用~~ **已关闭**（obs-fixes 补 L1-L4 日志）；③pi rpc-mode 无补全探测入口，补全断言以源码 diff 为证（U3 已注记）
 - ~~S7 修复已知残留：executeAgentCall 内部 finalizeCall 的 trace.update 对重跑新节点瞬时污染~~ **已关闭**（obs-fixes：isOrphaned 谓词守卫，U6 红性验证锚定）
-- 用户侧 pi-scheduler 扩展崩溃排查：**待用户确认是否仍在复现**（2026-08-17 automation run 无法向用户求证，未擅自深入；复现时建议收集 `~/.pi/agent/logs/` 该扩展日志）
+- 用户侧 pi-scheduler 扩展崩溃排查：**排查完成（2026-08-17，根因实证 + 复现成功，修复待用户决策）**。根因：dispatchTask 的 `await sendMessage` 窗口与 new_session 替换交错 → 旧 session 的 30s tick timer 存活到下一 tick → `refreshWidget` 访问 stale ctx（`ctx.ui` getter 抛）→ `void tickScheduler()` fire-and-forget 无 catch → unhandledRejection → pi exit 1。idle 态 new_session 不崩（89s 存活对照）。修复方案：①session_start 先停旧 runtime（幂等防泄漏）②tick 全链 catch + stale 时自杀（防御兜底）。修复实施归用户决策
 
 ## 事件流水（时间倒序追加，永不覆盖）
 
+- 2026-08-17 用户追加指令三件：pi-scheduler 全面排查（读引用 session 日志 + 本仓源码）→ 复现成功 exit 1（dispatch await 窗口 × new_session 交错，29.5s 对齐旧 timer 边界；idle 对照不崩），根因双层（timer 泄漏 + tick 无防护），方案已给待决策；feature 层 retrospect + closeout 写入 .cw/swf-perf-impl/（gitignore 惯例不提交）；PR 不开。
 - 2026-08-17 02:17 automation run（定时任务 automation-a9c769d0）执行 handoff 两任务：
   - **交接文档纠错**：handoff 称「slice5 wave1 零起点、wave2 未开始」——实际 wave1（093e28fe3 + 459202f25）与 wave2（dcee2c9b6 + f4f4f9f9f）已于 2026-08-16 05:16-06:23 完整交付（含 exec-review followups），主 agent git 考古 + 全符号现状核查证实。任务 B 转为独立符合性复核：verifier PASS（14/14 接口项 + 勿动清单 9/9 零触碰 + 对抗抽查 3/3，报告 slice5-conformance-report.md）。slice5 就此闭环；feature 层 retrospect/closeout 归用户决策未自发执行。
   - **obs-fixes unit 交付**：任务 A 项 2/3（S7 残留根除 + rebuild 可观察性）。基线 d2853b11b → builder 4 文件（+9 测试，2196 全绿）→ verifier PASS（U6 红性：谓词改 () => false → 'failed' ≠ 'running' 精确红；差异点 a-d 全裁决接受）→ 主 agent 核对（diff 基线为空 + sha256 一致 + 无越界）→ 流转。
