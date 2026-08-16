@@ -9,19 +9,15 @@
 #   C. built-in statusline 被发现并激活（plugin-registry 多形态扫描 + F3 预编译链）
 #   D. onBeforeSendMessage hook 真实执行（transform 副作用 + 无 failed/timed out）
 #      —— V6 验收场景（.xyz-harness/2026-08-15-perf/dev-acceptance.md）的自动化版本
+#   E. 声明 permissions 的插件 boot 挂起等审批 → 运行时 approvePermissions 唤醒
+#      → 毫秒级激活（权限审批唤醒链路；A2 走预批准持久化路径，E 走运行时批准路径）
 #
 # 运行形态：tsx 源码直跑（dev 形态，cwd=repo 根），不依赖 pnpm dev / 打包产物，
 # 不占用正在跑的 dev app（随机端口 + 隔离数据目录）。
 #
-# 已知边界（如实声明，非本脚本断言范围）：
-#   - sandbox 插件声明 permissions 时，boot 激活的 30s 权限等待无人唤醒
-#     （resolvePermissionApproval 无调用方，PluginService.approvePermissions 只 grant
-#     不 resolve）。脚本用预写 permissions.json 模拟「用户此前已批准」绕开该 30s，
-#     该缺口作为独立问题记录（docs/testing/13-plugin-e2e.md「已知缺口」）。
-#
 # 用法: bash scripts/verify-plugin-e2e.sh
 # 依赖: node >= 22（全局 WebSocket）、curl、lsof、esbuild（prepare-builtin-plugins 用）
-# 耗时: ~15s
+# 耗时: ~5s
 
 set -euo pipefail
 
@@ -154,9 +150,30 @@ export async function deactivate() {
 }
 EOF
 
-# 预批准 e2e-hook 的 hook 注册权限（模拟用户此前已批准；见头部「已知边界」）
+# 预批准 e2e-hook 的 hook 注册权限（模拟用户此前已批准；A2 覆盖「预批准持久化」路径，
+# E 步的 e2e-perm 不预批准——覆盖「运行时批准唤醒」路径，两条路径并存）
 cat > "$DATA_DIR/plugins/permissions.json" <<'EOF'
 {"e2e-hook": ["plugin.hooks.register"]}
+EOF
+
+# 权限审批插件（E 断言目标）：声明 permissions、不预批准——boot 激活挂起等审批，
+# 脚本经 WS plugin.approvePermissions 批准后应毫秒级完成激活（修复前干等 30s 超时）
+mkdir -p "$DATA_DIR/plugins/e2e-perm"
+cat > "$DATA_DIR/plugins/e2e-perm/package.json" <<'EOF'
+{
+  "name": "e2e-perm",
+  "version": "1.0.0",
+  "type": "module",
+  "xyzAgent": { "manifestVersion": 1, "main": "index.js", "activationEvents": ["onStartupFinished"], "trustLevel": "sandbox", "permissions": ["plugin.hooks.register"] }
+}
+EOF
+cat > "$DATA_DIR/plugins/e2e-perm/index.js" <<'EOF'
+export async function activate() {
+  console.log('[e2e-perm] activate called')
+}
+export async function deactivate() {
+  console.log('[e2e-perm] deactivate called')
+}
 EOF
 
 # built-in 预编译（F3 链）：statusline index.ts → index.js（幂等，全新 checkout 必需）
@@ -249,6 +266,17 @@ ws.onopen = async () => {
     step('A2 带权限 sandbox 插件激活 (e2e-hook)', hook?.status === 'active', `status=${hook?.status}`)
     step('A3 built-in statusline 被发现并激活（dev 扫描修复验收）', statusline != null && statusline.status === 'active', `status=${statusline?.status ?? 'MISSING'}`)
 
+    // ── E: 运行时权限批准唤醒（boot 挂起 → approvePermissions → 毫秒级激活）──
+    // e2e-perm 未预批准，boot 激活挂起等审批。批准 RPC reply 返回即 approvePermissions
+    // 完成（内部 await 了被唤醒的激活）——修复前该链路断裂，挂起只能等 30s 超时
+    // （实测 plugins=30007.5ms），故耗时阈值 10s 是宽松上限（实测 ~100ms）。
+    const tApprove = Date.now()
+    const approveReply = await send('plugin.approvePermissions', { pluginId: 'e2e-perm', permissions: ['plugin.hooks.register'] })
+    const approveElapsed = Date.now() - tApprove
+    const permPlugin = approveReply.payload.plugins.find((p) => p.pluginId === 'e2e-perm')
+    step('E1 运行时批准后立即激活 (e2e-perm)', permPlugin?.status === 'active', `status=${permPlugin?.status} elapsed=${approveElapsed}ms`)
+    step('E2 批准唤醒毫秒级完成（< 10s，非 30s 超时路径）', approveElapsed < 10000, `${approveElapsed}ms`)
+
     // ── B: toggle off → status 回落 + enabled=false；再 on → 恢复 ──
     const offReply = await send('plugin.toggle', { pluginId: 'e2e-minimal', enabled: false })
     const offPlugins = offReply.payload.plugins
@@ -307,6 +335,7 @@ assert_log '\[e2e-minimal\] activate called' 'activate 真实执行（worker 输
 assert_log '\[e2e-minimal\] deactivate called' 'toggle off 后 deactivate 真实执行'
 assert_log '\[e2e-hook\] onBeforeSendMessage fired: hello v6magic marker' 'onBeforeSendMessage hook 真实执行（收到原始消息）'
 assert_log '\[e2e-hook\] transform computed' 'hook transform 副作用（v6magic → [V6-HOOK-APPLIED] 计算）'
+assert_log '\[e2e-perm\] activate called' 'E 权限批准唤醒后 activate 真实执行'
 assert_log_absent 'failed/timed out' 'hook 管道无 failed/timed out'
 assert_log_absent 'ERR_MODULE_NOT_FOUND' '无 ESM 模块加载失败（F1 回归防护）'
 assert_log_absent 'PERMISSION_DENIED' '无权限拒绝（预批准生效）'
@@ -314,5 +343,5 @@ assert_log_absent 'PERMISSION_DENIED' '无权限拒绝（预批准生效）'
 # ── 5. 收尾 ──────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}[OK] Plugin E2E 验收全部通过（A 激活 / B toggle / C built-in / D hook）${NC}"
+echo -e "${GREEN}[OK] Plugin E2E 验收全部通过（A 激活 / B toggle / C built-in / D hook / E 权限批准唤醒）${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
