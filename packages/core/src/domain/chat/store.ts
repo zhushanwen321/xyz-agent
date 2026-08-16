@@ -219,9 +219,30 @@ export function createChatStore() {
   const isLruExempt = (sid: string) => isGenerating(sid) || pendingSend.value.has(sid) || isCompacting(sid) || isHandingOff(sid)
   /** W3 H3：LRU recency 更新（AC-1 真 LRU），直接透传 lruTouch */
   const touchLru = lruTouch
+  /**
+   * 删除该 sid 的 changeSetStatuses 前缀条目（W19 review Fix-2 从 disposeSession 提取）。
+   * key 格式 `${sessionId}:${messageId}`，按前缀过滤删除；两个消费点共用一份逻辑防 drift：
+   * disposeSession（deleteSession 编排）+ LRU 驱逐（makeLruEvictDeps 注入，驱逐重进后
+   * 历史 messageId 与残留 status key 异源，残留条目行为上碰巧 no-op 但 map 泄漏）。
+   */
+  function deleteChangeSetStatusesFor(sessionId: string): void {
+    if (changeSetStatuses.value.size === 0) return
+    const prefix = `${sessionId}:`
+    let changed = false
+    const next = new Map(changeSetStatuses.value)
+    for (const key of next.keys()) {
+      if (key.startsWith(prefix)) {
+        next.delete(key)
+        changed = true
+      }
+    }
+    if (changed) changeSetStatuses.value = next
+  }
   /** LRU 驱逐依赖（setup 时构造一次复用，闭包经 getter 延迟读取无快照陈旧，详见 ./README.md）。
-   *  D-3：deleteStreamingFlag 注入——deleteMessageKey 删 key 时同步清 streaming flag 派生缓存。 */
-  const lruEvictDeps = makeLruEvictDeps(messages, hydrated, isLruExempt, (sid) => sessionStreamingFlags.delete(sid))
+   *  D-3：deleteStreamingFlag 注入——deleteMessageKey 删 key 时同步清 streaming flag 派生缓存。
+   *  W19 review Fix-2：deleteChangeSetStatusesFor 注入——删 messages 分区时同步清该 sid 的
+   *  changeSetStatuses 前缀条目（此前仅 disposeSession 清理，LRU 驱逐不清 → map 泄漏）。 */
+  const lruEvictDeps = makeLruEvictDeps(messages, hydrated, isLruExempt, (sid) => sessionStreamingFlags.delete(sid), deleteChangeSetStatusesFor)
   /** W3 H3：LRU 驱逐（阈值触发）/ 显式驱逐（带虚拟 key）/ [M7] 单虚拟 key 删除 */
   function evictIfNeeded(): void { lruEvictIfNeeded(lruEvictDeps) }
   function evictSessionWithVirtual(sessionId: string): void { lruEvictSession(sessionId, lruEvictDeps) }
@@ -558,18 +579,8 @@ export function createChatStore() {
       }
     }
     // changeSetStatuses：key 格式 `${sessionId}:${messageId}`，前缀过滤删除
-    if (changeSetStatuses.value.size > 0) {
-      const prefix = `${sessionId}:`
-      let changed = false
-      const next = new Map(changeSetStatuses.value)
-      for (const key of next.keys()) {
-        if (key.startsWith(prefix)) {
-          next.delete(key)
-          changed = true
-        }
-      }
-      if (changed) changeSetStatuses.value = next
-    }
+    // （W19 review Fix-2 提取为 deleteChangeSetStatusesFor，与 LRU 驱逐共用一份逻辑）
+    deleteChangeSetStatusesFor(sessionId)
     // D-3 生命周期：streaming flag 惰性派生缓存随 messages 分区同点清理（漏删即慢泄漏，
     // 07 文档 §3.3.2 cleanup 契约）。
     sessionStreamingFlags.delete(sessionId)

@@ -91,7 +91,7 @@ export interface LruEvictDeps {
   hydratedValue: () => Set<string>
   /** 判断 session 是否在豁免集（streaming/pending/compacting 中）。不含 panel 绑定判定——见文件头注释 */
   isExempt: (sessionId: string) => boolean
-  /** 删除 messages key（不可变写，返回新 Map）。makeLruEvictDeps 构造时内联同步清 streaming flag 派生缓存（D-3） */
+  /** 删除 messages key（不可变写，返回新 Map）。makeLruEvictDeps 构造时内联同步清 streaming flag 派生缓存（D-3）+ changeSetStatuses 前缀条目（W19 review Fix-2，同 D-3 模式） */
   deleteMessageKey: (sessionId: string) => void
   /** 删除 hydrated 标记 */
   deleteHydrated: (sessionId: string) => void
@@ -198,6 +198,7 @@ export function makeLruEvictDeps(
   hydrated: { value: Set<string> },
   isExempt: (sid: string) => boolean,
   deleteStreamingFlag: (sid: string) => void,
+  deleteChangeSetStatuses: (sid: string) => void,
 ): LruEvictDeps {
   return {
     // [W7] getter 而非快照——deleteMessageKey/deleteHydrated 会替换 .value，
@@ -212,11 +213,17 @@ export function makeLruEvictDeps(
     // 使 evictIfNeeded/evictSessionWithVirtual 的主 key 与虚拟 key 联动驱逐全路径覆盖）。
     // flag 清理不受 has 守卫门控：keyless sid（messages 分区已不存在，但 flag 曾被
     // isGenerating 查询创建）同样清理——Map.delete 幂等无代价，防 flag 残留慢泄漏。
+    // W19 review Fix-2: 同点内联清 changeSetStatuses 前缀条目（同 D-3 模式——驱逐路径
+    // 全覆盖：evictIfNeeded/evictSessionWithVirtual 主 key + subagent 虚拟 key 联动 +
+    // evictVirtualKey 单虚拟 key）。此前仅 disposeSession 清理，LRU 驱逐不清 → map 泄漏，
+    // 且 W19 后 ready 帧扫描语义首次依赖其生命周期（驱逐重进后历史 messageId 与残留
+    // status key 异源）。清理在 has 守卫外（幂等前缀删除，无条目时零代价）。
     deleteMessageKey: (sid) => {
       if (messages.value.has(sid)) {
         deleteMessages(messages, sid)
       }
       deleteStreamingFlag(sid)
+      deleteChangeSetStatuses(sid)
     },
     deleteHydrated: (sid) => {
       if (hydrated.value.has(sid)) {

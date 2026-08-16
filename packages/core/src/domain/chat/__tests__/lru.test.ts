@@ -52,7 +52,7 @@ describe('evictIfNeeded', () => {
     const messages = shallowRef(new Map(sids.map((s) => [s, {}])))
     const hydrated = shallowRef(new Set<string>())
     const isExempt = (sid: string) => (opts.exempt?.has(sid) ?? false)
-    const deps = makeLruEvictDeps(messages, hydrated, isExempt, () => {})
+    const deps = makeLruEvictDeps(messages, hydrated, isExempt, () => {}, () => {})
     return { deps, messages }
   }
 
@@ -146,7 +146,7 @@ describe('evictSessionWithVirtual', () => {
       ['other', {}],
     ]))
     const hydrated = shallowRef(new Set<string>())
-    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {})
+    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {}, () => {})
     evictSessionWithVirtual('s1', deps)
     expect(messages.value.has('s1')).toBe(false)
     expect(messages.value.has('subagent:s1:c1')).toBe(false)
@@ -156,7 +156,7 @@ describe('evictSessionWithVirtual', () => {
   it('streaming 豁免的 session 不驱逐（SR8 竞态防护）', () => {
     const messages = shallowRef(new Map([['s1', {}]]))
     const hydrated = shallowRef(new Set<string>())
-    const deps = makeLruEvictDeps(messages, hydrated, () => true, () => {}) // 永远豁免
+    const deps = makeLruEvictDeps(messages, hydrated, () => true, () => {}, () => {}) // 永远豁免
     evictSessionWithVirtual('s1', deps)
     expect(messages.value.has('s1')).toBe(true) // 未被驱逐
   })
@@ -172,7 +172,7 @@ describe('disposeLruEntry', () => {
     const hydrated = shallowRef(new Set<string>())
     // 其他 session 都 touch，s1 已 dispose 无记录
     for (let i = 0; i < LRU_MAX_SESSIONS; i++) touchLru(`f${i}`)
-    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {})
+    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {}, () => {})
     evictIfNeeded(deps)
     // s1 无记录不被驱逐（dispose 已清）
     expect(messages.value.has('s1')).toBe(true)
@@ -184,7 +184,7 @@ describe('makeLruEvictDeps.deleteMessageKey', () => {
     const original = new Map([['s1', {}], ['s2', {}]])
     const messages = shallowRef(original)
     const hydrated = shallowRef(new Set<string>())
-    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {})
+    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {}, () => {})
     deps.deleteMessageKey('s1')
     expect(messages.value.has('s1')).toBe(false)
     expect(messages.value.has('s2')).toBe(true)
@@ -195,7 +195,7 @@ describe('makeLruEvictDeps.deleteMessageKey', () => {
     const original = new Map([['s1', {}]])
     const messages = shallowRef(original)
     const hydrated = shallowRef(new Set<string>())
-    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {})
+    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {}, () => {})
     deps.deleteMessageKey('not-exist')
     expect(messages.value).toBe(original) // 引用未变（has 检查拦截）
   })
@@ -208,7 +208,7 @@ describe('makeLruEvictDeps.deleteMessageKey', () => {
     const messages = shallowRef(original)
     const hydrated = shallowRef(new Set<string>())
     const flagDeleted: string[] = []
-    const deps = makeLruEvictDeps(messages, hydrated, () => false, (sid) => flagDeleted.push(sid))
+    const deps = makeLruEvictDeps(messages, hydrated, () => false, (sid) => flagDeleted.push(sid), () => {})
     // keyless sid：Map 不替换（无谓响应式仍被 has 检查拦截），flag 清理仍执行
     deps.deleteMessageKey('flag-only')
     expect(messages.value).toBe(original)
@@ -221,11 +221,43 @@ describe('makeLruEvictDeps.deleteMessageKey', () => {
     expect(flagDeleted).toEqual(['flag-only', 's1'])
   })
 
+  it('deleteChangeSetStatuses 随 deleteMessageKey 同点清理：keyless sid 同样清（W19 review Fix-2，与 deleteStreamingFlag 同语义）', () => {
+    // 场景：LRU 驱逐删 messages 分区时，changeSetStatuses 的 `${sid}:${messageId}` 前缀
+    // 条目必须同步清（此前仅 disposeSession 清理 → 驱逐重进后 map 泄漏）。keyless sid
+    // （messages 分区不存在）同样清——幂等前缀删除，防残留。
+    const messages = shallowRef(new Map([['s1', {}]]))
+    const hydrated = shallowRef(new Set<string>())
+    const cleared: string[] = []
+    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {}, (sid) => cleared.push(sid))
+    deps.deleteMessageKey('keyless')
+    expect(cleared).toEqual(['keyless'])
+    deps.deleteMessageKey('s1')
+    expect(cleared).toEqual(['keyless', 's1'])
+  })
+
+  it('evictIfNeeded 驱逐路径联动清 changeSetStatuses：主 key + subagent 虚拟 key 都清', () => {
+    const main = 's1'
+    const virtual = 'subagent:s1:c1'
+    const sids = [main, virtual]
+    for (let i = 0; i < LRU_MAX_SESSIONS; i++) sids.push(`fill${i}`)
+    sids.forEach((s) => touchLru(s))
+    sids.filter((s) => s !== main && s !== virtual).forEach((s) => touchLru(s)) // main 最旧
+    const messages = shallowRef(new Map(sids.map((s) => [s, {}])))
+    const hydrated = shallowRef(new Set<string>())
+    const cleared: string[] = []
+    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {}, (sid) => cleared.push(sid))
+    evictIfNeeded(deps)
+    expect(messages.value.has(main)).toBe(false) // 前置：s1 确实被驱逐
+    // 主 key 与虚拟 key 联动驱逐时，两者的 changeSetStatuses 前缀清理都被触发
+    expect(cleared).toContain(main)
+    expect(cleared).toContain(virtual)
+  })
+
   it('deleteHydrated 同样走 has 检查 + 不可变写', () => {
     const messages = shallowRef(new Map())
     const hydrated = shallowRef(new Set(['h1', 'h2']))
     const originalHydrated = hydrated.value
-    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {})
+    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {}, () => {})
     deps.deleteHydrated('h1')
     expect(hydrated.value.has('h1')).toBe(false)
     expect(hydrated.value.has('h2')).toBe(true)

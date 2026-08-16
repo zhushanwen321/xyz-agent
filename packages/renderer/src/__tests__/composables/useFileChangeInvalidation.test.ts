@@ -15,6 +15,8 @@
  * - debounce 窗口内多次 ready 只发一次 git.status RPC
  * - setGitOverlay 回写后 getDirChangeCount 反映新 overlay（W15 联动）
  * - E9-b RPC 失败降级不写 overlay；E9-c 回写落捕获 sid 分桶
+ * - W19 review Fix-1：debounce 窗口内 deleteSession（分桶+分区已销毁）后 timer 到点
+ *   不重建孤儿 gitOverlay/dirChangeCounts 分桶
  * - 异 sid 分区替换不触发（W11 触发收敛回归）；sid 切换重置快照（切回重失效）
  *
  * mock 策略：vi.mock('@/api')（git.status）+ fake timers（300ms debounce）+ 真实
@@ -295,6 +297,36 @@ describe('watchFileChangesForInvalidation（W19/D-9：ready 帧驱动失效 + ov
         expect(onInvalidate).toHaveBeenCalledTimes(1)
         expect(onInvalidate).toHaveBeenCalledWith('s1', ['src/a.ts'])
         await vi.advanceTimersByTimeAsync(300) // flush 挂起 timer，防跨测试泄漏
+      } finally {
+        unwatch()
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('W19 review Fix-1：debounce 窗口内 deleteSession，timer 到点不重建已销毁 sid 的 overlay 分桶', async () => {
+    vi.useFakeTimers()
+    try {
+      const chatStore = useChatStore()
+      const fileTreeStore = useFileTreeStore()
+      mockGitStatus.mockResolvedValue(gitStatusReply('s1', [gitFile('src/a.ts')]))
+      chatStore.setMessages('s1', [msg('u1', 'user'), msg('a1', 'assistant')])
+      const unwatch = watchFileChangesForInvalidation(ref('s1'), vi.fn())
+      try {
+        chatStore.applyFileChanges('s1', 'a1', [fc('src/a.ts')], 'ready', true)
+        await nextTick()
+
+        // debounce 窗口内销毁 session（模拟 useSidebar cleanupSessionState 的销毁序列：
+        // fileTree clearSession 删分桶 + chat disposeSession 删 messages 分区）
+        fileTreeStore.clearSession('s1')
+        chatStore.disposeSession('s1')
+
+        await vi.advanceTimersByTimeAsync(300)
+        // RPC 正常发出（守卫在其后），但回写被拦：孤儿 gitOverlay/dirChangeCounts 分桶不重建
+        expect(mockGitStatus).toHaveBeenCalledTimes(1)
+        expect(fileTreeStore.gitOverlay.has('s1')).toBe(false)
+        expect(fileTreeStore.getDirChangeCount('s1', 'src')).toBe(0)
       } finally {
         unwatch()
       }

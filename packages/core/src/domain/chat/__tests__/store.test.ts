@@ -402,6 +402,24 @@ describe('createChatStore factory', () => {
       expect(sut.store.getMessages('s8')).toHaveLength(1)
     })
 
+    it('LRU 驱逐同步清 changeSetStatuses 前缀条目（W19 review Fix-2：与 messages 分区同生共死）', () => {
+      // 9 个 session 全部带 ready 变更集状态（经 applyFileChanges 真实入口写入），s0 最旧被驱逐
+      for (let i = 0; i < 9; i++) {
+        const sid = `s${i}`
+        sut.store.setMessages(sid, [{ id: `a${i}`, role: 'assistant', content: '', status: 'complete', timestamp: 1 }])
+        sut.store.applyFileChanges(sid, `a${i}`, [], 'ready', true)
+        sut.store.touchLru(sid)
+      }
+      expect(sut.store.getChangeSetStatus('s0', 'a0')).toBe('ready') // 前置：status 已写入
+
+      sut.store.evictIfNeeded()
+      expect(sut.store.getMessages('s0')).toHaveLength(0) // 前置：s0 被驱逐
+      // 驱逐同步清该 sid 的 changeSetStatuses 条目（此前仅 disposeSession 清理 → map 泄漏）
+      expect(sut.store.getChangeSetStatus('s0', 'a0')).toBeUndefined()
+      // 保留 session 的条目不受影响
+      expect(sut.store.getChangeSetStatus('s8', 'a8')).toBe('ready')
+    })
+
     it('streaming session 豁免驱逐（isLruExempt）', () => {
       const streaming = 's-streaming'
       sut.store.setMessages(streaming, [streamingAssistant('a1')])

@@ -50,6 +50,13 @@ export type FileChangeInvalidateFn = (sid: string, newPaths: string[]) => void
  * 尾部扫描窗口：ready 帧挂在 turn 的最后一条 assistant 消息（agent_end 时 applyFileChanges
  * 按 messageId 定位、miss 时兜底挂最后一条 assistant），turn 结束后只在尾部。固定窗口保证
  * 每 token 回调的扫描成本 O(1) 级（而非旧实现的 O(全部消息)）。
+ *
+ * 窗口 8 的充分性事实链：pi 每段 assistant 输出都 emit message_start → event-adapter 译为
+ * turn-start → runtime currentMessageId 跟随至 turn 最后一段（event-interpreter turn-start
+ * 分支）→ ready 到达时挂载 target 距消息尾部 ≈0-2 条（messageId 命中时最多隔最后一段的
+ * tool 结果；miss 兜底挂最后一条 assistant 即尾部 0 位）。已知边界：若同一同步块追加
+ * >8 条消息（当前 WS 逐宏任务投递 + commitMessages 逐帧替换数组的模型下不会发生——每帧
+ * 独立触发 watch 回调并即时消费尾部），ready 会滑出窗口漏检；取 8 而非 2 是抖动余量。
  */
 const READY_SCAN_WINDOW = 8
 
@@ -84,8 +91,15 @@ function scheduleOverlayRefresh(sid: string): void {
 async function refreshOverlay(sid: string): Promise<void> {
   try {
     const result = await gitApi.status(sid)
-    // E9-c：写闭包捕获的 sid 分桶——异步回来时组件可能已切 session，仍落到正确 session 的桶
+    // W19 review Fix-1：RPC 在途期间 session 可能已被 deleteSession（useSidebar
+    // cleanupSessionState 的销毁序列删 fileTree 分桶 + chat messages 分区）——回写前查
+    // chat store messages 分区（session 存活权威信号），已销毁 sid 跳过，防 300ms timer
+    // 为其重建孤儿 gitOverlay/dirChangeCounts 分桶。不查 fileTree 自身分桶：「从未建桶」
+    // 与「已销毁」在 fileTree 侧不可区分，而首次回写本来就是合法建桶场景（T2.6 overlay
+    // 先到后挂载）。LRU 驱逐的 session 同样被拦（messages 分区已回收，切回时 loadTree 重建）。
+    if (!useChatStore().messages.has(sid)) return
     if (result.isRepo) {
+      // E9-c：写闭包捕获的 sid 分桶——异步回来时组件可能已切 session，仍落到正确 session 的桶
       useFileTreeStore().setGitOverlay(sid, result.files)
       // P-D9-2 探针：V-P2-3（AI 一轮改 5 文件后角标刷新）dev 实测观测点
       console.debug('[fileTree] overlay refreshed (D-9)', { sid, count: result.files.length })
@@ -157,9 +171,15 @@ export function watchFileChangesForInvalidation(
       }
 
       // 职责一：ready 路径清单直接失效（RPC 无关，先行）
-      if (newPaths.size > 0) onInvalidate(sid, [...newPaths])
-      // 职责二：debounce 后 git.status RPC → setGitOverlay（空清单 ready 也刷新，兜底
-      // runtime 帧序外路径；命中 runtime 缓存零额外 spawn）
+      if (newPaths.size > 0) {
+        // P-D9-3 探针：ready 驱动失效（目录/搜索缓存）dev 实测观测点，与 P-D9-2 同风格
+        console.debug('[fileTree] ready-driven invalidation (D-9)', { sid, paths: newPaths.size })
+        onInvalidate(sid, [...newPaths])
+      }
+      // 职责二：debounce 后 git.status RPC → setGitOverlay。空清单 ready 也刷新：runtime
+      // 现状（event-interpreter sendDiffFileChanges 的 changes.length===0 早退）零变更不推
+      // file_changes 帧，该分支实际不可达——兜底是防御性的（与 09 文档 D-9 伪代码一致，
+      // 防 runtime 未来放开零变更帧时角标漂移）；命中 runtime GitStateService TTL 缓存零额外 spawn
       if (foundReady) scheduleOverlayRefresh(sid)
     },
     { immediate: true },
