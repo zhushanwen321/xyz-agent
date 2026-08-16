@@ -150,6 +150,9 @@ function groupRenderInput(messages: Message[]): { slots: GroupSlot[]; groups: Tu
       }
       current.assistants.push(msg)
     } else {
+      // else 即「非 user/assistant」兜底分支：现状唯一合法值是 role === 'system'（systemNotice
+      // 或 bashExecution）。刻意不做显式 system 判定后丢弃——类型外 role（未来扩展）兜底渲染为
+      // systemNotice 可见可发现，静默丢弃会违背「渲染过滤不丢消息」语义（AGENTS.md 规则 7.5）。
       current = null
       slots.push({
         slot: 'static',

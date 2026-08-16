@@ -255,7 +255,9 @@ describe('toRenderItemsIncremental —— ④ 非 turn 项行为等价', () => {
     const r1 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
     const r2 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
     expect(r2[1]).toBe(r1[1]) // systemNotice
-    expect(r2[5]).toBe(r1[5]) // bashExecution
+    // items = [turn, systemNotice, turn, bashExecution]（长度 4，下标 0-3）
+    expect(r2[3]).toBe(r1[3]) // bashExecution（真实下标 3——r2[5] 是 vacuous 恒真，W21 review Fix-2）
+    expect(r2[3].kind).toBe('bashExecution') // 确认下标 3 确是 bashExecution（防再次写错下标退化成 vacuous）
   })
 
   it('重扫路径：system 项重建但 message 引用相同、kind 相同，整体与全量版 deepEqual', () => {
@@ -272,6 +274,59 @@ describe('toRenderItemsIncremental —— ④ 非 turn 项行为等价', () => {
     expect(r2[1]).toEqual(r1[1]) // 内容等价
     if (r2[1].kind !== 'systemNotice' || r1[1].kind !== 'systemNotice') throw new Error('expected systemNotice')
     expect(r2[1].message).toBe(r1[1].message) // message 引用不变
+    expect(r2).toEqual(toRenderItems(filterDisplayableMessages(src2), false))
+  })
+})
+
+describe('toRenderItemsIncremental —— ④b 平移场景（W21 review Fix-5）', () => {
+  it('prepend 历史（load-more）：输出与全量版 deepEqual，旧末位 turn 经重算路径 streaming 校正正确', () => {
+    const cache = createTurnRenderCache()
+    const u1 = makeMsg({ id: 'u1', role: 'user' })
+    const a1s = makeMsg({ id: 'a1', role: 'assistant', content: 'r', status: 'streaming' })
+    const r1 = toRenderItemsIncremental([u1, a1s], filterDisplayableMessages, false, cache)
+    expect(turnOf(r1[0]).isStreaming).toBe(true)
+
+    // 头部 prepend：system notice + 一个完整 turn → 旧 turn 签名整体下移一位，
+    // 同位置签名错位 → 全部重算（08 §3.3.1 失效条件 2：位置平移的 turn 重算）
+    const sys = makeMsg({ id: 'sys0', role: 'system', content: 'notice' })
+    const u0 = makeMsg({ id: 'u0', role: 'user', content: 'history q' })
+    const a0 = makeMsg({ id: 'a0', role: 'assistant', content: 'history a' })
+    const src2 = [sys, u0, a0, u1, a1s]
+    const r2 = toRenderItemsIncremental(src2, filterDisplayableMessages, false, cache)
+
+    // 正确性兜底：平移场景输出与全量版 deepEqual（错位复用会导致 index/user 错乱，此处兜住）
+    expect(r2).toEqual(toRenderItems(filterDisplayableMessages(src2), false))
+    expect(r2.map((i) => i.kind)).toEqual(['systemNotice', 'turn', 'turn'])
+    // 旧末位 turn（现第 2 个 turn）仍为末位：重算后 isStreaming 正确保持 true（成员 a1s 仍 streaming）
+    expect(turnOf(r2[2]).isStreaming).toBe(true)
+    expect(turnOf(r2[2]).user?.id).toBe('u1')
+    expect(turnOf(r2[2]).index).toBe(2)
+  })
+
+  it('中删一 turn（branch/fork 剪枝）：后续 turn 重算，index 连续不跳号，前缀 turn 引用复用', () => {
+    const cache = createTurnRenderCache()
+    const msgs = [
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+      makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
+      makeMsg({ id: 'u3', role: 'user', content: 'q3' }),
+      makeMsg({ id: 'a3', role: 'assistant', content: 'r3' }),
+    ]
+    const r1 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
+    expect(r1.map((i) => i.kind)).toEqual(['turn', 'turn', 'turn'])
+
+    // 删中间 turn2（[u2,a2] 整组移除）：位置 1 旧签名 [u2,a2] vs 新 [u3,a3] 错位 → 重算
+    const src2 = msgs.filter((m) => m.id !== 'u2' && m.id !== 'a2')
+    const r2 = toRenderItemsIncremental(src2, filterDisplayableMessages, false, cache)
+
+    // 前缀 turn 引用复用（位置 0 签名对齐）
+    expect(turnOf(r2[0])).toBe(turnOf(r1[0]))
+    // 后续 turn 重算：index 连续（1,2 —— 非 1,3 跳号残留）
+    expect(r2.map((i) => i.kind)).toEqual(['turn', 'turn'])
+    expect(turnOf(r2[1]).index).toBe(2)
+    expect(turnOf(r2[1]).user?.id).toBe('u3')
+    expect(turnOf(r2[1])).not.toBe(turnOf(r1[2])) // 旧 turn3 对象不复用（签名错位重算）
     expect(r2).toEqual(toRenderItems(filterDisplayableMessages(src2), false))
   })
 })

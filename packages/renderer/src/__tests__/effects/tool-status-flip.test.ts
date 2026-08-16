@@ -285,7 +285,9 @@ describe('方案 c: mount MessageStream（真 store + 真虚拟滚动层）— t
 
     // 直接测「已 hydrate 的完成 turn 上 toolCalls 状态翻转」。
     // 用 setMessages 覆盖第 1 turn 含 running tool，再翻转。
-    const base = chat.messages.get(sid) ?? []
+    // [W10 D-1 容器 API] messages 是 Map<sid, Ref<Message[]>>——读分区数组走 getMessages（生产读法），
+    //   直接 messages.get(sid) 拿到内层 Ref（无 .map），是 D-1 适配遗漏点（W21 review Fix-1）。
+    const base = chat.getMessages(sid)
     const tool: ToolCall = { id: 'tc-multi', toolName: 'read', input: {}, status: 'running', startTime: NOW }
     const updated: Message[] = base.map((m) =>
       m.id === 'a1'
@@ -303,7 +305,7 @@ describe('方案 c: mount MessageStream（真 store + 真虚拟滚动层）— t
 
     // 翻转 tool status via setMessages（不可变替换，模拟 tool_call_end 的 store 路径）
     const toolDone: ToolCall = { ...tool, status: 'completed', output: 'done' }
-    const updated2: Message[] = (chat.messages.get(sid) ?? []).map((m) =>
+    const updated2: Message[] = chat.getMessages(sid).map((m) =>
       m.id === 'a1' ? { ...m, toolCalls: [toolDone] } : m,
     )
     chat.setMessages(sid, updated2)
