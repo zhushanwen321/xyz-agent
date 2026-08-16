@@ -65,7 +65,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { Eraser, Square, MessageSquare } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
-import { useTerminal } from '@/composables/features/terminal/useTerminal'
+import { useTerminal, replayChunks, type TerminalBuffer } from '@/composables/features/terminal/useTerminal'
 import { useSessionStore } from '@/stores/session'
 import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
 import { getSettingsStore } from '@xyz-agent/core'
@@ -109,12 +109,13 @@ const selectionPos = ref({ top: 0, left: 0 })
 let xterm: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let resizeObserver: ResizeObserver | null = null
-// scrollback 回放指针（逻辑索引，W14 审查 Fix-1）：已回放的「累计 append chunk 总数」。
-// 逻辑索引 - (totalAppended - scrollback.length) = 物理索引。旧实现用物理绝对索引
-// (replayedScrollbackLength)，稳态轮转（达 LIMIT 后 push N + splice N）时 length 净值守恒、
-// 物理索引失义 → 新输出永不回放（实时输出冻结）。逻辑指针随 totalAppended 单调前进。
-// mount / 切 session 时归零（全量回放）。
-let replayedUpTo = 0
+// 版本回放指针（D-6.2，替代 W14 的逻辑索引指针）：本视图已回放的 chunk 总数
+// （= buffer.version 语义，单调）。mount / 切 session 时归零（全量回放），
+// 之后每次 flush 监听按「指针 → 当前版本」增量 write。指针是视图私有状态：
+// 模块级 buffer 跨组件存活，多个视图各自维护自己的回放进度。
+let replayedVersion = 0
+// 本视图的 flush 监听反注册（mount 注册 / unmount 与切 session 反注册）
+let unregisterFlush: (() => void) | null = null
 
 /** 取 session cwd（spawn 用）。 */
 function getSessionCwd(): string | undefined {
@@ -192,27 +193,22 @@ function initXterm(): FitAddon | null {
   return fit
 }
 
-/** 回放 scrollback（mount 时全量，之后增量）。未回放部分合并为单次 write（D-6.1：每帧一次）。 */
-function replayScrollback(): void {
+/**
+ * 版本回放（D-6.2）：把 buffer 中 fromVersion（含）之后 append 的 chunk 合并为单次 write。
+ * fromVersion=0 = 全量回放（mount / 切 session）；fromVersion=本视图指针 = 增量（flush 监听）。
+ * replayChunks 幂等（E6-b：重复回放只是重写既有内容），指针随 buffer.version 前进。
+ */
+function replayFrom(fromVersion: number, buffer: TerminalBuffer): void {
   if (!xterm) return
-  const p = state.value
-  const lines = p.scrollback
-  const total = p.totalAppended
-  const cropped = total - lines.length // 累计被裁剪数（append 总数 - 现存数）
-  // rAF flush 批量 append 后 watch 每帧至多触发一次，这里把本批 chunk join 成一次 write
-  // （xterm.write 是字节流语义，write(a);write(b) ≡ write(a+b)，合并只减少调用次数）。
-  if (replayedUpTo < cropped) {
-    // 指针落后于裁剪线：部分未回放 chunk 已被裁掉，物理上不可恢复。跳过本批不 write——
-    // 宁缺勿重复（重复 write 会造成内容失真）。实际不可达：单次 flush 的 chunk 数受
-    // MAX_OUTPUT_QUEUE=1000 < SCROLLBACK_LIMIT=5000 限制，指针每帧对齐时落后量不可能
-    // 超过裁剪增量。防御性保留（等价旧实现的钳制分支语义）。
-    replayedUpTo = total
-    return
-  }
-  if (replayedUpTo >= total) return
-  const merged = lines.slice(replayedUpTo - cropped).join('')
-  replayedUpTo = total
+  const merged = replayChunks(buffer, fromVersion)
+  if (merged === null) return
   xterm.write(merged)
+  replayedVersion = buffer.version
+}
+
+/** flush 监听回调：模块级 flush 完成后按本视图指针增量回放（替代 W14 的 watch 链）。 */
+function onFlushed(buffer: TerminalBuffer): void {
+  replayFrom(replayedVersion, buffer)
 }
 
 /** 清屏（清 xterm + scrollback 当前分区）。 */
@@ -238,8 +234,11 @@ onMounted(async () => {
   const fit = initXterm()
   if (!xterm || !fit) return
 
-  // 回放历史
-  replayScrollback()
+  // 全量回放模块级分区历史（切回 mount 场景：切走期间累积的输出在此补齐）
+  replayFrom(0, terminal.current.value.buffer)
+  // 注册 flush 监听：之后的输出经模块级订阅 → flush → 本监听增量回放
+  // （先全量回放再注册：回放指针锚定到当前版本，增量不重复不遗漏）
+  unregisterFlush = terminal.registerFlushListener(props.sessionId, onFlushed)
 
   // 若 PTY 未活，发 spawn
   const partition = state.value
@@ -262,24 +261,15 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  unregisterFlush?.()
+  unregisterFlush = null
   resizeObserver?.disconnect()
   resizeObserver = null
   xterm?.dispose()
   xterm = null
   fitAddon = null
-  replayedUpTo = 0
+  replayedVersion = 0
 })
-
-// 监听 flush 版本变化（W14 审查 Fix-1），增量 write 到 xterm。
-// 不用 scrollback.length 作源：达 SCROLLBACK_LIMIT 稳态后每次 flush「push N + splice 回 N」
-// 净值守恒（5000→5000），length 不变 watch 跳过回调 → 新输出永不写入 xterm（实时输出冻结）。
-// flushVersion 每次有内容的 flush 单调 +1，稳定触发。
-watch(
-  () => state.value.flushVersion,
-  () => {
-    if (xterm) replayScrollback()
-  },
-)
 
 // Settings → Terminal 配置变化（字体/字号/scrollback/cursorStyle）：动态应用到已挂载的 xterm。
 // mount 时若 config 尚未加载（null），会用默认值 init；config 广播到达后此处补偿更新。
@@ -307,16 +297,19 @@ watch(
   () => props.sessionId,
   async (sid) => {
     if (!sid) return
-    // 切 session 视为重新挂载：dispose 旧 xterm，重 init
+    // 切 session 视为重新挂载：反注册旧监听 + dispose 旧 xterm，重 init
+    unregisterFlush?.()
+    unregisterFlush = null
     resizeObserver?.disconnect()
     xterm?.dispose()
     xterm = null
     fitAddon = null
-    replayedUpTo = 0
+    replayedVersion = 0
     await nextTick()
     const fit2 = initXterm()
     if (!xterm || !fit2) return
-    replayScrollback()
+    replayFrom(0, terminal.current.value.buffer)
+    unregisterFlush = terminal.registerFlushListener(sid, onFlushed)
     const partition = state.value
     if (!partition.ptyAlive) {
       const cwd = getSessionCwd()

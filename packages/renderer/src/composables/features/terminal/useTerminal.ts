@@ -2,70 +2,85 @@
  * useTerminal —— drawer 集成终端的 per-session 状态 + PTY 控制（Phase 3）。
  *
  * 职责：
- * 1. per-session scrollback buffer + rAF 输出写队列 + PTY 存活态 + 命令写队列（useSessionScopedState，ADR-0049）
- * 2. 订阅 terminal.data/exit/alive（useSessionEvents），WS handler 用 updateFor 防竞态
- * 3. 对外暴露 spawn/write/resize/kill/enqueueWrite（TerminalView 调用）
+ * 1. per-session 命令式输出 buffer（非响应式 chunks + 单调版本）+ rAF 输出写队列 + PTY 存活态
+ * 2. 模块级订阅 terminal.data/exit/alive（跨组件生命周期存活，W27 分区生命周期上提）
+ * 3. 对外暴露 spawn/write/resize/kill/attach/registerFlushListener（TerminalView 调用）
  *
- * 三层生命周期解耦（设计意图）与已知缺口（W14 审查 Fix-2，2026-08）：
+ * ── 分区生命周期上提（W27/D-6.2，R-22）──────────────────────────────────
+ * W14 已知缺口（09 文档 E6-c）：TerminalPartition 与 terminal.* 订阅随 TerminalView
+ * 组件实例销毁（v-if 挂载，切 tab 即 unmount）→ 切走期间 terminal.data 无人接收、
+ * 切回是全新分区 + 重新 spawn，「切走 30s 切回历史完整」不可交付。
+ * 本 wave 把分区的持有从 useSessionScopedState（per-instance Map，scope 销毁即清）
+ * 提升为模块级持久 Map（partitions），订阅从 useSessionEvents（组件生命周期）
+ * 提升为模块级订阅（spawn 时建立、session 销毁 cleanup 时解除）。
+ *
+ * 选型说明（ADR-0049「全局 sid 协调器例外类」）：useSessionScopedState 是 setup-scoped
+ * 工厂——Map 在工厂调用（组件 setup）内创建，onScopeDispose 时反注册 cleanup，组件
+ * unmount 即分区销毁，结构上无法满足 R-22「buffer 存组件外」。本模块升级后命中例外
+ * 类判据（ADR-0049 §例外清单）：无 Vue setup 上下文（模块级单例）、所有方法显式接收
+ * sessionId（appendChunk/flushPending/updatePartition）、buffer 是非响应式数据（markRaw）。
+ * 同款先例：core/domain/chat/useChat.ts 的 streamSubscriptions（模块级 Map + 模块级
+ * 订阅编排）、core/domain/drawer 的 write-queue factory 单例 Map（terminal-write-queue
+ * store 已同款）。cleanup 仍经 registerSessionCleanup 挂载（useSidebar.deleteSession →
+ * triggerSessionCleanups → 删分区 + 退订 + 清 flush 监听器），内存语义与工厂一致。
+ *
+ * 三层生命周期（W27 后）：
  * - PTY（runtime）：跟随 session（session 销毁 → destroyPty），切 terminal tab 不死
- * - scrollback buffer + 订阅（renderer）：跟随 TerminalView 组件实例——TerminalView 经
- *   v-if 挂载（PanelContainer「drawerTab === 'terminal'」分支），切走 tab 即 unmount，
- *   订阅（terminal.data → appendChunk）与 Map 分区随组件销毁，**切走期间输出不累积**
- *   （已知缺口：分区生命周期应上提到独立于组件的层，归 W27/D-6.2 处理；09 文档 E6-c 的
- *   「切走期间照常累积」前提不成立）。切回 mount 是全新分区 + 重新 spawn。
+ * - buffer 分区 + 订阅（renderer 模块级）：spawn/attach 建立订阅 → session 销毁
+ *   cleanup 释放。切走 tab（TerminalView unmount）只移除该视图的 flush 监听器，
+ *   分区与订阅保留——切走期间 terminal.data 照常进 buffer，切回 mount 后
+ *   replayFrom(0) 全量回放（V-P2-4 可交付）。
  * - xterm 组件：跟随 terminal tab 可见性（TerminalView mount/unmount）
- * 当前实际保证仅覆盖 unmount 前的同帧窗口：已调度未执行的 rAF 回调持分区引用（Fix-4），
- * unmount 后执行只写孤儿对象（不复活分区、无泄漏）；切走期间的 PTY 输出无人接收。
  *
- * rAF 输出写队列（D-6.1，2026-08 perf）：
- * - terminal.data 不再逐 chunk push scrollback，改入 outputQueue，rAF 回调 flushPending
- *   批量 append scrollback → TerminalView 的 watch(flushVersion) 每帧至多触发一次 →
- *   replayScrollback 合并为一次 xterm.write。消除「每 chunk 一次 watch + 一次 write」的高频掉帧。
- * - watch 源是 flushVersion 而非 scrollback.length：scrollback 达 SCROLLBACK_LIMIT 稳态后
- *   每次 flush「push N + splice 回 LIMIT」净值守恒，watch(() => length) 不触发 → 实时输出
- *   冻结（W14 审查 Fix-1）；flushVersion 每次有内容的 flush 单调 +1，稳定触发。
+ * rAF 输出写队列（D-6.1 → D-6.2 演进）：
+ * - terminal.data 入 outputQueue（markRaw 非响应式），rAF flushPending 批量 append 进
+ *   buffer.chunks + 版本前进 + 裁剪，然后直接通知本 sid 已注册的 flush 监听器
+ *   （TerminalView 增量 replay）——watch 链消失（D-6.2 检查点：watch(scrollback.length)
+ *   与 watch(flushVersion) 全部删除，回放只靠 replayFrom(version)）。
+ * - buffer.version = 累计 append chunk 数（单调递增、裁剪不减，W14 flushVersion/
+ *   totalAppended 双锚点合一）：既是「buffer 有更新」的版本信号，也是回放指针基准。
+ *   replayChunks(buffer, fromVersion) 从版本号直接定位物理起点（逻辑索引 - 裁剪量），
+ *   O(1) 无辅助结构，幂等（重复回放只是重写既有内容，E6-b）。
  * - 用户输入（writeToTerminal）不走此队列，直连 terminalApi.write（击键即时回显）。
  *
- * 联动 2 写队列（enqueueWrite）：
- * - PTY 已活（ptyAlive=true）→ 立即 write
- * - PTY 未活 → 入 pendingWrites，等 terminal.alive flush
- * 解决 TerminalView 首次打开时 spawn 异步、命令写入的时序问题。
- *
- * 依赖方向：useSessionScopedState + useSessionEvents + terminalApi（@/api）。
- * 必须在组件 setup 同步调用（依赖 useSessionEvents 的 onBeforeUnmount）。
+ * 依赖方向：api/events + terminalApi（@/api）+ registerSessionCleanup（core）+ write-queue store。
+ * useTerminal 是组件视图层（current computed 按组件 sidRef 读模块分区），模块级状态不依赖组件。
  */
-import { reactive, type Ref } from 'vue'
-import { useSessionScopedState } from '@/composables/useSessionScopedState'
-import { useSessionEvents } from '@/composables/features/chat/useSessionEvents'
+import { computed, markRaw, reactive, ref, type ComputedRef, type Ref } from 'vue'
+import type { ServerMessage } from '@xyz-agent/shared'
+import * as events from '@/api/events'
+import { registerSessionCleanup } from '@/composables/useSessionScopedState'
 import { useTerminalWriteQueueStore } from '@/stores/terminal-write-queue'
 import { terminalApi } from '@/api/domains/terminal'
 
-/** terminal per-session 状态分区。reactive 容器（ADR-0049 契约）。 */
+/** 命令式输出 buffer（D-6.2）：append-only 非响应式 chunk 数组 + 单调版本号。 */
+export interface TerminalBuffer {
+  /**
+   * 物理 chunk 数组（append-only，超限裁剪截头）。非响应式（markRaw）——
+   * 高频 push 零 reactivity 开销，xterm 写入全命令式。
+   */
+  chunks: string[]
+  /**
+   * 单调递增版本 = 累计 append 进 buffer 的 chunk 总数（裁剪不减，物理长度失义后
+   * 版本仍是稳定回放锚点）。兼为「buffer 有更新」信号（每次有内容的 flush 前进）。
+   * 逻辑索引基准：逻辑索引 - (version - chunks.length) = 物理索引。
+   */
+  version: number
+}
+
+/** terminal per-session 状态分区（模块级持久，W27/D-6.2）。 */
 interface TerminalPartition {
-  /** scrollback 历史输出（PTY 切走期间继续累积，切回回放）。上限由 scrollback 配置裁剪。 */
-  scrollback: string[]
+  /** 命令式输出 buffer（D-6.2，markRaw 非响应式）。 */
+  buffer: TerminalBuffer
   /**
    * rAF 写队列（D-6.1）：一帧内待 flush 的 PTY 输出 chunk 暂存。
-   * terminal.data handler 只 push 这里，等 rAF flush 时批量进 scrollback——
-   * 高频输出时 N 次 data 合并为每帧一次 scrollback 批量 append + 一次 xterm.write。
+   * terminal.data handler 只 push 这里，等 rAF flush 时批量进 buffer——
+   * 高频输出时 N 次 data 合并为每帧一次 flush + 一次 xterm.write。
    * 命名避开 terminal-write-queue 的 pendingWrites（那是命令队列，drop-oldest 语义）。
    */
   outputQueue: string[]
   /** rAF 是否已置位（per-sid 防重入：置位期间新 chunk 只入队不再调度）。 */
   rafPending: boolean
-  /**
-   * flush 版本号（单调递增，W14 审查 Fix-1）：每次「有内容的 flush」自增 1。
-   * TerminalView 的 watch 源——scrollback 稳态轮转（达 LIMIT 后 push N + splice N）时
-   * length 净值守恒，watch(() => length) 不触发；flushVersion 恒变，watch 稳定触发。
-   * 兼为 W27/D-6.2 版本回放的锚点（replay(fromVersion) 的版本基准，见 09 §3.3.1 第二步）。
-   */
-  flushVersion: number
-  /**
-   * 累计 append 进 scrollback 的 chunk 总数（单调递增，裁剪不减，W14 审查 Fix-1）。
-   * 回放指针的「逻辑索引」基准：逻辑索引 - (totalAppended - scrollback.length) = 物理索引。
-   * 轮转后物理 length 净值守恒、绝对物理索引失义，只有逻辑指针能稳定指向未回放的尾部。
-   */
-  totalAppended: number
   /** PTY 是否存活（spawn 后置 true，exit 后置 false）。联动 2 的 ptyAlive 判断在全局 store（terminal-write-queue）。 */
   ptyAlive: boolean
   /** 当前 PTY 尺寸（xterm fit 后记录）。 */
@@ -73,21 +88,23 @@ interface TerminalPartition {
   rows: number
 }
 
-/** 新分区的默认状态。 */
+/**
+ * 新分区的默认状态。reactive 容器（ADR-0049 响应式契约：模板读 ptyAlive/cols/rows
+ * 需在 reactive 代理上建立依赖，updatePartition mutate 才能触发重渲染）；
+ * buffer/outputQueue 用 markRaw 包裹——非响应式，高频 push/splice 零 reactivity 开销。
+ */
 function createPartition(): TerminalPartition {
   return reactive({
-    scrollback: [],
-    outputQueue: [],
+    buffer: markRaw({ chunks: [], version: 0 }),
+    outputQueue: markRaw([]),
     rafPending: false,
-    flushVersion: 0,
-    totalAppended: 0,
     ptyAlive: false,
     cols: 80,
     rows: 24,
   })
 }
 
-/** scrollback 上限（Phase 6 后由 settings 配置，当前固定 5000）。 */
+/** scrollback 上限（Phase 6 后由 settings 配置，当前固定 5000，按 chunk 计）。 */
 const SCROLLBACK_LIMIT = 5000
 
 /**
@@ -97,103 +114,230 @@ const SCROLLBACK_LIMIT = 5000
  */
 const MAX_OUTPUT_QUEUE = 1000
 
+// ── 模块级持久分区（W27/D-6.2 生命周期上提）──────────────────────────────
+// ADR-0049「全局 sid 协调器例外类」：无 setup 上下文、方法显式接收 sid、buffer 非响应式。
+// 分区生命周期 = session 生命周期（session 销毁经 registerSessionCleanup 清理），
+// 独立于任何 TerminalView 组件实例——切 tab（unmount）只移除视图 flush 监听器，数据不丢。
+const partitions = new Map<string, TerminalPartition>()
+
+/** 分区表结构版本：cleanup 删分区时 bump，让各实例 current computed 失效重算（同 core 工厂）。 */
+const mapVersion = ref(0)
+
+// ── 模块级 terminal.* 订阅（生命周期 = PTY 生命周期）──────────────────────
+// publish-only 契约（W09）：runtime 只把 terminal.data 发给订阅该 sid 的连接，且
+// renderer 侧 events.on(sid) 无 handler 时 dispatchSession 直接丢弃——订阅必须跨组件
+// 存活，否则切走期间输出无人接收（分区在组件外但没有订阅同样空转）。
+const subscribedSids = new Set<string>()
+const subscriptionUnsubs = new Map<string, () => void>()
+
+// ── flush 监听器注册表（sid → 已挂载视图的增量回放回调）────────────────────
+// 组件 mount 注册、unmount 反注册。flush 后直接通知，替代 W14 的 watch(flushVersion) 链。
+const flushListeners = new Map<string, Set<(buffer: TerminalBuffer) => void>>()
+
 /**
- * terminal per-session 状态 + PTY 控制。
+ * 模块级分区读写（updateFor 语义，ADR-0049）：WS handler 用显式 sid，不读组件 sidRef。
+ */
+function getOrCreatePartition(sid: string): TerminalPartition {
+  let p = partitions.get(sid)
+  if (!p) {
+    p = createPartition()
+    partitions.set(sid, p)
+  }
+  return p
+}
+
+/** 显式 sid 分区更新（WS handler 用，M1 竞态防护同工厂 updateFor）。 */
+function updatePartition(sid: string, updater: (state: TerminalPartition) => void): void {
+  updater(getOrCreatePartition(sid))
+}
+
+/**
+ * session 销毁 cleanup（registerSessionCleanup 注册一次，triggerSessionCleanups 遍历调）：
+ * 删分区 + 解除模块级订阅 + 清 flush 监听器。迟到 rAF 回调持分区引用只写孤儿对象
+ * （flushPending 内 `partitions.get(sid) !== p` 守卫不再通知视图，不复活分区）。
+ */
+function cleanupPartition(sid: string): void {
+  if (partitions.delete(sid)) {
+    mapVersion.value += 1
+  }
+  if (subscribedSids.delete(sid)) {
+    subscriptionUnsubs.get(sid)?.()
+    subscriptionUnsubs.delete(sid)
+  }
+  flushListeners.delete(sid)
+}
+// 模块级注册一次（无 setup scope，应用生命周期内不反注册——分区清理点
+// useSidebar.deleteSession 的 triggerSessionCleanups 是唯一入口）
+registerSessionCleanup(cleanupPartition)
+
+// ServerMessage 是泛型接口（非可判别联合），type 字面量比较不会自动收窄 payload——
+// 用类型谓词显式收窄（与 useSessionEvents 的 TypedHandler 同构，无需 as 断言）
+function isTerminalDataMsg(msg: ServerMessage): msg is ServerMessage<'terminal.data'> {
+  return msg.type === 'terminal.data'
+}
+function isTerminalAliveMsg(msg: ServerMessage): msg is ServerMessage<'terminal.alive'> {
+  return msg.type === 'terminal.alive'
+}
+function isTerminalExitMsg(msg: ServerMessage): msg is ServerMessage<'terminal.exit'> {
+  return msg.type === 'terminal.exit'
+}
+
+/**
+ * 建立 sid 的模块级 terminal.* 订阅（幂等）。时机：spawn（RPC 前）与 attach——
+ * PTY 从 spawn 到 session 销毁全程有订阅，覆盖「切走 tab」整个窗口。
+ */
+function ensureTerminalSubscription(sid: string): void {
+  if (subscribedSids.has(sid)) return
+  subscribedSids.add(sid)
+  const unsub = events.on(sid, (msg) => {
+    if (isTerminalDataMsg(msg)) {
+      appendChunk(sid, msg.payload.data)
+    } else if (isTerminalAliveMsg(msg)) {
+      updatePartition(sid, (s) => {
+        s.ptyAlive = true
+      })
+      // store.markAlive 同步 ptyAlive + flush 写队列（Block.vue 入队的命令，联动 2）
+      useTerminalWriteQueueStore().markAlive(sid)
+    } else if (isTerminalExitMsg(msg)) {
+      updatePartition(sid, (s) => {
+        s.ptyAlive = false
+      })
+      useTerminalWriteQueueStore().markExited(sid)
+    }
+  })
+  subscriptionUnsubs.set(sid, unsub)
+}
+
+/**
+ * terminal.data chunk 入队（D-6.1 rAF 写队列入口，模块级订阅 handler 调）。
+ * 只 push 进 outputQueue 并置位 rAF；buffer 累积与视图通知都推迟到 flush——
+ * 高频输出（如 build 日志）时 N 次 data 只产生每帧一次的 flush + 一次 xterm.write。
+ * E6-a：rAF 被后台节流导致队列超限时 join 合并成单块（保序全量，不丢弃）。
+ */
+function appendChunk(sid: string, chunk: string): void {
+  let schedule = false
+  let partition: TerminalPartition | null = null
+  updatePartition(sid, (s) => {
+    // updater 同步执行，schedule 为 true 时 partition 必已赋值
+    partition = s
+    s.outputQueue.push(chunk)
+    if (s.outputQueue.length > MAX_OUTPUT_QUEUE) {
+      s.outputQueue = markRaw([s.outputQueue.join('')])
+    }
+    if (!s.rafPending) {
+      s.rafPending = true
+      schedule = true
+    }
+  })
+  const p = partition
+  if (schedule && p !== null) {
+    // rAF 回调捕获 sid + 分区引用（W14 审查 Fix-4 语义延续）：session 销毁
+    // （triggerSessionCleanups 删分区）后迟到的回调只写孤儿对象，flushPending 的
+    // `partitions.get(sid) !== p` 守卫保证不复活分区、不通知新分区视图。
+    requestAnimationFrame(() => flushPending(sid, p))
+  }
+}
+
+/**
+ * rAF 回调：把 outputQueue 批量刷进 buffer（D-6.2 命令式语义）。
+ * ① append-only push 全部 chunk + 版本前进（version += 本批 chunk 数，裁剪不减）；
+ * ② 超限裁剪（SCROLLBACK_LIMIT 按 chunk 计，F3 证伪 splice 不是成本）；
+ * ③ 通知本 sid 已挂载视图增量回放——任何分支都不得丢弃 outputQueue 内容
+ *   （xterm 可见性只影响 ③，buffer 累积永远先做）。
+ */
+function flushPending(sid: string, p: TerminalPartition): void {
+  p.rafPending = false
+  const q = p.outputQueue
+  if (q.length === 0) return
+  const buf = p.buffer
+  for (const queued of q) {
+    buf.chunks.push(queued)
+  }
+  buf.version += q.length
+  q.length = 0
+  // 裁剪 buffer 上限（保留最新 N chunk，语义同改造前的 per-push 裁剪）
+  if (buf.chunks.length > SCROLLBACK_LIMIT) {
+    buf.chunks.splice(0, buf.chunks.length - SCROLLBACK_LIMIT)
+  }
+  // 分区已被 session 销毁清理：孤儿 flush 只写孤儿对象（随 GC 回收），
+  // 不通知任何视图（也不复活分区——Fix-4 语义）。
+  if (partitions.get(sid) !== p) return
+  const listeners = flushListeners.get(sid)
+  if (listeners) {
+    for (const cb of listeners) {
+      try {
+        cb(buf)
+      } catch (e) {
+        // 单监听器抛错不阻断其余视图（events 层 safeForEach 同款，M4）
+        console.error('[terminal] flush listener threw:', e)
+      }
+    }
+  }
+}
+
+/**
+ * 版本回放纯函数（D-6.2）：从 fromVersion（含）之后 append 的 chunk 合并为单块。
+ * fromVersion 是逻辑索引版本（= 已回放的 chunk 总数）；裁剪后物理起点
+ * = fromVersion - 裁剪量，钳制到 0（指针落后裁剪线时保留内容全在新指针后，全量无重复）。
+ * 返回 null = 无新增（fromVersion 已是最新）。幂等：重复回放只是重写既有内容（E6-b）。
+ */
+export function replayChunks(buffer: TerminalBuffer, fromVersion: number): string | null {
+  if (fromVersion >= buffer.version) return null
+  const cropped = buffer.version - buffer.chunks.length
+  const physicalStart = Math.max(fromVersion - cropped, 0)
+  return buffer.chunks.slice(physicalStart).join('')
+}
+
+/**
+ * terminal per-session 状态 + PTY 控制的组件视图层。
  *
  * @param sessionIdRef session id ref（string | null）
- * @returns 状态（current computed）+ PTY 控制（spawn/write/resize/kill）+ 写队列（enqueueWrite）
+ * @returns current（按组件 sidRef 读模块分区的 computed）+ PTY 控制 + flush 监听注册
  */
 export function useTerminal(sessionIdRef: Ref<string | null>) {
-  const state = useSessionScopedState(sessionIdRef, createPartition)
-  const writeQueue = useTerminalWriteQueueStore()
-
-  // 订阅 terminal.* 广播（useSessionEvents 管理 session 级订阅生命周期）
-  const onMessage = useSessionEvents(sessionIdRef)
-
-  // terminal.data：PTY 输出 → 入 rAF 写队列（updateFor capturedSid，D-6.1 批量合帧）
-  onMessage('terminal.data', (msg, sid) => {
-    appendChunk(sid, msg.payload.data)
+  // 模块分区视图：null sid 返回临时默认实例（不写 Map，同工厂语义）；
+  // 依赖 mapVersion 让 cleanup（删分区）后本 computed 失效重算。
+  const current: ComputedRef<TerminalPartition> = computed(() => {
+    void mapVersion.value
+    const sid = sessionIdRef.value
+    if (sid === null) return createPartition()
+    return getOrCreatePartition(sid)
   })
 
   /**
-   * terminal.data chunk 入队（D-6.1 rAF 写队列入口）。
-   * 只 push 进 outputQueue 并置位 rAF；scrollback 累积与 xterm 写入都推迟到 flush——
-   * 高频输出（如 build 日志）时 N 次 data 只产生每帧一次的 watch 触发 + 一次 xterm.write。
-   * E6-a：rAF 被后台节流导致队列超限时 join 合并成单块（保序全量，不丢弃）。
+   * 注册本视图的增量回放监听（mount 调、unmount 反注册）：每次有内容的 flush 后调用，
+   * 回调内按本视图已回放版本做增量 write。替代 W14 的 watch(flushVersion) 链。
+   *
+   * @param sid 所属 session
+   * @param cb 收到最新 buffer 的回调（视图持有自己的回放指针，只写增量）
+   * @returns 反注册函数
    */
-  function appendChunk(sid: string, chunk: string): void {
-    let schedule = false
-    let partition: TerminalPartition | null = null
-    state.updateFor(sid, (s) => {
-      // updater 同步执行，schedule 为 true 时 partition 必已赋值
-      partition = s
-      s.outputQueue.push(chunk)
-      if (s.outputQueue.length > MAX_OUTPUT_QUEUE) {
-        s.outputQueue = [s.outputQueue.join('')]
+  function registerFlushListener(sid: string, cb: (buffer: TerminalBuffer) => void): () => void {
+    let set = flushListeners.get(sid)
+    if (!set) {
+      set = new Set()
+      flushListeners.set(sid, set)
+    }
+    set.add(cb)
+    return () => {
+      set.delete(cb)
+      if (set.size === 0) {
+        flushListeners.delete(sid)
       }
-      if (!s.rafPending) {
-        s.rafPending = true
-        schedule = true
-      }
-    })
-    const p = partition
-    if (schedule && p !== null) {
-      // rAF 回调捕获分区引用而非 sid（W14 审查 Fix-4）：session 销毁
-      // （triggerSessionCleanups 删分区）后迟到的回调只写孤儿对象（随 GC 回收），
-      // 若按 sid 走 updateFor 会经 getOrCreatePartition 重建空分区（复活）。
-      requestAnimationFrame(() => flushPending(p))
     }
   }
-
-  /**
-   * rAF 回调：把 outputQueue 批量刷进 scrollback（D-6.1）。
-   * scrollback 是唯一累积点，但「组件切走时本函数照常累积」不成立（W14 审查 Fix-2）——
-   * TerminalView 是 v-if 挂载，切走即 unmount，terminal.data 订阅随组件销毁，切走期间无输出
-   * 进入本函数；本函数只覆盖 unmount 前已调度的同帧窗口（持分区引用写孤儿对象，不复活分区，
-   * 分区生命周期上提归 W27/D-6.2）。xterm 写入不经本函数，由 TerminalView 的
-   * watch(flushVersion) → replayScrollback 承接：每帧一次批量 append 只触发一次 watch、
-   * 一次合并 write（该 watch 从此只承载「flush 后写 buffer」单一职责，09 §5 检查点）。
-   * 逐 chunk push（非整体 join）保持回放粒度，为 W27/D-6.2 版本回放留语义。
-   */
-  function flushPending(s: TerminalPartition): void {
-    s.rafPending = false
-    if (s.outputQueue.length === 0) return
-    for (const queued of s.outputQueue) {
-      s.scrollback.push(queued)
-    }
-    s.totalAppended += s.outputQueue.length
-    s.outputQueue.length = 0
-    // 裁剪 scrollback 上限（保留最新 N chunk，语义同改造前的 per-push 裁剪）
-    if (s.scrollback.length > SCROLLBACK_LIMIT) {
-      s.scrollback.splice(0, s.scrollback.length - SCROLLBACK_LIMIT)
-    }
-    // 有内容的 flush 完成，bump 版本触发 TerminalView 的 watch（W27 版本回放锚点）
-    s.flushVersion += 1
-  }
-
-  // terminal.alive：PTY 就绪 → 置 ptyAlive + markAlive（flush 全局写队列，联动 2）
-  onMessage('terminal.alive', (_msg, sid) => {
-    state.updateFor(sid, (s) => {
-      s.ptyAlive = true
-    })
-    // store.markAlive 同步 ptyAlive + flush 写队列（Block.vue 入队的命令）
-    writeQueue.markAlive(sid)
-  })
-
-  // terminal.exit：PTY 退出 → 置 ptyAlive=false + markExited
-  onMessage('terminal.exit', (_msg, sid) => {
-    state.updateFor(sid, (s) => {
-      s.ptyAlive = false
-    })
-    writeQueue.markExited(sid)
-  })
 
   /** 创建 PTY（TerminalView mount 且 !ptyAlive 时调）。cwd 取 session.cwd。 */
   async function spawnTerminal(cwd: string | undefined, cols: number, rows: number): Promise<void> {
     const sid = sessionIdRef.value
     if (!sid) return
+    // 订阅先于 spawn RPC 建立：PTY 输出在 alive 之后到达，订阅窗口覆盖全程
+    ensureTerminalSubscription(sid)
     // 先记录尺寸
-    state.update((s) => { s.cols = cols; s.rows = rows })
+    updatePartition(sid, (s) => {
+      s.cols = cols
+      s.rows = rows
+    })
     await terminalApi.spawn({ sessionId: sid, cwd, cols, rows })
     // 注：ptyAlive 由 terminal.alive 广播置位（异步），这里不等
   }
@@ -209,7 +353,10 @@ export function useTerminal(sessionIdRef: Ref<string | null>) {
   function resizeTerminal(cols: number, rows: number): void {
     const sid = sessionIdRef.value
     if (!sid) return
-    state.update((s) => { s.cols = cols; s.rows = rows })
+    updatePartition(sid, (s) => {
+      s.cols = cols
+      s.rows = rows
+    })
     void terminalApi.resize(sid, cols, rows)
   }
 
@@ -220,24 +367,46 @@ export function useTerminal(sessionIdRef: Ref<string | null>) {
     void terminalApi.kill(sid)
   }
 
-  /** 通知 PTY 活跃（TerminalView mount 调，预留流量控制）。 */
+  /** 通知 PTY 活跃（TerminalView mount 调）。attach 保持 no-op 预留（09 §3.3.1 定案，不做源头过滤）。 */
   function attachTerminal(): void {
     const sid = sessionIdRef.value
     if (!sid) return
+    // 幂等补订阅：切回 mount 时若 PTY 早已 alive（分区 ptyAlive=true），
+    // 订阅可能已在旧实例清理外存活（模块级）——此处确保窗口覆盖
+    ensureTerminalSubscription(sid)
     void terminalApi.attach(sid)
   }
 
   return {
     /** 当前 sid 分区状态（null sid 返回默认实例）。 */
-    current: state.current,
+    current,
     /** PTY 控制方法。 */
     spawnTerminal,
     writeToTerminal,
     resizeTerminal,
     killTerminal,
     attachTerminal,
+    /** flush 监听注册（TerminalView mount/unmount 编排）。 */
+    registerFlushListener,
   }
 }
 
 /** useTerminal 返回类型（供组件 type import）。 */
 export type UseTerminalReturn = ReturnType<typeof useTerminal>
+
+// ── 测试专用 hooks（生产代码禁止调用，参照 core lru.ts _resetLruForTest 先例）──
+
+/** 测试专用：清空模块级状态（分区/订阅/监听器 + bump mapVersion）。 */
+export function __resetTerminalStateForTest(): void {
+  partitions.clear()
+  for (const unsub of subscriptionUnsubs.values()) unsub()
+  subscriptionUnsubs.clear()
+  subscribedSids.clear()
+  flushListeners.clear()
+  mapVersion.value += 1
+}
+
+/** 测试专用：当前分区数（断言 session 销毁后分区释放）。 */
+export function __terminalPartitionCountForTest(): number {
+  return partitions.size
+}

@@ -52,13 +52,14 @@ beforeEach(() => {
 })
 
 describe('useTerminal 编排逻辑', () => {
-  it('UT-1: current 在 null sid 时返回默认实例（ptyAlive=false, scrollback=[]）', () => {
+  it('UT-1: current 在 null sid 时返回默认实例（ptyAlive=false, buffer 为空）', () => {
     const Host = makeHost(null)
     const wrapper = mount(Host)
     const terminal = wrapper.vm.terminal as UseTerminalReturn
     expect(terminal.current.value).toBeTruthy()
     expect(terminal.current.value.ptyAlive).toBe(false)
-    expect(terminal.current.value.scrollback).toEqual([])
+    expect(terminal.current.value.buffer.chunks).toEqual([])
+    expect(terminal.current.value.buffer.version).toBe(0)
     wrapper.unmount()
   })
 
