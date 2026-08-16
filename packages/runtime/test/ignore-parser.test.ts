@@ -140,4 +140,39 @@ describe('compileIgnoreRules / matchPath', () => {
       expect(matchPath(m, 'node_modules/test')).toBe(true)
     })
   })
+
+  /**
+   * 短路径直通（D7-2，W24）：无 '/' 的路径只有自身一个前缀（allPrefixes('x') ≡ ['x']），
+   * matchPath 跳过 allPrefixes 直接以 [path] 测试。等价性守卫：覆盖 plain/dirOnly/
+   * negated/anchored 四类规则在无斜杠路径上的行为，防止直通分支引入语义漂移。
+   */
+  describe('short-path fast path (D7-2)', () => {
+    it('plain name: short path matches the rule itself', () => {
+      const m = compileIgnoreRules('dist')
+      expect(matchPath(m, 'dist')).toBe(true)
+      expect(matchPath(m, 'other')).toBe(false)
+    })
+
+    it('dirOnly rule: short path (bare name) not matched, contents matched via expansion', () => {
+      const m = compileIgnoreRules('build/')
+      expect(matchPath(m, 'build')).toBe(false) // dirOnly 不匹配目录自身名（与展开路径语义一致）
+      expect(matchPath(m, 'build/out')).toBe(true) // 深路径走 allPrefixes 展开，行为不变
+    })
+
+    it('negation applies on short paths (last match wins)', () => {
+      const m = compileIgnoreRules(['foo', '!foo'].join('\n'))
+      expect(matchPath(m, 'foo')).toBe(false)
+    })
+
+    it('anchored rule: short path matches root-level name', () => {
+      const m = compileIgnoreRules('/dist')
+      expect(matchPath(m, 'dist')).toBe(true)
+      expect(matchPath(m, 'src/dist')).toBe(false)
+    })
+
+    it('empty matcher: short path never matched', () => {
+      const m = compileIgnoreRules('')
+      expect(matchPath(m, 'x')).toBe(false)
+    })
+  })
 })

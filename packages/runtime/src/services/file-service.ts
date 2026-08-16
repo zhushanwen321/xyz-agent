@@ -65,8 +65,32 @@ export const MAX_SEARCH_RESULTS = 5000
 export const BUILTIN_IGNORE_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'coverage', '.next', '.cache', '.turbo',
 ])
+/**
+ * .gitignore matcher 缓存容量上限（D7-1）。对齐项目 500 容量惯例；超出按 LRU 驱逐最旧 entry。
+ * 导出供测试断言驱逐行为。每个 entry = 单个 .gitignore 文件的编译结果（远小于 500 文件的真实场景）。
+ */
+export const IGNORE_MATCHER_CACHE_MAX = 500
+
+/** 缓存的 .gitignore 编译结果 + 文件身份戳（mtime/size 变化 → miss 重编译）。 */
+interface CachedIgnoreMatcher {
+  readonly mtimeMs: number
+  readonly size: number
+  readonly matcher: IgnoreMatcher
+}
+
+/** 空 matcher 单例（无 .gitignore / 内容为空时共享，matchPath 永远 false）。 */
+const EMPTY_MATCHER: IgnoreMatcher = compileIgnoreRules('')
 
 export class FileService implements IFileService {
+  /**
+   * .gitignore 编译结果缓存（D7-1，文件级）。
+   * key = 单个 .gitignore 文件绝对路径（非目录元组——expandDir 传 (cwd,dir) 两目录时，
+   * 各展开目录解析到同一根 .gitignore 即共享命中）；value 含 (mtimeMs,size) 身份戳，
+   * 文件被写工具改动 → stat 身份变化 → miss 重读重编译，无需手动失效。
+   * Map 迭代序 = 插入序，命中时 delete+set 移尾实现 LRU touch，驱逐从头删最旧。
+   */
+  private readonly ignoreCache = new Map<string, CachedIgnoreMatcher>()
+
   constructor(private opts: FileServiceOptions) {}
 
   /**
@@ -295,22 +319,88 @@ export class FileService implements IFileService {
   }
 
   /**
-   * 读一组目录的 .gitignore 合并编译 matcher（IO 走 port，计算走 shared 纯函数）。
+   * 读一组目录的 .gitignore 合并编译 matcher（IO 走 port，计算走 infra 纯函数）。
    * 任一目录无 .gitignore / 读取失败 → 该目录贡献空（不影响其它）。
+   *
+   * D7-1 缓存（按单个 .gitignore 文件粒度，非目录元组组合键）：每个目录的 .gitignore
+   * 编译结果独立缓存复用，多文件合并 = rules 拼接（compileIgnoreRules 逐行编译无跨行
+   * 状态，`contents.join('\n')` 整体编译与逐文件编译再拼接等价，join 保证行边界）。
+   * expandDir 传 (cwd,dir) 两目录时，各展开目录的 cwd 根 .gitignore 共享同一缓存 entry。
    */
   private async loadMatcher(...dirs: string[]): Promise<IgnoreMatcher> {
-    const contents: string[] = []
+    const collected: IgnoreMatcher[] = []
     for (const d of dirs) {
-      const c = await this.readIgnoreSafe(d)
-      if (c) contents.push(c)
+      const m = await this.loadFileMatcher(`${d}/.gitignore`)
+      if (m.rules.length > 0) collected.push(m)
     }
-    return compileIgnoreRules(contents.join('\n'))
+    if (collected.length === 0) return EMPTY_MATCHER
+    if (collected.length === 1) return collected[0] // 单文件：直接复用缓存实例，零拷贝
+    return { rules: collected.flatMap((m) => m.rules) } // 多文件：按目录序拼接（顺序求值语义不变）
   }
 
-  /** 读 dir/.gitignore，失败/不存在 → ''（不抛）。 */
-  private async readIgnoreSafe(dir: string): Promise<string> {
+  /**
+   * 取单个 .gitignore 文件的编译结果（带 D7-1 mtime 缓存）。
+   *
+   * 身份键 (mtimeMs, size)：每次先 stat（一次 stat 代价远低于重读重编译），
+   * 与缓存 entry 身份戳一致 → 命中（免读免编译）；不一致/无 entry → miss 重读重编译。
+   * 文件不存在（ENOENT）→ 哨兵身份 (-1,-1) 缓存空 matcher（文件后续被创建时 stat
+   * 成功必然 miss，无陈旧风险）。
+   *
+   * 降级路径（不缓存，行为与旧 readIgnoreSafe 等价）：stat resolve 但形状不完整
+   * （无 mtimeMs——旧式/自定义 executor）、stat 抛非 ENOENT 错误（EACCES/timeout 等，
+   * 文件身份不可确认）→ 直接读取，readFile 失败贡献空。
+   */
+  private async loadFileMatcher(gitignorePath: string): Promise<IgnoreMatcher> {
+    let mtimeMs = -1
+    let size = -1
     try {
-      return await this.opts.executor.readFile(`${dir}/.gitignore`)
+      const st = await this.opts.executor.stat(gitignorePath)
+      if (st == null || typeof st.mtimeMs !== 'number' || typeof st.size !== 'number') {
+        return this.compileUncached(gitignorePath)
+      }
+      ;({ mtimeMs, size } = st)
+    } catch (e) {
+      if ((e as { code?: string } | null)?.code !== 'ENOENT') {
+        return this.compileUncached(gitignorePath)
+      }
+      // ENOENT：文件不存在，落哨兵身份 (-1,-1) 走缓存判定（命中空 matcher）
+    }
+    const hit = this.ignoreCache.get(gitignorePath)
+    if (hit && hit.mtimeMs === mtimeMs && hit.size === size) {
+      // LRU touch：移到 Map 尾部（最近使用），驱逐从头删最旧
+      this.ignoreCache.delete(gitignorePath)
+      this.ignoreCache.set(gitignorePath, hit)
+      return hit.matcher
+    }
+    const matcher = await this.compileUncached(gitignorePath)
+    this.putIgnoreCache(gitignorePath, { mtimeMs, size, matcher })
+    return matcher
+  }
+
+  /** 降级路径：直接读取并编译，不入缓存（身份键不可用）。 */
+  private async compileUncached(gitignorePath: string): Promise<IgnoreMatcher> {
+    return compileIgnoreRules(await this.readIgnoreFile(gitignorePath))
+  }
+
+  /** 入缓存 + LRU 驱逐：超出 IGNORE_MATCHER_CACHE_MAX 时按插入序驱逐最旧。 */
+  private putIgnoreCache(path: string, entry: CachedIgnoreMatcher): void {
+    this.ignoreCache.delete(path)
+    this.ignoreCache.set(path, entry)
+    while (this.ignoreCache.size > IGNORE_MATCHER_CACHE_MAX) {
+      const oldest = this.ignoreCache.keys().next().value
+      if (oldest === undefined) break
+      this.ignoreCache.delete(oldest)
+    }
+  }
+
+  /**
+   * 读 .gitignore 文件内容，失败/不存在/非 string → ''（不抛）。
+   * 非 string 兜底与旧实现的 `if (c)` truthy 过滤等价（异常 executor 返回值不进编译）。
+   */
+  private async readIgnoreFile(gitignorePath: string): Promise<string> {
+    try {
+      const content = await this.opts.executor.readFile(gitignorePath)
+      return typeof content === 'string' ? content : ''
     } catch {
       return ''
     }

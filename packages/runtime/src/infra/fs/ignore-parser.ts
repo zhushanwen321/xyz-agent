@@ -178,8 +178,9 @@ function globToRegex(pattern: string, anchored: boolean): RegExp {
 export function matchPath(matcher: IgnoreMatcher, path: string): boolean {
   // 规范化路径：去前导斜杠、去末尾分隔符
   const normalized = normalizePath(path)
-  // 路径的所有祖先前缀（含自身），从深到浅：'a/b/c' → ['a/b/c', 'a/b', 'a']
-  const prefixes = allPrefixes(normalized)
+  // 短路径直通（D7-2）：无 '/' 的路径只有自身一个前缀（allPrefixes('x') ≡ ['x']），
+  // 跳过 split/构建数组，直接以 [path] 测试——文件树顶层 entry 全是短路径，省 split 开销
+  const prefixes = normalized.includes('/') ? allPrefixes(normalized) : [normalized]
   let ignored = false
   for (const rule of matcher.rules) {
     // 任一祖先前缀命中该规则 → 该规则对整条路径生效

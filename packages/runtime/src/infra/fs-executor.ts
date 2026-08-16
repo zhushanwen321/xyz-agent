@@ -54,10 +54,10 @@ export class FsExecutor implements IFileExecutor {
     return entries
   }
 
-  /** stat 单个路径（默认 follow symlink）。type 取 isDirectory() 判定 dir/file。 */
-  async stat(path: string): Promise<{ type: 'dir' | 'file'; size: number }> {
+  /** stat 单个路径（默认 follow symlink）。type 取 isDirectory() 判定 dir/file；mtimeMs 供 D7-1 matcher 缓存键。 */
+  async stat(path: string): Promise<{ type: 'dir' | 'file'; size: number; mtimeMs: number }> {
     const s = await this.withTimeout(() => stat(path), 'stat')
-    return { type: s.isDirectory() ? 'dir' : 'file', size: s.size }
+    return { type: s.isDirectory() ? 'dir' : 'file', size: s.size, mtimeMs: s.mtimeMs }
   }
 
   /** 读文件内容（utf-8）。ENOENT → reject（FileService 转 not_found）；EACCES → reject。 */

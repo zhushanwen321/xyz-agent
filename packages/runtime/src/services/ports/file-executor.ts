@@ -34,8 +34,12 @@ export interface FsEntry {
 export interface IFileExecutor {
   /** 列目录单层子（不递归）。超时/EACCES → reject Error。 */
   listDir(path: string): Promise<FsEntry[]>
-  /** 取文件/目录 stat。 */
-  stat(path: string): Promise<{ type: 'dir' | 'file'; size: number }>
+  /**
+   * 取文件/目录 stat。
+   * mtimeMs（D7-1 matcher 缓存键成分）：node:fs Stats.mtimeMs 透传，FileService 用作
+   * .gitignore 编译结果的文件身份戳（mtime/size 变化 → 缓存 miss 重读重编译）。
+   */
+  stat(path: string): Promise<{ type: 'dir' | 'file'; size: number; mtimeMs: number }>
   /** 读文件内容（utf-8）。 */
   readFile(path: string): Promise<string>
 }
