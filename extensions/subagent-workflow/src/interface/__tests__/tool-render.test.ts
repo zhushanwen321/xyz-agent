@@ -80,39 +80,41 @@ describe("renderSubagentCall — 拍平形态提取（regression for wave 3 flat
     expect(out).toContain("fix-login");
   });
 
-  it("从顶层 args 提取 task 作为 preview 行（含换行）", () => {
+  it("task 不再渲染为 preview 行（标题块只有单行）", () => {
     const out = renderText(renderSubagentCall(
       { action: "start", agent: "worker", task: "Analyze the bug in parser", slug: "fix-parser" },
       makeTheme() as never,
       CTX,
     ));
-    // task preview 出现在结果里（首行非空，截断到 60 字符）
-    expect(out).toContain("Analyze the bug in parser");
+    // task 预览行已移除——task 内容不进对话流（完整 task 在 /subagents 详情可见）
+    expect(out).not.toContain("Analyze the bug in parser");
+    expect(out).not.toContain("\n");
   });
 
-  it("task 含换行时只取首个非空行（不破坏单行渲染）", () => {
+  it("task 含换行时不进渲染（无 preview 泄漏）", () => {
     const out = renderText(renderSubagentCall(
       { action: "start", task: "first line\nsecond line", slug: "x" },
       makeTheme() as never,
       CTX,
     ));
-    expect(out).toContain("first line");
+    expect(out).not.toContain("first line");
     expect(out).not.toContain("second line");
+    expect(out).not.toContain("\n");
   });
 
   // 关键回归：若有人把提取路径改回 args.startParam，这些顶层调用都会失败
-  // （agent/slug/task 取不到，全用默认值）。此测试用顶层数据形态锁住 flatten。
+  // （agent/slug 取不到，全用默认值）。此测试用顶层数据形态锁住 flatten。
+  // task 不在断言里——task 已不渲染（上方用例锁定）。
   it("REGRESSION: 顶层 args 形态完整提取（防止回退到 startParam envelope）", () => {
     const out = renderText(renderSubagentCall(
       { action: "start", agent: "researcher", task: "search docs", slug: "search-docs" },
       makeTheme() as never,
       CTX,
     ));
-    // 三个字段都应被提取（默认值 fallback 也能过单字段断言，但同时命中的
+    // agent + slug 都应被提取（默认值 fallback 也能过单字段断言，但同时命中的
     // 概率只有联合 fallback 才有——researcher/search-docs 都不是默认值）
     expect(out).toContain("researcher");
     expect(out).toContain("search-docs");
-    expect(out).toContain("search docs");
   });
 
   it("args 缺所有字段时不崩（最防御）", () => {

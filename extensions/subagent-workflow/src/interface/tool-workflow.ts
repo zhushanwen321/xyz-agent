@@ -91,7 +91,7 @@ const WorkflowParams = Type.Object({
     description: "Run-level model override in 'provider/modelId' format. When set, all agents spawned by this run inherit it by default (unless a per-call agent() opts.model is set). Omit to inherit the main agent's model.",
   })),
   thinkingLevel: Type.Optional(StringEnum(THINKING_ORDER, {
-    description: "Run-level thinkingLevel override (off/minimal/low/medium/high/xhigh/max). All agents in this run inherit it by default. Omit to inherit the main agent's thinking level.",
+    description: "Run-level thinkingLevel override (off/minimal/low/medium/high/xhigh/max). All agents in this run inherit it by default. Omit to default each agent to its model's highest available level.",
   })),
 });
 

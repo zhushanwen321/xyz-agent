@@ -93,7 +93,7 @@ const SubagentParams = Type.Object({
     description: 'Model override in "provider/modelId" format. Resolution order (top wins): (1) this param, (2) agent .md frontmatter model, (3) the main agent\'s current model (zero-config default). An explicit model (param or frontmatter) that is missing or unauthorized THROWS — there is no silent fallback to the main model. Omit this param to inherit the main model.',
   })),
   thinkingLevel: Type.Optional(StringEnum(THINKING_ORDER, {
-    description: "Thinking depth override (derived from THINKING_ORDER SSOT, includes 'max'). Omit to inherit the main agent's thinking level.",
+    description: "Thinking depth override (derived from THINKING_ORDER SSOT, includes 'max'). Omit to default to the model's highest available level (not the main agent's level).",
   })),
   skillPath: Type.Optional(Type.String()),
   appendSystemPrompt: Type.Optional(Type.Array(Type.String())),
