@@ -106,6 +106,14 @@ ESLint 规则放弃后，per-session 范式靠 **code-review 强制检查项** �
 | `core/domain/drawer/coordination.ts` | `pendingOpenMap` | 纯函数模块（`setPendingOpenForSid`/`consumePendingOpen`/`openTasksDrawerOnFirstData` 独立导出，非 composable，无 setup/sidRef）；Map 存 boolean 路由标记（非 reactive）；清理走 `registerSessionCleanup` 挂载（见文件尾）+ 测试 `_resetDrawerForTest()` | renderer 重做审查
 | `core/domain/session/effects/panel-orchestration.ts` | `pendingOpenMap` | 纯函数模块（`openPanelOnSessionEvent`/`consumePendingOpen`/`clearPendingOpen` 独立导出，非 composable，无 setup/sidRef）；Map 存临时路由标记（`'tasks'`\|`'sideDrawer'`，存在即消费、随 `consumePendingOpen` 即删、不跨 session 存活，非 reactive）；清理走 `clearPendingOpen(sid)` 由 `use-session.ts` `cleanupSessionState` 编排（ES3）| renderer 重做审查
 
+#### 模块级分区 + reactive 容器混合例外（useTerminal，W27 终端）
+
+`useTerminal` 命中「全局 sid 协调器例外类」的模块级形态（无 Vue setup 上下文、方法显式接收 sessionId），但分区容器含 **reactive 字段**（ptyAlive/cols/rows 需响应式驱动模板），不满足该类「存非 reactive 数据」的完整判据——作为混合形态单独登记：
+
+| 模块 | 模块级状态 | 偏离点 | 理由 | 审批
+|------|-----------|--------|------|------
+| `renderer/composables/features/terminal/useTerminal.ts` | `partitions`（`Map<string, TerminalPartition>`）/ `subscribedSids` / `subscriptionUnsubs` / `flushListeners` | 模块级单例 Map（例外类形态），但分区容器是 reactive（视图字段 ptyAlive/cols/rows 需响应式），非纯非响应式数据 | ① R-22（perf plan `.xyz-harness/2026-08-15-perf/plan.md`）「buffer 存组件外」——切 tab（TerminalView `v-else-if` unmount/remount）历史完整要求分区跨组件生命周期存活，`useSessionScopedState` 是 setup-scoped 工厂（onScopeDispose 反注册 cleanup，组件销毁即分区销毁），结构上无法满足；② buffer/outputQueue 用 `markRaw` 包裹非响应式（高频 push 零 reactivity 开销），reactive 字段仅限低频视图状态；③ 方法显式接收 sessionId（appendChunk/updatePartition/clearPartition），WS handler 走 updateFor 语义；④ cleanup 经 `registerSessionCleanup` 挂载（useSidebar.deleteSession → triggerSessionCleanups → 删分区 + 退订 + 清监听器），内存语义与工厂一致 | W27 对抗式审查 Fix-1（2026-08-16）
+
 #### Pinia defineStore 单例 factory 例外类（factory 体内 Map 合理）
 
 以下模块的 per-session Map 声明在 **factory 函数体内**（非模块级），单例性来自调用方——factory 经 Pinia defineStore 按 id 缓存包装，factory body 全应用只执行一次，Map 实质单例。判据：factory 体内非 Vue setup 上下文、无 sidRef: Ref<string|null>；Map 存非 reactive 数据（timer handle / plain object queue state）。与上一小节「全局 sid 协调器例外类」同属 ADR-0049 例外，区别仅在单例性来源（ES module 单例 vs Pinia defineStore factory 单例）。`useSessionScopedState` 是 setup-scoped 工厂（要求 sidRef + reactive 容器契约），factory 体内不适用——强套需把 factory 改造成 setup composable（破坏 Pinia store 单例语义：每次 useStore() 重新执行会重建 Map 丢失单例）+ reactive 容器语义错位（timer handle / queue state 不是响应式状态）。延伸自「renderer 重做审查」延伸项 3——与 c6af1b9 登记的模块级 Map 例外同批判定，仅因当时不在 w4 范围而推迟登记。
@@ -116,6 +124,14 @@ ESLint 规则放弃后，per-session 范式靠 **code-review 强制检查项** �
 | `core/domain/chat/handoff.ts` | `createHandoffController()`（由 createChatStore setup 调用） | `handingOffTimers` | timer handle（非 reactive） | `clearHandingOffTimer(sid)`（per-session）/ `clearAllTimers()`（全量）由 createChatStore `onScopeDispose` 编排调用（store.ts） | renderer 重做审查 延伸项3
 | `core/domain/chat/store.ts` | `createChatStore()`（renderer `defineStore('chat')` 包装） | `pendingSendTimers` | timer handle（非 reactive） | 本文件 `onScopeDispose`（for + clearTimeout + clear） | renderer 重做审查 延伸项3
 | `core/domain/drawer/terminal-write-queue.ts` | `createTerminalWriteQueue()`（renderer `defineStore('terminal-write-queue')` 包装；core 是纯 TS 工厂，不 import vue/pinia） | `sessions` | `TerminalSessionState` plain object（`{ ptyAlive, pendingWrites }`，非 reactive，core 零 reactivity 依赖） | `removeSession(sid)`（per-session，session 销毁编排点调） | renderer 重做审查 延伸项3
+
+#### 分区容器形态例外（工厂内 shallowRef 替代 reactive 容器）
+
+`useSessionScopedState` 的标准契约要求 init 工厂返回 **reactive 容器**（plain object mutate 不触发下游 computed）。以下消费方经工厂分区（Map 分区语义完全遵守），但分区值是 `shallowRef` 包裹的 mutable 对象，属容器形态例外：
+
+| 消费方 | 分区值 | 偏离点 | 理由 | 审批
+|-------|--------|--------|------|------
+| `renderer/components/panel/MessageStream.vue`（TurnRenderCache，W21 D-4） | `shallowRef<TurnRenderCache>`（mutable 纯派生缓存，`toRenderItemsIncremental` 原地 mutate 更新） | 非 reactive 容器：cache mutate 不触发任何下游 | ① 缓存持有 `cachedItems`/`turnSignatures` 里的 **Message 引用**——深代理（reactive）会破坏 D-1 不可变身份语义（引用比较失效，增量复用键失真）且成本高；② 失效本就不由 cache mutate 驱动——`renderItems` 的响应式依赖是 `currentMessages`（shallowRef 源数组）+ `forceWorking`，cache 只是纯派生载体（可随时丢弃重建，无 drift 风险）；③ 工厂消费方式是「读当前分区 `.value` 后传值给纯函数」，非响应式读取分区内部字段 | perf plan W21 M-2 裁决（`.xyz-harness/2026-08-15-perf/plan.md`）
 
 > 新增例外须在此表登记 + 说明理由，否则 review 不通过。
 
