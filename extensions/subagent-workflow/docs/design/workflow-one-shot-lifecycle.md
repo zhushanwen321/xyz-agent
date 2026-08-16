@@ -5,7 +5,7 @@
 ## 层声明
 
 - **当前层**：技术方案设计（workflow 子系统生命周期收敛）
-- **下一层产物**：文件级改动规格（接口/数据模型/错误规格）——属「可实现的接口/数据模型/技术方案」，设计准则 5（物理数据流）/6（错误恢复指引）/7（运行时断言探针）全部 P0 适用
+- **下一层产物已产出**：[workflow-one-shot-lifecycle-impl-spec.md](workflow-one-shot-lifecycle-impl-spec.md)——文件级改动规格（U1/U2/U3 改动清单、测试处置全量、S1-S8 命令级验收手册、悬置点定稿总表），是**实施与验收的唯一权威输入**；本文档与它冲突时以它为准
 - **与既有文档的关系**：本方案独立于 subagent 侧的 V4 收敛（`v4-lifecycle-convergence.md`），只动 workflow 编排层（`src/orchestration/` + 接口面）；subagent 执行层（`src/execution/`）零改动
 
 ---
@@ -46,7 +46,7 @@
 | # | 目标 | 使用者（主 agent / 用户）体验 |
 |---|---|---|
 | G1 | **功能不回归**：run/status/abort、嵌套 workflow、token/time 预算、worker 崩溃重试、kill-9 残留检测全部保持（唯一例外：session 切换时 running run 从「挂起可续」变为「作废」——已确认接受的行为变更，§3.2 边界声明） | 现有 5 个内置 workflow 与自定义脚本行为完全不变 |
-| G2 | **复杂度可量化削减**：状态机两态；paused 散布守卫清零；pause 族机制（terminate+重跑+discard 补丁）整体删除 | 维护者读 lifecycle/error-recovery 不再遇到 paused 分支与 MUST_FIX 注释 |
+| G2 | **复杂度可量化削减**：状态机两态；paused 散布守卫清零；pause 族机制（terminate+重跑）删除，discard 补丁随 pause 场景消失并重定位为崩溃重建正式步骤（D-3） | 维护者读 lifecycle/error-recovery 不再遇到 paused 分支与 MUST_FIX 注释 |
 | G3 | **语义诚实**：工具/命令/UI/文档不再暴露不存在的能力；尝试 pause 得到明确错误 + 恢复指引 | 用户/LLM 不会被一个不维护的功能误导 |
 | G4 | **可验收**：每项断言在真实 pi 环境验证（非单测非 mock） | 实施者知道「做完怎么证明做对了」 |
 
@@ -72,7 +72,7 @@
 
 ```
 [用户] /workflows pause wf-123
-  → commands.ts:83 解析 verb → pauseRun (lifecycle.ts:251)
+  → commands.ts:99 解析 verb（:105-107 case）→ pauseRun (lifecycle.ts:251)
   → WorkflowRun.transition("paused")：releaseRuntime（A4 原子性：controller.abort() +
     worker.terminate() + gate 释放，lifecycle.ts:243-246）
   → discardInFlightCalls (lifecycle.ts:276→288)：清理被 abort 的在飞 call 的 failed 缓存
@@ -90,7 +90,7 @@
 这条链路的三个承重事实（全部经源码核实）：
 
 1. **确定性契约**：replay 正确性依赖「重跑脚本逐字节走同一控制流」——callId 是脚本内自增序号，第 N 次 `agent()` 调用必须对应同一个逻辑调用。脚本里的 `Date.now()`、`Math.random()`、读文件、网络请求在重跑时产生不同结果 → 控制流分叉 → callId 错位 → 已完成的 A 调用结果被安到 B 调用头上。**对 LLM 生成的脚本，这不是边缘情况而是必然事件**。
-2. **paused 态的散布成本**：error-recovery.ts 里执行级 `status === "paused"` 守卫 4 处（:178 stale 消息丢弃、:624 stale 完成守卫、:667 error 计数污染防护、:699 replay 判断），另有注释分支散布（:169/:177/:218/:346/:414/:453/:622/:698）；lifecycle.ts:374 abortRun 的 paused 防御分支、error-recovery.ts:736 scheduleRebuild 的重检都要为 paused 分支；lifecycle.ts:116 的时间预算 timer 要为 paused 重排；gui-mappers.ts:34 的状态映射、WorkflowsView 的按键分支（:435-446/:696-698）都带 paused。每一处都是「暂停期间异步消息乱入」的误伤面。
+2. **paused 态的散布成本**：error-recovery.ts 里执行级 `status === "paused"` 守卫 4 处（:178 stale 消息丢弃、:624 stale 完成守卫、:667 error 计数污染防护、:699 handleScriptError 守卫），另有注释分支散布（:169/:177/:218/:346/:414/:453/:622/:698）；lifecycle.ts:374 abortRun 的 paused 防御分支、error-recovery.ts:752 scheduleRebuild 的重检都要为 paused 分支；lifecycle.ts:115-119 的时间预算 timer 要为 paused 重排；gui-mappers.ts:44/:69 的状态映射、WorkflowsView 的按键分支（:433-446/:696-698）都带 paused。每一处都是「暂停期间异步消息乱入」的误伤面。
 3. **「跨进程恢复」本就不存在**：jsonl-run-store.ts:211-213 注释自述——`WorkflowRun.reconstruct` 跳过 I1 校验（running ⟺ runtime 存在）因为「进程被杀后 worker 不可能还活着」，恢复逻辑（源码 D-4 标记，实现于 index.ts:453-465 session_start）把残留 running 转 `done,failed`。**kill-9 / 崩溃后的 run 从来不能续跑**；pause/resume 是唯一的 resume 路径，而它只服务 session 切换挂起场景（§2.2 P4）。
 
 ### 2.2 问题清单
@@ -150,11 +150,19 @@
 
 ```
 [主 agent] workflow { action:"pause", runId:"wf-123" }
-  → ❌ 错误：Unknown action "pause". Supported actions: run, status, abort.
-    👉 Workflow runs are one-shot: to stop a run early use action:"abort";
-       to get a fresh result, start a new run.
-[用户] /workflows pause wf-123 → 命令补全与解析中无 pause verb → 同语义提示
+  → ❌ pi 核心参数校验层拦截（execute 之前，扩展不可定制文案）：
+    Validation failed for tool "workflow":
+      - /action: ...（enum 拒绝：期望 run | status | abort）
+    👉 预防性指引在 tool description / promptGuidelines：
+       "Runs are one-shot: there is no pause/resume — to stop a run early
+        use abort; for a fresh result start a new run."
+[用户] /workflows pause wf-123（RPC 通道）
+  → 命令解析命中 removed-verb 分支（command-actions.ts REMOVED_LIFECYCLE_VERBS）：
+    "Workflow pause has been removed — runs are one-shot.
+     To stop a run early: /workflows abort <runId>"
 ```
+
+**错误文案机制**（定稿，见子文档 F3）：工具侧接受 pi 核心校验拦截（action enum 删 pause/resume 后，`validateToolArguments` 在 execute 前 throw `Validation failed for tool "workflow"`，扩展无法定制该文案）——pi 的 enum 拒绝本身是结构化错误，LLM 可见合法值与实际入参，重试可自纠；恢复指引以前置形式（description/promptGuidelines）提供。命令侧在扩展自己的解析层（command-actions.ts）给 removed verb 定制提示。
 
 **场景 E：worker 崩溃自愈（保留机制回归）**
 
@@ -186,23 +194,23 @@
 
 - **选择**：`WorkflowRun` 状态删除 `paused`；保留 `running | done`（创建瞬态直接 running：现状 runWorkflow 先建 paused 再 assignRuntime 转 running 的两步（lifecycle.ts:178/:219）合并为「创建即 running 且绑定 runtime」一步，I1 不变式（running ⟺ runtime 存在）自然保持）。DoneReason 保留 6 种（completed/failed/aborted/budget_limited/time_limited/invalid_args），无新增。
 - **依据**：两态与 subagent record 的 active/closed 模型同构（V4 B-1 方向在编排层的镜像——subagent 侧 record 状态收敛为 running/closed 两态、中间语义改由派生谓词表达）；「是否挂起」不再是状态——一次性语义下不存在挂起。
-- **契约调整**：「创建即 running」合并撞上 `WorkflowRun.assignRuntime` 的 `requires status==="paused"` 前置校验（workflow-run.ts:222-224）——构造函数初始态与 assignRuntime 前置契约需同步调整（U1 改动点，编译期强制）。
-- **被否**：保留 paused 但废弃入口（半吊子：状态还在，守卫还得留）。
-- **探针**：⛔ S8 grep 断言：`src/` 下无 `pauseRun|resumeRun|"paused"` 运行时引用（允许 CHANGELOG/本文档/迁移注释提及）。
+- **契约调整（两段归位，子文档 F4）**：「创建即 running」整体在 U2 落地（与类型收窄同 commit）：构造初始 `status:"running"`；assignRuntime 前置校验从 `requires status==="paused"`（workflow-run.ts:222-224）改为 `status==="running" && runtime===undefined`；构造函数 `validateInvariants` 的 I1 构造期检查（:127-132）改为构造期跳过 I1（I1 完整校验移 assignRuntime 末尾——否则「构造即 running」撞构造期 I1 fail-fast，任何 run 无法创建）；`deps.runs.set` 从 worker.start 之前移到 assignRuntime 之后（I1 窗口对外不可见 + worker.start 抛错无孤儿注册）。U1 完全不动创建路径（paused 瞬态两步保留，落盘时已是 running）。
+- **被否**：保留 paused 但废弃入口（半吊子：状态还在，守卫还得留）；构造函数直接吃 runtime（makeHandlers 闭包需捕获 run 实例，构造先于 handlers，成循环引用）；U1 改初始 running（撞构造期 I1 fail-fast）。
+- **探针**：⛔ S8 两段式（见 §4：S8a U1 后 pauseRun/resumeRun 清零；S8b U2 后 "paused" 清零）。
 
 #### D-2：session 切换 / kill-9 的统一语义 = 转 failed（有意识的行为变更）
 
 - **选择**：三个落点统一为「非 done 残留 → done,failed」：
-  1. **session 切换/关闭当刻**（session_tree/session_shutdown handler，index.ts:527-545/:594-607）：删除原 pauseRun 调用，改为对每个 running run 直接 `transition("done","failed")` + 落盘（复用 abortRun 的 transition+save 骨架，或抽取「running → done,failed」小 helper 供两个 handler 共用）。字段落点对齐 session_start 恢复先例（index.ts:458-460）：`reason="failed"` + `state.error=<原因串>`，原因串为 session-switch 语义（如 "Session switched: run terminated"）。
-  2. **进程重启后**（session_start 的 loadAll 恢复，index.ts:453-465）：现状已把残留 running 转 failed，逻辑不变。
+  1. **session 切换/关闭当刻**（session_tree handler，index.ts:529-545；session_shutdown handler，:594-619）：删除原 pauseRun 调用，改为调用新增的 lifecycle 导出 **`terminateRunningRuns(deps, reason)`（形态定稿，子文档 F1）**：遍历 running run 逐个 `state.error = reason` → `transition("done","failed")`（内部先 releaseRuntime，A4）→ `await store.save(run)` → `pending:unregister`；**不调 onRunDone**（对齐 session_start 恢复先例 index.ts:456-465——主 agent 已离开本 session，注入完成通知无意义）；per-run try/catch 单个失败不中断其余。原因串两场景区分（事后审计）：`"Session switched: run terminated"` / `"Session shutdown: run terminated"`。
+  2. **进程重启后**（session_start 的 loadAll 恢复，index.ts:456-465）：现状已把残留 running 转 failed，逻辑不变。
   3. **快照格式**：paused 状态随状态机删除，SNAPSHOT_VERSION bump（D-5）。
-- **依据**：这是**行为变更**——现状 session 切换是 pauseRun 挂起落盘、paused 可 resume 续跑（replay 保住已完成调用）；删除后 running run 直接 failed、token 投入作废。变更已确认接受（§3.2 边界声明）。与 kill-9 语义统一后，「跨 session 存续」不再有任何形态。
+- **依据**：这是**行为变更**——现状 session 切换是 pauseRun 挂起落盘、paused 可 resume 续跑（replay 保住已完成调用）；删除后 running run 直接 failed、token 投入作废。变更已确认接受（§3.2 边界声明）。与 kill-9 语义统一后，「跨 session 存续」不再有任何形态。不复用 abortRun 因其附带 onRunDone（lifecycle.ts:392）——session 切换路径不应对已离开的 session 注入通知，两形态是行为分歧而非实现细节。
 - **被否**：保留「session 切换时挂起」的过渡形态（与删 paused 态矛盾）；session_tree 静默跳过（跨 session 幽灵 running，S8 grep 断言通过后此缺口仍无人决策）。
 - **探针**：⛔ S3：kill -9 与 session 切换双场景断言列表无 running/paused 幽灵；切换回原 session 后 run 显示 failed。
 
 #### D-3：worker 崩溃重试保留，discardInFlightCalls 重新定位
 
-- **选择**：error-recovery 的重试矩阵（worker error 与 script error 分账各 3 次、指数退避、rebuildRuntime）**原样保留**；calls Map replay 保留（重试重建后重跑脚本时命中缓存）。`discardInFlightCalls`（lifecycle.ts:288）**保留但改调用点与注释**：它清的是「重建前被 abort 的在飞 call 的假 failed 缓存」——该场景在崩溃重试的 rebuildRuntime 前同样存在（旧 runtime 的 controller.abort() 使在飞 executeAgentCall 以 failed 入缓存），与 pause 无关；注释中的 MUST_FIX (round-4 #1) 标记随 pause 场景消失而移除，改写为崩溃重建的正式步骤。
+- **选择**：error-recovery 的重试矩阵（worker error 与 script error 分账各 3 次、指数退避、rebuildRuntime）**原样保留**；calls Map replay 保留（重试重建后重跑脚本时命中缓存）。`discardInFlightCalls`（lifecycle.ts:288）**从 lifecycle.ts 移入 error-recovery.ts（模块级私有），调用点唯一且定稿（子文档 F2）：`rebuildRuntime` 内 `run.replaceRuntime(...)` 之后同步调用（无 await 间隔）**。时序窗口论证：replaceRuntime 同步 abort 旧 controller + terminate 旧 worker；在飞 executeAgentCall 的 finalize 发生在 `await runner.run` resolve 后的 microtask——同步点在飞 call 仍为 running/pending，`status !== "done"` 过滤精确命中。放退避 delay 之前会误删退避期间自然完成的真结果（重跑重复耗 token，直接违反 S7 断言）；放任何 await 之后假失败已 finalize 挡不住 replay。注释中的 MUST_FIX (round-4 #1) 标记随 pause 场景消失而移除，改写为崩溃重建的正式步骤。
 - **依据**：§3.2 方案 C 的否决理由；discard 的语义内核（「abort 产生的 failed 不是真实结果」）在崩溃重建路径独立成立。
 - **被否**：随 pause 一起删 discard（崩溃重建后 replay 命中假失败 → 场景 E 变成「崩溃一次 = 在飞调用永远 failed」）。
 - **探针**：⛔ S7：注入 worker 崩溃，断言已完成 call 不重复消耗 token、在飞 call 重跑而非 replay 假失败。
@@ -210,24 +218,24 @@
 #### D-4：接口面清除（工具 / 命令 / 视图 / GUI）
 
 - **选择**：
-  - `index.ts`（pauseRun 的两个程序化调用方）：session_tree handler（:538）与 session_shutdown handler（:607）的 pauseRun 调用替换为 D-2 的「running → done,failed + 落盘」helper；注释同步重写（「切分支前 pause」→「切分支前终止」）。
-  - `tool-workflow.ts`：action enum 删 pause/resume（:57-59/:64-66），保留 run/status/abort；`runId` 参数描述从 "Workflow run ID (pause/resume/abort)" 改 "abort action"；工具 description 增加一次性语义声明（runs are one-shot; abort is the only early-stop）。
-  - `commands.ts` / `command-actions.ts`：/workflows 删除 pause|resume verb（:76-78 补全、:83 解析、:105-107 case），保留 `[runId]` 打开与 `abort <runId>`；报错文案带恢复指引（§3.1 场景 D）。
-  - `WorkflowsView.ts`：ViewActions 删 pause/resume（:129-130），按键分支（:435-446/:696-698）只留 abort；详情状态行无 paused。
-  - `gui-mappers.ts`：mapRunStatus 删 paused 分支（:34 注释同步）；RunStatus 类型收窄。
+  - `index.ts`（pauseRun 的两个程序化调用方）：session_tree handler（:538）与 session_shutdown handler（:607）的 pauseRun 调用替换为 D-2 定稿的 `terminateRunningRuns` helper；注释同步重写（「切分支前 pause」→「切分支前终止」）。
+  - `tool-workflow.ts`：action enum 删 pause/resume（WorkflowAction :54-59 与 WORKFLOW_ACTIONS :61-67 同步），保留 run/status/abort；`runId` 参数描述（:83）改 "abort action"；description/promptGuidelines 补一次性语义 + 预防性指引（F3）。**错误文案机制定稿（子文档 F3）**：enum 收窄后 LLM 调 pause 由 pi 核心 `validateToolArguments` 在 execute 前拦截（`Validation failed for tool "workflow"`），扩展不可定制该文案——接受此行为，恢复指引前置到 description。
+  - `commands.ts` / `command-actions.ts`：/workflows 删除 pause|resume verb（:76-78 补全、:83 判定、:105-107 case），保留 `[runId]` 打开与 `abort <runId>`；command-actions.ts 新增 `REMOVED_LIFECYCLE_VERBS`（{"pause","resume"}），命中返回 `{action:"lifecycle-removed", verb}`，commands.ts RPC 分支输出定制提示（§3.1 场景 D 定稿文案）——命令解析在扩展自己的代码内，可定制。
+  - `WorkflowsView.ts`：ViewActions 删 pause/resume（:129-130），按键分支（:433-446/:696-698）只留 abort；详情状态行无 paused。
+  - `gui-mappers.ts` / `views/format.ts`：mapRunStatus 删 `includes("paused")`（:44）、mapRunIcon 同（:69）；format.ts 状态徽章删 `case "paused"`（:88）。
 - **依据**：G3 语义诚实；接口面是「能力宣传」，删能力必须删宣传，否则 LLM 按 description 调 pause 得到运行时错误（体验断层）。
 - **探针**：⛔ S4：真实工具调用 pause → 结构化错误 + 指引；命令补全无 pause/resume。
 
 #### D-5：快照格式 bump `wf-run-v2`，旧文件静默跳过
 
-- **选择**：`SNAPSHOT_VERSION` 从 `wf-run-v1` bump `wf-run-v2`（快照 status 枚举收窄为 running/done）；旧 v1 文件 loadAll 静默跳过——沿用现状 D-5 的不兼容策略（jsonl-run-store.ts:61-65 注释已确立「升级格式时 bump + 旧文件跳过」先例）。**边界声明**：v1 running 残留（kill-9 后未重开同 session）跳过 = 静默消失不显示（不转 failed）——概率低（bump 前最后窗口）、损失为一条历史失败记录的显示差异，接受。**快照内容本身不瘦身**（calls/trace 明细保留——TUI 运行中观测用；磁盘瘦身无收益，run 目录随 session-file-gc 的 30 天 TTL 清理）。
+- **选择**：`SNAPSHOT_VERSION` 从 `wf-run-v1` bump `wf-run-v2`（快照 status 枚举收窄为 running/done）；**`meta.pausedAt` 字段随 v2 删除**（workflow-run.ts:53-54 定义、jsonl-run-store.ts:205 反序列化重建、序列化投影三处同步——死字段不留，旧 v1 整体跳过无兼容负担）；旧 v1 文件 loadAll 静默跳过——沿用现状 D-5 的不兼容策略（jsonl-run-store.ts:61-65 注释已确立「升级格式时 bump + 旧文件跳过」先例）。**边界声明**：v1 running 残留（kill-9 后未重开同 session）跳过 = 静默消失不显示（不转 failed）——概率低（bump 前最后窗口）、损失为一条历史失败记录的显示差异，接受。**快照内容本身不瘦身**（calls/trace 明细保留——TUI 运行中观测用；磁盘瘦身无收益，run 目录随 session-file-gc 的 30 天 TTL 清理）。
 - **依据**：格式收窄与 bump 是同一变更的原子两半；不引入迁移逻辑（旧 run 早已终态，跳过零损失）。
 - **被否**：保留 v1 兼容读（为早已终态的历史 run 写迁移代码，纯成本）。
 - **探针**：⛔ S8：升级后启动，旧 v1 文件不崩不显示；新 run 快照为 v2。
 
 #### D-6：文档与注释回写
 
-- **选择**：① `workflows/README.md` 与工具 promptGuidelines 补一次性语义；② lifecycle.ts 头部模块注释（:8-9 的 pauseRun/resumeRun API 说明）重写；③ error-recovery.ts:151 的「时间预算静默失效（直到 pause/resume 才重排）」等 paused 相关注释清除；④ models 文件注释同步：run-runtime.ts:27（「lifecycle pauseRun 传 "pause"」）、budget.ts:103（「runWorkflow/resumeRun 内 setTimeout」）、trace.ts:156（「仅 lifecycle.pauseRun 清理」）；⑤ index.ts:587/:604 的 pause 语义注释重写；⑥ CHANGELOG 记录 breaking change（action enum 收窄是 API 变更）。
+- **选择**：① `workflows/README.md` 与工具 promptGuidelines 补一次性语义；② lifecycle.ts 头部模块注释（:8-9 的 pauseRun/resumeRun API 说明）重写；③ error-recovery.ts:151 的「时间预算静默失效（直到 pause/resume 才重排）」等 paused 相关注释清除；④ models 文件注释同步：run-runtime.ts:27-30（「lifecycle pauseRun 传 "pause"」与 ReleaseMode 定义，随 F8 收窄）、budget.ts:103（「runWorkflow/resumeRun 内 setTimeout」）、trace.ts:156（「仅 lifecycle.pauseRun 清理」）、run-state.ts:25/:28/:34、run-spec.ts:21/:33；⑤ index.ts:587/:604 的 pause 语义注释重写；⑥ CHANGELOG 记录 breaking change（action enum 收窄 + 命令 verb 收窄 + session 切换行为变更 + 快照 v2，四项）。
 - **依据**：项目规则——文档-代码漂移是认知风险源（V4 P5 的同类教训——subagent 侧 v4 收敛时注释与代码漂移导致的一次定位事故）；action enum 收窄影响 LLM 可见 schema，必须在 CHANGELOG 声明。
 - **探针**：⛔ S8 grep：源码注释无「pause/resume」的现役能力描述（历史/迁移说明除外）。
 
@@ -239,33 +247,32 @@
 
 | # | 场景（回溯目标） | 步骤 | 通过标准 |
 |---|---|---|---|
-| S1 | **正常完成回归**（G1） | run chain.js（task="分析当前目录结构"）→ 等完成通知 | status 显示 done/completed；result 含三步产出；stateFile 快照 v2 格式 |
+| S1 | **正常完成回归**（G1） | run chain.js（task="分析当前目录结构"）→ 等完成通知 | status 显示 done/completed；result 含三步产出；stateFile 快照 v2 格式（U2 后断言） |
 | S2 | **主动 abort**（G1/G3） | run review-fix-loop（targetType=text，长任务）→ 进行中 `/workflows abort <runId>` | done/aborted；`ps` 无残留 worker 与 pi 子进程；list 显示 aborted |
 | S3 | **崩溃与 session 切换作废**（G1/G2/G3，D-2 核心） | ① run review-fix-loop → 进行中 `kill -9` 主进程 → 重启同 session；② run review-fix-loop → 进行中切换 session → 切回 | ① 残留 run 显示 done/failed（无 running/paused 幽灵）；含失败原因；list 可打开详情；② 切回后 run 显示 failed 且不可 resume；两场景行为一致 |
-| S4 | **已删能力的错误指引**（G3） | ① 工具调 `{action:"pause",runId}` ② `/workflows pause <id>` | ① 结构化错误「Unknown action "pause". Supported: run, status, abort」+ 👉 指引；② 命令补全/解析无 pause verb，同语义提示 |
-| S5 | **嵌套 workflow 回归**（G1） | 跑一个脚本内 `workflow("chain.js", {...})` 嵌套调用的自定义脚本 | 父子均完成；预算共享不回归（子消耗计入父 budget） |
-| S6 | **预算终态回归**（G1） | run chain.js 带极小 tokens 预算 | done/budget_limited；无 pause 相关分支残留行为 |
-| S7 | **worker 崩溃自愈**（G1/G2，D-3 核心） | 注入点定稿：测试脚本经 `$ARGS` 条件分支触发两类崩溃——① worker 异常退出：脚本内 `process.exit(1)`（worker thread 的 process 全局可用，脚本内联于 worker 代码执行；exit 非零码走 handleWorkerExit → workerErrorCount 重试）；② 脚本错误：顶层 `throw new Error(...)`（buildWorkerScript 的顶层 .catch 转 type:"error" → handleScriptError → scriptErrorCount 重试）。两类分别注入，观察各自 ≤3 次重试 | ≤3 次重试后完成或 failed；**已完成的 agent 调用不重复消耗 token**（对照子进程 session 文件数量/内容）；在飞被 abort 的 call 重跑而非 replay 假失败（discardInFlightCalls 在崩溃重建路径生效） |
-| S8 | **静态断言**（G2/G3，D-1/D-5/D-6） | grep + 启动 | `src/` 无 `pauseRun\|resumeRun` 定义与调用、无 `"paused"` 状态引用（历史注释/CHANGELOG 除外）；旧 v1 快照文件启动不崩不显示；`pnpm extensions:typecheck` / `extensions:lint` / `extensions:test` 全绿 |
+| S4 | **已删能力的错误指引**（G3） | ① 工具调 `{action:"pause",runId}` ② `/workflows pause <id>`（RPC 通道） | ① 结构化错误匹配 `Validation failed for tool "workflow"`（pi 核心 enum 拒绝，F3 定稿）；description 含 one-shot 指引；② 命令输出 removed 提示文案（场景 D 定稿）；命令补全无 pause/resume |
+| S5 | **嵌套 workflow 回归**（G1） | 跑嵌套脚本（`workflow("chain.js", {...})`，脚本模板见实施规格 §3） | 父子均完成；预算共享不回归（子消耗计入父 budget） |
+| S6 | **预算终态回归**（G1） | run chain.js 带极小 tokens 预算（tool 参数 `tokens:N`） | done/budget_limited；无 pause 相关分支残留行为 |
+| S7 | **worker 崩溃自愈**（G1/G2，D-3 核心） | 注入脚本（全文见实施规格 §3：`process.exit(1)` / 顶层 `throw` / `setTimeout` 异步 exit 三路，$ARGS 条件分支）分别注入，观察各自 ≤3 次重试 | ≤3 次重试后完成或 failed；**已完成的 agent 调用不重复消耗 token**（对照子进程 session 文件数量/内容）；在飞被 abort 的 call 重跑而非 replay 假失败（discardInFlightCalls 在崩溃重建路径生效） |
+| S8 | **静态断言**（G2/G3，D-1/D-5/D-6） | grep + 启动 + 三命令 | **S8a（U1 后）**：`src/` 无 `pauseRun\|resumeRun` 定义与调用；`pnpm extensions:typecheck` / `extensions:lint` / `extensions:test` 全绿（"paused" 死值允许，U2 清）。**S8b（U2 后）**：`src/` 无 `"paused"` 状态引用（历史注释/CHANGELOG 除外）；旧 v1 快照文件启动不崩不显示；新 run 快照为 v2；三命令全绿 |
+
+S1-S8 的命令级执行手册（环境模板、注入脚本全文、每步命令与期望输出）见实施规格文档 §3。
 
 ---
 
-## §5 下一层拆分（文件级改动地图）
+## §5 下一层拆分（unit 划分，文件级改动规格见实施规格文档）
 
-按「可独立 commit、独立验收」拆 4 个单元，依赖关系：U1 是核心（U2/U3 依赖其状态定义），U4 最后。
+**拆分策略（定稿，子文档 F5）**：两阶段垂直切分——U1 = 行为删除（RunStatus 类型暂留 "paused" 死值，无写入者无消费者，编译全绿）；U2 = 类型与持久化收窄（删死值 + 快照 v2）。**为什么不能按原 U1/U2/U3 直拆**：RunStatus 类型收窄的一瞬间，WorkflowsView 的 `=== "paused"` 比较（:438/:446/:696）等消费点全部编译断——「先删行为、后收窄类型」是让每个 commit 都独立全绿的唯一拆法。三个 unit 全串行（lifecycle.ts 等文件被 U1/U2 先后触碰，领地交叉不并行）。
 
-| 单元 | 内容 | 文件 | 验收 | justification |
+| 单元 | 内容 | 源码文件 | 测试文件 | 验收 |
 |---|---|---|---|---|
-| **U1 状态机核** | WorkflowRun 删 paused；构造与 assignRuntime 契约调整（创建即 running，撞 paused 前置校验的改动点，D-1 契约调整）；删 pauseRun/resumeRun；error-recovery 4 处执行级 paused 守卫 + 注释分支简化为 isTerminal 单判据（含 lifecycle:374 防御分支、scheduleRebuild:736 重检）；discardInFlightCalls 挪入崩溃重建路径 + 注释重写（移除源码 MUST_FIX (round-4 #1) 标记）；时间预算 timer 删 paused 重排分支 | `orchestration/lifecycle.ts`、`orchestration/models/workflow-run.ts`（状态定义与契约所在）、`orchestration/error-recovery.ts` | S1/S2/S7 + S8 grep | 核心语义变更，单独成 commit 便于回滚；replay 机制在此单元内验证保留（S7） |
-| **U2 持久化** | SNAPSHOT_VERSION bump v2；快照 status 枚举收窄；deserializeRun 适配；旧 v1 文件跳过（D-5）；loadAll 恢复语义保持现状（D-2 落点 2 已在 index.ts，无需改） | `orchestration/jsonl-run-store.ts` | S3 + S8（旧文件） | 依赖 U1 的状态定义；格式变更是独立可验证单元 |
-| **U3 接口面 + 生命周期 handler** | index.ts session_tree/session_shutdown 两处 pauseRun 替换为「running → done,failed + 落盘」helper（D-2 落点 1）；tool-workflow action enum + description；commands verb/补全/case；command-actions 纯函数；WorkflowsView ViewActions/按键；gui-mappers 状态映射；类型收窄 | `index.ts`、`interface/tool-workflow.ts`、`interface/commands.ts`、`interface/command-actions.ts`、`interface/views/WorkflowsView.ts`、`interface/gui-mappers.ts` | S4 + S1 + S3② | 依赖 U1 的函数删除；对外 API 变更单独成 commit 便于 CHANGELOG 对应 |
-| **U4 文档** | workflows/README.md、promptGuidelines、模块头注释、CHANGELOG（breaking） | `workflows/README.md`、`interface/tool-workflow.ts`（description 部分若 U3 未含）、CHANGELOG.md | S8 | 最后做，核对代码终态后回写，防漂移 |
+| **U1 行为删除** | 删 pauseRun/resumeRun + 全部调用点（含 commands.ts openView 的 ViewActions 注入 :218-219）；terminateRunningRuns 新增（D-2）；discardInFlightCalls 移入 error-recovery + rebuildRuntime 落点（D-3）；**创建路径不动**（F4 两段归位——「创建即 running」属 U2）；4 处守卫简化 isTerminal；接口面清除（enum/verb/补全/按键/文案 F3） | `orchestration/lifecycle.ts`、`orchestration/error-recovery.ts`、`index.ts`、`interface/tool-workflow.ts`、`interface/commands.ts`、`interface/command-actions.ts`、`interface/views/WorkflowsView.ts` | `lifecycle.test.ts`（删两 describe + 新增 terminateRunningRuns 套件）、`error-recovery-handlers.test.ts`、`error-recovery-workflow-call.test.ts`、`launcher-nested-workflow.test.ts`、`workflow-nesting-e2e.test.ts`、`command-handlers.test.ts`、`index-session-start.test.ts`（W2TC16 重写） | S1（无 v2 断言）+ S2 + S4 + S7 + S8a |
+| **U2 类型与持久化收窄** | RunStatus 两态（`models/types.ts`——状态定义所在）；**创建即 running**（构造 I1 调整 + assignRuntime 校验 + runs.set 后移 + release("terminal")，F4 第二段/F8）；meta.pausedAt 删（D-5/F6）；ReleaseMode 收窄（F8）；SNAPSHOT_VERSION v2 + deserializeRun 适配 + v1 跳过注释；WorkflowToolDetails 死类型收窄（tool-workflow.ts:232/:286-288，与 gui.test.ts 同 unit）；gui-mappers/format 死分支清理；models 注释清理 | `orchestration/models/types.ts`、`models/workflow-run.ts`、`models/run-runtime.ts`、`models/run-state.ts`、`models/run-spec.ts`、`orchestration/lifecycle.ts`（仅创建路径）、`orchestration/jsonl-run-store.ts`、`interface/tool-workflow.ts`（仅死类型）、`interface/gui-mappers.ts`、`interface/views/format.ts` | `jsonl-run-store-session-file.test.ts`（paused 快照用例改 v1 跳过 + v2 断言新增）、`gui.test.ts`、`WorkflowsView-signature.test.ts`、`crash-recovery.test.ts` | S3 + S5 + S6 + S8b |
+| **U3 文档回写** | README、promptGuidelines 终稿核对、CHANGELOG（breaking ×4）、源码注释残余 grep 清零 | `workflows/README.md`、`CHANGELOG.md`、`interface/tool-workflow.ts`（description 复核） | — | S8b 注释 grep 复跑 |
 
-**待验证检查点**（实施期确认，设计阶段诚实标注）：
+依赖：U1 → U2 → U3 全串行。每个 unit 的逐文件改动表、测试逐条处置、验收命令级手册见 [workflow-one-shot-lifecycle-impl-spec.md](workflow-one-shot-lifecycle-impl-spec.md)——**它是实施与验收的唯一权威输入**。
 
-1. S7 注入点已定稿且源码核实可达（§4 S7：`process.exit(1)` / 顶层 `throw` 两路；worker-script-builder.ts 用 `new Worker(code, {eval:true})` 内联执行、无沙箱层，worker thread 的 process 全局标准可用）。
-2. D-2 落点 1 的 helper 形态（复用 abortRun 的 transition+save 骨架 vs 抽取新 helper——以不引入循环依赖为准）。
-3. `executeNestedWorkflow` 的轮询路径是否引用 paused 态（grep 未命中，实施时编译期确认）。
+**原「待验证检查点」全部关闭**：① S7 注入点已定稿且脚本全文在实施规格 §3（三路注入含「在飞时崩溃」的 setTimeout 异步构造）；② helper 形态已定稿 terminateRunningRuns（F1，含完整副作用清单）；③ executeNestedWorkflow 无 paused 引用已经 grep 实证（launcher.ts pollRunToResult/runAndWait 路径零命中，子文档 F9）。
 
 ---
 
