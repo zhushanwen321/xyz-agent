@@ -4,12 +4,14 @@
  * renderer 旧消费方（MessageStream.vue / Turn.vue 等）零改动继续从此 import。
  * shim 留至 P6 清尾删。
  */
-export type { MessageTurn, RenderItem, OrderedBlock } from '@xyz-agent/core/domain/chat'
+export type { MessageTurn, RenderItem, OrderedBlock, TurnRenderCache } from '@xyz-agent/core/domain/chat'
 export {
   renderKey,
   filterDisplayableMessages,
   groupTurns,
   toRenderItems,
+  toRenderItemsIncremental,
+  createTurnRenderCache,
   countThinking,
   countToolCalls,
   hasFailedTool,

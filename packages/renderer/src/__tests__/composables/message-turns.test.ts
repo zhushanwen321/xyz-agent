@@ -21,6 +21,8 @@ import {
   filterDisplayableMessages,
   renderKey,
   toRenderItems,
+  toRenderItemsIncremental,
+  createTurnRenderCache,
 } from '@/composables/logic/messageTurns'
 import type { Message } from '@xyz-agent/shared'
 import type { RenderItem } from '@/composables/logic/messageTurns'
@@ -443,5 +445,25 @@ describe('toRenderItems kind 全集现算（renderer-model M1）', () => {
     expect([...kinds].sort()).toEqual(['bashExecution', 'systemNotice', 'turn'])
     // 组件映射表 keys 与 kind 全集一致（无多余/缺失分支，与 MessageStream 查表对齐）
     expect(Object.keys(KIND_COMPONENT_MAP).sort()).toEqual(['bashExecution', 'systemNotice', 'turn'])
+  })
+})
+
+describe('W21 re-export —— D-4 增量函数经 renderer shim 可导入（perf plan minor 消化）', () => {
+  // MessageStream 消费的 toRenderItemsIncremental / createTurnRenderCache / TurnRenderCache
+  // 必须经本 shim（renderer 旧消费方统一 import 路径）re-export 自 core SSOT。
+  it('toRenderItemsIncremental/createTurnRenderCache 可导入且行为等价全量版 + 快路径引用恒等', () => {
+    expect(typeof toRenderItemsIncremental).toBe('function')
+    expect(typeof createTurnRenderCache).toBe('function')
+    const cache = createTurnRenderCache()
+    const msgs: Message[] = [
+      makeMsg({ id: 'u1', role: 'user', content: 'q' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r' }),
+      bashMsg('bash-1'),
+    ]
+    const r1 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
+    expect(r1).toEqual(toRenderItems(filterDisplayableMessages(msgs), false))
+    // 同源数组引用二次调用 → 快路径零重算（引用恒等）
+    const r2 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
+    expect(r2).toBe(r1)
   })
 })

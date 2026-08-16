@@ -157,7 +157,9 @@ import { Virtualizer, type VirtualizerHandle } from 'virtua/vue'
 import { useChatStore } from '@/stores/chat'
 import { useVirtuaFollow } from '@/composables/panel/useVirtuaFollow'
 import { useConstantHeightAssert } from '@/composables/panel/useConstantHeightAssert'
-import { toRenderItems, filterDisplayableMessages, renderKey } from '@/composables/logic/messageTurns'
+import { toRenderItemsIncremental, createTurnRenderCache, filterDisplayableMessages, renderKey } from '@/composables/logic/messageTurns'
+import type { TurnRenderCache } from '@/composables/logic/messageTurns'
+import { useSessionScopedState } from '@/composables/useSessionScopedState'
 import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubagentStore } from '@/stores/subagent'
 // [w6 chat-ui-and-shell T6] chat 展示组件迁 @xyz-agent/ui/features/chat，壳层经
 // ChatViewDeps inject token 注入 store/composable 依赖（TD3 inject 裁决）。
@@ -204,10 +206,27 @@ const forceWorking = computed(() => {
  *  ask-user（waiting）或 subagent 后台跑（working）都保持 true → 对话流不收起（M3 修复）。 */
 const isSessionActive = useSessionActive(sessionId, forceWorking)
 
-/** 扁平消息 → 渲染项（turn + system 提示行穿插，纯函数）。
- *  filterDisplayableMessages 过滤 display:false 的 custom message（ADR-0041，读 display 字段非黑名单）。 */
+/** [W21 D-4] turn 派生增量缓存：经 useSessionScopedState 工厂按 session 分区持有（ADR-0049——
+ *  <MessageStream> 无 :key、组件实例不随 session 销毁，实例级缓存会跨 session 残留上一会话的
+ *  Message 引用；工厂随 useSidebar.deleteSession → triggerSessionCleanups 自动释放分区）。
+ *  分区值是 shallowRef 包裹的 mutable 纯派生缓存：toRenderItemsIncremental 原地 mutate 更新，
+ *  该 mutate 从不触发下游（renderItems 失效由 currentMessages/forceWorking 驱动），shallowRef
+ *  只为满足工厂「init 返回 reactive 容器」契约且避免深代理缓存内的 Message 引用。 */
+const turnCacheState = useSessionScopedState(
+  sessionId,
+  () => shallowRef<TurnRenderCache>(createTurnRenderCache()),
+)
+
+/** 扁平消息 → 渲染项（增量版，08 §3.3.1 D-4：历史 turn 按成员消息身份复用，流式追加
+ *  只重建末位 turn → 视口内历史 Turn 不被 patch）。filterDisplayableMessages 过滤
+ *  display:false 的 custom message（ADR-0041）；快路径（源数组引用未变）跳过 filter。 */
 const renderItems = computed(() =>
-  toRenderItems(filterDisplayableMessages(currentMessages.value), forceWorking.value),
+  toRenderItemsIncremental(
+    currentMessages.value,
+    filterDisplayableMessages,
+    forceWorking.value,
+    turnCacheState.current.value.value, // 双层 .value：分区 shallowRef → TurnRenderCache
+  ),
 )
 
 /** 渲染项里最后一个 turn（streaming 滚动判定 + hasWorkingTurn 派生用）。 */

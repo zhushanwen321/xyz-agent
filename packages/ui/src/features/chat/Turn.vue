@@ -53,10 +53,24 @@
           @toggle="onToggleTakeover"
         />
         <!-- 单层 v-for 渲染窗口 visible 块。:key=flatIndex（拍平后全 turn 一维稳定序号，跨 assistant 连续）。
-             Block props 透传：从 FlatBlock 解出 kind/ref + 所属 assistant 的 status/error（D8 Block.vue 零改动）。 -->
+             Block props 透传：从 FlatBlock 解出 kind/ref + 所属 assistant 的 status/error（D8 Block.vue 零改动）。
+             [W21 D-4] Block 级 v-memo：deps = [块身份/内容引用, assistant 状态, thinking store 折叠态, assistant error]。
+             fb.block.ref 即「身份+内容」——text 是 normalizeContent 字符串、thinking/tool 是块对象引用
+             （D-1 不可变语义下内容/status/id 变化 = 新对象替换，引用入键即覆盖 08 §3.3.1 键清单的
+             thinking.id / tool.id / content / tool.status）；working/streaming 由 assistantStatus 派生。
+             刻意不含 Block 本地折叠 ref（thinkingCollapsed/toolCollapsed）——v-memo deps 在父组件渲染
+             作用域求值，无法引用子组件私有 ref；折叠由 Block 自身响应式驱动（实例经 :key 保活，
+             v-memo 不 gate 子组件内部更新）。sessionId 不入键：跨 session 时 renderKey 不同 →
+             Turn 实例整体重建，不存在同实例跨 session 复用。 -->
         <Block
           v-for="fb in visibleBlocks"
           :key="fb.flatIndex"
+          v-memo="[
+            fb.block.ref,
+            fb.assistantStatus,
+            fb.block.kind === 'thinking' ? (fb.block.ref as ThinkingBlock).collapsed : undefined,
+            assistantById.get(fb.assistantId)?.error,
+          ]"
           :type="fb.block.kind"
           :content="fb.block.kind === 'text' ? (fb.block.ref as string) : fb.block.kind === 'thinking' ? (fb.block.ref as ThinkingBlock).content : undefined"
           :tool="fb.block.kind === 'tool' || fb.block.kind === 'agentgraph' ? (fb.block.ref as ToolCall) : undefined"

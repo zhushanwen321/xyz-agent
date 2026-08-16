@@ -90,61 +90,220 @@ export function groupTurns(messages: Message[]): MessageTurn[] {
     .map((item) => item.turn)
 }
 
+// ── D-4 turn 派生增量（08-render-layer §3.3.1，perf W21）──────────────────────────
+
+/**
+ * turn 派生增量缓存（D-4）。复用键 = turn 成员消息的对象引用序列——直接消费 D-1 的
+ * 不可变消息身份（成员引用未变 = 成员内容未变，含 status/thinking/toolCalls/error），
+ * 无第二份状态、无脆弱文本 hash（被否方案见 08 §3.2 D-4 对比表）。
+ *
+ * 缓存归属：纯派生数据、可随时丢弃重建（无 drift 风险）。调用方（MessageStream）经
+ * useSessionScopedState 工厂按 session 分区持有（ADR-0049——组件实例不随 session 销毁，
+ * 实例级缓存会跨 session 残留上一会话的 Message 引用），session 销毁经工厂 cleanup 释放。
+ */
+export interface TurnRenderCache {
+  /** 快路径键 = 源数组引用（NOT filter 产物——filter 每调用产出新数组，键其上恒 miss）。
+   *  D-1 容器范式下源数组（per-sid 分区数组）commit 才替换引用：引用未变 = 本 sid 无新 commit。 */
+  lastSourceRef: Message[] | null
+  /** 每个 turn 的成员引用签名（[user, ...assistants]；首条 assistant 自启 turn 无 user 位），
+   *  与 turnObjects 一一对应 */
+  turnSignatures: Message[][]
+  /** 与 turnSignatures 一一对应：上次产出的 MessageTurn（复用载体） */
+  turnObjects: MessageTurn[]
+  /** 上次整体产出（快路径直接复用；含非 turn 项——systemNotice/bashExecution 一并缓存） */
+  cachedItems: RenderItem[]
+}
+
+/** 创建空缓存。toRenderItemsIncremental 原地 mutate 更新（不替换缓存对象），调用方 init 时创建一次。 */
+export function createTurnRenderCache(): TurnRenderCache {
+  return { lastSourceRef: null, turnSignatures: [], turnObjects: [], cachedItems: [] }
+}
+
+/** 分组中间结构：一个「turn」的成员组（user 起点或 assistant 自启） */
+interface TurnGroup {
+  user: Message | null
+  assistants: Message[]
+}
+
+/** 渲染槽位：turn 槽位引用 groups 下标；system 类直接产出静态项（不参与 turn 复用） */
+type GroupSlot = { slot: 'turn'; group: number } | { slot: 'static'; item: RenderItem }
+
+/**
+ * 扁平消息 → 渲染槽位序列 + turn 成员组。分组规则见文件头「分组规则」节。
+ * toRenderItems（全量版）与 toRenderItemsIncremental（增量版）共享的分组 SSOT——
+ * 两处分组逻辑漂移会导致增量输出与全量输出不等价。
+ */
+function groupRenderInput(messages: Message[]): { slots: GroupSlot[]; groups: TurnGroup[] } {
+  const slots: GroupSlot[] = []
+  const groups: TurnGroup[] = []
+  let current: TurnGroup | null = null
+  for (const msg of messages) {
+    if (msg.role === 'user') {
+      current = { user: msg, assistants: [] }
+      groups.push(current)
+      slots.push({ slot: 'turn', group: groups.length - 1 })
+    } else if (msg.role === 'assistant') {
+      if (!current) {
+        current = { user: null, assistants: [] }
+        groups.push(current)
+        slots.push({ slot: 'turn', group: groups.length - 1 })
+      }
+      current.assistants.push(msg)
+    } else {
+      current = null
+      slots.push({
+        slot: 'static',
+        item: msg.bashExecution
+          ? { kind: 'bashExecution', message: msg }
+          : { kind: 'systemNotice', message: msg },
+      })
+    }
+  }
+  return { slots, groups }
+}
+
+/** turn 派生字段：isStreaming（turn 级「文本正在流式生成」，仅末位 turn 可为 true） */
+function computeIsStreaming(
+  assistants: Message[],
+  isLastTurn: boolean,
+  forceWorking: boolean,
+): boolean {
+  if (!isLastTurn) return false
+  const last = assistants[assistants.length - 1]
+  return forceWorking || last?.status === 'streaming'
+}
+
+/** turn 派生字段：是否含可折叠块（thinking/toolCalls） */
+function computeHasFoldable(assistants: Message[]): boolean {
+  return assistants.some(
+    (m) => (m.thinking?.length ?? 0) > 0 || (m.toolCalls?.length ?? 0) > 0,
+  )
+}
+
+/** 签名相等 = 长度相同且逐成员引用相等（自启 turn 无 user 位，序列天然对齐） */
+function signatureEquals(a: Message[], b: Message[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
+}
+
+/**
+ * 快路径（源数组引用未变 = 本 sid 无新 commit）：按当前 forceWorking 重驱动末位 turn 的
+ * isStreaming——subagent forceWorking 翻转（subagentStore.isRunning）在源数组不变时触发本函数。
+ * 期望值未变 → cachedItems 引用恒等返回（零重算）；变化 → 不可变替换末位 turn 对象
+ * （不原地改，历史 turn 与其余项全部复用）并同步缓存自洽。
+ */
+function redriveLastTurnStreaming(cache: TurnRenderCache, forceWorking: boolean): RenderItem[] {
+  const items = cache.cachedItems
+  let lastTurnItemIdx = -1
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i].kind === 'turn') {
+      lastTurnItemIdx = i
+      break
+    }
+  }
+  const lastTurnItem = lastTurnItemIdx >= 0 ? items[lastTurnItemIdx] : null
+  // 无 turn（cachedItems 空或全 static 项）：static 项不依赖 forceWorking，恒等复用
+  if (!lastTurnItem || lastTurnItem.kind !== 'turn') return items
+  const expected = computeIsStreaming(lastTurnItem.turn.assistants, true, forceWorking)
+  if (lastTurnItem.turn.isStreaming === expected) return items
+  const replacement: MessageTurn = { ...lastTurnItem.turn, isStreaming: expected }
+  const nextItems = items.slice()
+  nextItems[lastTurnItemIdx] = { kind: 'turn', turn: replacement }
+  cache.cachedItems = nextItems
+  // items 中最后一个 turn 槽位恒对应 turnObjects 末位（分组顺序一致）；签名未变只换对象
+  if (cache.turnObjects.length > 0) {
+    const nextObjects = cache.turnObjects.slice()
+    nextObjects[nextObjects.length - 1] = replacement
+    cache.turnObjects = nextObjects
+  }
+  return nextItems
+}
+
+/**
+ * 增量派生版 toRenderItems（D-4）：以「成员消息对象引用序列」为复用键。
+ * - 快路径：源数组引用未变 → 零重算（仅按 forceWorking 重驱动末位 isStreaming）
+ * - 重扫：源数组引用变化 → filter 后重分组，同位置签名对齐的 turn 复用上次对象，
+ *   只重建成员变化的 turn。首版只做同位置匹配（位置平移的 turn 重算，成本 O(turn 数)，
+ *   可接受——08 §3.3.1 失效条件 2）。非 turn 项在重扫路径重建（构造便宜、数量少），
+ *   经 cachedItems 随快路径整体复用。
+ * - 上次末位 turn 的 streaming 态在末位地位变化时过期（如追加新 turn），复用分支
+ *   按「期望 isStreaming」校正——不一致时不可变替换。
+ *
+ * @param sourceMessages 源消息数组（per-sid 分区数组，非 filter 产物）
+ * @param filter 现状 filterDisplayableMessages（仅重扫路径调用；快路径跳过）
+ * @param forceWorking subagent 虚拟 session 强制 streaming
+ * @param cache 增量缓存；undefined 时退化为全量版（等价现状 toRenderItems）
+ */
+export function toRenderItemsIncremental(
+  sourceMessages: Message[],
+  filter: (msgs: Message[]) => Message[],
+  forceWorking: boolean,
+  cache: TurnRenderCache | undefined,
+): RenderItem[] {
+  if (!cache) {
+    return toRenderItems(filter(sourceMessages), forceWorking)
+  }
+  if (cache.lastSourceRef === sourceMessages) {
+    return redriveLastTurnStreaming(cache, forceWorking)
+  }
+
+  const filtered = filter(sourceMessages)
+  const { slots, groups } = groupRenderInput(filtered)
+  const lastGroupIdx = groups.length - 1
+  const turnObjects: MessageTurn[] = new Array<MessageTurn>(groups.length)
+  const signatures: Message[][] = new Array<Message[]>(groups.length)
+
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i]
+    const sig: Message[] = g.user ? [g.user, ...g.assistants] : g.assistants.slice()
+    signatures[i] = sig
+    const prevSig = cache.turnSignatures[i]
+    const prevTurn = cache.turnObjects[i]
+    const isLastTurn = i === lastGroupIdx
+    // 同位置签名逐引用对齐 → 复用上次 turn 对象。成员未变 → hasFoldable/user/assistants
+    // 必然不变，只需校正 isStreaming（末位地位变化 / forceWorking 翻转会让上次值过期）。
+    if (prevTurn && prevSig && signatureEquals(sig, prevSig)) {
+      const expected = computeIsStreaming(g.assistants, isLastTurn, forceWorking)
+      turnObjects[i] =
+        prevTurn.isStreaming === expected ? prevTurn : { ...prevTurn, isStreaming: expected }
+    } else {
+      turnObjects[i] = {
+        index: i + 1,
+        user: g.user,
+        assistants: g.assistants,
+        isStreaming: computeIsStreaming(g.assistants, isLastTurn, forceWorking),
+        hasFoldable: computeHasFoldable(g.assistants),
+      }
+    }
+  }
+
+  const items: RenderItem[] = slots.map((s) =>
+    s.slot === 'turn' ? { kind: 'turn', turn: turnObjects[s.group] } : s.item,
+  )
+
+  cache.lastSourceRef = sourceMessages
+  cache.turnSignatures = signatures
+  cache.turnObjects = turnObjects
+  cache.cachedItems = items
+  return items
+}
+
 export function toRenderItems(
   messages: Message[],
   forceWorking = false,
 ): RenderItem[] {
-  const items: RenderItem[] = []
-  let turnSeq = 0
-  let current: MessageTurn | null = null
-
-  for (const msg of messages) {
-    if (msg.role === 'user') {
-      turnSeq += 1
-      current = {
-        index: turnSeq,
-        user: msg,
-        assistants: [],
-        isStreaming: false,
-        hasFoldable: false,
-      }
-      items.push({ kind: 'turn', turn: current })
-    } else if (msg.role === 'assistant') {
-      if (!current) {
-        turnSeq += 1
-        current = {
-          index: turnSeq,
-          user: null,
-          assistants: [],
-          isStreaming: false,
-          hasFoldable: false,
-        }
-        items.push({ kind: 'turn', turn: current })
-      }
-      current.assistants.push(msg)
-    } else if (msg.role === 'system') {
-      current = null
-      items.push(
-        msg.bashExecution
-          ? { kind: 'bashExecution', message: msg }
-          : { kind: 'systemNotice', message: msg },
-      )
-    }
-  }
-
-  const turnItems = items.filter(
-    (item): item is { kind: 'turn'; turn: MessageTurn } => item.kind === 'turn',
-  )
-  turnItems.forEach(({ turn }, i) => {
-    const last = turn.assistants[turn.assistants.length - 1]
-    const isLast = i === turnItems.length - 1
-    turn.isStreaming = isLast && (forceWorking || last?.status === 'streaming')
-    turn.hasFoldable = turn.assistants.some(
-      (m) => (m.thinking?.length ?? 0) > 0 || (m.toolCalls?.length ?? 0) > 0,
-    )
-  })
-
-  return items
+  const { slots, groups } = groupRenderInput(messages)
+  const turns: MessageTurn[] = groups.map((g, i) => ({
+    index: i + 1,
+    user: g.user,
+    assistants: g.assistants,
+    isStreaming: computeIsStreaming(g.assistants, i === groups.length - 1, forceWorking),
+    hasFoldable: computeHasFoldable(g.assistants),
+  }))
+  return slots.map((s) => (s.slot === 'turn' ? { kind: 'turn', turn: turns[s.group] } : s.item))
 }
 
 /** 统计 turn 内 thinking 块数（折叠条 badge） */
