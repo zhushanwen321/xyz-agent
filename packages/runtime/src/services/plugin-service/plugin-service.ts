@@ -624,6 +624,10 @@ export class PluginService implements IPluginService {
 
   async shutdown(): Promise<void> {
     if (!this.initialized) return
+    // F5：停 timer 前先 flush 全部 dirty sessionData——WriteBackCache 是 per-write
+    // 500ms debounce + 5s 周期 flush，只停 timer 不 flush 会丢最后 ≤500ms 的写入。
+    // flush（同步 atomicWrite）完成后再关停，保证正常退出零丢失。
+    this.sessionDataStore.flushAll()
     this.sessionDataStore.stopFlushTimer()
     this.activator.stopAllWatchers()
     await this.activator.deactivateAll(this.host)

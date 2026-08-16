@@ -13,7 +13,10 @@
  * 运行命令: npx vitest run test/plugin-uninstall-shutdown.test.ts
  */
 
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 import type { PluginRegistry } from '../src/services/plugin-service/plugin-registry.js'
@@ -69,6 +72,7 @@ function internals(service: PluginService): ServiceInternals {
 function createService(opts: {
   descriptor?: PluginDescriptor
   installer?: IPluginInstaller
+  configDir?: string
 } = {}) {
   const broker = createMockBroker()
   const registryMock = {
@@ -78,6 +82,7 @@ function createService(opts: {
   }
   const service = new PluginService(registryMock as unknown as PluginRegistry, broker, {
     pluginInstaller: opts.installer,
+    ...(opts.configDir ? { configDir: opts.configDir } : {}),
   })
   return { service, reg: internals(service), registryMock }
 }
@@ -201,5 +206,52 @@ describe('uninstallPlugin 四缺收口（F2）', () => {
     const activateSpy = vi.spyOn(reg.activator, 'activatePlugin')
     await reg.activator.handleEvent({ type: 'onStartupFinished' }, reg.host)
     expect(activateSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('PluginService.shutdown flush 时序（F5）', () => {
+  let tmpConfigDir: string
+
+  beforeEach(async () => {
+    tmpConfigDir = await mkdtemp(join(tmpdir(), 'plugin-shutdown-flush-'))
+  })
+
+  afterEach(async () => {
+    await rm(tmpConfigDir, { recursive: true, force: true })
+  })
+
+  it('F5-①: flushAll 在 stopFlushTimer 之前完成（停 timer 前冲刷 dirty 数据）', async () => {
+    const { service, reg } = createService({ configDir: tmpConfigDir })
+    reg.initialized = true
+
+    const order: string[] = []
+    reg.sessionDataStore.flushAll = vi.fn(() => { order.push('sessionData.flushAll') })
+    reg.sessionDataStore.stopFlushTimer = vi.fn(() => { order.push('sessionData.stopFlushTimer') })
+    // storage 未 init（cache null 会 NPE），stub 掉——F5 断言对象是 sessionDataStore
+    reg.storage.flushAll = vi.fn(() => { order.push('storage.flushAll') })
+
+    await service.shutdown()
+
+    expect(order).toEqual([
+      'sessionData.flushAll',
+      'sessionData.stopFlushTimer',
+      'storage.flushAll',
+    ])
+  })
+
+  it('F5-②: shutdown 前 500ms debounce 窗口内的 sessionData 落盘（用户可见：文件存在且内容正确）', async () => {
+    const { service, reg } = createService({ configDir: tmpConfigDir })
+    reg.initialized = true
+    reg.storage.flushAll = vi.fn(() => {})
+
+    // 写入后立即 shutdown——不 flush 的话 per-write 500ms debounce 内的写入会丢
+    reg.sessionDataStore.set('session-1', 'lastKey', 'lastValue')
+
+    await service.shutdown()
+
+    const flushed = JSON.parse(
+      await readFile(join(tmpConfigDir, 'session-data', 'session-1.json'), 'utf-8'),
+    ) as Record<string, unknown>
+    expect(flushed['lastKey']).toBe('lastValue')
   })
 })

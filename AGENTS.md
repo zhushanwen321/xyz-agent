@@ -315,7 +315,7 @@ lsof -i :1420 -P | grep node
 - **Worker Thread 隔离**: 每个插件运行在独立的 Worker Thread 中。插件崩溃不影响其他插件或主进程
 - **Hook 串行执行**: executeHooks 按 priority 排序串行 invoke 每个 handler。单个 handler 超时 5s 视为放行。blocked 终止链
 - **Tool RPC 路由**: handleBridgeToolExecute 通过 toolRegistry 查找 → Worker RPC invoke（超时 30s）→ 返回结果。不是 stub
-- **sessionData 缓存**: 读取走内存缓存，写入先缓存再 5s 定时 flush。Plugin deactivate 时强制 flush。容量上限 10MB/plugin
+- **sessionData 缓存**: 读取走内存缓存，写入先缓存（per-write 500ms debounce + 5s 周期 flush），runtime shutdown 时先 flushAll 再停 timer（正常关停零丢失）。容量上限 10MB/plugin
 - **Hot Reload**: 外部插件通过 fs.watch 监听（300ms debounce）。built-in 插件不监听
 - **WS 命名约定**: Client→Server 用点号（`plugin.xxx`），Server→Client 用冒号+camelCase（`plugin:statusBarUpdate`）
 - **Plugin Store**: 前端使用 `stores/plugin.ts` + `composables/usePlugin.ts` 管理 plugin 状态和 WS 事件
