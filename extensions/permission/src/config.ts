@@ -17,6 +17,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
 	clearConfigCache,
@@ -50,6 +51,20 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const THINKING_LEVELS: ReadonlySet<string> = new Set([
+	"off",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+]);
+
+function isModelThinkingLevel(value: unknown): value is ModelThinkingLevel {
+	return typeof value === "string" && THINKING_LEVELS.has(value);
+}
+
 function normalizeClassifierConfig(raw: unknown): ClassifierConfig {
 	const record = isPlainObject(raw) ? raw : {};
 	const timeout = Number(record.timeout);
@@ -58,12 +73,17 @@ function normalizeClassifierConfig(raw: unknown): ClassifierConfig {
 	if (record.model !== undefined && !(typeof record.model === "string" && record.model.length > 0)) {
 		console.warn("[pi-permission] Ignoring invalid classifier.model (expected string 'auto' or 'provider/model-id'), using default auto");
 	}
+	// thinkingLevel 校验：合法值为 'off'|'minimal'|'low'|'medium'|'high'|'xhigh'|'max'
+	const thinkingLevel = isModelThinkingLevel(record.thinkingLevel)
+		? record.thinkingLevel
+		: DEFAULT_CLASSIFIER_CONFIG.thinkingLevel;
 	return {
 		enabled: record.enabled !== false,
 		model: typeof record.model === "string" && record.model.length > 0 ? record.model : DEFAULT_CLASSIFIER_CONFIG.model,
 		timeout: Number.isFinite(timeout) && timeout > 0 ? timeout : DEFAULT_CLASSIFIER_CONFIG.timeout,
 		autoApproveLowRisk: record.autoApproveLowRisk !== false,
 		autoDenyHighRisk: record.autoDenyHighRisk !== false,
+		thinkingLevel,
 	};
 }
 

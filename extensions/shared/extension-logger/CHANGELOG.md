@@ -12,6 +12,6 @@
 
 - Initial release. Shared logging helper for Pi extensions with three-channel routing:
   - `warn`/`error` → `pi.appendEntry` (audited in session.jsonl, not in LLM context, not shown in TUI)
-  - `debug` → file log at `~/.pi/agent/logs/<extName>-YYYY-MM-DD.log` (only when `PI_EXT_DEBUG=1`, no-op by default)
+  - `debug` → file log at `~/.pi/agent/logs/<extName>-YYYY-MM-DD.log` (only when `XYZ_AGENT_DEBUG=1`, no-op by default)
   - `notify` intentionally not wrapped — UI decision, left to each extension
 - `createLogger(extName, pi?)` for extension init time; `getLogger(extName)` for deep code without `pi` access (global singleton with deferred `setPiHandle`)

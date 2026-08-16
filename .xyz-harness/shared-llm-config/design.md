@@ -665,7 +665,7 @@ interface RenameSessionConfig {
 **通过标准**：
 - session 标题在 1-3 秒更新为简短标题（跟对话内容相关，非默认日期/序号）
 - 抓包/日志确认 rename 的 LLM 调用用的是配置的便宜模型，**不是**主 session 的 Sonnet
-- 日志确认 system prompt 是 rename 专属精简版（几十 token），**不是**整个 agent prompt（可用 `PI_EXT_DEBUG=1` 看 extension 日志，或在 callLLM 加 debug 日志打印 systemPrompt.length）
+- 日志确认 system prompt 是 rename 专属精简版（几十 token），**不是**整个 agent prompt（可用 `XYZ_AGENT_DEBUG=1` 看 extension 日志，或在 callLLM 加 debug 日志打印 systemPrompt.length）
 - ⛔ **探针**：`grep -c` systemPrompt 字符数 < 200（精简 prompt），对比改造前应 > 2000
 
 ### 场景 2：rename model 不可用时静默跳过（验证目标 1 的失败路径）

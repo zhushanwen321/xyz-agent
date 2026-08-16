@@ -93,7 +93,7 @@ describe("parseLogMessages", () => {
 
 	it("非 LLM request 行返回 null", () => {
 		expect(parseLogMessages("[rename-session] t=2026-08-15T03:41:33.287Z skip: count=2")).toBeNull();
-		expect(parseLogMessages("[rename-session] rename with model xiaomi-token-plan-cn/mimo-v2.5-pro")).toBeNull();
+		expect(parseLogMessages("[rename-session] t=2026-08-15T03:41:33.287Z rename with model xiaomi-token-plan-cn/mimo-v2.5-pro")).toBeNull();
 		expect(parseLogMessages("")).toBeNull();
 		expect(parseLogMessages(null)).toBeNull();
 	});

@@ -26,7 +26,7 @@ import { callLLM, resolveModel } from "@zhushanwen/pi-llm-shared";
 import renameSessionExtension from "../index";
 import { type RenameSessionConfig, loadRenameConfig } from "../pure.js";
 
-// 每用例收尾统一还原：console spy 恢复 + stub 的 PI_RENAME_DEBUG 还原，
+// 每用例收尾统一还原：console spy 恢复 + stub 的 XYZ_AGENT_DEBUG 还原，
 // 防泄漏到后续用例（debug 开关 live 读 process.env，依赖 stubEnv/unstubAllEnvs 成对）
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -65,7 +65,7 @@ const ENABLED_CONFIG: RenameSessionConfig = {
 };
 const DISABLED_CONFIG: RenameSessionConfig = {
 	enabled: false,
-	model: { type: "scoped" },
+	model: { type: "ref", ref: "" },
 	maxTitleLength: 50,
 	thinkingLevel: "off",
 };
@@ -137,7 +137,7 @@ function fire(setup: MockSetup, ctx: ExtensionContext, message?: unknown): Promi
 
 /** 开 debug 开关 + 静音 warn，返回 spy 供日志断言（还原由顶层 afterEach 统一负责）。 */
 function debugWarnSpy(): ReturnType<typeof vi.spyOn> {
-	vi.stubEnv("PI_RENAME_DEBUG", "1");
+	vi.stubEnv("XYZ_AGENT_DEBUG", "1");
 	return vi.spyOn(console, "warn").mockImplementation(() => {});
 }
 
@@ -433,9 +433,9 @@ describe("renameSessionExtension", () => {
 	// TC9 debug 关闭态零输出（默认生产环境零噪音，D9）
 	// ────────────────────────────────────────────────────
 
-	it("TC9: PI_RENAME_DEBUG 未设 → 全流程 7 条 debug 契约文案零输出（既有 A1 日志除外）", async () => {
-		// 显式清除（防宿主环境泄漏 PI_RENAME_DEBUG 影响判定）
-		vi.stubEnv("PI_RENAME_DEBUG", undefined);
+	it("TC9: XYZ_AGENT_DEBUG 未设 → 全流程 7 条 debug 契约文案零输出（既有 A1 日志除外）", async () => {
+		// 显式清除（防宿主环境泄漏 XYZ_AGENT_DEBUG 影响判定）
+		vi.stubEnv("XYZ_AGENT_DEBUG", undefined);
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
@@ -465,13 +465,13 @@ describe("renameSessionExtension", () => {
 		for (const lit of debugLiterals) {
 			expect(warnText(warnSpy)).not.toContain(lit);
 		}
-		// 「零调用」的精确口径：剔除既有 A1 日志（model not available / call failed / rename with model，
-		// 非本轮 debug 契约、本用例数据 ok:true 不触发前两类）后，其余 warn 调用必须为 0
+		// 「零调用」的精确口径：剔除既有 A1 日志（model not available / call failed，
+		// 非本轮 debug 契约、本用例数据 ok:true 不触发这两类）后，其余 warn 调用必须为 0。
+		// 成功路径的 rename with model 已改为 debug-only，debug 关闭时同样不得出现。
 		const nonA1Calls = warnLines(warnSpy).filter(
 			(l) =>
 				!l.includes("model not available") &&
-				!l.includes("rename LLM call failed") &&
-				!l.includes("rename with model"),
+				!l.includes("rename LLM call failed"),
 		);
 		expect(nonA1Calls).toHaveLength(0);
 	});

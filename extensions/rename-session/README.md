@@ -7,7 +7,7 @@ Pi rename-session 扩展 — 新 session 首个成功 round 完成后，自动�
 - 新 session 的**首个成功 round 末**自动生成 slug 式标题（名词/动名词词组，非完整句子；英文小写 kebab-case；跟随对话语言）
 - **触发时机**：只在 round 的最终 turn（`stopReason === "stop"`）评估——工具中间轮 / error / aborted / length 轮不评估，error 轮延迟到下一个成功轮命名
 - **两段输入**：`[user(首条 prompt), assistant(最终回复)]` 两段信号（各截断 4000 码点），不含 toolCall/toolResult 过程数据，token 成本不随工具数增长
-- **独立选模**：标题生成用独立的 `ModelSelector` 配置（默认 `scoped`，取 `settings.json` enabledModels 首个可用），不搭便车主 session 的昂贵模型
+- **独立选模**：标题生成用独立的 `ModelSelector` 配置（仅支持 `ref` 精确指定 provider/model），不搭便车主 session 的昂贵模型
 - **可靠性行为**：固定 30s 超时；落库前重查手动名（防覆盖 LLM 调用窗口内的竞态）；任何失败静默跳过保留原 label，绝不阻断 agent 循环
 - 标题直接 `setSessionName` 落库，不进 session history（不污染对话记录）
 - **子 session 自动排除**：subagent 子进程 session 不触发 rename（避免给临时产物起名）
@@ -25,7 +25,7 @@ pi install npm:@zhushanwen/pi-rename-session
 ```json
 {
   "enabled": true,
-  "model": { "type": "scoped" },
+  "model": { "type": "ref", "ref": "deepseek/deepseek-chat" },
   "maxTitleLength": 50,
   "thinkingLevel": "off"
 }
@@ -34,7 +34,7 @@ pi install npm:@zhushanwen/pi-rename-session
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `enabled` | `boolean` | `false` | 自动重命名开关（受 flag 文件覆盖，见下） |
-| `model` | `ModelSelector` | `{ "type": "scoped" }` | 标题生成模型，四形式见 config skill（`ref` / `fallback` / `available` / `scoped`） |
+| `model` | `ModelSelector` | `{ "type": "ref", "ref": "" }` | 标题生成模型，仅支持精确指定 `{type:"ref", ref:"provider/modelId"}` |
 | `maxTitleLength` | `number` | `50` | 标题最大长度（Unicode 码点数，须正整数） |
 | `thinkingLevel` | `ModelThinkingLevel` | `"off"` | 标题 LLM 的 thinking 级别（`off` = 不传 reasoning，provider 默认） |
 
@@ -79,9 +79,9 @@ rename 是 best-effort 副作用，任何失败静默跳过、绝不阻断 agent
 | 落库前发现已有手动名 | skip（name exists），不覆盖 |
 | 标题模型不可用 | 记日志静默跳过 |
 
-### debug 证据链（`PI_RENAME_DEBUG=1`）
+### debug 证据链（`XYZ_AGENT_DEBUG=1`）
 
-`console.warn` 输出，前缀 `[rename-session]`。下列 7 条 debug 日志的**文案字面值是 E2E 断言硬契约**（变更须同步 `e2e/` 场景脚本与单测）：
+`console.warn` 输出，前缀 `[rename-session]`。下列 8 条 debug 日志的**文案字面值是 E2E 断言硬契约**（变更须同步 `e2e/` 场景脚本与单测）：
 
 | # | 日志 | 发出侧 | 含义 |
 |---|---|---|---|
@@ -92,8 +92,9 @@ rename 是 best-effort 副作用，任何失败静默跳过、绝不阻断 agent
 | 5 | `skip: no user prompt` | llm | session 无 user message（理论不发生） |
 | 6 | `skip: title empty` | llm | cleanTitle 清洗后为空 |
 | 7 | `LLM request messages: <JSON>` | llm | 传给 callLLM 的 messages 内省（role + text 的 head 200 码点 + … + tail 100 码点预览，截断单位与 truncateForTitle 统一为 Unicode 码点），在请求发起前打出 |
+| 8 | `rename with model <provider>/<id>` | llm | 成功路径模型记录（原常开日志；为避免污染 Pi 输入框改为 debug 输出，带 t=ISO 时间戳） |
 
-另有三条**非 debug 常开**日志：`rename LLM call failed: <err>`（调用失败/超时；超时时 llm-shared callLLM 内部的 extractText 将空错误文本归一为 `unknown error`——extension 侧 `result.error ?? "unknown error"` 只兜 null/undefined，空串兜底发生在 llm-shared 层）、`rename with model <provider>/<id>`（成功路径模型记录）、`model not available, skipping`（选模失败）。handler 侧日志带 `t=<ISO时间>` 与 `turnIndex`；llm 侧带 `t=<ISO时间>`、无 turnIndex。
+另有两条**非 debug 常开**日志：`rename LLM call failed: <err>`（调用失败/超时；超时时 llm-shared callLLM 内部的 extractText 将空错误文本归一为 `unknown error`——extension 侧 `result.error ?? "unknown error"` 只兜 null/undefined，空串兜底发生在 llm-shared 层）、`model not available, skipping`（选模失败）。handler 侧日志带 `t=<ISO时间>` 与 `turnIndex`；llm 侧带 `t=<ISO时间>`、无 turnIndex。
 
 ## E2E 验收
 

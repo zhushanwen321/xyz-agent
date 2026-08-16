@@ -461,7 +461,7 @@ export async function spawnPi(opts = {}) {
 		env: {
 			...process.env,
 			PI_CODING_AGENT_DIR: agentDir,
-			PI_RENAME_DEBUG: "1",
+			XYZ_AGENT_DEBUG: "1",
 			PI_SKIP_VERSION_CHECK: "1",
 			...(opts.extraEnv ?? {}),
 		},

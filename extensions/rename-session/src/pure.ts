@@ -18,14 +18,14 @@ import {
  * 收口自旧版 pure.ts 的 `RenameConfig`（switchFilePath/maxTitleLength/renameInstruction 硬编码常量）：
  * - 开关双机制：`enabled` 字段（pi CLI 用户主开关，默认 false）+ xyz-agent runtime 的
  *   auto-rename-enabled flag 文件（live 覆盖源，存在即开，见下方 [COMPAT] 契约）
- * - model 从「搭便车 ctx.model」改为独立 `ModelSelector`（默认 scoped，取 enabledModels 首个可用）
+ * - model 从「搭便车 ctx.model」改为独立 `ModelSelector`（仅支持 ref 精确指定）
  * - maxTitleLength 保留（默认 50）
  * - renameInstruction 不进配置（i18n 留未来），由代码常量 RENAME_INSTRUCTION 承载
  */
 export interface RenameSessionConfig {
 	/** 自动重命名开关（默认 false）。 */
 	enabled: boolean;
-	/** 标题生成用的模型 selector（默认 scoped：取 settings.json enabledModels 首个可用模型）。 */
+	/** 标题生成用的模型 selector（仅支持 ref 精确指定；未配置时默认为空 ref，解析不到模型则跳过）。 */
 	model: ModelSelector;
 	/** 标题最大长度（Unicode 码点数）。 */
 	maxTitleLength: number;
@@ -48,6 +48,68 @@ const THINKING_LEVELS: ReadonlySet<string> = new Set([
 	"max",
 ]);
 
+// ──────────────────────── 环境变量覆盖 ────────────────────────
+
+/** 环境变量前缀（避免与其他配置冲突）。 */
+const ENV_PREFIX = "PI_RENAME_";
+
+/**
+ * 从环境变量读取配置覆盖值（live 读取，每次调用查 process.env）。
+ *
+ * 支持的环境变量：
+ * - `PI_RENAME_ENABLED`: 自动重命名开关（"true"/"false"）
+ * - `PI_RENAME_MODEL`: 模型引用（"provider/model" 格式，映射为 {type:"ref", ref:"provider/model"}）
+ * - `PI_RENAME_MAX_TITLE_LENGTH`: 标题最大长度（正整数）
+ * - `PI_RENAME_THINKING_LEVEL`: thinking 级别（枚举值）
+ *
+ * 返回 Partial<RenameSessionConfig>，仅包含有效覆盖值。无效值静默忽略（不阻断加载）。
+ *
+ * @example
+ * // 环境变量覆盖示例
+ * // PI_RENAME_ENABLED=true PI_RENAME_MODEL=deepseek/chat node app.js
+ */
+function getEnvOverrides(): Partial<RenameSessionConfig> {
+	const overrides: Partial<RenameSessionConfig> = {};
+
+	// enabled 覆盖
+	const enabledEnv = process.env[`${ENV_PREFIX}ENABLED`];
+	if (enabledEnv !== undefined) {
+		if (enabledEnv === "true") overrides.enabled = true;
+		else if (enabledEnv === "false") overrides.enabled = false;
+		// 其他值静默忽略（不回默认，让 config 文件或 flag 文件接管）
+	}
+
+	// model 覆盖（简化形式："provider/model" → {type:"ref", ref:"provider/model"}）
+	const modelEnv = process.env[`${ENV_PREFIX}MODEL`];
+	if (modelEnv !== undefined && typeof modelEnv === "string") {
+		// 支持 "provider/model" 格式（最常用场景）
+		const parts = modelEnv.split("/");
+		if (parts.length === 2 && parts[0] && parts[1]) {
+			overrides.model = { type: "ref", ref: modelEnv };
+		}
+		// 其他格式静默忽略（复杂 ModelSelector 请用配置文件）
+	}
+
+	// maxTitleLength 覆盖
+	const maxLengthEnv = process.env[`${ENV_PREFIX}MAX_TITLE_LENGTH`];
+	if (maxLengthEnv !== undefined) {
+		const parsed = Number(maxLengthEnv);
+		if (Number.isInteger(parsed) && parsed > 0) {
+			overrides.maxTitleLength = parsed;
+		}
+		// 非正整数静默忽略
+	}
+
+	// thinkingLevel 覆盖
+	const thinkingLevelEnv = process.env[`${ENV_PREFIX}THINKING_LEVEL`];
+	if (thinkingLevelEnv !== undefined && isThinkingLevel(thinkingLevelEnv)) {
+		overrides.thinkingLevel = thinkingLevelEnv;
+		// 非法值静默忽略
+	}
+
+	return overrides;
+}
+
 /**
  * 类型谓词：unknown 是否为合法 thinking 级别（normalizeRenameConfig 校验用，单点断言）。
  * Set.has 运行时兜底 + 类型收窄，调用方无需再断言。
@@ -56,10 +118,10 @@ function isThinkingLevel(raw: unknown): raw is ModelThinkingLevel {
 	return typeof raw === "string" && THINKING_LEVELS.has(raw);
 }
 
-/** 默认配置：关闭、scoped 选模、标题上限 50、不启用 thinking。 */
+/** 默认配置：关闭、空 ref（未精确指定模型，解析不到则跳过）、标题上限 50、不启用 thinking。 */
 export const DEFAULT_RENAME_CONFIG: RenameSessionConfig = {
 	enabled: false,
-	model: { type: "scoped" },
+	model: { type: "ref", ref: "" },
 	maxTitleLength: 50,
 	thinkingLevel: "off",
 };
@@ -143,25 +205,12 @@ export function normalizeRenameConfig(raw: unknown): RenameSessionConfig {
 	return { enabled, model, maxTitleLength, thinkingLevel };
 }
 
-/** 校验 ModelSelector 四形式（ref/fallback/available/scoped），非法返回 null。 */
+/** 校验 ModelSelector：只支持 ref 精确指定，其余形式非法返回 null。 */
 function normalizeModelSelector(raw: unknown): ModelSelector | null {
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
 	const obj = raw as Record<string, unknown>;
 	if (obj.type === "ref" && typeof obj.ref === "string") {
 		return { type: "ref", ref: obj.ref };
-	}
-	if (obj.type === "available") {
-		return { type: "available" };
-	}
-	if (obj.type === "scoped") {
-		return { type: "scoped" };
-	}
-	if (
-		obj.type === "fallback" &&
-		Array.isArray(obj.refs) &&
-		obj.refs.every((r) => typeof r === "string")
-	) {
-		return { type: "fallback", refs: obj.refs as string[] };
 	}
 	return null;
 }
@@ -169,14 +218,35 @@ function normalizeModelSelector(raw: unknown): ModelSelector | null {
 /**
  * 加载配置（mtime+size 缓存；文件缺失/损坏返回默认，不抛错）。
  *
- * enabled 的取值优先级（见上方 [COMPAT] 契约注释）：flag 文件存在 → true；否则 config.enabled。
- * flag 检查是 live 的（每次调用 existsSync），xyz-agent SystemPage 切开关立即生效。
+ * 配置值优先级（从高到低）：
+ * 1. 环境变量覆盖（PI_RENAME_*，live 读取，每次调用查 process.env）
+ * 2. xyz-agent runtime 开关契约（flag 文件存在 → enabled=true）
+ * 3. 配置文件（<agentDir>/config/rename-session-ext-config.json）
+ * 4. 默认值
+ *
+ * 环境变量覆盖适用于容器化部署、CI/CD 等场景，允许通过环境变量快速切换配置而无需修改文件。
+ *
+ * @example
+ * // 容器化部署示例
+ * // PI_RENAME_ENABLED=true PI_RENAME_MODEL=deepseek/chat node app.js
+ *
+ * // CI/CD 禁用重命名
+ * // PI_RENAME_ENABLED=false npm test
  */
 export function loadRenameConfig(): RenameSessionConfig {
-	const config = loadConfig(CONFIG_PKG, DEFAULT_RENAME_CONFIG, normalizeRenameConfig);
-	if (existsSync(getAutoRenameFlagPath())) {
-		return { ...config, enabled: true };
+	// 1. 从配置文件加载基础配置（带 mtime+size 缓存）
+	const fileConfig = loadConfig(CONFIG_PKG, DEFAULT_RENAME_CONFIG, normalizeRenameConfig);
+
+	// 2. 环境变量覆盖（最高优先级，live 读取）
+	const envOverrides = getEnvOverrides();
+	let config: RenameSessionConfig = { ...fileConfig, ...envOverrides };
+
+	// 3. xyz-agent runtime 开关契约（flag 文件存在 → enabled 强制 true，覆盖 config）
+	// 注意：flag 文件覆盖优先级低于环境变量（环境变量是最高优先级）
+	if (existsSync(getAutoRenameFlagPath()) && !("enabled" in envOverrides)) {
+		config = { ...config, enabled: true };
 	}
+
 	return config;
 }
 

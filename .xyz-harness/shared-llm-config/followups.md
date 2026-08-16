@@ -233,7 +233,7 @@ design.md §3.6 的 P4 清单只列了 6 处（已全部修完）。全仓扫描
 | **批次 1** | A1（rename 补日志：失败路径 + 成功路径记录所选 model id）+ **permission classifier 成功路径日志（记录解析到的 model id，R2 验收前提）** + D1-D4（文档/注释/前缀） | 低风险文案+日志级改动，一个 commit 可完成 | 无 |
 | **批次 2** | E3（rename 旧开关迁移，方案 a）+ F1/F2（硬编码改 getAgentDir） | 小代码改动 + 各自单测 | 无（可与批次 1 并行） |
 | **批次 3** | C1-C4 按 §2 已定裁决实施（C1 方案 a：callLLM stopReason 检查 + 透传字段 + permission 收口，裁决值见 §2-C1/C2；C2/C3 方案 b；C4 回写设计文档）+ E1（删死字段，与 E2 同区域，合并实施）+ E2（picker 改 modelRegistry + 三处调用方连带改动） | C1a/E2 是中等改动 | 裁决结论（已在本文档给出） |
-| **批次 4** | B 类真实环境验收：本地 pi CLI 实测场景 1/2/3/5（`pi --mode rpc --approve --extension <path>` + PI_EXT_DEBUG=1）+ 探针 4（Windows 原子写核对或标注） | 验证性工作，不改功能代码（除非实测发现问题） | 批次 1（A1 日志是场景 2/R1 验收的前提）+ **批次 2（R3 通过标准依赖 F1/F2 修复后）** |
+| **批次 4** | B 类真实环境验收：本地 pi CLI 实测场景 1/2/3/5（`pi --mode rpc --approve --extension <path>` + XYZ_AGENT_DEBUG=1）+ 探针 4（Windows 原子写核对或标注） | 验证性工作，不改功能代码（除非实测发现问题） | 批次 1（A1 日志是场景 2/R1 验收的前提）+ **批次 2（R3 通过标准依赖 F1/F2 修复后）** |
 
 **E4（statusline 死协议）已处理**：2026-08-13 按方案 b 删除（见 §2-E4），不占批次，独立 commit。
 
@@ -251,7 +251,7 @@ design.md §3.6 的 P4 清单只列了 6 处（已全部修完）。全仓扫描
 ### 批次 4 验收（真实环境，回溯 design.md §4 场景）
 
 **场景 R1（对应场景 1/2，验证 rename 端到端 + A1 日志）**：
-- 前置：本地 pi CLI（`pi --mode rpc --session-dir /tmp/r1 --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve --extension extensions/rename-session/src` + `PI_EXT_DEBUG=1`）；`<agentDir>/config/rename-session.json` 配 `{"enabled":true,"model":{"type":"ref","ref":"<某便宜模型>"}}`
+- 前置：本地 pi CLI（`pi --mode rpc --session-dir /tmp/r1 --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve --extension extensions/rename-session/src` + `XYZ_AGENT_DEBUG=1`）；`<agentDir>/config/rename-session.json` 配 `{"enabled":true,"model":{"type":"ref","ref":"<某便宜模型>"}}`
 - 步骤：发一条消息等 assistant 回复完成
 - 通过标准：session 标题真实更新为内容相关短标题；**日志出现 `[rename-session] rename with model <modelId>` 且 modelId 是配置的模型**（非主 session 模型——A1 成功路径日志的实证，批次 1 交付）；把 ref 改成 `nonexistent/model` 再测一次 → 标题保留默认、主对话不受影响、**日志出现 `[rename-session] model not available, skipping`**（A1 失败路径日志的实证）
 
@@ -271,7 +271,7 @@ design.md §3.6 的 P4 清单只列了 6 处（已全部修完）。全仓扫描
 
 **R1（rename 端到端 + A1 日志实证）——✅ 通过**
 
-环境：`PI_CODING_AGENT_DIR=/tmp/r1-agent`（隔离 agent 目录，避免写真实 `~/.pi/agent`）+ `--session-dir /tmp/r1` + `--approve` + `--extension extensions/rename-session` + `PI_EXT_DEBUG=1`；凭据从 `~/.pi/agent/auth.json` 复制到隔离目录（读操作）。
+环境：`PI_CODING_AGENT_DIR=/tmp/r1-agent`（隔离 agent 目录，避免写真实 `~/.pi/agent`）+ `--session-dir /tmp/r1` + `--approve` + `--extension extensions/rename-session` + `XYZ_AGENT_DEBUG=1`；凭据从 `~/.pi/agent/auth.json` 复制到隔离目录（读操作）。
 
 步骤 a（ref 指向配置模型）：`config/rename-session.json` = `{"enabled":true,"model":{"type":"ref","ref":"xiaomi-token-plan-cn/mimo-v2.5-pro"}}` → 发消息「写一句话介绍你自己。」等 assistant 完成。
 - 结果：session JSONL 出现 `session_info` entry，name=`MiMo自我介绍`（内容相关短标题，真实更新 ✅）；stderr 日志 `[rename-session] rename with model mimo-v2.5-pro`（A1 成功路径实证，ref 配置生效 ✅）。

@@ -25,7 +25,7 @@ mkdir -p $TMP/agent $TMP/sessions
 cp ~/.pi/agent/auth.json $TMP/agent/auth.json          # 唯一必需的迁移物
 printf '%s' '{"enabledModels":["xiaomi-token-plan-cn/mimo-v2.5-pro"],"retry":{"enabled":false}}' > $TMP/agent/settings.json
 touch $TMP/agent/auto-rename-enabled                    # rename 开关 flag（live 覆盖源）
-env PI_CODING_AGENT_DIR=$TMP/agent PI_RENAME_DEBUG=1 PI_SKIP_VERSION_CHECK=1 \
+env PI_CODING_AGENT_DIR=$TMP/agent XYZ_AGENT_DEBUG=1 PI_SKIP_VERSION_CHECK=1 \
   <repo>/node_modules/.bin/pi --mode rpc --session-dir $TMP/sessions \
   --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve \
   --extension <repo>/extensions/rename-session
@@ -65,7 +65,7 @@ env PI_CODING_AGENT_DIR=$TMP/agent PI_RENAME_DEBUG=1 PI_SKIP_VERSION_CHECK=1 \
 
 ```bash
 F=<tmp>/sessions/2026-08-15T..._<uuid>.jsonl
-env PI_CODING_AGENT_DIR=$TMP/agent PI_RENAME_DEBUG=1 \
+env PI_CODING_AGENT_DIR=$TMP/agent XYZ_AGENT_DEBUG=1 \
   <repo>/node_modules/.bin/pi --mode rpc --session-dir $TMP/sessions \
   --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve \
   --extension <repo>/extensions/rename-session --session "$F"

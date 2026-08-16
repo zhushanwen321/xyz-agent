@@ -26,7 +26,7 @@ import {
 } from "../llm.js";
 import { type RenameSessionConfig } from "../pure.js";
 
-// 每用例收尾统一还原：console spy 恢复 + stub 的 PI_RENAME_DEBUG 还原，
+// 每用例收尾统一还原：console spy 恢复 + stub 的 XYZ_AGENT_DEBUG 还原，
 // 防泄漏到后续用例（debug 开关 live 读 process.env，依赖 stubEnv/unstubAllEnvs 成对）
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -247,7 +247,7 @@ describe("RENAME_SYSTEM_PROMPT / RENAME_INSTRUCTION", () => {
 
 /** 开 debug 开关 + 静音 warn，返回 spy 供日志断言（还原由顶层 afterEach 统一负责）。 */
 function debugWarnSpy(): ReturnType<typeof vi.spyOn> {
-	vi.stubEnv("PI_RENAME_DEBUG", "1");
+	vi.stubEnv("XYZ_AGENT_DEBUG", "1");
 	return vi.spyOn(console, "warn").mockImplementation(() => {});
 }
 
@@ -519,13 +519,13 @@ describe("callRenameLLM", () => {
 		expect(resolveModel).toHaveBeenCalledWith(ctx, BASE_CONFIG.model);
 	});
 
-	it("thinkingLevel=off → 不传 reasoning（provider 默认，旧版本行为）", async () => {
+	it("thinkingLevel=off → 透传 reasoning=off（llm-shared 内部映射为不传）", async () => {
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
 		await callRenameLLM(createCtx(), { ...BASE_CONFIG, thinkingLevel: "off" }, FINAL_MESSAGE);
 
 		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as { reasoning?: unknown };
-		expect(callOpts.reasoning).toBeUndefined();
+		expect(callOpts.reasoning).toBe("off");
 	});
 
 	it("thinkingLevel=high → 透传 reasoning=high", async () => {
@@ -593,18 +593,31 @@ describe("callRenameLLM A1 日志", () => {
 		}
 	});
 
-	it("TC3: callLLM 成功 → console 输出 '[rename-session] rename with model <provider>/<modelId>'（B3 带 provider 前缀），返回标题", async () => {
+	it("TC3: callLLM 成功 → 默认不输出 'rename with model'（避免常开日志污染 Pi 输入框），返回标题", async () => {
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		try {
 			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 			vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "修复登录bug" });
 			const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 			expect(result).toBe("修复登录bug");
-			expect(warnSpy).toHaveBeenCalledWith(
-				"[rename-session] rename with model stub/stub-model",
+			const successLogCalls = warnSpy.mock.calls.filter((c) =>
+				String(c[0]).includes("rename with model"),
 			);
+			expect(successLogCalls).toHaveLength(0);
 		} finally {
 			warnSpy.mockRestore();
 		}
+	});
+
+	it("TC3b: debug 开启 + callLLM 成功 → 输出 'rename with model <provider>/<modelId>'（B3 带 provider 前缀），返回标题", async () => {
+		const warnSpy = debugWarnSpy();
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "修复登录bug" });
+		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
+		expect(result).toBe("修复登录bug");
+		const line = warnLines(warnSpy).find((l) => l.includes("rename with model"));
+		expect(line).toMatch(
+			/^\[rename-session\] t=\d{4}-\d{2}-\d{2}T.*rename with model stub\/stub-model/,
+		);
 	});
 });

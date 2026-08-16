@@ -10,7 +10,7 @@
 // 三层通道：
 //   1. AI 实时    → tool result / block reason（pi 原生，本模块不涉及）
 //   2. 事后排查   → pi.appendEntry（custom entry 不进 LLM 上下文，不显 TUI）
-//   3. 开发者调试 → 文件日志（PI_EXT_DEBUG=1 时写 ~/.pi/agent/logs/，默认 no-op）
+//   3. 开发者调试 → 文件日志（XYZ_AGENT_DEBUG=1 时写 ~/.pi/agent/logs/，默认 no-op）
 //
 // notify（用户操作反馈）刻意不封装——它是 UI 决策，留给各 extension 在命令/视图层
 // 直接调 ctx.ui.notify。
@@ -38,7 +38,7 @@ export type LogLevel = "debug" | "warn" | "error";
  * 自建太重）。warn/error 走 appendEntry 持久化；debug 默认 no-op。
  */
 export interface ExtensionLogger {
-	/** 开发调试日志。默认 no-op；PI_EXT_DEBUG=1 时写文件日志。不进 appendEntry。 */
+	/** 开发调试日志。默认 no-op；XYZ_AGENT_DEBUG=1 时写文件日志。不进 appendEntry。 */
 	debug(msg: string, data?: unknown): void;
 	/** 内部降级/竞态/IO 失败——appendEntry 持久化，不显 TUI，不进 LLM。 */
 	warn(msg: string, data?: unknown): void;
@@ -178,7 +178,7 @@ function prefixMsg(extName: string, msg: string): string {
 /**
  * 写文件日志到 `<agentDir>/logs/<extName>-YYYY-MM-DD.log`。
  *
- * 仅在 PI_EXT_DEBUG 环境变量为 "1" 时写入（默认 no-op，生产环境零开销）。
+ * 仅在 XYZ_AGENT_DEBUG 环境变量为 "1" 时写入（默认 no-op，生产环境零开销）。
  * agentDir 通过 pi 的 SSOT `getAgentDir()` 推导（读
  * `PI_CODING_AGENT_DIR`/`${APP_NAME}_CODING_AGENT_DIR`，默认 `~/.pi/agent`），
  * 与其它 extension 的路径派生保持一致。
@@ -188,7 +188,7 @@ function prefixMsg(extName: string, msg: string): string {
  * 行可能交错（可接受——debug 日志不要求严格顺序）。
  */
 function fileLog(extName: string, level: LogLevel, msg: string, data?: unknown): void {
-	if (process.env.PI_EXT_DEBUG !== "1") return;
+	if (process.env.XYZ_AGENT_DEBUG !== "1") return;
 	try {
 		const agentDir = getAgentDir();
 		const logDir = join(agentDir, "logs");

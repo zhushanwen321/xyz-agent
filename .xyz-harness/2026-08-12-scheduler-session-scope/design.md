@@ -250,7 +250,7 @@ Next run: in 1h
 
 ## §4 验收（真实场景）
 
-> 验收环境：本地 pi CLI（`pi --mode rpc --session-dir <dir> --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve --extension <scheduler 路径>`）+ stdin JSONL 发 `prompt` 命令，配合 `PI_EXT_DEBUG=1` 检查 `~/.pi/agent/logs/` 扩展日志。多 session 场景用两个独立 pi 进程（同 cwd、同 session-dir 分别指定不同 session 文件）。测试模型用 mimo-v2.5-pro（AGENTS.md 规则：禁止 kimi 做测试）。
+> 验收环境：本地 pi CLI（`pi --mode rpc --session-dir <dir> --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve --extension <scheduler 路径>`）+ stdin JSONL 发 `prompt` 命令，配合 `XYZ_AGENT_DEBUG=1` 检查 `~/.pi/agent/logs/` 扩展日志。多 session 场景用两个独立 pi 进程（同 cwd、同 session-dir 分别指定不同 session 文件）。测试模型用 mimo-v2.5-pro（AGENTS.md 规则：禁止 kimi 做测试）。
 
 | # | 场景（谁/做什么/看到什么） | 步骤 | 通过标准 | 回溯目标 |
 |---|---|---|---|---|

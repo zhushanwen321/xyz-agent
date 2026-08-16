@@ -7,7 +7,7 @@
 - **S（情境）**：`@zhushanwen/pi-rename-session` 是 pi 的 extension，在新 session 首个轮次后用独立小模型生成会话标题（`setSessionName` 落库），让 session 列表摆脱日期占位名。
 - **C（冲突）**：现状的触发判定在**首个 LLM iteration 结束时就触发**（pi 的 `turn_end` 每个 iteration 发一次，见 §4 术语）——工具型首轮基于「我来看看代码」+ 首批工具结果这类不完整上下文生成标题；注入内容含 toolCall/toolResult 等与标题无关的过程数据；标题风格缺乏约束，常见完整句子；另有三个可靠性缺口（无超时、覆盖手动命名、error 轮当场用错误上下文命名）。
 - **Q（问题）**：如何让标题生成「在正确时机触发、输入最小、风格可控、失败不影响任何东西、且行为可被 E2E 验证」？
-- **A（答案）**：触发点用 `stopReason === "stop"` 快速路径 + 成功计数收敛到轮末最终 iteration；注入内容收敛为两段文本信号（user prompt + 最终回复，各截断保护）；system prompt 重写为 slug 词组约束；补 `timeoutMs` / 落库前重查 `getSessionName()` / 成功计数三个修复；新增 `PI_RENAME_DEBUG=1` debug 日志输出实际发送的 messages（带时间戳与 turnIndex），作为 E2E 证据链。
+- **A（答案）**：触发点用 `stopReason === "stop"` 快速路径 + 成功计数收敛到轮末最终 iteration；注入内容收敛为两段文本信号（user prompt + 最终回复，各截断保护）；system prompt 重写为 slug 词组约束；补 `timeoutMs` / 落库前重查 `getSessionName()` / 成功计数三个修复；新增 `XYZ_AGENT_DEBUG=1` debug 日志输出实际发送的 messages（带时间戳与 turnIndex），作为 E2E 证据链。
 
 ---
 
@@ -117,7 +117,7 @@ round 完成后（约 2-5 秒），session 列表中该 session 的名字从日�
 
 > 修复 Safari 按钮点击失效
 
-标题 LLM 实际收到的只有三条 message（`PI_RENAME_DEBUG=1` 时可在日志中看到）：
+标题 LLM 实际收到的只有三条 message（`XYZ_AGENT_DEBUG=1` 时可在日志中看到）：
 
 ```json
 [{"role":"user","text":"帮我修复 login 页面在 Safari 下按钮点不动的问题"},
@@ -205,15 +205,15 @@ llm-shared `callLLM` 已支持 `timeoutMs`（✅源码核实，透传 `SimpleStr
 
 标题是一次性机会（后续 round 不再触发），网络抖动会导致该 session 保持默认名——但重试机制需要防抖、退避、与 session 退出的竞态处理，复杂度与收益不成比例。裁决：不做，留待真实失败频率数据支持后再议。若真发生，用户可手动 `/name`。
 
-### D9 debug 证据链：`PI_RENAME_DEBUG=1` 环境变量控制，日志带时间戳 + turnIndex
+### D9 debug 证据链：`XYZ_AGENT_DEBUG=1` 环境变量控制，日志带时间戳 + turnIndex
 
-debug 日志（`console.warn`，前缀 `[rename-session]`；**文案字面值是 E2E 断言的硬契约，实施时锁定不得漂移**。开关 helper 每次 live 读 `process.env.PI_RENAME_DEBUG`，非模块加载时读——保证可测与运行时切换）：
+debug 日志（`console.warn`，前缀 `[rename-session]`；**文案字面值是 E2E 断言的硬契约，实施时锁定不得漂移**。开关 helper 每次 live 读 `process.env.XYZ_AGENT_DEBUG`，非模块加载时读——保证可测与运行时切换）：
 
 1. 触发跳过时（handler 侧，含 `t=<ISO时间>` 与 `turnIndex=<n>`）：`skip: stopReason=<r>` / `skip: count=<n>`（定位判定路径。turnIndex 只在此侧输出——它只在 handler 作用域可达，不为日志字段扩 callRenameLLM 签名；**此阶段不查 getSessionName**，防覆盖检查只在落库前——见 D5。另 `skip: no user prompt` 从 llm.ts 侧发出（extractUserPromptText null 时），格式同第 2 组只含 `t=`、无 turnIndex）；
 2. 发请求时（**必须在 callLLM 调用之前打出**——构造 messages 后、发起请求前；A3 3b 竞态场景依赖轮询此日志在 rename 返回前抢入手动命名；含 `t=<ISO时间>`）：`LLM request messages: <JSON>`——每条 message 输出 `role + text 的 head 200 + tail 100 Unicode 码点`（v4 修正：截断单位与 truncateForTitle 统一为 Unicode 码点，非 UTF-16 码元；超长文本格式 `<head200>…<tail100>`，字面 `…` 连接；head/tail 双段支撑 E2E 对长 prompt 首尾片段的断言）；
 3. 落库/跳过时（含 `t=<ISO时间>`）：`renamed to "<title>"`（v4 更新：移至 index 侧 `.then()` 内 `setSessionName` **之后**打出，handler 侧带 `t=` + `turnIndex=`——竞态命中时只打 `skip: name exists`、无 `renamed to`，日志不再出现「声称 renamed 但未落库」的矛盾）/ `skip: title empty`（cleanTitle 清洗后为空时在 callRenameLLM 内打出）/ `skip: name exists`（唯一文案，防覆盖命中，index 侧 `.then` 内打出）。
 
-默认关闭时上述 7 条 debug 日志零输出；另有 3 条**常开** `console.warn`（不受 `PI_RENAME_DEBUG` 控制，供生产 stderr 诊断）：成功路径无条件记录 `rename with model <provider>/<id>`（llm.ts 发出）、失败路径 `rename LLM call failed: <err>`、选模失败 `model not available, skipping`。debug 日志是 E2E 验收（§8）的证据基础：**日志内省的是传给 `callLLM` 的同一对象**（同进程同函数序列化同一变量），日志内容即 LLM 收到的内容。
+默认关闭时上述 8 条 debug 日志零输出（含成功路径 `rename with model <provider>/<id>`——原常开日志已改为 debug-only，避免污染 Pi 输入框）；另有 2 条**常开** `console.warn`（不受 `XYZ_AGENT_DEBUG` 控制，供生产 stderr 诊断）：失败路径 `rename LLM call failed: <err>`、选模失败 `model not available, skipping`。debug 日志是 E2E 验收（§8）的证据基础：**日志内省的是传给 `callLLM` 的同一对象**（同进程同函数序列化同一变量），日志内容即 LLM 收到的内容。
 
 ## 7. 实现机制（把终态落到代码层）
 
@@ -296,7 +296,7 @@ handler 同步段另有 try/catch 兜底：同步路径任何抛错只 `console.
 
 - 真实 pi：`pi --mode rpc --session-dir <tmp> --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve --extension <本地 extensions/rename-session 路径>`，stdin 发 JSONL prompt 命令，stdout 收事件流、stderr 收扩展日志，**两流由 harness 交错写入同一时间轴文件**（各带到达时间戳）；
 - 配置隔离：`PI_CODING_AGENT_DIR=<tmp>` 指向临时目录（写 enabledModels + 开启 rename 的 flag 文件）；
-- `PI_RENAME_DEBUG=1` 开启证据日志；
+- `XYZ_AGENT_DEBUG=1` 开启证据日志；
 - 断言对象：session JSONL 文件（行序 + entry 内容）+ 交错时间轴日志文件。
 
 **回应用户三问（验收方法的可验证性依据）**：
@@ -357,7 +357,7 @@ handler 同步段另有 try/catch 兜底：同步路径任何抛错只 `console.
 1. **A4 的 `--session` 恢复与两阶段配置切换**实操细节（pi CLI flag 已核实存在，具体续跑行为实施期验证）；
 2. **A2 跟进型 prompt（「继续…」）的标题质量**——若实测语义空洞，instruction 中提高 assistant 结论权重（prompt 微调，非结构改动）；
 3. **模型对 slug 约束的遵从率**——若 prompt 微调一次后英文仍非 kebab-case，启用 cleanTitle 硬转换预案（仅对纯 ASCII 标题做空格→连字符 + 小写化，避免中英混合误伤）；
-4. **debug 日志对交错时间轴的粒度**——若 stderr 缓冲导致到达时间戳失真，改用 pi 扩展日志文件（`PI_EXT_DEBUG=1` 落盘路径）与 stdout 事件流的文件 mtime + 行序双证据。
+4. **debug 日志对交错时间轴的粒度**——若 stderr 缓冲导致到达时间戳失真，改用 pi 扩展日志文件（`XYZ_AGENT_DEBUG=1` 落盘路径）与 stdout 事件流的文件 mtime + 行序双证据。
 
 ## 12. xyz-agent GUI 联动影响评估（实施后审查结论）
 
@@ -372,7 +372,7 @@ handler 同步段另有 try/catch 兜底：同步路径任何抛错只 `console.
 | 两段输入 | 无影响 | extension 内部输入构造，不触 GUI 链路 |
 | 防覆盖 guard | 需注意（存量缺口） | guard 查 `pi.getSessionName()`（pi 进程内存）；GUI 手动改名是 runtime out-of-band 直接 append JSONL，pi 不知情 → 首轮竞态窗口内 GUI 手动改名仍会被 auto 标题覆盖。**非本次回归**（旧版无 guard 同样覆盖，新版至少保护 pi 可见改名）；修复方向：runtime `renameSession` 时同步通知 pi，或 extension guard 兼查 JSONL 尾部 |
 | 30s 超时 | 无影响 | fire-and-forget 静默跳过，GUI 无等待态 |
-| PI_RENAME_DEBUG 日志 | 无影响 | pi stderr 被 runtime 收集进 Electron 日志（无 UI 通道）；7 条 debug 日志默认关闭零输出，另有 3 条常开 warn（model not available / call failed / rename with model） |
+| XYZ_AGENT_DEBUG 日志 | 无影响 | pi stderr 被 runtime 收集进 Electron 日志（无 UI 通道）；8 条 debug 日志默认关闭零输出，另有 2 条常开 warn（model not available / call failed） |
 | 配置 schema/flag 契约 | 无影响 | SystemPage 开关 → flag 文件 ↔ extension live 读，两侧对齐未动 |
 
 另发现一个与本次改动无关的存量现象：auto-rename 落库后 runtime 内存 `ManagedSession.label` 不随 `session.renamed` 事件更新，后续 `config.sessions` 全量广播可能把侧栏已显示的 auto 标题回退成派生 label（直到重启从磁盘读回）。本次命名时机变晚会拉长该现象的观察窗口，机制本身非本次引入。

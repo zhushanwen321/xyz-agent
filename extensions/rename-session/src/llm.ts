@@ -151,7 +151,7 @@ const RENAME_TIMEOUT_MS = 30_000;
 
 /** debug 开关 live 读（每次调用查 process.env，非模块加载时读——vi.stubEnv 可测 + 运行时可切换）。 */
 export function isRenameDebugEnabled(): boolean {
-	return process.env.PI_RENAME_DEBUG === "1";
+	return process.env.XYZ_AGENT_DEBUG === "1";
 }
 
 /**
@@ -258,9 +258,8 @@ export async function callRenameLLM(
 		maxTokens: 64,
 		// D7：固定 30s 超时（网络抖动归一为 ok:false 走静默跳过，不悬挂 fire-and-forget promise）
 		timeoutMs: RENAME_TIMEOUT_MS,
-		// thinkingLevel:"off" → 不传 reasoning（provider 默认，与旧版本行为一致）；
-		// "minimal"~"max" 透传 pi-ai SimpleStreamOptions.reasoning（provider 不支持时忽略）
-		reasoning: config.thinkingLevel === "off" ? undefined : config.thinkingLevel,
+		// thinkingLevel 直接透传（含 "off"）；llm-shared 内部会把 "off" 映射为不传 reasoning（provider 默认）
+		reasoning: config.thinkingLevel,
 		// 保留随 session abort 取消调用的语义（旧版 llm.ts 同样透传 ctx.signal）
 		signal: ctx.signal,
 		sessionId,
@@ -271,10 +270,11 @@ export async function callRenameLLM(
 		return null;
 	}
 
-	// A1 成功路径日志（B2+B3 修正）：
+	// A1 成功路径日志（B2+B3 修正）：默认不输出，避免常开 console.warn 污染 Pi 输入框；
+	// 需要排查时设 XYZ_AGENT_DEBUG=1，经 debugLog 输出（带时间戳）。
 	// - B2 位置：原在 callLLM 调用前打出，失败时会误导（日志已落但 rename 未发生）；移到 result.ok 确认后
 	// - B3 文案：补 provider 前缀，区分两个 provider 同名 model
-	console.warn(`[rename-session] rename with model ${model.provider}/${model.id}`);
+	debugLog(`rename with model ${model.provider}/${model.id}`);
 
 	const title = cleanTitle(result.content, config.maxTitleLength);
 	if (!title) {

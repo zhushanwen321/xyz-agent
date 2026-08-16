@@ -17,9 +17,8 @@ import { completeSimple } from "@earendil-works/pi-ai/compat";
 import type {
 	Context as LlmContext,
 	SimpleStreamOptions,
-	ThinkingLevel,
 } from "@earendil-works/pi-ai/compat";
-import type { Api, Message, Model } from "@earendil-works/pi-ai";
+import type { Api, Message, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 // ──────────────────────── 类型 ────────────────────────
@@ -39,10 +38,10 @@ export interface CallLLMOptions {
 	sessionId?: string;
 	/**
 	 * thinking/reasoning 级别，透传给 SimpleStreamOptions.reasoning（pi 的 THINKING_ORDER SSOT：
-	 * minimal/low/medium/high/xhigh/max）。不传 = provider 默认。
-	 * 注意不含 "off" —— 关闭语义由调用方映射为「不传本字段」（如 rename-session 配置 thinkingLevel="off" 时不传）。
+	 * minimal/low/medium/high/xhigh/max）。"off" 表示关闭 thinking，由本库映射为「不传 reasoning 字段」
+	 * （provider 默认行为）；不传 = 同样 provider 默认。
 	 */
-	reasoning?: ThinkingLevel;
+	reasoning?: ModelThinkingLevel;
 }
 
 /**
@@ -123,7 +122,7 @@ export async function callLLM(
 			...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
 			...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
 			...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
-			...(opts.reasoning ? { reasoning: opts.reasoning } : {}),
+			...(opts.reasoning && opts.reasoning !== "off" ? { reasoning: opts.reasoning } : {}),
 		};
 		const resp = await completeSimple(opts.model, context, options);
 		// G3/C1a：completeSimple 对 error/aborted 也 resolve（带 stopReason，不 reject）。
