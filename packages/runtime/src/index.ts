@@ -3,8 +3,6 @@ import { SessionService } from './services/session/session-service.js'
 import { ConfigService } from './services/config-service.js'
 import { AuthService } from './services/auth/auth-service.js'
 import { AuthStorage } from './services/auth/auth-storage.js'
-import { migrateProviderConfig } from './services/migration/legacy-provider-migration.js'
-import { ensureAutoRenameDefault } from './services/worktree-config-helper.js'
 import { PresetService } from './services/preset-service.js'
 import { ModelService } from './services/model-service.js'
 
@@ -60,6 +58,9 @@ import { RecentWorkspacesStore } from './services/workspace/recent-workspaces-st
 import { ProjectStore } from './services/project/project-store.js'
 import { WorkspaceService } from './services/workspace/workspace-service.js'
 import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
+// D8-1（perf W29）：后台初始化序列（listen 后执行）——独立模块承载使「migrateBuiltin →
+// autoUpgrade 顺序」可 spy 断言（06 §5 门禁），组合根只负责构造与注入。
+import { runStartupBackgroundInit } from './services/startup-background-init.js'
 
 function parseArgs(): { port: number; projectRoot?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
@@ -94,6 +95,9 @@ function parseArgs(): { port: number; projectRoot?: string } {
 async function main(): Promise<void> {
   const { port, projectRoot } = parseArgs()
   const effectiveRoot = projectRoot ?? process.cwd()
+  // perf W29（D8-1）启动耗时分解探针（06 §5 m-7）：listen 前各段打点，
+  // 输出进日志文件供 D8 价值评估（基线实测：getPiVersion 1.1-1.3s 主导 listen 延迟）。
+  const tStart = performance.now()
 
   // 日志持久化（架构约定 #4）：组合根最早期初始化 + monkey-patch console。
   // 必须在所有 service 创建前（runtime 内 ~140 处裸 console.log 经 patch 自动落盘）。
@@ -121,6 +125,8 @@ async function main(): Promise<void> {
   // 原为 pi-config-bridge 的 import 副作用，现改为组合根显式调用（启动时序显式化）。
   // 必须在首次配置读取（readModels/readSettings/migrateSettingsSkillsToDiscovery）前完成。
   // 幂等：新路径已存在文件则跳过。
+  // D8-1（perf W29）：三个同步迁移保持 listen 前——「首次配置读取前」硬约束（06 §3.3 证据）。
+  const tSyncMigrations = performance.now()
   migrateToPiSubdir()
   // 清理 settings.json.packages 中泄漏到 pi 全局目录的相对路径项（架构约定 #1 隔离保障）
   cleanLeakedPackages()
@@ -155,48 +161,14 @@ async function main(): Promise<void> {
   // AuthStorage（OAuth 路径 B）：auth.json 在 pi agent 目录（与 models.json 同路径，与 pi 读取侧一致）。
   // ConfigService 用它做 I9 清理①（setProvider 保存 apiKey 时清 auth.json oauth）+ I8（deleteProvider 清 auth.json）。
   const authStorage = new AuthStorage(join(configStore.getPiAgentDir(), 'auth.json'))
-  // 一次性迁移：catalog provider 错位 apiKey 从 models.json 迁 auth.json（step1）+ 
-  // provider 级 enabled 字段迁 settings.json.enabledModels 白名单（step2，G5 修复）。
-  // 必须在首次 session spawn 前完成（pi AuthStorage 无文件监听，旧 session 不感知新 auth.json）。
-  // 幂等：已迁移条目不再重复处理。失败不阻断启动（warn + 下次重试）。
-  try {
-    const migrationReport = await migrateProviderConfig(configStore, authStorage)
-    const { catalog, enabled } = migrationReport
-    if (catalog.migrated.length > 0 || catalog.errors.length > 0 || enabled.migratedEnabled || enabled.fullDisabledWarn) {
-      console.log('[runtime] provider config migration:', JSON.stringify({
-        catalogMigrated: catalog.migrated.length,
-        catalogKept: catalog.kept.length,
-        catalogSkipped: catalog.skipped.length,
-        catalogFailed: catalog.failed.length,
-        enabledMigrated: enabled.migratedEnabled,
-        fullDisabledWarn: enabled.fullDisabledWarn ?? false,
-      }))
-      if (catalog.errors.length > 0) {
-        console.warn('[runtime] legacy provider migration errors:', catalog.errors)
-      }
-      if (enabled.fullDisabledWarn) {
-        console.warn('[runtime] all providers were disabled (enabled===false); pi does not support fully-disabled state. After migration all providers are available — please manually remove unwanted providers.')
-      }
-    }
-  } catch (e) {
-    // best-effort 降级：provider config migration 失败不阻塞启动（旧配置保留，用户可在 Settings 手动修正）。
-    console.warn('[runtime] provider config migration failed:', e)
-  }
   const configService = new ConfigService(effectiveRoot, configStore, authStorage)
   // ADR-0021 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
   // 首启用时提升为 discovery.json SSOT。幂等：discovery 已有数据则 no-op。
+  // D8-1 位置判断（perf W29，06 §5 m-7 结论）：保持 listen 前同步执行——
+  // fileService 构造时 allowedReadDirs 读 getSkillDirs()（discovery.json），
+  // 迁移后置会让首次升级启动的 skill 容器漏出 file.read 白名单（认知回归）。
+  // 成本：幂等 no-op 仅两次 JSON 读，实测 <1ms，非 listen 延迟主导项。
   configService.migrateSettingsSkillsToDiscovery()
-  // 一次性迁移：清理旧版 mandatory npm install 遗留的 9 个 builtin 包记录。
-  // 新版改为打包内置，不再需要 boot 时 npm install；从 settings.json packages[] /
-  // auto-upgrade-packages.json / disabled-packages.json 清除遗留（幂等）。
-  // 不删 ~/.xyz-agent/npm/node_modules/ 物理文件（用户可能有其他依赖）。
-  // 必须在 checkAndAutoUpgrade 前跑（否则 autoUpgrade 仍会尝试升级打包内置包）。
-  try {
-    await extensionService.migrateBuiltinExtensions()
-  } catch (e) {
-    // best-effort：迁移失败不阻塞启动（最坏情况是 builtin 包被重复发现，不影响功能）
-    console.warn('[runtime] builtin extension migration failed:', e)
-  }
   // PresetService（pi-launch-presets 设计 §8.1）：独立 service，与 ConfigService 对称。
   // 依赖 configStore（pi-presets.json 路径推导）+ extensionService（resolve 用 builtin/scanExtensions）。
   // 组合根构造，经 setPresetService 注入 SessionService（与 setConfigService 同模式）。
@@ -478,9 +450,10 @@ async function main(): Promise<void> {
     terminalService.destroyPty(sid)
   })
 
-  // 探测 pi 版本（启动时一次，失败不阻塞 —— fallback 'unknown'）
-  const piVersion = await pm.getPiVersion()
-  const appInfo = { appVersion: getAppVersion(), piVersion }
+  // D8-2（perf W29）：appInfo 惰性——piVersion 先 'unknown'（同步 getAppVersion），
+  // getPiVersion 探测完成后 mutate 同对象 + 补发 app.info（下方后台初始化块）。
+  // setServices 注入同一对象引用，broker 的 buildAppInfoMsg spread 读到 mutate 后的新值。
+  const appInfo: { appVersion: string; piVersion: string } = { appVersion: getAppVersion(), piVersion: 'unknown' }
 
   // WorktreeService：编排 worktree 创建（bare-workspace / plain-repo 两种模式）。
   // 依赖全注入：GitExecutor（git 子命令）/ ShellRunner（setup 脚本，用 child_process.spawn）/
@@ -497,7 +470,7 @@ async function main(): Promise<void> {
   // QuotaService：Coding Plan 额度查询（hover 触发 + 缓存 + log）。
   // 经 server.setServices 注入到 QuotaMessageHandler（quota.fetch/getCached/refresh/configure 路由）。
   // getProviderInfo：从 providerId 解析 ProviderInfo（baseUrl/name/quota.fetcher），
-  // quota.fetcher 优先于 matchQuotaPreset（设计文档 §2.2.3 + 手动选择 fetcher 需求）。
+  // quota.fetcher 优先于 matchQuotaPreset（设计文档 §8.2 + 手动选择 fetcher 需求）。
   const quotaService = new QuotaService({
     getProviderInfo: (providerId) => {
       const cfg = getProviderConfig(providerId)
@@ -506,6 +479,7 @@ async function main(): Promise<void> {
     },
   })
 
+  const tServicesReady = performance.now()
   server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService, handoffService, presetService, authService, projectStore)
 
   // Graceful shutdown on signals
@@ -540,50 +514,29 @@ async function main(): Promise<void> {
     console.error('[runtime] *** UNHANDLED REJECTION *** (should not happen):', reason)
   })
 
+  // D8-1（perf W29）：先 listen（端口即就绪）——迁移/探测等无 listen 前依赖的后置项
+  // 全部移入下方后台初始化块（06 §3.3 D8-1）。listen 前仅剩：同步迁移 + 服务构造 + setServices。
+  const tListen = performance.now()
   await server.start()
   console.log('[runtime] ready')
+  // 启动耗时分解探针（06 §5 m-7）：listen-ready 各段耗时（baseline 对比见汇报——
+  // 改造前 getPiVersion 占 listen 延迟 1.1-1.3s，重排后该段归零）。
+  console.log(`[runtime] startup breakdown: syncMigrations=${(tSyncMigrations - tStart).toFixed(1)}ms construction=${(tServicesReady - tSyncMigrations).toFixed(1)}ms listen=${(performance.now() - tListen).toFixed(1)}ms total=${(performance.now() - tStart).toFixed(1)}ms`)
 
-  // SkillRegistry 全局扫描：启动期扫描全局 skill 目录（piAgentDir/skills、configDir/skills、
-  // discovery.skillDirs）并挂 chokidar watcher。变动时 300ms debounce 重扫缓存 + 经 onChange
-  // 通知上游。必须在 server.start 后调（确保异常不阻塞服务启动）。失败不阻塞（skill 降级空缓存）。
-  try {
-    await skillRegistry.initGlobal()
-    console.log(`[runtime] skill registry initialized (${skillRegistry.getGlobalSkills().length} global skills)`)
-  // eslint-disable-next-line taste/no-silent-catch -- skill 扫描失败不阻塞 runtime，UI 降级空列表
-  } catch (e) {
-    console.error('[runtime] skill registry initialization failed:', e)
-  }
-
-  // auto-rename 默认初始化：首次启动默认开启（创建 flag file + initialized 标记）
-  try {
-    ensureAutoRenameDefault()
-  } catch (e) {
-    // best-effort：初始化失败不影响主流程（下次启动重试），仅记录诊断信息
-    console.warn('[runtime] auto-rename default initialization failed:', e)
-  }
-
-  // 自动升级：对开启 autoUpgrade 的 user-installed 扩展批量检查 npm latest 版本，
-  // semver.lt 判定后静默升级。失败不阻塞启动（每个扩展独立 try-catch）。
-  try {
-    const upgradeResults = await extensionService.checkAndAutoUpgrade()
-    const upgraded = upgradeResults.filter(r => r.upgraded)
-    if (upgraded.length > 0) {
-      console.log(`[runtime] auto-upgraded ${upgraded.length} extension(s):`,
-        upgraded.map(r => `${r.name} ${r.from ?? '?'}→${r.to ?? '?'}`).join(', '))
-    }
-  } catch (e) {
-    // checkAndAutoUpgrade 内部已 catch 每个扩展，此处是意外错误兜底
-    console.warn('[runtime] extension auto-upgrade encountered an error:', e)
-  }
-
-  // 插件系统初始化（扫描、激活 onStartupFinished 插件）
-  try {
-    await pluginService.initialize()
-    console.log('[runtime] plugins initialized')
-  // eslint-disable-next-line taste/no-silent-catch -- init: plugin failure must not block server
-  } catch (e) {
-    console.error('[runtime] plugin initialization failed:', e)
-  }
+  // ── 后台初始化块（D8-1）：listen 后执行，不阻塞端口就绪 ──────────────
+  // 序列与顺序约束见 startup-background-init.ts 文件头注释（migrateProviderConfig →
+  // migrateBuiltinExtensions → checkAndAutoUpgrade → getPiVersion → skill → plugins）。
+  // fire-and-forget：每步自带 catch，无 rejection 逃逸；失败不阻塞其余步骤。
+  void runStartupBackgroundInit({
+    configStore,
+    authStorage,
+    extensionService,
+    pm,
+    appInfo,
+    broadcastAppInfo: () => server.broadcastAppInfo(),
+    skillRegistry,
+    pluginService,
+  })
 }
 
 main().catch((e) => {

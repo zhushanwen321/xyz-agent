@@ -64,6 +64,24 @@ export function stripSessionEndEntries(jsonlContent: string): string {
  */
 const VALID_THINKING_LEVELS: readonly string[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
 
+// D8-3 迁移 promise gate（06 §3.3，perf W29）：provider 迁移（apiKey → auth.json +
+// enabledModels 白名单）完成前禁止 spawn pi——迁移窗口内 spawn 的 session 会读到迁移前
+// 配置（pi AuthStorage 无文件监听，旧 session 不感知新 auth.json）。
+// 组合根（index.ts）后台初始化块经 setMigrationGate 注入；gate 必须自带 catch——
+// 迁移失败也 resolve（best-effort 语义：失败不阻塞任何功能，下次启动重试）。
+// 默认 resolved（未注入时无 gate 语义：单测/无迁移场景行为与旧版一致）。
+let migrationGate: Promise<unknown> = Promise.resolve()
+
+/** 组合根注入迁移完成 gate（D8-3）。传入的 promise 必须已 catch（失败同样 resolve，不阻塞 spawn）。 */
+export function setMigrationGate(gate: Promise<unknown>): void {
+  migrationGate = gate
+}
+
+/** 当前 gate（测试断言/重置用）。 */
+export function getMigrationGate(): Promise<unknown> {
+  return migrationGate
+}
+
 export class SessionLifecycle {
   constructor(
     private readonly svc: ISessionServiceInternal,
@@ -171,6 +189,9 @@ export class SessionLifecycle {
     const presetClientOptions = this.buildPresetClientOptions(
       resolution, options?.modelOverride, options?.thinkingOverride,
     )
+    // D8-3（perf W29）：迁移完成前 spawn pi 会读到未迁移配置——gate 等待。
+    // gate 恒 resolve（迁移失败已 catch），正常迁移 <10ms 不可感知。
+    await migrationGate
     const client = await this.pm.createSession(tempId, sessionCwd, {
       skillPaths: resolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
@@ -388,6 +409,8 @@ export class SessionLifecycle {
     const allExtPaths = resolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
     // restore 不接收 Landing Chip override（无用户交互），只透传 preset 自身的 model/thinking。
     const presetClientOptions = this.buildPresetClientOptions(resolution, undefined, undefined)
+    // D8-3（perf W29）：restore 同样 spawn pi——gate 等待（启动时恢复路径与 create 一致过 gate）。
+    await migrationGate
     const client = await this.pm.createSession(id, sessionCwd, {
       skillPaths: resolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
@@ -541,6 +564,8 @@ export class SessionLifecycle {
       options?.modelOverride,
       options?.thinkingOverride,
     )
+    // D8-3（perf W29）：fork 同样 spawn pi——gate 等待（06 审查修正：fork 是第三处 spawn 点）。
+    await migrationGate
     const client = await this.pm.createSession(forkedId, sessionCwd, {
       skillPaths: forkResolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,

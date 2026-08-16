@@ -312,6 +312,11 @@ export class RuntimeServer implements IMessageBroker {
    */
   broadcastSessionList(): void { this.broker.broadcastSessionList() }
   /**
+   * D8-2：暴露 broker 的 app.info 广播，供 index.ts 在 piVersion 探测完成后补发
+   * （版本标签先显示应用版本，探测完成后自动更新）。
+   */
+  broadcastAppInfo(): void { this.broker.broadcastAppInfo() }
+  /**
    * W2：暴露 broker 的 skill 缓存失效广播，供 index.ts 的 skillRegistry.onChange 回调调用
    * （skill 变动 → 广播 config.skillCacheInvalidated 让 landing composable 失效缓存重拉）。
    */

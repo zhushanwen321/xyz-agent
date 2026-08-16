@@ -171,6 +171,15 @@ export class ServerMessageBroker implements IMessageBroker {
   broadcastSessionList(): void {
     this.broadcast(this.buildSessionListMsg())
   }
+  /**
+   * 广播 app.info（D8-2，06 §3.3）：piVersion 惰性探测的补发入口。
+   * sendInitialState 首推后，组合根（index.ts）在 getPiVersion 完成时 mutate services.appInfo
+   * 同对象（piVersion 字段）再调本方法——buildAppInfoMsg 的 spread 读到当前值，
+   * 侧栏版本标签先显示应用版本、探测完成后 1-2s 内自动补全（唯一消费者 Sidebar.vue 监听 app.info）。
+   */
+  broadcastAppInfo(): void {
+    this.broadcast(this.buildAppInfoMsg())
+  }
   broadcastProviderList(): void {
     for (const msg of this.buildProviderListMsgs()) this.broadcast(msg)
   }
