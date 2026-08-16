@@ -15,6 +15,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { computed } from 'vue'
 import {
   useFileTreeStore,
   projectVisibleRows,
@@ -110,13 +111,13 @@ function legacyVisibleRows(
   return out
 }
 
-/** 用 store 状态驱动投影（与 FileView computed 相同的调用形态） */
+/** 用 store 状态驱动投影（与 FileView computed 相同的调用形态：per-session getter 传参） */
 function project(store: ReturnType<typeof useFileTreeStore>, sid = 's1'): VisibleRow[] {
   return projectVisibleRows(
     (s) => store.getTree(s),
     (s) => store.getExpanded(s),
-    store.gitOverlay,
-    store.dirChangeCounts,
+    (s) => store.getGitOverlay(s),
+    (s) => store.getDirChangeCounts(s),
     store.filterText,
     store.showIgnored,
     sid,
@@ -262,6 +263,22 @@ describe('projectVisibleRows 字段映射（徽章/角标/行数从分桶投影�
     const keys = rows.map((r) => visibleRowKey(r))
     expect(new Set(keys).size).toBe(keys.length) // 无重复 key（目录行 'src/empty' vs hint 行同 path）
   })
+
+  it('[W28 审查 Fix-1] error hint 行 expanded=true（目录已展开才渲染 hint；点击 = 折叠非重试）', () => {
+    const store = useFileTreeStore()
+    setupTree(store, ['src'])
+    store.setNodeState('s1', 'src', { status: 'error', reason: 'timeout' })
+    const rows = project(store)
+
+    const errorHint = rows.find((r) => r.hint === 'error')!
+    // 旧递归语义：error hint 只在已展开目录渲染，点击 = 折叠父目录。
+    // expanded 恒 true → FileView.onToggleRow 走 collapseNode（expanded:false 会走
+    // expandNode → error 态重新发请求，变重试——行为回归）
+    expect(errorHint.expanded).toBe(true)
+    // 目录行自身展开态不受 hint 影响
+    const srcRow = rows.find((r) => r.path === 'src' && !r.hint)!
+    expect(srcRow.expanded).toBe(true)
+  })
 })
 
 describe('projectVisibleRows 纯函数幂等（同树同过滤同展开 → 同输出）', () => {
@@ -306,19 +323,46 @@ describe('projectVisibleRows 性能量级（万级节点，替代旧 per-row 12 
     ]
   }
 
-  it('万级可见行单次投影全量产出（10001 行），耗时在可接受量级', () => {
+  /** 计数版 Map：overlay.get 调用次数（行级 O(1) 的线性性证据，替代墙钟断言） */
+  class CountingGetMap<V> extends Map<string, V> {
+    getCalls = 0
+    override get(key: string): V | undefined {
+      this.getCalls += 1
+      return super.get(key)
+    }
+  }
+
+  it('万级可见行单次投影全量产出（10002 行），overlay.get/getNodeState 调用次数线性上界（替代墙钟）', () => {
     const store = useFileTreeStore()
     store.setTree('s1', buildBigTree(10000))
     store.setNodeState('s1', 'big', { status: 'loaded' })
     store.addExpanded('s1', 'big')
+    store.setGitOverlay('s1', [
+      { path: 'big/f1.ts', xyCode: ' M', status: 'modified' },
+      { path: 'big/nested/g2.ts', xyCode: '??', status: 'untracked' },
+    ])
 
-    const t0 = performance.now()
-    const rows = project(store)
-    const elapsed = performance.now() - t0
+    // 操作计数（不做墙钟断言——CI 慢机墙钟不可靠）：
+    // - getNodeState 只按已展开目录数调用（loading/error hint 判定），非 per-row
+    // - overlay.get 每行至多 2 次（gitStatus 投影 + lineStats），总次数 ≤ 2×行数（线性上界）
+    const countingOverlay = new CountingGetMap(store.getGitOverlay('s1'))
+    const nodeStateSpy = vi.fn((s: string, p: string) => store.getNodeState(s, p))
+    const rows = projectVisibleRows(
+      (s) => store.getTree(s),
+      (s) => store.getExpanded(s),
+      (s) => (s === 's1' ? countingOverlay : store.getGitOverlay(s)),
+      (s) => store.getDirChangeCounts(s),
+      store.filterText,
+      store.showIgnored,
+      's1',
+      nodeStateSpy,
+    )
 
     expect(rows).toHaveLength(10002) // big + 10000 files + nested 行（nested 未展开仅目录行）
-    // 纯 O(n) 投影（Map.get 逐行），万级宽松预算 < 1s（CI 慢机余量；实测通常 < 50ms）
-    expect(elapsed).toBeLessThan(1000)
+    // 只对已展开目录调用（1 个：'big'），不做 10002 次 per-row 状态读取
+    expect(nodeStateSpy).toHaveBeenCalledTimes(1)
+    // 行级 O(1)：2×行数 上界证明无 per-row 派生/前缀扫描（每行 gitStatus + lineStats 各一次）
+    expect(countingOverlay.getCalls).toBeLessThanOrEqual(rows.length * 2)
   })
 
   it('getNodeState 只按需调用（展开目录数），不做 per-row 派生（替代旧每行 12 computed 的调用面）', () => {
@@ -333,8 +377,8 @@ describe('projectVisibleRows 性能量级（万级节点，替代旧 per-row 12 
     const rows = projectVisibleRows(
       (s) => store.getTree(s),
       (s) => store.getExpanded(s),
-      store.gitOverlay,
-      store.dirChangeCounts,
+      (s) => store.getGitOverlay(s),
+      (s) => store.getDirChangeCounts(s),
       store.filterText,
       store.showIgnored,
       's1',
@@ -375,7 +419,22 @@ describe('visibleRowKey 稳定性', () => {
     expect(visibleRowKey({ path: 'a.ts', type: 'file', depth: 0 } as VisibleRow)).toBe('a.ts')
     expect(
       visibleRowKey({ path: 'src', type: 'dir', depth: 1, hint: 'loading' } as VisibleRow),
-    ).toBe('__loading__src')
+    ).toBe('hint:loading:src')
+  })
+
+  it('[W28 审查 Fix-3] 旧前缀形状的真实路径与 hint 行 key 不撞（hint: 分隔，Windows 禁冒号）', () => {
+    // 真实文件路径以旧前缀 '__loading__' 开头（POSIX 合法文件名）vs loading hint 行——新格式隔离
+    const realFile = visibleRowKey({ path: '__loading__src', type: 'file', depth: 0 } as VisibleRow)
+    const loadingHint = visibleRowKey({ path: 'src', type: 'dir', depth: 1, hint: 'loading' } as VisibleRow)
+    expect(realFile).toBe('__loading__src') // 节点行 key 恒为原 path，不带前缀
+    expect(loadingHint).toBe('hint:loading:src')
+    expect(realFile).not.toBe(loadingHint)
+
+    // 三类 hint 前缀互斥：同 path 不同 hint 类型 key 各异
+    const hintKeys = ['loading', 'error', 'empty'].map((h) =>
+      visibleRowKey({ path: 'src', type: 'dir', depth: 1, hint: h as VisibleRow['hint'] } as VisibleRow),
+    )
+    expect(new Set(hintKeys).size).toBe(3)
   })
 })
 
@@ -409,5 +468,68 @@ describe('projectVisibleRows 与 store 组合行为（懒加载/目录协议不�
     expect(project(store)).not.toHaveLength(0)
     store.clearSession('s1')
     expect(project(store)).toHaveLength(0)
+  })
+})
+
+describe('[W28 审查 Fix-2] E7-a 细粒度 getter 分桶（异 sid 更新不触发本 sid 投影重算）', () => {
+  it('异 sid overlay 更新不重算本 sid 投影；同 sid 更新重算（split mode 多面板隔离）', () => {
+    const store = useFileTreeStore()
+    setupTree(store, ['src'])
+    store.setGitOverlay('s1', [
+      { path: 'src/a.ts', xyCode: ' M', status: 'modified' },
+      { path: 'src/utils/b.ts', xyCode: 'A ', status: 'added' },
+    ])
+
+    // 模拟 FileView 的投影 computed（getter 传参形态）
+    let recomputes = 0
+    const rows = computed(() => {
+      recomputes += 1
+      return project(store, 's1')
+    })
+    void rows.value // 首次求值
+    expect(recomputes).toBe(1)
+
+    // 异 sid overlay 回写（split mode 另一面板的 git.status）→ 本 sid 投影缓存命中不重算
+    store.setGitOverlay('s2', [{ path: 'other.ts', xyCode: ' M', status: 'modified' }])
+    expect(rows.value).toBe(rows.value) // 同一数组引用（未 dirty）
+    expect(recomputes).toBe(1)
+
+    // 同 sid overlay 更新 → 重算一次（setGitOverlay keyed set 触发本 sid 分桶）
+    store.setGitOverlay('s1', [
+      { path: 'src/a.ts', xyCode: ' M', status: 'modified' },
+      { path: 'src/utils/b.ts', xyCode: 'A ', status: 'added' },
+      { path: 'src/empty/x.ts', xyCode: ' M', status: 'modified' },
+    ])
+    expect(rows.value).toBe(rows.value)
+    expect(recomputes).toBe(2)
+  })
+})
+
+describe('[W28 审查 Fix-7] 金标准用例（手写期望行序列，不经 reference 生成）', () => {
+  it('invalidated 展开目录仍渲染旧 children（hint 判定不吞 children）', () => {
+    const store = useFileTreeStore()
+    store.setTree('s1', [
+      {
+        path: 'src',
+        name: 'src',
+        type: 'dir',
+        children: [{ path: 'src/a.ts', name: 'a.ts', type: 'file' }],
+      },
+    ])
+    store.addExpanded('s1', 'src')
+    store.setNodeState('s1', 'src', { status: 'invalidated' })
+    // invalidated 不是 loading/error → 落到 children 分支，渲旧缓存子行（下次展开重发请求）
+    expect(briefs(project(store))).toEqual([
+      { path: 'src', depth: 0, kind: 'dir' },
+      { path: 'src/a.ts', depth: 1, kind: 'file' },
+    ])
+  })
+
+  it('loaded 但无 children 的展开目录：不产子行也不产 hint（懒加载盲区：加载完成但未 merge children）', () => {
+    const store = useFileTreeStore()
+    store.setTree('s1', [{ path: 'src', name: 'src', type: 'dir' }])
+    store.addExpanded('s1', 'src')
+    store.setNodeState('s1', 'src', { status: 'loaded' })
+    expect(briefs(project(store))).toEqual([{ path: 'src', depth: 0, kind: 'dir' }])
   })
 })

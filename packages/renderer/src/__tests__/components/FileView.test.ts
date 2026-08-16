@@ -197,4 +197,44 @@ describe('FileView W15 过滤防抖（A-1 竞态回归 + A-4 DOM 表现）', () 
     expect(wrapper.find('[data-testid="row-foo.ts"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="file-empty"]').exists()).toBe(false)
   })
+
+  it('[W28 审查 Fix-1] error hint 行点击 → 折叠目录（collapseNode，恢复旧递归「已展开→折叠」语义而非重试）', async () => {
+    // 真实 FileTreeRow（error 行带 toggle 点击），仅 stub ScrollArea；mock virtua 全量渲染行
+    mockFileTree.mockResolvedValueOnce([
+      { path: 'src', name: 'src', type: 'dir', children: [{ path: 'src/a.ts', name: 'a.ts', type: 'file' }] },
+    ])
+    mockGitStatus.mockResolvedValueOnce({
+      sessionId: 's1',
+      isRepo: false,
+      files: [],
+      stagedCount: 0,
+      unstagedCount: 0,
+      stats: { add: 0, del: 0 },
+      hasConflict: false,
+    })
+    const wrapper = mount(FileView, {
+      props: { sessionId: 's1' },
+      global: {
+        stubs: { ScrollArea: { template: '<div><slot /></div>' } },
+      },
+    })
+    await flushPromises()
+
+    const store = useFileTreeStore()
+    store.addExpanded('s1', 'src')
+    store.setNodeState('s1', 'src', { status: 'error', reason: 'timeout' })
+    await nextTick()
+
+    // error 占位行渲染（hint 行 expanded=true 由投影保证）
+    const errorRow = wrapper.find('[data-testid="file-tree-error-src"]')
+    expect(errorRow.exists()).toBe(true)
+    await errorRow.trigger('click')
+    await nextTick()
+
+    // 点击 = 折叠：FileView.onToggleRow 读 row.expanded=true → collapseNode → removeExpanded
+    // （回归前 expanded=false → expandNode → error 态重新发请求，语义变重试）
+    expect(store.getExpanded('s1').has('src')).toBe(false)
+
+    wrapper.unmount()
+  })
 })

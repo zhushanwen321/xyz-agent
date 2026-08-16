@@ -91,11 +91,16 @@ export interface VisibleRow {
   hint?: 'loading' | 'error' | 'empty'
 }
 
-/** 子区占位行 key 前缀（防与真实节点 path 冲突，v-for :key 用） */
+/**
+ * 子区占位行 key 前缀（防与真实节点 path 冲突，v-for :key 用）。
+ * [W28 审查 Fix-3] 旧前缀（'__loading__' 等）与真实相对路径理论碰撞（POSIX 允许文件名以
+ * '__loading__' 开头）——改 'hint:{type}:' 分隔形式：Windows 文件名禁止 ':'，POSIX 相对
+ * 路径含 ':' 需 cwd 下真实存在 'hint:loading:…' 前缀文件，碰撞概率趋零（理论残留仅此场景）。
+ */
 const HINT_KEY_PREFIX: Record<NonNullable<VisibleRow['hint']>, string> = {
-  loading: '__loading__',
-  error: '__error__',
-  empty: '__empty__',
+  loading: 'hint:loading:',
+  error: 'hint:error:',
+  empty: 'hint:empty:',
 }
 
 /**
@@ -116,11 +121,15 @@ export function visibleRowKey(row: VisibleRow): string {
  *
  * E7-a 更新策略：调用方（FileView）用 computed 包裹，依赖分桶后的细粒度 getter——
  * 展开/折叠/过滤/overlay 变化各触发一次全量重投影（O(可见行)，懒加载下是「已加载」子集）。
+ * [W28 审查 Fix-2] gitOverlay/dirChangeCounts 同样走 per-session getter 传参（与 getExpanded
+ * 同款分桶）：computed 只追踪本 sid 分桶 key，异 sid overlay 回写（split mode 多面板
+ * git.status）不触发本 sid 重投影——依赖 store 侧 setGitOverlay/rebuildDirChangeCounts
+ * 用响应式 Map 的 keyed set（不再整体替换外层 ref）。
  *
  * @param getTree 取 session 树（computed 内读 store.getTree 触发响应式）
  * @param getExpanded 取 session 展开态 Set
- * @param gitOverlay 全量 overlay 分桶（投影内 gitOverlay.get(sid) 取本 session）
- * @param dirChangeCounts 全量预聚合分桶（同 gitOverlay）
+ * @param getGitOverlay 取 session overlay 分桶（无则 undefined；与 getExpanded 同款细粒度分桶）
+ * @param getDirChangeCounts 取 session 预聚合分桶（同 getGitOverlay）
  * @param filterText 过滤关键词（原始输入，内部 trim/lower）
  * @param showIgnored 是否显示忽略项
  * @param sid 目标 session
@@ -129,8 +138,8 @@ export function visibleRowKey(row: VisibleRow): string {
 export function projectVisibleRows(
   getTree: (sid: string) => FileNode[] | undefined,
   getExpanded: (sid: string) => Set<string>,
-  gitOverlay: Map<string, Map<string, GitFileStatus>>,
-  dirChangeCounts: Map<string, Map<string, number>>,
+  getGitOverlay: (sid: string) => Map<string, GitFileStatus> | undefined,
+  getDirChangeCounts: (sid: string) => Map<string, number> | undefined,
   filterText: string,
   showIgnored: boolean,
   sid: string,
@@ -141,8 +150,8 @@ export function projectVisibleRows(
 
   const q = filterText.trim().toLowerCase()
   const expanded = getExpanded(sid)
-  const overlay = gitOverlay.get(sid)
-  const counts = dirChangeCounts.get(sid)
+  const overlay = getGitOverlay(sid)
+  const counts = getDirChangeCounts(sid)
 
   const rows: VisibleRow[] = []
 
@@ -178,13 +187,17 @@ export function projectVisibleRows(
     depth: number,
   ): VisibleRow {
     // path 保持目录 path（旧 testid `file-tree-loading-<dirPath>` 语义不变）；
-    // v-for key 由消费方用 rowKey(row)（hint 前缀 + path）保证与目录行不冲突
+    // v-for key 由消费方用 rowKey(row)（hint 前缀 + path）保证与目录行不冲突。
+    // [W28 审查 Fix-1] expanded 恒 true：hint 行只在目录已展开时渲染（walk 的
+    // expanded.has 分支内），目录必然在 expandedPaths 中。旧递归版 error 行点击 =
+    // 折叠（hint 只在已展开目录渲染）；expanded:false 会让 FileView.onToggleRow 走
+    // expandNode → error 态重新发请求（重试而非折叠）——true 恢复旧折叠语义。
     return {
       path: dirPath,
       name: '',
       type: 'dir',
       depth,
-      expanded: false,
+      expanded: true,
       changeCount: 0,
       ignored: false,
       hint,
@@ -271,10 +284,29 @@ export const useFileTreeStore = defineStore('fileTree', () => {
   }
 
   /**
+   * [W28 审查 Fix-2] 取 session 的 git overlay 分桶（无则 undefined）。
+   * per-session 细粒度 getter（与 getExpanded 同款分桶模式）：投影 computed 经它读本
+   * sid 分桶，只追踪该 key——setGitOverlay 的 keyed set 不会让异 sid 更新触发本 sid 重投影。
+   */
+  function getGitOverlay(sessionId: string): Map<string, GitFileStatus> | undefined {
+    return gitOverlay.value.get(sessionId)
+  }
+
+  /**
+   * [W28 审查 Fix-2] 取 session 的目录改动数预聚合分桶（无则 undefined）。
+   * 同 getGitOverlay 的细粒度分桶语义。
+   */
+  function getDirChangeCounts(sessionId: string): Map<string, number> | undefined {
+    return dirChangeCounts.value.get(sessionId)
+  }
+
+  /**
    * [W15/D-7.1] 预聚合目录改动数——随 setGitOverlay 一次 O(n) 构建（n=改动文件数）。
    * 语义与旧 per-row 前缀扫描（path.startsWith(`${dirPath}/`)) 等价：
    * 对每个改动文件 path 'a/b/c.ts'，其所有非空祖先目录（'a'、'a/b'）计数 +1；
    * 根目录（dirPath=''，旧算法 prefix='/' 不匹配相对路径）不计数。
+   * [W28 审查 Fix-2] 用响应式 Map 的 keyed set（不整体替换外层 ref）——投影 computed
+   * 只追踪本 sid 分桶 key，异 sid 更新不触发重投影（E7-a 细粒度分桶的前提）。
    */
   function rebuildDirChangeCounts(sessionId: string): void {
     const overlay = gitOverlay.value.get(sessionId)
@@ -291,8 +323,8 @@ export const useFileTreeStore = defineStore('fileTree', () => {
         }
       }
     }
+    // keyed set：仅本 sid 的响应式触发（dirChangeCounts 是 ref(新 Map()) 深响应式代理）
     dirChangeCounts.value.set(sessionId, counts)
-    dirChangeCounts.value = new Map(dirChangeCounts.value)
   }
 
   /**
@@ -404,8 +436,10 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     for (const s of statuses) {
       map.set(s.path, s)
     }
+    // [W28 审查 Fix-2] keyed set 替代整体替换外层 ref：gitOverlay 是 ref(深响应式 Map)，
+    // set(sid) 只触发本 sid key 的追踪者——投影 computed（经 getGitOverlay(sid) 读本分桶）
+    // 不被异 sid 回写触发（split mode 多面板 git.status 互不干扰，E7-a 细粒度分桶前提）。
     gitOverlay.value.set(sessionId, map)
-    gitOverlay.value = new Map(gitOverlay.value)
     // [W15/D-7.1] 同步预聚合目录改动数（后续 loadTree 之外的 setGitOverlay 调用点天然携带新计数）
     rebuildDirChangeCounts(sessionId)
   }
@@ -468,6 +502,8 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     getExpanded,
     getNodeState,
     getGitStatus,
+    getGitOverlay,
+    getDirChangeCounts,
     getDirChangeCount,
     // actions
     setTree,

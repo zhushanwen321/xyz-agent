@@ -159,14 +159,17 @@ const rootState = computed(() => store.getNodeState(props.sessionId, ''))
 /**
  * [W28/D-7.2] 唯一「树 → 可见行」投影 computed（E7-a：computed 缓存投影，依赖分桶后的
  * 细粒度 getter——展开/折叠/过滤/overlay 变化触发一次 O(可见行) 重投影）。
+ * [W28 审查 Fix-2] overlay/counts 走 per-session getter（getGitOverlay/getDirChangeCounts，
+ * 与 getExpanded 同款分桶）——只追踪本 sid 分桶 key，异 sid git.status 回写不触发重算
+ * （split mode 多面板隔离；store 侧 setGitOverlay 已改 keyed set 支撑）。
  * 语义与旧递归渲染逐行等价（顶层过滤 + 展开 DFS + loading/error/empty 占位行）。
  */
 const visibleRows = computed<VisibleRow[]>(() =>
   projectVisibleRows(
     (sid) => store.getTree(sid),
     (sid) => store.getExpanded(sid),
-    store.gitOverlay,
-    store.dirChangeCounts,
+    (sid) => store.getGitOverlay(sid),
+    (sid) => store.getDirChangeCounts(sid),
     store.filterText,
     store.showIgnored,
     props.sessionId,
