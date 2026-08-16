@@ -14,6 +14,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { computeElapsedSeconds } from "../execution/execution-record.ts";
 import type { SubagentService } from "../execution/subagent-service.ts";
 import type { SubagentRecord } from "../execution/types.ts";
+import { displayAgentName } from "../shared/agent-ref.ts";
 import {
   firstLine,
   formatDisplayItem,
@@ -352,7 +353,7 @@ export class SubagentsListComponent implements Component {
 
     // filter 行（阶段 2 时隐藏 filter 提示，显示锚定提示）
     const filterLine = inDetail
-      ? t.fg("dim", `Pinned: ${selected?.agent ?? ""} · Esc to return to list`)
+      ? t.fg("dim", `Pinned: ${selected?.agent ? displayAgentName(selected.agent) : ""} · Esc to return to list`)
       : (this.state.filterText
         ? `${t.fg("dim", "filter: ")}${t.bold(this.state.filterText)}${t.fg("accent", "_")}`
         : `${t.fg("dim", "filter: ")}${t.fg("accent", "_")}`);
@@ -460,7 +461,7 @@ export class SubagentsListComponent implements Component {
       const depthTag = r.depth > 0 ? ` ${t.fg("dim", `[L${r.depth + 1}]`)}` : "";
       // slug 非空时在 agent 后展示（accent 色），空串时省略。
       const slugTag = r.slug ? ` ${t.fg("accent", r.slug)}` : "";
-      const label = `${iconStr} ${sid}${depthTag} ${r.agent}${slugTag} ${t.fg("dim", modeTag)} ${t.fg("dim", dur)}`;
+      const label = `${iconStr} ${sid}${depthTag} ${displayAgentName(r.agent)}${slugTag} ${t.fg("dim", modeTag)} ${t.fg("dim", dur)}`;
       // 阶段 2：锚定行 accent + ▶；其余行 dim。阶段 1：选中 accent + →，其余正常。
       const content = inDetail
         ? (selected ? t.fg("accent", label) : t.fg("dim", label))
@@ -488,7 +489,7 @@ export class SubagentsListComponent implements Component {
         lines.push("");
       }
     }
-    lines.push(truncLine(`${t.bold(record.agent)} ${t.fg("dim", `· ${record.model}`)}`, width));
+    lines.push(truncLine(`${t.bold(displayAgentName(record.agent))} ${t.fg("dim", `· ${record.model}`)}`, width));
     lines.push(truncLine(
       t.fg("dim", `${record.status} · ${record.turns} turns · ${formatTokens(record.totalTokens)} · ${formatElapsedSeconds(elapsedSec(record))}`),
       width,

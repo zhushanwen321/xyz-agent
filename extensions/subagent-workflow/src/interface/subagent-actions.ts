@@ -22,6 +22,7 @@ import { isResumable } from "../execution/lifecycle-predicates.ts";
 import type { ExecutionRecord } from "../execution/types.ts";
 import type { ModelInfo } from "../execution/model-resolver.ts";
 import type { SubagentService } from "../execution/subagent-service.ts";
+import { displayAgentName } from "../shared/agent-ref.ts";
 import type {
   BgResponse,
   CancelResponse,
@@ -142,11 +143,13 @@ export function mapExternalState(status: ExecutionStatus): ExternalState {
 /** SubagentRecord → SubagentListItem（state 四态主字段 + status 调试字段，duration 实时计算）。
  *  [v4 A-6] 新增 parent/resumable/closedReason：parent 从 record.parentRecordId 派生
  *  （配合 A-5 直接父守卫），resumable 从 isResumable 派生（B-1「可续聊」对外表达），
- *  closedReason 透传（SP-4 级联关闭告知替代 before_agent_start 注入）。 */
+ *  closedReason 透传（SP-4 级联关闭告知替代 before_agent_start 注入）。
+ *  agent 是 GUI/TUI list 共用的显示名——取 basename 短名（displayAgentName），
+ *  完整路径保留在 record.agent（数据层）。 */
 export function recordToListItem(r: SubagentRecord): SubagentListItem {
   return {
     subagentId: r.id,
-    agent: r.agent,
+    agent: displayAgentName(r.agent),
     slug: r.slug,
     state: mapExternalState(r.status),
     status: r.status,

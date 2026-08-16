@@ -34,3 +34,19 @@ export function normalizeRef(ref: string, ext?: string): string | null {
 export const AGENT_REF_EXT = ".md";
 /** workflowRef 扩展名。 */
 export const WORKFLOW_REF_EXT = ".js";
+
+/**
+ * agent ref 的显示名：basename + 去 .md 扩展名（`/a/b/worker.md` → `worker`）。
+ *
+ * agentRef 是绝对路径，UI 显示层（TUI tool block 标题 / list / 完成通知、GUI list item /
+ * pending 通知 name）统一经本函数取短名，避免长路径挤占显示宽度。数据层不动——
+ * record.agent / env 注入（PI_SUBAGENT_AGENT）/ 持久化 / LLM 通知文本保持完整路径。
+ *
+ * 非路径值（DEFAULT_AGENT_NAME "general-purpose"）与无 .md 后缀的值原样返回。
+ * 手动 split(/[\\/]) 而非 path.basename：跨平台统一（macOS 的 path.basename
+ * 不切 Windows `\` 分隔符，反之类推），且本模块避免引入平台分支。
+ */
+export function displayAgentName(ref: string): string {
+  const base = ref.split(/[\\/]/).pop() ?? ref;
+  return base.endsWith(AGENT_REF_EXT) ? base.slice(0, -AGENT_REF_EXT.length) : base;
+}

@@ -9,6 +9,7 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 import type { ExtensionMode } from "./host-mode.ts";
 
 import type { AgentResult as WorkflowAgentResult } from "../orchestration/models/types.ts";
+import { displayAgentName } from "../shared/agent-ref.ts";
 // D-A10: workflow 侧 AgentResult 映射（executeAndAwait 出口）
 import { mapToWorkflowAgentResult } from "./agent-result-mapper.ts";
 import { removeAliveMarker } from "./alive-store.ts";
@@ -109,12 +110,14 @@ interface PiLike {
  *  通过 setWidget 通道转发到 RPC stdout（不经 sendMessage 的持久化路径）。 */
 export type { StreamSink } from "./stream-sink.ts";
 
-/** pending-notifications 注册/注销 helper（避免重复代码）。 */
+/** pending-notifications 注册/注销 helper（避免重复代码）。
+ *  name 是 GUI pending 通知的显示名——取 basename 短名（displayAgentName），
+ *  完整路径仍走 record.agent（env 注入 / 持久化）。 */
 function emitPendingRegister(pi: PiLike | null, id: string, name?: string): void {
   pi?.events.emit("pending:register", {
     id,
     type: "subagent",
-    name: name ?? id,
+    name: name ? displayAgentName(name) : id,
   });
 }
 

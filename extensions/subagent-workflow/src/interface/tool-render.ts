@@ -25,6 +25,7 @@ import type {
   ListResponse,
   SubagentToolResult,
 } from "../execution/types.ts";
+import { displayAgentName } from "../shared/agent-ref.ts";
 import {
   extractAgentName,
   firstLine,
@@ -94,8 +95,9 @@ export function renderSubagentCall(
   const t = theme as ThemeLike;
   // args 结构（拍平后）：{ action:"start", agent, task, slug, ... }（见 subagent-tool.ts schema）。
   // 13 字段直接在顶层，extractAgentName / slug / task 都从 args 顶层提取，
-  // 对齐 nicobailon 的 renderCall 多行布局。
-  const agent = extractAgentName(args);
+  // 对齐 nicobailon 的 renderCall 多行布局。agent ref 是绝对路径，显示取 basename 短名
+  // （displayAgentName）；extractAgentName 原值另被 subagent-tool 的 resolveModel 消费，不动。
+  const agent = displayAgentName(extractAgentName(args));
   // slug：从顶层 args 提取（必填字段），非空时在 agent 后用 · 分隔展示。
   const slug = typeof args === "object" && args !== null && "slug" in args
     ? (args as { slug?: unknown }).slug

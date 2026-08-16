@@ -37,6 +37,7 @@ import {
 import type { ExecutionTraceNode } from "../../orchestration/models/types.ts";
 import type { WorkflowRun } from "../../orchestration/models/workflow-run.ts";
 import { saveWorkflow } from "../../orchestration/workflow-files.ts";
+import { displayAgentName } from "../../shared/agent-ref.ts";
 import {
   BOX_BORDER_CHARS,
   BUDGET_TOKENS_DIVISOR,
@@ -820,7 +821,7 @@ function renderLevel1(
       const tokStr = live.totalTokens > 0 ? `${Math.round(live.totalTokens / BUDGET_TOKENS_DIVISOR)}k tok` : "";
       const tcCount = getAllToolCalls(node.live).length;
       const elapsed = formatElapsedSeconds(live.elapsedSeconds);
-      rightLines.push(`${pointer}${dot} ${node.agent}    ${node.model}    ${tokStr} · ${tcCount} tools · ${elapsed}`);
+      rightLines.push(`${pointer}${dot} ${displayAgentName(node.agent)}    ${node.model}    ${tokStr} · ${tcCount} tools · ${elapsed}`);
     } else {
       const elapsed = formatElapsed(
         node.startedAt,
@@ -829,7 +830,7 @@ function renderLevel1(
       const tok = node.result?.usage;
       const tokStr = tok ? `${Math.round((tok.input + tok.output) / BUDGET_TOKENS_DIVISOR)}k tok` : "";
       const tcCount = node.result?.toolCalls?.length ?? 0;
-      rightLines.push(`${pointer}${dot} ${node.agent}    ${node.model}    ${tokStr} · ${tcCount} tools · ${elapsed}`);
+      rightLines.push(`${pointer}${dot} ${displayAgentName(node.agent)}    ${node.model}    ${tokStr} · ${tcCount} tools · ${elapsed}`);
     }
   }
   state.agentScrollOffset = agentStart;
@@ -863,9 +864,10 @@ function renderLevel2(
     const a = agents[i];
     const pointer = i === state.agentIdx ? "❯ " : "  ";
     const maxNameWidth = SIDEBAR_WIDTH - AGENT_NAME_BUDGET;
-    const agentName = visibleLen(a.agent) > maxNameWidth
-      ? a.agent.slice(0, maxNameWidth - 1) + ELLIPSIS
-      : a.agent;
+    const agentRef = displayAgentName(a.agent);
+    const agentName = visibleLen(agentRef) > maxNameWidth
+      ? agentRef.slice(0, maxNameWidth - 1) + ELLIPSIS
+      : agentRef;
     leftLines.push(`${pointer}${agentName}`);
   }
 

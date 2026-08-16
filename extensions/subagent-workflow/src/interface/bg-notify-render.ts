@@ -22,6 +22,7 @@
 import type { Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 
+import { displayAgentName } from "../shared/agent-ref.ts";
 import {
   firstLine,
   padToVisible,
@@ -212,7 +213,7 @@ function sanitizeAnsiForBg(text: string): string {
 function renderRecordLines(record: BgNotifyRecord, t: ThemeLike): string[] {
   const glyph = statusGlyph(record.status);
   const icon = glyph.icon ?? "•";
-  const agent = truncLine(record.agent, AGENT_MAX_WIDTH);
+  const agent = truncLine(displayAgentName(record.agent), AGENT_MAX_WIDTH);
   // model 段：agent 后、状态描述前，accent 色。空则省略（向后兼容旧 record）。
   const modelPart = record.model
     ? ` ${t.fg("dim", "·")} ${t.fg("accent", truncLine(record.model, MODEL_MAX_WIDTH))}`
