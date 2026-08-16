@@ -82,15 +82,17 @@ const useTerminalMock = {
   writeToTerminal: vi.fn(),
   resizeTerminal: vi.fn(),
   killTerminal: vi.fn(),
+  clearTerminal: vi.fn(),
   attachTerminal: vi.fn(),
   enqueueWrite: vi.fn(),
   registerFlushListener: vi.fn(() => () => {}),
 }
 vi.mock('@/composables/features/terminal/useTerminal', () => ({
   useTerminal: () => useTerminalMock,
-  // D-6.2：TerminalView 挂载回放调用 replayChunks——mock 返回 null（无可回放，
-  // 本文件聚焦渲染/交互视角，回放内容由 raf-queue 测试覆盖）
+  // D-6.2：TerminalView 挂载回放调用 replayChunks（分批版 replayChunksBatched）——
+  // mock 返回 null（无可回放，本文件聚焦渲染/交互视角，回放内容由 raf-queue 测试覆盖）
   replayChunks: () => null,
+  replayChunksBatched: () => null,
 }))
 
 // ── mock session store（getSessionCwd 依赖）────────────────────────────────

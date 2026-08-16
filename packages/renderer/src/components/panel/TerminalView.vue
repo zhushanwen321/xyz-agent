@@ -65,7 +65,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { Eraser, Square, MessageSquare } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
-import { useTerminal, replayChunks, type TerminalBuffer } from '@/composables/features/terminal/useTerminal'
+import { useTerminal, replayChunksBatched, type TerminalBuffer } from '@/composables/features/terminal/useTerminal'
 import { useSessionStore } from '@/stores/session'
 import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
 import { getSettingsStore } from '@xyz-agent/core'
@@ -74,7 +74,6 @@ import { darkTerminalTheme } from '@/composables/terminal/terminal-themes'
 /**
  * xterm 默认字体栈（canvas 渲染，不能用 CSS 变量 var()——canvas 不解析）。
  * 项目首选 JetBrains Mono 但未加载 webfont，canvas 回退到系统等宽字体 Menlo（macOS）/ Monaco。
- * 用户可在 Settings → Terminal 用 fontFamily 覆盖。
  */
 const DEFAULT_FONT_FAMILY = 'Menlo, Monaco, "Courier New", monospace'
 const DEFAULT_FONT_SIZE = 13
@@ -109,13 +108,63 @@ const selectionPos = ref({ top: 0, left: 0 })
 let xterm: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let resizeObserver: ResizeObserver | null = null
-// 版本回放指针（D-6.2，替代 W14 的逻辑索引指针）：本视图已回放的 chunk 总数
-// （= buffer.version 语义，单调）。mount / 切 session 时归零（全量回放），
-// 之后每次 flush 监听按「指针 → 当前版本」增量 write。指针是视图私有状态：
-// 模块级 buffer 跨组件存活，多个视图各自维护自己的回放进度。
+// 版本回放指针（D-6.2）：本视图已回放 chunk 总数（= buffer.version 语义，单调），mount/切 session 归零
 let replayedVersion = 0
 // 本视图的 flush 监听反注册（mount 注册 / unmount 与切 session 反注册）
 let unregisterFlush: (() => void) | null = null
+
+// ── 回放分批写队列（Fix-5）──
+// 全量回放（mount）可达 5000 chunks × 4KB ≈ 20MB，replayChunksBatched 拆批逐帧写；
+// 顺序 = 入队序，队列空闲时单批同步写（增量 flush 立即可见），指针入队即推进。
+let replayWriteQueue: string[] = []
+let replayWriteScheduled = false
+
+/** 消费一帧：写队列首批，非空则调度下一帧继续（rAF 链）。 */
+function pumpReplayWrites(): void {
+  replayWriteScheduled = false
+  if (replayWriteQueue.length === 0) return
+  if (!xterm) { replayWriteQueue.length = 0; return } // 视图销毁：丢挂起批次（重挂载全量重放）
+  xterm.write(replayWriteQueue.shift()!)
+  if (replayWriteQueue.length > 0) {
+    replayWriteScheduled = true
+    requestAnimationFrame(pumpReplayWrites)
+  }
+}
+
+/** 回放批次入队（顺序 = 入队序）：空闲即同步消费，否则 rAF 链逐帧。 */
+function enqueueReplayWrites(batches: string[]): void {
+  replayWriteQueue.push(...batches)
+  if (!replayWriteScheduled) pumpReplayWrites()
+}
+
+/**
+ * 版本回放（D-6.2）：fromVersion（含）之后 append 的 chunk 分批复放（每批 ≤500，Fix-5）。
+ * 幂等（E6-b）；指针立即推进到 targetVersion，后续增量从新指针起算，不重叠不重复。
+ */
+function replayFrom(fromVersion: number, buffer: TerminalBuffer): void {
+  if (!xterm) return
+  const result = replayChunksBatched(buffer, fromVersion)
+  if (result === null) return
+  replayedVersion = result.targetVersion
+  enqueueReplayWrites(result.batches)
+}
+
+/** flush 监听回调：模块级 flush 完成后按本视图指针增量回放（替代 W14 的 watch 链）。 */
+function onFlushed(buffer: TerminalBuffer): void {
+  if (buffer.version < replayedVersion) {
+    // version 单调只增，回退 = 被 clearPartition 重置（Fix-3）：清本视图 + 指针归零 + 丢挂起批次
+    xterm?.clear()
+    replayedVersion = 0
+    replayWriteQueue.length = 0
+  }
+  replayFrom(replayedVersion, buffer)
+}
+
+/** 清屏（清 xterm + 当前分区 buffer，Fix-3：切走切回历史不复活）。 */
+function clear(): void {
+  xterm?.clear()
+  terminal.clearTerminal()
+}
 
 /** 取 session cwd（spawn 用）。 */
 function getSessionCwd(): string | undefined {
@@ -193,29 +242,6 @@ function initXterm(): FitAddon | null {
   return fit
 }
 
-/**
- * 版本回放（D-6.2）：把 buffer 中 fromVersion（含）之后 append 的 chunk 合并为单次 write。
- * fromVersion=0 = 全量回放（mount / 切 session）；fromVersion=本视图指针 = 增量（flush 监听）。
- * replayChunks 幂等（E6-b：重复回放只是重写既有内容），指针随 buffer.version 前进。
- */
-function replayFrom(fromVersion: number, buffer: TerminalBuffer): void {
-  if (!xterm) return
-  const merged = replayChunks(buffer, fromVersion)
-  if (merged === null) return
-  xterm.write(merged)
-  replayedVersion = buffer.version
-}
-
-/** flush 监听回调：模块级 flush 完成后按本视图指针增量回放（替代 W14 的 watch 链）。 */
-function onFlushed(buffer: TerminalBuffer): void {
-  replayFrom(replayedVersion, buffer)
-}
-
-/** 清屏（清 xterm + scrollback 当前分区）。 */
-function clear(): void {
-  xterm?.clear()
-}
-
 /** Phase 4 联动 1：选中文本 → 注入 composer「发给 AI」。 */
 function sendSelectionToAI(): void {
   const text = xterm?.getSelection()
@@ -269,6 +295,8 @@ onBeforeUnmount(() => {
   xterm = null
   fitAddon = null
   replayedVersion = 0
+  // 丢弃挂起回放批次（Fix-5：防旧会话内容写入重挂载后的新 xterm）
+  replayWriteQueue.length = 0
 })
 
 // Settings → Terminal 配置变化（字体/字号/scrollback/cursorStyle）：动态应用到已挂载的 xterm。
@@ -305,6 +333,7 @@ watch(
     xterm = null
     fitAddon = null
     replayedVersion = 0
+    replayWriteQueue.length = 0
     await nextTick()
     const fit2 = initXterm()
     if (!xterm || !fit2) return

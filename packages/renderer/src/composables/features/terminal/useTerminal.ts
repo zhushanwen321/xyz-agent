@@ -35,10 +35,10 @@
  * rAF 输出写队列（D-6.1 → D-6.2 演进）：
  * - terminal.data 入 outputQueue（markRaw 非响应式），rAF flushPending 批量 append 进
  *   buffer.chunks + 版本前进 + 裁剪，然后直接通知本 sid 已注册的 flush 监听器
- *   （TerminalView 增量 replay）——watch 链消失（D-6.2 检查点：watch(scrollback.length)
- *   与 watch(flushVersion) 全部删除，回放只靠 replayFrom(version)）。
- * - buffer.version = 累计 append chunk 数（单调递增、裁剪不减，W14 flushVersion/
- *   totalAppended 双锚点合一）：既是「buffer 有更新」的版本信号，也是回放指针基准。
+ *   （TerminalView 增量 replay）——watch 链消失（D-6.2 检查点：旧 watch 链（监听
+ *   scrollback 长度 / flush 版本号）全部删除，回放只靠 replayFrom(version)）。
+ * - buffer.version = 累计 append chunk 数（单调递增、裁剪不减，W14 双锚点——flush
+ *   版本号 / 累计 append 数——合一）：既是「buffer 有更新」的版本信号，也是回放指针基准。
  *   replayChunks(buffer, fromVersion) 从版本号直接定位物理起点（逻辑索引 - 裁剪量），
  *   O(1) 无辅助结构，幂等（重复回放只是重写既有内容，E6-b）。
  * - 用户输入（writeToTerminal）不走此队列，直连 terminalApi.write（击键即时回显）。
@@ -114,6 +114,9 @@ const SCROLLBACK_LIMIT = 5000
  */
 const MAX_OUTPUT_QUEUE = 1000
 
+/** 回放分批每批 chunk 数上限（Fix-5）：每帧一批，避免全量单串 write 卡住主线程。 */
+const REPLAY_BATCH_CHUNKS = 500
+
 // ── 模块级持久分区（W27/D-6.2 生命周期上提）──────────────────────────────
 // ADR-0049「全局 sid 协调器例外类」：无 setup 上下文、方法显式接收 sid、buffer 非响应式。
 // 分区生命周期 = session 生命周期（session 销毁经 registerSessionCleanup 清理），
@@ -131,17 +134,20 @@ const subscribedSids = new Set<string>()
 const subscriptionUnsubs = new Map<string, () => void>()
 
 // ── flush 监听器注册表（sid → 已挂载视图的增量回放回调）────────────────────
-// 组件 mount 注册、unmount 反注册。flush 后直接通知，替代 W14 的 watch(flushVersion) 链。
+// 组件 mount 注册、unmount 反注册。flush 后直接通知，替代 W14 的 watch(flush 版本) 链。
 const flushListeners = new Map<string, Set<(buffer: TerminalBuffer) => void>>()
 
 /**
  * 模块级分区读写（updateFor 语义，ADR-0049）：WS handler 用显式 sid，不读组件 sidRef。
+ * 分区创建（首次写入）时 bump mapVersion——新分区出现后各实例 current computed 失效
+ * 重算，从「临时默认实例」切到真实分区（Fix-2 读/写语义拆分，见 current 注释）。
  */
 function getOrCreatePartition(sid: string): TerminalPartition {
   let p = partitions.get(sid)
   if (!p) {
     p = createPartition()
     partitions.set(sid, p)
+    mapVersion.value += 1
   }
   return p
 }
@@ -167,7 +173,11 @@ function cleanupPartition(sid: string): void {
   flushListeners.delete(sid)
 }
 // 模块级注册一次（无 setup scope，应用生命周期内不反注册——分区清理点
-// useSidebar.deleteSession 的 triggerSessionCleanups 是唯一入口）
+// useSidebar.deleteSession 的 triggerSessionCleanups 是唯一入口）。
+// HMR 注意（Fix-6）：vite 热重载本模块时旧模块的 cleanupPartition 仍在 registry 中
+// 残留（triggerSessionCleanups 会多调一次，幂等无害），events.on 的旧 handler 同理
+// （只写旧模块的孤儿分区，随 GC 回收）——与 useChat.streamSubscriptions 同类的
+// dev-only 有界残留，不做 import.meta.hot.dispose 退订。
 registerSessionCleanup(cleanupPartition)
 
 // ServerMessage 是泛型接口（非可判别联合），type 字面量比较不会自动收窄 payload——
@@ -276,6 +286,33 @@ function flushPending(sid: string, p: TerminalPartition): void {
 }
 
 /**
+ * 清屏（Fix-3，TerminalView clear 按钮）：重置 sid 分区 buffer（chunks/version 归零）
+ * + 清 pending 输出队列（防帧边界 flush 回填）+ 通知已注册 flush 监听器。
+ * buffer.version 单调只增（裁剪不减），回退即被 clear 重置——监听器据此清空本视图
+ * xterm + 回放指针归零（多视图同 sid 同步清屏，见 TerminalView onFlushed）。
+ * 不 bump mapVersion：buffer 非响应式，视图靠 flush 监听器感知，无需渲染重算。
+ */
+function clearPartition(sid: string): void {
+  const p = partitions.get(sid)
+  if (!p) return
+  p.buffer.chunks.length = 0
+  p.buffer.version = 0
+  p.outputQueue.length = 0
+  p.rafPending = false
+  const listeners = flushListeners.get(sid)
+  if (listeners) {
+    for (const cb of listeners) {
+      try {
+        cb(p.buffer)
+      } catch (e) {
+        // 单监听器抛错不阻断其余视图（events 层 safeForEach 同款，M4）
+        console.error('[terminal] flush listener threw:', e)
+      }
+    }
+  }
+}
+
+/**
  * 版本回放纯函数（D-6.2）：从 fromVersion（含）之后 append 的 chunk 合并为单块。
  * fromVersion 是逻辑索引版本（= 已回放的 chunk 总数）；裁剪后物理起点
  * = fromVersion - 裁剪量，钳制到 0（指针落后裁剪线时保留内容全在新指针后，全量无重复）。
@@ -289,24 +326,49 @@ export function replayChunks(buffer: TerminalBuffer, fromVersion: number): strin
 }
 
 /**
+ * 分批版本回放（Fix-5）：replayChunks 的全量单串合并（5000 chunks × 4KB ≈ 20MB 一次
+ * write 会卡住主线程）拆成每批 ≤ maxBatchChunks 个 chunk 的批次数组，由视图侧分帧写
+ * （TerminalView enqueueReplayWrites）。物理起点/幂等语义与 replayChunks 完全一致。
+ * 返回 null = 无新增；targetVersion = 本批覆盖的最终版本（视图回放指针推进目标）。
+ */
+export function replayChunksBatched(
+  buffer: TerminalBuffer,
+  fromVersion: number,
+  maxBatchChunks = REPLAY_BATCH_CHUNKS,
+): { batches: string[]; targetVersion: number } | null {
+  if (fromVersion >= buffer.version) return null
+  const cropped = buffer.version - buffer.chunks.length
+  const physicalStart = Math.max(fromVersion - cropped, 0)
+  const batches: string[] = []
+  for (let i = physicalStart; i < buffer.chunks.length; i += maxBatchChunks) {
+    batches.push(buffer.chunks.slice(i, i + maxBatchChunks).join(''))
+  }
+  return { batches, targetVersion: buffer.version }
+}
+
+/**
  * terminal per-session 状态 + PTY 控制的组件视图层。
  *
  * @param sessionIdRef session id ref（string | null）
  * @returns current（按组件 sidRef 读模块分区的 computed）+ PTY 控制 + flush 监听注册
  */
 export function useTerminal(sessionIdRef: Ref<string | null>) {
-  // 模块分区视图：null sid 返回临时默认实例（不写 Map，同工厂语义）；
-  // 依赖 mapVersion 让 cleanup（删分区）后本 computed 失效重算。
+  // 模块分区视图（读/写语义拆分，Fix-2）：null sid 或「分区不存在/已 cleanup」返回
+  // 临时默认实例（不写 Map，同工厂语义）；依赖 mapVersion 让 cleanup（删分区）后本
+  // computed 失效重算。禁止 create-on-read：deleteSession 流程中 cleanup 后、activeId
+  // 回退到下一 session 之前若渲染重算，会重建已删 sid 的空分区且该 sid 不再被 cleanup
+  // （永久泄漏，W27-4 原测试假阳性即因此漏检）。分区由写入方（updatePartition：
+  // spawn/resize/appendChunk）创建并 bump mapVersion，本 computed 随之切到真实分区。
   const current: ComputedRef<TerminalPartition> = computed(() => {
     void mapVersion.value
     const sid = sessionIdRef.value
     if (sid === null) return createPartition()
-    return getOrCreatePartition(sid)
+    return partitions.get(sid) ?? createPartition()
   })
 
   /**
    * 注册本视图的增量回放监听（mount 调、unmount 反注册）：每次有内容的 flush 后调用，
-   * 回调内按本视图已回放版本做增量 write。替代 W14 的 watch(flushVersion) 链。
+   * 回调内按本视图已回放版本做增量 write。替代 W14 的 watch(flush 版本) 链。
    *
    * @param sid 所属 session
    * @param cb 收到最新 buffer 的回调（视图持有自己的回放指针，只写增量）
@@ -367,6 +429,13 @@ export function useTerminal(sessionIdRef: Ref<string | null>) {
     void terminalApi.kill(sid)
   }
 
+  /** 清屏（TerminalView clear 按钮）：重置当前 sid 分区 buffer + 通知监听器（Fix-3）。 */
+  function clearTerminal(): void {
+    const sid = sessionIdRef.value
+    if (!sid) return
+    clearPartition(sid)
+  }
+
   /** 通知 PTY 活跃（TerminalView mount 调）。attach 保持 no-op 预留（09 §3.3.1 定案，不做源头过滤）。 */
   function attachTerminal(): void {
     const sid = sessionIdRef.value
@@ -385,6 +454,7 @@ export function useTerminal(sessionIdRef: Ref<string | null>) {
     writeToTerminal,
     resizeTerminal,
     killTerminal,
+    clearTerminal,
     attachTerminal,
     /** flush 监听注册（TerminalView mount/unmount 编排）。 */
     registerFlushListener,
@@ -409,4 +479,11 @@ export function __resetTerminalStateForTest(): void {
 /** 测试专用：当前分区数（断言 session 销毁后分区释放）。 */
 export function __terminalPartitionCountForTest(): number {
   return partitions.size
+}
+
+/** 测试专用：已注册 flush 监听器总数（断言 session 销毁后监听清空，Fix-2 W27-4）。 */
+export function __terminalFlushListenerCountForTest(): number {
+  let count = 0
+  for (const set of flushListeners.values()) count += set.size
+  return count
 }

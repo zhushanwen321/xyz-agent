@@ -25,8 +25,10 @@ import type { ServerMessage } from '@xyz-agent/shared'
 import type { UseTerminalReturn } from '@/composables/features/terminal/useTerminal'
 import {
   replayChunks,
+  replayChunksBatched,
   __resetTerminalStateForTest,
   __terminalPartitionCountForTest,
+  __terminalFlushListenerCountForTest,
 } from '@/composables/features/terminal/useTerminal'
 
 // ── mock terminalApi（隔离 RPC；Part 2 的 TerminalView spawn 也会调）────────
@@ -479,17 +481,21 @@ describe('W27 D-6.2 分区生命周期上提 + 版本回放', () => {
 
     // session 销毁（useSidebar.deleteSession 编排 → triggerSessionCleanups）
     triggerSessionCleanups('s1')
+    // 让渲染队列推进（Fix-2）：cleanup bump mapVersion → 视图重渲染 → current computed
+    // 重算。修复前 create-on-read 会在此重建已删 sid 的空分区（原测试不 flush 渲染
+    // 队列，computed 惰性未重算，是假阳性——这里会暴露原 bug）
+    await flushPromises()
 
-    // ① 分区释放
+    // ① 分区释放（渲染重算后仍为 0——不复活已删 sid 的分区）
     expect(__terminalPartitionCountForTest()).toBe(0)
     // ② 订阅解除：销毁后 dispatch 无人接收，不重建分区
     dispatchSession('s1', makeDataMsg('s1', 'ghost'))
     advanceFrame()
+    await flushPromises()
     expect(__terminalPartitionCountForTest()).toBe(0)
-    // ③ 视图挂载期注册的 flush 监听器随分区清理（无残留闭包）
-    //   ——flushListeners 为模块内部，经「cleanup 后再 flush 无监听器触发」间接断言：
-    //   若监听残留，ghost flush 会尝试写 xterm（无分区时 flushPending 早退，零副作用）；
-    //   直接断言：分区不存在时 ghost 不产生任何写入路径（上面已断言分区数 0）。
+    // ③ 视图挂载期注册的 flush 监听器随分区清理（无残留闭包）——直接断言注册表清空
+    //   （Fix-2 新增测试 hook：不再依赖「无分区时 flushPending 早退」的间接路径）
+    expect(__terminalFlushListenerCountForTest()).toBe(0)
   })
 
   it('W27-5: replayChunks 纯函数 —— 版本边界与裁剪后物理起点', () => {
@@ -514,14 +520,125 @@ describe('W27 D-6.2 分区生命周期上提 + 版本回放', () => {
   })
 
   it('W27-6: watch(scrollback.length) 与 watch(flushVersion) 已删除（D-6.2 检查点 grep 断言）', () => {
-    // __dirname = src/__tests__/terminal（vite-node 注入），up 2 到 src 后拼 components 路径
-    const terminalViewSource = readFileSync(
+    // __dirname = src/__tests__/terminal（vite-node 注入），up 2 到 src 后拼目标路径
+    // Fix-4：断言范围覆盖 useTerminal.ts + TerminalView.vue 双侧（旧 watch 链可能
+    // 只从其中一侧回归——如模块侧重引入 reactive 依赖）
+    const sources = [
+      resolve(__dirname, '../../composables/features/terminal/useTerminal.ts'),
       resolve(__dirname, '../../components/panel/TerminalView.vue'),
-      'utf8',
-    )
+    ].map((p) => readFileSync(p, 'utf8'))
     // 旧 watch 链的源引用全部消失（回放只靠 replayFrom(version)）
-    expect(terminalViewSource).not.toContain('scrollback.length')
-    expect(terminalViewSource).not.toContain('flushVersion')
-    expect(terminalViewSource).not.toContain('replayedUpTo')
+    for (const src of sources) {
+      expect(src).not.toContain('scrollback.length')
+      expect(src).not.toContain('flushVersion')
+      expect(src).not.toContain('replayedUpTo')
+    }
+  })
+
+  it('W27-7: clear 重置 buffer —— 切走切回历史为空（Fix-3）', async () => {
+    const wrapper = mount(TerminalView, { props: { sessionId: 's1' } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    const xterm = xtermInstances[xtermInstances.length - 1]!
+
+    // 先有历史
+    dispatchSession('s1', makeDataMsg('s1', 'old-1'))
+    dispatchSession('s1', makeDataMsg('s1', 'old-2'))
+    advanceFrame()
+    await flushPromises()
+    expect(xterm.write).toHaveBeenCalledTimes(1)
+    expect(xterm.write).toHaveBeenCalledWith('old-1old-2')
+
+    // 点 clear：xterm 清屏 + 模块 buffer 重置（Fix-3 前只清 xterm，buffer 残留）
+    xterm.write.mockClear()
+    xterm.clear.mockClear()
+    await wrapper.find('[data-testid="terminal-btn-clear"]').trigger('click')
+    await flushPromises()
+    expect(xterm.clear).toHaveBeenCalled()
+
+    // clear 后新输出照常显示（buffer.version 从 0 重新计，增量链路不断）
+    dispatchSession('s1', makeDataMsg('s1', 'fresh'))
+    advanceFrame()
+    await flushPromises()
+    expect(xterm.write).toHaveBeenCalledTimes(1)
+    expect(xterm.write).toHaveBeenCalledWith('fresh')
+
+    // 切走再切回：回放仅含 clear 后的内容（旧历史不复活）
+    await wrapper.setProps({ sessionId: 's2' })
+    await flushPromises()
+    await wrapper.setProps({ sessionId: 's1' })
+    await flushPromises()
+    const xterm2 = xtermInstances[xtermInstances.length - 1]!
+    expect(xterm2.write).toHaveBeenCalledTimes(1)
+    expect(xterm2.write).toHaveBeenCalledWith('fresh')
+  })
+
+  it('W27-8: replayChunksBatched 纯函数 —— 分批边界 + 总内容等价 + 每批上限（Fix-5）', () => {
+    // 空 buffer：无可回放（同 replayChunks）
+    expect(replayChunksBatched({ chunks: [], version: 0 }, 0)).toBeNull()
+
+    // 默认批上限 500：1200 条 → 3 批（500/500/200），总内容与逐条 join 等价
+    const chunks = Array.from({ length: 1200 }, (_, i) => `c${i};`)
+    const buf = { chunks, version: chunks.length }
+    const r = replayChunksBatched(buf, 0)
+    expect(r).not.toBeNull()
+    const { batches, targetVersion } = r!
+    expect(batches.length).toBe(3)
+    expect(batches[0]).toBe(chunks.slice(0, 500).join(''))
+    expect(batches[1]).toBe(chunks.slice(500, 1000).join(''))
+    expect(batches[2]).toBe(chunks.slice(1000).join(''))
+    expect(batches.join('')).toBe(chunks.join(''))
+    expect(targetVersion).toBe(chunks.length)
+
+    // 每批 chunk 数 ≤ 上限（固定 4 字符 chunk：每批 ≤ 500 × 4 字符）
+    const fixedChunks = Array.from({ length: 1200 }, () => 'aaaa')
+    const r2 = replayChunksBatched({ chunks: fixedChunks, version: 1200 }, 0)!
+    for (const b of r2.batches) expect(b.length).toBeLessThanOrEqual(500 * 4)
+
+    // 自定义批上限 + 增量起点（裁剪后物理起点语义同 replayChunks）
+    const croppedBuf = { chunks: ['e', 'f', 'g'], version: 9 }
+    const r3 = replayChunksBatched(croppedBuf, 6, 2)!
+    expect(r3.batches).toEqual(['ef', 'g'])
+    // 指针 = 版本 → null（无新增）
+    expect(replayChunksBatched(croppedBuf, 9)).toBeNull()
+  })
+
+  it('W27-9: 大批量 flush 分帧写 —— 每帧一批、顺序保持、总内容等价（Fix-5）', async () => {
+    const wrapper = mount(TerminalView, { props: { sessionId: 's1' } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    const xterm = xtermInstances[xtermInstances.length - 1]!
+    xterm.write.mockClear()
+
+    // 单帧 600 chunks（≤ MAX_OUTPUT_QUEUE 不合并）：一次 flush → 2 批（500 + 100）
+    const count = 600
+    for (let i = 0; i < count; i++) dispatchSession('s1', makeDataMsg('s1', `b${i};`))
+    advanceFrame() // flushPending → onFlushed → 首批同步写
+    await flushPromises()
+    expect(xterm.write).toHaveBeenCalledTimes(1)
+    expect(xterm.write).toHaveBeenNthCalledWith(
+      1,
+      Array.from({ length: 500 }, (_, i) => `b${i};`).join(''),
+    )
+
+    advanceFrame() // rAF 链：第二批
+    await flushPromises()
+    expect(xterm.write).toHaveBeenCalledTimes(2)
+    expect(xterm.write).toHaveBeenNthCalledWith(
+      2,
+      Array.from({ length: 100 }, (_, i) => `b${i + 500};`).join(''),
+    )
+
+    // 总内容等价（分批不丢不重不乱序）
+    expect(xterm.write.mock.calls.map((c) => c[0]).join('')).toBe(
+      Array.from({ length: count }, (_, i) => `b${i};`).join(''),
+    )
+
+    // 链完成后增量 flush 照常（单批同步写）
+    dispatchSession('s1', makeDataMsg('s1', 'tail'))
+    advanceFrame()
+    await flushPromises()
+    expect(xterm.write).toHaveBeenCalledTimes(3)
+    expect(xterm.write).toHaveBeenNthCalledWith(3, 'tail')
   })
 })
