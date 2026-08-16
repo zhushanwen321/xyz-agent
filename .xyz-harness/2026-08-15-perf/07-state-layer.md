@@ -1,6 +1,6 @@
 # P0 状态层：容器范式 + per-session 派生 + token 合帧（子文档 07）
 
-> **一句话结论**：把 `messages` 从「Map 恒等不稳定 + 全局 streaming computed + 逐 token 提交」改为「Map 恒等稳定 + 每 session 独立 ref + per-session 惰性 computed + microtask 合帧」，让每个 token 的失效范围从「全部 session」收敛到「当前 session 一个 ref」，且提交次数从「每 token 一次」降到「每 microtask 一次」——这是失败模式 A 失效扇出根因（根因 1）的修法，也是子文档 08 的地基。**收益定位（审查修正）**：D-1 的失效收敛是**多 session** 属性（单 session 长对话时只有目标 session 自己在变，本无跨 session 扇出可收敛）；单 session 长对话的流畅由 D-2（提交次数）+ D-3（去全局扫描）+ 08 的 D-4/D-5（渲染）共同达成。**D-1 必须同时迁移两个整-ref watcher 的依赖源**（§2.3.5），否则其触发源被切断。
+> **一句话结论**：把 `messages` 从「Map 恒等不稳定 + 全局 streaming computed + 逐 token 提交」改为「Map 恒等稳定 + 每 session 独立 ref + per-session 惰性 computed + microtask 合帧」，让每个 token 的失效范围从「全部 session」收敛到「当前 session 一个 ref」，且提交次数从「每 token 一次」降到「每 microtask 一次」——这是失败模式 A 失效扇出根因（根因 1）的修法，也是子文档 08 的地基。**收益定位（审查修正）**：D-1 的失效收敛是**多 session** 属性（单 session 长对话时只有目标 session 自己在变，本无跨 session 扇出可收敛）；单 session 长对话的流畅由 D-2（提交次数）+ D-3（去全局扫描）+ 08 的 D-4/D-5（渲染）共同达成。**D-1 必须同时迁移两个整-ref watcher 的依赖源**（§2.3.5），否则 deep watcher 的触发面呈跨 session 过度触发（失效不收敛，见 §2.3.5 勘误）。
 
 - **S（情境）**：xyz-agent 开发者看 AI 流式回复时，每个 token 都要走 `WS → core transport → chat store → 消息组件 → markdown` 全链路。这条链路的头部是 `packages/core` 的 chat 域状态层（`store.ts` 的 `messages` 可变状态 + 派生），本文档只改这一层。
 - **C（冲突）**：`messages = shallowRef<Map<string, Message[]>>` 每次 commit 都整体替换 Map 身份（`mutations.ts` 的 `new Map` 全表拷贝），导致所有读 `messages.value` 的 computed 跨 session 失效；同时 `streamingSessionIds` 是全 Map 重扫的全局 computed，且每个 token 单独提交一次 `commitMessages`——无效写 + 无效算 + 无效失效。
@@ -196,11 +196,13 @@ const unwatch = watch(
 
 `packages/renderer/src/composables/features/search/useSearch.ts:78-98` 里 `setupInvalidation`（`useFileSearch`）同样 watch 整 `chatStore.messages`，且每次 `activeSessionId` 变化 rebuild 该 watcher。两者目前**每个 token 都会重扫当前 session 的全部消息的 fileChanges**（见失败模式 E：`useFileChangeInvalidation` 每 token 全量重扫无产出的 stale 角标）。
 
-**⚠️ D-1 伴生必改项（审查修正，本项是 MUST 级而非「自动受益」）**：D-1 落地后这两个 watcher 的触发源**被切断**——`() => chatStore.messages` 读的是外层 Map 身份，D-1 后同 sid 更新只替换 `get(sid).value`、外层 Map 身份不变 → watcher 不再随 token 更新触发；且 `{deep:true}` 救不了它（Vue `traverse` 对 ref 类值不深入遍历，分区值换成 `ShallowRef` 后 deep 遍历零依赖）。若不加处理，fileChanges 的 stale 缓存失效与搜索缓存失效会**静默停更**（角标不再随 AI 写文件刷新），且 D-9（09，阶段 2）晚于本文档（阶段 1）落地，中间存在明确回归窗口。
+**⚠️ D-1 伴生必改项（审查修正，本项是 MUST 级而非「自动受益」）**：D-1 落地后若这两个 watcher 不迁移，`{deep:true}` 会让它们的触发面失控——**任何 session 的每次 commit 都触发全量重扫**（watcher 回调读当前 sid 全消息扫 fileChanges），失效不收敛。
+**[W13 勘误，实证定案]** 本节初稿曾断言「`() => chatStore.messages` 读外层 Map 身份，D-1 后 Map 恒等 → watcher 不再随 token 触发；且 `{deep:true}` 救不了它（Vue `traverse` 对 ref 类值不深入遍历，分区值换成 `ShallowRef` 后 deep 遍历零依赖）→ 静默停更」。**该断言错误**。W11 的 P5 探针实测 + W10 审查者读 Vue 3.5.39 reactivity 源码双重实证：`traverse` 对 ref 类值走 `isRef(value) → traverse(value.value)`、对 Map 走 `isMap → forEach`，会递归进入 Map entry 的内层 ShallowRef 并读其 `.value` 建立 deep 依赖——deep watcher 在 D-1 后**仍随每次 commit 触发**。真实风险是**过度触发/失效不收敛**（每 token 一次全消息重扫，且他 sid 更新也触发本 watcher），而非停更。必改结论不变；迁移的正确理由是**性能收敛**（触发面从「任何 session 每次 commit」收敛到「本 session 的分区 ref 替换」），不是「防停更」。若不迁移，该性能退化持续到 D-9（09，阶段 2）落地。
 
 - **必改方案（选定）**：两个 watcher 的依赖源从「外层 Map」改为「当前 sid 的 per-sid 分区 ref」——`watch([() => sessionIdRef.value, () => chatStore.getMessages(sessionIdRef.value ?? '')], ..., { deep: true, immediate: true })`。getter 内部读 `get(sid).value` 会精确追踪该 sid 分区 ref 的替换，同 sid 更新触发、他 sid 更新不触发；`deep:true` 对返回的普通数组无副作用（保持与现状一致的「读当前 sid 全消息扫 fileChanges」逻辑，**逻辑不变，只换依赖源**）。
+  - **[落地形态，R-16 裁决版]** W11 实际落地为 watch source 直接取内层 ref（`() => chatStore.messages.get(sid)?.value`）并**去掉 deep**——依赖「消息数组不可变替换」语义（commitMessages 产出新数组）保证同 sid 更新仍触发，比本文档「watch getMessages + 保留 deep」更彻底地消除 deep traverse 成本；两版依赖追踪面等价（都只依赖本 sid 分区 ref）。
 - 由此获得的频率收益是 D-2 带来的（每 microtask 批只触发一次），而非「依赖迁移」本身。
-- 被否：(a) 不改依赖、声明「阶段 1 到 D-9 之间 fileChanges 失效停更」为已知副作用——把功能回归当已知项，违反 G5；(b) 等 D-9 一并改——回归窗口横跨阶段 1/2，不可接受。
+- 被否：(a) 不改依赖、声明「阶段 1 到 D-9 之间 fileChanges/搜索失效处于跨 session 过度触发（不收敛）」为已知副作用——把可避免的性能退化当已知项，违反 G5；(b) 等 D-9 一并改——退化窗口横跨阶段 1/2，不可接受。
 - 注意：这两个 watcher 只是**失效触发**；目录失效/角标刷新本身的改造（overlay 化）属 D-9（09 文档），本文档不改其回调逻辑。
 
 ### 2.4 失败模式与根因映射
@@ -432,6 +434,8 @@ function createCoalescer(chat: ChatStoreInstance) {
 
 **[待验证] 合并窗口上限**：`queueMicrotask` 的合并窗口是「当前同步任务到 microtask checkpoint」，在高频 token（真实 pi 假设 80/s）下一个 microtask 能合并的数量取决于 WS 事件是否在一个任务里连续派发。父 00 §5 待验证检查点 1 已把「真实 pi token 到达率」标为待查点——**若实测一个 microtask 合并窗口太窄（几乎每次只凑到 1 条），需在 flush 里加一个小的 rAF/协程级延迟上限**（如「microtask 立刻 flush 与下一帧之间择一」）。这是唯一一处需实施期验证的阈值，不影响方案选择（D-2 收益上界受影响，下限不变）。
 
+**[实施定案，W12 落地]** 独立模块 `packages/core/src/domain/chat/delta-coalescer.ts`，与本节草案的差异：① **不绑 store**——dispatch 函数由每次 enqueue 调用方注入（签名 `enqueue(sid, msg, dispatch)`，useChat 回调传 `(m) => chat.applyMessageEvent(sid, m)`），模块零 `ChatStoreInstance` 依赖、可用 `vi.fn()` 直测；② **合成对象取首条 delta 浅拷贝 + `payload.delta` 覆盖为拼接结果**（非草案的「重构 type/payload 新对象」）——首条 id 与 contentIndex 等伴随字段自然透传，seq 不合成；③ **`flush(sessionId)` 支持 per-sid 部分 flush**（disposeSession 收口兜底用，防一个 session 的收口打断其他 session 的合并窗口），另有 `clear()` 供测试隔离；④ 缓冲 key `${sid}:${type}`，text/thinking 分 key 独立累积（跨类型 dispatch 相对顺序不保证，同类型保序，不影响最终内容）。
+
 #### 3.3.2 数据模型：`Map<string, ShallowRef<Message[]>>` 结构与生命周期
 
 **结构**：
@@ -537,14 +541,14 @@ M4 清理/测试收口 ────  disposeSession/LRU 增补 sessionStreamingF
 | **U4 coalescer（D-2）** | `ensureStreamSubscription` 回调加缓冲 + microtask flush + 非 delta 先 flush | `core/useChat.ts`（177-192 回调内）；`registry.ts` 不改 | 真实 handler 位置已确认在 core（§2.3.4）；store 不担调度职责（D-2 被否方案 B 的教训） |
 | **U5 测试适配** | 5 文件「直接断言 `messages.value`」改为「经 getMessages / `.value`」 | 见 §5.3 | F9；测试是「接口变化的消费方」，不随代码正确性自动对 |
 | **U6 清理收口** | `disposeSession`/LRU 驱逐增补 `sessionStreamingFlags.delete` | `store.ts`（529-568）、`lru.ts`（131-147） | D-3 新增惰性 computed 的唯一生命周期状态，漏删即慢泄漏 |
-| **U7 watcher 依赖迁移（D-1 伴生必改，审查新增）** | `useFileChangeInvalidation` / `useSearch` 的 watch 依赖源从整 `chatStore.messages` 改为 `chatStore.getMessages(sid)`（per-sid 分区 ref） | `packages/renderer/src/composables/features/file-tree/useFileChangeInvalidation.ts:45-71`、`packages/renderer/src/composables/features/search/useSearch.ts:78-98` | §2.3.5：D-1 切断整-ref 触发源，不迁则 fileChanges/搜索失效静默停更直到 D-9（阶段 2），回归窗口不可接受 |
+| **U7 watcher 依赖迁移（D-1 伴生必改，审查新增）** | `useFileChangeInvalidation` / `useSearch` 的 watch 依赖源从整 `chatStore.messages` + `{deep:true}` 改为直接读 per-sid 内层分区 ref（`() => chatStore.messages.get(sid)?.value`）并**去掉 deep**（W11 R-16 落地形态，见 §2.3.5 [落地形态，R-16 裁决版]） | `packages/renderer/src/composables/features/file-tree/useFileChangeInvalidation.ts:45-71`、`packages/renderer/src/composables/features/search/useSearch.ts:78-98` | §2.3.5（含 W13 勘误）：deep watcher 在 D-1 后呈**跨 session 过度触发**（traverse 递归进分区 ref，任何 session commit 都触发全量重扫；非初稿断言的「静默停更」）；不迁则失效不收敛的性能退化持续到 D-9（阶段 2） |
 
 ### 5.3 5 个测试文件的适配策略
 
 父文档 F9 列出 5 个直接断言 `messages.value` 的测试文件，逐一给策略（按「断言了什么」分类）：
 
 1. **`core/src/domain/chat/__tests__/streaming-state-machine.test.ts`**：断言 `finalizeMessages`/`applySubagentStreamDelta` 后 `messages.value` 内容。策略：断言改经 `getMessages(sid)`（等价、不依赖内部 `.value` 结构），或把 `messages.value.get(sid)` 改为 `messages.value.get(sid).value`。优先前者（更黑盒）。
-2. **`lru.test.ts`**：断言驱逐后 Map key 变化。策略：`messagesValue()` 类型的 mock 从 `Map<string, Message[]>` 改为 `Map<string, {value: Message[]}>`（浅对象即可，不必真 shallowRef），驱动逻辑不变。
+2. **`lru.test.ts`**：断言驱逐后 Map key 变化。策略：`messagesValue()` 类型的 mock 从 `Map<string, Message[]>` 改为 `Map<string, {value: Message[]}>`（浅对象即可，不必真 shallowRef），驱动逻辑不变。**[实施定案，W13 勘误]** 本项 mock 值形态升级未发生——lru.test 的 mock 一直是 `Map<string, unknown>`（值 `{}`），LRU 逻辑只遍历 keys 不读值，无需升级；实际收口由 W11 提前完成（`makeLruEvictDeps` 第 4 参 `deleteStreamingFlag` 回调注入）。
 3. **`effects.test.ts`**：断言 `text_delta` 后最后一条 assistant content 拼接。策略：读侧改 `.value`；若有「同步 commit 后立即断言」的用例，注意 coalescer 只影响 useChat 层，直接调 `applyMessageEvent` 的用例不受 D-2 影响（合帧在更上层）。
 4. **`changeset.test.ts`**：断言 `applyFileChanges` 后消息的 fileChanges。策略：读侧改 `.value`；`commitMessages` 调用若被 spy，需适配新签名（`messages, sid, next` 三元不变，只内部实现变）。
 5. **`renderer/src/__tests__/stores/chat-chunk-content-blocks.test.ts`**：断言 contentBlocks 顺序。策略：读侧改 `.value`；此用例直接驱动 store，不涉及 coalescer。
@@ -570,3 +574,4 @@ M4 清理/测试收口 ────  disposeSession/LRU 增补 sessionStreamingF
 ## 附录：变更历史
 
 - 2026-08-15：初版。基于父文档 00 + 8 个必读文件真实代码片段实读成文；D-2 落点经确认在 core `useChat.ts` 的 `ensureStreamSubscription`；5 测试适配策略按断言性质分类给出。
+- 2026-08-16（W13）：勘误 §2.3.5/U7/结论句的 deep watcher 行为断言——初稿「traverse 不深入 ref → deep 零依赖 → 静默停更」有误，实证（W11 P5 探针 + Vue 3.5.39 reactivity 源码）traverse 会递归进内层 ShallowRef 的 `.value`，D-1 后 deep watcher 仍随每次 commit 触发；真实风险是跨 session 过度触发（失效不收敛），迁移理由是性能收敛而非防停更。必改结论与 R-16 裁决方案不变；补记 W11 落地形态（去 deep + watch 内层 ref）。

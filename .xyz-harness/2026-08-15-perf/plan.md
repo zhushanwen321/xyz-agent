@@ -88,7 +88,8 @@
 **R-04（02-G2）subagent.stream_delta 的 publish 目标改为主 session；payload.sessionId 保持 subagent sid**
 
 - 问题：R8 预案写「消息本身带 mainSessionId 字段」，但 `subagent.stream_delta` payload 仅 `{sessionId, recordId, lines}`（protocol.ts，[代码验证]），无 mainSessionId。
-- 裁决：若 W9 的 R8 探针证实 renderer 未订阅 subagent 虚拟 session，则 publish 目标从 payload.sessionId 改为 event-interpreter 的 `this.sessionId`（主 session，[代码验证]：`ev.sessionId` 来自 extension setWidget 上报的 subagent sid，interpreter 的 `this.sessionId` 是其服务的主 session）；payload.sessionId 字段保持 `ev.sessionId` 不动（前端 subagent 面板路由依赖它）。改动落在 session-service send 回调或消息构造处。
+- 裁决：若 W9 的 R8 探针证实 renderer 未订阅 subagent 虚拟 session，则 publish 目标从 payload.sessionId 改为 event-interpreter 的 `this.sessionId`（主 session）；payload.sessionId 字段保持 `ev.sessionId` 不动（前端 subagent 面板路由依赖它）。改动落在 session-service send 回调或消息构造处。
+- [事实前提更正，W09 实测]：原断言「`ev.sessionId` 来自 extension setWidget 上报的 subagent sid」有误——`ev.sessionId` 实为 **EventAdapter 实例绑定的主 session id**（event-adapter 的 `handleExtensionUIRequest(event, sid)` 中 sid 取自 adapter 构造时传入的 sessionId，即 interpreter 服务的主 session），与 interpreter 的 `this.sessionId` 同值。即 payload.sessionId 本就是主 session，裁决预设的「publish 目标 ≠ payload.sessionId」两维度区分不存在。W9 探针结论：renderer 经 useSessionStreamSync 按 list 全量订阅主 session，subagent.stream_delta 的消费路径在订阅覆盖内，**无需实施 R-04**（结论不受事实更正影响）。
 - 理由：publish 目标（发给谁的订阅者）与 payload.sessionId（前端路由到哪个分区）是两个独立维度，只需改前者。
 - 影响 wave：W9。
 
@@ -119,6 +120,7 @@
 - 裁决：W9 第一步是排查步骤：`grep -rn "\.broadcast(" packages/runtime/src --include="*.ts"` 逐处分类（session 级双写 / 纯全局 / D1-1 表内接 bus 点），产出分类清单（写入 wave 汇报），对照 02 文档 D1-2 的 DoR 审计表逐行勾稽后才删。任一 push 型 session 级消息不在表内 → 保留其 broadcast 并上报。
 - 理由：删双写是单通道化的收益主体也是风险主体，前置排查是唯一护栏。
 - 影响 wave：W9。
+- 实施定案（W09 审计事后追认）：审计发现清单外消息 `message.changeSetInvalidated`（server.ts git.commit 的 broadcastChangeSetInvalidated 注入点），按本裁决「不在表内 → 上报」路径上报后，经语义验证（session 级 push 型 + TOPIC_TABLE 归 stream 类 + 消费方为已订阅该 session 的面板，触发源为订阅中 session 的 git.commit）收口为 bus.publish 定向发布，特此追认；02 文档 D1-2 审计表已同步补行。
 
 **R-09（03-G1）baseline 死参数简化：移除 D3-2「baseline promise 门」，保留 D3-3 帧序三件套**
 
@@ -126,6 +128,7 @@
 - 裁决：turn-start 的 baseline 采集（event-interpreter.ts:219-221）异步化且不 await；`diffSnapshots` 不依赖 baseline；删除 baseline 参数的死语义。D3-2 的「baseline promise 门」从实施中移除。**D3-3 帧序不变量（per-session 串行 diff 链 + turnGen 代际守卫 + turnFinalizing 压制）保留不动**——它防御的是 accumulating/ready 乱序（异步化的真实风险），与 baseline 无关。
 - 理由：为不存在的问题引入 promise 门是复杂度浪费；帧序风险在异步化后真实存在，文档 D3-3 的三件套是 by-construction 保证。
 - 影响 wave：W18。
+- **实施定案（偏离记录，2026-08-16）**：裁决措辞「turn-start 的 baseline 采集异步化且不 await」未按字面实施——实施为**直接删除该采集**（turn-start 零 git spawn）。功能等价性：baseline 采集结果本就无人消费（`diffSnapshots` 不依赖 baseline，见上「问题」行），保留「异步发起点」仍是每 turn 白跑一次 git status 的纯浪费，删除比「异步不 await」更彻底且零语义变化。权威代码痕迹：`file-change-reconciler.ts:88-92` [HISTORICAL] 注释（明言「不引入『异步不 await 的 baseline 采集』」）。03 文档 D3-2 已加废弃标注、§5 U3 已同步指向本条。
 
 **R-10（03-G2）U3 文件清单补 `services/ports/file-change-diff.ts` 与 adapter**
 
@@ -140,6 +143,7 @@
 - 裁决：增量分支 `entries.length === 0` 时直接返回缓存现状（短路），不进 fallback。
 - 理由：空增量是常态（leafId 未前进），走尾读既是性能浪费也会破坏缓存一致性。
 - 影响 wave：W20。
+- **实施扩展（W20 审查 Fix-3，2026-08-16）**：空 entries 短路同时应用于全量分支（pi RPC 是权威视图，空即真空）；idle session 的文件尾读兜底仅在 getEntries 抛错链保留。
 
 **R-13（05-G1）剪枝保持现状行为：matchPath 级剪枝不变，D7-2「安全条件剪枝」降级为不做**
 
@@ -157,9 +161,9 @@
 
 **R-16（07-G2）useFileChangeInvalidation 的 watch source 改读内层 ref 并去 deep；并入 W11（D-3 wave）**
 
-- 问题：watch 是 `{deep:true}`（useFileChangeInvalidation.ts:70 附近），source 为整 messages Map；Vue deep traverse 会进 Map entry 读内层 ShallowRef 的 `.value` 建立依赖 → D-1 后其他 session 分区 ref 替换仍触发 watcher（失效不收敛）；去掉 deep 则同 sid 消息数组原地变更不触发（功能回归）。
+- 问题：watch 是 `{deep:true}`（useFileChangeInvalidation.ts:70 附近），source 为整 messages Map；Vue deep traverse 会进 Map entry 读内层 ShallowRef 的 `.value` 建立依赖 → D-1 后其他 session 分区 ref 替换仍触发 watcher（失效不收敛；[W13 实证确认] 此推断正确）；去掉 deep 则同 sid 消息数组原地变更不触发（功能回归——但 commitMessages 的不可变替换语义使该前提不成立）。
 - 裁决：watch source 改为 `() => chatStore.messages.get(sid)?.value`（per-sid 内层 ref），去掉 deep；依赖「消息数组不可变替换」语义（commitMessages 产出新数组，07 文档 D-1 的既有设计）保证同 sid 更新仍触发。此改动越出 07 文档「不改它们逻辑」的边界——**本裁决显式扩展边界**，与 useSearch（共用同一 helper 模式）同批迁移。不放到 D-9（W19）做，因为阶段 1 落地 D-1 后若不迁移，fileChanges/搜索失效在阶段 1-2 间处于「过度触发」状态且 D-9 改造又要动同一片代码。
-- 理由：07 文档 §5.2 U7（审查新增）已认定这是 D-1 伴生必改；评估确认 deep watch 断言错误。**现状行为的不确定性声明**：D-1 落地后 deep watcher 的实际表现（「过度触发」还是「静默停更」）存在两种可能，取决于 Vue traverse 对 shallowRef 内层 raw 对象的处理——07 文档 §2.3.5 断言「deep 救不了，触发源被切断（停更）」，本条问题陈述则推断「traverse 进 Map entry 读内层 ref `.value`（仍触发）」；两者互斥且均未实证。**W11 实施第一步先跑 P5 探针实证再动手**；裁决方案（去 deep + watch 内层 ref）在两种情况下均正确，不受该不确定性影响。
+- 理由：07 文档 §5.2 U7（审查新增）已认定这是 D-1 伴生必改；评估确认 deep watch 断言错误。**[W13 勘误，实证定案] D-1 落地后 deep watcher 的实际表现为「过度触发」而非「静默停更」**——W11 的 P5 探针实测 + W10 审查者读 Vue 3.5.39 reactivity 源码双重实证：`traverse` 对 ref 类值走 `isRef(value) → traverse(value.value)`、对 Map 走 `isMap → forEach`，会递归读内层 ShallowRef 的 `.value` 建立 deep 依赖，watcher 仍随每次 commit 触发（任何 session 的分区替换都触发，失效不收敛）。初稿的「两种可能」不确定性就此关闭：07 文档 §2.3.5「deep 救不了（停更）」断言错误（该文档已同步勘误），本条问题陈述的「仍触发」推断正确。裁决方案（watch source 迁内层 ref + 去 deep）结论不变，正确理由是**消除跨 session 过度触发、使失效收敛到本 session**，而非「防停更」；同 sid 更新仍触发由 commitMessages 的「数组不可变替换」语义保证（每 commit 产出新数组，浅 watch 分区 ref 即可捕获）。
 - 影响 wave：W11（含 useSearch.ts）。W19（D-9）在此之上再改触发源（见 R-23），两次改造串行无冲突。
 
 **R-17（07-G3）`mutations.test.ts` 核心断言重写（非适配）**
@@ -203,6 +207,7 @@
 - 裁决：buffer 存 per-session 分区（ADR-0049 `useSessionScopedState` 工厂 + `markRaw` 包裹非响应式 buffer），TerminalView 重建时从分区读回 + 按版本回放；session 销毁经工厂注册的 cleanup 自动释放。
 - 理由：与项目 per-session 状态隔离范式（ADR-0049）一致，组件生命周期与数据生命周期解耦。
 - 影响 wave：W27。
+- **实施偏差记录（W27 落地后回写，2026-08-16）**：裁决指定 `useSessionScopedState` 工厂，实施改为**模块级持久 Map + 模块级订阅**（useTerminal.ts，D-6.2）——工厂是 setup-scoped（Map 在组件 setup 内创建、onScopeDispose 反注册 cleanup），分区生命周期绑定组件实例，无法满足 R-22 核心目标「切 tab（unmount/remount）历史完整」：TerminalView 以 `v-else-if` 条件挂载（PanelContainer.vue:93，切 tab 即 unmount），组件销毁 → cleanup 反注册 + 分区销毁 → 切回重新 spawn，「切走 30s 切回历史完整」不可交付（W14 已知缺口 E6-c 正本）。模块级方案：`partitions` Map 模块级单例、terminal.* 订阅模块级建立（spawn/attach 时，session 销毁 cleanup 时解除）、buffer/outputQueue `markRaw` 非响应式、reactive 字段仅限视图状态（ptyAlive/cols/rows）；cleanup 经 `registerSessionCleanup` 挂载（useSidebar.deleteSession → triggerSessionCleanups → 删分区 + 退订 + 清监听器），内存语义与工厂一致。此偏差已在 ADR-0049 例外清单登记（「模块级分区 + reactive 容器混合例外」节，W27 审查 Fix-1）。工厂范式仍适用于组件级生命周期需求（如 W21 MessageStream TurnRenderCache），「buffer 存组件外」需求必须模块级。
 
 **R-23（09-G3）D-9 触发源：浅 watch messages 分区替换 + 扫末条消息 changeSetStatus（纯 renderer）**
 
@@ -408,6 +413,7 @@
 - **文件**：`core/src/domain/chat/__tests__/mutations.test.ts`（**重写核心断言**——R-17：断言 Map 恒等 + 内层 ref 替换 + 内容）；文档 §5.3 所列 5 文件（streaming-state-machine.test / lru.test / effects.test / changeset.test / renderer chat-chunk-content-blocks.test）按「读侧改 getMessages 或 .value、写侧 spy 签名三元不变」策略适配。
 - **注意事项**：P4 探针 grep 时限定代码引用（注释里有 streamingSessionIds 字样会误报）；优先黑盒断言（经 getMessages）。
 - **验收**：`cd packages/core && npx vitest run` + `cd packages/renderer && npx vitest run` **全绿**（W10 遗留红文件清零）；mutations.test 新断言覆盖「同 sid Map 引用不变 + 内层 .value 引用变化」双向。
+- **实施定案（2026-08-16，W13 审查后回写）**：实际适配 4 文件（lru.test 已由 W11 提前收口，经 `makeLruEvictDeps` 第 4 参注入，无需 mock 值形态升级，07 §5.3 已同步勘误）+ 清单外补收 chat-bash-effects.test.ts（2 个 D-1 遗留红）；renderer 全量 26→13 failed。
 - **关联裁决**：R-17。
 
 ### W14 — D-6.1 终端 rAF 写队列（阶段 1）
@@ -431,7 +437,7 @@
 - **目标**：D4-1/4-2/4-3 port + 实现先行——异步 execFile、in-flight 单飞去重、分层缓存（getStatus 短 TTL 键 = sessionId+cwd、非仓库负缓存 60s、snapshotStatus 只单飞不缓存）、invalidate 入口；顺带微项 10（两处 LRU O(1)）。
 - **文件**：新增 `services/ports/git-state.ts`（StatusSnapshot 用不透明类型 unknown——ADR-0027 层约束）+ `services/git/` 实现文件；`infra/git-executor.ts`（execSync→execFile 异步化，数组参数、超时getStatus 8000ms）；`infra/system/git-info-reader.ts` + `services/worktree/workspace-detector.ts`（微项 10：LRU 淘汰 O(n)→O(1)）。
 - **步骤要点**：① port 定义（snapshotStatus/numstat/getStatus/invalidate 四方法）；② 实现（单飞 Map + TTL + 负缓存）；③ git-executor 异步化保持防注入数组参数；④ 两处 LRU 微项独立 commit。
-- **注意事项**：git 参数不统一合并——snapshotStatus 裸 `--porcelain`、getStatus `--porcelain=v1 -z -b --untracked-files=all`（03 D4-1 有意区分）；D4-4 第二步（收编 git-info-reader/workspace-detector 的缓存）不做，只做它们的 LRU 微项。
+- **注意事项**：git 参数不统一合并——snapshotStatus 裸 `--porcelain`、getStatus `--porcelain=v1 -z -b --untracked-files=all`（03 D4-1 有意区分）；D4-4 第二步（收编 git-info-reader/workspace-detector 的缓存）不做，只做它们的 LRU 微项。StatusSnapshot 实际用具体 Map 类型（W16 实施裁决，覆盖 03 D4-1 的 unknown 不透明句柄措辞与上方「文件」节的 unknown 假设，依据见 git-state.ts port 注释）；getStatus(sessionId, cwd) 双参签名同理。
 - **验收**：`cd packages/runtime && npx vitest run` 全绿；新增单测：同 cwd 并发两请求共享一个 Promise（spawn 计数=1）；非仓库首次失败后 60s 内零 spawn；invalidate 后缓存 miss。
 - **关联裁决**：无（照 03 §3.3）；微项 10。
 
@@ -446,8 +452,8 @@
 ### W18 — file_changes 采集异步化 + 帧序不变量（阶段 2）
 
 - **目标**：reconciler 的 status+numstat 采集全部收进 GitStateService；computeLineCounts 纯函数化；**按 R-09 简化 baseline（不做 promise 门）**；落地 D3-3 帧序三件套（串行链 + turnGen + turnFinalizing）；前端 changeset.ts 单向守卫（纵深防御）。
-- **文件**：`infra/pi/file-change-reconciler.ts`（采集注入、computeLineCounts 纯函数化、删 baseline 死参数语义）、`services/ports/file-change-diff.ts`（snapshotGitStatus 签名异步化——R-10）、`infra/pi/file-change-diff-adapter.ts`、`services/session/event-interpreter.ts`（turn-start 采集异步化不 await、handleTurnEnd/handleToolCallEnd 适配 sendDiffFileChanges 异步链、diffChain/turnGen/turnFinalizing）、`runtime/src/index.ts`（组合根注入）、`core/src/domain/chat/changeset.ts`（changeSetStatuses 单向守卫：禁止 ready→accumulating 回退）。
-- **步骤要点**：① port/adapter/实现签名异步化；② reconciler 注入采集 + computeLineCounts(changes, numstatMap, writeContents?) 纯函数；③ event-interpreter：turn-start baseline 采集改异步不 await、diffSnapshots 不依赖 baseline；④ 帧序三件套 + `message.complete` 先于 ready 的次序保持（禁止 await 阻塞 turn-end 链）。
+- **文件**：`infra/pi/file-change-reconciler.ts`（采集注入、computeLineCounts 纯函数化、删 baseline 死参数语义）、`services/ports/file-change-diff.ts`（snapshotGitStatus 签名异步化——R-10）、`infra/pi/file-change-diff-adapter.ts`、`services/session/event-interpreter.ts`（~~turn-start 采集异步化不 await~~ **实施定案：直接删除 turn-start baseline 采集**（R-09 偏离记录，见总纲 R-09 条目）、handleTurnEnd/handleToolCallEnd 适配 sendDiffFileChanges 异步链、diffChain/turnGen/turnFinalizing）、`runtime/src/index.ts`（组合根注入）、`core/src/domain/chat/changeset.ts`（changeSetStatuses 单向守卫：禁止 ready→accumulating 回退）。
+- **步骤要点**：① port/adapter/实现签名异步化；② reconciler 注入采集 + computeLineCounts(changes, numstatMap, writeContents?) 纯函数；③ event-interpreter：~~turn-start baseline 采集改异步不 await~~（实施定案：直接删除采集，R-09 偏离记录）、diffSnapshots 不依赖 baseline；④ 帧序三件套 + `message.complete` 先于 ready 的次序保持（禁止 await 阻塞 turn-end 链）。
 - **注意事项**：超时沿现状（snapshotStatus/numstat 5000ms）；numstat 失败 → writeContents 回退语义不变；现有 reconciler 测试基线同步更新。
 - **验收**：`cd packages/runtime && npx vitest run` + `cd packages/core && npx vitest run` 全绿；新增单测：computeLineCounts 纯函数（同输入同输出、零 spawn spy）；帧序——模拟乱序完成（accumulating 慢于 ready 入链）时 ready 恒为链尾、跨 turnGen 的迟到 diff 被丢弃、turnFinalizing 后 accumulating no-op；changeset 单向守卫（ready 后 accumulating 不回退）。
 - **关联裁决**：R-09、R-10。
@@ -473,7 +479,7 @@
 ### W21 — D-4 turn 派生增量化（阶段 3）
 
 - **目标**：`toRenderItemsIncremental`（含 TurnRenderCache）落地，历史 turn 按消息对象身份增量复用；Turn.vue trace 区 v-memo。
-- **文件**：`core/src/domain/chat/message-turns.ts`（增量版 + TurnRenderCache，全量版保留为 cache=undefined 退化路径）、`renderer/src/composables/logic/messageTurns.ts`（**re-export 同步导出新函数**——minor 消化）、`renderer/src/components/panel/MessageStream.vue`（**缓存经 `useSessionScopedState` 工厂分区持有（`Map<sid, shallowRef<TurnRenderCache|null>>`），组件内只读当前 sid 分区**——08 §3.3.1 失效条件 3 定案；`<MessageStream :session-id>` 无 `:key`，组件实例不随 session 销毁，实例级缓存会跨 session 残留，违反 ADR-0049。08 §5.2 U2 表格下方的「per-instance 缓存」措辞是文档内部残留矛盾，以 §3.3.1 为准）、`ui/src/features/chat/Turn.vue`（trace v-for 包 v-memo，键 = [块身份, 状态, 本地折叠 ref]）+ 新增 `message-turns.incremental.test.ts`。
+- **文件**：`core/src/domain/chat/message-turns.ts`（增量版 + TurnRenderCache，全量版保留为 cache=undefined 退化路径）、`renderer/src/composables/logic/messageTurns.ts`（**re-export 同步导出新函数**——minor 消化）、`renderer/src/components/panel/MessageStream.vue`（**缓存经 `useSessionScopedState` 工厂分区持有（`Map<sid, shallowRef<TurnRenderCache|null>>`），组件内只读当前 sid 分区**——08 §3.3.1 失效条件 3 定案；`<MessageStream :session-id>` 无 `:key`，组件实例不随 session 销毁，实例级缓存会跨 session 残留，违反 ADR-0049。08 §5.2 U2 表格下方的「per-instance 缓存」措辞是文档内部残留矛盾，以 §3.3.1 为准）、`ui/src/features/chat/Turn.vue`（trace v-for 包 v-memo，键 = [块身份/内容引用, assistant 状态, thinking store 级折叠态（`ThinkingBlock.collapsed`，非 Block 本地 ref——v-memo deps 在父组件渲染作用域求值，不可引用子组件私有 ref）, assistant error]）+ 新增 `message-turns.incremental.test.ts`。
 - **注意事项**：依赖 07 已落地的消息对象不可变身份（W10-W13）；完整探针验收（复用率 100%）依赖 07，本 wave 先做单测级验收；TurnRenderCache 补 cachedItems 字段缓存非 turn 项（08 minor）。
 - **验收**：`cd packages/core && npx vitest run` + `cd packages/renderer && npx vitest run` 全绿；新增单测：追加 1 条消息时历史 turn renderItems 引用复用（身份相等断言）、cache=undefined 时与全量版输出 deepEqual；re-export 链新函数可从 renderer 导入（import 断言）。
 - **关联裁决**：无（照 08 §5 U1-U3）。

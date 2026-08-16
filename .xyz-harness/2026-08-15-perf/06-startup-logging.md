@@ -86,7 +86,7 @@ streaming：pi stdout 每行 → createPiSessionLog.write → appendFileSync（�
 **失败路径 + 恢复指引**：
 - 迁移失败：与现状一致 best-effort（warn + 下次重试），不阻塞任何功能。
 - piVersion 探测失败/超时（5s）：版本标签保持「unknown」/仅应用版本，不影响任何其他功能；下次启动重试。
-- 日志写失败（磁盘满）：WriteStream error 事件捕获记 console.error，runtime 主流程不受影响（与现状 appendFileSync 的 try-catch 容错对齐）。
+- 日志写失败（磁盘满）：WriteStream error 事件**静默吞、不记 console**（console 已被 patch，error 处理里再记 console 会与写失败互相触发形成递归），仅丢日志、不杀进程；首个 error 可降级记一次受限出口（writeLogEntry 直写主日志文件、不经 console，自身失败静默——不构成递归，审查 W30 Fix-4 勘误）。
 
 ### 3.2 多方案对比（启动编排）
 

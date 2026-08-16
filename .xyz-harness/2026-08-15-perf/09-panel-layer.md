@@ -300,6 +300,8 @@ function writeToTerminal(data: string): void            // 用户输入：直连
 - **用户输入**（`xterm.onData` → `writeToTerminal`）走直连 `terminalApi.write` 绕过队列（已有路径，不合并——用户击键要即时回显）。
 - 挂载/切 session 的**回放**仍走现有 `replayScrollback`（读 scrollback 全集），第一步不碰它。
 
+> **第一步落地形态（W14 实施裁决 + 审查修正）**：① `flushPending(sid)` 实际**无 xterm 参数**——xterm 写入经 TerminalView 既有 watch 间接承接（rAF 调度在 useTerminal 的 `appendChunk` 内置位，TerminalView 不挂 flush 调用），非草案里「flush 内直接 write」；② watch 源后来从 `scrollback.length` 改为分区新增的单调 `flushVersion`（稳态轮转下 length 净值守恒不触发 watch → 实时输出冻结，W14 审查 Fix-1；回放指针同步改为逻辑索引 `totalAppended` 基准）；③ 「隐藏 tab 期间输出照常累积」的前提**不成立**（TerminalView 是 v-if 挂载，切走即 unmount、订阅销毁），详见 E6-c 的已知缺口标注。
+
 **第二步（目标架构）命令式 buffer + 版本回放接口**：
 
 ```ts
@@ -328,6 +330,8 @@ interface CommandTerminal {
 - **E6-a 输出队列背压（审查修正：不与命令队列混用丢弃语义）**：`outputQueue` 只承载「一帧内的暂存」，rAF 必刷——「PTY 未活时输出 chunk 累积」场景几乎不存在（输出只能来自存活 PTY）。防御性上限仍设（如 rAF 被后台 tab 节流长时间推迟）：超限时**合并**（join 成单块）而非丢弃——输出侧语义是「保序全量」，丢 chunk 会在历史留下空洞。命令队列 `terminal-write-queue.MAX_PENDING_WRITES=100` 的 drop-oldest（保最新命令）契约**不适用于输出侧**，两条队列语义分离（命名也已分离：`outputQueue` vs `pendingWrites`）。
 - **E6-b 回放版本失配**：切 tab 回来 `buffer.version` 可能已被异步 `terminal.data` 推进，`replay(xterm, fromVersion)` 读到 stale `fromVersion` → 幂等重放：以 `buffer.version` 为当前值全量 `replay(0)` 一次（命令式 buffer 天然幂等，重复回放只是重写既有内容，无副作用）。
 - **E6-c 隐藏 tab 未 flush（审查修正）**：rAF 回调在 tab 切走（xterm 已 dispose）时触发 → **`flushPending` 仍先把 `outputQueue` 全部 append 进 scrollback**（累积点保证），仅跳过 xterm 写入；随后清空 `outputQueue` 与 `rafPending`。mount 回放从 scrollback 补齐隐藏期内容——与现状「无条件进 scrollback」等价，无 chunk 丢失（回溯 V-P2-4）。
+  **[已知缺口（W14 对抗式审查，2026-08）]** 本条的前提「tab 切走后 flushPending 仍被触发」**不成立**：TerminalView 经 v-if 挂载（`PanelContainer.vue` 「drawerTab === 'terminal'」分支），切走 terminal tab 即组件 unmount → useSessionEvents 退订 + useTerminal 的 Map 分区随组件实例销毁——切走期间 `terminal.data` 无人接收、scrollback 不累积，切回是全新分区 + 重新 spawn。「切走累积、切回回放完整历史」需把分区生命周期上提到独立于组件的层，归 W27/D-6.2 处理。当前实际保证仅覆盖 unmount 前已调度的同帧窗口（rAF 回调持分区引用写孤儿对象，不复活分区）。V-P2-4 的①步（切走 30s 切回）验收按此缺口修正：切回后终端可用、新输出正常，但切走期间历史**不保证**回放。
+  **[缺口闭环（W27 落地勘误，2026-08-16）]** 上述缺口已被 W27/D-6.2 实施解决——分区生命周期上提为**模块级**：`useTerminal.ts` 模块级 `partitions` Map（:124）+ 模块级 `terminal.*` 订阅（:133-134 `subscribedSids`/`subscriptionUnsubs`，spawn/attach 时建立、session 销毁 cleanup 时解除），订阅跨组件存活，切走期间 `terminal.data` 照常进 scrollback 累积；`TerminalView.vue` onBeforeUnmount（:289-300）只反注册 flush 监听器 + dispose xterm + 清回放批次，**不杀 PTY、不删分区**；切回 mount 时 `replayFrom(0, buffer)` 全量回放（:264/:340）。本条与 V-P2-4① 的「不保证回放」修正随之作废，验收恢复原口径（切走累积、切回历史完整）。实施形态偏离（模块级 Map 而非 `useSessionScopedState` 工厂）的裁决记录见 plan.md R-22 实施偏差记录。
 
 #### 3.3.2 D-7 文件树：数据模型草案
 
@@ -394,6 +398,8 @@ function projectVisibleRows(
 
 分离方案：**触发源从「deep watch 整 messages」改为「`message.file_changes` ready 帧订阅」，两职责共用同一触发**：
 
+> **[实现形态勘误（R-23 裁决，2026-08-16）]** 下述「onMessage 直订阅 `message.file_changes`」未按此形态实施——排查发现 fileChanges 是 assistant 消息内嵌字段（`m.fileChanges`），**无独立 WS 事件可订阅**，plan.md R-23 改裁为 **store 派生扫描**：浅 watch `() => chatStore.messages.get(sid)?.value`（分区数组替换触发）+ 扫尾部窗口 `READY_SCAN_WINDOW = 8` 条消息的 `changeSetStatus`，status 变 ready 时 debounce 300ms → `gitApi.status` → `setGitOverlay`，不加 runtime 广播（`useFileChangeInvalidation.ts:49-61` 注释自述）。**READY_SCAN_WINDOW=8 漏检边界**：若同一同步块追加 >8 条消息，ready 会滑出尾部窗口漏检——当前 WS 逐宏任务投递 + commitMessages 逐帧替换数组的模型下该形态不可达（每帧独立触发 watch 回调并即时消费尾部），取 8 而非 2 是抖动余量。
+
 ```ts
 // useFileChangeInvalidation.ts —— 从「deep watch 整 messages」改为「ready 帧订阅 + 职责分离」
 onMessage('message.file_changes', (msg, sid) => {
@@ -442,6 +448,10 @@ async function scheduleOverlayRefresh(sid: string): Promise<void> {
 | V-P2-2 万文件目录展开即时 | ① 在本仓展开 `packages/` 大目录（数千文件）；② 过滤框敲 `store`；③ 展开多层子目录滚动 | 展开/滚动首帧 <100ms；过滤 150-200ms 防抖内即时；万级可见行只渲染视口 ± 缓冲（探针 P-D7-1）；目录徽章 O(1)（探针 P-D7-2） | G2 |
 | V-P2-3 AI 一轮改 5 文件后角标刷新 | ① 让真实 AI 一轮修改 ≥5 个文件；② 观察侧栏文件树角标；③ 观察 runtime 进程 CPU | 角标在 file_changes ready 后数秒内刷新（探针 P-D9-2）；runtime 主线程无 >100ms git 阻塞（探针见 03 文档 P-git-*，由 D3/D4 验收）；fileChanges 不在 token 路径触发重扫（探针 P-D9-3） | G2、G5 |
 | V-P2-4 终端切 tab 回放 + PTY 未活背压 | ① 跑长输出命令时切走 terminal tab 30s 再切回；② 首次打开终端（PTY 未活）时从 Block 点「在终端运行」连发命令；③ 观察输出完整性与顺序 | 切回历史完整按序回放；PTY 未活时命令入队、alive 后按序 flush；无 chunk 丢失（探针 P-D6-1 验证 outputQueue flush；隐藏期输出仍进 scrollback，E6-c） | G3、G5 |
+
+> **[已知缺口（W14 对抗式审查，2026-08）]** V-P2-4 ①的「切回历史完整按序回放」与「隐藏期输出仍进 scrollback（E6-c）」**在第一步形态下不可验收**：TerminalView 是 v-if 挂载，切走即 unmount、订阅与分区随组件销毁，切走期间输出不累积（详见 §3.3.1 E6-c 缺口标注）。第一步实际验收口径：切走期间终端 tab 内**已可见**内容随组件销毁丢失属已知行为；切回后终端重新 spawn 可用、新输出完整；分区生命周期上提（切走累积、切回全量回放）归 W27/D-6.2。②（PTY 未活背压）不受影响。
+>
+> **[缺口闭环（W27 落地勘误，2026-08-16）]** 上注的不可验收限定**已解除**——W27/D-6.2 以模块级分区落地（`useTerminal.ts:124` 模块级 `partitions` Map、:133-134 模块级订阅跨组件存活；`TerminalView.vue` unmount 不杀 PTY 不删分区、切回 mount `replayFrom(0)` 全量回放，详见 §3.3.1 E6-c 闭环标注），**V-P2-4① 恢复原始验收口径**：切走 30s 切回，切走期间输出照常累积、切回历史完整按序回放。
 
 **验证缺口说明**：V-P2-3 依赖真实 AI 工具调用链（真实 pi session），无法 mock——实施时优先争取真实模型会话；V-P2-1 若 `npm run build` 输出不够高频可用 `find / -name x 2>/dev/null` 补足。这些场景对应父 00 §4 的 V3（终端）/V2（文件树）/V5（AI 写文件），本层是它们的面板层细分。
 

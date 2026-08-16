@@ -195,7 +195,7 @@
 | V4 启动与首屏 | 冷启动记录点击图标到可交互时长；Network 录首屏加载 | runtime 监听端口即就绪（不再等迁移/版本探测）；首屏 gzip JS <400KB（基线 684KB） | G4 |
 | V5 AI 写文件链路 | 让 AI 一轮修改 ≥5 文件；观察 runtime 进程与树角标 | runtime 主线程无 >100ms git 阻塞；角标在 file_changes ready 后数秒内刷新 | G5/G2 |
 | V6 插件 hook 可用 | 安装注册 `onBeforeSendMessage` 的插件，发送含关键词消息 | hook 真实执行（拦截/改写生效）；runtime 日志无 failed/timed out 告警 | G6 |
-| V7 长 session 切回 | 几百轮 session 切走再切回，观察历史加载 | 秒级→百毫秒级；runtime 日志可见 get_entries 带 since 且返回条目 < 全量 | G2 |
+| V7 长 session 切回（**口径勘误：W20 重范围，2026-08-16**） | **被驱逐重进**：几百轮 session 切走后超出 LRU 窗口（>8 session）再切回，观察历史加载（原「切走再切回」场景会测错——LRU 窗口内切回 isHydrated 守卫直接命中常驻消息，**本就零请求**，见 04 文档重范围记录与 `session-message-handler.ts:222` 注释；plan.md W20 验收已同步此口径） | 秒级→百毫秒级；runtime 日志可见 get_entries 带 since 且返回条目 < 全量（计时仅对「被驱逐重进」路径有意义；LRU 窗口内切回零请求属更快上限，不参与计时） | G2 |
 | V8 断线重连（**依赖 D1/D5 落地后才可验收**，属阶段 1 产物，非全局收尾） | streaming 中断开 renderer WS，5 秒后重连 | state 快照立即恢复；stream 按 seq 回放；delta 不回放但后续继续；无重复消息 | G1/G5 |
 
 **验证缺口**：V1/V5/V6 依赖真实 pi 模型与插件，无法 mock——实施时优先争取真实 pi 会话；mock 流（70ms/chunk）可验证渲染路径但覆盖不了真实 token 速率上限。**G1 确定性 fallback（审查补充）**：拿不到真实模型时，用「固定 fixture pi 会话（预置 200+ 消息 JSONL）+ 预录 token 流按 70ms/帧回放」跑 V1——可确定性执行、覆盖失效扇出/增量渲染的因果链，偏差边界 = 不覆盖真实 token 速率上限（该上限由实施期真实会话另行补测，不编造通过）。
@@ -243,7 +243,7 @@
 3. subagent 虚拟 session 是否经 subscribeSession 订阅——影响 D1 的 R8 风险项，实施 D1 时验证。
 4. pi 版本 `since` 行为与 AGENTS.md「leafId 从 JSONL 解析」描述的差异，及 **compact 后增量 since 语义**（⛔）——D6 实施前确认。
 5. fast-glob 在 runtime 的现有消费点——决定 D7 是否可移除该依赖。
-6. rolldown 下 manualChunks 实际行为——D-8 实施期验证。
+6. ~~rolldown 下 manualChunks 实际行为~~ **✅已验证关闭（W31 df1e7b62e 实施探针）**：manualChunks/advancedChunks 在 rolldown 1.1.4 已标 deprecated（manualChunks 仅剩函数形式、与 codeSplitting 同设时被忽略），实际生效键为 `build.rolldownOptions.output.codeSplitting.groups`；`rollupOptions` 系 `rolldownOptions` 的 deprecated alias，同设时被整体丢弃，input/output 须统一迁至 `rolldownOptions`。勘误详情见 10 §3.4 实施定案。
 7. V1/V5/V6 验收场景的真实模型可用性。
 
 ---

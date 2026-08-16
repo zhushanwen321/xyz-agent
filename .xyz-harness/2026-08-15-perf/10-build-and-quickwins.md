@@ -144,6 +144,13 @@ markdown.ts:28  → import { createHighlighter } from 'shiki'
 
 **注意**：不把 `markdown-it` 拆进任何组（它内联进消息渲染的主 chunk 更合理，避免公式/代码/纯文本三种消息路径都要额外 round-trip）；「全量逐包拆」已由方案 B 否决。
 
+**实施定案（2026-08-16 勘误，W31 df1e7b62e 实施验证，§5.3 检查点 1 / 父文档检查点 6 关闭）**：
+
+1. **键名勘误**：本文通篇的 `manualChunks` 在 rolldown 1.1.4 下**不生效**——`manualChunks` 与 `advancedChunks` 均已标 deprecated（manualChunks 仅剩函数形式、对象形式不支持），且与 `codeSplitting` 同时设置时被忽略。实际生效键为 **`build.rolldownOptions.output.codeSplitting.groups`**（组用 `{ name, test, priority }` 声明，等价承担本文 manualChunks 对象形式的分组语义）。
+2. **`rollupOptions` → `rolldownOptions` 整体迁移是必要联动，非可选**：vite 8 的 `build.rollupOptions` 只是 `rolldownOptions` 的 deprecated alias（vite 内部 `rolldownOptions ??= rollupOptions`）——两者同时设置时 `rollupOptions` 被**整体丢弃**（不是合并）。因此 `input` 与 `output` 必须统一写在 `rolldownOptions` 下，不能 input 留在 rollupOptions、output 挪去 rolldownOptions（拆开 = input 配置静默失效）。
+3. **分组落地与 §3.4 四组一致（vendor/xterm/shiki/katex），两处探针修正**：① shiki 组须排除 `@shikijs/langs`（langs-bundle-full 内 235 个动态 import 的语言定义 chunk 必须保持按需分离、不被本组吞并——shiki 4.3.1 源码实证）；② vendor 组配 `tags:['$initial']` 只捕获静态 import 链上的模块（mermaid ~3MB 动态 import 不被吞进 vendor、保持独立懒加载 chunk）。未命中任何组的模块回退 automatic chunking。权威实现见 `packages/renderer/vite.config.ts` 的 `rolldownOptions.output.codeSplitting` 段（含逐项注释）。
+4. **SettingsModal 懒加载行为差异声明（W31 review minor-5，commit message 无法回改、勘误留盘）**：SettingsModal 由**常驻挂载**改为**按需挂载**（AppShell `v-if="settingsOpen"` 门控 + defineAsyncComponent）——关闭即卸载，弹窗内状态（activeMenu 停留页、extensionView 子视图等）随卸载重置回默认页（此前常驻挂载保留上次停留页）。该差异已在 `AppShell.vue` 懒加载注释声明（设置是低频操作，重置属可接受行为差异），此处补文档侧声明。
+
 ### 3.5 错误规格：懒加载 chunk 失败（file:// 下 chunk 404）的兜底与恢复
 
 本项目 `vite.config.ts:33` 设 `base:'./'`（打包后 file:// 协议加载，必须相对路径），懒加载 chunk 的失败模式**不是网络超时而是「相对路径解析错 → chunk 404/加载失败」**。
@@ -161,8 +168,8 @@ markdown.ts:28  → import { createHighlighter } from 'shiki'
 | 编号 | 证据（file:line） | 一句话方案 | 一句话验收 |
 |---|---|---|---|
 | **Q1-1** | `useSessionMarkers.ts:77-135` 四写操作绕过 :24 内存 cache；触发点 `useCompletionNotify.ts:56` | 写路径改 `ensureCache()` → mutate cache → 更新 `cache.value` → 写盘；可选 `requestIdleCallback` 批量合并落盘 | 后台 5 session 完成，DevTools 无 5 次 `localStorage.setItem` 同步主线程长任务 |
-| **Q1-2** | `i18n/index.ts:2-3`、:30-38 双 locale 全量静态 import（3057 行） | **静态保留 `readInitialLocale()` 探测到的初始 locale，只对另一个 locale 动态 `import` + `setLocaleMessage`**（审查修正：初稿「初始只传 zh-CN」回归了 en-US 首启——`main.ts` 同步 createI18n 后，AppShell 之前的 connecting 屏第一帧就用 zh-CN 渲染，en-US 系统用户冷启动看到**中文闪烁**） | **英文系统冷启动首屏（含 connecting 屏）即英文、无中文闪烁**；启动首屏只含初始 locale（另一份不进首屏 chunk）；切语言即时显示 |
-| **Q1-3** | `useCompletionSound.ts:39-64` 每次 new Audio / IPC spawn / 重探测 | 缓存 `resolveName`/`detectPlatform` 结果 + win 平台 `Map<name, Audio>` 复用 | 连续播放同音不重复 spawn / 不重复 new Audio |
+| **Q1-2** | `i18n/index.ts:2-3`、:30-38 双 locale 全量静态 import（3057 行） | **静态保留 `readInitialLocale()` 探测到的初始 locale，只对另一个 locale 动态 `import` + `setLocaleMessage`**（审查修正：初稿「初始只传 zh-CN」回归了 en-US 首启——`main.ts` 同步 createI18n 后，AppShell 之前的 connecting 屏第一帧就用 zh-CN 渲染，en-US 系统用户冷启动看到**中文闪烁**。**实施定案**：字面方案不可实现——静态 import 路径须是编译期常量，静态保留「探测到的初始 locale」等于两份 locale 都静态 import，回归本项要消除的问题；实际实现为**恒定 zh-CN 静态 + en-US 永远动态**，en-US 偏好冷启动经模块内 top-level await 在首帧前补齐（等效达成验收：connecting 屏无中文闪烁）。代价：en-US 用户首屏两份都载（zh-CN 在首屏 chunk 内 + en-US 动态 chunk 立即拉取，~49KB 本地 chunk 一次性读取，file:// 下可忽略）；zh-CN 用户**首屏**零代价——**勘误（2026-08-16）：非全程零代价**，`i18n/index.ts` 启动后经 `scheduleFallbackPreload()` 无条件在 idle（`requestIdleCallback`，不可用回落 `setTimeout`）后台预载 en-US 作 fallbackLocale 兜底（防 zh-CN 缺 key 时 vue-i18n 回退裸 key 显示，`i18n/index.ts:91-103` 注释自洽），不阻塞首屏） | **英文系统冷启动首屏（含 connecting 屏）即英文、无中文闪烁**；启动首屏只含初始 locale（另一份不进首屏 chunk）；切语言即时显示 |
+| **Q1-3** | `useCompletionSound.ts:39-64` 每次 new Audio / IPC spawn / 重探测 | 缓存 `resolveName`/`detectPlatform` 结果 + win 平台 `Map<name, Audio>` 复用 | 探测结果 memo（detectPlatform/resolveName）+ win 平台 Audio 对象复用；mac/linux 每次播放仍 IPC spawn——播放语义本身，不在优化范围（**实施定案**：原「不重复 spawn」措辞陈旧，实现只 memo 探测/解析 + win Audio 复用） |
 | **Q1-4** | `route-inbound.ts:325` `.find()` 线性扫描（表 :160 起 4 条） | `Record<string, entry>` 下标访问 | 入站消息路由 O(1)，热路径无 find |
 | **Q1-5** | `pending.ts:22` 无上限；:50-56 真实 setTimeout | size 上限（如 256）超限最老 reject + 惰性超时清理（**审查补充：reject 前原子判定该 command-id 仍 pending——读 map 有则删再 reject；已 reject 的 id 若响应后到，`resolveEnvelope` 契约补「静默丢弃」**） | 高压下 pendingMap 不超 256，无 timer 泄漏、无双 settle/脱链 |
 | **Q1-6** | `useAppUpdate.ts:465` 无 visibility 判断；:462 force 绕缓存 | hidden 时顺延 + visible 时补查 | 后台隐藏期间不发 20min 联网检测请求 |
@@ -235,7 +242,7 @@ D-8 是**中等改动**（3 个 import 点 + 1 处 build 配置 + 一个新错�
 
 ### 5.3 待验证检查点（设计阶段诚实标注）
 
-1. **rolldown 下 manualChunks 的实际键名与行为**（最高优先）：当前 `vite.config.ts` 用 `build.rollupOptions`，但 rolldown 1.1.4 的 code splitting 可能需 `build.rolldownOptions.output.advancedChunks` 或另有语法。实施期先写最小配置构建一次，观察 chunk 切分是否生效、`rollupOptions` 是否仍兼容（父文档 F6 提示构建警告显示 `build.rolldownOptions`）。**此为必须先验证的探针，不预设结论。**
+1. **rolldown 下 manualChunks 的实际键名与行为**（最高优先）：当前 `vite.config.ts` 用 `build.rollupOptions`，但 rolldown 1.1.4 的 code splitting 可能需 `build.rolldownOptions.output.advancedChunks` 或另有语法。实施期先写最小配置构建一次，观察 chunk 切分是否生效、`rollupOptions` 是否仍兼容（父文档 F6 提示构建警告显示 `build.rolldownOptions`）。**✅已验证关闭（W31 实施）：实际键为 `rolldownOptions.output.codeSplitting.groups`，勘误见 §3.4 实施定案。**
 2. Q1-9 两处 deep watch 改浅的语义等价性（见 §3.6 末注）：`projects` 是否整替换、`freshIds` 是否整替换，需读 `project.ts` 的全部写点与 ForkGroup 父组件传参确认。
 3. Q1-1 用 `requestIdleCallback` 合并落盘的收益边界：markers 写频极低（后台 session 完成），纯内存 cache + 立即写盘可能已足够，idle 合并是可选优化，实施期按实测决定是否引入（避免为低收益加复杂度，遵循 §skill 减法原则）。
 
@@ -258,3 +265,4 @@ D-8 是**中等改动**（3 个 import 点 + 1 处 build 配置 + 一个新错�
 ## 附录：变更历史
 
 - 2026-08-15 v1：初版。基于父文档 00-overview 的 F6/D-8/Q1 快赢集成文；核实 vite 8.1.3 + rolldown 1.1.4、i18n 双 locale 3057 行、TerminalView xterm+4 addon、DetailPane/TerminalView/SettingsModal 三处 v-else-if/v-model 条件挂载边界。
+- 2026-08-16 勘误：§3.4 补实施定案——键名 manualChunks → `rolldownOptions.output.codeSplitting.groups`（manualChunks/advancedChunks 在 rolldown 1.1.4 已 deprecated 且与 codeSplitting 同设时被忽略；rollupOptions → rolldownOptions 整体迁移为必要联动）；shiki 组排除 @shikijs/langs、vendor 组 tags $initial 两处探针修正；补 SettingsModal 常驻改按需挂载的行为差异声明（W31 review minor-5，commit message 无法回改、留盘待终审）。

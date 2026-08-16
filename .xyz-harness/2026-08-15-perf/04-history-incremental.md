@@ -72,7 +72,7 @@
 | 消息身份：piEntryId 稳定、Message.id 随机 | `message-converter.ts:134/234/263/282/308` 全 `crypto.randomUUID()`；`:140` piEntryId 来自 entryIds[i]（稳定）；live 流 id 为 `u-*`/`a-*`（store.ts:273 / event-adapter.ts:490） |
 | renderer 全量替换模型 | hydrate 有守卫（store.ts:252），`setMessages`（store.ts:260）是非守卫覆盖路径；无 append 入口 |
 | segments badge 兼容增量 | 回填按 `clientUuidMap`/`piEntryId` 匹配（entry-tree-builder.ts:74-76），增量子集 + 全量 sidecar 可正确回填增量窗口内新 turn 的 badge |
-| branch 失效风险 | branch 切换回上游后 since id 可能无效 → pi 抛 "Entry not Found"；fork 是 runtime 层截断 JSONL 写新文件（session-fork.ts），新 session 有独立 leafId |
+| branch 失效风险 | ~~branch 切换回上游后 since id 可能无效 → pi 抛 "Entry not Found"~~（实施期修正：pi append-only，branch 后 since=旧 leaf **不报错**但返回新分支条目，增量合并会静默产出「老分支尾 + 新分支」混合历史；D6-4 的 "Entry not found" fallback 只覆盖 entry 消失场景。实施已加 parentId 不变量检测，见文末补记）；fork 是 runtime 层截断 JSONL 写新文件（session-fork.ts），新 session 有独立 leafId |
 | offline 路径 | 无 pi 进程时走文件尾读（tailReadHistory，最近 20 turn）+「加载更多」全量读（getFullHistory）——文件路径无 leafId 概念，不进缓存 |
 
 ### 2.4 根因
@@ -89,7 +89,7 @@
 
 **首次进入场景**：全量重建（与现状一致），同时缓存结果 + 记录本次响应的 leafId。
 
-**branch 后重进场景**：pi 抛 "Entry not found" → runtime 捕获 → 丢弃该 session 缓存 → 全量拉取 + 重建 + 覆盖缓存 + 更新 lastLeafId。用户无感（只多一次全量，且 branch 是低频显式操作）。
+**branch 后重进场景**（实施期修正）：pi append-only，branch（extension 经 navigateTree）后 since=旧 leaf **不报错**但返回新分支条目——runtime 靠 **parentId 不变量检测**（delta 首条 entry.parentId 必须等于缓存 leafId，branch 后是 branch 点不满足）→ 丢弃该 session 缓存 → 全量拉取 + 重建 + 覆盖缓存 + 更新 lastLeafId。用户无感（只多一次全量，且 branch 是低频显式操作）。
 
 **offline 场景**（pi 进程不存在）：保持现状尾读 + 加载更多，不读不写缓存（文件路径无 leafId 概念）。
 
@@ -125,7 +125,7 @@
 - 证据：`mutations.ts:67-77` 的 prependHistoryMut 是 renderer 侧 piEntryId 去重的现成范式（本设计在 runtime 侧复用同语义）。
 
 **D6-4：fallback 触发条件**。
-- 选择：捕获 pi 的 "Entry not found"（`sendCommand` reject 的 error message 匹配，**文案大小写以实测为准**——源码注释为 "Entry not found" 小写 n）→ 丢弃该 session 缓存 → 全量拉取 + 重建 + 覆盖缓存 + 更新 lastLeafId。其他错误 → 走现有降级链（尾读），缓存不动。
+- 选择：捕获 pi 的 "Entry not found"（`sendCommand` reject 的 error message 匹配，**文案大小写以实测为准**——源码注释为 "Entry not found" 小写 n）→ 丢弃该 session 缓存 → 全量拉取 + 重建 + 覆盖缓存 + 更新 lastLeafId。其他错误 → 走现有降级链（尾读），缓存不动。**实施期补充（W20 审查 Fix-2）**："Entry not found" 只覆盖 entry 消失场景（缓存跨 pi 进程存活 + 文件被外部改写）；branch 的真实症状是 append-only 下不报错但静默合出混合历史，已加 **parentId 不变量检测**（delta 首条 parentId ≠ 缓存 leafId → 丢缓存全量重建）。
 - 证据：branch 是唯一使 leafId 失效的已知场景（fork 生成新 session 文件 + 新 leafId，不触发）；匹配错误文案是既有做法（pi 错误经 `success:false`/error 返回）。
 
 **D6-5：协议与 renderer 侧零改动**。
@@ -143,7 +143,7 @@
 | V3 | fork 一个 session 并打开 | 观察 fork 后打开的新 session | 新 session 无缓存、首次打开走全量，历史按 fork 截断正确显示 | 目标 3 |
 | V4 | 真实场景验证 badge：发送带图片/文件的用户消息后驱逐并重进 | 重进后检查消息 badge | 增量重建的新 turn 消息 badge（图片/文件/skill）正确回填，无降级占位 | 目标 2 |
 | V5 | 关闭 pi 进程（或 session 离线）后打开该 session | 观察加载行为 | 走尾读路径（现状行为），无报错、不读写缓存 | 目标 3（offline 不回归） |
-| V6 | branch 后重进：branch 到旧分支再切回 | 观察加载行为 | 捕获 "Entry not found" → 全量重建（日志可见），聊天流与全量重建一致，缓存被覆盖 | 目标 3 |
+| V6 | branch 后重进：branch 到旧分支再切回 | 观察加载行为 | parentId 不变量 violation → 丢缓存全量重建（日志可见），聊天流与全量重建一致（新分支权威视图，无混合历史），缓存被覆盖 | 目标 3 |
 
 ---
 
@@ -173,3 +173,15 @@
 3. **去重身份错误**：重建消息 id 为随机 UUID，按 Message.id 去重恒失效；稳定身份是 piEntryId。
 
 重范围后 renderer 协议与行为零改动，增量底座（pi since / leafId / entry-tree-builder since 兼容）全部复用。
+
+---
+
+## 附：实施期补记（W20 对抗式审查修复，2026-08-16）
+
+**R-12 实施扩展**：空 entries 短路同时应用于**全量分支**（pi RPC 是活跃 session 的权威视图，entries 空 = 真空，不走尾读——尾读会给出发文件尾部与 RPC 视图闪变的不一致结果）；idle session 的文件尾读兜底仅保留在 getEntries **抛错**链（超时/pi 内部错误降级）。
+
+**branch 症状修正 + parentId 不变量检测**：初稿假设「branch 后 pi 抛 Entry not found」——实测 pi append-only，branch（pi rpc-mode 把 navigateTree 暴露给 extension command context）后 since=旧 leaf **不报错**但返回新分支条目，增量合并会静默产出「老分支尾 + 新分支」的混合历史；D6-4 fallback 只覆盖 entry 消失场景。修复：增量合并前校验 delta 首条 entry 的 `parentId === cached.leafId`（正常 append 恒满足；branch 后首条 parentId 是 branch 点）→ 不满足即丢缓存全量重建 + warn 日志。
+
+**孤儿 toolResult 回填（增量窗口以 toolResult 开头）**：缓存 leafId 可能切在 assistant(toolCalls) 与其 toolResults 之间（后台 session 生成中 getHistory 写缓存），下次增量窗口以 toolResult 开头 → convertPiHistory 的 toolResult→toolCall 配对是窗口局部的 → 配对失败静默丢弃 → 缓存中该 toolCall 永久无输出（leafId 持续前进，永不触发全量重建自愈）。修复：convertPiHistory 增加孤儿收集（可选 out 参数），session-service 增量合并后按 toolCallId 回填到缓存 assistant 的 toolCall（message-converter 的 applyOrphanToolResults）。
+
+**并发 getHistory 竞态**：per-session inflight 复用（同 session 共享同一 promise，GitStateService inflightSnapshot 同款模式），消除「后完成者的旧 delta 与先完成者的新缓存交错写回」竞态。

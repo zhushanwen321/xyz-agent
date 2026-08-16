@@ -105,6 +105,9 @@ pi 事件流（stdio）
 - 证据：`execFileSync` 虽在 async 方法内，仍同步阻塞事件循环（探明事实 2.2）；异步化后超时语义不变（kill 子进程 + reject）。
 
 **D3-2：baseline promise 时序（file_changes 异步化的核心设计）**。
+
+> **[已废弃（plan.md R-09 裁决 + W18 实施定案，2026-08-16）]** 本决策整段不作实施——排查发现 baseline 对 `diffSnapshots` 输出零影响（差集语义早在 dirty 漏报修复时移除，两个分支均输出 current 全集），「baseline promise 门」防御的问题不存在；W18 按 R-09 裁决**直接删除 turn-start 的 baseline 采集**（turn-start 零采集，不引入「异步化且不 await」形态），权威记录见 plan.md R-09 及 `file-change-reconciler.ts:88-92` [HISTORICAL] 注释。**D3-3 帧序三件套保留不动**（它防御的 accumulating/ready 乱序与 baseline 无关）。
+
 - 设计：`EventInterpreter` 的 `statusBaseline` 从「同步快照值」改为「`Promise<StatusSnapshot> | null`」。turn-start 时立即发起异步采集（不 await）；写工具结束时 `await this.statusBaseline`（超时/失败 → null → 按现状「跳过或全集」语义处理）；ready 帧同样 await。
 - 边界决策：**await 不阻塞 token 流**——turn-start 与写工具结束之间隔着模型思考 + 工具执行（秒级），baseline 在这期间完成；即使极端情况未完成，await 挂起的是 interpreter 的该条处理链，pi 的后续事件仍在（interpreter 的 `handle` 对 tool-call-end 是 `void this.handleToolCallEnd(ev)` 异步路径，不阻塞 `translate` 循环）。实施时以真实场景验证（V1）。
 - 被否：同步等待（回到现状）；不等待（方案 C 的误报问题）。
@@ -121,6 +124,12 @@ pi 事件流（stdio）
 - 被否：前端「按 status 字段自行收敛」（如 ready 之后忽略 accumulating）——只修表象，runtime 侧乱序仍在，且把正确性责任推给消费方；runtime 链式串行是 by-construction 的保证。
 - 证据：前端 isFullSet 恒 true + 状态机序敏感（changeset.ts:117-123）；handleToolCallEnd 的 fire-and-forget（event-interpreter.ts:237）；handleTurnEnd 同步次序（:396/:410）。
 
+> **[实施定案 2026-08-16，W18 对抗式审查后]**
+>
+> 1. **turnGen 粒度 = assistant message**（非 agent run）：turn-start 翻译自 assistant `message_start`（event-adapter handleMessageStart，一个 agent run 内工具循环每轮 assistant 消息都 emit），turn-end 翻译自 `agent_end`（run 结束一次）。故一个 run 内 turnGen 递增多次：中间消息段的 accumulating 若被后续 message_start 抢先（turnGen++）即丢弃，文件最终落在**最后一条消息的 ready 卡**上——与 D3-2 的 fallback「跳过 accumulating 仅推 ready」取舍一致（丢增量帧无损，ready 全集兜底）。
+> 2. **代际守卫仅作用于 accumulating，ready 恒推**（本条修正上文第 2 条「迟到 diff 不落新回合」的未区分表述）：审查实证竞态——turn N 的 ready 排链尾后（fire-and-forget，等前序链段 + status/numstat spawn，大仓库数百 ms~秒级），pi followUp 续跑（extension triggerTurn 机制）立即开新 turn（message_start → turnGen++）→ ready 链段被 gen 静默丢弃 → 卡片**永久**停在 accumulating（前端无恢复路径：markChangeSetsSuperseded 仅 git.commit 触发、hydrate 不写 changeSetStatus）。定案：ready 链段绕过 gen 守卫仍发出，挂排链时捕获的旧 messageId（前端按 messageId 分区 + 单向守卫幂等）；accumulating 保持代际丢弃（上文 §3.1 授权）。配套纵深防御：前端单向守卫扩展为「ready 不覆盖 partially-reviewed/resolved/superseded」（迟到的 ready 可能晚于用户审查操作到达），ready→ready 幂等重放放行。
+> 3. **writeContents 是保护无数据流经路径的机制**：pi 现状 `tool_execution_end` 从不带 writeContent（见 event-adapter handleToolExecutionEnd 注释），writeContents Map 恒空、untracked 行数回退当前不生效（untracked 行数靠 numstat 对已跟踪文件 + untracked 缺行数）。该机制是给「pi 未来透出 writeContent」预留的通路——若 pi 在 tool_execution_end 附带 content，此机制自动激活，无需改动。
+
 **D4-1：服务接口（port 先行）**。
 ```
 interface IGitStateService {
@@ -135,6 +144,7 @@ interface IGitStateService {
 }
 ```
 - **`StatusSnapshot` 是不透明类型（opaque handle）**：port 定义在 services 层，**不 import infra 类型**——沿用现有 `IFileChangeDiff` port 的先例（file-change-diff.ts:6-8 用 `FileChangeSnapshot = unknown` 封装 infra 的 `Map<string, FileChangeStatus>|null`）。infra 实现与 reconciler 消费端各自持有真实类型，port 接口上以 unknown 传递、组合根注入具体实现。理由：services 不 import infra 是项目层敏感约定（ADR-0027 三层 port 范式），`Map<string,FileChangeStatus>` 直接出现在 port 签名即违约。
+  **[勘误（W16 实施裁决，2026-08-16）]** 本段措辞被实施推翻——实际 port 暴露具体类型 `StatusSnapshot = Map<string, FileChangeStatus> | null`（`services/ports/git-state.ts` 类型注释，非 unknown 不透明句柄）。依据：`FileChangeStatus` 来自 `@xyz-agent/shared`（shared/message.ts，非 infra 类型），port 签名出现具体 Map 不违反 ADR-0027「services 不 import infra」；且同 port 的 numstat 返回具体 Map，快照独用 unknown 会造成同一接口风格割裂。裁决记录见 plan.md W16 任务书「注意事项」与 `services/ports/git-state.ts` 的「类型裁决（W16 实施定案）」注释。
 - **git 参数逐方法定案（初稿未声明，统一服务可能引入粒度漂移）**：`snapshotStatus` 沿用 reconciler 现状裸 `git status --porcelain`（保持 file_changes 的 untracked 目录折叠语义与现有测试基线不变）；`getStatus` 沿用 `--porcelain=v1 -z -b --untracked-files=all`（AGENTS.md #15 强制 -uall，git-service.ts:106）。两者语义不同是有意的——file_changes 增量集合不需要目录展开；git 面板徽章需要文件级展开。**不做统一参数合并**，各自保住现状语义。
 - 选择：两个方法对应两条热路径（② snapshotStatus + numstat、① getStatus 聚合），各自独立的缓存策略（见 D4-3）；`invalidate` 是写操作失效钩子的唯一入口。
 - 证据：现有 `IFileChangeDiff` port（`services/ports/file-change-diff.ts`）与 `IGitExecutor` port 已有雏形，本服务在其上收敛而非新增第三套抽象。
@@ -171,6 +181,8 @@ interface IGitStateService {
 | V3 | 打开一个 session 的 git 面板，连续快速切换两个 panel（同 cwd） | 观察 git.status 响应与子进程数 | 第二次请求命中缓存（响应即时）；并发切换时只 spawn 一次 git（单飞生效，可用 `ps` 或日志验证）；**两个 panel 各自显示自己的 sessionId 路由结果，无串扰** | 目标 2 |
 | V4 | git 面板中 stage 一个文件 | 观察面板状态 | stage 后刷新立即显示新状态（invalidate 生效，无 2s 延迟） | 目标 4 |
 | V5 | 在一个非 git 目录开 session 跑 agent turn | 观察 runtime 是否重复 spawn git | 首个 turn 判定非仓库后，后续 turn 零 git spawn（负缓存生效） | 目标 2 |
+
+> **[V5 locale 前提（W16 实施定案，2026-08-16）]** 负缓存仅在 stderr 匹配**英文**官方文案 `not a git repository` 时写入（判据 = exitCode 128 且 stderr 正则命中，`git-state-service.ts` `maybeMarkNotRepo`，:317-332 注释与判据）——zh_CN 等本地化环境输出「致命错误：不是 git 仓库」不匹配 → 不写负缓存 → 每 turn 一次探测 spawn，本场景验收在 zh_CN locale 下不成立（属保守取舍：防 wrapper 输出误写、不注入 LC_ALL 强制英文以免 stderr 用户可见出口回归）。验证本场景须以 `LC_ALL=en_US.UTF-8`（或等价英文 locale）环境运行。
 | V6 | 连续多写工具回合 + 回合间快速切换：让 agent 在一回合内改多个文件，并在 agent_end 后立即开下一回合 | ws 层打点记录 file_changes 帧的到达序（changeSetStatus 序列）+ 观察变更集卡徽章 | **确定性断言：每回合 ready 帧是该回合最后一帧，ready 之后不再出现该回合的 accumulating 帧**；徽章单向推进无「生成中」回退；下一回合的 accumulating 不串帧 | 目标 3 |
 
 ---
@@ -183,7 +195,7 @@ interface IGitStateService {
 |---|---|---|---|
 | U1 | GitStateService port + 实现（异步 execFile + 单飞 + 分层缓存 + invalidate） | 基础设施先行，独立可测 | 新增 `services/git/`（或 `infra/git/`）模块；`git-executor.ts` 改造为异步实现 |
 | U2 | `git-service.getStatus` 收编 + 写操作路径挂 invalidate | 第一条热路径替换，行为不变 | `git-service.ts`（改用服务）；git-message-handler 相关写操作调用点补 invalidate（stage/unstage/commit/checkout/branch；**worktree add/remove 若走独立 spawn 不经服务，必须同步挂 invalidate——列入 U2 检查点**） |
-| U3 | `file-change-reconciler` 采集异步化（status + numstat）+ baseline promise + 帧序不变量 | 第二条热路径 + 核心时序改造 | `file-change-reconciler.ts`（采集注入、computeLineCounts 纯函数化）、`file-change-diff-adapter.ts`、`event-interpreter.ts`（turn-start/tool-call-end/turn-end 三处 + diffChain/turnGen/turnFinalizing）；前端 `changeset.ts` 状态单向守卫（纵深防御，备注联动） |
+| U3 | `file-change-reconciler` 采集异步化（status + numstat）+ 帧序不变量（~~baseline promise~~——R-09 裁决删除 baseline 采集，见 D3-2 废弃标注） | 第二条热路径 + 核心时序改造 | `file-change-reconciler.ts`（采集注入、computeLineCounts 纯函数化）、`file-change-diff-adapter.ts`、`event-interpreter.ts`（turn-start/tool-call-end/turn-end 三处 + diffChain/turnGen/turnFinalizing）；前端 `changeset.ts` 状态单向守卫（纵深防御，备注联动） |
 | U4 | 负缓存（非仓库记忆） | 非仓库用户的最大节省 | GitStateService 内部 |
 | U5 | （第二步，后置）收编 git-info-reader / workspace-detector | 低频点统一，收益小可延后 | 两个模块的缓存改为委托服务 |
 

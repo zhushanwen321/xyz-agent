@@ -341,6 +341,12 @@ export function renderIncremental(
 ): Promise<IncrementalRenderResult>
 ```
 
+> **勘误（实现版 W22，2026-08-16 补）**：实现版 `renderIncremental` 的签名多了 `cache` 参数
+> ——**cache 由调用方持有**（`createIncrementalRenderCache()` 创建，W23 的 MarkdownRenderer
+> 按消息实例持有 opaque 句柄），**函数原地更新** cache（边界前进时新增稳定区并入
+> `cache.prefixSegments`，而不是上文草案的「调用方自己渲染并入」）；上文的「实现骨架」
+> 是草案形态，实际以 `markdown.ts` 实现与 ui 侧镜像类型（markdown-types.ts）为准。
+
 **实现骨架**：
 
 ```ts
