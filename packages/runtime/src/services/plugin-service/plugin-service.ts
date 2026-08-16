@@ -451,6 +451,10 @@ export class PluginService implements IPluginService {
   }
 
   async uninstallPlugin(pluginId: string): Promise<PluginInfo[]> {
+    // descriptor 先取（removeDescriptor 之前）：pluginPath 供磁盘删除、source 供
+    // builtin 判定
+    const descriptor = this.registry.getDescriptor(pluginId)
+
     // 停用插件。Fix-5：deactivate 失败不阻断后续清理——注册表/工具/hook/命令清理是
     // uninstall 的核心语义，Worker 侧 deactivate 抛错（如超时）时仍必须完成本地拆除
     try {
@@ -461,8 +465,45 @@ export class PluginService implements IPluginService {
       console.error(`[plugin-service] deactivate during uninstall failed (continuing cleanup) for ${pluginId}:`, toErrorMessage(err))
     }
 
+    // F2-①：停该插件的 fs.watch 热重载监听（toggle(false) 有 stopWatching，uninstall
+    // 此前缺失——目录删除后残留 watcher 持续触发 reload 事件）
+    this.activator.stopWatching(pluginId)
+
+    // F2-③：sandbox 子进程真杀。deactivate 只 postMessage 不 terminate（fork 宿主的
+    // 进程复用设计），但 uninstall 后插件目录即删，复用无意义且泄漏进程。
+    // terminateProcess 内置 SIGTERM→2s→SIGKILL 升级链。trusted Worker 共享
+    //（≤10 插件/线程），terminate 会误杀同 worker 其他插件，跳过。未激活/无进程
+    // 时 getWorkerHandle 返回 undefined，天然 no-op。
+    const handle = this.host.getWorkerHandle(pluginId)
+    if (handle && handle.workerId.startsWith('sandbox-')) {
+      await this.host.terminateWorker(handle.workerId).catch((err: unknown) => {
+        console.error(`[plugin-service] terminate sandbox process during uninstall failed for ${pluginId}:`, toErrorMessage(err))
+      })
+    }
+
+    // F2-②：删除磁盘插件目录（此前缺失 → 重启后 registry.scan() 把插件扫回来）。
+    // 仅 external 插件删盘——builtin（resources/plugins，随应用分发）删盘会破坏安装
+    // 产物。删除失败记日志不中断内存清理：磁盘残留重启后被 scan 扫回、可重试；
+    // 内存清理（下方 registry/activator/工具/hook 拆除）是 uninstall 的核心语义。
+    if (descriptor && descriptor.source === 'external') {
+      const installer = this.deps.pluginInstaller
+      if (installer) {
+        try {
+          await installer.uninstall(pluginId, descriptor.pluginPath)
+        } catch (err: unknown) {
+          console.error(`[plugin-service] on-disk removal during uninstall failed (continuing in-memory cleanup) for ${pluginId}:`, toErrorMessage(err))
+        }
+      } else {
+        console.warn(`[plugin-service] no pluginInstaller configured; on-disk removal skipped for ${pluginId}`)
+      }
+    }
+
     // 从注册表中移除
     this.registry.removeDescriptor(pluginId)
+
+    // F2-④：清理 activator 侧描述符/状态/eventMap（此前缺失 → 幽灵重激活：
+    // activationEvent 下次触发时 eventMap 仍命中已卸载插件）
+    this.activator.removeDescriptor(pluginId)
 
     // 清理工具和 hook 注册
     this.removeToolEntriesFor(pluginId)

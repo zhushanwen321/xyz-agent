@@ -260,6 +260,40 @@ export class PluginActivator {
     return result
   }
 
+  /**
+   * 移除插件在 activator 侧的全部状态（F2-④，uninstall 用）。
+   *
+   * descriptors/pluginStates/eventMap 残留会导致「幽灵重激活」：插件已从 registry
+   * 移除，但下一次 activationEvent 触发时 eventMap 仍命中并 re-activate（loadPlugin
+   * 读已删除的 pluginPath 报错）。pendingReplies/pendingPermissions 一并清理并
+   * resolve(false)，防 in-flight 回复悬挂到已卸载插件的 pending entry。
+   */
+  removeDescriptor(pluginId: string): void {
+    this.descriptors.delete(pluginId)
+    this.pluginStates.delete(pluginId)
+    this.contexts.delete(pluginId)
+    for (const [pattern, ids] of this.eventMap) {
+      const filtered = ids.filter(id => id !== pluginId)
+      if (filtered.length === 0) {
+        this.eventMap.delete(pattern)
+      } else {
+        this.eventMap.set(pattern, filtered)
+      }
+    }
+    const pendingReply = this.pendingReplies.get(pluginId)
+    if (pendingReply) {
+      clearTimeout(pendingReply.timer)
+      pendingReply.resolve(false)
+      this.pendingReplies.delete(pluginId)
+    }
+    const pendingPermission = this.pendingPermissions.get(pluginId)
+    if (pendingPermission) {
+      clearTimeout(pendingPermission.timer)
+      pendingPermission.resolve(false)
+      this.pendingPermissions.delete(pluginId)
+    }
+  }
+
   getState(pluginId: string): PluginState | undefined {
     return this.pluginStates.get(pluginId)
   }

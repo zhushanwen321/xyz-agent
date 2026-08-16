@@ -576,6 +576,7 @@ describe('PluginService.executeHooks (BG1 T2)', () => {
       deactivatePlugin: vi.fn().mockRejectedValue(new Error('deactivate timeout')),
       stopWatching: vi.fn(),
       getState: vi.fn().mockReturnValue('ACTIVE'),
+      removeDescriptor: vi.fn(),
     }
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const syncSpy = vi.spyOn(service, 'syncToolsToBridge').mockResolvedValue(undefined)
