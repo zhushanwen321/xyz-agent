@@ -353,6 +353,10 @@ export interface IConfigService {
   getAutoRenameEnabled(): boolean
   /** 设置 session 自动重命名开关（true 创建标志文件 / false 删除）。 */
   setAutoRenameEnabled(enabled: boolean): void
+  /** 读取 rename 标题生成模型（"provider/modelId"，未设置 = 空串；读 extension 配置文件）。 */
+  getRenameModel(): string
+  /** 设置 rename 标题生成模型（读改写 extension 配置文件的 model 字段，保留其他字段）。 */
+  setRenameModel(model: string): void
 }
 
 // ── IExtensionService ──────────────────────────────────────────────

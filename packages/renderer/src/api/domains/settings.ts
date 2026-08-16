@@ -68,6 +68,8 @@ type WorktreeTimeoutReply = ServerMessageMap['config.worktreeTimeout']
 type DefaultBaseBranchReply = ServerMessageMap['config.defaultBaseBranch']
 /** 自动重命名 session 配置 reply 类型。 */
 type AutoRenameEnabledReply = ServerMessageMap['config.autoRenameEnabled']
+/** rename 标题生成模型配置 reply 类型。 */
+type RenameModelReply = ServerMessageMap['config.renameModel']
 
 /** 设置 worktree 专用目录（持久化到 settings.json）。 */
 export async function setWorktreeRootDir(dir: string): Promise<WorktreeRootDirReply> {
@@ -127,6 +129,16 @@ export async function setAutoRenameEnabled(enabled: boolean): Promise<AutoRename
 /** 读取自动重命名 session 配置。 */
 export async function getAutoRenameEnabled(): Promise<AutoRenameEnabledReply> {
   return command('config.getAutoRenameEnabled', {})
+}
+
+/** 设置 rename 标题生成模型（"provider/modelId"，空串 = 清除回未设置）。 */
+export async function setRenameModel(model: string): Promise<RenameModelReply> {
+  return command('config.setRenameModel', { model })
+}
+
+/** 读取 rename 标题生成模型（"provider/modelId"，空串 = 未设置）。 */
+export async function getRenameModel(): Promise<RenameModelReply> {
+  return command('config.getRenameModel', {})
 }
 
 // ── 代理配置（update:getProxyConfig / update:setProxyConfig / update:testProxy）──
