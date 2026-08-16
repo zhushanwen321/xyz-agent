@@ -68,6 +68,17 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL] renderer markdown 渲染唯一适配层：markdown-it 配置 + fence 规则覆盖 +
+  // filepath core rule + KaTeX + segments 拆分 + D-5 增量渲染（findStableBoundary/
+  // renderIncremental，2026-08-16 W22 落地）。职责内聚（都消费同一 markdown-it 单例与
+  // MarkdownSegment 协议），行数超 500。拆分需先定增量协议归属（W23 消费方对接后），
+  // 属独立重构任务。短期 max-lines override 避免阻塞，长期应拆分。
+  {
+    files: ['packages/renderer/src/composables/logic/markdown.ts'],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
   // [HISTORICAL] protocol.ts 是全 WS 协议的 SSOT（ClientMessageType/ServerMessageType/
   // ClientMessageMap/ServerMessageMap/ReplyPayloadMap + 各域 Config/ErrorCode 类型）。
   // 所有 type 相互交叉引用（ClientMessage<T> 依赖 ClientMessageMap，后者引用所有 payload 类型），

@@ -491,12 +491,24 @@ export async function renderMarkdown(content: string, env?: MarkdownEnv): Promis
   return md.render(content, env ?? {}).trimEnd()
 }
 
-/** markdown 渲染段（供 MarkdownRenderer 按 segment 分别渲染，mermaid 段走 MermaidRenderer 组件） */
+/** markdown 渲染段（供 MarkdownRenderer 按 segment 分别渲染，mermaid 段走 MermaidRenderer 组件）。
+ *
+ * D-5 增量渲染（W22）在 text/mermaid 之外扩展 `streaming-fence` 变体（未闭合 fence 的流式占位），
+ * 并为段增加可选稳定键 `segId`（renderIncremental 首次产出时分配，前缀段跨帧不变）。
+ * 协议形状对齐 ui 层 MarkdownRenderer 的现有消费结构（ui/src/features/chat/markdown-types.ts，
+ * W23 同步镜像扩展）。
+ */
 export interface MarkdownSegment {
-  /** text 段：渲染后的 HTML 字符串（含代码块/链接等，走 v-html）；mermaid 段：原始 mermaid 源码 */
-  type: 'text' | 'mermaid'
-  /** text: HTML；mermaid: 源码（MermaidRenderer 渲染） */
+  /** text: HTML（v-html）；mermaid: 源码（MermaidRenderer 渲染）；streaming-fence: fence 内已流式源码（占位数据） */
+  type: 'text' | 'mermaid' | 'streaming-fence'
+  /** 各 type 的载荷（见 type 注释；streaming-fence 为 fence 行之后的已到达源码） */
   content: string
+  /** 段稳定键：单调递增、跨帧不复用（前缀段一经分配永不变）；W23 渲染树 v-for :key 用 */
+  segId?: number
+  /** streaming-fence 专属：fence 语言名（info string 首词；空 info 归一为 'text'） */
+  lang?: string
+  /** streaming-fence 专属：是否 mermaid fence（W23 用不同占位形态） */
+  mermaid?: boolean
 }
 
 /** 占位正则：匹配 fence 规则产出的 mermaid 占位（data-source base64） */
@@ -536,6 +548,391 @@ export function decodeBase64(b64: string): string {
   const binary = atob(b64)
   const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0))
   return new TextDecoder().decode(bytes)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// D-5 增量渲染（W22）：稳定边界判定 + segments 数组增量协议
+//
+// 设计依据 .xyz-harness/2026-08-15-perf/08-render-layer.md §3.3 D-5 + plan.md R-19/R-20：
+// - 协议是 MarkdownSegment[]（前缀段引用恒等缓存 + tail 段每帧重建），不是 HTML 字符串对
+//   ——字符串协议会把 mermaid 组件降级成 v-html，推翻现有渲染结构。
+// - 边界判定用行级扫描实现（不手写完整 CommonMark 解析器），未知/无法判定形态一律
+//   fallback-full 降级（唯一兜底出口）。
+// - 正确性判据是「拼接等价」：renderMarkdownSegments(prefix+tail) 与分段渲染在 DOM 层等价
+//   （08 §3.3.3 条件 4），本实现的所有保守拒绝都是为了该判据。
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** fence 开行：≤3 空格缩进 + 3 个以上 ` 或 ~（捕获 info string） */
+const FENCE_OPEN_RE = /^( {0,3})(`{3,}|~{3,})(.*)$/
+/** 闭行候选：纯 fence 标记（同字符、长度 ≥ 开行、行尾仅空白）——字符与长度在调用点校验 */
+const FENCE_CLOSE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/
+/** ATX 标题（自成块，行尾即闭合；可打断段落） */
+const HEADING_RE = /^ {0,3}#{1,6}(?:\s|$)/
+/** 主题分隔线（--- 、*** 、___ 形态，含 - - - 变体；自成块） */
+const THEMATIC_RE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/
+/** setext `=` 下划线（仅附着于上方开放段落；独立出现时是普通段落文本） */
+const SETEXT_EQ_RE = /^ {0,3}=+[ \t]*$/
+/** 列表标记（无序列线 -/+/* 或有序 1./1)） */
+const LIST_MARKER_RE = /^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]|$)/
+/** 引用行前缀 */
+const BLOCKQUOTE_RE = /^ {0,3}>/
+/** 链接引用定义（tail 以其开头时拒绝：闭合的链接化依赖定义出现在全文任意位置，拼接不安全） */
+const LINK_REF_DEF_RE = /^ {0,3}\[[^\]]*\]:[ \t]*\S/
+
+/** tab 折算宽度（CommonMark 习惯按 4 列；行首 tab 保守归为缩进代码/嵌套续行形态） */
+const TAB_WIDTH = 4
+/** fence 开行允许的最大行首缩进（CommonMark：≥4 空格是缩进代码块不是 fence） */
+const FENCE_MAX_INDENT = 3
+/** `$$` 数学块定界符长度（奇偶计数步进用） */
+const MATH_DELIM_LEN = 2
+
+/** 行首缩进宽度（tab 按 TAB_WIDTH 计，保守归为缩进代码/嵌套续行形态） */
+function leadingIndent(line: string): number {
+  let n = 0
+  for (const ch of line) {
+    if (ch === ' ') n += 1
+    else if (ch === '\t') return TAB_WIDTH
+    else break
+  }
+  return n
+}
+
+/** 块级行扫描的内部结果（findStableBoundary / renderIncremental 共用一次扫描） */
+interface BlockScan {
+  /** 最新稳定边界 offset；null = 无法判定（调用方 fallback-full） */
+  boundary: number | null
+  /** 文档末尾未闭合 fence 的开行 offset 与语言；无则 null（未闭合 fence 吞掉其后一切，至多一个） */
+  openFence: { offset: number; lang: string } | null
+}
+
+/**
+ * 行级块结构扫描：单次正向遍历维护 fence 配对 / `$$` 数学块奇偶 / 段落开闭 / 列表上下文，
+ * 在每个行首记录「前缀是否全闭合」，再从末尾反向取第一个同时满足三条件的位置。
+ *
+ * 三条件（08 §3.3.3）：① 行首锚点；② 前段全闭合（含段落闭合：空行或自成块行后缘；
+ * fence/数学块配对完整）；③ tail 是单一独立开放块（拒绝缩进续行 / 前缀列表续并 /
+ * setext 下划线 / 链接引用定义等「续行」形态）。
+ *
+ * 纯函数：同输入同输出、零副作用、不触碰 markdown-it。
+ */
+function scanMarkdownBlocks(content: string): BlockScan {
+  if (content.trim() === '') return { boundary: 0, openFence: null }
+
+  // 行枚举：{start, text}（text 不含行尾 \n）
+  const lines: { start: number; text: string }[] = []
+  {
+    let s = 0
+    while (s < content.length) {
+      const nl = content.indexOf('\n', s)
+      if (nl === -1) {
+        lines.push({ start: s, text: content.slice(s) })
+        break
+      }
+      lines.push({ start: s, text: content.slice(s, nl) })
+      s = nl + 1
+    }
+  }
+
+  // 候选边界 = 各行行首（+ 末尾 \n 后的文档尾行首）。candidate 0 = 空前缀（恒闭合）。
+  const candidates: { offset: number; closed: boolean; listOpen: boolean }[] = [
+    { offset: 0, closed: true, listOpen: false },
+  ]
+  let fence: { char: string; len: number; start: number; info: string } | null = null
+  let mathOdd = false // fence 外 "$$" 出现次数奇偶（markdown-it-katex 的 $$ 块未闭合时渲染到 EOF，拼接不安全）
+  let paraOpen = false // 段落级结构未闭合（段落/表格行/引用内容/列表项文本等可被续行附着的形态）
+  let listOpen = false // 列表上下文存活（跨空行——"- a\n\n- b" 仍是一个松散列表，尾部列表标记可续并）
+
+  for (let i = 0; i < lines.length; i++) {
+    const { start, text } = lines[i]
+    const wasParaOpen = paraOpen
+
+    if (fence) {
+      const close = text.match(FENCE_CLOSE_RE)
+      if (close && close[1][0] === fence.char && close[1].length >= fence.len) {
+        fence = null
+        paraOpen = false // 闭合 fence 行 = 闭合块后缘
+      }
+      // 其余行是 fence 内容，状态不变（fence 开着 → 候选恒不闭合）
+    } else if (text.trim() === '') {
+      paraOpen = false // 空行闭合段落（也终止表格/引用）
+    } else {
+      const indent = leadingIndent(text)
+      const open = text.match(FENCE_OPEN_RE)
+      if (open && indent <= FENCE_MAX_INDENT) {
+        fence = { char: open[2][0], len: open[2].length, start, info: open[3] ?? '' }
+        paraOpen = true // fence 开行 = 开放结构（同时打断了上方段落）
+        if (indent === 0) listOpen = false
+      } else if (THEMATIC_RE.test(text)) {
+        paraOpen = false
+        if (indent === 0) listOpen = false
+      } else if (HEADING_RE.test(text)) {
+        paraOpen = false
+        if (indent === 0) listOpen = false
+      } else {
+        if (SETEXT_EQ_RE.test(text) && wasParaOpen) {
+          paraOpen = false // setext h1：= 下划线把上方开放段落转为标题（闭合）
+        } else {
+          paraOpen = true
+          const isQuote = BLOCKQUOTE_RE.test(text)
+          if (LIST_MARKER_RE.test(text)) {
+            listOpen = true
+          } else if (indent === 0 && (!wasParaOpen || isQuote)) {
+            // 空行后的顶格非标记行：列表终止（lazy continuation 不能跨空行）；
+            // 引用行可打断段落 → 也终止列表。其余顶格行是 lazy 续行 → 列表存活（保守）。
+            listOpen = false
+          }
+        }
+        // $$ 奇偶只在 fence 外累计（每出现一次翻转一次）
+        for (let idx = text.indexOf('$$'); idx !== -1; idx = text.indexOf('$$', idx + MATH_DELIM_LEN)) {
+          mathOdd = !mathOdd
+        }
+      }
+    }
+
+    // 本行结束后的状态 → 下一行行首的候选（末行的“下一行首”仅在文档以 \n 结尾时存在）
+    const isLast = i === lines.length - 1
+    if (!isLast) {
+      candidates.push({
+        offset: lines[i + 1].start,
+        closed: fence === null && !mathOdd && !paraOpen,
+        listOpen,
+      })
+    } else if (content.endsWith('\n')) {
+      candidates.push({
+        offset: content.length,
+        closed: fence === null && !mathOdd && !paraOpen,
+        listOpen,
+      })
+    }
+  }
+
+  const openFence =
+    fence === null
+      ? null
+      : {
+        offset: fence.start,
+        lang: fence.info.trim().split(/\s+/)[0] ?? '',
+      }
+
+  // 反向取最新合法边界（最大化前缀缓存）
+  let boundary: number | null = null
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    const c = candidates[i]
+    // 单行文档（无 \n）：候选 0 不作为稳定边界 → null 降级（矩阵 row8「超大单行」；
+    // 空前缀也无缓存价值）。空/纯空白已在函数入口返回 0。
+    if (c.offset === 0 && !content.includes('\n')) continue
+    if (!c.closed) continue
+    if (!tailStartsIndependentBlock(content.slice(c.offset), c.listOpen)) continue
+    boundary = c.offset
+    break
+  }
+  return { boundary, openFence }
+}
+
+/**
+ * 条件 ③：tail 是否是「单一独立开放块」的起始。
+ *
+ * 允许：新段落 / fence 开行 / 标题 / 引用 / 表格头 / 主题线 / 数学块开行等干净块级起始，
+ * 以及 tail 内部含一个持续增长的未闭合结构。拒绝的「续行」形态：
+ * - 行首有缩进（缩进代码 / 列表项内容 / 嵌套列表——独立渲染会拆散所属结构）
+ * - setext `=` 下划线（附着上方段落）
+ * - 链接引用定义（闭合的前缀里 [ref] 文本是否链接化取决于后文定义，拼接不安全）
+ * - 列表标记且前缀列表上下文存活（会与前缀合并成一个列表 / 松散列表）
+ */
+function tailStartsIndependentBlock(tail: string, prefixListOpen: boolean): boolean {
+  let first = ''
+  let found = false
+  for (const ln of tail.split('\n')) {
+    if (ln.trim() !== '') {
+      first = ln
+      found = true
+      break
+    }
+  }
+  if (!found) return true // tail 空/全空白：边界即文档尾，前缀全覆盖
+  if (leadingIndent(first) > 0) return false
+  if (SETEXT_EQ_RE.test(first)) return false
+  if (LINK_REF_DEF_RE.test(first)) return false
+  if (prefixListOpen && LIST_MARKER_RE.test(first)) return false
+  return true
+}
+
+/**
+ * 稳定结构边界判定（纯函数）：返回「最后一个稳定边界」的字符 offset，无合法边界返回 null。
+ *
+ * 边界语义：prefix = content.slice(0, boundary) 的块级结构全闭合（含段落闭合），
+ * 可安全缓存复用；tail = content.slice(boundary) 每帧独立渲染，拼接结果与全文渲染
+ * DOM 等价（拼接等价判据见测试矩阵）。
+ */
+export function findStableBoundary(content: string): number | null {
+  return scanMarkdownBlocks(content).boundary
+}
+
+/** 前缀缓存（调用方持有——W23 经 per-session 分区管理；renderIncremental 原地更新） */
+export interface IncrementalRenderCache {
+  /** 上次稳定边界 offset（0 = 无前缀缓存） */
+  boundary: number
+  /** 上次前缀文本快照（append-only 校验：新 content 的同位置前缀被改写 → 降级） */
+  prefixText: string
+  /** 前缀段（段对象不可变、引用恒等跨帧复用；数组在边界前进时整体替换） */
+  prefixSegments: MarkdownSegment[]
+  /** segId 分配器（单调递增；降级/重建时保留不回退，防 key 复用） */
+  nextSegId: number
+  /** env 引用签名（filePaths/localFiles 引用恒等；变化 → 前缀缓存失效全量重建） */
+  envFilePaths?: Set<string>
+  envLocalFiles?: Set<string>
+}
+
+/** 创建空的前缀缓存 */
+export function createIncrementalRenderCache(): IncrementalRenderCache {
+  return { boundary: 0, prefixText: '', prefixSegments: [], nextSegId: 0 }
+}
+
+/** 增量渲染结果（segments 数组协议，R-19） */
+export interface IncrementalRenderResult {
+  /** 稳定边界之前的段（引用恒等——与 cache.prefixSegments 同引用，零重渲染） */
+  prefixSegments: MarkdownSegment[]
+  /** 稳定边界之后的段（每帧重建；未闭合 fence 以 streaming-fence 占位段呈现） */
+  tailSegments: MarkdownSegment[]
+  /** 稳定边界 offset（诊断用） */
+  stableBoundary: number
+  /** incremental = 前缀走缓存；fallback-full = 本帧全量渲染且前缀缓存已重置 */
+  mode: 'incremental' | 'fallback-full'
+}
+
+/**
+ * fence/mermaid 占位转完整渲染的静默阈值（ms）。
+ * 08 §5.4 待验证项：无真实用户数据，200 是实施期 A/B 起点（候选 200/300），
+ * dev 实测 tuning 后可调——不是结论值。
+ */
+export const STREAMING_FENCE_SILENCE_MS = 200
+
+/** 占位转完整渲染的判定输入（W23 组装：消息 complete 态 + 距末 token 静默时长） */
+export interface FenceFinalizeState {
+  /** 消息是否已完成（status 非 streaming） */
+  complete: boolean
+  /** 距上一个 token 到达的静默时长（ms） */
+  silenceMs: number
+}
+
+/**
+ * 未闭合 fence 占位是否应转完整渲染：message complete 或 token 静默 ≥ 阈值（08 §3.3.2）。
+ * W23 在 rAF 调度层调用；命中后以 finalizeOpenFence:true 调 renderIncremental。
+ */
+export function shouldFinalizeStreamingFence(state: FenceFinalizeState): boolean {
+  return state.complete || state.silenceMs >= STREAMING_FENCE_SILENCE_MS
+}
+
+/** 重置前缀缓存（boundary 归零、前缀段清空；nextSegId 故意保留——segId 跨重建单调不减） */
+function resetIncrementalCache(cache: IncrementalRenderCache, env?: MarkdownEnv): void {
+  cache.boundary = 0
+  cache.prefixText = ''
+  cache.prefixSegments = []
+  cache.envFilePaths = env?.filePaths
+  cache.envLocalFiles = env?.localFiles
+}
+
+/** 降级全量渲染：整段 content 作为 tailSegments，前缀缓存重置（可恢复——下一帧重走增量） */
+async function renderFallbackFull(
+  content: string,
+  cache: IncrementalRenderCache | null,
+  env?: MarkdownEnv,
+): Promise<IncrementalRenderResult> {
+  const tailSegments = await renderMarkdownSegments(content, env)
+  if (cache) resetIncrementalCache(cache, env)
+  let localId = 0
+  for (const s of tailSegments) s.segId = cache ? cache.nextSegId++ : localId++
+  return { prefixSegments: [], tailSegments, stableBoundary: 0, mode: 'fallback-full' }
+}
+
+/**
+ * 增量渲染（D-5 核心，W22）：前缀 segments 缓存 + tail segments 增量。
+ *
+ * - 前缀缓存命中（边界不变且前缀未变）：prefixSegments 与 cache.prefixSegments 同引用，
+ *   前缀零重渲染；W23 以 v-for :key="seg.segId" 复用 DOM（text 段 v-html 子树不触碰、
+ *   mermaid 段组件实例跨帧保活）。
+ * - 边界前进：新增稳定区（slice(oldBoundary, newBoundary)）独立渲染并入前缀缓存。
+ * - 单调性防御：边界回退（新 < 旧）或前缀被改写（非 append-only）→ fallback-full + 缓存重置。
+ * - env 签名变化（filePaths/localFiles 引用变）→ 前缀缓存失效，本帧全量重渲染并重建。
+ * - 未闭合 fence（非 finalize 态）：fence 之前的 tail 闭区正常渲染，fence 整体以
+ *   streaming-fence 占位段呈现（语言名 + streaming 标记数据；UI 呈现归 W23）。
+ * - cache 省略：无状态调用（边界拆分照常，前缀每帧重建，供一次性消费）。
+ *
+ * @param opts.finalizeOpenFence true 时未闭合 fence 走完整渲染（complete/静默期命中后；
+ *   markdown-it 把文档尾未闭合 fence 渲染为含已到达内容的代码块）
+ */
+export async function renderIncremental(
+  content: string,
+  cache?: IncrementalRenderCache | null,
+  env?: MarkdownEnv,
+  opts?: { finalizeOpenFence?: boolean },
+): Promise<IncrementalRenderResult> {
+  const c = cache ?? null
+  if (content.trim() === '') {
+    if (c) resetIncrementalCache(c, env)
+    return { prefixSegments: [], tailSegments: [], stableBoundary: 0, mode: 'incremental' }
+  }
+
+  const scan = scanMarkdownBlocks(content)
+  if (scan.boundary === null) return renderFallbackFull(content, c, env)
+  const boundary = scan.boundary
+
+  if (c) {
+    const hasCache = c.boundary > 0 || c.prefixSegments.length > 0
+    if (hasCache) {
+      if (c.envFilePaths !== env?.filePaths || c.envLocalFiles !== env?.localFiles) {
+        // env 签名变化：重置缓存走正常路径（本帧全量重渲染 prefix+tail 并重建前缀缓存）
+        resetIncrementalCache(c, env)
+      } else if (c.boundary > content.length || content.slice(0, c.boundary) !== c.prefixText) {
+        return renderFallbackFull(content, c, env) // 前缀被改写（非 append-only）
+      } else if (boundary < c.boundary) {
+        return renderFallbackFull(content, c, env) // 边界回退（单调性防御）
+      }
+    }
+    if (boundary > c.boundary) {
+      // 边界前进：新增稳定区独立渲染并入前缀缓存（该区起止都是合法边界，拼接等价由边界判定保证）
+      const piece = content.slice(c.boundary, boundary)
+      const pieceSegs = piece.trim() === '' ? [] : await renderMarkdownSegments(piece, env)
+      for (const s of pieceSegs) s.segId = c.nextSegId++
+      if (pieceSegs.length > 0) c.prefixSegments = [...c.prefixSegments, ...pieceSegs]
+      c.boundary = boundary
+      c.prefixText = content.slice(0, boundary)
+    }
+    c.envFilePaths = env?.filePaths
+    c.envLocalFiles = env?.localFiles
+  }
+
+  let localId = 0
+  let prefixSegments: MarkdownSegment[]
+  if (c) {
+    prefixSegments = c.prefixSegments
+  } else {
+    const prefixText = content.slice(0, boundary)
+    prefixSegments = prefixText.trim() === '' ? [] : await renderMarkdownSegments(prefixText, env)
+    for (const s of prefixSegments) s.segId = localId++
+  }
+
+  // tail 渲染：未闭合 fence 占位（非 finalize 态）或正常增量渲染
+  const finalize = opts?.finalizeOpenFence === true
+  let tailSegments: MarkdownSegment[] = []
+  const tailText = content.slice(boundary)
+  if (scan.openFence && !finalize) {
+    const pre = content.slice(boundary, scan.openFence.offset)
+    if (pre.trim() !== '') tailSegments = await renderMarkdownSegments(pre, env)
+    const bodyStart = content.indexOf('\n', scan.openFence.offset)
+    const body = bodyStart === -1 ? '' : content.slice(bodyStart + 1)
+    tailSegments.push({
+      type: 'streaming-fence',
+      content: body,
+      lang: scan.openFence.lang === '' ? 'text' : scan.openFence.lang,
+      mermaid: scan.openFence.lang.toLowerCase() === 'mermaid',
+      segId: c ? c.nextSegId++ : localId++,
+    })
+  } else if (tailText.trim() !== '') {
+    tailSegments = await renderMarkdownSegments(tailText, env)
+    for (const s of tailSegments) s.segId = c ? c.nextSegId++ : localId++
+  }
+  return { prefixSegments, tailSegments, stableBoundary: boundary, mode: 'incremental' }
 }
 
 /**

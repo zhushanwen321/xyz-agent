@@ -6,10 +6,21 @@
  *
  * - text 段：渲染后的 HTML 字符串（含代码块/链接等，走 v-html）
  * - mermaid 段：原始 mermaid 源码（走 MermaidRenderer 组件渲染）
+ * - streaming-fence 段（D-5 增量渲染，W22 协议 / W23 消费）：未闭合 fence 的流式占位
+ *   ——content 为 fence 内已到达源码，lang 为语言名，mermaid 标记是否 mermaid fence；
+ *   占位 UI（语言名 + spinner 行）由 MarkdownRenderer 特殊渲染
  *
- * 与 renderer composables/logic/markdown.ts 的 MarkdownSegment 结构对齐（renderer 壳适配）。
+ * 与 renderer composables/logic/markdown.ts 的 MarkdownSegment 结构对齐（renderer 壳适配）：
+ * segId 是 D-5 增量渲染的段稳定键（renderIncremental 首次产出时分配，前缀段跨帧不变），
+ * 渲染树 v-for :key="seg.segId"（全量渲染路径不携带，undefined）。
  */
 export interface MarkdownSegment {
-  type: 'text' | 'mermaid'
+  type: 'text' | 'mermaid' | 'streaming-fence'
   content: string
+  /** 段稳定键（D-5 增量渲染）：单调递增、前缀段跨帧不变；全量路径不携带 */
+  segId?: number
+  /** streaming-fence 专属：fence 语言名（info 首词；空 info 归一为 'text'） */
+  lang?: string
+  /** streaming-fence 专属：是否 mermaid fence */
+  mermaid?: boolean
 }
