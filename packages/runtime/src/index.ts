@@ -499,7 +499,10 @@ async function main(): Promise<void> {
     } catch (e) {
       console.error('[runtime] error during shutdown:', e)
     }
-    closeLogger()
+    // D10-1（perf W30）：退出 flush——closeLogger 现在需要 await（end 主日志 + 全部 pi
+    // session 写流并等待落盘）。process.exit 立即终止进程不等待异步 IO，必须在 flush
+    // 完成后才退出，否则缓冲窗口内尾部日志丢失（pi 卡死诊断证据，见 logger.ts 头部）。
+    await closeLogger()
     process.exit(0)
   }
 

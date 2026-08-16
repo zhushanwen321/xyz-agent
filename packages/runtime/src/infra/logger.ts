@@ -6,21 +6,31 @@
  * 无法事后追溯，因为日志只在 concurrently 终端，关掉即丢。本模块把 runtime + pi 日志持久化
  * 到文件，并按天/大小轮转，避免磁盘膨胀。
  *
- * 设计：
+ * 设计（perf W30 / 06 §3.3 D10-1、D10-2）：
  * - 纯 node:fs 自实现轮转，**零第三方依赖**（不动 tsup noExternal，规避规则 #12 摩擦）
- * - date 轮转：按天文件名（runtime-YYYY-MM-DD.log），跨天自动切新文件
- * - size 轮转：单文件超 MAX_FILE_BYTES 触发 .1 滚动（rename 旧文件，新开主文件）
+ * - **WriteStream 缓冲写**：主日志与 pi session log 均用 createWriteStream(flags:'a') 常驻写流，
+ *   替代 appendFileSync 同步盘写（旧实现的每行同步写是热路径阻塞点）
+ * - date 轮转：按天文件名（runtime-YYYY-MM-DD.log），跨天 end 旧流 → 惰性开新日期流
+ * - size 轮转：按**写入字节计数**（替代 statSync）触发 .1 滚动，顺序硬约束（审查 m-6）：
+ *   **end 旧流 → rename → 开新流**——且必须**异步等待旧流 'close'（全部在途 fs.write 落盘）
+ *   后再 rename**：rename 早于 flush 完成时，旧流在途写会落进已改名 inode，而单代 .1
+ *   在下一次轮转时被新 inode 覆盖路径，在途数据随之丢失（探针实测每个轮转边界丢 ~2 行）。
+ *   轮转窗口内到达的写入行暂存内存队列，新流就绪后按序回放（窗口通常 <1ms）
  * - 保留期：启动时清理 KEEP_DAYS 天前的日志
  * - 级别：dev 默认 debug，prod 默认 info，XYZ_LOG_LEVEL 可覆盖（XYZ_ 前缀自动过白名单）
  * - pi stdout JSONL 独立落盘：pi-<sessionId>.jsonl（卡死诊断的决定性证据）
+ * - 退出 flush（D10-1 分档承诺的配套）：shutdown 链必须 `await closeLogger()`（主日志 +
+ *   全部 pi session 写流 end 并等 flush 完成）后再 process.exit(0)；硬崩溃（SIGKILL/断电）
+ *   丢缓冲窗口内尾部几行已声明为取证能力削弱
  *
  * 用法（组合根 index.ts 初始化）：
- *   initLogger(getDataDir())          // 初始化全局 logger + patch console
+ *   initLogger(getDataDir())                // 初始化全局 logger + patch console
  *   const sessionLog = createPiSessionLog(sessionId)  // pi stdout tee
  *   sessionLog.write(line)
  *   sessionLog.end()
+ *   await closeLogger()                     // shutdown：flush 所有写流后进程才可退出
  */
-import { appendFileSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
+import { createWriteStream, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, type WriteStream } from 'node:fs'
 import { join } from 'node:path'
 import { isPackaged } from '../utils/runtime-env.js'
 
@@ -56,6 +66,28 @@ let logsDir: string | undefined
 /** 当前 runtime 主日志的日期（YYYY-MM-DD），跨天检测用。 */
 let currentDate = ''
 
+// ── 主日志写流状态（D10-1：WriteStream 缓冲写 + 字节计数轮转）─────────
+/** 主日志当前写流（按日期惰性打开）；跨天 / size 轮转时 end 后置 undefined。 */
+let mainStream: WriteStream | undefined
+/** mainStream 对应的文件路径（轮转 rename 目标用）。 */
+let mainStreamFile: string | undefined
+/** 自本次打开以来写入主日志的字节数（size 轮转判定，替代每行 statSync）。 */
+let mainBytesWritten = 0
+
+/** 异步轮转进行中（end 旧流等待 flush 完成 → rename → 开新流）。 */
+let rotationInFlight: Promise<void> | null = null
+/** 轮转窗口内到达的写入行（新流就绪后按序回放；窗口通常 <1ms）。 */
+const pendingLines: Array<{ line: string; bytes: number }> = []
+
+// ── pi session 写流注册表（D10-1 退出 flush：closeLogger 统一 end + 等待）──
+interface PiStreamState {
+  /** 惰性打开：首次 write 才建流。 */
+  stream: WriteStream | undefined
+  /** end() 已调（write 后续为 no-op）。保留注册直到 closeLogger，确保退出 flush 覆盖。 */
+  ended: boolean
+}
+const openPiStreams = new Set<PiStreamState>()
+
 /**
  * 初始化全局 logger。组合根（index.ts main 最早处）调用一次。
  *
@@ -81,23 +113,49 @@ export function initLogger(dataDir: string): void {
 /**
  * 内部：写一条日志到 runtime 主日志文件（含级别 + 时间戳前缀）。
  *
- * 用同步 appendFileSync 而非 writeStream——日志是诊断用，非高频热路径，
- * 同步写入保证 statSync 读到的 size 真实，轮转判断准确。性能可接受。
+ * D10-1 起为 WriteStream 缓冲写：write() 只入 Node 内部缓冲（非阻塞），
+ * 由事件循环异步落盘——热路径（streaming 期间每事件 console 输出）不再有同步盘写。
+ * 轮转判定用写入字节计数（mainBytesWritten），替代旧 appendFileSync 方案的每行 statSync。
+ *
+ * 轮转是异步的（end 旧流须等待 flush 完成才能 rename，见 rotateMain）；轮转窗口内
+ * 到达的行先入 pendingLines 队列，由 rotateMain 续体在新流就绪后按序回放——同步写入
+ * 路径在轮转期间零阻塞、零丢失。
  */
 function writeLogEntry(level: LogLevel, message: string, meta?: Record<string, unknown>): void {
   if (!currentLevel || !logsDir) return
   if (LEVEL_ORDER[level] < LEVEL_ORDER[currentLevel]) return
   const today = new Date().toISOString().slice(0, ISO_DATE_LENGTH)
-  // 跨天：更新 currentDate，新日志写新文件（旧文件保留，不主动关闭流——同步写入无流）
-  if (currentDate !== today) {
-    currentDate = today
-  }
-  rotateIfNeeded(today)
-  const file = join(logsDir, `runtime-${today}.log`)
-  const ts = new Date().toISOString()
   const metaStr = meta ? ' ' + JSON.stringify(meta) : ''
+  const line = `[${new Date().toISOString()}] [${level.toUpperCase()}] ${message}${metaStr}\n`
+  const bytes = Buffer.byteLength(line, 'utf8')
   try {
-    appendFileSync(file, `[${ts}] [${level.toUpperCase()}] ${message}${metaStr}\n`)
+    // 轮转进行中（end 旧流等待 flush 的窗口）：行先入队，续体在新流就绪后回放。
+    if (rotationInFlight) {
+      pendingLines.push({ line, bytes })
+      return
+    }
+    // 跨天：end 旧流（旧日期文件保持原状）→ 开新日期流。异步轮转，本行入队。
+    if (currentDate !== today) {
+      if (mainStream) {
+        void rotateMain(today, false)
+        pendingLines.push({ line, bytes })
+        return
+      }
+      currentDate = today
+    }
+    // size 轮转（写入字节计数）：超阈值 → 异步「end 旧流 → rename → 开新流」，本行入队。
+    if (mainStream && mainStreamFile && mainBytesWritten + bytes > MAX_FILE_BYTES) {
+      void rotateMain(today, true)
+      pendingLines.push({ line, bytes })
+      return
+    }
+    if (!mainStream) {
+      openMainStream(today)
+    }
+    const stream = mainStream
+    if (!stream) return // 打开失败（异常路径）→ 本轮丢弃，不抛
+    stream.write(line)
+    mainBytesWritten += bytes
   // eslint-disable-next-line taste/no-silent-catch -- logger 自身写入失败（磁盘满/权限等）不能杀进程；console 已被 patch，无可靠诊断出口，吞没是刻意容错
   } catch {
     // no-op
@@ -105,20 +163,76 @@ function writeLogEntry(level: LogLevel, message: string, meta?: Record<string, u
 }
 
 /**
- * size 轮转：若当天主文件超 MAX_FILE_BYTES，滚动为 .1（单代滚动）。
- * 写前检查，保证单文件不超阈值。同步写入后立即 stat，无 flush 延迟。
+ * 异步轮转主日志：end 旧流并**等待 flush 完成** →（size 轮转时）rename → 开新流 → 回放队列。
+ *
+ * 顺序硬约束（06 §3.3 D10-1 / 审查 m-6）：必须先等旧流 'close'（fd 关闭、全部在途
+ * fs.write 落盘）再 rename——否则 rename 后旧流在途写会落进已改名 inode，而单代 .1
+ * 在下一次轮转时被新 inode 覆盖路径，在途数据随之丢失（探针实测：rename 早于 flush
+ * 完成时每个轮转边界丢 ~2 行）。
+ *
+ * 幂等并发：轮转窗口内的重复触发复用同一 promise（写入行统一走 pendingLines 队列）。
  */
-function rotateIfNeeded(today: string): void {
-  if (!logsDir) return
+function rotateMain(nextToday: string, renameOld: boolean): Promise<void> {
+  if (rotationInFlight) return rotationInFlight
+  const oldStream = mainStream
+  const oldFile = mainStreamFile
+  // 状态先行清空：轮转窗口内到达的行统一入队（writeLogEntry 的 rotationInFlight 分支）
+  mainStream = undefined
+  mainStreamFile = undefined
+  mainBytesWritten = 0
+  rotationInFlight = (async () => {
+    if (oldStream) await endAndAwait(oldStream)
+    if (renameOld && oldFile) {
+      try {
+        renameSync(oldFile, `${oldFile}.1`)
+      // eslint-disable-next-line taste/no-silent-catch -- 轮转失败（rename IO 错/权限）不阻塞写入；logger 自身容错，吞没是刻意设计
+      } catch {
+        // no-op（rename 失败：新流仍写主文件，仅丢失滚动，数据不丢）
+      }
+    }
+    currentDate = nextToday
+    const stream = openMainStream(nextToday)
+    // 回放轮转窗口内到达的行（续体在微任务队列原子执行，无并发写入插队）
+    const pending = pendingLines.splice(0)
+    for (const p of pending) {
+      if (!stream) break
+      stream.write(p.line)
+      mainBytesWritten += p.bytes
+    }
+    rotationInFlight = null
+  })()
+  return rotationInFlight
+}
+
+/**
+ * 打开（或重开）当天主日志写流。惰性：仅在首次写入 / 跨天 / size 轮转后调用。
+ *
+ * 打开前若磁盘上既有文件已超阈值（如上次运行崩溃未轮转、历史大文件），先滚动一次——
+ * 进程内字节计数不覆盖历史，此 stat 弥合跨重启的 size 上限（仅打开时一次，非热路径）。
+ *
+ * 返回新流（失败返回 undefined）。调用方应使用返回值而非重读 mainStream——TS 对
+ * 模块级变量的 CFA 会在「先赋 undefined 再读」的闭包路径里把 mainStream 窄化为
+ * undefined，直接读会得到 never。
+ */
+function openMainStream(today: string): WriteStream | undefined {
+  if (!logsDir) return undefined
   const file = join(logsDir, `runtime-${today}.log`)
   try {
     if (existsSyncSafe(file) && statSync(file).size > MAX_FILE_BYTES) {
-      renameSync(file, join(logsDir, `runtime-${today}.log.1`))
+      renameSync(file, `${file}.1`)
     }
-  // eslint-disable-next-line taste/no-silent-catch -- 轮转失败（stat/rename IO 错）不阻塞写入；logger 自身容错，吞没是刻意设计
+  // eslint-disable-next-line taste/no-silent-catch -- 打开前滚动失败不阻塞写入；best-effort 容错
   } catch {
     // no-op
   }
+  const stream = createWriteStream(file, { flags: 'a' })
+  // WriteStream 的写错误是异步 'error' 事件，无监听器会升级为 uncaughtException。
+  // 与旧 appendFileSync try/catch 的容错契约一致（磁盘满/权限）——仅丢日志，不杀进程。
+  stream.on('error', () => {})
+  mainStream = stream
+  mainStreamFile = file
+  mainBytesWritten = 0
+  return stream
 }
 
 /** 清理 KEEP_DAYS 天前的日志文件（启动时调一次）。 */
@@ -235,8 +349,10 @@ export interface PiSessionLog {
  * 不轮转：单 session 事件量可控（正常 turn <1000 事件），session 结束即 end()。
  * 若极端长 session 导致文件过大，事后可手动清理（保留期 cleanExpiredLogs 会清 7 天前）。
  *
- * 用同步 appendFileSync（与主日志一致，简化 + 保证写入顺序）。
- * end 后 write 为 no-op（防御：pi exit handler 可能晚于最后的 stdout line）。
+ * D10-2：接口形状不变（end 后 write 为 no-op），内部从 appendFileSync 换成 WriteStream
+ * 缓冲写（惰性打开）。end() 只关闭本 session 写流；注册表保留条目，closeLogger 退出
+ * flush 时统一等待全部写流（含已 end 未 flush 完的）落盘——pi 静默卡死场景丢尾部
+ * 几行 = 丢「pi 挂在最后哪一步」的冒烟证据（D10-1 分档承诺）。
  */
 export function createPiSessionLog(sessionId: string): PiSessionLog {
   if (!logsDir || !currentLevel) {
@@ -247,20 +363,29 @@ export function createPiSessionLog(sessionId: string): PiSessionLog {
   // 文件名：pi-<date>-<sessionId>.jsonl（date 防跨天 session 冲突）
   const safeSid = sessionId.replace(/[^a-zA-Z0-9-]/g, '').slice(0, SESSION_ID_MAX_LENGTH)
   const file = join(logsDir, `pi-${date}-${safeSid}.jsonl`)
-  let ended = false
+  const state: PiStreamState = { stream: undefined, ended: false }
+  openPiStreams.add(state)
   return {
     write: (line: string) => {
-      if (ended) return // end 后 no-op
+      if (state.ended) return // end 后 no-op
       const data = line.endsWith('\n') ? line : line + '\n'
       try {
-        appendFileSync(file, data)
+        if (!state.stream) {
+          state.stream = createWriteStream(file, { flags: 'a' })
+          // 异步 'error' 事件无监听器会升级为 uncaughtException——与旧 appendFileSync
+          // try/catch 容错契约一致（磁盘满/权限）：仅丢日志，不杀进程。
+          state.stream.on('error', () => {})
+        }
+        state.stream.write(data)
       // eslint-disable-next-line taste/no-silent-catch -- pi stdout 落盘失败（磁盘满/权限）不影响 runtime 主流程；best-effort 容错
       } catch {
         // no-op
       }
     },
     end: () => {
-      ended = true
+      if (state.ended) return
+      state.ended = true
+      state.stream?.end() // 缓冲数据异步 flush 后关闭 fd；closeLogger 会等待其完成
     },
   }
 }
@@ -275,9 +400,51 @@ function existsSyncSafe(path: string): boolean {
   }
 }
 
-/** 重置 logger 状态（runtime shutdown 时调；同步写入无流需关闭，仅清模块状态）。 */
-export function closeLogger(): void {
+/**
+ * end 一个写流并等待其真正关闭（'close' 事件，fd 已释放、缓冲已 flush）。
+ *
+ * 退出 flush（D10-1）与轮转（审查 m-6）的核心：process.exit() 立即终止进程、rename
+ * 前必须有「无在途写」保证——都要求 end 后**等待落盘完成**，否则缓冲窗口内的尾部日志
+ * 在退出时丢失 / 轮转边界在途写被 orphaning。
+ *
+ * 永不 reject（best-effort）：'error' 也 resolve，避免日志模块阻塞进程退出。
+ */
+function endAndAwait(stream: WriteStream | undefined): Promise<void> {
+  if (!stream) return Promise.resolve()
+  if (stream.closed) return Promise.resolve() // 已关闭（含已 error 销毁的流）
+  if (!stream.writableEnded) stream.end()
+  if (stream.closed) return Promise.resolve() // 同步关闭路径（如测试用 fake 流）
+  return new Promise<void>((resolve) => {
+    const done = () => resolve()
+    stream.once('close', done)
+    stream.once('error', done)
+  })
+}
+
+/**
+ * 关闭 logger（runtime shutdown 时调）。
+ *
+ * **必须 await**：先等待进行中的轮转完成（队列回放），再 end 主日志写流 + 全部已注册
+ * pi session 写流，并等待 flush 完成——之后调用方才可 process.exit(0)（现状 index.ts
+ * shutdown 链已改为 await closeLogger()）。
+ *
+ * 幂等：再次调用（或 closeLogger 后的写入）均为 no-op。
+ */
+export async function closeLogger(): Promise<void> {
+  if (rotationInFlight) await rotationInFlight
+  // 先捕获所有写流引用再清状态——await 窗口内新写入应直接 no-op，
+  // 捕获的旧流照常 end + 等待（退出前最后几行不丢）。
+  const streams: Array<WriteStream | undefined> = [mainStream]
+  for (const s of openPiStreams) streams.push(s.stream)
+  mainStream = undefined
+  mainStreamFile = undefined
+  mainBytesWritten = 0
+  pendingLines.length = 0
+  openPiStreams.clear()
   currentLevel = undefined
   logsDir = undefined
   currentDate = ''
+  // 各写流独立且 endAndAwait 永不 reject——allSettled 与 all 等价，但符合
+  // taste/prefer-allsettled（独立数据源允许部分降级，不互相阻塞）。
+  await Promise.allSettled(streams.map(endAndAwait))
 }

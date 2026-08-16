@@ -140,9 +140,13 @@ describe('logger', () => {
     process.env.XYZ_LOG_MAX_BYTES = '200' // 极小阈值触发轮转
     const { initLogger } = await import('../src/infra/logger.js')
     initLogger(tmpDir)
-    // 写入足够多内容触发轮转（每次 console.log 经 patch → writeLogEntry）
+    // 写入足够多内容触发轮转（每次 console.log 经 patch → writeLogEntry）。
+    // W30 起轮转为异步（end 旧流等待 flush 完成 → rename → 开新流），写入间让出
+    // 事件循环：fd open / 在途 fs.write 在 tick 间完成，轮转在下一轮写入前落盘。
     for (let i = 0; i < 30; i++) {
       console.log(`line-${i}-${'x'.repeat(50)}`)
+      await new Promise((r) => setImmediate(r))
+      await new Promise((r) => setImmediate(r))
     }
     await new Promise((r) => setTimeout(r, 100))
     const today = new Date().toISOString().slice(0, 10)
