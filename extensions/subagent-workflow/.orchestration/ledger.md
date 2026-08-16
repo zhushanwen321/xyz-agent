@@ -24,7 +24,7 @@
 
 ## 事件流水（时间倒序追加，永不覆盖）
 
-- 2026-08-16 gate FAIL→复判 PASS：首轮 15 项 14 过，S7-second 暴露概率性竞态（rebuild 后旧 dispatch 的迟到 completion 经 postAgentResult 投给新 worker 同 callId pending，劫持重跑 → 假 completed b=""）——F2 定稿时「orphan 无外部副作用」断言与实测相反，被 gate 抓出。修复：isOrphanedCall 实例比对守卫（.then/.catch 双路，跳过投递/持久化/预算检查）+ 4 回归用例 + 错误注释修正。针对性复审 PASS：红性验证（守卫恒 false → 3 用例红）、真实复跑铁证（debug 日志 orphan drop 落在重跑 finalize 前 18ms = 竞态窗口重演且被拦截，非幸运通过）；builder 4 次复跑 + 复审 1 次全过 b=beta + PHASE_A 恰 1 份。commit <gate待填>。
+- 2026-08-16 gate FAIL→复判 PASS：首轮 15 项 14 过，S7-second 暴露概率性竞态（rebuild 后旧 dispatch 的迟到 completion 经 postAgentResult 投给新 worker 同 callId pending，劫持重跑 → 假 completed b=""）——F2 定稿时「orphan 无外部副作用」断言与实测相反，被 gate 抓出。修复：isOrphanedCall 实例比对守卫（.then/.catch 双路，跳过投递/持久化/预算检查）+ 4 回归用例 + 错误注释修正。针对性复审 PASS：红性验证（守卫恒 false → 3 用例红）、真实复跑铁证（debug 日志 orphan drop 落在重跑 finalize 前 18ms = 竞态窗口重演且被拦截，非幸运通过）；builder 4 次复跑 + 复审 1 次全过 b=beta + PHASE_A 恰 1 份。commit 8353f6b60。
 - 2026-08-16 环境事件（非被测物责任）：用户全局 pi-scheduler 扩展在 session 替换后 stale ctx 崩掉 pi 主进程两次（中断 gate C3 首轮，重启重跑成功）——已向用户披露，建议反馈该扩展。
 
 - 2026-08-16 U3 verified→committed：builder 首轮 3 文件（README/CHANGELOG/手册修订）+ R8 扩权 8 文件（SKILL.md:244 pause/resume 能力宣传改写为一次性语义——G3 违例修正 + 注释 8 处）；verifier PASS（288 处 grep 命中独立归类无现役能力残留；「previously auto-paused」经 pre-U1 代码抽验非杜撰）。minor：README reason 列举补 time_limited（verifier 观察①，主 agent 流转时修）；ports.ts:132 历史转述保留裁决复核成立。commit cdaea8a54。
