@@ -185,6 +185,9 @@ const triggerEl = ref<HTMLElement | null>(null)
 const navRootEl = ref<HTMLElement | null>(null)
 const contentEl = ref<HTMLElement | null>(null)
 
+// [W31 review major-1] immediate 必须保留：AppShell 懒加载下 settingsOpen=true 与组件挂载同帧，
+// props.open 初始即 true，非 immediate watch 无变化沿 → 回调不执行 → refreshProviders
+// （settings-lifecycle「打开 modal 时刷新 providers」语义）、triggerEl 捕获、首 nav 项聚焦全部跳过。
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
     triggerEl.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -193,10 +196,14 @@ watch(() => props.open, (isOpen) => {
       navRootEl.value?.querySelector<HTMLElement>('.nav-item')?.focus()
     })
   } else if (triggerEl.value) {
+    // 选型说明：当前唯一宿主 AppShell 是 v-if 卸载式（关闭 = settingsOpen=false = 同帧卸载，
+    // 本分支不触发，焦点还原由下方 onBeforeUnmount 承接）。保留本分支是 open 契约的自洽性：
+    // 组件模板仍以 v-if="open" 表达「常驻挂载 + open 切换」形态，非卸载式宿主（open 变 false
+    // 而不卸载）经此分支正确还原焦点；删除会把该场景的焦点还原静默降级为只依赖卸载路径。
     triggerEl.value.focus()
     triggerEl.value = null
   }
-})
+}, { immediate: true })
 
 function close(): void {
   emit('update:open', false)
@@ -311,6 +318,9 @@ async function onUpdateAgentDirs(dirs: SkillDirConfig[]): Promise<void> {
   }
 }
 
+// 卸载路径的焦点还原（与上方 watch else 分支互补，见其选型说明）：懒加载宿主（AppShell
+// v-if 门控）关闭即卸载，props.open 观察不到 false 转变，还原在此承接。卸载时 open 仍为
+// true（父 v-if 与 props 更新同帧，props 不再 patch），故以 props.open 判定「因关闭而卸载」。
 onBeforeUnmount(() => {
   if (props.open && triggerEl.value) triggerEl.value.focus()
 })

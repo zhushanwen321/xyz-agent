@@ -26,7 +26,7 @@
 </template>
 
 <script setup lang="ts">
-import { defineAsyncComponent, provide, ref, watch } from 'vue'
+import { defineAsyncComponent, defineComponent, h, provide, ref, watch } from 'vue'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
@@ -46,12 +46,21 @@ import { useSidebarStore } from '@/stores/sidebar'
 // （resolvedComp 就绪则直接渲染，否则 setup 挂到新 load 的 then）——两者缺一不可：
 // 只 userRetry 不重挂：已 settled 的 pendingRequest 使 resolve 失效、loaded 永不变；只重挂不 userRetry：
 // setup 的 load() 返回旧 rejected 缓存，loader 不重跑。
+// [W31 review minor-4] loading/error 占位必须 overlay 形态（fixed 全屏遮罩）：本组件挂载点是根
+// div `flex gap-3` 的 flex 子项，默认形态占位（h-full w-full、无定位）会参与布局流——error 态
+// 永久挤压 MainPanel、loading 超 200ms 短暂挤压。defineAsyncComponent 的 loading/error 组件
+// 无法直接传 props（loading 态无 props、error 态只收 error），用薄包装固定传 overlay: true。
+const SettingsModalFallback = defineComponent({
+  name: 'SettingsModalFallback',
+  props: { error: null },
+  setup: (fallbackProps) => () => h(AsyncErrorFallback, { error: fallbackProps.error, overlay: true }),
+})
 let settingsRetryFn: (() => void) | null = null
 const settingsRetryKey = ref(0)
 const SettingsModal = defineAsyncComponent({
   loader: () => import('@/components/settings/SettingsModal.vue'),
-  loadingComponent: AsyncErrorFallback,
-  errorComponent: AsyncErrorFallback,
+  loadingComponent: SettingsModalFallback,
+  errorComponent: SettingsModalFallback,
   delay: 200,
   onError: (_err, retry, fail) => {
     settingsRetryFn = retry

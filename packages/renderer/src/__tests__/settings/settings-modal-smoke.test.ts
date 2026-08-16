@@ -10,8 +10,8 @@
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/settings/settings-modal-smoke.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
+import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { provide, ref } from 'vue'
 import {
@@ -120,6 +120,9 @@ beforeEach(() => {
   __resetSettingsTransportForTesting()
 })
 
+// 懒加载语义测试断言 document.activeElement，用例间必须卸载 teleport 到 body 的挂载件
+enableAutoUnmount(afterEach)
+
 describe('SettingsModal 首屏冒烟（AC12 渲染 gate）', () => {
   it('open=true 时渲染 Dialog 标题 + provider 导航项 + provider 页区', async () => {
     providePlatform({
@@ -158,5 +161,49 @@ describe('SettingsModal 首屏冒烟（AC12 渲染 gate）', () => {
     expect(document.body.querySelector('[data-testid="settings-nav-provider"]')).not.toBeNull()
     // ③ provider 页区渲染（ProviderPage「添加供应商」按钮，i18n 中文）
     expect(body).toContain('添加') // settings.provider.add 含「添加」
+  })
+})
+
+describe('SettingsModal 懒加载挂载即 open 的 open 语义（W31 review major-1 回归防护）', () => {
+  it('挂载即 open=true：refreshProviders 被调用 + 首个 nav 项获得焦点', async () => {
+    providePlatform({
+      kind: 'mock',
+      storage: inMemoryStorage(),
+      webSocket: { create: () => ({ readyState: 0, send: () => {}, close: () => {}, onopen: null, onclose: null, onmessage: null, onerror: null }) },
+      ipc: null,
+    })
+    // refreshProviders → getSettingsTransport().listProviders()（模块级单例）→ spy 在此
+    const listProvidersSpy = vi.fn(async () => [])
+    provideSettingsTransport({ ...stubTransport(), listProviders: listProvidersSpy })
+
+    // 模拟 AppShell 懒加载场景：settingsOpen=true 与组件挂载同帧，props.open 初始即 true。
+    // 修复前 watch 无 immediate，无变化沿 → 回调不执行 → refreshProviders/焦点初始化全部跳过。
+    mount(SettingsModal, {
+      props: { open: true },
+      attachTo: document.body,
+      global: {
+        provide: {
+          [SETTINGS_TOAST_KEY as symbol]: { error: vi.fn(), info: vi.fn(), warning: vi.fn() },
+          [USE_QUOTA_CONFIGURE_KEY as symbol]: () => ({
+            fetcherId: ref(undefined), fetcherOptions: [], enabled: ref(false),
+            cookieInput: ref(''), apiKeyInput: ref(''), apiKeyConfigured: ref(false),
+            testStatus: ref('idle'), testError: ref(''), quotaData: ref(null),
+            lastFetchAt: ref(null), isCookieAuth: ref(false), helpUrl: ref(undefined),
+            helpText: ref(undefined), configuring: ref(false), configureError: ref(''),
+            toggleEnabled: vi.fn(), selectFetcher: vi.fn(), saveCookie: vi.fn(),
+            saveApiKey: vi.fn(), testQuery: vi.fn(), reset: vi.fn(),
+          }),
+          [SETTINGS_CONFIG_API_KEY as symbol]: { detectSources: vi.fn(async () => []) },
+        },
+      },
+    })
+    await flushPromises()
+
+    // ① open 语义：providers 快照刷新被触发（settings-lifecycle「打开 modal 时刷新」契约）
+    expect(listProvidersSpy).toHaveBeenCalledTimes(1)
+    // ② 焦点语义：nextTick 后首个 nav 项（provider）获得焦点（键盘可达性）
+    const firstNav = document.body.querySelector<HTMLElement>('[data-testid="settings-nav-provider"]')
+    expect(firstNav).not.toBeNull()
+    expect(document.activeElement).toBe(firstNav)
   })
 })

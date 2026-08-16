@@ -165,7 +165,7 @@ import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 // 均无重第三方依赖（重依赖判据不满足），拆分只引入 async 边界无字节收益（边界评估结论写 W31 汇报）。
 // 错误兜底（§3.5）：file:// 下 chunk 404 是配置性错误，不自动重试，错误占位 + 重试按钮经
 // LAZY_RETRY_KEY 注入触发 loader 重跑（重试 = userRetry 重跑 loader + key 重挂 wrapper，两者缺一
-// 不可，机制见 AppShell.vue 同款注释；两个面板同容器，retry 回调按失败方解析）。
+// 不可，机制见 AppShell.vue 同款注释）。
 let detailRetryFn: (() => void) | null = null
 const detailRetryKey = ref(0)
 const DetailPane = defineAsyncComponent({
@@ -190,14 +190,21 @@ const TerminalView = defineAsyncComponent({
     fail()
   },
 })
+// [W31 review major-2] retry 按当前激活 tab 路由（drawerTab 经下方 useDrawerControl 解构，回调
+// 点击时才求值，晚于声明无碍）。依据：DetailPane/TerminalView 是 drawerTab 的 v-else-if 互斥
+// 分支，AsyncErrorFallback 错误占位只渲染在对应分支内——用户能点到的重试按钮必然属于当前 tab
+// 的面板，按 tab 路由即「按失败方路由」。旧实现 `if (detailRetryFn) else if (terminalRetryFn)`
+// 在 detail 失败后（detailRetryFn 恒非 null、无重置路径）terminal 再失败时，terminal 占位的
+// 重试实际执行 detail 的 userRetry + detailRetryKey++，terminal 永久卡 error——file:// chunk 404
+// 恰会同时打断两个 chunk，属设计内真实路径。不走「独立 InjectionKey」方案：需给
+// AsyncErrorFallback 开自定义 key 的接口表面积，而 tab 路由零新增接口且语义直接。
 provide(LAZY_RETRY_KEY, () => {
-  if (detailRetryFn) {
-    detailRetryFn()
-    detailRetryKey.value++
-  } else if (terminalRetryFn) {
-    terminalRetryFn()
-    terminalRetryKey.value++
-  }
+  const isTerminal = drawerTab.value === 'terminal'
+  const retryFn = isTerminal ? terminalRetryFn : detailRetryFn
+  if (!retryFn) return
+  retryFn()
+  if (isTerminal) terminalRetryKey.value++
+  else detailRetryKey.value++
 })
 
 const { t } = useI18n()

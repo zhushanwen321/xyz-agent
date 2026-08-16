@@ -71,6 +71,36 @@ describe('AsyncErrorFallback loading/error 两态渲染', () => {
   })
 })
 
+describe('AsyncErrorFallback overlay 形态（W31 review minor-4：懒加载弹窗占位不参与宿主布局流）', () => {
+  it('overlay=true + error → 占位 fixed 全屏遮罩（与正常 modal 同视觉层级）', () => {
+    const wrapper = mount(AsyncErrorFallback, {
+      props: { error: new Error('chunk 404'), overlay: true },
+    })
+    const el = wrapper.find('[data-testid="async-error-fallback"]')
+    expect(el.exists()).toBe(true)
+    // fixed 定位脱离文档流 → 不作为 AppShell 根 flex 容器的子项挤压 MainPanel
+    expect(el.classes()).toContain('fixed')
+    expect(el.classes()).not.toContain('h-full')
+    // 重试按钮在 overlay 形态下仍可交互（存在性 = 用户可见出口）
+    expect(wrapper.find('[data-testid="async-retry-btn"]').exists()).toBe(true)
+  })
+
+  it('overlay=true 无 error → loading 占位同样 fixed（loading 超 delay 也不挤压布局）', () => {
+    const wrapper = mount(AsyncErrorFallback, { props: { overlay: true } })
+    const el = wrapper.find('[data-testid="async-loading"]')
+    expect(el.exists()).toBe(true)
+    expect(el.classes()).toContain('fixed')
+    expect(el.classes()).not.toContain('h-full')
+  })
+
+  it('默认形态不变（drawer 内面板占位 h-full w-full，回归防护）', () => {
+    const wrapper = mount(AsyncErrorFallback, { props: { error: new Error('chunk 404') } })
+    const el = wrapper.find('[data-testid="async-error-fallback"]')
+    expect(el.classes()).toContain('h-full')
+    expect(el.classes()).not.toContain('fixed')
+  })
+})
+
 describe('defineAsyncComponent onError → retry → resolve 全链路', () => {
   it('loader 失败一次 → error 占位；点重试 → loader 重跑成功 → 渲染真实内容', async () => {
     const loader = makeFlakyLoader(1)
