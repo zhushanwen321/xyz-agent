@@ -8,6 +8,7 @@
 # 4. 产物自包含验证（所有依赖已打入 bundle）
 # 5. plugin-bootstrap.cjs 可独立解析（Worker Thread 入口）
 # 6. 产物能正常启动（health check）
+# 7. 插件系统非 mock 端到端验收（隔离 runtime + 真实插件，~8s；verify-plugin-e2e.sh）
 #
 # 用法: ./scripts/validate-runtime-bundle.sh [--ci]
 #   --ci    CI 模式：严格模式，任何失败都会退出码非 0
@@ -256,6 +257,21 @@ else
     echo -e "${RED}[ERROR] Runtime 启动超时或失败${NC}"
     echo -e "${YELLOW}日志:${NC}"
     cat /tmp/runtime-validate.log | tail -20
+    exit 1
+fi
+
+# ── 7. 插件系统非 mock 端到端验收（隔离 runtime + 真实插件文件 + 真实 WS）──────
+# 前 6 步验证「打包产物」；本步验证「dev 源码形态」的插件真实加载路径（sandbox fork
+# 激活 / toggle / built-in 扫描 / onBeforeSendMessage hook 执行）。F1-F4 四个 bug 的
+# 共同根因是测试金字塔底部全是 mock、真实加载路径零覆盖——本步是结构性防护。
+# 实测耗时 ~8s（含隔离 runtime 启动），在 pre-commit 可接受范围内（阈值 ~30s）。
+echo ""
+echo -e "${BLUE}[7/7] 插件系统非 mock 端到端验收...${NC}"
+if bash "$PROJECT_ROOT/scripts/verify-plugin-e2e.sh"; then
+    echo -e "${GREEN}[OK] 插件端到端验收通过${NC}"
+else
+    echo -e "${RED}[ERROR] 插件端到端验收失败（A 激活 / B toggle / C built-in / D hook 中有失败步骤，详见上方输出）${NC}"
+    echo -e "${YELLOW}[FIX] 定位见 verify-plugin-e2e.sh 输出的 [FAIL]/[定位] 行；验收范围见 docs/testing/13-plugin-e2e.md${NC}"
     exit 1
 fi
 

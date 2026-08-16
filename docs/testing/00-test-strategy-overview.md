@@ -233,6 +233,10 @@ cd packages/renderer && npx vitest run src/__tests__/panel/xxx.test.ts  # 单文
 # ── runtime 单元测试（vitest）──
 cd packages/runtime && npx vitest run
 
+# ── 插件系统非 mock 端到端验收（隔离 runtime + 真实插件，~8s）──
+bash scripts/verify-plugin-e2e.sh        # 也挂在 validate-runtime-bundle.sh 第 7 步
+                                        # 详见 13-plugin-e2e.md
+
 # ── typecheck ──
 pnpm --filter @xyz-agent/frontend run typecheck
 cd packages/runtime && npx tsc --noEmit
@@ -368,3 +372,4 @@ real E2E 依赖真实 runtime + pi + provider 配置，环境敏感、CI 不稳�
 - GUI 组件渲染 → [07-gui-components.md](./07-gui-components.md)
 - real 轨手工测试 → [08-real-track-manual.md](./08-real-track-manual.md)
 - real 轨 E2E 自动化 spec → [11-real-e2e-specs.md](./11-real-e2e-specs.md)
+- 插件系统非 mock 端到端验收 → [13-plugin-e2e.md](./13-plugin-e2e.md)
