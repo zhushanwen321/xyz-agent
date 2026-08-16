@@ -109,6 +109,25 @@ function isTerminal(run: WorkflowRun): boolean {
   return run.state.status === "done";
 }
 
+/**
+ * 孤儿 call 判定：dispatch 时捕获的 call 实例是否已不是 calls Map 中该 callId
+ * 的当前条目。
+ *
+ * 为何需要实例级比对（而非只查 run 状态）：rebuildRuntime 不改 status（全程
+ * running），既有的终态 stale 守卫拦不住旧 runtime 代际的迟到 completion。只有
+ * discardInFlightCalls（delete 条目）与新一代 dispatch（set 新实例）会改变
+ * 「callId → 实例」映射，故实例不等 ⟺ 本 completion 属于被丢弃/被替换的旧代际
+ * （S7-second 竞态：旧失败结果经 postAgentResult 投给新 worker 的同 callId
+ * pending，劫持重跑调用为假失败/空串假成功）。
+ *
+ * 运行期 calls Map 写点仅 discard 的 delete 与 dispatchAgentCall 的 set 两族
+ * （jsonl-run-store 的 set 在离线重水合路径，无在飞 promise），正常（非孤儿）
+ * 路径下实例恒等，无误判。
+ */
+function isOrphanedCall(run: WorkflowRun, callId: number, call: AgentCall): boolean {
+  return run.state.calls.get(callId) !== call;
+}
+
 /** 计算第 n 次重试前的退避时间（ms）：1s, 2s, 4s 指数。 */
 function backoffDelay(retryIndex: number): number {
   return RETRY_BACKOFF_BASE_MS * Math.pow(EXPONENTIAL_BACKOFF_BASE, retryIndex - 1);
@@ -182,8 +201,13 @@ export function rebuildRuntime(
  // 清理；genuinely-done 的 call 保留（重跑 replay）。放 delay 退避之前会误删退避
  // 期间自然完成的真结果（重跑重复耗 token）；放任何 await 之后，假失败已 finalize
  // 为 "done" 挡不住——重跑 replay 会把 abort 错误当真结果回放，静默污染输出。
- // 后续 finalizeCall 在已移除的 orphan call 上运行（markDone 无外部副作用），
- // trace.update 因节点已移除为 no-op。
+ // 注意：discard 只清 Map/trace 条目，旧 executeAgentCall 的 promise 链仍会醒来
+ // finalize。markDone 在孤儿实例上无害，但后续投递并非 no-op——postAgentResult
+ // 会投给 run.runtime（已是新 worker）的同 callId pending，劫持重跑调用（实测
+ // S7-second 竞态：旧失败结果被 worker 侧 resolve 为空串 → 脚本假成功）；
+ // finalizeCall 的 trace.update 在重跑已 append 同 stepIndex 新节点时命中新节点
+ // （瞬时污染，由重跑完成时的 update 覆盖）。该投递由 dispatchAgentCall 的
+ // 孤儿守卫（isOrphanedCall）拦截，此处不重复设防。
   discardInFlightCalls(run);
 }
 
@@ -245,9 +269,12 @@ export async function handleWorkerMessage(
  * **C-2 修复**：call 完成后检查 `budget.isExceeded` → abortRun(budget_limited)，
  * 终止整个 run（避免烧光预算后继续 spawn 新 call）。
  *
- * **stale 完成守卫**：.then 内 recheck `run.state.status === "running"`，run 终止
- * （abort/terminate）后到达的 call 完成不写 run.state.calls / 不 postAgentResult
- *（终态快照不被迟到结果污染）。
+ * **stale 完成守卫（两层）**：completion 到达时——
+ * 1. `run.state.status === "running"` recheck：run 终止（abort/terminate）后到达的
+ *    call 完成不写 run.state.calls / 不 postAgentResult（终态快照不被迟到结果污染）；
+ * 2. 孤儿 call 实例比对（isOrphanedCall）：rebuildRuntime 后旧代际 dispatch 的
+ *    completion 不投递——rebuild 不改 status，第 1 层拦不住跨 runtime 代际的迟到
+ *    结果（S7-second 竞态：旧失败结果投给新 worker 劫持重跑 pending → 假成功）。
  */
 function dispatchAgentCall(
   run: WorkflowRun,
@@ -378,6 +405,16 @@ function dispatchAgentCall(
       node.live = undefined;
  // run 终止（终态）后到达的 stale completion 不写 state
       if (run.state.status !== "running") return;
+ // 孤儿 call 守卫（S7-second 竞态）：rebuild 的 discardInFlightCalls 已移除本
+ // call、或重跑 dispatch 已用新实例替换同 callId 条目时，本 completion 属于旧
+ // runtime 代际。postAgentResult 的投递目标是 run.runtime（已是新 worker），
+ // 迟到结果会劫持新 worker 内重跑 agent() 的 pending Promise——跳过投递 /
+ // budget 同步 / 持久化，仅留日志。executeAgentCall 内 finalizeCall 的
+ // trace.update 若已命中重跑新节点（瞬时污染），由重跑完成时的 update 覆盖。
+      if (isOrphanedCall(run, msg.callId, call)) {
+        deps.log?.("debug", "workflow:error-recovery", "orphan agent call completion dropped", { runId: run.runId, callId: msg.callId });
+        return;
+      }
       if (call.result) postAgentResult(run, msg.callId, call.result, false);
  // D-12 regression fix (round-2 #1)：executeAgentCall 内 consume/incrementCallCount
  // 后同步 worker $BUDGET（否则 $BUDGET.spent()/remaining() 恒为 0）
@@ -432,6 +469,15 @@ function dispatchAgentCall(
  // Promise 永不 resolve → agent() 永久 await → worker 脚本挂死。构造 failed AgentResult
  //（与 resolveAgentOpts 失败路径 L262-275 一致的模式）postAgentResult 回 worker，
  // 让 pending Promise resolve（结果为 error），脚本可继续或失败退出。
+ // 孤儿 call 守卫（与 .then 对称，S7-second 竞态）：rebuild 后本 call 已被 discard
+ // 移除/替换——markDone 虽在孤儿实例上无害，但 trace.update 会污染重跑新建的同
+ // stepIndex 节点、postAgentResult 会劫持新 worker 的同 callId pending。孤儿时只
+ // 留日志，全部跳过。node.live 无条件先清（旧节点已脱离 trace，防御性统一）。
+      node.live = undefined;
+      if (isOrphanedCall(run, msg.callId, call)) {
+        deps.log?.("debug", "workflow:error-recovery", "orphan agent call failure dropped", { runId: run.runId, callId: msg.callId });
+        return;
+      }
       const errorResult: AgentResult = { content: "", error: message };
  // call 已 done（executeAgentCall 内 finalizeCall 已 markDone）时跳过，避免重复 markDone。
  // status 理论上必为 running（executeAgentCall L130 markRunning 先于 reject），pending
@@ -444,7 +490,6 @@ function dispatchAgentCall(
  // trace 标 failed + 清 live record（防泄漏）+ 持久化（catch 恰是最需留证的场景）。
  // stale 终态（run 已 done）时 run.runtime 为 undefined，postAgentResult 用
  // optional chaining 跳过 worker 回发；trace/state 写入仍执行（无害，终态快照已存）。
-      node.live = undefined;
       run.state.trace.update(msg.callId, {
         status: "failed",
         result: errorResult,
