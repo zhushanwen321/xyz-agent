@@ -17,10 +17,11 @@
  * 3. listBranches: git branch --list + remote show origin + 读默认分支
  * 4. list: git worktree list --porcelain 解析输出
  *
- * 与 GitStateService 缓存失效的关系（perf W17 审查 Fix-6 记录的刻意取舍）：本服务的 worktree
- * add/remove 不触发 GitStateService 失效——声明接受陈旧（03 §5 检查点定案）。影响面：仅原地
- * worktree 的 getStatus branches 列表在 ≤2s TTL 内少/多一条；新建 worktree 面板是新 cwd = 新
- * 缓存键，天然不受影响。若未来要求即时一致，需经 gitService.invalidateStatusCache({ cwd }) 挂失效。
+ * 与 GitStateService 缓存失效的关系（perf 03 §5 worktree 检查点闭环，2026-08-17）：本服务自身
+ * 不触发失效（编排层不感知缓存），失效由 transport/worktree-message-handler.ts 在
+ * worktree.create 成功后、reply 前对发起请求的 cwd 调 gitService.invalidateStatusCache({ cwd })
+ * （内部即 GitStateService.invalidateByCwd，覆盖共享该 cwd 的全部 session）挂钩，失败路径不失效。
+ * 此前「声明接受陈旧」的取舍（perf W17 审查 Fix-6）已被该闭环取代。
  */
 import { join, basename } from 'node:path'
 import { createHash } from 'node:crypto'

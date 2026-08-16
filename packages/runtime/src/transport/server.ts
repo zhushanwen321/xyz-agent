@@ -249,6 +249,10 @@ export class RuntimeServer implements IMessageBroker {
       this.worktreeMessageHandler = new WorktreeMessageHandler({
         ...messaging,
         worktreeService: worktree,
+        // perf 03 §5 worktree 检查点闭环（2026-08-17）：worktree.create 成功后按 cwd 失效
+        // git 状态缓存。与 GitMessageHandler 共享同一 gitService 实例（组合根注入）；
+        // git 未注入时为 null，handler 跳过失效（防御，成功 reply 不受影响）。
+        gitService: this.gitService ?? null,
       })
     }
     if (terminal) {

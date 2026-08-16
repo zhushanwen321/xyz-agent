@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { WorktreeMessageHandler, type WorktreeHandlerContext } from './worktree-message-handler.js'
+import type { IGitService } from '../interfaces.js'
 import type { ClientMessage } from '@xyz-agent/shared'
 
 // ── mock helpers ─────────────────────────────────────────────
@@ -14,11 +15,20 @@ function mockWs() {
   return { send: vi.fn(), readyState: 1 } as any
 }
 
+/**
+ * 部分实现 mock（只含被测行为依赖的失效入口）：worktree handler 仅调
+ * invalidateStatusCache（perf 03 §5 worktree 检查点闭环），全接口 mock 无断言价值。
+ */
+function mockGitService() {
+  return { invalidateStatusCache: vi.fn() }
+}
+
 function mockContext(overrides?: Partial<WorktreeHandlerContext>): WorktreeHandlerContext {
   return {
     send: vi.fn(),
     sendError: vi.fn(),
     reply: vi.fn(),
+    gitService: mockGitService() as unknown as IGitService,
     worktreeService: {
       create: vi.fn(async () => ({ cwd: '/project/feat-x', branch: 'feat/x' })),
       detect: vi.fn(async () => ({
@@ -141,6 +151,91 @@ describe('WorktreeMessageHandler worktree.create', () => {
       'msg-1',
       undefined,
     )
+  })
+})
+
+// ── worktree.create 写操作失效（perf 03 §5 检查点闭环，2026-08-17）──
+
+describe('WorktreeMessageHandler worktree.create 写操作失效', () => {
+  it('成功后按 payload.workspaceHint 调 invalidateStatusCache，且在 reply 之前', async () => {
+    const gitService = mockGitService()
+    // 持有 reply 原始 mock（ctx 类型里 reply 是具体签名，.mock 不可达）——「失效在 reply 前」
+    // 用 vitest mock 的 invocationCallOrder 全局单调序断言失效先于 reply 发生
+    const reply = vi.fn()
+    const ctx = mockContext({
+      gitService: gitService as unknown as IGitService,
+      reply: reply as unknown as WorktreeHandlerContext['reply'],
+    })
+    const handler = new WorktreeMessageHandler(ctx)
+    const ws = mockWs()
+
+    await handler.handleWorktreeMessage(
+      msg('worktree.create', { branch: 'feat/x', workspaceHint: '/project' }),
+      ws,
+    )
+
+    // 失效调用真实发生，且目标 cwd = 发起请求的 cwd（workspaceHint）
+    expect(gitService.invalidateStatusCache).toHaveBeenCalledTimes(1)
+    expect(gitService.invalidateStatusCache).toHaveBeenCalledWith({ cwd: '/project' })
+    expect(reply).toHaveBeenCalledWith(ws, 'msg-1', 'worktree.created', {
+      cwd: '/project/feat-x',
+      branch: 'feat/x',
+    })
+    // 语义对齐 U2 六写操作：reply 前失效（前端收到 ack 后可能立即刷新 git zone）
+    const invalidateOrder = gitService.invalidateStatusCache.mock.invocationCallOrder[0]
+    const replyOrder = reply.mock.invocationCallOrder[0]
+    expect(invalidateOrder).toBeDefined()
+    expect(replyOrder).toBeDefined()
+    expect(invalidateOrder).toBeLessThan(replyOrder)
+  })
+
+  it('成功且 payload 无 workspaceHint → 按 process.cwd() 失效（与 service.detect 起点同式）', async () => {
+    const gitService = mockGitService()
+    const ctx = mockContext({ gitService: gitService as unknown as IGitService })
+    const handler = new WorktreeMessageHandler(ctx)
+    const ws = mockWs()
+
+    await handler.handleWorktreeMessage(
+      msg('worktree.create', { branch: 'feat/x' }),
+      ws,
+    )
+
+    expect(gitService.invalidateStatusCache).toHaveBeenCalledWith({ cwd: process.cwd() })
+  })
+
+  it('create 失败 → 不失效（状态未变）', async () => {
+    const gitService = mockGitService()
+    const ctx = mockContext({ gitService: gitService as unknown as IGitService })
+    ctx.worktreeService.create = vi.fn(async () => {
+      throw Object.assign(new Error('git worktree add 失败'), { code: 'GIT_FAILED' })
+    })
+    const handler = new WorktreeMessageHandler(ctx)
+    const ws = mockWs()
+
+    await handler.handleWorktreeMessage(
+      msg('worktree.create', { branch: 'feat/x', workspaceHint: '/project' }),
+      ws,
+    )
+
+    expect(gitService.invalidateStatusCache).not.toHaveBeenCalled()
+    expect(ctx.reply).not.toHaveBeenCalled()
+    expect(ctx.sendError).toHaveBeenCalledTimes(1)
+  })
+
+  it('gitService 为 null（server 未注入，防御场景）→ 成功路径跳过失效且不抛错', async () => {
+    const ctx = mockContext({ gitService: null })
+    const handler = new WorktreeMessageHandler(ctx)
+    const ws = mockWs()
+
+    await expect(handler.handleWorktreeMessage(
+      msg('worktree.create', { branch: 'feat/x', workspaceHint: '/project' }),
+      ws,
+    )).resolves.toBeUndefined()
+
+    expect(ctx.reply).toHaveBeenCalledWith(ws, 'msg-1', 'worktree.created', {
+      cwd: '/project/feat-x',
+      branch: 'feat/x',
+    })
   })
 })
 

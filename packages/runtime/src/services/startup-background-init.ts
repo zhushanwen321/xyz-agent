@@ -7,11 +7,13 @@
  * 执行顺序。抽出独立模块的动机：验收要求「migrateBuiltin → autoUpgrade 顺序 spy 调用序」
  * 断言——内联在 main() 里无法在测试中调用，抽出后行为可测。
  *
- * 顺序约束（06 §3.3 D8-1 定案 + index.ts:190 既有注释，双重固定）：
+ * 执行序（06 §3.3 D8-1 的收敛实现——串行链，2026-08-17 勘误回写口径；文档原文「相互可
+ * 并行」为设计阶段判断，实施有意收敛为全串行，见该文档 D8-1 勘误段）：
  *   migrateProviderConfig（存 migrationReady gate）→ migrateBuiltinExtensions →
- *   checkAndAutoUpgrade（migrateBuiltin 必须在 autoUpgrade 前——否则 autoUpgrade 仍会
- *   尝试升级打包内置包）→ getPiVersion（mutate appInfo + 补发 app.info）→
- *   skillRegistry.initGlobal → pluginService.initialize。
+ *   checkAndAutoUpgrade（migrateBuiltin 必须在 autoUpgrade 前——唯一硬序约束，否则
+ *   autoUpgrade 仍会尝试升级打包内置包）→ getPiVersion（mutate appInfo + 补发 app.info）→
+ *   skillRegistry.initGlobal → pluginService.initialize → ensureAutoRenameDefault。
+ * 全串行的取舍：约束零竞态面 + best-effort 语义最易保持；代价 = 后台总完成时间为各段之和。
  *
  * 每步独立 try/catch：任一步失败不阻塞其余（与改造前 best-effort 语义一致），
  * 无 rejection 逃逸。

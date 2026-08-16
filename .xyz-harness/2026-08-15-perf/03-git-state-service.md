@@ -203,4 +203,4 @@ interface IGitStateService {
 - 大仓库下「baseline 在首个写工具结束前完成」是否恒成立（D3-2 的实施期门；不成立则启用「跳过 accumulating 仅推 ready」fallback）。
 - **帧序门（⛔）**：串行链 + turnGen + turnFinalizing 的等价性——用 V6 的 ws 打点断言「ready 恒为链尾、无跨回合串帧」；`message.complete` 先于 ready 的次序保持（event-interpreter.ts:396 vs :410 现状次序）。
 - **numstat 异步化等价性（⛔）**：`computeLineCounts` 纯函数化后行数填充结果与现状一致（现有 reconciler 测试同步更新基线）；numstat 失败时 writeContents 回退语义不变。
-- worktree 写操作（worktree add/remove）是否在 U2 前就挂 invalidate（否则 step 1 期间 worktree 操作后 getStatus 面板可能显示 2s 陈旧状态——明确决策：挂 invalidate 或声明接受陈旧）。
+- worktree 写操作（worktree add/remove）是否在 U2 前就挂 invalidate（否则 step 1 期间 worktree 操作后 getStatus 面板可能显示 2s 陈旧状态——明确决策：挂 invalidate 或声明接受陈旧）。**已闭环：挂 invalidateByCwd（2026-08-17）**——worktree.create 成功后、reply 前在 `transport/worktree-message-handler.ts` 对发起请求的 cwd（payload.workspaceHint，缺省 process.cwd()）调 `gitService.invalidateStatusCache({ cwd })`（内部即 GitStateService.invalidateByCwd，覆盖共享该 cwd 的全部 session 缓存），失败路径不失效；对齐 U2 六写操作「成功后 reply 前失效」语义。此前 worktree-service.ts 文件头声明的「接受陈旧」取舍已被此闭环取代。
