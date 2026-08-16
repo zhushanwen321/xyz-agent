@@ -1,5 +1,5 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import type { XyzAgentPackageJson, PluginDescriptor, PluginState, PluginContributes, PluginSource } from './plugin-types.js'
 import { checkPluginCompatibility } from './plugin-version-checker.js'
 
@@ -103,19 +103,32 @@ export class PluginRegistry {
     const engineRange = pkg.engines?.['xyz-agent'] ?? '*'
     const compat = checkPluginCompatibility(typeof engineRange === 'string' ? engineRange : '*')
 
+    // 入口文件路径：manifest.main 缺省 index.js（向后兼容）。
+    // pluginPath 必须指向具体入口文件而非插件目录——plugin-bootstrap 的 load 分支
+    // 直接 `import(pluginPath)`，ESM 禁止目录导入（ERR_UNSUPPORTED_DIR_IMPORT），
+    // 存目录会导致所有插件激活必炸（built-in statusline 曾因目录路径从未激活成功）。
+    const main = manifest.main ?? 'index.js'
+    const entryPath = resolve(fullPath, main)
+    // 入口守卫：main 必须解析到插件目录内（拒绝 ../ 逃逸与绝对路径），
+    // 防止插件声明越权入口 import 插件目录外的任意文件
+    if (entryPath !== fullPath && !entryPath.startsWith(fullPath + sep)) {
+      console.warn(`[plugin-registry] ${dirName}: main "${main}" escapes plugin directory, skipping`)
+      return null
+    }
+
     const descriptor: PluginDescriptor = {
       pluginId: dirName,
       version: pkg.version ?? '0.0.0',
       displayName: pkg.displayName ?? pkg.name ?? dirName,
       description: pkg.description ?? '',
-      main: manifest.main ?? 'index.js',
+      main,
       activationEvents,
       trustLevel: manifest.trustLevel ?? 'sandbox',
       status: compat.compatible ? ('UNLOADED' as PluginState) : ('DEPS_MISSING' as PluginState),
       contributes: manifest.contributes ?? {} as PluginContributes,
       permissions: manifest.permissions ?? [],
       engines: { 'xyz-agent': engineRange ?? '*' },
-      pluginPath: fullPath,
+      pluginPath: entryPath,
       source,
       extensionDependencies: manifest.extensionDependencies ?? [],
       ...(compat.compatible ? {} : { compatibilityError: compat.reason }),

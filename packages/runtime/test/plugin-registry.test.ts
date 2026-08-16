@@ -171,4 +171,65 @@ describe('PluginRegistry', () => {
     expect(reloaded.some(d => d.pluginId === 'late-plugin')).toBeTruthy()
     expect(reloaded.some(d => d.pluginId === 'hello-world')).toBeTruthy()
   })
+
+  // ── TC-1-06: pluginPath 指向 main 入口文件而非插件目录 ──────────
+  // 回归防护：ESM 禁止目录导入（ERR_UNSUPPORTED_DIR_IMPORT），plugin-bootstrap 的
+  // load 分支直接 import(pluginPath)，pluginPath 存目录会导致激活必炸
+  // （built-in statusline 曾因此从未激活成功）
+  it('TC-1-06: pluginPath resolves to main entry file, not plugin directory', async () => {
+    const pluginDir = join(tmpDir, '.xyz-agent', 'plugins', 'entry-plugin')
+    await mkdir(pluginDir, { recursive: true })
+    await writeFile(join(pluginDir, 'package.json'), JSON.stringify({
+      name: 'entry-plugin',
+      version: '1.0.0',
+      xyzAgent: { manifestVersion: 1, main: 'dist/entry.js', activationEvents: [] },
+    }), 'utf-8')
+
+    const registry = new PluginRegistry(tmpDir, tmpDir)
+    await registry.scan()
+    const desc = registry.getDescriptor('entry-plugin')!
+
+    expect(desc).toBeTruthy()
+    expect(desc.pluginPath).toBe(join(pluginDir, 'dist', 'entry.js'))
+    expect(desc.main).toBe('dist/entry.js')
+  })
+
+  // ── TC-1-07: main 缺省时 fallback index.js（向后兼容）──────────
+  it('TC-1-07: main falls back to index.js when manifest omits it', async () => {
+    const pluginDir = join(tmpDir, '.xyz-agent', 'plugins', 'default-main')
+    await mkdir(pluginDir, { recursive: true })
+    await writeFile(join(pluginDir, 'package.json'), JSON.stringify({
+      name: 'default-main',
+      version: '1.0.0',
+      xyzAgent: { manifestVersion: 1, activationEvents: [] },
+    }), 'utf-8')
+
+    const registry = new PluginRegistry(tmpDir, tmpDir)
+    await registry.scan()
+    const desc = registry.getDescriptor('default-main')!
+
+    expect(desc).toBeTruthy()
+    expect(desc.main).toBe('index.js')
+    expect(desc.pluginPath).toBe(join(pluginDir, 'index.js'))
+  })
+
+  // ── TC-1-08: main 越权路径（../ 逃逸 / 绝对路径）被拒 ──────────
+  it('TC-1-08: main escaping plugin directory is rejected', async () => {
+    await createPluginDir('escape-plugin', {
+      name: 'escape-plugin',
+      version: '1.0.0',
+      xyzAgent: { manifestVersion: 1, main: '../../outside.js', activationEvents: [] },
+    })
+    await createPluginDir('absolute-plugin', {
+      name: 'absolute-plugin',
+      version: '1.0.0',
+      xyzAgent: { manifestVersion: 1, main: '/etc/passwd', activationEvents: [] },
+    })
+
+    const registry = new PluginRegistry(tmpDir, tmpDir)
+    const descriptors = await registry.scan()
+
+    expect(descriptors.find(d => d.pluginId === 'escape-plugin')).toBe(undefined)
+    expect(descriptors.find(d => d.pluginId === 'absolute-plugin')).toBe(undefined)
+  })
 })
