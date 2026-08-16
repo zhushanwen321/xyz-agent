@@ -182,5 +182,7 @@ export async function handleBridgeIntercept(
     return { blocked: true, reason: hookResult.reason ?? `Blocked by ${hookResult.blockedBy}`, injectedMessages: [] }
   }
 
+  // transformedData → injectedMessages 映射未实施，属 01-plugin-hook-fix §5 检查点 2 的
+  // 未定案空间（pi 侧协议通道已存在，runtime 侧暂不产出注入消息），非死代码遗漏。
   return { injectedMessages: [] }
 }

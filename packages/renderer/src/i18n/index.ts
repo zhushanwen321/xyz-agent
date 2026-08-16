@@ -32,7 +32,9 @@ const initialLocale = readInitialLocale()
 /**
  * Q1-2 惰性 locale 加载：初始只静态注册 zh-CN（默认 locale，语言包不进异步 chunk），
  * en-US 按需动态 import + setLocaleMessage（不进首屏 chunk——zh-CN 用户不再为用不到的
- * en-US 全量（settings 等 13 域）付出启动编译成本；反之亦然）。
+ * en-US 全量（settings 等 13 域）付出启动编译成本；en-US 偏好用户首屏则同时含静态注册的
+ * zh-CN（顶层静态 import 无条件进首屏 chunk，因其为默认 locale）与 top-level await 拉取的
+ * en-US，两份均在、无对应节省）。
  *
  * 显式泛型 <[DefaultLocaleMessageSchema], string, false>：默认推断会把 composer 的 locale
  * ref 窄化为 '"zh-CN"'（messages 只含 zh-CN），setLocale('en-US') 赋值需 cast。Locales 不能

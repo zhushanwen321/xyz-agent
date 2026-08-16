@@ -192,7 +192,7 @@
 
 ## 遗留问题清单（记录不修，本任务范围外）
 
-1. **[V2 关联] runtime 重启后文件树目录点击无响应**：expand 在途请求悬挂（WS 断线期间 promise 不 settle）→ `loading`/inFlight 残留拦截后续点击且无 UI 反馈；刷新 renderer 恢复。建议：WS 重连事件清理 fileTree nodeState/inFlight。
+1. ~~**[V2 关联] runtime 重启后文件树目录点击无响应**~~ **已解决**：0eabca7e6（request.ts 层 fast-fail）——断开时新请求同步 reject（`code='disconnected'`）+ 在途请求 rejectAll 双通道，useFileTree 经既有 catch/finally 自然复位。原「WS 重连事件清理 inFlight/nodeState」建议已被该更彻底方案取代，作废。
 2. ~~**[V6 根因] dev（tsx）模式 sandbox 插件 Worker 无法启动**~~ **已解决**：F1 修复（9068e2692，fork 传递 tsx loader）打通 dev sandbox 链路，V6 已补测通过（见 V6 节）。
 3. **[V7 口径] 「几百轮 session 被驱逐重进」未实证**：dev 环境无长 session + 驱逐构造未成功；W20 机制有 `cache fresh (empty delta)` 运行证据与确定性测试背书。
 4. **[V4] 冷启动 TTI 对比缺失**：无优化前基线版本可对照。

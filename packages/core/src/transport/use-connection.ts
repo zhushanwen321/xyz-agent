@@ -191,7 +191,10 @@ export function useConnection() {
     // subscriptionStates 为空 → no-op，无副作用。
     const stopStateWatch = watch(getState(), (newState, oldState) => {
       if (oldState === 'connected' && newState !== 'connected') {
-        ports.pending.rejectAll(new Error(ports.t('connection.disconnectedError')))
+        // code='disconnected' 供调用方（useFileTree catch 等）识别传输断开类失败（对齐 request.ts send-fail reject）
+        ports.pending.rejectAll(
+          Object.assign(new Error(ports.t('connection.disconnectedError')), { code: 'disconnected' }),
+        )
       }
       if (newState === 'connected' && oldState !== 'connected') {
         resubscribeAll()
@@ -219,14 +222,18 @@ export function useConnection() {
     // ask-user pending 同理：pi 死了 ask-user 的 Promise 永远不会被 resolve，必须清空（T5）。
     removeRuntimeRestartingListener = ports.ipc.onRuntimeRestarting(() => {
       setRestarting()
-      ports.pending.rejectAll(new Error(ports.t('connection.runtimeRestarting')))
+      ports.pending.rejectAll(
+        Object.assign(new Error(ports.t('connection.runtimeRestarting')), { code: 'disconnected' }),
+      )
       ports.onRuntimeUnavailable('restart')
     })
 
     // 监听 runtime 重启用尽（主进程放弃 → 进 failed 态，等用户手动重试）
     removeRuntimeFailedListener = ports.ipc.onRuntimeFailed(() => {
       setFailed()
-      ports.pending.rejectAll(new Error(ports.t('connection.runtimeUnavailable')))
+      ports.pending.rejectAll(
+        Object.assign(new Error(ports.t('connection.runtimeUnavailable')), { code: 'disconnected' }),
+      )
       ports.onRuntimeUnavailable('disconnect')
     })
 
