@@ -126,7 +126,14 @@ command-actions.ts：
 
 ### 1.3 U1 验收绑定
 
-S1（快照 v2 断言除外）+ S2 + S4 + S7 + S8a（§3 手册）。S8a = `grep -rn "pauseRun\|resumeRun" src/` 零命中 + 三命令全绿。
+S1（快照 v2 断言除外）+ S2 + S4 + S7 + S8a（§3 手册）。S8a = `grep -rn "pauseRun\|resumeRun" src/` 在 U1 领地（7 源文件 + 8 测试文件，含 builder 裁决扩入的 command-actions.test.ts 与 robustness-low-batch1.test.ts）内零命中；全域残留仅限清单外 6 处（gui.test.ts:429/:437 fixture 字符串、trace.ts:156 / budget.ts:103 / run-runtime.ts:27 / jsonl-run-store-session-file.test.ts:404 存量注释——全部已在 U2 §2 处置范围，全域真零命中由 S8b 断言）。
+
+**R6 裁决补遗（builder 实施发现，规格测试清单原遗漏 2 文件）**：
+
+| 测试文件 | 遗漏原因 | 处置 |
+|---|---|---|
+| `src/__tests__/command-actions.test.ts` | R3 grep 模式 `pauseRun\|resumeRun\|paused` 不命中 verb 字面量（`action: 'pause'`），但它是契约 #4（parseWorkflowRpcCommand 收窄）的直接单测文件 | 4 用例改断言 `{action:"lifecycle-removed", verb}`（pause/resume × 有/无 runId） |
+| `src/__tests__/robustness-low-batch1.test.ts` | 不含 pause 关键词，但 F2 把 discardInFlightCalls 移入 rebuildRuntime 后，该文件的 duck-typed run mock（无 `state.calls`/`state.trace`）在 rebuild 路径抛 TypeError | mock 的 state 补 `calls: new Map(), trace: { removeByStepIndex: vi.fn() }` |
 
 ---
 
@@ -188,7 +195,7 @@ S1（快照 v2 断言除外）+ S2 + S4 + S7 + S8a（§3 手册）。S8a = `grep
 
 ### 2.3 U2 验收绑定
 
-S3（kill-9 + session 切换完整两路）+ S5 + S6 + S8b（`grep -rn '"paused"' src/` 零命中（历史注释/CHANGELOG 除外）+ 旧 v1 快照启动不崩不显示 + 新快照 v2 + 三命令全绿）。
+S3（kill-9 + session 切换完整两路）+ S5 + S6 + S8b（`grep -rn '"paused"' src/` 零命中（历史注释/CHANGELOG 除外）**且 `grep -rn "pauseRun\|resumeRun" src/` 全域零命中**（U1 遗留的 6 处在 U2 一并清：trace.ts:156 / budget.ts:103 / run-runtime.ts:27 存量注释改写、gui.test.ts:429/:437 fixture 字符串改名、jsonl-run-store-session-file.test.ts:404 注释改写）+ 旧 v1 快照启动不崩不显示 + 新快照 v2 + 三命令全绿）。
 
 ---
 

@@ -18,4 +18,6 @@
 
 ## 事件流水（时间倒序追加，永不覆盖）
 
-- 2026-08-16 设计定稿：R3-R5 对抗审查收敛（R5: 0 must-fix），子文档 impl-spec 交付（commit 9ccfd44e1）。U1 acceptance 基线 commit 待记。
+- 2026-08-16 U1 R6 裁决：builder 上报 3 冲突（command-actions.test.ts / robustness-low-batch1.test.ts 规格遗漏、S8a grep 全域不可达）→ 测试清单扩 2 文件、S8a 改领地内断言、全域零命中挪 S8b；新基线 commit 待记。存量失败 4 用例（skill-discovery ×2 / spawn-worktree-guidance ×2）待 verifier 核验归因。
+- 2026-08-16 U1 builder 首轮交付：14 文件（7 源 + 7 测试），typecheck 0 / lint 0 error / 目标测试 76 绿；3 冲突停手上报（正确行为）。
+- 2026-08-16 设计定稿：R3-R5 对抗审查收敛（R5: 0 must-fix），子文档 impl-spec 交付（commit 9ccfd44e1）。U1 acceptance 基线 commit 313005e1c。

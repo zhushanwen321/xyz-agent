@@ -43,9 +43,18 @@ pause/resume 从全部接口面与生命周期消失；session 切换/关闭当�
 
 ```bash
 cd extensions/subagent-workflow
-pnpm extensions:typecheck && pnpm extensions:lint && pnpm extensions:test   # 三者全绿
-grep -rn "pauseRun\|resumeRun" src/ && echo "MUST BE EMPTY" || echo "OK: zero refs"   # S8a
+pnpm extensions:typecheck && pnpm extensions:lint && pnpm extensions:test   # 三者全绿（豁免：与本 diff 无关的存量失败，以 verifier 核验归因为准）
+grep -rn "pauseRun\|resumeRun" src/   # S8a：U1 领地（7 源 + 8 测试文件）内零命中；
+                                       # 全域残留仅限 6 处清单外文件（gui.test fixture ×2、
+                                       # trace/budget/run-runtime/jsonl-test 注释 ×4——U2 处置，
+                                       # 见子文档 §1.3 R6 裁决补遗）
 ```
+
+## R6 裁决（2026-08-16，主 agent，builder 冲突上报后）
+
+1. 测试允许清单扩入 2 文件（规格原遗漏）：`src/__tests__/command-actions.test.ts`（4 用例改断言 lifecycle-removed）、`src/__tests__/robustness-low-batch1.test.ts`（mock 补 `calls: new Map(), trace: { removeByStepIndex: vi.fn() }`）——见子文档 §1.3 R6 补遗。
+2. S8a grep 断言语义修正为「U1 领地内零命中」；全域真零命中挪 S8b（U2 清 6 处残留）。
+3. 存量失败 4 用例（skill-discovery ×2 / spawn-worktree-guidance ×2）与本 diff 的无关性由 verifier 独立核验（git diff 文件交集 + import 图），记录 ledger 不阻塞本 unit。
 
 ## 禁改清单（U1 领地外）
 
