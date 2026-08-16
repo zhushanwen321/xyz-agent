@@ -573,11 +573,17 @@ export class PluginService implements IPluginService {
     this.permissionChecker.grant(pluginId, permissions)
     await this.permissionChecker.save()
 
-    // If plugin was waiting for permissions, try to activate it
-    if (this.activator.getState(pluginId) !== 'ACTIVE') {
-      await this.activator.activatePlugin(pluginId, { type: 'onStartupFinished' }, this.host)
-      this.watchExternalIfActive(descriptor)
-    }
+    // 唤醒正挂在权限审批等待的那次激活（若有）：只 grant 不 resolve pending 的话，
+    // 挂起中的激活（boot/handleEvent 里 await 着）要干等 30s 超时才回落。无 pending
+    // 时 no-op（resolvePermissionApproval 内部守卫）。
+    this.activator.resolvePermissionApproval(pluginId, true)
+
+    // activatePlugin 真幂等（in-flight 重入返回同一 promise）：
+    // - 挂起中的激活刚被唤醒、仍在 ACTIVATING → 此处 await 与它同步完成（毫秒级）；
+    // - 已 ACTIVE → no-op；
+    // - UNLOADED（等待早已超时回落 / 从未激活）→ 权限已 grant，新起激活不再挂起。
+    await this.activator.activatePlugin(pluginId, { type: 'onStartupFinished' }, this.host)
+    this.watchExternalIfActive(descriptor)
   }
 
   async revokePermissions(pluginId: string): Promise<void> {
@@ -587,6 +593,11 @@ export class PluginService implements IPluginService {
     descriptor.permissions = []
     this.permissionChecker.revoke(pluginId)
     await this.permissionChecker.save()
+
+    // 拒绝语义：该插件正挂在权限审批等待时唤醒为「拒绝」——挂起中的激活走既有
+    // 失败路径（UNLOADED、不分配 Worker），而非干等 30s 超时。无 pending 时 no-op
+    // （仅撤销已授权限，不主动停用已激活插件）。
+    this.activator.resolvePermissionApproval(pluginId, false)
   }
 
   async executeCommand(pluginId: string, commandId: string, args?: Record<string, unknown>): Promise<void> {
