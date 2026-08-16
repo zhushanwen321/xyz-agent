@@ -1,6 +1,6 @@
 # sessions-index.json 持久化索引：消灭冷扫描的全量 identity 探测
 
-**一句话结论：冷扫描 2.7s 的根因是 identity 探测结果只活在内存缓存、进程重启即清零；把它持久化为一个以文件 stat 戳自校验的 `sessions-index.json`（tmp(pid)+rename 原子写、写入互不协商），冷启动从 2.7s 降到 ≤300ms，且任何索引异常都静默回退到今天的全量探测行为，永不产生错误数据。**
+**一句话结论：冷扫描 2.7s 的根因是 identity 探测结果只活在内存缓存、进程重启即清零；把它持久化为一个以文件 stat 戳自校验的 `sessions-index.json`（tmp(pid+seq)+rename 原子写、写入互不协商），冷启动从 2.7s 降到 ≤300ms，且任何索引异常都静默回退到今天的全量探测行为，永不产生错误数据。**
 
 | 项 | 值 |
 |---|---|
@@ -22,7 +22,7 @@ SCQA（四句开篇）：
 - **S（情境）**：subagent-workflow 把每个 subagent 的历史记录落在磁盘 `sessions/*.jsonl`，用户在 TUI 敲 `/subagents`（或 xyz-agent 的 subagent 面板）随时查看列表（id / agent / 任务 / 状态）。
 - **C（冲突）**：列表数据不驻内存、每次从磁盘重建；进程内三层缓存把重复打开压到毫秒级，但缓存全是内存态——每次重启 pi / xyz-agent，第一次打开 `/subagents` 都要对全部 1744 个文件重新探测 identity，实测卡 2.7s。
 - **Q（问题）**：怎么让「重启后的第一次打开」也像进程内重复打开一样快，且不引入文件锁、新依赖和新的出错面？
-- **A（答案）**：把探测结果持久化为自校验索引 `sessions-index.json`——stat 戳锚定（戳不匹配即重探测）+ tmp(pid)+rename 原子写 + 损坏静默回退。本文展开这个答案。
+- **A（答案）**：把探测结果持久化为自校验索引 `sessions-index.json`——stat 戳锚定（戳不匹配即重探测）+ tmp(pid+seq)+rename 原子写 + 损坏静默回退。本文展开这个答案。
 
 **系统是什么（受众背景）**：`@zhushanwen/pi-subagent-workflow` 运行在 pi 进程内，提供统一的 subagent 执行与多 agent workflow 编排。每个 subagent session 是一个 append-only 的 jsonl 文件；`/subagents` 列表把这些文件重建成可浏览的运行历史。
 
@@ -146,7 +146,8 @@ subagent-workflow 的终态 record 不驻内存：`RecordStore.collectRecords`�
 
 | 异常 | 使用者看到什么 | 恢复动作 |
 |---|---|---|
-| 索引文件损坏 / 版本不识别 | 无感知：首次打开慢回 ~2.7s，列表内容正确（本进程全量探测后重写合法索引，下次恢复快） | 无需动作，自动恢复 |
+| 索引文件损坏 / 版本低于自身 | 无感知：首次打开慢回 ~2.7s，列表内容正确（本进程全量探测后重写合法索引，下次恢复快） | 无需动作，自动恢复 |
+| 索引版本高于自身（未来 v2 写的索引） | 无感知：本进程全量探测；高版本文件**只忽略不消费也不重写**（重写为 v1 会与 v2 互相覆盖振荡，见 §3.3.3-③），索引由能读它的更高版本进程接管 | 无需动作 |
 | 并发写竞争（多 pi 进程） | 无感知：读到旧版或新版索引都是完整 JSON，戳校验兜底 | 无需动作 |
 | 怀疑索引导致行为异常（诊断场景） | — | 删除索引文件即完全回到无索引行为：`rm <agentDir>/subagents/<enc>/sessions-index.json`；写失败原因看 `PI_EXT_DEBUG=1` 时 `~/.pi/agent/logs/` 下的扩展日志（§3.3.3-⑤ 的 debug 级记录，默认 no-op） |
 
@@ -177,20 +178,20 @@ subagent-workflow 的终态 record 不驻内存：`RecordStore.collectRecords`�
 
 1. 若放 sessionsDir 内部：每次索引写入改目录 mtime → 本进程与其他进程的 L0 快路径全部失效一轮（readdir + 7k stat ≈ 50ms），多进程下互相扰动。兄弟位置完全无此问题。
 2. `reconstructAll` 的 readdir 过滤是 `f.endsWith(".jsonl")`（`record-store.ts:441-442`），兄弟位置的 `.json` 天然不会被当成 session 文件。
-3. GC 的 `.json` 清理只在 `records/` 子目录内开启（`extensions/subagent-workflow/src/execution/session-file-gc.ts:62-68`，注释明确「其他位置不能匹配 .json——否则会误删 worktree reaper 状态文件」），兄弟位置不会被 GC 误删；索引是自校验缓存，也**不需要** TTL 清理。文件被删除后对应条目由下一次索引重写自然修剪（见 ⑤）。
+3. GC 的 `.json` 清理只在 `records/` 子目录内开启（`extensions/subagent-workflow/src/execution/session-file-gc.ts:62-68`，注释明确「其他位置不能匹配 .json——否则会误删 worktree reaper 状态文件」），兄弟位置不会被 GC 误删；索引是自校验缓存，也**不需要** TTL 清理。文件被删除后对应条目由下一次索引重写自然修剪（修剪本身置 dirty 触发重写，见 ⑤——纯命中轮删了文件若不置 dirty，磁盘上的陈旧条目将永不清除）。
 
-索引条目的 TS 接口（正条目与 `IdentityHeaderRecon` 字段一一对应，`session-reconstructor.ts:490-505`）：
+索引条目的 TS 接口（正条目字段是 `IdentityHeaderRecon` 的投影子集，参照 `session-reconstructor.ts:490-505`；`forkDepth`/`chatMode` **不持久化**——投影源 light record 无消费方（`buildRecord` 构造 light 时不读此二字段，命中时补 `undefined`，与内存缓存对缺失值的处理一致），存了也无消费方，未来需要时升 `INDEX_VERSION`）：
 
 ```ts
 /** sessions-index.json 顶层 */
 interface SessionsIndexFile {
-  version: 1;                                // 版本不识别 → 整体丢弃（见 ③）
+  version: 1;                                // 高于自身 → 整体忽略不重写；低于自身 → 整体丢弃重写（见 ③）
   pid: number;                               // 写入进程，仅诊断
   /** key = jsonl 文件 basename（不含路径；索引天然属于这一个 sessionsDir） */
   entries: Record<string, SessionsIndexEntry | SessionsIndexNegativeEntry>;
 }
 
-/** 正条目：identity 探测结果 + 锚定戳 */
+/** 正条目：identity 探测结果 + 锚定戳（forkDepth/chatMode 未持久化，见上） */
 interface SessionsIndexEntry {
   /** 锚定戳 = 探测时的 jsonl stat。命中 ⇒ identity 仍有效（append 必变 size） */
   mtimeMs: number;
@@ -204,8 +205,6 @@ interface SessionsIndexEntry {
   rootSessionId: string | undefined;
   parentRecordId: string | undefined;
   depth: number;
-  forkDepth: number | undefined;
-  chatMode: boolean | undefined;
   model: string;                             // 尾部探测时为 ""——与内存缓存行为一致
   thinkingLevel: string | undefined;
 }
@@ -232,7 +231,8 @@ interface SessionsIndexNegativeEntry {
 进程启动
   └─ 首次 reconstructAll（dirStamp === null）
        ├─ 读 sessions-index.json（1 次 readFileSync + JSON.parse；失败→空索引）
-       ├─ readdir + 修剪消失文件          ← 不变（record-store.ts:439-455）
+       ├─ readdir + 修剪消失文件          ← 语义不变（record-store.ts:439-455）；
+       │                                    新增：修剪消失文件置 dirty（见 ⑤）
        └─ 逐文件 scanFile：
             ├─ 4 次 statSync              ← 不变（record-store.ts:476-483）
             ├─ 索引查 basename：
@@ -250,19 +250,19 @@ interface SessionsIndexNegativeEntry {
 **① 索引失效粒度：per-entry 锚定戳，最细粒度。**
 锚定戳（stat 锚定）= 探测时刻 jsonl 的 `{mtimeMs, size}`（与 L1 的 Stamp 同构，`record-store.ts:91-95`）。例：文件 `a.jsonl` 探测时 stat 为 `{mtimeMs: 1755216000000, size: 42800}`，索引存下这对值与 identity；下次冷启动再 stat 它，两值相等 ⇒ 直接复用 identity。被否：目录级单戳（目录变了全索引作废，一次 append 让 1744 条全部重探测）与 TTL 过期（时间到了但文件没变，白白重探测）。`scanFile` 的判定：stat 当前 jsonl → 戳相等 → identity 直接复用；不等（append 过、续聊补写了 identity、文件被重写）→ 重探测该文件并更新条目。负条目同理：戳变了就重试探测（与现有负缓存语义一致，`record-store.ts:509-511`）。单文件失效不波及邻居。已知局限与 L0 同族：mtime 粒度粗糙的文件系统（NFS/2s FAT）可能漏判，APFS 微秒级可靠——代码已有同款声明（`record-store.ts:417-419`），不新增风险面。
 
-**② 多进程并发写：无锁 + tmp(pid)+fsync+rename 原子写 + last-writer-wins 快照。**
+**② 多进程并发写：无锁 + tmp(pid+seq)+fsync+rename 原子写 + last-writer-wins 快照。**
 last-writer-wins（首现定义）= 多写者互不协商、后完成 rename 的写者整体覆盖先完成者，不做跨进程合并——代价是先写者的部分成果丢失，本场景下损失仅是「个别文件下次冷启动多重探测一次」。
-- 原子写复刻 `ManifestStore.writeManifest` 的既有模式：`sessions-index.json.tmp.<pid>` → 写 + fsync → rename → fsync 目录（`extensions/subagent-workflow/src/execution/manifest-store.ts:97-140`，pid 后缀防两进程写同一 tmp，见 `:99`）。Windows 下 rename 覆盖语义与 manifest 完全同假设（该模式已在生产运行）。被否：文件锁（pi 进程崩溃后锁残留，需 stale 锁恢复逻辑——新增出错面换不来正确性收益）与跨进程 merge（见下）。
+- 原子写复刻 `ManifestStore.writeManifest` 的既有模式：`sessions-index.json.tmp.<pid>.<seq>` → 写 + fsync → rename → fsync 目录（`extensions/subagent-workflow/src/execution/manifest-store.ts:97-140`，pid 后缀防两进程写同一 tmp，见 `:99`；`<seq>` 是同进程内单调计数，防并发 saveIndex 撞名——节流基准只在写成功后推进，W1 在途时新一轮过窗扫描可再发起 W2，共用同一 tmp 会交错产生半成品 rename）。Windows 下 rename 覆盖语义与 manifest 完全同假设（该模式已在生产运行）。被否：文件锁（pi 进程崩溃后锁残留，需 stale 锁恢复逻辑——新增出错面换不来正确性收益）与跨进程 merge（见下）。
 - **不做跨进程 merge，写入内容 = 本进程本轮扫描的完整快照**（本进程 readdir 见到的所有文件的最新探测结果）。理由：读侧逐条戳校验使得「丢失更新」的代价仅仅是下次冷启动对个别文件多一次探测（均摊 ~1.5ms/文件），而 merge 会把「本轮没见到的文件」（可能是新建，也可能是已删除）永久留在索引里，需要额外修剪逻辑。快照式自清洁：GC 删掉的文件的条目，在下一次任何进程的重写中自然消失。
 - **正确性不依赖写入协议**：这是本方案的核心安全性质。并发写最坏情况是 rename 竞争（读到旧版或新版，都是完整 JSON）；陈旧条目在读侧被戳校验拦下重探测。索引只能造成多余探测，**永远不会造成错误结果**——因此无需文件锁、无需 CAS、无需写入协商。论证链的逐环验证状态见 §3.4 探针清单（P-safety-a/b/c）。
 - 已知边界：多个 pi 进程**同时**冷启动（如 xyz-agent 一次开多个面板）时，第一代进程仍各自全量探测（索引尚不存在），并发收益从第二代开始。可接受——session-pool 进程是长驻的，2.7s 只付一次。
 
 **③ 损坏/版本容错：读侧永不抛，任何异常 = 空索引 = 今天的全量行为。**
 - 顶层 `version: 1`；不识别的版本 → 整体丢弃（升级/回滚场景）。读侧校验链：JSON.parse 失败 → 空；顶层不是预期结构 → 空；单条目字段类型不符（校验规则镜像 `isIdentityData`，`session-reconstructor.ts:244-254`：id/agent/mode/task/startedAt 类型 + mode 枚举）→ 丢弃该条目（该文件回退探测）。
-- 版本升级（未来 v2）：v1 读者遇 v2 文件丢弃重扫后**重写为 v1** 会引发 v1/v2 互相覆盖振荡——实现时约定「读到更高版本只忽略不重写」（低于自身的才重写）。当前只有 v1，此条落为实现注意事项。
-- 残留 `.tmp.<pid>`（写进程崩溃）：读侧按 listAllSync 的同款 `.tmp.` 过滤忽略（`manifest-store.ts:173`）；下次写入失败时的 best-effort 清理复刻 `writeManifest` 的 renamed 标志模式（`manifest-store.ts:128-139`）。不做 recoverTmpFiles 式恢复——索引是缓存，丢了就重算，没有恢复价值。
+- 版本升级（未来 v2）：v1 读者遇 v2 文件丢弃重扫后**重写为 v1** 会引发 v1/v2 last-writer-wins 互相覆盖振荡——约定「读到更高版本只忽略不重写」（低于自身的才丢弃重写自愈）。已实现：`loadIndex` 返回 `higherVersion` 标志（条目整体不消费），RecordStore 据此抑制本进程所有后续落盘（`sessions-index.ts` / `record-store.ts`；测试 S1TC4 断言高版本文件内容与 mtime 均逐字节不动）。
+- 残留 `.tmp.<pid>.<seq>`（写进程崩溃）：读侧按 listAllSync 的同款 `.tmp.` 过滤忽略（`manifest-store.ts:173`）；下次写入失败时的 best-effort 清理复刻 `writeManifest` 的 renamed 标志模式（`manifest-store.ts:128-139`）。不做 recoverTmpFiles 式恢复——索引是缓存，丢了就重算，没有恢复价值。
 - 回滚兼容：装过带索引的版本再回退到旧版——旧代码不认识 `sessions-index.json`，不读不写；GC 不删它（§3.3.1 佐证 3）；无害残留，再升级时旧索引仍可用。
-- 错误恢复出口：所有读侧异常的终点都是「空索引 = 今天的全量行为」，且下一次扫描会重写合法索引自愈；人工恢复动作（怀疑索引异常时）见 §3.1 失败路径表的 `rm` 命令——不需要任何专用修复工具。
+- 错误恢复出口：所有读侧异常（损坏/结构不符/低版本）的终点都是「空索引 = 今天的全量行为」，且下一次扫描会重写合法索引自愈；高版本不是异常而是协议行为——只忽略不重写（§3.3.3-③ 版本升级条）。人工恢复动作（怀疑索引异常时）见 §3.1 失败路径表的 `rm` 命令——不需要任何专用修复工具。
 
 **④ 与现有缓存体系的关系：索引是 L1 identity 部分的持久化种子，不是独立层。**
 分层后：
@@ -274,14 +274,14 @@ last-writer-wins（首现定义）= 多写者互不协商、后完成 rename 的
 | L1 fileCache | 内存 | 进程内 | identity + sidecar 矩阵 + full 懒加载 + 负缓存（加载后由 L-1 灌入种子，运行期 L0/L1 语义一字不动） |
 | L2 idToFile | 内存 | 进程内 | id → file（随 L1 维护） |
 
-运行期索引不再被读（内存 L1 已接管）；它只在冷启动被读一次、在 dirty 扫描后被写。`dispose()`/`revive()` 不与索引交互（dispose 只清内存，落盘由扫描路径驱动）。附带收益：索引加载后 L2 即热，`findLightById`（`record-store.ts:542-546`）在进程重启后无需先全扫就能 O(1) 命中——其单文件 stat 校验照常兜底陈旧条目。
+运行期索引不再被读（内存 L1 已接管）；它只在冷启动被读一次、在 dirty 扫描后被写。`dispose()`/`revive()` 不与索引交互（dispose 只清内存，落盘由扫描路径驱动）。附带收益（**未实现**）：曾设想「索引加载后 L2 即热，`findLightById` 无需先全扫就能 O(1) 命中」——实现中 `loadIndex` 不灌 L2（`idToFile` 仅在 `scanFile` 内逐文件填充），进程重启后未先扫描时 `findLightById` 仍返回 undefined、调用方兜底全目录扫描（`record-store.ts` findLightById 注释）。冷查找仍依赖首扫，但首扫本身已被索引加速（§4.1 实测中位数 80.6ms）——差的只是入口时机，无正确性影响。
 
 **⑤ 写入时机：首轮扫描后 fire-and-forget 异步写；后续按 60s 最小间隔节流。**
 被否：每次 dirty 扫描必写（`/subagents` overlay 打开期间 250ms 高频扫描，一次文件变化就重写 350KB 全量快照，写放大不可接受）；dispose 时写（dispose 不感知本轮是否 dirty，且 /resume /fork 触发的 dispose/revive 周期会让无变化进程也反复落盘）。
 - 首轮完整扫描结束即写（若本轮发生过 ≥1 次真实探测，即 dirty）：短命进程（pi CLI 一次性调用）也要能留下探测成果，否则节流可能让索引永远不落盘。
 - 之后每次 dirty 扫描想写时检查距上次落盘 ≥60s（内存时间戳）。写放大评估：全量快照 350KB × 每分钟至多 1 次 × 仅在有新探测的扫描后——实际场景（目录内只有少量新文件）远低于上限。
-- 异步（`fs.promises`，与 writeManifest 同）且 best-effort：写失败记 debug 日志不重试、不抛、不影响扫描结果。
-- `dirty` 的判定天然存在：本轮 `scanFile` 走了探测分支（索引 miss 或戳不匹配）即为 dirty，纯命中则不写。
+- 异步（`fs.promises`，与 writeManifest 同）且 best-effort：写失败恢复 dirty、不抛、不影响扫描结果，记 debug 日志；下轮扫描过节流窗自动重试——节流基准只在写成功后推进（失败不推进），重试的写放大仍有界（每 60s 至多一次）。
+- `dirty` 的判定天然存在且有两个来源：本轮 `scanFile` 走了探测分支（索引 miss 或戳不匹配），以及**修剪**——`reconstructAll` 发现磁盘上消失的文件（GC/手动删）时删缓存条目必须同步置 dirty，否则纯修剪轮（无其他探测）的 flush 第一道门 `!dirty` 直接 return，磁盘索引的陈旧条目永不清除（内存投影已删，落盘快照不会自发跟随）。纯命中且无修剪则不写。生命周期：dirty 发起写时消费（置 false）、写失败恢复；未写路径（节流窗内 / 高版本抑制）不清位——未落盘的探测成果跨轮携带，直至真正写入。
 
 **⑥ 索引体积：1744 条 × ~200B ≈ 350KB，读入 ~10ms，三倍增长仍在 50ms 内——不需要分片/压缩/截断。**
 体积变量主要在 `task`（任务描述文本）。即便未来涨到 5k 条 ≈ 1MB，单次 readFileSync + JSON.parse 仍在 50ms 量级，比 2.7s 低两个数量级。当前不做截断（task 是 light 列表的显示字段，截断会改变行为，违反目标 2）；若未来膨胀到影响启动，截断点在这一层，不动其他层。
@@ -294,7 +294,7 @@ last-writer-wins（首现定义）= 多写者互不协商、后完成 rename 的
 |---|---|---|---|
 | P-baseline | 冷扫描 2.7s（1744 文件 / 586MB，~7k stat + 186MB 读） | 真实目录副本 + 新进程 `collectRecords(2000,"all")` 计时，命令见 §4.1 步骤 1 | ✅ 已测（2026-08，文首性能基线） |
 | P-dist | identity 分布 ~34% 头 64KB / ~65% 尾 64KB / ~0.2% 全文 | 真实目录实测，记录于代码注释（`session-reconstructor.ts:484-487`、`:569-573`） | ✅ 已测（2026-08 真实目录） |
-| P-atomic | tmp(pid)+fsync+rename 原子写不产生半写文件 | 同款模式在 `ManifestStore.writeManifest`（`manifest-store.ts:97-140`）生产运行；新场景并发断言见 §4.2 判定 2 | ✅ 生产同款 + ⛔ §4.2 并发门 |
+| P-atomic | tmp(pid+seq)+fsync+rename 原子写不产生半写文件 | 同款模式在 `ManifestStore.writeManifest`（`manifest-store.ts:97-140`）生产运行；新场景并发断言见 §4.2 判定 2 | ✅ 生产同款 + ⛔ §4.2 并发门 |
 | P-safety-a | 戳不匹配的陈旧条目被拦下重探测，不产出旧 identity | 单测 C2（append 后仅该文件重探测）+ §4.2 判定 4（并发下输出与 ground truth 一致） | ⛔ 实施期门 |
 | P-safety-b | 戳匹配的命中路径零内容读取仍返回正确记录（不依赖文件内容） | 单测 C1：建索引后 chmod 000 jsonl，新 RecordStore 首次 collectRecords 返回全部记录（复刻既有 A1 手法 `record-store-cache.test.ts:94-106`） | ⛔ 实施期门 |
 | P-safety-c | 并发 rename 竞争下读到的都是完整 JSON | §4.2 判定 2：结束后 `JSON.parse` 成功且 `version` 存在 | ⛔ 实施期门 |
@@ -347,6 +347,8 @@ tsx bench/cold-scan.bench.ts /tmp/bench-enc/$ENC/sessions --rounds 5
 - 索引命中模式下，对 chmod 000 的 jsonl 仍能返回全部记录（证明零内容读取）。**注意这是与无索引冷扫的行为差异点**：无索引冷扫对不可读文件探测失败 → 记录消失；索引命中返回上次探测结果（保留）——差异方向良性（保留优于消失，视为鲁棒性提升），故该断言单独成轮执行、不参与两模式输出等价对比；技术同现有 A1 用例 `extensions/subagent-workflow/src/__tests__/record-store-cache.test.ts:94-106`；
 - 索引文件出现在 `<enc>/sessions-index.json`（兄弟位置），sessionsDir 内 readdir 无新增文件。
 
+**实现期加固**（`bench/cold-scan.bench.ts`）：① 真实 `~/.pi/agent/subagents` 数据目录**拒绝运行**——bench 会 chmod 000 jsonl、rm/重写索引，污染真实 session 数据，路径从 homedir 动态推导比对，命中即 exit 报错并提示先复制副本；② ground truth 文件按 sessionsDir 绝对路径哈希存 `os.tmpdir()`，跨两次调用共享——`--baseline` 轮 1 产出后索引命中模式直接复用，两模式不必同一次跑完；③ chmod 000 断言在 win32（chmod 仅映射 read-only）或 root（无视 000）下会退化为恒真，此时 SKIP 该轮（与 `record-store-index.test.ts` 的 chmodProbeIt 同款守卫）。
+
 **实测结果（2026-08-15，性能验收回填。副本 = 最大真实 `<enc>` 段，1744 个 jsonl / sessions 目录 671MB，其中 1633 条记录 + 111 个无 identity 文件；命令即上述两步，exit 0）**：
 
 **体积口径**：文首「586MB」是历史基线测量时（2026-08 早前）对原目录的测量值；本次「671MB」是 `cp -R` 到 /tmp 的副本值——文件数相同（均 1744 个 jsonl），差额来自 cp 后的块对齐/文件系统差异（原目录与 /tmp 所在卷的分配粒度不同），非数据量变化。
@@ -369,7 +371,7 @@ tsx bench/cold-scan.bench.ts /tmp/bench-enc/$ENC/sessions --rounds 5
 
 **结论：并发场景的正确性标准是「无异常 + 最终索引是完整 JSON + 输出与单进程一致」，不要求写入不竞争。**
 
-用脚本在同一目录上起 3 个 RecordStore 实例（模拟 xyz-agent session-pool 的 3 个 pi 进程；实现为**同进程多实例交错，非跨进程并发**——写路径 tmp(pid)+fsync+rename 与跨进程完全相同，交错调度已覆盖 rename 竞争窗口，跨进程真并发的成本高得多且不会改变写协议），各自循环 20 次 `collectRecords`，其间外部随机 append/touch 文件制造变化：
+用脚本在同一目录上起 3 个 RecordStore 实例（模拟 xyz-agent session-pool 的 3 个 pi 进程；实现为**同进程多实例交错，非跨进程并发**——写路径 tmp(pid+seq)+fsync+rename 与跨进程完全相同，交错调度已覆盖 rename 竞争窗口，跨进程真并发的成本高得多且不会改变写协议），各自循环 20 次 `collectRecords`，其间外部随机 append/touch 文件制造变化：
 
 ```bash
 tsx bench/concurrent-scan.bench.ts /tmp/bench-enc/$ENC/sessions --workers 3 --iters 20
@@ -382,6 +384,8 @@ tsx bench/concurrent-scan.bench.ts /tmp/bench-enc/$ENC/sessions --workers 3 --it
 3. 目录内无残留 `.tmp.` 文件（或仅存在于写入失败注入的负向用例中）；
 4. 每个实例每轮输出与「单进程全量探测」的 ground truth **五元组 `(id, agent, task, rootSessionId, status)`** 一致（戳校验兜住了陈旧索引；并发 + 随机 touch/append 恰是最可能暴露戳校验漏网的场景，id 集一致不足以捕获 identity 字段级漂移）。
 
+**实现期加固**（`bench/concurrent-scan.bench.ts`）：① 同款真实数据目录拒绝运行防护（并发 bench 会 append 污染 session 文件）；② **空 ground truth 判 0 恒真防护**——副本 jsonl 全无 subagent 记录时 D4 的输出一致断言退化为「空集对空集」恒真、失去防护意义，直接拒绝运行；③ `PRE_MUTATIONS = 5`：ground truth 采集后、并发轮开始前预变异 5 个文件（追加纯日志行只改 size/mtime，探测结论不变但戳不匹配），保证每个实例首扫都有重探测 → dirty → 各自发起落盘，主动制造 tmp(pid+seq) 交错与 rename 竞争窗口。
+
 ### 4.3 单测清单（新增 `src/__tests__/record-store-index.test.ts`；回归防护网与探针载体，不计入验收主体）
 
 **结论：8 个用例把 §3.4 的 ⛔ 实施期门探针落成可回归的断言（C1/C2 即 P-safety-b/a），并覆盖损坏/版本/位置/共享/落盘等分支；同时既有 A1-A4/B1-B5/D1-D2 全绿兜底目标 2（零行为变化）。**
@@ -391,7 +395,7 @@ tsx bench/concurrent-scan.bench.ts /tmp/bench-enc/$ENC/sessions --workers 3 --it
 | C1 索引命中零探测 | 建索引后 chmod 000 jsonl，新 RecordStore 的首次 collectRecords 仍返回全部记录（镜像 A1 手法） | P-safety-b |
 | C2 戳不匹配单文件重探测 | append 一个文件 → 只有该文件重探测（identity 更新），其余零读取；索引条目更新 | P-safety-a / §3.3.3-① |
 | C3 索引损坏回退 | 手写非法 JSON 索引 → 全量探测不崩、结果正确、索引被重写为合法内容 | §3.3.3-③ |
-| C4 版本不识别 | `version: 999` → 整体丢弃 → 全量探测 → 重写为 v1 | §3.3.3-③ |
+| C4 版本不识别 | 高于自身（`version: 999`）→ 整体忽略不消费**且不重写**（文件内容与 mtime 均不变，S1TC4）；低于自身（`version: 0`）→ 整体丢弃 → 全量探测 → 重写为当前版本（S1TC4B） | §3.3.3-③ |
 | C5 负条目命中 | 无 identity 的 junk 文件不因重启重读（复用 B5 的 junk 构造，`record-store-cache.test.ts:244-249`） | §3.3.1 负条目 |
 | C6 索引位置 | 索引落在 `dirname(sessionsDir)`，sessionsDir 的 readdir 不含它；L0 快路径不被索引写入击穿（写索引后同进程再扫，dir mtime 未变 → 快路径生效） | P-l0 / §3.3.1 佐证 1 |
 | C7 双实例顺序共享 | 实例 A 扫描落盘后，实例 B（新对象模拟新进程）首次扫描零探测 | §3.3.3-② |
@@ -415,7 +419,7 @@ tsx bench/concurrent-scan.bench.ts /tmp/bench-enc/$ENC/sessions --workers 3 --it
 
 | # | Task | 内容 | 验收 |
 |---|---|---|---|
-| 1 | 索引模块 | 新建 `extensions/subagent-workflow/src/execution/sessions-index.ts`：`loadIndex(encDir)`（读 + version/条目校验，永不抛）、`saveIndex(encDir, entries)`（tmp(pid)+fsync+rename+dir fsync，复刻 writeManifest 模式）、条目类型与校验函数（镜像 `isIdentityData`） | 单测：损坏/版本/条目校验/无 tmp 残留（C3/C4/C8 的模块级部分） |
+| 1 | 索引模块 | 新建 `extensions/subagent-workflow/src/execution/sessions-index.ts`：`loadIndex(encDir)`（读 + version/条目校验，永不抛）、`saveIndex(encDir, entries)`（tmp(pid+seq)+fsync+rename+dir fsync，复刻 writeManifest 模式）、条目类型与校验函数（镜像 `isIdentityData`） | 单测：损坏/版本/条目校验/无 tmp 残留（C3/C4/C8 的模块级部分） |
 | 2 | RecordStore 接入 | 两处：① `scanFile` 探测分支前查索引（戳匹配 → 用索引 identity；miss → 探测后写回内存条目并标 dirty）；② `reconstructAll` 首扫（dirStamp 为 null 时）惰性 loadIndex + 扫描结束后按 §3.3.3-⑤ 的节流规则异步 saveIndex。索引路径 `path.dirname(this.sessionsDir)` 推导 | `npx vitest run src/__tests__/record-store-index.test.ts` 全绿 + 既有 `record-store-cache.test.ts` 全绿 |
 | 3 | bench 脚本 | `bench/cold-scan.bench.ts` 与 `bench/concurrent-scan.bench.ts`（§4.1/§4.2 的可复现命令） | 在真实目录副本上跑通，cold 报告落 `.xyz-harness/2026-08-15-subagent-workflow-perf/`（数字回填本文档 §4.1） |
 | 4 | 回归与文档 | `pnpm extensions:typecheck` + `pnpm extensions:lint` + 全量 `pnpm extensions:test`；README 性能段落补一句索引机制 | 三命令 exit 0 |

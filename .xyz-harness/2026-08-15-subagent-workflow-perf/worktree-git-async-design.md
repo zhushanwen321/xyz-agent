@@ -148,7 +148,7 @@ session_start（async handler，index.ts:281）
 
 1. **subagent B 流式输出连续**：A 的 `worktree add` 进行中（PI_EXT_DEBUG=1 日志可见其起止），B 的输出持续到达主进程——主进程扩展日志中 B 的 stdout 事件时间戳连续、无秒级空洞（验收判据见 §4.2 场景 1；B 子进程侧 jsonl 测不出主进程冻结）
 2. **TUI 即时响应**：A spawn / finalize 期间按 ESC、输入字符立即回显，无冻结感
-3. **失败路径语义不变（父 agent 视角）**：脏树 spawn 仍抛 `DirtyWorktreeError` 且 message 格式不变，`worktree: true` + 脏工作区时父 agent 收到的错误与改造前逐字一致（tool 层零改动）。若 git 真失败（非脏树），错误 message 前缀 `git <subcommand> failed:` 不变，新增 `exitCode`/`stderr` 属性供诊断——恢复指引：按 message 内 stderr 内容修 git 侧问题（如分支残留）后重试 spawn；worktree 若残留，由下次 session_start 的 reaper 60s 宽限后自动回收，或手动 `git worktree list` 定位后 `git worktree remove --force <path>`
+3. **失败路径语义不变（父 agent 视角）**：脏树 spawn 仍抛 `DirtyWorktreeError` 且 message 格式不变，`worktree: true` + 脏工作区时父 agent 收到的错误与改造前逐字一致（tool 层零改动）。若 git 真失败（非脏树），错误 message 前缀 `git <subcommand> failed:` 不变，新增 `exitCode`/`stderr`/`timedOut` 属性供诊断（`timedOut` 为 true 即 30s 超时被 SIGTERM 杀死，可与 git 自身报错退出区分）——恢复指引：按 message 内 stderr 内容修 git 侧问题（如分支残留）后重试 spawn；worktree 若残留，由下次 session_start 的 reaper 60s 宽限后自动回收，或手动 `git worktree list` 定位后 `git worktree remove --force <path>`
 4. **cancel 不再冻结界面**：用户 cancel 一个 worktree subagent（2 条 git）时 TUI 与其他 subagent 不停摆；worktree 清理异步完成，`git worktree list` 稍后无 `pi-sub-*` 残留
 
 ### 3.2 方案对比总表
@@ -171,9 +171,9 @@ session_start（async handler，index.ts:281）
 
 1. **gitRunAsync 的错误包装**。✅已测（探针 P-errshape，验证方法见 §3.7 探针清单）：`execFile` callback 出的错与 `execFileSync` throw 的错 **message 格式同构**（非零退出路径两者均为 `"Command failed: <cmd>\n<stderr>"`；超时路径 `killed: true` + `signal: "SIGTERM"`），但**属性不同构**——实测（Node 24）`execFile` 的 `err.stderr` 为 `undefined`（stderr 在 callback 第三参）、退出码在 `err.code`（数字）；而 `execFileSync` 的异常 `e.code` 为 `undefined`（退出码在 `e.status`）、`e.stderr` 为 string。因此：
    - 包装 message 格式保持 `git <subcommand> failed: <原因>` 不变——下游 `DirtyWorktreeError` 判定（`worktree-manager.ts:292-299`，只检查 status 输出非空转 throw）与测试 `toThrow` 匹配零改动
-   - 顺带把 `exitCode` / `stderr` 挂到包装错误上（新增属性，非破坏性）。**实现注意（探针结论）**：`stderr` 必须从 callback 第三参取（`err.stderr` 是 undefined），`exitCode` 取 `err.code`（数字时）——直接照抄旧代码的 `err.stderr` 会拿到 undefined
+   - 顺带把 `exitCode` / `stderr` / `timedOut` 挂到包装错误上（新增属性，非破坏性；`timedOut` 取 `killed===true && signal==="SIGTERM"` 判定超时被杀，区分「超时被杀」与「git 报错退出」）。**实现注意（探针结论）**：`stderr` 必须从 callback 第三参取（`err.stderr` 是 undefined），`exitCode` 取 `err.code`（数字时）——直接照抄旧代码的 `err.stderr` 会拿到 undefined
    - 不用 `util.promisify(execFile)`：它对多返回值 resolve 成 `[stdout, stderr]` 数组，调用方要解构且易错。手写 10 行 Promise 包装
-2. **create 内部时序重排**：`Promise.all([assertCleanTree(status), rev-parse HEAD])` 并行（脏树校验语义不变，仍先于 `worktree add`）→ 串行 `worktree add` → registry.add / symlink（同步 fs 保留，见 3.6）→ MF#3 回滚路径（`worktree-manager.ts:112-126`）async 化（`await` remove / branch -D，各自 best-effort，原始 err 仍外抛）。
+2. **create 内部时序重排**：`Promise.allSettled([status --porcelain, rev-parse HEAD])` 并行，判定顺序固定 status 错误 → 脏树 → rev-parse 错误（脏树校验语义不变：仍先于 `worktree add`，rev-parse 结果在脏树时被丢弃）。用 `allSettled` 而非 `all`：status 先 reject 时 `all` 会短路返回，rev-parse 的后续 rejection 无人处理 → unhandledRejection → 串行 `worktree add` → registry.add / symlink（同步 fs 保留，见 3.6）→ MF#3 回滚路径（`worktree-manager.ts:112-126`）async 化（`await` remove / branch -D，各自 best-effort，原始 err 仍外抛）。
 3. **spawn 临界区顺序保证 + 新增竞态守卫**。顺序保证机制不变：execute 是 async 函数，`await create` 之后才 kickOffBackground → runSpawn 读 worktree.path 作 spawn cwd，await 串行天然保证「worktree 先于 spawn」。但 async 化打开了一个新竞态窗口——**create await 期间 event loop yield，cancel / dispose 可以插入**：
    ```
    execute:
@@ -182,8 +182,8 @@ session_start（async handler，index.ts:281）
      record.worktreeHandle = worktreeHandle     // cancel 时刻此值还是 undefined！
      kickOffBackground(...)
    ```
-   若 cancel 在 create 进行中到达：`cancelBackground` 的 `tryTransition` CAS 成功，但其 cleanup 分支（`subagent-service.ts:1534`）读到 `record.worktreeHandle === undefined` 而跳过 → create 返回后 handle 才被赋值 → worktree 泄漏（只能等 reaper 60s 宽限后兜底），且 `runAndFinalize` 会白跑整个子进程（末尾 CAS 失败跳过 finalize，`subagent-service.ts:1421`）。**守卫**：create 返回并赋值 `record.worktreeHandle` 后，立即检查 record 状态是否已被转终态（closed）；是则主动 `await cleanup(worktreeHandle)` + 走 early-failed 返回（execute 返回 `buildEarlyFailedHandle`，executeAndAwait throw 原语义不变），不进 kickOffBackground。dispose 同理由该守卫覆盖。⛔实施期门（探针 P-guard，§3.7）：该竞态路径的时序断言（yield 点可达 cancel/dispose）目前基于代码结构推理，Phase 2 落地时以单测（cancel-during-create）+ 人为延迟实测双验证。
-4. **并发行为变化与 per-repo 串行队列**。`execFileSync` 因单线程天然全局串行；async 化后同一时刻可有多个 git 进程并发（wave 并行 spawn 多个 worktree subagent）。**并发 git 写命令是否锁冲突——原假设「fail-fast 直接失败」已被实测修正**：✅已测（探针 P-lock，git 2.52.0，验证方法见 §3.7）：同一 repo 8 并发 `worktree add`（2000 文件 checkout，长写窗口）+ 8 并发 `branch` 创建，16/16 全部成功、零 `config.lock`/refs 锁冲突——现代 git 对锁竞争有内置重试，旧版本 git 的 fail-fast 场景在 2.52 未复现。但该行为**无兼容性承诺**（git 未文档化并发 worktree add 的安全性；旧 git、网络文件系统、packed-refs rewrite 场景未测），不能作为正确性依据。处理：在 WorktreeManager 内加 **per-repo mutex**（定义：以 repo 路径为 key 的互斥队列——`Map<repo, Promise>` 链式串行，后来的写命令 `await` 前一个的 Promise 尾部，即「同一 repo 的写命令排队执行、不同 repo 与读命令并发」；例如 wave 并发 spawn 时 8 个 `worktree add` 在同一 repo 上按到达顺序逐个执行），把**写类命令**（`worktree add` / `worktree remove` / `branch -D` / `add -A`）按 repo 串行化；读类（`status` / `rev-parse` / `diff`）不加锁。**错误语义（关键约束）**：链式实现必须吞掉前驱的 rejection——入队时以 `chain.set(repo, run.catch(() => {}))`（或等价的 `prev.catch(noop).then(run)`）形态接续，后继命令只关心「自己已排队」、**不继承前驱错误**。否则字面实现（`prev.then(run)` / `await prev` 后 run）在第一个写命令失败（git 报错 / 30s 超时）后，同 repo 队列要么链断裂静默跳过后续命令（unhandled rejection + worktree 批量泄漏）、要么错误级联（7 个无关命令报同一个前驱错误）——wave 中 1 个 `worktree add` 失败会传染后续 7 个 create，一次 `worktree remove` 失败后该 repo 所有 cleanup 的 `branch -D` 全部被跳过。原 `execFileSync` 各命令独立失败互不影响，此约束是防止该行为回归的硬性要求（P-mutex 单测须含「前驱失败后后继正常执行」断言）。该队列的三重收益：a) 不依赖 git 锁实现细节（对未验证场景防御）b) 并发限流——wave 8 并发 spawn 不再同时打 8 份 checkout 的磁盘 IO c) 行为确定性可测（§4.2 场景 5）。行为从「全局意外串行」收敛为「同 repo 写操作显式串行、跨 repo 与读操作真并发」。
+   若 cancel 在 create 进行中到达：`cancelBackground` 的 `tryTransition` CAS 成功，但其 cleanup 分支（`subagent-service.ts:1534`）读到 `record.worktreeHandle === undefined` 而跳过 → create 返回后 handle 才被赋值 → worktree 泄漏（只能等 reaper 60s 宽限后兜底），且 `runAndFinalize` 会白跑整个子进程（末尾 CAS 失败跳过 finalize，`subagent-service.ts:1421`）。**守卫**：create 返回并赋值 `record.worktreeHandle` 后，立即检查 record 状态是否已被转终态（closed）；是则主动 `await cleanup(worktreeHandle)` + 走 early-failed 返回（execute 返回 `buildEarlyFailedHandle`，executeAndAwait throw 原语义不变），不进 kickOffBackground。dispose 同理由该守卫覆盖。实施期门（探针 P-guard，§3.7）已闭合：service 层守卫单测（§5 测试改造点）+ 真机实测（worktree add 人为延迟 5s 窗口内触发 dispose 级联，守卫在 create 返回后 13ms 内启动主动清理、71ms 内完成全部回收，子进程零启动）双验证通过，留证见 `evidence/pblock-gates-2026-08-15.md` 门 1。
+4. **并发行为变化与 per-repo 串行队列**。`execFileSync` 因单线程天然全局串行；async 化后同一时刻可有多个 git 进程并发（wave 并行 spawn 多个 worktree subagent）。**并发 git 写命令是否锁冲突——原假设「fail-fast 直接失败」已被实测修正**：✅已测（探针 P-lock，git 2.52.0，验证方法见 §3.7）：同一 repo 8 并发 `worktree add`（2000 文件 checkout，长写窗口）+ 8 并发 `branch` 创建，16/16 全部成功、零 `config.lock`/refs 锁冲突——现代 git 对锁竞争有内置重试，旧版本 git 的 fail-fast 场景在 2.52 未复现。但该行为**无兼容性承诺**（git 未文档化并发 worktree add 的安全性；旧 git、网络文件系统、packed-refs rewrite 场景未测），不能作为正确性依据。处理：在 WorktreeManager 内加 **per-repo mutex**（定义：以**命令 cwd** 为 key 的互斥队列——`Map<cwd, Promise>` 链式串行，后来的写命令 `await` 前一个的 Promise 尾部，即「同一 cwd 的写命令排队执行、不同 cwd 与读命令并发」；`worktree add` / `worktree remove` / `branch -D` 的 cwd 均为 repo 路径，效果即「同一 repo 的写命令排队执行」——例如 wave 并发 spawn 时 8 个 `worktree add` 在同一 repo 上按到达顺序逐个执行），把**写类命令**（`worktree add` / `worktree remove` / `branch -D`）按 repo 串行化；`add -A` 虽同属写类，但其 cwd 是 worktree checkout 路径而非 repo 路径，各 worktree 落各自队列、**事实上独立于 repo 队列**——这是安全的：git worktree 的 index 文件 per-worktree 隔离，跨 record 的 `add -A` 之间无共享写资源；同一 record 内的 collectPatch → cleanup 顺序由 doFinalizeRecord 的 await 串行保证；reaper 只回收 registry 中 pid 已死/超宽限的孤儿条目，不与在册 record 的 `add -A` 交叠。读类（`status` / `rev-parse` / `diff`）不加锁。**错误语义（关键约束）**：链式实现必须吞掉前驱的 rejection——入队时以 `chain.set(cwdKey, run.catch(() => {}))`（或等价的 `prev.catch(noop).then(run)`）形态接续，后继命令只关心「自己已排队」、**不继承前驱错误**。否则字面实现（`prev.then(run)` / `await prev` 后 run）在第一个写命令失败（git 报错 / 30s 超时）后，同 repo 队列要么链断裂静默跳过后续命令（unhandled rejection + worktree 批量泄漏）、要么错误级联（7 个无关命令报同一个前驱错误）——wave 中 1 个 `worktree add` 失败会传染后续 7 个 create，一次 `worktree remove` 失败后该 repo 所有 cleanup 的 `branch -D` 全部被跳过。原 `execFileSync` 各命令独立失败互不影响，此约束是防止该行为回归的硬性要求（P-mutex 单测须含「前驱失败后后继正常执行」断言）。该队列的三重收益：a) 不依赖 git 锁实现细节（对未验证场景防御）b) 并发限流——wave 8 并发 spawn 不再同时打 8 份 checkout 的磁盘 IO c) 行为确定性可测（§4.2 场景 5）。行为从「全局意外串行」收敛为「同 repo 写操作显式串行、跨 repo 与读操作真并发」（同 repo 写写互斥 + 读写并发 + 前驱失败不传染的真机实测留证见 `evidence/pblock-gates-2026-08-15.md` 门 2）。
 5. **同步签名调用方（链路 C）的处理**。**fire-and-forget**（定义：发起异步操作后不 await 其完成、调用方立即返回；失败只能靠 `.catch` 记日志，不能向调用方传播——例：`void this.worktreeManager.cleanup(handle).catch(err => bestEffort(err, ...))`）：
    - `cancelBackground` / `cancel` 的同步 boolean 返回语义保留（CAS 抢锁结果同步可得，tool 层依赖）：cleanup 改 fire-and-forget（`void this.worktreeManager.cleanup(handle).catch(err => bestEffort(err, ...))`）。安全性：cleanup 只消费冻结的 WorktreeHandle，不依赖 record 后续状态；record 已 archive 不影响清理正确性
    - `disposeAllRecords` / `dispose`：同样 fire-and-forget。dispose 在进程退出路径上本就不等待子进程回收（`killAllSpawnedChildren` 也不 await，`session-runner.ts:226`）；若进程先退，残留 worktree 由下次 session_start 的 reaper 兜底（pid 死活判据，`worktree-manager.ts:233-249`），与现有崩溃恢复语义一致。恢复指引：若观察到 `pi-sub-*` 残留（`git worktree list`），等待下次 pi 启动的 reaper 自动回收，或手动 `git worktree remove --force <path> && git branch -D <branch>`
@@ -230,17 +230,17 @@ WorktreeManager 实现不动（继续 execFileSync），整体挪进 worker thre
 
 ### 3.7 探针清单（运行时行为断言的验证状态）
 
-本文档全部运行时行为断言及验证状态。✅ = 设计期已实测；⛔ = 实施期门（标注哪期前必须跑通，未跑通不得合入该期）：
+本文档全部运行时行为断言及验证状态。✅ = 已实测（设计期探针或实施期门），行内附证据文件引用（`evidence/` 相对本设计文档目录）：
 
 | ID | 验证的行为 | 探针方法 | 状态 |
 |---|---|---|---|
 | P-lock | 并发 git 写命令是否锁冲突失败（原「config.lock fail-fast」断言） | /tmp 测试 repo：8 并发 `worktree add`（2000 文件 checkout）+ 8 并发 `branch`，统计 exit code 与 stderr | ✅已测：git 2.52.0 下 16/16 成功零冲突——原 fail-fast 断言**不成立**，§3.3 设计点 4 已按实测改写（mutex 保留，理由改为防御+限流+确定性） |
 | P-errshape | `execFile` 与 `execFileSync` 错误对象 message 格式与属性形态 | Node 24 探针脚本：ENOENT / 非零退出（exit 128）/ 超时三路径，dump message/code/killed/signal/stderr 类型 | ✅已测：message 格式同构、超时 `killed:true`+`SIGTERM`；**属性不同构**（`execFile` 的 `err.stderr` undefined、退出码在 `err.code`；`execFileSync` 的 `e.code` undefined、stderr 在 `e.stderr`）——§3.3 设计点 1 已按实测修正包装实现细节 |
 | P-errtimeout | execFile 超时路径 killed/signal 形态 | `execFile("sleep",["3"],{timeout:200})` | ✅已测：`killed:true`、`signal:"SIGTERM"`、`code:null`（同 P-errshape 一并跑出） |
-| P-block | 同步 git 期间并发 subagent stdout 停摆（§2.0 根因链） | §4.3 对照基线：改造前跑 §4.2 场景 1，`PI_EXT_DEBUG=1` 主进程日志中 B 的 stdout 事件到达时间戳空洞（对照同日志中 A 的 git 窗口；B 子进程 jsonl 侧测不出主进程冻结，不可用） | ⛔ Phase 1 合入前留基线 |
-| P-guard | create await 窗口 cancel/dispose 插入 → worktree 泄漏，守卫兜住 | 单测 cancel-during-create（create 的 git mock 加延迟）+ §4.2 功能回归场景 4（人为延迟实测） | ⛔ Phase 2 合入前 |
-| P-ffcleanup | fire-and-forget cleanup 的失败可观测 + 进程先退时 reaper 兜底 | dispose 场景实测：kill 主进程 → 重启 pi 触发 session_start reaper → worktree 回收 | ⛔ Phase 1 合入前（随功能回归场景 2） |
-| P-mutex | per-repo 队列使同 repo 写命令串行且无饥饿；**前驱失败不传染后继**（链吞 rejection，见 §3.3 设计点 4 错误语义） | 单测：并发 N 个 create 全部成功且时间上互斥（§5 测试改造点）+「第一个写命令失败后，同 repo 后续写命令仍正常执行」断言；实测 §4.2 场景 5 | ⛔ Phase 2 合入前 |
+| P-block | 同步 git 期间并发 subagent stdout 停摆（§2.0 根因链） | §4.3 对照基线：改造前跑 §4.2 场景 1，`PI_EXT_DEBUG=1` 主进程日志中 B 的 stdout 事件到达时间戳空洞（对照同日志中 A 的 git 窗口；B 子进程 jsonl 侧测不出主进程冻结，不可用） | ✅已测：改造前基线（create 临界区 717ms 连续同步 git，窗口内 B 事件 0 条、跨窗口空洞 765ms）+ Phase 1 / Phase 2 终态对照均留证 `evidence/pblock-baseline-2026-08-15.md` |
+| P-guard | create await 窗口 cancel/dispose 插入 → worktree 泄漏，守卫兜住 | service 层守卫单测（create mock 加延迟；用例位置见 §5 测试改造点）+ §4.2 功能回归场景 4（人为延迟实测） | ✅已测（门 1）：add 延迟 5s 窗口内 dispose 抢先 → 守卫 13ms 内主动清理、71ms 内全回收、子进程零启动，`evidence/pblock-gates-2026-08-15.md` 门 1 |
+| P-ffcleanup | fire-and-forget cleanup 的失败可观测 + 进程先退时 reaper 兜底 | dispose 场景实测：kill 主进程 → 重启 pi 触发 session_start reaper → worktree 回收 | ✅已测（门 3）：kill -9 后孤儿三处固化 → 重启 6s 后 reaper remove（30ms）+ branch -D（19ms）全清，`evidence/pblock-gates-2026-08-15.md` 门 3 |
+| P-mutex | per-repo 队列使同 repo 写命令串行且无饥饿；**前驱失败不传染后继**（链吞 rejection，见 §3.3 设计点 4 错误语义） | 单测：并发 N 个 create 全部成功且时间上互斥（§5 测试改造点）+「第一个写命令失败后，同 repo 后续写命令仍正常执行」断言；实测 §4.2 场景 5 | ✅已测（门 2）：写写互斥（add#2 START = add#1 END + 11ms）+ 读写并发 + 注入首错后后继 add 9ms 后照常执行且成功，`evidence/pblock-gates-2026-08-15.md` 门 2 |
 
 ## 4. 验收
 
@@ -263,12 +263,12 @@ WorktreeManager 实现不动（继续 execFileSync），整体挪进 worker thre
 
 **功能回归（每项必须通过；均回溯 §1 目标 2「父 agent 语义不变」或目标 3「新增竞态处理明确」）**：
 
-1. patch 回收不丢（→目标 2）：A 完成后 `record.patchFile` 存在且 `git apply --check` 通过（改动回传不丢）。失败恢复：patchFile 缺失时检查 `PI_EXT_DEBUG=1` 日志中 collectPatch 的 best-effort 错误，改动仍在 worktree checkout 删除前可用 `git -C <checkout> diff` 手动导出
+1. patch 回收不丢（→目标 2）：A 完成后 `record.patchFile` 存在且 `git apply --check` 通过（改动回传不丢）。实测状态：初测不通过（存量 bug——`gitRunAsync` resolve 的 `stdout.trim()` 裁掉 diff 尾换行致 `git apply --check` exit 128，非异步化引入的回归）→ 修复后复测，过程与结论见 `evidence/pblock-gates-2026-08-15.md` 门 4 小节。失败恢复：patchFile 缺失时检查 `PI_EXT_DEBUG=1` 日志中 collectPatch 的 best-effort 错误，改动仍在 worktree checkout 删除前可用 `git -C <checkout> diff` 手动导出
 2. 资源清理干净（→目标 2）：`git worktree list` 与 `git branch` 无 `pi-sub-*` 残留；tmpdir 下 checkout 目录已删。失败恢复：残留时手动 `git worktree remove --force <path> && git branch -D pi-sub-*`，并检查 worktrees.json 条目
 3. 注册表清空（→目标 2）：`<agentDir>/subagents/worktrees.json` 条目清空（对应 branch）
 4. 竞态守卫（→目标 3，探针 P-guard）：在 create 的 git 命令中人为加延迟（临时 mock 或大 repo），延迟窗口内 cancel 该 record → worktree 被守卫主动清理（而非等 reaper 60s），子进程不白跑
 5. per-repo mutex（→目标 3，探针 P-mutex）：并发 spawn 2+ 个同 repo worktree subagent，全部成功，且 `PI_EXT_DEBUG=1` 日志显示同 repo 的写类 git 命令在时间上互斥串行（mutex 生效的直接判据；「无 config.lock 冲突」不再是判据——P-lock 实测 git 2.52 本就不冲突）
-6. 错误形态（→目标 2）：脏树 spawn 仍抛 `DirtyWorktreeError` 且 message 格式不变；git 失败时包装错误含 exitCode/stderr 属性
+6. 错误形态（→目标 2）：脏树 spawn 仍抛 `DirtyWorktreeError` 且 message 格式不变；git 失败时包装错误含 exitCode/stderr/timedOut 属性
 
 ### 4.3 对照基线
 
@@ -282,9 +282,9 @@ WorktreeManager 实现不动（继续 execFileSync），整体挪进 worker thre
 
 | # | 文件 | 任务 | 期 |
 |---|---|---|---|
-| T1 | `extensions/subagent-workflow/src/execution/worktree-manager.ts` | **新增** `gitRunAsync`：`execFile` 手写 Promise 包装（不用 promisify，规避 multi-args resolve）；message 格式不变；包装错误补挂 `exitCode`/`stderr` 属性。**同步 `gitRun` 保留**（Phase 1 过渡双轨——create 的 5 处调用 `:63/82/115/120` + assertCleanTree `:293` 要到 T2 才 async 化，buildEnvBlock 的 execFileSync 到 T11，Phase 1 期间它们仍需同步 gitRun）。同步引入 per-repo mutex（`Map<repo, Promise>` 链，错误语义见 §3.3 设计点 4）供写类命令（worktree add/remove、branch -D、add -A）串行。**gitRun 删除点**：T2+T11 均合入后的收尾动作（作为 T2 验收的一部分），保证终态无双轨 API（§1 目标 3） | P1 |
-| T2 | 同上 | `create` async 化：`Promise.all([status, rev-parse HEAD])` 并行 → worktree add → symlink/registry（同步 fs 保留）→ MF#3 回滚路径 async 化（`worktree-manager.ts:112-126`） | P2 |
-| T3 | 同上 | `cleanup` / `collectPatch` / `scan` / `cleanupOrphan` / `assertCleanTree` async 化（内部逐条 await；scan 保持逐孤儿串行） | P1 |
+| T1 | `extensions/subagent-workflow/src/execution/worktree-manager.ts` | **新增** `gitRunAsync`：`execFile` 手写 Promise 包装（不用 promisify，规避 multi-args resolve）；message 格式不变；包装错误补挂 `exitCode`/`stderr`/`timedOut` 属性。**同步 `gitRun` 保留**（Phase 1 过渡双轨——create 的 5 处调用 `:63/82/115/120` + assertCleanTree `:293` 要到 T2 才 async 化，buildEnvBlock 的 execFileSync 到 T11，Phase 1 期间它们仍需同步 gitRun）。同步引入 per-repo mutex（`Map<cwd, Promise>` 链——队列 key 为命令 cwd，`add -A` 因 cwd 是 worktree 路径而独立于 repo 队列，见 §3.3 设计点 4；错误语义同见）供写类命令（worktree add/remove、branch -D、add -A）按各自 cwd 串行。**gitRun 删除点**：T2+T11 均合入后的收尾动作（作为 T2 验收的一部分），保证终态无双轨 API（§1 目标 3） | P1 |
+| T2 | 同上 | `create` async 化：`Promise.allSettled([status, rev-parse HEAD])` 并行（防 rev-parse rejection 无人处理 → unhandledRejection，见 §3.3 设计点 2）→ worktree add → symlink/registry（同步 fs 保留）→ MF#3 回滚路径 async 化（`worktree-manager.ts:112-126`） | P2 |
+| T3 | 同上 | `cleanup` / `collectPatch` / `scan` / `cleanupOrphan` async 化（内部逐条 await；scan 保持逐孤儿串行）。`assertCleanTree` 未单独 async 化——其脏树校验逻辑（status --porcelain）在实现中已内联进 create 开头，行为等价，随 T2 的 allSettled 并行 | P1 |
 | T4 | 同上 | 并发守卫单测配套的 per-repo mutex 验证（与 T1 同落地，此处指行为验证收尾） | P2 |
 | T5 | `extensions/subagent-workflow/src/execution/subagent-service.ts` | execute 的 worktree 分支（`:652-662`）：`await create` + **终态守卫**（create 返回后发现 record 已 closed → 主动 cleanup + 返回 `buildEarlyFailedHandle`） | P2 |
 | T6 | 同上 | executeAndAwait 的 worktree 分支（`:1151-1163`）：同 T5（失败 throw 语义不变） | P2 |
@@ -300,7 +300,7 @@ WorktreeManager 实现不动（继续 execFileSync），整体挪进 worker thre
 
 | 任务 | 拆分理由 | 呼应验收 |
 |---|---|---|
-| T1 | 地基任务：包装形态（message 格式 + exitCode/stderr 属性）决定所有调用点与测试的错误断言；mutex 与 gitRun 同文件同 commit，避免 per-repo 队列后续二次重构 | §4.2 功能回归 5/6 |
+| T1 | 地基任务：包装形态（message 格式 + exitCode/stderr/timedOut 属性）决定所有调用点与测试的错误断言；mutex 与 gitRun 同文件同 commit，避免 per-repo 队列后续二次重构 | §4.2 功能回归 5/6 |
 | T2 | create 的 Promise.all 重排涉及脏树校验语义保真，与纯 await 化性质不同，独立成任务便于单独回归脏树路径 | §4.2 功能回归 6 |
 | T3 | 与 T1 同期使 finalize/reaper 立即受益（Phase 1 收益主体）；scan 保持逐孤儿串行是行为决策（防 N 并发 git），拆出可独立审查 | §4.2 场景 2 + 功能回归 1/2/3 |
 | T4 | mutex 的行为验证（串行性 + 无饥饿）依赖 T2 落地后的真实并发路径，单列收尾避免与实现混在一起自证 | §4.2 功能回归 5 |
@@ -316,10 +316,10 @@ WorktreeManager 实现不动（继续 execFileSync），整体挪进 worker thre
 
 | 文件 | 改造 |
 |---|---|
-| `execution/__tests__/worktree-manager.test.ts` | `vi.mock("node:child_process")` 的 `execFileSync` → `execFile`（callback 风格 mock：`(cmd, args, opts, cb) => cb(null, "stdout")`，`:16-18`）；全部 create/cleanup/collectPatch/scan 调用 await 化；`expect(() => ...).toThrow` → `await expect(...).rejects.toThrow`。**新增**：终态守卫（cancel-during-create，配合 T5）、per-repo 并发写串行化、包装错误 exitCode/stderr 属性断言 |
+| `execution/__tests__/worktree-manager.test.ts` | `vi.mock("node:child_process")` 的 `execFileSync` → `execFile`（callback 风格 mock：`(cmd, args, opts, cb) => cb(null, "stdout")`，`:16-18`）；全部 create/cleanup/collectPatch/scan 调用 await 化；`expect(() => ...).toThrow` → `await expect(...).rejects.toThrow`。**新增**：per-repo 并发写串行化、包装错误 exitCode/stderr/timedOut 属性断言。（终态守卫用例不在此文件——守卫逻辑在 service 层的 execute/executeAndAwait 内，用例落在 `subagent-service.test.ts` 与 `execute-and-await-worktree.test.ts`，见下两行） |
 | `execution/__tests__/finalize-record.test.ts` | worktreeManager mock 的 collectPatch/cleanup 返回 Promise |
-| `execution/__tests__/execute-and-await-worktree.test.ts` | execFileSync mock（`:43`）→ execFile；create mock 返回 Promise；`rejects.toThrow` 断言（`:161-163` 用例） |
-| `execution/__tests__/subagent-service.test.ts` | worktreeManager.create mock async 化（`:392-510` 区域的 worktree 分支用例） |
+| `execution/__tests__/execute-and-await-worktree.test.ts` | execFileSync mock（`:43`）→ execFile；create mock 返回 Promise；`rejects.toThrow` 断言（`:161-163` 用例）。**新增**终态守卫用例：create await 窗口内 dispose 抢先 CAS 成 closed → 守卫 cleanup + throw cancelled（配合 T6，失败 throw 语义） |
+| `execution/__tests__/subagent-service.test.ts` | worktreeManager.create mock async 化（`:392-510` 区域的 worktree 分支用例）。**新增**终态守卫用例：create await 窗口内 dispose 抢先 CAS 成 closed → 守卫 cleanup + early-failed 返回、不 kickOff（配合 T5） |
 | `execution/__tests__/session-start-reaper.test.ts` / `index-session-start.test.ts` | WorktreeManager mock 的 `scan` 返回 Promise（`:45-48` / `:111-116`）；调用断言不变 |
 | `execution/__tests__/worktree-pid-registration.integration.test.ts` | 真实 git 集成用例：`wtm.create` / `wtm.scan` 调用 await 化（`:150-200` 区域），断言不变（该测试是功能回归的主力，Phase 1/2 各跑一轮） |
 
@@ -327,4 +327,4 @@ T11 落地时另需同步改 mock `execFileSync`（buildEnvBlock 用）的测试
 
 ### 提交策略
 
-Phase 1 一个 commit（T1/T3/T7-T10 + 测试），Phase 2 拆两个 commit（T2/T4/T5/T6 + 竞态守卫测试；T11 顺带项独立）。每期完成后跑 `pnpm extensions:test && pnpm extensions:typecheck && pnpm extensions:lint`，并按 §4.2 实测留证。
+Phase 1 一个 commit（T1/T3/T7-T10 + 测试），Phase 2 拆两个 commit（T2/T4/T5/T6 + 竞态守卫测试；T11 顺带项独立）。每期完成后跑 `pnpm extensions:test && pnpm extensions:typecheck && pnpm extensions:lint`，并按 §4.2 实测留证。实施期门实测留证已补齐：门 1（cancel-during-create）/门 2（per-repo mutex）/门 3（kill 重启 reaper）通过、门 4（patch 回收）初测不通过→修复后复测，见 `evidence/pblock-gates-2026-08-15.md`；阻塞消除基线与终态对照见 `evidence/pblock-baseline-2026-08-15.md`。
