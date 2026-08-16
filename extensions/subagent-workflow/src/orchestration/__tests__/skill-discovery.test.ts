@@ -8,7 +8,9 @@
  * - project 优先于 user/npm 的搜索序
  *
  * 隔离：node:fs 的 existsSync 用 vi.mock 包一层计数（委托真实实现）；
- * node:os 的 homedir 用 hoisted 可变状态指向临时目录；process.cwd 用 spyOn。
+ * getAgentDir 用 vi.mock 覆盖为临时 home（vitest alias 指向 mocks/pi-coding-agent.ts
+ * 的硬编码桩 "/home/user/.pi/agent"，桩不读 os.homedir——mock node:os 无法影响它）；
+ * process.cwd 用 spyOn。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
@@ -32,9 +34,11 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...actual, existsSync: countingExistsSync };
 });
 
-vi.mock("node:os", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:os")>();
-  return { ...actual, homedir: () => osHome.dir };
+vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@earendil-works/pi-coding-agent")>();
+  const { join } = await import("node:path");
+  // 桩不读 os.homedir，必须在此把 agentDir 指向 hoisted 临时 home（beforeEach 注入 homeRoot）
+  return { ...actual, getAgentDir: () => join(osHome.dir, ".pi", "agent") };
 });
 
 import { clearSkillPathCache, resolveSkillPath } from "../skill-discovery.ts";
