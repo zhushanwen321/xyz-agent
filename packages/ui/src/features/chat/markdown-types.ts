@@ -10,7 +10,9 @@
  *   ——content 为 fence 内已到达源码，lang 为语言名，mermaid 标记是否 mermaid fence；
  *   占位 UI（语言名 + spinner 行）由 MarkdownRenderer 特殊渲染
  *
- * 与 renderer composables/logic/markdown.ts 的 MarkdownSegment 结构对齐（renderer 壳适配）：
+ * 协议镜像同步：与 renderer composables/logic/markdown.ts 的 MarkdownSegment 扩展（W22 的
+ * segId/lang/mermaid/streaming-fence）做结构对齐，防壳侧漂移——镜像不只为 deps 赋值提供
+ * 类型，更是增量协议在 ui 侧的形状契约（字段漂移会被结构化类型在编译期拦下）：
  * segId 是 D-5 增量渲染的段稳定键（renderIncremental 首次产出时分配，前缀段跨帧不变），
  * 渲染树 v-for :key="seg.segId"（全量渲染路径不携带，undefined）。
  */

@@ -132,8 +132,38 @@ describe('findStableBoundary — 9 形态矩阵（精确 offset）', () => {
     // 数学块 $$ 未闭合（奇偶）→ 边界在 $$ 开行前；闭合后（偶数）→ 可切过
     expect(findStableBoundary('para\n\n$$\n\\int x')).toBe(6)
     expect(findStableBoundary('para\n\n$$\n1+1\n$$\n\nbody')).toBe(17)
-    // 链接引用定义开头的 tail：闭合前缀的 [ref] 链接化依赖后文定义 → 拒绝 → 0
-    expect(findStableBoundary('para\n\n[a]: /url')).toBe(0)
+  })
+
+  it('M7b 链接引用定义（文档级拒绝）：fence 外任意位置含定义行 → null 走 fallback-full', async () => {
+    const { findStableBoundary } = await freshModule()
+    // markdown-it 引用解析是文档级的（定义全文收集、[label] 全文消费），实测分段渲染发散：
+    // def-prefix/ref-tail：全量 '[a]: /url\n\nsee [a]' 里 [a] 链接化（<a href="/url">），
+    // 边界 11 切段后 tail 'see [a]' 单独渲染丢定义 → 纯文本
+    expect(findStableBoundary('[a]: /url\n\nsee [a]')).toBeNull()
+    // ref-prefix/def-mid-tail：'see [a] now\n\nbar\n\n[a]: /url' 定义在 tail 中部，
+    // 前缀 '[a]' 渲染时定义未到达 → 不链接化且前缀缓存引用恒等永不重渲染（持久发散）
+    expect(findStableBoundary('see [a] now\n\nbar\n\n[a]: /url')).toBeNull()
+    // 定义后跟引用（同上反向形态）：同样 null
+    expect(findStableBoundary('para\n\n[a]: /url')).toBeNull()
+    // fence 内的 def 形态行不是定义（fence 内容不参与块解析）：不触发 fallback，
+    // 'para'(0-3) \n(4) \n(5) ```ts(6-10) \n(11) [a]: /url(12-20) \n(21) ```(22-24) \n(25) → 边界 26
+    expect(findStableBoundary('para\n\n```ts\n[a]: /url\n```\ntail')).toBe(26)
+  })
+
+  it('M7c CRLF：闭合 fence 行尾 \\r 不阻断识别（边界推进过闭合 fence）', async () => {
+    const { findStableBoundary } = await freshModule()
+    // 'para\r'(0-4) \n(5) \r(6) \n(7) ```ts\r(8-13) \n(14) code\r(15-19) \n(20) ```\r(21-24) \n(25) → 边界 26
+    // （\r 不容忍时闭合行匹配失败 → fence 开到 EOF → 边界退到 8）
+    expect(findStableBoundary('para\r\n\r\n```ts\r\ncode\r\n```\r\ntail')).toBe(26)
+  })
+
+  it('M7d 反引号 fence 的 info 含反引号：按段落处理（不是 fence 开行）', async () => {
+    const { findStableBoundary } = await freshModule()
+    // CommonMark：反引号 fence 的 info 不允许含反引号 → '``` a `b`' 是段落文本。
+    // 边界 6（其前的空行后仍是闭合点）；误判为 fence 时 'code' 会被吞进 fence 内容
+    expect(findStableBoundary('para\n\n``` a `b`\ncode')).toBe(6)
+    // 对照：波浪线 fence 的 info 允许含反引号 → 正常 fence（'code' 在 fence 内，无后续边界）
+    expect(findStableBoundary('para\n\n~~~ a `b`\ncode')).toBe(6)
   })
 
   it('M8 超大单行 → null 降级；超长尾段（前缀已闭合）→ 边界在长行前', async () => {
@@ -185,6 +215,14 @@ describe('renderIncremental — 拼接等价判据（闭合内容 DOM 等价）'
     await expectSpliceEquivalent('~~~py\nprint(1)\n~~~\nafter fence.')
     await expectSpliceEquivalent('intro\n\n```mermaid\ngraph TD;A-->B\n```\n\noutro.')
     await expectSpliceEquivalent('para\n\n$$\n1+1\n$$\n\nafter math.')
+    // W22 review 回归：含链接引用定义的文档走 fallback-full → 与全量渲染等价
+    // （全量渲染里 [a] 链接化；分段会丢定义发散，见 M7b）
+    await expectSpliceEquivalent('[a]: /url\n\nsee [a]')
+    await expectSpliceEquivalent('see [a] now\n\nbar\n\n[a]: /url')
+    // W22 review 回归：CRLF 闭合 fence（markdown-it 解析前归一化 \r\n，分段两侧等价）
+    await expectSpliceEquivalent('para\r\n\r\n```ts\r\ncode\r\n```\r\ntail')
+    // W22 review 回归：反引号 fence info 含反引号按段落处理（误判 fence 会产占位段发散）
+    await expectSpliceEquivalent('para\n\n``` a `b`\ncode')
   })
 })
 
@@ -323,6 +361,15 @@ describe('renderIncremental — 缓存协议 / segId / 降级 / 占位', () => {
     expect(r0.tailSegments.length).toBe(2)
     expect(r0.tailSegments[0].type).toBe('text')
     expect(r0.tailSegments[1].type).toBe('streaming-fence')
+    // W22 review（Major-2）：openFence 分支的 pre 段（占位前的文本段）也携带 segId、
+    // 帧内单调递增（曾漏赋值 → text 段无 key，v-for 复用错位）
+    expect(typeof r0.tailSegments[0].segId).toBe('number')
+    expect(r0.tailSegments[0].segId).toBeLessThan(r0.tailSegments[1].segId as number)
+
+    // W22 review（minor）：反引号 fence info 含反引号 → 不产占位段，整段按段落文本渲染
+    const rbt = await m.renderIncremental('para\n\n``` a `b`\ncode', m.createIncrementalRenderCache())
+    expect(rbt.mode).toBe('incremental')
+    expect(rbt.tailSegments.every((s) => s.type === 'text')).toBe(true)
 
     // info string 首词为语言名
     const ri = await m.renderIncremental('para\n\n```ts title=x\nconst', m.createIncrementalRenderCache())
@@ -342,6 +389,21 @@ describe('renderIncremental — 缓存协议 / segId / 降级 / 占位', () => {
     // markdown-it 把文档尾未闭合 fence 渲染为含已到达内容的代码块（shiki 高亮）
     expect(r.tailSegments[0].content).toContain('md-codeblock')
     expect(fakeCodeToHtml).toHaveBeenCalled()
+  })
+
+  it('P6b finalize 等价：占位形态文档以 finalizeOpenFence:true 渲染，与全量渲染 segsToHtml 等价', async () => {
+    // W22 review（minor）：finalize 分支缺等价测试——补「前缀 + finalize tail 拼接
+    // = 全量渲染」判据（markdown-it 把文档尾未闭合 fence 渲染为含已到达内容的代码块）
+    const m = await freshModule()
+    const content = 'para.\n\n```ts\nconst x = 1'
+    const r = await m.renderIncremental(content, m.createIncrementalRenderCache(), undefined, {
+      finalizeOpenFence: true,
+    })
+    expect(r.mode).toBe('incremental')
+    const full = await m.renderMarkdownSegments(content)
+    expect(normalizeHtml(segsToHtml([...r.prefixSegments, ...r.tailSegments]))).toBe(
+      normalizeHtml(segsToHtml(full)),
+    )
   })
 
   it('P7 env 签名失效：filePaths 引用变化 → 前缀缓存重建（全量重渲染）', async () => {

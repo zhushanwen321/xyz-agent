@@ -562,10 +562,14 @@ export function decodeBase64(b64: string): string {
 //   （08 §3.3.3 条件 4），本实现的所有保守拒绝都是为了该判据。
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** fence 开行：≤3 空格缩进 + 3 个以上 ` 或 ~（捕获 info string） */
-const FENCE_OPEN_RE = /^( {0,3})(`{3,}|~{3,})(.*)$/
-/** 闭行候选：纯 fence 标记（同字符、长度 ≥ 开行、行尾仅空白）——字符与长度在调用点校验 */
-const FENCE_CLOSE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/
+/** fence 开行：≤3 空格缩进 + 3 个以上 ` 或 ~（捕获 info string）。
+ *  info 用 [^\n]* 而非 .*：JS 的 . 不匹配 \r，CRLF 行（按 \n 切行后尾随 \r）会让
+ *  (.*)$ 整体失配 → fence 开行识别失败（W22 review CRLF 用例实测发现） */
+const FENCE_OPEN_RE = /^( {0,3})(`{3,}|~{3,})([^\n]*)$/
+/** 闭行候选：纯 fence 标记（同字符、长度 ≥ 开行、行尾仅空白）——字符与长度在调用点校验。
+ *  行尾空白含 \r：CRLF 文档按 \n 切行后闭行尾随 \r（markdown-it 解析前归一化 \r\n，
+ *  本扫描不整体归一化 content——会破坏 offset，只在字符类容忍 \r） */
+const FENCE_CLOSE_RE = /^ {0,3}(`{3,}|~{3,})[ \t\r]*$/
 /** ATX 标题（自成块，行尾即闭合；可打断段落） */
 const HEADING_RE = /^ {0,3}#{1,6}(?:\s|$)/
 /** 主题分隔线（--- 、*** 、___ 形态，含 - - - 变体；自成块） */
@@ -576,7 +580,9 @@ const SETEXT_EQ_RE = /^ {0,3}=+[ \t]*$/
 const LIST_MARKER_RE = /^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]|$)/
 /** 引用行前缀 */
 const BLOCKQUOTE_RE = /^ {0,3}>/
-/** 链接引用定义（tail 以其开头时拒绝：闭合的链接化依赖定义出现在全文任意位置，拼接不安全） */
+/** 链接引用定义行形态（fence 外任意位置命中即整体 fallback：markdown-it 的引用解析是文档级
+ *  的——定义在任何段落开头收集、全文 [label] 消费，任何前缀/尾段切分都会让一侧丢另一侧的定义，
+ *  拼接必然发散；见 scanMarkdownBlocks 的 hasLinkRefDef） */
 const LINK_REF_DEF_RE = /^ {0,3}\[[^\]]*\]:[ \t]*\S/
 
 /** tab 折算宽度（CommonMark 习惯按 4 列；行首 tab 保守归为缩进代码/嵌套续行形态） */
@@ -611,7 +617,12 @@ interface BlockScan {
  *
  * 三条件（08 §3.3.3）：① 行首锚点；② 前段全闭合（含段落闭合：空行或自成块行后缘；
  * fence/数学块配对完整）；③ tail 是单一独立开放块（拒绝缩进续行 / 前缀列表续并 /
- * setext 下划线 / 链接引用定义等「续行」形态）。
+ * setext 下划线等「续行」形态）。
+ *
+ * 文档级拒绝（优先于三条件）：文档 fence 外任意位置含链接引用定义行（hasLinkRefDef）
+ * → boundary=null 走 fallback-full。引用解析是文档级的，任何切分都会让 [label] 链接化
+ * 与全量渲染发散（定义侧与引用侧无论谁进前缀/尾段都丢另一半），且前缀缓存引用恒等
+ * 使发散**持久化**（永不自愈）。
  *
  * 纯函数：同输入同输出、零副作用、不触碰 markdown-it。
  */
@@ -641,6 +652,10 @@ function scanMarkdownBlocks(content: string): BlockScan {
   let mathOdd = false // fence 外 "$$" 出现次数奇偶（markdown-it-katex 的 $$ 块未闭合时渲染到 EOF，拼接不安全）
   let paraOpen = false // 段落级结构未闭合（段落/表格行/引用内容/列表项文本等可被续行附着的形态）
   let listOpen = false // 列表上下文存活（跨空行——"- a\n\n- b" 仍是一个松散列表，尾部列表标记可续并）
+  // 文档级链接引用定义存在标记：markdown-it 的引用解析是文档级的（定义全文收集、[label] 全文
+  // 消费），任何切分都发散——def 在尾段则前缀 [label] 不链接化且**前缀缓存永不重渲染**（引用恒等），
+  // def 在前缀则尾段 [label] 丢定义（前缀段独立渲染，定义不随行）。含定义文档无合法边界。
+  let hasLinkRefDef = false
 
   for (let i = 0; i < lines.length; i++) {
     const { start, text } = lines[i]
@@ -657,8 +672,12 @@ function scanMarkdownBlocks(content: string): BlockScan {
       paraOpen = false // 空行闭合段落（也终止表格/引用）
     } else {
       const indent = leadingIndent(text)
+      // 链接引用定义检测（fence 外）：形态命中即标记，段落位置的精确性不做——过度 fallback 安全
+      if (LINK_REF_DEF_RE.test(text)) hasLinkRefDef = true
       const open = text.match(FENCE_OPEN_RE)
-      if (open && indent <= FENCE_MAX_INDENT) {
+      // CommonMark：反引号 fence 的 info string 不允许含反引号——"``` a `b`" 是普通段落文本，
+      // 不视为 fence 开行（误判会把后续段落行吞进 fence 内容，占位/边界形态发散）
+      if (open && indent <= FENCE_MAX_INDENT && !(open[2][0] === '`' && (open[3] ?? '').includes('`'))) {
         fence = { char: open[2][0], len: open[2].length, start, info: open[3] ?? '' }
         paraOpen = true // fence 开行 = 开放结构（同时打断了上方段落）
         if (indent === 0) listOpen = false
@@ -714,6 +733,9 @@ function scanMarkdownBlocks(content: string): BlockScan {
         lang: fence.info.trim().split(/\s+/)[0] ?? '',
       }
 
+  // 含链接引用定义的文档无合法边界（见 hasLinkRefDef 注释）——唯一保守出口 fallback-full
+  if (hasLinkRefDef) return { boundary: null, openFence }
+
   // 反向取最新合法边界（最大化前缀缓存）
   let boundary: number | null = null
   for (let i = candidates.length - 1; i >= 0; i--) {
@@ -722,7 +744,7 @@ function scanMarkdownBlocks(content: string): BlockScan {
     // 空前缀也无缓存价值）。空/纯空白已在函数入口返回 0。
     if (c.offset === 0 && !content.includes('\n')) continue
     if (!c.closed) continue
-    if (!tailStartsIndependentBlock(content.slice(c.offset), c.listOpen)) continue
+    if (!tailStartsIndependentBlock(content, c.offset, c.listOpen)) continue
     boundary = c.offset
     break
   }
@@ -730,31 +752,35 @@ function scanMarkdownBlocks(content: string): BlockScan {
 }
 
 /**
- * 条件 ③：tail 是否是「单一独立开放块」的起始。
+ * 条件 ③：tail 是否是「单一独立开放块」的起始（offset 起、到首个非空行判定）。
  *
  * 允许：新段落 / fence 开行 / 标题 / 引用 / 表格头 / 主题线 / 数学块开行等干净块级起始，
  * 以及 tail 内部含一个持续增长的未闭合结构。拒绝的「续行」形态：
  * - 行首有缩进（缩进代码 / 列表项内容 / 嵌套列表——独立渲染会拆散所属结构）
  * - setext `=` 下划线（附着上方段落）
- * - 链接引用定义（闭合的前缀里 [ref] 文本是否链接化取决于后文定义，拼接不安全）
  * - 列表标记且前缀列表上下文存活（会与前缀合并成一个列表 / 松散列表）
+ *
+ * （链接引用定义形态曾在此按 tail 起始拒绝，W22 review 后升级为 scanMarkdownBlocks 的
+ * 文档级检测——tail 起始拒绝漏掉定义在 tail 中部/前缀中部的形态。）
+ *
+ * 只取 offset 起的首个非空行，不从 offset 拷贝整个 tail——反向候选循环逐候选调用，
+ * slice 整段是 O(候选×文档长度) 拷贝（大文档 + 多候选时的无谓开销）。
  */
-function tailStartsIndependentBlock(tail: string, prefixListOpen: boolean): boolean {
-  let first = ''
-  let found = false
-  for (const ln of tail.split('\n')) {
-    if (ln.trim() !== '') {
-      first = ln
-      found = true
-      break
+function tailStartsIndependentBlock(content: string, offset: number, prefixListOpen: boolean): boolean {
+  let s = offset
+  while (s < content.length) {
+    const nl = content.indexOf('\n', s)
+    const line = nl === -1 ? content.slice(s) : content.slice(s, nl)
+    if (line.trim() !== '') {
+      if (leadingIndent(line) > 0) return false
+      if (SETEXT_EQ_RE.test(line)) return false
+      if (prefixListOpen && LIST_MARKER_RE.test(line)) return false
+      return true
     }
+    if (nl === -1) break
+    s = nl + 1
   }
-  if (!found) return true // tail 空/全空白：边界即文档尾，前缀全覆盖
-  if (leadingIndent(first) > 0) return false
-  if (SETEXT_EQ_RE.test(first)) return false
-  if (LINK_REF_DEF_RE.test(first)) return false
-  if (prefixListOpen && LIST_MARKER_RE.test(first)) return false
-  return true
+  return true // tail 空/全空白：边界即文档尾，前缀全覆盖
 }
 
 /**
@@ -848,6 +874,12 @@ async function renderFallbackFull(
 /**
  * 增量渲染（D-5 核心，W22）：前缀 segments 缓存 + tail segments 增量。
  *
+ * **硬约束（并发，W22 review）**：同一 cache 必须串行调用——上一帧 Promise 落定后才能发起
+ * 下一帧，按发起顺序应用结果、丢弃乱序帧。本函数在 await 点交错原地更新 cache（边界前进
+ * 并入 / fallback 重置互相踩踏，坏状态不可被 append-only 校验自愈），**不自带串行化**
+ * （cache 内嵌串行链需扩展 ui 侧镜像协议面，长期方案另议），并发消费方须自带串行化——
+ * 如 MarkdownRenderer 的 latest-wins 帧门（W23 已实现）。
+ *
  * - 前缀缓存命中（边界不变且前缀未变）：prefixSegments 与 cache.prefixSegments 同引用，
  *   前缀零重渲染；W23 以 v-for :key="seg.segId" 复用 DOM（text 段 v-html 子树不触碰、
  *   mermaid 段组件实例跨帧保活）。
@@ -918,7 +950,12 @@ export async function renderIncremental(
   const tailText = content.slice(boundary)
   if (scan.openFence && !finalize) {
     const pre = content.slice(boundary, scan.openFence.offset)
-    if (pre.trim() !== '') tailSegments = await renderMarkdownSegments(pre, env)
+    if (pre.trim() !== '') {
+      tailSegments = await renderMarkdownSegments(pre, env)
+      // pre 段与正常 tail 段一样携带 segId（W22 review：此分支曾漏赋值，
+      // 占位前文本段无 key → v-for 复用错位）
+      for (const s of tailSegments) s.segId = c ? c.nextSegId++ : localId++
+    }
     const bodyStart = content.indexOf('\n', scan.openFence.offset)
     const body = bodyStart === -1 ? '' : content.slice(bodyStart + 1)
     tailSegments.push({
