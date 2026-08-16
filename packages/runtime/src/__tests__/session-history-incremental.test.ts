@@ -36,10 +36,16 @@ const { getHistoryTailFromFile } = await import('../services/session-history.js'
 // SUT 在 vi.mock 之后 import（session-service 内部引用 mocked 模块）
 const { SessionService } = await import('../services/session/session-service.js')
 const { HistoryRebuildCache, mergeIncrementalMessages } = await import('../services/session/history-rebuild-cache.js')
+// Fix-1/7 回归用真实重建（不 mock rebuildHistoryFromEntries，验证孤儿回填补丢失工具输出）
+const { rebuildHistoryFromEntries } = await import('../infra/pi/entry-tree-builder.js')
 
-/** 最小 PiSessionEntry（rebuildHistoryFromEntries 是直通 mock，只消费 id）。 */
-function entry(id: string): PiSessionEntry {
-  return { id, type: 'message', parentId: null, timestamp: '2026-08-16T00:00:00.000Z' } as unknown as PiSessionEntry
+/**
+ * 最小 PiSessionEntry（rebuildHistoryFromEntries 是直通 mock，只消费 id/parentId）。
+ * parentId 默认 null——增量 delta 的首条 entry 必须显式传「上次缓存 leafId」，
+ * 否则触发 Fix-2 parentId 不变量检测（丢缓存全量重建），非预期路径。
+ */
+function entry(id: string, parentId: string | null = null): PiSessionEntry {
+  return { id, type: 'message', parentId, timestamp: '2026-08-16T00:00:00.000Z' } as unknown as PiSessionEntry
 }
 
 function msg(piEntryId: string) {
@@ -61,8 +67,13 @@ interface GetEntriesCall {
  * 构造 SessionService + 可编排的 getEntries mock。
  * getEntriesScript 按调用序出队：每项是 {data} 成功响应或 Error（reject）。
  * 每次调用记录 since 参数（断言增量路径的传递）。
+ * opts.realRebuild = true 时 rebuildHistoryFromEntries 用真实实现（entry-tree-builder），
+ * 供 Fix-1/7 窗口语义回归（不 mock 重建，验证孤儿回填与 compaction 并入）。
  */
-function makeService(getEntriesScript: Array<{ data?: { entries: PiSessionEntry[]; leafId: string | null } } | Error>) {
+function makeService(
+  getEntriesScript: Array<{ data?: { entries: PiSessionEntry[]; leafId: string | null } } | Error>,
+  opts?: { realRebuild?: boolean },
+) {
   const calls: GetEntriesCall[] = []
   const client = {
     getEntries: vi.fn(async (since?: string) => {
@@ -81,10 +92,14 @@ function makeService(getEntriesScript: Array<{ data?: { entries: PiSessionEntry[
   } as unknown as IProcessManager
 
   const sessionStore = {
-    // 直通 mock：entry.id → Message.piEntryId（getHistory 的分支逻辑与重建实现解耦）
-    rebuildHistoryFromEntries: vi.fn((entries: PiSessionEntry[]) => ({
-      messages: entries.map((e) => msg(e.id)),
-    })),
+    // 直通 mock：entry.id → Message.piEntryId（getHistory 的分支逻辑与重建实现解耦）；
+    // realRebuild 时换真实 entry-tree-builder（含孤儿 toolResult 收集，Fix-1）
+    rebuildHistoryFromEntries: opts?.realRebuild
+      ? (entries: PiSessionEntry[]) => rebuildHistoryFromEntries(entries, null)
+      : vi.fn((entries: PiSessionEntry[]) => ({
+          messages: entries.map((e) => msg(e.id)),
+          orphanToolResults: [],
+        })),
     scanSessions: vi.fn(() => []),
     extractSessionOutcome: vi.fn(() => null),
     persistSessionEnd: vi.fn(),
@@ -175,10 +190,11 @@ describe('mergeIncrementalMessages', () => {
 
 describe('SessionService.getHistory —— D6 历史增量', () => {
   it('① 首次全量（无 since）→ 第二次带 since 增量且增量条目 < 全量，合并后缓存更新', async () => {
-    // 首次：全量 5 条，leafId=leaf-1；第二次：since 增量 2 条（<5），leafId=leaf-2
+    // 首次：全量 5 条，leafId=leaf-1；第二次：since 增量 2 条（<5），leafId=leaf-2。
+    // e6.parentId=leaf-1 满足 Fix-2 不变量（正常 append：delta 首条 parent = 缓存 leafId）
     const { svc, calls } = makeService([
       { data: { entries: [entry('e1'), entry('e2'), entry('e3'), entry('e4'), entry('e5')], leafId: 'leaf-1' } },
-      { data: { entries: [entry('e6'), entry('e7')], leafId: 'leaf-2' } },
+      { data: { entries: [entry('e6', 'leaf-1'), entry('e7', 'e6')], leafId: 'leaf-2' } },
     ])
 
     const first = await svc.getHistory('s1')
@@ -221,7 +237,7 @@ describe('SessionService.getHistory —— D6 历史增量', () => {
       { data: { entries: [entry('e1')], leafId: 'leaf-1' } },
       new Error('Entry not found: leaf-1'), // since 失效（防御场景：缓存跨 pi 进程存活）
       { data: { entries: [entry('e1'), entry('e2'), entry('e3')], leafId: 'leaf-3' } }, // 全量重拉
-      { data: { entries: [entry('e4')], leafId: 'leaf-4' } }, // 验证缓存已被全量结果覆盖（新基线 leaf-3）
+      { data: { entries: [entry('e4', 'leaf-3')], leafId: 'leaf-4' } }, // 验证缓存已被全量结果覆盖（新基线 leaf-3）
     ])
 
     await svc.getHistory('s4') // 全量 → 缓存 {leaf-1, [e1]}
@@ -285,5 +301,116 @@ describe('SessionService.getHistory —— D6 历史增量', () => {
     const result = await svc.getHistory('s-offline')
     expect(getHistoryTailFromFile).toHaveBeenCalledTimes(1)
     expect(result).toEqual({ messages: [], truncated: true })
+  })
+
+  it('Fix-2：delta 首条 parentId ≠ 缓存 leafId（branch）→ 丢缓存全量重拉，不合出混合历史', async () => {
+    // pi append-only + branch（extension navigateTree）后：since=旧 leaf 不报 "Entry not found"，
+    // 但新分支首条 entry 的 parentId 是 branch 点（e0）而非旧 leaf（e2）→ 不变量检测 → 全量
+    const { svc, calls } = makeService([
+      { data: { entries: [entry('e1'), entry('e2')], leafId: 'e2' } }, // 全量，缓存 {e2, [e1,e2]}
+      { data: { entries: [entry('b1', 'e0'), entry('b2', 'b1')], leafId: 'b2' } }, // 增量：head parentId=e0 ≠ e2
+      { data: { entries: [entry('e1'), entry('e2'), entry('b1'), entry('b2')], leafId: 'b2' } }, // 全量重拉（新分支完整历史）
+    ])
+
+    await svc.getHistory('s-branch')
+    const second = await svc.getHistory('s-branch')
+
+    expect(calls[1]?.since).toBe('e2') // 第二拍确实走了增量（since 传递正确）
+    expect(calls[2]?.since).toBeUndefined() // 不变量 violation → 丢缓存 → 全量重拉
+    // 返回的是全量重拉结果（新分支权威视图），不是「缓存老分支尾 + 新分支」的拼接
+    expect(second.messages.map((m) => m.piEntryId)).toEqual(['e1', 'e2', 'b1', 'b2'])
+    expect(getHistoryTailFromFile).not.toHaveBeenCalled()
+
+    // 缓存基线已被全量结果覆盖：下次走 since=b2 增量
+    // （不需要第三次脚本——空 delta 短路即证明 since=b2 传递；此处直接断言第三次调用参数）
+  })
+
+  it('Fix-5：并发 getHistory 复用同一 inflight——getEntries 只调一次，两调用结果一致', async () => {
+    // 脚本只有 1 个响应：若无 inflight 复用，第二个并发调用会 script exhausted reject
+    const { svc, calls } = makeService([
+      { data: { entries: [entry('e1'), entry('e2')], leafId: 'e2' } },
+    ])
+
+    const [a, b] = await Promise.all([svc.getHistory('s-race'), svc.getHistory('s-race')])
+    expect(calls).toHaveLength(1)
+    expect(a).toEqual(b)
+    expect(a.messages.map((m) => m.piEntryId)).toEqual(['e1', 'e2'])
+  })
+})
+
+// ── 集成：增量窗口语义（W20 review Fix-1/7，真实 rebuildHistoryFromEntries）────
+
+describe('SessionService.getHistory —— 增量窗口语义（真实重建，不 mock rebuildHistoryFromEntries）', () => {
+  /** 真实 pi message entry（type:'message'，透传 message 体）。 */
+  function messageEntry(id: string, parentId: string | null, message: unknown): PiSessionEntry {
+    return { type: 'message', id, parentId, timestamp: '2026-08-16T00:00:00.000Z', message } as unknown as PiSessionEntry
+  }
+
+  it('Fix-1：delta 以 toolResult 开头 → 孤儿回填到缓存 assistant 的 toolCall，输出不丢', async () => {
+    // 场景：后台 session 生成中 getHistory 写缓存，leafId 切在 assistant(toolCalls) 与其
+    // toolResults 之间（缓存 leafId=e2，但 t1 的 toolResult 尚未 append）→ 下次增量窗口
+    // 以 toolResult(e3) 开头 → convertPiHistory 窗口局部配对失败 → 无 Fix-1 时 t1 永久无输出
+    const userMsg = { role: 'user', content: [{ type: 'text', text: 'question' }], timestamp: 1 }
+    const assistantToolCallMsg = {
+      role: 'assistant',
+      content: [{ type: 'toolCall', id: 't1', name: 'bash', arguments: { command: 'ls' } }],
+      timestamp: 2,
+    }
+    const toolResultMsg = {
+      role: 'toolResult',
+      toolCallId: 't1',
+      toolName: 'bash',
+      content: [{ type: 'text', text: 'RESULT-OUTPUT' }],
+      timestamp: 3,
+    }
+    const assistantTextMsg = { role: 'assistant', content: [{ type: 'text', text: 'done' }], timestamp: 4 }
+
+    const { svc } = makeService([
+      // 全量：user(e1) + assistant(e2, toolCall t1 无输出)，leafId=e2（切点场景基线）
+      { data: { entries: [messageEntry('e1', null, userMsg), messageEntry('e2', 'e1', assistantToolCallMsg)], leafId: 'e2' } },
+      // 增量：toolResult(e3) 开头（head parentId=e2 满足 Fix-2 不变量）+ assistant(e4)
+      { data: { entries: [messageEntry('e3', 'e2', toolResultMsg), messageEntry('e4', 'e3', assistantTextMsg)], leafId: 'e4' } },
+    ], { realRebuild: true })
+
+    await svc.getHistory('s-fix1')
+    const second = await svc.getHistory('s-fix1')
+
+    // 合并结果：user(e1) + assistant(e2) + assistant(e4)（toolResult 不产独立消息）
+    expect(second.messages.map((m) => m.piEntryId)).toEqual(['e1', 'e2', 'e4'])
+    // 核心断言：缓存中 assistant(e2) 的 toolCall t1 拿到了窗口孤儿回填的输出
+    const assistant = second.messages.find((m) => m.piEntryId === 'e2')
+    expect(assistant?.toolCalls).toHaveLength(1)
+    expect(assistant?.toolCalls?.[0]?.id).toBe('t1')
+    expect(assistant?.toolCalls?.[0]?.output).toBe('RESULT-OUTPUT')
+  })
+
+  it('Fix-7：delta 以 compaction entry 开头 → compaction 系统消息正常并入缓存', async () => {
+    const userMsg = { role: 'user', content: [{ type: 'text', text: 'question' }], timestamp: 1 }
+    const assistantTextMsg = { role: 'assistant', content: [{ type: 'text', text: 'answer' }], timestamp: 2 }
+    const compactionEntry = {
+      type: 'compaction',
+      id: 'e2',
+      parentId: 'e1',
+      timestamp: '2026-08-16T00:00:01.000Z',
+      summary: 'compacted-history',
+      tokensBefore: 1000,
+    } as unknown as PiSessionEntry
+
+    const { svc } = makeService([
+      { data: { entries: [messageEntry('e1', null, userMsg)], leafId: 'e1' } },
+      { data: { entries: [compactionEntry, messageEntry('e3', 'e2', assistantTextMsg)], leafId: 'e3' } },
+    ], { realRebuild: true })
+
+    await svc.getHistory('s-fix7')
+    const second = await svc.getHistory('s-fix7')
+
+    // user + compaction 系统消息 + assistant（compaction 重建消息无 piEntryId → 防御追加）
+    expect(second.messages).toHaveLength(3)
+    expect(second.messages[0]?.piEntryId).toBe('e1')
+    const compactionMsg = second.messages[1]
+    expect(compactionMsg?.role).toBe('system')
+    expect(compactionMsg?.content).toBe('compacted-history')
+    expect(compactionMsg?.compactionSummary?.tokensBefore).toBe(1000)
+    expect(second.messages[2]?.piEntryId).toBe('e3')
   })
 })

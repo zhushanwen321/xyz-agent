@@ -29,8 +29,10 @@ export interface SessionHeader {
  * parseSessionHeader 的头部读块大小（4KB）。
  *
  * session header（type:"session"，含 cwd/parentSession/forkEntryId）固定在 JSONL 首行，
- * 4KB 覆盖正常 header（cwd 长路径 + 路径型字段）；JSONL 行内无换行，4KB 内无换行时
- * 按无首行终止处理（JSON.parse 截断行失败返回 null，与旧全量读实现对超长首行的行为一致）。
+ * 4KB 覆盖正常 header（cwd 长路径 + 路径型字段）。JSONL 行内无换行：块内无换行且未读满
+ * （文件本身 < 4KB 的单行文件）按无首行终止处理；块读满仍无换行（首行 > 4KB）回退
+ * 全量读取首行——旧 readFileSync 全量读实现可解析任意长度首行，单纯截断会让超长首行
+ * JSON.parse 失败 → session 从侧栏消失（W20 review Fix-4 等价性修复）。
  */
 const HEADER_READ_CHUNK_BYTES = 4096
 
@@ -48,15 +50,29 @@ export function parseSessionHeader(filePath: string): SessionHeader | null {
   try {
     const fd = openSync(filePath, 'r')
     let head: Buffer
+    let bytesRead = 0
     try {
       const chunk = Buffer.alloc(HEADER_READ_CHUNK_BYTES)
-      const bytesRead = readSync(fd, chunk, 0, chunk.length, 0)
+      bytesRead = readSync(fd, chunk, 0, chunk.length, 0)
       head = chunk.subarray(0, bytesRead)
     } finally {
       closeSync(fd)
     }
     const nlIndex = head.indexOf(NEWLINE_BYTE)
-    const firstLine = (nlIndex === -1 ? head : head.subarray(0, nlIndex)).toString('utf-8')
+    let firstLine: string
+    if (nlIndex !== -1) {
+      firstLine = head.subarray(0, nlIndex).toString('utf-8')
+    } else if (bytesRead >= HEADER_READ_CHUNK_BYTES) {
+      // 首行 > 4KB（4KB 块读满仍未见换行）：回退全量读取首行，与旧 readFileSync 全量读
+      // 实现严格等价（W20 review Fix-4——超长首行可解析，session 不从侧栏消失）。
+      // readFileSync 失败由外层 catch 返回 null，与打开/读取失败同错误面。
+      const content = readFileSync(filePath, 'utf-8')
+      const contentNl = content.indexOf('\n')
+      firstLine = contentNl === -1 ? content : content.slice(0, contentNl)
+    } else {
+      // 文件本身 < 4KB 且无换行（单行 JSONL）：head 即全量内容
+      firstLine = head.toString('utf-8')
+    }
     if (!firstLine) return null
     const entry = JSON.parse(firstLine)
     if (entry.type !== 'session') return null

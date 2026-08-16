@@ -28,8 +28,14 @@ import * as pending from './pending'
  *   const reply = await command('session.getSubagents', { sessionId })
  *   return reply.subagents
  *
- *   // ack 型：reply 类型是 void（ReplyPayloadMap['session.switch']）
- *   await command('session.switch', { sessionId })
+ *   // reply 消费型（session.switch 的 reply 已非 void）：ReplyPayloadMap['session.switch'] =
+ *   // ServerMessageMap['session.switched']，即 { sessionId, session }（wave:perf-w20 R-11 瘦身，
+ *   // reply 不再含 messages，历史消费走显式 session.history RPC）
+ *   const switched = await command('session.switch', { sessionId })
+ *   return switched.session
+ *
+ *   // ack 型：reply 类型是 void（如 ReplyPayloadMap['session.unsubscribe']）
+ *   await command('session.unsubscribe', { sessionId })
  */
 export async function command<K extends keyof ReplyPayloadMap>(
   type: K,

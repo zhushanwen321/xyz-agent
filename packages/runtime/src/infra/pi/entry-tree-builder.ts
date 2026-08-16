@@ -1,5 +1,5 @@
 import type { Message, Segment, SegmentsMetadataFile } from '@xyz-agent/shared'
-import type { PiSessionEntry } from './pi-protocol.js'
+import type { PiSessionEntry, PiHistoryToolResult } from './pi-protocol.js'
 import { convertPiHistory } from './message-converter.js'
 import { mapSessionEntries } from './session-entry-mapper.js'
 
@@ -40,6 +40,15 @@ export interface RebuiltHistory {
   messages: Message[]
   /** userEntryId → clientUuid 映射（来自 "xyz.client-msg-id" custom entry）。 */
   clientUuidMap: Map<string, string>
+  /**
+   * 窗口内无法配对的孤儿 toolResult（W20 review Fix-1）。全量窗口正常时序恒空；
+   * 增量窗口以 toolResult 开头（缓存 leafId 切在 assistant(toolCalls) 与其 toolResults
+   * 之间）时非空——调用方（session-service 增量合并）应把它回填到缓存消息的 toolCall。
+   *
+   * 类型收 unknown[]（与 entries 入参同模式）：pi 结构（PiHistoryToolResult）不越过
+   * port 边界，消费方透传给 message-converter 的 applyOrphanToolResults。
+   */
+  orphanToolResults: unknown[]
 }
 
 /**
@@ -118,7 +127,10 @@ export function rebuildHistoryFromEntries(
   // 3. 整个数组走 convertPiHistory（复用 toolResult 合并 + 系统消息完整处理，C1 修复核心）。
   //    entryIds 与 messages 一一对应平行传入，使产出的 user/assistant Message 带 piEntryId
   //    （从 entryIds[i] 取，供下方第 4 步回查 clientUuidMap + segmentsMetadata 回填 badge）。
-  const converted = convertPiHistory(messages, entryIds)
+  //    孤儿 toolResult 收集（W20 review Fix-1）：增量窗口以 toolResult 开头时窗口局部
+  //    配对失败，收集后由增量合并阶段回填到缓存中的 assistant toolCall。
+  const orphanToolResults: PiHistoryToolResult[] = []
+  const converted = convertPiHistory(messages, entryIds, orphanToolResults)
 
   // 4. 回填 segments：对 user message 按 piEntryId 查 clientUuidMap → segmentsMetadata
   const segmentsByClientUuid = new Map<string, Segment[]>()
@@ -140,5 +152,5 @@ export function rebuildHistoryFromEntries(
     }
   }
 
-  return { messages: converted, clientUuidMap }
+  return { messages: converted, clientUuidMap, orphanToolResults }
 }

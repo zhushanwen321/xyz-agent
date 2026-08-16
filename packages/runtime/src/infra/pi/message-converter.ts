@@ -174,6 +174,59 @@ export function convertSinglePiMessage(
 }
 
 /**
+ * 把 toolResult 归一回填到单个 toolCall（W20 review Fix-1 提取的共用点）。
+ *
+ * convertPiHistory 窗口内配对与 applyOrphanToolResults 增量回填共用，保证两条路径
+ * 填充语义一致（output stripAnsi / outputRaw / isError / details 透传）。
+ */
+function fillToolCallOutput(tc: ToolCall, toolResult: PiHistoryToolResult): void {
+  // 对称恢复 outputRaw（规则 7.5：对话流状态必须可重开恢复）。
+  // 实时路径（event-adapter handleToolExecutionEnd）已统一委托 normalizePiToolResult（W1），
+  // 此处历史路径对称：直接传 toolResult（顶层有 content 数组，走归一函数的 content-array 分支），
+  // output 存 stripAnsi 版本，outputRaw 存原始 ANSI 文本（仅当含 ANSI 时）。
+  const { output, outputRaw } = normalizePiToolResult(toolResult)
+  tc.output = output
+  if (outputRaw) tc.outputRaw = outputRaw
+  if (toolResult.isError) tc.status = 'error'
+  // F1 修复：透传 details（含 __gui__），与实时路径（event-interpreter tool_call_end）对齐。
+  // 规则 7.5：对话流状态必须可重开恢复——重开 session 后 __gui__ 不丢。
+  // 来源是顶层 toolResult.details（历史路语义），与归一函数返回的 details（来自 raw 内，通常 undefined）不同——保留不变。
+  if (toolResult.details && typeof toolResult.details === 'object' && !Array.isArray(toolResult.details)) {
+    tc.details = toolResult.details
+  }
+}
+
+/**
+ * 把增量窗口的孤儿 toolResult 按 toolCallId 回填到已合并消息列表的 assistant toolCall
+ * （W20 review Fix-1）。
+ *
+ * 背景：增量缓存基线（leafId）可能切在 assistant(toolCalls) 与其 toolResults 之间
+ * （后台 session 生成中 getHistory 会写缓存），下次增量窗口以 toolResult 开头 →
+ * convertPiHistory 的 toolResult→toolCall 配对是窗口局部的，窗口内无 preceding
+ * assistant → 不收集则该 toolCall 永久无输出（缓存 leafId 持续前进，永不触发全量重建）。
+ * 增量合并（mergeIncrementalMessages）后在合并结果上调用本函数回填。
+ *
+ * 匹配不到（缓存中也无该 toolCall）→ warn 丢弃（无更多信息可用）。
+ *
+ * 签名收 unknown[]（与 convertPiHistory 同模式）：pi 结构只在此 infra 文件内部断言。
+ */
+export function applyOrphanToolResults(messages: Message[], orphanToolResults: unknown[]): void {
+  for (const raw of orphanToolResults) {
+    const toolResult = raw as PiHistoryToolResult
+    let matched: ToolCall | undefined
+    for (const m of messages) {
+      matched = m.toolCalls?.find(t => t.id === toolResult.toolCallId)
+      if (matched) break
+    }
+    if (matched) {
+      fillToolCallOutput(matched, toolResult)
+    } else {
+      console.warn('[message-converter] orphan toolResult has no matching toolCall in merged messages:', toolResult.toolCallId)
+    }
+  }
+}
+
+/**
  * Convert pi message list into frontend Message[], merging toolResult
  * entries into their parent assistant message's matching toolCall.
  *
@@ -189,8 +242,12 @@ export function convertSinglePiMessage(
  *   传时 user/assistant message 会带上 piEntryId（按 index 取 entryIds[i]）。
  *   不传时行为不变（兼容 session-store.convertHistory / session-history 等 RPC/文件路径）。
  *   toolResult/系统消息分支不消费 entryId（它们或合并到上一个 assistant，或不需回填）。
+ * @param orphanToolResults 可选 out 数组：窗口内无法配对的 toolResult（无 preceding
+ *   assistant 或其 toolCalls 无匹配 toolCallId）push 进来供增量合并阶段回填
+ *   （W20 review Fix-1——增量窗口以 toolResult 开头时配对失败，不收集则输出静默丢失）。
+ *   不传时保持原行为（warn 丢弃）——全量窗口正常时序无孤儿。
  */
-export function convertPiHistory(raw: unknown[], entryIds?: string[]): Message[] {
+export function convertPiHistory(raw: unknown[], entryIds?: string[], orphanToolResults?: PiHistoryToolResult[]): Message[] {
   const result: Message[] = []
   let lastAssistantWithToolCalls = -1
 
@@ -199,32 +256,17 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[]): Message[]
     const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number } | { role: 'custom'; customType: string; content?: string; details?: Record<string, unknown>; timestamp?: number } | { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number } | { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp: number; fullOutputPath?: string }
     if (m.role === 'toolResult') {
       const toolResult = m as PiHistoryToolResult
-      // Merge tool result into the last assistant message's matching toolCall
-      if (lastAssistantWithToolCalls >= 0) {
-        const lastAssistant = result[lastAssistantWithToolCalls]
-        if (lastAssistant?.toolCalls) {
-          const tc = lastAssistant.toolCalls.find(t => t.id === toolResult.toolCallId)
-          if (tc) {
-            // 对称恢复 outputRaw（规则 7.5：对话流状态必须可重开恢复）。
-            // 实时路径（event-adapter handleToolExecutionEnd）已统一委托 normalizePiToolResult（W1），
-            // 此处历史路径对称：直接传 toolResult（顶层有 content 数组，走归一函数的 content-array 分支），
-            // output 存 stripAnsi 版本，outputRaw 存原始 ANSI 文本（仅当含 ANSI 时）。
-            const { output, outputRaw } = normalizePiToolResult(toolResult)
-            tc.output = output
-            if (outputRaw) tc.outputRaw = outputRaw
-            if (toolResult.isError) tc.status = 'error'
-            // F1 修复：透传 details（含 __gui__），与实时路径（event-interpreter tool_call_end）对齐。
-            // 规则 7.5：对话流状态必须可重开恢复——重开 session 后 __gui__ 不丢。
-            // 来源是顶层 toolResult.details（历史路语义），与归一函数返回的 details（来自 raw 内，通常 undefined）不同——保留不变。
-            if (toolResult.details && typeof toolResult.details === 'object' && !Array.isArray(toolResult.details)) {
-              tc.details = toolResult.details
-            }
-          } else {
-            console.warn('[message-converter] toolResult has no matching toolCall:', toolResult.toolCallId)
-          }
-        }
+      // Merge tool result into the last assistant message's matching toolCall（窗口局部配对）
+      const tc = lastAssistantWithToolCalls >= 0
+        ? result[lastAssistantWithToolCalls]?.toolCalls?.find(t => t.id === toolResult.toolCallId)
+        : undefined
+      if (tc) {
+        fillToolCallOutput(tc, toolResult)
       } else {
-        console.warn('[message-converter] toolResult with no preceding assistant message:', toolResult.toolCallId)
+        // 窗口内无 preceding assistant（增量窗口以 toolResult 开头）或 toolCallId 无匹配 →
+        // 孤儿：收集给增量合并阶段回填到缓存中的 assistant toolCall（W20 review Fix-1）
+        orphanToolResults?.push(toolResult)
+        console.warn('[message-converter] toolResult has no matching toolCall in window:', toolResult.toolCallId)
       }
       continue
     }

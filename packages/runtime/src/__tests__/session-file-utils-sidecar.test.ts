@@ -136,4 +136,22 @@ describe('session-file-utils sidecar', () => {
     writeFileSync(filePath, JSON.stringify({ type: 'session', id: 'sess-h3', cwd: '/x', timestamp: 't' }))
     expect(parseSessionHeader(filePath)?.id).toBe('sess-h3')
   })
+
+  // W20 review Fix-4：首行 > 4KB（读块满仍无换行）→ 回退全量读首行，与旧 readFileSync
+  // 全量读实现严格等价——单纯截断会让超长首行 JSON.parse 失败 → session 从侧栏消失。
+  it('H4: parseSessionHeader 首行超 4KB 无换行 → 回退全量读，header 仍正确解析', () => {
+    const filePath = join(dir, 'huge-first-line.jsonl')
+    // 构造 > 4KB 的合法 session header（超长 cwd 字段填充），无换行（单行文件）
+    const header = JSON.stringify({
+      type: 'session',
+      id: 'sess-h4',
+      cwd: '/x'.repeat(8192),
+      timestamp: '2026-08-16T00:00:00.000Z',
+    })
+    expect(header.length).toBeGreaterThan(4096)
+    writeFileSync(filePath, header)
+    const parsed = parseSessionHeader(filePath)
+    expect(parsed?.id).toBe('sess-h4')
+    expect(parsed?.cwd).toBe('/x'.repeat(8192))
+  })
 })

@@ -64,6 +64,13 @@ export interface RebuiltHistory {
   messages: Message[]
   /** userEntryId → clientUuid 映射（来自 "xyz.client-msg-id" custom entry）。 */
   clientUuidMap: Map<string, string>
+  /**
+   * 窗口内无法配对的孤儿 toolResult（W20 review Fix-1）。全量窗口正常时序恒空；
+   * 增量窗口以 toolResult 开头时非空——增量合并阶段按 toolCallId 回填到缓存消息。
+   * 类型收 unknown[]（pi 结构不越过 port 边界），透传给 message-converter 的
+   * applyOrphanToolResults 消费。
+   */
+  orphanToolResults: unknown[]
 }
 
 /**
