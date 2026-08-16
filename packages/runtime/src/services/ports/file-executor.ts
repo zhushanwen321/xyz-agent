@@ -45,8 +45,10 @@ export interface IFileExecutor {
   /**
    * 列目录单层子（不递归）。超时/EACCES → reject Error。
    * opts.withSize=false（D7-3）：非 symlink 的 file entry 免 per-file stat，size 缺省；
-   * symlink entry 仍 stat（坏 symlink ELOOP/ENOENT 跳过的语义与 withSize=true 严格一致，
-   * 保证 searchFiles 结果集成员不因免 stat 而变化）。
+   * symlink entry 仍 stat（坏 symlink ELOOP/ENOENT 跳过的语义与 withSize=true 一致）。
+   * 成员一致性口径（审查修正）：常规情形成员一致；stat 失败竞态（readdir 与 stat 间隙
+   * 文件被删）下 withSize=false 更宽容——收录 readdir 时刻存在的文件，withSize=true
+   * 会因 stat ENOENT 跳过。searchFiles 结果集成员仅在此竞态窗口可能不同。
    */
   listDir(path: string, opts?: ListDirOptions): Promise<FsEntry[]>
   /**

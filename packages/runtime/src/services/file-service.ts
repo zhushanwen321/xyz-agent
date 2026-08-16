@@ -251,6 +251,13 @@ export class FileService implements IFileService {
       if (result.length >= MAX_SEARCH_RESULTS) return
 
       await acquire()
+      // 截断兜底：acquire 排队期间其他并发 walk 可能已把 result 填到上限——等待后仍执行
+      // 一次 listDir 是纯浪费（cap 截断后入队的 walk 不再产出任何结果），再查一次直接释放
+      // slot 返回，避免无谓 IO
+      if (result.length >= MAX_SEARCH_RESULTS) {
+        release()
+        return
+      }
       let entries: FsEntry[]
       try {
         entries = await this.callFs(() => this.opts.executor.listDir(absPath, { withSize: false }))
@@ -340,7 +347,9 @@ export class FileService implements IFileService {
   /**
    * 文件节点排序（展示偏好，单一权威源）：目录在前，同类型内按 name 字典序降序；
    * 同名 tie（跨目录扁平列表才会出现，如 searchFiles 的 a/x.ts vs b/x.ts）按 path 降序决出
-   * ——D7-4 并发化后收集顺序非确定，仅靠 sort 稳定性（保持插入序）不足以保证输出序确定。
+   * ——D7-4 并发化后收集顺序非确定，仅靠 sort 稳定性（保持插入序）不足以保证输出序确定；
+   * path 全序断 tie 显式消除对 readdir 目录序的依赖（改造前 tie 序 = readdir 序 + 稳定排序，
+   * 跨目录同名节点的输出序以此为已声明修订，05 文档 D7-4 补注 + V1 验收按新全序对齐）。
    * 树场景（listTree/listLevel）同目录 name 唯一，tie 分支不可达，行为不变。
    * 用原生 < / > 比较（非 localeCompare）：跨平台/ICU 数据一致、可预测，不依赖运行环境 locale。
    * 静态方法：listTree（顶层）与 listLevel（子层）共用，确保全树一致有序。

@@ -30,8 +30,10 @@ export class FsExecutor implements IFileExecutor {
    * file entry 补 size（stat），dir entry 不取 size（undefined，性能优化）。
    * symlink 目录（K-3）：单独 stat 判定，ELOOP/EACCES catch 后跳过。
    * withSize=false（D7-3）：非 symlink 的 file entry 免 per-file stat 直接收录（size 缺省）；
-   * symlink 例外仍走 stat——坏 symlink（ELOOP/ENOENT）跳过的现状语义保持，
-   * 结果集成员与 withSize=true 严格一致（唯一差异是 file entry 缺 size 字段）。
+   * symlink 例外仍走 stat——坏 symlink（ELOOP/ENOENT）跳过的现状语义保持。
+   * 成员一致性口径（审查修正）：常规情形成员一致；stat 失败竞态（readdir 与 stat 间隙
+   * 文件被删）下 withSize=false 更宽容——收录 readdir 时刻存在的文件，withSize=true 会因
+   * stat ENOENT 跳过该 entry。唯一稳定差异是 file entry 缺 size 字段。
    */
   async listDir(path: string, opts?: ListDirOptions): Promise<FsEntry[]> {
     const withSize = opts?.withSize ?? true
@@ -44,6 +46,8 @@ export class FsExecutor implements IFileExecutor {
         // （不 follow），故不会成环——此处对真目录直接收录。
         entries.push({ name: d.name, type: 'dir' })
       } else if (!withSize && !d.isSymbolicLink()) {
+        // 免 stat 收录（D7-3）：readdir 时刻存在的文件直接进结果——stat 失败竞态
+        //（readdir 与 stat 间隙被删）下比 withSize=true 更宽容（后者 stat ENOENT 跳过）
         entries.push({ name: d.name, type: 'file' })
       } else {
         // file entry：取 size。对符号链接文件，stat（默认 follow）遇 ELOOP/EACCES → 跳过（K-3）。

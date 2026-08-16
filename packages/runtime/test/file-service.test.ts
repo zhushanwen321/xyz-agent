@@ -656,6 +656,9 @@ describe('FileService.searchFiles D7-3/D7-4（免 stat 快路径 + 有界并发�
 
   it('W25-2 并发 walk 结果集与串行 DFS 全集一致 + 排序确定（同名 tie 按 path 降序决出）+ node 无 size', async () => {
     mockTree()
+    // 注（审查修正）：fixture 无 symlink 且无 stat 失败竞态——「成员一致」口径在常规情形
+    // 成立；stat 失败竞态（readdir 与 stat 间隙文件被删）下 withSize=false 更宽容（收录
+    // readdir 时刻存在的文件），本 fixture 不含该场景，deepEqual 全集断言不受影响。
 
     const files = await svc().searchFiles('s1')
 
@@ -671,14 +674,40 @@ describe('FileService.searchFiles D7-3/D7-4（免 stat 快路径 + 有界并发�
     })))
   })
 
+  /**
+   * 用 fake timers 推进直到搜索 promise 落定（替代真实 setTimeout 延迟，消除测试睡眠）。
+   *
+   * 为什么循环推进而非单次 advanceTimersByTimeAsync(stepMs)：walk 的 timer 在微任务
+   * 续体里逐个排定（信号量 slot 转移层数不定，且 advance 内部是否先 flush 微任务与
+   * vitest 实现相关），单次 advance 只发「当时已排定」的 timer；循环推进直到 done 幂等
+   * 收敛（无 timer 可发时 advance 空转）。finally 恢复真实时钟，不污染其他用例。
+   */
+  async function settleWithFakeTimers<T>(p: Promise<T>, stepMs: number): Promise<T> {
+    vi.useFakeTimers()
+    try {
+      let done = false
+      p.then(
+        () => { done = true },
+        () => { done = true },
+      )
+      while (!done) {
+        await vi.advanceTimersByTimeAsync(stepMs)
+        await Promise.resolve() // 让 p 的 then 回调有机会置 done
+      }
+      return await p
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+
   it('W25-3 目录完成顺序扰动（不同目录人为延迟）下输出序不变', async () => {
     // run A：zed 分支延迟（src 分支先完成）
     mockTree({ '/repo/zed': 8 })
-    const runA = await svc().searchFiles('s1')
+    const runA = await settleWithFakeTimers(svc().searchFiles('s1'), 8)
 
     // run B：src/sub 深层延迟（zed 分支先完成）
     mockTree({ '/repo/src/sub': 8 })
-    const runB = await svc().searchFiles('s1')
+    const runB = await settleWithFakeTimers(svc().searchFiles('s1'), 8)
 
     // 两次发现顺序不同，输出序（sortNodes 终排序）恒定
     expect(runA.map((f) => f.path)).toEqual(EXPECTED_PATHS)
@@ -700,12 +729,12 @@ describe('FileService.searchFiles D7-3/D7-4（免 stat 快路径 + 有界并发�
     executor.listDir.mockImplementation(async (p: string) => {
       inFlight++
       maxInFlight = Math.max(maxInFlight, inFlight)
-      await new Promise((r) => setTimeout(r, 2)) // 打开并发窗口
+      await new Promise((r) => setTimeout(r, 2)) // 打开并发窗口（fake timers 下由 advance 触发）
       inFlight--
       return treeWide[p] ?? []
     })
 
-    const files = await svc().searchFiles('s1')
+    const files = await settleWithFakeTimers(svc().searchFiles('s1'), 2)
 
     // 30 目录壳 + 30 文件全部收集（未超 MAX_SEARCH_RESULTS，结果集与串行一致）
     expect(files).toHaveLength(60)
