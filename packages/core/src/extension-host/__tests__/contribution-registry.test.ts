@@ -100,8 +100,9 @@ describe('ContributionRegistry.registerBuiltin（DM5）', () => {
     expect(builtinContributions.map((b) => b.pluginId)).toEqual(['statusline', 'tasks'])
     expect(builtinContributions[0].contributes.statusBarItems).toHaveLength(1)
     expect(builtinContributions[1].contributes.slashCommands).toHaveLength(2)
-    expect(builtinContributions[1].contributes.views).toHaveLength(2)
-    expect(builtinContributions[1].contributes.views?.map((v) => v.id)).toEqual(['todo', 'goal'])
+    // D5（5e2dd96f0）：tasks 不再声明 views——todo/goal 经 extension widget 推送由
+    // M17 对话流 WidgetArea 承接，不进 sidebar
+    expect(builtinContributions[1].contributes.views).toBeUndefined()
   })
 })
 
@@ -174,12 +175,24 @@ describe('ContributionRegistry.loadExternal（IF4/ERR5）', () => {
 })
 
 describe('ContributionRegistry.getViewsByPlacement（IF1）', () => {
-  it('AC1: registerBuiltin 后 sidebar.tab 返回 builtin 两 view，字段与顺序正确', () => {
+  it('AC1: registerBuiltin 后 sidebar.tab 为空（D5：builtin 无静态 view）；external view 字段映射与顺序正确', () => {
     const { registry } = setup()
     registry.registerBuiltin()
+    // D5（5e2dd96f0）：tasks 不声明 views，builtin 无 sidebar view
+    expect(registry.getViewsByPlacement('sidebar.tab')).toEqual([])
+
+    // 字段映射与顺序用 external 注入验证（manifest 数组序保留）
+    registry.loadExternal([{
+      pluginId: 'p1',
+      contributes: {
+        views: [
+          { id: 'todo', title: '任务', placement: 'sidebar.tab', initialVisibility: 'visible' },
+          { id: 'goal', title: '目标', placement: 'sidebar.tab', initialVisibility: 'visible' },
+        ],
+      },
+    }])
     const views = registry.getViewsByPlacement('sidebar.tab')
     expect(views).toHaveLength(2)
-    // manifest 数组序：todo 在前，goal 在后
     expect(views.map((v) => v.viewId)).toEqual(['todo', 'goal'])
     expect(views[0]).toEqual({
       viewId: 'todo',
@@ -204,14 +217,21 @@ describe('ContributionRegistry.getViewsByPlacement（IF1）', () => {
 
   it('TC4: 同 pluginId 跨 type 同 id 共存（view 不被 slashCommand 覆盖）', () => {
     const { registry } = setup()
-    registry.registerBuiltin()
-    // tasks 共 4 条：2 view + 2 slashCommand，view 未被 slashCommand 同名覆盖
+    // builtin tasks 仅剩 slashCommands（D5）；跨 type 共存语义用同 descriptor 内
+    // view id='x' + slashCommand name='x' 验证
+    registry.loadExternal([{
+      pluginId: 'tasks',
+      contributes: {
+        views: [{ id: 'x', title: 'X', placement: 'sidebar.tab' }],
+        slashCommands: [{ name: 'x', description: 'x' }],
+      },
+    }])
     const tasks = registry.getContributions({ pluginId: 'tasks' })
-    expect(tasks).toHaveLength(4)
-    expect(tasks.filter((c) => c.type === 'view')).toHaveLength(2)
-    expect(tasks.filter((c) => c.type === 'slashCommand')).toHaveLength(2)
-    // 视图查询不受影响，两 view 均在场
-    expect(registry.getViewsByPlacement('sidebar.tab')).toHaveLength(2)
+    expect(tasks).toHaveLength(2)
+    expect(tasks.filter((c) => c.type === 'view')).toHaveLength(1)
+    expect(tasks.filter((c) => c.type === 'slashCommand')).toHaveLength(1)
+    // 视图查询不受 slashCommand 同名影响
+    expect(registry.getViewsByPlacement('sidebar.tab')).toHaveLength(1)
   })
 })
 
@@ -221,6 +241,6 @@ describe('ContributionRegistry.getContributions（IF4）', () => {
     registry.registerBuiltin()
     expect(registry.getContributions({ type: 'slashCommand' }).map((c) => c.slashCommand?.name)).toEqual(['goal', 'todo'])
     expect(registry.getContributions({ pluginId: 'statusline' })).toHaveLength(1)
-    expect(registry.getContributions()).toHaveLength(5) // 1 statusline + 2 tasks views + 2 tasks slashCommands
+    expect(registry.getContributions()).toHaveLength(3) // 1 statusline + 2 tasks slashCommands（D5：tasks 无 views）
   })
 })

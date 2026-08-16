@@ -63,7 +63,8 @@ describe('createSessionFlow', () => {
   it('TC-1 label 派生三分支：纯 text / bash command / 非 text 仅贴图（兜底文案）', async () => {
     // ① 纯 text：前 10 codePoint（输入 12 字符 → 前 10 + 省略号）
     await createSessionFlow(ctx, { cwd: '/x', segments: [textSeg('帮我重构这段代码 abc')] })
-    expect(ctx.api.create).toHaveBeenCalledWith('/x', '帮我重构这段代码 a…', undefined)
+    // 第 4 参 projectId（D14 创建时归属 activeProject）：未传 → undefined
+    expect(ctx.api.create).toHaveBeenCalledWith('/x', '帮我重构这段代码 a…', undefined, undefined)
 
     // ② bash command：label 从 command 取（无 ! 前缀）
     ctx = makeCtx()
@@ -72,7 +73,7 @@ describe('createSessionFlow', () => {
       segments: [textSeg('!ls')],
       bashCommand: { command: 'ls -la', excludeFromContext: false },
     })
-    expect(ctx.api.create).toHaveBeenCalledWith('/x', 'ls -la', undefined)
+    expect(ctx.api.create).toHaveBeenCalledWith('/x', 'ls -la', undefined, undefined)
 
     // ③ 非 text 仅贴图：deriveSessionLabel('') 兜底「无提示词」
     ctx = makeCtx()
@@ -80,7 +81,7 @@ describe('createSessionFlow', () => {
       cwd: '/x',
       segments: [imageSeg('/tmp/a.png', false)],
     })
-    expect(ctx.api.create).toHaveBeenCalledWith('/x', '无提示词', undefined)
+    expect(ctx.api.create).toHaveBeenCalledWith('/x', '无提示词', undefined, undefined)
   })
 
   it('TC-2 create 成功全编排序：create→appendSession→applyModel（无图片段 migrateImages 跳过）', async () => {
@@ -94,7 +95,7 @@ describe('createSessionFlow', () => {
 
     // 编排序断言：create 先于 appendSession 先于 applyModel
     expect(ctx.api.create).toHaveBeenCalledTimes(1)
-    expect(ctx.api.create).toHaveBeenCalledWith('/x', 'hi', undefined)
+    expect(ctx.api.create).toHaveBeenCalledWith('/x', 'hi', undefined, undefined)
     expect(appendSpy).toHaveBeenCalledTimes(1)
     expect(appendSpy).toHaveBeenCalledWith({ id: 'ns', cwd: '/x', label: 'hi', status: 'idle' })
     expect(ctx.applyModel).toHaveBeenCalledTimes(1)
@@ -135,7 +136,7 @@ describe('createSessionFlow', () => {
       presetId: 'preset-1',
       pendingModel: null,
     })
-    expect(ctx.api.create).toHaveBeenCalledWith('/x', 'hi', 'preset-1')
+    expect(ctx.api.create).toHaveBeenCalledWith('/x', 'hi', 'preset-1', undefined)
     expect(ctx.applyModel).toHaveBeenCalledTimes(0)
   })
 
@@ -211,6 +212,6 @@ describe('createSessionFlow', () => {
   it('TC-8 defaultCwd 兜底：input.cwd=null → 用 ctx.defaultCwd 创建', async () => {
     ctx = makeCtx({ defaultCwd: '/home/user' })
     await createSessionFlow(ctx, { cwd: null, segments: [textSeg('hi')] })
-    expect(ctx.api.create).toHaveBeenCalledWith('/home/user', 'hi', undefined)
+    expect(ctx.api.create).toHaveBeenCalledWith('/home/user', 'hi', undefined, undefined)
   })
 })
