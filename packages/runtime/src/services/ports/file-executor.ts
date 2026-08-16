@@ -20,6 +20,16 @@ export interface FsEntry {
 }
 
 /**
+ * listDir 选项（D7-3，05-scan-caching §3.3）。
+ * withSize 默认 true（文件树路径保持 size——FileTreeRow untracked `~size` 降级显示依赖）；
+ * searchFiles 传 false：非 symlink 的 file entry 免 per-file stat（size 缺省 undefined，
+ * searchFiles 结果无 size 消费方，语义无损）。
+ */
+export interface ListDirOptions {
+  withSize?: boolean
+}
+
+/**
  * fs 访问 port。
  *
  * 实现约束（infra/fs-executor.ts）：
@@ -32,8 +42,13 @@ export interface FsEntry {
  * - EACCES → reject Error(code='EACCES')，FileService 转 FileError('permission_denied')。
  */
 export interface IFileExecutor {
-  /** 列目录单层子（不递归）。超时/EACCES → reject Error。 */
-  listDir(path: string): Promise<FsEntry[]>
+  /**
+   * 列目录单层子（不递归）。超时/EACCES → reject Error。
+   * opts.withSize=false（D7-3）：非 symlink 的 file entry 免 per-file stat，size 缺省；
+   * symlink entry 仍 stat（坏 symlink ELOOP/ENOENT 跳过的语义与 withSize=true 严格一致，
+   * 保证 searchFiles 结果集成员不因免 stat 而变化）。
+   */
+  listDir(path: string, opts?: ListDirOptions): Promise<FsEntry[]>
   /**
    * 取文件/目录 stat。
    * mtimeMs（D7-1 matcher 缓存键成分）：node:fs Stats.mtimeMs 透传，FileService 用作

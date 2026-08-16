@@ -59,6 +59,13 @@ export const MAX_SEARCH_DEPTH = 8
  */
 export const MAX_SEARCH_RESULTS = 5000
 /**
+ * searchFiles 有界并发度（D7-4，05-scan-caching §3.3 定案 8~16 取 16）：
+ * 限制同时在飞的 listDir 数（目录级并发）。导出供测试断言并发上限。
+ * 信号量只包裹单次 listDir IO——父任务发起子任务后仅 await 不占 slot，
+ * 深链目录树不会因「父持 slot 等子」产生饥饿/死锁。
+ */
+export const SEARCH_WALK_CONCURRENCY = 16
+/**
  * searchFiles 内建 ignore 目录名（安全兜底，独立于 .gitignore，不可被 `!` 取反覆盖）。
  * 常见依赖产物/构建/缓存目录，几乎不应出现在 composer 文件候选里。
  */
@@ -194,6 +201,14 @@ export class FileService implements IFileService {
    * - **symlink 防环**：由 executor 层保证（Dirent.isDirectory() 不 follow symlink），
    *   深度上限 8 作递归硬限制兜底
    *
+   * D7-3/D7-4（05-scan-caching §3.3）：
+   * - **免 per-file stat**：listDir 传 { withSize:false }——size 唯一消费点是文件树路径
+   *   FileTreeRow 的 untracked `~size` 降级显示，searchFiles 结果无 size 消费方（缺省无损）；
+   *   坏 symlink 跳过语义由 executor 的 symlink-仍-stat 分支保持，结果集成员不变。
+   * - **有界并发**：walk 串行 → SEARCH_WALK_CONCURRENCY 路并发（未超限仓库结果集与串行
+   *   版完全一致；输出顺序由 sortNodes 终排序确定，不受发现顺序影响）。
+   *   超限仓库（>5000 命中）截断成员随并发调度而异，为已声明的可接受范围。
+   *
    * 返回扁平 FileNode[]（非嵌套树，给候选列表用）。排序同 sortNodes（dir 在前 + name 降序）。
    * @throws FileError('session_not_found') —— 仅 session 不存在抛（其余 fs 错误 per-dir 容错）
    */
@@ -204,7 +219,29 @@ export class FileService implements IFileService {
     const result: FileNode[] = []
 
     /**
-     * 递归单层（depth-limited + per-dir 容错）。
+     * 有界并发信号量（D7-4）：inFlight = 当前持有 slot 的 walk 数。
+     * acquire 快路径同步判定（不打乱同批子任务的发起顺序）；满则 FIFO 排队，
+     * release 时 slot 直接转移给队首（inFlight 不变，唤醒即持有）。
+     */
+    let inFlight = 0
+    const waiters: Array<() => void> = []
+    const acquire = (): Promise<void> => {
+      if (inFlight < SEARCH_WALK_CONCURRENCY) {
+        inFlight++
+        return Promise.resolve()
+      }
+      return new Promise<void>((resolve) => {
+        waiters.push(resolve)
+      })
+    }
+    const release = (): void => {
+      const next = waiters.shift()
+      if (next) next() // slot 转移给队首等待者（inFlight 保持）
+      else inFlight--
+    }
+
+    /**
+     * 递归单层（depth-limited + per-dir 容错 + 有界并发）。
      * @param absPath  目录绝对路径
      * @param relParent 相对 cwd 的目录路径（顶层 ''）
      * @param depth 当前深度（cwd=0，顶层 entry=1...）
@@ -213,16 +250,21 @@ export class FileService implements IFileService {
       // 结果数上限：达上限即停止（横向截断）
       if (result.length >= MAX_SEARCH_RESULTS) return
 
+      await acquire()
       let entries: FsEntry[]
       try {
-        entries = await this.callFs(() => this.opts.executor.listDir(absPath))
+        entries = await this.callFs(() => this.opts.executor.listDir(absPath, { withSize: false }))
       } catch {
         // per-directory 容错：单目录 EACCES/ENOENT/timeout 跳过，不中断整体递归
         return
+      } finally {
+        release()
       }
 
+      // 同目录 entries 同步处理完（无 await 间隙，result.push 原子）再发起子目录并发
+      const childWalks: Array<Promise<void>> = []
       for (const e of entries) {
-        if (result.length >= MAX_SEARCH_RESULTS) return
+        if (result.length >= MAX_SEARCH_RESULTS) break
         const node = this.entryToNode(e, relParent)
 
         // 关卡 1：内建 ignore 独立短路（node_modules 等，不可被 .gitignore ! 覆盖）
@@ -237,9 +279,11 @@ export class FileService implements IFileService {
 
         // 目录：深度未达上限才下钻
         if (e.type === 'dir' && depth < MAX_SEARCH_DEPTH) {
-          await walk(join(absPath, e.name), node.path, depth + 1)
+          childWalks.push(walk(join(absPath, e.name), node.path, depth + 1))
         }
       }
+      // 子树遍历相互独立（walk 自身不 reject，错误已在 per-dir 容错内消化）
+      await Promise.allSettled(childWalks)
     }
 
     await walk(cwd, '', 1)
@@ -294,7 +338,10 @@ export class FileService implements IFileService {
   }
 
   /**
-   * 文件节点排序（展示偏好，单一权威源）：目录在前，同类型内按 name 字典序降序。
+   * 文件节点排序（展示偏好，单一权威源）：目录在前，同类型内按 name 字典序降序；
+   * 同名 tie（跨目录扁平列表才会出现，如 searchFiles 的 a/x.ts vs b/x.ts）按 path 降序决出
+   * ——D7-4 并发化后收集顺序非确定，仅靠 sort 稳定性（保持插入序）不足以保证输出序确定。
+   * 树场景（listTree/listLevel）同目录 name 唯一，tie 分支不可达，行为不变。
    * 用原生 < / > 比较（非 localeCompare）：跨平台/ICU 数据一致、可预测，不依赖运行环境 locale。
    * 静态方法：listTree（顶层）与 listLevel（子层）共用，确保全树一致有序。
    */
@@ -303,7 +350,8 @@ export class FileService implements IFileService {
       // dir 排在 file 前（type 权重：dir=0, file=1）
       if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
       // 同类型内按 name 字典序降序（b 在前 = 降序）
-      return a.name < b.name ? 1 : a.name > b.name ? -1 : 0
+      if (a.name !== b.name) return a.name < b.name ? 1 : -1
+      return a.path < b.path ? 1 : a.path > b.path ? -1 : 0
     })
   }
 

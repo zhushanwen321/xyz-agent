@@ -19,7 +19,7 @@
  * 运行：pnpm --filter @xyz-agent/runtime run test -- test/file-service.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { FileService, READ_TIMEOUT_MS, MAX_FILE_SIZE, MAX_SEARCH_RESULTS, type FileServiceOptions } from '../src/services/file-service.js'
+import { FileService, READ_TIMEOUT_MS, MAX_FILE_SIZE, MAX_SEARCH_RESULTS, SEARCH_WALK_CONCURRENCY, type FileServiceOptions } from '../src/services/file-service.js'
 import { FileError } from '../src/services/file-error.js'
 import type { IFileExecutor, FsEntry } from '../src/services/ports/file-executor.js'
 
@@ -577,5 +577,141 @@ describe('FileService.searchFiles (#composer 文件候选全量递归)', () => {
     // debug.log 标记 ignored=true（显示模式保留+标记）
     const log = files.find((f) => f.path === 'debug.log')
     expect(log?.ignored).toBe(true)
+  })
+})
+
+describe('FileService.searchFiles D7-3/D7-4（免 stat 快路径 + 有界并发）', () => {
+  /**
+   * W25 覆盖（05-scan-caching §3.3）：
+   * - D7-3：searchFiles 的 listDir 调用带 { withSize:false }（文件树路径 listTree/expandDir
+   *   保持无 opts 默认——FileTreeRow untracked ~size 降级依赖 size）；结果 node 无 size 字段
+   * - D7-4：并发 walk 结果集与串行 DFS 全集一致 + sortNodes 终排序确定（含同名 tie 按 path 决出）；
+   *   目录完成顺序扰动下输出不变；同时在飞 listDir 数 ≤ SEARCH_WALK_CONCURRENCY
+   */
+
+  /**
+   * 三层多分支 fixture（含两个同名 dup.txt 制造排序 tie）：
+   * /repo: a.txt, src/(b.ts, sub/(c.md, dup.txt)), zed/(d.txt, dup.txt)
+   */
+  const TREE: Record<string, FsEntry[]> = {
+    '/repo': [
+      { name: 'a.txt', type: 'file' },
+      { name: 'src', type: 'dir' },
+      { name: 'zed', type: 'dir' },
+    ],
+    '/repo/src': [
+      { name: 'b.ts', type: 'file' },
+      { name: 'sub', type: 'dir' },
+    ],
+    '/repo/src/sub': [
+      { name: 'c.md', type: 'file' },
+      { name: 'dup.txt', type: 'file' },
+    ],
+    '/repo/zed': [
+      { name: 'd.txt', type: 'file' },
+      { name: 'dup.txt', type: 'file' },
+    ],
+  }
+
+  /** 串行 DFS 全集 + sortNodes（dir 前 + name 降序 + 同名 path 降序）后的预期 path 序。 */
+  const EXPECTED_PATHS = [
+    'zed', // dir 组降序：zed > sub > src
+    'src/sub',
+    'src',
+    'zed/dup.txt', // file 组降序：dup.txt(tie，path 降序 zed > src) > dup.txt > d.txt > c.md > b.ts > a.txt
+    'src/sub/dup.txt',
+    'zed/d.txt',
+    'src/sub/c.md',
+    'src/b.ts',
+    'a.txt',
+  ]
+
+  /** 按 TREE 查表应答（无 .gitignore：stat/readFile 均 ENOENT → 空 matcher）。 */
+  function mockTree(delayMs: Record<string, number> = {}): void {
+    executor.stat.mockRejectedValue(fsErr('ENOENT'))
+    executor.readFile.mockRejectedValue(fsErr('ENOENT'))
+    executor.listDir.mockImplementation(async (p: string) => {
+      const ms = delayMs[p] ?? 0
+      if (ms > 0) await new Promise((r) => setTimeout(r, ms))
+      return TREE[p] ?? []
+    })
+  }
+
+  it('W25-1 searchFiles 的 listDir 带 { withSize:false }；listTree/expandDir 保持无 opts（文件树 size 不变）', async () => {
+    mockTree()
+
+    await svc().searchFiles('s1')
+
+    expect(executor.listDir).toHaveBeenCalledWith('/repo', { withSize: false })
+    expect(executor.listDir).toHaveBeenCalledWith('/repo/src', { withSize: false })
+
+    // 对照：文件树路径不带 opts（默认 withSize——FileTreeRow untracked ~size 降级依赖）
+    executor.readFile.mockRejectedValue(fsErr('ENOENT'))
+    executor.listDir.mockImplementation(async (p: string) => TREE[p] ?? [])
+    await svc().listTree('s1')
+    expect(executor.listDir).toHaveBeenCalledWith('/repo')
+    await svc().expandDir('s1', 'src')
+    expect(executor.listDir).toHaveBeenCalledWith('/repo/src')
+  })
+
+  it('W25-2 并发 walk 结果集与串行 DFS 全集一致 + 排序确定（同名 tie 按 path 降序决出）+ node 无 size', async () => {
+    mockTree()
+
+    const files = await svc().searchFiles('s1')
+
+    // 全集（9 节点）与串行 DFS 版一致；顺序 = sortNodes 语义（确定性）
+    expect(files.map((f) => f.path)).toEqual(EXPECTED_PATHS)
+    // D7-3 降级语义：searchFiles 结果无 size 字段（size 唯一消费点是文件树路径，缺省无损）
+    expect(files.every((f) => f.size === undefined)).toBe(true)
+    // 对象形状完整断言（path/name/type，无 size/ignored）
+    expect(files).toEqual(EXPECTED_PATHS.map((p) => ({
+      path: p,
+      name: p.includes('/') ? p.slice(p.lastIndexOf('/') + 1) : p,
+      type: p === 'zed' || p === 'src/sub' || p === 'src' ? 'dir' : 'file',
+    })))
+  })
+
+  it('W25-3 目录完成顺序扰动（不同目录人为延迟）下输出序不变', async () => {
+    // run A：zed 分支延迟（src 分支先完成）
+    mockTree({ '/repo/zed': 8 })
+    const runA = await svc().searchFiles('s1')
+
+    // run B：src/sub 深层延迟（zed 分支先完成）
+    mockTree({ '/repo/src/sub': 8 })
+    const runB = await svc().searchFiles('s1')
+
+    // 两次发现顺序不同，输出序（sortNodes 终排序）恒定
+    expect(runA.map((f) => f.path)).toEqual(EXPECTED_PATHS)
+    expect(runB.map((f) => f.path)).toEqual(EXPECTED_PATHS)
+    expect(runA).toEqual(runB)
+  })
+
+  it('W25-4 有界并发上限：同时在飞 listDir 数 ≤ SEARCH_WALK_CONCURRENCY，且实际发生并发', async () => {
+    // 顶层 30 个子目录（> 并发度 16），每个含 1 文件
+    const dirs: FsEntry[] = Array.from({ length: 30 }, (_, i) => ({ name: `d${String(i).padStart(2, '0')}`, type: 'dir' as const }))
+    const treeWide: Record<string, FsEntry[]> = {
+      '/repo': dirs,
+      ...Object.fromEntries(dirs.map((d) => [`/repo/${d.name}`, [{ name: 'f.txt', type: 'file' }]])),
+    }
+    let inFlight = 0
+    let maxInFlight = 0
+    executor.stat.mockRejectedValue(fsErr('ENOENT'))
+    executor.readFile.mockRejectedValue(fsErr('ENOENT'))
+    executor.listDir.mockImplementation(async (p: string) => {
+      inFlight++
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise((r) => setTimeout(r, 2)) // 打开并发窗口
+      inFlight--
+      return treeWide[p] ?? []
+    })
+
+    const files = await svc().searchFiles('s1')
+
+    // 30 目录壳 + 30 文件全部收集（未超 MAX_SEARCH_RESULTS，结果集与串行一致）
+    expect(files).toHaveLength(60)
+    // 并发度上限遵守（spy 最大 in-flight ≤ 常量）
+    expect(maxInFlight).toBeLessThanOrEqual(SEARCH_WALK_CONCURRENCY)
+    // 确实发生并发（串行版 maxInFlight 恒为 1）
+    expect(maxInFlight).toBeGreaterThan(1)
   })
 })

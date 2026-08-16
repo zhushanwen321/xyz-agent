@@ -12,11 +12,12 @@
  *   catch 后跳过该 entry（不 follow 成环）。
  * - EACCES：readdir/stat/readFile 的权限错误以 Error(code='EACCES') reject，
  *   FileService catch 后转 FileError('permission_denied')。
- * - 性能：dir entry 不取 size（undefined），file entry 取 size（listDir 内批量 readdir 后逐个 stat）。
+ * - 性能：dir entry 不取 size（undefined），file entry 取 size（listDir 内批量 readdir 后逐个 stat）；
+ *   withSize=false 时非 symlink 的 file entry 免 stat（D7-3，searchFiles 快路径）。
  */
 import { readdir, stat, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { IFileExecutor, FsEntry } from '../services/ports/file-executor.js'
+import type { IFileExecutor, FsEntry, ListDirOptions } from '../services/ports/file-executor.js'
 
 /** 单次 fs 操作超时（ms），NFR ④K-2。listDir/stat/readFile 共用。 */
 const FS_TIMEOUT_MS = 10_000
@@ -28,8 +29,12 @@ export class FsExecutor implements IFileExecutor {
    * 单层 readdir（不递归）。用 withFileTypes 拿 Dirent，避免 N+1 lstat。
    * file entry 补 size（stat），dir entry 不取 size（undefined，性能优化）。
    * symlink 目录（K-3）：单独 stat 判定，ELOOP/EACCES catch 后跳过。
+   * withSize=false（D7-3）：非 symlink 的 file entry 免 per-file stat 直接收录（size 缺省）；
+   * symlink 例外仍走 stat——坏 symlink（ELOOP/ENOENT）跳过的现状语义保持，
+   * 结果集成员与 withSize=true 严格一致（唯一差异是 file entry 缺 size 字段）。
    */
-  async listDir(path: string): Promise<FsEntry[]> {
+  async listDir(path: string, opts?: ListDirOptions): Promise<FsEntry[]> {
+    const withSize = opts?.withSize ?? true
     const dirents = await this.withTimeout(() => readdir(path, { withFileTypes: true }), 'listDir')
     const entries: FsEntry[] = []
     for (const d of dirents) {
@@ -38,6 +43,8 @@ export class FsExecutor implements IFileExecutor {
         // dir entry：不取 size（性能优化）；symlink 指向目录的 Dirent.isDirectory() 为 false
         // （不 follow），故不会成环——此处对真目录直接收录。
         entries.push({ name: d.name, type: 'dir' })
+      } else if (!withSize && !d.isSymbolicLink()) {
+        entries.push({ name: d.name, type: 'file' })
       } else {
         // file entry：取 size。对符号链接文件，stat（默认 follow）遇 ELOOP/EACCES → 跳过（K-3）。
         try {
