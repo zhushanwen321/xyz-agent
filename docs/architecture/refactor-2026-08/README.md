@@ -12,7 +12,7 @@
 
 按本设计文档集分波次落地 36 个候选改进项，做到：
 
-1. **架构核心承诺恢复**：runtime 三层依赖方向（D1）、renderer 七层铁律（C2）、core 真 headless（B2）回到声明状态，并补上此前缺失的**可执行守护**（pre-commit 检查），使"无守护 → 回潮"这个通用病根不再复发
+1. **架构核心承诺恢复**：runtime 三层依赖方向（D1）、renderer 七层铁律（C2）、core 真 headless（B2）回到声明状态。其中 **D1 补上 runtime 三层的可执行 pre-commit 守护**（check_layer_boundaries.py），使 runtime 回潮被自动化拦住；**renderer/core/electron/extensions 四层的归位守护暂不自动化**（人工 + review 守住，评估成本后再决定是否补 githook，见各子文档"守护"说明）
 2. **死代码与兼容壳清除**：B1/C1/C4 等绞杀残留死壳、shim 层、假声明全部删除（合计约 600 行零风险删除）
 3. **seam 归位与重复收敛**：绕 seam 直连（C2）、跨端重复实现（C3/F1）、外部协议多份解析（F2/F7）收敛到唯一权威
 4. **文档债收口**：过期 3 倍的 module-map、失守的 migration-progress、失效的速查表全部改为"历史快照 + 可执行检查输出"两段式
@@ -46,7 +46,7 @@
 |------|-----|------|--------|------|
 | B1 | 包级链 | Strong | 清除 renderer 的 core re-export shim 层 | W0 |
 | B2 | 包级链 | Strong | core 的 pinia 死声明移出 dependencies | W0 |
-| B3 | 包级链 | Worth | composables/logic/ 纯函数下沉 core（13 文件 1456 行） | W3（DP-1 已决：下沉） |
+| B3 | 包级链 | Worth | composables/logic/ 纯函数下沉 core（12 文件 1347 行，⚠️ mermaid 因 DOM 依赖不下沉，见 01 文档） | W3（DP-1 已决：下沉） |
 | B4 | 包级链 | Worth | shared 扁平大杂烩按域收敛 | W4 |
 | B5 | 包级链 | Worth | 包名统一 frontend vs renderer | W5 |
 | B6 | 包级链 | Speculative | composer-shell 越层直连 dom-core 裁决 | W5 |
@@ -59,7 +59,7 @@
 | C6 | renderer | Worth | composables/panel/ 25 文件平铺 → 分子目录 | W4 |
 | C7 | renderer | Worth | components/panel/ 巨模块群拆分（DetailPane 优先） | W4 |
 | D1 | runtime | Strong | 三层骨架回潮修复 + pre-commit 守护（**Top 推荐**） | W1 |
-| D2 | runtime | Strong | 16/16 port 单实现 → 7 个 hypothetical seam 折叠（需裁决） | ⏸️ 暂缓（remote 合并后盘点 ports） |
+| D2 | runtime | Strong | 16/16 port 单实现 → 7 个 hypothetical seam 折叠（需裁决；hypothetical seam = 单消费方 1:1:1 port，形式 seam 非真抽象点） | ⏸️ 暂缓（remote 合并后盘点 ports） |
 | D3 | runtime | Strong | ITerminalService/IWorktreeService 方向反置归位 | W2 |
 | D4 | runtime | Strong | settings-message-handler 业务编排下沉 config-service | W2 |
 | D5 | runtime | Worth | session-message-handler 业务判断下沉 | W3 |
@@ -91,9 +91,9 @@
 B1 + B2 + C1 + C4。四者均为删除/降级操作，无行为变化，同一天可完成（审查报告明确标注）。完成后即提交。
 
 **W1 · 架构核心承诺恢复（Top 推荐，最高 leverage）**
-D1：runtime 三层回潮修复 + pre-commit 守护。配套 §6 文档债中 migration-progress 改为指向检查输出。**本波次优先级最高**——它把"声明式架构"变成"可执行架构"，后续所有波次的回潮都被它兜住。
+D1：runtime 三层回潮修复 + pre-commit 守护。配套 §6 文档债中 migration-progress 改为指向检查输出。**本波次优先级最高**——它把 runtime 的"声明式三层边界"变成"可执行检查"，runtime 回潮被 check_layer_boundaries.py 自动拦住（扫描范围 `packages/runtime/src/{transport,services,infra}/`）。
 - 依赖：无（独立可做）
-- 守护：pre-commit 检查为新增 githook，落地后所有后续波次的 diff 都会被它检查
+- 守护范围说明：check_layer_boundaries.py **只扫 runtime 三层**，不覆盖 renderer 七层 / core headless / electron / extensions——这四层的归位（C2/B2/F1/F2 等）靠人工 + review 守住，各子文档守护项均标注「随 W1/D1 评估」。若后续某层回潮频发，再为该层补最小 githook（参照 D1 范式）
 
 **W2 · seam 归位（中风险，行为收敛类）**
 C3 + D3 + D4 + E2 + E3。五项都是"绕过已有 seam 的直连/错位归位到正确位置"，模式相同（收编 → 收敛 → 删除旧路径），可并行走 3 层。
