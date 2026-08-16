@@ -36,6 +36,10 @@ function makeRunningRun(): WorkflowRun & { resetRunning(): void } {
       // 真实数组——push/slice 直接作用于它
       errorLogs: [] as Array<{ level: string; message: string }>,
       scriptResult: undefined as unknown,
+      // rebuildRuntime 内 discardInFlightCalls 遍历 calls + 移除 trace 节点——
+      // 必须是真实 Map（空 = 无在飞 call，discard 为 no-op）
+      calls: new Map(),
+      trace: { removeByStepIndex: vi.fn() },
     },
     meta: {
       startedAt: new Date().toISOString(),

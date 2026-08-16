@@ -1,17 +1,16 @@
 /**
- * lifecycle — pauseRun/resumeRun/scheduleTimeBudget/runWorkflow/abortRun 测试。
+ * lifecycle — runWorkflow/abortRun/terminateRunningRuns/scheduleTimeBudget/evict 测试。
  *
  * 用真实 WorkflowRun（含真实状态机 + I1/I2 不变式守卫）+ mock RunRuntime（释放副作用
  * 可控）+ mock LifecycleDeps（store/workerHost/eventBus 可观察）。这样能真正测到
  * transition/assignRuntime/releaseRuntime 的状态机逻辑，而非全 mock 聚合根。
  *
  * 覆盖：
- * - pauseRun：running → paused（releaseRuntime：worker terminate + controller abort）
- *   + 在飞 call 清理 + store.save
- * - resumeRun：paused → running（workerHost.start 重建 + assignRuntime + 时间预算重排）
- * - scheduleTimeBudget：定时器到期 → abortRun(done,time_limited)（用 fake timers）
  * - runWorkflow：spec → 创建 run + workerHost.start + store.save + emit pending:register
- * - abortRun：done no-op / running→done / paused→done + emit pending:unregister
+ * - abortRun：done no-op / running→done + emit pending:unregister
+ * - terminateRunningRuns：session 切换/关闭时仅 running 被终止（done,failed 落盘）
+ * - scheduleTimeBudget：定时器到期 → abortRun(done,time_limited)（用 fake timers）
+ * - evictDoneRunsBeyondCap：done run 内存淘汰白名单/排序/tie
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -19,10 +18,9 @@ import {
   abortRun,
   evictDoneRunsBeyondCap,
   MAX_RETAINED_DONE_RUNS,
-  pauseRun,
-  resumeRun,
   runWorkflow,
   scheduleTimeBudget,
+  terminateRunningRuns,
 } from "../lifecycle.ts";
 import { ArgsValidationError } from "../args-validator.ts";
 import { Budget } from "../models/budget.ts";
@@ -124,144 +122,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
-});
-
-// ── pauseRun ─────────────────────────────────────────────────
-
-describe("pauseRun", () => {
-  it("running run → paused：releaseRuntime（worker terminate + controller abort）+ store.save", async () => {
-    const { run, terminate, abort } = makeRunningRealRun("wf-pause-1");
-    const deps = makeDeps();
-    deps.runs.set("wf-pause-1", run);
-
-    await pauseRun("wf-pause-1", deps);
-
-    expect(run.state.status).toBe("paused");
-    expect(run.meta.pausedAt).toBeDefined();
-    // releaseRuntime 释放了 worker + controller
-    expect(terminate).toHaveBeenCalledTimes(1);
-    expect(abort).toHaveBeenCalledTimes(1);
-    // runtime 已解绑（I1：paused ⟺ runtime undefined）
-    expect(run.runtime).toBeUndefined();
-    // 持久化
-    expect(deps.store.save).toHaveBeenCalledTimes(1);
-  });
-
-  it("清留在飞 call（status !== done）及其 trace 节点", async () => {
-    const { run } = makeRunningRealRun("wf-pause-2");
-    // 注入一个未完成的在飞 call
-    run.state.calls.set(7, {
-      id: 7,
-      status: "running",
-      attempts: 1,
-    } as never);
-    // 注入一个已完成 call（应保留）
-    run.state.calls.set(8, {
-      id: 8,
-      status: "done",
-      result: { content: "ok" },
-    } as never);
-    const deps = makeDeps();
-    deps.runs.set("wf-pause-2", run);
-
-    await pauseRun("wf-pause-2", deps);
-
-    // 在飞 call（running）被移除；已完成 call（done）保留
-    expect(run.state.calls.has(7)).toBe(false);
-    expect(run.state.calls.has(8)).toBe(true);
-  });
-
-  it("runId 不存在 → 抛错", async () => {
-    const deps = makeDeps();
-    await expect(pauseRun("wf-missing", deps)).rejects.toThrow("not found");
-  });
-
-  it("status !== running → 抛错（只允许 running 暂停）", async () => {
-    const { run } = makeRunningRealRun("wf-pause-3");
-    run.transition("paused"); // 先 pause → paused
-    const deps = makeDeps();
-    deps.runs.set("wf-pause-3", run);
-
-    await expect(pauseRun("wf-pause-3", deps)).rejects.toThrow("only 'running' can be paused");
-  });
-});
-
-// ── resumeRun ────────────────────────────────────────────────
-
-describe("resumeRun", () => {
-  it("paused → running：workerHost.start 重建 worker + assignRuntime + 时间预算重排", async () => {
-    const { run } = makeRunningRealRun("wf-resume-1", { budgetTimeMs: 5000 });
-    run.transition("paused"); // → paused
-    const deps = makeDeps();
-    deps.runs.set("wf-resume-1", run);
-
-    await resumeRun("wf-resume-1", deps);
-
-    expect(run.state.status).toBe("running");
-    expect(run.runtime).toBeDefined(); // assignRuntime 绑定新 runtime
-    // workerHost.start 被调（重建 worker）
-    expect(deps.workerHost.start).toHaveBeenCalledTimes(1);
-    // 时间预算重排（budgetTimeMs > 0）：resumeRun 内调本文件 scheduleTimeBudget，
-    // 结果存入 run.runtime.timeBudgetTimer。budgetTimeMs <= 0 时为 undefined。
-    expect(run.runtime!.timeBudgetTimer).toBeDefined();
-    // 持久化
-    expect(deps.store.save).toHaveBeenCalledTimes(1);
-  });
-
-  it("TC13: resume 重建 worker 收到 coerce 后 args（WQ2 一致性不变式）", async () => {
-    // runWorkflow 首行校验 + coerceTypes 原地规范化 spec.args → pause → resume 重建
-    // worker 用同一 args 对象（run.spec === spec）→ start 收到 boolean false。
-    const deps = makeDeps();
-    const spec = makeSpec({
-      parameters: {
-        type: "object",
-        properties: { autoCommit: { type: "boolean" } },
-        required: [],
-      },
-      args: { autoCommit: "false" },
-    });
-    const runId = await runWorkflow(spec, deps);
-    expect(spec.args.autoCommit).toBe(false); // 原地 coerce 生效
-    const run = deps.runs.get(runId)!;
-    run.transition("paused");
-    deps.runs.set(runId, run);
-    deps.workerHost.start.mockClear();
-
-    await resumeRun(runId, deps);
-
-    const startArgs = deps.workerHost.start.mock.calls[0]?.[1] as
-      | Record<string, unknown>
-      | undefined;
-    expect(startArgs).toBeDefined();
-    expect(startArgs!.autoCommit).toBe(false);
-  });
-
-  it("无 budgetTimeMs 时 resume 不调度时间预算计时器", async () => {
-    const { run } = makeRunningRealRun("wf-resume-no-budget");
-    run.transition("paused");
-    const deps = makeDeps();
-    deps.runs.set("wf-resume-no-budget", run);
-
-    await resumeRun("wf-resume-no-budget", deps);
-
-    expect(run.state.status).toBe("running");
-    // budgetTimeMs 未设 → timeBudgetTimer 为 undefined
-    expect(run.runtime!.timeBudgetTimer).toBeUndefined();
-  });
-
-  it("runId 不存在 → 抛错", async () => {
-    const deps = makeDeps();
-    await expect(resumeRun("wf-missing", deps)).rejects.toThrow("not found");
-  });
-
-  it("status !== paused → 抛错（只允许 paused 恢复）", async () => {
-    const { run } = makeRunningRealRun("wf-resume-2");
-    // 仍 running
-    const deps = makeDeps();
-    deps.runs.set("wf-resume-2", run);
-
-    await expect(resumeRun("wf-resume-2", deps)).rejects.toThrow("only 'paused' can be resumed");
-  });
 });
 
 // ── scheduleTimeBudget ───────────────────────────────────────
@@ -443,6 +303,95 @@ describe("abortRun", () => {
   });
 });
 
+// ── terminateRunningRuns ─────────────────────────────────────
+
+describe("terminateRunningRuns", () => {
+  it("多 run 中仅 running 被终止（done run 不动）", async () => {
+    const { run: running1 } = makeRunningRealRun("wf-term-1");
+    const { run: running2 } = makeRunningRealRun("wf-term-2");
+    const { run: doneRun } = makeRunningRealRun("wf-term-done");
+    doneRun.transition("done", "completed");
+    const deps = makeDeps();
+    deps.runs.set("wf-term-1", running1);
+    deps.runs.set("wf-term-2", running2);
+    deps.runs.set("wf-term-done", doneRun);
+
+    await terminateRunningRuns(deps, "Session switched: run terminated");
+
+    // running 全部转 done,failed
+    expect(running1.state.status).toBe("done");
+    expect(running1.state.reason).toBe("failed");
+    expect(running2.state.status).toBe("done");
+    expect(running2.state.reason).toBe("failed");
+    // done run 不被重写（保留 completed）
+    expect(doneRun.state.reason).toBe("completed");
+  });
+
+  it("每个被终止的 run 发 pending:unregister（reason=failed）且不调 onRunDone", async () => {
+    const { run: r1 } = makeRunningRealRun("wf-term-3");
+    const { run: r2 } = makeRunningRealRun("wf-term-4");
+    const deps = makeDeps();
+    deps.runs.set("wf-term-3", r1);
+    deps.runs.set("wf-term-4", r2);
+
+    await terminateRunningRuns(deps, "Session shutdown: run terminated");
+
+    expect(deps.eventBus.emit).toHaveBeenCalledWith("pending:unregister", {
+      id: "wf-term-3",
+      reason: "failed",
+    });
+    expect(deps.eventBus.emit).toHaveBeenCalledWith("pending:unregister", {
+      id: "wf-term-4",
+      reason: "failed",
+    });
+    // 对齐 session_start 恢复先例：主 agent 已离开本 session，不发完成通知
+    expect(deps.onRunDone).not.toHaveBeenCalled();
+  });
+
+  it("state.error = reason、reason 字段 = failed、run 落盘（releaseRuntime 解绑 runtime）", async () => {
+    const { run, terminate } = makeRunningRealRun("wf-term-5");
+    const deps = makeDeps();
+    deps.runs.set("wf-term-5", run);
+
+    await terminateRunningRuns(deps, "Session switched: run terminated");
+
+    expect(run.state.error).toBe("Session switched: run terminated");
+    expect(run.state.reason).toBe("failed");
+    expect(run.runtime).toBeUndefined();
+    expect(terminate).toHaveBeenCalledTimes(1);
+    expect(deps.store.save).toHaveBeenCalledTimes(1);
+    expect(deps.store.save).toHaveBeenCalledWith(run);
+  });
+
+  it("单 run save 抛错不中断其余（其余 run 仍落盘 + unregister）", async () => {
+    const { run: bad } = makeRunningRealRun("wf-term-err");
+    const { run: good } = makeRunningRealRun("wf-term-ok");
+    const deps = makeDeps();
+    deps.runs.set("wf-term-err", bad);
+    deps.runs.set("wf-term-ok", good);
+    deps.store.save = vi.fn(async (r: WorkflowRun) => {
+      if (r.runId === "wf-term-err") throw new Error("disk full");
+    });
+
+    await terminateRunningRuns(deps, "Session shutdown: run terminated");
+
+    // 抛错的 run：transition 先于 save，状态已转 done，但 unregister 被 save 失败短路
+    expect(bad.state.status).toBe("done");
+    expect(bad.state.reason).toBe("failed");
+    expect(deps.eventBus.emit).not.toHaveBeenCalledWith("pending:unregister", {
+      id: "wf-term-err",
+      reason: "failed",
+    });
+    // 其余 run 正常走完落盘 + unregister（单 run 失败不中断批量终止）
+    expect(good.state.status).toBe("done");
+    expect(deps.store.save).toHaveBeenCalledWith(good);
+    expect(deps.eventBus.emit).toHaveBeenCalledWith("pending:unregister", {
+      id: "wf-term-ok",
+      reason: "failed",
+    });
+  });
+});
+
 // ── evictDoneRunsBeyondCap ────────────────────────────────────
 
 /**
@@ -488,29 +437,27 @@ function isoAt(min: number): string {
 }
 
 describe("evictDoneRunsBeyondCap（done run 内存淘汰，K=MAX_RETAINED_DONE_RUNS）", () => {
-  it("W3TC1: 状态白名单——仅 done 可淘汰，running/paused 永不删", () => {
+  it("W3TC1: 状态白名单——仅 done 可淘汰，running 永不删", () => {
     const runs = new Map<string, WorkflowRun>();
     runs.set("wf-done-1", makeEvictableRun("wf-done-1", { completedAt: isoAt(1) }));
     runs.set("wf-done-2", makeEvictableRun("wf-done-2", { completedAt: isoAt(2) }));
     runs.set("wf-done-3", makeEvictableRun("wf-done-3", { completedAt: isoAt(3) }));
     runs.set("wf-run-1", makeEvictableRun("wf-run-1", { status: "running" }));
     runs.set("wf-run-2", makeEvictableRun("wf-run-2", { status: "running" }));
-    runs.set("wf-paused-1", makeEvictableRun("wf-paused-1", { status: "paused" }));
-    runs.set("wf-paused-2", makeEvictableRun("wf-paused-2", { status: "paused" }));
 
     const evicted = evictDoneRunsBeyondCap(runs, 2);
 
     // 3 done 超保留数 2 → 淘汰最旧 1 个
     expect(evicted).toBe(1);
-    // running/paused 全部仍在 Map（白名单外，即使 completedAt 缺失也不参与排序淘汰）
-    for (const id of ["wf-run-1", "wf-run-2", "wf-paused-1", "wf-paused-2"]) {
+    // running 全部仍在 Map（白名单外，即使 completedAt 缺失也不参与排序淘汰）
+    for (const id of ["wf-run-1", "wf-run-2"]) {
       expect(runs.has(id)).toBe(true);
     }
     // done 仅剩 t2/t3 两个（t1 最旧被淘汰）
     expect(runs.has("wf-done-1")).toBe(false);
     expect(runs.has("wf-done-2")).toBe(true);
     expect(runs.has("wf-done-3")).toBe(true);
-    expect(runs.size).toBe(6);
+    expect(runs.size).toBe(4);
   });
 
   it("W3TC2: 按 meta.completedAt 升序淘汰最旧超限项 + 返回淘汰计数（非插入序）", () => {

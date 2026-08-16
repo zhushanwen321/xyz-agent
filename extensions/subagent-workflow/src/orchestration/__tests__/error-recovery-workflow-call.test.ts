@@ -6,7 +6,7 @@
  * - 成功时 postMessage(workflow-result, result)
  * - onWorkflowCall reject 时 postMessage 含 error
  * - onWorkflowCall 未注入时 postMessage 含 error（向后兼容）
- * - stale 完成守卫（resolve 前 run 已 paused → 不 postMessage）
+ * - stale 完成守卫（resolve 前 run 已终态 → 不 postMessage）
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -138,7 +138,7 @@ describe("dispatchWorkflowCall (workflow-call routing)", () => {
     expect(sent.result.error).toContain("onWorkflowCall not injected");
   });
 
-  it("does not post when run is paused before result arrives", async () => {
+  it("does not post when run reaches terminal state before result arrives", async () => {
     const postMessage = vi.fn();
     let resolveWorkflow: (value: unknown) => void = () => {};
     const workflowPromise = new Promise<unknown>((r) => {
@@ -156,8 +156,8 @@ describe("dispatchWorkflowCall (workflow-call routing)", () => {
     );
 
     // dispatchWorkflowCall 已触发，onWorkflowCall pending。
-    // 在 resolve 前 pause run —— stale 完成守卫应阻止 postMessage。
-    run.state.status = "paused";
+    // 在 resolve 前终止 run（转终态 done）—— stale 完成守卫应阻止 postMessage。
+    run.state.status = "done";
     resolveWorkflow({ content: "late" });
     await flushMicrotasks();
 

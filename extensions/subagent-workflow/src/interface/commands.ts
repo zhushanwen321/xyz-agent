@@ -11,7 +11,7 @@
  * - /workflow save <name> → 用 workflow-script tool { action: "save" }
  * - /workflow delete <name> → 用 workflow-script tool { action: "delete" }
  *
- * 层归属：Interface。依赖 Pi SDK + Engine lifecycle（pause/resume/abort，注入 ViewActions）
+ * 层归属：Interface。依赖 Pi SDK + Engine lifecycle（abort，注入 ViewActions）
  * + WorkflowsView（读 WorkflowRun 聚合根）。
  *
  * 参考：
@@ -22,7 +22,7 @@
 import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 
 import type { LauncherDeps } from "../orchestration/launcher.ts";
-import { abortRun, pauseRun, resumeRun } from "../orchestration/lifecycle.ts";
+import { abortRun } from "../orchestration/lifecycle.ts";
 import type { WorkflowRun } from "../orchestration/models/workflow-run.ts";
 import { parseWorkflowRpcCommand } from "./command-actions.ts";
 import { createWorkflowsView, type ViewActions } from "./views/WorkflowsView.ts";
@@ -30,10 +30,9 @@ import { createWorkflowsView, type ViewActions } from "./views/WorkflowsView.ts"
 /** runId 截断长度（显示用）。 */
 const RUNID_SHORT = 8;
 
-/** status 显示顺序：running/paused 优先（活跃态在前），再 startedAt 倒序。 */
+/** status 显示顺序：running 优先（活跃态在前），再 startedAt 倒序。 */
 const STATUS_ORDER: Record<string, number> = {
   running: 0,
-  paused: 1,
   done: 2,
 };
 /** 未知 status 的默认排序权重（排在已知 status 之后）。 */
@@ -52,12 +51,12 @@ const UNKNOWN_STATUS_WEIGHT = 9;
  * · 1 run → 直接打开
  * · 多 runs → select 选 → 打开选中 run 的 view
  *
- * ViewActions（pause/resume/abort）由本 command 注入——view 本身不持 lifecycle 依赖，
+ * ViewActions（abort）由本 command 注入——view 本身不持 lifecycle 依赖，
  * 只通过 actions 回调与 engine 交互（解耦，便于 view 单测）。
  *
  * @param api ExtensionAPI
  * @param getRuns 获取当前 session 的 runs（Map<runId, WorkflowRun>）
- * @param deps LauncherDeps（lifecycle pause/resume/abort 用）
+ * @param deps LauncherDeps（lifecycle abort 用）
  */
 export function registerWorkflowsCommand(
   api: ExtensionAPI,
@@ -65,7 +64,7 @@ export function registerWorkflowsCommand(
   deps: LauncherDeps,
 ): void {
   api.registerCommand("workflows", {
-    description: "Open workflow panel. /workflows [runId] | /workflows pause|resume|abort <runId>",
+    description: "Open workflow panel. /workflows [runId] | /workflows abort <runId>",
     getArgumentCompletions(prefix: string) {
       const trimmed = prefix.trimStart();
       const parts = trimmed.split(/\s+/).filter(Boolean);
@@ -73,14 +72,12 @@ export function registerWorkflowsCommand(
       // 第一级：lifecycle 动词（带尾随空格，选中后继续补 runId）
       if (parts.length <= 1) {
         return [
-          { label: "pause", value: "pause ", description: "Pause a workflow run" },
-          { label: "resume", value: "resume ", description: "Resume a paused workflow run" },
           { label: "abort", value: "abort ", description: "Abort a workflow run" },
         ].filter((opt) => opt.label.startsWith(trimmed.toLowerCase()));
       }
 
       // 第二级：lifecycle 动词后补全当前 session 的 runId
-      if (parts[0] === "pause" || parts[0] === "resume" || parts[0] === "abort") {
+      if (parts[0] === "abort") {
         try {
           const runs = sortedRuns(getRuns());
           if (runs.length === 0) return null;
@@ -102,21 +99,25 @@ export function registerWorkflowsCommand(
       if (ctx.mode === "rpc") {
         const parsed = parseWorkflowRpcCommand(args);
         switch (parsed.action) {
-          case "pause":
-          case "resume":
           case "abort": {
             try {
-              if (parsed.action === "pause") await pauseRun(parsed.runId, deps);
-              else if (parsed.action === "resume") await resumeRun(parsed.runId, deps);
-              else await abortRun(parsed.runId, deps);
-              const pastTense = parsed.action === "abort" ? "aborted" : `${parsed.action}d`;
-              ctx.ui.notify(`Workflow ${parsed.runId}: ${pastTense}`, "info");
+              await abortRun(parsed.runId, deps);
+              // abort 单态后 pastTense 固定（原三态拼接随 pause/resume 删除）
+              ctx.ui.notify(`Workflow ${parsed.runId}: aborted`, "info");
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
-              ctx.ui.notify(`Failed to ${parsed.action} workflow ${parsed.runId}: ${msg}`, "warning");
+              ctx.ui.notify(`Failed to abort workflow ${parsed.runId}: ${msg}`, "warning");
             }
             return;
           }
+          case "lifecycle-removed":
+            // 已移除的 lifecycle verb（pause/resume）：run 一次性生命周期后不可挂起，
+            // 给定制指引而非 Usage（F3 定稿——提示语义优先于 missing-id）
+            ctx.ui.notify(
+              `Workflow ${parsed.verb} has been removed — runs are one-shot. To stop a run early: /workflows abort <runId>`,
+              "warning",
+            );
+            return;
           case "lifecycle-missing-id":
             ctx.ui.notify(`Usage: /workflows ${parsed.verb} <runId>`, "warning");
             return;
@@ -187,7 +188,7 @@ export function registerWorkflowsCommand(
 // ── Helpers ──────────────────────────────────────────────────
 
 /**
- * 取 runs 按 status（running/paused 优先）+ startedAt 倒序排序。
+ * 取 runs 按 status（running 优先）+ startedAt 倒序排序。
  * 复用 main 的 UX 顺序（活跃态在前，新的在前）。
  */
 function sortedRuns(runs: Map<string, WorkflowRun>): WorkflowRun[] {
@@ -205,7 +206,7 @@ function sortedRuns(runs: Map<string, WorkflowRun>): WorkflowRun[] {
 /**
  * 打开 WorkflowsView（三级导航 TUI），注入 lifecycle ViewActions。
  *
- * ViewActions 通过 deps 调 lifecycle（pause/resume/abort），与 view 解耦——
+ * ViewActions 通过 deps 调 lifecycle（abort），与 view 解耦——
  * view 单测可注入 mock actions（见 workflows-view.test.ts）。
  */
 async function openView(
@@ -215,8 +216,6 @@ async function openView(
   deps: LauncherDeps,
 ): Promise<void> {
   const actions: ViewActions = {
-    pause: (runId: string) => pauseRun(runId, deps),
-    resume: (runId: string) => resumeRun(runId, deps),
     abort: (runId: string) => abortRun(runId, deps),
   };
   await createWorkflowsView(run, theme, ctx, actions, deps.store.stateFilePath(run.runId));

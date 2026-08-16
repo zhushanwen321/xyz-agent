@@ -10,8 +10,9 @@
  *   / 未超限 → rebuildRuntime（workerHost.start 重建）
  * - handleScriptError：超限 → transition done,failed / workerLogs 捕获
  * - postBudgetUpdate：postMessage budget-update（usedTokens/usedCost）
- * - stale handle 过滤（handle.isCurrent=false）+ paused/terminal stale 守卫
+ * - stale handle 过滤（handle.isCurrent=false）+ terminal stale 守卫（isTerminal 语义）
  * - rebuildRuntime：worker 崩溃后 workerHost.start + scheduleTimeBudget 重排 + replaceRuntime
+ *   + 在飞 call 清理（discardInFlightCalls 生效：在飞清除、done 保留）
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -41,6 +42,10 @@ function makeRunningRun(opts: {
       budget: { usedTokens: 50, usedCost: 0.1 },
       // L9: errorLogs 现在用 push 追加——必须是真实数组，不能省略
       errorLogs: [],
+      // rebuildRuntime 内 discardInFlightCalls 遍历 calls + 移除 trace 节点——
+      // 必须是真实 Map（空 = 无在飞 call，discard 为 no-op）
+      calls: new Map(),
+      trace: { removeByStepIndex: vi.fn() },
     },
     meta: {
       startedAt: new Date().toISOString(),
@@ -206,9 +211,10 @@ describe("handleWorkerError", () => {
     expect(deps.workerHost.start).toHaveBeenCalledTimes(1);
   });
 
-  it("paused 状态：stale 守卫前置丢弃（不递增 workerErrorCount）", async () => {
+  it("终态（done）：stale 守卫前置丢弃（不递增 workerErrorCount）", async () => {
     const run = makeRunningRun();
-    run.state.status = "paused";
+    run.state.status = "done";
+    (run.state as { reason?: string }).reason = "completed";
     const deps = makeDeps();
 
     await handleWorkerError(run, new Error("stale"), deps, makeHandlers());
@@ -329,6 +335,29 @@ describe("rebuildRuntime", () => {
     const deps = makeDeps({ scheduleTimeBudget: undefined });
 
     expect(() => rebuildRuntime(run, deps, makeHandlers())).not.toThrow();
+    expect(deps.workerHost.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("rebuildRuntime 后同步清理在飞 call（status !== done 清除、done 保留）", () => {
+    const run = makeRunningRun({ budgetTimeMs: 0 });
+    // 注入在飞 call（running）与已完成 call（done）+ trace 节点移除 spy
+    const removeByStepIndex = vi.fn();
+    const calls = new Map<number, { id: number; status: string }>([
+      [7, { id: 7, status: "running" }],
+      [8, { id: 8, status: "done" }],
+    ]);
+    (run.state as { calls: unknown }).calls = calls;
+    (run.state as { trace: unknown }).trace = { removeByStepIndex };
+    const deps = makeDeps();
+
+    rebuildRuntime(run, deps, makeHandlers());
+
+    // 在飞 call（running）被移除（含 trace 节点）；已完成 call（done）保留供重跑 replay
+    expect(calls.has(7)).toBe(false);
+    expect(calls.has(8)).toBe(true);
+    expect(removeByStepIndex).toHaveBeenCalledTimes(1);
+    expect(removeByStepIndex).toHaveBeenCalledWith(7);
+    // 重建本身不受影响
     expect(deps.workerHost.start).toHaveBeenCalledTimes(1);
   });
 });

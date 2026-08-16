@@ -9,7 +9,7 @@
  *
  * mock 策略：
  * - getSubagentService（subagent-service.ts）用 vi.mock 桩化，控制返回的 service.cancel 行为
- * - pauseRun/resumeRun/abortRun（lifecycle.ts）用 vi.mock 桩化，控制抛错/成功
+ * - abortRun（lifecycle.ts）用 vi.mock 桩化，控制抛错/成功
  * - ExtensionCommandContext 用最小 duck-typed mock（仅 mode/hasUI/ui.notify）
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -22,10 +22,8 @@ vi.mock("../execution/subagent-service.ts", () => ({
   getSubagentService: vi.fn(),
 }));
 
-/** 桩化 lifecycle——pauseRun/resumeRun/abortRun 为 vi.fn，由测试控制 resolve/reject。 */
+/** 桩化 lifecycle——abortRun 为 vi.fn，由测试控制 resolve/reject。 */
 vi.mock("../orchestration/lifecycle.ts", () => ({
-  pauseRun: vi.fn(),
-  resumeRun: vi.fn(),
   abortRun: vi.fn(),
 }));
 
@@ -36,7 +34,7 @@ vi.mock("../orchestration/lifecycle.ts", () => ({
 import { getSubagentService } from "../execution/subagent-service.ts";
 import { registerWorkflowsCommand } from "../interface/commands.ts";
 import { registerSubagentsCommand } from "../interface/subagents.ts";
-import { abortRun, pauseRun } from "../orchestration/lifecycle.ts";
+import { abortRun } from "../orchestration/lifecycle.ts";
 
 // ── 类型辅助 ────────────────────────────────────────────────
 
@@ -160,7 +158,6 @@ describe("registerWorkflowsCommand — RPC 分支 dispatch", () => {
   let captured: Record<string, CommandDef>;
   let pi: PiMock;
   let ctx: CtxMock;
-  const mockedPauseRun = vi.mocked(pauseRun);
   const mockedAbortRun = vi.mocked(abortRun);
 
   beforeEach(() => {
@@ -183,23 +180,13 @@ describe("registerWorkflowsCommand — RPC 分支 dispatch", () => {
     registerWorkflowsCommand(
       pi as ExtensionAPI,
       () => new Map(),
-      // LauncherDeps 只在非 RPC 分支用到（pauseRun/resumeRun/abortRun 已被 mock 替换）
+      // LauncherDeps 只在非 RPC 分支用到（abortRun 已被 mock 替换）
       {} as never,
     );
     const def = captured["workflows"];
     expect(def).toBeDefined();
     await def.handler(argsStr, ctx as ExtensionCommandContext);
   }
-
-  it("RPC + pause + runId → pauseRun 调用 + info 文案", async () => {
-    mockedPauseRun.mockResolvedValue(undefined);
-
-    await runHandler("pause run-abc");
-
-    expect(mockedPauseRun).toHaveBeenCalledTimes(1);
-    expect(mockedPauseRun.mock.calls[0][0]).toBe("run-abc");
-    expect(ctx.ui.notify).toHaveBeenCalledWith("Workflow run-abc: paused", "info");
-  });
 
   it("RPC + abort + runId → abortRun 调用 + info 文案", async () => {
     mockedAbortRun.mockResolvedValue(undefined);
@@ -211,28 +198,57 @@ describe("registerWorkflowsCommand — RPC 分支 dispatch", () => {
     expect(ctx.ui.notify).toHaveBeenCalledWith("Workflow run-xyz: aborted", "info");
   });
 
-  it("RPC + pause 无 runId → Usage 提示 warning", async () => {
-    await runHandler("pause");
+  it("RPC + abort + abortRun 抛异常 → try/catch 兜底 warning 文案", async () => {
+    mockedAbortRun.mockRejectedValue(new Error("not found"));
 
-    expect(mockedPauseRun).not.toHaveBeenCalled();
-    expect(ctx.ui.notify).toHaveBeenCalledWith("Usage: /workflows pause <runId>", "warning");
-  });
-
-  it("RPC + pause + pauseRun 抛异常 → try/catch 兜底 warning 文案", async () => {
-    mockedPauseRun.mockRejectedValue(new Error("not found"));
-
-    await runHandler("pause run-err");
+    await runHandler("abort run-err");
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
-      "Failed to pause workflow run-err: not found",
+      "Failed to abort workflow run-err: not found",
       "warning",
     );
+  });
+
+  it("RPC + pause（已移除 verb，带 runId）→ removed 提示 warning，不调 abortRun", async () => {
+    await runHandler("pause run-abc");
+
+    expect(mockedAbortRun).not.toHaveBeenCalled();
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Workflow pause has been removed — runs are one-shot. To stop a run early: /workflows abort <runId>",
+      "warning",
+    );
+  });
+
+  it("RPC + pause（已移除 verb，无 runId）→ removed 提示优先于 Usage（提示语义优先）", async () => {
+    await runHandler("pause");
+
+    expect(mockedAbortRun).not.toHaveBeenCalled();
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Workflow pause has been removed — runs are one-shot. To stop a run early: /workflows abort <runId>",
+      "warning",
+    );
+  });
+
+  it("RPC + resume（已移除 verb）→ removed 提示 warning", async () => {
+    await runHandler("resume run-def");
+
+    expect(mockedAbortRun).not.toHaveBeenCalled();
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Workflow resume has been removed — runs are one-shot. To stop a run early: /workflows abort <runId>",
+      "warning",
+    );
+  });
+
+  it("RPC + abort 无 runId → Usage 提示 warning", async () => {
+    await runHandler("abort");
+
+    expect(mockedAbortRun).not.toHaveBeenCalled();
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Usage: /workflows abort <runId>", "warning");
   });
 
   it("RPC + noop（空参）→ info 文案（兜底）", async () => {
     await runHandler("");
 
-    expect(mockedPauseRun).not.toHaveBeenCalled();
     expect(mockedAbortRun).not.toHaveBeenCalled();
     expect(ctx.ui.notify).toHaveBeenCalledWith(
       "View workflows in the sidebar Flows tab",

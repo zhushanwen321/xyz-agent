@@ -4,6 +4,8 @@
  * 覆盖 parseSubagentRpcCommand / parseWorkflowRpcCommand：
  * - 正常路径（action + id 齐全）
  * - missing-id 边界（action 有但 id 缺失）
+ * - removed 边界（已移除的 workflow lifecycle verb → lifecycle-removed 提示，
+ *   run 一次性生命周期后 pause/resume 不可用）
  * - noop 边界（空串 / 未知 action / 无参列表查看）
  *
  * 纯函数无外部依赖，直接断言返回值。
@@ -60,17 +62,17 @@ describe("parseSubagentRpcCommand", () => {
 // ============================================================
 
 describe("parseWorkflowRpcCommand", () => {
-  it("pause + runId → { action: 'pause', runId }", () => {
+  it("pause + runId → { action: 'lifecycle-removed', verb: 'pause' }（run 一次性生命周期，不可挂起）", () => {
     expect(parseWorkflowRpcCommand("pause run-abc")).toEqual({
-      action: "pause",
-      runId: "run-abc",
+      action: "lifecycle-removed",
+      verb: "pause",
     });
   });
 
-  it("resume + runId → { action: 'resume', runId }", () => {
+  it("resume + runId → { action: 'lifecycle-removed', verb: 'resume' }（run 一次性生命周期，不可恢复）", () => {
     expect(parseWorkflowRpcCommand("resume run-def")).toEqual({
-      action: "resume",
-      runId: "run-def",
+      action: "lifecycle-removed",
+      verb: "resume",
     });
   });
 
@@ -81,16 +83,16 @@ describe("parseWorkflowRpcCommand", () => {
     });
   });
 
-  it("pause 无 runId → lifecycle-missing-id with verb", () => {
+  it("pause 无 runId → lifecycle-removed（removed verb 优先于 missing-id 判定——提示语义优先）", () => {
     expect(parseWorkflowRpcCommand("pause")).toEqual({
-      action: "lifecycle-missing-id",
+      action: "lifecycle-removed",
       verb: "pause",
     });
   });
 
-  it("resume 无 runId → lifecycle-missing-id with verb", () => {
+  it("resume 无 runId → lifecycle-removed（removed verb 优先于 missing-id 判定）", () => {
     expect(parseWorkflowRpcCommand("resume")).toEqual({
-      action: "lifecycle-missing-id",
+      action: "lifecycle-removed",
       verb: "resume",
     });
   });

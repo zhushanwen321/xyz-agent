@@ -18,8 +18,8 @@
  * 关键实现点：(a) overlay 第二参数必须传，否则 view 不全屏；(b) trace 必须 per-render
  * 重读（run.state.trace.toArray 返回内部数组引用，trace.append 后下次 render 可见），
  * 配条件失效 tick（签名比对，IF11）+ requestRender 保证运行中刷新；(c) 's' save 模式无条件可用
- * （saveWorkflow 内部对非 tmp workflow 返回错误消息）；(d) pause/resume/abort 失败时
- * notify 反馈，不静默吞。
+ * （saveWorkflow 内部对非 tmp workflow 返回错误消息）；(d) abort 失败时 notify 反馈，
+ * 不静默吞（run 一次性生命周期——无 pause/resume，abort 是唯一提前停止方式）。
  */
 
 import { promises as fsPromises } from "node:fs";
@@ -123,11 +123,9 @@ interface TuiLike {
 
 /**
  * view 可触发的 lifecycle 操作（由调用方注入，避免 view 直接依赖 Engine 函数）。
- * 每个 action 接收 runId；调用方绑到 pauseRun/resumeRun/abortRun。
+ * 每个 action 接收 runId；调用方绑到 abortRun（一次性生命周期——仅 abort）。
  */
 export interface ViewActions {
-  pause: (runId: string) => Promise<void>;
-  resume: (runId: string) => Promise<void>;
   abort: (runId: string) => Promise<void>;
 }
 
@@ -245,7 +243,7 @@ function createInitialState(): ViewState {
  * @param run WorkflowRun 聚合根（读 state.status/spec/trace/meta）
  * @param theme ThemeLike（避免直接 import Pi runtime）
  * @param ctx ExtensionContext（调 ui.custom 渲染 + ui.notify 错误反馈）
- * @param actions lifecycle 操作（pause/resume/abort），由调用方注入
+ * @param actions lifecycle 操作（abort），由调用方注入
  */
 export function createWorkflowsView(
   run: WorkflowRun,
@@ -429,21 +427,9 @@ export function createWorkflowsView(
         return;
       }
 
- // ── Lifecycle shortcuts (no restart per D-9) ──
-      if (data === "p") {
-        if (run.state.status === "running") {
-          void actions.pause(run.runId)
-            .then(() => { cache.key = undefined; requestRender(); })
-            .catch((err: Error) => ctx.ui.notify(`Pause failed: ${err.message}`, "error"));
-        } else if (run.state.status === "paused") {
-          void actions.resume(run.runId)
-            .then(() => { cache.key = undefined; requestRender(); })
-            .catch((err: Error) => ctx.ui.notify(`Resume failed: ${err.message}`, "error"));
-        }
-        return;
-      }
+ // ── Lifecycle shortcuts (no restart per D-9; no pause/resume — one-shot) ──
       if (data === "a") {
-        if (run.state.status === "running" || run.state.status === "paused") {
+        if (run.state.status === "running") {
           void actions.abort(run.runId)
             .then(() => { cache.key = undefined; requestRender(); })
             .catch((err: Error) => ctx.ui.notify(`Abort failed: ${err.message}`, "error"));
@@ -569,7 +555,7 @@ export function createWorkflowsView(
 // │ ● 2 deploy 0/1 │ ● tester model ... │
 // │ (pad) │ (pad) │
 // ╰───────────────────────────────────────────────────╯
-// ↑↓ phase · ⏎ enter · p pause · a abort · s save · esc back ← footer (框外)
+// ↑↓ phase · ⏎ enter · a abort · s save · esc back ← footer (框外)
 //
 // body = sidebar(SIDEBAR_WIDTH) │ main(rest)
 // save overlay 活跃时居中覆盖 body。
@@ -692,10 +678,8 @@ function renderFooter(
       ? "↑↓ agent · ⏎ detail"
       : "↑↓ agent · ⏎ prompt · PgUp/PgDn scroll";
   const actionParts: string[] = [];
-  const status = run.state.status;
-  if (status === "running" || status === "paused") {
+  if (run.state.status === "running") {
     actionParts.push("a abort");
-    actionParts.push(status === "paused" ? "p resume" : "p pause");
   }
   actionParts.push("s save");
   actionParts.push("S trace");

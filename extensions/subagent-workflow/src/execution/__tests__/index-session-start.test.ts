@@ -141,15 +141,16 @@ vi.mock("../../orchestration/jsonl-run-store.ts", () => ({
   },
 }));
 
-// lifecycle mock：仅替换 pauseRun 为 hoisted spy（W2TC16 断言 pause→dispose 顺序用），
-// 其余导出（scheduleTimeBudget/runWorkflow/resumeRun/abortRun）经 importOriginal 保留
-// 真实实现——本文件不执行真实 workflow，替换只影响 shutdown handler 的 pause 调用点。
-const { mockPauseRun } = vi.hoisted(() => ({
-  mockPauseRun: vi.fn(async () => {}),
+// lifecycle mock：仅替换 terminateRunningRuns 为 hoisted spy（W2TC16 断言
+// terminate→dispose 顺序用），其余导出（scheduleTimeBudget/runWorkflow/abortRun/
+// evictDoneRunsBeyondCap）经 importOriginal 保留真实实现——本文件不执行真实
+// workflow，替换只影响 shutdown handler 的 terminate 调用点。
+const { mockTerminateRunningRuns } = vi.hoisted(() => ({
+  mockTerminateRunningRuns: vi.fn(async () => {}),
 }));
 vi.mock("../../orchestration/lifecycle.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../orchestration/lifecycle.ts")>();
-  return { ...actual, pauseRun: mockPauseRun };
+  return { ...actual, terminateRunningRuns: mockTerminateRunningRuns };
 });
 
 // interface 层 mock：避免触发真实 pi.registerTool（pi 是 Proxy，真实模块访问 pi
@@ -380,14 +381,13 @@ describe("session_start UI handler 注入链路（SR-3）", () => {
 });
 
 describe("session_shutdown: store.dispose 接线（W2TC16）", () => {
-  it("W2TC16: session_shutdown 触发后 store 实例 dispose 被调用（pause 之后、sessionState 清理之前）", async () => {
+  it("W2TC16: session_shutdown 触发后 store 实例 dispose 被调用（terminate 完成之后、sessionState 清理之前）", async () => {
     // 预热：session_start 建立一个 sessionState 条目（含 mock store 实例）。
-    // loadAll 注入 running run 使 shutdown handler 的 running filter 命中、
-    // pauseRun 被调——duck-typed 对象 + no-op transition：session_start 的 kill-9
-    // 恢复会把 running run 转 done,failed（真实 WorkflowRun.reconstruct 无法保持
-    // running），no-op transition 吞掉该转换让 run 以 running 进入 sessionState.runs。
-    // 运行时形状由消费路径保证：handler 只读 state.status（string）与
-    // transition（可调用），duck typing 满足。
+    // loadAll 注入 running run 使其进入 sessionState.runs——duck-typed 对象 +
+    // no-op transition：session_start 的 kill-9 恢复会把 running run 转 done,failed
+    // （真实 WorkflowRun.reconstruct 无法保持 running），no-op transition 吞掉该转换
+    // 让 run 以 running 进入 sessionState.runs。运行时形状由消费路径保证：handler
+    // 只读 state.status（string）与 transition（可调用），duck typing 满足。
     mockStoreDispose.mockClear();
     const runningRun = {
       runId: "wf-w2tc16-1",
@@ -402,27 +402,42 @@ describe("session_shutdown: store.dispose 接线（W2TC16）", () => {
     expect(startHandler).toBeDefined();
     await startHandler!({ type: "session_start" }, createMockCtx("tui"));
 
+    // terminate gate：deferred 模拟 terminateRunningRuns 内部 `await store.save(run)`
+    // 落盘边界——resolve 前 dispose 不得发生（terminate 未完成 = failed 状态未落盘，
+    // 此刻 dispose 刷 pending 批会把未定稿的 running 尾巴刷出去，重启后 kill-9
+    // 恢复误判）。
+    let resolveTerminate = (): void => {};
+    mockTerminateRunningRuns.mockImplementationOnce(async () => {
+      await new Promise<void>((r) => {
+        resolveTerminate = r;
+      });
+    });
+
     // 触发 session_shutdown（event 触发模式对齐本文件 session_start 既有写法）
     const shutdownHandler = getSessionShutdownHandler();
     expect(shutdownHandler).toBeDefined();
-    await shutdownHandler!({ type: "session_shutdown" }, createMockCtx("tui"));
+    const shutdownDone = shutdownHandler!({ type: "session_shutdown" }, createMockCtx("tui"));
 
-    // 每 sessionState 条目一次：session_start 建了 1 个 session → dispose 调用 1 次
+    // terminate 未完成（save 未落盘）→ dispose 未被调（await 边界真实生效）
+    await Promise.resolve();
+    expect(mockStoreDispose).not.toHaveBeenCalled();
+
+    resolveTerminate();
+    await shutdownDone;
+
+    // 每 sessionState 条目一次：session_start 建了 1 个 session → terminate 调用 1 次
+    expect(mockTerminateRunningRuns).toHaveBeenCalledTimes(1);
+    // 原因串字面值（session_shutdown 路径，接口契约锁定）
+    expect(mockTerminateRunningRuns.mock.calls[0]?.[1]).toBe("Session shutdown: run terminated");
+    // dispose 在 terminate 完成后被调（每 session 1 次）
     expect(mockStoreDispose).toHaveBeenCalledTimes(1);
-
-    // 顺序断言「pause 之后」（标题前半）：pauseRun 先于 dispose——W2C5 编排里
-    // pause 的 paused 冷路径同步 flush（run 转 paused 落盘）必须发生在 dispose 刷
-    // pending 批之前，顺序颠倒会让 dispose 时刻 run 仍 running（kill-9 恢复误判）。
-    expect(mockPauseRun).toHaveBeenCalledTimes(1);
-    expect(mockPauseRun.mock.invocationCallOrder[0]).toBeLessThan(
-      mockStoreDispose.mock.invocationCallOrder[0],
-    );
 
     // 顺序断言「sessionState 清理之前」（标题后半）：sessionState.delete 是 Map
     // 同步操作、无外部可观察 spy——用第二次 shutdown 的幂等性间接证明：第一次
     // handler 内条目已删（delete 在 dispose await 之后执行），重复 shutdown 遍历
-    // 空 Map 不再二次 dispose。若清理被跳过，此处 dispose 会涨到 2 次。
+    // 空 Map 不再二次 terminate/dispose。若清理被跳过，此处会涨到 2 次。
     await shutdownHandler!({ type: "session_shutdown" }, createMockCtx("tui"));
+    expect(mockTerminateRunningRuns).toHaveBeenCalledTimes(1);
     expect(mockStoreDispose).toHaveBeenCalledTimes(1);
   });
 });
