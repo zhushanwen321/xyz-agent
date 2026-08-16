@@ -1,5 +1,14 @@
 # @zhushanwen/pi-permission
 
+## 1.2.0
+
+### Minor Changes
+
+- 2a724190c: **llm-shared: ModelSelector collapsed to ref-exact only; permission classifier gains thinkingLevel**
+
+  - **pi-llm-shared**: `ModelSelector` now supports `ref` (exact `provider/model-id`) only — the `fallback` / `available` / `scoped` forms and the `settings.json` `enabledModels` glob machinery are removed. Auto model choice belongs to consumers via `ctx.modelRegistry`; unresolvable refs resolve to `null` (callers skip silently). `CallLLMOptions.reasoning` is now typed `ModelThinkingLevel` including `"off"`, which maps to omitting the reasoning field (provider default).
+  - **pi-permission**: classifier config gains a `thinkingLevel` field (`"off" | minimal | low | medium | high | xhigh | max`), validated on load (invalid values fall back to `"off"`) and forwarded to the classifier LLM call. `classifier.model = "auto"` is now resolved locally from `ctx.modelRegistry.getAvailable()[0]` instead of the removed scoped selector; exact `provider/model-id` refs go through llm-shared's ref selector (fail-closed when unresolvable).
+
 ## 1.1.0
 
 ### Minor Changes

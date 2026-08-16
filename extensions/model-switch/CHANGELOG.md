@@ -1,5 +1,11 @@
 # @zhushanwen/pi-model-switch
 
+## 0.7.1
+
+### Patch Changes
+
+- 2a724190c: chore: refresh dependency range (triggered by @zhushanwen/pi-llm-shared@0.2.0 → @zhushanwen/pi-llm-shared@0.3.0)
+
 ## 0.7.0
 
 ### Minor Changes

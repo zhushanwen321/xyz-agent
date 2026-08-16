@@ -1,5 +1,24 @@
 # @zhushanwen/pi-rename-session
 
+## 0.5.0
+
+### Minor Changes
+
+- 2a724190c: **rename-session: round-end trigger, two-segment input, slug-style titles, and reliability hardening**
+
+  - **Round-end trigger**: the rename LLM call now fires only after the session's first *successful* round fully completes (the final `turn_end` with `stopReason === "stop"`). Previously naming could effectively rely on the first turn's partial state; intermediate tool iterations are now skipped explicitly (`skip: stopReason=toolUse`), and error/aborted/length rounds defer naming to the next successful round instead of using error context.
+  - **Two-segment input**: the title LLM now receives `[user(first prompt), assistant(final reply), user(instruction)]` — each text segment truncated to 4000 Unicode code points — instead of the full conversation prefix. Tool calls/results and other process data are no longer injected, which sharply reduces input tokens (cost no longer grows with the number of tool iterations) and improves title signal quality.
+  - **Slug-style titles**: rewritten system prompt and instruction anchor a slug phrase style (noun/gerund phrase, no full sentences, no pronouns or tense markers, no trailing punctuation; lowercase kebab-case for English; follows the conversation language, 3-6 words). `cleanTitle` now also strips trailing punctuation.
+  - **30s timeout**: the title LLM call is bounded by a fixed 30s timeout; timeouts normalize to a silent skip with a failure log line (`rename LLM call failed: ...`) instead of hanging the fire-and-forget promise.
+  - **Manual-name race guard**: the session name is re-checked immediately before persisting, so a name set via pi (i.e. the `set_session_name` RPC) during the 2-30s LLM call window is not overwritten (`skip: name exists`); out-of-band JSONL edits (e.g. xyz-agent runtime rename) are not visible to the guard.
+  - **Debug evidence chain**: `XYZ_AGENT_DEBUG=1` now emits an introspection log of the exact messages sent to the title LLM (role + head200/tail100 text preview) plus skip/decision logs with timestamps and turn indices — the contract used by the new E2E suite (`e2e/run-a1..a5.mjs`, `e2e/run-all.mjs`).
+
+- 2a724190c: **rename-session: configurable thinking level for title generation**
+
+  - **pi-llm-shared**: `CallLLMOptions` gains an optional `reasoning` field, forwarded to `completeSimple`'s `SimpleStreamOptions.reasoning` (pi-ai `ThinkingLevel`: minimal/low/medium/high/xhigh/max). Omitted = provider default; no behavioral change for existing callers (permission classifier etc.).
+
+  - **pi-rename-session**: new `thinkingLevel` config field (`<agentDir>/config/rename-session-ext-config.json`), type `ModelThinkingLevel` ("off" | minimal | low | medium | high | xhigh | max), default "off". `"off"` maps to not passing `reasoning` (previous behavior); other values are forwarded to the LLM call. Invalid/missing values fall back to "off"; existing config files keep working unchanged.
+
 ## 0.4.0
 
 ### Minor Changes
