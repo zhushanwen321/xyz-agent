@@ -56,9 +56,33 @@ export default defineConfig(({ mode }) => {
       // 证明「构建期可按 flag 选入口」接缝机制；未设 flag 时以下两行与现状完全一致（ES1）。
       outDir: resolve(__dirname, newArch ? '../../apps/electron/renderer/dist-new' : '../../apps/electron/renderer/dist'),
       emptyOutDir: true,
-      rollupOptions: {
+      // [W31 D-8] codeSplitting.groups = rolldown 1.1.4 的 manual chunking（rolldown 文档 §manual-code-splitting）。
+      // rollupOptions.output.manualChunks / advancedChunks 均已被 rolldown 标记 deprecated（manualChunks 仅支持
+      // 函数形式、对象形式不支持），vite 8 的 build.rollupOptions 只是 rolldownOptions 的 deprecated alias
+      // （vite dist node.js: `rolldownOptions ??= rollupOptions` —— 两者同时设置时 rollupOptions 被整体丢弃，
+      // 故 input 与 output 必须统一写在 rolldownOptions 下，不能拆开）。
+      // 分组（10 §3.4 四组 + 探针修正）：
+      //   - xterm：TerminalView 静态 import @xterm/xterm + 4 addon，随 defineAsyncComponent 真正移出首屏
+      //   - shiki：排除 @shikijs/langs（langs-bundle-full 内 235 个动态 import 的语言定义 chunk 必须保持
+      //     按需分离，不被本组吞并——shiki 4.3.1 源码实证）；首屏仍静态 import（markdown.ts），分组收益
+      //     = 与业务 chunk 的 parse 隔离（10 §3.4 审查修正）
+      //   - katex：katex + markdown-it-katex（静态 import，同 shiki 仅 parse 隔离）
+      //   - vendor：其余 node_modules 稳定依赖。tags:['$initial'] 只捕获静态 import 链上的模块，
+      //     mermaid（动态 import ~3MB）不被吞进 vendor、保持独立懒加载 chunk
+      // 未命中任何组的模块（含 @shikijs/langs/*、mermaid、业务共享模块）回退 automatic chunking。
+      rolldownOptions: {
         input: {
           main: resolve(__dirname, newArch ? 'new-arch/index.html' : 'index.html'),
+        },
+        output: {
+          codeSplitting: {
+            groups: [
+              { name: 'xterm', test: /node_modules[\\/]@xterm[\\/]/, priority: 10 },
+              { name: 'shiki', test: /node_modules[\\/](shiki[\\/]|@shikijs[\\/](?!langs[\\/]))/, priority: 10 },
+              { name: 'katex', test: /node_modules[\\/](katex|markdown-it-katex)[\\/]/, priority: 10 },
+              { name: 'vendor', test: /node_modules[\\/]/, tags: ['$initial'], priority: 1 },
+            ],
+          },
         },
       },
     },

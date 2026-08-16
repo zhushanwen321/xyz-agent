@@ -17,12 +17,16 @@
     <AsideRegion />
     <AppNavControls />
     <MainPanel />
-    <SettingsModal v-model:open="settingsOpen" />
+    <!-- D-8 懒加载：v-if="settingsOpen" 门控是生效前提——defineAsyncComponent 在 AsyncComponentWrapper
+         实例化时立即触发 loader（Vue runtime-core setup 内 load()），SettingsModal 内部 v-if="open"
+         挡不住启动期加载；首开设置才拉取设置页树 chunk（首次触发才出现在 Network）。
+         :key 重挂 wrapper 是重试链路的一环（见 script 注释）。 -->
+    <SettingsModal v-if="settingsOpen" :key="settingsRetryKey" v-model:open="settingsOpen" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { provide, ref, watch } from 'vue'
+import { defineAsyncComponent, provide, ref, watch } from 'vue'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
@@ -31,8 +35,33 @@ import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import AppNavControls from './AppNavControls.vue'
 import AsideRegion from './AsideRegion.vue'
 import MainPanel from './MainPanel.vue'
-import SettingsModal from '@/components/settings/SettingsModal.vue'
+import AsyncErrorFallback, { LAZY_RETRY_KEY } from '@/components/ui/AsyncErrorFallback.vue'
 import { useSidebarStore } from '@/stores/sidebar'
+
+// 设置弹窗懒加载（D-8 §3.3 边界判据：首屏不渲染 + 重依赖——设置页树子树）。
+// 代价：activeMenu/extensionView 等弹窗内状态随关闭卸载而重置回默认页（此前常驻挂载保留上次页面，
+// 设置是低频操作，重置属可接受行为差异）。
+// 错误兜底（§3.5）：file:// 下 chunk 404 是配置性错误，不自动重试（onError 只捕获 userRetry 并
+// fail 展示错误占位）。重试 = userRetry（重置 pendingRequest 重跑 loader）+ key 重挂 wrapper
+// （resolvedComp 就绪则直接渲染，否则 setup 挂到新 load 的 then）——两者缺一不可：
+// 只 userRetry 不重挂：已 settled 的 pendingRequest 使 resolve 失效、loaded 永不变；只重挂不 userRetry：
+// setup 的 load() 返回旧 rejected 缓存，loader 不重跑。
+let settingsRetryFn: (() => void) | null = null
+const settingsRetryKey = ref(0)
+const SettingsModal = defineAsyncComponent({
+  loader: () => import('@/components/settings/SettingsModal.vue'),
+  loadingComponent: AsyncErrorFallback,
+  errorComponent: AsyncErrorFallback,
+  delay: 200,
+  onError: (_err, retry, fail) => {
+    settingsRetryFn = retry
+    fail()
+  },
+})
+provide(LAZY_RETRY_KEY, () => {
+  settingsRetryFn?.()
+  settingsRetryKey.value++
+})
 
 const navigation = useNavigationStore()
 const session = useSessionStore()

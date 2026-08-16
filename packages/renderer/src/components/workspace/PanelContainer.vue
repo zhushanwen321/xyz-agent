@@ -84,13 +84,21 @@
                Terminal tab → TerminalView（PTY 优先，交互式终端） -->
           <GitPanel v-if="drawerTab === 'git'" />
           <CommandDocPanel v-else-if="drawerTab === 'doc'" :session-id="panelSessionId" />
-          <DetailPane v-else-if="drawerTab === 'detail'" :session-id="panelSessionId" />
+          <DetailPane
+            v-else-if="drawerTab === 'detail'"
+            :key="detailRetryKey"
+            :session-id="panelSessionId"
+          />
           <BrowserPane
             v-else-if="drawerTab === 'browser' && browserUrl"
             :session-id="panelSessionId ?? ''"
             :url="browserUrlForRender"
           />
-          <TerminalView v-else-if="drawerTab === 'terminal'" :session-id="panelSessionId" />
+          <TerminalView
+            v-else-if="drawerTab === 'terminal'"
+            :key="terminalRetryKey"
+            :session-id="panelSessionId"
+          />
           <!-- subagent/workflow tab（2026-08-14 subagent-workflow-drawer-tab U2/U3/U4）：内容由
                SubagentTab/WorkflowTab 自治（读 useDrawerControl 的 selectedSubagentId/
                selectedWorkflowName + 各自 store），不依赖 panelSessionId，延续默认 slot 注入模式 -->
@@ -119,7 +127,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, provide, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PanelLeaf } from '@xyz-agent/shared'
 import {
@@ -144,12 +152,53 @@ import Panel from '@/components/panel/Panel.vue'
 import PanelHeader from '@/components/panel/PanelHeader.vue'
 import GitPanel from '@/components/panel/GitPanel.vue'
 import CommandDocPanel from '@/components/panel/CommandDocPanel.vue'
-import DetailPane from '@/components/panel/DetailPane.vue'
 import BrowserPane from '@/components/panel/BrowserPane.vue'
-import TerminalView from '@/components/panel/TerminalView.vue'
 import SubagentTab from '@/components/panel/SubagentTab.vue'
 import WorkflowTab from '@/components/panel/WorkflowTab.vue'
+import AsyncErrorFallback, { LAZY_RETRY_KEY } from '@/components/ui/AsyncErrorFallback.vue'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
+
+// D-8 抽屉面板懒加载（§3.3 边界判据：首屏不渲染 + 重依赖）：
+// DetailPane（DiffView 等专属依赖）/ TerminalView（xterm + 4 addon）是 drawerTab 的 v-else-if
+// 互斥分支，切到该 tab 才挂载 → 首次切 tab 才拉取对应 chunk（xterm 移出首屏初始请求集合）。
+// 其余条件挂载面板（GitPanel/CommandDocPanel/BrowserPane/SubagentTab/WorkflowTab）不拆：
+// 均无重第三方依赖（重依赖判据不满足），拆分只引入 async 边界无字节收益（边界评估结论写 W31 汇报）。
+// 错误兜底（§3.5）：file:// 下 chunk 404 是配置性错误，不自动重试，错误占位 + 重试按钮经
+// LAZY_RETRY_KEY 注入触发 loader 重跑（重试 = userRetry 重跑 loader + key 重挂 wrapper，两者缺一
+// 不可，机制见 AppShell.vue 同款注释；两个面板同容器，retry 回调按失败方解析）。
+let detailRetryFn: (() => void) | null = null
+const detailRetryKey = ref(0)
+const DetailPane = defineAsyncComponent({
+  loader: () => import('@/components/panel/DetailPane.vue'),
+  loadingComponent: AsyncErrorFallback,
+  errorComponent: AsyncErrorFallback,
+  delay: 200,
+  onError: (_err, retry, fail) => {
+    detailRetryFn = retry
+    fail()
+  },
+})
+let terminalRetryFn: (() => void) | null = null
+const terminalRetryKey = ref(0)
+const TerminalView = defineAsyncComponent({
+  loader: () => import('@/components/panel/TerminalView.vue'),
+  loadingComponent: AsyncErrorFallback,
+  errorComponent: AsyncErrorFallback,
+  delay: 200,
+  onError: (_err, retry, fail) => {
+    terminalRetryFn = retry
+    fail()
+  },
+})
+provide(LAZY_RETRY_KEY, () => {
+  if (detailRetryFn) {
+    detailRetryFn()
+    detailRetryKey.value++
+  } else if (terminalRetryFn) {
+    terminalRetryFn()
+    terminalRetryKey.value++
+  }
+})
 
 const { t } = useI18n()
 
