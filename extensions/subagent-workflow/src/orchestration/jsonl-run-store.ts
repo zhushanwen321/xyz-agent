@@ -20,10 +20,10 @@
  *   N 次 save 只落盘 1 次（serialize-at-flush：写 flush 时刻最新聚合状态）。
  *   固定窗口不重置 timer（批创建时定时一次），保证 flush 延迟有界 ≤saveDebounceMs；
  *   agent-call 间隔秒级下 trailing 重置无合并增益反可无限推迟。
- * - **冷路径**（本实例对该 runId 首写，或 status !== "running" 即 paused/done）：
- *   同步挂链 flush 绕过 timer——首写立即可见（跨 session resume 后 loadAll 依赖指针
- *   发现文件）、paused/done 立即落盘（kill-9 恢复正确性：pause→崩溃窗口内文件若仍
- *   running，恢复会误判 done,failed）。
+ * - **冷路径**（本实例对该 runId 首写，或 status !== "running" 即 done）：
+ *   同步挂链 flush 绕过 timer——首写立即可见（跨 session 重启后 loadAll 依赖指针
+ *   发现文件）、done 立即落盘（终态优先持久化：transition("done") 后的 save
+ *   不进去抖批，去抖窗口内的崩溃不吞终态）。
  * - 指针（workflow-state-link）只在两处写：创建（本实例首写，即使 status 是
  *   running）与终态（status==="done"）。中间态 flush 永不写指针——每实例每 run ≤2 条。
  * - per-runId 串行 flush 链：同 runId 的 flush 排队顺序执行（不跳过、永不并发
@@ -60,9 +60,15 @@ import { WorkflowRun } from "./models/workflow-run.ts";
 /**
  * 快照格式版本。D-5：旧 session（无此字段或值不匹配）被 loadAll 忽略。
  *
+ * 版本历史：
+ * - wf-run-v1：status 三态（含 paused）、meta 含 pausedAt。
+ * - wf-run-v2（当前）：status 两态（running/done）、meta 无 pausedAt（随一次性
+ *   生命周期收窄，F6/F8）。v1 文件 loadAll 静默跳过——含 v1 running 残留跳过 =
+ *   静默消失不显示，接受（父文档 D-5 边界声明：旧 run 历史价值低，不做兼容迁移）。
+ *
  * 升级格式时 bump 此常量并在 deserializeRun 中适配——旧文件返回 null（被 loadAll 跳过）。
  */
-export const SNAPSHOT_VERSION = "wf-run-v1" as const;
+export const SNAPSHOT_VERSION = "wf-run-v2" as const;
 
 /**
  * 持久化快照形态——WorkflowRun 公共字段的 JSON 可序列化投影。
@@ -103,7 +109,6 @@ interface RunSnapshot {
   meta: {
     startedAt: string;
     completedAt?: string;
-    pausedAt?: string;
     workerErrorCount?: number;
     scriptErrorCount?: number;
   };
@@ -142,7 +147,7 @@ function serializeRun(run: WorkflowRun): RunSnapshot {
         };
       }),
       // trace 节点浅拷贝时 strip live 字段——ExecutionRecord 含可变 turns[]/controller，
-      // 不适合序列化；pause/resume 后 live 为 undefined（重跑时由 dispatchAgentCall 重建）。
+      // 不适合序列化；live 是运行期对象（done 时由 dispatchAgentCall 清除，重跑时重建）。
       trace: run.state.trace.toArray().map(({ live: _live, ...rest }) => rest),
       errorLogs: run.state.errorLogs,
       error: run.state.error,
@@ -203,7 +208,6 @@ function deserializeRun(snapshot: RunSnapshot): WorkflowRun | null {
   const meta: WorkflowRunMeta = {
     startedAt: snapshot.meta.startedAt,
     completedAt: snapshot.meta.completedAt,
-    pausedAt: snapshot.meta.pausedAt,
     workerErrorCount: snapshot.meta.workerErrorCount,
     scriptErrorCount: snapshot.meta.scriptErrorCount,
   };

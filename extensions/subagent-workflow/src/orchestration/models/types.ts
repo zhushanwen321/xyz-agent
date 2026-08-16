@@ -5,7 +5,7 @@
  * 可独立编译测试（D-12 三层架构，AC-1）。
  *
  * 核心内容：
- * - 状态机：RunStatus = "running" | "paused" | "done"（3 态，FR-3）
+ * - 状态机：RunStatus = "running" | "done"（2 态，一次性生命周期，FR-3）
  * + DoneReason（completed/failed/aborted/budget_limited/time_limited）
  * - AgentCallOpts / AgentResult / AgentUsage（单次 agent 调用的输入/输出）
  * - ExecutionTraceNode / TracePatch / ToolCallEntry / WorkerLogEntry（trace 数据）
@@ -18,13 +18,13 @@ import type { ExecutionRecord } from "../../execution/types.ts";
 // ── 状态机 ────────────────────────────────────────────────────
 
 /**
- * 状态机：3 态（D-12 / FR-3）。
+ * 状态机：2 态（D-12 / FR-3，一次性生命周期——run 不可挂起）。
  *
- * running ↔ paused → done
+ * running → done
  *
  * `done` 是唯一终态，具体原因由 DoneReason 区分。
  */
-export type RunStatus = "running" | "paused" | "done";
+export type RunStatus = "running" | "done";
 
 /** 终态原因。done 时必有（WorkflowRun 不变式）。 */
 export type DoneReason =
@@ -38,12 +38,11 @@ export type DoneReason =
 
 /** 合法的状态转换。空数组 = 无出边（done 终态）。 */
 export const VALID_RUN_TRANSITIONS: Record<RunStatus, readonly RunStatus[]> = {
-  running: ["paused", "done"] as const,
-  paused: ["running", "done"] as const,
+  running: ["done"] as const,
   done: [] as const,
 };
 
-export const ALL_RUN_STATUSES: readonly RunStatus[] = ["running", "paused", "done"] as const;
+export const ALL_RUN_STATUSES: readonly RunStatus[] = ["running", "done"] as const;
 
 export const ALL_DONE_REASONS: readonly DoneReason[] = [
   "completed",
@@ -247,7 +246,7 @@ export interface ExecutionTraceNode {
   sessionId?: string;
  /**
  * Session JSONL 绝对路径。finalizeCall 从 result.sessionFile 透传。
- * 持久化到快照（serializeRun），pause/resume + 跨 session 重水合后保留。
+ * 持久化到快照（serializeRun），跨 session 重水合后保留。
  */
   sessionFile?: string;
  /**
@@ -255,7 +254,7 @@ export interface ExecutionTraceNode {
  *
  * 挂在 node 上（D-10 单源延伸：AgentCall.traceNode 与 Trace.nodes 共享同一引用）。
  * TUI 通过 trace.toArray() 读 node.live，派生 getEventLog/getCurrentActivity 实时展示。
- * 不持久化（pause/resume 时为 undefined，重跑时重建）。
+ * 不持久化（序列化时 strip；重跑时由 dispatchAgentCall 重建）。
  */
   live?: ExecutionRecord;
 }

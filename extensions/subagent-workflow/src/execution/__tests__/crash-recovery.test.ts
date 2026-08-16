@@ -136,7 +136,7 @@ import { WorkflowRun } from "../../orchestration/models/workflow-run.ts";
 /** 构造一个可重水合的 WorkflowRun（用 WorkflowRun.reconstruct 跳过 I1 校验）。 */
 function makeRun(
   runId: string,
-  status: "running" | "paused" | "done",
+  status: "running" | "done",
   reason?: "completed" | "failed" | "aborted" | "budget_limited" | "time_limited",
 ): WorkflowRunType {
   return WorkflowRun.reconstruct(

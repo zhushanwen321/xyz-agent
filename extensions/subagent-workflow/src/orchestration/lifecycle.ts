@@ -145,8 +145,9 @@ export function scheduleTimeBudget(
 /**
  * 启动一个 workflow run。
  *
- * 流程：创建 WorkflowRun（paused）+ makeHandlers + 构建 RunRuntime（worker+gate+controller）
- * + assignRuntime（paused → running）+ 注册到 deps.runs + store.save。
+ * 流程：创建 WorkflowRun（running，I1 构造期跳过）+ makeHandlers + 构建 RunRuntime
+ * （worker+gate+controller）+ assignRuntime（注入 runtime，恢复 I1）+ 注册到
+ * deps.runs + store.save。
  *
  * @param spec RunSpec（不可变输入，含 scriptSource/args）
  * @param deps LifecycleDeps（store/workerHost/runner/runs）
@@ -161,8 +162,8 @@ export async function runWorkflow(
 ): Promise<string> {
   // m3 E9：参数校验单一 chokepoint，钉在所有副作用前（generateRunId/log/signal
   // listener/runs.set/workerHost.start/store.save/pending:register）。校验失败时
-  // zero side effects。coerceTypes 原地规范化 spec.args——worker 启动与 pause/resume
-  // 重建共用同一对象（run.spec === spec），恢复路径参数一致。
+  // zero side effects。coerceTypes 原地规范化 spec.args——worker 启动与崩溃重建
+  // 共用同一对象（run.spec === spec），恢复路径参数一致。
   validateRunArgs(spec);
 
   const runId = generateRunId();
@@ -177,7 +178,7 @@ export async function runWorkflow(
     runId,
     spec,
     {
-      status: "paused",
+      status: "running",
       budget: spec.budgetRef ?? new Budget({
         maxTokens: spec.budgetTokens,
         maxTimeMs: spec.budgetTimeMs,
@@ -203,9 +204,6 @@ export async function runWorkflow(
     );
   }
 
- // 注册到 deps.runs（makeHandlers + assignRuntime 需要 run 已在 map）
-  deps.runs.set(runId, run);
-
  // 构造 handlers + runtime（worker + gate + controller）
   const handlers = makeHandlers(run, deps);
   const controller = new AbortController();
@@ -218,8 +216,13 @@ export async function runWorkflow(
       : undefined;
   const runtime = new RunRuntime(worker, gate, controller, timeBudgetTimer);
 
- // assignRuntime（paused → running，原子绑定 runtime + status）
+ // assignRuntime（注入 runtime，恢复 I1：running ⟺ runtime!==undefined）
   run.assignRuntime(runtime);
+
+ // 注册到 deps.runs（assignRuntime 之后——构造到 assignRuntime 之间 run 处于
+ // I1 跳过窗口（running 而 runtime undefined），后移保证窗口对外不可见；
+ // worker.start 抛错时 run 未注册，无孤儿 run 残留）
+  deps.runs.set(runId, run);
 
   await deps.store.save(run);
   deps.log?.("debug", "workflow:lifecycle", "run saved", { runId, status: run.state.status });
@@ -240,7 +243,7 @@ export async function runWorkflow(
 // ── abortRun ─────────────────────────────────────────────────
 
 /**
- * 中止 workflow（running 或 paused）。
+ * 中止 workflow（running）。
  *
  * **done 状态 no-op**：已终态的 run 不重复 abort。
  * **A4 原子性**：transition("done", doneReason) 内部先 releaseRuntime。
@@ -268,13 +271,6 @@ export async function abortRun(
   if (run.state.status === "done") {
     deps.log?.("debug", "workflow:lifecycle", "abortRun no-op: already done", { runId });
     return;
-  }
-
- // 只允许 running/paused abort（防御）
-  if (run.state.status !== "running" && run.state.status !== "paused") {
-    throw new Error(
-      `Cannot abort workflow in state '${run.state.status}': only 'running' or 'paused' can be aborted`,
-    );
   }
 
  // 记录中止原因
@@ -349,7 +345,7 @@ export async function terminateRunningRuns(
  * 淘汰 runs Map 中超出保留窗口的 done run，返回本次淘汰数量。
  *
  * 规则（契约 W3C1）：
- * 1. **状态白名单**：仅 `state.status === "done"` 可淘汰（RunStatus 封闭三态，
+ * 1. **状态白名单**：仅 `state.status === "done"` 可淘汰（RunStatus 封闭两态，
  *    显式白名单而非「非 running」——未来新增状态不落淘汰端）。running
  *    （活跃执行，isScriptRunning 遍历依赖）永不淘汰，即使 completedAt 缺失也
  *    绝不参与排序淘汰。

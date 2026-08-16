@@ -7,12 +7,10 @@
  * 职责：封装一次 running-segment 的所有技术资源（worker 线程 + 并发信号量 +
  * abort controller），统一 release 入口（AC-2：单 release 替代多 boolean flag）。
  *
- * pause/resume 生命周期（G3-001）：
- * - pause 时 WorkflowRun.releaseRuntime 使整个 RunRuntime 丢弃（runtime=undefined）
- * - resume 时 WorkflowRun.assignRuntime(new RunRuntime(...)) 全部重建
- * - 原因：AbortController 一次性语义决定 controller 无法跨 pause/resume 复用，
- * gate 队列也在 worker 重跑脚本 + callCache replay 时清空无影响——所以整个
- * RunRuntime 重建最简单、语义最清晰。
+ * 一次性生命周期（G3-001）：runtime 释放后不再复用——AbortController 一次性
+ * 语义决定 controller 无法跨释放复用，gate 队列也在 worker 重跑脚本 +
+ * callCache replay 时清空无影响，所以整个 RunRuntime 重建。唯一注入路径：
+ * assignRuntime（runWorkflow 创建）与 replaceRuntime（error-recovery 崩溃重试）。
  *
  * 参考：domain-models.md §10、clarification.md G3-001。
  */
@@ -23,11 +21,11 @@ import { WorkerHandle } from "../worker-handle.ts";
 /**
  * release mode 枚举——调用方表达意图。
  *
- * 注：pause 与 terminal 在 RunRuntime 内部行为等价（都全释放 worker + controller）。
- * 保留枚举为可读性——调用方语义清晰（lifecycle pauseRun 传 "pause"，
- * terminateRun 传 "terminal"），且为未来细分留余地。
+ * 一次性生命周期后唯一语义：terminal（终局释放，worker + controller 全释放，
+ * runtime 即被调用方丢弃）。原 "pause" 值已随 pause/resume 生命周期删除（F8）
+ * ——release 后不存在「保留待恢复」的中间形态。
  */
-export type ReleaseMode = "pause" | "terminal";
+export type ReleaseMode = "terminal";
 
 // ── RunRuntime ───────────────────────────────────────────────
 
@@ -39,8 +37,8 @@ export class RunRuntime {
  /** per-running-segment AbortController（一次性，无法复用——G3-001）。 */
   readonly controller: AbortController;
  /** Run 级墙钟时间预算计时器（spec.budgetTimeMs > 0 时由 lifecycle 调度，
-   * 到期 abortRun time_limited）。release 时清理，避免 pause/abort 后孤儿计时器
-   * 仍触发（resume 会重新调度一个全新的计时器，旧的不应残留）。 */
+   * 到期 abortRun time_limited）。release 时清理，避免 abort/replaceRuntime
+   * 后孤儿计时器仍触发（rebuildRuntime 会重排一个全新的计时器，旧的不应残留）。 */
   readonly timeBudgetTimer?: ReturnType<typeof setTimeout>;
  /** 防止 release 重复执行（幂等）。 */
   private released = false;
@@ -62,24 +60,24 @@ export class RunRuntime {
  *
  * 幂等——重复调用安全（第二次起 no-op，released flag 守卫）。
  * 调用后此 RunRuntime 应被调用方丢弃（WorkflowRun.runtime = undefined），
- * resume/retry 时由 assignRuntime/replaceRuntime 注入新实例（G3-001）。
+ * 崩溃重试时由 replaceRuntime 注入新实例（G3-001）。
  *
  * worker.terminate 本身幂等，controller.abort 本身幂等
  * （重复 abort 无副作用），但 released flag 让本方法语义更明确：
  * 「释放过一次的 runtime 不再释放第二次」。
  *
- * @param mode pause | terminal —— 当前等价，保留为调用方表达意图
+ * @param mode terminal —— 终局释放（唯一值，保留参数为调用方语义显式化）
  */
   release(_mode: ReleaseMode): void {
     if (this.released) return;
     this.released = true;
- // 清理 run 级时间预算计时器——pause/abort/replaceRuntime 后它不应再触发
- // （resume 会调度全新计时器；孤儿触发会把已 paused/aborted 的 run 误转 done）。
+ // 清理 run 级时间预算计时器——abort/terminate/replaceRuntime 后它不应再触发
+ // （rebuildRuntime 会重排全新计时器；孤儿触发会把已终态的 run 误转 done）。
     if (this.timeBudgetTimer) clearTimeout(this.timeBudgetTimer);
  // worker.terminate 异步但幂等——不 await（release 是同步签名，调用方
  // 不应被底层线程关闭阻塞；worker 收到 terminate 后自行清理）。
     void this.worker.terminate();
- // controller.abort 触发 listener（kill agent subprocess、pause workflow）。
+ // controller.abort 触发 listener（kill agent subprocess、中止在飞调用）。
  // 一次性语义——已 aborted 的 controller 重复 abort 无副作用。
     this.controller.abort();
   }

@@ -31,17 +31,17 @@ type TreeStatus = NonNullable<TreeItem["status"]>;
 /**
  * 把 workflow/subagent 状态字符串映射到 list-tree 的三态 status。
  *
- * 输入可能是纯 RunStatus（running/paused/done）、RunStatus+reason 组合
+ * 输入可能是纯 RunStatus（running/done）、RunStatus+reason 组合
  * （如 "done (failed)"），或 subagent status（running/done/failed/cancelled/crashed）。
  *
  * 映射规则：
- *   - running（含 paused，paused 可恢复，语义近 running）→ running
+ *   - running → running
  *   - failed / aborted / error / crashed / cancelled / budget_limited / time_limited → failed
  *   - 其他（done / completed / success / pending）→ done
  */
 export function mapRunStatus(status: string): TreeStatus {
   const s = status.toLowerCase();
-  if (s.includes("running") || s.includes("paused")) return "running";
+  if (s.includes("running")) return "running";
   if (
     s.includes("failed") ||
     s.includes("abort") ||
@@ -59,14 +59,12 @@ export function mapRunStatus(status: string): TreeStatus {
 /**
  * 把状态字符串映射到 TreeItem.icon。
  *
- *   running       → circle（进行中）
- *   paused        → pause（暂停可恢复）
- *   failed/abort/cancel/crash → cross
- *   其他（done）  → check
+ *   running                       → circle（进行中）
+ *   failed/abort/cancel/crash     → cross
+ *   其他（done）                  → check
  */
 export function mapRunIcon(status: string): TreeItemIcon {
   const s = status.toLowerCase();
-  if (s.includes("paused")) return "pause";
   if (s.includes("running")) return "circle";
   if (
     s.includes("failed") ||

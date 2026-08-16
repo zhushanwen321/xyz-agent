@@ -224,7 +224,7 @@ interface RunSummary {
 export type WorkflowToolDetails =
   | { action: "run"; runId: string; status: "running" | "not_found" | "invalid_args"; name: string; slug?: string; stateFile?: string; __gui__?: GuiRenderResult }
   | { action: "status"; runs: RunSummary[]; __gui__?: GuiRenderResult }
-  | { action: "pause" | "resume" | "abort"; runId: string; status: string; reason?: string; __gui__?: GuiRenderResult };
+  | { action: "abort"; runId: string; status: string; reason?: string; __gui__?: GuiRenderResult };
 
 /** Result returned by the `workflow` tool's execute. */
 export interface ToolResult {
@@ -278,14 +278,12 @@ export function buildWorkflowGui(details: WorkflowToolDetails) {
       }),
     });
   }
-  // pause/resume/abort
-  // abort 是破坏性终止、pause 是挂起（非成功完成），用 warn 区分；resume 保留 ok
-  const severity = details.action === "abort" || details.action === "pause" ? "warn" as const : "ok" as const;
+  // abort（唯一 lifecycle action）：破坏性终止非成功完成，用 warn 与成功区分
   return guiComponent("stats-line", {
     items: [{
       label: details.action,
       value: details.runId.slice(0, RUNID_SHORT),
-      severity,
+      severity: "warn" as const,
     }],
   });
 }

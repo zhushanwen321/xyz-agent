@@ -29,10 +29,6 @@ describe("mapRunStatus", () => {
     expect(mapRunStatus("running")).toBe("running");
   });
 
-  it("paused → running（paused 可恢复，语义近 running）", () => {
-    expect(mapRunStatus("paused")).toBe("running");
-  });
-
   it("done / completed / success / pending → done", () => {
     expect(mapRunStatus("done")).toBe("done");
     expect(mapRunStatus("completed")).toBe("done");
@@ -57,7 +53,6 @@ describe("mapRunStatus", () => {
     // mapRunStatus 用 includes 子串匹配，"done (failed)" 含 "failed" → failed。
     // 这是 workflow status action 的典型输入（status + reason 拼接）。
     expect(mapRunStatus("done (failed)")).toBe("failed");
-    expect(mapRunStatus("running (paused)")).toBe("running");
   });
 
   it("大小写不敏感", () => {
@@ -74,10 +69,6 @@ describe("mapRunStatus", () => {
 describe("mapRunIcon", () => {
   it("running → circle（进行中）", () => {
     expect(mapRunIcon("running")).toBe("circle");
-  });
-
-  it("paused → pause（暂停可恢复，与 running 区分）", () => {
-    expect(mapRunIcon("paused")).toBe("pause");
   });
 
   it("done / completed / success → check", () => {
@@ -97,12 +88,6 @@ describe("mapRunIcon", () => {
   it("budget / time_limited → cross", () => {
     expect(mapRunIcon("budget_limited")).toBe("cross");
     expect(mapRunIcon("time_limited")).toBe("cross");
-  });
-
-  it("paused 优先于 running（含 running 子串的 paused 取 pause）", () => {
-    // "paused" 不含 "running"，但 "running paused" 这种组合应取 pause
-    // （mapRunIcon 先判 paused 再判 running）。
-    expect(mapRunIcon("running paused")).toBe("pause");
   });
 
   it("未知状态 → done/check（default 兜底，S#15）", () => {
@@ -326,8 +311,8 @@ describe("buildGuiComponent", () => {
 // buildWorkflowGui —— workflow tool details 的 GUI 构造
 // ============================================================
 //
-// WorkflowToolDetails 是 run/status/lifecycle 联合。run→list-tree(1 item)，
-// status→list-tree(N items)，pause/resume/abort→stats-line。
+// WorkflowToolDetails 是 run/status/abort 联合。run→list-tree(1 item)，
+// status→list-tree(N items)，abort→stats-line。
 
 describe("buildWorkflowGui", () => {
   describe("action: run", () => {
@@ -422,33 +407,8 @@ describe("buildWorkflowGui", () => {
     });
   });
 
-  describe("lifecycle actions → stats-line", () => {
-    it("pause → stats-line，label=pause value=runId 前 8 字符，severity=warn（挂起非成功完成）", () => {
-      const details: WorkflowToolDetails = {
-        action: "pause",
-        runId: "pauseRunId99",
-        status: "paused",
-      };
-      const comp = buildWorkflowGui(details);
-
-      expect(comp.type).toBe("stats-line");
-      const props = comp.props as { items: Array<{ label: string; value: string; severity: string }> };
-      expect(props.items[0].label).toBe("pause");
-      expect(props.items[0].value).toBe("pauseRun");
-      expect(props.items[0].severity).toBe("warn");
-    });
-
-    it("resume → stats-line", () => {
-      const details: WorkflowToolDetails = {
-        action: "resume",
-        runId: "resumeId12",
-        status: "running",
-      };
-      const comp = buildWorkflowGui(details);
-      expect(comp.type).toBe("stats-line");
-    });
-
-    it("abort → stats-line", () => {
+  describe("abort → stats-line", () => {
+    it("abort → stats-line，label=abort value=runId 前 8 字符，severity=warn（破坏性终止非成功完成）", () => {
       const details: WorkflowToolDetails = {
         action: "abort",
         runId: "abortId1234",
@@ -457,7 +417,9 @@ describe("buildWorkflowGui", () => {
       };
       const comp = buildWorkflowGui(details);
       expect(comp.type).toBe("stats-line");
-      const props = comp.props as { items: Array<{ severity: string }> };
+      const props = comp.props as { items: Array<{ label: string; value: string; severity: string }> };
+      expect(props.items[0].label).toBe("abort");
+      expect(props.items[0].value).toBe("abortId1");
       expect(props.items[0].severity).toBe("warn");
     });
   });

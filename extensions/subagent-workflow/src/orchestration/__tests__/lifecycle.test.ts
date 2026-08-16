@@ -53,8 +53,9 @@ function makeSpec(opts: {
 /**
  * 构造一个 status="running" 的真实 WorkflowRun，注入 mock RunRuntime。
  *
- * 流程：new WorkflowRun（status=paused）→ assignRuntime（→running）。
- * mock runtime 的 worker.terminate / controller.abort / release 均可观察。
+ * 流程：new WorkflowRun（status=running，I1 构造期跳过）→ assignRuntime
+ * （注入 runtime，恢复 I1）。mock runtime 的 worker.terminate / controller.abort /
+ * release 均可观察。
  */
 /** flush microtask 队列多次，让 void .then().catch() + async 链跑完。
  *
@@ -75,7 +76,7 @@ function makeRunningRealRun(
     runId,
     spec,
     {
-      status: "paused",
+      status: "running",
       budget: new Budget({ maxTokens: 1000 }),
       calls: new Map(),
       trace: new Trace(),
@@ -201,6 +202,44 @@ describe("runWorkflow", () => {
       type: "workflow",
       name: "test-wf",
     });
+  });
+
+  it("创建即 running：构造即 running，runs.set 在 assignRuntime 后（I1 窗口对外不可见）", async () => {
+    const deps = makeDeps();
+    // worker.start 被调时探测 runs 注册状态——证明 runs.set 在 assignRuntime 之后
+    let runsSizeAtWorkerStart = -1;
+    deps.workerHost.start = vi.fn(() => {
+      runsSizeAtWorkerStart = deps.runs.size;
+      return { postMessage: vi.fn(), terminate: vi.fn(async () => {}) };
+    });
+
+    const runId = await runWorkflow(makeSpec(), deps);
+
+    // worker.start 执行时 run 尚未注册（I1 跳过窗口不外泄）
+    expect(runsSizeAtWorkerStart).toBe(0);
+    // 完成后已注册，且构造即 running + runtime 已注入（I1 成立）
+    expect(deps.runs.has(runId)).toBe(true);
+    const run = deps.runs.get(runId)!;
+    expect(run.state.status).toBe("running");
+    expect(run.runtime).toBeDefined();
+    // save 落盘的是恢复 I1 后的聚合（status running + runtime 已绑定）
+    const savedRun = deps.store.save.mock.calls[0]![0] as WorkflowRun;
+    expect(savedRun).toBe(run);
+    expect(savedRun.state.status).toBe("running");
+  });
+
+  it("worker.start 抛错 → runWorkflow 拒绝且 runs 无孤儿注册", async () => {
+    const deps = makeDeps();
+    deps.workerHost.start = vi.fn(() => {
+      throw new Error("worker boot failed");
+    });
+
+    await expect(runWorkflow(makeSpec(), deps)).rejects.toThrow("worker boot failed");
+
+    // 无孤儿：启动失败时 run 未注册进 deps.runs（runs.set 在 start 之后）
+    expect(deps.runs.size).toBe(0);
+    expect(deps.store.save).not.toHaveBeenCalled();
+    expect(deps.eventBus.emit).not.toHaveBeenCalled();
   });
 
   it("带 budgetTimeMs 时调度时间预算计时器", async () => {
@@ -396,15 +435,15 @@ describe("terminateRunningRuns", () => {
 
 /**
  * 构造可重水合的 WorkflowRun 快照（对齐 crash-recovery.test.ts makeRun 模式——
- * WorkflowRun.reconstruct 跳过 I1 校验，running/paused 快照合法）。
+ * WorkflowRun.reconstruct 与构造同语义：I1 构造期跳过，running 快照合法）。
  *
  * @param runId run 标识
  * @param opts.completedAt 完成时刻 ISO 串（缺省=缺失场景，模拟旧格式/异常快照）
- * @param opts.status 状态（默认 done；running/paused 用于白名单验证）
+ * @param opts.status 状态（默认 done；running 用于白名单验证）
  */
 function makeEvictableRun(
   runId: string,
-  opts: { completedAt?: string; status?: "running" | "paused" | "done" } = {},
+  opts: { completedAt?: string; status?: "running" | "done" } = {},
 ): WorkflowRun {
   const status = opts.status ?? "done";
   return WorkflowRun.reconstruct(
@@ -570,17 +609,16 @@ describe("evictDoneRunsBeyondCap（done run 内存淘汰，K=MAX_RETAINED_DONE_R
       expect(exact.has(`wf-ex-${i}`)).toBe(true);
     }
 
-    // 场景②：5 个 done（<K）+ 混入 running/paused
+    // 场景②：5 个 done（<K）+ 混入 running
     const under = new Map<string, WorkflowRun>();
     for (let i = 0; i < 5; i++) {
       under.set(`wf-un-${i}`, makeEvictableRun(`wf-un-${i}`, { completedAt: isoAt(i) }));
     }
     under.set("wf-un-run", makeEvictableRun("wf-un-run", { status: "running" }));
-    under.set("wf-un-paused", makeEvictableRun("wf-un-paused", { status: "paused" }));
     const evictedUnder = evictDoneRunsBeyondCap(under, MAX_RETAINED_DONE_RUNS);
     expect(evictedUnder).toBe(0);
-    expect(under.size).toBe(7);
-    for (const id of ["wf-un-run", "wf-un-paused"]) {
+    expect(under.size).toBe(6);
+    for (const id of ["wf-un-run"]) {
       expect(under.has(id)).toBe(true);
     }
   });

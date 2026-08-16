@@ -105,7 +105,7 @@ describe("computeRenderSignature — 基础确定性", () => {
 describe("computeRenderSignature — run 级字段", () => {
   it("run.state.status 变化 → 签名变", () => {
     const a = makeRun({ status: "running" });
-    const b = makeRun({ status: "paused" });
+    const b = makeRun({ status: "done" });
     expect(computeRenderSignature(a, T0)).not.toBe(computeRenderSignature(b, T0));
   });
 

@@ -7,8 +7,8 @@
 | unit | 模块 | 状态 | 验收基线 commit | 备注 |
 |---|---|---|---|---|
 | U1 行为删除 | orchestration + index + interface | committed | 2cff4d3f8（R6 后基线） | verifier PASS（.orchestration/acceptance/u1-report.md） |
-| U2 类型与持久化收窄 | models + jsonl-run-store + gui 视图 | pending | — | 前置 U1 ✓；全域 pauseRun/resumeRun 零命中归 U2（§2.3） |
-| U3 文档回写 | README + CHANGELOG | pending | — | 前置 U2；顺带处理 U1 verifier 3 条环境注记 |
+| U2 类型与持久化收窄 | models + jsonl-run-store + gui 视图 | committed | ce9302111 | verifier PASS（.orchestration/acceptance/u2-report.md）；builder 两项裁决（abortRun 死分支删除不可达论证 / v1 fixture 用 running）均复核成立 |
+| U3 文档回写 | README + CHANGELOG | pending | — | 前置 U2 ✓；含 U1 verifier 3 条环境注记（S7 脚本 @pi-meta / rebuild 日志 / 补全探测）+ U2 验收文档 fixture 描述修正 |
 
 ## Milestone Gate
 

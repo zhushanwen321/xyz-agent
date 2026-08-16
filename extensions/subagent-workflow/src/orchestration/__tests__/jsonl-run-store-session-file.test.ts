@@ -3,7 +3,7 @@
 // W1: jsonl-run-store 序列化/反序列化 sessionFile round-trip 测试
 //
 // 防的 bug：sessionFile 加入 AgentCall + ExecutionTraceNode 后，序列化时必须写入快照，
-// 反序列化时必须恢复——否则 pause/resume 或跨 session 重水合后 agent 的 session jsonl
+// 反序列化时必须恢复——否则跨 session 重水合后 agent 的 session jsonl
 // 路径丢失，overlay 无法定位。
 
 import * as fs from "node:fs";
@@ -221,6 +221,73 @@ describe("W2: RunStore.stateFilePath 暴露 run 状态文件路径", () => {
   });
 });
 
+// ── W9: 快照版本守卫（v2 当前 / v1 跳过）──────────────────────────────
+//
+// U2 快照格式 v1→v2（status 两态、无 pausedAt）。v1 遗留文件经 loadAll 静默跳过
+// （D-5 边界声明：旧 run 历史价值低，不做兼容迁移）。
+
+describe("W9: 快照版本守卫（v2 当前 / v1 跳过）", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-store-ver-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("v1 头快照（升级前遗留）→ loadAll 静默跳过：不崩、不显示", async () => {
+    // 模拟 v1 时代的遗留快照（版本头 wf-run-v1）。版本守卫只比对 v 字段，
+    // status 值不影响跳过判定——v1 running 残留同样静默消失不显示（D-5 边界声明）。
+    const stateDir = path.join(tmpDir, "workflow-state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    const filePath = path.join(stateDir, "run-legacy-v1.jsonl");
+    const legacySnapshot = {
+      v: "wf-run-v1",
+      runId: "run-legacy-v1",
+      state: { status: "running", calls: [], trace: [], errorLogs: [] },
+      meta: { startedAt: new Date().toISOString() },
+    };
+    fs.writeFileSync(filePath, JSON.stringify(legacySnapshot) + "\n", "utf8");
+
+    const entries: Array<{ type: string; customType?: string; data?: unknown }> = [
+      {
+        type: "custom",
+        customType: "workflow-state-link",
+        data: { runId: "run-legacy-v1", path: filePath },
+      },
+    ];
+    const mockCtx = { sessionManager: { getEntries: () => entries } };
+    const store = new JsonlRunStore({ sessionDir: tmpDir, ctx: mockCtx as never });
+
+    // 版本不匹配 → deserializeRun 返回 null → loadAll 跳过（空数组），不崩
+    await expect(store.loadAll()).resolves.toEqual([]);
+  });
+
+  it("新快照 version === wf-run-v2：status 两态、meta 投影无 pausedAt", async () => {
+    const store = new JsonlRunStore({ sessionDir: tmpDir });
+    const run = makeRunningRun("run-v2-check");
+    await store.save(run);
+
+    const raw = fs.readFileSync(
+      path.join(tmpDir, "workflow-state", "run-v2-check.jsonl"),
+      "utf8",
+    );
+    const snapshot = JSON.parse(raw.trim()) as {
+      v: string;
+      state: { status: string };
+      meta: Record<string, unknown>;
+    };
+    // 版本头 v2（持久化契约锚定字面量）
+    expect(snapshot.v).toBe("wf-run-v2");
+    // status 两态（running/done）
+    expect(snapshot.state.status).toBe("running");
+    // F6：meta 投影不再含 pausedAt 字段
+    expect(snapshot.meta).not.toHaveProperty("pausedAt");
+  });
+});
+
 // W3: save 兜底容错——run 工作目录被并发清理时 mkdir 抛 ENOENT，save 静默返回。
 //
 // 防的 bug（PR #166 CI 回归）：review-fix-loop-e2e 等 runAndWait 测试中，
@@ -276,7 +343,7 @@ describe("W3: JsonlRunStore.save 兜底容错（run 工作目录被并发清理�
 // ── W4-W8: save 去抖（cw swf-perf wave2，W2TC1-15）──────────────────────
 //
 // 状态机前提：热路径 = running 中间态且本实例已首写（writtenOnce 已记）→ 进去抖批；
-// 冷路径 = 本实例首写（任何 status）或 status !== "running"（paused/done）→ 同步
+// 冷路径 = 本实例首写（任何 status）或 status !== "running"（done）→ 同步
 // flush 绕过 timer。所有用例先做一次冷路径首写 + await 落盘，再进热路径。
 //
 // fake timers 惯例对齐 lifecycle.test.ts（vi.useFakeTimers + advanceTimersByTimeAsync）；
@@ -365,15 +432,15 @@ describe("W4: save 去抖（热路径合并 / 冷路径同步 flush）", () => {
     const p1 = store.save(run);
     const p2 = store.save(run);
     const p3 = store.save(run);
-    run.transition("paused");
+    run.transition("done", "completed");
     const p4 = store.save(run); // 冷路径合并 p1-p3 的批
     await p4; // 终态写盘完成后 resolve
     // settlers 数组统一 settle，无悬挂 Promise（防 unhandled rejection）
     await Promise.all([p1, p2, p3]);
-    expect(readStateFile(tmpDir, "run-w2tc3b").state.status).toBe("paused");
+    expect(readStateFile(tmpDir, "run-w2tc3b").state.status).toBe("done");
   });
 
-  it("W2TC7: paused 冷路径同步 flush：立即落盘且不写指针", async () => {
+  it("W2TC7: 终态冷路径同步 flush：立即落盘（绕过 timer）+ 终态指针", async () => {
     const mockPi = { appendEntry: vi.fn() };
     const store7 = new JsonlRunStore({ sessionDir: tmpDir, pi: mockPi as never });
     const run = makeRunningRun("run-w2tc7");
@@ -381,16 +448,18 @@ describe("W4: save 去抖（热路径合并 / 冷路径同步 flush）", () => {
     expect(mockPi.appendEntry).toHaveBeenCalledTimes(1);
 
     const pHot = store7.save(run); // 热路径批 pending
-    run.transition("paused");
-    await store7.save(run); // paused 冷路径
+    run.transition("done", "completed");
+    await store7.save(run); // 终态冷路径
 
-    // 不 advance 立即读磁盘：kill-9 恢复正确性锚点（paused 可 resume，不误判 done,failed）
-    expect(readStateFile(tmpDir, "run-w2tc7").state.status).toBe("paused");
+    // 不 advance 立即读磁盘：终态优先持久化（去抖窗口内的崩溃不吞终态）
+    expect(readStateFile(tmpDir, "run-w2tc7").state.status).toBe("done");
     // 合并的热路径批 Promise 一并 resolved
     await pHot;
-    // advance 后无追加写、无指针
+    // 终态冷路径写终态指针（创建 + 终态 = 2 次）
+    expect(mockPi.appendEntry).toHaveBeenCalledTimes(2);
+    // advance 后无追加写
     await vi.advanceTimersByTimeAsync(1000);
-    expect(mockPi.appendEntry).toHaveBeenCalledTimes(1);
+    expect(mockPi.appendEntry).toHaveBeenCalledTimes(2);
   });
 
   it("W2TC8: 首写冷路径（跨 session resume）：本 store 实例首 save 立即落盘 + 写创建指针", async () => {
@@ -401,7 +470,7 @@ describe("W4: save 去抖（热路径合并 / 冷路径同步 flush）", () => {
     // 实例 A 首写：status 是 running 也立即落盘（首写判定优先于 status）
     await storeA.save(run);
     expect(readStateFile(tmpDir, "run-w2tc8").state.status).toBe("running");
-    // 创建指针（即使 status 是 running——resumeRun 跨 session 首写即建指针）
+    // 创建指针（即使 status 是 running——新 store 实例对该 runId 的首写即建指针）
     expect(mockPi.appendEntry).toHaveBeenCalledTimes(1);
 
     // 实例 B（另一 session 的 store）对同一 runId 再 save：又是一次实例首写
@@ -527,7 +596,7 @@ describe("W6: 指针收敛（仅创建/终态写）", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("W2TC6: 指针 appendEntry 计数：创建+终态=2 次，中间 N 次 save 0 次，paused 0 次", async () => {
+  it("W2TC6: 指针 appendEntry 计数：创建+终态=2 次，中间 N 次 save 0 次", async () => {
     const mockPi = { appendEntry: vi.fn() };
     const store6 = new JsonlRunStore({ sessionDir: tmpDir, pi: mockPi as never });
     const run = makeRunningRun("run-w2tc6");
@@ -543,11 +612,6 @@ describe("W6: 指针收敛（仅创建/终态写）", () => {
       await vi.advanceTimersByTimeAsync(200);
       await p;
     }
-    expect(mockPi.appendEntry).toHaveBeenCalledTimes(1);
-
-    // paused save → 仍 1 次（paused 不写指针）
-    run.transition("paused");
-    await store6.save(run);
     expect(mockPi.appendEntry).toHaveBeenCalledTimes(1);
 
     // done 终态 save → 2 次（终态指针）

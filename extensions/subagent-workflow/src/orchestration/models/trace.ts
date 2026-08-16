@@ -139,7 +139,7 @@ export class Trace {
  * 2. 重复 append 后 removeByStepIndex：remove 的 findIndex 命中首个旧节点
  *    splice，而 byIndex.delete 把整个 stepIndex 键删掉——nodes 残留第二个
  *    节点成为孤儿（find/update 不可达，length/toArray 仍可见）。
- * 合法路径无差异：唯一性由 pause 先 remove 再 append 保证（W1TC12 锚定）。
+ * 合法路径无差异：唯一性由 discard 先 remove 再 append 保证（W1TC12 锚定）。
  */
   private findByStepIndex(stepIndex: number): ExecutionTraceNode | undefined {
     return this.byIndex.get(stepIndex);
@@ -151,12 +151,13 @@ export class Trace {
   }
 
  /**
- * 按 stepIndex 移除节点（仅 pause 清理在飞 call 用）。
+ * 按 stepIndex 移除节点（崩溃重建清理在飞 call 用）。
  *
- * 正常运行不调用（append-only 不变式）。仅 lifecycle.pauseRun 清理被 abort 的
- * 在飞 call 时用——移除其 trace 节点，让 resume 重发 agent-call 时 append 全新
- * 节点走全新执行路径（避免 stale "running" 节点残留 + trace.update 命中旧节点
- * 导致新节点 orphan）。stepIndex 不存在时 no-op（防御性）。
+ * 正常运行不调用（append-only 不变式）。仅 error-recovery 的 discardInFlightCalls
+ * （rebuildRuntime 内，F2）清理被旧 runtime abort 的在飞 call 时用——移除其 trace
+ * 节点，让重跑重发 agent-call 时 append 全新节点走全新执行路径（避免 stale
+ * "running" 节点残留 + trace.update 命中旧节点导致新节点 orphan）。
+ * stepIndex 不存在时 no-op（防御性）。
  */
   removeByStepIndex(stepIndex: number): void {
     // 先 findIndex 判存在再删，避免 byIndex 与 nodes 漂移
