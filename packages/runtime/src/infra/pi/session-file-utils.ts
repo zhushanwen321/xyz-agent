@@ -692,6 +692,12 @@ interface ScanDirCacheEntry {
   expiresAt: number
 }
 let scanDirCache: ScanDirCacheEntry | null = null
+/**
+ * 上次 scanPiSessions 观测的 Date.now()（时钟回拨检测，终审 suggestion）。
+ * now < lastNow = 系统时钟后跳（NTP 校时 / 手动改时）→ TTL 判定基于的墙钟不可信，
+ * 缓存视为过期强制重扫，否则 now < expiresAt 在回拨窗口内恒真（列表视图冻结）。
+ */
+let scanDirLastNow = 0
 
 /** scanPiSessions 的分层选项（wave:perf-w26 D9-1 消费方分层）。 */
 export interface ScanSessionsOptions {
@@ -711,6 +717,8 @@ export interface ScanSessionsOptions {
  */
 export function invalidateScanDirCache(): void {
   scanDirCache = null
+  // 回拨检测基准一并重置：缓存条目与观测基准同生命周期重建（测试间/显式失效后无跨窗口泄漏）
+  scanDirLastNow = 0
 }
 
 /**
@@ -726,7 +734,11 @@ export function invalidateScanDirCache(): void {
 export function scanPiSessions(opts?: ScanSessionsOptions): ScannedSessionMeta[] {
   const dir = getSessionsDir()
   const now = Date.now()
-  if (!opts?.force && scanDirCache && scanDirCache.dir === dir && now < scanDirCache.expiresAt) {
+  // 时钟回拨防护（终审 suggestion）：now 落到上次观测之前 → 墙钟被回拨，expiresAt 的
+  // 单调性假设失效 → 缓存不可信，强制重扫并以回拨后的时钟重建基准（几行代码的轻量防护）
+  const clockWentBackwards = now < scanDirLastNow
+  scanDirLastNow = now
+  if (!opts?.force && !clockWentBackwards && scanDirCache && scanDirCache.dir === dir && now < scanDirCache.expiresAt) {
     // 浅拷贝数组：消费者可安全 sort/splice，不污染缓存本体（meta 元素引用与
     // sessionMetaCache 共享，现状已是只读契约）。
     return [...scanDirCache.entries]

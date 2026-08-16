@@ -62,7 +62,8 @@ const mocks = vi.hoisted(() => ({
   convertPiHistoryMock: vi.fn((raw: unknown) => raw),
   // entry-tree-builder.rebuildHistoryFromEntries mock：默认 identity-ish（返 entries 当 messages），
   // 单测按需 mockReturnValueOnce 控制重建结果。与 convertPiHistoryMock 同范式（隔离重建逻辑）。
-  rebuildHistoryFromEntriesMock: vi.fn((entries: unknown[]) => ({ messages: entries as unknown[], clientUuidMap: new Map<string, string>() })),
+  // orphanToolResults 可选：仅增量路径消费（getHistory 缓存命中分支直接访问），增量用例显式提供。
+  rebuildHistoryFromEntriesMock: vi.fn((entries: unknown[]): { messages: unknown[]; clientUuidMap: Map<string, string>; orphanToolResults?: unknown[] } => ({ messages: entries as unknown[], clientUuidMap: new Map<string, string>() })),
   getHistoryFromFileMock: vi.fn().mockResolvedValue([]),
   getHistoryFromFilePathMock: vi.fn().mockResolvedValue([]),
   getHistoryTailFromFileMock: vi.fn().mockResolvedValue({ messages: [], truncated: false }),
@@ -1207,6 +1208,55 @@ describe('SessionService · Facade', () => {
       mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [], truncated: false })
       await setup.service.getHistory(id)
       expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(id, expect.anything())
+    })
+
+    it('终审 minor：全量重建与缓存新鲜路径返回浅拷贝——调用方就地变更不打穿缓存', async () => {
+      const client = setup.mountClient('sid-alias')
+      const e1 = { type: 'message', id: 'e1', parentId: null, message: { role: 'user', content: 'q1' } }
+      const m1 = { id: 'm1', role: 'user', content: 'q1' } as unknown as Message
+      // 全量重建路径：getEntries() → entries [e1] → rebuild → 写缓存（leafId='e1'）
+      client.getEntries.mockResolvedValueOnce({ data: { entries: [e1], leafId: 'e1' } })
+      mocks.rebuildHistoryFromEntriesMock.mockReturnValueOnce({ messages: [m1], clientUuidMap: new Map() })
+      const first = await setup.service.getHistory('sid-alias')
+      expect(first.messages).toHaveLength(1)
+
+      // 调用方就地污染全量重建的返回数组（模拟未来消费方就地 sort/splice/push）
+      first.messages.push({ id: 'polluted' } as unknown as Message)
+
+      // 缓存新鲜路径（空增量 = R-12 短路）：返回缓存副本，不受上面 push 影响
+      client.getEntries.mockResolvedValueOnce({ data: { entries: [], leafId: 'e1' } })
+      const second = await setup.service.getHistory('sid-alias')
+      expect(second.messages).toHaveLength(1)
+      // 且 second 与缓存本体分离：就地清空后第三次读取仍干净
+      second.messages.length = 0
+      client.getEntries.mockResolvedValueOnce({ data: { entries: [], leafId: 'e1' } })
+      const third = await setup.service.getHistory('sid-alias')
+      expect(third.messages).toHaveLength(1)
+      expect(third.messages[0]).toBe(m1)
+    })
+
+    it('终审 minor：增量合并路径返回浅拷贝——就地清空返回数组不影响缓存', async () => {
+      const client = setup.mountClient('sid-alias-inc')
+      const m1 = { id: 'm1', role: 'user', content: 'q1', piEntryId: 'e1' } as unknown as Message
+      client.getEntries.mockResolvedValueOnce({ data: { entries: [{ type: 'message', id: 'e1' }], leafId: 'e1' } })
+      mocks.rebuildHistoryFromEntriesMock.mockReturnValueOnce({ messages: [m1], clientUuidMap: new Map() })
+      await setup.service.getHistory('sid-alias-inc') // 写缓存（leafId='e1'）
+
+      // 增量路径：delta 首条 parentId === cached.leafId → merge → 写缓存 → 返回 merged 副本
+      const m2 = { id: 'm2', role: 'assistant', content: 'a1', piEntryId: 'e2' } as unknown as Message
+      client.getEntries.mockResolvedValueOnce({
+        data: { entries: [{ type: 'message', id: 'e2', parentId: 'e1' }], leafId: 'e2' },
+      })
+      // 增量路径直接访问 rebuilt.orphanToolResults（无 undefined 保护），mock 必须带该字段
+      mocks.rebuildHistoryFromEntriesMock.mockReturnValueOnce({ messages: [m2], clientUuidMap: new Map(), orphanToolResults: [] })
+      const inc = await setup.service.getHistory('sid-alias-inc')
+      expect(inc.messages).toHaveLength(2)
+
+      // 就地清空返回数组 → 缓存本体不受影响（随后空增量仍返回 2 条）
+      inc.messages.length = 0
+      client.getEntries.mockResolvedValueOnce({ data: { entries: [], leafId: 'e2' } })
+      const after = await setup.service.getHistory('sid-alias-inc')
+      expect(after.messages).toHaveLength(2)
     })
 
     it('reads from file directly when no active client', async () => {

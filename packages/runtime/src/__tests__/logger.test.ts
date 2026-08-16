@@ -181,6 +181,31 @@ describe('logger.ts WriteStream 化（D10-1/D10-2）', () => {
     expect(lines[lines.length - 1]).toContain('message_complete')
   })
 
+  it('多行消息折叠单行（终审 minor）：每条目以时间戳开头，无裸拆行，grep 友好', async () => {
+    logger = await loadLogger()
+    logger.initLogger(dataDir)
+    // 复现 index.ts shutdown 场景：前导 \n 模板串 + 多行消息（console patch 路径）
+    console.log('\n[runtime] received SIGTERM, shutting down...')
+    console.log('line1\nline2\n\nline3')
+    // 显式 logger 调用路径同样单行化（writeLogEntry 是写行唯一出口）
+    logger.logger.info('explicit\nmultiline')
+    logger.logger.warn('error stack like:\n  at foo\n  at bar', { code: 1 })
+    await logger.closeLogger()
+    const mainFile = mainLogFiles()[0]
+    const content = readFileSync(join(logsDir(), mainFile), 'utf8')
+    // 文件里每一行都是完整条目（时间戳开头）——多行消息不再拆出裸次行
+    for (const l of content.trim().split('\n')) {
+      expect(l).toMatch(/^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
+    }
+    // 内容保留：前导换行 strip、中间换行折叠为 ' | '（行边界可见）
+    expect(content).toContain('[runtime] received SIGTERM, shutting down...')
+    expect(content).toContain('line1 | line2 | line3')
+    expect(content).toContain('explicit | multiline')
+    expect(content).toContain('error stack like: |   at foo |   at bar')
+    // meta 的 JSON 序列化不受折叠影响（无裸换行，转义为 \\n）
+    expect(content.trim().split('\n').at(-1)).toMatch(/\{"code":1\}$/)
+  })
+
   it('保留期清理：KEEP_DAYS 天前的 runtime-*/pi-* 删除，近期 + 非本模块文件保留', async () => {
     const dir = logsDir()
     mkdirSync(dir, { recursive: true })

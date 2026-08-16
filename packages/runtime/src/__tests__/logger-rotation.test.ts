@@ -255,6 +255,37 @@ describe('logger.ts 轮转顺序（fs mock）', () => {
     await logger.closeLogger()
   })
 
+  it('回放失败计数：轮转后新流打开失败时 pending 行丢弃并合并记一次 warn（终审 suggestion）', async () => {
+    process.env.XYZ_LOG_MAX_BYTES = '80'
+    const created: InstanceType<typeof FakeStream>[] = []
+    let openCalls = 0
+    vi.mocked(createWriteStream).mockImplementation((file) => {
+      openCalls += 1
+      const name = String(file)
+      // 第 2 次 open = 轮转后的新流：同步抛错（模拟 EMFILE/非法路径）→ openMainStream
+      // 归一 undefined（createStreamSafe）→ 回放丢弃 + pendingDroppedCount 计数
+      if (openCalls === 2) throw new Error('disk full')
+      order.push(`open:${name}`)
+      const s = new FakeStream(name)
+      created.push(s)
+      return asWriteStream(s)
+    })
+    const logger = await import('../infra/logger.js')
+    logger.initLogger(dataDir)
+    // init 行（~130B）已超阈值 → 本行触发轮转并入 pendingLines
+    logger.logger.info('line-0')
+    // 轮转续体在微任务执行（endAndAwait 对同步 close 的 FakeStream 立即 resolve）
+    await tick()
+    // 新流（open#2）打开失败：line-0 无回放目标被丢弃（不静默——计数走合并 warn，
+    // warn 自身经 writeLogEntry 重开流 open#3 落盘）
+    const allChunks = created.flatMap((s) => s.chunks).join('')
+    expect(allChunks).not.toContain('line-0')
+    expect(allChunks).toContain('[WARN]')
+    expect(allChunks).toContain('dropped 1 log lines')
+    expect(openCalls).toBeGreaterThanOrEqual(3) // warn 落盘依赖重开的第 3 个流
+    await logger.closeLogger()
+  })
+
   it('pendingLines 容量上限：轮转窗口超长时超限行丢弃并合并 warn 一次（审查 W30 Fix-1）', async () => {
     vi.useFakeTimers()
     process.env.XYZ_LOG_MAX_BYTES = '80'

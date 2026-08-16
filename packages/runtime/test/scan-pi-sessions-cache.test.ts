@@ -113,6 +113,33 @@ describe('scanPiSessions 目录列举 TTL 缓存（W26 D9-1）', () => {
     }
   })
 
+  it('时钟回拨防护：Date.now() 后跳（NTP 校时/手动改时）视为缓存过期强制重扫（终审 suggestion）', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_000_000)
+      // 空目录填充缓存（expiresAt = 1_001_000），随后新 session 落盘
+      scanPiSessions()
+      writeSessionFile(sessionDir, 'fresh')
+
+      // 窗口内正常命中：缓存快照（空）生效
+      vi.advanceTimersByTime(500)
+      expect(scanPiSessions().map((s) => s.id)).toEqual([])
+
+      // 时钟回拨到 t=900_000（< 上次观测 1_000_500）：无防护时 900_000 < 1_001_000 恒真，
+      // 缓存再挂 100s；有防护 → 强制重扫，新 session 立即可见
+      vi.setSystemTime(900_000)
+      expect(scanPiSessions().map((s) => s.id)).toEqual(['fresh'])
+
+      // 回拨后基准已重建：随后的正常窗口（900_000 + 500ms < 新 expiresAt 901_000+...）命中缓存
+      const afterBackwardCalls = readdirCallCount()
+      vi.advanceTimersByTime(500)
+      expect(scanPiSessions().map((s) => s.id)).toEqual(['fresh'])
+      expect(readdirCallCount()).toBe(afterBackwardCalls)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('force 旁路：TTL 窗口内新落盘文件 force 可见、列表扫描不可见（消费方分层）', () => {
     // 1. 空目录填充 TTL 缓存
     expect(scanPiSessions()).toEqual([])

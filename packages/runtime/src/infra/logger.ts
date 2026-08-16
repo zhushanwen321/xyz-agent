@@ -123,6 +123,20 @@ export function initLogger(dataDir: string): void {
 }
 
 /**
+ * 把消息中的换行折叠为单行分隔符（终审 minor）。
+ *
+ * 为什么：日志文件按「一行一条目」组织（时间戳 + 级别前缀），多行消息（如 index.ts
+ * shutdown 的 `\n[runtime] received SIGTERM...` 模板串）会拆出「无时间戳的裸次行」，
+ * 破坏 grep 与行级解析。在 writeLogEntry（写行唯一出口）折叠，覆盖 console patch
+ * （formatArgs 产出）与显式 logger 调用两条入口；终端输出（originalConsole）保持原样。
+ * 首尾换行直接去除（调用点用前导 \n 与终端前序输出隔行是终端可读性习惯，文件里无意义），
+ * 中间换行折叠为 ' | ' 保留行边界。
+ */
+function foldNewlines(s: string): string {
+  return s.replace(/^[\r\n]+|[\r\n]+$/g, '').replace(/[\r\n]+/g, ' | ')
+}
+
+/**
  * 内部：写一条日志到 runtime 主日志文件（含级别 + 时间戳前缀）。
  *
  * D10-1 起为 WriteStream 缓冲写：write() 只入 Node 内部缓冲（非阻塞），
@@ -138,7 +152,8 @@ function writeLogEntry(level: LogLevel, message: string, meta?: Record<string, u
   if (LEVEL_ORDER[level] < LEVEL_ORDER[currentLevel]) return
   const today = new Date().toISOString().slice(0, ISO_DATE_LENGTH)
   const metaStr = meta ? ' ' + JSON.stringify(meta) : ''
-  const line = `[${new Date().toISOString()}] [${level.toUpperCase()}] ${message}${metaStr}\n`
+  // JSON.stringify(meta) 不产生裸换行（转义为 \\n），无需折叠；message 统一折叠单行化
+  const line = `[${new Date().toISOString()}] [${level.toUpperCase()}] ${foldNewlines(message)}${metaStr}\n`
   const bytes = Buffer.byteLength(line, 'utf8')
   try {
     // 轮转进行中（end 旧流等待 flush 的窗口）：行先入队，续体在新流就绪后回放。
@@ -214,10 +229,15 @@ function rotateMain(nextToday: string, renameOld: boolean): Promise<void> {
     const stream = openMainStream(nextToday)
     // 回放轮转窗口内到达的行（续体在微任务队列原子执行，无并发写入插队）
     const pending = pendingLines.splice(0)
-    for (const p of pending) {
-      if (!stream) break
-      stream.write(p.line)
-      mainBytesWritten += p.bytes
+    if (stream) {
+      for (const p of pending) {
+        stream.write(p.line)
+        mainBytesWritten += p.bytes
+      }
+    } else if (pending.length > 0) {
+      // 新流打开失败（终审 suggestion）：已 splice 出的回放行无目标流可写，丢弃但必须
+      // 计数——对齐超限丢弃的 pendingDroppedCount 出口（不静默），由下方合并 warn 报数
+      pendingDroppedCount += pending.length
     }
     rotationInFlight = null
     // 轮转窗口超长（fs 挂起）导致的超限丢弃：合并记一次 warn。此时 rotationInFlight 已清，
@@ -225,7 +245,7 @@ function rotateMain(nextToday: string, renameOld: boolean): Promise<void> {
     if (pendingDroppedCount > 0) {
       const dropped = pendingDroppedCount
       pendingDroppedCount = 0
-      writeLogEntry('warn', `[logger] dropped ${dropped} log lines (pending queue overflow during rotation)`)
+      writeLogEntry('warn', `[logger] dropped ${dropped} log lines (pending queue overflow / replay target unavailable during rotation)`)
     }
   })()
   return rotationInFlight
@@ -270,12 +290,29 @@ function openMainStream(today: string): WriteStream | undefined {
   } catch {
     // no-op
   }
-  const stream = createWriteStream(file, { flags: 'a' })
+  const stream = createStreamSafe(file)
+  if (!stream) return undefined
   attachStreamErrorHandler(stream, `main:${file}`)
   mainStream = stream
   mainStreamFile = file
   mainBytesWritten = 0
   return stream
+}
+
+/**
+ * createWriteStream 的容错包装（终审 suggestion 配套）：同步抛错（非法路径 / EMFILE 等）
+ * 归一为 undefined，兑现 openMainStream「失败返回 undefined」的注释承诺。不包装时异常会
+ * 沿 rotateMain 的 rotationInFlight promise 传播为 unhandled rejection（writeLogEntry 的
+ * `void rotateMain(...)` 不 await），且 rotateMain 的回放丢弃计数分支（stream 为 undefined）
+ * 因此具备真实可达路径。
+ */
+function createStreamSafe(file: string): WriteStream | undefined {
+  try {
+    return createWriteStream(file, { flags: 'a' })
+  } catch {
+    // 打开失败归一 undefined 由调用方降级（回放丢弃计数）；logger 自身容错，不杀进程
+    return undefined
+  }
 }
 
 /** 清理 KEEP_DAYS 天前的日志文件（启动时调一次）。 */

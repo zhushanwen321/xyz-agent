@@ -539,6 +539,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 视图不一致的文件尾部（最多 20 turn），两次 getHistory 结果闪变。
    *
    * 返回 { messages, truncated }——truncated=true 仅出现在尾读降级路径（N1）。
+   *
+   * 返回值契约（终审 minor）：messages 是缓存/重建结果的**浅拷贝**（数组级隔离，调用方可
+   * 安全就地变更）；Message 元素引用与缓存共享，仍受只读契约约束（深层拷贝在数百条消息
+   * 量级下成本不可接受，元素级污染面仅限「调用方 mutate message 对象自身」）。
    */
   async getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }> {
     // W20 review Fix-5：并发 getHistory 复用同一 inflight promise（同 session 共享一次
@@ -562,7 +566,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
           if (incEntries.length === 0) {
             // R-12 短路：空增量 = leafId 未变 = 缓存新鲜。零重建直接返回（不走尾读 fallback）。
             console.log(`[session-service] getHistory cache fresh (empty delta) for ${sessionId}, returning ${cached.messages.length} cached messages`)
-            return { messages: cached.messages, truncated: cached.truncated }
+            // 终审 minor：返回浅拷贝而非缓存引用——调用方就地 sort/splice/push 会打穿缓存
+            // 基底（增量合并的正确性依赖缓存未被污染）。元素级引用仍共享（只读契约，
+            // 与 scanPiSessions 浅拷贝注释同边界）。
+            return { messages: cached.messages.slice(), truncated: cached.truncated }
           }
           // W20 review Fix-2：parentId 不变量检测。pi append-only 下 delta 首条 entry 的
           // parentId 恒等于缓存基线 leafId（上次响应的叶子即本次增量的父）；branch
@@ -590,7 +597,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
             const newLeafId = inc.data?.leafId ?? null
             this.historyCache.set(sessionId, { leafId: newLeafId, messages: merged, truncated: false })
             console.log(`[session-service] getHistory incremental for ${sessionId}: ${incEntries.length} delta entries, merged ${cached.messages.length} -> ${merged.length} messages`)
-            return { messages: merged, truncated: false }
+            // merged 已写入缓存，返回浅拷贝与缓存本体分离（终审 minor，同上防御）
+            return { messages: merged.slice(), truncated: false }
           }
         } catch (e) {
           if (isEntryNotFoundError(e)) {
@@ -615,8 +623,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
           const rebuilt = this.sessionStore.rebuildHistoryFromEntries(entries, segmentsMetadata)
           // leafId 是 session 当前叶子 entry id，记录为下次增量拉取的 since 基准（D6-1）。
           this.historyCache.set(sessionId, { leafId: result.data?.leafId ?? null, messages: rebuilt.messages, truncated: false })
-          // entry 树重建返回全量历史（get_entries 不截断），truncated=false
-          return { messages: rebuilt.messages, truncated: false }
+          // entry 树重建返回全量历史（get_entries 不截断），truncated=false。
+          // rebuilt.messages 已写入缓存，返回浅拷贝与缓存本体分离（终审 minor，同上防御）
+          return { messages: rebuilt.messages.slice(), truncated: false }
         }
         // R-12：entries 空 → 短路返回空列表（pi RPC 是活跃 session 的权威视图，不走尾读）。
         return { messages: [], truncated: false }
