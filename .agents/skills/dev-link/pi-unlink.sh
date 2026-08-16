@@ -37,7 +37,7 @@ for input in "$@"; do
 	if [ -n "${DL_SRC_DIR:-}" ] && [ -d "$DL_SRC_DIR/skills" ]; then
 		skill_count=$(dl_unlink_skills "$DL_SRC_DIR")
 		if [ "$skill_count" != "0" ]; then
-			green "  ✓ 删 ${skill_count} 个 skill symlink（$PI_SKILL_DIR）"
+			green "  ✓ 删 ${skill_count} 个 skill symlink（${PI_SKILL_DIR}）"
 		fi
 	fi
 

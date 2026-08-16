@@ -135,6 +135,47 @@ describe("callLLM", () => {
 		expect("sessionId" in optionsArg).toBe(false);
 	});
 
+	it("reasoning 透传：传 reasoning=high → options 含 reasoning:high", async () => {
+		const ctx = makeCtx({ ok: true, apiKey: "k" });
+		mockComplete.mockResolvedValue({ content: [{ type: "text", text: "x" }] });
+
+		await callLLM(ctx, {
+			model: makeModel(),
+			systemPrompt: "s",
+			messages: [],
+			reasoning: "high",
+		});
+
+		const optionsArg = mockComplete.mock.calls[0][2];
+		expect(optionsArg).toMatchObject({ reasoning: "high" });
+	});
+
+	it("reasoning 不传 → options 不含 reasoning 字段（条件 spread，provider 默认）", async () => {
+		const ctx = makeCtx({ ok: true, apiKey: "k" });
+		mockComplete.mockResolvedValue({ content: [{ type: "text", text: "x" }] });
+
+		await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
+
+		const optionsArg = mockComplete.mock.calls[0][2] as Record<string, unknown>;
+		expect("reasoning" in optionsArg).toBe(false);
+	});
+
+	it("reasoning=off → options 不含 reasoning 字段（off 由本库映射为不传）", async () => {
+		const ctx = makeCtx({ ok: true, apiKey: "k" });
+		mockComplete.mockResolvedValue({ content: [{ type: "text", text: "x" }] });
+
+		await callLLM(ctx, {
+			model: makeModel(),
+			systemPrompt: "s",
+			messages: [],
+			reasoning: "off",
+		});
+
+		const optionsArg = mockComplete.mock.calls[0][2] as Record<string, unknown>;
+		expect("reasoning" in optionsArg).toBe(false);
+	});
+
+
 	it("B5: getApiKeyAndHeaders reject（抛异常）→ {ok:false, recoverable:true}（归一入 catch，不向上抛）", async () => {
 		const getApiKeyAndHeaders = vi.fn().mockRejectedValueOnce(new Error("registry exploded"));
 		const ctx = { modelRegistry: { getApiKeyAndHeaders } } as unknown as ExtensionContext;

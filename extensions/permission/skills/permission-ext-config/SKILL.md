@@ -48,6 +48,7 @@ interface ClassifierConfig {
   timeout: number;            // 超时秒，默认 90
   autoApproveLowRisk: boolean;   // 低风险自动放行，默认 true
   autoDenyHighRisk: boolean;     // 高风险转人工审批，默认 true
+  thinkingLevel: ModelThinkingLevel;  // thinking 级别，默认 "off"（直接透传，llm-shared 映射为不传）；"minimal"~"max" 透传
 }
 ```
 
@@ -64,8 +65,8 @@ interface ClassifierConfig {
 
 ### classifier.model（只接受 string）
 
-- `"auto"`（默认）→ scoped：读 settings.json enabledModels 取首个可用；空则 fallback available（getAvailable 首个）
-- `"provider/model-id"`（如 `"zhipu/glm-4-flash"`）→ 精确匹配
+- `"auto"`（默认）→ permission 本地取 `ctx.modelRegistry.getAvailable()` 首个（不经过 llm-shared 的非精确 selector）
+- `"provider/model-id"`（如 `"zhipu/glm-4-flash"`）→ 精确匹配（llm-shared `ModelSelector` 仅支持 ref）
 - 传对象形式会被 console.warn 忽略，回落 auto
 
 ### auto 模式的风险判定（autoApproveLowRisk / autoDenyHighRisk）
@@ -91,7 +92,8 @@ AI classifier 输出三档风险，对应处理：
     "model": "auto",
     "timeout": 90,
     "autoApproveLowRisk": true,
-    "autoDenyHighRisk": true
+    "autoDenyHighRisk": true,
+    "thinkingLevel": "off"
   },
   "userRules": []
 }

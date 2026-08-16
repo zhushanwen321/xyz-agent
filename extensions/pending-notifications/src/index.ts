@@ -115,11 +115,11 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	// debug 日志：环境变量 PENDING_DEBUG=1 时输出到 console.debug。
+	// debug 日志：环境变量 XYZ_AGENT_DEBUG=1 时输出到 console.debug。
 	// 不再写入 session entry（pending:log）——session entries 是 append-only 无法 GC，
 	// 12 处 debug 日志会让长 session 的 entries 线性膨胀，而 goal before-agent-start
 	// 每 turn 全量扫描 getEntries()。状态数据（pending:register/unregister）仍写 entry。
-	const debugEnabled = process.env.PENDING_DEBUG === "1";
+	const debugEnabled = process.env.XYZ_AGENT_DEBUG === "1";
 	function debugLog(level: string, message: string, data?: unknown): void {
 		if (!debugEnabled) return;
 		console.debug(`[pending-notifications:${level}] ${message}`, data ?? "");

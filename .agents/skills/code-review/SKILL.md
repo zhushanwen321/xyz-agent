@@ -1,8 +1,9 @@
 ---
 name: code-review
 description: >-
-  审查代码变更。触发词："review"、"审查代码"、"code review"、
-  "帮我看看代码"。仅用于 xyz-agent 项目。
+  Use when 审查当前 worktree 的代码变更。触发词："review"、"审查代码"、
+  "code review"、"帮我看看代码"。
+  不用于 非代码变更的审查（文档/设计/prompt——那是普通对话或其他 skill）。
 ---
 
 # code-review（协调器）

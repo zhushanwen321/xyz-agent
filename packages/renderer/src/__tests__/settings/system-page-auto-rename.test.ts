@@ -19,15 +19,23 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { SystemSettings } from '@/api/domains/settings'
 
-/** mock 捕获 auto-rename API 调用。vi.hoisted 保证在 vi.mock 工厂执行前就绪。 */
+/** mock 捕获 auto-rename / rename-model API 调用。vi.hoisted 保证在 vi.mock 工厂执行前就绪。 */
 const settingsMock = vi.hoisted(() => ({
   getAutoRenameEnabled: vi.fn(() => Promise.resolve({ enabled: true })),
   setAutoRenameEnabled: vi.fn(() => Promise.resolve({ enabled: true })),
+  getRenameModel: vi.fn(() => Promise.resolve({ model: '' })),
+  setRenameModel: vi.fn(() => Promise.resolve({ model: '' })),
 }))
 
 vi.mock('@/api/domains/settings', () => ({
   getAutoRenameEnabled: settingsMock.getAutoRenameEnabled,
   setAutoRenameEnabled: settingsMock.setAutoRenameEnabled,
+  getRenameModel: settingsMock.getRenameModel,
+  setRenameModel: settingsMock.setRenameModel,
+  // stores/settings → '@/api' → mock/index 转发引用 real 域的 getSystem/updateSystem，
+  // 工厂缺导出会在模块加载时抛 "No export defined"；本测试不消费，给空实现即可
+  getSystem: vi.fn(() => Promise.resolve({})),
+  updateSystem: vi.fn(() => Promise.resolve()),
 }))
 
 vi.mock('@/composables/useToast', () => ({
@@ -75,9 +83,13 @@ beforeEach(() => {
   setActivePinia(createPinia())
   settingsMock.getAutoRenameEnabled.mockReset()
   settingsMock.setAutoRenameEnabled.mockReset()
-  // 默认解析值：与组件默认 ref(true) 一致
+  settingsMock.getRenameModel.mockReset()
+  settingsMock.setRenameModel.mockReset()
+  // 默认解析值：与组件默认 ref(true) / ref('') 一致
   settingsMock.getAutoRenameEnabled.mockResolvedValue({ enabled: true })
   settingsMock.setAutoRenameEnabled.mockResolvedValue({ enabled: true })
+  settingsMock.getRenameModel.mockResolvedValue({ model: '' })
+  settingsMock.setRenameModel.mockResolvedValue({ model: '' })
 })
 
 afterEach(() => {

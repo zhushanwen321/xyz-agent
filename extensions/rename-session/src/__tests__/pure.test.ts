@@ -10,6 +10,7 @@ import {
 	DEFAULT_RENAME_CONFIG,
 	cleanTitle,
 	countAssistantReplies,
+	countSuccessfulAssistantReplies,
 	loadRenameConfig,
 	normalizeRenameConfig,
 	saveRenameConfig,
@@ -56,6 +57,60 @@ describe("countAssistantReplies", () => {
 			{ type: "toolResult" },
 		];
 		expect(countAssistantReplies(entries)).toBe(1);
+	});
+});
+
+// ────────────────────────────────────────────────────
+// countSuccessfulAssistantReplies（D6：触发判定改用的成功-turn 计数）
+// ────────────────────────────────────────────────────
+
+describe("countSuccessfulAssistantReplies", () => {
+	it("TC-D6-1: 混合 stopReason（stop×1/toolUse/error/length/user/compaction）→ 只数 stop 的 assistant，返回 1", () => {
+		const entries = [
+			{ type: "message", message: { role: "user" } },
+			{ type: "message", message: { role: "assistant", stopReason: "toolUse" } },
+			{ type: "message", message: { role: "assistant", stopReason: "error" } },
+			{ type: "message", message: { role: "assistant", stopReason: "length" } },
+			{ type: "message", message: { role: "assistant", stopReason: "stop" } },
+			{ type: "compaction" },
+		];
+		expect(countSuccessfulAssistantReplies(entries)).toBe(1);
+	});
+
+	it("TC-D6-2: 工具型首轮（多 toolUse + 最终 1 stop）→ 1（轮末最终 iteration 才触发）", () => {
+		const entries = [
+			{ type: "message", message: { role: "user" } },
+			{ type: "message", message: { role: "assistant", stopReason: "toolUse" } },
+			{ type: "message", message: { role: "assistant", stopReason: "toolUse" } },
+			{ type: "message", message: { role: "assistant", stopReason: "stop" } },
+		];
+		expect(countSuccessfulAssistantReplies(entries)).toBe(1);
+	});
+
+	it("TC-D6-3: 仅 error 轮 → 0（error 轮不命名，延迟到下一成功轮）", () => {
+		const entries = [
+			{ type: "message", message: { role: "user" } },
+			{ type: "message", message: { role: "assistant", stopReason: "error" } },
+		];
+		expect(countSuccessfulAssistantReplies(entries)).toBe(0);
+	});
+
+	it("TC-D6-4: 2 个 stop（已有成功轮后的新 session round）→ 2（不再触发）", () => {
+		const entries = [
+			{ type: "message", message: { role: "user" } },
+			{ type: "message", message: { role: "assistant", stopReason: "stop" } },
+			{ type: "message", message: { role: "user" } },
+			{ type: "message", message: { role: "assistant", stopReason: "stop" } },
+		];
+		expect(countSuccessfulAssistantReplies(entries)).toBe(2);
+	});
+
+	it("TC-D6-5: assistant 无 stopReason 字段 → 不计（只认显式 stop，宽松数据不误触发）", () => {
+		const entries = [
+			{ type: "message", message: { role: "user" } },
+			{ type: "message", message: { role: "assistant" } },
+		];
+		expect(countSuccessfulAssistantReplies(entries)).toBe(0);
 	});
 });
 
@@ -115,6 +170,36 @@ describe("cleanTitle", () => {
 	it("B1: 首尾空白仍被 trim（归一化不影响首尾裁剪）", () => {
 		expect(cleanTitle("  \n修复登录 bug\n  ", 50)).toBe("修复登录 bug");
 	});
+
+	// ── 尾部标点清理（D4 配套：slug 标题不带句尾标点，LLM 漏遵从时兜底） ──
+
+	it("尾部中文句号清除 → '修复登录超时'", () => {
+		expect(cleanTitle("修复登录超时。", 50)).toBe("修复登录超时");
+	});
+
+	it("尾部英文逗号清除 → 'refactor-loader'", () => {
+		expect(cleanTitle("refactor-loader,", 50)).toBe("refactor-loader");
+	});
+
+	it("尾部感叹号清除（中间全角冒号保留）→ '重构：配置'", () => {
+		expect(cleanTitle("重构：配置！", 50)).toBe("重构：配置");
+	});
+
+	it("中间标点保留（version 号的点不在首尾）→ 'v1.2.3'", () => {
+		expect(cleanTitle("v1.2.3", 50)).toBe("v1.2.3");
+	});
+
+	it("尾部标点+引号连排一次清干净 → '修复登录超时'", () => {
+		expect(cleanTitle('修复登录超时。”"', 50)).toBe("修复登录超时");
+	});
+
+	it("全尾部标点标题 → ''（清完为空）", () => {
+		expect(cleanTitle("。。。", 50)).toBe("");
+	});
+
+	it("尾部标点后随空白 → 标点清除后 trim 仍干净 → '重构配置'", () => {
+		expect(cleanTitle("重构配置。 ", 50)).toBe("重构配置");
+	});
 });
 
 // ────────────────────────────────────────────────────
@@ -122,10 +207,11 @@ describe("cleanTitle", () => {
 // ────────────────────────────────────────────────────
 
 describe("DEFAULT_RENAME_CONFIG", () => {
-	it("默认值：enabled=false / model=scoped / maxTitleLength=50", () => {
+	it("默认值：enabled=false / model=空 ref / maxTitleLength=50 / thinkingLevel=off", () => {
 		expect(DEFAULT_RENAME_CONFIG.enabled).toBe(false);
-		expect(DEFAULT_RENAME_CONFIG.model).toEqual({ type: "scoped" });
+		expect(DEFAULT_RENAME_CONFIG.model).toEqual({ type: "ref", ref: "" });
 		expect(DEFAULT_RENAME_CONFIG.maxTitleLength).toBe(50);
+		expect(DEFAULT_RENAME_CONFIG.thinkingLevel).toBe("off");
 	});
 });
 
@@ -145,14 +231,19 @@ describe("normalizeRenameConfig", () => {
 	});
 
 	it("合法完整配置 → 原样返回", () => {
-		const cfg = { enabled: true, model: { type: "ref", ref: "deepseek/chat" }, maxTitleLength: 30 };
+		const cfg = {
+			enabled: true,
+			model: { type: "ref", ref: "deepseek/chat" },
+			maxTitleLength: 30,
+			thinkingLevel: "high",
+		};
 		expect(normalizeRenameConfig(cfg)).toEqual(cfg);
 	});
 
-	it("enabled 非 boolean → 回默认 false", () => {
-		const r = normalizeRenameConfig({ enabled: "yes", model: { type: "available" } });
+	it("enabled 非 boolean → 回默认 false，但合法 ref 仍保留", () => {
+		const r = normalizeRenameConfig({ enabled: "yes", model: { type: "ref", ref: "a/b" } });
 		expect(r.enabled).toBe(false);
-		expect(r.model).toEqual({ type: "available" });
+		expect(r.model).toEqual({ type: "ref", ref: "a/b" });
 	});
 
 	it("maxTitleLength 非正整数 → 回默认 50", () => {
@@ -162,44 +253,202 @@ describe("normalizeRenameConfig", () => {
 		expect(normalizeRenameConfig({ maxTitleLength: "x" }).maxTitleLength).toBe(50);
 	});
 
-	it("model 非法（未知 type / 非 object）→ 回默认 scoped", () => {
-		expect(normalizeRenameConfig({ model: { type: "unknown" } }).model).toEqual({ type: "scoped" });
-		expect(normalizeRenameConfig({ model: "scoped" }).model).toEqual({ type: "scoped" });
+	it("model 非法（未知 type / 非 object / 非 ref 形式）→ 回默认空 ref", () => {
+		expect(normalizeRenameConfig({ model: { type: "unknown" } }).model).toEqual({ type: "ref", ref: "" });
+		expect(normalizeRenameConfig({ model: "scoped" }).model).toEqual({ type: "ref", ref: "" });
+		expect(normalizeRenameConfig({ model: { type: "available" } }).model).toEqual({ type: "ref", ref: "" });
+		expect(normalizeRenameConfig({ model: { type: "scoped" } }).model).toEqual({ type: "ref", ref: "" });
+		expect(normalizeRenameConfig({ model: { type: "fallback", refs: ["a/b"] } }).model).toEqual({ type: "ref", ref: "" });
 	});
 
-	it("model ref 缺 ref 字段 → 回默认", () => {
-		expect(normalizeRenameConfig({ model: { type: "ref" } }).model).toEqual({ type: "scoped" });
-		expect(normalizeRenameConfig({ model: { type: "ref", ref: 123 } }).model).toEqual({ type: "scoped" });
+	it("model ref 缺 ref 字段 / ref 非 string → 回默认空 ref", () => {
+		expect(normalizeRenameConfig({ model: { type: "ref" } }).model).toEqual({ type: "ref", ref: "" });
+		expect(normalizeRenameConfig({ model: { type: "ref", ref: 123 } }).model).toEqual({ type: "ref", ref: "" });
 	});
 
-	it("model fallback refs 非全 string → 回默认", () => {
-		expect(
-			normalizeRenameConfig({ model: { type: "fallback", refs: ["a/b", 1] } }).model,
-		).toEqual({ type: "scoped" });
+	it("thinkingLevel 合法值（minimal/max/off）→ 保留", () => {
+		expect(normalizeRenameConfig({ thinkingLevel: "minimal" }).thinkingLevel).toBe("minimal");
+		expect(normalizeRenameConfig({ thinkingLevel: "max" }).thinkingLevel).toBe("max");
+		expect(normalizeRenameConfig({ thinkingLevel: "off" }).thinkingLevel).toBe("off");
 	});
 
-	it("model 四形式各自合法时原样返回", () => {
+	it("thinkingLevel 非法（未知值 / 非字符串）→ 回默认 off", () => {
+		expect(normalizeRenameConfig({ thinkingLevel: "ultra" }).thinkingLevel).toBe("off");
+		expect(normalizeRenameConfig({ thinkingLevel: 5 }).thinkingLevel).toBe("off");
+		expect(normalizeRenameConfig({ thinkingLevel: null }).thinkingLevel).toBe("off");
+		// 缺失字段 → 默认 off（旧配置文件兼容：无 thinkingLevel 字段的存量配置自动回填）
+		expect(normalizeRenameConfig({ enabled: true }).thinkingLevel).toBe("off");
+	});
+
+	it("model 只支持 ref 精确指定；合法 ref 原样返回", () => {
 		expect(normalizeRenameConfig({ model: { type: "ref", ref: "a/b" } }).model).toEqual({
 			type: "ref",
 			ref: "a/b",
 		});
-		expect(normalizeRenameConfig({ model: { type: "fallback", refs: ["a/b"] } }).model).toEqual({
-			type: "fallback",
-			refs: ["a/b"],
-		});
-		expect(normalizeRenameConfig({ model: { type: "available" } }).model).toEqual({
-			type: "available",
-		});
-		expect(normalizeRenameConfig({ model: { type: "scoped" } }).model).toEqual({ type: "scoped" });
 	});
 
 	it("粒度容错：enabled 坏但 model/maxTitleLength 合法时各自独立处理", () => {
 		const r = normalizeRenameConfig({
 			enabled: "bad",
-			model: { type: "available" },
+			model: { type: "ref", ref: "a/b" },
 			maxTitleLength: 20,
 		});
-		expect(r).toEqual({ enabled: false, model: { type: "available" }, maxTitleLength: 20 });
+		expect(r).toEqual({
+			enabled: false,
+			model: { type: "ref", ref: "a/b" },
+			maxTitleLength: 20,
+			thinkingLevel: "off",
+		});
+	});
+});
+
+// ────────────────────────────────────────────────────
+// 环境变量覆盖（PI_RENAME_*）
+// ────────────────────────────────────────────────────
+
+describe("环境变量覆盖", () => {
+	let tmpAgentDir: string;
+	let origEnv: string | undefined;
+	let origEnabled: string | undefined;
+	let origModel: string | undefined;
+	let origMaxLength: string | undefined;
+	let origThinkingLevel: string | undefined;
+
+	beforeEach(() => {
+		tmpAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "rename-env-"));
+		origEnv = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = tmpAgentDir;
+		clearConfigCache();
+
+		// 保存并清除所有相关环境变量
+		origEnabled = process.env.PI_RENAME_ENABLED;
+		origModel = process.env.PI_RENAME_MODEL;
+		origMaxLength = process.env.PI_RENAME_MAX_TITLE_LENGTH;
+		origThinkingLevel = process.env.PI_RENAME_THINKING_LEVEL;
+		delete process.env.PI_RENAME_ENABLED;
+		delete process.env.PI_RENAME_MODEL;
+		delete process.env.PI_RENAME_MAX_TITLE_LENGTH;
+		delete process.env.PI_RENAME_THINKING_LEVEL;
+	});
+
+	afterEach(() => {
+		if (origEnv === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = origEnv;
+
+		// 恢复环境变量
+		if (origEnabled === undefined) delete process.env.PI_RENAME_ENABLED;
+		else process.env.PI_RENAME_ENABLED = origEnabled;
+		if (origModel === undefined) delete process.env.PI_RENAME_MODEL;
+		else process.env.PI_RENAME_MODEL = origModel;
+		if (origMaxLength === undefined) delete process.env.PI_RENAME_MAX_TITLE_LENGTH;
+		else process.env.PI_RENAME_MAX_TITLE_LENGTH = origMaxLength;
+		if (origThinkingLevel === undefined) delete process.env.PI_RENAME_THINKING_LEVEL;
+		else process.env.PI_RENAME_THINKING_LEVEL = origThinkingLevel;
+
+		clearConfigCache();
+		fs.rmSync(tmpAgentDir, { recursive: true, force: true });
+	});
+
+	it("PI_RENAME_ENABLED=true → enabled=true", () => {
+		process.env.PI_RENAME_ENABLED = "true";
+		const cfg = loadRenameConfig();
+		expect(cfg.enabled).toBe(true);
+	});
+
+	it("PI_RENAME_ENABLED=false → enabled=false", () => {
+		// 即使有 flag 文件，环境变量优先级更高
+		const flagPath = path.join(tmpAgentDir, "auto-rename-enabled");
+		fs.writeFileSync(flagPath, "");
+		process.env.PI_RENAME_ENABLED = "false";
+		const cfg = loadRenameConfig();
+		expect(cfg.enabled).toBe(false);
+	});
+
+	it("PI_RENAME_ENABLED 无效值（如 'yes'）→ 静默忽略，回落配置文件", () => {
+		saveRenameConfig({ ...DEFAULT_RENAME_CONFIG, enabled: true });
+		clearConfigCache();
+		process.env.PI_RENAME_ENABLED = "yes";
+		const cfg = loadRenameConfig();
+		expect(cfg.enabled).toBe(true); // 配置文件的值
+	});
+
+	it("PI_RENAME_MODEL=deepseek/chat → model={type:'ref', ref:'deepseek/chat'}", () => {
+		process.env.PI_RENAME_MODEL = "deepseek/chat";
+		const cfg = loadRenameConfig();
+		expect(cfg.model).toEqual({ type: "ref", ref: "deepseek/chat" });
+	});
+
+	it("PI_RENAME_MODEL 无效格式（如 'invalid'）→ 静默忽略", () => {
+		process.env.PI_RENAME_MODEL = "invalid";
+		const cfg = loadRenameConfig();
+		expect(cfg.model).toEqual({ type: "ref", ref: "" }); // 默认值
+	});
+
+	it("PI_RENAME_MAX_TITLE_LENGTH=100 → maxTitleLength=100", () => {
+		process.env.PI_RENAME_MAX_TITLE_LENGTH = "100";
+		const cfg = loadRenameConfig();
+		expect(cfg.maxTitleLength).toBe(100);
+	});
+
+	it("PI_RENAME_MAX_TITLE_LENGTH 无效值（如 '-5'）→ 静默忽略", () => {
+		process.env.PI_RENAME_MAX_TITLE_LENGTH = "-5";
+		const cfg = loadRenameConfig();
+		expect(cfg.maxTitleLength).toBe(50); // 默认值
+	});
+
+	it("PI_RENAME_THINKING_LEVEL=minimal → thinkingLevel='minimal'", () => {
+		process.env.PI_RENAME_THINKING_LEVEL = "minimal";
+		const cfg = loadRenameConfig();
+		expect(cfg.thinkingLevel).toBe("minimal");
+	});
+
+	it("PI_RENAME_THINKING_LEVEL 无效值（如 'ultra'）→ 静默忽略", () => {
+		process.env.PI_RENAME_THINKING_LEVEL = "ultra";
+		const cfg = loadRenameConfig();
+		expect(cfg.thinkingLevel).toBe("off"); // 默认值
+	});
+
+	it("多环境变量同时覆盖", () => {
+		process.env.PI_RENAME_ENABLED = "true";
+		process.env.PI_RENAME_MODEL = "zhipu/glm-4-flash";
+		process.env.PI_RENAME_MAX_TITLE_LENGTH = "30";
+		process.env.PI_RENAME_THINKING_LEVEL = "high";
+
+		const cfg = loadRenameConfig();
+		expect(cfg).toEqual({
+			enabled: true,
+			model: { type: "ref", ref: "zhipu/glm-4-flash" },
+			maxTitleLength: 30,
+			thinkingLevel: "high",
+		});
+	});
+
+	it("环境变量覆盖配置文件值", () => {
+		saveRenameConfig({
+			enabled: false,
+			model: { type: "ref", ref: "a/b" },
+			maxTitleLength: 100,
+			thinkingLevel: "off",
+		});
+		clearConfigCache();
+
+		process.env.PI_RENAME_ENABLED = "true";
+		process.env.PI_RENAME_MAX_TITLE_LENGTH = "25";
+
+		const cfg = loadRenameConfig();
+		expect(cfg.enabled).toBe(true); // 环境变量覆盖
+		expect(cfg.model).toEqual({ type: "ref", ref: "a/b" }); // 配置文件值保留
+		expect(cfg.maxTitleLength).toBe(25); // 环境变量覆盖
+	});
+
+	it("环境变量优先级高于 flag 文件（enabled 由环境变量控制时 flag 不生效）", () => {
+		const flagPath = path.join(tmpAgentDir, "auto-rename-enabled");
+		fs.writeFileSync(flagPath, "");
+
+		process.env.PI_RENAME_ENABLED = "false";
+
+		const cfg = loadRenameConfig();
+		expect(cfg.enabled).toBe(false); // 环境变量覆盖 flag
 	});
 });
 
@@ -236,7 +485,12 @@ describe("loadRenameConfig / saveRenameConfig", () => {
 	});
 
 	it("saveRenameConfig 后 loadRenameConfig 读回（跨缓存清空）", () => {
-		const cfg = { enabled: true, model: { type: "ref", ref: "deepseek/chat" }, maxTitleLength: 30 };
+		const cfg = {
+			enabled: true,
+			model: { type: "ref", ref: "deepseek/chat" },
+			maxTitleLength: 30,
+			thinkingLevel: "off",
+		};
 		const saveResult = saveRenameConfig(cfg);
 		expect(saveResult.success).toBe(true);
 		clearConfigCache();
@@ -244,7 +498,12 @@ describe("loadRenameConfig / saveRenameConfig", () => {
 	});
 
 	it("saveRenameConfig 实际落盘到隔离目录（不写 ~/.pi/agent）", () => {
-		saveRenameConfig({ enabled: true, model: { type: "scoped" }, maxTitleLength: 50 });
+		saveRenameConfig({
+			enabled: true,
+			model: { type: "ref", ref: "" },
+			maxTitleLength: 50,
+			thinkingLevel: "off",
+		});
 		const filePath = path.join(tmpAgentDir, "config", "rename-session-ext-config.json");
 		expect(fs.existsSync(filePath)).toBe(true);
 		const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));

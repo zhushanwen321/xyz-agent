@@ -98,7 +98,7 @@ describe("executeAutoRenameCommand", () => {
 		fs.mkdirSync(path.dirname(configPath()), { recursive: true });
 		fs.writeFileSync(
 			configPath(),
-			JSON.stringify({ enabled: false, model: { type: "available" }, maxTitleLength: 30 }),
+			JSON.stringify({ enabled: false, model: { type: "ref", ref: "a/b" }, maxTitleLength: 30 }),
 		);
 		clearConfigCache();
 
@@ -108,7 +108,7 @@ describe("executeAutoRenameCommand", () => {
 		// on 只建 flag，config 原封不动（enabled 仍 false，但 loadRenameConfig 被 flag 覆盖为 true）
 		const raw = JSON.parse(fs.readFileSync(configPath(), "utf-8"));
 		expect(raw.enabled).toBe(false);
-		expect(raw.model).toEqual({ type: "available" });
+		expect(raw.model).toEqual({ type: "ref", ref: "a/b" });
 		expect(raw.maxTitleLength).toBe(30);
 		expect(executeAutoRenameCommand("status")).toContain("已开启");
 	});

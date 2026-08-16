@@ -1,12 +1,11 @@
 ---
 name: dev-link
 description: >-
-  管理 @zhushanwen/pi-* extension 在本地源码（live edit）与已发布版本之间切换。
-  两种模式：pi 模式（原版 pi CLI，pi-link.sh/pi-unlink.sh symlink 到
-  ~/.pi/agent/extensions/）与 xyz-agent 模式（Electron dev，XYZ_EXTENSION_PATHS
-  环境变量，link-local.sh/link-npm.sh）。触发词："pi link"、"原版 pi"、
-  "link local"、"dev link"、"切换到本地"、"symlink extension"、"unlink extension"、
-  "restore npm"、"extension link"。不用于安装新包或管理非 pi extension。
+  Use when 在 @zhushanwen/pi-* extension 的本地源码（live edit）与已发布版本
+  之间切换。触发词："pi link"、"原版 pi"、"link local"、"dev link"、
+  "切换到本地"、"symlink extension"、"unlink extension"、"restore npm"、
+  "extension link"。
+  不用于 安装新包或管理非 pi extension。
 ---
 
 # Dev Link

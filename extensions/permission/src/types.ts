@@ -5,6 +5,8 @@
  * 对应 slice plan 的 DM1-DM5 数据模型。
  */
 
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+
 // ──────────────────────── DM1: PermissionMode ────────────────────────
 
 /** 四档权限模式，按严格等级排序（yolo 最低，strict 最高） */
@@ -96,6 +98,12 @@ export interface ClassifierConfig {
 	autoApproveLowRisk: boolean;
 	/** 高风险是否自动拦截（转人工审批） */
 	autoDenyHighRisk: boolean;
+	/**
+	 * 标题生成 LLM 的 thinking 级别（pi 的 ModelThinkingLevel，THINKING_ORDER SSOT）。
+	 * 默认 "off"：不传 pi-ai reasoning（provider 默认行为）；
+	 * "minimal"~"max" 透传给 SimpleStreamOptions.reasoning（provider 不支持时静默忽略）。
+	 */
+	thinkingLevel: ModelThinkingLevel;
 }
 
 // ──────────────────────── DM5: PermissionConfig ────────────────────────
@@ -120,6 +128,7 @@ export const DEFAULT_CLASSIFIER_CONFIG: ClassifierConfig = {
 	timeout: 90,
 	autoApproveLowRisk: true,
 	autoDenyHighRisk: true,
+	thinkingLevel: "off",
 };
 
 export const DEFAULT_CONFIG: PermissionConfig = {

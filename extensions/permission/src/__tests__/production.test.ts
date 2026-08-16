@@ -91,16 +91,10 @@ beforeEach(() => {
 
 // ──────────────────────── TC1/TC2: toSelector 映射 ────────────────────────
 
-describe("toSelector（C2：'auto'→scoped 向后兼容）", () => {
-	it("TC1: 'auto' 映射为 scoped", () => {
-		expect(toSelector("auto")).toEqual({ type: "scoped" });
-	});
-
-	it("TC2: 'provider/model-id' 映射为 ref", () => {
+describe("toSelector（仅 ref 精确指定）", () => {
+	it("任意字符串都映射为 ref（auto 由 production resolveModel 层自行处理，不走 selector）", () => {
+		expect(toSelector("auto")).toEqual({ type: "ref", ref: "auto" });
 		expect(toSelector("anthropic/claude-sonnet")).toEqual({ type: "ref", ref: "anthropic/claude-sonnet" });
-	});
-
-	it("任意非 'auto' 字符串都视为 ref（含边角格式，由 resolveRef 判合法性）", () => {
 		expect(toSelector("openai/gpt-4o")).toEqual({ type: "ref", ref: "openai/gpt-4o" });
 	});
 });
@@ -129,16 +123,17 @@ describe("createProductionClassifier", () => {
 
 describe("resolveModel 装配（resolveModel + callLLM）", () => {
 	const CTX = { toolName: "bash", command: "ls", cwd: "/tmp" };
-	const CFG = { enabled: true, model: "auto", timeout: 5, autoApproveLowRisk: false, autoDenyHighRisk: true };
+	const CFG_AUTO = { enabled: true, model: "auto", timeout: 5, autoApproveLowRisk: false, autoDenyHighRisk: true };
+	const CFG_REF = { enabled: true, model: "test-co/model-a", timeout: 5, autoApproveLowRisk: false, autoDenyHighRisk: true };
 
-	it("TC3: scoped enabledModels 空 + available 空 → resolveModel null → fail-closed ask（不触达 callLLM）", async () => {
-		vi.mocked(resolveModelShared).mockReturnValue(null);
-		const ctx = makeMockCtx();
+	it("TC3: auto 且 getAvailable 空 → resolveModel null → fail-closed ask（不触达 callLLM）", async () => {
+		const ctx = makeMockCtx({ getAvailable: () => [] });
 		const classifier = createProductionClassifier(ctx);
-		const result = await classifier.classifyRisk(CTX, CFG);
+		const result = await classifier.classifyRisk(CTX, CFG_AUTO);
 		expect(result.outcome).toBe("ask");
 		expect(result.confidence).toBe(0);
-		// 关键：resolveModel null 时不应触达 callLLM（LLM 调用层）
+		// auto 是 permission 本地解析，不经过 llm-shared resolveModel
+		expect(resolveModelShared).not.toHaveBeenCalled();
 		expect(callLLMShared).not.toHaveBeenCalled();
 	});
 
@@ -154,16 +149,14 @@ describe("resolveModel 装配（resolveModel + callLLM）", () => {
 		expect(source).toContain('from "@zhushanwen/pi-llm-shared"');
 	});
 
-	it("TC4（装配）: resolveModel 命中 → callLLM 收到 model → ok:true 正常分类（收口链路通）", async () => {
-		vi.mocked(resolveModelShared).mockImplementation((_ctx, selector) =>
-			selector.type === "scoped" ? MOCK_MODEL_A : null,
-		);
+	it("TC4（装配）: ref resolveModel 命中 → callLLM 收到 model → ok:true 正常分类（收口链路通）", async () => {
+		vi.mocked(resolveModelShared).mockReturnValue(MOCK_MODEL_A);
 		vi.mocked(callLLMShared).mockResolvedValue({
 			ok: true,
 			content: '{"outcome":"allow","risk_level":"low","reasoning":"safe","confidence":0.9}',
 		});
 		const classifier = createProductionClassifier(makeMockCtx());
-		const result = await classifier.classifyRisk(CTX, CFG);
+		const result = await classifier.classifyRisk(CTX, CFG_REF);
 		expect(result.outcome).toBe("allow");
 		// 关键：resolveModel 返回 model 后，callLLM 被调用且收到该 model（收口链路 resolve→callLLM 通）
 		expect(callLLMShared).toHaveBeenCalledOnce();
@@ -172,19 +165,18 @@ describe("resolveModel 装配（resolveModel + callLLM）", () => {
 		expect(opts.model).toBe(MOCK_MODEL_A);
 		expect(opts.messages).toHaveLength(1);
 		expect(opts.systemPrompt.length).toBeGreaterThan(0);
-		// scoped 命中只调 1 次 resolveModel（不走 available fallback）
+		// ref 精确指定只调 1 次 resolveModel
 		expect(vi.mocked(resolveModelShared)).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(resolveModelShared)).toHaveBeenCalledWith(expect.anything(), { type: "ref", ref: "test-co/model-a" });
 	});
 
-	it("TC4b: resolveModel 成功（scoped 命中）→ onLog 输出 '[pi-permission] classifier: using model <modelId>'（契约 C2，R2 验收前提）", async () => {
-		vi.mocked(resolveModelShared).mockImplementation((_ctx, selector) =>
-			selector.type === "scoped" ? MOCK_MODEL_A : null,
-		);
+	it("TC4b: ref resolveModel 成功 → onLog 输出 '[pi-permission] classifier: using model <modelId>'（契约 C2，R2 验收前提）", async () => {
+		vi.mocked(resolveModelShared).mockReturnValue(MOCK_MODEL_A);
 		vi.mocked(callLLMShared).mockResolvedValue({ ok: true, content: "x" });
 		const classifier = createProductionClassifier(makeMockCtx());
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		try {
-			await classifier.classifyRisk(CTX, CFG);
+			await classifier.classifyRisk(CTX, CFG_REF);
 			// onLog 实装为 console.warn（production.ts），成功路径日志在 LLM 调用前输出
 			expect(warnSpy).toHaveBeenCalledWith("[pi-permission] classifier: using model model-a");
 		} finally {
@@ -196,26 +188,22 @@ describe("resolveModel 装配（resolveModel + callLLM）", () => {
 		vi.mocked(resolveModelShared).mockReturnValue(MOCK_MODEL_A);
 		vi.mocked(callLLMShared).mockResolvedValue({ ok: false, error: "token expired", recoverable: true });
 		const classifier = createProductionClassifier(makeMockCtx());
-		const result = await classifier.classifyRisk(CTX, CFG);
+		const result = await classifier.classifyRisk(CTX, CFG_REF);
 		expect(result.outcome).toBe("ask");
 		expect(result.confidence).toBe(0);
 		expect(callLLMShared).toHaveBeenCalledOnce();
 	});
 
-	it("TC7: scoped 空 fallback available 命中（CL-scoped-fallback：有 auth provider 但无 enabledModels 不退化）", async () => {
-		// scoped（首次）返回 null，available（fallback）返回 MOCK_MODEL_A
-		vi.mocked(resolveModelShared).mockImplementation((_ctx, selector) =>
-			selector.type === "available" ? MOCK_MODEL_A : null,
-		);
+	it("TC7: auto 直接取 getAvailable 首个（permission 本地兼容，不经过非精确 ModelSelector）", async () => {
+		const ctx = makeMockCtx({ getAvailable: () => [MOCK_MODEL_A] });
 		vi.mocked(callLLMShared).mockResolvedValue({ ok: true, content: "x" });
-		const classifier = createProductionClassifier(makeMockCtx());
-		const result = await classifier.classifyRisk(CTX, CFG);
-		// fallback 命中 available → callLLM 收到 available model（非 scoped 的 null 直接返回）
+		const classifier = createProductionClassifier(ctx);
+		const result = await classifier.classifyRisk(CTX, CFG_AUTO);
 		expect(callLLMShared).toHaveBeenCalledOnce();
 		const opts = vi.mocked(callLLMShared).mock.calls[0]![1];
 		expect(opts.model).toBe(MOCK_MODEL_A);
-		// scoped 调 1 次（null）+ available fallback 调 1 次 = 2 次
-		expect(vi.mocked(resolveModelShared)).toHaveBeenCalledTimes(2);
+		// auto 不经过 llm-shared resolveModel
+		expect(resolveModelShared).not.toHaveBeenCalled();
 		// callLLM ok:true 但 content 非 JSON → parser fallback ask（链路已证明 resolve→callLLM 非 null）
 		expect(result.outcome).toBe("ask");
 	});

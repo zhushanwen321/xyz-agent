@@ -13,14 +13,21 @@
  *    读写 ${PI_CODING_AGENT_DIR}/auto-rename-enabled 独立标志文件（与 pi extension 契约
  *    对齐：文件存在=开，不存在=关）。
  *
+ * 3. rename-session 模型配置（getRenameModel / setRenameModel）：读改写
+ *    ${PI_CODING_AGENT_DIR}/config/rename-session-ext-config.json 的 model 字段
+ *    （与 pi-rename-session extension 的 llm-shared getConfigPath 路径契约对齐）。
+ *    extension 每次 turn_end 读时刷新（mtime+size 缓存），本侧写入后下一 turn 自动生效。
+ *    只改 model 字段，保留文件内其他字段（enabled/maxTitleLength/thinkingLevel 及未来新增）。
+ *
  * 抽出原因：config-service.ts 因本次 PR 新增 migration 委托方法触顶 max-lines(500)。
  * worktree 偏好是 config-service 内最内聚、对外接口稳定（IConfigService 已声明）的块，
  * 移到本模块后 ConfigService 仅保留单行委托，行为 / 签名 / import 路径零变化。
  */
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { getPiAgentDir } from '../infra/pi/pi-paths.js'
 import { logger } from '../infra/logger.js'
+import { atomicWrite } from '../utils/fs-utils.js'
 
 /** app config.json 的 load/save 能力（ConfigService 注入，避免暴露其私有方法）。 */
 type AppConfigAccessors = {
@@ -171,4 +178,76 @@ export function ensureAutoRenameDefault(): void {
     // 初始化失败不阻塞 boot，但记录原因便于诊断
     logger.warn(`[worktree-config] ensureAutoRenameDefault failed: ${e instanceof Error ? e.message : String(e)}`)
   }
+}
+
+// ── rename-session 模型配置（config/rename-session-ext-config.json 的 model 字段）──
+
+/** 配置文件相对路径（与 pi-rename-session 的 llm-shared getConfigPath('rename-session') 契约一致）。 */
+const RENAME_SESSION_CONFIG_REL = join('config', 'rename-session-ext-config.json')
+
+/**
+ * 文件缺失/损坏时的回退默认值（与 extension 的 DEFAULT_RENAME_CONFIG 一致：
+ * extensions/rename-session/src/pure.ts）。仅 setRenameModel 落盘时用作基底。
+ */
+const RENAME_MODEL_DEFAULT_CONFIG: Record<string, unknown> = {
+  enabled: false,
+  model: { type: 'ref', ref: '' },
+  maxTitleLength: 50,
+  thinkingLevel: 'off',
+}
+
+/** rename-session 配置文件完整路径（${PI_CODING_AGENT_DIR}/config/rename-session-ext-config.json）。 */
+export function getRenameConfigPath(): string {
+  return join(getPiAgentDir(), RENAME_SESSION_CONFIG_REL)
+}
+
+/** JSON 序列化缩进格数（与 extension 侧 llm-shared saveConfig 的 JSON_INDENT 一致）。 */
+const JSON_INDENT = 2
+
+/** 从原始 JSON 对象提取 model.ref（仅认 {type:"ref", ref:string} 形态，其余返回空串）。 */
+function extractModelRef(raw: Record<string, unknown>): string {
+  const model = raw['model']
+  if (typeof model !== 'object' || model === null || Array.isArray(model)) return ''
+  const ref = (model as Record<string, unknown>)['ref']
+  return typeof ref === 'string' ? ref : ''
+}
+
+/**
+ * 读取 rename 标题生成模型（"provider/modelId"，未设置返回空串）。
+ * 文件不存在/坏 JSON/model 字段非法 → 空串（与 extension normalizeRenameConfig 的回退语义一致）。
+ * 不抛错（读异常一律当未设置，防御性设计，与 getAutoRenameEnabled 一致）。
+ */
+export function getRenameModel(): string {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(getRenameConfigPath(), 'utf-8'))
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return ''
+    return extractModelRef(parsed as Record<string, unknown>)
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 设置 rename 标题生成模型（读改写，只覆盖 model 字段，保留其他字段）。
+ * model 为空串 = 清除回未设置；非空但不含 "/"（provider/modelId 格式非法）归一为空串
+ * （extension 的 parseRef 对无 "/" 的 ref 返回 null，写进去也不会生效，不如归一）。
+ * 写入为原子写（tmp+rename），与 extension saveConfig 的序列化格式一致（2 空格缩进 + 尾换行）。
+ * 写失败（如目录不可写）抛错由调用方处理。
+ */
+export function setRenameModel(model: string): void {
+  const normalized = model.includes('/') ? model : ''
+  const configPath = getRenameConfigPath()
+  let base: Record<string, unknown>
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf-8'))
+    base = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? { ...(parsed as Record<string, unknown>) }
+      : { ...RENAME_MODEL_DEFAULT_CONFIG }
+  } catch {
+    // 文件不存在/坏 JSON → 默认基底（与 extension 读取侧的回退语义一致：坏文件本来就无效）
+    base = { ...RENAME_MODEL_DEFAULT_CONFIG }
+  }
+  base['model'] = { type: 'ref', ref: normalized }
+  mkdirSync(dirname(configPath), { recursive: true })
+  atomicWrite(configPath, `${JSON.stringify(base, null, JSON_INDENT)}\n`)
 }

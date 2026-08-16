@@ -157,6 +157,8 @@ export function createClassifier(deps: ClassifierDeps): {
 			messages: buildMessages(ctx),
 			...(timeoutMs !== undefined ? { timeoutMs } : {}),
 			...(signal !== undefined ? { signal } : {}),
+			// thinkingLevel 直接透传（含 "off"）；llm-shared 内部会把 "off" 映射为不传 reasoning（provider 默认）
+			reasoning: config.thinkingLevel,
 		});
 
 		// 3. 等待 callLLM + 外层超时/中止兜底（provider 不支持 timeoutMs/signal 时防永挂）

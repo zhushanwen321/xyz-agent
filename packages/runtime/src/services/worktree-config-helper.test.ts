@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { mkdtempSync, rmSync } from 'node:fs'
-import { getAutoRenameEnabled, setAutoRenameEnabled, getAutoRenameEnabledPath, ensureAutoRenameDefault } from './worktree-config-helper.js'
+import { getAutoRenameEnabled, setAutoRenameEnabled, getAutoRenameEnabledPath, ensureAutoRenameDefault, getRenameModel, setRenameModel, getRenameConfigPath } from './worktree-config-helper.js'
 
 describe('auto-rename enabled 标志文件', () => {
   let tmpRoot: string
@@ -104,5 +104,106 @@ describe('ensureAutoRenameDefault', () => {
 
     // 恢复
     require('node:fs').mkdirSync = origMkdir
+  })
+})
+
+describe('rename-session 模型配置（config/rename-session-ext-config.json）', () => {
+  let tmpRoot: string
+  const configPath = () => join(tmpRoot, 'pi', 'agent', 'config', 'rename-session-ext-config.json')
+
+  /** 写入原始配置 JSON（预建目录）。 */
+  function writeRawConfig(raw: unknown): void {
+    mkdirSync(dirname(configPath()), { recursive: true })
+    writeFileSync(configPath(), typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2), 'utf-8')
+  }
+
+  /** 读回配置 JSON（parse 后对象）。 */
+  function readRawConfig(): Record<string, unknown> {
+    return JSON.parse(readFileSync(configPath(), 'utf-8')) as Record<string, unknown>
+  }
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'rename-model-test-'))
+    vi.stubEnv('XYZ_AGENT_DATA_DIR', tmpRoot)
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    rmSync(tmpRoot, { recursive: true, force: true })
+  })
+
+  it('getRenameConfigPath 解析到 <XYZ_AGENT_DATA_DIR>/pi/agent/config/rename-session-ext-config.json', () => {
+    expect(getRenameConfigPath()).toBe(join(tmpRoot, 'pi', 'agent', 'config', 'rename-session-ext-config.json'))
+  })
+
+  it('getRenameModel：文件不存在返回空串（未设置）', () => {
+    expect(getRenameModel()).toBe('')
+  })
+
+  it('getRenameModel：正常文件读出 model.ref', () => {
+    writeRawConfig({ enabled: true, model: { type: 'ref', ref: 'p1/m1' }, maxTitleLength: 50, thinkingLevel: 'off' })
+    expect(getRenameModel()).toBe('p1/m1')
+  })
+
+  it('getRenameModel：model 字段缺失 / 非法形态返回空串', () => {
+    writeRawConfig({ enabled: true })
+    expect(getRenameModel()).toBe('')
+    writeRawConfig({ model: 'p1/m1' })
+    expect(getRenameModel()).toBe('')
+    writeRawConfig({ model: { type: 'scoped' } })
+    expect(getRenameModel()).toBe('')
+    writeRawConfig({ model: { type: 'ref', ref: 123 } })
+    expect(getRenameModel()).toBe('')
+  })
+
+  it('getRenameModel：坏 JSON 返回空串（不抛错）', () => {
+    writeRawConfig('{ not valid json')
+    expect(getRenameModel()).toBe('')
+  })
+
+  it('setRenameModel：读改写保留其他字段与未知字段', () => {
+    writeRawConfig({ enabled: true, model: { type: 'ref', ref: 'old/m' }, maxTitleLength: 30, thinkingLevel: 'low', futureField: { a: 1 } })
+    setRenameModel('p1/m1')
+
+    const saved = readRawConfig()
+    expect(saved['model']).toEqual({ type: 'ref', ref: 'p1/m1' })
+    expect(saved['enabled']).toBe(true)
+    expect(saved['maxTitleLength']).toBe(30)
+    expect(saved['thinkingLevel']).toBe('low')
+    expect(saved['futureField']).toEqual({ a: 1 })
+    // get/set roundtrip
+    expect(getRenameModel()).toBe('p1/m1')
+  })
+
+  it('setRenameModel：文件不存在时以默认基底建文件', () => {
+    setRenameModel('p1/m1')
+
+    expect(existsSync(configPath())).toBe(true)
+    const saved = readRawConfig()
+    expect(saved['model']).toEqual({ type: 'ref', ref: 'p1/m1' })
+    // 默认基底字段（与 extension DEFAULT_RENAME_CONFIG 一致）
+    expect(saved['enabled']).toBe(false)
+    expect(saved['maxTitleLength']).toBe(50)
+    expect(saved['thinkingLevel']).toBe('off')
+  })
+
+  it('setRenameModel：空串清除回未设置', () => {
+    writeRawConfig({ model: { type: 'ref', ref: 'p1/m1' } })
+    setRenameModel('')
+    expect(getRenameModel()).toBe('')
+    expect(readRawConfig()['model']).toEqual({ type: 'ref', ref: '' })
+  })
+
+  it('setRenameModel：非空但不含 "/" 归一为空串（extension parseRef 不认）', () => {
+    setRenameModel('garbage-no-slash')
+    expect(getRenameModel()).toBe('')
+    expect(readRawConfig()['model']).toEqual({ type: 'ref', ref: '' })
+  })
+
+  it('setRenameModel：坏 JSON 用默认基底覆写（与 extension 读取侧回退语义一致）', () => {
+    writeRawConfig('{ corrupted')
+    setRenameModel('p1/m1')
+    expect(getRenameModel()).toBe('p1/m1')
+    expect(readRawConfig()['enabled']).toBe(false)
   })
 })
