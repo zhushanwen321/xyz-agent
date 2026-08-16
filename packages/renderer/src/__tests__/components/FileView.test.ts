@@ -43,6 +43,38 @@ vi.mock('@/api', () => ({
   git: { status: (...args: unknown[]) => mockGitStatus(...args) },
 }))
 
+// [W28/D-7.2] mock virtua：Virtualizer 全量渲染 slot 项（本测试关注过滤防抖 DOM 表现，
+// 不关注虚拟化窗口——虚拟化 DOM 数断言在 FileView-virtua.test.ts 用真实 Virtualizer）
+vi.mock('virtua/vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  return {
+    Virtualizer: defineComponent({
+      name: 'MockVirtualizer',
+      props: {
+        data: { type: Array, default: () => [] },
+        itemSize: { type: Number, default: undefined },
+        itemProps: { type: Function, default: undefined },
+      },
+      setup(props, { slots }) {
+        return () =>
+          h(
+            'div',
+            { 'data-testid': 'mock-virtua-list' },
+            (props.data as unknown[]).map((item, index) => {
+              const vnode = slots.default?.({ item, index }) ?? []
+              return h('div', { key: (vnode[0] as { key?: unknown } | undefined)?.key ?? index }, vnode)
+            }),
+          )
+      },
+    }),
+  }
+})
+
+// [W28/D-7.2] FileView 现在持有 useSideDrawer（onSelectRow 打开 detail 抽屉），mock 掉
+vi.mock('@/composables/features/drawer/useSideDrawer', () => ({
+  useSideDrawer: () => ({ open: vi.fn() }),
+}))
+
 /** 树节点 fixture：三个文件，'a' 过滤命中 a.ts，'zzz' 全无匹配 */
 const TREE_NODES: FileNode[] = [
   { path: 'a.ts', name: 'a.ts', type: 'file' },
@@ -50,10 +82,10 @@ const TREE_NODES: FileNode[] = [
   { path: 'foo.ts', name: 'foo.ts', type: 'file' },
 ]
 
-// FileTreeRow stub：透出 node.path 供 visibleNodes 内容断言（data-testid 含路径）
+// FileTreeRow stub：透出 row.path 供 visibleRows 内容断言（data-testid 含路径）
 const FileTreeRowStub = {
-  props: ['node', 'depth', 'sessionId'],
-  template: '<div :data-testid="`row-${node.path}`" />',
+  props: ['row', 'selected'],
+  template: '<div :data-testid="`row-${row.path}`" />',
 }
 
 /** mount FileView 并等 loadTree 完成（真实 timers 下 flushPromises） */

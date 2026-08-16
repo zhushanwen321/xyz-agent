@@ -13,6 +13,11 @@
  * [W15/D-7.1] dirChangeCounts 是 gitOverlay 的预聚合派生（sid → dirPath → count，随 setGitOverlay
  * 一次构建）——非独立权威源，getDirChangeCount 行级读取 O(1)。
  *
+ * [W28/D-7.2] projectVisibleRows 是唯一「树 → 可见行」投影点（纯函数，SSOT 仍是 tree）：
+ * FileView 用 computed 包裹它，FileTreeRow 改纯行组件收 VisibleRow——树形递归渲染改为
+ * 扁平可见行 + virtua 虚拟滚动（消除万级目录展开的全量 DOM 挂载）。4 facet 结构不变，
+ * 13 个非测试消费方零迁移（R-21 排查结论见 W28 汇报）。
+ *
  * [K-9 反哺] 跨 store 编排在 composable 层：store 暴露 invalidate 接口，不自行 subscribe chat store
  * （stores 间禁止互相 import，见 sidebar.ts:4 约束）。
  *
@@ -21,7 +26,7 @@
 import { ref, computed, type Ref, type ComputedRef } from 'vue'
 import { defineStore } from 'pinia'
 import type { FileNode, GitFileStatus } from '@xyz-agent/shared'
-import { findNodeByPath } from '@/composables/logic/file-tree-utils'
+import { findNodeByPath, nodeMatchesFilter } from '@/composables/logic/file-tree-utils'
 
 /** 节点加载态（②§5 状态机：5 态） */
 export type LoadStatus = 'unloaded' | 'loading' | 'loaded' | 'error' | 'invalidated'
@@ -43,6 +48,181 @@ type PathMap<T> = Map<string, T>
 type SessionPathMap<T> = Map<string, PathMap<T>>
 /** Map<sessionId, T> 的 per-session 单值分桶（tree 用：每 session 一个 FileNode[]） */
 type SessionMap<T> = Map<string, T>
+
+/** [W2] 文件行数结构：tracked 改动 {add/del}，untracked 降级 {size}，无数据 null */
+export interface LineStats {
+  add?: number
+  del?: number
+  size?: number
+}
+
+/**
+ * [W28/D-7.2] 可见行数据结构（09 文档 §3.3.2 定案 + 审查修正）。
+ * 供 virtua 虚拟滚动消费的扁平行——树仍是 SSOT，本行是渲染投影：
+ * depth/expanded/changeCount/gitStatus/lineStats 全部在投影时预计算，
+ * 替代旧递归 FileTreeRow 的 per-row computed（旧实现每行 12 个 computed）。
+ *
+ * hint 字段为审查修正扩展（09 文档草案未建模，代码现实要求保留）：
+ * 旧递归组件对「已展开目录」按 nodeStates 渲染 loading/error/empty 三类子区占位行，
+ * 扁平化后必须显式建模，否则展开在途/空目录的 UI 反馈丢失（行为回归）。
+ */
+export interface VisibleRow {
+  /** 节点相对路径（SSOT key；hint 行 = 所属目录 path） */
+  path: string
+  /** 显示名（hint 行为空串） */
+  name: string
+  /** 节点类型（hint 行恒 'dir'，实际渲染走 hint 分支） */
+  type: 'file' | 'dir'
+  /** 缩进层级（投影时算好，替代递归 depth prop） */
+  depth: number
+  /** 目录是否展开（从 expandedPaths 投影） */
+  expanded: boolean
+  /** 目录子树改动数（从预聚合 Map 投影，替代 per-row computed） */
+  changeCount: number
+  /** 文件角标（从 gitOverlay 投影） */
+  gitStatus?: GitFileStatus
+  /** 行数 +N −M（投影时算好） */
+  lineStats?: LineStats
+  ignored: boolean
+  /**
+   * 子区占位行标记（非节点行）：'loading'（展开在途）/ 'error'（展开失败）/
+   * 'empty'（已加载空目录或全部被 showIgnored 过滤）。仅 hint 行非空。
+   */
+  hint?: 'loading' | 'error' | 'empty'
+}
+
+/** 子区占位行 key 前缀（防与真实节点 path 冲突，v-for :key 用） */
+const HINT_KEY_PREFIX: Record<NonNullable<VisibleRow['hint']>, string> = {
+  loading: '__loading__',
+  error: '__error__',
+  empty: '__empty__',
+}
+
+/**
+ * [W28/D-7.2] 扁平行 v-for 稳定 key：hint 行加类型前缀（与目录行 path 同值时防冲突），
+ * 节点行直接用 path。hint 行跨投影稳定（同目录同态 → 同 key），无插删错位。
+ */
+export function visibleRowKey(row: VisibleRow): string {
+  return row.hint ? `${HINT_KEY_PREFIX[row.hint]}${row.path}` : row.path
+}
+
+/**
+ * [W28/D-7.2] 唯一「树 → 可见行」投影点（纯函数，零副作用）。
+ *
+ * 语义 = 旧递归渲染（FileView.visibleNodes 顶层裁 + FileTreeRow 递归子行）的逐行等价：
+ * - 顶层：showIgnored 过滤 + filterText 命中判定（nodeMatchesFilter，仅祖先链保留）；
+ * - 子层：showIgnored 过滤，展开目录 DFS 展开（懒加载——未加载 children 不产出子行）；
+ * - 已展开目录按 nodeStates 渲染 loading/error/empty 占位行（与旧递归一致）。
+ *
+ * E7-a 更新策略：调用方（FileView）用 computed 包裹，依赖分桶后的细粒度 getter——
+ * 展开/折叠/过滤/overlay 变化各触发一次全量重投影（O(可见行)，懒加载下是「已加载」子集）。
+ *
+ * @param getTree 取 session 树（computed 内读 store.getTree 触发响应式）
+ * @param getExpanded 取 session 展开态 Set
+ * @param gitOverlay 全量 overlay 分桶（投影内 gitOverlay.get(sid) 取本 session）
+ * @param dirChangeCounts 全量预聚合分桶（同 gitOverlay）
+ * @param filterText 过滤关键词（原始输入，内部 trim/lower）
+ * @param showIgnored 是否显示忽略项
+ * @param sid 目标 session
+ * @param getNodeState [审查修正扩展] 取节点加载态（hint 行判定需要；文档草案签名未含）
+ */
+export function projectVisibleRows(
+  getTree: (sid: string) => FileNode[] | undefined,
+  getExpanded: (sid: string) => Set<string>,
+  gitOverlay: Map<string, Map<string, GitFileStatus>>,
+  dirChangeCounts: Map<string, Map<string, number>>,
+  filterText: string,
+  showIgnored: boolean,
+  sid: string,
+  getNodeState: (sid: string, path: string) => NodeState,
+): VisibleRow[] {
+  const nodes = getTree(sid)
+  if (!nodes) return []
+
+  const q = filterText.trim().toLowerCase()
+  const expanded = getExpanded(sid)
+  const overlay = gitOverlay.get(sid)
+  const counts = dirChangeCounts.get(sid)
+
+  const rows: VisibleRow[] = []
+
+  function lineStatsOf(node: FileNode): LineStats | undefined {
+    const git = overlay?.get(node.path)
+    if (!git) return undefined
+    if (git.additions !== undefined || git.deletions !== undefined) {
+      return { add: git.additions, del: git.deletions }
+    }
+    if (git.status === 'untracked' && node.size !== undefined) {
+      return { size: node.size }
+    }
+    return undefined
+  }
+
+  function makeRow(node: FileNode, depth: number): VisibleRow {
+    return {
+      path: node.path,
+      name: node.name,
+      type: node.type,
+      depth,
+      expanded: node.type === 'dir' && expanded.has(node.path),
+      changeCount: node.type === 'dir' ? (counts?.get(node.path) ?? 0) : 0,
+      gitStatus: overlay?.get(node.path),
+      lineStats: lineStatsOf(node),
+      ignored: node.ignored ?? false,
+    }
+  }
+
+  function makeHint(
+    hint: NonNullable<VisibleRow['hint']>,
+    dirPath: string,
+    depth: number,
+  ): VisibleRow {
+    // path 保持目录 path（旧 testid `file-tree-loading-<dirPath>` 语义不变）；
+    // v-for key 由消费方用 rowKey(row)（hint 前缀 + path）保证与目录行不冲突
+    return {
+      path: dirPath,
+      name: '',
+      type: 'dir',
+      depth,
+      expanded: false,
+      changeCount: 0,
+      ignored: false,
+      hint,
+    }
+  }
+
+  function walk(list: FileNode[], depth: number): void {
+    for (const node of list) {
+      rows.push(makeRow(node, depth))
+      if (node.type !== 'dir' || !expanded.has(node.path)) continue
+      // 已展开目录的子区：按 nodeStates 渲染占位行或 DFS 子行（与旧递归 FileTreeRow 等价）
+      const status = getNodeState(sid, node.path).status
+      if (status === 'loading') {
+        rows.push(makeHint('loading', node.path, depth + 1))
+        continue
+      }
+      if (status === 'error') {
+        rows.push(makeHint('error', node.path, depth + 1))
+        continue
+      }
+      if (node.children) {
+        const visibleChildren = showIgnored
+          ? node.children
+          : node.children.filter((c) => !c.ignored)
+        if (visibleChildren.length === 0) {
+          rows.push(makeHint('empty', node.path, depth + 1))
+          continue
+        }
+        walk(visibleChildren, depth + 1)
+      }
+    }
+  }
+
+  let topLevel = showIgnored ? nodes : nodes.filter((n) => !n.ignored)
+  if (q) topLevel = topLevel.filter((n) => nodeMatchesFilter(n, q))
+  walk(topLevel, 0)
+  return rows
+}
 
 export const useFileTreeStore = defineStore('fileTree', () => {
   // ── State（4 facet per-session + showIgnored + selectedPath）──
@@ -277,6 +457,8 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     expandedPaths,
     nodeStates,
     gitOverlay,
+    // [W28/D-7.2] dirChangeCounts 暴露（投影 computed 的依赖源；9 文档「投影函数 + dirChangeCounts 暴露」）
+    dirChangeCounts,
     showIgnored,
     selectedPath,
     filterText,
