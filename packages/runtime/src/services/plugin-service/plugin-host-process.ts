@@ -245,6 +245,10 @@ export class PluginHostProcess implements PluginHostProcessContract {
 
   /** 关闭所有子进程并释放 rpcServer */
   async shutdown(): Promise<void> {
+    // 对齐 terminateProcess 的 pre-mark（与 Worker 版 plugin-host.shutdown 同款）：
+    // SIGTERM kill 触发的 exit(code=null)/disconnect 先到时，status='terminated'
+    // 幂等守卫拦截，不把正常关停误报为崩溃
+    for (const handle of this.processes.values()) handle.status = 'terminated'
     const children = [...this.processInstances.values()]
     await Promise.allSettled(
       children.map((child) => this.killChildGracefully(child)),

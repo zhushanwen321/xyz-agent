@@ -214,4 +214,26 @@ describe('PluginHost', () => {
     expect(crashes).toEqual([])
     expect(host.getCrashCount('shutdown-trusted')).toBe(0)
   })
+
+  // ── 回归：process 版 shutdown 同样不误报（sandbox 子进程正常关停）──
+  // PluginHostProcess.shutdown() 曾漏掉 pre-mark，SIGTERM 触发的 exit(code=null)
+  // 经 `code !== 0` 判定误入 handleProcessCrash → sandbox 插件退出弹假崩溃 toast
+  it('shutdown does not report crash for expected termination of sandbox processes', async () => {
+    const rpc = new PluginRpcServer()
+    const host = new PluginHost(rpc, { bootstrapPathOverride: PROCESS_MOCK_SOURCE, execArgv: ['--import', NOOP_ESM_LOADER] })
+
+    const crashes: Array<{ workerId: string; pluginIds: string[]; error: string }> = []
+    host.setCrashCallback((workerId, pluginIds, error) => {
+      crashes.push({ workerId, pluginIds, error })
+    })
+
+    const workerId = await host.assignWorker('shutdown-sandbox', 'sandbox')
+    // 等 loaded 回执：保证子进程已启动且消息回路通畅，kill 时是「存活中被终止」
+    await host.loadPlugin(workerId, 'shutdown-sandbox', '/virtual/plugin', 'sandbox')
+
+    await host.shutdown()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(crashes).toEqual([])
+  })
 })
