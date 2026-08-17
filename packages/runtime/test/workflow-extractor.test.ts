@@ -237,6 +237,39 @@ describe('extractWorkflowsFromSessionFile', () => {
     expect(result).toEqual([])
   })
 
+  // [review 修复 R3-S3] 回归：v 匹配但缺 state/spec/meta 三段的合法 JSON（如并发
+  // 截断写产出 {"v":"wf-run-v2"} 纯净对象 / 三段任一为 null），v 守卫放行后
+  // mapSnapshotToRecord 直接访问 state.trace / spec.scriptName / meta.startedAt
+  // 会抛 TypeError——补三段存在性守卫后按坏行跳过，与 malformed 行为一致。
+  it('边界：v2 版本匹配但缺 state/spec/meta（或任一段为 null）→ 按坏行跳过不抛', () => {
+    const sessionFile = join(tempDir, 'main-session.jsonl')
+
+    const stateBare = join(tempDir, 'wf-bare.jsonl')
+    writeFileSync(stateBare, JSON.stringify({ v: 'wf-run-v2' }) + '\n')
+    const stateNullState = join(tempDir, 'wf-null-state.jsonl')
+    writeFileSync(stateNullState, JSON.stringify({ v: 'wf-run-v2', state: null, spec: {}, meta: {} }) + '\n')
+    const stateMissingSpec = join(tempDir, 'wf-no-spec.jsonl')
+    writeFileSync(stateMissingSpec, JSON.stringify({ v: 'wf-run-v2', state: { status: 'running' }, meta: {} }) + '\n')
+
+    const link = (runId: string, path: string, ts: string) => ({
+      type: 'custom',
+      customType: 'workflow-state-link',
+      data: { runId, path, updatedAt: ts },
+      timestamp: ts,
+    })
+    const sessionEntries = [
+      { type: 'session', version: 3, id: 'main-sess', cwd: '/proj', timestamp: '2026-07-10T10:00:00Z' },
+      link('wf-bare', stateBare, '2026-07-10T10:01:00Z'),
+      link('wf-null-state', stateNullState, '2026-07-10T10:02:00Z'),
+      link('wf-no-spec', stateMissingSpec, '2026-07-10T10:03:00Z'),
+    ]
+    writeFileSync(sessionFile, sessionEntries.map((e) => JSON.stringify(e)).join('\n') + '\n')
+
+    // 三种 v2 匹配的坏结构均跳过，不抛 TypeError
+    const result = extractWorkflowsFromSessionFile(sessionFile)
+    expect(result).toEqual([])
+  })
+
   // 三源一致性护栏：wf-run-v* 快照版本字面量分布在 3 个包（跨包依赖方向不允许互相
   // import 源码），extension bump 格式版本时任何一处漏改都会静默丢数据：
   // - 源 1（权威）：extension jsonl-run-store.ts 的 SNAPSHOT_VERSION——漏改不会（它是生产方）

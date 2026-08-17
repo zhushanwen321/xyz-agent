@@ -602,7 +602,7 @@ export function buildSpawnArgs(
     forkSource: string | undefined;
     skillPaths: string[] | undefined;
     /**
-     * 镜像自主进程 argv 的 flag（--no-extensions/--approve/--extension）。
+     * 镜像自主进程 argv 的 flag（--no-extensions/--approve/--extension/--no-context-files）。
      * undefined 或全空/全 false 时行为不变（向后兼容）。
      */
     mirrorFlags?: MirrorFlags;
@@ -639,12 +639,17 @@ export function buildSpawnArgs(
       args.push("--skill", sp);
     }
   }
-  // 镜像主进程的 extension/approve flag：让子进程 extension 加载行为与主进程一致。
-  // undefined/空值时不追加（向后兼容）。顺序紧跟 skill 之后，注入类 flag 集中。
+  // 镜像主进程的 extension/approve/context-files flag：让子进程 extension 加载与
+  // context files 行为与主进程一致。undefined/空值时不追加（向后兼容）。顺序紧跟
+  // skill 之后，注入类 flag 集中。
   const mf = params.mirrorFlags;
   if (mf) {
     if (mf.noExtensions) args.push("--no-extensions");
     if (mf.approve) args.push("--approve");
+    // 镜像 --no-context-files：xyz-system-prompt-extension.js（经 --extension 镜像进入
+    // 子进程）靠子进程 argv 检测此 flag 守卫全局 AGENTS.md 注入——不镜像则用户的
+    // context files opt-out 只对主进程生效，每个 subagent 仍被注入。
+    if (mf.noContextFiles) args.push("--no-context-files");
     for (const ep of mf.extensionPaths) {
       args.push("--extension", ep);
     }

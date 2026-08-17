@@ -118,6 +118,22 @@ function piToManifest(pi: Record<string, unknown> | undefined, kind: ResourceKin
 }
 
 /**
+ * package.json 文本 → pi 字段对象（pi.agents / pi.workflows 的容器）。
+ * [review 修复] 结构守卫：JSON.parse 对 "42" / '"str"' / "null" 等合法 JSON 产出
+ * 非对象值，旧 `as Record<string, unknown>` 盲断言下 .pi 访问是「碰巧不抛」
+ * （primitive 装箱返 undefined / null 抛 TypeError 落入 catch）——显式判非对象，
+ * 按「无 manifest」（undefined）处理，后果与原先一致但语义不再依赖巧合。
+ * pi 字段本身非对象（如 {"pi":42}）同样显式归 undefined。
+ * JSON SyntaxError 向上抛，由调用方 catch 承担「坏 JSON 不缓存、下次重试」语义。
+ */
+function parsePiField(content: string): Record<string, unknown> | undefined {
+  const parsed: unknown = JSON.parse(content);
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const pi: unknown = (parsed as Record<string, unknown>).pi;
+  return typeof pi === "object" && pi !== null ? (pi as Record<string, unknown>) : undefined;
+}
+
+/**
  * stat + content 统一缓存。文件不存在/不可读 → null（并驱逐条目）。
  * mtime 未变 → 返回缓存 content（不重 read）；变 → readFileSync + 缓存。
  */
@@ -281,8 +297,7 @@ async function readPackageManifest(pkgDir: string, kind: ResourceKind): Promise<
   let pi: Record<string, unknown> | undefined;
   try {
     const content = await readFile(pkgJsonPath, "utf-8");
-    const pkg = JSON.parse(content) as Record<string, unknown>;
-    pi = pkg.pi as Record<string, unknown> | undefined;
+    pi = parsePiField(content);
   } catch {
     // read 失败或坏 JSON → 不缓存不驱逐已有好条目，下次调用重试
     return undefined;
@@ -571,8 +586,7 @@ export function readPackageManifestSync(pkgDir: string, kind: ResourceKind): str
   let pi: Record<string, unknown> | undefined;
   try {
     const content = fsSync.readFileSync(pkgJsonPath, "utf-8");
-    const pkg = JSON.parse(content) as Record<string, unknown>;
-    pi = pkg.pi as Record<string, unknown> | undefined;
+    pi = parsePiField(content);
   } catch {
     // read 失败或坏 JSON → 不缓存不驱逐已有好条目，下次调用重试
     return undefined;

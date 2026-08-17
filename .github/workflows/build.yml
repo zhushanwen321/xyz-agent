@@ -108,12 +108,14 @@ jobs:
 
       # 缓存 pi resources（~70MB，含二进制 + assets + theme）。
       # prepare-pi-resources.sh 自身有「binary 存在则跳过下载」逻辑，cache 恢复目录后脚本自动 skip。
-      # key 含 PI_VERSION：版本升级自动失效重建（binary 文件名含版本，旧 cache 不会误用）。
+      # key 含 PI_VERSION（版本升级自动失效重建，binary 文件名含版本，旧 cache 不会误用）
+      # + prepare 脚本内容 hash（同版本下脚本改动 assets 组成/下载源时旧 cache 失效，
+      # 防止脚本「binary 存在则跳过」让新增 assets 永不下载）。
       - name: Cache pi resources
         uses: actions/cache@v4
         with:
           path: apps/electron/resources/pi
-          key: ${{ runner.os }}-pi-${{ env.PI_VERSION }}-${{ runner.arch }}
+          key: ${{ runner.os }}-pi-${{ env.PI_VERSION }}-${{ runner.arch }}-${{ hashFiles('scripts/prepare-pi-resources.sh') }}
 
       - name: Download and prepare pi resources
         shell: bash

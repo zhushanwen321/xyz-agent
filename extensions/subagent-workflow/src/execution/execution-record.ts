@@ -316,7 +316,7 @@ export function updateFromEvent(record: ExecutionRecord, event: AgentEvent): voi
       const byName = runningToolIndex.get(record);
       const arr = byName?.get(event.toolName);
       if (arr !== undefined && arr.length > 0) {
-        const item = arr[arr.length - 1]!;
+        const item = arr[arr.length - 1];
         arr.pop();
         const tc = item.turn.toolCalls[item.idx];
         if (tc !== undefined && tc._status === "running") {

@@ -154,13 +154,14 @@ describe("buildSpawnArgs", () => {
   // mirrorFlags 透传：子进程镜像主进程 extension/approve flag
   // ============================================================
 
-  it("mirrorFlags 透传：noExtensions+approve+extensionPaths 全量 push（TC5）", () => {
+  it("mirrorFlags 透传：noExtensions+approve+noContextFiles+extensionPaths 全量 push（TC5）", () => {
     const args = buildSpawnArgs({
       ...baseParams,
-      mirrorFlags: { noExtensions: true, approve: true, extensionPaths: ["/e1", "/e2"] },
+      mirrorFlags: { noExtensions: true, approve: true, noContextFiles: true, extensionPaths: ["/e1", "/e2"] },
     });
     expect(args).toContain("--no-extensions");
     expect(args).toContain("--approve");
+    expect(args).toContain("--no-context-files");
     // 每个 extension 独立 token，顺序保留
     const extIdxs = args.map((a, i) => (a === "--extension" ? i : -1)).filter((i) => i >= 0);
     expect(extIdxs).toHaveLength(2);
@@ -171,11 +172,12 @@ describe("buildSpawnArgs", () => {
   it("mirrorFlags 全 false/空 → 不追加任何目标 flag（TC6）", () => {
     const args = buildSpawnArgs({
       ...baseParams,
-      mirrorFlags: { noExtensions: false, approve: false, extensionPaths: [] },
+      mirrorFlags: { noExtensions: false, approve: false, noContextFiles: false, extensionPaths: [] },
     });
     expect(args).not.toContain("--no-extensions");
     expect(args).not.toContain("--approve");
     expect(args).not.toContain("--extension");
+    expect(args).not.toContain("--no-context-files");
     // 仅基础参数
     expect(args).toEqual(["--mode", "rpc", "--session-dir", "/sessions/dir"]);
   });
@@ -186,6 +188,30 @@ describe("buildSpawnArgs", () => {
     expect(args).not.toContain("--extension");
     expect(args).not.toContain("--no-extensions");
     expect(args).not.toContain("--approve");
+    expect(args).not.toContain("--no-context-files");
+  });
+
+  it("noContextFiles 镜像：主进程 argv 含 --no-context-files → 子进程 args 含该 flag", () => {
+    // 端到端链路断言：主 pi 进程以 --no-context-files 启动（用户 opt-out context files）
+    // → mirrorMainProcessFlags 解析 → buildSpawnArgs 产出同 flag 给每个 subagent。
+    // 缺此镜像时，--extension 镜像带入的 xyz-system-prompt-extension.js 检查子进程
+    // 自己的 argv（无 flag）→ 全局 AGENTS.md 注入在 subagent system prompt 照常生效，
+    // 用户 opt-out 被绕过。
+    const mainArgv = [
+      "bun", "/pi", "--mode", "rpc", "--no-context-files",
+      "--extension", "/path/xyz-system-prompt-extension.js",
+    ];
+    const args = buildSpawnArgs({ ...baseParams, mirrorFlags: mirrorMainProcessFlags(mainArgv) });
+    expect(args).toContain("--no-context-files");
+    // extension 镜像照常（两者共存才构成完整契约）
+    const extIdx = args.indexOf("--extension");
+    expect(args[extIdx + 1]).toBe("/path/xyz-system-prompt-extension.js");
+  });
+
+  it("noContextFiles 不镜像：主进程 argv 不含 flag → 子进程 args 不含（默认行为不变）", () => {
+    const mainArgv = ["bun", "/pi", "--mode", "rpc"];
+    const args = buildSpawnArgs({ ...baseParams, mirrorFlags: mirrorMainProcessFlags(mainArgv) });
+    expect(args).not.toContain("--no-context-files");
   });
 
   // ============================================================
@@ -239,14 +265,14 @@ describe("mirrorMainProcessFlags", () => {
       "bun", "/pi", "--mode", "rpc", "--no-extensions", "--approve",
       "--extension", "/a", "--extension", "/b",
     ]);
-    expect(r).toEqual({ noExtensions: true, approve: true, extensionPaths: ["/a", "/b"] });
+    expect(r).toEqual({ noExtensions: true, approve: true, extensionPaths: ["/a", "/b"], noContextFiles: false });
   });
 
   it("--extension=path 等号形式 + 短形式 -e/-ne/-a（TC2）", () => {
     const r = mirrorMainProcessFlags([
       "bun", "/pi", "--extension=/x", "-ne", "-a",
     ]);
-    expect(r).toEqual({ noExtensions: true, approve: true, extensionPaths: ["/x"] });
+    expect(r).toEqual({ noExtensions: true, approve: true, extensionPaths: ["/x"], noContextFiles: false });
   });
 
   it("混合形式（空格 + 等号），顺序保留（TC3）", () => {
@@ -256,11 +282,29 @@ describe("mirrorMainProcessFlags", () => {
     expect(r.extensionPaths).toEqual(["/a", "/b", "/c"]);
     expect(r.noExtensions).toBe(false);
     expect(r.approve).toBe(false);
+    expect(r.noContextFiles).toBe(false);
   });
 
   it("无目标 flag → 全空/全 false（向后兼容，TC4）", () => {
     const r = mirrorMainProcessFlags(["bun", "/pi", "--mode", "rpc"]);
-    expect(r).toEqual({ noExtensions: false, approve: false, extensionPaths: [] });
+    expect(r).toEqual({ noExtensions: false, approve: false, extensionPaths: [], noContextFiles: false });
+  });
+
+  it("--no-context-files 长形式解析 → noContextFiles: true", () => {
+    const r = mirrorMainProcessFlags([
+      "bun", "/pi", "--mode", "rpc", "--no-context-files",
+      "--extension", "/path/xyz-system-prompt-extension.js",
+    ]);
+    expect(r.noContextFiles).toBe(true);
+    // 与 extension 镜像共存（实际 xyz-agent 启动形态：两 flag 同时出现）
+    expect(r.extensionPaths).toEqual(["/path/xyz-system-prompt-extension.js"]);
+    expect(r.noExtensions).toBe(false);
+    expect(r.approve).toBe(false);
+  });
+
+  it("-nc 短形式解析 → noContextFiles: true（pi CLI 等价短形式）", () => {
+    const r = mirrorMainProcessFlags(["bun", "/pi", "--mode", "rpc", "-nc"]);
+    expect(r.noContextFiles).toBe(true);
   });
 
   it("不误吃其他 flag 值与 positional 参数（TC8）", () => {
@@ -273,9 +317,9 @@ describe("mirrorMainProcessFlags", () => {
   });
 
   it("空 argv / 仅前导两项 → 全空", () => {
-    expect(mirrorMainProcessFlags([])).toEqual({ noExtensions: false, approve: false, extensionPaths: [] });
+    expect(mirrorMainProcessFlags([])).toEqual({ noExtensions: false, approve: false, extensionPaths: [], noContextFiles: false });
     expect(mirrorMainProcessFlags(["bun", "/pi"])).toEqual({
-      noExtensions: false, approve: false, extensionPaths: [],
+      noExtensions: false, approve: false, extensionPaths: [], noContextFiles: false,
     });
   });
 

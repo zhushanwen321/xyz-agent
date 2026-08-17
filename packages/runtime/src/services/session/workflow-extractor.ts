@@ -204,6 +204,16 @@ function readAndMapSnapshot(runId: string, stateFilePath: string): WorkflowRunRe
   // 而非走「跳过」路径——按坏行处理跳过，与上方 malformed 行为一致（状态文件由本
   // 扩展生成，防御并发截断 / 外部覆写）。
   if (typeof parsed !== 'object' || parsed === null || !('v' in parsed)) return null
+
+  // [review 修复 R3-S3] v 匹配后 mapSnapshotToRecord 还直接访问 state.trace /
+  // spec.scriptName / meta.startedAt——形如 {"v":"wf-run-v2"} 的合法 JSON（截断写，
+  // 缺三段或任一段为 null）在 v 守卫放行后仍抛 TypeError。三段须为非 null 对象，
+  // 坏结构与上方一致走跳过路径（仅一层存在性；字段级缺省由 ?? 与值级守卫兜底，
+  // 不做深度 schema 校验）。
+  const body = parsed as Record<string, unknown>
+  const isObj = (x: unknown): x is object => typeof x === 'object' && x !== null
+  if (!isObj(body.state) || !isObj(body.spec) || !isObj(body.meta)) return null
+
   const snapshot = parsed as RunSnapshot
 
   // D-5 版本守卫：版本不匹配跳过（旧格式不向后兼容）

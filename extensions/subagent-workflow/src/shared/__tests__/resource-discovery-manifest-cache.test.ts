@@ -187,6 +187,31 @@ describe("manifestCache（readPackageManifestSync）", () => {
     expect(readPackageManifestSync(pkgDir, "agents")).toBeUndefined();
     expect(readCount()).toBe(1);
   });
+
+  // [review 修复] 非对象 JSON 结构守卫：JSON.parse 对 "42" / '"str"' / "null" 等
+  // 合法 JSON 产出非对象值，旧 `as Record<string, unknown>` 盲断言下 .pi 访问
+  // 「碰巧不抛」（primitive 装箱返 undefined / null 抛 TypeError 落 catch）——
+  // 显式守卫后按「无 manifest」（undefined）处理，行为等价但不再依赖巧合。
+  it("非对象 JSON（42 / null / string / pi 字段非对象）→ undefined 不抛，按合法解析结果缓存", () => {
+    const cases: Array<{ raw: string; label: string }> = [
+      { raw: "42", label: "number" },
+      { raw: "null", label: "null" },
+      { raw: '"just-a-string"', label: "string" },
+      { raw: '{"name":"p","pi":42}', label: "pi-field-not-object" },
+    ];
+    // 每 case 独立子目录（缓存 key = package.json 绝对路径），互不命中；
+    // readCount 是跨 case 累积计数，断言用本 case 增量
+    for (const { raw, label } of cases) {
+      const before = readCount();
+      const caseDir = path.join(pkgDir, label);
+      pkgJson = writeRawPackageJson(caseDir, raw);
+      setMtime(pkgJson, T1);
+      expect(readPackageManifestSync(caseDir, "agents"), `case ${label}`).toBeUndefined();
+      expect(readPackageManifestSync(caseDir, "workflows"), `case ${label}`).toBeUndefined();
+      // 合法解析 + 无 manifest → 缓存 undefined 条目（同「无 pi 字段」语义，二次调用不重读）
+      expect(readCount() - before, `case ${label}`).toBe(1);
+    }
+  });
 });
 
 // ============================================================

@@ -162,6 +162,77 @@ describe('SchedulerRuntime', () => {
     })
   })
 
+  // ── R3-S1：dispatchTask in-flight 守卫 ──
+  // tick 为 fire-and-forget：tick1 的 await sendMessage 挂起超过 TICK_INTERVAL_MS（如 pi
+  // 卡死）时，tick2 的 step2 再标 pending → step3 对同一 task 并发第二个 dispatch → 同一
+  // prompt 双注入（force 任务绕过 isIdle gate 直接受影响）。守卫：同任务在途（Set<taskId>）
+  // 时 skip 本轮并 warn；不同任务不受影响。
+  describe('dispatchTask in-flight 守卫（R3-S1）', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('sendMessage 挂起期间下一 tick 同任务被跳过：不双注入、warn in-flight、完成后 runCount=1', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      let resolveSend: (() => void) | undefined
+      const sendPromise = new Promise<void>(resolve => { resolveSend = resolve })
+      backend.sendMessage = vi.fn(() => sendPromise)
+
+      const task = await runtime.addTask('in-flight', { mode: 'interval', intervalMs: 60000 }, { force: true })
+      task.nextRunAt = Date.now() - 1000
+
+      // tick1：dispatch 进入 sendMessage 挂起（同步段已置 in-flight 标记）
+      const tick1 = runtime.tickScheduler()
+      expect(backend.sendMessage).toHaveBeenCalledTimes(1)
+      expect(task.pending).toBe(true) // dispatch 未完成，pending 未清
+
+      // tick2（模拟 30s 后 pi 仍卡死）：同任务再标 pending → step3 dispatchTask 命中
+      // in-flight 守卫 → skip + warn（修复前：同一 prompt 双注入）
+      await runtime.tickScheduler()
+      expect(backend.sendMessage).toHaveBeenCalledTimes(1)
+      const warnText = warnSpy.mock.calls.map(c => String(c[0])).join('\n')
+      expect(warnText).toContain('already in flight')
+
+      // 放行挂起的 sendMessage：tick1 正常收尾（状态推进恰好一次）
+      resolveSend!()
+      await tick1
+      expect(backend.sendMessage).toHaveBeenCalledTimes(1)
+      expect(task.runCount).toBe(1)
+      expect(task.pending).toBe(false)
+      warnSpy.mockRestore()
+    })
+
+    it('挂起 dispatch 只挡同任务：其他任务在下一 tick 正常 dispatch 不受影响', async () => {
+      let resolveSend: (() => void) | undefined
+      const sendPromise = new Promise<void>(resolve => { resolveSend = resolve })
+      backend.sendMessage = vi.fn(() => sendPromise)
+
+      const task1 = await runtime.addTask('first', { mode: 'interval', intervalMs: 60000 }, { force: true })
+      const task2 = await runtime.addTask('second', { mode: 'interval', intervalMs: 60000 }, { force: true })
+      task1.nextRunAt = Date.now() - 1000
+      task2.nextRunAt = Date.now() - 1000
+
+      // tick1：task1 dispatch 挂起（step3 顺序 await，task2 尚未轮到）
+      const tick1 = runtime.tickScheduler()
+      expect(backend.sendMessage).toHaveBeenCalledTimes(1)
+
+      // tick2：task1 命中守卫跳过，task2 无在途 → 正常 dispatch（守卫按 taskId 粒度隔离）。
+      // 注：tick2 挂起在 task1 的 await dispatchTask（守卫命中即 resolved promise）与 task2
+      // 的 await sendMessage 上，先放行再 await，完成态统一断言
+      const tick2 = runtime.tickScheduler()
+      resolveSend!()
+      await Promise.all([tick1, tick2])
+      expect(backend.sendMessage).toHaveBeenCalledTimes(2)
+      expect(task1.runCount).toBe(1)
+      expect(task2.runCount).toBe(1)
+    })
+  })
+
   // ── M10b：rate-limit ──
   // dispatchTask 受 RATE_LIMIT_PER_MINUTE=6 限制。前 6 次成功（sendMessage 被调），
   // 第 7 次被 hasDispatchCapacity 拒绝（dispatchTimestamps.length 已达 6）。
@@ -537,13 +608,14 @@ describe('SchedulerRuntime', () => {
     })
   })
 
-  // ── G1：代际检测分诊（S9 review 修复）──
-  // isCtxStale（index.ts 注入的闭包代数比对）为主判，替代对 pi 错误文案的依赖：
+  // ── G1：代际检测分诊（S9 review 修复 / R3-M1 模块级化）──
+  // isCtxStale（index.ts 注入的模块级代数比对）为主判，替代对 pi 错误文案的依赖：
   // - G1-a：in-flight tick 内代际翻转 + 任意非文案错误 → catch 分诊走 stale 自停（不依赖文案）
   // - G1-b：代际翻转后（无任何错误）泄漏 timer 在下个 tick 前置检查自停，不进入 tick
   // - G1-c：显式注入 isCtxStale=false + 非 stale 错误 → 仍 "tick error" 继续调度（不误伤）
   // - G1-d：isCtxStale=false 但错误文案含 stale 片段 → 文案兜底仍自停（覆盖 reload 盲区：
-  //   pi reload 重跑 factory 后旧闭包代际计数不再递增，只剩文案能识别 stale）
+  //   clearExtensionCache 后 jiti 重 import 全新模块环境，旧闭包的模块级代数冻结不再递增，
+  //   只剩文案能识别 stale；模块级方案的装配级验证见 index-generation.test.ts factory 重跑用例）
   describe('G1: 代际检测分诊（S9）', () => {
     const TICK_INTERVAL_MS = 30_000
     let staleFlag: boolean

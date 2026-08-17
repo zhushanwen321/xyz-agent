@@ -490,7 +490,7 @@ export function adapter(
 
   // GUI 协议：RPC 模式下附加结构化渲染数据（union 各成员已声明 __gui__?，无需强转）
   const details: SubagentToolResult = ctx && isGuiCapable(ctx)
-    ? { ...detailsBase, __gui__: guiResult(buildGuiComponent(action, input, result)) }
+    ? { ...detailsBase, __gui__: guiResult(buildGuiComponent(input, result)) }
     : detailsBase;
 
   // [W3 修复] list action 追加 reminder text block：LLM 调 list 时提醒不要轮询。
@@ -506,16 +506,20 @@ export function adapter(
   };
 }
 
-/** 按 action 构造对应的 GuiComponent。 */
+/**
+ * 按 input.action 构造对应的 GuiComponent。
+ * 分支判定用 discriminated key（input.action）而非独立宽类型参数——TS 自动
+ * 收窄 input.domain 到对应 HandlerResult，无需 `as` 断言（与 adapter() 同款模式）。
+ */
 export function buildGuiComponent(
-  action: string,
   input: AdapterInput,
   _result: SubagentToolResult,
 ) {
+  const { action } = input;
   if (action === "start") {
     // subagent-trace 多层语义（agent名+slug+状态）用 card(stats-line) 组合表达。
     // 利用 input.domain 的身份信息，让并发 subagent 可区分。
-    const d = input.domain as StartHandlerResult;
+    const d = input.domain;
     return guiComponent("card", {
       header: d.slug ? `${d.slug}` : d.subagentId.slice(0, SUBAGENT_ID_PREVIEW),
       body: [guiComponent("stats-line", {
@@ -524,7 +528,7 @@ export function buildGuiComponent(
     });
   }
   if (action === "list") {
-    const listResp = input.domain as ListHandlerResult;
+    const listResp = input.domain;
     return guiComponent("list-tree", {
       items: listResp.response.items.map((it) => ({
         label: it.slug ? `${it.agent} · ${it.slug} · ${it.subagentId}` : `${it.agent} · ${it.subagentId}`,
@@ -535,16 +539,16 @@ export function buildGuiComponent(
   }
   if (action === "message") {
     return guiComponent("stats-line", {
-      items: [{ label: "messaged", value: (input.domain as MessageHandlerResult).subagentId, severity: "ok" }],
+      items: [{ label: "messaged", value: input.domain.subagentId, severity: "ok" }],
     });
   }
   if (action === "close") {
     return guiComponent("stats-line", {
-      items: [{ label: "closed", value: (input.domain as CloseHandlerResult).subagentId, severity: "warn" }],
+      items: [{ label: "closed", value: input.domain.subagentId, severity: "warn" }],
     });
   }
   // cancel
   return guiComponent("stats-line", {
-    items: [{ label: "cancelled", value: (input.domain as CancelHandlerResult).subagentId, severity: "warn" }],
+    items: [{ label: "cancelled", value: input.domain.subagentId, severity: "warn" }],
   });
 }

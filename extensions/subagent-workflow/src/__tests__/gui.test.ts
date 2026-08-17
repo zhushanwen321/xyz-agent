@@ -166,7 +166,6 @@ describe("buildGuiComponent", () => {
   describe("action: start", () => {
     it("返回 card 组件，header 为 slug（身份信息），body 含 stats-line", () => {
       const comp = buildGuiComponent(
-        "start",
         {
           action: "start",
           domain: {
@@ -200,7 +199,6 @@ describe("buildGuiComponent", () => {
   describe("action: list", () => {
     it("返回 list-tree，items 的 status/icon 按 SubagentListItem.status 正确映射", () => {
       const comp = buildGuiComponent(
-        "list",
         {
           action: "list",
           domain: {
@@ -267,7 +265,6 @@ describe("buildGuiComponent", () => {
 
     it("空 items → list-tree with empty items", () => {
       const comp = buildGuiComponent(
-        "list",
         { action: "list", domain: { response: { running: 0, items: [] } } },
         { action: "list", subagentId: null, sessionFile: null, listResponse: { running: 0, items: [] } },
       );
@@ -281,7 +278,6 @@ describe("buildGuiComponent", () => {
   describe("action: cancel", () => {
     it("返回 stats-line，含 cancelled 标签 + subagentId（severity warn）", () => {
       const comp = buildGuiComponent(
-        "cancel",
         {
           action: "cancel",
           domain: {
