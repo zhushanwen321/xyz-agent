@@ -55,7 +55,7 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 - 类型检查: `pnpm extensions:typecheck`；Lint: `pnpm extensions:lint`；测试: `pnpm extensions:test`
 - **本地开发调试**: `.agents/skills/dev-link/` 管理 `XYZ_EXTENSION_PATHS` 环境变量，在本地源码（live edit）和 npm 版本间切换 extension。`link-local.sh <pkg>` 添加 link → `set -a && source .env.dev-extensions && set +a && pnpm dev` 启动 → 改源码后新建 session 即生效。详见 [本地开发指南](docs/extensions/local-dev-guide.md)
 - **[MANDATORY] pi extension 测试优先在本地 pi 实测，不优先在 xyz-agent 验证**：`extensions/` 下 `@zhushanwen/pi-*` 扩展的改动，功能验证优先在**本地 pi CLI 环境**实测（RPC mode + 真实模型跑最小场景，检查 session 文件 / `XYZ_AGENT_DEBUG=1` 扩展日志），而不是优先在 xyz-agent 桌面应用中验证。原因：xyz-agent 有 mandatory 打包内置机制、数据目录隔离、runtime 中转等额外层，会掩盖或引入版本差异（2026-08-10 事故：嵌套 subagent keep-alive 拦截在本地 pi 7.0.1 实测正常，但用户 xyz-agent 环境滞留 dev 旧版 5.0.0-dev.1 导致拦截缺失）；pi CLI 是最接近扩展真实运行环境的验证场，子进程扩展加载（`mirrorMainProcessFlags` 镜像主进程 `--extension`）行为与 xyz-agent 一致。实测方法：`pi --mode rpc --session-dir <dir> --model <m> --approve --extension <ext-path>` + stdin JSONL 发 `prompt` 命令，配合 `XYZ_AGENT_DEBUG=1` 看 `~/.pi/agent/logs/` 扩展日志、检查子进程 session 文件（`~/.pi/agent/subagents/<enc>/sessions/`）的 `pending:register`/`pending:unregister` 差集。测试模型用 `xiaomi-token-plan-cn/mimo-v2.5-pro`（禁止用 kimi 模型做测试）
-- **Review 工作流**: `.agents/skills/pr-cr-fix/` 是 review→fix→PR 统一编排 skill，调度 `.agents/agents/` 下的 8 个 review agent（7 维审查 + 1 聚合器）。维度覆盖：arch-boundary / business-logic / electron-build / extension-api / monorepo-impact / test-coverage / type-safety。触发词："review 完开 PR"、"pr-cr-fix"。仅用于 xyz-agent worktree 的 PR 场景
+- **Review 工作流**: `.agents/skills/pr-cr-fix/` 是 PR 完整生命周期 skill（开 PR → 多维 review → 修 must-fix → pre-merge → push，内化原 pull-request / code-review / pre-push-checks / trim-cot-leakage 四个 skill）。review agent 定义内化在 `.agents/skills/pr-cr-fix/agents/` 下（7 维审查 + 1 聚合器，不全局暴露）。维度覆盖：arch-boundary / business-logic / electron-build / extension-api / monorepo-impact / test-coverage / type-safety。触发词："review 完开 PR"、"pr-cr-fix"、"review"、"提交 PR"、"push 前检查"。仅用于 xyz-agent worktree 的 PR 场景
 
 **Pi Extension 全集**（`extensions/` 下 14 个 `@zhushanwen/pi-*` 包 + `extensions/shared/` 下共享库；新增/删包时同步更新此表）：
 
@@ -743,7 +743,7 @@ runtime 子进程（`packages/runtime/src/`）与 pi 子进程的所有日志输
 - 子包若确需独立用 npm（罕见，如某个 vendored 工具），在该子包自己的 `.gitignore` 里放开 `package-lock.json` 规则，并在子包 package.json 声明对应 `packageManager`
 
 **保留 npm 的例外（不要"统一"成 pnpm）**：以下场景的 npm 命令是**刻意保留**的，未来 agent 做统一审查时**不要改**：
-- **第三方消费者安装指引**：`docs/extensions/local-dev-guide.md` 的 `npm install -g @earendil-works/pi-coding-agent`、`npm-prerelease/SKILL.md` 与 `release-npm-dev.yml` 的 `npm install @xyz-agent/extension-protocol@dev` 等。这些是发给 npm registry 的外部消费者的指引，他们环境未必装了 pnpm，npm 是最通用的兜底
+- **第三方消费者安装指引**：`docs/extensions/local-dev-guide.md` 的 `npm install -g @earendil-works/pi-coding-agent`、`prerelease/SKILL.md`（npm target）与 `release-npm-dev.yml` 的 `npm install @xyz-agent/extension-protocol@dev` 等。这些是发给 npm registry 的外部消费者的指引，他们环境未必装了 pnpm，npm 是最通用的兜底
 - **`npm publish`**：发包命令。`pnpm changeset publish` 内部最终也调 `npm publish`，文档里描述发包用 npm 是准确的
 - **runtime 安装用户 extension 的机制**：`extension-service.ts`/`installer.ts` 等代码里对用户 extension 执行 `npm install` 到数据目录——这是面向终端用户的 extension 安装机制，用户环境不可控，必须用 npm
 - **反例描述 / 规则正文**：「错误做法」表格里引用被禁的 `npm version`、§5 本节禁止 `npm install` 的规则条文，必须保留 npm 字样（描述被禁的命令名）
