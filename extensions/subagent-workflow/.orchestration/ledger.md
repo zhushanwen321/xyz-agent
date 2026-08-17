@@ -23,7 +23,7 @@
 - ~~存量测试失败 4 用例（skill-discovery ×2 / spawn-worktree-guidance ×2）~~ **已关闭**：用户侧 commit b843a5f49（2026-08-17 00:32）修复（mock 补 stdin 字段 / getAgentDir 直 mock），包全量 2187 绿复核成立（本 automation run exit 0 复证）
 - U1 verifier 环境注记 3 条（U3 已处置）：①手册 S7 注入脚本 @pi-meta 头已补（U3）；②~~rebuild 路径无 deps.log 调用~~ **已关闭**（obs-fixes 补 L1-L4 日志）；③pi rpc-mode 无补全探测入口，补全断言以源码 diff 为证（U3 已注记）
 - ~~S7 修复已知残留：executeAgentCall 内部 finalizeCall 的 trace.update 对重跑新节点瞬时污染~~ **已关闭**（obs-fixes：isOrphaned 谓词守卫，U6 红性验证锚定）
-- 用户侧 pi-scheduler 扩展崩溃排查：**排查完成（2026-08-17，根因实证 + 复现成功，修复待用户决策）**。根因：dispatchTask 的 `await sendMessage` 窗口与 new_session 替换交错 → 旧 session 的 30s tick timer 存活到下一 tick → `refreshWidget` 访问 stale ctx（`ctx.ui` getter 抛）→ `void tickScheduler()` fire-and-forget 无 catch → unhandledRejection → pi exit 1。idle 态 new_session 不崩（89s 存活对照）。修复方案：①session_start 先停旧 runtime（幂等防泄漏）②tick 全链 catch + stale 时自杀（防御兜底）。修复实施归用户决策
+- 用户侧 pi-scheduler 扩展崩溃排查：**已修复（2026-08-17 crash-fix 交付，extensions/scheduler/.orchestration/ledger.md）**。根因：dispatchTask 的 `await sendMessage` 窗口与 new_session 替换交错 → 旧 session 的 30s tick timer 存活到下一 tick → `refreshWidget` 访问 stale ctx（`ctx.ui` getter 抛）→ `void tickScheduler()` fire-and-forget 无 catch → unhandledRejection → pi exit 1。修复 F1+F2 双层（session_start 停旧 runtime + tick catch 分诊自停）；E2E 终裁：同场景交错后 75s+ 存活零 stale。**全局安装版 0.3.0 待 npm 发版更新（归用户决策）**
 
 ## 事件流水（时间倒序追加，永不覆盖）
 

@@ -16,6 +16,8 @@ const RATE_LIMIT_PER_MINUTE = 6
 const TICK_INTERVAL_MS = 30_000
 const DEFAULT_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 const HISTORY_LIMIT = 20 // 与 replayFoldEntries 的裁剪上限一致（advance 折叠 / dispatch 累积共用）
+// pi ExtensionRunner 在 session 替换后访问 stale ctx 时抛出的错误文案片段——tick 链路据此分诊
+const STALE_CTX_MARKER = 'stale after session replacement'
 
 export class SchedulerRuntime {
   private tasks: Map<string, ScheduledTask> = new Map()
@@ -160,7 +162,21 @@ export class SchedulerRuntime {
 
   startScheduler(): void {
     if (this.tickTimer) return
-    this.tickTimer = setInterval(() => void this.tickScheduler(), TICK_INTERVAL_MS)
+    this.tickTimer = setInterval(() => {
+      // F2（防御兜底）：fire-and-forget 的 tick 链路必须自带 catch——tick 内任何异常
+      // （典型：session 替换后泄漏 timer 的 onAfterTick → refreshWidget 访问 stale ctx.ui 抛错）
+      // 若无人接住即 unhandledRejection，直接崩掉 pi 主进程。分诊：stale 类错误说明本 runtime
+      // 所属 session 已被替换，timer 属泄漏资源，自停退场；其他错误仅告警，不终止调度。
+      void this.tickScheduler().catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err)
+        if (message.includes(STALE_CTX_MARKER)) {
+          console.warn(`[scheduler] tick stopped: stale extension ctx (session replaced); timer self-retired`)
+          this.stopScheduler()
+        } else {
+          console.warn(`[scheduler] tick error: ${message}`)
+        }
+      })
+    }, TICK_INTERVAL_MS)
   }
 
   stopScheduler(): void {

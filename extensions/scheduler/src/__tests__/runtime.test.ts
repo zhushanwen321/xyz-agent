@@ -463,4 +463,77 @@ describe('SchedulerRuntime', () => {
       expect(task.expiresAt).toBeUndefined()
     })
   })
+
+  // ── F2：tick 错误分诊（crash-fix）──
+  // startScheduler 的 interval 回调对 fire-and-forget 的 tickScheduler() 加 catch：
+  // stale 类错误（session 替换后泄漏 timer 访问 stale ctx）→ warn "tick stopped" + stopScheduler
+  // 自停；其他错误 → warn "tick error" 继续调度。修复前 tick 内异常无人接住 →
+  // unhandledRejection → pi 主进程 exit 1。
+  describe('tick 错误分诊（F2）', () => {
+    const TICK_INTERVAL_MS = 30_000
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    })
+
+    afterEach(() => {
+      runtime.stopScheduler()
+      vi.useRealTimers()
+    })
+
+    it('U1: stale 错误 → warn "tick stopped" + timer 自停，后续 tick 不再发生', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const nowSpy = vi.spyOn(backend, 'now')
+      runtime.onAfterTick(() => {
+        throw new Error('This extension ctx is stale after session replacement or reload.')
+      })
+
+      runtime.startScheduler()
+      await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS) // tick1：stale 抛 → catch 分诊 → 自停
+
+      const warnText = warnSpy.mock.calls.map(c => String(c[0])).join('\n')
+      expect(warnText).toContain('tick stopped')
+      expect(warnText).not.toContain('tick error')
+
+      const countAfterSelfStop = nowSpy.mock.calls.length
+      expect(countAfterSelfStop).toBeGreaterThan(0) // tick1 确实跑过（排除「timer 未启动」假绿）
+
+      await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS * 2) // 60s：timer 已停，无新 tick
+      expect(nowSpy.mock.calls.length).toBe(countAfterSelfStop) // now 计数不再增长
+      warnSpy.mockRestore()
+      nowSpy.mockRestore()
+    })
+
+    it('U2: 非 stale 错误 → warn "tick error" 且调度继续（advance 两次 now 计数 +2）', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const nowSpy = vi.spyOn(backend, 'now')
+      runtime.onAfterTick(() => {
+        throw new Error('boom')
+      })
+
+      runtime.startScheduler()
+      await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS) // tick1：warn 但不停
+
+      const warnText = warnSpy.mock.calls.map(c => String(c[0])).join('\n')
+      expect(warnText).toContain('tick error')
+      expect(warnText).not.toContain('tick stopped')
+
+      const countAfterFirstTick = nowSpy.mock.calls.length
+      expect(countAfterFirstTick).toBeGreaterThan(0)
+
+      await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS * 2) // 2 个后续 tick 照常
+      expect(nowSpy.mock.calls.length).toBe(countAfterFirstTick + 2)
+      warnSpy.mockRestore()
+      nowSpy.mockRestore()
+    })
+
+    it('U5: stopScheduler 幂等——连续调用两次不抛、无副作用', () => {
+      runtime.startScheduler()
+      expect(() => {
+        runtime.stopScheduler()
+        runtime.stopScheduler()
+      }).not.toThrow()
+    })
+  })
 })

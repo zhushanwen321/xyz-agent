@@ -41,6 +41,10 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
   }
 
   pi.on('session_start', (_event, ctx: ExtensionContext) => {
+    // F1（治本）：session 替换/重入时先停上一代 runtime 的 tick interval——dispatch 的 await sendMessage
+    // 窗口与 session 替换交错时旧 session_shutdown 可能永远等不到（timer 泄漏源头）。stopScheduler 幂等，
+    // shutdown 已停过再停一次无副作用。
+    service?.runtime.stopScheduler()
     // 装配点：backend（ctx.sessionManager 读 entries / pi.appendEntry 写 op）→ runtime（内存态 + 调度）→ service（业务入口）
     const backend = new PiSchedulerBackend(ctx, pi)
     // 旧 store 原子导入（CL3 方案A）：必须在 backend.loadTasks() 之前执行——
