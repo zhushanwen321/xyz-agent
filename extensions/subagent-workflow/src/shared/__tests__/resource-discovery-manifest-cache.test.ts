@@ -192,12 +192,15 @@ describe("manifestCache（readPackageManifestSync）", () => {
   // 合法 JSON 产出非对象值，旧 `as Record<string, unknown>` 盲断言下 .pi 访问
   // 「碰巧不抛」（primitive 装箱返 undefined / null 抛 TypeError 落 catch）——
   // 显式守卫后按「无 manifest」（undefined）处理，行为等价但不再依赖巧合。
-  it("非对象 JSON（42 / null / string / pi 字段非对象）→ undefined 不抛，按合法解析结果缓存", () => {
+  it("非对象 JSON（42 / null / string / pi 字段非对象或数组）→ undefined 不抛，按合法解析结果缓存", () => {
     const cases: Array<{ raw: string; label: string }> = [
       { raw: "42", label: "number" },
       { raw: "null", label: "null" },
       { raw: '"just-a-string"', label: "string" },
       { raw: '{"name":"p","pi":42}', label: "pi-field-not-object" },
+      // [review 修复] 数组能骗过 typeof "object" 守卫（装箱对象）——非合法 pi 容器，
+      // 显式归 undefined（语义上仍是「无 manifest」，与数组 entries 读出 undefined 一致）
+      { raw: '{"name":"p","pi":[]}', label: "pi-field-array" },
     ];
     // 每 case 独立子目录（缓存 key = package.json 绝对路径），互不命中；
     // readCount 是跨 case 累积计数，断言用本 case 增量

@@ -158,7 +158,10 @@ export default function (pi) {
       // Global instructions (~/.agents/AGENTS.md ...). Skipped when pi was
       // spawned with --no-context-files — the user opted out of AGENTS.md /
       // CLAUDE.md discovery, so the global file must not sneak back in.
-      if (!process.argv.includes('--no-context-files')) {
+      // pi CLI treats -nc as the equivalent short form of --no-context-files
+      // (cli/args.ts), so both forms must hit the guard — matches the mirror
+      // side (argv-mirror.ts parses both forms too).
+      if (!process.argv.includes('--no-context-files') && !process.argv.includes('-nc')) {
         const global = readGlobalAgentsFile()
         if (global) {
           newPrompt = newPrompt + '\n\n# Global instructions (' + global.path + ')\n\n' + global.content

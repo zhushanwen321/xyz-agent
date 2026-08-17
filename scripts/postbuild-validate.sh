@@ -7,7 +7,7 @@
 # 3. asar 内容正确性
 # 4. 产物大小合理性
 #
-# 用法: ./scripts/postbuild-validate.sh [--ci]
+# 用法: ./scripts/postbuild-validate.sh [--ci] [--dir-only]（参数顺序无关）
 
 set -euo pipefail
 
@@ -20,14 +20,18 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-CI_MODE=false
+# 参数解析（位置无关：循环遍历所有 args，任意顺序解析结果一致）：
+# - --dir-only：只验证 unpacked 目录（跳过安装器产物检查）
+# - --ci：接受的 no-op flag。原 CI_MODE 变量自 main 起设置后全脚本无读取点
+#   （死变量，grep 全仓确认），已删除；build.yml 调用仍传 --ci，保留解析以兼容。
 DIR_ONLY=false
-if [ "${1:-}" = "--ci" ]; then
-    CI_MODE=true
-fi
-if [ "${2:-}" = "--dir-only" ] || [ "${1:-}" = "--dir-only" ]; then
-    DIR_ONLY=true
-fi
+for arg in "$@"; do
+    case "$arg" in
+        --dir-only) DIR_ONLY=true ;;
+        --ci) ;; # no-op（原 CI_MODE 死变量已删）
+        *) echo "未知参数: $arg（支持: --ci --dir-only），已忽略" >&2 ;;
+    esac
+done
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"

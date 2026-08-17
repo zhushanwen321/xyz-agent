@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -268,6 +268,136 @@ describe('extractWorkflowsFromSessionFile', () => {
     // 三种 v2 匹配的坏结构均跳过，不抛 TypeError
     const result = extractWorkflowsFromSessionFile(sessionFile)
     expect(result).toEqual([])
+  })
+
+  // [review 修复 R4] 回归：state.trace 是守卫后唯一被直接解引用的字段（.map）——
+  // 非数组真值（"trace":{}）曾让 .map 抛 TypeError 上抛，readAndMapSnapshot 无
+  // per-item catch，一个坏 state 文件使整个 session.getWorkflows RPC 回
+  // handler_error（该 session 其余 run 一并不可见）。守卫补 Array.isArray 后
+  // 该 run 按坏行跳过，其余 run 正常返回。
+  it('边界：v2 匹配但 state.trace 非数组（{}）→ 该 run 跳过不抛，其余 run 正常', () => {
+    const sessionFile = join(tempDir, 'main-session.jsonl')
+
+    // 坏 run：trace 错型为对象
+    const stateBadTrace = join(tempDir, 'wf-bad-trace.jsonl')
+    writeFileSync(stateBadTrace, JSON.stringify({
+      v: 'wf-run-v2',
+      runId: 'wf-bad-trace',
+      spec: { scriptName: 'bad-trace-flow' },
+      state: { status: 'running', trace: {} },
+      meta: { startedAt: '2026-07-10T10:00:00Z' },
+    }) + '\n')
+
+    // 好 run：结构完整，与坏 run 共存于同一主 session
+    const stateGood = join(tempDir, 'wf-good.jsonl')
+    writeFileSync(stateGood, JSON.stringify({
+      v: 'wf-run-v2',
+      runId: 'wf-good',
+      spec: { scriptName: 'good-flow' },
+      state: {
+        status: 'running',
+        budget: { usedTokens: 1000, usedCost: 0 },
+        calls: [],
+        trace: [{ stepIndex: 0, agent: 'dev-W1', status: 'completed' }],
+      },
+      meta: { startedAt: '2026-07-10T10:00:00Z' },
+    }) + '\n')
+
+    const link = (runId: string, path: string, ts: string) => ({
+      type: 'custom',
+      customType: 'workflow-state-link',
+      data: { runId, path, updatedAt: ts },
+      timestamp: ts,
+    })
+    const sessionEntries = [
+      { type: 'session', version: 3, id: 'main-sess', cwd: '/proj', timestamp: '2026-07-10T10:00:00Z' },
+      link('wf-bad-trace', stateBadTrace, '2026-07-10T10:01:00Z'),
+      link('wf-good', stateGood, '2026-07-10T10:02:00Z'),
+    ]
+    writeFileSync(sessionFile, sessionEntries.map((e) => JSON.stringify(e)).join('\n') + '\n')
+
+    // 坏 trace 的 run 跳过，好 run 保留——不抛 TypeError、不废整个列表
+    const result = extractWorkflowsFromSessionFile(sessionFile)
+    expect(result).toHaveLength(1)
+    expect(result[0].runId).toBe('wf-good')
+    expect(result[0].scriptName).toBe('good-flow')
+    expect(result[0].agentCalls).toHaveLength(1)
+    expect(result[0].agentCalls[0].agent).toBe('dev-W1')
+  })
+
+  // [review 修复 R4] 回归：trace 数组内的 null 项按坏项过滤——mapTraceNode 的
+  // node.result 访问对 null 项抛 TypeError；过滤保留其余合法项，run 本身不跳过。
+  it('边界：trace 数组含 null 项 → 坏项过滤、合法项保留（run 不跳过）', () => {
+    const sessionFile = join(tempDir, 'main-session.jsonl')
+    const stateFilePath = join(tempDir, 'wf-null-items.jsonl')
+
+    const snapshot = {
+      v: 'wf-run-v2',
+      runId: 'wf-null-items',
+      spec: { scriptName: 'mixed-trace-flow' },
+      state: {
+        status: 'done',
+        budget: { usedTokens: 0, usedCost: 0 },
+        calls: [],
+        trace: [
+          null,
+          { stepIndex: 0, agent: 'dev-W1', status: 'completed', phase: 'P1' },
+          null,
+        ],
+      },
+      meta: { startedAt: '2026-07-10T10:00:00Z' },
+    }
+    writeFileSync(stateFilePath, JSON.stringify(snapshot) + '\n')
+
+    const sessionEntries = [
+      { type: 'session', version: 3, id: 'main-sess', cwd: '/proj', timestamp: '2026-07-10T10:00:00Z' },
+      {
+        type: 'custom',
+        customType: 'workflow-state-link',
+        data: { runId: 'wf-null-items', path: stateFilePath, updatedAt: '2026-07-10T10:01:00Z' },
+        timestamp: '2026-07-10T10:01:00Z',
+      },
+    ]
+    writeFileSync(sessionFile, sessionEntries.map((e) => JSON.stringify(e)).join('\n') + '\n')
+
+    const result = extractWorkflowsFromSessionFile(sessionFile)
+    expect(result).toHaveLength(1)
+    expect(result[0].runId).toBe('wf-null-items')
+    expect(result[0].agentCalls).toHaveLength(1)
+    expect(result[0].agentCalls[0].agent).toBe('dev-W1')
+    expect(result[0].agentCalls[0].phase).toBe('P1')
+  })
+
+  // [review 修复 R4] 版本不匹配不再静默跳过——extension（mandatory + autoUpgrade）
+  // 先发版、app 未跟上时新 run 全部消失，warn 使该版本漂移可观测（含行动指引）。
+  it('版本不匹配跳过时输出 warn（含实际版本、期望版本与修复指引）', () => {
+    const sessionFile = join(tempDir, 'main-session.jsonl')
+    const stateV1 = join(tempDir, 'wf-v1.jsonl')
+    writeFileSync(stateV1, JSON.stringify({ v: 'wf-run-v1', runId: 'wf-v1', state: {}, spec: {}, meta: {} }) + '\n')
+
+    const sessionEntries = [
+      { type: 'session', version: 3, id: 'main-sess', cwd: '/proj', timestamp: '2026-07-10T10:00:00Z' },
+      {
+        type: 'custom',
+        customType: 'workflow-state-link',
+        data: { runId: 'wf-v1', path: stateV1, updatedAt: '2026-07-10T10:01:00Z' },
+        timestamp: '2026-07-10T10:01:00Z',
+      },
+    ]
+    writeFileSync(sessionFile, sessionEntries.map((e) => JSON.stringify(e)).join('\n') + '\n')
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const result = extractWorkflowsFromSessionFile(sessionFile)
+      expect(result).toEqual([])
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      const msg = String(warnSpy.mock.calls[0][0])
+      expect(msg).toContain("version 'wf-run-v1' unsupported (expected 'wf-run-v2')")
+      expect(msg).toContain('wf-v1')
+      expect(msg).toContain('jsonl-run-store.ts')
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   // 三源一致性护栏：wf-run-v* 快照版本字面量分布在 3 个包（跨包依赖方向不允许互相

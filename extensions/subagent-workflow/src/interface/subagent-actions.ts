@@ -547,7 +547,13 @@ export function buildGuiComponent(
       items: [{ label: "closed", value: input.domain.subagentId, severity: "warn" }],
     });
   }
-  // cancel
+  // cancel（fall-through：前四分支已 return）。
+  // 穷尽检查（同 mapExternalState 的 assertNever 先例）：AdapterInput 未来新增
+  // action 时，action 在此不再收窄为 "cancel"，assertNever 的 never 参数处编译
+  // 报错——防止新分支静默落入 cancelled 渲染。
+  if (action !== "cancel") {
+    throw new Error(`buildGuiComponent: unhandled action ${assertNever(action)}`);
+  }
   return guiComponent("stats-line", {
     items: [{ label: "cancelled", value: input.domain.subagentId, severity: "warn" }],
   });

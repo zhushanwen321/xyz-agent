@@ -158,9 +158,9 @@ describe("isGuiCapable (protocol)", () => {
 // buildGuiComponent —— subagent adapter 的 GUI 构造
 // ============================================================
 //
-// AdapterInput 是 start/list/cancel 三态联合，构造对象字面量即可（不需 mock
-// SubagentService）。start 分支返回 card(stats-line)，list 分支返回 list-tree，
-// cancel 分支返回 stats-line。
+// AdapterInput 是 start/list/cancel/message/close 五成员联合，构造对象字面量即可
+// （不需 mock SubagentService）。start 分支返回 card(stats-line)，list 分支返回
+// list-tree，cancel/message/close 分支返回 stats-line。
 
 describe("buildGuiComponent", () => {
   describe("action: start", () => {
@@ -298,6 +298,62 @@ describe("buildGuiComponent", () => {
       expect(props.items).toHaveLength(1);
       expect(props.items[0].label).toBe("cancelled");
       expect(props.items[0].value).toBe("sub-002");
+      expect(props.items[0].severity).toBe("warn");
+    });
+  });
+
+  describe("action: message", () => {
+    it("返回 stats-line，含 messaged 标签 + subagentId（severity ok）", () => {
+      const comp = buildGuiComponent(
+        {
+          action: "message",
+          domain: {
+            kind: "message",
+            subagentId: "sub-003",
+            response: { delivered: true },
+          },
+        },
+        {
+          action: "message",
+          subagentId: "sub-003",
+          sessionFile: null,
+          messageResponse: { delivered: true },
+        },
+      );
+
+      expect(comp.type).toBe("stats-line");
+      const props = comp.props as { items: Array<{ label: string; value: string; severity: string }> };
+      expect(props.items).toHaveLength(1);
+      expect(props.items[0].label).toBe("messaged");
+      expect(props.items[0].value).toBe("sub-003");
+      expect(props.items[0].severity).toBe("ok");
+    });
+  });
+
+  describe("action: close", () => {
+    it("返回 stats-line，含 closed 标签 + subagentId（severity warn）", () => {
+      const comp = buildGuiComponent(
+        {
+          action: "close",
+          domain: {
+            kind: "close",
+            subagentId: "sub-004",
+            response: { closed: true },
+          },
+        },
+        {
+          action: "close",
+          subagentId: "sub-004",
+          sessionFile: null,
+          closeResponse: { closed: true },
+        },
+      );
+
+      expect(comp.type).toBe("stats-line");
+      const props = comp.props as { items: Array<{ label: string; value: string; severity: string }> };
+      expect(props.items).toHaveLength(1);
+      expect(props.items[0].label).toBe("closed");
+      expect(props.items[0].value).toBe("sub-004");
       expect(props.items[0].severity).toBe("warn");
     });
   });

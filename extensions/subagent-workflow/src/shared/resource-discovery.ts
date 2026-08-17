@@ -123,14 +123,17 @@ function piToManifest(pi: Record<string, unknown> | undefined, kind: ResourceKin
  * 非对象值，旧 `as Record<string, unknown>` 盲断言下 .pi 访问是「碰巧不抛」
  * （primitive 装箱返 undefined / null 抛 TypeError 落入 catch）——显式判非对象，
  * 按「无 manifest」（undefined）处理，后果与原先一致但语义不再依赖巧合。
- * pi 字段本身非对象（如 {"pi":42}）同样显式归 undefined。
+ * pi 字段本身非对象（如 {"pi":42}）或为数组（如 {"pi":[]}——数组不是合法 pi 容器，
+ * typeof "object" 守卫会放行，Record 断言对数组是谎言）同样显式归 undefined。
  * JSON SyntaxError 向上抛，由调用方 catch 承担「坏 JSON 不缓存、下次重试」语义。
  */
 function parsePiField(content: string): Record<string, unknown> | undefined {
   const parsed: unknown = JSON.parse(content);
   if (typeof parsed !== "object" || parsed === null) return undefined;
   const pi: unknown = (parsed as Record<string, unknown>).pi;
-  return typeof pi === "object" && pi !== null ? (pi as Record<string, unknown>) : undefined;
+  return typeof pi === "object" && pi !== null && !Array.isArray(pi)
+    ? (pi as Record<string, unknown>)
+    : undefined;
 }
 
 /**

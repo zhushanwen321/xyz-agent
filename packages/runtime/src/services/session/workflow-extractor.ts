@@ -216,15 +216,41 @@ function readAndMapSnapshot(runId: string, stateFilePath: string): WorkflowRunRe
 
   const snapshot = parsed as RunSnapshot
 
-  // D-5 版本守卫：版本不匹配跳过（旧格式不向后兼容）
-  if (snapshot.v !== SNAPSHOT_VERSION) return null
+  // D-5 版本守卫：版本不匹配跳过（旧格式不向后兼容），判定先于结构校验——
+  // 新格式快照结构可能已变（trace 改形等），先比版本才能把「版本漂移」与
+  // 「同版本坏数据」区分开。
+  // [review 修复 R4] 不再静默——pi-subagent-workflow 是 mandatory + autoUpgrade 扩展，
+  // extension 先发版（npm-* tag 独立管线）而 app 未跟上时，版本守卫会把新 run 全部
+  // 判为不匹配跳过（WorkflowList 对新 run 显示为空），无日志则该版本漂移不可观测。
+  if (snapshot.v !== SNAPSHOT_VERSION) {
+    console.warn(
+      `[workflow-extractor] snapshot version '${String(snapshot.v)}' unsupported (expected '${SNAPSHOT_VERSION}') — ` +
+        `extension/runtime version skew, skip run ${runId} (${stateFilePath}). ` +
+        `Fix: bump SNAPSHOT_VERSION in workflow-extractor.ts to match ` +
+        `extensions/subagent-workflow/src/orchestration/jsonl-run-store.ts (see header comment).`,
+    )
+    return null
+  }
+
+  // [review 修复 R4] state.trace 是三段中唯一被直接解引用的字段（mapSnapshotToRecord
+  // 的 .map 与 mapTraceNode 的 node.result 访问）——非数组真值（如 "trace":{}）时
+  // ?? 只挡 null/undefined 不挡错型，.map 抛 TypeError 且 readAndMapSnapshot 无
+  // per-item catch，一个坏 state 文件会让整个 session.getWorkflows RPC 回
+  // handler_error（该 session 其余 run 一并不可见）。非数组与三段缺失同层：该 run
+  // 按坏行跳过；数组内的 null 项在 mapSnapshotToRecord 过滤（项级隔离，不弃整个 run）。
+  if (!Array.isArray((body.state as Record<string, unknown>).trace)) return null
 
   return mapSnapshotToRecord(snapshot, stateFilePath)
 }
 
 /** 映射 RunSnapshot → WorkflowRunRecord（含 trace → agentCalls 映射） */
 function mapSnapshotToRecord(snapshot: RunSnapshot, stateFilePath: string): WorkflowRunRecord {
-  const agentCalls: WorkflowAgentCall[] = (snapshot.state.trace ?? []).map(mapTraceNode)
+  // [review 修复 R4] trace 数组内的 null 项按坏项过滤（mapTraceNode 的 node.result
+  // 访问对 null 项抛 TypeError）——保留其余合法项，run 本身不跳过（坏项隔离到项级，
+  // 上方 Array.isArray 守卫已保证 trace 是数组，?? 仅为函数级防御保留）
+  const agentCalls: WorkflowAgentCall[] = (snapshot.state.trace ?? [])
+    .filter((node): node is SnapshotTraceNode => typeof node === 'object' && node !== null)
+    .map(mapTraceNode)
 
   return {
     runId: snapshot.runId,
