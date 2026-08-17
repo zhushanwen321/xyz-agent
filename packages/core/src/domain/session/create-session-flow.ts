@@ -19,7 +19,7 @@
  * 依赖方向：SessionApiPort（./api-port）+ createSessionStore 类型（./store）+ Segment/SessionSummary
  * （@xyz-agent/shared）。core 零 renderer import。
  */
-import type { Segment, SessionSummary } from '@xyz-agent/shared'
+import type { Segment, SessionSummary, ThinkingLevel } from '@xyz-agent/shared'
 import type { SessionApiPort } from './api-port'
 import type { createSessionStore } from './store'
 
@@ -102,6 +102,8 @@ export interface CreateSessionFlowInput {
   segments: Segment[]
   /** bash 首发（landing 态 !/!! 前缀）；存在时 label 从 command 取 */
   bashCommand?: { command: string; excludeFromContext: boolean } | null
+  /** landing 态选定的思考等级（透传 session.create，session 创建即带正确等级） */
+  pendingThinkingLevel?: ThinkingLevel | null
 }
 
 /** createSessionFlow 的返回值（非 null 分支；null = guard 命中未创建）。 */
@@ -119,7 +121,7 @@ export interface CreateSessionFlowResult {
  * 1. guard：无 text trim 且无非 text 段且无 bashCommand → 返回 null（不创建）
  * 2. cwd 兜底：input.cwd ?? ctx.defaultCwd
  * 3. label 派生：bashCommand ? command : trimmed（codePoint 前 10 + 省略号）
- * 4. create：api.create(cwd, label, presetId ?? undefined)
+ * 4. create：api.create(cwd, label, presetId, projectId, modelOverride, thinkingOverride)
  * 5. INV-7 降级：cwd && created.cwd !== cwd → onCwdFallback?.(cwd, created.cwd)
  * 6. appendSession：store.appendSession(created)
  * 7. applyModel：pendingModel 非空 → ctx.applyModel?.(created.id, pendingModel)
@@ -150,7 +152,16 @@ export async function createSessionFlow(
   const label = deriveSessionLabel(labelSource)
 
   // 4. create session（label 已派生；presetId 透传；projectId 归属透传：D14 语义修正，创建时归属当前 activeProject）
-  const created = await ctx.api.create(cwd, label, input.presetId ?? undefined, input.projectId ?? undefined)
+  // B3：modelOverride/thinkingOverride 透传——session 创建即带正确模型，消除 config.sessions 广播覆盖竞态。
+  // 优先级：override > preset > 全局默认。applyModel 保留作 fallback（override 未传时仍执行）。
+  const created = await ctx.api.create(
+    cwd,
+    label,
+    input.presetId ?? undefined,
+    input.projectId ?? undefined,
+    input.pendingModel ?? undefined,
+    input.pendingThinkingLevel ?? undefined,
+  )
 
   // 5. INV-7 cwd 降级比对（runtime create 内部可能降级 homedir）
   if (cwd && created.cwd !== cwd) {
