@@ -17,7 +17,7 @@ describe('SessionMetaCache', () => {
   })
 
   describe('setLabel / getLabel', () => {
-    it('should set and get label for a session', () => {
+    it('A0 should set and get label for a session', () => {
       cache.setLabel('session-1', 'My Session')
       expect(cache.getLabel('session-1')).toBe('My Session')
     })

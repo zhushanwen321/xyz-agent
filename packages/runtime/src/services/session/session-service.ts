@@ -28,6 +28,7 @@ import type {
 } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine, PiCommandInfo } from '../ports/pi-engine.js'
+import { sessionMetaCache } from './session-meta-cache.js'
 import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
 import { parseJsonl } from '../../utils/jsonl.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
@@ -1001,7 +1002,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   toSummary(s: IManagedSessionView): SessionSummary {
     const git = this.gitInfoReader.readGitInfo(s.cwd)
     return {
-      id: s.id, label: s.label, cwd: s.cwd,
+      id: s.id, label: sessionMetaCache.getLabel(s.id) ?? s.label, cwd: s.cwd,
       gitBranch: git?.branch, gitIsWorktree: git?.isWorktree,
       // R1：复用 WorkspaceDetector 检测 .bare workspace（带缓存），填 isBareWorkspace
       // 供前端 Landing.vue 派生「新建 worktree」动作项显隐。

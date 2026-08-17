@@ -23,6 +23,7 @@ import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
 import { EventInterpreter } from './services/session/event-interpreter.js'
+import { sessionMetaCache } from './services/session/session-meta-cache.js'
 import { join, resolve, isAbsolute } from 'node:path'
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
@@ -256,6 +257,11 @@ async function main(): Promise<void> {
         // pi 切模型 / 用户手切档位后推 thinking_level_changed 事件。
         // 回写 session 缓存，使后续 broadcastSessionState 读到真值（而非 undefined）。
         sessionService.setThinkingLevelCache(sid, level)
+      },
+      onSessionRenamed: (sid, name) => {
+        // pi extension auto-rename (session_info_changed) 事件到达时。
+        // 回写 session label 缓存，使后续 broadcastSessionList 读到新名称（而非旧值）。
+        sessionMetaCache.setLabel(sid, name ?? '')
       },
       executeHooks: (hookType, context) => pluginService.executeHooks(hookType, {
         pluginId: '',
