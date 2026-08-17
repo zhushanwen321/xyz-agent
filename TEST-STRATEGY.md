@@ -1,6 +1,6 @@
 # 测试策略（TEST-STRATEGY）
 
-> 测试体系 SSOT。CLAUDE.md「测试规范」章节是规则载体，本文件补充分层策略 + 回归基线 + mock 策略 + 运行手册。两者互补不冲突。
+> 测试体系 SSOT。AGENTS.md「测试规范」章节是规则载体，本文件补充分层策略 + 回归基线 + mock 策略 + 运行手册。两者互补不冲突。
 >
 > **各功能具体测试步骤**（MOCK/非MOCK/Playwright 调用链 + 每步期望输入输出）见 [docs/testing/](docs/testing/) 测试手册：
 > - [00-test-strategy-overview.md](docs/testing/00-test-strategy-overview.md) — 双轨制 + Playwright harness + 公共前置（入口篇，必读）
