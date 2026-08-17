@@ -87,7 +87,7 @@
           <!-- running 态 loader（双环 + accent），其余走 list-checks ICON -->
           <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <component :is="BLOCK_ICON_LUCIDE.workflow" v-else class="size-3.5 shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
-          <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.workflow') }}</span>
+          <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold tracking-[0.08em] text-neutral-fg">{{ t('panel.message.workflow') }}</span>
           <span v-if="workflowFields.name" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ workflowFields.name }}</span>
           <template v-if="workflowFields.slug">
             <span class="text-neutral-faint">·</span>
@@ -101,7 +101,7 @@
         <div
           data-testid="tool-block-header"
           class="tool-header flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[length:var(--text-sm)] font-medium transition-opacity hover:opacity-80"
-          :class="toolStatusClass"
+          :class="[toolStatusClass, isRunning ? 'toolcall-breathing' : '']"
           :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
         >
@@ -462,6 +462,15 @@ const testId = computed(() => {
 .block-expand-leave-to {
   opacity: 0;
   transform: translateY(-4px);
+}
+
+/* running toolcall 透明度呼吸：文字在 opacity 1 ↔ 0.55 间呼吸，区分进行中与已完成 */
+@keyframes toolcall-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.toolcall-breathing {
+  animation: toolcall-breathe 2.4s ease-in-out infinite;
 }
 </style>
 

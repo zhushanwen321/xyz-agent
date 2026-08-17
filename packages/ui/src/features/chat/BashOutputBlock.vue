@@ -22,7 +22,7 @@
     exitCode/timeout/cancelled/truncated 语义全保留）。
   -->
   <div
-    class="bash-output-block flex flex-col gap-1.5 py-2"
+    class="bash-output-block mx-auto flex w-full max-w-[var(--content-max-w)] flex-col gap-1.5 py-2"
     data-testid="bash-output-block"
   >
     <!-- 头部行：command 文本 + 状态标签（+ no context 标记 + 取消按钮） -->
