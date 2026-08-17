@@ -258,6 +258,16 @@ export class SubagentService {
    *  与 forkDepthAls 独立：后者只数 fork 链（fork=true 才递增），本 ALS 数所有 subagent 嵌套。 */
   private readonly execCtxAls = new AsyncLocalStorage<{ recordId: string | undefined; depth: number }>();
 
+  /** [review MF1] record 级在途 resume 守卫。resumeRound 全部守卫通过后 add，
+   *  runAndFinalize 结束（finally，覆盖轮次完成 / MF-6 失败回退 / abort / 终态化所有分支）时
+   *  delete（幂等：execute() 新建 record 不在集合，no-op）。窗口 = resume 发起（含 pool.acquire
+   *  排队）→ 本轮 runAndFinalize 收尾。窗口内同 record 再次到达 resumeRound（冷路径重入 /
+   *  EPIPE 兜底）直接 throw——防两个 pi 子进程以 --session 同一 JSONL 双写 + 前一个脱离
+   *  kill 记账成孤儿（deliverMessage 冷路径的 acquireActivateLock 只覆盖 resumeRound 同步段，
+   *  锁释放在子进程注册（session-runner spawnedChildren.set）之前，锁空洞由此守卫兜住；
+   *  EPIPE 兜底不持锁，同样被覆盖）。child 注册完成后 deliverMessage 走热路径，不经此守卫。 */
+  private readonly resumesInFlight = new Set<string>();
+
   private readonly manifestStore: ManifestStore;
 
   constructor(init: SubagentServiceInit) {
@@ -495,6 +505,9 @@ export class SubagentService {
     this.disposeAllRecords("parent-shutdown");
     // [v4 A-1] EPIPE 连续失败计数器清零（计数器已迁移到 stdin-writer，防跨 session 泄漏）
     resetAllEpipeFailures();
+    // [review MF1] 在途 resume 守卫清空（正常由 runAndFinalize finally 清除；此处兜底
+    // abort/kill 后仍挂着的条目，防跨 session 复活时残留）
+    this.resumesInFlight.clear();
     // flush 待发通知后 dispose（防丢失）
     this.notifier.flushPendingNotifications();
     this.notifier.dispose();
@@ -736,14 +749,29 @@ export class SubagentService {
    */
   resumeRound(record: ExecutionRecord, text: string): void {
     this.assertReady();
-    // [CL-b1-cas-coupling / v4 B-1] 临时：旧 idle CAS（status!=='idle'）改 status!=='running'，
-    // 保留 CAS 机制本体（不删 CAS）。B-3 补完 isResumable 精确守卫前，CAS 是唯一单写者守卫。
-    // resumeRound 仅经 deliverMessage 冷路径到达（无活进程），running 守卫在实践上安全。
+    // [CL-b1-cas-coupling / v4 B-1] v4 把旧 idle 折入 running 后此守卫对 idle-resumable
+    // record 恒放行（idle 本来就是 running），`status = "running"`（下方）是幂等写——
+    // 旧「idle→running CAS」的单写者语义已消失。单写者守卫由 resumesInFlight 承担
+    //（[review MF1]，见字段注释）；本守卫保留拦截终态（closed）record。
     if (record.status !== "running") {
       // MF-4：行动语言（spec §3.1），不暴露 resume/controller 等内部词汇。
       throw new Error(
         `subagent ${record.id} is not ready for a new message (current state: ${record.status}). ` +
         `Recovery: use action:'list' to confirm state; wait for the current round to finish, or send the message again once it is idle.`,
+      );
+    }
+    // [review MF1] 在途 resume 守卫：上一条消息发起的 resume 仍在途（spawn 尚未注册 /
+    // 本轮 runAndFinalize 未收尾）时，再次到达（冷路径重入 / EPIPE 兜底）直接拒绝。
+    // 触发链：pi 对同一 assistant message 的 tool calls 顺序执行（sequential），tool1 的
+    // deliverMessage 在冷路径 resumeRound 返回即 resolve（早于 spawn 注册完成），tool2
+    // 立即执行 → getChildByRecord 仍 undefined → 再次冷路径。无此守卫 → 两次 kickOff →
+    // runSpawn 2 次 → 两 pi 子进程双写同一 session JSONL + 第一个脱离 kill 记账成孤儿。
+    if (this.resumesInFlight.has(record.id)) {
+      // MF-4：行动语言。
+      throw new Error(
+        `subagent ${record.id} is already starting a new round (a previous message is still resuming). ` +
+        `Recovery: wait for the round to start (check with action:'list'), then send the message again; ` +
+        `or use action:'close' if this subagent is no longer needed.`,
       );
     }
     if (!record.sessionFile) {
@@ -758,6 +786,19 @@ export class SubagentService {
       throw new Error(
         `subagent ${record.id} is not ready for a new message (internal state error). ` +
         `Recovery: use action:'close' to clean up, then action:'start' a new subagent.`,
+      );
+    }
+    // [review round2] 跨重启 worktree 绑定丢失守卫：原 record 曾用 worktree 隔离
+    //（hadWorktree 由 getRecordForAction 磁盘重建时从 session entry 恢复），但 handle
+    // 不可序列化、跨重启后无法 reattach（reattach 也无 checkout 可用——reaper 在
+    // session_start 已按 pid 死活清理孤儿 worktree）。此时 resume 的 spawn cwd 会静默
+    // 回落主 repo，子 agent 直接编辑主仓库——正是 worktree 隔离要防的场景。拒绝续聊。
+    if (record.hadWorktree === true && !record.worktreeHandle) {
+      // MF-4：行动语言。
+      throw new Error(
+        `subagent ${record.id} was created with worktree isolation, but that binding was lost when the parent process restarted; ` +
+        `resuming it now would run in the main repository and bypass the isolation. ` +
+        `Recovery: use action:'close' to release this subagent, then action:'start' a new one with worktree isolation.`,
       );
     }
 
@@ -795,6 +836,9 @@ export class SubagentService {
 
     // detached 编排：runAndFinalize 在 background 跑，pool 重新 acquire（轮次间 idle 已 release）。
     // chatMode + done 时 M2-A 分流自动 finalizeRoundToIdle（record 回 idle、round+1）。
+    // [review MF1] 在途标记在 kickOff 前同步设置：resumeRound 返回即生效，后续重入
+    // （冷路径 / EPIPE 兜底）在守卫处被拒；runAndFinalize finally 统一清除。
+    this.resumesInFlight.add(record.id);
     this.kickOffBackground(record, opts, ctx, identity, record.controller.signal, PRIORITY_BACKGROUND, resume);
   }
 
@@ -841,6 +885,9 @@ export class SubagentService {
       } catch (err) {
         // EPIPE 兜底：stdin 管道已断，进程实际已死但 close 事件尚未到达。
         // 检测 EPIPE 关键词 → 进程按 dead 处理 → 自动转冷路径 resume + 消息重放。
+        // [review MF1] 本兜底不持 activateLock，但与冷路径共用 resumeRound 的在途守卫
+        //（resumesInFlight）：resume 已在途时兜底的 resumeRound 调用被拒（throw 行动语言），
+        // 不会二次 spawn。
         if (err instanceof Error && err.message.includes("EPIPE")) {
           logger.warn(`[subagents] EPIPE on hot path for ${record.id}, falling back to cold path resume`, {
             detail: err.message,
@@ -871,8 +918,10 @@ export class SubagentService {
       }
     } else {
       // 冷路径：进程死（idle timer reap / 崩溃 / 跨重启），record 应为 idle → resume spawn。
-      // D3：acquireActivateLock 双保险——idle CAS 守卫仍有效，锁作为额外防护层。
-      // 防并发 message 同时走冷路径（虽概率极低，CAS 已覆盖，锁是结构化保障）。
+      // D3：acquireActivateLock 双保险——注意锁只覆盖 resumeRound 同步段，释放在子进程注册
+      //（session-runner spawnedChildren.set）之前（中间隔 pool.acquire await + tempFile 等异步点）。
+      // 真正的单写者守卫是 resumeRound 的 resumesInFlight（[review MF1]）：锁释放后、child
+      // 注册前到达的第二次冷路径 message 在 resumeRound 处被拒，不会二次 spawn。
       const releaseLock = await acquireActivateLock(record.id);
       try {
         this.resumeRound(record, text);
@@ -936,6 +985,12 @@ export class SubagentService {
         });
         record.sessionFile = found.sessionFile;
         record.round = found.round;
+        // [review round2] 跨重启 worktree 绑定丢失防护：原 record 创建时启用了 worktree 隔离
+        //（session entry 的 worktree 标志），但 WorktreeHandle 不可序列化、重建后恒缺失。
+        // 标记 hadWorktree，resumeRound 守卫据此拒绝续聊（防 spawn cwd 静默回落主 repo 破坏
+        // 隔离——正是 worktree 要防的并发写冲突场景）。close 不受影响（closeChatIdle 走
+        // doFinalizeRecord，泄漏的 worktree 由 reaper 兜底回收）。
+        record.hadWorktree = found.worktree === true;
         this.store.register(record);
       }
     }
@@ -1397,6 +1452,10 @@ export class SubagentService {
       if (pooled && acquired) this.pool.release();
       // 清除 streaming widget（subagent 终态，幂等）
       stream?.dispose();
+      // [review MF1] 清除在途 resume 守卫（幂等）：本轮收尾——无论轮次完成（early return）、
+      // MF-6 失败回退 resumable、abort 还是终态化，record 都可再次接受冷路径 message。
+      // execute() 新建 record 不在集合，delete 是 no-op。
+      this.resumesInFlight.delete(record.id);
     }
 
     // [V2 决策 2/3] chatMode 首轮闭环：runSpawn 因 agent_settled 提前 resolve（onRoundSettled

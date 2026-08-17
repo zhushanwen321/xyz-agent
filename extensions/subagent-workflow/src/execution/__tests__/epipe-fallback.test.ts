@@ -217,4 +217,25 @@ describe("deliverMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径 resu
     spawnedChildren.set(record.id, makeEpipeChild());
     await expect(service.deliverMessage(record, "after reset", false)).resolves.toBeUndefined();
   });
+
+  it("EPIPE 兜底与冷路径共用 in-flight 守卫：resume 在途时 EPIPE 兜底不再二次 spawn（review round2 MF1）", async () => {
+    // 冷路径发起 resume，runSpawn 挂起（spawn 异步窗口内）
+    let releaseFirst!: (r: AgentResult) => void;
+    mockRunSpawn.mockImplementationOnce(
+      () => new Promise<AgentResult>((res) => { releaseFirst = res; }),
+    );
+    await service.deliverMessage(record, "cold path first", false);
+    await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
+
+    // 注册 EPIPE child → deliverMessage 走热路径 → stdin EPIPE → 兜底调 resumeRound
+    // → in-flight 命中 → throw（不再走第二次 spawn。EPIPE 计数仍 +1 但未达阈值 2，
+    // exhaustion 分支不触发；throw 由兜底路径的 resumeRound 守卫抛出）
+    spawnedChildren.set(record.id, makeEpipeChild());
+    await expect(service.deliverMessage(record, "epipe during resume", false)).rejects.toThrow(
+      /already starting a new round/,
+    );
+    expect(mockRunSpawn).toHaveBeenCalledTimes(1);
+
+    releaseFirst(makeResult(true));
+  });
 });

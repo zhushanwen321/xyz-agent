@@ -62,15 +62,16 @@ export type ClosedReason = 'parent-shutdown' | 'parent-fork' | 'parent-new' | 'u
 
 /**
  * 对外四态（设计决策 10 细则 3）：内部 ExecutionStatus（v4 B-1 两态）收敛为 agent
- * 可理解的状态语义。
+ * 可理解的状态语义。真实映射只有两条：
+ *   running → active / closed → ended（closed 统一终态，含 cancelled）。
+ * mapExternalState 不消费 ClosedReason——closed 恒映射 ended。
  *
- *   running              → active   （正在执行 / 对话模式活跃）
- *   closed + L2 reason   → ended 或 error（按 ClosedReason 派生）
- *     - closedReason=cancelled/parent-shutdown/parent-fork/parent-new/gc/user-close → ended
- *     - （未来扩展：如 closedReason=crash → error）
+ * waiting / error 是历史多态映射（idle→waiting / failed+crashed→error）的遗留声明：
+ * 对外四态联合契约不变，但当前状态机不产生这两个值。
  *
  * 原始 ExecutionStatus 进 list item 的 status 字段供调试；state 是对外主字段。
- * 未来内部加态（如 paused）只需扩展 mapExternalState，不影响对外契约。
+ * 映射实现见 subagent-actions.ts mapExternalState——未来内部加态必须扩展该处，
+ * 漏加会在 default 分支编译报错，不影响对外契约。
  */
 export type ExternalState = "active" | "waiting" | "ended" | "error";
 
@@ -258,18 +259,9 @@ export interface AgentResult {
 // ExecutionRecord —— 唯一状态对象（Core 拥有，Runtime 引用）
 // ============================================================
 
-/**
- * 所有执行路径的唯一状态源。
- *
- * 收口设计：一次执行的完整内容（text/thinking/toolCalls/usage）按 turn 收口在
- * `turns: Turn[]` 里。eventLog / currentActivity / result 文本均从 turns[] 派生
- * （getEventLog / getCurrentActivity / getFullText），不再独立存储切片或缓冲。
- *
- * 生命周期：createRecord() 创建 → updateFromEvent() 实时更新（累积进 turns）→
- *           completeRecord() 冻结 → archive 立即移出内存（读时从 session.jsonl 重建）。
- *
- * TUI 永远拿 RecordSnapshot（.slice() 快照），不直接持此可变对象。
- */
+// 本 section 先声明 ExecutionRecord 的组成值对象（WorktreeHandle / AliveMarker /
+// PatchResult 等），ExecutionRecord 本体及其文档注释在 section 末尾。
+
 /**
  * worktree handle 值对象。仅 worktree:true 时持有——worktree 是独立维度，
  * 需显式开启，fork alone 不创建 worktree。
@@ -338,11 +330,17 @@ export class DirtyWorktreeError extends Error {
 }
 
 /**
- * 在途消息缓存条目（消费确认制，设计决策 6 状态×interrupt 映射）已随 deliverToRunning
- * 一并删除（SP-5 upgrade 后无生产调用方，三段消费链全部不可达）。见 subagent-service.ts
- * 删除记录注释。
+ * 所有执行路径的唯一状态源。
+ *
+ * 收口设计：一次执行的完整内容（text/thinking/toolCalls/usage）按 turn 收口在
+ * `turns: Turn[]` 里。eventLog / currentActivity / result 文本均从 turns[] 派生
+ * （getEventLog / getCurrentActivity / getFullText），不再独立存储切片或缓冲。
+ *
+ * 生命周期：createRecord() 创建 → updateFromEvent() 实时更新（累积进 turns）→
+ *           completeRecord() 冻结 → archive 立即移出内存（读时从 session.jsonl 重建）。
+ *
+ * TUI 永远拿 RecordSnapshot（.slice() 快照），不直接持此可变对象。
  */
-
 export interface ExecutionRecord {
   /** 唯一 ID（sync: "run-N"，bg: "bg-N-xxx"）。 */
   readonly id: string;
@@ -461,6 +459,14 @@ export interface ExecutionRecord {
 
   /** worktree 隔离时的 handle（仅 worktree:true 时存在；fork alone 无此字段）。 */
   worktreeHandle?: WorktreeHandle;
+
+  /**
+   * [review round2] 该 record 创建时启用了 worktree 隔离（跨重启磁盘重建时从 session
+   * entry 的 worktree 标志恢复）。handle 本体不可序列化——跨重启后 worktreeHandle 恒
+   * undefined，续聊（冷路径 resume）须拒绝（防 cwd 静默回落主 repo 破坏隔离）。仅内存
+   * record 使用，与持久化无关；execute() 新建 record 不设（有真 handle 时无意义）。
+   */
+  hadWorktree?: boolean;
 
   // ── 控制（仅 background 持有）──
   controller: AbortController | undefined;
@@ -619,7 +625,14 @@ export interface CancelResponse {
   cancelled: true;
 }
 
-/** message 的内层响应（挂在 SubagentToolResult.messageResponse，决策 10 瘦身）。 */
+/**
+ * message 的内层响应（挂在 SubagentToolResult.messageResponse，决策 10 瘦身）。
+ *
+ * [R1 删除记录] 旧 PendingMessage（在途消息缓存条目，消费确认制，设计决策 6 状态×
+ * interrupt 映射）已随 deliverToRunning 一并删除——SP-5 upgrade 后无生产调用方，
+ * 配套三段消费链（push / message_start shift / redeliverPending 补投）全部不可达。
+ * 详见 subagent-service.ts 的删除记录注释。
+ */
 export interface MessageResponse {
   delivered: true;
 }
@@ -682,6 +695,11 @@ export interface SubagentRecord {
   sessionFile?: string;
   /** [MF#3] worktree 模式下子 agent 改动的 patch 文件路径（worktree 外，供调用方应用）。 */
   patchFile?: string;
+  /**
+   * [review round2] 创建时启用 worktree 隔离（磁盘重建源从 session entry 恢复；内存源由
+   * recordToSubagent 从 worktreeHandle 投影）。getRecordForAction 跨重启重建时据此拒绝续聊。
+   */
+  worktree?: boolean;
   /**
    * 对话轮次计数（仅 chatMode idle record 有意义）。round 仅在内存维护（doFinalizeRoundToIdle
    * 递增），跨重启不恢复（round 无磁盘持久化）；非对话模式 / 非 idle record 为 undefined。内存源由 recordToSubagent 从

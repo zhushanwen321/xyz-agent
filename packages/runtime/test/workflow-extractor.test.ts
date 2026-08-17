@@ -197,26 +197,61 @@ describe('extractWorkflowsFromSessionFile', () => {
     expect(result).toEqual([])
   })
 
-  // 双源一致性护栏：runtime 的 SNAPSHOT_VERSION 是 extension 侧常量的本地副本
-  // （跨包依赖方向不允许 import extensions/ 源码），extension bump 格式版本时若漏改
-  // runtime 副本，版本守卫会把新快照全部判为不匹配跳过（renderer WorkflowList 全空）。
-  // 两个常量都未导出，读源码提取字面量断言相等。
-  it('双源一致性：runtime SNAPSHOT_VERSION 与 extension jsonl-run-store.ts 一致', () => {
+  // 三源一致性护栏：wf-run-v* 快照版本字面量分布在 3 个包（跨包依赖方向不允许互相
+  // import 源码），extension bump 格式版本时任何一处漏改都会静默丢数据：
+  // - 源 1（权威）：extension jsonl-run-store.ts 的 SNAPSHOT_VERSION——漏改不会（它是生产方）
+  // - 源 2（副本）：runtime workflow-extractor.ts 的本地副本——漏改则版本守卫把新快照
+  //   全部判为不匹配跳过（renderer WorkflowList 全空）
+  // - 源 3（消费方）：session-reader（独立发 npm 的 sibling 扩展）两处版本判定——
+  //   discovery/workflows.ts isNew + core/workflow.ts NEW 分支。漏改则 family/workflows
+  //   腿对新 run 静默丢全部 calls sessionFile、workflow overview 对新 run 返 null
+  it('三源一致性：runtime SNAPSHOT_VERSION 副本 + session-reader 两处版本判定与 extension jsonl-run-store.ts 同步', () => {
     const extSrc = readFileSync(
       join(__dirname, '..', '..', '..', 'extensions', 'subagent-workflow', 'src', 'orchestration', 'jsonl-run-store.ts'),
       'utf-8',
     )
     const extMatch = extSrc.match(/export const SNAPSHOT_VERSION = "([^"]+)"/)
     expect(extMatch, 'extension 侧 SNAPSHOT_VERSION 导出字面量未找到——导出形式是否变了？').not.toBeNull()
+    const current = extMatch![1]
 
+    // 源 2：runtime 副本与权威源字面量相等
     const rtSrc = readFileSync(
       join(__dirname, '..', 'src', 'services', 'session', 'workflow-extractor.ts'),
       'utf-8',
     )
     const rtMatch = rtSrc.match(/const SNAPSHOT_VERSION = '([^']+)'/)
     expect(rtMatch, 'runtime 侧 SNAPSHOT_VERSION 常量字面量未找到').not.toBeNull()
+    expect(rtMatch![1]).toBe(current)
 
-    expect(rtMatch![1]).toBe(extMatch![1])
+    // 源 3a：session-reader discovery/workflows.ts 的 isNew 判定接受当前版本
+    const srDiscoverySrc = readFileSync(
+      join(__dirname, '..', '..', '..', 'extensions', 'session-reader', 'src', 'discovery', 'workflows.ts'),
+      'utf-8',
+    )
+    const isNewLine = srDiscoverySrc.match(/const isNew = s\.v === '([^']+)[^\n]*/)
+    expect(
+      isNewLine,
+      'session-reader discovery/workflows.ts 的 isNew 版本判定未找到——判定写法是否变了？',
+    ).not.toBeNull()
+    expect(
+      isNewLine![0].includes(`'${current}'`),
+      `session-reader discovery/workflows.ts isNew 判定不含当前快照版本 '${current}'——extension bump 快照版本时须同步扩 session-reader 的判定，否则 family/workflows 腿对新 run 静默丢全部 calls sessionFile`,
+    ).toBe(true)
+
+    // 源 3b：session-reader core/workflow.ts 的 NEW 分支判定接受当前版本
+    const srCoreSrc = readFileSync(
+      join(__dirname, '..', '..', '..', 'extensions', 'session-reader', 'src', 'core', 'workflow.ts'),
+      'utf-8',
+    )
+    const newBranchLine = srCoreSrc.match(/if \(v === '([^']+)[^\n]*/)
+    expect(
+      newBranchLine,
+      'session-reader core/workflow.ts 的 NEW 分支版本判定未找到——判定写法是否变了？',
+    ).not.toBeNull()
+    expect(
+      newBranchLine![0].includes(`'${current}'`),
+      `session-reader core/workflow.ts NEW 分支判定不含当前快照版本 '${current}'——extension bump 快照版本时须同步扩 session-reader 的判定，否则 workflow overview 对新 run 静默返 null`,
+    ).toBe(true)
   })
 
   it('边界：running 状态 + trace 节点含 pending/failed 的映射', () => {

@@ -285,3 +285,101 @@ describe("deliverMessage (V2 决策 3 chatMode 统一投递)", () => {
     expect(record.round).toBe(beforeRound! + 1);
   });
 });
+
+// ============================================================
+// 冷路径并发守卫（review round2 MF1：同 turn 批量两条 message 双冷路径双 spawn）
+// ============================================================
+// 复现链（reviewer 探针实证）：pi 对同一条 assistant message 的 tool calls 顺序执行
+// （subagent tool sequential），tool1 的 deliverMessage 在冷路径 resumeRound 返回即
+// resolve——早于 runSpawn 完成 spawn 注册（session-runner spawnedChildren.set 前有
+// pool.acquire await / writePromptToTempFile 等多个异步点）；tool2 立即执行 →
+// getChildByRecord 仍 undefined → 再次冷路径。v4 两态收敛后 resumeRound 的
+// `status !== "running"` 守卫对 idle-resumable record 恒放行（idle 本来就是 running）、
+// `status = "running"` 是幂等写 → 两次 kickOff → runSpawn 被调 2 次 → 两个 pi 子进程
+// 以 --session 同一 JSONL 双写 + 第一个进程脱离 kill 记账成孤儿。
+describe("deliverMessage 冷路径并发守卫（review round2 MF1）", () => {
+  let agentDir: string;
+  let service: SubagentService;
+  let record: ExecutionRecord;
+
+  beforeEach(() => {
+    agentDir = makeTmpAgentDir();
+    const modelService = new ModelConfigService({ agentDir });
+    service = new SubagentService({ cwd: agentDir, modelService });
+    service.initSession({ pi: makePi(), sessionId: "root-session" });
+    record = makeIdleRecord();
+    record.sessionFile = path.join(agentDir, "fake-session.jsonl");
+    spawnedChildren.clear();
+    mockRunSpawn.mockReset();
+    lifecycle._resetLifecycleState();
+  });
+
+  afterEach(() => {
+    service.dispose();
+    spawnedChildren.clear();
+    lifecycle._resetLifecycleState();
+    fs.rmSync(agentDir, { recursive: true, force: true });
+  });
+
+  it("同 record 连续两条 message 冷路径 → 第二条 throw 行动语言，runSpawn 仅 1 次", async () => {
+    // runSpawn 挂起不 resolve：模拟真实 spawn 异步窗口（pool.acquire 排队 + tempFile + spawn），
+    // 此窗口内 spawnedChildren 尚未注册 → 第二条 message 必再走冷路径。
+    let releaseFirst!: (r: AgentResult) => void;
+    mockRunSpawn.mockImplementationOnce(
+      () => new Promise<AgentResult>((res) => { releaseFirst = res; }),
+    );
+
+    // 第一条：正常冷路径 resume
+    await expect(service.deliverMessage(record, "first msg", false)).resolves.toBeUndefined();
+    await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
+
+    // 第二条：spawn 仍在途（getChildByRecord undefined）→ 再走冷路径。
+    // 修复前：resumeRound 守卫恒放行 → 第二次 kickOff → runSpawn 2 次（双 spawn 双写 session）。
+    // 修复后：in-flight 守卫 throw 行动语言（MF-4）。
+    await expect(service.deliverMessage(record, "second msg", false)).rejects.toThrow(
+      /already starting a new round/,
+    );
+    expect(mockRunSpawn).toHaveBeenCalledTimes(1);
+
+    // 轮次完成 → 守卫清除 → 后续冷路径可再 resume（守卫不得永久死锁 record）
+    releaseFirst(makeResult(true));
+    await vi.waitFor(() =>
+      expect((service as unknown as { resumesInFlight: Set<string> }).resumesInFlight.has(record.id)).toBe(false),
+    );
+    mockRunSpawn.mockResolvedValueOnce(makeResult(true));
+    await expect(service.deliverMessage(record, "third msg", false)).resolves.toBeUndefined();
+    await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(2));
+    expect(mockRunSpawn.mock.calls[1]![1]).toBe("third msg");
+  });
+
+  it("守卫是 record 级：A 在途 resume 不拦截 B 的冷路径 message", async () => {
+    const recordB = makeIdleRecord("sa-chat-b");
+    recordB.sessionFile = path.join(agentDir, "fake-session-b.jsonl");
+    let releaseA!: (r: AgentResult) => void;
+    mockRunSpawn.mockImplementation(
+      () => new Promise<AgentResult>((res) => { releaseA = res; }),
+    );
+
+    await service.deliverMessage(record, "A msg", false);
+    await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
+
+    // B 的冷路径不受 A 在途影响
+    await expect(service.deliverMessage(recordB, "B msg", false)).resolves.toBeUndefined();
+    await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(2));
+    expect(mockRunSpawn.mock.calls[1]![0]).toBe(recordB);
+
+    releaseA(makeResult(true));
+  });
+
+  it("resume 在途时直接调 resumeRound（不经 deliverMessage）同样被守卫拦截", () => {
+    // promise 同步创建：release 立即可用（runSpawn 在 pool.acquire 微任务后才被调）
+    let release!: (r: AgentResult) => void;
+    const gate = new Promise<AgentResult>((res) => { release = res; });
+    mockRunSpawn.mockImplementationOnce(() => gate);
+
+    service.resumeRound(record, "first");
+    expect(() => service.resumeRound(record, "second")).toThrow(/already starting a new round/);
+
+    release(makeResult(true));
+  });
+});

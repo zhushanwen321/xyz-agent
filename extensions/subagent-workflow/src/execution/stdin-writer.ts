@@ -127,49 +127,11 @@ export function sendPromptCommand(
 }
 
 /**
- * 向 busy 子进程 stdin 写 follow_up 命令——消息排队，当前轮完成后按序处理（设计决策 6）。
- *
- * pi rpc-mode：`{id, type:"follow_up", message}` → session.followUp（排队，不抢占）。
- * 语义：subagent 正在运行（busy）时投递「不打断」消息——当前 turn 跑完后，pi 自动 drain
- * 排队消息开新一轮（探针 P-4）。agent_end 后 follow_up 不触发新 run（探针 P-3），
- * 故 idle 态必须用 prompt（见 resumeRound），不能用 follow_up。
- *
- * 时机：busy 投递。child.stdin 必须存活（进程未退出）；已关闭/销毁时静默跳过（与 sendPromptCommand 同 guard）。
- *
- * @param child 子进程（busy，stdin 存活）
- * @param message 消息文本
+ * [review 修复 round2] 已删除 sendFollowUpCommand / sendSteerCommand——deliverToRunning
+ * （busy 投递死机制，S2 删除）的唯一消费方移除后两函数成零生产调用方死 export。
+ * busy 投递语义由 prompt + streamingBehavior（sendPromptCommand 的
+ * options.streamingBehavior: "followUp" | "steer"，pi 权威裁决）承担。
  */
-export function sendFollowUpCommand(child: ChildProcess, message: string): void {
-  if (!child.stdin || child.stdin.destroyed) return;
-  const command = JSON.stringify({
-    id: crypto.randomUUID(),
-    type: "follow_up",
-    message,
-  });
-  writeStdinLine(child, command, "follow_up command");
-}
-
-/**
- * 向 busy 子进程 stdin 写 steer 命令——消息抢占，立即中断当前 streaming（设计决策 6）。
- *
- * pi rpc-mode：`{id, type:"steer", message}` → session.steer（抢占，streaming 中立即生效）。
- * 语义：subagent 正在运行（busy）时投递「立即打断」消息——pi 抢占当前 turn 的 streaming，
- * steer 消息作为新输入立即处理。与 follow_up 的区别：steer 不等当前轮完成，立即生效。
- *
- * 时机：busy 投递。child.stdin 必须存活（进程未退出）；已关闭/销毁时静默跳过（与 sendPromptCommand 同 guard）。
- *
- * @param child 子进程（busy，stdin 存活）
- * @param message 消息文本
- */
-export function sendSteerCommand(child: ChildProcess, message: string): void {
-  if (!child.stdin || child.stdin.destroyed) return;
-  const command = JSON.stringify({
-    id: crypto.randomUUID(),
-    type: "steer",
-    message,
-  });
-  writeStdinLine(child, command, "steer command");
-}
 
 /**
  * 向 rpc 子进程 stdin 写 get_state 命令，查询 sessionFile/sessionId。

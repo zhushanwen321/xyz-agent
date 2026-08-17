@@ -25,14 +25,16 @@ import { extractSessionIdFromFilename } from './subagents.js'
  * 从 wf-state 快照对象提取 calls[].sessionFile（绝对路径数组）。
  *
  * 两种格式（探查确认，本机 371 个 wf 文件）：
- * - NEW (v="wf-run-v1")：state.calls[]，每项顶层 .sessionFile（258 文件 / 1590 sessionFile）
+ * - NEW (v="wf-run-v1" 或 "wf-run-v2"，读取面形状一致)：state.calls[]，每项顶层
+ *   .sessionFile（258 文件 / 1590 sessionFile）。v2 由 pi-subagent-workflow 8.x 一次性
+ *   生命周期收敛引入（status 两态、无 pausedAt），calls[].sessionFile/result 保留
  * - OLD (无 v)：callCache[]=[{key,value}]，value.sessionFile（112 文件 / 0 sessionFile，旧 pi 不持久化）
  */
 export function extractCallSessionFiles(snap: unknown): string[] {
   const out: string[] = []
   if (typeof snap !== 'object' || snap === null) return out
   const s = snap as Record<string, unknown>
-  const isNew = s.v === 'wf-run-v1'
+  const isNew = s.v === 'wf-run-v1' || s.v === 'wf-run-v2'
   let callsRaw: unknown
   if (isNew) {
     const state = s.state

@@ -257,6 +257,38 @@ if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
     fi
 fi
 
+# ── Linux unpacked app structure ─────────────────────────────────────
+# dir-only 模式（ci.yml）也执行本段：只要 linux-unpacked 目录存在就校验结构，
+# 否则 linux 平台打包回归（tsup noExternal 缺失、extraResources from 路径错等）
+# CI 捕获不到，延迟到 release 才暴露。
+# 布局依据：executableName: xyz-agent（electron-builder.yml，三平台统一）；
+# asarUnpack dist/runtime/**/* 与 win 段同构；pi binary 名 prepare-pi-resources.sh
+# BINARY_NAME="pi-linux-${PI_ARCH}"（linux target arch x64）。
+if [ -d "$OUTPUT_DIR/linux-unpacked" ]; then
+    echo ""
+    echo -e "${BLUE}[2/5] Linux unpacked app structure...${NC}"
+    LINUX_ROOT="$OUTPUT_DIR/linux-unpacked"
+    LINUX_RESOURCES="$LINUX_ROOT/resources"
+    LINUX_UNPACKED="$LINUX_RESOURCES/app.asar.unpacked"
+
+    for required in \
+        "$LINUX_ROOT/xyz-agent" \
+        "$LINUX_UNPACKED/dist/runtime/index.cjs" \
+        "$LINUX_UNPACKED/dist/runtime/plugin-bootstrap.cjs" \
+        "$LINUX_RESOURCES/pi/pi-linux-x64" \
+        "$LINUX_RESOURCES/xyz-agent-extension.js" \
+        "$LINUX_RESOURCES/xyz-system-prompt-extension.js" \
+        "$LINUX_RESOURCES/xyz-client-msg-id-mapper.js" \
+        "$LINUX_RESOURCES/bin/xyz-settings"; do
+        if [ -f "$required" ]; then
+            echo -e "  ${GREEN}✓${NC} ${required#$LINUX_ROOT/}"
+        else
+            echo -e "  ${RED}✗${NC} ${required#$LINUX_ROOT/} 缺失"
+            FAILED=1
+        fi
+    done
+fi
+
 # ── 3. 产物大小合理性 ───────────────────────────────────────────────
 echo ""
 echo -e "${BLUE}[3/5] Artifact sizes...${NC}"

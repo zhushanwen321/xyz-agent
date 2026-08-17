@@ -103,6 +103,12 @@ export interface SubagentIdentityData {
    * session-runner 写入；reconstructFromFile 经 ...identity 展开自动透传到 ReconstructedRecord。
    */
   chatMode?: boolean;
+  /**
+   * [review round2] worktree 隔离标志（该 subagent 创建时 worktree:true）。旧文件缺失 →
+   * undefined。仅供跨重启重建路径判定「worktree 绑定已丢失」——WorktreeHandle 本身不可
+   * 序列化，跨重启后无法 reattach，续聊须拒绝（防 resume cwd 静默回落主 repo 破坏隔离）。
+   */
+  worktree?: boolean;
   /** @deprecated 兼容旧文件：旧 identity entry 写的是 parentSessionId，读取时 fallback 到 rootSessionId。 */
   parentSessionId?: string;
 }
@@ -149,6 +155,8 @@ export interface ReconstructedRecord {
   forkDepth: number | undefined;
   /** 对话模式标志（来自 identity custom entry；旧文件为 undefined）。 */
   chatMode?: boolean;
+  /** [review round2] worktree 隔离标志（见 SubagentIdentityData.worktree）。 */
+  worktree?: boolean;
   /**
    * 对话轮次计数（非 identity entry 字段，reconstructFromFile 不填）。
    * V2 idle record 的 round 只在内存维护（doFinalizeRoundToIdle 递增），磁盘重建不恢复。
@@ -499,6 +507,8 @@ export interface IdentityHeaderRecon {
   depth: number;
   forkDepth: number | undefined;
   chatMode?: boolean;
+  /** [review round2] worktree 隔离标志（见 SubagentIdentityData.worktree）。 */
+  worktree?: boolean;
   model: string;
   thinkingLevel: string | undefined;
   sessionFile: string;
@@ -660,6 +670,7 @@ function parseIdentityFromText(text: string, sessionFile: string): IdentityHeade
     depth: identity.depth ?? 0,
     forkDepth: identity.forkDepth,
     chatMode: identity.chatMode,
+    worktree: identity.worktree,
     model,
     thinkingLevel,
     sessionFile,

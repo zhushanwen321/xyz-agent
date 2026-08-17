@@ -78,6 +78,7 @@ function writeSessionJsonl(
     parentRecordId?: string;
     depth?: number;
     chatMode?: boolean;
+    worktree?: boolean;
   },
 ): string {
   const file = path.join(sessionsDir, `${identity.id}.jsonl`);
@@ -107,6 +108,7 @@ function writeSessionJsonl(
         ...(identity.parentRecordId !== undefined ? { parentRecordId: identity.parentRecordId } : {}),
         ...(identity.depth !== undefined ? { depth: identity.depth } : {}),
         ...(identity.chatMode !== undefined ? { chatMode: identity.chatMode } : {}),
+        ...(identity.worktree !== undefined ? { worktree: identity.worktree } : {}),
       },
     }),
     JSON.stringify({
@@ -211,5 +213,42 @@ describe("[M10] getRecordForAction 跨重启磁盘重建（S3 回归场景）", 
 
     expect(() => service.getRecordForAction("sa-fin")).toThrow(/not found or not owned/);
     expect(store.getMutable("sa-fin")).toBeUndefined(); // 未重建注册
+  });
+
+  // ============================================================
+  // [review round2] 跨重启 worktree 绑定丢失防护
+  // ============================================================
+  // 场景：worktree:true + conversation:true 的 subagent 在父进程重启后续聊。WorktreeHandle
+  // 不可序列化、重建后恒缺失，若无守卫 → 冷路径 resume 的 spawn cwd 静默回落主 repo
+  //（隔离失效，正是 worktree 要防的并发写冲突场景）。
+  it("[review round2] worktree record 跨重启重建 → hadWorktree 标记 + 续聊被拒（行动语言）", async () => {
+    writeSessionJsonl(sessionsDir, {
+      id: "sa-wt",
+      rootSessionId: "root-session",
+      worktree: true,
+    });
+
+    const record = service.getRecordForAction("sa-wt");
+    // hadWorktree 从磁盘 identity entry 的 worktree 标志恢复
+    expect(record.hadWorktree).toBe(true);
+    // handle 无法恢复（不可序列化）
+    expect(record.worktreeHandle).toBeUndefined();
+
+    // 冷路径续聊（无活进程）→ resumeRound 守卫拒绝，不 spawn 回落主 repo
+    await expect(service.deliverMessage(record, "resume after restart", false)).rejects.toThrow(
+      /worktree isolation.*lost when the parent process restarted/,
+    );
+  });
+
+  it("[review round2] 非 worktree record 跨重启重建 → 续聊不受 worktree 守卫拦截（向后兼容）", async () => {
+    // identity entry 无 worktree 字段（旧文件）→ found.worktree undefined → hadWorktree false
+    writeSessionJsonl(sessionsDir, { id: "sa-nowt", rootSessionId: "root-session" });
+
+    const record = service.getRecordForAction("sa-nowt");
+    expect(record.hadWorktree).toBe(false);
+
+    // deliverMessage 冷路径不被 worktree 守卫拦截（resume 正常发起；后续 spawn 编排
+    // 超出本用例关注点——runSpawn 在本文件是 no-op mock）
+    await expect(service.deliverMessage(record, "resume normal", false)).resolves.toBeUndefined();
   });
 });

@@ -760,6 +760,7 @@ export class RecordStore {
         result: base.result,
         error: base.error,
         sessionFile: base.sessionFile,
+        worktree: base.worktree,
       };
     } else {
       // light：详情字段缺省（turns=0/eventLog=[]/result=undefined），getFullRecord 懒补。
@@ -785,6 +786,7 @@ export class RecordStore {
         result: undefined,
         error: undefined,
         sessionFile: base.sessionFile,
+        worktree: base.worktree,
       };
     }
 
@@ -899,6 +901,8 @@ export class RecordStore {
       error: r.error,
       sessionFile: r.sessionFile,
       round: r.round,
+      // [review round2] worktree 隔离标志：内存源有 handle 或跨重启重建带 hadWorktree 均为 true。
+      worktree: r.worktreeHandle !== undefined || r.hadWorktree === true,
     };
   }
 }

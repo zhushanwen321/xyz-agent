@@ -22,6 +22,8 @@ v4 one-shot lifecycle convergence for background and conversation-mode subagents
 
 - **Conversation mode now sustains multiple rounds.** New `message` and `close` tool actions let the parent agent keep chatting with a conversation-mode subagent (`start` with `conversation: true`) across rounds, close it after a round, or auto-upgrade a finished one-shot subagent by sending it a first message.
 
+- **`list` responses now report the `agent` field as a short display name.** The LLM-visible `subagent` tool's `list` action result previously echoed the full agent definition path (e.g. `/home/user/.pi/agent/agents/dev.md`); it now carries the basename without extension (`dev`). This is a display-only change — the underlying record keeps the full path, and no other `list` fields are affected.
+
 - **BREAKING — bg-notify payload contract change.** `subagent-bg-notify` records now carry `status: "running"` (a conversation round finished, result included, `round` counter used for dedup) or `"closed"` (terminal, reason in `closedReason`); the legacy `done` / `failed` / `cancelled` values are no longer emitted, and `closedReason` / `round` are new fields. This is a cross-process wire contract — xyz-agent itself consumes it and ships a matching `@xyz-agent/shared` parser in the same release; other consumers of the notify details must align.
 
 - **Recursion guardrails for nested subagents.** The `subagent` tool description now documents tree-shaped task criteria, self-contained task requirements, independent acceptance criteria per level, depth-as-safety-rail positioning (not a budget), and fork cost warnings, preventing LLMs from treating the 10-level cap as encouragement for deep nesting.

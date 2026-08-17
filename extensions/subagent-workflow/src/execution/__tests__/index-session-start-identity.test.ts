@@ -142,6 +142,7 @@ const IDENTITY_ENV_KEYS = [
   "PI_SUBAGENT_DEPTH",
   "PI_SUBAGENT_FORK_DEPTH",
   "PI_SUBAGENT_CHAT_MODE",
+  "PI_SUBAGENT_WORKTREE",
 ] as const;
 
 function clearIdentityEnv(): void {
@@ -233,6 +234,7 @@ describe("session_start identity 子进程写入（M4 / V2 决策 5）", () => {
     process.env.PI_SUBAGENT_DEPTH = "2";
     process.env.PI_SUBAGENT_FORK_DEPTH = "1";
     process.env.PI_SUBAGENT_CHAT_MODE = "true";
+    process.env.PI_SUBAGENT_WORKTREE = "true";
 
     const { pi, getSessionStartHandler, appendEntrySpy } = createMockPi();
     subagentsExtension(pi);
@@ -262,6 +264,9 @@ describe("session_start identity 子进程写入（M4 / V2 决策 5）", () => {
       depth: 2,
       forkDepth: 1,
       chatMode: true,
+      // [review round2] worktree 隔离标志经 env 贯穿写入 identity entry（跨重启重建
+      // 拒绝续聊的数据源）
+      worktree: true,
     });
   });
 
@@ -281,7 +286,7 @@ describe("session_start identity 子进程写入（M4 / V2 决策 5）", () => {
     expect(identityCall).toBeUndefined();
   });
 
-  it("可选字段缺失（chatMode/slug/parentRecordId/forkDepth 未注入）：identity 仍写入，可选字段为默认", async () => {
+  it("可选字段缺失（chatMode/slug/parentRecordId/forkDepth/worktree 未注入）：identity 仍写入，可选字段为默认", async () => {
     process.env.PI_SUBAGENT_SELF_RECORD_ID = "rec-child-2";
     process.env.PI_SUBAGENT_AGENT = "explorer";
     process.env.PI_SUBAGENT_MODE = "background";
@@ -312,6 +317,7 @@ describe("session_start identity 子进程写入（M4 / V2 决策 5）", () => {
     expect(data.slug).toBeUndefined();
     expect(data.parentRecordId).toBeUndefined();
     expect(data.forkDepth).toBeUndefined();
+    expect(data.worktree).toBe(false);
   });
 
   it("W3TC9: 主进程分支 session_start 裁剪接线——21 done 经 loadAll 裁到 20（identity 与淘汰共存）", async () => {

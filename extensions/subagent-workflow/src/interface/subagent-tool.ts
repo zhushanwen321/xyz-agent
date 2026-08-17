@@ -219,7 +219,7 @@ CRITICAL — executionMode "sequential": multiple \`subagent\` calls in the SAME
 
 ## When to delegate
 
-Delegate when the task needs a distinct specialized role, context isolation (fork/worktree), or parallelism while you do other work. Delegate FIRST when the task involves any of: reading 3+ files, writing 100+ lines of implementation, parallel research, or specialized review — doing these yourself floods your context with implementation detail and loses the orchestration view.
+Delegate when the task needs a distinct specialized role, context isolation (fork/worktree), or parallelism while you do other work. Delegate FIRST when the task involves any of: reading 3+ files, writing 100+ lines of implementation, parallel research, or specialized review — doing these yourself floods your context.
 
 ## Before starting — list first
 
@@ -228,7 +228,7 @@ action:"list" before action:"start" — a reusable running subagent may exist; c
 ## Actions
 
 - action:"start" — run a subagent. Pass task and slug as top-level fields (REQUIRED). Optional: agent, model, thinkingLevel, skillPath, appendSystemPrompt, schema, maxTurns, graceTurns, fork, worktree, cwd, conversation, idleTimeoutMs. Background only: returns a subagentId immediately, notifies on completion.
-- action:"message" — send a follow-up message to a running subagent (conversation-mode or one-shot); it keeps the full context across rounds. REQUIRED messageParam: { subagentId, text }. Optional: interrupt (default false). Returns { delivered: true } immediately; the reply auto-notifies when the round completes.
+- action:"message" — send a follow-up message to a running subagent (conversation-mode or one-shot); it keeps the full context across rounds. REQUIRED messageParam: { subagentId, text }. Optional: interrupt (default false). The reply auto-notifies when the round completes.
 - action:"close" — end a running subagent and release its resources. REQUIRED closeParam: { subagentId }. Optional: force (default false; true terminates mid-round immediately). Always close when done.
 - action:"list" — list subagents. Pass listParam: { includeFinished?, limit? } (all optional). Read an item's sessionFile for full detail.
 - action:"cancel" — stop a background subagent (legacy verb; for conversation-mode use close). REQUIRED cancelParam: { subagentId }.
@@ -248,7 +248,7 @@ action:"list" before action:"start" — a reusable running subagent may exist; c
 
 ## After launching — do NOT wait
 
-Completion auto-notifies you (steer wakes next turn, even mid-poll). So:
+Completion auto-notifies you (steer wakes the next turn):
 - DO NOT sleep, busy-wait, or poll — there is no poll action; use action:"list" only when you concretely need state.
 - DO useful non-overlapping work, otherwise STOP.
 - On auto-injected completion: process directly. The notification IS the confirmation — do NOT call action:"list" to re-confirm.
@@ -256,7 +256,7 @@ Completion auto-notifies you (steer wakes next turn, even mid-poll). So:
 
 ## Anti-patterns
 
-- Forgetting the REQUIRED top-level task/slug fields for action:"start" — both must be present at the top level (not nested).
+- Forgetting the REQUIRED top-level task/slug fields for action:"start" (not nested).
 - Over-generalizing the flatten: ONLY start fields are top-level. list and cancel params stay nested under listParam / cancelParam (e.g. {"action":"list","listParam":{"includeFinished":true}}, NOT {"action":"list","includeFinished":true}).
 - Launching background, then sleeping/polling instead of working or stopping.
 - Treating subagent results as authoritative without verification.
@@ -271,7 +271,7 @@ When to use:
 - ✅ Long-interval rounds (>5min apart) → conversation:true + idleTimeoutMs increased
 - ❌ Single exploration/lookup → default (one-shot)
 
-idleTimeoutMs: idle timeout in ms for conversation-mode subagents (default 300000 / 5min). Env XYZ_SUBAGENT_IDLE_TIMEOUT_MS sets global default; per-call param takes precedence.
+idleTimeoutMs: per-subagent idle timeout (default 300000 / 5min). Env XYZ_SUBAGENT_IDLE_TIMEOUT_MS sets the global default; per-call param takes precedence.
 
 ## You cannot
 
@@ -284,11 +284,11 @@ Chain dependent tasks: send the next start after prior completion. Run N indepen
 
 ## Nested spawning (recursion)
 
-A subagent MAY call the \`subagent\` tool itself (each level spawns its own child process; depth appears in the environment block as "Depth: N/10"). The hard cap is 10 levels — depth 11 fails as a tool error, NOT a reason to avoid nesting entirely (Do NOT refuse a sub-subagent).
+A subagent MAY call the \`subagent\` tool itself (depth appears in the environment block as "Depth: N/10"). The hard cap is 10 levels — depth 11 fails as a tool error, NOT a reason to avoid nesting entirely (Do NOT refuse a sub-subagent).
 
-Recursion is for TREE-SHAPED work only: a task that decomposes naturally into independent, independently-verifiable sub-tasks (e.g. layered orchestration, module-by-module development). Each level's \`task\` must be SELF-CONTAINED — the child does not see your conversation (unless fork:true). Each level must have its own acceptance criteria, or errors compound silently down the chain.
+Recursion is for TREE-SHAPED work only: a task that decomposes naturally into independent, independently-verifiable sub-tasks. Each level's \`task\` must be SELF-CONTAINED — the child does not see your conversation (unless fork:true). Each level must have its own acceptance criteria, or errors compound silently down the chain.
 
-Do NOT recurse when: the work is linear/flat (use chain or parallel instead); the child needs your context to do the job; or you are delegating the judgment/decision your own level is responsible for. Depth should match the task tree (2-3 levels for most work; deep trees only when the decomposition genuinely demands it) — 10 is a safety rail against infinite delegation loops, not a budget to spend. Favor depth 2-3 for ad-hoc tasks; deep nesting (>4) is reserved for structured orchestration frameworks. Prefer fork:false in recursion: fork chains copy parent history at every level and blow up context volume linearly.`,
+Do NOT recurse when: the work is linear/flat (use chain or parallel instead); the child needs your context to do the job; or you are delegating the judgment/decision your own level is responsible for. Depth should match the task tree (2-3 levels for most work; deep trees only when the decomposition genuinely demands it) — 10 is a safety rail against infinite delegation loops, not a budget to spend. Prefer fork:false in recursion: fork chains copy parent history at every level and blow up context volume linearly.`,
     executionMode: "sequential",
     parameters: SubagentParams,
     renderCall: subagentRenderCall,

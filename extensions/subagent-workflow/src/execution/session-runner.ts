@@ -887,6 +887,10 @@ export async function runSpawn(
   childEnv.PI_SUBAGENT_PARENT_RECORD_ID = record.parentRecordId;
   childEnv.PI_SUBAGENT_CHAT_MODE =
     record.chatMode !== undefined ? String(record.chatMode) : undefined;
+  // [review round2] worktree 隔离标志贯穿：resume 轮 opts.worktree 来自 record.worktreeHandle
+  //（同进程内保留），子进程 identity entry 据此记 worktree:true——跨重启重建时据此拒绝续聊
+  //（WorktreeHandle 不可序列化，reattach 不可行，静默回落主 repo 会破坏隔离）。
+  childEnv.PI_SUBAGENT_WORKTREE = opts.worktree !== undefined ? "true" : undefined;
   // D-A6 bridge: schema 激活 structured-output 扩展注册 tool（workflow 编排层需要）
   applySchemaEnvToChildEnv(childEnv, opts.schemaEnv);
 
