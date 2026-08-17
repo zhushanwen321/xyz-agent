@@ -5,7 +5,7 @@
  * 从 pi-config-bridge.ts 提取以控制文件行数（pi-config-bridge 已删除）。
  */
 
-import { existsSync, readFileSync, statSync, openSync, writeSync, closeSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, openSync, readSync, writeSync, closeSync, readdirSync, unlinkSync } from 'node:fs'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { parseJsonl, readTailEntries } from '../../utils/jsonl.js'
 import { join } from 'node:path'
@@ -25,10 +25,54 @@ export interface SessionHeader {
 
 // ── 解析工具 ─────────────────────────────────────────────────
 
+/**
+ * parseSessionHeader 的头部读块大小（4KB）。
+ *
+ * session header（type:"session"，含 cwd/parentSession/forkEntryId）固定在 JSONL 首行，
+ * 4KB 覆盖正常 header（cwd 长路径 + 路径型字段）。JSONL 行内无换行：块内无换行且未读满
+ * （文件本身 < 4KB 的单行文件）按无首行终止处理；块读满仍无换行（首行 > 4KB）回退
+ * 全量读取首行——旧 readFileSync 全量读实现可解析任意长度首行，单纯截断会让超长首行
+ * JSON.parse 失败 → session 从侧栏消失（W20 review Fix-4 等价性修复）。
+ */
+const HEADER_READ_CHUNK_BYTES = 4096
+
+/** LF（'\n'）字节值——JSONL 行终止符，Buffer.indexOf 用字节比较。 */
+const NEWLINE_BYTE = 0x0a
+
+/**
+ * 解析 session JSONL 首行的 session header。
+ *
+ * wave:perf-w20 微项 9：只读文件头部一小块（而非 readFileSync 全量读再 split('\n')[0]）。
+ * header 固定在首行，长 session 文件（数 MB）全量读只为取第一行是纯浪费；扫描器对每个
+ * 候选文件调一次本函数，节省随文件数线性放大。
+ */
 export function parseSessionHeader(filePath: string): SessionHeader | null {
   try {
-    const content = readFileSync(filePath, 'utf-8')
-    const firstLine = content.split('\n')[0]
+    const fd = openSync(filePath, 'r')
+    let head: Buffer
+    let bytesRead = 0
+    try {
+      const chunk = Buffer.alloc(HEADER_READ_CHUNK_BYTES)
+      bytesRead = readSync(fd, chunk, 0, chunk.length, 0)
+      head = chunk.subarray(0, bytesRead)
+    } finally {
+      closeSync(fd)
+    }
+    const nlIndex = head.indexOf(NEWLINE_BYTE)
+    let firstLine: string
+    if (nlIndex !== -1) {
+      firstLine = head.subarray(0, nlIndex).toString('utf-8')
+    } else if (bytesRead >= HEADER_READ_CHUNK_BYTES) {
+      // 首行 > 4KB（4KB 块读满仍未见换行）：回退全量读取首行，与旧 readFileSync 全量读
+      // 实现严格等价（W20 review Fix-4——超长首行可解析，session 不从侧栏消失）。
+      // readFileSync 失败由外层 catch 返回 null，与打开/读取失败同错误面。
+      const content = readFileSync(filePath, 'utf-8')
+      const contentNl = content.indexOf('\n')
+      firstLine = contentNl === -1 ? content : content.slice(0, contentNl)
+    } else {
+      // 文件本身 < 4KB 且无换行（单行 JSONL）：head 即全量内容
+      firstLine = head.toString('utf-8')
+    }
     if (!firstLine) return null
     const entry = JSON.parse(firstLine)
     if (entry.type !== 'session') return null
@@ -60,10 +104,10 @@ export function extractSessionName(filePath: string): string | null {
   )
 }
 
-// ── session 终态 entry（W4，ADR 0036）─────────────────────────
+// ── session 终态 entry（W4，ADR 0042）─────────────────────────
 
 /**
- * session 结束时的终态类型（W4，ADR 0036 + W1 sidecar 方案）。
+ * session 结束时的终态类型（W4，ADR 0042 + W1 sidecar 方案）。
  * runtime 在 3 个终态点写 session_end 到 sidecar `.meta.json`（不写 JSONL），scanner
  * 据此派生终态，让前端侧栏无需预加载历史即可显示 done/error/stopped。
  */
@@ -77,7 +121,7 @@ export type SessionOutcome = 'done' | 'error' | 'stopped'
 const VALID_SESSION_OUTCOMES = ['done', 'error', 'stopped'] as const
 
 /**
- * 将 session 终态持久化到 sidecar `.meta.json`（W4，ADR 0036 + W1 sidecar 方案）。
+ * 将 session 终态持久化到 sidecar `.meta.json`（W4，ADR 0042 + W1 sidecar 方案）。
  *
  * 与 JSONL 同目录写 `.meta.json`（存 session_end 元数据），不污染 JSONL——pi 的
  * _persist 永远只写 message/session_info，runtime 的终态独立存 sidecar，避免「pi
@@ -126,6 +170,87 @@ export function persistSessionEnd(filePath: string, outcome: SessionOutcome, rea
  */
 export function presetSidecarPath(filePath: string): string {
   return filePath + '.preset.json'
+}
+
+/**
+ * 计算 session project 归属 sidecar 路径（D14 语义修正，2026-08-04）。
+ * `<sessionFile>.project.json`：session 归属的 project id（与 preset/meta sidecar 并列独立）。
+ */
+export function projectSidecarPath(filePath: string): string {
+  return filePath + '.project.json'
+}
+
+/**
+ * 将 session 归属 project 持久化到 sidecar `.project.json`（D14：Project 直接关联 Session）。
+ *
+ * session create 成功 / 手动归类（session.setProject）时调用。归属是 session 级数据，
+ * 跟 session 走（删除 session 归属自动消失，fork 继承父归属）。
+ *
+ * [规则 #6] session JSONL 文件不存在时**绝不创建 sidecar**（与 persistPresetBinding 同守则）：
+ * pi 延迟写入窗口内 existsSync=false → 静默跳过；active session 归属经内存态兑底
+ *（ManagedSession.projectId），不阻断主流程。
+ *
+ * @param filePath session JSONL 绝对路径（sidecar = projectSidecarPath(filePath)）
+ * @param projectId 归属 project id（空串 = 归回默认项目，删除已存在的绑定 sidecar）
+ */
+export function persistProjectBinding(filePath: string, projectId: string): void {
+  if (!filePath) return
+  // 空 projectId（归回默认项目）= 删除绑定 sidecar。readProjectBinding 以 sidecar 为权威（无 sidecar
+  // 兑底 undefined → 展示层归入默认项目），若只 return 不删，已存在的 .project.json 会继续生效——
+  // 重启后 session 归属回退到旧命名项目（review MF-2 回归）。删除不创建文件，不违反规则 #6，
+  // 因此不依赖 JSONL 存在性，放在 existsSync 检查之前执行。
+  if (!projectId) {
+    const sidecarPath = projectSidecarPath(filePath)
+    try {
+      if (existsSync(sidecarPath)) {
+        unlinkSync(sidecarPath)
+        // 与写入分支同失效处理：缓存键只含 JSONL 的 (mtimeMs, size)，sidecar 删除不变 JSONL stat，
+        // 不删缓存会命中旧 projectId（扫描读回已删除的归属）。
+        sessionMetaCache.delete(filePath)
+      }
+    // eslint-disable-next-line taste/no-silent-catch -- file delete: failure must not crash caller
+    } catch (e) {
+      console.error(`[session-file-utils] persistProjectBinding: failed to delete sidecar: ${sidecarPath}`, e)
+    }
+    return
+  }
+  if (!existsSync(filePath)) {
+    // 文件不存在（pi 延迟写入窗口）：绝不创建文件，直接跳过（ES-RL-1 同款）。
+    return
+  }
+  const binding = { projectId, version: 1 as const }
+  try {
+    atomicWrite(projectSidecarPath(filePath), JSON.stringify(binding), `project-${Date.now()}`)
+    // sidecar 写入后主动失效 sessionMetaCache（缓存键只含 JSONL 的 (mtimeMs, size)，
+    // sidecar 变更不变 JSONL stat → 命中缓存返回旧值，与 persistPresetBinding 同处理）。
+    sessionMetaCache.delete(filePath)
+  // eslint-disable-next-line taste/no-silent-catch -- file write: failure must not crash caller
+  } catch (e) {
+    console.error(`[session-file-utils] persistProjectBinding failed: ${filePath}`, e)
+  }
+}
+
+/**
+ * 从 `.project.json` sidecar 读取 session 归属 project id。
+ *
+ * scanSessionMeta 第五读：与 launchPresetId 同批次提取，结果合并进 ScannedSessionMeta.projectId，
+ * 享受 sessionMetaCache 缓存（禁止在 scannedToSummary 独立读文件）。
+ *
+ * @returns projectId 字符串；sidecar 不存在/损坏/projectId 非字符串 → undefined
+ */
+export function readProjectBinding(filePath: string): string | undefined {
+  const sidecarPath = projectSidecarPath(filePath)
+  try {
+    const raw = readFileSync(sidecarPath, 'utf-8')
+    const binding = JSON.parse(raw)
+    // 类型守卫：projectId 必须是字符串（sidecar 是文件，内容可能损坏/被篡改）
+    if (binding && typeof binding.projectId === 'string') {
+      return binding.projectId
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -189,7 +314,7 @@ export function readPresetBinding(filePath: string): string | undefined {
 }
 
 /**
- * 从 .jsonl 文件提取最后一条 session_end 的 outcome（W4，ADR 0036）。
+ * 从 .jsonl 文件提取最后一条 session_end 的 outcome（W4，ADR 0042）。
  *
  * W2 尾读优化：先尾读找尾部最后一条 session_end。persistSessionEnd 是 session 结束时
  * 最后写入的 entry → session_end 始终在文件最尾部 → 尾读几乎必中。
@@ -445,6 +570,11 @@ export interface ScannedSessionMeta {
    * undefined 表示无 sidecar（历史 session / create 时未绑定 preset）。
    */
   launchPresetId?: string
+  /**
+   * 归属 project id（从 .project.json sidecar 读，D14 语义修正 2026-08-04）。
+   * undefined = 未归类（展示层归入默认项目 proj-default 兑底）。
+   */
+  projectId?: string
 }
 
 /**
@@ -520,6 +650,8 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
   // 第四读：preset binding sidecar（设计文档 §4），与 name/outcome/handedOffTo 同批次
   // 提取，结果合并进 meta.launchPresetId，享受 sessionMetaCache 缓存。
   const launchPresetId = readPresetBinding(filePath)
+  // 第五读：project binding sidecar（D14 语义修正），同批次提取进 meta.projectId。
+  const projectId = readProjectBinding(filePath)
   const meta: ScannedSessionMeta = {
     id: header.id,
     filePath,
@@ -533,9 +665,60 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
     forkEntryId: header.forkEntryId,
     handedOffTo,
     launchPresetId,
+    projectId,
   }
   sessionMetaCache.set(filePath, { mtimeMs: fstat.mtimeMs, size: fstat.size, meta })
   return meta
+}
+
+/**
+ * wave:perf-w26（D9-1）：sessions 目录列举层 TTL 缓存有效期（1s）。
+ *
+ * 列表构建消费方（SessionScanner.listAll → listPersistedSessions，侧栏列表）在 TTL 窗口内
+ * 直接命中缓存快照（零 readdirSync/statSync）。1s 保证 pi 落盘新 session 文件后秒级出现在
+ * 列表（pi 延迟写入：首个 assistant 前不落盘，列表本就无法更早发现，TTL 过期即重扫）。
+ *
+ * 正确性敏感的**单 session 路径解析消费方**（getHistoryFromFile / getFullHistory /
+ * getSubagents / getWorkflows / findScannedSession 等）必须传 force 旁路——pi 是外部进程
+ * 写文件，不在显式失效覆盖内，若走 TTL 缓存，刚落盘 session 的查找会在窗口内静默返回
+ * 空（05-scan-caching D9-1 审查修正，plan M-3）。
+ */
+const SCAN_DIR_TTL_MS = 1000
+
+/** 目录列举缓存条目。dir 不匹配（XYZ_AGENT_DATA_DIR 切换 / 测试隔离）即整体失效。 */
+interface ScanDirCacheEntry {
+  dir: string
+  entries: ScannedSessionMeta[]
+  expiresAt: number
+}
+let scanDirCache: ScanDirCacheEntry | null = null
+/**
+ * 上次 scanPiSessions 观测的 Date.now()（时钟回拨检测，终审 suggestion）。
+ * now < lastNow = 系统时钟后跳（NTP 校时 / 手动改时）→ TTL 判定基于的墙钟不可信，
+ * 缓存视为过期强制重扫，否则 now < expiresAt 在回拨窗口内恒真（列表视图冻结）。
+ */
+let scanDirLastNow = 0
+
+/** scanPiSessions 的分层选项（wave:perf-w26 D9-1 消费方分层）。 */
+export interface ScanSessionsOptions {
+  /**
+   * 单 session 路径解析消费方传 true：绕过目录 TTL 缓存强制刷新（正确性优先，
+   * 刚落盘 session 在 TTL 窗口内也必须解析到）。
+   */
+  force?: boolean
+}
+
+/**
+ * 显式失效目录列举 TTL 缓存（wave:perf-w26 D9-1）。
+ *
+ * session delete / fork / rename（runtime 自写文件的操作）后调用——这些写不经 pi 延迟
+ * 落盘，显式失效让下一次列表构建立即可见。create 走 pi 延迟落盘，靠 TTL 自然过期，
+ * 不调此函数。亦供测试重置（测试间目录隔离）。
+ */
+export function invalidateScanDirCache(): void {
+  scanDirCache = null
+  // 回拨检测基准一并重置：缓存条目与观测基准同生命周期重建（测试间/显式失效后无跨窗口泄漏）
+  scanDirLastNow = 0
 }
 
 /**
@@ -544,13 +727,33 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
  *
  * W3：scanSessionMeta 三读合一 + 缓存。每文件 miss 时 1 次提取 header+name+outcome，
  * hit 时零读取（仅 statSync）。
+ *
+ * wave:perf-w26（D9-1）：目录列举层 1s TTL 缓存——默认（列表构建消费方）窗口内返回
+ * 缓存快照；opts.force=true（路径解析消费方）绕过缓存强制刷新。
  */
-export function scanPiSessions(): ScannedSessionMeta[] {
-  if (!existsSync(getSessionsDir())) return []
+export function scanPiSessions(opts?: ScanSessionsOptions): ScannedSessionMeta[] {
+  const dir = getSessionsDir()
+  const now = Date.now()
+  // 时钟回拨防护（终审 suggestion）：now 落到上次观测之前 → 墙钟被回拨，expiresAt 的
+  // 单调性假设失效 → 缓存不可信，强制重扫并以回拨后的时钟重建基准（几行代码的轻量防护）
+  const clockWentBackwards = now < scanDirLastNow
+  scanDirLastNow = now
+  if (!opts?.force && !clockWentBackwards && scanDirCache && scanDirCache.dir === dir && now < scanDirCache.expiresAt) {
+    // 浅拷贝数组：消费者可安全 sort/splice，不污染缓存本体（meta 元素引用与
+    // sessionMetaCache 共享，现状已是只读契约）。
+    return [...scanDirCache.entries]
+  }
+  const results = scanPiSessionsFromDisk(dir)
+  // force 刷新同样写缓存：随后 1s 内的列表构建消费方零 IO 读到最新视图。
+  scanDirCache = { dir, entries: results, expiresAt: now + SCAN_DIR_TTL_MS }
+  return [...results]
+}
+
+function scanPiSessionsFromDisk(sessionsDir: string): ScannedSessionMeta[] {
+  if (!existsSync(sessionsDir)) return []
 
   const results: ScannedSessionMeta[] = []
 
-  const sessionsDir = getSessionsDir()
   let entries: string[]
   try {
     entries = readdirSync(sessionsDir)

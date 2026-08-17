@@ -1,34 +1,27 @@
 /**
- * Worker 端 tool execute RPC handler 测试
+ * Worker 端 tool execute / hook invoke RPC handler 测试
  *
- * plugin-bootstrap.ts 无法在 Vitest 中直接 import（Worker Thread 顶层副作用
- * 导致 Vite transform 后 exports 丢失）。因此采用独立单元测试策略：
- * 复制核心逻辑（handleIncomingRequest + toolHandlers Map）到此测试文件中验证。
+ * 经真实 plugin-bootstrap.handleMessage 驱动（type:'rpc' request 分支 →
+ * handleIncomingRequest）：此前该文件复制 handleIncomingRequest + toolHandlers 骨架
+ * 验证（W01 时 plugin-bootstrap 顶层副作用曾阻断 vitest import），现已实测可直接
+ * import（parentPort 为 null 时顶层副作用安全跳过），改为真实函数驱动，消除
+ * 复制骨架与源码的漂移面（W01 审查遗留 P-3）。
  *
- * 集成验证依赖：
- * - 类型检查 (vue-tsc) 确保 plugin-bootstrap.ts 的签名正确
- * - 全量运行时测试覆盖 Worker ↔ 主线程的完整链路
+ * post 通道经 setPostMessage 注入收集器（模块级 post 与传输解耦的设计缝）。
+ * 端到端全链路（真实 PluginRpcServer + MessageChannel）见 plugin-hooks-e2e.test.ts。
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { ToolExecuteHandler } from '../src/services/plugin-service/plugin-types.js'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { ToolExecuteHandler, HostToWorkerMessage } from '../src/services/plugin-service/plugin-types.js'
 import { PluginRpcErrorCodes } from '../src/services/plugin-service/plugin-types.js'
-
-// --- 复制自 plugin-bootstrap.ts 的核心逻辑 ---
-// 保持同步。如果 plugin-bootstrap.ts 中的逻辑变更，此测试也需要更新。
-
-const toolHandlers = new Map<string, ToolExecuteHandler>()
-
-function registerToolHandler(toolKey: string, handler: ToolExecuteHandler): void {
-  toolHandlers.set(toolKey, handler)
-}
-
-interface RpcRequest {
-  jsonrpc: '2.0'
-  id: number | string | null
-  method: string
-  params?: unknown
-}
+import { createHookApi } from '../src/services/plugin-service/hook-api.js'
+import {
+  handleMessage,
+  setPostMessage,
+  registerToolHandler,
+  unregisterToolHandler,
+} from '../src/services/plugin-service/plugin-bootstrap.js'
+import type { PluginRpcClient } from '../src/services/plugin-service/plugin-rpc-client.js'
 
 interface RpcResponse {
   jsonrpc: '2.0'
@@ -38,68 +31,72 @@ interface RpcResponse {
 }
 
 const postedMessages: Array<{ type: string; response: RpcResponse }> = []
+const registeredToolKeys: string[] = []
 
-function postRpcResponse(
-  id: number | string | null,
-  result: unknown,
-  error: { code: number; message: string } | undefined,
-): void {
-  if (id === null) return
-  const response: RpcResponse = { jsonrpc: '2.0', id: id as number }
-  if (error) {
-    response.error = error
-  } else {
-    response.result = result
-  }
-  postedMessages.push({ type: 'rpc', response })
+beforeEach(() => {
+  postedMessages.length = 0
+  setPostMessage((msg: unknown) => {
+    const m = msg as { type: string; response?: RpcResponse }
+    if (m.type === 'rpc' && m.response) postedMessages.push({ type: 'rpc', response: m.response })
+  })
+})
+
+/** 注册 tool handler 并登记 key 供清理 */
+function registerToolHandlerTracked(toolKey: string, handler: ToolExecuteHandler): void {
+  registerToolHandler(toolKey, handler)
+  registeredToolKeys.push(toolKey)
 }
 
-async function handleIncomingRequest(request: RpcRequest): Promise<void> {
-  if (request.method === 'plugin.tool.execute') {
-    const { pluginId, toolName, arguments: args, sessionId, toolCallId } = request.params as Record<string, unknown>
-    const toolKey = `${pluginId}:${toolName}`
-    const handler = toolHandlers.get(toolKey)
-    if (!handler) {
-      postRpcResponse(request.id, undefined, {
-        code: PluginRpcErrorCodes.METHOD_NOT_FOUND,
-        message: `Tool handler not found: ${toolKey}`,
-      })
-      return
-    }
-    try {
-      const result = await handler({
-        arguments: args as Record<string, unknown>,
-        sessionId: sessionId as string | undefined,
-        toolCallId: toolCallId as string | undefined,
-      })
-      postRpcResponse(request.id, result, undefined)
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e)
-      postRpcResponse(request.id, undefined, {
-        code: PluginRpcErrorCodes.INTERNAL_ERROR,
-        message: `Tool execution error: ${msg}`,
-      })
-    }
-  } else {
-    postRpcResponse(request.id, undefined, {
-      code: PluginRpcErrorCodes.METHOD_NOT_FOUND,
-      message: `Unknown method: ${request.method}`,
-    })
+afterEach(() => {
+  for (const key of registeredToolKeys.splice(0)) {
+    unregisterToolHandler(key)
   }
+})
+
+/** 经真实 handleMessage 驱动 rpc request 分支（handleIncomingRequest 在其内 fire-and-forget，flush 后返回） */
+async function dispatchRpcRequest(request: {
+  jsonrpc: '2.0'
+  id: number | string | null
+  method: string
+  params?: unknown
+}): Promise<void> {
+  await handleMessage({ type: 'rpc', request } as HostToWorkerMessage)
+  await new Promise(resolve => setImmediate(resolve))
 }
-// --- 核心逻辑结束 ---
+
+/** 最小 mock PluginRpcClient（createHookApi 注册 hook 时需要） */
+function createMockRpcClient(): PluginRpcClient {
+  const requestCalls: Array<{ method: string; params: Record<string, unknown> }> = []
+  return {
+    request: (method: string, params: Record<string, unknown>) => {
+      requestCalls.push({ method, params })
+      return Promise.resolve(undefined)
+    },
+    onNotification: () => () => {},
+    notify: () => {},
+    attach: () => {},
+    requestCalls,
+  } as unknown as PluginRpcClient
+}
+
+/** 经 createHookApi 注册一个 onBeforeSendMessage 拦截器，返回其 handlerId */
+async function registerTestInterceptor(
+  handler: (ctx: unknown) => Promise<{ proceed: boolean; reason?: string; modifiedData?: unknown }>,
+): Promise<string> {
+  const mockClient = createMockRpcClient()
+  const hookApi = createHookApi(mockClient, 'bootstrap-test-plugin')
+  await hookApi.onBeforeSendMessage(handler)
+  const registerCall = (mockClient as unknown as { requestCalls: Array<{ method: string; params: Record<string, unknown> }> })
+    .requestCalls.find(c => c.method === 'plugin.hooks.register')
+  return registerCall!.params.handlerId as string
+}
 
 describe('plugin-bootstrap tool execute RPC handler', () => {
-  beforeEach(() => {
-    toolHandlers.clear()
-    postedMessages.length = 0
-  })
-
   it('executes registered handler and returns result', async () => {
     const handler: ToolExecuteHandler = vi.fn().mockResolvedValue({ content: 'ok' })
-    registerToolHandler('p:t', handler)
+    registerToolHandlerTracked('p:t', handler)
 
-    await handleIncomingRequest({
+    await dispatchRpcRequest({
       jsonrpc: '2.0',
       id: 42,
       method: 'plugin.tool.execute',
@@ -117,7 +114,7 @@ describe('plugin-bootstrap tool execute RPC handler', () => {
   })
 
   it('returns error when handler not found', async () => {
-    await handleIncomingRequest({
+    await dispatchRpcRequest({
       jsonrpc: '2.0',
       id: 43,
       method: 'plugin.tool.execute',
@@ -141,9 +138,9 @@ describe('plugin-bootstrap tool execute RPC handler', () => {
 
   it('returns error when handler throws', async () => {
     const handler: ToolExecuteHandler = vi.fn().mockRejectedValue(new Error('boom'))
-    registerToolHandler('e:f', handler)
+    registerToolHandlerTracked('e:f', handler)
 
-    await handleIncomingRequest({
+    await dispatchRpcRequest({
       jsonrpc: '2.0',
       id: 44,
       method: 'plugin.tool.execute',
@@ -166,7 +163,7 @@ describe('plugin-bootstrap tool execute RPC handler', () => {
   })
 
   it('returns error for unknown method', async () => {
-    await handleIncomingRequest({
+    await dispatchRpcRequest({
       jsonrpc: '2.0',
       id: 45,
       method: 'unknown.method',
@@ -186,5 +183,185 @@ describe('plugin-bootstrap tool execute RPC handler', () => {
         },
       },
     ])
+  })
+})
+
+describe('plugin-bootstrap plugin.hooks.invoke request branch (D2-1)', () => {
+  it('responds with InterceptorResult when handler blocks', async () => {
+    const handlerId = await registerTestInterceptor(async () => ({
+      proceed: false,
+      reason: 'API key detected',
+    }))
+
+    await dispatchRpcRequest({
+      jsonrpc: '2.0',
+      id: 51,
+      method: 'plugin.hooks.invoke',
+      params: { handlerId, hookType: 'onBeforeSendMessage', context: { data: 'x' } },
+    })
+
+    expect(postedMessages).toEqual([
+      {
+        type: 'rpc',
+        response: {
+          jsonrpc: '2.0',
+          id: 51,
+          result: { proceed: false, reason: 'API key detected' },
+        },
+      },
+    ])
+  })
+
+  it('responds with modifiedData when handler transforms', async () => {
+    const handlerId = await registerTestInterceptor(async () => ({
+      proceed: true,
+      modifiedData: { content: 'IMPORTANT' },
+    }))
+
+    await dispatchRpcRequest({
+      jsonrpc: '2.0',
+      id: 52,
+      method: 'plugin.hooks.invoke',
+      params: { handlerId, hookType: 'onBeforeSendMessage', context: { data: { content: '!important' } } },
+    })
+
+    expect(postedMessages).toEqual([
+      {
+        type: 'rpc',
+        response: {
+          jsonrpc: '2.0',
+          id: 52,
+          result: { proceed: true, modifiedData: { content: 'IMPORTANT' } },
+        },
+      },
+    ])
+  })
+
+  it('responds with {proceed:true} when handler throws (异常放行)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const handlerId = await registerTestInterceptor(async () => {
+        throw new Error('handler boom')
+      })
+
+      await dispatchRpcRequest({
+        jsonrpc: '2.0',
+        id: 53,
+        method: 'plugin.hooks.invoke',
+        params: { handlerId, hookType: 'onBeforeSendMessage', context: {} },
+      })
+
+      expect(postedMessages).toEqual([
+        {
+          type: 'rpc',
+          response: {
+            jsonrpc: '2.0',
+            id: 53,
+            result: { proceed: true },
+          },
+        },
+      ])
+      // 异常放行分支记 Worker 侧日志（对齐源码行为，P-3 消除漂移）
+      expect(errorSpy).toHaveBeenCalled()
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  it('responds with {proceed:true} for unknown handlerId', async () => {
+    await dispatchRpcRequest({
+      jsonrpc: '2.0',
+      id: 54,
+      method: 'plugin.hooks.invoke',
+      params: { handlerId: 'hook_missing_0', hookType: 'onBeforeSendMessage', context: {} },
+    })
+
+    expect(postedMessages).toEqual([
+      {
+        type: 'rpc',
+        response: {
+          jsonrpc: '2.0',
+          id: 54,
+          result: { proceed: true },
+        },
+      },
+    ])
+  })
+
+  it('D2-2 observe notification: plugin.hooks.invoke notification executes handler without response', async () => {
+    // observe 快捷路径：无 id 通知 → handler 执行 → 不产生任何响应消息（fire-and-forget）
+    const collected: Array<{ eventName: string; data: unknown }> = []
+    const mockClient = createMockRpcClient()
+    const hookApi = createHookApi(mockClient, 'observe-plugin')
+    await hookApi.onPiEvent('agent_start', async (eventName, data) => {
+      collected.push({ eventName, data })
+    })
+    const registerCall = (mockClient as unknown as { requestCalls: Array<{ method: string; params: Record<string, unknown> }> })
+      .requestCalls.find(c => c.method === 'plugin.hooks.register')!
+    const handlerId = registerCall.params.handlerId as string
+
+    await handleMessage({
+      type: 'rpc',
+      notification: {
+        jsonrpc: '2.0',
+        method: 'plugin.hooks.invoke',
+        params: { handlerId, hookType: 'onPiEvent', context: { eventName: 'agent_start', data: { sessionId: 's1' } } },
+      },
+    } as HostToWorkerMessage)
+    // executeHookRequest 在 notification 分支是 fire-and-forget 调用，flush 微任务
+    await new Promise(resolve => setTimeout(resolve, 10))
+
+    expect(collected).toEqual([{ eventName: 'agent_start', data: { sessionId: 's1' } }])
+    // 关键断言：通知不产生响应（postedMessages 为空——没有 postRpcResponse 调用）
+    expect(postedMessages).toEqual([])
+  })
+})
+
+// ── Fix-7: 'deactivate' 分支清理本地 tool handler（与主线程清 toolRegistry 对偶） ──
+
+describe('plugin-bootstrap deactivate clears local tool handlers (Fix-7)', () => {
+  it("deactivate removes the plugin's tool handlers; other plugins' handlers survive", async () => {
+    const handlerP1: ToolExecuteHandler = vi.fn().mockResolvedValue({ content: 'p1' })
+    const handlerP2: ToolExecuteHandler = vi.fn().mockResolvedValue({ content: 'p2' })
+    registerToolHandlerTracked('p1:toolA', handlerP1)
+    registerToolHandlerTracked('p2:toolB', handlerP2)
+
+    // 'deactivate' 分支（无 loadedModule 时 mod?.deactivate 跳过，仍执行清理 + 回 deactivated）
+    await handleMessage({ type: 'deactivate', pluginId: 'p1' } as HostToWorkerMessage)
+    await new Promise(resolve => setImmediate(resolve))
+
+    // p1 的 handler 摘除：tool.execute 落 METHOD_NOT_FOUND（迟到的工具调用不可达）
+    postedMessages.length = 0
+    await dispatchRpcRequest({
+      jsonrpc: '2.0',
+      id: 51,
+      method: 'plugin.tool.execute',
+      params: { pluginId: 'p1', toolName: 'toolA', arguments: {} },
+    })
+    expect(postedMessages).toEqual([{
+      type: 'rpc',
+      response: {
+        jsonrpc: '2.0',
+        id: 51,
+        error: {
+          code: PluginRpcErrorCodes.METHOD_NOT_FOUND,
+          message: 'Tool handler not found: p1:toolA',
+        },
+      },
+    }])
+    expect(handlerP1).not.toHaveBeenCalled()
+
+    // 其他插件的 handler 不受影响
+    postedMessages.length = 0
+    await dispatchRpcRequest({
+      jsonrpc: '2.0',
+      id: 52,
+      method: 'plugin.tool.execute',
+      params: { pluginId: 'p2', toolName: 'toolB', arguments: {} },
+    })
+    expect(postedMessages).toEqual([{
+      type: 'rpc',
+      response: { jsonrpc: '2.0', id: 52, result: { content: 'p2' } },
+    }])
   })
 })

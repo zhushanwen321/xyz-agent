@@ -5,6 +5,7 @@ import {
   guiSetWidget,
   isGuiCapable,
   isGuiComponent,
+  isGuiRenderResult,
   extractGui,
   GUI_WIDGET_MARKER,
   PROTOCOL_VERSION,
@@ -33,6 +34,17 @@ describe('guiResult', () => {
     const result = guiResult(component)
     expect(result.v).toBe(PROTOCOL_VERSION)
     expect(result.component.type).toBe('stats-line')
+    expect(result.meta).toBeUndefined()
+  })
+
+  it('meta 可选挂载（v1.1 widget 宿主元数据），不传时键不出现', () => {
+    const result = guiResult(guiComponent('list-tree', { items: [] }), {
+      title: 'Todo',
+      status: 'running',
+      progress: { current: 1, total: 3 },
+    })
+    expect(result.meta).toEqual({ title: 'Todo', status: 'running', progress: { current: 1, total: 3 } })
+    expect('meta' in JSON.parse(JSON.stringify(guiResult(guiComponent('list-tree', { items: [] }))))).toBe(false)
   })
 
   it('strip undefined 字段（序列化干净）', () => {
@@ -74,7 +86,7 @@ describe('guiComponent', () => {
 })
 
 describe('guiSetWidget', () => {
-  it('RPC 模式用 marker 编码 GuiComponent JSON', () => {
+  it('RPC 模式用 marker 编码 GuiRenderResult 信封 JSON（v1.1：component + meta）', () => {
     let captured: string[] | undefined
     const ctx: GuiContext = {
       mode: 'rpc',
@@ -85,8 +97,11 @@ describe('guiSetWidget', () => {
         },
       },
     }
-    const component = guiComponent('stats-line', { items: [{ value: 'x' }] })
-    guiSetWidget(ctx, 'todo', component)
+    const result = guiResult(
+      guiComponent('stats-line', { items: [{ value: 'x' }] }),
+      { title: 'Todo', status: 'running', progress: { current: 1, total: 2 } },
+    )
+    guiSetWidget(ctx, 'todo', result)
 
     expect(captured).toBeDefined()
     expect(captured).toHaveLength(1)
@@ -94,7 +109,9 @@ describe('guiSetWidget', () => {
 
     const json = captured![0].slice(GUI_WIDGET_MARKER.length)
     const parsed = JSON.parse(json)
-    expect(parsed.type).toBe('stats-line')
+    expect(parsed.v).toBe(PROTOCOL_VERSION)
+    expect(parsed.component.type).toBe('stats-line')
+    expect(parsed.meta).toEqual({ title: 'Todo', status: 'running', progress: { current: 1, total: 2 } })
   })
 
   it('传 undefined 清除 widget', () => {
@@ -115,7 +132,25 @@ describe('guiSetWidget', () => {
   it('无 ui.setWidget 时安全无操作', () => {
     const ctx: GuiContext = { mode: 'rpc', hasUI: true }
     // 不应抛错
-    guiSetWidget(ctx, 'todo', guiComponent('ansi-text', { lines: [] }))
+    guiSetWidget(ctx, 'todo', guiResult(guiComponent('ansi-text', { lines: [] })))
+  })
+})
+
+describe('isGuiRenderResult', () => {
+  it('v1.1 信封（v + 合法 component）→ true，meta 可选', () => {
+    expect(isGuiRenderResult(guiResult(guiComponent('list-tree', { items: [] })))).toBe(true)
+    expect(
+      isGuiRenderResult(guiResult(guiComponent('list-tree', { items: [] }), { title: 'x' })),
+    ).toBe(true)
+  })
+
+  it.each([
+    ['null', null],
+    ['v1 裸 component（无信封）', { type: 'stats-line', props: {} }],
+    ['v 版本不匹配', { v: 99, component: { type: 'stats-line', props: {} } }],
+    ['component 非法（缺 props）', { v: PROTOCOL_VERSION, component: { type: 'stats-line' } }],
+  ])('%s → false', (_label, value) => {
+    expect(isGuiRenderResult(value)).toBe(false)
   })
 })
 

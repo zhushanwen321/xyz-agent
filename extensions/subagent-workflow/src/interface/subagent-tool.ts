@@ -194,7 +194,7 @@ Delegate when the task needs a distinct specialized role, context isolation (for
 
 \`\`\`
 {"action":"start","task":"<your task>","slug":"<kebab-case>"}
-{"action":"start","task":"...","slug":"fix-login","agent":"worker","model":"anthropic/claude-3.5-sonnet","fork":true}
+{"action":"start","task":"...","slug":"fix-login","agent":"coder","model":"anthropic/claude-3.5-sonnet","fork":true}
 {"action":"list","listParam":{"includeFinished":false,"limit":20}}
 {"action":"cancel","cancelParam":{"subagentId":"sa-550e8400"}}
 \`\`\`

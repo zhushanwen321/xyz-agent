@@ -18,7 +18,7 @@ import type { SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import * as events from '@/api/events'
 
 // mock sessionApi：getCommands/getContext 用 spy 断言「不被调用」。
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   session: {
     list: vi.fn(() => Promise.resolve([])),
     switchSession: vi.fn(() => Promise.resolve()),
@@ -43,7 +43,7 @@ vi.mock('@/api', () => ({
 
 import { session as sessionMock } from '@/api'
 
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -60,7 +60,7 @@ function makeGroups(ids: string[]): SessionGroup[] {
 
 it('U1: selectSession 不再主动调 sessionApi.getCommands（wave:remove-bandaids 删兜底）', async () => {
   const scope = effectScope()
-  const sidebar = scope.run(() => useSidebar())!
+  const sidebar = scope.run(() => useSidebarNew())!
   events.dispatchGlobal({ type: 'config.sessions', payload: { groups: makeGroups(['s1']) } })
 
   await sidebar.selectSession('s1')
@@ -73,7 +73,7 @@ it('U1: selectSession 不再主动调 sessionApi.getCommands（wave:remove-banda
 
 it('U2: selectSession 不再主动调 sessionApi.getContext（wave:remove-bandaids 删兜底）', async () => {
   const scope = effectScope()
-  const sidebar = scope.run(() => useSidebar())!
+  const sidebar = scope.run(() => useSidebarNew())!
   events.dispatchGlobal({ type: 'config.sessions', payload: { groups: makeGroups(['s1']) } })
 
   await sidebar.selectSession('s1')
@@ -85,7 +85,7 @@ it('U2: selectSession 不再主动调 sessionApi.getContext（wave:remove-bandai
 
 it('U3: selectSession 不向 session 通道本地投递 session.commands（由 subscribe stateSnapshot 接管）', async () => {
   const scope = effectScope()
-  const sidebar = scope.run(() => useSidebar())!
+  const sidebar = scope.run(() => useSidebarNew())!
   events.dispatchGlobal({ type: 'config.sessions', payload: { groups: makeGroups(['s1']) } })
 
   const received: Array<{ type: string; payload: { commands?: unknown[] } }> = []

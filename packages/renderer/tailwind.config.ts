@@ -1,12 +1,12 @@
 import type { Config } from 'tailwindcss'
 
 /**
- * xyz-agent Tailwind 配置 · v3 冷蓝暗色（ADR-0018）
+ * xyz-agent Tailwind 配置 · v3 冷蓝暗色（ADR-0019）
  * 色值映射到 style.css 的 CSS 变量（SSOT: docs/page-design/design-tokens.md）。
  * shadcn-vue 装机会在此基础上扩展，此处只落 design-tokens 对齐项。
  */
 export default {
-  content: ['./src/**/*.{vue,ts,tsx}'],
+  content: ['./src/**/*.{vue,ts,tsx}', '../ui/src/**/*.{vue,ts}'],
   darkMode: 'class',
   theme: {
     extend: {
@@ -15,6 +15,7 @@ export default {
           DEFAULT: 'var(--bg)',
           elevated: 'var(--bg-elevated)',
           input: 'var(--bg-input)',
+          card: 'var(--bg-card)', // v6 新增：设置分组卡片
         },
         surface: {
           DEFAULT: 'var(--surface)',
@@ -31,11 +32,16 @@ export default {
         },
         border: 'var(--border)',
         'border-strong': 'var(--border-strong)',
+        // v6 §4.3：hairline 0.05 弱分隔（drawer L1 栏底线 / 行分隔）。settings wave followup「hairline 语义类补映射」的映射部分。
+        'border-hairline': 'var(--hairline)',
         accent: {
           DEFAULT: 'var(--accent)',
           hover: 'var(--accent-hover)',
           soft: 'var(--accent-soft)',
           ring: 'var(--accent-ring)', // inset 内描边（Card-Active/Input focus/SessionItem 激活）
+          // v6 §3.5.1：accent 实色上的前景（深字 #1a1a1c）。与下方 foreground（shadcn 别名=neutral-fg，
+          // 服务 ghost hover 蓝底）语义独立，accent 实色 badge/icon 前景必须用 fg 非 foreground。
+          fg: 'var(--accent-fg)',
           foreground: 'var(--accent-foreground)', // shadcn text-accent-foreground
         },
         success: { DEFAULT: 'var(--success)', soft: 'var(--success-soft)' },
@@ -44,14 +50,15 @@ export default {
         info: { DEFAULT: 'var(--info)', soft: 'var(--info-soft)' },
         // reasoning 紫（draft-message-stream 思考块 / composer 思考等级专属色相）
         reasoning: { DEFAULT: 'var(--reasoning)', soft: 'var(--reasoning-soft)' },
-        // ── diff 行/字符级背景（预混合色，color-mix 派生跟随 --success/--danger）──
-        // 行背景中饱和(18%) + 字符级高饱和(45%)，双层亮度差锁定肉眼可辨。
-        // canvas 用 bg-bg-input（暗 #1e1f24 / 亮 #f1f3f6 自动跟随主题），色块叠加其上。
+        // ── diff 行/字符级背景（引用 style.css 新增 token，v6 §4.5 柔化 12%）──
+        // 行背景中饱和(12%) + 字符级高饱和(45%)，双层亮度差锁定肉眼可辨。
+        // 真值源在 style.css（--diff-* token），config 只做映射不重复定义色值。
+        // canvas 用 bg-bg-input（暗 #17171a / 亮 #f1f3f6 自动跟随主题），色块叠加其上。
         diff: {
-          'add-bg': 'color-mix(in oklch, var(--success) 18%, transparent)',
-          'add-strong': 'color-mix(in oklch, var(--success) 45%, transparent)',
-          'del-bg': 'color-mix(in oklch, var(--danger) 18%, transparent)',
-          'del-strong': 'color-mix(in oklch, var(--danger) 45%, transparent)',
+          'add-bg': 'var(--diff-add-bg)',
+          'add-strong': 'var(--diff-add-strong)',
+          'del-bg': 'var(--diff-del-bg)',
+          'del-strong': 'var(--diff-del-strong)',
         },
 
         // ── shadcn-vue 命名空间（别名映射到 v3 值，不引入新色）──────────
@@ -75,82 +82,33 @@ export default {
         mono: ['JetBrains Mono', 'IBM Plex Mono', 'ui-monospace', 'Menlo', 'monospace'],
       },
       borderRadius: {
-        sm: '3px',
-        DEFAULT: '8px',
+        sm: '6px', // v6 升档（对应 --radius-sm）
+        DEFAULT: '8px', // 按钮/卡片默认档（对应 --radius）
         md: '8px',
-        lg: '12px',
+        lg: '12px', // 面板/弹层（对应 --radius-lg）
+        card: '10px', // v6 新增：卡片容器（对应 --radius-card）
       },
       boxShadow: {
         1: 'var(--shadow-1)',
         2: 'var(--shadow-2)',
         glow: 'var(--shadow-glow)',
       },
-      // 状态点脉冲（SessionItem / SessionCard 共享，running=accent / waiting=warn）。
-      // 原两组件各自 scoped 定义同一份 keyframes，收敛到 SSOT 避免漂移。
-      keyframes: {
-        'pulse-accent': {
-          '0%': { 'box-shadow': '0 0 0 0 rgba(79, 142, 247, 0.5)' },
-          '70%': { 'box-shadow': '0 0 0 5px rgba(79, 142, 247, 0)' },
-          '100%': { 'box-shadow': '0 0 0 0 rgba(79, 142, 247, 0)' },
-        },
-        // 注意：rgba 值对应暗色 --warn (#b08a3e)。亮色 --warn (#8a6a2e) 下 pulse 环会有色相差，
-        // 已知限制——keyframe 无法读运行时 CSS 变量，需后续用 CSS @property 或独立动画方案解决。
-        'pulse-warn': {
-          '0%': { 'box-shadow': '0 0 0 0 rgba(176, 138, 62, 0.5)' },
-          '70%': { 'box-shadow': '0 0 0 5px rgba(176, 138, 62, 0)' },
-          '100%': { 'box-shadow': '0 0 0 0 rgba(176, 138, 62, 0)' },
-        },
-        // Composer S6 流式态呼吸 ring（steer 提交引导）
-        'steer-breathe': {
-          '0%, 100%': { 'box-shadow': '0 0 0 3px rgba(79, 142, 247, 0.22)' },
-          '50%': { 'box-shadow': '0 0 0 4px rgba(79, 142, 247, 0.40)' },
-        },
-        // message-stream working-dot 脉冲（turn-meta working 态，draft .working-dot）
-        'working-pulse': {
-          '0%, 100%': { opacity: '1', 'box-shadow': '0 0 0 0 rgba(79, 142, 247, 0.4)' },
-          '50%': { opacity: '0.55', 'box-shadow': '0 0 0 5px rgba(79, 142, 247, 0)' },
-        },
-        // 流式光标闪烁（turn-summary / trace-tool streaming）
-        blink: {
-          '0%, 50%': { opacity: '1' },
-          '51%, 100%': { opacity: '0' },
-        },
-        // message-stream trace 块 running 态双环 loader（Demo H，普通 tool/subagent/workflow 共用）。
-        // 1.4s 线性旋转，prefers-reduced-motion 由 style.css 全局 @media reduce 兜底。
-        'loader-spin': {
-          to: { transform: 'rotate(360deg)' },
-        },
-        // session status icons（方案 C 优化版 v3）
-        wiggle: {
-          '0%, 100%': { transform: 'rotate(-6deg)' },
-          '50%': { transform: 'rotate(6deg)' },
-        },
-        'pulse-strong': {
-          '0%, 100%': { opacity: '1', transform: 'scale(1)' },
-          '50%': { opacity: '0.65', transform: 'scale(0.92)' },
-        },
-        // ask-user inline overlay 入场（覆盖 composer 位置时滑入，对齐 demo v2 slideUp）
-        'ask-user-slide-up': {
-          from: { opacity: '0', transform: 'translateY(8px)' },
-          to: { opacity: '1', transform: 'translateY(0)' },
-        },
-        // ForkNotice 反馈行入场（spec §3：从 -4px translateY 淡入，200ms ease）
-        'notice-in': {
-          from: { opacity: '0', transform: 'translateY(-4px)' },
-          to: { opacity: '1', transform: 'translateY(0)' },
-        },
-      },
+      // keyframes SSOT 已迁移至 style.css 全局（v6 §5.9：只在全局定义一次；
+      // pulse-accent 改用 CSS 变量派生，跟随主题，不再硬编码 rgba）。
+      // 此处仅保留 animation 简写，引用全局 @keyframes 名。
       animation: {
         'pulse-accent': 'pulse-accent 2s var(--ease) infinite',
-        'pulse-warn': 'pulse-warn 2s var(--ease) infinite',
-        'steer-breathe': 'steer-breathe 2.6s ease-in-out infinite',
-        'working-pulse': 'working-pulse 1.4s ease-in-out infinite',
+        // [chat-flow-polish] sidebar running/waiting badge 呼吸（复用全局 pulse-dot keyframes）
+        'pulse-dot': 'pulse-dot 2s ease-in-out infinite',
         blink: 'blink 1s step-end infinite',
         'loader-spin': 'loader-spin 1.4s linear infinite',
         'ask-user-slide-up': 'ask-user-slide-up var(--duration-slow) var(--ease)',
-        wiggle: 'wiggle 1.2s ease-in-out infinite',
         'pulse-strong': 'pulse-strong 1.4s ease-in-out infinite',
         'notice-in': 'notice-in 200ms var(--ease)',
+        // 品牌旋转（太极「周而复始」）：静态简写注册供 JIT 生成；TaijiLogo 用 inline
+        // animation-duration 覆盖时长（default 8s，可传 prop）。motion-reduce:animate-none
+        // 在 class 层覆盖 animation 简写（name 置 none），inline duration 不影响 name。
+        'taiji-spin': 'taiji-spin 8s linear infinite',
       },
     },
   },

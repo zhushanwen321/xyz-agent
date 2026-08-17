@@ -11,6 +11,11 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'plugin-bootstrap': 'src/services/plugin-service/plugin-bootstrap.ts',
+    // 子进程版 bootstrap + ESM loader（sandbox 真隔离，重构 3）：
+    // fork 子进程入口（host-process resolveAndValidateFile('plugin-bootstrap-process.cjs') 定位）
+    // + ESM loader 经 execArgv --import 注入（沙箱进程启动时加载）
+    'plugin-bootstrap-process': 'src/services/plugin-service/plugin-bootstrap-process.ts',
+    'plugin-esm-loader': 'src/services/plugin-service/plugin-esm-loader.cjs',
     cli: 'src/cli/index.ts',  // xyz-settings CLI 入口（打包后 dist/runtime/cli.cjs）
   },
   // 输出到 apps/electron/dist/runtime（与 main/preload dist 同级，供 electron-builder 打包）
@@ -29,7 +34,7 @@ export default defineConfig({
   // ══════════════════════════════════════════════════════════════
   // @xyz-agent/shared：workspace 包（纯 TS 类型 + 工具函数），必须打包进 bundle，
   // 否则打包后 require('@xyz-agent/shared') 找不到（runtime 子进程无 node_modules）
-  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', 'chokidar', '@iarna/toml'],
+  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', 'chokidar', '@iarna/toml', 'proper-lockfile'],
   // platform: 'node' 已自动处理所有 node:* 内置模块，无需手动 external
   // node-pty 是 native module（含 .node 二进制），不能打包进 JS bundle：
   // 其 JS 入口用 node-gyp-build 动态 require prebuilds/<platform>/*.node，

@@ -13,9 +13,10 @@
  * 不含：发送/steer/abort 编排、模型/思考等级、草稿维护（均留在 Composer.vue / 其他 composable）。
  */
 import { ref, watch, type Ref } from 'vue'
-import { useCommandStore } from '@/stores/command'
+import { useCommandStore } from '@/composables/features/command/useCommandStore'
 import { pickFile } from '@/lib/ipc'
-import type ComposerInput from '@/components/panel/ComposerInput.vue'
+// W4：ComposerInput 迁 ui 包，类型 import 改 ui 包路径（旧 renderer 路径已删）
+import type { ComposerInput } from '@xyz-agent/ui/features/composer'
 import type CommandPopover from '@/components/panel/CommandPopover.vue'
 
 /** + 菜单「附件」项的图片类型过滤扩展名（「图片」入口 pickFile filters 用） */
@@ -64,7 +65,7 @@ export function useCommandPopoverTrigger(
    * 注入顺序：先 insertSlashChip 后 clearPendingSlash（防先清后注入读到 null）。
    */
   watch(
-    () => commandStore.pendingSlash,
+    () => commandStore.pendingSlash.value,
     (req) => {
       if (!req) return
       if (req.sessionId !== sessionId.value) return // 仅消费目标 session 的请求

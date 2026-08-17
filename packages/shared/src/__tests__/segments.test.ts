@@ -1,5 +1,5 @@
 /**
- * Segment 归一化函数单测（ADR-0037）。
+ * Segment 归一化函数单测（ADR-0043）。
  *
  * 覆盖 segmentsToText / segmentsToPrompt / textToSegments / normalizeContent。
  * 重点：segmentsToText 不 trim（保留末尾换行），segmentsToPrompt trim（pi 边界）。

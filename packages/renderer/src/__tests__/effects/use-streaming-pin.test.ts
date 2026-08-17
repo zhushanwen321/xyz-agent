@@ -45,7 +45,7 @@ function turnItem(index: number, key: string, isStreaming = false): RenderItem {
 /** 构造一个 system RenderItem（如 bash 消息，排在 streaming turn 之后） */
 function systemItem(id: string): RenderItem {
   return {
-    kind: 'system',
+    kind: 'systemNotice',
     message: { id, role: 'system', content: 'bash' } as never,
   }
 }

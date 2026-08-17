@@ -174,15 +174,32 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
   } else {
     // 开发环境：tsx 运行 TS 源码
     // projectRoot = app.getAppPath() = apps/electron。
-    // pnpm workspace + node-linker=hoisted 下，tsx 提升到 repo root 的 node_modules/.bin；
     // runtime 源码在 packages/runtime/src/（与 apps/electron 平级）。
     // repo root 相对 apps/electron 是 ../..
     const repoRoot = path.join(projectRoot, '..', '..')
-    const tsxPath = path.join(repoRoot, 'node_modules', '.bin', 'tsx')
     const runtimeEntry = path.join(repoRoot, 'packages', 'runtime', 'src', 'index.ts')
 
+    // [HISTORICAL] tsx 路径必须用 require.resolve 动态解析，不能写死 repoRoot/node_modules。
+    // 根因链（dev 启动崩溃的真实原因）：
+    //   1. ada6c0466 把 .npmrc 从 hoisted 切到 isolated（控制 builtin extension 的 pnpm deploy 体积），
+    //      但本处写死 repoRoot/node_modules/tsx 的解析未同步更新。
+    //   2. isolated 布局下 repoRoot 没有 node_modules/tsx——tsx 只被 apps/electron（本 supervisor
+    //      所在包）声明为 devDependency，实际位于 node_modules/.pnpm/tsx@x.y.z/node_modules/tsx/。
+    //      旧实现长期靠 root 残留的 hoisted 时代污染物掩盖，干净重装后即刻崩溃。
+    //   3. 33ed23e91 把启动入口从 .bin/tsx 换成 dist/cli.mjs，但路径仍写死 repoRoot，
+    //      干净 isolated 安装下依旧找不到。另注：pnpm isolated 下 .bin 条目本就是
+    //      @pnpm/cmd-shim 生成的跨平台 shell 脚本（非 symlink），「还原 .bin 为 symlink」
+    //      既不可能也不必要——node <任何路径>/.bin/tsx 必然把 shell 当 JS 解析崩溃。
+    // 正确做法：require.resolve 从 projectRoot（= apps/electron，tsx 声明方）按 Node 解析算法
+    // 定位 tsx 真实位置——isolated → .pnpm/tsx@x.y.z/...；hoisted → 向上遍历到 repoRoot。
+    // 与打包模式用 dist/runtime/index.cjs 同思路（解析包内 JS 入口，不依赖 .bin 或固定
+    // node_modules 形态），跨 linker 模式稳定，merge 到 main（hoisted）不坏。
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- 运行时按 Node 解析算法动态定位 tsx 包路径（适配 isolated node-linker），不引入静态依赖；vite CJS 输出下 require 原生可用
+    const tsxPkgPath = require.resolve('tsx/package.json', { paths: [projectRoot] })
+    const tsxPath = path.join(path.dirname(tsxPkgPath), 'dist', 'cli.mjs')
+
     if (!existsSync(tsxPath)) {
-      throw new Error(`tsx not found at ${tsxPath}. Run: pnpm install`)
+      throw new Error(`tsx cli not found at ${tsxPath} (resolved pkg: ${tsxPkgPath}). Run: pnpm install`)
     }
     if (!existsSync(runtimeEntry)) {
       throw new Error(`Runtime entry not found at ${runtimeEntry}`)

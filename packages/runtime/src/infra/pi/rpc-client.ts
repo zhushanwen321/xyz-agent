@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
-import { ENV_WHITELIST_PREFIXES, type ThinkingLevel } from '@xyz-agent/shared'
+import { ENV_WHITELIST_PREFIXES, type ThinkingLevel, type ProviderId } from '@xyz-agent/shared'
 import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
 import { createPiSessionLog, type PiSessionLog } from '../logger.js'
 
@@ -500,7 +500,7 @@ export class RpcClient implements IPiEngine {
     return this.sendCommand('follow_up', { message: content })
   }
 
-  setModel(provider: string, modelId: string): Promise<PiMessage> {
+  setModel(provider: ProviderId, modelId: string): Promise<PiMessage> {
     return this.sendCommand('set_model', { provider, modelId })
   }
 
@@ -508,6 +508,8 @@ export class RpcClient implements IPiEngine {
     return this.sendCommand('set_thinking_level', { level })
   }
 
+  /** [DEAD] pi get_messages 死路径——生产零调用（session-service.getHistory 走 client.getEntries entry 树重建）。
+   *  保留供未来扁平 message 列表场景；删除前确认无 mock/测试依赖。 */
   getHistory(): Promise<PiMessage> {
     return this.sendCommand('get_messages')
   }

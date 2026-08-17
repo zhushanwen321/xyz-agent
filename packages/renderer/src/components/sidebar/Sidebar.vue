@@ -1,8 +1,8 @@
 <template>
   <!--
     容器组件 · L1 Sidebar（sidebar/spec.md 四态）。
-    分层（自上而下）：Brand → 主操作 nav（新建 ⌘N / 搜索 ⌘K）→ Overview 入口按钮 →
-    segmented tab（会话|文件）→ 子视图区 → 用户区。
+    分层（自上而下）：Brand → 主操作 nav（新建 ⌘N / 搜索 ⌘K）→ segmented tab（会话|文件|Agents|Flows|Plugins）→ 子视图区 → 用户区。
+    注：v6 D14 nav 重构移除 Overview 入口按钮，go-overview 仅经 SearchModal 命令面板可达（useAppCommands 注册）。
     折叠态 C：整体隐藏（width:0 + opacity:0），spec §收起态。
     File View 内容 G2-003 defer。
   -->
@@ -11,71 +11,45 @@
     :class="{ 'w-0 opacity-0 overflow-hidden': sidebar.collapsed }"
   >
     <div class="sidebar__inner flex h-full w-[300px] flex-col pl-0.5">
-      <!-- Brand -->
-      <div class="flex items-center gap-2 px-2 pb-3.5">
-        <span class="grid size-[22px] shrink-0 place-items-center rounded-md bg-accent text-[11px] font-bold text-neutral-fg">x</span>
-        <div class="flex flex-col leading-tight">
-          <span class="text-[13px] font-semibold text-neutral-fg">xyz-agent</span>
-          <span class="text-[10px] text-neutral-mid">v{{ appVersion }}<template v-if="piVersion"> · pi v{{ piVersion }}</template></span>
-        </div>
-        <!-- 升级状态指示器（useAppUpdate 单例 state，idle/checking 不渲染） -->
-        <UpdateButton class="ml-auto" />
-      </div>
+      <!-- Brand（太极 logo + 产品名 + 版本号 + 升级指示器，v6 §6.2） -->
+      <Brand :version-label="versionLabel">
+        <template #trailing>
+          <!-- 升级状态指示器（useAppUpdate 单例 state，idle/checking 不渲染） -->
+          <UpdateButton class="ml-auto" />
+        </template>
+      </Brand>
 
-      <!-- 主操作 nav：新建任务 ⌘N / 搜索 ⌘K -->
-      <nav class="flex flex-col gap-px px-1">
+      <!-- 主操作 nav：新建任务 ⌘N（primary 主操作）/ 搜索 ⌘K（ghost 次操作）。
+           v6-master-spec §6.2 NavItem：primary=accent 实色 / ghost=透明 双层级。 -->
+      <nav class="flex flex-col gap-1 px-1">
         <Button
           variant="ghost"
-          class="group h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+          class="group h-8 w-full justify-start gap-2.5 rounded-md bg-accent px-3 text-[12px] font-medium text-accent-fg transition-colors hover:bg-accent-hover hover:text-accent-fg"
           @click="onNewSession"
         >
-          <Plus class="size-[15px] text-neutral-dim transition-colors group-hover:text-neutral-mid" />
+          <Plus class="size-[15px] text-accent-fg" />
           <span class="flex-1 text-left">{{ t('sidebar.newTask') }}</span>
-          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">{{ formatKbd('n') }}</kbd>
+          <kbd class="font-mono text-[10px] text-accent-fg opacity-70">{{ formatKbd('n') }}</kbd>
         </Button>
         <Button
           variant="ghost"
-          class="group h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+          class="group h-8 w-full justify-start gap-2.5 rounded-md px-3 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
           @click="searchModal.open()"
         >
           <Search class="size-[15px] text-neutral-dim transition-colors group-hover:text-neutral-mid" />
           <span class="flex-1 text-left">{{ t('sidebar.search') }}</span>
-          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">{{ formatKbd('k') }}</kbd>
+          <kbd class="rounded-sm border border-border-strong px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">{{ formatKbd('k') }}</kbd>
         </Button>
       </nav>
 
       <div class="my-2 mx-2.5 h-px bg-border" />
 
-      <!-- Overview 入口按钮（外部 L1 Region 入口，≠ segmented tab） -->
-      <Button
-        variant="ghost"
-        :class="cn(
-          'group mb-1 h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px]',
-          isOverviewActive
-            ? 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'
-            : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg',
-        )"
-        @click="goOverview"
-      >
-        <LayoutGrid
-          class="size-[15px] transition-colors"
-          :class="isOverviewActive ? 'text-accent' : 'text-neutral-dim group-hover:text-neutral-mid'"
-        />
-        <span class="flex-1 text-left">{{ t('sidebar.overview') }}</span>
-        <span
-          v-if="session.list.length"
-          class="font-mono text-[10px]"
-          :class="isOverviewActive ? 'text-accent' : 'text-neutral-dim'"
-        >{{ session.list.length }}</span>
-      </Button>
+      <!-- ProjectSwitcher（v6 D14：nav 下方 Project 一级导航，spec §6.2） -->
+      <ProjectSwitcher />
 
-      <!-- segmented tab（会话 | 文件 | Agents | Flows） -->
+      <!-- segmented tab（会话 | 文件 | Agents | Flows | Plugins） -->
       <SegmentedTab
         v-model="sidebar.activeTab"
-        :session-count="session.list.length"
-        :file-count="fileCount"
-        :subagent-count="subagentCount"
-        :workflow-count="workflowCount"
         :subagent-running-count="subagentRunningCount"
         :workflow-running-count="workflowRunningCount"
       />
@@ -104,6 +78,7 @@
             @delete="onDeleteSession"
             @delete-folder="onDeleteFolder"
             @stop-branch="onStopBranch"
+            @set-project="onAssignProject"
           />
         </template>
         <template v-else-if="sidebar.activeTab === 'subagents'">
@@ -117,26 +92,47 @@
           />
         </template>
         <template v-else-if="sidebar.activeTab === 'workflows'">
-          <!-- Transition: 列表 ↔ 详情切换的 slide 过渡（out-in 避免两个视图同时渲染）。
-               Escape hatch：Transition 类无法用 Tailwind 表达，走 <style scoped>（design-system §3）。 -->
-          <Transition name="wf-slide" mode="out-in">
-            <WorkflowDetail
-              v-if="currentWorkflow"
-              :workflow="currentWorkflow"
-              @back="onWorkflowBack"
-              @select-agent-call="onSelectAgentCall"
-              @action="onWorkflowAction"
-            />
-            <WorkflowList
-              v-else
-              :workflows="workflowList"
-              :is-loading="workflowStore.isLoading"
-              :load-error="workflowStore.loadError"
-              @select="onSelectWorkflow"
-              @action="onWorkflowAction"
-              @retry="onRetryWorkflows"
-            />
-          </Transition>
+          <!-- [HISTORICAL] 列表 ↔ 详情切换原用 wf-slide Transition（out-in + 120ms 滑动），
+               2026-08-14 移除：Electron 下 transitionend 偶发丢失（元素 detach 竞态）导致 out-in
+               卡在中间态——内容区空白、详情永不挂载（真实用户点击 workflow 后侧边栏空白）。
+               曾尝试 :duration 超时兜底（Vue 3.5 理论支持）实测仍卡；CDP 自动化下 3/3 复现，
+               去 Transition 后 3/3 正常。稳定性优先，直接 v-if/v-else 切换（无动画）。 -->
+          <WorkflowDetail
+            v-if="currentWorkflow"
+            :workflow="currentWorkflow"
+            @back="onWorkflowBack"
+            @select-agent-call="onSelectAgentCall"
+            @action="onWorkflowAction"
+          />
+          <WorkflowList
+            v-else
+            :workflows="workflowList"
+            :is-loading="workflowStore.isLoading"
+            :load-error="workflowStore.loadError"
+            @select="onSelectWorkflow"
+            @action="onWorkflowAction"
+            @retry="onRetryWorkflows"
+          />
+        </template>
+        <!-- ExtensionHost sidebar view 宿主（audit §12.1 sidebar.tab 挂载点）。
+             L2 二级路由：PluginViewContainer 经 VIEWS_SOURCE_KEY 取 plugin view 清单
+             （ContributionRegistry sidebar.tab 贡献）→ L2TabBar 切 tab → ViewHost 渲染
+             （数据按 viewId 'todo'/'goal' 落，见 02-extension-host-wiring.md 重构 2）。
+             sessionId 绑定焦点 session。 -->
+        <template v-else-if="sidebar.activeTab === 'plugins'">
+          <PluginViewContainer
+            v-if="focusedSessionId"
+            :session-id="focusedSessionId"
+          />
+          <!-- 无焦点 session 时（Overview 态）空态占位，与 files tab 同范式 -->
+          <div
+            v-else
+            class="flex flex-col items-center justify-center gap-2 py-10 text-center"
+            data-testid="sidebar-plugin-no-session"
+          >
+            <Puzzle class="size-5 text-neutral-dim opacity-40" />
+            <p class="text-[11px] text-neutral-dim opacity-55">{{ t('sidebar.selectSessionHint') }}</p>
+          </div>
         </template>
         <template v-else>
           <FileView
@@ -157,9 +153,9 @@
         </template>
       </div>
 
-      <!-- 用户区（footer）· 齿轮图标打开 Settings（settings/spec.md §1） -->
-      <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-neutral-mid">
-        <span class="size-5 shrink-0 rounded-full bg-gradient-to-br from-accent to-info" />
+      <!-- 用户区（footer）· §6.2 UserArea：accent 纯色头像（去装饰渐变）+ 用户名 + 设置齿轮。 -->
+      <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-neutral-mid transition-colors hover:bg-surface-hover">
+        <span class="size-5 shrink-0 rounded-full bg-accent" />
         <span class="flex-1 truncate text-neutral-fg">{{ t('sidebar.developer') }}</span>
         <Button
           variant="ghost"
@@ -173,7 +169,13 @@
     </div>
 
     <!-- 搜索浮层（⌘K 触发的全局 Overlay，spec §搜索浮层剥离） -->
-    <SearchModal v-model:open="isOpen" :active-session-id="focusedSessionId" />
+    <SearchModal
+      v-model:open="isOpen"
+      :active-session-id="focusedSessionId"
+      :deps="searchDeps"
+      :on-open-drawer="onOpenSearchDrawer"
+      :on-toast-error="toastError"
+    />
 
     <RenameSessionDialog
       v-model:open="renameOpen"
@@ -185,304 +187,69 @@
 
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
-import { useEventListener } from '@vueuse/core'
-import { Plus, LayoutGrid, Search, Settings, FolderOpen, AlertCircle } from '@lucide/vue'
+import { Plus, Search, Settings, FolderOpen, AlertCircle, Puzzle } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
-import SearchModal from '@/components/overlays/SearchModal.vue'
-import { useNavigationStore } from '@/stores/navigation'
+import { SearchModal } from '@xyz-agent/ui'
+import { PluginViewContainer } from '@xyz-agent/ui/extension-host'
+import { useSearchModal } from '@xyz-agent/core'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
-import { useCommandStore } from '@/stores/command'
-import { usePresetStore } from '@/stores/preset'
-import { useSidebar } from '@/composables/features/useSidebar'
-import { useChat } from '@/composables/features/useChat'
-import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { useSessionDerivations } from '@/composables/features/chat/useSessionDerivations'
 import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
 import UpdateButton from './UpdateButton.vue'
+import Brand from './Brand.vue'
+import ProjectSwitcher from './ProjectSwitcher.vue'
 import FileView from './FileView.vue'
 import SubagentList from './SubagentList.vue'
 import WorkflowList from './WorkflowList.vue'
 import WorkflowDetail from './WorkflowDetail.vue'
 import RenameSessionDialog from './RenameSessionDialog.vue'
-import { useFileTreeStore } from '@/stores/fileTree'
-import { usePanelStore } from '@/stores/panel'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
-import { useSubagentListSync } from '@/composables/features/useSubagentListSync'
-import { useWorkflowListSync } from '@/composables/features/useWorkflowListSync'
-import { useSidebarSubagentActions } from '@/composables/features/useSidebarSubagentActions'
-import { useAppUpdate } from '@/composables/features/useAppUpdate'
-import { useSearchModal } from '@/composables/features/useSearchModal'
+import { useSubagentListSync } from '@/composables/features/chat/useSubagentListSync'
+import { useWorkflowListSync } from '@/composables/features/chat/useWorkflowListSync'
+import { useSidebarSubagentActions } from '@/composables/features/sidebar/useSidebarSubagentActions'
+import { useGlobalShortcuts } from '@/composables/shell/useGlobalShortcuts'
+import { useNavigationStore } from '@/stores/navigation'
+import { useSidebarCounts } from '@/composables/features/sidebar/useSidebarCounts'
+import { useSidebarSessionActions } from '@/composables/features/sidebar/useSidebarSessionActions'
+import { useAppUpdate } from '@/composables/features/settings/useAppUpdate'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
 import * as events from '@/api/events'
 
 const { t } = useI18n()
-const searchModal = useSearchModal()
 const { formatKbd } = usePlatformShortcut()
+const searchModal = useSearchModal()
 const { isOpen } = searchModal
-const navigation = useNavigationStore()
 const session = useSessionStore()
-const { error: toastError } = useToast()
 const sidebar = useSidebarStore()
-const fileTreeStore = useFileTreeStore()
-const panelStore = usePanelStore()
 const subagentStore = useSubagentStore()
 const workflowStore = useWorkflowStore()
-const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, focusedSessionId, focusedSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant } = useSidebar()
-const { abort: abortSession } = useChat()
-const { derivedStatus } = useSessionDerivations()
+const { error: toastError } = useToast()
 const openSettings = inject<() => void>('openSettings', () => {})
-
-/** pi 版本（runtime 启动时经 app.info 推送）+ xyz-agent 版本（vite define 注入） */
+const { selectSession, restoreSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, assignSessionToProject, focusedSessionId, focusedSession: currentSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant } = useSidebarNew()
 const piVersion = ref('')
-const appVersion = __APP_VERSION__
+const versionLabel = computed(() => piVersion.value ? `v${__APP_VERSION__} · pi v${piVersion.value}` : `v${__APP_VERSION__}`)
 const renameOpen = ref(false)
 const targetSessionId = ref('')
-const isOverviewActive = computed(() => navigation.current.view === 'overview')
-const currentSession = focusedSession
-
-/** tab 计数（fileTree / subagent / workflow） */
-const fileCount = computed(() => {
-  const sid = focusedSessionId.value
-  if (!sid) return 0
-  return fileTreeStore.getTree(sid)?.length ?? 0
-})
-const subagentCount = computed(() => subagentStore.recordsOf(focusedSessionId.value ?? '').value.length)
-const subagentRunningCount = computed(
-  () => subagentStore.recordsOf(focusedSessionId.value ?? '').value.filter((r) => r.status === 'running').length,
-)
-const subagentList = computed(() => subagentStore.recordsOf(focusedSessionId.value ?? '').value)
-const workflowCount = computed(() => workflowStore.recordsOf(focusedSessionId.value ?? '').value.length)
-const workflowRunningCount = computed(
-  () =>
-    workflowStore
-      .recordsOf(focusedSessionId.value ?? '')
-      .value.filter((r) => r.status === 'running' || r.status === 'paused').length,
-)
-const workflowList = computed(() => workflowStore.recordsOf(focusedSessionId.value ?? '').value)
-/** workflow 详情态（null 时显示列表） */
-const currentWorkflow = computed(() =>
-  focusedSessionId.value ? workflowStore.getCurrentWorkflow(panelStore.activePanelId, focusedSessionId.value) : null,
-)
-
-/** 状态点派生（D6）：useSessionDerivations 读 chat+session store 派生 5 态 */
-function statusOf(id: string) {
-  return derivedStatus(id).value
-}
-
-async function onSelectSession(id: string): Promise<void> {
-  try {
-    await selectSession(id)
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    toastError(t('sidebar.switchSessionFailed', { msg }))
-  }
-}
-
-/** subagent/workflow 操作 handler（提取到 composable 减行） */
-const {
-  onSelectSubagent,
-  onCancelSubagent,
-  onSelectWorkflow,
-  onWorkflowBack,
-  onSelectAgentCall,
-  onWorkflowAction,
-} = useSidebarSubagentActions(focusedSessionId)
-
-/** S5：重试加载会话列表（loadSessions 失败后用户点击重试） */
-function onRetryLoadSessions(): void {
-  void loadSessions()
-}
-
-/** M1：重试加载 workflow 列表 */
-function onRetryWorkflows(): void {
-  const sid = focusedSessionId.value
-  if (sid) void workflowStore.loadWorkflows(sid)
-}
-
-/** M1：重试加载 subagent 列表 */
-function onRetrySubagents(): void {
-  const sid = focusedSessionId.value
-  if (sid) void subagentStore.loadSubagents(sid)
-}
-
-async function onNewSession(): Promise<void> {
-  try {
-    await newSession()
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    toastError(t('sidebar.newTaskFailed', { msg }))
-  }
-}
-
-async function onRenameSession(id: string): Promise<void> {
-  targetSessionId.value = id
-  renameOpen.value = true
-}
-
-async function onDeleteSession(id: string): Promise<void> {
-  try {
-    await deleteSession(id)
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    toastError(t('sidebar.deleteSessionFailed', { msg }))
-  }
-}
-
-/** 删除指定 cwd 下所有 session（folder 批量删除）。部分失败 toast 带 error；全成功不提示。 */
-async function onDeleteFolder(cwd: string): Promise<void> {
-  try {
-    const res = await deleteFolder(cwd)
-    if (res.failed.length > 0) {
-      const firstError = res.failed[0]?.error ?? ''
-      toastError(
-        t('sidebar.deleteFolderPartialFailed', res.failed.length, {
-          named: { count: res.failed.length, error: firstError },
-        }),
-      )
-    }
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    toastError(t('sidebar.deleteFolderFailed', { msg }))
-  }
-}
-
-/** 停止后台分支 session（ForkGroup 两段式确认后 emit stopBranch）。 */
-function onStopBranch(id: string): void {
-  void abortSession(id)
-}
-
-async function onConfirmRename(payload: { sessionId: string; label: string }): Promise<void> {
-  try {
-    await renameSession(payload.sessionId, payload.label)
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    toastError(t('sidebar.renameFailed', { msg }))
-  }
-}
-
-/** 挂载时加载 session 列表（铁律 1：通过 features 层 loadSessions 调 api）+ 订阅 pi 版本
- *  + 启动 subagent 列表同步（watch 生命周期跟随 Sidebar 组件） */
+const { subagentRunningCount, subagentList, workflowRunningCount, workflowList, currentWorkflow } = useSidebarCounts(focusedSessionId)
+const { derivedStatus } = useSessionDerivations()
+function statusOf(id: string) { return derivedStatus(id).value }
+const { onSelectSession, onNewSession, onRenameSession, onDeleteSession, onDeleteFolder, onStopBranch, onConfirmRename, onAssignProject, onRetryLoadSessions, onRetryWorkflows, onRetrySubagents, searchDeps, onOpenSearchDrawer } = useSidebarSessionActions({ focusedSessionId, selectSession, restoreSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, assignSessionToProject, renameOpen, targetSessionId })
+const { onSelectSubagent, onCancelSubagent, onSelectWorkflow, onWorkflowBack, onSelectAgentCall, onWorkflowAction } = useSidebarSubagentActions(focusedSessionId)
+useGlobalShortcuts({ onNewSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant, navigation: useNavigationStore(), openSettings })
 onMounted(() => {
   void loadSessions()
   events.onGlobalType('app.info', (msg) => { piVersion.value = msg.payload.piVersion })
   useSubagentListSync()
   useWorkflowListSync()
 })
-
-/**
- * 启动 30s 自动升级检测（w4：useAppUpdate.initAutoCheck，UpdateButton 消费检测到的状态）。
- * 在 setup 顶层同步调用（非 onMounted）：initAutoCheck 内部用 setTimeout 延迟 30s，不需等 DOM 挂载；
- * onScopeDispose（initAutoCheck 内注册的清理）必须在活跃 effect scope 内同步绑定，
- * 放 onMounted 回调内虽能工作（onMounted 在组件 scope 内同步跑）但脆弱且注释误导，故提到 setup 顶层。
- */
-useAppUpdate().initAutoCheck()
-
-/**
- * #10.1 AC-10.1：Sidebar 全局快捷键派发（消除硬编码 if/else，改 keymap 数组遍历匹配）。
- * - ⌘K toggle（AC-7.1 变更项：再按关闭，原 =true 改 !searchOpen）
- * - ⌘N 新建 session（shell spec §五）
- * - ⌘B 折叠侧栏（shell spec §⌘B；v1 只做 toggle 前两态，G-033 第 3 态 DEFERRED）
- *
- * ⌘K 不注册为 appCommand（搜索结果里出现「搜索」命令是逻辑自指），始终硬编码。
- * ⌘N/⌘B 支持用户自定义覆盖（commandStore.shortcutOverrides），SystemPage 设置页可重录。
- */
-interface KeymapEntry {
-  /** 默认 key（无 override 时用 ⌘+key 匹配） */
-  key: string
-  /** commandStore.shortcutOverrides 中的 id（有 override 时走 matchOverrideKey） */
-  commandId?: string
-  /** 要求 shift 修饰键（⌘⇧G 进 fork 模式 vs ⌘G 后台 fork；无此字段则要求不带 shift） */
-  shift?: boolean
-  action: () => void
-}
-const commandStore = useCommandStore()
-const keymap: KeymapEntry[] = [
-  { key: 'k', action: () => { searchModal.toggle() } },
-  { key: 'n', commandId: 'new-session', action: () => { void onNewSession() } },
-  { key: 'b', commandId: 'toggle-sidebar', action: () => { sidebar.toggleCollapsed() } },
-  // FR-16：⌘⇧P 打开启动预设选择 Popover（与 useAppCommands 注册的 open-preset-select 同源）。
-  // commandId 让 shortcutOverrides 生效（设置页可重录）；shift 守卫确保仅 ⌘⇧P 触发，避免 ⌘P 误命中。
-  // 默认无 override 时走 fallback：mod + 'p' + shift；fallback 的默认 shortcut 在 useAppCommands 声明为 'shift+p'。
-  { key: 'p', shift: true, commandId: 'open-preset-select', action: () => { usePresetStore().requestOpen() } },
-  // FR-16 fork 快捷键：⌘G 从末条 assistant 后台 fork（留在原线）；⌘⇧G 进 composer fork 模式。
-  // shift 守卫（keydown handler 内）区分同 key 的 shift/非 shift 项，避免 ⌘G 误命中 ⌘⇧G。
-  // 每条 entry 形如 { key: 'g'…}：'g' 后 shift 字段决定修饰要求。
-  { key: 'g', action: () => { void forkFromLastAssistant() } },
-  { key: 'g', shift: true, action: () => { void enterForkModeFromLastAssistant() } },
-  // fast-handoff 快捷键：⌘J 从末条 assistant 打包文档到新 session（完成后跳转新 session）。
-  // 用 ⌘J 而非 ⌘H：macOS 系统保留 ⌘H 为「Hide Application」，OS 先拦截 renderer 拦不住。
-  { key: 'j', action: () => { void handoffFromLastAssistant() } },
-]
-useEventListener(window, 'keydown', (e: KeyboardEvent) => {
-  // composer 聚焦时禁用全局 fork 快捷键（避免与 composer 输入冲突；⌘K/⌘N/⌘B 仍可用但 fork 专属此守卫）。
-  // 检测：activeElement 落在 composer-box（contenteditable 输入区）内 → 不派发任何 keymap。
-  if (isComposerFocused()) return
-  const overrides = commandStore.shortcutOverrides
-  const hit = keymap.find((m) => {
-    // 有 override → 解析组合键格式（'mod+n' / 'shift+j' / 'j'）
-    if (m.commandId && overrides[m.commandId]) {
-      return matchOverrideKey(e, overrides[m.commandId])
-    }
-    // 默认：⌘/Ctrl + key，shift 守卫区分同 key 的 shift/非 shift 项
-    const mod = e.metaKey || e.ctrlKey
-    if (!mod) return false
-    if (e.key.toLowerCase() !== m.key) return false
-    // shift 项要求 e.shiftKey；非 shift 项要求 !e.shiftKey（否则 ⌘G 和 ⌘⇧G 都命中 ⌘G）
-    return m.shift ? e.shiftKey : !e.shiftKey
-  })
-  if (hit) {
-    e.preventDefault()
-    // stopImmediatePropagation：避免多 Sidebar 实例（测试 mount 未 unmount 堆积 / HMR 残留）
-    // 各自注册的 window keydown 监听器对同一事件重复派发。首个命中的实例处理后阻止后续实例，
-    // 保证一次按键只触发一次 action（与生产单实例行为一致）。
-    e.stopImmediatePropagation()
-    hit.action()
-  }
-})
-
-/**
- * composer 是否聚焦（全局快捷键守卫用）：activeElement 落在 composer-box 内即为聚焦。
- * composer-box 是 contenteditable 输入区（ComposerInput 根元素带 composer-box class + data-testid），
- * 用户在其中键入时 activeElement 是它或其后代；此时 ⌘G/⌘⇧G 不应触发 fork（与输入语义冲突）。
- */
-function isComposerFocused(): boolean {
-  const el = document.activeElement
-  if (!el) return false
-  return !!el.closest('.composer-box, [data-testid="composer-box"]')
-}
-
-/** 匹配自定义快捷键格式（'mod+n' / 'shift+j' / 'j' / 'alt+x' 等） */
-function matchOverrideKey(e: KeyboardEvent, override: string): boolean {
-  const parts = override.toLowerCase().split('+')
-  const key = parts[parts.length - 1]
-  const needMod = parts.includes('mod')
-  const needShift = parts.includes('shift')
-  const needAlt = parts.includes('alt')
-  if (needMod && !(e.metaKey || e.ctrlKey)) return false
-  if (needShift && !e.shiftKey) return false
-  if (needAlt && !e.altKey) return false
-  return e.key.toLowerCase() === key
-}
+useAppUpdate().initAutoCheck() // setup 顶层同步调用（非 onMounted）：initAutoCheck 的 onScopeDispose 须在活跃 effect scope 内绑定
 </script>
 
 <style scoped>
-/* Escape hatch（design-system §3）：Vue Transition 类无法用 Tailwind 表达，走 scoped style。
- * 列表 ↔ 详情切换：从右滑入/向右滑出，120ms fast（与 design-tokens --duration-fast 一致）。 */
-.wf-slide-enter-active,
-.wf-slide-leave-active {
-  transition: transform var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease);
-}
-.wf-slide-enter-from {
-  transform: translateX(16px);
-  opacity: 0;
-}
-.wf-slide-leave-to {
-  transform: translateX(-16px);
-  opacity: 0;
-}
 </style>

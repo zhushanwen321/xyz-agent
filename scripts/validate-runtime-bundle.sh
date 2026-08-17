@@ -8,6 +8,7 @@
 # 4. 产物自包含验证（所有依赖已打入 bundle）
 # 5. plugin-bootstrap.cjs 可独立解析（Worker Thread 入口）
 # 6. 产物能正常启动（health check）
+# 7. 插件系统非 mock 端到端验收（隔离 runtime + 真实插件，~8s；verify-plugin-e2e.sh）
 #
 # 用法: ./scripts/validate-runtime-bundle.sh [--ci]
 #   --ci    CI 模式：严格模式，任何失败都会退出码非 0
@@ -42,12 +43,14 @@ RUNTIME_DIR="$PROJECT_ROOT/packages/runtime"
 DIST_RUNTIME="$PROJECT_ROOT/apps/electron/dist/runtime"
 BUNDLE_PATH="$DIST_RUNTIME/index.cjs"
 BOOTSTRAP_PATH="$DIST_RUNTIME/plugin-bootstrap.cjs"
+BOOTSTRAP_PROCESS_PATH="$DIST_RUNTIME/plugin-bootstrap-process.cjs"
+ESM_LOADER_PATH="$DIST_RUNTIME/plugin-esm-loader.cjs"
 
-# ── 1. Build 产物存在（index.cjs + plugin-bootstrap.cjs）────────────
+# ── 1. Build 产物存在（index.cjs + plugin-bootstrap.cjs + 子进程产物）──
 echo ""
 echo -e "${BLUE}[1/6] 检查 build 产物...${NC}"
 
-if [ ! -f "$BUNDLE_PATH" ] || [ ! -f "$BOOTSTRAP_PATH" ]; then
+if [ ! -f "$BUNDLE_PATH" ] || [ ! -f "$BOOTSTRAP_PATH" ] || [ ! -f "$BOOTSTRAP_PROCESS_PATH" ] || [ ! -f "$ESM_LOADER_PATH" ]; then
     echo -e "${YELLOW}[WARN] 产物不完整，先运行 build...${NC}"
     cd "$RUNTIME_DIR" && pnpm run build
 fi
@@ -61,7 +64,17 @@ if [ ! -f "$BOOTSTRAP_PATH" ]; then
     echo -e "${YELLOW}[FIX] tsup entry 必须包含 plugin-bootstrap.ts，输出为 plugin-bootstrap.cjs${NC}"
     exit 1
 fi
-echo -e "${GREEN}[OK] 产物存在: index.cjs + plugin-bootstrap.cjs${NC}"
+if [ ! -f "$BOOTSTRAP_PROCESS_PATH" ]; then
+    echo -e "${RED}[ERROR] 子进程 bootstrap 不存在: $BOOTSTRAP_PROCESS_PATH${NC}"
+    echo -e "${YELLOW}[FIX] tsup entry 必须包含 plugin-bootstrap-process.ts（fork 子进程入口，host-process resolveAndValidateFile 定位）${NC}"
+    exit 1
+fi
+if [ ! -f "$ESM_LOADER_PATH" ]; then
+    echo -e "${RED}[ERROR] ESM loader 不存在: $ESM_LOADER_PATH${NC}"
+    echo -e "${YELLOW}[FIX] tsup entry 必须包含 plugin-esm-loader.cjs（sandbox 子进程 execArgv --import 注入目标）${NC}"
+    exit 1
+fi
+echo -e "${GREEN}[OK] 产物存在: index.cjs + plugin-bootstrap.cjs + plugin-bootstrap-process.cjs + plugin-esm-loader.cjs${NC}"
 
 # ── 2. 依赖打包检查 ─────────────────────────────────────────────────
 echo ""
@@ -116,7 +129,9 @@ echo -e "${BLUE}[3/6] 检查 CJS 兼容性（禁止 import.meta / fileURLToPath�
 
 # 允许的 import.meta 用法：有 __dirname 兼容层或 getAppVersion/getPluginHostDir 的注释说明
 # plugin-host.ts 和 plugin-version-checker.ts 有专门的 __dirname 兼容层，予以排除
-IMPORTS_META=$(grep -rn "import\.meta" "$RUNTIME_DIR/src" --include="*.ts" 2>/dev/null | grep -v "plugin-host.ts\|plugin-version-checker.ts" || true)
+# [HISTORICAL] 2026-08-05：排除 __tests__ 目录——测试文件不走 tsup CJS bundle（entry 只含 index.ts + bootstrap），
+# vitest 在 ESM 环境直接跑源码，import.meta 有效；此前误扫 plugin-esm-loader.test.ts（fixture 路径定位用 import.meta）导致误报。
+IMPORTS_META=$(grep -rn "import\.meta" "$RUNTIME_DIR/src" --include="*.ts" --exclude-dir=__tests__ 2>/dev/null | grep -v "plugin-host.ts\|plugin-version-checker.ts" || true)
 
 if [ -n "$IMPORTS_META" ]; then
     echo -e "${RED}[ERROR] runtime 源码使用了 import.meta，CJS bundle 会变成 undefined：${NC}"
@@ -125,7 +140,7 @@ if [ -n "$IMPORTS_META" ]; then
     exit 1
 fi
 
-FILE_URL_USAGE=$(grep -rn "fileURLToPath" "$RUNTIME_DIR/src" --include="*.ts" 2>/dev/null | grep -v "plugin-host.ts" || true)
+FILE_URL_USAGE=$(grep -rn "fileURLToPath" "$RUNTIME_DIR/src" --include="*.ts" --exclude-dir=__tests__ 2>/dev/null | grep -v "plugin-host.ts" || true)
 if [ -n "$FILE_URL_USAGE" ]; then
     echo -e "${RED}[ERROR] runtime 源码使用了 fileURLToPath（CJS 中需要 import.meta.url）：${NC}"
     echo "$FILE_URL_USAGE" | sed 's/^/  /'
@@ -165,6 +180,23 @@ if ! grep -q "worker_threads" "$BOOTSTRAP_PATH"; then
     exit 1
 fi
 echo -e "${GREEN}[OK] plugin-bootstrap.cjs 结构正确${NC}"
+
+# ── 5b. plugin-bootstrap-process.cjs 结构检查（fork 子进程入口）────────
+echo ""
+echo -e "${BLUE}[5b/6] 子进程 bootstrap 结构检查...${NC}"
+
+# fork 子进程入口：必须用 process IPC（process.send 发送 + process.on('message') 接收）。
+# 注意：不能 grep 排除 worker_threads——产物内联了 plugin-bootstrap.ts 的 parentPort import
+# （post 注入改造后 Worker 版复用，fork 进程里 parentPort undefined + 可选链，安全）。
+if ! grep -q "process.send" "$BOOTSTRAP_PROCESS_PATH"; then
+    echo -e "${RED}[ERROR] plugin-bootstrap-process.cjs 缺少 process.send（fork IPC 发送通道）${NC}"
+    exit 1
+fi
+if ! grep -q 'process.on("message"' "$BOOTSTRAP_PROCESS_PATH"; then
+    echo -e "${RED}[ERROR] plugin-bootstrap-process.cjs 缺少 process.on('message')（fork IPC 消息循环）${NC}"
+    exit 1
+fi
+echo -e "${GREEN}[OK] plugin-bootstrap-process.cjs 结构正确（process.send + process.on('message') IPC 通道）${NC}"
 
 # ── 6. 运行时健康检查 ────────────────────────────────────────────────
 echo ""
@@ -225,6 +257,21 @@ else
     echo -e "${RED}[ERROR] Runtime 启动超时或失败${NC}"
     echo -e "${YELLOW}日志:${NC}"
     cat /tmp/runtime-validate.log | tail -20
+    exit 1
+fi
+
+# ── 7. 插件系统非 mock 端到端验收（隔离 runtime + 真实插件文件 + 真实 WS）──────
+# 前 6 步验证「打包产物」；本步验证「dev 源码形态」的插件真实加载路径（sandbox fork
+# 激活 / toggle / built-in 扫描 / onBeforeSendMessage hook 执行）。F1-F4 四个 bug 的
+# 共同根因是测试金字塔底部全是 mock、真实加载路径零覆盖——本步是结构性防护。
+# 实测耗时 ~8s（含隔离 runtime 启动），在 pre-commit 可接受范围内（阈值 ~30s）。
+echo ""
+echo -e "${BLUE}[7/7] 插件系统非 mock 端到端验收...${NC}"
+if bash "$PROJECT_ROOT/scripts/verify-plugin-e2e.sh"; then
+    echo -e "${GREEN}[OK] 插件端到端验收通过${NC}"
+else
+    echo -e "${RED}[ERROR] 插件端到端验收失败（A 激活 / B toggle / C built-in / D hook 中有失败步骤，详见上方输出）${NC}"
+    echo -e "${YELLOW}[FIX] 定位见 verify-plugin-e2e.sh 输出的 [FAIL]/[定位] 行；验收范围见 docs/testing/13-plugin-e2e.md${NC}"
     exit 1
 fi
 

@@ -11,6 +11,7 @@ import type {
   SessionGroup,
   Message,
   ProviderInfo,
+  BuiltinProviderTemplate,
   ModelInfo,
   SkillInfo,
   AgentInfo,
@@ -28,7 +29,11 @@ import type {
   SystemPromptConfig,
   TerminalConfig,
   BatchDeleteResult,
+  SegmentsMetadataEntry,
+  SkillDirConfig,
+  ProviderId,
 } from '@xyz-agent/shared'
+import type { DirScopes } from './services/skill-dir-config.js'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 
 /**
@@ -55,9 +60,16 @@ export type IRpcClient = IPiEngine
  *
  * Uses `unknown` for the WebSocket parameter to avoid coupling
  * the Service layer to the `ws` module.
+ *
+ * wave:perf-w09（02 文档 D1-2 / ADR-0055 7d）：`broadcast` 退化为**纯全局通道**——
+ * 只服务 payload 无 sessionId 的全局消息（config.*、app.info、plugin:statusBar*、
+ * session.forkNotice、session.handoffComplete/handoffAborted 等，见 02 文档 D5-1 排除清单）。
+ * session 级 push 型消息（payload 带 sessionId）一律走 `IMessageBus.publish`
+ * （services/message-bus，seq/ring/snapshot + 只推订阅该 sid 的连接），双写已收口。
  */
 export interface IMessageBroker {
   send(ws: unknown, msg: ServerMessage): void
+  /** 纯全局通道：盲推所有连接。session 级消息禁止走此方法（见接口注释）。 */
   broadcast(msg: ServerMessage): void
   /** D10/P0-B: 第 5 参数从 sessionId(string) 改为 details(ErrorDetails)，sessionId 进 details.sessionId。 */
   sendError(ws: unknown, code: string, message: string, id?: string, details?: { sessionId?: string; [key: string]: unknown }): void
@@ -92,6 +104,8 @@ export interface SessionCreateOptions {
    * 优先级（设计文档 §5.2）：Landing Chip > preset.thinkingLevel > 全局默认。
    */
   thinkingOverride?: string
+  /** 归属 project id（D14 语义修正 2026-08-04）：创建时归属当前 activeProject；空 = 默认项目兑底。 */
+  projectId?: string
 }
 
 /** Session lifecycle: creation, deletion, messaging, history. */
@@ -100,6 +114,8 @@ export interface ISessionService {
   delete(sessionId: string): Promise<void>
   deleteByCwd(cwd: string): Promise<BatchDeleteResult>
   renameSession(sessionId: string, newName: string): Promise<void>
+  /** 手动归类（D14 语义修正 2026-08-04）：写 session 归属 project sidecar（空 = 归回默认项目）。 */
+  setProject(sessionId: string, projectId: string): Promise<void>
   /**
    * 发送用户消息。
    *
@@ -124,7 +140,7 @@ export interface ISessionService {
   getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }>
   /**
    * 获取 session 全量历史（直读 JSONL 文件，不截断）。
-   * 与 getHistory 的区别：getHistory 优先走 RPC（pi client.getHistory），文件路径 fallback 截断尾读；
+   * 与 getHistory 的区别：getHistory 优先走 RPC（pi client.getEntries entry 树重建），文件路径 fallback 截断尾读；
    * getFullHistory 直接全量读文件，供前端「加载更多历史」按钮调用（FR-4）。
    */
   getFullHistory(sessionId: string): Promise<Message[]>
@@ -149,7 +165,7 @@ export interface ISessionService {
    */
   getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]>
   /**
-   * 解析 agent call 对话流 JSONL 绝对路径（与 getAgentCallHistory 共用 findAgentCallFile）。
+   * 解析 agent call 对话流 JSONL 绝对路径（与 getAgentCallHistory 共用 _findAgentCallFile）。
    * 找不到返回空串（展示型功能，不 throw）。
    */
   getAgentCallFilePath(sessionId: string, agentCallSessionId: string): Promise<string>
@@ -188,9 +204,9 @@ export interface ISessionService {
     opts?: {
       fromMessageTimestamp?: number
       fromMessageRole?: string
-      /** Staging Mode（ADR-0043）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。 */
+      /** Staging Mode（ADR-0056）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。 */
       modelOverride?: string
-      /** Staging Mode（ADR-0043）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
+      /** Staging Mode（ADR-0056）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
       thinkingOverride?: string
     },
   ): Promise<SessionSummary>
@@ -223,14 +239,22 @@ export interface ISessionService {
   listPersistedSessions(): SessionGroup[]
   destroyAll(): Promise<void>
 
-  /** 注册 onBeforeSendMessage hook，由 PluginService 调用 */
-  setSendMessageHook(hook: (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>): void
+  /** 注册 onBeforeSendMessage hook，由 PluginService 调用（可阻止发送或改写内容） */
+  setSendMessageHook(hook: (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string; modifiedContent?: string } | null>): void
   /** Set thinking level for a session's pi subprocess */
   setThinkingLevel(sessionId: string, level: string): Promise<void>
   /** Steer an actively generating session */
   steerMessage(sessionId: string, content: string): Promise<void>
   /** Queue a follow-up message for a session */
   followUpMessage(sessionId: string, content: string): Promise<void>
+
+  // ── wave:runtime-patch ipc-converge-a3 W2：业务持久化写（从 main IPC 迁 WS，安全校验原样搬 TC3）──
+  /** 写入粘贴截图（base64→attachments/tmpdir）。安全校验：mimeType image/* + 20MB 上限 + name sanitize */
+  writeImage(sessionId: string, base64: string, mimeType: string, name: string): Promise<{ path: string; fileName: string; displayName: string; id: string; persisted: boolean }>
+  /** 迁移 tmpdir 图片到 attachments 持久化目录。安全校验：fromPath 白名单（tmpdir/attachments） */
+  migrateImage(fromPath: string, sessionId: string, fileName: string): Promise<{ path: string }>
+  /** 追加/覆盖 segments.json sidecar（atomic 写，同 clientUuid 覆盖） */
+  writeSegmentsMetadata(sessionId: string, entry: SegmentsMetadataEntry): Promise<void>
 }
 
 // ── ISessionServiceInternal ───────────────────────────────────────
@@ -243,45 +267,77 @@ export type { ISessionServiceInternal } from './services/session/session-interna
 /** Provider / Skill / Agent CRUD and tool permissions. */
 export interface IConfigService {
   listProviders(): ProviderInfo[]
-  getDefaultModel(): { provider: string; modelId: string } | null
+  /** 列出内置 provider 模板（wave 2，import generated JSON，无参只读）。 */
+  listBuiltinProviders(): BuiltinProviderTemplate[]
+  /**
+   * 环境变量检测（I3，wave-env-check）：检查 runtime process.env 中指定变量是否已设置。
+   * 安全红线：只返回布尔不返回值（env 值可能含凭证，不能泄露到前端）。names 去重。
+   */
+  checkEnvVars(names: string[]): Record<string, boolean>
+  getDefaultModel(): { provider: ProviderId; modelId: string } | null
   setDefaultModel(provider: string, modelId: string): void
   setProvider(providerId: string, data: {
     name?: string
     type?: string
     apiKey?: string
+    authMethod?: 'api_key' | 'oauth' | 'env_var' | 'ambient'
     baseUrl?: string
     models?: Array<string | { id: string; name?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null> }>
     enabled?: boolean
-  }): { newDefault?: { provider: string; modelId: string } }
-  deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } }
+  }): Promise<{ newDefault?: { provider: ProviderId; modelId: string } }>
+  /**
+   * 切换 provider 启用状态（wave3 IF2）——写 enabledModels 白名单。
+   *
+   * enabled=true: 若 enabledModels 非空加 `<id>/*`；空时 no-op（CL1）。
+   * enabled=false: 移除所有 `<id>/*`/`<id>/<model>` pattern；边界3 空时 delete 字段（CL2）；
+   *   边界2 若 defaultModel 承载该 provider 重选并返回 newDefault。
+   *
+   * @returns 触发 defaultModel 重选时含 newDefault；否则空对象。
+   */
+  toggleProviderEnabled(providerId: string, enabled: boolean): { newDefault?: { provider: ProviderId; modelId: string } }
+  /**
+   * 按体系移除 provider（wave4 IF3）——catalog 清凭据/override/残留（不删 pi catalog 定义），
+   * custom 删 models.json 条目 + 清残留。renderer 传 ProviderInfo.kind（CL1）。
+   *
+   * @returns custom 分支透传 configStore.removeProvider 的 newDefault（default 承载被删 provider 时重选）；
+   *          catalog 分支透传 removeProvider 的 newDefault（override 承载 default 时重选 default + mutate settings.json）。
+   */
+  removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }>
+  deleteProvider(providerId: string): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }>
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined
   updateToolPermissions(permissions: Record<string, string>): void
-  // ── Skill/Agent 加载路径（ADR-0020 §1 discovery.json SSOT）──
-  /** 覆盖 skillDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json + 投影 settings.json。 */
-  setSkillDirs(dirs: string[]): void
-  /** 读取 skillDirs（有序数组）。 */
+  // ── Skill/Agent 加载路径（ADR-0021 §1 discovery.json v2 SSOT）──
+  /** 覆盖 skill 路径（SkillDirConfig[] 带 scope，按 scope 分发写 projectPaths/globalPaths）。写 discovery.json + 投影 settings.json。 */
+  setSkillDirs(dirs: SkillDirConfig[]): void
+  /** 读取 skill 合并路径（project ∪ global 去重，项目在前）。 */
   getSkillDirs(): string[]
-  /** 覆盖 agentDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
-  setAgentDirs(dirs: string[]): void
-  /** 读取 agentDirs（有序数组）。 */
+  /** 读取 skill 的 v2 分 scope 结构（projectPaths / globalPaths）。 */
+  getSkillPathScopes(): DirScopes
+  /** 覆盖 agent 路径（SkillDirConfig[] 带 scope）。写 discovery.json。 */
+  setAgentDirs(dirs: SkillDirConfig[]): void
+  /** 读取 agent 合并路径（project ∪ global 去重，项目在前）。 */
   getAgentDirs(): string[]
-  /** 覆盖 extensionDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
-  setExtensionDirs(dirs: string[]): void
-  /** 读取 extensionDirs（有序数组）。 */
+  /** 读取 agent 的 v2 分 scope 结构（projectPaths / globalPaths）。 */
+  getAgentPathScopes(): DirScopes
+  /** 覆盖 extension 路径（SkillDirConfig[] 带 scope）。写 discovery.json。 */
+  setExtensionDirs(dirs: SkillDirConfig[]): void
+  /** 读取 extension 合并路径（project ∪ global 去重，项目在前）。 */
   getExtensionDirs(): string[]
+  /** 读取 extension 的 v2 分 scope 结构（projectPaths / globalPaths）。 */
+  getExtensionPathScopes(): DirScopes
   /** 一次性迁移：settings.json.skills → discovery.json（首启用，幂等）。 */
   migrateSettingsSkillsToDiscovery(): void
   loadSkills(projectRoot: string): SkillInfo[]
   saveSkills(projectRoot: string, skills: SkillInfo[]): void
-  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
+  /** @deprecated ADR-0021 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   upsertSkill(skill: SkillInfo): void
-  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
+  /** @deprecated ADR-0021 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   deleteSkill(skillId: string): void
   loadAgents(projectRoot: string): AgentInfo[]
   saveAgents(projectRoot: string, agents: AgentInfo[]): void
-  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
+  /** @deprecated ADR-0021 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   upsertAgent(agent: AgentInfo): void
-  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
+  /** @deprecated ADR-0021 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   deleteAgent(agentId: string): void
   scanSkills(sources: string[], existingIds: Set<string>): ScannedSkillInfo[]
   scanAgents(sources: string[], existingIds: Set<string>): ScannedAgentInfo[]
@@ -311,12 +367,12 @@ export interface IConfigService {
    * @param selectedIds 用户勾选导入的 provider id 列表（对应源里的 provider 名）。
    * @returns 成功 { result }；缓存过期/不存在 { error: { code: 'PREVIEW_EXPIRED', message } }。
    */
-  applyImportProviders(importId: string, selectedIds: string[]): { result: ProviderImportResult } | { error: { code: string; message: string } }
+  applyImportProviders(importId: string, selectedIds: string[]): Promise<{ result: ProviderImportResult } | { error: { code: string; message: string } }>
   /** pi agent 配置目录（settings.json/agents/skills 所在地）。 */
   getPiAgentDir(): string
   /** xyz-agent 配置根目录（~/.xyz-agent/，plugins/session-data 所在地）。 */
   getConfigDir(): string
-  // ── System prompt config（FR-6/FR-7，ADR-0038）──
+  // ── System prompt config（FR-6/FR-7，ADR-0044）──
   /** 读取 system-prompt.json。损坏时 corrupted=true 且返回默认配置。 */
   getSystemPromptConfig(): { config: SystemPromptConfig; corrupted: boolean }
   /** 写入 system-prompt.json。replace.prompt 超长（>SYSTEM_PROMPT_MAX_LENGTH）返回 ok:false + error，不写盘。 */
@@ -393,6 +449,19 @@ export interface IExtensionService {
 
 // ── IModelService ─────────────────────────────────────────────────
 
+/**
+ * OAuth Login 编排服务（slice design I1/T5）。
+ * 实现：services/auth/auth-service.ts（路径 B 自实现：device/callback flow 拿 token 写 auth.json）。
+ */
+export interface IAuthService {
+  /** 启动 OAuth login（异步执行）。无 oauthConfig / 已有进行中 flow → started:false + error。 */
+  login(providerId: string): { started: boolean; error?: string }
+  /** 中止进行中 flow。幂等：无 flow 返回 cancelled:false。 */
+  cancel(providerId: string): { cancelled: boolean }
+  /** 读 auth.json：该 provider 是否有 oauth 凭据。 */
+  hasOAuth(providerId: string): Promise<boolean>
+}
+
 /** Model aggregation, API discovery, and model/thinking-level orchestration. */
 export interface IModelService {
   aggregateModels(providers: ProviderInfo[]): ModelInfo[]
@@ -437,6 +506,8 @@ export interface IPluginService {
   getPluginConfig(pluginId: string, key?: string): Promise<unknown>
   /** Set a plugin config value */
   setPluginConfig(pluginId: string, key: string, value: unknown): Promise<void>
+  /** 覆盖式写入挂载点集合（renderer 经 plugin.mountPoints.sync 上报，DM3 全量镜像） */
+  syncMountPoints(mountPoints: string[]): void
   /** Clear cached session data */
   clearSessionData(sessionId: string): void
   /** Handle UI response from frontend (confirm/select/input dialogs) */
@@ -471,6 +542,11 @@ export interface IGitService {
   checkout(sessionId: string, name: string): Promise<void>
   checkoutByCwd(cwd: string, name: string): Promise<void>
   createBranch(sessionId: string, name: string): Promise<void>
+  /**
+   * 写操作成功后的状态缓存失效（perf W17）：handler 在 stage/unstage/commit/checkout/
+   * createBranch（sessionId）与 checkoutCwd（cwd，session-less）成功后调用。
+   */
+  invalidateStatusCache(target: { sessionId?: string; cwd?: string }): void
 }
 
 // ── IFileService ──────────────────────────────────────────────────

@@ -18,14 +18,30 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PiProviderConfig, PiModelsConfig } from '../../../infra/pi/pi-provider-store.js'
-import type { ParseResult, ParsedProvider } from '../provider-parser.js'
+import type { ParseResult, ParsedProvider, ParsedOrphanCredential } from '../provider-parser.js'
 
 /**
- * Pi auth.json 形状：providerId → { type, key（明文）}。
- * type 通常是 'api_key' / 'oauth' 等，这里不消费，只取 key。
+ * Pi auth.json 形状：providerId → 凭据条目（对齐 pi-ai 0.82.1 dist/auth/types.d.ts 的 Credential）。
+ *
+ * type 只有 'api_key' / 'oauth' 两种真实值（AuthType，见 types.d.ts）；'env' 不是独立 type，
+ * 是 api_key 凭据的 env 包字段（ApiKeyCredential.env）。
+ * - api_key：key 为明文 / $VAR 占位 / !command 前缀 / ${VAR} 占位；可选 env 包（key 内嵌值）。
+ * - oauth：access + refresh + expires 三元组（OAuthCredential，Phase 1 不支持，warnings 提示 Phase 2）。
  */
 interface PiAuthJson {
-  [providerId: string]: { type?: string; key?: string }
+  [providerId: string]: {
+    type?: 'api_key' | 'oauth'
+    /** 明文 key / $VAR 占位 / ${VAR} 占位 / !command 前缀。 */
+    key?: string
+    /** env 包：{ VAR: 'value' }（api_key 的 scoped env bag），Phase 1 不支持（不落盘 models.json）。 */
+    env?: Record<string, string>
+    /** OAuth access token（type==='oauth'，OAuthCredential.access）。Phase 1 不取。 */
+    access?: string
+    /** OAuth refresh token（type==='oauth'，OAuthCredential.refresh）。Phase 1 不取。 */
+    refresh?: string
+    /** OAuth token 过期时间戳（ms，type==='oauth'，OAuthCredential.expires）。Phase 1 不取。 */
+    expires?: number
+  }
 }
 
 /** pi 支持的终值协议（与 pi-provider-store 注释对齐）。 */
@@ -34,6 +50,88 @@ const PI_SUPPORTED_PROTOCOLS = new Set([
   'openai-responses',
   'anthropic-messages',
 ])
+
+// ══ sa3 F1：凭据六态判定共享函数（wave 4 import-credential-types + 孤儿凭据扫描共用）══
+//
+// 现有 providers 循环与孤儿凭据循环（auth.json 有、models.json 无定义的 providerId）
+// 使用同一套六态判定，提取为模块级函数避免双份逻辑漂移。
+
+/** classifyCredential 的返回值（六态 + 可选 envVarName/apiKey + 警告）。 */
+interface CredentialClassify {
+  credentialType: 'plaintext' | 'env' | 'env-bundle' | 'missing' | 'oauth' | 'command'
+  envVarName?: string
+  apiKey?: string
+  warnings: string[]
+}
+
+/**
+ * 凭据六态判定（WC1：替换单行 `apiKey = authEntry?.key ?? config.apiKey` 为六态分支）。
+ *
+ * 优先级：env 包 > oauth > !command > $$ 字面量 > $ENV > plaintext > missing
+ * （env 包 / oauth 不落盘 apiKey，避免 models.json 落盘后 resolveConfigValueOrThrow 硬抛错）。
+ *
+ * @param authEntry auth.json 里该 provider 的凭据条目（可能 undefined）。
+ * @param configApiKey models.json 里该 provider 的 apiKey（auth 条目缺失时的回退）。
+ * @param providerId 用于 warning 文案（孤儿凭据 = auth.json 的 key）。
+ */
+function classifyCredential(
+  authEntry: PiAuthJson[string] | undefined,
+  configApiKey: string | undefined,
+  providerId: string,
+): CredentialClassify {
+  const rawKey = authEntry?.key ?? configApiKey
+  const hasEnvBundle = authEntry?.env != null && typeof authEntry.env === 'object' && Object.keys(authEntry.env).length > 0
+  // 主判定 type==='oauth'；兼容缺 type 的旧格式：有 access 字段且无 key 也判 oauth。
+  // 旧字段名 token/refreshToken 已废弃（pi 真实格式是 access/refresh，见 auth/types.d.ts
+  // OAuthCredential），不再作为判定依据。
+  const isOauth = authEntry?.type === 'oauth' || (!authEntry?.key && !!authEntry?.access)
+
+  // 凭据形态六态：plaintext / env($VAR,${VAR}) / env-bundle(env 包) / oauth / command(!) / missing(无线索)
+  if (hasEnvBundle) {
+    // env 包凭据：有凭据（key 内嵌在 env 包里）但 Phase 1 不支持落盘（models.json apiKey
+    // 是纯字符串无 env 字段），apiKey 不写（undefined），避免 pi 运行时 resolveConfigValueOrThrow 硬抛错
+    return {
+      credentialType: 'env-bundle',
+      warnings: [`provider ${providerId}: env bundle credentials not supported in Phase 1, apiKey omitted (will be supported in Phase 2)`],
+    }
+  }
+  if (isOauth) {
+    // OAuth 凭据：Phase 1 不支持，不取 token 作 apiKey（token 不是 api_key 语义）
+    return {
+      credentialType: 'oauth',
+      warnings: [`provider ${providerId}: OAuth credentials, apiKey not extracted (OAuth support planned for Phase 2)`],
+    }
+  }
+  if (rawKey) {
+    // 有 key：按前缀判 plaintext / env($VAR/${VAR}) / command(!)
+    // 边界：同时 $ 和 ! → 优先 command（更危险保守判定）
+    if (rawKey.startsWith('!')) {
+      return {
+        credentialType: 'command',
+        apiKey: rawKey, // 保留原样，pi 运行时执行 shell 命令取值
+        warnings: [`provider ${providerId}: apiKey starts with '!' — pi executes this as a shell command at runtime (command injection surface), imported as-is`],
+      }
+    }
+    if (rawKey.startsWith('$$')) {
+      // pi 的 $$ 是字面量转义：$$OPENAI_API_KEY 解析为字面量字符串 $OPENAI_API_KEY（单 $），
+      // 不是 env 引用。按明文处理，apiKey 保留原转义串（pi 运行时负责还原字面量）。
+      return { credentialType: 'plaintext', apiKey: rawKey, warnings: [] }
+    }
+    if (rawKey.startsWith('$')) {
+      // 单 $ / ${ 才是 env 引用（$$ 已在上面拦截，不会多剥一个 $）
+      const envVarName = rawKey.startsWith('${') ? rawKey.replace(/^\$\{/, '').replace(/\}$/, '') : rawKey.replace(/^\$/, '')
+      return {
+        credentialType: 'env',
+        apiKey: rawKey, // 保留原占位串（pi 运行时解析 $VAR / ${VAR}）
+        envVarName,
+        warnings: [`provider ${providerId}: apiKey is an env var reference (${rawKey}) — ensure ${envVarName} is set in the environment after import`],
+      }
+    }
+    return { credentialType: 'plaintext', apiKey: rawKey, warnings: [] }
+  }
+  // 无 authEntry 且无 config.apiKey：无任何 key 线索
+  return { credentialType: 'missing', warnings: [] }
+}
 
 /**
  * 解析 Pi 源（~/.pi/agent/models.json + ~/.pi/agent/auth.json）。
@@ -107,16 +205,24 @@ export function parsePiProviders(homeDir: string): ParseResult | null {
         continue
       }
 
-      // auth.json 合并：若 authData 有对应 key 则填入（优先于 models.json 的 apiKey）
+      // auth.json 合并 + 凭据六态识别（wave 4 import-credential-types + sa3 F1：六态判定
+      // 提取为 classifyCredential 共享函数，与孤儿凭据扫描同源，避免双份逻辑漂移）
       const authEntry = authData[providerId]
-      const apiKey = authEntry?.key ?? config.apiKey
-      const apiKeyExtracted = !!apiKey
+      const classification = classifyCredential(authEntry, config.apiKey, providerId)
+      const { credentialType, envVarName, apiKey } = classification
+      warnings.push(...classification.warnings)
+
+      // computed：plaintext/env/command = 已拿到可用凭据（落盘可用 / 运行时读环境变量）；
+      // missing/oauth/env-bundle = 需手填、Phase 2 支持或有凭据但 Phase 1 不支持落盘
+      const apiKeyExtracted = credentialType === 'plaintext' || credentialType === 'env' || credentialType === 'command'
 
       providers.push({
         ...config,
         apiKey,
         _sourceName: providerId,
         _apiKeyExtracted: apiKeyExtracted,
+        _credentialType: credentialType,
+        ...(envVarName !== undefined ? { _envVarName: envVarName } : {}),
         _warnings: warnings,
       })
     } catch (e) {
@@ -126,8 +232,37 @@ export function parsePiProviders(homeDir: string): ParseResult | null {
     }
   }
 
+  // ══ sa3 F1：孤儿凭据扫描（B.1 缺口 4 修复）══
+  //
+  // auth.json 里存在、models.json 未定义的 providerId（pi 内置 provider 如 openai/anthropic/
+  // deepseek 的凭据——models.json 天然没有它们，因为 provider 定义来自 pi 内置 catalog）。
+  // 这些凭据现在只进 orphanCredentials（runtime 内部，含明文 apiKey），preview 脱敏为组 2，
+  // apply 时匹配内置模板补全定义（provider-importer 负责）。
+  //
+  // 安全红线（B.5/DM1）：apiKey 明文只存在 ParsedOrphanCredential（runtime 内存 → preview-cache），
+  // 与 ParsedProvider 同模式，绝不进 preview 序列化。
+  const orphanCredentials: ParsedOrphanCredential[] = []
+  const knownProviderIds = new Set(Object.keys(providerEntries))
+  for (const [providerId, authEntryRaw] of Object.entries(authData)) {
+    if (knownProviderIds.has(providerId)) continue // 已在 models.json 定义，走上方 providers 主流程
+    // 防御：非对象条目（null/字符串等）无法识别凭据类型，跳过 + 顶层警告
+    if (authEntryRaw === null || typeof authEntryRaw !== 'object') {
+      topWarnings.push(`credential ${providerId}: malformed auth.json entry (${authEntryRaw === null ? 'null' : typeof authEntryRaw}), orphan credential skipped`)
+      continue
+    }
+    const classification = classifyCredential(authEntryRaw as PiAuthJson[string], undefined, providerId)
+    orphanCredentials.push({
+      providerId,
+      credentialType: classification.credentialType,
+      ...(classification.envVarName !== undefined ? { envVarName: classification.envVarName } : {}),
+      ...(classification.apiKey !== undefined ? { apiKey: classification.apiKey } : {}),
+      warnings: classification.warnings,
+    })
+  }
+
   return {
     providers,
+    orphanCredentials,
     warnings: topWarnings.length > 0 ? topWarnings : undefined,
   }
 }

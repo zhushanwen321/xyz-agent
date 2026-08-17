@@ -1,19 +1,20 @@
 /**
- * Pi Provider/Model/Settings Store — xyz-pi 配置文件读写层
+ * Pi Provider/Model/Settings Store — xyz-pi 配置文件读写层。
  *
- * 负责 models.json 和 settings.json 的原子读写、内存缓存、
- * defaultModel 校验/修复、provider CRUD 同步。
- *
- * 不包含：路径解析（pi-paths）、session 扫描（session-file-utils）、agent 管理（agent-crud）
+ * 重构说明（Phase 1 拆分）：本文件曾 883 行超 ESLint max-lines(500)，现按职责拆到
+ * pi-maintenance / pi-enabled-models / pi-skill-paths / pi-provider-repair。本文件保留
+ * models.json 读写 + provider CRUD + defaultModel 校验 + refresh + sanitizeInvalidProviders
+ *（依赖 modelsStore 模块级缓存）+ barrel re-export 保 import 路径不变，行为/签名零变化。
  */
 
-import { existsSync, readdirSync, mkdirSync, renameSync, rmdirSync, cpSync, statSync } from 'node:fs'
-import { join, resolve as pathResolve, sep } from 'node:path'
-import { toErrorMessage } from '../../utils/errors.js'
-import { isPackaged } from '../../utils/runtime-env.js'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+// builtin provider catalog（QuickSetup 模板源）：sanitizeInvalidProviders 对 catalog 已知的
+// 空壳 provider 合并 models 修复而非删除（对齐 config-service 的 builtinModelsById 先例）。
+import builtinData from '../../generated/builtin-providers.json'
+import { deriveEnabled } from '../../services/provider-catalog.js'
 import { JsonStore } from '../../utils/json-store.js'
-import { normalizeToHome } from '../../utils/path-utils.js'
-import { getConfigDir, getModelsPath, getSettingsPath, getPiAgentDir, getSessionsDir, getAgentsDir, getExtensionsDir, getNpmDir, getTmpDir } from './pi-paths.js'
+import { getModelsPath, getPiAgentDir } from './pi-paths.js'
 // settings.json 的唯一读写层（D17 收口）：readSettings/updateSettingsSync/PiSettings/缓存/原子写
 // 都收敛到 pi-settings-store，model 域（本文件）与 extension 域共享同一所有者 + 缓存。
 import {
@@ -21,13 +22,13 @@ import {
   updateSettingsSync,
   invalidateSettingsCache,
 } from './pi-settings-store.js'
-// discovery.json 是 skill/agent 加载路径的 SSOT（ADR-0020 §1）。
-// skill 路径函数代理 discovery-store，settings.json.skills 仅作派生投影（pi 原生读此加载 skill）。
-import {
-  getSkillDirs as getDiscoverySkillDirs,
-  setSkillDirs as setDiscoverySkillDirs,
-  readDiscovery,
-} from './discovery-store.js'
+// enabledModels 白名单读写（Phase 1 拆出到 pi-enabled-models）：本文件的 pickFirstModelProvider /
+// findValidDefaultModel 经 getEnabledModels 派生启用状态，不直接碰 settings.enabledModels。
+import { getEnabledModels } from './pi-enabled-models.js'
+// provider 有效性校验（Phase 1 拆出到 pi-provider-repair）：sanitizeInvalidProviders 启动时
+// 剔除空壳 provider 用。isInvalidProvider 是纯函数，不碰 modelsStore。
+import { isInvalidProvider } from './pi-provider-repair.js'
+import type { ProviderId } from '@xyz-agent/shared'
 
 // ── 类型定义（对齐 pi models.json / settings.json 的 schema）────
 
@@ -53,6 +54,8 @@ export interface PiProviderConfig {
   baseUrl?: string
   apiKey?: string
   api?: string
+  /** 认证方式（I6）：ProviderQuickSetup.onSave 标注。旧数据缺失时按 apiKey 格式推断。 */
+  authMethod?: 'api_key' | 'oauth' | 'env_var' | 'ambient'
   /** provider 级启停（W1）。省略时默认 true，向上兼容存量数据。 */
   enabled?: boolean
   headers?: Record<string, string>
@@ -146,13 +149,39 @@ export function getProviderConfig(providerId: string): PiProviderConfig | undefi
  */
 function pickFirstModelProvider(
   providers: Record<string, PiProviderConfig>,
-): { provider: string; modelId: string } | undefined {
+): { provider: ProviderId; modelId: string } | undefined {
+  // A8：跳过被 enabledModels 禁用的 provider（与 findValidDefaultModel 主路径守卫一致），
+  // 避免 removeProvider/upsertProvider 重选与 findValidDefaultModel fallback 选到用户已禁用的 provider。
+  // enabledModels 空（全启用）时 deriveEnabled 恒 true，行为不变。重选场景 enabledModels 不变，
+  // 实时读 getEnabledModels 安全（无 updateSettingsSync 回调内 stale 风险）。
+  const enabledModels = getEnabledModels()
   for (const [pid, pcfg] of Object.entries(providers)) {
+    if (!deriveEnabled(pid, enabledModels)) continue
     if (pcfg.models && pcfg.models.length > 0) {
-      return { provider: pid, modelId: pcfg.models[0].id }
+      // pid 来自 models.json 磁盘 key（反序列化边界，design D5）→ as ProviderId
+      return { provider: pid as ProviderId, modelId: pcfg.models[0].id }
     }
   }
   return undefined
+}
+
+/**
+ * 读 auth.json 凭据表（catalog 兜底的凭据校验用）。
+ * 文件不存在返回 {}；JSON 损坏返回 {} + warn（兜底是 best-effort，不因损坏阻断）。
+ * 不依赖 AuthStorage 实例——本模块是纯函数读写层，无注入依赖。
+ */
+function readAuthCredentials(): Record<string, unknown> {
+  const authPath = join(getPiAgentDir(), 'auth.json')
+  if (!existsSync(authPath)) return {}
+  try {
+    const raw = readFileSync(authPath, 'utf-8')
+    if (raw.trim() === '') return {}
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch (cause) {
+    console.warn(`[provider-store] auth.json 损坏: ${authPath}`, cause)
+    return {}
+  }
 }
 
 /**
@@ -160,7 +189,7 @@ function pickFirstModelProvider(
  * 全程同步（无 await），避免竞态窗口。
  */
 export function upsertProvider(providerId: string, config: PiProviderConfig): {
-  newDefault?: { provider: string; modelId: string }
+  newDefault?: { provider: ProviderId; modelId: string }
 } {
   const models: PiModelsConfig = JSON.parse(JSON.stringify(readModels()))
   models.providers[providerId] = config
@@ -168,11 +197,18 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
 
   // 同步校验 defaultModel：经 updateSettingsSync 单次 RMW。
   // 结果通过外层变量捕获（mutator 不返回值）。
-  let outcome: { newDefault?: { provider: string; modelId: string } } = {}
+  let outcome: { newDefault?: { provider: ProviderId; modelId: string } } = {}
   updateSettingsSync(s => {
     if (s.defaultProvider !== providerId) { outcome = {}; return }
 
-    const newModelList = config.models ?? []
+    // models 未参与本次更新（partial upsert：clearApiKey 剥离 apiKey / quota 覆写 /
+    // QuickSetup 保存不携带 models）时跳过 default 校验——builtin override-only provider
+    // 的 models.json 条目本无 models 数组，把 undefined 视作「模型被清空」会把
+    // defaultProvider/defaultModel 静默删除并回退到别的 provider（用户默认模型在 OAuth
+    // 授权成功瞬间被改写，spec §8 未授权该副作用）。显式传 models（含空数组）仍走校验。
+    if (config.models === undefined) { outcome = {}; return }
+
+    const newModelList = config.models
     if (newModelList.length === 0) {
       delete s.defaultProvider
       delete s.defaultModel
@@ -182,7 +218,7 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
         s.defaultModel = fallback.modelId
       }
       outcome = s.defaultProvider
-        ? { newDefault: { provider: s.defaultProvider, modelId: s.defaultModel! } }
+        ? { newDefault: { provider: s.defaultProvider as ProviderId, modelId: s.defaultModel! } }
         : {}
       return
     }
@@ -192,7 +228,7 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
       s.defaultModel = newModelList[0].id
       console.warn(`[provider-store] defaultModel "${currentModelId}" no longer in provider "${providerId}", falling back to "${newModelList[0].id}"`)
     }
-    outcome = { newDefault: { provider: providerId, modelId: s.defaultModel! } }
+    outcome = { newDefault: { provider: providerId as ProviderId, modelId: s.defaultModel! } }
   })
   return outcome
 }
@@ -203,7 +239,7 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
  */
 export function removeProvider(providerId: string): {
   removed: boolean
-  newDefault?: { provider: string; modelId: string }
+  newDefault?: { provider: ProviderId; modelId: string }
 } {
   const models: PiModelsConfig = JSON.parse(JSON.stringify(readModels()))
   if (!(providerId in models.providers)) return { removed: false }
@@ -211,7 +247,7 @@ export function removeProvider(providerId: string): {
   writeModels(models)
 
   // 同步清理 defaultProvider/defaultModel：经 updateSettingsSync 单次 RMW。
-  let outcome: { removed: boolean; newDefault?: { provider: string; modelId: string } } = { removed: true }
+  let outcome: { removed: boolean; newDefault?: { provider: ProviderId; modelId: string } } = { removed: true }
   updateSettingsSync(s => {
     if (s.defaultProvider !== providerId) { outcome = { removed: true }; return }
     delete s.defaultProvider
@@ -222,7 +258,7 @@ export function removeProvider(providerId: string): {
       s.defaultModel = fallback.modelId
     }
     outcome = s.defaultProvider
-      ? { removed: true, newDefault: { provider: s.defaultProvider, modelId: s.defaultModel! } }
+      ? { removed: true, newDefault: { provider: s.defaultProvider as ProviderId, modelId: s.defaultModel! } }
       : { removed: true }
   })
   return outcome
@@ -244,9 +280,7 @@ export function getApiKeyForProvider(providerId: string): string | undefined {
 }
 
 // ── Settings.json 操作 ───────────────────────────────────────
-// readSettings/updateSettingsSync 的实现收敛到 pi-settings-store（D17 唯一读写层）。
-// 本文件 re-export，供 pi-config-store 等直接消费。
-// setSettingsPath 一并 re-export，供测试（clean-leaked-packages.test.ts）指向 tmpdir 隔离。
+// readSettings/updateSettingsSync 收敛到 pi-settings-store（D17 唯一读写层）；setSettingsPath 供测试 tmpdir 隔离。
 export { readSettings, writeSettings, updateSettingsSync, setSettingsPath } from './pi-settings-store.js'
 
 /**
@@ -254,7 +288,7 @@ export { readSettings, writeSettings, updateSettingsSync, setSettingsPath } from
  * 无副作用，不修改任何文件。
  */
 export function findValidDefaultModel(): {
-  result: { provider: string; modelId: string } | null
+  result: { provider: ProviderId; modelId: string } | null
   wasFixed: boolean
 } { // eslint-disable-line indent -- standard TS function signature with multi-line return type
   const settings = readSettings()
@@ -263,28 +297,63 @@ export function findValidDefaultModel(): {
 
   if (defaultProvider && defaultModel) {
     const providerConfig = models.providers[defaultProvider]
-    if (providerConfig?.models?.length) {
+    // A8：被 enabledModels 禁用的 default provider 不走主路径，fall through 到 fallback 重选
+    // （主路径原只校验 provider/model 有效，未过滤 enabledModels，被禁用的 default 会直接返回）。
+    const isEnabled = deriveEnabled(defaultProvider, getEnabledModels())
+    if (providerConfig?.models?.length && isEnabled) {
       const found = providerConfig.models.find(m => m.id === defaultModel)
       if (found) {
-        return { result: { provider: defaultProvider, modelId: defaultModel }, wasFixed: false }
+        // defaultProvider 来自 settings.json 磁盘读（反序列化边界，design D5）→ as ProviderId
+        return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
       }
       console.warn(`[provider-store] defaultModel "${defaultModel}" not found in provider "${defaultProvider}", falling back to "${providerConfig.models[0].id}"`)
-      return { result: { provider: defaultProvider, modelId: providerConfig.models[0].id }, wasFixed: true }
+      return { result: { provider: defaultProvider as ProviderId, modelId: providerConfig.models[0].id }, wasFixed: true }
     }
-    console.warn(`[provider-store] defaultProvider "${defaultProvider}" not found in models.json`)
+    if (!providerConfig?.models?.length) {
+      console.warn(`[provider-store] defaultProvider "${defaultProvider}" not found in models.json`)
+    }
+    // isEnabled===false：default provider 被禁用，静默 fall through 到 fallback（不 warn 误导）
   }
 
   const fallback = pickFirstModelProvider(models.providers)
   if (fallback) {
     return { result: { provider: fallback.provider, modelId: fallback.modelId }, wasFixed: true }
   }
+
+  // catalog 兜底：models.json 无可用 provider 时，查 builtin-providers 副本找
+  // 「凭据可解析」的 catalog provider 作默认候选（决策 4：校验 auth.json credential /
+  // models.json apiKey 任一）。遍历而非取排序第一个——amazon-bedrock 等 ambient 认证
+  // provider 无凭据时不可用，不能作为默认。
+  // wasFixed=false：兜底是临时展示，不是配置修复——写回 settings.json 会污染用户配置
+  //（曾踩坑：兜底结果经 updateSettingsSync 覆盖用户默认 provider，见 2026-08-09 回归）。
+  if (!fallback) {
+    const authCredentials = readAuthCredentials()
+    const builtinProviders = (builtinData.providers ?? []) as Array<{
+      id: string
+      models?: Array<{ id: string }>
+    }>
+    for (const bp of builtinProviders) {
+      const hasCredential =
+        bp.id in authCredentials || !!models.providers[bp.id]?.apiKey
+      // ES3：被 enabledModels 禁用的 catalog provider 不作 default 候选（避免返回用户已禁用的 provider）。
+      // deriveEnabled 复用 listProviders 的启用判定（DM3），保持「可用 provider」语义一致。
+      if (hasCredential && deriveEnabled(bp.id, getEnabledModels()) && bp.models && bp.models.length > 0) {
+        return {
+          // bp.id 来自 builtin-providers.json 磁盘读（反序列化边界，design D5）→ as ProviderId
+          result: { provider: bp.id as ProviderId, modelId: bp.models[0].id },
+          wasFixed: false,
+        }
+      }
+    }
+  }
+
   return { result: null, wasFixed: false }
 }
 
 /**
  * 获取默认模型，带有效性校验和自动修复。
  */
-export function getDefaultModel(): { provider: string; modelId: string } | null {
+export function getDefaultModel(): { provider: ProviderId; modelId: string } | null {
   const { result, wasFixed } = findValidDefaultModel()
   if (wasFixed && result) {
     updateSettingsSync(s => {
@@ -296,19 +365,11 @@ export function getDefaultModel(): { provider: string; modelId: string } | null 
   return result
 }
 
-export function setDefaultModel(provider: string, modelId: string): void {
+export function setDefaultModel(provider: ProviderId, modelId: string): void {
   updateSettingsSync(s => {
     s.defaultProvider = provider
     s.defaultModel = modelId
   })
-}
-
-export function getEnabledModels(): string[] {
-  return readSettings().enabledModels ?? []
-}
-
-export function setEnabledModels(patterns: string[]): void {
-  updateSettingsSync(s => { s.enabledModels = patterns })
 }
 
 export function getDefaultThinkingLevel(): string {
@@ -319,106 +380,87 @@ export function setDefaultThinkingLevel(level: string): void {
   updateSettingsSync(s => { s.defaultThinkingLevel = level })
 }
 
-// ── Skill 路径管理（ADR-0020：discovery.json 是 SSOT，settings.json 是派生投影）──
+// ── models.json 无效 provider 清理（重装后 "Model not found" 自愈）──────
 //
-// 数据流（方案 C 决策）：
-//   UI 读写 → discovery.json.skillDirs（SSOT，有序数组 = 优先级）
-//   discovery.json 变更 → syncSkillDirsToSettings() 同步投影到 settings.json.skills
-//   pi 启动 → collectSettingsSkillPaths 读 settings.json.skills 加载 skill（pi 官方扩展点）
+// 背景见下 sanitizeInvalidProviders JSDoc（bundled pi 0.80.3 严格校验空壳 provider 致整个 models.json 加载失败）。
 //
-// 这保证 xyz-agent 完全控制优先级（discovery 数组顺序），同时复用 pi 原生 skill 加载链路。
+// MF-5（R3 review）：catalog 已知内置 provider 的空壳不删除——QuickSetup 保存 baseUrl
+// 为空串模板（amazon-bedrock/azure-openai-responses/cloudflare-*/google-vertex/opencode* 等
+// 7 个）时条目五字段全缺，旧实现重启即删除（用户刚保存的 apiKey/authMethod 静默丢失）。
+// 这类空壳从 catalog 合并 models 修复（模型级 baseUrl 由 catalog 提供），保留用户数据且
+// 仍满足 bundled pi 严格校验；非 catalog 的空壳（外部脚本 fixture）维持删除语义。
+// MF-6（R4 review）：修复前提是 catalog models 每个模型都有可用 baseUrl（见下）。
+// azure-openai-responses 的 38 个 catalog models 全为空串 baseUrl，合并即毒化 pi 组合，
+// 排除出修复名单（维持删除语义）——目录中不存在任何可用 baseUrl 数据。
 
 /**
- * 把 discovery.json.skillDirs 投影到 settings.json.skills（pi 原生读此加载 skill）。
- * 在 setSkillPaths/addSkillPath/removeSkillPath 写入 discovery 后调用，保持派生缓存一致。
+ * builtin provider id → catalog models 索引（MF-5 修复空壳用）。
+ * JSON import 推断类型与 PiModelDefinition 有 input 等字段差异，构造时断言（对齐
+ * config-service builtinModelsById 的 `as [string, ...]` 处理）。
  */
-function syncSkillDirsToSettings(): void {
-  updateSettingsSync(s => { s.skills = getDiscoverySkillDirs() })
-}
+const builtinModelsById = new Map<string, PiModelDefinition[]>(
+  (builtinData.providers ?? []).map(p => [p.id, p.models] as [string, PiModelDefinition[]]),
+)
 
 /**
- * 判断目录是否是「skill 容器」（含 ≥1 个带 SKILL.md 的子目录）。
- * 用于迁移时区分容器目录（如 ~/.pi/agent/skills）与单 skill 目录（如 .../skills/anysearch）。
- * ADR-0020 §1：discovery.json 存容器目录粒度，目录内资源全开。
+ * 启动时清理 models.json 里的无效 provider（五字段全缺的空壳）。
+ *
+ * 修复根因：空壳 provider（如 {apiKey, name} 无五字段任一）导致 bundled pi 0.80.3
+ * 严格校验时整个 models.json 加载失败。系统 pi 0.83 对此容错但 bundled 0.80.3 不容错，
+ * 重装后切换 bundled pi 必现 "Model not found"。本函数让 xyz-agent 自愈这种脏数据。
+ *
+ * MF-5：catalog 已知内置 provider 的空壳（QuickSetup 保存空 baseUrl 模板产生，含用户
+ * 刚保存的 apiKey）不删除，合并 catalog models 修复（条目合法化，apiKey/authMethod 保留，
+ * 模型级 baseUrl 由 catalog 提供）。非 catalog 空壳维持删除语义（外部 fixture 不留存）。
+ * MF-6：修复前提是 catalog models 每个模型均有非空 baseUrl（pi modelFromJson 对空 baseUrl
+ * 直接 throw，毒化整个 provider 组合且无自愈路径）。catalog models 含空 baseUrl 的 provider
+ * （azure-openai-responses）排除出修复名单，维持删除语义；catalog 未来补全 baseUrl 后自动恢复修复。
+ *
+ * 启动时一次性调用（index.ts cleanLeakedPackages 之后）。幂等：无无效 provider 时不触发写。
+ * 永不抛错：失败仅 warn 不阻塞启动（对齐 cleanLeakedPackages ES1 风格）。
+ *
+ * @returns { removed: string[]; repaired: string[] } 被剔除 / 被修复（合并 models）的 provider id 列表
  */
-function isSkillContainer(dirPath: string): boolean {
-  if (!existsSync(dirPath)) return false
-  let entries: string[]
+export function sanitizeInvalidProviders(): { removed: string[]; repaired: string[] } {
   try {
-    entries = readdirSync(dirPath)
-  } catch {
-    return false
-  }
-  for (const name of entries) {
-    try {
-      if (statSync(join(dirPath, name)).isDirectory() && existsSync(join(dirPath, name, 'SKILL.md'))) {
-        return true
+    modelsStore.invalidate()
+    const draft: PiModelsConfig = JSON.parse(JSON.stringify(readModels()))
+    const removed: string[] = []
+    const repaired: string[] = []
+    for (const [id, cfg] of Object.entries(draft.providers)) {
+      if (isInvalidProvider(cfg)) {
+        // catalog 已知内置 provider 的空壳 → 合并 catalog models 修复（保留 apiKey/authMethod）。
+        // MF-6（R4 review）：catalog models 含空 baseUrl 的 provider 不可修复——pi modelFromJson
+        // 对每个自定义模型强制非空 baseUrl（空串非 nullish，`??` 不跳过 → 直接 throw），任一空
+        // baseUrl 模型即毒化整个 provider 组合（composeModelProvider 抛错 → pi 回退 builtin base，
+        // 用户 apiKey 静默失效且条目 isInvalidProvider===false 无自愈路径）。这类 provider
+        // （azure-openai-responses 38/38 模型空 baseUrl）维持删除语义；过滤空 baseUrl 模型会退回
+        // models:[] 五字段全缺态再次被删（transient 非法态），合成 baseUrl 不可接受（catalog 无数据）。
+        const catalogModels = builtinModelsById.get(id)
+        if (catalogModels && catalogModels.length > 0 && catalogModels.every(m => !!m.baseUrl)) {
+          draft.providers[id] = { ...cfg, models: catalogModels }
+          repaired.push(id)
+        } else {
+          delete draft.providers[id]
+          removed.push(id)
+        }
       }
-    } catch {
-      continue
     }
+    if (removed.length > 0 || repaired.length > 0) {
+      writeModels(draft)
+      if (removed.length > 0) {
+        console.log('[provider-store] sanitized invalid providers:', removed)
+      }
+      if (repaired.length > 0) {
+        console.log('[provider-store] repaired catalog-known invalid providers (merged builtin models):', repaired)
+      }
+    }
+    return { removed, repaired }
+  } catch (e) {
+    // best-effort 降级：models.json 异常不阻塞启动（pi 自身加载时也会容错或报错）
+    console.warn('[provider-store] sanitizeInvalidProviders failed:', e)
+    return { removed: [], repaired: [] }
   }
-  return false
-}
-
-/**
- * 一次性迁移：把旧版本 settings.json.skills（粒度错误：存的是单 skill 目录）
- * 归并为 ADR-0020 §1 的容器目录粒度，提升为 discovery.json SSOT。
- *
- * 旧数据问题：旧 addSkillPath(dirname(skill.sourcePath)) 把每个 skill 的父目录
- * 单独塞进 settings.json.skills（如 ~/.pi/agent/skills/anysearch），而非容器目录
- * （~/.pi/agent/skills）。44 条单 skill 路径去重父目录后只有 2 个容器。
- *
- * 归并策略：对每条旧路径取父目录 → 去重 → 仅保留确实是容器（含 ≥1 个 SKILL.md 子目录）的。
- * 幂等：discovery 已有容器目录数据则 no-op。
- * 由 ConfigService 初始化时调用。
- */
-export function migrateSettingsSkillsToDiscovery(): void {
-  const discovery = readDiscovery()
-  // discovery 已有「有效容器」数据则 no-op（幂等）。
-  // 注意：不能仅凭 skillDirs.length>0 判定——可能存有脏数据（/path/a 等测试残留），
-  // 故用 isSkillContainer 校验每条；全无效则继续迁移覆盖。
-  if (discovery.skillDirs.length > 0 && discovery.skillDirs.some(c => isSkillContainer(c))) return
-  const legacy = readSettings().skills ?? []
-  if (legacy.length === 0) return
-
-  // 取父目录去重（旧路径是 <container>/<skillName>，父目录才是容器）
-  const containers = new Set<string>()
-  for (const p of legacy) {
-    const idx = p.lastIndexOf('/')
-    const parent = idx > 0 ? p.slice(0, idx) : p
-    containers.add(parent)
-  }
-
-  // 仅保留确实是容器的父目录（含 ≥1 个带 SKILL.md 的子目录）
-  const validContainers = [...containers].filter(c => isSkillContainer(c))
-  if (validContainers.length === 0) return
-  // 归一化为 ~ 形式（家目录下的路径用 ~ 前缀），与预设候选 ~/.pi/agent/skills 等保持一致，
-  // 避免 buildDirConfigs 的字符串匹配因 ~ vs 绝对路径失配而重复显示。
-  const normalized = validContainers.map(normalizeToHome)
-  setDiscoverySkillDirs(normalized)
-  syncSkillDirsToSettings()
-  console.log(`[provider-store] migrated ${legacy.length} legacy skill paths → ${normalized.length} container dirs in discovery.json`)
-}
-
-export function getSkillPaths(): string[] {
-  return getDiscoverySkillDirs()
-}
-
-export function setSkillPaths(paths: string[]): void {
-  setDiscoverySkillDirs(paths)
-  syncSkillDirsToSettings()
-}
-
-export function addSkillPath(path: string): void {
-  const paths = getDiscoverySkillDirs()
-  if (!paths.includes(path)) {
-    setSkillPaths([...paths, path])
-  }
-}
-
-export function removeSkillPath(path: string): void {
-  setSkillPaths(getDiscoverySkillDirs().filter(p => p !== path))
 }
 
 // ── 缓存控制 ─────────────────────────────────────────────────
@@ -437,251 +479,23 @@ export function refreshAll(): void {
   refreshSettings()
 }
 
-// ── 迁移 ─────────────────────────────────────────────────────
-
-/**
- * 把 oldDir 的内容逐项迁移到 newDir（跳过 newDir 中已存在的同名项），
- * 迁移后若 oldDir 为空则删除。幂等。
- *
- * 抽自 migrateToPiSubdir 的 sessions/agents 两段近乎逐行相同的目录迁移块（D4）。
- */
-function migrateDirContents(oldDir: string, newDir: string, label: string): void {
-  if (!existsSync(oldDir)) return
-  try {
-    const entries = readdirSync(oldDir)
-    if (entries.length > 0) {
-      let migrated = 0
-      for (const entry of entries) {
-        const newPath = join(newDir, entry)
-        if (!existsSync(newPath)) {
-          renameSync(join(oldDir, entry), newPath)
-          migrated++
-        }
-      }
-      if (migrated > 0) {
-        console.log(`[provider-store] migrated ${migrated} ${label}`)
-      }
-      try {
-        const remaining = readdirSync(oldDir)
-        if (remaining.length === 0) rmdirSync(oldDir)
-      // eslint-disable-next-line taste/no-silent-catch -- migration cleanup: error logged, non-critical
-      } catch (e) {
-        console.warn(`[provider-store] failed to remove old ${label} dir:`, toErrorMessage(e))
-      }
-    }
-  // eslint-disable-next-line taste/no-silent-catch -- migration: error logged, non-critical
-  } catch (e) {
-    console.warn(`[provider-store] failed to migrate ${label} dir:`, toErrorMessage(e))
-  }
-}
-
-/**
- * 首次加载时执行一次性迁移：将旧路径下的文件移动到新的 xyz-pi 目录结构。
- * 幂等：如果新路径已存在文件，跳过迁移。
- */
-export function migrateToPiSubdir(): void {
-  const piAgentDir = getPiAgentDir()
-  const sessionsDir = getSessionsDir()
-  const agentsDir = getAgentsDir()
-  const configDir = getConfigDir()
-
-  const oldModelsPath = join(configDir, 'models.json')
-  const oldSettingsPath = join(configDir, 'settings.json')
-  const oldSessionsDir = join(configDir, 'sessions')
-  const oldAgentsDir = join(configDir, 'agents')
-
-  mkdirSync(piAgentDir, { recursive: true })
-  mkdirSync(sessionsDir, { recursive: true })
-  mkdirSync(agentsDir, { recursive: true })
-
-  const modelsPath = getModelsPath()
-  const settingsPath = getSettingsPath()
-
-  if (existsSync(oldModelsPath) && !existsSync(modelsPath)) {
-    renameSync(oldModelsPath, modelsPath)
-    console.log('[provider-store] migrated models.json → pi/agent/models.json')
-  }
-
-  if (existsSync(oldSettingsPath) && !existsSync(settingsPath)) {
-    renameSync(oldSettingsPath, settingsPath)
-    console.log('[provider-store] migrated settings.json → pi/agent/settings.json')
-  }
-
-  migrateDirContents(oldSessionsDir, sessionsDir, 'session files → pi/sessions/')
-  migrateDirContents(oldAgentsDir, agentsDir, 'agent files → pi/agent/agents/')
-
-  // extension/npm/tmp 目录迁移：原在 pi/agent/ 子树下，迁出到 dataDir 根层
-  // （与 skills/agents 强制目录结构对齐，详见 paths.ts 目录结构注释）。
-  // 幂等：新目录已有内容时跳过（migrateDirContents 内部逐项判重）。
-  migrateDirContents(join(piAgentDir, 'extensions'), getExtensionsDir(), 'extension files → extensions/')
-  migrateDirContents(join(piAgentDir, 'npm'), getNpmDir(), 'npm packages → npm/')
-  migrateDirContents(join(piAgentDir, 'tmp'), getTmpDir(), 'temp files → tmp/')
-
-  // 打包模式：从 bundled 资源同步
-  if (isPackaged()) {
-    const bundledAgentDir = join(process.cwd(), 'pi', 'agent')
-    // skills 仍在 pi/agent/skills（bundled pi 自带 skill）；extensions 已迁出到 dataDir/extensions
-    for (const [subDir, destDir] of [
-      ['extensions', getExtensionsDir()],
-      ['skills', join(piAgentDir, 'skills')],
-    ] as const) {
-      const src = join(bundledAgentDir, subDir)
-      if (existsSync(src) && !existsSync(destDir)) {
-        try {
-          cpSync(src, destDir, { recursive: true })
-          console.log(`[provider-store] synced bundled ${subDir} → ${destDir}`)
-        // eslint-disable-next-line taste/no-silent-catch -- bundled sync: error logged, non-critical
-        } catch (e) {
-          console.error(`[provider-store] failed to sync bundled ${subDir}:`, e)
-        }
-      }
-    }
-  }
-}
-
-// ── settings.json.packages 泄漏路径清理（架构约定 #1：xyz-agent/pi 数据隔离）──────
-//
-// 背景：早期从 pi 导入 settings.json 时，packages[] 带入了泄漏到 pi 全局目录
-// （~/.pi/agent/）的相对路径项（如 ../../../.pi/agent/extensions/pending-notifications），
-// 违反隔离原则。runtime 启动时（index.ts migrateToPiSubdir 之后）一次性清理。
-
-/**
- * pi 全局 agent 目录，泄漏路径的判定目标。
- *
- * 结构性推导：从 getPiAgentDir() 向上 3 层（agent→pi→dataDir→parent）再下 .pi/agent，
- * 即「xyz-agent 数据目录（getConfigDir()）的兄弟 .pi/agent」。
- *
- * 生产（XYZ_AGENT_DATA_DIR=~/.xyz-agent）：getPiAgentDir()=~/.xyz-agent/pi/agent，
- * 向上 3 层到 ~，本函数返回 ~/.pi/agent（pi 全局 agent 目录）。
- *
- * [HISTORICAL] 为何不从 homedir() 推导：vitest globalSetup 把 XYZ_AGENT_DATA_DIR 指向 tmp，
- * getPiAgentDir() 落在 tmp 分区，而 homedir()/.pi/agent 落在真实家目录，两者不同分区——
- * 相对路径解析后永远无法从 tmp 跨到真实家目录，导致 isLeakedPackage 不可测（tmp 嵌套深度
- * 还随机器变化）。从 getPiAgentDir() 同源推导后，泄漏路径 ../../../.pi/agent/x 的 ../../../
- *（向上 3 层）与本函数的向上 3 层天然对齐，depth-structural 一致，任意 dataDir 位置均成立。
- */
-function getPiGlobalAgentDir(): string {
-  return pathResolve(getPiAgentDir(), '..', '..', '..', '.pi', 'agent')
-}
-
-/**
- * 判定 packages 项是否为泄漏到 pi 全局目录的相对路径。
- *
- * 泄漏特征：以 '../' 开头（相对路径），且相对 settings.json 所在目录（getPiAgentDir()）
- * 解析后落在 pi 全局目录（~/.pi/agent/）内。
- *
- * 合法项不被误杀：npm:@xxx 不以 ../ 开头；extensions/xxx 不以 ../ 开头；
- * ./local-ext 不以 ../ 开头；../../../other-dir 解析后不在 ~/.pi/agent/ 内。
- *
- * @param pkg packages 数组的一项
- * @returns true = 泄漏项（应删除）
- */
-export function isLeakedPackage(pkg: string): boolean {
-  if (!pkg.startsWith('../')) return false
-  const resolved = pathResolve(getPiAgentDir(), pkg)
-  return resolved.startsWith(getPiGlobalAgentDir() + sep)
-}
-
-/**
- * 清理 settings.json.packages 中泄漏到 pi 全局目录的相对路径项。
- *
- * 启动时一次性调用（index.ts 的 migrateToPiSubdir 之后）。幂等：filter 后无变化不触发写。
- *
- * @returns { removed: string[] } 被删除的项列表（供调用方 log）
- */
-export function cleanLeakedPackages(): { removed: string[] } {
-  try {
-    let removed: string[] = []
-    updateSettingsSync(s => {
-      const packages = s.packages ?? []
-      const filtered = packages.filter(p => !isLeakedPackage(p))
-      removed = packages.filter(p => isLeakedPackage(p))
-      if (removed.length > 0) {
-        s.packages = filtered
-      }
-    })
-    if (removed.length > 0) {
-      console.log(`[provider-store] cleaned ${removed.length} leaked package(s) from settings.json:`, removed)
-    }
-    return { removed }
-  } catch (e) {
-    // settings.json 读取失败不阻塞启动（ES1）
-    console.warn('[provider-store] cleanLeakedPackages failed:', e)
-    return { removed: [] }
-  }
-}
-
-// ── models.json 无效 provider 清理（重装后 "Model not found" 自愈）──────
-//
-// 背景：bundled pi 0.80.3 对 models.json 校验严格——任一 provider 缺五字段
-//（baseUrl/headers/compat/modelOverrides/models）全缺时，整个 models.json 加载失败，
-// 导致所有 model not found。系统 pi 0.83 对此容错，但重装后切换 bundled pi 必现。
-// 典型脏数据：外部脚本写入的测试 fixture provider（如 concurrency-verify-A）。
-// 启动时一次性剔除这类空壳 provider，让 xyz-agent 自愈。
-
-/**
- * 判定 provider 是否无效（pi 会拒绝加载）。
- *
- * pi 0.80.3 报错原文：provider must specify "baseUrl", "headers", "compat",
- * "modelOverrides", or "models"。五字段全缺则 pi 拒绝该 provider；0.80.3 更严格——
- * 一个无效 provider 会导致整个 models.json 加载失败。本函数对齐 pi 判定标准，
- * 供 sanitizeInvalidProviders 启动时剔除空壳 provider（如外部脚本写入的测试 fixture）。
- *
- * compat 是 pi 端 provider 级字段（xyz-agent PiProviderConfig 未声明，但运行时脏数据
- * 可能含），用宽松键检查（as Record<string,unknown>）不遗漏。
- *
- * 判定与 pi 0.80.3 实测语义对齐（model-registry.ts applyModelsJson + zod schema）：
- * - baseUrl/headers/compat 用 falsiness：zod `Type.String({ minLength: 1 })` 拒绝空字符串
- *   （实测 `--list-models` 报 must not have fewer than 1 characters），空串视同未 specify
- * - modelOverrides 要求 `Object.keys(...).length > 0`（applyModelsJson hasOverrides），
- *   空对象不视为 specify（实测报 must specify ... "modelOverrides" ...）
- * - models 空数组（[]）视为未 specify（无法提供任何模型，与 undefined 等效）
- * - 非对象值（null/string/number）：zod ProviderConfigSchema 直接拒绝 → 无效
- */
-export function isInvalidProvider(provider: PiProviderConfig): boolean {
-  if (typeof provider !== 'object' || provider === null) return true
-  const raw = provider as Record<string, unknown>
-  const hasModels = Array.isArray(raw.models) && raw.models.length > 0
-  const hasOverrides =
-    typeof raw.modelOverrides === 'object' &&
-    raw.modelOverrides !== null &&
-    Object.keys(raw.modelOverrides as object).length > 0
-  return !raw.baseUrl && !raw.headers && !raw.compat && !hasOverrides && !hasModels
-}
-
-/**
- * 启动时剔除 models.json 里的无效 provider（五字段全缺的空壳）。
- *
- * 修复根因：空壳 provider（如 {apiKey, name} 无五字段任一）导致 bundled pi 0.80.3
- * 严格校验时整个 models.json 加载失败。系统 pi 0.83 对此容错但 bundled 0.80.3 不容错，
- * 重装后切换 bundled pi 必现 "Model not found"。本函数让 xyz-agent 自愈这种脏数据。
- *
- * 启动时一次性调用（index.ts cleanLeakedPackages 之后）。幂等：无无效 provider 时不触发写。
- * 永不抛错：失败仅 warn 不阻塞启动（对齐 cleanLeakedPackages ES1 风格）。
- *
- * @returns { removed: string[] } 被剔除的 provider id 列表
- */
-export function sanitizeInvalidProviders(): { removed: string[] } {
-  try {
-    modelsStore.invalidate()
-    const draft: PiModelsConfig = JSON.parse(JSON.stringify(readModels()))
-    const removed: string[] = []
-    for (const [id, cfg] of Object.entries(draft.providers)) {
-      if (isInvalidProvider(cfg)) {
-        delete draft.providers[id]
-        removed.push(id)
-      }
-    }
-    if (removed.length > 0) {
-      writeModels(draft)
-      console.log('[provider-store] sanitized invalid providers:', removed)
-    }
-    return { removed }
-  } catch (e) {
-    // best-effort 降级：models.json 异常不阻塞启动（pi 自身加载时也会容错或报错）
-    console.warn('[provider-store] sanitizeInvalidProviders failed:', e)
-    return { removed: [] }
-  }
-}
-
-
+// ── Barrel re-export（Phase 1 拆分：保 import 路径不变）──────────────────
+// 以下函数已拆到 pi-maintenance / pi-enabled-models / pi-skill-paths / pi-provider-repair，
+// re-export 保 import 路径不变（现有测试零改动即全绿 = 行为零变化证据）。
+export { migrateToPiSubdir, isLeakedPackage, cleanLeakedPackages } from './pi-maintenance.js'
+export {
+  getEnabledModels,
+  setEnabledModels,
+  clearEnabledModels,
+  ensureProviderInWhitelist,
+  cleanEnabledModelsResidue,
+} from './pi-enabled-models.js'
+export {
+  getSkillPaths,
+  getSkillPathScopes,
+  setSkillPaths,
+  addSkillPath,
+  removeSkillPath,
+  migrateSettingsSkillsToDiscovery,
+} from './pi-skill-paths.js'
+export { isInvalidProvider }

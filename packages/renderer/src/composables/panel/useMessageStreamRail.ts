@@ -8,14 +8,16 @@
  * - 事件路由：onJump（滚动定位）/ onToggle / onExpandAll / onCollapseAll，全部经 useTurnExpansion
  *   与 Turn.vue 共享同一 session 展开态（同一 session Map key）。
  *
- * 索引空间注意：rail 内部用 railTurns 数组下标（0-based），Turn.vue 用 MessageTurn.index（1-based 序列）。
- * toggle/expandAll/collapseAll 把下标转 MessageTurn.index 再传 useTurnExpansion，保证 Map key 一致。
+ * 索引空间注意：rail 内部用 railTurns 数组下标（0-based），Turn.vue 用 props.turn（稳定 key
+ * 经 turnStableId 派生，M5 stable-key）。toggle/expandAll/collapseAll 把下标转 turn 稳定 key
+ * 再传 useTurnExpansion，保证 Map key 一致（string key 不随消息插删漂移）。
  *
  * 提取至此（composables/panel 既有范式）：MessageStream.vue script setup ≤300 行规范 + rail 关注点单一可复用。
  */
 import { computed, onMounted, onScopeDispose, ref, type ComputedRef, type Ref } from 'vue'
 import type { VirtualizerHandle } from 'virtua/vue'
 import type { MessageTurn, RenderItem } from '@/composables/logic/messageTurns'
+import { turnStableId } from '@xyz-agent/core/domain/chat'
 import { useTurnExpansion } from '@/composables/panel/useTurnExpansion'
 import { useTurnExpansionStore } from '@/stores/turn-expansion'
 
@@ -25,7 +27,7 @@ import { useTurnExpansionStore } from '@/stores/turn-expansion'
  * 因 Set 引用变更触发的无谓重渲染（W3 性能优化）。
  * frozen 保证不被外部 mutate 污染——expandedTurns 的契约是只读 Set。
  */
-const EMPTY_SET: ReadonlySet<number> = Object.freeze(new Set<number>()) as ReadonlySet<number>
+const EMPTY_SET: ReadonlySet<string> = Object.freeze(new Set<string>()) as ReadonlySet<string>
 
 /** useMessageStreamRail 依赖（由 MessageStream.vue 注入，避免重复读取 store/props）。 */
 export interface UseMessageStreamRailDeps {
@@ -43,9 +45,9 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
   railTurns: ComputedRef<MessageTurn[]>
   activeTurnIndex: Ref<number>
   panelRightEdge: Ref<number>
-  /** 当前 session 已展开的 turn index 集合（TurnRail toggle 图标方向依据）。
+  /** 当前 session 已展开的 turn 稳定 key 集合（TurnRail toggle 图标方向依据）。
    *  ReadonlySet：消费方只读（TurnRail 用 .has 查询），空态复用 EMPTY_SET 单例（W3）。 */
-  expandedTurns: ComputedRef<ReadonlySet<number>>
+  expandedTurns: ComputedRef<ReadonlySet<string>>
   updateActiveTurnIndex: () => void
   onJump: (idx: number) => void
   onToggle: (idx: number) => void
@@ -61,27 +63,32 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
   )
 
   /**
-   * 派生当前 session 已展开的 turn index 集合（TurnRail toggle 图标方向依据）。
+   * 派生当前 session 已展开的 turn 稳定 key 集合（TurnRail toggle 图标方向依据）。
    *
-   * 响应式追踪关键：用 store.isExpanded(sid, idx) 逐个查 railTurns 的 index，
+   * [M5 stable-key] key 从 MessageTurn.index 改为 turnStableId(turn)（首条消息 id）：
+   * 消息插删（load-more/streaming）时 index 漂移，展开态会错绑到别的 turn；
+   * string 稳定 key 随 turn 首条消息 id 不变（消息 id 创建时生成，全局唯一）。
+   *
+   * 响应式追踪关键：用 store.isExpanded(sid, key) 逐个查 railTurns 的稳定 key，
    * 不直接遍历 store.partitions.entries()。原因：
    * - 外层 partitions 是 plain Map（非响应式），遍历/读它都不建立依赖；
-   *   真正的依赖通过内层 reactive Map.get(idx) 建立（store.isExpanded 内部走 getPartition
-   *   惰性创建分区 + 读 reactive Map.get(idx)），故必须逐个查 isExpanded 才能让
+   *   真正的依赖通过内层 reactive Map.get(key) 建立（store.isExpanded 内部走 getPartition
+   *   惰性创建分区 + 读 reactive Map.get(key)），故必须逐个查 isExpanded 才能让
    *   toggle/expand/collapse mutate 时正确失效。
    * - 直接读 entries() 还会把 partition 误当响应式源，但 partition 引用本身不变（只 mutate 内容），
-   *   不会触发 computed 重算——必须通过 get(idx) 建立 per-key 依赖。
+   *   不会触发 computed 重算——必须通过 get(key) 建立 per-key 依赖。
    *
-   * 与 Turn.vue 读 isExpanded 的追踪链路一致（同一 store 同一分区同一 idx 依赖）。
+   * 与 Turn.vue 读 isExpanded 的追踪链路一致（同一 store 同一分区同一 key 依赖）。
    */
   const store = useTurnExpansionStore()
-  const expandedTurns = computed<ReadonlySet<number>>(() => {
+  const expandedTurns = computed<ReadonlySet<string>>(() => {
     const sid = sessionId.value
     if (!sid) return EMPTY_SET
-    const expanded = new Set<number>()
+    const expanded = new Set<string>()
     for (const turn of railTurns.value) {
-      if (store.isExpanded(sid, turn.index)) {
-        expanded.add(turn.index)
+      const key = turnStableId(turn)
+      if (store.isExpanded(sid, key)) {
+        expanded.add(key)
       }
     }
     return expanded.size === 0 ? EMPTY_SET : expanded
@@ -130,10 +137,11 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
   }
 
   /** rail toggle：切该 turn 的展开态。
-   *  idx 是 railTurns 下标 → 转成 MessageTurn.index（与 Turn.vue 用的 props.turn.index 对齐）。 */
+   *  idx 是 railTurns 下标 → 转成 turn 稳定 key（turnStableId，M5 stable-key；
+   *  与 Turn.vue/TurnMeta 用的 key 派生一致，同 store 同分区）。 */
   function onToggle(idx: number): void {
-    const turnIdx = railTurns.value[idx]?.index
-    if (turnIdx != null) toggle(turnIdx)
+    const turn = railTurns.value[idx]
+    if (turn) toggle(turnStableId(turn))
   }
 
   /**

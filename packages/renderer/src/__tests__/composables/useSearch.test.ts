@@ -22,7 +22,7 @@
  * mock 策略：
  *  - vi.mock('@/api')：composer.getFileCandidates / session.list
  *  - vi.mock('@/stores/fileSearch')：store.get/set/invalidate
- *  - vi.mock('@/composables/features/useFileSearch')：setupInvalidation 返 vi.fn()（验证 AC-4.10 接线）
+ *  - vi.mock('@/composables/features/search/useFileSearch')：setupInvalidation 返 vi.fn()（验证 AC-4.10 接线）
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useSearch.test.ts
  */
@@ -46,14 +46,14 @@ vi.stubEnv('VITE_MOCK', 'false')
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import type { FileNode, SessionGroup } from '@xyz-agent/shared'
-import type { AppCommand } from '@/lib/search-types'
-import { useCommandStore } from '@/stores/command'
+import type { AppCommand, SearchItem } from '@xyz-agent/core'
+import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/command/useCommandStore'
 import { useFileSearchStore } from '@/stores/fileSearch'
 
 // ── mock：api domain ──
 const mockGetFileCandidates = vi.fn()
 const mockSessionList = vi.fn()
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   composer: { getFileCandidates: (...args: unknown[]) => mockGetFileCandidates(...(args as [string])) },
   session: { list: () => mockSessionList() },
 }))
@@ -71,11 +71,9 @@ vi.mock('@/stores/fileSearch', () => ({
 
 // ── mock：useFileSearch（setupInvalidation 验证 AC-4.10 接线） ──
 const mockSetupInvalidation = vi.fn(() => vi.fn()) // 返回 unwatch 函数
-vi.mock('@/composables/features/useFileSearch', () => ({
+vi.mock('@/composables/features/search/useFileSearch', () => ({
   useFileSearch: () => ({ setupInvalidation: mockSetupInvalidation }),
 }))
-
-import type { SearchItem } from '@/lib/search-types'
 
 /**
  * 动态加载 useSearch：必须在 vi.stubEnv('VITE_MOCK','false')（见文件顶部）之后，
@@ -86,7 +84,7 @@ import type { SearchItem } from '@/lib/search-types'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let useSearch: any
 beforeAll(async () => {
-  const mod = await import('@/composables/features/useSearch')
+  const mod = await import('@/composables/features/search/useSearch')
   useSearch = mod.useSearch
 })
 
@@ -503,19 +501,20 @@ describe('T5.2 占位不随查询变化', () => {
 describe('U5/U6 toCommandItem icon + commandKind 透传', () => {
   it('U5 SessionCommand 映射带 icon（star）+ commandKind:slash', async () => {
     const store = useCommandStore()
-    // applyCommands 把 source:'skill' 归一化为 icon:'star'（iconKeyForSource）。
+    // applyCommands 把 source:'skill' 归一化为 icon:'star'（iconKeyForCommand source fallback）。
+    // name 选非 builtin 命令（builtin 会命中专属图标，测不到 star fallback）。
     // name 不带 / 前缀（对齐 pi get_commands 真实格式）。
-    store.applyCommands('s1', [{ name: 'goal', description: '设定目标', source: 'skill' }])
+    store.applyCommands('s1', [{ name: 'my-custom-skill', description: '自定义 skill', source: 'skill' }])
     const sid = ref<string | null>('s1')
     const { query } = useSearch(sid)
 
-    const sections = await query('goal', { activeSessionId: 's1' })
+    const sections = await query('my-custom-skill', { activeSessionId: 's1' })
 
     const cmdSection = findSection(sections, '命令')
     expect(cmdSection).toBeTruthy()
-    const hit = cmdSection!.items.find((it) => it.title === 'goal')
+    const hit = cmdSection!.items.find((it) => it.title === 'my-custom-skill')
     expect(hit).toBeTruthy()
-    // SessionCommand 分支透传 icon（star）
+    // SessionCommand 分支透传 icon（star：非 builtin skill 命令的 source fallback）
     expect(hit!.icon).toBe('star')
     // commandKind='slash'：useSearchJump 据此走注入分支（不靠 title 前缀猜测）
     expect(hit!.commandKind).toBe('slash')

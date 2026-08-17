@@ -19,7 +19,7 @@ import { onScopeDispose } from 'vue'
 import type { ServerMessage } from '@xyz-agent/shared'
 import * as events from '@/api/events'
 import { useChatStore } from '@/stores/chat'
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 
 /**
  * 注册全局 handoff 效果（handoffComplete + handoffAborted）。
@@ -28,7 +28,7 @@ import { useSidebar } from '@/composables/features/useSidebar'
  */
 export function bindHandoffEffect(): void {
   const chat = useChatStore()
-  const { loadSessions, selectSession } = useSidebar()
+  const { loadSessions, selectSession } = useSidebarNew()
 
   const offs: Array<() => void> = []
 

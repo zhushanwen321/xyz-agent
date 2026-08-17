@@ -154,7 +154,7 @@ export class HandoffService {
    *
    * @param srcSessionId 源 session id
    * @param reply 可选的用户备注（sanitize 后追加到 prompt 末尾）
-   * @param options Staging Mode（ADR-0043）：modelOverride/thinkingOverride 仅作用于新建的承接 session，
+   * @param options Staging Mode（ADR-0056）：modelOverride/thinkingOverride 仅作用于新建的承接 session，
    *   源 session 的 handoff turn 仍用源 session 自身模型（override 不影响源 turn）。
    * @throws 已有进行中 handoff / 历史为空 / session 不可用 / agent 产空文档 / timeout / abort
    */
@@ -246,12 +246,10 @@ export class HandoffService {
       })
     })
 
-    // B1：广播 handoffStarted 到源 session 对话流，让用户知道 handoff 已启动
-    this.opts.broker.broadcast({
-      type: 'session.handoffStarted',
-      id: this.opts.nextPushId(),
-      payload: { sessionId: srcSessionId },
-    })
+    // B1（wave:perf-w08 删除）：原此处广播 session.handoffStarted 到源 session 对话流。
+    // 02 文档 D1-1 定案删除——前端无消费方（core/src/domain/chat/useChat.ts 已删
+    // 「正在交接…」处理，仅剩注释），广播是每 handoff 一次的无效盲发。
+    // protocol.ts 的类型定义保留（02 文档无删类型定案；W09 接口收敛时统一处置）。
 
     let doc: string
     try {
@@ -276,7 +274,7 @@ export class HandoffService {
     }
 
     // 9. 新建空白 session（复用源 cwd）
-    // Staging Mode（ADR-0043）：透传 modelOverride/thinkingOverride 让承接 session 用用户当前选定模型/思考等级，
+    // Staging Mode（ADR-0056）：透传 modelOverride/thinkingOverride 让承接 session 用用户当前选定模型/思考等级，
     // 而非全局默认。源 session 的 handoff turn 已用自身模型跑完，不受此 override 影响。
     const newSession = await this.opts.sessionService.create(srcCwd, `handoff from ${srcLabel}`, {
       modelOverride: options?.modelOverride,

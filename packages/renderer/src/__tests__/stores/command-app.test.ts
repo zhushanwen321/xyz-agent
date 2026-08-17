@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useCommandStore, type RawCommand } from '@/stores/command'
-import type { AppCommand } from '@/lib/search-types'
+import type { AppCommand } from '@xyz-agent/core'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -19,7 +19,7 @@ const APP_NEW: AppCommand = { id: 'new', name: '新建', action: vi.fn() }
 const APP_SEARCH: AppCommand = { id: 'search', name: '搜索', shortcut: '⌘K', action: vi.fn() }
 
 const RAW_SLASH: RawCommand[] = [
-  { name: '/commit', description: '提交改动', source: 'extension' },
+  { name: '/my-ext-cmd', description: '提交改动', source: 'extension' },
   { name: '/review', source: 'skill' },
 ]
 
@@ -95,12 +95,12 @@ describe('D-016 物理隔离：appCommands 与 commandsBySession 互不影响', 
 describe('slashCommandsOf（显式 slash 响应式视图）', () => {
   it('applyCommands 后 slashCommandsOf(sid).value 含命令（归一化）', () => {
     const store = useCommandStore()
-    store.applyCommands('s1', [{ name: '/commit', source: 'extension' }])
+    store.applyCommands('s1', [{ name: '/my-ext-cmd', source: 'extension' }])
     const view = store.slashCommandsOf('s1')
     expect(view.value).toHaveLength(1)
     expect(view.value[0]).toEqual({
-      id: '/commit',
-      name: '/commit',
+      id: '/my-ext-cmd',
+      name: '/my-ext-cmd',
       kind: 'extension',
       icon: 'terminal',
       description: undefined,
@@ -145,7 +145,7 @@ describe('现有 slash 功能回归（不破坏）', () => {
   it('findCommandByName 仍正常', () => {
     const store = useCommandStore()
     store.applyCommands('s1', RAW_SLASH)
-    expect(store.findCommandByName('s1', '/commit')?.icon).toBe('terminal')
+    expect(store.findCommandByName('s1', '/my-ext-cmd')?.icon).toBe('terminal')
     expect(store.findCommandByName('s1', '/nope')).toBeUndefined()
   })
 })

@@ -17,6 +17,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { GitService, GitError, type GitServiceOptions } from '../src/services/git-service.js'
 import { GitExecutorError } from '../src/services/ports/git-executor.js'
 import type { IGitExecutor, GitExecutorResult } from '../src/services/ports/git-executor.js'
+import { GitStateService } from '../src/services/git/git-state-service.js'
 
 const executor = { exec: vi.fn() }
 const sessionService = { getSummary: vi.fn() }
@@ -25,6 +26,8 @@ function svc(): GitService {
   return new GitService({
     sessionService: sessionService as unknown as GitServiceOptions['sessionService'],
     executor: executor as unknown as IGitExecutor,
+    // getFileDiff 不经状态服务；注入真 GitStateService（共享 executor）满足必选依赖
+    stateService: new GitStateService({ executor: executor as unknown as IGitExecutor }),
   })
 }
 

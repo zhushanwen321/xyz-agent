@@ -10,7 +10,7 @@
  * 等待期间对话流收起（bug）。本 store 把 pending 提升为 session 级 store SSOT，供
  * derivedStatus computed 经 hasPendingAskUser 非响应式查询当前 session 是否有 ask-user 在等。
  *
- * 范式（镜像 subagent.ts / command.ts，ADR-0036 Map 分区派）：
+ * 范式（镜像 subagent.ts / command.ts，ADR-0049 Map 分区派）：
  * - requestsBySession: ref<Map<sessionId, ExtensionUIRequest[]>> —— per-sessionId 分区
  * - recordsOf(sessionId): ComputedRef —— 响应式视图，组件订阅用
  * - getRequestsBySession(sessionId): ExtensionUIRequest[] —— 非响应式读（无则空数组）
@@ -59,7 +59,7 @@ export const useExtensionUIStore = defineStore('extension-ui', () => {
     return getRequestsBySession(sessionId).some((r) => r.askUser === true)
   }
 
-  /** 该 session 是否有非 ask-user 的简单原语 dialog pending（供 ExtensionUIDialog 消费者查询） */
+  /** 该 session 是否有非 ask-user 的简单原语 dialog pending（供外部消费者查询；当前无消费方，公共接口保留） */
   function hasPendingDialog(sessionId: string): boolean {
     return getRequestsBySession(sessionId).some((r) => r.askUser !== true)
   }

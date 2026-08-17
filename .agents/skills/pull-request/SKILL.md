@@ -18,50 +18,30 @@ description: >-
 
 ## 流程
 
-### [MANDATORY] 1. Pre-merge 验证
+### [MANDATORY] 1. Pre-merge 硬 gate
 
 **在当前 feature worktree 内执行**（不是 main worktree）。验证的是待 PR 的代码。
 
-```bash
-# Lint 检查
-pnpm run lint
-
-# 单元测试（根 package.json 没有 test script，需要分别跑）
-cd packages/runtime && npx vitest run
-cd ../renderer && npx vitest run
-
-# 构建验证(确认 build 不报错)
-pnpm run build
-```
-
-**Electron 特化说明**:
-- 构建产物在 CI 产生,本地只需确认 `pnpm run build` 不报错
-- 本技能目录包含 `scripts/preflight-check.sh`,可用作更全面的预检
-
-```bash
-# 可选:使用 preflight-check.sh 做全面预检
-bash scripts/preflight-check.sh
-```
-
-**[MANDATORY] changeset 完整性检查**（改了 `extensions/` 时）:
-
-推荐用 `pr-pre-merge.sh`（内置 changeset 检查，Step 5）：
+用 `scripts/pr-pre-merge.sh` 一体化验证（typecheck → lint → test，任意步骤 FAIL 即 exit 非 0）。与 pr-cr-fix skill 阶段 3b 共用同一个 gate 脚本，行为一致。
 
 ```bash
 bash scripts/pr-pre-merge.sh
 ```
 
-或手动检查：如果 PR 改了 `extensions/*/src/`，确认有对应 changeset 文件声明改了哪些包：
+**Gate 语义 [MANDATORY]**：
+- exit 0 = 全绿，继续下一步
+- exit 非 0 = 有步骤失败，**必须修复后才能 push**。看输出的 `FAIL <step>` 行定位失败步骤（typecheck:extensions / lint / test:extensions / test:runtime / test:renderer），修复对应代码后重跑 `pr-pre-merge.sh` 直到全绿
+- **禁止** `SKIP_*` 环境变量、`--no-verify`、`eslint-disable`、删 pre-commit 等绕过手段。检查不通过 = 流程中止，唯一的出路是修复代码让检查通过
 
-```bash
-# 检查改了哪些 extension 包的 src/
-git diff main...HEAD --name-only | grep -E '^extensions/.*/src/'
+**说明**：
+- build 默认跳过（`PR_PRE_MERGE_SKIP_BUILD=1`），Electron build 耗时，CI 会跑完整打包
+- changeset 完整性检查由 pr-pre-merge.sh Step 5 覆盖（见下方「changeset 说明」）
 
-# 检查是否有对应的 changeset
-ls .changeset/*.md 2>/dev/null | grep -v README
-```
+**[MANDATORY] changeset 说明**
 
-- **需要发布** → 运行 `pnpm changeset` 创建声明文件（声明包名 + patch/minor/major）
+pr-pre-merge.sh Step 5 会自动检测 changeset 完整性（改了 `extensions/*/src/` 但无对应 changeset → 输出 `WARN`，**不导致 FAIL**）。看到 WARN 时：
+
+- **需要发布** → 运行 `pnpm changeset` 创建声明文件（声明包名 + patch/minor/major），commit 后重跑 pr-pre-merge.sh
 - **纯文档/测试/重构改动，不需要发布** → 可忽略。但建议运行 `pnpm changeset add --empty` 创建空 changeset，避免 merge 时 `changeset version` 误报
 
 ⚠️ **缺失 changeset 的后果**：merge 阶段 4N 的 `changeset version` 不会 bump 该包版本 → `changeset publish` 不会发布 → bug fix 静默丢失。

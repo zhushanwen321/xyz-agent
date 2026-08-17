@@ -2,7 +2,7 @@
  * Quota provider 类型 — runtime 实现层。
  *
  * re-export shared 类型 + 添加 runtime 专用常量。
- * 设计文档：docs/page-design/v3/coding-plan-quota/design.md
+ * 设计文档：docs/page-design/archive/v3/coding-plan-quota/design.md
  */
 
 import type { QuotaWindow, QuotaWins, NormalizedQuotaRow, ProviderQuotaFetcher } from '@xyz-agent/shared'

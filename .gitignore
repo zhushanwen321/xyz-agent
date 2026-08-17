@@ -6,6 +6,8 @@
 # 旧规则只匹配 2026-04-* 和 brainstorm/，漏 2026-06+（事故：2026-06-22-sidebar-polish/plan.md 漏网被 commit）。
 .superpowers/
 .xyz-harness/gate/
+# visual 验证产物（截图 PNG + result.json），不进 git；追溯副本在 docs/testing/visual/baselines/
+.xyz-harness/visual/
 *.local
 *.log
 dist/
@@ -27,6 +29,10 @@ target/
 # package.json), skills are user/project-level — neither is bundled here.
 apps/electron/resources/
 
+# built-in xyz plugins 编译产物（scripts/prepare-builtin-plugins.sh 构建期生成，
+# 源 index.ts 是 SSOT，产物与源同目录但不进 git）
+resources/plugins/*/index.js
+
 # .pi/ 目录：只跟踪源码（workflows），忽略运行时缓存/会话数据。
 # check_directory_rules.py 会强制只允许 .pi/workflows/ 进 git（见 PI_ALLOWED 检查）。
 # pi extension 相关内容（如 extension-dependencies.json）不在 .pi/ 下，是 npm 包。
@@ -42,6 +48,9 @@ apps/electron/resources/
 # Playwright E2E artifacts (test results / reports / cache)
 /test-results/
 /playwright-report/
+
+# Vitest coverage report (S3-W1 coverage gate 产物，不进 git)
+coverage/
 /playwright/.cache/
 /blob-report/
 /playwright/.auth/
@@ -71,12 +80,17 @@ screenshot.png
 .v3-audit/
 
 # === cw v1 工作流临时产物（根目录散落，应放 .xyz-harness/ 归档）===
-# .cw-*.json/.md 是 cw 跑完手动归档的中间产物，不是源码。
-# /.cw/ 目录本身是 cw 中间产物（按 topic 分子目录），整体忽略；
-# 历史遗留的 .cw/run-*.sh 测试脚本仍被 git 跟踪，ignore 不影响已跟踪文件。
-/.cw/
+# .cw-*.json/.md 是 cw 跑完手动归档的中间产物，不是源码；.cw/（带斜杠）的 run-*.sh 是 tracked 测试脚本，不忽略。
 /.cw-*.json
 /.cw-*.md
+# .cw/<slug>/ 子目录是 cw v1 运行时中间产物（clarify/plan/design-review 等 input JSON），不是源码，忽略。
+# 只忽略子目录，保留 .cw/*.sh tracked 测试脚本（run-*.sh）。
+/.cw/*/
+# .cw/ 直下的 *-design.json 是 cw 当前版本（wave-plan 流程）的运行时设计产物，同样忽略；
+# 仍保留 .cw/*.sh tracked。
+/.cw/*.json
+# 根目录散落的截图调试脚本（browser-automation 临时产物）。
+/.shot-*.mjs
 # wave-* / clarify / plan / design-review 等是 cw 当前 wave 的运行时产物。
 /wave-*.json
 /wave-*.md
@@ -97,6 +111,11 @@ screenshot.png
 
 # 手动测试残留的假数据目录（测试代码用 tmpdir()，不读根目录 session-data/）
 /session-data/
+/packages/runtime/session-data/
+
+# renderer 构建产物（dist 原入口 + dist-new 共存接缝 spike 新壳产物）
+/apps/electron/renderer/dist/
+/apps/electron/renderer/dist-new/
 
 # === npm lock 文件（本项目用 pnpm，package-lock.json 是历史遗留/误生成产物）===
 # 详见 AGENTS.md「包管理器与 lock 文件纪律」。pnpm-lock.yaml 是唯一权威 lock。
@@ -113,3 +132,11 @@ package-lock.json.*
 *.swp
 *.orig
 *~
+
+# === v6 Vue demo 工作区（从 docs/page-design/ 迁出）===
+/.tmp/
+.review-reports/
+
+# === dev 模式自制 Electron app bundle（dev-electron.mjs 生成，太极图标）===
+# dev 启动时按需重建，不进版本库
+/apps/electron/.dev-electron/

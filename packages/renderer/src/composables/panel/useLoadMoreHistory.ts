@@ -11,7 +11,7 @@
  * @param sessionId 当前 session id getter
  */
 import { computed, nextTick, ref, type ComputedRef, type Ref } from 'vue'
-import { useChat } from '@/composables/features/useChat'
+import { useChat } from '@/composables/features/chat/useChat'
 
 export function useLoadMoreHistory(sessionId: () => string): {
   /** 加载中状态（disabled / spinner / 文案切换驱动） */

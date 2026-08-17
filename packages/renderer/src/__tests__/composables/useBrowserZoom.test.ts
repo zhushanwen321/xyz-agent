@@ -28,7 +28,7 @@ vi.mock('@/lib/ipc', () => ({
   browserSetZoom: hoisted.browserSetZoom,
 }))
 
-import { useBrowserZoom } from '@/composables/features/useBrowserZoom'
+import { useBrowserZoom } from '@/composables/features/browser/useBrowserZoom'
 
 describe('useBrowserZoom', () => {
   beforeEach(() => {

@@ -18,7 +18,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore, LRU_MAX_SESSIONS } from '@/stores/chat'
-import { _resetLruForTest } from '@/stores/chat-lru'
+import { _resetLruForTest } from '@xyz-agent/core'
 import { subagentVirtualId } from '@/stores/subagent'
 import type { Message } from '@xyz-agent/shared'
 

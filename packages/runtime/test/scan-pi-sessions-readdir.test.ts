@@ -27,11 +27,15 @@ vi.mock('../src/infra/pi/pi-paths.js', () => ({
   getSessionsDir: pathsMock.getSessionsDir,
 }))
 
-import { scanPiSessions } from '../src/infra/pi/session-file-utils.js'
+import { scanPiSessions, invalidateScanDirCache } from '../src/infra/pi/session-file-utils.js'
 
 describe('W1/L8: scanPiSessions readdirSync 保护', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // W26（D9-1）：scanPiSessions 目录列举层 1s TTL 缓存——测试间必须显式失效，
+    // 否则上一用例写入的缓存快照（EACCES 空结果 / 空目录）会让本用例 readdirSync
+    // 不再触发（缓存命中），断言失真的同时掩盖被测行为。
+    invalidateScanDirCache()
     fsMock.existsSync.mockReturnValue(true)
     fsMock.readdirSync.mockReturnValue([])
     pathsMock.getSessionsDir.mockReturnValue('/fake/sessions')

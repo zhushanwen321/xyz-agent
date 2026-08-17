@@ -13,7 +13,7 @@
  * 等信号，derivedStatus 退化返回 done）。回退到 forceWorking（虚拟 session running 时 true → 进行中）。
  */
 import { computed, type ComputedRef, type Ref } from 'vue'
-import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
+import { useSessionDerivations } from '@/composables/features/chat/useSessionDerivations'
 import { isSubagentVirtualId } from '@/stores/subagent'
 import type { DerivedStatus } from '@/types'
 

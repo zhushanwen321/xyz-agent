@@ -5,7 +5,7 @@
  * 包含：tool、hook、storage、notify、session、config、sessionData、ui、agent、workspace。
  */
 
-import type { StatusBarItem } from '@xyz-agent/shared'
+import type { StatusBarItem, ProviderId } from '@xyz-agent/shared'
 import type { PluginRpcServer } from './plugin-rpc-server.js'
 import type { PluginStorage } from './plugin-storage.js'
 import type { StatusBarItemOptions, IPluginServiceDeps } from './plugin-types.js'
@@ -20,6 +20,10 @@ import { registerSessionDataRpcHandlers } from './api/session-data-api.js'
 import { registerUiRpcHandlers } from './api/ui-api.js'
 import { registerAgentRpcHandlers } from './api/agent-api.js'
 import { registerWorkspaceRpcHandlers } from './api/workspace-api.js'
+import { registerCommandRpcHandlers } from './api/commands-api.js'
+import type { CommandRegistration } from './api/commands-api.js'
+import { registerViewRpcHandlers } from './api/views-api.js'
+import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import type { ToolEntry } from './plugin-types.js'
 
 const MAX_FIND_FILES_RESULTS = 1000
@@ -55,6 +59,26 @@ export interface RpcSetupContext {
   sessionDataStore: SessionDataStore
   /** 活跃 session 解析器（P6：替代模块级全局 _activeSessionCache） */
   activeSessionResolver: ActiveSessionResolver
+  /** 命令注册表（commandId→CommandRegistration），PluginService 实例字段注入 */
+  commandRegistry: Map<string, CommandRegistration>
+  /** 挂载点集合（renderer 经 plugin.mountPoints.sync 上报的副本，AC10） */
+  mountPoints: string[]
+  /**
+   * views.update 的广播出口（wave:perf-w08，02 文档 D1-1）：PluginService 实现的
+   * bus 定向发布（transient）/ 全局广播兜底分流，见 publishViewUpdate 实现。
+   */
+  publishViewUpdate: PluginServiceLike['publishViewUpdate']
+}
+
+/** 仅用于 RpcSetupContext.publishViewUpdate 的类型（避免 rpc-setup 反向 import plugin-service 成环） */
+interface PluginServiceLike {
+  publishViewUpdate(payload: {
+    sessionId: string
+    viewId: string
+    pluginId: string
+    guiTree: GuiComponent[]
+    updatedAt: number
+  }): void
 }
 
 export function registerAllRpcMethods(ctx: RpcSetupContext): void {
@@ -187,7 +211,8 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
       if (!active) return
       const parts = model.split('/')
       if (parts.length < MIN_MODEL_PARTS) return
-      const provider = parts[0]
+      // 复合串切分边界（design D5）：parts[0] 是 provider id，从插件传入的 "providerId/modelId" 切出
+      const provider = parts[0] as ProviderId
       const modelId = parts.slice(1).join('/')
       // Unified entry: persist + broadcast included
       if (deps.modelService) {
@@ -214,6 +239,46 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
     },
     getActiveTools: () => {
       return Array.from(toolRegistry.values()).map(e => e.schema.name)
+    },
+  })
+
+  // ── Commands RPC handlers ────────────────────────────────
+  // 主线程侧命令注册表（register 建表 + 下行广播 plugin:commandRegistered）。
+  // worker 侧 invoke 监听在 createCommandsApi（plugin-bootstrap），主线程发送段
+  // （查 commandId→pluginId 映射 → 向 worker 发 plugin.commands.invoke）归后续 wave。
+  registerCommandRpcHandlers(rpcServer, {
+    registry: ctx.commandRegistry,
+    broadcastRegistered: (reg) => {
+      if (deps.broadcastFn) {
+        deps.broadcastFn('plugin:commandRegistered', reg)
+      } else {
+        console.warn('[plugin-rpc-setup] commands.register broadcast dropped: no broadcastFn configured')
+      }
+    },
+  })
+
+  // ── Views RPC handlers ───────────────────────────────────
+  // views.update → handleViewUpdate（ES2：无活跃 session 丢弃广播 + warning）；
+  // listMountPoints → 读挂载点集合副本（AC10：sync 注入→查询一致）。
+  // wave:perf-w08（02 文档 D1-1，R-06）：广播出口改 ctx.publishViewUpdate——
+  // bus 已装配时按 payload.sessionId 定向 publish（plugin:viewUpdate 归 transient 类，
+  // 不占 seq 不入 ring），不再全局 broadcast。
+  registerViewRpcHandlers(rpcServer, {
+    mountPoints: ctx.mountPoints,
+    handleViewUpdate: (pluginId: string, viewId: string, guiTree: GuiComponent[]) => {
+      const active = ctx.activeSessionResolver.resolve()
+      if (!active) {
+        // ES2: 无活跃 session 时丢弃广播 + warning（含 pluginId+viewId）
+        console.warn(`[plugin-rpc-setup] views.update dropped: no active session (plugin=${pluginId}, view=${viewId})`)
+        return
+      }
+      ctx.publishViewUpdate({
+        sessionId: active.id,
+        viewId,
+        pluginId,
+        guiTree,
+        updatedAt: Date.now(),
+      })
     },
   })
 

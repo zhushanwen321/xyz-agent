@@ -32,14 +32,20 @@ function createMockSessionStore(mainSessionFile: string, mainSessionId: string, 
   }
   return {
     scanSessions: () => [meta],
+    // W26（D9-1）：ISessionStore 接口新增目录 TTL 缓存失效成员
+    invalidateScanCache: () => {},
     refreshAll: () => {},
     persistSessionName: () => {},
     persistSessionEnd: () => {},
     persistPresetBinding: () => {},
+    persistProjectBinding: () => {},
     extractSessionOutcome: () => null,
     invalidateMetaCache: () => {},
     patchSessionCwd: () => true,
     convertHistory: (raw: unknown[]) => convertPiHistory(raw),
+    rebuildHistoryFromEntries: () => ({ messages: [], clientUuidMap: new Map(), orphanToolResults: [] }),
+    parseSessionHeader: () => null,
+    persistHandedOff: () => {},
     trash: () => {},
   }
 }

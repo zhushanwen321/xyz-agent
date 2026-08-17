@@ -21,7 +21,7 @@ const plainTheme: ThemeLike = {
 function makeNode(overrides: Partial<ExecutionTraceNode> = {}): ExecutionTraceNode {
   return {
     stepIndex: 0,
-    agent: "worker",
+    agent: "coder",
     task: "do something",
     model: "default",
     status: "completed",

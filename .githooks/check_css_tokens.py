@@ -27,6 +27,20 @@ ALLOWED_CLASSES = {
     'hidden',
 }
 
+# [HISTORICAL] 全局动画原语类白名单（与 @keyframes 同层，非组件级样式）
+# 这类 class 是跨多组件共享的过渡/动画原语，特征：
+#   1. 被多个组件消费（如 .reka-popover-transition 被 Popover/Select/HoverCard 共用）
+#   2. 使用 Tailwind 无法表达的 CSS 特性（@starting-style、[data-state] 属性选择器）
+#   3. 属于 style.css 的「全局动画原语」层，与既有 @keyframes（spin/pulse-*/taiji-spin 等）并列
+# 判据见 .xyz-harness/2026-08-09-animation-audit/01-overlay-enter-exit-transition.md。
+# 误报背景：原规则把所有含 `-` 的 class 选择器判为「组件级」，但全局共享原语不在其列。
+# 新增此类 class 时必须在此登记并确认满足上述三条特征，禁止为单组件样式开口子。
+ALLOWED_GLOBAL_ANIMATION_CLASSES = {
+    'reka-popover-transition',   # popover 族进出场（Popover/Select/HoverCard 共用，跟随触发点 scale）
+    'reka-dialog-transition',    # dialog 居中 modal 进出场（transform 含 translate 居中 + scale）
+    'reka-overlay-transition',   # dialog 遮罩纯 opacity 过渡
+}
+
 RED = '\033[0;31m'
 GREEN = '\033[0;32m'
 YELLOW = '\033[1;33m'
@@ -57,7 +71,7 @@ def check_style_css(filepath: str) -> list[str]:
         m = re.match(r'^\.([a-z][a-z0-9_-]*)\s*\{', stripped)
         if m:
             cls = m.group(1)
-            if cls not in ALLOWED_CLASSES and '-' in cls:
+            if cls not in ALLOWED_CLASSES and cls not in ALLOWED_GLOBAL_ANIMATION_CLASSES and '-' in cls:
                 violations.append(
                     f"  {filepath}:{i}  .{cls} {{ — 组件级样式不应出现在 style.css 中，"
                     f"应使用 Tailwind 工具类或 <style scoped>"

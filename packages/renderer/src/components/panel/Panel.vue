@@ -1,33 +1,17 @@
 <template>
   <!--
-    容器组件 · Panel（panel/spec.md 5 zone 编排，承载一个 Session）。
-    自上而下：① panel-header → ② message-stream → ③ progress-zone → ④ composer（companion 带）。
-    git 状态移入 SideDrawer git tab（原底部 zone ⑤ 摘牌，panel/spec.md），入口为 header 右侧 git 按钮。
-    v2：移除 split 后单 panel 恒 active，无主从视觉态（section 透明继承 MainPanel surface）。
-    [HISTORICAL] 原「左 2px 竖条 + inset box-shadow ring」双叠加导致激活 panel 左边 3px、其余边 1px，
-    边框厚度不均；inset shadow 在直角 section 上不跟随外层 MainPanel 圆角，圆角处露 bg。
-    改 ring-1（box-shadow 外发光，跟随 rounded-lg）+ 去竖条，4 边均匀且圆角覆盖。
+    容器组件 · Panel（panel/spec.md zone 编排，承载一个 Session 的 body 区）。
+    自上而下：② message-stream → ④ composer（companion 带，③ progress-zone 已删——
+    state 恒 null 自隐藏死代码，见 conversation-renderer-model-unification §3.3.6）。
+    ① panel-header 已提升到 PanelContainer（共享横跨 main+drawer 全宽，D2 一体化），
+    本组件只承载 body。git 状态移入 SideDrawer git tab，入口在共享 header 右侧 git 按钮。
+    section 透明继承 MainPanel 的统一 surface 外壳（border/radius/shadow 只在最外层 MainPanel），
+    不再有独立 rounded-lg/border（避免在统一外壳内产生内圆角视觉）。
   -->
   <section
-    class="relative flex min-w-0 h-full flex-col overflow-hidden rounded-lg transition-[background-color,opacity,box-shadow] duration-[var(--duration)] ease-[var(--ease)]"
-    :class="panelStateClass"
+    class="relative flex min-w-0 h-full flex-col overflow-hidden"
     :style="panelStyle"
   >
-    <PanelHeader
-      :session-label="sessionLabel"
-      :session-dir="sessionDir"
-      :session-file="sessionFile"
-      :git-branch="gitBranch"
-      :git-indicator="gitIndicator"
-      :status="status"
-      :viewing-subagent="isViewingSubagent"
-      :subagent-label="subagentLabel"
-      :overlay-session-file="overlaySessionFile"
-      @open-git="emit('openGit')"
-      @toggle-drawer="emit('toggleDrawer')"
-      @back="onSubagentBack"
-    />
-
     <!-- 渲染分支对齐 NewTaskFlow 状态机（修恢复空 session 的 chip 死锁）：
          - messageCount>0 → 对话流
          - new-task landing（无 session 或 flow.state==='landing'）→ Landing（chip 合法）
@@ -42,24 +26,21 @@
     >
       <AlertCircle class="size-8 text-danger opacity-60" />
       <div class="space-y-1">
-        <p class="text-sm text-text">{{ t('panel.panel.sessionDead') }}</p>
+        <p v-if="restoreErrorCode === 'SESSION_NOT_FOUND'" class="text-sm text-text">{{ t('panel.panel.sessionFileLost') }}</p>
+        <p v-else class="text-sm text-text">{{ t('panel.panel.sessionDead') }}</p>
         <p class="text-xs text-neutral-dim">{{ t('panel.panel.sessionDeadHint') }}</p>
       </div>
-      <Button variant="default" size="sm" @click="onReviveSession">
+      <Button v-if="restoreErrorCode === 'SESSION_NOT_FOUND'" variant="ghost" size="sm" @click="onDeleteGhostSession">
+        <Trash2 class="mr-1.5 size-3.5" />
+        {{ t('panel.panel.deleteThisSession') }}
+      </Button>
+      <Button v-else variant="default" size="sm" @click="onReviveSession">
         <RotateCcw class="mr-1.5 size-3.5" />
         {{ t('panel.panel.reopen') }}
       </Button>
     </div>
 
-    <MessageStream v-else-if="effectiveSessionId && effectiveMessageCount > 0" :session-id="effectiveSessionId" />
-    <!-- overlay 态（subagent/agent call）但消息为空：agent call 历史文件只有 header（pi 延迟写入）或执行失败无输出 -->
-    <div
-      v-else-if="isViewingSubagent"
-      class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center"
-    >
-      <MessageSquare class="size-6 text-neutral-dim opacity-40" />
-      <p class="text-[12px] text-neutral-dim opacity-70">{{ t('panel.message.noAgentCall') }}</p>
-    </div>
+    <MessageStream v-else-if="props.sessionId && messageCount > 0" :session-id="props.sessionId" />
     <Landing
       v-else-if="!isSessionActive && isLandingView"
       :session-id="sessionId"
@@ -80,14 +61,18 @@
       <p class="text-[12px] text-neutral-dim opacity-70">{{ t('panel.panel.selectSession') }}</p>
     </div>
 
-    <!-- ③④ companion zones：progress / composer 垂直 6px 紧凑成「带」。
-         git 状态已移入 SideDrawer git tab（原 zone ⑤ 摘牌），此带仅 progress/composer。
-         ask-user 富交互（W2）：请求到达时 AskUserOverlay 覆盖 composer 位置（互斥），
-         对话历史全程可见，composer 消失输入禁止（不再走全屏 modal）。 -->
-    <div v-if="!isViewingSubagent" class="composer-band flex flex-shrink-0 flex-col gap-1.5 px-3.5 pb-3.5">
-      <!-- ③ progress-zone（composer 上方）：真实任务态未就绪时不渲染（组件内 v-if="state" 自隐藏） -->
-      <ProgressZone />
+    <!-- M17 对话流 widget 面板（todo/goal 等常驻状态卡，ViewHostStore 经 inject 消费）。
+         挂载条件：有 session 且非 dead——null session 无分区可枚举不渲染；dead session
+         主区已被重开占位接管，防状态矛盾；Landing 态（有 session 无消息）渲染，
+         保 session_start 即推 widget 的常驻首屏可见。 -->
+    <WidgetArea v-if="props.sessionId && !isSessionDead" :session-id="props.sessionId" />
 
+    <!-- ④ composer companion zone（③ progress-zone 已删——真实任务态未接入，state 恒 null
+         自隐藏死代码）。git 状态已移入 SideDrawer git tab（原 zone ⑤ 摘牌），此带仅 composer。
+         ask-user 富交互（W2）：请求到达时 AskUserOverlay 覆盖 composer 位置（互斥），
+         对话历史全程可见，composer 消失输入禁止（不再走全屏 modal）。
+         [U7] overlay 移除后 composer 常驻（不再 v-if="!isViewingSubagent"）。 -->
+    <div class="composer-band flex flex-shrink-0 flex-col gap-1.5 px-5 pb-3.5">
       <!-- ④ composer（FG5，S1/S2/S5/S6 主路径）/ ask-user overlay（互斥）。
            new-task landing 态由 Landing 内部渲染 composer 卡片，此处 band 不重复渲染
            （showPanelComposer：非 landing 才挂）。已绑空 session（恢复的僵尸空 session）
@@ -107,155 +92,56 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, AlertCircle, RotateCcw } from '@lucide/vue'
-import type { DerivedStatus } from '@/types'
-import type { GitIndicator } from '@/composables/features/useGitStatus'
+import { MessageSquare, AlertCircle, RotateCcw, Trash2 } from '@lucide/vue'
 import { isAskUserQuestion, type AskUserQuestion } from '@xyz-agent/extension-protocol'
-import PanelHeader from './PanelHeader.vue'
-import ProgressZone from './ProgressZone.vue'
+import { WidgetArea } from '@xyz-agent/ui'
 import MessageStream from './MessageStream.vue'
 import Composer from './Composer.vue'
 import { Button } from '@/components/ui/button'
 import Landing from '@/components/new-task/Landing.vue'
 import AskUserOverlay from '@/components/extension/ask-user/AskUserOverlay.vue'
-import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
-import { useSubagentStore } from '@/stores/subagent'
-import { useWorkflowStore } from '@/stores/workflow'
+import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { useToast } from '@/composables/useToast'
 import { useExtensionUI, askUserFilter } from '@/composables/useExtensionUI'
-import { getAgentCallFilePath } from '@/api/domains/session'
 
 const props = defineProps<{
   panelId: string
   sessionId: string | null
-  sessionLabel: string
+  /** 工作目录（Landing current-cwd 用） */
   sessionDir: string
-  /** session JSONL 绝对路径（pi 延迟写入窗口可能为空，PanelHeader 据此渲染短文件名） */
-  sessionFile?: string
+  /** git 分支名（Landing 用） */
   gitBranch?: string
-  /** git 脏状态指示（PanelContainer 统一提供，透传给 PanelHeader；hasRepo=false 不渲染 git 按钮） */
-  gitIndicator?: GitIndicator
-  status: DerivedStatus
-}>()
-
-const emit = defineEmits<{
-  /** 打开 SideDrawer git tab（PanelContainer 统一渲染抽屉，事件上抛） */
-  openGit: []
-  /** 切换 SideDrawer 开关（PanelContainer 统一渲染抽屉，事件上抛） */
-  toggleDrawer: []
 }>()
 
 const { t } = useI18n()
 const chat = useChatStore()
 const sessionStore = useSessionStore()
 const { error: toastError } = useToast()
-const subagentStore = useSubagentStore()
-const workflowStore = useWorkflowStore()
 
 const flow = useNewTaskFlow()
 
-/** overlay 视图标题：subagent 或 agent call 的摘要 */
-const SUBAGENT_ID_DISPLAY_LENGTH = 12
-const subagentLabel = computed(() => {
-  // agent call overlay
-  const agentCallId = workflowStore.getViewingAgentCallId(props.panelId)
-  if (agentCallId) {
-    return t('panel.overlay.agentCallId', { id: agentCallId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH) })
-  }
-  // subagent overlay
-  const record = props.sessionId ? subagentStore.getCurrentSubagent(props.panelId, props.sessionId) : null
-  if (!record) return t('panel.overlay.subagent')
-  return `${record.agent} · ${record.subagentId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH)}`
-})
+/** dead session 重开：显式调 useSidebarNew.restoreSession（setup 内解构，避免事件回调调 composable 触发 useI18n 报错） */
+const { restoreSession, retryHistory, deleteSession } = useSidebarNew()
 
-/** 返回主会话（subagent overlay 或 agent call overlay 均回退） */
-function onSubagentBack(): void {
-  if (workflowStore.isViewing(props.panelId)) {
-    // [M7 FR-4] backFromAgentCall 立即清 messages[agentcallVirtualId]（对称 subagent）
-    // [W2] 传 mainSessionId 清 mainSessionAgentCalls Set（防无界增长）
-    workflowStore.backFromAgentCall(
-      props.panelId,
-      (acsId) => chat.evictVirtualKey(acsId),
-      props.sessionId ?? undefined,
-    )
-  } else {
-    // [M7] backToMain 立即清 messages[virtualId] + tombstone 防终态复活
-    const subagentId = subagentStore.getViewingSubagentId(props.panelId)
-    subagentStore.backToMain(
-      props.panelId,
-      props.sessionId ?? undefined,
-      subagentId ?? undefined,
-      (sid) => chat.evictVirtualKey(sid),
-    )
-  }
-}
-
-/** Panel 卸载时停止 subagent streaming 订阅（防止泄漏） */
-onUnmounted(() => {
-  subagentStore.stopStream(props.panelId)
-})
+/** restore 失败的错误 code（ghost session 判据）：SESSION_NOT_FOUND 时显示删除入口 */
+const restoreErrorCode = ref<string | null>(null)
 
 /**
- * overlay 模式：viewing subagent 或 agent call 时用虚拟 session ID 渲染 MessageStream，
- * 否则用主 session ID。panel store 的 sessionId 从不被替换（主 session 保持高亮、文件视图不变）。
- * subagent overlay 优先于 agent call overlay（两者互斥，不会同时 active）。
+ * 当前 session 的消息数（驱动 MessageStream 渲染分支：有消息显对话流，无消息显 landing/空态）。
+ * [U7] overlay 移除后 Panel 恒展示主 session（effectiveSessionId 回归 props.sessionId），
+ * subagent/agent call 详情走 drawer SubagentTab，不再替换 Panel body。
  */
-const effectiveSessionId = computed(
-  () => subagentStore.getActiveSubagentVirtualId(props.panelId, props.sessionId)
-    ?? workflowStore.getActiveAgentCallVirtualId(props.panelId)
-    ?? props.sessionId,
-)
-
-/** 本 panel 是否正在查看 overlay（subagent 或 agent call） */
-const isViewingSubagent = computed(
-  () => subagentStore.isViewing(props.panelId) || workflowStore.isViewing(props.panelId),
-)
-
-/**
- * overlay 态当前展示的 JSONL 文件路径（PanelHeader 文件名按钮用）。
- * - subagent overlay：SubagentRecord.sessionFile（store 已持有，同步读）
- * - agent call overlay：经 getAgentCallFilePath RPC 拉取（trace 只有 sessionId，路径需 runtime 解析）
- * - 正常态（非 overlay）：undefined，PanelHeader 回落用主 sessionFile
- */
-const agentCallOverlayFile = ref('')
-const viewingAgentCallId = computed(() => workflowStore.getViewingAgentCallId(props.panelId))
-watch(
-  viewingAgentCallId,
-  async (agentCallId) => {
-    agentCallOverlayFile.value = ''
-    if (!agentCallId || !props.sessionId) return
-    // 展示型功能：RPC 失败（runtime 未启动/WS 断开）静默降级，按钮不显示即可
-    try {
-      agentCallOverlayFile.value = await getAgentCallFilePath(props.sessionId, agentCallId)
-     
-    } catch {
-      agentCallOverlayFile.value = ''
-    }
-  },
-  { immediate: true },
-)
-const overlaySessionFile = computed(() => {
-  if (subagentStore.isViewing(props.panelId) && props.sessionId) {
-    return subagentStore.getCurrentSubagent(props.panelId, props.sessionId)?.sessionFile ?? undefined
-  }
-  if (viewingAgentCallId.value) {
-    return agentCallOverlayFile.value || undefined
-  }
-  return undefined
-})
-
-/** subagent overlay 时的消息数（虚拟 session 的消息数） */
-const effectiveMessageCount = computed(() =>
-  effectiveSessionId.value ? chat.getMessages(effectiveSessionId.value).length : 0,
+const messageCount = computed(() =>
+  props.sessionId ? chat.getMessages(props.sessionId).length : 0,
 )
 
 // W1 useExtensionUI per-sessionId 订阅：本 Panel 绑定的 session 的 UI 请求队列。
-// B1 防重复入队：Panel 只收 askUser 请求（非 askUser 由 ExtensionUIDialog modal 处理）
+// B1 防重复入队：Panel 只收 askUser 请求（非 askUser 由 CompanionBand 处理）
 // landing 态 sessionId=null 时内部 null 守卫已处理，不订阅。
 const { currentAskUserRequest, respond: respondExtensionUI, cancel: cancelExtensionUI } =
   useExtensionUI(computed(() => props.sessionId), askUserFilter)
@@ -334,32 +220,40 @@ const historyError = computed(() =>
   props.sessionId ? chat.failedHistory.has(props.sessionId) : false,
 )
 
-/** Landing 重试 → useSidebar.retryHistory（#2 AC-2.6） */
+/** Landing 重试 → useSidebarNew.retryHistory（#2 AC-2.6） */
 function onRetryHistory(): void {
-  if (props.sessionId) void useSidebar().retryHistory(props.sessionId)
+  if (props.sessionId) void retryHistory(props.sessionId)
 }
 
-/** dead session「重新打开」：调 selectSession 触发 restore（重新 spawn pi），成功后 revive 重置 idle */
+/** dead session「重新打开」：调 useSidebarNew.restoreSession（显式 restore RPC），成功后内部已 revive */
 async function onReviveSession(): Promise<void> {
   if (!props.sessionId) return
+  restoreErrorCode.value = null
   try {
-    await useSidebar().selectSession(props.sessionId)
-    sessionStore.revive(props.sessionId)
+    await restoreSession(props.sessionId)
   } catch (e) {
+    const code = (e as Error & { code?: string }).code
+    restoreErrorCode.value = code ?? null
     const msg = e instanceof Error ? e.message : String(e)
     toastError(t('panel.panel.reopenFailed', { error: msg }))
   }
 }
 
-/** 激活标识（v2：单 panel 恒 active，无主从视觉态）。
- *  层级语义：MainPanel 是唯一 float-panel（bg-surface + border + shadow + radius）。
- *  Panel section 是它的内容区，单 panel 下 section 透明继承 MainPanel 的 surface。
- *  SideDrawer 是 workspace-body 级 flex 子项（与 Panel 各占一半并排）。 */
-const panelStateClass = computed(() => '')
+/** ghost session 删除：session 文件丢失（SESSION_NOT_FOUND）后用户选择删除该项 */
+async function onDeleteGhostSession(): Promise<void> {
+  if (!props.sessionId) return
+  try {
+    await deleteSession(props.sessionId)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(msg)
+  }
+}
 
 /**
  * Panel 底色 + --panel-bg CSS 变量（供子组件如 sticky turn-meta 消费，保证浮层底色与所在 panel 一致）。
- * 单 panel：透明继承 MainPanel 的 bg-surface，--panel-bg=surface 供子组件浮层对齐。
+ * section 透明继承 MainPanel 的 bg-surface，--panel-bg=surface 供子组件浮层对齐。
+ * header 已提升到 PanelContainer，本组件仅 body 区，无边框/圆角（融入统一外壳）。
  */
 const panelStyle = computed(() => ({ '--panel-bg': 'var(--surface)' }))
 </script>

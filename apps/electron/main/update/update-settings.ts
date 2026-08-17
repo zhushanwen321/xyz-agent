@@ -1,8 +1,9 @@
 /**
  * 升级设置存储读写 SSOT（Single Source Of Truth）。
  *
- * 持久化用户对升级行为的偏好设置，当前含「预下载开关」：
- * 开启后检测到新版时自动在后台下载安装包，用户点击更新时跳过下载等待直接进入替换重启。
+ * 持久化用户对升级行为的偏好设置，当前含「预下载开关」与「自动更新开关」：
+ * - preDownload：检测到新版时自动在后台下载安装包，用户点击更新时跳过下载等待直接进入替换重启
+ * - autoUpdate：启动时自动检查更新并提示下载（v6 demo 语义）
  *
  * 仿 proxy-config.ts 的 SSOT 模式：本模块只依赖 @xyz-agent/shared + node:fs/node:path，
  * 不静态依赖 electron，gateway 层（update-handlers）调用。
@@ -20,9 +21,11 @@ import { UPDATE_SETTINGS_FILE } from './constants.js'
  * 升级设置默认值。
  *
  * preDownload 默认 false：新用户不自动消耗流量/磁盘，需主动到设置页开启。
+ * autoUpdate 默认 false：默认不自动检查更新（保持现状行为，v6 demo 语义为启动时自动检查并提示下载）。
  */
 export const DEFAULT_UPDATE_SETTINGS: UpdateSettings = {
   preDownload: false,
+  autoUpdate: false,
 }
 
 /**
@@ -59,18 +62,26 @@ export function getUpdateSettings(): UpdateSettings {
     if (typeof obj.preDownload === 'boolean') {
       settings.preDownload = obj.preDownload
     }
+    if (typeof obj.autoUpdate === 'boolean') {
+      settings.autoUpdate = obj.autoUpdate
+    }
   }
   return settings
 }
 
 /**
- * 写入升级设置。
+ * 写入升级设置（局部更新语义）。
  *
  * 自动 mkdirSync 父目录（recursive）。best-effort：写入失败抛错由调用方决定容错
  * （gateway 层 IPC handler 已有 try/catch 包裹）。
+ *
+ * 合并语义：以现有设置（含默认值）为基底合并传入字段后整体写盘，
+ * 调用方只传要修改的字段（如仅 { preDownload } 或仅 { autoUpdate }），不会覆盖其他开关的持久化值。
  */
-export function setUpdateSettings(settings: UpdateSettings): void {
+export function setUpdateSettings(settings: Partial<UpdateSettings>): void {
   mkdirSync(path.dirname(UPDATE_SETTINGS_FILE), { recursive: true })
+  // 合并写入：读现有设置做基底，局部更新不丢其他字段
+  const merged: UpdateSettings = { ...getUpdateSettings(), ...settings }
   // eslint-disable-next-line no-magic-numbers -- 2 = JSON 缩进空格数（人类可读）
-  writeFileSync(UPDATE_SETTINGS_FILE, JSON.stringify(settings, null, 2))
+  writeFileSync(UPDATE_SETTINGS_FILE, JSON.stringify(merged, null, 2))
 }

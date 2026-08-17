@@ -7,24 +7,34 @@
  * message-converter 的 convertPiHistory + system/trash。
  * service 经此 port 访问这些 session 域操作，不直接 import 各 infra 模块。
  */
-import type { ISessionStore, ScannedSessionMeta, SessionOutcome } from '../../services/ports/session.js'
-import type { Message } from '@xyz-agent/shared'
+import type { ISessionStore, ScannedSessionMeta, SessionOutcome, SessionHeader, RebuiltHistory, ScanSessionsOptions } from '../../services/ports/session.js'
+import type { Message, SegmentsMetadataFile } from '@xyz-agent/shared'
+import type { PiSessionEntry } from './pi-protocol.js'
 import {
   scanPiSessions,
   persistSessionName,
   persistSessionEnd,
   persistPresetBinding,
+  persistProjectBinding,
   extractSessionOutcome,
   patchSessionCwd,
   invalidateSessionMetaCache,
+  invalidateScanDirCache,
+  parseSessionHeader,
+  persistHandedOff,
 } from './session-file-utils.js'
 import { refreshAll } from './pi-provider-store.js'
 import { convertPiHistory } from './message-converter.js'
+import { rebuildHistoryFromEntries } from './entry-tree-builder.js'
 import { trash } from '../system/trash.js'
 
 export class PiSessionStore implements ISessionStore {
-  scanSessions(): ScannedSessionMeta[] {
-    return scanPiSessions()
+  scanSessions(opts?: ScanSessionsOptions): ScannedSessionMeta[] {
+    return scanPiSessions(opts)
+  }
+
+  invalidateScanCache(): void {
+    invalidateScanDirCache()
   }
 
   refreshAll(): void {
@@ -43,6 +53,10 @@ export class PiSessionStore implements ISessionStore {
     persistPresetBinding(filePath, presetId)
   }
 
+  persistProjectBinding(filePath: string, projectId: string): void {
+    persistProjectBinding(filePath, projectId)
+  }
+
   extractSessionOutcome(filePath: string): SessionOutcome | null {
     return extractSessionOutcome(filePath)
   }
@@ -55,8 +69,24 @@ export class PiSessionStore implements ISessionStore {
     return patchSessionCwd(filePath, newCwd)
   }
 
-  convertHistory(raw: unknown[]): Message[] {
-    return convertPiHistory(raw)
+  convertHistory(raw: unknown[], entryIds?: string[]): Message[] {
+    // MF5：透传平行 entryIds 给 convertPiHistory，使文件路径产出的 user/assistant message
+    // 带 piEntryId（fork 定位用）。entryIds 与 raw 按 index 对齐（mapSessionEntries 产出）。
+    return convertPiHistory(raw, entryIds)
+  }
+
+  rebuildHistoryFromEntries(entries: unknown[], segmentsMetadata: SegmentsMetadataFile | null): RebuiltHistory {
+    // port 入参降级为 unknown[]（不暴露 PiSessionEntry），实现内 cast 回 PiSessionEntry[]
+    // 透传 infra 同名函数（TS 编译期类型擦除，运行时无断言开销）。
+    return rebuildHistoryFromEntries(entries as PiSessionEntry[], segmentsMetadata)
+  }
+
+  parseSessionHeader(filePath: string): SessionHeader | null {
+    return parseSessionHeader(filePath)
+  }
+
+  persistHandedOff(filePath: string, newSessionId: string): void {
+    persistHandedOff(filePath, newSessionId)
   }
 
   trash(path: string): void {

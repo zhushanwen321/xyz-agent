@@ -19,6 +19,7 @@ import { join, dirname, basename, resolve } from 'node:path'
 import { getNpmDir, getExtensionsDir } from '../pi/pi-paths.js'
 import { canonicalizePath } from '../../utils/path-utils.js'
 import { readSettings } from '../pi/pi-settings-store.js'
+import { mandatoryExtensions } from '@xyz-agent/shared'
 import type { IExtensionResolver, ExtensionPaths, DiscoveredExtension, ExtensionSource } from '../../services/ports/installer.js'
 
 // re-export ExtensionPaths 供历史 import 此文件的消费者使用（类型归属 ports）
@@ -111,7 +112,7 @@ export class ExtensionResolver implements IExtensionResolver {
           const pkgDir = join(bundledNmDir, entry)
           if (!statSync(pkgDir).isDirectory()) continue
           if (!this.isValidPiExtension(pkgDir)) continue
-          result.set(this.normalizeExtName(entry), pkgDir)
+          result.set(this.readExtName(pkgDir), pkgDir)
         }
       } catch (e) {
         log.warn(`[extension-resolver] failed to scan packaged node_modules: ${e}`)
@@ -146,8 +147,7 @@ export class ExtensionResolver implements IExtensionResolver {
 
       if (!this.isValidPiExtension(pkgDir)) continue
 
-      const extName = this.normalizeExtName(pkgName)
-      result.set(extName, pkgDir)
+      result.set(this.readExtName(pkgDir), pkgDir)
     }
 
     return result
@@ -181,29 +181,55 @@ export class ExtensionResolver implements IExtensionResolver {
 
       if (!this.isValidPiExtension(pkgDir)) continue
 
-      const extName = this.normalizeExtName(pkgName)
-      result.set(extName, pkgDir)
+      result.set(this.readExtName(pkgDir), pkgDir)
     }
 
     return result
   }
 
   /**
-   * 扫描 bundled extensions
+   * 扫描 bundled extensions（builtin pi-* 包）
    *
-   * dev 模式：projectRoot = apps/electron（runtime 子进程 cwd），bundled extensions
-   * 在 repo root 的 resources/pi/agent/extensions/（与 apps/electron 平级的 resources/ 目录）。
-   * repo root 相对 apps/electron 是 ../..
+   * dev/build 加载路径分流（见 docs/architecture/builtin-extension-dev-build-split.md）：
+   *   - packaged（build）：读 electron-builder extraResources 拷贝的 staged bundle
+   *     （Resources/extensions/@zhushanwen/<pkg>/，esbuild 全量 bundle 的自包含 index.js）。
+   *   - dev：读源码目录 extensions/<pkg>/（repo root，pi 原生加载 .ts），
+   *     改源码后新建 session 即生效，无需跑 prepare-builtin-extensions.sh。
+   *
+   * dev 源码扫描只保留 mandatory 包（对齐 build staged 集合）：源码目录 extensions/ 含
+   * 17 个 @zhushanwen/pi-* 包，build 只 bundle 其中 10 个 mandatory（prepare 脚本按
+   * mandatory-extensions.json SSOT bundle）。若 dev 全量加载源码，会多出 evolve-daily
+   *（每日跑 Python 分析）等非 mandatory 包，与 build 产物集不一致。故按 mandatory SSOT
+   * 过滤，保证 dev/build 加载同一集合，仅路径分流（源码 .ts vs bundle .js）。这属「builtin
+   * 源集合界定」（静态定义），非 disabled/enabled/tier 运行时策略过滤（后者归 extension-filter）。
+   *
+   * [HISTORICAL] dev 模式历经三阶段：(1) 读 repoRoot/resources/pi/agent/extensions/
+   *（仅含 bridge，isValidPiExtension 返回 false，恒返回空）；(2) 改读 staged bundle
+   *（apps/electron/resources/extensions/@zhushanwen/），但 dev/build 同源导致改源码需跑
+   * prepare-builtin-extensions.sh 全量 bundle ~40s + 重启 dev；(3) 现行 dev 读源码，
+   * 彻底消除 dev 的 bundle 成本。
    */
   scanBundledExtensions(projectRoot: string, packaged: boolean): ExtensionMap {
-    if (packaged) return new Map()
-
     const result: ExtensionMap = new Map()
-    const bundledDir = join(projectRoot, '..', '..', 'resources', 'pi', 'agent', 'extensions')
 
-    if (!existsSync(bundledDir)) return result
+    if (packaged) {
+      // build：读 staged bundle（projectRoot = process.resourcesPath）
+      const builtinDir = join(projectRoot, 'extensions', '@zhushanwen')
+      if (!existsSync(builtinDir)) return result
+      this.scanDirectory(builtinDir, result, 'bundled')
+      return result
+    }
 
-    this.scanDirectory(bundledDir, result, 'bundled')
+    // dev：读源码目录（projectRoot = apps/electron，repoRoot = projectRoot/../..）。
+    // join(projectRoot, '..', '..', 'extensions') 运行时解析为 <repoRoot>/extensions。
+    const sourceExtDir = join(projectRoot, '..', '..', 'extensions')
+    if (!existsSync(sourceExtDir)) return result
+    this.scanDirectory(sourceExtDir, result, 'bundled')
+    // 只保留 mandatory 包，对齐 build staged 集合（见方法注释 + 设计文档 §2.3）
+    const mandatoryNames = new Set(mandatoryExtensions.map(e => e.name))
+    for (const name of [...result.keys()]) {
+      if (!mandatoryNames.has(name)) result.delete(name)
+    }
     return result
   }
 
@@ -233,8 +259,7 @@ export class ExtensionResolver implements IExtensionResolver {
         continue
       }
       if (!this.isValidPiExtension(extPath)) continue
-      const extName = this.normalizeExtName(basename(extPath))
-      result.set(extName, extPath)
+      result.set(this.readExtName(extPath), extPath)
     }
 
     return result
@@ -421,33 +446,25 @@ export class ExtensionResolver implements IExtensionResolver {
   }
 
   /**
-   * 规范化 extension name 用于去重。
-   * 保留 scope，仅去掉 pi- 前缀：
-   * - @zhushanwen/pi-goal → @zhushanwen/goal
-   * - pi-subagents → subagents
-   * - @scope/subagents → @scope/subagents
+   * 从扩展目录读 package.json.name 作为 deduplicate 的去重 key（扩展身份唯一源）。
    *
-   * NOTE: Behavioral change from old version — scope is now preserved.
-   * Old: @zhushanwen/pi-goal → goal (scope stripped)
-   * New: @zhushanwen/pi-goal → @zhushanwen/goal (scope kept)
-   * This allows scoped and unscoped packages with the same base name
-   * to coexist without dedup collision.
-   */
-  /** Normalize extension name: keep scope, strip pi- prefix.
-   *  e.g. "@zhushanwen/pi-goal" → "@zhushanwen/goal", "pi-goal" → "goal"
+   * [HISTORICAL] 此前用 normalizeExtName（保留 scope、去 pi- 前缀）做去重 key，但 bundled 源
+   * 遍历 @zhushanwen 目录子项拿到的是无 scope 目录名（pi-ask-user），而 settings/npm 源用
+   * 完整 scoped 包名（@zhushanwen/pi-ask-user），两者经 normalizeExtName 产生不同 key
+   *（ask-user vs @zhushanwen/ask-user），导致同一扩展跨源去重失败、列表出现重复条目。
    *
-   *  BREAKING CHANGE NOTE: versions prior to this change stripped the scope
-   *  ("@zhushanwen/pi-goal" → "goal"). Existing disabled-packages.json entries
-   *  may use the old format. If users report extensions re-enabling after upgrade,
-   *  check disabled-packages.json for stale keys and run a one-time migration.
+   * 根治：去重 key 统一为 package.json.name，与 disabled key（resolveExtension 的
+   * `npm:${meta.name}`）、ExtensionInfo.name 全链路一致。name 缺失/非 string 时 fallback
+   * basename(dir)，与 resolveExtension 的 typeof 守卫对齐。
    */
-  private normalizeExtName(name: string): string {
-    const parts = name.split('/')
-    const last = parts[parts.length - 1].replace(/^pi-/, '')
-    if (parts.length > 1) {
-      return parts.slice(0, -1).join('/') + '/' + last
+  private readExtName(dir: string): string {
+    try {
+      const raw = readFileSync(join(dir, 'package.json'), 'utf-8')
+      const pkg = JSON.parse(raw) as { name?: unknown }
+      return typeof pkg.name === 'string' ? pkg.name : basename(dir)
+    } catch {
+      return basename(dir)
     }
-    return last
   }
 
   /** 扫描目录下的子目录，跳过 shared/ */
@@ -463,7 +480,7 @@ export class ExtensionResolver implements IExtensionResolver {
           continue
         }
         if (!this.isValidPiExtension(entryPath)) continue
-        result.set(this.normalizeExtName(entry), entryPath)
+        result.set(this.readExtName(entryPath), entryPath)
       }
       log.debug(`[extension-resolver] ${label}: found ${result.size} extensions in ${dir}`)
     } catch (e) {

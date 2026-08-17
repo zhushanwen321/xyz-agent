@@ -15,7 +15,7 @@ import { createPinia, setActivePinia } from 'pinia'
 // 第一次 read 延迟，第二次立即返回
 const mockFileRead = vi.fn()
 const mockGitGetDiff = vi.fn()
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   file: { read: (...args: unknown[]) => mockFileRead(...(args as [string, string?])) },
   git: { getDiff: (...args: unknown[]) => mockGitGetDiff(...(args as [string, string])) },
 }))
@@ -23,7 +23,7 @@ vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ list: [] }),
 }))
 
-import { useDetailPane } from '@/composables/features/useDetailPane'
+import { useDetailPane } from '@/composables/features/file-tree/useDetailPane'
 import { useFileTreeStore } from '@/stores/fileTree'
 
 beforeEach(() => {

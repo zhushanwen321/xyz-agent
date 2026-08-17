@@ -15,7 +15,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ref } from 'vue'
-import { useUrlBar } from '@/composables/features/useUrlBar'
+import { useUrlBar } from '@/composables/features/url-bar/useUrlBar'
 import { useToast } from '@/composables/useToast'
 
 describe('useUrlBar', () => {

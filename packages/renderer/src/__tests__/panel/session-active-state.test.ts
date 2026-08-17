@@ -18,14 +18,13 @@ import SessionItem from '@/components/sidebar/SessionItem.vue'
 import Panel from '@/components/panel/Panel.vue'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
-import { useSessionDerivations, invalidateStatusCache } from '@/composables/features/useSessionDerivations'
+import { useSessionDerivations, invalidateStatusCache } from '@/composables/features/chat/useSessionDerivations'
 import { DOT_CLASS } from '@/composables/logic/sessionStatus'
 import type { SessionSummary } from '@xyz-agent/shared'
 
 /** Panel 子组件 stub（隔离 PanelHeader/MessageStream 等的重渲染，聚焦被测逻辑） */
 const panelStubs = {
   PanelHeader: { template: '<div />' },
-  ProgressZone: { template: '<div />' },
   MessageStream: { template: '<div data-testid="msg-stream" />' },
   Composer: { template: '<div data-testid="composer" />' },
   Landing: { template: '<div data-testid="landing">landing</div>' },
@@ -65,7 +64,7 @@ beforeEach(() => {
 })
 
 describe('E1: 提交后空窗期 pending 态（核心 bug 回归）', () => {
-  it('addPendingSend 后 isActive=true → derivedStatus=pending，渲染 ArrowUpCircle 图标', () => {
+  it('addPendingSend 后 isActive=true → derivedStatus=pending，渲染 running badge（§5.6A）', () => {
     const chat = useChatStore()
     const sessionStore = useSessionStore()
     const { derivedStatus } = useSessionDerivations()
@@ -81,13 +80,14 @@ describe('E1: 提交后空窗期 pending 态（核心 bug 回归）', () => {
     const status = derivedStatus('s1').value
     expect(status).toBe('pending')
 
-    // mount SessionItem 传 pending status → 渲染 ArrowUpCircle 图标
+    // mount SessionItem 传 pending status → 渲染 running badge（spec §5.6A D12 列表主行范式）
     const wrapper = mount(SessionItem, {
       props: { session, active: true, status },
     })
-    const icon = wrapper.find('[data-testid="sidebar-session-icon"]')
-    expect(icon.exists()).toBe(true)
-    expect(icon.attributes('data-icon')).toBe('ArrowUpCircle')
+    // 列表主行不再用语义图标
+    expect(wrapper.find('[data-testid="sidebar-session-icon"]').exists()).toBe(false)
+    // pending → running badge（脉动小条）
+    expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(true)
 
     // 清理 pendingSend timer 避免 leak
     chat.clearPendingSend('s1')
@@ -117,11 +117,12 @@ describe('E2: 非焦点 session 提交后 pending 态（activeId 限定已移除
     const statusB = derivedStatus('B').value
     expect(statusB).toBe('pending')
 
-    // mount SessionItem(B) 传 pending → 渲染 ArrowUpCircle 图标
+    // mount SessionItem(B) 传 pending → 渲染 running badge（spec §5.6A D12）
     const wrapper = mount(SessionItem, {
       props: { session: sessionB, active: false, status: statusB },
     })
-    expect(wrapper.find('[data-testid="sidebar-session-icon"]').attributes('data-icon')).toBe('ArrowUpCircle')
+    expect(wrapper.find('[data-testid="sidebar-session-icon"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(true)
 
     chat.clearPendingSend('B')
   })

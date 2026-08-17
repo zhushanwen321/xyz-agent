@@ -1,7 +1,7 @@
 <template>
   <!--
     容器组件 · Overview（overview/spec.md，L1 独立 Region · 多会话鸟瞰）。
-    激活时覆盖整个 workspace（main）区，sidebar 持久（ADR-0022）。
+    激活时覆盖整个 workspace（main）区，sidebar 持久（ADR-0023）。
     取向 = 统筹/监控（网格、信息密集），区别于 Session List 的导航/切换。
 
     v1 范围（spec §8.5）：卡片网格骨架 + 进入（sidebar 按钮，FG3 已建）+ 基本退出。
@@ -69,8 +69,8 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
-import { useSidebar } from '@/composables/features/useSidebar'
-import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { useSessionDerivations } from '@/composables/features/chat/useSessionDerivations'
 import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
 import SessionCard from './SessionCard.vue'
 
@@ -78,7 +78,7 @@ const { t } = useI18n()
 const { formatKbd } = usePlatformShortcut()
 const navigation = useNavigationStore()
 const session = useSessionStore()
-const { selectSession, newSession, focusedSessionId } = useSidebar()
+const { selectSession, newSession, focusedSessionId } = useSidebarNew()
 const { derivedStatus, sessionDigest } = useSessionDerivations()
 
 /** 状态点派生（D6）：features 层读 chat+session store 派生 5 态 */
@@ -91,7 +91,7 @@ function digestOf(id: string) {
   return sessionDigest(id).value
 }
 
-/** 点卡片载入 session 回 chat view（ADR-0022 退出路径之一） */
+/** 点卡片载入 session 回 chat view（ADR-0023 退出路径之一） */
 async function onOpen(id: string): Promise<void> {
   await selectSession(id)
 }

@@ -1,8 +1,8 @@
 # cw-tool 侧 store/workspace 解耦协调需求（差异文档）
 
-> **定位**：本文是 xyz-agent 侧（`@zhushanwen/pi-cw-tool`，cw-cli 的 pi extension 封装层）对「cw store 归属与 workspace 解耦」问题的**差异补充**。**引擎层完整设计 SSOT** 在 coding-workflow 仓库：`fix-cw-cwd-worktree/docs/cw-store-workspace-decoupling.md`（commit `aa4949b`，含自身对抗审查）。本文不重述引擎层决策，只记录 xyz-agent 侧独有的：cw-tool 协调改动、版本门控契约、本仓实测数据、ADR-0045 修订、反哺引擎层的两条。
+> **定位**：本文是 xyz-agent 侧（`@zhushanwen/pi-cw-tool`，cw-cli 的 pi extension 封装层）对「cw store 归属与 workspace 解耦」问题的**差异补充**。**引擎层完整设计 SSOT** 在 coding-workflow 仓库：`fix-cw-cwd-worktree/docs/cw-store-workspace-decoupling.md`（commit `aa4949b`，含自身对抗审查）。本文不重述引擎层决策，只记录 xyz-agent 侧独有的：cw-tool 协调改动、版本门控契约、本仓实测数据、ADR-0061 修订、反哺引擎层的两条。
 >
-> **一句话结论**：cw-tool 退回纯封装——删除 `detectRepoWorkspace`（`cw-runner.ts:96-160`）与 `--workspace` 透传逻辑（含只读守卫 `:225`）；加运行时版本门控（cw-tool 经 PATH 裸调 `cw`、`package.json` 零 dependencies，npm peerDep 管不到全局 cw 版本，错配组合会割裂回归）；配套将 ADR-0045 标记 Superseded。引擎层落地 store 归一化 + 迁移后，cw-tool 这两组改动即可。
+> **一句话结论**：cw-tool 退回纯封装——删除 `detectRepoWorkspace`（`cw-runner.ts:96-160`）与 `--workspace` 透传逻辑（含只读守卫 `:225`）；加运行时版本门控（cw-tool 经 PATH 裸调 `cw`、`package.json` 零 dependencies，npm peerDep 管不到全局 cw 版本，错配组合会割裂回归）；配套将 ADR-0061 标记 Superseded。引擎层落地 store 归一化 + 迁移后，cw-tool 这两组改动即可。
 
 ---
 
@@ -10,7 +10,7 @@
 
 cw-tool 把 cw-cli 包成 4 个 role-restricted 工具（`cw_planning` / `cw_wave` / `cw_dev` / `cw_review`）供递归编排 agent 调用。它在两点上与引擎层解耦方案耦合，这两点是 xyz-agent 侧独有、引擎层文档只列「协调需求」而具体实现落在本仓：
 
-1. **`detectRepoWorkspace` + `--workspace` 透传**（ADR-0045 实现）：cw-tool 当前探测 `git-common-dir` 取 `dirname` 后传 `--workspace`。bare repo 下 `dirname(.bare)` = workspace 容器（非任何 worktree），是当前 bug 的所在。引擎层方案 A 要求归一化下沉 cw-cli，cw-tool 退回纯封装（不再探测、不传 `--workspace`）。
+1. **`detectRepoWorkspace` + `--workspace` 透传**（ADR-0061 实现）：cw-tool 当前探测 `git-common-dir` 取 `dirname` 后传 `--workspace`。bare repo 下 `dirname(.bare)` = workspace 容器（非任何 worktree），是当前 bug 的所在。引擎层方案 A 要求归一化下沉 cw-cli，cw-tool 退回纯封装（不再探测、不传 `--workspace`）。
 2. **PATH 裸调 cw + 零依赖声明**：`cw-spawn.ts:50` `spawn("cw", args)`，`package.json` 的 `dependencies: {}`、`peerDependencies` 仅声明 pi（`@earendil-works/pi-coding-agent` / `pi-ai` / `typebox`），**完全没声明对 `@zhushanwen/coding-workflow` 的依赖**。npm peerDep 机制管不到用户全局安装的 cw 版本，cw-tool 与 cw-cli 的版本协调只能靠运行时门控。
 
 ---
@@ -57,7 +57,7 @@ cw-tool 把 cw-cli 包成 4 个 role-restricted 工具（`cw_planning` / `cw_wav
 
 **门控机制（唯一可行路径）**：cw-tool 运行时探测 cw-cli 归一化能力，不满足则保留旧 `--workspace` 行为兜底 + stderr 引导升级 cw：
 - 探测方式：`cw version` 输出 ≥ 含 S1 的版本号；或特性检测（cw 对探针 flag/命令的响应）
-- 兜底语义：探测失败时 cw-tool 退回 ADR-0045 行为（传 `--workspace`），并 stderr 提示「检测到 cw-cli 版本不支持 store 自动归一化；请升级 cw-cli（`@zhushanwen/coding-workflow`）以启用 bare repo worktree 支持」
+- 兜底语义：探测失败时 cw-tool 退回 ADR-0061 行为（传 `--workspace`），并 stderr 提示「检测到 cw-cli 版本不支持 store 自动归一化；请升级 cw-cli（`@zhushanwen/coding-workflow`）以启用 bare repo worktree 支持」
 
 > 注：引擎层 §4.1 建议「peerDep 或运行时门控二选一」。本仓实测表明 peerDep 不可行（cw-tool 根本没声明对 cw-cli 的依赖、走 PATH 裸调），**只能运行时门控**——这是 xyz-agent 侧对引擎层建议的细化。
 
@@ -70,18 +70,18 @@ cw-tool 把 cw-cli 包成 4 个 role-restricted 工具（`cw_planning` / `cw_wav
 | 类别 | 数量 | 说明 |
 |---|---|---|
 | xyz-agent bare repo worktree 级 store | 5 | 各 worktree 一个（bash 在 worktree 内跑 cw 建的） |
-| xyz-agent 容器级「store」 | 1（空目录） | `__...__xyz-agent-workspace/`——CwStore 构造 `mkdirSync` 副作用，`store.json` 从未写入，0 unit（ADR-0045 dirname bug 产物） |
+| xyz-agent 容器级「store」 | 1（空目录） | `__...__xyz-agent-workspace/`——CwStore 构造 `mkdirSync` 副作用，`store.json` 从未写入，0 unit（ADR-0061 dirname bug 产物） |
 | 对应 worktree **已删**的 store | ≈50% | `feat-optimize-subagent-workflow-load`(13 units)、`fix-workflow-input-agent-md`(7)、`fix-workflow-subagent-thinking-level`(3) 等无法 probe git |
 
 **对引擎层的佐证价值**：
-- 「容器级空目录」证明 ADR-0045 dirname bug 从未成功写入任务（`store.json` 不存在），不是「空 store」而是「无 store」
+- 「容器级空目录」证明 ADR-0061 dirname bug 从未成功写入任务（`store.json` 不存在），不是「空 store」而是「无 store」
 - 「50% worktree 已删」是引擎层决策 7② 归属硬问题（已删 worktree 无法 probe git）的现实佐证——归属不能靠 probe，须 remoteUrl fallback + 人工认领
 
 ---
 
-## §6 ADR-0045 修订
+## §6 ADR-0061 修订
 
-ADR-0045（`docs/architecture/adr/0045-cw-store-repo-level-keying.md`）状态改为 **Superseded by 引擎层方案 A**：
+ADR-0061（`docs/adr/0061-cw-store-repo-level-keying.md`）状态改为 **Superseded by 引擎层方案 A**：
 
 - **继承成立的核心洞察**：store 应 repo 级共享（所有 worktree 一份）、用 `git-common-dir` 做 repo 标识
 - **修正的实现错误**：① 多余的 `dirname`（common-dir 本身即标识，dirname 在 bare repo 到容器、在 separate-git-dir 到非 repo 根）；② 单一 `--workspace` 兼任 repo 标识 + 工作树两角色（bare repo 结构性不可能）；③ 归一化放 cw-tool 调用层而非 cw-cli 引擎层（导致 bash/cw-tool 割裂无法消除）

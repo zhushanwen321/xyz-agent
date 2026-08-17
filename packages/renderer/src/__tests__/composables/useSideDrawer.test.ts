@@ -1,16 +1,17 @@
 /**
- * useSideDrawer per-session 控制态隔离单测（W3: U1-U9）。
+ * useSideDrawer per-session 控制态隔离单测（W3: U1-U10）。
  *
  * 验证从模块级单例 isOpen/activeTab/docked 重构为 per-session Map 分区后：
- * - U1 (AC-1): 跨 session 不干扰——后台 session 事件不弹当前 drawer
+ * - U1 (AC-1): 跨 session 不干扰——切走/切回不互相污染
  * - U2 (AC-2): 切回恢复三态（isOpen/activeTab/docked）
- * - U3 (AC-3): pendingOpen 切回消费（自动开 tasks）
- * - U4 (AC-4): tasks docked 不污染其他 session
- * - U5 (AC-5): deleteSession 清理分区 + pendingOpen
+ * - U4 (AC-4): docked 不污染其他 session
+ * - U5 (AC-5): deleteSession 清理分区
  * - U6 (AC-6): 手动关后切回不被重开（无新事件）
- * - U7 (AC-7): 快速来回切幂等（pendingOpen 消费后不重复触发）
- * - U8 (AC-8): 手动 open 清 pendingOpen
  * - U9 (AC-9): 双 panel standby 无独立 drawer 状态
+ * - U10 (AC-10): sid 稳定下手动 open
+ *
+ * [P4 s5 drawer-widget-removal] U3 (pendingOpen 切回消费)/ U7 (快速来回切幂等)/
+ * U8 (手动 open 清 pendingOpen) 已删：pendingOpen 机制随 tasks 域移除（PluginViewContainer 承接）。
  *
  * 运行：npx vitest run src/__tests__/composables/useSideDrawer.test.ts
  * 禁止 node:test / tsx --test。
@@ -48,13 +49,7 @@ vi.mock('@/stores/panel', () => ({
   }),
 }))
 
-import {
-  useSideDrawer,
-  resetSideDrawer,
-  setPendingOpenForSid,
-  consumePendingOpen,
-  getPendingOpenForSid,
-} from '@/composables/features/useSideDrawer'
+import { useSideDrawer, resetSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
 
 /** 切换当前 focused session（模拟 selectSession 改 active panel 的 session 绑定） */
@@ -64,35 +59,34 @@ function focusSession(sid: string | null): void {
 
 beforeEach(() => {
   // 注意：不调 __clearSessionCleanupRegistryForTest()——useSideDrawer 是模块级单例，
-  // controlState + pendingOpen 的 cleanup 注册在模块加载时完成（一次），跨 test 保留是正确的。
+  // controlState 的 cleanup 注册在模块加载时完成（一次），跨 test 保留是正确的。
   // clear 反而会丢掉单例的 cleanup 注册，导致 U5 的 triggerSessionCleanups 验证失效。
-  // 状态隔离靠 resetSideDrawer（清分区 + pendingOpen）。
+  // 状态隔离靠 resetSideDrawer（清分区）。
   mockFocusedSessionId.value = null
   mockPanels.value = [{ id: 'panel-root', sessionId: null }]
   resetSideDrawer()
 })
 
 describe('useSideDrawer U1 (AC-1) 跨 session 不干扰', () => {
-  it('session A 有 pending tasks 事件，用户在 B，B 的 drawer 不被弹开', () => {
+  it('session A 的 drawer 打开，用户在 B，B 的 drawer 不被弹开', () => {
+    focusSession('A')
+    useSideDrawer().open('git')
+
     focusSession('B')
     const { isOpen, activeTab } = useSideDrawer()
-
-    // 后台 session A 的 tasks 事件到达（A !== focused B）→ 只置 pendingOpen，不直接 open
-    setPendingOpenForSid('A')
 
     // B 的 drawer 不被弹开
     expect(isOpen.value).toBe(false)
     expect(activeTab.value).toBe('terminal')
-    // A 的 pendingOpen 已记录
-    expect(getPendingOpenForSid('A')).toBe(true)
   })
 })
 
 describe('useSideDrawer U2 (AC-2) 切回恢复三态', () => {
-  it('A 的 drawer 开/tasks/docked，切 B 再切回 A 全恢复', () => {
+  it('A 的 drawer 开/docked，切 B 再切回 A 全恢复', () => {
     focusSession('A')
     const drawer = useSideDrawer()
-    drawer.open('tasks') // tasks tab 强制 docked=true（仅 A 分区）
+    drawer.open('git')
+    drawer.toggleDock() // A 分区 docked=true
 
     // 切到 B（B 独立操作，不影响 A 分区）
     focusSession('B')
@@ -104,31 +98,16 @@ describe('useSideDrawer U2 (AC-2) 切回恢复三态', () => {
     focusSession('A')
     const drawerA = useSideDrawer()
     expect(drawerA.isOpen.value).toBe(true)
-    expect(drawerA.activeTab.value).toBe('tasks')
+    expect(drawerA.activeTab.value).toBe('git')
     expect(drawerA.docked.value).toBe(true)
   })
 })
 
-describe('useSideDrawer U3 (AC-3) pendingOpen 切回消费', () => {
-  it('后台 C 事件置 pendingOpen[C]，selectSession(C) 消费后自动开 tasks 并清标记', () => {
+describe('useSideDrawer U4 (AC-4) docked 不污染其他 session', () => {
+  it('A 的 drawer docked=true，切到 B，B 的 docked 是自己记忆(false)', () => {
     focusSession('A')
-    setPendingOpenForSid('C')
-
-    // 用户切到 C（selectSession 内部会调 consumePendingOpen）
-    focusSession('C')
-    consumePendingOpen('C')
-    const drawer = useSideDrawer()
-
-    expect(drawer.isOpen.value).toBe(true)
-    expect(drawer.activeTab.value).toBe('tasks')
-    expect(getPendingOpenForSid('C')).toBe(false)
-  })
-})
-
-describe('useSideDrawer U4 (AC-4) tasks docked 不污染其他 session', () => {
-  it('A 的 tasks tab docked=true，切到 B，B 的 docked 是自己记忆(false)', () => {
-    focusSession('A')
-    useSideDrawer().open('tasks') // tasks 强制 docked=true（仅 A 分区）
+    useSideDrawer().open('git')
+    useSideDrawer().toggleDock() // A docked=true（仅 A 分区）
 
     focusSession('B')
     const drawerB = useSideDrawer()
@@ -141,17 +120,13 @@ describe('useSideDrawer U4 (AC-4) tasks docked 不污染其他 session', () => {
 })
 
 describe('useSideDrawer U5 (AC-5) deleteSession 清理分区', () => {
-  it('triggerSessionCleanups(A) 清掉 A 控制态分区 + pendingOpen[A]', () => {
+  it('triggerSessionCleanups(A) 清掉 A 控制态分区', () => {
     focusSession('A')
-    useSideDrawer().open('tasks')
-    setPendingOpenForSid('A')
-    expect(getPendingOpenForSid('A')).toBe(true)
+    useSideDrawer().open('git')
 
     // session 销毁编排
     triggerSessionCleanups('A')
 
-    // pendingOpen[A] 已清
-    expect(getPendingOpenForSid('A')).toBe(false)
     // A 分区重置：切到 A 应是默认态（isOpen=false）
     focusSession('A')
     expect(useSideDrawer().isOpen.value).toBe(false)
@@ -167,45 +142,9 @@ describe('useSideDrawer U6 (AC-6) 手动关不被重开', () => {
     drawer.close()
 
     focusSession('B')
-    focusSession('A') // 切回，无 pendingOpen（无新事件）
-    consumePendingOpen('A') // selectSession 会调，但 pendingOpen[A]=false
+    focusSession('A') // 切回，无新事件
 
     expect(useSideDrawer().isOpen.value).toBe(false)
-  })
-})
-
-describe('useSideDrawer U7 (AC-7) 快速来回切幂等', () => {
-  it('A pendingOpen=true，A→B→A 第二次到 A 不重复 open', () => {
-    setPendingOpenForSid('A')
-
-    // 第一次切到 A：消费 pendingOpen
-    focusSession('A')
-    consumePendingOpen('A')
-    expect(useSideDrawer().isOpen.value).toBe(true)
-    expect(getPendingOpenForSid('A')).toBe(false)
-
-    // 关掉 A 的 drawer，模拟用户看完后关
-    useSideDrawer().close()
-
-    // 切 B 再切回 A：pendingOpen 已清，不应重开
-    focusSession('B')
-    focusSession('A')
-    consumePendingOpen('A')
-
-    expect(useSideDrawer().isOpen.value).toBe(false)
-    expect(getPendingOpenForSid('A')).toBe(false)
-  })
-})
-
-describe('useSideDrawer U8 (AC-8) 手动 open 清 pendingOpen', () => {
-  it('A 有 pendingOpen=true，手动 open("git") 后清标记', () => {
-    focusSession('A')
-    setPendingOpenForSid('A')
-    expect(getPendingOpenForSid('A')).toBe(true)
-
-    useSideDrawer().open('git') // 手动 open（任意 tab）
-
-    expect(getPendingOpenForSid('A')).toBe(false)
   })
 })
 

@@ -18,7 +18,9 @@ function makeDescriptor(overrides: Partial<PluginDescriptor> = {}): PluginDescri
     permissions: [],
     engines: { 'xyz-agent': '*' },
     pluginPath: '/tmp/test-plugin',
-    source: 'external',
+    // 默认 built-in：正常激活路径 fixture（激活锁只锁 external，见下方锁语义 describe）。
+    // 锁语义用例显式传 source: 'external'。
+    source: 'built-in',
     extensionDependencies: [],
     ...overrides,
   }
@@ -242,5 +244,40 @@ describe('PluginActivator', () => {
 
     await activator.activatePlugin('nonexistent', { type: 'onStartupFinished' }, host)
     expect(activator.getState('nonexistent')).toBe(undefined)
+  })
+})
+
+describe('external plugin activation hard lock（§6.6 激活侧，IF3）', () => {
+  // ── TC-A: external + 开关 true（sandbox 闭环已落地）→ 正常激活 ────────
+  it('TC-A: external plugin + EXTERNAL_PLUGIN_ENABLED=true（翻转后）→ 正常激活 (assignWorker called, state ACTIVE)', async () => {
+    const activator = new PluginActivator()
+    const desc = makeDescriptor({ pluginId: 'ext-allowed', source: 'external' })
+    activator.registerDescriptors([desc])
+
+    const host = createMockHost(activator, 'activated')
+
+    // 翻转后：external 来源不再被硬锁跳过（sandbox 子进程 + ESM loader 兜底隔离，
+    // 见 plugin-security.ts [翻转记录]）。开关回退 false 时本 guard 重新生效（fail-closed）。
+    await activator.activatePlugin('ext-allowed', { type: 'onStartupFinished' }, host)
+
+    // 正常进入激活路径
+    expect(activator.getState('ext-allowed')).toBe('ACTIVE')
+    expect(host.assignWorker).toHaveBeenCalledTimes(1)
+    expect(host.loadPlugin).toHaveBeenCalledTimes(1)
+  })
+
+  // ── TC-B: built-in 来源不受影响，正常激活 ─────────────────────
+  it('TC-B: built-in plugin unaffected → normal activation path (assignWorker called, state ACTIVE)', async () => {
+    const activator = new PluginActivator()
+    const desc = makeDescriptor({ pluginId: 'builtin-ok', source: 'built-in' })
+    activator.registerDescriptors([desc])
+
+    const host = createMockHost(activator, 'activated')
+
+    await activator.activatePlugin('builtin-ok', { type: 'onStartupFinished' }, host)
+
+    expect(activator.getState('builtin-ok')).toBe('ACTIVE')
+    expect(host.assignWorker).toHaveBeenCalled()
+    expect(host.loadPlugin).toHaveBeenCalled()
   })
 })

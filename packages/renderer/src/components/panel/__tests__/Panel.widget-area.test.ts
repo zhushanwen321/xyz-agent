@@ -1,0 +1,159 @@
+/**
+ * Panel.widget-area.test.ts —— M17 Panel 挂载 WidgetArea 链路测试（design.json TC8/TC9）。
+ *
+ * 覆盖：
+ *  - TC8 WidgetArea 在 MessageStream 与 composer-band 之间（DOM 顺序断言，消息分支链后）
+ *  - TC9 挂载条件：①isSessionDead=true 不渲染；②sessionId=null 不渲染（IF4）
+ *
+ * 策略（design WQ1 resolution）：mount 真实 Panel（非 shallowMount）+ stub 重型子组件
+ * （MessageStream/Composer/Landing/AskUserOverlay），WidgetArea 不 stub——经 @xyz-agent/ui
+ * 真实渲染，保 DOM 顺序断言可行。store/composable mock 对齐 MessageStream.wire.test.ts
+ * 模式（vi.hoisted + vi.mock 模块替换，隔离 store 副作用）。
+ *
+ * 运行：cd packages/renderer && npx vitest run src/components/panel/__tests__/Panel.widget-area.test.ts
+ */
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { defineComponent, h, ref } from 'vue'
+import { createPinia } from 'pinia'
+import type { GuiComponent } from '@xyz-agent/extension-protocol'
+import Panel from '../Panel.vue'
+import { VIEW_HOST_SOURCE_KEY, type ViewHostSource } from '@xyz-agent/ui/extension-host'
+
+// ── mock 面（Panel script 依赖的最小闭合集）──────────────────────────
+
+/** chat store mock：Panel 只消费 getMessages/isActive/isCompacting/failedHistory */
+const chatMock = vi.hoisted(() => ({
+  getMessages: vi.fn(() => [] as unknown[]),
+  isActive: vi.fn(() => false),
+  isCompacting: vi.fn(() => false),
+  failedHistory: new Map<string, boolean>(),
+}))
+vi.mock('@/stores/chat', () => ({ useChatStore: () => chatMock }))
+
+/** session store mock：Panel 只消费 list（isSessionDead 判据 status === 'dead'） */
+const sessionMock = vi.hoisted(() => ({
+  list: [] as Array<{ id: string; status: string }>,
+}))
+vi.mock('@/stores/session', () => ({ useSessionStore: () => sessionMock }))
+
+/** new-task flow mock：state 恒 idle（非 landing 态，TC8 走 MessageStream/空对话分支） */
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
+  useNewTaskFlow: () => ({ state: ref('idle') }),
+}))
+
+/** sidebar mock：Panel setup 内解构 restoreSession/retryHistory/deleteSession */
+vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
+  useSidebarNew: () => ({
+    restoreSession: vi.fn(async () => {}),
+    retryHistory: vi.fn(async () => {}),
+    deleteSession: vi.fn(async () => {}),
+  }),
+}))
+
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ error: vi.fn(), info: vi.fn(), warning: vi.fn() }),
+}))
+
+/** useExtensionUI mock：无 ask-user 请求（currentAskUserRequest 恒 undefined，band 渲染 Composer） */
+const extensionUIMock = vi.hoisted(() => ({
+  currentAskUserRequest: { value: undefined as unknown },
+  respond: vi.fn(),
+  cancel: vi.fn(),
+}))
+vi.mock('@/composables/useExtensionUI', () => ({
+  useExtensionUI: () => extensionUIMock,
+  askUserFilter: () => true,
+}))
+
+// ── 固定 widget source（WidgetArea 经 inject 消费，TC8 真实渲染一张卡）──
+
+const WIDGET_GUI: GuiComponent = { type: 'ansi-text', props: { lines: ['widget todo line'] } }
+const widgetSource: ViewHostSource = {
+  getViewIds: (sessionId: string) => (sessionId === 's1' ? ['todo'] : []),
+  getView: (sessionId: string, viewId: string) =>
+    sessionId === 's1' && viewId === 'todo'
+      ? { viewId: 'todo', pluginId: 'p1', guiTree: [WIDGET_GUI], updatedAt: 1 }
+      : undefined,
+}
+
+/** MessageStream stub（render 函数，不依赖运行时模板编译器）——DOM 顺序断言的左侧锚点 */
+const MessageStreamStub = defineComponent({
+  name: 'MessageStream',
+  render: () => h('div', { 'data-testid': 'message-stream-stub' }),
+})
+
+function mountPanel(sessionId: string | null) {
+  return mount(Panel, {
+    props: { panelId: 'p1', sessionId, sessionDir: '/tmp/x' },
+    global: {
+      plugins: [createPinia()],
+      provide: { [VIEW_HOST_SOURCE_KEY as symbol]: widgetSource },
+      stubs: {
+        MessageStream: MessageStreamStub,
+        Composer: true,
+        Landing: true,
+        AskUserOverlay: true,
+      },
+    },
+  })
+}
+
+beforeEach(() => {
+  chatMock.getMessages.mockReturnValue([])
+  chatMock.isActive.mockReturnValue(false)
+  chatMock.isCompacting.mockReturnValue(false)
+  chatMock.failedHistory.clear()
+  sessionMock.list = []
+})
+
+describe('Panel 挂载 WidgetArea（M17）', () => {
+  it('TC8: session 有效且非 dead → widget-area 位于 MessageStream 与 composer-band 之间', async () => {
+    // 有消息（messageCount>0 → MessageStream 分支命中）+ session 非 dead
+    chatMock.getMessages.mockReturnValue([{ id: 'm1' }])
+    sessionMock.list = [{ id: 's1', status: 'idle' }]
+
+    const wrapper = mountPanel('s1')
+    await wrapper.vm.$nextTick()
+
+    // WidgetArea 真实渲染（未 stub）：容器 + 卡 + widgetKey 标签
+    const area = wrapper.find('[data-testid="widget-area"]')
+    expect(area.exists()).toBe(true)
+    expect(wrapper.find('[data-testid="widget-card"]').exists()).toBe(true)
+    expect(area.text()).toContain('todo')
+
+    // DOM 顺序（section 直接子元素比较）：message-stream-stub < widget-area < composer-band。
+    // Panel 是 fragment 根组件（根级注释 + section），wrapper.element 是 test-utils 包的
+    // 外层 DIV，需先定位 section 再取其子元素。
+    const section = wrapper.find('section')
+    expect(section.exists()).toBe(true)
+    const kids = Array.from(section.element.children)
+    const idxOf = (pred: (el: Element) => boolean): number => kids.findIndex(pred)
+    const streamIdx = idxOf((el) => el.getAttribute('data-testid') === 'message-stream-stub')
+    const widgetIdx = idxOf((el) => el.getAttribute('data-testid') === 'widget-area')
+    const bandIdx = idxOf((el) => el.classList.contains('composer-band'))
+
+    expect(streamIdx).toBeGreaterThanOrEqual(0) // MessageStream 分支命中（防 Landing 误渲染）
+    expect(bandIdx).toBeGreaterThanOrEqual(0)
+    expect(widgetIdx).toBeGreaterThan(streamIdx)
+    expect(widgetIdx).toBeLessThan(bandIdx)
+  })
+
+  it('TC9①: isSessionDead=true → widget-area 不渲染（dead 占位接管主区）', async () => {
+    // dead 优先于消息分支：即使有消息也渲染 dead 占位，WidgetArea 挂载条件不含 dead
+    chatMock.getMessages.mockReturnValue([{ id: 'm1' }])
+    sessionMock.list = [{ id: 's1', status: 'dead' }]
+
+    const wrapper = mountPanel('s1')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-testid="widget-area"]').exists()).toBe(false)
+  })
+
+  it('TC9②: sessionId=null → widget-area 不渲染（null session 无分区可枚举）', async () => {
+    const wrapper = mountPanel(null)
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-testid="widget-area"]').exists()).toBe(false)
+  })
+})

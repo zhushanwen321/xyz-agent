@@ -44,7 +44,7 @@ describe('WorkflowDetail', () => {
     ]
     const wrapper = mount(WorkflowDetail, { props: { workflow: makeRecord(calls) } })
 
-    const headerTexts = wrapper.findAll('[data-testid="workflow-detail"] .text-\\[10px\\].font-medium.uppercase')
+    const headerTexts = wrapper.findAll('[data-testid="workflow-detail"] .text-\\[10px\\].font-medium')
     // 至少渲染了 phase header（BUILD / TEST）
     const phaseNames = headerTexts.map((h) => h.text())
     expect(phaseNames).toContain('BUILD')
@@ -63,11 +63,11 @@ describe('WorkflowDetail', () => {
     const cards = wrapper.findAll('[data-testid="workflow-agent-call"]')
     expect(cards).toHaveLength(2)
 
-    // 不应出现 'OTHER' phase header（uppercase tracked 文本里不含 OTHER）
-    const upperTexts = wrapper.findAll('.uppercase.tracking-wide')
-    const phaseHeaders = upperTexts.filter((el) => el.text() !== '')
-    // scriptName 容器不带 uppercase tracking-wide，phase header 才带
-    // 无 phase 时 phase header v-if=false，不应渲染
+    // 不应出现 'OTHER' phase header（phase 名 span 里不含 OTHER）
+    // phase 名 span = .text-[10px].font-medium（WorkflowDetail 内唯一，去 uppercase 后改用此稳定选择器）
+    const phaseNameSpans = wrapper.findAll('.text-\\[10px\\].font-medium')
+    const phaseHeaders = phaseNameSpans.filter((el) => el.text() !== '')
+    // 无 phase 时 phase header v-if=false，phase 名 span 不应渲染
     expect(phaseHeaders.length).toBe(0)
   })
 

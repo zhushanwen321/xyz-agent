@@ -22,8 +22,8 @@ import { UpdateError } from '../update/types.js'
 
 /** 合法的 mac asset（GitHub 域名 + https + 64 位 hex sha256） */
 const VALID_MAC = {
-  name: 'xyz-agent-mac-arm64.zip',
-  downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/xyz-agent-mac-arm64.zip',
+  name: 'TaiJi-mac-arm64.zip',
+  downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-mac-arm64.zip',
   size: 1000,
   sha256: 'a'.repeat(64),
 }

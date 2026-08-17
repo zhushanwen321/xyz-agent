@@ -12,6 +12,7 @@ import {
   type GuiComponentType,
   type GuiComponentProps,
   type GuiRenderResult,
+  type WidgetMeta,
   PROTOCOL_VERSION,
 } from './types'
 import { GUI_WIDGET_MARKER } from './markers'
@@ -28,14 +29,17 @@ export function isGuiCapable(ctx: GuiContext): boolean {
 }
 
 /**
- * 构造 GuiRenderResult，放进 details.__gui__。
+ * 构造 GuiRenderResult。当前主用途是 guiSetWidget 的载荷（M17 对话流 widget 面板）；
+ * details.__gui__（tool result 通道）为遗留兼容路径，todo/goal 已不再使用。
  * stripUndefined 确保序列化不含 undefined（JSON.stringify 会丢弃 undefined 字段）。
  */
-export function guiResult(component: GuiComponent): GuiRenderResult {
-  return {
+export function guiResult(component: GuiComponent, meta?: WidgetMeta): GuiRenderResult {
+  const result: GuiRenderResult = {
     v: PROTOCOL_VERSION,
     component: stripUndefined(component) as GuiComponent,
   }
+  if (meta !== undefined) result.meta = stripUndefined(meta) as WidgetMeta
+  return result
 }
 
 /**
@@ -50,21 +54,23 @@ export function guiComponent<T extends GuiComponentType>(
 }
 
 /**
- * 设置 GUI widget。RPC 模式下用 marker 编码 GuiComponent JSON 进 string[]，
- * runtime event-adapter 检测 marker 解码为结构化 WS 帧。
- * TUI 模式下此函数无操作（extension 应在 TUI 分支调原生 ctx.ui.setWidget 传 Component factory）。
+ * 设置 GUI widget。RPC 模式下用 marker 编码 GuiRenderResult JSON 进 string[]，
+ * runtime event-adapter 检测 marker 解码为结构化 WS 帧（component + meta）。
+ * 本函数无 isGui 守卫（仅查 ctx.ui?.setWidget 存在性），调用方需先判定
+ * isGuiCapable(ctx)——TUI 模式误调会把 marker 编码行推给原生 widget 造成乱码。
  *
- * 传 undefined 清除 widget。
+ * meta（标题/状态/进度）由宿主壳层渲染成统一 head；extension 不再用 card 原语
+ * header 表达这些。传 undefined 清除 widget。
  */
 export function guiSetWidget(
   ctx: GuiContext,
   key: string,
-  component: GuiComponent | undefined
+  result: GuiRenderResult | undefined
 ): void {
   if (!ctx.ui?.setWidget) return
 
-  if (component) {
-    const encoded = [GUI_WIDGET_MARKER + JSON.stringify(stripUndefined(component))]
+  if (result) {
+    const encoded = [GUI_WIDGET_MARKER + JSON.stringify(stripUndefined(result))]
     ctx.ui.setWidget(key, encoded)
   } else {
     ctx.ui.setWidget(key, undefined)
@@ -102,6 +108,18 @@ export function isGuiComponent(value: unknown): value is GuiComponent {
     && obj.props !== null
     && obj.props !== undefined
     && typeof obj.props === 'object'
+}
+
+/**
+ * v1.1 wire 格式校验：判断 unknown 值是否为合法 GuiRenderResult 信封
+ * （v === PROTOCOL_VERSION + component 是合法 GuiComponent）。meta 可选不校验深度。
+ * event-adapter 据此区分 v1.1 信封（解包 component + meta）与 v1 裸 component
+ * （旧版 extension 发出的 wire 格式，兼容窗口内两种并存）。
+ */
+export function isGuiRenderResult(value: unknown): value is GuiRenderResult {
+  if (value === null || typeof value !== 'object') return false
+  const obj = value as Record<string, unknown>
+  return obj.v === PROTOCOL_VERSION && isGuiComponent(obj.component)
 }
 
 // ── 内部工具 ──

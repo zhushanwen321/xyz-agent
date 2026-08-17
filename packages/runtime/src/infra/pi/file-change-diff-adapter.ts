@@ -1,28 +1,38 @@
 /**
  * FileChangeDiffAdapter — IFileChangeDiff port 的 infra 实现。
  *
- * 薄包装 file-change-reconciler 的三个纯函数，适配 port 接口签名（FileChangeSnapshot=unknown）。
+ * W18（perf 03 D4-5）采集收编：snapshotGitStatus / numstat 委托注入的 IGitStateService
+ * （异步 execFile + in-flight 单飞 + 非仓库负缓存，W16 基础设施），本 adapter 不再 spawn
+ * 任何子进程；diffSnapshots / computeLineCounts 转发 file-change-reconciler 的纯函数。
  * 组合根注入 EventInterpreter，使 service 层不直接 import infra（[runtime-three-layer-design.md] 铁律）。
  */
 import type { FileChange } from '@xyz-agent/shared'
-import type { IFileChangeDiff, FileChangeSnapshot } from '../../services/ports/file-change-diff.js'
+import type { IFileChangeDiff, FileChangeSnapshot, NumstatMap } from '../../services/ports/file-change-diff.js'
+import type { IGitStateService } from '../../services/ports/git-state.js'
 import {
-  snapshotGitStatus,
   diffSnapshots,
   computeLineCounts,
 } from './file-change-reconciler.js'
 import type { StatusSnapshot } from './file-change-reconciler.js'
 
 export class FileChangeDiffAdapter implements IFileChangeDiff {
-  snapshotGitStatus(cwd: string): FileChangeSnapshot {
-    return snapshotGitStatus(cwd)
+  constructor(private readonly gitState: IGitStateService) {}
+
+  async snapshotGitStatus(cwd: string): Promise<FileChangeSnapshot> {
+    // IGitStateService.snapshotStatus 返回 StatusSnapshot（具体 Map|null），port 侧以
+    // 不透明 unknown 透传给 interpreter（其只持有/透传，不解构）。
+    return this.gitState.snapshotStatus(cwd)
   }
 
-  diffSnapshots(baseline: FileChangeSnapshot, current: FileChangeSnapshot): FileChange[] {
-    return diffSnapshots(baseline as StatusSnapshot, current as StatusSnapshot)
+  async numstat(cwd: string): Promise<NumstatMap> {
+    return this.gitState.numstat(cwd)
   }
 
-  computeLineCounts(cwd: string, changes: FileChange[], writeContents?: Map<string, string>): void {
-    computeLineCounts(cwd, changes, writeContents)
+  diffSnapshots(current: FileChangeSnapshot): FileChange[] {
+    return diffSnapshots(current as StatusSnapshot)
+  }
+
+  computeLineCounts(changes: FileChange[], numstatMap: NumstatMap, writeContents?: Map<string, string>): void {
+    computeLineCounts(changes, numstatMap, writeContents)
   }
 }

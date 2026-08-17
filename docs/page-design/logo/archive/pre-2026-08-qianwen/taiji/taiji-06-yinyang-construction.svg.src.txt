@@ -1,0 +1,2 @@
+url: https://upload.wikimedia.org/wikipedia/commons/d/da/YinYang-construction.svg
+source: Wikimedia Commons (API query)

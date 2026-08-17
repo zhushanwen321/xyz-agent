@@ -21,6 +21,7 @@
  */
 
 import { execSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -34,9 +35,15 @@ const WORKTREE_ROOT = path.resolve(__dirname, '../../..');
 const WORKSPACE_ROOT = path.resolve(WORKTREE_ROOT, '..');
 
 const SHARED_DIST = path.join(WORKSPACE_ROOT, '.electron-dist');
-// pnpm hoisted 模式（node-linker=hoisted）：electron 包被提升到 worktree 根 node_modules，
-// 不在 apps/electron/node_modules/ 下。从根查找。
-const ELECTRON_MODULE = path.join(WORKTREE_ROOT, 'node_modules/electron');
+// [HISTORICAL] ada6c0466 把 .npmrc 从 hoisted 切到 isolated 后，electron 不再提升到
+// worktree 根 node_modules，而是在 .pnpm/electron@x.y.z/node_modules/electron/。
+// 旧实现写死 WORKTREE_ROOT/node_modules/electron，isolated 下 readVersion() 读 package.json
+// 即 ENOENT，dev 启动崩在 electron-ensure（先于 process-control.ts 的 tsx 解析执行）。
+// 正确做法：createRequire 从本脚本所在包（apps/electron，electron 的声明方）按 Node 解析算法
+// 定位真实路径——与 supervisor 的 tsx 解析（process-control.ts 的 require.resolve）同思路，
+// isolated → .pnpm/electron@x.y.z/...；hoisted → worktree 根。跨 linker 模式稳定。
+const __require = createRequire(import.meta.url);
+const ELECTRON_MODULE = path.dirname(__require.resolve('electron/package.json'));
 const DIST_LINK = path.join(ELECTRON_MODULE, 'dist');
 const PATH_TXT = path.join(ELECTRON_MODULE, 'path.txt');
 

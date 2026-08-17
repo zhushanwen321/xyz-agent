@@ -10,12 +10,16 @@ export default [
       'tools/*.cjs',
       'vendor/**',
       '.pi/**',
+      // 临时/历史 demo 目录（.tmp 已 gitignore，v6 是重构前的遗留 demo）
+      '.tmp/**',
       // 构建产物（目录重构后：apps/electron + packages/*）
       'apps/electron/dist/**',
       'apps/electron/renderer/dist/**',
+      'apps/electron/renderer/dist-new/**',
       'packages/*/dist/**',
       'apps/electron/preload/preload.js',
       'apps/electron/resources/pi/**',
+      'apps/electron/resources/extensions/**',
       // .xyz-harness 是设计文档/骨架代码（spec/plan/code-skeleton），非项目源码，不参与 lint
       '.xyz-harness/**',
       // playwright 测试产物（trace/报告是工具生成的压缩 JS，非项目源码，已被 .gitignore）
@@ -40,6 +44,15 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL] runtime 的 .cjs 文件（plugin-esm-loader.cjs 等）是 Node CJS 模块，
+  // require() 是唯一导入方式——no-require-imports 规则对 .cjs 是误报（2026-08-05 添加，
+  // sandbox ESM loader 落地时确认：tsup entry 直接打包 .cjs 源文件，无 TS 转换层）。
+  {
+    files: ['packages/runtime/**/*.cjs'],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
   // [HISTORICAL] runtime 核心服务聚合点：event-adapter（pi 事件→前端消息的唯一适配层）、
   // extension-service（扩展生命周期 + 路径解析 + 热重载）、session-service（session 生命周期/历史/
   // fork/agentcall 的 facade）。三者都是本子系统的唯一聚合中心，职责内聚但行数超 500。
@@ -51,6 +64,17 @@ export default [
       'packages/runtime/src/services/extension-service.ts',
       'packages/runtime/src/services/session/session-service.ts',
     ],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
+  // [HISTORICAL] renderer markdown 渲染唯一适配层：markdown-it 配置 + fence 规则覆盖 +
+  // filepath core rule + KaTeX + segments 拆分 + D-5 增量渲染（findStableBoundary/
+  // renderIncremental，2026-08-16 W22 落地）。职责内聚（都消费同一 markdown-it 单例与
+  // MarkdownSegment 协议），行数超 500。拆分需先定增量协议归属（W23 消费方对接后），
+  // 属独立重构任务。短期 max-lines override 避免阻塞，长期应拆分。
+  {
+    files: ['packages/renderer/src/composables/logic/markdown.ts'],
     rules: {
       'max-lines': 'off',
     },
@@ -139,8 +163,24 @@ export default [
   // 承载 form/localModels/headerRows 状态 + test/discover/save 编排 + 模型/headers CRUD +
   // compat 编辑器展开态 + isDirty 快照 + 过期刷新 watch。职责内聚但函数体超 300 行。
   // 与 chat.ts setup 同理：唯一聚合中心，max-lines-per-function 规则不适用，override 避免误报。
+  // [HISTORICAL] arch-fix-v2 归位：useProviderEdit 迁至 packages/core/src/domain/settings/（M1a 新包），
+  // files 模式补新路径（旧 renderer 路径文件已删，仅保留作迁移记录）。
   {
-    files: ['packages/renderer/src/composables/features/useProviderEdit.ts'],
+    files: [
+      'packages/renderer/src/composables/features/useProviderEdit.ts',
+      'packages/core/src/domain/settings/use-provider-edit.ts',
+    ],
+    rules: {
+      'max-lines-per-function': 'off',
+    },
+  },
+  // [HISTORICAL] createChatStore 是 core 域 chat store 的唯一 setup 函数（自 renderer stores/chat.ts 迁入，
+  // P3 chat 域绞杀 w4）。与 renderer chat.ts 同性质——唯一聚合中心，setup 天然是单一大函数，
+  // max-lines-per-function 规则不适用（项目已裁定该场景为误报，对齐 renderer chat.ts 同款 override）。
+  // B6 *Impl 消除（FR2 内联）后函数体 345 行；深模块化已由 streaming-state-machine 承担（FR1），
+  // 不再为绕行数拆分模块级函数（B6 反模式）。
+  {
+    files: ['packages/core/src/domain/chat/store.ts'],
     rules: {
       'max-lines-per-function': 'off',
     },
@@ -166,6 +206,42 @@ export default [
     ],
     rules: {
       'max-lines': 'off',
+    },
+  },
+  // [HISTORICAL] core 包纯净性强制（AC2，renderer-rebuild v2 §11.4 验收基准）：
+  // core 零 `node:` / 零 window.electronAPI / 零直接 localStorage/WebSocket（lint 强制）。
+  // 平台能力（KVStorage/WebSocketFactory/ipc）经 PlatformPort 注入，禁止绕过。
+  // overrides 按 packages/core/src 路径限定，不触碰 renderer/ui/mobile 存量（ES2）。
+  // 新增规则时必须先确认 core 现有代码零命中（2026-08-03 审计：零实际使用，仅注释提及）。
+  {
+    files: ['packages/core/src/**/*.{ts,vue}'],
+    rules: {
+      'no-restricted-globals': ['error', 'window', 'localStorage'],
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            { group: ['node:*'], message: 'core 包禁止 node: import——平台能力经 PlatformPort 注入' },
+            { group: ['ws'], message: 'core 包禁止直连 ws 包——WebSocket 经 PlatformPort.webSocket.create' },
+            { group: ['electron'], message: 'core 包禁止 import electron——ipc 经 PlatformPort' },
+            // [HISTORICAL] AC10 跨域铁律（W5 drawer-boundaries-gate，FR7 终验收）：
+            // domain 内文件禁止 import 任何「@xyz-agent/core/domain/<域>/<内部模块>」包名路径（含同域内部路径——
+            // 域内应走相对路径）。合法形态：单层 '@xyz-agent/core/domain/<域>'（index.ts 公开 API，
+            // minimatch * 不跨 / 故单层不匹配下方 pattern）或 '@xyz-agent/core'（包入口 index.ts）。
+            // 相对路径跨域（深度可变，patterns 无法表达）由 scripts/check-domain-boundaries.sh 兜底。
+            // 2026-08-04 审计：domain 下零包名内部路径 import，规则落地零命中。
+            { group: ['@xyz-agent/core/domain/*/*'], message: 'AC10 跨域铁律：domain 内禁 import 域内部模块（包名形式）——经 @xyz-agent/core/domain/<域> 公开 index API 或 @xyz-agent/core 包入口消费' },
+            { group: ['@xyz-agent/core/domain/*/**/*'], message: 'AC10 跨域铁律：domain 内禁 import 域内部深层模块（包名形式）——经公开 index API 消费' },
+          ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'NewExpression[callee.name="WebSocket"]',
+          message: 'core 包禁止 new WebSocket——经 PlatformPort.webSocket.create 创建',
+        },
+      ],
     },
   },
   // [HISTORICAL] subagent-workflow factory（src/index.ts）是 extension 的唯一装配点：

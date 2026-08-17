@@ -65,7 +65,8 @@ function makeDescriptor(overrides: Partial<PluginDescriptor> = {}): PluginDescri
     permissions: [],
     engines: { 'xyz-agent': '*' },
     pluginPath: '/tmp/plugins/test-plugin/index.js',
-    source: 'external',
+    // 默认 built-in：热重载机制测试与激活锁（IF3）正交，锁只拦 external。
+    source: 'built-in',
     extensionDependencies: [],
     ...overrides,
   }

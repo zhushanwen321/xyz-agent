@@ -45,10 +45,10 @@ const sidebarMocks = vi.hoisted(() => ({
   loadSessions: vi.fn(() => Promise.resolve()),
   syncSessionToPanel: vi.fn(),
 }))
-vi.mock('@/composables/features/useSidebar', async () => {
+vi.mock('@/composables/features/sidebar/useSidebarNew', async () => {
   const { ref } = await import('vue')
   return {
-    useSidebar: () => ({
+    useSidebarNew: () => ({
       ...sidebarMocks,
       focusedSessionId: ref<string | null>(null),
       focusedSession: ref(null),
@@ -104,28 +104,25 @@ vi.mock('@/stores/workflow', () => ({
 vi.mock('@/stores/navigation', () => ({
   useNavigationStore: () => ({ push: vi.fn(), current: { value: { view: 'chat' } }, stack: [] }),
 }))
-vi.mock('@/stores/command', () => ({
-  useCommandStore: () => ({ appCommands: [] }),
+vi.mock('@/composables/features/command/useCommandStore', () => ({
+  useCommandStore: () => ({
+    appCommands: { value: [] },
+    shortcutOverrides: { value: {} },
+    pendingSlash: { value: null },
+    clearPendingSlash: vi.fn(),
+  }),
 }))
 
 // ── mock composables ──
-vi.mock('@/composables/features/useChat', () => ({ useChat: () => ({ abort: vi.fn() }) }))
-vi.mock('@/composables/features/useSessionDerivations', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({ useChat: () => ({ abort: vi.fn() }) }))
+vi.mock('@/composables/features/chat/useSessionDerivations', () => ({
   useSessionDerivations: () => ({ derivedStatus: () => ({ value: 'done' }) }),
 }))
-vi.mock('@/composables/features/useSubagentListSync', () => ({ useSubagentListSync: vi.fn() }))
-vi.mock('@/composables/features/useWorkflowListSync', () => ({ useWorkflowListSync: vi.fn() }))
-vi.mock('@/composables/features/useSidebarSubagentActions', () => ({
+vi.mock('@/composables/features/chat/useSubagentListSync', () => ({ useSubagentListSync: vi.fn() }))
+vi.mock('@/composables/features/chat/useWorkflowListSync', () => ({ useWorkflowListSync: vi.fn() }))
+vi.mock('@/composables/features/sidebar/useSidebarSubagentActions', () => ({
   useSidebarSubagentActions: () => ({ onSelectSubagent: vi.fn(), onCancelSubagent: vi.fn(), onRetrySubagents: vi.fn() }),
 }))
-vi.mock('@/composables/features/useSearchModal', async () => {
-  const { ref } = await import('vue')
-  return {
-    // W5：isOpen 必须是真实 Vue ref（Sidebar 模板 v-model:open="isOpen" 传给 SearchModal 的
-    // Boolean prop open），裸 { value } 对象会触发 "Invalid prop: Expected Boolean, got Object"。
-    useSearchModal: () => ({ isOpen: ref(false), open: vi.fn(), close: vi.fn() }),
-  }
-})
 vi.mock('@/composables/usePlatformShortcut', () => ({ usePlatformShortcut: () => ({ formatKbd: () => '⌘K' }) }))
 
 // ── mock api/events（onMounted 的 loadSessions / app.info 订阅）──

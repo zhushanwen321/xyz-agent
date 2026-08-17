@@ -1,12 +1,13 @@
 // Client → Runtime message types
 
-import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig, ScannedSkillInfo, ScannedAgentInfo } from './provider'
+import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig, ScannedSkillInfo, ScannedAgentInfo, BuiltinProviderTemplate, ProviderId } from './provider'
 import type { SessionGroup, SessionSummary } from './session'
 import type { FileChange, ChangeSetStatus, Message } from './message'
 import type { FileNode } from './file-tree'
 // 领域 DTO 已下沉到各自领域文件（E2 架构候选）：protocol.ts 仅保留 type→payload 映射 SSOT，
 // 领域形状（ExtensionInfo / GitStatusResult / PluginInfo …）按领域就近归属。
 import type { ExtensionInfo, RecommendedExtension, ExtensionInteractMethod } from './extension'
+import type { ProjectStoreState } from './project'
 import type { GitStatusResult } from './git'
 import type { PluginInfo } from './plugin'
 import type { RecentWorkspaceRecord } from './workspace'
@@ -19,6 +20,7 @@ import type {
   ProviderImportPreview,
   ProviderImportResult,
 } from './migration'
+import type { SegmentsMetadataEntry } from './message-metadata'
 
 // ── Client → Runtime message types
 
@@ -40,8 +42,8 @@ export interface CommandSourceInfo {
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
 export type ClientMessageType =
-  | 'session.create' | 'session.delete' | 'session.deleteByCwd' | 'config.sessions' | 'session.switch' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
-  | 'session.compact' | 'session.rename' | 'session.fork'
+  | 'session.create' | 'session.delete' | 'session.deleteByCwd' | 'config.sessions' | 'session.switch' | 'session.restore' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
+  | 'session.compact' | 'session.rename' | 'session.fork' | 'session.setProject'
   | 'session.handoff' | 'session.abortHandoff'
   // runtime-message-bus（slice:runtime-message-bus，wave:protocol-seq）：
   // session.subscribe 订阅某 session 的 live 事件流（bus.publish 推送的带 seq 消息），
@@ -52,6 +54,10 @@ export type ClientMessageType =
   | 'session.getSubagents' | 'session.getSubagentHistory'
   | 'session.getWorkflows' | 'session.getAgentCallHistory' | 'session.getAgentCallFilePath'
   | 'session.workflowAction' | 'session.subagentAction'
+  // wave:runtime-patch ipc-converge-a3 W2：业务持久化写迁 WS（session 数据单一出口归 runtime）。
+  // session.writeImage 粘贴截图落地 attachments；session.migrateImage landing tmpdir→attachments 迁移；
+  // session.writeSegments 追加/覆盖 segments.json sidecar。原 main IPC handler，现 runtime session-service。
+  | 'session.writeImage' | 'session.migrateImage' | 'session.writeSegments'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'message.bash' | 'message.abortBash'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
@@ -77,12 +83,14 @@ export type ClientMessageType =
   | 'plugin.executeCommand'
   | 'plugin.config.get' | 'plugin.config.set'
   | 'plugin.uiResponse'
+  | 'plugin.mountPoints.sync'
   | 'file.read'
   | 'file.tree' | 'file.tree.expand' | 'file.search'
   | 'git.diff'
   | 'file.write.create' | 'file.write.rename' | 'file.write.delete'
   | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.checkoutCwd' | 'git.createBranch'
   | 'workspace.listRecent' | 'workspace.record' | 'workspace.detectBare' | 'workspace.detect'
+  | 'project.load' | 'project.save'
   | 'worktree.create' | 'worktree.listBranches' | 'worktree.list'
   | 'terminal.spawn' | 'terminal.write' | 'terminal.resize' | 'terminal.kill' | 'terminal.attach'
   | 'config.getTerminalConfig' | 'config.setTerminalConfig'
@@ -102,9 +110,22 @@ export type ClientMessageType =
   // 迁移：检测本机其他 agent（Claude/Codex/Pi/ZCode）的 skill/agent 配置目录。
   // 只读检测，不读文件内容（安全）。reply config.sourcesDetected。
   | 'config.detectSources'
+  // wave 2：列出内置 provider 模板（import generated JSON，无参只读）。reply config.builtinProviders。
+  | 'config.listBuiltinProviders'
   // 迁移 W2：Provider 导入两步流。Step1 preview（脱敏，apiKey 不进前端）→ Step2 apply（写 models.json）。
   // reply config.providersPreviewed / config.providersImported。
   | 'config.previewImportProviders' | 'config.applyImportProviders'
+  // OAuth Login（路径 B 自实现，slice design I1/I2）：启动/中止 OAuth flow。
+  // 中间态经 server→client 事件推送（auth.deviceCode / auth.authUrl / auth.success / auth.error）。
+  | 'config.oauthLogin' | 'config.oauthCancel'
+  // 环境变量检测（I3，wave-env-check）：只返回布尔不返回值（env 值可能含凭证）。
+  | 'config.checkEnvVars'
+  // OAuth 凭据查询（MF-1）：auth.json 是否已有该 provider 的 oauth 凭据（只返回布尔，token 不出协议）。reply config.hasOAuthReply。
+  | 'config.hasOAuth'
+  // wave4：provider 启用切换（写 enabledModels 白名单，reply config.providerUpdated）。替代旧 setProvider({enabled})。
+  | 'config.toggleProviderEnabled'
+  // wave4：按体系移除 provider（catalog 清凭据/custom 删条目，reply config.providerUpdated）。
+  | 'config.removeProviderByKind'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -115,6 +136,12 @@ export interface SetProviderData {
   name?: string
   type?: string
   apiKey?: string
+  /**
+   * 认证方式（I6，wave-quick-setup-c）：ProviderQuickSetup.onSave 按所选认证方式填充，
+   * runtime 写入 models.json 该 provider 条目旁。兼容旧数据：未设置时按 apiKey 格式推断
+   * （$开头→env_var，非空→api_key）。
+   */
+  authMethod?: 'api_key' | 'oauth' | 'env_var' | 'ambient'
   baseUrl?: string
   /** 自定义请求头（provider 级，与 ProviderInfo.headers 对齐）。 */
   headers?: Record<string, string>
@@ -208,6 +235,8 @@ export interface ClientMessageMap {
     label?: string
     hidden?: boolean
     presetId?: string
+    /** 归属 project id（D14 语义修正）：创建时归属当前 activeProject；空 = 默认项目兑底。 */
+    projectId?: string
     modelOverride?: string
     thinkingOverride?: ThinkingLevel
   }
@@ -216,12 +245,16 @@ export interface ClientMessageMap {
   'session.deleteByCwd': { cwd: string }
   'config.sessions': Record<string, never>
   'session.switch': { sessionId: string }
+  'session.restore': { sessionId: string }
   'session.history': { sessionId: string }
   'session.getFullHistory': { sessionId: string }
   'session.getCommands': { sessionId: string }
   'session.getContext': { sessionId: string }
   'session.compact': { sessionId: string; customInstructions?: string }
   'session.rename': { sessionId: string; name: string }
+  // session.setProject：手动归类（SessionItem「归入项目」菜单）。
+  // runtime 写 `<sessionFile>.project.json` sidecar + 刷新列表广播。projectId 空 = 归回默认项目。
+  'session.setProject': { sessionId: string; projectId: string }
   // fork：从 srcSessionId 截断到 fromPiEntryId（pi JSONL entry id，前端 Message.piEntryId），
   // includeFrom=true 保留到该 entry（含），false 保留到该 entry 前（不含）。
   // runtime 按 fromPiEntryId 在源 session JSONL 树回溯截断，写新 JSONL，switch_session 加载。
@@ -244,7 +277,7 @@ export interface ClientMessageMap {
     fromMessageRole?: string
     includeFrom?: boolean
     label?: string
-    /** Staging Mode（ADR-0043）：composer 暂存的模型覆盖（"provider/modelId" 格式）。
+    /** Staging Mode（ADR-0056）：composer 暂存的模型覆盖（"provider/modelId" 格式）。
      *  存在时优先于源 session preset 的 modelOverride；不存在时继承源 preset。 */
     modelOverride?: string
     /** Staging Mode：composer 暂存的思考等级覆盖（合法值见 VALID_THINKING_LEVELS）。 */
@@ -255,7 +288,7 @@ export interface ClientMessageMap {
   // 由 runtime 注入 doc 触发新 turn。与 fork 的区别：fork 从某点分叉继承历史；handoff 不继承历史，
   // 只注入文档（"打包交接到新线程"）。reply sanitize 后拼到 handoff prompt 末尾告知 agent 下一 session 关注点。
   // 完成经独立通道 session.handoffComplete 广播，reply 是 message.status ack（前端不读 payload）。
-  // Staging Mode（ADR-0043）：modelOverride/thinkingOverride 来自 composer 暂存态的模型选择，
+  // Staging Mode（ADR-0056）：modelOverride/thinkingOverride 来自 composer 暂存态的模型选择，
   // 用于新 session 创建（源 session turn 仍用源 session 自身模型，不受 override 影响）。
   'session.handoff': {
     sessionId: string
@@ -277,6 +310,13 @@ export interface ClientMessageMap {
   // session.subagentAction：subagent 生命周期操作（当前只 cancel，对称 workflowAction 的扩展 slash command 转发）。
   // runtime 经 client.prompt("/subagents <action> <subagentId>") 调扩展（不经 LLM）。
   'session.subagentAction': { sessionId: string; action: 'cancel'; subagentId: string }
+  // wave:runtime-patch ipc-converge-a3 W2：业务持久化写 WS 请求 payload（从 main IPC 原样搬，零字段变更）。
+  // writeImage：base64 解码后写 attachments（sessionId 空降级 tmpdir，persisted 反映落地位置）。
+  // migrateImage：landing 落 tmpdir 的图，session 创建后 move 到 attachments（fromPath 白名单守门）。
+  // writeSegments：追加/覆盖 segments.json sidecar（同 clientUuid 覆盖，atomic 写）。
+  'session.writeImage': { sessionId: string; base64: string; mimeType: string; name: string }
+  'session.migrateImage': { fromPath: string; sessionId: string; fileName: string }
+  'session.writeSegments': { sessionId: string; entry: SegmentsMetadataEntry }
   // session.subscribe（runtime-message-bus wave:runtime-wiring 补登记，对应 IF6 契约）：
   // renderer 切换/创建 session 时调用，触发 bus.subscribe 注册订阅 + 拉 ring snapshot。
   // fromSeq 可选：重连场景带 lastSeenSeq，bus 返回 seq > fromSeq 的增量
@@ -301,12 +341,17 @@ export interface ClientMessageMap {
   // message.abortBash：取消进行中的 bash 执行（调 pi abort_bash）。
   'message.abortBash': { sessionId: string }
   'config.getProviders': Record<string, never>
-  'config.setProvider': { providerId: string } & SetProviderData
-  'config.deleteProvider': { providerId: string }
+  'config.setProvider': { providerId: ProviderId } & SetProviderData
+  'config.deleteProvider': { providerId: ProviderId }
+  // wave4：provider 启用切换（wave3 RPC 链路在 wave4 补全）。enabled=false 时 runtime 移除白名单 pattern，
+  // 若 default 承载该 provider 会重选并广播 config.defaults（见 settings-message-handler）。
+  'config.toggleProviderEnabled': { providerId: ProviderId; enabled: boolean }
+  // wave4：按体系移除 provider。kind 来自 ProviderInfo.kind（wave2 聚合层标注），catalog 清凭据/custom 删条目。
+  'config.removeProviderByKind': { providerId: ProviderId; kind: 'catalog' | 'custom' }
   'config.setToolPermissions': { permissions: Record<string, string> }
   'config.discoverModels': { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }
   // W3 默认模型持久化：前端设置全局默认模型，runtime 调 configService.setDefaultModel 写 settings.json。
-  'config.setDefaultModel': { provider: string; modelId: string }
+  'config.setDefaultModel': { provider: ProviderId; modelId: string }
   'config.scanSkills': { sources: string[] }
   // W2（cw-2026-07-21-scan-project-agents-skills）：按 session cwd 拉 project skill（.agents/skills + .xyz-agent/skills）。
   // 与 config.scanSkills 区分：scanSkills 扫 sources 数组候选加入 discovery；scanSessionSkills 扫某 cwd 已生效目录。
@@ -323,14 +368,17 @@ export interface ClientMessageMap {
   'config.scanAgents': { sources: string[] }
   'config.setAgent': { agent: AgentInfo }
   'config.deleteAgent': { agentId: string }
-  /** 目录级管道写入（ADR-0020 §5）：dirs 为有序数组，靠前覆盖靠后。写 discovery.json。 */
-  'config.setSkillDirs': { dirs: string[] }
-  'config.setAgentDirs': { dirs: string[] }
-  'config.setExtensionDirs': { dirs: string[] }
+  /**
+   * 目录级管道写入（ADR-0021 §5）：dirs 为有序 SkillDirConfig[]（含 scope），靠前覆盖靠后。写 discovery.json。
+   * v2：写入侧带 scope，消费端（skill-dirs.ts）直接读 scope 决定 project/global 归属，不再推断（方案 §2.5 路径 A）。
+   */
+  'config.setSkillDirs': { dirs: SkillDirConfig[] }
+  'config.setAgentDirs': { dirs: SkillDirConfig[] }
+  'config.setExtensionDirs': { dirs: SkillDirConfig[] }
   'config.getSystemPrompt': Record<string, never>
   'config.setSystemPrompt': { config: SystemPromptConfig }
   'model.list': Record<string, never>
-  'model.switch': { sessionId: string; provider: string; modelId: string }
+  'model.switch': { sessionId: string; provider: ProviderId; modelId: string }
   'session.setThinkingLevel': { sessionId: string; level: string }
   'tool.approve': { sessionId: string; toolCallId?: string }
   'tool.deny': { sessionId: string; toolCallId?: string; reason?: string }
@@ -358,6 +406,7 @@ export interface ClientMessageMap {
   'plugin.config.get': { pluginId: string; key?: string }
   'plugin.config.set': { pluginId: string; key: string; value: unknown }
   'plugin.uiResponse': { requestId: string; result: unknown }
+  'plugin.mountPoints.sync': { mountPoints: string[] }
   'file.read': { path: string; sessionId?: string }
   'file.tree': { sessionId: string }
   'file.tree.expand': { sessionId: string; path: string }
@@ -376,6 +425,10 @@ export interface ClientMessageMap {
   'git.createBranch': { sessionId: string; name: string }
   'workspace.listRecent': Record<string, never>
   'workspace.record': { cwd: string }
+  // project.load / project.save：project 列表持久化（D14，2026-08-04 迁 runtime projects.json，
+  // 对齐 recent-workspaces.json 模式；localStorage 仅首启迁移源）。
+  'project.load': Record<string, never>
+  'project.save': ProjectStoreState
   /** workspace.detectBare：向后兼容别名，等价于 workspace.detect。 */
   'workspace.detectBare': { cwd: string }
   /** workspace.detect：检测 cwd 所在 git 仓库模式（bare-workspace / plain-repo / not-repo）。
@@ -469,6 +522,8 @@ export interface ClientMessageMap {
   'preset.import': { json: string }
   /** config.detectSources：检测本机其他 agent 的 skill/agent 配置目录（无参数，只读检测）。 */
   'config.detectSources': Record<string, never>
+  /** config.listBuiltinProviders：列出内置 provider 模板（wave 2，无参只读，import generated JSON）。 */
+  'config.listBuiltinProviders': Record<string, never>
   /**
    * config.previewImportProviders：Step1 预览从其他 agent 源导入的 provider 列表（脱敏，apiKey 不进前端）。
    * source 是迁移源（pi/zcode/codex/claude）。
@@ -479,6 +534,14 @@ export interface ClientMessageMap {
    * importId 来自 Step1 preview 的 reply；selectedIds 是用户勾选的 provider id 列表。
    */
   'config.applyImportProviders': { importId: string; selectedIds: string[] }
+  /** config.oauthLogin：启动 OAuth flow（device/callback，按 provider 的 oauthConfig）。reply config.oauthLoginReply。 */
+  'config.oauthLogin': { providerId: string }
+  /** config.checkEnvVars：批量检测环境变量是否已设置。reply config.envVarsChecked。 */
+  'config.checkEnvVars': { names: string[] }
+  /** config.oauthCancel：中止进行中的 OAuth flow（停轮询/关 server/清 state）。reply config.oauthCancelReply。 */
+  'config.oauthCancel': { providerId: string }
+  /** config.hasOAuth：查询 auth.json 是否已有该 provider 的 oauth 凭据（只返回布尔）。reply config.hasOAuthReply。 */
+  'config.hasOAuth': { providerId: string }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -527,8 +590,9 @@ export type WorktreeUnknownErrorCode = 'worktree_failed'
 export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 
 export type ServerMessageType =
-  | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.fullHistory'
-  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted'
+  | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.fullHistory' | 'session.switched'
+  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted' | 'session.setProject'
+  | 'project.loaded'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
   | 'session.workflowUpdate' | 'session.workflowActionDone' | 'session.subagentActionDone'
@@ -571,6 +635,7 @@ export type ServerMessageType =
   | 'plugin:statusBarUpdate' | 'plugin:messageDecoration' | 'plugin:config'
   | 'plugin:statusSetUpdate'
   | 'plugin:uiRequest'
+  | 'plugin:viewUpdate'
   | 'extension:widget' | 'extension:widgetGui' | 'extension:status' | 'extension:notify'
   | 'extension:setEditorText'
   | 'message.compactionSummary' | 'message.branchSummary'
@@ -585,6 +650,8 @@ export type ServerMessageType =
   | 'file.tree:result' | 'file.tree.expand:result' | 'file.search:result'
   | 'git.diff:result'
   | 'file.write.create:result' | 'file.write.rename:result' | 'file.write.delete:result'
+  // wave:runtime-patch ipc-converge-a3 W2：业务持久化写 reply（:result 后缀复用 file.write.create:result 约定）
+  | 'session.writeImage:result' | 'session.migrateImage:result' | 'session.writeSegments:result'
   | 'git.status:result'
   | 'workspace.recentList'
   | 'workspace.bareDetected'
@@ -608,8 +675,19 @@ export type ServerMessageType =
   | 'preset.getCwdDefault' | 'preset.setCwdDefault' | 'preset.getCwdDefaults'
   | 'preset.export' | 'preset.import'
   | 'config.sourcesDetected'
+  // wave 2：listBuiltinProviders reply（内置 provider 模板数组）。
+  | 'config.builtinProviders'
   // 迁移 W2：Provider 导入 reply（preview 脱敏 / apply 结果含 imported/skipped/failed 三态）。
   | 'config.providersPreviewed' | 'config.providersImported'
+  // OAuth Login 事件（路径 B，slice design I4）：payload 必带 providerId（前端按 providerId 路由，支持并发多 provider）。
+  // token 永不出现在事件 payload（脱敏红线）。
+  | 'auth.deviceCode' | 'auth.authUrl' | 'auth.success' | 'auth.error'
+  // OAuth Login RPC reply（config.oauthLogin/oauthCancel 的回复，消费型）。
+  | 'config.oauthLoginReply' | 'config.oauthCancelReply'
+  // OAuth 凭据查询 reply（MF-1）。
+  | 'config.hasOAuthReply'
+  // 环境变量检测 reply（I3）。
+  | 'config.envVarsChecked'
 
 /** skill 缓存失效广播的作用域：global=全局 skill 变动，project=某项目 cwd 的 skill 变动。 */
 export type SkillCacheScope = 'global' | 'project'
@@ -648,7 +726,7 @@ export interface ServerMessageMapBase {
    */
   'config.skillCacheInvalidated': SkillCacheInvalidatedPayload
   'config.agents': { agents: AgentInfo[] }
-  /** discovery.json 加载路径广播（ADR-0020 §1，目录级管道配置） */
+  /** discovery.json 加载路径广播（ADR-0021 §1，目录级管道配置） */
   'config.skillDirs': { dirs: SkillDirConfig[] }
   'config.agentDirs': { dirs: SkillDirConfig[] }
   'config.extensionDirs': { dirs: SkillDirConfig[] }
@@ -665,6 +743,24 @@ export interface ServerMessageMapBase {
   // reply { pluginId, config }）。config 是该插件全量配置对象（get 不带 key 时）或单 key 子树。
   // 用 Record<string, unknown> 保持 shared 依赖最小化（与 extension:widgetGui.gui:unknown 同先例）。
   'plugin:config': { pluginId: string; config: Record<string, unknown> }
+  // plugin:viewUpdate：plugin views.update 下行广播（plugin-rpc-setup.ts handleViewUpdate 生产，
+  // 带 sessionId 走 session 通道 + CROSS_SESSION_TYPES crossSession 分发到 ExtensionHost）。
+  // guiTree 用 unknown[] 保持 shared 包依赖最小化（与 extension:widgetGui 的 gui:unknown 同先例），
+  // 消费端（core MessageBusBridge parseViewUpdate → ViewHostStore）用 isGuiComponent 守卫收窄。
+  'plugin:viewUpdate': {
+    sessionId: string
+    viewId: string
+    pluginId: string
+    guiTree: unknown[]
+    updatedAt: number
+  }
+  // plugin:uiRequest：plugin dialog 交互请求下行（runtime UiRequestQueue 广播回调生产，
+  // payload 注入当前活跃 sessionId 后经 bus.publish 定向发布，无活跃 session 时回退全局广播）。
+  // requestId 必带（前端 message-bus-bridge.parseUiRequest 缺失即丢弃整条）；method/title 等
+  // dialog 字段（select/confirm/input 及各自扩展字段）由 plugin 侧透传，用索引签名保持形状开放
+  //（消费端 parseUiRequest 对 method 超界兜底 'input'，未知字段原样保留），与 runtime
+  // UiBroadcastFn 的 Record<string, unknown> 同形。
+  'plugin:uiRequest': { requestId: string; sessionId?: string } & Record<string, unknown>
   'model.list': { models: ModelInfo[] }
   'config.sessions': { groups: SessionGroup[] }
   /** config.systemPrompt：reply + broadcast + 初始推送三用。corrupted=true 表示磁盘配置损坏已回退默认（SR5）。 */
@@ -806,6 +902,13 @@ export interface ServerMessageMapBase {
   'file.write.create:result': { sessionId: string; path: string; implemented: false }
   'file.write.rename:result': { sessionId: string; newPath: string; implemented: false }
   'file.write.delete:result': { sessionId: string; path: string; implemented: false }
+  // wave:runtime-patch ipc-converge-a3 W2：业务持久化写 reply payload（与原 main IPC 返回值零字段变更）
+  /** session.writeImage:result：落地结果。persisted=true 落 attachments（已持久化）；false 落 tmpdir（landing 降级，需迁移） */
+  'session.writeImage:result': { path: string; fileName: string; displayName: string; id: string; persisted: boolean }
+  /** session.migrateImage:result：迁移后新路径（调用方据此更新 segment.path） */
+  'session.migrateImage:result': { path: string }
+  /** session.writeSegments:result：ack 型空 payload（atomic 写成功） */
+  'session.writeSegments:result': Record<string, never>
   'workspace.recentList': { records: RecentWorkspaceRecord[] }
   /** workspace.bareDetected：workspace.detectBare 的向后兼容 reply（isBare/wsRoot/barePath）。 */
   'workspace.bareDetected': { isBare: boolean; wsRoot: string; barePath: string }
@@ -889,8 +992,12 @@ export interface ServerMessageMapBase {
   // session.deletedByCwd：session.deleteByCwd reply（session-message-handler.ts reply BatchDeleteResult，
   // 含 deleted/failed 聚合列表，前端据此 toast 部分失败）。
   'session.deletedByCwd': BatchDeleteResult
+  // project.loaded：project.load reply（project 列表全量，D14 迁 runtime projects.json）。
+  'project.loaded': ProjectStoreState
   // session.renamed：session.rename reply（session-message-handler.ts:162 reply { sessionId, name }）。
   'session.renamed': { sessionId: string; name: string }
+  // session.setProject：session.setProject reply（确认即可；归属更新经 config.sessions 全量广播）。
+  'session.setProject': { sessionId: string; projectId: string }
   // session.forkNotice：session.fork 成功后的广播（FR-12 修订 PR2），通知 srcSession 所在 panel
   // 在对话流插一条 ForkNotice 反馈行。广播时机：fork RPC 成功创建 newSession 之后。
   // branchName/preview optional——纯后台 fork 传 branchName，fork-ask 传 preview（提问预览）。
@@ -917,14 +1024,22 @@ export interface ServerMessageMapBase {
   // （内部 client.abort + 清 inflight）→ 广播此帧让前端复位源 session 的 handingOff 态。
   // srcSessionId：被中断的源 session id（与 handoffComplete 的 srcSessionId 同义，统一字段名）。
   'session.handoffAborted': { srcSessionId: string }
-  // session.history：session.history / session.switch 的成功 reply（session-message-handler.ts:83/96/111）。
-  // session optional——switch 路径带 SessionSummary（已 restore 的 session），getHistory 路径不带。
+  // session.history：session.history 的成功 reply（显式历史拉取 RPC；wave:perf-w20 后 switch
+  // reply 已拆分到 session.switched，不再复用本类型）。session optional 保留向后兼容。
   // historyTruncated：历史超上限截断标志（前端据此提示「历史已截断」）。
   'session.history': {
     sessionId: string
     session?: SessionSummary
     messages: Message[]
     historyTruncated: boolean
+  }
+  // session.switched：session.switch 的成功 reply（wave:perf-w20 R-11 瘦身——switch reply 不再
+  // 无条件全量 getHistory 塞 messages，被驱逐 session 切回走显式 session.history RPC（全量），
+  // LRU 内切回本就零请求）。renderer switchSession 返回 void 不读 payload，历史消费路径是
+  // selectSession 内显式 chat.getHistory。与 session.history 类型拆分（历史 reply 形状不动）。
+  'session.switched': {
+    sessionId: string
+    session: SessionSummary
   }
   // session.fullHistory：session.getFullHistory reply（session-message-handler.ts:115 reply { sessionId, messages }，全量无截断）。
   'session.fullHistory': { sessionId: string; messages: Message[] }
@@ -963,6 +1078,8 @@ export interface ServerMessageMapBase {
   // config.sourcesDetected：detectSources reply（settings-message-handler.ts reply { sources }）。
   // sources 是本机其他 agent（Claude/Codex/Pi/ZCode）skill/agent 目录的检测结果（只读，不读文件内容）。
   'config.sourcesDetected': { sources: SourceDetectResult[] }
+  // config.builtinProviders：listBuiltinProviders reply（wave 2，内置 provider 模板数组）。
+  'config.builtinProviders': { providers: BuiltinProviderTemplate[] }
   // config.providersPreviewed：previewImportProviders reply（W2 迁移）。
   // 成功 { importId, preview }（preview 脱敏，只含 apiKeyExtracted 布尔，无 apiKey 值）；
   // 失败 { error: { code, message } }（如 SOURCE_NOT_INSTALLED）。
@@ -976,6 +1093,23 @@ export interface ServerMessageMapBase {
   'config.providersImported':
     | { result: ProviderImportResult }
     | { error: { code: string; message: string } }
+  // ── OAuth Login 事件（路径 B，slice design I4）──
+  /** device flow 中间态：user_code 大字号展示 + verification_uri 打开浏览器 + 轮询倒计时。 */
+  'auth.deviceCode': { providerId: string; userCode: string; verificationUri: string; verificationUriComplete?: string; expiresIn?: number; interval?: number }
+  /** callback flow 中间态：授权 URL（前端打开浏览器）+ 固定端口提示。 */
+  'auth.authUrl': { providerId: string; url: string; callbackPort?: number }
+  /** 授权成功：token 已写 auth.json。 */
+  'auth.success': { providerId: string; oauthName?: string }
+  /** 授权失败（expired_token / access_denied / 端口占用 / 超时 / exchange 失败）。 */
+  'auth.error': { providerId: string; message: string }
+  /** config.oauthLogin reply（成功/失败布尔 + 错误原因）。 */
+  'config.oauthLoginReply': { started: boolean; error?: string }
+  /** config.oauthCancel reply（幂等：无进行中 flow 返回 cancelled:false 不报错）。 */
+  'config.oauthCancelReply': { cancelled: boolean }
+  /** config.hasOAuth reply：auth.json 是否已有该 provider 的 oauth 凭据（布尔，无 token）。 */
+  'config.hasOAuthReply': { hasOAuth: boolean }
+  /** config.checkEnvVars reply：只含布尔（安全红线：env 值不进前端）。 */
+  'config.envVarsChecked': { results: Record<string, boolean> }
   // config.discoveredModels：discoverModels reply（settings-message-handler.ts:178/180）。
   // 成功 { models, success: true }；失败 { models: [], success: false, error }（D10 降级响应，非 error envelope）。
   // models 元素形状对齐前端 config.ts:49 DiscoveredModelsResult（id + 可选 name/contextWindow）。
@@ -1088,9 +1222,15 @@ export interface ReplyPayloadMap {
   'config.scanAgents': ServerMessageMap['config.scannedAgents']
   'config.scanSkills': ServerMessageMap['config.scannedSkills']
   'config.detectSources': ServerMessageMap['config.sourcesDetected']
+  'config.listBuiltinProviders': ServerMessageMap['config.builtinProviders']
   // W2 迁移：provider 导入两步流 reply（payload 消费型，前端读 importId/preview/result/error）。
   'config.previewImportProviders': ServerMessageMap['config.providersPreviewed']
   'config.applyImportProviders': ServerMessageMap['config.providersImported']
+  // OAuth Login（路径 B）：reply 消费型（started/cancelled 布尔）。
+  'config.oauthLogin': ServerMessageMap['config.oauthLoginReply']
+  'config.oauthCancel': ServerMessageMap['config.oauthCancelReply']
+  'config.hasOAuth': ServerMessageMap['config.hasOAuthReply']
+  'config.checkEnvVars': ServerMessageMap['config.envVarsChecked']
   'config.scanSessionSkills': ServerMessageMap['config.sessionSkills']
   'config.getGlobalSkills': ServerMessageMap['config.globalSkills']
   'config.getProjectSkills': ServerMessageMap['config.projectSkills']
@@ -1109,6 +1249,10 @@ export interface ReplyPayloadMap {
   'file.write.create': ServerMessageMap['file.write.create:result']
   'file.write.rename': ServerMessageMap['file.write.rename:result']
   'file.write.delete': ServerMessageMap['file.write.delete:result']
+  // wave:runtime-patch ipc-converge-a3 W2：业务持久化写 request→reply 映射（payload 消费型，domain 读 reply 字段）
+  'session.writeImage': ServerMessageMap['session.writeImage:result']
+  'session.migrateImage': ServerMessageMap['session.migrateImage:result']
+  'session.writeSegments': ServerMessageMap['session.writeSegments:result']
   'file.tree.expand': ServerMessageMap['file.tree.expand:result']
   'git.diff': ServerMessageMap['git.diff:result']
   'git.status': ServerMessageMap['git.status:result']
@@ -1117,6 +1261,7 @@ export interface ReplyPayloadMap {
   'model.list': ServerMessageMap['model.list']
   'session.create': ServerMessageMap['session.created']
   'session.fork': ServerMessageMap['session.created']
+  'session.restore': ServerMessageMap['session.created']
   'session.getAgentCallFilePath': ServerMessageMap['session.agentCallFilePath']
   'session.getAgentCallHistory': ServerMessageMap['session.agentCallHistory']
   'session.getCommands': ServerMessageMap['session.commands']
@@ -1141,8 +1286,11 @@ export interface ReplyPayloadMap {
   'plugin.executeCommand': ServerMessageMap['pong']
   'plugin.config.get': ServerMessageMap['plugin:config']
   'plugin.config.set': ServerMessageMap['plugin:config']
+  'plugin.mountPoints.sync': ServerMessageMap['pong']
   'workspace.listRecent': ServerMessageMap['workspace.recentList']
   'workspace.record': ServerMessageMap['workspace.recentList']
+  'project.load': ServerMessageMap['project.loaded']
+  'project.save': void                  // ack 型（保存成功即 resolve）
   'workspace.detectBare': ServerMessageMap['workspace.detected']
   'workspace.detect': ServerMessageMap['workspace.detected']
   'worktree.create': ServerMessageMap['worktree.created']
@@ -1199,6 +1347,8 @@ export interface ReplyPayloadMap {
   'config.setDefaultModel': void  // reply config.defaults
   'config.setExtensionDirs': void // reply config.extensionDirs
   'config.setProvider': void      // reply config.providerUpdated
+  'config.toggleProviderEnabled': void  // wave4：reply config.providerUpdated（同 setProvider 模式）
+  'config.removeProviderByKind': void   // wave4：reply config.providerUpdated（同 deleteProvider 模式）
   'config.setSkill': void         // reply config.skillUpdated
   'config.setSkillDirs': void     // reply config.skillDirs
   'config.setToolPermissions': void // reply config.providerUpdated（settings-message-handler.ts:65）
@@ -1207,7 +1357,7 @@ export interface ReplyPayloadMap {
   'extension.install': void       // reply config.extensions
   'extension.list': void          // reply config.extensions
   'extension.setAutoUpgrade': void // reply config.extensions
-  'extension.toggle': void        // reply config.extensions
+  'extension.toggle': { extensions: ExtensionInfo[] }  // reply config.extensions（前端消费 reply 刷新 store；RPC reply 命中 pending 不走 dispatchGlobal）
   'extension.uninstall': void     // reply config.extensions
   'extension.upgrade': void       // reply config.extensions
   'git.checkout': void            // reply message.status
@@ -1245,9 +1395,10 @@ export interface ReplyPayloadMap {
   // 不读 reply payload，取消订阅的副作用由后续 live 事件停发体现。
   'session.unsubscribe': void     // reply message.status
   'session.rename': void          // reply session.renamed
+  'session.setProject': void      // reply session.setProject
   'session.setThinkingLevel': void // reply session.thinkingLevelSet
   'session.subagentAction': void  // reply session.subagentActionDone
-  'session.switch': void          // reply session.history（前端不读 payload）
+  'session.switch': ServerMessageMap['session.switched'] // reply session.switched（R-11 瘦身：无 messages；前端 register<void> 不读 payload）
   'session.workflowAction': void  // reply session.workflowActionDone
   // terminal.* 都是 ack 型，统一 reply 'terminal.ack'（空 payload，前端 command() 按 id 匹配 resolve）
   'terminal.attach': ServerMessageMap['terminal.ack']
@@ -1291,7 +1442,7 @@ export function isMessage(value: unknown): value is Message {
     typeof v.id === 'string' &&
     (v.role === 'user' || v.role === 'assistant' || v.role === 'system') &&
     (typeof v.content === 'string' || Array.isArray(v.content)) &&
-    (v.status === 'streaming' || v.status === 'complete' || v.status === 'error' || v.status === 'pending') &&
+    (v.status === 'streaming' || v.status === 'complete' || v.status === 'error') &&
     typeof v.timestamp === 'number'
   )
 }

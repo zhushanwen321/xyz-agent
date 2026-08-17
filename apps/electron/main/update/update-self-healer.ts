@@ -295,7 +295,7 @@ export async function cleanupCompletedUpdate(): Promise<void> {
 /**
  * 推导当前平台的 .old 备份路径（若平台/环境不支持自更新则返回 undefined）。
  *
- * - mac：execPath .../xyz-agent.app/Contents/MacOS/xyz-agent → dirname×3 得 .app，
+ * - mac：execPath .../太极.app/Contents/MacOS/TaiJi → dirname×3 得 .app，
  *   备份在 `<appBundle>.old`
  * - linux：process.env.APPIMAGE → 备份在 `${APPIMAGE}.old`
  * - win/其他：返回 undefined（win 走 NSIS，无 .old 备份机制）
@@ -320,7 +320,7 @@ function getOldBackupPath(): string | undefined {
  *   2. rename .old 回 .app（失败则把 .broken 还回去，至少有 app 可用）
  *   3. 成功后清理 .broken
  *
- * execPath 推导 .app 路径：.../xyz-agent.app/Contents/MacOS/xyz-agent → dirname×3
+ * execPath 推导 .app 路径：.../太极.app/Contents/MacOS/TaiJi → dirname×3
  */
 function rollbackMacBundle(): void {
   const appBundle = path.dirname(path.dirname(path.dirname(process.execPath)))

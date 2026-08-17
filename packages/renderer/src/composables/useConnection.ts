@@ -1,23 +1,25 @@
 /**
- * useConnection —— 连接生命周期编排。
+ * useConnection —— 连接生命周期编排（装配点，架构审计 §10.2 D-1）。
  *
- * 职责：
- * - init()：发现 runtime 端口 → connect WS（mock 模式走 mock://）
- * - 监听 onRuntimePort（runtime 重启后推新端口 → 断开重连）
- * - teardown()：取消监听 + 断开
+ * 主体逻辑已迁 @xyz-agent/core/transport/use-connection.ts（core headless：
+ * 零 DOM / 零 import.meta / 零 store import，DOM 经 visibility 端口、env 经端口、
+ * store 副作用经 useMessageEffects 注入）。本文件只做三件事：
  *
- * 端口发现顺序：
- * 1. VITE_MOCK=true → connect('mock://')（ws-client 内部走 mockConnect）
- * 2. IPC getRuntimePort（main 已 spawn）→ connect(ws://localhost:port)
- * 3. fallback：BASE_PORT + offset（dev 模式 +DEV_PORT_OFFSET）
+ * 1. 构建 ConnectionPorts 实现（从 renderer 取 ipc / visibility / env / pending /
+ *    events / subscribe / toast / t / useMessageEffects）
+ * 2. setConnectionPorts 注入（模块级一次，幂等）
+ * 3. useConnection() = core useConnection() 薄包装（App.vue 的
+ *    { state, init, teardown, retryRuntime } 接口不变）
  *
- * 依赖方向：useConnection → ws-client + ipc + shared（BASE_PORT/DEV_PORT_OFFSET）
+ * 依赖方向：useConnection（装配）→ core use-connection + lib/ipc + api/{pending,events}
+ *   + api(sessionApi) + useMessageEffects + i18n + useToast。
  */
-import { watch } from 'vue'
-import { connect, disconnect, getState, setRestarting, setFailed } from '../lib/ws-client'
+import {
+  useConnection as useCoreConnection,
+  setConnectionPorts,
+  type ConnectionPorts,
+} from '@xyz-agent/core'
 import i18n from '@/i18n'
-
-const t = i18n.global.t
 import {
   getRuntimePort,
   getRuntimePortOffset,
@@ -26,344 +28,54 @@ import {
   onRuntimeFailed,
   restartRuntime,
 } from '../lib/ipc'
-import { BASE_PORT, DEV_PORT_OFFSET } from '@xyz-agent/shared'
-import type { ServerMessage } from '@xyz-agent/shared'
-import * as transport from '../api/transport'
 import * as pending from '../api/pending'
 import * as events from '../api/events'
-import {
-  getSubscriptionState,
-  updateLastSeenSeq,
-  subscribeSession,
-} from './useMessageBusSubscription'
-import { useChatStore } from '../stores/chat'
-import { useSessionStore } from '../stores/session'
-import { usePanelStore } from '../stores/panel'
-import { useExtensionUIStore } from '../stores/extension-ui'
-import { useSubagentStore } from '@/stores/subagent'
-import { useWorkflowStore } from '@/stores/workflow'
-import type { SubagentRecord } from '@xyz-agent/shared'
+import { session as sessionApi } from '../api'
 import { useToast } from './useToast'
-import { handleCompletion } from './useCompletionNotify'
+import { createInboundEffects, handleRuntimeUnavailable } from './effects/useMessageEffects'
+
+// i18n.global.t 的类型窄化 cast：vue-i18n 的 t 是复杂重载签名，ConnectionPorts.t 只需
+// `(key, params?) => string`。cast 保持调用方用法不变（t('connection.runtimeExited', { reason })）。
+const t = i18n.global.t as (key: string, params?: Record<string, unknown>) => string
 
 /**
- * 处理 session.exited 事件（pi 进程异常退出）。
- *
- * 不能只依赖 session 通道的惰性订阅（ensureStreamSubscription 在首次 send 时建立）：
- * 进程可能在用户首次发消息前就死（如 extension 加载失败 exit(1)），此时无订阅者，
- * dispatchSession 会静默丢弃。因此 routeInbound 对 session.exited 做兜底处理，
- * 保证 markDead + markSessionError + toast 一定执行。
+ * 装配点：构建 core ConnectionPorts 实现（模块级一次构建，引用全部稳定：
+ * ipc/api 模块级函数、effects 工厂返回稳定函数引用、useToast 模块级单例）。
  */
-function handleSessionExited(sessionId: string, payload: { code: number | null; reason: string }): void {
-  useChatStore().markSessionError(sessionId, payload.reason)
-  useSessionStore().markDead(sessionId)
-  // reason 可能含多行 stderr，toast 只取首行（完整内容在聊天流 error 消息里）
-  const shortReason = payload.reason.split('\n')[0]
-  useToast().error(t('connection.runtimeExited', { reason: shortReason }))
+const connectionPorts: ConnectionPorts = {
+  ipc: {
+    getRuntimePort,
+    getRuntimePortOffset,
+    onRuntimePort: (cb) => onRuntimePort(cb),
+    onRuntimeRestarting: (cb) => onRuntimeRestarting(cb),
+    onRuntimeFailed: (cb) => onRuntimeFailed(cb),
+    restartRuntime,
+  },
+  // DOM 端口：core 零 document，visibility 读/监听由壳实现
+  visibility: {
+    isVisible: () => document.visibilityState === 'visible',
+    onVisibilityChange: (handler) => {
+      document.addEventListener('visibilitychange', handler)
+      return () => document.removeEventListener('visibilitychange', handler)
+    },
+  },
+  // env 端口：core 零 import.meta，VITE_MOCK/DEV 由壳读取
+  env: {
+    isMock: import.meta.env.VITE_MOCK === 'true',
+    isDev: Boolean(import.meta.env.DEV),
+  },
+  pending,
+  events,
+  subscribe: sessionApi.subscribe,
+  effects: createInboundEffects(),
+  toast: useToast(),
+  t,
+  onRuntimeUnavailable: handleRuntimeUnavailable,
 }
 
-export type ConnectionStatus =
-  | 'disconnected'
-  | 'connecting'
-  | 'connected'
-  | 'reconnecting'
-  | 'restarting'
-  | 'failed'
-
-/**
- * 入站消息分发器（features 层串联 transport→pending/events 的唯一桥）。
- *
- * 对每条入站 ServerMessage：
- *   1. 若 msg.id 命中 pending → resolve（普通响应）/ reject（error envelope）
- *   2. 按 payload.sessionId 是否存在分流：
- *      - 有 sessionId → seq gap 检测（IF8/ES3，仅对已 subscribe 的 session 生效）→
- *        events.dispatchSession（session 通道，CLAUDE.md line 98 隔离）+ 4 个兜底
- *      - 无 sessionId → events.dispatchGlobal（global 通道，config.* 及 model.list 等广播）
- *
- * session 隔离规则不变：session 级消息仍按 sessionId 路由；新增的是全局通道，
- * 承接 sendInitialState 推送的 7 条无 sessionId server-push（config.providers/model.list 等），
- * 不再静默丢弃。两通道互不串扰。
- *
- * seq gap 检测（D7 id/seq 互斥）：msg.seq 是 server-push live 事件的序号（per-session，
- * bus.publish 分配）。对已 subscribe 的 session（SubscriptionState.subscribed=true）：
- *   - seq <= lastSeenSeq → 丢弃（reconcile 回放的重复或乱序）
- *   - seq > lastSeenSeq+1 → 触发 subscribeSession(sid, seq-1) reconcile（ES3），当前 msg 仍 dispatch
- *   - seq === lastSeenSeq+1 → 正常递进，dispatch + 更新 lastSeenSeq
- * 未 subscribe 的 session（state 不存在或 subscribed=false）不做 gap 检测，正常 dispatch（渐进迁移，
- * remove-bandaids wave 统一）。pending 路径（msg.id 分支）不受 seq 影响——id/seq 来源互斥（D7）。
- */
-function routeInbound(msg: ServerMessage): void {
-  if (msg.id) {
-    if (msg.type === 'error') {
-      // type==='error' 已窄化 payload 为 error envelope（含 code + message + 可选 details）。
-      // 透传 code 到 reject 的 Error（D-021：NodeState.reason 需要 error code 区分失败类型，
-      // 如 out_of_cwd / permission_denied / timeout）。此前只透传 message 丢了 code。
-      // R2：details.detail 展开到 reject 的 Error 上——
-      // - worktree handler 把 WORKTREE_EXISTS 的 { cwd, dirName } 放 detail（对象，S5 后）；
-      // - 把 SETUP_FAILED/GIT_FAILED 的 { exitCode, stderr } 放 detail。
-      // 不展开则 CreateWorktreeModal error 态读不到 stderr、exists 态「直接开始」读不到 cwd。
-      // 注：object 分支 Object.assign(enriched, d) 会把 cwd 和 dirName 都赋到 Error 上，
-      // lastError.cwd 仍可读（onUseExisting 用），dirName 可用于前端核对是否同分支名碰撞。
-      const payload = msg.payload as {
-        code?: string
-        message?: string
-        details?: { detail?: unknown }
-      }
-      const message = typeof payload.message === 'string' ? payload.message : 'request failed'
-      const code = typeof payload.code === 'string' ? payload.code : 'unknown'
-      const enriched: Record<string, unknown> = { code }
-      const d = payload.details?.detail
-      if (typeof d === 'string') {
-        // 字符串 detail（如 WORKTREE_EXISTS 的 cwd）直接作 cwd 字段
-        enriched.cwd = d
-      } else if (d && typeof d === 'object') {
-        // 对象 detail（如 { exitCode, stderr }）展开到 Error 上
-        Object.assign(enriched, d)
-      }
-      pending.reject(msg.id, Object.assign(new Error(message), enriched))
-    } else {
-      pending.resolve(msg.id, msg.payload)
-    }
-  }
-  // payload 跨多种 type：有的含 sessionId（session 通道），有的不含（global 通道）。
-  // 联合类型无法直接 .sessionId，窄断言为可选字段做路由判定（CLAUDE.md line 98 隔离规则不变）。
-  const sid = (msg.payload as { sessionId?: string }).sessionId
-  if (typeof sid === 'string' && sid) {
-    // seq gap 检测（IF8/ES3）：只对已 subscribe 的 session 生效（渐进迁移，T2）。
-    // state 不存在或 subscribed=false → 跳过检测，正常 dispatch（兼容旧路径）。
-    if (typeof msg.seq === 'number') {
-      const state = getSubscriptionState(sid)
-      if (state && state.subscribed) {
-        if (msg.seq <= state.lastSeenSeq) {
-          // 丢弃：reconcile 回放的重复或乱序（seq 回退）。
-          // 不 dispatch、不更新基线、不触发兜底——这条消息是已处理过的（reconcile 期间重复 dispatch）。
-          return
-        }
-        if (msg.seq > state.lastSeenSeq + 1) {
-          // gap detected（ES3）：中间 seq 缺失 → 触发 subscribeSession(sid, seq-1) reconcile。
-          // fromSeq = seq-1（当前缺失的最早 seq，runtime 从此 seq 回拉到最新）。
-          // 不 return：当前消息仍 dispatch（gap 期间尽量不丢，reconcile 负责补齐缺失段）。
-          // void fire-and-forget：reconcile 是异步 RPC，不阻塞当前 dispatch；失败由 subscribeSession 内部 console.warn。
-          void subscribeSession(sid, msg.seq - 1)
-        }
-        // 正常递进（seq === lastSeenSeq+1）或 gap 后当前消息：更新基线 + 继续 dispatch。
-        updateLastSeenSeq(sid, msg.seq)
-      }
-      // state 不存在或未 subscribed：正常 dispatch（兼容旧路径，未迁移的 session 不做 gap 检测）
-    }
-    events.dispatchSession(sid, msg)
-    // session.exited 兜底：进程退出必须标记 dead + toast，不能只依赖惰性的 session
-    // 通道订阅（首次 send 前可能无订阅者 → dispatchSession no-op → 错误丢弃）。
-    if (msg.type === 'session.exited') {
-      handleSessionExited(sid, msg.payload as { code: number | null; reason: string })
-    }
-    // message.complete：后台完成时提示音 + 未读标记
-    if (msg.type === 'message.complete') {
-      const payload = msg.payload as { sessionId?: string; stopReason?: string }
-      const focusedSid = usePanelStore().panels.find(
-        (p) => p.id === usePanelStore().activePanelId,
-      )?.sessionId ?? null
-      handleCompletion(sid, payload.stopReason ?? 'stop', focusedSid)
-    }
-    // session.subagents 兜底：subagent 终态推送必须在所有 session 生效（含非活跃），
-    // 不能只依赖 per-focus 订阅（切走即退订 → 终态丢弃 → 侧栏卡 running）。
-    // 仿 session.exited / message.complete：dispatchSession 之后无条件 applyRecords。
-    if (msg.type === 'session.subagents') {
-      const payload = msg.payload as { subagents?: SubagentRecord[] }
-      if (Array.isArray(payload.subagents)) {
-        useSubagentStore().applyRecords(sid, payload.subagents)
-      }
-    }
-    // session.workflowUpdate 兜底：workflow 增量信号触发 loadWorkflows + running 延迟重试，
-    // 同样在所有 session（含非活跃）生效，不依赖 per-focus 订阅。
-    if (msg.type === 'session.workflowUpdate') {
-      const payload = msg.payload as { update?: { status?: string } }
-      useWorkflowStore().triggerWorkflowReload(sid, payload.update?.status ?? 'unknown')
-    }
-  } else {
-    events.dispatchGlobal(msg)
-    // L9：session 级消息（type 以 session./message. 开头）缺失 sessionId 时 warn，
-    // 让 runtime bug 可见（违反规则 #7 隔离要求应有 fail-fast 信号，而非静默降级到 global 丢弃）
-    if (msg.type.startsWith('session.') || msg.type.startsWith('message.')) {
-      console.warn('[useConnection] session-level message missing sessionId, routed to global:', msg.type)
-    }
-    // 全局 error 兜底：无 sessionId、无 id 的 server-push error 此前静默丢弃。
-    // 现 toast 提示（如 config 加载失败等全局错误）。
-    if (msg.type === 'error' && !msg.id) {
-      const payload = msg.payload as { message?: string }
-      const message = typeof payload.message === 'string' ? payload.message : t('connection.unknownError')
-      useToast().error(message)
-    }
-  }
-}
-
-let dispatcherInstalled = false
-let removeTransportListener: (() => void) | null = null
-
-/** 安装入站分发器（幂等：仅安装一次）。transport.on 占用 ws-client 单槽 onMessage。 */
-function ensureDispatcher(): void {
-  if (dispatcherInstalled) return
-  dispatcherInstalled = true
-  removeTransportListener = transport.on(routeInbound)
-}
-
-/**
- * 连接 WS 并记录 url（W4 visibility 重连复用）。
- * 包装 ws-client connect：调前把 url 存入 lastConnectedUrl，供用户切回前台时主动重连。
- */
-function connectWs(url: string): void {
-  lastConnectedUrl = url
-  connect(url)
-}
-
-/** 获取 fallback 端口（考虑 dev 偏移） */
-async function resolveFallbackPort(): Promise<number> {
-  const offset = await getRuntimePortOffset()
-  if (offset !== undefined) return BASE_PORT + offset
-  // DEV 环境下 runtime 在 BASE_PORT+100，不能 fallback 到 prod 端口
-  if (import.meta.env.DEV) return BASE_PORT + DEV_PORT_OFFSET
-  return BASE_PORT
-}
-
-let initialised = false
-let removeRuntimePortListener: (() => void) | null = null
-let removeRuntimeRestartingListener: (() => void) | null = null
-let removeRuntimeFailedListener: (() => void) | null = null
-let removeStateWatch: (() => void) | null = null
-/**
- * 最近一次 connect 使用的 url（W4 visibility 重连复用）。
- * 用户从后台切回前台且未连接时，用此 url 主动重连，不干等 ws-client 指数退避（最长 30s）。
- * null 表示从未连过（此时也无 url 可复用，visibility 不触发重连）。
- */
-let lastConnectedUrl: string | null = null
-/** visibilitychange handler 引用（teardown 时 removeEventListener 用） */
-let visibilityHandler: (() => void) | null = null
+// 幂等注入（模块加载一次；HMR 重载时重新注入，core 侧取最新实现）
+setConnectionPorts(connectionPorts)
 
 export function useConnection() {
-  const state = getState()
-
-  async function init(): Promise<void> {
-    // 入站消息分发器在任何模式下都安装（mock 模式仅收到 pong，无副作用）
-    ensureDispatcher()
-
-    // W4：安装 visibilitychange 监听（幂等——visibilityHandler 守卫防重复注册）。
-    // 用户从其它标签页 / 系统切回应用（visibilityState 变 visible）且当前未连接时，
-    // 用最近一次 url 主动重连，不干等 ws-client 指数退避（最长 30s）。
-    if (!visibilityHandler) {
-      visibilityHandler = () => {
-        // 守卫 1：只有切回可见（visible）才重连，切到后台（hidden）不触发
-        if (document.visibilityState !== 'visible') return
-        // 守卫 2：已连接就不重连（避免无谓连接触发）
-        if (getState().value === 'connected') return
-        // 守卫 3：从未连过（无 url 复用）则不触发
-        if (!lastConnectedUrl) return
-        connectWs(lastConnectedUrl)
-      }
-      document.addEventListener('visibilitychange', visibilityHandler)
-    }
-
-    if (initialised) {
-      // HMR 后重连
-      if (import.meta.env.VITE_MOCK !== 'true') {
-        connectWs('ws://localhost:' + await resolveFallbackPort())
-      }
-      return
-    }
-    initialised = true
-
-    // L10：WS 连接状态监听在任何模式都安装（含 mock），确保 mock 断连时也 rejectAll pending。
-    // 此前在 mock 分支之后，mock 模式跳过安装 → mock 断连时 pending 永不 reject。
-    const stopStateWatch = watch(getState(), (newState, oldState) => {
-      if (oldState === 'connected' && newState !== 'connected') {
-        pending.rejectAll(new Error(t('connection.disconnectedError')))
-      }
-    })
-    removeStateWatch = stopStateWatch
-
-    // mock 模式：走 mock，不需要端口发现，也不监听 runtime 崩溃事件（mock 无 runtime 进程）
-    if (import.meta.env.VITE_MOCK === 'true') {
-      connectWs('mock://localhost')
-      return
-    }
-
-    // 监听 runtime 端口推送（runtime 重启成功后推新端口 → 断开重连）
-    removeRuntimePortListener = onRuntimePort((newPort) => {
-      if (newPort && state.value !== 'disconnected') {
-        disconnect()
-        connectWs('ws://localhost:' + newPort)
-      }
-    })
-
-    // 监听 runtime 崩溃重启中（主进程正在拉起新实例 → 进 restarting 态，停自动重连）
-    // runtime 崩溃 = pi 子进程没了 = 流不可能继续。重置 chat 活跃态 + 清理 pending，
-    // 避免 UI 卡「思考中」+ in-flight Promise 永挂（runtime 重启后是全新实例，旧 pending 永远收不到响应）。
-    // ask-user pending 同理：pi 死了 ask-user 的 Promise 永远不会被 resolve，必须 clearAllPending（T5）。
-    removeRuntimeRestartingListener = onRuntimeRestarting(() => {
-      setRestarting()
-      pending.rejectAll(new Error(t('connection.runtimeRestarting')))
-      useChatStore().finalizeAllStreaming('restart')
-      useExtensionUIStore().clearAllPending()
-    })
-
-    // 监听 runtime 重启用尽（主进程放弃 → 进 failed 态，等用户手动重试）
-    removeRuntimeFailedListener = onRuntimeFailed(() => {
-      setFailed()
-      pending.rejectAll(new Error(t('connection.runtimeUnavailable')))
-      useChatStore().finalizeAllStreaming('disconnect')
-      useExtensionUIStore().clearAllPending()
-    })
-
-    // 尝试从主进程获取已知端口
-    const knownPort = await getRuntimePort()
-    if (knownPort) {
-      connectWs('ws://localhost:' + knownPort)
-      return
-    }
-
-    // Runtime 尚未启动：用 fallback 端口（ws-client 会自动重连，runtime 起来后连上）
-    connectWs('ws://localhost:' + await resolveFallbackPort())
-  }
-
-  /**
-   * 手动重试（用户从「runtime 不可用」状态条点重试触发）。
-   * 委托 IPC runtime-restart → 主进程 supervisor.restartRuntime。
-   * supervisor 重启成功会广播 runtime-port（onRuntimePort 监听自动重连）。
-   */
-  async function retryRuntime(): Promise<void> {
-    await restartRuntime()
-  }
-
-  function teardown(): void {
-    if (removeRuntimePortListener) {
-      removeRuntimePortListener()
-      removeRuntimePortListener = null
-    }
-    if (removeRuntimeRestartingListener) {
-      removeRuntimeRestartingListener()
-      removeRuntimeRestartingListener = null
-    }
-    if (removeRuntimeFailedListener) {
-      removeRuntimeFailedListener()
-      removeRuntimeFailedListener = null
-    }
-    if (removeStateWatch) {
-      removeStateWatch()
-      removeStateWatch = null
-    }
-    // W4：卸载 visibilitychange 监听（与 init 的 addEventListener 配对，防内存泄漏 + 重复触发）
-    if (visibilityHandler) {
-      document.removeEventListener('visibilitychange', visibilityHandler)
-      visibilityHandler = null
-    }
-    if (removeTransportListener) {
-      removeTransportListener()
-      removeTransportListener = null
-    }
-    dispatcherInstalled = false
-    disconnect()
-    initialised = false
-    lastConnectedUrl = null
-  }
-
-  return { state, init, teardown, retryRuntime }
+  return useCoreConnection()
 }

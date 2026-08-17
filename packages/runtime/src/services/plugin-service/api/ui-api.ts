@@ -8,9 +8,7 @@
  *
  * Worker 侧：createUiApi() 返回代理对象，通过 RPC 转发到主线程。
  *
- * showSelect/confirm/input 通过 broker 发 extension_ui_request 到前端。
- * Phase 2 中这些方法为 stub 实现（返回假数据或 undefined）。真实前端的
- * extension_ui_request 响应路由将在 Phase 3 中实现。
+ * showSelect/confirm/input 经 ctx.handleUiRequest 发 extension_ui_request 到前端并等待响应。
  */
 
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
@@ -21,7 +19,7 @@ import type { StatusBarItemOptions } from '../plugin-types.js'
 export interface UiHandlers {
   /**
    * 发送 extension_ui_request 到前端。
-   * Phase 2 中为 stub，返回 undefined。
+   * 经 handleUiRequest 发送，返回前端选择结果。
    */
   showSelect(title: string, options: string[], pluginId: string): Promise<string | undefined>
   showConfirm(title: string, message: string, pluginId: string): Promise<boolean>

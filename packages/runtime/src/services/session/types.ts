@@ -13,8 +13,17 @@
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { ScannedSessionMeta } from '../ports/session.js'
 
-/** SendMessage hook:消息发送前触发,可阻止发送。 */
-export type SendMessageHook = (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>
+/**
+ * SendMessage hook:消息发送前触发,可阻止发送或改写内容。
+ *
+ * modifiedContent:onBeforeSendMessage 拦截器经 modifiedData 改写后的消息文本
+ * （D2-3 transform 语义消费侧出口，01 文档 §3.1 成功路径第 4 步）——消费点
+ * （message-dispatcher.sendPrompt）用它替代原文发 pi；blocked 优先级高于改写。
+ */
+export type SendMessageHook = (
+  sessionId: string,
+  content: string,
+) => Promise<{ blocked: boolean; reason?: string; modifiedContent?: string } | null>
 
 /** scanPiSessions 返回的元素类型（经 ISessionStore.scanSessions）。 */
 export type ScannedSession = ScannedSessionMeta
@@ -127,7 +136,7 @@ export type PiTranslatedEvent =
   | { kind: 'message'; message: ServerMessage }
   /** 无输出（pi 内部记账事件，如 NULL_EVENTS / toolResult 抑制）。 */
   | { kind: 'noop' }
-  /** assistant turn 开始（message_start 无 role / 兜底）。interpreter 记 messageId + 采 baseline 快照。 */
+  /** assistant turn 开始（message_start 无 role / 兜底）。interpreter 记 messageId + 推进回合代际（turnGen，W18 帧序三件套）。 */
   | { kind: 'turn-start'; messageId: string }
   /** 工具调用开始 —— interpreter 跑 onBeforeToolCall hook（可阻断/改写 input）后产出 tool_call_start。 */
   | {
@@ -136,6 +145,12 @@ export type PiTranslatedEvent =
       toolName: string
       input: unknown
     }
+  /**
+   * toolCall 产出顺序锚点（pi toolcall_start，模型输出 tool_use 时，带 contentIndex）。
+   * interpreter 缓存 toolCallId → contentIndex，tool-call-start 到达时附到 tool_call_start WS 帧，
+   * 前端按 contentIndex 有序插入 contentBlocks（§11 检查点 3：两条填充路径统一顺序语义）。
+   */
+  | { kind: 'tool-call-index'; toolCallId: string; contentIndex: number }
   /** 工具调用结束 —— interpreter 跑 onAfterToolResult hook（改写 output）+ 触发 file_changes diff。 */
   | {
       kind: 'tool-call-end'
@@ -148,7 +163,7 @@ export type PiTranslatedEvent =
       toolName: string
       isError: boolean
     }
-  /** turn 结束（agent_end）—— interpreter 触发 context.update 回写 + file_changes ready diff + hook + baseline 清空。 */
+  /** turn 结束（agent_end）—— interpreter 触发 context.update 回写 + file_changes ready diff（排 diff 链尾）+ hook。 */
   | {
       kind: 'turn-end'
       message: ServerMessage
@@ -182,4 +197,21 @@ export type PiTranslatedEvent =
    * lines 是累积全文（split('\n')），undefined = subagent 终态清除（setWidget(key, undefined)）。
    */
   | { kind: 'subagent-stream'; sessionId: string; recordId: string; lines: string[] | undefined }
+  /**
+   * compaction 生命周期开始（pi compaction_start{reason}）—— interpreter 编排：
+   * 广播 session.compacting{reason} + 置 runtime active.isCompacting=true（经 onCompactingStateChange 回调）。
+   * reason 驱动前端文案区分手动（'manual'）/自动（'threshold'|'overflow'）。
+   */
+  | { kind: 'compaction-start'; reason: string }
+  /**
+   * compaction 生命周期结束（pi compaction_end）—— interpreter 唯一驱动 compaction 全部前端态：
+   * - result 真值（成功）→ message.compactionSummary + applyContextUpdate + session.compacted + 复位 isCompacting
+   * - 无 errorMessage 真值（aborted）→ session.compacted（不带 error，前端 flush queue）+ 复位
+   * - errorMessage 真值（failed）→ session.compacted{error} + message.error 对话流提示 + 复位
+   *
+   * 失败判据以 errorMessage 真值为准（非 aborted 字段、非 key 存在性）—— pi 三种 aborted:true
+   * 形态在 errorMessage 真值层面一致（都 falsy）。result 类型暂 unknown（M5 契约清理时收紧，CQ1——事件路径宽松形状 PiCompactionResult 在 infra/pi/pi-protocol，services/session import 会违分层）。
+   * 孤儿 end 容错：overflow 早退路径无 preceding start，end handler 复位对「本来就 false 的 isCompacting」幂等无害。
+   */
+  | { kind: 'compaction-end'; reason: string; result?: unknown; aborted: boolean; errorMessage?: string }
 

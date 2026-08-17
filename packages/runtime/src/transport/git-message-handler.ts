@@ -11,6 +11,10 @@
  * - git.checkout → gitService.checkout → reply 'message.status' {status:'switched'}  （#6 选分支 popover）
  * - git.createBranch → gitService.createBranch → reply 'message.status' {status:'branch_created'} （#7 创建分支 modal）
  *
+ * 写操作失效（perf W17，03 D4-3）：6 个写操作成功后、reply 前调 gitService.invalidateStatusCache
+ * （stage/unstage/commit/createBranch 按 sessionId；checkout 与 checkoutCwd 按 cwd——checkout 改变
+ * 整个 worktree HEAD，对共享该 cwd 的所有 session 可见，W17 审查 Fix-2）——下次 getStatus 不命中旧缓存。
+ *
  * 错误：GitError → error envelope（D10/P0-B）。code 取自 GitError.code；
  * sessionId 透传 details。GitExecutorError 已在 GitService.execSafe 中转为 GitError。
  */
@@ -62,6 +66,9 @@ export class GitMessageHandler {
         const { sessionId, filePaths } = msg.payload
         try {
           await this.ctx.gitService.stage(sessionId, filePaths)
+          // perf W17：写操作成功后失效状态缓存（下次 getStatus 拿新状态，无 2s 陈旧窗口）。
+          // 必须在 reply 之前——前端收到 ack 后可能立即刷新 git zone。
+          this.ctx.gitService.invalidateStatusCache({ sessionId })
           return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'staged' })
         } catch (e) {
           return this.sendGitError(ws, msg.id, sessionId, e)
@@ -71,6 +78,7 @@ export class GitMessageHandler {
         const { sessionId, filePaths } = msg.payload
         try {
           await this.ctx.gitService.unstage(sessionId, filePaths)
+          this.ctx.gitService.invalidateStatusCache({ sessionId })
           return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'unstaged' })
         } catch (e) {
           return this.sendGitError(ws, msg.id, sessionId, e)
@@ -84,6 +92,7 @@ export class GitMessageHandler {
           // 必须在 reply 之前广播——前端收到 status:'committed' 后可能立即刷新 git zone，
           // changeSetInvalidated 先到可避免卡片短暂停留在 ready 态。
           this.ctx.broadcastChangeSetInvalidated(sessionId, 'committed')
+          this.ctx.gitService.invalidateStatusCache({ sessionId })
           return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'committed' })
         } catch (e) {
           return this.sendGitError(ws, msg.id, sessionId, e)
@@ -93,6 +102,11 @@ export class GitMessageHandler {
         const { sessionId, name } = msg.payload
         try {
           await this.ctx.gitService.checkout(sessionId, name)
+          // W17 审查 Fix-2：checkout 改变整个 worktree 的 HEAD，对共享该 cwd 的所有 session 可见
+          // （与 checkoutCwd 是同一物理操作）→ 必须按 cwd 失效才与 checkoutCwd 对称；sessionId 兜底
+          // （getSummary 竞态返回空时至少保住旧行为；checkout 成功 ⇒ session 必有 cwd，兜底仅防御）
+          const cwd = this.ctx.sessionService.getSummary(sessionId)?.cwd
+          this.ctx.gitService.invalidateStatusCache(cwd ? { sessionId, cwd } : { sessionId })
           return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'switched' })
         } catch (e) {
           return this.sendGitError(ws, msg.id, sessionId, e)
@@ -102,6 +116,8 @@ export class GitMessageHandler {
         const { cwd, name } = msg.payload
         try {
           await this.ctx.gitService.checkoutByCwd(cwd, name)
+          // session-less 写操作按 cwd 失效（覆盖共享该 cwd 的所有 session 缓存）
+          this.ctx.gitService.invalidateStatusCache({ cwd })
           return this.ctx.reply(ws, msg.id, 'message.status', { status: 'switched' })
         } catch (e) {
           // 无 session 的 cwd-based checkout，error 不带 sessionId（landing 态无绑定 session）
@@ -112,6 +128,7 @@ export class GitMessageHandler {
         const { sessionId, name } = msg.payload
         try {
           await this.ctx.gitService.createBranch(sessionId, name)
+          this.ctx.gitService.invalidateStatusCache({ sessionId })
           return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'branch_created' })
         } catch (e) {
           return this.sendGitError(ws, msg.id, sessionId, e)

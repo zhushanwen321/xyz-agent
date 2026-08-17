@@ -1,10 +1,10 @@
 /**
- * ExtensionPage mandatory 扩展 UI 测试。
+ * ExtensionPage 三层权限矩阵 UI 测试。
  *
- * 覆盖：
- *  - mandatory 扩展显示「内置」badge
- *  - mandatory 扩展隐藏卸载/disable/升级/autoUpgrade 按钮
- *  - 非 mandatory 扩展不受影响
+ * 覆盖新的 layer + tier 权限矩阵：
+ *  - builtin/infrastructure：可见、不可禁、不可卸、无 autoUpgrade
+ *  - builtin/feature：可见、可禁、不可卸、无 autoUpgrade（翻转原 mandatory 行为）
+ *  - user：全部操作可见（禁/卸/升级/autoUpgrade）
  *
  * mock 策略：
  *  - vi.mock('@/api') 把 extension 门面替成可断言的 mock（fetchRecommended 空数组避免 onMounted 拉取报错）。
@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import type { ExtensionItem } from '@/stores/settings'
+import type { ExtensionItem } from '@xyz-agent/core'
 
 const extensionMock = vi.hoisted(() => ({
   fetchRecommended: vi.fn(() => Promise.resolve([])),
@@ -31,42 +31,61 @@ const extensionMock = vi.hoisted(() => ({
   setAutoUpgrade: vi.fn(() => Promise.resolve()),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   extension: extensionMock,
   default: { extension: extensionMock },
+  config: { detectSources: async () => [] },
 }))
 
-import ExtensionPage from '@/components/settings/ExtensionPage.vue'
+import ExtensionPage from '@/components/settings/extension/ExtensionPage.vue'
 import { useToast } from '@/composables/useToast'
 
-/** mandatory 扩展 fixture（强制安装，不可卸载/禁用，应显示内置 badge 且隐藏操作按钮） */
-function mandatoryExt(): ExtensionItem {
+/** infrastructure builtin fixture（layer='builtin' && tier='infrastructure'，不可禁不可卸） */
+function infraBuiltinExt(): ExtensionItem {
+  return {
+    name: '@zhushanwen/pi-pending-notifications',
+    displayName: '@zhushanwen/pi-pending-notifications',
+    dirName: 'pi-pending-notifications',
+    version: '1.0.0',
+    description: 'infra builtin',
+    path: '/exts/pi-pending-notifications',
+    enabled: true,
+    source: 'built-in',
+    layer: 'builtin',
+    tier: 'infrastructure',
+    tools: [],
+  }
+}
+
+/** feature builtin fixture（layer='builtin' && tier='feature'，可禁不可卸） */
+function featureBuiltinExt(): ExtensionItem {
   return {
     name: '@zhushanwen/pi-goal',
     displayName: '@zhushanwen/pi-goal',
     dirName: 'pi-goal',
     version: '0.5.0',
-    description: 'goal extension',
+    description: 'feature builtin',
     path: '/exts/pi-goal',
     enabled: true,
-    source: 'user-installed',
-    autoUpgrade: true,
-    mandatory: true,
+    source: 'built-in',
+    layer: 'builtin',
+    tier: 'feature',
     tools: [],
   }
 }
 
-/** 非 mandatory 扩展 fixture（应保留全部操作按钮） */
-function normalExt(): ExtensionItem {
+/** user 层扩展 fixture（layer='user'，全部操作可见：禁/卸/升级/autoUpgrade） */
+function userExt(): ExtensionItem {
   return {
     name: 'my-tools',
     displayName: 'my-tools',
     dirName: 'my-tools',
     version: '1.0.0',
-    description: 'normal extension',
+    description: 'user extension',
     path: '/exts/my-tools',
     enabled: true,
     source: 'user-installed',
+    layer: 'user',
     autoUpgrade: false,
     tools: ['tool-a'],
   }
@@ -90,61 +109,70 @@ afterEach(() => {
 
 /**
  * 定位某扩展名对应的「已安装项」根 div。
- * 已安装项根 div 的 class 含 flex items-center gap-3 rounded-md border，文本含 ext.name。
+ * 已安装项根 div 的 class 含 flex items-center gap-3 rounded-card（v6 卡片范式，§5.8 GroupCard；
+ * 原 rounded-md border 是 v6 清理的装饰 class，2026-08-04 settings-newtask-v6 wave 修复后改用稳定范式 class）。
  */
 function findExtRow(root: ReturnType<typeof mount>, name: string) {
-  const rows = root.findAll('div.flex.items-center.gap-3.rounded-md.border')
+  const rows = root.findAll('div.flex.items-center.gap-3.rounded-card')
   return rows.find((r) => r.text().includes(name))
 }
 
-describe('ExtensionPage mandatory UI', () => {
-  it('mandatory 扩展显示「内置」badge', async () => {
-    wrapper = mount(ExtensionPage, { props: { extensions: [mandatoryExt()] } })
+describe('ExtensionPage 三层权限矩阵 UI', () => {
+  it('infrastructure builtin 显示「内置」badge + 隐藏启用开关 + 隐藏卸载/升级/autoUpgrade', async () => {
+    wrapper = mount(ExtensionPage, { props: { extensions: [infraBuiltinExt()] } })
     await flushPromises()
-    const row = findExtRow(wrapper!, '@zhushanwen/pi-goal')
+    const row = findExtRow(wrapper!, '@zhushanwen/pi-pending-notifications')
     expect(row).toBeTruthy()
+    // badge 含「内置」
     expect(row!.text()).toContain('内置')
-  })
-
-  it('mandatory 扩展隐藏卸载按钮', async () => {
-    wrapper = mount(ExtensionPage, { props: { extensions: [mandatoryExt()] } })
-    await flushPromises()
-    const row = findExtRow(wrapper!, '@zhushanwen/pi-goal')
-    expect(row).toBeTruthy()
-    expect(row!.findAll('button[title="卸载"]')).toHaveLength(0)
-  })
-
-  it('mandatory 扩展隐藏 disable 开关', async () => {
-    wrapper = mount(ExtensionPage, { props: { extensions: [mandatoryExt()] } })
-    await flushPromises()
-    const row = findExtRow(wrapper!, '@zhushanwen/pi-goal')
-    expect(row).toBeTruthy()
-    // enable/disable Switch 渲染为 button[role="switch"]；autoUpgrade Switch 已被 v-if 隐藏
+    // 启用开关隐藏（infrastructure 不可禁）
     expect(row!.findAll('button[role="switch"]')).toHaveLength(0)
-  })
-
-  it('mandatory 扩展隐藏升级按钮和自动升级开关', async () => {
-    wrapper = mount(ExtensionPage, { props: { extensions: [mandatoryExt()] } })
-    await flushPromises()
-    const row = findExtRow(wrapper!, '@zhushanwen/pi-goal')
-    expect(row).toBeTruthy()
+    // 卸载/升级按钮隐藏
+    expect(row!.findAll('button[title="卸载"]')).toHaveLength(0)
     expect(row!.findAll('button[title="升级"]')).toHaveLength(0)
-    // 「自动升级」文本仅在 autoUpgrade Switch 行出现，mandatory 应隐藏
+    // autoUpgrade 文案不应出现（开关行整体被 v-if 隐藏）
     expect(row!.text()).not.toContain('自动升级')
   })
 
-  it('非 mandatory 扩展仍显示全部操作按钮', async () => {
-    wrapper = mount(ExtensionPage, { props: { extensions: [normalExt()] } })
+  it('feature builtin 显示「内置」badge + 显示启用开关（可禁）+ 隐藏卸载/升级/autoUpgrade', async () => {
+    wrapper = mount(ExtensionPage, { props: { extensions: [featureBuiltinExt()] } })
+    await flushPromises()
+    const row = findExtRow(wrapper!, '@zhushanwen/pi-goal')
+    expect(row).toBeTruthy()
+    // badge 含「内置」
+    expect(row!.text()).toContain('内置')
+    // 启用开关可见（feature builtin 可禁，翻转原 mandatory 行为）
+    expect(row!.findAll('button[role="switch"]')).toHaveLength(1)
+    // 卸载/升级按钮隐藏（builtin 不可卸，由 runtime 自动升级）
+    expect(row!.findAll('button[title="卸载"]')).toHaveLength(0)
+    expect(row!.findAll('button[title="升级"]')).toHaveLength(0)
+    // autoUpgrade 文案不应出现（开关行整体被 v-if 隐藏）
+    expect(row!.text()).not.toContain('自动升级')
+  })
+
+  it('user 扩展全部操作可见（禁/卸/升级/autoUpgrade）+ 无「内置」badge', async () => {
+    wrapper = mount(ExtensionPage, { props: { extensions: [userExt()] } })
     await flushPromises()
     const row = findExtRow(wrapper!, 'my-tools')
     expect(row).toBeTruthy()
+    // 卸载 1 + 升级 1
     expect(row!.findAll('button[title="卸载"]')).toHaveLength(1)
     expect(row!.findAll('button[title="升级"]')).toHaveLength(1)
-    // enable Switch + autoUpgrade Switch = 2 个
+    // enable Switch + autoUpgrade Switch = 2
     expect(row!.findAll('button[role="switch"]')).toHaveLength(2)
     expect(row!.text()).toContain('自动升级')
-    // 非 mandatory 不显示内置 badge
+    // user 层不显示内置 badge
     expect(row!.text()).not.toContain('内置')
+  })
+
+  it('首屏渲染 gate：[infra, feature, user] 三行均渲染（防 layer 判断异常导致整行消失）', async () => {
+    wrapper = mount(ExtensionPage, {
+      props: { extensions: [infraBuiltinExt(), featureBuiltinExt(), userExt()] },
+    })
+    await flushPromises()
+    expect(findExtRow(wrapper!, '@zhushanwen/pi-pending-notifications')).toBeTruthy()
+    expect(findExtRow(wrapper!, '@zhushanwen/pi-goal')).toBeTruthy()
+    expect(findExtRow(wrapper!, 'my-tools')).toBeTruthy()
   })
 
   it('推荐区为空时不渲染（recommended v-if=false）', async () => {
@@ -154,5 +182,44 @@ describe('ExtensionPage mandatory UI', () => {
     expect(extensionMock.fetchRecommended).toHaveBeenCalled()
     // 推荐区标题「推荐扩展」不应出现在 DOM
     expect(wrapper!.text()).not.toContain('推荐扩展')
+  })
+
+  it('按 layer 分两组渲染：builtin 系统强制组在前、user 用户安装组在后，扩展归入对应组', async () => {
+    // 乱序传入：user 在前、builtin 在后，验证分组按 layer 归位而非输入顺序
+    wrapper = mount(ExtensionPage, {
+      props: { extensions: [userExt(), infraBuiltinExt(), featureBuiltinExt()] },
+    })
+    await flushPromises()
+    const builtinGroup = wrapper!.find('[data-testid="extension-group-builtin"]')
+    const userGroup = wrapper!.find('[data-testid="extension-group-user"]')
+    // 两组组头均存在
+    expect(builtinGroup.exists()).toBe(true)
+    expect(userGroup.exists()).toBe(true)
+    // 组头 = 标题 + pill + count + aux
+    expect(builtinGroup.text()).toContain('已安装扩展')
+    expect(builtinGroup.text()).toContain('系统强制')
+    expect(builtinGroup.text()).toContain('runtime 自动安装/升级')
+    expect(builtinGroup.text()).toContain('2') // count badge = 2 个 builtin
+    expect(userGroup.text()).toContain('用户安装')
+    expect(userGroup.text()).toContain('可开关 · 可升级 · 可卸载')
+    // builtin 扩展（infrastructure + feature）出现在系统强制组内，user 扩展不在
+    expect(builtinGroup.text()).toContain('@zhushanwen/pi-pending-notifications')
+    expect(builtinGroup.text()).toContain('@zhushanwen/pi-goal')
+    expect(builtinGroup.text()).not.toContain('my-tools')
+    // user 扩展出现在用户安装组内，builtin 扩展不在
+    expect(userGroup.text()).toContain('my-tools')
+    expect(userGroup.text()).not.toContain('@zhushanwen/pi-goal')
+    // builtin 组在 user 组之前（DOM 顺序）
+    const html = wrapper!.html()
+    expect(html.indexOf('extension-group-builtin')).toBeLessThan(html.indexOf('extension-group-user'))
+  })
+
+  it('空组不渲染组头（整体隐藏）', async () => {
+    // 只有 user 扩展 → builtin 组整体隐藏
+    wrapper = mount(ExtensionPage, { props: { extensions: [userExt()] } })
+    await flushPromises()
+    expect(wrapper!.find('[data-testid="extension-group-builtin"]').exists()).toBe(false)
+    expect(wrapper!.find('[data-testid="extension-group-user"]').exists()).toBe(true)
+    expect(wrapper!.text()).not.toContain('系统强制')
   })
 })

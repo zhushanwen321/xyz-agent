@@ -13,14 +13,16 @@
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useFileTree.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { watch } from 'vue'
+import type { FileNode } from '@xyz-agent/shared'
 
 // mock @/api 门面（useFileTree 经 `import { file as fileApi, git as gitApi } from '@/api'` 依赖）
 const mockFileTree = vi.fn()
 const mockFileExpand = vi.fn()
 const mockGitStatus = vi.fn()
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   file: {
     tree: (...args: unknown[]) => mockFileTree(...args),
     expand: (...args: unknown[]) => mockFileExpand(...args),
@@ -28,7 +30,7 @@ vi.mock('@/api', () => ({
   git: { status: (...args: unknown[]) => mockGitStatus(...args) },
 }))
 
-import { useFileTree } from '@/composables/features/useFileTree'
+import { useFileTree } from '@/composables/features/file-tree/useFileTree'
 import { useFileTreeStore } from '@/stores/fileTree'
 
 beforeEach(() => {
@@ -169,5 +171,144 @@ describe('useFileTree.expandNode T2.3/T2.4/T2.5', () => {
 
     expect(store.getNodeState('s1', 'src').status).toBe('error')
     expect(store.getNodeState('s1', 'src').reason).toBe('out_of_cwd')
+  })
+
+  // V8 实测 bug 回归锁定（runtime 重启后文件树点击零反馈）：断开期间 expand promise
+  // 被 reject（request 层 send-fail 立即 reject 或 use-connection rejectAll）后，
+  // loading 态必须复位为 error，且后续点击不被 inFlight/loading 幂等去重拦截。
+  // nodeState.status 是 FileView 渲染 loading/error 图标的依据（用户可见）。
+  it('V8 断开恢复：expand 在途时连接断开（promise reject）→ loading 复位为 error → 二次 expand 重发可达', async () => {
+    const store = useFileTreeStore()
+    store.setTree('s1', [{ path: 'packages', name: 'packages', type: 'dir' }])
+    // 第一次 expand 挂起在途——模拟请求已发出、runtime 被 kill（promise 未 settle）
+    let rejectInFlight: ((e: Error) => void) | undefined
+    mockFileExpand.mockImplementationOnce(
+      () => new Promise<FileNode[]>((_resolve, reject) => { rejectInFlight = reject }),
+    )
+
+    const { expandNode } = useFileTree()
+    const first = expandNode('s1', 'packages')
+    await Promise.resolve() // 等 markInFlight + setNodeState(loading) 同步生效
+    expect(store.getNodeState('s1', 'packages').status).toBe('loading') // 用户看到 loading
+
+    // WS 断开：在途 promise 被 reject（pending.rejectAll / send-fail reject 的下游效果）
+    rejectInFlight!(Object.assign(new Error('ws closed'), { code: 'disconnected' }))
+    await first
+
+    // loading 复位为 error：用户看到错误态而非永久 spinner，点击不再被拦截
+    expect(store.getNodeState('s1', 'packages').status).toBe('error')
+    expect(store.getNodeState('s1', 'packages').reason).toBe('disconnected')
+
+    // 重连成功后二次点击：新请求可达（不被 inFlight/loading 残留吞掉），成功展开
+    mockFileExpand.mockResolvedValueOnce([{ path: 'packages/core', name: 'core', type: 'dir' }])
+    await expandNode('s1', 'packages')
+    expect(mockFileExpand).toHaveBeenCalledTimes(2)
+    expect(store.getNodeState('s1', 'packages').status).toBe('loaded')
+    expect(store.getExpanded('s1').has('packages')).toBe(true)
+  })
+
+  it('V8 断开窗口：请求发出时 WS 已非 OPEN（request 层立即 reject）→ error 态 → 二次点击重试成功', async () => {
+    const store = useFileTreeStore()
+    store.setTree('s1', [{ path: 'packages', name: 'packages', type: 'dir' }])
+    // request.command 对 send false 立即 reject（code='disconnected'）——mock 在 api 门面
+    // 模拟其下游效果：expand promise 同步失败
+    mockFileExpand.mockRejectedValueOnce(Object.assign(new Error('transport unavailable'), { code: 'disconnected' }))
+
+    const { expandNode } = useFileTree()
+    await expandNode('s1', 'packages')
+
+    // 不悬挂：立即进入 error 态（用户可见），而非停在 loading 拦截后续点击
+    expect(store.getNodeState('s1', 'packages').status).toBe('error')
+
+    // 重连后重试成功
+    mockFileExpand.mockResolvedValueOnce([{ path: 'packages/ui', name: 'ui', type: 'dir' }])
+    await expandNode('s1', 'packages')
+    expect(mockFileExpand).toHaveBeenCalledTimes(2)
+    expect(store.getNodeState('s1', 'packages').status).toBe('loaded')
+  })
+})
+
+describe('useFileTree.setFilter W15/D-7.1 过滤防抖', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    // 清掉模块级 pending timer，避免跨用例触发（filterText 是全局单值）
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  })
+
+  it('防抖窗口内连续 setFilter 只触发一次 store.filterText 更新（trailing 取最后一次）', () => {
+    const store = useFileTreeStore()
+    const { setFilter } = useFileTree()
+
+    // 过滤重算的触发源是 store.filterText（FileView.visibleNodes 依赖它），watch 计次数
+    // flush:'sync' 保证同步断言能读到回调计数（默认 pre 是微任务调度）
+    let filterCommits = 0
+    watch(
+      () => store.filterText,
+      () => {
+        filterCommits++
+      },
+      { flush: 'sync' },
+    )
+
+    // 模拟连续击键 's' → 'st' → 'sto' → 'store'
+    setFilter('s')
+    setFilter('st')
+    setFilter('sto')
+    setFilter('store')
+
+    // 防抖窗口内：store 未被写（过滤零重算）
+    expect(store.filterText).toBe('')
+    expect(filterCommits).toBe(0)
+
+    vi.advanceTimersByTime(200)
+
+    // trailing：只透传最后一次，且只触发一次
+    expect(store.filterText).toBe('store')
+    expect(filterCommits).toBe(1)
+  })
+
+  it('超过防抖间隔的两次输入各自触发（间隔 200ms 以上不合并）', () => {
+    const store = useFileTreeStore()
+    const { setFilter } = useFileTree()
+
+    setFilter('src')
+    vi.advanceTimersByTime(200)
+    expect(store.filterText).toBe('src')
+
+    setFilter('lib')
+    vi.advanceTimersByTime(200)
+    expect(store.filterText).toBe('lib')
+  })
+
+  it('模块级聚合：多个 useFileTree 实例（split mode 多 panel）连续 setFilter 仍只触发一次', () => {
+    const store = useFileTreeStore()
+    const panelA = useFileTree()
+    const panelB = useFileTree()
+
+    let filterCommits = 0
+    watch(
+      () => store.filterText,
+      () => {
+        filterCommits++
+      },
+      { flush: 'sync' },
+    )
+
+    panelA.setFilter('a-query')
+    panelB.setFilter('b-query')
+
+    expect(store.filterText).toBe('')
+    vi.advanceTimersByTime(200)
+    expect(store.filterText).toBe('b-query') // 后到者胜（与旧直通行为终态一致）
+    expect(filterCommits).toBe(1)
+  })
+
+  it('对外签名不变：setFilter 同步返回 void', () => {
+    const { setFilter } = useFileTree()
+    expect(setFilter('x')).toBeUndefined()
   })
 })

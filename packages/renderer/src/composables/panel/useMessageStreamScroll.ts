@@ -85,9 +85,8 @@ export function useMessageStreamScroll(deps: MessageStreamScrollDeps): void {
   // 高度骤减，virta $fixScrollJump 异步触发 followIfStuck 有时间窗，期间界面停中间。
   // 此处与 trace 折叠同源（都看 isSessionActive）显式补一次 follow，消除空窗期。
   //
-  // 不用 force=true：尊重用户上滑意图（stickToBottom=false 时 guard 拦截，视口不动）。配合
-  // useVirtuaFollow 的 pauseStickGuard（trace 折叠 transition 期间暂停 onScroll 误判），贴底态下能
-  // 正确执行到底。ask-user/subagent 期间 isSessionActive 保持 true，不会误触发。
+  // 不用 force=true：尊重用户上滑意图（stickToBottom=false 时 scrollToBottom 内部 guard
+  // 拦截，视口不动）。ask-user/subagent 期间 isSessionActive 保持 true，不会误触发。
   watch(
     () => deps.isSessionActive.value,
     (nw, old) => {

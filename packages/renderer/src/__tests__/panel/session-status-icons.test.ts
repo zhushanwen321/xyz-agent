@@ -5,7 +5,7 @@
  * 覆盖 cw-2026-07-15-session-status-icons 新增状态：
  * - streaming / pending / compacting / waiting / retrying 派生正确
  * - DOT_CLASS / STATUS_ICON 映射完整
- * - SessionItem 按状态渲染图标（观察者形态视角）
+ * - SessionItem 列表主行按状态渲染右侧 badge（spec §5.6A / D12；图标范式移至非列表场景）
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/panel/session-status-icons.test.ts
  */
@@ -89,7 +89,7 @@ describe('session status icons extended states', () => {
     expect(deriveStatus('sid', chat, true, false, true)).toBe('working')
   })
 
-  it('streaming 状态 SessionItem 渲染 RefreshCw 图标', () => {
+  it('streaming 状态 SessionItem 渲染 running badge（spec §5.6A D12 列表主行范式）', () => {
     const wrapper = mount(SessionItem, {
       props: {
         session: { id: '1', label: 'x', cwd: '/a', lastActiveAt: 0, status: 'active' },
@@ -97,11 +97,13 @@ describe('session status icons extended states', () => {
         status: 'streaming',
       },
     })
-    expect(wrapper.find('[data-testid="sidebar-session-icon"]').attributes('data-icon')).toBe('RefreshCw')
-    expect(wrapper.find('[data-testid="sidebar-session-dot"]').exists()).toBe(false)
+    // 列表主行不再用语义图标（STATUS_ICON 保留给非列表场景）
+    expect(wrapper.find('[data-testid="sidebar-session-icon"]').exists()).toBe(false)
+    // streaming → running badge（脉动小条 + 耗时）
+    expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(true)
   })
 
-  it('waiting 状态 SessionItem 渲染 Wrench 图标', () => {
+  it('waiting 状态 SessionItem 渲染 waiting … badge', () => {
     const wrapper = mount(SessionItem, {
       props: {
         session: { id: '1', label: 'x', cwd: '/a', lastActiveAt: 0, status: 'active' },
@@ -109,6 +111,57 @@ describe('session status icons extended states', () => {
         status: 'waiting',
       },
     })
-    expect(wrapper.find('[data-testid="sidebar-session-icon"]').attributes('data-icon')).toBe('Wrench')
+    expect(wrapper.find('[data-testid="sidebar-session-icon"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="session-badge-waiting"]').exists()).toBe(true)
+  })
+
+  it('error 状态 SessionItem 渲染 ! 胶囊 badge（danger，需用户介入）', () => {
+    const wrapper = mount(SessionItem, {
+      props: {
+        session: { id: '1', label: 'x', cwd: '/a', lastActiveAt: 0, status: 'active' },
+        active: false,
+        status: 'error',
+      },
+    })
+    // error → 专用 badge（! 胶囊，bg-danger-soft）
+    const badge = wrapper.find('[data-testid="session-badge-error"]')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toBe('!')
+    // 其他状态 badge 不渲染（互斥）
+    expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="session-badge-waiting"]').exists()).toBe(false)
+  })
+
+  it('done / stopped 状态 SessionItem 无 badge（仅耗时文字）', () => {
+    for (const status of ['done', 'stopped'] as const) {
+      const wrapper = mount(SessionItem, {
+        props: {
+          session: { id: '1', label: 'x', cwd: '/a', lastActiveAt: 0, status: 'active' },
+          active: false,
+          status,
+        },
+      })
+      // 终态：running/waiting/error 三类 badge 均不渲染，meta 区只剩耗时文字
+      expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="session-badge-waiting"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="session-badge-error"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="sidebar-session-meta"]').exists()).toBe(true)
+    }
+  })
+
+  it('dead 状态 isDead 抑制 badge（整行 opacity-50 表达，无任何状态 badge）', () => {
+    const wrapper = mount(SessionItem, {
+      props: {
+        session: { id: '1', label: 'x', cwd: '/a', lastActiveAt: 0, status: 'dead' },
+        active: false,
+        status: 'dead',
+      },
+    })
+    // dead 由 isDead 抑制 badge（badgeKind=none），整行 opacity-50 表达（spec §5.6A）
+    expect(wrapper.find('[data-testid="session-badge-error"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="session-badge-waiting"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="sidebar-session-meta"]').exists()).toBe(true)
+    expect(wrapper.find('.session-item').classes()).toContain('opacity-50')
   })
 })

@@ -23,6 +23,10 @@ import {
   findMissingDependencies,
 } from './plugin-deps.js'
 import { PluginHotReloader, type HotReloadHooks, type StatusChangeCallback } from './plugin-hot-reload.js'
+// §6.6 硬锁常量（w1 落地）：external 插件安装/激活总开关。
+// sandbox 真隔离闭环已落地，EXTERNAL_PLUGIN_ENABLED 已翻转为 true。
+// 联动契约见 plugin-security.ts —— 任一 sandbox 环节回退时须同步改回 false。
+import { EXTERNAL_PLUGIN_ENABLED } from './plugin-security.js'
 // 本地类型别名：方法签名 host: PluginHost 用（re-export 不进本地作用域，需单独 import）
 import type { PluginHostContract as PluginHost } from './plugin-host.js'
 
@@ -73,6 +77,12 @@ export class PluginActivator {
   private contexts = new Map<string, PluginContextState>()
   private descriptors = new Map<string, PluginDescriptor>()
   private pendingReplies = new Map<string, PendingReply>()
+  /**
+   * 进行中的激活 promise（pluginId → in-flight activatePlugin）。
+   * 幂等守卫的支撑状态：重入 activatePlugin 返回同一 promise 而非静默丢弃，
+   * 使「批准权限后 re-activate」能 await 到挂起中那次激活的完成。
+   */
+  private activationInFlight = new Map<string, Promise<void>>()
 
   /** 权限检查（可选） */
   private permissionChecker?: PermissionCheckerLike
@@ -135,6 +145,11 @@ export class PluginActivator {
    * 激活单个插件。
    *
    * 流程：ACTIVATING → assignWorker → loadPlugin → postMessage('activate') → 等待回复
+   *
+   * 幂等语义（真幂等，非 no-op）：已激活跳过；激活中返回**同一 in-flight promise**——
+   * 重入调用方（如 PluginService.approvePermissions 在批准唤醒后）await 到的是挂起中
+   * 那次激活的完成，而非被静默丢弃。旧实现 `ACTIVATING → return` 会吞掉重入调用，
+   * 配合「批准只 grant 不 resolve pending」形成权限审批唤醒断链（批准后仍干等 30s）。
    */
   async activatePlugin(
     pluginId: string,
@@ -144,9 +159,21 @@ export class PluginActivator {
     const descriptor = this.descriptors.get(pluginId)
     if (!descriptor) return
 
-    // 幂等：已在激活中或已激活，跳过
+    // §6.6 硬锁（IF3，激活侧）：external 来源 + 开关 false → 跳过激活。
+    // 与 w1 安装锁（installPlugin）组成「新装不进 + 已装不跑」双 guard。
+    // 锁在权限检查之前（ES2）。sandbox 真隔离闭环已落地、开关 true 后此 guard 放行；
+    // 开关回退 false 时重新生效。
+    if (descriptor.source === 'external' && !EXTERNAL_PLUGIN_ENABLED) {
+      console.warn(`[plugin-activator] skipping ${pluginId}: external plugin activation locked (sandbox isolation not yet implemented)`)
+      this.setState(pluginId, 'UNLOADED')
+      return
+    }
+
+    // 幂等：激活中 → 返回同一 in-flight promise；已激活 → 跳过
+    const inFlight = this.activationInFlight.get(pluginId)
+    if (inFlight) return inFlight
     const currentState = this.pluginStates.get(pluginId)
-    if (currentState === 'ACTIVE' || currentState === 'ACTIVATING') return
+    if (currentState === 'ACTIVE') return
 
     // 版本不兼容的插件不能激活
     if (currentState === 'DEPS_MISSING') {
@@ -154,6 +181,22 @@ export class PluginActivator {
       return
     }
 
+    const task = this.doActivatePlugin(pluginId, event, host, descriptor)
+    this.activationInFlight.set(pluginId, task)
+    try {
+      await task
+    } finally {
+      this.activationInFlight.delete(pluginId)
+    }
+  }
+
+  /** activatePlugin 的实际激活流程（守卫全过后执行；拆出以支持 in-flight 注册）。 */
+  private async doActivatePlugin(
+    pluginId: string,
+    event: ActivationEvent,
+    host: PluginHost,
+    descriptor: PluginDescriptor,
+  ): Promise<void> {
     this.pluginStates.set(pluginId, 'ACTIVATING')
 
     try {
@@ -166,23 +209,30 @@ export class PluginActivator {
           this.onPermissionRequest?.({ pluginId, permissions: unapproved })
           // 等待审批结果
           const approved = await approvalPromise
+          // 等待期间状态被外部改写（deactivate/disable → DEACTIVATING/UNLOADED、
+          // uninstall removeDescriptor → 已删除、crash → CRASHED）→ 本次激活作废：
+          // 继续走 assignWorker 会把已停用/已卸载的插件拉回 ACTIVE（approve → 快速
+          // disable 竞态）。removeDescriptor 场景下此处同时防住「卸载后幽灵 setState
+          // 复活」（状态已从 Map 删除，!== ACTIVATING 提前 return，不再回写）。
+          if (this.pluginStates.get(pluginId) !== 'ACTIVATING') return
           if (!approved) {
-            this.pluginStates.set(pluginId, 'UNLOADED')
+            this.setState(pluginId, 'UNLOADED')
             return
           }
         }
       }
 
-      // 1. 分配 Worker
-      const workerId = await host.assignWorker(pluginId, descriptor.trustLevel)
+      // 1. 分配 Worker（sandbox 传 pluginDir：fork 子进程 env 注入 XYZ_PLUGIN_SANDBOX_DIR，
+      // ESM loader initialize() 在进程启动时读此 env 做路径边界判定）
+      const workerId = await host.assignWorker(pluginId, descriptor.trustLevel, descriptor.pluginPath)
 
-      // 2. 加载插件模块到 Worker
-      await host.loadPlugin(workerId, descriptor.pluginPath)
+      // 2. 加载插件模块到 Worker（pluginId 显式传：loadedModules 分区键）
+      await host.loadPlugin(workerId, pluginId, descriptor.pluginPath)
 
       // 3. 发送 activate 消息并等待 Worker 回复
       const handle = host.getWorkerHandle(pluginId)
       if (!handle) {
-        this.pluginStates.set(pluginId, 'UNLOADED')
+        this.setState(pluginId, 'UNLOADED')
         return
       }
 
@@ -195,13 +245,13 @@ export class PluginActivator {
 
       if (success) {
         this.contexts.set(pluginId, { subscriptions: [] })
-        this.pluginStates.set(pluginId, 'ACTIVE')
+        this.setState(pluginId, 'ACTIVE')
       } else {
-        this.pluginStates.set(pluginId, 'UNLOADED')
+        this.setState(pluginId, 'UNLOADED')
       }
     } catch (err: unknown) {
       console.error(`[plugin-activator] failed to activate ${pluginId}:`, err)
-      this.pluginStates.set(pluginId, 'UNLOADED')
+      this.setState(pluginId, 'UNLOADED')
     }
   }
 
@@ -216,6 +266,12 @@ export class PluginActivator {
 
     this.pluginStates.set(pluginId, 'DEACTIVATING')
 
+    // 该插件正挂在权限审批等待（ACTIVATING 中）→ 唤醒为「拒绝」：不 resolve 的话
+    // 挂起中的激活要干等 30s 超时；且若等待期间用户批准（resolvePermissionApproval
+    // (pluginId, true)），醒来的激活会绕过本次停用把插件拉回 ACTIVE。此处
+    // resolve(false) + doActivatePlugin 醒来后的 ACTIVATING 状态检查双保险收敛到停用语义。
+    this.resolvePermissionApproval(pluginId, false)
+
     const handle = host.getWorkerHandle(pluginId)
     if (handle) {
       await this.sendAndWaitReply(
@@ -228,7 +284,7 @@ export class PluginActivator {
 
     // dispose subscriptions
     this.disposeContext(pluginId)
-    this.pluginStates.set(pluginId, 'UNLOADED')
+    this.setState(pluginId, 'UNLOADED')
   }
 
   /** 停用所有已激活的插件 */
@@ -245,13 +301,51 @@ export class PluginActivator {
     return result
   }
 
+  /**
+   * 移除插件在 activator 侧的全部状态（F2-④，uninstall 用）。
+   *
+   * descriptors/pluginStates/eventMap 残留会导致「幽灵重激活」：插件已从 registry
+   * 移除，但下一次 activationEvent 触发时 eventMap 仍命中并 re-activate（loadPlugin
+   * 读已删除的 pluginPath 报错）。pendingReplies/pendingPermissions 一并清理并
+   * resolve(false)，防 in-flight 回复悬挂到已卸载插件的 pending entry。
+   *
+   * activationInFlight 无需显式清理：被 resolve(false) 唤醒的挂起激活经
+   * doActivatePlugin 的 ACTIVATING 状态检查提前 return，外层 activatePlugin 的
+   * finally 随之移除 entry（自然收敛，不悬挂）。
+   */
+  removeDescriptor(pluginId: string): void {
+    this.descriptors.delete(pluginId)
+    this.pluginStates.delete(pluginId)
+    this.contexts.delete(pluginId)
+    for (const [pattern, ids] of this.eventMap) {
+      const filtered = ids.filter(id => id !== pluginId)
+      if (filtered.length === 0) {
+        this.eventMap.delete(pattern)
+      } else {
+        this.eventMap.set(pattern, filtered)
+      }
+    }
+    const pendingReply = this.pendingReplies.get(pluginId)
+    if (pendingReply) {
+      clearTimeout(pendingReply.timer)
+      pendingReply.resolve(false)
+      this.pendingReplies.delete(pluginId)
+    }
+    const pendingPermission = this.pendingPermissions.get(pluginId)
+    if (pendingPermission) {
+      clearTimeout(pendingPermission.timer)
+      pendingPermission.resolve(false)
+      this.pendingPermissions.delete(pluginId)
+    }
+  }
+
   getState(pluginId: string): PluginState | undefined {
     return this.pluginStates.get(pluginId)
   }
 
   /** 将插件状态标记为 CRASHED（由 PluginService crash callback 调用） */
   markCrashed(pluginId: string): void {
-    this.pluginStates.set(pluginId, 'CRASHED')
+    this.setState(pluginId, 'CRASHED')
   }
 
   /**
@@ -440,6 +534,21 @@ export class PluginActivator {
   }
 
   // ── Private helpers ─────────────────────────────────────────────
+
+  /**
+   * 稳定态状态回写：pluginStates 与 descriptor.status 同步。
+   *
+   * activator.descriptors 与 registry cache 持有同一 descriptor 对象引用，
+   * PluginService.toPluginInfo 经 descriptor.status 映射 PluginInfo.status——
+   * 只写 pluginStates 不回写 descriptor 会导致 toggle/激活后 UI 状态恒为
+   * discovered（存量缺口：激活链路从未回写）。仅稳定态（ACTIVE/UNLOADED/
+   * CRASHED）回写，ACTIVATING/DEACTIVATING 中间态不落 descriptor，避免 UI 闪烁。
+   */
+  private setState(pluginId: string, state: PluginState): void {
+    this.pluginStates.set(pluginId, state)
+    const descriptor = this.descriptors.get(pluginId)
+    if (descriptor) descriptor.status = state
+  }
 
   /** 根据 ActivationEvent 解析匹配的 pluginId 列表 */
   private resolveCandidates(event: ActivationEvent): string[] {

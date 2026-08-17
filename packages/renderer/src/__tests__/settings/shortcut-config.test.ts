@@ -14,19 +14,32 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
+// [w5] useAppCommands 改经壳单例 useCommandStore（core createCommandStore + getPlatform().storage）。
+// mock 壳单例捕获 registerApp 参数，避免依赖真实 getPlatform（AppShell 时序）。
+const appCmdsMock = vi.hoisted(() => ({
+  registerApp: vi.fn<(cmds: Array<{ id: string; shortcut?: string }>) => void>(),
+}))
+
+vi.mock('@/composables/features/command/useCommandStore', () => ({
+  useCommandStore: () => ({
+    appCommands: { value: [] },
+    shortcutOverrides: { value: {} },
+    registerApp: appCmdsMock.registerApp,
+  }),
+}))
+
 describe('U12: 快捷键配置（降级只读展示）', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    vi.clearAllMocks()
     // useAppCommands 依赖 commandStore + sidebarStore，均在 pinia 下
     vi.resetModules()
   })
 
   it('registerAppCommands 注册 new-session(⌘N) / toggle-sidebar(⌘B)，含 shortcut 字段', async () => {
-    const { registerAppCommands } = await import('@/composables/features/useAppCommands')
-    const { useCommandStore } = await import('@/stores/command')
+    const { registerAppCommands } = await import('@/composables/features/command/useAppCommands')
     const { useSidebarStore } = await import('@/stores/sidebar')
 
-    const commandStore = useCommandStore()
     const sidebarStore = useSidebarStore()
 
     registerAppCommands({
@@ -34,7 +47,7 @@ describe('U12: 快捷键配置（降级只读展示）', () => {
       goOverview: vi.fn(),
     })
 
-    const cmds = commandStore.appCommands
+    const cmds = appCmdsMock.registerApp.mock.calls[0]![0] as Array<{ id: string; shortcut?: string }>
     const newSession = cmds.find((c) => c.id === 'new-session')
     const toggleSidebar = cmds.find((c) => c.id === 'toggle-sidebar')
     const goOverview = cmds.find((c) => c.id === 'go-overview')
@@ -53,10 +66,8 @@ describe('U12: 快捷键配置（降级只读展示）', () => {
   })
 
   it('appCommands 含 shortcut 的命令可被 SystemPage 筛选展示', async () => {
-    const { registerAppCommands } = await import('@/composables/features/useAppCommands')
-    const { useCommandStore } = await import('@/stores/command')
+    const { registerAppCommands } = await import('@/composables/features/command/useAppCommands')
 
-    const commandStore = useCommandStore()
     registerAppCommands({ newSession: vi.fn(), goOverview: vi.fn() })
 
     // SystemPage.shortcutCommands 过滤条件：id 在 new-session/toggle-sidebar/go-overview 中
@@ -65,7 +76,8 @@ describe('U12: 快捷键配置（降级只读展示）', () => {
       'toggle-sidebar': true,
       'go-overview': true,
     }
-    const shortcutCommands = commandStore.appCommands.filter((c) => c.id in SHORTCUT_LABELS)
+    const cmds = appCmdsMock.registerApp.mock.calls[0]![0] as Array<{ id: string; shortcut?: string }>
+    const shortcutCommands = cmds.filter((c) => c.id in SHORTCUT_LABELS)
     expect(shortcutCommands).toHaveLength(3)
     expect(shortcutCommands.map((c) => c.id).sort()).toEqual(['go-overview', 'new-session', 'toggle-sidebar'])
   })
@@ -73,11 +85,11 @@ describe('U12: 快捷键配置（降级只读展示）', () => {
   it('i18n command namespace 含三个命令的显示名', async () => {
     const { setLocale } = await import('@/i18n')
     const i18n = (await import('@/i18n')).default
-    setLocale('zh-CN')
+    await setLocale('zh-CN')
     expect(i18n.global.t('settings.command.new-session')).toBe('新建任务')
     expect(i18n.global.t('settings.command.toggle-sidebar')).toBe('收起侧栏')
     expect(i18n.global.t('settings.command.go-overview')).toBe('概览')
-    setLocale('en-US')
+    await setLocale('en-US')
     expect(i18n.global.t('settings.command.new-session')).toBe('New session')
     expect(i18n.global.t('settings.command.toggle-sidebar')).toBe('Toggle sidebar')
     expect(i18n.global.t('settings.command.go-overview')).toBe('Overview')

@@ -16,7 +16,7 @@
  */
 import { computed, type ComputedRef, type DeepReadonly } from 'vue'
 import { useForkNoticeFeed, type ForkNoticeEntry } from '@/composables/effects/useForkNoticeEffect'
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 
 /** ForkNotice 每条高度估算（absolute 定位 top 计算用，与 ForkNotice.vue 实际高度对齐） */
 const FORK_NOTICE_HEIGHT = 40
@@ -59,22 +59,24 @@ export function useForkNoticeStream(
   onDismiss: (noticeId: number) => void
   } {
   const { notices: forkNoticeFeed, dismissNotice: dismissForkNotice } = useForkNoticeFeed()
-  // [W6] 顶层实例化 useSidebar：避免在 onView 回调内每次新建实例（composable 工厂模式反模式）。
-  const { selectSession } = useSidebar()
+  // [W6] 顶层实例化 useSidebarNew：避免在 onView 回调内每次新建实例（composable 工厂模式反模式）。
+  const { selectSession } = useSidebarNew()
 
   /** 当前 session 的 ForkNotice 列表（响应式，feed 变化自动更新） */
   const forkNotices = computed(() => forkNoticeFeed(sessionId()))
 
   /**
-   * ForkNotice 起始 top：列表末尾 + topOffset + compacting/dispatching 占位高度。
-   * compacting / dispatching 各预留对应 notice 高度量级的占位（与容器占位块对齐）。
-   * 顺序：compacting → dispatching（垂直堆叠，互不重叠）。
+   * ForkNotice 起始 top：列表末尾 + topOffset + compacting 占位高度。
    *
    * [M2] 若注入 injectedBaseTop（来自 useNoticeStack），直接采用——消除占位叠加的重复计算
-   * （dispatchingTop / 此 baseTop，reviewer m4）。未注入时兜底内部计算。
+   * （reviewer m4）。未注入时兜底内部计算。
    *
    * [cw wave w4] 基线优先级简化为 injectedBaseTop > vlistBottom（删 totalHeight 旧路径）。
    * MessageStream.vue 注入 injectedBaseTop 短路；未注入时 base = vlistBottom（virtua 单一滚动 owner）。
+   *
+   * [方案 D] dispatching 占位已迁入对话流文档流（末尾空 turn 的 TurnMeta），injectedBaseTop
+   * （生产路径）已不含 dispatching 占位。下方兜底分支仍保留 dispatching 占位叠加（兼容未注入
+   * 场景），但生产经 injectedBaseTop 短路不触发，属历史遗留。
    */
   const forkNoticeBaseTop = computed(() => {
     if (deps.injectedBaseTop) return deps.injectedBaseTop.value

@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 
 import { ConfigService } from '../src/services/config-service.js'
+import type { ProviderId } from '@xyz-agent/shared'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import {
   setModelsPath,
@@ -37,6 +38,7 @@ const HAS_DEV_PROVIDERS = devHasProviders()
 
 let tmpDir: string
 let configService: ConfigService
+let configStore: PiConfigStore
 let firstProviderId: string
 let firstModelId: string | undefined
 
@@ -54,7 +56,7 @@ beforeAll(() => {
   setSettingsPath(join(piAgentDir, 'settings.json'))
   refreshModels()
 
-  const configStore = new PiConfigStore()
+  configStore = new PiConfigStore()
   configService = new ConfigService(tmpDir, configStore)
 
   const providers = configService.listProviders()
@@ -80,24 +82,33 @@ describe.skipIf(!HAS_DEV_PROVIDERS)('E1-E3 real 层持久化验证', () => {
     expect(raw.providers[firstProviderId]?.api).toBe(newApi)
   })
 
-  it('E2: setProvider 改 enabled → models.json 落盘 enabled', () => {
-    configService.setProvider(firstProviderId, { enabled: false })
+  it('E2: toggleProviderEnabled(false) → settings.json enabledModels 落盘 + listProviders 派生 enabled=false', () => {
+    // wave3 C5/TC6：setProvider 不再写 provider 级 enabled——provider 启停由 enabledModels
+    // 白名单承载（listProviders 经 deriveEnabled 派生）。空白名单 = 全启用且 toggle(false)
+    // 幂等 no-op（设计内，config-service-toggle.test TC2），故先显式构造多 pattern 白名单。
+    const other = configService.listProviders().find(p => p.id !== firstProviderId)
+    if (!other) return // dev 单 provider：无法构造非末位白名单，跳过（对齐 E3 跳过模式）
+
+    configStore.setEnabledModels([`${firstProviderId}/*`, `${other.id}/*`])
+    expect(configService.listProviders().find(p => p.id === firstProviderId)!.enabled).toBe(true)
+
+    configService.toggleProviderEnabled(firstProviderId, false)
 
     const afterProvider = configService.listProviders().find(p => p.id === firstProviderId)!
     expect(afterProvider.enabled).toBe(false)
 
-    // 直接读盘验证
-    const raw = readModels()
-    expect(raw.providers[firstProviderId]?.enabled).toBe(false)
+    // 直接读盘验证（绕过缓存）：白名单不再含 firstProviderId 的 pattern
+    const settings = readSettings()
+    expect(settings.enabledModels).toEqual([`${other.id}/*`])
 
-    // 恢复
-    configService.setProvider(firstProviderId, { enabled: true })
+    // 恢复（清白名单 = 回到全启用）
+    configStore.clearEnabledModels()
   })
 
   it('E3: setDefaultModel → settings.json 落盘 defaultProvider/defaultModel', () => {
     if (!firstModelId) return // provider 无 model，跳过
 
-    configService.setDefaultModel(firstProviderId, firstModelId)
+    configService.setDefaultModel(firstProviderId as ProviderId, firstModelId)
 
     const settings = readSettings()
     expect(settings.defaultProvider).toBe(firstProviderId)

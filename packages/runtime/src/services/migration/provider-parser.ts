@@ -11,10 +11,8 @@
  *
  * ParsedProvider 结构：
  *   - 继承 PiProviderConfig（models.json provider 配置形状，含 apiKey 明文）。
- *   - 加 3 个 _ 前缀元数据字段（apply 时剥离，不写 models.json）：
- *     - _sourceName：源里的 provider 名（导入后作为 xyz-agent models.json 的 provider id）。
- *     - _apiKeyExtracted：是否成功提取 apiKey（脱敏布尔，preview 用）。
- *     - _warnings：解析期警告（preview 展示）。
+ *   - 加 5 个 _ 前缀元数据字段（apply 时剥离，不写 models.json）：_sourceName / _apiKeyExtracted /
+ *     _credentialType / _envVarName / _warnings（字段语义详见下方 ParsedProvider 接口 JSDoc）。
  */
 import type { ProviderSource } from '@xyz-agent/shared'
 import type { PiProviderConfig } from '../../infra/pi/pi-provider-store.js'
@@ -30,14 +28,25 @@ import { parseClaudeProviders as parseClaudeProvidersImpl } from './parsers/clau
  * 解析后的单个 provider（含元数据）。
  *
  * extends PiProviderConfig 以便 apply 时直接透传给 upsertProvider（剥离 _ 字段后）。
- * 三个 _ 前缀字段是 runtime 内部元数据，apply 时解构剥离，不写 models.json。
+ * _ 前缀字段是 runtime 内部元数据，apply 时解构剥离，不写 models.json。
  */
 export interface ParsedProvider extends PiProviderConfig {
   /** 源里的 provider 名（如 Pi 的 'deepseek-router'），导入后作 xyz-agent models.json 的 provider id。 */
   _sourceName: string
-  /** 源里是否成功提取到 apiKey 明文（脱敏布尔，preview 用；apply 时 apiKey 字段照原样写）。 */
+  /** computed 布尔：_credentialType ∈ plaintext/env/command 时 true（脱敏布尔，preview 用）。 */
   _apiKeyExtracted: boolean
-  /** 解析期警告（如「env_key 未设置」「key 加密无法提取」），preview 逐条展示。 */
+  /** 凭据形态六态（wave 4 import-credential-types，真相源）：
+   * - plaintext：明文 key 已提取。
+   * - env：$VAR / ${VAR} 占位，_envVarName 记变量名。
+   * - env-bundle：api_key 带 env 包，有凭据但 Phase 1 不支持落盘，apiKey 不写。
+   * - command：!command 前缀（shell 命令取值，命令注入面）。
+   * - oauth：type==='oauth'，Phase 1 不支持。
+   * - missing：无任何 key 线索，apiKey 不写。
+   */
+  _credentialType: 'plaintext' | 'env' | 'env-bundle' | 'missing' | 'oauth' | 'command'
+  /** _credentialType==='env' 时的环境变量名（已去 $ / ${} 前缀），其他态为 undefined。 */
+  _envVarName?: string
+  /** 解析期警告（如「env_key 未设置」「!command 命令注入」「OAuth Phase 2」），preview 逐条展示。 */
   _warnings: string[]
 }
 
@@ -45,15 +54,46 @@ export interface ParsedProvider extends PiProviderConfig {
  * 单个源解析结果。
  *
  * - providers：解析出的 provider 列表（含 apiKey 明文 + _ 元数据）。
+ * - orphanCredentials：孤儿凭据（auth.json 有、models.json 无定义的 providerId，含明文 apiKey，
+ *   sa3 F1 · 内置 Provider 模板衔接）。只进 runtime 内存（preview-cache），preview 脱敏。
  * - parseError：解析期致命错误（如文件格式损坏）。有 parseError 时 providers 可能为空或部分。
  * - warnings：顶层警告（如「N 个 provider 因协议不支持被丢弃」「provider X 因格式错误跳过」），
  *   preview 阶段整体展示给用户，与 per-provider `_warnings`（单 provider 维度）区分。
  */
 export interface ParseResult {
   providers: ParsedProvider[]
+  /**
+   * 孤儿凭据：auth.json 里存在、models.json 未定义的 providerId（pi 内置 provider 的凭据）。
+   * 含 apiKey 明文（runtime 内部），apply 时匹配内置模板补全定义（B4：不写 models）。
+   * 仅 pi-parser 产出；其他源解析器无此概念，省略。
+   */
+  orphanCredentials?: ParsedOrphanCredential[]
   parseError?: string
   /** 顶层警告（如「N 个 provider 因协议不支持被丢弃」），preview 阶段展示给用户。 */
   warnings?: string[]
+}
+
+/**
+ * 孤儿凭据（sa3 F1）：auth.json 有、models.json 无定义的 provider 凭据。
+ *
+ * 安全红线（B.5/DM1）：apiKey 明文只活在 runtime 内存（ParseResult → preview-cache），
+ * 与 ParsedProvider 同模式——preview 只暴露 credentialType/envVarName/占位信息，不含 key 值。
+ * 六态判定与 ParsedProvider._credentialType 同源（pi-parser 的 classifyCredential 共享函数）。
+ */
+export interface ParsedOrphanCredential {
+  /** auth.json 的 providerId（如 'openai'），导入后作 xyz-agent models.json 的 provider id。 */
+  providerId: string
+  /** 凭据形态六态（与 ParsedProvider._credentialType 同枚举）。 */
+  credentialType: 'plaintext' | 'env' | 'env-bundle' | 'missing' | 'oauth' | 'command'
+  /** credentialType==='env' 时的环境变量名（已去 $ / ${} 前缀），其他态为 undefined。 */
+  envVarName?: string
+  /**
+   * 明文 key / $ENV 占位串 / !command 原文（apply 时写 models.json apiKey；
+   * env-bundle/oauth/missing 态不写）。绝不进 preview 序列化。
+   */
+  apiKey?: string
+  /** 解析期警告（如「OAuth Phase 2」「!command 命令注入」「env bundle Phase 1 不支持」）。 */
+  warnings: string[]
 }
 
 // ══════════════════════════════════════════════════════════════════

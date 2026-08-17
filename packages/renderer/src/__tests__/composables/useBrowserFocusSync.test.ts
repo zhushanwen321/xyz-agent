@@ -34,7 +34,7 @@ vi.mock('@/stores/panel', () => ({
   }),
 }))
 
-import { useBrowserFocusSync } from '@/composables/features/useBrowserFocusSync'
+import { useBrowserFocusSync } from '@/composables/features/browser/useBrowserFocusSync'
 
 import { afterEach } from 'vitest'
 

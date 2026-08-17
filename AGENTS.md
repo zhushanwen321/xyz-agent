@@ -19,23 +19,28 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 
 **规范与设计文档**:
 - [完整编码规范](docs/standards.md) — 组件使用、样式规则、TypeScript 约束
-- [设计 Tokens（v3 SSOT）](docs/page-design/design-tokens.md) — 冷蓝暗色原子值（色/字/距/影/动效），ADR-0018 确立
-- [设计系统原语层（v3）](docs/page-design/design-system.md) — 组件原语如何使用 tokens
-- [v3 UI 设计稿](docs/page-design/v3/README.md) — L0-L4 递归骨架 spec + draft（shell/sidebar/workspace/panel/overview/settings/overlays/flow-2/flow-3）
+- [UI 设计演变史](docs/design-evolution.md) — Warm&Soft → v3 → v6 → 太极纯灰的完整演变叙事
+- [设计 Tokens（太极 V3 SSOT）](docs/page-design/design-tokens.md) — 纯灰暗色原子值（色/字/距/影/动效），ADR-0019 确立
+- [设计系统原语层](docs/page-design/design-system.md) — 组件原语如何使用 tokens
+- [v6 单一权威源](docs/page-design/v6-master-spec.md) — 决策与范式（整合自 28 份过程文档 + demo，D1-D14 裁决）
+- [v6 视觉规格](docs/page-design/v6-spec-shell.html) — 逐组件验收基准（15 个 v6-spec-*.html）
 - [领域术语表](docs/architecture/context.md) — Session/Panel/Runtime/v3 UI 结构术语
-- [竞品 UI 分析](docs/templates/competitor-ui-analysis.md) — Claude Code / Codex 逐图拆解，7 条设计原则
-- [UI/UX 设计原则与参考](docs/templates/ui-design-principles-and-references.md) — 设计方法论 + 竞品案例 + 行动清单
-- [设计方向](docs/templates/design-direction.md) — 产品定位、主题策略、窗口架构、实施优先级
-- [暗色主题选项 demo](docs/templates/dark-theme-options.html) — 5 种彩色 accent 方案对比
-- [朴素锐利主题 demo](docs/templates/muted-sharp-themes.html) — 5 种低饱和/无彩色方案对比
+- [UI/UX 设计原则与参考](docs/page-design/ui-design-principles.md) — 设计方法论 + 竞品案例 + 行动清单
 
-**页面设计目录**: `docs/page-design/` — v3 设计 SSOT 与设计稿。结构：`design-tokens.md`（原子）+ `design-system.md`（原语）+ `v3/`（正式设计区，L0-L4 骨架）+ `zcode-demo/`（视觉原型）+ `archive/`（pre-v3 历史稿）。禁止在项目根目录或其他位置创建 `demos/`、`impeccable/` 等目录
+**前端架构文档**:
+- [Renderer 目标架构（七层）](docs/architecture/renderer-target-architecture.md) — Shell/Workspace/Feature/ExtensionHost/RenderingProtocol/Transport&Coordination/Foundation 七层 + 层归属规则表 + 依赖铁律
+- [v6 架构重构](docs/architecture/v6-architecture-refactor.md) — 现状审查 + 落地改动（阶段 0/A/B/C，B1-B9）
+
+**待执行架构任务**（`docs/todo/`）:
+- [远程化合并架构指引](docs/todo/remote-use-merge-architecture.md) — `feat-remote-use`（86 commits）合并进 main 时的 T&C 层归位清单 + routeInbound 合并设计 + sync 兼容纪律。**合并 remote-use 之后删除此文档**
+
+**页面设计目录**: `docs/page-design/` — 前端设计 SSOT 与设计稿。结构：`design-tokens.md`（原子 SSOT）+ `design-system.md`（原语层）+ `v6-master-spec.md`（v6 单一权威源）+ `v6-spec-*.html`（视觉规格）+ `archive/v3/`（能力设计 spec：fast-*/flow-*/coding-plan-quota 等活跃功能设计）。禁止在项目根目录或其他位置创建 `demos/`、`impeccable/` 等目录
 
 **外部项目源码**:
 - **pi**: [badlogic/pi-mono](https://github.com/badlogic/pi-mono) — AI coding agent CLI，xyz-agent 通过子进程 RPC 调用。session tree / fork / clone 核心能力为 pi 原生，xyz-agent 不依赖任何 fork 特有改动
   - npm 包: `@earendil-works/pi-coding-agent`
-  - 当前版本: `0.82.1`（devDependency 提供 extensions 开发期类型；打包的 pi binary 见 `resources/pi/`）
-  - 历史背景：此前使用 fork `zhushanwen321/pi`（包名 `xyz-pi`），fork 唯一改动是在 `get_state` RPC 响应中透出 `leafId` 字段。该字段在 xyz-agent 前端从未消费，2026-07 已切回上游，leafId 改为从 JSONL session 文件解析近似值
+  - 当前版本: `0.84.1`（devDependency 提供 extensions 开发期类型；打包的 pi binary 见 `resources/pi/`）
+  - 历史背景：此前使用 fork `zhushanwen321/pi`（包名 `xyz-pi`），fork 唯一改动是在 `get_state` RPC 响应中透出 `leafId` 字段。该字段在 xyz-agent 前端从未消费，2026-07 已切回上游；leafId 现直接取自上游 `get_entries` RPC 响应的 `data.leafId` 字段（runtime 历史增量缓存用作 since 基准，见 `session-service.ts` getHistory），无 JSONL session 文件解析代码（旧说法「从 JSONL 解析近似值」与代码不符，已勘误）
   - Skill 加载: `packages/coding-agent/src/core/skills.ts`
   - Skill 展开: `packages/coding-agent/src/core/agent-session.ts` — `_expandSkillCommand()`
   - Slash 命令: `packages/coding-agent/src/core/slash-commands.ts`
@@ -49,7 +54,7 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 - **Extension 开发规范**: [docs/extensions/development-guide.md](docs/extensions/development-guide.md)（完整指南）、[docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)（强约束）、[docs/extensions/glossary.md](docs/extensions/glossary.md)（术语表）
 - 类型检查: `pnpm extensions:typecheck`；Lint: `pnpm extensions:lint`；测试: `pnpm extensions:test`
 - **本地开发调试**: `.agents/skills/dev-link/` 管理 `XYZ_EXTENSION_PATHS` 环境变量，在本地源码（live edit）和 npm 版本间切换 extension。`link-local.sh <pkg>` 添加 link → `set -a && source .env.dev-extensions && set +a && pnpm dev` 启动 → 改源码后新建 session 即生效。详见 [本地开发指南](docs/extensions/local-dev-guide.md)
-- **[MANDATORY] pi extension 测试优先在本地 pi 实测，不优先在 xyz-agent 验证**：`extensions/` 下 `@zhushanwen/pi-*` 扩展的改动，功能验证优先在**本地 pi CLI 环境**实测（RPC mode + 真实模型跑最小场景，检查 session 文件 / `XYZ_AGENT_DEBUG=1` 扩展日志），而不是优先在 xyz-agent 桌面应用中验证。原因：xyz-agent 有 mandatory 安装/升级机制、数据目录隔离、runtime 中转等额外层，会掩盖或引入版本差异（2026-08-10 事故：嵌套 subagent keep-alive 拦截在本地 pi 7.0.1 实测正常，但用户 xyz-agent 环境滞留 dev 旧版 5.0.0-dev.1 导致拦截缺失）；pi CLI 是最接近扩展真实运行环境的验证场，子进程扩展加载（`mirrorMainProcessFlags` 镜像主进程 `--extension`）行为与 xyz-agent 一致。实测方法：`pi --mode rpc --session-dir <dir> --model <m> --approve --extension <ext-path>` + stdin JSONL 发 `prompt` 命令，配合 `XYZ_AGENT_DEBUG=1` 看 `~/.pi/agent/logs/` 扩展日志、检查子进程 session 文件（`~/.pi/agent/subagents/<enc>/sessions/`）的 `pending:register`/`pending:unregister` 差集。测试模型用 `xiaomi-token-plan-cn/mimo-v2.5-pro`（禁止用 kimi 模型做测试）
+- **[MANDATORY] pi extension 测试优先在本地 pi 实测，不优先在 xyz-agent 验证**：`extensions/` 下 `@zhushanwen/pi-*` 扩展的改动，功能验证优先在**本地 pi CLI 环境**实测（RPC mode + 真实模型跑最小场景，检查 session 文件 / `XYZ_AGENT_DEBUG=1` 扩展日志），而不是优先在 xyz-agent 桌面应用中验证。原因：xyz-agent 有 mandatory 打包内置机制、数据目录隔离、runtime 中转等额外层，会掩盖或引入版本差异（2026-08-10 事故：嵌套 subagent keep-alive 拦截在本地 pi 7.0.1 实测正常，但用户 xyz-agent 环境滞留 dev 旧版 5.0.0-dev.1 导致拦截缺失）；pi CLI 是最接近扩展真实运行环境的验证场，子进程扩展加载（`mirrorMainProcessFlags` 镜像主进程 `--extension`）行为与 xyz-agent 一致。实测方法：`pi --mode rpc --session-dir <dir> --model <m> --approve --extension <ext-path>` + stdin JSONL 发 `prompt` 命令，配合 `XYZ_AGENT_DEBUG=1` 看 `~/.pi/agent/logs/` 扩展日志、检查子进程 session 文件（`~/.pi/agent/subagents/<enc>/sessions/`）的 `pending:register`/`pending:unregister` 差集。测试模型用 `xiaomi-token-plan-cn/mimo-v2.5-pro`（禁止用 kimi 模型做测试）
 - **Review 工作流**: `.agents/skills/pr-cr-fix/` 是 review→fix→PR 统一编排 skill，调度 `.agents/agents/` 下的 8 个 review agent（7 维审查 + 1 聚合器）。维度覆盖：arch-boundary / business-logic / electron-build / extension-api / monorepo-impact / test-coverage / type-safety。触发词："review 完开 PR"、"pr-cr-fix"。仅用于 xyz-agent worktree 的 PR 场景
 
 **Pi Extension 全集**（`extensions/` 下 14 个 `@zhushanwen/pi-*` 包 + `extensions/shared/` 下共享库；新增/删包时同步更新此表）：
@@ -72,7 +77,6 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 | `@zhushanwen/pi-unified-hooks` | `unified-hooks` | 统一 hooks 收集（散落 hook 集中维护） |
 
 **Settings 模块设计文档**:
-- [Settings 视觉 demo](docs/page-design/archive/settings-final.html) — Section Groups 风格 HTML demo（pre-v3 历史稿）
 - [Settings spec](.xyz-harness/2026-05-12-settings-redesign/spec.md) — 需求规格（WS 协议、数据流、组件结构）
 - [Settings plan](.xyz-harness/2026-05-12-settings-redesign/plan.md) — 实现计划（12 个 Task）
 
@@ -125,7 +129,7 @@ node $PW $EP click "[data-testid=chip-branch]"
 node $PW $EP fill "input[name=x]" "value"
 ```
 
-**注意多个 xyz-agent 实例**：打包版 `/Applications/xyz-agent.app` 也可能同时在跑（占 3210 端口）。dev 实例的 renderer 在 9222、runtime 在 3310（tsx 跑 `packages/runtime/src/index.ts`）。连错实例会看到旧代码——先确认 `list-pages` 的 URL 是 `localhost:1420`（vite dev server）。
+**注意多个 xyz-agent 实例**：打包版 `/Applications/太极.app` 也可能同时在跑（占 3210 端口）。dev 实例的 renderer 在 9222、runtime 在 3310（tsx 跑 `packages/runtime/src/index.ts`）。连错实例会看到旧代码——先确认 `list-pages` 的 URL 是 `localhost:1420`（vite dev server）。
 
 **runtime 代码改动不热重载**：dev runtime 用 `tsx`（非 `tsx watch`）运行，改 runtime 源码后**必须重启 dev**（`pnpm dev` 重跑）才生效。renderer 走 vite HMR 自动热重载。
 
@@ -143,7 +147,7 @@ node $PW $EP fill "input[name=x]" "value"
 任何错误路径都必须重置状态，否则 UI 卡死在「思考中」。错误作为 assistant 消息插入聊天流，不用顶部 banner。
 
 ### 4. 外部系统对接先验证再编码
-对接 pi RPC 等外部系统时，先写独立验证脚本（`tools/verify-*.cjs`），确认字段名和格式后再写业务代码。
+对接 pi RPC 等外部系统时，先写独立验证脚本（如 `verify-<system>.cjs`，放项目根或临时位置），确认字段名和格式后再写业务代码。验证使命完成后脚本即归档/移除，不长期保留。
 
 ### 5. pi 适配层不信任外部格式
 EventAdapter 和 session-pool 是 pi 协议的唯一适配点。业务代码不直接处理 pi 格式。`sendCommand` 必须检查 `success` 字段。
@@ -173,7 +177,7 @@ pi 的 `SessionManager._persist()` 在收到第一个 **assistant** 消息之前
 
 Runtime 侧：`server.ts` 的 `sendError` 必须传入 `sessionId`（外层 catch 从原始消息 `msg.payload.sessionId` 提取）。不带 `sessionId` 的 error 会被前端所有 panel 忽略。
 
-### 7.6 per-session 状态隔离范式 [ADR-0036]
+### 7.6 per-session 状态隔离范式 [ADR-0049]
 
 **所有持有 per-session 状态的 composable 必须用 `useSessionScopedState` 工厂（`composables/useSessionScopedState.ts`），统一采用 Map 分区派范式。** 禁止实例级状态 + watch(sessionId) 手动清空（脆弱模式）。
 
@@ -220,7 +224,9 @@ state.cleanup(sid)  // 移除指定 sid 分区（手动调用，正常由 delete
 - `useSessionEvents.ts`：订阅编排层，不持有 per-session 业务状态（registrations 是 handler 路由表，随实例销毁清）。不套 Map 分区。
 - `useDetailPane` / `useFileTree` 等：已正确隔离（loadToken / 现有 Map 分区），不在本次重构范围。
 
-详见 [ADR-0036](docs/adr/0036-session-isolation-map-partition.md)。
+详见 [ADR-0049](docs/adr/0049-session-isolation-map-partition.md)。
+
+**Code Review 强制检查项**：新增/修改 composable 时，reviewer 必须按 ADR-0049 的 [Code Review Checklist](docs/adr/0049-session-isolation-map-partition.md#code-review-checklist范式守护替代-eslint-规则) 逐条确认（是否持有 per-session 状态 / 是否用工厂 / WS handler 是否 updateFor / cleanup 是否挂钩）。例外须在 ADR 例外清单登记审批。
 
 ### 7.5 对话流状态必须可重开恢复 [HISTORICAL]
 
@@ -237,7 +243,7 @@ state.cleanup(sid)  // 移除指定 sid 分区（手动调用，正常由 delete
 
 持久化链路的两条读取路径都要覆盖（缺一会导致「在线重开能看到、离线重开看不到」或反之）：
 
-1. **RPC 路径**（session 在线，有 pi 子进程）：`session-service.getHistory` → `client.getHistory()` → pi `get_messages` → `message-converter.ts` 的 `convertPiHistory`。converter 必须处理所有 pi 返回的 message role（`user`/`assistant`/`toolResult`/`compactionSummary`/`branchSummary` 等），不能静默丢弃未知 role。
+1. **RPC 路径**（session 在线，有 pi 子进程）：`session-service.getHistory` → `client.getEntries()` → pi `get_entries` → `mapSessionEntries`（entry 树 → 伪消息，session-entry-mapper.ts）→ `convertPiHistory`（message-converter.ts，converter M1-M4 已改走 entry 树重建）。converter 必须处理所有 pi 返回的 message role（`user`/`assistant`/`toolResult`/`compactionSummary`/`branchSummary` 等），不能静默丢弃未知 role。
 2. **文件路径**（session 离线，无 pi 子进程）：`session-history.ts` 的 `getHistoryFromFile` → 解析 JSONL。filter 不能只留 `type === 'message'`，pi 的顶层 entry 类型（`compaction`/`branch`/`bashExecution` 等）需按需放开并转换。
 
 **新增任何进入对话流的状态时，必须同时实现两条通路**。只补实时广播、不改 converter/文件读取的，会在重开时丢失。检测方法：操作后关闭 session 再重开，对话流应与关闭前一致。
@@ -284,7 +290,7 @@ lsof -i :1420 -P | grep node
 
 #### pnpm workspace 单步安装（2026-07-04 重构后）
 - 项目使用 pnpm workspace（`pnpm-workspace.yaml`），`pnpm install` 一次装完根 + `packages/*` + `apps/*`
-- `.npmrc` 配置 `node-linker=hoisted` 保证 Electron 兼容性（详见 ADR-0032）
+- `.npmrc` 配置 `node-linker=hoisted` 保证 Electron 兼容性（详见 ADR-0036）
 - `git-cwt` 的 `setup-worktree.sh` 会自动跑 `pnpm install`，手动操作时跑一次即可
 
 #### merge-worktree 脚本的 bare repo 兼容
@@ -303,10 +309,10 @@ lsof -i :1420 -P | grep node
 ### 11. Plugin System 架构约束
 
 - **Plugin Service 是唯一的适配层**: 所有前端 ↔ 插件系统通信必须通过 WS → server.ts → PluginService 路径。前端不直接与 Worker 通信
-- **Worker Thread 隔离**: 每个插件运行在独立的 Worker Thread 中。插件崩溃不影响其他插件或主进程
+- **执行隔离（两层）**: trusted 插件运行在 Worker Thread 中；sandbox 插件运行在独立 fork 子进程中（`XYZ_PLUGIN_SANDBOX_DIR` + ESM loader 路径边界，plugin-host-process.ts）。插件崩溃不影响其他插件或主进程
 - **Hook 串行执行**: executeHooks 按 priority 排序串行 invoke 每个 handler。单个 handler 超时 5s 视为放行。blocked 终止链
 - **Tool RPC 路由**: handleBridgeToolExecute 通过 toolRegistry 查找 → Worker RPC invoke（超时 30s）→ 返回结果。不是 stub
-- **sessionData 缓存**: 读取走内存缓存，写入先缓存再 5s 定时 flush。Plugin deactivate 时强制 flush。容量上限 10MB/plugin
+- **sessionData 缓存**: 读取走内存缓存，写入先缓存（per-write 500ms debounce + 5s 周期 flush），runtime shutdown 时先 flushAll 再停 timer（正常关停零丢失）。容量上限 10MB/plugin
 - **Hot Reload**: 外部插件通过 fs.watch 监听（300ms debounce）。built-in 插件不监听
 - **WS 命名约定**: Client→Server 用点号（`plugin.xxx`），Server→Client 用冒号+camelCase（`plugin:statusBarUpdate`）
 - **Plugin Store**: 前端使用 `stores/plugin.ts` + `composables/usePlugin.ts` 管理 plugin 状态和 WS 事件
@@ -318,6 +324,7 @@ lsof -i :1420 -P | grep node
   - **代价**：新用户首次启动无这些 extension，需到 Settings 手动安装；离线环境无法安装（npm-installer 需联网）
   - 旧规则背景：曾经发生过误删 builtin 依赖导致打包产物缺失的事故，故设禁止删除规则。现改为推荐安装机制后该约束不再适用，但「删除打包所需依赖」的事故教训仍适用于其他 builtin 资源（如 pi binary、xyz-agent-extension.js）
   - **2026-07-30 推翻（升格 mandatory）**：上面的「Settings 推荐安装」机制**已被取代**。原 6 个推荐包（`pi-ask-user`/`pi-goal`/`pi-todo`/`pi-pending-notifications`/`pi-subagent-workflow`/`pi-structured-output`）已升格为 **mandatory**（强制安装），并新增 3 包（`pi-permission`/`pi-scheduler`/`pi-rename-session`），共 **9 包**改为 mandatory。mandatory 语义：runtime boot 时 `ensureMandatoryExtensions()` 自动 `npm install` 到 `~/.xyz-agent/npm/node_modules/` 并设 `autoUpgrade`、清 disabled 残留；**不可卸载/不可禁用**（`uninstallExtension`/`toggleExtension` 双重守卫，抛 `mandatory_cannot_disable`/`mandatory_cannot_uninstall`）。`recommended-extensions.json` 已清空为 `[]`（推荐机制保留给未来非强制可选扩展，当前为空）。**SSOT 迁移**：mandatory 列表 SSOT = `packages/shared/src/mandatory-extensions.json`（含 `tier: infrastructure | feature` 两级），recommended-extensions.json 不再是这些包的 SSOT。离线安装/用户手动安装等「推荐机制」结论不再适用。
+  - **2026-08-12 推翻（改为打包内置）**：上面的「boot npm install 到 `~/.xyz-agent/npm/node_modules/`」机制**已被取代**（ada6c0466 重构 + `prepare-builtin-extensions.sh`）。mandatory 包改为**随应用打包内置**：esbuild 把每个包 bundle 成自包含 `index.js`（JS value 依赖 inline，仅 pi virtualModules external）→ staged 到 `apps/electron/resources/extensions/@zhushanwen/<pkg>/` → electron-builder extraResources 拷进 `Resources/extensions/` → resolver `bundled` 源扫描。dev 与 build 同源（dev 直读 staged 目录）。**语义变化**：不再 boot npm install（`migrateBuiltinExtensions()` 反向清理历史 npm 记录：settings.json packages[] / auto-upgrade / disabled）；禁止用户 npm 安装（`installExtension` 抛 `builtin_already_installed`）；infrastructure 级不可禁用守卫保留。**SSOT 不变**：`mandatory-extensions.json` 仍是清单 SSOT（`prepare-builtin-extensions.sh` 读它生成 staged 产物，新增包**自动生效**，无需改 electron-builder.yml——extraResources filter 为 `**/*` 全量）；2026-08-12 加入 `pi-session-reader`（tier: infrastructure），共 **10 包**。打包产物存在性/完整性校验在 `postbuild-validate.sh`（`verify-staged-extensions.mjs`：index.js 存在 / 无 .ts 残留 / permission wasm / import dry-run）。**后续术语演化（builtin）**：守卫错误码与判定函数已从 mandatory 切到 builtin——`uninstallExtension` 抛 `builtin_cannot_uninstall`，`toggleExtension` 抛 `infrastructure_cannot_disable`（仅拦 infrastructure 级，feature 级可禁）。分级行为：infrastructure 3 包（`pi-pending-notifications`/`pi-session-reader`/`pi-structured-output`）不可禁且 UI 无启用开关；feature 7 包可禁（开关可见可操作）；两者都不可卸（UI 无卸载按钮，`ExtensionActions.vue` `v-if="ext.layer !== 'builtin'"` 隐藏）。判定函数 `isBuiltinExtension`（`packages/shared/src/extension.ts`，`isMandatoryExtension` 的新语义别名）、`isInfrastructureBuiltin`，底层 SSOT 仍是 `mandatory-extensions.json`。非 builtin 扩展（任意第三方 npm/local-dir/git 安装）仍正常装卸。
   - **xyz-system-prompt-extension.js**（repo root）：builtin 文件型 pi 扩展，before_agent_start hook 实现系统提示词追加注入。走 `--extension` CLI 注入（extension-service.getExtensionPaths 在 xyz-agent-extension.js 之后追加）。打包走 electron-builder.yml extraResources（`../../xyz-system-prompt-extension.js`），postbuild-validate.sh 校验产物存在性。「删除打包所需依赖」事故教训同样适用
   - extension/skill 都不走 vendor submodule（2026-07-04 移除了 `vendor/xyz-pi-extensions` + `vendor/xyz-harness` 两个 submodule，`prepare-pi-resources.sh` 现只负责下载 pi binary，extensions 走 npm 源、skills 走用户/project 级目录 `~/.agents/skills` / `<cwd>/.pi/agent/skills`）
 
@@ -384,10 +391,10 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 
 ### 13. 目录规范（违反必出 bug）
 
-- **禁止创建 `demos/` 或 `impeccable/` 目录** — 页面设计稿统一放 `docs/page-design/`：v3 正式稿在 `v3/<模块>/draft-*.html`，历史探索稿在 `archive/`。pre-commit hook 自动检查
+- **禁止创建 `demos/` 或 `impeccable/` 目录** — 页面设计稿统一放 `docs/page-design/`：视觉规格在 `v6-spec-*.html`，能力设计 spec 在 `archive/v3/`。pre-commit hook 自动检查
 - **禁止 symlink 指向外部绝对路径** — 项目内 symlink 白名单仅允许 `../` 相对路径（指向同 workspace 内的兄弟 worktree）。外部绝对路径 symlink 打包后目标不存在，导致运行时资源缺失。pre-commit hook 自动检查
 - **`.xyz-harness/` 目录必须提交且不能删除** — 该目录存放所有 spec/plan 的历史设计文档（按 `YYYY-MM-DD-<slug>/` 命名），是项目决策追溯的重要依据。禁止 `git rm -r .xyz-harness/` 或将其加入 `.gitignore`
-- **`DESIGN.md` 必须保留在项目根目录** — ~~产品设计系统的核心定义文件~~（已 DEPRECATED by ADR-0018，Warm & Soft 被推翻）。真身设计系统见 `docs/page-design/design-tokens.md` + `docs/page-design/design-system.md`（v3 冷蓝暗色）。文件保留作历史参考，不作为当前规范
+- **`DESIGN.md` 必须保留在项目根目录** — ~~产品设计系统的核心定义文件~~（已 DEPRECATED by ADR-0019，Warm & Soft 被推翻）。真身设计系统见 `docs/page-design/design-tokens.md` + `docs/page-design/design-system.md`（v3 冷蓝暗色）。文件保留作历史参考，不作为当前规范
 
 ### 14. 项目 skill 必须自包含 [HISTORICAL]
 
@@ -442,7 +449,7 @@ xyz-agent runtime 只是旁观转发：它看到 pi 又开始流 `message_start`
 1. xyz-agent runtime 侧（event-interpreter / session-service / message-dispatcher / session-message-handler）：这些只是「旁观 + 转发 + UI 同步」，不主动编排 pi 行为
 2. pi extension 机制（运行在 pi 进程内）：`@zhushanwen/pi-subagent-workflow` / `pi-subagents` 等扩展的 notifier / hook 才是续跑/编排的发起方。**开发期源码**在本项目 `extensions/`（@zhushanwen/pi-* 包），**运行时安装版**在用户机器 `~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/pi-*/src/`（排查用户环境问题时看这个）
 3. pi 私有协议（`triggerTurn`/`deliverAs`/`before_agent_start` 等）：`packages/shared/src/message.ts` 的注释会提到这些语义（如「triggerTurn:true 唤醒父 agent 接力处理结果」），但 xyz-agent 不实现它们
-4. 设计文档：`docs/page-design/v3/` 下常有 extension adaptation 文档（如 `subagent-panel/workflow-extension-adaptation.md`）说明跨层协议。extension 的 `ctx.mode`、运行环境、SDK 接口契约等前提知识见 [docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)
+4. 设计文档：`docs/page-design/archive/v3/` 下常有 extension adaptation 文档（如 `subagent-panel/workflow-extension-adaptation.md`）说明跨层协议。extension 的 `ctx.mode`、运行环境、SDK 接口契约等前提知识见 [docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)
 
 **判断「是 xyz-agent 职责还是 pi 职责」的依据**：如果一个行为涉及 pi 的 session loop / turn 调度 / LLM 调用，它的发起方几乎一定在 pi 进程内（extension 或 pi 核心），xyz-agent runtime 只是通过 RPC/事件流与 pi 交互，不会自己编排 pi 的 turn。xyz-agent 的职责是 UI 状态同步 + 用户命令转发，不是 pi 行为编排。
 
@@ -503,17 +510,18 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 7. **Promise.allSettled** — 独立数据源用 `allSettled`，不用 `all`
 8. **禁止硬编码颜色** — 用 CSS 变量（`var(--accent)`）或语义 Tailwind 类
 9. **禁止魔数间距** — 用标准 Tailwind scale，不用 `p-[17px]`
-10. **border-radius 遵循 v3 design-tokens**（`--radius-sm:3px` / `--radius:8px` / `--radius-lg:12px`）— `rounded-sm`(3px) 默认，`rounded-md`/`rounded-lg`(8/12px) 特殊场景。SSOT 见 [docs/page-design/design-tokens.md](docs/page-design/design-tokens.md)，裁决依据 ADR-0018（旧 Warm 时期的 1px/2px 规则已推翻）。详见 docs/standards.md §7.1
-11. **窗口顶部 traffic light 安全区（v3 shell 拓扑）** — v3 重建采用 zcode-demo 拓扑：base 平铺全屏 → sidebar 透明融合 → main 是唯一 float-panel 浮起。traffic light 靠 **aside-region 顶部留白**兼容，而非旧版 padding-left 避让。具体要求：
-    - `.aside-region` 恒定 `padding-top: 52px`（安全区），**三平台统一，全屏也保留**（mac 全屏 hover 时系统下拉覆盖层会落进这块留白）
-    - mac 红黄绿位置由主进程 `titleBarStyle:'hidden'` + `trafficLightPosition:{x:16,y:26}` 精确控制（**不用 hiddenInset**——inset 模式强制水平内缩，`trafficLightPosition.x` 被系统忽略）；win/linux 自绘圆点 `left:16px top:26px`（TrafficLight.vue，与 mac 同位）
-    - app-nav-controls（收起侧栏/←/→）浮在 aside 安全区，**非折叠态** `left:100px top:21px`，全屏 `left:16px`（320ms 平移与 traffic-light opacity 同步）。三处 chrome（红黄绿 / 浮层按钮 / PanelHeader 内按钮）统一对齐到 header 中线 y=32px
-    - **折叠态** chrome 迁入 P1 PanelHeader 内（header `pl-[88px]` 让位），与浮层位置一致（按钮起 x=100），切换折叠无跳动；AppShell 折叠态 `!gap-0`（强制覆盖 gap-3，否则 MainPanel 左右不对称）
-    - 全屏两态：非全屏（traffic light opacity 1，按钮 left:100px）/ 全屏（opacity 0，按钮左移）。**无第三态**，mac 全屏 hover 红黄绿由系统提供，应用不渲染
+10. **border-radius 遵循 v3 design-tokens**（`--radius-sm:3px` / `--radius:8px` / `--radius-lg:12px`）— `rounded-sm`(3px) 默认，`rounded-md`/`rounded-lg`(8/12px) 特殊场景。SSOT 见 [docs/page-design/design-tokens.md](docs/page-design/design-tokens.md)，裁决依据 ADR-0019（旧 Warm 时期的 1px/2px 规则已推翻）。详见 docs/standards.md §7.1
+11. **窗口顶部 traffic light 安全区（v3 shell 拓扑 + 刻意调整形态）** — v3 重建采用 zcode-demo 拓扑：base 平铺全屏 → sidebar 透明融合 → main 是唯一 float-panel 浮起。traffic light 靠 **aside-region 顶部留白**兼容，而非旧版 padding-left 避让。**2026-08 二次裁决：本拓扑是刻意调整，不遵循 v6 demo**（PanelHeader 调小至 22px 与 trafficlight 行共线对齐、main-panel 与窗口边框间距收紧至 4px、折叠态 chrome 落入 header 等，出自 8c62f64bc/0251b6d40/860ee6007 等 commit）。此前一次裁决曾按「以 v6 demo 为准」回填 v6 拓扑（38px header / trafficLight {16,26} / p-3 / 52px 安全区），后经用户确认刻意调整被误改，已整体恢复。具体要求：
+    - AppShell `p-1`(4px) 四周统一：上下左右各 4px（紧凑但有呼吸，对称）。注意：左右 4 使 aside 左缘 x=4，与红黄绿 x=8 有 4px 差（红黄绿保持原生位置不动，用户明确不移动 trafficLightPosition）；折叠态 `!gap-0`（aside 归零，padding 保持 p-1 四周 4px，与展开态一致）
+    - `.aside-region` 恒定 `padding-top: 44px`(pt-11)（安全区 + 拉开 trafficlight 行与 LOGO 行间距），**三平台统一，全屏也保留**（mac 全屏 hover 时系统下拉覆盖层会落进这块留白）。AppShell py-1 使 aside 顶在窗口 y=4，红黄绿 y=8~20，安全区让出，与 trafficlight 行（nav 按钮 bottom y27）视觉间距约 12px
+    - mac 红黄绿位置由主进程 `titleBarStyle:'hidden'` + `trafficLightPosition:{x:8,y:8}` 放到 macOS 原生左上角（**不用 hiddenInset**——inset 模式强制水平内缩，`trafficLightPosition.x` 被系统忽略）；win/linux 自绘圆点 `left:0 top:[4px]`（TrafficLight.vue 挂载于 AsideRegion 内，aside 顶在窗口 y=4，故 top-4 = 窗口 y8，与 mac 同位）。圆点 12px，顶理论 y=8 / **实测中线 y≈15.75**（macOS 渲染亚像素偏置，比理论 y14 低 ~2pt）/ 右缘 x=60
+    - app-nav-controls（收起侧栏/←/→）浮在 AppShell 层（aside 外，避免折叠态 overflow-hidden 裁剪），**非折叠态** `left:72px top:5px`（按钮中线 y=5+11=16，对齐红黄绿**实测**中线 ~15.75；红黄绿右缘 60 + 12 呼吸），全屏 `left:8px`（320ms 平移与 traffic-light opacity 同步）。**PanelHeader `h-[22px]` 与 trafficlight 行共线对齐**：main-panel 顶=AppShell p-1(4)+border(1)=y5，h-22 → header bottom y27 = nav 按钮 bottom，内容中线 y16 ≈ 红黄绿实测中线 y15.75（三者顶/底/中线全对齐）。右侧 drawer/git 按钮 `size-[22px]` 适配 22 高 header
+    - **折叠态** chrome 迁入 P1 PanelHeader 内（header `pl-[88px]` 让位红黄绿右缘 60），chrome 按钮在 header 中线（header h-22 中线 y16 = 红黄绿中线，无高度差）；AppShell 折叠态 `!gap-0`（强制覆盖 gap-3，padding 保持 p-1）
+    - 全屏两态：非全屏（traffic light opacity 1，按钮 left:72px）/ 全屏（opacity 0，按钮左移 left:8px）。**无第三态**，mac 全屏 hover 红黄绿由系统提供，应用不渲染。全屏态 TrafficLight 圆点 `opacity-0 pointer-events-none` 成对（review MF-1：隐形圆点仍可命中会劫持 header chrome 点击）
     - win/linux 走 mimic_mac：自绘彩色圆点放左侧模拟 mac，三平台左上视觉统一
     - 唤回侧栏：⌘B + header chrome 按钮（**rail-restore 左缘细条已移除**）
-    - 新增或修改任何窗口顶部区域 UI 时，必须读 [shell spec](docs/page-design/v3/shell/spec.md) 确认拓扑一致
-    - 设计决策记录：[ADR 0016](docs/architecture/adr/0016-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已 Superseded**）、[v3 shell spec](docs/page-design/v3/shell/spec.md)（现版 SSOT，2026-06-18 修正）
+    - 新增或修改任何窗口顶部区域 UI 时，先对照本条目数值，再读 [v6 shell spec](docs/page-design/v6-spec-shell.html) 了解设计稿差异（v6 demo/spec 的 38px/16,26/52px 拓扑不适用本实现，属刻意偏离）
+    - 设计决策记录：[ADR 0017](docs/adr/0017-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已 Superseded**）；8c62f64bc/0251b6d40/860ee6007（刻意调整序列，现版形态来源）
 12. **reka ScrollAreaViewport 默认 `overflow-x: hidden` [HISTORICAL]** — reka-ui 的 `ScrollAreaViewport` 内联注入 `overflow-x: hidden`，横向溢出的内容被**裁掉不滚动**（非 `scroll` 也非 `auto`）。文件树等需横向滚动看长文件名的场景，必须给 `ScrollArea` 传 `horizontal` prop（`src/components/ui/scroll-area/ScrollArea.vue`，渲染额外横向 ScrollBar + 用 `!overflow-x-auto` 覆盖内联 style）。覆盖用 Tailwind `!` 前缀（`!important` 压过 inline）；scoped `<style>` 的 `:deep()` 不行——会注入 `<style>` 元素破坏 reka Root 的子组件渲染顺序，导致 ScrollBar/Corner 不挂载
 
 ### 自动化检查
@@ -583,6 +591,7 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 - **Runtime 通信**: WebSocket，前端通过 `ws-client.ts` + `event-bus.ts` 消息分发
 - **Electron IPC**: 主进程通过 preload 暴露 `window.electronAPI`，渲染进程不直接使用 `ipcRenderer`
 - **Runtime broadcast 时序竞争 [HISTORICAL]**: session 级 broadcast（如 `session.commands`）若在 session 激活/创建流程内部发出（`ensureActive`/`lifecycle.create` 内的 `fetchAndBroadcastCommands`），会**早于** renderer 订阅该 sessionId 通道——订阅依赖 `switchSession`/`create` 的 RPC resolve → `activeId`/`currentSessionId` 更新 → `CommandPopover` 的 `watch(sessionId)` 重订，而 broadcast 已在此之前发出 → 消息丢失，renderer transport 只收到同流程的 `reply`（RPC 响应，走 pending map，不依赖订阅）。**约束：renderer 切换/创建 session 后需立即消费的 session 级状态，必须主动拉取**（新增 `session.getCommands` RPC，`useSidebar.selectSession` / `useNewTaskFlow.precreateSessionAndLoadCommands` 在 session 建立后调它 + `events.dispatchSession` 本地投递），不可依赖 broadcast 到达。新增任何 session 级 broadcast 必须对照本条评估。
+- **pi 源码不可改约束 [MANDATORY]**: xyz-agent 作为 pi 的封装消费者，**不修改 pi 源码、不向 pi 上游提 PR、不 fork pi**。所有 pi 没提供但 xyz-agent 需要的能力（如 OAuth login 的 device/callback flow、auth.json 写入器），由 xyz-agent 自己实现。与「项目概述」的「不依赖 fork 特有改动」一致——保持 pi 升级路径畅通。
 
 ## 发布与 CI 验证 [HISTORICAL]
 
@@ -755,7 +764,9 @@ cw v1 的 testRunner 硬编码 `cwd: workspacePath`（仓库根）跑 `npx vites
 2. 确认失败的测试是否在本次 wave 范围（看 plan.files）——范围外的预存失败需单独修，但不阻塞本 wave
 3. 若本 wave 范围内测试全绿，人工判定 test 阶段通过，推进 exec-review
 
-**根治方向**（待提 PR 到 coding-workflow）：testRunner 检测 monorepo（workspacePath 下有 `packages/*/vitest.config.ts`）时定位到含配置的子包跑；或读 `unit.plan.files` 推断测试范围。
+**已修复（2026-08 验证）**：当前 cw 版本（@zhushanwen/coding-workflow）已支持 `plan.testCwd` 字段——wave design/replan 阶段填 `testCwd: "<子包目录>"`（相对仓库根，如 `packages/runtime`），testRunner 即在该子包目录跑 testCommand，gate 数字与本地 `npx vitest run` 一致。monorepo 项目在 wave design 填 testCwd 即生效，上述「临时对策」的人工判定不再需要。验证来源：plugin-mock-isolation wave 填 `testCwd: "packages/runtime"`，cw test gate 33/0 与本地一致（R3 风险未 materialize）。
+
+**原根治方向（已由 testCwd 超额实现，保留作记录）**：testRunner 检测 monorepo（workspacePath 下有 `packages/*/vitest.config.ts`）时定位到含配置的子包跑；或读 `unit.plan.files` 推断测试范围。
 
 > **默认禁止跳过**（见上文「Lint / Git Hooks 问题处理原则 [MANDATORY]」）。以下变量仅供线上热修复等紧急场景，使用时必须在 commit message 说明原因。
 

@@ -14,7 +14,7 @@ import { registerUpdateHandlers } from './update-handlers.js'
 import { registerSoundHandlers } from './sound-handlers.js'
 
 /**
- * 注册所有 IPC handlers（特权 + 桥接 + browser drawer + 自动升级检测 + 系统提示音）。
+ * 注册所有 IPC handlers（特权 + 桥接 + browser drawer + 自动升级（含代理配置） + 系统提示音）。
  *
  * @param deps 注入依赖（实现由 main.ts 构造 MainContext 后提供）
  */

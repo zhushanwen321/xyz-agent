@@ -9,14 +9,15 @@
  * 「实际发给 pi 的文本」构造方式(subagent 注入 base64 marker)。
  *
  * 依赖经构造注入:svc(Facade 内部协议,访问 sessions/共享 helper)、
- * pm(getClient / 进程操作)、broker(broadcast)。
+ * pm(getClient / 进程操作)、messageBus(发布,wave:perf-w09 接口收敛——
+ * dispatcher 只依赖 publish 抽象,broker 依赖已删除:命令编排消息全部是
+ * session 级 push 型,单通道走 bus 定向发布,broadcast 双写腿已收口)。
  */
-import type { IMessageBroker } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IPiEngine, IProcessManager } from '../ports/pi-engine.js'
 import type { SendMessageHook } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
-import type { MessageBus } from '../message-bus/message-bus.js'
+import type { IMessageBus } from '../message-bus/message-bus.js'
 import { toErrorMessage } from '../../utils/errors.js'
 
 /** 生成代次 token 用的进制（base-36：数字 + 小写字母，紧凑且无符号字符）。 */
@@ -38,10 +39,20 @@ export class MessageDispatcher {
   constructor(
     private readonly svc: ISessionServiceInternal,
     private readonly pm: IProcessManager,
-    private readonly broker: IMessageBroker,
     private readonly workspaceService: WorkspaceService,
-    private readonly messageBus?: MessageBus,
+    private messageBus?: IMessageBus,
   ) {}
+
+  /**
+   * 后置注入 / 回填 MessageBus（SessionService.setMessageBus 同步回填调用）。
+   *
+   * bus 的两条注入通道：①构造参数（index.ts 构造 SessionService 时传导）；
+   * ②SessionService.setMessageBus 后置注入路径——该路径下 dispatcher 已构造（bus 为
+   * undefined），必须回填，否则全部 session 级发布静默 no-op（null-safe 但消息丢失）。
+   */
+  setMessageBus(bus: IMessageBus): void {
+    this.messageBus = bus
+  }
 
   /** 注册消息发送前 hook(PluginService 调用,实现 beforeSend 拦截)。 */
   setSendMessageHook(hook: SendMessageHook): void {
@@ -54,7 +65,7 @@ export class MessageDispatcher {
    * pending.reject，不得 reply success（round7 must-fix #3：避免「composer 清空 + 错误气泡」矛盾态）。
    */
   async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }> {
-    return this.sendPrompt(sessionId, content, () => content, images)
+    return this.sendPrompt(sessionId, content, (content) => content, images)
   }
 
   /** 构造 subagent 隐藏标记并发送 prompt(hook 审核用户原文,marker 仅发给 pi)。 */
@@ -63,26 +74,28 @@ export class MessageDispatcher {
     const encoded = Buffer.from(payload, 'utf-8').toString('base64')
     const marker = `<!-- xyz-agent-force-subagent:${encoded} -->`
     const promptText = content || `Execute task using agent '${agent}'`
-    return this.sendPrompt(sessionId, promptText, () => `${marker}\n${promptText}`)
+    return this.sendPrompt(sessionId, promptText, (promptBody) => `${marker}\n${promptBody}`)
   }
 
   /**
    * sendMessage / sendSubagentMessage 共享骨架。
-   * @param sessionId   会话 id
-   * @param hookContent hook 审核的文本(用户原文,不含 marker)
-   * @param buildPrompt 返回实际发给 pi 的文本(subagent 时含 marker 前缀)
-   * @param images      shared 形状图片附件（{data;mimeType}），透传给 client.prompt。
-   *                    仅 sendMessage 主路径传入；sendSubagentMessage 不传（范围外）。
+   * @param sessionId    会话 id
+   * @param hookContent  hook 审核的文本(用户原文,不含 marker)
+   * @param buildPrompt  输入(hook 改写后的)文本,返回实际发给 pi 的文本(subagent 时含 marker 前缀)
+   * @param images       shared 形状图片附件（{data;mimeType}），透传给 client.prompt。
+   *                     仅 sendMessage 主路径传入；sendSubagentMessage 不传（范围外）。
    */
   private async sendPrompt(
     sessionId: string,
     hookContent: string,
-    buildPrompt: () => string,
+    buildPrompt: (content: string) => string,
     images?: Array<{ data: string; mimeType: string }>,
   ): Promise<{ blocked: boolean; rejected?: boolean }> {
     // ── BeforeSend hook ──
     // blocked: 已广播 message.error（错误气泡），此处返回 {blocked:true} 让 handler 改发 error envelope。
-    if ((await this.runBeforeSendHook(sessionId, hookContent)).blocked) {
+    // modifiedContent: hook 改写后的文本（transform 语义，Fix-1），未改写时回退原文。
+    const hookOutcome = await this.runBeforeSendHook(sessionId, hookContent)
+    if (hookOutcome.blocked) {
       return { blocked: true }
     }
 
@@ -97,7 +110,6 @@ export class MessageDispatcher {
       // 之前只靠 server.ts 外层 handler_error envelope（走 pending.reject，不进聊天流），
       // 导致 ensureActive 失败（如 pi 进程已死、restore 再 spawn 再 exit）时用户在对话流看不到错误。
       const msg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
-      this.broker.broadcast(msg)
       this.messageBus?.publish(sessionId, msg)
       throw e
     }
@@ -111,7 +123,6 @@ export class MessageDispatcher {
       if (activeSession.isGenerating || activeSession.isCompacting || activeSession.isBashRunning) {
         console.warn(`[message-dispatcher] preemptive reject (busy), sid=${sessionId}`)
         const msg = { type: 'send.rejected' as const, payload: { sessionId, reason: 'busy' as const, message: 'Agent 正在处理' } }
-        this.broker.broadcast(msg)
         this.messageBus?.publish(sessionId, msg)
         return { blocked: true, rejected: true }
       }
@@ -131,7 +142,7 @@ export class MessageDispatcher {
       }
     }
     // ── 发送 prompt + 错误广播 ──
-    const promptText = buildPrompt()
+    const promptText = buildPrompt(hookOutcome.modifiedContent ?? hookContent)
     try {
       await client.prompt(promptText, images)
     } catch (e) {
@@ -139,7 +150,6 @@ export class MessageDispatcher {
       console.error(`[message-dispatcher] prompt failed: sessionId=${sessionId}`, errMsg)
       if (activeSession) activeSession.isGenerating = false
       const errMsgMsg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
-      this.broker.broadcast(errMsgMsg)
       this.messageBus?.publish(sessionId, errMsgMsg)
       // 与 hook 拦截同等对待：已广播 message.error 气泡，返回 blocked 让 handler 走 error envelope（sendError），
       // renderer pending.reject 触发 Composer 恢复草稿。否则 handler reply success → pending.resolve 误判发送成功。
@@ -149,27 +159,29 @@ export class MessageDispatcher {
   }
 
   /**
-   * 运行 BeforeSend hook：返回 { blocked: true } 时调用方应中止发送。
+   * 运行 BeforeSend hook：返回 { blocked: true } 时调用方应中止发送；
+   * 返回 { modifiedContent } 时调用方应以改写后的文本发送（transform 语义，Fix-1）。
    * 统一处理 hook 拦截（blocked）与 hook 自身异常（广播 message.error 后视作 blocked）。
    */
   private async runBeforeSendHook(
     sessionId: string,
     hookContent: string,
-  ): Promise<{ blocked: boolean }> {
+  ): Promise<{ blocked: boolean; modifiedContent?: string }> {
     if (!this.sendMessageHook) return { blocked: false }
     try {
       const hookResult = await this.sendMessageHook(sessionId, hookContent)
       if (hookResult?.blocked) {
         const msg = { type: 'message.error' as const, payload: { sessionId, message: hookResult.reason ?? 'Message blocked by plugin hook' } }
-        this.broker.broadcast(msg)
         this.messageBus?.publish(sessionId, msg)
         return { blocked: true }
+      }
+      if (typeof hookResult?.modifiedContent === 'string') {
+        return { blocked: false, modifiedContent: hookResult.modifiedContent }
       }
       return { blocked: false }
     } catch (e) {
       console.error('[message-dispatcher] sendMessage hook error:', e)
       const msg = { type: 'message.error' as const, payload: { sessionId, message: 'Plugin hook error: ' + (toErrorMessage(e)) } }
-      this.broker.broadcast(msg)
       this.messageBus?.publish(sessionId, msg)
       return { blocked: true }
     }
@@ -189,7 +201,6 @@ export class MessageDispatcher {
       // W4：abort 失败（异常退出）写 stopped 终态
       this.svc.persistSessionOutcome(sessionId, 'stopped', `Abort failed: ${errMsg}`)
       const abortErrMsg = { type: 'message.error' as const, payload: { sessionId, message: `Abort failed: ${errMsg}` } }
-      this.broker.broadcast(abortErrMsg)
       this.messageBus?.publish(sessionId, abortErrMsg)
       return
     }
@@ -204,7 +215,6 @@ export class MessageDispatcher {
     // W4：用户主动 abort 写 stopped 终态
     this.svc.persistSessionOutcome(sessionId, 'stopped', 'User aborted')
     const completeMsg = { type: 'message.complete' as const, payload: { sessionId, stopReason: 'aborted' as const } }
-    this.broker.broadcast(completeMsg)
     this.messageBus?.publish(sessionId, completeMsg)
   }
 
@@ -235,7 +245,6 @@ export class MessageDispatcher {
       const errMsg = `Failed to restore session: ${toErrorMessage(e)}`
       console.error(`[message-dispatcher] sendBash: ${errMsg}`)
       const errMsgObj = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
-      this.broker.broadcast(errMsgObj)
       this.messageBus?.publish(sessionId, errMsgObj)
       throw e
     }
@@ -255,7 +264,6 @@ export class MessageDispatcher {
       if (activeSession.isCompacting || activeSession.isBashRunning) {
         console.warn(`[message-dispatcher] sendBash preemptive reject (busy), sid=${sessionId}`)
         const rejectMsg = { type: 'send.rejected' as const, payload: { sessionId, reason: 'busy' as const, message: 'Agent 正在处理' } }
-        this.broker.broadcast(rejectMsg)
         this.messageBus?.publish(sessionId, rejectMsg)
         return { blocked: true, rejected: true }
       }
@@ -271,7 +279,6 @@ export class MessageDispatcher {
     // ── bashStart 广播（实时反馈，与 bashResult 终态对称）──
     const excludeFlag = !!excludeFromContext
     const bashStartMsg = { type: 'message.bashStart' as const, payload: { sessionId, command, excludeFromContext: excludeFlag, timestamp: Date.now() } }
-    this.broker.broadcast(bashStartMsg)
     this.messageBus?.publish(sessionId, bashStartMsg)
 
     // ── 调 pi bash + 广播终态 ──
@@ -299,7 +306,6 @@ export class MessageDispatcher {
           ...(result.fullOutputPath !== undefined && { fullOutputPath: result.fullOutputPath }),
         },
       }
-      this.broker.broadcast(bashResultMsg)
       this.messageBus?.publish(sessionId, bashResultMsg)
     } catch (e) {
       const errMsg = toErrorMessage(e)
@@ -328,10 +334,8 @@ export class MessageDispatcher {
           timestamp: Date.now(),
         },
       }
-      this.broker.broadcast(bashResultErrMsg)
       this.messageBus?.publish(sessionId, bashResultErrMsg)
       const bashErrMsg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
-      this.broker.broadcast(bashErrMsg)
       this.messageBus?.publish(sessionId, bashErrMsg)
       return { blocked: true }
     } finally {
@@ -390,7 +394,6 @@ export class MessageDispatcher {
         timestamp: Date.now(),
       },
     }
-    this.broker.broadcast(cancelMsg)
     this.messageBus?.publish(sessionId, cancelMsg)
   }
 
@@ -430,71 +433,43 @@ export class MessageDispatcher {
 
     console.log('[message-dispatcher] compact: start, sessionId=' + sessionId + ', customInstructions=' + (customInstructions ? `"${customInstructions}"` : '(none)'))
 
-    // [W3] busy 预检：与 sendBash/sendMessage 的 isCompacting 拒绝对称。
-    // compact 期间若 isBashRunning（pi 单 bash slot，compact 重写上下文会读到半压缩状态）或
-    // isGenerating（pi 正在跑 LLM turn，compact 重写上下文会与 streaming 竞态），必须拒。
-    // 互斥此前只单向（sendBash/sendMessage 拒 isCompacting，但 compact 自身不预检 busy），
-    // 导致 compact 可在 bash/generating 进行中启动 → 竞态。此处补齐双向互斥。
+    // [W3 + M4] busy 预检：与 sendBash/sendMessage 的 isCompacting 拒绝对称 + 防并发 compact 重入。
+    // 补 isCompacting：A 置位（interpreter 从 compaction_start 事件）后，B 进来预检若无 isCompacting
+    // 看不到 A → 两个 client.compact RPC 并发 → 双 compaction 事件流。补上后事件层 P-dedup by construction 成立。
+    //
+    // 事件驱动（M4）：compaction 生命周期广播全删——由 interpreter 从 compaction_start/compaction_end
+    // 唯一编排（session.compacting / message.compactionSummary / session.compacted / 对话流错误提示）。
+    // dispatcher 退化为「预检 + RPC 触发 + 失败复位」三件事。
     const active = this.svc.getSessionByClient(client)
-    if (active && (active.isBashRunning || active.isGenerating)) {
-      const reason = active.isBashRunning ? 'bash running' : 'agent generating'
+    if (active && (active.isBashRunning || active.isGenerating || active.isCompacting)) {
+      const reason = active.isCompacting ? 'compaction already running'
+        : active.isBashRunning ? 'bash running'
+          : 'agent generating'
       const errMsg = `Cannot compact while ${reason}`
       console.warn(`[message-dispatcher] compact preemptive reject (busy), sid=${sessionId}, reason=${reason}`)
-      // 广播 session.compacted{error} 让前端流式通道收口（与下方 client.compact 失败路径对称）。
-      const busyMsg = { type: 'session.compacted' as const, payload: { sessionId, status: 'compacted' as const, error: errMsg } }
-      this.broker.broadcast(busyMsg)
-      this.messageBus?.publish(sessionId, busyMsg)
-      // 抛错让 session-message-handler 补请求级 error envelope（与 client.compact 失败路径对称）。
+      // 零广播：不广播 session.compacted{error}。预检在 RPC 前，pi 未发 compaction_start，interpreter 不参与；
+      // 错误经 throw → session-message-handler error envelope → useChat compact catch（MF-1：busy/transport 级失败
+      // compaction_end 未到达 → catch toast 兜底；compaction 级失败由 interpreter 进对话流，catch 不 toast）。
       throw new Error(errMsg)
     }
 
-    const compactingMsg = { type: 'session.compacting' as const, payload: { sessionId, status: 'compacting' as const } }
-    this.broker.broadcast(compactingMsg)
-    this.messageBus?.publish(sessionId, compactingMsg)
-    // [W3, U6] compact 期间用 isCompacting 互斥 sendPrompt（pi 在压缩上下文，
-    // 此时 prompt 会与压缩竞态导致卡死）。与 isGenerating 不同：compact 不开 isGenerating，
-    // 否则前端会把 session 误显示为 active（实际在压缩）。finally 兜底确保异常/成功都复位。
-    // active 已在上方 busy 预检处取出（W3 复用）。
-    if (active) active.isCompacting = true
+    // 事件驱动（M4）：不广播 session.compacting、不置 active.isCompacting——均由 interpreter 从
+    // compaction_start 事件驱动。dispatcher 只做 RPC 触发 + 失败复位。
     try {
-      let result
-      try {
-        result = await client.compact(customInstructions)
-        console.log('[message-dispatcher] compact: complete, sessionId=' + sessionId + ', elapsed=' + (Date.now() - startTime) + 'ms')
-      } catch (e) {
-        const errMsg = toErrorMessage(e)
-        console.error('[message-dispatcher] compact: failed, sessionId=' + sessionId + ', error=' + errMsg + ', elapsed=' + (Date.now() - startTime) + 'ms')
-        const compactFailMsg = { type: 'session.compacted' as const, payload: { sessionId, status: 'compacted' as const, error: errMsg } }
-        this.broker.broadcast(compactFailMsg)
-        this.messageBus?.publish(sessionId, compactFailMsg)
-        throw e
-      }
-      // 压缩成功：广播 summary 进对话流（SystemNotice）+ 刷新 context 用量。
-      // 两件事都在 dispatcher 编排——compact 是主动命令，副作用归位命令编排层（非 event-adapter）。
-      // AGENTS.md 规则 7.5：对话流状态必须实时可见 + 可重开恢复（持久化由 pi 写入 JSONL，重开经 converter 还原）。
-      if (result?.summary) {
-        const summaryMsg = {
-          type: 'message.compactionSummary' as const,
-          payload: {
-            sessionId,
-            summary: result.summary,
-            tokensBefore: result.tokensBefore,
-            timestamp: Date.now(),
-          },
-        }
-        this.broker.broadcast(summaryMsg)
-        this.messageBus?.publish(sessionId, summaryMsg)
-      }
-      if (result?.estimatedTokensAfter != null && result.estimatedTokensAfter > 0) {
-        // compact 后无 turn_end，context 用量不会自动刷新。用 pi 返回的估算值触发 applyContextUpdate。
-        // 注意 estimatedTokensAfter 可能很小（压缩后），applyContextUpdate 对 0 会跳过，故判 > 0。
-        this.svc.applyContextUpdate(sessionId, result.estimatedTokensAfter)
-      }
-      const compactedMsg = { type: 'session.compacted' as const, payload: { sessionId, status: 'compacted' as const } }
-      this.broker.broadcast(compactedMsg)
-      this.messageBus?.publish(sessionId, compactedMsg)
+      await client.compact(customInstructions)
+      console.log('[message-dispatcher] compact: complete, sessionId=' + sessionId + ', elapsed=' + (Date.now() - startTime) + 'ms')
+    } catch (e) {
+      const errMsg = toErrorMessage(e)
+      console.error('[message-dispatcher] compact: failed, sid=' + sessionId + ', err=' + errMsg + ', elapsed=' + (Date.now() - startTime) + 'ms')
+      // 零广播：不广播 session.compacted{error}。pi 手动 compact 失败必发 compaction_end{errorMessage}
+      // （agent-session.js:1464-1483 无静默路径），interpreter 统一编排失败提示（session.compacted{error} +
+      // message.error 对话流提示）。此处只传播 RPC error，复位交由下方 finally（兜底防 transport 级失败
+      // ——RPC 未达 pi / pi 来不及发 compaction_end——时 session 卡死）。
+      throw e
     } finally {
-      // [W3, U6] 无论成功/失败/抛错都复位，避免 session 永远卡在 isCompacting（之后所有消息被拒）
+      // 兜底复位：interpreter 的 compaction_end 是复位主力（三路对称），此处防 transport 级失败时
+      // interpreter 未触发 compaction_end 导致 session 卡死。置位归 interpreter（compaction_start），
+      // dispatcher 不置 true，故此处只写 false（对 false 无害，幂等）。
       if (active) active.isCompacting = false
     }
   }

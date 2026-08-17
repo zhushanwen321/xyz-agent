@@ -1,10 +1,16 @@
 /**
  * git-status-parser 单测（vitest）。
  * 覆盖：parseGitStatus（-z NUL 分隔 + branch 头 + 重命名双记录）、xyToGitStatus（全枚举）、
- * deriveCounts（staged/unstaged/hasConflict 计数 + 未跟踪计入 unstaged）、parseNumstat。
+ * deriveCounts（staged/unstaged/hasConflict 计数 + 未跟踪计入 unstaged）、parseNumstatEntries。
+ *
+ * W17 审查 Fix-5：原 parseNumstat（聚合）/ parseNumstatByFile（per-file Map）薄包装无生产
+ * 消费方已删除，其用例随之移除——等价覆盖锚点：聚合/per-file 语义由
+ * git-state-service.test.ts「微项 8 单趟解析边界」用例承担（二进制跳过、半二进制只计数字列、
+ * per-file 双值均数字才收录）；行级解析边界（lossless / tab 路径 / 空输入）见下方
+ * parseNumstatEntries 与 git-status-parser-shared.test.ts。
  */
 import { describe, it, expect } from 'vitest'
-import { parseGitStatus, xyToGitStatus, deriveCounts, parseNumstat, parseNumstatByFile, parseNumstatEntries } from '@xyz-agent/shared'
+import { parseGitStatus, xyToGitStatus, deriveCounts, parseNumstatEntries } from '../src/infra/git/git-status-parser.js'
 import type { GitFileStatus } from '@xyz-agent/shared'
 
 describe('xyToGitStatus', () => {
@@ -92,41 +98,6 @@ describe('deriveCounts', () => {
   it('hasConflict true when any unmerged', () => {
     expect(deriveCounts([f('UU', 'unmerged')]).hasConflict).toBe(true)
     expect(deriveCounts([f(' M', 'modified')]).hasConflict).toBe(false)
-  })
-})
-
-describe('parseNumstat', () => {
-  it('sums add/del columns', () => {
-    expect(parseNumstat('12\t3\ta.ts\n5\t0\tb.ts')).toEqual({ add: 17, del: 3 })
-  })
-  it('skips binary (- counts) and empty lines', () => {
-    expect(parseNumstat('-\t-\tbin\n10\t2\tc.ts')).toEqual({ add: 10, del: 2 })
-  })
-  it('empty output → zeros', () => {
-    expect(parseNumstat('')).toEqual({ add: 0, del: 0 })
-  })
-})
-
-describe('parseNumstatByFile', () => {
-  it('多文件 → Map 含每文件 {add, del}', () => {
-    const m = parseNumstatByFile('10\t2\tsrc/a.ts\n5\t0\tsrc/b.ts')
-    expect(m.size).toBe(2)
-    expect(m.get('src/a.ts')).toEqual({ add: 10, del: 2 })
-    expect(m.get('src/b.ts')).toEqual({ add: 5, del: 0 })
-  })
-  it('二进制文件（add/del 为 -）跳过，不进 Map', () => {
-    const m = parseNumstatByFile('-\t-\timg.png\n3\t1\tcode.ts')
-    expect(m.size).toBe(1)
-    expect(m.has('img.png')).toBe(false)
-    expect(m.get('code.ts')).toEqual({ add: 3, del: 1 })
-  })
-  it('空输入 → 空 Map', () => {
-    expect(parseNumstatByFile('').size).toBe(0)
-  })
-  it('单文件 → Map 含一项', () => {
-    const m = parseNumstatByFile('7\t4\tlib/util.ts')
-    expect(m.size).toBe(1)
-    expect(m.get('lib/util.ts')).toEqual({ add: 7, del: 4 })
   })
 })
 

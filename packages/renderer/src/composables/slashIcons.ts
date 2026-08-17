@@ -1,27 +1,12 @@
 /**
- * slash 命令 icon 组件映射（SSOT）。
- * CommandPopover（选择框图标）与 useComposerChipCommands（内联 chip 图标）共用，
- * 保证两处 source → icon 推断一致（extension→terminal / skill→star / 默认 wrench）。
+ * slash 命令 icon 组件映射 —— 薄 re-export（SSOT 在 @xyz-agent/ui）。
  *
- * markRaw：组件对象无需响应式代理，跳过 reactivity 避免无谓开销（reka-ui / lucide 惯例）。
+ * 设计分层（audit §15.6 新发现-1 归位）：
+ * - core `command-store.ts` 产出 icon key 字符串（builtin 命令名 / source 泛化 key）
+ * - @xyz-agent/ui 把 key 绑定到 lucide 组件（SLASH_ICON_COMPONENTS，跨前端壳共享 SSOT）
+ * - 本文件仅保持 renderer 消费方 import 路径不变（CommandPopover / Composer / CommandDocPanel）
+ *
+ * 命令专属 icon key 推断（iconKeyForCommand）已在 core 实现，消费方直接
+ * `import { iconKeyForCommand } from '@xyz-agent/core'`（见 stores/command.ts）。
  */
-import { markRaw } from 'vue'
-import { Braces, FileText, Folder, Star, Terminal, Wrench } from '@lucide/vue'
-
-/** source → icon key（与 CommandPopover.iconForSource 同源，集中维护避免漂移） */
-export function iconKeyForSource(source: string): string {
-  if (source === 'extension') return 'terminal'
-  if (source === 'skill') return 'star'
-  return 'wrench'
-}
-
-/** icon key → lucide 组件（slash chip 与选择框共用同一映射） */
-export const SLASH_ICON_COMPONENTS = {
-  file: markRaw(FileText),
-  symbol: markRaw(Braces),
-  skill: markRaw(Star),
-  folder: markRaw(Folder),
-  terminal: markRaw(Terminal),
-  wrench: markRaw(Wrench),
-  star: markRaw(Star),
-}
+export { SLASH_ICON_COMPONENTS } from '@xyz-agent/ui'

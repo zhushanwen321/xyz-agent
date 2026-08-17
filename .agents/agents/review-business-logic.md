@@ -38,7 +38,7 @@ task prompt 中必须包含：
    - **异步/并发**：是否引入竞态、漏 await、listener 重复注册、不再成立的顺序假设？
    - **爆炸半径**：共享状态变更、emit 事件、config/env 读取 —— 即时调用点之外有什么会被破坏？
    - **回归**：公共 API 签名变更、隐式依赖被破坏等。
-5. **xyz-agent 特定检查**（参考项目 CLAUDE.md「关键规则」、standards.md）：
+5. **xyz-agent 特定检查**（参考项目 AGENTS.md「关键规则」、standards.md）：
    - 错误路径是否重置 `isGenerating` + `streamingMessage`（否则 UI 卡在「思考中」）
    - emit 是否只传单个 payload 对象（禁止 `emit('event', a, b)`）
    - 独立数据源是否用 `Promise.allSettled`（禁止 `Promise.all`）

@@ -229,14 +229,13 @@ describe('MessageDispatcher — 写入时机 record', () => {
       getSessionByClient: vi.fn().mockReturnValue(activeSession),
     }
     const pm = {}
-    const broker = { broadcast: vi.fn() }
-
-    // 当前 MessageDispatcher 只有 3 个构造参数，workspaceService 是本次 W2 新增的第 4 个。
+    // wave:perf-w09（D1-2）：dispatcher 4 参（svc/pm/workspace/bus），broker 依赖已删
+    const bus = { publish: vi.fn() } as unknown as ConstructorParameters<typeof MessageDispatcher>[3]
     const dispatcher = new MessageDispatcher(
       svc as unknown as ConstructorParameters<typeof MessageDispatcher>[0],
       pm as unknown as ConstructorParameters<typeof MessageDispatcher>[1],
-      broker as unknown as ConstructorParameters<typeof MessageDispatcher>[2],
-      workspaceService as unknown as ConstructorParameters<typeof MessageDispatcher>[3],
+      workspaceService as unknown as ConstructorParameters<typeof MessageDispatcher>[2],
+      bus,
     )
 
     const result = await dispatcher.sendMessage('s1', 'hello')
@@ -255,13 +254,13 @@ describe('MessageDispatcher — 写入时机 record', () => {
       getSessionByClient: vi.fn(),
     }
     const pm = {}
-    const broker = { broadcast: vi.fn() }
-
+    // wave:perf-w09（D1-2）：dispatcher 4 参（svc/pm/workspace/bus），broker 依赖已删
+    const bus = { publish: vi.fn() } as unknown as ConstructorParameters<typeof MessageDispatcher>[3]
     const dispatcher = new MessageDispatcher(
       svc as unknown as ConstructorParameters<typeof MessageDispatcher>[0],
       pm as unknown as ConstructorParameters<typeof MessageDispatcher>[1],
-      broker as unknown as ConstructorParameters<typeof MessageDispatcher>[2],
-      workspaceService as unknown as ConstructorParameters<typeof MessageDispatcher>[3],
+      workspaceService as unknown as ConstructorParameters<typeof MessageDispatcher>[2],
+      bus,
     )
 
     // 注册一个会 block 的 hook
@@ -282,13 +281,13 @@ describe('MessageDispatcher — 写入时机 record', () => {
       getSessionByClient: vi.fn(),
     }
     const pm = {}
-    const broker = { broadcast: vi.fn() }
-
+    // wave:perf-w09（D1-2）：dispatcher 4 参（svc/pm/workspace/bus），broker 依赖已删
+    const bus = { publish: vi.fn() } as unknown as ConstructorParameters<typeof MessageDispatcher>[3]
     const dispatcher = new MessageDispatcher(
       svc as unknown as ConstructorParameters<typeof MessageDispatcher>[0],
       pm as unknown as ConstructorParameters<typeof MessageDispatcher>[1],
-      broker as unknown as ConstructorParameters<typeof MessageDispatcher>[2],
-      workspaceService as unknown as ConstructorParameters<typeof MessageDispatcher>[3],
+      workspaceService as unknown as ConstructorParameters<typeof MessageDispatcher>[2],
+      bus,
     )
 
     await expect(dispatcher.sendMessage('s1', 'hello')).rejects.toThrow('restore failed')

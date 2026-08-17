@@ -10,6 +10,14 @@
  * - workspace.detect → worktreeService.detect → reply 'workspace.detected' { mode, wsRoot, barePath, repoRoot, defaultBranch }
  * - workspace.detectBare → 向后兼容别名，等价于 workspace.detect
  *
+ * 写操作失效（perf 03 §5 worktree 检查点闭环，2026-08-17）：worktree.add 创建新分支，
+ * 同 repo 各 cwd 的 getStatus branches 列表随之变化。worktree.create 成功后、reply 前对
+ * 发起请求的 cwd（payload.workspaceHint，缺省与 service.detect 同用 process.cwd()）调
+ * gitService.invalidateStatusCache({ cwd })（内部即 GitStateService.invalidateByCwd，
+ * 覆盖共享该 cwd 的所有 session）——语义对齐 git-message-handler U2 六写操作：成功后
+ * reply 前失效，失败路径不失效（状态未变）。gitService 为 null（server 未注入，仅测试
+ * /防御场景）时跳过失效，成功 reply 行为不变。
+ *
  * 错误：WorktreeService 用 `Object.assign(new Error(...), { code, detail })` 扁平错误模式
  * （非 class，详见 ports/worktree-service.ts 注释）。本 handler 从 error.code 提取业务错误码
  * 透传给前端（NOT_BARE_REPO / NOT_GIT_REPO / WORKTREE_EXISTS / SETUP_FAILED / GIT_FAILED / INVALID_BRANCH）；
@@ -21,10 +29,17 @@ import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, WorktreeEnvelopeCode } from '@xyz-agent/shared'
 import type { MessageHandlerContext } from './message-context.js'
 import type { IWorktreeService } from '../services/ports/worktree-service.js'
+import type { IGitService } from '../interfaces.js'
 
-/** Worktree handler 依赖的 context（messaging + worktreeService）。 */
+/** Worktree handler 依赖的 context（messaging + worktreeService + gitService）。 */
 export interface WorktreeHandlerContext extends MessageHandlerContext {
   worktreeService: IWorktreeService
+  /**
+   * 写操作失效入口（perf 03 §5 worktree 检查点闭环，2026-08-17）：worktree.create 成功后
+   * 按 cwd 失效 git 状态缓存。server.setServices 注入（与 GitMessageHandler 共享同一
+   * gitService 实例）；null = 未注入（防御），跳过失效。
+   */
+  gitService: IGitService | null
 }
 
 /** 具有 code 字段的业务错误形状（WorktreeService 抛出的扁平错误）。 */
@@ -55,6 +70,14 @@ export class WorktreeMessageHandler {
         }
         try {
           const result = await this.ctx.worktreeService.create({ branch, baseBranch, locationMode, workspaceHint })
+          // perf 03 §5 worktree 检查点闭环（2026-08-17）：worktree.add 创建新分支，共享发起
+          // cwd 的 session 面板 branches 列表随之变化——按 cwd 失效（内部走 GitStateService
+          // invalidateByCwd，覆盖该 cwd 全部 session 缓存），不残留 2s TTL 陈旧窗口。必须在
+          // reply 之前（前端收到 worktree.created 后可能立即刷新 git zone）；失败路径不失效
+          //（状态未变，对齐 U2 六写操作语义）。requestCwd 与 service.detect 起点同式
+          //（workspaceHint ?? process.cwd()），保证失效的 cwd 与实际操作的 repo 上下文一致。
+          const requestCwd = workspaceHint ?? process.cwd()
+          this.ctx.gitService?.invalidateStatusCache({ cwd: requestCwd })
           return this.ctx.reply(ws, msg.id, 'worktree.created', result)
         } catch (e) {
           return this.sendWorktreeError(ws, msg.id, e)

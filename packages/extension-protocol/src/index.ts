@@ -19,6 +19,7 @@ export type {
   StatItem,
   TreeItem,
   TreeItemIcon,
+  WidgetMeta,
 } from './core/types'
 
 // ── core：通用常量 ──
@@ -29,6 +30,7 @@ export { GUI_WIDGET_MARKER } from './core/markers'
 export {
   isGuiCapable,
   isGuiComponent,
+  isGuiRenderResult,
   guiResult,
   guiComponent,
   guiSetWidget,

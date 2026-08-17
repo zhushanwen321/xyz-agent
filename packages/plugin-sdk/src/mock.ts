@@ -95,5 +95,13 @@ export function createMockAgentAPI(): Phase2AgentAPI {
       name: 'mock-workspace',
       findFiles: () => Promise.resolve([]),
     },
+    commands: {
+      register: () => Promise.resolve(mockDisposable),
+      unregister: noopVoid,
+    },
+    views: {
+      update: noopVoid,
+      listMountPoints: () => Promise.resolve([]),
+    },
   }
 }

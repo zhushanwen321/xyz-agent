@@ -14,8 +14,7 @@
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/lib/file-match.test.ts
  */
 import { describe, it, expect } from 'vitest'
-import { filterAndSortFileCandidates } from '@/lib/file-match'
-import type { FileCandidate } from '@/lib/file-candidates'
+import { filterAndSortFileCandidates, type FileCandidate } from '@xyz-agent/core'
 
 /** 构造候选的辅助函数（减少样板） */
 function mk(

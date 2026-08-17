@@ -3,10 +3,11 @@
  *
  * 覆盖：
  * - U24 debounce：连续 load 2 次（间隔0）→ fake timers advance 300，api 调 1 次
- * - U25 setupInvalidation：chatStore fileChanges 变化 → store.invalidate
+ * - U25 setupInvalidation：file_changes ready 转变（W19/D-9 经共享 helper）→ store.invalidate
  * - U26 invalidate 后不自动刷新（store.get 仍返回旧值，不触发 load）
  *
- * mock 策略：vi.mock('@/api') composer.getFileCandidates + fake timers（debounce）。
+ * mock 策略：vi.mock('@/api') composer.getFileCandidates + git.status（helper overlay 回写）+
+ * fake timers（debounce）。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useFileSearch.test.ts
  */
@@ -15,11 +16,12 @@ import { createPinia, setActivePinia } from 'pinia'
 import { ref, nextTick } from 'vue'
 
 const mockGetFileCandidates = vi.fn()
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   composer: { getFileCandidates: (...args: unknown[]) => mockGetFileCandidates(...args) },
+  git: { status: vi.fn().mockResolvedValue({ sessionId: 's1', isRepo: false, stagedCount: 0, unstagedCount: 0, stats: { add: 0, del: 0 }, hasConflict: false, files: [] }) },
 }))
 
-import { useFileSearch } from '@/composables/features/useFileSearch'
+import { useFileSearch } from '@/composables/features/search/useFileSearch'
 import { useFileSearchStore } from '@/stores/fileSearch'
 import { useChatStore } from '@/stores/chat'
 
@@ -52,7 +54,7 @@ describe('useFileSearch debouncedLoad', () => {
 })
 
 describe('useFileSearch.setupInvalidation', () => {
-  it('U25 fileChanges 变化 → store.invalidate', async () => {
+  it('U25 file_changes ready 转变 → store.invalidate', async () => {
     mockGetFileCandidates.mockResolvedValue([{ path: 'a.ts', name: 'a.ts', type: 'file' }])
     const { load, setupInvalidation } = useFileSearch()
     const store = useFileSearchStore()
@@ -66,13 +68,12 @@ describe('useFileSearch.setupInvalidation', () => {
     const sidRef = ref('s1')
     const unwatch = setupInvalidation(sidRef)
 
-    // 模拟 agent 改文件：往 chatStore 注入含 fileChanges 的 assistant message。
-    // 必须用 setMessages（commitMessages 不可变写：新 Map → set → 赋值 .value）——
-    // W1 shallowRef 后，直接 messages.value.set 的 Map mutation 不触发响应式，
-    // setupInvalidation 的 watch 收不到变更。
+    // 模拟 agent 完成一轮改文件（W19/D-9：ready 帧经 applyFileChanges 写 messages +
+    // changeSetStatuses，两者同步完成；accumulating 中间帧不触发失效）
     chatStore.setMessages('s1', [
-      { role: 'assistant', content: 'done', fileChanges: [{ filePath: 'src/a.ts', changeType: 'edit' }] },
-    ] as never)
+      { id: 'a1', role: 'assistant', content: 'done', status: 'complete', timestamp: 1 },
+    ])
+    chatStore.applyFileChanges('s1', 'a1', [{ filePath: 'src/a.ts', status: 'modified' }], 'ready', true)
 
     await nextTick() // 触发 Vue watch（shallowRef .value 整体替换触发响应式）
     // 缓存被失效（G9：删缓存不重拉）
@@ -95,10 +96,11 @@ describe('useFileSearch.setupInvalidation', () => {
     await load('s1')
     expect(store.get('s1')).toHaveLength(1)
 
-    // 触发失效（setMessages 走 commitMessages 不可变写，触发 shallowRef 响应式）
+    // 触发失效（ready 帧走 applyFileChanges 真实写路径，触发 shallowRef 响应式）
     chatStore.setMessages('s1', [
-      { role: 'assistant', content: 'done', fileChanges: [{ filePath: 'x.ts', changeType: 'edit' }] },
-    ] as never)
+      { id: 'a1', role: 'assistant', content: 'done', status: 'complete', timestamp: 1 },
+    ])
+    chatStore.applyFileChanges('s1', 'a1', [{ filePath: 'x.ts', status: 'modified' }], 'ready', true)
     await nextTick()
     expect(store.get('s1')).toBeUndefined()
 

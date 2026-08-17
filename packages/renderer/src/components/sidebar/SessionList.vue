@@ -2,28 +2,35 @@
   <!--
     展示组件 · 会话列表（子视图 A，draft-five-states 卡 A/D）。
     按 cwd 分组渲染（D7：对齐后端 SessionGroup[]）—— 每组一个标题（cwd 末段）+ 组内 SessionItem 列表。
+    【D14 语义修正 2026-08-04】按 activeProject 过滤 session（session.projectId，cwd 只是展示聚合）：
+    命名 project → 只显示归属它的 session（同 cwd 组内可混合不同归属，逐 session 过滤）；
+    默认项目 → 未归类（无 projectId）+ 孤儿（归属的 project 已删除）聚合。
     ScrollArea 包裹；空态（D，session 数=0）显示极淡「暂无会话」占位。
     v-model 语义用 activeId（单向：子→父 select）。
   -->
   <ScrollArea class="session-list h-full">
     <div class="flex flex-col px-1">
       <div
-        v-for="g in groups"
+        v-for="g in visibleGroups"
         :key="g.cwd"
-        class="group/folder group-section flex flex-col gap-0.5"
+        class="group-section flex flex-col gap-0.5"
       >
         <!-- 组标题：cwd 末段（长路径只显末段防溢出，与 SessionItem.dirName 同一信息原子）。
              sticky 贴顶用 bg-bg 不透明（侧边栏底色透明融合 bg，header 同色遮住滚过的 item 文字）。
-             group/folder 命名 group：folder header 的 hover 只触发 folder delete button 显示，
-             不影响子级 SessionItem 的 group-hover（两者独立 scope）。 -->
-        <div class="group/folder sticky top-0 z-[1] flex items-center gap-1.5 bg-bg px-2 pb-0.5 pt-2">
+             group/folder 命名 group 只放在 header 行上（本容器**不能**带 group/folder——Tailwind
+             命名 group 是「任意层级祖先」匹配，容器带它会令 hover 组内任意 SessionItem 时也触发
+             folder 按钮，破坏单行独立 hover 语义）。 -->
+        <div class="group/folder sticky top-0 z-[1] flex items-center gap-1.5 bg-bg px-2 pb-0.5 pt-1">
           <Folder class="size-[11px] shrink-0 text-neutral-dim" />
-          <span class="truncate text-[10px] font-medium uppercase tracking-wide text-neutral-dim">
+          <span class="truncate text-[10px] font-medium text-neutral-dim">
             {{ dirNameOf(g.cwd) }}
           </span>
           <span class="font-mono text-[10px] text-neutral-dim opacity-60">{{ g.sessions.length }}</span>
-          <!-- folder 维度批量删除按钮（两段式确认，与 SessionItem.delete 一致） -->
+          <!-- folder 维度批量删除按钮（两段式确认，与 SessionItem.delete 一致）。
+               [review MF-2] 仅当组内可见数 = 该 cwd 全量数时渲染：removeByCwd 是 cwd 全量删除（项目无关），
+               项目过滤隐藏了部分 session 时点删除会误删用户不可见的其他 project session。 -->
           <div
+            v-if="isFolderDeleteAvailable(g.cwd)"
             class="ml-auto"
             :class="folderConfirmingCwd === g.cwd ? 'flex' : 'flex opacity-0 group-hover/folder:opacity-100'"
             @mouseleave="onFolderMouseLeave(g.cwd)"
@@ -57,6 +64,7 @@
             @select="emit('select', $event)"
             @rename="emit('rename', $event)"
             @delete="emit('delete', $event)"
+            @set-project="emit('setProject', $event)"
           />
           <!-- 当前 session 的分支：从组内 sessions filter parentSession 指向当前 session
                （sessionFile 路径或 sessionId，FR-20 fallback）。无分支时不渲染空容器。 -->
@@ -97,11 +105,13 @@ import { Plus, Folder, Trash2, Check } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { dirNameOf } from '@/composables/logic/path'
+import { dirNameOf } from '@xyz-agent/ui'
+import { useProjectStore } from '@/stores/project'
 import SessionItem from './SessionItem.vue'
 import ForkGroup from './ForkGroup.vue'
 
 const { t } = useI18n()
+const projectStore = useProjectStore()
 
 const props = defineProps<{
   /** 按 cwd 分组的会话（D7，对齐后端 SessionGroup[]） */
@@ -120,12 +130,54 @@ const emit = defineEmits<{
   stopBranch: [sessionId: string]
   /** 删除指定 cwd 下所有 session（folder 维度批量删除，两段式确认后由 Sidebar 调 deleteFolder） */
   deleteFolder: [cwd: string]
+  /** 归入项目（D14 语义修正）：透传 SessionItem 的 setProject */
+  setProject: [{ sessionId: string; projectId: string }]
 }>()
+
+/**
+ * 按 activeProject 过滤后的分组（D14 语义修正 2026-08-04，SSOT 见 shared/project.ts）。
+ *
+ * 过滤粒度是 **session 级**：同一 cwd 组内可混合不同归属的 session（project 可跨目录，
+ * 同一目录下不同 session 可服务不同 project），按 session.projectId 逐条匹配后重组分组。
+ *
+ * - 命名 project：只保留 projectId === activeProjectId 的 session
+ * - 默认项目（name 空）：未归类（无 projectId）+ 孤儿（归属的 project 已删除）聚合——
+ *   保证任何 session 都至少在一个项目视图中可见，不因 project 删除而丢失可见性
+ *
+ * 过滤后无匹配 → totalCount=0 走空态（「暂无会话」+ 新建按钮）。
+ */
+const visibleGroups = computed<SessionGroup[]>(() => {
+  const pid = projectStore.activeProjectId
+  const isDefault = projectStore.isDefaultProject
+  const knownIds = new Set(
+    projectStore.projects.filter((p) => p.name).map((p) => p.id),
+  )
+  const matches = (s: SessionGroup['sessions'][number]): boolean => {
+    if (isDefault) return !s.projectId || !knownIds.has(s.projectId)
+    return s.projectId === pid
+  }
+  return props.groups
+    .map((g) => ({ cwd: g.cwd, sessions: g.sessions.filter(matches) }))
+    .filter((g) => g.sessions.length > 0)
+})
 
 /** 全部 session 总数（空态判定，跨组汇总） */
 const totalCount = computed(() =>
-  props.groups.reduce((sum, g) => sum + g.sessions.length, 0),
+  visibleGroups.value.reduce((sum, g) => sum + g.sessions.length, 0),
 )
+
+/**
+ * folder 删除可用性（review MF-2）：组内可见 session 数 < 该 cwd 全量 session 数时隐藏删除按钮。
+ * 项目过滤按 session.projectId 逐条过滤（同 cwd 跨项目是模型常态），而 deleteFolder →
+ * api.removeByCwd(cwd) 是项目无关的全量删除——过滤态下删除会连带删掉不可见的 session，
+ * 且 header 计数（过滤后）会误导「删 1 个实际删 N 个」。全量数从未过滤的 props.groups 取，
+ * 不改 runtime removeByCwd 语义。
+ */
+function isFolderDeleteAvailable(cwd: string): boolean {
+  const total = props.groups.find((g) => g.cwd === cwd)?.sessions.length ?? 0
+  const visible = visibleGroups.value.find((g) => g.cwd === cwd)?.sessions.length ?? 0
+  return total === visible
+}
 
 /**
  * 取当前 session 的直接子分支列表（FR-17，spec §2 层③）。
@@ -139,7 +191,7 @@ const totalCount = computed(() =>
  * 仅在当前 session 所在组内 filter（分支与父同 cwd，不需跨组扫描）。
  */
 function branchesOf(s: SessionSummary): SessionSummary[] {
-  return props.groups
+  return visibleGroups.value
     .filter((g) => g.cwd === s.cwd)
     .flatMap((g) => g.sessions)
     .filter(
@@ -163,7 +215,7 @@ function branchesOf(s: SessionSummary): SessionSummary[] {
  */
 function parentLabelOf(s: SessionSummary): string {
   if (!s.parentSession) return ''
-  const parent = props.groups
+  const parent = visibleGroups.value
     .filter((g) => g.cwd === s.cwd)
     .flatMap((g) => g.sessions)
     .find((p) => p.sessionFile === s.parentSession || p.id === s.parentSession)

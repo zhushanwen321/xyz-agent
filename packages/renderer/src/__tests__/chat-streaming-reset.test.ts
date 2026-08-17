@@ -45,7 +45,9 @@ describe('chat store message.error 流式状态复位（规则 #3）', () => {
     expect(after[0].id).toBe('a1') // 原流式消息被转态
     expect(after[0].status).toBe('error') // 关键：复位 streaming
     expect(after[0].content).toContain('部分内容') // 保留已生成内容
-    expect(after[0].content).toContain('进程崩溃') // 并入 errorText
+    // [M2 error-visibility] 追加形态双通道：errorText 写 msg.error，不拼进 content
+    expect(after[0].error).toBe('进程崩溃')
+    expect(after[0].content).not.toContain('进程崩溃')
   })
 
   it('prompt 级 message.error（无 streaming assistant）：新建独立 error 消息', () => {
@@ -104,7 +106,8 @@ describe('chat store message.error 流式状态复位（规则 #3）', () => {
     const after = store.getMessages(sid)
     expect(after).toHaveLength(1)
     expect(after[0].status).toBe('error')
-    expect(after[0].content).toContain('Unknown error')
+    expect(after[0].error).toBe('Unknown error') // 缺省文案落 msg.error 字段（不拼 content）
+    expect(after[0].content).toBe('')
   })
 })
 
@@ -229,7 +232,9 @@ describe('chat store markSessionError —— session 级错误统一入口', () 
     expect(msgs[0].id).toBe('a-me')
     expect(msgs[0].status).toBe('error')
     expect(msgs[0].content).toContain('流中内容') // 保留已生成内容
-    expect(msgs[0].content).toContain('进程崩溃') // 并入 errorText
+    // [M2 error-visibility] 追加形态双通道：errorText 写 msg.error，不拼进 content
+    expect(msgs[0].error).toBe('进程崩溃')
+    expect(msgs[0].content).not.toContain('进程崩溃')
   })
 
   it('finalizeSession 收口所有活跃态：streaming entity + pendingSend', () => {

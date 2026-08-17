@@ -30,20 +30,24 @@ const presetMock = vi.hoisted(() => ({
   remove: vi.fn(() => Promise.resolve()),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   preset: presetMock,
   default: { preset: presetMock },
 }))
 
-vi.mock('@/components/settings/PresetModeSection.vue', () => ({
-  default: {
+vi.mock('@xyz-agent/ui/features/settings', () => ({
+  PresetModeSection: {
     name: 'PresetModeSection',
     props: ['preset', 'disabled'],
     template: '<div data-testid="mode-section" />',
   },
+  GroupCard: {
+    name: 'GroupCard',
+    template: '<div data-testid="group-card"><slot /></div>',
+  },
 }))
 
-import PiPresetsPage from '@/components/settings/PiPresetsPage.vue'
+import PiPresetsPage from '@/components/settings/preset/PiPresetsPage.vue'
 import { usePresetStore } from '@/stores/preset'
 import { useToast } from '@/composables/useToast'
 
@@ -141,8 +145,6 @@ describe('PiPresetsPage 首屏冒烟', () => {
   it('异步加载后：自定义预设自动展开、内置预设折叠（expandedIds 竞态回归防护）', async () => {
     // 模拟生产场景：mount 时 store 空，onMounted → loadPresets → list RPC 返回预设
     // 回归 bug：expandedIds 曾在 setup eager 初始化（此时 presets 空）→ 自定义预设也折叠
-    const store = usePresetStore()
-    // store 初始为空（不预填），让 loadPresets 走 list RPC
     presetMock.list.mockResolvedValue([builtinPreset(), customPreset()])
 
     wrapper = mount(PiPresetsPage)
@@ -302,6 +304,8 @@ describe('PiPresetsPage 设为默认', () => {
 
 describe('PiPresetsPage 内置扩展提示', () => {
   it('页面底部显示内置扩展提示', async () => {
+    // hint 在 presets 非空时渲染（v-if="presets.length"），fixture 需喂数据
+    presetMock.list.mockResolvedValue([builtinPreset()])
     wrapper = mount(PiPresetsPage)
     await flushPromises()
 

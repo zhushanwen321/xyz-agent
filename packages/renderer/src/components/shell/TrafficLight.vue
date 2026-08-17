@@ -2,13 +2,16 @@
   <!--
     TrafficLight · 跨平台窗口控制（shell spec §五方案 X）
     - mac：空占位 div（保留 .traffic-light 定位 + opacity transition 语义，红黄绿由 OS 绘制）
-    - win/linux：自绘 3 彩色圆点 mimic mac，hover 整组显 close/min/max 符号，点击 IPC 控窗口
-    全屏态 isFullscreen=true 时 opacity→0（响应式 :class 绑定，替代旧 [data-fullscreen] 祖先选择器），
+    - win/linux：自绘 3 彩色圆点 mimic mac（mac 原生位置 {8,8}；aside 顶在窗口 y=4，故 left-0=窗口x8 / top-[4px]=窗口y8），hover 整组显 close/min/max 符号，点击 IPC 控窗口
+    全屏态 isFullscreen=true 时 opacity→0 + pointer-events-none（响应式 :class 绑定，替代旧 [data-fullscreen] 祖先选择器），
     mac 系统 hover 浮层独立不参与。
+    [review MF-1] pointer-events-none 必须与 opacity-0 成对：仅隐藏视觉时，隐形圆点组
+    （absolute z-10）仍可被点击（折叠+全屏下悬浮在 PanelHeader chrome 之上），点击静默触发
+    最小化/最大化。opacity 只管视觉，pointer-events 管命中。
   -->
   <div
-    class="traffic-light absolute left-[16px] top-[26px] flex gap-2 z-10 transition-opacity duration-[var(--duration-slow)] ease-[var(--ease)] group"
-    :class="{ 'opacity-0': isFullscreen }"
+    class="traffic-light absolute left-0 top-[4px] flex gap-2 z-10 transition-opacity duration-[var(--duration-slow)] ease-[var(--ease)] group"
+    :class="{ 'opacity-0 pointer-events-none': isFullscreen }"
   >
     <template v-if="!isMac">
       <Button
@@ -17,7 +20,7 @@
         variant="ghost"
         :aria-label="dot.label"
         :title="dot.label"
-        class="tl-dot h-3 w-3 grid place-items-center rounded-full border border-black/25 p-0 hover:bg-transparent"
+        class="tl-dot h-3 w-3 grid place-items-center rounded-full p-0 hover:bg-transparent"
         :class="dot.bgClass"
         @click="onAction(dot.action)"
       >

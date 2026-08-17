@@ -33,6 +33,10 @@ describe('Task 2: Worker Sandbox (require 拦截)', () => {
       expect(!BLOCKED_BUILTINS.includes('util')).toBeTruthy()
       expect(!BLOCKED_BUILTINS.includes('events')).toBeTruthy()
     })
+
+    it('blocks module (createRequire bypass source)', () => {
+      expect(BLOCKED_BUILTINS.includes('module')).toBeTruthy()
+    })
   })
 
   describe('createRequireInterceptor', () => {
@@ -73,6 +77,40 @@ describe('Task 2: Worker Sandbox (require 拦截)', () => {
           expect(err).toBeInstanceOf(Error)
           expect((err as { code?: string }).code).toBe('PERMISSION_DENIED')
         }
+      }
+    })
+
+    it('rejects node: prefixed builtins (M6a-01 bypass regression)', () => {
+      const interceptor = createRequireInterceptor(pluginDir)
+      // CJS 侧黑名单查 node: 前缀剥离后的裸名：node:fs / node:child_process / node:module
+      // 均须拦截（node:module 的 createRequire 是绕过链第一环）
+      for (const mod of ['node:fs', 'node:fs/promises', 'node:child_process', 'node:module']) {
+        try {
+          interceptor(mod, undefined)
+          expect.unreachable(`should have thrown for ${mod}`)
+        } catch (err) {
+          expect(err).toBeInstanceOf(Error)
+          expect((err as { code?: string }).code).toBe('PERMISSION_DENIED')
+        }
+      }
+    })
+
+    it('allows node: prefixed safe builtins', () => {
+      const interceptor = createRequireInterceptor(pluginDir)
+      // 安全模块的 node: 形态放行（require('node:path') 与 require('path') 等价）
+      for (const mod of ['node:path', 'node:util', 'node:events']) {
+        expect(interceptor(mod, undefined)).toBe(mod)
+      }
+    })
+
+    it('rejects bare module builtin (createRequire bypass source)', () => {
+      const interceptor = createRequireInterceptor(pluginDir)
+      try {
+        interceptor('module', undefined)
+        expect.unreachable('should have thrown')
+      } catch (err) {
+        expect(err).toBeInstanceOf(Error)
+        expect((err as { code?: string }).code).toBe('PERMISSION_DENIED')
       }
     })
 

@@ -28,33 +28,30 @@ const chatApiMock = {
   editAndResend: vi.fn(),
   hydrateHistory: vi.fn(),
 }
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => chatApiMock,
 }))
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, setPendingModel: vi.fn() }),
   resetNewTaskFlow: vi.fn(),
 }))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   model: { switchModel: vi.fn() },
   session: { setThinkingLevel: vi.fn() },
   composer: { getMentionCandidates: vi.fn().mockResolvedValue([]), getFileCandidates: vi.fn().mockResolvedValue([]) },
 }))
 // main 合并引入 useProjectSkills/useGlobalSkills（landing skill），与 fork 测试无关，stub 掉
-vi.mock('@/composables/features/useProjectSkills', () => ({
+vi.mock('@/composables/features/settings/useProjectSkills', () => ({
   useProjectSkills: () => ({ projectSkills: [] }),
   useGlobalSkills: () => ({ globalSkills: [] }),
 }))
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
 }))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({ defaultModel: '' }),
-}))
 // ── mock useSidebar：forkSessionAsk（W2 新增，当前不存在）──
 const forkSessionAskMock = vi.fn(() => Promise.resolve())
-vi.mock('@/composables/features/useSidebar', () => ({
-  useSidebar: () => ({ forkSessionAsk: forkSessionAskMock, forkSession: vi.fn() }),
+vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
+  useSidebarNew: () => ({ forkSessionAsk: forkSessionAskMock, forkSession: vi.fn() }),
 }))
 
 // ── ComposerInput mock：defineExpose + emit（同 composer-three-states 范式）──

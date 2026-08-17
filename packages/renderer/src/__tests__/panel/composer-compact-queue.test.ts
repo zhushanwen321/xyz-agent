@@ -43,18 +43,18 @@ const chatApiMock = vi.hoisted(() => ({
 }))
 const toastMock = vi.hoisted(() => ({ error: vi.fn(), info: vi.fn(), warning: vi.fn() }))
 
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => chatApiMock,
   resetChatModuleState: vi.fn(),
 }))
 vi.mock('@/composables/useToast', () => ({
   useToast: () => toastMock,
 }))
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, setPendingModel: vi.fn(), currentCwd: ref(null) }),
   resetNewTaskFlow: vi.fn(),
 }))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   // chat: useCompactQueue.flush 依赖（TC15 flush 真实路径，非仅 useChat mock）
   chat: { send: chatApiMock.send, steer: chatApiMock.steer },
   model: { switchModel: vi.fn() },
@@ -64,9 +64,6 @@ vi.mock('@/api', () => ({
 }))
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
-}))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({ defaultModel: '' }),
 }))
 
 // ── ComposerInput mock：emit input 设 draft + emit keydown Enter 触发 onSend ──
@@ -106,7 +103,7 @@ const otherStubs = {
 
 import Composer from '@/components/panel/Composer.vue'
 // resetChatModuleState 来自被 mock 的 useChat 模块（vi.fn，测试隔离占位）
-import { resetChatModuleState } from '@/composables/features/useChat'
+import { resetChatModuleState } from '@/composables/features/chat/useChat'
 
 beforeEach(() => {
   setActivePinia(createPinia())

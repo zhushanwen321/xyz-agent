@@ -704,6 +704,40 @@ else
 fi
 
 # ============================================================================
+# AC7 extension-host 边界检查（packages/core 源码有变更时触发）
+# ============================================================================
+
+BOUNDARY_CHECKER="scripts/verify-extension-host-boundaries.mjs"
+CORE_SRC="packages/core/src"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_BOUNDARY_CHECK" != "1" ]; then
+    if echo "$STAGED_FILES" | grep -q "^$CORE_SRC/"; then
+        print_section "[AC7 extension-host 边界检查]"
+        echo -e "${BLUE}[INFO] core 源码有变更，运行 AC7 边界检查...${NC}"
+
+        if [ ! -f "$BOUNDARY_CHECKER" ]; then
+            echo -e "${RED}[ERROR] 找不到验证脚本: $BOUNDARY_CHECKER${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+
+        node "$BOUNDARY_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] AC7 边界检查失败：extension-host 消费端不得 import domain/stores/composables${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}[OK] core 源码无变更，跳过 AC7 边界检查${NC}"
+    fi
+else
+    echo -e "${YELLOW}[SKIP] AC7 边界检查已跳过${NC}"
+fi
+
+# ============================================================================
 # 打包配置预检查（electron-builder.yml / tsup.config.ts / resources/pi 有变更时触发）
 # ============================================================================
 
@@ -883,6 +917,7 @@ echo -e "  ${GREEN}[+]${NC} 目录规范检查（禁止 demos/impeccable + 外�
 echo -e "  ${GREEN}[+]${NC} ws-client send 直调检查（D3 统一门面）"
 echo -e "  ${GREEN}[+]${NC} runtime services 循环依赖检查（D6c 防护）"
 echo -e "  ${GREEN}[+]${NC} Runtime Bundle 验证（依赖打包 + CJS 兼容 + 健康检查）"
+echo -e "  ${GREEN}[+]${NC} AC7 extension-host 边界检查（core 变更时触发，禁 domain/stores import）"
 echo -e "  ${GREEN}[+]${NC} 打包配置预检查（asarUnpack/files 一致性 + symlink 检查）"
 echo -e "  ${GREEN}[+]${NC} i18n CJK 残留检测（.vue 模板不得含硬编码中文）"
 echo -e "  ${GREEN}[+]${NC} i18n locale 双侧 key 对齐检查（zh-CN === en-US）"

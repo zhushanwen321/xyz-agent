@@ -14,7 +14,8 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { effectScope } from 'vue'
 import type { Message, SessionGroup, SessionSummary } from '@xyz-agent/shared'
-import { _resetLruForTest } from '@/stores/chat-lru'
+import { _resetLruForTest } from '@xyz-agent/core'
+import { useSessionStore } from '@/stores/session'
 
 // ── mock 无关 store / composable，减少 selectSession 噪音 ──
 const clearSessionMock = vi.hoisted(() => vi.fn())
@@ -24,7 +25,7 @@ vi.mock('@/stores/fileTree', () => ({
 
 const useChatDisposeMock = vi.hoisted(() => vi.fn())
 const setHistoryTruncatedMock = vi.hoisted(() => vi.fn())
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     disposeSession: useChatDisposeMock,
     setHistoryTruncated: setHistoryTruncatedMock,
@@ -44,7 +45,7 @@ vi.mock('@/stores/workflow', () => ({
 }))
 
 const loadTreeMock = vi.hoisted(() => vi.fn())
-vi.mock('@/composables/features/useFileTree', () => ({
+vi.mock('@/composables/features/file-tree/useFileTree', () => ({
   useFileTree: () => ({ loadTree: loadTreeMock }),
 }))
 
@@ -53,7 +54,7 @@ const switchSessionMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 const getHistoryMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ messages: [], historyTruncated: false })))
 const getCommandsMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ commands: [] })))
 const getContextMock = vi.hoisted(() => vi.fn(() => Promise.resolve({})))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   chat: { getHistory: getHistoryMock, streamSubscribe: vi.fn(() => () => {}) },
   extension: {},
   session: {
@@ -67,10 +68,9 @@ vi.mock('@/api', () => ({
   },
 }))
 
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { useChatStore } from '@/stores/chat'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
-import { useSessionStore } from '@/stores/session'
 
 function makeSummary(id: string): SessionSummary {
   return { id, label: id, cwd: '/proj', status: 'idle', lastActiveAt: 1, modelId: 'm1', tokenCount: 0 }
@@ -80,10 +80,10 @@ function makeMessage(id: string): Message {
   return { id, role: 'assistant', content: `msg-${id}`, status: 'complete', timestamp: Date.now() }
 }
 
-function seedSessions(ids: string[]): void {
-  const store = useSessionStore()
+// seed pinia session store（ADR-0059：useSessionStore 单例）
+function seedSessions(_sidebar: ReturnType<typeof useSidebarNew>, ids: string[]): void {
   const group: SessionGroup = { cwd: '/proj', sessions: ids.map(makeSummary) }
-  store.setGroups([group])
+  useSessionStore().setGroups([group])
 }
 
 /** hydrate 指定 session（绕过 selectSession 的 api 拉取，直接注入消息） */
@@ -111,9 +111,9 @@ describe('lru-panel-exempt-fix 方案 C：panel 绑定 session 不被 LRU 误驱
   describe('AC-2: 单 panel LRU 基线不退化（最旧被驱逐）', () => {
     it('单 panel 下切 9 个 session，最旧的 session 被驱逐', async () => {
       const scope = effectScope()
-      const sidebar = scope.run(() => useSidebar())!
+      const sidebar = scope.run(() => useSidebarNew())!
       const ids = Array.from({ length: 9 }, (_, i) => `s${i}`)
-      seedSessions(ids)
+      seedSessions(sidebar, ids)
 
       const panel = usePanelStore()
       // 单 panel（默认 ROOT_PANEL_ID）

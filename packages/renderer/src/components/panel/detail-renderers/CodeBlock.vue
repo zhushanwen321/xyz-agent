@@ -17,7 +17,7 @@
   <!-- eslint-disable vue/no-v-html -->
   <pre
     v-if="html"
-    class="shiki-codeblock shiki m-0 overflow-x-auto rounded p-2 font-mono text-[12px] leading-[1.5]"
+    class="shiki-codeblock shiki m-0 overflow-x-auto rounded p-2 font-mono text-[12px] leading-[1.5] bg-[var(--bg-input)]"
     v-html="html"
   />
   <!-- eslint-enable vue/no-v-html -->
@@ -64,23 +64,16 @@ watch(
 </script>
 
 <style scoped>
-/* 复用 MarkdownRenderer 的 shiki 双主题切换机制（defaultColor:false 产出双套 span）。
-   shiki codeToHtml 产出的 <pre class="shiki"> 带 --shiki-dark-bg/--shiki-light-bg 变量，
-   这里把变量应用到 background-color；span 的 color 同理。暗为默认，亮主题经
-   [data-theme="light"] 覆盖。走 design-tokens 主题机制。
-   <pre> 自身布局样式用 Tailwind class（template 内），scoped 只留 :deep 主题变量切换
-   （Tailwind 无法表达跨 :deep + [data-theme] 的 CSS 变量切换，属 escape hatch）。 */
-.shiki-codeblock :deep(.shiki) {
-  background-color: var(--shiki-dark-bg) !important;
-}
+/* 复用 MarkdownRenderer 的 shiki 双主题切换机制（defaultColor:false 产出双套 span，
+   min-dark/min-light 透明底）。暗为默认，亮主题经 [data-theme] 覆盖。
+   [HISTORICAL] 亮色规则曾写 :global([data-theme="light"]) X :deep(Y)，Vue scoped 编译
+   退化成裸 [data-theme="light"]，亮色切换从未生效。修复：整条选择器包进 :global。
+   背景色由 template 的 bg-[var(--bg-input)] 提供（跟随全部主题），不再强制 shiki bg。 */
 .shiki-codeblock :deep(span) {
   color: var(--shiki-dark);
 }
 
-:global([data-theme="light"]) .shiki-codeblock :deep(.shiki) {
-  background-color: var(--shiki-light-bg) !important;
-}
-:global([data-theme="light"]) .shiki-codeblock :deep(span) {
+:global([data-theme="light"] .shiki-codeblock span) {
   color: var(--shiki-light);
 }
 </style>

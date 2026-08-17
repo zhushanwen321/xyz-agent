@@ -19,13 +19,13 @@ import { useChatStore } from '@/stores/chat'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
-import { useSidebar } from '@/composables/features/useSidebar'
-import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
+import { useSidebar } from '@/composables/features/sidebar/useSidebar'
+import { useSessionDerivations } from '@/composables/features/chat/useSessionDerivations'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
 
 /** useSidebar 经 @/api 门面调真实 transport 会挂起；测试统一替成 mock 实现。
  *  selectSession 触发 loadTree（文件树预加载，并行拉 file.tree + git.status），补 file/git domain mock 避免 unhandled rejection。 */
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   session: mockApi.session,
   chat: mockApi.chat,
   file: mockApi.file,

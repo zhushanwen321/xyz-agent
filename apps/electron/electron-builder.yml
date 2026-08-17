@@ -1,9 +1,12 @@
 appId: com.xyz-agent.app
-productName: xyz-agent
+productName: 太极
 # electron-builder 在 linux AppImage 上 fallback 用 package.json name（@xyz-agent/electron）
-# 去斜杠后变成 @xyz-agentelectron，AppImage 拒绝 @ 字符。显式指定与 productName 一致，
-# mac/linux/win 三平台统一。mac 产物验证：Contents/MacOS/xyz-agent（改动前已是此值，无行为变化）。
-executableName: xyz-agent
+# 去斜杠后变成 @xyz-agentelectron，AppImage 拒绝 @ 字符，故显式指定。
+# executableName / artifactName 统一用 TaiJi（拼音），与 productName「太极」品牌一致：
+# - 用拼音而非中文：可执行文件名 / 下载包名含中文有路径编码与跨工具链风险，拼音零风险。
+# - 不考虑 ≤0.8.40 旧版本自动升级兼容（旧版需手动下载新版重装），故 artifactName 可直接改名；
+#   release-checker.ts ASSET_NAME / postbuild-validate.sh / README 下载指引已同步改为 TaiJi-*。
+executableName: TaiJi
 directories:
   output: dist/builder-output
 asar: true
@@ -67,8 +70,8 @@ extraResources:
   # xyz-agent pi extension (xyz-navigate command)
   # 源文件在 repo root。electron-builder projectDir=apps/electron/，
   # from 相对 projectDir 解析，需上两级到仓库根。
-  # 注：builtin pi-extensions（@zhushanwen/pi-*）已改为 Settings 推荐安装，
-  # 不再打包进产物。详见 recommended-extensions.json + extension.recommended WS 协议。
+  # 注：builtin pi-extensions（@zhushanwen/pi-*）打包内置（2026-08 重构），
+  # 由下方 resources/extensions 条目拷贝，不走 Settings 推荐安装（旧机制已废弃）。
   - from: ../../xyz-agent-extension.js
     to: xyz-agent-extension.js
   # xyz-system-prompt-extension.js（before_agent_start hook：追加注入 + 快照）
@@ -79,6 +82,32 @@ extraResources:
   # 客户端 message 元数据映射框架：重开 session 时按映射回填 image/file badge。同前两个 extension 模式。
   - from: ../../xyz-client-msg-id-mapper.js
     to: xyz-client-msg-id-mapper.js
+  # builtin pi extensions（@zhushanwen/pi-* 包，数量以 mandatory-extensions.json SSOT 为准，
+  # 打包内置，不走 npm install）
+  # prepare-builtin-extensions.sh 预先 deploy 到 resources/extensions/@zhushanwen/<pkg>/
+  # 含真实运行时 deps（tree-sitter-bash/ajv/croner 等），不含 peerDeps（pi 进程提供）
+  - from: resources/extensions
+    to: extensions
+    filter:
+      - "**/*"
+      # 排除 tree-sitter-bash 的 C 源码 + grammar（产物不需要，省 10M）
+      - "!**/tree-sitter-bash/src/**"
+      - "!**/tree-sitter-bash/grammar.js"
+      # 排除 web-tree-sitter 的 debug wasm（804K，非运行时需要）
+      - "!**/web-tree-sitter/debug/**"
+      # 排除测试 + 类型声明（运行时不需要）
+      - "!**/__tests__/**"
+      - "!**/*.test.*"
+      - "!**/*.d.ts"
+  # built-in xyz plugins（resources/plugins/<name>，如 statusline）。
+  # prepare-builtin-plugins.sh 预编译 index.ts → index.js（与源同目录）；plugin-registry
+  # 打包后扫描 <cwd>/resources/plugins（cwd=Resources），故 to 保持 resources/plugins 嵌套。
+  # 排除 .ts 源码（运行时不需要，防体积浪费；入口以 manifest main 的 index.js 为准）。
+  - from: ../../resources/plugins
+    to: resources/plugins
+    filter:
+      - "**/*"
+      - "!**/*.ts"
   # xyz-settings CLI（从 tsup 打包的 cli.cjs）
   # packaged app 中位置：resources/bin/xyz-settings
   # pi Skill 通过绝对路径引用此文件
@@ -96,10 +125,12 @@ mac:
       arch:
         - arm64
   category: public.app-category.developer-tools
+  icon: build/icon.icns
   minimumSystemVersion: 12.0.0
-  # 文件名带版本号（release asset 归档识别）。release-checker 用后缀 pattern 匹配
-  # （-mac-arm64.zip），不依赖固定名。${ext} 由 electron-builder 按 target 解析为 .zip / .dmg。
-  artifactName: xyz-agent-${version}-mac-arm64.${ext}
+  # release asset 文件名带版本号（preflight 检查强制；release-checker 用平台后缀 pattern
+  # 如 -mac-arm64.zip 定位 asset，不依赖固定文件名——ad0bcf86a 起自动升级改走版本化 asset）。
+  # zip 和 dmg 共用此 pattern，${ext} 由 electron-builder 按 target 解析为 .zip / .dmg。
+  artifactName: TaiJi-${version}-mac-arm64.${ext}
 
 win:
   target:
@@ -109,14 +140,18 @@ win:
     - target: zip
       arch:
         - x64
-  # 文件名带版本号（release asset 归档识别）。release-checker 用后缀 pattern 匹配
-  # （-setup-x64.exe）。nsis target 的 ${ext} 解析为 exe，zip target 的 ${ext} 解析为 zip。
-  artifactName: xyz-agent-${version}-setup-${arch}.${ext}
+  icon: build/icon.ico
+  # release asset 文件名带版本号（同 mac 注释，release-checker pattern 匹配）。
+  # nsis target 的 ${ext} 解析为 exe，zip target 的 ${ext} 解析为 zip。
+  # [HISTORICAL] 版本号必须在 setup 之前（TaiJi-<v>-setup-<arch>.exe）：release-checker
+  # ASSET_PATTERNS.winX64Exe 用 '-setup-x64.exe' 后缀匹配，setup 在 version 前会导致
+  # win 自动升级检测永远匹配不到 release asset（M7-01 P0）。
+  artifactName: TaiJi-${version}-setup-${arch}.${ext}
 
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  artifactName: xyz-agent-${version}-setup-${arch}.${ext}
+  artifactName: TaiJi-${version}-setup-${arch}.${ext}
 
 linux:
   target:
@@ -127,11 +162,12 @@ linux:
       arch:
         - x64
   category: Development
-  # 文件名带版本号（release asset 归档识别）。release-checker 用后缀 pattern 匹配
-  # （-x86_64.AppImage / -amd64.deb）。${arch} 由 electron-builder 按 target ext 解析
-  # （getArtifactArchName）：AppImage(x64) -> x86_64，deb(x64) -> amd64，
-  # ${ext} 解析为 AppImage / deb。产物：xyz-agent-<version>-x86_64.AppImage 等。
-  artifactName: xyz-agent-${version}-${arch}.${ext}
+  icon: build/icon-512.png
+  # release asset 文件名带版本号（同 mac 注释，release-checker pattern 匹配）。
+  # ${arch} 由 electron-builder 按 target ext 解析（getArtifactArchName）：
+  # AppImage(x64) -> x86_64，deb(x64) -> amd64，${ext} 解析为 AppImage / deb。
+  # 产物：TaiJi-${version}-x86_64.AppImage 和 TaiJi-${version}-amd64.deb。
+  artifactName: TaiJi-${version}-${arch}.${ext}
 
 # 本地构建时 electron-builder 需要至少一个 publish provider
 # 否则 updateInfoBuilder 会因 channel === null 崩溃

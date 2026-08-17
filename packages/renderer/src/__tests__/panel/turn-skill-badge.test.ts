@@ -11,20 +11,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import Turn from '@/components/panel/message-stream/Turn.vue'
+// [w6 chat-ui-and-shell T7] ui 包 Turn 经 ChatViewDeps inject 消费 drawer.open（原 useSideDrawer mock 失效）
+import { Turn } from '@xyz-agent/ui'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import type { Message } from '@xyz-agent/shared'
+import { mockChatProvide } from '@/__tests__/helpers/chat-view-deps'
 
 const mockOpen = vi.fn()
-vi.mock('@/composables/features/useChat', () => ({
-  useChat: () => ({ editAndResend: vi.fn() }),
-}))
-vi.mock('@/composables/features/useSidebar', () => ({
-  useSidebar: () => ({ forkSession: vi.fn() }),
-}))
-vi.mock('@/composables/features/useSideDrawer', () => ({
-  useSideDrawer: () => ({ open: mockOpen }),
-}))
 
 function makeTurn(userOver: Partial<Message> = {}): MessageTurn {
   return {
@@ -48,6 +41,7 @@ function mountTurn(turn: MessageTurn, sessionId = 's1') {
     props: { turn, sessionId },
     global: {
       plugins: [createPinia()],
+      provide: mockChatProvide({ openDrawer: mockOpen }),
       stubs: {
         Block: true,
         ChangeSetCard: true,

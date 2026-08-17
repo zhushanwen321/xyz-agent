@@ -1,17 +1,14 @@
 /**
- * M7 修复红灯测试：subagent/agentcall 虚拟 key 三段式 + 清理链路 + tombstone。
+ * M7 虚拟 key 三段式 + deleteSession 清理链路测试（数据加载层）。
  *
- * 防的 bug：
- * - D1: subagent 虚拟 key 两段式 vs chat-lru 三段式假设 → LRU 清理永远 false（假绿测试掩盖）
- * - D3: backToMain 不清 messages → subagent 消息永久残留
- * - D4: evictSessionWithVirtual 零调用
- * - D7: 终态 fetchAndInject fire-and-forget 复活已清 messages
+ * 覆盖（U7 后保留）：
+ * - FR-1: subagent 虚拟 key 三段式格式 + 结构校验
+ * - FR-2: 真实 key 经 chat-lru isVirtualKeyOf 匹配（防假绿）
+ * - FR-5: deleteSession 时序（evictSessionWithVirtual 清 subagent 虚拟 key）
  *
- * [红灯说明] 当前 subagentVirtualId 是两段式（subagent:<subagentId>），
- * isSubagentVirtualId 只 startsWith 不做三段结构校验，backToMain 不清 messages。
- * 本文件断言三段式行为 → 编译失败（subagentVirtualId 两参）或断言失败 → 红灯。
- *
- * 运行：cd packages/renderer && npx vitest run src/__tests__/stores/m7-virtual-key-cleanup.test.ts
+ * [HISTORICAL] overlay 相关用例已随 U7 移除：FR-3（backToMain）、FR-7（tombstone 防复活）、
+ * B3（backFromAgentCall）。这些均依赖 overlay viewing 状态机，overlay 移除后概念消失。
+ * agentcall 清理映射测试见 workflow.test.ts（registerAgentCall + deleteSession 路径）。
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
@@ -23,11 +20,11 @@ import {
   useSubagentStore,
 } from '@/stores/subagent'
 import { useChatStore } from '@/stores/chat'
-import { isVirtualKeyOf } from '@/stores/chat-lru'
+import { isVirtualKeyOf } from '@xyz-agent/core'
 import { useWorkflowStore } from '@/stores/workflow'
 import type { Message } from '@xyz-agent/shared'
 
-// mock sessionApi（B3 测试用：selectAgentCall 内部调 getAgentCallHistory）
+// mock sessionApi（FR-2/FR-5 数据加载用）
 vi.mock('@/api/domains/session', () => ({
   getWorkflows: vi.fn(),
   getAgentCallHistory: vi.fn().mockResolvedValue([]),
@@ -120,76 +117,6 @@ describe('M7 AC-2/3: 真实 subagentVirtualId 经 LRU 匹配（防假绿）', ()
   })
 })
 
-// ── FR-3: backToMain 立即清 + tombstone ──────────────────────────
-
-describe('M7 FR-3: backToMain 立即清 messages + tombstone', () => {
-  beforeEach(() => {
-    setActivePinia(createPinia())
-  })
-
-  it('backToMain 后 messages[virtualId] 立即清空', () => {
-    const store = useChatStore()
-    const subagentStore = useSubagentStore()
-    const virtualKey = subagentVirtualId('sess-1', 'bg-1')
-
-    // 注入 subagent messages
-    store.setMessages(virtualKey, [makeMessage('bg-msg')])
-    expect(store.getMessages(virtualKey)).toHaveLength(1)
-
-    // backToMain 立即清（需传 mainSessionId + chatEvict 回调，evictVirtualKey 只删虚拟 key 不删主 session）
-    subagentStore.backToMain('panel-A', 'sess-1', 'bg-1', (sid: string) => store.evictVirtualKey(sid))
-
-    expect(store.getMessages(virtualKey)).toEqual([])
-  })
-
-  it('backToMain 幂等：清不存在 key 无副作用（catch 回滚路径安全）', () => {
-    const subagentStore = useSubagentStore()
-    // 未注入任何 messages 直接 backToMain
-    expect(() => subagentStore.backToMain('panel-A', 'sess-1', 'never', (sid: string) => {})).not.toThrow()
-  })
-
-  it('backToMain 只删虚拟 key 不删主 session messages（防 evictSessionWithVirtual 误删回归）', () => {
-    const store = useChatStore()
-    const subagentStore = useSubagentStore()
-    const virtualKey = subagentVirtualId('sess-1', 'bg-1')
-
-    // 主 session + subagent 虚拟 key 都有 messages
-    store.hydrate('sess-1', [makeMessage('main-msg')])
-    store.setMessages(virtualKey, [makeMessage('bg-msg')])
-
-    // backToMain 只清虚拟 key
-    subagentStore.backToMain('panel-A', 'sess-1', 'bg-1', (sid) => store.evictVirtualKey(sid))
-
-    // 虚拟 key 清空，主 session 消息保留
-    expect(store.getMessages(virtualKey)).toEqual([])
-    expect(store.getMessages('sess-1')).toHaveLength(1)
-  })
-})
-
-// ── FR-7: tombstone 防终态 fetchAndInject 复活 ────────────────────
-
-describe('M7 FR-7: tombstone 防终态 fetchAndInject 复活', () => {
-  beforeEach(() => {
-    setActivePinia(createPinia())
-  })
-
-  it('backToMain 后迟到终态 fetchAndInject 不复活 messages', () => {
-    const store = useChatStore()
-    const subagentStore = useSubagentStore()
-    const virtualKey = subagentVirtualId('sess-1', 'bg-1')
-
-    store.setMessages(virtualKey, [makeMessage('bg-msg')])
-    // backToMain 设 tombstone + 清
-    subagentStore.backToMain('panel-A', 'sess-1', 'bg-1', (sid: string) => store.evictVirtualKey(sid))
-    expect(store.getMessages(virtualKey)).toEqual([])
-
-    // 模拟迟到的终态 fetchAndInject（subscribeStream 终态回调在 backToMain 前已启动）
-    // tombstone 应短路，不 setMessages 复活
-    subagentStore.tryInjectIfNotCleared(virtualKey, [makeMessage('revive-attempt')])
-    expect(store.getMessages(virtualKey)).toEqual([]) // 仍空，未复活
-  })
-})
-
 // ── FR-5: deleteSession 时序 ─────────────────────────────────────
 
 describe('M7 FR-5: deleteSession 时序 evict 在 dispose 前', () => {
@@ -234,58 +161,3 @@ describe('M7 FR-5: deleteSession 时序 evict 在 dispose 前', () => {
     expect(store.getMessages(vk1)).toHaveLength(1)
   })
 })
-
-// ── B3: agentcall 虚拟 session 清理（防 backFromAgentCall 传 raw sessionId 致 no-op）──
-
-describe('B3: backFromAgentCall 清理 agentcall 虚拟 session 消息', () => {
-  beforeEach(() => {
-    setActivePinia(createPinia())
-  })
-
-  it('backFromAgentCall 后 messages[agentcall:<acsId>] 立即清空（真实 chat.evictVirtualKey 注入）', async () => {
-    // 回归 B3：调用方注入 (acsId) => chat.evictVirtualKey(acsId)，
-    // workflow.backFromAgentCall 必须传带前缀的 virtualId（agentCallVirtualId），
-    // 否则 evictVirtualKey(rawId) → deleteMessageKey(rawId) 删一个从未存在过的 key（no-op），
-    // agentcall 虚拟 session 消息永久残留（内存泄漏）。
-    const chat = useChatStore()
-    const workflowStore = useWorkflowStore()
-    const acsId = 'sess-ac-1'
-    const virtualId = agentCallVirtualIdVirtual(acsId) // 'agentcall:sess-ac-1'
-
-    // 1. 直接注入 agentcall 虚拟 session 消息（key 是带前缀的 virtualId，对齐 selectAgentCall 写入路径）
-    chat.setMessages(virtualId, [makeMessage('ac-msg')])
-    expect(chat.getMessages(virtualId)).toHaveLength(1)
-
-    // 2. 经 selectAgentCall 进入 Panel overlay（注入空历史，重点验证清理而非历史拉取）
-    await workflowStore.selectAgentCall('panel-1', 'sess-main', acsId, () => {})
-    expect(workflowStore.getViewingAgentCallId('panel-1')).toBe(acsId)
-
-    // 3. backFromAgentCall：注入与 Panel.vue 完全一致的 chatEvict 闭包
-    workflowStore.backFromAgentCall('panel-1', (sid) => chat.evictVirtualKey(sid), 'sess-main')
-
-    // 4. agentcall 虚拟 session messages 已清，messages Map 不含该 key（raw sessionId 也无残留）
-    expect(chat.getMessages(virtualId)).toEqual([])
-    expect(chat.getMessages(acsId)).toEqual([])
-  })
-
-  it('B3 回归保险：raw sessionId 传给 evictVirtualKey 是 no-op（证明前缀必要性）', () => {
-    // 反向证明：若错误地传 raw sessionId 给 evictVirtualKey，agentcall 虚拟 key 不会被清。
-    // 此测试锁定 B3 根因，防止未来误以为「传 raw 也能清」。
-    const store = useChatStore()
-    const virtualId = agentCallVirtualIdVirtual('sess-ac-x') // 'agentcall:sess-ac-x'
-
-    store.setMessages(virtualId, [makeMessage('leak')])
-    expect(store.getMessages(virtualId)).toHaveLength(1)
-
-    // 模拟 B3 bug：传 raw sessionId 给 evictVirtualKey
-    store.evictVirtualKey('sess-ac-x')
-
-    // agentcall 虚拟 key 仍残留（这正是 B3 bug 的症状）
-    expect(store.getMessages(virtualId)).toHaveLength(1)
-  })
-})
-
-/** 内联构造 agentcall virtualId（避免跨模块耦合引入 workflow store 到 describe 块顶部） */
-function agentCallVirtualIdVirtual(sessionId: string): string {
-  return `agentcall:${sessionId}`
-}

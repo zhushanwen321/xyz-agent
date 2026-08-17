@@ -10,7 +10,8 @@
  * - BeforeSend hook blocked → 返回 {blocked:true}（不调 pi.prompt，hook 已广播 message.error）
  * - pi.prompt 抛异常 → 广播 message.error + isGenerating 复位 false + 返回 blocked:true
  *
- * mock 策略：全部依赖 mock（svc/pm/broker/workspace），不 spawn pi。
+ * mock 策略：全部依赖 mock（svc/pm/bus/workspace），不 spawn pi。wave:perf-w09 后 dispatcher
+ * 只依赖 publish 抽象（broker 双写腿已删）。
  *
  * 运行：npx vitest run test/message-dispatcher-precheck.test.ts
  */
@@ -18,7 +19,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MessageDispatcher } from '../src/services/session/message-dispatcher.js'
 import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
 import type { IManagedSessionView } from '../src/services/session/types.js'
-import type { IMessageBroker } from '../src/interfaces.js'
+import type { IMessageBus } from '../src/services/message-bus/message-bus.js'
 import type { IPiEngine, IProcessManager } from '../src/services/ports/pi-engine.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { WorkspaceService } from '../src/services/workspace/workspace-service.js'
@@ -48,8 +49,9 @@ function makeMocks(opts: { isGenerating?: boolean; promptError?: Error } = {}) {
     : vi.fn(async () => ({}) as unknown as Awaited<ReturnType<IPiEngine['prompt']>>)
   const client = { prompt: promptFn } as unknown as IPiEngine
 
+  // wave:perf-w09（D1-2）：dispatcher 只依赖 publish 抽象（broker 双写腿已删），mock bus 收集发布消息
   const broadcasts: ServerMessage[] = []
-  const broker = { broadcast: vi.fn((m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBroker
+  const bus = { publish: vi.fn((_sid: string, m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBus
 
   const svc = {
     ensureActive: vi.fn(async () => client),
@@ -59,8 +61,8 @@ function makeMocks(opts: { isGenerating?: boolean; promptError?: Error } = {}) {
   const pm = {} as unknown as IProcessManager
   const workspace = { record: vi.fn() } as unknown as WorkspaceService
 
-  const dispatcher = new MessageDispatcher(svc, pm, broker, workspace)
-  return { dispatcher, session, promptFn, broadcasts, broker }
+  const dispatcher = new MessageDispatcher(svc, pm, workspace, bus)
+  return { dispatcher, session, promptFn, broadcasts, bus }
 }
 
 describe('MessageDispatcher D-009 预检（busy → send.rejected）', () => {
@@ -117,7 +119,7 @@ describe('MessageDispatcher 错误路径', () => {
     const promptFn = vi.fn(async () => ({}) as unknown as Awaited<ReturnType<IPiEngine['prompt']>>)
     const client = { prompt: promptFn } as unknown as IPiEngine
     const broadcasts: ServerMessage[] = []
-    const broker = { broadcast: vi.fn((m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBroker
+    const bus = { publish: vi.fn((_sid: string, m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBus
     const svc = {
       ensureActive: vi.fn(async () => client),
       getSessionByClient: vi.fn(() => session),
@@ -125,7 +127,7 @@ describe('MessageDispatcher 错误路径', () => {
     const pm = {} as unknown as IProcessManager
     const workspace = { record: vi.fn(() => { throw new Error('cache boom') }) } as unknown as WorkspaceService
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const dispatcher = new MessageDispatcher(svc, pm, broker, workspace)
+    const dispatcher = new MessageDispatcher(svc, pm, workspace, bus)
 
     // 不该向上抛
     const result = await dispatcher.sendMessage('s1', 'hello')

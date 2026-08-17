@@ -1,5 +1,5 @@
 export default {
-  title: 'xyz-agent',
+  title: '太极',
   waiting: '等待 Runtime 服务…',
   greetingMorning: '上午好呀',
   greetingAfternoon: '下午好呀',

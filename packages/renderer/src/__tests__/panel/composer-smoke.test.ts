@@ -11,7 +11,7 @@
  * - mount(Panel, { sessionId: null })（Landing 态），Landing/Composer 均真实渲染
  * - 仅 mock useNewTaskFlow（Landing + Composer 的 session/cwd/branch 真源）+ useExtensionUI
  *   （Panel 的 ask-user 订阅）+ useChat（Composer 的 chat RPC）
- * - stub 重子组件（PanelHeader/ProgressZone/MessageStream/AskUserOverlay + Composer 子组件
+ * - stub 重子组件（PanelHeader/MessageStream/AskUserOverlay + Composer 子组件
  *   + Landing 的 popover/modal 子组件），保留 ComposerInput mock（testid 断言）
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/panel/composer-smoke.test.ts
@@ -50,7 +50,7 @@ const flowMock = vi.hoisted(() => ({
   setPendingModel: vi.fn(),
   submitFirstMessage: vi.fn(),
 }))
-vi.mock('@/composables/features/useNewTaskFlow', () => {
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => {
   // currentCwd 必须是真 ref：useProjectSkills 对它 watch（plain object 触发 Vue warn）
   const currentCwdRef = ref<string | null>(null)
   return {
@@ -58,6 +58,23 @@ vi.mock('@/composables/features/useNewTaskFlow', () => {
     resetNewTaskFlow: vi.fn(),
   }
 })
+// [w5] Landing 经 useNewTaskDeps 构造 NewTaskDeps + provide（ui 组件 inject 消费）；mock 返回 flowMock + deps 字段
+const depsMock = vi.hoisted(() => ({
+  recentWorkspaces: { value: [] as unknown[] },
+  listBranches: vi.fn(),
+  createWorktree: vi.fn(),
+  detectWorkspace: vi.fn(),
+  pickDirectory: vi.fn(),
+  presets: { value: [] as unknown[] },
+  defaultPresetId: { value: '' },
+  presetOpenRequest: { value: 0 },
+  loadPresets: vi.fn(),
+  setDefaultPreset: vi.fn(),
+  toast: { error: vi.fn() },
+}))
+vi.mock('@/composables/features/new-task/useNewTaskDeps', () => ({
+  useNewTaskDeps: () => ({ flow: flowMock, ...depsMock }),
+}))
 
 // ── useExtensionUI mock（Panel 的 ask-user 订阅，ask-user-inline 范式）──
 const uiMock = vi.hoisted(() => ({
@@ -69,12 +86,10 @@ const uiMock = vi.hoisted(() => ({
 vi.mock('@/composables/useExtensionUI', () => ({
   useExtensionUI: () => ({
     currentAskUserRequest: uiMock.askUserReq,
-    currentDialogRequest: uiMock.dialogReq,
     respond: uiMock.respond,
     cancel: uiMock.cancel,
   }),
   askUserFilter: (req: { askUser?: boolean } | undefined) => req?.askUser === true,
-  dialogFilter: (req: { askUser?: boolean } | undefined) => req?.askUser !== true,
 }))
 
 // ── useChat / useToast / @/api / stores mock（Composer 的 chat RPC + 队列 flush）──
@@ -90,14 +105,14 @@ const chatApiMock = vi.hoisted(() => ({
   abortBash: vi.fn(() => Promise.resolve()),
 }))
 const toastMock = vi.hoisted(() => ({ error: vi.fn(), info: vi.fn(), warning: vi.fn() }))
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => chatApiMock,
   resetChatModuleState: vi.fn(),
 }))
 vi.mock('@/composables/useToast', () => ({
   useToast: () => toastMock,
 }))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   chat: { send: chatApiMock.send, steer: chatApiMock.steer },
   model: { switchModel: vi.fn() },
   session: { setThinkingLevel: vi.fn() },
@@ -106,9 +121,6 @@ vi.mock('@/api', () => ({
 }))
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn(), revive: vi.fn() }),
-}))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({ defaultModel: '' }),
 }))
 
 // ── ComposerInput mock（data-testid 供冒烟断言；emit keydown 驱动 onSend 范式与集成测试一致）──
@@ -135,7 +147,6 @@ const SIMPLE = defineComponent({ name: 'SimpleStub', template: '<div />' })
 const stubs = {
   // Panel 子组件
   PanelHeader: SIMPLE,
-  ProgressZone: SIMPLE,
   MessageStream: SIMPLE,
   AskUserOverlay: SIMPLE,
   // Landing 子组件（popover/modal 重依赖）
@@ -184,6 +195,8 @@ describe('首屏冒烟（TC19）', () => {
 
     // 使用者视角：composer 输入区真实在 DOM（Landing 内嵌的 Composer 子树）
     expect(wrapper.find('[data-testid="composer-input"]').exists()).toBe(true)
+    // AC12：composer-box 容器（chip 行宿主：已附上下文 ContextChipsBar 渲染位）存在
+    expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(true)
     // Landing 顶部元信息 chip（spec §3.1）
     expect(wrapper.find('[data-testid="chip-directory"]').exists()).toBe(true)
   })

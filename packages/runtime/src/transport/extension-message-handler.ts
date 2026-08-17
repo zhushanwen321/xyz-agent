@@ -3,8 +3,9 @@
  * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
+import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService, IExtensionService } from '../interfaces.js'
+import type { IMessageBus } from '../services/message-bus/message-bus.js'
 import type { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { ExtensionInstallError } from '../services/extension-service.js'
 import { toErrorMessage } from '../utils/errors.js'
@@ -16,10 +17,19 @@ export interface ExtensionHandlerContext extends MessageHandlerContext {
   sessionService: ISessionService
   extensionService: IExtensionService | undefined
   extensionTimeoutMgr: ExtensionTimeoutManager
-  /** 广播给所有连接（extension.ui_timeout 超时通知用）。 */
-  broadcast(msg: import('@xyz-agent/shared').ServerMessage): void
-  /** push 消息 id 生成器（extension.ui_timeout 广播 id）。 */
+  /** push 消息 id 生成器（extension.ui_timeout 消息 id）。 */
   nextPushId(): string
+  /**
+   * IMessageBus（wave:perf-w08 接入，wave:perf-w09 单通道化）：extension.ui_timeout 的
+   * 主发布通道（broadcast 依赖已随 D1-2 删双写移除）。由 server.setServices 装配。
+   */
+  messageBus?: IMessageBus
+  /**
+   * 全局广播兜底（server.setServices 注入 broker.broadcast 封装）：bus 未装配
+   * （测试构造 / 组合根装配顺序异常）时 extension.ui_timeout 回退此通道——保持
+   * 「消息不丢」兜底哲学，对齐 plugin-service publishViewUpdate 的 broadcastOrBroker 回退。
+   */
+  broadcast(msg: ServerMessage): void
 }
 
 export class ExtensionMessageHandler {
@@ -67,11 +77,22 @@ export class ExtensionMessageHandler {
     if (client) {
       client.sendExtensionUiResponse(requestId, method === 'confirm' ? false : null, method)
     }
-    this.ctx.broadcast({
+    const timeoutMsg: ServerMessage = {
       type: 'extension.ui_timeout',
       id: this.ctx.nextPushId(),
       payload: { sessionId, requestId },
-    })
+    }
+    // wave:perf-w09（02 文档 D1-2）：payload 恒含 sessionId（handleExtensionTimeout 的
+    // sessionId 参数）→ bus.publish 定向发布是主通道（extension.ui_timeout 归 stream 类：
+    // 分配 seq + 入 ring，重连可回放），不再盲广播——盲广播会推给未订阅该 sid 的连接，
+    // 且已订阅 renderer 靠 seq-gap drop 第二条的兼容负担随之消失。
+    // bus 未装配 → 回退 broker.broadcast 兜底（W09 review 修正：不能静默丢弃，对齐
+    // plugin-service 的「消息不丢」哲学；组合根恒装配 bus，此为防御路径）。
+    if (this.ctx.messageBus) {
+      this.ctx.messageBus.publish(sessionId, timeoutMsg)
+      return
+    }
+    this.ctx.broadcast(timeoutMsg)
   }
 
   async handleExtensionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
@@ -128,7 +149,7 @@ export class ExtensionMessageHandler {
           const extensions = await ext.scanExtensions()
           return this.ctx.reply(ws, msg.id, 'config.extensions', { extensions })
         } catch (e) {
-          // 透传 ExtensionInstallError 的 code/hint（如 mandatory_cannot_disable），
+          // 透传 ExtensionInstallError 的 code/hint（如 infrastructure_cannot_disable），
           // 与 install 路径对称；非领域错误 fallback 到 toggle_failed。
           return sendHandlerError(this.ctx, ws, ExtensionInstallError, 'toggle_failed', e, msg.id, (matched) => matched.hint ? { hint: matched.hint } : undefined)
         }
@@ -150,7 +171,7 @@ export class ExtensionMessageHandler {
         try {
           await ext.uninstallExtension(msg.payload.name)
         } catch (e) {
-          // 透传 ExtensionInstallError 的 code/hint（如 mandatory_cannot_uninstall），
+          // 透传 ExtensionInstallError 的 code/hint（如 builtin_cannot_uninstall），
           // 与 install/toggle 路径对称；非领域错误 fallback 到 uninstall_failed。
           return sendHandlerError(this.ctx, ws, ExtensionInstallError, 'uninstall_failed', e, msg.id, (matched) => matched.hint ? { hint: matched.hint } : undefined)
         }

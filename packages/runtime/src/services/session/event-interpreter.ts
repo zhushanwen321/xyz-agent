@@ -3,18 +3,20 @@
  *
  * [定位] service 层。承接 EventAdapter（infra 纯翻译器）产出的中间事件，做副作用：
  *   1. plugin hook 触发（onBeforeToolCall 阻断/改写、onAfterToolResult 改写、onPiEvent 观测）
- *   2. file_changes baseline diff（turn 内写操作实时 + agent_end 最终对账）—— 经 IFileChangeDiff port
+ *   2. file_changes diff（turn 内写操作实时 + agent_end 最终对账）—— 经 IFileChangeDiff port
+ *      （W18 采集异步化：diffChain 串行链 + turnGen 代际 + turnFinalizing 压制，03 D3-3）
  *   3. context.update 回写 session 缓存（sessionService.applyContextUpdate）
  *   4. thinkingLevel 回写 session 缓存（sessionService.setThinkingLevelCache）
  *   5. status/bridge/extension-ui 路由到 server（注册超时 / 处理 bridge 请求）
  *
  * 持有的可变态（从 event-adapter 迁来）：
  *   - currentMessageId（message_start 设置，file_changes 挂载目标）
- *   - statusBaseline（turn 开始 git status 快照，baseline diff 基准）
  *   - writeContents（本 turn write 工具写入的 content，untracked 行数回退用）
+ *   - diffChain / turnGen / turnFinalizing（W18 帧序三件套）
  *
- * [ADR-0024 D5] git 作为唯一真值源：turn 开始采 baseline，写操作后 diff，agent_end 推 ready 全集。
+ * [ADR-0024 D5] git 作为唯一真值源：写操作后 diff 当前 git status，agent_end 推 ready 全集。
  * 非 git 仓库 / cwd 缺省 → 跳过 diff（不推 file_changes）。
+ * [R-09] turn-start 不再采 baseline——diffSnapshots 输出只依赖 current（死参数已删）。
  *
  * 依赖经构造注入：send（WS 帧）、fileChangeDiff（port，git 纯函数经组合根注入）、
  * 各业务回调（executeHooks / contextUpdate / thinkingLevel / status/bridge/extension-ui 路由）。
@@ -23,21 +25,22 @@ import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import type { FileChange } from '@xyz-agent/shared'
 
 /**
- * [ADR-0035] ping 间隔：turn 进行中每 60s 发一次 get_state 进程健康探测。
+ * [ADR-0047] ping 间隔：turn 进行中每 60s 发一次 get_state 进程健康探测。
  *
- * 阈值依据见 ADR-0035「阈值依据」。平衡 RPC 流量（轻量）与响应速度。
+ * 阈值依据见 ADR-0047「阈值依据」。平衡 RPC 流量（轻量）与响应速度。
  *
  * export 供测试 import（SR6 SSOT：测试跟随源码常量，不漂移）。
  */
 export const PING_INTERVAL_MS = 60_000
-/** [ADR-0035] 连续失败阈值：3 次（180s）→ 判定 pi 进程真死 → onSilentAbort。export 供测试（SR6）。 */
+/** [ADR-0047] 连续失败阈值：3 次（180s）→ 判定 pi 进程真死 → onSilentAbort。export 供测试（SR6）。 */
 export const PING_FAIL_THRESHOLD = 3
 /** [AC-8] 连续 2 次失败（120s）→ 广播 message.stream_warn 一次（提示性，不中断）。export 供测试（SR6）。 */
 export const PING_WARN_FAIL_COUNT = 2
-import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, parseBgNotifyDetails, normalizeSubagentStatus } from '@xyz-agent/shared'
+import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, parseBgNotifyDetails } from '@xyz-agent/shared'
+import { normalizeSubagentStatus } from './subagent-status.js'
 import type { SubagentRecord, SubagentStatus, BgNotifyRecord } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
-import type { IFileChangeDiff, FileChangeSnapshot } from '../ports/file-change-diff.js'
+import type { IFileChangeDiff } from '../ports/file-change-diff.js'
 import type { PiTranslatedEvent } from './types.js'
 
 /** plugin hook 执行回调（组合根注入，封装 pluginService.executeHooks + sessionId 注入）。 */
@@ -57,7 +60,7 @@ export interface EventInterpreterOptions {
   cwd?: string
   /** WS 帧发送。 */
   send: (msg: ServerMessage) => void
-  /** file_changes baseline diff 引擎（port，组合根注入 infra 实现）。 */
+  /** file_changes diff 引擎（port，组合根注入 infra 实现，采集经 GitStateService 异步）。 */
   fileChangeDiff?: IFileChangeDiff
   /** plugin hook 执行（onBeforeToolCall/onAfterToolResult/onPiEvent）。组合根注入 pluginService.executeHooks。 */
   executeHooks?: ExecuteHookFn
@@ -85,10 +88,10 @@ export interface EventInterpreterOptions {
   onExtensionUIRequest?: (requestId: string, sessionId: string, method: string, payload: Record<string, unknown>) => void
   /** bridge:* 前缀请求（直接路由不经前端超时）。组合根注入 server.handleBridgeRequest。 */
   onBridgeUIRequest?: (requestId: string, sessionId: string, method: string, data: Record<string, unknown>) => void
-  /** extension setStatus（路由到 statusline 插件）。组合根注入 server.handleStatusSetUpdate。 */
+  /** extension setStatus（路由到 statusline builtin 插件，status-bar-registry 广播）。组合根注入 server.handleStatusSetUpdate。 */
   onStatusSetUpdate?: (payload: { sessionId: string; key: string; text: string; textRaw?: string }) => void
   /**
-   * pi 卡死 abort 回调（ADR-0035 ping 探测机制）。
+   * pi 卡死 abort 回调（ADR-0047 ping 探测机制）。
    *
    * turn 进行中每 60s ping get_state，连续 3 次（180s）失败时判定 pi 进程真死，
    * 触发本回调由组合根调 sessionService.abort（复用现有 abort 兜底广播路径）。
@@ -96,7 +99,15 @@ export interface EventInterpreterOptions {
    */
   onSilentAbort?: (payload: { sessionId: string }) => void
   /**
-   * [ADR-0035] ping get_state 进程健康探测回调（组合根注入）。
+   * compaction 生命周期态切换（M4 事件驱动）—— interpreter 从 compaction_start/end 唯一置位/复位
+   * runtime active.isCompacting（sendPrompt/sendBash 预检互斥依据）。
+   *
+   * 组合根注入：(sid, v) => 写 sessionService.getSession(sid).isCompacting（与原 dispatcher 手动
+   * 路径置位对称）。事件驱动后 dispatcher 不再置位，复位责任转移到 interpreter（三路对称复位）。
+   */
+  onCompactingStateChange?: (sessionId: string, isCompacting: boolean) => void
+  /**
+   * [ADR-0047] ping get_state 进程健康探测回调（组合根注入）。
    *
    * 延迟解析 client：interpreter 在 session 创建时构造，那时 client 可能尚未 spawn。
    * 回调内部按当前 sessionId 取 pm.getClient(sessionId)?.getState()，client 未就绪时
@@ -109,7 +120,7 @@ export interface EventInterpreterOptions {
    *
    * 设计权衡：ping 能穿透所有「pi 合理等待」场景（ask_user / 网络 / 文件锁）——
    * pi 阻塞在 await 时事件循环仍活，get_state 必响应。只有进程真死才连续 3 次失败。
-   * 详见 ADR-0035「ping 可行性验证」。
+   * 详见 ADR-0047「ping 可行性验证」。
    */
   pingPi?: () => Promise<Record<string, unknown> | undefined> | undefined
 }
@@ -120,10 +131,18 @@ const FILE_MUTATING_TOOLS = new Set(['write', 'edit', 'bash'])
 export class EventInterpreter {
   /** 当前 assistant message 的 id（message_start 设置，file_changes 挂载目标，跨事件保持） */
   private currentMessageId: string | undefined
-  /** turn 开始时的 git status 快照（baseline diff 基准，message_start 采集，agent_end 清空） */
-  private statusBaseline: FileChangeSnapshot = null
-  /** 本 turn write 工具写入的 content（untracked 行数回退用，message_start 清空） */
+  /** 本 turn write 工具写入的 content（untracked 行数回退用，message_start 重置换新）。 */
   private writeContents: Map<string, string> = new Map()
+  /**
+   * [W18 帧序三件套，03 D3-3] per-session 串行 diff 链：file_changes 的 diff 计算按触发序
+   * 串行执行，turn-end 的 ready 排链尾 → ready 恒为该回合最后一帧（by-construction）。
+   * 链上每段 catch 兜底，diffChain 永不 reject（单帧失败不断链）。
+   */
+  private diffChain: Promise<void> = Promise.resolve()
+  /** 回合代际守卫：turn-start 自增；链上执行时 gen 不匹配 → 丢弃 accumulating（ready 绕过恒推，见 sendDiffFileChanges） */
+  private turnGen = 0
+  /** turn-end 压制标记：true 后到达的 accumulating 直接 no-op（同回合迟到 tool-call-end 不产生新帧） */
+  private turnFinalizing = false
   /**
    * subagent 内存态：subagentId → SubagentRecord。
    * tool-call-end 建 running 记录，bg-notify 更新终态。每次变更广播 session.subagents。
@@ -132,8 +151,14 @@ export class EventInterpreter {
   private subagentRecords: Map<string, SubagentRecord> = new Map()
   /** subagent tool-call-start 的 startParam 缓存（toolCallId → startParam），end 时取出合并 */
   private pendingStartParams: Map<string, { agent: string; slug: string; task: string }> = new Map()
+  /**
+   * toolCall 产出顺序锚点缓存（toolCallId → contentIndex，pi toolcall_start 提供）。
+   * tool-call-start（tool_execution_start）到达时取出附到 tool_call_start WS 帧，
+   * 前端按 contentIndex 有序插入 contentBlocks（§11 检查点 3 两条路径顺序语义统一）。
+   */
+  private toolCallContentIndex: Map<string, number> = new Map()
 
-  // ── [ADR-0035] ping 探测状态 ──
+  // ── [ADR-0047] ping 探测状态 ──
   /** ping 定时器句柄（null = 未在探测） */
   private pingTimer: ReturnType<typeof setInterval> | null = null
   /** 当前连续失败计数（成功即清零） */
@@ -163,6 +188,24 @@ export class EventInterpreter {
       //   - message.complete 不送达前端（streaming 永远不停）
       // 故单事件失败仅记日志不中断批次（复用 event-adapter.logInterpretFailure 的隔离思路）。
       try {
+        // 微项 4（wave:perf-w09）：高频 delta 帧快速路径——kind 路由（handle 的大 switch）
+        // 与 subagent-bg-notify / workflow-result 的 payload 检查全部跳过，纯转发。
+        // text_delta / thinking_delta 占 streaming 期事件量绝对大头，等价性依据：
+        // 两者的 payload 是 { sessionId, delta, contentIndex? }（event-adapter :99-106），
+        // 永不带 customType，跳过的两个检查函数（handleSubagentBgNotify / handleWorkflowResult
+        // 首行 customType 守卫）对它们恒 early-return，行为与走 handle 完全一致。
+        // 运行时护栏（W09 review 补）：快速路径条件额外要求 payload 无 customType——
+        // 未来若新增带 customType 的 delta 产出点，缺此护栏会静默绕过两个检查函数，
+        // 此处强制其回落完整 handle 路径。
+        // 仍在 W1 try 内：send 抛错不中断批次。
+        if (ev.kind === 'message') {
+          const t = ev.message.type
+          if ((t === 'message.text_delta' || t === 'message.thinking_delta')
+            && !('customType' in (ev.message.payload ?? {}))) {
+            this.opts.send(ev.message)
+            continue
+          }
+        }
         this.handle(ev)
       } catch (err: unknown) {
         // B2（PR#86 review）：终态事件（turn-end）自身 handler 抛错时，onTurnFinalize 未执行 →
@@ -199,13 +242,17 @@ export class EventInterpreter {
         this.handleWorkflowResult(ev.message)
         return
       case 'turn-start':
-        // 记 messageId（file_changes 挂载目标）+ 采 baseline 快照（ADR-0024 D5）
+        // 记 messageId（file_changes 挂载目标）+ 推进回合代际（W18 帧序三件套）。
+        // [R-09 简化] 原 turn-start 同步采 baseline 快照已删除——diffSnapshots 的 baseline
+        // 参数是死参数（[HISTORICAL] dirty 漏报修复后输出只依赖 current），turn-start 采集
+        // 是每 turn 一次的纯浪费（W18 前为 execSync 同步阻塞）。
         this.currentMessageId = ev.messageId
-        this.statusBaseline = this.opts.cwd && this.opts.fileChangeDiff
-          ? this.opts.fileChangeDiff.snapshotGitStatus(this.opts.cwd)
-          : null
-        this.writeContents.clear()
-        // [ADR-0035] turn 开始启动 ping 探测（每 60s get_state）。
+        this.turnGen += 1
+        this.turnFinalizing = false
+        // 替换新 Map（非原地 clear）：上一 turn 排在 diff 链上的 ready 计算闭包仍持有旧引用，
+        // 原地清空会让 untracked 行数回退拿不到 content。
+        this.writeContents = new Map()
+        // [ADR-0047] turn 开始启动 ping 探测（每 60s get_state）。
         // ping 在 turn 进行中持续，turn-end / agent_end / onSilentAbort 停止（见各分支）。
         // turn 间不探测（AC-3）：startPingLoop 在 turn-start 调用，确保只在 turn 内跑。
         this.startPingLoop()
@@ -213,6 +260,10 @@ export class EventInterpreter {
       case 'tool-call-start':
         // hook 改写是异步的：handler 内部 await 后 send（不阻塞本循环）
         void this.handleToolCallStart(ev)
+        return
+      case 'tool-call-index':
+        // 缓存 toolCall 产出顺序锚点（pi toolcall_start），tool-call-start 到达时附到 WS 帧
+        this.toolCallContentIndex.set(ev.toolCallId, ev.contentIndex)
         return
       case 'tool-call-end':
         void this.handleToolCallEnd(ev)
@@ -254,6 +305,12 @@ export class EventInterpreter {
           payload: { sessionId: ev.sessionId, recordId: ev.recordId, lines: ev.lines },
         })
         return
+      case 'compaction-start':
+        this.handleCompactionStart(ev)
+        return
+      case 'compaction-end':
+        this.handleCompactionEnd(ev)
+        return
     }
   }
 
@@ -280,6 +337,8 @@ export class EventInterpreter {
       // 阻断：不产出 tool_call_start，但仍触发 onPiEvent hook（带 blocked 标记，供观测插件）。
       // 移到 try-catch 外：与 tool_execution_end 的 fire-and-forget 模式一致——
       // onBeforeToolCall hook 失败（catch 分支）时仍触发 onPiEvent（不因 hook 失败丢观测事件）。
+      // contentIndex 锚点不再被消费，同步清理（防 Map 残留）。
+      this.toolCallContentIndex.delete(toolCallId)
       this.opts.executeHooks?.('onPiEvent', { event: 'tool_execution_start', toolCallId, toolName, input, blocked: true }).catch(() => {})
       return
     }
@@ -289,8 +348,19 @@ export class EventInterpreter {
 
     this.opts.send({
       type: 'message.tool_call_start',
-      payload: { sessionId: this.sessionId, toolCallId, toolName, input },
+      payload: {
+        sessionId: this.sessionId,
+        toolCallId,
+        toolName,
+        input,
+        // §11 检查点 3：toolCall 产出顺序锚点（pi toolcall_start 提供，模型输出 tool_use 时）。
+        // tool_call_start 帧由 tool_execution_start（工具执行时）驱动，若无此锚点，同 turn 内
+        // text 在 tool 之后时 contentBlocks 顺序会错位（text_delta 先到）。缺失（旧 pi/异常）时不带。
+        ...(this.toolCallContentIndex.get(toolCallId) !== undefined ? { contentIndex: this.toolCallContentIndex.get(toolCallId) } : {}),
+      },
     })
+    // 锚点已消费，清除缓存（防 Map 无限增长；同 id 重复 start 无意义）
+    this.toolCallContentIndex.delete(toolCallId)
 
     // subagent tool-call-start：缓存 startParam（agent/slug/task），end 时取出合并 details 建记录
     if (SUBAGENT_TOOL_NAMES.has(toolName)) {
@@ -320,9 +390,15 @@ export class EventInterpreter {
     // ADR-0024 D5：失败的调用不触发 diff（避免噪声）；实时 diff
     if (!isError) {
       // [已知限制] ev.writeContent 恒为 undefined（pi tool_execution_end 从不发 args，见
-      // event-adapter handleToolExecutionEnd 注释），writeContents 累积逻辑暂不生效。
+      // event-adapter handleToolExecutionEnd 注释），writeContents 累积逻辑保护的是当前无数据
+      // 流经的路径——后续 pi 若透出 writeContent 则自动激活（untracked 行数回退）。
       if (FILE_MUTATING_TOOLS.has(toolName)) {
-        this.sendDiffFileChanges('accumulating')
+        // await 保持「file_changes(accumulating) 先于 tool_call_end」帧序（W18 前为同步实现
+        // 天然满足；异步化后显式 await——本 handler 本就是 fire-and-forget 异步路径，
+        // await 不阻塞 interpret 循环）。等待的是整个 diff 链尾 = 前序链段 + 自身（每段最坏
+        // = status + numstat 两个采集超时之和，各 5000ms）；fire-and-forget 语义下不阻塞
+        // 事件循环，仅延迟 tool_call_end 相对时序。
+        await this.sendDiffFileChanges('accumulating')
       }
     }
 
@@ -368,42 +444,88 @@ export class EventInterpreter {
     // 观测 hook（agent_end）
     this.opts.executeHooks?.('onPiEvent', { event: 'agent_end', stopReason: ev.stopReason, usage: ev.usage }).catch(() => {})
 
-    // ADR-0024 D5：agent_end 推 ready 全集（baseline diff 最终结果），推后清空 baseline + writeContents
-    this.sendDiffFileChanges('ready')
-    this.statusBaseline = null
-    this.writeContents.clear()
+    // ADR-0024 D5：agent_end 推 ready 全集（diff 最终结果）。
+    // W18 帧序三件套：turn-end 置 turnFinalizing（其后迟到的 accumulating no-op）；
+    // ready 排 diff 链尾（fire-and-forget，禁止 await——await 会阻塞 turn-end 处理链），
+    // 天然晚于所有在途 accumulating → ready 恒为链尾；message.complete 已在上方同步先发。
+    this.turnFinalizing = true
+    void this.sendDiffFileChanges('ready')
+    // 替换新 Map（非原地 clear）：ready 排链后本 handler 立即返回，链上计算闭包持有旧引用
+    // 做 untracked 行数回退，原地清空会拿不到 content。
+    this.writeContents = new Map()
 
-    // [ADR-0035] turn 结束停止 ping 探测（AC-3：turn 间不探测）。
+    // [ADR-0047] turn 结束停止 ping 探测（AC-3：turn 间不探测）。
     this.stopPingLoop()
   }
 
   /**
-   * 推送 baseline diff 结果的 file_changes 帧（从 event-adapter 迁来）。
+   * 推送 diff 结果的 file_changes 帧（W18 异步化 + 帧序三件套，03 D3-3）。
    *
-   * 机制：diff 当前 git status vs turn 开始 baseline → 本 turn 变更。
-   * isFullSet=true（baseline diff 每次全量结果，前端全集替换）。
-   * 非 git 仓库 / cwd 缺省 → 跳过。
+   * 机制：采集当前 git status（异步，经 GitStateService 单飞）→ diff → 行数填充 → 推帧。
+   * isFullSet=true（每次全量结果，前端全集替换）。非 git 仓库 / cwd 缺省 → 跳过。
+   *
+   * 帧序不变量（by-construction）：
+   * 1. 单飞串行链——diff 计算入 per-session promise 链按触发序串行，turn-end 的 ready
+   *    排链尾 → 恒晚于所有在途 accumulating；
+   * 2. 回合代际守卫（仅 accumulating）——捕获排链时的 turnGen，链上执行时（含 await 窗口后
+   *    send 前）不匹配即丢弃，上回合迟到 accumulating 不落新回合。ready 绕过守卫恒推
+   *    （03 §3.1「ready 恒推」；W18 review）：pi followUp 续跑（triggerTurn）会立即开新 turn
+   *    （turnGen++），若 ready 也按代际丢弃，本回合变更集卡永久停在 accumulating——前端无
+   *    恢复路径（markChangeSetsSuperseded 仅 git.commit 触发、hydrate 不写 changeSetStatus）。
+   *    迟到的 ready 挂排链时捕获的旧 messageId，前端按 messageId 分区 + 单向守卫幂等；
+   * 3. turnFinalizing 压制——turn-end 后到达的 accumulating 直接 no-op。
+   *
+   * 返回链尾 promise：handleToolCallEnd await 它以保持「accumulating 先于 tool_call_end」；
+   * handleTurnEnd 不 await（禁止阻塞 turn-end 处理链）。
    */
-  private sendDiffFileChanges(changeSetStatus: 'accumulating' | 'ready'): void {
-    if (!this.currentMessageId) return
+  private sendDiffFileChanges(changeSetStatus: 'accumulating' | 'ready'): Promise<void> {
+    if (this.turnFinalizing && changeSetStatus === 'accumulating') {
+      console.debug(`[event-interpreter] file_changes accumulating suppressed by turnFinalizing sid=${this.sessionId}`)
+      return Promise.resolve()
+    }
+    const messageId = this.currentMessageId
+    if (!messageId) return Promise.resolve()
     const { cwd, fileChangeDiff } = this.opts
-    if (!cwd || !fileChangeDiff) return
-    const current = fileChangeDiff.snapshotGitStatus(cwd)
-    if (!current) return
-    const changes: FileChange[] = fileChangeDiff.diffSnapshots(this.statusBaseline, current)
-    if (changes.length === 0) return
-    // 行数：numstat（已跟踪）+ writeContents 回退（untracked）
-    fileChangeDiff.computeLineCounts(cwd, changes, this.writeContents)
-    this.opts.send({
-      type: 'message.file_changes',
-      payload: {
-        sessionId: this.sessionId,
-        messageId: this.currentMessageId,
-        fileChanges: changes,
-        changeSetStatus,
-        isFullSet: true,
-      },
+    if (!cwd || !fileChangeDiff) return Promise.resolve()
+    const gen = this.turnGen
+    // writeContents 捕获引用快照：turn-end / turn-start 排链后替换新 Map，链上计算仍持旧引用
+    const writeContents = this.writeContents
+    const run = async (): Promise<void> => {
+      // 回合代际守卫（仅 accumulating，见上方 JSDoc 第 2 条）：排链到执行之间可能已跨 turn
+      if (changeSetStatus === 'accumulating' && gen !== this.turnGen) {
+        console.debug(`[event-interpreter] file_changes accumulating dropped by turn-generation guard sid=${this.sessionId}`)
+        return
+      }
+      const current = await fileChangeDiff.snapshotGitStatus(cwd)
+      if (!current) return
+      const changes: FileChange[] = fileChangeDiff.diffSnapshots(current)
+      if (changes.length === 0) return
+      const numstatMap = await fileChangeDiff.numstat(cwd)
+      // 二次 gen 校验（仅 accumulating）：采集 await 窗口内跨 turn 的迟到帧不发出（守卫覆盖整个链上生命周期）
+      if (changeSetStatus === 'accumulating' && gen !== this.turnGen) {
+        console.debug(`[event-interpreter] file_changes accumulating dropped by turn-generation guard (post-await) sid=${this.sessionId}`)
+        return
+      }
+      // 行数：numstat（已跟踪）+ writeContents 回退（untracked）
+      fileChangeDiff.computeLineCounts(changes, numstatMap, writeContents)
+      this.opts.send({
+        type: 'message.file_changes',
+        payload: {
+          sessionId: this.sessionId,
+          messageId,
+          fileChanges: changes,
+          changeSetStatus,
+          isFullSet: true,
+        },
+      })
+    }
+    // 单段失败不断链：catch 后 diffChain 保持 resolved，后续帧照常排队。
+    // warn（非 debug）：链段失败 = 一帧 file_changes 静默丢失，prod info 级日志下应可见
+    const next = this.diffChain.then(run).catch((e: unknown) => {
+      console.warn(`[event-interpreter] file_changes diff failed (frame dropped): ${toErrorMessage(e)}`)
     })
+    this.diffChain = next
+    return next
   }
 
   // ── subagent 内存态 + session.subagents 广播 ──
@@ -558,7 +680,82 @@ export class EventInterpreter {
     })
   }
 
-  // ── [ADR-0035] ping 探测（进程健康检测，替代事件静默检测）──
+  // ── compaction 生命周期编排（M4 事件驱动：interpreter 唯一源）──
+
+  /**
+   * compaction_start → 广播 session.compacting{reason} + 置 runtime active.isCompacting=true。
+   *
+   * reason 透传给前端，驱动 compacting 浮层文案区分手动（'manual'）/自动（'threshold'|'overflow'）。
+   * runtime active.isCompacting 经 onCompactingStateChange 回调置位，sendPrompt/sendBash 预检据此互斥。
+   */
+  private handleCompactionStart(ev: PiTranslatedEvent & { kind: 'compaction-start' }): void {
+    this.opts.send({
+      type: 'session.compacting',
+      payload: { sessionId: this.sessionId, status: 'compacting', reason: ev.reason },
+    })
+    this.opts.onCompactingStateChange?.(this.sessionId, true)
+  }
+
+  /**
+   * compaction_end → 唯一驱动 compaction 终态（成功/aborted/failed 三路）。
+   *
+   * 失败判据：errorMessage 真值为 failed（非 aborted 字段、非 key 存在性）—— pi 三种 aborted:true
+   * 形态在 errorMessage 真值层面一致（extension cancel/signal abort 无 key；手动 catch 取消类
+   * errorMessage 为 undefined）。分叉干净。
+   *
+   * 三路均复位 isCompacting（与 compaction_start 置位对称，SUG-新2）—— 否则 auto compact 结束后
+   * active.isCompacting 永远 true，sendPrompt 预检永远拒，session 卡死。
+   *
+   * 孤儿 end 容错（SUG-新3）：overflow「已 retry 过一次」早退路径无 preceding start，end handler
+   * 复位对「本来就 false 的 isCompacting」幂等无害；不维护 start/end 配对状态机。
+   */
+  private handleCompactionEnd(ev: PiTranslatedEvent & { kind: 'compaction-end' }): void {
+    const hasError = !!ev.errorMessage
+    if (hasError) {
+      // failed：广播 session.compacted{error}（前端 compacted handler error 非空 → 不 flush，队列保留）
+      // + message.error 进对话流（错误作为 assistant 消息插入，AGENTS.md 规则 #3）。
+      this.opts.send({
+        type: 'session.compacted',
+        payload: { sessionId: this.sessionId, status: 'compacted', error: ev.errorMessage },
+      })
+      this.opts.send({
+        type: 'message.error',
+        payload: { sessionId: this.sessionId, message: `上下文压缩失败：${ev.errorMessage}（可重试 /compact，上下文未压缩、agent 记忆未变）` },
+      })
+    } else {
+      // 成功（result 真值）或 aborted（无 errorMessage 真值）—— 都不带 error，前端 compacted handler flush queue。
+      // 成功额外发 compactionSummary 进对话流 + applyContextUpdate 刷新 context 用量。
+      if (ev.result) {
+        const r = ev.result as { summary?: string; tokensBefore?: number; estimatedTokensAfter?: number }
+        if (r.summary) {
+          this.opts.send({
+            type: 'message.compactionSummary',
+            payload: {
+              sessionId: this.sessionId,
+              summary: r.summary,
+              tokensBefore: r.tokensBefore,
+              timestamp: Date.now(),
+            },
+          })
+        }
+        if (typeof r.estimatedTokensAfter === 'number' && r.estimatedTokensAfter > 0) {
+          // compact 后无 turn_end，context 用量不会自动刷新。用 pi 返回的估算值触发 applyContextUpdate。
+          this.opts.onContextUpdate?.(this.sessionId, {
+            inputTokens: r.estimatedTokensAfter,
+            totalTokens: r.estimatedTokensAfter,
+          })
+        }
+      }
+      this.opts.send({
+        type: 'session.compacted',
+        payload: { sessionId: this.sessionId, status: 'compacted' },
+      })
+    }
+    // 三路复位对称（SUG-新2）
+    this.opts.onCompactingStateChange?.(this.sessionId, false)
+  }
+
+  // ── [ADR-0047] ping 探测（进程健康检测，替代事件静默检测）──
 
   /**
    * 启动 ping 探测循环（turn-start 调用）。
@@ -628,7 +825,7 @@ export class EventInterpreter {
         },
       })
     }
-    // ADR-0035：连续 3 次失败 → 判定 pi 进程真死 → onSilentAbort + 停止 ping（AC-7）
+    // ADR-0047：连续 3 次失败 → 判定 pi 进程真死 → onSilentAbort + 停止 ping（AC-7）
     if (this.pingFailCount >= PING_FAIL_THRESHOLD) {
       this.stopPingLoop()
       this.opts.onSilentAbort?.({ sessionId: this.sessionId })

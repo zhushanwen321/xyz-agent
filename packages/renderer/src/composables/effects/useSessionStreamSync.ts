@@ -2,8 +2,8 @@
  * useSessionStreamSync —— session 全量事件订阅编排（对齐 bindHandoffEffect/bindForkNoticeEffect 范式）。
  *
  * 职责：session 全量事件订阅编排——watch sessionStore.list，added → ensureStreamSubscription，
- * removed → disposeSession。对齐派生态视野（isGenerating 扫描所有 session 的 messages），消除惰性
- * 订阅盲区（非交互 session 收到终态事件 message.complete 时，因 ensureStreamSubscription 仅在
+ * removed → disposeSession。对齐派生态视野（isGenerating 由消息实体 per-session 惰性派生，D-3），
+ * 消除惰性订阅盲区（非交互 session 收到终态事件 message.complete 时，因 ensureStreamSubscription 仅在
  * send/steer/fork/handoff 时惰性建立，未交互 session 无订阅者被 events.dispatchSession 静默丢弃 →
  * streaming assistant 永不收口 → 侧栏卡 running）。改为全量订阅：session 出现在 sessionStore.list
  * 时即建立订阅，从 list 消失时清理。
@@ -23,7 +23,7 @@
 import { watch, onScopeDispose } from 'vue'
 import { useSessionStore } from '@/stores/session'
 import { useChatStore } from '@/stores/chat'
-import { ensureStreamSubscription, useChat } from '@/composables/features/useChat'
+import { ensureStreamSubscription, useChat } from '@/composables/features/chat/useChat'
 import type { SessionSummary } from '@xyz-agent/shared'
 
 /**

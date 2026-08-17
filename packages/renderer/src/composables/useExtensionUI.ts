@@ -1,26 +1,33 @@
 /**
- * Extension UI 交互 composable——订阅编排 + filter 分流读取。
+ * Extension UI 交互 composable——bus 订阅编排 + filter 分流读取。
  *
  * pi extension 调 ctx.ui.select/confirm/input → runtime 推 extension.ui_request
- * → 此 composable 订阅 WS 事件、写入 extensionUIStore（session 级 pending SSOT）→
- * 渲染层（Panel inline ask-user / ExtensionUIDialog modal）从 store 分区派生 →
- * 用户操作 → sendExtensionUIResponse 回传（带 method）→ pi Promise resolve。
+ * → core MessageBusBridge 归一为 bus 'ui-request' 事件（plugin:uiRequest + extension.ui_request
+ * 双源合一）→ 本 composable 订阅 bus、写入 extensionUIStore（session 级 pending SSOT）→
+ * 渲染层（Panel inline ask-user）从 store 分区派生 → 用户操作 → sendExtensionUIResponse 回传（带 method）→ pi Promise resolve。
  *
  * 状态归属（CW wave `session-active-ssot` T2）：pending 队列已提升到 extensionUIStore
  *（session 级 SSOT），让 deriveStatus 经 hasPendingAskUser 能查到 ask-user 等待状态。
- * 本 composable 只负责：①订阅编排（per-panel 实例各自订阅自己的 sid）；②filter 分流读取
- *（store 存全量 pending，currentAskUserRequest/currentDialogRequest 在 computed 里按 filter 取）。
+ * 本 composable 只负责：①订阅编排（per-panel 实例各自订阅）；②filter 分流读取
+ *（store 存全量 pending，currentAskUserRequest 在 computed 里按 filter 取）。
  *
- * 订阅模型不变（split 双 panel 各自订阅仍工作）：每个 composable 实例独立 subscribe 自己的 sid，
- * 仅读写目标从局部 useSessionScopedState 换为 store（addRequest/removeRequest）。
- * requestId dedup 由 store.addRequest 单一入口处理（收敛，composable 不再手写）。
+ * 订阅模型（slice `companion-band-mount` wave1，IF2）：
+ * - bus 'ui-request' 订阅走**模块级 refCount**（项目规则 #2 防重复注册）——首个实例订阅时
+ *   单次 bus.on，末个实例注销时 unsub；实例 handler 只处理 askUser 请求（C4 分流，
+ *   dialog 请求由 CompanionBand wave 消费 bus 直连，不经 store）
+ * - 事件 sessionId 缺失（无 sid 的 ui-request）→ 跳过入 store（warn，C2）
+ * - 事件按**事件 sid** 写入分区（M1 竞态语义：切 session 后旧 sid 迟到事件写旧分区，不污染新分区）
+ * - onUITimeout（超时出队）+ getPendingRequests（切回拉取）保留 WS/RPC 路径（C3）
  *
- * filter 仅用于读取分流（不入库时过滤）——store 存全量，两个 composable 实例（Panel 入 askUser 读取、
- * ExtensionUIDialog 入 dialog 读取）各按 filter 读同一份 store 分区，天然分流（AC-6 保持）。
+ * filter 仅用于读取分流 + 入队第二道闸（askUser 硬过滤之后）：store 存全量 pending，
+ * 多个 composable 实例（Panel 入 askUser 读取）各按 filter 读同一份 store 分区。
+ * dialog 请求（非 askUser）已由 CompanionBand 消费 bus 直连（wave1 起），不再经 store。
  */
 import { computed, watch, onScopeDispose, type Ref } from 'vue'
-import { onUIRequest, onUITimeout, onNotify, sendExtensionUIResponse, getPendingRequests, type ExtensionUIRequest } from '@/api/domains/extension'
-import { useToast } from '@/composables/useToast'
+import type { InternalEvent, DialogRequest } from '@xyz-agent/core'
+import type { ExtensionInteractMethod } from '@xyz-agent/shared'
+import { getExtensionBus } from '@/composables/shell/useExtensionHostBridge'
+import { onUITimeout, sendExtensionUIResponse, getPendingRequests, type ExtensionUIRequest } from '@/api/domains/extension'
 import { useExtensionUIStore } from '@/stores/extension-ui'
 
 /** 入队过滤谓词：返回 true 的请求才入队 */
@@ -28,8 +35,69 @@ export type UIRequestFilter = (req: ExtensionUIRequest) => boolean
 
 /** ask-user 富交互请求过滤器（Panel 用） */
 export const askUserFilter: UIRequestFilter = (req) => req.askUser === true
-/** 非 ask-user 的简单原语请求过滤器（ExtensionUIDialog 用） */
-export const dialogFilter: UIRequestFilter = (req) => req.askUser !== true
+
+// ── 模块级 refCount bus 订阅（项目规则 #2：多实例共享单次注册，防事件处理翻倍） ──
+// split 双 panel 多实例各自订阅同一 bus 事件，若每实例直接 bus.on 则同一事件被 N 个
+// handler 各处理一次。refCount：首个实例注册时单次 bus.on('ui-request')（dispatchAll 遍历
+// 实例 handler Set），末个注销时 unsub。store.addRequest 的 requestId dedup 保证同事件
+// 多实例分发幂等（T1/T10）。
+type UiRequestEvent = Extract<InternalEvent, { kind: 'ui-request' }>
+type BusHandler = (e: UiRequestEvent) => void
+
+const busHandlers = new Set<BusHandler>()
+let busUnsub: (() => void) | null = null
+
+function subscribeBus(handler: BusHandler): () => void {
+  busHandlers.add(handler)
+  if (busHandlers.size === 1) {
+    const bus = getExtensionBus()
+    busUnsub = bus.on('ui-request', (e) => {
+      for (const h of busHandlers) h(e)
+    })
+  }
+  return () => {
+    busHandlers.delete(handler)
+    if (busHandlers.size === 0 && busUnsub) {
+      busUnsub()
+      busUnsub = null
+    }
+  }
+}
+
+/** 测试钩子：清空模块级 bus 订阅残留（对齐 __resetXxxForTesting 模式）。 */
+export function __resetExtensionBusSubscriptionForTesting(): void {
+  if (busUnsub) {
+    busUnsub()
+    busUnsub = null
+  }
+  busHandlers.clear()
+}
+
+/**
+ * bus 事件 request（DialogRequest）→ ExtensionUIRequest 适配（IF3）。
+ *
+ * DialogRequest 是 parseUiRequest/parseExtensionUiRequest 经 ...payload 展开构造的——
+ * runtime extension.ui_request 原始 payload（含 askUser/askUserQuestions/allowCancel/message/
+ * options 等）保留在索引签名里（event-adapter.ts:397-399 广播 askUser:true）。
+ * method 用原始 method（可能超界如 editor）?? kind 兜底（kind 已归一 select/confirm/input）。
+ */
+function toExtensionUIRequest(sid: string, request: DialogRequest): ExtensionUIRequest {
+  return {
+    sessionId: sid,
+    requestId: request.requestId,
+    method: (request.method as ExtensionInteractMethod | undefined) ?? request.kind,
+    ...(request.title !== undefined ? { title: request.title } : {}),
+    ...(request.message !== undefined ? { message: request.message as string } : {}),
+    ...(request.options !== undefined ? { options: request.options as string[] } : {}),
+    ...(request.default !== undefined ? { default: request.default as string } : {}),
+    ...(request.level !== undefined ? { level: request.level as 'info' | 'warn' | 'error' } : {}),
+    ...(request.prefill !== undefined ? { prefill: request.prefill as string } : {}),
+    ...(request.askUser !== undefined ? { askUser: request.askUser as boolean } : {}),
+    ...(request.askUserQuestions !== undefined ? { askUserQuestions: request.askUserQuestions as unknown[] } : {}),
+    ...(request.allowCancel !== undefined ? { allowCancel: request.allowCancel as boolean } : {}),
+    receivedAt: Date.now(),
+  }
+}
 
 export function useExtensionUI(
   sessionId: Ref<string | null>,
@@ -48,27 +116,34 @@ export function useExtensionUI(
       unsubFns = []
     }
     if (!sid) return
-    // UI 请求入队（全量写入 store，不在入库时 filter——store 是完整 pending SSOT，
-    // hasPendingAskUser/hasPendingDialog 才能正确查询；filter 只在下方 computed 读取分流）。
-    // M1 竞态修复：handler 闭包捕获 subscribe 时的 sid（参数），调 store.addRequest(sid, ...)
-    // 写入订阅时 sid 的分区。即使 session 切换后退订是异步的（watch flush:pre），
-    // 旧 sid 的迟到消息也只写旧 sid 分区，不污染新 sid 分区。
+    // bus 订阅（IF2）：ui-request 事件按**事件 sid** 入 store 分区（M1 竞态语义——
+    // 切 session 后旧 sid 迟到事件写旧分区，不污染新分区；事件自带归属，无需捕获订阅时 sid）。
+    // C4 分流：askUser 硬过滤先行（bus 路径只入 askUser，dialog 由 CompanionBand 消费 bus），
+    // filter 是第二道闸（askUserFilter 放行——非 askUser 不再经 store）。
+    // C2：事件 sid 缺失（无 sid 的 ui-request）跳过入队（warn）——ask-user 渲染依赖 session 分区。
     unsubFns.push(
-      onUIRequest(sid, (req) => {
-        store.addRequest(sid, { ...req, receivedAt: Date.now() })
+      subscribeBus((e) => {
+        const eventSid = e.sessionId
+        if (!eventSid) {
+          console.warn('[useExtensionUI] ui-request 事件缺少 sessionId，跳过入队:', e.request.requestId)
+          return
+        }
+        if (e.request.askUser !== true) return // C4：只入 askUser
+        const adapted = toExtensionUIRequest(eventSid, e.request)
+        if (filter && !filter(adapted)) return // filter 第二道闸
+        store.addRequest(eventSid, adapted)
       }),
     )
-    // 超时出队：runtime ExtensionTimeoutManager 5 分钟无响应后广播 extension.ui_timeout，
-    // 同时已向 pi 发默认响应（confirm→false，其余→null）。前端必须出队超时的请求，
-    // 否则对话框残留，用户点击会发送过期的 ui_response。
-    // 按 requestId 精确移除：pi 无串行保证，队列可能同时有多个 pending，超时的不一定在队首。
-    // M1 竞态修复：同上，store.removeRequest(sid, ...) 用订阅时 sid。
+    // C3 保留 WS/RPC 路径：超时出队（runtime ExtensionTimeoutManager 5 分钟无响应后广播
+    // extension.ui_timeout，同时已向 pi 发默认响应。前端必须出队超时请求，否则对话框残留，
+    // 用户点击会发送过期的 ui_response）。按 requestId 精确移除：pi 无串行保证，
+    // 队列可能同时有多个 pending，超时的不一定在队首。M1 竞态修复：用订阅时捕获的 sid。
     unsubFns.push(
       onUITimeout(sid, (requestId) => {
         store.removeRequest(sid, requestId)
       }),
     )
-    // 拉取 runtime 缓存的 pending 请求（切换 session 后重新订阅时，runtime 会推送缓存的请求）
+    // C3 保留：拉取 runtime 缓存的 pending 请求（切换 session 后重新订阅时，runtime 会推送缓存的请求）
     // 异步执行，不阻塞订阅建立
     getPendingRequests(sid)
       .then((pendingRequests) => {
@@ -92,7 +167,7 @@ export function useExtensionUI(
     unsubFns = []
   })
 
-  // ── 分流渲染：ask-user 走 Panel inline，其余走 ExtensionUIDialog modal ──
+  // ── 分流渲染：ask-user 走 Panel inline，其余由 CompanionBand（bus 直连）──
   // 从 store 分区派生：store 存全量 pending，computed 内按 askUser 取 + filter 过滤。
   // 读 sessionId.value 建立响应式依赖，sid 变化时重算读新分区。
   /** 队列中第一个 ask-user 富交互请求（Panel inline 渲染用）；无则 undefined */
@@ -101,13 +176,6 @@ export function useExtensionUI(
     if (!sid) return undefined
     const records = store.recordsOf(sid).value
     return (filter ? records.filter(filter) : records).find(r => r.askUser === true)
-  })
-  /** 队列中第一个非 ask-user 的简单原语请求（ExtensionUIDialog modal 渲染用）；无则 undefined */
-  const currentDialogRequest = computed(() => {
-    const sid = sessionId.value
-    if (!sid) return undefined
-    const records = store.recordsOf(sid).value
-    return (filter ? records.filter(filter) : records).find(r => r.askUser !== true)
   })
 
   /** 用户回复指定请求（按 requestId 精确定位，不假设队首） */
@@ -129,44 +197,7 @@ export function useExtensionUI(
 
   return {
     currentAskUserRequest,
-    currentDialogRequest,
     respond,
     cancel,
   }
-}
-
-/**
- * Extension notify composable——订阅 fire-and-forget 的 extension.notify 推送，渲染为 toast。
- *
- * pi notify 是 fire-and-forget（pi rpc-mode.ts notify 发后不等回复），不走 ExtensionUIDialog。
- * 按 sessionId 订阅，level 映射到 toast 类型：
- * - error → error toast
- * - warning/warn → warning toast
- * - info → info toast
- *
- * 全局单例（Workspace 层单次调用，跟 focusedSessionId）。notify 是非阻塞 toast，
- * 不需要 per-panel 隔离（toast 本就是全局浮层）。
- */
-export function useExtensionNotify(focusedSessionId: Ref<string | null>) {
-  const { error, info, warning } = useToast()
-  let unsubFn: (() => void) | null = null
-
-  function subscribe(sid: string | null) {
-    if (unsubFn) {
-      unsubFn()
-      unsubFn = null
-    }
-    if (!sid) return
-    unsubFn = onNotify(sid, ({ message, level }) => {
-      if (level === 'error') error(message)
-      else if (level === 'warn') warning(message)
-      else info(message)
-    })
-  }
-
-  watch(focusedSessionId, (sid) => subscribe(sid), { immediate: true })
-
-  onScopeDispose(() => {
-    if (unsubFn) unsubFn()
-  })
 }

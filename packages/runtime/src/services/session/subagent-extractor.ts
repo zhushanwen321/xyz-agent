@@ -26,7 +26,8 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { parseJsonl } from '../../utils/jsonl.js'
 import { getSubagentSessionDir } from '../../infra/pi/pi-paths.js'
-import { parseBgNotifyDetails, normalizeSubagentStatus } from '@xyz-agent/shared'
+import { parseBgNotifyDetails } from '@xyz-agent/shared'
+import { normalizeSubagentStatus } from './subagent-status.js'
 import type { SubagentRecord, SubagentStatus, BgNotifyRecord } from '@xyz-agent/shared'
 
 /** subagent toolCall 的 arguments 结构（start action） */
@@ -331,5 +332,5 @@ function parseIsoFromFilename(filename: string): number | null {
   return Number.isNaN(time) ? null : time
 }
 
-// 状态归一化已迁移至 @xyz-agent/shared 的 normalizeSubagentStatus（runtime 实时路径与磁盘路径共用，
+// 状态归一化已下沉至 ./subagent-status.ts 的 normalizeSubagentStatus（runtime 实时路径与磁盘路径共用，
 // 避免两份手写实现漂移）。历史 bug：event-interpreter 的三元缺 completed/crashed 归一。

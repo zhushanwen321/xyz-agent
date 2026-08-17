@@ -3,7 +3,13 @@
  * 三态: pending → in_progress → completed
  */
 
-import { guiComponent, type GuiRenderResult, guiResult, type TreeItem } from "@xyz-agent/extension-protocol";
+import {
+	type GuiRenderResult,
+	guiComponent,
+	guiResult,
+	type TreeItem,
+	type WidgetMeta,
+} from "@xyz-agent/extension-protocol";
 
 // ── 数据模型 ─────────────────────────────────────────
 
@@ -17,8 +23,6 @@ export interface TodoDetails {
 	action: "list" | "add" | "update" | "delete";
 	todos: Todo[];
 	nextId: number;
-	/** GUI 渲染结果（仅 RPC 模式填充，前端 list-tree 渲染）。对齐 extension-protocol@0.2.0。 */
-	__gui__?: GuiRenderResult;
 }
 
 export const VALID_STATUSES = ["pending", "in_progress", "completed"] as const;
@@ -67,34 +71,46 @@ export function migrateTodo(raw: unknown): Todo {
 // ── GUI 渲染辅助 ─────────────────────────────────────
 
 /**
- * 把 todos 映射为 list-tree GuiRenderResult（对齐 extension-protocol@0.2.0）。
- * status → icon/status 映射：
- *   pending      → dot      / 无 status
- *   in_progress  → circle   / running
- *   completed    → check    / done
+ * 把 todos 组装为 GuiRenderResult（v1.1 meta head 架构，对齐 extension-protocol@0.3.0）。
+ *
+ * - meta（标题/状态/进度）由宿主壳层渲染成唯一 head：进度计数 "N/M" + mini bar
+ *   替代 body 内 progress-bar（精简 body），全完成 status=done（head 绿点 + bar 变绿）。
+ * - 内容根 = numbered list-tree：行首弱化序号（编辑器行号范式，ListTree 渲染），
+ *   id 不再烧进 label——update/delete 锚点由模型经 list action 获取，用户引用
+ *   「第 N 项」即可；状态由行尾圆点单一表达（无 icon，v6 单一信息源裁决）。
+ *
+ * status → 圆点映射：
+ *   pending      → 无圆点（常态归零）
+ *   in_progress  → running（accent）
+ *   completed    → done（success + label 弱化）
  */
 export function buildGui(todos: Todo[]): GuiRenderResult {
-	const items: TreeItem[] = todos.map((t) => {
-		const icon =
-			t.status === "completed"
-				? "check"
-				: t.status === "in_progress"
-					? "circle"
-					: "dot"; // pending
-		const status =
+	const total = todos.length;
+	const completed = todos.filter((t) => t.status === "completed").length;
+	const inProgress = todos.filter((t) => t.status === "in_progress").length;
+
+	const status: WidgetMeta["status"] =
+		total > 0 && completed === total ? "done" : inProgress > 0 ? "running" : "idle";
+
+	const items: TreeItem[] = todos.map((t) => ({
+		label: t.text,
+		status:
 			t.status === "in_progress"
 				? "running"
 				: t.status === "completed"
 					? "done"
-					: undefined; // pending 无 status
-		return {
-			icon,
-			label: `#${t.id}: ${t.text}`,
+					: undefined, // pending 无 status
+		depth: 0,
+	}));
+
+	return guiResult(
+		guiComponent("list-tree", { numbered: true, items }),
+		{
+			title: "Todo",
 			status,
-			depth: 0,
-		};
-	});
-	return guiResult(guiComponent("list-tree", { items }));
+			progress: total > 0 ? { current: completed, total } : undefined,
+		},
+	);
 }
 
 export function getDisplayStatus(t: Todo): string {

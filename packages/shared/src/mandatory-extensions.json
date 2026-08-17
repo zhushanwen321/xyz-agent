@@ -4,6 +4,7 @@
   { "name": "@zhushanwen/pi-todo", "description": "AI-driven todo list with session persistence and /todos", "tier": "feature" },
   { "name": "@zhushanwen/pi-pending-notifications", "description": "Cross-extension async operation registration/query", "tier": "infrastructure" },
   { "name": "@zhushanwen/pi-subagent-workflow", "description": "Unified subagent execution and multi-agent workflow orchestration", "tier": "feature" },
+  { "name": "@zhushanwen/pi-session-reader", "description": "Read pi session JSONL for subagent/workflow discovery (session tree, family, execution tree)", "tier": "infrastructure" },
   { "name": "@zhushanwen/pi-structured-output", "description": "Structured output tool with JSON Schema / Ajv validation", "tier": "infrastructure" },
   { "name": "@zhushanwen/pi-permission", "description": "Permission tool for tool execution approval/denial", "tier": "feature" },
   { "name": "@zhushanwen/pi-scheduler", "description": "Task scheduling and delayed execution", "tier": "feature" },

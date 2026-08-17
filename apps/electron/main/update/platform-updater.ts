@@ -10,7 +10,7 @@
  * - win：返回 NSIS 静默安装参数，由 orchestrator 负责 spawn（不在 prepareUpdate 内 spawn，
  *   保持 mac/linux/win 返回值语义一致：orchestrator 据 ref.kind 决定后续动作）
  * - dev 模式（!app.isPackaged）一律拒绝自更新（避免覆盖 dev 环境）
- * - .app bundle 路径推导：process.execPath（.../xyz-agent.app/Contents/MacOS/xyz-agent）
+ * - .app bundle 路径推导：process.execPath（.../太极.app/Contents/MacOS/TaiJi）
  *   向上 3 层 dirname 得到 .app 目录
  *
  * 依赖方向：platform-updater → electron(app) + node:child_process/fs + updater-script
@@ -55,8 +55,8 @@ export interface PlatformUpdater {
 export class MacUpdater implements PlatformUpdater {
   prepareUpdate(downloadedFilePath: string, release: LatestReleaseInfo): UpdateScriptRef {
     if (!app.isPackaged) throw new UpdateError('dev mode does not support self-update', 'replacing')
-    // 推导 .app bundle 路径：execPath = .../xyz-agent.app/Contents/MacOS/xyz-agent
-    // dirname×3 = .../xyz-agent.app
+    // 推导 .app bundle 路径：execPath = .../太极.app/Contents/MacOS/TaiJi
+    // dirname×3 = .../太极.app
     const appBundle = path.dirname(path.dirname(path.dirname(process.execPath)))
     // 布局守卫：dirname×3 假设标准 .app/Contents/MacOS/<binary> 布局。若 execPath 不符
     // （如开发期改了 cwd、或将来改成非 .app 打包），appBundle 不以 .app 结尾，后续
@@ -75,7 +75,7 @@ export class MacUpdater implements PlatformUpdater {
       sha256,
       logPath: UPDATER_LOG_PATH,
       resultPath: path.join(UPDATE_DIR, 'update-result.json'),
-      appName: 'xyz-agent',
+      appName: 'TaiJi',
       targetVersion: release.version,
     })
     mkdirSync(UPDATE_DIR, { recursive: true })

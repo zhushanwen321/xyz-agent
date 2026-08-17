@@ -10,8 +10,8 @@
  *     extensions/                    ← 用户安装的 extension（local/git + discovery 扫描根）
  *     npm/                           ← npm 安装的 extension（node_modules 平铺布局）
  *     tmp/                           ← extension 安装临时目录
- *     skills/                        ← skill 强制目录（ADR-0020）
- *     agents/                        ← agent 强制目录（ADR-0020）
+ *     skills/                        ← skill 强制目录（ADR-0021）
+ *     agents/                        ← agent 强制目录（ADR-0021）
  *     pi/                            ← xyz-pi 的根目录
  *       agent/                       ← xyz-pi 的 agent 目录
  *         models.json                ← Provider & Model 定义

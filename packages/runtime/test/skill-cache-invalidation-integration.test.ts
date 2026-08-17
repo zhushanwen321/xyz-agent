@@ -65,7 +65,7 @@ describe('skill cache invalidation 端到端广播（契约 4 集成）', () => 
     const { broker, broadcastSpy } = await makeRealBroker()
 
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       // 真实 sessionService：返回活跃 session（notifyGlobalChange 会读它填 affectedSessionIds）
       sessionService: { getActiveSessionIds: () => ['s1'] } as never,
@@ -106,7 +106,7 @@ describe('skill cache invalidation 端到端广播（契约 4 集成）', () => 
 
     const cwd = '/proj'
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       sessionService: {
         getActiveSessionIds: () => ['s1', 's2'],
@@ -144,7 +144,7 @@ describe('skill cache invalidation 端到端广播（契约 4 集成）', () => 
 
     const cwd = '/proj-2'
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       sessionService: {
         getActiveSessionIds: () => ['s1'],

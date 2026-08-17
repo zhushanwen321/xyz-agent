@@ -5,11 +5,13 @@ describe('darkTerminalTheme', () => {
   const hexPattern = /^#[0-9a-f]{6}$/i
   const rgbaPattern = /^rgba\(\d+,\s*\d+,\s*\d+,\s*[\d.]+\)$/
 
-  it('核心色对齐 v3 design tokens', () => {
-    expect(darkTerminalTheme.background).toBe('#1a1b1f')
+  it('核心色：fg/cursor 对齐 v3 tokens，背景为纯黑块（2026-08-14 裁决，f9719a71e）', () => {
+    // f9719a71e：终端为纯黑圆角块嵌 drawer 深底（v6-drawer-tabs-demo），
+    // background/cursorAccent 由 #1a1b1f 改 #000000 与黑块画布一致
+    expect(darkTerminalTheme.background).toBe('#000000')
     expect(darkTerminalTheme.foreground).toBe('#f7f8fc')
     expect(darkTerminalTheme.cursor).toBe('#4f8ef7')
-    expect(darkTerminalTheme.cursorAccent).toBe('#1a1b1f')
+    expect(darkTerminalTheme.cursorAccent).toBe('#000000')
   })
 
   it('selectionBackground 使用 rgba（透明度）', () => {

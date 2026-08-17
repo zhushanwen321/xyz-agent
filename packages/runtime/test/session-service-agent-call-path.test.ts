@@ -1,62 +1,26 @@
 /**
  * SessionService.getAgentCallFilePath 测试。
  *
- * 与 getAgentCallHistory 对称，但返回绝对路径字符串（找不到返回空串，不 throw——
- * overlay 文件名是展示型功能，找不到不应阻断 UI）。
- *
- * 测试点：
- * - 正常：subagents 目录有匹配 sessionId 的文件 → 返回绝对路径
- * - 边界 1：主 session 不存在 → 空串
- * - 边界 2：subagents 目录不存在 → 空串
- * - 边界 3：目录下无匹配 sessionId 的文件 → 空串
+ * 同 getAgentCallHistory：agent call 是 subagent，经 record.sessionFile 定位（subagentId → record）。
+ * 返回路径字符串，找不到 record / 无 sessionFile / 路径穿越 → 空串（展示型功能，不 throw）。
  *
  * 运行：cd packages/runtime && npx vitest run test/session-service-agent-call-path.test.ts
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-
-const mocks = vi.hoisted(() => ({
-  mockScannedSessions: [] as Array<{
-    id: string
-    filePath: string
-    cwd: string
-    name: string | null
-    lastModified: number
-    timestamp: string
-    size: number
-  }>,
-  existsSyncMock: vi.fn(),
-  readdirSyncMock: vi.fn(),
-  parseSessionHeaderMock: vi.fn(),
-  getSubagentSessionDirMock: vi.fn(),
-}))
+import type { SubagentRecord } from '@xyz-agent/shared'
 
 vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/infra/pi/session-file-utils.js')>()
-  return {
-    ...actual,
-    scanPiSessions: () => mocks.mockScannedSessions,
-    parseSessionHeader: mocks.parseSessionHeaderMock,
-  }
+  return { ...actual, scanPiSessions: () => [], parseSessionHeader: vi.fn() }
 })
-
 vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
-  return {
-    ...actual,
-    getSubagentSessionDir: mocks.getSubagentSessionDirMock,
-  }
+  return { ...actual, getPiAgentDir: () => '/tmp/pi-agent' }
 })
-
-vi.mock('node:fs', () => ({
-  existsSync: mocks.existsSyncMock,
-  readdirSync: mocks.readdirSyncMock,
-}))
-
 vi.mock('../src/services/session-history.js', () => ({
   getHistoryFromFile: vi.fn().mockResolvedValue([]),
   getHistoryFromFilePath: vi.fn().mockResolvedValue([]),
 }))
-
 vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/infra/pi/pi-provider-store.js')>()
   return {
@@ -68,15 +32,12 @@ vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
     readSettings: () => ({}),
   }
 })
-
 vi.mock('../src/infra/system/trash.js', () => ({ trash: vi.fn() }))
 vi.mock('../src/infra/pi/message-converter.js', () => ({ convertPiHistory: vi.fn((r) => r) }))
 
 import { SessionService } from '../src/services/session/session-service.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { PiSessionStore } from '../src/infra/pi/session-store.js'
-
-const { mockScannedSessions } = mocks
 
 function createService(): SessionService {
   const pm = {
@@ -107,77 +68,36 @@ function createService(): SessionService {
 }
 
 describe('SessionService.getAgentCallFilePath', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mockScannedSessions.length = 0
+  beforeEach(() => vi.clearAllMocks())
+
+  it('record 有 sessionFile（在 piAgentDir 下）→ 返回路径', async () => {
+    const service = createService()
+    vi.spyOn(service, 'getSubagents').mockResolvedValue([
+      { subagentId: 'sa-001', sessionFile: '/tmp/pi-agent/subagents/enc/sa-001.jsonl' } as SubagentRecord,
+    ])
+    const result = await service.getAgentCallFilePath('main-sess', 'sa-001')
+    expect(result).toBe('/tmp/pi-agent/subagents/enc/sa-001.jsonl')
   })
 
-  it('U1: 正常 → 返回匹配文件的绝对路径', async () => {
-    mockScannedSessions.push({
-      id: 'main-sess-001',
-      filePath: '/mock/sessions/main.jsonl',
-      cwd: '/project',
-      name: null,
-      lastModified: 0,
-      timestamp: '2026-07-13T00:00:00Z',
-      size: 0,
-    })
-    mocks.getSubagentSessionDirMock.mockReturnValue('/mock/subagents/enc/sessions')
-    mocks.existsSyncMock.mockReturnValue(true)
-    mocks.readdirSyncMock.mockReturnValue(['2026-07-13T05-41-22-097Z_019f59fe.jsonl'])
-    mocks.parseSessionHeaderMock.mockReturnValue({
-      id: 'agentcall-001',
-      cwd: '/project',
-      timestamp: '2026-07-13T05:41:22Z',
-    })
-
+  it('找不到 record → 空串', async () => {
     const service = createService()
-    const result = await service.getAgentCallFilePath('main-sess-001', 'agentcall-001')
-
-    expect(result).toBe('/mock/subagents/enc/sessions/2026-07-13T05-41-22-097Z_019f59fe.jsonl')
+    vi.spyOn(service, 'getSubagents').mockResolvedValue([])
+    expect(await service.getAgentCallFilePath('main-sess', 'sa-missing')).toBe('')
   })
 
-  it('U2: 主 session 不存在 → 空串（不 throw）', async () => {
+  it('record 无 sessionFile（null）→ 空串', async () => {
     const service = createService()
-    const result = await service.getAgentCallFilePath('nonexistent', 'agentcall-001')
-    expect(result).toBe('')
+    vi.spyOn(service, 'getSubagents').mockResolvedValue([
+      { subagentId: 'sa-001', sessionFile: null } as SubagentRecord,
+    ])
+    expect(await service.getAgentCallFilePath('main-sess', 'sa-001')).toBe('')
   })
 
-  it('U3: subagents 目录不存在 → 空串（不 throw）', async () => {
-    mockScannedSessions.push({
-      id: 'main-sess-003',
-      filePath: '/mock/sessions/main.jsonl',
-      cwd: '/project',
-      name: null,
-      lastModified: 0,
-      timestamp: '2026-07-13T00:00:00Z',
-      size: 0,
-    })
-    mocks.getSubagentSessionDirMock.mockReturnValue('/mock/subagents/enc/sessions')
-    mocks.existsSyncMock.mockReturnValue(false)
-
+  it('sessionFile 路径穿越（不在 piAgentDir 下）→ 空串（isStrictlyUnder 安全校验）', async () => {
     const service = createService()
-    const result = await service.getAgentCallFilePath('main-sess-003', 'agentcall-001')
-    expect(result).toBe('')
-  })
-
-  it('U4: 目录下无匹配 sessionId 的文件 → 空串（不 throw）', async () => {
-    mockScannedSessions.push({
-      id: 'main-sess-004',
-      filePath: '/mock/sessions/main.jsonl',
-      cwd: '/project',
-      name: null,
-      lastModified: 0,
-      timestamp: '2026-07-13T00:00:00Z',
-      size: 0,
-    })
-    mocks.getSubagentSessionDirMock.mockReturnValue('/mock/subagents/enc/sessions')
-    mocks.existsSyncMock.mockReturnValue(true)
-    mocks.readdirSyncMock.mockReturnValue(['a.jsonl', 'b.jsonl'])
-    mocks.parseSessionHeaderMock.mockReturnValue({ id: 'other-001', cwd: '/p', timestamp: '2026-07-13T00:00:00Z' })
-
-    const service = createService()
-    const result = await service.getAgentCallFilePath('main-sess-004', 'agentcall-001')
-    expect(result).toBe('')
+    vi.spyOn(service, 'getSubagents').mockResolvedValue([
+      { subagentId: 'sa-001', sessionFile: '/etc/passwd' } as SubagentRecord,
+    ])
+    expect(await service.getAgentCallFilePath('main-sess', 'sa-001')).toBe('')
   })
 })

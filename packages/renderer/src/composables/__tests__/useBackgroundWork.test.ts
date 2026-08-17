@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
-import { useBackgroundWork } from '../features/useBackgroundWork'
+import { useBackgroundWork } from '../features/chat/useBackgroundWork'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 
@@ -115,7 +115,7 @@ describe('TC9: useSessionDerivations.derivedStatus working 态回归（useBackgr
 
   it('subagent running → derivedStatus = working；subagent done 后回落 done', async () => {
     const { useSessionDerivations, invalidateStatusCache } = await import(
-      '@/composables/features/useSessionDerivations'
+      '@/composables/features/chat/useSessionDerivations'
     )
     invalidateStatusCache()
 
@@ -137,7 +137,7 @@ describe('TC9: useSessionDerivations.derivedStatus working 态回归（useBackgr
 
   it('workflow paused → derivedStatus = working（paused 也算 background work）', async () => {
     const { useSessionDerivations, invalidateStatusCache } = await import(
-      '@/composables/features/useSessionDerivations'
+      '@/composables/features/chat/useSessionDerivations'
     )
     invalidateStatusCache()
 

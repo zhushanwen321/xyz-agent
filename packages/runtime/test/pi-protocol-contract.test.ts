@@ -321,7 +321,7 @@ describe('U6: 3 representative handlers use narrow Pi*Event param types', () => 
 // W2 contract deepening — 4 should_fix field alignments (mirror pi source)
 // ════════════════════════════════════════════════════════════════════════
 //
-// pi-protocol.ts claims to be pi's real contract (ADR-0033), but 4 fields
+// pi-protocol.ts claims to be pi's real contract (ADR-0037), but 4 fields
 // drifted from pi's canonical names/shapes. These tests pin the alignment:
 //   C1: PiUsage mirrors pi Usage field names (input/output/cacheRead/cacheWrite/totalTokens)
 //   C2: PiAgentEndEvent carries willRetry: boolean (pi AgentSessionEvent.agent_end)

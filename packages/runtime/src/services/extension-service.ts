@@ -20,10 +20,10 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSy
 import { join, resolve, basename, dirname, relative, isAbsolute, delimiter } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
-import { recommendedExtensions, mandatoryExtensions, isMandatoryExtension, BUILTIN_EXTENSION_FILES } from '@xyz-agent/shared'
+import { recommendedExtensions, isMandatoryExtension, isBuiltinExtension, isInfrastructureBuiltin, BUILTIN_EXTENSION_FILES, mandatoryExtensions } from '@xyz-agent/shared'
 import semver from 'semver'
 import type { IInstaller, IExtensionResolver, DiscoveredExtension } from './ports/installer.js'
-import { resolveExtensions, readPkgMeta, type ResolvedExtension } from './extension-filter.js'
+import { resolveExtensions, dedupeLoadedExtensions, readPkgMeta, type ResolvedExtension } from './extension-filter.js'
 import type { IExtensionSettings } from './ports/extension-settings.js'
 import type { IConfigStore } from './ports/config.js'
 import { isStrictlyUnder, isUnderOrEqual, extractRepoName, expandHome } from '../utils/path-utils.js'
@@ -333,6 +333,9 @@ export class ExtensionService {
         // mandatory SSOT 也不当 mandatory，tier 为 undefined；packages[]/npm 源 mandatory 包 tier 非 undefined）
         mandatory: resolved.tier !== undefined,
         tier: resolved.tier, // S10：tier 直接从 resolved 透传（天然正确）
+        // layer：tier 非 undefined 即 builtin（infrastructure + feature 两级），否则 user。
+        // system（3 个文件型 xyz-*.js）走独立加载路径，不进 scanExtensions，故此处无 system 分支。
+        layer: resolved.tier !== undefined ? 'builtin' as const : 'user' as const,
         source: isUserInstalled ? 'user-installed' : ext.source === 'discovery' ? 'discovery' : 'built-in',
         autoUpgrade: isAutoUpgrade,
         ...(tools && { tools }),
@@ -346,9 +349,8 @@ export class ExtensionService {
    * 返回推荐扩展列表，附带当前已安装状态。
    *
    * 匹配逻辑：scanExtensions() 拿到已装列表，按 npm 包名精确匹配。
-   * ExtensionInfo.name 存的是原始 npm 包名（如 @zhushanwen/pi-goal，见 readPackageJson
-   * 的 NOTE 注释——name 故意保留原始值不做 normalize），与 recommended-extensions.json
-   * 的 name 字段一致，无需 normalizeExtName 转换。
+   * ExtensionInfo.name 存的是原始 package.json name（如 @zhushanwen/pi-goal），与
+   * recommended-extensions.json 的 name 字段一致，无需转换（全链路统一用 package.json.name）。
    *
    * SSOT：recommended-extensions.json（shared 包导出，runtime import）。
    * 额外过滤 mandatory 项：即使将来 recommended-extensions.json 误含 mandatory 包，
@@ -376,7 +378,10 @@ export class ExtensionService {
     const { discovered, disabledSet } = await this.getDiscoveredAndDisabled(cwd)
     // 委托给过滤管道（一次读盘，元数据透传）
     const resolved = resolveExtensions(discovered, disabledSet)
-    const filtered = resolved.filter(r => r.loadable).map(r => r.path)
+    // P7：加载层同名去重（discovery 目录与 settings npm 版双路径冲突防护）。
+    // scanExtensions 全局视图不去重（列表仍显示），仅 --extension 注入去重。
+    const deduped = dedupeLoadedExtensions(resolved)
+    const filtered = deduped.filter(r => r.loadable).map(r => r.path)
     // builtin extension 永远前置（设计文档 §2.3）
     filtered.unshift(...this.getBuiltinExtensionPaths())
     return filtered
@@ -445,6 +450,35 @@ export class ExtensionService {
   }
 
   /**
+   * 一次性迁移：清理旧版 mandatory 机制遗留的 9 个 builtin 包历史记录。
+   *
+   * 旧版通过 ensureMandatoryExtensions 在 boot 时 npm install builtin 包并注册 autoUpgrade。
+   * 新版改为打包内置，这些包不再需要用户机器上的 npm 安装记录。
+   * 从 3 个数据文件清理（幂等，已不存在则 no-op）：
+   *   - settings.json packages[]（避免被误判 user-installed）
+   *   - auto-upgrade-packages.json（避免 autoUpgrade 尝试升级打包内置包）
+   *   - disabled-packages.json（清理历史禁用残留）
+   *
+   * 不删 ~/.xyz-agent/npm/node_modules/ 下的物理文件（用户可能有其他依赖）。
+   */
+  async migrateBuiltinExtensions(): Promise<void> {
+    for (const ext of mandatoryExtensions) {
+      const source = `npm:${ext.name}`
+      await this.extSettings.removePackage(source)
+      // M6a-02：disabled 只清 infrastructure 级。本分支语义为「feature builtin 可禁」
+      // （toggleExtension 只拦 infrastructure，extension-filter loadable 尊重 disabled），
+      // feature 包的 disabled 记录是用户合法状态，每次 boot 无条件清除会静默重新启用。
+      // infrastructure 不可禁（toggleExtension 抛错），其 disabled 记录只可能是旧版
+      // mandatory 机制/手动编辑残留，清除无语义冲突。removePackage/removeAutoUpgrade
+      // 对所有包继续执行（builtin 不可安装/不可升级，这两类记录永远不该存在）。
+      if (ext.tier === 'infrastructure') {
+        await this.extSettings.removeDisabled(source)
+      }
+      await this.extSettings.removeAutoUpgrade(source)
+    }
+  }
+
+  /**
    * 安装 npm 包 → 写 settings.json packages[] → 返回。
    * 验证 npm 包是否为有效的 pi extension。
    * 失败时抛出 ExtensionInstallError，含 code 和 hint。
@@ -461,6 +495,16 @@ export class ExtensionService {
       const pkgName = source.slice(NPM_PREFIX_LENGTH)
       if (!isValidNpmPackageName(pkgName)) {
         throw new ExtensionInstallError('not_found', `Invalid npm package name: ${pkgName}`)
+      }
+      // mandatory/builtin 包已打包内置，禁止用户 npm 安装。
+      // 否则与内置副本产生去重冲突，且 deduplicate（settings 优先级 > bundled）会保留用户装的
+      // 那份、吞掉内置那份，产生 source(user-installed)/tier(mandatory) 矛盾条目（不可卸载却显示为用户安装）。
+      if (isBuiltinExtension(pkgName)) {
+        throw new ExtensionInstallError(
+          'builtin_already_installed',
+          `Extension already built in: ${pkgName}`,
+          '该扩展已随应用打包内置，无需单独安装。如需最新版，更新应用即可。',
+        )
       }
       const npmDir = this.npmDir
 
@@ -487,12 +531,12 @@ export class ExtensionService {
    */
   async uninstallExtension(name: string): Promise<void> {
     return this.withInstallLock(async () => {
-      // mandatory 包不可卸载
-      if (isMandatoryExtension(name)) {
+      // builtin 包不可卸载（打包内置，infrastructure + feature 两级都不可卸）
+      if (isBuiltinExtension(name)) {
         throw new ExtensionInstallError(
-          'mandatory_cannot_uninstall',
-          `Mandatory extension cannot be uninstalled: ${name}`,
-          'This extension is required by the application and cannot be removed.',
+          'builtin_cannot_uninstall',
+          `Builtin extension cannot be uninstalled: ${name}`,
+          'This extension is built into the application and cannot be removed.',
         )
       }
       // 先扫描已安装列表，按 name 查找 extension 的路径
@@ -500,7 +544,7 @@ export class ExtensionService {
       const target = installed.find((e) => e.name === name)
       const thirdPartyDir = this.extensionsDir
 
-      // local-dir / git 安装的 extension 在 ~/.xyz-agent/pi/agent/extensions/ 下。
+      // local-dir / git 安装的 extension 在 ~/.xyz-agent/extensions/ 下（getExtensionsDir）。
       // finishInstall 时只 cpSync 到此目录，未记录到 settings.json packages[]——
       // 卸载必须 rmSync 目录，否则 resolver 会重新发现它。
       if (target?.path && isUnderOrEqual(thirdPartyDir, target.path)) {
@@ -546,14 +590,13 @@ export class ExtensionService {
     const extensions = await this.scanExtensions()
     const ext = extensions.find(e => e.name === name)
     const source = ext?.source === 'discovery' ? 'discovery' : 'npm'
-    // mandatory 扩展不可禁用（与 uninstallExtension 守卫对称，避免 UI 禁用但 getExtensionPaths
-    // 仍强加载的状态分离）。用 scanExtensions 的 mandatory 判定（已 source 感知：discovery 源扩展
-    // 即使 name 命中 mandatory SSOT 也不当 mandatory）。查不到时 fallback 到 isMandatoryExtension。
-    if (!enabled && (ext?.mandatory ?? isMandatoryExtension(name))) {
+    // infrastructure builtin 不可禁用（被依赖的基础包，feature builtin 和 user 可禁）。
+    // 用 isInfrastructureBuiltin 直接判定（与 resolveExtension 的 loadable 强加载条件对齐）。
+    if (!enabled && isInfrastructureBuiltin(name)) {
       throw new ExtensionInstallError(
-        'mandatory_cannot_disable',
-        `Mandatory extension cannot be disabled: ${name}`,
-        'This extension is required by the application and cannot be disabled.',
+        'infrastructure_cannot_disable',
+        `Infrastructure extension cannot be disabled: ${name}`,
+        'This extension provides core capabilities required by other extensions.',
       )
     }
     // #2：disabled key 按 source 命名空间隔离（discovery 扩展用 'discovery:' 前缀，避免与 npm 扩展串扰）
@@ -615,48 +658,6 @@ export class ExtensionService {
       const actualVersion = this.readInstalledVersion(name, npmDir)
       return { upgraded: true, from: currentVersion, to: actualVersion || latestVersion }
     })
-  }
-
-  /**
-   * 确保 mandatory 扩展已安装。runtime boot 时调用（checkAndAutoUpgrade 之前）。
-   * 对 mandatoryExtensions SSOT 中每个包：已装则跳过，未装则 installExtension + setAutoUpgrade。
-   * 失败不抛错（记日志），不阻塞启动。与 checkAndAutoUpgrade 失败策略一致。
-   *
-   * 另外清理 disabled-packages.json 中的 mandatory 残留：某扩展可能在升格 mandatory 之前
-   * 被用户禁用过，disabled 状态会遗留。getExtensionPaths 会无视 disabled 强加载 mandatory，
-   * 但残留的 disabled 记录会让 scanExtensions 报 enabled:false + mandatory:true 的不一致状态
-   * （UI 显示禁用态但开关已隐藏）。boot 时清除这些残留，保证 mandatory 包 enabled 始终为 true。
-   */
-  async ensureMandatoryExtensions(): Promise<Array<{ name: string; installed: boolean; error?: string }>> {
-    const extensions = await this.scanExtensions()
-    const installedNames = new Set(extensions.map(e => e.name))
-    const disabled = this.extSettings.getDisabled()
-    const results: Array<{ name: string; installed: boolean; error?: string }> = []
-
-    for (const ext of mandatoryExtensions) {
-      const source = `npm:${ext.name}`
-      // 清理 disabled 残留（无论是否已安装）——mandatory 包不应处于 disabled 状态
-      if (disabled.includes(source)) {
-        try {
-          await this.extSettings.removeDisabled(source)
-        } catch (e) {
-          log.warn(`[extension-service] mandatory clear-disabled failed for ${ext.name}: ${toErrorMessage(e)}`)
-        }
-      }
-      if (installedNames.has(ext.name)) {
-        results.push({ name: ext.name, installed: true })
-        continue
-      }
-      try {
-        await this.installExtension(source)
-        await this.extSettings.setAutoUpgrade(source, true)
-        results.push({ name: ext.name, installed: true })
-      } catch (e) {
-        log.warn(`[extension-service] mandatory install failed for ${ext.name}: ${toErrorMessage(e)}`)
-        results.push({ name: ext.name, installed: false, error: toErrorMessage(e) })
-      }
-    }
-    return results
   }
 
   /**
@@ -1051,14 +1052,10 @@ export class ExtensionService {
   /**
    * Read package.json from a directory and return name/version/description.
    *
-   * NOTE: `name` is intentionally the raw package.json `name` field, NOT
-   * normalized via `this.resolver.normalizeExtName()`. Reasons:
-   * 1. `ExtensionInfo.name` stores raw names throughout the codebase
-   *    (scanNpmExtensions, scanSettingsExtensions, scanDirectory all keep raw).
-   * 2. `finishInstall` uses `name` as a directory path for file operations —
-   *    normalizing would break tempDir → extensions/ copy.
-   * 3. Dedup normalization is handled by ExtensionResolver's internal Maps,
-   *    not by individual scan methods or ExtensionInfo fields.
+   * NOTE: `name` 是原始 package.json `name` 字段（如 @zhushanwen/pi-goal），不做任何转换。
+   * 全链路统一用 package.json.name：去重 key（resolver.readExtName）、disabled key
+   *（resolveExtension 的 `npm:${meta.name}`）、ExtensionInfo.name 都用它，无需 normalize。
+   * finishInstall 用 name 做目录路径操作时也保持原始值。
    */
   private readPackageJson(dir: string): { name: string; version: string; description: string } {
     const pkgJsonPath = join(dir, 'package.json')

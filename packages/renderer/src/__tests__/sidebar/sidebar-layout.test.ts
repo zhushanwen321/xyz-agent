@@ -5,13 +5,19 @@
  * 测试框架：vitest（从 vitest 导入 describe/it/expect/vi）。
  * 运行：cd packages/renderer && npx vitest run src/__tests__/sidebar/sidebar-layout.test.ts
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import SubagentList from '@/components/sidebar/SubagentList.vue'
 import WorkflowDetail from '@/components/sidebar/WorkflowDetail.vue'
 import SessionItem from '@/components/sidebar/SessionItem.vue'
 import SegmentedTab from '@/components/sidebar/SegmentedTab.vue'
 import type { SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
+
+beforeEach(() => {
+  // SessionItem setup 内 useProjectStore（D14 归入项目菜单），mount 需激活 pinia
+  setActivePinia(createPinia())
+})
 
 // ── D2: SubagentList 去掉 slug 列 ──────────────────────────
 describe('D2: SubagentList slug 降级', () => {
@@ -91,8 +97,8 @@ describe('D3: WorkflowDetail model 降级', () => {
   })
 })
 
-// ── D4: SessionItem hover 按钮 top 定位 ─────────────────────
-describe('D4: SessionItem hover 按钮重定位', () => {
+// ── D4: SessionItem hover 按钮 bottom-right 定位（spec §5.6A）──────
+describe('D4: SessionItem hover 按钮定位', () => {
   function makeSession() {
     return {
       id: 'sess-1',
@@ -102,7 +108,7 @@ describe('D4: SessionItem hover 按钮重定位', () => {
     }
   }
 
-  it('hover 按钮容器不再用 bottom-1 定位（改为 top 定位）', () => {
+  it('hover 按钮容器定位在 bottom-right（遮 meta 而非 dirName，与 demo 一致）', () => {
     const wrapper = mount(SessionItem, {
       props: {
         session: makeSession(),
@@ -110,15 +116,17 @@ describe('D4: SessionItem hover 按钮重定位', () => {
         status: 'done' as never,
       },
     })
-    // hover 按钮容器（absolute 定位的 div）
-    const hoverContainer = wrapper.find('.absolute.bottom-1')
-    expect(hoverContainer.exists()).toBe(false)
+    // spec §5.6A / D12：actions 容器 absolute bottom-0.5 right-1（bottom-right）。
+    // 用 [class~=] 单词匹配避开 happy-dom 对 class 选择器中点（bottom-0.5）转义的脆弱性。
+    const actionsContainer = wrapper.find('.absolute[class~="bottom-0.5"]')
+    expect(actionsContainer.exists()).toBe(true)
+    expect(actionsContainer.classes()).toContain('right-1')
   })
 })
 
-// ── D5: SegmentedTab badge 位置微调 ─────────────────────────
-describe('D5: SegmentedTab badge 微调', () => {
-  it('badge 不再用 right-1 top-1（微调到 right-0 top-0 避免与 count 重叠）', () => {
+// ── D5: SegmentedTab badge 位置 ─────────────────────────
+describe('D5: SegmentedTab badge 位置', () => {
+  it('badge 蓝点在 right-1 top-1（v6 count 数字移除后无重叠，位置保留）', () => {
     const wrapper = mount(SegmentedTab, {
       props: {
         modelValue: 'subagents',
@@ -130,9 +138,24 @@ describe('D5: SegmentedTab badge 微调', () => {
         workflowRunningCount: 0,
       },
     })
-    // badge 蓝点（absolute 定位的 span）
-    const oldBadge = wrapper.find('.absolute.right-1.top-1')
-    expect(oldBadge.exists()).toBe(false)
+    // badge 蓝点（absolute 定位的 span，v6 spec 对齐后回 right-1 top-1，size 7px）
+    const badge = wrapper.find('.absolute.right-1.top-1')
+    expect(badge.exists()).toBe(true)
+  })
+
+  it('badge 精确化：running 为 0 时 subagents tab 不亮蓝点', () => {
+    const wrapper = mount(SegmentedTab, {
+      props: {
+        modelValue: 'subagents',
+        sessionCount: 3,
+        fileCount: 10,
+        subagentCount: 2,
+        workflowCount: 1,
+        subagentRunningCount: 0,
+        workflowRunningCount: 0,
+      },
+    })
+    expect(wrapper.find('.absolute.right-1.top-1').exists()).toBe(false)
   })
 })
 

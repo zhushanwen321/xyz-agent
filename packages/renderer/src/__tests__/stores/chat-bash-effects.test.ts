@@ -12,8 +12,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia, storeToRefs } from 'pinia'
 import { useChatStore } from '@/stores/chat'
-import { initTimers } from '@/stores/chat-timers'
-import { markBashError } from '@/stores/chat-bash-effects'
+import { initTimers, markBashError, commitMessages } from '@xyz-agent/core'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 describe('w1 timer-decouple: bash timer 不跨域误杀 streaming', () => {
@@ -59,8 +58,9 @@ describe('w1 timer-decouple: bash timer 不跨域误杀 streaming', () => {
     const messagesRef = storeToRefs(store).messages
     const finalizeSessionSpy = vi.fn()
     const finalizeBashOnly = (sessionId: string): void => {
-      // 复用 store 内 finalizeBashOnly 的纯逻辑（commitMessages 写回真 store ref）。
-      const prev = messagesRef.value.get(sessionId) ?? []
+      // 复用 store 内 finalizeBashOnly 的纯逻辑（commitMessages 写回真 store ref，
+      // D-1 容器：读分区需 .value，写回走 commitMessages 的同 sid 分区替换语义）。
+      const prev = messagesRef.value.get(sessionId)?.value ?? []
       const reversedIdx = [...prev].reverse().findIndex(m => m.bashExecution && m.status === 'streaming')
       if (reversedIdx === -1) return
       const realIdx = prev.length - 1 - reversedIdx
@@ -70,7 +70,7 @@ describe('w1 timer-decouple: bash timer 不跨域误杀 streaming', () => {
         bashExecution: { ...m.bashExecution!, cancelled: true },
         error: 'timeout',
       } : m)
-      messagesRef.value = new Map(messagesRef.value).set(sessionId, next)
+      commitMessages(messagesRef, sessionId, next)
     }
     const { armBashTimer } = initTimers(finalizeSessionSpy, finalizeBashOnly, 600_000)
     armBashTimer(sid)
@@ -154,7 +154,7 @@ describe('w1 timer-decouple: bash timer 不跨域误杀 streaming', () => {
     const sid = 's-w1t4'
     // 空 messages（无任何消息）：finalizeBashOnly 应 no-op 不抛
     const finalizeBashOnly = (sessionId: string): void => {
-      const prev = messagesRef.value.get(sessionId) ?? []
+      const prev = messagesRef.value.get(sessionId)?.value ?? []
       const reversedIdx = [...prev].reverse().findIndex(m => m.bashExecution && m.status === 'streaming')
       if (reversedIdx === -1) return
       // 不会走到这里

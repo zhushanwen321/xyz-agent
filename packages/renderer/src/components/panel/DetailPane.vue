@@ -10,7 +10,7 @@
   -->
   <div class="flex h-full flex-col" data-testid="detail-pane">
     <!-- header：文件名（hover 显绝对路径 + 复制文件名）+ 复制绝对路径按钮 + view toggle -->
-    <div class="flex items-center gap-2 border-b border-border px-2 py-1.5">
+    <div class="flex items-center gap-2 border-b border-hairline px-2 py-1.5">
       <FileText class="size-3.5 shrink-0 text-neutral-dim" />
       <HoverCard :open-delay="0">
         <HoverCardTrigger as-child>
@@ -75,18 +75,18 @@
         <Quote class="size-3.5 text-neutral-dim" />
       </Button>
       <!-- view toggle：有 git 改动时可切换 diff/preview -->
-      <div v-if="state.hasGitChange" class="flex gap-0.5" data-testid="detail-view-toggle">
+      <div v-if="state.hasGitChange" class="flex gap-0.5 rounded-md bg-bg-input p-0.5" data-testid="detail-view-toggle">
         <Button
           variant="ghost"
           class="h-6 rounded-sm px-1.5 text-[10px]"
-          :class="state.viewMode === 'diff' ? 'bg-accent-soft text-accent' : 'text-neutral-mid'"
+          :class="state.viewMode === 'diff' ? 'bg-bg-elevated text-neutral-fg' : 'text-neutral-mid'"
           :title="t('panel.detail.showDiff')"
           @click="onToggleView('diff')"
         >{{ t('panel.detail.tabDiff') }}</Button>
         <Button
           variant="ghost"
           class="h-6 rounded-sm px-1.5 text-[10px]"
-          :class="state.viewMode === 'preview' ? 'bg-accent-soft text-accent' : 'text-neutral-mid'"
+          :class="state.viewMode === 'preview' ? 'bg-bg-elevated text-neutral-fg' : 'text-neutral-mid'"
           :title="t('panel.detail.showPreview')"
           @click="onToggleView('preview')"
         >{{ t('panel.detail.preview') }}</Button>
@@ -244,19 +244,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, provide, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileText, Loader2, AlertCircle, Image as ImageIcon, Copy, Check, Quote } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
-import { useDetailPane, type DetailViewMode } from '@/composables/features/useDetailPane'
-import { useCopy } from '@/composables/effects/useCopy'
-import { useComposerInjectionStore } from '@/stores/composer-injection'
+import { useDetailPane, type DetailViewMode } from '@/composables/features/file-tree/useDetailPane'
+import { useCopy } from '@/composables/panel/useCopy'
+import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
 import { extToLang } from '@/composables/logic/file-type'
 import { resolvePreviewPath } from '@/lib/path-utils'
-import MarkdownRenderer from '@/components/panel/message-stream/MarkdownRenderer.vue'
+import { MarkdownRenderer, ChatViewDepsKey } from '@xyz-agent/ui'
 import CodeBlock from '@/components/panel/detail-renderers/CodeBlock.vue'
 import DiffView from '@/components/panel/detail-renderers/DiffView.vue'
+import { useChatViewDeps } from '@/composables/panel/useChatViewDeps'
 
 const { t } = useI18n()
 
@@ -276,6 +277,10 @@ const props = defineProps<{
 const { state, toggleView, sessionCwd } = useDetailPane(
   computed(() => props.sessionId),
 )
+
+// [w6 T6] ui MarkdownRenderer 经 ChatViewDeps inject 消费壳层依赖。DetailPane 不在 MessageStream
+// provide 作用域内，需自行 provide（sessionId 可为 null，coalesce '' 后 renderMarkdown 无路径链接降级）
+provide(ChatViewDepsKey, useChatViewDeps(computed(() => props.sessionId ?? '')))
 
 /** 文件名（basename，从 state.path 取） */
 const fileName = computed(() => {

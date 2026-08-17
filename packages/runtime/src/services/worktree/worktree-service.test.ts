@@ -65,6 +65,7 @@ function mockGitInfoReader(branch?: string) {
 /** 创建 mock IConfigService。 */
 function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
   return {
+    checkEnvVars: vi.fn(() => ({})),
     getWorktreeRootDir: vi.fn(() => worktreeRootDir),
     setWorktreeRootDir: vi.fn(),
     getSetupScript: vi.fn(() => 'custom-hooks/setup-worktree.sh'),
@@ -83,18 +84,25 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     setRenameModel: vi.fn(),
     // 其他方法 stub
     listProviders: vi.fn(() => []),
+    listBuiltinProviders: vi.fn(() => []),
     getDefaultModel: vi.fn(() => null),
     setDefaultModel: vi.fn(),
     setProvider: vi.fn(),
-    deleteProvider: vi.fn(),
+    // wave4 补全：toggleProviderEnabled / removeProviderByKind（IConfigService 新增方法 stub）
+    toggleProviderEnabled: vi.fn(() => ({})),
+    removeProviderByKind: vi.fn(async () => ({ removed: true })),
+    deleteProvider: vi.fn().mockResolvedValue(undefined),
     getProvider: vi.fn(),
     updateToolPermissions: vi.fn(),
     setSkillDirs: vi.fn(),
     getSkillDirs: vi.fn(() => []),
+    getSkillPathScopes: vi.fn(() => ({ projectPaths: [], globalPaths: [] })),
     setAgentDirs: vi.fn(),
     getAgentDirs: vi.fn(() => []),
+    getAgentPathScopes: vi.fn(() => ({ projectPaths: [], globalPaths: [] })),
     setExtensionDirs: vi.fn(),
     getExtensionDirs: vi.fn(() => []),
+    getExtensionPathScopes: vi.fn(() => ({ projectPaths: [], globalPaths: [] })),
     migrateSettingsSkillsToDiscovery: vi.fn(),
     loadSkills: vi.fn(() => []),
     saveSkills: vi.fn(),
@@ -110,7 +118,7 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     detectSources: vi.fn(() => []),
     // 迁移 provider 导入 stub（W2，worktree 测试不涉及）
     previewImportProviders: vi.fn(() => ({ error: { code: 'SOURCE_NOT_INSTALLED', message: 'not installed' } })),
-    applyImportProviders: vi.fn(() => ({ error: { code: 'PREVIEW_EXPIRED', message: 'expired' } })),
+    applyImportProviders: vi.fn(() => Promise.resolve({ error: { code: 'PREVIEW_EXPIRED', message: 'expired' } })),
     getPiAgentDir: vi.fn(() => '/home/user/.pi/agent'),
     getConfigDir: vi.fn(() => '/home/user/.xyz-agent'),
     getSystemPromptConfig: vi.fn(() => ({ config: { version: 1, replace: { enabled: false, prompt: '' }, append: { enabled: false, prompt: '' } }, corrupted: false })),

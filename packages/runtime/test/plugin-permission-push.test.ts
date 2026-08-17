@@ -35,7 +35,8 @@ function makeDescriptor(overrides: Partial<PluginDescriptor> = {}): PluginDescri
     permissions: [],
     engines: { 'xyz-agent': '*' },
     pluginPath: '/tmp/perm-plugin',
-    source: 'external',
+    // 默认 built-in：权限审批机制测试与激活锁（IF3）正交，锁只拦 external。
+    source: 'built-in',
     extensionDependencies: [],
     ...overrides,
   }

@@ -28,6 +28,13 @@ const configMock = vi.hoisted(() => ({
   listProviders: vi.fn(() => Promise.resolve([])),
   setSkillDirs: vi.fn(() => Promise.resolve()),
   setAgentDirs: vi.fn(() => Promise.resolve()),
+  // wave-oauth：SettingsModal → ProviderPage → useProviderOAuth onMounted 订阅 4 个 auth.* 事件（缺则 TypeError 崩 mount）
+  onAuthDeviceCode: vi.fn(() => () => {}),
+  onAuthAuthUrl: vi.fn(() => () => {}),
+  onAuthSuccess: vi.fn(() => () => {}),
+  onAuthError: vi.fn(() => () => {}),
+  // P2：ProviderPage 默认 pill + 默认修复 toast（缺则 TypeError 崩 mount）
+  onDefaultsWithSource: vi.fn(() => () => {}),
 }))
 
 const settingsMock = vi.hoisted(() => ({
@@ -67,9 +74,9 @@ afterEach(() => {
 async function openSystemPromptPage(): Promise<void> {
   wrapper = mount(SettingsModal, { props: { open: true }, attachTo: document.body })
   await flushPromises()
-  const navButtons = Array.from(document.body.querySelectorAll('nav button'))
-  // systemPrompt 菜单排在 provider/skill/agent/extension 之后，index 4
-  const btn = navButtons[4]
+  // 用 data-testid 定位（menus 已标注 settings-nav-${id}），不依赖 nav button 索引——
+  // 索引定位会因 nav 内新增非菜单按钮（如顶部退出按钮）而整体偏移，脆弱。
+  const btn = document.body.querySelector('[data-testid="settings-nav-system-prompt"]')
   expect(btn).toBeTruthy()
   btn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
   await flushPromises()

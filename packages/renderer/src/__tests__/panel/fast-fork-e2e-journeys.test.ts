@@ -56,14 +56,14 @@ const { sessionApiMock, chatApiMock } = vi.hoisted(() => ({
     compact: vi.fn(() => Promise.resolve()),
   },
 }))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   session: sessionApiMock,
   chat: chatApiMock,
   model: { switchModel: vi.fn() },
   composer: { getMentionCandidates: vi.fn().mockResolvedValue([]), getFileCandidates: vi.fn().mockResolvedValue([]) },
 }))
 // main 合并引入 useProjectSkills/useGlobalSkills（landing skill），与 fork 测试无关，stub 掉
-vi.mock('@/composables/features/useProjectSkills', () => ({
+vi.mock('@/composables/features/settings/useProjectSkills', () => ({
   useProjectSkills: () => ({ projectSkills: [] }),
   useGlobalSkills: () => ({ globalSkills: [] }),
 }))
@@ -71,7 +71,7 @@ vi.mock('@/composables/features/useProjectSkills', () => ({
 // ── mock useChat（流式依赖；fork 不走 send/steer，但 Composer setup 取这些引用）──
 // 注意：必须返回稳定对象（同 composer-fork-mode.test.ts），避免每帧新引用导致 watch 抖动。
 // ensureStreamSubscription 导出作 no-op stub：层 1 只验编排（fork RPC → send RPC），真实流式订阅由 useChat.test.ts 覆盖。
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     send: vi.fn(),
     steer: vi.fn(),
@@ -85,8 +85,8 @@ vi.mock('@/composables/features/useChat', () => ({
   }),
   ensureStreamSubscription: vi.fn(),
 }))
-vi.mock('@/composables/features/useSideDrawer', () => ({ useSideDrawer: () => ({ open: vi.fn() }) }))
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/drawer/useSideDrawer', () => ({ useSideDrawer: () => ({ open: vi.fn() }) }))
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => ({
     submitFirstMessage: vi.fn(),
     currentModel: { value: null },
@@ -94,7 +94,6 @@ vi.mock('@/composables/features/useNewTaskFlow', () => ({
   }),
   resetNewTaskFlow: vi.fn(),
 }))
-vi.mock('@/stores/settings', () => ({ useSettingsStore: () => ({ defaultModel: '' }) }))
 
 // ── ComposerInput mock（同 composer-fork-mode.test.ts 范式，支持 emit input/keydown + defineExpose）──
 const lastInputText = ref('')
@@ -176,12 +175,15 @@ function keyEvent(
 }
 
 // 延迟到 mock 声明之后 import 被测组件（vi.mock 被 hoist，组件 import 走 mock 后的 api）。
-import Turn from '@/components/panel/message-stream/Turn.vue'
+// [w6 chat-ui-and-shell T7] ui 包 Turn 经 deps.onForkAsk inject 消费（channel 触发迁 renderer 壳 useChatViewDeps）
+import { Turn } from '@xyz-agent/ui'
+import { mockChatProvide } from '@/__tests__/helpers/chat-view-deps'
 import Composer from '@/components/panel/Composer.vue'
 import { useChatStore } from '@/stores/chat'
-import { useForkModeChannel } from '@/composables/panel/useForkModeChannel'
 import ForkNotice from '@/components/panel/ForkNotice.vue'
 import SessionList from '@/components/sidebar/SessionList.vue'
+
+const onForkAskMock = vi.fn()
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -194,7 +196,7 @@ afterEach(() => {
 
 // ════════════════════════════════════════════════════════════════════════
 // E2E-L1-1 · fork-ask 完整旅程（P0，最核心）
-// 真实链通：Turn.onForkAsk → useForkModeChannel signal → Composer.enterForkMode →
+// 真实链通：renderer 壳 useChatViewDeps.onForkAsk → useForkModeChannel signal → Composer.enterForkMode →
 //           handleForkSend → useForkActions.forkSessionAsk → sessionApi.fork + chatApi.send
 // ════════════════════════════════════════════════════════════════════════
 describe('E2E-L1-1: fork-ask 完整旅程（Turn → channel → Composer → forkSessionAsk）', () => {
@@ -208,6 +210,7 @@ describe('E2E-L1-1: fork-ask 完整旅程（Turn → channel → Composer → fo
       // HoverCard 子组件 stub 成内联渲染（绕开 reka-ui HoverCardPortal 在 happy-dom 不渲染）；
       // fork-ask-btn 现作为 fork split-button 的 hover 第二选项住在 HoverCardContent 内。
       global: {
+        provide: mockChatProvide({ onForkAsk: onForkAskMock }),
         stubs: {
           Block: true,
           ChangeSetCard: true,
@@ -223,14 +226,13 @@ describe('E2E-L1-1: fork-ask 完整旅程（Turn → channel → Composer → fo
     expect(forkAskBtns.length).toBe(1)
   })
 
-  it('点 fork 提问按钮 → useForkModeChannel signal 更新（携带 srcSessionId + fromMessageId）', async () => {
-    const { signal } = useForkModeChannel()
-    // 记下 signal 当前值引用（点前）
-    const before = signal.value
+  it('点 fork 提问按钮 → deps.onForkAsk(sessionId, message) 回调（channel signal 编排在 renderer 壳）', async () => {
+    onForkAskMock.mockClear()
     const turn = makeTurn([makeAssistant({ id: 'a1', piEntryId: 'pi-a1' })])
     const wrapper = mount(Turn, {
       props: { turn, sessionId: 's-src' },
       global: {
+        provide: mockChatProvide({ onForkAsk: onForkAskMock }),
         stubs: {
           Block: true,
           ChangeSetCard: true,
@@ -245,10 +247,8 @@ describe('E2E-L1-1: fork-ask 完整旅程（Turn → channel → Composer → fo
     await wrapper.find('[data-testid="fork-ask-btn"]').trigger('click')
     await nextTick()
 
-    // signal 已更新为新对象（id 递增），携带正确的 srcSessionId / fromMessageId
-    expect(signal.value).not.toBe(before)
-    expect(signal.value?.srcSessionId).toBe('s-src')
-    expect(signal.value?.fromMessageId).toBe('a1')
+    // 回调契约：ui TurnSummary 点 fork-ask → deps.onForkAsk(sessionId, message)（携带 srcSessionId + fromMessageId）
+    expect(onForkAskMock).toHaveBeenCalledWith('s-src', expect.objectContaining({ id: 'a1' }))
   })
 
   it('Composer 订阅 channel：signal 命中本 session → 进入 fork 模式（三重视觉 DOM 可见）', async () => {

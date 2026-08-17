@@ -8,12 +8,13 @@
   unmount 流程：xterm.dispose()（PTY + buffer 不动，切回重放）
 -->
 <template>
-  <div data-testid="terminal-view" class="flex h-full flex-col bg-black">
-    <!-- 工具栏：clear / kill -->
-    <div data-testid="terminal-toolbar" class="flex items-center gap-1 border-b border-white/10 px-2 py-1">
+  <div data-testid="terminal-view" class="flex h-full flex-col">
+    <!-- 工具栏：clear / kill。2026-08-14 裁决遵循 v6-drawer-tabs-demo：跟随 drawer 深底、
+         去 border-white/10（层级靠底色差不靠边框），按钮 neutral 配色（spec .tv-v6 的按钮规范）。 -->
+    <div data-testid="terminal-toolbar" class="flex items-center gap-1 px-2 py-1">
       <Button
         variant="ghost"
-        class="size-6 shrink-0 rounded-sm p-0 text-white/60 hover:text-white"
+        class="size-6 shrink-0 rounded-sm p-0 text-neutral-mid hover:text-neutral-fg"
         :title="t('panel.terminal.clear')"
         data-testid="terminal-btn-clear"
         @click="clear"
@@ -22,7 +23,7 @@
       </Button>
       <Button
         variant="ghost"
-        class="size-6 shrink-0 rounded-sm p-0 text-white/60 hover:text-white"
+        class="size-6 shrink-0 rounded-sm p-0 text-neutral-mid hover:text-neutral-fg"
         :class="state.ptyAlive ? '' : 'opacity-30'"
         :disabled="!state.ptyAlive"
         :title="t('panel.terminal.kill')"
@@ -32,16 +33,17 @@
         <Square class="size-3.5" />
       </Button>
     </div>
-    <!-- xterm 挂载点（relative 包裹浮动按钮） -->
-    <div class="relative min-h-0 flex-1">
-      <div data-testid="terminal-xterm" ref="xtermContainer" class="h-full p-1" />
+    <!-- xterm 挂载点（relative 包裹浮动按钮）。纯黑圆角块嵌在 drawer 深底上
+         （demo .terminal-mock：#000 + radius 8px + padding 12px）。 -->
+    <div class="relative m-2 min-h-0 flex-1 rounded bg-black">
+      <div data-testid="terminal-xterm" ref="xtermContainer" class="h-full p-3" />
       <!-- 选区浮动按钮（Phase 4 联动 1：选中输出 → 发给 AI） -->
       <Transition name="fade">
         <Button
           v-if="hasSelection"
           variant="ghost"
           data-testid="terminal-send-to-ai"
-          class="absolute z-10 flex items-center gap-1 rounded-sm bg-accent px-2 py-1 text-xs text-white shadow-lg"
+          class="absolute z-10 flex items-center gap-1 rounded-sm bg-accent px-2 py-1 text-xs text-accent-fg shadow-lg"
           :style="{ top: selectionPos.top + 'px', left: selectionPos.left + 'px' }"
           @click="sendSelectionToAI"
         >
@@ -63,16 +65,15 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { Eraser, Square, MessageSquare } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
-import { useTerminal } from '@/composables/features/useTerminal'
+import { useTerminal, replayChunksBatched, type TerminalBuffer } from '@/composables/features/terminal/useTerminal'
 import { useSessionStore } from '@/stores/session'
-import { useComposerInjectionStore } from '@/stores/composer-injection'
-import { useSettingsStore } from '@/stores/settings'
+import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
+import { getSettingsStore } from '@xyz-agent/core'
 import { darkTerminalTheme } from '@/composables/terminal/terminal-themes'
 
 /**
  * xterm 默认字体栈（canvas 渲染，不能用 CSS 变量 var()——canvas 不解析）。
  * 项目首选 JetBrains Mono 但未加载 webfont，canvas 回退到系统等宽字体 Menlo（macOS）/ Monaco。
- * 用户可在 Settings → Terminal 用 fontFamily 覆盖。
  */
 const DEFAULT_FONT_FAMILY = 'Menlo, Monaco, "Courier New", monospace'
 const DEFAULT_FONT_SIZE = 13
@@ -87,11 +88,11 @@ const xtermContainer = ref<HTMLDivElement | null>(null)
 const terminal = useTerminal(toRef(props, 'sessionId'))
 const state = terminal.current
 const composerInjection = useComposerInjectionStore()
-const settingsStore = useSettingsStore()
+const settingsStore = getSettingsStore()
 
 /** 从 settings store 的 terminalConfig 解析 xterm 渲染选项。config 未加载时用默认值。 */
 function resolveXtermFontOptions() {
-  const cfg = settingsStore.terminalConfig?.config
+  const cfg = settingsStore.terminalConfig.value?.config
   return {
     fontFamily: cfg && cfg.fontFamily.trim() !== '' ? cfg.fontFamily : DEFAULT_FONT_FAMILY,
     fontSize: cfg?.fontSize ?? DEFAULT_FONT_SIZE,
@@ -107,8 +108,63 @@ const selectionPos = ref({ top: 0, left: 0 })
 let xterm: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let resizeObserver: ResizeObserver | null = null
-// scrollback 回放标记：mount 后把 buffer 全量 write 一次，之后只 write 增量
-let replayedScrollbackLength = 0
+// 版本回放指针（D-6.2）：本视图已回放 chunk 总数（= buffer.version 语义，单调），mount/切 session 归零
+let replayedVersion = 0
+// 本视图的 flush 监听反注册（mount 注册 / unmount 与切 session 反注册）
+let unregisterFlush: (() => void) | null = null
+
+// ── 回放分批写队列（Fix-5）：全量回放可达 5000 chunks × 4KB ≈ 20MB，拆批逐帧写；指针入队即推进 ──
+let replayWriteQueue: string[] = []
+let replayWriteScheduled = false
+
+/** 消费一帧：写队列首批，非空则调度下一帧继续（rAF 链）。 */
+function pumpReplayWrites(): void {
+  replayWriteScheduled = false
+  if (replayWriteQueue.length === 0) return
+  if (!xterm) { replayWriteQueue.length = 0; return } // 视图销毁：丢挂起批次（重挂载全量重放）
+  xterm.write(replayWriteQueue.shift()!)
+  if (replayWriteQueue.length > 0) {
+    replayWriteScheduled = true
+    requestAnimationFrame(pumpReplayWrites)
+  }
+}
+
+/** 回放批次入队（顺序 = 入队序）：空闲即同步消费，否则 rAF 链逐帧。 */
+function enqueueReplayWrites(batches: string[]): void {
+  replayWriteQueue.push(...batches)
+  if (!replayWriteScheduled) pumpReplayWrites()
+}
+
+/**
+ * 版本回放（D-6.2）：fromVersion（含）之后 append 的 chunk 分批复放（每批 ≤500，Fix-5）。
+ * 指针立即推进到 targetVersion，后续增量从新指针起算，不重叠不重复（重复回放不幂等——
+ * xterm.write 追加语义，靠下方 clamped 清屏守卫保证不重复显示）。
+ */
+function replayFrom(fromVersion: number, buffer: TerminalBuffer): void {
+  if (!xterm) return
+  const result = replayChunksBatched(buffer, fromVersion)
+  if (result === null) return
+  if (result.clamped) { xterm.clear(); replayWriteQueue.length = 0 } // S-15：指针落后裁剪线钳 0 全量重放 → 先清屏+丢挂起批次再写，防屏上旧内容与全量重放重复（对齐 onFlushed 回退 clear 模式）
+  replayedVersion = result.targetVersion
+  enqueueReplayWrites(result.batches)
+}
+
+/** flush 监听回调：模块级 flush 完成后按本视图指针增量回放（替代 W14 的 watch 链）。 */
+function onFlushed(buffer: TerminalBuffer): void {
+  if (buffer.version < replayedVersion) {
+    // version 单调只增，回退 = 被 clearPartition 重置（Fix-3）：清本视图 + 指针归零 + 丢挂起批次
+    xterm?.clear()
+    replayedVersion = 0
+    replayWriteQueue.length = 0
+  }
+  replayFrom(replayedVersion, buffer)
+}
+
+/** 清屏（清 xterm + 当前分区 buffer，Fix-3：切走切回历史不复活）。 */
+function clear(): void {
+  xterm?.clear()
+  terminal.clearTerminal()
+}
 
 /** 取 session cwd（spawn 用）。 */
 function getSessionCwd(): string | undefined {
@@ -186,24 +242,6 @@ function initXterm(): FitAddon | null {
   return fit
 }
 
-/** 回放 scrollback（mount 时全量，之后增量）。 */
-function replayScrollback(): void {
-  if (!xterm) return
-  const partition = state.value
-  const lines = partition.scrollback
-  // 只 write 未回放的部分
-  // 注意：scrollback 是按 PTY 输出 chunk 累积（非按行），replayedScrollbackLength 跟踪 chunk 数
-  for (let i = replayedScrollbackLength; i < lines.length; i++) {
-    xterm.write(lines[i])
-  }
-  replayedScrollbackLength = lines.length
-}
-
-/** 清屏（清 xterm + scrollback 当前分区）。 */
-function clear(): void {
-  xterm?.clear()
-}
-
 /** Phase 4 联动 1：选中文本 → 注入 composer「发给 AI」。 */
 function sendSelectionToAI(): void {
   const text = xterm?.getSelection()
@@ -222,8 +260,11 @@ onMounted(async () => {
   const fit = initXterm()
   if (!xterm || !fit) return
 
-  // 回放历史
-  replayScrollback()
+  // 全量回放模块级分区历史（切回 mount 场景：切走期间累积的输出在此补齐）
+  replayFrom(0, terminal.current.value.buffer)
+  // 注册 flush 监听：之后的输出经模块级订阅 → flush → 本监听增量回放
+  // （先全量回放再注册：回放指针锚定到当前版本，增量不重复不遗漏）
+  unregisterFlush = terminal.registerFlushListener(props.sessionId, onFlushed)
 
   // 若 PTY 未活，发 spawn
   const partition = state.value
@@ -246,26 +287,22 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  unregisterFlush?.()
+  unregisterFlush = null
   resizeObserver?.disconnect()
   resizeObserver = null
   xterm?.dispose()
   xterm = null
   fitAddon = null
-  replayedScrollbackLength = 0
+  replayedVersion = 0
+  // 丢弃挂起回放批次（Fix-5：防旧会话内容写入重挂载后的新 xterm）
+  replayWriteQueue.length = 0
 })
-
-// 监听 scrollback 变化，增量 write 到 xterm（PTY 切走期间累积的输出，切回后实时 write）
-watch(
-  () => state.value.scrollback.length,
-  () => {
-    if (xterm) replayScrollback()
-  },
-)
 
 // Settings → Terminal 配置变化（字体/字号/scrollback/cursorStyle）：动态应用到已挂载的 xterm。
 // mount 时若 config 尚未加载（null），会用默认值 init；config 广播到达后此处补偿更新。
 watch(
-  () => settingsStore.terminalConfig,
+  () => settingsStore.terminalConfig.value,
   () => {
     if (!xterm) return
     const opts = resolveXtermFontOptions()
@@ -288,16 +325,20 @@ watch(
   () => props.sessionId,
   async (sid) => {
     if (!sid) return
-    // 切 session 视为重新挂载：dispose 旧 xterm，重 init
+    // 切 session 视为重新挂载：反注册旧监听 + dispose 旧 xterm，重 init
+    unregisterFlush?.()
+    unregisterFlush = null
     resizeObserver?.disconnect()
     xterm?.dispose()
     xterm = null
     fitAddon = null
-    replayedScrollbackLength = 0
+    replayedVersion = 0
+    replayWriteQueue.length = 0
     await nextTick()
     const fit2 = initXterm()
     if (!xterm || !fit2) return
-    replayScrollback()
+    replayFrom(0, terminal.current.value.buffer)
+    unregisterFlush = terminal.registerFlushListener(sid, onFlushed)
     const partition = state.value
     if (!partition.ptyAlive) {
       const cwd = getSessionCwd()
@@ -321,7 +362,7 @@ const { killTerminal } = terminal
 /* escape hatch：Vue Transition 类（Tailwind 无法表达），浮动按钮淡入淡出 */
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.15s ease;
+  transition: opacity var(--duration-fast) var(--ease);
 }
 .fade-enter-from,
 .fade-leave-to {

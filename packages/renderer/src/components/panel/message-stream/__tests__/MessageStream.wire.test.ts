@@ -17,11 +17,12 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { computed, nextTick, ref, shallowRef, defineComponent, h } from 'vue'
+// [w6 chat-ui-and-shell T7] ui 包组件：Turn/TurnRail 迁 ui；Turn 展开态经 deps inject（真实 useTurnExpansion 在 renderer 壳 useChatViewDeps）
+import { computed, nextTick, ref, shallowRef, defineComponent, h, reactive } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { VirtualizerHandle } from 'virtua/vue'
-import Turn from '../Turn.vue'
-import TurnRail from '../TurnRail.vue'
+import { Turn, TurnRail } from '@xyz-agent/ui'
+import { mockChatProvide } from '@/__tests__/helpers/chat-view-deps'
 import MessageStream from '../../MessageStream.vue'
 import { useMessageStreamRail } from '@/composables/panel/useMessageStreamRail'
 import { createMockVlist } from '@/__tests__/effects/_virtua-mock-helper'
@@ -33,7 +34,7 @@ import type { Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
 // mock 重依赖 composable（只测组件接线，不测 store 副作用）。
 // useChat mock 需含 loadMoreHistory/hasMoreHistory：useLoadMoreHistory 经 useChat 读这俩，
 // MessageStream 挂载时 useLoadMoreHistory 会立即调 hasMoreHistory（computed）。
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     editAndResend: vi.fn(),
     loadMoreHistory: vi.fn(),
@@ -41,8 +42,35 @@ vi.mock('@/composables/features/useChat', () => ({
   }),
   resetChatModuleState: vi.fn(),
 }))
-vi.mock('@/composables/features/useSidebar', () => ({
+vi.mock('@/composables/features/sidebar/useSidebar', () => ({
   useSidebar: () => ({ forkSession: vi.fn(), abortHandoff: vi.fn() }),
+}))
+
+// [w6] MessageStream 壳装配 useChatViewDeps（TC-w4-9/9b mount 真组件）→ mock 装配器，壳内 ui 组件经 deps inject 消费
+const chatDepsMock = vi.hoisted(() => ({
+  getMessages: vi.fn(() => []),
+  isActive: vi.fn(() => false),
+  isHandingOff: vi.fn(() => false),
+  getChangeSetStatus: vi.fn(() => undefined),
+  isExpanded: vi.fn(() => false),
+  toggleExpand: vi.fn(),
+  collapse: vi.fn(),
+  abortBash: vi.fn(),
+  editAndResend: vi.fn(),
+  onFork: vi.fn(),
+  onForkAsk: vi.fn(),
+  onHandoff: vi.fn(),
+  onHandoffAsk: vi.fn(),
+  openDrawer: vi.fn(),
+  onFileClick: vi.fn(),
+  onAmbiguousSelect: vi.fn(),
+  loadFileCandidates: vi.fn(() => Promise.resolve([])),
+  renderMarkdown: vi.fn(() => Promise.resolve([])),
+  renderMermaid: vi.fn(() => Promise.resolve({ svg: '' })),
+  toMarkdown: vi.fn(() => ''),
+}))
+vi.mock('@/composables/panel/useChatViewDeps', () => ({
+  useChatViewDeps: () => chatDepsMock,
 }))
 
 /** 构造 toolCall（status 可指定，默认 completed） */
@@ -71,16 +99,46 @@ function assistantWithBlocks(opts: {
   } as Message
 }
 
-/** 构造 MessageTurn：complete 态 + hasFoldable=true（让 turn-meta 可点击展开）。 */
+/** 构造 MessageTurn：complete 态 + hasFoldable=true（让 turn-meta 可点击展开）。
+ *  [M5 stable-key] user.id 随 index 派生（u1/u2/...）——稳定 key（turnStableId）在测试里
+ *  必须随 turn 不同而不同，展开态隔离断言才成立（旧实现只改 index 不换 id，
+ *  string key 下两个 turn 会撞同一个 key）。
+ *  [block-rendering M0] 默认 assistant 含 thinking 块（trace 容器恒渲染后，折叠/展开以内容显隐表达，
+ *  需要可折叠内容才能断言「内容隐藏」语义）。 */
 function makeTurn(over: Partial<MessageTurn> = {}): MessageTurn {
+  const index = over.index ?? 1
   return {
-    index: 1,
-    user: { id: 'u1', role: 'user', content: 'hi', status: 'complete', timestamp: Date.now() } as Message,
-    assistants: [assistantWithBlocks({ status: 'complete' })],
+    index,
+    user: { id: `u${index}`, role: 'user', content: 'hi', status: 'complete', timestamp: Date.now() } as Message,
+    assistants: [
+      assistantWithBlocks({
+        status: 'complete',
+        thinking: [{ id: 'th1', content: 'thinking', collapsed: true }],
+        contentBlocks: [
+          { type: 'thinking', refId: 'th1' },
+          { type: 'text', refId: 'text' },
+        ],
+      }),
+    ],
     isStreaming: false,
     hasFoldable: true,
     ...over,
   } as MessageTurn
+}
+
+/** [w6] ui Turn 展开态经 deps 注入：stateful mock（reactive Set）驱动展开/收起契约
+ *  （真实 useTurnExpansion 逻辑在 renderer 壳 useChatViewDeps 内，组件层只经 isExpanded/toggleExpand/collapse 消费）。
+ *  [M5 stable-key] key 为 turnStableId(turn)（string，首条消息 id），非 turn.index。 */
+const expandedTurns = reactive(new Set<string>())
+function statefulExpandDeps() {
+  return {
+    isExpanded: (key: string) => expandedTurns.has(key),
+    toggleExpand: (key: string) => {
+      if (expandedTurns.has(key)) expandedTurns.delete(key)
+      else expandedTurns.add(key)
+    },
+    collapse: (key: string) => expandedTurns.delete(key),
+  }
 }
 
 /** mount Turn，stub 掉子组件（Block/ChangeSetCard/MarkdownRenderer），隔离 Turn 自身接线逻辑。 */
@@ -93,6 +151,7 @@ function mountTurn(props: { turn: MessageTurn; sessionId?: string; isSessionActi
     },
     global: {
       plugins: [createPinia()],
+      provide: mockChatProvide(statefulExpandDeps()),
       stubs: { Block: true, ChangeSetCard: true, MarkdownRenderer: true },
     },
   })
@@ -104,6 +163,7 @@ function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string }
     props: { turn: props.turn, sessionId: props.sessionId ?? 's1' },
     global: {
       plugins: [createPinia()],
+      provide: mockChatProvide(statefulExpandDeps()),
       stubs: { ChangeSetCard: true, MarkdownRenderer: true },
     },
   })
@@ -111,6 +171,7 @@ function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string }
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  expandedTurns.clear()
 })
 
 /* ──────────────────────────────────────────────────────────────
@@ -119,18 +180,21 @@ beforeEach(() => {
 describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
   it('TC-w4-1: complete 态默认折叠（showTrace=false），点 turn-meta → 展开 trace（isExpanded 驱动）', async () => {
     const wrapper = mountTurn({ turn: makeTurn() })
-    // complete + 默认折叠 → trace 不存在
-    expect(wrapper.find('.trace').exists()).toBe(false)
+    // [block-rendering M0] trace 容器恒渲染（v-if 下沉 Block 级）：折叠态内容隐藏——仅 text 恒渲染，
+    // thinking/tool 不渲染（原「容器不存在」断言改「内容隐藏」语义）
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(1)
     // chevron 未 rotate-90（折叠态）
     expect(wrapper.find('.chev').classes()).not.toContain('rotate-90')
-    // 点击 turn-meta → useTurnExpansion.toggle → isExpanded=true → showTrace=true
+    // 点击 turn-meta → useTurnExpansion.toggle → isExpanded=true → showTrace=true → thinking 块渲染
     await wrapper.find('.turn-meta').trigger('click')
     expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(2)
     // chevron rotate-90（展开态）
     expect(wrapper.find('.chev').classes()).toContain('rotate-90')
   })
 
-  it('TC-w4-2: 完成态自动收起（isSessionActive true→false 触发 useTurnElapsed.onComplete → collapse）', async () => {
+  it('TC-w4-2: 完成态自动收起（isSessionActive true→false 触发 useTurnElapsed.onComplete → deps.collapse）', async () => {
     // 关键：先让 isExpanded=true（手动展开），才能区分两条路径——
     //   showTrace = sessionActive || isExpanded(idx)。
     //   若不预先展开，sessionActive true→false 时 showTrace 直接 false，与 onComplete 是否调用无关，
@@ -138,54 +202,54 @@ describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
     //   预先 isExpanded=true 后：onComplete 正确触发 collapse → isExpanded 转 false → showTrace=false；
     //   若 onComplete 未触发 → isExpanded 仍 true → showTrace=false||true=true（trace 仍在，测试能捕捉）。
     //
-    // sessionActive=true 时 turn-meta button :disabled（Turn.vue L162），无法用点击触发 toggle，
-    // 故直接用 store.expand 写入（Turn.vue 的 isExpanded 读同一 store，per-instance useTurnExpansion
-    // 共享同一 Pinia store 分区）。
-    //
-    // pinia 实例必须与 mountTurn 用同一个：mountTurn 的 global.plugins:[createPinia()] 会建独立
-    // pinia，故本测自建 pinia 实例，先 expand 再把它传给 mount（绕过 mountTurn 的默认 pinia）。
-    const sessionId = 'sess-w4-2'
-    const pinia = createPinia()
-    setActivePinia(pinia)
-    const store = useTurnExpansionStore()
-    store.expand(sessionId, 1) // makeTurn() 默认 index=1
+    // sessionActive=true 时 turn-meta button :disabled（Turn.vue），无法用点击触发 toggle，
+    // 故直接预置 expandedTurns（makeTurn() 默认 index=1 → 稳定 key 'u1'）。
+    expandedTurns.add('u1')
     const wrapper = mount(Turn, {
       props: {
         turn: makeTurn({ isStreaming: false }),
-        sessionId,
+        sessionId: 'sess-w4-2',
         isSessionActive: true,
       },
       global: {
-        plugins: [pinia],
+        plugins: [createPinia()],
+        provide: mockChatProvide(statefulExpandDeps()),
         stubs: { Block: true, ChangeSetCard: true, MarkdownRenderer: true },
       },
     })
-    // sessionActive=true → showTrace = true || true = true（trace 可见）
+    // sessionActive=true → showTrace = true || true = true（thinking+text 都渲染）
     expect(wrapper.find('.trace').exists()).toBe(true)
-    // 对话结束：isSessionActive true→false → useTurnElapsed watch 触发 onComplete → collapse(1)
-    //   → isExpanded(1) 变 false → showTrace = false || false = false → trace 消失
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(2)
+    // 对话结束：isSessionActive true→false → useTurnElapsed watch 触发 onComplete → deps.collapse(1)
+    //   → isExpanded(1) 变 false → showTrace = false || false = false → thinking/tool 内容隐藏
     await wrapper.setProps({ isSessionActive: false })
-    expect(wrapper.find('.trace').exists()).toBe(false)
-    // 回归守卫：collapse 确实被调用（isExpanded 已被 onComplete 路径复位为 false）。
+    // [block-rendering M0] trace 容器恒渲染，折叠态仅 text 恒渲染（thinking 隐藏）
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(1)
+    // 回归守卫：collapse 确实被调用（expandedTurns 已被 onComplete 路径复位）。
     // 若 onComplete 被改成 no-op，此处仍为 true，测试会失败（捕捉回归）。
-    expect(store.isExpanded(sessionId, 1)).toBe(false)
+    expect(expandedTurns.has('u1')).toBe(false)
   })
 
-  it('TC-w4-7: useTurnExpansion per-session 隔离 —— 两个 Turn（不同 sessionId）展开态互不影响', async () => {
-    // 注意：useTurnExpansion 是 per-instance（每次组件 setup 各自调用），per-session Map 在 composable 内。
-    // 本测验证两个不同 sessionId 的 Turn 展开态独立：展开 turn-A 不影响 turn-B。
+  it('TC-w4-7: 展开态隔离 —— 两个 Turn（不同稳定 key）展开互不影响', async () => {
+    // [w6] 展开态经 deps 注入（stateful mock 按稳定 key 分区）；真实 per-session 隔离在
+    // renderer 壳 useChatViewDeps（useTurnExpansion(sessionId)）。组件层契约：不同 turn 稳定 key 独立。
     const turnA = makeTurn({ index: 1 })
     const turnB = makeTurn({ index: 2 })
     const wrapperA = mountTurn({ turn: turnA, sessionId: 'sessA' })
     const wrapperB = mountTurn({ turn: turnB, sessionId: 'sessB' })
-    // 初始都折叠
-    expect(wrapperA.find('.trace').exists()).toBe(false)
-    expect(wrapperB.find('.trace').exists()).toBe(false)
+    // [block-rendering M0] 初始都折叠：trace 容器恒渲染，内容隐藏（仅 text，thinking 不渲染）
+    expect(wrapperA.find('.trace').exists()).toBe(true)
+    expect(wrapperA.findAllComponents({ name: 'Block' }).length).toBe(1)
+    expect(wrapperB.find('.trace').exists()).toBe(true)
+    expect(wrapperB.findAllComponents({ name: 'Block' }).length).toBe(1)
     // 展开 A
     await wrapperA.find('.turn-meta').trigger('click')
     expect(wrapperA.find('.trace').exists()).toBe(true)
-    // B 仍折叠（不同 session，展开态隔离）
-    expect(wrapperB.find('.trace').exists()).toBe(false)
+    expect(wrapperA.findAllComponents({ name: 'Block' }).length).toBe(2)
+    // B 仍折叠（不同稳定 key，展开态隔离）
+    expect(wrapperB.find('.trace').exists()).toBe(true)
+    expect(wrapperB.findAllComponents({ name: 'Block' }).length).toBe(1)
   })
 
   it('TC-w4-8: 连续同类 tool 调用 → 每个 block 独立渲染（不再合并）', async () => {
@@ -214,9 +278,14 @@ describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
     expect(wrapper.find('.trace').exists()).toBe(true)
     // 不存在 merged 卡片（合并功能已移除）
     expect(wrapper.findAll('[data-testid="merged-block-card"]')).toHaveLength(0)
-    // 3 个连续 tool 各自独立渲染（3 个 Block / trace-blk）
+    // [block-rendering M0] 3 个连续 tool + 末位 text（不再被 filter，全 inline 就地渲染）各自独立渲染
     const blocks = wrapper.findAll('.trace-blk')
-    expect(blocks).toHaveLength(3)
+    expect(blocks).toHaveLength(4)
+    expect(blocks[0].find('.trace-tool').exists()).toBe(true)
+    expect(blocks[1].find('.trace-tool').exists()).toBe(true)
+    expect(blocks[2].find('.trace-tool').exists()).toBe(true)
+    // 末位 text 在 trace 内（contentBlocks 顺序：3 tool + text）
+    expect(blocks[3].findComponent({ name: 'MarkdownRenderer' }).exists()).toBe(true)
   })
 })
 
@@ -280,7 +349,7 @@ describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRa
         activeTurnIndex: 1,
         sessionActive: false,
         panelRightEdge: 800,
-        expandedTurns: new Set([2]),
+        expandedTurns: new Set(['u2']),
       },
     })
     expect(wrapper.find('[data-testid="turn-rail"]').exists()).toBe(true)
@@ -288,20 +357,20 @@ describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRa
     expect(wrapper.findAll('[data-testid="rail-node"]')).toHaveLength(3)
     expect(wrapper.props('panelRightEdge')).toBe(800)
     // expandedTurns prop 透传（toggle 图标方向依据）
-    expect(wrapper.props('expandedTurns')).toEqual(new Set([2]))
+    expect(wrapper.props('expandedTurns')).toEqual(new Set(['u2']))
   })
 
-  it('TC-w4-3b: useMessageStreamRail.expandedTurns 从 store 派生当前 session 已展开的 turn index', () => {
+  it('TC-w4-3b: useMessageStreamRail.expandedTurns 从 store 派生当前 session 已展开的 turn 稳定 key', () => {
     const { rail, wrapper } = mountRail()
     // 初始无展开 → 空 Set
     expect(rail.expandedTurns.value.size).toBe(0)
-    // onToggle(0) 翻转 railTurns[0].index=1 → store 记录 index=1 展开
+    // onToggle(0) 翻转 railTurns[0]（稳定 key 'u1'）→ store 记录 'u1' 展开
     rail.onToggle(0)
-    expect(rail.expandedTurns.value.has(1)).toBe(true)
+    expect(rail.expandedTurns.value.has('u1')).toBe(true)
     expect(rail.expandedTurns.value.size).toBe(1)
-    // 再 onToggle(0) 翻回 → index=1 折叠，expandedTurns 不含 1
+    // 再 onToggle(0) 翻回 → 'u1' 折叠，expandedTurns 不含 u1
     rail.onToggle(0)
-    expect(rail.expandedTurns.value.has(1)).toBe(false)
+    expect(rail.expandedTurns.value.has('u1')).toBe(false)
     wrapper.unmount()
   })
 
@@ -416,15 +485,15 @@ describe('MessageStream.vue 首屏冒烟（mount 真组件，验 TurnRail 接线
     // emit jump(0) → MessageStream 模板 @jump="onJump" 路由到 rail.onJump（不抛错即接线成立）
     turnRail.vm.$emit('jump', 0)
     await nextTick()
-    // emit toggle(0) → MessageStream 模板 @toggle="onToggle" 路由到 rail.onToggle → useTurnExpansion.toggle(1)
-    //   railTurns[0].index=1（首条 user 开启 turnSeq=1）→ store 分区记 index=1 展开态
+    // emit toggle(0) → MessageStream 模板 @toggle="onToggle" 路由到 rail.onToggle → useTurnExpansion.toggle('u1')
+    //   railTurns[0] 稳定 key = 'u1'（首条 user 消息 id）→ store 分区记 'u1' 展开态
     turnRail.vm.$emit('toggle', 0)
     await nextTick()
 
-    // 真接线断言：toggle 经 MessageStream 路由到 useTurnExpansion（store isExpanded(1) 翻为 true）。
+    // 真接线断言：toggle 经 MessageStream 路由到 useTurnExpansion（store isExpanded('u1') 翻为 true）。
     // 若 MessageStream 模板删了 @toggle 绑定或 onToggle 改名，store 不变 → 此处 false，测试失败。
     const store = useTurnExpansionStore()
-    expect(store.isExpanded('sess-mount-emit', 1)).toBe(true)
+    expect(store.isExpanded('sess-mount-emit', 'u1')).toBe(true)
 
     wrapper.unmount()
   })

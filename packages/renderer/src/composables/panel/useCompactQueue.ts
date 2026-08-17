@@ -24,7 +24,7 @@ export interface QueuedMessage {
   text: string
 }
 
-/** per-session 分区：待发消息数组（init 返回 reactive 容器，ADR-0036 响应式契约） */
+/** per-session 分区：待发消息数组（init 返回 reactive 容器，ADR-0049 响应式契约） */
 interface CompactQueuePartition {
   messages: QueuedMessage[]
 }

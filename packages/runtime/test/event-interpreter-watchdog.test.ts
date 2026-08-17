@@ -1,5 +1,5 @@
 /**
- * watchdog 重构 TDD 红灯测试：EventInterpreter ping 探测机制（ADR-0035）。
+ * watchdog 重构 TDD 红灯测试：EventInterpreter ping 探测机制（ADR-0047）。
  *
  * [背景] 旧 watchdog 用「事件静默时长」检测 pi 卡死，在 ask_user 等待用户期间误杀
  * （extension-ui 的 pauseWatchdog 被同批 [extension-ui, message] 双事件中 message 触发的
@@ -92,7 +92,7 @@ function turnEnd(sessionId: string, stopReason = 'end_turn'): PiTranslatedEvent 
   }
 }
 
-describe('EventInterpreter · watchdog ping 探测机制（ADR-0035）', () => {
+describe('EventInterpreter · watchdog ping 探测机制（ADR-0047）', () => {
   const sessionId = 'sid-ping'
 
   let sent: ServerMessage[]

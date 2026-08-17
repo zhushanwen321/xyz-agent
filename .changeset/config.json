@@ -18,10 +18,14 @@
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
   "ignore": [
+    "@xyz-agent/core",
+    "@xyz-agent/dom-core",
     "@xyz-agent/electron",
     "@xyz-agent/frontend",
+    "@xyz-agent/mobile-renderer",
     "@xyz-agent/runtime",
     "@xyz-agent/shared",
+    "@xyz-agent/ui",
     "create-xyz-plugin",
     "xyz-agent-plugin-sdk"
   ]

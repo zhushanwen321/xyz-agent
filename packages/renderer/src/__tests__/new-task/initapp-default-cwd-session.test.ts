@@ -35,7 +35,7 @@ const chatCtrl = vi.hoisted(() => ({
   getHistory: vi.fn<(id: string) => Promise<unknown[]>>().mockResolvedValue([]),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   session: {
     list: sessionCtrl.list,
     create: sessionCtrl.create,
@@ -62,8 +62,8 @@ vi.mock('@/stores/workspace', () => ({
 }))
 
 // useNewTaskFlow / useSidebar 真实实现（不 mock）
-import { useSidebar, resetAppBootstrap } from '@/composables/features/useSidebar'
-import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useSidebar, resetAppBootstrap } from '@/composables/features/sidebar/useSidebar'
+import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useSessionStore } from '@/stores/session'
 
 beforeEach(() => {

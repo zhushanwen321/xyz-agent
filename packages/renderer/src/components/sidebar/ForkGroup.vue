@@ -4,7 +4,7 @@
     当前激活 session 正下方浮出「本会话的分支」折叠区（方案3），不碰全局扁平结构。
 
     规范（spec §2 层③ + §7）：
-    - 容器：4% accent 混底 + border + radius（不用左色条 accent，design-system §2 反模式）
+    - 容器：4% accent 混底 + radius（去 border 改层级，spec §3.5.4；不用左色条 accent，design-system §2 反模式）
     - 折叠头：accent 色 + chev 图标 + 「本会话的分支」+ 计数
     - 子项复用 .si 紧凑变体（padding 6px 8px，font-size 12px），带「分支 N」pill
     - fresh 高亮：accent-soft 底 + inset accent-ring，FRESH_FADE_MS(3.2s) 后淡出
@@ -14,7 +14,7 @@
   -->
   <div
     v-if="branches.length > 0"
-    class="fork-group mx-1 mb-1 mt-0.5 rounded-[var(--radius)] border border-border bg-accent/5"
+    class="fork-group mx-1 mb-1 mt-0.5 rounded-[var(--radius)] bg-accent/5"
   >
     <!-- 折叠头：chev + 「本会话的分支」+ 计数 -->
     <Button
@@ -62,10 +62,10 @@
         </span>
         <div class="min-w-0 flex-1">
           <div class="truncate text-[12px] leading-[1.3] text-neutral-fg">{{ b.label }}</div>
-          <!-- 分支 N pill（accent-soft 底 + 9px mono，spec §7 branch-pill） -->
+          <!-- 分支 N pill（reasoning-soft 底 + 9px mono，spec §3.5.7/§5.6C branch-pill git 分支维度） -->
           <div class="mt-0.5 flex items-center gap-1">
             <span
-              class="rounded-[3px] bg-accent-soft px-1 font-mono text-[9px] font-semibold leading-[1.4] text-accent"
+              class="rounded-[3px] bg-reasoning-soft px-1 font-mono text-[9px] font-semibold leading-[1.4] text-reasoning"
             >
               {{ t('sidebar.forkGroup.branchN', { n: idx + 1 }) }}
             </span>
@@ -202,7 +202,9 @@ function scheduleFreshFade(id: string): void {
   freshTimers.set(id, handle)
 }
 
-/** mount + freshIds 变化时：为新增的 fresh id 启动计时 */
+/** mount + freshIds 变化时：为新增的 fresh id 启动计时。
+ *  浅 watch（Q1-9）：freshIds 更新约定经数组引用替换表达（父组件传新数组；本组件不 mutate prop），
+ *  原地 mutate 不触发。当前生产消费方（SessionList）未传该 prop（走默认空数组）。 */
 watch(
   () => props.freshIds,
   (ids, oldIds) => {
@@ -211,7 +213,7 @@ watch(
       if (!prev.has(id)) scheduleFreshFade(id)
     }
   },
-  { immediate: true, deep: true },
+  { immediate: true },
 )
 
 /** 当前 id 是否处于 fresh 高亮态 */

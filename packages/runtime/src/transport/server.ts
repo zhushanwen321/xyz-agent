@@ -11,12 +11,20 @@
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage, SkillCacheScope } from '@xyz-agent/shared'
-import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from '../interfaces.js'
+import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService, IAuthService } from '../interfaces.js'
+
+/** authService 未注入时的兜底（组合根必传；防御性空实现防 handler 空指针） */
+const noopAuthService: IAuthService = {
+  login: () => ({ started: false, error: 'OAuth 不可用（authService 未装配）' }),
+  cancel: () => ({ cancelled: false }),
+  hasOAuth: async () => false,
+}
 import type { GitService } from '../services/git-service.js'
 import type { FileService } from '../services/file-service.js'
 import type { SkillRegistry } from '../services/skill-registry.js'
-// MessageBus（wave:runtime-wiring）：注入到 SessionMessageHandler ctx（subscribe/unsubscribe RPC）。
-import type { MessageBus } from '../services/message-bus/message-bus.js'
+// IMessageBus（wave:perf-w09 接口收敛）：注入到 SessionMessageHandler ctx（subscribe RPC）+
+// ConnectionManager.onDisconnect 清理 + changeSetInvalidated 定向发布。
+import type { IMessageBus } from '../services/message-bus/message-bus.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { ConnectionManager } from './connection-manager.js'
 import { ServerMessageBroker } from './message-broker.js'
@@ -28,12 +36,14 @@ import { PluginMessageHandler } from './plugin-message-handler.js'
 import { GitMessageHandler } from './git-message-handler.js'
 import { FileMessageHandler } from './file-message-handler.js'
 import { WorkspaceMessageHandler } from './workspace-message-handler.js'
+import { ProjectMessageHandler } from './project-message-handler.js'
 import { WorktreeMessageHandler } from './worktree-message-handler.js'
 import { TerminalMessageHandler } from './terminal-message-handler.js'
 import { QuotaMessageHandler } from './quota-message-handler.js'
 import { PresetMessageHandler } from './preset-message-handler.js'
 import type { MessageHandlerContext, ErrorDetails } from './message-context.js'
 import type { WorkspaceService } from '../services/workspace/workspace-service.js'
+import type { ProjectStore } from '../services/project/project-store.js'
 import type { IWorktreeService } from '../services/ports/worktree-service.js'
 import type { HandoffService } from '../services/handoff-service.js'
 import type { ITerminalService } from '../services/ports/terminal-service.js'
@@ -62,7 +72,7 @@ export class RuntimeServer implements IMessageBroker {
    * 供 session.subscribe/unsubscribe RPC 注册/取消订阅。ws 断开时 onDisconnect 回调调
    * bus.unsubscribeAll(ws) 清理订阅。经 setMessageBus 注入（组合根在 setServices 前调）。
    */
-  private messageBus?: MessageBus
+  private messageBus?: IMessageBus
 
   // ── Message handlers (extracted) ────────────────────────────────
   // Constructed in setServices() — not at field-init time — so `this` is fully
@@ -77,6 +87,7 @@ export class RuntimeServer implements IMessageBroker {
   private gitMessageHandler?: GitMessageHandler
   private fileMessageHandler?: FileMessageHandler
   private workspaceMessageHandler!: WorkspaceMessageHandler
+  private projectMessageHandler!: ProjectMessageHandler
   private worktreeMessageHandler?: WorktreeMessageHandler
   private terminalMessageHandler?: TerminalMessageHandler
   private quotaMessageHandler!: QuotaMessageHandler
@@ -109,11 +120,11 @@ export class RuntimeServer implements IMessageBroker {
    * unsubscribe RPC 用 + ConnectionManager.onDisconnect 调 unsubscribeAll。
    * 必须在 setServices 前调（setServices 装配 sessionHandler 时读 this.messageBus）。
    */
-  setMessageBus(bus: MessageBus): void {
+  setMessageBus(bus: IMessageBus): void {
     this.messageBus = bus
   }
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }, skillRegistry?: SkillRegistry, worktree?: IWorktreeService, terminal?: ITerminalService, quota?: QuotaService, handoff?: HandoffService, preset?: PresetService): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }, skillRegistry?: SkillRegistry, worktree?: IWorktreeService, terminal?: ITerminalService, quota?: QuotaService, handoff?: HandoffService, preset?: PresetService, auth?: IAuthService, project?: ProjectStore): void {
     this.gitService = git
     this.fileService = file
     this.handoffService = handoff
@@ -123,6 +134,10 @@ export class RuntimeServer implements IMessageBroker {
     this.skillRegistry = skillRegistry
     if (extension) this.extensionService = extension
     if (plugin) this.pluginService = plugin
+    //（wave:perf-w09 接口收敛）plugin.setMessageBus 的 wire 已归位组合根（index.ts，
+    // 与 sessionService.setMessageBus 并列）——services 间依赖注入不经 transport 层中转。
+    // server 保留的 bus 消费只剩自身 transport 职责：sessionHandler ctx（subscribe RPC）、
+    // extensionHandler ctx（ui_timeout publish）、onDisconnect 清理、changeSetInvalidated 定向发布。
 
     // broker 在此构造：依赖 services（broadcast helper / sendInitialState 取数据）+ 连接池（conn.clients）。
     this.broker = new ServerMessageBroker(this.conn, {
@@ -154,6 +169,7 @@ export class RuntimeServer implements IMessageBroker {
       configService: this.configService,
       sessionService: this.sessionService,
       modelService: this.modelService,
+      authService: auth ?? noopAuthService,
       // W4：skillRegistry 必须注入（settings-handler 的 config.getGlobalSkills/getProjectSkills 依赖）。
       // 组合根 index.ts 保证传入；此处断言非空（setServices 编排保证）。若未来 skillRegistry 可选，handler 需守卫。
       skillRegistry: this.skillRegistry!,
@@ -184,8 +200,11 @@ export class RuntimeServer implements IMessageBroker {
       sessionService: this.sessionService,
       extensionService: this.extensionService,
       extensionTimeoutMgr: this.extensionTimeoutMgr,
-      broadcast: (msg) => this.broker.broadcast(msg),
       nextPushId: () => this.broker.nextPushId(),
+      // wave:perf-w09（D1-2）：extension.ui_timeout 主通道走 bus.publish；broadcast 是
+      // bus 未装配时的「消息不丢」兜底（对齐 plugin-service 的回退哲学）
+      broadcast: (msg) => this.broker.broadcast(msg),
+      messageBus: this.messageBus,
     })
     this.pluginMessageHandler = new PluginMessageHandler({
       ...messaging,
@@ -197,8 +216,10 @@ export class RuntimeServer implements IMessageBroker {
         sessionService: this.sessionService,
         gitService: this.gitService,
         broadcastChangeSetInvalidated: (sessionId, reason) => {
-          // 广播给所有连接（session 级消息，前端按 payload.sessionId 路由到正确 panel）。
-          this.broker.broadcast({
+          // wave:perf-w09（R-08 审计发现的清单外 session 级 push 型消息）：原走
+          // broker.broadcast 盲广播，收口为 bus.publish 定向发布（message.changeSetInvalidated
+          // 归 stream 类：分配 seq + 入 ring，已订阅该 sid 的连接照常收到，未订阅连接不再被打扰）。
+          this.messageBus?.publish(sessionId, {
             type: 'message.changeSetInvalidated',
             id: this.broker.nextPushId(),
             payload: { sessionId, reason },
@@ -218,10 +239,20 @@ export class RuntimeServer implements IMessageBroker {
         workspaceService: workspace,
       })
     }
+    if (project) {
+      this.projectMessageHandler = new ProjectMessageHandler({
+        ...messaging,
+        projectStore: project,
+      })
+    }
     if (worktree) {
       this.worktreeMessageHandler = new WorktreeMessageHandler({
         ...messaging,
         worktreeService: worktree,
+        // perf 03 §5 worktree 检查点闭环（2026-08-17）：worktree.create 成功后按 cwd 失效
+        // git 状态缓存。与 GitMessageHandler 共享同一 gitService 实例（组合根注入）；
+        // git 未注入时为 null，handler 跳过失效（防御，成功 reply 不受影响）。
+        gitService: this.gitService ?? null,
       })
     }
     if (terminal) {
@@ -250,6 +281,7 @@ export class RuntimeServer implements IMessageBroker {
     const gitHandler = this.gitMessageHandler
     const fileHandler = this.fileMessageHandler
     const workspaceHandler = this.workspaceMessageHandler
+    const projectHandler = this.projectMessageHandler
     const worktreeHandler = this.worktreeMessageHandler
     const terminalHandler = this.terminalMessageHandler
     const quotaHandler = this.quotaMessageHandler
@@ -263,6 +295,7 @@ export class RuntimeServer implements IMessageBroker {
       ...(gitHandler ? gitHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => gitHandler.handleGitMessage(msg, ws)] as const) : []),
       ...(fileHandler ? fileHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => fileHandler.handleFileMessage(msg, ws)] as const) : []),
       ...(workspaceHandler ? workspaceHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => workspaceHandler.handleWorkspaceMessage(msg, ws)] as const) : []),
+      ...(projectHandler ? projectHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => projectHandler.handleProjectMessage(msg, ws)] as const) : []),
       ...(worktreeHandler ? worktreeHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => worktreeHandler.handleWorktreeMessage(msg, ws)] as const) : []),
       ...(terminalHandler ? terminalHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => terminalHandler.handleTerminalMessage(msg, ws)] as const) : []),
       ...(quotaHandler ? quotaHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => quotaHandler.handleQuotaMessage(msg, ws)] as const) : []),
@@ -282,6 +315,11 @@ export class RuntimeServer implements IMessageBroker {
    * 供 index.ts 注入到 HandoffService（与 session-message-handler 的 create/fork/delete/rename 一致）。
    */
   broadcastSessionList(): void { this.broker.broadcastSessionList() }
+  /**
+   * D8-2：暴露 broker 的 app.info 广播，供 index.ts 在 piVersion 探测完成后补发
+   * （版本标签先显示应用版本，探测完成后自动更新）。
+   */
+  broadcastAppInfo(): void { this.broker.broadcastAppInfo() }
   /**
    * W2：暴露 broker 的 skill 缓存失效广播，供 index.ts 的 skillRegistry.onChange 回调调用
    * （skill 变动 → 广播 config.skillCacheInvalidated 让 landing composable 失效缓存重拉）。

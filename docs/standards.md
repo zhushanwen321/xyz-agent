@@ -15,13 +15,13 @@
 - 事件流的时序和嵌套结构
 - 错误时的响应格式（`success: false` 还是 throw）
 
-**脚本存放位置**: `tools/verify-<system>.cjs`（如 `tools/verify-pi-rpc.cjs`）
+**脚本存放位置**: 项目根或临时目录下的 `verify-<system>.cjs`（如 `verify-pi-rpc.cjs`）。验证使命完成后移除,不长期保留。
 
 **示例**：验证 pi RPC 的 prompt 和事件流
 
 ```js
-// tools/verify-pi-rpc.cjs
-// 用法: node tools/verify-pi-rpc.cjs
+// verify-pi-rpc.cjs
+// 用法: node verify-pi-rpc.cjs
 // 验证: prompt 命令格式、事件嵌套结构、tool_execution 字段名
 ```
 
@@ -229,7 +229,7 @@ apps/electron/
 
 ### 7.1 Border-radius 约束（v3）
 
-> **v3 更新（ADR-0018，2026-06）**：旧 Warm & Soft 时期的「仅 1px/2px」锐利几何规则已**推翻**。v3 冷蓝暗色采用三档圆角，权威 SSOT 为 [design-tokens.md](../page-design/design-tokens.md)。
+> **v3 更新（ADR-0019，2026-06）**：旧 Warm & Soft 时期的「仅 1px/2px」锐利几何规则已**推翻**。v3 冷蓝暗色采用三档圆角，权威 SSOT 为 [design-tokens.md](./page-design/design-tokens.md)。
 
 | 场景 | 使用值 | Tailwind class |
 |------|--------|----------------|
@@ -438,3 +438,30 @@ const MOCK: SearchItem[] = [
 1. 先更新 `shared/src/protocol.ts` 中的类型定义
 2. 确认前端和 runtime 的消费方都已适配
 3. 运行 `pnpm --filter @xyz-agent/frontend run typecheck` 和 `pnpm --filter @xyz-agent/runtime run typecheck` 验证
+
+---
+
+## 10. 重构范式
+
+### 10.1 深模块化三段式
+
+深模块化是项目重构的统一范式（源：`07-cross-cutting-optimizations.md` 优化 4，已由 B4 Composer 验证）。三段式：
+
+1. **逻辑归位**：按职责内聚到深模块（domain/store/state-machine），**非**「为绕 lint 行数限制拆 *Impl」——模块级 `*Impl` 函数拆分是反模式，必须用深模块化替代
+2. **壳装配**：容器组件 / composable 退化为薄装配层，经 deps 注入或 facade 组装深模块
+3. **facade 消费**：消费方只 import 1 个 facade（如 Composer.vue 只 import `useComposerShell`），不直接碰深模块内部
+
+### 10.2 信号识别表（何时该深模块化）
+
+| 信号 | 含义 | 案例 |
+|---|---|---|
+| `*Impl` 后缀函数为绕 max-lines | 模块级函数拆分反模式 | B6 store.ts 6 个 *Impl |
+| 容器组件 > 400 行 + import 多个 composable | 上帝组件 | B5 前 Sidebar.vue 508 行 |
+| 同类逻辑散落多处 | 缺内聚 | ⌘[⌘]⌘, 散落 AppShell + useGlobalShortcuts |
+| 深模块有独立测试价值 | 可抽 | streaming-state-machine（B6） |
+
+### 10.3 落地要求
+
+1. 范式写入 `docs/standards.md` 的「重构」章节（本文档即固化产物）
+2. 后续重构（B6 / ViewHost / Settings 拆分）统一遵循三段式
+3. review 检查新代码：是否有上述信号 → 建议深模块化，而非继续拆 *Impl 或堆叠 import

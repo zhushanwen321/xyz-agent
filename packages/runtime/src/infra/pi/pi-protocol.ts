@@ -16,7 +16,7 @@
  * - tool_execution_end uses `result` (pi 的规范字段名，非漂移——pi 从不发 output)
  * - message_update.toolcall_* events are incomplete; prefer tool_execution_* instead
  *
- * 本文件是 pi 协议的真契约（ADR-0033）。PiEvent 联合覆盖 AgentSessionEvent 全部事件类型，
+ * 本文件是 pi 协议的真契约（ADR-0037）。PiEvent 联合覆盖 AgentSessionEvent 全部事件类型，
  * pi 升级时需同步维护（编译器 exhaustive check 会提示）。
  */
 
@@ -185,6 +185,10 @@ export interface PiMessageEndEvent extends PiBaseMessage {
  */
 export interface PiMessageUpdateEvent extends PiBaseMessage {
   type: 'message_update'
+  /** 运行时 pi 带完整 partial message（agent-session.js:462 确认）。toolcall_start 提取 toolCallId 用。 */
+  message?: {
+    content?: Array<{ type?: string; id?: string; name?: string }>
+  }
   assistantMessageEvent: PiAssistantMessageSubEvent
 }
 
@@ -265,7 +269,7 @@ export interface PiToolcallEndSubEvent {
 
 /**
  * Tool execution start — provides the canonical tool call info.
- * pi 用 `args` 是规范字段名（非漂移，ADR-0033）。
+ * pi 用 `args` 是规范字段名（非漂移，ADR-0037）。
  */
 export interface PiToolExecutionStartEvent extends PiBaseMessage {
   type: 'tool_execution_start'
@@ -289,7 +293,7 @@ export interface PiToolExecutionUpdateEvent extends PiBaseMessage {
 
 /**
  * Tool execution end — provides the canonical tool result.
- * pi 用 `result` 是规范字段名（非漂移，ADR-0033）。pi 从不发 output。
+ * pi 用 `result` 是规范字段名（非漂移，ADR-0037）。pi 从不发 output。
  *
  * 注意：pi tool_execution_end **从不发 args**（pi types.ts:430 定义无此字段）。
  * write 工具的 content 在 tool_execution_start 事件里（types.ts:428 args: any）。
@@ -346,13 +350,33 @@ export interface PiCompactionStartEvent extends PiBaseMessage {
 }
 
 /**
- * Compaction 结束事件。result 用 unknown——pi 内部用 CompactionResult 类型，
- * xyz-agent 不消费其字段，故不引入该类型的镜像。
+ * pi CompactionResult 的协议镜像（compaction_end 事件的 result 字段形状）。
+ *
+ * 字段全可选——事件路径下 aborted/error 时 result 可能缺失或部分字段未填；
+ * event-interpreter.handleCompactionEnd 用 `if (ev.result)` 守卫后读
+ * summary/tokensBefore/estimatedTokensAfter（M4 事件驱动）。
+ *
+ * 与 services/ports/pi-engine.ts 的 PiCompactionResult 区别：后者是 compact RPC
+ * 成功返回契约（summary/firstKeptEntryId/tokensBefore 必填），本类型是事件路径
+ * 的宽松形状（全可选，兼容 aborted）。两者镜像同一个 pi 内部 CompactionResult。
+ */
+export interface PiCompactionResult {
+  summary?: string
+  firstKeptEntryId?: string
+  tokensBefore?: number
+  estimatedTokensAfter?: number
+  usage?: unknown
+  details?: unknown
+}
+
+/**
+ * Compaction 结束事件。result 收紧为 PiCompactionResult（M5，S5）——event-adapter
+ * handleCompactionEnd 原样透传，event-interpreter 读 summary/tokensBefore/estimatedTokensAfter。
  */
 export interface PiCompactionEndEvent extends PiBaseMessage {
   type: 'compaction_end'
   reason: PiCompactionReason
-  result?: unknown
+  result?: PiCompactionResult
   aborted: boolean
   willRetry: boolean
   errorMessage?: string
@@ -539,6 +563,7 @@ export type PiSessionEntry =
   | PiSessionLabelEntry
   | PiSessionCompactionEntry
   | PiSessionBranchSummaryEntry
+  | PiSessionCustomMessageEntry
 
 /**
  * 所有 entry 的公共字段（对应 pi SessionEntryBase，session-manager.ts:46-51）。
@@ -631,6 +656,26 @@ export interface PiSessionBranchSummaryEntry extends PiSessionEntryBase {
 }
 
 /**
+ * custom_message entry（扩展经 pi sendMessage 注入的结构化通知，持久化进 session JSONL）。
+ * 对应 pi CustomMessageEntry（session-manager.ts:866）。
+ *
+ * 与 custom entry（type:'custom'）的区别：custom_message 进 LLM 上下文 + 对话流渲染，
+ * custom entry 是纯扩展数据（不进 LLM 上下文）。mapSessionEntries 据此分流：
+ * custom_message → messages（伪消息），custom → customDataEntries。
+ *
+ * display:false 时 xyz-agent 不渲染（filterDisplayableMessages）；完成通知类 customType
+ *（subagent-bg-notify/workflow-result）由 mapSessionEntries 引用 COMPLETE_NOTIFY_CUSTOM_TYPES
+ * 覆写为 display:false（pi 可能持久化 display:true，xyz-agent 统一隐藏）。
+ */
+export interface PiSessionCustomMessageEntry extends PiSessionEntryBase {
+  type: 'custom_message'
+  customType: string
+  content: string
+  display?: boolean
+  details?: Record<string, unknown>
+}
+
+/**
  * get_entries RPC 请求（对应 pi rpc-types.ts:63 `{ type: "get_entries"; since?: string }`）。
  *
  * since 可选：传 entry id 时返回该 entry 之后的所有 entry（增量拉取，pi rpc-mode.ts:614-620
@@ -659,7 +704,7 @@ export interface GetEntriesResponse {
 /**
  * pi Usage type — mirrors pi 源码字段名（input/output/cacheRead/cacheWrite/totalTokens）。
  *
- * pi-protocol 作为 pi 协议的真契约（ADR-0033），字段名镜像 pi 实际发出的，
+ * pi-protocol 作为 pi 协议的真契约（ADR-0037），字段名镜像 pi 实际发出的，
  * 不用 xyz-agent 的 inputTokens/outputTokens（那是 event-adapter 翻译时的职责）。
  */
 export interface PiUsage {
@@ -672,7 +717,7 @@ export interface PiUsage {
 
 // ── Union types for the adapter layer ──────────────────────────────
 
-/** Union of all unsolicited event types from pi (mirrors AgentSessionEvent, ADR-0033). */
+/** Union of all unsolicited event types from pi (mirrors AgentSessionEvent, ADR-0037). */
 export type PiEvent =
   | PiAgentStartEvent
   | PiAgentEndEvent

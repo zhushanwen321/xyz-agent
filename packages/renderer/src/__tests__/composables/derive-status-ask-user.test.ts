@@ -82,7 +82,7 @@ describe('T3: useSessionDerivations 注入 extensionUIStore.hasPendingAskUser（
     // 延迟 import：invalidateStatusCache 需在每次 pinia 重置后清理模块级缓存，
     // 避免 computed 持有上个用例的旧 store 闭包（对齐 session-active-state.test.ts 模式）
     const { useSessionDerivations, invalidateStatusCache } = await import(
-      '@/composables/features/useSessionDerivations'
+      '@/composables/features/chat/useSessionDerivations'
     )
     const { useExtensionUIStore } = await import('@/stores/extension-ui')
     invalidateStatusCache()

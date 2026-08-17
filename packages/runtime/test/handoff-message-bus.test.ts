@@ -167,8 +167,11 @@ describe('Handoff + MessageBus integration (BLOCKER-1)', () => {
    * 场景：runHandoff 流程中，newClient.prompt(doc) 后，EventInterpreter 产生的
    * message_start/text_delta 经 send 回调进 bus.publish(newId, msg)。
    * 验证 bus 的 streamRing 包含这些事件。
+   *
+   * wave:perf-w06（D5-1）：text_delta 归 transient——不入 ring、不分配 seq、直传订阅者；
+   * 只有 stream 类（message_start）入 ring。快照完整性语义随之调整。
    */
-  it('TC1: handoff flow publishes message_start + text_delta to bus for new session', async () => {
+  it('TC1: handoff flow publishes message_start (stream) to bus ring; text_delta is transient', async () => {
     // 启动 handoff
     const runPromise = service.runHandoff(SRC_ID)
     await new Promise((r) => setTimeout(r, 0))
@@ -198,26 +201,28 @@ describe('Handoff + MessageBus integration (BLOCKER-1)', () => {
     bus.publish(NEW_ID, makeMsg('message.text_delta', { sessionId: NEW_ID, delta: 'Hello' }))
     bus.publish(NEW_ID, makeMsg('message.text_delta', { sessionId: NEW_ID, delta: ' world' }))
 
-    // 验证 bus 内部 ring 包含这些事件
+    // 验证 bus 内部 ring 只含 stream 类（message_start）；text_delta 是 transient 不入 ring
     // subscribe 返回 snapshot 验证 ring 内容
     const ws = createMockBusClient()
     const result = bus.subscribe(NEW_ID, ws)
 
-    expect(result.snapshot).toHaveLength(3)
+    expect(result.snapshot).toHaveLength(1)
     expect(result.snapshot[0]!.type).toBe('message.message_start')
-    expect(result.snapshot[1]!.type).toBe('message.text_delta')
-    expect(result.snapshot[2]!.type).toBe('message.text_delta')
-    // seq 应该是单调递增的
-    expect(result.lastSeq).toBe(3)
+    // seq 只对 stream/state 分配：message_start 是 seq 1，两条 text_delta 不占 seq
+    expect(result.snapshot[0]!.seq).toBe(1)
+    expect(result.lastSeq).toBe(1)
   })
 
   /**
-   * TC2: renderer subscribe(newId) 后拿到 message_start + text_delta snapshot。
+   * TC2: renderer subscribe(newId) 后拿到 stream 类完整 snapshot。
    *
    * 场景：bus.publish 若干条后，调 subscribe(newId)，验证 snapshot 包含
-   * message_start + 所有 text_delta（按顺序）。
+   * message_start + complete（stream 类，按顺序回放）。
+   *
+   * wave:perf-w06（D5-1）：text_delta 归 transient（高频流，丢失可接受、不回放），
+   * subscribe 快照只含 stream 类；delta 的连续性靠 live push 保证。
    */
-  it('TC2: subscribe after publish returns complete snapshot with message_start + text_delta', () => {
+  it('TC2: subscribe after publish returns stream-only snapshot (message_start + complete)', () => {
     // 发布一系列流式事件
     bus.publish(NEW_ID, makeMsg('message.message_start', { sessionId: NEW_ID, role: 'assistant' }))
     bus.publish(NEW_ID, makeMsg('message.text_delta', { sessionId: NEW_ID, delta: 'Part 1' }))
@@ -229,26 +234,24 @@ describe('Handoff + MessageBus integration (BLOCKER-1)', () => {
     const ws = createMockBusClient()
     const result = bus.subscribe(NEW_ID, ws)
 
-    // snapshot 应包含所有 5 条事件，按发布顺序
-    expect(result.snapshot).toHaveLength(5)
+    // snapshot 只含 stream 类（message_start + complete），按发布顺序
+    expect(result.snapshot).toHaveLength(2)
     expect(result.snapshot.map((m) => m.type)).toEqual([
       'message.message_start',
-      'message.text_delta',
-      'message.text_delta',
-      'message.text_delta',
       'message.complete',
     ])
-    // lastSeq 应等于发布数
-    expect(result.lastSeq).toBe(5)
+    // lastSeq 只随 stream/state 类推进（2 条 stream）
+    expect(result.lastSeq).toBe(2)
   })
 
   /**
-   * TC3: subscribe 后的 live push 也带 seq 且正确路由。
+   * TC3: subscribe 后的 live push 正确路由。
    *
    * 场景：subscribe 后继续 publish，验证新事件自动推给已订阅的 ws。
+   * wave:perf-w06（D5-1）：transient 类（text_delta）不入 ring 但 live push 照常直传（无 seq）。
    */
   it('TC3: live push after subscribe delivers new events to subscribed ws', () => {
-    // 先发布 2 条
+    // 先发布 2 条（1 条 stream + 1 条 transient——ring 只存前者）
     bus.publish(NEW_ID, makeMsg('message.message_start', { sessionId: NEW_ID }))
     bus.publish(NEW_ID, makeMsg('message.text_delta', { sessionId: NEW_ID, delta: 'initial' }))
 
@@ -256,8 +259,8 @@ describe('Handoff + MessageBus integration (BLOCKER-1)', () => {
     const ws = createMockBusClient()
     const result = bus.subscribe(NEW_ID, ws)
 
-    expect(result.snapshot).toHaveLength(2)
-    expect(result.lastSeq).toBe(2)
+    expect(result.snapshot).toHaveLength(1)
+    expect(result.lastSeq).toBe(1)
 
     // 清除 subscribe 期间的 send 记录
     vi.mocked(ws.send).mockClear()
@@ -265,11 +268,12 @@ describe('Handoff + MessageBus integration (BLOCKER-1)', () => {
     // 继续发布新事件（live push）
     bus.publish(NEW_ID, makeMsg('message.text_delta', { sessionId: NEW_ID, delta: ' live' }))
 
-    // ws 应该收到 live push
+    // ws 应该收到 live push（transient 直传）
     expect(ws.send).toHaveBeenCalledTimes(1)
     const sentPayload = JSON.parse(vi.mocked(ws.send).mock.calls[0]![0]) as ServerMessage
     expect(sentPayload.type).toBe('message.text_delta')
     expect((sentPayload.payload as { delta?: string }).delta).toBe(' live')
+    expect(sentPayload.seq).toBeUndefined() // transient 不分配 seq
   })
 
   /**
@@ -314,10 +318,11 @@ describe('Handoff + MessageBus integration (BLOCKER-1)', () => {
     bus.publish(NEW_ID, makeMsg('message.message_start', { sessionId: NEW_ID }))
     bus.publish(NEW_ID, makeMsg('message.text_delta', { sessionId: NEW_ID, delta: 'data' }))
 
-    // 验证事件已在 bus 中
+    // 验证事件已在 bus 中（wave:perf-w06：ring 只存 stream 类 message_start）
     const ws1 = createMockBusClient()
     const before = bus.subscribe(NEW_ID, ws1)
-    expect(before.snapshot).toHaveLength(2)
+    expect(before.snapshot).toHaveLength(1)
+    expect(before.snapshot[0]!.type).toBe('message.message_start')
 
     // 启动 handoff 并 abort
     const runPromise = service.runHandoff(SRC_ID).catch(() => {})
@@ -328,9 +333,8 @@ describe('Handoff + MessageBus integration (BLOCKER-1)', () => {
     // abort 后 bus 中的事件仍在
     const ws2 = createMockBusClient()
     const after = bus.subscribe(NEW_ID, ws2)
-    expect(after.snapshot).toHaveLength(2)
+    expect(after.snapshot).toHaveLength(1)
     expect(after.snapshot[0]!.type).toBe('message.message_start')
-    expect(after.snapshot[1]!.type).toBe('message.text_delta')
   })
 
   /**
@@ -395,16 +399,14 @@ describe('Handoff + MessageBus integration (BLOCKER-1)', () => {
     const ws = createMockBusClient()
     const result = bus.subscribe(NEW_ID, ws)
 
-    // ── Step 6: 验证 snapshot 包含完整事件序列 ──
-    expect(result.snapshot).toHaveLength(5)
+    // ── Step 6: 验证 snapshot 包含 stream 类完整事件序列 ──
+    //（wave:perf-w06/D5-1：text_delta 是 transient 不入 ring，快照只含 message_start + complete）
+    expect(result.snapshot).toHaveLength(2)
     expect(result.snapshot.map((m) => m.type)).toEqual([
       'message.message_start',
-      'message.text_delta',
-      'message.text_delta',
-      'message.text_delta',
       'message.complete',
     ])
-    expect(result.lastSeq).toBe(5)
+    expect(result.lastSeq).toBe(2)
 
     // ── Step 7: subscribe 后继续 publish（live push）──
     vi.mocked(ws.send).mockClear()
@@ -422,25 +424,32 @@ describe('Handoff + MessageBus integration (BLOCKER-1)', () => {
    *
    * 场景：如果 handoff 过程中产生了大量事件（超过 ring 容量），
    * 最旧的事件会被淘汰，subscribe 只返回保留的事件。
+   *
+   * wave:perf-w06（D5-3）：溢出淘汰由 O(1) 覆盖写环形缓冲完成；text_delta 是 transient
+   * 不入 ring，改用 stream 类（message.status）驱动溢出。subscribe 不再返回 gap 字段
+   * （R-03：bus 内死 gauge 已删，gap 由 session-message-handler 基于 fromSeq 判定，
+   * 见 src/__tests__/session-message-handler-subscribe.test.ts）。
    */
   it('TC8: ring overflow — subscribe returns only ringCapacity most recent events', () => {
     // 用小容量 bus
     const smallBus = new MessageBus(5)
 
-    // 发布 8 条事件（超过容量 5）
+    // 发布 8 条 stream 类事件（超过容量 5）
     for (let i = 0; i < 8; i++) {
-      smallBus.publish(NEW_ID, makeMsg('message.text_delta', { sessionId: NEW_ID, delta: `chunk-${i}` }))
+      smallBus.publish(NEW_ID, makeMsg('message.status', { sessionId: NEW_ID, status: `chunk-${i}` }))
     }
 
     const ws = createMockBusClient()
     const result = smallBus.subscribe(NEW_ID, ws)
 
-    // 只保留最新的 5 条（chunk-3 到 chunk-7）
+    // 只保留最新的 5 条（chunk-3 到 chunk-7），按 seq 顺序导出
     expect(result.snapshot).toHaveLength(5)
-    expect((result.snapshot[0]!.payload as { delta?: string }).delta).toBe('chunk-3')
-    expect((result.snapshot[4]!.payload as { delta?: string }).delta).toBe('chunk-7')
+    expect((result.snapshot[0]!.payload as { status?: string }).status).toBe('chunk-3')
+    expect((result.snapshot[4]!.payload as { status?: string }).status).toBe('chunk-7')
+    expect(result.snapshot[0]!.seq).toBe(4) // 最旧 seq 随淘汰正确推进
+    expect(result.snapshot[4]!.seq).toBe(8)
     expect(result.lastSeq).toBe(8) // seq 仍然单调递增到 8
-    // ring 溢出时 gap 标记为 true（旧消息已被 FIFO 淘汰）
-    expect(result.gap).toBe(true)
+    // R-03：gap 不再由 bus 返回（死 gauge 已删），由 handler 基于 fromSeq 判定
+    expect('gap' in result).toBe(false)
   })
 })

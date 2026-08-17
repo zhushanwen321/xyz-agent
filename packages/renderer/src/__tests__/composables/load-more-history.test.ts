@@ -30,7 +30,7 @@ vi.mock('@/api', async () => {
 })
 
 import { useChatStore } from '@/stores/chat'
-import { useChat, resetChatModuleState } from '@/composables/features/useChat'
+import { useChat, resetChatModuleState } from '@/composables/features/chat/useChat'
 import { chat } from '@/api'
 
 function makeMessage(id: string, content: string): Message {

@@ -33,13 +33,11 @@
 
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { type GuiRenderResult } from "@xyz-agent/extension-protocol";
 import { type Static, Type } from "typebox";
 
 import { SHORT_ID_LENGTH } from "../constants";
 import { isActiveStatus, isTerminalStatus, transitionStatus } from "../engine/goal";
 import type { BudgetConfig, GoalStatus } from "../engine/types";
-import { buildGoalGui } from "../projection/gui";
 import { updateWidget } from "../projection/widget";
 import { createGoal, finalizeAndPersist, persistState, type ServicePorts, tickState } from "../service";
 import type { GoalSession } from "../session";
@@ -111,8 +109,6 @@ export interface GoalControlDetails {
 	goalId: string;
 	status: GoalStatus;
 	slug?: string;
-	/** RPC 模式下的 GUI 渲染描述符（progress-bar 预算进度）。TUI 模式无此字段。 */
-	__gui__?: GuiRenderResult;
 }
 
 // ── 业务 handler（契约对齐 §3，可测：fake ports）──────
@@ -344,10 +340,8 @@ export function registerGoalControlTool(pi: ExtensionAPI, session: GoalSession):
 						? `Goal completed.\nGoal ID: ${details.goalId}`
 						: `Goal reported blocked.\nGoal ID: ${details.goalId}\nReason: ${params.reason?.trim() ?? ""}`;
 
-			// RPC 模式下附加 __gui__（用展开避免 details 来自 frozen 对象时加字段失败）
-			if (ctx.mode === "rpc" && session.state) {
-				return { content: [{ type: "text", text }], details: { ...details, __gui__: buildGoalGui(session.state) } };
-			}
+			// 状态展示不再进 tool result（GUI 渲染字段已移除）：GUI 由 handle* 内的 updateWidget
+			// 经 guiSetWidget 推送（M17 对话流 widget 面板）。
 			return { content: [{ type: "text", text }], details };
 		},
 

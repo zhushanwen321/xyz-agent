@@ -1,5 +1,5 @@
 /**
- * Segment —— user message content 的结构化模型（ADR-0037）。
+ * Segment —— user message content 的结构化模型（ADR-0043）。
  *
  * Message.content 从纯 string 重构为 `string | Segment[]`：
  * - user message → Segment[]（badge 载体，含 skill/file/mention 等结构化片段）

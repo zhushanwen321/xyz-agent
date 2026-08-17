@@ -31,7 +31,7 @@ import { useChatStore } from '@/stores/chat'
 import {
   ensureStreamSubscription,
   resetChatModuleState,
-} from '@/composables/features/useChat'
+} from '@/composables/features/chat/useChat'
 import { deriveStatus } from '@/composables/logic/sessionStatus'
 import type { SessionSummary, ServerMessage } from '@xyz-agent/shared'
 

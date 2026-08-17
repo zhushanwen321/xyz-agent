@@ -123,9 +123,9 @@ describe('useMessageStreamRail · W2TC2: 传 mock vlistRef（virtua 路径）', 
     // 未修复时 activeTurnIndex 会是 4（> railTurns.length=3），TurnRail 的 topPct 计算会越界。
     const renderItems: RenderItem[] = [
       turnItem(1),
-      { kind: 'system', message: { id: 's1', role: 'system', content: 'x' } as never },
+      { kind: 'systemNotice', message: { id: 's1', role: 'system', content: 'x' } as never },
       turnItem(2),
-      { kind: 'system', message: { id: 's2', role: 'system', content: 'y' } as never },
+      { kind: 'systemNotice', message: { id: 's2', role: 'system', content: 'y' } as never },
       turnItem(3),
     ]
     const findItemIndex = vi.fn(() => 4)
@@ -144,9 +144,9 @@ describe('useMessageStreamRail · W2TC2: 传 mock vlistRef（virtua 路径）', 
     // renderItems = [system, turn1, system, turn2, turn3]：railTurns=[turn1,turn2,turn3]
     // rail idx=2（turn3）→ renderItems 下标=4
     const renderItems: RenderItem[] = [
-      { kind: 'system', message: { id: 's1', role: 'system', content: 'x' } as never },
+      { kind: 'systemNotice', message: { id: 's1', role: 'system', content: 'x' } as never },
       turnItem(1),
-      { kind: 'system', message: { id: 's2', role: 'system', content: 'y' } as never },
+      { kind: 'systemNotice', message: { id: 's2', role: 'system', content: 'y' } as never },
       turnItem(2),
       turnItem(3),
     ]

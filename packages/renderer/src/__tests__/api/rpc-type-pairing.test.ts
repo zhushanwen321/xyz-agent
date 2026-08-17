@@ -15,23 +15,45 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { ReplyPayloadMap, ServerMessageMap } from '@xyz-agent/shared'
+import type { ClientMessageMap, ReplyPayloadMap, ServerMessageMap } from '@xyz-agent/shared'
 import { command } from '@/api/request'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const domainsDir = resolve(__dirname, '../../api/domains')
+
+/**
+ * 类型用例的运行时调用统一包装：测试环境无 WS 连接，transport.send 必然 fast-fail
+ * reject（code='disconnected'）。本文件只验证编译期类型契约，挂 catch 消化 rejection
+ * 防 unhandled rejection。泛型签名与 command 一致，返回类型推导（Awaited<typeof p>）不受影响。
+ * 注意：用例内挂在 p 上的 .then 链仍需自带 .catch——then 产生的派生 promise 在 p reject
+ * 时同样 reject，无人处理仍会报 unhandled。
+ */
+function silentCommand<K extends keyof ReplyPayloadMap>(
+  type: K,
+  payload: ClientMessageMap[K],
+): Promise<ReplyPayloadMap[K]> {
+  const p = command(type, payload)
+  void p.catch(() => {})
+  return p
+}
 
 // ════════════════════════════════════════════════════════════════════════
 // U1: ReplyPayloadMap key 完整性（覆盖所有 RPC request type）
 // ════════════════════════════════════════════════════════════════════════
 
 describe('U1: ReplyPayloadMap — key 覆盖 RPC request type', () => {
-  it('session.switch 映射存在且为 void（ack 型，前端不读 payload）', () => {
-    // session.switch 的 reply 是 session.history（带 session summary），
-    // 但前端 request<void> 不读 payload，故 ReplyPayloadMap['session.switch']=void
+  it('session.switch 映射存在且为 session.switched（R-11 瘦身：无 messages，前端不读 payload）', () => {
+    // wave:perf-w20（R-11）：session.switch 的 reply 拆分为 session.switched
+    // （{ sessionId, session }，不再全量 getHistory 塞 messages——历史消费路径是
+    // selectSession 内显式 session.history RPC）。前端 switchSession 返回 void 不读 payload。
     type SwitchReply = ReplyPayloadMap['session.switch']
-    const _check: SwitchReply = undefined as void
-    expect(_check).toBeUndefined()
+    // 编译期形状断言：含 session、不含 messages/historyTruncated（瘦身锁定）
+    const hasSession: 'session' extends keyof SwitchReply ? true : false = true
+    const hasMessages: 'messages' extends keyof SwitchReply ? true : false = false
+    const hasTruncated: 'historyTruncated' extends keyof SwitchReply ? true : false = false
+    expect(hasSession).toBe(true)
+    expect(hasMessages).toBe(false)
+    expect(hasTruncated).toBe(false)
   })
 
   it('session.history 映射存在且含 messages + historyTruncated', () => {
@@ -125,25 +147,25 @@ describe('U1: ReplyPayloadMap — key 覆盖 RPC request type', () => {
 describe('U2: command() — payload 受 ClientMessageMap[K] 约束', () => {
   it('session.history 接受 { sessionId }', () => {
     // 正向：合法 payload
-    const p = command('session.history', { sessionId: 's1' })
+    const p = silentCommand('session.history', { sessionId: 's1' })
     expect(p).toBeInstanceOf(Promise)
   })
 
   it('session.history 拒绝 { content }（字段不存在）', () => {
     // 负向：session.history 的 payload 是 { sessionId }，不接受 content
     // @ts-expect-error — content 不在 ClientMessageMap['session.history'] 的 payload 里
-    command('session.history', { content: 'x' })
+    silentCommand('session.history', { content: 'x' })
     expect(true).toBe(true)
   })
 
   it('message.send 接受 { sessionId, content }', () => {
-    const p = command('message.send', { sessionId: 's1', content: 'hi' })
+    const p = silentCommand('message.send', { sessionId: 's1', content: 'hi' })
     expect(p).toBeInstanceOf(Promise)
   })
 
   it('message.send 拒绝缺 content', () => {
     // @ts-expect-error — message.send payload 必须含 content
-    command('message.send', { sessionId: 's1' })
+    silentCommand('message.send', { sessionId: 's1' })
     expect(true).toBe(true)
   })
 })
@@ -154,7 +176,7 @@ describe('U2: command() — payload 受 ClientMessageMap[K] 约束', () => {
 
 describe('U3: command() — 返回类型从 ReplyPayloadMap[K] 推导', () => {
   it('git.stage 返回 Promise<void>（ack 型）', () => {
-    const p = command('git.stage', { sessionId: 's1', filePaths: ['/x'] })
+    const p = silentCommand('git.stage', { sessionId: 's1', filePaths: ['/x'] })
     // ack 型返回 void，不能读 .status
     type Ret = Awaited<typeof p>
     const _check: Ret = undefined as void
@@ -162,18 +184,18 @@ describe('U3: command() — 返回类型从 ReplyPayloadMap[K] 推导', () => {
   })
 
   it('git.stage 返回值读 .status 编译报错（void 无 status）', () => {
-    const p = command('git.stage', { sessionId: 's1', filePaths: ['/x'] })
+    const p = silentCommand('git.stage', { sessionId: 's1', filePaths: ['/x'] })
     // @ts-expect-error — void 类型无 status 属性
-    void p.then((r) => r.status)
+    void p.then((r) => r.status).catch(() => {})
     expect(true).toBe(true)
   })
 
   it('session.history 返回 Promise<含 messages>', () => {
-    const p = command('session.history', { sessionId: 's1' })
+    const p = silentCommand('session.history', { sessionId: 's1' })
     void p.then((r) => {
       // r 是 ReplyPayloadMap['session.history']，可读 messages
       expect(Array.isArray(r.messages)).toBe(true)
-    })
+    }).catch(() => {})
   })
 })
 

@@ -1,6 +1,6 @@
 import { createI18n } from 'vue-i18n'
+import type { DefaultLocaleMessageSchema } from 'vue-i18n'
 import zhCN from './locales/zh-CN'
-import enUS from './locales/en-US'
 
 export type Locale = 'zh-CN' | 'en-US'
 
@@ -27,21 +27,97 @@ function readInitialLocale(): Locale {
   return legacy === 'en-US' ? 'en-US' : 'zh-CN'
 }
 
-const i18n = createI18n({
+const initialLocale = readInitialLocale()
+
+/**
+ * Q1-2 惰性 locale 加载：初始只静态注册 zh-CN（默认 locale，语言包不进异步 chunk），
+ * en-US 按需动态 import + setLocaleMessage（不进首屏 chunk——zh-CN 用户不再为用不到的
+ * en-US 全量（settings 等 13 域）付出启动编译成本；en-US 偏好用户首屏则同时含静态注册的
+ * zh-CN（顶层静态 import 无条件进首屏 chunk，因其为默认 locale）与 top-level await 拉取的
+ * en-US，两份均在、无对应节省）。
+ *
+ * 显式泛型 <[DefaultLocaleMessageSchema], string, false>：默认推断会把 composer 的 locale
+ * ref 窄化为 '"zh-CN"'（messages 只含 zh-CN），setLocale('en-US') 赋值需 cast。Locales 不能
+ * 填 Locale 联合——那会要求 messages 全 locale 齐备（TS2741，与 en-US 懒加载冲突）；用
+ * string 后写路径 locale.value = locale 免 cast，读路径 getLocale 保持 as Locale 收窄
+ * （不变式：locale 只经 createI18n 初始值 / setLocale 写入，运行时必为 Locale 联合成员）。
+ */
+const i18n = createI18n<[DefaultLocaleMessageSchema], string, false>({
   legacy: false,
-  locale: readInitialLocale(),
+  locale: initialLocale,
   fallbackLocale: 'en-US',
   messages: {
     'zh-CN': zhCN,
-    'en-US': enUS,
   },
 })
 
+/** 已注册 messages 的 locale（幂等守卫：避免重复动态 import / setLocaleMessage） */
+const loadedLocales = new Set<Locale>(['zh-CN'])
+
 /**
- * 切换运行时语言。仅切换 i18n 实例；持久化由 settings store 统一负责
- * （system 偏好 key），此处不再单独写 locale，避免双真相源。
+ * 动态加载 en-US 语言包并注册。字面量 import 路径保证 bundler 静态可分析（拆独立 chunk）。
+ *
+ * 不变量：zh-CN 静态注册（loadedLocales 初始含 'zh-CN'），动态加载只有 en-US 一条路径
+ * ——参数收窄为字面量 'en-US'，杜绝「zh-CN 走动态 import」的死分支（loadedLocales 初始已含
+ * zh-CN，该分支永不执行，产物却会留一个桩 chunk）。
+ *
+ * 失败处理：动态 import 失败（chunk 404 / 产物损坏）在内部 catch——warn 指向恢复动作而非
+ * 变成 unhandledrejection；返回是否加载成功，调用方据决定是否仍切换 locale。
  */
-export function setLocale(locale: Locale): void {
+async function loadEnUsMessages(): Promise<boolean> {
+  if (loadedLocales.has('en-US')) return true
+  try {
+    const mod = await import('./locales/en-US')
+    i18n.global.setLocaleMessage('en-US', mod.default)
+    loadedLocales.add('en-US')
+    return true
+  } catch (e) {
+    console.warn(
+      '[i18n] en-US 语言包加载失败，UI 保持当前语言。可重试 setLocale(\'en-US\')；' +
+      '若持续失败请检查构建产物完整性（renderer dist/assets 内 en-US chunk 是否存在）',
+      e,
+    )
+    return false
+  }
+}
+
+// en-US 偏好用户冷启动：top-level await 在模块解析内补齐 en-US 再放行 main.ts——
+// 否则 connecting 屏第一帧（AppShell 渲染前）locale=en-US 但 messages 未注册，
+// 会看到裸 key / 回退中文的闪烁。zh-CN 用户（默认）不执行此分支：模块同步解析、
+// en-US 不进首屏 chunk（切换时再动态拉取）。
+if (initialLocale === 'en-US') {
+  await loadEnUsMessages()
+}
+
+/**
+ * fallbackLocale 'en-US' 懒加载的兜底恢复：zh-CN 用户缺 key 时 vue-i18n 回退 en-US，
+ * 若 en-US 未注册则显示裸 key。启动后空闲时后台预载（不阻塞首屏），loadedLocales
+ * 幂等守卫使已加载场景零开销。requestIdleCallback 不可用的环境回落 setTimeout。
+ */
+function scheduleFallbackPreload(): void {
+  const idle = typeof window !== 'undefined' ? window.requestIdleCallback : undefined
+  if (typeof idle === 'function') {
+    idle(() => void loadEnUsMessages())
+  } else {
+    setTimeout(() => void loadEnUsMessages(), 0)
+  }
+}
+scheduleFallbackPreload()
+
+/** setLocale 请求序号：连续快速切换时后写胜，防止先发的动态加载完成晚到后回写过期 locale */
+let setLocaleSeq = 0
+
+/**
+ * 切换运行时语言。首次切换到 en-US 时先动态 import 其语言包（拆 chunk，
+ * 一次网络/磁盘往返）再切换；已加载的 locale（含初始 zh-CN）同步命中缓存，仅一个 microtask。
+ * en-US 加载失败时保持当前语言不切换（messages 缺失下切换只会显示裸 key）。
+ * 持久化由 settings store 统一负责（system 偏好 key），此处不写 locale，避免双真相源。
+ */
+export async function setLocale(locale: Locale): Promise<void> {
+  const seq = ++setLocaleSeq
+  // zh-CN 静态注册（loadedLocales 初始含之），仅 en-US 需要动态拉取
+  if (locale === 'en-US' && !(await loadEnUsMessages())) return
+  if (seq !== setLocaleSeq) return // 已有更新的切换请求，本请求过期
   i18n.global.locale.value = locale
 }
 

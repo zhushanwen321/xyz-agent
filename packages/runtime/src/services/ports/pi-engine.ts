@@ -8,7 +8,7 @@
  * 跨服务 facade 契约。本文件是 pi 引擎 / 进程池接口的唯一权威定义点。
  */
 
-import type { ThinkingLevel } from '@xyz-agent/shared'
+import type { ThinkingLevel, ProviderId } from '@xyz-agent/shared'
 
 /**
  * pi 任意 JSON 响应的逃生类型。
@@ -141,8 +141,9 @@ export interface IPiEngine {
   abort(): Promise<PiMessage>
   steer(content: string): Promise<PiMessage>
   followUp(content: string): Promise<PiMessage>
-  setModel(provider: string, modelId: string): Promise<PiMessage>
+  setModel(provider: ProviderId, modelId: string): Promise<PiMessage>
   setThinkingLevel(level: string): Promise<PiMessage>
+  /** [DEAD] pi get_messages 死路径——见 RpcPiEngine.getHistory（生产零调用） */
   getHistory(): Promise<PiMessage>
   /**
    * 拉取 pi session 的完整 entry 树（get_entries RPC）。

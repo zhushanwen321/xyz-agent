@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore } from '@/stores/chat'
-import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
+import { useSessionDerivations } from '@/composables/features/chat/useSessionDerivations'
 
 describe('W3: derivedStatus 缓存复用（AC-2）', () => {
   beforeEach(() => setActivePinia(createPinia()))

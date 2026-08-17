@@ -25,10 +25,14 @@ const flowMock = vi.hoisted(() => ({
   currentModel: { value: null as string | null },
   gitInfo: { value: { branch: 'main' } as { branch: string } | null },
   state: { value: 'landing' as string },
+  mode: { value: 'plain-repo' as string },
+  worktreeItems: { value: [] as Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }> },
   startFlow: vi.fn(),
   presetCwd: vi.fn(),
   openDirPopover: vi.fn(),
   openBranchPopover: vi.fn(),
+  openPresetPopover: vi.fn(),
+  openCreateWorktree: vi.fn(),
   closeOverlay: vi.fn(),
   selectWorkspace: vi.fn(),
   selectBranch: vi.fn(),
@@ -36,11 +40,27 @@ const flowMock = vi.hoisted(() => ({
   openDirDialog: vi.fn(),
   openBranchModal: vi.fn(),
   setPendingModel: vi.fn(),
+  setPendingPreset: vi.fn(),
 }))
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
-  useNewTaskFlow: () => flowMock,
-  resetNewTaskFlow: vi.fn(),
+// [w5] NewTaskDeps mock（Landing 经 useNewTaskDeps 构造 + provide NewTaskDepsKey；
+// ui 组件（PresetSelectChip 等）inject 消费。flow = flowMock）
+const depsMock = vi.hoisted(() => ({
+  recentWorkspaces: { value: [] as unknown[] },
+  listBranches: vi.fn(),
+  createWorktree: vi.fn(),
+  detectWorkspace: vi.fn(),
+  pickDirectory: vi.fn(),
+  presets: { value: [] as unknown[] },
+  defaultPresetId: { value: '' },
+  presetOpenRequest: { value: 0 },
+  loadPresets: vi.fn(),
+  setDefaultPreset: vi.fn(),
+  toast: { error: vi.fn() },
 }))
+vi.mock('@/composables/features/new-task/useNewTaskDeps', () => ({
+  useNewTaskDeps: () => ({ flow: flowMock, ...depsMock }),
+}))
+
 
 beforeEach(() => {
   setActivePinia(createPinia())

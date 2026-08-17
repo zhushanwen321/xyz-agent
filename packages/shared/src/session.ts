@@ -7,7 +7,7 @@
  * - 'dead'：pi 进程异常退出（前端收到 session.exited 后标记）。dead session 在侧栏置灰，
  *   panel 显示「进程已退出」占位，点击「重新打开」触发 restore 重新 spawn pi。
  *
- * 终态（W5，ADR 0036，来自 session_end entry）：
+ * 终态（W5，ADR 0042，来自 session_end entry）：
  * - 'done'：正常完成
  * - 'error'：LLM 出错
  * - 'stopped'：用户 abort / 进程崩溃
@@ -43,6 +43,13 @@ export interface SessionSummary {
    * 点击复制完整路径。
    */
   sessionFile?: string
+  /**
+   * 归属 project id（D14 语义修正，2026-08-04）：session 创建时归属当前 activeProject，
+   * 与 cwd 无关（project 可跨目录）。无值 = 未归类，展示层归入默认项目（proj-default 兑底）。
+   * 持久化在独立 sidecar `<sessionFile>.project.json`（与 preset sidecar 同模式），
+   * runtime 扫描时读取填充。fork 继承父归属。
+   */
+  projectId?: string
   /**
    * 隐藏 session（如公共 session）：不显示在 sidebar session 列表，仅供内部使用（如
    * landing 态命令源）。scanner listAll 过滤掉 hidden:true 的 session。

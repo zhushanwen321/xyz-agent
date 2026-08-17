@@ -420,4 +420,4 @@ test.describe('对话流 E2E', () => {
 - 集成测试：[`__tests__/fg5-message-stream.test.ts`](../../packages/renderer/src/__tests__/fg5-message-stream.test.ts)
 - mock 流式：[`api/mock/run-send-stream.ts`](../../packages/renderer/src/api/mock/run-send-stream.ts)
 - 发送入口：[02-composer.md](./02-composer.md)（Composer.onSend → chat.send）
-- FileChanges 通道：[ADR-0024](../architecture/adr/0024-filechanges-channel.md)
+- FileChanges 通道：[ADR-0024](../adr/0024-filechanges-channel.md)

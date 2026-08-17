@@ -77,40 +77,34 @@ describe('ExtensionResolver', () => {
     vi.clearAllMocks()
   })
 
-  describe('normalizeExtName', () => {
-    it('removes pi- prefix from unscoped name', () => {
+  describe('readExtName', () => {
+    it('reads package.json name as dedup key', () => {
+      mockedReadFileSync.mockImplementation((p: unknown) => {
+        if (typeof p === 'string' && p === '/dir/package.json') {
+          return JSON.stringify({ name: '@zhushanwen/pi-ask-user', keywords: ['pi-package'] })
+        }
+        throw new Error('not found')
+      })
       // @ts-expect-error — testing private method
-      expect(resolver.normalizeExtName('pi-subagents')).toBe('subagents')
+      expect(resolver.readExtName('/dir')).toBe('@zhushanwen/pi-ask-user')
     })
 
-    it('preserves scope and removes pi- prefix', () => {
+    it('falls back to basename when name missing or non-string', () => {
+      mockedReadFileSync.mockImplementation((p: unknown) => {
+        if (typeof p === 'string' && p === '/dir/package.json') {
+          return JSON.stringify({ keywords: ['pi-package'] })
+        }
+        throw new Error('not found')
+      })
+      // basename 被 mock 为 split('/').pop()，'/dir' → 'dir'
       // @ts-expect-error — testing private method
-      expect(resolver.normalizeExtName('@zhushanwen/pi-goal')).toBe('@zhushanwen/goal')
+      expect(resolver.readExtName('/dir')).toBe('dir')
     })
 
-    it('preserves non-pi scope intact', () => {
+    it('falls back to basename when package.json unreadable', () => {
+      mockedReadFileSync.mockImplementation(() => { throw new Error('not found') })
       // @ts-expect-error — testing private method
-      expect(resolver.normalizeExtName('@scope/subagents')).toBe('@scope/subagents')
-    })
-
-    it('handles scoped name without pi- prefix', () => {
-      // @ts-expect-error — testing private method
-      expect(resolver.normalizeExtName('@scope/my-ext')).toBe('@scope/my-ext')
-    })
-
-    it('handles name without pi- prefix', () => {
-      // @ts-expect-error — testing private method
-      expect(resolver.normalizeExtName('my-ext')).toBe('my-ext')
-    })
-
-    it('prevents dedup collision between different scopes', () => {
-      // @ts-expect-error — testing private method
-      const name1 = resolver.normalizeExtName('@scope1/pi-goal')
-      // @ts-expect-error — testing private method
-      const name2 = resolver.normalizeExtName('@scope2/pi-goal')
-      expect(name1).not.toBe(name2)
-      expect(name1).toBe('@scope1/goal')
-      expect(name2).toBe('@scope2/goal')
+      expect(resolver.readExtName('/dir')).toBe('dir')
     })
   })
 
@@ -180,7 +174,7 @@ describe('ExtensionResolver', () => {
 
       const result = resolver.scanSettingsExtensions()
       expect(result.size).toBe(1)
-      expect(result.get('ask-user')).toBe(pkgDir)
+      expect(result.get('pi-ask-user')).toBe(pkgDir)
     })
 
     it('returns disabled packages (pure discovery, no disabled filtering)', () => {
@@ -215,8 +209,8 @@ describe('ExtensionResolver', () => {
       const result = resolver.scanSettingsExtensions()
       // disabled 过滤已移至 extension-filter.ts，resolver 全量返回
       expect(result.size).toBe(1)
-      // normalizeExtName('pi-ask-user') 去掉 pi- 前缀 → 'ask-user'
-      expect(result.get('ask-user')).toBe(pkgDir)
+      // readExtName 读 package.json.name → 'pi-ask-user'（全链路统一用 package.json.name）
+      expect(result.get('pi-ask-user')).toBe(pkgDir)
     })
 
     it('skips invalid pi extensions', () => {
@@ -254,30 +248,95 @@ describe('ExtensionResolver', () => {
   })
 
   describe('scanBundledExtensions', () => {
-    // dev 模式 projectRoot = apps/electron，bundled 在 repo root 的 resources/pi/agent/extensions/。
-    // join 被 mock 为字符串拼接（不解析 ..），路径为 {projectRoot}/../../resources/pi/agent/extensions
-    const bundledMockPath = '/project/../../resources/pi/agent/extensions'
+    // dev 模式 projectRoot = apps/electron，源码目录 = repoRoot/extensions。
+    // join mock 为字符串拼接（不解析 ..），dev 源码路径 = '/project/../../extensions'。
+    // dev 扫描源码后按 mandatory SSOT 过滤：mock 3 个包（2 mandatory + 1 非 mandatory）验证过滤。
+    const devSourceDir = '/project/../../extensions'
+    const nameByDir: Record<string, string> = {
+      goal: '@zhushanwen/pi-goal',
+      todo: '@zhushanwen/pi-todo',
+      'context-engineering': '@zhushanwen/pi-context-engineering',
+    }
 
-    it('scans bundled directory in dev mode', () => {
-      mockDir(bundledMockPath)
+    // dev 源码扫描专用 mock：package.json.name 返回真实 scoped 名（与 mandatory SSOT 对齐）
+    function mockDevSource(): void {
+      mockedExistsSync.mockImplementation((p: unknown) => {
+        if (typeof p !== 'string') return false
+        if (p === devSourceDir) return true
+        if (p.endsWith('/package.json')) {
+          const dir = p.replace(/\/package\.json$/, '').split('/').pop() ?? ''
+          return dir in nameByDir
+        }
+        return p.startsWith(devSourceDir + '/')
+      })
+      mockedReaddirSync.mockImplementation(((p: unknown) => {
+        if (p === devSourceDir) return Object.keys(nameByDir)
+        return []
+      }) as unknown as typeof readdirSync)
+      mockedStatSync.mockImplementation((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        const base = p.split('/').pop() ?? ''
+        if (!(base in nameByDir)) {
+          const err = new Error('not found') as NodeJS.ErrnoException
+          err.code = 'ENOENT'
+          throw err
+        }
+        return { isDirectory: () => true } as import('node:fs').Stats
+      })
+      mockedReadFileSync.mockImplementation((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        if (p.endsWith('/package.json')) {
+          const dir = p.replace(/\/package\.json$/, '').split('/').pop() ?? ''
+          if (dir in nameByDir) {
+            return JSON.stringify({ name: nameByDir[dir], keywords: ['pi-package'] })
+          }
+        }
+        throw new Error('not found')
+      })
+    }
 
+    it('dev 扫描源码目录并按 mandatory SSOT 过滤（保留 mandatory，剔除非 mandatory）', () => {
+      mockDevSource()
       const result = resolver.scanBundledExtensions('/project', false)
+      // 只剩 2 个 mandatory（goal + todo），非 mandatory 的 context-engineering 被过滤
       expect(result.size).toBe(2)
-      expect(result.has('ext-a')).toBe(true)
-      expect(result.has('ext-b')).toBe(true)
-      expect(result.has('shared')).toBe(false)
+      expect(result.has('@zhushanwen/pi-goal')).toBe(true)
+      expect(result.has('@zhushanwen/pi-todo')).toBe(true)
+      expect(result.has('@zhushanwen/pi-context-engineering')).toBe(false)
+      // 路径指向源码目录（join mock 不解析 ..）
+      expect(result.get('@zhushanwen/pi-goal')).toBe(devSourceDir + '/goal')
     })
 
-    it('returns empty in packaged mode', () => {
+    it('packaged 读 staged bundle 目录（@zhushanwen scope，路径不变）', () => {
+      const stagedDir = '/project/extensions/@zhushanwen'
+      mockedExistsSync.mockImplementation((p: unknown) => {
+        if (typeof p !== 'string') return false
+        if (p === stagedDir) return true
+        if (p.endsWith('/package.json') && p.startsWith(stagedDir + '/')) return true
+        return false
+      })
+      mockedReaddirSync.mockImplementation(((p: unknown) => {
+        if (p === stagedDir) return ['pi-goal'] as string[]
+        return [] as string[]
+      }) as unknown as typeof readdirSync)
+      mockedStatSync.mockImplementation(() => ({ isDirectory: () => true } as import('node:fs').Stats))
+      mockedReadFileSync.mockImplementation((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        if (p.endsWith('/package.json') && p.includes(stagedDir)) {
+          return JSON.stringify({ name: '@zhushanwen/pi-goal', keywords: ['pi-package'] })
+        }
+        throw new Error('not found')
+      })
       const result = resolver.scanBundledExtensions('/project', true)
-      expect(result.size).toBe(0)
+      expect(result.size).toBe(1)
+      expect(result.has('@zhushanwen/pi-goal')).toBe(true)
+      expect(result.get('@zhushanwen/pi-goal')).toBe(stagedDir + '/pi-goal')
     })
 
-    it('skips shared directory', () => {
-      mockDir(bundledMockPath)
-
+    it('dev 源码目录不存在时返回空（全新 clone 未装依赖）', () => {
+      mockedExistsSync.mockImplementation(() => false)
       const result = resolver.scanBundledExtensions('/project', false)
-      expect(result.has('shared')).toBe(false)
+      expect(result.size).toBe(0)
     })
   })
 
@@ -424,8 +483,8 @@ describe('ExtensionResolver', () => {
 
   describe('resolve', () => {
     it('integrates all 5 sources and deduplicates', () => {
-      // dev 模式 bundled 在 repo root（projectRoot/../../resources/...），join mock 不解析 ..
-      const bundledDir = '/project/../../resources/pi/agent/extensions'
+      // dev 模式 bundled 走源码目录（projectRoot/../../extensions），join mock 不解析 ..
+      const bundledDir = '/project/../../extensions'
       const home = process.env.HOME ?? '/home/user'
       const settingsDir = `${home}/.xyz-agent/pi/agent`
       const settingsPath = `${settingsDir}/settings.json`
@@ -457,7 +516,7 @@ describe('ExtensionResolver', () => {
       })
 
       mockedReaddirSync.mockImplementation(((p: unknown) => {
-        if (p === bundledDir) return ['ext-a', 'shared'] as string[]
+        if (p === bundledDir) return ['goal', 'shared'] as string[]
         if (p === `${home}/.xyz-agent/pi/agent/extensions`) return ['ext-c'] as string[]
         return [] as string[]
       }) as unknown as typeof readdirSync)
@@ -483,9 +542,13 @@ describe('ExtensionResolver', () => {
         }
         // package.json for bundled/third-party/user extensions
         if (p.endsWith('/package.json')) {
-          const name = p.replace(/\/package\.json$/, '').split('/').pop() ?? ''
-          if (['ext-a', 'ext-c', 'my-ext'].includes(name)) {
-            return JSON.stringify({ name, keywords: ['pi-package'] })
+          const base = p.replace(/\/package\.json$/, '').split('/').pop() ?? ''
+          // bundled 源码包 goal 返回真实 scoped 名（mandatory SSOT 对齐，过 mandatory 过滤）
+          if (base === 'goal') {
+            return JSON.stringify({ name: '@zhushanwen/pi-goal', keywords: ['pi-package'] })
+          }
+          if (['ext-c', 'my-ext'].includes(base)) {
+            return JSON.stringify({ name: base, keywords: ['pi-package'] })
           }
         }
         throw new Error('not found')
@@ -494,8 +557,8 @@ describe('ExtensionResolver', () => {
       resolver = new ExtensionResolver({ settingsDir, thirdPartyDir: `${settingsDir}/extensions`, npmDir: join(settingsDir, 'npm') })
       const result = resolver.resolve('/project', false, ['/custom/my-ext'])
 
-      // bundled ext-a
-      expect(result.extensionDirs.some(d => d.path === bundledDir + '/ext-a')).toBe(true)
+      // bundled goal（dev 走源码，经 mandatory 过滤后保留）
+      expect(result.extensionDirs.some(d => d.path === bundledDir + '/goal')).toBe(true)
       // third-party ext-c
       expect(result.extensionDirs.some(d => d.path.includes('ext-c'))).toBe(true)
       // user extension

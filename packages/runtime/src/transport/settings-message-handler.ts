@@ -3,8 +3,8 @@
  * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage, ProviderSource, SkillCacheScope } from '@xyz-agent/shared'
-import type { IConfigService, ISessionService, IModelService } from '../interfaces.js'
+import type { ClientMessage, ProviderSource, SkillCacheScope, ProviderId } from '@xyz-agent/shared'
+import type { IConfigService, ISessionService, IModelService, IAuthService } from '../interfaces.js'
 import type { SkillRegistry } from '../services/skill-registry.js'
 import { toErrorMessage } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
@@ -14,6 +14,8 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
   configService: IConfigService
   sessionService: ISessionService
   modelService: IModelService
+  /** OAuth Login（路径 B）：config.oauthLogin/oauthCancel RPC 路由 + auth.* 事件由 AuthService 推 broadcast */
+  authService: IAuthService
   /** W4：skillRegistry（全局 + 项目级 skill 缓存，带 watcher）。landing 全局 skill 经此拿 globalCache（FR-5）。 */
   skillRegistry: SkillRegistry
   projectRoot: string
@@ -28,9 +30,33 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
   broadcastExtensionDirs(): void
 }
 
+/**
+ * provider 增删后统一维护 defaultModel（design provider-arch-hardening §3.3 D3 / Phase 3）。
+ *
+ * 二选一：有 newDefault 直接用（不读盘）；无则 getDefaultModel 兜底（内部 findValidDefaultModel +
+ * wasFixed:true 时写回 settings.json）。config.defaults 广播收敛在本 helper 内一次，消除 5 handler
+ * 各自编排的遗漏根因（applyImportProviders 曾漏维护，commit cd41254ba 局部补）。
+ *
+ * broadcastProviderList 不在此收口（决策 D3：语义正交——provider 列表变更 vs defaultModel 对账；
+ * 且 applyImport 只成功时广播、其它总广播，留各 handler 更清晰）。
+ */
+function reconcileDefaultModelAfterProviderChange(
+  ctx: SettingsHandlerContext,
+  existingNewDefault?: { provider: ProviderId; modelId: string },
+): void {
+  const dm = existingNewDefault ?? ctx.configService.getDefaultModel()
+  if (!dm) return
+  ctx.broadcast({
+    type: 'config.defaults',
+    id: ctx.nextPushId(),
+    payload: { defaultModel: `${dm.provider}/${dm.modelId}`, source: 'provider-change' },
+  })
+}
+
 export class SettingsMessageHandler {
   constructor(private ctx: SettingsHandlerContext) {}
 
+  // eslint-disable-next-line max-lines-per-function -- config.* 路由 switch，case 数随业务增长天然偏长，拆分收益低于可读性损失（同 session-message-handler 先例）
   async handleSettingsMessage(msg: ClientMessage, ws: WsType): Promise<boolean> {
     switch (msg.type) {
       case 'config.getProviders':
@@ -38,31 +64,69 @@ export class SettingsMessageHandler {
         return true
       case 'config.setProvider': {
         const { providerId, ...data } = msg.payload
-        const setResult = this.ctx.configService.setProvider(providerId, data as Parameters<IConfigService['setProvider']>[1])
+        const setResult = await this.ctx.configService.setProvider(providerId, data as Parameters<IConfigService['setProvider']>[1])
         this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId })
         this.ctx.broadcastProviderList()
-        // 如果 fallback 修正了 defaultModel，广播到所有 panel
-        if (setResult.newDefault) {
-          this.ctx.broadcast({
-            type: 'config.defaults',
-            id: this.ctx.nextPushId(),
-            payload: { defaultModel: `${setResult.newDefault.provider}/${setResult.newDefault.modelId}`, source: 'provider-updated' },
-          })
-        }
+        reconcileDefaultModelAfterProviderChange(this.ctx, setResult.newDefault)
         return true
       }
       case 'config.deleteProvider': {
-        const delResult = this.ctx.configService.deleteProvider(msg.payload.providerId)
+        const delResult = await this.ctx.configService.deleteProvider(msg.payload.providerId)
         this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId: msg.payload.providerId, deleted: true })
         this.ctx.broadcastProviderList()
-        // 如果 fallback 修正了 defaultModel，广播到所有 panel
-        if (delResult.newDefault) {
-          this.ctx.broadcast({
-            type: 'config.defaults',
-            id: this.ctx.nextPushId(),
-            payload: { defaultModel: `${delResult.newDefault.provider}/${delResult.newDefault.modelId}`, source: 'provider-deleted' },
-          })
+        reconcileDefaultModelAfterProviderChange(this.ctx, delResult.newDefault)
+        return true
+      }
+      case 'config.toggleProviderEnabled': {
+        // wave4 C1：provider 启用切换走 toggleProviderEnabled（写 enabledModels 白名单），
+        // 替代旧 setProvider({enabled})。reply config.providerUpdated + broadcastProviderList
+        // （wave2 双源聚合 + deriveEnabled 派生新启用状态）+ newDefault 广播（边界2 default 重选）。
+        const { providerId, enabled } = msg.payload
+        const toggleResult = this.ctx.configService.toggleProviderEnabled(providerId, enabled)
+        this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId })
+        this.ctx.broadcastProviderList()
+        reconcileDefaultModelAfterProviderChange(this.ctx, toggleResult.newDefault)
+        return true
+      }
+      case 'config.removeProviderByKind': {
+        // wave4 IF3：按体系移除 provider。catalog 清凭据/override/残留（不删 pi 定义），
+        // custom 删条目 + 清残留。reply config.providerUpdated + broadcastProviderList +
+        // newDefault 广播（custom 分支 removeProvider 内 default 重选）。
+        const { providerId, kind } = msg.payload
+        const removeResult = await this.ctx.configService.removeProviderByKind(providerId, kind)
+        this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId, deleted: true })
+        this.ctx.broadcastProviderList()
+        reconcileDefaultModelAfterProviderChange(this.ctx, removeResult.newDefault)
+        return true
+      }
+      case 'config.oauthLogin': {
+        const result = this.ctx.authService.login(msg.payload.providerId)
+        this.ctx.reply(ws, msg.id, 'config.oauthLoginReply', result.started
+          ? { started: true }
+          : { started: false, error: result.error })
+        return true
+      }
+      case 'config.oauthCancel': {
+        const result = this.ctx.authService.cancel(msg.payload.providerId)
+        this.ctx.reply(ws, msg.id, 'config.oauthCancelReply', result)
+        return true
+      }
+      case 'config.hasOAuth': {
+        // MF-1：查询 auth.json 是否已有该 provider 的 oauth 凭据（QuickSetup 重开时据此默认
+        // oauth radio，防 env 盲保存触发 I9 清理①静默删凭据）。只返回布尔——token 永不出现在协议中。
+        const hasOAuth = await this.ctx.authService.hasOAuth(msg.payload.providerId)
+        this.ctx.reply(ws, msg.id, 'config.hasOAuthReply', { hasOAuth })
+        return true
+      }
+      case 'config.checkEnvVars': {
+        // I3 契约：names 必须是字符串数组，非法 payload → sendError invalid_payload（对齐 D10 错误 envelope）
+        const names = msg.payload.names
+        if (!Array.isArray(names) || names.some(n => typeof n !== 'string')) {
+          this.ctx.sendError(ws, 'invalid_payload', 'names 必须是字符串数组')
+          return true
         }
+        const results = this.ctx.configService.checkEnvVars(names)
+        this.ctx.reply(ws, msg.id, 'config.envVarsChecked', { results })
         return true
       }
       case 'config.setToolPermissions':
@@ -101,9 +165,9 @@ export class SettingsMessageHandler {
         return true
       }
       case 'config.setSkillDirs': {
-        // ADR-0020 §1 目录级管道：覆盖 discovery.json.skillDirs（有序数组 = 优先级）
+        // ADR-0021 §1 目录级管道：覆盖 discovery.json.skillDirs（有序数组 = 优先级）
         this.ctx.configService.setSkillDirs(msg.payload.dirs)
-        this.ctx.reply(ws, msg.id, 'config.skillDirs', { dirs: msg.payload.dirs.map((path) => ({ path, enabled: true })) })
+        this.ctx.reply(ws, msg.id, 'config.skillDirs', { dirs: msg.payload.dirs })
         // 触发 SkillRegistry 重建（close 旧 watcher → 重扫 globalCache → 重挂 watcher 含新路径）+ 清 projectCache。
         // rebuildGlobal 内部 notifyGlobalChange → onChange → 广播 config.skillCacheInvalidated('global') + reloadOrchestrator。
         // 显式广播 ('project')——让前端 useProjectSkills 也失效重拉。
@@ -133,14 +197,14 @@ export class SettingsMessageHandler {
         return true
       }
       case 'config.setSkill': {
-        // @deprecated ADR-0020 §5：保留兼容期，走 deprecated config-service 路径
+        // @deprecated ADR-0021 §5：保留兼容期，走 deprecated config-service 路径
         this.ctx.configService.upsertSkill(msg.payload.skill)
         this.ctx.reply(ws, msg.id, 'config.skillUpdated', { skill: msg.payload.skill, success: true })
         this.ctx.broadcastSkillList()
         return true
       }
       case 'config.deleteSkill': {
-        // @deprecated ADR-0020 §5：保留兼容期
+        // @deprecated ADR-0021 §5：保留兼容期
         this.ctx.configService.deleteSkill(msg.payload.skillId)
         this.ctx.reply(ws, msg.id, 'config.skillDeleted', { skillId: msg.payload.skillId, success: true })
         this.ctx.broadcastSkillList()
@@ -158,6 +222,11 @@ export class SettingsMessageHandler {
         // 只读检测（不读文件内容），reply 检测结果数组。无副作用，无需广播。
         const sources = this.ctx.configService.detectSources()
         this.ctx.reply(ws, msg.id, 'config.sourcesDetected', { sources })
+        return true
+      }
+      case 'config.listBuiltinProviders': {
+        // wave 2：列出内置 provider 模板（import generated JSON，无参只读）。reply config.builtinProviders。
+        this.ctx.reply(ws, msg.id, 'config.builtinProviders', { providers: this.ctx.configService.listBuiltinProviders() })
         return true
       }
       case 'config.previewImportProviders': {
@@ -186,38 +255,41 @@ export class SettingsMessageHandler {
           this.ctx.sendError(ws, 'invalid_payload', 'config.applyImportProviders requires a non-empty "importId" string and "selectedIds" string array', msg.id)
           return true
         }
-        const result = this.ctx.configService.applyImportProviders(importId, selectedIds as string[])
+        const result = await this.ctx.configService.applyImportProviders(importId, selectedIds as string[])
         this.ctx.reply(ws, msg.id, 'config.providersImported', result)
         // 仅成功时广播（result 有 result 字段 = 成功；有 error 字段 = 失败，不广播）
         if ('result' in result) {
           this.ctx.broadcastProviderList()
+          // 导入后重选 defaultModel：不传 newDefault → reconcile 自动走 getDefaultModel 兜底
+          //（内部 findValidDefaultModel + wasFixed:true 时写回 settings.json）。
+          reconcileDefaultModelAfterProviderChange(this.ctx)
         }
         return true
       }
       case 'config.setAgentDirs': {
-        // ADR-0020 §1 目录级管道：覆盖 discovery.json.agentDirs（有序数组 = 优先级）
+        // ADR-0021 §1 目录级管道：覆盖 discovery.json.agentDirs（有序数组 = 优先级）
         this.ctx.configService.setAgentDirs(msg.payload.dirs)
-        this.ctx.reply(ws, msg.id, 'config.agentDirs', { dirs: msg.payload.dirs.map((path) => ({ path, enabled: true })) })
+        this.ctx.reply(ws, msg.id, 'config.agentDirs', { dirs: msg.payload.dirs })
         this.ctx.broadcastAgentList()
         this.ctx.broadcastAgentDirs()
         return true
       }
       case 'config.setAgent': {
-        // @deprecated ADR-0020 §5：保留兼容期
+        // @deprecated ADR-0021 §5：保留兼容期
         this.ctx.configService.upsertAgent(msg.payload.agent)
         this.ctx.reply(ws, msg.id, 'config.agentUpdated', { agent: msg.payload.agent, success: true })
         this.ctx.broadcastAgentList()
         return true
       }
       case 'config.setExtensionDirs': {
-        // ADR-0020 §1 目录级管道：覆盖 discovery.json.extensionDirs（有序数组 = 优先级）
+        // ADR-0021 §1 目录级管道：覆盖 discovery.json.extensionDirs（有序数组 = 优先级）
         this.ctx.configService.setExtensionDirs(msg.payload.dirs)
-        this.ctx.reply(ws, msg.id, 'config.extensionDirs', { dirs: msg.payload.dirs.map((path) => ({ path, enabled: true })) })
+        this.ctx.reply(ws, msg.id, 'config.extensionDirs', { dirs: msg.payload.dirs })
         this.ctx.broadcastExtensionDirs()
         return true
       }
       case 'config.deleteAgent': {
-        // @deprecated ADR-0020 §5：保留兼容期
+        // @deprecated ADR-0021 §5：保留兼容期
         this.ctx.configService.deleteAgent(msg.payload.agentId)
         this.ctx.reply(ws, msg.id, 'config.agentDeleted', { agentId: msg.payload.agentId, success: true })
         this.ctx.broadcastAgentList()

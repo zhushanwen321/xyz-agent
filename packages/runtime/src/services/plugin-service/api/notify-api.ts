@@ -97,8 +97,11 @@ export function notifyHandlersFrom(
 /**
  * 创建 Worker 侧 notify 代理对象。
  *
- * Worker 侧 Phase2AgentAPI.notify 签名为 {info/warning/error}(message)，
- * 通过 RPC 转发 plugin.notify 到主线程。
+ * Worker 侧 Phase2AgentAPI.notify 签名为 {info/warning/error}(message)。
+ * 微项 6（D2-2 同族）：notify 本就是 fire-and-forget（主线程 handler 只广播、无返回值），
+ * 经 rpcClient.notify 发真 notification（无 id、不登记 pending、不等响应、不占 30s 超时
+ * 定时器）——替代旧实现的 request 往返。接口形状保持 Promise<void>（Phase2AgentAPI 契约
+ * 不变），实现为同步发通知后立即 resolve。
  */
 export function createNotifyApi(
   rpcClient: PluginRpcClient,
@@ -108,12 +111,13 @@ export function createNotifyApi(
   warning(message: string): Promise<void>
   error(message: string): Promise<void>
 } {
+  const send = (level: string, msg: string): Promise<void> => {
+    rpcClient.notify('plugin.notify', { pluginId, level, message: msg })
+    return Promise.resolve()
+  }
   return {
-    info: (msg: string) =>
-      rpcClient.request('plugin.notify', { pluginId, level: 'info', message: msg }).then(() => {}),
-    warning: (msg: string) =>
-      rpcClient.request('plugin.notify', { pluginId, level: 'warning', message: msg }).then(() => {}),
-    error: (msg: string) =>
-      rpcClient.request('plugin.notify', { pluginId, level: 'error', message: msg }).then(() => {}),
+    info: (msg: string) => send('info', msg),
+    warning: (msg: string) => send('warning', msg),
+    error: (msg: string) => send('error', msg),
   }
 }

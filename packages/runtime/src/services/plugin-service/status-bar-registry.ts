@@ -2,7 +2,7 @@
  * Status Bar 注册表（StatusBarRegistry）
  *
  * 从 PluginService 抽出的正交职责：维护插件注册的 status bar item，
- * 并在变更时广播 `plugin:statusBarUpdate`（ADR-0023 契约不变）。
+ * 并在变更时广播 `plugin:statusBarUpdate`（ADR-0015 契约不变）。
  *
  * 行为契约（与原 PluginService 完全一致）：
  * - itemKey = `${pluginId}:${id}`，空 text 表示移除该 item。

@@ -12,13 +12,14 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { defineComponent } from 'vue'
+import { defineComponent, inject } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import CommandDocPanel from '@/components/panel/CommandDocPanel.vue'
-import { useCommandStore } from '@/stores/command'
-import { useSettingsStore } from '@/stores/settings'
-import { useSideDrawer, resetSideDrawer } from '@/composables/features/useSideDrawer'
+import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/command/useCommandStore'
+import { getSettingsStore } from '@xyz-agent/core'
+import { useSideDrawer, resetSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 import type { SkillInfo } from '@xyz-agent/shared'
+import { ChatViewDepsKey } from '@xyz-agent/ui'
 
 // file.read mock：捕获调用参数，返回预设 content。两路守门（带/不带 sessionId）都走这个 mock。
 const readMock = vi.fn()
@@ -26,18 +27,55 @@ vi.mock('@/api/domains/file', () => ({
   read: vi.fn((path: string, sessionId?: string) => readMock(path, sessionId)),
 }))
 
-// MarkdownRenderer 异步加载 shiki，单测内 stub 成同步渲染 content（断言文档正文到达即可）
-vi.mock('@/components/panel/message-stream/MarkdownRenderer.vue', () => ({
-  default: defineComponent({
-    name: 'MarkdownRenderer',
-    props: { content: { type: String, default: '' } },
-    template: '<div class="md-stub">{{ content }}</div>',
-  }),
+// MarkdownRenderer stub：ui 包 MarkdownRenderer 异步走 deps.renderMarkdown（shiki 在壳），
+// 单测内按名 stub 成同步渲染 content（断言文档正文到达即可）。
+// [w6 chat-ui-and-shell T7] CommandDocPanel 壳经 useChatViewDeps 装配 deps → mock 该装配器。
+const chatDepsMock = vi.hoisted(() => ({
+  getMessages: vi.fn(() => []),
+  isActive: vi.fn(() => false),
+  isHandingOff: vi.fn(() => false),
+  getChangeSetStatus: vi.fn(() => undefined),
+  isExpanded: vi.fn(() => false),
+  toggleExpand: vi.fn(),
+  collapse: vi.fn(),
+  abortBash: vi.fn(),
+  editAndResend: vi.fn(),
+  onFork: vi.fn(),
+  onForkAsk: vi.fn(),
+  onHandoff: vi.fn(),
+  onHandoffAsk: vi.fn(),
+  openDrawer: vi.fn(),
+  onFileClick: vi.fn(),
+  onAmbiguousSelect: vi.fn(),
+  loadFileCandidates: vi.fn(() => Promise.resolve([])),
+  renderMarkdown: vi.fn(() => Promise.resolve([])),
+  renderMermaid: vi.fn(() => Promise.resolve({ svg: '' })),
+  toMarkdown: vi.fn(() => ''),
 }))
+vi.mock('@/composables/panel/useChatViewDeps', () => ({
+  useChatViewDeps: () => chatDepsMock,
+}))
+const mdStub = defineComponent({
+  name: 'MarkdownRenderer',
+  props: { content: { type: String, default: '' } },
+  template: '<div class="md-stub">{{ content }}</div>',
+})
+// MarkdownRenderer inject 探针：验证 CommandDocPanel provide 了 ChatViewDepsKey。
+// drawer 不在 MessageStream provide 作用域内，须自行 provide，否则 MarkdownRenderer setup 抛 inject 缺失。
+const mdProbe = defineComponent({
+  name: 'MarkdownRenderer',
+  setup() {
+    const deps = inject(ChatViewDepsKey, null)
+    return { hasDeps: !!deps }
+  },
+  template: '<div class="md-probe">{{ hasDeps }}</div>',
+})
 
 beforeEach(() => {
   setActivePinia(createPinia())
   resetSideDrawer()
+  // [w5] 壳单例跨测试共享：reset 让每个用例拿到全新实例（getPlatform 由 vitest-i18n-setup 全局 provide mock）
+  __resetCommandStoreForTesting()
   readMock.mockReset()
 })
 
@@ -73,8 +111,8 @@ async function setup(sessionId: string, withSourceInfo = true): Promise<void> {
     { name: '/commit', description: '提交改动', source: 'extension' },
     { name: '/compact', source: 'builtin' },
   ])
-  const settings = useSettingsStore()
-  settings.skills = SKILLS as typeof settings.skills
+  const settings = getSettingsStore()
+  settings.skills.value = SKILLS as typeof settings.skills.value
 }
 
 describe('CommandDocPanel', () => {
@@ -86,7 +124,10 @@ describe('CommandDocPanel', () => {
     const drawer = useSideDrawer()
     drawer.open('doc', { commandName: '/fix' })
 
-    const wrapper = mount(CommandDocPanel, { props: { sessionId: 's1' } })
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub, Button: true } },
+    })
     await flushPromises()
 
     // header 含命令名 + Skill 标签
@@ -112,7 +153,10 @@ describe('CommandDocPanel', () => {
     const drawer = useSideDrawer()
     drawer.open('doc', { commandName: '/fix' })
 
-    const wrapper = mount(CommandDocPanel, { props: { sessionId: 's1' } })
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub, Button: true } },
+    })
     await flushPromises()
 
     // 至少一次带 sessionId 的调用（cwd 守门尝试），且至少一次不带 sessionId 的调用（白名单 fallback）
@@ -131,7 +175,10 @@ describe('CommandDocPanel', () => {
     const drawer = useSideDrawer()
     drawer.open('doc', { commandName: '/skill:fix' })
 
-    const wrapper = mount(CommandDocPanel, { props: { sessionId: 's1' } })
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub, Button: true } },
+    })
     await flushPromises()
 
     // sourcePath 来自 settings.skills 的 sourcePath
@@ -147,7 +194,10 @@ describe('CommandDocPanel', () => {
     const drawer = useSideDrawer()
     drawer.open('doc', { commandName: '/commit' })
 
-    const wrapper = mount(CommandDocPanel, { props: { sessionId: 's1' } })
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub, Button: true } },
+    })
     await flushPromises()
 
     expect(wrapper.text()).toContain('/commit')
@@ -163,7 +213,10 @@ describe('CommandDocPanel', () => {
     const drawer = useSideDrawer()
     drawer.open('doc', { commandName: '/compact' })
 
-    const wrapper = mount(CommandDocPanel, { props: { sessionId: 's1' } })
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub, Button: true } },
+    })
     await flushPromises()
 
     expect(wrapper.text()).toContain('/compact')
@@ -175,9 +228,82 @@ describe('CommandDocPanel', () => {
     await setup('s1')
     // 不调 open（selectedCommandName 仍为 null）
 
-    const wrapper = mount(CommandDocPanel, { props: { sessionId: 's1' } })
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub, Button: true } },
+    })
     await flushPromises()
 
     expect(wrapper.text()).toContain('未选择命令')
+  })
+
+  it('content 异步到达不崩（fragment 切换：无文档正文 div → content MarkdownRenderer）', async () => {
+    await setup('s1')
+    // file.read 延迟 resolve：模拟 content 从 null→有值，触发 fragment 内 div(无文档正文)→MarkdownRenderer(content) 切换。
+    let resolveRead!: (v: { content: string; truncated: boolean }) => void
+    readMock.mockReturnValue(new Promise((r) => { resolveRead = r }))
+
+    const drawer = useSideDrawer()
+    drawer.open('doc', { commandName: '/fix' })
+
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub, Button: true } },
+    })
+    await flushPromises()
+
+    // content 未到：description 是元信息卡片纯文本（非 md-stub），content 缺失显示「无文档正文」
+    expect(wrapper.findAll('.md-stub').length).toBe(0)
+    expect(wrapper.text()).toContain('修复问题')
+    expect(wrapper.text()).toContain('无文档正文')
+
+    // content 到达 → fragment 切换（卸载「无文档正文」div，挂载 content md-stub）
+    resolveRead({ content: '# Fix Skill body', truncated: false })
+    await flushPromises()
+
+    // 切换后不崩：content md-stub 渲染，不再显示「无文档正文」
+    expect(wrapper.findAll('.md-stub').length).toBe(1)
+    expect(wrapper.text()).toContain('Fix Skill body')
+    expect(wrapper.text()).not.toContain('无文档正文')
+  })
+
+  it('CommandDocPanel provide ChatViewDepsKey（drawer 不在 MessageStream 作用域，须自行 provide，子 MarkdownRenderer 才能 inject）', async () => {
+    await setup('s1')
+    readMock.mockResolvedValue({ content: '# body', truncated: false })
+
+    const drawer = useSideDrawer()
+    drawer.open('doc', { commandName: '/fix' })
+
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdProbe, Button: true } },
+    })
+    await flushPromises()
+
+    // content MarkdownRenderer 能 inject 到 ChatViewDeps（provide 生效，不抛 inject 缺失）
+    const probes = wrapper.findAll('.md-probe')
+    expect(probes.length).toBe(1)
+    expect(probes[0]!.text()).toBe('true')
+  })
+
+  it('SKILL.md content 的 YAML frontmatter 被剥掉（不泄漏成分正文）', async () => {
+    await setup('s1')
+    readMock.mockResolvedValue({
+      content: '---\nname: fix\ndescription: 修 bug\n---\n\n# Fix Skill\n\n正文内容。',
+      truncated: false,
+    })
+    const drawer = useSideDrawer()
+    drawer.open('doc', { commandName: '/fix' })
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub, Button: true } },
+    })
+    await flushPromises()
+    // 正文保留
+    expect(wrapper.text()).toContain('正文内容')
+    expect(wrapper.text()).toContain('Fix Skill')
+    // frontmatter 元数据不泄漏成正文（name:/description: 不再被当段落渲染）
+    expect(wrapper.text()).not.toContain('name: fix')
+    expect(wrapper.text()).not.toContain('description: 修 bug')
   })
 })

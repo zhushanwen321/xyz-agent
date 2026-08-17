@@ -37,7 +37,7 @@ const apiMock = vi.hoisted(() => {
   }
 })
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   chat: {
     streamSubscribe: apiMock.streamSubscribe,
     send: apiMock.send,
@@ -47,26 +47,25 @@ vi.mock('@/api', () => ({
     steer: apiMock.steer,
     followUp: apiMock.followUp,
   },
-  session: {},
+  session: {
+    writeSegments: sessionDomainMock.writeSegments,
+  },
 }))
 
-// ── ipc mock：writeSegmentsMetadata 捕获 sidecar 写入（clientUuid + segments 回填用）──
-const ipcMock = vi.hoisted(() => ({
-  writeSegmentsMetadata: vi.fn(() => Promise.resolve()),
-}))
-vi.mock('@/lib/ipc', () => ({
-  writeSegmentsMetadata: ipcMock.writeSegmentsMetadata,
+// ── session domain mock：writeSegments 捕获 sidecar 写入（clientUuid + segments 回填用）──
+const sessionDomainMock = vi.hoisted(() => ({
+  writeSegments: vi.fn(() => Promise.resolve()),
 }))
 
 import { useChatStore } from '@/stores/chat'
-import { useChat, resetChatModuleState } from '@/composables/features/useChat'
+import { useChat, resetChatModuleState } from '@/composables/features/chat/useChat'
 
 beforeEach(() => {
   setActivePinia(createPinia())
   resetChatModuleState()
   vi.clearAllMocks()
   apiMock.holder.handler = null
-  ipcMock.writeSegmentsMetadata.mockResolvedValue(undefined)
+  sessionDomainMock.writeSegments.mockResolvedValue(undefined)
 })
 
 // ── SS1: send(含 image) → submitSegments → chatApi.send 路径模式 ──
@@ -93,8 +92,8 @@ describe('submitSegments 统一通路：send', () => {
     expect(call[2]).toBeUndefined()
 
     // writeSegmentsMetadata 被调（写 segments.json sidecar，clientUuid 关联回填用）
-    expect(ipcMock.writeSegmentsMetadata).toHaveBeenCalledTimes(1)
-    const sidecarCall = ipcMock.writeSegmentsMetadata.mock.calls[0]![0]
+    expect(sessionDomainMock.writeSegments).toHaveBeenCalledTimes(1)
+    const sidecarCall = sessionDomainMock.writeSegments.mock.calls[0]![0]
     expect(sidecarCall.sessionId).toBe('ss-send')
     expect(sidecarCall.entry.clientUuid).toMatch(/^u-[0-9a-fA-F-]{36}$/)
     // sidecar 的 clientUuid 必须与 prompt 标记里的 uuid 一致（同一 user message 的映射键）

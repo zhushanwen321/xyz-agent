@@ -1,7 +1,8 @@
 import { RuntimeServer } from './transport/server.js'
 import { SessionService } from './services/session/session-service.js'
 import { ConfigService } from './services/config-service.js'
-import { ensureAutoRenameDefault } from './services/worktree-config-helper.js'
+import { AuthService } from './services/auth/auth-service.js'
+import { AuthStorage } from './services/auth/auth-storage.js'
 import { PresetService } from './services/preset-service.js'
 import { ModelService } from './services/model-service.js'
 
@@ -10,7 +11,7 @@ import { getDataDir } from '@xyz-agent/shared/paths'
 import { initLogger, closeLogger } from './infra/logger.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
-import { migrateToPiSubdir, getProviderConfig, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
+import { migrateToPiSubdir, getProviderConfig, upsertProvider, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
 import { getExtensionsDir, getNpmDir, getTmpDir } from './infra/pi/pi-paths.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
@@ -22,7 +23,7 @@ import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
 import { EventInterpreter } from './services/session/event-interpreter.js'
-import { join, resolve } from 'node:path'
+import { join, resolve, isAbsolute } from 'node:path'
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 import { ExtensionService } from './services/extension-service.js'
@@ -32,15 +33,20 @@ import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
 import { PluginService } from './services/plugin-service/plugin-service.js'
 import { GitService } from './services/git-service.js'
 import { GitExecutor } from './infra/git-executor.js'
+import { GitStateService } from './services/git/git-state-service.js'
+import { createContextWindowResolver } from './services/model-context-cache.js'
 import { GitInfoReader } from './infra/system/git-info-reader.js'
 import { ShellRunner } from './infra/shell-runner.js'
 import { WorktreeService } from './services/worktree/worktree-service.js'
 import { TerminalService } from './services/terminal/terminal-service.js'
 import { QuotaService } from './services/quota-service.js'
 import { FileService } from './services/file-service.js'
+import { getSkillDirs } from './infra/pi/discovery-store.js'
+import { expandHome } from './utils/path-utils.js'
 import { HandoffService } from './services/handoff-service.js'
 // MessageBus（wave:bus-core 产物）：per-session 消息广播核心。
-// wave:runtime-wiring 在组合根创建单例并注入到 SessionService（session 级消息双写走 bus.publish）+
+// wave:runtime-wiring 在组合根创建单例并注入到 SessionService（session 级消息单通道走
+// bus.publish——wave:perf-w09 D1-2 删双写后唯一通道）+
 // RuntimeServer（subscribe/unsubscribe RPC handler + ConnectionManager.onClose → unsubscribeAll）。
 // 保留 re-export 供外部消费（renderer-subscribe wave 等可能 import 类型）。
 import { MessageBus } from './services/message-bus/message-bus.js'
@@ -49,8 +55,12 @@ export type { BusClient, SessionBusState } from './services/message-bus/types.js
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
 import { FsExecutor } from './infra/fs-executor.js'
 import { RecentWorkspacesStore } from './services/workspace/recent-workspaces-store.js'
+import { ProjectStore } from './services/project/project-store.js'
 import { WorkspaceService } from './services/workspace/workspace-service.js'
 import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
+// D8-1（perf W29）：后台初始化序列（listen 后执行）——独立模块承载使「migrateBuiltin →
+// autoUpgrade 顺序」可 spy 断言（06 §5 门禁），组合根只负责构造与注入。
+import { runStartupBackgroundInit } from './services/startup-background-init.js'
 
 function parseArgs(): { port: number; projectRoot?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
@@ -85,6 +95,9 @@ function parseArgs(): { port: number; projectRoot?: string } {
 async function main(): Promise<void> {
   const { port, projectRoot } = parseArgs()
   const effectiveRoot = projectRoot ?? process.cwd()
+  // perf W29（D8-1）启动耗时分解探针（06 §5 m-7）：listen 前各段打点，
+  // 输出进日志文件供 D8 价值评估（基线实测：getPiVersion 1.1-1.3s 主导 listen 延迟）。
+  const tStart = performance.now()
 
   // 日志持久化（架构约定 #4）：组合根最早期初始化 + monkey-patch console。
   // 必须在所有 service 创建前（runtime 内 ~140 处裸 console.log 经 patch 自动落盘）。
@@ -112,6 +125,8 @@ async function main(): Promise<void> {
   // 原为 pi-config-bridge 的 import 副作用，现改为组合根显式调用（启动时序显式化）。
   // 必须在首次配置读取（readModels/readSettings/migrateSettingsSkillsToDiscovery）前完成。
   // 幂等：新路径已存在文件则跳过。
+  // D8-1（perf W29）：三个同步迁移保持 listen 前——「首次配置读取前」硬约束（06 §3.3 证据）。
+  const tSyncMigrations = performance.now()
   migrateToPiSubdir()
   // 清理 settings.json.packages 中泄漏到 pi 全局目录的相对路径项（架构约定 #1 隔离保障）
   cleanLeakedPackages()
@@ -143,9 +158,16 @@ async function main(): Promise<void> {
     npmDir: getNpmDir(),
     tmpDir: getTmpDir(),
   })
-  const configService = new ConfigService(effectiveRoot, configStore)
-  // ADR-0020 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
+  // AuthStorage（OAuth 路径 B）：auth.json 在 pi agent 目录（与 models.json 同路径，与 pi 读取侧一致）。
+  // ConfigService 用它做 I9 清理①（setProvider 保存 apiKey 时清 auth.json oauth）+ I8（deleteProvider 清 auth.json）。
+  const authStorage = new AuthStorage(join(configStore.getPiAgentDir(), 'auth.json'))
+  const configService = new ConfigService(effectiveRoot, configStore, authStorage)
+  // ADR-0021 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
   // 首启用时提升为 discovery.json SSOT。幂等：discovery 已有数据则 no-op。
+  // D8-1 位置判断（perf W29，06 §5 m-7 结论）：保持 listen 前同步执行——
+  // fileService 构造时 allowedReadDirs 读 getSkillDirs()（discovery.json），
+  // 迁移后置会让首次升级启动的 skill 容器漏出 file.read 白名单（认知回归）。
+  // 成本：幂等 no-op 仅两次 JSON 读，实测 <1ms，非 listen 延迟主导项。
   configService.migrateSettingsSkillsToDiscovery()
   // PresetService（pi-launch-presets 设计 §8.1）：独立 service，与 ConfigService 对称。
   // 依赖 configStore（pi-presets.json 路径推导）+ extensionService（resolve 用 builtin/scanExtensions）。
@@ -163,6 +185,9 @@ async function main(): Promise<void> {
   const workspaceService = new WorkspaceService(recentWorkspacesStore, new WorkspaceDetector(fs))
   // 启动定期 flush 计时器（全量周期，补充 per-write debounce 500ms）
   recentWorkspacesStore.startFlushTimer()
+  // ProjectStore：project 列表持久化（D14，2026-08-04 迁 runtime projects.json，
+  // 与 recent-workspaces 同模式；前端 localStorage 仅首启迁移源）。
+  const projectStore = new ProjectStore(configDir)
   const pluginRegistry = new PluginRegistry(effectiveRoot, configDir)
   const pluginInstaller = new NpmPluginInstaller(join(configDir, 'plugins'))
   const pluginService = new PluginService(pluginRegistry, server, {
@@ -172,6 +197,10 @@ async function main(): Promise<void> {
     pluginInstaller,
     broadcastFn: (type, payload) => server.broadcast({ type: type as 'config.sessions', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
   })
+  // wave:perf-w09（接口收敛 wire 归位）：plugin 的 session 级广播点（plugin:viewUpdate /
+  // plugin:uiRequest）接 bus 定向发布。原在 server.setServices 内 wire（wave:perf-w08 的
+  // 过渡位置），services 间依赖注入统一归组合根——与下方 sessionService.setMessageBus 同模式。
+  pluginService.setMessageBus(messageBus)
 
   // ── R1 重构：EventAdapter（infra 纯翻译）+ EventInterpreter（service 编排）──
   // adapterFactory closure captures pluginService / sessionService / server by reference.
@@ -181,9 +210,16 @@ async function main(): Promise<void> {
   // creation time, so sessionService is always set by then.
   //
 
-  const fileChangeDiff = new FileChangeDiffAdapter()
+  // GitExecutor + GitStateService：git 状态统一读取基础设施（perf W16，03 D4-1）。
+  // 在 fileChangeDiff 之前创建——W18 起 FileChangeDiffAdapter 的采集（snapshotStatus/numstat）
+  // 委托 GitStateService；GitService（下方，依赖 sessionService）与 GitMessageHandler 的
+  // 写操作失效共享同一实例（in-flight 单飞 + sessionId+cwd TTL 缓存 + 非仓库负缓存）。
+  const gitExecutor = new GitExecutor()
+  const gitStateService = new GitStateService({ executor: gitExecutor })
+
+  const fileChangeDiff = new FileChangeDiffAdapter(gitStateService)
   const createAdapter = (sessionId: string, send: (msg: import('@xyz-agent/shared').ServerMessage) => void, cwd?: string) => {
-    // EventInterpreter 持有业务态（currentMessageId/statusBaseline/writeContents）+ 业务回调，
+    // EventInterpreter 持有业务态（currentMessageId/writeContents/diffChain 帧序三件套）+ 业务回调，
     // 消费 EventAdapter 翻译出的 PiTranslatedEvent[]，执行 hook / diff / 回写 / 路由副作用。
     const interpreter = new EventInterpreter(sessionId, {
       // #8 G1 cwd：注入 session cwd（write 工具 added/modified 判定 + agent_end git 对账用）。
@@ -227,14 +263,22 @@ async function main(): Promise<void> {
         data: { ...context, sessionId },
         timestamp: Date.now(),
       }),
-      // [ADR-0035] ping 探测连续 3 次失败（180s）判定 pi 进程真死，触发 abort。
+      // [ADR-0047] ping 探测连续 3 次失败（180s）判定 pi 进程真死，触发 abort。
       // 复用 sessionService.abort → message-dispatcher.abort 完整路径（client.abort 成功/失败
       // 均有兜底广播 + 复位 isGenerating）。.catch 兜底防 unhandledRejection
       // （abort 内部已 try/catch 广播终态，此处只防极端异常逃逸）。
       onSilentAbort: ({ sessionId: sid }) => {
         sessionService.abort(sid).catch(() => {})
       },
-      // [ADR-0035] ping get_state 进程健康探测（替代事件静默检测）。
+      // M4 compaction 事件驱动：interpreter 从 compaction_start/end 唯一置位/复位
+      // runtime active.isCompacting（sendPrompt/sendBash 预检互斥依据）。与原 dispatcher
+      // 手动路径置位对称——事件驱动后 dispatcher 不再置位，复位责任转移到 interpreter（三路对称）。
+      // getSession 返回 IManagedSessionView，isCompacting 为可写字段（types.ts 注释明言子模块可读写）。
+      onCompactingStateChange: (sid, v) => {
+        const s = sessionService.getSession(sid)
+        if (s) s.isCompacting = v
+      },
+      // [ADR-0047] ping get_state 进程健康探测（替代事件静默检测）。
       // 延迟解析 client：interpreter 在 session 创建时构造，那时 client 可能尚未 spawn。
       // pm（ProcessManager）在本闭包外已创建，getClient 返回 undefined 时计为一次失败
       // （AC-9），但不抛错——client 偶发未就绪不应让 interpret 批次崩溃。
@@ -260,7 +304,8 @@ async function main(): Promise<void> {
     // 与 GitExecutor 同为 git 域 infra，但语义不同（窄查询 vs 通用 exec）——故独立 port（services/ports/git-info.ts）。
     new GitInfoReader(),
     workspaceService,
-    // messageBus：注入 dispatcher 的 session 级事件双写（dispatcher 内部 bus?.publish after broker.broadcast）。
+    // messageBus：注入 dispatcher 的 session 级事件通道（wave:perf-w09 D1-2 后单通道——
+    // dispatcher 只依赖 publish 抽象，bus.publish 是唯一出口，broker 依赖已随接口收敛删除）。
     messageBus,
   )
 
@@ -282,20 +327,48 @@ async function main(): Promise<void> {
   pluginService.setSessionService(sessionService)
   // GitService：composition root 注入 infra executor（数组参数防注入）+ sessionService（取 cwd）。
   // 经 server.setServices 注入到 GitMessageHandler（git.* 路由）。
-  const gitService = new GitService({ sessionService, executor: new GitExecutor() })
+  // perf W17（03 D4-4 U2）：gitService.getStatus 收编走 GitStateService（上方已创建，
+  // 与 FileChangeDiffAdapter 共享同一实例——file_changes 采集与面板状态读取共享单飞/负缓存）。
+  const gitService = new GitService({ sessionService, executor: gitExecutor, stateService: gitStateService })
   // FileService：对称注入 infra FsExecutor（node:fs/promises adapter）+ sessionService（取 cwd 做越界守门）。
   // 经 server.setServices 注入到 FileMessageHandler（file.tree/expand/write.* 路由）。
   // allowedReadDirs：file.read 的 BC-3 白名单（~/.agents/skills、piAgentDir/skills、piAgentDir/npm），
   //   从 configService 算出传入（FileService 不直接依赖 configService，保持单一职责）。
   const piAgentDir = configService.getPiAgentDir()
   const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? ''
+
+  // AuthService（OAuth 路径 B）：编排 device/callback flow 拿 token 写 auth.json。
+  // 依赖 authStorage + builtin oauthConfig（configService.listBuiltinProviders）+ broadcast/nextPushId
+  // （server/broker）+ clearApiKey（I9 清理②：OAuth 成功清 models.json apiKey，防 both provider 凭据冲突）。
+  // 经 server.setServices 注入到 handler（settings-message-handler 的 config.oauthLogin/oauthCancel）。
+  const authService = new AuthService({
+    authStorage,
+    getOAuthConfig: (providerId) => configService.listBuiltinProviders().find(p => p.id === providerId)?.oauthConfig,
+    broadcast: (msg) => server.broadcast(msg),
+    nextPushId: () => server.nextPushId(),
+    clearApiKey: (providerId) => {
+      const existing = getProviderConfig(providerId)
+      if (!existing || !('apiKey' in existing)) return
+      const { apiKey: _removed, ...rest } = existing
+      upsertProvider(providerId, rest)
+    },
+  })
   const fileService = new FileService({
     sessionService,
     executor: new FsExecutor(),
+    // allowedReadDirs：file.read 白名单。除三个固定目录外，动态合并用户在 discovery.json
+    // 配置的 skill 目录（globalPaths，如 ~/.claude/skills）——否则这些 skill 的 SKILL.md
+    // 既不在 cwd 内（cwd 守门拒）也不在固定白名单内（白名单拒），两路 file.read 都失败，
+    // drawer 误显示「该 skill 无文档正文」。projectPaths（相对 cwd）走 cwd 守门，不需进白名单。
+    // expandHome 处理 globalPaths 里 ~/ 开头路径；filter(isAbsolute) 丢弃相对路径（白名单需绝对路径）。
     allowedReadDirs: [
       resolve(homeDir, '.agents/skills'),
       resolve(piAgentDir, 'skills'),
       resolve(piAgentDir, 'npm'),
+      ...getSkillDirs()
+        .map((d) => expandHome(d))
+        .filter((d) => isAbsolute(d))
+        .map((d) => resolve(d)),
     ],
   })
 
@@ -305,12 +378,15 @@ async function main(): Promise<void> {
   // 需读 model contextWindow 才能 switchModel / applyContextUpdate 时算 usagePercent。
   // 直接注入 modelService/configService 会形成依赖环（modelService 反过来依赖 sessionService），
   // 故注入窄 resolver（纯数据查询，等价 configService.listProviders + modelService.aggregateModels）。
-  sessionService.setModelContextWindowResolver((provider, modelId) => {
-    const providers = configService.listProviders()
-    const models = modelService.aggregateModels(providers)
-    const model = models.find(m => m.providerId === provider && m.id === modelId)
-    return model?.contextWindow ?? 0
-  })
+  // 微项 5（perf W17）：resolver 经 createContextWindowResolver 加 TTL 缓存——原实现每次
+  // context.update / switchModel 都全量重算 listProviders + aggregateModels（streaming 期高频），
+  // 缓存后聚合每 5s 至多一次，查询热点只剩 find。
+  sessionService.setModelContextWindowResolver(
+    createContextWindowResolver({
+      listProviders: () => configService.listProviders(),
+      aggregateModels: (providers) => modelService.aggregateModels(providers),
+    }),
+  )
 
   // 注入 ConfigService 供 getReplaceSystemPrompt 委托（spawn pi 时透传替换系统提示词）。
   // 与 setModelContextWindowResolver 同模式：避免构造参数破坏 SessionService 的测试调用点。
@@ -318,9 +394,13 @@ async function main(): Promise<void> {
   // 注入 PresetService 供 getLaunchPresetOptions 委托（spawn pi 时按 launch preset 构建 args）。
   // 与 setConfigService 同模式（pi-launch-presets 设计 §8.1 + §4.3）。
   sessionService.setPresetService(presetService)
-  // 注入 MessageBus（wave:runtime-wiring）：session 级消息（带 sessionId payload）双写走 bus.publish
-  //（bus 负责 per-session seq 分配 + ring buffer + 订阅者广播），session 销毁时 removeSessionEntry
-  // 调 bus.clearSession。与 setConfigService 同模式（setter 注入，避免破坏 SessionService 测试构造点）。
+  // 注入 MessageBus（wave:runtime-wiring）：session 级消息（带 sessionId payload）单通道走
+  // bus.publish（wave:perf-w09 D1-2 删双写后唯一通道；bus 负责 per-session seq 分配 + ring
+  // buffer + 订阅者广播），session 销毁时 removeSessionEntry 调 bus.clearSession。
+  // 与 setConfigService 同模式（setter 注入，避免破坏 SessionService 测试调用点）。
+  // bus 两条注入通道（构造参数 + 本 setter）组合根都走：构造参数经 SessionService 构造器
+  // 传导给 dispatcher；setter 内部同步回填 dispatcher（仅走 setter 路径时保证 dispatcher
+  // 不持 undefined bus，见 session-service.setMessageBus）。
   sessionService.setMessageBus(messageBus)
 
   // ── SkillRegistry（W1）：全局 + 项目级 skill 缓存 + chokidar 文件监听 ──
@@ -328,7 +408,7 @@ async function main(): Promise<void> {
   // initGlobal() 在 server.start 后调（下文），启动期扫描全局 skill 目录挂 watcher。
   const skillRegistry = new SkillRegistry({
     configStore: {
-      getSkillPaths: () => configService.getSkillDirs(),
+      getSkillPathScopes: () => configService.getSkillPathScopes(),
       getPiAgentDir: () => configService.getPiAgentDir(),
     },
     configDir,
@@ -337,10 +417,14 @@ async function main(): Promise<void> {
 
   // TerminalService：drawer 集成终端的 PTY 生命周期管理（node-pty spawn + per-session 映射）。
   // 声明在生命周期挂钩之前（session 销毁回调引用它，TDZ 要求先声明）。
-  // 依赖：broker.broadcast（PTY 输出/退出/就绪广播）+ broker.nextPushId（广播消息 id）。
+  // wave:perf-w07（D1-1 / R-05）：发布通道从 broker.broadcast 改为 MessageBus——terminal 三类
+  // 消息按 topicOf 分类（data=transient 直传、alive/exit=stream 入 ring）定向推给订阅该 sid 的 ws。
+  // publish-only 不叠加 broadcast：terminal.data 无 seq，叠加盲广播会被已订阅 renderer 双 dispatch
+  // （终端输出重复渲染），见 TerminalServiceDeps.publish 注释。W09（D1-2）删双写已落地——
+  // bus.publish 是 session 级消息唯一通道，publish-only 即终态语义（非过渡态）。
   // Phase 6 接入 configService 读 shell 配置（当前用 $SHELL fallback）。
   const terminalService = new TerminalService({
-    broadcast: (msg) => server.broadcast(msg),
+    publish: (sid, msg) => messageBus.publish(sid, msg),
     configService,
   })
 
@@ -366,9 +450,10 @@ async function main(): Promise<void> {
     terminalService.destroyPty(sid)
   })
 
-  // 探测 pi 版本（启动时一次，失败不阻塞 —— fallback 'unknown'）
-  const piVersion = await pm.getPiVersion()
-  const appInfo = { appVersion: getAppVersion(), piVersion }
+  // D8-2（perf W29）：appInfo 惰性——piVersion 先 'unknown'（同步 getAppVersion），
+  // getPiVersion 探测完成后 mutate 同对象 + 补发 app.info（下方后台初始化块）。
+  // setServices 注入同一对象引用，broker 的 buildAppInfoMsg spread 读到 mutate 后的新值。
+  const appInfo: { appVersion: string; piVersion: string } = { appVersion: getAppVersion(), piVersion: 'unknown' }
 
   // WorktreeService：编排 worktree 创建（bare-workspace / plain-repo 两种模式）。
   // 依赖全注入：GitExecutor（git 子命令）/ ShellRunner（setup 脚本，用 child_process.spawn）/
@@ -385,7 +470,7 @@ async function main(): Promise<void> {
   // QuotaService：Coding Plan 额度查询（hover 触发 + 缓存 + log）。
   // 经 server.setServices 注入到 QuotaMessageHandler（quota.fetch/getCached/refresh/configure 路由）。
   // getProviderInfo：从 providerId 解析 ProviderInfo（baseUrl/name/quota.fetcher），
-  // quota.fetcher 优先于 matchQuotaPreset（设计文档 §2.2.3 + 手动选择 fetcher 需求）。
+  // quota.fetcher 优先于 matchQuotaPreset（设计文档 §8.2 + 手动选择 fetcher 需求）。
   const quotaService = new QuotaService({
     getProviderInfo: (providerId) => {
       const cfg = getProviderConfig(providerId)
@@ -394,7 +479,8 @@ async function main(): Promise<void> {
     },
   })
 
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService, handoffService, presetService)
+  const tServicesReady = performance.now()
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService, handoffService, presetService, authService, projectStore)
 
   // Graceful shutdown on signals
   let shuttingDown = false
@@ -405,6 +491,7 @@ async function main(): Promise<void> {
     try {
       recentWorkspacesStore.flushAll()
       recentWorkspacesStore.stopFlushTimer()
+      projectStore.flushAll()
       // R1：关闭 SkillRegistry 的 chokidar watcher（global + project），防句柄泄漏阻塞退出。
       skillRegistry.dispose()
       await server.stop()
@@ -412,7 +499,10 @@ async function main(): Promise<void> {
     } catch (e) {
       console.error('[runtime] error during shutdown:', e)
     }
-    closeLogger()
+    // D10-1（perf W30）：退出 flush——closeLogger 现在需要 await（end 主日志 + 全部 pi
+    // session 写流并等待落盘）。process.exit 立即终止进程不等待异步 IO，必须在 flush
+    // 完成后才退出，否则缓冲窗口内尾部日志丢失（pi 卡死诊断证据，见 logger.ts 头部）。
+    await closeLogger()
     process.exit(0)
   }
 
@@ -427,66 +517,29 @@ async function main(): Promise<void> {
     console.error('[runtime] *** UNHANDLED REJECTION *** (should not happen):', reason)
   })
 
+  // D8-1（perf W29）：先 listen（端口即就绪）——迁移/探测等无 listen 前依赖的后置项
+  // 全部移入下方后台初始化块（06 §3.3 D8-1）。listen 前仅剩：同步迁移 + 服务构造 + setServices。
+  const tListen = performance.now()
   await server.start()
   console.log('[runtime] ready')
+  // 启动耗时分解探针（06 §5 m-7）：listen-ready 各段耗时（baseline 对比见汇报——
+  // 改造前 getPiVersion 占 listen 延迟 1.1-1.3s，重排后该段归零）。
+  console.log(`[runtime] startup breakdown: syncMigrations=${(tSyncMigrations - tStart).toFixed(1)}ms construction=${(tServicesReady - tSyncMigrations).toFixed(1)}ms listen=${(performance.now() - tListen).toFixed(1)}ms total=${(performance.now() - tStart).toFixed(1)}ms`)
 
-  // SkillRegistry 全局扫描：启动期扫描全局 skill 目录（piAgentDir/skills、configDir/skills、
-  // discovery.skillDirs）并挂 chokidar watcher。变动时 300ms debounce 重扫缓存 + 经 onChange
-  // 通知上游。必须在 server.start 后调（确保异常不阻塞服务启动）。失败不阻塞（skill 降级空缓存）。
-  try {
-    await skillRegistry.initGlobal()
-    console.log(`[runtime] skill registry initialized (${skillRegistry.getGlobalSkills().length} global skills)`)
-  // eslint-disable-next-line taste/no-silent-catch -- skill 扫描失败不阻塞 runtime，UI 降级空列表
-  } catch (e) {
-    console.error('[runtime] skill registry initialization failed:', e)
-  }
-
-  // mandatory 扩展：确保强制安装的扩展已装好（在 auto-upgrade 之前，先装再升级）
-  try {
-    const mandatoryResults = await extensionService.ensureMandatoryExtensions()
-    const installed = mandatoryResults.filter(r => r.installed && !r.error)
-    const failed = mandatoryResults.filter(r => !r.installed || r.error)
-    if (installed.length > 0) {
-      console.log(`[runtime] installed ${installed.length} mandatory extension(s):`,
-        installed.map(r => r.name).join(', '))
-    }
-    if (failed.length > 0) {
-      console.warn(`[runtime] ${failed.length} mandatory extension(s) failed to install:`,
-        failed.map(r => `${r.name} (${r.error})`).join(', '))
-    }
-  } catch (e) {
-    console.warn('[runtime] mandatory extension installation encountered an error:', e)
-  }
-
-  // auto-rename 默认初始化：首次启动默认开启（创建 flag file + initialized 标记）
-  try {
-    ensureAutoRenameDefault()
-  } catch (e) {
-    console.warn('[runtime] auto-rename default initialization failed:', e)
-  }
-
-  // 自动升级：对开启 autoUpgrade 的 user-installed 扩展批量检查 npm latest 版本，
-  // semver.lt 判定后静默升级。失败不阻塞启动（每个扩展独立 try-catch）。
-  try {
-    const upgradeResults = await extensionService.checkAndAutoUpgrade()
-    const upgraded = upgradeResults.filter(r => r.upgraded)
-    if (upgraded.length > 0) {
-      console.log(`[runtime] auto-upgraded ${upgraded.length} extension(s):`,
-        upgraded.map(r => `${r.name} ${r.from ?? '?'}→${r.to ?? '?'}`).join(', '))
-    }
-  } catch (e) {
-    // checkAndAutoUpgrade 内部已 catch 每个扩展，此处是意外错误兜底
-    console.warn('[runtime] extension auto-upgrade encountered an error:', e)
-  }
-
-  // 插件系统初始化（扫描、激活 onStartupFinished 插件）
-  try {
-    await pluginService.initialize()
-    console.log('[runtime] plugins initialized')
-  // eslint-disable-next-line taste/no-silent-catch -- init: plugin failure must not block server
-  } catch (e) {
-    console.error('[runtime] plugin initialization failed:', e)
-  }
+  // ── 后台初始化块（D8-1）：listen 后执行，不阻塞端口就绪 ──────────────
+  // 序列与顺序约束见 startup-background-init.ts 文件头注释（migrateProviderConfig →
+  // migrateBuiltinExtensions → checkAndAutoUpgrade → getPiVersion → skill → plugins）。
+  // fire-and-forget：每步自带 catch，无 rejection 逃逸；失败不阻塞其余步骤。
+  void runStartupBackgroundInit({
+    configStore,
+    authStorage,
+    extensionService,
+    pm,
+    appInfo,
+    broadcastAppInfo: () => server.broadcastAppInfo(),
+    skillRegistry,
+    pluginService,
+  })
 }
 
 main().catch((e) => {

@@ -1,0 +1,484 @@
+/**
+ * use-provider-edit 迁移测试（W2 核心测试 2）。
+ *
+ * 覆盖：provider 变化重置编辑态 + 快照捕获；isDirty 全字段对比（快照 null 返 false）；
+ * runDiscover test/discover 成功失败分支（discoverModels 调用参数、合并去重、文案）；
+ * save 校验/成功/失败 + apiKey 哨兵语义 + headers/authHeader/models 透传；D8 过期快照
+ * watch（未 dirty 刷新 + captureSnapshot，dirty 不刷新）；模型 CRUD（空名/重名抛错等）。
+ *
+ * watch 类用例用 effectScope 包裹 + flushPromises 驱动（node 环境无组件渲染）。
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { ref, effectScope, nextTick } from 'vue'
+import { providePlatform, __resetPlatformForTesting } from '../../../platform/port'
+import {
+  provideSettingsTransport,
+  __resetSettingsTransportForTesting,
+  type SettingsTransport,
+} from '../transport'
+import { __resetSettingsStoreForTesting, getSettingsStore } from '../settings-store'
+import {
+  useProviderEdit,
+  API_KEY_CLEAR_SENTINEL,
+  type LocalModel,
+} from '../use-provider-edit'
+import { InMemoryStorage } from './helpers/in-memory-storage'
+import type { ProviderInfo } from '@xyz-agent/shared'
+
+/** i18n stub：返回 key 本身（校验调用参数而非翻译）。 */
+const tStub = vi.fn((key: string) => key)
+
+function makeFakeTransport(): SettingsTransport {
+  return {
+    listProviders: vi.fn(async () => []),
+    listModels: vi.fn(async () => []),
+    setProvider: vi.fn(async () => {}),
+    discoverModels: vi.fn(async () => ({ success: true, models: [] })),
+    setSkillDirs: vi.fn(async () => {}),
+    setAgentDirs: vi.fn(async () => {}),
+    setExtensionDirs: vi.fn(async () => {}),
+    onProviders: vi.fn(() => () => {}),
+    onModels: vi.fn(() => () => {}),
+    onSkills: vi.fn(() => () => {}),
+    onAgents: vi.fn(() => () => {}),
+    onExtensions: vi.fn(() => () => {}),
+    onSkillDirs: vi.fn(() => () => {}),
+    onAgentDirs: vi.fn(() => () => {}),
+    onExtensionDirs: vi.fn(() => () => {}),
+    onDefaults: vi.fn(() => () => {}),
+    onSystemPrompt: vi.fn(() => () => {}),
+    onTerminalConfig: vi.fn(() => () => {}),
+  }
+}
+
+beforeEach(() => {
+  __resetSettingsStoreForTesting()
+  __resetSettingsTransportForTesting()
+  __resetPlatformForTesting()
+  providePlatform({ kind: 'mock', storage: new InMemoryStorage(), webSocket: { create: () => ({}) as never }, ipc: null })
+  currentTransport = makeFakeTransport()
+  provideSettingsTransport(currentTransport)
+  tStub.mockClear()
+  tStub.mockImplementation((key: string) => key)
+})
+
+let scope: ReturnType<typeof effectScope> | null = null
+
+/** 当前注入的 fake transport（模块级，供断言用；避免 ESM 下 require 不可用）。 */
+let currentTransport: SettingsTransport
+
+function getTransport(): SettingsTransport {
+  return currentTransport
+}
+
+afterEach(() => {
+  scope?.stop()
+  scope = null
+})
+
+function mount(providerRef: ReturnType<typeof ref<ProviderInfo | null>>) {
+  scope = effectScope()
+  return scope!.run(() => useProviderEdit(providerRef, { t: tStub }))
+}
+
+function makeProvider(overrides: Partial<ProviderInfo> = {}): ProviderInfo {
+  return {
+    id: 'p1',
+    name: 'P1',
+    api: 'anthropic-messages',
+    baseUrl: 'https://api.example.com',
+    apiKeySet: true,
+    status: 'connected',
+    headers: { 'X-Test': 'v1' },
+    authHeader: false,
+    models: [
+      { id: 'm1', name: 'M1', contextWindow: 200_000, enabled: true },
+    ],
+    enabled: true,
+    ...overrides,
+  }
+}
+
+describe('provider 变化重置编辑态 + 快照', () => {
+  it('null → provider：表单填充 + localModels 映射 + isDirty false', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    providerRef.value = makeProvider()
+    await nextTick()
+    expect(edit.form.name).toBe('P1')
+    expect(edit.form.api).toBe('anthropic-messages')
+    expect(edit.form.baseUrl).toBe('https://api.example.com')
+    expect(edit.form.headers).toEqual({ 'X-Test': 'v1' })
+    expect(edit.localModels.value).toHaveLength(1)
+    expect(edit.localModels.value[0].id).toBe('m1')
+    expect(edit.isDirty.value).toBe(false)
+  })
+
+  it('provider → null：编辑态清空 + 快照重置', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    providerRef.value = null
+    await nextTick()
+    expect(edit.form.name).toBe('')
+    expect(edit.form.api).toBe('anthropic-messages')
+    expect(edit.localModels.value).toHaveLength(0)
+    expect(edit.isDirty.value).toBe(false)
+  })
+})
+
+describe('isDirty 对比', () => {
+  it('快照 null → false', () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    expect(edit.isDirty.value).toBe(false)
+  })
+
+  it('改 name/api/baseUrl/apiKey/models/authHeader/headers 各触发 true', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    expect(edit.isDirty.value).toBe(false)
+
+    edit.form.name = 'P2'
+    expect(edit.isDirty.value).toBe(true)
+    edit.form.name = 'P1'
+    expect(edit.isDirty.value).toBe(false)
+
+    edit.form.api = 'openai-completions'
+    expect(edit.isDirty.value).toBe(true)
+    edit.form.api = 'anthropic-messages'
+    expect(edit.isDirty.value).toBe(false)
+
+    edit.form.baseUrl = 'https://other.example.com'
+    expect(edit.isDirty.value).toBe(true)
+    edit.form.baseUrl = 'https://api.example.com'
+    expect(edit.isDirty.value).toBe(false)
+
+    // apiKey：输入值 → dirty
+    edit.form.apiKey = 'sk-abc'
+    expect(edit.isDirty.value).toBe(true)
+    edit.form.apiKey = ''
+    expect(edit.isDirty.value).toBe(false)
+
+    // models 整体增删 → dirty
+    edit.localModels.value.push({ id: 'm2', name: 'M2' })
+    expect(edit.isDirty.value).toBe(true)
+    edit.localModels.value.pop()
+    expect(edit.isDirty.value).toBe(false)
+
+    // authHeader → dirty
+    edit.form.authHeader = true
+    expect(edit.isDirty.value).toBe(true)
+    edit.form.authHeader = false
+    expect(edit.isDirty.value).toBe(false)
+
+    // headers → dirty
+    edit.form.headers['X-Test'] = 'v2'
+    expect(edit.isDirty.value).toBe(true)
+  })
+})
+
+describe('runDiscover test 分支', () => {
+  it('成功 → testResult ok；discoverModels 调用参数正确', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.baseUrl = 'https://api.example.com'
+    edit.form.apiKey = 'sk-abc'
+    await edit.testConnection()
+    const transport = getTransport()
+    expect(transport.discoverModels).toHaveBeenCalledWith({
+      baseUrl: 'https://api.example.com',
+      apiKey: 'sk-abc',
+      providerType: 'anthropic-messages',
+      providerId: 'p1',
+    })
+    expect(edit.testResult.value).toBe('ok')
+    expect(edit.testing.value).toBe(false)
+  })
+
+  it('success:false → testResult error + actionError', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    getTransport().discoverModels = vi.fn(async () => ({ success: false, error: 'bad key' }))
+    await edit.testConnection()
+    expect(edit.testResult.value).toBe('error')
+    expect(edit.actionError.value).toBe('bad key')
+  })
+
+  it('reject → testResult error + actionError 消息', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    getTransport().discoverModels = vi.fn(async () => { throw new Error('net down') })
+    await edit.testConnection()
+    expect(edit.testResult.value).toBe('error')
+    expect(edit.actionError.value).toBe('net down')
+  })
+})
+
+describe('runDiscover discover 分支', () => {
+  it('成功：合并去重 + discoverResult 文案（newMerged）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    // localModels 已有 m1；返回 [m1, m2] → 只合并 m2
+    getTransport().discoverModels = vi.fn(async () => ({
+      success: true,
+      models: [
+        { id: 'm1', name: 'M1', contextWindow: 200_000 },
+        { id: 'm2', name: 'M2', contextWindow: 128_000 },
+      ],
+    }))
+    await edit.autoDiscover()
+    expect(edit.localModels.value.map((m) => m.id)).toEqual(['m1', 'm2'])
+    expect(edit.localModels.value[1].contextWindow).toBe(128_000)
+    expect(tStub).toHaveBeenCalledWith('composable.discoveredModels', expect.anything())
+    expect(tStub).toHaveBeenCalledWith('composable.newMerged', { count: 1 })
+    expect(edit.discovering.value).toBe(false)
+  })
+
+  it('成功：全部已存在 → allExisted 文案', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    getTransport().discoverModels = vi.fn(async () => ({
+      success: true,
+      models: [{ id: 'm1', name: 'M1' }],
+    }))
+    await edit.autoDiscover()
+    expect(edit.localModels.value).toHaveLength(1)
+    expect(tStub).toHaveBeenCalledWith('composable.allExisted')
+  })
+
+  it('失败：success:false → actionError', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    getTransport().discoverModels = vi.fn(async () => ({ success: false, error: 'fail' }))
+    await edit.autoDiscover()
+    expect(edit.actionError.value).toBe('fail')
+  })
+
+  it('reject → actionError 消息', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    getTransport().discoverModels = vi.fn(async () => { throw new Error('boom') })
+    await edit.autoDiscover()
+    expect(edit.actionError.value).toBe('boom')
+  })
+})
+
+describe('save 校验/成功/失败 + apiKey 哨兵', () => {
+  it('空 name → false + providerNameRequired（不经 setProvider）', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    const ok = await edit.save()
+    expect(ok).toBe(false)
+    expect(tStub).toHaveBeenCalledWith('composable.providerNameRequired')
+    expect(getTransport().setProvider).not.toHaveBeenCalled()
+  })
+
+  it('成功：setProvider 参数（apiKey 空 → undefined；models 透传；headers 回写；authHeader）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.name = 'P1-renamed'
+    edit.form.apiKey = ''
+    edit.form.authHeader = true
+    const ok = await edit.save()
+    expect(ok).toBe(true)
+    expect(getTransport().setProvider).toHaveBeenCalledWith('p1', {
+      name: 'P1-renamed',
+      type: 'anthropic-messages',
+      baseUrl: 'https://api.example.com',
+      apiKey: undefined,
+      headers: { 'X-Test': 'v1' },
+      authHeader: true,
+      models: [
+        { id: 'm1', name: 'M1', api: undefined, baseUrl: undefined, contextWindow: 200_000, input: undefined, thinkingLevelMap: undefined, compat: undefined, enabled: true },
+      ],
+    })
+  })
+
+  it('apiKey 哨兵 → 发送空串（清空语义 D18）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.apiKey = API_KEY_CLEAR_SENTINEL
+    await edit.save()
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect(arg.apiKey).toBe('')
+  })
+
+  it('apiKey 非空 → 原值透传', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.apiKey = 'sk-xyz'
+    await edit.save()
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect(arg.apiKey).toBe('sk-xyz')
+  })
+
+  it('headers 空对象 → 不传 headers（undefined，避免覆盖 runtime 既有值）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.headers = {}
+    await edit.save()
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect(arg.headers).toBeUndefined()
+  })
+
+  it('失败：setProvider reject → false + actionError', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    getTransport().setProvider = vi.fn(async () => { throw new Error('save failed') })
+    const ok = await edit.save()
+    expect(ok).toBe(false)
+    expect(edit.actionError.value).toBe('save failed')
+    expect(edit.saving.value).toBe(false)
+  })
+})
+
+describe('D8 过期快照 watch', () => {
+  it('未 dirty + 同 id provider 广播 → 表单刷新 + 快照重捕获（仍 isDirty false）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    // 外部广播替换 providers（新 name）
+    const store = getSettingsStore()
+    store.providers.value = [makeProvider({ name: 'P1-broadcast' })]
+    await nextTick()
+    expect(edit.form.name).toBe('P1-broadcast')
+    expect(edit.isDirty.value).toBe(false) // 快照已重捕获
+  })
+
+  it('dirty 后广播 → 不刷新（用户改动优先）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.name = 'P1-user-edit'
+    expect(edit.isDirty.value).toBe(true)
+    const store = getSettingsStore()
+    store.providers.value = [makeProvider({ name: 'P1-broadcast' })]
+    await nextTick()
+    expect(edit.form.name).toBe('P1-user-edit') // 不刷新
+  })
+
+  it('新增态（providerRef null）→ 广播不刷新', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    const store = getSettingsStore()
+    store.providers.value = [makeProvider({ name: 'P1-broadcast' })]
+    await nextTick()
+    expect(edit.form.name).toBe('') // 保持空
+  })
+})
+
+describe('模型 CRUD', () => {
+  it('addModel 空名抛错', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.newModel.name = '   '
+    expect(() => edit.addModel()).toThrow()
+    expect(tStub).toHaveBeenCalledWith('composable.modelNameRequired')
+  })
+
+  it('addModel 重名 id 抛错', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.newModel.name = 'm1'
+    edit.localModels.value = [{ id: 'm1', name: 'M1' }]
+    expect(() => edit.addModel()).toThrow('composable.modelAlreadyExists')
+  })
+
+  it('addModel 正常添加 + 清空表单', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.newModel.name = 'new-model'
+    edit.newModel.contextWindow = 128_000
+    edit.addModel()
+    expect(edit.localModels.value).toHaveLength(1)
+    expect(edit.localModels.value[0].id).toBe('new-model')
+    expect(edit.newModel.name).toBe('')
+  })
+
+  it('removeModel 移除指定下标', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.localModels.value = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]
+    edit.removeModel(0)
+    expect(edit.localModels.value.map((m) => m.id)).toEqual(['b'])
+  })
+
+  it('toggleInput 切换 text/image', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    const m: LocalModel = { id: 'm', name: 'M', input: ['text'] }
+    edit.toggleInput(m, 'image')
+    expect(m.input).toEqual(['text', 'image'])
+    edit.toggleInput(m, 'text')
+    expect(m.input).toEqual(['image'])
+  })
+
+  it('pickStrategy high-max → thinkingLevelMap {off,high,max:xhigh}', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    const m: LocalModel = { id: 'm', name: 'M' }
+    edit.pickStrategy(m, 'high-max')
+    expect(m.thinkingLevelMap).toEqual({ off: 'off', high: 'high', max: 'xhigh' })
+    edit.pickStrategy(m, 'all-levels')
+    expect(m.thinkingLevelMap).toBeUndefined()
+  })
+
+  it('getStrategyFromMap 反推策略', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    expect(edit.getStrategyFromMap(undefined)).toBe('all-levels')
+    expect(edit.getStrategyFromMap({ off: 'off', high: 'high' })).toBe('on-off')
+    expect(edit.getStrategyFromMap({ off: 'off', high: 'high', max: 'xhigh' })).toBe('high-max')
+  })
+})
+
+describe('headers CRUD', () => {
+  it('addHeader 新增空行；removeHeader 移除 + 同步 form.headers', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.addHeader()
+    expect(edit.headerRows.value).toHaveLength(2) // 1（回填）+ 1
+    edit.headerRows.value[1] = { key: 'X-New', value: 'v2' }
+    edit.syncHeadersFromRows()
+    expect(edit.form.headers['X-New']).toBe('v2')
+    edit.removeHeader(1)
+    expect(edit.headerRows.value).toHaveLength(1)
+    expect(edit.form.headers['X-New']).toBeUndefined()
+  })
+
+  it('重复 key → actionError duplicateHeaderKey', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.headerRows.value = [
+      { key: 'X-A', value: '1' },
+      { key: 'X-A', value: '2' },
+    ]
+    edit.syncHeadersFromRows()
+    expect(edit.actionError.value).toBe('composable.duplicateHeaderKey')
+  })
+})

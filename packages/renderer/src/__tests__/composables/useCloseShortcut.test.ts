@@ -7,7 +7,7 @@
  * - shortcut type 非 'close' → 不响应
  *
  * mock 策略：vi.mock('@/lib/ipc') 捕获 onShortcut（暴露 callback）+ windowClose；
- * vi.mock('@/composables/features/useSideDrawer') 提供 isOpen ref + close spy。
+ * vi.mock('@/composables/features/drawer/useSideDrawer') 提供 isOpen ref + close spy。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/useCloseShortcut.test.ts
  */
@@ -34,14 +34,14 @@ vi.mock('@/lib/ipc', () => ({
 const isOpenRef = ref(false)
 const mockClose = vi.fn()
 
-vi.mock('@/composables/features/useSideDrawer', () => ({
+vi.mock('@/composables/features/drawer/useSideDrawer', () => ({
   useSideDrawer: () => ({
     isOpen: isOpenRef,
     close: mockClose,
   }),
 }))
 
-import { useCloseShortcut } from '@/composables/features/useCloseShortcut'
+import { useCloseShortcut } from '@/composables/features/app/useCloseShortcut'
 
 beforeEach(() => {
   vi.clearAllMocks()

@@ -42,6 +42,13 @@ const configMock = vi.hoisted(() => ({
   listProviders: vi.fn(() => Promise.resolve([])),
   setSkillDirs: vi.fn(() => Promise.resolve()),
   setAgentDirs: vi.fn(() => Promise.resolve()),
+  // wave-oauth：SettingsModal → ProviderPage → useProviderOAuth onMounted 订阅 4 个 auth.* 事件（缺则 TypeError 崩 mount）
+  onAuthDeviceCode: vi.fn(() => () => {}),
+  onAuthAuthUrl: vi.fn(() => () => {}),
+  onAuthSuccess: vi.fn(() => () => {}),
+  onAuthError: vi.fn(() => () => {}),
+  // P2：ProviderPage 默认 pill + 默认修复 toast（缺则 TypeError 崩 mount）
+  onDefaultsWithSource: vi.fn(() => () => {}),
 }))
 
 const settingsMock = vi.hoisted(() => ({
@@ -49,7 +56,7 @@ const settingsMock = vi.hoisted(() => ({
   updateSystem: vi.fn(() => Promise.resolve()),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   config: configMock,
   settings: settingsMock,
 }))
@@ -101,9 +108,9 @@ async function openSystemPromptPage(): Promise<void> {
   })
   await flushPromises()
 
-  const navButtons = Array.from(document.body.querySelectorAll('nav button'))
-  // systemPrompt 菜单排在 provider/skill/agent/extension 之后，index 4
-  const systemPromptBtn = navButtons[4]
+  // 用 data-testid 定位（menus 已标注 settings-nav-${id}），不依赖 nav button 索引——
+  // 索引定位会因 nav 内新增非菜单按钮（如顶部退出按钮）而整体偏移，脆弱。
+  const systemPromptBtn = document.body.querySelector('[data-testid="settings-nav-system-prompt"]')
   expect(systemPromptBtn).toBeTruthy()
   systemPromptBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
   await flushPromises()
@@ -186,6 +193,56 @@ describe('SystemPromptPage 保存交互', () => {
     expect(configMock.setSystemPrompt).toHaveBeenCalledTimes(1)
     const { toasts } = useToast()
     expect(toasts.value.some((t) => t.type === 'error' && t.message.includes('保存失败'))).toBe(true)
+  })
+
+  it('修改后点「放弃」还原已保存快照，编辑态回退且保存按钮禁用', async () => {
+    configMock.getSystemPrompt.mockResolvedValueOnce({
+      config: {
+        version: 1,
+        replace: { enabled: true, prompt: '已保存的提示词' },
+        append: { enabled: false, prompt: '' },
+      },
+      corrupted: false,
+    })
+
+    await openSystemPromptPage()
+
+    // 编辑态：修改 textarea 文本 → dirty → 放弃按钮可用
+    await $('[data-testid="system-prompt-replace-input"]').setValue('未保存的修改')
+    const discardBtn = $('[data-testid="system-prompt-replace-discard"]')
+    expect(discardBtn.attributes('disabled')).toBeUndefined()
+
+    // 放弃 → textarea 还原为快照值、放弃按钮禁用（dirty 归零）
+    await discardBtn.trigger('click')
+    await flushPromises()
+
+    const input = $('[data-testid="system-prompt-replace-input"]')
+    expect((input.element as HTMLTextAreaElement).value).toBe('已保存的提示词')
+    expect($('[data-testid="system-prompt-replace-discard"]').attributes('disabled')).toBeDefined()
+    expect(configMock.setSystemPrompt).not.toHaveBeenCalled()
+  })
+
+  it('替换卡「恢复默认」清空文本并关开关（编辑态，需保存生效）', async () => {
+    configMock.getSystemPrompt.mockResolvedValueOnce({
+      config: {
+        version: 1,
+        replace: { enabled: true, prompt: '已保存的提示词' },
+        append: { enabled: false, prompt: '' },
+      },
+      corrupted: false,
+    })
+
+    await openSystemPromptPage()
+
+    // 开启状态下文本非空 → dirty 由 enabled 翻转产生（enabled 未变时需先改文本）
+    await $('[data-testid="system-prompt-replace-input"]').setValue('临时改动')
+    await $('[data-testid="system-prompt-replace-reset"]').trigger('click')
+    await flushPromises()
+
+    const input = $('[data-testid="system-prompt-replace-input"]')
+    expect((input.element as HTMLTextAreaElement).value).toBe('')
+    expect((input.element as HTMLTextAreaElement).disabled).toBe(true) // 开关已关，textarea 禁用
+    expect(configMock.setSystemPrompt).not.toHaveBeenCalled()
   })
 })
 

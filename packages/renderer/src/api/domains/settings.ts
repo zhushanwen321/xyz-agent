@@ -20,27 +20,9 @@ import {
   setUpdateSettings as setUpdateSettingsIpc,
 } from '@/lib/ipc'
 
-export interface SystemSettings {
-  locale: 'zh-CN' | 'en-US'
-  theme: 'light' | 'dark' | 'system'
-  themePreset: string
-  /** 字体大小：small/medium/large，缺省按 medium（D17） */
-  fontSize?: 'small' | 'medium' | 'large'
-  /** 后台完成提示音开关 */
-  completionSound?: boolean
-  /**
-   * 成功完成提示音：系统声音 id（如 'Glass' / 'complete' / 'Windows Notify System Generic'）。
-   * undefined / 空串 → 用平台默认（mac=Glass, win=Windows Notify System Generic, linux=complete）。
-   * 跨平台失效兜底（W3）：保存的 id 在当前平台不存在时（如 mac 的 'Hero' 切到 linux），
-   * main 侧 sound:play 据 kind 回落到对应平台默认（成功音→平台默认成功音），不再静默。
-   */
-  successSound?: string
-  /** 失败完成提示音：语义同 successSound，默认 mac=Funk / win=Windows Notify Email / linux=message-new-instant */
-  errorSound?: string
-}
-
-const SYSTEM_KEY = 'xyz-agent:system-settings'
-const DEFAULT_SYSTEM: SystemSettings = { locale: 'zh-CN', theme: 'dark', themePreset: 'cold-blue', fontSize: 'medium', completionSound: true }
+// [W4] SystemSettings 类型 + SYSTEM_KEY/DEFAULT_SYSTEM/getSystem/updateSystem 持久化已迁
+// @xyz-agent/core（domain/settings system-storage + types）。本文件仅保留 transport 转发与
+// proxy/worktree ipc 函数。SystemSettings 类型消费方改从 @xyz-agent/core import。
 
 // ── 订阅（转发 config / extension 域）──
 export const onProviders = configDomain.onProviders
@@ -161,6 +143,10 @@ export async function testProxy(config: IProxyConfig): Promise<{ success: boolea
   return testProxyIpc(config)
 }
 
+// [W4] getSystem/updateSystem（纯前端 localStorage 持久化）已迁 @xyz-agent/core
+// domain/settings/system-storage（经 PlatformPort.storage KVStorage）。renderer 壳 useSettingsShell
+// providePlatform 注入 LocalStorageAdapter 后，core settings-lifecycle.init 直接读 storage。
+
 // ── 升级设置（update:getSettings / update:setSettings）──
 // 预下载开关等升级偏好，通过 Electron IPC 直接与 main 进程通信（不走 runtime WS）。
 
@@ -169,28 +155,7 @@ export async function getUpdateSettings(): Promise<UpdateSettings> {
   return getUpdateSettingsIpc()
 }
 
-/** 保存升级设置。 */
-export async function setUpdateSettings(settings: UpdateSettings): Promise<void> {
+/** 保存升级设置（局部更新：只传要修改的字段）。 */
+export async function setUpdateSettings(settings: Partial<UpdateSettings>): Promise<void> {
   await setUpdateSettingsIpc(settings)
-}
-
-// ── 纯前端偏好（localStorage，不走 transport；mock 侧直接复用本实现，消除手工同构）──
-export function getSystem(): Promise<SystemSettings> {
-  const raw = localStorage.getItem(SYSTEM_KEY)
-  let parsed: Partial<SystemSettings> = {}
-  if (raw) {
-    try {
-      parsed = JSON.parse(raw) as Partial<SystemSettings>
-    } catch {
-      // 数据损坏：显式回退到默认值（空对象 → 下行 spread 自动用 DEFAULT_SYSTEM 兜底）
-      parsed = {}
-    }
-  }
-  return Promise.resolve({ ...DEFAULT_SYSTEM, ...parsed })
-}
-
-export async function updateSystem(patch: Partial<SystemSettings>): Promise<void> {
-  // 真 await：读当前值 → 合并 → 写回。写入失败 throw（调用方可据 toast 提示）。
-  const cur = await getSystem()
-  localStorage.setItem(SYSTEM_KEY, JSON.stringify({ ...cur, ...patch }))
 }

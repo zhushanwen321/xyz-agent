@@ -20,11 +20,16 @@ let nextId = 0
 
 const TOAST_DURATION_MS = 4000
 
-/** 自动移除 toast（4s 后） */
+/** [Q1-8] toast 自动移除 timer 句柄：remove 提前关 toast 时 clearTimeout，避免 4s 后空跑回调 */
+const timers = new Map<number, ReturnType<typeof setTimeout>>()
+
+/** 自动移除 toast（4s 后），记录句柄供 remove 清理 */
 function scheduleRemove(id: number): void {
-  setTimeout(() => {
+  const timer = setTimeout(() => {
+    timers.delete(id)
     toasts.value = toasts.value.filter((t) => t.id !== id)
   }, TOAST_DURATION_MS)
+  timers.set(id, timer)
 }
 
 export function useToast() {
@@ -47,6 +52,12 @@ export function useToast() {
   }
 
   function remove(id: number): void {
+    // [Q1-8] 提前关闭时清掉自动移除 timer（句柄不存在 = 已自然触发，no-op）
+    const timer = timers.get(id)
+    if (timer) {
+      clearTimeout(timer)
+      timers.delete(id)
+    }
     toasts.value = toasts.value.filter((t) => t.id !== id)
   }
 

@@ -27,6 +27,7 @@ function fixtureProvider(overrides: Partial<ParsedProvider> = {}): ParsedProvide
   return {
     _sourceName: 'test-provider',
     _apiKeyExtracted: true,
+    _credentialType: 'plaintext',
     _warnings: [],
     api: 'anthropic-messages',
     models: [{ id: 'm1', name: 'M1' }],

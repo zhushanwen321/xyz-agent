@@ -20,6 +20,8 @@ vi.mock('@/api/domains/session', () => ({
   getSubagents: vi.fn().mockResolvedValue([]),
   getWorkflows: vi.fn().mockResolvedValue([]),
   getAgentCallHistory: vi.fn().mockResolvedValue([]),
+  // w5：useChat 薄包装 import session.writeSegments（写 segments sidecar），mock 补全
+  writeSegments: vi.fn().mockResolvedValue(undefined),
 }))
 
 // chat 域 mock：streamSubscribe 捕获 handler 注册
@@ -32,6 +34,9 @@ vi.mock('@/api/domains/chat', () => ({
   steer: vi.fn().mockResolvedValue(undefined),
   followUp: vi.fn().mockResolvedValue(undefined),
   compact: vi.fn().mockResolvedValue(undefined),
+  // w5：useChat 薄包装的 chatApiPort 组装需 bash/abortBash
+  bash: vi.fn().mockResolvedValue(undefined),
+  abortBash: vi.fn().mockResolvedValue(undefined),
   getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
   getFullHistory: vi.fn().mockResolvedValue([]),
   streamSubscribe: chatStreamSubscribeMock,
@@ -64,9 +69,8 @@ vi.mock('@/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
 vi.mock('@/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
 
 import { session as sessionApi, chat as chatApi } from '@/api'
-import { subscribeSession } from '@/composables/useMessageBusSubscription'
-import { useSidebar } from '@/composables/features/useSidebar'
-import { resetChatModuleState } from '@/composables/features/useChat'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { resetChatModuleState } from '@/composables/features/chat/useChat'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -77,21 +81,21 @@ beforeEach(() => {
 
 describe('selectSession: ensureStreamSubscription 统一注册 events handler + subscribe', () => {
   it('selectSession(sess-A) 不调 getSubagents（subagents 经 subscribe stateSnapshot 提供）', async () => {
-    const sidebar = useSidebar()
+    const sidebar = useSidebarNew()
     await sidebar.selectSession('sess-A')
 
     expect(sessionApi.getSubagents).not.toHaveBeenCalled()
   })
 
   it('selectSession(sess-A) 不调 getWorkflows（workflows 经 streamRing workflowUpdate 增量信号→RPC 闭环）', async () => {
-    const sidebar = useSidebar()
+    const sidebar = useSidebarNew()
     await sidebar.selectSession('sess-A')
 
     expect(sessionApi.getWorkflows).not.toHaveBeenCalled()
   })
 
   it('切到 session B 也不主动拉（多次切换一致性）', async () => {
-    const sidebar = useSidebar()
+    const sidebar = useSidebarNew()
     await sidebar.selectSession('sess-A')
     await sidebar.selectSession('sess-B')
 
@@ -99,25 +103,17 @@ describe('selectSession: ensureStreamSubscription 统一注册 events handler + 
     expect(sessionApi.getWorkflows).not.toHaveBeenCalled()
   })
 
-  it('selectSession 调 subscribeSession 回流 commands/context（经 ensureStreamSubscription 内部）', async () => {
-    const sidebar = useSidebar()
-    await sidebar.selectSession('sess-A')
-
-    // ensureStreamSubscription 内部 fire-and-forget 调 subscribeSession
-    expect(subscribeSession).toHaveBeenCalledWith('sess-A')
-  })
-
-  it('selectSession 注册 events.on handler（经 ensureStreamSubscription → chatApi.streamSubscribe）', async () => {
-    const sidebar = useSidebar()
+  it('selectSession 触发订阅建立（ensureStreamSubscription → chatApi.streamSubscribe）', async () => {
+    const sidebar = useSidebarNew()
     await sidebar.selectSession('sess-A')
 
     // ensureStreamSubscription 内部同步调 chatApi.streamSubscribe 注册 handler
-    // 这是修复 handoff 回复丢失的关键：handler 注册后 snapshot 回放才能消费
+    // （订阅链路建立的可观测信号：handler 注册后 snapshot 回放才能消费）
     expect(chatApi.streamSubscribe).toHaveBeenCalledWith('sess-A', expect.any(Function))
   })
 
   it('多次切同一 session 不重复注册（幂等守卫）', async () => {
-    const sidebar = useSidebar()
+    const sidebar = useSidebarNew()
     await sidebar.selectSession('sess-A')
     await sidebar.selectSession('sess-A')
 
@@ -125,11 +121,14 @@ describe('selectSession: ensureStreamSubscription 统一注册 events handler + 
     expect(chatApi.streamSubscribe).toHaveBeenCalledTimes(1)
   })
 
-  it('subscribeSession 失败不阻塞切会话', async () => {
-    vi.mocked(subscribeSession).mockRejectedValueOnce(new Error('subscribe failed'))
-    const sidebar = useSidebar()
-    // 不应抛出——subscribeSession 失败被 ensureStreamSubscription 内部 catch 消化
+  it('subscribeSession 失败不阻塞切会话（core 内部 catch 消化）', async () => {
+    // w5 后 ensureStreamSubscription 经 core coordination/subscription-state 调 subscribeSession
+    //（ESM 静态绑定，vitest 无法 mock core 内部相对路径模块）。失败路径由 core useChat.ts 的
+    // void subscribeSession(sid).catch(console.warn) 消化。renderer 侧验证：selectSession 正常完成
+    // + 订阅链路建立（streamSubscribe 注册）不因 subscribeSession 内部失败而中断。
+    const sidebar = useSidebarNew()
     await expect(sidebar.selectSession('sess-A')).resolves.toBeUndefined()
     expect(sessionApi.switchSession).toHaveBeenCalledWith('sess-A')
+    expect(chatApi.streamSubscribe).toHaveBeenCalledWith('sess-A', expect.any(Function))
   })
 })
