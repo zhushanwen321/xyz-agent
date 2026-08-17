@@ -310,6 +310,7 @@ export function formatToolCall(
   theme: ThemeLike,
 ): string {
   const shortenPath = (p: string): string => {
+    // 仅用于显示层路径缩写（~ 替换 home 前缀），不读取 pi 目录（TC9 合法命中）
     const home = os.homedir();
     return p.startsWith(home) ? `~${p.slice(home.length)}` : p;
   };

@@ -101,6 +101,7 @@ export type ClientMessageType =
   | 'config.setTimeout' | 'config.getTimeout'
   | 'config.setDefaultBaseBranch' | 'config.getDefaultBaseBranch'
   | 'config.setAutoRenameEnabled' | 'config.getAutoRenameEnabled'
+  | 'config.setRenameModel' | 'config.getRenameModel'
   | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
   | 'preset.create' | 'preset.update' | 'preset.delete'
   | 'preset.recordUsage' | 'preset.getUsage'
@@ -491,6 +492,10 @@ export interface ClientMessageMap {
   'config.setAutoRenameEnabled': { enabled: boolean }
   /** config.getAutoRenameEnabled：读取 session 自动重命名开关配置（前端读取）。 */
   'config.getAutoRenameEnabled': Record<string, never>
+  /** config.setRenameModel：设置自动重命名标题生成模型（"provider/modelId"，空串 = 未设置）。 */
+  'config.setRenameModel': { model: string }
+  /** config.getRenameModel：读取自动重命名标题生成模型（前端读取）。 */
+  'config.getRenameModel': Record<string, never>
   // pi 启动预设域（设计文档 pi-launch-presets.md）。
   // preset.list：列出全部预设（内置 + 自定义）；preset.getDefault：读全局默认预设 id；
   // preset.setDefault：设全局默认预设（写入 pi-presets.json）。均按需 RPC，无 server-push 广播。
@@ -663,6 +668,7 @@ export type ServerMessageType =
   | 'config.worktreeTimeout'
   | 'config.defaultBaseBranch'
   | 'config.autoRenameEnabled'
+  | 'config.renameModel'
   | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
   | 'preset.create' | 'preset.update' | 'preset.delete'
   | 'preset.recordUsage' | 'preset.getUsage'
@@ -947,6 +953,8 @@ export interface ServerMessageMapBase {
   'config.defaultBaseBranch': { baseBranch: string }
   /** config.autoRenameEnabled：config.getAutoRenameEnabled 的 reply。 */
   'config.autoRenameEnabled': { enabled: boolean }
+  /** config.renameModel：config.getRenameModel / config.setRenameModel 的 reply（"provider/modelId"，空串 = 未设置）。 */
+  'config.renameModel': { model: string }
 
   // ── preset 域 reply（设计文档 pi-launch-presets.md，runtime PresetMessageHandler reply）──
   // 仅登记 payload 消费型 reply（domain 读 reply 字段）。
@@ -1306,6 +1314,8 @@ export interface ReplyPayloadMap {
   'config.getDefaultBaseBranch': ServerMessageMap['config.defaultBaseBranch']
   'config.setAutoRenameEnabled': ServerMessageMap['config.autoRenameEnabled']
   'config.getAutoRenameEnabled': ServerMessageMap['config.autoRenameEnabled']
+  'config.setRenameModel': ServerMessageMap['config.renameModel']
+  'config.getRenameModel': ServerMessageMap['config.renameModel']
   // preset 域（设计文档 pi-launch-presets.md）：runtime PresetMessageHandler reply。
   // 全部引用 ServerMessageMapBase 中登记的精确 payload 形状（W-SH-1 收紧，SSOT）。
   //  - preset.list / getDefault / getUsage / getCwdDefault / getCwdDefaults / export / import

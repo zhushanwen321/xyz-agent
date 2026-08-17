@@ -2,20 +2,18 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-
 import {
 	type NormalizedQuotaRow,
 	type QuotaProvider,
 } from "./types.js";
 
-// 凭据文件位于当前 pi agent 数据目录的 secrets/ 下（getAgentDir 读 PI_CODING_AGENT_DIR，缺省 ~/.pi/agent）
-const SECRETS_DIR = join(getAgentDir(), "secrets");
+export const SECRETS_DIR = join(getAgentDir(), "secrets");
 
 /** 默认 fetch 超时（毫秒） */
 const FETCH_TIMEOUT_MS = 8000;
 /** HTTP 200 状态码 */
 const HTTP_OK = 200;
-const OPENCODE_COOKIE_PATH = join(SECRETS_DIR, "opencode-cookie.txt");
+export const OPENCODE_COOKIE_PATH = join(SECRETS_DIR, "opencode-cookie.txt");
 const OPENCODE_WORKSPACE_URL =
 	"https://opencode.ai/workspace/wrk_01KM5Q3EEQEHZJ3V5PXF5JCR62/go";
 

@@ -1,28 +1,16 @@
 ---
 name: dev-link
 description: >-
-  管理 @zhushanwen/pi-* extension 在本地源码（live edit）与已发布版本之间切换。
-  两种模式：pi 模式（原版 pi CLI，pi-link.sh/pi-unlink.sh symlink 到
-  ~/.pi/agent/extensions/）与 xyz-agent 模式（Electron dev，XYZ_EXTENSION_PATHS
-  环境变量，link-local.sh/link-npm.sh）。触发词："pi link"、"原版 pi"、
-  "link local"、"dev link"、"切换到本地"、"symlink extension"、"unlink extension"、
-  "restore npm"、"extension link"。不用于安装新包或管理非 pi extension。
+  Use when 在 @zhushanwen/pi-* extension 的本地源码（live edit）与已发布版本
+  之间切换。触发词："pi link"、"原版 pi"、"link local"、"dev link"、
+  "切换到本地"、"symlink extension"、"unlink extension"、"restore npm"、
+  "extension link"。
+  不用于 安装新包或管理非 pi extension。
 ---
 
 # Dev Link
 
 管理 `@zhushanwen/pi-*` extension 在**本地源码（live edit）**与**已发布版本**之间切换。两种模式，按测试目标选——选错模式是常见错误（link 了但不生效）。
-
-## 重要：mandatory 扩展在 dev 自动走源码（不需 dev-link）
-
-builtin（mandatory）扩展共 10 个（`pi-ask-user`/`pi-goal`/`pi-todo`/`pi-pending-notifications`/`pi-subagent-workflow`/`pi-session-reader`/`pi-structured-output`/`pi-permission`/`pi-scheduler`/`pi-rename-session`，SSOT = `packages/shared/src/mandatory-extensions.json`）。**在 xyz-agent dev 模式下，它们自动从源码 `extensions/<pkg>/` 加载**（pi 原生加载 `.ts`），改源码后新建 session 即生效——**不需要 dev-link**。
-
-机制：`extension-resolver.ts` 的 `scanBundledExtensions` dev 分支读源码目录并按 mandatory SSOT 过滤（见 `docs/architecture/builtin-extension-dev-build-split.md`）。`pnpm dev` 也不再跑 `prepare-builtin-extensions.sh`（dev 不读 staged bundle）。
-
-**dev-link 的用途收窄为**：
-
-- 非 mandatory 的 `@zhushanwen/pi-*` 包（如 `context-engineering`、`cw-tool`、`evolve-daily`、`model-switch`、`plan`、`unified-hooks`、`vision`）在本地源码与 npm 版本间切换——这些包默认不从源码加载，要 live edit 需显式 link。
-- 临时把某个 mandatory 包指向**别处的源码版本**（如另一个 feature 分支 worktree 的 `extensions/goal/`）做对比测试——此时 link 会覆盖默认的当前 worktree 源码加载。
 
 ## 两种模式（关键区别）
 
@@ -72,9 +60,8 @@ bash .agents/skills/dev-link/link-list.sh
 智能检测（动态推导路径，不写死项目路径）：
 - **pi 模式**（`PI_EXT_DIR/pi-*` symlink）：显示所有 link + target，标注归属 `[当前worktree]` / `[其他worktree: name]` / `[外部]`；悬空 symlink（worktree 删了未清）标 `✗悬空`
 - **xyz-agent 模式**（`.env.dev-extensions`）：从当前 git root 动态查找，检测路径存在性 + worktree 归属
-- **npm 条目备份**：显示 pi-link 清掉的 npm 源（pi-unlink 会恢复）
 - **PI_CODING_AGENT_DIR 不一致警告**：link 位置与运行时 agentDir 不一致时提示（pi 可能不加载）
-- 路径 source `dev-link-lib.sh` 复用 `PI_EXT_DIR`/`SETTINGS`/`DL_BACKUP_FILE`，与 link 建立位置一致
+- 路径 source `dev-link-lib.sh` 复用 `PI_EXT_DIR`，与 link 建立位置一致
 ```
 
 ## 包名格式

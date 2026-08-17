@@ -27,6 +27,21 @@ task prompt 中必须包含：
    - `type: "module"` 和 `keywords: ["pi-package"]` 是否存在
    - 有 skills 目录时 `pi.skills` 是否声明
    - `peerDependencies` 是否声明 `@earendil-works/pi-coding-agent`
+
+**配置 skill 约定**（agent 可发现性）：凡 agent 可能需要协助配置/使用/排查的 extension，**必须**带一个统一命名的 config skill，让 agent 通过 pi 的 progressive disclosure（skill description 进 `<available_skills>`，正文按需 read）自动发现说明。检查：
+   - 有磁盘配置文件（读 `<agentDir>/` 下 .json 等）→ skill 含配置路径（getAgentDir 派生）+ schema + 默认值 + 示例
+   - 无配置文件但有命令交互/复杂存储（如 event sourcing）→ skill 讲使用方式 + 存储机制（不硬套配置 schema 模板）
+   - 命名：`skills/<extension简名>-ext-config/SKILL.md`（如 `permission-ext-config`、`model-switch-ext-config`）
+   - `package.json`：`pi.skills: ["./skills"]` + `files` 含 `"skills/"`（否则 npm publish 丢 skill）
+   - SKILL.md frontmatter：`name` = 目录名 + `description` 双引号含触发词（决定 agent 能否正确匹配 read）
+   - 范例：`extensions/{rename-session,permission,model-switch,scheduler}/skills/*-ext-config/`
+
+**配置路径约定**（参考 extension-conventions §「配置路径约定」）：有磁盘配置文件的 extension，路径必须是 `<agentDir>/config/<extension简名>-ext-config.json`（与 config skill 名 `<简名>-ext-config` 对齐，禁语义名 / 无后缀简写 / `<名>-config.json`）。检查：
+   - 配置路径是否落在 `config/` 子目录 + 文件名 = `<简名>-ext-config.json`（如 `permission-ext-config.json`、`model-switch-ext-config.json`，llm-shared `getConfigPath` 派生）
+   - 历史路径迁移是否用 session_start hook（幂等 + 模块级 once flag；参考 extension-conventions §「历史路径迁移」）：代码含 `migrateLegacyConfig` 调用 + 版本注释（`Added in vX.Y.Z` / `Remove after vN.0.0`）
+   - **禁止** `postinstall` / `pi.migrate` / `scripts/migrate-config.mjs`（已废弃，session_start 取代）
+   - 代码是否**只读新路径**（无旧路径 fallback / 双读）
+
 4. **向后兼容性**（参考 extension-conventions §「状态持久化」）：
    - 已有 tool 的参数 schema 变更是否兼容（新增字段可选？）
    - details 接口变更是否破坏下游消费者

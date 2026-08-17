@@ -106,7 +106,7 @@ extensions:
     installed: null
     version: null
     license: null
-    status: active
+    status: removed  # 2026-08 包已删除（shared-llm-config slice P0）
     npm_package: "@zhushanwen/pi-context-engineering"
     replaces: null
     replaced_by: null
@@ -125,7 +125,7 @@ extensions:
     installed: null
     version: null
     license: null
-    status: active
+    status: removed  # 2026-08 包已删除（shared-llm-config slice P0）
     npm_package: "@zhushanwen/pi-evolve-daily"
     replaces: null
     replaced_by: null

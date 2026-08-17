@@ -1,5 +1,8 @@
 # Autocontext vs Evolve — 源码架构深度对比
 
+> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。
+
+
 > 分析对象：autocontext（⭐1,168）、evolve-daily + skills/evolve*（自有）
 > 分析日期：2025-06-01
 > 分析深度：源码级

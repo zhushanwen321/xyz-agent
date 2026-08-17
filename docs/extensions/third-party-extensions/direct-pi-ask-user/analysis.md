@@ -1,5 +1,8 @@
 # pi-ask-user — 直接安装分析
 
+> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。
+
+
 ## 基本信息
 
 | 维度 | 信息 |

@@ -79,6 +79,9 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     // auto-rename 开关 stub（worktree 测试不涉及，默认关闭）
     getAutoRenameEnabled: vi.fn(() => false),
     setAutoRenameEnabled: vi.fn(),
+    // rename 模型 stub（worktree 测试不涉及，默认未设置）
+    getRenameModel: vi.fn(() => ''),
+    setRenameModel: vi.fn(),
     // 其他方法 stub
     listProviders: vi.fn(() => []),
     listBuiltinProviders: vi.fn(() => []),

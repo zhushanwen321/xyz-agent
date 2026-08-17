@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-
 import {
 	INFINITE_WIN,
 	type NormalizedQuotaRow,
@@ -15,9 +14,8 @@ const FETCH_TIMEOUT_MS = 5000;
 /** 百分比标度 */
 const PERCENT_SCALE = 100;
 
-// 凭据文件位于当前 pi agent 数据目录的 secrets/ 下（getAgentDir 读 PI_CODING_AGENT_DIR，缺省 ~/.pi/agent）
-const SECRETS_DIR = join(getAgentDir(), "secrets");
-const KIMI_API_KEY_PATH = join(SECRETS_DIR, "kimi-coding-api-key.txt");
+export const SECRETS_DIR = join(getAgentDir(), "secrets");
+export const KIMI_API_KEY_PATH = join(SECRETS_DIR, "kimi-coding-api-key.txt");
 
 export interface KimiCodingWindow {
 	limit: number;

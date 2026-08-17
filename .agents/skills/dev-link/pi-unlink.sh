@@ -21,6 +21,8 @@ source "$SCRIPT_DIR/dev-link-lib.sh"
 for input in "$@"; do
 	short=$(dl_resolve_short_name "$input")
 	link="$PI_EXT_DIR/pi-$short"
+	# 清上一轮循环残留（dl_lookup 失败时不覆盖旧值，stale 名会把刚卸载的包重新 pi install 回来）
+	unset DL_NPM_NAME DL_SRC_DIR
 	dl_lookup "$short" || true  # 查 npm 包名（pi install 重装用）；映射不在则跳过重装
 
 	# 1. rm symlink
@@ -35,7 +37,7 @@ for input in "$@"; do
 	if [ -n "${DL_SRC_DIR:-}" ] && [ -d "$DL_SRC_DIR/skills" ]; then
 		skill_count=$(dl_unlink_skills "$DL_SRC_DIR")
 		if [ "$skill_count" != "0" ]; then
-			green "  ✓ 删 ${skill_count} 个 skill symlink（$PI_SKILL_DIR）"
+			green "  ✓ 删 ${skill_count} 个 skill symlink（${PI_SKILL_DIR}）"
 		fi
 	fi
 

@@ -33,8 +33,9 @@ function getNpmSkillCandidates(npmSkillsDir: string): string[] {
  * Resolve a skill name to its directory or SKILL.md path.
  * Search order:
  * 1. Project-level: .agents/skills/<name>/
- * 2. Global: ~/.pi/agent/skills/<name>/
- * 3. npm packages: ~/.pi/agent/npm/node_modules/<pkg>/skills/<name>/
+ * 2. Global: <agentDir>/skills/<name>/（agentDir = getAgentDir()，实例隔离：
+ *    PI_CODING_AGENT_DIR 场景读隔离目录，不碰 ~/.pi/agent）
+ * 3. npm packages: <agentDir>/npm/node_modules/<pkg>/skills/<name>/
  * Returns the directory path if found, undefined otherwise.
  */
 export function resolveSkillPath(skillName: string): string | undefined {

@@ -1,8 +1,9 @@
 ---
 name: pull-request
 description: >-
-  提交 Pull Request。触发词："提交 PR"、"创建 PR"、"push"、
-  "提交代码"、"pr-worktree"。仅用于 xyz-agent 项目。
+  Use when 提交代码并创建 Pull Request。触发词："提交 PR"、"创建 PR"、"push"、
+  "提交代码"、"pr-worktree"。
+  不用于 仅提交/推送不建 PR 的纯 git 操作、或 push 前的最小验证（用 pre-push-checks）。
 ---
 
 # pull-request

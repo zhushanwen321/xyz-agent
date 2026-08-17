@@ -1,11 +1,10 @@
 ---
 name: prerelease-test
 description: >-
-  Use when you need to test Electron build artifacts (DMG/EXE/AppImage)
-  locally before an official release, or when the user says "发测试版",
-  "构建测试 DMG", "生成测试包", "pre-release test", "beta release",
-  "draft release", "测版". Only for xyz-agent project.
-  Not for official releases — use merge skill instead.
+  Use when 需要本地测试 Electron 构建产物（DMG/EXE/AppImage），或用户说
+  "发测试版"、"构建测试 DMG"、"生成测试包"、"pre-release test"、"beta release"、
+  "draft release"、"测版"。
+  不用于 正式发布——用 merge skill。
 ---
 
 # prerelease-test

@@ -1,5 +1,8 @@
 # ADR-024: skill tracker 主动声明替代被动监听（误报零容忍）
 
+> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。
+
+
 ## Status
 
 Accepted

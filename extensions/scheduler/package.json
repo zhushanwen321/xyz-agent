@@ -1,13 +1,15 @@
 {
   "name": "@zhushanwen/pi-scheduler",
-  "version": "0.1.1",
+  "version": "0.3.0",
   "type": "module",
   "main": "index.ts",
   "pi": {
     "extensions": [
       "./index.ts"
     ],
-    "skills": []
+    "skills": [
+      "./skills"
+    ]
   },
   "keywords": [
     "pi-package"
@@ -23,6 +25,7 @@
   "files": [
     "index.ts",
     "src/**/*.ts",
+    "skills/",
     "vitest.config.ts"
   ],
   "peerDependencies": {

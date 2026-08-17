@@ -1,5 +1,8 @@
 # Third-Party Extensions Registry
 
+> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。
+
+
 > **Source of truth**: [`extensions.yaml`](./extensions.yaml)
 > Schema: [`extensions.schema.json`](./extensions.schema.json)
 > 验证脚本位于源仓库：`xyz-pi-extensions-workspace/.githooks/validate-extensions-yaml`

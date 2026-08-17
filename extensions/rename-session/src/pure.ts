@@ -1,34 +1,277 @@
-import fs from "node:fs";
-import path from "node:path";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 
-/** 配置：开关文件路径、标题最大长度、rename 指令。readonly，集中管理便于测试注入。 */
-export interface RenameConfig {
-	readonly switchFilePath: string;
-	readonly maxTitleLength: number;
-	readonly renameInstruction: string;
+import {
+	loadConfig,
+	saveConfig,
+	type ModelSelector,
+} from "@zhushanwen/pi-llm-shared";
+
+// ──────────────────────── 配置 ────────────────────────
+
+/**
+ * rename-session 配置 schema（落盘到 `<agentDir>/config/rename-session-ext-config.json`，路径由 llm-shared 推导）。
+ *
+ * 收口自旧版 pure.ts 的 `RenameConfig`（switchFilePath/maxTitleLength/renameInstruction 硬编码常量）：
+ * - 开关双机制：`enabled` 字段（pi CLI 用户主开关，默认 false）+ xyz-agent runtime 的
+ *   auto-rename-enabled flag 文件（live 覆盖源，存在即开，见下方 [COMPAT] 契约）
+ * - model 从「搭便车 ctx.model」改为独立 `ModelSelector`（仅支持 ref 精确指定）
+ * - maxTitleLength 保留（默认 50）
+ * - renameInstruction 不进配置（i18n 留未来），由代码常量 RENAME_INSTRUCTION 承载
+ */
+export interface RenameSessionConfig {
+	/** 自动重命名开关（默认 false）。 */
+	enabled: boolean;
+	/** 标题生成用的模型 selector（仅支持 ref 精确指定；未配置时默认为空 ref，解析不到模型则跳过）。 */
+	model: ModelSelector;
+	/** 标题最大长度（Unicode 码点数）。 */
+	maxTitleLength: number;
+	/**
+	 * 标题生成 LLM 的 thinking 级别（pi 的 ModelThinkingLevel，THINKING_ORDER SSOT）。
+	 * 默认 "off"：不传 pi-ai reasoning（provider 默认行为，与旧版本一致）；
+	 * "minimal"~"max" 透传给 SimpleStreamOptions.reasoning（provider 不支持时静默忽略）。
+	 */
+	thinkingLevel: ModelThinkingLevel;
 }
 
-/** pi 实际使用的根数据目录（getAgentDir：读 PI_CODING_AGENT_DIR env，缺省回退 ~/.pi/agent） */
-const ROOT = getAgentDir();
+/** 合法 thinking 级别清单（与 pi-ai ModelThinkingLevel 一致；normalize 校验用）。Set 免 as 断言。 */
+const THINKING_LEVELS: ReadonlySet<string> = new Set([
+	"off",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+]);
 
-export const CONFIG: RenameConfig = {
-	switchFilePath: path.join(ROOT, "auto-rename-enabled"),
+// ──────────────────────── 环境变量覆盖 ────────────────────────
+
+/** 环境变量前缀（避免与其他配置冲突）。 */
+const ENV_PREFIX = "PI_RENAME_";
+
+/**
+ * 从环境变量读取配置覆盖值（live 读取，每次调用查 process.env）。
+ *
+ * 支持的环境变量：
+ * - `PI_RENAME_ENABLED`: 自动重命名开关（"true"/"false"）
+ * - `PI_RENAME_MODEL`: 模型引用（"provider/model" 格式，映射为 {type:"ref", ref:"provider/model"}）
+ * - `PI_RENAME_MAX_TITLE_LENGTH`: 标题最大长度（正整数）
+ * - `PI_RENAME_THINKING_LEVEL`: thinking 级别（枚举值）
+ *
+ * 返回 Partial<RenameSessionConfig>，仅包含有效覆盖值。无效值静默忽略（不阻断加载）。
+ *
+ * @example
+ * // 环境变量覆盖示例
+ * // PI_RENAME_ENABLED=true PI_RENAME_MODEL=deepseek/chat node app.js
+ */
+function getEnvOverrides(): Partial<RenameSessionConfig> {
+	const overrides: Partial<RenameSessionConfig> = {};
+
+	// enabled 覆盖
+	const enabledEnv = process.env[`${ENV_PREFIX}ENABLED`];
+	if (enabledEnv !== undefined) {
+		if (enabledEnv === "true") overrides.enabled = true;
+		else if (enabledEnv === "false") overrides.enabled = false;
+		// 其他值静默忽略（不回默认，让 config 文件或 flag 文件接管）
+	}
+
+	// model 覆盖（简化形式："provider/model" → {type:"ref", ref:"provider/model"}）
+	const modelEnv = process.env[`${ENV_PREFIX}MODEL`];
+	if (modelEnv !== undefined && typeof modelEnv === "string") {
+		// 支持 "provider/model" 格式（最常用场景）
+		const parts = modelEnv.split("/");
+		if (parts.length === 2 && parts[0] && parts[1]) {
+			overrides.model = { type: "ref", ref: modelEnv };
+		}
+		// 其他格式静默忽略（复杂 ModelSelector 请用配置文件）
+	}
+
+	// maxTitleLength 覆盖
+	const maxLengthEnv = process.env[`${ENV_PREFIX}MAX_TITLE_LENGTH`];
+	if (maxLengthEnv !== undefined) {
+		const parsed = Number(maxLengthEnv);
+		if (Number.isInteger(parsed) && parsed > 0) {
+			overrides.maxTitleLength = parsed;
+		}
+		// 非正整数静默忽略
+	}
+
+	// thinkingLevel 覆盖
+	const thinkingLevelEnv = process.env[`${ENV_PREFIX}THINKING_LEVEL`];
+	if (thinkingLevelEnv !== undefined && isThinkingLevel(thinkingLevelEnv)) {
+		overrides.thinkingLevel = thinkingLevelEnv;
+		// 非法值静默忽略
+	}
+
+	return overrides;
+}
+
+/**
+ * 类型谓词：unknown 是否为合法 thinking 级别（normalizeRenameConfig 校验用，单点断言）。
+ * Set.has 运行时兜底 + 类型收窄，调用方无需再断言。
+ */
+function isThinkingLevel(raw: unknown): raw is ModelThinkingLevel {
+	return typeof raw === "string" && THINKING_LEVELS.has(raw);
+}
+
+/** 默认配置：关闭、空 ref（未精确指定模型，解析不到则跳过）、标题上限 50、不启用 thinking。 */
+export const DEFAULT_RENAME_CONFIG: RenameSessionConfig = {
+	enabled: false,
+	model: { type: "ref", ref: "" },
 	maxTitleLength: 50,
-	renameInstruction: "根据以上对话，为这个会话生成一个简短标题（3-8 个词）。用对话所用的语言。只输出标题文本，不要解释，不要 emoji，不要引号或 markdown 标记。",
+	thinkingLevel: "off",
 };
 
-/** entry 的宽松类型（structural typing，兼容 pi 的 SessionEntry[] 但不依赖 pi 类型） */
+/** llm-shared loadConfig/saveConfig 的包名（决定文件名 rename-session-ext-config.json，llm-shared getConfigPath 追加 -ext-config.json 后缀）。 */
+const CONFIG_PKG = "rename-session";
+
+// ──────────────────────── xyz-agent runtime 开关契约（live 覆盖源） ────────────────────────
+
+/**
+ * [COMPAT] xyz-agent runtime 开关契约文件：<agentDir>/auto-rename-enabled（存在=开，不存在=关）。
+ * Added in v0.4.0. Remove after v1.0.0（旧 runtime 版本淘汰后随 flag 契约一并移除）。
+ *
+ * 背景：已发布的 xyz-agent runtime（worktree-config-helper.ts）只认这个 flag 文件——
+ * SystemPage 开关读写它、首启 ensureAutoRenameDefault 默认创建它，且这部分代码随桌面 app
+ * 发布、不随本 extension 升级。若本扩展单方面改为只读 config JSON 并在迁移时删除 flag，
+ * 则 mandatory 自动升级后所有未更新桌面 app 的用户：UI 显示 OFF 而 extension 实际 ON，
+ * 且 SystemPage toggle 永久失效（旧 runtime 只写 flag，新 extension 不再读）。
+ *
+ * 契约语义（loadRenameConfig 每次调用 live 检查，非一次性迁移）：
+ * - flag 存在 → enabled 强制 true（xyz-agent runtime 的开关打开，覆盖 config.enabled）
+ * - flag 不存在 → 回落 config.enabled（pi CLI 用户的主开关机制，见 config skill）
+ * - 扩展永不删除/创建该文件，除非用户通过 /auto-rename on|off 显式操作（commands.ts 双写同步）
+ */
+const AUTO_RENAME_FLAG_FILE = "auto-rename-enabled";
+
+/** flag 文件完整路径（getAgentDir 派生，尊重 PI_CODING_AGENT_DIR）。 */
+function getAutoRenameFlagPath(): string {
+	return join(getAgentDir(), AUTO_RENAME_FLAG_FILE);
+}
+
+/**
+ * 设置 xyz-agent runtime 开关契约 flag（/auto-rename on|off 命令调用，与 config 双写同步）。
+ * enabled=true 创建空 flag 文件；enabled=false 删除（不存在时视为成功）。best-effort 不抛错。
+ */
+export function setAutoRenameSwitch(enabled: boolean): void {
+	const flagPath = getAutoRenameFlagPath();
+	if (enabled) {
+		mkdirSync(dirname(flagPath), { recursive: true });
+		if (!existsSync(flagPath)) {
+			writeFileSync(flagPath, "", "utf-8");
+		}
+	} else {
+		try {
+			rmSync(flagPath);
+		} catch (e: unknown) {
+			// flag 不存在视为已关（吞 ENOENT）；其他错误（如权限）如实抛出，不静默
+			const code = (e as NodeJS.ErrnoException).code;
+			if (code !== "ENOENT") throw e;
+		}
+	}
+}
+
+/**
+ * 把磁盘上的 unknown JSON 归一化成 RenameSessionConfig。
+ *
+ * 容错策略（逐字段校验 + 默认值回填）：坏字段不影响其他字段（粒度容错），
+ * 整体坏（非对象 / null / 数组）返回全默认。宁可静默回默认，不抛错阻断 rename。
+ */
+export function normalizeRenameConfig(raw: unknown): RenameSessionConfig {
+	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+		return { ...DEFAULT_RENAME_CONFIG };
+	}
+	const obj = raw as Record<string, unknown>;
+
+	const enabled = typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_RENAME_CONFIG.enabled;
+
+	const maxTitleLength =
+		typeof obj.maxTitleLength === "number" &&
+		Number.isInteger(obj.maxTitleLength) &&
+		obj.maxTitleLength > 0
+			? obj.maxTitleLength
+			: DEFAULT_RENAME_CONFIG.maxTitleLength;
+
+	const model = normalizeModelSelector(obj.model) ?? DEFAULT_RENAME_CONFIG.model;
+
+	const thinkingLevel = isThinkingLevel(obj.thinkingLevel)
+		? obj.thinkingLevel
+		: DEFAULT_RENAME_CONFIG.thinkingLevel;
+
+	return { enabled, model, maxTitleLength, thinkingLevel };
+}
+
+/** 校验 ModelSelector：只支持 ref 精确指定，其余形式非法返回 null。 */
+function normalizeModelSelector(raw: unknown): ModelSelector | null {
+	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+	const obj = raw as Record<string, unknown>;
+	if (obj.type === "ref" && typeof obj.ref === "string") {
+		return { type: "ref", ref: obj.ref };
+	}
+	return null;
+}
+
+/**
+ * 加载配置（mtime+size 缓存；文件缺失/损坏返回默认，不抛错）。
+ *
+ * 配置值优先级（从高到低）：
+ * 1. 环境变量覆盖（PI_RENAME_*，live 读取，每次调用查 process.env）
+ * 2. xyz-agent runtime 开关契约（flag 文件存在 → enabled=true）
+ * 3. 配置文件（<agentDir>/config/rename-session-ext-config.json）
+ * 4. 默认值
+ *
+ * 环境变量覆盖适用于容器化部署、CI/CD 等场景，允许通过环境变量快速切换配置而无需修改文件。
+ *
+ * @example
+ * // 容器化部署示例
+ * // PI_RENAME_ENABLED=true PI_RENAME_MODEL=deepseek/chat node app.js
+ *
+ * // CI/CD 禁用重命名
+ * // PI_RENAME_ENABLED=false npm test
+ */
+export function loadRenameConfig(): RenameSessionConfig {
+	// 1. 从配置文件加载基础配置（带 mtime+size 缓存）
+	const fileConfig = loadConfig(CONFIG_PKG, DEFAULT_RENAME_CONFIG, normalizeRenameConfig);
+
+	// 2. 环境变量覆盖（最高优先级，live 读取）
+	const envOverrides = getEnvOverrides();
+	let config: RenameSessionConfig = { ...fileConfig, ...envOverrides };
+
+	// 3. xyz-agent runtime 开关契约（flag 文件存在 → enabled 强制 true，覆盖 config）
+	// 注意：flag 文件覆盖优先级低于环境变量（环境变量是最高优先级）
+	if (existsSync(getAutoRenameFlagPath()) && !("enabled" in envOverrides)) {
+		config = { ...config, enabled: true };
+	}
+
+	return config;
+}
+
+/** 保存配置（原子写 tmp+rename）。返回 {success, error?}。 */
+export function saveRenameConfig(
+	config: RenameSessionConfig,
+): { success: boolean; error?: string } {
+	return saveConfig(CONFIG_PKG, config);
+}
+
+// ──────────────────────── 首 turn 判定 ────────────────────────
+
+/** entry 的宽松类型（structural typing，兼容 pi 的 SessionEntry[] 但不依赖 pi 类型）。 */
 interface EntryLike {
 	type: string;
-	message?: { role?: string };
+	message?: { role?: string; stopReason?: string };
 }
 
 /**
  * 数 session 中 assistant 回复数。用于判定首 turn（===1）。
  * 判定条件：entry.type === "message" && entry.message.role === "assistant"
- * （pi 内部 session-manager.ts:367/937/1392 同款模式）
+ * （pi 内部 session-manager.ts 同款模式）。
+ *
+ * 注意：触发判定使用 countSuccessfulAssistantReplies（index.ts 已切换；不看 stopReason
+ * 无法区分「iteration 结束」与「轮次结束」，见设计 D6）。本函数仅为兼容保留。
  */
 export function countAssistantReplies(entries: ReadonlyArray<EntryLike>): number {
 	let count = 0;
@@ -40,68 +283,55 @@ export function countAssistantReplies(entries: ReadonlyArray<EntryLike>): number
 	return count;
 }
 
-/** AssistantMessage.content 的宽松元素类型 */
-interface ContentBlockLike {
-	type: string;
-	text?: string;
+/**
+ * 数 session 中「成功完成」的 assistant 回复数（stopReason === "stop"），触发判定用（===1 触发 rename）。
+ *
+ * 只数 stop 的理由（设计 D6）：pi 的 turn_end 每个 iteration 发一次，中间 iteration 的
+ * stopReason 是 toolUse；error/aborted 轮的错误上下文不该用来命名（延迟到下一个成功轮）；
+ * length（输出被 max token 截断）截断文本质量无保证，与 error 同等对待。
+ * 无 stopReason 字段的宽松数据不计（只认显式 stop，防误触发）。
+ */
+export function countSuccessfulAssistantReplies(entries: ReadonlyArray<EntryLike>): number {
+	let count = 0;
+	for (const entry of entries) {
+		if (
+			entry.type === "message" &&
+			entry.message?.role === "assistant" &&
+			entry.message.stopReason === "stop"
+		) {
+			count++;
+		}
+	}
+	return count;
 }
 
-/**
- * 从 completeSimple 返回的 AssistantMessage.content 提取标题文本。
- * 遍历 content 取 type==='text' 的 .text 拼接，trim，去首尾引号/markdown 包装，截断。
- * 仅 toolCall 块（无 text）或空 content → 返回空串。
- */
-export function extractTitle(resp: { content: ReadonlyArray<ContentBlockLike> }, maxLength: number): string {
-	const rawText = resp.content
-		.filter((block) => block.type === "text" && block.text)
-		.map((block) => block.text as string)
-		.join("");
+// ──────────────────────── 标题清洗 ────────────────────────
 
-	const trimmed = rawText.trim();
+/**
+ * rename 专属后处理：去首尾成对引号（单/双/中文）+ markdown 强调标记（* ** ` _）+ 尾部标点，按 Unicode 码点截断。
+ *
+ * 输入是 callLLM 已 extractText+trim 的 string（llm-shared/call.ts 的 extractText 负责从
+ * AssistantMessage.content 提取 text block 拼接并 trim）。本函数只做 rename 特有的包装清理，
+ * 是旧版 extractTitle（从 resp.content 提取）的收口后形态。
+ */
+export function cleanTitle(content: string, maxLength: number): string {
+	const trimmed = content.trim();
 	if (!trimmed) return "";
 
-	// 去首尾成对引号（单/双/中文）和 markdown 强调标记（* ** ` _）
-	const cleaned = trimmed
-		.replace(/^["“”'`*_]+|["“”'`*_]+$/g, "")
-		.trim();
+	// B1: 归一化内部空白——把所有连续空白（含 \n / \r / \t）压成单空格，
+	// 避免 LLM 返回多行标题（如 "重构API层\n更新文档"）原样落库破坏 UI 标题/列表渲染
+	const normalized = trimmed.replace(/\s+/g, " ");
 
+	// 去首部引号/markdown 标记 + 尾部引号/markdown/标点（。．.，,、;；!！?？：:）。
+	// 尾部标点是 D4 slug 风格的兜底（prompt 已约束「不要句尾标点」，LLM 漏遵从时在此清除）；
+	// 只清首尾——中间标点保留（如 version 号 'v1.2.3' 中间的点）。
+	const cleaned = normalized
+		.replace(/^["“”'`*_]+|["“”'`*_。．.，,、;；!！?？：:]+$/g, "")
+		.trim();
 	if (!cleaned) return "";
 
 	// 按 Unicode 码点截断（避免截断多字节字符）
 	const chars = Array.from(cleaned);
 	if (chars.length <= maxLength) return cleaned;
 	return chars.slice(0, maxLength).join("");
-}
-
-/**
- * 检查开关文件是否存在。文件存在=开启。
- * try/catch 包裹，读失败（权限/IO）返回 false（当作关闭）。
- */
-export function isEnabled(switchFilePath: string): boolean {
-	try {
-		return fs.existsSync(switchFilePath);
-	} catch {
-		return false;
-	}
-}
-
-/**
- * 设置开关状态。enabled=true 创建文件（含父目录），false 删除文件。
- * 返回操作结果描述（供 command 反馈）。IO 失败时返回错误信息，不抛。
- */
-export function setSwitch(switchFilePath: string, enabled: boolean): string {
-	try {
-		if (enabled) {
-			fs.mkdirSync(path.dirname(switchFilePath), { recursive: true });
-			fs.writeFileSync(switchFilePath, "", { flag: "a" });
-			return `已开启：自动重命名会话（${switchFilePath}）`;
-		}
-		if (fs.existsSync(switchFilePath)) {
-			fs.unlinkSync(switchFilePath);
-			return "已关闭：自动重命名会话";
-		}
-		return "已是关闭状态，无需操作";
-	} catch (e) {
-		return `设置失败：${e instanceof Error ? e.message : String(e)}`;
-	}
 }

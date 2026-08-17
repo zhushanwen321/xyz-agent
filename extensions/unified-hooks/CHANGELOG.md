@@ -1,5 +1,11 @@
 # @zhushanwen/pi-unified-hooks
 
+## 0.2.2
+
+### Patch Changes
+
+- 2a724190c: chore: refresh dependency range (triggered by @zhushanwen/pi-extension-logger@0.2.0 → @zhushanwen/pi-extension-logger@0.2.1)
+
 ## 0.2.1
 
 ### Patch Changes

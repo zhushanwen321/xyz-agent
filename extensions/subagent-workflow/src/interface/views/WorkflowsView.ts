@@ -11,7 +11,7 @@
  *
  * SDK 集成：ctx.ui.custom factory 返回 Component{render(width), handleInput(data),
  * invalidate}，第二参数 `{overlay:true, overlayOptions}`（全屏 overlay，对齐 main +
- * subagents 扩展 + docs/extensions/pi-tui-development-guide.md §3.2）。按键经
+ * subagents 扩展 + docs/pi-tui-development-guide.md §3.2）。按键经
  * matchesKey(data, KeyId) 解析（兼容 xterm/iTerm/kitty 转义序列差异）。
  * escape/ctrl+c 在 keybindings 同映射到 exit。
  *
@@ -25,7 +25,8 @@
 import { promises as fsPromises } from "node:fs";
 import { join as pathJoin } from "node:path";
 
-import { getAgentDir, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
 
 import {
@@ -857,7 +858,7 @@ const TRACE_ACTIVITY_WIDTH = 80;
 
 /**
  * 导出完整 workflow trace 到 Markdown 文件。
- * 路径：~/.pi/agent/workflow-traces/{runId}.md
+ * 路径：<agentDir>/workflow-traces/{runId}.md（agentDir = getAgentDir()，实例隔离）
  * 对齐 main 的 saveTraceToFile（WorkflowsView.ts:365-396）。
  */
 function saveTraceToFile(run: WorkflowRun, ctx: ExtensionContext): void {

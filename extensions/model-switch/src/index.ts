@@ -9,7 +9,9 @@
  */
 
 import { StringEnum } from "@earendil-works/pi-ai";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { migrateLegacyConfig } from "@zhushanwen/pi-llm-shared";
 import { readCache } from "@zhushanwen/pi-quota-providers";
 import { Type } from "typebox";
 
@@ -54,7 +56,15 @@ interface BeforeAgentStartLikeEvent {
 export default function modelSwitchExtension(pi: ExtensionAPI) {
 	const state: SessionState = { config: null, injectedModelTable: false };
 
+	// [MIGRATION] Added in v0.6.0. Remove after v1.0.0 (one major past).
+	// session_start 迁移：model-policy.json → config/model-switch-ext-config.json（幂等，过渡性）
+	let configMigrationChecked = false;
+
 	pi.on("session_start", async (_event: unknown, _ctx: ExtensionContext) => {
+		if (!configMigrationChecked) {
+			configMigrationChecked = true;
+			migrateLegacyConfig(getAgentDir(), "model-policy.json", "config/model-switch-ext-config.json");
+		}
 		state.config = loadConfig();
 		state.injectedModelTable = false;
 	});
@@ -74,7 +84,7 @@ export default function modelSwitchExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("setup-model-policy", {
-		description: "Auto-generate model-policy.json from your configured models",
+		description: "Auto-generate config/model-switch-ext-config.json from your configured models",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			if (state.config) {
 				ctx.ui.notify(`Config already exists at ${getConfigPath()}. Delete it first to regenerate.`, "info");
@@ -97,7 +107,7 @@ function registerSwitchTool(pi: ExtensionAPI, state: SessionState): void {
 		label: "Switch Model",
 		description:
 			"List configured models, search by alias/name, switch to another model, or show current data snapshot and rules. "
-			+ "Configured models are defined in model-policy.json. "
+			+ "Configured models are defined in <agentDir>/config/model-switch-ext-config.json. "
 			+ "Setup sub-actions: 'setup delete' (remove config), 'setup list' (show config), 'setup edit' (LLM-guided edit), 'setup' (generate new).",
 		promptSnippet:
 			"Use this tool to manage models. TRIGGERS: "
@@ -259,14 +269,14 @@ function handleSetup(state: SessionState, ctx: ExtensionContext, query?: string)
 	if (subAction === "list") {
 		const result = readPolicyConfigContent();
 		if (!result.ok) return res(result.error, { error: true });
-		return res(`Current model-policy.json (${result.path}):\n\n\`\`\`json\n${result.content}\n\`\`\``);
+		return res(`Current config/model-switch-ext-config.json (${result.path}):\n\n\`\`\`json\n${result.content}\n\`\`\``);
 	}
 
 	if (subAction === "edit") {
 		const result = readPolicyConfigContent();
 		if (!result.ok) return res(result.error, { error: true });
 		return res([
-			"Current model-policy.json for editing:\n",
+			"Current config/model-switch-ext-config.json for editing:\n",
 			"```json",
 			result.content,
 			"```\n",
@@ -288,7 +298,7 @@ function handleSetup(state: SessionState, ctx: ExtensionContext, query?: string)
 	const genResult = generatePolicyConfig(ctx.modelRegistry, enabledModels);
 
 	return res([
-		"Auto-generated model-policy.json (v2).",
+		"Auto-generated config/model-switch-ext-config.json (v2).",
 		"Review the config below. If it looks correct, write it to " + getConfigPath() + " using the write tool.",
 		"",
 		"```json",

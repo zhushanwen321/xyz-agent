@@ -24,7 +24,7 @@ describe("extension-logger", () => {
 	afterEach(() => {
 		setPiHandle(undefined);
 		vi.restoreAllMocks();
-		// 还原环境变量，避免文件日志测试的 PI_EXT_DEBUG/PI_CODING_AGENT_DIR 泄漏到其它用例
+		// 还原环境变量，避免文件日志测试的 XYZ_AGENT_DEBUG/PI_CODING_AGENT_DIR 泄漏到其它用例
 		process.env = { ...prevEnv };
 	});
 
@@ -137,7 +137,7 @@ describe("extension-logger", () => {
 		});
 	});
 
-	describe("PI_EXT_DEBUG 文件日志", () => {
+	describe("XYZ_AGENT_DEBUG 文件日志", () => {
 		// 文件日志的 agentDir 通过 getAgentDir() 推导（读 PI_CODING_AGENT_DIR，
 		// 默认 ~/.pi/agent）。设 PI_CODING_AGENT_DIR 到 tmpdir 子目录，与组 A 的
 		// arch-boundary 改动（fileLog 用 getAgentDir()）保持一致。
@@ -156,15 +156,15 @@ describe("extension-logger", () => {
 			}
 		});
 
-		it("PI_EXT_DEBUG 未设时 debug 是 no-op（不抛错即可）", () => {
-			delete process.env.PI_EXT_DEBUG;
+		it("XYZ_AGENT_DEBUG 未设时 debug 是 no-op（不抛错即可）", () => {
+			delete process.env.XYZ_AGENT_DEBUG;
 			const logger = createLogger("test", pi);
 			expect(() => logger.debug("no-op")).not.toThrow();
 		});
 
 		// ---- Suggestion #8：fileLog 实际写入路径 ----
-		it("PI_EXT_DEBUG=1 时 debug 写入日志文件，内容含 [debug] 与序列化 data", () => {
-			process.env.PI_EXT_DEBUG = "1";
+		it("XYZ_AGENT_DEBUG=1 时 debug 写入日志文件，内容含 [debug] 与序列化 data", () => {
+			process.env.XYZ_AGENT_DEBUG = "1";
 			// 固定日期 → 文件名 <extName>-2026-08-01.log
 			vi.setSystemTime(new Date("2026-08-01T12:34:56.789Z"));
 
@@ -187,8 +187,8 @@ describe("extension-logger", () => {
 			expect(appendSpy).not.toHaveBeenCalled();
 		});
 
-		it("PI_EXT_DEBUG=1 时 warn 既写文件又走 appendEntry（文件内容含 [warn]）", () => {
-			process.env.PI_EXT_DEBUG = "1";
+		it("XYZ_AGENT_DEBUG=1 时 warn 既写文件又走 appendEntry（文件内容含 [warn]）", () => {
+			process.env.XYZ_AGENT_DEBUG = "1";
 			vi.setSystemTime(new Date("2026-08-01T12:34:56.789Z"));
 
 			const logger = createLogger("warn-ext", pi);
@@ -204,8 +204,8 @@ describe("extension-logger", () => {
 			expect(appendSpy).toHaveBeenCalledOnce();
 		});
 
-		it("PI_EXT_DEBUG=1 写失败（只读目录）不 throw", () => {
-			process.env.PI_EXT_DEBUG = "1";
+		it("XYZ_AGENT_DEBUG=1 写失败（只读目录）不 throw", () => {
+			process.env.XYZ_AGENT_DEBUG = "1";
 			vi.setSystemTime(new Date("2026-08-01T12:34:56.789Z"));
 
 			// 已存在的 logs 目录改为只读，让 mkdirSync/appendFileSync 失败。
@@ -240,13 +240,13 @@ describe("extension-logger", () => {
 			const [, entry] = appendSpy.mock.calls[0]!;
 			// appendEntry payload 的 data 字段保留原对象（safeStringify 仅在文件日志路径用）
 			expect(entry).toMatchObject({ level: "warn" });
-			// 验证 safeStringify 的 fallback 分支：用 PI_EXT_DEBUG=1 触发 fileLog，
+			// 验证 safeStringify 的 fallback 分支：用 XYZ_AGENT_DEBUG=1 触发 fileLog，
 			// 文件内 data 应是 String() 形式（含 [object Object] 或循环结构字符串）
 			expect(() => JSON.stringify(cyclic)).toThrow(); // 对照：原对象确实不可序列化
 		});
 
 		it("BigInt：warn 不崩，文件日志路径走 String fallback", () => {
-			process.env.PI_EXT_DEBUG = "1";
+			process.env.XYZ_AGENT_DEBUG = "1";
 			const tmpAgentDir = mkdtempSync(join(tmpdir(), "pi-ext-bigint-"));
 			process.env.PI_CODING_AGENT_DIR = tmpAgentDir;
 			vi.setSystemTime(new Date("2026-08-01T12:34:56.789Z"));

@@ -1,26 +1,24 @@
 /**
  * AI Classifier 主流程（I4 classifyRisk）
  *
- * 流程：resolveModel → 构造 Model<Api> + Context + Options → streamSimple →
- *       检查 stopReason → 解析文本 → ClassifierResult。所有失败路径返回 fail-closed ask。
+ * 流程：resolveModel → 构造 CallLLMOptions → llm-shared callLLM →
+ *       检查结果（ok:false → fallback，stopReason 保留日志区分）→ 解析文本 → ClassifierResult。
+ * 所有失败路径返回 fail-closed ask。
  *
  * 关键设计：
- *   - 依赖注入 ClassifierDeps（streamSimple 注入，便于测试 mock，不直接 import）
- *   - 超时/中止：传 provider 原生 timeoutMs + signal 给 streamSimple；外层再叠
- *     Promise.race 兜底（防止 provider 不支持 timeoutMs 时 result() 永挂）
- *   - G3 修正：EventStream.result() 只 resolve 不 reject，error/aborted 也 resolve
- *     （带 stopReason）。因此 classifyRisk 在取 text 前显式检查 stopReason，
- *     error/aborted → fallback ask
+ *   - 依赖注入 ClassifierDeps（callLLM 注入，便于测试 mock，不直接 import）
+ *   - C1a 收口：LLM 调用走 llm-shared callLLM（内部完成凭证 getApiKeyAndHeaders +
+ *     completeSimple + stopReason 归一化：error/aborted → {ok:false, recoverable:true,
+ *     stopReason 透传}），不再走 production.ts 的 streamSimple
+ *   - G3 修正（由 callLLM 承接）：completeSimple 的 EventStream.result() 只 resolve 不 reject，
+ *     error/aborted 也 resolve（带 stopReason）。callLLM 已把 error/aborted 归一为 ok:false +
+ *     stopReason 独立透传；classifier 消费透传字段保留日志区分（abort 与 error 分开记）
+ *   - 外层超时/中止兜底保留：防御 provider 不支持 timeoutMs 时 result() 永挂
  *   - fail-closed：timeout / 抛错 / 解析失败 / 无可用模型 → 一律 ask
  */
 
-import type {
-	Api,
-	AssistantMessageEventStream,
-	Context,
-	Model,
-	SimpleStreamOptions,
-} from "@earendil-works/pi-ai";
+import type { Api, Message, Model } from "@earendil-works/pi-ai";
+import type { CallLLMOptions, CallLLMResult } from "@zhushanwen/pi-llm-shared";
 
 import type {
 	ClassifierConfig,
@@ -28,7 +26,6 @@ import type {
 	ToolInvocationContext,
 } from "../types.js";
 import { parseClassifierResponse } from "./json-parser.js";
-import { type ResolvedModel } from "./model-resolver.js";
 import { buildClassifierUserPrompt, CLASSIFIER_SYSTEM_PROMPT } from "./prompt.js";
 
 // ──────────────────────── fail-closed fallback ────────────────────────
@@ -49,89 +46,53 @@ const CLASSIFY_FALLBACK_RESULT: ClassifierResult = {
 /**
  * Classifier 的外部依赖（DI 便于测试 mock）。
  *
- * - resolveModel：把 ClassifierConfig.model 解析为 ResolvedModel（或 null）
- * - streamSimple：pi-ai 的流式调用（同步返回 EventStream，result() 异步）
+ * - resolveModel（async）：把 ClassifierConfig.model 解析为 Model<Api>（或 null）。
+ *   P3 收口后 model 解析走 llm-shared resolveModel（ctx.modelRegistry 三源合并）。
+ * - callLLM：llm-shared 的 LLM 调用封装（内部完成凭证 getApiKeyAndHeaders +
+ *   completeSimple + stopReason 归一化）。C1a 收口替代原 streamSimple 注入。
  * - onLog：可选日志回调（调试/审计）
- *
- * 命名锁定为 streamSimple（G7：不是 callStreamSimple）。
  */
 export interface ClassifierDeps {
-	resolveModel: (config: ClassifierConfig) => ResolvedModel | null;
-	streamSimple: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
+	resolveModel: (config: ClassifierConfig) => Promise<Model<Api> | null>;
+	callLLM: (opts: CallLLMOptions) => Promise<CallLLMResult>;
 	onLog?: (msg: string) => void;
 }
 
-// ──────────────────────── AssistantMessage 最小子集 ────────────────────────
+// ──────────────────────── 辅助：构造 messages ────────────────────────
 
-/** AssistantMessage 的最小子集（只取 stopReason + content，避免泛型/依赖膨胀） */
-interface AssistantMessageLike {
-	stopReason?: string;
-	content?: { type: string; text?: string }[];
-}
-
-// ──────────────────────── 辅助：构造 Model<Api> ────────────────────────
-
-/**
- * 从 ResolvedModel 构造 pi-ai 的 Model<Api>。
- *
- * ResolvedModel.api 是字符串（来自 models.json），断言为 Api 联合类型。
- * cost 字段携带 input 真实值（G4），其余填 0（classifier 不关心 token 成本计量）。
- */
-function buildModel(resolved: ResolvedModel): Model<Api> {
-	const inputCost = typeof resolved.inputCost === "number" ? resolved.inputCost : 0;
-	return {
-		id: resolved.id,
-		name: resolved.name ?? resolved.id,
-		api: resolved.api as Api,
-		provider: resolved.provider,
-		// G4：baseUrl 用真实值（无则空串，provider 内部会补默认）
-		baseUrl: resolved.baseUrl ?? "",
-		reasoning: false,
-		input: ["text"],
-		cost: { input: inputCost, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 128000,
-		maxTokens: 16384,
-	};
-}
-
-/** 构造无 transcript 的 Context（单轮 user message） */
-function buildContext(ctx: ToolInvocationContext): Context {
-	return {
-		systemPrompt: CLASSIFIER_SYSTEM_PROMPT,
-		messages: [
-			{
-				role: "user",
-				content: [{ type: "text", text: buildClassifierUserPrompt(ctx) }],
-				timestamp: Date.now(),
-			},
-		],
-	};
-}
-
-/** 从 AssistantMessage.content 抽取纯文本（拼接所有 text 块） */
-function extractAssistantText(content: { type: string; text?: string }[]): string {
-	return content
-		.filter((c): c is { type: "text"; text: string } => c.type === "text" && typeof c.text === "string")
-		.map((c) => c.text)
-		.join("");
+/** 构造单轮 user message（无 transcript），供 callLLM 的 CallLLMOptions.messages 用 */
+function buildMessages(ctx: ToolInvocationContext): Message[] {
+	return [
+		{
+			role: "user",
+			content: [{ type: "text", text: buildClassifierUserPrompt(ctx) }],
+			timestamp: Date.now(),
+		},
+	];
 }
 
 // ──────────────────────── 外层超时（兜底） ────────────────────────
 
 /**
- * 给 result() 叠加外层超时（毫秒）+ abort 信号。
+ * 给 callLLM 的 Promise 叠加外层超时（毫秒）+ abort 信号。
  *
- * 防御 provider 不支持 timeoutMs 时 result() 永挂。result() 自身只 resolve 不 reject，
- * 故 race 不会因 provider 错误提前 reject——错误走 stopReason 路径。
+ * 防御 provider 不支持 timeoutMs 时 result() 永挂（callLLM 内部直接 await completeSimple，
+ * 无自身 race 兜底）。callLLM 已 catch 内部错误返回 ok:false，理论不 reject，但防御性处理。
  */
 function raceResultWithDeadline(
-	resultPromise: Promise<AssistantMessageLike>,
+	resultPromise: Promise<CallLLMResult>,
 	timeoutMs: number | undefined,
 	signal: AbortSignal | undefined,
-): Promise<{ kind: "ok"; message: AssistantMessageLike } | { kind: "timeout" } | { kind: "aborted" }> {
-	type Outcome = { kind: "ok"; message: AssistantMessageLike } | { kind: "timeout" } | { kind: "aborted" };
+): Promise<{ kind: "ok"; result: CallLLMResult } | { kind: "timeout" } | { kind: "aborted" }> {
+	type Outcome = { kind: "ok"; result: CallLLMResult } | { kind: "timeout" } | { kind: "aborted" };
 	const racers: Promise<Outcome>[] = [
-		resultPromise.then((message) => ({ kind: "ok" as const, message })),
+		resultPromise.then(
+			(result) => ({ kind: "ok" as const, result }),
+			(error) => ({
+				kind: "ok" as const,
+				result: { ok: false as const, error: error instanceof Error ? error.message : String(error), recoverable: true },
+			}),
+		),
 	];
 
 	let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -168,50 +129,45 @@ function raceResultWithDeadline(
 export function createClassifier(deps: ClassifierDeps): {
 	classifyRisk: (ctx: ToolInvocationContext, config: ClassifierConfig, signal?: AbortSignal) => Promise<ClassifierResult>;
 } {
-	const { resolveModel, streamSimple, onLog } = deps;
+	const { resolveModel, callLLM, onLog } = deps;
 
 	async function classifyRisk(
 		ctx: ToolInvocationContext,
 		config: ClassifierConfig,
 		signal?: AbortSignal,
 	): Promise<ClassifierResult> {
-		// 1. 解析模型；无可用模型 → fail-closed
-		const resolved = resolveModel(config);
-		if (resolved === null) {
+		// 1. 解析模型（llm-shared resolveModel：scoped/ref/available，走 ctx.modelRegistry）；
+		//    无可用模型 → fail-closed
+		const model = await resolveModel(config);
+		if (model === null) {
 			onLog?.("[pi-permission] classifier: no model resolved, returning fallback");
 			return { ...CLASSIFY_FALLBACK_RESULT };
 		}
 
-		// 2. 构造 model/context/options（timeout 秒→毫秒，传 provider 原生 timeoutMs + signal + apiKey）
-		const model = buildModel(resolved);
-		const context = buildContext(ctx);
+		// A1 同类成功路径日志（R2 验收前提）：LLM 调用前记录解析到的 model id，
+		// 实证 classifier 真实用到 OAuth/配置的模型（而非 fail-closed 降级）。
+		onLog?.(`[pi-permission] classifier: using model ${model.id}`);
+
+		// 2. 构造 CallLLMOptions（timeout 秒→毫秒；signal 透传 callLLM → completeSimple，
+		//    abort 时 reject 或 resolve(aborted) 都会归一为 ok:false）
 		const timeoutMs = config.timeout > 0 ? config.timeout * MILLIS_PER_SECOND : undefined;
-		const options: SimpleStreamOptions = {
+		const callPromise = callLLM({
+			model,
+			systemPrompt: CLASSIFIER_SYSTEM_PROMPT,
+			messages: buildMessages(ctx),
 			...(timeoutMs !== undefined ? { timeoutMs } : {}),
 			...(signal !== undefined ? { signal } : {}),
-			...(resolved.apiKey !== undefined ? { apiKey: resolved.apiKey } : {}),
-		};
+			// thinkingLevel 直接透传（含 "off"）；llm-shared 内部会把 "off" 映射为不传 reasoning（provider 默认）
+			reasoning: config.thinkingLevel,
+		});
 
-		// 3. 调用 streamSimple（同步返回 EventStream）。包裹 try/catch 防同步抛错。
-		let stream: AssistantMessageEventStream;
+		// 3. 等待 callLLM + 外层超时/中止兜底（provider 不支持 timeoutMs/signal 时防永挂）
+		let settled: { kind: "ok"; result: CallLLMResult } | { kind: "timeout" } | { kind: "aborted" };
 		try {
-			stream = streamSimple(model, context, options);
+			settled = await raceResultWithDeadline(callPromise, timeoutMs, signal);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			onLog?.(`[pi-permission] classifier: streamSimple threw: ${message}`);
-			return { ...CLASSIFY_FALLBACK_RESULT };
-		}
-
-		// 4. 等待 result() + 外层超时/中止兜底。
-		//    G3：result() 只 resolve 不 reject，error/aborted 也 resolve（带 stopReason）。
-		const resultPromise = stream.result() as Promise<AssistantMessageLike>;
-		let settled: { kind: "ok"; message: AssistantMessageLike } | { kind: "timeout" } | { kind: "aborted" };
-		try {
-			settled = await raceResultWithDeadline(resultPromise, timeoutMs, signal);
-		} catch (error) {
-			// result() 理论上不 reject，但防御性 catch（fail-closed）
-			const message = error instanceof Error ? error.message : String(error);
-			onLog?.(`[pi-permission] classifier: result race threw: ${message}`);
+			onLog?.(`[pi-permission] classifier: callLLM race threw: ${message}`);
 			return { ...CLASSIFY_FALLBACK_RESULT };
 		}
 
@@ -224,18 +180,21 @@ export function createClassifier(deps: ClassifierDeps): {
 			return { ...CLASSIFY_FALLBACK_RESULT };
 		}
 
-		// 5. G3 关键修正：显式检查 stopReason。error/aborted → fallback（不能当成功）
-		const message = settled.message;
-		if (message?.stopReason === "error" || message?.stopReason === "aborted") {
-			const errorDetail = message?.content?.[0]?.text ?? "unknown error";
-			onLog?.(`[pi-permission] classifier: stream stopReason=${message.stopReason}, error=${errorDetail}, returning fallback`);
+		// 4. ok:false → fallback（fail-closed）。stopReason 独立透传字段保留日志区分
+		//    （G3 语义：abort 与 error 分开记，即使行为上两者都 fallback 无差别）。
+		const result = settled.result;
+		if (!result.ok) {
+			if (result.stopReason === "aborted") {
+				onLog?.(`[pi-permission] classifier: LLM call aborted (stopReason=aborted), returning fallback`);
+			} else {
+				const stopDetail = result.stopReason !== undefined ? ` (stopReason=${result.stopReason})` : "";
+				onLog?.(`[pi-permission] classifier: LLM call failed: ${result.error}${stopDetail}, returning fallback`);
+			}
 			return { ...CLASSIFY_FALLBACK_RESULT };
 		}
 
-		// 6. 提取文本 → 三层容错解析
-		const content = Array.isArray(message?.content) ? (message.content as { type: string; text?: string }[]) : [];
-		const text = extractAssistantText(content);
-		return parseClassifierResponse(text);
+		// 5. 提取文本 → 三层容错解析
+		return parseClassifierResponse(result.content);
 	}
 
 	return { classifyRisk };

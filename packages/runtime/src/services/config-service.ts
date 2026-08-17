@@ -47,6 +47,8 @@ import {
   setDefaultBaseBranch as setDefaultBaseBranchImpl,
   getAutoRenameEnabled as getAutoRenameEnabledImpl,
   setAutoRenameEnabled as setAutoRenameEnabledImpl,
+  getRenameModel as getRenameModelImpl,
+  setRenameModel as setRenameModelImpl,
 } from './worktree-config-helper.js'
 import { loadAppConfig as loadAppConfigImpl, saveAppConfig as saveAppConfigImpl } from './app-config-store.js'
 import {
@@ -225,6 +227,16 @@ export class ConfigService implements IConfigService {
   /** 设置 auto-rename 开关（true 创建标志文件 / false 删除）。 */
   setAutoRenameEnabled(enabled: boolean): void {
     setAutoRenameEnabledImpl(enabled)
+  }
+
+  /** 读取 rename 标题生成模型（"provider/modelId"，未设置 = 空串；extension 配置文件，非 config.json 字段）。 */
+  getRenameModel(): string {
+    return getRenameModelImpl()
+  }
+
+  /** 设置 rename 标题生成模型（读改写 extension 配置文件的 model 字段，保留其他字段）。 */
+  setRenameModel(model: string): void {
+    setRenameModelImpl(model)
   }
 
   // ── Skill CRUD（委托 skill-config-helper）─────────────────────────

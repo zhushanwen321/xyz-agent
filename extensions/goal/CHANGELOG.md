@@ -1,5 +1,11 @@
 # @zhushanwen/pi-goal
 
+## 0.8.3
+
+### Patch Changes
+
+- 2a724190c: chore: refresh dependency range (triggered by @zhushanwen/pi-pending-notifications@0.3.1 → @zhushanwen/pi-pending-notifications@0.3.2)
+
 ## 0.8.2
 
 ### Patch Changes

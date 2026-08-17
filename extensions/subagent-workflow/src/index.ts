@@ -167,6 +167,7 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   function resolveSessionDir(): string {
     const defaultDir = getAgentDir();
     const sessionSlug = `--${process.cwd().replace(/^\//, "").replace(/\//g, "-")}--`;
+    // F2：根改 getAgentDir() 派生（实例隔离）；保留 sessionScopedDir 存在则用之的探测语义
     const sessionScopedDir = path.join(getAgentDir(), "sessions", sessionSlug);
     return fs.existsSync(sessionScopedDir) ? sessionScopedDir : defaultDir;
   }

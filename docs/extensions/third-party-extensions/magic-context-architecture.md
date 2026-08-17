@@ -1,5 +1,8 @@
 # magic-context 源码架构深度分析
 
+> ⚠️ DEPRECATED: 本文档引用的 pi-statusline / pi-context-engineering / pi-evolve-daily 包已删除，本文保留作历史决策记录。
+
+
 > 分析对象：cortexkit/magic-context（⭐764）
 > 分析日期：2025-06-01
 > 分析深度：源码级（transform.ts 1421 行、event-handler.ts 689 行、hook.ts 685 行、tagger.ts 713 行、storage-db.ts 805 行 等 15 个核心文件完整阅读）

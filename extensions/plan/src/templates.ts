@@ -40,7 +40,7 @@ export function listTemplates(projectDir?: string): TemplateInfo[] {
     templates.push(...scanTemplateDir(path.join(projectDir, ".pi", "plan-templates"), "project", seen));
   }
 
-  // 2. Global templates
+  // 2. Global templates（getAgentDir 派生，实例隔离：PI_CODING_AGENT_DIR 场景读隔离目录）
   templates.push(...scanTemplateDir(path.join(getAgentDir(), "plan-templates"), "global", seen));
 
   // 3. Builtin templates (lowest priority)

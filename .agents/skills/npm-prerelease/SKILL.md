@@ -1,12 +1,10 @@
 ---
 name: npm-prerelease
 description: >-
-  发布 npm 预发布版本（dev dist-tag）用于测试。创建 dev-npm-* 分支，
-  changeset 生成 prerelease 版本号，push 触发 CI 发布到 npm @dev tag，
-  轮询验证后还原代码。触发词："npm 预发布"、"发 npm beta"、"npm prerelease"。
-  仅用于 xyz-agent 项目的 npm 包发布：支持 @xyz-agent/* 和 @zhushanwen/pi-* 两类 scope
-  （脚本自动定位 packages/* 或 extensions/* 下的包目录）。
-  不用于 Electron 打包预发布——那个用 prerelease-test skill。
+  Use when 发布 npm 预发布版本（dev dist-tag）用于测试。触发词："npm 预发布"、
+  "发 npm beta"、"npm prerelease"。支持 @xyz-agent/* 和 @zhushanwen/pi-* 两类
+  scope（脚本自动定位 packages/* 或 extensions/* 下的包目录）。
+  不用于 Electron 打包预发布——用 prerelease-test skill。
 ---
 
 # npm-prerelease
