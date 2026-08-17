@@ -1,11 +1,9 @@
 <template>
   <!--
-    展示组件 · 单会话项（spec §5.6A / D12 列表主行范式）。
-    状态信号「左未读点 + 右异常 badge」空间分离（消除双圆点重叠 + 常态归零）：
-    - 左侧：8px 占位圆点，未读时 accent 实心（不脉动，固定占位保 label 对齐）
-    - 右侧：异常态 badge（running 脉动小条 / waiting … / error !），done 无 badge 仅耗时，dead 整行 opacity-50
-    active=bg-surface+text-accent；hover ghost 操作（bottom-right 遮 meta，spec §3 hover 帧）。
-    STATUS_ICON（§5.6B 图标范式）不在此渲染——保留给 PanelHeader / git 等非列表主行场景。
+    展示组件 · 单会话项（7px 单一 icon 范式）。
+    状态信号集中在左侧 7px 单一 icon（旋转箭头/空心圆/实心圆/空白），
+    右侧仅保留时间文字。未读标记 7px accent 圆点叠在 icon 右上角。
+    active=bg-surface+text-accent；hover ghost 操作（bottom-right）。
   -->
   <div
     ref="rootEl"
@@ -18,14 +16,33 @@
     @click="emit('select', session.id)"
     @mouseleave="confirming = false"
   >
-    <!-- 左侧未读圆点：固定 8px 占位保 label 对齐（spec §5.6A D12），未读 accent 实心，不脉动。
-         不用 absolute + 负偏移（双圆点重叠 bug 的温床），改流内占位。 -->
-    <span
-      v-if="unread"
-      data-testid="session-unread-dot"
-      class="mt-1 size-2 shrink-0 rounded-full bg-accent transition-colors"
-    />
-    <span v-else class="mt-1 size-2 shrink-0 rounded-full bg-transparent" aria-hidden="true" />
+    <!-- 左侧 7px 状态 icon：spinning(旋转箭头) / hollow(空心圆) / waiting / error / done / stopped / dead / 空。
+         未读标记 7px accent 圆点叠在 icon 右上角（absolute + box-shadow 镂空）。 -->
+    <div class="relative mt-[6px] size-[7px] shrink-0" data-testid="session-icon">
+      <!-- spinning: streaming / compacting / working / retrying → 旋转箭头（accent 边框 + 透明顶边） -->
+      <span v-if="iconKind === 'spinning'" class="block size-[7px] animate-spin rounded-full border-[1.5px] border-accent border-t-transparent" />
+      <!-- hollow: pending → accent 空心圆 -->
+      <span v-else-if="iconKind === 'hollow'" class="block size-[7px] rounded-full border-[1.5px] border-accent" />
+      <!-- hollow-dim: stopped → dim 空心圆 -->
+      <span v-else-if="iconKind === 'hollow-dim'" class="block size-[7px] rounded-full border-[1.5px] border-neutral-dim opacity-60" />
+      <!-- waiting → warn 实心圆 -->
+      <span v-else-if="iconKind === 'waiting'" class="block size-[7px] rounded-full bg-warn" />
+      <!-- error → danger 实心圆 -->
+      <span v-else-if="iconKind === 'error'" class="block size-[7px] rounded-full bg-danger" />
+      <!-- done → success 实心圆 90% -->
+      <span v-else-if="iconKind === 'done'" class="block size-[7px] rounded-full bg-success opacity-90" />
+      <!-- dead → neutral-dim 实心圆 50% -->
+      <span v-else-if="iconKind === 'dead'" class="block size-[7px] rounded-full bg-neutral-dim opacity-50" />
+      <!-- 已归档+已读 → 空（无 icon） -->
+      <span v-else aria-hidden="true" />
+      <!-- 未读标记：叠在 icon 右上角 -->
+      <span
+        v-if="unread"
+        data-testid="session-unread-dot"
+        class="absolute -right-0.5 -top-0.5 size-[7px] rounded-full bg-accent"
+        style="box-shadow: 0 0 0 2px var(--bg)"
+      />
+    </div>
 
     <!-- 主体：label + sub（fork 血缘 / branch） -->
     <div class="min-w-0 flex-1">
@@ -52,39 +69,10 @@
       </div>
     </div>
 
-    <!-- 右侧 meta 槽位：状态 badge 矩阵（spec §5.6A D12）。
-         running=脉动小条+耗时 / waiting=… 胶囊 / error=! 胶囊 / done·stopped·dead 无 badge 仅耗时。
-         hover 时整单元 visibility:hidden 让位 ghost 操作（保留占位防跳动，spec §3 hover 帧）。 -->
-    <div
-      class="mt-[3px] shrink-0 font-mono text-[10px] leading-[1.35] text-neutral-dim group-hover/item:invisible"
-      data-testid="sidebar-session-meta"
-    >
-      <!-- running：呼吸小条 + 耗时（accent，同色同单元）。
-           兑现顶部注释承诺的「running 脉动小条」——animate-pulse-dot 复用全局 pulse-dot
-           keyframes（opacity 1↔0.4，2s），竖条与耗时同节奏呼吸。 -->
-      <span
-        v-if="badgeKind === 'running'"
-        data-testid="session-badge-running"
-        class="inline-flex items-center gap-1 rounded-sm bg-accent-soft px-1 leading-none text-accent"
-      >
-        <span class="inline-block h-[9px] w-[3px] animate-pulse-dot rounded-[2px] bg-accent" />
-        <span v-if="timeLabel" class="text-[10px] text-neutral-dim">{{ timeLabel }}</span>
-      </span>
-      <!-- waiting：… 胶囊（warn）— 需要用户介入，同节奏呼吸（animate-pulse-dot） -->
-      <span
-        v-else-if="badgeKind === 'waiting'"
-        data-testid="session-badge-waiting"
-        class="inline-flex h-4 min-w-4 animate-pulse-dot items-center justify-center rounded-sm bg-warn-soft px-1 text-[10px] font-semibold leading-none text-warn"
-      >…</span>
-      <!-- error：! 胶囊（danger）— 需要用户介入 -->
-      <span
-        v-else-if="badgeKind === 'error'"
-        data-testid="session-badge-error"
-        class="inline-flex h-4 min-w-4 items-center justify-center rounded-sm bg-danger-soft px-1 text-[10px] font-semibold leading-none text-danger"
-      >!</span>
-      <!-- done / stopped / dead：无 badge，仅耗时文字 -->
-      <span v-else>{{ timeLabel }}</span>
-    </div>
+    <!-- 右侧：仅时间文字（状态信号已移至左侧 7px icon） -->
+    <span
+      class="mt-1 shrink-0 font-mono text-[10px] leading-[1.35] text-neutral-dim"
+    >{{ timeLabel }}</span>
 
     <!-- hover ghost 操作（spec §3 SessionItem hover 帧）。
          位置 bottom-right（遮 meta 而非 dirName，与 demo 对齐）；删除走两段式确认。 -->
@@ -179,8 +167,8 @@ import { formatRelativeTime } from '@/composables/logic/formatTime'
 import { dirNameOf } from '@xyz-agent/ui'
 import { isUnread, isMarkedDone, toggleMarkedDone } from '@/composables/useSessionMarkers'
 
-/** 右侧 badge 矩阵种类（spec §5.6A D12）。 */
-type BadgeKind = 'running' | 'waiting' | 'error' | 'none'
+/** 左侧状态 icon 种类（7px 单一 icon 范式）。 */
+type IconKind = 'spinning' | 'hollow' | 'hollow-dim' | 'waiting' | 'error' | 'done' | 'dead' | 'empty'
 
 /**
  * 展示组件 · 单会话项（spec §5.6A / D12 列表主行范式）。
@@ -271,28 +259,34 @@ onClickOutside(rootEl, () => {
 })
 
 /**
- * 右侧 badge 矩阵映射（spec §5.6A D12）。
- * streaming/working/compacting/pending → running 脉动小条；
- * waiting/retrying → waiting … 胶囊；error → ! 胶囊；
- * done/stopped → none（仅耗时文字）；dead 由 isDead 抑制 badge（整行 opacity 表达）。
+ * 左侧 7px 状态 icon 映射（单一 icon 范式）。
+ * spinning: streaming/compacting/working/retrying → 旋转箭头（accent 边框+透明顶边）
+ * hollow: pending → accent 空心圆
+ * hollow-dim: stopped → dim 空心圆
+ * waiting: 等用户操作 → warn 实心圆
+ * error: 出错 → danger 实心圆
+ * done: 正常完成 → success 实心圆 90%
+ * dead: 进程退出 → neutral-dim 实心圆 50%
+ * empty: 已归档+已读 → 无 icon
  */
-const badgeKind = computed<BadgeKind>(() => {
-  // dead 由整行 opacity-50 表达，无 badge（spec §5.6A）
-  if (isDead.value) return 'none'
+const iconKind = computed<IconKind>(() => {
+  if (isDead.value) return 'dead'
+  if (markedDone.value && !unread.value) return 'empty'
   switch (props.status) {
     case 'streaming':
     case 'working':
     case 'compacting':
     case 'pending':
-      return 'running'
+      return 'spinning'
     case 'waiting':
     case 'retrying':
       return 'waiting'
     case 'error':
       return 'error'
+    case 'stopped':
+      return 'hollow-dim'
     default:
-      // done / stopped：终态，无 badge，仅耗时文字
-      return 'none'
+      return 'done'
   }
 })
 
