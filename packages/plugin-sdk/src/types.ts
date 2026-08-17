@@ -86,6 +86,15 @@ export interface GuiComponentProps {
   /** 列表树——替代 TUI 的 ⎿ ├─ └─ 缩进 */
   'list-tree': {
     items: TreeItem[]
+    /** 行首显示弱化序号（1/2/3…，mono tabular-nums）。扁平有序清单用（todo）；
+     *  自带编号的文本（goal criteria "1. xxx"）不要开，避免双重编号 */
+    numbered?: boolean
+  }
+
+  /** 垂直组合容器——无视觉样式的透明分组。宿主壳层（WidgetArea）承担卡壳/head/折叠
+   *  后，widget 内容需要多组件组合时的组合根（替代「无头 card」的语义滥用） */
+  'group': {
+    children: GuiComponent[]
   }
 
   /** 双列网格——替代 TUI 的 │ 列分隔 */
@@ -112,6 +121,32 @@ export interface GuiRenderResult {
   /** 版本协商，前端检测，不认识降级 ansi-text */
   v: typeof PROTOCOL_VERSION
   component: GuiComponent
+  /**
+   * widget 宿主元数据（M17 对话流 widget 面板消费）：标题/状态点/进度计数由
+   * 宿主壳层统一渲染成单一 head（含折叠交互），extension 不再用 card 原语
+   * 的 header 表达这些（壳层 head 与 payload card header 双头重复的根因修复）。
+   * 可选：不发时宿主 fallback 到 viewId 标题、无状态点/进度。
+   */
+  meta?: WidgetMeta
+}
+
+/** widget 宿主元数据——head 渲染契约（title + 状态点 + 进度 + 折叠 chevron）。 */
+export interface WidgetMeta {
+  /** head 标题（todo → "Todo"；goal → slug） */
+  title: string
+  /** head 状态点语义：running=accent / done=success / failed=danger / idle=neutral 弱点 */
+  status?: 'running' | 'done' | 'failed' | 'idle'
+  /** head 进度（mini bar + 计数文本）；progress-bar 原语从 body 移入 head 的承载 */
+  progress?: {
+    /** fill 比例 = current/total */
+    current: number
+    total: number
+    /** 计数显示文本（head 空间有限，extension 全权格式化：todo "2/5"、goal "42%"）。
+     *  缺省 `${current}/${total}` */
+    label?: string
+    /** fill 语义色（预算阈值映射）；缺省按 meta.status（done→success，否则 accent） */
+    severity?: 'ok' | 'warn' | 'danger'
+  }
 }
 
 // ── 布局原语子类型 ──
@@ -365,8 +400,14 @@ export type InterceptorHookType =
 
 /**
  * @proposed — 只观察的 hook 类型，插件只能读取数据不能阻止。
+ * onPiEvent 是泛型 observe 通道（D2-4）：事件名经 context 传给 handler，
+ * 插件在 handler 内自行按事件名过滤。
+ *
+ * [HISTORICAL] Fix-6：曾含 'onMessage' | 'onSessionCreate' | 'onSessionDestroy' 三个
+ * 字面量——无注册面（createHookApi 不暴露对应方法）、无调用面（event-interpreter /
+ * bridge-interop 不以此 key 调 executeHooks），属死类型，已删除（2026-08-15 W02 审查）。
  */
-export type ObserverHookType = 'onMessage' | 'onSessionCreate' | 'onSessionDestroy'
+export type ObserverHookType = 'onPiEvent'
 
 /** @proposed — 所有 hook 类型 */
 export type HookType = InterceptorHookType | ObserverHookType
@@ -399,9 +440,12 @@ export interface HookContext {
 export type HookInterceptor = (context: HookContext) => Promise<InterceptorResult>
 
 /**
- * @proposed — Hook 观察者处理函数（只能读取数据）。
+ * @proposed — Hook 观察者处理函数（只能读取数据，不能阻止）。
+ * 可选返回 InterceptorResult（proceed 恒为 true 语义，modifiedData 改写 output）——
+ * onAfterToolResult 的 transform 语义经此回传（D2-3：Worker 响应携带 modifiedData，
+ * 主线程 HookPipeline 映射为 HookResult.transformedData，消费侧 event-interpreter 读取）。
  */
-export type HookObserver = (context: HookContext) => Promise<void>
+export type HookObserver = (context: HookContext) => Promise<InterceptorResult | void>
 
 /**
  * @proposed — PiEvent 处理函数。
@@ -454,6 +498,16 @@ export interface WorkerHandle {
   status: 'idle' | 'active' | 'crashed' | 'terminated'
   lastActiveAt: number
   memoryUsage?: number
+}
+
+/** @internal — runtime 内部：子进程句柄，仅 PluginHostProcess（fork 版）使用 */
+export interface ProcessHandle {
+  processId: string
+  pid: number
+  trustLevel: 'trusted' | 'sandbox'
+  pluginIds: string[]
+  status: 'active' | 'crashed' | 'terminated'
+  lastActiveAt: number
 }
 
 // ── Activation 类型 ────────────────────────────────────────────
