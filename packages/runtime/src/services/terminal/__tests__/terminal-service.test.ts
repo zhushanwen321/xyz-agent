@@ -63,12 +63,28 @@ vi.mock('node-pty', () => ({
 
 // import 必须在 vi.mock 之后
 const { TerminalService } = await import('../terminal-service.js')
+const { MessageBus } = await import('../../message-bus/message-bus.js')
 
-/** 收集 broadcast 收到的消息。 */
-function createBroadcastCollector() {
+/** 收集 publish 收到的消息（wave:perf-w07：deps 通道从 broadcast 改为 publish(sid, msg)）。 */
+function createPublishCollector() {
   const messages: ServerMessage[] = []
-  const broadcast = (msg: ServerMessage) => messages.push(msg)
-  return { messages, broadcast }
+  const publish = (_sid: string, msg: ServerMessage) => messages.push(msg)
+  return { messages, publish }
+}
+
+/** mock ws（BusClient 契约：readyState + send），收集收到的原始 payload。 */
+function createMockWs() {
+  const sent: string[] = []
+  return {
+    readyState: 1 as const,
+    sent,
+    send: (payload: string) => { sent.push(payload) },
+  }
+}
+
+/** 解析 ws 收到的最后 N 条消息。 */
+function parseSent(ws: { sent: string[] }): ServerMessage[] {
+  return ws.sent.map((s) => JSON.parse(s) as ServerMessage)
 }
 
 /** 从消息列表找指定 type。 */
@@ -89,8 +105,8 @@ afterEach(() => {
 
 describe('TerminalService', () => {
   it('TS-1: spawn 后广播 terminal.alive，ptyMap 持有 sid', async () => {
-    const { messages, broadcast } = createBroadcastCollector()
-    const svc = new TerminalService({ broadcast })
+    const { messages, publish } = createPublishCollector()
+    const svc = new TerminalService({ publish })
     await svc.spawn('s1', '/tmp', 80, 24)
     const alive = findMsg(messages, 'terminal.alive')
     expect(alive).toBeDefined()
@@ -101,24 +117,24 @@ describe('TerminalService', () => {
   })
 
   it('TS-2: write 转发到 pty.write', async () => {
-    const { broadcast } = createBroadcastCollector()
-    const svc = new TerminalService({ broadcast })
+    const { publish } = createPublishCollector()
+    const svc = new TerminalService({ publish })
     await svc.spawn('s2', undefined, 80, 24)
     svc.write('s2', 'ls -la')
     expect(mockPtys.at(-1)!.write).toHaveBeenCalledWith('ls -la')
   })
 
   it('TS-3: resize 转发到 pty.resize', async () => {
-    const { broadcast } = createBroadcastCollector()
-    const svc = new TerminalService({ broadcast })
+    const { publish } = createPublishCollector()
+    const svc = new TerminalService({ publish })
     await svc.spawn('s3', undefined, 80, 24)
     svc.resize('s3', 120, 40)
     expect(mockPtys.at(-1)!.resize).toHaveBeenCalledWith(120, 40)
   })
 
   it('TS-4: PTY onData 触发 terminal.data 广播（含 sessionId + data）', async () => {
-    const { messages, broadcast } = createBroadcastCollector()
-    const svc = new TerminalService({ broadcast })
+    const { messages, publish } = createPublishCollector()
+    const svc = new TerminalService({ publish })
     await svc.spawn('s4', undefined, 80, 24)
     const pty = mockPtys.at(-1)!
     pty.__emitData('hello world\r\n')
@@ -131,8 +147,8 @@ describe('TerminalService', () => {
   })
 
   it('TS-5: PTY onExit 触发 terminal.exit 广播 + 清理 ptyMap', async () => {
-    const { messages, broadcast } = createBroadcastCollector()
-    const svc = new TerminalService({ broadcast })
+    const { messages, publish } = createPublishCollector()
+    const svc = new TerminalService({ publish })
     await svc.spawn('s5', undefined, 80, 24)
     const pty = mockPtys.at(-1)!
     pty.__emitExit(42)
@@ -145,8 +161,8 @@ describe('TerminalService', () => {
   })
 
   it('TS-6: destroyPty 调 pty.kill + 清 ptyMap', async () => {
-    const { broadcast } = createBroadcastCollector()
-    const svc = new TerminalService({ broadcast })
+    const { publish } = createPublishCollector()
+    const svc = new TerminalService({ publish })
     await svc.spawn('s6', undefined, 80, 24)
     const pty = mockPtys.at(-1)!
     svc.destroyPty('s6')
@@ -157,8 +173,8 @@ describe('TerminalService', () => {
   })
 
   it('TS-7: kill 不存在的 sid 是 no-op（不抛错）', async () => {
-    const { broadcast } = createBroadcastCollector()
-    const svc = new TerminalService({ broadcast })
+    const { publish } = createPublishCollector()
+    const svc = new TerminalService({ publish })
     expect(() => svc.kill('nonexistent')).not.toThrow()
     expect(() => svc.write('nonexistent', 'x')).not.toThrow()
     expect(() => svc.resize('nonexistent', 80, 24)).not.toThrow()
@@ -166,8 +182,8 @@ describe('TerminalService', () => {
   })
 
   it('TS-8: spawn 幂等（同 sid 重复 spawn 不新建 PTY）', async () => {
-    const { broadcast } = createBroadcastCollector()
-    const svc = new TerminalService({ broadcast })
+    const { publish } = createPublishCollector()
+    const svc = new TerminalService({ publish })
     await svc.spawn('s8', undefined, 80, 24)
     await svc.spawn('s8', undefined, 80, 24)
     // node-pty.spawn 应只被调一次
@@ -180,8 +196,8 @@ describe('TerminalService', () => {
     vi.mocked(spawn).mockImplementationOnce(() => {
       throw new Error('ENOENT: shell not found')
     })
-    const { broadcast } = createBroadcastCollector()
-    const svc = new TerminalService({ broadcast })
+    const { publish } = createPublishCollector()
+    const svc = new TerminalService({ publish })
     await expect(svc.spawn('s9', undefined, 80, 24)).rejects.toMatchObject({
       code: 'spawn_failed',
       message: expect.stringContaining('shell not found'),
@@ -198,8 +214,8 @@ describe('TerminalService', () => {
       throw spawnErr
     })
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const { broadcast } = createBroadcastCollector()
-    const svc = new TerminalService({ broadcast })
+    const { publish } = createPublishCollector()
+    const svc = new TerminalService({ publish })
 
     await expect(svc.spawn('s10', undefined, 80, 24)).rejects.toMatchObject({
       code: 'spawn_failed',
@@ -231,8 +247,8 @@ describe('TerminalService', () => {
     process.env.ELECTRON_NO_ASAR = '1'
     process.env.ELECTRON_OVERRIDE_DIST_PATH = '/some/path'
     try {
-      const { broadcast } = createBroadcastCollector()
-      const svc = new TerminalService({ broadcast })
+      const { publish } = createPublishCollector()
+      const svc = new TerminalService({ publish })
       await svc.spawn('s11', undefined, 80, 24)
       const { spawn } = await import('node-pty')
       // node-pty.spawn(file, args, options) → options.env
@@ -253,5 +269,67 @@ describe('TerminalService', () => {
         else delete process.env[k]
       }
     }
+  })
+})
+
+// ── W07（D1-1 / R-05）：TerminalService × MessageBus 集成 ─────────────────
+// deps.publish 注入真实 MessageBus.publish，锁定 topic 三分类语义在 terminal 三类消息上的落地：
+// terminal.data=transient（订阅者收到、无 seq、不占 ring、不动 seq 计数）、
+// terminal.alive/exit=stream（带 seq 入 ring，重连订阅可回放）。
+describe('TerminalService × MessageBus（wave:perf-w07）', () => {
+  it('W07-1: terminal.data publish 后订阅者收到且无 seq；ring 长度不变、seq 计数不变（transient 语义）', async () => {
+    const bus = new MessageBus()
+    const ws = createMockWs()
+    bus.subscribe('s-terminal', ws)
+
+    const svc = new TerminalService({ publish: (sid, msg) => bus.publish(sid, msg) })
+    await svc.spawn('s-terminal', undefined, 80, 24)
+
+    // spawn 已发一条 terminal.alive（stream，seq=1）。记录 data 前基线。
+    const before = bus.subscribe('s-terminal', createMockWs())
+    expect(before.lastSeq).toBe(1)
+    expect(before.snapshot).toHaveLength(1) // alive
+
+    mockPtys.at(-1)!.__emitData('chunk-1\r\n')
+
+    // 订阅者收到 terminal.data，且消息无 seq 字段（transient 不分配）
+    const msgs = parseSent(ws).filter((m) => m.type === 'terminal.data')
+    expect(msgs).toHaveLength(1)
+    expect((msgs[0]!.payload as { sessionId: string; data: string })).toMatchObject({
+      sessionId: 's-terminal',
+      data: 'chunk-1\r\n',
+    })
+    expect(msgs[0]!.seq).toBeUndefined()
+
+    // 新订阅者视角：ring 未被 terminal.data 填充（长度仍 1），seq 计数未动（仍 1）
+    const after = bus.subscribe('s-terminal', createMockWs())
+    expect(after.snapshot).toHaveLength(1)
+    expect(after.snapshot[0]!.type).toBe('terminal.alive')
+    expect(after.lastSeq).toBe(1)
+  })
+
+  it('W07-2: terminal.alive / terminal.exit 入 ring（stream 语义：带 seq，重连订阅可回放）', async () => {
+    const bus = new MessageBus()
+    const svc = new TerminalService({ publish: (sid, msg) => bus.publish(sid, msg) })
+    await svc.spawn('s-stream', undefined, 80, 24)
+    mockPtys.at(-1)!.__emitExit(7)
+
+    // 重连订阅者：从 ring 回放 alive + exit 两条，seq 单调递增
+    const late = bus.subscribe('s-stream', createMockWs())
+    expect(late.snapshot.map((m) => m.type)).toEqual(['terminal.alive', 'terminal.exit'])
+    expect(late.snapshot[0]!.seq).toBe(1)
+    expect(late.snapshot[1]!.seq).toBe(2)
+    expect((late.snapshot[1]!.payload as { exitCode: number }).exitCode).toBe(7)
+    expect(late.lastSeq).toBe(2)
+
+    // 在线订阅者也实时收到带 seq 的 exit（exit 后 ptyMap 已清理，重新 spawn 拿新 PTY）
+    const ws = createMockWs()
+    bus.subscribe('s-stream', ws)
+    const svc2 = new TerminalService({ publish: (sid, msg) => bus.publish(sid, msg) })
+    await svc2.spawn('s-stream', undefined, 80, 24)
+    mockPtys.at(-1)!.__emitExit(0)
+    const exitMsgs = parseSent(ws).filter((m) => m.type === 'terminal.exit')
+    expect(exitMsgs).toHaveLength(1)
+    expect(typeof exitMsgs[0]!.seq).toBe('number')
   })
 })

@@ -48,7 +48,7 @@ vi.mock('electron', () => ({
 // ── FS 依赖模块全量 mock（消除 constants 顶层 path 预绑定）──────────
 const settingsMocks = vi.hoisted(() => ({
   getUpdateSettings: vi.fn<() => UpdateSettings>(),
-  setUpdateSettings: vi.fn<(settings: UpdateSettings) => void>(),
+  setUpdateSettings: vi.fn<(settings: Partial<UpdateSettings>) => void>(),
 }))
 vi.mock('../update/update-settings.js', () => ({
   getUpdateSettings: settingsMocks.getUpdateSettings,

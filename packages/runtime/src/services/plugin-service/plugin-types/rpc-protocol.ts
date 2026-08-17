@@ -34,7 +34,13 @@ export type RpcMessage = RpcRequest | RpcResponse | RpcNotification
 
 // ── Error Codes ──────────────────────────────────────────────────
 
-export const PluginRpcErrorCodes = {
+/**
+ * @stable — RPC 错误码常量，SDK 契约面。
+ *
+ * 经 Object.freeze 冻结：插件与 runtime 均不可在运行时修改错误码，
+ * 保证错误判定（code 比较）的确定性。
+ */
+export const PluginRpcErrorCodes = Object.freeze({
   RPC_TIMEOUT: -32000,
   PERMISSION_DENIED: -32001,
   PLUGIN_NOT_FOUND: -32010,
@@ -43,6 +49,6 @@ export const PluginRpcErrorCodes = {
   PAYLOAD_TOO_LARGE: -32021,
   METHOD_NOT_FOUND: -32601,
   INTERNAL_ERROR: -32603,
-} as const
+} as const)
 
 export type PluginRpcErrorCode = (typeof PluginRpcErrorCodes)[keyof typeof PluginRpcErrorCodes]

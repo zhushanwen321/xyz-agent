@@ -25,7 +25,7 @@ import { nextTick, defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
 // ── mock：composable / api（与现有 Composer 测试范式一致，防真依赖构造报错）──
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     send: vi.fn(),
     steer: vi.fn(),
@@ -36,11 +36,11 @@ vi.mock('@/composables/features/useChat', () => ({
     hydrateHistory: vi.fn(),
   }),
 }))
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, currentCwd: { value: null }, setPendingModel: vi.fn() }),
   resetNewTaskFlow: vi.fn(),
 }))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   model: { switchModel: vi.fn() },
   session: { setThinkingLevel: vi.fn() },
   composer: {
@@ -71,15 +71,16 @@ vi.mock('@/stores/session', () => ({
   // 本测试关注 slash 注入，store 更新为 no-op 即可。
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
 }))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({ defaultModel: '' }),
-}))
 
 // ── ComposerInput mock：defineExpose 暴露 insertSlashChip 为独立 vi.fn() spy ──
 // 每个测试 mount 前重新生成 spy：通过 factory 读取最新 spy 引用。
 let composerInputSpies: Array<{ insertSlashChip: ReturnType<typeof vi.fn> }> = []
-vi.mock('@/components/panel/ComposerInput.vue', () => ({
-  default: defineComponent({
+// W4：ComposerInput 迁 ui 包（@xyz-agent/ui/features/composer），mock 目标改 ui 包路径
+vi.mock('@xyz-agent/ui/features/composer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@xyz-agent/ui/features/composer')>()
+  return {
+    ...actual,
+    ComposerInput: defineComponent({
     name: 'ComposerInput',
     emits: ['input', 'keydown', 'slash-trigger', 'file-trigger'],
     setup() {
@@ -89,15 +90,18 @@ vi.mock('@/components/panel/ComposerInput.vue', () => ({
       return { insertSlashChip }
     },
     template: '<div data-testid="composer-input" />',
-  }),
-}))
+    }),
+  }
+})
 
 import Composer from '@/components/panel/Composer.vue'
-import { useCommandStore } from '@/stores/command'
+import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/command/useCommandStore'
 
 beforeEach(() => {
   setActivePinia(createPinia())
   composerInputSpies = []
+  // [w5] 壳单例跨测试共享：reset 让每个用例拿到全新实例（旧 Composer watch 订阅旧实例，不再干扰）
+  __resetCommandStoreForTesting()
 })
 
 /** 其他子组件空 stub（CommandPopover/AddMenuPopover/各 popover/指示位） */
@@ -146,7 +150,7 @@ describe('Composer slash 注入 watch（Wave C）', () => {
     expect(insertSpy).toHaveBeenCalledOnce()
     expect(insertSpy).toHaveBeenCalledWith('/goal', 'star')
     // pendingSlash 被消费清空
-    expect(commandStore.pendingSlash).toBeNull()
+    expect(commandStore.pendingSlash.value).toBeNull()
     expect(clearSpy).toHaveBeenCalledOnce()
     // 注入顺序：先 insertSlashChip 后 clearPendingSlash（防先清后注入读到 null）
     expect(insertSpy).toHaveBeenCalledBefore(clearSpy)
@@ -167,8 +171,8 @@ describe('Composer slash 注入 watch（Wave C）', () => {
     // 不清空（显式断言调用次数 0，防「无论匹配都 clear」误实现清掉 s2 的请求）
     expect(clearSpy).not.toHaveBeenCalled()
     // pendingSlash 仍非 null（留给 sid=s2 的 Composer 消费）
-    expect(commandStore.pendingSlash).not.toBeNull()
-    expect(commandStore.pendingSlash?.sessionId).toBe('s2')
+    expect(commandStore.pendingSlash.value).not.toBeNull()
+    expect(commandStore.pendingSlash.value?.sessionId).toBe('s2')
   })
 
   // ───────────────────────── U14 landing 态匹配（双方 null）─────────────────────────
@@ -186,7 +190,7 @@ describe('Composer slash 注入 watch（Wave C）', () => {
 
     expect(insertSpy).toHaveBeenCalledOnce()
     expect(insertSpy).toHaveBeenCalledWith('/goal', 'star')
-    expect(commandStore.pendingSlash).toBeNull()
+    expect(commandStore.pendingSlash.value).toBeNull()
   })
 
   // ───────────────────────── U15 watch 非 immediate（残留值不误注入）─────────────────────────
@@ -199,7 +203,7 @@ describe('Composer slash 注入 watch（Wave C）', () => {
       icon: 'star',
       sessionId: 's1',
     })
-    expect(commandStore.pendingSlash).not.toBeNull() // 预设存在
+    expect(commandStore.pendingSlash.value).not.toBeNull() // 预设存在
 
     // 然后才 mount Composer（非 immediate：初始值不应触发 watch）
     const { spy: insertSpy } = mountComposer({ sessionId: 's1' })
@@ -208,7 +212,7 @@ describe('Composer slash 注入 watch（Wave C）', () => {
 
     expect(insertSpy).not.toHaveBeenCalled()
     // 残留值未被本 Composer 误消费（应留给真正触发的消费时机）
-    expect(commandStore.pendingSlash).not.toBeNull()
+    expect(commandStore.pendingSlash.value).not.toBeNull()
   })
 
   // ───────────────────────── U16 重复点击同命令触发（ts 变化）─────────────────────────
@@ -229,7 +233,7 @@ describe('Composer slash 注入 watch（Wave C）', () => {
     await nextTick()
 
     expect(insertSpy).toHaveBeenCalledTimes(2)
-    expect(commandStore.pendingSlash).toBeNull()
+    expect(commandStore.pendingSlash.value).toBeNull()
   })
 
   // ───────────────────────── U18 split 双 Composer 竞争消费 ─────────────────────────
@@ -253,6 +257,6 @@ describe('Composer slash 注入 watch（Wave C）', () => {
     // 全局注入总次数 === 1（无重复/广播消费）
     expect(spy1.mock.calls.length + spy2.mock.calls.length).toBe(1)
     // pendingSlash 最终为 null（被 s1 消费方清一次）
-    expect(commandStore.pendingSlash).toBeNull()
+    expect(commandStore.pendingSlash.value).toBeNull()
   })
 })

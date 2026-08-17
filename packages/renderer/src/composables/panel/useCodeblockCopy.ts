@@ -1,7 +1,7 @@
 /**
  * useCodeblockCopy —— 代码块复制按钮反馈（从 MarkdownRenderer.vue 拆出，单一变化轴「事件委托复制反馈」）。
  *
- * 与 effects/useCopy 的差异（为何不复用它）：useCopy 是 ref-based（copied key + Vue 响应式，
+ * 与 panel/useCopy 的差异（为何不复用它）：useCopy 是 ref-based（copied key + Vue 响应式，
  * 供模板 :class/v-if 切换 Copy/Check 图标）。代码块复制走**事件委托**——按钮在 markdown-it
  * 产出的 v-html 内，Vue 无法绑定事件/无响应式节点，反馈态只能用 DOM class（.is-copied）切换。
  * ref→DOM 桥接（watch copied → 找元素 toggle class）徒增 watcher 且无收益，故独立封装此
@@ -11,7 +11,7 @@
  * - copyButton(btn, code)：写剪贴板 + 该按钮加 .is-copied（同时只一个按钮处于反馈态，后者覆盖前者）。
  * - dispose：清定时器（调用方 onBeforeUnmount）。
  */
-/** 复制反馈持续时长（ms）—— 与 effects/useCopy 的 COPIED_FEEDBACK_MS 保持一致 */
+/** 复制反馈持续时长（ms）—— 与 panel/useCopy 的 COPIED_FEEDBACK_MS 保持一致 */
 const COPY_FEEDBACK_MS = 1200
 /** 复制反馈态 class（CSS .is-copied 切换 Copy→Check icon + 成功色） */
 const COPIED_CLASS = 'is-copied'

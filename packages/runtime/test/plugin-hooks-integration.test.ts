@@ -296,13 +296,13 @@ describe('PluginService.handleBridgeEvent', () => {
     const service = new PluginService({} as never, broker)
     const reg = serviceRegistry(service)
 
-    // 注册 hook 类型
-    reg.hookRegistry.set('onMessage', [
+    // 注册 hook 类型（Fix-6：'onMessage' 死字面量已删，用真实 pi 事件名走 onPiEvent 映射）
+    reg.hookRegistry.set('onPiEvent', [
       { pluginId: 'p1', handlerId: 'h1', priority: 100 },
     ])
 
-    // handleBridgeEvent 不应抛出异常
-    service.handleBridgeEvent('onMessage', { text: 'hello' }, 'session-1')
+    // handleBridgeEvent 不应抛出异常（agent_start 经 PI_HOOK_EVENT_MAP 映射到 onPiEvent observe 路径）
+    service.handleBridgeEvent('agent_start', { text: 'hello' }, 'session-1')
     // 异步 executeHooks 的内部 broadcast — 等待微任务
     await new Promise(resolve => setTimeout(resolve, 10))
   })

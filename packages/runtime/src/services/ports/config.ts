@@ -5,7 +5,8 @@
  * pi 的协议类型（PiProviderConfig/PiModelDefinition）只存在于 infra 实现内部，
  * service 只见本文件定义的 ConfigProviderConfig / ConfigModelDefinition。
  */
-import type { ScanSourceType } from '@xyz-agent/shared'
+import type { ScanSourceType, SkillDirConfig, ProviderId } from '@xyz-agent/shared'
+import type { DirScopes } from '../skill-dir-config.js'
 
 /** service 侧的 provider 配置形状（pi-provider-store 的 PiProviderConfig 的 service 视图）。 */
 export interface ConfigProviderConfig {
@@ -14,6 +15,8 @@ export interface ConfigProviderConfig {
   baseUrl?: string
   /** pi 的 api 标识（前端直接发送 pi 终值，runtime 透传，见 applyTypeTranslation）。 */
   api?: string
+  /** 认证方式（I6）：ProviderQuickSetup.onSave 标注。与 infra PiProviderConfig.authMethod 同构。 */
+  authMethod?: 'api_key' | 'oauth' | 'env_var' | 'ambient'
   /** provider 级启停（W1）。省略时默认 true，与 infra PiProviderConfig 同构。 */
   enabled?: boolean
   models?: ConfigModelDefinition[]
@@ -57,7 +60,7 @@ export interface ConfigModelsConfig {
 
 /** 默认模型引用。 */
 export interface DefaultModelRef {
-  provider: string
+  provider: ProviderId
   modelId: string
 }
 
@@ -93,7 +96,38 @@ export interface AgentFileEntry {
 export interface IConfigStore {
   // ── 默认模型 ──
   getDefaultModel(): DefaultModelRef | null
-  setDefaultModel(provider: string, modelId: string): void
+  setDefaultModel(provider: ProviderId, modelId: string): void
+
+  // ── enabledModels 白名单（wave2 DM3：provider 启用状态派生源）──
+  /**
+   * 读 settings.json.enabledModels（pi 白名单语义：空/undefined = 全可用）。
+   * config-service.listProviders 经 deriveEnabled(id, getEnabledModels()) 派生每个
+   * provider 的启用状态，替代旧实现读 models.json provider.enabled（F2）。
+   */
+  getEnabledModels(): string[]
+
+  // ── enabledModels 白名单写入（wave3：toggleProviderEnabled + 边界守卫）──
+  /**
+   * 设置 enabledModels 白名单（非空数组写回 settings.json.enabledModels）。
+   * wave3 toggleProviderEnabled 在「重算后非空」分支调用（TC1/TC2）。
+   */
+  setEnabledModels(patterns: string[]): void
+  /**
+   * 删除 settings.json.enabledModels 字段（wave3 边界3 / CL2）。
+   * pi 白名单语义空=全可用，写空数组语义反转故 delete 字段（belt-and-suspenders）。
+   */
+  clearEnabledModels(): void
+  /**
+   * 边界1（wave3 TC5 / C2）：若 enabledModels 非空，加 `<id>/*` 让新 provider 默认启用；
+   * 空/undefined 时 no-op。importer applyImport / setProvider 新建 provider 时调用。
+   */
+  ensureProviderInWhitelist(providerId: string): void
+  /**
+   * 清除 enabledModels 白名单中某 provider 的残留 pattern（wave4 IF3 / C3）。
+   * removeProviderByKind 两分支共用：filter `<id>/*` 与 `<id>/<model>` pattern；
+   * 边界3(a) 重算空 → clearEnabledModels（delete 字段，CL2）。
+   */
+  cleanEnabledModelsResidue(providerId: string): void
 
   // ── Provider CRUD ──
   readModels(): ConfigModelsConfig
@@ -103,24 +137,33 @@ export interface IConfigStore {
   /** 透传 provider type → pi api 标识（前端直接发 pi 终值，runtime 不再翻译别名）。 */
   applyTypeTranslation(type: string): string
 
-  // ── Skill paths（discovery.json SSOT，ADR-0020 §1）──
+  // ── Skill paths（discovery.json v2 SSOT，ADR-0021 §1）──
+  /** 读取 skill 合并路径（project ∪ global 去重，项目在前）。供 session-service pi 启动参数等消费。 */
   getSkillPaths(): string[]
-  /** 覆盖 skillDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json + 同步投影 settings.json。 */
-  setSkillPaths(paths: string[]): void
+  /** 读取 skill 的 v2 分 scope 结构（projectPaths / globalPaths）。 */
+  getSkillPathScopes(): DirScopes
+  /** 覆盖 skill 路径（SkillDirConfig[] 带 scope，按 scope 分发写 projectPaths/globalPaths + 脏数据过滤）。写 discovery.json + 同步投影 settings.json。 */
+  setSkillPaths(dirs: SkillDirConfig[]): void
   addSkillPath(dir: string): void
   removeSkillPath(dir: string): void
   /** 一次性迁移：settings.json.skills → discovery.json（首启用，幂等）。 */
   migrateSettingsSkillsToDiscovery(): void
 
-  // ── Agent dirs（discovery.json SSOT，ADR-0020 §1）──
+  // ── Agent dirs（discovery.json v2 SSOT，ADR-0021 §1）──
+  /** 读取 agent 合并路径（project ∪ global 去重，项目在前）。 */
   getAgentDirs(): string[]
-  /** 覆盖 agentDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
-  setAgentDirs(dirs: string[]): void
+  /** 读取 agent 的 v2 分 scope 结构（projectPaths / globalPaths）。 */
+  getAgentPathScopes(): DirScopes
+  /** 覆盖 agent 路径（SkillDirConfig[] 带 scope，按 scope 分发 + 脏数据过滤）。写 discovery.json。 */
+  setAgentDirs(dirs: SkillDirConfig[]): void
 
-  // ── Extension dirs（discovery.json SSOT，ADR-0020 §1）──
+  // ── Extension dirs（discovery.json v2 SSOT，ADR-0021 §1）──
+  /** 读取 extension 合并路径（project ∪ global 去重，项目在前）。 */
   getExtensionDirs(): string[]
-  /** 覆盖 extensionDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
-  setExtensionDirs(dirs: string[]): void
+  /** 读取 extension 的 v2 分 scope 结构（projectPaths / globalPaths）。 */
+  getExtensionPathScopes(): DirScopes
+  /** 覆盖 extension 路径（SkillDirConfig[] 带 scope，按 scope 分发 + 脏数据过滤）。写 discovery.json。 */
+  setExtensionDirs(dirs: SkillDirConfig[]): void
 
   // ── Agent files（强制目录 + discovery 多目录扫描）──
   /**

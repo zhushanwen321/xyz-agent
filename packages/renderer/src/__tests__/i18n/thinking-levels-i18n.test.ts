@@ -10,14 +10,13 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import ThinkingLevelPopover from '@/components/panel/ThinkingLevelPopover.vue'
-import ProviderEditModal from '@/components/settings/ProviderEditModal.vue'
 import i18n, { setLocale } from '@/i18n'
 import {
   THINKING_LEVELS,
   getDisplayLabel,
   type ThinkingLevel,
 } from '@/components/panel/thinking-levels'
-import { THINKING_STRATEGIES } from '@/composables/features/useProviderEdit'
+import { THINKING_STRATEGIES } from '@xyz-agent/core'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -33,16 +32,16 @@ describe('U3: thinking-levels 数据源 i18n 化', () => {
     }
   })
 
-  it('en-US + on-off map 时 high 档 currentLabel === \'On\'', () => {
-    setLocale('en-US')
+  it('en-US + on-off map 时 high 档 currentLabel === \'On\'', async () => {
+    await setLocale('en-US')
     // on-off 模式：map 只有 off + high
     const map = { off: 'off', high: 'high' }
     const label = getDisplayLabel('high', map)
     expect(label).toBe('On')
   })
 
-  it('zh-CN + 全档 map 时 high 档 currentLabel === \'高\'', () => {
-    setLocale('zh-CN')
+  it('zh-CN + 全档 map 时 high 档 currentLabel === \'高\'', async () => {
+    await setLocale('zh-CN')
     const map = { off: 'off', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'xhigh' }
     const label = getDisplayLabel('high', map)
     expect(label).toBe('高')
@@ -59,8 +58,8 @@ describe('U4: ProviderEditModal en-US 下显示英文策略名', () => {
     }
   })
 
-  it('en-US locale 下 THINKING_STRATEGIES 翻译为 All Levels / On / Off / High / Max', () => {
-    setLocale('en-US')
+  it('en-US locale 下 THINKING_STRATEGIES 翻译为 All Levels / On / Off / High / Max', async () => {
+    await setLocale('en-US')
     const labels = THINKING_STRATEGIES.map((s) => i18n.global.t(s.labelKey!))
     expect(labels).toEqual(['All Levels', 'On / Off', 'High / Max'])
   })

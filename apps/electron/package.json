@@ -1,6 +1,6 @@
 {
   "name": "@xyz-agent/electron",
-  "version": "0.8.72",
+  "version": "0.9.0",
   "private": true,
   "description": "AI Agent Desktop Workstation",
   "author": {
@@ -14,12 +14,14 @@
     "dev": "node scripts/electron-ensure.mjs && concurrently \"pnpm run dev:vite\" \"pnpm run dev:electron\"",
     "dev:mock": "node scripts/electron-ensure.mjs && VITE_MOCK=true XYZ_MOCK=1 concurrently \"pnpm run dev:vite\" \"pnpm run dev:electron\"",
     "dev:vite": "pnpm --filter @xyz-agent/frontend run dev",
-    "dev:electron": "pnpm run build:main && pnpm run build:preload && electron . --remote-debugging-port=9222",
+    "dev:electron": "pnpm run build:main && pnpm run build:preload && node scripts/dev-electron.mjs . --remote-debugging-port=9222",
     "build:runtime": "pnpm --filter @xyz-agent/runtime run build",
     "build:main": "vite build --config vite.config.main.ts",
     "build:preload": "vite build --config vite.config.preload.ts",
-    "build": "pnpm run build:runtime && pnpm run build:vite && pnpm run build:main && pnpm run build:preload && electron-builder --publish never",
-    "build:dir": "pnpm run build:runtime && pnpm run build:vite && pnpm run build:main && pnpm run build:preload && electron-builder --publish never --dir",
+    "build": "pnpm run prepare-builtin-extensions && node ../../scripts/verify-staged-extensions.mjs && pnpm run prepare-builtin-plugins && pnpm run build:runtime && pnpm run build:vite && pnpm run build:main && pnpm run build:preload && electron-builder --publish never",
+    "prepare-builtin-extensions": "bash ../../scripts/prepare-builtin-extensions.sh",
+    "prepare-builtin-plugins": "bash ../../scripts/prepare-builtin-plugins.sh",
+    "build:dir": "pnpm run prepare-builtin-extensions && node ../../scripts/verify-staged-extensions.mjs && pnpm run prepare-builtin-plugins && pnpm run pnpm run build:runtime && pnpm run build:vite && pnpm run build:main && pnpm run build:preload && electron-builder --publish never --dir",
     "build:vite": "pnpm --filter @xyz-agent/frontend run build",
     "test:main": "cd main && vitest run",
     "test:all": "pnpm --filter @xyz-agent/frontend run test && pnpm --filter @xyz-agent/runtime run test && cd main && vitest run"

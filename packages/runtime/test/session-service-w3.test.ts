@@ -25,6 +25,7 @@ import type {
   IEventAdapter,
   IExtensionService,
 } from '../src/interfaces.js'
+import type { IMessageBus } from '../src/services/message-bus/message-bus.js'
 import type { IProcessManager, IPiEngine, PiEventListener } from '../src/services/ports/pi-engine.js'
 import type { MockInstance } from 'vitest'
 
@@ -414,13 +415,17 @@ describe('SessionService · W3 E2：完整 pi 事件流集成', () => {
       return new EventAdapter(sessionId, (events) => interpreter.interpret(events))
     }
     // 用真实 createAdapter 组合根装配（EventAdapter → Interpreter → SessionService 全链路）
+    // wave:perf-w09（D1-2）：session 级消息单通道走 bus（构造参数注入喂 dispatcher + send 回调）
+    const bus = { publish: vi.fn() } as unknown as IMessageBus
     const service2 = new SessionService(
       pm, broker, createAdapter, '/tmp',
       { getExtensionPaths: vi.fn().mockResolvedValue([]) } as unknown as IExtensionService,
       new PiConfigStore(), new PiSessionStore(),
       { readGitInfo: vi.fn(() => undefined), pruneStaleCache: vi.fn() } as unknown as IGitInfoReader,
       { record: vi.fn(), list: vi.fn().mockReturnValue([]) } as unknown as ConstructorParameters<typeof SessionService>[8],
+      bus,
     )
+    service2.setMessageBus(bus)
     holder.service = service2
 
     const piSid = `pi-e2-final-${++autoId}`
@@ -484,8 +489,9 @@ describe('SessionService · W3 E2：完整 pi 事件流集成', () => {
     // 3. inputTokens 写入（>0，agent_end usage 回写）
     expect(service2.getInputTokens(piSid)).toBeGreaterThan(0)
 
-    // 附带验证：message.complete 已广播（EventAdapter handleAgentEnd → interpreter 转发）
-    const broadcasts = vi.mocked(broker.broadcast).mock.calls.map(c => c[0].type)
-    expect(broadcasts).toContain('message.complete')
+    // 附带验证：message.complete 已发布（EventAdapter handleAgentEnd → interpreter 转发；
+    // wave:perf-w09 后 session 级消息走 bus.publish，不再经 broker.broadcast）
+    const published = vi.mocked(bus.publish).mock.calls.map(c => c[1].type)
+    expect(published).toContain('message.complete')
   })
 })

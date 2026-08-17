@@ -167,7 +167,10 @@ describe("[N2] chatMode 轮次通知正文：真实 session-runner 链路", () =
     emitStdoutLine(child, sessionHeader("sess-round-1"));
     emitStdoutLine(child, {
       type: "message_update",
-      assistantMessageEvent: { type: "text", delta: ROUND_REPLY },
+      // type 对齐 pi-ai AssistantMessageEvent 真实协议（text 增量 = "text_delta"，带 contentIndex）。
+      // 曾用 {type:"text"} 假类型——旧实现不查 type 只看 delta 碰巧兼容；现实现按 type 正向
+      // 分流（toolcall_delta 不混入 text 流），假类型事件被正确丢弃，fake 必须对齐真实协议。
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: ROUND_REPLY },
     });
     emitStdoutLine(child, { type: "turn_end" });
     emitStdoutLine(child, { type: "agent_end", willRetry: false });

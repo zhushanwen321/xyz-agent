@@ -198,14 +198,14 @@ export interface GuiRenderResult {
 
 ### 4.1 映射总表
 
-| pi 渲染入口 | GUI 数据通道 | 数据载体 | 传输方向 |
-|---|---|---|---|
-| `renderCall(args)` | extension 在 execute 中构造 | `details.__gui__.call` | 单向 |
-| `renderResult(result)` | extension 在 execute 中构造 | `details.__gui__.result` | 单向 |
-| `setWidget(key, factory)` | `guiSetWidget()` helper（直编码） | extension_ui_request（marker 编码进 string[]） | 单向 |
-| `setStatus(key, text)` | 复用 pi 原生（已有效） | extension_ui_request | 单向 |
-| `registerMessageRenderer` | extension 在 sendMessage 中构造 | `message.details.__gui__` | 单向 |
-| `ctx.ui.custom(factory)` | `askUserInteract()` helper（extensions/ask-user/） | select 通道 + `ASK_USER_MARKER` + WS 回传 | **双向** |
+| pi 渲染入口 | GUI 数据通道 | 数据载体 | 挂载点 | 传输方向 |
+|---|---|---|---|---|
+| `renderCall(args)` | extension 在 execute 中构造 | `details.__gui__.call` | **M4** tool result block | 单向 |
+| `renderResult(result)` | extension 在 execute 中构造 | `details.__gui__.result` | **M4** tool result block | 单向 |
+| `setWidget(key, factory)` | `guiSetWidget()` helper（直编码） | extension_ui_request（marker 编码进 string[]） | **M17** 对话流 widget 面板 | 单向 |
+| `setStatus(key, text)` | 复用 pi 原生（已有效） | extension_ui_request | **M8** status bar | 单向 |
+| `registerMessageRenderer` | extension 在 sendMessage 中构造 | `message.details.__gui__` | **M5** custom message | 单向 |
+| `ctx.ui.custom(factory)` | `askUserInteract()` helper（extensions/ask-user/） | select 通道 + `ASK_USER_MARKER` + WS 回传 | **M11** companion | **双向** |
 
 ### 4.2 tool result（renderCall + renderResult）
 
@@ -256,6 +256,8 @@ renderResult(result, options, theme) {
 ### 4.3 widget（setWidget）
 
 widget 通过 `guiSetWidget()` helper **直接编码进 string[]**——不需要 shim extension，不需要 monkey-patch。
+
+**挂载点（M17）**：widget 在 GUI 下渲染到**对话流 widget 面板**（MessageStream 与 composer 之间，对应 TUI「editor 上方常驻面板」）。语义与 pi 原生完全一致：**常驻 + 同 key 覆盖更新 + undefined 清除**。xyz-agent 前端按 widgetKey 分区缓存，**多 widgetKey 分栏并排**（flex wrap：单 widget 占满整行，多 widget 等分/按内容）。任何 extension 推 widget 都走此挂载点（通用承接，不特化）。
 
 #### 原理
 
@@ -1041,7 +1043,7 @@ extension 用通用原语组合表达领域数据，不再有专属组件类型�
 | 渲染入口 | 当前能力 | DOM 结构 | 协议对接改动 |
 |---------|---------|---------|-------------|
 | **tool result** | 纯文本 `{{ result }}` | Block.vue: `<span>{{ result }}</span>` + `font-mono whitespace-pre-wrap` | 加 `GuiComponentRenderer` 分支 + `AnsiRenderer` 兜底 |
-| **widget** | 纯文本每行 `<code>` | SideDrawer.vue: `v-for line in activeLines` → `<code>{{ line }}</code>` | 加 `extension:widgetGui` 订阅 + `GuiComponentRenderer` 分支 |
+| **widget（M17）** | 对话流 WidgetArea（已实现，Panel.vue 挂载于 MessageStream 与 composer 之间） | WidgetArea.vue: 常驻卡片分栏并排（flex wrap），`widgetKey` 标签 + `GuiComponentRenderer` | `extension:widget`/`extension:widgetGui` 订阅 + 渲染到对话流（MessageStream 与 composer 之间）；widget 不再进 SideDrawer/sidebar |
 | **status** | 纯文本 footer | SideDrawer.vue: `<footer><span>key</span><span>text</span></footer>` | 提取 `useExtensionStatus()` composable + 挂载到 Workspace 底部 |
 | **custom message** | BgNotifyCard（结构化）/ SystemNotice（纯文本）| MessageStream.vue: `v-else-if="bgNotify"` | 加 `message.details.__gui__` 检测 + `GuiComponentRenderer` |
 | **dialog** | **不存在** | — | 新建 `ExtensionUIDialog` + `extension.ui_request` handler |
@@ -1086,7 +1088,7 @@ P2 前，非 `ansi-text` 的通用原语降级为 JSON 序列化文本展示（�
 | 渲染入口 | 挂载位置 | 文件 |
 |---------|---------|------|
 | tool result GuiComponent | Block.vue 展开态详情内（`extractGui` 调用 ×2） | `Block.vue:191,198` |
-| widget GuiComponent | SideDrawer.vue（`extension:widgetGui` WS 事件，直接读 `payload.gui`） | `SideDrawer.vue:332-345` |
+| widget GuiComponent（M17） | **对话流 WidgetArea**（MessageStream 与 composer 之间，常驻卡片分栏并排；`extension:widgetGui`/`extension:widget` WS 事件 → ViewHostStore per-session 缓存 → WidgetArea 渲染） | `WidgetArea.vue`（已实现）；历史：SideDrawer.vue:332-345（已废弃方向） |
 | custom message GuiComponent | MessageStream.vue system 消息分支（`extractGui` 调用 ×1） | `MessageStream.vue:130` |
 | ask-user 富交互 | **Panel.vue inline**（覆盖 composer 位置，与 Composer 互斥） | `Panel.vue:90-97` |
 | ExtensionUIDialog（confirm/select/input） | 全局 portal | `ExtensionUIDialog.vue` |
@@ -1153,3 +1155,15 @@ v1-draft 经 4 路并行技术审查（shim 可行性 / 交互层 / 数据链路
 ### 行号引用修正
 
 文档中行号引用（agent-session.js:451 / rpc-mode.js:264 / jsonl.js:8 等）会随 pi 版本漂移。实现时应以函数名为准（`_emitExtensionEvent` / `serializeJsonLine` / `createExtensionUIContext`）。
+
+### M17 挂载点变更（2026-08-14 定稿）
+
+**变更**：`setWidget` 的 GUI 挂载点从 **M7 drawer widget** 改为 **M17 对话流 widget 面板**（MessageStream 与 composer 之间）。
+
+**背景**：todo/goal 的 TUI widget（setWidget，常驻 + 覆盖更新，官方文档定位 "persistent content, good for todo lists, progress"）映射到 drawer（M7）/sidebar（M2）与产品诉求冲突——用户明确拒绝 drawer/sidebar，要求「常驻 + 更新」语义落在**对话流**。M5 custom message 是 append-only 消息语义（无更新 API），不承担面板语义。
+
+**决策**：
+1. GUI 侧新增 M17 挂载点，语义与 pi setWidget 完全一致（常驻 + 同 key 覆盖更新 + undefined 清除），数据通道不变（`extension:widget`/`extension:widgetGui`）
+2. todo/goal 走 M17：tool result 不再带 `__gui__`（M4 移除）、不推 custom message（M5 不走）
+3. widget 不进 sidebar（M2 方向废弃，动态 view 发现移除）
+4. M5（custom message 渲染）保留为独立能力，与 M17 正交（subagent-workflow 等已推 `__gui__` message）

@@ -26,7 +26,7 @@ export interface AgentFileEntry {
 /**
  * 扫描 agent .md 文件。
  * - 不带参：扫默认强制目录 getAgentsDir()（向后兼容，旧调用方）。
- * - 带 dirs：扫多目录（ADR-0020 §1.1 层 3），同名按数组顺序去重（靠前覆盖靠后）。
+ * - 带 dirs：扫多目录（ADR-0021 §1.1 层 3），同名按数组顺序去重（靠前覆盖靠后）。
  *   dirs 数组顺序 = 优先级（与 discovery.json.agentDirs 顺序一致）。
  */
 export function listAgentFiles(dirs?: string[]): AgentFileEntry[] {

@@ -25,7 +25,8 @@ import { defineComponent, h, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ServerMessage, SkillInfo } from '@xyz-agent/shared'
 import * as events from '@/api/events'
-import { useSettingsStore } from '@/stores/settings'
+import { getSettingsStore, __resetSettingsStoreForTesting } from '@xyz-agent/core'
+import { __resetCommandStoreForTesting } from '@/composables/features/command/useCommandStore'
 import CommandPopover from '@/components/panel/CommandPopover.vue'
 
 // Wave3 TC5：useGlobalSkills 走真实 events 订阅链路（dispatchGlobal → handler → loadGlobal(true) → DOM 刷新）。
@@ -65,15 +66,19 @@ const SESSION_CMDS = [
   { name: '/fix', description: '修复问题', source: 'skill' },
 ]
 
-/** reka-ui PopoverContent teleport 到 body：在 body 内找命令项按钮（v-for Button 渲染为 native <button>）。
- *  按 item 列表容器（.max-h-[180px]）定位——不依赖 button 文本含 /（skill 项显示去掉了 / 前缀）。 */
+/** reka-ui PopoverContent teleport 到 body：在 body 内找命令项行（v-for 渲染为 .cmd-row div）。
+ *  按 item 列表容器（.max-h-[180px]）定位——不依赖行文本含 /（skill 项显示去掉了 / 前缀）。
+ *  [B3] 行从 <Button> 改为纯 div（对齐 demo .cmd-row），选择器同步从 'button' 改为 '.cmd-row'。 */
 function bodyItemButtons(): HTMLElement[] {
   const list = document.body.querySelector('.max-h-\\[180px\\]')
-  return Array.from((list ?? document.body).querySelectorAll('button'))
+  return Array.from((list ?? document.body).querySelectorAll('.cmd-row'))
 }
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  __resetSettingsStoreForTesting()
+  // [w5] CommandPopover 改经壳单例（core 实例）：reset 防跨用例残留 commandsBySession/appCommands
+  __resetCommandStoreForTesting()
 })
 
 describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () => {
@@ -124,7 +129,7 @@ describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () 
   })
 
   it('L5 session 态（variant=panel + sessionId=s1）→ 用 commandStore（3 项 pi 命令）+ 前端注入 compact = 4 项，不被 globalSkills(7) 污染', async () => {
-    // AC-3：session 态不并入 globalSkills（配置态/运行态不混淆，ADR-0037 D2）
+    // AC-3：session 态不并入 globalSkills（配置态/运行态不混淆，ADR-0050 D2）
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
       props: { open: true, type: 'slash', variant: 'panel', sessionId: 's1', query: '', globalSkills: LANDING_SKILLS },
@@ -404,7 +409,7 @@ describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () 
 
   it('L17 AC-8 反向：settingsStore.skills 有值但 globalSkills prop 空 → landing 不显示 skill（FR-5 解耦）', async () => {
     // settingsStore.skills 注入 7 条（模拟修复前的数据源）
-    useSettingsStore().skills = LANDING_SKILLS
+    getSettingsStore().skills.value = LANDING_SKILLS
     // globalSkills prop 不传（空）
     await mountLanding('', [])
     const btns = bodyItemButtons()
@@ -418,7 +423,7 @@ describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () 
   // 用 wrapper 组件调 useGlobalSkills() 拿响应式 globalSkills，传给 CommandPopover（模拟 Composer.vue 的接线）。
   it('TC5: 广播 global scope 失效信号 → landing slash 浮层 DOM 反映 globalSkills 刷新', async () => {
     // lazy import：避免顶层 import 触发 useProjectSkills 模块加载（其顶层订阅依赖 mock 已挂载，OK）。
-    const { useGlobalSkills } = await import('@/composables/features/useProjectSkills')
+    const { useGlobalSkills } = await import('@/composables/features/settings/useProjectSkills')
 
     const SKILL_1: SkillInfo[] = [
       { id: 'sk-1', name: 'skill1', description: 'one', enabled: true, source: 'agents', effective: true },

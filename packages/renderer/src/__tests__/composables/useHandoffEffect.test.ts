@@ -19,7 +19,7 @@
  * - TC5 scope.stop() 退订：广播不再触发任何副作用
  *
  * mock 策略（收窄，删除 wave1 时代的 doc 注入 mock）：
- * - vi.mock('@/composables/features/useSidebar')：loadSessions / selectSession 用 vi.fn（可 reject 测失败路径）。
+ * - vi.mock('@/composables/features/sidebar/useSidebar')：loadSessions / selectSession 用 vi.fn（可 reject 测失败路径）。
  * - events / useChatStore 用**真实**实现（验 setHandingOff 写 handingOffSessions Set 的真实副作用，
  *   AGENTS #5 用户可见断言）。events 不 mock，用真实 dispatchGlobal 派发。
  *
@@ -38,8 +38,8 @@ const sidebarMock = vi.hoisted(() => ({
   loadSessions: vi.fn(() => Promise.resolve()),
   selectSession: vi.fn(() => Promise.resolve()),
 }))
-vi.mock('@/composables/features/useSidebar', () => ({
-  useSidebar: () => ({
+vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
+  useSidebarNew: () => ({
     loadSessions: sidebarMock.loadSessions,
     selectSession: sidebarMock.selectSession,
   }),

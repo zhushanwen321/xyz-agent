@@ -12,17 +12,19 @@
 import type { ITheme } from '@xterm/xterm'
 
 export const darkTerminalTheme: ITheme = {
-  /* ── 核心色（v3 tokens）────────────────────────────── */
-  background: '#1a1b1f',      // --bg
+  /* ── 核心色 ──────────────────────────────────────────
+     背景 #000：2026-08-14 裁决遵循 v6-drawer-tabs-demo——纯黑圆角块嵌在 drawer 深底
+     （bg #131316）上，黑块与深底的明度差即层次（替代旧 #1a1b1f 与容器 bg-black 混搭）。 */
+  background: '#000000',
   foreground: '#f7f8fc',      // --fg
   cursor: '#4f8ef7',          // --accent
-  cursorAccent: '#1a1b1f',    // block cursor 内文字色（= bg，反差可见）
+  cursorAccent: '#000000',    // block cursor 内文字色（= bg，反差可见）
   selectionBackground: 'rgba(79, 142, 247, 0.30)', // --accent-ring
   selectionInactiveBackground: 'rgba(79, 142, 247, 0.15)',
 
   /* ── ANSI 16 色 ─────────────────────────────────────── */
   // 标准色（0-7）：色相对齐 v3 状态色，饱和度参考 Dracula/Gruvbox
-  black: '#1a1b1f',           // = bg
+  black: '#000000',           // = background
   red: '#ef4444',             // --danger
   green: '#22c55e',           // --success
   yellow: '#f5a524',          // ANSI xterm yellow（独立于 design token 体系）

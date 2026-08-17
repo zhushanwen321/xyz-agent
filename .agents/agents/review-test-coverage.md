@@ -26,7 +26,7 @@ task prompt 中必须包含：
    - 空输入、null/undefined 输入
    - 边界值（0、-1、MAX_SAFE_INTEGER）
    - 错误路径（异常恢复、状态回滚）
-5. **测试框架合规**（xyz-agent 规范，参考项目 CLAUDE.md「测试规范」）：
+5. **测试框架合规**（xyz-agent 规范，参考项目 AGENTS.md「测试规范」）：
    - 使用 **vitest**（从 vitest 导入 describe/it/expect/vi/beforeEach）
    - **禁止 node:test** 和 `tsx --test`
    - 运行命令：`npx vitest run <test-file>`（runtime 子项目有独立 `vitest.config.ts`，依赖 `vitest@^4.1.6`）

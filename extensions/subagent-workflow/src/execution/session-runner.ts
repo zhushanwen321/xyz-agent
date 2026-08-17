@@ -4,7 +4,6 @@
 //
 // spawn 改造后：session 在独立子进程跑（进程隔离），事件经 stdout JSON 流回流。
 // runSpawn 是唯一执行入口（sync/background 共用）。mode 分叉在 Runtime.execute 顶部。
-// 设计信息见 docs/subagents/spawn-refactor-plan.md。
 
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
@@ -87,6 +86,24 @@ function isAgentSettledEvt(x: unknown): x is { type: "agent_settled" } {
   if (typeof x !== "object" || x === null) return false;
   if (!("type" in x)) return false;
   return x.type === "agent_settled";
+}
+
+/**
+ * 把 pi assistantMessageEvent 分流为 text_delta / thinking_delta AgentEvent，供 streaming 通道。
+ *
+ * 正向判定：只 text_delta / thinking_delta 产出事件。toolcall_delta（工具入参 JSON 增量，
+ * 如 {"path":"..."}）等其他带 delta 的事件不混入 text stream——否则 subagent overlay 的
+ * assistant 正文会原样流出工具参数 JSON 串（对话末尾 JSON 与 text 混杂、无 ICON+title 卡片）。
+ * 工具调用由 fetchAndInject 拉取的完整历史（toolCall 卡片）展示，不依赖 streaming。
+ *
+ * 提取为纯函数便于单测（runSpawn 的 handleSdkEvent 闭包不易直接测）。
+ */
+export function mapAssistantMessageDelta(
+  ame: { type?: string; delta?: string },
+): { type: "text_delta"; delta: string } | { type: "thinking_delta"; delta: string } | null {
+  if (ame.type === "thinking_delta") return { type: "thinking_delta", delta: ame.delta ?? "" };
+  if (ame.type === "text_delta" && ame.delta !== undefined) return { type: "text_delta", delta: ame.delta };
+  return null;
 }
 
 // ============================================================
@@ -776,12 +793,8 @@ export async function runSpawn(
         return;
       }
       case "message_update": {
-        const ame = raw.assistantMessageEvent;
-        if (ame?.type === "thinking_delta") {
-          agentEvent({ type: "thinking_delta", delta: ame.delta ?? "" });
-        } else if (ame?.delta !== undefined) {
-          agentEvent({ type: "text_delta", delta: ame.delta });
-        }
+        const mapped = mapAssistantMessageDelta(raw.assistantMessageEvent ?? {});
+        if (mapped) agentEvent(mapped);
         return;
       }
       case "turn_end": {

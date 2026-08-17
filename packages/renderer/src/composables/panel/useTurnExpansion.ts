@@ -18,14 +18,23 @@
 import type { Ref } from 'vue'
 import { useTurnExpansionStore } from '@/stores/turn-expansion'
 
+/**
+ * turn key：MessageTurn 的稳定标识（首条消息 id），由 turnStableId 派生。
+ * [M5 stable-key] 旧契约用 MessageTurn.index（number），消息插删时漂移；
+ * string 稳定 key 后展开态跟随 turn 而非索引。
+ */
+export type TurnKey = string
+
 export function useTurnExpansion(sessionId: Ref<string | null>): {
-  isExpanded: (turnIndex: number) => boolean
-  toggle: (turnIndex: number) => void
-  expand: (turnIndex: number) => void
-  collapse: (turnIndex: number) => void
-  expandAll: (turnIndices: number[]) => void
-  collapseAll: (turnIndices: number[]) => void
-  hasAnyExpanded: (turnIndices: number[]) => boolean
+  isExpanded: (turnKey: TurnKey) => boolean
+  toggle: (turnKey: TurnKey) => void
+  expand: (turnKey: TurnKey) => void
+  collapse: (turnKey: TurnKey) => void
+  isTakeover: (turnKey: TurnKey) => boolean
+  setTakeover: (turnKey: TurnKey, on: boolean) => void
+  expandAll: (turnKeys: TurnKey[]) => void
+  collapseAll: (turnKeys: TurnKey[]) => void
+  hasAnyExpanded: (turnKeys: TurnKey[]) => boolean
 } {
   const store = useTurnExpansionStore()
 
@@ -36,39 +45,49 @@ export function useTurnExpansion(sessionId: Ref<string | null>): {
 
   return {
     /** 查询指定 turn 是否展开。null sid 返回 false（与 w1 契约一致）。 */
-    isExpanded: (turnIndex: number): boolean => {
+    isExpanded: (turnKey: TurnKey): boolean => {
       const s = sid()
-      return s !== null && store.isExpanded(s, turnIndex)
+      return s !== null && store.isExpanded(s, turnKey)
     },
     /** 翻转展开态。null sid 时 no-op */
-    toggle: (turnIndex: number): void => {
+    toggle: (turnKey: TurnKey): void => {
       const s = sid()
-      if (s !== null) store.toggle(s, turnIndex)
+      if (s !== null) store.toggle(s, turnKey)
     },
     /** 设为展开。null sid 时 no-op */
-    expand: (turnIndex: number): void => {
+    expand: (turnKey: TurnKey): void => {
       const s = sid()
-      if (s !== null) store.expand(s, turnIndex)
+      if (s !== null) store.expand(s, turnKey)
     },
     /** 设为折叠。null sid 时 no-op */
-    collapse: (turnIndex: number): void => {
+    collapse: (turnKey: TurnKey): void => {
       const s = sid()
-      if (s !== null) store.collapse(s, turnIndex)
+      if (s !== null) store.collapse(s, turnKey)
+    },
+    /** 查询「展开全部」接管态。null sid 返回 false（D6/TC2，窗口级语义，驱动 computeTraceWindow） */
+    isTakeover: (turnKey: TurnKey): boolean => {
+      const s = sid()
+      return s !== null && store.isTakeover(s, turnKey)
+    },
+    /** 设/清「展开全部」接管态。null sid 时 no-op */
+    setTakeover: (turnKey: TurnKey, on: boolean): void => {
+      const s = sid()
+      if (s !== null) store.setTakeover(s, turnKey, on)
     },
     /** 批量展开。null sid 时 no-op */
-    expandAll: (turnIndices: number[]): void => {
+    expandAll: (turnKeys: TurnKey[]): void => {
       const s = sid()
-      if (s !== null) store.expandAll(s, turnIndices)
+      if (s !== null) store.expandAll(s, turnKeys)
     },
     /** 批量折叠。null sid 时 no-op */
-    collapseAll: (turnIndices: number[]): void => {
+    collapseAll: (turnKeys: TurnKey[]): void => {
       const s = sid()
-      if (s !== null) store.collapseAll(s, turnIndices)
+      if (s !== null) store.collapseAll(s, turnKeys)
     },
     /** 任一 turn 处于展开态。null sid 返回 false */
-    hasAnyExpanded: (turnIndices: number[]): boolean => {
+    hasAnyExpanded: (turnKeys: TurnKey[]): boolean => {
       const s = sid()
-      return s !== null && store.hasAnyExpanded(s, turnIndices)
+      return s !== null && store.hasAnyExpanded(s, turnKeys)
     },
   }
 }

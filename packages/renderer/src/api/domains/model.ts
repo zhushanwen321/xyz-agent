@@ -8,7 +8,7 @@
  *
  * 依赖方向：events（订阅）+ command（动作）。
  */
-import type { ModelInfo } from '@xyz-agent/shared'
+import type { ModelInfo, ProviderId } from '@xyz-agent/shared'
 export type { ModelInfo }
 import { command } from '../request'
 import * as events from '../events'
@@ -20,11 +20,25 @@ export function onModels(handler: (models: ModelInfo[]) => void): () => void {
   })
 }
 
+/**
+ * 主动拉取聚合模型列表（请求-响应兜底，对齐 config.listProviders 范式）。
+ *
+ * onModels 订阅覆盖 sendInitialState 首推与运行时广播；本函数解决「订阅注册时序竞态导致首推丢失」
+ * 的兜底（runtime settings-message-handler.ts 的 model.list case reply { models }）。
+ * 由 settings-lifecycle.refreshModels 在连接后调一次。mock 模式 WS 不回此 reply（mockSend 仅 ping/pong），
+ * 故调用方须在非 mock 模式下调（否则 pending 65s 超时）。
+ */
+export async function listModels(): Promise<ModelInfo[]> {
+  const reply = await command('model.list', {})
+  return reply.models
+}
+
 /** 切换当前 session 的模型（动作；确认由 model.switched push，后续消费） */
 export function switchModel(
   sessionId: string,
-  provider: string,
+  provider: ProviderId,
   modelId: string,
 ): Promise<void> {
   return command('model.switch', { sessionId, provider, modelId })
 }
+

@@ -6,7 +6,7 @@
  *   ✗ 不做 file_changes baseline diff（snapshotGitStatus/diffSnapshots）
  *   ✗ 不回写 session 状态（context.update / thinkingLevel 缓存）
  *   ✗ 不路由 status/bridge/extension-ui 到 server
- *   ✗ 不持有可变态（statusBaseline/writeContents/currentMessageId）
+ *   ✗ 不持有可变态（currentMessageId/writeContents/diffChain 帧序态全在 interpreter）
  *   ✓ 只产出结构化中间事件（PiTranslatedEvent[]），交由 service 层 EventInterpreter 编排。
  *
  * pi RPC events have this structure:
@@ -21,7 +21,7 @@
  */
 import type { ServerMessage, ServerMessageType, ExtensionInteractMethod } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS } from '@xyz-agent/shared'
-import { GUI_WIDGET_MARKER, ASK_USER_MARKER, isGuiComponent } from '@xyz-agent/extension-protocol'
+import { GUI_WIDGET_MARKER, ASK_USER_MARKER, isGuiComponent, isGuiRenderResult } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import type { PiTranslatedEvent } from '../../services/session/types.js'
 import { randomUUID } from 'node:crypto'
@@ -44,11 +44,13 @@ import type {
   PiThinkingLevelChangedEvent,
   PiStatusEvent,
   PiErrorEvent,
+  PiCompactionStartEvent,
+  PiCompactionEndEvent,
 } from './pi-protocol.js'
 
 // ── Sub-handler types ──────────────────────────────────────────────
 //
-// [ADR-0033] translate() 入参用 pi-protocol.ts 的 PiEvent 联合类型（真契约）。
+// [ADR-0037] translate() 入参用 pi-protocol.ts 的 PiEvent 联合类型（真契约）。
 // 每个 handler 入参窄化为对应的 Pi*Event interface（如 handleToolExecutionEnd →
 // PiToolExecutionEndEvent）。pi 升级时若新增事件类型，PiEvent 联合的 exhaustive
 // 检查会提示补 handler 或登记到 NULL_EVENTS。
@@ -95,14 +97,31 @@ function handleMessageUpdate(event: PiMessageUpdateEvent, sid: string): PiTransl
 
   switch (sub.type) {
     case 'text_delta':
-      return [{ kind: 'message', message: { type: 'message.text_delta', payload: { sessionId: sid, delta: sub.delta ?? '' } } }]
+      return [{ kind: 'message', message: { type: 'message.text_delta', payload: { sessionId: sid, delta: sub.delta ?? '', ...(sub.contentIndex !== undefined ? { contentIndex: sub.contentIndex } : {}) } } }]
     case 'thinking_start':
-      return [{ kind: 'message', message: { type: 'message.thinking_start', payload: { sessionId: sid } } }]
+      return [{ kind: 'message', message: { type: 'message.thinking_start', payload: { sessionId: sid, ...(sub.contentIndex !== undefined ? { contentIndex: sub.contentIndex } : {}) } } }]
     case 'thinking_delta':
-      return [{ kind: 'message', message: { type: 'message.thinking_delta', payload: { sessionId: sid, delta: sub.delta ?? '' } } }]
+      // 微项 1（wave:perf-w07）：contentIndex 透传对齐 text_delta——为 D-2 token coalescing（W12
+      // DeltaBuffer 合帧）保住 thinking 块的有序插入锚点；renderer 现状 handler 未消费该字段，多余字段无害。
+      return [{ kind: 'message', message: { type: 'message.thinking_delta', payload: { sessionId: sid, delta: sub.delta ?? '', ...(sub.contentIndex !== undefined ? { contentIndex: sub.contentIndex } : {}) } } }]
     case 'thinking_end':
       return [{ kind: 'message', message: { type: 'message.thinking_end', payload: { sessionId: sid } } }]
-    case 'toolcall_start': case 'toolcall_delta': case 'toolcall_end':
+    case 'toolcall_start': {
+      // toolCall 块顺序锚点（§11 检查点 3）：pi 在模型输出 tool_use 时发 toolcall_start（带 contentIndex），
+      // 远早于 tool_execution_start（工具执行时，无 contentIndex）。toolCall 块若由 tool_execution_start 驱动，
+      // 同 turn 内 text 在 tool 之后时顺序会错位（text_delta 先到、toolCall 后到）。
+      // 此处产出 tool-call-index 中间事件（toolCallId + contentIndex），interpreter 缓存后
+      // 在 tool-call-start 到达时附到 tool_call_start WS 帧，前端按 contentIndex 有序插入。
+      const contentIndex = sub.contentIndex
+      const toolCallId = contentIndex !== undefined
+        ? (event.message?.content?.[contentIndex] as { id?: string } | undefined)?.id
+        : undefined
+      if (toolCallId && contentIndex !== undefined) {
+        return [{ kind: 'tool-call-index', toolCallId, contentIndex }]
+      }
+      return [{ kind: 'noop' }]
+    }
+    case 'toolcall_delta': case 'toolcall_end':
     case 'text_start': case 'text_end':
       return [{ kind: 'noop' }]
     // FR-5: streaming error — surface as message.stream_error
@@ -121,7 +140,7 @@ function handleMessageUpdate(event: PiMessageUpdateEvent, sid: string): PiTransl
  */
 function handleToolExecutionStart(event: PiToolExecutionStartEvent, _sid: string): PiTranslatedEvent[] {
   const toolName = event.toolName
-  // pi 用 args 是规范字段名（pi 从不发 input，ADR-0033）。
+  // pi 用 args 是规范字段名（pi 从不发 input，ADR-0037）。
   const input = event.args
   return [{
     kind: 'tool-call-start',
@@ -136,7 +155,7 @@ function handleToolExecutionStart(event: PiToolExecutionStartEvent, _sid: string
  * EventInterpreter 据此跑 onAfterToolResult hook（改写 output）+ 触发 file_changes baseline diff。
  */
 function handleToolExecutionEnd(event: PiToolExecutionEndEvent, _sid: string): PiTranslatedEvent[] {
-  // pi 用 result 是规范字段名（pi 从不发 output，ADR-0033）。
+  // pi 用 result 是规范字段名（pi 从不发 output，ADR-0037）。
   // 三态判定 + stripAnsi + images/details 提取统一委托 normalizePiToolResult（W1）。
   const raw = event.result
   const { output, outputRaw, details, images } = normalizePiToolResult(raw)
@@ -177,7 +196,7 @@ function handleAgentEnd(event: PiAgentEndEvent, sid: string): PiTranslatedEvent[
       stopReason: 'error',
     }]
   }
-  // pi 事件是强类型契约（ADR-0033）。agent_end.messages 的 usage/stopReason 由 PiAgentEndMessage
+  // pi 事件是强类型契约（ADR-0037）。agent_end.messages 的 usage/stopReason 由 PiAgentEndMessage
   // 覆盖（PiUsage 已镜像 pi 字段名 input/output/cacheRead/cacheWrite）。但 pi 在此还附带
   // responseModel / diagnostics / errorMessage 等运行时字段（超出 PiAgentEndMessage 声明范围，
   // pi AgentMessage 实际形态比声明的 union 更宽）——这些用 as 提取。
@@ -236,7 +255,7 @@ function handleAgentEnd(event: PiAgentEndEvent, sid: string): PiTranslatedEvent[
  * totalTokens 缺失时返回空（纯工具结果 turn 可能无 usage）。
  */
 function handleTurnEndPi(event: PiTurnEndEvent, sid: string): PiTranslatedEvent[] {
-  // pi turn_end 事件把 message 放在顶层 message 字段（ADR-0033 契约，pi 从不发 payload）。
+  // pi turn_end 事件把 message 放在顶层 message 字段（ADR-0037 契约，pi 从不发 payload）。
   const message = event.message
   const usage = message?.usage
   if (!usage?.totalTokens) return []
@@ -303,18 +322,34 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
     if (rawLines.length === 1 && typeof rawLines[0] === 'string' && (rawLines[0] as string).startsWith(GUI_WIDGET_MARKER)) {
       try {
         const json = (rawLines[0] as string).slice(GUI_WIDGET_MARKER.length)
-        const gui: unknown = JSON.parse(json)
-        // 形状校验：防止异常结构进入渲染层（非合法 GuiComponent → 降级纯文本 widget）
-        if (isGuiComponent(gui)) {
+        const decoded: unknown = JSON.parse(json)
+        // v1.1 wire：GuiRenderResult 信封 {v, component, meta?} → 解包 component + meta
+        // （meta = widget 宿主元数据，前端 WidgetArea 渲染统一 head）
+        if (isGuiRenderResult(decoded)) {
           return [{
             kind: 'message',
             message: {
               type: EXTENSION_EVENTS.WIDGET_GUI as ServerMessageType,
-              payload: { sessionId: sid, widgetKey, gui },
+              payload: {
+                sessionId: sid,
+                widgetKey,
+                gui: decoded.component,
+                ...(decoded.meta !== undefined ? { meta: decoded.meta } : {}),
+              },
             },
           }]
         }
-        console.warn('[EventAdapter] widgetGui marker decoded but not a valid GuiComponent, falling back to text widget', gui)
+        // v1 wire（兼容窗口）：裸 GuiComponent（旧版 extension 发出的格式）
+        if (isGuiComponent(decoded)) {
+          return [{
+            kind: 'message',
+            message: {
+              type: EXTENSION_EVENTS.WIDGET_GUI as ServerMessageType,
+              payload: { sessionId: sid, widgetKey, gui: decoded },
+            },
+          }]
+        }
+        console.warn('[EventAdapter] widgetGui marker decoded but not a valid GuiComponent, falling back to text widget', decoded)
        
       } catch (e) {
         // marker 检测命中但 JSON 解析失败 → 降级为纯文本 widget
@@ -446,7 +481,7 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
 
 /** message_start — role-based routing for non-assistant messages */
 function handleMessageStart(event: PiMessageStartEvent, sid: string): PiTranslatedEvent[] {
-  // pi 事件是强类型契约（ADR-0033），但 message_start.message 含 pi 声明之外的运行时字段
+  // pi 事件是强类型契约（ADR-0037），但 message_start.message 含 pi 声明之外的运行时字段
   // （summary / tokensBefore / fromId / customType / details / display），且 assistant turn 开始时
   // message 缺省。此处局部放宽为 Record 提取这些超范围字段。
   const msg = event.message as unknown as Record<string, unknown> | undefined
@@ -475,24 +510,10 @@ function handleMessageStart(event: PiMessageStartEvent, sid: string): PiTranslat
   // 与历史路径 message-converter.ts:36（toolResult 合并进父 assistant，非独立消息）语义一致。
   if (role === 'toolResult') return [{ kind: 'noop' }]
 
-  if (role === 'compactionSummary') {
-    return [{
-      kind: 'message',
-      message: {
-        type: 'message.compactionSummary',
-        payload: { sessionId: sid, summary: msg.summary as string | undefined, tokensBefore: msg.tokensBefore as number | undefined, timestamp: msg.timestamp as number | undefined },
-      },
-    }]
-  }
-  if (role === 'branchSummary') {
-    return [{
-      kind: 'message',
-      message: {
-        type: 'message.branchSummary',
-        payload: { sessionId: sid, summary: msg.summary as string | undefined, fromId: msg.fromId as string | undefined, timestamp: msg.timestamp as number | undefined },
-      },
-    }]
-  }
+  // [HISTORICAL] compactionSummary / branchSummary 的 message_start 分支已在 M5 删除——
+  // grep 历史 session JSONL 确认 pi 从不 emit message_start{role:compactionSummary|branchSummary}
+  //（死分支）。压缩/分支摘要改由 compaction_end 事件（event-interpreter.handleCompactionEnd）
+  // 与 entry 树重建（mapSessionEntries → convertPiHistory）两条通路覆盖，不经 message_start。
   // custom message from pi.sendMessage（扩展注入的结构化通知，如 subagent-bg-notify）。
   // 用独立 type 'message.customStart'，与 assistant turn 的 message_start 区分——
   // 前端 message_start handler 默认建 role:'assistant' 气泡，custom 不应走那条路径。
@@ -646,13 +667,48 @@ function handleError(event: PiErrorEvent, sid: string): PiTranslatedEvent[] {
   }]
 }
 
+/**
+ * compaction_start → compaction-start 中间事件（interpreter 编排 compaction 生命周期，M4 事件驱动）。
+ *
+ * pi 手动/自动 compact 都发此事件（agent-session.js:1370 手动 reason:'manual' / :1608 自动
+ * reason:'threshold'|'overflow'）。reason 原样透传，interpreter 据此广播 session.compacting{reason}
+ * 并驱动前端文案区分手动/自动。
+ */
+function handleCompactionStart(event: PiCompactionStartEvent, _sid: string): PiTranslatedEvent[] {
+  return [{ kind: 'compaction-start', reason: event.reason }]
+}
+
+/**
+ * compaction_end → compaction-end 中间事件（interpreter 唯一驱动 compaction 终态，M4 事件驱动）。
+ *
+ * result/aborted/errorMessage 原样透传，失败判据由 interpreter 以 errorMessage 真值为准
+ * （非 aborted 字段——pi 三种 aborted:true 形态在 errorMessage 真值层面一致，都 falsy）。
+ * result 类型已收紧为 PiCompactionResult（M5，S5），interpreter 运行时读 summary/tokensBefore/estimatedTokensAfter。
+ */
+function handleCompactionEnd(event: PiCompactionEndEvent, _sid: string): PiTranslatedEvent[] {
+  return [
+    {
+      kind: 'compaction-end',
+      reason: event.reason,
+      result: event.result,
+      aborted: event.aborted,
+      ...(event.errorMessage !== undefined ? { errorMessage: event.errorMessage } : {}),
+    },
+  ]
+}
+
 // ── Null-event types (lifecycle events not forwarded to frontend) ──
 // 注意：turn_end 不在此列——它经 handleTurnEndPi 提取 usage 触发 context.update（见 DISPATCHER）。
 // agent_settled 是 pi 0.80.3 稳态事件（无待处理工具/消息），xyz-agent 不消费——显式登记忽略。
+// compaction_start/compaction_end 在 M4 移出此列（改事件驱动，interpreter 唯一编排 compaction 生命周期）。
+// agent_start 在 M5 移出此列——其 hook 分支在 translate() 内单独消费（onPiEvent/agent_start hook，
+// 消费方是插件 executeHooks，S1）。若放回 NULL_EVENTS 会被此处 short-circuit，hook 分支不可达。
+// entry_appended 在 M5 登记此列——pi extension appendEntry 会 emit，xyz-agent 无前端消费方，
+// 不登记会刷 console.warn unhandled。
 const NULL_EVENTS = new Set([
-  'agent_start', 'turn_start', 'message_end',
+  'turn_start', 'message_end',
   'extension_config', 'extension_ui_response', 'response',
-  'compaction_start', 'compaction_end', 'agent_settled',
+  'agent_settled', 'entry_appended',
 ])
 
 // ── Dispatcher map ─────────────────────────────────────────────────
@@ -679,6 +735,8 @@ const DISPATCHER = new Map<string, Handler>()
   // Simple passthrough handlers
   DISPATCHER.set('status', handleStatus as Handler)
   DISPATCHER.set('error', handleError as Handler)
+  DISPATCHER.set('compaction_start', handleCompactionStart as Handler)
+  DISPATCHER.set('compaction_end', handleCompactionEnd as Handler)
 })()
 
 /**
@@ -758,7 +816,7 @@ export type WsSender = (msg: ServerMessage) => void
 /**
  * 绑定一个 pi session 的事件适配器：订阅事件 → 翻译 → 经 interpreter 回调消费。
  *
- * 纯订阅器：不持有业务态（statusBaseline/writeContents/currentMessageId 全部移到 interpreter），
+ * 纯订阅器：不持有业务态（currentMessageId/writeContents/diffChain 帧序态全部移到 interpreter），
  * 不直接 send —— 把翻译结果交给注入的 interpreter 回调（interpreter 决定副作用：转发/hook/diff/回写）。
  */
 export class EventAdapter {

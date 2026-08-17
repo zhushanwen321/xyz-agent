@@ -2,14 +2,22 @@ import type { Segment } from './segments'
 
 export type MessageRole = 'user' | 'assistant' | 'system'
 
-/** steer / follow-up 发送模式（appendPending / removePending / markPendingDelivered 共用）。
+/** steer / follow-up 发送模式（pushPending / drainPending / abortPending 共用）。
  *  从 Message.sendMode 的子集抽出，避免 'steer' | 'follow-up' 字面量在三处手写漂移。 */
 export type SteerFollowUpMode = 'steer' | 'follow-up'
+
 /**
- * 'pending'：steer/followup 已入队 pi 但尚未投递（draft-composer-states S7）。
- * 投递（pi drain + queue_update 移除该项）时转 'complete'，与普通 user 气泡同形态。
+ * 完成通知类 customType SSOT（conversation-renderer-model-unification §3.3.2：
+ * 黑名单已删，收敛为 display 单一判别）。
+ *
+ * 这些 custom_message 触发 pi triggerTurn 唤醒 agent 在后续 turn 处理结果——对用户是噪声，
+ * 结果由 agent 后续 turn 体现。两条消费通路共用此 SSOT，避免字面量漂移：
+ * - core registry customStart：完成通知类覆写 display:false（实时链路）
+ * - runtime mapSessionEntries / entry-tree-builder：对称覆写 display:false（历史链路，方案 Z）
  */
-export type MessageStatus = 'streaming' | 'complete' | 'error' | 'pending'
+export const COMPLETE_NOTIFY_CUSTOM_TYPES = new Set(['subagent-bg-notify', 'workflow-result'])
+/** 消息生命周期状态（steer/followup 解耦后 pending 不再进消息流——m4 清理）。 */
+export type MessageStatus = 'streaming' | 'complete' | 'error'
 export type ToolCallStatus = 'running' | 'completed' | 'error' | 'end_not_received'
 
 export interface ToolCall {
@@ -52,6 +60,13 @@ export interface ContentBlock {
   type: ContentBlockType
   /** thinking/toolCall 指向对应数组的元素 id；text 指向 'text' */
   refId: string
+  /**
+   * pi content array 中的产出顺序索引（模型输出顺序，非到达顺序）。
+   * 两条 contentBlocks 填充路径（streaming 事件流 / 持久化 content array）统一按此排序，
+   * 消除「同 turn 内 text 在 tool 之后」时 streaming 的 toolCall 块延迟到达导致的顺序错位。
+   * 旧数据/无 index 事件缺省（渲染层不读该字段，仅排序语义）。
+   */
+  contentIndex?: number
 }
 
 export interface Usage {
@@ -180,7 +195,7 @@ function parseSingleRecord(d: Record<string, unknown>): BgNotifyRecord | null {
 }
 
 // ── Flow-2 代码变更审查数据契约（FileChanges 通道）──────────────────
-// 依据：docs/page-design/v3/flow-2-code-review/spec.md（§S3 变更集聚合 + §状态机·变更集卡）
+// 依据：docs/page-design/archive/v3/flow-2-code-review/spec.md（§S3 变更集聚合 + §状态机·变更集卡）
 //      （v3 重建审计档案 wave-W11/W14 已随 .v3-audit/ 清理，需求追溯见 git 历史）
 // 本契约只定义类型，runtime 解析方案见 ADR-0024，chat store 数据流由 flow-2 完整实施落地。
 
@@ -227,7 +242,7 @@ export interface Message {
   id: string
   role: MessageRole
   /**
-   * 消息内容。按 role 语义区分（ADR-0037）：
+   * 消息内容。按 role 语义区分（ADR-0043）：
    * - user message → Segment[]（badge 载体，含 skill/file/mention 结构化片段）
    * - assistant message → string（流式 text_delta 热路径）
    * - system/custom message → string（提示文本）
@@ -248,8 +263,8 @@ export interface Message {
    * 仅 assistant 消息有值；user/system 消息不设置。
    */
   fileChanges?: FileChange[]
-  /** 发送模式，仅 user 消息有值 */
-  sendMode?: 'send' | 'steer' | 'follow-up'
+  /** 发送模式，仅 user 消息有值（'send' 成员已删——无写入点，§3.3.6） */
+  sendMode?: 'steer' | 'follow-up'
   /** 是否被 abort 中断，仅 assistant 消息有值 */
   isInterrupted?: boolean
   /**
@@ -267,16 +282,14 @@ export interface Message {
   /** pi CustomMessage 的 customType（识别来源扩展，如 "subagent-bg-notify"）。
    *  来自 pi sendMessage 注入的 custom message，role 还原为 system。 */
   customType?: string
-  /** pi CustomMessage 的 display 字段透传（ADR-0035）。
+  /** pi CustomMessage 的 display 字段透传（ADR-0048）。
    *  pi 协议层是必填 boolean：false=隐藏不渲染，true=用区别于 user message 的样式渲染。
    *  xyz-agent 当前只消费 false 分支（filterDisplayableMessages 按 `!== false` 过滤），
-   *  true 与 undefined 在渲染上等价（ADR-0035 决策点 3 scope 只做过滤，未实现区别样式）。
+   *  true 与 undefined 在渲染上等价（ADR-0048 决策点 3 scope 只做过滤，未实现区别样式）。
    *  shared.Message 是聚合类型含非 custom 消息，故 optional——
    *  消费侧（renderer filterDisplayableMessages）按 `display !== false` 判断：
    *  仅 false 隐藏，undefined/true 都显示（undefined 来自无 customType 的普通消息或旧数据）。 */
   display?: boolean
-  /** Background subagent 完成通知（customType:"subagent-bg-notify" 时填充）。 */
-  bgNotify?: BgNotifyDetails
   /** Bash 执行结果（composer-bash-execute）。system 消息有值：实时经 message.bashResult
    *  effect 创建 system 消息，历史经 converter 还原为 system 消息，统一走 BashOutputBlock 渲染。
    *  与 toolCall 互斥（bash 不走工具链）。 */

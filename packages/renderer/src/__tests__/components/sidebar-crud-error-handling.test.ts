@@ -35,8 +35,8 @@ const sidebarMocks = vi.hoisted(() => ({
   loadSessions: vi.fn(() => Promise.resolve()),
   syncSessionToPanel: vi.fn(),
 }))
-vi.mock('@/composables/features/useSidebar', () => ({
-  useSidebar: () => sidebarMocks,
+vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
+  useSidebarNew: () => sidebarMocks,
   deriveStatus: () => ({ value: 'done' }),
 }))
 
@@ -90,16 +90,21 @@ vi.mock('@/stores/workflow', () => ({
 vi.mock('@/stores/navigation', () => ({
   useNavigationStore: () => ({ push: vi.fn(), current: { value: { view: 'chat' } }, stack: [] }),
 }))
-vi.mock('@/stores/command', () => ({
-  useCommandStore: () => ({ appCommands: [] }),
+vi.mock('@/composables/features/command/useCommandStore', () => ({
+  useCommandStore: () => ({
+    appCommands: { value: [] },
+    shortcutOverrides: { value: {} },
+    pendingSlash: { value: null },
+    clearPendingSlash: vi.fn(),
+  }),
 }))
 
 // ── mock composables ──
-vi.mock('@/composables/features/useSessionDerivations', () => ({
+vi.mock('@/composables/features/chat/useSessionDerivations', () => ({
   useSessionDerivations: () => ({ derivedStatus: () => ({ value: 'done' }) }),
 }))
-vi.mock('@/composables/features/useSubagentListSync', () => ({ useSubagentListSync: vi.fn() }))
-vi.mock('@/composables/features/useWorkflowListSync', () => ({ useWorkflowListSync: vi.fn() }))
+vi.mock('@/composables/features/chat/useSubagentListSync', () => ({ useSubagentListSync: vi.fn() }))
+vi.mock('@/composables/features/chat/useWorkflowListSync', () => ({ useWorkflowListSync: vi.fn() }))
 
 // ── mock api/events（onMounted 的 loadSessions / app.info 订阅）──
 vi.mock('@/api/events', () => ({
@@ -108,7 +113,7 @@ vi.mock('@/api/events', () => ({
   dispatchGlobal: vi.fn(),
 }))
 vi.mock('@/api/domains/session', () => ({
-  sessionApi: { workflowAction: vi.fn(() => Promise.resolve()) },
+  list: vi.fn().mockResolvedValue([]),
 }))
 
 import Sidebar from '@/components/sidebar/Sidebar.vue'

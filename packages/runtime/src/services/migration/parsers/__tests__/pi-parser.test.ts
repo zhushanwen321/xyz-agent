@@ -228,4 +228,232 @@ describe('parsePiProviders', () => {
     expect(result!.warnings).toBeDefined()
     expect(result!.warnings!.some((w) => w.includes('unknown protocol some-unknown-protocol'))).toBe(true)
   })
+
+  // ══ wave 4 import-credential-types：credential 三态识别（t1-t5）══
+  // 五场景覆盖 pi-parser authEntry 五态分支：plaintext / env($VAR,${VAR}) / missing(env 包) / oauth / command(!)
+
+  it('wave4-t1: auth.json {type:api_key, key:明文} → _credentialType=plaintext', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { openai: { name: 'OpenAI', api: 'openai-completions', models: [{ id: 'gpt-4', name: 'GPT-4' }] } },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({ openai: { type: 'api_key', key: 'sk-plain-xxx' } }))
+
+    const result = parsePiProviders(home)!
+    const p = result.providers.find((x) => x._sourceName === 'openai')!
+    expect(p._credentialType).toBe('plaintext')
+    expect(p.apiKey).toBe('sk-plain-xxx')
+    expect(p._apiKeyExtracted).toBe(true)
+    expect(p._envVarName).toBeUndefined()
+  })
+
+  it('wave4-t2: auth.json key=$VAR / ${VAR} → _credentialType=env + _envVarName 去前缀', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: {
+        openai: { name: 'OpenAI', api: 'openai-completions', models: [{ id: 'gpt-4', name: 'GPT-4' }] },
+        openai2: { name: 'OpenAI2', api: 'openai-completions', models: [{ id: 'gpt-4o', name: 'GPT-4o' }] },
+      },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({
+      openai: { type: 'api_key', key: '$OPENAI_API_KEY' },
+      openai2: { type: 'api_key', key: '${OPENAI_API_KEY_BRACE}' },
+    }))
+
+    const result = parsePiProviders(home)!
+    const p1 = result.providers.find((x) => x._sourceName === 'openai')!
+    expect(p1._credentialType).toBe('env')
+    expect(p1._envVarName).toBe('OPENAI_API_KEY')
+    expect(p1.apiKey).toBe('$OPENAI_API_KEY') // 保留原占位串
+    expect(p1._apiKeyExtracted).toBe(true)
+
+    const p2 = result.providers.find((x) => x._sourceName === 'openai2')!
+    expect(p2._credentialType).toBe('env')
+    expect(p2._envVarName).toBe('OPENAI_API_KEY_BRACE') // ${VAR} → VAR
+    expect(p2.apiKey).toBe('${OPENAI_API_KEY_BRACE}')
+    expect(p2._apiKeyExtracted).toBe(true)
+  })
+
+  it('wave4-t3: auth.json env 包 → _credentialType=env-bundle + apiKey 不写 + warning', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { deepseek: { name: 'DeepSeek', api: 'openai-completions', models: [{ id: 'ds', name: 'DS' }] } },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({
+      deepseek: { type: 'api_key', key: '$DEEPSEEK_API_KEY', env: { DEEPSEEK_API_KEY: 'sk-real-from-bundle' } },
+    }))
+
+    const result = parsePiProviders(home)!
+    const p = result.providers.find((x) => x._sourceName === 'deepseek')!
+    expect(p._credentialType).toBe('env-bundle') // 有凭据但 Phase 1 不支持落盘，区别于 missing（无线索）
+    expect(p.apiKey).toBeUndefined() // 不落盘，避免 resolveConfigValueOrThrow 硬抛错
+    expect(p._apiKeyExtracted).toBe(false)
+    expect(p._warnings.some((w) => w.includes('env bundle') && w.includes('Phase 1'))).toBe(true)
+  })
+
+  it('wave4-t4: auth.json type=oauth（真实格式 access/refresh/expires）→ _credentialType=oauth + 不取 token + warning', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { 'github-copilot': { name: 'Copilot', api: 'openai-completions', models: [{ id: 'c', name: 'C' }] } },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({
+      // pi-ai 0.82.1 OAuthCredential 真实字段：access/refresh/expires（auth/types.d.ts）
+      'github-copilot': { type: 'oauth', access: 'acc-xxx', refresh: 'ref-yyy', expires: 1234567890 },
+    }))
+
+    const result = parsePiProviders(home)!
+    const p = result.providers.find((x) => x._sourceName === 'github-copilot')!
+    expect(p._credentialType).toBe('oauth')
+    expect(p.apiKey).toBeUndefined() // 不取 token 作 apiKey
+    expect(p._apiKeyExtracted).toBe(false)
+    expect(p._warnings.some((w) => w.includes('OAuth') && w.includes('Phase 2'))).toBe(true)
+  })
+
+  it('wave4-t4b: 缺 type 的旧格式 oauth（有 access 无 key）→ 兼容判定 oauth', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { copilot: { name: 'Copilot', api: 'openai-completions', models: [{ id: 'c', name: 'C' }] } },
+    }))
+    // 旧格式无 type 字段，但有 access 字段且无 key —— 按 oauth 处理（基于旧字段名 token 的死代码已移除）
+    writePiAgentFile('auth.json', JSON.stringify({
+      copilot: { access: 'acc-old-format', refresh: 'ref-old-format', expires: 123 },
+    }))
+
+    const result = parsePiProviders(home)!
+    const p = result.providers.find((x) => x._sourceName === 'copilot')!
+    expect(p._credentialType).toBe('oauth')
+    expect(p.apiKey).toBeUndefined()
+  })
+
+  it('wave4-t4c: 旧字段名 token/refreshToken 不再作为 oauth 判定依据（type 缺失且无 key 时判 missing）', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { copilot: { name: 'Copilot', api: 'openai-completions', models: [{ id: 'c', name: 'C' }] } },
+    }))
+    // 只有旧字段 token/refreshToken：pi 真实格式没有这些字段名，不应被识别为 oauth
+    writePiAgentFile('auth.json', JSON.stringify({
+      copilot: { token: 'tok-xxx', refreshToken: 'ref-yyy', expires: 123 },
+    }))
+
+    const result = parsePiProviders(home)!
+    const p = result.providers.find((x) => x._sourceName === 'copilot')!
+    expect(p._credentialType).toBe('missing')
+    expect(p.apiKey).toBeUndefined()
+  })
+
+  it('wave4-t4d: auth.json key=$$OPENAI_API_KEY（字面量转义）→ _credentialType=plaintext，不剥 $', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { openai: { name: 'OpenAI', api: 'openai-completions', models: [{ id: 'gpt-4', name: 'GPT-4' }] } },
+    }))
+    // $$ 是 pi 的字面量转义（解析为字面量 $OPENAI_API_KEY），不是 env 引用
+    writePiAgentFile('auth.json', JSON.stringify({ openai: { type: 'api_key', key: '$$OPENAI_API_KEY' } }))
+
+    const result = parsePiProviders(home)!
+    const p = result.providers.find((x) => x._sourceName === 'openai')!
+    expect(p._credentialType).toBe('plaintext')
+    expect(p.apiKey).toBe('$$OPENAI_API_KEY') // 保留原转义串，pi 运行时还原字面量
+    expect(p._envVarName).toBeUndefined() // 不提取 env var 名
+    expect(p._apiKeyExtracted).toBe(true)
+  })
+
+  it('wave4-t5: auth.json key=!command → _credentialType=command + apiKey 保留 + warning', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { openai: { name: 'OpenAI', api: 'openai-completions', models: [{ id: 'gpt-4', name: 'GPT-4' }] } },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({ openai: { type: 'api_key', key: '!op read xxx' } }))
+
+    const result = parsePiProviders(home)!
+    const p = result.providers.find((x) => x._sourceName === 'openai')!
+    expect(p._credentialType).toBe('command')
+    expect(p.apiKey).toBe('!op read xxx') // 保留原样，pi 运行时执行 shell 命令
+    expect(p._apiKeyExtracted).toBe(true)
+    expect(p._warnings.some((w) => w.includes('!') && w.includes('shell command'))).toBe(true)
+  })
+
+  // ══ sa3 F1：孤儿凭据扫描（B.1 缺口 4 修复）══
+  // auth.json 里有、models.json 没定义的 providerId（pi 内置 provider 的凭据）→ orphanCredentials
+
+  it('sa3-o1: auth.json 有 openai 凭据 + models.json 无 openai → orphanCredentials 输出（不进 providers）', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { zhipu: { name: 'Zhipu', api: 'openai-completions', models: [{ id: 'm', name: 'M' }] } },
+    }))
+    // openai 只在 auth.json（pi 内置 provider，models.json 无定义）
+    writePiAgentFile('auth.json', JSON.stringify({ openai: { type: 'api_key', key: 'sk-orphan-openai-plain' } }))
+
+    const result = parsePiProviders(home)!
+
+    // 不进 providers（models.json 无定义）
+    expect(result.providers.find((x) => x._sourceName === 'openai')).toBeUndefined()
+    expect(result.providers).toHaveLength(1)
+    // 进 orphanCredentials
+    expect(result.orphanCredentials).toHaveLength(1)
+    const oc = result.orphanCredentials![0]
+    expect(oc.providerId).toBe('openai')
+    expect(oc.credentialType).toBe('plaintext')
+    // 明文 key 只活在 runtime 内存（测试直接断言对象，preview 脱敏由 provider-importer 负责）
+    expect(oc.apiKey).toBe('sk-orphan-openai-plain')
+    expect(oc.envVarName).toBeUndefined()
+  })
+
+  it('sa3-o2: env 包孤儿 → credentialType=env-bundle + apiKey 不写 + warning', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { zhipu: { name: 'Zhipu', api: 'openai-completions', models: [{ id: 'm', name: 'M' }] } },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({
+      deepseek: { type: 'api_key', key: '$DEEPSEEK_API_KEY', env: { DEEPSEEK_API_KEY: 'sk-from-bundle' } },
+    }))
+
+    const result = parsePiProviders(home)!
+    const oc = result.orphanCredentials!.find((x) => x.providerId === 'deepseek')!
+    expect(oc.credentialType).toBe('env-bundle')
+    expect(oc.apiKey).toBeUndefined() // Phase 1 不落盘
+    expect(oc.warnings.some((w) => w.includes('env bundle') && w.includes('Phase 1'))).toBe(true)
+  })
+
+  it('sa3-o3: oauth 孤儿（access/refresh/expires）→ credentialType=oauth + apiKey 不写 + warning', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { zhipu: { name: 'Zhipu', api: 'openai-completions', models: [{ id: 'm', name: 'M' }] } },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({
+      'github-copilot': { type: 'oauth', access: 'acc-orphan', refresh: 'ref-orphan', expires: 1234567890 },
+    }))
+
+    const result = parsePiProviders(home)!
+    const oc = result.orphanCredentials!.find((x) => x.providerId === 'github-copilot')!
+    expect(oc.credentialType).toBe('oauth')
+    expect(oc.apiKey).toBeUndefined()
+    expect(oc.warnings.some((w) => w.includes('OAuth') && w.includes('Phase 2'))).toBe(true)
+  })
+
+  it('sa3-o4: env 引用孤儿 → credentialType=env + envVarName 去前缀 + apiKey 保留占位串', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { zhipu: { name: 'Zhipu', api: 'openai-completions', models: [{ id: 'm', name: 'M' }] } },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({ openai: { type: 'api_key', key: '$OPENAI_API_KEY' } }))
+
+    const result = parsePiProviders(home)!
+    const oc = result.orphanCredentials!.find((x) => x.providerId === 'openai')!
+    expect(oc.credentialType).toBe('env')
+    expect(oc.envVarName).toBe('OPENAI_API_KEY')
+    expect(oc.apiKey).toBe('$OPENAI_API_KEY') // 保留原占位串（运行时解析）
+    expect(oc.warnings.some((w) => w.includes('env var reference'))).toBe(true)
+  })
+
+  it('sa3-o5: models.json 已定义的 provider 不进 orphanCredentials（六态判定仍走主流程）', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { deepseek: { name: 'DeepSeek', api: 'openai-completions', models: [{ id: 'm', name: 'M' }] } },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({ deepseek: { type: 'api_key', key: 'sk-deepseek' } }))
+
+    const result = parsePiProviders(home)!
+    expect(result.orphanCredentials).toHaveLength(0)
+    // 主流程照常：credentialType=plaintext
+    expect(result.providers[0]._credentialType).toBe('plaintext')
+    expect(result.providers[0].apiKey).toBe('sk-deepseek')
+  })
+
+  it('sa3-o6: auth.json 非对象条目（null/字符串）→ 孤儿凭据跳过 + 顶层 warning', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { zhipu: { name: 'Zhipu', api: 'openai-completions', models: [{ id: 'm', name: 'M' }] } },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({ weird: 'sk-not-an-object', bad: null }))
+
+    const result = parsePiProviders(home)!
+    expect(result.orphanCredentials).toHaveLength(0)
+    expect(result.warnings!.some((w) => w.includes('credential weird') && w.includes('malformed'))).toBe(true)
+  })
 })

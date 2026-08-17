@@ -24,12 +24,12 @@ const presetApiMock = vi.hoisted(() => ({
   update: vi.fn(),
   remove: vi.fn(),
 }))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   preset: presetApiMock,
 }))
 
 import { usePresetStore } from '@/stores/preset'
-import { usePiPresets } from '@/composables/features/usePiPresets'
+import { usePiPresets } from '@/composables/features/settings/usePiPresets'
 
 const FIXTURE_PRESETS: PiLaunchPreset[] = [
   { id: 'builtin:full', name: '全工具模式', builtin: true, order: 0, toolMode: 'all', extensionMode: 'all' },

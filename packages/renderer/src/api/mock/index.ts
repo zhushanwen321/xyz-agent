@@ -17,7 +17,7 @@
  * connected），打一次 console.warn 提示。
  */
 import type {
-  Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo,
+  Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo, BuiltinProviderTemplate,
   SkillInfo, AgentInfo, PluginInfo, SetProviderData,
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
   SystemPromptConfig,
@@ -25,21 +25,22 @@ import type {
   BatchDeleteResult,
   ProviderSource, ProviderImportPreview, ProviderImportResult, ProviderImportedItem,
   SkillCacheInvalidatedPayload,
+  ProviderId,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
 import { fixtureProviders, fixtureSkills, fixtureAgents, fixtureExtensions, toCandidate } from './settings-data'
 import { MOCK_MODELS, mockModelToInfo, MENTION_CANDIDATES, FILE_CANDIDATES } from './composer-data'
 import { SEARCH_MOCK, SEARCH_RECENTS, SEARCH_SUGGESTED_COUNT, type SearchItem } from './search-data'
-import type { Section } from '@/lib/search-types'
+import type { Section } from '@xyz-agent/core'
 import { runSendStream, type Timing } from './run-send-stream'
 import { makeMockSubscription, type GlobalHandler } from './subscription'
 import * as events from '../events'
 // [W17] 检测 real ws-client 是否已 connected（mock 与 real 同进程时打 warn，防 events 总线污染）
 import * as wsClient from '@/lib/ws-client'
-// settings 的纯前端偏好（getSystem/updateSystem）与 transport 无关，复用 real 实现消除手工同构；
-// mock 域隔离原则针对 transport/events/pending，localStorage 偏好不在此列。
-import { getSystem as realGetSystem, updateSystem as realUpdateSystem } from '../domains/settings'
+// [W4] getSystem/updateSystem 持久化已迁 @xyz-agent/core domain/settings/system-storage
+// （经 PlatformPort.storage KVStorage，renderer 壳 useSettingsShell providePlatform 注入）。
+// mock 不再转发这两个方法（消费方已切 core getSystem(getPlatform().storage)）。
 
 // mock/git.ts 的 git domain + fixtureGitStatus 透出（Wave 1a real git domain 落地后由 api/index 接线）
 export { git, fixtureGitStatus } from './git'
@@ -163,7 +164,7 @@ const TIMING: Timing = {
   toolGap: 90, // tool_call 各阶段间隔（进度感）
   fileChangesGap: 120, // accumulating → ready 间隔
   retryGap: 800, // auto_retry_start → end 间隔（让指示位可见）
-  steerDrain: 1500, // steer/followUp 入队 → 模拟 drain（pi 投递）间隔，让 pending 气泡可见
+  steerDrain: 1500, // steer/followUp 入队 → 模拟 drain（pi 投递）间隔，让 QueueBubble 可见
 }
 
 const streamHandlers = new Map<string, Set<(msg: ServerMessage) => void>>()
@@ -173,8 +174,8 @@ const cancelled = new Set<string>()
 const timers = new Set<ReturnType<typeof setTimeout>>()
 /**
  * mock 队列状态镜像（steer/followUp pending）。
- * steer/followUp 入队时 push + emit 全量 queue_update（QueueBubble 渲染 + pending 气泡），
- * 延迟后 splice 模拟 drain（pi 投递）+ emit 全量（移除该项）→ 前端 pending 气泡转 complete。
+ * steer/followUp 入队时 push + emit 全量 queue_update（QueueBubble 渲染），
+ * 延迟后 splice 模拟 drain（pi 投递）+ emit 全量（移除该项）→ drainPending 取 segments + appendUser（complete user 进对话流）。
  */
 const mockQueues = new Map<string, { steering: string[]; followUp: string[] }>()
 
@@ -195,7 +196,7 @@ function emit(sessionId: string, msg: ServerMessage): void {
   streamHandlers.get(sessionId)?.forEach((h) => h(msg))
 }
 
-/** emit 全量 queue_update（steering + followUp 镜像），驱动 QueueBubble + pending 气泡 */
+/** emit 全量 queue_update（steering + followUp 镜像），驱动 QueueBubble 渲染 */
 function emitQueueUpdate(sessionId: string): void {
   const q = mockQueues.get(sessionId)
   const steering = q?.steering.length ? q.steering : undefined
@@ -205,6 +206,29 @@ function emitQueueUpdate(sessionId: string): void {
     type: 'message.queue_update',
     payload: { sessionId, steering, followUp },
   })
+}
+
+/**
+ * steer/followUp drain（pi 投递）后补发 assistant turn（m4）：message_start → text_delta×N → complete。
+ *
+ * drain 只 emit queue_update 会让用户消息入流后无后续 assistant——dangling streaming bubble
+ * （demo / E2E 下 steer 后看不到回复）。补一个最小 assistant turn 让 mock 与真实 pi 行为同构
+ * （pi drain steer 后开新一轮 LLM turn，发 message_start + 流式回复 + complete）。
+ * 内容简化为固定文案逐字流式，让 streaming 气泡可见；全程检查 cancelled。
+ */
+async function emitDrainAssistantTurn(sessionId: string, steeredText: string): Promise<void> {
+  const messageId = nextId('m')
+  emit(sessionId, { type: 'message.message_start', id: messageId, payload: { sessionId, messageId } })
+  await sleep(TIMING.startGap)
+  const reply = `（mock）已处理："${steeredText}"`
+  for (const ch of reply) {
+    if (cancelled.has(sessionId)) return
+    await sleep(TIMING.chunk)
+    emit(sessionId, { type: 'message.text_delta', id: messageId, payload: { sessionId, messageId, delta: ch } })
+  }
+  if (cancelled.has(sessionId)) return
+  await sleep(TIMING.done)
+  emit(sessionId, { type: 'message.complete', id: messageId, payload: { sessionId, messageId, stopReason: 'complete' } })
 }
 
 function sleep(ms: number): Promise<void> {
@@ -265,6 +289,17 @@ export const session = {
     pushSessionState(id)
   },
 
+  /** mock restoreSession：等价 switchSession（mock 不真正 spawn pi，模拟激活即可）。返回 SessionSummary。 */
+  async restoreSession(id: string): Promise<SessionSummary> {
+    await sleep(TIMING.switchCmd)
+    const s = isE2E && id === e2eTestSession.id ? e2eTestSession : fixtureSessions.find((item) => item.id === id)
+    if (!s) {
+      throw new Error(`mock: session ${id} 不存在`)
+    }
+    pushSessionState(id)
+    return { ...s }
+  },
+
   /** 拉取 session 扩展命令（与 real domain 同接口，mock 返回 MOCK_COMMANDS） */
   async getCommands(id: string): Promise<{ sessionId: string; commands: typeof MOCK_COMMANDS }> {
     await sleep(TIMING.ack)
@@ -283,6 +318,15 @@ export const session = {
     if (!target) throw new Error(`mock: session ${sessionId} 不存在`)
     target.label = label
     // 模拟 runtime rename 后 broadcastSessionList
+    pushSessionList()
+  },
+
+  /** Mock：归入项目（D14 语义修正）——与 real session.setProject 同构，更新归属 + 广播。 */
+  async setProject(sessionId: string, projectId: string): Promise<void> {
+    await sleep(TIMING.ack)
+    const target = fixtureSessions.find((s) => s.id === sessionId)
+    if (!target) throw new Error(`mock: session ${sessionId} 不存在`)
+    target.projectId = projectId || undefined
     pushSessionList()
   },
 
@@ -350,7 +394,7 @@ export const session = {
     return sessionId === 's3' ? fixtureWorkflows.map((w) => ({ ...w })) : []
   },
 
-  /** Mock agent call 对话流历史（返回空数组，selectAgentCall 不 throw 即可） */
+  /** Mock agent call 对话流历史（返回空数组，drawer SubagentTab agentcall 分支加载不 throw 即可） */
   async getAgentCallHistory(_sessionId: string, _agentCallSessionId: string): Promise<Message[]> {
     await sleep(TIMING.ack)
     return []
@@ -388,6 +432,28 @@ export const session = {
 
   /** Mock unsubscribe（对称 subscribe，ack 型 stub resolve 即可） */
   async unsubscribe(_sessionId: string): Promise<void> {
+    await sleep(TIMING.ack)
+  },
+
+  // ── wave:runtime-patch ipc-converge-a3 W2：业务持久化写 stub（与 real domain 同接口）──
+  /** Mock writeImage：返伪造落地结果（path/fileName/displayName/id/persisted）。 */
+  async writeImage(payload: { sessionId: string; base64: string; mimeType: string; name: string }): Promise<{ path: string; fileName: string; displayName: string; id: string; persisted: boolean }> {
+    await sleep(TIMING.ack)
+    return {
+      path: `/mock/attachments/${payload.sessionId || 'landing'}/mock-image.png`,
+      fileName: 'mock-image.png',
+      displayName: payload.name || 'mock-image.png',
+      id: 'mock-image-id',
+      persisted: !!payload.sessionId,
+    }
+  },
+  /** Mock migrateImage：返 fromPath（不实际迁移）。 */
+  async migrateImage(payload: { fromPath: string; sessionId: string; fileName: string }): Promise<{ path: string }> {
+    await sleep(TIMING.ack)
+    return { path: payload.fromPath }
+  },
+  /** Mock writeSegments：ack 型 stub resolve（void）。 */
+  async writeSegments(_payload: { sessionId: string; entry: import('@xyz-agent/shared').SegmentsMetadataEntry }): Promise<void> {
     await sleep(TIMING.ack)
   },
 }
@@ -538,7 +604,7 @@ export const chat = {
 
   /**
    * steer：ack 后推 queue_update（steering 入队），延迟后模拟 drain（pi 投递：splice 移除 + emit）。
-   * 入队 → QueueBubble 渲染 + pending 气泡；drain → 前端 pending→complete。
+   * 入队 → QueueBubble 渲染；drain → drainPending 取 segments + appendUser（complete user 进对话流）。
    * drain 时机简化为固定延迟（真实 pi 在「当前回合工具调用结束后、下次 LLM 调用前」）。
    */
   async steer(sessionId: string, text: string): Promise<void> {
@@ -547,13 +613,14 @@ export const chat = {
     q.steering.push(text)
     mockQueues.set(sessionId, q)
     emitQueueUpdate(sessionId)
-    // 延迟模拟 drain（投递后移除该项）
+    // 延迟模拟 drain（投递后移除该项）+ 补发 assistant turn（m4：避免 dangling streaming bubble）
     const t = setTimeout(() => {
       const cur = mockQueues.get(sessionId)
       if (!cur || cancelled.has(sessionId)) return
       const idx = cur.steering.indexOf(text)
       if (idx !== -1) cur.steering.splice(idx, 1)
       emitQueueUpdate(sessionId)
+      void emitDrainAssistantTurn(sessionId, text)
     }, TIMING.steerDrain)
     timers.add(t)
   },
@@ -571,6 +638,7 @@ export const chat = {
       const idx = cur.followUp.indexOf(text)
       if (idx !== -1) cur.followUp.splice(idx, 1)
       emitQueueUpdate(sessionId)
+      void emitDrainAssistantTurn(sessionId, text)
     }, TIMING.steerDrain)
     timers.add(t)
   },
@@ -598,27 +666,54 @@ const skillsSub = makeMockSubscription(() => fixtureSkills.map((s) => ({ ...s })
 const agentsSub = makeMockSubscription(() => fixtureAgents.map((a) => ({ ...a })))
 const defaultsSub = makeMockSubscription(() => 'Anthropic/claude-sonnet-4.5')
 
-// ADR-0020 §1 discovery.json 加载路径配置（目录级管道，UI 层 A 勾选/拖动用）
-// fixtureSkillDirs/fixtureAgentDirs 是「预设候选 + enabled 状态」的 UI 视图，对齐 server.ts buildDirConfigs
-const PRESET_SKILL_DIRS = ['~/.pi/agent/skills', '~/.claude/skills', '~/.agents/skills', '.agents/skills']
-const PRESET_AGENT_DIRS = ['~/.pi/agent/agents', '~/.claude/agents', '~/.agents/agents', '.agents/agents']
-const PRESET_EXTENSION_DIRS = ['~/.pi/agent/extensions', '~/.claude/extensions', '~/.agents/extensions', '.agents/extensions']
-let mockSkillDirPaths = ['~/.pi/agent/skills', '~/.claude/skills', '~/.agents/skills'] // 启用的 skillDirs（有序 = 优先级）
-let mockAgentDirPaths = ['~/.agents/agents'] // 启用的 agentDirs
-let mockExtensionDirPaths: string[] = [] // 启用的 extensionDirs（Phase 4，默认空——仅强制目录生效）
-function buildMockDirConfigs(preset: string[], enabledPaths: string[]): SkillDirConfig[] {
-  // ADR-0020 §1.1：discovery 数组顺序即优先级（靠前覆盖靠后）。
-  // 顺序：启用的按 discovery 顺序（用户拖拽排序）→ 未启用的预设候选按固定顺序追加。
-  const enabledSet = new Set(enabledPaths)
-  const configs = enabledPaths.map((path) => ({ path, enabled: true }))
-  for (const path of preset) {
-    if (!enabledSet.has(path)) configs.push({ path, enabled: false })
+// ADR-0021 §1 discovery 加载路径配置（v2 嵌套 project/global，UI 层 A 勾选/↑↓ 用）。
+// preset 按 §2.3 路径特征拆 project（相对）/ global（绝对 ~ 或 / 开头），对齐 runtime buildDirConfigs 归属。
+const PRESET_SKILL_DIRS_PROJECT = ['.agents/skills']
+const PRESET_SKILL_DIRS_GLOBAL = ['~/.pi/agent/skills', '~/.claude/skills', '~/.agents/skills']
+const PRESET_AGENT_DIRS_PROJECT = ['.agents/agents']
+const PRESET_AGENT_DIRS_GLOBAL = ['~/.pi/agent/agents', '~/.claude/agents', '~/.agents/agents']
+const PRESET_EXTENSION_DIRS_PROJECT = ['.agents/extensions']
+const PRESET_EXTENSION_DIRS_GLOBAL = ['~/.pi/agent/extensions', '~/.claude/extensions', '~/.agents/extensions']
+
+// v2 mock 当前态：完整 SkillDirConfig[]（含 enabled + scope）。初始 fixture 与 runtime buildDirConfigs 顺序一致。
+// setSkillDirs 等整体透传 SkillDirConfig[]（v2 scope 穿越路 A，不降维为 string[]）。
+let mockSkillDirs: SkillDirConfig[] = [
+  { path: '~/.pi/agent/skills', enabled: true, scope: 'global' },
+  { path: '~/.claude/skills', enabled: true, scope: 'global' },
+  { path: '~/.agents/skills', enabled: true, scope: 'global' },
+]
+let mockAgentDirs: SkillDirConfig[] = [
+  { path: '~/.agents/agents', enabled: true, scope: 'global' },
+]
+// extension 默认空（Phase 4，仅强制目录生效）
+let mockExtensionDirs: SkillDirConfig[] = []
+
+/**
+ * v2 buildMockDirConfigs：产带 scope 的 SkillDirConfig[]，顺序对齐 runtime buildDirConfigs
+ * `[project.enabled → global.enabled → project 未启用 → global 未启用]`（项目优先级 > 全局）。
+ * current 是用户最新下发的完整态；preset 中缺失的路径补为 enabled:false（scope 按所属组）。
+ */
+function buildMockDirConfigs(
+  current: SkillDirConfig[],
+  presetProject: string[],
+  presetGlobal: string[],
+): SkillDirConfig[] {
+  const byKey = new Map<string, SkillDirConfig>()
+  for (const d of current) byKey.set(d.path, { ...d })
+  for (const path of presetProject) {
+    if (!byKey.has(path)) byKey.set(path, { path, enabled: false, scope: 'project' })
   }
-  return configs
+  for (const path of presetGlobal) {
+    if (!byKey.has(path)) byKey.set(path, { path, enabled: false, scope: 'global' })
+  }
+  const all = [...byKey.values()]
+  const pick = (scope: 'project' | 'global', enabled: boolean) =>
+    all.filter((d) => d.scope === scope && d.enabled === enabled)
+  return [...pick('project', true), ...pick('global', true), ...pick('project', false), ...pick('global', false)]
 }
-const skillDirsSub = makeMockSubscription(() => buildMockDirConfigs(PRESET_SKILL_DIRS, mockSkillDirPaths).map((d) => ({ ...d })))
-const agentDirsSub = makeMockSubscription(() => buildMockDirConfigs(PRESET_AGENT_DIRS, mockAgentDirPaths).map((d) => ({ ...d })))
-const extensionDirsSub = makeMockSubscription(() => buildMockDirConfigs(PRESET_EXTENSION_DIRS, mockExtensionDirPaths).map((d) => ({ ...d })))
+const skillDirsSub = makeMockSubscription(() => buildMockDirConfigs(mockSkillDirs, PRESET_SKILL_DIRS_PROJECT, PRESET_SKILL_DIRS_GLOBAL).map((d) => ({ ...d })))
+const agentDirsSub = makeMockSubscription(() => buildMockDirConfigs(mockAgentDirs, PRESET_AGENT_DIRS_PROJECT, PRESET_AGENT_DIRS_GLOBAL).map((d) => ({ ...d })))
+const extensionDirsSub = makeMockSubscription(() => buildMockDirConfigs(mockExtensionDirs, PRESET_EXTENSION_DIRS_PROJECT, PRESET_EXTENSION_DIRS_GLOBAL).map((d) => ({ ...d })))
 
 /** 默认系统提示词配置（与 W7 system-prompt-page.test defaultConfig 同构）。 */
 function defaultSystemPromptConfig(): SystemPromptConfig {
@@ -653,6 +748,40 @@ export const config = {
     await sleep(TIMING.ack)
     return fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) }))
   },
+  // wave 3：内置 provider 模板。mock 模式不接 runtime generated JSON，返空数组保持签名同构（facade 三元）。
+  async listBuiltinProviders(): Promise<BuiltinProviderTemplate[]> {
+    await sleep(TIMING.ack)
+    return []
+  },
+  // wave-env-check：env 检测。mock 读 process.env 同构（浏览器 mock 下多为未设置）。
+  async checkEnvVars(names: string[]): Promise<Record<string, boolean>> {
+    await sleep(TIMING.ack)
+    const results: Record<string, boolean> = {}
+    for (const name of names) {
+      const proc = (globalThis as Record<string, unknown>).process as { env?: Record<string, string | undefined> } | undefined
+      const v = proc?.env?.[name]
+      results[name] = v !== undefined && v !== ''
+    }
+    return results
+  },
+  // wave-oauth-infra：OAuth RPC。mock 模式无 runtime flow（无真实授权），返回 started 失败提示签名同构。
+  async oauthLogin(_providerId: string): Promise<{ started: boolean; error?: string }> {
+    await sleep(TIMING.ack)
+    return { started: false, error: 'mock 模式不支持 OAuth 授权' }
+  },
+  async oauthCancel(_providerId: string): Promise<{ cancelled: boolean }> {
+    await sleep(TIMING.ack)
+    return { cancelled: false }
+  },
+  // MF-1：mock 模式无真实 auth.json，恒 false（不默认 oauth radio）。
+  async hasOAuth(_providerId: string): Promise<boolean> {
+    return false
+  },
+  // OAuth 事件订阅：mock 不推送，返回 no-op unsubscribe 保持签名同构。
+  onAuthDeviceCode: (_h: (payload: { providerId: string; userCode: string; verificationUri: string; verificationUriComplete?: string; expiresIn?: number; interval?: number }) => void) => () => {},
+  onAuthAuthUrl: (_h: (payload: { providerId: string; url: string; callbackPort?: number }) => void) => () => {},
+  onAuthSuccess: (_h: (payload: { providerId: string }) => void) => () => {},
+  onAuthError: (_h: (payload: { providerId: string; message: string }) => void) => () => {},
   async discoverModels(req: { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }) {
     await sleep(TIMING.ack)
     void req
@@ -664,6 +793,8 @@ export const config = {
   onSkills: (h: (skills: SkillInfo[]) => void) => skillsSub.subscribe(h),
   onAgents: (h: (agents: AgentInfo[]) => void) => agentsSub.subscribe(h),
   onDefaults: (h: (defaultModel: string) => void) => defaultsSub.subscribe(h),
+  // P2：带 source 的 defaults 订阅（mock 广播不携带 source，source 恒 undefined）
+  onDefaultsWithSource: (h: (payload: { defaultModel: string; source?: string }) => void) => defaultsSub.subscribe((defaultModel: string) => h({ defaultModel })),
   onSkillDirs: (h: (dirs: SkillDirConfig[]) => void) => skillDirsSub.subscribe(h),
   // Wave3：skill 缓存失效信号订阅。mock 模式无真实文件系统 watcher（不广播失效信号），
   // 返回 no-op unsubscribe 保持与 real domains 签名同构（facade 三元要求）。
@@ -671,7 +802,7 @@ export const config = {
   onAgentDirs: (h: (dirs: SkillDirConfig[]) => void) => agentDirsSub.subscribe(h),
   onExtensionDirs: (h: (dirs: SkillDirConfig[]) => void) => extensionDirsSub.subscribe(h),
   // 动作型：mock 同构——更新 fixture 后经订阅广播推回（与 real sendInitialState/广播一致）
-  async setProvider(providerId: string, data: SetProviderData) {
+  async setProvider(providerId: ProviderId, data: SetProviderData) {
     await sleep(TIMING.ack)
     const target = fixtureProviders.find((p) => p.id === providerId)
     if (target) {
@@ -687,7 +818,22 @@ export const config = {
     }
     broadcastProviders()
   },
-  async deleteProvider(providerId: string) {
+  async deleteProvider(providerId: ProviderId) {
+    await sleep(TIMING.ack)
+    const idx = fixtureProviders.findIndex((p) => p.id === providerId)
+    if (idx >= 0) fixtureProviders.splice(idx, 1)
+    broadcastProviders()
+  },
+  // wave4：provider 启用切换（写 enabledModels 白名单 mock）。与 runtime toggleProviderEnabled 对齐——
+  // 乐观改本地 provider.enabled + 广播 provider 列表（mock 不模拟 enabledModels 白名单语义，简化处理）。
+  async toggleProviderEnabled(providerId: ProviderId, enabled: boolean) {
+    await sleep(TIMING.ack)
+    const p = fixtureProviders.find((p) => p.id === providerId)
+    if (p) p.enabled = enabled
+    broadcastProviders()
+  },
+  // wave4：按体系移除 provider mock。catalog/custom 统一从 fixtureProviders 移除（mock 不区分体系语义）。
+  async removeProviderByKind(providerId: ProviderId, _kind: 'catalog' | 'custom') {
     await sleep(TIMING.ack)
     const idx = fixtureProviders.findIndex((p) => p.id === providerId)
     if (idx >= 0) fixtureProviders.splice(idx, 1)
@@ -698,7 +844,7 @@ export const config = {
    * 改 defaultsSub 内部值并广播 "provider/modelId" 复合串，与 runtime 广播 config.defaults 同构。
    * 状态经 onDefaults 订阅推回 settingsStore.defaultModel，前端无需本地乐观更新。
    */
-  async setDefaultModel(provider: string, modelId: string) {
+  async setDefaultModel(provider: ProviderId, modelId: string) {
     await sleep(TIMING.ack)
     defaultsSub.broadcast(`${provider}/${modelId}`)
   },
@@ -707,7 +853,7 @@ export const config = {
     // 扫描后广播当前 skills 快照（runtime scan 后会刷新 config.skills）
     skillsSub.broadcast(fixtureSkills.map((s) => ({ ...s })))
   },
-  // W2（ADR-0038）：按 session cwd 拉 project skill。mock 返回空（mock 模式无真实文件系统扫描）。
+  // W2（ADR-0051）：按 session cwd 拉 project skill。mock 返回空（mock 模式无真实文件系统扫描）。
   async scanSessionSkills(_cwd: string) {
     await sleep(TIMING.ack)
     return []
@@ -722,11 +868,11 @@ export const config = {
     await sleep(TIMING.ack)
     return []
   },
-  /** ADR-0020 §1 目录级管道写入：更新 mock skillDirs + 广播 skill 列表 + 目录配置 */
-  async setSkillDirs(dirs: string[]) {
+  /** ADR-0021 §1 目录级管道写入（v2 scope 穿越）：更新 mock skillDirs + 广播 skill 列表 + 目录配置 */
+  async setSkillDirs(dirs: SkillDirConfig[]) {
     await sleep(TIMING.ack)
-    mockSkillDirPaths = dirs
-    skillDirsSub.broadcast(buildMockDirConfigs(PRESET_SKILL_DIRS, dirs).map((d) => ({ ...d })))
+    mockSkillDirs = dirs.map((d) => ({ ...d }))
+    skillDirsSub.broadcast(buildMockDirConfigs(mockSkillDirs, PRESET_SKILL_DIRS_PROJECT, PRESET_SKILL_DIRS_GLOBAL).map((d) => ({ ...d })))
     skillsSub.broadcast(fixtureSkills.map((s) => ({ ...s })))
   },
   async setSkill(skill: SkillInfo) {
@@ -764,6 +910,7 @@ export const config = {
         protocol: 'openai-completions',
         modelCount: 1,
         apiKeyExtracted: true,
+        credentialType: 'plaintext',
         conflict: 'none',
         warnings: [],
       }],
@@ -784,18 +931,18 @@ export const config = {
     broadcastProviders()
     return { result: { source: 'pi' as ProviderSource, imported: [mockImported], failedCount: 0 } }
   },
-  /** ADR-0020 §1 目录级管道写入：更新 mock agentDirs + 广播 agent 列表 + 目录配置 */
-  async setAgentDirs(dirs: string[]) {
+  /** ADR-0021 §1 目录级管道写入（v2 scope 穿越）：更新 mock agentDirs + 广播 agent 列表 + 目录配置 */
+  async setAgentDirs(dirs: SkillDirConfig[]) {
     await sleep(TIMING.ack)
-    mockAgentDirPaths = dirs
-    agentDirsSub.broadcast(buildMockDirConfigs(PRESET_AGENT_DIRS, dirs).map((d) => ({ ...d })))
+    mockAgentDirs = dirs.map((d) => ({ ...d }))
+    agentDirsSub.broadcast(buildMockDirConfigs(mockAgentDirs, PRESET_AGENT_DIRS_PROJECT, PRESET_AGENT_DIRS_GLOBAL).map((d) => ({ ...d })))
     agentsSub.broadcast(fixtureAgents.map((a) => ({ ...a })))
   },
-  /** Phase 4 目录级管道写入：更新 mock extensionDirs + 广播目录配置（靠后端权威值推回） */
-  async setExtensionDirs(dirs: string[]) {
+  /** Phase 4 目录级管道写入（v2 scope 穿越）：更新 mock extensionDirs + 广播目录配置（靠后端权威值推回） */
+  async setExtensionDirs(dirs: SkillDirConfig[]) {
     await sleep(TIMING.ack)
-    mockExtensionDirPaths = dirs
-    extensionDirsSub.broadcast(buildMockDirConfigs(PRESET_EXTENSION_DIRS, dirs).map((d) => ({ ...d })))
+    mockExtensionDirs = dirs.map((d) => ({ ...d }))
+    extensionDirsSub.broadcast(buildMockDirConfigs(mockExtensionDirs, PRESET_EXTENSION_DIRS_PROJECT, PRESET_EXTENSION_DIRS_GLOBAL).map((d) => ({ ...d })))
   },
   async setAgent(agent: AgentInfo) {
     await sleep(TIMING.ack)
@@ -850,7 +997,7 @@ const modelsSub = makeMockSubscription(() => MOCK_MODELS.map(mockModelToInfo))
 
 export const model = {
   onModels: (h: (models: ModelInfo[]) => void) => modelsSub.subscribe(h),
-  async switchModel(_sessionId: string, _provider: string, _modelId: string) {
+  async switchModel(_sessionId: string, _provider: ProviderId, _modelId: string) {
     await sleep(TIMING.ack)
   },
 }
@@ -869,12 +1016,17 @@ export const extension = {
     await sleep(TIMING.ack)
     extensionsSub.broadcast(fixtureExtensions.map((e) => ({ ...e })))
   },
-  async toggle(name: string, enabled: boolean) {
+  async toggle(name: string, enabled: boolean): Promise<{ extensions: ReturnType<typeof toCandidate>[] }> {
     await sleep(TIMING.ack)
     const target = fixtureExtensions.find((e) => e.name === name)
     if (target) target.enabled = enabled
-    // 广播快照（模拟 runtime extension.toggle 后 onExtensions 推回）
+    // 真实 runtime：RPC reply { extensions }（scanExtensions 最新快照），routeInbound 命中 pending
+    // 不触发 onExtensions 全局订阅，前端用 reply 刷新 store。mock 对齐：返回 toCandidate 转换快照
+    // （toCandidate 覆盖 ExtensionInfo 必需字段，类型可赋给 Ref<ExtensionInfo[]>）。
+    // broadcast 保留以模拟连接级 onExtensions 推送（幂等，值一致）。
+    const snapshot = fixtureExtensions.map(toCandidate)
     extensionsSub.broadcast(fixtureExtensions.map((e) => ({ ...e })))
+    return { extensions: snapshot }
   },
   /**
    * npm 直装（mock：剥 npm: 前缀后以真实包名加入 fixture 并广播刷新）。
@@ -1003,9 +1155,6 @@ export const settings = {
   listProviders: config.listProviders,
   // 动作
   setProvider: config.setProvider,
-  // 纯前端偏好（localStorage）：复用 real 实现，两侧契约由类型保证一致，不再手工复制。
-  getSystem: realGetSystem,
-  updateSystem: realUpdateSystem,
 }
 
 // Mock workspace domain（W3：最近工作区记录，mock 返回 3 条 records 供 E2E 验证）
@@ -1062,6 +1211,17 @@ export const workspace = {
   // detect：mock 恒返 not-repo（三态检测，real 轨驱动）
   async detect(_cwd: string): Promise<import('@xyz-agent/shared').ServerMessageMap['workspace.detected']> {
     return { mode: 'not-repo', wsRoot: '', barePath: '', repoRoot: '', defaultBranch: '' }
+  },
+}
+
+// project 域 mock 占位（D14，2026-08-04）：mock 模式无 runtime，project 列表回退默认空态。
+// 与 real 轨 api/domains/project.ts 签名同构（load/save），避免门面三元崩溃。
+export const project = {
+  async load(): Promise<import('@xyz-agent/shared').ProjectStoreState> {
+    return { projects: [], activeProjectId: '' }
+  },
+  async save(state: import('@xyz-agent/shared').ProjectStoreState): Promise<import('@xyz-agent/shared').ProjectStoreState> {
+    return { ...state }
   },
 }
 

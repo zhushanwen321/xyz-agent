@@ -37,7 +37,7 @@ const apiMock = vi.hoisted(() => ({
   steer: vi.fn(() => Promise.resolve()),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   chat: {
     send: apiMock.send,
     steer: apiMock.steer,

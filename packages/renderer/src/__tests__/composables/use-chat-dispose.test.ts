@@ -19,15 +19,19 @@ const unsubscribeMock = vi.hoisted(() => vi.fn())
 const streamSubscribeMock = vi.hoisted(() => vi.fn(() => unsubscribeMock))
 const sendMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   chat: {
     streamSubscribe: streamSubscribeMock,
     send: sendMock,
     getHistory: vi.fn(() => Promise.resolve([])),
   },
+  // w5：useChat 薄包装 import session.writeSegments（写 segments sidecar），mock 补全
+  session: {
+    writeSegments: vi.fn(() => Promise.resolve()),
+  },
 }))
 
-import { useChat, resetChatModuleState } from '@/composables/features/useChat'
+import { useChat, resetChatModuleState } from '@/composables/features/chat/useChat'
 import { useChatStore } from '@/stores/chat'
 
 describe('useChat disposeSession（W1：取消 streamSubscriptions + 清 chat store）', () => {

@@ -3,7 +3,7 @@
  *
  * 职责：
  * - IMessageBroker 三方法：send（单 ws）/ broadcast（所有 ws）/ sendError（统一 error envelope，D10/P0-B）。
- * - reply（D2）：带请求 id 的回复，E1 泛型化收窄 payload（ADR-0015 双向保护）。
+ * - reply（D2）：带请求 id 的回复，E1 泛型化收窄 payload（ADR-0016 双向保护）。
  * - 8 个 broadcast helper：session/provider/skill/agent/skillDirs/agentDirs 列表广播（settings handler 触发）。
  * - sendInitialState（D7）：新连接推送 8 段 descriptor 驱动的初始状态。
  * - pushId 计数器：所有 push 消息的 id 生成（`push_<n>`）。
@@ -57,6 +57,15 @@ export class ServerMessageBroker implements IMessageBroker {
   }
 
   broadcast(msg: ServerMessage): void {
+    // wave:perf-w09（02 文档 D1-2）：broadcast 是纯全局通道——session 级 push 型消息
+    //（payload 带 sessionId）必须走 IMessageBus.publish（seq/ring/订阅定向），禁止盲广播。
+    // 误用告警（不 throw，不阻断发送）：新增消息类型接错通道时日志立即可见，
+    // 是 V1「只推给订阅该 sid 的连接」不变量的运行时哨兵。合法的全局消息 payload 均无
+    // sessionId 字段（见 02 文档 D5-1 排除清单）；uiRequest 无 sid 兜底时值为 undefined 不触发。
+    const sid = (msg.payload as { sessionId?: unknown } | undefined)?.sessionId
+    if (sid !== undefined) {
+      console.warn(`[broadcast] session-scoped message "${msg.type}" went through global broadcast — use IMessageBus.publish instead (02 §3.3 D1-2)`)
+    }
     // L6（perf-quick-batch）：循环外序列化一次。
     // 旧实现循环内调 this.send → send 内 JSON.stringify(msg)，N 客户端 = N 次重复
     // 序列化同一对象。session.list 等大 payload 广播时主线程被重复 stringify 阻塞。
@@ -105,7 +114,7 @@ export class ServerMessageBroker implements IMessageBroker {
 
   /**
    * D2 reply 惯用法：发送带请求 id 的回复，消灭 46 处 `send(ws,{type,id:msg.id,payload})` 样板。
-   * E1 泛型化：`type` 字面量收窄 `payload` 到 `ServerMessageMap[T]`，构造侧字段错误在编译期暴露（ADR-0015 双向保护）。
+   * E1 泛型化：`type` 字面量收窄 `payload` 到 `ServerMessageMap[T]`，构造侧字段错误在编译期暴露（ADR-0016 双向保护）。
    */
   reply<T extends ServerMessageType>(ws: WsType, id: string | undefined, type: T, payload: ServerMessageMap[T]): void {
     this.send(ws, { type, id, payload })
@@ -144,23 +153,32 @@ export class ServerMessageBroker implements IMessageBroker {
   private buildAgentListMsg(): ServerMessage {
     return { type: 'config.agents', id: this.nextPushId(), payload: { agents: this.services.configService.loadAgents(this.services.projectRoot) } }
   }
-  /** skill 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  /** skill 加载路径配置（ADR-0021 §1 discovery.json SSOT 的 UI 视图）。 */
   private buildSkillDirsMsg(): ServerMessage {
-    return { type: 'config.skillDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_SKILL_DIRS, this.services.configService.getSkillDirs()) } }
+    return { type: 'config.skillDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_SKILL_DIRS, this.services.configService.getSkillPathScopes()) } }
   }
-  /** agent 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  /** agent 加载路径配置（ADR-0021 §1 discovery.json SSOT 的 UI 视图）。 */
   private buildAgentDirsMsg(): ServerMessage {
-    return { type: 'config.agentDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_AGENT_DIRS, this.services.configService.getAgentDirs()) } }
+    return { type: 'config.agentDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_AGENT_DIRS, this.services.configService.getAgentPathScopes()) } }
   }
-  /** extension 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  /** extension 加载路径配置（ADR-0021 §1 discovery.json SSOT 的 UI 视图）。 */
   private buildExtensionDirsMsg(): ServerMessage {
-    return { type: 'config.extensionDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_EXTENSION_DIRS, this.services.configService.getExtensionDirs()) } }
+    return { type: 'config.extensionDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_EXTENSION_DIRS, this.services.configService.getExtensionPathScopes()) } }
   }
 
   // ── Broadcast helpers ──────────────────────────────────────────
 
   broadcastSessionList(): void {
     this.broadcast(this.buildSessionListMsg())
+  }
+  /**
+   * 广播 app.info（D8-2，06 §3.3）：piVersion 惰性探测的补发入口。
+   * sendInitialState 首推后，组合根（index.ts）在 getPiVersion 完成时 mutate services.appInfo
+   * 同对象（piVersion 字段）再调本方法——buildAppInfoMsg 的 spread 读到当前值，
+   * 侧栏版本标签先显示应用版本、探测完成后 1-2s 内自动补全（唯一消费者 Sidebar.vue 监听 app.info）。
+   */
+  broadcastAppInfo(): void {
+    this.broadcast(this.buildAppInfoMsg())
   }
   broadcastProviderList(): void {
     for (const msg of this.buildProviderListMsgs()) this.broadcast(msg)
@@ -185,15 +203,15 @@ export class ServerMessageBroker implements IMessageBroker {
   broadcastAgentList(): void {
     this.broadcast(this.buildAgentListMsg())
   }
-  /** 广播 skill 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  /** 广播 skill 加载路径配置（ADR-0021 §1 discovery.json SSOT 的 UI 视图）。 */
   broadcastSkillDirs(): void {
     this.broadcast(this.buildSkillDirsMsg())
   }
-  /** 广播 agent 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  /** 广播 agent 加载路径配置（ADR-0021 §1 discovery.json SSOT 的 UI 视图）。 */
   broadcastAgentDirs(): void {
     this.broadcast(this.buildAgentDirsMsg())
   }
-  /** 广播 extension 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  /** 广播 extension 加载路径配置（ADR-0021 §1 discovery.json SSOT 的 UI 视图）。 */
   broadcastExtensionDirs(): void {
     this.broadcast(this.buildExtensionDirsMsg())
   }

@@ -65,6 +65,15 @@ export interface GuiComponentProps {
   /** 列表树——替代 TUI 的 ⎿ ├─ └─ 缩进 */
   'list-tree': {
     items: TreeItem[]
+    /** 行首显示弱化序号（1/2/3…，mono tabular-nums）。扁平有序清单用（todo）；
+     *  自带编号的文本（goal criteria "1. xxx"）不要开，避免双重编号 */
+    numbered?: boolean
+  }
+
+  /** 垂直组合容器——无视觉样式的透明分组。宿主壳层（WidgetArea）承担卡壳/head/折叠
+   *  后，widget 内容需要多组件组合时的组合根（替代「无头 card」的语义滥用） */
+  'group': {
+    children: GuiComponent[]
   }
 
   /** 双列网格——替代 TUI 的 │ 列分隔 */
@@ -91,6 +100,32 @@ export interface GuiRenderResult {
   /** 版本协商，前端检测，不认识降级 ansi-text */
   v: typeof PROTOCOL_VERSION
   component: GuiComponent
+  /**
+   * widget 宿主元数据（M17 对话流 widget 面板消费）：标题/状态点/进度计数由
+   * 宿主壳层统一渲染成单一 head（含折叠交互），extension 不再用 card 原语
+   * 的 header 表达这些（壳层 head 与 payload card header 双头重复的根因修复）。
+   * 可选：不发时宿主 fallback 到 viewId 标题、无状态点/进度。
+   */
+  meta?: WidgetMeta
+}
+
+/** widget 宿主元数据——head 渲染契约（title + 状态点 + 进度 + 折叠 chevron）。 */
+export interface WidgetMeta {
+  /** head 标题（todo → "Todo"；goal → slug） */
+  title: string
+  /** head 状态点语义：running=accent / done=success / failed=danger / idle=neutral 弱点 */
+  status?: 'running' | 'done' | 'failed' | 'idle'
+  /** head 进度（mini bar + 计数文本）；progress-bar 原语从 body 移入 head 的承载 */
+  progress?: {
+    /** fill 比例 = current/total */
+    current: number
+    total: number
+    /** 计数显示文本（head 空间有限，extension 全权格式化：todo "2/5"、goal "42%"）。
+     *  缺省 `${current}/${total}` */
+    label?: string
+    /** fill 语义色（预算阈值映射）；缺省按 meta.status（done→success，否则 accent） */
+    severity?: 'ok' | 'warn' | 'danger'
+  }
 }
 
 // ── 布局原语子类型 ──

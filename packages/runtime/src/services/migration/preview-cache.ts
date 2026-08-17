@@ -18,7 +18,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { ProviderSource } from '@xyz-agent/shared'
-import type { ParsedProvider } from './provider-parser.js'
+import type { ParsedProvider, ParsedOrphanCredential } from './provider-parser.js'
 
 /** 预览缓存 TTL：5 分钟。 */
 const TTL_MS = 300_000
@@ -27,6 +27,7 @@ const TTL_MS = 300_000
  * 预览缓存条目。
  *
  * - providers 含 apiKey 明文（runtime 内部用，绝不返回前端）。
+ * - orphanCredentials 含孤儿凭据 apiKey 明文（sa3 F1，同上安全红线）。
  * - createdAt 用于 TTL 惰性清理。
  */
 export interface PreviewCacheEntry {
@@ -34,6 +35,8 @@ export interface PreviewCacheEntry {
   source: ProviderSource
   /** 完整配置（含 apiKey 明文）。apply 时剥离 _ 前缀元数据后 upsertProvider。 */
   providers: ParsedProvider[]
+  /** 孤儿凭据（auth.json 有、models.json 无定义的 providerId，含 apiKey 明文）。apply 时匹配内置模板补全。 */
+  orphanCredentials: ParsedOrphanCredential[]
 }
 
 /** 模块级单例缓存（进程内唯一）。key = importId（randomUUID）。 */
@@ -54,10 +57,14 @@ function pruneExpired(): void {
  *
  * 调用方：previewImport（解析源配置后存入完整配置，返回脱敏 preview + importId）。
  */
-export function createPreview(source: ProviderSource, providers: ParsedProvider[]): string {
+export function createPreview(
+  source: ProviderSource,
+  providers: ParsedProvider[],
+  orphanCredentials: ParsedOrphanCredential[] = [],
+): string {
   pruneExpired()
   const importId = randomUUID()
-  cache.set(importId, { createdAt: Date.now(), source, providers })
+  cache.set(importId, { createdAt: Date.now(), source, providers, orphanCredentials })
   return importId
 }
 

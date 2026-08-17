@@ -23,27 +23,51 @@ const detailState = ref({
   status: 'success',
   hasGitChange: false,
 })
-vi.mock('@/composables/features/useDetailPane', () => ({
+vi.mock('@/composables/features/file-tree/useDetailPane', () => ({
   useDetailPane: () => ({
     state: detailState,
     toggleView: vi.fn(),
     sessionCwd: () => '/cwd',
   }),
 }))
-vi.mock('@/composables/effects/useCopy', () => ({
+vi.mock('@/composables/panel/useCopy', () => ({
   useCopy: () => ({ copied: ref(null), copy: vi.fn() }),
 }))
 vi.mock('@/composables/logic/file-type', () => ({ extToLang: () => 'ts' }))
 vi.mock('@/lib/path-utils', () => ({ resolvePreviewPath: () => ({ absolute: '/cwd/src/foo.ts' }) }))
-vi.mock('@/components/panel/message-stream/MarkdownRenderer.vue', () => ({
-  default: { template: '<div />' },
+
+// [w6 chat-ui-and-shell T7] DetailPane 壳 provide 真 deps（useChatViewDeps）→ mock 该装配器（原 vi.mock 旧组件路径失效，改模板按名 stub）
+const chatDepsMock = vi.hoisted(() => ({
+  getMessages: vi.fn(() => []),
+  isActive: vi.fn(() => false),
+  isHandingOff: vi.fn(() => false),
+  getChangeSetStatus: vi.fn(() => undefined),
+  isExpanded: vi.fn(() => false),
+  toggleExpand: vi.fn(),
+  collapse: vi.fn(),
+  abortBash: vi.fn(),
+  editAndResend: vi.fn(),
+  onFork: vi.fn(),
+  onForkAsk: vi.fn(),
+  onHandoff: vi.fn(),
+  onHandoffAsk: vi.fn(),
+  openDrawer: vi.fn(),
+  onFileClick: vi.fn(),
+  onAmbiguousSelect: vi.fn(),
+  loadFileCandidates: vi.fn(() => Promise.resolve([])),
+  renderMarkdown: vi.fn(() => Promise.resolve([])),
+  renderMermaid: vi.fn(() => Promise.resolve({ svg: '' })),
+  toMarkdown: vi.fn(() => ''),
+}))
+vi.mock('@/composables/panel/useChatViewDeps', () => ({
+  useChatViewDeps: () => chatDepsMock,
 }))
 vi.mock('@/components/panel/detail-renderers/CodeBlock.vue', () => ({
   default: { template: '<div />' },
 }))
 
 import DetailPane from '@/components/panel/DetailPane.vue'
-import { useComposerInjectionStore } from '@/stores/composer-injection'
+import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -93,11 +117,11 @@ describe('W4: DetailPane 选区 bubble（FR-4）', () => {
     expect(bubble.exists()).toBe(true)
 
     await wrapper.find('[data-testid="bubble-inject-current"]').trigger('click')
-    expect(store.pendingInjection).not.toBeNull()
-    expect(store.pendingInjection?.path).toBe('src/foo.ts')
-    expect(store.pendingInjection?.lineStart).toBe(2)
-    expect(store.pendingInjection?.lineEnd).toBe(3)
-    expect(store.pendingInjection?.target).toBe('current')
+    expect(store.pendingInjection.value).not.toBeNull()
+    expect(store.pendingInjection.value?.path).toBe('src/foo.ts')
+    expect(store.pendingInjection.value?.lineStart).toBe(2)
+    expect(store.pendingInjection.value?.lineEnd).toBe(3)
+    expect(store.pendingInjection.value?.target).toBe('current')
     // FR-8: payload 不含 text
     expect((store.pendingInjection as Record<string, unknown>).text).toBeUndefined()
     vi.restoreAllMocks()
@@ -120,9 +144,9 @@ describe('W4: DetailPane 选区 bubble（FR-4）', () => {
 
     await wrapper.find('[data-testid="detail-content"]').trigger('mouseup')
     await wrapper.find('[data-testid="bubble-inject-new"]').trigger('click')
-    expect(store.pendingInjection?.target).toBe('new')
-    expect(store.pendingInjection?.path).toBe('src/foo.ts')
-    expect(store.pendingInjection?.sessionId).toBeNull()
+    expect(store.pendingInjection.value?.target).toBe('new')
+    expect(store.pendingInjection.value?.path).toBe('src/foo.ts')
+    expect(store.pendingInjection.value?.sessionId).toBeNull()
     vi.restoreAllMocks()
   })
 
@@ -174,11 +198,11 @@ describe('W4: DetailPane 选区 bubble（FR-4）', () => {
     expect(bubble.exists()).toBe(true)
 
     await wrapper.find('[data-testid="bubble-inject-current"]').trigger('click')
-    expect(store.pendingInjection).not.toBeNull()
-    expect(store.pendingInjection?.path).toBe('src/foo.ts')
+    expect(store.pendingInjection.value).not.toBeNull()
+    expect(store.pendingInjection.value?.path).toBe('src/foo.ts')
     // 行号从 data-line 读取（首行 newNo 到末行 newNo）
-    expect(store.pendingInjection?.lineStart).toBe(Number(firstLineEl.getAttribute('data-line')))
-    expect(store.pendingInjection?.lineEnd).toBe(Number(lastLineEl.getAttribute('data-line')))
+    expect(store.pendingInjection.value?.lineStart).toBe(Number(firstLineEl.getAttribute('data-line')))
+    expect(store.pendingInjection.value?.lineEnd).toBe(Number(lastLineEl.getAttribute('data-line')))
     vi.restoreAllMocks()
     // 恢复 preview 模式供后续测试
     detailState.value = {

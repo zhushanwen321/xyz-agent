@@ -74,7 +74,7 @@
               class="size-1.5 shrink-0 rounded-full"
               :class="phaseDotClass(group.phaseStatus)"
             />
-            <span class="text-[10px] font-medium uppercase tracking-wide text-neutral-dim">
+            <span class="text-[10px] font-medium text-neutral-dim">
               {{ group.phase }}
             </span>
             <span class="text-[10px] text-neutral-dim opacity-60">

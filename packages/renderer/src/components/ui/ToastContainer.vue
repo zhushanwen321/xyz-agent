@@ -70,8 +70,8 @@ function toastClass(type: 'error' | 'info' | 'warning'): string {
 </script>
 
 <style scoped>
-.toast-enter-active { transition: all 0.3s ease-out; }
-.toast-leave-active { transition: all 0.2s ease-in; }
+.toast-enter-active { transition: opacity var(--duration) var(--ease), transform var(--duration) var(--ease); }
+.toast-leave-active { transition: opacity var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease); }
 .toast-enter-from { opacity: 0; transform: translateX(20px); }
 .toast-leave-to { opacity: 0; transform: translateX(20px); }
 </style>

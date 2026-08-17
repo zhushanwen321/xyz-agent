@@ -174,7 +174,7 @@ describe("notifyDone — GUI 协议", () => {
       reason: "completed",
       scriptName: "my-workflow",
       traceNodes: [
-        { stepIndex: 0, agent: "worker", status: "done" },
+        { stepIndex: 0, agent: "coder", status: "done" },
         { stepIndex: 1, agent: "reviewer", status: "done" },
       ],
     });

@@ -25,14 +25,14 @@ import type { SkillInfo } from '@xyz-agent/shared'
 // onSkillCacheInvalidated 顶层 stub（Wave3 模块级订阅调用；W4 用例不验证订阅，stub 为空实现）。
 const getProjectSkillsMock = vi.hoisted(() => vi.fn())
 const onSkillCacheInvalidatedMock = vi.hoisted(() => vi.fn().mockReturnValue(() => {}))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   config: {
     getProjectSkills: getProjectSkillsMock,
     onSkillCacheInvalidated: onSkillCacheInvalidatedMock,
   },
 }))
 
-import { useProjectSkills } from '@/composables/features/useProjectSkills'
+import { useProjectSkills } from '@/composables/features/settings/useProjectSkills'
 
 const SKILLS_A: SkillInfo[] = [
   { id: 's-a1', name: 'proj-a-skill', description: 'a', enabled: true, source: 'agents', effective: true },
@@ -178,7 +178,7 @@ describe('useGlobalSkills / useProjectSkills (Wave3: 订阅失效信号)', () =>
     const inv = makeInvalidateMock()
     vi.doMock('@/api', () => ({ config: { getGlobalSkills, onSkillCacheInvalidated: inv.onSkillCacheInvalidated } }))
 
-    const { useGlobalSkills } = await import('@/composables/features/useProjectSkills')
+    const { useGlobalSkills } = await import('@/composables/features/settings/useProjectSkills')
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     const { globalSkills } = useGlobalSkills()
@@ -201,7 +201,7 @@ describe('useGlobalSkills / useProjectSkills (Wave3: 订阅失效信号)', () =>
     const inv = makeInvalidateMock()
     vi.doMock('@/api', () => ({ config: { getGlobalSkills, onSkillCacheInvalidated: inv.onSkillCacheInvalidated } }))
 
-    const { useGlobalSkills } = await import('@/composables/features/useProjectSkills')
+    const { useGlobalSkills } = await import('@/composables/features/settings/useProjectSkills')
     const { globalSkills } = useGlobalSkills()
     await vi.waitFor(() => expect(globalSkills.value).toEqual(SKILL_1))
     expect(getGlobalSkills).toHaveBeenCalledTimes(1)
@@ -224,7 +224,7 @@ describe('useGlobalSkills / useProjectSkills (Wave3: 订阅失效信号)', () =>
     const inv = makeInvalidateMock()
     vi.doMock('@/api', () => ({ config: { getGlobalSkills, onSkillCacheInvalidated: inv.onSkillCacheInvalidated } }))
 
-    const { useGlobalSkills } = await import('@/composables/features/useProjectSkills')
+    const { useGlobalSkills } = await import('@/composables/features/settings/useProjectSkills')
     // 第一次挂载（模拟首个 Composer 实例）
     const first = useGlobalSkills()
     await vi.waitFor(() => expect(first.globalSkills.value).toEqual(SKILL_1))
@@ -249,7 +249,7 @@ describe('useGlobalSkills / useProjectSkills (Wave3: 订阅失效信号)', () =>
     const inv = makeInvalidateMock()
     vi.doMock('@/api', () => ({ config: { getProjectSkills, onSkillCacheInvalidated: inv.onSkillCacheInvalidated } }))
 
-    const { useProjectSkills } = await import('@/composables/features/useProjectSkills')
+    const { useProjectSkills } = await import('@/composables/features/settings/useProjectSkills')
     const cwd = ref<string | null>('/proj1')
     const { projectSkills } = useProjectSkills(cwd)
 
@@ -269,7 +269,7 @@ describe('useGlobalSkills / useProjectSkills (Wave3: 订阅失效信号)', () =>
     const inv = makeInvalidateMock()
     vi.doMock('@/api', () => ({ config: { getProjectSkills, onSkillCacheInvalidated: inv.onSkillCacheInvalidated } }))
 
-    const { useProjectSkills } = await import('@/composables/features/useProjectSkills')
+    const { useProjectSkills } = await import('@/composables/features/settings/useProjectSkills')
     // 两次实例化（模拟多个 Composer 实例）
     useProjectSkills(ref('/a'))
     useProjectSkills(ref('/b'))

@@ -1,7 +1,7 @@
 /**
  * useSessionScopedState 工厂单测（W1 / TDD 红灯）。
  *
- * 覆盖 ADR-0036 通用 Map 分区工厂的契约：
+ * 覆盖 ADR-0049 通用 Map 分区工厂的契约：
  * - 新 sid 惰性 init（init() 仅调一次/sid）
  * - current 按 sid 查分区
  * - update(updater) 操作当前分区

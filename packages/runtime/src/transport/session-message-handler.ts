@@ -6,11 +6,11 @@ import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
 import type { HandoffService } from '../services/handoff-service.js'
-import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED } from '../utils/errors.js'
+import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND, RESTORE_FAILED } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 // MessageBus（wave:runtime-wiring）：session.subscribe/unsubscribe RPC handler 用它注册订阅。
 // type-only import（handler 不持有 bus 实例的创建，只调它的方法）。
-import type { MessageBus } from '../services/message-bus/message-bus.js'
+import type { IMessageBus } from '../services/message-bus/message-bus.js'
 // BusClient（wave:bus-core）：ws 适配为 bus 订阅者的最小契约 { readyState, send }。
 // ws 库的 WebSocket 天然满足，但类型不完全一致，用 as unknown as BusClient 显式标记边界（R2）。
 import type { BusClient } from '../services/message-bus/types.js'
@@ -24,7 +24,7 @@ export interface SessionHandlerContext extends MessageHandlerContext {
    * MessageBus 单例（wave:runtime-wiring）：session.subscribe/unsubscribe RPC 用它注册/取消订阅。
    * 可选：未注入时 subscribe/unsubscribe case 报 unsupported（组合根保证注入）。
    */
-  messageBus?: MessageBus
+  messageBus?: IMessageBus
   nextPushId(): string
   broadcastSessionList(): void
   clearExtensionTimeoutsForSession(sessionId: string): void
@@ -37,17 +37,20 @@ export class SessionMessageHandler {
 
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
-    'session.create', 'session.delete', 'session.deleteByCwd', 'config.sessions', 'session.switch', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
+    'session.create', 'session.delete', 'session.deleteByCwd', 'config.sessions', 'session.switch', 'session.restore', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork', 'session.setProject',
     'session.handoff', 'session.abortHandoff',
     // wave:runtime-wiring：session.subscribe/unsubscribe RPC（IF6/IF7）。
     'session.subscribe', 'session.unsubscribe',
     'session.getSubagents', 'session.getSubagentHistory',
     'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
     'session.workflowAction', 'session.subagentAction',
+    // wave:runtime-patch ipc-converge-a3 W2：业务持久化写 WS（session 数据单一出口归 runtime）
+    'session.writeImage', 'session.migrateImage', 'session.writeSegments',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
     'message.bash', 'message.abortBash',
   ]
 
+  // eslint-disable-next-line max-lines-per-function -- session.* 路由 switch，case 数随业务增长天然偏长，拆分收益低于可读性损失
   async handleSessionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
       case 'session.create': {
@@ -55,9 +58,11 @@ export class SessionMessageHandler {
           // B3：透传 modelOverride / thinkingOverride（Landing Chip 覆盖值，设计文档 §5.2）。
           // 优先级：Landing Chip override > preset.modelOverride/thinkingLevel > 全局默认。
           // 之前只透传了 hidden/presetId，覆盖值在 transport 层被丢弃，导致 Landing Chip 选型不生效。
+          // projectId：D14 语义修正（2026-08-04），创建时归属当前 activeProject（空 = 默认项目兑底）。
           const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label, {
             hidden: msg.payload.hidden,
             presetId: msg.payload.presetId,
+            projectId: msg.payload.projectId,
             modelOverride: msg.payload.modelOverride,
             thinkingOverride: msg.payload.thinkingOverride,
           })
@@ -73,13 +78,33 @@ export class SessionMessageHandler {
           throw e
         }
       }
+      case 'session.restore': {
+        try {
+          const session = await this.ctx.sessionService.restoreSession(msg.payload.sessionId)
+          this.ctx.reply(ws, msg.id, 'session.created', { session })
+          return this.ctx.broadcastSessionList()
+        } catch (e) {
+          const code = (e as Error & { code?: string }).code
+          if (code === MODEL_NOT_CONFIGURED) {
+            this.ctx.sendError(ws, MODEL_NOT_CONFIGURED, toErrorMessage(e), msg.id)
+            return
+          }
+          if (code === SESSION_NOT_FOUND) {
+            this.ctx.sendError(ws, SESSION_NOT_FOUND, toErrorMessage(e), msg.id)
+            return
+          }
+          // spawn pi / switchSession / initialize 失败统一归为 restore_failed
+          this.ctx.sendError(ws, RESTORE_FAILED, toErrorMessage(e), msg.id)
+          return
+        }
+      }
       case 'session.fork': {
         // fork：runtime 读源 JSONL 截断 → 新进程 switch_session。reply session.created（复用类型）。
         const { srcSessionId, fromPiEntryId, fromMessageTimestamp, fromMessageRole, includeFrom, label, modelOverride, thinkingOverride } = msg.payload
         try {
           const session = await this.ctx.sessionService.forkSession(
             srcSessionId, fromPiEntryId, includeFrom ?? true, label,
-            // Staging Mode（ADR-0043）：透传 composer 暂存的 modelOverride/thinkingOverride，
+            // Staging Mode（ADR-0056）：透传 composer 暂存的 modelOverride/thinkingOverride，
             // 让 fork 出的新 session 用用户当前选定的模型/思考等级，而非单纯继承源 preset。
             { fromMessageTimestamp, fromMessageRole, modelOverride, thinkingOverride },
           )
@@ -114,7 +139,7 @@ export class SessionMessageHandler {
           return this.ctx.sendError(ws, 'handoff_unsupported', 'handoff service not available', msg.id, { sessionId })
         }
         try {
-          // Staging Mode（ADR-0043）：透传 modelOverride/thinkingOverride 给新 session 创建。
+          // Staging Mode（ADR-0056）：透传 modelOverride/thinkingOverride 给新 session 创建。
           // 源 session 的 handoff turn 仍用源 session 自身模型，override 只作用于新建的承接 session。
           await hs.runHandoff(sessionId, reply, {
             modelOverride: msg.payload.modelOverride,
@@ -190,20 +215,15 @@ export class SessionMessageHandler {
       case 'config.sessions':
         return this.ctx.reply(ws, msg.id, 'config.sessions', { groups: this.ctx.sessionService.listPersistedSessions() })
       case 'session.switch': {
+        // wave:perf-w20（R-11 瘦身）：switch reply 不再无条件全量 getHistory 塞 messages。
+        // renderer switchSession 返回 void 不读 reply payload，历史消费路径是 selectSession
+        // 内显式 chat.getHistory（session.history RPC）——reply 里的 messages 是纯浪费的
+        // 全量序列化（长 session 数 MB）。被驱逐 session 切回由显式 history RPC（享受 D6
+        // 重建缓存增量）拉取；LRU 窗口内切回本就零请求（isHydrated 守卫）。
         const switchId = msg.payload.sessionId
         const summary = this.ctx.sessionService.getSummary(switchId)
         if (summary) {
-          try {
-            const { messages, truncated } = await this.ctx.sessionService.getHistory(switchId)
-            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: summary, messages, historyTruncated: truncated })
-          } catch (e) {
-            // W5：历史加载失败时绝不能 reply messages:[] + historyTruncated:false——
-            // 前端会误判「全部历史已加载且未截断」并把空列表当真。改走 sendError（统一 error
-            // envelope），与项目「错误作为 assistant 消息/可见告警插入」模式一致，前端据此渲染失败态。
-            const errMsg = toErrorMessage(e)
-            console.error('[runtime] failed to load history for switch:', errMsg)
-            this.ctx.sendError(ws, 'history_load_failed', errMsg, msg.id, { sessionId: switchId })
-          }
+          this.ctx.reply(ws, msg.id, 'session.switched', { sessionId: switchId, session: summary })
         } else {
           try {
             await this.ctx.sessionService.ensureActive(switchId)
@@ -211,8 +231,7 @@ export class SessionMessageHandler {
             if (!restored) {
               throw new Error(`Session ${switchId} restored but summary unavailable`)
             }
-            const { messages, truncated } = await this.ctx.sessionService.getHistory(switchId)
-            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: restored, messages, historyTruncated: truncated })
+            this.ctx.reply(ws, msg.id, 'session.switched', { sessionId: switchId, session: restored })
           } catch (e) {
             const errMsg = toErrorMessage(e)
             const isENOENT = isEnoent(e)
@@ -261,13 +280,50 @@ export class SessionMessageHandler {
         await this.ctx.sessionService.subagentAction(msg.payload.sessionId, msg.payload.action, msg.payload.subagentId)
         return this.ctx.reply(ws, msg.id, 'session.subagentActionDone', { sessionId: msg.payload.sessionId, action: msg.payload.action, subagentId: msg.payload.subagentId })
       }
+      // ── wave:runtime-patch ipc-converge-a3 W2：业务持久化写（从 main IPC 迁 WS）──
+      case 'session.writeImage': {
+        // 粘贴截图落地 attachments/tmpdir。安全校验在 sessionService.writeImage（mimeType/大小/name sanitize）。
+        const { sessionId, base64, mimeType, name } = msg.payload
+        try {
+          const result = await this.ctx.sessionService.writeImage(sessionId, base64, mimeType, name)
+          return this.ctx.reply(ws, msg.id, 'session.writeImage:result', result)
+        } catch (err) {
+          return this.ctx.sendError(ws, 'write_image_failed', toErrorMessage(err), msg.id, { sessionId })
+        }
+      }
+      case 'session.migrateImage': {
+        // landing tmpdir→attachments 迁移。安全校验在 sessionService.migrateImage（fromPath 白名单）。
+        const { fromPath, sessionId, fileName } = msg.payload
+        try {
+          const result = await this.ctx.sessionService.migrateImage(fromPath, sessionId, fileName)
+          return this.ctx.reply(ws, msg.id, 'session.migrateImage:result', result)
+        } catch (err) {
+          return this.ctx.sendError(ws, 'migrate_image_failed', toErrorMessage(err), msg.id, { sessionId })
+        }
+      }
+      case 'session.writeSegments': {
+        // segments.json sidecar atomic 写。sessionId 空拒绝。
+        const { sessionId, entry } = msg.payload
+        try {
+          await this.ctx.sessionService.writeSegmentsMetadata(sessionId, entry)
+          return this.ctx.reply(ws, msg.id, 'session.writeSegments:result', {})
+        } catch (err) {
+          return this.ctx.sendError(ws, 'write_segments_failed', toErrorMessage(err), msg.id, { sessionId })
+        }
+      }
       case 'session.subscribe': {
         // wave:runtime-wiring（IF6）：订阅某 session 的 live 事件流。
         // 调 bus.subscribe 注册当前 ws 为订阅者 + 拉 ring 全量 snapshot + stateSnapshot + 最新 seq。
-        // fromSeq 可选（重连场景）：若提供且 < ring 最旧 seq（旧消息已被 FIFO 淘汰）→ gap=true
+        // fromSeq 可选（重连场景）：若提供且 < ring 最旧 seq（旧 stream 消息已被环形覆盖淘汰）→ gap=true
         // 返全量 snapshot；否则过滤 snapshot 只返 seq > fromSeq 的（增量 backfill）。
-        // stateSnapshot（wave:remove-bandaids）是 4 个 state topic 的 last-value，不受 fromSeq
+        // stateSnapshot（wave:remove-bandaids）是 state topic 的 last-value，不受 fromSeq
         // 增量过滤影响（last-value 语义无历史概念），renderer 始终拿到最新状态 reconcile。
+        //
+        // gap 判定基准（wave:perf-w06，R-03）：本 handler 是 gap 的唯一判定点——
+        // `fromSeq < snapshot[0].seq（ring 最旧 seq）`。D5 topic 分类后 ring 只存 stream 类
+        // （state 类分配 seq 但不入 ring、由 stateSnapshot 覆盖重连；transient 类不分配 seq），
+        // 该判定语义自洽：state 消息不入 ring 不产生「假最旧 seq」，混合 session 正常重连
+        // （fromSeq ≥ ring 最旧）不误报 gap；只有 ring 真实溢出（长断线）才 gap=true 全量重拉。
         const { sessionId, fromSeq } = msg.payload
         const bus = this.ctx.messageBus
         if (!bus) {
@@ -280,10 +336,14 @@ export class SessionMessageHandler {
         if (fromSeq !== undefined) {
           const oldestSeq = snapshot[0]?.seq ?? 0
           // ES2/gap 检测：fromSeq 早于 ring 最旧 seq → 旧消息已被淘汰，本次存在缺口。
+          // [W06 审查] 判定偏保守（宁可误报不漏报）：state 消息分配 seq 但不入 ring，
+          // fromSeq 与 ring 最旧 seq 之间若只隔了 state 消息（stream 未淘汰），也会判
+          // gap=true——代价是多一次全量回放，由订阅端幂等 dispatch 兜底，无正确性影响。
           if (fromSeq < oldestSeq) {
             gap = true
           } else {
             // 增量模式：过滤掉 seq <= fromSeq 的（已处理过的），只返 seq > fromSeq。
+            // state 消息不在 ring 内，其增量覆盖由 stateSnapshot（last-value）保证。
             snapshot = snapshot.filter(m => (m.seq ?? 0) > fromSeq)
           }
         }
@@ -327,6 +387,16 @@ export class SessionMessageHandler {
       case 'session.rename': {
         await this.ctx.sessionService.renameSession(msg.payload.sessionId, msg.payload.name)
         this.ctx.reply(ws, msg.id, 'session.renamed', { sessionId: msg.payload.sessionId, name: msg.payload.name })
+        return this.ctx.broadcastSessionList()
+      }
+      case 'session.setProject': {
+        // D14 语义修正：手动归类（SessionItem「归入项目」菜单）。
+        // runtime 写 .project.json sidecar + 内存态同步，列表经 broadcastSessionList 全量刷新。
+        await this.ctx.sessionService.setProject(msg.payload.sessionId, msg.payload.projectId)
+        this.ctx.reply(ws, msg.id, 'session.setProject', {
+          sessionId: msg.payload.sessionId,
+          projectId: msg.payload.projectId,
+        })
         return this.ctx.broadcastSessionList()
       }
       case 'message.send': {

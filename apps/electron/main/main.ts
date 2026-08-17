@@ -52,6 +52,7 @@
  * 依赖方向：main.ts → context + interfaces + gateway + window-factory + 三个 Facade 实现
  */
 import path from 'node:path'
+import { existsSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { app, protocol, net, BrowserWindow } from 'electron'
 import { DEV_PORT_OFFSET } from '@xyz-agent/shared'
@@ -192,6 +193,21 @@ async function bootstrapMainWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  // dev 模式 Dock 图标：未打包的 Electron 运行时用内置默认图标（蓝色 Electron logo），
+  // 不读 electron-builder 的 build/icon.*（那只在打包产物生效）。macOS dock 图标跟随
+  // app bundle——dev 无 bundle，必须显式 setIcon 才有新 LOGO（双鱼太极）。
+  // 打包版无需此调用：bundle 的 Info.plist + Contents/Resources/icon.icns 自动生效。
+  //
+  // 跳过条件：dev-electron.mjs 已用自制 Taiji.app bundle（改了 Info.plist 的
+  // CFBundleIconFile）启动，dock 启动即显示太极图标，无需再 setIcon（且避免重设闪烁）。
+  // 此时 main 进程会收到 XYZ_DEV_BUNDLE_ICON=1 环境变量。fallback 到默认 electron 时
+  // 无此变量，走 setIcon 兜底（会闪但至少有图标）。
+  if (isDev && process.platform === 'darwin' && !process.env.XYZ_DEV_BUNDLE_ICON) {
+    const dockIcon = path.join(app.getAppPath(), 'build', 'icon-1024.png')
+    if (existsSync(dockIcon)) {
+      app.dock?.setIcon(dockIcon)
+    }
+  }
   // 注册 local-file:// 协议，用于渲染进程加载本地文件（如图片）
   protocol.handle('local-file', (request) => {
     const rawPath = decodeURIComponent(new URL(request.url).pathname)
@@ -201,7 +217,7 @@ app.whenReady().then(async () => {
     // 放宽成「能读 ~/.ssh」。白名单只含可信子集：
     //   - app.getAppPath()：当前 app 资源目录（dev 模式即项目根）
     //   - getDataDir()：xyz-agent 数据目录（动态推导，dev=~/.xyz-agent-dev，符合架构约定 #2）
-    //   - <getDataDir()>/attachments：会话级图片附件目录（write-session-image IPC 持久化路径，
+    //   - <getDataDir()>/attachments：会话级图片附件目录（runtime session-service 持久化路径，
     //     按 sessionId 分区。放行整个 attachments 目录——全是用户自粘图片非敏感，安全粒度等同 tmpdir；
     //     protocol handler 无状态拿不到 session 上下文，无法按 session 推导）
     //   - process.cwd()：当前项目工作目录（图片预览主要场景，cwd 通常是用户项目）

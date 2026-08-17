@@ -171,4 +171,124 @@ describe('PluginRegistry', () => {
     expect(reloaded.some(d => d.pluginId === 'late-plugin')).toBeTruthy()
     expect(reloaded.some(d => d.pluginId === 'hello-world')).toBeTruthy()
   })
+
+  // ── TC-1-06: pluginPath 指向 main 入口文件而非插件目录 ──────────
+  // 回归防护：ESM 禁止目录导入（ERR_UNSUPPORTED_DIR_IMPORT），plugin-bootstrap 的
+  // load 分支直接 import(pluginPath)，pluginPath 存目录会导致激活必炸
+  // （built-in statusline 曾因此从未激活成功）
+  it('TC-1-06: pluginPath resolves to main entry file, not plugin directory', async () => {
+    const pluginDir = join(tmpDir, '.xyz-agent', 'plugins', 'entry-plugin')
+    await mkdir(pluginDir, { recursive: true })
+    await writeFile(join(pluginDir, 'package.json'), JSON.stringify({
+      name: 'entry-plugin',
+      version: '1.0.0',
+      xyzAgent: { manifestVersion: 1, main: 'dist/entry.js', activationEvents: [] },
+    }), 'utf-8')
+
+    const registry = new PluginRegistry(tmpDir, tmpDir)
+    await registry.scan()
+    const desc = registry.getDescriptor('entry-plugin')!
+
+    expect(desc).toBeTruthy()
+    expect(desc.pluginPath).toBe(join(pluginDir, 'dist', 'entry.js'))
+    expect(desc.main).toBe('dist/entry.js')
+  })
+
+  // ── TC-1-07: main 缺省时 fallback index.js（向后兼容）──────────
+  it('TC-1-07: main falls back to index.js when manifest omits it', async () => {
+    const pluginDir = join(tmpDir, '.xyz-agent', 'plugins', 'default-main')
+    await mkdir(pluginDir, { recursive: true })
+    await writeFile(join(pluginDir, 'package.json'), JSON.stringify({
+      name: 'default-main',
+      version: '1.0.0',
+      xyzAgent: { manifestVersion: 1, activationEvents: [] },
+    }), 'utf-8')
+
+    const registry = new PluginRegistry(tmpDir, tmpDir)
+    await registry.scan()
+    const desc = registry.getDescriptor('default-main')!
+
+    expect(desc).toBeTruthy()
+    expect(desc.main).toBe('index.js')
+    expect(desc.pluginPath).toBe(join(pluginDir, 'index.js'))
+  })
+
+  // ── TC-1-08: main 越权路径（../ 逃逸 / 绝对路径）被拒 ──────────
+  it('TC-1-08: main escaping plugin directory is rejected', async () => {
+    await createPluginDir('escape-plugin', {
+      name: 'escape-plugin',
+      version: '1.0.0',
+      xyzAgent: { manifestVersion: 1, main: '../../outside.js', activationEvents: [] },
+    })
+    await createPluginDir('absolute-plugin', {
+      name: 'absolute-plugin',
+      version: '1.0.0',
+      xyzAgent: { manifestVersion: 1, main: '/etc/passwd', activationEvents: [] },
+    })
+
+    const registry = new PluginRegistry(tmpDir, tmpDir)
+    const descriptors = await registry.scan()
+
+    expect(descriptors.find(d => d.pluginId === 'escape-plugin')).toBe(undefined)
+    expect(descriptors.find(d => d.pluginId === 'absolute-plugin')).toBe(undefined)
+  })
+
+  // ── built-in 扫描路径两形态（F4 dev 缺口回归防护）────────────────
+  // 布局辅助：在 <root>/resources/plugins/<name>/ 下造一个最小 built-in 插件
+  async function createBuiltinPlugin(root: string, name: string): Promise<string> {
+    const pluginDir = join(root, 'resources', 'plugins', name)
+    await mkdir(pluginDir, { recursive: true })
+    await writeFile(join(pluginDir, 'package.json'), JSON.stringify({
+      name,
+      version: '1.0.0',
+      xyzAgent: { manifestVersion: 1, main: 'index.js', activationEvents: ['onStartupFinished'] },
+    }), 'utf-8')
+    return pluginDir
+  }
+
+  // TC-1-09: dev 形态（pnpm dev，cwd=apps/electron，仓库根在上两层）
+  it('TC-1-09: built-in dir resolves via ../.. when cwd is apps/electron (dev form)', async () => {
+    const root = join(tmpDir, 'builtin-dev-form')
+    await createBuiltinPlugin(root, 'builtin-dev')
+    // projectRoot 模拟 pnpm dev 的 runtime cwd：<root>/apps/electron
+    const projectRoot = join(root, 'apps', 'electron')
+    await mkdir(projectRoot, { recursive: true })
+
+    const registry = new PluginRegistry(projectRoot, join(root, 'config'))
+    const descriptors = await registry.scan()
+
+    const desc = descriptors.find(d => d.pluginId === 'builtin-dev')
+    expect(desc).toBeTruthy()
+    expect(desc!.source).toBe('built-in')
+    expect(desc!.pluginPath).toBe(join(root, 'resources', 'plugins', 'builtin-dev', 'index.js'))
+  })
+
+  // TC-1-10: 仓库根形态（隔离 tsx / 本地 dist / 打包 cwd=Resources，resources 就在 cwd 下）
+  it('TC-1-10: built-in dir resolves directly under projectRoot (repo-root/packaged form)', async () => {
+    const root = join(tmpDir, 'builtin-root-form')
+    await createBuiltinPlugin(root, 'builtin-root')
+
+    const registry = new PluginRegistry(root, join(root, 'config'))
+    const descriptors = await registry.scan()
+
+    const desc = descriptors.find(d => d.pluginId === 'builtin-root')
+    expect(desc).toBeTruthy()
+    expect(desc!.source).toBe('built-in')
+    expect(desc!.pluginPath).toBe(join(root, 'resources', 'plugins', 'builtin-root', 'index.js'))
+  })
+
+  // TC-1-11: 两候选同时存在时 projectRoot 本地目录优先（候选顺序锁定）
+  it('TC-1-11: local resources/plugins wins over ../.. candidate when both exist', async () => {
+    const root = join(tmpDir, 'builtin-prio-form')
+    await createBuiltinPlugin(root, 'up-level-builtin')
+    const projectRoot = join(root, 'apps', 'electron')
+    // projectRoot 本地也放一个 built-in
+    await createBuiltinPlugin(projectRoot, 'local-builtin')
+
+    const registry = new PluginRegistry(projectRoot, join(root, 'config'))
+    const descriptors = await registry.scan()
+
+    expect(descriptors.find(d => d.pluginId === 'local-builtin')).toBeTruthy()
+    expect(descriptors.find(d => d.pluginId === 'up-level-builtin')).toBe(undefined)
+  })
 })

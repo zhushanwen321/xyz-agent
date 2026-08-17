@@ -20,9 +20,37 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore } from '@/stores/chat'
 import MessageStream from '@/components/panel/MessageStream.vue'
-import BashOutputBlock from '@/components/panel/message-stream/BashOutputBlock.vue'
+// [w6 chat-ui-and-shell T7] ui 包 BashOutputBlock（MessageStream 壳 provide 真 deps → mock useChatViewDeps）
+import { BashOutputBlock } from '@xyz-agent/ui'
 import type { Message } from '@xyz-agent/shared'
 import { defineComponent, h } from 'vue'
+
+// 壳 deps mock（MessageStream 装配 useChatViewDeps，测试聚焦路由分支不需真 deps）
+const chatDepsMock = vi.hoisted(() => ({
+  getMessages: vi.fn(() => []),
+  isActive: vi.fn(() => false),
+  isHandingOff: vi.fn(() => false),
+  getChangeSetStatus: vi.fn(() => undefined),
+  isExpanded: vi.fn(() => false),
+  toggleExpand: vi.fn(),
+  collapse: vi.fn(),
+  abortBash: vi.fn(),
+  editAndResend: vi.fn(),
+  onFork: vi.fn(),
+  onForkAsk: vi.fn(),
+  onHandoff: vi.fn(),
+  onHandoffAsk: vi.fn(),
+  openDrawer: vi.fn(),
+  onFileClick: vi.fn(),
+  onAmbiguousSelect: vi.fn(),
+  loadFileCandidates: vi.fn(() => Promise.resolve([])),
+  renderMarkdown: vi.fn(() => Promise.resolve([])),
+  renderMermaid: vi.fn(() => Promise.resolve({ svg: '' })),
+  toMarkdown: vi.fn(() => ''),
+}))
+vi.mock('@/composables/panel/useChatViewDeps', () => ({
+  useChatViewDeps: () => chatDepsMock,
+}))
 
 // happy-dom 不提供 ResizeObserver
 class NoopResizeObserver {
@@ -34,7 +62,6 @@ class NoopResizeObserver {
 const globalStubs = {
   Turn: { name: 'Turn', template: '<div />' },
   SystemNotice: { name: 'SystemNotice', template: '<div data-testid="system-notice-stub" />' },
-  BgNotifyCard: { name: 'BgNotifyCard', template: '<div />' },
   GuiComponentRenderer: { name: 'GuiComponentRenderer', template: '<div />' },
   ForkNotice: { name: 'ForkNotice', template: '<div />' },
 }
@@ -163,7 +190,6 @@ const TurnStub = defineComponent({
 const coexistStubs = {
   Turn: TurnStub,
   SystemNotice: { name: 'SystemNotice', template: '<div data-testid="system-notice-stub" />' },
-  BgNotifyCard: { name: 'BgNotifyCard', template: '<div />' },
   GuiComponentRenderer: { name: 'GuiComponentRenderer', template: '<div />' },
   ForkNotice: { name: 'ForkNotice', template: '<div />' },
 }

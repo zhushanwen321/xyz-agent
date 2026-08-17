@@ -11,7 +11,7 @@
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useCopy.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { useCopy } from '@/composables/effects/useCopy'
+import { useCopy } from '@/composables/panel/useCopy'
 
 describe('useCopy', () => {
   beforeEach(() => {

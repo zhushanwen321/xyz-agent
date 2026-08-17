@@ -150,6 +150,55 @@ infra/      ← pi 适配（实现 ports，连接 + 翻译合并）
 | **services** | ports(自己定义的接口) + shared + 内部类型 | **不 import infra**；**不出现 PiXxx 类型** | 业务编排，经 ports 访问外部能力 |
 | **infra** | 外部系统 + node: 内置 + shared | 不知道 WS 协议；不知道 session 业务语义 | 实现 ports；**PiXxx 类型仅在此层内部** |
 
+### 跨切面例外（受控违背「services 不 import infra」铁律）
+
+三层边界规则要求 services 层不直接 import infra。但存在两类「跨切面基础设施」模块——它们或是无业务语义的横切关注点，或是无状态无副作用的纯函数——其 import 不经 port 而直接静态依赖 infra 模块，属**受控例外**。声明如下，使后续架构审查（如 R5 收尾验证 `rg "from '.*infra/" services/`）不把这些 import 误报为违规。
+
+#### ① logger —— 跨切面日志基础设施
+
+`infra/logger.ts` 是全局日志基础设施：日志文件落盘 + 按天/按大小轮转 + monkey-patch 全局 `console` 实现 terminal-tee（架构约定 §4「Runtime/pi 日志必须落盘 + 轮转 + 动态数据目录」）。它**无 pi 状态依赖、无业务语义**，是纯横切关注点（cross-cutting concern）。为它定义 port（如 `ILogger`）并注入只会增加无意义的间接层——services 层几乎所有模块都可能记日志，强制经 port 注入会污染全部 service 构造函数签名；且 logger 是 process-wide 单例，不存在「换实现」的依赖倒置需求。
+
+当前 services 层以下 **8 处**静态 import `logger`，属受控例外（合规）：
+
+| 文件 | 行 | 用途 |
+|-----|---|------|
+| `services/quota-cache.ts` | 15 | 配额缓存命中/失效日志 |
+| `services/quota-service.ts` | 21 | 配额查询编排日志 |
+| `services/migration/parsers/codex-parser.ts` | 23 | codex 迁移解析日志 |
+| `services/quota-providers/minimax.ts` | 14 | minimax 配额探测日志 |
+| `services/quota-providers/mimo.ts` | 13 | mimo 配额探测日志 |
+| `services/quota-providers/opencode.ts` | 13 | opencode 配额探测日志 |
+| `services/quota-providers/kimi.ts` | 11 | kimi 配额探测日志 |
+| `services/worktree-config-helper.ts` | 23 | worktree 配置读取日志 |
+
+#### ② pi-paths —— kernel 纯路径函数
+
+`infra/pi/pi-paths.ts` 是纯路径解析函数集（`getSessionsDir` / `getPiAgentDir` / `getSubagentSessionDir` / `getExtensionsDir` / `getNpmDir` / `getTmpDir` / `encodeCwd` 等），**无 pi 状态、无副作用、无 IO**，仅依据 `getDataDir()` / `getConfigDir()`（来自 shared/paths）做字符串拼接。它与 `shared/paths.ts` 同性质——纯路径计算——故归为 **kernel 层**（与 infra 平级的共享内核，任意层可如 shared 般直接 import），不强制走 port。
+
+当前 services 层以下 **6 处**依赖 `pi-paths`，属 kernel 直接依赖（合规）：
+
+| 文件 | 行 | 使用的函数 |
+|-----|---|-----------|
+| `services/config-service.ts` | 39 | `getConfigDir` |
+| `services/worktree-config-helper.ts` | 22 | `getPiAgentDir` |
+| `services/extension-service.ts` | 32 | `getExtensionsDir`, `getNpmDir`, `getTmpDir` |
+| `services/session/session-lifecycle.ts` | 27 | `getSessionsDir` |
+| `services/session/session-service.ts` | 33 | `getSubagentSessionDir`, `getPiAgentDir` |
+| `services/session/subagent-extractor.ts` | 28 | `getSubagentSessionDir` |
+
+#### ③ 纯解析函数（git-status-parser / ignore-parser）—— kernel 纯函数
+
+`infra/git/git-status-parser.ts`（`parseGitStatus` / `deriveCounts` / `parseNumstat` / `parseNumstatByFile`）与 `infra/fs/ignore-parser.ts`（`compileIgnoreRules` / `matchPath` / `IgnoreMatcher`）是纯解析/匹配函数集——**输入字符串/规则，输出结构化数据，无 IO、无状态、无副作用**。与 pi-paths 同性质（纯计算），归 kernel 层，services 可直接 import。
+
+当前 services 层以下依赖这两个模块，属 kernel 直接依赖（合规）：
+
+| 文件 | 行 | 使用的函数 |
+|-----|---|-----------|
+| `services/git-service.ts` | 21 | `parseGitStatus`, `deriveCounts`, `parseNumstat`, `parseNumstatByFile` |
+| `services/file-service.ts` | 21-22 | `IgnoreMatcher`(type), `compileIgnoreRules`, `matchPath` |
+
+> **新增 services→infra import 时的判断准则**：logger 类横切关注点（无业务语义、process-wide 单例）可直接 import；kernel 类纯函数（无状态、无副作用、无 IO，与 shared 同性质）——含 pi-paths 路径解析、git-status-parser/ignore-parser 等纯解析/匹配函数——可直接 import。其余 infra 模块——含 pi 协议类型、RPC 子进程、有状态/有 IO 的文件操作、安装器等——一律经 port 访问，不得直接 import。
+
 **依赖方向**：`transport → services ← infra`（services 定义 ports，infra 实现 ports，箭头都指向接口）。**无环**。
 
 ---

@@ -14,7 +14,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import type { RecentWorkspaceRecord } from '@xyz-agent/shared'
 
 // mock @/api 门面的 workspace（store 走门面，mock 路径须与 store import 一致；vi.mock 自动 hoist）
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   workspace: { listRecent: vi.fn(), record: vi.fn() },
 }))
 

@@ -43,7 +43,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       # 提到 job 级：Cache pi resources 步骤的 key 和 prepare 步骤共用同一版本号。
-      PI_VERSION: '0.80.3'
+      # 与 scripts/prepare-pi-resources.sh 默认值对齐（0.84.1），避免 CI 打包内置旧 pi。
+      PI_VERSION: '0.84.1'
 
     steps:
       - uses: actions/checkout@v4
@@ -125,6 +126,15 @@ jobs:
           chmod +x scripts/prepare-pi-resources.sh
           ./scripts/prepare-pi-resources.sh "$PI_VERSION"
 
+      # 内置 provider catalog 由构建期脚本从 pi-ai 提取（git 跟踪的 JSON 是构建快照）。
+      # 根 package.json 的 prebuild 只在根 `pnpm run build` 时触发；本 workflow 直接
+      # --filter @xyz-agent/electron run build / build:dir 都会绕过它——必须显式执行，
+      # 否则 pi-ai 升级后 CI 静默用仓库里的旧 JSON（生成物与 pi-ai 版本漂移，
+      # verifyEnvVars 守卫只在本地生效）。
+      - name: Generate builtin providers catalog
+        shell: bash
+        run: node packages/runtime/scripts/gen-builtin-providers.mjs
+
       # CI 模式（dir-only=true）：用 build:dir，只产出 unpacked 目录，跳过 zip/NSIS/DMG/AppImage 压缩。
       # 安装器打包配置（nsis/dmg 段）的回归交给 release.yml 完整构建覆盖。
       # 验证分层：CI 验证代码正确性（asar 打包 + runtime unpacked + smoke test），
@@ -165,9 +175,11 @@ jobs:
         if: matrix.platform == 'mac'
         shell: bash
         run: |
-          APP_PATH="apps/electron/dist/builder-output/mac-arm64/xyz-agent.app"
+          # 产物名为 太极.app / TaiJi 可执行文件（electron-builder.yml productName/executableName），
+          # .app 名派生方式与 scripts/postbuild-validate.sh 对齐，避免改名后再漂移
+          APP_PATH=$(find apps/electron/dist/builder-output/mac-arm64 -name "*.app" -maxdepth 1 | head -1)
           RUNTIME="$APP_PATH/Contents/Resources/app.asar.unpacked/dist/runtime/index.cjs"
-          ELECTRON="$APP_PATH/Contents/MacOS/xyz-agent"
+          ELECTRON="$APP_PATH/Contents/MacOS/TaiJi"
           if [ ! -f "$RUNTIME" ]; then
             echo '::error::Runtime bundle not found in app.asar.unpacked'
             exit 1
@@ -195,7 +207,7 @@ jobs:
         shell: pwsh
         run: |
           $runtime = "apps/electron/dist/builder-output/win-unpacked/resources/app.asar.unpacked/dist/runtime/index.cjs"
-          $electron = "apps/electron/dist/builder-output/win-unpacked/xyz-agent.exe"
+          $electron = "apps/electron/dist/builder-output/win-unpacked/TaiJi.exe"
           if (-not (Test-Path $runtime)) { throw "Runtime bundle not found in app.asar.unpacked" }
           if (-not (Test-Path $electron)) { throw "Electron executable not found" }
           $port = 3299

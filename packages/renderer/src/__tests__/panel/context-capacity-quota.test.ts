@@ -23,7 +23,7 @@ import type { NormalizedQuotaRow, ProviderInfo } from '@xyz-agent/shared'
 
 // ── mock ──
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   config: {
     onProviders: vi.fn(() => () => {}),
     onSkills: vi.fn(() => () => {}),
@@ -57,13 +57,14 @@ vi.mock('@/i18n', () => ({
 
 import ContextCapacityPopover from '@/components/panel/ContextCapacityPopover.vue'
 import { useSessionStore } from '@/stores/session'
-import { useSettingsStore } from '@/stores/settings'
+import { getSettingsStore, __resetSettingsStoreForTesting } from '@xyz-agent/core'
 import { useQuotaStore } from '@/stores/quota'
 import * as quotaApi from '@/api/domains/quota'
 import * as events from '@/api/events'
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  __resetSettingsStoreForTesting()
   vi.clearAllMocks()
 })
 
@@ -117,8 +118,8 @@ function setupSession(sid: string, modelId: string): void {
 
 /** 设置 settings store 的 providers */
 function setupProviders(providers: ProviderInfo[]): void {
-  const settingsStore = useSettingsStore()
-  settingsStore.providers = providers
+  const settingsStore = getSettingsStore()
+  settingsStore.providers.value = providers
 }
 
 /** 推送 context.update 消息 */

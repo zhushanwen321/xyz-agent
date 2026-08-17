@@ -109,14 +109,22 @@ export class PluginRpcServer {
    * 处理来自 Worker 的 RPC 请求，调用对应 handler 并回复结果。
    *
    * 调用方（PluginHost）从 WorkerToHostMessage 中提取 RpcRequest 后传入。
+   * 无 id 消息（notification，如 plugin.notify 经 rpcClient.notify 发出的扁平消息）
+   * 按 JSON-RPC 语义不回包——handler 照常执行，错误记日志。
    */
   async dispatch(workerId: string, message: RpcRequest): Promise<void> {
     const worker = this.workers.get(workerId)
     if (!worker) return
 
+    // notification（无 id）：执行但不回包（JSON-RPC 2.0 语义，与 Worker 侧
+    // rpcClient.notify / 主线程侧 rpcServer.notify 对偶）
+    const isNotification = message.id === undefined || message.id === null
+
     const handler = this.methods.get(message.method)
     if (!handler) {
-      worker.postMessage({ type: 'rpc', response: this.makeErrorResponse(message.id, PluginRpcErrorCodes.METHOD_NOT_FOUND, `Method not found: ${message.method}`) })
+      if (!isNotification) {
+        worker.postMessage({ type: 'rpc', response: this.makeErrorResponse(message.id, PluginRpcErrorCodes.METHOD_NOT_FOUND, `Method not found: ${message.method}`) })
+      }
       return
     }
 
@@ -124,6 +132,12 @@ export class PluginRpcServer {
     if (this.permissionCheck) {
       const pluginId = (message.params?.pluginId as string) || 'unknown'
       if (!this.permissionCheck(pluginId, message.method)) {
+        // notification 被拒：无回包通道（JSON-RPC 语义），拒绝必须落日志——
+        // 否则插件通知静默消失，排查时无迹可循（Fix-4）
+        if (isNotification) {
+          console.warn(`[plugin-rpc-server] notification denied (PERMISSION_DENIED): plugin=${pluginId} method=${message.method}`)
+          return
+        }
         worker.postMessage({ type: 'rpc', response: this.makeErrorResponse(message.id, PluginRpcErrorCodes.PERMISSION_DENIED, `PERMISSION_DENIED: ${message.method}`) })
         return
       }
@@ -131,9 +145,16 @@ export class PluginRpcServer {
 
     try {
       const result = await handler(message.params)
-      worker.postMessage({ type: 'rpc', response: this.makeSuccessResponse(message.id, result) })
+      if (!isNotification) {
+        worker.postMessage({ type: 'rpc', response: this.makeSuccessResponse(message.id, result) })
+      }
     } catch (e: unknown) {
       const errorMessage = toErrorMessage(e)
+      if (isNotification) {
+        // notification 无回包通道，错误只能落日志
+        console.error(`[plugin-rpc-server] notification handler error (${message.method}):`, errorMessage)
+        return
+      }
       const code = (e as { code?: number })?.code ?? PluginRpcErrorCodes.INTERNAL_ERROR
       worker.postMessage({ type: 'rpc', response: this.makeErrorResponse(message.id, code, errorMessage) })
     }

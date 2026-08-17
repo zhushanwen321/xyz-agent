@@ -29,7 +29,7 @@ const delegatedProps = reactiveOmit(props, 'class')
   >
     <slot />
     <SelectIcon as-child>
-      <ChevronDown class="size-3.5 shrink-0 text-neutral-dim opacity-50 transition-transform duration-200" />
+      <ChevronDown class="size-3.5 shrink-0 text-neutral-dim opacity-50 transition-transform duration-[var(--duration)] ease-[var(--ease)]" />
     </SelectIcon>
   </SelectTrigger>
 </template>

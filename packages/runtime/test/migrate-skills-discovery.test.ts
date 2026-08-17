@@ -1,5 +1,5 @@
 /**
- * migrateSettingsSkillsToDiscovery 单测 —— ADR-0020 §1 迁移逻辑回归保护。
+ * migrateSettingsSkillsToDiscovery 单测 —— ADR-0021 §1 迁移逻辑回归保护。
  *
  * 关键场景（真实环境踩过的坑）：旧 settings.json.skills 存的是「单 skill 目录」粒度
  * （如 ~/.pi/agent/skills/anysearch），44 条去重父目录后只有 2 个容器。
@@ -73,7 +73,7 @@ describe('migrateSettingsSkillsToDiscovery', () => {
 
   it('discovery 已有有效容器 → no-op（幂等）', () => {
     const container = createSkillContainer(join(tmpDir, '.pi', 'agent', 'skills'), ['anysearch'])
-    setSkillPaths([container]) // discovery 已有有效容器
+    setSkillPaths([{ path: container, enabled: true, scope: 'global' }]) // discovery 已有有效容器
     const dirsBefore = getSkillPaths()
 
     // 即使 settings.json 有旧数据，也不应覆盖 discovery
@@ -117,15 +117,17 @@ describe('migrateSettingsSkillsToDiscovery', () => {
     expect(getSkillPaths()).toEqual([])
   })
 
-  it('readDiscovery schema guard 过滤脏数据后保持 version:1', () => {
+  it('迁移后 discovery 为 v2 结构（容器进 globalPaths）', () => {
     const container = createSkillContainer(join(tmpDir, '.pi', 'agent', 'skills'), ['s1'])
     writeFileSync(join(piAgentDir, 'settings.json'), JSON.stringify({ skills: [join(container, 's1')] }), 'utf-8')
 
     migrateSettingsSkillsToDiscovery()
 
     const d = readDiscovery()
-    expect(d.version).toBe(1)
-    expect(d.skillDirs).toHaveLength(1)
-    expect(d.agentDirs).toEqual([])
+    expect(d.version).toBe(2)
+    expect(d.skill.globalPaths).toHaveLength(1)
+    expect(d.skill.projectPaths).toEqual([])
+    expect(d.agent.projectPaths).toEqual([])
+    expect(d.agent.globalPaths).toEqual([])
   })
 })

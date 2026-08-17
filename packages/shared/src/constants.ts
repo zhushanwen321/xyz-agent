@@ -19,10 +19,6 @@ export const MAX_PORT = 65535 as const
  *  pi-subagents 通过名为 "subagent" 的 tool 执行子 agent，前端据此判定特殊渲染。 */
 export const SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set(['subagent'])
 
-/** 应在对话流中隐藏的 tool name（状态管理类 tool，其状态由 SideDrawer Tasks tab 展示）。
- *  这些 tool call 在 Block.vue 渲染时直接跳过（v-if=false），不产生 trace block。 */
-export const HIDDEN_TOOL_NAMES: ReadonlySet<string> = new Set(['todo', 'goal_control'])
-
 /** pi-subagent-workflow 扩展的 workflow tool 名集合（识别 workflow 调用用，SSOT）。
  *  workflow 扩展通过名为 "workflow" 的 tool 执行 workflow run，event-interpreter 据此
  *  捕获发起时刻（action=run → 广播 session.workflows 增量信号）。 */
@@ -48,6 +44,21 @@ export const ENV_WHITELIST_PREFIXES: readonly string[] = [
   'PATH', 'HOME', 'USER', 'LANG', 'TERM',
   'NODE_', 'NVM_', 'XYZ_', 'XDG_',
   'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP',
+  // ambient 云凭证具体变量名（spec §7）：只加具体名不整前缀（AWS_/GOOGLE_ 整前缀会
+  // 把用户生产 AWS 凭证暴露给所有 pi 子进程，最小暴露面）。GOOGLE_APPLICATION_CREDENTIALS
+  // 是文件型自定义 ADC 路径（spec §7 点名，漏掉则自定义路径检测不到）。
+  'GOOGLE_APPLICATION_CREDENTIALS', 'AWS_PROFILE',
+  'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION', 'GCLOUD_PROJECT', 'CLOUDSDK_REGION',
+]
+
+/**
+ * ambient 云凭证相关环境变量名（spec §7 / wave-env-check）。
+ * 与 ENV_WHITELIST_PREFIXES 的追加名单一致，供 shell-env.ts 回写复用（避免两处维护漂移）：
+ * GUI 启动时 LaunchServices 最小环境缺这些变量，登录 shell 有值时补齐。
+ */
+export const AMBIENT_ENV_NAMES: readonly string[] = [
+  'GOOGLE_APPLICATION_CREDENTIALS', 'AWS_PROFILE',
+  'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION', 'GCLOUD_PROJECT', 'CLOUDSDK_REGION',
 ]
 
 /** 系统提示词 replace.prompt 最大字符长度（argv 安全边界）。
@@ -68,7 +79,7 @@ export const IMAGE_LIMITS = {
 } as const
 
 /**
- * ADR-0020 §2/§3 预设可选 skill/agent 目录候选（UI 「可选目录」的固定来源）。
+ * ADR-0021 §2/§3 预设可选 skill/agent 目录候选（UI 「可选目录」的固定来源）。
  *
  * SSOT：services/skill-dir-config.ts（buildDirConfigs 读取端）与 infra/pi/discovery-store.ts
  * （setSkillDirs/setAgentDirs 写入端）共同 import 此常量，消除本地副本漂移风险。

@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import type { ExtensionItem } from '@/stores/settings'
+import type { ExtensionItem } from '@xyz-agent/core'
 
 /** mock 捕获 extension.upgrade / setAutoUpgrade 调用。vi.hoisted 保证在 vi.mock 工厂执行前就绪。 */
 const extensionMock = vi.hoisted(() => ({
@@ -33,12 +33,13 @@ const extensionMock = vi.hoisted(() => ({
   uninstall: vi.fn(() => Promise.resolve()),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   extension: extensionMock,
   default: { extension: extensionMock },
+  config: { detectSources: async () => [] },
 }))
 
-import ExtensionPage from '@/components/settings/ExtensionPage.vue'
+import ExtensionPage from '@/components/settings/extension/ExtensionPage.vue'
 import { useToast } from '@/composables/useToast'
 
 /** user-installed 扩展 fixture（source='user-installed'，应渲染升级按钮 + 自动升级开关） */
@@ -178,7 +179,7 @@ describe('ExtensionPage 候选项点击不双触发（W2 D3）', () => {
 
     expect(wrapper.text()).toContain('发现 1 个候选')
 
-    const checkboxBtn = wrapper.find('button[role="checkbox"]')
+    const checkboxBtn = wrapper.find('[data-testid="install-candidates"] button[role="checkbox"]')
     expect(checkboxBtn.exists()).toBe(true)
     // 初始未选中
     expect(checkboxBtn.attributes('data-state')).toBe('unchecked')

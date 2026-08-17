@@ -121,7 +121,7 @@ describe("subagent tool description — 行为约束器（非功能说明书）"
     // 工具描述只保留通用指引（2026-08 通用化重构）。
     expect(SUBAGENT_TOOL_SRC).toContain("available_subagents");
     // 通用化约束：不写死任何具体 agent 名（名字随 agents/*.md 动态变化）
-    expect(SUBAGENT_TOOL_SRC).not.toMatch(/orchestrator|code-reviewer|context-builder/);
+    expect(SUBAGENT_TOOL_SRC).not.toMatch(/orchestrator|code-reviewer|context-builder|worker/);
   });
 
   it("Anti-patterns 段明确 list/cancel 仍 nested（防过度泛化 flatten）", () => {

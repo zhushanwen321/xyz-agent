@@ -20,11 +20,15 @@ const apiMock = vi.hoisted(() => ({
   streamSubscribe: vi.fn((_sid: string, _handler: (msg: ServerMessage) => void) => () => {}),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   chat: {
     bash: apiMock.bash,
     abortBash: apiMock.abortBash,
     streamSubscribe: apiMock.streamSubscribe,
+  },
+  // w5：useChat 薄包装 import session.writeSegments（写 segments sidecar），测试 mock 补全
+  session: {
+    writeSegments: vi.fn().mockResolvedValue(undefined),
   },
 }))
 
@@ -34,7 +38,7 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ error: toastError }),
 }))
 
-import { useChat, resetChatModuleState } from '@/composables/features/useChat'
+import { useChat, resetChatModuleState } from '@/composables/features/chat/useChat'
 
 beforeEach(() => {
   setActivePinia(createPinia())

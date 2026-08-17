@@ -4,37 +4,47 @@ AI Agent 桌面工作台，基于 Electron + Vue 3 + Node.js Runtime 架构。
 
 通过 [pi](https://github.com/badlogic/pi-mono)（npm 包名 `@earendil-works/pi-coding-agent`）的子进程 RPC 协议与各类 AI Agent 通信，提供多 session 管理、split view、focus mode、drawer 面板等功能。
 
-> 本项目使用上游 [pi-mono](https://github.com/badlogic/pi-mono)。详见 [CLAUDE.md](CLAUDE.md)。
+> 本项目使用上游 [pi-mono](https://github.com/badlogic/pi-mono)。详见 [AGENTS.md](AGENTS.md)。
 
 ## 安装
 
-从 [Releases 页面](https://github.com/zhushanwen321/xyz-agent/releases/latest) 下载对应平台的安装包（文件名含版本号，如 `xyz-agent-0.8.44-mac-arm64.zip`）。安装后 app 内会自动检测新版本，提示一键升级。
+首次安装用以下命令。安装后 app 内会自动检测新版本，提示一键升级。
 
 ### macOS（Apple Silicon）
 
-下载 `xyz-agent-*-mac-arm64.zip` 后解压到 `/Applications`：
-
 ```bash
-unzip ~/Downloads/xyz-agent-*-mac-arm64.zip -d /Applications && open /Applications/xyz-agent.app
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/TaiJi-mac-arm64.zip -o /tmp/TaiJi.zip \
+  && unzip /tmp/TaiJi.zip -d /Applications \
+  && open /Applications/太极.app
 ```
 
-若启动时提示「已损坏」或「无法验证开发者」（浏览器下载常见），执行：
+若启动时提示「已损坏」或「无法验证开发者」，执行（curl 下载通常不需要，浏览器下载需要）：
 
 ```bash
-xattr -cr /Applications/xyz-agent.app
+xattr -cr /Applications/太极.app
 ```
 
 ### Linux
 
-下载 `xyz-agent-*-x86_64.AppImage` 后运行：
-
 ```bash
-chmod +x ~/Downloads/xyz-agent-*-x86_64.AppImage && ~/Downloads/xyz-agent-*-x86_64.AppImage
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/TaiJi-x86_64.AppImage -o ~/TaiJi.AppImage \
+  && chmod +x ~/TaiJi.AppImage \
+  && ~/TaiJi.AppImage
 ```
 
 ### Windows
 
-下载 `xyz-agent-*-setup-x64.exe` 后双击运行。
+PowerShell（用 Invoke-WebRequest，避免 curl 在 PowerShell 是别名导致的参数冲突）：
+
+```powershell
+Invoke-WebRequest -Uri "https://github.com/zhushanwen321/xyz-agent/releases/latest/download/TaiJi-setup-x64.exe" -OutFile "$env:TEMP\TaiJi-setup.exe" -UseBasicParsing; & "$env:TEMP\TaiJi-setup.exe"
+```
+
+命令提示符（cmd.exe，需系统自带 curl.exe，Win10 1803+ 默认含）：
+
+```cmd
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/TaiJi-setup-x64.exe -o "%TEMP%\TaiJi-setup.exe" && "%TEMP%\TaiJi-setup.exe"
+```
 
 ---
 
@@ -126,7 +136,7 @@ node $PW http://localhost:9222 evaluate "document.title"     # 执行 JS
 
 ## 核心功能（v3 UI）
 
-v3 前端于 2026-06 完成 L0–L4 递归骨架重建（W01–W20 视觉验收全部 PASS），冷蓝暗色设计系统（ADR-0018）。设计 SSOT 见 [docs/page-design/v3/](docs/page-design/v3/)，术语见 [领域术语表](docs/architecture/context.md#v3-ui-结构术语2026-06-重构)。
+v3 前端于 2026-06 完成冷蓝暗色设计系统重建（ADR-0019 视觉方向）。当前视觉 SSOT 见 [docs/page-design/v6-master-spec.md](docs/page-design/v6-master-spec.md)，设计演变见 [docs/design-evolution.md](docs/design-evolution.md)，术语见 [领域术语表](docs/architecture/context.md)。
 
 - **Sidebar（侧栏）** — 持久容器（非单列表），顶部 Logo + 主操作 → segmented tab（会话｜文件）互斥切换 → 子视图列表 → 底部设置/用户。透明融合于 base，支持折叠（⌘B）
 - **Workspace（工作区）** — 双 Panel 主从模式（单 Panel = 默认态，开第二 session 才 split）
@@ -240,7 +250,7 @@ xyz-agent/
 
 ## 编码规范
 
-详见 [docs/standards.md](docs/standards.md) 和 [CLAUDE.md](CLAUDE.md)。
+详见 [docs/standards.md](docs/standards.md) 和 [AGENTS.md](AGENTS.md)。
 
 关键规则摘要：
 

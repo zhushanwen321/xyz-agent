@@ -34,7 +34,7 @@ const apiMock = vi.hoisted(() => ({
   remove: vi.fn((): Promise<void> => Promise.resolve()),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   session: { create: apiMock.create, remove: apiMock.remove },
   // submitFirstMessage → useFileTree.loadTree 调 fileApi.tree/gitApi.status（Promise.allSettled）；给空返回避免 unhandled rejection
   file: { tree: vi.fn().mockResolvedValue([]), expand: vi.fn().mockResolvedValue([]) },
@@ -43,11 +43,11 @@ vi.mock('@/api', () => ({
 }))
 
 // mock useChat.send（submitFirstMessage 会调）
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({ send: vi.fn(() => Promise.resolve()), steer: vi.fn(), followUp: vi.fn(), abort: vi.fn(), compact: vi.fn() }),
 }))
 
-import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useSessionStore } from '@/stores/session'
 
 beforeEach(() => {
@@ -135,6 +135,6 @@ describe('Landing 选目录延迟 create（不预建 session）', () => {
 
     // 首发提交才 create，用 pendingCwd（/picked）而非 resolveDefaultCwd（/elsewhere）；label='hello'（≤10 原文）
     expect(apiMock.create).toHaveBeenCalledTimes(1)
-    expect(apiMock.create).toHaveBeenCalledWith('/picked', 'hello', undefined)
+    expect(apiMock.create).toHaveBeenCalledWith('/picked', 'hello', undefined, undefined)
   })
 })

@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SkillCacheScope, SkillInfo } from '@xyz-agent/shared'
 import { resolveGlobalSkillDirs, resolveProjectSkillDirs } from './skill-dirs.js'
+import type { DirScopes } from './skill-dir-config.js'
 import type { IConfigStore } from './ports/config.js'
 
 /**
@@ -30,10 +31,13 @@ import type { IConfigStore } from './ports/config.js'
  */
 export type SkillScanFn = (projectRoot: string) => Promise<SkillInfo[]>
 
-/** configStore 的窄接口（与 PiConfigStore 对齐：无参 getSkillPaths / getPiAgentDir）。 */
+/** configStore 的窄接口（与 PiConfigStore 对齐：无参 getSkillPathScopes / getPiAgentDir）。 */
 export interface SkillRegistryConfigStore {
-  /** discovery.json skillDirs（全局，无 cwd 参数）。 */
-  getSkillPaths(): string[]
+  /**
+   * discovery.json skill 的 v2 分 scope 结构（projectPaths / globalPaths）。
+   * v2：resolveGlobal/ProjectSkillDirs 直接读显式 scope，不再 isAbsolute 推断（方案 §2.5 路径 A 配套）。
+   */
+  getSkillPathScopes(): DirScopes
   /** pi agent 配置目录（~/.xyz-agent/pi/agent）。 */
   getPiAgentDir(): string
 }

@@ -8,7 +8,7 @@
  * - 最小间隔保护（10s throttle）
  * - 凭证读取（api-key 从 pi-provider-store，cookie 从 secrets 文件）
  *
- * 设计文档：docs/page-design/v3/coding-plan-quota/design.md §2.2.3
+ * 设计文档：docs/page-design/archive/v3/coding-plan-quota/design.md §2.2.3
  */
 
 import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, chmodSync } from 'node:fs'

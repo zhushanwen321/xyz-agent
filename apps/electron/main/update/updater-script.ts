@@ -30,7 +30,7 @@
 
 /** mac updater 脚本的变量替换入参 */
 export interface UpdaterScriptVars {
-  /** app bundle 路径（如 /Applications/xyz-agent.app） */
+  /** app bundle 路径（如 /Applications/太极.app） */
   appBundle: string
   /** 下载的 zip 路径 */
   zipPath: string
@@ -40,7 +40,7 @@ export interface UpdaterScriptVars {
   logPath: string
   /** update-result.json 路径（跨进程状态 SSOT） */
   resultPath: string
-  /** app 进程名（日志用，如 'xyz-agent'） */
+  /** app 进程名（日志用，如 'TaiJi'） */
   appName: string
   /** 目标版本号（写日志 + result） */
   targetVersion: string
@@ -139,7 +139,7 @@ export function buildWinInstallerArgs(installDir: string): string[] {
 // pgrep 用 APP_BUNDLE 精确路径 + grep -v "^$$\$" 排除脚本自身 PID：
 //   原 pgrep -f "{{APP_NAME}}"（"xyz-agent"）会命中 detached 脚本自身进程（其命令行
 //   `bash /Users/<u>/.xyz-agent/update/updater.sh` 含 "xyz-agent" 子串），导致 || break
-//   永不触发、循环跑满 30s。改用 {{APP_BUNDLE}}（/Applications/xyz-agent.app）后，
+//   永不触发、循环跑满 30s。改用 {{APP_BUNDLE}}（/Applications/太极.app）后，
 //   脚本命令行不含该路径，不再自匹配；grep -v "^$$\$"（$$=脚本自身 PID）做兜底。
 const MAC_UPDATER_TEMPLATE = `#!/bin/bash
 set -uo pipefail

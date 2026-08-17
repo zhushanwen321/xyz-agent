@@ -33,7 +33,10 @@ const mockHolder = vi.hoisted(() => {
   }
 })
 
-vi.mock('@/lib/ws-client', () => ({
+// §10.2 D-1 后 useConnection 迁 core：dispatcher 经 core ws-client onMessage 注册
+// （renderer lib/ws-client 是 re-export shim，mock 它不再拦截 core 内部 import）。
+// 改 mock core ws-client 叶子模块（vitest 按 alias 解析到同一模块 ID）。
+vi.mock('../../../core/src/transport/ws-client', () => ({
   connect: vi.fn(),
   disconnect: vi.fn(),
   send: vi.fn(),
@@ -59,6 +62,9 @@ vi.mock('@/lib/ipc', () => ({
 vi.mock('@/api/domains/session', () => ({
   getSubagents: vi.fn(async () => []),
   getSubagentHistory: vi.fn(async () => []),
+  // useConnection.ensureDispatcher 经 sessionApi.subscribe 注入 ports（T2 后）
+  subscribe: vi.fn(async () => {}),
+  unsubscribe: vi.fn(async () => {}),
 }))
 
 // subagent store 经 @/api 门面导入 session，需把门面 session 指回上面 mock 的 domains 命名空间，

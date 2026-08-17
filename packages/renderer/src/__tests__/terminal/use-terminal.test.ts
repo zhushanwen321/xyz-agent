@@ -6,7 +6,7 @@
  *
  * 覆盖：per-session 状态 + spawn/write/resize/kill + enqueueWrite 时序。
  * WS handler（terminal.data/alive/exit 路由）的竞态防护由 useSessionEvents + useSessionScopedState
- * 保证（ADR-0036 已测），本测试聚焦 useTerminal 的编排逻辑。
+ * 保证（ADR-0049 已测），本测试聚焦 useTerminal 的编排逻辑。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/terminal/use-terminal.test.ts
  */
@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { defineComponent, h, ref } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import type { UseTerminalReturn } from '@/composables/features/useTerminal'
+import type { UseTerminalReturn } from '@/composables/features/terminal/useTerminal'
 
 // ── mock terminalApi（隔离 RPC）────────────────────────────────────────────
 const terminalApiMock = vi.hoisted(() => ({
@@ -28,7 +28,7 @@ vi.mock('@/api/domains/terminal', () => ({
   terminalApi: terminalApiMock,
 }))
 
-import { useTerminal } from '@/composables/features/useTerminal'
+import { useTerminal } from '@/composables/features/terminal/useTerminal'
 
 /** 测试宿主组件：在 setup 内调 useTerminal，expose 返回值。 */
 function makeHost(sessionId: string | null) {
@@ -52,13 +52,14 @@ beforeEach(() => {
 })
 
 describe('useTerminal 编排逻辑', () => {
-  it('UT-1: current 在 null sid 时返回默认实例（ptyAlive=false, scrollback=[]）', () => {
+  it('UT-1: current 在 null sid 时返回默认实例（ptyAlive=false, buffer 为空）', () => {
     const Host = makeHost(null)
     const wrapper = mount(Host)
     const terminal = wrapper.vm.terminal as UseTerminalReturn
     expect(terminal.current.value).toBeTruthy()
     expect(terminal.current.value.ptyAlive).toBe(false)
-    expect(terminal.current.value.scrollback).toEqual([])
+    expect(terminal.current.value.buffer.chunks).toEqual([])
+    expect(terminal.current.value.buffer.version).toBe(0)
     wrapper.unmount()
   })
 

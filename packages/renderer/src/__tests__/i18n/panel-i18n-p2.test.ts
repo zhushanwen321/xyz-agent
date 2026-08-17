@@ -13,8 +13,8 @@ import { resolve } from 'node:path'
 import i18n, { setLocale } from '@/i18n'
 
 describe('U5: GitPanel en-US locale 显示英文按钮 + 状态 pill', () => {
-  it('Stage / Unstage / Commit 三按钮英文文案 + 源码走 t()', () => {
-    setLocale('en-US')
+  it('Stage / Unstage / Commit 三按钮英文文案 + 源码走 t()', async () => {
+    await setLocale('en-US')
     expect(i18n.global.t('panel.git.stage')).toBe('Stage')
     expect(i18n.global.t('panel.git.unstage')).toBe('Unstage')
     expect(i18n.global.t('panel.git.commit')).toBe('Commit')
@@ -28,16 +28,16 @@ describe('U5: GitPanel en-US locale 显示英文按钮 + 状态 pill', () => {
     expect(source).toContain("t('panel.git.commit')")
   })
 
-  it('状态 pill en-US 值: Clean / Staged / Dirty / Conflict', () => {
-    setLocale('en-US')
+  it('状态 pill en-US 值: Clean / Staged / Dirty / Conflict', async () => {
+    await setLocale('en-US')
     expect(i18n.global.t('panel.git.pillClean')).toBe('Clean')
     expect(i18n.global.t('panel.git.pillStaged')).toBe('Staged')
     expect(i18n.global.t('panel.git.pillDirty')).toBe('Dirty')
     expect(i18n.global.t('panel.git.pillConflict')).toBe('Conflict')
   })
 
-  it('SideDrawer 5 tab label 走 i18n key', () => {
-    setLocale('en-US')
+  it('SideDrawer 5 tab label 走 i18n key', async () => {
+    await setLocale('en-US')
     // tabTerminal / tabBrowser / tabGit / tabDoc / tabDetail key 存在且非空
     for (const k of ['tabTerminal', 'tabBrowser', 'tabGit', 'tabDoc', 'tabDetail']) {
       const label = i18n.global.t(`panel.sideDrawer.${k}`)
@@ -48,13 +48,13 @@ describe('U5: GitPanel en-US locale 显示英文按钮 + 状态 pill', () => {
 })
 
 describe('U6: Sidebar zh-CN locale + SegmentedTab 4 tab i18n', () => {
-  it('sessionList 错误态重试按钮 === \'重试\'（zh-CN）', () => {
-    setLocale('zh-CN')
+  it('sessionList 错误态重试按钮 === \'重试\'（zh-CN）', async () => {
+    await setLocale('zh-CN')
     expect(i18n.global.t('sidebar.retry')).toBe('重试')
   })
 
-  it('SegmentedTab 4 tab label 走 i18n key（subagent/workflow 已新增 key）', () => {
-    setLocale('zh-CN')
+  it('SegmentedTab 4 tab label 走 i18n key（subagent/workflow 已新增 key）', async () => {
+    await setLocale('zh-CN')
     const subagentLabel = i18n.global.t('sidebar.segmentedTab.subagent')
     const workflowLabel = i18n.global.t('sidebar.segmentedTab.workflow')
     expect(subagentLabel).toBeTruthy()

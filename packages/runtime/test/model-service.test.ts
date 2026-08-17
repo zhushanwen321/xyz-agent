@@ -13,7 +13,7 @@ import { ModelService, ModelDiscoveryError } from '../src/services/model-service
 import type { ModelDiscoveryErrorCode } from '../src/services/model-service.js'
 import type { IModelSource } from '../src/services/ports/model.js'
 import type { ISessionService, IConfigService, IMessageBroker } from '../src/interfaces.js'
-import type { ProviderInfo, ServerMessage } from '@xyz-agent/shared'
+import type { ProviderInfo, ServerMessage, ProviderId } from '@xyz-agent/shared'
 
 // ── mock 工厂 ──────────────────────────────────────────────────
 
@@ -69,7 +69,7 @@ describe('ModelService · switchModel 编排（瘦身后）', () => {
     const svc = new ModelService(modelSource)
     svc.setServices(sessionService, configService, broker)
 
-    await svc.switchModel('s1', 'anthropic', 'claude-4')
+    await svc.switchModel('s1', 'anthropic' as ProviderId, 'claude-4')
 
     expect(sessionService.switchModel).toHaveBeenCalledWith('s1', 'anthropic', 'claude-4')
   })
@@ -82,7 +82,7 @@ describe('ModelService · switchModel 编排（瘦身后）', () => {
     const svc = new ModelService(modelSource)
     svc.setServices(sessionService, configService, broker)
 
-    await svc.switchModel('s1', 'anthropic', 'claude-4')
+    await svc.switchModel('s1', 'anthropic' as ProviderId, 'claude-4')
 
     expect(configService.setDefaultModel).toHaveBeenCalledWith('anthropic', 'claude-4')
   })
@@ -95,7 +95,7 @@ describe('ModelService · switchModel 编排（瘦身后）', () => {
     const svc = new ModelService(modelSource)
     svc.setServices(sessionService, configService, broker)
 
-    await svc.switchModel('s1', 'openai', 'gpt-4')
+    await svc.switchModel('s1', 'openai' as ProviderId, 'gpt-4')
 
     const configDefaults = broadcasts.find((m) => m.type === 'config.defaults')
     expect(configDefaults).toBeDefined()
@@ -113,7 +113,7 @@ describe('ModelService · switchModel 编排（瘦身后）', () => {
     const svc = new ModelService(modelSource)
     svc.setServices(sessionService, configService, broker)
 
-    await svc.switchModel('s1', 'anthropic', 'claude-4')
+    await svc.switchModel('s1', 'anthropic' as ProviderId, 'claude-4')
 
     // ModelService 只广播 config.defaults，不广播 session.state_changed
     const types = broadcasts.map((m) => m.type)
@@ -132,7 +132,7 @@ describe('ModelService · switchModel 编排（瘦身后）', () => {
     svc.setServices(sessionService, configService, broker)
 
     // 不抛（best-effort）
-    await expect(svc.switchModel('s1', 'anthropic', 'claude-4')).resolves.toBeUndefined()
+    await expect(svc.switchModel('s1', 'anthropic' as ProviderId, 'claude-4')).resolves.toBeUndefined()
     // sessionService.switchModel 仍被调用，config.defaults 仍广播
     expect(sessionService.switchModel).toHaveBeenCalled()
     expect(broadcasts.some((m) => m.type === 'config.defaults')).toBe(true)
@@ -242,7 +242,7 @@ describe('ModelService.aggregateModels · enabled 过滤（W2 / U3）', () => {
   it('provider.enabled === false 时其下所有 model 被过滤掉', () => {
     const providers: ProviderInfo[] = [
       {
-        id: 'p1',
+        id: 'p1' as ProviderId,
         name: 'P1',
         apiKeySet: true,
         status: 'connected',
@@ -253,7 +253,7 @@ describe('ModelService.aggregateModels · enabled 过滤（W2 / U3）', () => {
         ],
       },
       {
-        id: 'p2',
+        id: 'p2' as ProviderId,
         name: 'P2',
         apiKeySet: true,
         status: 'connected',
@@ -272,7 +272,7 @@ describe('ModelService.aggregateModels · enabled 过滤（W2 / U3）', () => {
   it('model.enabled === false 时该 model 被过滤掉', () => {
     const providers: ProviderInfo[] = [
       {
-        id: 'p1',
+        id: 'p1' as ProviderId,
         name: 'P1',
         apiKeySet: true,
         status: 'connected',
@@ -294,7 +294,7 @@ describe('ModelService.aggregateModels · enabled 过滤（W2 / U3）', () => {
   it('存量 model 无 enabled 字段时默认启用（向上兼容）', () => {
     const providers: ProviderInfo[] = [
       {
-        id: 'p1',
+        id: 'p1' as ProviderId,
         name: 'P1',
         apiKeySet: true,
         status: 'connected',
@@ -316,7 +316,7 @@ describe('ModelService.aggregateModels · enabled 过滤（W2 / U3）', () => {
     // 模拟 listProviders 读回的 ProviderInfo（model 级 enabled 已透传）
     const providers: ProviderInfo[] = [
       {
-        id: 'p1',
+        id: 'p1' as ProviderId,
         name: 'P1',
         apiKeySet: true,
         status: 'connected',

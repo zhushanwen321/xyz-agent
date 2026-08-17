@@ -1,15 +1,20 @@
 /**
- * subagent store 单测 —— state / getters / actions 覆盖。
+ * subagent store 单测 —— state / getters / actions 覆盖（数据加载层）。
  *
- * 覆盖：
+ * 覆盖（U7 后保留的数据加载层）：
  * - records 初值空数组
  * - loadSubagents 成功写入 records + 失败清空
- * - clearSubagents 清空 records + 退出所有 panel overlay
- * - isViewing / getViewingSubagentId / getActiveSubagentVirtualId per-panel 隔离
- * - getCurrentSubagent 从 records 查找
+ * - clearSubagents 清空 records + 停止所有 streaming
+ * - clearSession per-session 分区释放
  * - isRunning 读 records status
- * - selectSubagent 写入 viewing 状态 + 调 setMessages 注入历史
- * - backToMain 清除 viewing + 停止 streaming/轮询
+ * - hasRunning 分区是否有 running
+ * - cancelSubagent RPC + 乐观更新
+ * - fetchAndInject fail-fast + setMessages
+ *
+ * [HISTORICAL] overlay viewing 用例（selectSubagent/backToMain/isViewing/getViewingSubagentId/
+ * getActiveSubagentVirtualId/getCurrentSubagent/per-panel getters）已随 U7 overlay 移除删除。
+ * subagent 详情现走 drawer SubagentTab（直接 fetchAndInject + subscribeStream），不经 store
+ * viewing 状态机。
  *
  * 运行：npx vitest run src/__tests__/stores/subagent.test.ts
  */
@@ -18,7 +23,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useSubagentStore } from '@/stores/subagent'
 import type { SubagentRecord, Message } from '@xyz-agent/shared'
 
-// mock sessionApi（loadSubagents / selectSubagent / cancelSubagent 内部调用）
+// mock sessionApi（loadSubagents / fetchAndInject / cancelSubagent 内部调用）
 vi.mock('@/api/domains/session', () => ({
   getSubagents: vi.fn(),
   getSubagentHistory: vi.fn(),
@@ -58,7 +63,6 @@ function makeChatMock() {
   const messages = new Map<string, Message[]>()
   return {
     applySubagentStreamDelta: vi.fn((sid: string, lines: string[]) => {
-      // 镜像 chat store 真实行为：全量替换 content + push 新 streaming（测试只需记录调用）
       const prev = messages.get(sid) ?? []
       messages.set(sid, [
         ...prev,
@@ -127,20 +131,15 @@ describe('subagent store — loadSubagents', () => {
 })
 
 describe('subagent store — clearSubagents', () => {
-  it('清空所有分区 + 退出所有 panel overlay', async () => {
-    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
+  it('清空所有分区', () => {
     const store = useSubagentStore()
-    const chat = makeChatMock()
-
-    // 预置：panel-A 正在看一个 subagent
-    store.applyRecords('session-1', [makeRecord({ status: 'done' })])
-    await store.selectSubagent('panel-A', 'session-1', 'bg-test-1-111', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
-    expect(store.isViewing('panel-A')).toBe(true)
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-a' })])
+    store.applyRecords('session-2', [makeRecord({ subagentId: 'bg-b' })])
 
     store.clearSubagents()
 
     expect(store.getRecordsBySession('session-1')).toEqual([])
-    expect(store.isViewing('panel-A')).toBe(false)
+    expect(store.getRecordsBySession('session-2')).toEqual([])
   })
 })
 
@@ -159,53 +158,6 @@ describe('subagent store — clearSession (per-session 分区释放)', () => {
   it('清除不存在的 sid 分区是 no-op', () => {
     const store = useSubagentStore()
     expect(() => store.clearSession('never')).not.toThrow()
-  })
-})
-
-describe('subagent store — per-panel getters', () => {
-  it('isViewing per-panel 隔离', async () => {
-    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
-    const store = useSubagentStore()
-    const chat = makeChatMock()
-
-    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
-
-    expect(store.isViewing('panel-A')).toBe(true)
-    expect(store.isViewing('panel-B')).toBe(false)
-  })
-
-  it('getViewingSubagentId 返回当前查看的 subagentId', async () => {
-    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
-    const store = useSubagentStore()
-    const chat = makeChatMock()
-
-    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
-
-    expect(store.getViewingSubagentId('panel-A')).toBe('bg-1')
-    expect(store.getViewingSubagentId('panel-B')).toBeNull()
-  })
-
-  it('getActiveSubagentVirtualId 返回虚拟 session ID', async () => {
-    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
-    const store = useSubagentStore()
-    const chat = makeChatMock()
-
-    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
-
-    expect(store.getActiveSubagentVirtualId('panel-A', 'session-1')).toBe('subagent:session-1:bg-1')
-  })
-
-  it('getCurrentSubagent 从 mainSession 分区查找当前查看的记录', async () => {
-    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
-    const store = useSubagentStore()
-    const chat = makeChatMock()
-    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-target', agent: 'worker' })])
-
-    await store.selectSubagent('panel-A', 'session-1', 'bg-target', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
-
-    const record = store.getCurrentSubagent('panel-A', 'session-1')
-    expect(record?.agent).toBe('worker')
-    expect(store.getCurrentSubagent('panel-B', 'session-1')).toBeNull()
   })
 })
 
@@ -253,8 +205,8 @@ describe('subagent store — hasRunning', () => {
   })
 })
 
-describe('subagent store — selectSubagent', () => {
-  it('调 getSubagentHistory + setMessages 注入历史', async () => {
+describe('subagent store — fetchAndInject（drawer SubagentTab 数据加载入口）', () => {
+  it('调 getSubagentHistory + setMessages 注入历史到三段式虚拟 id', async () => {
     const fakeHistory: Message[] = [
       { id: 'm1', role: 'user', content: 'hello', timestamp: 1 },
     ]
@@ -262,41 +214,22 @@ describe('subagent store — selectSubagent', () => {
     const store = useSubagentStore()
     const chat = makeChatMock()
 
-    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
+    await store.fetchAndInject('session-1', 'bg-1', chat.setMessages)
 
     expect(sessionApi.getSubagentHistory).toHaveBeenCalledWith('session-1', 'bg-1')
     expect(chat.setMessages).toHaveBeenCalledWith('subagent:session-1:bg-1', fakeHistory)
   })
 
-  it('getSubagentHistory 失败时 fail-fast throw（调用方负责 catch + 回滚）', async () => {
+  it('getSubagentHistory 失败时 fail-fast throw（调用方负责 catch + 显示错误态）', async () => {
     vi.mocked(sessionApi.getSubagentHistory).mockRejectedValue(new Error('network'))
     const store = useSubagentStore()
     const chat = makeChatMock()
 
-    // W2/M5 fail-fast 契约：selectSubagent → fetchAndInject 不静默注入空数组，
-    // 错误上抛由调用方（onSelectSubagent）catch + toast + backToMain 回滚。
-    await expect(
-      store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages),
-    ).rejects.toThrow('network')
+    // W2/M5 fail-fast 契约：drawer SubagentTab 负责捕获 + 显示错误态 + 重试入口
+    await expect(store.fetchAndInject('session-1', 'bg-1', chat.setMessages)).rejects.toThrow('network')
 
     // 失败时不应注入历史（避免用户看到空对话流，无重试入口）
     expect(chat.setMessages).not.toHaveBeenCalled()
-  })
-})
-
-describe('subagent store — backToMain', () => {
-  it('清除 viewing 状态', async () => {
-    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
-    const store = useSubagentStore()
-    const chat = makeChatMock()
-
-    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
-    expect(store.isViewing('panel-A')).toBe(true)
-
-    store.backToMain('panel-A')
-
-    expect(store.isViewing('panel-A')).toBe(false)
-    expect(store.getViewingSubagentId('panel-A')).toBeNull()
   })
 })
 

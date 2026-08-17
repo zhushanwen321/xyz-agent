@@ -28,7 +28,8 @@ function makeDescriptor(overrides: Partial<PluginDescriptor> = {}): PluginDescri
     permissions: [],
     engines: { 'xyz-agent': '*' },
     pluginPath: '/tmp/test-plugin',
-    source: 'external',
+    // 默认 built-in：依赖排序机制测试与激活锁（IF3）正交，锁只拦 external。
+    source: 'built-in',
     extensionDependencies: [],
     ...overrides,
   }

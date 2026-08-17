@@ -34,25 +34,43 @@ export async function list(): Promise<SessionGroup[]> {
  * presetId：session 创建时锁定的 pi 启动预设 id（设计文档 §4.1），透传给 runtime。
  * reply envelope 是 { session }，解包 .session。
  */
-export async function create(cwd?: string, label?: string, presetId?: string): Promise<SessionSummary> {
-  const payload: { cwd?: string; label?: string; presetId?: string } = {}
+export async function create(cwd?: string, label?: string, presetId?: string, projectId?: string): Promise<SessionSummary> {
+  const payload: { cwd?: string; label?: string; presetId?: string; projectId?: string } = {}
   if (cwd !== undefined) payload.cwd = cwd
   if (label !== undefined) payload.label = label
   if (presetId !== undefined) payload.presetId = presetId
+  // D14 语义修正（2026-08-04）：创建时归属当前 activeProject（空 = 默认项目兑底）。
+  if (projectId !== undefined) payload.projectId = projectId
   const reply = await command('session.create', payload)
   return reply.session
 }
 
 /** 切换到指定 session（id 无效时由 runtime/pending reject） */
-export function switchSession(sessionId: string): Promise<void> {
-  return command('session.switch', { sessionId })
+export async function switchSession(sessionId: string): Promise<void> {
+  // wave:perf-w20（R-11）：switch reply 拆分为 session.switched（无 messages），调用方
+  // 本就丢弃 reply——await 显式丢弃（Promise<session.switched> 不能直接 return 给 Promise<void>）。
+  await command('session.switch', { sessionId })
+}
+
+/**
+ * 恢复（重开）指定 session：runtime 重新 spawn pi 进程并载入历史对话（session-lifecycle.restoreSession）。
+ *
+ * 与 switchSession 的区别：switchSession 切换到内存中已存在的 session（若不存在则隐式 restore）；
+ * restoreSession 显式触发 restore（重新 spawn pi），语义独立、不依赖 getSummary 副作用判断。
+ *
+ * reply 复用 session.created（{ session: SessionSummary }），解包 .session。
+ * 错误码：MODEL_NOT_CONFIGURED / SESSION_NOT_FOUND / RESTORE_FAILED（runtime 侧 sendError）。
+ */
+export async function restoreSession(sessionId: string): Promise<SessionSummary> {
+  const reply = await command('session.restore', { sessionId })
+  return reply.session
 }
 
 /**
  * Fork session：从 srcSessionId 截断到 fromPiEntryId，创建新 session（独立 pi 进程）。
  * reply 复用 session.created，解包 .session。
  *
- * Staging Mode（ADR-0043）：modelOverride/thinkingOverride 来自 composer 暂存态，
+ * Staging Mode（ADR-0056）：modelOverride/thinkingOverride 来自 composer 暂存态，
  * 优先于源 session preset 的对应字段。
  */
 export async function fork(
@@ -104,6 +122,14 @@ export function getContext(
 /** 重命名 session（label 更新） */
 export function rename(sessionId: string, label: string): Promise<void> {
   return command('session.rename', { sessionId, name: label })
+}
+
+/**
+ * 手动归类（D14 语义修正）：写 session 归属 project 到 sidecar（SessionItem「归入项目」菜单）。
+ * projectId 空串 = 归回默认项目（runtime 删除绑定）。
+ */
+export function setProject(sessionId: string, projectId: string): Promise<void> {
+  return command('session.setProject', { sessionId, projectId })
 }
 
 /** 删除 session（从列表移除） */
@@ -200,7 +226,7 @@ export function subagentAction(
  * reply sanitize 后拼到 handoff prompt 末尾告知 agent 下一 session 关注点。完成经独立通道 session.handoffComplete 广播（effect 层订阅跳转），
  * reply 是 message.status ack（前端不读 payload，等广播）。
  *
- * Staging Mode（ADR-0043）：modelOverride/thinkingOverride 来自 composer 暂存态的模型选择，
+ * Staging Mode（ADR-0056）：modelOverride/thinkingOverride 来自 composer 暂存态的模型选择，
  * 用于新 session 创建（源 session turn 仍用源 session 自身模型，不受 override 影响）。
  */
 export function handoff(
@@ -256,4 +282,30 @@ export async function subscribe(
  */
 export function unsubscribe(sessionId: string): Promise<void> {
   return command('session.unsubscribe', { sessionId })
+}
+
+// ── wave:runtime-patch ipc-converge-a3 W2：业务持久化写（从 main IPC 迁 WS）──
+/** 写入粘贴截图（base64→attachments/tmpdir）。安全校验在 runtime sessionService.writeImage */
+export function writeImage(payload: {
+  sessionId: string
+  base64: string
+  mimeType: string
+  name: string
+}): Promise<{ path: string; fileName: string; displayName: string; id: string; persisted: boolean }> {
+  return command('session.writeImage', payload)
+}
+/** 迁移 landing tmpdir 图片到 attachments。安全校验在 runtime sessionService.migrateImage */
+export function migrateImage(payload: {
+  fromPath: string
+  sessionId: string
+  fileName: string
+}): Promise<{ path: string }> {
+  return command('session.migrateImage', payload)
+}
+/** 追加/覆盖 segments.json sidecar（atomic 写） */
+export async function writeSegments(payload: {
+  sessionId: string
+  entry: import('@xyz-agent/shared').SegmentsMetadataEntry
+}): Promise<void> {
+  await command('session.writeSegments', payload)
 }

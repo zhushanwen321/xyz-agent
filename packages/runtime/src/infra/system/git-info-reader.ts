@@ -24,17 +24,19 @@ export class GitInfoReader implements IGitInfoReader {
     const cached = gitInfoCache.get(cwd)
     if (cached && (now - cached.ts) < CACHE_TTL_MS) return cached.info
 
-    // Evict oldest entries if cache is at capacity
+    // Evict oldest entry if cache is at capacity —— O(1)：JS Map 迭代序 = 插入序，
+    // 过期重写路径（下方 delete+set）保证「迭代序 = 最后写入时间升序」不变量，
+    // 故 first key 恒为 ts 最小（最久未重算）条目，与原 O(n) 扫描 ts 最小的语义精确等价（perf 微项 10）。
+    // 已知边界（W16 审查 Fix-8）：该不变量以 Date.now 单调为前提，时钟回拨下 first-key 驱逐可能
+    // 非最旧——5min TTL 窗口内秒级回拨的影响可忽略，不做补偿。
     if (gitInfoCache.size >= CACHE_MAX_SIZE) {
-      let oldestKey: string | null = null
-      let oldestTs = Infinity
-      for (const [key, val] of gitInfoCache) {
-        if (val.ts < oldestTs) { oldestTs = val.ts; oldestKey = key }
-      }
-      if (oldestKey) gitInfoCache.delete(oldestKey)
+      const oldest = gitInfoCache.keys().next().value
+      if (oldest !== undefined) gitInfoCache.delete(oldest)
     }
 
     const info = readGitInfoUncached(cwd)
+    // 过期重写先 delete 再 set：把条目移到 Map 尾部，维持上述不变量（set 对已有 key 不换位）
+    gitInfoCache.delete(cwd)
     gitInfoCache.set(cwd, { info, ts: now })
     return info
   }
@@ -75,4 +77,9 @@ function readGitInfoUncached(cwd: string): GitInfo | undefined {
   } catch {
     return undefined
   }
+}
+
+/** 测试隔离用：重置模块级缓存（@internal，仅供单测 beforeEach 调，与 workspace-detector 的 __resetBareCacheForTests 同范式）。 */
+export function __resetGitInfoCacheForTests(): void {
+  gitInfoCache.clear()
 }

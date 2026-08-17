@@ -28,10 +28,13 @@ describe('command store', () => {
     store.applyCommands('s1', RAW)
     const cmds = store.getCommands('s1')
     expect(cmds).toHaveLength(4)
-    expect(cmds[0]).toEqual({ id: '/commit', name: '/commit', kind: 'extension', icon: 'terminal', description: '提交改动' })
+    // builtin keys 命中优先：/commit 在 BUILTIN_COMMAND_ICON_KEYS（专属 icon），extension 推断不覆盖
+    expect(cmds[0]).toEqual({ id: '/commit', name: '/commit', kind: 'extension', icon: 'commit', description: '提交改动' })
+    // 非 builtin keys 的 extension 命令 → terminal（source 推断）
+    expect(cmds[1]).toEqual({ id: '/review', name: '/review', kind: 'extension', icon: 'terminal', description: '代码审查' })
     expect(cmds[2]).toEqual({ id: '/fix', name: '/fix', kind: 'skill', icon: 'star', description: '修复问题' })
-    // builtin 默认 wrench，无 description
-    expect(cmds[3]).toEqual({ id: '/compact', name: '/compact', kind: 'builtin', icon: 'wrench', description: undefined })
+    // builtin 命中专属 icon key（compact 在 BUILTIN_COMMAND_ICON_KEYS），无 description
+    expect(cmds[3]).toEqual({ id: '/compact', name: '/compact', kind: 'builtin', icon: 'compact', description: undefined, sourceInfo: undefined })
   })
 
   it('getCommands 未知 session → 空数组（不写入 Map）', () => {
@@ -70,7 +73,8 @@ describe('command store', () => {
   it('findCommandByName 精确匹配（用户气泡 chip 解析用）', () => {
     const store = useCommandStore()
     store.applyCommands('s1', RAW)
-    expect(store.findCommandByName('s1', '/commit')?.icon).toBe('terminal')
+    // /commit 在 BUILTIN_COMMAND_ICON_KEYS（专属 icon），命中优先于 extension source 推断
+    expect(store.findCommandByName('s1', '/commit')?.icon).toBe('commit')
     expect(store.findCommandByName('s1', '/fix')?.icon).toBe('star')
     expect(store.findCommandByName('s1', '/nonexistent')).toBeUndefined()
   })

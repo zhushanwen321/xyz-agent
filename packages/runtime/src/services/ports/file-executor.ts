@@ -20,6 +20,16 @@ export interface FsEntry {
 }
 
 /**
+ * listDir 选项（D7-3，05-scan-caching §3.3）。
+ * withSize 默认 true（文件树路径保持 size——FileTreeRow untracked `~size` 降级显示依赖）；
+ * searchFiles 传 false：非 symlink 的 file entry 免 per-file stat（size 缺省 undefined，
+ * searchFiles 结果无 size 消费方，语义无损）。
+ */
+export interface ListDirOptions {
+  withSize?: boolean
+}
+
+/**
  * fs 访问 port。
  *
  * 实现约束（infra/fs-executor.ts）：
@@ -32,10 +42,21 @@ export interface FsEntry {
  * - EACCES → reject Error(code='EACCES')，FileService 转 FileError('permission_denied')。
  */
 export interface IFileExecutor {
-  /** 列目录单层子（不递归）。超时/EACCES → reject Error。 */
-  listDir(path: string): Promise<FsEntry[]>
-  /** 取文件/目录 stat。 */
-  stat(path: string): Promise<{ type: 'dir' | 'file'; size: number }>
+  /**
+   * 列目录单层子（不递归）。超时/EACCES → reject Error。
+   * opts.withSize=false（D7-3）：非 symlink 的 file entry 免 per-file stat，size 缺省；
+   * symlink entry 仍 stat（坏 symlink ELOOP/ENOENT 跳过的语义与 withSize=true 一致）。
+   * 成员一致性口径（审查修正）：常规情形成员一致；stat 失败竞态（readdir 与 stat 间隙
+   * 文件被删）下 withSize=false 更宽容——收录 readdir 时刻存在的文件，withSize=true
+   * 会因 stat ENOENT 跳过。searchFiles 结果集成员仅在此竞态窗口可能不同。
+   */
+  listDir(path: string, opts?: ListDirOptions): Promise<FsEntry[]>
+  /**
+   * 取文件/目录 stat。
+   * mtimeMs（D7-1 matcher 缓存键成分）：node:fs Stats.mtimeMs 透传，FileService 用作
+   * .gitignore 编译结果的文件身份戳（mtime/size 变化 → 缓存 miss 重读重编译）。
+   */
+  stat(path: string): Promise<{ type: 'dir' | 'file'; size: number; mtimeMs: number }>
   /** 读文件内容（utf-8）。 */
   readFile(path: string): Promise<string>
 }

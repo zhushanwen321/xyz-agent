@@ -56,7 +56,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { GitFork, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import type { BranchChangeKind } from '@/composables/features/useForkBranchNotify'
+import type { BranchChangeKind } from '@/composables/features/fork-handoff/useForkBranchNotify'
 
 const { t } = useI18n()
 

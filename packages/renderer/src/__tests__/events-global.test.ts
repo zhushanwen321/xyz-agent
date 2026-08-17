@@ -41,3 +41,48 @@ describe('events 全局通道', () => {
     off()
   })
 })
+
+describe('events crossSession 通道（ADR-0060）', () => {
+  it('onCrossSession 注册后，dispatchCrossSession 触发 handler，off 后不再触发', () => {
+    const seen: string[] = []
+    const off = events.onCrossSession((msg) => seen.push(msg.type))
+    events.dispatchCrossSession({ type: 'extension:widget', payload: { sessionId: 's1' } })
+    expect(seen).toEqual(['extension:widget'])
+    off()
+    events.dispatchCrossSession({ type: 'extension:widget', payload: { sessionId: 's1' } })
+    expect(seen).toEqual(['extension:widget'])
+  })
+
+  it('dispatchCrossSession 不触发 global/session handler（通道隔离）', () => {
+    let globalHit = false
+    let sessionHit = false
+    const offG = events.onGlobal(() => {
+      globalHit = true
+    })
+    const offS = events.on('s1', () => {
+      sessionHit = true
+    })
+    events.dispatchCrossSession({ type: 'extension:widget', payload: { sessionId: 's1' } })
+    expect(globalHit).toBe(false)
+    expect(sessionHit).toBe(false)
+    offG()
+    offS()
+  })
+
+  it('dispatchSession/dispatchGlobal 不触发 crossSession handler（反向隔离）', () => {
+    let crossHit = false
+    const off = events.onCrossSession(() => {
+      crossHit = true
+    })
+    events.dispatchSession('s1', { type: 'extension:widget', payload: { sessionId: 's1' } })
+    events.dispatchGlobal({ type: 'config.providers', payload: {} })
+    expect(crossHit).toBe(false)
+    off()
+  })
+
+  it('无订阅者时 dispatchCrossSession 不抛（no-op）', () => {
+    expect(() =>
+      events.dispatchCrossSession({ type: 'extension:widget', payload: { sessionId: 's1' } }),
+    ).not.toThrow()
+  })
+})

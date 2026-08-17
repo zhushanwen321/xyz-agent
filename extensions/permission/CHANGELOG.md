@@ -1,5 +1,25 @@
 # @zhushanwen/pi-permission
 
+## 1.3.0
+
+### Minor Changes
+
+- 07b5a813d: Drop pi-statusline integration; resolve AST wasm in bundled mode; unify agent-dir resolution
+
+  The optional `@zhushanwen/pi-statusline` peer dependency is removed along with the statusline footer integration (the statusline extension is deprecated and no longer maintained). The footer provider keeps an optional reflective handshake and silently no-ops when no statusline host is present, so nothing breaks when both sides coexist at different versions.
+
+  `resolveWasmPaths()` gains a bundled mode: when the extension runs from an esbuild bundle (web-tree-sitter inlined, no `node_modules` beside the entry), the tree-sitter wasm files are resolved from the entry file's own directory; the previous `require.resolve` path remains as the development fallback. Both wasm files must be present before the bundled path is used, keeping the AST layer fail-closed.
+
+  Agent-dir resolution now uses `getAgentDir()` exported by `@earendil-works/pi-coding-agent` instead of a local re-implementation: config path, `models.json` lookup and user-facing messages (rule editor hint, model picker hint) all derive from it, so `PI_CODING_AGENT_DIR` overrides apply consistently. The internal `agentDir()` helper is no longer exported from the classifier barrel.
+
+  Impact for consumers: code importing `agentDir` from the classifier module must switch to `getAgentDir()` from the pi SDK; headless-mode messages now print the effective config path instead of a hardcoded `~/.pi/agent` one.
+
+## Unreleased
+
+### Breaking Changes
+
+- **移除 statusline peerDependency（breaking）**：`@zhushanwen/pi-statusline` 已废弃删除（commit 53a2eb8c2），permission 的 peerDependencies 不再声明该包，footer 不再显示 permission mode 标签。footer-provider 握手代码保留但 statusline 缺失时静默 no-op，权限功能不受影响；查看/切换 mode 用 `/permission status`。
+
 ## 1.2.0
 
 ### Minor Changes

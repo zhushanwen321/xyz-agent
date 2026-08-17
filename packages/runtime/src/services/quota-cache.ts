@@ -29,6 +29,17 @@ export interface QuotaCacheFile {
 
 export class QuotaCache {
   private filePath: string
+  /**
+   * 内存镜像（微项 11 quota 缓存内存层，00 §5 微项表「quota 缓存加内存层」）。
+   *
+   * getEntry 命中内存零磁盘读（hover 浮层反复 getCached 不再每次 readFileSync 整个
+   * quota-cache.json）；null = 未加载。镜像与磁盘的一致性维护：
+   *   - 首次 getEntry / 内存 miss → 从磁盘 read() 加载
+   *   - doUpdate 读磁盘（保持跨实例「读-改-写」合并语义不变）写盘成功后同步为合并结果
+   * 内存 miss 回退磁盘重载（可见性口径：仅 miss 时重载磁盘——外部写入对已缓存 provider
+   * 不可见，直到 update() 同步内存镜像或进程重启；改造前每次读磁盘，缓存命中零读为收益）。
+   */
+  private memoryCache: QuotaCacheFile | null = null
 
   constructor(dataDir: string) {
     this.filePath = join(dataDir, CACHE_FILENAME)
@@ -52,10 +63,22 @@ export class QuotaCache {
     }
   }
 
-  /** 读取单个 provider 的缓存。 */
+  /** 读取单个 provider 的缓存（内存层优先，命中零磁盘读）。 */
   getEntry(providerId: string): QuotaCacheEntry | null {
-    const cache = this.read()
-    return cache.providers[providerId] ?? null
+    let cache = this.memoryCache
+    if (!cache) {
+      cache = this.read()
+      this.memoryCache = cache
+    }
+    const entry = cache.providers[providerId]
+    if (entry) return entry
+    // 内存 miss：重载一次内存镜像（读失败返回空对象不抛）。
+    // 可见性口径（审查修正）：仅内存 miss 时重载磁盘——外部写入对已缓存 provider 不可见，
+    // 直到 update() 同步内存镜像或进程重启；未缓存 provider 的 miss 重载可见磁盘最新。
+    // 单次重载后仍 miss = provider 确实无缓存，下次查询重复此路径；存在的 provider 恒命中
+    // 内存零读（微项 11 收益点）。
+    this.memoryCache = this.read()
+    return this.memoryCache.providers[providerId] ?? null
   }
 
   /**
@@ -107,6 +130,9 @@ export class QuotaCache {
       const tmpPath = `${this.filePath}.tmp`
       writeFileSync(tmpPath, JSON.stringify(cache, null, CACHE_INDENT), 'utf-8')
       renameSync(tmpPath, this.filePath)
+      // 写盘成功同步内存镜像：此后 getEntry 命中内存零磁盘读，且与磁盘逐字节一致。
+      // （写盘失败时不更新内存——内存仍反映最近一次成功持久化的数据，下次 update 重试。）
+      this.memoryCache = cache
     } catch (err) {
       // 失败不删除旧缓存，只 log（架构约定 #4 落盘）
       const msg = err instanceof Error ? err.message : String(err)

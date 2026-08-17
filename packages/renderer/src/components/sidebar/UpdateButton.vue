@@ -21,7 +21,7 @@
         >
           <ArrowUp class="size-3" />
           <!-- 红点角标（与 SegmentedTab.vue:27-30 同范式） -->
-          <span class="absolute right-0 top-0 size-[5px] rounded-full bg-danger" data-testid="update-badge" />
+          <span class="absolute right-0 top-0 size-[7px] rounded-full bg-danger" data-testid="update-badge" />
         </Button>
       </HoverCardTrigger>
       <HoverCardContent side="top" class="release-notes-content max-h-[360px] w-[360px] overflow-auto p-4 text-[12px] text-neutral-fg">
@@ -55,7 +55,7 @@
         :aria-label="t('sidebar.update.downloading', { percent: state.percent })"
       >
         <span
-          class="block h-full rounded-full bg-accent transition-all"
+          class="block h-full rounded-full bg-accent transition-[width,background-color]"
           :style="{ width: `${state.percent}%` }"
         />
       </span>
@@ -169,7 +169,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
-import { useAppUpdate } from '@/composables/features/useAppUpdate'
+import { useAppUpdate } from '@/composables/features/settings/useAppUpdate'
 
 const { t } = useI18n()
 const { state, performDownload, performInstall, openFallbackUrl } = useAppUpdate()
@@ -350,18 +350,20 @@ function onRetry(): void {
   margin: 0.8em 0;
 }
 
-/* shiki 双主题切换（与 MarkdownRenderer 一致） */
-.release-notes-markdown :deep(.shiki) {
-  background-color: var(--shiki-dark-bg) !important;
-}
+/* shiki 双主题切换（与 MarkdownRenderer 一致，min-dark/min-light 透明底）。
+   [HISTORICAL] 亮色规则曾写 :global([data-theme="light"]) X :deep(Y)，Vue scoped 编译
+   退化成裸 [data-theme="light"]，亮色切换从未生效。修复：整条选择器包进 :global。
+   代码块底色由下方 .release-notes-markdown .md-codeblock pre.shiki 的 --bg-input 提供。 */
 .release-notes-markdown :deep(.shiki span) {
   color: var(--shiki-dark);
 }
 
-:global([data-theme="light"]) .release-notes-markdown :deep(.shiki) {
-  background-color: var(--shiki-light-bg) !important;
-}
-:global([data-theme="light"]) .release-notes-markdown :deep(.shiki span) {
+:global([data-theme="light"] .release-notes-markdown .shiki span) {
   color: var(--shiki-light);
+}
+
+/* release notes 代码块：背景跟随主题 token（--bg-input 凹陷容器语义） */
+.release-notes-markdown :deep(.md-codeblock pre.shiki) {
+  background: var(--bg-input);
 }
 </style>

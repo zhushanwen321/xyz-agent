@@ -468,11 +468,14 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
     return getUpdateSettings()
   })
 
-  // ── update:setSettings（保存升级设置）──────────────────────────
-  ipcMain.handle('update:setSettings', async (_event, settings: UpdateSettings) => {
-    // 基本类型校验
-    if (typeof settings.preDownload !== 'boolean') {
+  // ── update:setSettings（保存升级设置，局部更新：只传要修改的字段）──
+  ipcMain.handle('update:setSettings', async (_event, settings: Partial<UpdateSettings>) => {
+    // 逐字段类型校验：传了的字段必须是 boolean（缺失 = 不更新该字段）
+    if (settings.preDownload !== undefined && typeof settings.preDownload !== 'boolean') {
       throw new Error('Invalid settings: preDownload must be boolean')
+    }
+    if (settings.autoUpdate !== undefined && typeof settings.autoUpdate !== 'boolean') {
+      throw new Error('Invalid settings: autoUpdate must be boolean')
     }
     setUpdateSettings(settings)
     return { success: true }

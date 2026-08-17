@@ -15,12 +15,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { SessionSummary } from '@xyz-agent/shared'
 
 // 捕获 transport.send 收到的消息（含 payload 形状）
+// （send 返回 true = 消息已送出，符合 transport.send 的 boolean 契约：
+// request.command 对 send false 会走 fast-fail reject）
 const transportMock = vi.hoisted(() => {
   const sent: Array<{ type: string; id: string; payload: Record<string, unknown> }> = []
   return {
     sent,
-    send: vi.fn((msg: { type: string; id: string; payload: Record<string, unknown> }) => {
+    send: vi.fn((msg: { type: string; id: string; payload: Record<string, unknown> }): boolean => {
       sent.push(msg)
+      return true
     }),
   }
 })
@@ -31,6 +34,7 @@ vi.mock('@/api/pending', () => ({
   register: vi.fn(() =>
     Promise.resolve({ session: { id: 's1', cwd: '/x', status: 'idle' } as SessionSummary }),
   ),
+  reject: vi.fn(),
 }))
 
 import { create } from '@/api/domains/session'

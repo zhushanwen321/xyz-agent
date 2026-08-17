@@ -3,7 +3,7 @@
  * （#1+#3+#4+#5，需求修正后「统一延迟 create」语义）。
  *
  * 集成边界：mock 最外层 @/api（session.create/remove）+ lib/ipc（pickDirectory）+
- * @/composables/features/useChat（chat.send），真用 useSessionStore/usePanelStore/
+ * @/composables/features/chat/useChat（chat.send），真用 useSessionStore/usePanelStore/
  * useNavigationStore/resolveDefaultCwd。验证跨层数据流。
  *
  * 需求修正后的新语义（真相源）：
@@ -61,7 +61,7 @@ const migrateCtrl = vi.hoisted(() => ({
   migrateSessionImage: vi.fn().mockResolvedValue(undefined),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   session: {
     create: createCtrl.create,
     remove: createCtrl.remove,
@@ -70,6 +70,8 @@ vi.mock('@/api', () => ({
     getCommands: vi.fn().mockResolvedValue({ commands: [] }),
     getSubagents: vi.fn().mockResolvedValue([]),
     getWorkflows: vi.fn().mockResolvedValue([]),
+    // wave:runtime-patch W2：migrateImage 走 @/api（从 @/lib/ipc 迁来）。默认 resolve(undefined)（非迁移路径）。
+    migrateImage: migrateCtrl.migrateSessionImage,
   },
   // submitFirstMessage → useFileTree.loadTree 调 fileApi.tree/gitApi.status（Promise.allSettled）；
   // 给空返回避免 unhandled rejection
@@ -80,10 +82,9 @@ vi.mock('@/api', () => ({
 }))
 vi.mock('@/lib/ipc', () => ({
   pickDirectory: pickCtrl.pickDirectory,
-  migrateSessionImage: migrateCtrl.migrateSessionImage,
 }))
 // submitFirstMessage 终端调用 useChat.send；mock 掉避免拖入 chat 订阅机制（useChat 自有单测）
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => chatMock,
 }))
 
@@ -99,13 +100,14 @@ vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: vi.fn(() => workspaceStoreMock),
 }))
 
-import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useNewTaskFlow, resetNewTaskFlow, __resetNewTaskFlowForTesting } from '@/composables/features/new-task/useNewTaskFlow'
 import { useSessionStore } from '@/stores/session'
 import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  __resetNewTaskFlowForTesting() // 壳单例捕获的 store 引用随 pinia 重建失效
   resetNewTaskFlow()
   vi.clearAllMocks()
   createCtrl.remove.mockResolvedValue(undefined)
@@ -262,7 +264,7 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     await flow.submitFirstMessage(textToSegments('hello world'))
 
     // create 用 workspaceStore.defaultCwd（最近工作区 cwd=/repo）；label=提示词前10字（'hello world' 11 字符 → 截断+省略号）
-    expect(createCtrl.create).toHaveBeenCalledWith('/repo', 'hello worl…', undefined)
+    expect(createCtrl.create).toHaveBeenCalledWith('/repo', 'hello worl…', undefined, undefined)
     expect(session.activeId).toBe('new-1') // activeId 绑定
     expect(session.list.map((s) => s.id)).toContain('new-1') // appendSession 入组
     // panel 载入 active panel
@@ -270,7 +272,7 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     // navigation push chat view
     expect(navigation.current.view).toBe('chat')
     expect(navigation.current.sessionId).toBe('new-1')
-    // chat.send 被调用（显式 sid + segments 原样透传，ADR-0037）
+    // chat.send 被调用（显式 sid + segments 原样透传，ADR-0043）
     expect(chatMock.send).toHaveBeenCalledWith('new-1', textToSegments('hello world'))
     expect(flow.state.value).toBe('completed')
   })
@@ -288,7 +290,7 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     await flow.submitFirstMessage(textToSegments('go'))
 
     // create 用 pendingCwd（/picked），而非 workspaceStore.defaultCwd（/last-repo）；label='go'（≤10 原文）
-    expect(createCtrl.create).toHaveBeenCalledWith('/picked', 'go', undefined)
+    expect(createCtrl.create).toHaveBeenCalledWith('/picked', 'go', undefined, undefined)
   })
 
   it('cwd 来源：无 pendingCwd 时用 workspaceStore.defaultCwd', async () => {
@@ -302,7 +304,7 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     await flow.submitFirstMessage(textToSegments('go'))
 
     // create 用 workspaceStore.defaultCwd（最近活跃 cwd=/last-repo）；label='go'（≤10 原文）
-    expect(createCtrl.create).toHaveBeenCalledWith('/last-repo', 'go', undefined)
+    expect(createCtrl.create).toHaveBeenCalledWith('/last-repo', 'go', undefined, undefined)
   })
 
   it('重试场景（currentSession 已存在）→跳过 create 直接 send', async () => {
@@ -378,7 +380,7 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     await flow.submitFirstMessage(imageSegments)
 
     // 纯图无 text：label 走 deriveSessionLabel('') 兜底为「无提示词」
-    expect(createCtrl.create).toHaveBeenCalledWith('/repo', '无提示词', undefined)
+    expect(createCtrl.create).toHaveBeenCalledWith('/repo', '无提示词', undefined, undefined)
     expect(chatMock.send).toHaveBeenCalledWith('img-only', imageSegments)
     expect(flow.state.value).toBe('completed')
   })
@@ -444,9 +446,10 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     const sentSegments = chatMock.send.mock.calls[0][1] as Segment[]
     expect(sentSegments[0]).toMatchObject({ type: 'image', path: '/tmp/img1.png' })
     expect(sentSegments[1]).toMatchObject({ type: 'image', path: '/dataDir/attachments/mig-fail/img2.png' })
-    // 失败项 console.warn（allSettled 硬规则不阻断）
+    // 失败项 console.warn（allSettled 硬规则不阻断）。
+    // w5（C-W5-2）：创建分支的迁移下沉 core createSessionFlow，warn 前缀从 [useNewTaskFlow] 改 [createSessionFlow]。
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[useNewTaskFlow] image migrate failed: /tmp/img1.png'),
+      expect.stringContaining('[createSessionFlow] image migrate failed: /tmp/img1.png'),
       expect.any(Error),
     )
     warnSpy.mockRestore()

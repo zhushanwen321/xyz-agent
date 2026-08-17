@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest'
 import {
   COMPAT_PRESETS,
   getPresetsForApi,
-} from '@/components/settings/compat-fields'
+} from '@xyz-agent/core'
 
 describe('compat 预设配置（COMPAT_PRESETS）', () => {
   describe('getPresetsForApi 按 api 类型过滤', () => {

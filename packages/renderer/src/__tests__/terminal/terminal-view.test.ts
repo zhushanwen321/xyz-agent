@@ -3,7 +3,7 @@
  *
  * mock 策略：
  * - vi.mock('@xterm/xterm' / addon-*) —— happy-dom 无 canvas，xterm.open() 会抛错，必须 mock
- * - vi.mock('@/composables/features/useTerminal') —— 隔离 PTY 逻辑（useTerminal 的 WS 订阅已在 use-terminal.test.ts 覆盖）
+ * - vi.mock('@/composables/features/terminal/useTerminal') —— 隔离 PTY 逻辑（useTerminal 的 WS 订阅已在 use-terminal.test.ts 覆盖）
  * - vi.mock('@/stores/session') —— getSessionCwd 依赖
  *
  * 三视角（规则 5-8）：
@@ -67,7 +67,9 @@ vi.mock('@xterm/xterm/css/xterm.css', () => ({}))
 // ── mock useTerminal（隔离 PTY 逻辑）──────────────────────────────────────
 // TerminalView 用 terminal.current（ComputedRef）访问状态，模板自动 unwrap，需用真 ref。
 const mockState = {
-  scrollback: [] as string[],
+  buffer: { chunks: [] as string[], version: 0 },
+  outputQueue: [] as string[],
+  rafPending: false,
   ptyAlive: false,
   cols: 80,
   rows: 24,
@@ -80,11 +82,17 @@ const useTerminalMock = {
   writeToTerminal: vi.fn(),
   resizeTerminal: vi.fn(),
   killTerminal: vi.fn(),
+  clearTerminal: vi.fn(),
   attachTerminal: vi.fn(),
   enqueueWrite: vi.fn(),
+  registerFlushListener: vi.fn(() => () => {}),
 }
-vi.mock('@/composables/features/useTerminal', () => ({
+vi.mock('@/composables/features/terminal/useTerminal', () => ({
   useTerminal: () => useTerminalMock,
+  // D-6.2：TerminalView 挂载回放调用 replayChunks（分批版 replayChunksBatched）——
+  // mock 返回 null（无可回放，本文件聚焦渲染/交互视角，回放内容由 raf-queue 测试覆盖）
+  replayChunks: () => null,
+  replayChunksBatched: () => null,
 }))
 
 // ── mock session store（getSessionCwd 依赖）────────────────────────────────
@@ -101,7 +109,9 @@ let wrapper: ReturnType<typeof mount> | null = null
 beforeEach(() => {
   setActivePinia(createPinia())
   // 重置 mock 状态（每例隔离）
-  mockState.scrollback = []
+  mockState.buffer = { chunks: [], version: 0 }
+  mockState.outputQueue = []
+  mockState.rafPending = false
   mockState.ptyAlive = false
   mockState.cols = 80
   mockState.rows = 24
@@ -110,6 +120,7 @@ beforeEach(() => {
   useTerminalMock.attachTerminal.mockClear()
   useTerminalMock.killTerminal.mockClear()
   useTerminalMock.writeToTerminal.mockClear()
+  useTerminalMock.registerFlushListener.mockClear()
 })
 
 afterEach(() => {

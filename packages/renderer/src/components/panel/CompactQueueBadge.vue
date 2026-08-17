@@ -9,6 +9,9 @@
   纯展示 + remove 回调（对齐 QueueBubble 纯展示范式）：不持状态——count/peek
   从 useCompactQueue() 单例 computed 读取，updateFor 内读 messages.length 建立
   reactive 依赖（入队/取消实时反映到 UI，跨组件共享同一队列实例）。
+
+  [M4 queue 子域] 数据源唯一：useCompactQueue 模块级单例（含 flush 编排，shell 层），
+  与 QueueBubble（pi queueStates 快照，经 chatStore）语义互补、消费点各自唯一。
 -->
 <template>
   <div

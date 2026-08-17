@@ -63,26 +63,26 @@ describe("renderSubagentCall — 拍平形态提取（regression for wave 3 flat
 
   it("从顶层 args 提取显式 agent 名", () => {
     const out = renderText(renderSubagentCall(
-      { action: "start", agent: "worker", task: "do stuff", slug: "x" },
+      { action: "start", agent: "coder", task: "do stuff", slug: "x" },
       makeTheme() as never,
       CTX,
     ));
-    expect(out).toContain("worker");
+    expect(out).toContain("coder");
   });
 
   it("从顶层 args 提取 slug 并在 agent 后展示", () => {
     const out = renderText(renderSubagentCall(
-      { action: "start", agent: "worker", task: "do stuff", slug: "fix-login" },
+      { action: "start", agent: "coder", task: "do stuff", slug: "fix-login" },
       makeTheme() as never,
       CTX,
     ));
-    expect(out).toContain("worker");
+    expect(out).toContain("coder");
     expect(out).toContain("fix-login");
   });
 
   it("task 不再渲染为 preview 行（标题块只有单行）", () => {
     const out = renderText(renderSubagentCall(
-      { action: "start", agent: "worker", task: "Analyze the bug in parser", slug: "fix-parser" },
+      { action: "start", agent: "coder", task: "Analyze the bug in parser", slug: "fix-parser" },
       makeTheme() as never,
       CTX,
     ));

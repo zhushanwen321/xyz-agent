@@ -136,6 +136,25 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
                 echo -e "  ${RED}✗${NC} runtime/plugin-bootstrap.cjs 缺失"
                 FAILED=1
             fi
+
+            # plugin-bootstrap-process.cjs：sandbox 子进程（fork）入口，重构 3 新增产物。
+            # 缺失则 sandbox 插件子进程无法启动（host-process resolveAndValidateFile 定位失败）。
+            if [ -f "$APP_PATH/Contents/Resources/app.asar.unpacked/dist/runtime/plugin-bootstrap-process.cjs" ]; then
+                echo -e "  ${GREEN}✓${NC} runtime/plugin-bootstrap-process.cjs"
+            else
+                echo -e "  ${RED}✗${NC} runtime/plugin-bootstrap-process.cjs 缺失"
+                FAILED=1
+            fi
+
+            # plugin-esm-loader.cjs：sandbox 子进程 ESM resolve hook（execArgv --import 注入）。
+            # 缺失则 sandbox ESM import 绕过未封堵（node:fs 等越权 import 放行），
+            # plugin-service.resolveEsmLoaderExecArgv fail-open 仅 console.error 不阻断启动。
+            if [ -f "$APP_PATH/Contents/Resources/app.asar.unpacked/dist/runtime/plugin-esm-loader.cjs" ]; then
+                echo -e "  ${GREEN}✓${NC} runtime/plugin-esm-loader.cjs"
+            else
+                echo -e "  ${RED}✗${NC} runtime/plugin-esm-loader.cjs 缺失"
+                FAILED=1
+            fi
         else
             echo -e "  ${RED}✗${NC} app.asar.unpacked/dist/runtime 缺失"
             FAILED=1
@@ -211,6 +230,49 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
             echo -e "  ${RED}✗${NC} bin/xyz-settings 缺失（检查 electron-builder.yml from 路径 dist/runtime/cli.cjs）"
             FAILED=1
         fi
+        # builtin pi extensions 完整性校验（index.js 存在 / 无 .ts 残留 R3 / permission wasm / dry-run import）
+        # prepare-builtin-extensions.sh 部署 + electron-builder extraResources 拷贝。
+        # 复用 verify-staged-extensions.mjs：文件级校验 + import dry-run（external 缺失降级，
+        # prod 环境无 node_modules 属预期，pi runtime 提供）。
+        BUILTIN_EXT_DIR="$APP_PATH/Contents/Resources/extensions/@zhushanwen"
+        if [ -d "$BUILTIN_EXT_DIR" ]; then
+            if node "$PROJECT_ROOT/scripts/verify-staged-extensions.mjs" --staged-dir "$BUILTIN_EXT_DIR" > /tmp/ext-verify-mac.log 2>&1; then
+                echo -e "  ${GREEN}✓${NC} builtin ext 完整性校验通过（verify-staged）"
+            else
+                echo -e "  ${RED}✗${NC} builtin ext 完整性校验失败（缺 index.js / 残留 .ts / 缺 wasm）:"
+                sed 's/^/    /' /tmp/ext-verify-mac.log
+                FAILED=1
+            fi
+        else
+            echo -e "  ${RED}✗${NC} builtin ext 目录缺失: $BUILTIN_EXT_DIR（检查 prepare-builtin-extensions.sh + electron-builder.yml）"
+            FAILED=1
+        fi
+        # builtin xyz plugins 完整性校验（resources/plugins/<name>，如 statusline）
+        # prepare-builtin-plugins.sh 预编译 index.js + electron-builder extraResources 拷贝。
+        # registry 打包后扫描 <cwd>/resources/plugins；缺入口文件则插件静默不被发现或
+        # 激活必炸（ERR_UNSUPPORTED_DIR_IMPORT，2026-08-16 statusline 从未激活成功事故）。
+        # 入口 SSOT = 各插件 package.json 的 xyzAgent.main（缺省 index.js）。
+        BUILTIN_PLUGINS_DIR="$APP_PATH/Contents/Resources/resources/plugins"
+        if [ -d "$BUILTIN_PLUGINS_DIR" ]; then
+            PLUGINS_MISSING=0
+            for plugin_dir in "$BUILTIN_PLUGINS_DIR"/*/; do
+                plugin_name="$(basename "$plugin_dir")"
+                main_entry=$(node -e "const p=require(process.argv[1]);process.stdout.write(p.xyzAgent?.main ?? 'index.js')" "${plugin_dir}package.json" 2>/dev/null || echo "")
+                if [ -z "$main_entry" ] || [ ! -f "${plugin_dir}${main_entry}" ]; then
+                    echo -e "  ${RED}✗${NC} builtin plugin ${plugin_name} 缺入口 ${main_entry:-<manifest 无效>}"
+                    PLUGINS_MISSING=1
+                fi
+            done
+            if [ "$PLUGINS_MISSING" -ne 0 ]; then
+                FAILED=1
+            else
+                PLUGIN_COUNT=$(find "$BUILTIN_PLUGINS_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+                echo -e "  ${GREEN}✓${NC} builtin plugins 完整性校验通过（$PLUGIN_COUNT plugins）"
+            fi
+        else
+            echo -e "  ${RED}✗${NC} builtin plugins 目录缺失: ${BUILTIN_PLUGINS_DIR}（检查 prepare-builtin-plugins.sh + electron-builder.yml）"
+            FAILED=1
+        fi
     else
         echo -e "  ${YELLOW}⚠ 未找到 .app 目录${NC}"
     fi
@@ -228,9 +290,11 @@ if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
     WIN_UNPACKED="$WIN_RESOURCES/app.asar.unpacked"
 
     for required in \
-        "$WIN_ROOT/xyz-agent.exe" \
+        "$WIN_ROOT/TaiJi.exe" \
         "$WIN_UNPACKED/dist/runtime/index.cjs" \
         "$WIN_UNPACKED/dist/runtime/plugin-bootstrap.cjs" \
+        "$WIN_UNPACKED/dist/runtime/plugin-bootstrap-process.cjs" \
+        "$WIN_UNPACKED/dist/runtime/plugin-esm-loader.cjs" \
         "$WIN_RESOURCES/pi/pi-windows-x64.exe" \
         "$WIN_RESOURCES/xyz-agent-extension.js" \
         "$WIN_RESOURCES/xyz-system-prompt-extension.js" \
@@ -243,6 +307,41 @@ if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
             FAILED=1
         fi
     done
+    # builtin pi extensions（Windows 同 mac 校验，复用 verify-staged）
+    WIN_BUILTIN="$WIN_RESOURCES/extensions/@zhushanwen"
+    if [ -d "$WIN_BUILTIN" ]; then
+        if node "$PROJECT_ROOT/scripts/verify-staged-extensions.mjs" --staged-dir "$WIN_BUILTIN" > /tmp/ext-verify-win.log 2>&1; then
+            echo -e "  ${GREEN}✓${NC} builtin ext 完整性校验通过（verify-staged）"
+        else
+            echo -e "  ${RED}✗${NC} builtin ext 完整性校验失败:"
+            sed 's/^/    /' /tmp/ext-verify-win.log
+            FAILED=1
+        fi
+    else
+        echo -e "  ${RED}✗${NC} builtin ext 目录缺失: $WIN_BUILTIN"
+        FAILED=1
+    fi
+    # builtin xyz plugins（Windows 同 mac 校验：每插件 manifest main 入口存在）
+    WIN_PLUGINS_DIR="$WIN_RESOURCES/resources/plugins"
+    if [ -d "$WIN_PLUGINS_DIR" ]; then
+        WIN_PLUGINS_MISSING=0
+        for plugin_dir in "$WIN_PLUGINS_DIR"/*/; do
+            plugin_name="$(basename "$plugin_dir")"
+            main_entry=$(node -e "const p=require(process.argv[1]);process.stdout.write(p.xyzAgent?.main ?? 'index.js')" "${plugin_dir}package.json" 2>/dev/null || echo "")
+            if [ -z "$main_entry" ] || [ ! -f "${plugin_dir}${main_entry}" ]; then
+                echo -e "  ${RED}✗${NC} builtin plugin ${plugin_name} 缺入口 ${main_entry:-<manifest 无效>}"
+                WIN_PLUGINS_MISSING=1
+            fi
+        done
+        if [ "$WIN_PLUGINS_MISSING" -ne 0 ]; then
+            FAILED=1
+        else
+            echo -e "  ${GREEN}✓${NC} builtin plugins 完整性校验通过"
+        fi
+    else
+        echo -e "  ${RED}✗${NC} builtin plugins 目录缺失: $WIN_PLUGINS_DIR"
+        FAILED=1
+    fi
 
     WINDOWS_PTY_PREBUILDS="$WIN_UNPACKED/node_modules/node-pty/prebuilds/win32-x64"
     WINDOWS_PTY_MISSING=0

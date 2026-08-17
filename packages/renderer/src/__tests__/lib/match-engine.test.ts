@@ -14,7 +14,7 @@ import {
   matchFilter,
   segments,
   type MatchSegment,
-} from '@/lib/match-engine'
+} from '@xyz-agent/core'
 
 describe('match-engine (#1) —— 导出契约', () => {
   it('AC-1.1 matchFilter 与 segments 均为导出函数', () => {

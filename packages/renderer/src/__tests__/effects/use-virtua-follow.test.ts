@@ -4,7 +4,6 @@
  * 覆盖 follow 状态机：
  * - onWheel 上滑 → stickToBottom=false
  * - onScroll distance≤40 → stickToBottom=true（只单向翻真）
- * - pause/resumeStickGuard 计数器（TC9 修复点）
  * - followIfStuck 受 stickToBottom guard（含 INVAR-M4-2 rAF 内重读）
  * - followToBottom(force) 强制贴底
  * - showJumpButton 派生 = !stickToBottom && unreadBelow
@@ -21,7 +20,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ref, type Ref } from 'vue'
 import type { VirtualizerHandle } from 'virtua/vue'
-import { useVirtuaFollow } from '@/composables/effects/useVirtuaFollow'
+import { useVirtuaFollow } from '@/composables/panel/useVirtuaFollow'
 // createMockVlist 共享工厂（w2 提取至此，避免与 rail-virtua 测试重复定义）
 import { createMockVlist } from './_virtua-mock-helper'
 
@@ -78,33 +77,6 @@ describe('useVirtuaFollow (cw wave w1 W1TC1-W1TC9)', () => {
 
     expect(stickToBottom.value).toBe(false)
     expect(onStickChange).not.toHaveBeenCalled()
-  })
-
-  it('W1TC4 pause/resumeStickGuard 计数器：count>0 时 onScroll 不改 stickToBottom', () => {
-    mock = createMockVlist({ scrollSize: 1000, viewportSize: 500 })
-    vlistRef.value = mock
-    const { stickToBottom, onScroll, pauseStickGuard, resumeStickGuard } = useVirtuaFollow({
-      vlistRef,
-      onStickChange,
-    })
-    stickToBottom.value = false
-
-    // pause 两次 → count===2
-    pauseStickGuard()
-    pauseStickGuard()
-    // distance≤40，但 count>0 guard，不应翻 true
-    onScroll(480)
-    expect(stickToBottom.value).toBe(false)
-
-    // resume 一次 → count===1，仍 guard
-    resumeStickGuard()
-    onScroll(480)
-    expect(stickToBottom.value).toBe(false)
-
-    // resume 一次 → count===0，guard 解除，onScroll 翻 true
-    resumeStickGuard()
-    onScroll(480)
-    expect(stickToBottom.value).toBe(true)
   })
 
   it('W1TC5 followIfStuck stickToBottom=true 调 scrollToIndex(lastIndex, {align:"end"})', async () => {

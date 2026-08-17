@@ -22,7 +22,7 @@ vi.mock('@/api/domains/quota', () => ({
   configure: vi.fn(),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   config: {
     onProviders: vi.fn(() => () => {}),
     onSkills: vi.fn(() => () => {}),
@@ -49,7 +49,7 @@ vi.mock('@/i18n', () => ({
 }))
 
 import * as quotaApi from '@/api/domains/quota'
-import { useQuotaQuery } from '@/composables/features/useQuotaQuery'
+import { useQuotaQuery } from '@/composables/features/model/useQuotaQuery'
 import { useQuotaStore } from '@/stores/quota'
 
 beforeEach(() => {

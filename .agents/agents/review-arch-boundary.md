@@ -10,7 +10,7 @@ name: review-arch-boundary
 - **Electron 侧**：main / preload / renderer / shared 四层
 - **runtime（Agent Runtime）内部**：自 2026-06 重构为 **transport / services / infra** 三层（端口-适配器架构，旧 `adapters/` 已合并入 `infra/`；设计源 `docs/architecture/runtime-three-layer-design.md`）。依赖方向：`transport → services ← infra`（services 定义 ports 接口，infra 实现，无环）。
 
-术语以 `docs/architecture/terminology.md`（R1-R3 已落地：sidecar→runtime、Pane→Panel、SystemChatMessage 清除；R4/R5 被 v3 推翻）、`docs/architecture/context.md` 为准。边界违规是 bug 高发区（参考 CLAUDE.md「关键规则」「架构约定」）。
+术语以 `docs/architecture/terminology.md`（R1-R3 已落地：sidecar→runtime、Pane→Panel、SystemChatMessage 清除；R4/R5 被 v3 推翻）、`docs/architecture/context.md` 为准。边界违规是 bug 高发区（参考 AGENTS.md「关键规则」「架构约定」）。
 
 ## 输入
 
@@ -30,7 +30,7 @@ task prompt 中必须包含：
    - **infra/**：pi 适配（连接 + 翻译合并），**`Pi*` 类型仅在此层内部可见**，不知道 WS 协议和 session 业务语义
    - 禁止新建 `adapters/` 目录（已合并入 infra）
    - 过渡态：services 仍存在 `Pi*` 泄漏（tree-service/config-service/extension-service）是**已知技术债**（ports 依赖倒置 R3 进行中）→ 标 INFO/SUGGESTION，不标 MUST_FIX；但**新增**代码不应加重泄漏
-4. **WS session 隔离（CLAUDE.md 关键规则 #7）**：
+4. **WS session 隔离（AGENTS.md 关键规则 #7）**：
    - 所有 runtime → renderer 消息的 `payload` 是否包含 `sessionId`
    - 缺失 `sessionId` 的消息会被所有 panel 忽略——检查新增的 WS 事件是否漏带
    - `server.ts` 的 `sendError` 是否传入了 `sessionId`
@@ -48,11 +48,11 @@ task prompt 中必须包含：
    - **Extension**（pi extension）：运行在 **pi 子进程内**，用 `ExtensionAPI`，数据存 `~/.xyz-agent/extensions/`，由 `extension-service.ts` 管理
    - **Plugin**（xyz-agent 插件）：运行在 **runtime 的 Worker Thread**，用 agentAPI（非 ExtensionAPI），数据存 `~/.xyz-agent/plugins/`，由 PluginService 管理
    - **Pi Bridge Extension**：插件系统与 pi 引擎的**唯一适配层**（插件系统内部唯一感知 pi 的模块）——变更是否绕过 Bridge 直接访问 pi
-9. **插件系统边界（CLAUDE.md 关键规则 #11、context.md「Plugin」）**：
+9. **插件系统边界（AGENTS.md 关键规则 #11、context.md「Plugin」）**：
    - 前端 ↔ 插件系统通信是否经 WS → server → PluginService 路径（禁止前端直连 Worker）
    - WS 命名约定：Client→Server 用点号（`plugin.xxx`），Server→Client 用冒号 camelCase（`plugin:xxx`）
    - sessionData（plugin per-session KV）是否走 Pi Bridge 的 `pi.appendEntry()` 持久化（区别于 PluginStorage 的 global/workspace scope JSON 文件）
-10. **视图层术语（v3 拓扑）**：变更涉及前端时，视图组件应遵循 v3 拓扑（设计源 `docs/page-design/v3/`）：
+10. **视图层术语（v3 拓扑）**：变更涉及前端时，视图组件应遵循 v3 拓扑（设计源 `docs/page-design/archive/v3/`）：
     - L0/L1 结构：**Sidebar**（持久容器）/ **Workspace**（chat view 容器）/ **Overview**（L1 独立 Region，多会话鸟瞰）/ **Search Modal**（⌘K Overlay）
     - **Panel 5 zone**：panel-header / message-stream / progress-zone / composer / git-zone
     - **Side Drawer**（原 Side Inspector）：Panel 联动多 tab 抽屉（文件/终端/子Agent/浏览器），非运行时状态面板

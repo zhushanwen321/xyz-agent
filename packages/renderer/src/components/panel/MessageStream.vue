@@ -13,7 +13,7 @@
   <div class="relative flex min-h-0 flex-1 flex-col">
     <div
       ref="scrollEl"
-      class="message-stream relative flex-1 overflow-y-auto px-5 pt-5"
+      class="message-stream relative flex-1 overflow-y-auto px-5 pt-[var(--message-stream-pad-top)] pb-[8px]"
       :style="{ overflowAnchor: 'none' }"
       @wheel="onWheel"
     >
@@ -31,7 +31,7 @@
          - :keepMounted streaming/editing turn idx 恒挂载（design §4.3，virta 仍挂 RO 不致测量断）
          - :startMargin load-more 占位高度（virta getItemOffset 已含 startMargin，design §4.11）
          - :key=session 强制重建 Virtualizer，跨 session 测量缓存隔离（design §4.5）
-         slot 内 item.kind 分支与原 visibleItems 循环一致（turn/system 穿插渲染）。 -->
+         slot 内 item.kind 分支与原 visibleItems 循环一致（kind 全集三态：turn/systemNotice/bashExecution）。 -->
     <Virtualizer
       ref="vlistRef"
       :data="renderItems"
@@ -43,30 +43,29 @@
       @scroll="onVirtuaScroll"
       @scroll-end="onVirtuaScrollEnd"
     >
+      <!-- slot 内容注意：禁止在 <template #default> 内放任何注释/文本节点！
+           virtua 的 item key 提取要求 slot 返回恰好 1 个 vnode（P(): e.length===1 才取 e[0].key），
+           注释节点会让长度变 2 → fallback `_${index}` 索引 key（M5 stable-key 失效）。
+           三分支共用 :key="renderKey(item)"（稳定 id 非索引）：turn 用首条消息 id（turnStableId），
+           system 类用 message.id。 -->
       <template #default="{ item, index }">
         <Turn
           v-if="item.kind === 'turn'"
+          :key="renderKey(item)"
           :turn="item.turn"
           :session-id="sessionId"
           :can-edit="!!item.turn.user && index === lastUserTurnIdx"
           :is-session-active="isSessionActive"
+          :is-last-turn="item.turn === lastRenderTurn"
           @edit-state-change="onEditStateChange(index, $event.editing)"
         />
-        <BgNotifyCard v-else-if="item.message.bgNotify" :message="item.message" />
-        <!-- bash 执行结果气泡（composer-bash-execute W3）：role:'system' + bashExecution -->
         <BashOutputBlock
-          v-else-if="item.message.bashExecution"
+          v-else-if="item.kind === 'bashExecution'"
+          :key="renderKey(item)"
           :message="item.message"
           :session-id="sessionId"
         />
-        <!-- 结构化 GUI 组件（extension GUI 协议 E5：customMessage 的 details.__gui__）。 -->
-        <div
-          v-else-if="extractGuiComponent(item.message)"
-          class="py-1 pl-1 font-mono text-[length:var(--text-sm)] leading-snug text-neutral-fg"
-        >
-          <GuiComponentRenderer :component="extractGuiComponent(item.message)!" />
-        </div>
-        <SystemNotice v-else :message="item.message" />
+        <SystemNotice v-else :key="renderKey(item)" :message="item.message" />
       </template>
     </Virtualizer>
 
@@ -85,49 +84,40 @@
     </div>
 
     <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代）。
-         非虚拟化，absolute 定位到列表末尾。virta 路径下 top 改读 vlistBottom（design §4.7）。
+         文档流 block（Virtualizer 之后），样式对齐 SystemNotice 横线分隔行；宽度随对话流自动对齐。
          ref 供 dev-only 断言：实测高度 vs COMPACTING_NOTICE_HEIGHT 常量漂移检测。 -->
     <div
       v-if="isCompacting"
       ref="compactingNoticeEl"
-      class="system-notice absolute left-5 right-5 z-10 flex min-w-0 items-center gap-2 rounded-md bg-surface px-2 pt-2.5 pb-5 shadow-sm"
-      :style="{ top: vlistBottom + 'px' }"
+      class="system-notice flex min-w-0 items-center gap-2 py-1"
     >
       <span class="h-px flex-1 bg-border" />
       <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
-      <span class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ t('panel.message.compressing') }}</span>
+      <span class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ compactingText }}</span>
       <span class="h-px flex-1 bg-border" />
     </div>
 
-    <!-- dispatching 空窗期占位（非虚拟化，absolute 定位到列表末尾 + compacting 占位高度）。 -->
-    <div
-      v-if="isDispatching && !hasWorkingTurn"
-      class="absolute left-5 right-5 z-10 flex items-center gap-2 rounded-md bg-surface px-2 py-2 shadow-sm text-[length:var(--text-sm)] text-neutral-mid"
-      :style="{ top: dispatchingTop + 'px' }"
-    >
-      <Loader2 class="size-3 animate-spin text-accent" />
-      <span>{{ t('panel.message.dispatching') }}</span>
-    </div>
+    <!-- [方案 D] dispatching 空窗期占位已移除：原 absolute 浮层改为末尾空 turn 的 TurnMeta 占位。
+         message_start 前末尾空 turn（user 已发、assistants=[]）经 TurnMeta 的 isPendingPlaceholder
+         渲染「思考中」+ spinner，message_start 后 assistant 填入同一 turn，原地变为 working 态。
+         dispatching 占位现在是对话流文档流的一部分（已计入 vlistBottom），不再是独立浮层。 -->
 
-    <!-- ForkNotice 反馈行（transient，非虚拟化，RV1）。
-         绝对定位到列表末尾 + compacting/dispatching 占位高度；多条通知垂直堆叠。 -->
-    <template v-if="forkNotices.length > 0">
-      <div
-        v-for="(notice, idx) in forkNotices"
-        :key="notice.id"
-        class="absolute left-5 right-5 py-1"
-        :style="{ top: forkNoticeTop(idx) + 'px' }"
-      >
-        <ForkNotice
-          :branch-name="notice.branchName"
-          :preview="notice.preview"
-          :kind="notice.kind"
-          :session-deleted="notice.sessionDeleted ?? false"
-          @view="onForkNoticeView(notice.newSessionId)"
-          @dismiss="onForkNoticeDismiss(notice.id)"
-        />
-      </div>
-    </template>
+    <!-- ForkNotice 反馈行（transient，RV1）。文档流 block（Virtualizer 之后），多条通知垂直堆叠；
+         宽度随对话流自动对齐。 -->
+    <div
+      v-for="notice in forkNotices"
+      :key="notice.id"
+      class="py-1"
+    >
+      <ForkNotice
+        :branch-name="notice.branchName"
+        :preview="notice.preview"
+        :kind="notice.kind"
+        :session-deleted="notice.sessionDeleted ?? false"
+        @view="onForkNoticeView(notice.newSessionId)"
+        @dismiss="onForkNoticeDismiss(notice.id)"
+      />
+    </div>
     </div>
 
     <!-- 回到底部浮层：非贴底且有未读新内容时显示（showJumpButton），点之平滑滚回并恢复锚定 -->
@@ -159,25 +149,23 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, provide, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronUp, Loader2, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Virtualizer, type VirtualizerHandle } from 'virtua/vue'
 import { useChatStore } from '@/stores/chat'
-import { useVirtuaFollow } from '@/composables/effects/useVirtuaFollow'
-import { useConstantHeightAssert } from '@/composables/effects/useConstantHeightAssert'
-import { provideStickGuard } from '@/composables/effects/useStickGuard'
-import { toRenderItems, filterDisplayableMessages } from '@/composables/logic/messageTurns'
+import { useVirtuaFollow } from '@/composables/panel/useVirtuaFollow'
+import { useConstantHeightAssert } from '@/composables/panel/useConstantHeightAssert'
+import { toRenderItemsIncremental, createTurnRenderCache, filterDisplayableMessages, renderKey } from '@/composables/logic/messageTurns'
+import type { TurnRenderCache } from '@/composables/logic/messageTurns'
+import { useSessionScopedState } from '@/composables/useSessionScopedState'
 import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubagentStore } from '@/stores/subagent'
-import Turn from './message-stream/Turn.vue'
-import SystemNotice from './message-stream/SystemNotice.vue'
-import BgNotifyCard from './message-stream/BgNotifyCard.vue'
-import BashOutputBlock from './message-stream/BashOutputBlock.vue'
-import GuiComponentRenderer from './message-stream/GuiComponentRenderer.vue'
-import TurnRail from './message-stream/TurnRail.vue'
+// [w6 chat-ui-and-shell T6] chat 展示组件迁 @xyz-agent/ui/features/chat，壳层经
+// ChatViewDeps inject token 注入 store/composable 依赖（TD3 inject 裁决）。
+import { Turn, SystemNotice, BashOutputBlock, TurnRail, ChatViewDepsKey } from '@xyz-agent/ui'
+import { useChatViewDeps } from '@/composables/panel/useChatViewDeps'
 import ForkNotice from './ForkNotice.vue'
-import { extractGuiComponent } from '@/composables/logic/guiComponent'
 import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
 import { useLoadMoreHistory } from '@/composables/panel/useLoadMoreHistory'
 import { useSessionActive } from '@/composables/panel/useSessionActive'
@@ -200,8 +188,10 @@ const subagentStore = useSubagentStore()
 /** W4 H4 + cw wave w3 / IF8：加载更多历史 loading 状态 + isPrepend（virta :shift 信号）+ handler。 */
 const { loadingMore, showLoadMore, handleLoadMore, isPrepend } = useLoadMoreHistory(() => props.sessionId)
 
-/** 当前 session 的消息（直接 Map.get 建立 Map 依赖，storeToRefs 等价；Map.set 触发更新）。 */
-const currentMessages = computed(() => chat.messages.get(props.sessionId) ?? [])
+/** 当前 session 的消息（getMessages 兼容接口：W10 D-1 后 messages Map 的 value 是内层
+ *  ShallowRef<Message[]> 容器，直接 .get() 会拿到 ref 而非数组——getMessages 内部
+ *  unwrap（.value ?? []），Map.get + 内层 .value 依赖均被 computed track，响应性不变）。 */
+const currentMessages = computed(() => chat.getMessages(props.sessionId))
 
 /** session id（template 内多处引用：Turn :session-id / rail 等）。 */
 const sessionId = computed(() => props.sessionId)
@@ -216,10 +206,27 @@ const forceWorking = computed(() => {
  *  ask-user（waiting）或 subagent 后台跑（working）都保持 true → 对话流不收起（M3 修复）。 */
 const isSessionActive = useSessionActive(sessionId, forceWorking)
 
-/** 扁平消息 → 渲染项（turn + system 提示行穿插，纯函数）。
- *  filterDisplayableMessages 过滤 display:false 的 custom message（ADR-0035，读 display 字段非黑名单）。 */
+/** [W21 D-4] turn 派生增量缓存：经 useSessionScopedState 工厂按 session 分区持有（ADR-0049——
+ *  <MessageStream> 无 :key、组件实例不随 session 销毁，实例级缓存会跨 session 残留上一会话的
+ *  Message 引用；工厂随 useSidebar.deleteSession → triggerSessionCleanups 自动释放分区）。
+ *  分区值是 shallowRef 包裹的 mutable 纯派生缓存：toRenderItemsIncremental 原地 mutate 更新，
+ *  该 mutate 从不触发下游（renderItems 失效由 currentMessages/forceWorking 驱动），shallowRef
+ *  只为满足工厂「init 返回 reactive 容器」契约且避免深代理缓存内的 Message 引用。 */
+const turnCacheState = useSessionScopedState(
+  sessionId,
+  () => shallowRef<TurnRenderCache>(createTurnRenderCache()),
+)
+
+/** 扁平消息 → 渲染项（增量版，08 §3.3.1 D-4：历史 turn 按成员消息身份复用，流式追加
+ *  只重建末位 turn → 视口内历史 Turn 不被 patch）。filterDisplayableMessages 过滤
+ *  display:false 的 custom message（ADR-0041）；快路径（源数组引用未变）跳过 filter。 */
 const renderItems = computed(() =>
-  toRenderItems(filterDisplayableMessages(currentMessages.value), forceWorking.value),
+  toRenderItemsIncremental(
+    currentMessages.value,
+    filterDisplayableMessages,
+    forceWorking.value,
+    turnCacheState.current.value.value, // 双层 .value：分区 shallowRef → TurnRenderCache
+  ),
 )
 
 /** 渲染项里最后一个 turn（streaming 滚动判定 + hasWorkingTurn 派生用）。 */
@@ -278,9 +285,9 @@ const [loadMoreEl, compactingNoticeEl] = useConstantHeightAssert([
  *  topOffset 恒 0（W3C2 R2）。 */
 const {
   isCompacting,
+  compactingText,
   isDispatching,
   hasWorkingTurn,
-  dispatchingTop,
   forkNoticeBaseTop,
 } = useMessageStreamNotices({
   sessionId,
@@ -291,7 +298,7 @@ const {
 
 /** ForkNotice 反馈行（transient，RV1）：feed 消费 + 定位 + 交互封装在 useForkNoticeStream。
  *  [M2] 注入 forkNoticeBaseTop 消除占位叠加重复计算。 */
-const { forkNotices, forkNoticeTop, onView: onForkNoticeView, onDismiss: onForkNoticeDismiss } =
+const { forkNotices, onView: onForkNoticeView, onDismiss: onForkNoticeDismiss } =
   useForkNoticeStream(() => props.sessionId, {
     vlistBottom,
     topOffset,
@@ -334,7 +341,6 @@ const { pinnedIndexes } = useStreamingPin({
  *  - onScroll 接 virta @scroll(offset)，只单向翻真（distance≤40 → stickToBottom=true）
  *  - onWheel 接 scrollEl @wheel，deltaY<0 脱离锚定（纯用户信号）
  *  - followIfStuck rAF 内重读 stickToBottom（INVAR-M4-2，防上滑用户被扯回）
- *  - pause/resumeStickGuard 计数器（design §4.10，修 P5 嵌套 transition 互相 resume）
  *  virta 是单一 scrollTop owner，应用层只声明「我要 follow 到底」。 */
 const {
   showJumpButton,
@@ -342,8 +348,6 @@ const {
   onWheel,
   followIfStuck,
   followToBottom,
-  pauseStickGuard,
-  resumeStickGuard,
 } = useVirtuaFollow({ vlistRef })
 
 /* TurnRail（w4 wave IF4）：状态 + 事件路由下沉 useMessageStreamRail（script ≤300 行规范）。
@@ -358,9 +362,13 @@ const rail = useMessageStreamRail({
 })
 const { railTurns, activeTurnIndex, panelRightEdge, expandedTurns, onJump, onToggle } = rail
 
-/** provide stick guard pause/resume 给 Turn.vue（trace 折叠 transition 期间暂停 onScroll 误判）。
- *  [cw wave w3] pause/resume 来源切到 useVirtuaFollow 计数器版（原旧滚动 composable 布尔版有 P5 bug）。 */
-provideStickGuard({ pause: pauseStickGuard, resume: resumeStickGuard })
+// [w6 T6] ui 包 chat 展示组件经 inject token 消费壳层依赖：ChatViewDepsKey（~20 字段：
+//   store 数据 / RPC 回调 / 文件加载 / 重库渲染），useChatViewDeps 装配器把 renderer
+//   store/composable/纯函数绑定到各字段。
+//   （trace 折叠 stick-guard 通路已随 <Transition> 删除退役——Turn.vue 不再 inject
+//   StickGuardDepsKey，原 useStickGuard.ts / stick-guard-deps.ts 已删。guarded 回归结构上
+//   不可能：useVirtuaFollow INVAR-M4-2 下 onScroll 只单向翻真，永不翻 false。）
+provide(ChatViewDepsKey, useChatViewDeps(sessionId))
 
 /**
  * [cw wave w3] virta scroll 事件聚合 handler（IF7 @scrollEnd 用于 showJumpButton 稳定判定）。
@@ -413,6 +421,6 @@ watch(
    （vue_rules_checker 不允许 scoped CSS 写非动画/伪元素属性，inline style 绕过检查且语义等价）。 */
 
 /* 回到底部浮层过渡 */
-.fade-enter-active, .fade-leave-active { transition: opacity var(--duration-fast, 150ms) ease; }
+.fade-enter-active, .fade-leave-active { transition: opacity var(--duration-fast) ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 </style>

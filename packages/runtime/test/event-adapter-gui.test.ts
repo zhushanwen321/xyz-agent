@@ -64,6 +64,41 @@ describe('event-adapter: setWidget GUI marker 检测', () => {
     expect(gui.props.items).toHaveLength(1)
   })
 
+  it('v1.1 信封（GuiRenderResult：v + component + meta）→ 解包 gui + meta 透传', () => {
+    const envelope = {
+      v: 1,
+      component: { type: 'list-tree', props: { numbered: true, items: [{ label: 'a', depth: 0 }] } },
+      meta: { title: 'Todo', status: 'running', progress: { current: 1, total: 3 } },
+    }
+    const event = makeSetWidgetEvent('todo', [GUI_WIDGET_MARKER + JSON.stringify(envelope)])
+
+    const results = translate(event, 'sess-1')
+
+    const msg = results.find(r => r.kind === 'message') as
+      { kind: 'message'; message: { type: string; payload: Record<string, unknown> } } | undefined
+
+    expect(msg).toBeDefined()
+    expect(msg!.message.type).toBe('extension:widgetGui')
+    const gui = msg!.message.payload.gui as { type: string }
+    // gui 是解包后的 component（非信封本身）
+    expect(gui.type).toBe('list-tree')
+    expect(msg!.message.payload.meta).toEqual({
+      title: 'Todo',
+      status: 'running',
+      progress: { current: 1, total: 3 },
+    })
+  })
+
+  it('v1.1 信封无 meta → payload 不带 meta 键', () => {
+    const envelope = { v: 1, component: { type: 'stats-line', props: { items: [] } } }
+    const event = makeSetWidgetEvent('goal', [GUI_WIDGET_MARKER + JSON.stringify(envelope)])
+    const results = translate(event, 'sess-1')
+    const msg = results.find(r => r.kind === 'message') as
+      { kind: 'message'; message: { type: string; payload: Record<string, unknown> } } | undefined
+    expect(msg).toBeDefined()
+    expect('meta' in msg!.message.payload).toBe(false)
+  })
+
   it('普通文本 widgetLines → 走原 stripAnsi 路径 extension:widget', () => {
     const event = makeSetWidgetEvent('todo', ['\x1b[32mDone\x1b[0m', 'Next: work'])
 

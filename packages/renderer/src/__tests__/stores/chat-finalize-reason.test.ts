@@ -137,7 +137,7 @@ describe('finalizeSession reason→终态映射', () => {
     expect(msgs[0].status).toBe('error')
   })
 
-  it('errorText 合并到 streaming assistant content（D-013）', () => {
+  it('errorText 写 msg.error 字段（D-013 双通道，content 不动）', () => {
     const store = useChatStore()
     const sid = 's-errtext'
     store.applyMessageEvent(sid, {
@@ -151,7 +151,9 @@ describe('finalizeSession reason→终态映射', () => {
     store.finalizeSession(sid, 'error', '[错误] 连接断开')
     const msgs = store.getMessages(sid)
     expect(msgs[0].content).toContain('部分回答')
-    expect(msgs[0].content).toContain('[错误] 连接断开')
+    // [M2 error-visibility] 追加形态双通道：errorText 写 msg.error，content 保持正文
+    expect(msgs[0].error).toBe('[错误] 连接断开')
+    expect(msgs[0].content).not.toContain('[错误] 连接断开')
   })
 
   it('errorText 不合并到非 assistant 消息', () => {

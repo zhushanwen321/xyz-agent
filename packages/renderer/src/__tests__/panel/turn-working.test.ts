@@ -18,17 +18,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import Turn from '@/components/panel/message-stream/Turn.vue'
+import { reactive } from 'vue'
+// [w6 chat-ui-and-shell T7] ui 包 Turn 经 ChatViewDeps inject 消费依赖，mount 时 provide mock deps
+import { Turn } from '@xyz-agent/ui'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import type { Message } from '@xyz-agent/shared'
-
-// mock 重依赖 composable（只测 Turn 自身响应式逻辑，不测 store 副作用）
-vi.mock('@/composables/features/useChat', () => ({
-  useChat: () => ({ editAndResend: vi.fn() }),
-}))
-vi.mock('@/composables/features/useSidebar', () => ({
-  useSidebar: () => ({ forkSession: vi.fn() }),
-}))
+import { mockChatProvide } from '@/__tests__/helpers/chat-view-deps'
 
 function msg(over: Partial<Message> = {}): Message {
   return { id: 'a1', role: 'assistant', content: '', status: 'streaming', timestamp: Date.now(), ...over }
@@ -47,16 +42,20 @@ function makeTurn(over: Partial<MessageTurn> = {}): MessageTurn {
 }
 
 /** mount Turn，stub 掉子组件（Block/ChangeSetCard/MarkdownRenderer），隔离 Turn 自身逻辑。
- *  isSessionActive prop 透传（T4：session 进行中信号，缺省回退到 turn.isStreaming）。 */
-function mountTurn(props: { turn: MessageTurn; sessionId?: string; isSessionActive?: boolean }) {
+ *  isSessionActive prop 透传（T4：session 进行中信号，缺省回退到 turn.isStreaming）。
+ *  isLastTurn 默认 true：单 turn 隔离挂载即视为列表末位 turn（D1 折叠作用域，streaming-trace-window
+ *  design §3.3）——session 进行中时该 turn 的工作 trace 才会展开。需测「非末位 turn 折叠」显式传 false。 */
+function mountTurn(props: { turn: MessageTurn; sessionId?: string; isSessionActive?: boolean; isLastTurn?: boolean }) {
   return mount(Turn, {
     props: {
       turn: props.turn,
       sessionId: props.sessionId ?? 's1',
+      isLastTurn: props.isLastTurn ?? true,
       ...(props.isSessionActive !== undefined ? { isSessionActive: props.isSessionActive } : {}),
     },
     global: {
       plugins: [createPinia()],
+      provide: mockChatProvide(),
       stubs: { Block: true, ChangeSetCard: true, MarkdownRenderer: true },
     },
   })
@@ -65,12 +64,23 @@ function mountTurn(props: { turn: MessageTurn; sessionId?: string; isSessionActi
 /**
  * mount Turn 但用真实 Block（仅 stub 重依赖 MarkdownRenderer/ChangeSetCard），
  * 用于断言 trace 内块的 DOM 顺序（三视角之「观察者」视角，防 contentBlocks 乱序回归）。
+ * 展开/折叠经 deps 注入（U19 手动展开需要状态化 toggleExpand/isExpanded mock，
+ * 必须用 reactive Set——普通 Set 非响应式，computed 不重算）。
  */
-function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string }) {
+const expandedTurns = reactive(new Set<string>())
+// isLastTurn 默认 true：单 turn 隔离挂载即末位 turn（D1，同 mountTurn），session 进行中时工作 trace 才展开。
+function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string; isLastTurn?: boolean }) {
   return mount(Turn, {
-    props: { turn: props.turn, sessionId: props.sessionId ?? 's1' },
+    props: { turn: props.turn, sessionId: props.sessionId ?? 's1', isLastTurn: props.isLastTurn ?? true },
     global: {
       plugins: [createPinia()],
+      provide: mockChatProvide({
+        isExpanded: (key: string) => expandedTurns.has(key),
+        toggleExpand: (key: string) => {
+          if (expandedTurns.has(key)) expandedTurns.delete(key)
+          else expandedTurns.add(key)
+        },
+      }),
       stubs: { ChangeSetCard: true, MarkdownRenderer: true },
     },
   })
@@ -90,15 +100,29 @@ describe('Turn working 态 · 完成复位 + elapsed live', () => {
     vi.useRealTimers()
   })
 
-  it('U9: 完成态（isStreaming + isSessionActive 同步 false）复位 expanded，trace 从 DOM 消失', async () => {
+  it('U9: 完成态（isStreaming + isSessionActive 同步 false）复位 expanded，trace 内容隐藏', async () => {
+    // [block-rendering M0] trace 容器恒渲染（v-if 下沉 Block 级），完成收起从「容器消失」改「内容隐藏」
+    const thinkingTurn = (status: Message['status']) =>
+      makeTurn({
+        isStreaming: status === 'streaming',
+        assistants: [
+          msg({
+            status,
+            thinking: [{ id: 'th1', content: 'thinking', collapsed: true }],
+            contentBlocks: [{ type: 'thinking', refId: 'th1' }],
+          }),
+        ],
+      })
     // 不传 isSessionActive → 回退到 turn.isStreaming（旧调用方/简单场景，streaming=false 即对话结束）
-    const wrapper = mountTurn({ turn: makeTurn({ isStreaming: true }) })
-    // streaming 态 trace 展开
+    const wrapper = mountTurn({ turn: thinkingTurn('streaming') })
+    // streaming 态 trace 展开（thinking 块渲染）
     expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(1)
     // 切换到完成态（isStreaming false，无 prop 回退 → sessionActive 也 false）
-    await wrapper.setProps({ turn: makeTurn({ isStreaming: false }) })
-    // trace 区消失（expanded 复位，showTrace=false）
-    expect(wrapper.find('.trace').exists()).toBe(false)
+    await wrapper.setProps({ turn: thinkingTurn('complete') })
+    // trace 容器仍在（恒渲染），thinking 内容隐藏（expanded 复位，showTrace=false）
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(0)
   })
 
   it('U10: working 态 elapsed 随 setInterval 实时增长', async () => {
@@ -161,12 +185,17 @@ describe('Turn working 态 · 完成复位 + elapsed live', () => {
     expect(elapsedText(wrapper)).not.toBe('')
     // 无 chevron（无可折叠内容 → 不渲染展开按钮，用户说的「展开按钮没渲染」即此场景）
     expect(wrapper.find('.chev').exists()).toBe(false)
-    // 无 trace（无内容可折）
-    expect(wrapper.find('.trace').exists()).toBe(false)
+    // [block-rendering M0] trace 容器恒渲染；text 块恒渲染（inline，不受折叠影响），无 thinking/tool 内容
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    const blocks = wrapper.findAllComponents({ name: 'Block' })
+    expect(blocks.length).toBe(1)
+    expect(blocks[0].props('type')).toBe('text')
   })
 
-  // U14:纯文本回合 working 态（pi 流式纯文本，无 thinking）也须显示「思考中」+ spinner
-  it('U14: 纯文本回合 working 态显示「思考中」+ spinner + 无 chevron + trace 强制展开', () => {
+  // U14:纯文本回合 working 态（pi 流式纯文本，无 thinking）显示「工作中」+ spinner
+  // [HISTORICAL 3266931c8] working 文案已从「思考中」改为「工作中」：仅空窗占位
+  // （assistants 空）显示「思考中」，assistants 非空的生成中 turn 显示「工作中」。
+  it('U14: 纯文本回合 working 态显示「工作中」+ spinner + 无 chevron + trace 强制展开', () => {
     const wrapper = mountTurn({
       turn: makeTurn({
         isStreaming: true,
@@ -175,11 +204,35 @@ describe('Turn working 态 · 完成复位 + elapsed live', () => {
       }),
     })
     expect(wrapper.find('.turn-meta').exists()).toBe(true)
-    expect(wrapper.find('.lbl').text()).toBe('思考中')
+    expect(wrapper.find('.lbl').text()).toBe('工作中')
     // working 态用 spinner（Loader2 animate-spin），不再用 working-dot 脉冲点
     expect(wrapper.find('.turn-meta .animate-spin').exists()).toBe(true)
     expect(wrapper.find('.chev').exists()).toBe(false)
     expect(wrapper.find('.trace').exists()).toBe(true)
+  })
+
+  // U15:[方案 D] dispatching 空窗期占位——空 turn（user 已发、assistants 未到）+ session 进行中，
+  // 渲染 TurnMeta 占位「思考中」+ spinner，替代原 absolute dispatching 浮层。
+  // message_start 到达后 assistant 填入同一 turn，TurnMeta 原地变为 working 态（DOM 延续）。
+  it('U15: dispatching 占位（空 turn + sessionActive）→ TurnMeta 渲染「思考中」+ spinner，无 elapsed', () => {
+    const wrapper = mountTurn({
+      turn: makeTurn({
+        isStreaming: false,
+        hasFoldable: false,
+        assistants: [], // dispatching 空窗期：user 已发、message_start 未到
+      }),
+      isSessionActive: true, // session 进行中（derivedStatus=pending）
+    })
+    // 占位 TurnMeta 渲染（v-if 放宽：assistants 空 + sessionActive）
+    expect(wrapper.find('.turn-meta').exists()).toBe(true)
+    // 占位态显示「思考中」（sessionActive）
+    expect(wrapper.find('.lbl').text()).toBe('思考中')
+    // 占位态强制转 spinner（isPendingPlaceholder，区别于 ask-user 不转）
+    expect(wrapper.find('.turn-meta .animate-spin').exists()).toBe(true)
+    // 占位态隐藏 elapsed（尚未开始计时，避免 0s）
+    expect(wrapper.find('.elapsed').exists()).toBe(false)
+    // 无 chevron（hasFoldable=false）
+    expect(wrapper.find('.chev').exists()).toBe(false)
   })
 })
 
@@ -213,14 +266,15 @@ describe('Turn · T4 isWorking 拆分（isStreaming vs isSessionActive）', () =
     expect(wrapper.find('.trace').exists()).toBe(true)
     // B 类进行中：折叠按钮 disabled（进行中禁止折叠 trace）
     expect(wrapper.find('.turn-meta').attributes('disabled')).toBeDefined()
-    // B 类进行中：sticky 贴顶（turn-meta 父 wrapper 带 sticky class）
-    expect(wrapper.find('.sticky').exists()).toBe(true)
-    // C 类进行中：thinking 文案（对话在进行，显示「思考中」而非「已工作」）
-    expect(wrapper.find('.lbl').text()).toBe('思考中')
+    // sticky 已移除（负 margin 覆盖 padding-top 技巧不可靠），turn-meta 正常文档流
+    expect(wrapper.find('.sticky').exists()).toBe(false)
+    // C 类进行中：working 文案（对话在进行，显示「工作中」而非「已工作」；
+    // 3266931c8 后仅空窗占位显示「思考中」，此处 assistants 非空）
+    expect(wrapper.find('.lbl').text()).toBe('工作中')
     // A 类流式关闭：Loader 不转（isStreaming=false）
     expect(wrapper.find('.turn-meta .animate-spin').exists()).toBe(false)
-    // A 类流式关闭：streaming 光标不闪
-    expect(wrapper.find('.streaming-cursor').exists()).toBe(false)
+    // A 类流式关闭：streaming 光标不闪（TurnSummary 去光标后改断言 Turn 尾部 streaming-tail）
+    expect(wrapper.find('.streaming-tail').exists()).toBe(false)
   })
 
   // TC5：ask-user 等待期间 trace 持续展开（不收起）——切走切回 isSessionActive 恒 true 期间 trace 不消失。
@@ -259,27 +313,49 @@ describe('Turn · T4 isWorking 拆分（isStreaming vs isSessionActive）', () =
   // TC8：subagent 后台跑——isSessionActive=true（derivedStatus 为 working 态，主 turn 已结束但有
   // background subagent 仍在 running）。期望对话流不收起（trace 保留）。验证 working 态也算进行中。
   it('TC8: subagent 后台跑（isSessionActive=true）→ 对话流不收起（isStreaming 已 false）', async () => {
-    // 主 turn complete（isStreaming false），但有 background subagent 跑（isSessionActive true = working 态）
-    const wrapper = mountTurn({
-      turn: makeTurn({ isStreaming: false, assistants: [msg({ status: 'complete' })] }),
-      isSessionActive: true,
+    // [block-rendering M0] 完成收起从「容器消失」改「内容隐藏」：带 thinking 块断言内容显隐
+    const thinkingTurn = makeTurn({
+      isStreaming: false,
+      assistants: [
+        msg({
+          status: 'complete',
+          thinking: [{ id: 'th1', content: 'thinking', collapsed: true }],
+          contentBlocks: [{ type: 'thinking', refId: 'th1' }],
+        }),
+      ],
     })
+    // 主 turn complete（isStreaming false），但有 background subagent 跑（isSessionActive true = working 态）
+    const wrapper = mountTurn({ turn: thinkingTurn, isSessionActive: true })
     expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(1)
     // subagent 跑完（isSessionActive 转 false）→ 此刻才收起
     await wrapper.setProps({ isSessionActive: false })
-    expect(wrapper.find('.trace').exists()).toBe(false)
+    // trace 容器仍在（恒渲染），thinking 内容隐藏
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(0)
   })
 
   // 补充：真正完成（isSessionActive true→false）才收起——M3 修复核心断言。
   it('完成自动收起：ask-user respond 后（isSessionActive true→false）才收起', async () => {
-    const wrapper = mountTurn({
-      turn: makeTurn({ isStreaming: false, assistants: [msg({ status: 'complete' })] }),
-      isSessionActive: true,
+    // [block-rendering M0] 完成收起从「容器消失」改「内容隐藏」
+    const thinkingTurn = makeTurn({
+      isStreaming: false,
+      assistants: [
+        msg({
+          status: 'complete',
+          thinking: [{ id: 'th1', content: 'thinking', collapsed: true }],
+          contentBlocks: [{ type: 'thinking', refId: 'th1' }],
+        }),
+      ],
     })
+    const wrapper = mountTurn({ turn: thinkingTurn, isSessionActive: true })
     expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(1)
     // ask-user respond：对话真正结束 → 收起
     await wrapper.setProps({ isSessionActive: false })
-    expect(wrapper.find('.trace').exists()).toBe(false)
+    // trace 容器仍在（恒渲染），thinking 内容隐藏
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(0)
   })
 })
 
@@ -294,6 +370,7 @@ describe('Turn · T4 isWorking 拆分（isStreaming vs isSessionActive）', () =
 describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    expandedTurns.clear()
   })
 
   /** 构造 contentBlocks=[text, toolCall] 的 assistant（先 text 后 tool 的真实场景） */
@@ -313,8 +390,8 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
   }
 
   /** 构造 contentBlocks=[thinking, toolCall] 的 assistant（先 think 后 tool 的时序对比）。
-   *  用 thinking+tool 而非 text+tool：末位 text 始终在 summary 位渲染（不在 trace），
-   *  thinking/tool 不受末位跳过影响，能稳定验证 contentBlocks 时序。 */
+   *  用 thinking+tool 而非 text+tool：[block-rendering M0] text 全 inline 就地渲染（不再进 summary 位），
+   *  thinking/tool 不受影响，能稳定验证 contentBlocks 时序。 */
   function thinkToolAssistant(thinkFirst: boolean, over: Partial<Message> = {}): Message {
     const thinking = { id: 'th1', content: '让我想想', collapsed: true }
     const toolCall = { id: 'tc1', toolName: 'grep', input: { command: 'foo' }, status: 'completed', startTime: 0 }
@@ -330,7 +407,7 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
     })
   }
 
-  it('U15: streaming 态 trace 块顺序 = contentBlocks 顺序（think 在 tool 之前），末位 text 在 summary 位', () => {
+  it('U15: streaming 态 trace 块顺序 = contentBlocks 顺序（think 在 tool 之前）', () => {
     const wrapper = mountTurnWithRealBlock({
       turn: makeTurn({
         isStreaming: true,
@@ -340,14 +417,14 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
     })
     // trace 存在
     expect(wrapper.find('.trace').exists()).toBe(true)
-    // trace 内所有 Block 根（.trace-blk）。末位 text 始终跳过，trace 只剩 thinking + tool
+    // trace 内所有 Block 根（.trace-blk）。thinkToolAssistant 无 text 块，trace 仍 2 块
     const blocks = wrapper.findAll('.trace .trace-blk')
     expect(blocks.length).toBe(2)
     // 第一个块是 thinking（.trace-think 存在）
     expect(blocks[0].find('.trace-think').exists()).toBe(true)
     // 第二个块是 tool（.trace-tool 存在）
     expect(blocks[1].find('.trace-tool').exists()).toBe(true)
-    // summary 也存在（末位 text 在 summary 位，streaming 态也渲染）
+    // 操作栏也存在（lastAssistant 非 null，去内容化后仅 hover actions）
     expect(wrapper.find('.turn-summary').exists()).toBe(true)
   })
 
@@ -365,11 +442,11 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
     expect(blocks[0].find('.trace-tool').exists()).toBe(true)
     // 第二个块是 thinking
     expect(blocks[1].find('.trace-think').exists()).toBe(true)
-    // summary 也存在（末位 text 在 summary 位）
+    // 操作栏存在（lastAssistant 非 null）
     expect(wrapper.find('.turn-summary').exists()).toBe(true)
   })
 
-  it('U17: streaming 态末位 text 在 summary 位渲染（不在 trace 内重复），summary 带 streaming 光标', () => {
+  it('U17: streaming 态 text 全 inline 在 trace 内（不再跳 summary），末位 running tool 时尾部光标隐藏', () => {
     const wrapper = mountTurnWithRealBlock({
       turn: makeTurn({
         isStreaming: true,
@@ -377,44 +454,53 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
         assistants: [textFirstAssistant()],
       }),
     })
-    // streaming 态：turn-summary 存在（末位 text 在 summary 位渲染，消除停止时样式跳变）
+    // 操作栏存在（lastAssistant 非 null；去内容化后不再承载文字）
     expect(wrapper.find('.turn-summary').exists()).toBe(true)
-    // streaming 光标在 summary 内（streaming-cursor span）
-    expect(wrapper.find('.turn-summary .streaming-cursor').exists()).toBe(true)
-    // trace 内无 text 块（末位 text 跳过，只剩 tool）
+    // [block-rendering M0] streaming 光标迁移到 Turn 尾部 streaming-tail；
+    // 末位可见 block 是 running tool（textFirstAssistant: text→tool running）→ 隐藏（工具自带 loader）
+    expect(wrapper.find('.streaming-tail').exists()).toBe(false)
+    // trace 内 text + tool 两个块（末位 text 不再被 filter，全 inline 就地渲染）
     const blocks = wrapper.findAll('.trace .trace-blk')
-    expect(blocks.length).toBe(1)
-    expect(blocks[0].find('.trace-tool').exists()).toBe(true)
+    expect(blocks.length).toBe(2)
+    expect(blocks[0].findComponent({ name: 'MarkdownRenderer' }).exists()).toBe(true)
+    expect(blocks[1].find('.trace-tool').exists()).toBe(true)
   })
 
-  it('U18: streaming→complete 切换后，summary 仍在（text 位置不变），光标消失', async () => {
-    // streaming 态：summary 已存在（text 在 summary 位），带光标
+  it('U18: streaming→complete 切换后，Turn 尾部 streaming-tail 光标消失', async () => {
+    // tool completed：streaming 态光标显示（末位非 running tool），complete 后消失
+    const completedTool = {
+      id: 'tc1',
+      toolName: 'grep',
+      input: { command: 'foo' },
+      status: 'completed',
+      startTime: 0,
+    }
+    // streaming 态：text + completed tool，光标在 turn 尾部
     const wrapper = mountTurnWithRealBlock({
       turn: makeTurn({
         isStreaming: true,
         hasFoldable: true,
-        assistants: [textFirstAssistant()],
+        assistants: [textFirstAssistant({ toolCalls: [completedTool] })],
       }),
     })
     expect(wrapper.find('.turn-summary').exists()).toBe(true)
-    expect(wrapper.find('.turn-summary .streaming-cursor').exists()).toBe(true)
+    expect(wrapper.find('.streaming-tail').exists()).toBe(true)
 
     // 切到 complete 态
     await wrapper.setProps({
       turn: makeTurn({
         isStreaming: false,
         hasFoldable: true,
-        assistants: [textFirstAssistant({ status: 'complete' })],
+        assistants: [textFirstAssistant({ status: 'complete', toolCalls: [completedTool] })],
       }),
     })
-    // summary 仍存在（text 位置未变，这正是消除跳变的核心）
+    // 操作栏仍存在（text 位置未变，这正是消除跳变的核心）
     expect(wrapper.find('.turn-summary').exists()).toBe(true)
     // 光标消失（isStreaming=false）
-    expect(wrapper.find('.turn-summary .streaming-cursor').exists()).toBe(false)
-    // 注意：MarkdownRenderer 被 stub，summary 文本可能不渲染，但 .turn-summary div 存在即可
+    expect(wrapper.find('.streaming-tail').exists()).toBe(false)
   })
 
-  it('U19: complete 态展开 trace，末位 assistant 的 text 块被跳过（仅显 tool 过程）', async () => {
+  it('U19: complete 态展开 trace，末位 assistant 的 text 块在 trace 内（不再跳过）', async () => {
     const wrapper = mountTurnWithRealBlock({
       turn: makeTurn({
         isStreaming: false,
@@ -425,9 +511,242 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
     // complete 态默认收起，手动展开 trace（点击 turn-meta）
     await wrapper.find('.turn-meta').trigger('click')
     expect(wrapper.find('.trace').exists()).toBe(true)
-    // trace 内只剩 tool 块（text 被跳过，因已在底部 summary）
+    // [block-rendering M0] text 全 inline：trace 内 text + tool 两块（末位 text 不再被跳过）
+    const blocks = wrapper.findAll('.trace .trace-blk')
+    expect(blocks.length).toBe(2)
+    expect(blocks[0].findComponent({ name: 'MarkdownRenderer' }).exists()).toBe(true)
+    expect(blocks[1].find('.trace-tool').exists()).toBe(true)
+  })
+
+  // [block-rendering M0] TC-M0-1：末位 text 不再被 filter，全 inline 就地渲染（多 assistant 跨 message 顺序）
+  it('TC-M0-1: 末位 text 不再被 filter（a1 text+tool + a2 text 全 inline，顺序按 contentBlocks）', async () => {
+    const a1 = msg({
+      id: 'a1',
+      status: 'complete',
+      content: '我先查一下',
+      toolCalls: [{ id: 'tc1', toolName: 'grep', input: { command: 'foo' }, status: 'completed', startTime: 0 }],
+      contentBlocks: [
+        { type: 'text', refId: 'text' },
+        { type: 'toolCall', refId: 'tc1' },
+      ],
+    })
+    const a2 = msg({ id: 'a2', status: 'complete', content: '内容是...' })
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({ isStreaming: false, hasFoldable: true, assistants: [a1, a2] }),
+    })
+    // complete 态默认折叠，手动展开 trace
+    await wrapper.find('.turn-meta').trigger('click')
+    // a1 text 在 trace 内（不再被 filter 掉）、在 tool 之前（contentBlocks 顺序）；a2 text 正常渲染
+    const blocks = wrapper.findAll('.trace .trace-blk')
+    expect(blocks.length).toBe(3)
+    expect(blocks[0].findComponent({ name: 'MarkdownRenderer' }).exists()).toBe(true)
+    expect(blocks[1].find('.trace-tool').exists()).toBe(true)
+    expect(blocks[2].findComponent({ name: 'MarkdownRenderer' }).exists()).toBe(true)
+    // 操作栏存在但不再承载文字内容（MarkdownRenderer stub 不在 .turn-summary 内）
+    expect(wrapper.find('.turn-summary').exists()).toBe(true)
+    expect(wrapper.find('.turn-summary').findComponent({ name: 'MarkdownRenderer' }).exists()).toBe(false)
+  })
+
+  // [block-rendering M0] TC-M0-2：streaming-tail 光标位置与显隐（C2 全分支 + ES1 兜底）
+  it('TC-M0-2a: 末位 text 流式 → streaming-tail 存在（turn 内容区末尾）', () => {
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({ isStreaming: true, hasFoldable: false, assistants: [msg({ status: 'streaming', content: '流式中' })] }),
+    })
+    expect(wrapper.find('.streaming-tail').exists()).toBe(true)
+  })
+
+  it('TC-M0-2b: 末位 running tool → streaming-tail 隐藏；tool completed → 存在', async () => {
+    const runningTool = { id: 'tc1', toolName: 'grep', input: { command: 'foo' }, status: 'running', startTime: 0 }
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({
+        isStreaming: true,
+        hasFoldable: true,
+        assistants: [textFirstAssistant({ toolCalls: [runningTool] })],
+      }),
+    })
+    // 末位 running tool：光标隐藏（工具自带 loader，避免光标+loader 并存）
+    expect(wrapper.find('.streaming-tail').exists()).toBe(false)
+    // tool 完成（completed）：光标恢复
+    await wrapper.setProps({
+      turn: makeTurn({
+        isStreaming: true,
+        hasFoldable: true,
+        assistants: [textFirstAssistant({ toolCalls: [{ ...runningTool, status: 'completed' }] })],
+      }),
+    })
+    expect(wrapper.find('.streaming-tail').exists()).toBe(true)
+  })
+
+  it('TC-M0-2c: ES1 空块兜底（assistants 为空）→ streaming-tail 存在', () => {
+    const wrapper = mountTurnWithRealBlock({ turn: makeTurn({ isStreaming: true, assistants: [] }) })
+    expect(wrapper.find('.streaming-tail').exists()).toBe(true)
+  })
+
+  it('TC-M0-2d: complete 后 streaming-tail 消失', async () => {
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({ isStreaming: true, hasFoldable: false, assistants: [msg({ status: 'streaming', content: '流式中' })] }),
+    })
+    expect(wrapper.find('.streaming-tail').exists()).toBe(true)
+    await wrapper.setProps({
+      turn: makeTurn({ isStreaming: false, hasFoldable: false, assistants: [msg({ status: 'complete', content: '完成' })] }),
+    })
+    expect(wrapper.find('.streaming-tail').exists()).toBe(false)
+  })
+
+  // [block-rendering M0] TC-M0-3：折叠态（showTrace=false）渲染最后一个 text（单 text turn 即唯一 text），thinking/tool 隐藏
+  it('TC-M0-3: 折叠态 text 可见（thinking/tool 隐藏）', () => {
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({
+        isStreaming: false,
+        hasFoldable: true,
+        assistants: [
+          msg({
+            status: 'complete',
+            content: '正文',
+            thinking: [{ id: 'th1', content: 'thinking', collapsed: true }],
+            toolCalls: [{ id: 'tc1', toolName: 'grep', input: { command: 'foo' }, status: 'completed', startTime: 0 }],
+            contentBlocks: [
+              { type: 'thinking', refId: 'th1' },
+              { type: 'text', refId: 'text' },
+              { type: 'toolCall', refId: 'tc1' },
+            ],
+          }),
+        ],
+      }),
+    })
+    // complete + 未展开 → showTrace=false；trace 容器恒渲染
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    // text 块 DOM 存在（trace 内唯一块 = text；MarkdownRenderer stub 在 UserBubble 也有，须限定 trace 范围）
     const blocks = wrapper.findAll('.trace .trace-blk')
     expect(blocks.length).toBe(1)
-    expect(blocks[0].find('.trace-tool').exists()).toBe(true)
+    expect(blocks[0].findComponent({ name: 'MarkdownRenderer' }).exists()).toBe(true)
+    // thinking/tool 块 DOM 不存在
+    expect(wrapper.find('.trace-think').exists()).toBe(false)
+    expect(wrapper.find('.trace-tool').exists()).toBe(false)
+  })
+
+  // 多 assistant turn（工具调用循环）折叠态只渲染全 turn 最后一个 text block——8be96c5dc
+  // 修正（tool-loop 防爆炸）：末位 text 不再按 assistant 分组，非末位回复经 takeover 或
+  // 展开（完成态全量 flatBlocks）查看
+  it('折叠态多 assistant text turn 渲染全 turn 末位 text（8be96c5dc：不按 assistant 分组）', () => {
+    const wrapper = mountTurn({
+      turn: makeTurn({
+        isStreaming: false,
+        hasFoldable: true,
+        assistants: [
+          msg({
+            id: 'a1',
+            status: 'complete',
+            content: '我先查一下文件',
+            toolCalls: [{ id: 'tc1', toolName: 'read', input: {}, status: 'completed', startTime: 0 }],
+            contentBlocks: [
+              { type: 'text', refId: 't1' },
+              { type: 'toolCall', refId: 'tc1' },
+            ],
+          }),
+          msg({
+            id: 'a2',
+            status: 'complete',
+            content: '已完成修改',
+            contentBlocks: [{ type: 'text', refId: 't2' }],
+          }),
+        ],
+      }),
+    })
+    // 折叠态（!sessionActive && !expanded）：仅全 turn 末位 text（a2「已完成修改」）可见；
+    // a1 非末位 text 收编（Turn.vue visibleBlocks 折叠分支），tool 随 trace 折叠
+    const blocks = wrapper.findAllComponents({ name: 'Block' })
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].props('type')).toBe('text')
+    expect(blocks[0].props('content')).toBe('已完成修改')
+  })
+})
+
+/**
+ * edges wave：forceWorking 虚拟 session working turn 回归（CL1 裁决固化）。
+ *
+ * subagent 虚拟 session：renderer 为保持 useStreamingPin keepMounted 设 turn.isStreaming=true，
+ * 但 assistant.status='complete'（非真在 streaming）。computeTraceWindow 按 assistant.status==='streaming'
+ * 判定进行中块 → ②空、全部非 text 非 error 块进③已完成池 → visible=末位text + last W completed。
+ * 窗口对 forceWorking 生效（objective ②），不是 bug（CL1 裁决，已源码核实 trace-window.ts:131）。
+ * 这组测试固化该裁决，防止 renderer 后续改动（如调整 isStreaming 判定）让 forceWorking 路径静默回归。
+ */
+describe('Turn · forceWorking 虚拟 session 回归（edges wave CL1）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    expandedTurns.clear()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('forceWorking 基础：turn.isStreaming=true + assistant.status=complete → trace 展开、streaming-tail 显示、无进行中块', () => {
+    // CL1：forceWorking 态 computeTraceWindow ②进行中集合空，全部过程块进③已完成池
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({
+        isStreaming: true, // forceWorking 标记（renderer 为 keepMounted 设）
+        hasFoldable: true,
+        assistants: [
+          msg({
+            status: 'complete', // 关键：非 streaming（虚拟 session 均为完成态）
+            content: '虚拟 session 回复',
+            thinking: [{ id: 'th1', content: '推理', collapsed: true }],
+            toolCalls: [{ id: 'tc1', toolName: 'read', input: {}, status: 'completed', startTime: 0 }],
+            contentBlocks: [
+              { type: 'thinking', refId: 'th1' },
+              { type: 'toolCall', refId: 'tc1' },
+              { type: 'text', refId: 'text' },
+            ],
+          }),
+        ],
+      }),
+    })
+    // sessionActive 回退 turn.isStreaming=true → showTrace=true（isLastTurn 默认 true）
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    // visible = thinking(0) + tool(1) + text(2) = 3（②空，W=6 全收）
+    expect(wrapper.findAll('.trace .trace-blk').length).toBe(3)
+    // streaming-tail 显示（isStreaming=true，末位 text 非 running tool）
+    expect(wrapper.find('.streaming-tail').exists()).toBe(true)
+  })
+
+  // 加固（review r2 mitigation）：forceWorking + >W 个完成块 → 窗口收编生效（CL1 反例场景）。
+  // subagent 虚拟 session 块多时仍受窗口策略约束（visible=last W + text，compactedCount>0）。
+  // W=8→6：e9651bfa6（design D7 V1 tuning）
+  it('forceWorking + >W 完成块（10 tool）→ 窗口收编生效（visible=6 tool + text=7，compactedCount=4）', () => {
+    const tools = Array.from({ length: 10 }, (_, i) => ({
+      id: `tc${i}`,
+      toolName: 'read',
+      input: {},
+      status: 'completed' as const,
+      startTime: 0,
+    }))
+    const contentBlocks = [
+      ...tools.map((t) => ({ type: 'toolCall' as const, refId: t.id })),
+      { type: 'text' as const, refId: 'text' },
+    ]
+    const turn = makeTurn({
+      isStreaming: true,
+      hasFoldable: true,
+      assistants: [
+        msg({
+          status: 'complete',
+          content: '虚拟 session 回复',
+          toolCalls: tools,
+          contentBlocks,
+        }),
+      ],
+    })
+    // inline mount：stub Block + TraceCompactorRow（隔离 i18n，本文件未 mock vue-i18n）
+    const wrapper = mount(Turn, {
+      props: { turn, sessionId: 's1', isLastTurn: true },
+      global: {
+        plugins: [createPinia()],
+        provide: mockChatProvide(),
+        stubs: { ChangeSetCard: true, MarkdownRenderer: true, Block: true, TraceCompactorRow: true },
+      },
+    })
+    // visible = last 6 of 10 tool + text = 7（W=6，窗口对 forceWorking 生效）
+    const blocks = wrapper.findAllComponents({ name: 'Block' })
+    expect(blocks.length).toBe(7)
   })
 })

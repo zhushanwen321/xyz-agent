@@ -18,7 +18,7 @@ export type {
   CompactionSummary, BranchSummary, SteerFollowUpMode,
   BgNotifyRecord, BgNotifyDetails,
 } from './message'
-export { parseBgNotifyDetails } from './message'
+export { parseBgNotifyDetails, COMPLETE_NOTIFY_CUSTOM_TYPES } from './message'
 export type { Segment } from './segments'
 export { segmentsToText, textToSegments, segmentsToPrompt, normalizeContent } from './segments'
 export type { SegmentsMetadataFile, SegmentsMetadataEntry } from './message-metadata'
@@ -26,11 +26,14 @@ export type {
   SessionStatus, SessionSummary, SessionGroup,
 } from './session'
 export type {
-  ProviderStatus, ProviderInfo, ModelInfo,
+  ProviderStatus, ProviderInfo, BuiltinProviderTemplate, BuiltinOAuthConfig, ModelInfo,
   SkillInfo, AgentInfo,
   ScanSourceType, ScannedSkillInfo, ScannedAgentInfo,
-  DiscoveryConfig, SkillDirConfig,
+  DiscoveryConfig, DiscoveryConfigV1, SkillDirConfig,
+  ProviderId, ModelId,
 } from './provider'
+// v1→v2 discovery.json 迁移纯函数（discovery-migrate.ts）
+export { migrateDiscoveryV1ToV2 } from './discovery-migrate'
 export type { ToolPermission, ThemeMode, ThemePreset } from './settings'
 export type {
   PanelLeaf, WindowState,
@@ -38,7 +41,7 @@ export type {
 export * from './extension'
 export * from './git'
 export * from './plugin'
-export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, SUBAGENT_TOOL_NAMES, HIDDEN_TOOL_NAMES, WORKFLOW_TOOL_NAMES, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS, IMAGE_LIMITS } from './constants'
+export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, AMBIENT_ENV_NAMES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS, IMAGE_LIMITS } from './constants'
 export type { ProviderApiType } from './constants'
 export { DEFAULT_PI_SYSTEM_PROMPT, DEFAULT_PI_SYSTEM_PROMPT_VERSION } from './pi-default-prompt'
 // 推荐扩展列表 SSOT（runtime 读取，前端经 extension.recommended WS 拉取）
@@ -57,10 +60,21 @@ export { mandatoryExtensions }
 // 它们依赖 node:os / node:path，而本 barrel 被 renderer（浏览器）整包 import。
 // Node-only 消费方（main/runtime）从子路径 import：'@xyz-agent/shared/paths'
 export * from './file-tree'
-export * from './ignore-parser'
-export * from './git-status-parser'
 export type { RecentWorkspaceRecord } from './workspace'
+export type { Project, ProjectStoreState } from './project'
 export type { SubagentRecord, SubagentStatus, ClosedDisplayStatus } from './subagent'
+// 虚拟 session ID 工厂（subagent 三段式 / agent call 两段式）——跨层协议级 key 约定 SSOT
+export {
+  SUBAGENT_PREFIX,
+  subagentVirtualId,
+  isSubagentVirtualId,
+  extractSubagentId,
+  extractMainSessionId,
+  AGENTCALL_PREFIX,
+  agentCallVirtualId,
+  isAgentCallVirtualId,
+  extractAgentCallSessionId,
+} from './virtual-session-id'
 // Coding Plan 额度查询类型
 export type {
   QuotaWindow,
@@ -70,7 +84,9 @@ export type {
 } from './quota-types'
 export type { QuotaPreset } from './quota-presets'
 export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'
-export { normalizeSubagentStatus, deriveClosedDisplay } from './subagent'
+// normalizeSubagentStatus 已下沉至 runtime（packages/runtime/src/services/session/subagent-status.ts，
+// 单消费者归位）；shared 仅保留 renderer 消费的 deriveClosedDisplay 展示派生。
+export { deriveClosedDisplay } from './subagent'
 export type {
   WorkflowRunStatus,
   WorkflowDoneReason,
@@ -102,6 +118,7 @@ export type {
   AgentSource,
   SourceDetectResult,
   ProviderPreviewItem,
+  ProviderPreviewOrphanItem,
   ProviderImportPreview,
   ProviderImportedItem,
   ProviderImportResult,

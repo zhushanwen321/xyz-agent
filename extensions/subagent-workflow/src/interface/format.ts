@@ -227,7 +227,7 @@ export function firstLine(text?: string): string {
 /**
  * 从 renderCall/execute 的 unknown args 安全提取 agent 名.
  * 类型守卫窄化(替代 `as { agent?: string }` 全可选断言).
- * 无 agent 字段或非空字符串时兌底 DEFAULT_AGENT_NAME(与 service 层 resolveIdentity 一致,
+ * 无 agent 字段或非空字符串时兜底 DEFAULT_AGENT_NAME(与 service 层 resolveIdentity 一致,
  * 保证 block 标题显示的名与实际加载的 agent.md 相符).
  */
 export function extractAgentName(args: unknown): string {

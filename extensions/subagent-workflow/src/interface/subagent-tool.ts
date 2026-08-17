@@ -237,7 +237,7 @@ action:"list" before action:"start" — a reusable running subagent may exist; c
 
 \`\`\`
 {"action":"start","task":"<your task>","slug":"<kebab-case>"}
-{"action":"start","task":"...","slug":"fix-login","agent":"worker","model":"anthropic/claude-3.5-sonnet","fork":true}
+{"action":"start","task":"...","slug":"fix-login","agent":"coder","model":"anthropic/claude-3.5-sonnet","fork":true}
 {"action":"start","task":"review iteratively","slug":"review","conversation":true}
 {"action":"message","messageParam":{"subagentId":"sa-550e8400","text":"now also handle the empty-list case"}}
 {"action":"message","messageParam":{"subagentId":"sa-550e8400","text":"stop, switch direction to X","interrupt":true}}

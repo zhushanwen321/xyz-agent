@@ -28,6 +28,7 @@ import { isTerminalStatus } from "../engine/goal";
 import type { GoalRuntimeState } from "../engine/types";
 import type { UiPort } from "../ports";
 import type { GoalSession } from "../session";
+import { buildGoalGui } from "./gui";
 
 /**
  * projection 层的 Theme 抽象。不 import Pi 的 ThemeColor。
@@ -220,16 +221,22 @@ export { asTheme };
 /**
  * 刷新 widget + status bar。
  *
- * FR-6.6：`uiPort.hasUI === false`（headless / RPC mode）时直接 return，
- * 不调 setWidget / setStatus，避免无 UI 环境崩溃或无意义写入。
+ * FR-6.6：`uiPort.hasUI === false`（headless）时直接 return。
  *
- * 终态折叠为单行 status bar；cancelled / 无 state 时清除 widget + status。
+ * GUI 模式（RPC，uiPort.isGui）：推送 buildGoalGui 的 GuiComponent（guiSetWidget marker
+ * 编码，host 侧解码 → GuiComponentRenderer 渲染）。
+ * TUI 模式：推送 renderWidgetLines 文本行（向后兼容）。
+ *
+ * 终态折叠为单行 status bar（widget 清除）；cancelled/无 state 清除 widget + status。
  */
 export function updateWidget(session: GoalSession, uiPort: UiPort): void {
 	if (!uiPort.hasUI) return;
 
+	const isGui = uiPort.isGui;
+
 	if (!session.state || session.state.status === "cancelled") {
-		uiPort.setWidget("goal", undefined);
+		if (isGui) uiPort.setGuiWidget("goal", undefined);
+		else uiPort.setWidget("goal", undefined);
 		uiPort.setStatus("goal", undefined);
 		return;
 	}
@@ -240,10 +247,16 @@ export function updateWidget(session: GoalSession, uiPort: UiPort): void {
 		if (statusText) {
 			uiPort.setStatus("goal", statusText);
 		}
-		uiPort.setWidget("goal", undefined);
+		if (isGui) uiPort.setGuiWidget("goal", undefined);
+		else uiPort.setWidget("goal", undefined);
 		return;
 	}
 
 	uiPort.setStatus("goal", renderStatusLine(session.state, asTheme(uiPort)));
-	uiPort.setWidget("goal", renderWidgetLines(session.state, asTheme(uiPort)));
+	if (isGui) {
+	// 复用 projection/gui.ts 的 buildGoalGui（整个 GuiRenderResult：component + meta 宿主元数据）
+		uiPort.setGuiWidget("goal", buildGoalGui(session.state));
+	} else {
+		uiPort.setWidget("goal", renderWidgetLines(session.state, asTheme(uiPort)));
+	}
 }

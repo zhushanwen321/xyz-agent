@@ -166,13 +166,15 @@ describe('HandoffService', () => {
     // payload 不含 doc / reply 字段（DM3 协议变更）
     // W5：也不含多余的 sessionId（协议类型只有 srcSessionId/newSessionId/sourceLabel，
     // sessionId 会被前端 routeInbound 误当路由字段）
-    // B1：broker.broadcast 被调用两次：handoffStarted（含sessionId）+ handoffComplete（不含）
+    // wave:perf-w08（02 D1-1）：handoffStarted 广播已删除（前端无消费方）——
+    // 主路径全程只广播 handoffComplete 一次
     const handoffCompleteCall = vi.mocked(broker.broadcast).mock.calls.find(
       (c: any[]) => c[0].type === 'session.handoffComplete',
     )![0] as { payload: Record<string, unknown> }
     expect(handoffCompleteCall.payload).not.toHaveProperty('doc')
     expect(handoffCompleteCall.payload).not.toHaveProperty('reply')
     expect(handoffCompleteCall.payload).not.toHaveProperty('sessionId')
+    expect(vi.mocked(broker.broadcast).mock.calls).toHaveLength(1)
 
     // listener 已清理（detach 调用 → _listeners 空 → inflight 清空）
     expect(srcClient._listeners.size).toBe(0)
@@ -230,17 +232,13 @@ describe('HandoffService', () => {
     expect(replyIndex).toBeGreaterThan(xmlCloseIndex)
   })
 
-  it('TC2c: B1 handoffStarted 在 prompt 之前广播', async () => {
+  it('TC2c: wave:perf-w08 handoffStarted 广播已删除 — 全程零 handoffStarted，仅完成后 handoffComplete 一次', async () => {
     const runPromise = service.runHandoff('src-1')
     await new Promise((r) => setTimeout(r, 0))
 
-    // B1：handoffStarted 应在 prompt 之前广播
-    expect(broker.broadcast).toHaveBeenCalledTimes(1)
-    expect(broker.broadcast).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'session.handoffStarted',
-      payload: { sessionId: 'src-1' },
-    }))
-    // prompt 应在 broadcast 之后调用
+    // handoff 开始时零广播（原 B1 handoffStarted 已删——前端无消费方，02 文档 D1-1）
+    expect(broker.broadcast).not.toHaveBeenCalled()
+    // prompt 正常发出
     expect(srcClient.prompt).toHaveBeenCalledTimes(1)
 
     srcClient.emit({
@@ -250,8 +248,8 @@ describe('HandoffService', () => {
     })
     await runPromise
 
-    // 完成后应有 handoffComplete
-    expect(broker.broadcast).toHaveBeenCalledTimes(2)
+    // 完成后应有 handoffComplete（且是唯一一次广播）
+    expect(broker.broadcast).toHaveBeenCalledTimes(1)
     expect(broker.broadcast).toHaveBeenCalledWith(expect.objectContaining({
       type: 'session.handoffComplete',
     }))
@@ -275,11 +273,8 @@ describe('HandoffService', () => {
 
     await expect(runPromise).rejects.toThrow('empty')
     expect(sessionService.create).not.toHaveBeenCalled()
-    // B1：handoff 开始时广播 handoffStarted，但 empty 后不应广播 handoffComplete
-    expect(broker.broadcast).toHaveBeenCalledTimes(1)
-    expect(broker.broadcast).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'session.handoffStarted',
-    }))
+    // wave:perf-w08：handoffStarted 广播已删，empty 路径全程零广播（原断言 1 次 handoffStarted）
+    expect(broker.broadcast).not.toHaveBeenCalled()
   })
 
   it('TC4: timeout — 不 emit agent_end，advance timer → rejects（timeout），create 未调', async () => {
@@ -325,11 +320,8 @@ describe('HandoffService', () => {
 
     expect(srcClient.abort).toHaveBeenCalledTimes(1)
     await expect(runPromise).rejects.toThrow('abort')
-    // B1：handoff 开始时广播 handoffStarted，但 abort 后不应广播 handoffComplete
-    expect(broker.broadcast).toHaveBeenCalledTimes(1)
-    expect(broker.broadcast).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'session.handoffStarted',
-    }))
+    // wave:perf-w08：handoffStarted 广播已删，abort 路径零广播（原断言 1 次 handoffStarted）
+    expect(broker.broadcast).not.toHaveBeenCalled()
   })
 
   it('TC7: abortHandoff 幂等 — inflight 空时 no-op，abort 未调，返回 false', async () => {
@@ -369,11 +361,8 @@ describe('HandoffService', () => {
 
       await expectPromise
       // 远未到 timeout（10 分钟），证明 exit 探测命中而非超时
-      // B1：handoff 开始时广播 handoffStarted，但 exit 后不应广播 handoffComplete
-      expect(broker.broadcast).toHaveBeenCalledTimes(1)
-      expect(broker.broadcast).toHaveBeenCalledWith(expect.objectContaining({
-        type: 'session.handoffStarted',
-      }))
+      // wave:perf-w08：handoffStarted 广播已删，exit 路径零广播（原断言 1 次 handoffStarted）
+      expect(broker.broadcast).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
@@ -421,7 +410,7 @@ describe('HandoffService', () => {
     // runHandoff 应因 abortedSessions 检查而 throw，不创建新 session
     await expect(runPromise).rejects.toThrow('handoff aborted')
     expect(sessionService.create).not.toHaveBeenCalled()
-    // handoffStarted 已广播，但 handoffComplete 不应广播
+    // handoffStarted 已删除（wave:perf-w08），handoffComplete 不应广播
     const hasComplete = vi.mocked(broker.broadcast).mock.calls.some(
       (c) => (c[0] as { type?: string }).type === 'session.handoffComplete',
     )
@@ -452,7 +441,7 @@ describe('HandoffService', () => {
     await expect(runPromise).rejects.toThrow('handoff aborted')
     // abortedSessions 守卫阻断：createSession 未被调用
     expect(sessionService.create).not.toHaveBeenCalled()
-    // handoffStarted 已广播（在 prompt 之前），但 handoffComplete 不应广播
+    // handoffStarted 已删除（wave:perf-w08），handoffComplete 不应广播
     const hasComplete = vi.mocked(broker.broadcast).mock.calls.some(
       (c) => (c[0] as { type?: string }).type === 'session.handoffComplete',
     )

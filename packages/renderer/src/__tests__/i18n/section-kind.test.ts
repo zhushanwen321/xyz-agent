@@ -16,7 +16,7 @@ import { useFileSearchStore } from '@/stores/fileSearch'
 
 const mockGetFileCandidates = vi.fn()
 const mockSessionList = vi.fn()
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   composer: { getFileCandidates: (...args: unknown[]) => mockGetFileCandidates(...(args as [string])) },
   session: { list: () => mockSessionList() },
 }))
@@ -32,12 +32,12 @@ vi.mock('@/stores/fileSearch', () => ({
 }))
 
 const mockSetupInvalidation = vi.fn(() => vi.fn())
-vi.mock('@/composables/features/useFileSearch', () => ({
+vi.mock('@/composables/features/search/useFileSearch', () => ({
   useFileSearch: () => ({ setupInvalidation: mockSetupInvalidation }),
 }))
 
-import { useSearch } from '@/composables/features/useSearch'
-import type { Section } from '@/lib/search-types'
+import { useSearch } from '@/composables/features/search/useSearch'
+import type { Section } from '@xyz-agent/core'
 
 beforeEach(() => {
   setActivePinia(createPinia())

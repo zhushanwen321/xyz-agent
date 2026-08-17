@@ -5,12 +5,16 @@
     点选即切换当前 session 模型。
   -->
   <Popover v-model:open="open">
-    <PopoverTriggerButton
-      :open="open"
-      :title="t('panel.modelSelect.switchModel')"
-    >
-      <span class="truncate">{{ currentName }}</span>
-    </PopoverTriggerButton>
+    <!-- 默认 trigger（PopoverTriggerButton）。调用方可传 #trigger slot 自定义触发器
+         （如 ProviderPage 默认 pill），此时调用方需自行包 <PopoverTrigger as-child>。 -->
+    <slot name="trigger">
+      <PopoverTriggerButton
+        :open="open"
+        :title="t('panel.modelSelect.switchModel')"
+      >
+        <span class="truncate">{{ currentName }}</span>
+      </PopoverTriggerButton>
+    </slot>
     <PopoverContent side="top" class="w-[220px] p-0">
       <!-- 搜索 -->
       <div class="border-b border-border p-2">
@@ -31,7 +35,7 @@
             variant="ghost"
             class="flex w-full items-center gap-2 rounded-none px-2.5 py-[7px] text-[13px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
             :class="isSelected(model.id) && SELECTED_ITEM_CLASS"
-            @click="onSelect(model.id, group.provider)"
+            @click="onSelect(model.id, group.providerId)"
           >
             <span class="flex-1 text-left">{{ model.name }}</span>
             <Check
@@ -40,11 +44,12 @@
             />
           </Button>
         </div>
+        <!-- 空态区分（P2）：模型池为空 → 引导配置凭据；池有模型但搜索无结果 → 无匹配 -->
         <div
           v-if="groups.length === 0"
           class="px-2.5 py-3 text-center text-[12px] text-neutral-dim"
         >
-          {{ t('panel.modelSelect.noMatch') }}
+          {{ hasAnyModel ? t('panel.modelSelect.noMatch') : t('panel.modelSelect.noModel') }}
         </div>
       </div>
 
@@ -61,19 +66,25 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTriggerButton } from '@/components/ui/popover'
 import { SELECTED_ITEM_CLASS } from '@/composables/logic/popover-styles'
 import type { ModelInfo } from '@/api'
-import { useSettingsStore } from '@/stores/settings'
+import type { ProviderId } from '@xyz-agent/shared'
+import { getSettingsStore } from '@xyz-agent/core'
 
 const emit = defineEmits<{
-  select: [payload: { modelId: string; provider: string }]
+  select: [payload: { modelId: string; provider: ProviderId }]
 }>()
 
 // 接收外部当前选中（Composer 传入），替代写死的 'claude-sonnet-4.5'
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   selected?: string
-}>()
+  /** 限定展示的 provider 分组（ProviderPage 默认 pill 传 [p.id]，只列该供应商模型） */
+  providerFilter?: ProviderId[]
+}>(), {
+  selected: '',
+  providerFilter: undefined,
+})
 
 const { t } = useI18n()
-const settingsStore = useSettingsStore()
+const settingsStore = getSettingsStore()
 const open = ref(false)
 const query = ref('')
 
@@ -91,7 +102,7 @@ function bareModelId(v: string): string {
 // 旧实现用 onMounted 本地订阅，组件随 Composer v-if 重新挂载时会错过 sendInitialState
 // 一次性推送 → 列表空（2026-07-01 竞态修复）。
 interface ModelGroup {
-  providerId: string
+  providerId: ProviderId
   provider: string
   models: ModelInfo[]
 }
@@ -100,11 +111,21 @@ interface ModelGroup {
 // 同时过滤 enabled===false 的 model：runtime aggregateModels 已过滤一遍，
 // 但 settingsStore.models 与 providers 同源广播，若某次广播未过滤则会泄漏禁用模型到切换器，
 // 故前端兜底再过滤一次（双保险）。
+/** 模型池是否非空（enabled 过滤 + providerFilter 限定），空态区分依据 */
+const hasAnyModel = computed(() =>
+  settingsStore.models.value.some((m) => {
+    if (m.enabled === false) return false
+    if (props.providerFilter && !props.providerFilter.includes(m.providerId)) return false
+    return true
+  }),
+)
+
 const groups = computed<ModelGroup[]>(() => {
   const q = query.value.trim().toLowerCase()
   const map = new Map<string, ModelGroup>()
-  for (const m of settingsStore.models) {
+  for (const m of settingsStore.models.value) {
     if (m.enabled === false) continue
+    if (props.providerFilter && !props.providerFilter.includes(m.providerId)) continue
     if (q && !m.name.toLowerCase().includes(q)) continue
     const key = m.providerId
     let g = map.get(key)
@@ -122,7 +143,7 @@ const selectedValue = computed(() => props.selected ?? '')
 
 const currentName = computed(() => {
   const id = bareModelId(selectedValue.value)
-  return settingsStore.models.find((m) => m.id === id)?.name ?? id
+  return settingsStore.models.value.find((m) => m.id === id)?.name ?? id
 })
 
 /** 列表项是否选中（兼容复合串 "provider/modelId" 与裸 id 两种来源） */
@@ -130,7 +151,8 @@ function isSelected(modelId: string): boolean {
   return bareModelId(selectedValue.value) === modelId
 }
 
-function onSelect(id: string, provider: string): void {
+function onSelect(id: string, provider: ProviderId): void {
+  // provider 参数实为 providerId（switch 标识用 id，pi set_model 按 id 查；group.provider 是 name 仅用于分组标题显示）
   open.value = false
   emit('select', { modelId: id, provider })
 }

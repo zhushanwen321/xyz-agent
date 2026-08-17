@@ -17,7 +17,7 @@
  * 分类成结构化 ModelDiscoveryError（含 code + 中文文案）。transport 只 catch + reply，
  * 不再硬编码中文错误文案。
  */
-import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
+import type { ProviderInfo, ModelInfo, ProviderId } from '@xyz-agent/shared'
 import type { IModelService, ISessionService, IConfigService, IMessageBroker } from '../interfaces.js'
 import type { IModelSource } from './ports/model.js'
 import { toErrorMessage } from '../utils/errors.js'
@@ -82,7 +82,7 @@ export class ModelService implements IModelService {
    * session.state_changed 的广播由 SessionService.switchModel 内部负责（含按新 contextWindow
    * 重算的用量 + thinkingLevel），本方法不再自己 broadcastSessionState。
    */
-  async switchModel(sessionId: string, provider: string, modelId: string): Promise<void> {
+  async switchModel(sessionId: string, provider: ProviderId, modelId: string): Promise<void> {
     this.ensureInitialized()
     // 1. pi RPC + 缓存更新 + 广播 session.state_changed（session 级状态单一 owner）
     await this.sessionService.switchModel(sessionId, provider, modelId)

@@ -499,8 +499,8 @@ describe('updater-script integration: linux mv 备份/回滚', () => {
 
   function makeLinuxVars(): LinuxUpdaterScriptVars {
     return {
-      appImagePath: path.join(tmpDir, 'xyz-agent-x86_64.AppImage'),
-      newFilePath: path.join(tmpDir, 'update', 'xyz-agent-x86_64.AppImage'),
+      appImagePath: path.join(tmpDir, 'TaiJi-x86_64.AppImage'),
+      newFilePath: path.join(tmpDir, 'update', 'TaiJi-x86_64.AppImage'),
       // sha 在 body 测试里被剥离（见 buildLinuxBodyScript），填任意 64 hex 占位满足类型
       sha256: 'a'.repeat(64),
       logPath: path.join(tmpDir, 'updater-linux.log'),

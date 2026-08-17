@@ -1,14 +1,19 @@
 /**
  * Events 层 —— ServerMessage 订阅分发。
  *
- * 两条独立通道：
+ * 三条独立通道：
  * - session 通道（on/off/dispatch/dispatchSession）：按 sessionId 路由。CLAUDE.md line 98
  *   要求 session 级消息必须含 sessionId。隔离规则不变。
  * - global 通道（onGlobal/onGlobalType/dispatchGlobal）：无 sessionId 的 server-push
  *   （config.providers / model.list / config.skills / config.agents / config.plugins /
  *   config.extensions / config.defaults）。sendInitialState 推 7 条 + 运行时广播。
+ * - crossSession 通道（onCrossSession/dispatchCrossSession）：带 sessionId 但需同时分发到
+ *   全局单例消费者的消息（ADR-0060）。合法消费者仅 ExtensionHost（+ 未来远程化协同态），
+ *   per-session 消费用 on(sid, handler)，不要用本通道。
  *
- * 两通道互不串扰。routeInbound（useConnection）按 payload.sessionId 有无决定走哪条。
+ * 三通道互不串扰。routeInbound（useConnection）按 payload.sessionId 有无 + type 白名单
+ * 决定走哪条（有 sid → session 通道；有 sid 且 type ∈ CROSS_SESSION_TYPES → 额外 crossSession；
+ * 无 sid → global 通道）。
  */
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 
@@ -101,4 +106,24 @@ export function dispatchGlobal(msg: ServerMessage): void {
   safeForEach(globalAllHandlers, msg)
   const typeSet = globalTypeHandlers.get(msg.type)
   if (typeSet) safeForEach(typeSet, msg)
+}
+
+// ── crossSession 通道（带 sid 消息的全局消费者订阅，ADR-0060）──
+// 语义：允许全局单例消费者（ExtensionHost）接收带 sessionId 的消息——routeInbound 用
+// payload.sessionId 路由，有 sid 的下行（extension:widget/notify 等）走 dispatchSession 不
+// 触发 onGlobal，全局消费者经本通道才能收到。**这不是广播**：合法消费者仅 ExtensionHost
+// （+ 未来远程化协同态 busy/idle/presence），per-session 消费用 on(sid, handler)。
+const crossSessionHandlers = new Set<MessageHandler>()
+
+/** 订阅 crossSession 通道（全局消费者接收带 sid 消息），返回取消函数。ADR-0060。 */
+export function onCrossSession(handler: MessageHandler): () => void {
+  crossSessionHandlers.add(handler)
+  return () => {
+    crossSessionHandlers.delete(handler)
+  }
+}
+
+/** 分发消息到 crossSession 通道（route-inbound FALLBACK 有 sid 分支调用）。ADR-0060。 */
+export function dispatchCrossSession(msg: ServerMessage): void {
+  if (crossSessionHandlers.size > 0) safeForEach(crossSessionHandlers, msg)
 }

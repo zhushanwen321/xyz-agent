@@ -40,7 +40,7 @@ const apiMock = vi.hoisted(() => {
   }
 })
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   chat: {
     streamSubscribe: apiMock.streamSubscribe,
     send: apiMock.send,
@@ -50,7 +50,13 @@ vi.mock('@/api', () => ({
     steer: apiMock.steer,
     followUp: apiMock.followUp,
   },
-  session: {},
+  session: {
+    subscribe: vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 }),
+    unsubscribe: vi.fn().mockResolvedValue(undefined),
+    writeSegments: vi.fn().mockResolvedValue(undefined),
+    // useModel.setThinkingLevel 依赖（thinking-level-sync watch 在 mount 时触发）
+    setThinkingLevel: vi.fn().mockResolvedValue(undefined),
+  },
   config: {
     getGlobalSkills: vi.fn().mockResolvedValue([]),
     getProjectSkills: vi.fn().mockResolvedValue([]),
@@ -59,7 +65,7 @@ vi.mock('@/api', () => ({
 }))
 
 // mount(Composer) 用例：mock 较深依赖（useChat 保留真实，验证 send.rejected 回滚链路）
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => ({
     submitFirstMessage: vi.fn(),
     currentModel: { value: null },
@@ -67,9 +73,6 @@ vi.mock('@/composables/features/useNewTaskFlow', () => ({
     setPendingModel: vi.fn(),
   }),
   resetNewTaskFlow: vi.fn(),
-}))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({ defaultModel: '' }),
 }))
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ toasts: { value: [] }, error: vi.fn(), remove: vi.fn() }),
@@ -87,11 +90,11 @@ vi.mock('@/composables/panel/useComposerModelThinking', () => ({
 
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
-import { useChat } from '@/composables/features/useChat'
+import { useChat } from '@/composables/features/chat/useChat'
 import Composer from '@/components/panel/Composer.vue'
 
 // ── Composer 子组件 stub（参照 composer-three-states.test.ts，最小化 mount 开销）──
-// getSegments 通过 emits 验证器捕获 input payload，用 textToSegments 还原（ADR-0037）。
+// getSegments 通过 emits 验证器捕获 input payload，用 textToSegments 还原（ADR-0043）。
 const lastInputText = ref('')
 const ComposerInputMock = defineComponent({
   name: 'ComposerInput',

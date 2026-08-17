@@ -19,15 +19,81 @@
     <!-- 文档体：skill 命令渲染完整 SKILL.md；非 skill 渲染 description 信息卡 -->
     <div class="min-h-0 flex-1 overflow-auto p-3">
       <template v-if="skill">
-        <!-- skill 完整文档（SKILL.md 经 markdown 渲染） -->
-        <div v-if="skill.description" class="mb-3 text-[13px] text-neutral-mid">{{ skill.description }}</div>
-        <MarkdownRenderer v-if="skill.content" :content="skill.content" :session-id="sessionId ?? undefined" />
-        <div v-else class="py-6 text-center text-[12px] text-neutral-dim">{{ t('panel.command.noDocBody') }}</div>
-        <!-- skill 元信息：sourcePath / tools / triggers -->
-        <div v-if="skill.sourcePath" class="mt-4 border-t border-border pt-3">
-          <p class="text-[11px] text-neutral-dim">{{ t('panel.command.path') }}</p>
-          <p class="mt-0.5 break-all font-mono text-[11px] text-neutral-mid">{{ skill.sourcePath }}</p>
+        <!-- 元信息卡片：frontmatter 结构化展示（名称/路径/描述）+ 分块复制 + 复制完整 frontmatter。
+             content MR 在 fragment 顶层 v-if，加 key 防 null→有值切换时 diff 错位 -->
+        <div class="mb-4 overflow-hidden rounded-md border border-border bg-surface">
+          <!-- 卡片头：标题 + 复制 frontmatter -->
+          <div class="flex items-center border-b border-border bg-surface-hover px-3 py-1.5">
+            <span class="text-[10px] font-medium uppercase tracking-wider text-neutral-dim">{{ t('panel.command.meta') }}</span>
+            <Button
+              v-if="skill.frontmatter"
+              variant="ghost"
+              class="ml-auto h-6 gap-1 px-1.5 text-[11px] text-neutral-mid"
+              :title="t('panel.command.copyFrontmatter')"
+              @click="copy(skill.frontmatter, 'frontmatter')"
+            >
+              <Check v-if="copied === 'frontmatter'" class="size-3 text-accent" />
+              <Copy v-else class="size-3" />
+              {{ copied === 'frontmatter' ? t('panel.command.copied') : t('panel.command.copyFrontmatter') }}
+            </Button>
+          </div>
+          <!-- 名称 -->
+          <div v-if="skill.name" class="group flex items-start gap-2.5 border-b border-border px-3 py-1.5">
+            <span class="w-7 shrink-0 pt-0.5 text-[11px] text-neutral-dim">{{ t('panel.command.metaName') }}</span>
+            <span class="min-w-0 flex-1 break-all font-mono text-[12px] text-neutral-fg">{{ skill.name }}</span>
+            <Button
+              variant="ghost"
+              class="size-6 shrink-0 p-0 opacity-0 group-hover:opacity-100"
+              :class="{ '!opacity-100': copied === 'name' }"
+              :title="t('panel.command.metaName')"
+              @click="copy(skill.name, 'name')"
+            >
+              <Check v-if="copied === 'name'" class="size-3.5 text-accent" />
+              <Copy v-else class="size-3.5 text-neutral-dim" />
+            </Button>
+          </div>
+          <!-- 路径 -->
+          <div v-if="skill.sourcePath" class="group flex items-start gap-2.5 border-b border-border px-3 py-1.5">
+            <span class="w-7 shrink-0 pt-0.5 text-[11px] text-neutral-dim">{{ t('panel.command.path') }}</span>
+            <span class="min-w-0 flex-1 break-all font-mono text-[11.5px] text-neutral-mid">{{ skill.sourcePath }}</span>
+            <Button
+              variant="ghost"
+              class="size-6 shrink-0 p-0 opacity-0 group-hover:opacity-100"
+              :class="{ '!opacity-100': copied === 'path' }"
+              :title="t('panel.command.path')"
+              @click="copy(skill.sourcePath, 'path')"
+            >
+              <Check v-if="copied === 'path'" class="size-3.5 text-accent" />
+              <Copy v-else class="size-3.5 text-neutral-dim" />
+            </Button>
+          </div>
+          <!-- 描述（长描述折叠/展开） -->
+          <div v-if="skill.description" class="group flex items-start gap-2.5 px-3 py-1.5">
+            <span class="w-7 shrink-0 pt-0.5 text-[11px] text-neutral-dim">{{ t('panel.command.metaDesc') }}</span>
+            <div class="min-w-0 flex-1">
+              <p class="break-words text-[12px] leading-[1.55] text-neutral-mid" :class="{ 'line-clamp-2': !descExpanded }">{{ skill.description }}</p>
+              <Button
+                v-if="descNeedsClamp"
+                variant="ghost"
+                class="h-5 px-0 text-[11px] text-neutral-mid"
+                @click="descExpanded = !descExpanded"
+              >{{ descExpanded ? t('panel.command.collapse') : t('panel.command.expand') }}</Button>
+            </div>
+            <Button
+              variant="ghost"
+              class="size-6 shrink-0 p-0 opacity-0 group-hover:opacity-100"
+              :class="{ '!opacity-100': copied === 'desc' }"
+              :title="t('panel.command.metaDesc')"
+              @click="copy(skill.description, 'desc')"
+            >
+              <Check v-if="copied === 'desc'" class="size-3.5 text-accent" />
+              <Copy v-else class="size-3.5 text-neutral-dim" />
+            </Button>
+          </div>
         </div>
+        <!-- 正文：剥掉 frontmatter 后的 SKILL.md，正常 markdown 渲染 -->
+        <MarkdownRenderer v-if="skill.content" key="skill-content" :content="skill.content" :session-id="sessionId ?? undefined" />
+        <div v-else class="py-6 text-center text-[12px] text-neutral-dim">{{ t('panel.command.noDocBody') }}</div>
       </template>
       <!-- 非 skill 命令：信息卡 -->
       <div v-else class="flex h-full flex-col items-start gap-2 py-2">
@@ -48,16 +114,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, provide, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Wrench } from '@lucide/vue'
+import { Wrench, Copy, Check } from '@lucide/vue'
 import type { Component } from 'vue'
-import { useCommandStore } from '@/stores/command'
-import { useSettingsStore } from '@/stores/settings'
-import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { useCommandStore } from '@/composables/features/command/useCommandStore'
+import { getSettingsStore } from '@xyz-agent/core'
+import { useSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import * as fileApi from '@/api/domains/file'
-import MarkdownRenderer from './message-stream/MarkdownRenderer.vue'
+import { useChatViewDeps } from '@/composables/panel/useChatViewDeps'
+import { useCopy } from '@/composables/panel/useCopy'
+// [w6 chat-ui-and-shell T7] MarkdownRenderer 迁 ui 包（经 ChatViewDeps inject 消费 renderMarkdown）
+import { MarkdownRenderer, ChatViewDepsKey } from '@xyz-agent/ui'
+import { Button } from '@/components/ui/button'
 
 const { t } = useI18n()
 
@@ -66,8 +136,14 @@ const props = defineProps<{
   sessionId: string | null
 }>()
 
+// [w6 T6] ui MarkdownRenderer 经 ChatViewDeps inject 消费壳层依赖。CommandDocPanel 不在 MessageStream
+// provide 作用域内（走 DrawerPanel，与 DetailPane 同级），须自行 provide——否则子 MarkdownRenderer
+// setup 调 useChatViewDeps() inject 缺失抛错（description + content 两个 MR 都会崩）。与 DetailPane:283 同范式。
+// sessionId 可为 null，coalesce '' 后 renderMarkdown 无路径链接降级（安全）。
+provide(ChatViewDepsKey, useChatViewDeps(computed(() => props.sessionId ?? '')))
+
 const commandStore = useCommandStore()
-const settings = useSettingsStore()
+const settings = getSettingsStore()
 const { selectedCommandName } = useSideDrawer()
 
 /** 当前选中的 SessionCommand（从 commandStore 查） */
@@ -104,10 +180,10 @@ const skillPath = computed<string | null>(() => {
   const name = selectedCommandName.value
   if (name?.startsWith('/skill:')) {
     const skillName = name.replace('/skill:', '')
-    return settings.skills.find((s) => s.name === skillName)?.sourcePath ?? null
+    return settings.skills.value.find((s) => s.name === skillName)?.sourcePath ?? null
   }
   const bareName = cmd.name.replace(/^\//, '')
-  return settings.skills.find((s) => s.name === bareName)?.sourcePath ?? null
+  return settings.skills.value.find((s) => s.name === bareName)?.sourcePath ?? null
 })
 
 /** skill 描述：/skill:xxx 从 settings.skills 查，其余用 command.description */
@@ -115,15 +191,36 @@ const skillDescription = computed<string | undefined>(() => {
   const name = selectedCommandName.value
   if (name?.startsWith('/skill:')) {
     const skillName = name.replace('/skill:', '')
-    return settings.skills.find((s) => s.name === skillName)?.description
+    return settings.skills.value.find((s) => s.name === skillName)?.description
   }
   return command.value?.description
 })
 
-/** skill content（异步从 SKILL.md 加载）。null = 未加载/加载失败。 */
+/** skill content（异步从 SKILL.md 加载，已剥 frontmatter）。null = 未加载/加载失败。 */
 const skillContent = ref<string | null>(null)
+/** SKILL.md 完整 frontmatter 块（---...---），元信息卡片「复制 frontmatter」用。null = 无 frontmatter 或未加载。 */
+const skillFrontmatter = ref<string | null>(null)
 /** 防重入标记：避免 watch 多次触发时并发发请求（竞态导致旧请求覆盖新结果） */
 let loadingPath: string | null = null
+
+/** 元信息卡片复制 + 反馈态（name/路径/description/frontmatter 各一个 key，copied===key 时切 Check 图标） */
+const { copied, copy } = useCopy()
+/** description 折叠阈值：超过此字符数显示展开/收起按钮（line-clamp-2 截断） */
+const DESC_CLAMP_THRESHOLD = 80
+/** description 折叠态：长描述（超过 DESC_CLAMP_THRESHOLD）默认折叠 2 行，点击展开/收起。切换 skill 重置为折叠 */
+const descExpanded = ref(false)
+const descNeedsClamp = computed(() => (skillDescription.value?.length ?? 0) > DESC_CLAMP_THRESHOLD)
+
+/**
+ * 解析 SKILL.md 开头的 YAML frontmatter 块（--- ... ---）。
+ * 返回 { frontmatter: 完整 ---...--- 块（元信息卡片「复制 frontmatter」用）， body: 剥掉后的正文 }。
+ * frontmatter 是元数据（name/description/triggers），若不剥会被 MarkdownRenderer 当正文渲染：
+ * ---→分割线、key:value→段落，整块元数据泄漏成正文。正则锚定 ^---，正文里的 --- 不会误伤；无 frontmatter 原样返回。
+ */
+function parseFrontmatter(content: string): { frontmatter: string | null; body: string } {
+  const m = content.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/)
+  return m ? { frontmatter: m[0], body: content.slice(m[0].length) } : { frontmatter: null, body: content }
+}
 
 /**
  * 读 SKILL.md：先带 sessionId 走 cwd 守门（项目级 skill 在 cwd 下），
@@ -132,7 +229,10 @@ let loadingPath: string | null = null
  */
 async function loadSkillContent(path: string): Promise<void> {
   if (!path || loadingPath === path) {
-    if (!path) skillContent.value = null
+    if (!path) {
+      skillContent.value = null
+      skillFrontmatter.value = null
+    }
     return
   }
   loadingPath = path
@@ -141,11 +241,18 @@ async function loadSkillContent(path: string): Promise<void> {
     const result = sid
       ? await fileApi.read(path, sid).catch(() => fileApi.read(path))
       : await fileApi.read(path)
-    // 防竞态：异步期间用户已切到别的命令，丢弃本次结果
-    if (loadingPath === path) skillContent.value = result.content
+    // 防竞态：异步期间用户已切到别的命令，丢弃本次结果。解析 frontmatter：body 给正文渲染，frontmatter 给元信息卡片复制
+    if (loadingPath === path) {
+      const { frontmatter, body } = parseFrontmatter(result.content)
+      skillContent.value = body
+      skillFrontmatter.value = frontmatter
+    }
   } catch {
     // 两路守门均拒绝（路径既不在 cwd 下也不在白名单）→ 退化为无文档体
-    if (loadingPath === path) skillContent.value = null
+    if (loadingPath === path) {
+      skillContent.value = null
+      skillFrontmatter.value = null
+    }
   } finally {
     if (loadingPath === path) loadingPath = null
   }
@@ -155,19 +262,25 @@ async function loadSkillContent(path: string): Promise<void> {
 watch(
   skillPath,
   (path) => {
+    descExpanded.value = false
     if (path) void loadSkillContent(path)
-    else skillContent.value = null
+    else {
+      skillContent.value = null
+      skillFrontmatter.value = null
+    }
   },
   { immediate: true },
 )
 
-/** skill 渲染对象（合并 sourcePath / content / description 供模板用） */
+/** skill 渲染对象（合并 name/sourcePath/content/description/frontmatter 供模板用） */
 const skill = computed(() => {
   if (!skillPath.value) return null
   return {
+    name: command.value?.name.replace(/^\//, '') ?? '',
     sourcePath: skillPath.value,
     content: skillContent.value,
     description: skillDescription.value,
+    frontmatter: skillFrontmatter.value,
   }
 })
 

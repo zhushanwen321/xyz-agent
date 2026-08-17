@@ -26,7 +26,7 @@ process.env.XYZ_AGENT_DATA_DIR = TMP_DATA_DIR
 
 interface UpdateSettingsModule {
   getUpdateSettings: () => UpdateSettings
-  setUpdateSettings: (settings: UpdateSettings) => void
+  setUpdateSettings: (settings: Partial<UpdateSettings>) => void
   DEFAULT_UPDATE_SETTINGS: UpdateSettings
 }
 
@@ -54,10 +54,10 @@ describe('update-settings (升级设置存储 SSOT)', () => {
   })
 
   // ── 1. 无文件时 getUpdateSettings 返回默认值 ────────────────────
-  it('getUpdateSettings：无文件时返回默认值 { preDownload: false }', () => {
+  it('getUpdateSettings：无文件时返回默认值 { preDownload: false, autoUpdate: false }', () => {
     expect(existsSync(UPDATE_SETTINGS_FILE)).toBe(false)
     const settings = mod.getUpdateSettings()
-    expect(settings).toEqual({ preDownload: false })
+    expect(settings).toEqual({ preDownload: false, autoUpdate: false })
     // 默认值常量与本模块导出一致
     expect(settings).toEqual(mod.DEFAULT_UPDATE_SETTINGS)
     // 返回的是副本，修改不影响默认常量
@@ -72,7 +72,7 @@ describe('update-settings (升级设置存储 SSOT)', () => {
     expect(existsSync(UPDATE_SETTINGS_FILE)).toBe(true)
 
     const settings = mod.getUpdateSettings()
-    expect(settings).toEqual({ preDownload: true })
+    expect(settings).toEqual({ preDownload: true, autoUpdate: false })
     expect(settings.preDownload).toBe(true)
   })
 
@@ -85,7 +85,22 @@ describe('update-settings (升级设置存储 SSOT)', () => {
     const parsed = JSON.parse(raw) as UpdateSettings
     expect(parsed.preDownload).toBe(false)
 
-    expect(mod.getUpdateSettings()).toEqual({ preDownload: false })
+    expect(mod.getUpdateSettings()).toEqual({ preDownload: false, autoUpdate: false })
+  })
+
+  // ── 2.5 autoUpdate：局部更新合并语义（不覆盖其他开关） ──────────────
+  it('setUpdateSettings：仅传 { autoUpdate: true } 读回 autoUpdate true 且 preDownload 保持默认', () => {
+    mod.setUpdateSettings({ autoUpdate: true })
+    expect(mod.getUpdateSettings()).toEqual({ preDownload: false, autoUpdate: true })
+  })
+
+  it('setUpdateSettings：局部更新合并——先后写 preDownload 与 autoUpdate 互不覆盖', () => {
+    mod.setUpdateSettings({ preDownload: true })
+    mod.setUpdateSettings({ autoUpdate: true })
+    expect(mod.getUpdateSettings()).toEqual({ preDownload: true, autoUpdate: true })
+    // 反向顺序同样成立
+    mod.setUpdateSettings({ autoUpdate: false })
+    expect(mod.getUpdateSettings()).toEqual({ preDownload: true, autoUpdate: false })
   })
 
   // ── 3. 损坏 JSON 时 getUpdateSettings 降级默认值 ────────────────
@@ -96,7 +111,7 @@ describe('update-settings (升级设置存储 SSOT)', () => {
     expect(existsSync(UPDATE_SETTINGS_FILE)).toBe(true)
 
     const settings = mod.getUpdateSettings()
-    expect(settings).toEqual({ preDownload: false })
+    expect(settings).toEqual({ preDownload: false, autoUpdate: false })
     // 注意：损坏时不自动清除文件（与 pending-update 不同），但下次读仍降级默认值
     expect(() => mod.getUpdateSettings()).not.toThrow()
   })
@@ -109,5 +124,16 @@ describe('update-settings (升级设置存储 SSOT)', () => {
 
     const settings = mod.getUpdateSettings()
     expect(settings.preDownload).toBe(false)
+  })
+
+  it('getUpdateSettings：autoUpdate 字段类型错误（非 boolean）→ 降级默认值', () => {
+    const dir = path.dirname(UPDATE_SETTINGS_FILE)
+    mkdirSync(dir, { recursive: true })
+    // autoUpdate 写成字符串，逐字段校验应回退默认值
+    writeFileSync(UPDATE_SETTINGS_FILE, JSON.stringify({ preDownload: true, autoUpdate: 'yes' }), 'utf-8')
+
+    const settings = mod.getUpdateSettings()
+    expect(settings.preDownload).toBe(true)
+    expect(settings.autoUpdate).toBe(false)
   })
 })

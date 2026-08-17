@@ -41,10 +41,18 @@ export interface ExtensionInfo {
   tools?: string[]
   /** 是否启用自动升级（仅 user-installed 扩展有效）。前端读写此字段控制 auto-upgrade 开关。 */
   autoUpgrade?: boolean
-  /** 是否为强制安装扩展（不可卸载/禁用，boot 时自动安装）。从 mandatory-extensions.json SSOT 派生。 */
+  /** @deprecated 废弃，被 layer 取代，保留向后兼容（渐进迁移）。
+   *  原语义：是否为强制安装扩展（不可卸载/禁用，boot 时自动安装）。从 mandatory-extensions.json SSOT 派生。
+   *  新语义下，infrastructure 不可禁不可卸、feature 可禁不可卸，二者均为 mandatory=true。 */
   mandatory?: boolean
-  /** mandatory 扩展的分级（infrastructure=绝对强加载 / feature=preset 可覆盖）。从 mandatory-extensions.json SSOT 派生。 */
+  /** builtin 内部子级：infrastructure=不可禁的基础包 / feature=可禁的功能包。
+   *  从 mandatory-extensions.json SSOT 派生。tier 字段存在（非 undefined）即表示 builtin。
+   *  @deprecated 旧字段名，新代码用 layer+tier 组合（layer 区分 builtin/user，tier 区分 builtin 子级）。 */
   tier?: ExtensionTier
+  /** 扩展分层。system 不进 scan 所以不需要出现在 DTO（走独立加载路径）。
+   *  - builtin：打包内置，不可卸载（infrastructure 子级不可禁，feature 子级可禁）
+   *  - user：用户安装，可禁可卸 */
+  layer?: 'builtin' | 'user'
 }
 
 // ── Extension install flow payload interfaces ──────────────────
@@ -114,4 +122,24 @@ export function isInfrastructureExtension(name: string): boolean {
  */
 export function isFeatureMandatoryExtension(name: string): boolean {
   return mandatoryExtensions.some(e => e.name === name && e.tier === 'feature')
+}
+
+// ── builtin 语义别名（新分层语义，渐进迁移；底层 SSOT 仍为 mandatory-extensions.json）─────────
+
+/**
+ * 判断包名是否为 builtin extension（打包内置，不可卸载）。
+ * 涵盖 infrastructure + feature 两级。
+ *
+ * 新分层语义：原 mandatory 机制（boot 时 npm install + 不可禁）改为 builtin 机制
+ * （打包内置 + infrastructure 不可禁 + feature 可禁）。底层 SSOT 不变，此函数为新语义别名。
+ */
+export function isBuiltinExtension(name: string): boolean {
+  return isMandatoryExtension(name)
+}
+
+/**
+ * 判断包名是否为 builtin infrastructure 包（被依赖的基础包，不可禁不可卸）。
+ */
+export function isInfrastructureBuiltin(name: string): boolean {
+  return isInfrastructureExtension(name)
 }

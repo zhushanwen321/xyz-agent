@@ -5,7 +5,7 @@
  *   - resolveExtension / resolveExtensions（disabled 过滤 + tier 推导，一次读盘）
  *   - applyPresetMode（preset extensionMode 二次筛选）
  *
- * 核心保证（S2）：infrastructure 包在任何 preset mode 下都绝对存活。
+ * 核心保证（S2）：infrastructure 包在任何 preset mode 下都绝对存活；feature builtin 受 disabled 控制（可禁）。
  * S8：畸形 package.json name（非 string）用 basename fallback。
  */
 import { describe, it, expect, vi } from 'vitest'
@@ -74,25 +74,27 @@ describe('resolveExtensions', () => {
     expect(result[0]!.tier).toBe('infrastructure')
   })
 
-  it('feature mandatory 包无视 disabled 强加载（pi-ask-user）', () => {
+  it('feature builtin 包受 disabled 控制（pi-ask-user 可禁）', () => {
     const discovered: DiscoveredExtension[] = [
       { path: '/ext/pi-ask-user', source: 'npm' },
     ]
     const disabled = new Set(['npm:@zhushanwen/pi-ask-user'])
     const result = resolveExtensions(discovered, disabled)
-    expect(result[0]!.loadable).toBe(true)
+    // feature 现在可禁：disabled set 含 pi-ask-user → loadable=false
+    expect(result[0]!.loadable).toBe(false)
     // feature 可被 preset 覆盖（与 infrastructure 的绝对强加载区分）
     expect(result[0]!.presetOverridable).toBe(true)
     expect(result[0]!.tier).toBe('feature')
   })
 
-  it('feature mandatory 包 pi-goal 强加载', () => {
+  it('feature builtin 包 pi-goal 可被 disabled', () => {
     const discovered: DiscoveredExtension[] = [
       { path: '/ext/pi-goal', source: 'npm' },
     ]
     const disabled = new Set(['npm:@zhushanwen/pi-goal'])
     const result = resolveExtensions(discovered, disabled)
-    expect(result[0]!.loadable).toBe(true)
+    // feature 现在可禁：disabled set 含 pi-goal → loadable=false
+    expect(result[0]!.loadable).toBe(false)
     expect(result[0]!.presetOverridable).toBe(true)
     expect(result[0]!.tier).toBe('feature')
   })
@@ -222,7 +224,7 @@ describe('resolveExtensions', () => {
     expect(result[1]!.presetOverridable).toBe(true)
   })
 
-  it('#4: 对比 npm 源同名扩展当 mandatory（强加载, presetOverridable 按 infrastructure/feature 区分）', () => {
+  it('#4: 对比 npm 源同名扩展当 builtin（infrastructure 强加载, feature 受 disabled 控制）', () => {
     const discovered: DiscoveredExtension[] = [
       { path: '/npm/pi-pending-notifications', source: 'npm' }, // infrastructure
       { path: '/npm/pi-goal', source: 'npm' }, // feature
@@ -232,17 +234,18 @@ describe('resolveExtensions', () => {
       'npm:@zhushanwen/pi-goal',
     ])
     const result = resolveExtensions(discovered, disabled)
-    // npm 源 mandatory 包无视 disabled 强加载
+    // npm 源 infrastructure builtin 无视 disabled 强加载
     expect(result[0]!.tier).toBe('infrastructure')
     expect(result[0]!.loadable).toBe(true)
     expect(result[0]!.presetOverridable).toBe(false)
+    // feature builtin 受 disabled 控制（disabled set 含它 → loadable=false）
     expect(result[1]!.tier).toBe('feature')
-    expect(result[1]!.loadable).toBe(true)
+    expect(result[1]!.loadable).toBe(false)
     expect(result[1]!.presetOverridable).toBe(true)
   })
 
-  it('#4: settings 源（packages[] 安装）mandatory 包仍当 mandatory（生产 boot 安装路径）', () => {
-    // 生产场景：boot 自动安装的 mandatory 包经 packages[] → resolver 标 source='settings'
+  it('#4: settings 源（packages[] 安装）builtin 包仍当 builtin（infrastructure 强加载, feature 受 disabled 控制）', () => {
+    // 生产场景：内置的 builtin 包经 packages[] → resolver 标 source='settings'
     const discovered: DiscoveredExtension[] = [
       { path: '/settings/pi-pending-notifications', source: 'settings' }, // infrastructure
       { path: '/settings/pi-goal', source: 'settings' }, // feature
@@ -252,12 +255,13 @@ describe('resolveExtensions', () => {
       'npm:@zhushanwen/pi-goal',
     ])
     const result = resolveExtensions(discovered, disabled)
-    // settings 源 mandatory 包仍当 mandatory（强加载，disabled key 用 npm: 前缀）
+    // settings 源 infrastructure builtin 无视 disabled 强加载（disabled key 用 npm: 前缀）
     expect(result[0]!.tier).toBe('infrastructure')
     expect(result[0]!.loadable).toBe(true)
     expect(result[0]!.presetOverridable).toBe(false)
+    // settings 源 feature builtin 受 disabled 控制
     expect(result[1]!.tier).toBe('feature')
-    expect(result[1]!.loadable).toBe(true)
+    expect(result[1]!.loadable).toBe(false)
     expect(result[1]!.presetOverridable).toBe(true)
   })
 })

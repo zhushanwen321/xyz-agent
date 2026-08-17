@@ -7,6 +7,12 @@
  * - clearSkillPathCache 后重扫
  * - project 优先于 user/npm 的搜索序
  *
+ * [merge 注] main 侧同名文件（mock-fs 版）的 5 用例语义均已覆盖：搜索序三用例
+ * 同名等价；「npm 候选路径构造含 agentDir」= 本文件各用例断言 join(homeRoot,
+ * ".pi/agent/npm/...") 完整路径 + npm 兜底用例的多包枚举；「全 miss undefined 含
+ * readdirSync ENOENT 兜底」= 「未命中 undefined 也缓存」用例（homeRoot 无 npm 目录，
+ * 真实 fs 下 ENOENT 由实现 catch）。mock 版被本集成版取代。
+ *
  * 隔离：node:fs 的 existsSync 用 vi.mock 包一层计数（委托真实实现）；
  * getAgentDir 用 vi.mock 覆盖为临时 home（vitest alias 指向 mocks/pi-coding-agent.ts
  * 的硬编码桩 "/home/user/.pi/agent"，桩不读 os.homedir——mock node:os 无法影响它）；
@@ -90,9 +96,11 @@ describe("resolveSkillPath — 搜索序（project > user > npm）", () => {
     expect(resolveSkillPath(name)).toBe(join(homeRoot, ".pi/agent/skills", name));
   });
 
-  it("npm 兜底：仅 npm 包内存在时返回包内 skills 路径", () => {
+  it("npm 兜底：仅 npm 包内存在时返回包内 skills 路径（readdirSync 枚举多包候选）", () => {
     vi.spyOn(process, "cwd").mockReturnValue(projRoot);
     const name = "npm-skill";
+    // 两个包并存：断言实现枚举 npm/node_modules 下每个包（S-6 语义，防只查首个包的回退）
+    mkdirp(join(homeRoot, ".pi/agent/npm/node_modules/pkg-a/other", "x"));
     mkdirp(join(homeRoot, ".pi/agent/npm/node_modules/some-pkg/skills", name));
 
     expect(resolveSkillPath(name)).toBe(

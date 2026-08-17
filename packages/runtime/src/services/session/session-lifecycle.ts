@@ -17,12 +17,12 @@ import type { SessionSummary, BatchDeleteResult, ThinkingLevel } from '@xyz-agen
 import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
-import type { IManagedSessionView } from './types.js'
+import type { IManagedSessionView, ScannedSession } from './types.js'
 import type { PresetResolution } from '../preset-service.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
-import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED } from '../../utils/errors.js'
+import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND } from '../../utils/errors.js'
 import { createForkedSessionFile } from './session-fork.js'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
 
@@ -63,6 +63,24 @@ export function stripSessionEndEntries(jsonlContent: string): string {
  * 非法值 warn 后忽略（不传给 pi，避免 pi 报错或行为异常）。
  */
 const VALID_THINKING_LEVELS: readonly string[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+
+// D8-3 迁移 promise gate（06 §3.3，perf W29）：provider 迁移（apiKey → auth.json +
+// enabledModels 白名单）完成前禁止 spawn pi——迁移窗口内 spawn 的 session 会读到迁移前
+// 配置（pi AuthStorage 无文件监听，旧 session 不感知新 auth.json）。
+// 组合根（index.ts）后台初始化块经 setMigrationGate 注入；gate 必须自带 catch——
+// 迁移失败也 resolve（best-effort 语义：失败不阻塞任何功能，下次启动重试）。
+// 默认 resolved（未注入时无 gate 语义：单测/无迁移场景行为与旧版一致）。
+let migrationGate: Promise<unknown> = Promise.resolve()
+
+/** 组合根注入迁移完成 gate（D8-3）。传入的 promise 必须已 catch（失败同样 resolve，不阻塞 spawn）。 */
+export function setMigrationGate(gate: Promise<unknown>): void {
+  migrationGate = gate
+}
+
+/** 当前 gate（测试断言/重置用）。 */
+export function getMigrationGate(): Promise<unknown> {
+  return migrationGate
+}
 
 export class SessionLifecycle {
   constructor(
@@ -138,6 +156,8 @@ export class SessionLifecycle {
     hidden?: boolean
     /** Launch preset id（设计文档 §5，绑定到新 session 并解析为 pi 启动参数）。 */
     presetId?: string
+    /** 归属 project id（D14 语义修正，2026-08-04）：创建时归属当前 activeProject；空 = 默认项目兑底。 */
+    projectId?: string
     /** Landing Model Chip 传入值，覆盖 preset.modelOverride（C-RL-6 优先级）。 */
     modelOverride?: string
     /** Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel（C-RL-6 优先级）。 */
@@ -169,6 +189,9 @@ export class SessionLifecycle {
     const presetClientOptions = this.buildPresetClientOptions(
       resolution, options?.modelOverride, options?.thinkingOverride,
     )
+    // D8-3（perf W29）：迁移完成前 spawn pi 会读到未迁移配置——gate 等待。
+    // gate 恒 resolve（迁移失败已 catch），正常迁移 <10ms 不可感知。
+    await migrationGate
     const client = await this.pm.createSession(tempId, sessionCwd, {
       skillPaths: resolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
@@ -204,7 +227,7 @@ export class SessionLifecycle {
     // try-catch + safeDestroy 保证异常时清理 pi 进程。
     let session: IManagedSessionView
     try {
-      // Staging Mode（ADR-0043）：透传 effectiveModel（presetClientOptions.model，已含 C-RL-6 优先级解析）
+      // Staging Mode（ADR-0056）：透传 effectiveModel（presetClientOptions.model，已含 C-RL-6 优先级解析）
       // 让 session 元数据 modelId 反映实际启动模型，前端 composer chip 正确显示。
       session = await this.svc.initializeManagedSession(
         id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath, options?.hidden,
@@ -233,6 +256,16 @@ export class SessionLifecycle {
       ;(session as { launchPresetId?: string }).launchPresetId = presetId
       if (session.sessionFilePath) {
         this.sessionStore.persistPresetBinding(session.sessionFilePath, presetId)
+      }
+    }
+    // 持久化归属 project 到 .project.json sidecar（D14 语义修正，2026-08-04）。
+    // 与 preset 同模式：pi 延迟写入窗口（sessionFilePath 未落盘）时 sidecar 写入内部
+    // existsSync 守卫跳过，内存态兑底 patch session.projectId（toSummary 透传）。
+    // 空 projectId（默认项目创建）不写 sidecar——等价于未归类，读取侧一致兑底默认项目。
+    if (options?.projectId) {
+      ;(session as { projectId?: string }).projectId = options.projectId
+      if (session.sessionFilePath) {
+        this.sessionStore.persistProjectBinding(session.sessionFilePath, options.projectId)
       }
     }
     // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表。
@@ -264,6 +297,10 @@ export class SessionLifecycle {
       }
     }
 
+    // wave:perf-w26（D9-1 rename 失效点）：persistSessionName append session_info 改变文件
+    // mtime/size（sessionMetaCache 键控自然 miss），但目录列举 TTL 快照 1s 内仍返回旧 name——
+    // rename 后侧栏刷新立即显示新名，显式失效目录缓存。
+    this.sessionStore.invalidateScanCache()
     this.sessionStore.refreshAll()
   }
 
@@ -293,6 +330,9 @@ export class SessionLifecycle {
       // W-Runtime4：清理 sessionMetaCache 中的 stale 条目（避免无界增长）
       this.sessionStore.invalidateMetaCache(target.filePath)
     }
+    // wave:perf-w26（D9-1 delete 失效点）：session 文件已 trash，目录 TTL 快照 1s 内仍含
+    // 已删条目——显式失效，删除后立即从侧栏列表消失（05 文档 V5 验收）。
+    this.sessionStore.invalidateScanCache()
     this.sessionStore.refreshAll()
   }
 
@@ -310,13 +350,18 @@ export class SessionLifecycle {
    * 故意包含 hidden session（与 SessionScanner.listAll 的 !s.hidden 过滤不同）：
    * folder 删除是按 cwd 的彻底清理，hidden session 也属于该 cwd。
    * 若未来要改为排除 hidden，需同步评估前端列表（listAll 过滤）与删除的语义对齐。
+   *
+   * wave:perf-w26 修正（审查）：scanSessions 传 { force: true } 旁路目录 TTL 快照——
+   * deleteByCwd 是写语义的彻底清理：走快照会漏删（TTL 窗口内刚落盘的 session 不在快照里）
+   * 且误报失败（快照含已删条目时 delete 内 findScannedSession 找不到 → Session not found
+   * → failed 数组 → 前端误报）。该调用点低频（用户点 folder 删除按钮），无性能顾虑。
    */
   async deleteByCwd(cwd: string): Promise<BatchDeleteResult> {
     const cwdSessions = new Set<string>()
     for (const s of this.svc.getActiveSummaries()) {
       if (s.cwd === cwd) cwdSessions.add(s.id)
     }
-    for (const s of this.sessionStore.scanSessions()) {
+    for (const s of this.sessionStore.scanSessions({ force: true })) {
       if (s.cwd === cwd) cwdSessions.add(s.id)
     }
     const deleted: string[] = []
@@ -336,7 +381,7 @@ export class SessionLifecycle {
   /** 从持久化文件恢复 session。 */
   async restoreSession(sessionId: string): Promise<SessionSummary> {
     const target = this.svc.findScannedSession(sessionId)
-    if (!target) throw new Error(`Persisted session ${sessionId} not found`)
+    if (!target) throw errorWithCode(`Persisted session ${sessionId} not found`, SESSION_NOT_FOUND)
 
     if (!this.configStore.getDefaultModel()) {
       throw errorWithCode('No model configured. Please configure a provider and model in Settings before restoring a session.', MODEL_NOT_CONFIGURED)
@@ -364,6 +409,8 @@ export class SessionLifecycle {
     const allExtPaths = resolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
     // restore 不接收 Landing Chip override（无用户交互），只透传 preset 自身的 model/thinking。
     const presetClientOptions = this.buildPresetClientOptions(resolution, undefined, undefined)
+    // D8-3（perf W29）：restore 同样 spawn pi——gate 等待（启动时恢复路径与 create 一致过 gate）。
+    await migrationGate
     const client = await this.pm.createSession(id, sessionCwd, {
       skillPaths: resolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
@@ -437,12 +484,18 @@ export class SessionLifecycle {
     label?: string,
     options?: {
       /**
-       * Staging Mode（ADR-0043）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。
+       * Staging Mode（ADR-0056）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。
        * undefined 时 fork 仅继承源 preset（旧行为）。
        */
       modelOverride?: string
-      /** Staging Mode（ADR-0043）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
+      /** Staging Mode（ADR-0056）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
       thinkingOverride?: string
+      /**
+       * wave:perf-w26（微项 12 find 合并）：调用方（SessionService.forkSession facade）已解析的
+       * 源 session 扫描结果。传入时本方法不再自扫（同 handler 单次 scanSessions）；
+       * 直接调用方（测试）未传时保持原行为自行扫描。
+       */
+      source?: ScannedSession
     },
   ): Promise<SessionSummary> {
     if (!this.configStore.getDefaultModel()) {
@@ -450,7 +503,8 @@ export class SessionLifecycle {
     }
 
     // 1. 查源 session 文件路径（scanSessions 合并磁盘 + 内存 active）
-    const source = this.svc.findScannedSession(srcSessionId)
+    // wave:perf-w26（微项 12）：facade 传入 source 时复用（find 合并），未传时自扫（force 旁路 TTL）。
+    const source = options?.source ?? this.svc.findScannedSession(srcSessionId)
     if (!source) {
       throw new Error(`fork: source session not found: ${srcSessionId}`)
     }
@@ -464,14 +518,27 @@ export class SessionLifecycle {
 
     // 2. 截断源 JSONL → 写新文件（parentSession 指回源文件/源 sessionId，形成父子链）
     // forkEntryId 字段写入新 header（= 截断锚点 fromPiEntryId），供后续 merge 定位 fork 点
-    const { filePath: forkedFilePath, sessionId: forkedId } = await createForkedSessionFile(
-      source.filePath,
-      fromPiEntryId,
-      includeFrom,
-      getSessionsDir(),
-      fromPiEntryId,
-      fallbackParentId,
-    )
+    let forked: { filePath: string; sessionId: string }
+    try {
+      forked = await createForkedSessionFile(
+        source.filePath,
+        fromPiEntryId,
+        includeFrom,
+        getSessionsDir(),
+        fromPiEntryId,
+        fallbackParentId,
+      )
+    } catch (e) {
+      // wave:perf-w26（D9-1，审查修正）：createForkedSessionFile 写文件半程失败时可能留下
+      // 残缺 fork 文件——失效目录 TTL 缓存避免快照收录残缺条目（与 switchSession/initialize
+      // 失败分支的失效对称，见下）。
+      this.sessionStore.invalidateScanCache()
+      throw e
+    }
+    const { filePath: forkedFilePath, sessionId: forkedId } = forked
+    // wave:perf-w26（D9-1 fork 失效点）：fork 新文件由 runtime 直接写出（非 pi 延迟落盘），
+    // 显式失效目录 TTL 缓存让下一次列表构建立即包含新 session（不依赖 active 内存合并兜底）。
+    this.sessionStore.invalidateScanCache()
 
     // 3. spawn 新 pi 进程（与 restore 同模式）
     // fork 继承源 session 的 preset（设计文档 §4.5）。
@@ -483,15 +550,22 @@ export class SessionLifecycle {
     const forkPresetId = (this.svc.getSession(srcSessionId) as { launchPresetId?: string } | undefined)?.launchPresetId
       ?? source.launchPresetId
       ?? BUILTIN_PRESET_IDS.FULL
+    // fork 继承源 session 的归属 project（D14 语义修正，2026-08-04）：
+    // 与 preset 同模式——active 内存态兑底（延迟写入窗口），fallback 扫描 sidecar 值。
+    // 无归属（undefined）= 默认项目，不写 fork sidecar。
+    const forkProjectId = (this.svc.getSession(srcSessionId) as { projectId?: string } | undefined)?.projectId
+      ?? source.projectId
     const forkResolution = await this.svc.getLaunchPresetOptions(forkPresetId, sessionCwd)
     const allExtPaths = forkResolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
-    // Staging Mode（ADR-0043）：override 优先于源 preset 的 modelOverride/thinkingLevel（见 buildPresetClientOptions
+    // Staging Mode（ADR-0056）：override 优先于源 preset 的 modelOverride/thinkingLevel（见 buildPresetClientOptions
     // 内 C-RL-6 优先级）。undefined 时仅继承源 preset（旧行为），不影响现有 fork。
     const presetClientOptions = this.buildPresetClientOptions(
       forkResolution,
       options?.modelOverride,
       options?.thinkingOverride,
     )
+    // D8-3（perf W29）：fork 同样 spawn pi——gate 等待（06 审查修正：fork 是第三处 spawn 点）。
+    await migrationGate
     const client = await this.pm.createSession(forkedId, sessionCwd, {
       skillPaths: forkResolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
@@ -521,10 +595,17 @@ export class SessionLifecycle {
       // 写 preset 绑定到 forkedFilePath 的 sidecar（设计文档 §4.5）。
       // fork 继承源 preset，forkedFilePath 是新文件（已写出），existsSync 守卫会通过。
       this.sessionStore.persistPresetBinding(forkedFilePath, forkPresetId)
+      // 写归属 project 到 forkedFilePath 的 sidecar（D14 语义修正）：fork 继承源归属。
+      if (forkProjectId) {
+        this.sessionStore.persistProjectBinding(forkedFilePath, forkProjectId)
+      }
     } catch (e) {
       // L5: switchSession 失败时清理孤儿 fork 文件（已写出但 pi 未能加载）
       await this.safeDestroy(forkedId)
       await unlink(forkedFilePath).catch(() => {})
+      // wave:perf-w26（D9-1）：fork 文件已删，失效目录 TTL 缓存（步骤 2 的失效到此刻的
+      // 窗口内可能已被其他消费方扫进快照）。
+      this.sessionStore.invalidateScanCache()
       throw e
     }
 
@@ -537,7 +618,7 @@ export class SessionLifecycle {
     const parentSessionKey = sourceActive?.sessionFilePath ?? srcSessionId
     let session: IManagedSessionView
     try {
-      // Staging Mode（ADR-0043）：透传 effectiveModel（presetClientOptions.model）让 fork 新 session
+      // Staging Mode（ADR-0056）：透传 effectiveModel（presetClientOptions.model）让 fork 新 session
       // 元数据 modelId 反映实际启动模型（override > 源 preset.modelOverride）。
       session = await this.svc.initializeManagedSession(
         forkedId, client, sessionCwd, label ?? basename(sessionCwd), forkedFilePath,
@@ -547,6 +628,8 @@ export class SessionLifecycle {
       // L5: initializeManagedSession 失败时清理孤儿 fork 文件（已写出但 session 未进 Map）
       await this.safeDestroy(forkedId)
       await unlink(forkedFilePath).catch(() => {})
+      // wave:perf-w26（D9-1）：同 switchSession 失败分支——孤儿文件已删，失效目录 TTL 缓存。
+      this.sessionStore.invalidateScanCache()
       throw initErr
     }
 

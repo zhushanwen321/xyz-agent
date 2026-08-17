@@ -34,7 +34,10 @@ const mockHolder = vi.hoisted(() => {
   }
 })
 
-vi.mock('@/lib/ws-client', () => ({
+// §10.2 D-1 后 useConnection 迁 core：dispatcher 经 core ws-client onMessage 注册
+// （renderer lib/ws-client 是 re-export shim，mock 它不再拦截 core 内部 import）。
+// 改 mock core ws-client 叶子模块（vitest 按 alias 解析到同一模块 ID）。
+vi.mock('../../../core/src/transport/ws-client', () => ({
   connect: vi.fn(),
   disconnect: vi.fn(),
   send: vi.fn(),

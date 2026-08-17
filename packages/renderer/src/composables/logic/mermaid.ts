@@ -36,7 +36,7 @@ export function getMermaid(): Promise<Mermaid> {
 
 /**
  * 从 <html data-theme> 读取当前主题。
- * 暗为默认（无 data-theme 或 'dark'），亮为 'light'（style.css ADR-0021-B）。
+ * 暗为默认（无 data-theme 或 'dark'），亮为 'light'（style.css ADR-0022-B）。
  */
 export function getCurrentTheme(): 'dark' | 'light' {
   const attr = document.documentElement.getAttribute('data-theme')

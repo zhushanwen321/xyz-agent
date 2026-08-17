@@ -28,33 +28,33 @@ function makeReleaseJson(overrides: Record<string, unknown> = {}): Record<string
     html_url: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
     assets: [
       {
-        name: 'xyz-agent-mac-arm64.zip',
+        name: 'TaiJi-mac-arm64.zip',
         browser_download_url: 'https://example.com/mac-arm64.zip',
         size: 1000,
         // 合法 64 位 hex（全 a 便于断言）
         digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       },
       {
-        name: 'xyz-agent-setup-x64.exe',
+        name: 'TaiJi-setup-x64.exe',
         browser_download_url: 'https://example.com/setup-x64.exe',
         size: 2000,
         digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       },
       {
-        name: 'xyz-agent-x86_64.AppImage',
+        name: 'TaiJi-x86_64.AppImage',
         browser_download_url: 'https://example.com/x86_64.AppImage',
         size: 3000,
         digest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
       },
       {
-        name: 'xyz-agent-amd64.deb',
+        name: 'TaiJi-amd64.deb',
         browser_download_url: 'https://example.com/amd64.deb',
         size: 4000,
         digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
       },
       // 干扰：blockmap 不应被选中（digest 用 sha512 以验证不会被误当 sha256）
       {
-        name: 'xyz-agent-mac-arm64.zip.blockmap',
+        name: 'TaiJi-mac-arm64.zip.blockmap',
         browser_download_url: 'https://example.com/mac-arm64.zip.blockmap',
         size: 10,
         digest: 'sha512:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
@@ -278,28 +278,28 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
         makeReleaseJson({
           assets: [
             {
-              name: 'xyz-agent-mac-arm64.zip',
+              name: 'TaiJi-mac-arm64.zip',
               browser_download_url: 'https://example.com/mac.zip',
               size: 1000,
               // sha512 前缀 → 必须拒绝，不能原样返回
               digest: `sha512:${sha512Hex}`,
             },
             {
-              name: 'xyz-agent-setup-x64.exe',
+              name: 'TaiJi-setup-x64.exe',
               browser_download_url: 'https://example.com/exe',
               size: 2000,
               // sha256 前缀但 hex 长度不对（6 位）→ 拒绝
               digest: 'sha256:abc123',
             },
             {
-              name: 'xyz-agent-x86_64.AppImage',
+              name: 'TaiJi-x86_64.AppImage',
               browser_download_url: 'https://example.com/appimage',
               size: 3000,
               // 无前缀、纯 64 位 hex → 接受
               digest: 'f'.repeat(64),
             },
             {
-              name: 'xyz-agent-amd64.deb',
+              name: 'TaiJi-amd64.deb',
               browser_download_url: 'https://example.com/deb',
               size: 4000,
               // 无前缀、垃圾数据 → 拒绝
@@ -390,6 +390,61 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
       const result = await checker.checkForLatestRelease('0.8.14')
       expect(result).not.toBeNull()
       expect(result!.version).toBe('0.8.15')
+    })
+  })
+
+  // ── W2TC8：win 产物名后缀匹配（M7-01 P0 回归防护）────────────────
+  //
+  // electron-builder.yml nsis artifactName 必须产出 TaiJi-<version>-setup-<arch>.exe
+  // （setup 在 version 之后），与 ASSET_PATTERNS.winX64Exe 的 '-setup-x64.exe' 后缀匹配。
+  // 曾出现 setup/version 对调（TaiJi-setup-<version>-<arch>.exe）导致 win 自动升级
+  // 检测永远匹配不到 asset（实际产物恒带 ${version}，fixture 用不带版本号的形态掩盖了）。
+  describe('W2TC8: win asset 后缀匹配（带版本号形态）', () => {
+    it('TaiJi-<version>-setup-x64.exe（正确形态）→ winX64Exe 匹配', async () => {
+      globalThis.fetch = vi.fn(async () =>
+        jsonResponse(
+          makeReleaseJson({
+            assets: [
+              {
+                name: 'TaiJi-0.8.44-setup-x64.exe',
+                browser_download_url: 'https://example.com/TaiJi-0.8.44-setup-x64.exe',
+                size: 2000,
+                digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              },
+            ],
+          }),
+        ),
+      ) as typeof globalThis.fetch
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+      expect(result).not.toBeNull()
+      expect(result!.assets.winX64Exe?.downloadUrl).toBe(
+        'https://example.com/TaiJi-0.8.44-setup-x64.exe',
+      )
+    })
+
+    it('TaiJi-setup-<version>-x64.exe（setup/version 对调的错误形态）→ winX64Exe 不匹配', async () => {
+      // 锁死修复：对调形态必须匹配不到，否则回归时 win 自动升级静默失效
+      globalThis.fetch = vi.fn(async () =>
+        jsonResponse(
+          makeReleaseJson({
+            assets: [
+              {
+                name: 'TaiJi-setup-0.8.44-x64.exe',
+                browser_download_url: 'https://example.com/TaiJi-setup-0.8.44-x64.exe',
+                size: 2000,
+                digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              },
+            ],
+          }),
+        ),
+      ) as typeof globalThis.fetch
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+      expect(result).not.toBeNull()
+      expect(result!.assets.winX64Exe).toBeUndefined()
     })
   })
 })

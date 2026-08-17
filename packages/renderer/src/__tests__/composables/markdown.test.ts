@@ -392,3 +392,20 @@ describe('renderMarkdownSegments（text/mermaid 拆分）', () => {
     expect(segs[0].type).toBe('mermaid')
   })
 })
+
+describe('table 横向滚动 wrapper', () => {
+  // markdown.ts table_open/close rule 覆盖：超宽表格自身 overflow-x:auto 滚动，不撑宽
+  // .md-render / detail-content（与 .md-codeblock 同策略：离散块自带滚动容器）。
+  it('table 被 .md-table-wrap 包裹（wrapper 紧包 table，默认 thead/tbody 保留）', async () => {
+    const md = ['| 列1 | 列2 | 列3 |', '| --- | --- | --- |', '| a | b | c |'].join('\n')
+    const html = await freshRender(md)
+    // wrapper 开：div.md-table-wrap 紧接 table（含空白容忍）
+    expect(html).toMatch(/<div class="md-table-wrap">\s*<table>/)
+    // wrapper 闭：table 先关、div 后关
+    expect(html).toMatch(/<\/table>\s*<\/div>/)
+    // 默认 render 链保留（thead/tbody/tr/th/td 未被 wrapper 覆盖破坏）
+    expect(html).toContain('<thead>')
+    expect(html).toContain('<tbody>')
+    expect(html).toContain('<td>')
+  })
+})

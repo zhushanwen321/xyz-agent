@@ -43,13 +43,13 @@ describe('diffSessionList', () => {
 // mock useChat（隔离 streamSubscriptions 模块级 Map + 捕获调用）。
 // disposeSessionMock 为模块级共享，便于 TC6/TC9/TC10 断言调用次数/参数。
 const disposeSessionMock = vi.fn()
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   ensureStreamSubscription: vi.fn(),
   useChat: () => ({ disposeSession: disposeSessionMock }),
   resetChatModuleState: vi.fn(),
 }))
 
-const useChatMock = await import('@/composables/features/useChat')
+const useChatMock = await import('@/composables/features/chat/useChat')
 const ensureStreamSubscriptionMock = useChatMock.ensureStreamSubscription as ReturnType<typeof vi.fn>
 const { useSessionStore } = await import('@/stores/session')
 const { bindSessionStreamSync } = await import('../useSessionStreamSync')

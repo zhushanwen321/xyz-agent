@@ -22,6 +22,7 @@
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { Language, Parser } from "web-tree-sitter";
 
@@ -45,9 +46,25 @@ export interface WasmPaths {
  * 所以这里只定位 .js 所在目录，不硬编码 wasm 文件名（跨版本健壮）。
  *
  * 任一不存在则 throw（fail-loud，由 getBashParser 捕获后 fail-closed）。
+ *
+ * 双模式（R1，bundle 适配）：builtin extension 经 esbuild bundle 成自包含 index.js 后，
+ * web-tree-sitter 被 inline、staged 产物无 node_modules，nodeRequire.resolve 必然失败。
+ * 故优先尝试 bundle 模式 —— 用 fileURLToPath(import.meta.url) 定位 index.js 所在目录，
+ * 查同目录的 tree-sitter-bash.wasm；命中则返回（wasm 由 bundle-extensions.mjs 拷至此）。
+ * 未命中则 fallback 到 nodeRequire.resolve（开发期 dev-link，源码 node_modules 完整）。
  */
 export function resolveWasmPaths(): WasmPaths {
-	// 1. tree-sitter-bash.wasm —— grammar wasm 在包根目录
+	// bundle 模式：bundle 后 wasm 与 index.js 同目录（bundle-extensions.mjs 拷贝至此）。
+	// 查两个 wasm 都存在才返回，避免不对称 guard（bash.wasm 在但 web-tree-sitter.wasm
+	// 缺失时 emscripten locateFile 会失败，虽 fail-closed 但不如入口 guard 显式拦截）。
+	const bundleDir = dirname(fileURLToPath(import.meta.url));
+	const bundleBashWasm = join(bundleDir, "tree-sitter-bash.wasm");
+	const bundleRuntimeWasm = join(bundleDir, "web-tree-sitter.wasm");
+	if (existsSync(bundleBashWasm) && existsSync(bundleRuntimeWasm)) {
+		return { bashWasmPath: bundleBashWasm, runtimeWasmDir: bundleDir };
+	}
+
+	// fallback：开发期从 node_modules 解析（dev-link，源码目录完整）
 	const bashPkgDir = dirname(nodeRequire.resolve("tree-sitter-bash/package.json"));
 	const bashWasmPath = join(bashPkgDir, "tree-sitter-bash.wasm");
 	if (!existsSync(bashWasmPath)) {
@@ -56,8 +73,6 @@ export function resolveWasmPaths(): WasmPaths {
 		);
 	}
 
-	// 2. 运行时 wasm 目录 —— web-tree-sitter 的 .js / .wasm 同目录
-	// 用 resolve("web-tree-sitter") 定位 .js 入口，取其 dirname。
 	const runtimeEntry = nodeRequire.resolve("web-tree-sitter");
 	const runtimeWasmDir = dirname(runtimeEntry);
 	if (!existsSync(runtimeWasmDir)) {

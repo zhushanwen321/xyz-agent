@@ -47,7 +47,7 @@ const toastSpy = vi.hoisted(() => ({
   warning: vi.fn(),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   chat: {
     streamSubscribe: apiMock.streamSubscribe,
     send: apiMock.send,
@@ -70,7 +70,7 @@ vi.mock('@/composables/useToast', () => ({
 }))
 
 import { useChatStore } from '@/stores/chat'
-import { useChat, resetChatModuleState } from '@/composables/features/useChat'
+import { useChat, resetChatModuleState } from '@/composables/features/chat/useChat'
 import { useCompactQueue } from '@/composables/panel/useCompactQueue'
 
 let scope: EffectScope

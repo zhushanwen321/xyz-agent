@@ -27,14 +27,30 @@ export interface BusClient {
 }
 
 /**
+ * O(1) 环形缓冲（D5-3，wave:perf-w06）：定长数组 + head（最旧元素索引）+ size。
+ *
+ * 覆盖写语义：满时新元素写入 (head + size) % capacity 位置（即覆盖最旧），head 前移一格。
+ * 相比旧 push/shift 实现消除每条消息 O(n) 的数组头部搬移。
+ * 只存 stream 类消息（state 类写快照不入 ring，transient 类直传不入 ring——见 message-bus.ts 的 topic 分类）。
+ */
+export interface StreamRingBuffer {
+  /** 定长槽位数组（容量 = buf.length，空槽为 undefined）。 */
+  buf: (ServerMessage | undefined)[]
+  /** 最旧元素索引（0 ≤ head < buf.length；size=0 时无意义）。 */
+  head: number
+  /** 当前元素数（0 ≤ size ≤ buf.length）。 */
+  size: number
+}
+
+/**
  * per-session bus 内部状态。
  *
  * 每个 sessionId 对应一个独立的 SessionBusState：
- * - seqCounter：per-session 单调递增的 seq 分配器（publish 时 ++seqCounter 写入 message.seq）。
- * - streamRing：流式消息的环形缓冲（FIFO），满时淘汰最旧（shift）。固定容量 ringCapacity（默认 1000）。
- * - stateSnapshot：state topic 的最新值去重表（typeKey → 最新 ServerMessage）。新订阅者 connect 时
- *   用 streamRing 全量 + stateSnapshot 合并做初始化（subscribe 当前只返 streamRing snapshot，
- *   stateSnapshot 的合并消费在 runtime-wiring wave）。
+ * - seqCounter：per-session 单调递增的 seq 分配器（publish 时 ++seqCounter 写入 message.seq；
+ *   state/stream 类分配，transient 类不分配——见 message-bus.ts 的 topic 分类）。
+ * - streamRing：stream 类消息的 O(1) 环形缓冲（覆盖写）。固定容量 ringCapacity（默认 1000）。
+ * - stateSnapshot：state topic 的最新值去重表（typeKey → 最新 ServerMessage）。新订阅者
+ *   subscribe 时拿到 last-value 拷贝（renderer reconcile 用），不受 fromSeq 增量过滤影响。
  * - subscribers：当前 session 的活跃订阅者（BusClient 集合）。publish 时遍历广播。
  *
  * 不变量：ws ∈ subscribers ⟺ sid ∈ wsSubscriptions[ws]（由 MessageBus 双向维护）。
@@ -42,8 +58,8 @@ export interface BusClient {
 export interface SessionBusState {
   /** per-session 单调 seq 分配器（publish 前 ++）。 */
   seqCounter: number
-  /** 流式消息环形缓冲（FIFO，满则 shift 最旧）。 */
-  streamRing: ServerMessage[]
+  /** stream 类消息的 O(1) 环形缓冲（覆盖写，D5-3）。 */
+  streamRing: StreamRingBuffer
   /** state topic 最新快照（typeKey → 最新消息），用于状态去重与初始化。 */
   stateSnapshot: Map<string, ServerMessage>
   /** 当前 session 的活跃订阅者集合。 */

@@ -6,6 +6,12 @@ import { readFileSync } from 'fs'
 // __APP_VERSION__ 展示应用版本（与 electron 包一致），读 apps/electron/package.json（单一版本源）。
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../apps/electron/package.json'), 'utf-8')) as { version: string }
 
+// P0 coexistence spike：构建期共存 flag。NEW_ARCH=1 时整个构建切换到新壳骨架入口
+// （vite define 注入 globalThis.__NEW_ARCH__ + input/outDir 切到 dist-new），未设 flag 时
+// 构建行为与现状完全一致（ES1 安全默认）。消费方：main 进程 window-factory.ts 的
+// resolveRendererEntry(process.env.NEW_ARCH)（同源同值，避免 main loadFile 与 renderer 自认架构不一致）。
+const newArch = process.env.NEW_ARCH === '1'
+
 export default defineConfig(({ mode }) => {
   // loadEnv 读取 renderer 目录下的 .env + 按前缀过滤；同时并入 process.env 中已存在的 VITE_ 变量
   // （E2E 构建时由 e2e/fixtures 注入 VITE_MOCK / VITE_E2E）。
@@ -19,6 +25,9 @@ export default defineConfig(({ mode }) => {
       // 用 globalThis.__X__ 形式：vite define 会替换 globalThis 属性访问（vitest 不继承 build 的 define，
       // 但 data.ts 用可选链兜底，vitest 下为 undefined → 空串，不影响测试）。
       'globalThis.__E2E_SAMPLE_PROJECT_CWD__': JSON.stringify(env.VITE_E2E === 'true' ? e2eSampleCwd : ''),
+      // P0 coexistence spike：构建期 flag，读 process.env.NEW_ARCH，默认 false，复用现有 define 模式。
+      // 烘焙为字面 boolean；P0 无业务消费者（consumerCount=0），P3 域级灰度时各域模块按此分支。
+      'globalThis.__NEW_ARCH__': JSON.stringify(newArch),
     },
     // 打包后通过 file:// 协议加载，必须用相对路径，否则 /assets/ 解析到文件系统根目录
     base: './',
@@ -31,16 +40,49 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 1420,
       strictPort: true,
+      // HMR file watcher：本机环境（Node 24 + macOS 15）下 Vite 8 默认的 fsevents 后端不派发变更事件
+      //（独立 chokidar 同路径/同 fsevents 绑定可正常收到，问题仅在 Vite 运行时触发），导致改 .vue/.ts 不热更新。
+      // 强制轮询模式绕过 fsevents，保证 HMR 可靠触发。轮询 209 个源目录 ~每 100ms，CPU 开销可忽略。
+      watch: {
+        usePolling: true,
+        interval: 100,
+      },
     },
     build: {
       target: 'esnext',
       // 产物输出到 apps/electron/renderer/dist（与 main 进程 loadFile 路径一致，
       // electron-builder files 直接包含 renderer/dist/**/*）。dev 模式不读 outDir。
-      outDir: resolve(__dirname, '../../apps/electron/renderer/dist'),
+      // P0 coexistence spike：NEW_ARCH=1 时切换入口/输出目录到新壳骨架（dist-new），
+      // 证明「构建期可按 flag 选入口」接缝机制；未设 flag 时以下两行与现状完全一致（ES1）。
+      outDir: resolve(__dirname, newArch ? '../../apps/electron/renderer/dist-new' : '../../apps/electron/renderer/dist'),
       emptyOutDir: true,
-      rollupOptions: {
+      // [W31 D-8] codeSplitting.groups = rolldown 1.1.4 的 manual chunking（rolldown 文档 §manual-code-splitting）。
+      // rollupOptions.output.manualChunks / advancedChunks 均已被 rolldown 标记 deprecated（manualChunks 仅支持
+      // 函数形式、对象形式不支持），vite 8 的 build.rollupOptions 只是 rolldownOptions 的 deprecated alias
+      // （vite dist node.js: `rolldownOptions ??= rollupOptions` —— 两者同时设置时 rollupOptions 被整体丢弃，
+      // 故 input 与 output 必须统一写在 rolldownOptions 下，不能拆开）。
+      // 分组（10 §3.4 四组 + 探针修正）：
+      //   - xterm：TerminalView 静态 import @xterm/xterm + 4 addon，随 defineAsyncComponent 真正移出首屏
+      //   - shiki：排除 @shikijs/langs（langs-bundle-full 内 235 个动态 import 的语言定义 chunk 必须保持
+      //     按需分离，不被本组吞并——shiki 4.3.1 源码实证）；首屏仍静态 import（markdown.ts），分组收益
+      //     = 与业务 chunk 的 parse 隔离（10 §3.4 审查修正）
+      //   - katex：katex + markdown-it-katex（静态 import，同 shiki 仅 parse 隔离）
+      //   - vendor：其余 node_modules 稳定依赖。tags:['$initial'] 只捕获静态 import 链上的模块，
+      //     mermaid（动态 import ~3MB）不被吞进 vendor、保持独立懒加载 chunk
+      // 未命中任何组的模块（含 @shikijs/langs/*、mermaid、业务共享模块）回退 automatic chunking。
+      rolldownOptions: {
         input: {
-          main: resolve(__dirname, 'index.html'),
+          main: resolve(__dirname, newArch ? 'new-arch/index.html' : 'index.html'),
+        },
+        output: {
+          codeSplitting: {
+            groups: [
+              { name: 'xterm', test: /node_modules[\\/]@xterm[\\/]/, priority: 10 },
+              { name: 'shiki', test: /node_modules[\\/](shiki[\\/]|@shikijs[\\/](?!langs[\\/]))/, priority: 10 },
+              { name: 'katex', test: /node_modules[\\/](katex|markdown-it-katex)[\\/]/, priority: 10 },
+              { name: 'vendor', test: /node_modules[\\/]/, tags: ['$initial'], priority: 1 },
+            ],
+          },
         },
       },
     },

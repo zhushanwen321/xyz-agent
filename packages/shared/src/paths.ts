@@ -17,8 +17,8 @@
  *     extensions/                    ← 用户安装的 extension（local/git 副本 + discovery 扫描根）
  *     npm/                           ← npm 安装的 extension（node_modules 平铺布局）
  *     tmp/                           ← extension 安装临时目录（crash 恢复用）
- *     skills/                        ← skill 强制目录（ADR-0020）
- *     agents/                        ← agent 强制目录（ADR-0020）
+ *     skills/                        ← skill 强制目录（ADR-0021）
+ *     agents/                        ← agent 强制目录（ADR-0021）
  *     pi/                            ← xyz-pi 的根目录
  *       agent/                       ← xyz-pi 的 agent 目录（PI_CODING_AGENT_DIR）
  *         models.json / settings.json / disabled-packages.json
@@ -55,7 +55,7 @@ export function getPiAgentDir(env: NodeJS.ProcessEnv = process.env): string {
  * 用户安装的 extension 目录（`<dataDir>/extensions`）。
  *
  * local/git 安装的 extension 副本存放于此；也是 discovery.json 可选目录的强制基址
- * （与 skill/agent 的 `<dataDir>/skills` 强制目录对齐，ADR-0020）。
+ * （与 skill/agent 的 `<dataDir>/skills` 强制目录对齐，ADR-0021）。
  *
  * 注意：原在 `<piAgentDir>/extensions/`，已迁出到 dataDir 根层。
  *

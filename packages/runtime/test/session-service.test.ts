@@ -19,11 +19,11 @@
  *           ensureActive / listPersistedSessions / getSummary / destroyAll / setSendMessageHook
  * - onSessionExit：构造函数注册的进程退出回调
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { MockInstance } from 'vitest'
 import { tmpdir, homedir } from 'node:os'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
 
 import type { IGitInfoReader } from '../src/services/ports/git-info.js'
 
@@ -32,8 +32,10 @@ import type {
   IEventAdapter,
   IExtensionService,
 } from '../src/interfaces.js'
+import type { IMessageBus } from '../src/services/message-bus/message-bus.js'
 import type { IProcessManager, IPiEngine, PiEventListener } from '../src/services/ports/pi-engine.js'
-import type { SessionSummary, SessionGroup, Message, ServerMessage } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, Message, ServerMessage, ProviderId, SegmentsMetadataEntry, SegmentsMetadataFile } from '@xyz-agent/shared'
+import { getAttachmentsDir } from '@xyz-agent/shared/paths'
 
 // ── vi.hoisted：在 vi.mock 工厂执行前就绪的 mock 句柄 ───────────────
 
@@ -60,7 +62,8 @@ const mocks = vi.hoisted(() => ({
   convertPiHistoryMock: vi.fn((raw: unknown) => raw),
   // entry-tree-builder.rebuildHistoryFromEntries mock：默认 identity-ish（返 entries 当 messages），
   // 单测按需 mockReturnValueOnce 控制重建结果。与 convertPiHistoryMock 同范式（隔离重建逻辑）。
-  rebuildHistoryFromEntriesMock: vi.fn((entries: unknown[]) => ({ messages: entries as unknown[], clientUuidMap: new Map<string, string>() })),
+  // orphanToolResults 可选：仅增量路径消费（getHistory 缓存命中分支直接访问），增量用例显式提供。
+  rebuildHistoryFromEntriesMock: vi.fn((entries: unknown[]): { messages: unknown[]; clientUuidMap: Map<string, string>; orphanToolResults?: unknown[] } => ({ messages: entries as unknown[], clientUuidMap: new Map<string, string>() })),
   getHistoryFromFileMock: vi.fn().mockResolvedValue([]),
   getHistoryFromFilePathMock: vi.fn().mockResolvedValue([]),
   getHistoryTailFromFileMock: vi.fn().mockResolvedValue({ messages: [], truncated: false }),
@@ -199,6 +202,8 @@ interface Setup {
   service: SessionService
   pm: IProcessManager
   broker: IMessageBroker
+  /** mock IMessageBus（wave:perf-w09 单通道：session 级消息的发布目标） */
+  messageBus: IMessageBus
   extensionService: IExtensionService
   clientMap: Map<string, MockClient>
   /** mock 的 IGitInfoReader（readGitInfo 恒 undefined → 摘要 git 字段留空）。供 localSession 复用。 */
@@ -256,6 +261,16 @@ function createSetup(): Setup {
     sendError: vi.fn(),
   } as unknown as IMessageBroker
 
+  // wave:perf-w09（02 文档 D1-2）：session 级消息单通道走 bus.publish（broker 双写腿已删）。
+  // dispatcher（构造参数注入）与 session-service 自身（setMessageBus，对齐组合根）共用此 mock。
+  const messageBus: IMessageBus = {
+    publish: vi.fn(),
+    subscribe: vi.fn(),
+    unsubscribe: vi.fn(),
+    unsubscribeAll: vi.fn(),
+    clearSession: vi.fn(),
+  } as unknown as IMessageBus
+
   const extensionService: IExtensionService = {
     getExtensionPaths: vi.fn().mockResolvedValue([]),
   } as unknown as IExtensionService
@@ -288,7 +303,9 @@ function createSetup(): Setup {
     new PiSessionStore(),
     gitInfoReader,
     workspaceService as unknown as ConstructorParameters<typeof SessionService>[8],
+    messageBus,
   )
+  service.setMessageBus(messageBus)
 
   const mountClient = (sessionId: string, client?: MockClient): MockClient => {
     const c = client ?? makeMockClient()
@@ -313,14 +330,19 @@ function createSetup(): Setup {
   }
 
   return {
-    service, pm, broker, extensionService, clientMap, gitInfoReader,
+    service, pm, broker, messageBus, extensionService, clientMap, gitInfoReader,
     triggerExit: (sid, code, stderr = '') => exitCb?.(sid, code, stderr),
     mountClient, seedSession,
   }
 }
 
-/** 辅助：从 broadcast 调用里找指定 type 的消息（按 type 收窄返回 payload 类型）。 */
+/** 辅助：找指定 type 的已发布消息（按 type 收窄返回 payload 类型）。
+ * wave:perf-w09（D1-2）双通道查询：session 级消息走 bus.publish（call[1]），
+ * 全局消息（config.sessions 等）仍走 broker.broadcast（call[0]）。 */
 function findBroadcast<T extends ServerMessage['type']>(setup: Setup, type: T): ServerMessage<T> | undefined {
+  for (const call of vi.mocked(setup.messageBus.publish).mock.calls) {
+    if (call[1].type === type) return call[1] as ServerMessage<T>
+  }
   for (const call of vi.mocked(setup.broker.broadcast).mock.calls) {
     if (call[0].type === type) return call[0] as ServerMessage<T>
   }
@@ -378,6 +400,32 @@ describe('SessionService · dispatcher', () => {
       expect(client.prompt).toHaveBeenCalledWith('go', undefined)
     })
 
+    // Fix-1：onBeforeSendMessage 的 transform 语义消费侧——hook 返回 modifiedContent
+    // 时 dispatcher 用改写后的文本发 pi（demo 插件 !important → IMPORTANT 的消费链路）
+    it('sends the hook-modified content when hook returns modifiedContent', async () => {
+      const client = setup.mountClient('sid-1')
+      setup.service.setSendMessageHook(async (_sid, content) => ({
+        blocked: false,
+        modifiedContent: content.replace('!important', 'IMPORTANT'),
+      }))
+      await setup.service.sendMessage('sid-1', 'hello !important world')
+      expect(client.prompt).toHaveBeenCalledTimes(1)
+      expect(client.prompt).toHaveBeenCalledWith('hello IMPORTANT world', undefined)
+    })
+
+    it('blocks take precedence over modifiedContent (no prompt sent)', async () => {
+      const client = setup.mountClient('sid-1')
+      setup.service.setSendMessageHook(async () => ({
+        blocked: true,
+        reason: 'denied',
+        modifiedContent: 'should not be sent',
+      }))
+      await setup.service.sendMessage('sid-1', 'go')
+      expect(client.prompt).not.toHaveBeenCalled()
+      const err = findBroadcast(setup, 'message.error')
+      expect(err?.payload).toMatchObject({ message: 'denied' })
+    })
+
     it('broadcasts message.error and skips prompt when hook throws', async () => {
       const client = setup.mountClient('sid-1')
       setup.service.setSendMessageHook(async () => { throw new Error('hook boom') })
@@ -422,6 +470,19 @@ describe('SessionService · dispatcher', () => {
       await setup.service.sendSubagentMessage('sid-sub', 'coder', 't', 'do this please')
       const arg = client.prompt.mock.calls[0][0] as string
       expect(arg.endsWith('\ndo this please')).toBe(true)
+    })
+
+    // Fix-1：subagent 路径同样消费 modifiedContent——改写后的正文拼在 marker 之后
+    it('sends hook-modified body with marker prefix when hook returns modifiedContent', async () => {
+      const client = setup.mountClient('sid-sub')
+      setup.service.setSendMessageHook(async () => ({
+        blocked: false,
+        modifiedContent: 'rewritten body',
+      }))
+      await setup.service.sendSubagentMessage('sid-sub', 'coder', 't', 'raw body')
+      const arg = client.prompt.mock.calls[0][0] as string
+      expect(arg.startsWith('<!-- xyz-agent-force-subagent:')).toBe(true)
+      expect(arg.endsWith('\nrewritten body')).toBe(true)
     })
 
     it('hook audits the prompt text (not the marker) and blocks send', async () => {
@@ -495,23 +556,28 @@ describe('SessionService · dispatcher', () => {
   })
 
   describe('compact', () => {
-    it('broadcasts compacting then compacted and calls client.compact', async () => {
+    it('M4 事件驱动：零 compaction 广播 + client.compact 调用', async () => {
       const client = setup.mountClient('sid-c')
       await setup.service.compact('sid-c')
       expect(client.compact).toHaveBeenCalledTimes(1)
-      const types = vi.mocked(setup.broker.broadcast).mock.calls.map(c => c[0].type)
-      expect(types).toContain('session.compacting')
-      expect(types).toContain('session.compacted')
-      const compacted = findBroadcast(setup, 'session.compacted')
-      expect(compacted?.payload).toMatchObject({ sessionId: 'sid-c', status: 'compacted' })
+      // 零 compaction 广播（compacting/compacted/summary 由 interpreter 从 pi 事件唯一编排）
+      const types = [
+        ...vi.mocked(setup.broker.broadcast).mock.calls.map(c => c[0].type),
+        ...vi.mocked(setup.messageBus.publish).mock.calls.map(c => c[1].type),
+      ]
+      const compactionTypes = types.filter(t =>
+        ['session.compacting', 'session.compacted', 'message.compactionSummary'].includes(t),
+      )
+      expect(compactionTypes).toHaveLength(0)
     })
 
-    it('broadcasts compacted with error and rethrows when client.compact fails', async () => {
+    it('M4 事件驱动：client.compact 失败 → rethrow + 零 compaction 广播（失败提示归 interpreter）', async () => {
       const client = setup.mountClient('sid-c')
       client.compact.mockRejectedValueOnce(new Error('compact fail'))
       await expect(setup.service.compact('sid-c')).rejects.toThrow('compact fail')
+      // 零 compaction 广播（pi 手动失败必发 compaction_end{errorMessage}，interpreter 统一编排提示）
       const compacted = findBroadcast(setup, 'session.compacted')
-      expect(compacted?.payload).toMatchObject({ sessionId: 'sid-c', error: 'compact fail' })
+      expect(compacted).toBeUndefined()
     })
 
     it('throws when session has no client', async () => {
@@ -736,14 +802,14 @@ describe('SessionService · Facade', () => {
     it('calls client.setModel and updates cached modelId', async () => {
       const { id, client } = await setup.seedSession()
       vi.mocked(client.setModel).mockClear()
-      const returned = await setup.service.switchModel(id, 'anthropic', 'claude-x')
+      const returned = await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
       expect(returned).toBe(id)
       expect(client.setModel).toHaveBeenCalledWith('anthropic', 'claude-x')
       expect(setup.service.getSummary(id)?.modelId).toBe('anthropic/claude-x')
     })
 
     it('throws when session not in map (W1/L7: fail-fast，不再静默成功)', async () => {
-      await expect(setup.service.switchModel('ghost', 'p', 'm')).rejects.toThrow('session not active')
+      await expect(setup.service.switchModel('ghost', 'p' as ProviderId, 'm')).rejects.toThrow('session not active')
     })
 
     it('切换后广播 session.state_changed（含按新 contextWindow 重算用量）', async () => {
@@ -754,11 +820,12 @@ describe('SessionService · Facade', () => {
       setup.service.setInputTokens(id, 12000)
       vi.mocked(client.setModel).mockClear()
       vi.mocked(setup.broker.broadcast).mockClear()
+      vi.mocked(setup.messageBus.publish).mockClear()
       // get_state 返回 thinkingLevel（broadcastSessionState 查 pi get_state）
       // W2 收口后用 client.getState()，返回归一后的 state 对象
       vi.mocked(client.getState).mockResolvedValueOnce({ thinkingLevel: 'high' })
 
-      await setup.service.switchModel(id, 'anthropic', 'claude-x')
+      await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
 
       const stateChanged = findBroadcast(setup, 'session.state_changed')
       expect(stateChanged).toBeDefined()
@@ -777,7 +844,7 @@ describe('SessionService · Facade', () => {
       // 不注入 resolver
       setup.service.setInputTokens(id, 5000)
 
-      await setup.service.switchModel(id, 'anthropic', 'claude-x')
+      await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
 
       const stateChanged = findBroadcast(setup, 'session.state_changed')
       expect(stateChanged).toBeDefined()
@@ -795,7 +862,7 @@ describe('SessionService · Facade', () => {
       // W2 收口后 broadcastSessionState 用 client.getState()，失败时 thinkingLevel 回退缓存值
       vi.mocked(client.getState).mockRejectedValueOnce(new Error('get_state boom'))
 
-      await setup.service.switchModel(id, 'anthropic', 'claude-x')
+      await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
 
       const stateChanged = findBroadcast(setup, 'session.state_changed')
       expect(stateChanged).toBeDefined()
@@ -832,6 +899,7 @@ describe('SessionService · Facade', () => {
       setup.service.setModelContextWindowResolver(() => 100000)
       // modelId 初始为 default 'test-provider/test-model'，resolver 按 provider/model 查 contextWindow
       vi.mocked(setup.broker.broadcast).mockClear()
+      vi.mocked(setup.messageBus.publish).mockClear()
 
       setup.service.applyContextUpdate(id, 25000)
 
@@ -1111,15 +1179,16 @@ describe('SessionService · Facade', () => {
       expect(result).toEqual({ messages: ['rebuilt'], truncated: false })
     })
 
-    it('falls back to file read when getEntries returns empty and session is idle', async () => {
+    it('R-12: returns empty array (short-circuit) when getEntries returns empty and session is idle', async () => {
       const { id } = await setup.seedSession()
       const client = setup.clientMap.get(id)!
       client.getEntries.mockResolvedValueOnce({ data: { entries: [], leafId: null } })
-      // idle session getEntries 空 → fallback 走 getHistoryTailFromFile（尾读，返回 {messages, truncated}）
-      mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [{ role: 'user', content: 'f' } as unknown as Message], truncated: false })
+      // wave:perf-w20（R-12）：pi RPC 是活跃 session 的权威视图，空 entries 短路返回空列表，
+      // 不走尾读 fallback（尾读会给最多 20 turn 的文件尾部视图，与 RPC 视图闪变不一致）。
+      // 尾读降级仅在 getEntries 抛错时触发（见下方 throws 用例）。
       const result = await setup.service.getHistory(id)
-      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(id, expect.anything())
-      expect(result.messages.length).toBe(1)
+      expect(result).toEqual({ messages: [], truncated: false })
+      expect(mocks.getHistoryTailFromFileMock).not.toHaveBeenCalled()
     })
 
     it('returns empty array when getEntries empty and session is generating', async () => {
@@ -1139,6 +1208,55 @@ describe('SessionService · Facade', () => {
       mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [], truncated: false })
       await setup.service.getHistory(id)
       expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(id, expect.anything())
+    })
+
+    it('终审 minor：全量重建与缓存新鲜路径返回浅拷贝——调用方就地变更不打穿缓存', async () => {
+      const client = setup.mountClient('sid-alias')
+      const e1 = { type: 'message', id: 'e1', parentId: null, message: { role: 'user', content: 'q1' } }
+      const m1 = { id: 'm1', role: 'user', content: 'q1' } as unknown as Message
+      // 全量重建路径：getEntries() → entries [e1] → rebuild → 写缓存（leafId='e1'）
+      client.getEntries.mockResolvedValueOnce({ data: { entries: [e1], leafId: 'e1' } })
+      mocks.rebuildHistoryFromEntriesMock.mockReturnValueOnce({ messages: [m1], clientUuidMap: new Map() })
+      const first = await setup.service.getHistory('sid-alias')
+      expect(first.messages).toHaveLength(1)
+
+      // 调用方就地污染全量重建的返回数组（模拟未来消费方就地 sort/splice/push）
+      first.messages.push({ id: 'polluted' } as unknown as Message)
+
+      // 缓存新鲜路径（空增量 = R-12 短路）：返回缓存副本，不受上面 push 影响
+      client.getEntries.mockResolvedValueOnce({ data: { entries: [], leafId: 'e1' } })
+      const second = await setup.service.getHistory('sid-alias')
+      expect(second.messages).toHaveLength(1)
+      // 且 second 与缓存本体分离：就地清空后第三次读取仍干净
+      second.messages.length = 0
+      client.getEntries.mockResolvedValueOnce({ data: { entries: [], leafId: 'e1' } })
+      const third = await setup.service.getHistory('sid-alias')
+      expect(third.messages).toHaveLength(1)
+      expect(third.messages[0]).toBe(m1)
+    })
+
+    it('终审 minor：增量合并路径返回浅拷贝——就地清空返回数组不影响缓存', async () => {
+      const client = setup.mountClient('sid-alias-inc')
+      const m1 = { id: 'm1', role: 'user', content: 'q1', piEntryId: 'e1' } as unknown as Message
+      client.getEntries.mockResolvedValueOnce({ data: { entries: [{ type: 'message', id: 'e1' }], leafId: 'e1' } })
+      mocks.rebuildHistoryFromEntriesMock.mockReturnValueOnce({ messages: [m1], clientUuidMap: new Map() })
+      await setup.service.getHistory('sid-alias-inc') // 写缓存（leafId='e1'）
+
+      // 增量路径：delta 首条 parentId === cached.leafId → merge → 写缓存 → 返回 merged 副本
+      const m2 = { id: 'm2', role: 'assistant', content: 'a1', piEntryId: 'e2' } as unknown as Message
+      client.getEntries.mockResolvedValueOnce({
+        data: { entries: [{ type: 'message', id: 'e2', parentId: 'e1' }], leafId: 'e2' },
+      })
+      // 增量路径直接访问 rebuilt.orphanToolResults（无 undefined 保护），mock 必须带该字段
+      mocks.rebuildHistoryFromEntriesMock.mockReturnValueOnce({ messages: [m2], clientUuidMap: new Map(), orphanToolResults: [] })
+      const inc = await setup.service.getHistory('sid-alias-inc')
+      expect(inc.messages).toHaveLength(2)
+
+      // 就地清空返回数组 → 缓存本体不受影响（随后空增量仍返回 2 条）
+      inc.messages.length = 0
+      client.getEntries.mockResolvedValueOnce({ data: { entries: [], leafId: 'e2' } })
+      const after = await setup.service.getHistory('sid-alias-inc')
+      expect(after.messages).toHaveLength(2)
     })
 
     it('reads from file directly when no active client', async () => {
@@ -1322,5 +1440,351 @@ describe('SessionService · onSessionExit callback', () => {
     // 不应该广播 session.exited（只有已知 session 才广播）
     const exitedMsg = findBroadcast(setup, 'session.exited')
     expect(exitedMsg).toBeUndefined()
+  })
+})
+
+// ── wave:runtime-patch ipc-converge-a3 W2：业务持久化写迁移的安全守卫回归 ──
+// 背景：write-session-image / migrate-session-image / write-segments-metadata 三个 IPC handler
+// 从 main 迁到 runtime session-service（WS：session.writeImage/migrateImage/writeSegments）时，
+// 原 Electron 测试（apps/electron/main/test/privileged-handlers.test.ts，-476 行）未随迁，
+// 安全守卫（20MB 上限 / mimeType image/* / name sanitize 防目录穿越 / fromPath 白名单 /
+// segments.json 原子写 + 损坏恢复）失去唯一回归保护。以下用例按 runtime 真实 API 签名
+// （service 直接调用，非 IPC handler 形态）移植，断言强度与原用例一致（TC3 零削弱）。
+//
+// 真实文件 I/O：writeImage/migrateImage/writeSegmentsMetadata 写真实 attachments/tmpdir 文件，
+// 测试读回校验后清理。不 mock node:fs/os/path——这些模块 mock 会破坏同文件其他用例。
+// dataDir 由 vitest globalSetup 的 XYZ_AGENT_DATA_DIR 指向 tmp 目录，不会污染用户数据。
+describe('SessionService · 业务持久化写安全守卫（W2 ipc-converge-a3 移植）', () => {
+  let service: SessionService
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    service = createSetup().service
+  })
+
+  const writtenPaths: string[] = []
+  afterEach(() => {
+    for (const p of writtenPaths.splice(0)) {
+      try { rmSync(p) } catch { /* 忽略清理失败 */ }
+    }
+  })
+
+  describe('writeImage（原 write-session-image IPC handler）', () => {
+    it('W3TC3: panel 态（sessionId 非空）→ 写 attachments/<sessionId>/ 返回 {path,fileName,displayName,id,persisted:true}', async () => {
+      const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a])
+      const result = await service.writeImage('sess-panel-1', bytes.toString('base64'), 'image/png', 'shot.png')
+      writtenPaths.push(result.path)
+      // path 在 <dataDir>/attachments/sess-panel-1/ 下
+      const expectedDir = getAttachmentsDir('sess-panel-1')
+      expect(result.path.startsWith(expectedDir)).toBe(true)
+      // 文件真实写入 + 内容 round-trip
+      expect(existsSync(result.path)).toBe(true)
+      expect(Array.from(readFileSync(result.path))).toEqual(Array.from(bytes))
+      // fileName 是 uuid-shot.png 格式（含 uuid 前缀）
+      expect(result.fileName).toMatch(/^[0-9a-f-]+-shot\.png$/)
+      // displayName 用 sanitized basename（无 uuid 前缀），用户传 'shot.png' → 'shot.png'
+      expect(result.displayName).toBe('shot.png')
+      // id 是 uuid 格式
+      expect(result.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+      // M1：sessionId 非空 → 落 attachments → persisted=true（不需迁移）
+      expect(result.persisted).toBe(true)
+    })
+
+    it('W3TC4: landing 降级（sessionId 为空）→ 写 tmpdir 返回 {path,fileName,displayName,id,persisted:false}', async () => {
+      const bytes = Buffer.from([0x01])
+      const result = await service.writeImage('', bytes.toString('base64'), 'image/png', 'x.png')
+      writtenPaths.push(result.path)
+      // path 在 tmpdir 下（降级路径）
+      expect(result.path.startsWith(tmpdir())).toBe(true)
+      expect(existsSync(result.path)).toBe(true)
+      // id 是 uuid 格式
+      expect(result.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+      // M1：sessionId 空 → 落 tmpdir → persisted=false（session 创建后需迁移）
+      expect(result.persisted).toBe(false)
+    })
+
+    it('W3TC5: 非 image/* mimeType → throw「mimeType must start with image/」（ERR1）', async () => {
+      await expect(service.writeImage('s1', 'x', 'text/plain', 'x')).rejects.toThrow('mimeType must start with image/')
+    })
+
+    it('W3TC6: 超过 20MB → throw「图片过大...20MB」（ERR2 ATTACH_TOO_LARGE）不写文件', async () => {
+      const targetBytes = 21 * 1024 * 1024
+      const base64Len = Math.ceil((targetBytes * 4) / 3)
+      await expect(service.writeImage('s1', 'A'.repeat(base64Len), 'image/png', 'big.png')).rejects.toThrow(/图片过大.*20MB/)
+    })
+
+    it('W3TC7: name 含路径分隔符 → sanitize 剥离，path 不逃逸 attachments 目录', async () => {
+      const result = await service.writeImage('s1', Buffer.from([0x01]).toString('base64'), 'image/png', '../../etc/passwd.png')
+      writtenPaths.push(result.path)
+      // path 不含穿越片段
+      expect(result.path).not.toContain('etc/passwd')
+      // path 仍在 attachments/s1 下
+      const expectedDir = getAttachmentsDir('s1')
+      expect(result.path.startsWith(expectedDir)).toBe(true)
+      expect(existsSync(result.path)).toBe(true)
+    })
+
+    it('W3TC8: 19MB（上限内）→ 正常写入不 throw', async () => {
+      // 用 19MB（上限 20MB 内，留余量避开 base64 padding 估算误差）验证大图正常落地。
+      const bytes = Buffer.alloc(19 * 1024 * 1024, 0x01)
+      const result = await service.writeImage('s1', bytes.toString('base64'), 'image/png', 'big.png')
+      writtenPaths.push(result.path)
+      expect(existsSync(result.path)).toBe(true)
+    })
+
+    it('mimeType=image/jpeg → ext=jpg', async () => {
+      const result = await service.writeImage('s1', Buffer.from([0x01]).toString('base64'), 'image/jpeg', 'pic')
+      writtenPaths.push(result.path)
+      expect(result.fileName.endsWith('.jpg')).toBe(true)
+      expect(result.displayName.endsWith('.jpg')).toBe(true)
+    })
+
+    it('拖拽/+菜单（name 非空）→ displayName 用原 basename（sanitized + .ext）', async () => {
+      const result = await service.writeImage('s1', Buffer.from([0x01]).toString('base64'), 'image/png', 'photo.png')
+      writtenPaths.push(result.path)
+      // displayName 用 sanitized basename，无 uuid 前缀
+      expect(result.displayName).toBe('photo.png')
+      // fileName 含 uuid 前缀
+      expect(result.fileName).toMatch(/^[0-9a-f-]+-photo\.png$/)
+    })
+
+    it('粘贴截图（name 为空，sanitized 退化 image）→ displayName 形如 截图-YYYYMMDD-HHMM.png', async () => {
+      const result = await service.writeImage('s1', Buffer.from([0x01]).toString('base64'), 'image/png', '')
+      writtenPaths.push(result.path)
+      // fileName 仍是 uuid-image.png 形式（uuid 前缀 + 占位 basename）
+      expect(result.fileName).toMatch(/^[0-9a-f-]+-image\.png$/)
+      // displayName 走截图-时间戳 分支（正则校验，不硬编码时间）
+      expect(result.displayName).toMatch(/^截图-\d{8}-\d{4}\.png$/)
+    })
+
+    it('写入失败 → throw「write-session-image failed」+ console.error（超长文件名触发 ENAMETOOLONG）', async () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      await expect(
+        service.writeImage('s1', Buffer.from([0x01]).toString('base64'), 'image/png', 'a'.repeat(5000)),
+      ).rejects.toThrow('write-session-image failed')
+      expect(errSpy).toHaveBeenCalled()
+      errSpy.mockRestore()
+    })
+  })
+
+  describe('migrateImage（原 migrate-session-image IPC handler）', () => {
+    // 真实文件 I/O：migrate 把 tmpdir 文件 move 到 attachments 目录。
+    it('happy path: landing 写 tmpdir 后 migrate 到 attachments/<sessionId>/，原 tmpdir 文件已 move', async () => {
+      // 1. landing 态先写 tmpdir（sessionId 为空）
+      const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47])
+      const writeResult = await service.writeImage('', bytes.toString('base64'), 'image/png', 'shot.png')
+      writtenPaths.push(writeResult.path)
+      const tmpPath = writeResult.path
+      expect(existsSync(tmpPath)).toBe(true)
+      // 2. session 创建后 migrate 到真实 sessionId
+      const migrateResult = await service.migrateImage(tmpPath, 'sess-real-1', writeResult.fileName)
+      writtenPaths.push(migrateResult.path)
+      // 新 path 在 attachments 目录下
+      const expectedDir = getAttachmentsDir('sess-real-1')
+      expect(migrateResult.path.startsWith(expectedDir)).toBe(true)
+      expect(migrateResult.path.endsWith(writeResult.fileName)).toBe(true)
+      // 新文件存在 + 内容 round-trip
+      expect(existsSync(migrateResult.path)).toBe(true)
+      expect(Array.from(readFileSync(migrateResult.path))).toEqual(Array.from(bytes))
+      // 原 tmpdir 文件已被 move（不存在）—— rename 是 move 不是 copy
+      expect(existsSync(tmpPath)).toBe(false)
+    })
+
+    it('fromPath 不存在 → reject（throw），可被 catch 降级', async () => {
+      const ghostPath = join(tmpdir(), 'definitely-not-exist-' + Date.now() + '.png')
+      expect(existsSync(ghostPath)).toBe(false)
+      await expect(service.migrateImage(ghostPath, 'sess-1', 'x.png')).rejects.toThrow(/source file not found/)
+    })
+
+    it('sessionId 为空 → throw requires non-empty sessionId', async () => {
+      // 先写一个 tmpdir 文件让 fromPath 真实存在，验证空 sessionId 早于 fs 检查就 throw
+      const writeResult = await service.writeImage('', Buffer.from([0x01]).toString('base64'), 'image/png', 'x.png')
+      writtenPaths.push(writeResult.path)
+      await expect(service.migrateImage(writeResult.path, '', writeResult.fileName)).rejects.toThrow(
+        'migrate-session-image requires non-empty sessionId',
+      )
+    })
+
+    it('B1: fromPath 在白名单外（home 目录）→ throw，不 move 文件（防任意文件移动）', async () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      // 在 home 下造一个文件，尝试迁移（不应被允许——home 既非 tmpdir 也非 attachments）
+      const evilFile = join(homedir(), '.xyz-agent-test-evil-' + Date.now() + '.txt')
+      writeFileSync(evilFile, 'secret')
+      writtenPaths.push(evilFile)
+      expect(existsSync(evilFile)).toBe(true)
+      await expect(service.migrateImage(evilFile, 'sess-b1', 'leaked.txt')).rejects.toThrow('migrate-session-image failed')
+      // 原文件仍在原位（未被 move）
+      expect(existsSync(evilFile)).toBe(true)
+      // 目标 attachments 目录下没有 leaked.txt
+      expect(existsSync(join(getAttachmentsDir('sess-b1'), 'leaked.txt'))).toBe(false)
+      errSpy.mockRestore()
+    })
+
+    it('B1: fileName 含路径分隔符 → sanitize 剥离，newPath 落在 attachments/<sid>/ 下不穿越', async () => {
+      // 先在 tmpdir 造一个 fromPath（合法来源）
+      const bytes = Buffer.from([0x01, 0x02])
+      const fromPath = join(tmpdir(), 'xyz-test-migrate-' + Date.now() + '.png')
+      writeFileSync(fromPath, bytes)
+      writtenPaths.push(fromPath)
+      // fileName 含穿越片段
+      const result = await service.migrateImage(fromPath, 'sess-sanitize', '../../../etc/foo.png')
+      writtenPaths.push(result.path)
+      // newPath 落在 attachments/sess-sanitize/ 下（starts with 守门，穿越后不会满足）
+      const expectedDir = getAttachmentsDir('sess-sanitize')
+      expect(result.path.startsWith(expectedDir)).toBe(true)
+      // 路径分隔符被剥离——结果路径相对 expectedDir 只剩一个扁平文件名（不含任何 / 或 \ 段）
+      const rel = relative(expectedDir, result.path)
+      expect(rel).not.toMatch(/[\\/]/)
+      // 文件已 move 到 newPath，内容 round-trip
+      expect(existsSync(result.path)).toBe(true)
+      expect(Array.from(readFileSync(result.path))).toEqual(Array.from(bytes))
+      expect(existsSync(fromPath)).toBe(false)
+    })
+
+    it('B1: sessionId 含 ../ → throw（getAttachmentsDir 校验防路径穿越）', async () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      // 在 tmpdir 造合法来源文件（绕过 fromPath 白名单，专门测 sessionId 校验）
+      const fromPath = join(tmpdir(), 'xyz-test-migrate-sid-' + Date.now() + '.png')
+      writeFileSync(fromPath, Buffer.from([0x01]))
+      writtenPaths.push(fromPath)
+      await expect(service.migrateImage(fromPath, '../etc', 'x.png')).rejects.toThrow('migrate-session-image failed')
+      // 原文件未被 move
+      expect(existsSync(fromPath)).toBe(true)
+      errSpy.mockRestore()
+    })
+  })
+
+  describe('writeSegmentsMetadata（原 write-segments-metadata IPC handler）', () => {
+    // 真实文件 I/O：复用 writeImage 测试的 tmpdir 清理模式（afterEach rmSync）。
+    // 每个用例用独立 sessionId 子目录，互不干扰（getAttachmentsDir 按 sessionId 分区）。
+    //
+    // 注意：read-segments-metadata handler 已删除（W6），原 round-trip 校验改用 readFileSync
+    // 直接读 segments.json 验证落地内容（不再经 IPC read）。
+    const writtenDirs: string[] = []
+    afterEach(() => {
+      for (const d of writtenDirs.splice(0)) {
+        try { rmSync(d, { recursive: true, force: true }) } catch { /* 忽略清理失败 */ }
+      }
+    })
+
+    /** 构造一条测试用 segments entry（含 text/image/file 段，覆盖实际 user message 形态） */
+    function makeEntry(clientUuid: string, timestamp = 1234567890): SegmentsMetadataEntry {
+      return {
+        clientUuid,
+        segments: [
+          { type: 'text', text: '看下这张图' },
+          {
+            type: 'image',
+            id: 'img-id-1',
+            path: '/tmp/foo.png',
+            fileName: 'foo.png',
+            displayName: 'foo.png',
+          },
+          { type: 'file', path: '/repo/src/index.ts', lineRange: [10, 20] },
+        ],
+        timestamp,
+      }
+    }
+
+    /** 读 segments.json 并 parse（替代已删的 read-segments-metadata IPC，纯测试辅助） */
+    function readSidecar(sessionId: string): SegmentsMetadataFile {
+      const raw = readFileSync(join(getAttachmentsDir(sessionId), 'segments.json'), 'utf-8')
+      return JSON.parse(raw) as SegmentsMetadataFile
+    }
+
+    it('write 单条 → 落地 segments.json 含该条（round-trip 保真）', async () => {
+      const sessionId = 'seg-test-write-read-single'
+      writtenDirs.push(getAttachmentsDir(sessionId))
+
+      const entry = makeEntry('u-aaa')
+      await service.writeSegmentsMetadata(sessionId, entry)
+
+      const file = readSidecar(sessionId)
+      expect(file.version).toBe(1)
+      expect(file.entries).toHaveLength(1)
+      expect(file.entries[0]).toEqual(entry)
+    })
+
+    it('write 多条（不同 clientUuid）→ 落地含全部', async () => {
+      const sessionId = 'seg-test-write-multi'
+      writtenDirs.push(getAttachmentsDir(sessionId))
+
+      await service.writeSegmentsMetadata(sessionId, makeEntry('u-1', 1000))
+      await service.writeSegmentsMetadata(sessionId, makeEntry('u-2', 2000))
+      await service.writeSegmentsMetadata(sessionId, makeEntry('u-3', 3000))
+
+      const file = readSidecar(sessionId)
+      expect(file.entries).toHaveLength(3)
+      expect(file.entries.map((e) => e.clientUuid).sort()).toEqual(['u-1', 'u-2', 'u-3'])
+    })
+
+    it('write 同 clientUuid 两次（editAndResend 场景）→ 后者覆盖前者，不重复', async () => {
+      const sessionId = 'seg-test-edit-resend'
+      writtenDirs.push(getAttachmentsDir(sessionId))
+
+      const v1 = makeEntry('u-overwrite', 1000)
+      const v2 = makeEntry('u-overwrite', 9999)
+      // 改 v2 的 segments 内容，验证覆盖的是后者而非前者
+      v2.segments = [{ type: 'text', text: 'edited' }]
+      await service.writeSegmentsMetadata(sessionId, v1)
+      await service.writeSegmentsMetadata(sessionId, v2)
+
+      const file = readSidecar(sessionId)
+      expect(file.entries).toHaveLength(1)
+      expect(file.entries[0].timestamp).toBe(9999)
+      expect(file.entries[0].segments).toEqual([{ type: 'text', text: 'edited' }])
+    })
+
+    it('write 时目录不存在 → 自动创建并写入', async () => {
+      const sessionId = 'seg-test-mkdir-' + Date.now()
+      const dir = getAttachmentsDir(sessionId)
+      writtenDirs.push(dir)
+      // 目录不存在
+      expect(existsSync(dir)).toBe(false)
+
+      await service.writeSegmentsMetadata(sessionId, makeEntry('u-mkdir'))
+      // 目录 + segments.json 已创建
+      expect(existsSync(dir)).toBe(true)
+      expect(existsSync(join(dir, 'segments.json'))).toBe(true)
+      const file = readSidecar(sessionId)
+      expect(file.entries).toHaveLength(1)
+    })
+
+    it('write 到已损坏的 segments.json → 重置后写入成功（best-effort，不阻断）', async () => {
+      const sessionId = 'seg-test-write-corrupted-' + Date.now()
+      const dir = getAttachmentsDir(sessionId)
+      writtenDirs.push(dir)
+      // 先构造损坏文件
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, 'segments.json'), '{corrupted!!!', 'utf-8')
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      // write 不抛（捕获了 parse 错误 → 重置为新文件 → 写入成功）
+      await service.writeSegmentsMetadata(sessionId, makeEntry('u-recover'))
+      warnSpy.mockRestore()
+
+      const file = readSidecar(sessionId)
+      expect(file.entries).toHaveLength(1)
+      expect(file.entries[0].clientUuid).toBe('u-recover')
+    })
+
+    it('write 空 sessionId → throw requires non-empty sessionId', async () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      await expect(service.writeSegmentsMetadata('', makeEntry('u-x'))).rejects.toThrow(
+        'write-segments-metadata requires non-empty sessionId',
+      )
+      errSpy.mockRestore()
+    })
+
+    it('atomic 写：临时文件 .tmp 写完才 rename（写后 .tmp 不残留）', async () => {
+      const sessionId = 'seg-test-atomic-' + Date.now()
+      const dir = getAttachmentsDir(sessionId)
+      writtenDirs.push(dir)
+
+      await service.writeSegmentsMetadata(sessionId, makeEntry('u-atomic'))
+      // segments.json 存在，.tmp 不残留（已 rename 走）
+      expect(existsSync(join(dir, 'segments.json'))).toBe(true)
+      expect(existsSync(join(dir, 'segments.json.tmp'))).toBe(false)
+    })
   })
 })

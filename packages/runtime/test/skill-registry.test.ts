@@ -52,7 +52,7 @@ describe('skillRegistry (W1)', () => {
   it('U1: getGlobalSkills 返回启动扫描的 skill', async () => {
     const { SkillRegistry } = await import('../src/services/skill-registry.js')
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       sessionService: { getActiveSessionIds: () => [] } as never,
     })
@@ -66,7 +66,7 @@ describe('skillRegistry (W1)', () => {
     const { SkillRegistry } = await import('../src/services/skill-registry.js')
     const scanSpy = vi.fn().mockResolvedValue([])
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       sessionService: { getActiveSessionIds: () => [] } as never,
       _scanFn: scanSpy,
@@ -80,7 +80,7 @@ describe('skillRegistry (W1)', () => {
   it('U3: onChange 回调注册 + 触发通知 affectedSessions', async () => {
     const { SkillRegistry } = await import('../src/services/skill-registry.js')
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       sessionService: { getActiveSessionIds: () => ['sid-a', 'sid-b'] } as never,
     } as never)
@@ -99,7 +99,7 @@ describe('skillRegistry (W1)', () => {
     mkdirSync(join(cwd, '.xyz-agent', 'skills'), { recursive: true })
     mkdirSync(join(cwd, 'node_modules', 'some-pkg'), { recursive: true })
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       sessionService: { getActiveSessionIds: () => [] } as never,
       _scanFn: vi.fn().mockResolvedValue([]),
@@ -136,7 +136,7 @@ describe('skillRegistry (W1)', () => {
     ;(fakeWatcher as unknown as { close: ReturnType<typeof vi.fn> }).close = closeSpy
     vi.mocked(chokidar.watch).mockReturnValueOnce(fakeWatcher as never)
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       sessionService: { getActiveSessionIds: () => [] } as never,
       _scanFn: vi.fn().mockResolvedValue([]),
@@ -167,7 +167,7 @@ describe('skillRegistry (W1)', () => {
       () => new Promise<[]>(resolve => { resolveScan = resolve as (v: []) => void }),
     )
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       sessionService: { getActiveSessionIds: () => [] } as never,
       _scanFn: scanSpy,
@@ -195,7 +195,7 @@ describe('skillRegistry (W1)', () => {
     // scanFn 返回空——本用例只验证「补挂 watcher + 重扫触发」，不关心扫到的 skill 内容
     const scanSpy = vi.fn().mockResolvedValue([])
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       sessionService: { getActiveSessionIds: () => [] } as never,
       _scanFn: scanSpy,
@@ -227,7 +227,7 @@ describe('skillRegistry (W1)', () => {
     ;(fakeWatcher as unknown as { close: () => Promise<void> }).close = () => Promise.resolve()
     vi.mocked(chokidar.watch).mockReturnValueOnce(fakeWatcher as never)
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       sessionService: {
         getActiveSessionIds: () => ['sid-x'],
@@ -252,7 +252,7 @@ describe('skillRegistry (W1)', () => {
   it('S5: 全局扫描（projectRoot 空串）不传 process.cwd()，避免项目 skill 混入 globalCache', async () => {
     const { SkillRegistry } = await import('../src/services/skill-registry.js')
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       sessionService: { getActiveSessionIds: () => [] } as never,
     })
@@ -289,6 +289,7 @@ describe('skillRegistry (W2 rebuild)', () => {
       configStore: {
         getSkillPaths: () => currentDirs.value,
         getPiAgentDir: () => '/pi',
+        getSkillPathScopes: () => ({ projectPaths: [], globalPaths: currentDirs.value }),
       } as never,
       configDir: '/cfg',
       sessionService: { getActiveSessionIds: () => [] } as never,
@@ -320,7 +321,7 @@ describe('skillRegistry (W2 rebuild)', () => {
     const { SkillRegistry } = await import('../src/services/skill-registry.js')
     const dir = mkdtempSync(join(tmpdir(), 'skill-w2-tc2-'))
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [dir], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [dir], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [dir] }) } as never,
       configDir: '/cfg',
       sessionService: { getActiveSessionIds: () => [] } as never,
       _scanFn: vi.fn().mockResolvedValue([]),
@@ -348,7 +349,7 @@ describe('skillRegistry (W2 rebuild)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'skill-w2-tc2b-'))
     const skill1 = { id: 'skill-1', name: 'Skill One' }
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [dir], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [dir], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [dir] }) } as never,
       configDir: '/cfg',
       sessionService: { getActiveSessionIds: () => ['sid-tc2b'] } as never,
       // initGlobal 返回 [skill1]；rebuildGlobal 第二次调用（index=1）抛错
@@ -391,7 +392,7 @@ describe('skillRegistry (W2 rebuild)', () => {
     mkdirSync(join(cwdB, '.xyz-agent', 'skills'), { recursive: true })
     const scanSpy = vi.fn().mockResolvedValue([])
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       sessionService: { getActiveSessionIds: () => [] } as never,
       _scanFn: scanSpy,
@@ -440,7 +441,7 @@ describe('skillRegistry (W2 rebuild)', () => {
     })
     const cwd = mkdtempSync(join(tmpdir(), 'skill-w2-tc3b-'))
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       sessionService: { getActiveSessionIds: () => [] } as never,
       _scanFn: scanFn,
@@ -477,7 +478,7 @@ describe('skillRegistry (W2 rebuild)', () => {
     const { SkillRegistry } = await import('../src/services/skill-registry.js')
     const cwd = '/proj-tc4'
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       sessionService: {
         getActiveSessionIds: () => ['sid-1', 'sid-2'],
@@ -501,7 +502,7 @@ describe('skillRegistry (W2 rebuild)', () => {
     const { SkillRegistry } = await import('../src/services/skill-registry.js')
     const dir = mkdtempSync(join(tmpdir(), 'skill-w2-tc4b-'))
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [dir], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [dir], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
       configDir: '/cfg',
       // 真实 sessionService：返回活跃 session 列表（rebuildGlobal → notifyGlobalChange 会读它）
       sessionService: { getActiveSessionIds: () => ['sid-g1', 'sid-g2'] } as never,

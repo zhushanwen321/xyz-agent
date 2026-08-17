@@ -31,7 +31,7 @@
         <div
           v-for="record in subagents"
           :key="record.subagentId"
-          class="group relative cursor-pointer rounded-md px-2 py-[7px] transition-colors hover:bg-surface-hover"
+          class="group relative cursor-pointer rounded-md px-2 py-1 transition-colors hover:bg-surface-hover"
           data-testid="subagent-card"
           :title="record.slug ? record.agent + ' · ' + record.slug : record.agent"
           @click="emit('select', record.subagentId)"

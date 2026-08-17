@@ -65,6 +65,9 @@ export function parseClaudeProviders(homeDir: string): ParseResult | null {
     models: [{ id: modelId, name: modelId }],
     _sourceName: 'claude-imported',
     _apiKeyExtracted: false, // 恒 false（安全红线 ES5）
+    // wave 4：claude 源恒为占位 provider（无 apiKey），credentialType 恒 missing。
+    // claude 源暂不识别 $ENV/!command/oauth（Phase 1 范围），留给后续 wave。
+    _credentialType: 'missing',
     _warnings: [KEYCHAIN_WARNING],
   }
 

@@ -16,8 +16,16 @@
  * 运行：npx vitest run src/__tests__/composables/message-turns.test.ts
  */
 import { describe, it, expect } from 'vitest'
-import { expandAssistantBlocks, filterDisplayableMessages } from '@/composables/logic/messageTurns'
+import {
+  expandAssistantBlocks,
+  filterDisplayableMessages,
+  renderKey,
+  toRenderItems,
+  toRenderItemsIncremental,
+  createTurnRenderCache,
+} from '@/composables/logic/messageTurns'
 import type { Message } from '@xyz-agent/shared'
+import type { RenderItem } from '@/composables/logic/messageTurns'
 
 function makeMsg(over: Partial<Message> = {}): Message {
   return { id: 'a1', role: 'assistant', content: '', status: 'complete', timestamp: Date.now(), ...over }
@@ -41,33 +49,45 @@ describe('filterDisplayableMessages —— 按 display 字段过滤（FR-5 / AC-
     expect(filtered.map((m) => m.id)).toEqual(['u1', 'a1'])
   })
 
-  // [FEAT] 完成通知（subagent-bg-notify / workflow-result）不渲染——用户选择「不展示通知」，
-  // 通知触发 agent 后续 turn（triggerTurn:true）处理结果，结果由新 turn 体现，通知本身是噪声。
-  // 即使 display:true 也过滤；消息仍进 store 供 fork/compact/replay（filter 不丢消息）。
-  it('subagent-bg-notify customType 的消息被过滤（即使 display:true）', () => {
+  // [M2 display 前置] customType 黑名单已删（§3.3.2 收敛为 display 单一判别），完成通知
+  // （subagent-bg-notify / workflow-result）由生产端（registry customStart / runtime mapper）
+  // 统一写 display:false，filter 只按 display===false 纯字段过滤。用例输入对齐生产端契约。
+  // 消息仍进 store 供 fork/compact/replay（filter 不丢消息）。
+  it('subagent-bg-notify 完成通知（display:false）被过滤', () => {
     const messages: Message[] = [
       makeMsg({ id: 'u1', role: 'user', content: 'hi' }),
-      makeMsg({ id: 'n1', role: 'system', customType: 'subagent-bg-notify', display: true, content: '子代理完成' }),
+      makeMsg({ id: 'n1', role: 'system', customType: 'subagent-bg-notify', display: false, content: '子代理完成' }),
       makeMsg({ id: 'a1', role: 'assistant', content: 'ok' }),
     ]
     const filtered = filterDisplayableMessages(messages)
     expect(filtered.map((m) => m.id)).toEqual(['u1', 'a1'])
   })
 
-  it('workflow-result customType 的消息被过滤（即使 display:true）', () => {
+  it('workflow-result 完成通知（display:false）被过滤', () => {
     const messages: Message[] = [
       makeMsg({ id: 'u1', role: 'user', content: 'hi' }),
-      makeMsg({ id: 'w1', role: 'system', customType: 'workflow-result', display: true, content: 'done' }),
+      makeMsg({ id: 'w1', role: 'system', customType: 'workflow-result', display: false, content: 'done' }),
       makeMsg({ id: 'a1', role: 'assistant', content: 'ok' }),
     ]
     const filtered = filterDisplayableMessages(messages)
     expect(filtered.map((m) => m.id)).toEqual(['u1', 'a1'])
+  })
+
+  it('完成通知 customType 但 display:true/undefined 时保留（filter 只认 display 字段，不按 customType 拉黑）', () => {
+    // 黑名单删除后的关键回归：filter 不得再按 customType 过滤（M2 前置后 customType
+    // 语义回归普通 systemNotice——兼容旧数据/非 xyz-agent 消费方写入的 display:true 完成通知）。
+    const messages: Message[] = [
+      makeMsg({ id: 'n1', role: 'system', customType: 'subagent-bg-notify', display: true, content: '子代理完成' }),
+      makeMsg({ id: 'w1', role: 'system', customType: 'workflow-result', content: 'done' }),
+    ]
+    const filtered = filterDisplayableMessages(messages)
+    expect(filtered.map((m) => m.id)).toEqual(['n1', 'w1'])
   })
 
   it('普通 customType 消息（display:true）仍保留', () => {
     const messages: Message[] = [
       makeMsg({ id: 'u1', role: 'user', content: 'hi' }),
-      // 非 HIDDEN_NOTIFY_CUSTOM_TYPES 的 customType，display:true → 保留
+      // 非完成通知 customType，display:true → 保留
       makeMsg({ id: 'x1', role: 'system', customType: 'future-extension-notify', display: true, content: '显示' }),
       makeMsg({ id: 'a1', role: 'assistant', content: 'ok' }),
     ]
@@ -223,5 +243,227 @@ describe('expandAssistantBlocks —— 单条 assistant 内部块按时序展开
     const result = expandAssistantBlocks(msg)
     // 降级顺序 text→tool：subagent 标 agentgraph，grep 标 tool
     expect(result.map((b) => b.kind)).toEqual(['text', 'agentgraph', 'tool'])
+  })
+})
+
+/**
+ * kind 全集现算（renderer-model 归一 M1，conversation-renderer-model-unification §3.3.1）。
+ *
+ * kind 是 toRenderItems 每渲染从同一堆可选字段现算的派生值（不落 store），全集三态：
+ * turn（user+assistant 回合）/ systemNotice（system 无 bashExecution）/ bashExecution（system + bashExecution）。
+ *
+ * 判定顺序与旧 MessageStream system 分支一致：bashExecution 优先于 systemNotice 兜底。
+ * bgNotify/gui 不属全集（完成通知 display:false 过滤 + workflow-result 同源移除，见 SSOT）。
+ */
+function bashMsg(id: string, over: Partial<Message> = {}): Message {
+  return makeMsg({
+    id,
+    role: 'system',
+    content: '',
+    bashExecution: {
+      command: 'echo hi',
+      output: 'hi',
+      exitCode: 0,
+      cancelled: false,
+      truncated: false,
+      timestamp: 1000,
+    },
+    ...over,
+  })
+}
+
+/** kind 全集 → MessageStream 渲染组件映射契约（M1 检查点 1 的测试载体）。
+ *  新增 kind 时必须同步更新此表 + MessageStream.vue 模板分发（TC3 防遗漏/多余）。 */
+const KIND_COMPONENT_MAP: Record<RenderItem['kind'], string> = {
+  turn: 'Turn',
+  systemNotice: 'SystemNotice',
+  bashExecution: 'BashOutputBlock',
+}
+
+describe('renderKey 稳定生成（M5 stable-key）', () => {
+  /** 三 kind 全覆盖 fixture：turn(用户首条消息 id) + systemNotice + bashExecution */
+  function stableFixture(): Message[] {
+    return [
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'c1', role: 'system', content: '压缩记录' }),
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+      makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
+      bashMsg('bash-1'),
+    ]
+  }
+
+  it('TC1: 同一组消息两次 toRenderItems → 各 item 的 renderKey 一致（不随渲染重建漂移）', () => {
+    const messages = stableFixture()
+    const keysA = toRenderItems(messages).map(renderKey)
+    const keysB = toRenderItems(messages).map(renderKey)
+    expect(keysA).toEqual(keysB)
+    // 且 key 是稳定 id 派生（turn 用首条消息 id，system 类用 message.id），非索引
+    expect(keysA).toEqual(['t-u1', 's-c1', 't-u2', 's-bash-1'])
+  })
+
+  it('TC1: 顶部插入（load-more）后既有 turn 的 renderKey 不漂移', () => {
+    const base = [
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+      makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
+      makeMsg({ id: 'u3', role: 'user', content: 'q3' }),
+      makeMsg({ id: 'a3', role: 'assistant', content: 'r3' }),
+    ]
+    const before = toRenderItems(base).map(renderKey)
+    // load-more 在顶部插入更早的 turn（旧实现按索引生成 key 会让全部既有 key +1 漂移）
+    const withMore = [
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      ...base,
+    ]
+    const after = toRenderItems(withMore).map(renderKey)
+    // 既有 turn 的 key 值不变，只多出首项新 turn 的 key（稳定 id 非索引）
+    expect(after.slice(1)).toEqual(before)
+  })
+
+  it('TC1: 中间插入/删除后既有 turn 的 renderKey 不漂移', () => {
+    const base = [
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+      makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
+      makeMsg({ id: 'u3', role: 'user', content: 'q3' }),
+      makeMsg({ id: 'a3', role: 'assistant', content: 'r3' }),
+    ]
+    const before = toRenderItems(base).map(renderKey)
+    // 中间插入一条 user/assistant 对（新 turn 出现在 index 2 位置）
+    const inserted = [
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'uX', role: 'user', content: 'qX' }),
+      makeMsg({ id: 'aX', role: 'assistant', content: 'rX' }),
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+      makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
+      makeMsg({ id: 'u3', role: 'user', content: 'q3' }),
+      makeMsg({ id: 'a3', role: 'assistant', content: 'r3' }),
+    ]
+    const afterInsert = toRenderItems(inserted).map(renderKey)
+    // 新 turn 插在中间，u2/u3 两个既有 turn 的 key 保持 t-u2/t-u3（索引方案会变 t-3/t-4）
+    expect(afterInsert).toEqual(['t-u1', 't-uX', 't-u2', 't-u3'])
+    // 删除 u2 turn 后，u3 的 key 仍为 t-u3
+    const removed = [
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'u3', role: 'user', content: 'q3' }),
+      makeMsg({ id: 'a3', role: 'assistant', content: 'r3' }),
+    ]
+    expect(toRenderItems(removed).map(renderKey)).toEqual(['t-u1', 't-u3'])
+    expect(before).toEqual(['t-u1', 't-u2', 't-u3'])
+  })
+
+  it('TC1: assistant 自启 turn（首条即 assistant，无 user）用首条 assistant id 作稳定 key', () => {
+    const items = toRenderItems([
+      makeMsg({ id: 'a0', role: 'assistant', content: '首条 assistant' }),
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+    ])
+    expect(items.map(renderKey)).toEqual(['t-a0', 't-u1'])
+  })
+
+  it('TC1: 同 session 消息追加（streaming 中间态）不改变既有 turn 的 key 集合', () => {
+    const mid = toRenderItems([
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+    ])
+    const done = toRenderItems([
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+      makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
+    ])
+    // 末尾追加 assistant 只扩展 u2 turn，u1/u2 两个 turn 的 key 不变
+    expect(mid.map(renderKey)).toEqual(['t-u1', 't-u2'])
+    expect(done.map(renderKey)).toEqual(['t-u1', 't-u2'])
+  })
+})
+
+describe('toRenderItems kind 全集现算（renderer-model M1）', () => {
+  it('TC1: user/assistant 消息 → turn（assistant 归入 user 开启的同一回合）', () => {
+    const items = toRenderItems([
+      makeMsg({ id: 'u1', role: 'user', content: 'q' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r' }),
+    ])
+    expect(items.map((i) => i.kind)).toEqual(['turn'])
+    const turn = items[0]
+    if (turn.kind !== 'turn') throw new Error('expected turn item')
+    expect(turn.turn.assistants.map((m) => m.id)).toEqual(['a1'])
+  })
+
+  it('TC1: system + bashExecution → bashExecution（不落 systemNotice）', () => {
+    const items = toRenderItems([bashMsg('bash-1')])
+    expect(items.map((i) => i.kind)).toEqual(['bashExecution'])
+    const item = items[0]
+    if (item.kind !== 'bashExecution') throw new Error('expected bashExecution item')
+    expect(item.message.id).toBe('bash-1')
+  })
+
+  it('TC1: system 无 bashExecution（compactionSummary/branchSummary/stream_warn）→ systemNotice', () => {
+    const items = toRenderItems([
+      makeMsg({ id: 'c1', role: 'system', content: '压缩记录' }),
+      makeMsg({ id: 'b1', role: 'system', branchSummary: { summary: 's', fromId: 'prev-id' } }),
+      makeMsg({ id: 'w1', role: 'system', customType: 'stream_warn', content: 'warn' }),
+    ])
+    expect(items.map((i) => i.kind)).toEqual(['systemNotice', 'systemNotice', 'systemNotice'])
+  })
+
+  it('TC1: 混合序列顺序：turn → systemNotice → turn → bashExecution（system 消息不归入 turn）', () => {
+    const items = toRenderItems([
+      makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
+      makeMsg({ id: 'c1', role: 'system', content: '压缩记录' }),
+      makeMsg({ id: 'u2', role: 'user', content: 'q2' }),
+      makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
+      bashMsg('bash-1'),
+    ])
+    expect(items.map((i) => i.kind)).toEqual(['turn', 'systemNotice', 'turn', 'bashExecution'])
+    // 压缩记录穿插在 turn 之间，不并入任何 turn
+    const notice = items[1]
+    if (notice.kind !== 'systemNotice') throw new Error('expected systemNotice item')
+    expect(notice.message.content).toBe('压缩记录')
+  })
+
+  it('TC3 kind 一致性：全覆盖消息形态产出的 kind 集合恰好 = 全集（无遗漏/无多余）', () => {
+    const messages: Message[] = [
+      // → turn
+      makeMsg({ id: 'u1', role: 'user', content: 'q' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r' }),
+      // → bashExecution
+      bashMsg('bash-1'),
+      // → systemNotice 各形态（compactionSummary/branchSummary/stream_warn/customType）
+      makeMsg({ id: 'c1', role: 'system', content: '压缩记录' }),
+      makeMsg({ id: 'b1', role: 'system', branchSummary: { summary: 's', fromId: 'prev-id' } }),
+      makeMsg({ id: 'w1', role: 'system', customType: 'stream_warn', content: 'warn' }),
+    ]
+    const kinds = new Set(toRenderItems(messages).map((i) => i.kind))
+    // 三态全集恰好都被产出（无 kind 被遗漏）
+    expect([...kinds].sort()).toEqual(['bashExecution', 'systemNotice', 'turn'])
+    // 组件映射表 keys 与 kind 全集一致（无多余/缺失分支，与 MessageStream 查表对齐）
+    expect(Object.keys(KIND_COMPONENT_MAP).sort()).toEqual(['bashExecution', 'systemNotice', 'turn'])
+  })
+})
+
+describe('W21 re-export —— D-4 增量函数经 renderer shim 可导入（perf plan minor 消化）', () => {
+  // MessageStream 消费的 toRenderItemsIncremental / createTurnRenderCache / TurnRenderCache
+  // 必须经本 shim（renderer 旧消费方统一 import 路径）re-export 自 core SSOT。
+  it('toRenderItemsIncremental/createTurnRenderCache 可导入且行为等价全量版 + 快路径引用恒等', () => {
+    expect(typeof toRenderItemsIncremental).toBe('function')
+    expect(typeof createTurnRenderCache).toBe('function')
+    const cache = createTurnRenderCache()
+    const msgs: Message[] = [
+      makeMsg({ id: 'u1', role: 'user', content: 'q' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r' }),
+      bashMsg('bash-1'),
+    ]
+    const r1 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
+    expect(r1).toEqual(toRenderItems(filterDisplayableMessages(msgs), false))
+    // 同源数组引用二次调用 → 快路径零重算（引用恒等）
+    const r2 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
+    expect(r2).toBe(r1)
   })
 })

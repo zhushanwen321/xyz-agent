@@ -6,13 +6,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Mock transport 和 pending 模块（vi.mock 会自动提升到文件顶部）
+// （send 返回 true = 消息已送出，符合 transport.send 的 boolean 契约：
+// request.command 对 send false 会调 pending.reject 走 fast-fail，mock 需提供 reject）
 vi.mock('../api/transport', () => ({
-  send: vi.fn(),
+  send: vi.fn((): boolean => true),
 }))
 
 vi.mock('../api/pending', () => ({
   create: vi.fn(() => 'test-id'),
   register: vi.fn(() => Promise.resolve()),
+  reject: vi.fn(),
 }))
 
 import * as extension from '../api/domains/extension'

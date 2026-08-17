@@ -37,11 +37,11 @@ const configMock = vi.hoisted(() => ({
   setTerminalConfig: vi.fn((cfg: TerminalConfig) => Promise.resolve({ config: cfg, corrupted: false })),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   config: configMock,
 }))
 
-import TerminalPage from '@/components/settings/TerminalPage.vue'
+import TerminalPage from '@/components/settings/terminal/TerminalPage.vue'
 
 let wrapper: ReturnType<typeof mount> | null = null
 

@@ -97,8 +97,7 @@ describe('U7: locale key 双侧对齐（zh-CN === en-US）', () => {
 describe('U8: 组件 <template> 无新增 CJK 字符（豁免清单外）', () => {
   /** 豁免清单：已知含 CJK 但属于合理使用的位置（mock fixtures / icon SVG / 数据值） */
   const ALLOW_FILES = new Set<string>([
-    // 已知豁免：mock fixtures 含 CJK（数据值非 UI 文案）
-    'components/panel/message-stream/gui/Card.vue', // 抽 placeholder mock
+    // （W1 re-home：Card.vue 等 GUI 原语已迁至 @xyz-agent/ui 包，不在本目录扫描范围，条目移除）
   ])
 
   it.each(listVueFiles(COMPONENTS_DIR))('%s 模板无新增 CJK 字符', (filePath) => {

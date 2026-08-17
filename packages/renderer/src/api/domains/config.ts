@@ -22,9 +22,12 @@ import type {
   TerminalConfig,
   SourceDetectResult,
   ProviderSource,
+  BuiltinProviderTemplate,
   ProviderImportPreview,
   ProviderImportResult,
   SkillCacheInvalidatedPayload,
+  ServerMessage,
+  ProviderId,
 } from '@xyz-agent/shared'
 import { command } from '../request'
 import * as events from '../events'
@@ -86,6 +89,15 @@ export async function scanAgents(sources: string[]): Promise<ScannedAgentInfo[]>
 export async function detectSources(): Promise<SourceDetectResult[]> {
   const reply = await command('config.detectSources', {})
   return reply.sources
+}
+
+/**
+ * 列出内置 provider 模板（wave 2，无参只读）。reply config.builtinProviders 形状 `{ providers }`。
+ * 数据源为 runtime import 的 generated JSON（37 个内置 provider，含 model 摘要与 auth 元信息）。
+ */
+export async function listBuiltinProviders(): Promise<BuiltinProviderTemplate[]> {
+  const reply = await command('config.listBuiltinProviders', {})
+  return reply.providers
 }
 
 /**
@@ -187,36 +199,61 @@ export function onDefaults(handler: (defaultModel: string) => void): () => void 
   })
 }
 
+/** 带 source 的 config.defaults 订阅（仅广播携带 source；reply 走 pending map 不进全局通道）。
+ *  ProviderPage 用它区分「provider 变更后 runtime 自动修复默认模型」（source='provider-updated'/
+ *  'provider-deleted' 等）与用户主动 config.setDefaultModel（source='default-set'）。
+ *  source 用宽 string（shared 未导出 DefaultModelSource 联合类型，其成员均为 string 字面量，赋值兼容）。 */
+export function onDefaultsWithSource(handler: (payload: { defaultModel: string; source?: string }) => void): () => void {
+  return events.onGlobalType('config.defaults', (msg) => {
+    handler({ defaultModel: msg.payload.defaultModel, source: msg.payload.source })
+  })
+}
+
 // ── 动作-ack（状态变更由对应订阅通道推回）──
 /**
- * 目录级管道写入（ADR-0020 §1）：覆盖 discovery.json.skillDirs（有序数组 = 优先级，靠前覆盖靠后）。
+ * 目录级管道写入（ADR-0021 §1）：覆盖 skill 加载路径配置（含 scope 的 SkillDirConfig[]，靠前覆盖靠后）。
+ * v2 scope 穿越：整体透传 SkillDirConfig[]（不降维为 string[]），让用户显式 scope 决定加载归属与优先级。
  * 状态变更经 onSkills + onSkillDirs 订阅推回（后端 setSkillDirs 后广播）。
  */
-export function setSkillDirs(dirs: string[]): Promise<void> {
+export function setSkillDirs(dirs: SkillDirConfig[]): Promise<void> {
   return command('config.setSkillDirs', { dirs })
 }
 
-export function setAgentDirs(dirs: string[]): Promise<void> {
+export function setAgentDirs(dirs: SkillDirConfig[]): Promise<void> {
   return command('config.setAgentDirs', { dirs })
 }
 
-/** 覆盖 extension 加载路径（Phase 4 目录级管道），语义同 setSkillDirs/setAgentDirs。
+/** 覆盖 extension 加载路径（Phase 4 目录级管道，v2 scope 穿越），语义同 setSkillDirs/setAgentDirs。
  *  reply 为 config.extensionDirs（广播），状态变更经 onExtensionDirs 订阅推回。 */
-export function setExtensionDirs(dirs: string[]): Promise<void> {
+export function setExtensionDirs(dirs: SkillDirConfig[]): Promise<void> {
   return command('config.setExtensionDirs', { dirs })
 }
 
-export function setProvider(providerId: string, data: SetProviderData): Promise<void> {
+export function setProvider(providerId: ProviderId, data: SetProviderData): Promise<void> {
   return command('config.setProvider', { providerId, ...data })
 }
 
 // W3 默认模型持久化：动作-ack，状态变更经 onDefaults 订阅推回（runtime 广播 config.defaults）。
-export function setDefaultModel(provider: string, modelId: string): Promise<void> {
+export function setDefaultModel(provider: ProviderId, modelId: string): Promise<void> {
   return command('config.setDefaultModel', { provider, modelId })
 }
 
-export function deleteProvider(providerId: string): Promise<void> {
+export function deleteProvider(providerId: ProviderId): Promise<void> {
   return command('config.deleteProvider', { providerId })
+}
+
+// wave4 C1：provider 启用切换（写 enabledModels 白名单）。替代旧 setProvider({enabled}) 路径——
+// wave3 停用 setProvider 的 provider 级 enabled 写入后，toggle 必须走此 RPC 才能持久化启用状态。
+// reply config.providerUpdated；newDefault 经 onDefaults 订阅推回（broadcast 由 handler 发起）。
+export function toggleProviderEnabled(providerId: ProviderId, enabled: boolean): Promise<void> {
+  return command('config.toggleProviderEnabled', { providerId, enabled })
+}
+
+// wave4 IF3：按体系移除 provider。kind 来自 ProviderInfo.kind（wave2 聚合层标注）——
+// catalog 清凭据（不删 pi 定义），custom 删条目。与 deleteProvider 区别：后者不分体系直接删条目
+// （向后兼容保留），renderer 按 kind 调对应 RPC。reply config.providerUpdated。
+export function removeProviderByKind(providerId: ProviderId, kind: 'catalog' | 'custom'): Promise<void> {
+  return command('config.removeProviderByKind', { providerId, kind })
 }
 
 export function setSkill(skill: SkillInfo): Promise<void> {
@@ -278,5 +315,70 @@ export async function setTerminalConfig(config: TerminalConfig): Promise<{ confi
 export function onTerminalConfig(handler: (config: TerminalConfig, corrupted: boolean) => void): () => void {
   return events.onGlobalType('config.terminalConfig', (msg) => {
     handler(msg.payload.config, msg.payload.corrupted ?? false)
+  })
+}
+
+// ── OAuth Login（路径 B · slice design I1/I2/I4）──
+// RPC/事件契约见 shared protocol.ts（config.oauthLogin/oauthCancel reply + auth.* 事件）。
+// 事件 payload 必带 providerId（前端按 providerId 路由，支持并发多 provider）；
+// token 永不出现在 payload（脱敏红线）。payload 类型从 ServerMessage 派生，协议改动自动跟随。
+
+/** auth.deviceCode 事件 payload（device flow 中间态：验证码 + 浏览器验证链接 + 倒计时参数） */
+export type AuthDeviceCodePayload = ServerMessage<'auth.deviceCode'>['payload']
+/** auth.authUrl 事件 payload（callback flow 中间态：授权 URL + 本地回调端口） */
+export type AuthAuthUrlPayload = ServerMessage<'auth.authUrl'>['payload']
+/** auth.success 事件 payload（授权成功，token 已写 auth.json） */
+export type AuthSuccessPayload = ServerMessage<'auth.success'>['payload']
+/** auth.error 事件 payload（授权失败原因） */
+export type AuthErrorPayload = ServerMessage<'auth.error'>['payload']
+
+/** 启动 OAuth flow（device/callback，按 provider 的 oauthConfig）。started=false + error 表示启动失败。 */
+export function oauthLogin(providerId: string): Promise<{ started: boolean; error?: string }> {
+  return command('config.oauthLogin', { providerId })
+}
+
+/** 中止进行中的 OAuth flow（幂等：无进行中 flow 返回 cancelled:false 不报错）。 */
+export function oauthCancel(providerId: string): Promise<{ cancelled: boolean }> {
+  return command('config.oauthCancel', { providerId })
+}
+
+/** 查询 auth.json 是否已有该 provider 的 OAuth 凭据（MF-1：QuickSetup 重开时默认 oauth radio，
+ *  防 env 盲保存触发 I9 清理静默删凭据）。只返回布尔——token 永不出现在协议中。 */
+export async function hasOAuth(providerId: string): Promise<boolean> {
+  const reply = await command('config.hasOAuth', { providerId })
+  return reply.hasOAuth
+}
+
+/** 批量检测环境变量是否已设置（I3，只返回布尔不返回值——env 值可能含凭证）。 */
+export async function checkEnvVars(names: string[]): Promise<Record<string, boolean>> {
+  const reply = await command('config.checkEnvVars', { names })
+  return reply.results
+}
+
+/** 订阅 device flow 中间态（user_code / verification_uri / 倒计时）。返回取消函数。 */
+export function onAuthDeviceCode(handler: (payload: AuthDeviceCodePayload) => void): () => void {
+  return events.onGlobalType('auth.deviceCode', (msg) => {
+    handler(msg.payload)
+  })
+}
+
+/** 订阅 callback flow 中间态（授权 URL + 本地回调端口）。返回取消函数。 */
+export function onAuthAuthUrl(handler: (payload: AuthAuthUrlPayload) => void): () => void {
+  return events.onGlobalType('auth.authUrl', (msg) => {
+    handler(msg.payload)
+  })
+}
+
+/** 订阅授权成功（token 已写 auth.json）。返回取消函数。 */
+export function onAuthSuccess(handler: (payload: AuthSuccessPayload) => void): () => void {
+  return events.onGlobalType('auth.success', (msg) => {
+    handler(msg.payload)
+  })
+}
+
+/** 订阅授权失败（expired_token / access_denied / 端口占用 / 超时 / exchange 失败）。返回取消函数。 */
+export function onAuthError(handler: (payload: AuthErrorPayload) => void): () => void {
+  return events.onGlobalType('auth.error', (msg) => {
+    handler(msg.payload)
   })
 }

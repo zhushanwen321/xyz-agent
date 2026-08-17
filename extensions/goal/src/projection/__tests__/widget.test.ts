@@ -194,16 +194,20 @@ describe("renderWidgetLines", () => {
 
 describe("updateWidget (FR-6.6 hasUI guard)", () => {
 	interface RecordedCall {
-		method: "setWidget" | "setStatus";
+		method: "setWidget" | "setGuiWidget" | "setStatus";
 		args: unknown[];
 	}
 
-	function makeUiPort(hasUI: boolean): { ui: UiPort; calls: RecordedCall[] } {
+	function makeUiPort(hasUI: boolean, isGui = false): { ui: UiPort; calls: RecordedCall[] } {
 		const calls: RecordedCall[] = [];
 		const ui = {
 			hasUI,
+			isGui,
 			setWidget(name: string, content: unknown) {
 				calls.push({ method: "setWidget", args: [name, content] });
+			},
+			setGuiWidget(name: string, component: unknown) {
+				calls.push({ method: "setGuiWidget", args: [name, component] });
 			},
 			setStatus(name: string, text: unknown) {
 				calls.push({ method: "setStatus", args: [name, text] });
@@ -262,5 +266,85 @@ describe("updateWidget (FR-6.6 hasUI guard)", () => {
 		expect(widgetCall!.args[1]).toEqual(
 			expect.arrayContaining([expect.stringContaining("Token:")]),
 		);
+	});
+});
+
+// ── updateWidget GUI 协议分支（isGui=true，复用 projection/gui.ts buildGoalGui）──
+
+describe("updateWidget GUI 协议分支（isGui=true）", () => {
+	interface RecordedCall {
+		method: "setWidget" | "setGuiWidget" | "setStatus";
+		args: unknown[];
+	}
+
+	function makeGuiUiPort(hasUI: boolean, isGui = false): { ui: UiPort; calls: RecordedCall[] } {
+		const calls: RecordedCall[] = [];
+		const ui = {
+			hasUI,
+			isGui,
+			setWidget(name: string, content: unknown) {
+				calls.push({ method: "setWidget", args: [name, content] });
+			},
+			setGuiWidget(name: string, component: unknown) {
+				calls.push({ method: "setGuiWidget", args: [name, component] });
+			},
+			setStatus(name: string, text: unknown) {
+				calls.push({ method: "setStatus", args: [name, text] });
+			},
+			notify() {},
+			fg: (_color: string, text: string) => text,
+			bold: (text: string) => text,
+		} as UiPort;
+		return { ui, calls };
+	}
+
+	it("active + isGui + 有预算 → setGuiWidget(v1.1 result: group + meta) + 不调 setWidget TUI lines", () => {
+		const { ui, calls } = makeGuiUiPort(true, true);
+		const session = createGoalSession();
+		session.state = makeState({ status: "active", budget: { tokenBudget: 10000 } });
+		updateWidget(session, ui);
+		const guiCall = calls.find((c) => c.method === "setGuiWidget" && c.args[0] === "goal");
+		expect(guiCall).toBeDefined();
+		// v1.1：整个 GuiRenderResult（group 组合根 + meta 宿主元数据，head 由壳层渲染）
+		const result = guiCall!.args[1] as {
+			component: { type: string };
+			meta: { title: string; progress?: { total: number } };
+		};
+		expect(result.component.type).toBe("group");
+		expect(result.meta.progress).toMatchObject({ total: 10000 });
+		// GUI 模式不走 TUI 文本行
+		expect(calls.some((c) => c.method === "setWidget" && c.args[0] === "goal")).toBe(false);
+	});
+
+	it("active + isGui 无预算 → setGuiWidget(group，meta 无 progress)", () => {
+		const { ui, calls } = makeGuiUiPort(true, true);
+		const session = createGoalSession();
+		session.state = makeState({ status: "active" });
+		updateWidget(session, ui);
+		const guiCall = calls.find((c) => c.method === "setGuiWidget" && c.args[0] === "goal");
+		expect(guiCall).toBeDefined();
+		const result = guiCall!.args[1] as {
+			component: { type: string };
+			meta: { title: string; progress?: unknown };
+		};
+		expect(result.component.type).toBe("group");
+		expect(result.meta.progress).toBeUndefined();
+	});
+
+	it("cancelled + isGui → setGuiWidget(undefined)", () => {
+		const { ui, calls } = makeGuiUiPort(true, true);
+		const session = createGoalSession();
+		session.state = makeState({ status: "cancelled" });
+		updateWidget(session, ui);
+		expect(calls.some((c) => c.method === "setGuiWidget" && c.args[1] === undefined)).toBe(true);
+	});
+
+	it("isGui=false → 走 TUI setWidget（不调 setGuiWidget）", () => {
+		const { ui, calls } = makeGuiUiPort(true, false);
+		const session = createGoalSession();
+		session.state = makeState({ status: "active" });
+		updateWidget(session, ui);
+		expect(calls.some((c) => c.method === "setWidget" && c.args[0] === "goal")).toBe(true);
+		expect(calls.some((c) => c.method === "setGuiWidget")).toBe(false);
 	});
 });

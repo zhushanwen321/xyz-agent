@@ -4,23 +4,26 @@
  * 覆盖：
  * - records 初值空数组 + workflowCount
  * - loadWorkflows 成功写入 records + 失败清空
- * - clearWorkflows 清空 records + 退出所有 panel viewing
- * - selectWorkflow / getViewingRunId / getCurrentWorkflow 视图 2 进入
- * - selectAgentCall / getViewingAgentCallId / getActiveAgentCallVirtualId Panel overlay
- * - backToWorkflowList / backFromAgentCall 退出 viewing
- * - isViewing per-panel 隔离
+ * - clearWorkflows 清空 records + 退出侧边栏视图 2 + 清 agentcall 映射
+ * - selectWorkflow / getViewingRunId / getCurrentWorkflow 视图 2（sidebar 内，非 overlay）
+ * - backToWorkflowList 退出视图 2
+ * - registerAgentCall / getAgentCallVirtualIdsByMain / clearAgentCallMapping agentcall 清理映射（U7 MUST_FIX 1）
+ *
+ * [HISTORICAL] overlay 相关用例（selectAgentCall/backFromAgentCall/isViewing/getViewingAgentCallId/
+ * getActiveAgentCallVirtualId）已随 U7 overlay 移除删除。agent call 详情现走 drawer SubagentTab
+ * （直接 getAgentCallHistory + setMessages + registerAgentCall），不经 store overlay 状态机。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/stores/workflow.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useWorkflowStore } from '@/stores/workflow'
+import { agentCallVirtualId } from '@xyz-agent/shared'
 import type { WorkflowRunRecord } from '@xyz-agent/shared'
 
-// mock sessionApi（loadWorkflows / selectAgentCall 内部调用）
+// mock sessionApi（loadWorkflows 内部调用）
 vi.mock('@/api/domains/session', () => ({
   getWorkflows: vi.fn(),
-  getAgentCallHistory: vi.fn(),
 }))
 
 // workflow store 经 @/api 门面导入 session（VITE_MOCK=true 下门面指向 mock），
@@ -88,19 +91,22 @@ describe('workflow store', () => {
     expect(store.loadError).toBe('rpc error')
   })
 
-  it('clearWorkflows 清空所有分区 + 退出 viewing', () => {
+  it('clearWorkflows 清空所有分区 + 退出侧边栏视图 2 + 清 agentcall 映射', () => {
     const store = useWorkflowStore()
     store.selectWorkflow('panel-1', 'wf-001')
-    // selectWorkflow 只设侧边栏视图2，不触发 Panel overlay（isViewing 只认 agent-call）
+    // 登记 agentcall 映射（U7 MUST_FIX 1）
+    store.registerAgentCall('sess-1', agentCallVirtualId('ac-1'))
     expect(store.getViewingRunId('panel-1')).toBe('wf-001')
+    expect(store.getAgentCallVirtualIdsByMain('sess-1')).toContain(agentCallVirtualId('ac-1'))
 
     store.clearWorkflows()
 
     expect(store.getRecordsBySession('sess-1')).toEqual([])
     expect(store.getViewingRunId('panel-1')).toBeNull()
+    expect(store.getAgentCallVirtualIdsByMain('sess-1')).toEqual([])
   })
 
-  it('selectWorkflow + getViewingRunId + getCurrentWorkflow 视图 2', () => {
+  it('selectWorkflow + getViewingRunId + getCurrentWorkflow 视图 2（sidebar 内，非 overlay）', () => {
     const store = useWorkflowStore()
     store.applyRecords('sess-1', [makeRecord({ runId: 'wf-001', scriptName: 'my-flow' })])
 
@@ -108,20 +114,6 @@ describe('workflow store', () => {
 
     expect(store.getViewingRunId('panel-1')).toBe('wf-001')
     expect(store.getCurrentWorkflow('panel-1', 'sess-1')?.scriptName).toBe('my-flow')
-    // selectWorkflow 是侧边栏视图2，不触发 Panel overlay
-    expect(store.isViewing('panel-1')).toBe(false)
-  })
-
-  it('selectAgentCall + getViewingAgentCallId Panel overlay', async () => {
-    vi.mocked(sessionApi.getAgentCallHistory).mockResolvedValue([])
-    const store = useWorkflowStore()
-    const setMessages = vi.fn()
-
-    await store.selectAgentCall('panel-1', 'sess-main', 'sess-agent-1', setMessages)
-
-    expect(store.getViewingAgentCallId('panel-1')).toBe('sess-agent-1')
-    expect(store.getActiveAgentCallVirtualId('panel-1')).toBe('agentcall:sess-agent-1')
-    expect(setMessages).toHaveBeenCalledWith('agentcall:sess-agent-1', [])
   })
 
   it('backToWorkflowList 退出视图 2', () => {
@@ -131,82 +123,72 @@ describe('workflow store', () => {
 
     store.backToWorkflowList('panel-1')
 
-    // isViewing 本就 false（侧边栏视图2 不触发 overlay）
-    expect(store.isViewing('panel-1')).toBe(false)
     expect(store.getViewingRunId('panel-1')).toBeNull()
   })
+})
 
-  it('backFromAgentCall 退出 Panel overlay', async () => {
-    vi.mocked(sessionApi.getAgentCallHistory).mockResolvedValue([])
-    const store = useWorkflowStore()
-    await store.selectAgentCall('panel-1', 'sess-main', 'sess-agent-1', vi.fn())
-    expect(store.isViewing('panel-1')).toBe(true)
+// ── U7 MUST_FIX 1: agentcall 清理映射（deleteSession 清 agentcall 虚拟 key 唯一通路）──
 
-    store.backFromAgentCall('panel-1')
-
-    expect(store.isViewing('panel-1')).toBe(false)
-    expect(store.getViewingAgentCallId('panel-1')).toBeNull()
+describe('U7 MUST_FIX 1: agentcall 虚拟 key 清理映射', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
   })
 
-  it('isViewing per-panel 隔离（agent-call overlay 维度）', async () => {
-    vi.mocked(sessionApi.getAgentCallHistory).mockResolvedValue([])
+  it('registerAgentCall 登记 virtualId，getAgentCallVirtualIdsByMain 反查', () => {
     const store = useWorkflowStore()
-    // isViewing 只认 agent-call overlay（不是侧边栏视图2）
-    await store.selectAgentCall('panel-1', 'sess-main', 'sess-agent-1', vi.fn())
+    const vid = agentCallVirtualId('ac-sess-1')
 
-    expect(store.isViewing('panel-1')).toBe(true)
-    expect(store.isViewing('panel-2')).toBe(false)
+    store.registerAgentCall('main-1', vid)
+
+    expect(store.getAgentCallVirtualIdsByMain('main-1')).toEqual([vid])
   })
 
-  it('Fail-fast：getAgentCallHistory 失败 → selectAgentCall throw（不静默 setMessages([])）', async () => {
-    vi.mocked(sessionApi.getAgentCallHistory).mockRejectedValue(new Error('文件不存在'))
+  it('同一 mainSession 多个 agentcall virtualId 都登记', () => {
     const store = useWorkflowStore()
-    const setMessages = vi.fn()
+    const vid1 = agentCallVirtualId('ac-1')
+    const vid2 = agentCallVirtualId('ac-2')
 
-    // selectAgentCall 不 catch，错误传播给调用方
-    await expect(
-      store.selectAgentCall('panel-1', 'sess-main', 'sess-agent-1', setMessages),
-    ).rejects.toThrow('文件不存在')
+    store.registerAgentCall('main-1', vid1)
+    store.registerAgentCall('main-1', vid2)
 
-    // setViewing 已执行（fetchAndInject 之前），调用方负责回滚
-    expect(store.isViewing('panel-1')).toBe(true)
-    // setMessages 不应被调用（fetchAndInject 失败）
-    expect(setMessages).not.toHaveBeenCalled()
+    expect(store.getAgentCallVirtualIdsByMain('main-1').sort()).toEqual([vid1, vid2].sort())
   })
 
-  it('[B3] backFromAgentCall 传给 chatEvict 的是带前缀的 virtualId（防 raw sessionId 致 no-op 泄漏）', async () => {
-    // 回归 B3：selectAgentCall 写入 messages 用的 key 是 `agentcall:<acsId>`，
-    // backFromAgentCall 调 chatEvict 时必须传带前缀的 virtualId，与写入时 key 对齐。
-    // 否则 chat.evictVirtualKey(rawId) → deleteMessageKey(rawId) 删一个从未存在过的 key（no-op），
-    // agentcall 虚拟 session 消息永久残留（内存泄漏）。
-    vi.mocked(sessionApi.getAgentCallHistory).mockResolvedValue([])
+  it('不同 mainSession 独立分区，互不干扰', () => {
     const store = useWorkflowStore()
+    store.registerAgentCall('main-1', agentCallVirtualId('ac-1'))
+    store.registerAgentCall('main-2', agentCallVirtualId('ac-2'))
 
-    // 1. selectAgentCall 写入消息到 'agentcall:sess-agent-1'
-    await store.selectAgentCall('panel-1', 'sess-main', 'sess-agent-1', vi.fn())
-    expect(store.getViewingAgentCallId('panel-1')).toBe('sess-agent-1')
-
-    // 2. backFromAgentCall：chatEvict mock 捕获实际传入的参数
-    const chatEvict = vi.fn()
-    store.backFromAgentCall('panel-1', chatEvict, 'sess-main')
-
-    // 3. 断言：chatEvict 收到的是带前缀的 'agentcall:sess-agent-1'，不是 raw 'sess-agent-1'
-    expect(chatEvict).toHaveBeenCalledTimes(1)
-    expect(chatEvict).toHaveBeenCalledWith('agentcall:sess-agent-1')
-    expect(chatEvict).not.toHaveBeenCalledWith('sess-agent-1')
-    // Panel overlay 已退出
-    expect(store.isViewing('panel-1')).toBe(false)
-    expect(store.getViewingAgentCallId('panel-1')).toBeNull()
+    expect(store.getAgentCallVirtualIdsByMain('main-1')).toEqual([agentCallVirtualId('ac-1')])
+    expect(store.getAgentCallVirtualIdsByMain('main-2')).toEqual([agentCallVirtualId('ac-2')])
   })
 
-  it('[B3] backFromAgentCall 不传 chatEvict 时 messages 残留（仅清 viewing 状态）', async () => {
-    // 边界：调用方未注入 chatEvict（如非 Panel 组件的轻量回退）时只清 viewing，
-    // 不抛错——messages 清理由调用方负责（与 subagent backToMain 行为一致）。
-    vi.mocked(sessionApi.getAgentCallHistory).mockResolvedValue([])
+  it('clearAgentCallMapping 清指定 mainSession 的映射（deleteSession 路径）', () => {
     const store = useWorkflowStore()
-    await store.selectAgentCall('panel-1', 'sess-main', 'sess-agent-1', vi.fn())
+    store.registerAgentCall('main-1', agentCallVirtualId('ac-1'))
+    store.registerAgentCall('main-2', agentCallVirtualId('ac-2'))
 
-    expect(() => store.backFromAgentCall('panel-1')).not.toThrow()
-    expect(store.isViewing('panel-1')).toBe(false)
+    store.clearAgentCallMapping('main-1')
+
+    expect(store.getAgentCallVirtualIdsByMain('main-1')).toEqual([])
+    // main-2 不受影响
+    expect(store.getAgentCallVirtualIdsByMain('main-2')).toHaveLength(1)
+  })
+
+  it('registerAgentCall 幂等：同 virtualId 重复登记不重复', () => {
+    const store = useWorkflowStore()
+    const vid = agentCallVirtualId('ac-1')
+
+    store.registerAgentCall('main-1', vid)
+    store.registerAgentCall('main-1', vid)
+
+    expect(store.getAgentCallVirtualIdsByMain('main-1')).toEqual([vid])
+  })
+
+  it('未登记的 mainSession 反查返回空数组（deleteSession 安全 no-op）', () => {
+    const store = useWorkflowStore()
+    expect(store.getAgentCallVirtualIdsByMain('never')).toEqual([])
+    // 清不存在的映射不抛错
+    expect(() => store.clearAgentCallMapping('never')).not.toThrow()
   })
 })

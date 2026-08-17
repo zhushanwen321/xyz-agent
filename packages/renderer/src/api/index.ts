@@ -24,6 +24,7 @@ import * as realComposer from './domains/composer'
 import * as realWorkspace from './domains/workspace'
 import * as realQuota from './domains/quota'
 import * as realPreset from './domains/preset'
+import * as realProject from './domains/project'
 import * as mockApi from './mock'
 
 const isMock = import.meta.env.VITE_MOCK === 'true'
@@ -43,6 +44,7 @@ export const file = isMock ? mockApi.file : realFile
 export const composer = isMock ? mockApi.composer : realComposer
 export const workspace = isMock ? mockApi.workspace : realWorkspace
 export const quota = isMock ? mockApi.quota : realQuota
+export const project = isMock ? mockApi.project : realProject
 // preset：pi 启动预设域（pi-launch-presets wave1）。mock 轨走 mockApi.preset 占位（空列表 + 默认 id），
 // real 轨走真实 RPC（preset.list/getDefault/setDefault）。
 export const preset = isMock ? mockApi.preset : realPreset
@@ -51,6 +53,7 @@ export const preset = isMock ? mockApi.preset : realPreset
 
 // 类型 re-export（供组件 import 类型用）
 export type { ModelInfo } from './domains/model'
-export type { SystemSettings } from './domains/settings'
+// [W4] SystemSettings 类型已迁 @xyz-agent/core；此处保留 re-export 路径兼容（消费方主要已改 import core）。
+export type { SystemSettings } from '@xyz-agent/core'
 // D-028：SearchItem SSOT 归 lib/search-types，门面 re-export 改指领域层（非 mock）
-export type { SearchItem } from '@/lib/search-types'
+export type { SearchItem } from '@xyz-agent/core'

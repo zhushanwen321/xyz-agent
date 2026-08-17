@@ -21,7 +21,7 @@
  *
  * 依赖方向：useImageAttachment → lib/ipc（唯一 electronAPI 适配点）
  */
-import { writeSessionImage } from '@/lib/ipc'
+import { session as sessionApi } from '@/api'
 
 /** handleImagePaste 返回联合类型。
  *  badge 分支含 path（磁盘绝对路径，local-file:// 加载用）+ fileName（磁盘全名，含 uuid 前缀，
@@ -89,7 +89,7 @@ export async function handleImagePaste(
     // renderer 是第一个信任边界，提前清理；main 进程会再 sanitize 一次，双层防护。
     const rawName = blob.name || 'image'
     const sanitizedName = rawName.replace(/[/\\:\x00-\x1f]/g, '').trim() || 'image'
-    result = await writeSessionImage({
+    result = await sessionApi.writeImage({
       sessionId: sessionId ?? '',
       base64,
       mimeType: blob.type,

@@ -1,5 +1,5 @@
 /**
- * SystemPage · 重命名模型 Select 测试（AutoRenameSection 子组件，经 SystemPage 入口 mount）。
+ * SystemPage · 重命名模型 Select 测试（SystemAutoRenameSection 子组件，经 SystemPage 入口 mount）。
  *
  * 覆盖：
  *  - 首屏冒烟：DOM 含 rename-model Select trigger（data-testid=setting-rename-model）。
@@ -13,10 +13,13 @@
  *  - vi.mock('@/api/domains/settings') 捕获 getRenameModel / setRenameModel /
  *    getAutoRenameEnabled / setAutoRenameEnabled。
  *  - vi.mock('@/composables/useToast') 隔离 toast 全局副作用。
- *  - vi.mock('@/stores/command') 避免 useCommandStore 真实 pinia store 初始化报错。
- *  - vi.mock('@/lib/ipc') mock listSystemSounds（SystemPage onMounted 调用）。
- *  - settings store 用真实 createPinia + 直接写 providers/models（store 是 setup store，
- *    空列表 = 下拉只剩「未设置」项；本测试需要非空列表所以显式注入 fixture）。
+ *  - vi.mock('@/composables/features/command/useCommandStore') 避免真实 command store 初始化报错
+ *    （容器用例挂 SystemShortcutSection 需要）。
+ *  - vi.mock('@/lib/ipc') mock listSystemSounds（SystemSoundSection onMounted 调用）
+ *    及 onUpdateProgress/onUpdateError（UpdateCheckCard 订阅）。
+ *  - settings store 用 @xyz-agent/core 的 getSettingsStore() 单例（模块级 store，
+ *    providers/models 是 ref，测试直接写 .value 注入 fixture），
+ *    beforeEach 经 __resetSettingsStoreForTesting 重置避免跨用例残留。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/settings/system-page-rename-model.test.ts
  */
@@ -24,7 +27,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
-import type { SystemSettings } from '@/api/domains/settings'
+import { __resetSettingsStoreForTesting, getSettingsStore, type SystemSettings } from '@xyz-agent/core'
 
 /** mock 捕获 auto-rename / rename-model API 调用。vi.hoisted 保证在 vi.mock 工厂执行前就绪。 */
 const settingsMock = vi.hoisted(() => ({
@@ -49,8 +52,8 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ info: vi.fn(), error: vi.fn(), warning: vi.fn() }),
 }))
 
-// storeToRefs 要求真正的 reactive 属性，故用 ref 暴露 appCommands / shortcutOverrides
-vi.mock('@/stores/command', () => {
+// SystemShortcutSection 需要 command store；用 ref 暴露响应式属性（storeToRefs 兼容）
+vi.mock('@/composables/features/command/useCommandStore', () => {
   const { ref } = require('vue') as typeof import('vue')
   return {
     useCommandStore: () => ({
@@ -64,13 +67,13 @@ vi.mock('@/stores/command', () => {
 
 vi.mock('@/lib/ipc', () => ({
   listSystemSounds: vi.fn(() => Promise.resolve({ sounds: [] })),
+  // UpdateCheckCard → useAppUpdate 订阅 onUpdateProgress/onUpdateError（useAppUpdate refactor 18c67d16f 后新增；
+  // 缺此导出 vitest 抛 No export is defined on the mock → 容器用例崩 mount）
+  onUpdateProgress: vi.fn(() => () => {}),
+  onUpdateError: vi.fn(() => () => {}),
 }))
 
-// SystemPage 渲染 UpdateCheckCard 子组件（版本检查卡片），stub 掉避免拉入升级流程 ipc 订阅
-const stubUpdateCheckCard = { template: '<div />' }
-
-import SystemPage from '@/components/settings/SystemPage.vue'
-import { useSettingsStore } from '@/stores/settings'
+import SystemPage from '@/components/settings/system/SystemPage.vue'
 
 /** 最小 SystemSettings fixture。 */
 function systemFixture(): SystemSettings {
@@ -101,11 +104,11 @@ function modelFixtures(): ModelInfo[] {
   ]
 }
 
-/** 注入非空 providers/models 到真实 settings store（setup store 状态可直接写）。 */
+/** 注入非空 providers/models 到 settings store 单例（模块级 store 的 ref，直接写 .value）。 */
 function seedStore(): void {
-  const store = useSettingsStore()
-  store.providers = [authedProvider(), unauthedProvider()]
-  store.models = modelFixtures()
+  const store = getSettingsStore()
+  store.providers.value = [authedProvider(), unauthedProvider()]
+  store.models.value = modelFixtures()
 }
 
 let wrapper: ReturnType<typeof mount> | null = null
@@ -115,13 +118,13 @@ async function mountPage(): Promise<void> {
   wrapper = mount(SystemPage, {
     props: { system: systemFixture() },
     attachTo: document.body,
-    global: { stubs: { UpdateCheckCard: stubUpdateCheckCard } },
   })
   await flushPromises()
 }
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  __resetSettingsStoreForTesting()
   settingsMock.getAutoRenameEnabled.mockReset()
   settingsMock.setAutoRenameEnabled.mockReset()
   settingsMock.getRenameModel.mockReset()

@@ -174,101 +174,18 @@ describe('ExtensionService', () => {
       }
     })
 
-    it('uninstallExtension rejects mandatory packages', async () => {
+    it('uninstallExtension rejects builtin packages', async () => {
+      // @zhushanwen/pi-goal 是 builtin（feature 子级，仍不可卸）
+      // 阶段 2 改名：mandatory_cannot_uninstall → builtin_cannot_uninstall
       await expect(service.uninstallExtension('@zhushanwen/pi-goal'))
-        .rejects.toThrow(/Mandatory extension cannot be uninstalled/)
+        .rejects.toThrow(/Builtin extension cannot be uninstalled/)
     })
 
-    it('uninstallExtension allows non-mandatory packages', async () => {
-      // pi-ask-user 非 mandatory，卸载不应抛 mandatory 守卫错误
+    it('uninstallExtension allows non-builtin packages', async () => {
+      // pi-ask-user 非 builtin，卸载不应抛 builtin 守卫错误
       // （后续 npm uninstall 是 mock 的，不会真正报错）
       await expect(service.uninstallExtension('pi-ask-user'))
         .resolves.toBeUndefined()
-    })
-  })
-
-  describe('ensureMandatoryExtensions', () => {
-    it('installs missing mandatory extensions + enables autoUpgrade', async () => {
-      // scanExtensions 只返回 pi-ask-user，所有 mandatory 包都「未装」
-      const installSpy = vi.spyOn(service, 'installExtension').mockResolvedValue(undefined)
-      const autoUpgradeSpy = vi.spyOn(service['extSettings'], 'setAutoUpgrade').mockResolvedValue(undefined)
-
-      const results = await service.ensureMandatoryExtensions()
-
-      // 9 个 mandatory 包都触发了安装
-      expect(installSpy).toHaveBeenCalledTimes(9)
-      expect(autoUpgradeSpy).toHaveBeenCalledTimes(9)
-      // 每个结果都是 installed:true
-      expect(results.every(r => r.installed)).toBe(true)
-      expect(results.every(r => !r.error)).toBe(true)
-
-      installSpy.mockRestore()
-      autoUpgradeSpy.mockRestore()
-    })
-
-    it('skips already-installed mandatory extensions', async () => {
-      // 造一个已安装的 mandatory 包 @zhushanwen/pi-goal
-      const pkgDir = join(testSettingsDir, 'npm', 'node_modules', '@zhushanwen', 'pi-goal')
-      mkdirSync(pkgDir, { recursive: true })
-      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
-        name: '@zhushanwen/pi-goal',
-        version: '0.5.0',
-        description: 'goal ext',
-        keywords: ['pi-package'],
-        peerDependencies: { '@mariozechner/pi-coding-agent': '*' },
-      }), 'utf-8')
-      const settingsPath = join(testSettingsDir, 'settings.json')
-      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
-      settings.packages = [...(settings.packages || []), 'npm:@zhushanwen/pi-goal']
-      writeFileSync(settingsPath, JSON.stringify(settings), 'utf-8')
-
-      const installSpy = vi.spyOn(service, 'installExtension').mockResolvedValue(undefined)
-
-      const results = await service.ensureMandatoryExtensions()
-
-      // pi-goal 已装 → 少调一次 installExtension（8 次而非 9 次）
-      expect(installSpy).toHaveBeenCalledTimes(8)
-      expect(installSpy).not.toHaveBeenCalledWith('npm:@zhushanwen/pi-goal')
-      // pi-goal 结果仍是 installed:true
-      const goalResult = results.find(r => r.name === '@zhushanwen/pi-goal')
-      expect(goalResult?.installed).toBe(true)
-
-      installSpy.mockRestore()
-    })
-
-    it('does not throw when install fails, records error', async () => {
-      const installSpy = vi.spyOn(service, 'installExtension').mockRejectedValue(new Error('network timeout'))
-
-      const results = await service.ensureMandatoryExtensions()
-
-      // 不抛错
-      expect(results).toHaveLength(9)
-      // 每个都 installed:false + 有 error
-      expect(results.every(r => !r.installed)).toBe(true)
-      expect(results.every(r => r.error?.includes('network timeout'))).toBe(true)
-
-      installSpy.mockRestore()
-    })
-
-    it('清理 disabled-packages.json 中的 mandatory 残留', async () => {
-      // 某扩展升格 mandatory 前被用户禁用过，disabled 状态遗留
-      const disabledPath = join(testSettingsDir, 'disabled-packages.json')
-      writeFileSync(disabledPath, JSON.stringify({
-        disabled: ['npm:@zhushanwen/pi-goal'],
-      }), 'utf-8')
-
-      // installExtension mock 掉避免真装，只测 disabled 清理
-      const installSpy = vi.spyOn(service, 'installExtension').mockResolvedValue(undefined)
-      const autoUpgradeSpy = vi.spyOn(service['extSettings'], 'setAutoUpgrade').mockResolvedValue(undefined)
-
-      await service.ensureMandatoryExtensions()
-
-      // disabled-packages.json 中的 @zhushanwen/pi-goal 被清除
-      // 用 getDisabled() API 读（removeDisabled 删空后会删文件，getDisabled 对 ENOENT 返回空数组）
-      expect(service['extSettings'].getDisabled()).not.toContain('npm:@zhushanwen/pi-goal')
-
-      installSpy.mockRestore()
-      autoUpgradeSpy.mockRestore()
     })
   })
 
@@ -287,30 +204,30 @@ describe('ExtensionService', () => {
       expect(paths.some(p => p.includes('pi-ask-user'))).toBe(false)
     })
 
-    it('mandatory 包无视 disabled 状态，强制加载', async () => {
-      // 造一个已安装的 mandatory 包 @zhushanwen/pi-goal（scoped name）
-      const pkgDir = join(testSettingsDir, 'npm', 'node_modules', '@zhushanwen', 'pi-goal')
+    it('infrastructure builtin 包无视 disabled 强加载', async () => {
+      // pi-pending-notifications 是 infrastructure builtin（被依赖的基础包），仍无视 disabled 强加载
+      const pkgDir = join(testSettingsDir, 'npm', 'node_modules', '@zhushanwen', 'pi-pending-notifications')
       mkdirSync(pkgDir, { recursive: true })
       writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
-        name: '@zhushanwen/pi-goal',
-        version: '0.5.0',
-        description: 'goal ext',
+        name: '@zhushanwen/pi-pending-notifications',
+        version: '1.0.0',
+        description: 'infra ext',
         keywords: ['pi-package'],
         peerDependencies: { '@mariozechner/pi-coding-agent': '*' },
       }), 'utf-8')
       const settingsPath = join(testSettingsDir, 'settings.json')
       const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
-      settings.packages = [...(settings.packages || []), 'npm:@zhushanwen/pi-goal']
+      settings.packages = [...(settings.packages || []), 'npm:@zhushanwen/pi-pending-notifications']
       writeFileSync(settingsPath, JSON.stringify(settings), 'utf-8')
 
-      // 把 mandatory 包加入 disabled-packages.json
+      // 把 infrastructure 包加入 disabled-packages.json（应当被无视）
       writeFileSync(join(testSettingsDir, 'disabled-packages.json'), JSON.stringify({
-        disabled: ['npm:@zhushanwen/pi-goal'],
+        disabled: ['npm:@zhushanwen/pi-pending-notifications'],
       }), 'utf-8')
 
       const paths = await service.getExtensionPaths()
-      // mandatory 包即使被 disabled 仍出现在路径中（强制加载）
-      expect(paths.some(p => p.includes('@zhushanwen') && p.includes('pi-goal'))).toBe(true)
+      // infrastructure 包即使被 disabled 仍出现在路径中（强制加载）
+      expect(paths.some(p => p.includes('@zhushanwen') && p.includes('pi-pending-notifications'))).toBe(true)
     })
   })
 
@@ -378,6 +295,21 @@ describe('ExtensionService', () => {
       await expect(service.installExtension('git:foo/bar')).rejects.toThrow('Unsupported source')
     })
 
+    it('rejects builtin packages (builtin_already_installed guard, MF-4)', async () => {
+      // @zhushanwen/pi-goal 是 builtin（feature 级），installExtension 守卫应拒绝用户 npm 安装。
+      // 否则与内置副本产生去重冲突，deduplicate 保留用户装的那份，
+      // 产生 source(user-installed)/tier(mandatory) 矛盾条目（不可卸载却显示为用户安装）。
+      // 与 uninstall/toggle 的 builtin 守卫对称（均有测），唯独 install 入口原缺测（MF-4）。
+      try {
+        await service.installExtension('npm:@zhushanwen/pi-goal')
+        expect.unreachable('Should have thrown builtin_already_installed')
+      } catch (e) {
+        expect(e).toBeInstanceOf(ExtensionInstallError)
+        expect((e as ExtensionInstallError).code).toBe('builtin_already_installed')
+        expect((e as Error).message).toMatch(/already built in/i)
+      }
+    })
+
     it('throws when package is not a valid pi extension', async () => {
       // installPackage succeeds but the installed package lacks pi manifest fields
       mockedInstallPackage.mockResolvedValue(undefined)
@@ -437,15 +369,28 @@ describe('ExtensionService', () => {
       expect(existsSync(disabledPath)).toBe(false)
     })
 
-    it('rejects disabling mandatory packages', async () => {
-      // @zhushanwen/pi-goal 是 mandatory（与 uninstallExtension 守卫对称）：
-      // 禁用应抛 mandatory_cannot_disable，避免 UI 禁用但 getExtensionPaths 仍强加载的状态分离
+    it('rejects disabling infrastructure but allows feature', async () => {
+      // 阶段 2：守卫只拦截 infrastructure builtin（被依赖的基础包，不可禁）；
+      // feature builtin（pi-goal）可禁，禁用走正常 disabled-packages.json 路径。
+
+      // [1] infrastructure builtin（pi-pending-notifications）禁用应抛 infrastructure_cannot_disable
+      // （阶段 2 改名：mandatory_cannot_disable → infrastructure_cannot_disable）
+      await expect(service.toggleExtension('@zhushanwen/pi-pending-notifications', false))
+        .rejects.toThrow(/Infrastructure extension cannot be disabled/)
+
+      // [2] feature builtin（pi-goal）禁用应成功（feature 现在可禁）
       await expect(service.toggleExtension('@zhushanwen/pi-goal', false))
-        .rejects.toThrow(/Mandatory extension cannot be disabled/)
+        .resolves.toBeUndefined()
+      // 落盘到 disabled-packages.json（用 npm: 前缀，pi-goal 非 discovery 源）
+      const disabledPath = join(testSettingsDir, 'disabled-packages.json')
+      expect(existsSync(disabledPath)).toBe(true)
+      const raw = readFileSync(disabledPath, 'utf-8')
+      const data = JSON.parse(raw)
+      expect(data.disabled).toContain('npm:@zhushanwen/pi-goal')
     })
 
-    it('allows enabling mandatory packages', async () => {
-      // 开启 mandatory 扩展允许（守卫只拦截禁用，开启无害）
+    it('allows enabling builtin packages', async () => {
+      // 开启 builtin 扩展允许（守卫只拦截禁用，开启无害）
       await expect(service.toggleExtension('@zhushanwen/pi-goal', true))
         .resolves.toBeUndefined()
     })
@@ -955,6 +900,142 @@ describe('ExtensionService', () => {
       } finally {
         try { rmSync(filePath, { force: true }) } catch { /* ignore */ }
       }
+    })
+  })
+
+  // ── Phase 4: migrateBuiltinExtensions（清理旧版 mandatory npm install 遗留）──
+
+  describe('migrateBuiltinExtensions', () => {
+    /** 9 个 builtin 包名（与 shared/mandatory-extensions.json SSOT 对齐） */
+    const builtinNames = [
+      '@zhushanwen/pi-ask-user',
+      '@zhushanwen/pi-goal',
+      '@zhushanwen/pi-todo',
+      '@zhushanwen/pi-pending-notifications',
+      '@zhushanwen/pi-subagent-workflow',
+      '@zhushanwen/pi-structured-output',
+      '@zhushanwen/pi-permission',
+      '@zhushanwen/pi-scheduler',
+      '@zhushanwen/pi-rename-session',
+    ]
+    /** 一个不属于 builtin 的 user 包（迁移后必须保留） */
+    const userPkg = 'npm:user-installed-pkg'
+    /** infrastructure 级 builtin（不可禁，disabled 记录属残留，迁移清除） */
+    const infraNames = ['@zhushanwen/pi-pending-notifications', '@zhushanwen/pi-structured-output']
+    /** feature 级 builtin（可禁，disabled 记录是用户合法状态，迁移必须保留，M6a-02） */
+    const featureNames = builtinNames.filter(n => !infraNames.includes(n))
+
+    it('清理 3 个数据文件中的 builtin 包记录，user 记录保留', async () => {
+      // settings.json packages[]：builtin + user
+      const settingsPath = join(testSettingsDir, 'settings.json')
+      writeFileSync(settingsPath, JSON.stringify({
+        packages: [...builtinNames.map(n => `npm:${n}`), userPkg],
+      }), 'utf-8')
+
+      // auto-upgrade-packages.json：builtin + user
+      writeFileSync(join(testSettingsDir, 'auto-upgrade-packages.json'), JSON.stringify({
+        autoUpgrade: [...builtinNames.map(n => `npm:${n}`), userPkg],
+      }), 'utf-8')
+
+      // disabled-packages.json：builtin（infra + feature）+ user
+      writeFileSync(join(testSettingsDir, 'disabled-packages.json'), JSON.stringify({
+        disabled: [...builtinNames.map(n => `npm:${n}`), userPkg],
+      }), 'utf-8')
+
+      await service.migrateBuiltinExtensions()
+
+      // settings.json：builtin 清除，user 保留
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
+      for (const n of builtinNames) {
+        expect(settings.packages).not.toContain(`npm:${n}`)
+      }
+      expect(settings.packages).toContain(userPkg)
+
+      // auto-upgrade-packages.json：builtin 清除，user 保留
+      const autoRaw = readFileSync(join(testSettingsDir, 'auto-upgrade-packages.json'), 'utf-8')
+      const auto = JSON.parse(autoRaw) as { autoUpgrade: string[] }
+      for (const n of builtinNames) {
+        expect(auto.autoUpgrade).not.toContain(`npm:${n}`)
+      }
+      expect(auto.autoUpgrade).toContain(userPkg)
+
+      // disabled-packages.json（M6a-02）：infrastructure builtin 清除（残留），
+      // feature builtin 保留（用户合法禁用状态），user 保留
+      const disabledRaw = readFileSync(join(testSettingsDir, 'disabled-packages.json'), 'utf-8')
+      const disabled = JSON.parse(disabledRaw) as { disabled: string[] }
+      for (const n of infraNames) {
+        expect(disabled.disabled).not.toContain(`npm:${n}`)
+      }
+      for (const n of featureNames) {
+        expect(disabled.disabled).toContain(`npm:${n}`)
+      }
+      expect(disabled.disabled).toContain(userPkg)
+    })
+
+    it('禁用 feature builtin 后迁移保留 disabled（模拟 boot，M6a-02）', async () => {
+      // 用户禁用 feature builtin（toggleExtension 落盘 npm:<name>）
+      const disabledPath = join(testSettingsDir, 'disabled-packages.json')
+      writeFileSync(disabledPath, JSON.stringify({
+        disabled: ['npm:@zhushanwen/pi-goal', 'npm:@zhushanwen/pi-subagent-workflow'],
+      }), 'utf-8')
+      // 旧机制遗留：settings.json packages[] 有同包 npm 记录（迁移应清除）
+      writeFileSync(join(testSettingsDir, 'settings.json'), JSON.stringify({
+        packages: ['npm:@zhushanwen/pi-goal'],
+      }), 'utf-8')
+
+      // 模拟 boot 迁移
+      await service.migrateBuiltinExtensions()
+
+      // disabled 保留：feature builtin 禁用状态跨重启持久
+      const disabled = JSON.parse(readFileSync(disabledPath, 'utf-8')) as { disabled: string[] }
+      expect(disabled.disabled).toContain('npm:@zhushanwen/pi-goal')
+      expect(disabled.disabled).toContain('npm:@zhushanwen/pi-subagent-workflow')
+      // packages[] 仍清理（builtin 不可安装，该记录永远不该存在）
+      const settings = JSON.parse(readFileSync(join(testSettingsDir, 'settings.json'), 'utf-8'))
+      expect(settings.packages).not.toContain('npm:@zhushanwen/pi-goal')
+    })
+
+    it('迁移清除 infrastructure builtin 的 disabled 残留（M6a-02）', async () => {
+      // 旧 mandatory 机制/手动编辑残留的 infrastructure disabled 记录应被清除
+      writeFileSync(join(testSettingsDir, 'disabled-packages.json'), JSON.stringify({
+        disabled: ['npm:@zhushanwen/pi-pending-notifications', 'npm:@zhushanwen/pi-structured-output'],
+      }), 'utf-8')
+
+      await service.migrateBuiltinExtensions()
+
+      // infrastructure disabled 全清后 disabled-packages.json 被 JsonStore 删除（空数组删文件行为）
+      expect(existsSync(join(testSettingsDir, 'disabled-packages.json'))).toBe(false)
+    })
+
+    it('幂等：无 builtin 记录时不报错且数据不变', async () => {
+      // 3 个文件只含 user 记录（无 builtin）
+      const settingsPath = join(testSettingsDir, 'settings.json')
+      writeFileSync(settingsPath, JSON.stringify({ packages: [userPkg] }), 'utf-8')
+      writeFileSync(join(testSettingsDir, 'auto-upgrade-packages.json'), JSON.stringify({
+        autoUpgrade: [userPkg],
+      }), 'utf-8')
+      writeFileSync(join(testSettingsDir, 'disabled-packages.json'), JSON.stringify({
+        disabled: [userPkg],
+      }), 'utf-8')
+
+      await expect(service.migrateBuiltinExtensions()).resolves.toBeUndefined()
+
+      // user 记录完整保留
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
+      expect(settings.packages).toEqual([userPkg])
+      const auto = JSON.parse(readFileSync(join(testSettingsDir, 'auto-upgrade-packages.json'), 'utf-8')) as { autoUpgrade: string[] }
+      expect(auto.autoUpgrade).toEqual([userPkg])
+      const disabled = JSON.parse(readFileSync(join(testSettingsDir, 'disabled-packages.json'), 'utf-8')) as { disabled: string[] }
+      expect(disabled.disabled).toEqual([userPkg])
+    })
+
+    it('幂等：3 个文件均不存在时不报错', async () => {
+      // 删除 beforeEach 造的 settings.json，模拟全新安装（无任何历史文件）
+      rmSync(join(testSettingsDir, 'settings.json'), { force: true })
+      rmSync(join(testSettingsDir, 'disabled-packages.json'), { force: true })
+      rmSync(join(testSettingsDir, 'auto-upgrade-packages.json'), { force: true })
+
+      await expect(service.migrateBuiltinExtensions()).resolves.toBeUndefined()
     })
   })
 })

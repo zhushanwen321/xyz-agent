@@ -16,7 +16,6 @@ import { type Static, Type } from "typebox";
 
 import {
 	addTodos,
-	buildGui,
 	formatTodoList,
 	type Todo,
 	type TodoDetails,
@@ -222,11 +221,8 @@ function executeTodoAction(
 		todos: [...state.todos],
 		nextId: state.nextId,
 	};
-	// RPC 模式（xyz-agent GUI）附加 __gui__，前端按 list-tree 渲染。
-	// TUI/print/json 模式走原生文本渲染（contentText 已在 content 中）。
-	if (ctx.mode === "rpc") {
-		details.__gui__ = buildGui(state.todos);
-	}
+	// 状态展示不再进 tool result（GUI 渲染字段已移除）：GUI 走 refreshDisplay 的
+	// guiSetWidget 推送（M17 widget 面板），TUI 走原生文本渲染（contentText 已在 content 中）。
 	return {
 		content: [{ type: "text" as const, text: contentText }],
 		details,

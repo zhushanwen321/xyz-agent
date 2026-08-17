@@ -19,7 +19,6 @@ import { useChatStore } from '@/stores/chat'
 
 const stubs = {
   PanelHeader: { template: '<div />' },
-  ProgressZone: { template: '<div />' },
   MessageStream: { template: '<div data-testid="msg-stream" />' },
   Composer: { template: '<div data-testid="composer" />' },
   Landing: { template: '<div data-testid="landing">landing</div>' },

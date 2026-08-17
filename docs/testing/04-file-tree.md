@@ -25,16 +25,27 @@
 Sidebar.vue
   └─ SegmentedTab「文件」
        └─ FileView.vue (data-testid="file-view-root")  ← 文件树容器
-            ├─ 过滤输入框 (data-testid="file-filter-input")
-            ├─ showIgnored 开关 (data-testid="file-show-ignored-toggle")
-            ├─ 加载态 (data-testid="file-loading")
-            ├─ 错误态 (data-testid="file-error")
-            ├─ 空态 (data-testid="file-empty")
-            └─ 树渲染
-                 └─ FileTreeRow.vue × N
-                      ├─ 目录行 (data-testid="file-tree-dir-{path}")
-                      └─ 文件行 (data-testid="file-tree-file-{path}")
-                           └─ git 角标（A/M/D/U，来自 store.getGitStatus）
+            ├─ 头部：session 标签 + 分支（左）× showIgnored 开关（右）— 滚动区外固定
+            │    └─ showIgnored 开关 (data-testid="file-show-ignored-toggle")
+            ├─ 过滤输入框 (data-testid="file-filter-input") — 滚动区外固定
+            └─ 滚动区（ScrollAreaViewport，仅承载树）
+                 ├─ 加载态 (data-testid="file-loading")
+                 ├─ 错误态 (data-testid="file-error" + 重试按钮 file-retry)
+                 ├─ 空态 (data-testid="file-empty")
+                 └─ [W28/D-7.2] Virtualizer（virtua 虚拟滚动）挂扁平行（projectVisibleRows 投影）
+                      └─ FileTreeRow.vue × N（纯行组件，收 VisibleRow）
+                           ├─ 目录行 (data-testid="file-tree-dir-{path}")
+                           ├─ loading/error/empty 占位行 (file-tree-loading/error/empty-{path})
+                           └─ 文件行 (data-testid="file-tree-file-{path}")
+                                └─ git 角标（A/M/D/U，来自投影 row.gitStatus）
+
+[W28/D-7.2] 结构变化（相对旧递归版）：
+- 头部（session label + showIgnored 开关）与过滤框移出滚动区固定——virtua Virtualizer 要求
+  parentElement 即滚动容器且前方无内容（startMargin 动态高度脆弱），过滤器固定可见
+- 树形递归渲染 → 扁平可见行（projectVisibleRows，stores/fileTree.ts）+ 虚拟滚动：
+  万级目录展开只挂载视口 ± 缓冲的行（DOM 行数 < 200）
+- FileTreeRow 改纯行组件：depth/expanded/changeCount/gitStatus/lineStats 全部由投影预计算，
+  交互（toggle/select）经 emit 归位 FileView 层
 
 无活跃 session 时：
   └─ file-view-no-session（空态，提示选择会话）
@@ -44,23 +55,24 @@ Sidebar.vue
 
 | testid | 文件:行 | 触发/可见条件 |
 |--------|---------|--------------|
-| `file-view-root` | FileView.vue:13 | 文件 tab 激活 + 有 session 时恒显 |
-| `file-filter-input` | FileView.vue:28 | 恒显（过滤输入框） |
-| `file-show-ignored-toggle` | FileView.vue:40 | 恒显（showIgnored 开关） |
-| `file-loading` | FileView.vue:53 | 加载中 |
-| `file-error` | FileView.vue:63 | 加载失败 |
-| `file-retry` | FileView.vue:67 | 加载失败时的「重试」按钮 |
-| `file-empty` | FileView.vue:74 | 过滤无匹配 / 树空 |
-| `file-tree-dir-{path}` | FileTreeRow.vue:21 | 目录节点（path 如 `src`、`src/utils`） |
-| `file-tree-loading-{path}` | FileTreeRow.vue:41 | 该目录展开加载中（子节点异步加载态） |
-| `file-tree-error-{path}` | FileTreeRow.vue:51 | 该目录展开加载失败 |
-| `file-tree-file-{path}` | FileTreeRow.vue:84 | 文件节点（path 如 `README.md`、`src/index.ts`） |
-| `chevron-slot` | FileTreeRow.vue:24/43/54/88 | 展开/折叠箭头（每个节点都有，无 path 后缀，E2E 查询时需限定父节点） |
+| `file-view-root` | FileView.vue:18 | 文件 tab 激活 + 有 session 时恒显 |
+| `file-filter-input` | FileView.vue:51 | 恒显（过滤输入框，滚动区外固定） |
+| `file-show-ignored-toggle` | FileView.vue:32 | 恒显（showIgnored 开关，头部行） |
+| `file-loading` | FileView.vue:66 | 加载中 |
+| `file-error` | FileView.vue:76 | 加载失败 |
+| `file-retry` | FileView.vue:80 | 加载失败时的「重试」按钮 |
+| `file-empty` | FileView.vue:87 | 过滤无匹配 / 树空 |
+| `file-tree-dir-{path}` | FileTreeRow.vue:53 | 目录节点（path 如 `src`、`src/utils`） |
+| `file-tree-loading-{path}` | FileTreeRow.vue:18 | 该目录展开加载中（子节点异步加载态） |
+| `file-tree-error-{path}` | FileTreeRow.vue:30 | 该目录展开加载失败（点击 = 折叠父目录，旧递归语义） |
+| `file-tree-empty-{path}` | FileTreeRow.vue:43 | 该目录已加载空（含全部子项被 showIgnored 过滤） |
+| `file-tree-file-{path}` | FileTreeRow.vue:78 | 文件节点（path 如 `README.md`、`src/index.ts`） |
+| `chevron-slot` | FileTreeRow.vue:20/33/56/82 | 展开/折叠箭头（每个节点都有，无 path 后缀，E2E 查询时需限定父节点） |
 | `file-view-no-session` | Sidebar.vue:98 | 无活跃 session 时 |
 
 **testid 命名规则**：
 - 节点：`file-tree-{dir|file}-{相对路径}`，路径用 `/` 分隔（如 `src/index.ts`）
-- 节点态：`file-tree-{loading|error}-{path}`（展开该目录时的异步态）
+- 节点态：`file-tree-{loading|error|empty}-{path}`（展开该目录时的异步态/空态）
 - `chevron-slot` 是公共箭头标识，无 path 后缀，E2E 查询时用 `page.getByTestId('file-tree-dir-src').locator('.chevron-slot')` 限定到具体节点
 
 **E2E 查询示例**（限定 chevron 到具体节点）：
@@ -100,10 +112,10 @@ FileView.onMounted → useFileTree.setupInvalidation(sessionId)
 ### 4.3 过滤链路
 
 ```
-file-filter-input input → store.setFilter(query)
-  └─ 计算属性：filter 后的树（递归匹配 query）
-       → 命中节点显示，不命中隐藏
-       → 全无匹配 → file-empty 显示
+file-filter-input input → store.setFilter(query)（useFileTree 200ms 防抖提交）
+  └─ [W28/D-7.2] FileView 投影 computed（projectVisibleRows）：顶层节点 nodeMatchesFilter
+       命中判定（仅祖先链保留）+ 展开目录 DFS 展开 → 命中节点显示，不命中隐藏
+       → 全无匹配 → 投影空 → file-empty 显示
 ```
 
 ## 5. mock 数据
@@ -288,7 +300,7 @@ test.describe('文件树 E2E', () => {
 | 1. gotoFileTree | （helper） | sessions tab → 点 e2e-files → files tab → file-view-root 可见 |
 | 2. 点 src | `getByTestId('file-tree-dir-src').click()` | `useFileTree.expandNode('src')` |
 | 3. 缓存检查 | （内部） | store.getTree src 节点已有子目录（首加载含一级子）→ 复用缓存，不发 expand |
-| 4. 展开渲染 | （DOM） | `file-tree-file-src/index.ts` 等 v-if isExpanded → 可见 |
+| 4. 展开渲染 | （DOM） | `file-tree-file-src/index.ts` 等（投影产出可见行，virtua 挂载）→ 可见 |
 | 5. 角标渲染 | （DOM） | `file-tree-file-src/new-feature.ts` 含 'A'（fixtureGitStatus added） |
 | 6. 断言 | （验证） | 子节点 visible + 角标文本 contains 'A' |
 
@@ -297,14 +309,15 @@ test.describe('文件树 E2E', () => {
 | 约束 | 说明 |
 |------|------|
 | ✅ testid 完整 | FileView/FileTreeRow 有完整 testid，E2E 稳定 |
-| ⚠️ 真实大项目性能 | mock 树小（约 10 节点），真实项目可能数千节点。懒加载性能只能非 MOCK 测 |
+| ✅ 大数据量渲染 | [W28] FileView-virtua.test.ts 用真实 virtua 覆盖万级目录（10000 文件 → DOM 行数 < 200） |
+| ⚠️ 真实大项目性能 | mock 树小（约 10 节点），真实项目可能数千节点。懒加载/滚动体验只能非 MOCK 测 |
 | ❌ 真实 git status | mock fixtureGitStatus 是静态的，真实 git 输出格式（rename/copy 等）只能非 MOCK 测 |
 | ❌ 路径守卫 | BC-3 白名单（file.read 允许 3 全局目录 + cwd 子树）只能非 MOCK 测（mock 不校验） |
 
 ## 10. 相关文档
 
 - 组件源码：[`components/sidebar/FileView.vue`](../../packages/renderer/src/components/sidebar/FileView.vue) / [`FileTreeRow.vue`](../../packages/renderer/src/components/sidebar/FileTreeRow.vue)
-- composable：[`composables/features/useFileTree.ts`](../../packages/renderer/src/composables/features/useFileTree.ts)
+- composable：[`composables/features/file-tree/useFileTree.ts`](../../packages/renderer/src/composables/features/file-tree/useFileTree.ts)
 - E2E spec：[`e2e/file-tree.spec.ts`](../../e2e/file-tree.spec.ts)（11 用例）
-- ADR：[ADR-0025 文件视图完整项目树](../architecture/adr/0025-file-view-full-project-tree.md) / [ADR-0026 懒加载](../architecture/adr/0026-file-tree-lazy-loading.md) / [ADR-0027 FileService 三层](../architecture/adr/0027-fileservice-three-layer.md)
+- ADR：[ADR-0025 文件视图完整项目树](../adr/0025-file-view-full-project-tree.md) / [ADR-0026 懒加载](../adr/0026-file-tree-lazy-loading.md) / [ADR-0027 FileService 三层](../adr/0027-fileservice-three-layer.md)
 - SideDrawer detail：[05-side-drawer.md](./05-side-drawer.md)（点文件 → drawer 预览）

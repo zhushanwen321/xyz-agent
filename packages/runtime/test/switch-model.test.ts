@@ -13,7 +13,7 @@
  * 运行：cd packages/runtime && npx vitest run test/switch-model.test.ts
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { ServerMessage } from '@xyz-agent/shared'
+import type { ServerMessage, ProviderId } from '@xyz-agent/shared'
 
 import type {
   IMessageBroker,
@@ -154,7 +154,7 @@ describe('W1/L7: switchModel fail-fast & 无 client 不假装成功', () => {
 
   it('U2: session 不在 Map → throw Error（不静默返回 sessionId）', async () => {
     const { service } = createService()
-    await expect(service.switchModel('nonexistent', 'provider', 'model'))
+    await expect(service.switchModel('nonexistent', 'provider' as ProviderId, 'model'))
       .rejects.toThrow('session not active')
   })
 
@@ -177,7 +177,7 @@ describe('W1/L7: switchModel fail-fast & 无 client 不假装成功', () => {
     vi.mocked(broker.broadcast).mockClear()
 
     // 3. switchModel 应 fail-skip：不写缓存、不广播
-    const returned = await service.switchModel('s1', 'new', 'model')
+    const returned = await service.switchModel('s1', 'new' as ProviderId, 'model')
     expect(returned).toBe('s1')
     // modelId 未被改写（未假装成功）
     expect(service.getSummary('s1')?.modelId).toBe(beforeModelId)

@@ -47,7 +47,7 @@ const chatApiMock = {
   sendBash: vi.fn(() => Promise.resolve()),
   abortBash: vi.fn(() => Promise.resolve()),
 }
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => chatApiMock,
 }))
 
@@ -58,11 +58,11 @@ const flowMock = {
   setPendingModel: vi.fn(),
   currentCwd: ref(null),
 }
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => flowMock,
   resetNewTaskFlow: vi.fn(),
 }))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   model: { switchModel: vi.fn() },
   session: { setThinkingLevel: vi.fn() },
   composer: { getMentionCandidates: vi.fn().mockResolvedValue([]), getFileCandidates: vi.fn().mockResolvedValue([]) },
@@ -70,9 +70,6 @@ vi.mock('@/api', () => ({
 }))
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
-}))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({ defaultModel: '' }),
 }))
 
 // ── ComposerInput mock：render testid + emit input 设 draft + emit keydown Enter 触发 onSend ──

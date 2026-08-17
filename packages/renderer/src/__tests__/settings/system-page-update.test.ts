@@ -11,7 +11,7 @@
  * - TC7 error      重试按钮（settings-update-retry），click → checkForUpdate(true)
  * - TC8 unsupported 前往下载按钮（settings-update-unsupported），click → openFallbackUrl
  *
- * Mock 策略：仅需 vi.mock('@/composables/features/useAppUpdate')（UpdateCheckCard 唯一外部依赖）。
+ * Mock 策略：仅需 vi.mock('@/composables/features/settings/useAppUpdate')（UpdateCheckCard 唯一外部依赖）。
  * 不需 SystemPage 的其他 mock（getAutoRenameEnabled/useToast/useCommandStore/listSystemSounds）——
  * UpdateCheckCard 是自包含组件，无 props、无 onMounted 副作用。
  *
@@ -50,7 +50,7 @@ const performDownloadMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 const performInstallMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 const openFallbackUrlMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 
-vi.mock('@/composables/features/useAppUpdate', () => ({
+vi.mock('@/composables/features/settings/useAppUpdate', () => ({
   useAppUpdate: () => ({
     state: testState,
     checkForUpdate: checkForUpdateMock,
