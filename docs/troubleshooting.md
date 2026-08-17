@@ -146,3 +146,31 @@ lsof -i :1420 -P | grep node
 | `XYZ_AGENT_PACKAGED` | 打包标记 | `1` | 未设置 |
 | `ELECTRON_RUN_AS_NODE` | Node 模式 | `1`（runtime 子进程） | 未设置 |
 | `VITE_MOCK=true` | Mock 模式 | — | 可选 |
+
+## 历史排查规则 [HISTORICAL]（从 AGENTS.md 外移 2026-08-17）
+
+### git status untracked 目录展开
+
+`GitService.getStatus` 执行 `git status --porcelain=v1 -z -b` **必须带 `--untracked-files=all`**。
+
+- 根因：默认 git 把整个 untracked 目录折叠成一行 `?? dir/`（**带尾斜杠**）。文件树 `FileNode.path` 无尾斜杠，两者失配 → overlay key 查不到 → 目录徽章误显（前缀匹配命中自身那条带斜杠记录）、展开后子文件无角标无行数
+- 修复：`--untracked-files=all`（`-uall`）强制展开每个 untracked 文件到文件级，与 `FileNode.path` 格式一致。`.gitignore` 仍生效，不会因 node_modules 等爆量
+- 修改位置：`packages/runtime/src/services/git-service.ts` getStatus。测试基线：`git-service.test.ts` 断言了命令参数
+
+### 禁止写死项目绝对路径
+
+runtime 代码禁止出现特定项目的绝对路径或硬编码假设，所有 workspace / bare repo / 数据目录路径必须从运行时上下文动态推导（xyz-agent 是通用工具，用户会在任意 bare repo + worktree 项目中使用）。
+
+- workspace 根 / bare repo：`WorkspaceDetector.detect(currentCwd)` 向上查找 `.bare`（`workspace-detector.ts`）
+- 数据目录：`getDataDir()` / `getConfigDir()`（`packages/shared/src/paths.ts`）
+- 检查：`grep -rn "xyz-agent-workspace\|/Users/zhushanwen" packages/runtime/src/` 不得在逻辑代码中出现硬编码绝对路径
+- 关联教训（spawn 权限）：git 跟踪的脚本默认 644 无 x 位，直接 `spawn(scriptPath)` 会 EACCES；执行外部脚本用 `spawn('bash', [scriptPath, ...args])` 包装
+
+### 跨层机制排查必须穷尽所有层（pi extension ↔ xyz-agent runtime）
+
+分层架构里，每层只看自己视角，「我这层没做」≠「没发生」。涉及 pi extension ↔ xyz-agent runtime 的跨层机制排查，必须穷尽所有可能发起方，不能只看 xyz-agent runtime 侧就下结论。
+
+- 事故：排查「background subagent 完成后主 agent 是否续跑」，explorer 只看 xyz-agent runtime 就断言「不续跑」，差点设计出「永不响」的错方案。真相：续跑由 pi 进程内的 extension 发起（pi-subagent-workflow notifier 调 `pi.sendMessage(..., {triggerTurn:true, deliverAs:'steer'})`，pi 核心收到后开新 turn），xyz-agent runtime 只是旁观转发
+- 排查步骤：① xyz-agent runtime 侧（event-interpreter / session-service / message-dispatcher）只是旁观转发；② pi extension 机制（pi 进程内）——开发期源码在本项目 `extensions/`，用户机器运行时安装在 `~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/pi-*/src/`；③ pi 私有协议（`triggerTurn`/`deliverAs`）语义见 `packages/shared/src/message.ts` 注释；④ 设计文档：`docs/page-design/archive/v3/` + `docs/extensions/extension-conventions.md`
+- 判断依据：涉及 pi 的 session loop / turn 调度 / LLM 调用的行为，发起方几乎一定在 pi 进程内；xyz-agent 的职责是 UI 状态同步 + 用户命令转发
+- 教训：当用户的领域知识与 explorer 结论冲突时，**优先怀疑 explorer 排查范围不全**，而非怀疑用户
