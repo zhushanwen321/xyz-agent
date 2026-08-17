@@ -8,10 +8,20 @@
 //   - 通过 pi.sendMessage({ deliverAs:"followUp", triggerTurn:true }) 注入——
 //     当前 turn 结束后唤醒父 agent 处理结果（followUp 不打断 streaming、不锁滚动）
 
-/** 一条待发送的完成通知记录。 */
+/**
+ * 一条待发送的完成通知记录。
+ * SP-1: done/failed/crashed 合并为 closed + closedReason L2 子枚举。
+ */
 export interface BgNotifyRecord {
   id: string;
-  status: "done" | "failed" | "cancelled";
+  /**
+   * 完成状态。v4 B-1 两态收敛：closed（终态，含 cancelled，closedReason 表达 L2 原因）
+   * 或 running（对话模式轮次完成，旧 idle 折入 running，携带本轮结果送回主 agent）。
+   * toNotifyRecord 守卫放行后经此联合穷尽。
+   */
+  status: "running" | "closed";
+  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。供通知文案按需展示。 */
+  closedReason?: import("./types.ts").ClosedReason;
   agent: string;
   /** 执行所用 model（RecordSnapshot.model），用于完成通知显示。 */
   model?: string;
@@ -19,10 +29,25 @@ export interface BgNotifyRecord {
   error?: string;
   startedAt: number;
   endedAt: number | undefined;
+  /**
+   * 对话轮次计数（仅 idle 有意义）。dedup key 按 `id:round` 去重——对话模式每轮 round
+   * 不同，60s 内多轮不被吞；非 chatMode round 恒定（0/undefined），key 同旧 id 行为不变。
+   */
+  round?: number;
   /** [MF#1] worktree 模式下子 agent 改动的 patch 路径（worktree 外，cleanup 后留存）。
    *  done 时通知文本显式提示 `git apply`，否则 background 子 agent 在隔离 worktree 的改动
    *  会静默丢失——父 LLM 不知 patch 路径，无法应用。 */
   patchFile?: string;
+  /** [wave2] 子 agent session 文件路径（增量语义的全文恢复通道）。
+   *  仅 chatMode 透传（toNotifyRecord 条件透传）——轮次/完成通知末尾追加
+   *  "Full transcript: <path>" 指针行，父 LLM 可按需读全文；one-shot 不透传，
+   *  通知输出逐字节不变。缺失时 buildLlmContent 省略整行。 */
+  sessionFile?: string;
+  /** [C-2] close 终态通知的轮次统计（文案 "completed after N rounds." 用）。
+   *  仅 chatMode close 语义（notifyClosed）构造时携带——此时 dedup 身份 round 已被
+   *  置 undefined（与轮次通知的 id:round key 区分，终态不被吞），轮数改由本字段进
+   *  文案。one-shot 完成通知不设置，文案保持 "completed. Result:" 逐字节（G4）。 */
+  totalRounds?: number;
 }
 
 /** notifier 依赖的 pi 最小接口（解耦，便于测试）。 */
@@ -108,9 +133,12 @@ export class BgNotifier {
         if (now - ts >= DEDUP_TTL_MS) this.dedup.delete(id);
       }
     }
-    const lastSeen = this.dedup.get(record.id);
+    // dedup key：idle（对话模式每轮完成）按 id:round 去重——不同轮次不互相掩蔽；
+    // 非 idle（closed/cancelled）round 恒定 undefined，key 同旧行为不变。
+    const dedupKey = record.round != null ? `${record.id}:${record.round}` : record.id;
+    const lastSeen = this.dedup.get(dedupKey);
     if (lastSeen !== undefined && now - lastSeen < DEDUP_TTL_MS) return;
-    this.dedup.set(record.id, now);
+    this.dedup.set(dedupKey, now);
 
     this.pending.push(record);
 
@@ -209,18 +237,47 @@ export class BgNotifier {
   private buildLlmContent(record: BgNotifyRecord): string {
     const agent = record.agent;
     const id = record.id;
+    // [wave2 指针行] 增量语义下轮次通知只携带本轮增量，异步 flush 窗口丢失时不可重发
+    //（见 subagent-service.ts onRoundSettled 注释），恢复通道是 session 文件全文。
+    // 仅 chatMode 透传 sessionFile，one-shot 通知不含该行；cancelled/gc-failed 不追加
+    //（无成功结果可读，指针无意义）；缺失时省略整行（追加空串 = 输出逐字节不变）。
+    const transcriptPointer = record.sessionFile
+      ? `\n\nFull transcript: ${record.sessionFile}`
+      : "";
     switch (record.status) {
-      case "done": {
-        const base = `Subagent "${agent}" (${id}) completed. Result:\n${record.result ?? "(empty)"}`;
-        if (record.patchFile) {
-          return `${base}\n\nThis subagent ran in an isolated worktree; its file changes were captured as a patch:\n  ${record.patchFile}\nTo bring these changes into the current repo, run: \`git apply ${record.patchFile}\``;
+      case "closed": {
+        // v4 B-1: closed 统一终态（含 cancelled）。按 closedReason 派生通知文案。
+        const reason = record.closedReason ?? "gc";
+        if (reason === "cancelled") {
+          return `Subagent "${agent}" (${id}) cancelled.`;
         }
-        return base;
+        // 失败场景（gc + 有 error）：展示错误。判定必须先于 patchFile——失败轮也会写
+        // patchFile（doFinalizeRecord Step 0 对 worktreeHandle 无条件 collectPatch），若
+        // patch 分支在前，gc 失败 + worktree 并存时 LLM 被告知 completed。顺序与三处
+        // 同构契约的另外两处一致（shared/subagent.ts deriveClosedDisplay、
+        // bg-notify-render.ts renderRecordLines：cancelled → gc+error → patch/result）。
+        if (record.error && reason === "gc") {
+          return `Subagent "${agent}" (${id}) failed: ${record.error}`;
+        }
+        // 成功完成（user-close）或通用结束（gc/parent-shutdown 等）：展示结果。
+        // [C-2] chatMode close 终态通知附轮次统计（设计 D2 路径①"completed after N rounds"）。
+        // totalRounds 仅 close 语义携带（notifyClosed）；one-shot 完成通知不设置（round 无轮次
+        // 语义），文案保持 "completed. Result:" 逐字节（G4 硬约束，one-shot 字节锁测试锚定）。
+        const roundsSuffix =
+          record.totalRounds != null && record.totalRounds > 0
+            ? ` after ${record.totalRounds} round${record.totalRounds === 1 ? "" : "s"}`
+            : "";
+        const base = `Subagent "${agent}" (${id}) completed${roundsSuffix}. Result:\n${record.result ?? "(empty)"}`;
+        if (record.patchFile) {
+          // [wave2 review] 长 return 拆行：模板串内不可直接换行（会改变输出内容），提取 patchHint 中转变量
+          const patchHint = `\n\nThis subagent ran in an isolated worktree; its file changes were captured as a patch:\n  ${record.patchFile}\nTo bring these changes into the current repo, run: \`git apply ${record.patchFile}\``;
+          return `${base}${patchHint}${transcriptPointer}`;
+        }
+        return `${base}${transcriptPointer}`;
       }
-      case "failed":
-        return `Subagent "${agent}" (${id}) failed: ${record.error ?? "(unknown error)"}`;
-      case "cancelled":
-        return `Subagent "${agent}" (${id}) cancelled.`;
+      case "running":
+        // v4 B-1: 对话模式轮次完成（旧 idle 折入 running）：携带本轮结果送回主 agent，等待下一轮 message。
+        return `Subagent "${agent}" (${id}) finished a round. Reply:\n${record.result ?? "(empty)"}${transcriptPointer}`;
     }
   }
 

@@ -24,7 +24,16 @@
 //     const { FakeChild } = await import("./helpers/spawn-mock.ts");
 //     return {
 //       spawn: vi.fn(() => new FakeChild()),
-//       execFileSync: vi.fn(() => ""),
+//       // buildEnvBlock 用 execFile 异步取 git branch：默认 err-first 兜底（catch → branch=""），
+//       // 形态同 worktree-manager.test.ts 的 setupExecFile
+//       execFile: vi.fn(
+//         (
+//           _cmd: string,
+//           _args: readonly string[],
+//           _opts: unknown,
+//           cb: (err: Error | null, stdout?: string, stderr?: string) => void,
+//         ) => cb(new Error("execFile not configured in this test")),
+//       ),
 //     };
 //   });
 //   vi.mock("node:fs", async () => {
@@ -111,9 +120,17 @@ export function lastSpawnedChild<
 /**
  * 等待 runSpawn 内部调到 spawn（拿到 child 控制器）。
  *
- * runSpawn 是 async，spawn 在 mkdirSync + writePromptToTempFile 之后才调（均有微任务/
- * I/O 延迟）。用 setTimeout 轮询 mockSpawn.mock.results，比 vi.waitFor 在该 vitest 版本
- * 下更可靠（vi.waitFor 偶发过早 resolve 导致后续读取竞态）。
+ * runSpawn 是 async，spawn 在 buildEnvBlock + writePromptToTempFile 两个 await 之后才调
+ *（均为微任务级延迟）。用 setTimeout 轮询 mockSpawn.mock.results，比 vi.waitFor 在该
+ * vitest 版本下更可靠（vi.waitFor 偶发过早 resolve 导致后续读取竞态）。
+ *
+ * [快照语义] 等待的是「调用时刻之后**新发生**的一次 spawn」，而非「任意历史 spawn」。
+ * 旧实现只在 results 为空时等待（即只在文件/测试内首次 spawn 有效）：同一文件第二次
+ * runSpawn 时立即返回，而新 runSpawn 尚未跨过 await 到达 spawn → lastSpawnedChild 取回
+ * **上一次**的 child，stdout/close 事件发给已死的旧 child，当前 runSpawn 永远收不到
+ * close → 测试超时。buildEnvBlock 异步化（多一个 await 微任务）后该隐式时序假设失效，
+ * 故改为快照 baseline：等待 results.length 超过调用时的快照值，天然对「每测试/每文件
+ * N 次 spawn」都正确（调用前先记 baseline，本次 runSpawn 的 spawn 必然使 length 增长）。
  *
  * @param mockSpawn 调用方用 `vi.mocked(spawn)` 取回的 mock 引用
  */
@@ -121,7 +138,8 @@ export async function waitForSpawn<
   T extends { mock: { results: unknown[] } },
 >(mockSpawn: T, timeoutMs = 1000): Promise<void> {
   const start = Date.now();
-  while (mockSpawn.mock.results.length === 0) {
+  const baseline = mockSpawn.mock.results.length;
+  while (mockSpawn.mock.results.length <= baseline) {
     if (Date.now() - start > timeoutMs) {
       throw new Error(`spawn was not called within ${timeoutMs}ms`);
     }
@@ -159,8 +177,8 @@ export function mockSessionFileExists(
 // ── record / opts / ctx 构造（3 文件一致的最小合法形状）──
 
 /** 构造最小合法的 ExecutionRecord（runSpawn 入参）。 */
-export function makeRecord() {
-  return createRecord("run-1", {
+export function makeRecord(id = "run-1") {
+  return createRecord(id, {
     agent: "general-purpose",
     model: "test-model",
     mode: "sync",

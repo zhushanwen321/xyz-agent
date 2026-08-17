@@ -9,8 +9,8 @@
  * 2. toolResult message 含 content[0].text = JSON 字符串，解析后含：
  *    - background 模式：{action:'start', subagentId, sessionFile:null, bgResponse:{status:'running', message:'detached...'}}
  *    - list 模式：{action:'list', subagentId:null, sessionFile:null, listResponse:{running, items:[{subagentId, agent, status, sessionFile, model, totalTokens, duration}]}}
- * 3. custom_message customType:'subagent-bg-notify' 含 details:{id, status:'done'|'failed'|'cancelled', agent, model, result, error, startedAt, endedAt}
- *    （background 模式完成时注入，可用来更新状态）
+ * 3. custom_message customType:'subagent-bg-notify' 含 details:{id, status:'running'|'closed'（legacy 兼容 done/failed/cancelled）, agent, model, result, error, startedAt, endedAt, closedReason?, round?}
+ *    （background 完成终态 / 对话模式轮次完成时注入，可用来更新状态）
  *
  * 提取策略：
  * - 遍历所有 message entry，收集 subagent toolCall（按 toolCallId 索引）和对应 toolResult
@@ -68,6 +68,8 @@ interface SubagentToolResultData {
       model?: string
       totalTokens?: number
       duration?: number
+      /** L2 关闭原因（仅 status='closed' 的 item 有值，pi-subagent-workflow v4 A-6） */
+      closedReason?: string
     }>
   }
 }
@@ -217,11 +219,14 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
       const listItem = listItems.get(subagentId)
       const notify = bgNotifies.get(subagentId)
 
-      // status 归一：notify.status 是 pi 严格枚举（done/failed/cancelled），但走 normalizeSubagentStatus
-      // 统一兼容上游变体（completed/error/crashed 等）。notify 缺失时回落到 listItem/bgResponse。
+      // status 归一：v4 起 notify.status 是两态枚举（running/closed，详见 subagent-extractor.ts 头部
+      // 契约注释），legacy 值 done/failed/cancelled 仅为历史 session 数据保留；走
+      // normalizeSubagentStatus 统一兼容上游变体（completed/error/crashed 等）。notify 缺失时回落
+      // listItem.status（[review 修复] 删除原 `?? normalizeSubagentStatus(tr.bgResponse.status)` 右支——
+      // normalizeSubagentStatus 恒返回非空（falsy 输入回 'running'），?? 右支永不可达）。
       const status: SubagentStatus = notify
         ? normalizeSubagentStatus(notify.status)
-        : normalizeSubagentStatus(listItem?.status) ?? normalizeSubagentStatus(tr.bgResponse.status)
+        : normalizeSubagentStatus(listItem?.status)
 
       // sessionFile 回退查找：listResponse/bg-notify 都不带 sessionFile 时，
       // 扫描 subagent session 目录用 startedAt 时间戳匹配最近的 JSONL 文件。
@@ -245,6 +250,11 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
         startedAt: notify?.startedAt,
         endedAt: notify?.endedAt,
         error: notify?.error,
+        // L2 关闭原因（v4 B-1）：bg-notify 与 list item 都可能携带，notify 优先（终态时点更晚）。
+        // 仅 status === 'closed' 时投影，与实时路径（event-interpreter handleSubagentBgNotify）
+        // 同构——最后一条 notify 为 running（轮次完成通知）时不从 listItem 兜底 closedReason，
+        // 消除 running + closedReason 脏组合。
+        closedReason: status === 'closed' ? (notify?.closedReason ?? listItem?.closedReason) : undefined,
       })
       continue
     }

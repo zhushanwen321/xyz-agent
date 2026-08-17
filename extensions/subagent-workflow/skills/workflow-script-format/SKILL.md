@@ -241,7 +241,7 @@ agent({ prompt: '...', description: 'review-business-logic' });
 
 ## Constraints
 
-- `agent()` calls **must be deterministic in order** for pause/resume to work correctly. 根因：调用结果按单调递增的 callId（从 0 起、按调用顺序）缓存，pause 时杀 Worker 但保留 callCache，resume 时按 callId 重放。`parallel()` 内的调用顺序不能随机，否则重放会错位命中旧结果。注意：无 script hash 校验，**改脚本后 resume 会用旧结果**，开发期改脚本应重新 run。
+- `agent()` calls **must be deterministic in order** for crash-retry replay to work correctly. 根因：调用结果按单调递增的 callId（从 0 起、按调用顺序）缓存。Runs are one-shot（无 pause/resume——提前停止用 abort，要新结果重新 run）；worker 基础设施错误自动重试 ≤3 次，重试时已完成调用按 callId 重放缓存结果不重跑。`parallel()` 内的调用顺序不能随机，否则重放会错位命中旧结果。注意：无 script hash 校验，重试重放的是缓存结果，开发期改脚本应重新 run。
 - `parallel()` 并发默认上限 6（ConcurrencyPool，超出自动排队；来源 ADR-030 决策 3）。
 - Throwing an error aborts the workflow (after retries).
 - Use `require()` for Node.js built-ins: `const fs = require('node:fs');`

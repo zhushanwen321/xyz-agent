@@ -216,6 +216,73 @@ describe('EventInterpreter · subagent 内存态 + session.subagents 广播', ()
       expect(donePayload.subagents[0]!.agent).toBe('researcher')
       expect(donePayload.subagents[0]!.status).toBe('done')
     })
+
+    // v4 B-1：closed 统一终态携带 closedReason，投影到 SubagentRecord 供 renderer 派生展示
+    it('closed 通知携带 closedReason → 投影到 SubagentRecord.closedReason + error 直通', () => {
+      const interpreter = new EventInterpreter('sid-u2d', { send })
+
+      interpreter.interpret([
+        subagentStart('call-d', { agent: 'worker', slug: 'task-d', task: 'Do D' }),
+        subagentEnd('call-d', {
+          action: 'start', subagentId: 'bg-d-4', sessionFile: '/d.jsonl',
+          bgResponse: { status: 'running', message: 'detached' },
+        }),
+      ])
+
+      interpreter.interpret([{
+        kind: 'message',
+        message: {
+          type: 'message.customStart',
+          payload: {
+            sessionId: 'sid-u2d',
+            customType: 'subagent-bg-notify',
+            details: {
+              id: 'bg-d-4', status: 'closed', closedReason: 'gc', agent: 'worker',
+              error: 'Model timeout', startedAt: 1000, endedAt: 3000,
+            },
+          },
+        } as ServerMessage,
+      }])
+
+      const payload = sent.filter((m) => m.type === 'session.subagents')[1]!
+        .payload as { subagents: Array<Record<string, unknown>> }
+      expect(payload.subagents[0]!.status).toBe('closed')
+      expect(payload.subagents[0]!.closedReason).toBe('gc')
+      expect(payload.subagents[0]!.error).toBe('Model timeout')
+    })
+
+    it('running 轮次完成通知 → 状态保持 running 且 closedReason 清空（防残留脏组合）', () => {
+      const interpreter = new EventInterpreter('sid-u2e', { send })
+
+      interpreter.interpret([
+        subagentStart('call-e', { agent: 'worker', slug: 'task-e', task: 'Do E' }),
+        subagentEnd('call-e', {
+          action: 'start', subagentId: 'bg-e-5', sessionFile: '/e.jsonl',
+          bgResponse: { status: 'running', message: 'detached' },
+        }),
+      ])
+
+      interpreter.interpret([{
+        kind: 'message',
+        message: {
+          type: 'message.customStart',
+          payload: {
+            sessionId: 'sid-u2e',
+            customType: 'subagent-bg-notify',
+            details: {
+              id: 'bg-e-5', status: 'running', round: 1, agent: 'worker',
+              result: 'round 1 done', startedAt: 1000, endedAt: 2000,
+            },
+          },
+        } as ServerMessage,
+      }])
+
+      const payload = sent.filter((m) => m.type === 'session.subagents')[1]!
+        .payload as { subagents: Array<Record<string, unknown>> }
+      // v4：轮次完成是非终态（等待续聊），status 保持 running，无 closedReason
+      expect(payload.subagents[0]!.status).toBe('running')
+      expect(payload.subagents[0]!.closedReason).toBeUndefined()
+    })
   })
 
   // ── U3：非 subagent 工具不触发 ───────────────────────────────────

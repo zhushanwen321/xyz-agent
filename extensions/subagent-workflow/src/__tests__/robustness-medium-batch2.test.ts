@@ -2,7 +2,7 @@
 //
 // M6: worktree cleanup not gated by patchOk (decoupled)
 // M9: store.save not fire-and-forget (has .catch)
-// M10: notifyDone JSON.stringify wrapped in try-catch (circular ref safe)
+// M10: notifyDone serialization circular-ref safe (IF13: boundedPrettySerialize + guard/fallback)
 // M12: budget-done transition and onRunDone in separate try blocks
 
 import { readFileSync } from "node:fs";
@@ -47,15 +47,32 @@ describe("M9: store.save not fire-and-forget in dispatchAgentCall", () => {
   });
 });
 
-// ── M10: notifyDone JSON.stringify wrapped in try-catch ───────
+// ── M10: notifyDone 序列化有循环引用保护（IF13 后形态）─────────
+//
+// IF13（#19）：notifyDone 的 scriptResult 序列化从「整体 try { JSON.stringify(x, null, 2) }
+// catch { String(x) }」重构为 boundedPrettySerialize（只生成 ≤8000 前缀）。循环引用
+// 保护语义不变，锚定点迁移：(1) notifyDone 调用 boundedPrettySerialize(scriptResult)；
+// (2) 实现内祖先 Set 守卫（命中 throw）+ 顶层 try-catch 整体回退 String(value)。
+// 行为级等价（回退输出与旧实现逐字节一致）由 helpers-bounded-serialize.test.ts 锚定。
 
-describe("M10: notifyDone JSON.stringify has circular ref protection", () => {
+describe("M10: notifyDone serialization has circular ref protection", () => {
   const src = readSrc(join("src", "interface", "helpers.ts"));
 
-  it("JSON.stringify(scriptResult) is inside try-catch", () => {
-    // 找到 JSON.stringify(scriptResult 的上下文
-    const stringifyMatch = src.match(/try\s*\{[\s\S]*?JSON\.stringify\([\s\S]*?scriptResult/);
-    expect(stringifyMatch).toBeTruthy();
+  it("notifyDone serializes scriptResult via boundedPrettySerialize", () => {
+    // 调用点：scriptResult 不再直接 JSON.stringify，走 bounded 序列化
+    const callMatch = src.match(/boundedPrettySerialize\(run\.state\.scriptResult,\s*MAX_RESULT_LENGTH\)/);
+    expect(callMatch).toBeTruthy();
+  });
+
+  it("boundedPrettySerialize has ancestor-set guard plus whole-value fallback try-catch", () => {
+    // 实现：函数体内含祖先 Set 循环守卫（命中 throw）与顶层 try-catch（整体回退）
+    const fnMatch = src.match(/function boundedPrettySerialize\([\s\S]*?\n\}/);
+    expect(fnMatch).toBeTruthy();
+    const fnBody = fnMatch![0];
+    expect(fnBody).toMatch(/ancestors\.has\(obj\)/);
+    expect(fnBody).toMatch(/throw new TypeError\("circular reference"\)/);
+    expect(fnBody).toMatch(/catch\s*\{/);
+    expect(fnBody).toMatch(/String\(value\)/);
   });
 });
 

@@ -288,6 +288,37 @@ describe("sendPromptCommand", () => {
     const child = { stdin: null } as unknown as ChildProcess;
     expect(() => sendPromptCommand(child, "task")).not.toThrow();
   });
+
+  // [V2 决策 3] streamingBehavior 可选参数：chatMode 统一投递热路径用 prompt+streamingBehavior
+  it("options.streamingBehavior='followUp' → 写入 streamingBehavior:followUp 字段", () => {
+    const child = makeChild();
+    sendPromptCommand(child, "queue this", { streamingBehavior: "followUp" });
+
+    const lines = readStdinLines(child);
+    expect(lines).toHaveLength(1);
+    const cmd = lines[0] as { type: string; message: string; streamingBehavior?: string };
+    expect(cmd.type).toBe("prompt");
+    expect(cmd.message).toBe("queue this");
+    expect(cmd.streamingBehavior).toBe("followUp");
+  });
+
+  it("options.streamingBehavior='steer' → 写入 streamingBehavior:steer 字段", () => {
+    const child = makeChild();
+    sendPromptCommand(child, "interrupt now", { streamingBehavior: "steer" });
+
+    const lines = readStdinLines(child);
+    const cmd = lines[0] as { streamingBehavior?: string };
+    expect(cmd.streamingBehavior).toBe("steer");
+  });
+
+  it("省略 options → 不写入 streamingBehavior 字段（向后兼容，首帧 prompt / 非 chatMode 调用方）", () => {
+    const child = makeChild();
+    sendPromptCommand(child, "first task");
+
+    const lines = readStdinLines(child);
+    const cmd = lines[0] as { streamingBehavior?: string };
+    expect(cmd.streamingBehavior).toBeUndefined();
+  });
 });
 
 // ============================================================
@@ -362,5 +393,71 @@ describe("writeStdinLine 背压 — write 返回 false 时 warn 不 throw", () =
     respond(child, "req-ok", { value: "x" });
 
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+// [review 修复 round2] 已删除 sendFollowUpCommand / sendSteerCommand 两 describe——
+// 随 deliverToRunning（S2）死亡后两函数成零生产调用方的死 export，一并移除。
+// busy 投递语义由 prompt + streamingBehavior（"followUp"/"steer"，sendPromptCommand）承担。
+
+// ============================================================
+// writeStdinLine EPIPE / ERR_STREAM_DESTROYED 检测（R3）
+// ============================================================
+
+describe("writeStdinLine EPIPE 检测 — EPIPE / ERR_STREAM_DESTROYED throw", () => {
+  it("child.stdin.write 抛 {code:'EPIPE'} → throw 含 EPIPE 关键词", () => {
+    const fakeStdin = {
+      write: vi.fn(() => {
+        const err = Object.assign(new Error("write after end"), { code: "EPIPE" });
+        throw err;
+      }),
+      destroyed: false,
+    } as unknown as PassThrough;
+    const child = { stdin: fakeStdin } as unknown as ChildProcess;
+
+    expect(() => respond(child, "req-epipe", { value: "x" })).toThrow(/EPIPE/);
+  });
+
+  it("child.stdin.write 抛 {code:'ERR_STREAM_DESTROYED'} → throw 含 EPIPE 关键词", () => {
+    const fakeStdin = {
+      write: vi.fn(() => {
+        const err = Object.assign(new Error("Stream is destroyed"), {
+          code: "ERR_STREAM_DESTROYED",
+        });
+        throw err;
+      }),
+      destroyed: false,
+    } as unknown as PassThrough;
+    const child = { stdin: fakeStdin } as unknown as ChildProcess;
+
+    expect(() => sendPromptCommand(child, "task")).toThrow(/EPIPE/);
+  });
+
+  it("child.stdin.destroyed=true → 静默跳过（guard 生效，不触发 write）", () => {
+    const fakeStdin = {
+      write: vi.fn(),
+      destroyed: true,
+    } as unknown as PassThrough;
+    const child = { stdin: fakeStdin } as unknown as ChildProcess;
+
+    expect(() => respond(child, "req-destroyed", { value: "x" })).not.toThrow();
+    // destroyed guard 生效，write 不被调用
+    expect(fakeStdin.write).not.toHaveBeenCalled();
+  });
+
+  it("child.stdin.write 抛非 EPIPE 错误 → warn 降级不 throw（兜底）", () => {
+    const fakeStdin = {
+      write: vi.fn(() => {
+        throw new Error("some other error");
+      }),
+      destroyed: false,
+    } as unknown as PassThrough;
+    const child = { stdin: fakeStdin } as unknown as ChildProcess;
+
+    // 非 EPIPE 错误应 warn 降级，不 throw
+    expect(() => respond(child, "req-other-err", { value: "x" })).not.toThrow();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const warnMsg = warnSpy.mock.calls[0]?.[0] as string;
+    expect(warnMsg).toContain("unexpected stdin write error");
   });
 });

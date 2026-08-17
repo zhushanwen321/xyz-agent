@@ -89,13 +89,19 @@ function writeSessionJsonl(
 }
 
 describe("RecordStore", () => {
+  let rootDir: string;
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rs-test-"));
+    // [DS3] 两层布局：tmpDir 深一层（对齐生产 <enc> 段结构），sessions-index.json 落
+    // dirname(tmpDir)=rootDir 内随 afterEach 清理（含 MF-3/S-20 的嵌套 <enc> 段索引）。
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "rs-test-"));
+    tmpDir = path.join(rootDir, "sessions");
+    fs.mkdirSync(tmpDir);
   });
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    // maxRetries：fire-and-forget 的 sessions-index 写可能与删除并发（ENOTEMPTY 竞态）
+    fs.rmSync(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   // ============================================================
@@ -104,7 +110,7 @@ describe("RecordStore", () => {
   describe("archive 立即移除", () => {
     it("archive 后 record 立即从内存移除（不再 linger）", () => {
       const store = new RecordStore(tmpDir);
-      const r = makeRecord({ id: "sync-1", mode: "sync", status: "done" });
+      const r = makeRecord({ id: "sync-1", mode: "sync", status: "closed" });
       store.register(r);
       expect(store.getMutable("sync-1")).toBeDefined();
       store.archive(r);
@@ -113,7 +119,7 @@ describe("RecordStore", () => {
 
     it("background record 同样立即移除（不再 FIFO）", () => {
       const store = new RecordStore(tmpDir);
-      const r = makeRecord({ id: "bg-1", mode: "background", status: "done" });
+      const r = makeRecord({ id: "bg-1", mode: "background", status: "closed" });
       store.register(r);
       store.archive(r);
       expect(store.getMutable("bg-1")).toBeUndefined();
@@ -131,20 +137,25 @@ describe("RecordStore", () => {
       expect(ids).toContain("run-1");
     });
 
-    it("磁盘 session.jsonl 重建的终态 record 出现在结果中（无 sidecar → crashed）", () => {
+    it("磁盘 session.jsonl 重建的 record 出现在结果中（无 sidecar → running, SP-2 跨重启可恢复）", () => {
       const sessionFile = path.join(tmpDir, "2026-01-01-uuid-a.jsonl");
       writeSessionJsonl(sessionFile, {
         id: "bg-1", agent: "worker", mode: "background", task: "do it", startedAt: 5000,
       });
-      // 无 sidecar → 四分支兜底 crashed
+      // 无 sidecar → 四分支兜底 running（v4 B-1：旧 idle 折入 running，SP-2 跨重启可恢复）
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === "bg-1");
       expect(found).toBeDefined();
-      expect(found?.status).toBe("crashed");
+      expect(found?.status).toBe("running");
       expect(found?.agent).toBe("worker");
-      expect(found?.turns).toBe(1);
-      expect(found?.totalTokens).toBe(30);
-      expect(found?.result).toBe("result text");
+      // [perf] 列表是 light（头部 identity，详情字段缺省）——turns/tokens/result 走 getFullRecord 懒加载
+      expect(found?.turns).toBe(0);
+      expect(found?.result).toBeUndefined();
+      const full = store.getFullRecord("bg-1");
+      expect(full?.turns).toBe(1);
+      expect(full?.totalTokens).toBe(30);
+      expect(full?.result).toBe("result text");
+      expect(full?.status).toBe("running"); // 状态矩阵在全量路径同样套用
     });
 
     it("磁盘 session.jsonl + .finalized sidecar → done", () => {
@@ -156,10 +167,10 @@ describe("RecordStore", () => {
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === "bg-2");
       expect(found).toBeDefined();
-      expect(found?.status).toBe("done");
+      expect(found?.status).toBe("closed");
     });
 
-    it("statusFilter='running' 只返回 running（磁盘终态被滤掉）", () => {
+    it("statusFilter='running' 含内存 + 磁盘跨重启 running（v4 B-1：旧 idle 折入 running）", () => {
       const sessionFile = path.join(tmpDir, "2026-01-01-uuid-a.jsonl");
       writeSessionJsonl(sessionFile, {
         id: "bg-1", agent: "worker", mode: "background", task: "do it", startedAt: 5000,
@@ -168,7 +179,8 @@ describe("RecordStore", () => {
       store.register(makeRecord({ id: "run-1", mode: "background", startedAt: 1000 }));
       const filter: StatusFilter = "running";
       const ids = store.collectRecords(100, filter).map((r) => r.id);
-      expect(ids).toEqual(["run-1"]); // 只有内存 running，磁盘 crashed 被滤
+      // 内存 run-1 + 磁盘跨重启 bg-1 都是 running（旧 idle 折入）；startedAt desc → bg-1(5000) 先
+      expect(ids).toEqual(["bg-1", "run-1"]);
     });
 
     it("statusFilter='all'（默认）返回内存 + 磁盘", () => {
@@ -191,7 +203,7 @@ describe("RecordStore", () => {
       const store = new RecordStore(tmpDir);
       store.register(makeRecord({ id: "dup-1", mode: "background", status: "running", startedAt: 5000 }));
       const found = store.collectRecords(100).find((r) => r.id === "dup-1");
-      expect(found?.status).toBe("running"); // 内存 running 覆盖磁盘 crashed
+      expect(found?.status).toBe("running"); // 内存 running 覆盖磁盘 idle（SP-2）
     });
 
     it("[MF-3/S-20] 跨进程组合：子进程（worktree）写入 enc(ROOT) 的深层 record 被 ROOT store 重建，同 rootSessionId 全树可见、他树被排除", () => {
@@ -235,7 +247,7 @@ describe("RecordStore", () => {
   // cancelled tombstone override
   // ============================================================
   describe("cancelled tombstone", () => {
-    it("有 .cancelled sidecar → status override 为 cancelled", () => {
+    it("有 .cancelled sidecar → status override 为 closed + closedReason=cancelled", () => {
       const sessionFile = path.join(tmpDir, "2026-01-01-uuid-a.jsonl");
       writeSessionJsonl(sessionFile, {
         id: "bg-1", agent: "worker", mode: "background", task: "do it", startedAt: 5000,
@@ -245,7 +257,9 @@ describe("RecordStore", () => {
       });
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === "bg-1");
-      expect(found?.status).toBe("cancelled");
+      // v4 B-1：cancelled 折入 closed，closedReason='cancelled' 保留用户取消语义
+      expect(found?.status).toBe("closed");
+      expect(found?.closedReason).toBe("cancelled");
       expect(found?.error).toBe("cancelled by user");
     });
   });
@@ -254,17 +268,19 @@ describe("RecordStore", () => {
   // compareRecords 排序稳定性（内存 running record）
   // ============================================================
   describe("compareRecords 排序", () => {
-    it("status priority（running < crashed）", () => {
+    it("status priority（running < closed）", () => {
       const store = new RecordStore(tmpDir);
-      // 内存 running record vs 磁盘无 sidecar → crashed
+      // 内存 running record
       const running = makeRecord({ id: "run-1", mode: "background", startedAt: 3000, status: "running" });
       store.register(running);
-      // 磁盘 crashed record（无 sidecar → 四分支兜底）
-      writeSessionJsonl(path.join(tmpDir, "a.jsonl"), {
+      // 磁盘 closed record（.finalized sidecar → closed，v4 B-1 统一终态）
+      const doneFile = path.join(tmpDir, "a.jsonl");
+      writeSessionJsonl(doneFile, {
         id: "done-1", agent: "w", mode: "background", task: "t", startedAt: 5000,
       });
+      writeFinalized(doneFile);
       const ids = store.collectRecords(100).map((r) => r.id);
-      expect(ids[0]).toBe("run-1"); // running 排前
+      expect(ids[0]).toBe("run-1"); // running(0) 排在 closed(3) 前
     });
 
     it("同 status 时 startedAt desc（新→旧）", () => {
@@ -275,30 +291,55 @@ describe("RecordStore", () => {
       writeSessionJsonl(path.join(tmpDir, "new.jsonl"), {
         id: "new", agent: "w", mode: "background", task: "t", startedAt: 9000,
       });
-      // 两个都是 crashed（磁盘重建，无 sidecar），按 startedAt desc
+      // 两个都是 running（磁盘重建，无 sidecar → SP-2 兜底 running，旧 idle 折入），按 startedAt desc
       const ids = store.collectRecords(100).map((r) => r.id);
       expect(ids).toEqual(["new", "old"]);
     });
   });
 
   // ============================================================
+  // running 态 record（M2-A chatMode 续聊；v4 B-1：旧 idle 折入 running）
+  // ============================================================
+  describe("running 态 record（旧 idle 折入，等待续聊）", () => {
+    it("getMutable 能查到 running record（不筛 status，running record 留内存不 archive）", () => {
+      const store = new RecordStore(tmpDir);
+      const r = makeRecord({ id: "idle-1", status: "running" });
+      store.register(r);
+      // running record 不 archive → getMutable 仍可查（续聊定位依赖此）
+      expect(store.getMutable("idle-1")).toBe(r);
+    });
+
+    it("running record 经 collectRecords(statusFilter=all) 可见", () => {
+      const store = new RecordStore(tmpDir);
+      store.register(makeRecord({ id: "idle-2", status: "running" }));
+      const ids = store.collectRecords(100, "all").map((r) => r.id);
+      expect(ids).toContain("idle-2");
+    });
+
+    it("running record 经 collectRecords(statusFilter=running) 可见（v4 B-1：旧 idle 折入 running）", () => {
+      const store = new RecordStore(tmpDir);
+      store.register(makeRecord({ id: "idle-3", status: "running" }));
+      const ids = store.collectRecords(100, "running").map((r) => r.id);
+      expect(ids).toContain("idle-3");
+    });
+  });
+
+
+  // ============================================================
   // 重建缓存
   // ============================================================
   describe("重建缓存", () => {
-    it("notifyChange 后缓存失效（新 session.jsonl 可见）", () => {
+    it("新 session.jsonl 无需内存事件即立即可见（[perf] stat 校验取代 notifyChange 整体失效）", () => {
       const store = new RecordStore(tmpDir);
       // 首次 collect：空目录
       expect(store.collectRecords(100)).toHaveLength(0);
-      // 写新 session.jsonl
+      // 写新 session.jsonl（模拟外部进程/子进程写入——不经本进程任何内存事件）
       writeSessionJsonl(path.join(tmpDir, "new.jsonl"), {
         id: "bg-1", agent: "w", mode: "background", task: "t", startedAt: 1000,
       });
-      // 缓存仍命中旧结果（notifyChange 未触发）
-      expect(store.collectRecords(100)).toHaveLength(0);
-      // register 触发 notifyChange → 缓存失效
-      store.register(makeRecord({ id: "trigger", mode: "sync", startedAt: 2000 }));
-      store.archive(makeRecord({ id: "trigger", mode: "sync", startedAt: 2000 }));
-      // 现在 bg-1 可见
+      // [perf] 旧实现：reconCache 建立后只能靠 register/archive 触发 notifyChange 失效，
+      // 否则永远 stale（外部进程写入的文件对本进程不可见）。新实现：每次 collectRecords
+      // 都 readdir + stat 校验，新文件立即可见（同时修复跨进程可见性）。
       const ids = store.collectRecords(100).map((r) => r.id);
       expect(ids).toContain("bg-1");
     });
@@ -336,14 +377,16 @@ describe("RecordStore", () => {
     }
 
     // ── 分支 1: .cancelled ──
-    it(".cancelled sidecar → cancelled", () => {
+    it(".cancelled sidecar → closed + closedReason=cancelled", () => {
       const sessionFile = writeBaseSession();
       writeCancelledTombstone(sessionFile, {
         id: SESSION_ID, status: "cancelled", agent: "worker", startedAt: STARTED_AT, endedAt: 6000,
       });
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
-      expect(found?.status).toBe("cancelled");
+      // v4 B-1：cancelled 折入 closed（closedReason='cancelled' 区分用户取消）
+      expect(found?.status).toBe("closed");
+      expect(found?.closedReason).toBe("cancelled");
       expect(found?.error).toBe("cancelled by user");
       expect(found?.endedAt).toBe(6000);
     });
@@ -354,7 +397,7 @@ describe("RecordStore", () => {
       writeFinalized(sessionFile);
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
-      expect(found?.status).toBe("done");
+      expect(found?.status).toBe("closed");
     });
 
     // ── 分支 2: .finalized failed ──
@@ -386,7 +429,7 @@ describe("RecordStore", () => {
       writeFinalized(sessionFile);
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
-      expect(found?.status).toBe("failed");
+      expect(found?.status).toBe("closed");
     });
 
     // ── 分支 3: .alive + 活 pid → running + externalInstance ──
@@ -401,27 +444,27 @@ describe("RecordStore", () => {
       expect(found?.externalInstance).toEqual(marker);
     });
 
-    // ── 分支 3→4: .alive + 死 pid → crashed ──
-    it(".alive + 死 pid → crashed", () => {
+    // ── 分支 3→4: .alive + 死 pid → running（SP-2：跨重启可恢复）──
+    it(".alive + 死 pid → running（SP-2 跨重启可恢复）", () => {
       const sessionFile = writeBaseSession();
       const marker: AliveMarker = { pid: 9999999, id: SESSION_ID, startedAt: STARTED_AT };
       writeAliveMarker(sessionFile, marker);
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
-      expect(found?.status).toBe("crashed");
+      expect(found?.status).toBe("running");
       expect(found?.externalInstance).toBeUndefined();
     });
 
-    // ── 分支 4: 都无 sidecar → crashed ──
-    it("无任何 sidecar → crashed", () => {
+    // ── 分支 4: 都无 sidecar → running（SP-2：跨重启可恢复）──
+    it("无任何 sidecar → running（SP-2 跨重启可恢复）", () => {
       writeBaseSession();
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
-      expect(found?.status).toBe("crashed");
+      expect(found?.status).toBe("running");
     });
 
-    // ── 分支 4: >24h 软超时 → crashed（无视探活）──
-    it(">24h 软超时 → crashed（即使 pid 存活）", () => {
+    // ── 分支 4: >24h 软超时 → running（SP-2：跨重启可恢复，无视探活）──
+    it(">24h 软超时 → running（SP-2，即使 pid 存活）", () => {
       const sessionFile = writeBaseSession();
       // startedAt 设为 25 小时前
       const oldStartedAt = Date.now() - 25 * 60 * 60 * 1000;
@@ -436,7 +479,7 @@ describe("RecordStore", () => {
 
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
-      expect(found?.status).toBe("crashed");
+      expect(found?.status).toBe("running");
       expect(found?.externalInstance).toBeUndefined();
     });
 
@@ -449,18 +492,21 @@ describe("RecordStore", () => {
       });
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
-      expect(found?.status).toBe("cancelled");
+      // v4 B-1：.cancelled 优先级不变，但 status 折入 closed（closedReason='cancelled'）
+      expect(found?.status).toBe("closed");
+      expect(found?.closedReason).toBe("cancelled");
     });
 
     // ── 回归：旧 .cancelled 单分支行为不变 ──
-    it("旧 .cancelled 单分支行为不变（回归）", () => {
+    it("旧 .cancelled 单分支行为不变（回归，status 折入 closed）", () => {
       const sessionFile = writeBaseSession();
       writeCancelledTombstone(sessionFile, {
         id: SESSION_ID, status: "cancelled", agent: "worker", startedAt: STARTED_AT, endedAt: 7000,
       });
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
-      expect(found?.status).toBe("cancelled");
+      expect(found?.status).toBe("closed");
+      expect(found?.closedReason).toBe("cancelled");
       expect(found?.error).toBe("cancelled by user");
       expect(found?.endedAt).toBe(7000);
     });
@@ -546,7 +592,7 @@ describe("RecordStore", () => {
   // endedAt 重建（问题 2 修复：终态耗时不再随墙钟增长）
   // ============================================================
   describe("endedAt 重建（耗时不再无限增长）", () => {
-    it(".finalized → endedAt 为最后 entry 时间戳（非 now）", () => {
+    it(".finalized → light endedAt 用 mtime 近似，全量 endedAt 为最后 entry 时间戳", () => {
       const sessionFile = path.join(tmpDir, "fin.jsonl");
       writeSessionJsonl(sessionFile, {
         id: "bg-1", agent: "w", mode: "background", task: "t",
@@ -555,10 +601,15 @@ describe("RecordStore", () => {
       writeFinalized(sessionFile);
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100, "all", "sess-A").find((r) => r.id === "bg-1");
-      expect(found?.endedAt).toBe(9000); // 不是 Date.now()
+      // [perf] light 分支 2：endedAt 用 jsonl mtime 近似（finalize 后文件不再变化，
+      // 与最后 entry ts 差 <1s）——不是 entry ts 9000，也不是随墙钟无限增长的 now 基准。
+      expect(found?.endedAt).toBeDefined();
+      expect(found?.endedAt).toBeGreaterThan(5000);
+      // 全量（getFullRecord）：精确用最后 entry 时间戳（非 now）。
+      expect(store.getFullRecord("bg-1")?.endedAt).toBe(9000);
     });
 
-    it("无 sidecar（crashed）→ endedAt 为最后 entry 时间戳（非 now）", () => {
+    it("无 sidecar（running, SP-2）→ endedAt 保持 undefined（非终态）", () => {
       const sessionFile = path.join(tmpDir, "crash.jsonl");
       writeSessionJsonl(sessionFile, {
         id: "bg-1", agent: "w", mode: "background", task: "t",
@@ -566,8 +617,9 @@ describe("RecordStore", () => {
       });
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100, "all", "sess-A").find((r) => r.id === "bg-1");
-      expect(found?.status).toBe("crashed");
-      expect(found?.endedAt).toBe(9000);
+      expect(found?.status).toBe("running");
+      // SP-2: running 是非终态（旧 idle 折入），endedAt 保持 undefined（待续聊）
+      expect(found?.endedAt).toBeUndefined();
     });
 
     it(".alive running → endedAt 保持 undefined（running 耗时继续增长是正确的）", () => {
@@ -602,7 +654,7 @@ describe("RecordStore", () => {
         id: "broken-1",
         rootSessionId: "sess-current",
         agentName: "worker",
-        status: "crashed", // 越界值（union 不含 "crashed"）
+        status: "crashed", // 越界值（union 不含 "crashed"，SP-1 后 valid statuses = running/closed/cancelled）
         createdAt: 1000,
       } as unknown as ManifestRecord;
     }
@@ -664,6 +716,60 @@ describe("RecordStore", () => {
         "subagent:manifest-invalid-status",
         expect.objectContaining({ id: "broken-1" }),
       );
+    });
+  });
+
+  // ============================================================
+  // SP-2: reconstructAll 兜底分支输出 running（非 crashed；v4 两态后旧 idle 折入 running）
+  // ============================================================
+  describe("SP-2: reconstructAll 兜底 running（跨重启恢复）", () => {
+    // TC-1: 兜底分支输出 running（非 crashed）
+    it("TC-1: 无 sidecar + 死 pid → reconstructAll 输出 running（可冷路径 resume）", () => {
+      const sessionFile = path.join(tmpDir, "sp2-tc1.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-sp2-1", agent: "worker", mode: "background", task: "cross-restart task",
+        startedAt: 1000, rootSessionId: "sess-sp2",
+      });
+      // 无任何 sidecar marker → 分支 4 兜底
+      const store = new RecordStore(tmpDir);
+      const found = store.collectRecords(100, "all", "sess-sp2").find((r) => r.id === "sa-sp2-1");
+      expect(found).toBeDefined();
+      expect(found?.status).toBe("running");
+      // SP-2: running 是非终态（旧 idle 折入），endedAt 保持 undefined
+      expect(found?.endedAt).toBeUndefined();
+    });
+
+    // TC-2: 有 .finalized marker 的 record 仍归档为 done（不回归）
+    it("TC-2: .finalized marker → done（分支 1/2 不回归）", () => {
+      const sessionFile = path.join(tmpDir, "sp2-tc2.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-sp2-2", agent: "worker", mode: "background", task: "finalized task",
+        startedAt: 2000, rootSessionId: "sess-sp2",
+      });
+      writeFinalized(sessionFile);
+      const store = new RecordStore(tmpDir);
+      const found = store.collectRecords(100, "all", "sess-sp2").find((r) => r.id === "sa-sp2-2");
+      expect(found).toBeDefined();
+      // 分支 2 仍归档为 done，不受 SP-2 影响
+      expect(found?.status).toBe("closed");
+      expect(found?.endedAt).toBeDefined();
+    });
+
+    // TC-2b: .cancelled marker → closed+cancelled（分支 1 不回归）
+    it("TC-2b: .cancelled marker → closed+cancelled reason（分支 1 不回归）", () => {
+      const sessionFile = path.join(tmpDir, "sp2-tc2b.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-sp2-2b", agent: "worker", mode: "background", task: "cancelled task",
+        startedAt: 3000, rootSessionId: "sess-sp2",
+      });
+      writeCancelledTombstone(sessionFile, {
+        id: "sa-sp2-2b", status: "cancelled", agent: "worker", startedAt: 3000, endedAt: 4000,
+      });
+      const store = new RecordStore(tmpDir);
+      const found = store.collectRecords(100, "all", "sess-sp2").find((r) => r.id === "sa-sp2-2b");
+      expect(found).toBeDefined();
+      expect(found?.status).toBe("closed");
+      expect(found?.closedReason).toBe("cancelled");
     });
   });
 });

@@ -181,6 +181,7 @@ M0 `findSessions` 合并 `listMainSessions`+`listSubagentSessions`,`resolveSessi
 - `discovery/workflows.ts`(从 subagents.ts 迁移 `resolveWorkflows` 发现链路)+ `core/workflow.ts`(`parseRunSnapshot` + `renderWorkflowOverview`)。
 - `tool-handler.ts` `doWorkflow` + `index.ts` 加 `"workflow"` action。
 - 复用 `extractCallSessionFiles`(subagents.ts:302,已兼容 wf-run-v1/OLD callCache)。
+  > 勘误(2026-08-17):本文为设计时点快照。现状:pi-subagent-workflow 快照格式已 bump 到 wf-run-v2,session-reader 读取侧(workflows.ts/core/workflow.ts)已兼容 v1||v2,详见 `.changeset/session-reader-wf-run-v2.md`。
 
 ### 6.4 M3 — 嵌套执行树(pi-subagent-workflow 仅补 2 行 manifest 落盘)
 

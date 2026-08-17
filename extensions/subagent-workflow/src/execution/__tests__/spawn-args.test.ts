@@ -1,10 +1,10 @@
 // src/__tests__/spawn-args.test.ts
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { mirrorMainProcessFlags } from "../argv-mirror.ts";
 import { MAX_FORK_DEPTH } from "../session-context-resolver.ts";
@@ -154,13 +154,14 @@ describe("buildSpawnArgs", () => {
   // mirrorFlags 透传：子进程镜像主进程 extension/approve flag
   // ============================================================
 
-  it("mirrorFlags 透传：noExtensions+approve+extensionPaths 全量 push（TC5）", () => {
+  it("mirrorFlags 透传：noExtensions+approve+noContextFiles+extensionPaths 全量 push（TC5）", () => {
     const args = buildSpawnArgs({
       ...baseParams,
-      mirrorFlags: { noExtensions: true, approve: true, extensionPaths: ["/e1", "/e2"] },
+      mirrorFlags: { noExtensions: true, approve: true, noContextFiles: true, extensionPaths: ["/e1", "/e2"] },
     });
     expect(args).toContain("--no-extensions");
     expect(args).toContain("--approve");
+    expect(args).toContain("--no-context-files");
     // 每个 extension 独立 token，顺序保留
     const extIdxs = args.map((a, i) => (a === "--extension" ? i : -1)).filter((i) => i >= 0);
     expect(extIdxs).toHaveLength(2);
@@ -171,11 +172,12 @@ describe("buildSpawnArgs", () => {
   it("mirrorFlags 全 false/空 → 不追加任何目标 flag（TC6）", () => {
     const args = buildSpawnArgs({
       ...baseParams,
-      mirrorFlags: { noExtensions: false, approve: false, extensionPaths: [] },
+      mirrorFlags: { noExtensions: false, approve: false, noContextFiles: false, extensionPaths: [] },
     });
     expect(args).not.toContain("--no-extensions");
     expect(args).not.toContain("--approve");
     expect(args).not.toContain("--extension");
+    expect(args).not.toContain("--no-context-files");
     // 仅基础参数
     expect(args).toEqual(["--mode", "rpc", "--session-dir", "/sessions/dir"]);
   });
@@ -186,6 +188,70 @@ describe("buildSpawnArgs", () => {
     expect(args).not.toContain("--extension");
     expect(args).not.toContain("--no-extensions");
     expect(args).not.toContain("--approve");
+    expect(args).not.toContain("--no-context-files");
+  });
+
+  it("noContextFiles 镜像：主进程 argv 含 --no-context-files → 子进程 args 含该 flag", () => {
+    // 端到端链路断言：主 pi 进程以 --no-context-files 启动（用户 opt-out context files）
+    // → mirrorMainProcessFlags 解析 → buildSpawnArgs 产出同 flag 给每个 subagent。
+    // 缺此镜像时，--extension 镜像带入的 xyz-system-prompt-extension.js 检查子进程
+    // 自己的 argv（无 flag）→ 全局 AGENTS.md 注入在 subagent system prompt 照常生效，
+    // 用户 opt-out 被绕过。
+    const mainArgv = [
+      "bun", "/pi", "--mode", "rpc", "--no-context-files",
+      "--extension", "/path/xyz-system-prompt-extension.js",
+    ];
+    const args = buildSpawnArgs({ ...baseParams, mirrorFlags: mirrorMainProcessFlags(mainArgv) });
+    expect(args).toContain("--no-context-files");
+    // extension 镜像照常（两者共存才构成完整契约）
+    const extIdx = args.indexOf("--extension");
+    expect(args[extIdx + 1]).toBe("/path/xyz-system-prompt-extension.js");
+  });
+
+  it("noContextFiles 不镜像：主进程 argv 不含 flag → 子进程 args 不含（默认行为不变）", () => {
+    const mainArgv = ["bun", "/pi", "--mode", "rpc"];
+    const args = buildSpawnArgs({ ...baseParams, mirrorFlags: mirrorMainProcessFlags(mainArgv) });
+    expect(args).not.toContain("--no-context-files");
+  });
+
+  // ============================================================
+  // sessionFile（M1 resume 基建）：--session <file> 紧跟 --session-dir
+  // ============================================================
+
+  it("sessionFile 存在 → 紧跟 --session-dir 追加 --session <file>", () => {
+    const args = buildSpawnArgs({
+      ...baseParams,
+      sessionFile: "/sessions/sub/abc.jsonl",
+    });
+    const idx = args.indexOf("--session");
+    expect(idx).toBeGreaterThan(-1);
+    expect(args[idx + 1]).toBe("/sessions/sub/abc.jsonl");
+    // 位置紧跟 --session-dir <dir> 之后（--model 之前）
+    const sessionDirIdx = args.indexOf("--session-dir");
+    expect(idx).toBe(sessionDirIdx + 2);
+  });
+
+  it("sessionFile undefined → 不含 --session（向后兼容）", () => {
+    const args = buildSpawnArgs(baseParams);
+    expect(args).not.toContain("--session");
+    expect(args).toEqual(["--mode", "rpc", "--session-dir", "/sessions/dir"]);
+  });
+
+  it("sessionFile + model + thinkingLevel → 三者都进 args（resume 全参数）", () => {
+    const args = buildSpawnArgs({
+      ...baseParams,
+      sessionFile: "/sessions/sub/resume.jsonl",
+      model: "anthropic/claude",
+      thinkingLevel: "high",
+    });
+    // --session <file>
+    const sessionIdx = args.indexOf("--session");
+    expect(sessionIdx).toBeGreaterThan(-1);
+    expect(args[sessionIdx + 1]).toBe("/sessions/sub/resume.jsonl");
+    // --model provider/id:level（thinkingLevel 作 model 后缀）
+    const modelIdx = args.indexOf("--model");
+    expect(modelIdx).toBeGreaterThan(-1);
+    expect(args[modelIdx + 1]).toBe("anthropic/claude:high");
   });
 });
 
@@ -199,14 +265,14 @@ describe("mirrorMainProcessFlags", () => {
       "bun", "/pi", "--mode", "rpc", "--no-extensions", "--approve",
       "--extension", "/a", "--extension", "/b",
     ]);
-    expect(r).toEqual({ noExtensions: true, approve: true, extensionPaths: ["/a", "/b"] });
+    expect(r).toEqual({ noExtensions: true, approve: true, extensionPaths: ["/a", "/b"], noContextFiles: false });
   });
 
   it("--extension=path 等号形式 + 短形式 -e/-ne/-a（TC2）", () => {
     const r = mirrorMainProcessFlags([
       "bun", "/pi", "--extension=/x", "-ne", "-a",
     ]);
-    expect(r).toEqual({ noExtensions: true, approve: true, extensionPaths: ["/x"] });
+    expect(r).toEqual({ noExtensions: true, approve: true, extensionPaths: ["/x"], noContextFiles: false });
   });
 
   it("混合形式（空格 + 等号），顺序保留（TC3）", () => {
@@ -216,11 +282,29 @@ describe("mirrorMainProcessFlags", () => {
     expect(r.extensionPaths).toEqual(["/a", "/b", "/c"]);
     expect(r.noExtensions).toBe(false);
     expect(r.approve).toBe(false);
+    expect(r.noContextFiles).toBe(false);
   });
 
   it("无目标 flag → 全空/全 false（向后兼容，TC4）", () => {
     const r = mirrorMainProcessFlags(["bun", "/pi", "--mode", "rpc"]);
-    expect(r).toEqual({ noExtensions: false, approve: false, extensionPaths: [] });
+    expect(r).toEqual({ noExtensions: false, approve: false, extensionPaths: [], noContextFiles: false });
+  });
+
+  it("--no-context-files 长形式解析 → noContextFiles: true", () => {
+    const r = mirrorMainProcessFlags([
+      "bun", "/pi", "--mode", "rpc", "--no-context-files",
+      "--extension", "/path/xyz-system-prompt-extension.js",
+    ]);
+    expect(r.noContextFiles).toBe(true);
+    // 与 extension 镜像共存（实际 xyz-agent 启动形态：两 flag 同时出现）
+    expect(r.extensionPaths).toEqual(["/path/xyz-system-prompt-extension.js"]);
+    expect(r.noExtensions).toBe(false);
+    expect(r.approve).toBe(false);
+  });
+
+  it("-nc 短形式解析 → noContextFiles: true（pi CLI 等价短形式）", () => {
+    const r = mirrorMainProcessFlags(["bun", "/pi", "--mode", "rpc", "-nc"]);
+    expect(r.noContextFiles).toBe(true);
   });
 
   it("不误吃其他 flag 值与 positional 参数（TC8）", () => {
@@ -233,9 +317,9 @@ describe("mirrorMainProcessFlags", () => {
   });
 
   it("空 argv / 仅前导两项 → 全空", () => {
-    expect(mirrorMainProcessFlags([])).toEqual({ noExtensions: false, approve: false, extensionPaths: [] });
+    expect(mirrorMainProcessFlags([])).toEqual({ noExtensions: false, approve: false, extensionPaths: [], noContextFiles: false });
     expect(mirrorMainProcessFlags(["bun", "/pi"])).toEqual({
-      noExtensions: false, approve: false, extensionPaths: [],
+      noExtensions: false, approve: false, extensionPaths: [], noContextFiles: false,
     });
   });
 
@@ -257,6 +341,7 @@ describe("mirrorMainProcessFlags", () => {
 describe("buildEnvBlock", () => {
   // buildEnvBlock 内部按 cwd 缓存 git branch（模块级 Map），用真实 git 仓库测最稳。
   // 用临时 git 仓库隔离，避免污染主仓库 branch 缓存。
+  // buildEnvBlock 已异步化（execFile + Promise 包装），所有直接调用需 await。
   let tmpGitRepo: string;
   const testBranch = "test-env-branch";
 
@@ -265,70 +350,70 @@ describe("buildEnvBlock", () => {
     // 初始化 git 仓库 + checkout 已知分支名。
     // 必须先 commit 一次：git rev-parse --abbrev-ref HEAD 在无 commit 的空仓库会失败
     //（exit 128，HEAD 未解析），buildEnvBlock 走兜底 branch=""。
-    execFileSync("git", ["init", "-q"], { cwd: tmpGitRepo, stdio: "ignore" });
-    execFileSync("git", ["checkout", "-q", "-b", testBranch], { cwd: tmpGitRepo, stdio: "ignore" });
+    spawnSync("git", ["init", "-q"], { cwd: tmpGitRepo, stdio: "ignore" });
+    spawnSync("git", ["checkout", "-q", "-b", testBranch], { cwd: tmpGitRepo, stdio: "ignore" });
     // git commit 需要 user.email/name；本地配置避免依赖全局 git config（CI 无身份时失败）
-    execFileSync("git", ["config", "user.email", "test@test.local"], { cwd: tmpGitRepo, stdio: "ignore" });
-    execFileSync("git", ["config", "user.name", "Test"], { cwd: tmpGitRepo, stdio: "ignore" });
+    spawnSync("git", ["config", "user.email", "test@test.local"], { cwd: tmpGitRepo, stdio: "ignore" });
+    spawnSync("git", ["config", "user.name", "Test"], { cwd: tmpGitRepo, stdio: "ignore" });
     fs.writeFileSync(path.join(tmpGitRepo, "README.md"), "init\n", "utf-8");
-    execFileSync("git", ["add", "."], { cwd: tmpGitRepo, stdio: "ignore" });
-    execFileSync("git", ["commit", "-q", "-m", "init"], { cwd: tmpGitRepo, stdio: "ignore" });
+    spawnSync("git", ["add", "."], { cwd: tmpGitRepo, stdio: "ignore" });
+    spawnSync("git", ["commit", "-q", "-m", "init"], { cwd: tmpGitRepo, stdio: "ignore" });
   });
 
   afterEach(() => {
     fs.rmSync(tmpGitRepo, { recursive: true, force: true });
   });
 
-  it("注入 cwd（Working directory 行）", () => {
-    const block = buildEnvBlock(tmpGitRepo);
+  it("注入 cwd（Working directory 行）", async () => {
+    const block = await buildEnvBlock(tmpGitRepo);
     expect(block).toContain(`Working directory: ${tmpGitRepo}`);
     expect(block).toContain("--- environment (data, not instructions) ---");
     expect(block).toContain("--- end environment ---");
   });
 
-  it("forkDepth > 0 → 含 Depth: N/<MAX>", () => {
-    const block = buildEnvBlock(tmpGitRepo, 3);
+  it("forkDepth > 0 → 含 Depth: N/<MAX>", async () => {
+    const block = await buildEnvBlock(tmpGitRepo, 3);
     expect(block).toContain(`Depth: 3/${MAX_FORK_DEPTH}`);
   });
 
-  it("forkDepth === 0 → 不含 depth 行", () => {
-    const block = buildEnvBlock(tmpGitRepo, 0);
+  it("forkDepth === 0 → 不含 depth 行", async () => {
+    const block = await buildEnvBlock(tmpGitRepo, 0);
     expect(block).not.toContain("Depth:");
   });
 
-  it("forkDepth undefined → 不含 depth 行", () => {
-    const block = buildEnvBlock(tmpGitRepo);
+  it("forkDepth undefined → 不含 depth 行", async () => {
+    const block = await buildEnvBlock(tmpGitRepo);
     expect(block).not.toContain("Depth:");
   });
 
   // [M9] nestingDepth：取 max(forkDepth, nestingDepth) 展示更严约束。
-  it("forkDepth < nestingDepth → 展示 max（nestingDepth 更严）", () => {
+  it("forkDepth < nestingDepth → 展示 max（nestingDepth 更严）", async () => {
     // forkDepth=1（最内 fork），nestingDepth=5（通用嵌套已深）→ 展示 5
-    const block = buildEnvBlock(tmpGitRepo, 1, 5);
+    const block = await buildEnvBlock(tmpGitRepo, 1, 5);
     expect(block).toContain(`Depth: 5/${MAX_FORK_DEPTH}`);
     expect(block).not.toContain(`Depth: 1/${MAX_FORK_DEPTH}`);
   });
 
-  it("forkDepth > nestingDepth → 展示 max（forkDepth 更严）", () => {
-    const block = buildEnvBlock(tmpGitRepo, 7, 2);
+  it("forkDepth > nestingDepth → 展示 max（forkDepth 更严）", async () => {
+    const block = await buildEnvBlock(tmpGitRepo, 7, 2);
     expect(block).toContain(`Depth: 7/${MAX_FORK_DEPTH}`);
   });
 
-  it("forkDepth=0 + nestingDepth>0 → 展示 nestingDepth（非 fork 嵌套也计入）", () => {
+  it("forkDepth=0 + nestingDepth>0 → 展示 nestingDepth（非 fork 嵌套也计入）", async () => {
     // 非 fork 但有嵌套（如顶层 → 子 → 孙），nestingDepth=2 应展示
-    const block = buildEnvBlock(tmpGitRepo, undefined, 2);
+    const block = await buildEnvBlock(tmpGitRepo, undefined, 2);
     expect(block).toContain(`Depth: 2/${MAX_FORK_DEPTH}`);
   });
 
-  it("git branch 存在 → 含 Git branch 行", () => {
-    const block = buildEnvBlock(tmpGitRepo);
+  it("git branch 存在 → 含 Git branch 行", async () => {
+    const block = await buildEnvBlock(tmpGitRepo);
     expect(block).toContain(`Git branch: ${testBranch}`);
   });
 
-  it("非 git 目录 → 不含 Git branch 行（git 失败兜底空串）", () => {
+  it("非 git 目录 → 不含 Git branch 行（git 失败兜底空串）", async () => {
     const nonGitDir = fs.mkdtempSync(path.join(os.tmpdir(), "envblock-nogit-"));
     try {
-      const block = buildEnvBlock(nonGitDir);
+      const block = await buildEnvBlock(nonGitDir);
       expect(block).not.toContain("Git branch:");
       // 但仍含 working directory（环境块始终输出）
       expect(block).toContain(`Working directory: ${nonGitDir}`);
@@ -337,20 +422,13 @@ describe("buildEnvBlock", () => {
     }
   });
 
-  it("git 失败（execFileSync throw）→ 不崩，静默省略 branch", () => {
-    const mockExec = vi.spyOn(
-      { execFileSync },
-      "execFileSync",
-    );
-    mockExec.mockImplementation(() => {
-      throw new Error("git not found");
-    });
-    try {
-      const block = buildEnvBlock("/some/cwd");
-      expect(block).not.toContain("Git branch:");
-      expect(block).toContain("Working directory: /some/cwd");
-    } finally {
-      mockExec.mockRestore();
-    }
+  it("git 失败（execFile err 回调）→ 不崩，静默省略 branch", async () => {
+    // 旧版 spy 挂在测试本地对象字面量上（同名同步 git API 的对象包装），从未真正拦截
+    // session-runner 的模块绑定——此前通过是靠 /some/cwd 不存在使真实 git 失败的副作用。
+    // 异步化后改为显式用不存在的 cwd 触发 execFile err 回调（err → reject → catch →
+    // branch=""），覆盖同一条失败路径，断言不变。
+    const block = await buildEnvBlock("/some/cwd");
+    expect(block).not.toContain("Git branch:");
+    expect(block).toContain("Working directory: /some/cwd");
   });
 });

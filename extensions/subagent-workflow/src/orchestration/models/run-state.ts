@@ -22,16 +22,16 @@ import type { DoneReason, RunStatus, WorkerLogEntry } from "./types.ts";
  * RunState——一次 run 的可持久化执行状态。
  *
  * 持久化由 RunStore.save(WorkflowRun) 触发（WorkflowRun 持 RunState）。
- * 跨 session pause/resume 时，RunState 从 JSONL 重水合（callCache 保留，worker 重建）。
+ * 跨进程重启时 RunState 从 JSONL 重水合（callCache 保留，worker 由崩溃恢复重建）。
  */
 export interface RunState {
- /** 当前状态（running/paused/done）。 */
+ /** 当前状态（running/done）。 */
   status: RunStatus;
  /** 终态原因（done 时必有）。 */
   reason?: DoneReason;
  /** Token/cost 预算（含 usedTokens/usedCost 累积）。 */
   budget: Budget;
- /** 按 callId 索引的 agent 调用集合（含 result，跨 pause/resume 存活）。 */
+ /** 按 callId 索引的 agent 调用集合（含 result，跨 runtime 重建存活——callCache replay）。 */
   calls: Map<number, AgentCall>;
  /** 执行追踪事件流（唯一来源 D-10）。 */
   trace: Trace;

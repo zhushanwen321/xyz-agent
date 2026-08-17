@@ -5,6 +5,16 @@
  *  1. Reads <dataDir>/system-prompt.json every turn (never cached).
  *  2. When `append.enabled === true` and `append.prompt` is non-blank,
  *     appends the user's text to the event's systemPrompt.
+ *  3. Reads the global instructions file `~/.agents/AGENTS.md` (candidates
+ *     AGENTS.md / AGENTS.MD / CLAUDE.md / CLAUDE.MD — mirroring pi's native
+ *     `loadContextFileFromDir`) every turn and appends it under a labeled
+ *     header. Opt-in by file existence: no file → no injection. Skipped when
+ *     pi was spawned with `--no-context-files` (consistent with pi's native
+ *     context-file opt-out). `XYZ_GLOBAL_AGENTS_DIR` overrides the global
+ *     directory (test hook / escape hatch).
+ *
+ * Injection order per turn: base prompt → global instructions → append config
+ * (the explicitly configured text wins last).
  *
  * Fail-safe: any error in the handler is swallowed and `undefined` is returned
  * so the agent loop is never blocked.
@@ -14,9 +24,13 @@
  */
 
 import path from 'node:path'
-import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 
 const CONFIG_FILE = 'system-prompt.json'
+
+/** Global instruction candidates, mirroring pi's loadContextFileFromDir. */
+const GLOBAL_AGENTS_CANDIDATES = ['AGENTS.md', 'AGENTS.MD', 'CLAUDE.md', 'CLAUDE.MD']
 
 /**
  * Resolve the data directory from the environment.
@@ -34,6 +48,58 @@ function resolveDataDir() {
     return process.env.XYZ_AGENT_DATA_DIR
   }
   return path.resolve(process.env.PI_CODING_AGENT_DIR ?? '', '..', '..')
+}
+
+/**
+ * Resolve the global agents directory.
+ *
+ * Priority:
+ *  1. `process.env.XYZ_GLOBAL_AGENTS_DIR` (explicit override; tests / escape
+ *     hatch)
+ *  2. `~/.agents` (the user-global agents dir that also hosts skills/templates)
+ *
+ * Re-read on every handler invocation so env changes take effect.
+ */
+function resolveGlobalAgentsDir() {
+  if (process.env.XYZ_GLOBAL_AGENTS_DIR) {
+    return process.env.XYZ_GLOBAL_AGENTS_DIR
+  }
+  return path.join(homedir(), '.agents')
+}
+
+/**
+ * Read the global instructions file. First candidate that exists and is a
+ * regular file with non-blank content wins (mirrors pi's loadContextFileFromDir
+ * semantics). Returns { path, content } or null; never throws.
+ */
+function readGlobalAgentsFile() {
+  const dir = resolveGlobalAgentsDir()
+  // Match candidates against real directory entries (exact case) instead of
+  // existsSync-per-candidate: on case-insensitive filesystems (macOS APFS
+  // default) existsSync('AGENTS.md') would hit a file actually named
+  // AGENTS.MD, reporting an injected path that differs from the on-disk
+  // filename and shadowing the later exact-case candidate.
+  let entries
+  try {
+    entries = new Set(readdirSync(dir))
+  } catch {
+    return null
+  }
+  for (const name of GLOBAL_AGENTS_CANDIDATES) {
+    if (!entries.has(name)) continue
+    const filePath = path.join(dir, name)
+    try {
+      if (statSync(filePath).isFile()) {
+        const content = readFileSync(filePath, 'utf-8')
+        if (content.trim()) {
+          return { path: filePath, content }
+        }
+      }
+    } catch {
+      // Try the next candidate; never throw into the agent loop.
+    }
+  }
+  return null
 }
 
 /**
@@ -89,8 +155,21 @@ export default function (pi) {
       const basePrompt = typeof event.systemPrompt === 'string' ? event.systemPrompt : ''
       let newPrompt = basePrompt
 
+      // Global instructions (~/.agents/AGENTS.md ...). Skipped when pi was
+      // spawned with --no-context-files — the user opted out of AGENTS.md /
+      // CLAUDE.md discovery, so the global file must not sneak back in.
+      // pi CLI treats -nc as the equivalent short form of --no-context-files
+      // (cli/args.ts), so both forms must hit the guard — matches the mirror
+      // side (argv-mirror.ts parses both forms too).
+      if (!process.argv.includes('--no-context-files') && !process.argv.includes('-nc')) {
+        const global = readGlobalAgentsFile()
+        if (global) {
+          newPrompt = newPrompt + '\n\n# Global instructions (' + global.path + ')\n\n' + global.content
+        }
+      }
+
       if (cfg.append.enabled && cfg.append.prompt.trim()) {
-        newPrompt = basePrompt + '\n\n' + cfg.append.prompt
+        newPrompt = newPrompt + '\n\n' + cfg.append.prompt
       }
 
       return newPrompt === event.systemPrompt ? undefined : { systemPrompt: newPrompt }

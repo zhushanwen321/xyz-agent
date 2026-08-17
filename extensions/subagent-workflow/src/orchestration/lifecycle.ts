@@ -3,11 +3,12 @@
  *
  * Workflow run 生命周期 free functions（D-12）。
  *
- * 4 个导出函数：
+ * 5 个导出函数：
  * - runWorkflow(spec, deps, signal?) → Promise<runId>
- * - pauseRun(runId, deps) → Promise<void>（A4 原子性）
- * - resumeRun(runId, deps) → Promise<void>（G3-001 整重建）
- * - abortRun(runId, deps, reason?) → Promise<void>（done no-op）
+ * - abortRun(runId, deps, reason?, doneReason?) → Promise<void>（done no-op）
+ * - terminateRunningRuns(deps, reason) → Promise<void>（session 切换/关闭终止）
+ * - evictDoneRunsBeyondCap(runs, keepDone) → number（done run 内存淘汰）
+ * - scheduleTimeBudget(runId, deps, budgetTimeMs) → timer（C.7 时间预算）
  *
  * 私有 makeHandlers(run, deps) → WorkerHandlers：
  * - onMessage → handleWorkerMessage(run, raw, deps, handlers)
@@ -15,12 +16,14 @@
  * - onExit(code, handle) → handleWorkerExit(run, code, handle, deps, handlers)
  * （G-025：handle.isCurrent 检查内化在 handleWorkerExit 内）
  *
- * **A4 原子性**：pause/abort 内部 transition 先 releaseRuntime（cleanup before mutate），
- * 失败时 status 不变。transition("paused"/"done") 在 WorkflowRun.transition 内已实现
+ * **A4 原子性**：abort/terminate 内部 transition 先 releaseRuntime（cleanup before
+ * mutate），失败时 status 不变。transition("done") 在 WorkflowRun.transition 内已实现
  * 「releaseRuntime → 改 status」原子顺序。
  *
- * **G3-001**：pause 时整个 RunRuntime 丢弃（AbortController 一次性，无法复用）；
- * resume 时 assignRuntime 重建 worker/gate/controller。
+ * **G3-001**（run 一次性生命周期）：AbortController 一次性无法复用，runtime 释放后
+ * 只有两类重建——rebuildRuntime（error-recovery，崩溃重试路径，run 保持 running、
+ * replaceRuntime 原子换新）与 abort/terminate 的终态释放（transition("done") 内
+ * releaseRuntime，run 不再恢复）。
  *
  * **D-13**：maxConcurrency=4（ConcurrencyGate 默认值）。
  *
@@ -56,6 +59,15 @@ const logger = getLogger("subagents");
 const RUNID_RADIX = 36;
 const RUNID_SLICE_START = 2;
 const RUNID_SLICE_END = 8;
+
+/**
+ * done run 内存保留窗口（K=20）。
+ *
+ * 本淘汰是 done run 内存有界性的唯一来源：calls.result 不裁、单聚合大小不随 wave1
+ * 裁剪缩小，故内存上限 = K × 实际聚合大小。同时定义 actionStatus 可查刚完成 run
+ * 的窗口（超出窗口的 done run 不再出现在列表中——已接受的用户可见变化）。
+ */
+export const MAX_RETAINED_DONE_RUNS = 20;
 
 function generateRunId(): string {
   return `wf-${Date.now()}-${Math.random().toString(RUNID_RADIX).slice(RUNID_SLICE_START, RUNID_SLICE_END)}`;
@@ -103,11 +115,10 @@ function makeHandlers(run: WorkflowRun, deps: LifecycleDeps): WorkerHandlers {
 /**
  * 启动 run 级墙钟时间预算计时器：到期后 abortRun(doneReason="time_limited")。
  *
- * 恢复旧 orchestrator-budget.ts 的 scheduleTimeBudgetCheck 语义——run/resume 各
- * 启一个 setTimeout(maxTimeMs)，到期若 run 仍 running/paused 则转 done,time_limited。
- * 计时器存入 RunRuntime.timeBudgetTimer，release（pause/abort/replaceRuntime）时
- * 自动清理，避免孤儿触发。resume 会调度全新计时器（与旧语义一致：pause+resume
- * 重置墙钟预算）。
+ * 恢复旧 orchestrator-budget.ts 的 scheduleTimeBudgetCheck 语义——runWorkflow 启动
+ * 一个 setTimeout(maxTimeMs)，到期若 run 仍未终态则转 done,time_limited。
+ * 计时器存入 RunRuntime.timeBudgetTimer，release（abort/replaceRuntime）时
+ * 自动清理，避免孤儿触发。worker/script 错误重试经 rebuildRuntime 重排新计时器。
  *
  * @returns 计时器句柄（未设预算时 undefined）
  */
@@ -134,8 +145,9 @@ export function scheduleTimeBudget(
 /**
  * 启动一个 workflow run。
  *
- * 流程：创建 WorkflowRun（paused）+ makeHandlers + 构建 RunRuntime（worker+gate+controller）
- * + assignRuntime（paused → running）+ 注册到 deps.runs + store.save。
+ * 流程：创建 WorkflowRun（running，I1 构造期跳过）+ makeHandlers + 构建 RunRuntime
+ * （worker+gate+controller）+ assignRuntime（注入 runtime，恢复 I1）+ 注册到
+ * deps.runs + store.save。
  *
  * @param spec RunSpec（不可变输入，含 scriptSource/args）
  * @param deps LifecycleDeps（store/workerHost/runner/runs）
@@ -150,8 +162,8 @@ export async function runWorkflow(
 ): Promise<string> {
   // m3 E9：参数校验单一 chokepoint，钉在所有副作用前（generateRunId/log/signal
   // listener/runs.set/workerHost.start/store.save/pending:register）。校验失败时
-  // zero side effects。coerceTypes 原地规范化 spec.args——worker 启动与 pause/resume
-  // 重建共用同一对象（run.spec === spec），恢复路径参数一致。
+  // zero side effects。coerceTypes 原地规范化 spec.args——worker 启动与崩溃重建
+  // 共用同一对象（run.spec === spec），恢复路径参数一致。
   validateRunArgs(spec);
 
   const runId = generateRunId();
@@ -166,7 +178,7 @@ export async function runWorkflow(
     runId,
     spec,
     {
-      status: "paused",
+      status: "running",
       budget: spec.budgetRef ?? new Budget({
         maxTokens: spec.budgetTokens,
         maxTimeMs: spec.budgetTimeMs,
@@ -192,9 +204,6 @@ export async function runWorkflow(
     );
   }
 
- // 注册到 deps.runs（makeHandlers + assignRuntime 需要 run 已在 map）
-  deps.runs.set(runId, run);
-
  // 构造 handlers + runtime（worker + gate + controller）
   const handlers = makeHandlers(run, deps);
   const controller = new AbortController();
@@ -207,8 +216,13 @@ export async function runWorkflow(
       : undefined;
   const runtime = new RunRuntime(worker, gate, controller, timeBudgetTimer);
 
- // assignRuntime（paused → running，原子绑定 runtime + status）
+ // assignRuntime（注入 runtime，恢复 I1：running ⟺ runtime!==undefined）
   run.assignRuntime(runtime);
+
+ // 注册到 deps.runs（assignRuntime 之后——构造到 assignRuntime 之间 run 处于
+ // I1 跳过窗口（running 而 runtime undefined），后移保证窗口对外不可见；
+ // worker.start 抛错时 run 未注册，无孤儿 run 残留）
+  deps.runs.set(runId, run);
 
   await deps.store.save(run);
   deps.log?.("debug", "workflow:lifecycle", "run saved", { runId, status: run.state.status });
@@ -226,112 +240,10 @@ export async function runWorkflow(
   return runId;
 }
 
-// ── pauseRun ─────────────────────────────────────────────────
-
-/**
- * 暂停 running workflow。
- *
- * **A4 原子性**：WorkflowRun.transition("paused") 内部先 releaseRuntime（cleanup
- * before mutate），再改 status。releaseRuntime 失败时 status 不变（仍 running）。
- *
- * **G3-001**：transition("paused") 调 releaseRuntime，整个 RunRuntime 丢弃
- * （runtime=undefined）。AbortController 一次性无法复用。
- *
- * @throws runId 不存在 / status !== "running"
- */
-export async function pauseRun(runId: string, deps: LifecycleDeps): Promise<void> {
-  const run = deps.runs.get(runId);
-  if (!run) {
-    throw new Error(`Workflow '${runId}' not found`);
-  }
-  if (run.state.status !== "running") {
-    throw new Error(
-      `Cannot pause workflow in state '${run.state.status}': only 'running' can be paused`,
-    );
-  }
-
- // A4: transition 内部 releaseRuntime（cleanup before mutate）
-  run.transition("paused");
-
- // MUST_FIX (round-4 #1): 清理被 abort 的在飞 call（status !== "done"）。
- // transition 已同步 abort controller + terminate worker，但 in-flight 的
- // executeAgentCall 会在后续 microtask 被 finalizeCall 标记为 "done"（带 abort
- // 错误结果）。若保留，resume 时 dispatchAgentCall 的 cached 路径会把该 failed
- // 结果原样 replay，静默污染 workflow 输出。此处同步移除在飞 call + 其 trace 节点，
- // 让 resume 重发 agent-call 走全新执行路径。
- //
- // 同步执行（在 await store.save 前）：transition 与本清理间无 await，微任务无法
- // 插入，此时在飞 call 仍为 "running"/"pending"，可精确清理；genuinely-done 的
- // call 不受影响（resume 时正常 replay）。后续 finalizeCall 在已移除的 orphan call
- // 上运行（markDone 无外部副作用），trace.update 因节点已移除为 no-op。
-  discardInFlightCalls(run);
-
-  await deps.store.save(run);
-}
-
-/**
- * 移除 run 中未真正完成的在飞 call（status !== "done"）及其 trace 节点。
- *
- * 仅 pauseRun 调用——清理被 abort 的在飞 call，避免 resume 时 cached replay
- * 把 abort 产生的 failed 结果当作已完成结果回放（MUST_FIX round-4 #1）。
- * genuinely-done 的 call（成功或失败均 "done"）保留，resume 时按原语义 replay。
- */
-function discardInFlightCalls(run: WorkflowRun): void {
-  const inFlight: number[] = [];
-  for (const [callId, call] of run.state.calls) {
-    if (call.status !== "done") inFlight.push(callId);
-  }
-  for (const callId of inFlight) {
-    run.state.calls.delete(callId);
-    run.state.trace.removeByStepIndex(callId);
-  }
-}
-
-// ── resumeRun ────────────────────────────────────────────────
-
-/**
- * 恢复 paused workflow。
- *
- * **G3-001**：assignRuntime 重建 worker/gate/controller + transition running。
- * worker 重跑脚本，已完成调用从 RunState.calls replay（callCache 在 calls Map 里）。
- *
- * **A4 mirror**：先 startWorker（副作用可能抛），成功后才 assignRuntime 改 status。
- * 若 Worker 构造抛错，workflow 保持 paused，调用方可重试。
- *
- * @throws runId 不存在 / status !== "paused"
- */
-export async function resumeRun(runId: string, deps: LifecycleDeps): Promise<void> {
-  const run = deps.runs.get(runId);
-  if (!run) {
-    throw new Error(`Workflow '${runId}' not found`);
-  }
-  if (run.state.status !== "paused") {
-    throw new Error(
-      `Cannot resume workflow in state '${run.state.status}': only 'paused' can be resumed`,
-    );
-  }
-
- // A4 mirror: 先 startWorker（副作用），成功后才 assignRuntime
-  const handlers = makeHandlers(run, deps);
-  const controller = new AbortController();
-  const gate = new ConcurrencyGate({ maxConcurrency: DEFAULT_CONCURRENCY });
-  const worker = deps.workerHost.start(run.spec, run.spec.args, handlers);
- // C.7：resume 重新调度时间预算计时器（与 run 对称；旧 pause 已清旧计时器）。
-  const timeBudgetTimer =
-    run.spec.budgetTimeMs && run.spec.budgetTimeMs > 0
-      ? scheduleTimeBudget(runId, deps, run.spec.budgetTimeMs)
-      : undefined;
-  const runtime = new RunRuntime(worker, gate, controller, timeBudgetTimer);
-
- // assignRuntime（paused → running，原子绑定 runtime + status）
-  run.assignRuntime(runtime);
-  await deps.store.save(run);
-}
-
 // ── abortRun ─────────────────────────────────────────────────
 
 /**
- * 中止 workflow（running 或 paused）。
+ * 中止 workflow（running）。
  *
  * **done 状态 no-op**：已终态的 run 不重复 abort。
  * **A4 原子性**：transition("done", doneReason) 内部先 releaseRuntime。
@@ -361,13 +273,6 @@ export async function abortRun(
     return;
   }
 
- // 只允许 running/paused abort（防御）
-  if (run.state.status !== "running" && run.state.status !== "paused") {
-    throw new Error(
-      `Cannot abort workflow in state '${run.state.status}': only 'running' or 'paused' can be aborted`,
-    );
-  }
-
  // 记录中止原因
   if (reason) {
     run.state.error = reason;
@@ -381,4 +286,102 @@ export async function abortRun(
   deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
   deps.log?.("debug", "workflow:lifecycle", "emit pending:unregister done", { runId });
   deps.onRunDone?.(run);
+}
+
+// ── terminateRunningRuns（session 切换/关闭：终止全部 running run） ────────
+
+/**
+ * 终止 deps.runs 中全部 running run（session 切换 / session 关闭时调用）。
+ *
+ * 一次性生命周期（D-2）：session 离开当刻，running run 的 token 投入作废，转
+ * done,failed 持久化落盘——重启后 kill-9 恢复不误判，也不再存在「挂起待恢复」
+ * 的中间态。
+ *
+ * per-run 行为：`state.error = reason` → `transition("done","failed")`（内部先
+ * releaseRuntime，A4）→ `await store.save(run)` → `eventBus.emit("pending:unregister",
+ * {reason:"failed"})`。
+ *
+ * **不调 deps.onRunDone**：对齐 session_start 恢复先例（index.ts kill-9 恢复只发
+ * unregister、不发 onRunDone）——session 切换/关闭语境下主 agent 已离开本 session，
+ * 注入完成通知只会把消息发给已离开的 session。
+ *
+ * **不调 discardInFlightCalls**：run 已转终态不再 replay（无恢复路径），在飞 call
+ * 缓存清不清都不影响结果；该清理仅 rebuildRuntime 需要（崩溃重试会重放脚本，
+ * 假失败结果会污染重跑输出）。
+ *
+ * 单 run 失败（try/catch + log 带 runId/reason）不中断其余 run——终止是批量收尾，
+ * 一个 run 落盘失败不应放走其余 run 的 failed 状态。
+ *
+ * @param deps LifecycleDeps（runs/store/eventBus/log）
+ * @param reason 终止原因（写入 run.state.error，如 "Session switched: run terminated"）
+ */
+export async function terminateRunningRuns(
+  deps: LifecycleDeps,
+  reason: string,
+): Promise<void> {
+  for (const run of deps.runs.values()) {
+    if (run.state.status !== "running") continue;
+    try {
+      deps.log?.("debug", "workflow:lifecycle", "terminateRunningRuns", { runId: run.runId, reason });
+      run.state.error = reason;
+      // A4: transition 内部先 releaseRuntime（cleanup before mutate）
+      run.transition("done", "failed");
+      await deps.store.save(run);
+      // C-4: run 到达 done 终态 → 注销 pending-notification（reason 固定 "failed"）
+      deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: "failed" });
+      deps.log?.("debug", "workflow:lifecycle", "run terminated", { runId: run.runId, reason: run.state.reason });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(
+        `[workflow] terminateRunningRuns failed for run ${run.runId}: ${msg} (reason: ${reason})`,
+      );
+    }
+  }
+}
+
+// ── evictDoneRunsBeyondCap（done run 内存淘汰，原地裁剪函数） ────────
+
+/**
+ * 淘汰 runs Map 中超出保留窗口的 done run，返回本次淘汰数量。
+ *
+ * 规则（契约 W3C1）：
+ * 1. **状态白名单**：仅 `state.status === "done"` 可淘汰（RunStatus 封闭两态，
+ *    显式白名单而非「非 running」——未来新增状态不落淘汰端）。running
+ *    （活跃执行，isScriptRunning 遍历依赖）永不淘汰，即使 completedAt 缺失也
+ *    绝不参与排序淘汰。
+ * 2. **排序**：done 项按 `meta.completedAt` ISO 字符串字典序升序（toISOString 恒
+ *    UTC 毫秒格式，字典序=时间序）。completedAt 缺失（防御旧格式/异常快照）fallback
+ *    排序键为空串——字典序最小=最旧，先被淘汰。
+ * 3. **tie 稳定排序**：比较器三态返回（相等返回 0），Array#sort 稳定性（Node≥12）
+ *    保持元素原序——原序 = Map 插入序 = 创建序，tie 组内先创建者视为更旧先被淘汰
+ *    （kill-9 批量恢复同 ms completedAt 场景的确定性保证）。
+ * 4. **淘汰执行**：超限数 excess = doneCount - keepDone（<=0 时 no-op 返回 0），
+ *    对升序前 excess 项逐个 `runs.delete(runId)`。
+ * 5. **边界不变式**：禁止按 Map 插入序直接淘汰——嵌套 workflow 父 run 创建最早、
+ *    完成最晚，插入序淘汰会在其自身 onRunDone 同步裁剪中淘汰它，runAndWait 轮询
+ *    窗口内 get 不到 → 误返 "Run not found"。
+ * 6. **副作用边界**：只清内存 runs Map，不动磁盘 state 文件、不删
+ *    workflow-state-link 指针条目、不发任何事件。
+ *
+ * @param runs per-session 的 run 注册表（原地裁剪）
+ * @param keepDone done run 保留数（生产传 MAX_RETAINED_DONE_RUNS）
+ * @returns 本次淘汰的 run 数量
+ */
+export function evictDoneRunsBeyondCap(
+  runs: Map<string, WorkflowRun>,
+  keepDone: number,
+): number {
+  // 显式白名单：仅 done 参与淘汰（running 误删即功能破坏）
+  const done = Array.from(runs.values()).filter((r) => r.state.status === "done");
+  const excess = done.length - keepDone;
+  if (excess <= 0) return 0;
+  // ISO 字典序=时间序；缺失 fallback 空串（ISO 串恒以 '2' 开头非空，空串严格最小=最旧）
+  const keyOf = (r: WorkflowRun): string => r.meta.completedAt ?? "";
+  // 三态比较器 + sort 稳定性：tie 保持 Array.from 的 Map 插入序（=创建序）——
+  // 先插入者更旧先淘汰，禁止按插入序直接 slice 淘汰（边界不变式 5）
+  done.sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0));
+  for (const r of done.slice(0, excess)) {
+    runs.delete(r.runId);
+  }
+  return excess;
 }

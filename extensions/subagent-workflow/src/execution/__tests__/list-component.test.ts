@@ -36,11 +36,13 @@ function makeTheme(): ThemeLike {
   } as ThemeLike;
 }
 
-/** service stub：list-component 只调 collectRecords(limit) 单参数。
+/** service stub：list-component 只调 collectRecords(limit) 单参数 + getFullRecord（[perf]
+ *  选中项详情懒加载，mock 回 undefined → fullRecordOf 回退 light record，与旧行为一致）。
  *  与 tool-action.test.ts 同模式：部分对象直接断言为 SubagentService（duck-type）。 */
 function makeService(records: SubagentRecord[] = []): SubagentService {
   return {
     collectRecords: vi.fn(() => records),
+    getFullRecord: vi.fn(() => undefined as SubagentRecord | undefined),
   } as SubagentService;
 }
 
@@ -50,7 +52,7 @@ function makeRecord(over: Partial<SubagentRecord> = {}): SubagentRecord {
     id: "run-1",
     agent: "worker",
     task: "do the thing",
-    status: "done",
+    status: "closed",
     mode: "sync",
     startedAt: 1000,
     endedAt: 2000,
@@ -158,9 +160,10 @@ describe("SubagentsListComponent", () => {
 
   // ── hasRunning ────────────────────────────────────────
   describe("hasRunning", () => {
-    it("records 全是 done → false", () => {
+    it("records 全是 closed（终态）→ false", () => {
       const { comp } = makeComponent({
-        records: [makeRecord({ status: "done" }), makeRecord({ status: "failed" })],
+        // v4 B-1：done/failed 等旧终态已收敛为 closed（fixture 同步迁移）
+        records: [makeRecord({ status: "closed" }), makeRecord({ status: "closed" })],
       });
       expect(comp.hasRunning()).toBe(false);
     });
@@ -168,7 +171,7 @@ describe("SubagentsListComponent", () => {
     it("records 含一个 running → true", () => {
       const { comp } = makeComponent({
         records: [
-          makeRecord({ id: "a", status: "done" }),
+          makeRecord({ id: "a", status: "closed" }),
           makeRecord({ id: "b", status: "running" }),
         ],
       });
@@ -342,6 +345,57 @@ describe("SubagentsListComponent", () => {
       expect(detailJoined).toContain("final report content"); // Result 段
       expect(detailJoined).toContain("Result:");
       expect(detailJoined).toContain("session-abc.jsonl"); // sessionFile
+    });
+  });
+
+  // ── 帧缓存 collectRecordsFrame（TC3/IF3/DM5）──────────
+  describe("帧缓存 collectRecordsFrame", () => {
+    it("同一帧（TTL 50ms 内）hasRunning + render 只触发 1 次 service.collectRecords", () => {
+      // fake timers 已锁 Date.now()（beforeEach）→ 帧内多次消费共享同一份 records
+      const rec = makeRecord({ id: "a", status: "running" });
+      const { comp, service } = makeComponent({ records: [rec], rows: 24 });
+      expect(comp.hasRunning()).toBe(true); // 第 1 次扫描
+      comp.render(80); // buildLines 消费（帧命中，不重扫）
+      comp.handleInput("x"); // handleInput 消费（帧命中）
+      expect(vi.mocked(service.collectRecords)).toHaveBeenCalledTimes(1);
+    });
+
+    it("advance 100ms 后 TTL 过期 → 重扫（collectRecords 递增）", () => {
+      const rec = makeRecord({ id: "a", status: "running" });
+      const { comp, service } = makeComponent({ records: [rec], rows: 24 });
+      comp.render(80);
+      expect(vi.mocked(service.collectRecords)).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(100); // > FRAME_TTL_MS(50)
+      // 镜像 animTimer 真实序列：hasRunning（帧消费点）→ invalidate → render。
+      // hasRunning 直接走帧缓存（不经 render 行缓存），TTL 过期 → 重扫
+      expect(comp.hasRunning()).toBe(true);
+      expect(vi.mocked(service.collectRecords)).toHaveBeenCalledTimes(2);
+      comp.invalidate();
+      comp.render(80); // 重建行，但帧刚刷新（100ms 后的同一时刻）→ 不再重扫
+      expect(vi.mocked(service.collectRecords)).toHaveBeenCalledTimes(2);
+    });
+
+    it("invalidate 不清帧缓存：invalidate 后同帧 render 仍命中（不重扫）", () => {
+      // timer 序列 hasRunning → invalidate → requestRender 的共享前提：
+      // invalidate 只清渲染行缓存（cachedKey/cachedLines），帧缓存由 TTL 独立保证
+      const rec = makeRecord({ id: "a", status: "running" });
+      const { comp, service } = makeComponent({ records: [rec], rows: 24 });
+      const first = comp.render(80);
+      expect(vi.mocked(service.collectRecords)).toHaveBeenCalledTimes(1);
+      comp.invalidate();
+      const second = comp.render(80);
+      expect(second).not.toBe(first); // 渲染行缓存已清 → 重建
+      expect(vi.mocked(service.collectRecords)).toHaveBeenCalledTimes(1); // 帧缓存未清 → 不重扫
+    });
+
+    it("detailMode 渲染路径（buildDetailContent children）同帧共享：render 仍只 1 次扫描", () => {
+      // 选中项有子 record → buildDetailContent 内 children 计算消费 collectRecordsFrame
+      const parent = makeRecord({ id: "p", status: "closed" });
+      const child = makeRecord({ id: "c", parentRecordId: "p" });
+      const { comp, service } = makeComponent({ records: [parent, child], rows: 24, detailMode: true });
+      const joined = comp.render(80).join("\n");
+      expect(joined).toContain("children:");
+      expect(vi.mocked(service.collectRecords)).toHaveBeenCalledTimes(1); // buildLines + children 同帧合一
     });
   });
 });

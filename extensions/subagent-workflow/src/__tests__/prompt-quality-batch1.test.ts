@@ -68,7 +68,7 @@ describe("U3: not-found 错误含退路指引", () => {
   const subagentActionsSrc = readSrc("src/interface/subagent-actions.ts");
 
   it("tool-workflow.ts: not-found 错误含 action:status 指引", () => {
-    // pause/resume/abort 的 not-found 错误都应有 action:status 指引
+    // abort 的 not-found 错误应有 action:status 指引（pause/resume 已随一次性生命周期移除）
     const matches = toolWorkflowSrc.match(/action:status/g) ?? [];
     // 至少 1 处（lifecycle not-found 错误）
     expect(matches.length).toBeGreaterThanOrEqual(1);

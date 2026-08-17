@@ -333,6 +333,61 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     expect(ext.map((r) => path.basename(r.path))).toEqual(["async.md"]);
     expect(ext[0]?.source).toBe("user-extension-paths");
   });
+
+  it("async: overrides npm on name clash (priority: user-extension-paths > npm)", async () => {
+    const npmPkg = path.join(agentDir, "npm", "node_modules", "test-pkg");
+    writePackageJson(npmPkg, { agents: ["./agents"] });
+    writeFile(path.join(npmPkg, "agents"), "shared.md", "npm-body");
+    const devPkg = path.join(ws, "dev-ext");
+    writePackageJson(devPkg, { agents: ["./agents"] });
+    writeFile(path.join(devPkg, "agents"), "shared.md", "dev-body");
+    process.env.XYZ_EXTENSION_PATHS = devPkg;
+    const result = await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+    const shared = result.find((r) => path.basename(r.path) === "shared.md");
+    expect(shared?.source).toBe("user-extension-paths");
+  });
+
+  it("async: project-agents overrides user-extension-paths (project wins)", async () => {
+    const devPkg = path.join(ws, "dev-ext");
+    writePackageJson(devPkg, { agents: ["./agents"] });
+    writeFile(path.join(devPkg, "agents"), "x.md", "dev-body");
+    writeFile(path.join(ws, ".agents", "agents"), "x.md", "project-body");
+    process.env.XYZ_EXTENSION_PATHS = devPkg;
+    const result = await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+    const x = result.find((r) => path.basename(r.path) === "x.md");
+    expect(x?.source).toBe("project-agents");
+  });
+
+  it("async: 4 源混合 fixture——输出序 + 优先级 + 与串行版快照等价", async () => {
+    // 源优先级低→高：npm < user-extension-paths < project-pi < project-agents
+    const npmPkg = path.join(agentDir, "npm", "node_modules", "test-pkg");
+    writePackageJson(npmPkg, { agents: ["./agents"] });
+    writeFile(path.join(npmPkg, "agents"), "shared.md", "npm-body");
+    const devPkg = path.join(ws, "dev-ext");
+    writePackageJson(devPkg, { agents: ["./agents"] });
+    writeFile(path.join(devPkg, "agents"), "dev.md", "dev-body");
+    writeFile(path.join(ws, ".pi", "agents"), "pi.md", "pi-body");
+    writeFile(path.join(ws, ".agents", "agents"), "shared.md", "project-body");
+    writeFile(path.join(ws, ".agents", "agents"), "proj.md", "proj-body");
+    process.env.XYZ_EXTENSION_PATHS = devPkg;
+    const config = { kind: "agents" as const, workspaceRoot: ws, agentDir };
+
+    const asyncResult = await discoverResources(config);
+
+    // 输出序：stem 首次插入位置固定（低优先级源先入 Map），同名后续覆盖值不移位
+    expect(asyncResult.map((r) => path.basename(r.path))).toEqual([
+      "shared.md", // 首现于 npm（最低源），位置固定
+      "dev.md", // user-extension-paths
+      "pi.md", // project-pi
+      "proj.md", // project-agents
+    ]);
+    // 优先级：shared.md 两源同名，project-agents（高）last-writer-wins
+    expect(asyncResult.find((r) => path.basename(r.path) === "shared.md")?.source).toBe(
+      "project-agents",
+    );
+    // 快照等价：源级并行 async 版与串行 sync 版输出逐项一致（含序与 source 标签）
+    expect(asyncResult).toEqual(discoverResourcesSync(config));
+  });
 });
 
 // ── m5 TC4/TC5: 统一 mtime 缓存层（P-cache / P-cache-invalidation） ──

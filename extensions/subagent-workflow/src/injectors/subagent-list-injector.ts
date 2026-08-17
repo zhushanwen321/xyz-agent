@@ -51,6 +51,19 @@ const logger = getLogger("injector");
  */
 let agentCache: AgentEntry[] | null = null;
 
+/**
+ * 注入块渲染缓存（与 agentCache 同步更新）：before_agent_start 每个 turn 都要注入，
+ * formatAgentList（escapeXml 多趟正则 × 全部字段）在数据不变时输出完全相同——渲染
+ * 一次随缓存复用，turn 热路径零重复计算。
+ */
+let agentInjectionCache: string | null = null;
+
+/** agentCache 唯一写点：数据与渲染缓存同步更新（null 清空两者）。 */
+function setAgentCache(entries: AgentEntry[] | null): void {
+	agentCache = entries;
+	agentInjectionCache = entries !== null ? formatAgentList(entries) : null;
+}
+
 /** 从 .md frontmatter 提取的最小 agent 信息（m5：+ when/examples 路由样本；S1：+ path） */
 export interface AgentEntry {
 	name: string;
@@ -189,9 +202,11 @@ export function setupSubagentListInjector(pi: ExtensionAPI): void {
 		"session_start",
 		async (_event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
 			try {
-				agentCache = await discoverAllAgents(
-					findWorkspaceRoot(ctx.cwd),
-					getAgentDir(),
+				setAgentCache(
+					await discoverAllAgents(
+						findWorkspaceRoot(ctx.cwd),
+						getAgentDir(),
+					),
 				);
 			} catch (err) {
 				// fail-safe：发现异常不阻断 session，缓存保持 null（before_agent_start 会 fallback）
@@ -211,12 +226,15 @@ export function setupSubagentListInjector(pi: ExtensionAPI): void {
 			try {
 				// 读缓存；miss（session_start 未触发/缓存被清）则 fallback 重新发现+赋值
 				if (agentCache === null) {
-					agentCache = await discoverAllAgents(
-						findWorkspaceRoot(ctx.cwd),
-						getAgentDir(),
+					setAgentCache(
+						await discoverAllAgents(
+							findWorkspaceRoot(ctx.cwd),
+							getAgentDir(),
+						),
 					);
 				}
-				const injection = formatAgentList(agentCache);
+				// agentInjectionCache 与 agentCache 不变量同步（setAgentCache 保证），直接复用
+				const injection = agentInjectionCache;
 				if (!injection) return;
 				return { systemPrompt: event.systemPrompt + injection };
 			} catch (err) {
@@ -230,7 +248,7 @@ export function setupSubagentListInjector(pi: ExtensionAPI): void {
 	pi.on(
 		"session_shutdown",
 		(_event: SessionShutdownEvent, _ctx: ExtensionContext): void => {
-			agentCache = null;
+			setAgentCache(null);
 		},
 	);
 }

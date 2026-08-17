@@ -324,6 +324,174 @@ describe('extractSubagentsFromSessionFile', () => {
     expect(records[0].slug).toBe('review-code')
   })
 
+  // v4 B-1：closed 统一终态携带 closedReason，extractor 投影到 SubagentRecord 供 renderer 派生展示
+  it('v4 closed 终态 bg-notify（closedReason=gc + error）→ 投影 status=closed + closedReason + error', () => {
+    const sessionFile = join(tempDir, 'closed-bg.jsonl')
+    const bgSubagentId = 'bg-closed-1-8888888888'
+    const toolCallId = 'call_closed1'
+
+    const entries = [
+      { type: 'session', id: 'main-5', cwd: '/proj', timestamp: '2026-07-10T10:00:00Z' },
+      {
+        type: 'message',
+        id: 'msg-1',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolCall',
+              id: toolCallId,
+              name: 'subagent',
+              arguments: {
+                action: 'start',
+                startParam: { agent: 'reviewer', slug: 'review-v4', task: 'Review code' },
+              },
+            },
+          ],
+        },
+      },
+      {
+        type: 'message',
+        id: 'msg-2',
+        message: {
+          role: 'toolResult',
+          toolCallId,
+          toolName: 'subagent',
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                action: 'start',
+                subagentId: bgSubagentId,
+                sessionFile: null,
+                bgResponse: { status: 'running', message: 'detached' },
+              }),
+            },
+          ],
+        },
+      },
+      {
+        type: 'custom_message',
+        customType: 'subagent-bg-notify',
+        content: 'Subagent closed.',
+        details: {
+          id: bgSubagentId,
+          status: 'closed',
+          closedReason: 'gc',
+          agent: 'reviewer',
+          error: 'provider 429',
+          startedAt: 1783751909029,
+          endedAt: 1783752218705,
+        },
+        timestamp: '2026-07-11T07:03:38Z',
+      },
+    ]
+
+    writeFileSync(sessionFile, entries.map((e) => JSON.stringify(e)).join('\n'))
+
+    const records = extractSubagentsFromSessionFile(sessionFile)
+    expect(records).toHaveLength(1)
+    expect(records[0].status).toBe('closed')
+    expect(records[0].closedReason).toBe('gc')
+    expect(records[0].error).toBe('provider 429')
+  })
+
+  // 与实时路径（event-interpreter handleSubagentBgNotify）同构守卫：closedReason 仅
+  // status === 'closed' 时投影。最后一条 notify 为 running（轮次完成通知）时：
+  // 1) notify 自身异常携带的 closedReason 被丢弃；2) 不从早先 list item（closed）兜底。
+  it('running 终态守卫：最后 notify 为 running 时 closedReason 不投影（无 running + closedReason 脏组合）', () => {
+    const sessionFile = join(tempDir, 'running-guard.jsonl')
+    const bgSubagentId = 'bg-run-guard-1-7777777777'
+    const toolCallId = 'call_runguard'
+    const entries = [
+      { type: 'session', id: 'main-rg', cwd: '/proj', timestamp: '2026-07-11T06:00:00Z' },
+      {
+        type: 'message',
+        id: 'msg-1',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolCall',
+              id: toolCallId,
+              name: 'subagent',
+              arguments: {
+                action: 'start',
+                startParam: { agent: 'worker', slug: 'chat-loop', task: 'Chat task', conversation: true },
+              },
+            },
+          ],
+        },
+      },
+      {
+        type: 'message',
+        id: 'msg-2',
+        message: {
+          role: 'toolResult',
+          toolCallId,
+          toolName: 'subagent',
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                action: 'start',
+                subagentId: bgSubagentId,
+                sessionFile: null,
+                bgResponse: { status: 'running', message: 'detached' },
+              }),
+            },
+          ],
+        },
+      },
+      // 早先 list：item 已 closed + closedReason（此后的轮次通知会覆盖为 running）
+      {
+        type: 'message',
+        id: 'msg-3',
+        message: {
+          role: 'toolResult',
+          toolCallId: 'call_list_rg',
+          toolName: 'subagent',
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                action: 'list',
+                subagentId: null,
+                sessionFile: null,
+                listResponse: {
+                  running: 0,
+                  items: [
+                    {
+                      subagentId: bgSubagentId,
+                      agent: 'worker',
+                      status: 'closed',
+                      closedReason: 'user-close',
+                    },
+                  ],
+                },
+              }),
+            },
+          ],
+        },
+      },
+      // 最后一条 notify：status running（对话模式轮次完成通知），异常携带 closedReason 残留
+      {
+        type: 'custom_message',
+        customType: 'subagent-bg-notify',
+        details: { id: bgSubagentId, status: 'running', closedReason: 'gc', agent: 'worker', round: 2, startedAt: 1783751909029 },
+        timestamp: '2026-07-11T07:00:00Z',
+      },
+    ]
+
+    writeFileSync(sessionFile, entries.map((e) => JSON.stringify(e)).join('\n'))
+
+    const records = extractSubagentsFromSessionFile(sessionFile)
+    expect(records).toHaveLength(1)
+    expect(records[0].status).toBe('running')
+    // 守卫生效：notify 异常残留与 listItem 兜底都不进入输出
+    expect(records[0].closedReason).toBeUndefined()
+  })
+
   it('extracts multiple background subagents', () => {
     const sessionFile = join(tempDir, 'multi-bg.jsonl')
 

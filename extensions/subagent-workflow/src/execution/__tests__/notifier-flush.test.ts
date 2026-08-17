@@ -49,7 +49,7 @@ describe("BgNotifier.flushPendingNotifications — deliverAs 契约", () => {
 	it("flush 时调 sendMessage 的 options.deliverAs === 'steer'（FR-3/AC-3）", () => {
 		notifier.notify({
 			id: "bg-test-1",
-			status: "done",
+			status: "closed",
 			agent: "explorer",
 			result: "done",
 			startedAt: Date.now() - 1000,
@@ -65,7 +65,7 @@ describe("BgNotifier.flushPendingNotifications — deliverAs 契约", () => {
 	it("flush 时 triggerTurn 也必须为 true（让父 agent 立即唤醒）", () => {
 		notifier.notify({
 			id: "bg-test-2",
-			status: "failed",
+			status: "closed",
 			agent: "worker",
 			error: "boom",
 			startedAt: Date.now(),
@@ -100,7 +100,7 @@ describe("BgNotifier — isIdle gate 竞态修复", () => {
 		host.isIdle.mockReturnValue(false);
 		notifier.notify({
 			id: "bg-race-1",
-			status: "done",
+			status: "closed",
 			agent: "worker",
 			result: "ok",
 			startedAt: Date.now(),
@@ -131,7 +131,7 @@ describe("BgNotifier — isIdle gate 竞态修复", () => {
 		host.isIdle.mockReturnValue(false);
 		notifier.notify({
 			id: "bg-starve-1",
-			status: "done",
+			status: "closed",
 			agent: "worker",
 			result: "ok",
 			startedAt: Date.now(),
@@ -155,7 +155,7 @@ describe("BgNotifier — isIdle gate 竞态修复", () => {
 		const legacyNotifier = new BgNotifier(legacyHost);
 		legacyNotifier.notify({
 			id: "bg-legacy-1",
-			status: "done",
+			status: "closed",
 			agent: "worker",
 			result: "ok",
 			startedAt: Date.now(),
@@ -171,7 +171,7 @@ describe("BgNotifier — isIdle gate 竞态修复", () => {
 		host.isIdle.mockReturnValue(false);
 		notifier.notify({
 			id: "bg-dispose-1",
-			status: "done",
+			status: "closed",
 			agent: "worker",
 			result: "ok",
 			startedAt: Date.now(),
@@ -182,5 +182,207 @@ describe("BgNotifier — isIdle gate 竞态修复", () => {
 		// 推进足够久，退避 timer 若未清会触发
 		vi.advanceTimersByTime(10_000);
 		expect(host.sendMessageCalls).toHaveLength(0);
+	});
+});
+
+describe("BgNotifier dedup 按轮次（G1 决策 9：对话模式豁免 60s dedup）", () => {
+	let host: ReturnType<typeof makeMockHost>;
+	let notifier: BgNotifier;
+
+	beforeEach(() => {
+		host = makeMockHost();
+		// hasRunningBackground=false → notify 立即 flush（不排队）；dedup 仍在 push 前生效
+		notifier = new BgNotifier(host);
+	});
+
+	afterEach(() => {
+		notifier.dispose();
+	});
+
+	it("对话模式：同 id 不同 round 的两次 notify 不互相吞（round 参与 dedup key）", () => {
+		notifier.notify({
+			id: "sa-chat", status: "idle", agent: "w", round: 1, result: "round1",
+			startedAt: 1, endedAt: 2,
+		});
+		notifier.notify({
+			id: "sa-chat", status: "idle", agent: "w", round: 2, result: "round2",
+			startedAt: 3, endedAt: 4,
+		});
+
+		// MF-1 修复：dedup key=id:round，不同 round 不互相吞
+		expect(host.sendMessageCalls).toHaveLength(2);
+	});
+
+	it("同 id 同 round 60s 内第二次被 dedup 吞（防重复通知）", () => {
+		notifier.notify({
+			id: "sa-dup", status: "idle", agent: "w", round: 1, result: "r",
+			startedAt: 1, endedAt: 2,
+		});
+		notifier.notify({
+			id: "sa-dup", status: "idle", agent: "w", round: 1, result: "r",
+			startedAt: 3, endedAt: 4,
+		});
+
+		// 第二条被吞（dedup key=sa-dup:1 命中）
+		expect(host.sendMessageCalls).toHaveLength(1);
+	});
+
+	it("非 chatMode（round undefined → key=id:0）行为同旧（向后兼容，60s 内同 id 吞）", () => {
+		// round undefined → dedup key="sa-once:0"，与旧 record.id 单 key 行为一致
+		notifier.notify({
+			id: "sa-once", status: "closed", agent: "w", result: "done",
+			startedAt: 1, endedAt: 2,
+		});
+		notifier.notify({
+			id: "sa-once", status: "closed", agent: "w", result: "done",
+			startedAt: 3, endedAt: 4,
+		});
+
+		// 第二条被吞（旧 dedup 行为不变，一次性模式回归）
+		expect(host.sendMessageCalls).toHaveLength(1);
+	});
+});
+
+describe("BgNotifier buildLlmContent 指针行（wave2：chatMode sessionFile 透传）", () => {
+	let host: ReturnType<typeof makeMockHost>;
+	let notifier: BgNotifier;
+
+	beforeEach(() => {
+		host = makeMockHost();
+		// hasRunningBackground=false → notify 立即 flush，sendMessageCalls 恰 1 条
+		notifier = new BgNotifier(host);
+	});
+
+	afterEach(() => {
+		notifier.dispose();
+	});
+
+	/** 取唯一一条已发消息的 content（前置断言恰 1 条）。 */
+	function sentContent(): string {
+		expect(host.sendMessageCalls).toHaveLength(1);
+		return (host.sendMessageCalls[0]!.message as { content: string }).content;
+	}
+
+	it("running（轮次通知）+ sessionFile → 末尾追加 \\n\\n 空行分隔的指针行", () => {
+		notifier.notify({
+			id: "sa-ptr-1", status: "running", agent: "w", round: 1, result: "round1 text",
+			sessionFile: "/tmp/sessions/child-1.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe(
+			'Subagent "w" (sa-ptr-1) finished a round. Reply:\nround1 text' +
+			"\n\nFull transcript: /tmp/sessions/child-1.jsonl",
+		);
+	});
+
+	it("closed 成功文案 + sessionFile → 指针行追加在最终串末尾", () => {
+		notifier.notify({
+			id: "sa-ptr-2", status: "closed", agent: "w", result: "final result",
+			sessionFile: "/tmp/sessions/child-2.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe(
+			'Subagent "w" (sa-ptr-2) completed. Result:\nfinal result' +
+			"\n\nFull transcript: /tmp/sessions/child-2.jsonl",
+		);
+	});
+
+	it("closed + patchFile + sessionFile → 指针行追加在 patch 提示串末尾（最终串）", () => {
+		notifier.notify({
+			id: "sa-ptr-3", status: "closed", agent: "w", result: "did work",
+			patchFile: "/tmp/patches/sa-ptr-3.patch",
+			sessionFile: "/tmp/sessions/child-3.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		const content = sentContent();
+		expect(content).toContain("git apply /tmp/patches/sa-ptr-3.patch");
+		expect(content.endsWith("\n\nFull transcript: /tmp/sessions/child-3.jsonl")).toBe(true);
+	});
+
+	it("sessionFile 缺失 → 省略整行（running 通知正文与无指针形态逐字节一致）", () => {
+		notifier.notify({
+			id: "sa-ptr-4", status: "running", agent: "w", round: 2, result: "round2 text",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe('Subagent "w" (sa-ptr-4) finished a round. Reply:\nround2 text');
+	});
+
+	it("cancelled → 不追加指针行（即使 sessionFile 有值）", () => {
+		notifier.notify({
+			id: "sa-ptr-5", status: "closed", closedReason: "cancelled", agent: "w",
+			sessionFile: "/tmp/sessions/child-5.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe('Subagent "w" (sa-ptr-5) cancelled.');
+	});
+
+	it("gc-failed（closed + closedReason=gc + error 有值）→ 不追加指针行", () => {
+		notifier.notify({
+			id: "sa-ptr-6", status: "closed", closedReason: "gc", agent: "w",
+			error: "spawn EPIPE",
+			sessionFile: "/tmp/sessions/child-6.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe('Subagent "w" (sa-ptr-6) failed: spawn EPIPE');
+	});
+
+	it("[review 修复] gc-failed + patchFile 并存 → failed 文案优先（失败轮也会写 patchFile，patch 提示不可达）", () => {
+		// 回归锚定：doFinalizeRecord Step 0 对 worktreeHandle 无条件 collectPatch，gc 失败 +
+		// worktree 并存时 patchFile 有值。判定顺序必须与 deriveClosedDisplay / renderRecordLines
+		// 同构（cancelled → gc+error → patch/result），否则 LLM 被告知 completed 掩盖失败。
+		notifier.notify({
+			id: "sa-ptr-8", status: "closed", closedReason: "gc", agent: "w",
+			error: "spawn EPIPE",
+			patchFile: "/tmp/patches/sa-ptr-8.patch",
+			sessionFile: "/tmp/sessions/child-8.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe('Subagent "w" (sa-ptr-8) failed: spawn EPIPE');
+	});
+
+	it("one-shot（sessionFile 未透传 → undefined）→ closed 通知与改造前逐字节一致（基线常量锚定）", () => {
+		notifier.notify({
+			id: "sa-ptr-7", status: "closed", agent: "worker", result: "done",
+			startedAt: 1, endedAt: 2,
+		});
+
+		// 改造前形态：sessionFile undefined 时指针为空串，追加不改变输出——逐字节锁定
+		expect(sentContent()).toBe('Subagent "worker" (sa-ptr-7) completed. Result:\ndone');
+	});
+
+	it("[C-2] closed + totalRounds（chatMode close 终态通知）→ 文案附轮次统计 after N rounds", () => {
+		notifier.notify({
+			id: "sa-rounds-1", status: "closed", agent: "w", totalRounds: 3, result: "",
+			sessionFile: "/tmp/sessions/child-rounds.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		// 设计 D2 路径①：closed 分支文案附轮次统计 + sessionFile 提示；
+		// 路径②正文空串（idle close）形态也走本分支（result 空串非 nullish，不触发 (empty)）
+		expect(sentContent()).toBe(
+			'Subagent "w" (sa-rounds-1) completed after 3 rounds. Result:\n' +
+			"\n\nFull transcript: /tmp/sessions/child-rounds.jsonl",
+		);
+	});
+
+	it("[C-2] 对照：totalRounds 缺失（one-shot 完成通知）→ 无轮次统计，文案逐字节保持 completed. Result:", () => {
+		notifier.notify({
+			id: "sa-rounds-2", status: "closed", agent: "w", result: "done",
+			sessionFile: "/tmp/sessions/child-oneshot.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		// one-shot record 无轮次语义（totalRounds 不设置）——G4：文案不含统计
+		expect(sentContent()).toBe(
+			'Subagent "w" (sa-rounds-2) completed. Result:\ndone' +
+			"\n\nFull transcript: /tmp/sessions/child-oneshot.jsonl",
+		);
 	});
 });

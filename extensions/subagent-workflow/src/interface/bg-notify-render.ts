@@ -22,6 +22,7 @@
 import type { Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 
+import { displayAgentName } from "../shared/agent-ref.ts";
 import {
   firstLine,
   padToVisible,
@@ -52,11 +53,16 @@ const MIN_BORDER_WIDTH = BORDER_CHARS + INNER_PAD_TOTAL + 1;
  */
 interface BgNotifyRecord {
   id: string;
-  status: "done" | "failed" | "cancelled";
+  /** v4 B-1: closed（终态，含 cancelled）或 running（对话模式轮次完成，旧 idle）。 */
+  status: "running" | "closed";
+  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。 */
+  closedReason?: string;
   agent: string;
   model?: string;
   result?: string;
   error?: string;
+  /** 对话轮次计数（仅 idle 有意义）。 */
+  round?: number;
   /** [MF#1] worktree background 完成通知携带的 patch 文件路径。 */
   patchFile?: string;
 }
@@ -207,17 +213,34 @@ function sanitizeAnsiForBg(text: string): string {
 function renderRecordLines(record: BgNotifyRecord, t: ThemeLike): string[] {
   const glyph = statusGlyph(record.status);
   const icon = glyph.icon ?? "•";
-  const agent = truncLine(record.agent, AGENT_MAX_WIDTH);
+  const agent = truncLine(displayAgentName(record.agent), AGENT_MAX_WIDTH);
   // model 段：agent 后、状态描述前，accent 色。空则省略（向后兼容旧 record）。
   const modelPart = record.model
     ? ` ${t.fg("dim", "·")} ${t.fg("accent", truncLine(record.model, MODEL_MAX_WIDTH))}`
     : "";
-  const verb = record.status === "done" ? "finished" : record.status === "failed" ? "failed" : "cancelled";
+  // v4 B-1: closed 统一终态（含 cancelled）。按 closedReason 派生文案。
+  const reason = record.closedReason ?? "gc";
+  let verb: string;
+  if (reason === "cancelled") {
+    verb = "cancelled";
+  } else if (reason === "gc" && record.error) {
+    verb = "failed";
+  } else {
+    verb = "finished";
+  }
   const idShort = shortId(record.id);
   const head = `${t.fg(glyph.color, icon)} ${t.bold(agent)}${modelPart}${t.fg("dim", ` — background subagent ${verb} - ${idShort}`)}`;
 
   switch (record.status) {
-    case "done": {
+    case "closed": {
+      // v4 B-1: closed 统一终态（含 cancelled）。cancelled 无正文；失败显示错误；否则结果/patch。
+      const r = record.closedReason ?? "gc";
+      if (r === "cancelled") {
+        return [head];
+      }
+      if (r === "gc" && record.error) {
+        return [head, t.fg("dim", truncLine(`Error: ${firstLineSanitized(record.error)}`, BODY_MAX_WIDTH))];
+      }
       if (!record.result && !record.patchFile) return [head];
       const lines: string[] = [];
       if (record.result) {
@@ -229,10 +252,9 @@ function renderRecordLines(record: BgNotifyRecord, t: ThemeLike): string[] {
       }
       return [head, ...lines];
     }
-    case "failed":
-      return [head, t.fg("dim", truncLine(`Error: ${record.error ? firstLineSanitized(record.error) : "(unknown)"}`, BODY_MAX_WIDTH))];
-    case "cancelled":
+    case "running":
     default:
+      // v4 B-1: 对话模式轮次完成（旧 idle 折入 running）——仅标题行。
       return [head];
   }
 }
@@ -263,7 +285,7 @@ function extractBgNotifyRecord(details: unknown): BgNotifyRecord | undefined {
   const status = d.status;
   const agent = d.agent;
   if (
-    (status !== "done" && status !== "failed" && status !== "cancelled") ||
+    (status !== "closed" && status !== "running") ||
     typeof agent !== "string"
   ) {
     return undefined;
@@ -275,6 +297,8 @@ function extractBgNotifyRecord(details: unknown): BgNotifyRecord | undefined {
     model: typeof d.model === "string" ? d.model : undefined,
     result: typeof d.result === "string" ? d.result : undefined,
     error: typeof d.error === "string" ? d.error : undefined,
+    closedReason: typeof d.closedReason === "string" ? d.closedReason : undefined,
+    round: typeof d.round === "number" ? d.round : undefined,
     // [MF#1] 提取 patchFile（worktree background 完成通知携带）。
     patchFile: typeof d.patchFile === "string" ? d.patchFile : undefined,
   };

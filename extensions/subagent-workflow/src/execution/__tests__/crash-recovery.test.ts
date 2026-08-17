@@ -52,11 +52,15 @@ const { mockLoadAll, mockRegisterSubagentTool, mockScan } = vi.hoisted(() => ({
   mockRegisterSubagentTool: vi.fn(),
 }));
 
-// JsonlRunStore mock：loadAll 由各 test 配置。构造参数忽略（sessionDir/pi/ctx 都 mock 掉）
+// JsonlRunStore mock：loadAll 由各 test 配置。构造参数忽略（sessionDir/pi/ctx 都 mock 掉）。
+// dispose/flushPendingSaves：session_shutdown handler 会调 state.store.dispose()（W2C5），
+// 本文件用例虽不触发 handler body，防御性补齐防 mock 缺方法 TypeError。
 vi.mock("../../orchestration/jsonl-run-store.ts", () => ({
   JsonlRunStore: class {
     loadAll = mockLoadAll;
     save = vi.fn(async () => {});
+    dispose = vi.fn(async () => {});
+    flushPendingSaves = vi.fn(async () => {});
   },
 }));
 
@@ -90,6 +94,8 @@ vi.mock("../subagent-service.ts", () => ({
     initSession = vi.fn();
     // W3: index.ts session_start 注入 UI handler 时调用
     setUiRequestHandler = vi.fn();
+    recoverManifestTmpFiles = vi.fn(async () => ({ deleted: 0, recovered: 0 }));
+    startGcTimer = vi.fn();
   },
   getSubagentService: () => null,
   setSubagentService: vi.fn(),
@@ -130,7 +136,7 @@ import { WorkflowRun } from "../../orchestration/models/workflow-run.ts";
 /** 构造一个可重水合的 WorkflowRun（用 WorkflowRun.reconstruct 跳过 I1 校验）。 */
 function makeRun(
   runId: string,
-  status: "running" | "paused" | "done",
+  status: "running" | "done",
   reason?: "completed" | "failed" | "aborted" | "budget_limited" | "time_limited",
 ): WorkflowRunType {
   return WorkflowRun.reconstruct(

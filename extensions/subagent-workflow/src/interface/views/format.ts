@@ -10,6 +10,7 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentEventLogEntry } from "../../execution/types.ts";
 import type { ExecutionTraceNode, ToolCallEntry } from "../../orchestration/models/types.ts";
 import type { DoneReason, RunStatus } from "../../orchestration/models/types.ts";
+import { displayAgentName } from "../../shared/agent-ref.ts";
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -39,7 +40,7 @@ const SECS_PER_MIN = 60;
 /**
  * 可显示的状态文本集合。
  *
- * 包含 RunStatus（"running"|"paused"|"done" 不直接显示，转 reason）+ DoneReason
+ * 包含 RunStatus（"running"|"done" 不直接显示，转 reason）+ DoneReason
  * （completed/failed/aborted/budget_limited/time_limited）+ ExecutionTraceNode.status
  * （含 "pending"——trace 节点的初始态）。
  *
@@ -85,7 +86,6 @@ export function formatStatusBadge(
 ): string {
   switch (status) {
     case "running": return theme.fg("warning", "\u25CF running");
-    case "paused": return theme.fg("warning", "\u23F8 PAUSED");
     case "completed": return theme.fg("success", "\u2713 completed");
     case "failed": return theme.fg("error", "\u2717 failed");
     case "aborted": return theme.fg("error", "\u2717 aborted");
@@ -311,7 +311,7 @@ export function formatAgentOneLiner(node: ExecutionTraceNode, theme: ThemeLike):
     ? `${Math.round((tok.input + tok.output) / TOKEN_K)}k tok`
     : "";
   const tcCount = node.result?.toolCalls?.length ?? 0;
-  const parts = [dot, node.agent, node.model];
+  const parts = [dot, displayAgentName(node.agent), node.model];
   if (tokStr) parts.push(`${tokStr} · ${tcCount} tools`);
   parts.push(elapsed);
   return parts.join("    ");

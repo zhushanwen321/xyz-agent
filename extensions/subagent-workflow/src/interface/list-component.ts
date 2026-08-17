@@ -14,6 +14,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { computeElapsedSeconds } from "../execution/execution-record.ts";
 import type { SubagentService } from "../execution/subagent-service.ts";
 import type { SubagentRecord } from "../execution/types.ts";
+import { displayAgentName } from "../shared/agent-ref.ts";
 import {
   firstLine,
   formatDisplayItem,
@@ -76,6 +77,15 @@ const DETAIL_LEN_PROBE_WIDTH = 9999;
 const VERT_CENTER_DIVISOR = 2;
 /** spinner 帧切换粒度（与 Date.now() 配合选帧）。 */
 const SPINNER_FRAME_MS = 250;
+/**
+ * [perf] 同帧 records 共享窗口（swf-perf-impl cleanup TC3/IF3/DM5）。
+ * 250ms 动画帧内 hasRunning 与 buildLines（含 detail 路径 children 计算）各自
+ * collectRecords(LIST_LIMIT) 全量合并扫描（内存 running + 磁盘 light 重建）——帧内合一。
+ * 取值 50：须 < store 事件 debounce 120ms（事件驱动渲染大概率 TTL 已过走新鲜扫描）
+ * 且 > 同 tick 内 hasRunning→render 微秒级间隔（命中复用）。最坏滞后 = 渲染合帧场景下
+ * 50ms 内旧快照一帧，下一 animTimer tick / 事件渲染自愈，对 250ms 动画无感知差异。
+ */
+const FRAME_TTL_MS = 50;
 /** 顶框嵌入标题（分屏模式）。 */
 const TITLE_SPLIT = "Subagents";
 /** 分屏分区线左/右嵌入标题。 */
@@ -85,7 +95,8 @@ const TITLE_RIGHT = "Detail";
 /**
  * 全屏带框左右分屏 list 组件。
  *
- * 不缓存行（records 每次 render 都从 service.collectRecords 拉最新——保证 store 变化后刷新）。
+ * 不缓存行（render 每次重建；records 经 collectRecordsFrame 帧缓存拉取——TTL 50ms 内
+ * 同帧共享一份，保证 store 变化后刷新由 TTL/事件 debounce 兜底，见 FRAME_TTL_MS）。
  * 缓存的是「上次 render 的 width×rows」（用于 invalidate 后强制重建）。
  */
 export class SubagentsListComponent implements Component {
@@ -94,6 +105,9 @@ export class SubagentsListComponent implements Component {
   private closeFn: () => void = () => {};
   /** 动画 timer 句柄（dispose 兜底清理）。 */
   private animTimer: ReturnType<typeof setInterval> | undefined;
+  /** [perf] 帧缓存：TTL 内复用同一份 records（collectRecordsFrame，TC3/IF3/DM5）。 */
+  private frameRecords: SubagentRecord[] | undefined;
+  private frameAt = 0;
 
   constructor(
     private readonly service: SubagentService,
@@ -117,7 +131,29 @@ export class SubagentsListComponent implements Component {
 
   /** 是否有 running record（动画 timer 据此决定是否刷新）。 */
   hasRunning(): boolean {
-    return this.service.collectRecords(LIST_LIMIT).some((r) => r.status === "running");
+    return this.collectRecordsFrame().some((r) => r.status === "running");
+  }
+
+  /**
+   * [perf] 帧缓存读取（TC3/IF3/DM5）：TTL（FRAME_TTL_MS=50ms）内复用同一份 records，
+   * 过期/未缓存则调 service.collectRecords 刷新 {frameRecords, frameAt}。
+   * hasRunning / handleInput / buildLines / buildDetailContent(children) 四个消费点统一走这里。
+   * invalidate() 刻意不清帧缓存：invalidate 在 timer 序列（hasRunning→invalidate→requestRender）
+   * 的共享路径中间，清了共享即失效；新鲜度由 TTL 独立保证 + animTimer 250ms tick 双重兜底。
+   */
+  private collectRecordsFrame(): SubagentRecord[] {
+    if (this.frameRecords !== undefined && Date.now() - this.frameAt <= FRAME_TTL_MS) {
+      return this.frameRecords;
+    }
+    const records = this.service.collectRecords(LIST_LIMIT);
+    this.frameRecords = records;
+    this.frameAt = Date.now();
+    return records;
+  }
+
+  /** [perf] 选中项详情数据：优先全量（懒加载 + per-file 缓存），拿不到回退 light。 */
+  private fullRecordOf(r: SubagentRecord): SubagentRecord {
+    return this.service.getFullRecord(r.id) ?? r;
   }
 
   invalidate(): void {
@@ -138,16 +174,17 @@ export class SubagentsListComponent implements Component {
   handleInput(data: string): void {
     if (this.state.disposed) return;
 
-    const records = applyFilter(this.service.collectRecords(LIST_LIMIT), this.state.filterText);
+    const records = applyFilter(this.collectRecordsFrame(), this.state.filterText);
     const selected = records[this.state.selectedIdx] ?? null;
     // 详情翻屏上下文：视口高 = 右侧 body 高（内框高 - SPLIT_FIXED_LINES），
     // contentLines = 详情内容总行数（含元数据/段头/eventLog/result/error，单一数据源）。
     // 与 renderRightDetail 的 viewH + max 计算保持一致。
+    // [perf] 详情长度需重数据：选中项懒加载全量（带缓存）。
     const innerRows = Math.max(MIN_INNER_ROWS, this.termRows() - PAD_ROWS);
     const bodyH = Math.max(1, innerRows - SPLIT_FIXED_LINES);
     const detailCtx: DetailKeyContext = {
       viewportHeight: bodyH,
-      contentLines: selected ? this.detailContentLength(selected) : 0,
+      contentLines: selected ? this.detailContentLength(this.fullRecordOf(selected)) : 0,
     };
 
     const result = this.keyHandler(data, records, this.state, selected, this.service, detailCtx, this.notify);
@@ -192,7 +229,7 @@ export class SubagentsListComponent implements Component {
     const innerWidth = Math.max(MIN_INNER_WIDTH, width - PAD_COLS);
     const innerRows = Math.max(MIN_INNER_ROWS, rows - PAD_ROWS);
 
-    const allRecords = this.service.collectRecords(LIST_LIMIT);
+    const allRecords = this.collectRecordsFrame();
     const records = applyFilter(allRecords, this.state.filterText);
 
     // 先在内框尺寸下生成框行
@@ -302,9 +339,12 @@ export class SubagentsListComponent implements Component {
 
     const selected = records[this.state.selectedIdx] ?? null;
     const inDetail = this.state.detailMode; // 阶段 2：右侧滚动焦点
+    // [perf] 预览/详情需重数据（displayItems/turns/tokens/result）：选中项按需全量加载
+    // （per-file 缓存，stat 校验）；列表其余行保持 light（identity+状态），列表扫描不开销全量解析。
+    const selectedFull = selected ? this.fullRecordOf(selected) : null;
     // 预构建详情内容（inDetail 时）：分区线标题(detailScrollInfo 算长度)与右列(renderRightDetail 渲染)
     // 共用同一份，避免每帧双倍构建（animTimer 250ms 触发，长 eventLog 下有感）。
-    const detailContent = inDetail && selected ? this.buildDetailContent(selected, rightWidth) : null;
+    const detailContent = inDetail && selectedFull ? this.buildDetailContent(selectedFull, rightWidth) : null;
 
     const lines: string[] = [];
 
@@ -313,7 +353,7 @@ export class SubagentsListComponent implements Component {
 
     // filter 行（阶段 2 时隐藏 filter 提示，显示锚定提示）
     const filterLine = inDetail
-      ? t.fg("dim", `Pinned: ${selected?.agent ?? ""} · Esc to return to list`)
+      ? t.fg("dim", `Pinned: ${selected?.agent ? displayAgentName(selected.agent) : ""} · Esc to return to list`)
       : (this.state.filterText
         ? `${t.fg("dim", "filter: ")}${t.bold(this.state.filterText)}${t.fg("accent", "_")}`
         : `${t.fg("dim", "filter: ")}${t.fg("accent", "_")}`);
@@ -322,7 +362,7 @@ export class SubagentsListComponent implements Component {
     // 分区线（嵌入左/右标题，分段着色）
     const leftTitleStyled = t.fg("accent", t.bold(` ${TITLE_LEFT} `));
     const rightTitleStyled = inDetail
-      ? t.fg("accent", t.bold(` ${TITLE_RIGHT}${this.detailScrollInfo(selected, bodyH, detailContent?.length)} `))
+      ? t.fg("accent", t.bold(` ${TITLE_RIGHT}${this.detailScrollInfo(selectedFull, bodyH, detailContent?.length)} `))
       : t.fg("accent", t.bold(` ${TITLE_RIGHT} `));
     lines.push(
       this.b("├") + segFillColored(leftTitleStyled, this.dash(), leftWidth)
@@ -346,8 +386,8 @@ export class SubagentsListComponent implements Component {
       ));
       leftLines = this.renderLeftColumn(records, leftWidth, leftStart, bodyH);
       rightLines = inDetail
-        ? this.renderRightDetail(selected, rightWidth, bodyH, detailContent)
-        : this.renderRightPreview(selected, rightWidth, bodyH);
+        ? this.renderRightDetail(selectedFull, rightWidth, bodyH, detailContent)
+        : this.renderRightPreview(selectedFull, rightWidth, bodyH);
     }
     const bodyRows = Math.max(leftLines.length, rightLines.length, bodyH);
     for (let i = 0; i < bodyRows; i++) {
@@ -421,7 +461,7 @@ export class SubagentsListComponent implements Component {
       const depthTag = r.depth > 0 ? ` ${t.fg("dim", `[L${r.depth + 1}]`)}` : "";
       // slug 非空时在 agent 后展示（accent 色），空串时省略。
       const slugTag = r.slug ? ` ${t.fg("accent", r.slug)}` : "";
-      const label = `${iconStr} ${sid}${depthTag} ${r.agent}${slugTag} ${t.fg("dim", modeTag)} ${t.fg("dim", dur)}`;
+      const label = `${iconStr} ${sid}${depthTag} ${displayAgentName(r.agent)}${slugTag} ${t.fg("dim", modeTag)} ${t.fg("dim", dur)}`;
       // 阶段 2：锚定行 accent + ▶；其余行 dim。阶段 1：选中 accent + →，其余正常。
       const content = inDetail
         ? (selected ? t.fg("accent", label) : t.fg("dim", label))
@@ -449,7 +489,7 @@ export class SubagentsListComponent implements Component {
         lines.push("");
       }
     }
-    lines.push(truncLine(`${t.bold(record.agent)} ${t.fg("dim", `· ${record.model}`)}`, width));
+    lines.push(truncLine(`${t.bold(displayAgentName(record.agent))} ${t.fg("dim", `· ${record.model}`)}`, width));
     lines.push(truncLine(
       t.fg("dim", `${record.status} · ${record.turns} turns · ${formatTokens(record.totalTokens)} · ${formatElapsedSeconds(elapsedSec(record))}`),
       width,
@@ -550,8 +590,7 @@ export class SubagentsListComponent implements Component {
     // parent 不需外部数据；children 需查同 session 的 record（collectRecords 有磁盘缓存，开销可接受）。
     const parentLabel = record.parentRecordId ? shortId(record.parentRecordId) : "(root)";
     content.push(truncLine(t.fg("dim", `parent: ${parentLabel}`), width));
-    const childIds = this.service
-      .collectRecords(LIST_LIMIT)
+    const childIds = this.collectRecordsFrame()
       .filter((r) => r.parentRecordId === record.id)
       .map((r) => shortId(r.id));
     content.push(truncLine(

@@ -27,7 +27,7 @@ import type { ModelConfigService } from "./model-config-service.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
 import type { RecordStore } from "./record-store.ts";
 import { writeCancelledTombstone } from "./tombstone-store.ts";
-import type { AgentResult, ExecutionRecord } from "./types.ts";
+import type { AgentResult, ClosedReason, ExecutionRecord } from "./types.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
 
 const logger = getLogger("subagents");
@@ -40,10 +40,10 @@ export interface FinalizeDeps {
   modelService: ModelConfigService;
   /** Pi ExtensionAPI（仅用 appendEntry 记录 manifest 写失败事件）。null 在 dispose 后。 */
   pi: { appendEntry?: (type: string, data: unknown) => void } | null;
-  /** 清节流状态（防 trailing timer 在 record 归档后误发陈旧 onUpdate）。 */
-  clearThrottle(id: string): void;
   /** pending-notifications 终态注销（绑定 pi.events.emit，由调用方闭包提供）。 */
   emitUnregister(id: string, status: string): void;
+  // [review 修复] 已删除 redeliverPending 回调（MF-1 消费确认制补投）：pendingMessages
+  // 三段消费链随 deliverToRunning 一并移除（无生产调用方，死机制）。
 }
 
 /**
@@ -57,11 +57,9 @@ export async function doFinalizeRecord(
   deps: FinalizeDeps,
   record: ExecutionRecord,
   result: AgentResult,
-  status: "done" | "failed" | "cancelled",
+  status: "closed",
+  closedReason?: ClosedReason,
 ): Promise<void> {
-  // 终态清节流状态：防 trailing timer 在 record 归档后误发陈旧 onUpdate
-  deps.clearThrottle(record.id);
-
   // ── Step 0: collectPatch（best-effort）──
   // [MF#3] patchFile 写到 worktree 之外（sessionsDir/<branch>.patch），避免被 cleanup 删除；
   //        路径回填 record.patchFile，供调用方（tool result / /subagents list）应用。
@@ -73,7 +71,7 @@ export async function doFinalizeRecord(
       );
       fs.mkdirSync(sessionsDir, { recursive: true });
       const patchFile = path.join(sessionsDir, `${record.worktreeHandle.branch}.patch`);
-      const patch = deps.worktreeManager.collectPatch(record.worktreeHandle, patchFile);
+      const patch = await deps.worktreeManager.collectPatch(record.worktreeHandle, patchFile);
       if (patch.written) record.patchFile = patchFile;
     } catch (pe: unknown) {
       bestEffort(pe, "collectPatch (finalizeRecord Step0)");
@@ -82,7 +80,7 @@ export async function doFinalizeRecord(
 
   // ── Step 1: completeRecord（B9: 抛错→后续仍执行）──
   try {
-    completeRecord(record, result, status);
+    completeRecord(record, result, status, closedReason);
   } catch (err) {
     bestEffort(err, "completeRecord (finalizeRecord B9)", "error");
   }
@@ -100,8 +98,8 @@ export async function doFinalizeRecord(
   //   （否则 worktree 泄漏）。各件独立 try/catch，互不阻断。
   if (record.sessionFile) {
     try {
-      // MF-1 fix: cancelled 状态写 tombstone 而非 finalized，防重建丢失 cancelled
-      if (status === "cancelled") {
+      // MF-1 fix / v4 B-1: cancelled（closedReason='cancelled'）写 tombstone 而非 finalized，防重建丢失 cancelled
+      if (closedReason === "cancelled") {
         writeCancelledTombstone(record.sessionFile, {
           id: record.id,
           status: "cancelled",
@@ -118,7 +116,7 @@ export async function doFinalizeRecord(
   }
   if (record.worktreeHandle) {
     try {
-      deps.worktreeManager.cleanup(record.worktreeHandle);
+      await deps.worktreeManager.cleanup(record.worktreeHandle);
     } catch (err) {
       bestEffort(err, "worktree cleanup (finalizeRecord Step3)");
     }
@@ -146,7 +144,8 @@ export async function doFinalizeRecord(
       rootSessionId: record.rootSessionId ?? "",
       parentRecordId: record.parentRecordId,
       agentName: record.agent,
-      status: status === "done" ? "completed" : status,
+      // v4 B-1: manifest status 统一为 closed（cancelled 折入 closed，区分靠 tombstone sidecar）
+      status: "closed",
       createdAt: record.startedAt,
       completedAt: record.endedAt ?? Date.now(),
       sessionFile: record.sessionFile,
@@ -162,4 +161,82 @@ export async function doFinalizeRecord(
       error: msg,
     });
   }
+}
+
+/**
+ * 对话模式轮次完成收尾：record 进 idle 态（非终态化，等待续聊）。
+ *
+ * 与 doFinalizeRecord 的关键区别（M2-A idle 语义）：
+ *   - 不调 completeRecord（record 不冻结，保留 turns[] 等运行时状态供续聊累积）
+ *   - 不调 store.archive（record 留内存，getMutable 可查、list 可见）
+ *   - 不 cleanup worktree（保留对话模式工作目录）
+ *   - 不写 manifest（idle 非终态，manifest 是终态诊断辅助）
+ *   - 删 .alive marker（进程已 SIGTERM 回收，不再是活进程）
+ *   - emitUnregister（进程已死，从 pending 活跃后代差集移除；record 留内存不 archive）
+ *
+ * MF-2：设 record.result = result.text（否则 notifier idle 回复正文恒为 "(empty)"，
+ *   G1/G2 多轮回复送达不成立）。失败轮次（result.success=false，MF-6 回退 idle 路径）
+ *   的 result.text 可能为空，用 result.error 兜底让 notify 可读。
+ *
+ * 状态：record.status = "idle"（覆盖 tryTransition 设的 done/failed），record.round += 1。
+ * 各步骤 best-effort 互不阻断（参照 doFinalizeRecord 的 bestEffort 用法）。
+ *
+ * @param deps 与 doFinalizeRecord 同源（从 SubagentService 注入）
+ * @param result 本轮 AgentResult（MF-2：result.text 写入 record.result 供 notifier idle 回复）
+ */
+export async function doFinalizeRoundToIdle(
+  deps: FinalizeDeps,
+  record: ExecutionRecord,
+  result: AgentResult,
+): Promise<void> {
+  // MF-2：设 record.result 供 notifier idle 回复正文（否则恒 "(empty)"，G1/G2 不成立）。
+  // MF-6 兜底：失败轮次（success=false）的 result.text 可能为空，用 error 让 notify 可读。
+  // [增量 G2] 第三分支 chatMode 条件占位：本写点被 one-shot 成功路径共用（subagent-service
+  // runAndFinalize 的 `!record.chatMode && !aborted && result.success` 分支 → finalizeRoundToIdle），
+  // 非 chatMode 必须保持 `|| record.result` 现状——one-shot 空文本成功完成（collectResult
+  // getFullText 返回 ""、success=true、真实可达）时 result 前值 undefined → notifier
+  // buildLlmContent 的 `record.result ?? "(empty)"` 兜底确定性产出 "(empty)"，通知逐字节
+  // 不变（G4）；无条件替换会把文案漂移为占位。chatMode 空增量轮 → 固定占位
+  // "(no output this round)"（D5：增量语义下沿用旧 record.result = 上一轮增量，本轮通知
+  // 正文 = 上一轮内容，父 agent 误读为原样重复回复）。
+  let nextResult: string | undefined;
+  if (result.text) {
+    nextResult = result.text;
+  } else if (result.error) {
+    nextResult = `round did not complete: ${result.error}`;
+  } else if (record.chatMode) {
+    nextResult = "(no output this round)";
+  } else {
+    nextResult = record.result;
+  }
+  record.result = nextResult;
+
+  // 删 .alive marker（进程已 SIGTERM 回收）。
+  // sessionFile 窗口期可能 undefined（极少——对话模式轮次完成意味着 session 已跑过），
+  // 缺失时跳过但仍设内存 idle（重启后磁盘重建会落到 crashed，边界可接受）。
+  if (record.sessionFile) {
+    try {
+      removeAliveMarker(record.sessionFile);
+    } catch (err) {
+      bestEffort(err, "removeAliveMarker (doFinalizeRoundToIdle)");
+    }
+  }
+
+  // pending-notifications：进程已死，从活跃后代差集移除（record 留内存不 archive，
+  // v4 B-1：record 现为 running-resumable，但 pending 注册的是进程活跃性，进程死了需注销）。
+  deps.emitUnregister(record.id, "running");
+
+  // 状态机（v4 B-1）：record 保持 running（旧 idle 折入 running，覆盖 tryTransition 设的 closed，
+  // 可冷路径 resume），轮次计数 +1。idleSince 时间戳独立保留供 GC 判据。
+  // [S10] closedReason 同步清除：调用方（runAndFinalize catch / MF-6 分支）先 tryTransition
+  // 设了 closed+closedReason 再回退 running——不清则 "gc"/"cancelled" 残留在 running record 上，
+  // 泄漏进 list 投影与后续 notify 载荷（toNotifyRecord 透传 record.closedReason），让一个
+  // 活跃 record 看起来像已被某原因关闭过。
+  record.status = "running";
+  record.closedReason = undefined;
+  record.round = (record.round ?? 0) + 1;
+  record.idleSince = Date.now();
+
+  // [review 修复] 已删除残留 pendingMessages 的 redeliverPending 补投段（MF-1 消费
+  // 确认安全网）：三段消费链随 deliverToRunning 一并移除，本段不可达。
 }

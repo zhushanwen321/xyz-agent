@@ -6,7 +6,7 @@
  *
  * 核心职责：竞态防护（G-025）。
  *
- * 背景：一个 run 可经历多个 WorkerHandle（pause/resume/retry 各换一个）。
+ * 背景：一个 run 可经历多个 WorkerHandle（终止/重试各换一个）。
  * 需防止「terminate(old) → start(new) → old exit fires」竞态——
  * WorkerHandle 把守卫内化：terminate 后 isCurrent=false，
  * 已终止 handle 的 onMessage/onError/onExit 回调自动 no-op（无需调用方比对引用）。

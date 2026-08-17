@@ -8,7 +8,8 @@
 // mock 策略（参考 worktree-manager.test.ts 的 mock 模式）：
 //   - node:child_process.spawn → 返回 FakeChild（EventEmitter + PassThrough），
 //     测试用控制器 emit data/close/error 控制时序。
-//   - node:child_process.execFileSync → 返回空串（buildEnvBlock 的 git branch 调用避免副作用）。
+//   - node:child_process.execFile → err-first callback 默认兜底（buildEnvBlock 的 git
+//     branch 调用失败 → catch → branch=""）。
 //   - node:fs 同步方法 → mock（mkdirSync/existsSync/appendFileSync/writeFileSync 等），
 //     避免 sessionDir/sessionFile 触碰真实文件系统。
 //   - fs.promises.* → 保留真实实现（temp-prompt 整体被 mock，不触发真实 I/O）。
@@ -21,7 +22,7 @@
 // `await import("./helpers/spawn-mock.ts")` 取回 FakeChild（绕开 vitest 的 hoisting 限制——
 // 工厂函数体不能引用顶层 import 变量，但 async 工厂内的 await import 是运行时求值）。
 
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,7 +33,15 @@ vi.mock("node:child_process", async () => {
   const { FakeChild } = await import("./helpers/spawn-mock.ts");
   return {
     spawn: vi.fn(() => new FakeChild()),
-    execFileSync: vi.fn(() => ""), // buildEnvBlock 的 git branch 调用，返回空避免副作用
+    // buildEnvBlock 的 git branch 调用（execFile 异步）：默认 err-first 兜底 → catch → branch=""
+    execFile: vi.fn(
+      (
+        _cmd: string,
+        _args: readonly string[],
+        _opts: unknown,
+        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
+      ) => cb(new Error("execFile not configured in this test")),
+    ),
   };
 });
 
@@ -86,7 +95,6 @@ import {
 } from "./helpers/spawn-mock.ts";
 
 const mockSpawn = vi.mocked(spawn);
-const mockExec = vi.mocked(execFileSync);
 const mockExistsSync = vi.mocked(fs.existsSync);
 const mockAppendFileSync = vi.mocked(fs.appendFileSync);
 const mockMkdirSync = vi.mocked(fs.mkdirSync);
@@ -103,8 +111,6 @@ const mockSessionFileExists = (p: string): void => mockSessionFileExistsOf(mockE
 describe("runSpawn", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // execFileSync 默认返回空串（git branch 兜底）
-    mockExec.mockReturnValue("");
     // existsSync 默认 false（sessionFile 不存在兜底路径）
     mockExistsSync.mockReturnValue(false);
   });
@@ -404,9 +410,9 @@ describe("runSpawn", () => {
     });
   });
 
-  // ── 7. identity 补写 ──
-  describe("identity 补写", () => {
-    it("正常 close 后 appendFileSync 写入 IDENTITY_CUSTOM_TYPE custom entry", async () => {
+  // ── 7. identity 写入职责（M4 / V2 决策 5：迁移到子进程 session_start）──
+  describe("identity 写入职责", () => {
+    it("正常 close 后 session-runner 不再 fs 补写 identity（M4 迁移到子进程 session_start）", async () => {
       const record = makeRecord();
       const promise = runSpawn(record, "Task: identity", makeOpts(), makeCtx());
 
@@ -425,17 +431,11 @@ describe("runSpawn", () => {
 
       await promise;
 
-      // appendFileSync 被调用写 identity custom entry
-      expect(mockAppendFileSync).toHaveBeenCalledWith(
-        sessionFile,
-        expect.stringContaining('"customType":"subagent-identity"'),
-        "utf-8",
-      );
-      // 写入内容含 record.id / agent
-      const written = mockAppendFileSync.mock.calls[0]?.[1] as string;
-      expect(written).toContain(record.id);
-      expect(written).toContain(record.agent);
-      expect(written).toContain('"type":"custom"');
+      // [M4 / V2 决策 5] identity 不再由 session-runner fs.appendFileSync 补写——
+      // 改由子进程 session_start hook 用 pi.appendEntry 写（pi 自动生成 id/parentId，
+      // 修复旧 fs 补写缺 id/parentId 污染 _buildIndex 的 bug）。identity 写入由
+      // index-session-start-identity.test.ts 覆盖；此处守护 session-runner 不再 fs 写。
+      expect(mockAppendFileSync).not.toHaveBeenCalled();
     });
 
     it("sessionFile 不存在（existsSync=false）→ 不补写 identity（不调 appendFileSync）", async () => {
@@ -625,18 +625,22 @@ describe("runSpawn", () => {
     });
 
     /**
-     * fake timers 下推进时间直到 spawn 被调用（替代 waitForSpawn）。
+     * fake timers 下推进时间直到 spawn 被调用（替代 waitForSpawn，返回 child 控制器）。
+     *
+     * [快照语义] 同 helpers/spawn-mock.ts 的 waitForSpawn：记调用时 baseline，等待其后的
+     * **新** spawn——支持同一测试/文件内多次 runSpawn。
      *
      * runSpawn 在 mkdirSync + writePromptToTempFile（真实 fs.promises I/O）之后才调 spawn。
-     * 每次推进 10ms 让 waitForSpawn 轮询的 setTimeout(r,5) 触发；同时 advanceTimersByTimeAsync
-     * flush 已 resolve 的 I/O promise，使 runSpawn 继续走到 spawn。
+     * 每次推进 10ms 让轮询 setTimeout 触发；同时 advanceTimersByTimeAsync flush 已 resolve
+     * 的 I/O promise，使 runSpawn 继续走到 spawn。
      */
     async function waitForSpawnFake(timeoutSteps = 200): Promise<FakeChild> {
+      const baseline = mockSpawn.mock.results.length;
       for (let i = 0; i < timeoutSteps; i++) {
-        if (mockSpawn.mock.results.length > 0) break;
+        if (mockSpawn.mock.results.length > baseline) break;
         await vi.advanceTimersByTimeAsync(10);
       }
-      if (mockSpawn.mock.results.length === 0) {
+      if (mockSpawn.mock.results.length <= baseline) {
         throw new Error("spawn was not called (fake timers did not progress to spawn)");
       }
       return lastSpawnedChild();

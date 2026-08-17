@@ -16,21 +16,34 @@ export type SubagentRpcAction =
 
 /** /workflows RPC action 判别联合。 */
 export type WorkflowRpcAction =
-  | { action: "pause"; runId: string }
-  | { action: "resume"; runId: string }
   | { action: "abort"; runId: string }
-  | { action: "lifecycle-missing-id"; verb: "pause" | "resume" | "abort" }
+  | { action: "lifecycle-missing-id"; verb: LifecycleVerb }
+  | { action: "lifecycle-removed"; verb: "pause" | "resume" }
   | { action: "noop" };
 
 /** workflow lifecycle verb 类型。 */
-type LifecycleVerb = "pause" | "resume" | "abort";
+type LifecycleVerb = "abort";
 
 /** workflow lifecycle verb 集合。 */
-const LIFECYCLE_VERBS: ReadonlySet<LifecycleVerb> = new Set(["pause", "resume", "abort"]);
+const LIFECYCLE_VERBS: ReadonlySet<LifecycleVerb> = new Set(["abort"]);
 
 /** verb 是否为 lifecycle action（类型守卫，收窄到 LifecycleVerb）。 */
 function isLifecycleVerb(verb: string): verb is LifecycleVerb {
   return LIFECYCLE_VERBS.has(verb as LifecycleVerb);
+}
+
+/**
+ * 已移除的 lifecycle verb 集合（pause/resume——run 一次性生命周期化后删除，
+ * 解析为 lifecycle-removed 提示，而非 unknown noop）。
+ */
+const REMOVED_LIFECYCLE_VERBS: ReadonlySet<"pause" | "resume"> = new Set([
+  "pause",
+  "resume",
+]);
+
+/** verb 是否为已移除的 lifecycle action（类型守卫，收窄到 "pause" | "resume"）。 */
+function isRemovedLifecycleVerb(verb: string): verb is "pause" | "resume" {
+  return REMOVED_LIFECYCLE_VERBS.has(verb as "pause" | "resume");
 }
 
 /**
@@ -60,8 +73,11 @@ export function parseSubagentRpcCommand(argsStr: string): SubagentRpcAction {
  * 解析 /workflows RPC 命令字符串。
  *
  * 支持格式：
- * - `pause|resume|abort <runId>` → 对应 lifecycle action + runId
- * - `pause|resume|abort`（无 runId）→ { action: "lifecycle-missing-id", verb }
+ * - `abort <runId>` → { action: "abort", runId }
+ * - `abort`（无 runId）→ { action: "lifecycle-missing-id", verb: "abort" }
+ * - `pause|resume ...`（已移除的 lifecycle verb，带或不带 runId 均同）→
+ *   { action: "lifecycle-removed", verb }——removed verb 优先于 missing-id 判定
+ *  （提示语义优先：用户应得知能力已删除并获 abort 指引，而非被引导补 runId）
  * - 其他（空 / 未知 action / 无参）→ { action: "noop" }
  */
 export function parseWorkflowRpcCommand(argsStr: string): WorkflowRpcAction {
@@ -69,6 +85,9 @@ export function parseWorkflowRpcCommand(argsStr: string): WorkflowRpcAction {
   if (args.length === 0) return { action: "noop" };
 
   const [verb, runId] = args;
+  if (isRemovedLifecycleVerb(verb)) {
+    return { action: "lifecycle-removed", verb };
+  }
   if (isLifecycleVerb(verb)) {
     if (!runId) return { action: "lifecycle-missing-id", verb };
     return { action: verb, runId };

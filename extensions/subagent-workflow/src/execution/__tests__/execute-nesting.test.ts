@@ -5,8 +5,8 @@
 // 用例：
 //   D-032  background 进并发池（分层配额：max(1, maxConcurrent - depth)）
 //   D-033  execute 入口通用嵌套护栏（execCtxAls 计 fork+非 fork 嵌套，深度>MAX 拒）
-//   嵌套抑制 background onUpdate 恒 undefined（防 spinner 堆叠）
-//   节流清理 background finalize 后 throttleState 无残留（clearThrottle 生效）
+//   （原「嵌套抑制 onUpdate」「节流清理 throttleState」用例组已随 onEventThrottled
+//   死路径删除一并移除——swf-perf-impl ledger #22 / cleanup-slice TC4）
 //
 // ── mock 策略 ──
 //
@@ -18,7 +18,8 @@
 //   mock 模式参考 run-spawn-integration.test.ts（该文件是 spawn 改造后的正确 mock 范式）：
 //     - node:child_process.spawn → FakeChild（EventEmitter + PassThrough），测试控制器
 //       emit stdout JSON 行（header + SdkEvent）/ stderr / close 时序。
-//     - node:child_process.execFileSync → ""（buildEnvBlock 的 git branch 调用避免副作用）。
+//     - node:child_process.execFile → err-first callback 默认兜底（buildEnvBlock 的 git
+//       branch 调用失败 → catch → branch=""，避免副作用）。
 //     - node:fs 同步方法 → mock（mkdirSync/existsSync/appendFileSync/writeFileSync/readdirSync），
 //       避免 sessionDir/sessionFile 触碰真实文件系统。
 //     - fs.promises.* → 保留真实实现（temp-prompt 整体被 mock，不触发真实 I/O）。
@@ -26,7 +27,7 @@
 //     - alive-store.writeAliveMarker → mock（避免写 .alive sidecar）。
 //
 //   所有断言语义不变：它们测的是 SubagentService 的 **编排逻辑**
-//   （pool.acquire / execCtxAls 深度 / onUpdate 抑制 / throttle 清理），这些逻辑
+//   （pool.acquire / execCtxAls 深度），这些逻辑
 //   无论事件来自 fakeSession.subscribe 还是 FakeChild.stdout 都一致。
 
 import type { PassThrough } from "node:stream";
@@ -60,7 +61,15 @@ vi.mock("node:child_process", async () => {
 
   return {
     spawn: vi.fn(() => new FakeChild()),
-    execFileSync: vi.fn(() => ""), // buildEnvBlock 的 git branch 调用，返回空避免副作用
+    // buildEnvBlock 的 git branch 调用（execFile 异步）：默认 err-first 兜底 → catch → branch=""
+    execFile: vi.fn(
+      (
+        _cmd: string,
+        _args: readonly string[],
+        _opts: unknown,
+        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
+      ) => cb(new Error("execFile not configured in this test")),
+    ),
   };
 });
 
@@ -133,6 +142,7 @@ vi.mock("../temp-prompt.ts", () => ({
 
 import { spawn } from "node:child_process";
 
+import { waitForSpawn } from "./helpers/spawn-mock.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { MAX_FORK_DEPTH } from "../session-context-resolver.ts";
@@ -160,23 +170,6 @@ function lastSpawnedChild(): FakeChild {
   const result = mockSpawn.mock.results.at(-1);
   if (!result) throw new Error("spawn was not called yet");
   return result.value as FakeChild;
-}
-
-/**
- * 等待 execute → runSpawn 内部调到 spawn（拿到 child 控制器）。
- *
- * runSpawn 是 async，spawn 在 mkdirSync + writePromptToTempFile 之后才调（均有微任务/
- * I/O 延迟）。用 setInterval 轮询 mockSpawn.mock.results，比 vi.waitFor 在该 vitest 版本
- * 下更可靠（vi.waitFor 偶发过早 resolve 导致后续读取竞态）。
- */
-async function waitForSpawn(timeoutMs = 1000): Promise<void> {
-  const start = Date.now();
-  while (mockSpawn.mock.results.length === 0) {
-    if (Date.now() - start > timeoutMs) {
-      throw new Error(`spawn was not called within ${timeoutMs}ms`);
-    }
-    await new Promise((r) => setTimeout(r, 2));
-  }
 }
 
 // ============================================================
@@ -271,7 +264,7 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
 
     const execPromise = service.execute({ task: "bg in pool", ctxModel });
     // detached runAndFinalize → acquire。等 spawn 拿到 child 再驱动完成。
-    await waitForSpawn();
+    await waitForSpawn(mockSpawn);
     await driveChildToCompletion(lastSpawnedChild());
 
     // 等 detached promise 链跑完（kickOffBackground 的 .then notify）
@@ -312,7 +305,7 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
     const execPromise = execCtxAls.run({ recordId: "parent", depth: MAX_FORK_DEPTH - 1 }, () =>
       service.execute({ task: "at limit", ctxModel }),
     );
-    await waitForSpawn();
+    await waitForSpawn(mockSpawn);
     await driveChildToCompletion(lastSpawnedChild(), [
       { type: "turn_end" },
       { type: "message_end", message: { usage: { input: 1 } } },
@@ -323,53 +316,8 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
   });
 
   // ============================================================
-  // 嵌套 sync onUpdate 抑制（nestingDepth>0 → onUpdate undefined）
+  // 原嵌套抑制 onUpdate / 节流清理 throttleState 用例组（:322-355）已删除——
+  // onEventThrottled 死路径删除（swf-perf-impl ledger #22 / cleanup-slice TC4/IF14，
+  // 详见 .cw/swf-perf-impl/cleanup-slice-design.json）。恢复点：本 slice 前的 git 历史。
   // ============================================================
-
-  it("[嵌套抑制] 嵌套 sync（execCtxAls depth>0）不回流 onUpdate", async () => {
-    const { service } = setup();
-
-    const execCtxAls = Reflect.get(service, "execCtxAls") as ExecCtxAls;
-
-    const updates: unknown[] = [];
-    const execPromise = execCtxAls.run({ recordId: "parent", depth: 1 }, () =>
-        service.execute({ task: "nested sync", ctxModel, onUpdate: (d) => updates.push(d) }),
-    );
-    await waitForSpawn();
-    // emit 会触发 onUpdate 的事件（tool_start/tool_end 是 TRIGGERING_EVENT），
-    // 但嵌套层 onUpdate 被抑制（undefined）→ onEventThrottled 包装不挂载 → 0 次
-    await driveChildToCompletion(lastSpawnedChild(), [
-      { type: "tool_execution_start", toolCallId: "t1", toolName: "read" },
-      { type: "tool_execution_end", toolCallId: "t1", toolName: "read" },
-      { type: "message_end", message: { usage: { input: 1 } } },
-    ]);
-    await execPromise;
-
-    // tool_end 是 TRIGGERING_EVENT，但嵌套层 onUpdate 被抑制（undefined）→ 0 次
-    expect(updates).toHaveLength(0);
-  });
-
-  // ============================================================
-  // clearThrottle：sync 完成后 throttleState 清理
-  // ============================================================
-
-  it("[节流清理] sync 完成后 throttleState 无残留（clearThrottle 生效）", async () => {
-    const { service } = setup();
-
-    const execPromise = service.execute({
-      task: "throttle clear",
-      ctxModel,
-      onUpdate: () => {},
-    });
-    await waitForSpawn();
-    await driveChildToCompletion(lastSpawnedChild(), [
-      { type: "tool_execution_end", toolCallId: "t1", toolName: "read" },
-      { type: "message_end", message: { usage: { input: 1 } } },
-    ]);
-    await execPromise;
-
-    // finalizeRecord → clearThrottle 清掉该 record 的节流 entry（防 Map 无限增长 + trailing 误发陈旧）
-    const throttleState = Reflect.get(service, "throttleState") as Map<string, unknown>;
-    expect(throttleState.size).toBe(0);
-  });
 });

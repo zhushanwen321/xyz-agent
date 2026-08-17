@@ -10,8 +10,10 @@ import {
   getCurrentActivity,
   getEventLog,
   getFullText,
+  getFullTextFrom,
   getTotalUsage,
   markReconstructedStatus,
+  nextRoundBaseTurnIndex,
   project,
   projectLiveProgress,
   snapshot,
@@ -577,6 +579,152 @@ describe("getFullText", () => {
 });
 
 // ============================================================
+// getFullTextFrom — 增量文本派生（round-base-increment wave1）
+// ============================================================
+describe("getFullTextFrom", () => {
+  it("C1TC2: from=0 与 getFullText 逐字节等价（fresh / 单 turn / 多 turn 混空 turn 三形态）", () => {
+    // 形态 1：fresh record（turns=[emptyTurn()]）
+    const fresh = makeRecord();
+    expect(getFullTextFrom(fresh, 0)).toBe(getFullText(fresh));
+    expect(getFullTextFrom(fresh, 0)).toBe("");
+
+    // 形态 2：单 turn 有文本
+    const single = makeRecord();
+    updateFromEvent(single, { type: "text_delta", delta: "Hello world" });
+    expect(getFullTextFrom(single, 0)).toBe(getFullText(single));
+    expect(getFullTextFrom(single, 0)).toBe("Hello world");
+
+    // 形态 3：多 turn 混空 turn（closed 空 turn + 空白串 turn + 未闭合尾 turn）
+    const mixed = makeRecord();
+    updateFromEvent(mixed, { type: "text_delta", delta: "Turn 1" });
+    updateFromEvent(mixed, { type: "turn_end" });
+    updateFromEvent(mixed, { type: "turn_end" }); // 空 turn 2（closed）
+    updateFromEvent(mixed, { type: "text_delta", delta: " " }); // 空白串 turn 3
+    updateFromEvent(mixed, { type: "turn_end" });
+    updateFromEvent(mixed, { type: "text_delta", delta: "Turn 4" }); // 未闭合尾 turn
+    expect(getFullTextFrom(mixed, 0)).toBe(getFullText(mixed));
+    expect(getFullTextFrom(mixed, 0)).toBe("Turn 1\n\n \n\nTurn 4");
+  });
+
+  it("C1TC3: 多 turn 单轮增量——from=1 只含 Turn 2，对照全量含 Turn 1\\n\\nTurn 2", () => {
+    const r = makeRecord();
+    updateFromEvent(r, { type: "text_delta", delta: "Turn 1" });
+    updateFromEvent(r, { type: "turn_end" });
+    updateFromEvent(r, { type: "text_delta", delta: "Turn 2" });
+    expect(getFullTextFrom(r, 1)).toBe("Turn 2");
+    // 对照：全量 vs 增量差异锁定
+    expect(getFullText(r)).toBe("Turn 1\n\nTurn 2");
+  });
+
+  it("C1TC4: 空文本轮过滤（join 不多出空段）+ 空白串按非空计入增量", () => {
+    // turns: ["A"(closed), ""(closed), " "(closed), "B"(open)]
+    const r = makeRecord();
+    updateFromEvent(r, { type: "text_delta", delta: "A" });
+    updateFromEvent(r, { type: "turn_end" });
+    updateFromEvent(r, { type: "turn_end" }); // 空 turn（closed）
+    updateFromEvent(r, { type: "text_delta", delta: " " });
+    updateFromEvent(r, { type: "turn_end" });
+    updateFromEvent(r, { type: "text_delta", delta: "B" });
+    // from=2 起：空 turn 在 from 之前不参与；" " 按非空处理计入增量（filter 判据与 getFullText 逐字对齐）
+    expect(getFullTextFrom(r, 2)).toBe(" \n\nB");
+    // 空 turn 过滤：from=0 时不产出空段（join 不多出 \n\n 空段）
+    expect(getFullTextFrom(r, 0)).toBe("A\n\n \n\nB");
+  });
+
+  it("C1TC5: from >= turns.length 越界返回空串（不抛错、不回绕）", () => {
+    const r = makeRecord();
+    updateFromEvent(r, { type: "text_delta", delta: "Turn 1" });
+    updateFromEvent(r, { type: "turn_end" });
+    updateFromEvent(r, { type: "text_delta", delta: "Turn 2" });
+    expect(getFullTextFrom(r, r.turns.length)).toBe("");
+    expect(getFullTextFrom(r, r.turns.length + 5)).toBe("");
+  });
+
+  it("C1TC6: from 为负规范化为 0（与 from=0 / getFullText 等价，无 slice 负偏移语义）", () => {
+    const r = makeRecord();
+    updateFromEvent(r, { type: "text_delta", delta: "Turn 1" });
+    updateFromEvent(r, { type: "turn_end" });
+    updateFromEvent(r, { type: "text_delta", delta: "Turn 2" });
+    expect(getFullTextFrom(r, -1)).toBe(getFullTextFrom(r, 0));
+    expect(getFullTextFrom(r, -100)).toBe(getFullText(r));
+    expect(getFullTextFrom(r, -100)).toBe("Turn 1\n\nTurn 2");
+  });
+});
+
+// ============================================================
+// nextRoundBaseTurnIndex — 轮次边界推进公式（round-base-increment wave1）
+// ============================================================
+describe("nextRoundBaseTurnIndex", () => {
+  it("C1TC7: 全闭合推进 length / fresh record（[emptyTurn()] 单未闭合空 turn）返回 0", () => {
+    // 全闭合：2 个 closed turn → length
+    const r = makeRecord();
+    updateFromEvent(r, { type: "text_delta", delta: "Turn 1" });
+    updateFromEvent(r, { type: "turn_end" });
+    updateFromEvent(r, { type: "text_delta", delta: "Turn 2" });
+    updateFromEvent(r, { type: "turn_end" });
+    expect(r.turns.length).toBe(2);
+    expect(nextRoundBaseTurnIndex(r)).toBe(2);
+
+    // fresh 形态（createRecord：turns=[emptyTurn()] 单个未闭合空 turn）→ 0（ES6 重建回退语义）
+    const fresh = createRecord("fresh-1", {
+      agent: "worker",
+      model: "test-model",
+      thinkingLevel: undefined,
+      mode: "sync",
+      task: "t",
+      slug: "t",
+      startedAt: 1000,
+      rootSessionId: "sess-main",
+      parentRecordId: undefined,
+      depth: 0,
+    });
+    expect(fresh.turns).toHaveLength(1);
+    expect(nextRoundBaseTurnIndex(fresh)).toBe(0);
+  });
+
+  it("C1TC8 ⛔ ES1 探针: 滞后空 turn（防御分支）边界不丢下轮首段文本", () => {
+    // 防御分支构造（pi 现事件序下不可达——带 usage 的 message_end 恒先于 turn_end；探针
+    // 按防御分支构造仍有效，锁住公式在滞后交错下的正确性，防 pi 未来事件序变化）。
+    // 两层 usage 守卫：session-runner.ts 转发层 if (msg?.usage)（bare message_end 不转发）
+    // + execution-record.ts 累积层 if (event.usage)（bare message_end 不开 turn）——
+    // 故本探针的 message_end 必须携带 usage（如 { input: 10, output: 5, cacheRead: 0, cacheWrite: 0 }）才能开出空 turn。
+    const r = makeRecord();
+    updateFromEvent(r, { type: "text_delta", delta: "R1" });
+    updateFromEvent(r, { type: "turn_end" }); // 闭合本轮
+    updateFromEvent(r, {
+      type: "message_end",
+      usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0 },
+    }); // 滞后 message_end 开新空 turn
+    expect(r.turns.length).toBe(2);
+    expect(r.turns[1]!.closed).toBe(false);
+    expect(r.turns[1]!.text).toBe("");
+
+    // 推进：滞后空 turn 不计入边界（turns.length - 1，留在下一轮增量内）
+    const base = nextRoundBaseTurnIndex(r);
+    expect(base).toBe(1);
+
+    // 新轮 text_delta 复用该空 turn → 文本落在增量范围内，不丢
+    updateFromEvent(r, { type: "text_delta", delta: "R2" });
+    expect(r.turns.length).toBe(2); // 复用，未新开
+    expect(getFullTextFrom(r, base)).toBe("R2");
+
+    // 对照组：若直用 turns.length 推进，R2 被挤出 slice——被防住的丢文本负面行为锁定
+    expect(getFullTextFrom(r, r.turns.length)).toBe("");
+  });
+
+  it("C1TC9: 末 turn 未闭合且非空计入本轮（防御形态公式锁定，R1 观测哨触发条件）", () => {
+    // pi 现序不可达（agent_settled 在 agent_end 之后，error/aborted 也先 emit turn_end）；
+    // 构造该防御形态锁死公式行为：非空文本计入本轮增量、不 defer 到下轮。
+    const r = makeRecord();
+    updateFromEvent(r, { type: "text_delta", delta: "Turn 1" });
+    updateFromEvent(r, { type: "turn_end" });
+    updateFromEvent(r, { type: "text_delta", delta: "Unclosed tail" }); // 未闭合非空尾 turn
+    expect(nextRoundBaseTurnIndex(r)).toBe(r.turns.length);
+    expect(nextRoundBaseTurnIndex(r)).toBe(2);
+  });
+});
+
+// ============================================================
 // getAllToolCalls / getTotalUsage — 聚合派生
 // ============================================================
 describe("getAllToolCalls", () => {
@@ -955,5 +1103,56 @@ describe("projectLiveProgress (T3.21)", () => {
     });
     const result = projectLiveProgress(record);
     expect(result.lastError).toBe("something went wrong");
+  });
+});
+
+// ============================================================
+// tool_end running 索引 [perf]
+// ============================================================
+// 索引弹尾必须与旧实现「倒序全扫找最后一个 running 同名」语义等价：
+// 同名并发 toolCall 的 tool_end 交错到达时按 LIFO 配对，配对结果写回正确槽位。
+describe("tool_end running index [perf]", () => {
+  const start = (record: ExecutionRecord, name: string, args: Record<string, unknown> = {}) =>
+    updateFromEvent(record, { type: "tool_start", toolName: name, args });
+
+  const end = (record: ExecutionRecord, name: string, result: string) =>
+    updateFromEvent(record, { type: "tool_end", toolName: name, result, isError: false });
+
+  it("同名并发两个 toolCall：tool_end LIFO 配对，结果写回各自槽位", () => {
+    const record = makeRecord();
+    start(record, "bash", { cmd: "first" });
+    start(record, "bash", { cmd: "second" });
+
+    // 第一个 end 配对最后 push 的 running 同名（second）——与旧倒序全扫一致
+    end(record, "bash", "result-for-second");
+    const calls = record.turns[0]!.toolCalls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({ args: { cmd: "first" }, _status: "running" });
+    expect(calls[1]).toMatchObject({ result: "result-for-second", _status: "done" });
+
+    // 第二个 end 配对剩下的 first
+    end(record, "bash", "result-for-first");
+    expect(calls[0]).toMatchObject({ result: "result-for-first", _status: "done" });
+    expect(calls[1]).toMatchObject({ result: "result-for-second", _status: "done" });
+  });
+
+  it("索引 miss（无 tool_start 的外部注入 tool_end）→ fallback 全扫后 push 幽灵条目", () => {
+    const record = makeRecord();
+    end(record, "external_tool", "injected");
+    const calls = record.turns[0]!.toolCalls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ toolName: "external_tool", result: "injected", _status: "done" });
+  });
+
+  it("跨 turn 滞后 tool_end：索引跨 turn 命中（与旧全扫语义一致）", () => {
+    const record = makeRecord();
+    start(record, "read");            // turn 0 内 running
+    updateFromEvent(record, { type: "turn_end" }); // 闭合 turn 0，开 turn 1
+    start(record, "write");           // turn 1
+    end(record, "write", "w-done");   // 正常配对 turn 1
+    end(record, "read", "r-done");    // 滞后 end 配对 turn 0（跨 turn 兜底）
+
+    expect(record.turns[0]!.toolCalls[0]).toMatchObject({ toolName: "read", result: "r-done", _status: "done" });
+    expect(record.turns[1]!.toolCalls[0]).toMatchObject({ toolName: "write", result: "w-done", _status: "done" });
   });
 });

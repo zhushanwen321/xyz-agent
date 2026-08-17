@@ -33,8 +33,48 @@ export const DEFAULT_AGENT_NAME = "general-purpose";
 // 执行状态机
 // ============================================================
 
-/** 唯一执行状态。所有路径共用。crashed 为进程崩溃终态（重建推断）。 */
-export type ExecutionStatus = "running" | "done" | "failed" | "cancelled" | "crashed";
+/**
+ * 唯一执行状态。所有路径共用。v4 B-1 两态收敛：旧 idle 折入 running、
+ * 旧 cancelled 折入 closed（closedReason='cancelled' 区分）。
+ *
+ * running = 活跃态。含两种子态（由派生谓词区分，见 lifecycle-predicates.ts）：
+ *   - 对话模式等待续聊（旧 idle）：进程可能保活（isIdle=hasIdleTimer）或已回收
+ *     待冷路径 resume（isResumable=running && 无活进程句柄）。
+ *   - 正在执行（有活进程句柄）。
+ *
+ * closed = 统一终态（done/failed/crashed/cancelled 合并）。具体关闭原因由
+ * {@link ClosedReason} 子枚举表达（如 user-close / gc / cancelled / parent-shutdown）。
+ * ExecutionRecord.closedReason 携带 L2 原因，投影层按需派生对外语义（error / ended）。
+ */
+export type ExecutionStatus = "running" | "closed";
+
+/**
+ * closed 终态的 L2 关闭原因子枚举。
+ *
+ * 与 ExecutionStatus="closed" 配合使用，表达「为什么关闭」：
+ *   parent-shutdown  — 父进程 session_shutdown 时回收子进程
+ *   parent-fork     — 父进程 fork 新 session 时清理旧子进程
+ *   parent-new      — 父进程创建新 subagent 时清理旧子进程
+ *   user-close      — 用户手动 close action（含对话模式 close）
+ *   cancelled       — 用户取消（close(force:true) / cancelBackground）
+ *   gc              — 通用完成/失败（一次执行自然结束、超时、错误等无专属 reason 的终态）
+ */
+export type ClosedReason = 'parent-shutdown' | 'parent-fork' | 'parent-new' | 'user-close' | 'cancelled' | 'gc';
+
+/**
+ * 对外四态（设计决策 10 细则 3）：内部 ExecutionStatus（v4 B-1 两态）收敛为 agent
+ * 可理解的状态语义。真实映射只有两条：
+ *   running → active / closed → ended（closed 统一终态，含 cancelled）。
+ * mapExternalState 不消费 ClosedReason——closed 恒映射 ended。
+ *
+ * waiting / error 是历史多态映射（idle→waiting / failed+crashed→error）的遗留声明：
+ * 对外四态联合契约不变，但当前状态机不产生这两个值。
+ *
+ * 原始 ExecutionStatus 进 list item 的 status 字段供调试；state 是对外主字段。
+ * 映射实现见 subagent-actions.ts mapExternalState——未来内部加态必须扩展该处，
+ * 漏加会在 default 分支编译报错，不影响对外契约。
+ */
+export type ExternalState = "active" | "waiting" | "ended" | "error";
 
 /** 执行模式。background = 调用方立即拿 handle 返回，子 agent 在 detached promise 里跑。 */
 export type ExecutionMode = "background";
@@ -130,6 +170,8 @@ export type SdkEvent = {
     usage?: AgentUsage & { cost?: { total: number } };
     stopReason?: string;
     errorMessage?: string;
+    /** 消息角色（message_start 事件携带，user/assistant/toolResult/custom）。 */
+    role?: string;
   };
   assistantMessageEvent?: { type?: string; delta?: string };
   reason?: string;
@@ -218,18 +260,9 @@ export interface AgentResult {
 // ExecutionRecord —— 唯一状态对象（Core 拥有，Runtime 引用）
 // ============================================================
 
-/**
- * 所有执行路径的唯一状态源。
- *
- * 收口设计：一次执行的完整内容（text/thinking/toolCalls/usage）按 turn 收口在
- * `turns: Turn[]` 里。eventLog / currentActivity / result 文本均从 turns[] 派生
- * （getEventLog / getCurrentActivity / getFullText），不再独立存储切片或缓冲。
- *
- * 生命周期：createRecord() 创建 → updateFromEvent() 实时更新（累积进 turns）→
- *           completeRecord() 冻结 → archive 立即移出内存（读时从 session.jsonl 重建）。
- *
- * TUI 永远拿 RecordSnapshot（.slice() 快照），不直接持此可变对象。
- */
+// 本 section 先声明 ExecutionRecord 的组成值对象（WorktreeHandle / AliveMarker /
+// PatchResult 等），ExecutionRecord 本体及其文档注释在 section 末尾。
+
 /**
  * worktree handle 值对象。仅 worktree:true 时持有——worktree 是独立维度，
  * 需显式开启，fork alone 不创建 worktree。
@@ -297,6 +330,18 @@ export class DirtyWorktreeError extends Error {
   }
 }
 
+/**
+ * 所有执行路径的唯一状态源。
+ *
+ * 收口设计：一次执行的完整内容（text/thinking/toolCalls/usage）按 turn 收口在
+ * `turns: Turn[]` 里。eventLog / currentActivity / result 文本均从 turns[] 派生
+ * （getEventLog / getCurrentActivity / getFullText），不再独立存储切片或缓冲。
+ *
+ * 生命周期：createRecord() 创建 → updateFromEvent() 实时更新（累积进 turns）→
+ *           completeRecord() 冻结 → archive 立即移出内存（读时从 session.jsonl 重建）。
+ *
+ * TUI 永远拿 RecordSnapshot（.slice() 快照），不直接持此可变对象。
+ */
 export interface ExecutionRecord {
   /** 唯一 ID（sync: "run-N"，bg: "bg-N-xxx"）。 */
   readonly id: string;
@@ -319,9 +364,26 @@ export interface ExecutionRecord {
   readonly parentRecordId: string | undefined;
   /** subagent 递归深度。顶层（主 session 直接创建）=0，每层嵌套 +1。 */
   readonly depth: number;
+  /**
+   * 对话模式标志（可持续对话 subagent）。true = 轮次完成进 idle 态（保留 record +
+   * worktree）等待续聊，而非一次性终态化。
+   * undefined/false = 一次性模式（默认，行为完全不变）。
+   * 向后兼容：旧 record / 旧 session 文件无此字段，按一次性模式处理。
+   */
+  readonly chatMode?: boolean;
+  /**
+   * 空闲超时毫秒数（仅 chatMode 有意义）。覆盖默认 5min idle timeout。
+   * 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
+   * 向后兼容：旧 record 无此字段，按默认值处理。
+   */
+  readonly idleTimeoutMs?: number;
 
   // ── 状态（实时更新）──
   status: ExecutionStatus;
+  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。表达「为什么关闭」。
+   *  由 tryTransition(record, "closed", reason) 写入；投影层按需派生对外语义。
+   *  向后兼容：旧 record 无此字段，按 gc 处理（通用完成/失败）。 */
+  closedReason?: ClosedReason;
   /** 完整执行内容，按 turn 组织。createRecord 初始化为 [空 turn]。 */
   turns: Turn[];
   /** turn 计数（= turns.filter(closed).length，冗余存储供投影直接读）。 */
@@ -329,6 +391,49 @@ export interface ExecutionRecord {
   totalTokens: number;
   /** 运行期最近一次 error 事件的消息（getEventLog 派生 error 条目用）。 */
   lastError: string | undefined;
+  /**
+   * 对话轮次计数（仅 chatMode 有意义）。首轮运行时 = 0；每完成一轮（finalizeRoundToIdle
+   * 进 idle）+1。undefined 时视为 0。非 chatMode 不自增。
+   */
+  round?: number;
+  /**
+   * [增量通知] 当前轮次增量的 turns[] 起始下标（仅 chatMode 有意义；内存态记账，D4 不持久化）。
+   *
+   * - 生命周期：undefined 视为 0（首轮增量 = 全量，与改造前首轮通知逐字节一致，向后兼容旧
+   *   record）；唯一写点 onRoundSettled 第 5 步（notify 之后推进），唯一读点同回调第 2 步
+   *   （`getFullTextFrom(record, record.roundBaseTurnIndex ?? 0)`）。非 chatMode 恒
+   *   undefined（onRoundSettled 是 session-runner chatMode 分支专属回调）。
+   * - D1 滞后空 turn 防丢文本（防御性）：pi 当前事件序下该形态不可达——带 usage 的
+   *   message_end 恒先于 turn_end（@earendil-works/pi-agent-core dist/agent-loop.js
+   *   :240/:253/:547 三处 message_end emit 均在 :131 正常路径 turn_end 之前），settle 时
+   *   turn 全闭合。防 pi 未来事件序变化：若 settle 时刻末 turn 是滞后 message_end 开出的
+   *   空 turn（execution-record.ts message_end 分支经 currentTurn，需同时过两层 usage 守卫：
+   *   session-runner.ts 转发层 `if (msg?.usage)`（bare message_end 不转发）+ execution-record.ts
+   *   累积层 `if (event.usage)`（bare message_end 不开 turn）），推进公式
+   *   nextRoundBaseTurnIndex 把它留在下一轮增量内（新轮首个 text_delta 经 currentTurn 复用该
+   *   空 turn，复用累积被 slice 覆盖）；直用 turns.length 推进会把下轮首段文本挤出 slice
+   *   范围静默丢失。
+   * - D4 不持久化：磁盘重建走 createRecord（turns 仅为初始 [emptyTurn()]），base=0 对空 turn
+   *   的增量派生等价为空、天然产出仅新轮增量，持久化是死数据。故不写 manifest、不参与重建。
+   * - pi 内部序锚定依据（R1 mitigation）：@earendil-works/pi-agent-core 0.84.0
+   *   dist/agent-loop.js :106-113（error/aborted stopReason 也先 emit turn_end 再 agent_end）
+   *   与 :131（正常路径 turn_end 收尾）；agent_settled 在 agent_end 之后 emit，故未闭合
+   *   turn 只可能来自滞后事件。pi 升级若改变 turn_end/agent_end 时序，onRoundSettled 推进前
+   *   的观测哨（末 turn 未闭合且 text 非空 → logger.warn）会留痕。
+   */
+  roundBaseTurnIndex?: number;
+  /**
+   * record 进入 idle 态的时间戳（ms）。finalizeRoundToIdle 设值；GC 定时器据此计算
+   * 剩余 TTL。undefined = 非 idle 态（running/closed/cancelled）或旧 record 缺失字段。
+   */
+  idleSince?: number;
+  /**
+   * close 优雅关闭标志（M2-B3）。chatMode record 运行中调 `close {force:false}` 时置 true；
+   * runAndFinalize 的 done 分流检查此标志——true 则终态化为 done（而非进 idle），并清标志。
+   * undefined/false = 正常 idle 分流（对话模式轮次完成进 idle 等续聊）。
+   * 仅 chatMode + running 时有意义；force:true（立即终止）不走此标志。
+   */
+  closeAfterRound?: boolean;
 
   // ── 完成 ──
   endedAt: number | undefined;
@@ -340,11 +445,29 @@ export interface ExecutionRecord {
   /** session jsonl 文件名。session 创建成功后由 session-runner.run() 回填（窗口期内 undefined）。 */
   sessionFile?: string;
 
+  /**
+   * [V2 决策 3] 子进程 pid（spawn 后由 session-runner 回填到内存 record）。
+   *
+   * 用于 lifecycle-manager 孤儿扫描（V2 §5.2 职责 4：父进程重启时按持久化 pid 扫收
+   * 上次崩溃遗留的孤儿）。本字段仅在内存记账，持久化留 Step 5（record
+   * 文件写入 pid + 启动时 scanOrphanProcesses 消费）。undefined = 尚未 spawn / 已退出。
+   * 向后兼容：旧 record 无此字段，按无 pid 处理（孤儿扫描跳过）。
+   */
+  pid?: number;
+
   /** [MF#3] worktree 模式下子 agent 改动的 patch 文件路径（worktree 外，供调用方应用）。 */
   patchFile?: string;
 
   /** worktree 隔离时的 handle（仅 worktree:true 时存在；fork alone 无此字段）。 */
   worktreeHandle?: WorktreeHandle;
+
+  /**
+   * [review round2] 该 record 创建时启用了 worktree 隔离（跨重启磁盘重建时从 session
+   * entry 的 worktree 标志恢复）。handle 本体不可序列化——跨重启后 worktreeHandle 恒
+   * undefined，续聊（冷路径 resume）须拒绝（防 cwd 静默回落主 repo 破坏隔离）。仅内存
+   * record 使用，与持久化无关；execute() 新建 record 不设（有真 handle 时无意义）。
+   */
+  hadWorktree?: boolean;
 
   // ── 控制（仅 background 持有）──
   controller: AbortController | undefined;
@@ -414,8 +537,6 @@ export interface ExecuteOptions {
   signal?: AbortSignal;
   /** 主 agent 当前模型（模型解析第三层兼底）。execute 调用方从 ctx.model 传入。 */
   ctxModel?: ModelInfo;
-  /** live 状态回流（对话流 block 实时刷新）。 */
-  onUpdate?: (details: SubagentToolDetails) => void;
   /** background 完成回调（sync 不调）。 */
   onComplete?: (record: RecordSnapshot) => void;
   /** 是否继承父会话上下文（fork 模式，只继承上下文）。 */
@@ -424,6 +545,17 @@ export interface ExecuteOptions {
   worktree?: boolean | WorktreeHandle;
   /** 覆盖执行 cwd（默认 mainCwd）。 */
   cwd?: string;
+  /**
+   * 可持续对话模式（决策 8：独立 chatMode 标志，不扩展 ExecutionMode）。
+   * true = record 标记 chatMode，轮次完成进 idle 态（保留 record + worktree，等待 message 续聊）；
+   * undefined/false = 一次性模式（默认，行为完全不变）。service.execute 透传到 createRecordForMode。
+   */
+  conversation?: boolean;
+  /**
+   * 空闲超时毫秒数（仅 conversation 模式有意义）。覆盖默认 5min idle timeout。
+   * 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
+   */
+  idleTimeoutMs?: number;
   // 注：fork 深度不从外部传入（曾暴露 parentForkDepth，改用 ALS 后 execute 内部从调用链派生，
   // 公开字段成为死字段误导调用方，已移除）。深度限制检查见 session-runner.ts 内部 RunOptions.parentForkDepth
   // （与历史残留的 types.ts RunOptions 同名不同 interface——后者已删除）。
@@ -445,12 +577,15 @@ export type ExecutionHandle = {
 // tool action 出参（外层分组，adapter 产出）
 // ============================================================
 
-/** list 的 item 结构（8 字段）。 */
+/** list 的 item 结构。 */
 export interface SubagentListItem {
   subagentId: string;
   agent: string;
   /** 短标签（≤35 字符），来自 record.slug。旧 record 反序列化时为空串。 */
   slug: string;
+  /** 对外四态（决策 10 细则 3，主字段）。由 mapExternalState(status) 派生。 */
+  state: ExternalState;
+  /** 原始内部状态（调试用，供 details 展示）。 */
   status: ExecutionStatus;
   mode: ExecutionMode;
   /** 运行秒数（running 态实时计算，终态 endedAt-startedAt）。 */
@@ -459,6 +594,16 @@ export interface SubagentListItem {
   totalTokens: number;
   /** session jsonl 文件名（窗口期内可能 undefined）。 */
   sessionFile?: string;
+  /** 直接父 subagent record ID（顶层 record 为 undefined）。[v4 A-6] 从
+   *  record.parentRecordId 派生，配合 A-5 直接父守卫（message/close 仅作用于直接子）。 */
+  parent?: string;
+  /** 可冷路径 resume（running 且无活进程句柄）。[v4 A-6] B-1「可续聊」对外表达，
+   *  agent 据 list 判断哪些 running subagent 实际可续聊（vs 正在忙）。 */
+  resumable?: boolean;
+  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。[v4 A-6] SP-4 级联关闭告知
+   *  替代——砍 before_agent_start 注入通道后，被级联关闭的 record 经 list
+   *  （includeFinished:true）可查，closedReason 显示 'parent-fork'/'parent-new' 等。 */
+  closedReason?: ClosedReason;
 }
 
 /** background 启动的内层响应（挂在 SubagentToolResult.bgResponse）。 */
@@ -482,17 +627,38 @@ export interface CancelResponse {
 }
 
 /**
+ * message 的内层响应（挂在 SubagentToolResult.messageResponse，决策 10 瘦身）。
+ *
+ * [R1 删除记录] 旧 PendingMessage（在途消息缓存条目，消费确认制，设计决策 6 状态×
+ * interrupt 映射）已随 deliverToRunning 一并删除——SP-5 upgrade 后无生产调用方，
+ * 配套三段消费链（push / message_start shift / redeliverPending 补投）全部不可达。
+ * 详见 subagent-service.ts 的删除记录注释。
+ */
+export interface MessageResponse {
+  delivered: true;
+}
+
+/** close 的内层响应（挂在 SubagentToolResult.closeResponse，决策 10 瘦身）。 */
+export interface CloseResponse {
+  closed: true;
+}
+
+/**
  * Tool 外层出参（renderResult + LLM content JSON 同源）。
- * adapter 唯一产出：领域对象（bg/list/cancel 三选一）+ action/subagentId/sessionFile。
+ * adapter 唯一产出：领域对象（bg/list/cancel/message/close 五选一）+ action/subagentId/sessionFile。
  *
  *   - background 启动 → bgResponse（subagentId 有值；sessionFile 窗口期可能 undefined）
  *   - list → listResponse（最外层 subagentId/sessionFile 为 null，sessionFile 在各 item 内）
  *   - cancel → cancelResponse（subagentId 有值；sessionFile 无意义，可为 null）
+ *   - message → messageResponse（subagentId 有值；sessionFile 无意义，可为 null）
+ *   - close → closeResponse（subagentId 有值；sessionFile 无意义，可为 null）
  */
 export type SubagentToolResult =
   | { action: "start"; subagentId: string; sessionFile: string | null; slug: string; bgResponse: BgResponse; __gui__?: GuiRenderResult }
   | { action: "list"; subagentId: null; sessionFile: null; listResponse: ListResponse; __gui__?: GuiRenderResult }
-  | { action: "cancel"; subagentId: string; sessionFile: null; cancelResponse: CancelResponse; __gui__?: GuiRenderResult };
+  | { action: "cancel"; subagentId: string; sessionFile: null; cancelResponse: CancelResponse; __gui__?: GuiRenderResult }
+  | { action: "message"; subagentId: string; sessionFile: null; messageResponse: MessageResponse; __gui__?: GuiRenderResult }
+  | { action: "close"; subagentId: string; sessionFile: null; closeResponse: CloseResponse; __gui__?: GuiRenderResult };
 
 // ============================================================
 // TUI list 视图的合并 record（4 源 merge 后的形状）
@@ -507,6 +673,8 @@ export interface SubagentRecord {
   /** 短标签（≤35 字符）。磁盘重建源旧文件可能缺失→兜底空串。 */
   slug: string;
   status: ExecutionStatus;
+  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。SP-1 新增。 */
+  closedReason?: ClosedReason;
   mode: ExecutionMode;
   startedAt: number;
   /** 根 Pi session ID（session 隔离过滤用）。递归链上所有层 record 同值。 */
@@ -530,6 +698,17 @@ export interface SubagentRecord {
   sessionFile?: string;
   /** [MF#3] worktree 模式下子 agent 改动的 patch 文件路径（worktree 外，供调用方应用）。 */
   patchFile?: string;
+  /**
+   * [review round2] 创建时启用 worktree 隔离（磁盘重建源从 session entry 恢复；内存源由
+   * recordToSubagent 从 worktreeHandle 投影）。getRecordForAction 跨重启重建时据此拒绝续聊。
+   */
+  worktree?: boolean;
+  /**
+   * 对话轮次计数（仅 chatMode idle record 有意义）。round 仅在内存维护（doFinalizeRoundToIdle
+   * 递增），跨重启不恢复（round 无磁盘持久化）；非对话模式 / 非 idle record 为 undefined。内存源由 recordToSubagent 从
+   * ExecutionRecord.round 投影。
+   */
+  round?: number;
   /** 外部 Pi 实例（进程隔离模式下由外部启动的子进程）。 */
   externalInstance?: AliveMarker;
   /** fork 模式下的 worktree handle。 */
@@ -574,6 +753,8 @@ export interface RecordSnapshot {
   /** 短标签（≤35 字符）。来自 record.slug。 */
   readonly slug: string;
   readonly status: ExecutionStatus;
+  /** 对话模式标志（与 ExecutionRecord.chatMode 同源）。cancel 别名判定用。 */
+  readonly chatMode?: boolean;
   readonly turns: number;
   readonly totalTokens: number;
   readonly startedAt: number;

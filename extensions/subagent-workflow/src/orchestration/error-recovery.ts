@@ -109,6 +109,25 @@ function isTerminal(run: WorkflowRun): boolean {
   return run.state.status === "done";
 }
 
+/**
+ * 孤儿 call 判定：dispatch 时捕获的 call 实例是否已不是 calls Map 中该 callId
+ * 的当前条目。
+ *
+ * 为何需要实例级比对（而非只查 run 状态）：rebuildRuntime 不改 status（全程
+ * running），既有的终态 stale 守卫拦不住旧 runtime 代际的迟到 completion。只有
+ * discardInFlightCalls（delete 条目）与新一代 dispatch（set 新实例）会改变
+ * 「callId → 实例」映射，故实例不等 ⟺ 本 completion 属于被丢弃/被替换的旧代际
+ * （S7-second 竞态：旧失败结果经 postAgentResult 投给新 worker 的同 callId
+ * pending，劫持重跑调用为假失败/空串假成功）。
+ *
+ * 运行期 calls Map 写点仅 discard 的 delete 与 dispatchAgentCall 的 set 两族
+ * （jsonl-run-store 的 set 在离线重水合路径，无在飞 promise），正常（非孤儿）
+ * 路径下实例恒等，无误判。
+ */
+function isOrphanedCall(run: WorkflowRun, callId: number, call: AgentCall): boolean {
+  return run.state.calls.get(callId) !== call;
+}
+
 /** 计算第 n 次重试前的退避时间（ms）：1s, 2s, 4s 指数。 */
 function backoffDelay(retryIndex: number): number {
   return RETRY_BACKOFF_BASE_MS * Math.pow(EXPONENTIAL_BACKOFF_BASE, retryIndex - 1);
@@ -122,6 +141,29 @@ function delay(ms: number): Promise<void> {
 }
 
 // ── rebuildRuntime（G3-001 整重建） ─────────────────────────
+
+/**
+ * 移除 run 中未真正完成的在飞 call（status !== "done"）及其 trace 节点。
+ *
+ * 仅 rebuildRuntime 调用——清理被旧 runtime abort 的在飞 call，避免重跑时
+ * cached replay 把 abort 产生的 failed 结果当作已完成结果回放（原 MUST_FIX
+ * round-4 #1，自 pause 路径移入崩溃重建路径）。genuinely-done 的 call（成功或
+ * 失败均 "done"）保留，重跑时按原语义 replay（不重复耗 token）。
+ *
+ * 返回被丢弃的 callId 数组（升序——Map 迭代按插入序，排序保证返回值与
+ * rebuildRuntime 的 L3 日志 payload 形态稳定），供调用方记日志。
+ */
+function discardInFlightCalls(run: WorkflowRun): number[] {
+  const inFlight: number[] = [];
+  for (const [callId, call] of run.state.calls) {
+    if (call.status !== "done") inFlight.push(callId);
+  }
+  for (const callId of inFlight) {
+    run.state.calls.delete(callId);
+    run.state.trace.removeByStepIndex(callId);
+  }
+  return inFlight.sort((a, b) => a - b);
+}
 
 /**
  * 重建整个 RunRuntime：新 controller + 新 gate + 新 worker。
@@ -142,19 +184,56 @@ export function rebuildRuntime(
   deps: LifecycleDeps,
   handlers: WorkerHandlers,
 ): void {
+ // OB3（可观察性）：rebuild 关键节点 debug 日志——此前函数体 0 处 deps.log，
+ // 崩溃自愈只能靠行为证据诊断（L1 入口 / L2 重排 / L3 discard / L4 完成）。
+  deps.log?.("debug", "workflow:error-recovery", "runtime rebuild start", {
+    runId: run.runId,
+    budgetTimeMs: run.spec.budgetTimeMs,
+  });
   const controller = new AbortController();
   const gate = new ConcurrencyGate({ maxConcurrency: DEFAULT_CONCURRENCY });
   const worker = deps.workerHost.start(run.spec, run.spec.args, handlers);
  // D-12 regression fix (round-2 #2)：重新调度 run 级墙钟预算计时器。
  // replaceRuntime 释放旧 runtime 时 clearTimeout 了旧计时器（run-runtime.release），
  // 新 runtime 必须重排，否则带 budgetTimeMs 的 run 命中一次 worker/script 错误重试后
- // 时间预算静默失效（直到 pause/resume 才重排）。deps.scheduleTimeBudget 由 Interface
- // 层注入；未注入时（旧测试）跳过重排（兼容，不影响无时间预算的 run）。
-  const timeBudgetTimer =
-    run.spec.budgetTimeMs && run.spec.budgetTimeMs > 0 && deps.scheduleTimeBudget
-      ? deps.scheduleTimeBudget(run.runId, run.spec.budgetTimeMs)
-      : undefined;
+ // 时间预算静默失效（直到 rebuildRuntime 才重排——本函数即唯一重排点）。
+ // deps.scheduleTimeBudget 由 Interface 层注入；未注入时（旧测试）跳过重排（兼容，
+ // 不影响无时间预算的 run）。
+ // 重排分支改为 if——语义与原三元一致（同一条件调 scheduleTimeBudget），仅为在
+ // 分支内记 L2 日志，控制流/异常语义零变化。
+  let timeBudgetTimer: ReturnType<typeof setTimeout> | undefined;
+  if (run.spec.budgetTimeMs && run.spec.budgetTimeMs > 0 && deps.scheduleTimeBudget) {
+    timeBudgetTimer = deps.scheduleTimeBudget(run.runId, run.spec.budgetTimeMs);
+    deps.log?.("debug", "workflow:error-recovery", "time budget rescheduled", {
+      runId: run.runId,
+      budgetTimeMs: run.spec.budgetTimeMs,
+    });
+  }
   run.replaceRuntime(new RunRuntime(worker, gate, controller, timeBudgetTimer));
+ // 清除被旧 runtime abort 的在飞 call——必须在 replaceRuntime 之后同步执行（无
+ // await 间隔）：replaceRuntime 同步 abort 旧 controller + terminate 旧 worker，
+ // 在飞 executeAgentCall 的 finalize 发生在 `await runner.run` resolve 后的
+ // microtask，此刻在飞 call 仍为 "running"/"pending"（status !== "done"）可精确
+ // 清理；genuinely-done 的 call 保留（重跑 replay）。放 delay 退避之前会误删退避
+ // 期间自然完成的真结果（重跑重复耗 token）；放任何 await 之后，假失败已 finalize
+ // 为 "done" 挡不住——重跑 replay 会把 abort 错误当真结果回放，静默污染输出。
+ // 注意：discard 只清 Map/trace 条目，旧 executeAgentCall 的 promise 链仍会醒来
+ // finalize。markDone 在孤儿实例上无害，但后续投递并非 no-op——postAgentResult
+ // 会投给 run.runtime（已是新 worker）的同 callId pending，劫持重跑调用（实测
+ // S7-second 竞态：旧失败结果被 worker 侧 resolve 为空串 → 脚本假成功）；
+ // finalizeCall 的 trace.update 在重跑已 append 同 stepIndex 新节点时命中新节点
+ // （瞬时污染，由重跑完成时的 update 覆盖）。该投递由 dispatchAgentCall 的
+ // 孤儿守卫（isOrphanedCall）拦截，trace.update 的瞬时污染由 executeAgentCall
+ // 的 isOrphaned 谓词（OB2）拦截，此处不重复设防。
+  const discardedCallIds = discardInFlightCalls(run);
+  deps.log?.("debug", "workflow:error-recovery", "in-flight calls discarded", {
+    runId: run.runId,
+    callIds: discardedCallIds,
+    count: discardedCallIds.length,
+  });
+  deps.log?.("debug", "workflow:error-recovery", "runtime rebuild complete", {
+    runId: run.runId,
+  });
 }
 
 // ── handleWorkerMessage（消息路由） ──────────────────────────
@@ -166,7 +245,7 @@ export function rebuildRuntime(
  * return → transition done,completed（脚本正常返回）
  * error → handleScriptError（脚本主动抛错）
  *
- * 终态/paused 状态下的 stale 消息丢弃（P0-1）。
+ * 终态（done）下的 stale 消息丢弃（P0-1）。
  */
 export async function handleWorkerMessage(
   run: WorkflowRun,
@@ -174,8 +253,8 @@ export async function handleWorkerMessage(
   deps: LifecycleDeps,
   handlers: WorkerHandlers,
 ): Promise<void> {
- // 终态/paused 状态丢弃 stale 消息（P0-1）
-  if (isTerminal(run) || run.state.status === "paused") return;
+ // 终态（done）丢弃 stale 消息（P0-1）
+  if (isTerminal(run)) return;
 
  // M7: 形状校验——防畸形 IPC 消息（worker 崩溃/发非对象）导致下游 TypeError
   if (typeof raw !== "object" || raw === null) return;
@@ -215,8 +294,12 @@ export async function handleWorkerMessage(
  * **C-2 修复**：call 完成后检查 `budget.isExceeded` → abortRun(budget_limited)，
  * 终止整个 run（避免烧光预算后继续 spawn 新 call）。
  *
- * **stale 完成守卫**：.then 内 recheck `run.state.status === "running"`，paused 后到达的
- * call 完成不写 run.state.calls / 不 postAgentResult（pause 是干净快照）。
+ * **stale 完成守卫（两层）**：completion 到达时——
+ * 1. `run.state.status === "running"` recheck：run 终止（abort/terminate）后到达的
+ *    call 完成不写 run.state.calls / 不 postAgentResult（终态快照不被迟到结果污染）；
+ * 2. 孤儿 call 实例比对（isOrphanedCall）：rebuildRuntime 后旧代际 dispatch 的
+ *    completion 不投递——rebuild 不改 status，第 1 层拦不住跨 runtime 代际的迟到
+ *    结果（S7-second 竞态：旧失败结果投给新 worker 劫持重跑 pending → 假成功）。
  */
 function dispatchAgentCall(
   run: WorkflowRun,
@@ -233,7 +316,7 @@ function dispatchAgentCall(
     return;
   }
 
- // 已缓存的调用直接 replay（跨 pause/resume）
+ // 已缓存的调用直接 replay（跨 rebuild——崩溃重建后重跑脚本，已完成调用按 callId 命中缓存）
   const cached = run.state.calls.get(msg.callId);
   if (cached && cached.status === "done") {
     postAgentResult(run, msg.callId, cached.result!, true);
@@ -313,7 +396,7 @@ function dispatchAgentCall(
  // runner（runner.run）管 spawn pi 子进程。
  // assignRuntime/replaceRuntime 保证 status==="running" ⟺ runtime defined，
  // 故 run.runtime 在此必存在（dispatchAgentCall 仅从 handleWorkerMessage 调用，
- // 后者已守 paused/terminal 早期 return）。fallback new AbortController 已移除。
+ // 后者已守 terminal（isTerminal）早期 return）。fallback new AbortController 已移除。
   const runtime = run.runtime!;
   const signal = runtime.controller.signal;
   // D-005: onEvent 签名升级——executeAndAwait 直接出 AgentEvent（强类型，
@@ -333,7 +416,10 @@ function dispatchAgentCall(
     .withSlot(
       async () => {
         try {
-          await executeAgentCall(call, deps.runner, run.state.budget, signal, run.state.trace, onEvent, stream);
+ // OB2（S7 残留）：isOrphaned 谓词注入——旧代际 finalize 在 trace.update 前被
+ // 拦截（判定语义与下方 .then/.catch 守卫同一 isOrphanedCall，详见
+ // execute-agent-call.ts finalizeCall 文档注释）。
+          await executeAgentCall(call, deps.runner, run.state.budget, signal, run.state.trace, onEvent, stream, () => isOrphanedCall(run, msg.callId, call));
         } finally {
           stream?.dispose();
         }
@@ -343,10 +429,20 @@ function dispatchAgentCall(
     .then(() => {
  // 清除 live record：终态已由 executeAgentCall → finalizeCall 写入 node.result，
  // live 不再需要（且含可变状态，不保留）。无论 stale 与否都清，避免内存泄漏。
- // M4: 必须在 stale guard 之前清，否则 pause/resume 循环下 live record 累积。
+ // M4: 必须在 stale guard 之前清，否则跨 rebuild 的迟到 completion 会累积 live record。
       node.live = undefined;
- // pause/abort 后到达的 stale completion 不写 state（pause 是干净快照）
+ // run 终止（终态）后到达的 stale completion 不写 state
       if (run.state.status !== "running") return;
+ // 孤儿 call 守卫（S7-second 竞态）：rebuild 的 discardInFlightCalls 已移除本
+ // call、或重跑 dispatch 已用新实例替换同 callId 条目时，本 completion 属于旧
+ // runtime 代际。postAgentResult 的投递目标是 run.runtime（已是新 worker），
+ // 迟到结果会劫持新 worker 内重跑 agent() 的 pending Promise——跳过投递 /
+ // budget 同步 / 持久化，仅留日志。executeAgentCall 内 finalizeCall 的
+ // trace.update 若已命中重跑新节点（瞬时污染），由重跑完成时的 update 覆盖。
+      if (isOrphanedCall(run, msg.callId, call)) {
+        deps.log?.("debug", "workflow:error-recovery", "orphan agent call completion dropped", { runId: run.runId, callId: msg.callId });
+        return;
+      }
       if (call.result) postAgentResult(run, msg.callId, call.result, false);
  // D-12 regression fix (round-2 #1)：executeAgentCall 内 consume/incrementCallCount
  // 后同步 worker $BUDGET（否则 $BUDGET.spent()/remaining() 恒为 0）
@@ -401,6 +497,15 @@ function dispatchAgentCall(
  // Promise 永不 resolve → agent() 永久 await → worker 脚本挂死。构造 failed AgentResult
  //（与 resolveAgentOpts 失败路径 L262-275 一致的模式）postAgentResult 回 worker，
  // 让 pending Promise resolve（结果为 error），脚本可继续或失败退出。
+ // 孤儿 call 守卫（与 .then 对称，S7-second 竞态）：rebuild 后本 call 已被 discard
+ // 移除/替换——markDone 虽在孤儿实例上无害，但 trace.update 会污染重跑新建的同
+ // stepIndex 节点、postAgentResult 会劫持新 worker 的同 callId pending。孤儿时只
+ // 留日志，全部跳过。node.live 无条件先清（旧节点已脱离 trace，防御性统一）。
+      node.live = undefined;
+      if (isOrphanedCall(run, msg.callId, call)) {
+        deps.log?.("debug", "workflow:error-recovery", "orphan agent call failure dropped", { runId: run.runId, callId: msg.callId });
+        return;
+      }
       const errorResult: AgentResult = { content: "", error: message };
  // call 已 done（executeAgentCall 内 finalizeCall 已 markDone）时跳过，避免重复 markDone。
  // status 理论上必为 running（executeAgentCall L130 markRunning 先于 reject），pending
@@ -411,9 +516,8 @@ function dispatchAgentCall(
       }
  // state 一致性三件套（与 resolveAgentOpts 失败 L268-276 / .then L319-325 对等）：
  // trace 标 failed + 清 live record（防泄漏）+ 持久化（catch 恰是最需留证的场景）。
- // stale 终态（run 已 paused/done）时 run.runtime 为 undefined，postAgentResult 用
- // optional chaining 跳过 worker 回发；trace/state 写入仍执行（无害，pause 快照已存）。
-      node.live = undefined;
+ // stale 终态（run 已 done）时 run.runtime 为 undefined，postAgentResult 用
+ // optional chaining 跳过 worker 回发；trace/state 写入仍执行（无害，终态快照已存）。
       run.state.trace.update(msg.callId, {
         status: "failed",
         result: errorResult,
@@ -450,7 +554,7 @@ export function makeSerializeFailedResult(
  * 异步 postMessage(workflow-result) 回 worker。
  *
  * onWorkflowCall 未注入时（向后兼容），返回 error result 让脚本 soft-fail。
- * 与 dispatchAgentCall 对称：异步触发（不 await），stale 完成守卫（paused/terminal 不发）。
+ * 与 dispatchAgentCall 对称：异步触发（不 await），stale 完成守卫（终态不发）。
  */
 function dispatchWorkflowCall(
   run: WorkflowRun,
@@ -619,9 +723,9 @@ export async function handleWorkerError(
   deps: LifecycleDeps,
   handlers: WorkerHandlers,
 ): Promise<void> {
- // 与 handleWorkerMessage 对称——paused/terminal 状态丢弃 stale error。
- // 否则 paused 后到达的 worker error 仍会 workerErrorCount++（污染跨 runtime 计数）。
-  if (isTerminal(run) || run.state.status === "paused") return;
+ // 与 handleWorkerMessage 对称——终态（done）丢弃 stale error。
+ // 否则终态后到达的 worker error 仍会 workerErrorCount++（污染跨 runtime 计数）。
+  if (isTerminal(run)) return;
 
   const count = (run.meta.workerErrorCount ?? 0) + 1;
   run.meta.workerErrorCount = count;
@@ -664,7 +768,7 @@ export async function handleWorkerExit(
 ): Promise<void> {
  // G-025: stale exit 事件丢弃（handle 已不是当前 runtime 的 worker）
   if (!handle.isCurrent) return;
-  if (isTerminal(run) || run.state.status === "paused") return;
+  if (isTerminal(run)) return;
 
   if (code === 0) return; // 正常退出，no-op
 
@@ -695,8 +799,8 @@ export async function handleScriptError(
   deps: LifecycleDeps,
   handlers: WorkerHandlers,
 ): Promise<void> {
- // 与 handleWorkerMessage/handleWorkerError 对称——paused/terminal 守卫前置。
-  if (isTerminal(run) || run.state.status === "paused") return;
+ // 与 handleWorkerMessage/handleWorkerError 对称——终态守卫前置。
+  if (isTerminal(run)) return;
 
  // P2-2: 捕获 worker 诊断日志
   // L9: 追加而非覆盖
@@ -733,8 +837,8 @@ export async function handleScriptError(
 /**
  * 退避后重建 RunRuntime（G3-001 整重建）。
  *
- * 退避期间 run 可能被 pause/abort——rebuildRuntime 前重检状态，paused/terminal 时
- * 跳过重建（避免给已暂停的 run 启新 worker）。
+ * 退避期间 run 可能被 abort（转终态 done）——rebuildRuntime 前重检状态，终态时
+ * 跳过重建（避免给已终止的 run 启新 worker）。
  */
 async function scheduleRebuild(
   run: WorkflowRun,
@@ -749,7 +853,7 @@ async function scheduleRebuild(
   await delay(backoffDelay(retryIndex));
 
  // 退避期间状态可能变化——重检
-  if (isTerminal(run) || run.state.status !== "running") return;
+  if (isTerminal(run)) return;
 
   rebuildRuntime(run, deps, handlers);
 }

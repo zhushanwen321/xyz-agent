@@ -304,6 +304,8 @@ export default {
   bgNotify: {
     title: 'Background notification',
     cancelled: 'Cancelled',
+    roundLabel: 'finished round {round}',
+    roundDone: 'finished a round',
     patchHint: 'Changes saved as patch: {file} (apply with git apply)',
   },
   forkNotice: {

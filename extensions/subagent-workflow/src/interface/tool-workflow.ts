@@ -1,16 +1,15 @@
 /**
- * Workflow Extension — workflow tool（5 actions，FR-5 tool 收口）。
+ * Workflow Extension — workflow tool（3 actions，FR-5 tool 收口）。
  *
  * 合并原 tool-workflow.ts + tool-workflow-run.ts 为单 tool。
  *
  * Actions:
  * - run: registry.get → runWorkflow（直接启动，无需用户确认）
  * - status: 列出 runs（deps.runs）
- * - pause: 调 pauseRun
- * - resume: 调 resumeRun
  * - abort: 调 abortRun
  *
- * **restart 不包含**（D-9 废弃）。
+ * **restart 不包含**（D-9 废弃）；**pause/resume 不包含**（一次性生命周期——run
+ * 不可挂起，提前停止用 abort，要新结果开新 run）。
  *
  * 层归属：Interface。依赖 Pi SDK + Engine lifecycle/launcher + helpers。
  *
@@ -36,7 +35,7 @@ import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
 import { THINKING_ORDER } from "../execution/model-resolver.ts";
 import type { LauncherDeps } from "../orchestration/launcher.ts";
 import { ArgsValidationError } from "../orchestration/args-validator.ts";
-import { abortRun, pauseRun, resumeRun, runWorkflow } from "../orchestration/lifecycle.ts";
+import { abortRun, runWorkflow } from "../orchestration/lifecycle.ts";
 import type { RunStore } from "../orchestration/models/ports.ts";
 import type { WorkflowRun } from "../orchestration/models/workflow-run.ts";
 import { mapRunIcon, mapRunStatus, toGuiCtx } from "./gui-mappers.ts";
@@ -54,15 +53,11 @@ import { formatElapsed, renderTextFallback } from "./views/format.ts";
 export type WorkflowAction =
   | "run"
   | "status"
-  | "pause"
-  | "resume"
   | "abort";
 
 const WORKFLOW_ACTIONS: readonly WorkflowAction[] = [
   "run",
   "status",
-  "pause",
-  "resume",
   "abort",
 ];
 
@@ -80,7 +75,7 @@ const WorkflowParams = Type.Object({
     }),
   ),
   runId: Type.Optional(
-    Type.String({ description: "Workflow run ID (pause/resume/abort)" }),
+    Type.String({ description: "Workflow run ID (abort action)" }),
   ),
   args: Type.Optional(
     Type.Record(Type.String(), Type.Unknown(), {
@@ -96,7 +91,7 @@ const WorkflowParams = Type.Object({
     description: "Run-level model override in 'provider/modelId' format. When set, all agents spawned by this run inherit it by default (unless a per-call agent() opts.model is set). Omit to inherit the main agent's model.",
   })),
   thinkingLevel: Type.Optional(StringEnum(THINKING_ORDER, {
-    description: "Run-level thinkingLevel override (off/minimal/low/medium/high/xhigh/max). All agents in this run inherit it by default. Omit to inherit the main agent's thinking level.",
+    description: "Run-level thinkingLevel override (off/minimal/low/medium/high/xhigh/max). All agents in this run inherit it by default. Omit to default each agent to its model's highest available level.",
   })),
 });
 
@@ -229,7 +224,7 @@ interface RunSummary {
 export type WorkflowToolDetails =
   | { action: "run"; runId: string; status: "running" | "not_found" | "invalid_args"; name: string; slug?: string; stateFile?: string; __gui__?: GuiRenderResult }
   | { action: "status"; runs: RunSummary[]; __gui__?: GuiRenderResult }
-  | { action: "pause" | "resume" | "abort"; runId: string; status: string; reason?: string; __gui__?: GuiRenderResult };
+  | { action: "abort"; runId: string; status: string; reason?: string; __gui__?: GuiRenderResult };
 
 /** Result returned by the `workflow` tool's execute. */
 export interface ToolResult {
@@ -283,14 +278,12 @@ export function buildWorkflowGui(details: WorkflowToolDetails) {
       }),
     });
   }
-  // pause/resume/abort
-  // abort 是破坏性终止、pause 是挂起（非成功完成），用 warn 区分；resume 保留 ok
-  const severity = details.action === "abort" || details.action === "pause" ? "warn" as const : "ok" as const;
+  // abort（唯一 lifecycle action）：破坏性终止非成功完成，用 warn 与成功区分
   return guiComponent("stats-line", {
     items: [{
       label: details.action,
       value: details.runId.slice(0, RUNID_SHORT),
-      severity,
+      severity: "warn" as const,
     }],
   });
 }
@@ -298,7 +291,8 @@ export function buildWorkflowGui(details: WorkflowToolDetails) {
 // ── Tool registration ────────────────────────────────────────
 
 /**
- * 注册 workflow tool（5 actions: run / status / pause / resume / abort）。
+ * 注册 workflow tool（3 actions: run / status / abort；pause/resume 已随一次性
+ * 生命周期移除——enum 拒绝由 pi 核心校验拦截，见 F3）。
  *
  * @param pi ExtensionAPI
  * @param deps LauncherDeps（LifecycleDeps + registry）
@@ -318,9 +312,9 @@ export function registerWorkflowTool(
     name: "workflow",
     label: "Workflow",
     description:
-      "Execute and control workflows: run (start), status, pause, resume, abort.\n" +
+      "Execute and control workflows: run (start), status, abort.\n" +
       "Replaces workflow + workflow-run tools.",
-    promptSnippet: "Run, pause, resume, abort, or check workflow status",
+    promptSnippet: "Run, abort, or check workflow status",
     promptGuidelines: [
       "PRIORITY: When user says 'workflow', 'run workflow', try run action FIRST.",
       "All listed workflows run DIRECTLY with action:run — refs/descriptions come from " +
@@ -329,10 +323,11 @@ export function registerWorkflowTool(
       "workflow-script generate for patterns already covered by available workflows.",
       "run: pass the absolute .js path from <available_workflows> <location> as name, then start in background (no user confirmation needed).",
       "Do NOT poll status after starting — results appear automatically via notifyDone.",
+      "Runs are one-shot: there is no pause/resume — to stop a run early use abort; for a fresh result start a new run.",
       "Call shapes (JSON): " +
       "- run: {\"action\":\"run\",\"name\":\"<script>\",\"args\":{...},\"tokens\":N,\"time\":N,\"model\":\"<provider/modelId>\",\"thinkingLevel\":\"<level>\"}. " +
       "- status: {\"action\":\"status\"}. " +
-      "- pause/resume/abort: {\"action\":\"pause\",\"runId\":\"<id>\"} (abort optional: ,\"error\":\"<reason>\"}).",
+      "- abort: {\"action\":\"abort\",\"runId\":\"<id>\"} (optional: {\"error\":\"<reason>\"}).",
       "Budget: Do NOT set tokens/time unless the user explicitly requests a limit. Built-in workflows run unlimited by default.",
       "Model/thinkingLevel: omit by default (inherit main agent's model). Only set model/thinkingLevel when the user explicitly requests a specific model or thinking depth for this run.",
       "Anti-patterns: Flattening args sub-fields (task/items/...) to the top level — they belong inside args. Calling {\"action\":\"run\"} without name.",
@@ -368,12 +363,6 @@ export function registerWorkflowTool(
             break;
           case "status":
             result = actionStatus(deps);
-            break;
-          case "pause":
-            result = await actionLifecycle("pause", params, deps);
-            break;
-          case "resume":
-            result = await actionLifecycle("resume", params, deps);
             break;
           case "abort":
             result = await actionLifecycle("abort", params, deps);
@@ -551,10 +540,12 @@ function actionStatus(deps: LauncherDeps): ToolResult {
   };
 }
 
-// ── pause/resume/abort lifecycle actions ─────────────────────
+// ── abort lifecycle action ────────────────────────────────────
 
+// 一次性生命周期：abort 是唯一的提前停止方式（pause/resume 已随 D-2 移除），
+// action 参数保留字面量类型与 WorkflowAction 单成员分发对齐。
 async function actionLifecycle(
-  action: "pause" | "resume" | "abort",
+  action: "abort",
   params: WorkflowToolParams,
   deps: LauncherDeps,
 ): Promise<ToolResult> {
@@ -571,13 +562,7 @@ async function actionLifecycle(
   }
   try {
     const oldStatus = run.state.status;
-    if (action === "pause") {
-      await pauseRun(runId, deps);
-    } else if (action === "resume") {
-      await resumeRun(runId, deps);
-    } else {
-      await abortRun(runId, deps, params.error);
-    }
+    await abortRun(runId, deps, params.error);
     const newStatus = run.state.status;
     const reasonSuffix = run.state.reason ? ` (${run.state.reason})` : "";
     return {
