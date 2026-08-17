@@ -53,6 +53,7 @@ import { registerSubagentsCommand } from "./interface/subagents.ts";
 import { registerWorkflowTool } from "./interface/tool-workflow.ts";
 import { registerWorkflowScriptTool } from "./interface/tool-workflow-script.ts";
 import { JsonlRunStore } from "./orchestration/jsonl-run-store.ts";
+import { clearSkillPathCache } from "./orchestration/skill-discovery.ts";
 // ═══ orchestration/ 层（workflow engine + infra） ═══
 import type { LauncherDeps } from "./orchestration/launcher.ts";
 import { executeNestedWorkflow, runAndWait, type WorkflowRunResult } from "./orchestration/launcher.ts";
@@ -309,6 +310,11 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     const agentDir = getAgentDir();
     const sessionId = ctx.sessionManager.getSessionId();
     lsRef.lastSessionId = sessionId;
+
+    // skill 路径两级缓存 session 级失效：pi 同进程可能有多个 session（TUI /new、/fork），
+    // 运行中安装的 skill 需对新 session 可见（含曾 miss 缓存的 undefined 条目与 npm 新装
+    // 包的候选目录）。session 内复用收益不变（IF8/DM3 消重发生在同 session 的重复调用）。
+    clearSkillPathCache();
 
     // ── [M4] identity 子进程写入（V2 决策 5）──
     // 子进程经 env（PI_SUBAGENT_*）接收自己的 identity，在 session_start 用 pi.appendEntry
@@ -639,11 +645,17 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   //  不触发，此处 process.on 兜底确保 sync 子进程被收割（防线 i：shutdown 时显式
   //  SIGTERM 全部 activation）。
   //
-  //  - SIGTERM/SIGINT 注册 listener 后 Node 不执行默认终止，故 handler 内主动 exit(0)。
+  //  - SIGTERM：pi 各 mode（rpc/interactive/print）自带 SIGTERM handler 负责退出编排，
+  //    本 extension 的 handler 只做收割 + 设 exitCode（不 re-raise、不抢 pi 的退出语义；
+  //    xyz-agent 桌面 supervisor 用 SIGTERM 杀 pi 走这条路）。
+  //  - SIGINT：pi 本体不注册常规 SIGINT handler（interactive/print/rpc 均 SIGTERM only），
+  //    依赖 Node 默认终止。本 extension 注册 listener 即取消默认终止——若只设 exitCode，
+  //    本地 pi CLI 的 Ctrl-C 杀不死进程（TUI/stdin/agent loop 仍在事件循环）。故收割
+  //    完成后 re-raise 恢复默认终止，见下方 sigintHandler。
   //  - beforeExit 是退出前最后事件，不 exit（自然退出）。
   //  - idempotent guard（reapSpawnedChildrenOnShutdown 内）防多信号叠加重复 kill。
   //
-  //  防线 iii（activate 互斥）已接入：subagent-service.ts:894 冷路径 resume 调
+  //  防线 iii（activate 互斥）已接入：subagent-service.ts 冷路径 resume 调
   //  acquireActivateLock（含 30s 超时兜底，见 lifecycle-manager.ts ACTIVATE_LOCK_TIMEOUT_MS）。
   //  防线 ii（启动 scanOrphanProcesses）骨架就位，启动时接入待实现。
   // ════════════════════════════════════════════════════════════
@@ -651,12 +663,18 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     reapSpawnedChildrenOnShutdown();
     // S-3: 改用 process.exitCode 而非 process.exit(0)，让子进程 cleanup 完成后再自然退出。
     // process.exit(0) 会立即终止，可能在 reapSpawnedChildrenOnShutdown 完成前截断。
+    // 退出编排归 pi 自身的 SIGTERM handler（rpc-mode 会主动退出）。
     process.exitCode = 0;
   });
-  process.on("SIGINT", () => {
+  // [review 修复] SIGINT re-raise：收割同步完成后，先移除自身 listener 再向自身重发
+  // SIGINT，恢复 Node 默认终止。不 removeListener 直接 kill(process.pid) 会再次进入
+  // 本 handler 递归；移除后无其他 SIGINT listener（pi 不注册）→ 默认行为终止进程。
+  const sigintHandler = (): void => {
     reapSpawnedChildrenOnShutdown();
-    process.exitCode = 0;
-  });
+    process.removeListener("SIGINT", sigintHandler);
+    process.kill(process.pid, "SIGINT");
+  };
+  process.on("SIGINT", sigintHandler);
   process.on("beforeExit", reapSpawnedChildrenOnShutdown);
 
   // ════════════════════════════════════════════════════════════

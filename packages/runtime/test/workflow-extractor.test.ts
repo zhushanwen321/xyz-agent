@@ -1,15 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { extractWorkflowsFromSessionFile } from '../src/services/session/workflow-extractor.js'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 /**
  * workflow-extractor 测试。
  *
  * 数据链：主 session JSONL 的 workflow-state-link custom entry →
  * data.path 指向的 workflow-state/<runId>.jsonl（单行 RunSnapshot）→
- * 版本守卫 v==='wf-run-v1' → 映射 WorkflowRunRecord。
+ * 版本守卫 v==='wf-run-v2'（v1 旧快照跳过，D-5）→ 映射 WorkflowRunRecord。
  *
  * 测试用临时目录模拟主 session JSONL + workflow-state 文件。
  */
@@ -24,13 +27,13 @@ describe('extractWorkflowsFromSessionFile', () => {
     rmSync(tempDir, { recursive: true, force: true })
   })
 
-  it('正常映射：主 session JSONL 含 workflow-state-link + state 文件含 wf-run-v1 快照（2 个 trace 节点）', () => {
+  it('正常映射：主 session JSONL 含 workflow-state-link + state 文件含 wf-run-v2 快照（2 个 trace 节点）', () => {
     const stateFilePath = join(tempDir, 'wf-test-001.jsonl')
     const sessionFile = join(tempDir, 'main-session.jsonl')
 
-    // 构造 wf-run-v1 快照（2 个 trace 节点）
+    // 构造 wf-run-v2 快照（2 个 trace 节点）
     const snapshot = {
-      v: 'wf-run-v1',
+      v: 'wf-run-v2',
       runId: 'wf-test-001',
       spec: {
         scriptSource: 'const meta = {};',
@@ -149,12 +152,12 @@ describe('extractWorkflowsFromSessionFile', () => {
     expect(record.agentCalls[1].agent).toBe('dev-W2')
   })
 
-  it('边界：版本不匹配跳过 + 同 runId 多条 link 去重 + state 文件不存在跳过', () => {
+  it('边界：版本不匹配跳过（v1 快照 + 无 v 字段） + 同 runId 多条 link 去重 + state 文件不存在跳过', () => {
     const sessionFile = join(tempDir, 'main-session.jsonl')
 
-    // wf-A 的 state 文件（旧版本，无 v 字段）
+    // wf-A 的 state 文件（v1 旧版本快照——extension 已 bump 到 wf-run-v2，v1 一律跳过）
     const stateA = join(tempDir, 'wf-A.jsonl')
-    writeFileSync(stateA, JSON.stringify({ runId: 'wf-A', name: 'old-format' }) + '\n')
+    writeFileSync(stateA, JSON.stringify({ v: 'wf-run-v1', runId: 'wf-A', name: 'old-format' }) + '\n')
 
     // wf-B 的 state 文件不存在（path 指向不存在的文件）
     const stateB = join(tempDir, 'wf-B-does-not-exist.jsonl')
@@ -185,7 +188,7 @@ describe('extractWorkflowsFromSessionFile', () => {
 
     const result = extractWorkflowsFromSessionFile(sessionFile)
 
-    // wf-A 版本不匹配（无 v 字段）跳过，wf-B 文件不存在跳过 → 空数组
+    // wf-A 版本不匹配（v1 旧版本）跳过，wf-B 文件不存在跳过 → 空数组
     expect(result).toEqual([])
   })
 
@@ -194,12 +197,34 @@ describe('extractWorkflowsFromSessionFile', () => {
     expect(result).toEqual([])
   })
 
+  // 双源一致性护栏：runtime 的 SNAPSHOT_VERSION 是 extension 侧常量的本地副本
+  // （跨包依赖方向不允许 import extensions/ 源码），extension bump 格式版本时若漏改
+  // runtime 副本，版本守卫会把新快照全部判为不匹配跳过（renderer WorkflowList 全空）。
+  // 两个常量都未导出，读源码提取字面量断言相等。
+  it('双源一致性：runtime SNAPSHOT_VERSION 与 extension jsonl-run-store.ts 一致', () => {
+    const extSrc = readFileSync(
+      join(__dirname, '..', '..', '..', 'extensions', 'subagent-workflow', 'src', 'orchestration', 'jsonl-run-store.ts'),
+      'utf-8',
+    )
+    const extMatch = extSrc.match(/export const SNAPSHOT_VERSION = "([^"]+)"/)
+    expect(extMatch, 'extension 侧 SNAPSHOT_VERSION 导出字面量未找到——导出形式是否变了？').not.toBeNull()
+
+    const rtSrc = readFileSync(
+      join(__dirname, '..', 'src', 'services', 'session', 'workflow-extractor.ts'),
+      'utf-8',
+    )
+    const rtMatch = rtSrc.match(/const SNAPSHOT_VERSION = '([^']+)'/)
+    expect(rtMatch, 'runtime 侧 SNAPSHOT_VERSION 常量字面量未找到').not.toBeNull()
+
+    expect(rtMatch![1]).toBe(extMatch![1])
+  })
+
   it('边界：running 状态 + trace 节点含 pending/failed 的映射', () => {
     const stateFilePath = join(tempDir, 'wf-running.jsonl')
     const sessionFile = join(tempDir, 'main-session.jsonl')
 
     const snapshot = {
-      v: 'wf-run-v1',
+      v: 'wf-run-v2',
       runId: 'wf-running',
       spec: { scriptSource: '', args: {}, scriptName: 'partial-flow', scriptPath: '/wf.ts' },
       state: {

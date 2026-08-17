@@ -1,7 +1,7 @@
 // resource-policy 单测 —— SP-6 资源策略配置化（idleTimeoutMs + env 覆盖）。
 //
 // 测试策略：
-//   - 验证 armIdleTimer 的三层优先级：参数 > env PI_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
+//   - 验证 armIdleTimer 的三层优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
 //   - 用 vi.useFakeTimers() 控制时间流逝。
 //   - 每个用例 beforeEach/afterEach 清理 env + reset lifecycle state。
 
@@ -15,7 +15,7 @@ import {
 } from "../lifecycle-manager.ts";
 
 describe("resource-policy — SP-6 idleTimeoutMs 配置化", () => {
-  const ENV_KEY = "PI_SUBAGENT_IDLE_TIMEOUT_MS";
+  const ENV_KEY = "XYZ_SUBAGENT_IDLE_TIMEOUT_MS";
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -46,8 +46,8 @@ describe("resource-policy — SP-6 idleTimeoutMs 配置化", () => {
     expect(onTimeout).toHaveBeenCalledOnce();
   });
 
-  // TC-2: env PI_SUBAGENT_IDLE_TIMEOUT_MS 覆盖默认值
-  it("TC-2: env PI_SUBAGENT_IDLE_TIMEOUT_MS 覆盖默认值（不传参数时）", () => {
+  // TC-2: env XYZ_SUBAGENT_IDLE_TIMEOUT_MS 覆盖默认值
+  it("TC-2: env XYZ_SUBAGENT_IDLE_TIMEOUT_MS 覆盖默认值（不传参数时）", () => {
     process.env[ENV_KEY] = "5000"; // 5 秒
 
     const onTimeout = vi.fn();

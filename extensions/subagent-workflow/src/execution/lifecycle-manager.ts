@@ -34,12 +34,18 @@
 export const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 分钟
 
 /**
- * 从环境变量 PI_SUBAGENT_IDLE_TIMEOUT_MS 读取全局默认超时。
+ * 从环境变量 XYZ_SUBAGENT_IDLE_TIMEOUT_MS 读取全局默认超时。
  * 返回 undefined 表示 env 未设置或非法（调用方回落 DEFAULT_IDLE_TIMEOUT_MS）。
- * PI_ 前缀符合 ENV_WHITELIST_PREFIXES 白名单。
+ *
+ * [review 修复] 原 PI_ 前缀（PI_SUBAGENT_IDLE_TIMEOUT_MS）不在 ENV_WHITELIST_PREFIXES
+ * 白名单（packages/shared/src/constants.ts 只有 XYZ_ 等，无 PI_），xyz-agent 桌面
+ * spawn 链（safe-env 过滤）会丢弃该 env，配置口在桌面场景静默失效——已改名 XYZ_
+ * 前缀以透传。本地 pi CLI 直跑 env 全量继承，两种前缀都有效。注意与其他
+ * PI_SUBAGENT_* env 区分：那些是 extension 在 pi 进程内 spawn 子进程时直接注入的
+ * childEnv，不经过 safe-env 白名单过滤，PI_ 前缀无此问题。
  */
 function getEnvIdleTimeoutMs(): number | undefined {
-  const raw = process.env.PI_SUBAGENT_IDLE_TIMEOUT_MS;
+  const raw = process.env.XYZ_SUBAGENT_IDLE_TIMEOUT_MS;
   if (!raw) return undefined;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
@@ -84,14 +90,14 @@ const idleTimers = new Map<string, IdleTimerEntry>();
  *
  * @param recordId subagent record id（sa-<uuid>）
  * @param onTimeout 超时回调（调用方注入：SIGTERM 回收进程）
- * @param timeoutMs 可选。SP-6 优先级：参数 > env PI_SUBAGENT_IDLE_TIMEOUT_MS > DEFAULT_IDLE_TIMEOUT_MS。
+ * @param timeoutMs 可选。SP-6 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > DEFAULT_IDLE_TIMEOUT_MS。
  */
 export function armIdleTimer(
   recordId: string,
   onTimeout: () => void,
   timeoutMs?: number,
 ): void {
-  // SP-6 优先级：参数 > env PI_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms (5min)。
+  // SP-6 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms (5min)。
   const resolved = timeoutMs ?? getEnvIdleTimeoutMs() ?? DEFAULT_IDLE_TIMEOUT_MS;
 
   // 刷新：先清旧 timer，避免同一 record 叠加多个 armed timer。
@@ -358,7 +364,13 @@ const ACTIVATE_LOCK_TIMEOUT_MS = 30 * 1000;
 export function acquireActivateLock(recordId: string): Promise<() => void> {
   const prev = activateLockTails.get(recordId) ?? Promise.resolve();
   let releaseFn!: () => void;
+  // [review 修复] 超时放行句柄：超时者从未持有锁（race 已 reject），releaseFn 不会被
+  // 调用方触发，current 将永久 pending → tail（= prev.then(() => current)）永久
+  // pending → 后续同 recordId 的 acquire 只能靠 30s 超时出队（锁链瘫痪，只能重启
+  // 恢复）。超时回调显式 resolve current 放行链尾（见下方 timeoutPromise）。
+  let settleCurrent!: () => void;
   const current = new Promise<void>((resolve) => {
+    settleCurrent = resolve;
     // tail-identity 自清（ES7/LOCK_TAIL_GC_RACE）：resolve 后经 microtask 异步回收——
     // 仅当 Map 链尾仍是本链尾（tail）时 delete。自清检查只读 Map 引用比较、不依赖
     // 链尾 Promise 是否已 settle——release() 同步 resolve 后 microtask 执行时，无论
@@ -384,12 +396,22 @@ export function acquireActivateLock(recordId: string): Promise<() => void> {
   // 取消未触发的 timer 防泄漏。超时只 reject 本次 acquire 的返回 promise，不改 release 语义——
   // 原 holder release 仍 resolve current，链尾照常推进，后续 waiter 各受同样 30s 保护。
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  // acquire 已赢标记：prev 的 then 回调（微任务）恒先于 timer 回调（宏任务）执行，
+  // 标记位防「prev 恰在 30s 边界 settle、clearTimeout 未赶上已入队 timer」的窗口——
+  // 那时调用方已（将）持有锁，若再放行链尾会让后续 waiter 提前获锁形成双写者。
+  let acquired = false;
   const acquirePromise = prev.then(() => {
+    acquired = true;
     clearTimeout(timeoutId);
     return releaseFn;
   });
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
+      if (acquired) return;
+      // [review 修复] 超时放行链尾：resolve 自身 current，保证前序 holder release 后
+      // tail 可 settle（不绕过前序等待——prev 未 settle 时 tail 仍等 prev，互斥保持），
+      // 后续 acquire 不被本超时者的永久 pending tail 卡死。
+      settleCurrent();
       reject(
         new Error(
           `subagent ${recordId} activation timed out; retry action: message`,

@@ -332,6 +332,21 @@ describe("BgNotifier buildLlmContent 指针行（wave2：chatMode sessionFile �
 		expect(sentContent()).toBe('Subagent "w" (sa-ptr-6) failed: spawn EPIPE');
 	});
 
+	it("[review 修复] gc-failed + patchFile 并存 → failed 文案优先（失败轮也会写 patchFile，patch 提示不可达）", () => {
+		// 回归锚定：doFinalizeRecord Step 0 对 worktreeHandle 无条件 collectPatch，gc 失败 +
+		// worktree 并存时 patchFile 有值。判定顺序必须与 deriveClosedDisplay / renderRecordLines
+		// 同构（cancelled → gc+error → patch/result），否则 LLM 被告知 completed 掩盖失败。
+		notifier.notify({
+			id: "sa-ptr-8", status: "closed", closedReason: "gc", agent: "w",
+			error: "spawn EPIPE",
+			patchFile: "/tmp/patches/sa-ptr-8.patch",
+			sessionFile: "/tmp/sessions/child-8.jsonl",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe('Subagent "w" (sa-ptr-8) failed: spawn EPIPE');
+	});
+
 	it("one-shot（sessionFile 未透传 → undefined）→ closed 通知与改造前逐字节一致（基线常量锚定）", () => {
 		notifier.notify({
 			id: "sa-ptr-7", status: "closed", agent: "worker", result: "done",

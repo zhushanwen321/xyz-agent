@@ -72,6 +72,55 @@ describe("acquireActivateLock 30s 超时兜底 (v4 A-2)", () => {
     await vi.advanceTimersByTimeAsync(60000);
     release();
   });
+
+  it("[review 修复] 超时后前序 release → 链可推进：二次 acquire 立即获锁（锁链不瘫痪）", async () => {
+    // 瘫痪路径回归：waiter 超时 reject 后，若其 current 永久 pending，tail 永久
+    // pending → 前序 release 后后续 acquire 也只能 30s 超时（只能重启恢复）。
+    // 修复后超时回调 resolve 自身 current 放行链尾：release1 后 tail settle，
+    // 二次 acquire 的 prev 已 settle → 立即拿到 releaseFn。
+    const release1 = await acquireActivateLock("sa-recover");
+
+    let waiterErr: string | null = null;
+    const waiter = acquireActivateLock("sa-recover").catch((err: unknown) => {
+      waiterErr = err instanceof Error ? err.message : String(err);
+    });
+    await vi.advanceTimersByTimeAsync(0); // waiter 挂链
+    await vi.advanceTimersByTimeAsync(30001); // 超时 reject（+ 超时放行链尾）
+    await waiter;
+    expect(waiterErr).toContain("activation timed out");
+
+    release1(); // 前序释放 → tail settle（current 已被超时放行 resolve）
+    await vi.advanceTimersByTimeAsync(0); // flush microtask 链
+
+    // 二次 acquire：prev 是已 settle 的 tail → 立即拿到锁，不等 30s
+    const release2 = await acquireActivateLock("sa-recover");
+    expect(typeof release2).toBe("function");
+    release2();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it("[review 修复] 前序持续持锁时超时不放行后续 waiter 提前获锁（互斥保持）", async () => {
+    // 超时放行只 resolve 自身 current（tail 仍等 prev）；前序未 release 时，
+    // 新 acquire 依然排队等待，不会与前序 holder 形成双写者。
+    const release1 = await acquireActivateLock("sa-mutex");
+
+    const waiter1 = acquireActivateLock("sa-mutex").catch(() => {});
+    await vi.advanceTimersByTimeAsync(30001); // waiter1 超时放行自身 current
+    await waiter1;
+
+    // 前序仍持锁：新 acquire 的 prev（= waiter1 的 tail）等待 release1，不提前获锁
+    let gotRelease2 = false;
+    const waiter2 = acquireActivateLock("sa-mutex").then(() => {
+      gotRelease2 = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(gotRelease2).toBe(false); // 未提前获锁
+
+    release1();
+    await vi.advanceTimersByTimeAsync(0);
+    await waiter2; // release1 后链推进，waiter2 获锁
+    expect(gotRelease2).toBe(true);
+  });
 });
 
 describe("activateLockTails tail-identity 自清（release 后回收）", () => {

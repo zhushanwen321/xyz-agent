@@ -168,8 +168,7 @@ export type SdkEvent = {
     usage?: AgentUsage & { cost?: { total: number } };
     stopReason?: string;
     errorMessage?: string;
-    /** 消息角色（message_start 事件携带，user/assistant/toolResult/custom）。
-     *  MF-5：消费确认制按 user 消息的 message_start 清除 pendingMessages（设计决策 6 spec L251）。 */
+    /** 消息角色（message_start 事件携带，user/assistant/toolResult/custom）。 */
     role?: string;
   };
   assistantMessageEvent?: { type?: string; delta?: string };
@@ -339,22 +338,10 @@ export class DirtyWorktreeError extends Error {
 }
 
 /**
- * 在途消息缓存条目（消费确认制，设计决策 6 状态×interrupt 映射）。
- *
- * busy 投递（follow_up/steer）时缓存进 {@link ExecutionRecord.pendingMessages}；
- * pi 消费确认（message_start/turn_start 事件）时清除；进程死亡时由 M2-B2 补投。
- * M2-B1 只加此类型 + 投递时 push，不做清除/补投（M2-B2 实现）。
+ * 在途消息缓存条目（消费确认制，设计决策 6 状态×interrupt 映射）已随 deliverToRunning
+ * 一并删除（SP-5 upgrade 后无生产调用方，三段消费链全部不可达）。见 subagent-service.ts
+ * 删除记录注释。
  */
-export interface PendingMessage {
-  /** 消息唯一 id（FIFO 匹配用，crypto.randomUUID 生成）。 */
-  readonly id: string;
-  /** 消息正文。 */
-  readonly text: string;
-  /** true=steer（抢占）/ false=follow_up（排队），决策 6 状态×interrupt 映射。 */
-  readonly interrupt: boolean;
-  /** 投递墙钟时间戳（Date.now()，ms），诊断/超时判断用。 */
-  readonly sentAt: number;
-}
 
 export interface ExecutionRecord {
   /** 唯一 ID（sync: "run-N"，bg: "bg-N-xxx"）。 */
@@ -387,7 +374,7 @@ export interface ExecutionRecord {
   readonly chatMode?: boolean;
   /**
    * 空闲超时毫秒数（仅 chatMode 有意义）。覆盖默认 5min idle timeout。
-   * 优先级：参数 > env PI_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
+   * 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
    * 向后兼容：旧 record 无此字段，按默认值处理。
    */
   readonly idleTimeoutMs?: number;
@@ -441,12 +428,6 @@ export interface ExecutionRecord {
    * 剩余 TTL。undefined = 非 idle 态（running/closed/cancelled）或旧 record 缺失字段。
    */
   idleSince?: number;
-  /**
-   * 在途消息缓存（消费确认制，设计决策 6）。busy 投递（follow_up/steer）时缓存；
-   * pi 消费确认（message_start/turn_start，M2-B2 实现）时清除；进程死亡时 M2-B2 补投。
-   * M2-B1 只加字段 + 投递时 push，不做清除/补投。undefined/空 = 无在途消息。
-   */
-  pendingMessages?: PendingMessage[];
   /**
    * close 优雅关闭标志（M2-B3）。chatMode record 运行中调 `close {force:false}` 时置 true；
    * runAndFinalize 的 done 分流检查此标志——true 则终态化为 done（而非进 idle），并清标志。
@@ -565,7 +546,7 @@ export interface ExecuteOptions {
   conversation?: boolean;
   /**
    * 空闲超时毫秒数（仅 conversation 模式有意义）。覆盖默认 5min idle timeout。
-   * 优先级：参数 > env PI_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
+   * 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
    */
   idleTimeoutMs?: number;
   // 注：fork 深度不从外部传入（曾暴露 parentForkDepth，改用 ALS 后 execute 内部从调用链派生，

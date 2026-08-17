@@ -11,12 +11,13 @@
  *    同 runId 可有多条（去重保留最新 updatedAt 的 path）。
  * 2. workflow-state 文件（<sessionDir>/workflow-state/<runId>.jsonl）：
  *    单行 RunSnapshot（rewrite mode，文件始终是最新单行快照）。
- *    格式版本：v === 'wf-run-v1'（D-5 版本守卫，不匹配跳过）。
+ *    格式版本：v === 'wf-run-v2'（D-5 版本守卫，不匹配跳过；v1 快照跳过为
+ *    extension 侧声明的接受边界——旧 run 历史价值低，不做兼容迁移）。
  *
  * 提取策略：
  * - 遍历所有 custom_message entry，收集 workflow-state-link（按 runId 去重，保留最新 path）
  * - 逐个读 path 指向的 state 文件，取最后一行（rewrite mode = 最新快照）
- * - 版本守卫（v !== 'wf-run-v1' 跳过，D-5 不向后兼容）
+ * - 版本守卫（v !== 'wf-run-v2' 跳过，D-5 不向后兼容；v1 旧快照一并跳过）
  * - 映射 RunSnapshot → WorkflowRunRecord
  *
  * agent call 对话流：trace[].sessionId 是 pi session ID（uuidv7），
@@ -34,12 +35,19 @@ import { parseJsonl } from '../../utils/jsonl.js'
 import type {
   WorkflowRunRecord,
   WorkflowAgentCall,
-  WorkflowRunStatus,
   WorkflowDoneReason,
 } from '@xyz-agent/shared'
 
-/** RunSnapshot 格式版本（对齐扩展的 SNAPSHOT_VERSION）。版本不匹配跳过（D-5）。 */
-const SNAPSHOT_VERSION = 'wf-run-v1'
+/**
+ * RunSnapshot 格式版本。版本不匹配跳过（D-5）。
+ *
+ * 注意：这是 extension 侧 SNAPSHOT_VERSION 的本地副本——跨包依赖方向不允许 runtime
+ * import extensions/ 源码，只能复制字面量。权威源：extensions/subagent-workflow/src/
+ * orchestration/jsonl-run-store.ts 的 SNAPSHOT_VERSION（export const，当前 'wf-run-v2'）。
+ * extension 升级格式时必须同步 bump 此处，否则版本守卫会把新快照全部判为不匹配跳过
+ * （renderer WorkflowList 对新 run 显示为空）。
+ */
+const SNAPSHOT_VERSION = 'wf-run-v2'
 
 /** workflow-state-link entry 的 data 结构 */
 interface WorkflowStateLinkData {
@@ -90,7 +98,7 @@ interface SnapshotTraceNode {
   error?: string
 }
 
-/** RunSnapshot 顶层结构（对齐扩展 jsonl-run-store.ts 的 RunSnapshot interface） */
+/** RunSnapshot 顶层结构（对齐扩展 jsonl-run-store.ts 的 v2 RunSnapshot interface） */
 interface RunSnapshot {
   v: string
   runId: string
@@ -103,7 +111,8 @@ interface RunSnapshot {
     description?: string
   }
   state: {
-    status: 'running' | 'paused' | 'done'
+    // v2 两态（wf-run-v2 随一次性生命周期收窄，paused 态已删除）；v1 三态快照被版本守卫跳过
+    status: 'running' | 'done'
     reason?: WorkflowDoneReason
     budget: SnapshotBudget
     calls: unknown[]
@@ -115,7 +124,6 @@ interface RunSnapshot {
   meta: {
     startedAt: string
     completedAt?: string
-    pausedAt?: string
     workerErrorCount?: number
     scriptErrorCount?: number
   }
@@ -206,11 +214,12 @@ function mapSnapshotToRecord(snapshot: RunSnapshot, stateFilePath: string): Work
     scriptName: snapshot.spec.scriptName,
     slug: snapshot.spec.slug,
     description: snapshot.spec.description,
-    status: snapshot.state.status as WorkflowRunStatus,
+    // v2 两态直接赋值（是 WorkflowRunStatus 三态的子集，无需断言；
+    // 'paused' 是 WorkflowRunStatus 的 legacy 读侧值，v2 快照不产出）
+    status: snapshot.state.status,
     reason: snapshot.state.reason,
     startedAt: snapshot.meta.startedAt,
     completedAt: snapshot.meta.completedAt,
-    pausedAt: snapshot.meta.pausedAt,
     usedTokens: snapshot.state.budget?.usedTokens,
     totalCallCount: snapshot.state.budget?.totalCallCount,
     agentCalls,

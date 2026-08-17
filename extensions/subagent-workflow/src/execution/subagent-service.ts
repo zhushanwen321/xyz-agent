@@ -45,9 +45,7 @@ import {
   EPIPE_FAILURE_THRESHOLD,
   recordEpipeFailure,
   resetAllEpipeFailures,
-  sendFollowUpCommand,
   sendPromptCommand,
-  sendSteerCommand,
 } from "./stdin-writer.ts";
 import type { StreamSink } from "./stream-sink.ts";
 import { SubagentStream } from "./stream-sink.ts";
@@ -61,7 +59,6 @@ import type {
   ExecutionHandle,
   ExecutionMode,
   ExecutionRecord,
-  PendingMessage,
   RecordSnapshot,
   SubagentRecord,
 } from "./types.ts";
@@ -710,46 +707,11 @@ export class SubagentService {
 
   // ── 对话模式投递（M2-B3 message action 调用）──────────────
 
-  /**
-   * busy 投递：向 record 对应的活子进程 stdin 写 follow_up（排队）或 steer（抢占）。
-   *
-   * 设计决策 6 状态×interrupt 映射的 running 分支。同步立即返回（投递即返回，非阻塞）。
-   * 投递后把消息缓存进 record.pendingMessages（消费确认制，MF-5：message_start(user) 清除、
-   * 进程死亡时由 doFinalizeRoundToIdle 的 redeliverPending 补投）。
-   *
-   * MF-1（设计决策 6 spec L251 消费确认安全网）：record 仍 running 但子进程刚 close 的竞态窗口
-   * （getChildByRecord 返回 undefined）不再 throw——throw 会让 messageHandler 把错误直达 LLM 且
-   * 消息丢失。改为仅入队（delivery delayed, will retry），由 doFinalizeRoundToIdle 的 resume 补投。
-   * spec §3.1 失败表：「进程忙且 stdin 写入失败（进程刚退）→ delivery delayed, will retry」。
-   *
-   * @param record 目标 record（busy，running 态）
-   * @param text 消息正文
-   * @param interrupt true=steer（抢占）/ false=follow_up（排队）
-   */
-  deliverToRunning(record: ExecutionRecord, text: string, interrupt: boolean): void {
-    this.assertReady();
-    // 先入队（消费确认制安全网）：无论 child 是否存活都缓存，message_start(user) 清除 / 进程死亡补投。
-    record.pendingMessages ??= [];
-    record.pendingMessages.push({
-      id: crypto.randomUUID(),
-      text,
-      interrupt,
-      sentAt: Date.now(),
-    } satisfies PendingMessage);
-
-    const child = getChildByRecord(record.id);
-    if (!child) {
-      // MF-1 竞态窗口：record 仍 running 但子进程刚 close（agent_end 已到、pump 还未走完 finalize）。
-      // 不 throw（防消息丢失 + 错误导 LLM）；消息已入队，doFinalizeRoundToIdle 的 redeliverPending 会 resume 补投。
-      getLogger("subagents").warn(
-        `[subagents] busy deliver race window: ${record.id} child closed between status check and stdin write; message enqueued, will be re-delivered via resume when the round finalizes`,
-        { id: record.id },
-      );
-      return;
-    }
-    if (interrupt) sendSteerCommand(child, text);
-    else sendFollowUpCommand(child, text);
-  }
+  // [review 修复] 已删除 deliverToRunning（busy follow_up/steer 投递 + pendingMessages
+  // 消费确认制）：SP-5 upgrade 后所有 running record 走 chatMode 分支 → deliverMessage
+  // 统一投递（热路径 prompt+streamingBehavior / 冷路径 resume），该方法无生产调用方，
+  // 其配套三段消费链（push / message_start shift / redeliverPending 补投）全部不可达，
+  // 一并移除（详见各文件同步删除）。
 
   /**
    * idle 投递：resume spawn 开启新一轮对话（设计决策 6 idle 分支）。
@@ -855,9 +817,8 @@ export class SubagentService {
    * resumeRound 的 idle 检查会 throw）。resume spawn 后 session-runner 回填 record.pid，
    * 热路径拿到 child 时也顺便刷新 pid（resume 重开进程后 pid 已变）。
    *
-   * 与 deliverToRunning（非 chatMode busy 投递）的区别：deliverToRunning 用 follow_up/steer
-   * 命令 + pendingMessages 消费确认制；本方法用 prompt+streamingBehavior 统一语义（V2 删除
-   * 消费确认制/sidecar/重建矩阵，见决策 3）。非 chatMode 路径完全不走本方法（messageHandler 分流）。
+   * [review 修复] 曾对比的 deliverToRunning（非 chatMode busy 投递 + pendingMessages
+   * 消费确认制）已删除——SP-5 upgrade 后无生产调用方（V2 决策 3 已删消费确认制）。
    *
    * @param record 目标 record（chatMode，running 或 idle）
    * @param text 消息正文
@@ -1628,25 +1589,10 @@ export class SubagentService {
         modelService: this.modelService,
         pi: this.pi,
         emitUnregister: (id, st) => emitPendingUnregister(this.pi, id, st),
-        // MF-1：残留 pendingMessages 经 resume 补投（设计决策 6 spec L251 消费确认安全网）。
-        // redeliverPendingMessages 合并消息文本 → resumeRound 重开 session 续聊。
-        redeliverPending: (rec, mergedText) => this.redeliverPendingMessages(rec, mergedText),
       },
       record,
       result,
     );
-  }
-
-  /**
-   * MF-1 消费确认制补投（设计决策 6 spec L251）：doFinalizeRoundToIdle 发现进程退出时残留的
-   * pendingMessages（in-flight 的 follow_up/steer 未被 pi drain）后，合并文本经 resumeRound 重投。
-   *
-   * 由 doFinalizeRoundToIdle 用 setTimeout(0) 延迟调用（避开与当前 runAndFinalize 链的 pool
-   * release/acquire 时序竞争）。resume 失败由 MF-6 分流保证回退 idle（不销毁），不递归补投。
-   */
-  private redeliverPendingMessages(record: ExecutionRecord, mergedText: string): void {
-    // record 此时为 idle（doFinalizeRoundToIdle 已设），resumeRound 会手动设回 running 开新轮。
-    this.resumeRound(record, mergedText);
   }
 
   /** run() 创建期异常的收尾（H1 修复）：createAndConfigureSession 失败会抛，本方法合成 failed

@@ -1,23 +1,5 @@
 # @zhushanwen/pi-subagent-workflow
 
-## Unreleased
-
-### Major Changes
-
-- 889a798f9: **BREAKING — one-shot lifecycle: remove pause/resume across the workflow tool, /workflows command, and session lifecycle**
-
-  Runs are one-shot: there is no pause/resume — to stop a run early use abort; for a fresh result start a new run.
-
-  1. **`workflow` tool action enum narrows to `run`/`status`/`abort`.** Calls with `{"action":"pause"}` / `{"action":"resume"}` now fail pi schema validation with `Validation failed for tool "workflow"` (structured error listing the allowed enum — self-correctable by switching to abort or starting a new run).
-  2. **`/workflows` command verbs narrow to `abort`.** `/workflows pause|resume <runId>` no longer pauses/resumes; both verbs now return the removed-capability hint `Workflow <verb> has been removed — runs are one-shot. To stop a run early: /workflows abort <runId>` (warning level). Command completion no longer offers pause/resume; the TUI `p` keybinding is removed (`a` abort remains).
-  3. **Session switch/shutdown now terminates running runs as `done,failed`** (previously auto-paused and resumable). Each terminated run persists `state.error = "Session switched: run terminated"` / `"Session shutdown: run terminated"`; token spend on terminated runs is forfeited and resume is unreachable in any form — start a new run instead.
-
-  Behavior notes (non-breaking): on worker crash the runtime rebuild (up to 3 retries, unchanged) discards in-flight agent calls that the old runtime aborted (they re-run fresh), while genuinely-done calls keep their replay cache — a completed step is not re-billed after a crash. Verified in real-pi E2E: after a mid-flight crash the alpha call replayed from cache (exactly 1 subagent session file) and beta re-ran fresh (2 session files).
-
-- 931e219a0: **BREAKING — type narrowing: RunStatus two states, snapshot wf-run-v2, create-as-running**
-
-  4. **Run snapshot format bumps `wf-run-v1` → `wf-run-v2`.** Old v1 snapshot files are silently skipped on load (accepted boundary per design D-5) — runs persisted by previous versions disappear from the run list after upgrade. The state machine is now two-state (`running → done`, `done` the only terminal state): the `paused` status and the `meta.pausedAt` field are gone, runs are created directly as `running` (the transient paused construction step no longer exists), and `ReleaseMode` narrows to `"terminal"`.
-
 ## 7.3.4
 
 ### Patch Changes

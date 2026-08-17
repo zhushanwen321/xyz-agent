@@ -7,7 +7,8 @@
  * mock 策略（对齐 wave0-package-structure.test.ts）：
  *   - session-runner.killAllSpawnedChildren → vi.fn（避免真实 kill + 可断言调用）
  *   - process.on → spy + mockImplementation 捕获 handler（不真实注册，防 listener 泄漏）
- *   - process.exit → spy mock（阻止 handler 内 exit(0) 终止测试进程）
+ *   - process.kill → spy mock（SIGINT handler re-raise 会 kill 自身，必须拦截防杀测试 runner）
+ *   - process.removeListener → spy（断言 SIGINT re-raise 前先摘除自身 listener）
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -35,7 +36,8 @@ describe("[V2 决策 7 防线 i] process 级 shutdown hook", { timeout: 30000 },
   type Handler = (...args: unknown[]) => void;
   const registered: Partial<Record<string, Handler>> = {};
   let onSpy: ReturnType<typeof vi.spyOn>;
-  let exitSpy: ReturnType<typeof vi.spyOn>;
+  let removeListenerSpy: ReturnType<typeof vi.spyOn>;
+  let killSpy: ReturnType<typeof vi.spyOn>;
   let resetGuard: () => void;
 
   // hook 显式 timeout：describe 级 { timeout } 不传播给 hook（vitest 4 行为），
@@ -50,8 +52,10 @@ describe("[V2 决策 7 防线 i] process 级 shutdown hook", { timeout: 30000 },
       registered[event] = handler;
       return process;
     }) as never);
-    // 阻止 SIGTERM/SIGINT handler 内 process.exit(0) 真实终止测试 runner。
-    exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    // [review 修复配套] SIGINT handler re-raise 会 process.kill(process.pid, "SIGINT")——
+    // 必须 mock 拦截，否则触发 handler 的用例会真实杀掉测试 runner 进程。
+    killSpy = vi.spyOn(process, "kill").mockImplementation((() => true) as never);
+    removeListenerSpy = vi.spyOn(process, "removeListener");
 
     // 直接 import src/index.ts（而非 extension-root/index.ts re-export）——后者只
     // re-export default，拿不到 named export _resetProcessShutdownGuardForTest。
@@ -64,7 +68,8 @@ describe("[V2 决策 7 防线 i] process 级 shutdown hook", { timeout: 30000 },
 
   afterEach(() => {
     onSpy.mockRestore();
-    exitSpy.mockRestore();
+    killSpy.mockRestore();
+    removeListenerSpy.mockRestore();
   });
 
   it("factory 注册 process.on SIGTERM / SIGINT / beforeExit 三个 hook", () => {
@@ -80,18 +85,24 @@ describe("[V2 决策 7 防线 i] process 级 shutdown hook", { timeout: 30000 },
     expect(process.exitCode).toBe(0);
   });
 
-  it("SIGINT handler 触发时调 killAllSpawnedChildren + process.exitCode = 0", () => {
+  it("SIGINT handler 触发时收割 + re-raise（先 removeListener 自身再 kill 自身，恢复默认终止）", () => {
     resetGuard();
+    const beforeExitCode = process.exitCode;
     registered["SIGINT"]!("SIGINT");
+    // 收割（SIGTERM 信号收割全部活子进程）
     expect(killAllSpawnedChildrenMock).toHaveBeenCalledWith("SIGTERM");
-    expect(process.exitCode).toBe(0);
+    // re-raise：先摘除自身 listener（防递归），再向自身重发 SIGINT（无 listener → Node 默认终止）
+    expect(removeListenerSpy).toHaveBeenCalledWith("SIGINT", registered["SIGINT"]);
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGINT");
+    // 不再设 exitCode——退出由默认终止完成（signal death，非自然退出）
+    expect(process.exitCode).toBe(beforeExitCode);
   });
 
-  it("beforeExit handler 触发时调 killAllSpawnedChildren 但不 process.exit（自然退出）", () => {
+  it("beforeExit handler 触发时调 killAllSpawnedChildren 但不 process.kill（自然退出）", () => {
     resetGuard();
     registered["beforeExit"]!();
     expect(killAllSpawnedChildrenMock).toHaveBeenCalledWith("SIGTERM");
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(killSpy).not.toHaveBeenCalled();
   });
 
   it("idempotent：多信号叠加（SIGTERM 后又 SIGINT/beforeExit）只收割一次", () => {

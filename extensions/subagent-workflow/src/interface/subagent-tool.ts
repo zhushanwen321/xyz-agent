@@ -72,7 +72,7 @@ type SubagentRenderResultCb = (
 // 反映必填性。勿在此基础上继续堆 action 条件逻辑——要加就拆 tool。
 const SubagentParams = Type.Object({
   action: StringEnum(["start", "list", "cancel", "message", "close"], {
-    description: "Operation: 'start' runs a subagent, 'list' shows subagents, 'cancel' stops a background subagent, 'message' sends a follow-up to a conversation-mode subagent, 'close' ends a conversation-mode subagent.",
+    description: "Operation: 'start' runs a subagent, 'list' shows subagents, 'cancel' stops a background subagent, 'message' sends a follow-up to a running subagent (one-shot subagents are auto-upgraded to conversation mode on first message), 'close' ends a running subagent (conversation-mode or one-shot).",
   }),
   // ── action:"start" fields (flattened to top level). task/slug REQUIRED for start. ──
   // Missing/empty task or slug throws at runtime (startHandler).
@@ -142,10 +142,11 @@ const SubagentParams = Type.Object({
       description: "REQUIRED for action:'cancel'. The subagentId to cancel. Throws if missing. Only background subagents can be cancelled.",
     }),
   })),
-  // action:"message" → messageParam.subagentId + text REQUIRED. conversation-mode subagents only.
+  // action:"message" → messageParam.subagentId + text REQUIRED. Any RUNNING subagent works —
+  // one-shot subagents are auto-upgraded to conversation mode on first message (SP-5); ended ones throw.
   messageParam: Type.Optional(Type.Object({
     subagentId: Type.String({
-      description: "REQUIRED for action:'message'. The subagentId to message (a conversation-mode subagent started with conversation:true).",
+      description: "REQUIRED for action:'message'. The subagentId to message (any running subagent; a one-shot subagent is auto-upgraded to conversation mode on first message, so you may also message one-shot subagents that are still running).",
     }),
     text: Type.String({
       description: "REQUIRED for action:'message'. The message to send. Whitespace-only throws.",
@@ -154,10 +155,11 @@ const SubagentParams = Type.Object({
       description: "If true, interrupt the subagent's current work immediately (in-progress output stops, it switches to your new message). If false (default), the message is queued and processed after the current round completes. When the subagent is idle (between rounds), interrupt has no effect — the message always starts a new round.",
     })),
   })),
-  // action:"close" → closeParam.subagentId REQUIRED. Ends a conversation-mode subagent.
+  // action:"close" → closeParam.subagentId REQUIRED. Ends a running subagent (conversation-mode
+  // or one-shot — closeSubagent behavior split covers both).
   closeParam: Type.Optional(Type.Object({
     subagentId: Type.String({
-      description: "REQUIRED for action:'close'. The subagentId to close (a conversation-mode subagent).",
+      description: "REQUIRED for action:'close'. The subagentId to close (any running subagent, conversation-mode or one-shot).",
     }),
     force: Type.Optional(Type.Boolean({
       description: "If true, terminate immediately even if mid-round (in-progress work is lost). If false (default), let the current round finish, then close. When idle, the subagent closes immediately regardless.",
@@ -226,8 +228,8 @@ action:"list" before action:"start" — a reusable running subagent may exist; c
 ## Actions
 
 - action:"start" — run a subagent. Pass task and slug as top-level fields (REQUIRED). Optional: agent, model, thinkingLevel, skillPath, appendSystemPrompt, schema, maxTurns, graceTurns, fork, worktree, cwd, conversation, idleTimeoutMs. Background only: returns a subagentId immediately, notifies on completion.
-- action:"message" — send a follow-up message to a conversation-mode subagent (started with conversation:true); it keeps the full context across rounds. REQUIRED messageParam: { subagentId, text }. Optional: interrupt (default false). Returns { delivered: true } immediately; the reply auto-notifies when the round completes.
-- action:"close" — end a conversation-mode subagent and release its resources. REQUIRED closeParam: { subagentId }. Optional: force (default false; true terminates mid-round immediately). Always close when done.
+- action:"message" — send a follow-up message to a running subagent (conversation-mode or one-shot); it keeps the full context across rounds. REQUIRED messageParam: { subagentId, text }. Optional: interrupt (default false). Returns { delivered: true } immediately; the reply auto-notifies when the round completes.
+- action:"close" — end a running subagent and release its resources. REQUIRED closeParam: { subagentId }. Optional: force (default false; true terminates mid-round immediately). Always close when done.
 - action:"list" — list subagents. Pass listParam: { includeFinished?, limit? } (all optional). Read an item's sessionFile for full detail.
 - action:"cancel" — stop a background subagent (legacy verb; for conversation-mode use close). REQUIRED cancelParam: { subagentId }.
 
@@ -269,7 +271,7 @@ When to use:
 - ✅ Long-interval rounds (>5min apart) → conversation:true + idleTimeoutMs increased
 - ❌ Single exploration/lookup → default (one-shot)
 
-idleTimeoutMs: idle timeout in ms for conversation-mode subagents (default 300000 / 5min). Env PI_SUBAGENT_IDLE_TIMEOUT_MS sets global default; per-call param takes precedence.
+idleTimeoutMs: idle timeout in ms for conversation-mode subagents (default 300000 / 5min). Env XYZ_SUBAGENT_IDLE_TIMEOUT_MS sets global default; per-call param takes precedence.
 
 ## You cannot
 

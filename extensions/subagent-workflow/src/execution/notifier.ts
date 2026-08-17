@@ -251,6 +251,14 @@ export class BgNotifier {
         if (reason === "cancelled") {
           return `Subagent "${agent}" (${id}) cancelled.`;
         }
+        // 失败场景（gc + 有 error）：展示错误。判定必须先于 patchFile——失败轮也会写
+        // patchFile（doFinalizeRecord Step 0 对 worktreeHandle 无条件 collectPatch），若
+        // patch 分支在前，gc 失败 + worktree 并存时 LLM 被告知 completed。顺序与三处
+        // 同构契约的另外两处一致（shared/subagent.ts deriveClosedDisplay、
+        // bg-notify-render.ts renderRecordLines：cancelled → gc+error → patch/result）。
+        if (record.error && reason === "gc") {
+          return `Subagent "${agent}" (${id}) failed: ${record.error}`;
+        }
         // 成功完成（user-close）或通用结束（gc/parent-shutdown 等）：展示结果。
         // [C-2] chatMode close 终态通知附轮次统计（设计 D2 路径①"completed after N rounds"）。
         // totalRounds 仅 close 语义携带（notifyClosed）；one-shot 完成通知不设置（round 无轮次
@@ -264,10 +272,6 @@ export class BgNotifier {
           // [wave2 review] 长 return 拆行：模板串内不可直接换行（会改变输出内容），提取 patchHint 中转变量
           const patchHint = `\n\nThis subagent ran in an isolated worktree; its file changes were captured as a patch:\n  ${record.patchFile}\nTo bring these changes into the current repo, run: \`git apply ${record.patchFile}\``;
           return `${base}${patchHint}${transcriptPointer}`;
-        }
-        // 失败场景（gc + 有 error）：展示错误。
-        if (record.error && reason === "gc") {
-          return `Subagent "${agent}" (${id}) failed: ${record.error}`;
         }
         return `${base}${transcriptPointer}`;
       }

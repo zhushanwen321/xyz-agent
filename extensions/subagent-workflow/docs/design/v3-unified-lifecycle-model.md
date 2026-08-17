@@ -324,11 +324,11 @@ notify 主 agent：isIdle()=false 时退避等 idle 再发（triggerTurn 只在�
 - 探针（⛔）：xyz-agent 删除主 session 后 ps 无 subagent 残留。
 
 **D8：idle timeout 配置化（默认维持 5min）；ceiling 配置化（默认 8）；嵌套乘积不做树级控制**
-- 选择：timeoutMs 从 start 参数透传（armIdleTimer 已支持参数，只缺透传）+ 全局 env 默认覆盖（如 PI_SUBAGENT_IDLE_TIMEOUT_MS）；ceiling 同理。
-- 默认 5min 的依据（防拍脑袋改 30min）：5min 是一个**中等长度的空闲窗口**，在「免 spawn 红利」与「内存占用」之间取平衡。对 Claude 系 provider，5min 大致落在 prompt cache 的有效窗口内（cache TTL 受 context 长度、服务端负载等因素影响，不是固定常量——**不能把 5min 等同于 Anthropic prompt cache TTL 的精确值**），续聊时有概率命中 cache 省 input token；对其他 provider（Gemini/本地模型等）无 cache 或 TTL 不同，5min 退化为纯免 spawn 窗口。这是「有依据的默认值」而非「普适最优」，provider 差异由 env 覆盖（如 PI_SUBAGENT_IDLE_TIMEOUT_MS）解决。timeout 内续聊吃双红利（免 spawn + cache 命中省 input token）；timeout 外即使进程活着，cache 已过期，热路径只剩免 spawn 红利。调大到 30min 的收益仅限「免 spawn」，代价是内存窗口 ×6 + ceiling 更容易触顶（LRU 挤出别的活跃进程）。
+- 选择：timeoutMs 从 start 参数透传（armIdleTimer 已支持参数，只缺透传）+ 全局 env 默认覆盖（如 XYZ_SUBAGENT_IDLE_TIMEOUT_MS）；ceiling 同理。
+- 默认 5min 的依据（防拍脑袋改 30min）：5min 是一个**中等长度的空闲窗口**，在「免 spawn 红利」与「内存占用」之间取平衡。对 Claude 系 provider，5min 大致落在 prompt cache 的有效窗口内（cache TTL 受 context 长度、服务端负载等因素影响，不是固定常量——**不能把 5min 等同于 Anthropic prompt cache TTL 的精确值**），续聊时有概率命中 cache 省 input token；对其他 provider（Gemini/本地模型等）无 cache 或 TTL 不同，5min 退化为纯免 spawn 窗口。这是「有依据的默认值」而非「普适最优」，provider 差异由 env 覆盖（如 XYZ_SUBAGENT_IDLE_TIMEOUT_MS）解决。timeout 内续聊吃双红利（免 spawn + cache 命中省 input token）；timeout 外即使进程活着，cache 已过期，热路径只剩免 spawn 红利。调大到 30min 的收益仅限「免 spawn」，代价是内存窗口 ×6 + ceiling 更容易触顶（LRU 挤出别的活跃进程）。
 - 嵌套乘积（P10）：每进程 8 × 深度 N = 8^(N+1) 理论峰值。裁决：known limitation **文档化（动作落进 SP-6：在扩展 README 写明嵌套树级总量无控制、单进程资源有界的边界）**，不做树级总量控制（嵌套深度本身有限制；树级控制需要跨进程协调，复杂度不成比例——准则 8 减法）。G5 的「资源有界」按单进程解读（ceiling per-process），树级总量不承诺。
 - 探针（⛔）：start 传 idleTimeoutMs 生效；env 覆盖默认值生效。
-- **[实现修订 2026-08-13] 接线已闭合**：`record.idleTimeoutMs` 已在 ExecuteOptions → createRecord → session-runner 的 armIdleTimer 调用链完整透传。三级优先级（参数 > env PI_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms）已在 lifecycle-manager.ts 实现。
+- **[实现修订 2026-08-13] 接线已闭合**：`record.idleTimeoutMs` 已在 ExecuteOptions → createRecord → session-runner 的 armIdleTimer 调用链完整透传。三级优先级（参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms）已在 lifecycle-manager.ts 实现。
 
 **D9：turn-limiter 语义（P11）**
 - 选择：chatMode 下 maxTurns 按「每轮 reset」（一轮 = 一次 message 到 agent_settled），graceTurns 同；全程累计不做（续聊本质是无限轮，累计上限违背 G1）。
@@ -391,7 +391,7 @@ notify 主 agent：isIdle()=false 时退避等 idle 再发（triggerTurn 只在�
 
 ### S8：资源策略配置化（回溯 G5，SP-6）
 
-- 步骤：① 设 PI_SUBAGENT_IDLE_TIMEOUT_MS=60000 起 chatMode subagent；② 65s 内观察进程存活；③ start 时透传 idleTimeoutMs=10000，11s 后观察。
+- 步骤：① 设 XYZ_SUBAGENT_IDLE_TIMEOUT_MS=60000 起 chatMode subagent；② 65s 内观察进程存活；③ start 时透传 idleTimeoutMs=10000，11s 后观察。
 - 通过标准：①65s 时进程已回收（非 5min）；③11s 时回收；未配置时默认 5min。
 
 ### S9：worktree 级联清理（回溯 G2，SP-4）

@@ -145,7 +145,7 @@ describe("SP-5 one-shot upgrade（message → chatMode + 冷 resume）", () => {
 
     // 验证 chatMode 被升级
     expect(record.chatMode).toBe(true);
-    // 验证 record 仍为 running（热路径 deliverToRunning 不改 status，deliverMessage 设 running）
+    // 验证 record 仍为 running（deliverMessage 热路径设 running）
     expect(record.status).toBe("running");
     // 验证 record 在内存中（非终态，未被 archive）
     expect(store.getMutable(record.id)).toBeDefined();

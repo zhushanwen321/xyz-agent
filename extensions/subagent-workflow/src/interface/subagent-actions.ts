@@ -125,10 +125,19 @@ export interface CancelHandlerResult {
  * 不新增 sessionId 到 ExecutionRecord（YAGNI，修跨 session 清理是独立问题）。
  */
 
+/** exhaustiveness 兜底：default 分支把 status 收敛为 never，ExecutionStatus 加态时 tsc 报错。 */
+function assertNever(value: never): string {
+  return String(value);
+}
+
 /**
- * 内部 ExecutionStatus → 对外四态映射（设计决策 10 细则 3）。
- *   running → active / idle → waiting / done+cancelled → ended / failed+crashed → error
- * 未来内部加态只需扩展此处，不影响对外契约。
+ * 内部 ExecutionStatus → 对外 state 映射（设计决策 10 细则 3）。
+ * v4 B-1 两态收敛后的真实映射只有两条：
+ *   running → active / closed → ended（closed 统一终态，含 cancelled）
+ * ExternalState 仍声明 waiting/error 四态联合（对外契约不变），但当前状态机不产生
+ * 这两个值——它们是历史多态映射（idle→waiting / failed+crashed→error）的遗留声明。
+ * 未来内部加态必须扩展此处，漏加会在 default 分支编译报错（而非静默返回 undefined
+ * 让 state 字段以无主值进入 listResponse JSON）。
  */
 export function mapExternalState(status: ExecutionStatus): ExternalState {
   switch (status) {
@@ -137,6 +146,8 @@ export function mapExternalState(status: ExecutionStatus): ExternalState {
     case "closed":
       // v4 B-1: closed 统一终态（含 cancelled）。对外映射为 ended。
       return "ended";
+    default:
+      throw new Error(`mapExternalState: unhandled ExecutionStatus ${assertNever(status)}`);
   }
 }
 
@@ -328,10 +339,13 @@ export type MessageHandlerResult = {
 /**
  * message action handler：向对话模式 subagent 续聊/插入消息。
  *
- * 状态 × interrupt 自动映射（设计决策 6，agent 只表达意图）：
- *   running → deliverToRunning（busy 投递：interrupt=true 抢占 / false 排队）
- *   idle    → resumeRound（resume 重开 session + prompt，interrupt 自动退化，agent 无感）
+ * 状态 × interrupt 自动映射（agent 只表达意图）：
+ *   running → deliverMessage 热路径（进程活：prompt + streamingBehavior，interrupt=true
+ *             抢占 / false 排队，pi 权威裁决 busy/idle）
+ *   进程死  → deliverMessage 冷路径（resumeRound 重开 session + prompt，interrupt 自动
+ *             退化，agent 无感）
  *   终态    → throw ended（正常路径不命中——终态 record 已 archive，getRecordForAction 先 throw not found）
+ * （旧 deliverToRunning busy 投递已删除——SP-5 upgrade 后 running 恒走 deliverMessage）
  *
  * 归属守卫（决策 3）：getRecordForAction 内部校验 rootSessionId。
  *

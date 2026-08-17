@@ -202,7 +202,7 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
   });
 
   /** 构造 FinalizeDeps：worktreeManager.cleanup / store.archive 为 vi.fn 以断言「不调」。 */
-  function makeDeps(redeliverPending?: ReturnType<typeof vi.fn>) {
+  function makeDeps() {
     return {
       manifestStore,
       worktreeManager: { cleanup: vi.fn(), collectPatch: vi.fn() } as never,
@@ -210,7 +210,6 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
       modelService: {} as never,
       pi: { appendEntry: vi.fn() } as never,
       emitUnregister: vi.fn(),
-      redeliverPending,
     };
   }
 
@@ -339,35 +338,5 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     // notifier buildLlmContent 的 record.result ?? "(empty)" 确定性链保 G4：
     // 通知文案逐字节产出 "completed. Result:\n(empty)"，不漂移为 "(no output this round)"
     expect(record.result ?? "(empty)").toBe("(empty)");
-  });
-
-  it("残留 pendingMessages → 触发 redeliverPending 补投（MF-1 安全网，不再静默清除）", async () => {
-    const redeliverPending = vi.fn();
-    const record = makeMinimalRecord({ id: "rec-pending" });
-    record.status = "closed";
-    record.pendingMessages = [
-      { id: "m1", text: "unconsumed race-window msg", interrupt: false, sentAt: 1 },
-      { id: "m2", text: "second queued", interrupt: true, sentAt: 2 },
-    ];
-    await doFinalizeRoundToIdle(makeDeps(redeliverPending), record, makeMinimalResult());
-    // MF-1：pendingMessages 从队列移除（转入 resume 重投通道）
-    expect(record.pendingMessages).toBeUndefined();
-    // redeliverPending 被调（合并文本 = 两条用 \n\n 拼接）
-    await vi.waitFor(() => expect(redeliverPending).toHaveBeenCalledTimes(1));
-    expect(redeliverPending).toHaveBeenCalledWith(
-      record,
-      "unconsumed race-window msg\n\nsecond queued",
-    );
-  });
-
-  it("无残留 pendingMessages → 不调 redeliverPending（正常路径）", async () => {
-    const redeliverPending = vi.fn();
-    const record = makeMinimalRecord({ id: "rec-no-pending" });
-    record.status = "closed";
-    await doFinalizeRoundToIdle(makeDeps(redeliverPending), record, makeMinimalResult());
-    expect(record.pendingMessages).toBeUndefined();
-    // 给 setTimeout(0) 一个周期确认未被调
-    await new Promise((r) => setTimeout(r, 10));
-    expect(redeliverPending).not.toHaveBeenCalled();
   });
 });

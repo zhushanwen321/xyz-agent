@@ -1,14 +1,16 @@
 // src/execution/__tests__/delivery-methods.test.ts
 //
-// deliverToRunning + resumeRound 单元测试（M2-B1 投递基础设施）。
+// resumeRound + deliverMessage 单元测试（M2-B1 投递基础设施）。
 //
 // mock session-runner（runSpawn 受控 + killAllSpawnedChildren 空实现 + getChildByRecord/spawnedChildren
-// 真实 Map 语义），走 SubagentService 真实的 deliverToRunning/resumeRound 逻辑：
-//   - deliverToRunning：busy 写 stdin（PassThrough child 验证字节）+ pendingMessages push；child 不存在 throw
+// 真实 Map 语义），走 SubagentService 真实的 resumeRound/deliverMessage 逻辑：
 //   - resumeRound：idle→running→detached kickOff runSpawn 收到 resume 参数；chatMode+done 回 idle/round+1；
 //     非 idle / 无 sessionFile / 无 controller throw
+//   - deliverMessage：按进程死活分流（热路径 prompt+streamingBehavior / 冷路径 resume）
 //
-// stdin-writer 不 mock（端到端验证 deliverToRunning→sendFollowUp/sendSteer→child.stdin 字节）。
+// stdin-writer 不 mock（端到端验证 deliverMessage→sendPromptCommand→child.stdin 字节）。
+// [review 修复] 已删除 deliverToRunning describe（busy follow_up/steer 投递）——随
+// deliverToRunning 方法一并移除（无生产调用方，pendingMessages 消费确认制死机制）。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -107,75 +109,6 @@ function readStdinLines(child: ChildProcess): unknown[] {
     .filter((l) => l.length > 0)
     .map((l) => JSON.parse(l));
 }
-
-describe("deliverToRunning (M2-B1 busy 投递)", () => {
-  let agentDir: string;
-  let service: SubagentService;
-  let record: ExecutionRecord;
-
-  beforeEach(() => {
-    agentDir = makeTmpAgentDir();
-    const modelService = new ModelConfigService({ agentDir });
-    service = new SubagentService({ cwd: agentDir, modelService });
-    service.initSession({ pi: makePi(), sessionId: "root-session" });
-    record = makeIdleRecord();
-    record.status = "running"; // busy 投递前提
-    spawnedChildren.clear();
-  });
-
-  afterEach(() => {
-    service.dispose();
-    spawnedChildren.clear();
-    fs.rmSync(agentDir, { recursive: true, force: true });
-  });
-
-  it("interrupt=false → 写 follow_up 到 stdin + push pendingMessages(interrupt:false)", () => {
-    const child = makeStreamChild();
-    spawnedChildren.set(record.id, child);
-
-    service.deliverToRunning(record, "after you finish", false);
-
-    const lines = readStdinLines(child);
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatchObject({ type: "follow_up", message: "after you finish" });
-    expect(record.pendingMessages).toHaveLength(1);
-    expect(record.pendingMessages![0]).toMatchObject({ text: "after you finish", interrupt: false });
-    expect(record.pendingMessages![0]!.id).toEqual(expect.any(String));
-    expect(record.pendingMessages![0]!.sentAt).toEqual(expect.any(Number));
-  });
-
-  it("interrupt=true → 写 steer 到 stdin + push pendingMessages(interrupt:true)", () => {
-    const child = makeStreamChild();
-    spawnedChildren.set(record.id, child);
-
-    service.deliverToRunning(record, "stop now", true);
-
-    const lines = readStdinLines(child);
-    expect(lines[0]).toMatchObject({ type: "steer", message: "stop now" });
-    expect(record.pendingMessages![0]).toMatchObject({ text: "stop now", interrupt: true });
-  });
-
-  it("child 不存在（进程已退）→ 不 throw，入队 pendingMessages（MF-1 安全网，由 resume 补投）", () => {
-    // MF-1：竞态窗口（record 仍 running 但子进程刚 close）不再 throw——throw 会丢消息 + 错误导 LLM。
-    // 改为仅入队（delivery delayed, will retry），由 doFinalizeRoundToIdle 的 redeliverPending 补投。
-    expect(() => service.deliverToRunning(record, "msg", false)).not.toThrow();
-    expect(record.pendingMessages).toHaveLength(1);
-    expect(record.pendingMessages![0]).toMatchObject({ text: "msg", interrupt: false });
-  });
-
-  it("多次投递累积 pendingMessages（FIFO 顺序保留）", () => {
-    const child = makeStreamChild();
-    spawnedChildren.set(record.id, child);
-    service.deliverToRunning(record, "first", false);
-    service.deliverToRunning(record, "second", true);
-
-    expect(record.pendingMessages).toHaveLength(2);
-    expect(record.pendingMessages![0]!.text).toBe("first");
-    expect(record.pendingMessages![0]!.interrupt).toBe(false);
-    expect(record.pendingMessages![1]!.text).toBe("second");
-    expect(record.pendingMessages![1]!.interrupt).toBe(true);
-  });
-});
 
 describe("resumeRound (M2-B1 idle 投递)", () => {
   let agentDir: string;
