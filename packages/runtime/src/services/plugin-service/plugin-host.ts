@@ -157,10 +157,11 @@ type ReplyCallback = (msg: unknown) => void
 export interface PluginHostContract {
   /**
    * 为插件分配 Worker。
-   * @param pluginDir 插件根目录绝对路径（sandbox 经此注入 fork 子进程 env XYZ_PLUGIN_SANDBOX_DIR；
-   *   trusted 走 Worker 线程，忽略此参数）
+   * @param pluginPath 插件入口文件绝对路径（descriptor.pluginPath；sandbox 经此派生
+   *   沙箱目录——PluginHostProcess 在 fork env 注入处 dirname(pluginPath)，见该处
+   *   S1-W3 修正注释；trusted 走 Worker 线程，忽略此参数）
    */
-  assignWorker(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginDir?: string): Promise<string>
+  assignWorker(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginPath?: string): Promise<string>
   /** pluginId 显式传入：load 消息的 pluginId 是子进程/Worker loadedModules 分区键，
    *  activate 按真实 pluginId 查找——从 pluginPath 推导在入口文件语义下会失配。 */
   loadPlugin(workerId: string, pluginId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void>
@@ -254,15 +255,16 @@ export class PluginHost implements PluginHostContract {
   /**
    * 为插件分配 Worker。
    *
-   * - sandbox: 每个插件独占一个子进程（pluginDir 注入 fork env，ESM loader 边界判定依赖）
-   * - trusted: 查找有空位的 trusted Worker（≤10），没有则新建（pluginDir 忽略）
+   * - sandbox: 每个插件独占一个子进程（pluginPath 派生沙箱目录注入 fork env，
+   *   ESM loader 边界判定依赖；dirname 在 PluginHostProcess env 注入处统一修正）
+   * - trusted: 查找有空位的 trusted Worker（≤10），没有则新建（pluginPath 忽略）
    */
-  async assignWorker(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginDir?: string): Promise<string> {
+  async assignWorker(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginPath?: string): Promise<string> {
     if (trustLevel === 'sandbox') {
       // sandbox 插件走子进程宿主（fork 隔离），不进 workers Map。
       // 进程复用由 PluginHostProcess.assignProcess 内部处理（sandbox 独占进程）。
-      // pluginDir 注入 fork env XYZ_PLUGIN_SANDBOX_DIR（ESM loader initialize() 读此 env）。
-      return this.ensureProcessHost().assignProcess(pluginId, 'sandbox', pluginDir)
+      // pluginPath 透传子进程宿主（env 注入处 dirname 成沙箱目录）。
+      return this.ensureProcessHost().assignProcess(pluginId, 'sandbox', pluginPath)
     }
 
     // trusted: 复用空闲 Worker
@@ -483,7 +485,12 @@ export class PluginHost implements PluginHostContract {
     this.workers.set(workerId, handle)
     this.workerInstances.set(workerId, worker)
     this.pluginToWorker.set(pluginId, workerId)
-    this.rpcServer.registerWorker(workerId, worker)
+    // D1 通道身份：trusted Worker 多插件共享（≤10），无唯一归属 → worker 级身份
+    // （鉴权按 trusted 放行，dispatch 不覆写 params.pluginId——trusted 插件间互不
+    // 设防是设计语义，见 spec D1 信任模型澄清）。本函数仅 trusted 路径调用；
+    // 若未来出现 sandbox Worker（当前不存在此路径），无 pluginId 的 sandbox 身份
+    // 在 check() 走 fail-closed 拒绝，安全方向正确。
+    this.rpcServer.registerWorker(workerId, worker, { trustLevel })
 
     worker.on('message', (msg: unknown) => {
       const m = msg as Record<string, unknown>

@@ -77,6 +77,10 @@ export type ClientMessageType =
   | 'extension.upgrade' | 'extension.setAutoUpgrade'
   | 'extension.getPendingRequests'
   | 'ping'
+  // WS 传输层认证握手（S1-W1，spec §3.3 D4）：连接建立后的首条消息，校验通过前
+  // runtime 不受理任何其他消息（10s 超时断开、失败 close 1008）。不走 handleMessage
+  // 路由（ConnectionManager 传输层消费），reply 'auth.result'。
+  | 'auth'
   | 'plugin.list' | 'plugin.toggle'
   | 'plugin.install' | 'plugin.uninstall'
   | 'plugin.approvePermissions' | 'plugin.revokePermissions'
@@ -222,6 +226,9 @@ export type BatchDeleteResult = {
 /** 每个 type 对应的 payload 类型映射 */
 export interface ClientMessageMap {
   'ping': Record<string, never>
+  // auth：WS 传输层握手凭据（S1-W1）。token = Electron 主进程 spawn runtime 时生成的
+  // 随机 32B hex（renderer 经 preload getRuntimeToken IPC / CLI 经 <dataDir>/runtime-token 文件获取）。
+  'auth': { token: string }
   // hidden:true 创建隐藏 session（公共 session），不进 sidebar 列表，仅供内部使用。
   // presetId：session 创建时锁定的 pi 启动预设 id（设计文档 §4.1）。runtime 写入 .preset.json sidecar，
   // restoreSession 据此重建 pi args。可选——省略时 runtime 用默认预设。透传链路见 wave3。
@@ -621,6 +628,8 @@ export type ServerMessageType =
   // request 与 reply 同名更直观：renderer register<{snapshot,lastSeq,gap}> 按 id resolve）。
   // session.unsubscribe 的 reply 走 message.status（ack 型，见 ReplyPayloadMap :1192 注释），不在此登记。
   | 'session.subscribe'
+  // auth.result：auth 握手的结果回复（S1-W1，ConnectionManager 传输层生产，见 ClientMessageMap 'auth'）。
+  | 'auth.result'
   | 'pong' | 'error'
   | 'extension.ui_request' | 'extension.ui_timeout' | 'extension.error'
   | 'extension.discovered' | 'extension.installCancelled'
@@ -768,6 +777,9 @@ export interface ServerMessageMapBase {
 
   // ── 协议级 reply / push（精确）──
   'pong': Record<string, never>
+  // auth.result：WS auth 握手结果（S1-W1）。ok=false 时 reason 描述拒绝原因
+  // （bad_token / no_token_configured），客户端据此提示。握手失败连接随后被 close 1008。
+  'auth.result': { ok: boolean; reason?: string }
   'error': { code: string; message: string; sessionId?: string; details?: Record<string, unknown> }
   // 流式异步推送失败（server-push 通道，区别于请求级 error envelope；见错误契约文档）
   'message.error': { sessionId: string; message: string }

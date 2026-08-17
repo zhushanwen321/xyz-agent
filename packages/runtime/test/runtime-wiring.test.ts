@@ -317,7 +317,7 @@ describe('wave:runtime-wiring · TC6 ConnectionManager.onClose → bus.unsubscri
       onMessage: vi.fn(),
       sendError: vi.fn(),
       onDisconnect: (ws) => messageBus.unsubscribeAll(ws as unknown as BusClient),
-    })
+    }, 'test-ws-token-wiring')
     await conn.start()
     // 直接从 clients 池取一个 ws 模拟 close 事件（clients 是 readonly Set，handleConnection 时 add）。
     // 由于无法轻易构造真实 ws 进 connection 回调，改为验证 onDisconnect 回调本身接线正确：
@@ -335,7 +335,7 @@ describe('wave:runtime-wiring · TC6 ConnectionManager.onClose → bus.unsubscri
       onConnect: () => {},
       onMessage: vi.fn(),
       sendError: vi.fn(),
-    })
+    }, 'test-ws-token-wiring')
     await conn.start()
     expect(() => {
       ;(conn as unknown as { callbacks: { onDisconnect?: (ws: unknown) => void } }).callbacks.onDisconnect?.(createMockWs())

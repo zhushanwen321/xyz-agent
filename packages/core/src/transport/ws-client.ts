@@ -11,6 +11,13 @@
  * 4. generation 计数：新连接 ++generation，旧 WS 的残余回调（onopen/onclose/onmessage）
  *    检查 gen !== wsGeneration 时直接 return，不干扰新连接
  *
+ * S1-W1 auth 握手（spec §3.3 D4）：connect(url, token) 传入 token 时，open 后首条消息发
+ * {type:'auth'}，收到 auth.result {ok:true} 才置 connected（resubscribeAll / 心跳随 connected
+ * 之后启动，重订阅消息不会被 runtime 当「auth 前消息」丢弃）。token 未传（mock 平台）保持
+ * 旧行为。内部重连（退避 / visibility）复用 currentToken；runtime 重启换 token 由
+ * use-connection 的 onRuntimePort 路径重新拉取后 connect(url, newToken) 覆盖。auth 5s 客户端
+ * 超时（短于 runtime 侧 10s）：超时 close 走 onclose → 正常重连链。
+ *
  * 与 renderer 版的差异（迁移改造）：
  * - new WebSocket(url) → getPlatform().webSocket.create(url)（平台注入，mock 由 platform
  *   的 webSocket factory 决定，ws-client 不再感知 VITE_MOCK / mock-ws）
@@ -41,15 +48,21 @@ const MAX_RECONNECT_DELAY_MS = 30_000
  *  累积约第 6-7 次即跨 60s → duration cap 先触发，attempts 永不可达，该常量为死代码已删除。
  *  放弃自动重连的判定唯由本时长上限决定。 */
 const MAX_RECONNECT_DURATION_MS = 60_000
+/** auth 握手客户端超时（S1-W1）：短于 runtime 侧 10s 握手超时，客户端先主动断开走重连。 */
+const AUTH_TIMEOUT_MS = 5_000
 
 // ── 状态 ────────────────────────────────────────────────────
 const state = ref<ConnectionState>('disconnected')
 let ws: WebSocketLike | null = null
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+/** auth 握手超时计时器（auth.result 到达 / 连接关闭时清除） */
+let authTimer: ReturnType<typeof setTimeout> | null = null
 let reconnectAttempts = 0
 let wsGeneration = 0
 let currentUrl: string | null = null
+/** 本次连接凭据（S1-W1）：connect(url, token) 更新；内部重连复用；mock url 强制清空。 */
+let currentToken: string | null = null
 /** 本轮重连起始时间戳（首次 scheduleReconnect 设置，connect 成功后置 null 重置） */
 let reconnectStartedAt: number | null = null
 
@@ -91,25 +104,61 @@ export function setFailed(): void {
   state.value = 'failed'
 }
 
-/** 建立连接（已连接/连接中时幂等 no-op） */
-export function connect(url: string): void {
+/**
+ * 建立连接（已连接/连接中时幂等 no-op）。
+ *
+ * @param url   连接地址（mock 平台为 mock:// 前缀）
+ * @param token WS auth token（S1-W1）。传入时 open 后先走 auth 握手（首条消息 auth，
+ *              等 auth.result ok 才 connected）；不传（mock / 无 IPC）保持旧行为。
+ *              未传时保留上次 token 供内部重连复用；mock url 一律清空。
+ */
+export function connect(url: string, token?: string): void {
   currentUrl = url
+  if (url.startsWith('mock:')) {
+    currentToken = null
+  } else if (token !== undefined) {
+    currentToken = token
+  }
 
   // 幂等：已连接或连接中，不重复建连
   if (ws && (ws.readyState === WS_READY_STATE.OPEN || ws.readyState === WS_READY_STATE.CONNECTING)) return
 
   state.value = 'connecting'
   const gen = ++wsGeneration
+  /** 本代连接是否已完成 auth（无 token 模式在 onopen 即视为完成） */
+  let authed = currentToken === null
   ws = getPlatform().webSocket.create(url)
   console.log('[ws] connecting to', url)
 
-  ws.onopen = () => {
-    if (gen !== wsGeneration) return // 旧 WS 残余回调，忽略
+  const clearAuthTimer = () => {
+    if (authTimer) {
+      clearTimeout(authTimer)
+      authTimer = null
+    }
+  }
+
+  /** connected 化（auth 成功或无 token 模式）：置位状态 + 重连簿记 + 启动心跳。 */
+  const markConnected = () => {
     state.value = 'connected'
     reconnectAttempts = 0
     // 连接成功 → 重置重连计时窗口（下次掉线重新开始计数）
     reconnectStartedAt = null
     startHeartbeat()
+  }
+
+  ws.onopen = () => {
+    if (gen !== wsGeneration) return // 旧 WS 残余回调，忽略
+    if (!authed) {
+      // S1-W1：首条消息必须是 auth；connected 推迟到 auth.result ok（心跳/重订阅随后）
+      ws!.send(JSON.stringify({ type: 'auth', payload: { token: currentToken } }))
+      authTimer = setTimeout(() => {
+        if (gen !== wsGeneration) return
+        console.warn('[ws] auth handshake timeout, closing for reconnect')
+        ws?.close()
+      }, AUTH_TIMEOUT_MS)
+      return
+    }
+    markConnected()
   }
 
   ws.onmessage = (event) => {
@@ -120,6 +169,23 @@ export function connect(url: string): void {
     } catch (e) {
       // JSON 解析失败：仅记日志跳过（dispatch 已移出 try，handler 抛错不再被此处吞掉）
       console.error('[ws] parse error:', e)
+      return
+    }
+    // auth 握手期：只消费 auth.result，其余消息（握手期不应出现）丢弃
+    if (!authed) {
+      const r = parsed as { type?: unknown; payload?: { ok?: unknown } | null }
+      if (r.type === 'auth.result' && r.payload != null) {
+        clearAuthTimer()
+        if (r.payload.ok === true) {
+          authed = true
+          markConnected()
+        } else {
+          // runtime 拒绝（token 失效，如 runtime 已换 token 重启）→ close 走重连链，
+          // 新 token 由 use-connection 的 onRuntimePort 路径刷新
+          console.warn('[ws] auth rejected by runtime, closing for reconnect')
+          ws?.close()
+        }
+      }
       return
     }
     if (!isServerMessage(parsed)) {
@@ -133,6 +199,7 @@ export function connect(url: string): void {
     if (gen !== wsGeneration) return // 旧 WS 残余回调，不干扰新连接
     state.value = 'disconnected'
     stopHeartbeat()
+    clearAuthTimer()
     scheduleReconnect()
   }
 
@@ -231,5 +298,9 @@ function clearTimers(): void {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
+  }
+  if (authTimer) {
+    clearTimeout(authTimer)
+    authTimer = null
   }
 }

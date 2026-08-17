@@ -62,12 +62,13 @@ import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 // autoUpgrade 顺序」可 spy 断言（06 §5 门禁），组合根只负责构造与注入。
 import { runStartupBackgroundInit } from './services/startup-background-init.js'
 
-function parseArgs(): { port: number; projectRoot?: string } {
+function parseArgs(): { port: number; projectRoot?: string; builtinPluginsDir?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
   const args = process.argv.slice(2)
   const portOffset = Math.max(0, Math.min(parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0, MAX_PORT - BASE_PORT))
   let port = BASE_PORT + portOffset
   let projectRoot: string | undefined
+  let builtinPluginsDir: string | undefined
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && i + 1 < args.length) {
       const parsed = parseInt(args[i + 1], 10)
@@ -87,13 +88,39 @@ function parseArgs(): { port: number; projectRoot?: string } {
       projectRoot = args[i + 1]
     } else if (args[i].startsWith('--project-root=')) {
       projectRoot = args[i].split('=')[1]
+    } else if (args[i] === '--builtin-plugins-dir' && i + 1 < args.length) {
+      builtinPluginsDir = args[i + 1]
+    } else if (args[i].startsWith('--builtin-plugins-dir=')) {
+      builtinPluginsDir = args[i].split('=')[1]
     }
   }
-  return { port, projectRoot }
+  return { port, projectRoot, builtinPluginsDir }
+}
+
+/**
+ * 解析 WS auth token（S1-W1，spec §3.3 D4）：优先 env XYZ_RUNTIME_TOKEN（Electron 主进程
+ * spawn 时注入），缺失时 fallback 读 <dataDir>/runtime-token 文件（CLI / 脚本消费的通道）。
+ * 两者都缺失 → 返回 null（fail-closed：ConnectionManager 拒绝全部 WS 连接）。
+ *
+ * 独立函数而非内联：解析链与 fail-closed 语义是传输安全的关键路径，后续 D4 校验期
+ * 单测可直接 import 此函数探针（env 注入 / 文件注入 / 双缺失三态）。
+ */
+function resolveRuntimeToken(): string | null {
+  const envToken = process.env.XYZ_RUNTIME_TOKEN
+  if (envToken && envToken.trim().length > 0) return envToken.trim()
+  try {
+    const fileToken = fs.readFileSync(join(getDataDir(), 'runtime-token'), 'utf-8').trim()
+    if (fileToken.length > 0) return fileToken
+  } catch {
+    // token 文件不存在/不可读 → 落到下方 fail-closed warning（正常 dev 直跑场景，
+    // scripts/verify-*.sh 会显式注入 env 或写 token 文件）
+  }
+  console.warn('[runtime] WS auth token unavailable (XYZ_RUNTIME_TOKEN env / <dataDir>/runtime-token both missing) — fail-closed: ALL WebSocket connections will be rejected')
+  return null
 }
 
 async function main(): Promise<void> {
-  const { port, projectRoot } = parseArgs()
+  const { port, projectRoot, builtinPluginsDir } = parseArgs()
   const effectiveRoot = projectRoot ?? process.cwd()
   // perf W29（D8-1）启动耗时分解探针（06 §5 m-7）：listen 前各段打点，
   // 输出进日志文件供 D8 价值评估（基线实测：getPiVersion 1.1-1.3s 主导 listen 延迟）。
@@ -106,11 +133,14 @@ async function main(): Promise<void> {
   // <dataDir>/logs/runtime-YYYY-MM-DD.log。
   initLogger(getDataDir())
 
+  // S1-W1：token 解析在 initLogger 之后（fail-closed warning 落盘）、server 构造之前。
+  const runtimeToken = resolveRuntimeToken()
+
   // Infrastructure
   const pm = new ProcessManager(effectiveRoot)
 
   // Transport layer
-  const server = new RuntimeServer(port, projectRoot)
+  const server = new RuntimeServer(port, projectRoot, runtimeToken)
 
   // MessageBus 单例（wave:runtime-wiring）：per-session 消息广播核心。
   // 在 server 构造后、setServices 前创建并注入——server 的 ConnectionManager.onDisconnect
@@ -188,7 +218,10 @@ async function main(): Promise<void> {
   // ProjectStore：project 列表持久化（D14，2026-08-04 迁 runtime projects.json，
   // 与 recent-workspaces 同模式；前端 localStorage 仅首启迁移源）。
   const projectStore = new ProjectStore(configDir)
-  const pluginRegistry = new PluginRegistry(effectiveRoot, configDir)
+  // S1-W4（D3）：built-in 插件目录显式注入（主进程 spawn 时传 --builtin-plugins-dir）。
+  // 提供时 registry 只扫该目录、不做 cwd 探测（防用户 repo 预置目录冒充 built-in）；
+  // 缺失（dev 直跑/测试）时 registry 回退探测链并落 warning。
+  const pluginRegistry = new PluginRegistry(effectiveRoot, configDir, builtinPluginsDir)
   const pluginInstaller = new NpmPluginInstaller(join(configDir, 'plugins'))
   const pluginService = new PluginService(pluginRegistry, server, {
     configService,

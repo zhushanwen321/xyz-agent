@@ -12,8 +12,8 @@
  * - self-register：module.exports 先赋值 hooks，再 register 自身（避免 evaluating 中提取空 exports）
  * - env XYZ_PLUGIN_SANDBOX_DIR：插件根目录绝对路径；缺失 → initialize throw（fail-closed）
  *
- * 注意：本文件是 .cjs（--import 注入目标必须独立可执行），无法 require TS 源，
- * BLOCKED_BUILTINS 内联复制自 plugin-sandbox.ts —— 修改黑名单必须同步两处（已注释标记）。
+ * BLOCKED_BUILTINS 单一来源：require 同目录 plugin-blocked-builtins.cjs
+ * （S1-W3 黑名单 SSOT；plugin-sandbox.ts 经 import 消费同一份，修改只改那一处）。
  */
 
 'use strict'
@@ -23,27 +23,7 @@ const { pathToFileURL, fileURLToPath } = require('node:url')
 const path = require('node:path')
 const { realpathSync } = require('node:fs')
 
-/** 同步 plugin-sandbox.ts 的 BLOCKED_BUILTINS（ESM loader 无法 require TS 源，必须内联） */
-const BLOCKED_BUILTINS = [
-  'fs',
-  'fs/promises',
-  'child_process',
-  'cluster',
-  'crypto',
-  'dgram',
-  'dns',
-  'http',
-  'https',
-  'net',
-  'os',
-  'readline',
-  'tls',
-  'v8',
-  'vm',
-  'worker_threads',
-  // module：node:module 暴露 createRequire，可构造绕过 sandbox 拦截的 require（M6a-01）
-  'module',
-]
+const { BLOCKED_BUILTINS } = require('./plugin-blocked-builtins.cjs')
 
 let sandboxDir = ''
 
@@ -111,8 +91,19 @@ async function resolve(specifier, context, nextResolve) {
     throw sandboxError(`Sandbox: import('${specifier}') uses blocked scheme`)
   }
 
-  // 裸名（npm 包名，非黑名单）放行
-  return nextResolve(specifier, context)
+  // 裸名（npm 包名或非黑名单内置名）解析后校验解析结果边界（S1-W3，spec §3.3 D2-②）：
+  // Node 对裸名会从 parentURL 起向上遍历 node_modules——可在 pluginDir 外命中
+  // （如插件目录上层的沙箱外副本），命中后该模块后续 import 全部绕过 hook。
+  // 合法依赖天然落在 pluginDir/node_modules 内（isInsideSandbox 覆盖子目录）；
+  // - node: 内置解析结果是 node: scheme（非 file URL），已过黑名单检查 → 放行
+  //   （先排除 node: 再判界，防止「非 file:// 即出界」误杀安全内置模块）
+  // - 其余解析结果必须在沙箱内（file:// 且 isInsideSandbox），出界即拒
+  const resolved = await nextResolve(specifier, context)
+  if (resolved.url.startsWith('node:')) return resolved
+  if (!isInsideSandbox(resolved.url)) {
+    throw sandboxError(`Sandbox: import('${specifier}') resolves outside plugin directory (${resolved.url})`)
+  }
+  return resolved
 }
 
 // hooks 先赋值再 self-register（register 从本模块 exports 提取 hooks，

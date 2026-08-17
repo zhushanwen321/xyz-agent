@@ -147,10 +147,24 @@ const flushAsync = () => new Promise<void>(r => setTimeout(r, 0))
 /** Wait for WS message propagation (real I/O needs a few event loop cycles). */
 const waitForWs = () => new Promise<void>(r => setTimeout(r, 50))
 
+/** S1-W1：真实 WS 测试统一 token（ConnectionManager auth 握手，见 ws-listen-hardening.test.ts） */
+const TEST_WS_TOKEN = 'test-ws-token-data-flow'
+
 function connectClient(port: number): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://localhost:${port}`)
-    ws.on('open', () => setTimeout(() => resolve(ws), 100))
+    ws.on('open', () => {
+      // S1-W1：首条消息 auth，等 auth.result ok 后连接才可用
+      ws.send(JSON.stringify({ type: 'auth', payload: { token: TEST_WS_TOKEN } }))
+    })
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(String(data))
+        if (msg.type === 'auth.result' && msg.payload?.ok === true) {
+          setTimeout(() => resolve(ws), 100)
+        }
+      } catch { /* skip */ }
+    })
     ws.on('error', reject)
   })
 }
@@ -189,7 +203,7 @@ interface WSFixture {
 
 async function createWSFixture(extensionService?: object): Promise<WSFixture> {
   const port = await getFreePort()
-  const server = new RuntimeServer(port, '/tmp/test-project')
+  const server = new RuntimeServer(port, '/tmp/test-project', TEST_WS_TOKEN)
   const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
 
   server.setServices(
@@ -403,7 +417,7 @@ describe('DF-1: Extension UI 超时路径', () => {
     mockSendCommand.mockClear()
     mockSendRaw.mockClear()
     mockSendExtensionUiResponse.mockClear()
-    server = new RuntimeServer(0, '/tmp/test-project')
+    server = new RuntimeServer(0, '/tmp/test-project', TEST_WS_TOKEN)
     sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
     server.setServices(
       sessionService,
@@ -576,7 +590,7 @@ describe('DF-4: Extension 列表管理', () => {
     mockSendExtensionUiResponse.mockClear()
 
     const port = await getFreePort()
-    server = new RuntimeServer(port, '/tmp/test-project')
+    server = new RuntimeServer(port, '/tmp/test-project', TEST_WS_TOKEN)
     const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
 
     mockExtensionService = {
@@ -637,7 +651,7 @@ describe('DF-4: Extension 列表管理', () => {
 
   it('ExtensionService 为 null → 返回空列表', async () => {
     const port2 = await getFreePort()
-    const server2 = new RuntimeServer(port2, '/tmp/test-project')
+    const server2 = new RuntimeServer(port2, '/tmp/test-project', TEST_WS_TOKEN)
     const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
     server2.setServices(sessionService2, new ConfigService('/tmp', new PiConfigStore()), new ModelService(new ModelApiDiscoverer()))
     await server2.start()
@@ -680,7 +694,7 @@ describe('DF-5: Extension 启用/禁用', () => {
     mockSendExtensionUiResponse.mockClear()
 
     const port = await getFreePort()
-    server = new RuntimeServer(port, '/tmp/test-project')
+    server = new RuntimeServer(port, '/tmp/test-project', TEST_WS_TOKEN)
     const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
 
     mockExtensionService = {
@@ -736,7 +750,7 @@ describe('DF-5: Extension 启用/禁用', () => {
 
   it('ExtensionService 为 null → 返回 error', async () => {
     const port2 = await getFreePort()
-    const server2 = new RuntimeServer(port2, '/tmp/test-project')
+    const server2 = new RuntimeServer(port2, '/tmp/test-project', TEST_WS_TOKEN)
     const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
     server2.setServices(sessionService2, new ConfigService('/tmp', new PiConfigStore()), new ModelService(new ModelApiDiscoverer()))
     await server2.start()

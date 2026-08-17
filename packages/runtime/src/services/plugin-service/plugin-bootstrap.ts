@@ -11,6 +11,7 @@
 
 import { parentPort } from 'node:worker_threads'
 import { Module } from 'node:module'
+import { dirname as pathDirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type {
   HostToWorkerMessage,
@@ -115,9 +116,11 @@ export async function handleMessage(msg: HostToWorkerMessage): Promise<void> {
   switch (msg.type) {
     case 'load': {
       try {
-        // sandbox 模式下初始化 require 拦截
+        // sandbox 模式下初始化 require 拦截（S1-W3：msg.pluginPath 是入口文件路径，
+        // CJS 拦截器的边界判定需要插件根目录——与 fork env 注入处（plugin-host-process）
+        // 同款 dirname 修正，两处各自在「宿主传入点→边界判定消费点」的转换处完成）
         if (msg.trustLevel === 'sandbox') {
-          initSandbox(msg.pluginPath)
+          initSandbox(pathDirname(msg.pluginPath))
         }
 
         const moduleUrl = pathToFileURL(msg.pluginPath).href

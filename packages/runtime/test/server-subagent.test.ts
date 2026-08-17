@@ -113,6 +113,9 @@ function getFreePort(): Promise<number> {
   })
 }
 
+/** S1-W1：真实 WS 测试统一 token（ConnectionManager auth 握手，见 ws-listen-hardening.test.ts） */
+const TEST_WS_TOKEN = 'test-ws-token-subagent'
+
 describe('RuntimeServer message.send with subagent field', () => {
   let server: RuntimeServer
   let port: number
@@ -122,7 +125,7 @@ describe('RuntimeServer message.send with subagent field', () => {
   sendMessageMock.mockClear()
   sendSubagentMessageMock.mockClear()
   port = await getFreePort()
-  server = new RuntimeServer(port, '/tmp/test-project')
+  server = new RuntimeServer(port, '/tmp/test-project', TEST_WS_TOKEN)
   server.setServices(
     new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, { readGitInfo: () => undefined, pruneStaleCache: () => {} } as never, {} as never),
     new ConfigService('/tmp', new PiConfigStore()),
@@ -139,13 +142,20 @@ describe('RuntimeServer message.send with subagent field', () => {
   await server.stop()
   })
 
-  /** Helper: connect a WS client and wait for initial state to drain */
+  /** Helper: connect a WS client, auth (S1-W1), and wait for initial state to drain */
   function connectClient(): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     ws = new WebSocket(`ws://localhost:${port}`)
     ws.on('open', () => {
-    // Wait a tick for initial state messages to be sent
-    setTimeout(() => resolve(ws), 100)
+    // S1-W1：首条消息 auth，等 auth.result ok 后连接才可用
+    ws.send(JSON.stringify({ type: 'auth', payload: { token: TEST_WS_TOKEN } }))
+    })
+    ws.on('message', (data) => {
+    const msg = JSON.parse(String(data))
+    if (msg.type === 'auth.result' && msg.payload?.ok === true) {
+      // Wait a tick for initial state messages to be sent
+      setTimeout(() => resolve(ws), 100)
+    }
     })
     ws.on('error', reject)
   })

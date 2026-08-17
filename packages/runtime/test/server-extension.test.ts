@@ -172,6 +172,9 @@ function waitForMessage(ws: WebSocket, type: string, timeout = 2000): Promise<Re
 
 // ── Tests with real timers (basic routing) ────────────────────────
 
+/** S1-W1：真实 WS 测试统一 token（ConnectionManager auth 握手，见 ws-listen-hardening.test.ts） */
+const TEST_WS_TOKEN = 'test-ws-token-extension'
+
 describe('RuntimeServer: extension message routing', () => {
   let server: RuntimeServer
   let port: number
@@ -186,7 +189,7 @@ describe('RuntimeServer: extension message routing', () => {
     mockInstallGitRepository.mockClear()
     mockFinishInstall.mockClear()
     port = await getFreePort()
-    server = new RuntimeServer(port, '/tmp/test-project')
+    server = new RuntimeServer(port, '/tmp/test-project', TEST_WS_TOKEN)
     sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
     server.setServices(
       sessionService,
@@ -212,7 +215,18 @@ describe('RuntimeServer: extension message routing', () => {
   function connectClient(): Promise<WebSocket> {
     return new Promise((resolve, reject) => {
       ws = new WebSocket(`ws://localhost:${port}`)
-      ws.on('open', () => setTimeout(() => resolve(ws), 100))
+      ws.on('open', () => {
+        // S1-W1：首条消息 auth，等 auth.result ok 后连接才可用
+        ws.send(JSON.stringify({ type: 'auth', payload: { token: TEST_WS_TOKEN } }))
+      })
+      ws.on('message', (data) => {
+        try {
+          const msg = JSON.parse(String(data))
+          if (msg.type === 'auth.result' && msg.payload?.ok === true) {
+            setTimeout(() => resolve(ws), 100)
+          }
+        } catch { /* skip */ }
+      })
       ws.on('error', reject)
     })
   }
@@ -319,16 +333,26 @@ describe('RuntimeServer: extension message routing', () => {
 
   describe('sendInitialState pushes config.extensions', () => {
     it('client receives config.extensions on connect (已安装列表初始数据源)', async () => {
-      // sendInitialState 在 ws.onConnect 时推，config.extensions 段是 fire-and-forget
-      // （scanExtensions async，.then 后 send）。必须在 ws 'open' 之前 attach 'message'
-      // handler，否则会漏掉 open 触发的 initial state 推送。
+      // sendInitialState 在 ws.onConnect（S1-W1 后 = auth 通过）时推，config.extensions 段
+      // 是 fire-and-forget（scanExtensions async，.then 后 send）。必须在 ws 'open' 之前
+      // attach 'message' handler，否则会漏掉 auth 后触发的 initial state 推送。
       const collected: Record<string, unknown>[] = []
       await new Promise<void>((resolve, reject) => {
         ws = new WebSocket(`ws://localhost:${port}`)
         ws.on('message', (data: Buffer) => {
-          try { collected.push(JSON.parse(data.toString())) } catch { /* skip */ }
+          try {
+            const msg = JSON.parse(data.toString()) as Record<string, unknown>
+            collected.push(msg)
+            if (msg.type === 'auth.result' && (msg.payload as { ok?: boolean } | undefined)?.ok === true) {
+              // auth 通过后再等一拍收 initial state
+              setTimeout(() => resolve(), 100)
+            }
+          } catch { /* skip */ }
         })
-        ws.on('open', () => setTimeout(() => resolve(), 100))
+        ws.on('open', () => {
+          // S1-W1：首条消息 auth
+          ws.send(JSON.stringify({ type: 'auth', payload: { token: TEST_WS_TOKEN } }))
+        })
         ws.on('error', reject)
       })
 

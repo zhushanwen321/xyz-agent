@@ -14,8 +14,9 @@
  */
 
 import { fork, type ChildProcess, type Serializable } from 'node:child_process'
+import { dirname as pathDirname } from 'node:path'
 import type { ProcessHandle } from './plugin-types.js'
-import { PluginRpcServer } from './plugin-rpc-server.js'
+import { PluginRpcServer, type RpcIdentity } from './plugin-rpc-server.js'
 import { resolveAndValidateFile, dispatchHostRpcMessage } from './plugin-host.js'
 
 const MAX_PLUGINS_PER_TRUSTED_PROCESS = 10
@@ -33,11 +34,14 @@ type ReplyCallback = (msg: unknown) => void
 export interface PluginHostProcessContract {
   /**
    * 为插件分配子进程。
-   * @param pluginDir 插件根目录绝对路径（sandbox 必传，注入 fork env XYZ_PLUGIN_SANDBOX_DIR；
+   * @param pluginPath 插件入口文件绝对路径（descriptor.pluginPath，`<dir>/index.js` 形态；
+   *   sandbox 经此派生沙箱目录——本宿主在 fork env 注入处 dirname(pluginPath) 一次
+   *   （S1-W3 修正落点，spec §3.3 D2-①：此前原样注入文件路径，ESM loader 的
+   *   `startsWith(sandboxDir + sep)` 恒 false，边界检查 0% 命中）；
    *   ESM loader 的 initialize() 在进程启动时读该 env，缺失 fail-closed throw，
-   *   故 sandbox 进程必须在 fork 前拿到 pluginDir——loadPlugin 时机太晚）。
+   *   故 sandbox 进程必须在 fork 前拿到 pluginPath——loadPlugin 时机太晚）。
    */
-  assignProcess(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginDir?: string): Promise<string>
+  assignProcess(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginPath?: string): Promise<string>
   loadPlugin(processId: string, pluginId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void>
   terminateProcess(processId: string): Promise<void>
   getProcessHandle(pluginId: string): { processId: string; postMessage(message: unknown): void } | undefined
@@ -101,11 +105,12 @@ export class PluginHostProcess implements PluginHostProcessContract {
   /**
    * 为插件分配子进程。
    *
-   * - sandbox: 每个插件独占一个子进程（pluginDir 注入 fork env XYZ_PLUGIN_SANDBOX_DIR，
-   *   供 ESM loader initialize() 在进程启动时读取——晚于 fork 的 loadPlugin 时机无法注入）
+   * - sandbox: 每个插件独占一个子进程（pluginPath 派生的沙箱目录注入 fork env
+   *   XYZ_PLUGIN_SANDBOX_DIR，供 ESM loader initialize() 在进程启动时读取——
+   *   晚于 fork 的 loadPlugin 时机无法注入）
    * - trusted: 查找有空位的 trusted 子进程（≤10），没有则新建
    */
-  async assignProcess(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginDir?: string): Promise<string> {
+  async assignProcess(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginPath?: string): Promise<string> {
     if (trustLevel === 'sandbox') {
       const processId = `sandbox-${pluginId}`
       const existing = this.processes.get(processId)
@@ -118,7 +123,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
         this.pluginToProcess.set(pluginId, processId)
         return processId
       }
-      return this.createProcess(processId, 'sandbox', pluginId, pluginDir).processId
+      return this.createProcess(processId, 'sandbox', pluginId, pluginPath).processId
     }
 
     // trusted: 复用空闲子进程
@@ -306,7 +311,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
     processId: string,
     trustLevel: 'trusted' | 'sandbox',
     pluginId: string,
-    pluginDir?: string,
+    pluginPath?: string,
   ): ProcessHandle {
     // M6a-03：覆盖同 processId 前先清理残留句柄（崩溃→重建竞态防护）。
     // 崩溃（handleProcessCrash 不 kill 不删 map）后重激活走 createProcess 直接 set 覆盖，
@@ -359,12 +364,17 @@ export class PluginHostProcess implements PluginHostProcessContract {
       )
     }
 
-    // sandbox 子进程 env：注入 XYZ_PLUGIN_SANDBOX_DIR（ESM loader initialize() 读此 env
-    // 做路径边界判定，缺失则 fail-closed throw）。trusted 不需要（ESM loader 仅 sandbox
-    // 进程经 execArgv --import 注入；trusted 走 Worker 线程不经此 fork 路径）。
+    // sandbox 子进程 env：注入 XYZ_PLUGIN_SANDBOX_DIR = dirname(pluginPath)（S1-W3
+    // dirname 修正落点，spec §3.3 D2-①：ESM loader 以 startsWith(sandboxDir + sep)
+    // 判界，目录必须传插件根目录形态。此前把入口文件路径原样注入，任何真实模块
+    // 都不可能以 `<dir>/index.js/` 开头 → 边界/黑名单/scheme 检查 0% 命中）。
+    // dirname 修正只在本宿主 env 注入处一处（activator 继续传 pluginPath 原语义），
+    // loader 的 fail-closed 语义不变（env 缺失仍 initialize throw）。
+    // trusted 不需要（ESM loader 仅 sandbox 进程经 execArgv --import 注入；
+    // trusted 走 Worker 线程不经此 fork 路径）。
     const env: NodeJS.ProcessEnv = { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
-    if (trustLevel === 'sandbox' && pluginDir) {
-      env.XYZ_PLUGIN_SANDBOX_DIR = pluginDir
+    if (trustLevel === 'sandbox' && pluginPath) {
+      env.XYZ_PLUGIN_SANDBOX_DIR = pathDirname(pluginPath)
     }
 
     let child: ChildProcess
@@ -407,6 +417,11 @@ export class PluginHostProcess implements PluginHostProcessContract {
     this.processes.set(processId, handle)
     this.processInstances.set(processId, child)
     this.pluginToProcess.set(pluginId, processId)
+    // D1 通道身份：sandbox 进程与插件一对一（processId = sandbox-<pluginId>），
+    // 身份携带唯一 pluginId（鉴权按它查 granted，dispatch 覆写 params.pluginId）；
+    // trusted 进程多插件共享（≤10）→ worker 级身份，无唯一归属。
+    const identity: RpcIdentity =
+      trustLevel === 'sandbox' ? { trustLevel: 'sandbox', pluginId } : { trustLevel: 'trusted' }
     // WorkerPort 适配：child.send → postMessage（IPC channel 与 Worker postMessage 语义同构）
     this.rpcServer.registerWorker(processId, {
       postMessage: (message: unknown) => {
@@ -417,7 +432,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
           console.debug(`[plugin-host-process] send failed for ${processId}:`, e)
         }
       },
-    })
+    }, identity)
 
     child.on('message', (msg: unknown) => {
       const m = msg as Record<string, unknown>

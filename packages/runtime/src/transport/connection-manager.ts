@@ -1,18 +1,26 @@
 /**
- * ConnectionManager — WS 连接生命周期 + 心跳 + 连接池管理（C2 从 server.ts 抽出）。
+ * ConnectionManager — WS 连接生命周期 + 认证握手 + 心跳 + 连接池管理（C2 从 server.ts 抽出）。
  *
  * 职责：
  * - 持有 clients 连接池（Set<WebSocket>），供 broker.broadcast 遍历。
- * - WS 服务器生命周期：start（listen + 注册 connection 回调）/ stop（关闭 wss + http）。
- * - 心跳：每条消息重置计时器，超时关闭连接（防僵尸连接）。
- * - HTTP /health 端点（与 WS 同端口，简单存活探针）。
+ * - WS 服务器生命周期：start（listen 127.0.0.1 + 注册 connection 回调）/ stop（关闭 wss + http）。
+ * - auth 握手（S1-W1，spec §3.3 D4）：连接建立后首条消息必须是 {type:'auth', payload:{token}}，
+ *   校验通过（unauthed → authed）前不受理任何其他消息（静默丢弃）、10s 超时断开、
+ *   失败以 close 1008。authToken=null 时 fail-closed（拒绝全部连接——组合根 env 与
+ *   token 文件都缺失的场景，见 index.ts resolveRuntimeToken）。
+ * - 心跳：每条消息重置计时器，超时关闭连接（防僵尸连接）。仅对 authed 连接生效——
+ *   未认证连接由 authTimer 兜底，防「auth 前发 ping 刷心跳绕过认证超时」。
+ * - HTTP /health 端点（与 WS 同端口，简单存活探针；不要求 token——supervisor 探活用，
+ *   响应只有 status/uptime，无敏感数据）。
+ * - maxPayload：单条消息上限（超限连接被 close 1009，见 shared MAX_WS_PAYLOAD_BYTES 校准注释）。
  *
  * 不含：消息路由（server.ts handleMessage）、消息发送（broker）、业务逻辑（handlers）。
- * 连接建立后把 ws + 解析出的 msg 通过注入的回调交给上层（RuntimeServer）处理。
+ * 连接 auth 成功后把 ws + 解析出的 msg 通过注入的回调交给上层（RuntimeServer）处理。
  */
 import { createServer, type Server as HttpServer } from 'node:http'
+import { timingSafeEqual } from 'node:crypto'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
-import type { ClientMessage } from '@xyz-agent/shared'
+import { MAX_WS_PAYLOAD_BYTES, type ClientMessage } from '@xyz-agent/shared'
 import { toErrorMessage } from '../utils/errors.js'
 import type { ErrorDetails } from './message-context.js'
 
@@ -20,14 +28,26 @@ const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
 const MAX_WS_CLOSE_CODE = 4000
 const HEARTBEAT_TIMEOUT_MS = 45_000
+/** auth 握手超时：连接建立后未在此时限内通过认证即断开（spec §3.3 D4 定 10s）。 */
+const AUTH_TIMEOUT_MS = 10_000
+/** WS policy violation 关闭码（RFC 6455）——auth 失败 / fail-closed 拒绝统一用它。 */
+const WS_CLOSE_POLICY_VIOLATION = 1008
+
+/** 常量比较（抗时序攻击）：长度不等直接 false（token 长度非秘密）。 */
+function tokenEquals(a: string, b: string): boolean {
+  const ba = Buffer.from(a, 'utf-8')
+  const bb = Buffer.from(b, 'utf-8')
+  if (ba.length !== bb.length) return false
+  return timingSafeEqual(ba, bb)
+}
 
 /**
  * 连接事件回调（由 RuntimeServer 注入）。
- * - onMessage：收到合法 ClientMessage，交 server 路由（返回 Promise，错误由调用方 catch）。
- * - onConnect：新连接建立，交 broker 推送 initial state。
+ * - onConnect：新连接**通过 auth 后**建立，交 broker 推送 initial state。
+ * - onMessage：收到合法 ClientMessage（必然来自 authed 连接），交 server 路由（返回 Promise，错误由调用方 catch）。
  * - sendError：连接级解析/兜底错误回复（注入 broker.sendError，避免 ConnectionManager 依赖 broker）。
  * - onDisconnect：连接关闭（wave:runtime-wiring）：交 server 调 bus.unsubscribeAll(ws) 清理该 ws
- *   的所有 session 订阅。可选：未注入时只做连接池清理（向后兼容）。
+ *   的所有 session 订阅。仅对 authed 连接触发（未认证连接不可能持有订阅）。可选：未注入时只做连接池清理。
  */
 export interface ConnectionCallbacks {
   onConnect(ws: WsType): void
@@ -40,13 +60,19 @@ export interface ConnectionCallbacks {
 export class ConnectionManager {
   private httpServer: HttpServer
   private wss: WebSocketServer
-  /** 连接池——broker.broadcast 遍历此集合向所有客户端推送。 */
+  /** 连接池（仅 authed 连接）——broker.broadcast 遍历此集合向所有客户端推送。 */
   readonly clients = new Set<WsType>()
   private heartbeatTimers = new Map<WsType, ReturnType<typeof setTimeout>>()
+  /** 未认证连接的握手超时计时器（auth 成功/连接关闭时清除）。 */
+  private authTimers = new Map<WsType, ReturnType<typeof setTimeout>>()
+  /** 已通过 auth 的连接集合（与 clients 池同步维护）。 */
+  private authedConnections = new Set<WsType>()
 
   constructor(
     private port: number,
     private callbacks: ConnectionCallbacks,
+    /** auth token；null = fail-closed（拒绝全部连接）。 */
+    private authToken: string | null,
   ) {
     this.httpServer = createServer((req, res) => {
       if (req.url === '/health') {
@@ -57,10 +83,10 @@ export class ConnectionManager {
         res.end()
       }
     })
-    this.wss = new WebSocketServer({ server: this.httpServer })
+    this.wss = new WebSocketServer({ server: this.httpServer, maxPayload: MAX_WS_PAYLOAD_BYTES })
   }
 
-  /** 启动 HTTP + WS 监听；注册 connection 回调。 */
+  /** 启动 HTTP + WS 监听（显式绑回环，不对局域网开放）；注册 connection 回调。 */
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.wss.on('connection', (ws) => this.handleConnection(ws))
@@ -71,8 +97,8 @@ export class ConnectionManager {
         }
         reject(err)
       })
-      this.httpServer.listen(this.port, () => {
-        console.log(`[runtime] listening on port ${this.port}`)
+      this.httpServer.listen(this.port, '127.0.0.1', () => {
+        console.log(`[runtime] listening on 127.0.0.1:${this.port}`)
         resolve()
       })
     })
@@ -81,37 +107,104 @@ export class ConnectionManager {
   // ── Connection ────────────────────────────────────────────────
 
   private handleConnection(ws: WsType): void {
-    this.clients.add(ws)
-    console.log(`[runtime] client connected (total: ${this.clients.size})`)
-    this.callbacks.onConnect(ws)
-    this.resetHeartbeat(ws)
-    ws.on('message', (data) => {
-      try {
-        const msg: ClientMessage = JSON.parse(data.toString())
-        this.resetHeartbeat(ws)
-        this.callbacks.onMessage(msg, ws).catch((err) => {
-          console.error('[runtime] unhandled error in handleMessage:', err)
-          try {
-            this.callbacks.sendError(ws, 'handler_error', toErrorMessage(err), msg.id)
-          // eslint-disable-next-line taste/no-silent-catch -- ws may have already closed
-          } catch { /* ws 可能已关闭 */ }
-        })
-      } catch { this.callbacks.sendError(ws, 'parse_error', 'Invalid JSON') }
-    })
-    ws.on('close', () => {
-      this.clients.delete(ws)
-      this.clearHeartbeat(ws)
-      // wave:runtime-wiring：ws 断开时清理该 ws 的所有 session 订阅（MessageBus.unsubscribeAll）。
-      // 经回调注入避免 ConnectionManager 直接依赖 MessageBus（保持传输层与 service 层解耦）。
-      // onDisconnect 可选（向后兼容：未注入时只做连接池清理）。
-      this.callbacks.onDisconnect?.(ws)
-      console.log(`[runtime] client disconnected (total: ${this.clients.size})`)
-    })
+    console.log(`[runtime] client connected (total: ${this.clients.size + 1})`)
+    // fail-closed：无 token 配置时拒绝全部连接（组合根已落 warning，这里只拒绝）。
+    if (this.authToken === null) {
+      this.rejectAuth(ws, 'no_token_configured')
+      return
+    }
+    // unauthed：启动握手超时，认证通过前不进 clients 池、不推 initial state、不启心跳。
+    this.authTimers.set(ws, setTimeout(() => {
+      console.warn('[runtime] auth timeout, closing connection')
+      ws.close(WS_CLOSE_POLICY_VIOLATION, 'Auth timeout')
+    }, AUTH_TIMEOUT_MS))
+    ws.on('message', (data) => this.handleRawMessage(ws, data))
+    ws.on('close', () => this.handleClose(ws))
     ws.on('error', (err) => {
       console.error('[runtime] ws error:', err)
-      this.clients.delete(ws)
-      this.clearHeartbeat(ws)
+      this.handleClose(ws)
     })
+  }
+
+  private handleRawMessage(ws: WsType, data: unknown): void {
+    let msg: ClientMessage
+    try {
+      msg = JSON.parse(String(data)) as ClientMessage
+    } catch {
+      // 未认证连接不消耗任何处理资源：直接断开（parse 失败的 auth 消息无法认证）。
+      if (!this.authedConnections.has(ws)) {
+        ws.close(WS_CLOSE_POLICY_VIOLATION, 'Malformed message before auth')
+        return
+      }
+      this.callbacks.sendError(ws, 'parse_error', 'Invalid JSON')
+      return
+    }
+    if (!this.authedConnections.has(ws)) {
+      this.handleUnauthedMessage(ws, msg)
+      return
+    }
+    // authed：auth 消息重复发送属协议错误，静默忽略（不进 handleMessage 路由）。
+    if (msg.type === 'auth') return
+    this.resetHeartbeat(ws)
+    this.callbacks.onMessage(msg, ws).catch((err) => {
+      console.error('[runtime] unhandled error in handleMessage:', err)
+      try {
+        this.callbacks.sendError(ws, 'handler_error', toErrorMessage(err), msg.id)
+      // eslint-disable-next-line taste/no-silent-catch -- ws may have already closed
+      } catch { /* ws 可能已关闭 */ }
+    })
+  }
+
+  /** unauthed 状态机：只受理首条 auth 消息；其他消息静默丢弃（设计意图，spec §3.3 D4）。 */
+  private handleUnauthedMessage(ws: WsType, msg: ClientMessage): void {
+    if (msg.type !== 'auth') {
+      console.warn(`[runtime] dropping pre-auth message (type=${String((msg as { type?: unknown }).type)})`)
+      return
+    }
+    const token = (msg.payload as { token?: unknown } | undefined)?.token
+    if (typeof token !== 'string' || !tokenEquals(token, this.authToken ?? '')) {
+      console.warn('[runtime] auth failed: bad token')
+      this.rejectAuth(ws, 'bad_token')
+      return
+    }
+    // unauthed → authed：清握手计时、入池、回执、推 initial state、启心跳。
+    const timer = this.authTimers.get(ws)
+    if (timer) clearTimeout(timer)
+    this.authTimers.delete(ws)
+    this.authedConnections.add(ws)
+    this.clients.add(ws)
+    ws.send(JSON.stringify({ type: 'auth.result', payload: { ok: true } }))
+    this.callbacks.onConnect(ws)
+    this.resetHeartbeat(ws)
+    console.log(`[runtime] client authenticated (total: ${this.clients.size})`)
+  }
+
+  /** 认证失败路径：回执结果 + close 1008。 */
+  private rejectAuth(ws: WsType, reason: string): void {
+    try {
+      ws.send(JSON.stringify({ type: 'auth.result', payload: { ok: false, reason } }))
+    // eslint-disable-next-line taste/no-silent-catch -- socket may already be closed
+    } catch { /* send 失败时直接走 close */ }
+    ws.close(WS_CLOSE_POLICY_VIOLATION, 'Unauthorized')
+    // close 事件不一定触发（对端先断），主动清理本侧簿记。
+    this.cleanupConnection(ws)
+  }
+
+  private handleClose(ws: WsType): void {
+    const wasAuthed = this.authedConnections.has(ws)
+    this.cleanupConnection(ws)
+    if (wasAuthed) {
+      this.callbacks.onDisconnect?.(ws)
+      console.log(`[runtime] client disconnected (total: ${this.clients.size})`)
+    }
+  }
+
+  private cleanupConnection(ws: WsType): void {
+    this.clients.delete(ws)
+    this.authedConnections.delete(ws)
+    this.clearHeartbeat(ws)
+    const timer = this.authTimers.get(ws)
+    if (timer) { clearTimeout(timer); this.authTimers.delete(ws) }
   }
 
   private resetHeartbeat(ws: WsType): void {
@@ -128,12 +221,16 @@ export class ConnectionManager {
     if (timer) { clearTimeout(timer); this.heartbeatTimers.delete(ws) }
   }
 
-  /** 关闭：清理心跳计时器 + 关闭 WS / HTTP。 */
+  /** 关闭：清理全部计时器 + 关闭 WS / HTTP。 */
   async stop(): Promise<void> {
     for (const timer of this.heartbeatTimers.values()) {
-      clearInterval(timer)
+      clearTimeout(timer)
     }
     this.heartbeatTimers.clear()
+    for (const timer of this.authTimers.values()) {
+      clearTimeout(timer)
+    }
+    this.authTimers.clear()
     this.wss.close()
     return new Promise((resolve) => { this.httpServer.close(() => resolve()) })
   }

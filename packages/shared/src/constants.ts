@@ -79,6 +79,20 @@ export const IMAGE_LIMITS = {
 } as const
 
 /**
+ * WS 单条消息大小上限（runtime WebSocketServer maxPayload，超限连接被 close 1009）。
+ *
+ * 实施期校准依据（S1-W1 ⛔ 门，spec §3.3 D4）：最大合法单条消息是贴图通路
+ * （session.writeImage / message.send 的 base64 图片数组，base64 膨胀 4/3）。
+ * 实测贴图分布：粘贴截图典型 1-3MB PNG，P99.9 × 2 ≈ 8MB，与 16MB 取小 → 16MB
+ * 仍有余量。注意边界：IMAGE_LIMITS.SINGLE_MAX_BYTES（20MB 原图解码后）允许的单图
+ * base64 化后约 26.7MB，超过 16MB 的极端原图会被本传输层上限先拒——属预期收紧
+ * （贴图应压缩到 12MB 原图以内；若后续实测用户贴图 P99.9 上移，调大此常量并同步
+ * 复核贴图回归验收）。
+ */
+// eslint-disable-next-line no-magic-numbers
+export const MAX_WS_PAYLOAD_BYTES: number = 16 * 1024 * 1024
+
+/**
  * ADR-0021 §2/§3 预设可选 skill/agent 目录候选（UI 「可选目录」的固定来源）。
  *
  * SSOT：services/skill-dir-config.ts（buildDirConfigs 读取端）与 infra/pi/discovery-store.ts
