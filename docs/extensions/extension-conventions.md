@@ -106,7 +106,30 @@ streamSink: ctx.mode === "rpc"
 - 新增/修改 SDK 调用必须有契约测试覆盖（模板：`extensions/subagent-workflow/src/execution/__tests__/sdk-contract.test.ts`）
 - `registerTool` 的 schema 必填字段在所有执行模式下都必须真的必填；条件必填用 Optional + 运行时校验，避免 schema 与描述矛盾
 
-> 本项目已将 `@earendil-works/pi-coding-agent@0.82.1` 作为根 devDependency 安装（真实 SDK 类型），不再使用类型桩。extensions 的 tsconfig 直接从 node_modules 解析 SDK 类型。
+> 本项目已将 `@earendil-works/pi-coding-agent@0.84.1` 作为根 devDependency 安装（真实 SDK 类型），不再使用类型桩。extensions 的 tsconfig 直接从 node_modules 解析 SDK 类型。
+
+## Event handler 消息注入
+
+event handler（如 `tool_execution_end`）中注入消息**必须用 `pi.sendUserMessage()`**，不能用 `ctx.sendUserMessage()`：
+
+| API | ctx (ExtensionContext) | pi (ExtensionAPI) |
+|-----|----------------------|-------------------|
+| sendUserMessage / sendMessage | 仅 ExtensionCommandContext（command handler 内可用） | 任何位置 |
+| sessionManager / signal / cwd | ✅ | ❌ |
+
+`tool_execution_end` 事件字段是 `{ toolCallId, toolName, args, result, isError }`——输入参数字段名是 `args`（不是 `input`），结果是 `result`（不是 `content`/`details`）。
+
+`sendUserMessage` 的 `deliverAs` 三模式：
+
+| 模式 | 行为 |
+|------|------|
+| `"steer"` | 当前 turn 完成后、下一个 LLM 调用前投递（需要 AI 立即处理用这个） |
+| `"followUp"` | 等 agent 完全空闲后投递 |
+| `"nextTurn"` | 队列到下一个用户 prompt |
+
+**消息注入不触发 skill 命令**：`pi.sendUserMessage("/skill-name")` 只是普通用户消息文本，不会触发 skill 机制（skill 由命令系统解析）。正确做法：把期望行为直接写进消息内容（如 `Run fix_whitespace.py --fix <file>, then retry the edit`），不依赖 skill 命令。
+
+**防循环**：注入的 steer 消息可能触发新的同类事件，hook 逻辑必须幂等或去重，否则 hook → 消息 → 新事件 → hook 无限循环。
 
 ## 扩展安装红线 [强制]
 

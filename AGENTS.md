@@ -161,7 +161,7 @@ pi 的 `SessionManager._persist()` 在收到第一个 **assistant** 消息之前
 - `getHistoryFromFile()` → 文件不存在时返回空消息列表
 - **禁止**假设 `get_state` 返回 `sessionFile` 后文件就已存在
 
-**[HISTORICAL] 禁止提前创建 session 文件**：曾经有 `ensureSessionFile()` 在 session 创建后立即用 `openSync(filePath, 'wx')` 创建含 session+session_info 两行的最小文件，理由是「确保 scanPiSessions 能找到该 session」。但这与 pi 0.80.3 `SessionManager._persist` 首次 flush 的 `openSync(sessionFile, "wx")` 冲突 → **EEXIST** → pi 抛 `message_start{stopReason:"error"}` → 整个 session 永久卡死（坏 session 文件只有 2 行，pi 自己的内容从未写入）。正确做法是依赖 `SessionScanner.listAll()` 合并内存 active session（`this.sessions` Map）：活跃 session 即使磁盘无文件也显示在列表里。**禁止任何代码在 pi 首次 flush 前创建/触碰 session 文件**。
+**[HISTORICAL] 禁止提前创建 session 文件**：曾在 session 创建后立即 `openSync(filePath, 'wx')` 创建最小文件，与 pi 首次 flush 的 `openSync` 冲突（EEXIST）→ session 永久卡死。活跃 session 靠 `SessionScanner.listAll()` 合并内存 active session（`this.sessions` Map）显示，无需磁盘文件。**禁止任何代码在 pi 首次 flush 前创建/触碰 session 文件**。
 
 ### 7. Session 隔离：所有消息必须带 sessionId
 
@@ -232,7 +232,7 @@ state.cleanup(sid)  // 移除指定 sid 分区（手动调用，正常由 delete
 
 **所有进入对话流的状态（消息、系统通知、压缩记录、工具结果等），必须同时满足两条：实时可见 + 重开 session 后仍可见。** 只做到实时可见、重开后消失的，视为未完成。
 
-事故背景：compact 执行后实时反馈缺失 + 重开 session 看不到压缩记录。根因是「实时链路」和「持久化链路」是两条独立的通路，只打通一条会导致：关掉 session 重开后，对话流回到压缩前的状态，用户以为压缩没发生或丢失了数据。
+事故背景：compact 只打通实时链路，重开 session 后压缩记录消失。「实时链路」和「持久化链路」是两条独立通路，只打通一条 = 用户以为数据丢失。
 
 两条通路必须同时维护：
 
@@ -288,23 +288,13 @@ lsof -i :1420 -P | grep node
 - 默认 `@{upstream}` 可能指向 `origin/main`，导致 `git log @{upstream}..HEAD` 显示所有 feature commits
 - 修复：`git branch --set-upstream-to=origin/<branch-name>`
 
-#### pnpm workspace 单步安装（2026-07-04 重构后）
-- 项目使用 pnpm workspace（`pnpm-workspace.yaml`），`pnpm install` 一次装完根 + `packages/*` + `apps/*`
-- `.npmrc` 配置 `node-linker=hoisted` 保证 Electron 兼容性（详见 ADR-0036）
-- `git-cwt` 的 `setup-worktree.sh` 会自动跑 `pnpm install`，手动操作时跑一次即可
+#### pnpm workspace 单步安装
+- `.npmrc` 配置 `node-linker=hoisted` 保证 Electron 兼容性（详见 ADR-0036）；手动创建 worktree 后跑一次 `pnpm install` 即可（root + packages/* + apps/* 一次装完）
 
 #### merge-worktree 脚本的 bare repo 兼容
 - 脚本已修复：自动检测 `GH_REPO` 并给所有 `gh` 调用加 `--repo`
 - 没有 main worktree 时，用 bare repo（`.bare/`）做 `git --git-dir`
 - 版本 bump push 用 `HEAD:refs/heads/main` 而不是 `main`（worktree 中本地没有 main 分支）
-
-Vite 使用 `strictPort: true`（端口 1420 被占则静默失败）。同一机器上另一个进程（main worktree 或其他项目）占 1420 端口时，当前 worktree 的 Vite 不会启动，Electron 加载的是旧代码。现象：代码改了但浏览器不更新，DOM 出现已删除的旧元素。
-
-```bash
-# 确认 1420 端口属于当前 worktree
-lsof -i :1420 -P | grep node
-# 检查进程 cwd 是否指向当前 worktree 的 renderer 目录
-```
 
 ### 11. Plugin System 架构约束
 
@@ -317,77 +307,32 @@ lsof -i :1420 -P | grep node
 - **WS 命名约定**: Client→Server 用点号（`plugin.xxx`），Server→Client 用冒号+camelCase（`plugin:statusBarUpdate`）
 - **Plugin Store**: 前端使用 `stores/plugin.ts` + `composables/usePlugin.ts` 管理 plugin 状态和 WS 事件
 - **数据目录隔离**: `~/.xyz-agent/` 与 `~/.pi/agent/` 完全隔离（已有规则 #10）
-- **[HISTORICAL] Builtin pi-extensions 改为 Settings 推荐安装**（2026-07-04 推翻旧规则）：5 个 `@zhushanwen/pi-*` 包（`pi-goal`/`pi-todo`/`pi-subagents`/`pi-workflow`/`pi-structured-output`）**不再作为根 `package.json` dependencies 集成进打包产物**。改为 Settings → Extensions 页面的「推荐扩展」快捷按钮，用户点击从 npm 安装到 `~/.xyz-agent/pi/agent/npm/node_modules/`。
-  - 推荐列表 SSOT：`packages/shared/src/recommended-extensions.json`（runtime import，前端经 `extension.recommended` WS 拉取）
-  - runtime `ExtensionService.getRecommendedExtensions()` 计算已安装状态（按 npm 包名精确匹配 `ExtensionInfo.name`，不经 normalizeExtName 转换）
-  - electron-builder.yml 不再 `extraResources` 拷贝 `@zhushanwen/`，preflight-check.sh 移除了原 npm packages / 传递依赖检查（步骤 7、8）
-  - **代价**：新用户首次启动无这些 extension，需到 Settings 手动安装；离线环境无法安装（npm-installer 需联网）
-  - 旧规则背景：曾经发生过误删 builtin 依赖导致打包产物缺失的事故，故设禁止删除规则。现改为推荐安装机制后该约束不再适用，但「删除打包所需依赖」的事故教训仍适用于其他 builtin 资源（如 pi binary、xyz-agent-extension.js）
-  - **2026-07-30 推翻（升格 mandatory）**：上面的「Settings 推荐安装」机制**已被取代**。原 6 个推荐包（`pi-ask-user`/`pi-goal`/`pi-todo`/`pi-pending-notifications`/`pi-subagent-workflow`/`pi-structured-output`）已升格为 **mandatory**（强制安装），并新增 3 包（`pi-permission`/`pi-scheduler`/`pi-rename-session`），共 **9 包**改为 mandatory。mandatory 语义：runtime boot 时 `ensureMandatoryExtensions()` 自动 `npm install` 到 `~/.xyz-agent/npm/node_modules/` 并设 `autoUpgrade`、清 disabled 残留；**不可卸载/不可禁用**（`uninstallExtension`/`toggleExtension` 双重守卫，抛 `mandatory_cannot_disable`/`mandatory_cannot_uninstall`）。`recommended-extensions.json` 已清空为 `[]`（推荐机制保留给未来非强制可选扩展，当前为空）。**SSOT 迁移**：mandatory 列表 SSOT = `packages/shared/src/mandatory-extensions.json`（含 `tier: infrastructure | feature` 两级），recommended-extensions.json 不再是这些包的 SSOT。离线安装/用户手动安装等「推荐机制」结论不再适用。
-  - **2026-08-12 推翻（改为打包内置）**：上面的「boot npm install 到 `~/.xyz-agent/npm/node_modules/`」机制**已被取代**（ada6c0466 重构 + `prepare-builtin-extensions.sh`）。mandatory 包改为**随应用打包内置**：esbuild 把每个包 bundle 成自包含 `index.js`（JS value 依赖 inline，仅 pi virtualModules external）→ staged 到 `apps/electron/resources/extensions/@zhushanwen/<pkg>/` → electron-builder extraResources 拷进 `Resources/extensions/` → resolver `bundled` 源扫描。dev 与 build 同源（dev 直读 staged 目录）。**语义变化**：不再 boot npm install（`migrateBuiltinExtensions()` 反向清理历史 npm 记录：settings.json packages[] / auto-upgrade / disabled）；禁止用户 npm 安装（`installExtension` 抛 `builtin_already_installed`）；infrastructure 级不可禁用守卫保留。**SSOT 不变**：`mandatory-extensions.json` 仍是清单 SSOT（`prepare-builtin-extensions.sh` 读它生成 staged 产物，新增包**自动生效**，无需改 electron-builder.yml——extraResources filter 为 `**/*` 全量）；2026-08-12 加入 `pi-session-reader`（tier: infrastructure），共 **10 包**。打包产物存在性/完整性校验在 `postbuild-validate.sh`（`verify-staged-extensions.mjs`：index.js 存在 / 无 .ts 残留 / permission wasm / import dry-run）。**后续术语演化（builtin）**：守卫错误码与判定函数已从 mandatory 切到 builtin——`uninstallExtension` 抛 `builtin_cannot_uninstall`，`toggleExtension` 抛 `infrastructure_cannot_disable`（仅拦 infrastructure 级，feature 级可禁）。分级行为：infrastructure 3 包（`pi-pending-notifications`/`pi-session-reader`/`pi-structured-output`）不可禁且 UI 无启用开关；feature 7 包可禁（开关可见可操作）；两者都不可卸（UI 无卸载按钮，`ExtensionActions.vue` `v-if="ext.layer !== 'builtin'"` 隐藏）。判定函数 `isBuiltinExtension`（`packages/shared/src/extension.ts`，`isMandatoryExtension` 的新语义别名）、`isInfrastructureBuiltin`，底层 SSOT 仍是 `mandatory-extensions.json`。非 builtin 扩展（任意第三方 npm/local-dir/git 安装）仍正常装卸。
+- **Builtin pi-extensions 打包内置（现行机制）**：10 个 `@zhushanwen/pi-*` 包随应用打包内置，不走 npm 安装。esbuild 把每个包 bundle 成自包含 `index.js`（JS 依赖 inline，仅 pi virtualModules external）→ staged 到 `apps/electron/resources/extensions/@zhushanwen/<pkg>/` → electron-builder extraResources 拷进 `Resources/extensions/` → resolver `bundled` 源扫描；dev 与 build 同源。清单 SSOT = `packages/shared/src/mandatory-extensions.json`（`tier: infrastructure | feature` 两级，`prepare-builtin-extensions.sh` 读它生成 staged 产物，新增包自动生效）；产物校验在 `postbuild-validate.sh`（`verify-staged-extensions.mjs`）
+  - 守卫：`installExtension` 抛 `builtin_already_installed`（禁止对 builtin 包 npm 安装）；`uninstallExtension` 抛 `builtin_cannot_uninstall`（UI 无卸载按钮）。infrastructure 3 包（`pi-pending-notifications`/`pi-session-reader`/`pi-structured-output`）不可禁（`toggleExtension` 抛 `infrastructure_cannot_disable`，UI 无启用开关）；feature 7 包可禁。判定函数 `isBuiltinExtension` / `isInfrastructureBuiltin`（`packages/shared/src/extension.ts`）。非 builtin 扩展（第三方 npm/local-dir/git）正常装卸
+  - **[HISTORICAL] 演化史**：builtin 依赖 → Settings 推荐安装（2026-07-04）→ boot npm install mandatory（2026-07-30）→ 打包内置（2026-08-12，现行）。中间机制的结论不再适用；「删除打包所需依赖导致产物缺失」的事故教训始终适用（pi binary、xyz-system-prompt-extension.js 等 builtin 资源同理）
   - **xyz-system-prompt-extension.js**（repo root）：builtin 文件型 pi 扩展，before_agent_start hook 实现系统提示词追加注入。走 `--extension` CLI 注入（extension-service.getExtensionPaths 在 xyz-agent-extension.js 之后追加）。打包走 electron-builder.yml extraResources（`../../xyz-system-prompt-extension.js`），postbuild-validate.sh 校验产物存在性。「删除打包所需依赖」事故教训同样适用
   - extension/skill 都不走 vendor submodule（2026-07-04 移除了 `vendor/xyz-pi-extensions` + `vendor/xyz-harness` 两个 submodule，`prepare-pi-resources.sh` 现只负责下载 pi binary，extensions 走 npm 源、skills 走用户/project 级目录 `~/.agents/skills` / `<cwd>/.pi/agent/skills`）
 
 ### 12. Electron 打包约束（违反必出 bug）
 
-#### tsup 配置 (`packages/runtime/tsup.config.ts`)
-- `platform: 'node'` + `target` 匹配当前 Electron 内置 Node 版本（见 `packages/runtime/tsup.config.ts`，Electron 42 → Node 24）— 自动处理所有 Node 内置模块 external
-- `noExternal` 必须覆盖 **所有** runtime `dependencies` — 新增 npm 依赖时必须同步追加，否则 `asar.unpacked` 运行时 `Cannot find module`
-- **Worker 入口必须独立打包**：`plugin-bootstrap.ts` 是 Worker Thread 入口，tsup `entry` 必须包含它，输出为 `plugin-bootstrap.cjs`，与 `index.cjs` 同目录。禁止只打包 `index.ts` 一个 entry
-- 禁止在 runtime 源码中使用 `import.meta.url` 或 `fileURLToPath(import.meta.url)` — tsup CJS bundle 将 `import.meta` 替换为 `var import_meta = {}`，`import_meta.url` 始终为 `undefined`。禁止用 `globalThis.__dirname` — CJS 中 `__dirname` 是模块局部变量，不在 `globalThis` 上。正确做法：用 `typeof __dirname !== 'undefined' ? __dirname : undefined` 直接检查 CJS 模块变量，tsup/esbuild 会原样保留到 CJS 输出
+事故最高发领域。完整审查清单（含逐项核对方法）见 `.agents/skills/pr-cr-fix/agents/review-electron-build.md`，验证由脚本自动化，日常编码按下述约束执行。
 
-#### electron-builder 配置 (`apps/electron/electron-builder.yml`)
-- `asarUnpack: dist/runtime/**/*` — runtime 必须在 unpacked 目录，子进程无法读取 asar 内的 JS 文件
-- **`files` 与 `asarUnpack` 的致命交互**：`asarUnpack` 只作用于**已被 `files` 包含的文件**。如果 `files` 中用了 `!dist/runtime/**/*` 排除 runtime，asarUnpack 将无文件可解压，导致打包产物中**缺失整个 runtime**。必须确保 `files` 包含 `dist/runtime/**/*`
-- `files` 只包含主进程直接 `require` 的 `node_modules`（其余已被 tsup 打包进 runtime bundle）
+**tsup 配置**（`packages/runtime/tsup.config.ts`）：
+- `platform: 'node'` + `target` 匹配 Electron 内置 Node 版本（Electron 42 → Node 24）
+- `noExternal` 必须覆盖**所有** runtime `dependencies`——新增 npm 依赖必须同步追加，否则打包后 `Cannot find module`
+- Worker 入口 `plugin-bootstrap.ts` 必须独立打包（tsup `entry` 包含，输出 `plugin-bootstrap.cjs`），禁止只打包 `index.ts`
+- runtime 源码禁止 `import.meta.url` / `fileURLToPath(import.meta.url)` / `globalThis.__dirname`（CJS bundle 下全部失效）；路径用 `typeof __dirname !== 'undefined' ? __dirname : undefined`
 
-#### extraResources 与 symlink
-- `resources/pi/` 中**禁止存在指向外部绝对路径的 symlink**。electron-builder 的 `extraResources` 复制时保留 symlink，用户机器上目标路径不存在会导致 pi 运行时资源缺失
-- 构建前必须 dereference：`cp -RL` 替代 `cp -R`，或脚本中显式将 symlink 替换为真实目录拷贝
+**electron-builder**（`apps/electron/electron-builder.yml`）：
+- `asarUnpack` 只作用于已被 `files` 包含的文件——`files` 必须显式含 `dist/runtime/**/*`；误加 `!dist/runtime` 排除 = 产物缺失整个 runtime（子进程无法读 asar 内 JS）
+- `files` 只包含主进程直接 `require` 的 `node_modules`（其余已被 tsup 打进 runtime bundle）
+- `resources/pi/` 禁止外部绝对路径 symlink（打包保留 symlink，用户机器目标不存在）；构建前 `cp -RL` dereference
 
-#### 子进程启动 (`apps/electron/main/supervisor/runtime-supervisor.ts`)
-- 必须用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 启动 runtime，不能用 `node` 路径
-- 打包后路径必须用 `process.resourcesPath/app.asar.unpacked/...`，不能用 `app.getAppPath()`（返回 asar 虚拟路径）
+**子进程启动**（`runtime-supervisor.ts`）：必须 `process.execPath` + `ELECTRON_RUN_AS_NODE=1`；打包后路径用 `process.resourcesPath/app.asar.unpacked/...`，禁止 `app.getAppPath()`（返回 asar 虚拟路径）
 
-#### 打包验证流程（三阶段，缺一不可）
-1. **Preflight** (`scripts/preflight-check.sh`)：
-   - 产物存在性（dist/main, dist/preload, dist/runtime/index.cjs, dist/runtime/plugin-bootstrap.cjs, renderer/dist）
-   - tsup noExternal 与 runtime dependencies 一致性
-   - `files` 显式包含 `dist/runtime/**/*`（不只是"未排除"）
-   - `files` 未排除 `dist/runtime`（正则扫描 `!dist/runtime` 模式）
-   - `resources/pi` 无 symlink
-2. **Build** (`pnpm run build`)：electron-builder 执行打包，产出 dmg/zip/exe
-3. **Postbuild** (`scripts/postbuild-validate.sh`)：
-   - asar 内容正确性（dist/main/main.cjs, dist/preload/preload.cjs）
-   - `app.asar.unpacked/dist/runtime/` 存在且包含 `index.cjs` + `plugin-bootstrap.cjs`
-   - `Resources/pi` 无 symlink
-   - 产物大小合理性
-4. **CI Runtime Smoke Test**（release workflow）：
-   - macOS: `ELECTRON_RUN_AS_NODE=1 <electron> <runtime> --port=<random>` → `/health` 返回 ok
-   - Windows/Linux: 验证 `app.asar.unpacked/dist/runtime/index.cjs` 存在
+**逐 commit 纪律**：tsup.config.ts / electron-builder.yml / plugin-host / runtime 相关改动必须逐个 commit、逐个验证——一个 commit 混多个打包子系统时，出 bug 无法定位是哪个改动引入
 
-#### 打包相关改动规范（违反必出 bug）
-
-**tsup.config.ts、electron-builder.yml、plugin-host.ts、runtime 相关文件的改动必须逐个 commit、逐个验证。** 禁止在一个 commit 中同时修改多个打包子系统。
-
-原因：v0.3.8 的 PR #61 在一个 commit 中同时改了 tsup 配置、electron-builder files、plugin-host 路径解析、plugin-version-checker，引入了两个独立致命 bug，无法定位是哪个改动导致的问题。
-
-正确流程：
-1. 每个改动独立 commit
-2. 每次 commit 后运行 `bash scripts/validate-runtime-bundle.sh`（含第 6 步 smoke test）
-3. 打包配置变更（electron-builder.yml/tsup.config.ts）额外触发 pre-commit 的 runtime bundle 验证
-
-#### 自动验证脚本
-- `scripts/preflight-check.sh` — 打包前检查
-- `scripts/postbuild-validate.sh` — 打包后验证 + CI 自动拦截
-- `scripts/validate-runtime-bundle.sh` — runtime bundle 深度验证（依赖打包、CJS 兼容、Worker bootstrap 存在性、健康检查、plugin 初始化成功）
-- pre-commit hook 自动触发 `validate-runtime-bundle.sh`（当 `packages/runtime/src/` 有变更时）
-
-**跳过检查**:
-```bash
-SKIP_RUNTIME_BUNDLE_CHECK=1 git commit   # 跳过 runtime bundle 验证
-SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
-```
+**验证三阶段**（脚本自动化，禁止 skip）:preflight-check.sh（打包前）→ `pnpm build` → postbuild-validate.sh（打包后 + CI 拦截）；runtime bundle 深度验证用 validate-runtime-bundle.sh（pre-commit 在 `packages/runtime/src/` 变更时自动触发，含 smoke test）
 
 ### 13. 目录规范（违反必出 bug）
 
@@ -400,14 +345,9 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 
 **项目维度 skill（`.agents/skills/`）引用的所有脚本必须复制到项目 skill 目录内，禁止依赖全局脚本目录（`~/.agents/skills/`）或 symlink。**
 
-- **根因**：项目 skill 依赖全局脚本时，全局脚本变更会悄悄影响项目行为（如 pre-merge-check.sh 改了 remote 检查逻辑），且 bare repo workspace 项目的 remote 语义（`origin`=本地 bare repo，`github`=真正远程）与通用脚本不一致，导致检查误报。全局脚本不随项目 git 跟踪，无法保证可复现。
-- **规则**：
-  1. 项目 skill 需要的脚本 → 复制到 `.agents/skills/<skill-name>/scripts/` 下，随 git 跟踪推送
-  2. SKILL.md 里的路径引用 → 用项目内相对路径（`.agents/skills/merge/scripts/pre-merge-check.sh`），不用 `~/.agents/...`
-  3. 禁止用 symlink 指向全局脚本（symlink 不随 git 跟踪，且违反 §13 外部 symlink 禁令）
-  4. 如果复制的脚本有问题（如 remote 检查逻辑不适用本项目），直接改项目内副本，不影响全局
-- **事故记录**：2026-07-22 merge 流程阶段 1 pre-merge-check.sh 报"有未推送 commits"误报。根因是全局脚本检查 `origin/$BRANCH`（bare repo），但实际推送到 `github/$BRANCH`。修复方式：复制脚本到项目内，改为优先检查 `github` remote（bare repo workspace），fallback `origin`（普通 repo）
-- **当前项目内自包含脚本**：`.agents/skills/merge/scripts/` 含 init.sh / pr-merge.sh / pre-merge-check.sh / release.sh / remove-worktree.sh / wait-for-ci.sh（全部 git 跟踪）
+- **根因**：全局脚本不随项目 git 跟踪、变更会悄悄影响项目行为；且 bare repo workspace 的 remote 语义（`origin`=bare repo，`github`=真远程）与通用脚本不一致，曾导致 pre-merge-check 误报「有未推送 commits」
+- **规则**：脚本复制到 `.agents/skills/<skill-name>/scripts/` 随 git 跟踪；路径用项目内相对路径；禁止 symlink 指向全局脚本（违反 §13）；项目内副本有问题直接改副本
+- **当前自包含脚本**：`.agents/skills/merge/scripts/` 含 init.sh / pr-merge.sh / pre-merge-check.sh / release.sh / remove-worktree.sh / wait-for-ci.sh
 
 ### 15. git status untracked 目录展开 [HISTORICAL]
 
@@ -422,38 +362,26 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 
 **runtime 代码禁止出现特定项目的绝对路径（如 `/Users/.../xyz-agent-workspace`）或对特定项目的硬编码假设。所有 workspace / bare repo / 数据目录路径必须从运行时上下文动态推导。**
 
-- **根因**：xyz-agent 是通用工具，用户会在任意 bare repo + worktree 结构的项目中使用（不只限 xyz-agent 自身）。写死 `xyz-agent-workspace` 等特定路径会导致其他项目（如 xyz-pi-extensions-workspace）功能失效。用户报告在 xyz-pi-extensions-workspace 执行「新建 worktree」失败，初看像写死路径，实际排查后发现 detector 正确动态查找 .bare，真正的 bug 是 spawn 权限（见下）——但「禁止写死路径」作为通用原则必须固化为规范。
-- **正确做法**：
-  - workspace 根 / bare repo 路径：用 `WorkspaceDetector.detect(currentCwd)` 从当前 cwd 向上逐级查找 `.bare`（`packages/runtime/src/services/worktree/workspace-detector.ts`）
-  - 数据目录：用 `getDataDir()` / `getConfigDir()`（`packages/shared/src/paths.ts`），禁止硬编码 `~/.xyz-agent`
-  - 路径白名单：用动态函数推导，禁止硬编码（见架构约定 #2）
-- **事故关联**（spawn 脚本权限）：`ShellRunner.execute` 原用 `spawn(scriptPath, args)` 直接 spawn 脚本，依赖文件 +x 权限位。git 跟踪的脚本默认 644（无 x 位）→ EACCES。修复为 `spawn('bash', [scriptPath, ...args])`（不依赖 +x）。这是独立 bug，但与「路径」无关——记在 `shell-runner.ts` 的 [HISTORICAL] 注释中。教训：执行外部脚本用 bash 包装，不依赖文件权限位。
-- **检查方法**：`grep -rn "xyz-agent-workspace\|/Users/zhushanwen" packages/runtime/src/` 应只在注释/示例中出现，不得在逻辑代码中出现硬编码绝对路径。
+- **根因**：xyz-agent 是通用工具，用户会在任意 bare repo + worktree 结构的项目中使用，写死路径导致其他项目功能失效
+- **正确做法**：workspace 根 / bare repo 路径用 `WorkspaceDetector.detect(currentCwd)` 向上查找 `.bare`（`workspace-detector.ts`）；数据目录用 `getDataDir()` / `getConfigDir()`（`packages/shared/src/paths.ts`），禁止硬编码 `~/.xyz-agent`；路径白名单动态推导（架构约定 #2）
+- **关联教训**（spawn 权限）：git 跟踪的脚本默认 644 无 x 位，直接 `spawn(scriptPath)` 会 EACCES；执行外部脚本用 `spawn('bash', [scriptPath, ...args])` 包装，不依赖权限位
+- **检查方法**：`grep -rn "xyz-agent-workspace\|/Users/zhushanwen" packages/runtime/src/` 不得在逻辑代码中出现硬编码绝对路径
 
 ### 17. 跨层机制排查必须穷尽所有层（pi extension ↔ xyz-agent runtime）[HISTORICAL]
 
 **分层架构里，每层只看自己视角，「我这层没做」≠「没发生」。涉及 pi extension ↔ xyz-agent runtime 的跨层机制排查，必须穷尽所有可能发起方，不能只看 xyz-agent runtime 侧就下结论。**
 
-**事故背景**：排查「background subagent 完成后主 agent 是否续跑」。前次 explorer 只看 xyz-agent runtime（event-interpreter / session-service / message-dispatcher），发现 `handleSubagentBgNotify` 只更新 subagent 状态、不调 steer/followUp/prompt，据此下结论「主 agent 不续跑」。基于此错误结论，差点把修复方案设计成「加守卫跳过有 background 任务的 message.complete，不新增触发点」——净效果是**从「早响」变成「永不响」**（subagent 完成后没有任何 message.complete 会触发提示）。
-
-**真相**：续跑机制由 **pi 进程内部的 extension**（pi-subagent-workflow notifier）发起，xyz-agent runtime 完全不参与：
-- pi-subagent-workflow 在 subagent 完成时调 `pi.sendMessage({customType:'subagent-bg-notify', ...}, {triggerTurn:true, deliverAs:'steer'})`
-- pi 核心（session loop）收到 `triggerTurn:true` 后开新一轮 turn（steer 抢占当前 streaming，followUp 排队）
-- 主 agent 续跑 → 产出 → 最终 `message.complete`（此时 subagent 已 done，hasBackgroundWork===false，守卫放行自然响）
-
-xyz-agent runtime 只是旁观转发：它看到 pi 又开始流 `message_start`，与用户手动发消息触发的 turn 无法区分。`triggerTurn`/`deliverAs` 是 pi 私有协议，xyz-agent 从未实现——因为它不需要，pi 自己做了。
-
-**为什么前次 explorer 会错判**：只看 xyz-agent runtime 的「通知到达后 xyz-agent 做什么」，没看「通知到达 xyz-agent 之前 pi 已经自己做了什么」。这是分层架构的典型陷阱——每层的代码都在自己职责内自洽，但跨层机制的发起方/执行方分布在不同进程/扩展中，单一层视角必然遗漏。
+**事故背景**：排查「background subagent 完成后主 agent 是否续跑」，explorer 只看 xyz-agent runtime 就断言「不续跑」，差点据此设计出「永不响」的错方案。真相：续跑由 pi 进程内的 extension 发起（pi-subagent-workflow notifier 调 `pi.sendMessage(..., {triggerTurn:true, deliverAs:'steer'})`，pi 核心收到后开新 turn），xyz-agent runtime 只是旁观转发，与用户手动发消息触发的 turn 无法区分。跨层机制的发起方/执行方分布在不同进程/扩展中，单一层视角必然遗漏。
 
 **排查跨层机制的强制步骤**：
-1. xyz-agent runtime 侧（event-interpreter / session-service / message-dispatcher / session-message-handler）：这些只是「旁观 + 转发 + UI 同步」，不主动编排 pi 行为
-2. pi extension 机制（运行在 pi 进程内）：`@zhushanwen/pi-subagent-workflow` / `pi-subagents` 等扩展的 notifier / hook 才是续跑/编排的发起方。**开发期源码**在本项目 `extensions/`（@zhushanwen/pi-* 包），**运行时安装版**在用户机器 `~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/pi-*/src/`（排查用户环境问题时看这个）
-3. pi 私有协议（`triggerTurn`/`deliverAs`/`before_agent_start` 等）：`packages/shared/src/message.ts` 的注释会提到这些语义（如「triggerTurn:true 唤醒父 agent 接力处理结果」），但 xyz-agent 不实现它们
-4. 设计文档：`docs/page-design/archive/v3/` 下常有 extension adaptation 文档（如 `subagent-panel/workflow-extension-adaptation.md`）说明跨层协议。extension 的 `ctx.mode`、运行环境、SDK 接口契约等前提知识见 [docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)
+1. xyz-agent runtime 侧（event-interpreter / session-service / message-dispatcher / session-message-handler）：只是「旁观 + 转发 + UI 同步」，不主动编排 pi 行为
+2. pi extension 机制（pi 进程内）：`@zhushanwen/pi-*` 扩展的 notifier / hook 才是续跑/编排的发起方。开发期源码在本项目 `extensions/`，用户机器运行时安装在 `~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/pi-*/src/`（排查用户环境问题看这个）
+3. pi 私有协议（`triggerTurn`/`deliverAs`/`before_agent_start`）：语义见 `packages/shared/src/message.ts` 注释，xyz-agent 不实现它们
+4. 设计文档：`docs/page-design/archive/v3/` 的 extension adaptation 文档；extension 的 `ctx.mode`、运行环境、SDK 契约见 [docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)
 
-**判断「是 xyz-agent 职责还是 pi 职责」的依据**：如果一个行为涉及 pi 的 session loop / turn 调度 / LLM 调用，它的发起方几乎一定在 pi 进程内（extension 或 pi 核心），xyz-agent runtime 只是通过 RPC/事件流与 pi 交互，不会自己编排 pi 的 turn。xyz-agent 的职责是 UI 状态同步 + 用户命令转发，不是 pi 行为编排。
+**判断依据**：涉及 pi 的 session loop / turn 调度 / LLM 调用的行为，发起方几乎一定在 pi 进程内；xyz-agent 的职责是 UI 状态同步 + 用户命令转发，不是 pi 行为编排。
 
-**教训记录**：2026-07-27 completion-sound-bg-guard wave，前次 explorer 误判续跑机制，差点导致「永不响」错方案。幸亏用户坚称「主 agent 会续跑」与 explorer 结论冲突，触发二次排查（穷尽 pi extension 源码 + 设计文档）才定位真相。教训：当用户的领域知识与 explorer 结论冲突时，**优先怀疑 explorer 排查范围不全**，而非怀疑用户。explorer 单次排查的盲点（尤其跨层机制）比用户对自家产品的认知更容易出错。
+**教训**：当用户的领域知识与 explorer 结论冲突时，**优先怀疑 explorer 排查范围不全**，而非怀疑用户。
 
 ## 测试规范 [HISTORICAL]
 
@@ -469,7 +397,7 @@ xyz-agent runtime 只是旁观转发：它看到 pi 又开始流 `message_start`
 
 ### 测试视角与覆盖质量 [HISTORICAL — 2026-06-27「新建任务」事故]
 
-> 事故：「新建任务」功能 77 单测 + 24 集成全绿、vue-tsc/tsc EXIT 0、verdict pass，用户手动打开却发现 Landing 态根本没有 composer 输入区——阻塞级 bug。根因：测试只做了构建者（白盒）视角（验状态机/API 契约），缺使用者（黑盒：能否完成目标）与观察者（形态：渲染长什么样）两个视角。
+> 事故背景：「新建任务」功能测试全绿 + tsc EXIT 0，用户手动打开却发现 Landing 态根本没有 composer 输入区——测试只有构建者（白盒）视角，缺使用者（黑盒：能否完成目标）与观察者（形态：渲染长什么样）视角。
 
 5. **每条集成/E2E 用例至少一个用户可见断言** [MANDATORY]：每条 `it` 至少含一个 `wrapper.find(...).exists()` / `wrapper.text()` / `wrapper.html()` 断言（DOM 元素存在、文案渲染、可见状态）。纯内部断言（`state.value`、`expect(apiMock).toHaveBeenCalled`）不计入 DoD 覆盖。反模式：39 用例全断言 state/testid，零个断言「用户能否看到输入框」。
 
@@ -533,21 +461,11 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 
 ### Lint / Git Hooks 问题处理原则 [MANDATORY]
 
-**lint（ESLint / vue_rules_checker）或 githooks（pre-commit 的任何 check_*.py）检出的问题，无论等级（warning / error，或 critical / major / minor），也无论是否本次改动引入（预存存量问题一律同视），必须全部正面修复，不得跳过。不得以"不是本次改动导致"为由而不修复。**
-
-- **存量问题也要修**：携改动的 commit 触发了检查，检查出的所有问题（含本次改动前就存在的）都是本次提交的责任范围。
-- **不得以”只是 warning / minor”为由跳过**：低等级问题也必须修。等级只影响修复顺序，不影响”必须修复”的结论。reviewer 报告的 minor、ESLint 的 warning 同样必须解决。
-- **不得绕过检查**：禁止 `git commit --no-verify` 或项目专属的 `SKIP_*` 变量（`SKIP_FRONTEND_LINT` / `SKIP_CODE_RULES_CHECK` / `SKIP_ALL_CHECKS` 等）— 仅限线上故障热修复等紧急场景，且必须在 commit message 说明原因。
-- **不得仅“消除报错”而不解决根因**：例如把原生 `<button>` 改成 `<Button>` 是正面修复；但把检测规则改成“放过该写法”只有在确认规则误报时才可（且须在规则中加注释说明）。
-- **规则误报的唯一正当处理**：修正规则本身使其准确（如 reka-ui `SelectItem :value` 是选项值语义，应排除），并在规则文件加 `[HISTORICAL]` 注释记录原因。禁止用 `// eslint-disable-next-line` 局部静默。
-- pre-commit 每个检查失败分支已内置提示：”无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过”。
+**按全局 AGENTS.md「Pre-commit Hook 问题处理」执行**：lint / githooks（含 vue_rules_checker、pre-commit 的 `check_*.py`）检出的任何等级问题（含预存存量）必须全部正面修复——禁止 `--no-verify` / 项目专属 `SKIP_*` 变量（`SKIP_FRONTEND_LINT` / `SKIP_CODE_RULES_CHECK` / `SKIP_ALL_CHECKS` 等）绕过，仅限线上故障热修复且须在 commit message 说明原因。规则误报的唯一正当处理：修正规则本身使其准确（如 reka-ui `SelectItem :value` 是选项值语义，应排除），并在规则文件加 `[HISTORICAL]` 注释记录原因；禁止 `// eslint-disable-next-line` 局部静默。
 
 ### 完成即提交 [MANDATORY]
 
-**所有变更改完并在本地验证通过后，在向用户汇报完成 / 结束本轮工作（stop）之前，必须执行 git commit。** 禁止留下”改了代码但未提交”的脏工作区就结束。
-
-- 若因**穷尽正面修复后仍未解决的**检查失败、冲突、认知外改动等原因无法提交，必须在结束前**明确说明未提交原因**，不得静默跳过（见失败模式防护 #3「失败要出声」）。注意：pre-commit 检出的问题必须先按上文「Lint / Git Hooks 问题处理原则」全部修复，「检查未过」本身不构成停笔理由
-- 提交范围遵循全局提交策略：优先提交本次会话产生的改动，文件级颗粒度
+按全局 AGENTS.md「提交策略 → 完成即提交」执行，禁止留脏工作区结束，无法提交必须说明原因。项目补充：pre-commit 检出的问题先按上文「Lint / Git Hooks 问题处理原则」修复，「检查未过」不构成不提交的理由；提交范围用全局策略（优先本次会话改动，文件级颗粒度）。
 
 
 ## Git 规范
@@ -624,7 +542,17 @@ main 稳定发布流程（merge skill 阶段 4N 封装）：
 
 > **merge skill 集成**：merge skill 阶段 4N 封装了上述 main 稳定发布流程。仅当 PR 含 `extensions/` 改动时执行，与 Electron 发布线（阶段 4，`v*` tag）独立。dev-npm 预发布不走阶段 4N。详见 `.agents/skills/merge/SKILL.md`
 
-每次 push tag 触发 CI（release workflow）构建 Electron 产物后，**必须等待 CI 完成并验证产物存在**。多次发生 AI push 后直接宣布"已完成"，实际 CI 构建失败或产物缺失而无人察觉。
+### [MANDATORY] push tag 后必须验证 CI 产物
+
+push 任何发布 tag 后禁止直接宣布完成（多次事故：push 后说"CI 会构建"就结束，实际 CI 构建失败或产物缺失无人察觉）。必须轮询 CI 并验证产物存在，直到验证脚本 exit 0：
+
+| 操作 | 验证命令 |
+|------|---------|
+| 预发布测试 | `scripts/prerelease-test.sh` 内置自动验证 |
+| 正式发布（merge） | `bash scripts/verify-ci-release.sh v<version>` |
+| 手动 push tag | `bash scripts/verify-ci-release.sh <tagname>` |
+
+脚本 exit 非 0 时：CI workflow 未完成或失败 → 打开 CI 链接排查；Release 未创建 → 检查 release.yml 是否触发；产物缺失 → 查对应平台构建日志。禁止说"CI 可能还在跑"或"应该没问题"后结束，必须修复直到 exit 0。
 
 ### [MANDATORY] Release Notes 必须中英双语
 
@@ -643,47 +571,7 @@ Release Notes 需要同时包含中文和英文版本，使用 `<!-- LANG:zh -->
 - 添加功能 Y
 ```
 
-注意事项：
-- 英文在前，中文在后（便于 GitHub 默认显示英文）
-- 每个语言部分保持独立的 markdown 结构
-- 标记必须独占一行，前后可有空行
-- 向后兼容：无标记的 release 仍正常显示完整内容
-
-### [MANDATORY] 必须遵守的规则
-
-**错误做法（禁止）：**
-```
-# 坏 — push 后直接结束
-pnpm version patch && git push github HEAD --tags
-echo "已推送，CI 会构建"
-# ← AI 在此结束，不检查 CI 结果
-```
-
-**正确做法：**
-```
-# 好 — push 后必须验证
-pnpm version patch && git push github HEAD --tags
-bash scripts/verify-ci-release.sh "v$(node -p "require('./package.json').version")"
-# ← 脚本会轮询 CI 直到完成，验证 dmg/exe/AppImage 存在
-# ← exit 0 = 通过，exit 非 0 = 失败（AI 必须修复直到 exit 0）
-```
-
-### 适用场景
-
-| 操作 | 验证命令 |
-|------|---------|
-| 预发布测试 | `scripts/prerelease-test.sh` 内置自动验证 |
-| 正式发布（merge） | `bash scripts/verify-ci-release.sh v<version>` |
-| 手动 push tag | `bash scripts/verify-ci-release.sh <tagname>` |
-
-### 验证失败时的处理
-
-脚本 exit 非 0 意味着：
-1. CI workflow 未完成或失败 → 打开 CI 链接排查
-2. Release 未创建 → 检查 release.yml 是否正常触发
-3. 产物缺失 → 检查对应平台构建日志
-
-**禁止行为**：说"CI 可能还在跑"或"应该没问题"后结束。必须等脚本 exit 0。
+注意事项：英文在前中文在后；标记必须独占一行；无标记的旧 release 仍正常显示完整内容（向后兼容）。
 
 
 
@@ -723,30 +611,19 @@ runtime 子进程（`packages/runtime/src/`）与 pi 子进程的所有日志输
 - **pi 子进程输出落盘**：pi 卡死时其 stdout JSONL 事件流是**唯一决定性证据**。pi stdout（`rpc-client.ts` 的 `createInterface` 消费点，`rl.on('line')`）必须 tee 一份原始行到 `<dataDir>/logs/pi-<date>-<sessionId>.jsonl`；pi stderr 进主 runtime 日志（经 `[rpc:stderr]` 前缀随 console 落盘）
 - **实现位置**：logger 模块在 `runtime/src/infra/logger.ts`，在 `index.ts` 组合根最早期初始化（`initLogger(getDataDir())`），console 作为 logger 语法糖（monkey-patch 全局 console 覆盖 runtime 内既有的裸 console，tee 到终端 + 文件）。supervisor 层（`main/supervisor/process-control.ts`）仍捕获 runtime stdout 打终端，日志落盘责任在 runtime 自身
 
-**[HISTORICAL] 背景**：handoff 2026-07-04 P1「pi 静默卡死」——坏 session 的 JSONL 只有 2 行、零 message，pi 子进程 0% CPU 不退出。runtime 发了 prompt 后 pi 发了什么事件（或什么都没发）无法事后追溯，因为日志只在 concurrently 终端，关掉即丢。此条目把「日志必须落盘」固化为规范，避免再次因证据丢失而无法定位。实现见 commit（logger.ts + index.ts initLogger + rpc-client.ts pi stdout tee）。
+**[HISTORICAL] 背景**：「pi 静默卡死」事故中 pi 子进程 0% CPU 不退出、session JSONL 仅 2 行零 message，日志只在终端关掉即丢，无法事后追溯发了什么事件。此条目固化「日志必须落盘」。实现：`runtime/src/infra/logger.ts` + `index.ts` initLogger + `rpc-client.ts` pi stdout tee。
 
 ### 5. 包管理器与 lock 文件纪律 [HISTORICAL]
 
-本项目是 **pnpm workspace 单一包管理器**项目（`pnpm-workspace.yaml` 声明 `packages/*` + `apps/*`）。`pnpm-lock.yaml` 是**唯一权威 lock 文件**，必须跟踪。**禁止跟踪任何 npm 产物**（`package-lock.json`）。
+本项目是 **pnpm workspace 单一包管理器**项目（`pnpm-workspace.yaml` 声明 `packages/*` + `apps/*`），`pnpm-lock.yaml` 是唯一权威 lock 文件，**禁止跟踪任何 npm 产物**（`package-lock.json`）。通用纪律（`packageManager` 字段声明、`.gitignore` 忽略、`git rm --cached` 停止跟踪、安装命令与包管理器一致、禁 `npm version`）按全局 AGENTS.md「包管理器与 lock 文件纪律」执行。子包确需独立用 npm 时（罕见），在该子包自己的 `.gitignore` 放开规则并声明对应 `packageManager`。
 
-**三件套（缺一不可）**：
-
-1. **`package.json` 必须声明 `packageManager` 字段**（锁定包管理器 + 版本）。示例：`"packageManager": "pnpm@10.27.0"`。corepack/IDE 据此自动切换，避免有人误用 npm install 生成 `package-lock.json`。新增项目或发现缺失时补全；pnpm 升级时同步更新此字段
-2. **`.gitignore` 必须忽略 `package-lock.json`**（连同 `package-lock.json.*`）。即使误生成也不进版本库
-3. **发现 `package-lock.json` 被 git 跟踪时，用 `git rm --cached package-lock.json` 停止跟踪**（保留磁盘文件），不要 `rm` 物理删除
-
-**根因**：`package-lock.json` 与 `pnpm-lock.yaml` 双轨跟踪时，版本号长期各跑各的（package.json / pnpm-lock / package-lock 三处版本号各不相同），且 npm 与 pnpm 的依赖解析算法不同（npm flat hoisting vs pnpm 严格隔离 + symlink），双 lock 会产生幽灵依赖、重复安装、解析不一致类 bug。2026-07-30 事故：`package-lock.json` 版本滞留在 0.8.32（main 已 0.8.38、package.json 0.8.37），且 `package.json` 未声明 `packageManager`，是 lock 双轨的根因。
-
-**操作纪律**：
-- 所有安装/添加依赖命令用 `pnpm install` / `pnpm add`，禁止 `npm install` / `npm ci`
-- 禁止 `npm version` 改版本号（会同步改写 package-lock.json），版本号用 `changeset version` 或手改 package.json
-- 子包若确需独立用 npm（罕见，如某个 vendored 工具），在该子包自己的 `.gitignore` 里放开 `package-lock.json` 规则，并在子包 package.json 声明对应 `packageManager`
+[历史] 事故：`package-lock.json` 双轨跟踪导致版本三处各跑各的，且 npm 与 pnpm 解析算法不同（flat hoisting vs 严格隔离 + symlink），产生幽灵依赖与解析不一致 bug。
 
 **保留 npm 的例外（不要"统一"成 pnpm）**：以下场景的 npm 命令是**刻意保留**的，未来 agent 做统一审查时**不要改**：
 - **第三方消费者安装指引**：`docs/extensions/local-dev-guide.md` 的 `npm install -g @earendil-works/pi-coding-agent`、`prerelease/SKILL.md`（npm target）与 `release-npm-dev.yml` 的 `npm install @xyz-agent/extension-protocol@dev` 等。这些是发给 npm registry 的外部消费者的指引，他们环境未必装了 pnpm，npm 是最通用的兜底
 - **`npm publish`**：发包命令。`pnpm changeset publish` 内部最终也调 `npm publish`，文档里描述发包用 npm 是准确的
 - **runtime 安装用户 extension 的机制**：`extension-service.ts`/`installer.ts` 等代码里对用户 extension 执行 `npm install` 到数据目录——这是面向终端用户的 extension 安装机制，用户环境不可控，必须用 npm
-- **反例描述 / 规则正文**：「错误做法」表格里引用被禁的 `npm version`、§5 本节禁止 `npm install` 的规则条文，必须保留 npm 字样（描述被禁的命令名）
+- **规则正文描述被禁命令**：本节禁止 `npm install` 的条文里必须保留 npm 字样（描述被禁的命令名）
 - **`npx` 命令**：中立包执行器，不算 npm 风格违纪，保留
 
 **判断标准一句话**：命令执行者若是「本项目的开发者/CI/AI」→ 用 pnpm；若是「外部消费者/终端用户」或「描述被禁行为」→ 保留 npm。
@@ -755,18 +632,9 @@ runtime 子进程（`packages/runtime/src/`）与 pi 子进程的所有日志输
 
 ### cw v1 testRunner cwd 对 monorepo 失效 [HISTORICAL]
 
-cw v1 的 testRunner 硬编码 `cwd: workspacePath`（仓库根）跑 `npx vitest run`。本项目的 vitest 配置在 `packages/renderer/vitest.config.ts`（含 `@/` alias 等），根目录跑出大量「配置/alias 找不到」的假失败（test files 层面 200+ failed），gate `tests-all-pass` 永远不过——**即使本次改动零回归**。
+[历史] cw v1 testRunner 硬编码 `cwd: workspacePath`（仓库根）跑 `npx vitest run`，而本项目 vitest 配置在子包（如 `packages/renderer/vitest.config.ts` 含 `@/` alias），根目录跑出大量假失败（200+ failed），test gate 永远不过——即使本次改动零回归。
 
-2026-07-23 事故：session-bg-work-status wave 的 renderer 目录内 vitest 是 1827 passed / 5 认知外失败，但 cw 在根目录跑出 160 passed / 32 failed（解析还受彩色输出干扰），test gate 卡死无法推进 exec-review。
-
-**临时对策**（coding-workflow 修复前）：wave test gate 的判定**以 `packages/renderer` 目录内的 `npx vitest run` 结果为准**，不用 cw gate 的数字。具体：
-1. `cd packages/renderer && npx vitest run` 拿真实 pass/fail
-2. 确认失败的测试是否在本次 wave 范围（看 plan.files）——范围外的预存失败需单独修，但不阻塞本 wave
-3. 若本 wave 范围内测试全绿，人工判定 test 阶段通过，推进 exec-review
-
-**已修复（2026-08 验证）**：当前 cw 版本（@zhushanwen/coding-workflow）已支持 `plan.testCwd` 字段——wave design/replan 阶段填 `testCwd: "<子包目录>"`（相对仓库根，如 `packages/runtime`），testRunner 即在该子包目录跑 testCommand，gate 数字与本地 `npx vitest run` 一致。monorepo 项目在 wave design 填 testCwd 即生效，上述「临时对策」的人工判定不再需要。验证来源：plugin-mock-isolation wave 填 `testCwd: "packages/runtime"`，cw test gate 33/0 与本地一致（R3 风险未 materialize）。
-
-**原根治方向（已由 testCwd 超额实现，保留作记录）**：testRunner 检测 monorepo（workspacePath 下有 `packages/*/vitest.config.ts`）时定位到含配置的子包跑；或读 `unit.plan.files` 推断测试范围。
+**已修复（2026-08 验证）**：当前 cw 版本（@zhushanwen/coding-workflow）支持 `plan.testCwd` 字段——wave design/replan 阶段填 `testCwd: "<子包目录>"`（相对仓库根，如 `packages/runtime`），testRunner 即在该子包目录跑 testCommand，gate 数字与本地 `npx vitest run` 一致。monorepo 项目在 wave design 填 testCwd 即生效。
 
 > **默认禁止跳过**（见上文「Lint / Git Hooks 问题处理原则 [MANDATORY]」）。以下变量仅供线上热修复等紧急场景，使用时必须在 commit message 说明原因。
 
