@@ -87,7 +87,7 @@ export async function migrateLegacyProviderConfig(configStore: IConfigStore, aut
         await authStorage.set(providerId, { type: 'api_key', key: config.apiKey as string })
 
         // 删 models.json 条目（重建不含 apiKey 的配置）
-        const { apiKey, ...rest } = config as Record<string, unknown>
+        const { apiKey: _apiKey, ...rest } = config as Record<string, unknown>
         // 如果只剩下默认字段（name/api/baseUrl 来自 builtin template），直接删条目
         // 如果有额外 override 字段 → 保留 override-only 条目
         // M5-04：hasOverride 判定必须覆盖 models/quota——catalog 条目含 model 级配置
