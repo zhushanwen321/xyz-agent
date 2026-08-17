@@ -404,6 +404,21 @@ function main() {
   }
   const outPath = fileURLToPath(new URL('../src/generated/builtin-providers.json', import.meta.url))
   mkdirSync(dirname(outPath), { recursive: true })
+  // 内容无变化时跳过写入：generatedAt 时间戳随每次运行变化，无条件重写会把
+  // prebuild 后的 git status 永久弄脏（merge 流程「未提交变更」gate 永远不过）。
+  // providers/piAiVersion 深度相等 → 保留磁盘文件（含旧 generatedAt）不动。
+  try {
+    const existing = JSON.parse(readFileSync(outPath, 'utf-8'))
+    const sameProviders =
+      JSON.stringify(existing.providers) === JSON.stringify(payload.providers) &&
+      existing.piAiVersion === payload.piAiVersion
+    if (sameProviders) {
+      console.log(`[gen-builtin-providers] ${providers.length} providers unchanged, skip rewrite -> ${outPath}`)
+      return
+    }
+  } catch {
+    // 文件不存在或损坏 → 走写入路径
+  }
   writeFileSync(outPath, JSON.stringify(payload, null, 2) + '\n', 'utf-8')
   console.log(`[gen-builtin-providers] wrote ${providers.length} providers -> ${outPath}`)
 }
