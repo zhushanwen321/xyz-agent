@@ -241,6 +241,10 @@ export interface ISessionService {
 
   /** 注册 onBeforeSendMessage hook，由 PluginService 调用（可阻止发送或改写内容） */
   setSendMessageHook(hook: (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string; modifiedContent?: string } | null>): void
+  /** S3-W2：注册 session 创建回调（PluginService 绑插件 session 事件注册表投递） */
+  setOnSessionCreated(handler: (summary: SessionSummary) => void): void
+  /** S3-W2：注册 session 销毁回调（触发点 removeSessionEntry，全部删除路径汇聚处） */
+  setOnSessionDestroyed(handler: (summary: SessionSummary) => void): void
   /** Set thinking level for a session's pi subprocess */
   setThinkingLevel(sessionId: string, level: string): Promise<void>
   /** Steer an actively generating session */
@@ -500,8 +504,8 @@ export interface IPluginService {
   approvePermissions(pluginId: string, permissions: string[]): Promise<void>
   /** Revoke all permissions for a plugin */
   revokePermissions(pluginId: string): Promise<void>
-  /** Execute a slash command contributed by a plugin */
-  executeCommand(pluginId: string, commandId: string, args?: Record<string, unknown>): Promise<void>
+  /** Execute a command contributed by a plugin（S3-W1：返回插件 handler 的执行结果） */
+  executeCommand(pluginId: string, commandId: string, args?: Record<string, unknown>): Promise<unknown>
   /** Get plugin config value(s) */
   getPluginConfig(pluginId: string, key?: string): Promise<unknown>
   /** Set a plugin config value */

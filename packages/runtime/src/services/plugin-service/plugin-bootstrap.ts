@@ -284,13 +284,27 @@ export function createAgentAPI(pluginId: string): Phase2AgentAPI {
     },
     notify: createNotifyApi(rpcClient, pluginId),
     sessions: createSessionApi(rpcClient, pluginId),
+    // S3-W2 events 显式降级：插件间事件总线从未实现（plugin.event.* 通知全仓无
+    // 生产方），SDK 已从 @stable 移到 @experimental。调用即抛 NOT_IMPLEMENTED
+    //（带 issue 指引）——显式失败优于静默失效（G4：SDK 允诺的能力全部真实可用或显式报错）。
+    // 需要订阅 session 生命周期的插件请用 api.sessions.onDidCreateSession（已实现）。
     events: {
-      on: (event: string, handler: (data: unknown) => void): Disposable => {
-        const unsubscribe = rpcClient.onNotification(`plugin.event.${event}`, handler)
-        return { dispose: unsubscribe }
+      on: (event: string, _handler: (data: unknown) => void): Disposable => {
+        throw errorWithCode(
+          `NOT_IMPLEMENTED: api.events.on('${event}') — plugin-to-plugin event bus is not implemented. ` +
+          'This API is experimental (removed from the stable SDK surface). ' +
+          'Use specific APIs (e.g. api.sessions.onDidCreateSession) instead. ' +
+          'If you need the bus, open an issue at https://github.com/zhushanwen321/xyz-agent/issues so a real consumer drives the design.',
+          PluginRpcErrorCodes.METHOD_NOT_FOUND,
+        )
       },
-      emit: (event: string, data: unknown): void => {
-        rpcClient.notify(`plugin.event.${event}`, { pluginId, data })
+      emit: (event: string, _data: unknown): void => {
+        throw errorWithCode(
+          `NOT_IMPLEMENTED: api.events.emit('${event}', ...) — plugin-to-plugin event bus is not implemented. ` +
+          'This API is experimental (removed from the stable SDK surface). ' +
+          'Open an issue at https://github.com/zhushanwen321/xyz-agent/issues if you need it.',
+          PluginRpcErrorCodes.METHOD_NOT_FOUND,
+        )
       },
     },
     tools: createToolApi(rpcClient, pluginId),

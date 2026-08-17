@@ -54,15 +54,21 @@ describe('commands.register（主线程侧）', () => {
   let rpc: PluginRpcServer
   let registry: Map<string, CommandRegistration>
   let broadcastRegistered: ReturnType<typeof vi.fn<(reg: CommandRegistration) => void>>
+  let deliverInvokeResult: ReturnType<typeof vi.fn<(handlerId: string, payload: { result?: unknown; error?: unknown }) => void>>
 
   beforeEach(() => {
     rpc = new PluginRpcServer()
     registry = new Map()
     broadcastRegistered = vi.fn<(reg: CommandRegistration) => void>()
+    deliverInvokeResult = vi.fn<(handlerId: string, payload: { result?: unknown; error?: unknown }) => void>()
   })
 
+  function registerHandlers(): void {
+    registerCommandRpcHandlers(rpc, { registry, broadcastRegistered, deliverInvokeResult })
+  }
+
   it('AC2: register 写入 registry（commandId/pluginId/handlerId/registeredAt）+ 广播 + 成功响应', async () => {
-    registerCommandRpcHandlers(rpc, { registry, broadcastRegistered })
+    registerHandlers()
     const port = createMockPort<WorkerPort>()
     rpc.registerWorker('w1', port)
 
@@ -77,8 +83,8 @@ describe('commands.register（主线程侧）', () => {
       },
     })
 
-    // registry 建表（TC3 链路数据源）
-    const reg = registry.get('cmd1')
+    // registry 建表（TC3 链路数据源；S3-W1 复合键：key 为 `pluginId:commandId`）
+    const reg = registry.get('p1:cmd1')
     expect(reg).toBeDefined()
     expect(reg!.commandId).toBe('cmd1')
     expect(reg!.pluginId).toBe('p1')
@@ -98,7 +104,7 @@ describe('commands.register（主线程侧）', () => {
   })
 
   it('ES1: unregister 不存在的 commandId 幂等 no-op（不 throw + registry 不变）', async () => {
-    registerCommandRpcHandlers(rpc, { registry, broadcastRegistered })
+    registerHandlers()
     const port = createMockPort<WorkerPort>()
     rpc.registerWorker('w1', port)
 
@@ -117,8 +123,8 @@ describe('commands.register（主线程侧）', () => {
   })
 
   it('ES1: unregister 已注册 commandId 删除 registry 条目', async () => {
-    registerCommandRpcHandlers(rpc, { registry, broadcastRegistered })
-    registry.set('cmd1', {
+    registerHandlers()
+    registry.set('p1:cmd1', {
       commandId: 'cmd1',
       pluginId: 'p1',
       handlerId: 'h1',
@@ -134,7 +140,7 @@ describe('commands.register（主线程侧）', () => {
       params: { pluginId: 'p1', commandId: 'cmd1' },
     })
 
-    expect(registry.has('cmd1')).toBe(false)
+    expect(registry.has('p1:cmd1')).toBe(false)
   })
 })
 

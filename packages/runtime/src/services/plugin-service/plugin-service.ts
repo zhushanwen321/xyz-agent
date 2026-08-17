@@ -12,7 +12,8 @@ import { PluginHost, resolveAndValidateFile } from './plugin-host.js'
 import { PluginActivator } from './plugin-activator.js'
 import { registerAllRpcMethods } from './plugin-rpc-setup.js'
 import { bootstrapPluginService } from './plugin-lifecycle.js'
-import { ActiveSessionResolver } from './api/session-api.js'
+import { ActiveSessionResolver, SessionEventDispatch, sessionInfoFromSummary } from './api/session-api.js'
+import { COMMAND_RPC_METHODS, commandCompositeKey } from './api/commands-api.js'
 import type { CommandRegistration } from './api/commands-api.js'
 import type { InstallResult } from '../ports/plugin-installer.js'
 import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept, BridgeToolCache, PI_HOOK_EVENT_MAP } from './bridge-interop.js'
@@ -24,6 +25,7 @@ import { PermissionStorage } from './plugin-permission-storage.js'
 import { EXTERNAL_PLUGIN_ENABLED, EXTERNAL_PLUGIN_DISABLED_MESSAGE } from './plugin-security.js'
 import { join } from 'node:path'
 import { toErrorMessage } from '../../utils/errors.js'
+import { PendingTracker } from '../../utils/async/pending-tracker.js'
 // type-only：IMessageBus 不反向依赖 plugin-service，无运行时环（与 message-dispatcher 同款约束）
 // wave:perf-w09（接口收敛）：依赖 publish 抽象而非 MessageBus 具体类
 import type { IMessageBus } from '../message-bus/message-bus.js'
@@ -146,8 +148,21 @@ export class PluginService implements IPluginService {
   /** 活跃 session 解析器（P6：取代 plugin-rpc-setup 模块级全局缓存，随实例生命周期） */
   private readonly activeSessionResolver: ActiveSessionResolver
 
-  /** 命令注册表（commandId→CommandRegistration），commands 域 RPC handler 共享（IF2 DM1） */
+  /**
+   * 命令注册表（复合键 `pluginId:commandId` → CommandRegistration，D7 隔离），
+   * commands 域 RPC handler 共享（IF2 DM1）。
+   */
   private readonly commandRegistry = new Map<string, CommandRegistration>()
+
+  /**
+   * 命令执行 pending 登记表（S3-W1 发送段闭环）：executeCommand 发
+   * plugin.commands.invoke 通知后按 handlerId 等待 Worker 经
+   * plugin.commands.invoke.result 回传的结果/错误；超时兜底 reject。
+   */
+  private readonly commandInvokes = new PendingTracker<string, unknown>()
+
+  /** session 生命周期事件注册表（S3-W2）：handlerId → workerId 定向投递 */
+  private readonly sessionEventDispatch: SessionEventDispatch
 
   /** 挂载点集合（renderer 经 plugin.mountPoints.sync 上报，views.listMountPoints 中继查询，AC10） */
   private mountPoints: string[] = []
@@ -184,6 +199,9 @@ export class PluginService implements IPluginService {
 
     // 活跃 session 解析器：持有同一 deps 引用（setSessionService 后续 mutate 可见）
     this.activeSessionResolver = new ActiveSessionResolver(this.deps)
+
+    // session 事件注册表：复用同一 rpcServer（workerId↔port 映射 + notify 通道）
+    this.sessionEventDispatch = new SessionEventDispatch(this.rpcServer)
 
     // Hook 管道：持有共享 hookRegistry（rpc-setup 注册侧与本类消费侧同一实例），
     // 复用 host / rpcServer 引用。
@@ -353,6 +371,7 @@ export class PluginService implements IPluginService {
         this.removeHookEntriesFor(pluginId)
         this.removeToolEntriesFor(pluginId)
         this.removeCommandEntriesFor(pluginId)
+        this.sessionEventDispatch.clearForPlugin(pluginId)
       }
       void this.syncToolsToBridge().catch((err: unknown) => {
         console.error('[plugin-service] syncToolsToBridge after crash failed:', toErrorMessage(err))
@@ -433,6 +452,15 @@ export class PluginService implements IPluginService {
         }
         return null
       })
+      // S3-W2：session 生命周期事件接线——session-service 的创建/销毁回调（其内部
+      // 收敛点 notifySessionCreated / removeSessionEntry）转发到注册表，按 handlerId
+      // 记录的 workerId 定向投递 plugin.sessions.didCreate/didDestroy 到对应 Worker。
+      this.deps.sessionService.setOnSessionCreated(summary => {
+        this.sessionEventDispatch.didCreate(sessionInfoFromSummary(summary))
+      })
+      this.deps.sessionService.setOnSessionDestroyed(summary => {
+        this.sessionEventDispatch.didDestroy(sessionInfoFromSummary(summary))
+      })
     }
   }
 
@@ -460,6 +488,8 @@ export class PluginService implements IPluginService {
         // 工具仍可被 bridge 调用、命令 invoke 仍发向该插件（worker 已 deactivate，必超时）
         this.removeToolEntriesFor(pluginId)
         this.removeCommandEntriesFor(pluginId)
+        // S3-W2：session 事件注册表同步清理（禁用插件的 didCreate/didDestroy 订阅不再投递）
+        this.sessionEventDispatch.clearForPlugin(pluginId)
         await this.syncToolsToBridge()
       }
      
@@ -540,6 +570,8 @@ export class PluginService implements IPluginService {
     this.removeHookEntriesFor(pluginId)
     // 清理命令注册表（插件卸载后残留命令会导致 invoke 通知发向已死 worker）
     this.removeCommandEntriesFor(pluginId)
+    // S3-W2：session 事件注册表同步清理（卸载插件的订阅不再投递）
+    this.sessionEventDispatch.clearForPlugin(pluginId)
 
     // 清理 status bar items
     this.statusBarRegistry.clearForPlugin(pluginId)
@@ -630,19 +662,63 @@ export class PluginService implements IPluginService {
     this.activator.resolvePermissionApproval(pluginId, false)
   }
 
-  async executeCommand(pluginId: string, commandId: string, args?: Record<string, unknown>): Promise<void> {
+  /**
+   * 执行插件注册的命令（S3-W1 发送段闭环）。
+   *
+   * 链路：复合键查 registry → rpcServer.notify 向 Worker 发 plugin.commands.invoke
+   * （handler 驻留 Worker，方法名 COMMAND_RPC_METHODS.invoke 统一 SSOT）→ Worker
+   * 执行 handler 后经 plugin.commands.invoke.result 回传结果/错误 → 本类
+   * deliverInvokeResult resolve/reject 对应 pending（超时 COMMAND_EXECUTE_TIMEOUT_MS）。
+   *
+   * 前端消费契约（useExtensionHostBridge commandExecutor）：payload 携带分离的
+   * pluginId + commandId，本方法组复合键 `${pluginId}:${commandId}` 查表——
+   * 命令表按插件隔离（B 无法覆盖/注销 A 的同名命令）。
+   */
+  async executeCommand(pluginId: string, commandId: string, args?: Record<string, unknown>): Promise<unknown> {
     const descriptor = this.registry.getDescriptor(pluginId)
     if (!descriptor) throw new Error(`Plugin not found: ${pluginId}`)
+
+    const compositeKey = commandCompositeKey(pluginId, commandId)
+    const registration = this.commandRegistry.get(compositeKey)
+    if (!registration) throw new Error(`Command not found: ${compositeKey}`)
 
     const handle = this.host.getWorkerHandle(pluginId)
     if (!handle) throw new Error(`Plugin worker not available: ${pluginId}`)
 
-    await this.rpcServer.invoke(
-      handle.workerId,
-      'plugin.command.execute',
-      { pluginId, commandId, args: args ?? {} },
+    // 并发守卫：同 handlerId 二次执行会覆盖 pending 登记表条目（旧 promise 永挂），
+    // 显式拒绝并发（用户双击同一命令的第二次触发立即失败优于静默挂死）。
+    if (this.commandInvokes.has(registration.handlerId)) {
+      throw new Error(`Command already executing: ${compositeKey}`)
+    }
+
+    // 顺序约束：先登记 pending、立即发 notify、最后才 await——notify 必须在函数体
+    // 挂起等待 result 之前发出（await 放前面会挂住函数体，通知永远发不出）。
+    const result = this.commandInvokes.register(
+      registration.handlerId,
       COMMAND_EXECUTE_TIMEOUT_MS,
+      Object.assign(new Error(`Command execution timeout: ${compositeKey}`), { code: -32000 }),
     )
+    this.rpcServer.notify(
+      handle.workerId,
+      COMMAND_RPC_METHODS.invoke,
+      { handlerId: registration.handlerId, args: args ?? {} },
+    )
+    return result
+  }
+
+  /**
+   * Worker 经 plugin.commands.invoke.result 回传的执行结果（commands 域 RPC
+   * handler 调用）。error 非空 = handler 抛错，reject 对应 pending。
+   */
+  private deliverInvokeResult(handlerId: string, payload: { result?: unknown; error?: unknown }): void {
+    if (payload.error !== undefined) {
+      this.commandInvokes.reject(
+        handlerId,
+        new Error(`Command handler error: ${toErrorMessage(payload.error)}`),
+      )
+      return
+    }
+    this.commandInvokes.resolve(handlerId, payload.result)
   }
 
   async getPluginConfig(pluginId: string, key?: string): Promise<unknown> {
@@ -671,6 +747,11 @@ export class PluginService implements IPluginService {
     // 数秒（单插件 deactivate 5s 超时），期间 rebuild 冷却到期会复活插件（LC-C2）。
     // host.shutdown 在链末尾才清，此时已晚。
     this.host.cancelPendingRebuilds()
+
+    // S3-W1/W2：命令执行 pending 全部拒绝 + session 事件注册表清空
+    //（Worker 即将终止，等待中的 executeCommand 与后续事件投递都无意义）。
+    this.commandInvokes.rejectAll(new Error('Plugin service shutting down'))
+    this.sessionEventDispatch.clearAll()
 
     // D6/W4 关停顺序（反转）：deactivateAll（allSettled，单插件 deactivate 超时不
     // 阻塞整体——每插件自带 DEACTIVATE_TIMEOUT_MS 兜底）→ sessionData flush+dispose
@@ -740,6 +821,8 @@ export class PluginService implements IPluginService {
       sessionDataStore: this.sessionDataStore,
       activeSessionResolver: this.activeSessionResolver,
       commandRegistry: this.commandRegistry,
+      sessionEvents: this.sessionEventDispatch,
+      deliverInvokeResult: (handlerId, payload) => this.deliverInvokeResult(handlerId, payload),
       mountPoints: this.mountPoints,
       publishViewUpdate: (payload) => this.publishViewUpdate(payload),
     })

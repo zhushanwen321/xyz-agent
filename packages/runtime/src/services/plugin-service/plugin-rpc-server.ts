@@ -10,7 +10,24 @@ import { PluginRpcErrorCodes } from './plugin-types.js'
 import { PendingTracker } from '../../utils/async/pending-tracker.js'
 import { toErrorMessage } from '../../utils/errors.js'
 
-export type RpcMethodHandler = (params: Record<string, unknown>) => Promise<unknown>
+/**
+ * handler 分发上下文（S3-W2）：需要回溯消息来源通道的 handler 使用
+ * （如 plugin.sessions.registerCreate 按 handlerId 记录 workerId，事件
+ * 发生时按注册表定向投递）。workerId 来自宿主消息回调闭包捕获，不可伪造。
+ */
+export interface RpcDispatchContext {
+  workerId: string
+  identity: RpcIdentity | undefined
+}
+
+/**
+ * RPC 方法 handler。ctx 可选使用（既有 handler 单参数定义依然兼容——
+ * 参数逆变：少参数函数可赋给多参数签名）。
+ */
+export type RpcMethodHandler = (
+  params: Record<string, unknown>,
+  ctx: RpcDispatchContext,
+) => Promise<unknown>
 
 /**
  * 通道绑定的 RPC 身份（宿主 registerWorker 时注册，安全判定的唯一身份来源）。
@@ -216,7 +233,7 @@ export class PluginRpcServer {
     }
 
     try {
-      const result = await handler(message.params)
+      const result = await handler(message.params, { workerId, identity })
       if (!isNotification) {
         worker.postMessage({ type: 'rpc', response: this.makeSuccessResponse(message.id, result) })
       }

@@ -4,15 +4,23 @@
  * 提供命令注册的 RPC handler（主线程侧）和 Worker 侧代理对象。
  *
  * 主线程侧：registerCommandRpcHandlers() 在 PluginRpcServer 上注册
- *   plugin.commands.register / plugin.commands.unregister 两个 RPC 方法。
- *   register 把 CommandRegistration 存入 registry（commandId→registration），
+ *   plugin.commands.register / plugin.commands.unregister /
+ *   plugin.commands.invoke.result 三个 RPC 方法。
+ *   register 把 CommandRegistration 存入 registry（复合键 `pluginId:commandId`
+ *   → registration，D7 隔离语义：插件 B 无法覆盖或注销插件 A 的同名命令），
  *   并调用 broadcastRegistered 下行广播 plugin:commandRegistered。
  *
  * Worker 侧：createCommandsApi() 返回代理对象，提供 register/unregister。
  *   handler 驻留 Worker 本地（TC1 VSCode 模式）：register 只经 RPC 传命令元数据，
  *   执行时主线程经 plugin.commands.invoke 通知回调 Worker 本地 handler。
- *   Worker 监听 invoke 通知，dispatchHandler 命中本地 handler，结果经
- *   plugin.commands.invoke.result RPC 回传主线程（hook-api 同款模式）。
+ *   Worker 监听 invoke 通知，dispatchHandler 命中本地 handler，结果/错误经
+ *   plugin.commands.invoke.result RPC 回传主线程（主线程 executeCommand 的
+ *   pending 等待由该回传 resolve/reject）。
+ *
+ * 方法名 SSOT（D7）：本域全部方法名收敛到 COMMAND_RPC_METHODS 常量——
+ * 此前主线程 executeCommand 硬编码 'plugin.command.execute'（单数 command），
+ * 与 Worker 侧 'plugin.commands.invoke'（复数 commands）漂移导致动态命令
+ * 从未真正可执行；常量化后此类漂移在编译期不可再现。
  */
 
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
@@ -20,6 +28,30 @@ import type { PluginRpcClient } from '../plugin-rpc-client.js'
 import type { Disposable } from '../plugin-types.js'
 import { registerHandler, dispatchHandler } from '../handler-registry.js'
 import { toErrorMessage } from '../../../utils/errors.js'
+
+/**
+ * 命令域 RPC 方法名常量（D7 方法名 SSOT）。
+ * 主线程 ↔ Worker 两侧引用同一常量，禁止再出现裸字符串方法名。
+ */
+export const COMMAND_RPC_METHODS = {
+  register: 'plugin.commands.register',
+  unregister: 'plugin.commands.unregister',
+  /** 主线程 → Worker：命令执行（通知形态，结果经 invokeResult 回传闭环） */
+  invoke: 'plugin.commands.invoke',
+  /** Worker → 主线程：invoke 结果/错误回传 */
+  invokeResult: 'plugin.commands.invoke.result',
+} as const
+
+/**
+ * 命令注册表复合键：`${pluginId}:${commandId}`（D7）。
+ *
+ * 全局命名空间的裸 commandId 允许插件互相覆盖/注销他人命令；复合键后
+ * 注册表按插件隔离——注销/覆盖只作用于自身前缀。commandId 含 ':' 会被
+ * register 拒绝（防复合键注入歧义）。
+ */
+export function commandCompositeKey(pluginId: string, commandId: string): string {
+  return `${pluginId}:${commandId}`
+}
 
 /** 命令声明元数据（与 Phase2AgentAPI['commands'].register 参数对齐，IF1） */
 export interface CommandDescriptor {
@@ -34,6 +66,7 @@ export interface CommandDescriptor {
  * 运行时命令注册表条目（DM1）。
  * handlerRef 语义：handlerId 是 Worker 本地 handler 引用（invoke 回调用），
  * pluginId 定位 Worker，与 s2 IF6 CommandRecord.handlerRef 对齐（仅契约对齐，不依赖 s2 代码）。
+ * registry 的 key 是复合键 `pluginId:commandId`（commandCompositeKey），非裸 commandId。
  */
 export interface CommandRegistration {
   commandId: string
@@ -48,27 +81,42 @@ export interface CommandRegistration {
 
 /** 命令注册服务依赖（主线程侧） */
 export interface CommandService {
-  /** 命令注册表，key 为 commandId */
+  /** 命令注册表，key 为复合键 `pluginId:commandId`（commandCompositeKey） */
   registry: Map<string, CommandRegistration>
   /** register 后下行广播 plugin:commandRegistered（payload 为 CommandRegistration） */
   broadcastRegistered: (reg: CommandRegistration) => void
+  /**
+   * Worker 经 plugin.commands.invoke.result 回传的执行结果（S3-W1 发送段闭环）。
+   * error 非空 = handler 抛错（reject 对应 pending），否则 resolve result。
+   */
+  deliverInvokeResult: (handlerId: string, payload: { result?: unknown; error?: unknown }) => void
 }
 
 /**
  * 在 PluginRpcServer 上注册命令相关的 RPC handler。
  *
- * 注册的方法：
- * - `plugin.commands.register` — 注册命令（命令元数据 + handlerId 引用）
- * - `plugin.commands.unregister` — 注销命令（幂等：不存在时 no-op，ES1）
+ * 注册的方法（COMMAND_RPC_METHODS）：
+ * - `plugin.commands.register` — 注册命令（命令元数据 + handlerId 引用，复合键隔离）
+ * - `plugin.commands.unregister` — 注销命令（幂等：不存在时 no-op，ES1；复合键只删自身前缀）
+ * - `plugin.commands.invoke.result` — Worker 执行结果回传（resolve/reject executeCommand pending）
  */
 export function registerCommandRpcHandlers(
   rpcServer: PluginRpcServer,
   service: CommandService,
 ): void {
-  rpcServer.registerMethod('plugin.commands.register', async (params) => {
+  rpcServer.registerMethod(COMMAND_RPC_METHODS.register, async (params) => {
     const pluginId = params.pluginId as string
     const command = params.command as CommandDescriptor
     const handlerId = params.handlerId as string
+
+    // 复合键完整性：commandId 含 ':' 会与 `pluginId:commandId` 键格式歧义
+    // （恶意插件可用它伪造他人前缀的键），register 侧拒绝。
+    if (typeof command?.id === 'string' && command.id.includes(':')) {
+      throw Object.assign(
+        new Error(`INVALID_COMMAND_ID: command id must not contain ':' (got '${command.id}')`),
+        { code: -32602 },
+      )
+    }
 
     const registration: CommandRegistration = {
       commandId: command.id,
@@ -81,19 +129,30 @@ export function registerCommandRpcHandlers(
       registeredAt: Date.now(),
     }
 
-    service.registry.set(registration.commandId, registration)
+    service.registry.set(commandCompositeKey(pluginId, command.id), registration)
     service.broadcastRegistered(registration)
 
     return { registered: true }
   })
 
-  rpcServer.registerMethod('plugin.commands.unregister', async (params) => {
+  rpcServer.registerMethod(COMMAND_RPC_METHODS.unregister, async (params) => {
+    const pluginId = params.pluginId as string
     const commandId = params.commandId as string
 
-    // ES1: 幂等 no-op——不存在的 commandId 直接 delete 返回 false，无副作用
-    service.registry.delete(commandId)
+    // ES1 + 复合键隔离：只删 `${自身pluginId}:${commandId}`——插件 B 传
+    // commandId='A:x' 时键为 'B:A:x'（不存在）→ no-op，A:x 不受影响。
+    service.registry.delete(commandCompositeKey(pluginId, commandId))
 
     return { unregistered: true }
+  })
+
+  rpcServer.registerMethod(COMMAND_RPC_METHODS.invokeResult, async (params) => {
+    const handlerId = params.handlerId as string
+    const payload: { result?: unknown; error?: unknown } = params.error !== undefined
+      ? { error: params.error }
+      : { result: params.result }
+    service.deliverInvokeResult(handlerId, payload)
+    return { delivered: true }
   })
 }
 
@@ -114,10 +173,12 @@ let commandCounter = 0
  * 3. 发 RPC plugin.commands.register 到主线程（只传元数据 + handlerId）
  * 4. 返回 Disposable（dispose 时发 RPC 注销并清理本地 map）
  *
- * 同时注册 `plugin.commands.invoke` 通知处理器（TC1 handler 驻留 Worker）：
+ * 同时注册 `plugin.commands.invoke` 通知处理器（TC1 handler 驻留 Worker，
+ * 主线程 executeCommand 的发送段即 rpcServer.notify 此方法）：
  * - 收到通知后 dispatchHandler 从本地 map 查找 handler
  * - 调用 handler(args)
- * - 结果通过 `plugin.commands.invoke.result` RPC 返回主线程（hook-api 同款）
+ * - 结果**或错误**通过 `plugin.commands.invoke.result` RPC 返回主线程——
+ *   错误也回传（否则主线程 executeCommand 只能等 10s 超时才能感知失败）
  */
 export function createCommandsApi(
   rpcClient: PluginRpcClient,
@@ -133,13 +194,13 @@ export function createCommandsApi(
   const handlers = new Map<string, StoredCommand>()
 
   // 注册 invoke 通知处理器（主线程回调 Worker 中的 command handler）
-  rpcClient.onNotification('plugin.commands.invoke', (params: unknown) => {
+  rpcClient.onNotification(COMMAND_RPC_METHODS.invoke, (params: unknown) => {
     const p = params as { handlerId: string; args?: unknown }
     dispatchHandler(handlers, p, stored => {
       Promise.resolve(stored.handler(p.args))
         .then((result) => {
           rpcClient
-            .request('plugin.commands.invoke.result', {
+            .request(COMMAND_RPC_METHODS.invokeResult, {
               handlerId: p.handlerId,
               result,
             })
@@ -148,7 +209,15 @@ export function createCommandsApi(
             })
         })
         .catch((e: unknown) => {
-          console.error('[commands-api] command handler error:', toErrorMessage(e))
+          // handler 抛错也回传：主线程 pending 以错误 reject（不等超时）
+          rpcClient
+            .request(COMMAND_RPC_METHODS.invokeResult, {
+              handlerId: p.handlerId,
+              error: toErrorMessage(e),
+            })
+            .catch((deliveryErr: unknown) => {
+              console.error('[commands-api] invoke error delivery failed:', toErrorMessage(deliveryErr))
+            })
         })
     })
   })
@@ -157,7 +226,7 @@ export function createCommandsApi(
     register: async (command, handler) => {
       const handlerId = `cmd_${pluginId}_${++commandCounter}`
 
-      await rpcClient.request('plugin.commands.register', {
+      await rpcClient.request(COMMAND_RPC_METHODS.register, {
         pluginId,
         command,
         handlerId,
@@ -165,7 +234,7 @@ export function createCommandsApi(
 
       return registerHandler(handlers, handlerId, { commandId: command.id, handler }, () => {
         rpcClient
-          .request('plugin.commands.unregister', { pluginId, commandId: command.id })
+          .request(COMMAND_RPC_METHODS.unregister, { pluginId, commandId: command.id })
           .catch((e: unknown) => {
             console.error('[commands-api] command unregister failed:', toErrorMessage(e))
           })
@@ -180,7 +249,7 @@ export function createCommandsApi(
           break
         }
       }
-      await rpcClient.request('plugin.commands.unregister', { pluginId, commandId })
+      await rpcClient.request(COMMAND_RPC_METHODS.unregister, { pluginId, commandId })
     },
   }
 }

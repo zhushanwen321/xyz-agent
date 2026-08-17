@@ -32,9 +32,10 @@ export const PLUGIN_RPC_METHODS = [
   'plugin.agent.getThinkingLevel',
   'plugin.agent.setThinkingLevel',
   'plugin.agent.getActiveTools',
-  // commands 域（api/commands-api.ts，2 个）
+  // commands 域（api/commands-api.ts，3 个）
   'plugin.commands.register',
   'plugin.commands.unregister',
+  'plugin.commands.invoke.result',
   // config 域（api/config-api.ts，3 个）
   'plugin.config.get',
   'plugin.config.getAll',
@@ -49,11 +50,15 @@ export const PLUGIN_RPC_METHODS = [
   'plugin.sessionData.set',
   'plugin.sessionData.delete',
   'plugin.sessionData.keys',
-  // sessions 域（api/session-api.ts，4 个）
+  // sessions 域（api/session-api.ts，8 个——含 S3-W2 生命周期事件注册 4 个）
   'plugin.sessions.list',
   'plugin.sessions.get',
   'plugin.sessions.getActive',
   'plugin.sessions.sendMessage',
+  'plugin.sessions.registerCreate',
+  'plugin.sessions.registerDestroy',
+  'plugin.sessions.unregisterCreate',
+  'plugin.sessions.unregisterDestroy',
   // storage 域（api/storage-api.ts，global + workspace 两 scope × 4 操作 = 8 个）
   'plugin.storage.global.get',
   'plugin.storage.global.set',
@@ -109,7 +114,19 @@ const CAPABILITY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   'tools.register': ['plugin.tools.register', 'plugin.tools.unregister'],
   'hooks.register': ['plugin.hooks.register', 'plugin.hooks.unregister'],
   'sessions.sendMessage': ['plugin.sessions.sendMessage'],
-  'sessions.readState': ['plugin.sessions.list', 'plugin.sessions.get', 'plugin.sessions.getActive'],
+  // sessions.readState 含生命周期事件订阅（S3-W2）：onDidCreateSession/
+  // onDidDestroySession 的注册/注销方法并入读侧能力（通知型，无写语义；
+  // 注册类连带 unregister 的既有成对授予模式）。不新增 SDK 常量（能力词汇表
+  // 扩展属 SDK 契约变更，须与 PermissionConstants 同步评审）。
+  'sessions.readState': [
+    'plugin.sessions.list',
+    'plugin.sessions.get',
+    'plugin.sessions.getActive',
+    'plugin.sessions.registerCreate',
+    'plugin.sessions.registerDestroy',
+    'plugin.sessions.unregisterCreate',
+    'plugin.sessions.unregisterDestroy',
+  ],
   'storage.access': ALL_STORAGE_METHODS,
   'notify': ['plugin.notify', 'plugin.ui.notify'],
   // ── manifest 常用操作粒度短形（如设计验收 A4 的 permissions: ["storage.set"]）──
