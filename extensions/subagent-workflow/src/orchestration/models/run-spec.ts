@@ -18,7 +18,7 @@ import type { Budget } from "./budget.ts";
 /**
  * RunSpec——一次 workflow run 的不可变输入规格。
  *
- * 作为 RunStore 持久化的一部分（WorkflowRun.spec），跨 session pause/resume 时
+ * 作为 RunStore 持久化的一部分（WorkflowRun.spec），崩溃恢复重水合后
  * 需要 scriptSource/args 重建 worker（G3-001）。
  */
 export interface RunSpec {
@@ -30,7 +30,7 @@ export interface RunSpec {
  * undefined = 不校验（安全退化——漏拷 parameters 退化是「不校验」非「校验错」）。
  * 由调用方（actionRun/runAndWait/executeNestedWorkflow）从 script.meta.parameters 拷贝。
  * lifecycle.runWorkflow 首行经 validateRunArgs 校验 spec.args（coerceTypes 原地规范化
- * args 对象内容，字段引用不变；worker 启动与 pause/resume 重建共用同一对象）。
+ * args 对象内容，字段引用不变；worker 启动与崩溃重建共用同一对象）。
  */
   readonly parameters?: Record<string, unknown>;
   /** 调用方传入的参数（worker 内通过 $ARGS 访问）。 */

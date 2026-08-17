@@ -12,7 +12,7 @@
  * 设计要点：
  * - leading edge：第一个 delta 立即 flush（前端尽快看到开始）
  * - trailing edge：后续 delta 追加 buffer，timer 到期后 flush
- * - 每次 flush 把 buffer 的累积全文 split("\n") 传给 setWidget
+ * - 每次 flush 把 buffer 的累积文本 split("\n") 截尾 MAX_WIDGET_LINES 行传给 setWidget
  * - dispose 清除 widget + 清 timer
  */
 
@@ -25,8 +25,16 @@ export interface StreamSink {
   setWidget(key: string, lines: string[] | undefined): void;
 }
 
-/** delta 合并窗口时间（ms）。与 onEventThrottled 的节流间隔对齐。 */
+/** delta 合并窗口时间（ms）。 */
 const STREAM_FLUSH_MS = 100;
+
+/** widget 发送的最大行数上限。
+ *
+ * flush 把 buffer 累积全文 split 后经 setWidget RPC 通道整包发送——长输出 subagent
+ * （数百 KB）下每 100ms 一次 O(当前总量) 的序列化+传输，累计 O(n²)。widget 是实时
+ * 预览（完整输出在 record/eventLog 与 session 文件），只保留尾部行即可；超限时以
+ * 一行 truncated 提示替代被裁掉的头部。 */
+const MAX_WIDGET_LINES = 200;
 
 /**
  * subagent text_delta streaming 生命周期对象。
@@ -78,6 +86,15 @@ export class SubagentStream {
   private flush(): void {
     this.timer = undefined;
     if (this.buffer.length === 0 || this.disposed) return;
-    this.sink.setWidget(this.widgetKey, this.buffer.split("\n"));
+    const lines = this.buffer.split("\n");
+    if (lines.length <= MAX_WIDGET_LINES) {
+      this.sink.setWidget(this.widgetKey, lines);
+      return;
+    }
+    const dropped = lines.length - MAX_WIDGET_LINES;
+    this.sink.setWidget(this.widgetKey, [
+      `(... ${dropped} earlier lines truncated, full output in /subagents detail)`,
+      ...lines.slice(dropped),
+    ]);
   }
 }

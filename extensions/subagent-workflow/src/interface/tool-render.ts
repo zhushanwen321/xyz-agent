@@ -25,6 +25,7 @@ import type {
   ListResponse,
   SubagentToolResult,
 } from "../execution/types.ts";
+import { displayAgentName } from "../shared/agent-ref.ts";
 import {
   extractAgentName,
   firstLine,
@@ -75,9 +76,9 @@ export interface RenderContext {
 // ============================================================
 
 /**
- * renderCall：tool 标题行（agent + model + thinking，不变信息）。
+ * renderCall：tool 标题行（agent + model + thinking 等级，不变信息）。
  *
- *   "subagent worker · glm-5.2 · thinking high"
+ *   "subagent worker · glm-5.2 · high"
  *
  * model/thinkingLevel 由调用方（subagent-tool.ts 的闭包）预解析后传入，
  * 因为 renderCall 在 execute 前调用，但 model 解析是同步的（只读配置）。
@@ -94,8 +95,9 @@ export function renderSubagentCall(
   const t = theme as ThemeLike;
   // args 结构（拍平后）：{ action:"start", agent, task, slug, ... }（见 subagent-tool.ts schema）。
   // 13 字段直接在顶层，extractAgentName / slug / task 都从 args 顶层提取，
-  // 对齐 nicobailon 的 renderCall 多行布局。
-  const agent = extractAgentName(args);
+  // 对齐 nicobailon 的 renderCall 多行布局。agent ref 是绝对路径，显示取 basename 短名
+  // （displayAgentName）；extractAgentName 原值另被 subagent-tool 的 resolveModel 消费，不动。
+  const agent = displayAgentName(extractAgentName(args));
   // slug：从顶层 args 提取（必填字段），非空时在 agent 后用 · 分隔展示。
   const slug = typeof args === "object" && args !== null && "slug" in args
     ? (args as { slug?: unknown }).slug
@@ -111,24 +113,10 @@ export function renderSubagentCall(
     parts.push(t.fg("dim", " ("));
     parts.push(t.fg("accent", resolved.model));
     if (resolved.thinkingLevel) {
-      parts.push(t.fg("dim", ` · thinking ${resolved.thinkingLevel})`));
+      parts.push(t.fg("dim", ` · ${resolved.thinkingLevel})`));
     } else {
       parts.push(t.fg("dim", ")"));
     }
-  }
-
-  // task preview 行——对齐 nicobailon：renderCall 输出多行（标题 + \n + task 预览）。
-  // 实验假设：call 多行让首帧（无 result）与后续帧（有 result）的高度跳变模式
-  // 与 nicobailon 一致，可能影响 pi diff 引擎的行对齐路径。preview 截断到 60 字符。
-  const task = typeof args === "object" && args !== null && "task" in args
-    ? (args as { task?: unknown }).task
-    : undefined;
-  if (typeof task === "string" && task.length > 0) {
-    // task 取首行——prompt 常含换行（多行指令），直接 slice 会保留 \n，
-    // 渲染时意外换行破坏 tool block 行对齐。
-    const taskFirst = task.split("\n").find((l) => l.trim())?.trim() ?? "";
-    const preview = taskFirst.length > 60 ? `${taskFirst.slice(0, 60)}...` : taskFirst;
-    if (preview) parts.push(`\n  ${t.fg("dim", preview)}`);
   }
 
   return new Text(parts.join(""), 0, 0);
@@ -215,10 +203,9 @@ function buildCompactLines(d: SubagentToolResult, theme: ThemeLike): string[] {
   }
   // ── start 分支：background ──
   if ("bgResponse" in d) {
-    const slugPart = d.slug ? `${theme.fg("dim", " · ")}${theme.fg("accent", d.slug)}` : "";
     return [truncLine(
-      `${theme.fg("accent", "●")} ${theme.fg("dim", "background: ")}${theme.fg("accent", d.subagentId ?? "?")}${slugPart}`
-      + ` ${theme.fg("dim", "· running detached · will notify on completion")}`,
+      `${theme.fg("accent", "●")} ${theme.fg("dim", "background: ")}${theme.fg("accent", d.subagentId ?? "?")}`
+      + ` ${theme.fg("dim", "· detached")}`,
       width,
     )];
   }
@@ -244,9 +231,9 @@ function buildExpandedLines(d: SubagentToolResult, theme: ThemeLike): string[] {
   const lines: string[] = [];
   // bg 占位 expanded 与 compact 同（一次性 block 无细节可展开）
   if ("bgResponse" in d) {
-    const slugPart = d.slug ? `${theme.fg("dim", " · ")}${theme.fg("accent", d.slug)}` : "";
     lines.push(truncLine(
-      `${theme.fg("accent", "●")} ${theme.fg("dim", "background: ")}${theme.fg("accent", d.subagentId ?? "?")}${slugPart}`,
+      `${theme.fg("accent", "●")} ${theme.fg("dim", "background: ")}${theme.fg("accent", d.subagentId ?? "?")}`
+      + ` ${theme.fg("dim", "· detached")}`,
       width,
     ));
     return lines;

@@ -111,28 +111,36 @@ export interface BashExecutionData {
 /**
  * Background subagent 完成通知的单条记录。
  *
- * 对应 pi-subagents 扩展 notifier.ts 的 BgNotifyRecord，经 customType:"subagent-bg-notify"
- * 的 CustomMessage details 传递。pi-subagents 在主对话流注入此通知，triggerTurn:true 唤醒
+ * 对应 pi-subagent-workflow 扩展 notifier.ts 的 BgNotifyRecord，经 customType:"subagent-bg-notify"
+ * 的 CustomMessage details 传递。扩展在主对话流注入此通知，triggerTurn:true 唤醒
  * 父 agent 接力处理结果。
  *
- * 来源：~/.xyz-agent/pi/agent/extensions/subagents/src/runtime/execution/notifier.ts
+ * 来源：extensions/subagent-workflow/src/execution/notifier.ts（本仓源码；
+ * 运行时安装在 ~/.xyz-agent/npm/node_modules/@zhushanwen/pi-subagent-workflow/）
  */
 export interface BgNotifyRecord {
   id: string
-  /** 'done' | 'failed' | 'cancelled'（pi-subagents 的状态枚举） */
-  status: 'done' | 'failed' | 'cancelled'
+  /** 扩展状态枚举（v4 B-1 两态）：
+   *  running = 对话模式轮次完成（每轮送达，携带本轮结果，等待下一轮续聊，非终态）；
+   *  closed = 统一终态（含 cancelled/gc 等，closedReason 表达 L2 原因）。
+   *  done/failed/cancelled 为 legacy 兼容值（v4 之前旧版扩展产物，历史 session 落盘存在）。 */
+  status: 'done' | 'failed' | 'cancelled' | 'closed' | 'running'
   agent: string
   /** 执行所用 model（用于通知展示） */
   model?: string
-  /** done 状态的完成结果文本（进 LLM context，不截断） */
+  /** 完成结果文本（closed 终态结果 / running 轮次结果；进 LLM context，不截断） */
   result?: string
-  /** failed 状态的错误文本 */
+  /** 错误文本（closed 失败终态 / legacy failed 状态） */
   error?: string
   startedAt: number
   endedAt?: number
   /** fork+worktree 模式下子 agent 改动的 patch 路径（worktree cleanup 后留存）。
-   *  done 时通知显式提示 git apply，否则改动会静默丢失。 */
+   *  closed 时通知显式提示 git apply，否则改动会静默丢失。 */
   patchFile?: string
+  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。对齐 notifier.ts ClosedReason。 */
+  closedReason?: string
+  /** 对话轮次计数（仅 running 轮次通知有意义，非 chatMode 恒定）。dedup key 按 id:round 去重。 */
+  round?: number
 }
 
 /**
@@ -171,7 +179,7 @@ export function parseBgNotifyDetails(details: unknown): BgNotifyDetails | null {
 /** 防御性解析单条 BgNotifyRecord（必需字段 id/status/agent/startedAt 缺失返回 null） */
 function parseSingleRecord(d: Record<string, unknown>): BgNotifyRecord | null {
   const id = typeof d.id === 'string' ? d.id : null
-  const status = d.status === 'done' || d.status === 'failed' || d.status === 'cancelled' ? d.status : null
+  const status = d.status === 'done' || d.status === 'failed' || d.status === 'cancelled' || d.status === 'closed' || d.status === 'running' ? d.status : null
   const agent = typeof d.agent === 'string' ? d.agent : null
   const startedAt = typeof d.startedAt === 'number' ? d.startedAt : null
   if (!id || !status || !agent || startedAt === null) return null
@@ -181,6 +189,8 @@ function parseSingleRecord(d: Record<string, unknown>): BgNotifyRecord | null {
   if (typeof d.error === 'string') record.error = d.error
   if (typeof d.endedAt === 'number') record.endedAt = d.endedAt
   if (typeof d.patchFile === 'string') record.patchFile = d.patchFile
+  if (typeof d.closedReason === 'string') record.closedReason = d.closedReason
+  if (typeof d.round === 'number') record.round = d.round
   return record
 }
 

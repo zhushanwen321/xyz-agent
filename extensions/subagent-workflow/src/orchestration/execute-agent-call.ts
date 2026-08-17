@@ -78,13 +78,31 @@ function backoffDelay(retryIndex: number): number {
  *
  * 成功：status="completed"；失败：status="failed"。
  * traceNode.stepIndex === call.id（D-10 单源，调用方保证）。
+ *
+ * 孤儿守卫（OB2，S7 残留）：isOrphaned 谓词为 true 时跳过 trace.update——
+ * rebuild 竞态窗口中，重跑 dispatch 已 append 同 stepIndex 新节点，旧代际
+ * finalize 的 update 会命中新节点，TUI/中间快照短暂可见错误终态。正确性论证：
+ * 运行期 calls Map 写点仅 discardInFlightCalls 的 delete 与 dispatchAgentCall 的
+ * set 两族（error-recovery.ts isOrphanedCall 文档注释既定），故实例不等 ⟺ 本
+ * finalize 属于被丢弃/被替换的旧代际——与 dispatch 层 .then/.catch 守卫
+ * （S7-second 修复，8353f6b60）同一判定语义，本守卫只是把它前移到 trace.update
+ * 之前。markDone 与 sessionId/sessionFile 同步保留（markDone 在孤儿实例上无害，
+ * dispatch 层 catch 路径依赖 call.status 语义）。跳过时不记日志——本文件是纯
+ * 函数层无日志通道，dispatch 层 .then 守卫的 orphan completion dropped 日志已
+ * 覆盖同一事件的可观察性。
  */
-function finalizeCall(call: AgentCall, result: AgentResult, trace: Trace): void {
+function finalizeCall(
+  call: AgentCall,
+  result: AgentResult,
+  trace: Trace,
+  isOrphaned?: () => boolean,
+): void {
   call.markDone(result);
   const status = result.error === undefined ? "completed" : "failed";
   // 同步 AgentCall 的 sessionId/sessionFile（对齐 trace 节点，持久化 + reset 用）
   if (result.sessionId !== undefined) call.setSessionId(result.sessionId);
   if (result.sessionFile !== undefined) call.setSessionFile(result.sessionFile);
+  if (isOrphaned?.()) return;
   trace.update(call.id, {
     status,
     result,
@@ -124,6 +142,11 @@ function delay(ms: number): Promise<void> {
  * @param budget Budget 值对象（consume + isExceeded 检查）
  * @param signal AbortSignal（runner.run 传播；abort 后不重试）
  * @param trace Trace 值对象（finalizeCall 时 update）
+ * @param onEvent 实时事件回调（live record 更新用）
+ * @param stream streaming sink（透传 runner.run）
+ * @param isOrphaned 孤儿判定谓词（OB2，可选，默认恒 false）：true 时 finalizeCall
+ *   跳过 trace.update（判定语义与正确性论证见 finalizeCall 文档注释）。递归重试
+ *   透传本谓词。
  */
 export async function executeAgentCall(
   call: AgentCall,
@@ -133,6 +156,7 @@ export async function executeAgentCall(
   trace: Trace,
   onEvent?: (event: AgentEvent) => void,
   stream?: SubagentStream,
+  isOrphaned?: () => boolean,
 ): Promise<void> {
   call.markRunning();
 
@@ -145,21 +169,21 @@ export async function executeAgentCall(
 
  // stale-context：不重试（P1-5）
   if (result.error !== undefined && isStaleContextErrorMsg(result.error)) {
-    finalizeCall(call, result, trace);
+    finalizeCall(call, result, trace, isOrphaned);
     budget.incrementCallCount();
     return;
   }
 
  // signal 已 abort：调用方终止，不重试（避免无意义的递归）
   if (signal.aborted) {
-    finalizeCall(call, result, trace);
+    finalizeCall(call, result, trace, isOrphaned);
     budget.incrementCallCount();
     return;
   }
 
  // 预算超限：不重试（重试只会突破预算且无意义）
   if (result.error !== undefined && budget.isExceeded()) {
-    finalizeCall(call, result, trace);
+    finalizeCall(call, result, trace, isOrphaned);
     budget.incrementCallCount();
     return;
   }
@@ -169,15 +193,15 @@ export async function executeAgentCall(
     await delay(backoffDelay(call.attempts));
  // 退避期间 signal 可能 abort
     if (signal.aborted) {
-      finalizeCall(call, result, trace);
+      finalizeCall(call, result, trace, isOrphaned);
       budget.incrementCallCount();
       return;
     }
-    await executeAgentCall(call, runner, budget, signal, trace, onEvent, stream);
+    await executeAgentCall(call, runner, budget, signal, trace, onEvent, stream, isOrphaned);
     return;
   }
 
  // 终态（成功或达到重试上限的失败）
-  finalizeCall(call, result, trace);
+  finalizeCall(call, result, trace, isOrphaned);
   budget.incrementCallCount();
 }

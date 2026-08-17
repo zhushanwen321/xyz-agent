@@ -16,6 +16,16 @@ const RATE_LIMIT_PER_MINUTE = 6
 const TICK_INTERVAL_MS = 30_000
 const DEFAULT_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 const HISTORY_LIMIT = 20 // 与 replayFoldEntries 的裁剪上限一致（advance 折叠 / dispatch 累积共用）
+// pi ExtensionRunner 在 session 替换后访问 stale ctx 时抛出的错误文案片段。
+// 兜底通道（防御纵深）：G1 模块级代际检测（isCtxStale）为主判，覆盖同模块环境内的 session
+// 替换路径（newSession/fork/switchSession：extensionCache 命中，factory 重跑但模块环境共享，
+// 模块级代数被新闭包递增）；本子串覆盖代际盲区——显式 reload / cwd 变化触发
+// clearExtensionCache 后 jiti 重新 import 产生全新模块环境，旧闭包引用的模块级代数冻结
+// 不再递增，isCtxStale 恒 false，此时除 session_shutdown teardown 主防线外只剩错误文案
+// 能识别 stale。
+// 注意：pi 非契约 API（Error message 非稳定接口），pi 升级需回归验证 runtime.test.ts 的
+// U1 / G1-d 文案锚定用例；文案变更时此兜底失效，后果为 timer 泄漏 + 每 30s warn（不 crash）。
+const STALE_CTX_MARKER = 'stale after session replacement'
 
 export class SchedulerRuntime {
   private tasks: Map<string, ScheduledTask> = new Map()
@@ -24,17 +34,26 @@ export class SchedulerRuntime {
   private tickTimer: ReturnType<typeof setInterval> | null = null
   private dispatchTimestamps: number[] = []
   private onAfterTickCallback: (() => void) | null = null
+  private readonly isCtxStale: (() => boolean) | undefined
+  // R3-S1：同任务 dispatch 在途标记（Set<taskId>），见 dispatchTask 注释
+  private readonly dispatchesInFlight = new Set<string>()
 
   /**
    * 依赖反转构造：backend 承担 appendEntry/pi.sendMessage/时间源，runtime 只持有内存态。
    * 不触碰任何 FS / session JSONL（测试可用 MockSchedulerBackend 零副作用注入）。
+   *
+   * isCtxStale（G1 代际检测，S9/R3-M1）：返回 true 表示本 runtime 建立时的 session 已被
+   * 替换。index.ts 装配点注入（模块级代数比对，R3-M1），使 stale 分诊不依赖 pi 错误文案；
+   * 缺省（不注入）恒视为非 stale——纯 runtime 单测与旧装配路径行为不变。
    */
   constructor(
     backend: SchedulerBackend,
     ctx: Pick<ExtensionContext, 'isIdle' | 'hasPendingMessages'>,
+    isCtxStale?: () => boolean,
   ) {
     this.backend = backend
     this.ctx = ctx
+    this.isCtxStale = isCtxStale
   }
 
   // ── 任务 CRUD ──
@@ -160,7 +179,30 @@ export class SchedulerRuntime {
 
   startScheduler(): void {
     if (this.tickTimer) return
-    this.tickTimer = setInterval(() => void this.tickScheduler(), TICK_INTERVAL_MS)
+    this.tickTimer = setInterval(() => {
+      // G1（代际前置检查，S9）：本 runtime 所属 session 已被替换 → timer 属泄漏资源，
+      // 自停退场且不进入本轮 tick（不触碰捕获的 stale ctx）。主防线是 F1（session_start
+      // 停旧 timer），此处覆盖 F1 未能触达的泄漏路径——且不依赖「stale ctx 访问恰好抛错」
+      // 或 pi 错误文案，代际一翻转即可静默退场。
+      if (this.isCtxStale?.()) {
+        this.retireStaleTimer()
+        return
+      }
+      // F2（防御兜底）：fire-and-forget 的 tick 链路必须自带 catch——tick 内任何异常
+      // （典型：session 替换后泄漏 timer 的 onAfterTick → refreshWidget 访问 stale ctx.ui 抛错）
+      // 若无人接住即 unhandledRejection，直接崩掉 pi 主进程。分诊：G1 模块级代数比对为主判
+      // （契约内，不受 pi 文案变更影响），STALE_CTX_MARKER 子串为兜底（覆盖 reload 产生全新
+      // 模块环境后旧闭包代数冻结、isCtxStale 恒 false 的盲区）。stale 类错误说明本 runtime
+      // 所属 session 已被替换，timer 属泄漏资源，自停退场；其他错误仅告警，不终止调度。
+      void this.tickScheduler().catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err)
+        if (this.isCtxStale?.() || message.includes(STALE_CTX_MARKER)) {
+          this.retireStaleTimer()
+        } else {
+          console.warn(`[scheduler] tick error: ${message}`)
+        }
+      })
+    }, TICK_INTERVAL_MS)
   }
 
   stopScheduler(): void {
@@ -168,6 +210,16 @@ export class SchedulerRuntime {
       clearInterval(this.tickTimer)
       this.tickTimer = null
     }
+  }
+
+  /**
+   * stale 自停退场（G1 前置检查与 F2 catch 分诊共用）：warn 观测口径与 crash-fix 一致
+   * （含 "tick stopped"，U1 断言锚定）+ stopScheduler（幂等）。timer 自停后调度由
+   * session_start 重建的新一代 runtime 接管。
+   */
+  private retireStaleTimer(): void {
+    console.warn(`[scheduler] tick stopped: stale extension ctx (session replaced); timer self-retired`)
+    this.stopScheduler()
   }
 
   /**
@@ -218,15 +270,38 @@ export class SchedulerRuntime {
 
   /**
    * dispatch 单个任务。返回 true 表示真的发送了 message，false 表示 no-op
-   * （task disabled / rate-limited / 非 force 且 busy）。
+   * （task disabled / 已有同任务在途 / rate-limited / 非 force 且 busy）。
+   *
+   * R3-S1 in-flight 守卫：tick 为 fire-and-forget，若 tick1 的 `await backend.sendMessage`
+   * 挂起超过 TICK_INTERVAL_MS（如 pi 卡死），tick2 的 step2 会再标 pending、step3 对同一
+   * task 并发第二个 dispatch → 同一 prompt 双注入（force 任务绕过 isIdle gate 直接受影响）。
+   * 参照 subagent-workflow resumesInFlight 模式：入口同步置位、finally 清除（覆盖 gate /
+   * rate-limit / sendMessage 抛错 / 成功推进全部退出路径）；命中时 skip 本轮并 warn
+   * （不 throw——tick 继续处理其他任务，本任务 pending 保留到下轮重试）。
+   */
+  async dispatchTask(task: ScheduledTask): Promise<boolean> {
+    if (!task.enabled) return false
+    if (this.dispatchesInFlight.has(task.id)) {
+      console.warn(`[scheduler] dispatch already in flight for task ${task.id}; skipping this tick`)
+      return false
+    }
+    this.dispatchesInFlight.add(task.id)
+    try {
+      return await this.dispatchTaskInner(task)
+    } finally {
+      this.dispatchesInFlight.delete(task.id)
+    }
+  }
+
+  /**
+   * dispatch 本体（dispatchTask 守卫置位后执行；runTaskNow 与 tick step3 共用入口，
+   * 手动 run-now 与挂起中的 tick dispatch 并发时同样被守卫拦截）。
    * sendMessage 抛错时记录 failed 状态但不 rethrow，让 tick 继续处理其他任务。
    *
    * 持久化（append-only）：recurring 成功推进 nextRunAt → append advance（status='success' CL8）；
    * once 成功 → append delete。失败 dispatch 不 append（CL7 重试语义，transient 失败 nextRunAt 未推进）。
    */
-  async dispatchTask(task: ScheduledTask): Promise<boolean> {
-    if (!task.enabled) return false
-
+  private async dispatchTaskInner(task: ScheduledTask): Promise<boolean> {
     // 检查 force 或 idle
     if (!task.force) {
       if (!this.ctx.isIdle() || this.ctx.hasPendingMessages()) {

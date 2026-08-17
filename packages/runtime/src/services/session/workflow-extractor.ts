@@ -11,12 +11,13 @@
  *    同 runId 可有多条（去重保留最新 updatedAt 的 path）。
  * 2. workflow-state 文件（<sessionDir>/workflow-state/<runId>.jsonl）：
  *    单行 RunSnapshot（rewrite mode，文件始终是最新单行快照）。
- *    格式版本：v === 'wf-run-v1'（D-5 版本守卫，不匹配跳过）。
+ *    格式版本：v === 'wf-run-v2'（D-5 版本守卫，不匹配跳过；v1 快照跳过为
+ *    extension 侧声明的接受边界——旧 run 历史价值低，不做兼容迁移）。
  *
  * 提取策略：
  * - 遍历所有 custom_message entry，收集 workflow-state-link（按 runId 去重，保留最新 path）
  * - 逐个读 path 指向的 state 文件，取最后一行（rewrite mode = 最新快照）
- * - 版本守卫（v !== 'wf-run-v1' 跳过，D-5 不向后兼容）
+ * - 版本守卫（v !== 'wf-run-v2' 跳过，D-5 不向后兼容；v1 旧快照一并跳过）
  * - 映射 RunSnapshot → WorkflowRunRecord
  *
  * agent call 对话流：trace[].sessionId 是 pi session ID（uuidv7），
@@ -34,12 +35,19 @@ import { parseJsonl } from '../../utils/jsonl.js'
 import type {
   WorkflowRunRecord,
   WorkflowAgentCall,
-  WorkflowRunStatus,
   WorkflowDoneReason,
 } from '@xyz-agent/shared'
 
-/** RunSnapshot 格式版本（对齐扩展的 SNAPSHOT_VERSION）。版本不匹配跳过（D-5）。 */
-const SNAPSHOT_VERSION = 'wf-run-v1'
+/**
+ * RunSnapshot 格式版本。版本不匹配跳过（D-5）。
+ *
+ * 注意：这是 extension 侧 SNAPSHOT_VERSION 的本地副本——跨包依赖方向不允许 runtime
+ * import extensions/ 源码，只能复制字面量。权威源：extensions/subagent-workflow/src/
+ * orchestration/jsonl-run-store.ts 的 SNAPSHOT_VERSION（export const，当前 'wf-run-v2'）。
+ * extension 升级格式时必须同步 bump 此处，否则版本守卫会把新快照全部判为不匹配跳过
+ * （renderer WorkflowList 对新 run 显示为空）。
+ */
+const SNAPSHOT_VERSION = 'wf-run-v2'
 
 /** workflow-state-link entry 的 data 结构 */
 interface WorkflowStateLinkData {
@@ -90,7 +98,7 @@ interface SnapshotTraceNode {
   error?: string
 }
 
-/** RunSnapshot 顶层结构（对齐扩展 jsonl-run-store.ts 的 RunSnapshot interface） */
+/** RunSnapshot 顶层结构（对齐扩展 jsonl-run-store.ts 的 v2 RunSnapshot interface） */
 interface RunSnapshot {
   v: string
   runId: string
@@ -103,7 +111,8 @@ interface RunSnapshot {
     description?: string
   }
   state: {
-    status: 'running' | 'paused' | 'done'
+    // v2 两态（wf-run-v2 随一次性生命周期收窄，paused 态已删除）；v1 三态快照被版本守卫跳过
+    status: 'running' | 'done'
     reason?: WorkflowDoneReason
     budget: SnapshotBudget
     calls: unknown[]
@@ -115,7 +124,6 @@ interface RunSnapshot {
   meta: {
     startedAt: string
     completedAt?: string
-    pausedAt?: string
     workerErrorCount?: number
     scriptErrorCount?: number
   }
@@ -183,34 +191,78 @@ function readAndMapSnapshot(runId: string, stateFilePath: string): WorkflowRunRe
   const lastLine = lines[lines.length - 1]
   if (!lastLine) return null
 
-  let snapshot: RunSnapshot
+  let parsed: unknown
   try {
-    snapshot = JSON.parse(lastLine) as RunSnapshot
+    parsed = JSON.parse(lastLine)
   } catch {
     // JSON 解析失败（损坏的 state 文件）
     return null
   }
 
-  // D-5 版本守卫：版本不匹配跳过（旧格式不向后兼容）
-  if (snapshot.v !== SNAPSHOT_VERSION) return null
+  // [review 修复] 结构守卫：JSON.parse 对 "null" / "42" / '"str"' / '[]' 等合法 JSON
+  // 产出 null / 非对象 / 缺 v 字段值，直接 as RunSnapshot 后 .v 访问会抛 TypeError
+  // 而非走「跳过」路径——按坏行处理跳过，与上方 malformed 行为一致（状态文件由本
+  // 扩展生成，防御并发截断 / 外部覆写）。
+  if (typeof parsed !== 'object' || parsed === null || !('v' in parsed)) return null
+
+  // [review 修复 R3-S3] v 匹配后 mapSnapshotToRecord 还直接访问 state.trace /
+  // spec.scriptName / meta.startedAt——形如 {"v":"wf-run-v2"} 的合法 JSON（截断写，
+  // 缺三段或任一段为 null）在 v 守卫放行后仍抛 TypeError。三段须为非 null 对象，
+  // 坏结构与上方一致走跳过路径（仅一层存在性；字段级缺省由 ?? 与值级守卫兜底，
+  // 不做深度 schema 校验）。
+  const body = parsed as Record<string, unknown>
+  const isObj = (x: unknown): x is object => typeof x === 'object' && x !== null
+  if (!isObj(body.state) || !isObj(body.spec) || !isObj(body.meta)) return null
+
+  const snapshot = parsed as RunSnapshot
+
+  // D-5 版本守卫：版本不匹配跳过（旧格式不向后兼容），判定先于结构校验——
+  // 新格式快照结构可能已变（trace 改形等），先比版本才能把「版本漂移」与
+  // 「同版本坏数据」区分开。
+  // [review 修复 R4] 不再静默——pi-subagent-workflow 是 mandatory + autoUpgrade 扩展，
+  // extension 先发版（npm-* tag 独立管线）而 app 未跟上时，版本守卫会把新 run 全部
+  // 判为不匹配跳过（WorkflowList 对新 run 显示为空），无日志则该版本漂移不可观测。
+  if (snapshot.v !== SNAPSHOT_VERSION) {
+    console.warn(
+      `[workflow-extractor] snapshot version '${String(snapshot.v)}' unsupported (expected '${SNAPSHOT_VERSION}') — ` +
+        `extension/runtime version skew, skip run ${runId} (${stateFilePath}). ` +
+        `Fix: bump SNAPSHOT_VERSION in workflow-extractor.ts to match ` +
+        `extensions/subagent-workflow/src/orchestration/jsonl-run-store.ts (see header comment).`,
+    )
+    return null
+  }
+
+  // [review 修复 R4] state.trace 是三段中唯一被直接解引用的字段（mapSnapshotToRecord
+  // 的 .map 与 mapTraceNode 的 node.result 访问）——非数组真值（如 "trace":{}）时
+  // ?? 只挡 null/undefined 不挡错型，.map 抛 TypeError 且 readAndMapSnapshot 无
+  // per-item catch，一个坏 state 文件会让整个 session.getWorkflows RPC 回
+  // handler_error（该 session 其余 run 一并不可见）。非数组与三段缺失同层：该 run
+  // 按坏行跳过；数组内的 null 项在 mapSnapshotToRecord 过滤（项级隔离，不弃整个 run）。
+  if (!Array.isArray((body.state as Record<string, unknown>).trace)) return null
 
   return mapSnapshotToRecord(snapshot, stateFilePath)
 }
 
 /** 映射 RunSnapshot → WorkflowRunRecord（含 trace → agentCalls 映射） */
 function mapSnapshotToRecord(snapshot: RunSnapshot, stateFilePath: string): WorkflowRunRecord {
-  const agentCalls: WorkflowAgentCall[] = (snapshot.state.trace ?? []).map(mapTraceNode)
+  // [review 修复 R4] trace 数组内的 null 项按坏项过滤（mapTraceNode 的 node.result
+  // 访问对 null 项抛 TypeError）——保留其余合法项，run 本身不跳过（坏项隔离到项级，
+  // 上方 Array.isArray 守卫已保证 trace 是数组，?? 仅为函数级防御保留）
+  const agentCalls: WorkflowAgentCall[] = (snapshot.state.trace ?? [])
+    .filter((node): node is SnapshotTraceNode => typeof node === 'object' && node !== null)
+    .map(mapTraceNode)
 
   return {
     runId: snapshot.runId,
     scriptName: snapshot.spec.scriptName,
     slug: snapshot.spec.slug,
     description: snapshot.spec.description,
-    status: snapshot.state.status as WorkflowRunStatus,
+    // v2 两态直接赋值（是 WorkflowRunStatus 三态的子集，无需断言；
+    // 'paused' 是 WorkflowRunStatus 的 legacy 读侧值，v2 快照不产出）
+    status: snapshot.state.status,
     reason: snapshot.state.reason,
     startedAt: snapshot.meta.startedAt,
     completedAt: snapshot.meta.completedAt,
-    pausedAt: snapshot.meta.pausedAt,
     usedTokens: snapshot.state.budget?.usedTokens,
     totalCallCount: snapshot.state.budget?.totalCallCount,
     agentCalls,

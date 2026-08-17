@@ -21,8 +21,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../lifecycle.ts", () => ({
   runWorkflow: vi.fn(),
   abortRun: vi.fn(async () => {}),
-  pauseRun: vi.fn(async () => {}),
-  resumeRun: vi.fn(async () => {}),
   scheduleTimeBudget: vi.fn(() => undefined),
 }));
 

@@ -18,7 +18,7 @@ import type {
 
 function makeDetails(over: Partial<SubagentToolDetails> = {}): SubagentToolDetails {
   return {
-    status: "done",
+    status: "closed",
     mode: "background",
     agent: "worker",
     model: "test/model",
@@ -42,7 +42,7 @@ function makeSnapshot(over: Partial<RecordSnapshot> = {}): RecordSnapshot {
     mode: "background",
     task: "t",
     slug: "test-slug",
-    status: "done",
+    status: "closed",
     eventLog: [],
     turns: 1,
     totalTokens: 10,
@@ -61,6 +61,8 @@ function makeService(over: Partial<SubagentService> = {}): SubagentService {
     findRecord: vi.fn(() => undefined),
     cancel: vi.fn(() => false),
     collectRecords: vi.fn(() => [] as SubagentRecord[]),
+    // [perf] listHandler 逐项 enrich 会调 getFullRecord；mock 回 undefined → 调用方回退 light record
+    getFullRecord: vi.fn(() => undefined as SubagentRecord | undefined),
     ...over,
   } as SubagentService;
 }
@@ -171,13 +173,13 @@ describe("listHandler", () => {
 
   it("item 8 字段齐全（含 duration 实时计算）", () => {
     const records: SubagentRecord[] = [
-      { id: "r1", agent: "w", status: "done", mode: "background", startedAt: 1000, endedAt: 2500, turns: 2, totalTokens: 50, model: "m", thinkingLevel: "high", eventLog: [], sessionFile: "x.jsonl" },
+      { id: "r1", agent: "w", status: "closed", mode: "background", startedAt: 1000, endedAt: 2500, turns: 2, totalTokens: 50, model: "m", thinkingLevel: "high", eventLog: [], sessionFile: "x.jsonl" },
     ];
     const svc = makeService({ collectRecords: vi.fn(() => records) });
     const r = listHandler(svc, { includeFinished: true });
     const item = r.response.items[0];
     expect(item).toMatchObject({
-      subagentId: "r1", agent: "w", status: "done", mode: "background",
+      subagentId: "r1", agent: "w", status: "closed", mode: "background",
       duration: 1, model: "m", totalTokens: 50, sessionFile: "x.jsonl",
     });
   });
@@ -263,7 +265,7 @@ describe("cancelHandler", () => {
 
   it("[S-19] id 在树内但已终态（磁盘可见 done）→ 仍用 may have finished 消息", async () => {
     const done: SubagentRecord = {
-      id: "bg-done", agent: "w", status: "done", mode: "background", startedAt: 1,
+      id: "bg-done", agent: "w", status: "closed", mode: "background", startedAt: 1,
       endedAt: 2, turns: 0, totalTokens: 0, model: "m", thinkingLevel: undefined, eventLog: [],
     };
     const svc = makeService({
@@ -275,10 +277,10 @@ describe("cancelHandler", () => {
 
   it("已终态（cancel 返回 false）→ throw could not be cancelled", async () => {
     const svc = makeService({
-      findRecord: vi.fn(() => makeSnapshot({ id: "bg-1", mode: "background", status: "done" })),
+      findRecord: vi.fn(() => makeSnapshot({ id: "bg-1", mode: "background", status: "closed" })),
       cancel: vi.fn(() => false),
     });
-    await expect(cancelHandler(svc, { subagentId: "bg-1" })).rejects.toThrow(/could not be cancelled.*status: done/);
+    await expect(cancelHandler(svc, { subagentId: "bg-1" })).rejects.toThrow(/could not be cancelled.*status: closed/);
   });
 
   it("成功 → cancelled:true", async () => {
@@ -295,7 +297,7 @@ describe("cancelHandler", () => {
   // re-query 到终态。覆盖 cancelHandler 的 re-query 分支（subagent-actions.ts:267-272）。
   it("并发 CAS：两次 cancel 同一 id，第二次 CAS 失败 re-query 到终态", async () => {
     const running = makeSnapshot({ id: "bg-cas", mode: "background", status: "running" });
-    const done = makeSnapshot({ id: "bg-cas", mode: "background", status: "done" });
+    const done = makeSnapshot({ id: "bg-cas", mode: "background", status: "closed" });
 
     let cancelCalls = 0;
     const svc = makeService({
@@ -317,9 +319,9 @@ describe("cancelHandler", () => {
     const r1 = await cancelHandler(svc, { subagentId: "bg-cas" });
     expect(r1.response.cancelled).toBe(true);
 
-    // 第二次 cancel：CAS 失败，re-query 返回 done（不是初始的 running）
+    // 第二次 cancel：CAS 失败，re-query 返回 closed（不是初始的 running）
     await expect(cancelHandler(svc, { subagentId: "bg-cas" }))
-      .rejects.toThrow(/could not be cancelled.*status: done/);
+      .rejects.toThrow(/could not be cancelled.*status: closed/);
 
     // 验证 re-query 确实发生（3 次 findRecord：1 初始 + 1 初始 + 1 re-query）
     expect(svc.findRecord).toHaveBeenCalledTimes(3);

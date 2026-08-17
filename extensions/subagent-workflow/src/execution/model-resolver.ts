@@ -82,11 +82,13 @@ const MODEL_LIST_LIMIT = 20;
 //   ║    3. ctxModel                 （主 agent 当前模型，直接透传）   ║
 //   ║                                                                ║
 //   ║  1/2 级查 registry + auth 校验；3 级无需 lookup（主 agent 在用  ║
-//   ║  说明 auth OK）。thinkingLevel 无指定时 undefined（model 默认） ║
+//   ║  说明 auth OK）。thinkingLevel 无显式指定时兜底「模型最高可用档」║
+//   ║  （maxThinkingForModel，含 "max" 时用 max）——不落回 pi 默认      ║
+//   ║  medium，subagent 任务需要最大推理深度。                          ║
 //   ║                                                                ║
 //   ║  显式指定但 lookup/auth 失败 → 抛错（不静默降级到主 agent，     ║
 //   ║  因为用户明确要求了某个 model，降级会造成「以为用了 X 实际用 Y」║
-//   ╚═══════════════════════════════════════════════════════════════╝
+//   ╚════════════════════════════════════════════════════════════════╝
  *
  * @param agentConfig     agent .md 解析结果（查 model override + thinkingLevel）
  * @param modelRegistry   registry（仅 override 路径用）
@@ -120,11 +122,12 @@ export function resolveModel(
     );
   }
 
-  // 3. 主 agent model（直接透传，thinkingLevel 用 override 或 undefined）
+  // 3. 主 agent model（直接透传）。无显式 thinking → 兜底最高可用档。
   if (ctxModel) {
     return {
       model: ctxModel,
-      thinkingLevel: paramOverride?.thinkingLevel ?? agentConfig?.thinkingLevel,
+      thinkingLevel: paramOverride?.thinkingLevel ?? agentConfig?.thinkingLevel
+        ?? maxThinkingForModel(ctxModel),
     };
   }
 
@@ -166,8 +169,26 @@ function lookupAndResolve(
   }
   return {
     model,
-    thinkingLevel: resolveThinkingLevel(model, requestedThinking),
+    // 无显式请求时兜底「模型最高可用档」（不落 pi 默认 medium）。
+    thinkingLevel: resolveThinkingLevel(model, requestedThinking ?? maxThinkingForModel(model)),
   };
+}
+
+/**
+ * subagent 默认 thinking：模型最高可用档。
+ *
+ *   - thinkingLevelMap 配置了级别 → map 中最高档（模型显式配置 "max" 时即 max）
+ *   - reasoning 但无 map → "xhigh"（pi 合法最高档；"max" 非 pi 合法值——
+ *     spawn 侧 model:"max" 后缀会被 pi 判为非法 thinking 后缀导致 model 解析失败，
+ *     故无 map 时不能直接用 "max"）
+ *   - 非 reasoning 模型 → undefined（不支持 thinking）
+ */
+function maxThinkingForModel(
+  model: { reasoning: boolean; thinkingLevelMap?: Record<string, unknown> },
+): string | undefined {
+  const levels = availableThinkingLevels(model);
+  if (levels.length > 0) return levels[levels.length - 1];
+  return model.reasoning ? "xhigh" : undefined;
 }
 
 /**

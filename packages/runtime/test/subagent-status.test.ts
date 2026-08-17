@@ -32,11 +32,20 @@ describe('normalizeSubagentStatus', () => {
     expect(normalizeSubagentStatus('active')).toBe('running')
   })
 
-  it('undefined / 空串 / 未知值 → running（兜底）', () => {
+  it('closed → closed', () => {
+    expect(normalizeSubagentStatus('closed')).toBe('closed')
+  })
+
+  it('undefined / 空串 → running（无状态信息，保持初始运行态）', () => {
     expect(normalizeSubagentStatus(undefined)).toBe('running')
     expect(normalizeSubagentStatus('')).toBe('running')
-    expect(normalizeSubagentStatus('unknown')).toBe('running')
-    expect(normalizeSubagentStatus('whatever')).toBe('running')
+  })
+
+  it('未知值 → closed（终态方向兜底，不把已结束记录翻回运行中）', () => {
+    expect(normalizeSubagentStatus('unknown')).toBe('closed')
+    expect(normalizeSubagentStatus('whatever')).toBe('closed')
+    // idle 是 v4 已删除的死值（idle 已折入 running），按未知值走终态兜底
+    expect(normalizeSubagentStatus('idle')).toBe('closed')
   })
 
   it('未知状态触发 console.warn 兜底告警', () => {

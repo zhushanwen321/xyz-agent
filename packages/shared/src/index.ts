@@ -62,7 +62,7 @@ export { mandatoryExtensions }
 export * from './file-tree'
 export type { RecentWorkspaceRecord } from './workspace'
 export type { Project, ProjectStoreState } from './project'
-export type { SubagentRecord, SubagentStatus } from './subagent'
+export type { SubagentRecord, SubagentStatus, ClosedDisplayStatus } from './subagent'
 // 虚拟 session ID 工厂（subagent 三段式 / agent call 两段式）——跨层协议级 key 约定 SSOT
 export {
   SUBAGENT_PREFIX,
@@ -84,6 +84,9 @@ export type {
 } from './quota-types'
 export type { QuotaPreset } from './quota-presets'
 export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'
+// normalizeSubagentStatus 已下沉至 runtime（packages/runtime/src/services/session/subagent-status.ts，
+// 单消费者归位）；shared 仅保留 renderer 消费的 deriveClosedDisplay 展示派生。
+export { deriveClosedDisplay } from './subagent'
 export type {
   WorkflowRunStatus,
   WorkflowDoneReason,

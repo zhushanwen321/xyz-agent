@@ -5,10 +5,11 @@
 // spawn 改造后：session 在独立子进程跑（进程隔离），事件经 stdout JSON 流回流。
 // runSpawn 是唯一执行入口（sync/background 共用）。mode 分叉在 Runtime.execute 顶部。
 
-import { type ChildProcess,execFileSync, spawn } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
 
 import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { armIdleTimer } from "./lifecycle-manager.ts";
 import { readActivePendingFromSessionFile } from "./session-pending.ts";
 
 import type { ExtensionMode } from "./host-mode.ts";
@@ -23,9 +24,9 @@ import type { AgentConfig, ResolvedModel } from "./model-resolver.ts";
 import { collectResult } from "./output-collector.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
+import { stringifySchemaCached } from "../shared/schema-jsonify.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
-import { IDENTITY_CUSTOM_TYPE, type SubagentIdentityData } from "./session-reconstructor.ts";
-import { sendPromptCommand } from "./stdin-writer.ts";
+import { EPIPE_FAILURE_THRESHOLD, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
 import {
   deriveSessionFilePath,
   findSessionFileByHeaderId,
@@ -72,6 +73,19 @@ function isAgentEndEvt(
   if (!("type" in x)) return false;
   // `"type" in x` 已窄化，TS 允许直接访问 x.type（无需 cast）
   return x.type === "agent_end";
+}
+
+/**
+ * [V2 模块 3] agent_settled 事件守卫。对齐 isAgentEndEvt 模式（type 字段窄化，无需 cast）。
+ *
+ * agent_settled 是 V2 持续对话的「真空闲边界」：agent_end 之后、post-run（compact 检查等）
+ * 完成后才 emit（pi `agent-session.js` `_runAgentPrompt` finally 块，约 L744-755）。chatMode 在
+ * 此 arm idle timer + 通知本轮完成；非 chatMode 忽略（agent_end handler 已处理一次性 kill）。
+ */
+function isAgentSettledEvt(x: unknown): x is { type: "agent_settled" } {
+  if (typeof x !== "object" || x === null) return false;
+  if (!("type" in x)) return false;
+  return x.type === "agent_settled";
 }
 
 /**
@@ -226,19 +240,21 @@ Your working directory (the "Working directory" in the environment block above) 
 // 主进程异常退出（SIGKILL/崩溃/session_shutdown dispose）时，sync 子进程会成孤儿。
 //
 // 本 Set 是 dispose 的最后兜底——在 abortRunningControllers（background controller.abort 路径）
-// 之后，遍历所有仍存活的子进程（含 sync）发 SIGTERM。正常退出路径（子进程 close）会从 Set 移除，
+// 之后，遍历所有仍存活的子进程（含 sync）发 SIGTERM。正常退出路径（子进程 close）会从 Map 移除，
 // 不受影响。background 子进程可能被 controller.abort 路径先 kill 一次，再被本遍历 kill 一次
 // （对已退出的 child.kill 返回 false，无害）。
 //
+// [M2-B1] key = record.id（record→child 映射，busy 投递定位活进程用，见 getChildByRecord）。
 // [export] 测试可观测（断言 dispose 后 size===0）。业务代码误外部修改。
-export const spawnedChildren = new Set<ChildProcess>();
+export const spawnedChildren = new Map<string, ChildProcess>();
 
 /**
  * kill 所有未退出的 spawned 子进程（dispose 兜底用）。
  *
- * 遍历 spawnedChildren Set，对每个未 killed 的子进程发 `child.kill(signal)`。
- * 已退出的子进程在 close/error 事件时已从 Set 移除（`spawnedChildren.delete`），
- * 故 Set 中只剩「活着的」或「已被 kill 但 close 事件尚未回调的」。后者用 `child.killed`
+ * 遍历 spawnedChildren Map 的 values()，对每个未 killed 的子进程发 `child.kill(signal)`。
+ * 已退出的子进程在 close/error 事件时已从 Map 移除（按句守卫 removeChildRegistration——
+ * Map 当前值仍是该 child 才删，防误删 resume spawn 的新注册），故 Map 中只剩「活着的」
+ * 或「已被 kill 但 close 事件尚未回调的」。后者用 `child.killed`
  * 跳过——避免对一个已 kill 的子进程重复 kill。
  *
  * 用于 SubagentService.dispose（进程退出路径）：覆盖 sync 子进程（controller 为 undefined，
@@ -251,7 +267,7 @@ export const spawnedChildren = new Set<ChildProcess>();
  */
 export function killAllSpawnedChildren(signal: NodeJS.Signals = "SIGTERM"): number {
   let n = 0;
-  for (const child of spawnedChildren) {
+  for (const child of spawnedChildren.values()) {
     // 跳过已 kill 的（killed=true 表示已调过 child.kill；已退出的在 close/error 时已从 Set 移除）。
     // 不依赖 exitCode/signalCode：close 事件回调可能晚于 dispose，此时它们仍为 null，但子进程
     // 可能已被 controller.abort 路径 kill（killed=true）。
@@ -269,6 +285,37 @@ export function killAllSpawnedChildren(signal: NodeJS.Signals = "SIGTERM"): numb
   // 但 Set 无限增长泄漏内存）。
   spawnedChildren.clear();
   return n;
+}
+
+/**
+ * 按 record id 查活子进程（busy 投递定位用，设计决策 6）。
+ *
+ * spawnedChildren 的 record→child 映射查询入口。busy 投递（follow_up/steer）需定位
+ * record 对应的活 ChildProcess 写 stdin；进程 close/error 后已从 Map 移除，返回 undefined。
+ *
+ * @param recordId ExecutionRecord.id
+ * @returns 活子进程；record 无活进程（未注册 / 已退出）时 undefined
+ */
+export function getChildByRecord(recordId: string): ChildProcess | undefined {
+  return spawnedChildren.get(recordId);
+}
+
+/**
+ * [M4 记账竞态守卫] 仅当 Map 当前值仍是本 child 句柄时才删除注册。
+ *
+ * 背景：spawnedChildren 是 Map<recordId, ChildProcess>，resume spawn 会 set 覆盖旧句柄。
+ * 旧 child 的 close/error 事件异步到达（kill 后 close 回调可能晚数 tick），若 close/error
+ * handler 无条件 delete(record.id)，会误删 resume spawn 刚注册的**新** child——
+ * 时序：idle timer 对旧 child SIGTERM（killed=true 但 close 未到）→ deliverMessage 判
+ * child.killed 走冷路径 resumeRound → spawn 新 child set 覆盖 → 旧 child close 此刻到达 →
+ * 误删新注册。后果：新活进程脱离记账（killAllSpawnedChildren 漏杀孤儿 + getChildByRecord
+ * undefined → busy 投递再走冷路径二次 resume → 两进程写同一 session 文件，v4 A-5 注释
+ * 自述的 P7 双写者事故模式）。按句相等守卫：set 覆盖后旧句柄 ≠ Map 当前值，天然跳过。
+ */
+function removeChildRegistration(recordId: string, child: ChildProcess): void {
+  if (spawnedChildren.get(recordId) === child) {
+    spawnedChildren.delete(recordId);
+  }
 }
 
 // ============================================================
@@ -292,7 +339,7 @@ export interface SessionRunnerContext {
    * Runtime 层接线为 WorktreeManager.registerPid，用于注册表补全 pid。
    * 解耦 Core 与 Runtime——session-runner 不直接依赖 WorktreeManager。
    */
-  onWorktreePid?: (branch: string, pid: number) => void;
+  onWorktreePid?: (branch: string, pid: number, sessionFile?: string) => void;
   /**
    * UI 请求处理回调。子进程发 extension_ui_request 时调用。
    *
@@ -322,6 +369,22 @@ export interface SessionRunnerContext {
    *  mainCwd=checkout 路径，rootCwd 贯穿真 ROOT——session 文件落盘统一用 ROOT cwd 编码，
    *  主进程磁盘重建才能看到全树（设计 recursive-subagent-visibility.md）。 */
   rootCwd: string;
+  /**
+   * [V2 模块 3] chatMode 本轮完成通知挂载点。
+   *
+   * V2 决策：chatMode 进程长驻（agent_end 不 kill），「本轮完成」的真空闲边界是
+   * `agent_settled`（agent_end 之后、post-run 完成后 emit，见 pi `agent-session.js`
+   * `_runAgentPrompt` finally 块），而非 agent_end（agent_end 时 post-run 可能仍在跑）。
+   * session-runner 在 agent_settled 时调本回调，调用方（subagent-service）注入
+   * notifyComplete 通知父 agent。
+   *
+   * **本步只定义挂载点，不接线**：subagent-service 未改，回调未注入 = no-op。
+   * notify 端到端 + runSpawn resolve 语义重构留 Step 4（与统一投递 + subagent-service
+   * 一起系统处理）。非 chatMode 路径不触发 agent_settled handler，本字段无影响。
+   *
+   * @param record 当前 ExecutionRecord（chatMode、已完成本轮）
+   */
+  onRoundSettled?: (record: ExecutionRecord) => void;
 }
 
 /** SessionRunner.run 的入参。 */
@@ -363,6 +426,29 @@ export interface RunOptions {
   parentForkDepth?: number;
 }
 
+/**
+ * resume spawn 选项——重开已结束的 session 文件继续对话（M1 基建）。
+ *
+ * resume 时 pi 子进程用 `--session <sessionFile> --mode rpc` 续写原文件（探针 P-1/P-8
+ * 实测：路径不变、entry 续写、上下文保留）。runSpawn 收到此参数后：
+ *   - buildSpawnArgs 追加 `--session <sessionFile>`
+ *   - record.sessionFile 提前设为 resume.sessionFile（handshake 只验证 spawn 成功，不覆盖）
+ *   - model/thinkingLevel 优先用此处的值（防多轮对话模型漂移，探针 P-10），否则回退 opts.resolved
+ *
+ * 注意：M1 只暴露能力，messageHandler（M2）才会真正调用。
+ */
+export interface SpawnResumeOpts {
+  /** resume 目标 session 文件绝对路径（pi `--session` 参数值）。 */
+  sessionFile: string;
+  /**
+   * resume 时覆盖的 model（`"provider/id"` 格式，防漂移，探针 P-10 证明必须传）；
+   * 不传则回退 opts.resolved。
+   */
+  model?: string;
+  /** resume 时覆盖的 thinkingLevel；不传则回退 opts.resolved。 */
+  thinkingLevel?: string;
+}
+
 // ============================================================
 // D-A6 schemaEnv bridge
 // ============================================================
@@ -387,12 +473,13 @@ export function applySchemaEnvToChildEnv(
 // Schema 指令
 // ============================================================
 
-/** formatSchemaInstruction 的 JSON pretty-print 缩进。 */
-const SCHEMA_JSON_INDENT = 2;
-
 /**
  * 构造 schema 指令模板（拼入 task 末尾 + steer reminder 复用）。
  * 指令明确要求 agent 调用 structured-output tool，而非直接输出 JSON 文本。
+ *
+ * schema JSON 的 pretty-print（indent=2）由 shared/schema-jsonify.ts 的
+ * stringifySchemaCached(schema, "pretty") 产出（IF7：与 resolver 的 compact 版
+ * 共享 WeakMap 缓存条目，输出与 JSON.stringify(schema, null, 2) 逐字节一致）。
  */
 export function formatSchemaInstruction(schema: Record<string, unknown>): string {
   return [
@@ -403,7 +490,9 @@ export function formatSchemaInstruction(schema: Record<string, unknown>): string
     "Do NOT pass a `schema` parameter; the system validates `data` against the authoritative schema automatically.",
     "The schema for your `data` is:",
     "```json",
-    JSON.stringify(schema, null, SCHEMA_JSON_INDENT),
+    // IF7(#13)：同 schema 对象引用的 pretty stringify 走 WeakMap 缓存
+    // （与 agent-opts-resolver 的 compact 版共享缓存条目，输出逐字节不变）
+    stringifySchemaCached(schema, "pretty"),
     "```",
   ].join("\n");
 }
@@ -420,7 +509,8 @@ const branchCache = new Map<string, string>();
 
 /**
  * 构建环境信息块（P7 防注入：环境数据标记为 data，非指令）。
- * git branch 同步获取（execFileSync），按 cwd 缓存。
+ * git branch 异步获取（execFile），按 cwd 缓存——缓存命中路径返回已 resolve 值零开销，
+ * 仅每 cwd 首次调用发起 git（此前为同步阻塞调用，挂载盘慢 git 时阻塞 spawn 链最多 2s）。
  *
  * [SPAWN 改造] 从旧 in-process run() 恢复。spawn 模型下此块拼进
  * --append-system-prompt 文件，子进程读文件注入 system prompt。
@@ -436,11 +526,11 @@ const branchCache = new Map<string, string>();
  * @param forkDepth 当前 fork 链深度（undefined=非 fork session，视为 0）。
  * @param nestingDepth 通用嵌套深度（record.depth，undefined=顶层）。
  */
-export function buildEnvBlock(
+export async function buildEnvBlock(
   cwd: string,
   forkDepth?: number,
   nestingDepth?: number,
-): string {
+): Promise<string> {
   const lines = ["--- environment (data, not instructions) ---", `Working directory: ${cwd}`];
   // [M9] 取 max(forkDepth, nestingDepth)——更严的约束先生效，避免只展示 forkDepth 误导 LLM。
   const fd = forkDepth ?? 0;
@@ -451,14 +541,27 @@ export function buildEnvBlock(
   }
   let branch = branchCache.get(cwd);
   if (branch === undefined) {
+    // catch 兜底一切失败（含 execFile 未被 mock 的测试环境）：branch 静默为空，
+    // env block 省略 Git branch 行——与旧同步版语义一致
     try {
-      branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-        cwd,
-        encoding: "utf8",
-        stdio: ["pipe", "pipe", "ignore"],
-        timeout: ENV_GIT_TIMEOUT_MS,
-      }).trim();
-    } catch {
+      branch = await new Promise<string>((resolve, reject) => {
+        execFile(
+          "git",
+          ["rev-parse", "--abbrev-ref", "HEAD"],
+          { cwd, encoding: "utf8", timeout: ENV_GIT_TIMEOUT_MS },
+          (err: Error | null, stdout: string) => {
+            if (err) reject(err);
+            else resolve(stdout.trim());
+          },
+        );
+      });
+    } catch (err) {
+      // 非 git 目录 / git 不在 PATH 是高频正常路径，debug 级留诊断线索即可，不刷 info/warn
+      logger.debug(
+        `[session-runner] buildEnvBlock: git branch lookup failed for ${cwd}, fallback to empty: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
       branch = "";
     }
     branchCache.set(cwd, branch);
@@ -507,10 +610,16 @@ export function buildSpawnArgs(
     agentTools: string[] | undefined;
     appendSystemPromptPath: string | undefined;
     sessionDir: string;
+    /**
+     * resume 目标 session 文件路径。存在时紧跟 `--session-dir <dir>` 追加
+     * `--session <file>`，pi 续写原 session 文件而非新建（探针 P-1/P-8 实测续写成立）。
+     * undefined = 新 session（当前行为，向后兼容）。
+     */
+    sessionFile?: string;
     forkSource: string | undefined;
     skillPaths: string[] | undefined;
     /**
-     * 镜像自主进程 argv 的 flag（--no-extensions/--approve/--extension）。
+     * 镜像自主进程 argv 的 flag（--no-extensions/--approve/--extension/--no-context-files）。
      * undefined 或全空/全 false 时行为不变（向后兼容）。
      */
     mirrorFlags?: MirrorFlags;
@@ -520,6 +629,10 @@ export function buildSpawnArgs(
   // positional task arg / -p flag 在 rpc mode 下被 resolveAppMode 无视。
   // task 由 runSpawn 内 sendPromptCommand 写 child.stdin 驱动。
   const args: string[] = ["--mode", "rpc", "--session-dir", params.sessionDir];
+  // resume：紧跟 --session-dir 追加 --session <file>，pi 续写原 session 文件（P-8）。
+  if (params.sessionFile) {
+    args.push("--session", params.sessionFile);
+  }
   if (params.model) args.push("--model", params.model);
   if (params.thinkingLevel && params.model) {
     // thinking level 通过 model 后缀 :level 传递（pi CLI 约定）
@@ -543,12 +656,17 @@ export function buildSpawnArgs(
       args.push("--skill", sp);
     }
   }
-  // 镜像主进程的 extension/approve flag：让子进程 extension 加载行为与主进程一致。
-  // undefined/空值时不追加（向后兼容）。顺序紧跟 skill 之后，注入类 flag 集中。
+  // 镜像主进程的 extension/approve/context-files flag：让子进程 extension 加载与
+  // context files 行为与主进程一致。undefined/空值时不追加（向后兼容）。顺序紧跟
+  // skill 之后，注入类 flag 集中。
   const mf = params.mirrorFlags;
   if (mf) {
     if (mf.noExtensions) args.push("--no-extensions");
     if (mf.approve) args.push("--approve");
+    // 镜像 --no-context-files：xyz-system-prompt-extension.js（经 --extension 镜像进入
+    // 子进程）靠子进程 argv 检测此 flag 守卫全局 AGENTS.md 注入——不镜像则用户的
+    // context files opt-out 只对主进程生效，每个 subagent 仍被注入。
+    if (mf.noContextFiles) args.push("--no-context-files");
     for (const ep of mf.extensionPaths) {
       args.push("--extension", ep);
     }
@@ -567,8 +685,17 @@ export async function runSpawn(
   task: string,
   opts: RunOptions,
   ctx: SessionRunnerContext,
+  /** resume 选项（M1 基建）：重开已结束的 session 继续对话。undefined = 新 session。 */
+  resume?: SpawnResumeOpts,
 ): Promise<AgentResult> {
   const startTime = Date.now();
+
+  // [M1 resume 基建] resume 时提前锁定 record.sessionFile：spawn 前已知目标文件，
+  // handshake 的 finishHandshake 内 `!record.sessionFile` 守卫天然跳过回填，
+  // sessionFile 用 resume.sessionFile 不被覆盖（RPC mode 无 header，header 分支也不触发）。
+  if (resume) {
+    record.sessionFile = resume.sessionFile;
+  }
 
   // a. transient 寄存器（同 run()：tool_end 缺 args 时回填）
   const pendingTools = new Map<string, { toolName: string; args?: unknown }>();
@@ -609,7 +736,40 @@ export async function runSpawn(
     }
   };
 
+  // [V2 决策 2] chatMode 首轮 resolveRun：agent_settled 时提前 resolve runSpawn 的 exitCode
+  // promise（首轮完成 exit code 0），让 runAndFinalize 拿到 result 走 chatMode 首轮分支。
+  // 非 chatMode 不触发 agent_settled resolve（agent_end handler 一次性 kill → close resolve）。
+  // chatMode 后续轮次（idle timer kill → close）到达时 resolve(code) 是 no-op（Promise 只
+  // resolve 一次）。close handler 的 cleanup（spawnedChildren.delete / get_stateListeners.clear /
+  // settleHandshake）完全不变——chatMode 下 close 最终触发时仍执行。
+  let resolveRun: ((code: number) => void) | undefined = undefined;
+
   const handleSdkEvent = (raw: SdkEvent): void => {
+    // [V2 模块 3] agent_settled：真空闲边界（agent_end 之后、post-run 完成后才 emit）。
+    // chatMode：arm idle timer（超时 SIGTERM 回收）+ 通知本轮完成（onRoundSettled，本步 no-op）。
+    // 非 chatMode：忽略（agent_end handler 的一次性 kill 已处理，进程不会活到 agent_settled）。
+    if (isAgentSettledEvt(raw)) {
+      if (record.chatMode) {
+        armIdleTimer(record.id, () => {
+          // onTimeout 复用现有 kill 路径：child.kill("SIGTERM") 触发 close → close handler
+          // 统一 cleanup（spawnedChildren.delete / get_stateListeners.clear / resolve）。
+          // 与 agent_end handler 现有 SIGTERM 分支一致，不新造 cleanup。
+          const child = getChildByRecord(record.id);
+          if (child && !child.killed) child.kill("SIGTERM");
+        }, record.idleTimeoutMs);
+        // [SP-9] chatMode 每轮 reset turn-limiter：新一轮开始（续聊）时，
+        // maxTurns/graceTurns 不跨轮累计（续聊本质是无限轮，累计上限违背 G1）。
+        // reset steered/aborted 标志 + turnCount 归零，下一轮独立计数。
+        limiter.reset();
+        record.turnCount = 0;
+        ctx.onRoundSettled?.(record);
+        // [V2 决策 2] chatMode 首轮：agent_settled = 本轮真空闲，提前 resolve runSpawn
+        //（exit code 0，进程仍保活 idle timer armed）。runAndFinalize 拿到 result 后走
+        // chatMode 首轮分支（不进 finalize 分流），onRoundSettled 已 notify 主 agent。
+        resolveRun?.(0);
+      }
+      return;
+    }
     switch (raw.type) {
       case "tool_execution_start": {
         const toolName = raw.toolName ?? "";
@@ -649,6 +809,10 @@ export async function runSpawn(
         agentEvent({ type: "compaction" });
         return;
       }
+      // [review 修复] 已删除 turn_start / message_start 两 case 的 pendingMessages
+      // 消费确认 shift（MF-5）：三段消费链（deliverToRunning push / message_start(user)
+      // shift / redeliverPending 补投）随 deliverToRunning 一并移除——SP-5 upgrade 后
+      // 无生产调用方，整条链路不可达。两 case 均为 no-op，落 default 即可。
       default:
         return;
     }
@@ -688,7 +852,7 @@ export async function runSpawn(
   // [M9] buildEnvBlock 取 max(forkDepth, nestingDepth)：record.depth === nestingDepth（都从
   // execCtxAls 派生，见 createRecordForMode L425-427 与 execute L257-258），传它让 env block
   // 展示更严的约束（混合嵌套链下通用护栏可能先于 fork 护栏拒绝）。
-  const appendParts: string[] = [buildEnvBlock(ctx.cwd, ownForkDepth, record.depth)];
+  const appendParts: string[] = [await buildEnvBlock(ctx.cwd, ownForkDepth, record.depth)];
   if (opts.agentConfig?.systemPrompt) appendParts.push(opts.agentConfig.systemPrompt);
   if (opts.appendSystemPrompt) appendParts.push(...opts.appendSystemPrompt);
   // [M1 补偿] rpc mode 的 steer 通道当前未接通，改为启动时预置 wrap-up 提示——
@@ -727,6 +891,24 @@ export async function runSpawn(
   // 子进程的 store/runSpawn 落盘目录须统一编码在 enc(ROOT cwd) 段（与身份贯穿同构），
   // 否则 ROOT 磁盘重建扫不到深层 record（见 subagent-service ENV_ROOT_CWD 注释）。
   childEnv.PI_SUBAGENT_ROOT_CWD = ctx.rootCwd;
+  // [M4 identity 子进程写] 子进程 session_start hook 读这些 env → pi.appendEntry 写
+  // subagent-identity custom entry（V2 决策 5）。旧实现父进程 fs.appendFileSync 补写的
+  // custom entry 缺 id/parentId → 污染 pi _buildIndex leafId → message tree 断成两棵
+  // → 多轮对话丢上下文。改由子进程（session 文件所有者）用 appendEntry 写，pi 自动生成 id/parentId。
+  // id/rootSessionId/depth/forkDepth 复用上方身份贯穿 env（SELF_RECORD_ID/ROOT_SESSION_ID/DEPTH/FORK_DEPTH），
+  // 此处补 identity 专属字段：agent/mode/task/slug/startedAt/parentRecordId/chatMode。
+  childEnv.PI_SUBAGENT_AGENT = record.agent;
+  childEnv.PI_SUBAGENT_MODE = record.mode;
+  childEnv.PI_SUBAGENT_TASK = record.task;
+  childEnv.PI_SUBAGENT_SLUG = record.slug;
+  childEnv.PI_SUBAGENT_STARTED_AT = String(record.startedAt);
+  childEnv.PI_SUBAGENT_PARENT_RECORD_ID = record.parentRecordId;
+  childEnv.PI_SUBAGENT_CHAT_MODE =
+    record.chatMode !== undefined ? String(record.chatMode) : undefined;
+  // [review round2] worktree 隔离标志贯穿：resume 轮 opts.worktree 来自 record.worktreeHandle
+  //（同进程内保留），子进程 identity entry 据此记 worktree:true——跨重启重建时据此拒绝续聊
+  //（WorktreeHandle 不可序列化，reattach 不可行，静默回落主 repo 会破坏隔离）。
+  childEnv.PI_SUBAGENT_WORKTREE = opts.worktree !== undefined ? "true" : undefined;
   // D-A6 bridge: schema 激活 structured-output 扩展注册 tool（workflow 编排层需要）
   applySchemaEnvToChildEnv(childEnv, opts.schemaEnv);
 
@@ -737,13 +919,18 @@ export async function runSpawn(
     (p): p is string => typeof p === "string" && p.length > 0,
   );
   const modelId = opts.resolved.model.id;
+  // [M1 resume] resume 时 model/thinkingLevel 优先用 resume 值（防多轮对话模型漂移，P-10），
+  // 否则回退 opts.resolved。resume.model 已是 "provider/id" 格式，与 buildSpawnArgs 约定一致。
+  const effectiveModel = resume?.model ?? `${opts.resolved.model.provider}/${modelId}`;
+  const effectiveThinkingLevel = resume?.thinkingLevel ?? opts.resolved.thinkingLevel;
   const spawnArgs = buildSpawnArgs(
     {
-      model: `${opts.resolved.model.provider}/${modelId}`,
-      thinkingLevel: opts.resolved.thinkingLevel,
+      model: effectiveModel,
+      thinkingLevel: effectiveThinkingLevel,
       agentTools: opts.agentConfig?.tools,
       appendSystemPromptPath: tempPromptFile?.filePath,
       sessionDir,
+      sessionFile: resume?.sessionFile,
       forkSource,
       skillPaths: skillPaths.length > 0 ? skillPaths : undefined,
       // 镜像主进程 argv 的 extension/approve flag，让子进程加载行为对齐主进程
@@ -774,8 +961,11 @@ export async function runSpawn(
       ctx.onWorktreePid?.(opts.worktree.branch, child.pid);
     }
     // [C1] track 子进程供 dispose 兜底 kill（sync + background 均注册——sync 无 controller，
-    // abortRunningControllers 跳过它，靠本 Set 兜底）。close/error 后移除（已退出无需再 kill）。
-    spawnedChildren.add(child);
+    // abortRunningControllers 跳过它，靠本 Map 兜底）。close/error 后按句守卫移除（已退出无需再 kill）。
+    spawnedChildren.set(record.id, child);
+    // [V2 决策 3] spawn 后 child.pid 同步立即可得，记录到 record 内存（lifecycle-manager
+    // 孤儿扫描用，Step 5 接入持久化）。resume spawn 时此处同样覆盖更新（pid 可能已变）。
+    if (child.pid !== undefined) record.pid = child.pid;
 
     // [worktree-reaper-fix] 同步补全注册表 pid：spawn 返回后 child.pid 立即可得（Node.js
     // 同步属性），无需等任何 stdout 事件。原补全点挂在 header 分支（下方 stdout handler 内），
@@ -803,6 +993,31 @@ export async function runSpawn(
     //（下方）只清理 tempPromptFile，watchdog/signal listener 尚未注册则无需清理——避免泄漏。
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
+
+    // [v4 A-1] 异步 stdin 'error' listener。writeStdinLine 的 try/catch 只覆盖同步 write 抛错；
+    // 子进程退出后内核回写 EPIPE 会以异步 stream 'error' event 到达，若无 listener 会让 Node
+    // 抛 unhandled 'error' 崩主进程（P1）。必须在首次 stdin 写入（下方 sendPromptCommand）前注册。
+    // handler 行为：①移出 spawnedChildren 标记 dead（与 child.on('error') :1141 同模式）；
+    // ②recordEpipeFailure 合并同步/异步计数；③logger.warn 记录一次。
+    // [v4 A-1 裁决] handler 内**不 throw**——stream 'error' listener 内 throw 会经 Node 内部
+    // emit() 传播为 uncaughtException 崩主进程，违背 A-1 防崩核心目标。达阈值的 throw 留给
+    // 同步路径（deliverMessage catch 合并计数达 EPIPE_FAILURE_THRESHOLD 时同步 throw，不崩）。
+    // async handler 只移句柄 + 计数 + warn；进程已 dead（移句柄），下次 deliverMessage 检测
+    // dead 走冷路径，冷路径 write EPIPE 同步计数达阈值同步 throw——防死循环且不崩。
+    child.stdin.on("error", (err: Error) => {
+      // [M4] 按值守卫：resume spawn 已覆盖注册时不误删新 child（见 removeChildRegistration）
+      removeChildRegistration(record.id, child);
+      const count = recordEpipeFailure(record.id);
+      logger.warn(`[subagents] async stdin error for ${record.id}`, {
+        detail: err.message,
+        epipeCount: count,
+        threshold: EPIPE_FAILURE_THRESHOLD,
+        hint:
+          count >= EPIPE_FAILURE_THRESHOLD
+            ? "sync path will throw on next write EPIPE"
+            : undefined,
+      });
+    });
 
     // 喂 prompt 命令驱动子进程开始处理 task。pi runRpcMode 只消费 stdin RpcCommand，
     // 不读 positional arg；必须在 spawn 后主动写，否则子进程阻塞、totalTokens 恒 0。
@@ -899,7 +1114,9 @@ export async function runSpawn(
           // create 时 pid 未知写 0 占位，此处拿到 child.pid 后回调 WorktreeManager.registerPid。
           // 取代旧的 .session mapping sidecar——注册表是 reaper 的唯一数据源。
           if (opts.worktree && child.pid) {
-            ctx.onWorktreePid?.(opts.worktree.branch, child.pid);
+            // 透传 record.sessionFile：填入 registry entry（reaper 据 pid 死活判孤儿），
+            // first header 时 sessionFile 已回填（deriveSessionFilePath 在本分支上方）。
+            ctx.onWorktreePid?.(opts.worktree.branch, child.pid, record.sessionFile);
           }
           // FR-4 加速路径：header 到达即 finishHandshake（header 已提供 sessionId，
           // 足以推导 sessionFile + 兜底查找，无需等 get_state response）。
@@ -920,6 +1137,14 @@ export async function runSpawn(
             if (evt.willRetry) {
               // agent 会重试，不能 kill。
             } else {
+              // [V2 决策 1] chatMode：对话模式进程不因轮次死。agent_end 不 kill、不 MF-3/MF-4。
+              // 等待 agent_settled（真空闲信号）arm idle timer + notify（onRoundSettled）。
+              // 用 continue 而非 return：return 会跳出 stdout data handler 的 for(line) 循环，
+              // 丢弃同一 flush 内 agent_end 之后的事件（如紧随的 agent_settled）。continue 只
+              // 跳过当前行剩余（handleSdkEvent 对 agent_end 是 no-op），继续处理后续行。
+              if (record.chatMode) {
+                continue;
+              }
               // [recursive-orchestration] 条件 kill：读子进程 session 文件算活跃后代
               // （pending:register − unregister 差集）。有活跃后代（background subagent /
               // workflow）→ 保持进程 idle，等后代完成时 notifier triggerTurn steer 唤醒；
@@ -1003,9 +1228,13 @@ export async function runSpawn(
 
     // 等待子进程退出
     const exitCode = await new Promise<number>((resolve) => {
+      // [V2 决策 2] resolveRun 指向本 promise 的 resolve：chatMode 首轮 agent_settled 时
+      // 由 handleSdkEvent 提前调 resolveRun(0)，close 最终到达时 resolve(code) 是 no-op。
+      resolveRun = resolve;
       child.on("close", async (code: number | null) => {
-        // [C1] 子进程已退出，从 orphan-tracking Set 移除（dispose 兜底无需再 kill 它）
-        spawnedChildren.delete(child);
+        // [C1] 子进程已退出，从 orphan-tracking Map 移除（dispose 兜底无需再 kill 它）。
+        // [M4] 按值守卫：close 事件晚于 resume spawn 到达时不误删新 child 注册。
+        removeChildRegistration(record.id, child);
         // FR-4: 清理 get_state 监听器（子进程已退出，无更多 response）
         get_stateListeners.clear();
         // FR-4: 子进程已退出，get_state response 不会再来。若握手仍未 settle，立即放弃
@@ -1030,9 +1259,10 @@ export async function runSpawn(
         // [worktree-reaper-fix] 拼 spawnCwd 进错误消息：ENOENT 的 err.message 只含 command 名，
         // 无 cwd 线索（worktree 被 reaper 误删后 cwd 指向虚空）会导致误诊——2026-08-11 事故
         // AI 误判"node 被卸载"的直接原因。
+        // [M4] 按值守卫：error 事件晚于 resume spawn 到达时不误删新 child 注册。
+        removeChildRegistration(record.id, child);
         // [S3] code 读取带运行时 guard：非 ErrnoException（普通 Error）时 code 为 undefined，
         // 不加 cwd hint（行为与修复前一致）；仅 ENOENT 才拼 cwd。
-        spawnedChildren.delete(child);
         const errno = err as NodeJS.ErrnoException;
         const errCode = "code" in err ? errno.code : undefined;
         const cwdHint = errCode === "ENOENT" ? ` (cwd: ${spawnCwd})` : "";
@@ -1044,10 +1274,10 @@ export async function runSpawn(
     opts.signal?.removeEventListener("abort", onAbort);
     clearTimeout(watchdog);
 
-    // [持久化 A] sessionFile 兜底校验 + identity entry。
-    // session.jsonl 由子进程写入，父进程在子进程退出后（写入完成）補写身份条目。
-    // reconstructFromFile 依赖 IDENTITY_CUSTOM_TYPE custom entry 重建 record 身份，
-    // 缺失则 /subagents list 磁盘源为空（终态 record 全丢失）。[回归修复]
+    // [持久化 A] sessionFile 兜底校验。
+    // identity custom entry 已改由子进程 session_start hook 写（M4 / V2 决策 5），
+    // 父进程不再 fs 补写——fs 补写的 entry 缺 id/parentId 污染 pi _buildIndex。
+    // 此处仅保留 sessionFile 路径兜底（deriveSessionFilePath/握手路径可能不准）。
     if (record.sessionFile) {
       // 兜底：deriveSessionFilePath 推导或握手返回的路径可能不存在（pi 命名规则变化），
       // 用 sessionId 后缀匹配实际文件。匹配到则修正 record.sessionFile。
@@ -1057,34 +1287,6 @@ export async function runSpawn(
         if (lookupId) {
           const actual = findSessionFileByHeaderId(sessionDir, lookupId);
           if (actual) record.sessionFile = actual;
-        }
-      }
-      // 补写 identity custom entry（子进程已退出，append 安全）。
-      if (fs.existsSync(record.sessionFile)) {
-        const identity: SubagentIdentityData = {
-          id: record.id,
-          agent: record.agent,
-          mode: record.mode,
-          task: record.task,
-          slug: record.slug,
-          startedAt: record.startedAt,
-          rootSessionId: record.rootSessionId,
-          parentRecordId: record.parentRecordId,
-          depth: record.depth,
-          forkDepth: opts.fork ? (opts.parentForkDepth ?? 0) + 1 : undefined,
-        };
-        try {
-          fs.appendFileSync(
-            record.sessionFile,
-            `${JSON.stringify({ type: "custom", customType: IDENTITY_CUSTOM_TYPE, data: identity })}\n`,
-            "utf-8",
-          );
-        } catch (err) {
-          // best-effort：identity 写入失败不影响执行结果，但会影响 /subagents list 重建。
-          // 记录到 logger（非阻断）—— 终态 record 会从 list 消失，这是可观测的退化信号。
-          logger.error(`[subagents] identity append failed for ${record.sessionFile}`, {
-            detail: err instanceof Error ? err.message : String(err),
-          });
         }
       }
     }

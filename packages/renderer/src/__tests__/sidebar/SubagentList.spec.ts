@@ -131,6 +131,34 @@ describe('SubagentList', () => {
     expect(dot.exists()).toBe(true)
   })
 
+  // ── v4 B-1 closed 统一终态：按 closedReason/error 派生状态点颜色 ──
+
+  it('closed + closedReason=gc + error → danger 色点（v4 真实失败终态）', () => {
+    const records = [makeRecord({ status: 'closed', closedReason: 'gc', error: 'Model timeout', subagentId: 'run-closed-fail' })]
+    const wrapper = mount(SubagentList, { props: { subagents: records } })
+
+    expect(wrapper.find('[data-testid="subagent-card-spinner"]').exists()).toBe(false)
+    expect(wrapper.find('.bg-danger').exists()).toBe(true)
+  })
+
+  it('closed + closedReason=cancelled → 中性色点（不落 danger/success）', () => {
+    const records = [makeRecord({ status: 'closed', closedReason: 'cancelled', subagentId: 'run-closed-cancel' })]
+    const wrapper = mount(SubagentList, { props: { subagents: records } })
+
+    expect(wrapper.find('.bg-danger').exists()).toBe(false)
+    expect(wrapper.find('.bg-success').exists()).toBe(false)
+    expect(wrapper.find('.bg-neutral-dim').exists()).toBe(true)
+  })
+
+  it('closed 自然完成（parent-new 级联关闭等）→ success 色点', () => {
+    const records = [makeRecord({ status: 'closed', closedReason: 'parent-new', subagentId: 'run-closed-ok' })]
+    const wrapper = mount(SubagentList, { props: { subagents: records } })
+
+    expect(wrapper.find('.bg-success').exists()).toBe(true)
+    // 历史 bug 回归防护：closed 不落 default bg-accent（成功/失败语义丢失）
+    expect(wrapper.find('.bg-accent').exists()).toBe(false)
+  })
+
   // ── cancel 两段式确认（W3 新增）──
 
   it('running 态渲染 cancel 按钮，done 态不渲染', () => {

@@ -12,7 +12,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
-import { notifyDone, type WorkflowNotifyDetails } from "../interface/helpers.ts";
+import {
+  MAX_NOTIFIED_RUN_IDS,
+  notifyDone,
+  trackNotifiedRunId,
+  type WorkflowNotifyDetails,
+} from "../interface/helpers.ts";
 
 /** 最小 WorkflowRun mock（duck typing，notifyDone 只访问这些字段）。 */
 type RunMock = {
@@ -182,5 +187,73 @@ describe("notifyDone — GUI 协议", () => {
     expect(details.status).toBe("done");
     expect(details.reason).toBe("completed");
     expect(details.traceLength).toBe(2);
+  });
+});
+
+describe("trackNotifiedRunId（notifiedRunIds 有界 FIFO）", () => {
+  // 与上方 describe 同款：RunMock 结构兼容 notifyDone 的 WorkflowRun 参数（duck typing）
+  const runAsParam = (r: RunMock): Parameters<typeof notifyDone>[2] => r as never;
+
+  it("W3TC11: 有界 FIFO——超 cap 删最旧（Set 迭代序=插入序）", () => {
+    const set = new Set<string>();
+    trackNotifiedRunId(set, "a", 3);
+    trackNotifiedRunId(set, "b", 3);
+    trackNotifiedRunId(set, "c", 3);
+    trackNotifiedRunId(set, "d", 3);
+
+    // "a" 最旧被删——Set 迭代序=插入序，删迭代器首元素即删最旧
+    expect(set.size).toBe(3);
+    expect(Array.from(set)).toEqual(["b", "c", "d"]);
+  });
+
+  it("W3TC12: 有界后旧 id 不再去重——被挤出窗口的 runId 再 notifyDone 会重新发送", () => {
+    const { pi } = makePi();
+    const run = makeRun({ status: "done", reason: "completed" });
+    const set = new Set<string>();
+    const ctx = { mode: "rpc", hasUI: true } as const;
+
+    // old 首次通知 + track
+    notifyDone(pi, "old", runAsParam(run), set, ctx);
+    trackNotifiedRunId(set, "old", 3);
+    // 3 个新 run 依次通知 + track——"old" 被挤出窗口（set 现为 n1/n2/n3）
+    for (const id of ["n1", "n2", "n3"]) {
+      notifyDone(pi, id, runAsParam(run), set, ctx);
+      trackNotifiedRunId(set, id, 3);
+    }
+    expect(set.size).toBe(3);
+    expect(Array.from(set)).toEqual(["n1", "n2", "n3"]);
+
+    // 第二次对 "old" 的 notifyDone：has 为 false → 重新发送
+    notifyDone(pi, "old", runAsParam(run), set, ctx);
+
+    // 旧行为『永不重复』在挤出窗口后不成立——边界显式钉死：
+    // old 首次 + n1/n2/n3 + old 二次 = 5 次
+    expect(pi.sendMessage).toHaveBeenCalledTimes(5);
+  });
+
+  it("W3TC13: 幂等——重复 track 同一 id 不改变插入位置", () => {
+    const set = new Set<string>();
+    trackNotifiedRunId(set, "x", 3);
+    trackNotifiedRunId(set, "x", 3); // 重复：Set.add 不改变迭代位置
+    trackNotifiedRunId(set, "y", 3);
+    trackNotifiedRunId(set, "z", 3);
+    trackNotifiedRunId(set, "w", 3); // 触发超限：若第二次 track("x") 误重置位置，被删的将错为 y
+
+    // 被删的是 "x"（首次插入位置不变仍最旧），非 "y"
+    expect(set.size).toBe(3);
+    expect(Array.from(set)).toEqual(["y", "z", "w"]);
+  });
+
+  it("生产默认 cap 锚定：不传 cap 时窗口上限 === MAX_NOTIFIED_RUN_IDS（循环实测 1001 次）", () => {
+    expect(MAX_NOTIFIED_RUN_IDS).toBe(1000);
+    const set = new Set<string>();
+    for (let i = 0; i < 1001; i++) {
+      trackNotifiedRunId(set, `run-${i}`);
+    }
+    expect(set.size).toBe(MAX_NOTIFIED_RUN_IDS);
+    // 最旧的 run-0 已被挤出窗口
+    expect(set.has("run-0")).toBe(false);
+    expect(set.has("run-1")).toBe(true);
+    expect(set.has("run-1000")).toBe(true);
   });
 });

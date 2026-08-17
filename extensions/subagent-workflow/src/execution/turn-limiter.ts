@@ -51,6 +51,14 @@ export interface TurnLimiterOptions {
 export interface TurnLimiter {
   /** 每次 turn_end 调用。 */
   onTurnEnd(currentTurns: number): void;
+  /**
+   * 重置 steered/aborted 标志（新一轮开始）。
+   *
+   * chatMode 下 agent_settled 时调用——每轮（message → agent_settled）独立计数，
+   * maxTurns 不跨轮累计（续聊本质是无限轮，累计上限违背 G1）。
+   * 非 chatMode 不调用，行为不变（全程累计）。
+   */
+  reset(): void;
   /** 是否已发过 steer（诊断用）。 */
   readonly didSteer: boolean;
   /** 是否已 abort（诊断用）。 */
@@ -76,8 +84,14 @@ export function createTurnLimiter(opts: TurnLimiterOptions): TurnLimiter {
     }
   };
 
+  const reset = (): void => {
+    steered = false;
+    aborted = false;
+  };
+
   return {
     onTurnEnd,
+    reset,
     get didSteer(): boolean {
       return steered;
     },

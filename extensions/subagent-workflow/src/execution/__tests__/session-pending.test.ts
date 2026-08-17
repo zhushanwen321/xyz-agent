@@ -7,9 +7,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { readActivePendingFromSessionFile } from "../session-pending.ts";
+import { readActivePendingFromSessionFile, clearPendingCursors } from "../session-pending.ts";
 
 function makeTmpSessionFile(lines: string[]): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-pending-test-"));
@@ -134,5 +134,64 @@ describe("readActivePendingFromSessionFile", () => {
     // bg-1 register+unregister 抵消，bg-2 仍活跃 → count=1。
     // 旧 fast-path（`"customType":"pending:` 冒号无空格）会跳过所有行 → count=0（静默失效）。
     expect(readActivePendingFromSessionFile(file)).toEqual({ count: 1, recentUnregister: false });
+  });
+});
+
+// [perf] 增量游标行为：同文件重复判定（层主被多个后代唤醒 N 次 → N 次 agent_end）
+// 只读上次 offset 之后的新增行，累计差集语义与全量读一致。
+describe("readActivePendingFromSessionFile — 增量游标 [perf]", () => {
+  let dir: string;
+  let file: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-pending-incr-"));
+    file = path.join(dir, "session.jsonl");
+    clearPendingCursors();
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("首次全量 + append 后增量：unregister 只抵消对应 id（与全量读一致）", () => {
+    fs.writeFileSync(file, mkRegister("d1") + "\n" + mkRegister("d2") + "\n");
+    expect(readActivePendingFromSessionFile(file).count).toBe(2);
+
+    fs.appendFileSync(file, mkUnregister("d1", "completed") + "\n");
+    const r = readActivePendingFromSessionFile(file);
+    expect(r.error).toBeUndefined();
+    expect(r.count).toBe(1);
+  });
+
+  it("EOF 半行（append 竞态）不入账，补全换行后入账", () => {
+    fs.writeFileSync(file, mkRegister("d1") + "\n");
+    expect(readActivePendingFromSessionFile(file).count).toBe(1);
+
+    // 半行：无尾换行 → offset 不推进该行
+    const full = mkUnregister("d1", "completed", new Date().toISOString());
+    fs.appendFileSync(file, full.slice(0, full.length - 4));
+    expect(readActivePendingFromSessionFile(file).count).toBe(1);
+
+    // 补全（剩余字符 + 换行）→ 消费
+    fs.appendFileSync(file, full.slice(-4) + "\n");
+    const r = readActivePendingFromSessionFile(file);
+    expect(r.count).toBe(0);
+    expect(r.recentUnregister).toBe(true);
+  });
+
+  it("文件 truncate/重建（size 回退）→ 重置游标从头全读", () => {
+    fs.writeFileSync(file, mkRegister("d1") + "\n" + mkRegister("d2") + "\n");
+    expect(readActivePendingFromSessionFile(file).count).toBe(2);
+
+    fs.writeFileSync(file, mkRegister("d3") + "\n");
+    expect(readActivePendingFromSessionFile(file).count).toBe(1);
+  });
+
+  it("clearPendingCursors 后重新全量（累计 entries 不残留旧账）", () => {
+    fs.writeFileSync(file, mkRegister("d1") + "\n");
+    expect(readActivePendingFromSessionFile(file).count).toBe(1);
+    clearPendingCursors();
+    fs.appendFileSync(file, mkRegister("d2") + "\n");
+    expect(readActivePendingFromSessionFile(file).count).toBe(2);
   });
 });

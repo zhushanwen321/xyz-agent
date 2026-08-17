@@ -7,7 +7,7 @@
 # 3. asar 内容正确性
 # 4. 产物大小合理性
 #
-# 用法: ./scripts/postbuild-validate.sh [--ci]
+# 用法: ./scripts/postbuild-validate.sh [--ci] [--dir-only]（参数顺序无关）
 
 set -euo pipefail
 
@@ -20,10 +20,18 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-CI_MODE=false
-if [ "${1:-}" = "--ci" ]; then
-    CI_MODE=true
-fi
+# 参数解析（位置无关：循环遍历所有 args，任意顺序解析结果一致）：
+# - --dir-only：只验证 unpacked 目录（跳过安装器产物检查）
+# - --ci：接受的 no-op flag。原 CI_MODE 变量自 main 起设置后全脚本无读取点
+#   （死变量，grep 全仓确认），已删除；build.yml 调用仍传 --ci，保留解析以兼容。
+DIR_ONLY=false
+for arg in "$@"; do
+    case "$arg" in
+        --dir-only) DIR_ONLY=true ;;
+        --ci) ;; # no-op（原 CI_MODE 死变量已删）
+        *) echo "未知参数: $arg（支持: --ci --dir-only），已忽略" >&2 ;;
+    esac
+done
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
@@ -39,12 +47,26 @@ FAILED=0
 echo ""
 echo -e "${BLUE}[1/5] Build artifacts...${NC}"
 
-ARTIFACT_COUNT=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "*.dmg" -o -name "*.zip" -o -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" \) | wc -l | tr -d ' ')
-if [ "$ARTIFACT_COUNT" -eq 0 ]; then
-    echo -e "  ${RED}✗ 未找到任何构建产物${NC}"
-    FAILED=1
+if [ "$DIR_ONLY" = true ]; then
+    # dir-only 模式：跳过安装器产物检查，只验证 unpacked 目录存在
+    UNPACKED_COUNT=0
+    [ -d "$OUTPUT_DIR/mac-arm64" ] && UNPACKED_COUNT=$((UNPACKED_COUNT + 1))
+    [ -d "$OUTPUT_DIR/win-unpacked" ] && UNPACKED_COUNT=$((UNPACKED_COUNT + 1))
+    [ -d "$OUTPUT_DIR/linux-unpacked" ] && UNPACKED_COUNT=$((UNPACKED_COUNT + 1))
+    if [ "$UNPACKED_COUNT" -eq 0 ]; then
+        echo -e "  ${RED}✗ dir-only 模式：未找到任何 unpacked 目录${NC}"
+        FAILED=1
+    else
+        echo -e "  ${GREEN}✓ dir-only 模式：找到 $UNPACKED_COUNT 个 unpacked 目录${NC}"
+    fi
 else
-    echo -e "  ${GREEN}✓ 找到 $ARTIFACT_COUNT 个产物${NC}"
+    ARTIFACT_COUNT=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "*.dmg" -o -name "*.zip" -o -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" \) | wc -l | tr -d ' ')
+    if [ "$ARTIFACT_COUNT" -eq 0 ]; then
+        echo -e "  ${RED}✗ 未找到任何构建产物${NC}"
+        FAILED=1
+    else
+        echo -e "  ${GREEN}✓ 找到 $ARTIFACT_COUNT 个产物${NC}"
+    fi
 fi
 
 # ── 2. macOS app 结构 ──────────────────────────────────────────────
@@ -336,6 +358,38 @@ if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
     if [ "$WINDOWS_PTY_MISSING" -ne 0 ]; then
         FAILED=1
     fi
+fi
+
+# ── Linux unpacked app structure ─────────────────────────────────────
+# dir-only 模式（ci.yml）也执行本段：只要 linux-unpacked 目录存在就校验结构，
+# 否则 linux 平台打包回归（tsup noExternal 缺失、extraResources from 路径错等）
+# CI 捕获不到，延迟到 release 才暴露。
+# 布局依据：executableName: xyz-agent（electron-builder.yml，三平台统一）；
+# asarUnpack dist/runtime/**/* 与 win 段同构；pi binary 名 prepare-pi-resources.sh
+# BINARY_NAME="pi-linux-${PI_ARCH}"（linux target arch x64）。
+if [ -d "$OUTPUT_DIR/linux-unpacked" ]; then
+    echo ""
+    echo -e "${BLUE}[2/5] Linux unpacked app structure...${NC}"
+    LINUX_ROOT="$OUTPUT_DIR/linux-unpacked"
+    LINUX_RESOURCES="$LINUX_ROOT/resources"
+    LINUX_UNPACKED="$LINUX_RESOURCES/app.asar.unpacked"
+
+    for required in \
+        "$LINUX_ROOT/xyz-agent" \
+        "$LINUX_UNPACKED/dist/runtime/index.cjs" \
+        "$LINUX_UNPACKED/dist/runtime/plugin-bootstrap.cjs" \
+        "$LINUX_RESOURCES/pi/pi-linux-x64" \
+        "$LINUX_RESOURCES/xyz-agent-extension.js" \
+        "$LINUX_RESOURCES/xyz-system-prompt-extension.js" \
+        "$LINUX_RESOURCES/xyz-client-msg-id-mapper.js" \
+        "$LINUX_RESOURCES/bin/xyz-settings"; do
+        if [ -f "$required" ]; then
+            echo -e "  ${GREEN}✓${NC} ${required#$LINUX_ROOT/}"
+        else
+            echo -e "  ${RED}✗${NC} ${required#$LINUX_ROOT/} 缺失"
+            FAILED=1
+        fi
+    done
 fi
 
 # ── 3. 产物大小合理性 ───────────────────────────────────────────────

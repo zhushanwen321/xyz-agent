@@ -21,6 +21,7 @@
 
 import type { AgentCallOpts } from "./models/types.ts";
 import { resolveSkillPath } from "./skill-discovery.ts";
+import { stringifySchemaCached } from "../shared/schema-jsonify.ts";
 
 export interface ResolveResult {
   opts: AgentCallOpts;
@@ -59,7 +60,9 @@ export function resolveAgentOpts(opts: AgentCallOpts): ResolveResult {
  // which got concatenated into the final append file as path garbage — the SO instruction
  // never reached the subprocess. Now the instruction content is pushed directly.
   if (opts.schema) {
-    const schemaJson = JSON.stringify(opts.schema);
+    // IF7(#13)：同 schema 对象引用的 compact stringify 走 WeakMap 缓存
+    // （与 session-runner formatSchemaInstruction 的 pretty 版共享缓存条目）
+    const schemaJson = stringifySchemaCached(opts.schema, "compact");
     const content = [
       "## MANDATORY: Structured Output Requirement",
       "",

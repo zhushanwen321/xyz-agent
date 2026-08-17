@@ -40,7 +40,7 @@ describe("renderBgNotifyMessage", () => {
   it("单条 done → 施加 customMessageBg 背景 + 边框 + 内容可见", () => {
     const { theme, bgColors } = makeTheme();
     const comp = renderBgNotifyMessage(
-      { details: { status: "done", agent: "worker", id: "bg-1", result: "All green" } },
+      { details: { status: "closed", agent: "worker", id: "bg-1", result: "All green" } },
       { expanded: false },
       theme,
     );
@@ -66,7 +66,7 @@ describe("renderBgNotifyMessage", () => {
   it("id 用 shortId 截断（bg-tag-seq-ts → bg-tag-seq）", () => {
     const { theme } = makeTheme();
     const comp = renderBgNotifyMessage(
-      { details: { status: "done", agent: "w", id: "bg-f6f731-10-1719500000000", result: "ok" } },
+      { details: { status: "closed", agent: "w", id: "bg-f6f731-10-1719500000000", result: "ok" } },
       { expanded: false },
       theme,
     );
@@ -80,7 +80,7 @@ describe("renderBgNotifyMessage", () => {
   it("单条 failed → 内容含 Error + agent", () => {
     const { theme } = makeTheme();
     const comp = renderBgNotifyMessage(
-      { details: { status: "failed", agent: "scout", id: "bg-2", error: "boom" } },
+      { details: { status: "closed", agent: "scout", id: "bg-2", error: "boom" } },
       { expanded: false },
       theme,
     );
@@ -98,8 +98,8 @@ describe("renderBgNotifyMessage", () => {
         details: {
           batch: true,
           items: [
-            { status: "done", agent: "alpha", id: "1", result: "r1" },
-            { status: "failed", agent: "beta", id: "2", error: "e2" },
+            { status: "closed", agent: "alpha", id: "1", result: "r1" },
+            { status: "closed", agent: "beta", id: "2", error: "e2" },
           ],
         },
       },
@@ -117,10 +117,10 @@ describe("renderBgNotifyMessage", () => {
     expect(lines[lines.length - 1]).toContain("╰");
   });
 
-  it("cancelled → 内容含 cancelled", () => {
+  it("closed + closedReason=cancelled → 内容含 cancelled（v4 B-1 cancelled 折入 closed）", () => {
     const { theme } = makeTheme();
     const comp = renderBgNotifyMessage(
-      { details: { status: "cancelled", agent: "w", id: "bg-3" } },
+      { details: { status: "closed", closedReason: "cancelled", agent: "w", id: "bg-3" } },
       { expanded: false },
       theme,
     );
@@ -137,7 +137,7 @@ describe("renderBgNotifyMessage", () => {
       renderBgNotifyMessage({ details: { id: "x", agent: "w" } }, { expanded: false }, theme),
     ).toBeUndefined();
     expect(
-      renderBgNotifyMessage({ details: { status: "done", id: "x" } }, { expanded: false }, theme),
+      renderBgNotifyMessage({ details: { status: "closed", id: "x" } }, { expanded: false }, theme),
     ).toBeUndefined();
   });
 
@@ -152,7 +152,7 @@ describe("renderBgNotifyMessage", () => {
   it("record 带 model → 内容含 model 字符串（agent 后、状态描述前）", () => {
     const { theme } = makeTheme();
     const comp = renderBgNotifyMessage(
-      { details: { status: "done", agent: "general-purpose", model: "anthropic/sonnet-4-5", id: "bg-1", result: "ok" } },
+      { details: { status: "closed", agent: "general-purpose", model: "anthropic/sonnet-4-5", id: "bg-1", result: "ok" } },
       { expanded: false },
       theme,
     );
@@ -166,7 +166,7 @@ describe("renderBgNotifyMessage", () => {
   it("record 无 model → 向后兼容，不渲染 model 段不崩", () => {
     const { theme } = makeTheme();
     const comp = renderBgNotifyMessage(
-      { details: { status: "done", agent: "worker", id: "bg-2", result: "r" } },
+      { details: { status: "closed", agent: "worker", id: "bg-2", result: "r" } },
       { expanded: false },
       theme,
     );
@@ -188,7 +188,7 @@ describe("renderBgNotifyMessage", () => {
     // head 行含 ANSI（fg 包裹），截断时 activeStyles 非空 → 会产生 \x1b[0m
     const longAgent = "a".repeat(60);
     const comp = renderBgNotifyMessage(
-      { details: { status: "done", agent: longAgent, id: "bg-1", result: "ok" } },
+      { details: { status: "closed", agent: longAgent, id: "bg-1", result: "ok" } },
       { expanded: false },
       theme,
     );
@@ -210,7 +210,7 @@ describe("renderBgNotifyMessage", () => {
   it("极窄宽度（width < 5）退化：无边框，不崩溃，有背景", () => {
     const { theme, bgColors } = makeTheme();
     const comp = renderBgNotifyMessage(
-      { details: { status: "done", agent: "w", id: "bg-1", result: "ok" } },
+      { details: { status: "closed", agent: "w", id: "bg-1", result: "ok" } },
       { expanded: false },
       theme,
     );
@@ -233,9 +233,9 @@ describe("renderBgNotifyMessage", () => {
         details: {
           batch: true,
           items: [
-            { status: "done", agent: "alpha", id: "1", result: "r1" },
-            { status: "failed", agent: "beta", id: "2", error: "e2" },
-            { status: "cancelled", agent: "gamma", id: "3" },
+            { status: "closed", agent: "alpha", id: "1", result: "r1" },
+            { status: "closed", agent: "beta", id: "2", error: "e2" },
+            { status: "closed", closedReason: "cancelled", agent: "gamma", id: "3" },
           ],
         },
       },

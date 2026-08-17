@@ -275,4 +275,19 @@ export default [
       'taste/no-unsafe-object-entries': 'warn',
     },
   },
+  // [HISTORICAL] resource-discovery.ts 的 3 处 Promise.all（源级/包级/scoped 子包级）触发
+  // taste/prefer-allsettled 属规则误报，per-file override 关闭。规则设计针对「独立数据源
+  // 可部分降级」场景；本文件三处是 swf-perf-impl cleanup slice（TC2/IF2，见
+  // .cw/swf-perf-impl/cleanup-slice-design.json）把串行扫描并行化的产物，硬约束是
+  // 输出与异常传播语义均与串行版等价：每级预期失败已由内部既有 catch 面承担
+  // （access/readdir/processPackage），未捕获异常必须向上抛（Promise.all 整体 reject
+  // ↔ 串行版向上抛）。allSettled + 部分失败返回 [] 是设计中明确否决的 alternative
+  // （会吞掉未捕获异常的向上传播，改变调用方可观察行为）。故禁用 eslint-disable 行内
+  // 注释形态（taste/no-eslint-disable 语义），统一走本配置级 override。
+  {
+    files: ['extensions/subagent-workflow/src/shared/resource-discovery.ts'],
+    rules: {
+      'taste/prefer-allsettled': 'off',
+    },
+  },
 ];

@@ -41,13 +41,17 @@
 // ── Build worker source ─────────────────────────────────────
 
 /**
- * Build the complete worker source text by wrapping the user's workflow script
- * with infrastructure code and injected global functions.
+ * Template constant segments（模块级 hoisting，IF5/TC8）——
+ * 常量段在模块加载时构造一次，buildWorkerScript 每次调用只做三段 concat，
+ * 消除每次 run 的 330+ 元素数组重建 + join 分配（#11 低优先形态）。
  *
- * AC-4：脚本格式不变（用户资产）。逐字保留旧 buildWorkerScript 的拼接逻辑。
+ * 输出与 hoisting 前逐字节一致（join("\n") 拼装语义精确保留），由
+ * __tests__/worker-script-template-snapshot.test.ts 的 byte-identical 快照锚定
+ * （fixture 由改造前实现生成）。
  */
-export function buildWorkerScript(userScript: string): string {
-  return [
+
+/** PRE 段：use strict … User workflow script 注释行（不含 userScript）。 */
+const WORKER_TEMPLATE_PRE = [
     '"use strict";',
     '// Module-scope helpers: accessible to BOTH the IIFE body AND the outer',
     '// .then()/.catch() handlers (which run outside the IIFE). _workerLogs/',
@@ -60,6 +64,9 @@ export function buildWorkerScript(userScript: string): string {
     '// appear in the IIFE and the outer .then/.catch.',
     'const { parentPort: _parentPort, workerData: _workerData } = require("node:worker_threads");',
     'const _workerLogs = [];',
+    '// IF6(#12): known agent() fields — hoisted to module scope, built once per worker',
+    '// (was rebuilt inside agent() on every call; field set is call-invariant).',
+    'const _KNOWN_FIELDS = new Set(["prompt", "description", "schema", "model", "scene", "label", "task", "agent", "phase", "skill", "timeoutMs", "cwd", "fork", "worktree", "returnMeta", "thinkingLevel"]);',
     'function _pushWorkerLog(level, args) {',
     '  try { _workerLogs.push({ level, message: args.map((a) => typeof a === "string" ? a : JSON.stringify(a)).join(" ") }); } catch (e) { /* swallow */ }',
     '}',
@@ -232,9 +239,8 @@ export function buildWorkerScript(userScript: string): string {
     '    if (!opts.model && $MODEL) opts.model = $MODEL;',
     '    if (!opts.thinkingLevel && $THINKING_LEVEL) opts.thinkingLevel = $THINKING_LEVEL;',
     '',
-    '    // Validate known agent() fields to catch API misuse early',
-    '    const _knownFields = new Set(["prompt", "description", "schema", "model", "scene", "label", "task", "agent", "phase", "skill", "timeoutMs", "cwd", "fork", "worktree", "returnMeta", "thinkingLevel"]);',
-    '    const _unknownFields = Object.keys(opts).filter((k) => !_knownFields.has(k));',
+    '    // Validate known agent() fields to catch API misuse early (_KNOWN_FIELDS at module scope)',
+    '    const _unknownFields = Object.keys(opts).filter((k) => !_KNOWN_FIELDS.has(k));',
     '    if (_unknownFields.length > 0) {',
     '      _pushWorkerLog("warn", ["[workflow] agent() received unknown fields: " + _unknownFields.join(", ") + ". Known fields: prompt, description, schema, model, scene, label, task, agent, phase, skill, timeoutMs, cwd, fork, worktree, returnMeta, thinkingLevel"]);',
     '    }',
@@ -361,8 +367,10 @@ export function buildWorkerScript(userScript: string): string {
     '  }',
     '',
     '  // ── User workflow script ──',
-    '  ' + userScript,
-    '',
+  ].join("\n");
+
+/** POST 段：auto-invoke execute() + 顶层 .then/.catch return/error handler。 */
+const WORKER_TEMPLATE_POST = [
     '  // ── Auto-invoke execute() for module.exports pattern ──',
     '  if (typeof module !== "undefined" && module.exports && typeof module.exports.execute === "function") {',
     '    return await module.exports.execute({ agent, parallel, pipeline, phase, log, workflow, $ARGS, $WORKSPACE, $BUDGET });',
@@ -375,4 +383,15 @@ export function buildWorkerScript(userScript: string): string {
     '  _safePost({ type: "error", runId, error: err.message || String(err), workerLogs: _workerLogs }, "error");',
     '});',
   ].join("\n");
+
+/**
+ * Build the complete worker source text by wrapping the user's workflow script
+ * with infrastructure code and injected global functions.
+ *
+ * AC-4：脚本格式不变（用户资产）。逐字保留旧 buildWorkerScript 的拼接逻辑——
+ * 三段 concat 的换行语义 = 原单数组 join("\n")（userScript 段带 2 空格缩进，
+ * 段后一个空行接 auto-invoke 段），byte-identical 快照锚定。
+ */
+export function buildWorkerScript(userScript: string): string {
+  return WORKER_TEMPLATE_PRE + "\n  " + userScript + "\n\n" + WORKER_TEMPLATE_POST;
 }

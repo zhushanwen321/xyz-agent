@@ -174,17 +174,9 @@ export function statusGlyph(status: ExecutionStatus): { icon: string | undefined
   switch (status) {
     case "running":
       return { icon: undefined, color: "accent" };
-    case "done":
+    case "closed":
+      // v4 B-1: closed 统一终态（含 cancelled）。默认 ✓ success 色。
       return { icon: "✓", color: "success" };
-    case "failed":
-      return { icon: "✗", color: "error" };
-    case "cancelled":
-      return { icon: "■", color: "muted" };
-    case "crashed":
-      return { icon: "✝", color: "error" };
-    default:
-      // 防御:运行时 status 可能是意外值(SDK 投影异常/未来新增状态),兜底为 running 语义
-      return { icon: undefined, color: "accent" };
   }
 }
 
@@ -391,6 +383,20 @@ export function formatDisplayItem(item: DisplayItem, theme: ThemeLike): string {
 // ============================================================
 
 /**
+ * SGR 序列 sticky regex（truncLine 专用）。
+ *
+ * lastIndex 置位后 exec/test 只在该位置匹配（等价 `flat.slice(pos).match(/^\x1b\[[0-9;]*m/)`，
+ * 但零子串分配）。同步代码内「设 lastIndex → 立即用」，无跨调用残留。
+ */
+const SGR_STICKY_RE = /\x1b\[[0-9;]*m/y;
+
+/** 判断 s 在 pos 处是否开始一个 SGR 序列（非 SGR ESC——OSC/非 SGR CSI/裸 ESC——返回 false）。 */
+function isSgrStart(s: string, pos: number): boolean {
+  SGR_STICKY_RE.lastIndex = pos;
+  return SGR_STICKY_RE.test(s);
+}
+
+/**
  * 截断文本到 maxWidth 可见宽度(带省略号 `…`,ANSI 安全).
  *
  * 问题:pi-tui 的 truncateToWidth 在省略号前插 `\x1b[0m`(全局 reset),
@@ -399,6 +405,16 @@ export function formatDisplayItem(item: DisplayItem, theme: ThemeLike): string {
  * 解决:遍历追踪 active SGR styles,遇 `\x1b[0m` 清空、遇其他 `\x1b[..m` push,
  * 截断时 `result + activeStyles.join("") + "…"`——重应用 active 样式,背景不断裂.
  * 用 Intl.Segmenter grapheme 切分,正确处理 emoji/CJK/组合字符.
+ *
+ * 性能（IF12/#18）：旧实现逐字符 `flat.slice(end).match(...)` 是 O(n²)（每字符
+ * 一次子串分配 + 正则扫描）；现改为 `indexOf("\x1b", ...)` 跳到下一 ESC，仅在 ESC
+ * 位置做一次 sticky 判定——纯文本段零分配零正则。
+ *
+ * **非 SGR ESC 行为（等价关键，逐字节等价的定义点）**：OSC（\x1b]0;..\x07）、
+ * 非 SGR CSI（\x1b[K）、裸 \x1b 后跟非 [ 字符——均不构成文本段边界，作为纯文本
+ * 并入 textPortion 被 segmenter 消费（占 currentWidth、进 result），与旧实现
+ * 「while 停点集合 = SGR 序列起点」完全一致。输出由 __fixtures__/truncline.snapshot.json
+ * （改造前实现生成）逐字节锚定。
  *
  * 移植自 pi-subagents render.ts:44-89.
  */
@@ -417,8 +433,9 @@ export function truncLine(text: string, maxWidth: number): string {
   let i = 0;
 
   while (i < flat.length) {
-    // 捕获 ANSI SGR 序列
-    const ansiMatch = flat.slice(i).match(/^\x1b\[[0-9;]*m/);
+    // 捕获 ANSI SGR 序列（sticky：只在 i 处匹配，等价旧 slice(i).match(/^.../m)）
+    SGR_STICKY_RE.lastIndex = i;
+    const ansiMatch = SGR_STICKY_RE.exec(flat);
     if (ansiMatch) {
       const code = ansiMatch[0];
       result += code;
@@ -432,10 +449,20 @@ export function truncLine(text: string, maxWidth: number): string {
       continue;
     }
 
-    // 找到下一段纯文本(非 ANSI)的边界
-    let end = i;
-    while (end < flat.length && !flat.slice(end).match(/^\x1b\[[0-9;]*m/)) {
-      end++;
+    // 找到下一段纯文本(非 ANSI)的边界：下一处 SGR 序列起点（或串尾）。
+    // indexOf 跳到 ESC 候选位，仅对 ESC 位置做一次 sticky 判定；非 SGR ESC
+    // （OSC/\x1b[K/裸 \x1b）不构成边界、并入文本段（end 推进到该 ESC 之后继续找），
+    // 与旧逐字符 while 的停点集合逐字节一致。
+    let end = flat.length;
+    for (
+      let escPos = flat.indexOf("\x1b", i);
+      escPos !== -1;
+      escPos = flat.indexOf("\x1b", escPos + 1)
+    ) {
+      if (isSgrStart(flat, escPos)) {
+        end = escPos;
+        break;
+      }
     }
 
     // 按 grapheme 迭代这段文本,累加到 targetWidth

@@ -1,88 +1,157 @@
 /**
- * resolveSkillPath 测试（S-6：getAgentDir 迁移后全局/npm 两级候选路径断言兜底）。
- * 候选顺序：项目级 .agents/skills → agentDir/skills → agentDir/npm/node_modules 下各包 skills。
- * 注意：getNpmSkillCandidates 有模块级缓存（key = npmSkillsDir），各用例用不同 agentDir 隔离缓存键。
+ * skill-discovery — resolveSkillPath 结果缓存（IF8/#14）+ 搜索序测试。
+ *
+ * 现状该文件此前零测试，本文件为首个测试（design IF8 契约）：
+ * - hit 不再 existsSync（计数 wrapper 观察，spyOn ESM namespace 不可配置的既有教训）
+ * - 未命中 undefined 也缓存（不存在的名字二次调用零 stat）
+ * - clearSkillPathCache 后重扫
+ * - project 优先于 user/npm 的搜索序
+ *
+ * [merge 注] main 侧同名文件（mock-fs 版）的 5 用例语义均已覆盖：搜索序三用例
+ * 同名等价；「npm 候选路径构造含 agentDir」= 本文件各用例断言 join(homeRoot,
+ * ".pi/agent/npm/...") 完整路径 + npm 兜底用例的多包枚举；「全 miss undefined 含
+ * readdirSync ENOENT 兜底」= 「未命中 undefined 也缓存」用例（homeRoot 无 npm 目录，
+ * 真实 fs 下 ENOENT 由实现 catch）。mock 版被本集成版取代。
+ *
+ * 隔离：node:fs 的 existsSync 用 vi.mock 包一层计数（委托真实实现）；
+ * getAgentDir 用 vi.mock 覆盖为临时 home（vitest alias 指向 mocks/pi-coding-agent.ts
+ * 的硬编码桩 "/home/user/.pi/agent"，桩不读 os.homedir——mock node:os 无法影响它）；
+ * process.cwd 用 spyOn。
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import * as path from "node:path";
-import * as fs from "node:fs";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-vi.mock("node:fs", () => ({
-  readdirSync: vi.fn(),
-  existsSync: vi.fn(),
+const { existsSyncCalls, osHome } = vi.hoisted(() => ({
+  existsSyncCalls: { count: 0 },
+  osHome: { dir: "/nonexistent-home-skill-tests" },
 }));
 
-vi.mock("@earendil-works/pi-coding-agent", () => ({
-  getAgentDir: vi.fn(() => "/mock/agent-dir"),
-}));
-
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { resolveSkillPath } from "../skill-discovery";
-
-const mockedFs = vi.mocked(fs);
-const mockedGetAgentDir = vi.mocked(getAgentDir);
-
-beforeEach(() => {
-  mockedFs.existsSync.mockReset();
-  mockedFs.readdirSync.mockReset();
-  mockedGetAgentDir.mockReturnValue("/mock/agent-dir");
-  // 默认：任何路径都不存在、npm 目录无包
-  mockedFs.existsSync.mockReturnValue(false);
-  mockedFs.readdirSync.mockReturnValue([]);
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const realExistsSync = actual.existsSync;
+  // 计数 wrapper（委托真实实现）——vi.spyOn(fs, "existsSync") 在 ESM 模块
+  // 命名空间不可配置（record-store-index.test.ts:419 同款教训），改用 mock 工厂。
+  const countingExistsSync = ((p: string) => {
+    existsSyncCalls.count++;
+    return realExistsSync(p);
+  }) as typeof actual.existsSync;
+  return { ...actual, existsSync: countingExistsSync };
 });
 
-describe("resolveSkillPath", () => {
-  it("项目级 .agents/skills 优先命中（返回 cwd 相对路径）", () => {
-    const projectPath = path.resolve(process.cwd(), ".agents/skills", "foo");
-    mockedFs.existsSync.mockImplementation((p) => p === projectPath);
+vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@earendil-works/pi-coding-agent")>();
+  const { join } = await import("node:path");
+  // 桩不读 os.homedir，必须在此把 agentDir 指向 hoisted 临时 home（beforeEach 注入 homeRoot）
+  return { ...actual, getAgentDir: () => join(osHome.dir, ".pi", "agent") };
+});
 
-    expect(resolveSkillPath("foo")).toBe(projectPath);
+import { clearSkillPathCache, resolveSkillPath } from "../skill-discovery.ts";
+
+// ── 临时目录工具 ──────────────────────────────────────────────
+
+let projRoot: string;
+let homeRoot: string;
+
+beforeEach(() => {
+  clearSkillPathCache();
+  existsSyncCalls.count = 0;
+  projRoot = mkdtempSync(join(tmpdir(), "skill-proj-"));
+  homeRoot = mkdtempSync(join(tmpdir(), "skill-home-"));
+  osHome.dir = homeRoot;
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  rmSync(projRoot, { recursive: true, force: true });
+  rmSync(homeRoot, { recursive: true, force: true });
+});
+
+/** mkdir -p（目录存在即 resolveSkillPath 命中——检查的是目录而非 SKILL.md）。 */
+function mkdirp(dir: string): void {
+  mkdirSync(dir, { recursive: true });
+}
+
+describe("resolveSkillPath — 搜索序（project > user > npm）", () => {
+  it("project 优先：同名 skill 同时存在于 project/user/npm 时返回 project 路径", () => {
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(projRoot);
+    const name = "dup-skill";
+    mkdirp(join(projRoot, ".agents/skills", name));
+    mkdirp(join(homeRoot, ".pi/agent/skills", name));
+    mkdirp(join(homeRoot, ".pi/agent/npm/node_modules/some-pkg/skills", name));
+
+    const resolved = resolveSkillPath(name);
+
+    expect(resolved).toBe(join(projRoot, ".agents/skills", name));
+    expect(cwdSpy).toHaveBeenCalled();
   });
 
-  it("agentDir 全局 skills 兜底（路径含 getAgentDir 返回值）", () => {
-    const agentPath = path.join("/mock/agent-dir", "skills", "foo");
-    mockedFs.existsSync.mockImplementation((p) => p === agentPath);
+  it("user 次之：仅 user/npm 存在时返回 user 路径", () => {
+    vi.spyOn(process, "cwd").mockReturnValue(projRoot);
+    const name = "user-skill";
+    mkdirp(join(homeRoot, ".pi/agent/skills", name));
+    mkdirp(join(homeRoot, ".pi/agent/npm/node_modules/some-pkg/skills", name));
 
-    expect(resolveSkillPath("foo")).toBe(agentPath);
+    expect(resolveSkillPath(name)).toBe(join(homeRoot, ".pi/agent/skills", name));
   });
 
-  it("npm 候选命中：readdirSync 枚举包目录，skills/<name> 存在则返回 agentDir 派生路径", () => {
-    // 独立 agentDir 避免命中前序用例已缓存的空 npm 候选（getNpmSkillCandidates 按 npmSkillsDir 缓存）
-    mockedGetAgentDir.mockReturnValue("/mock/agent-dir-npm");
-    const npmSkillsDir = path.join("/mock/agent-dir-npm", "npm/node_modules");
-    const npmHit = path.join(npmSkillsDir, "@zhushanwen/pi-x", "skills", "foo");
-    mockedFs.readdirSync.mockImplementation((dir) =>
-      dir === npmSkillsDir ? ["@zhushanwen/pi-x"] : [],
+  it("npm 兜底：仅 npm 包内存在时返回包内 skills 路径（readdirSync 枚举多包候选）", () => {
+    vi.spyOn(process, "cwd").mockReturnValue(projRoot);
+    const name = "npm-skill";
+    // 两个包并存：断言实现枚举 npm/node_modules 下每个包（S-6 语义，防只查首个包的回退）
+    mkdirp(join(homeRoot, ".pi/agent/npm/node_modules/pkg-a/other", "x"));
+    mkdirp(join(homeRoot, ".pi/agent/npm/node_modules/some-pkg/skills", name));
+
+    expect(resolveSkillPath(name)).toBe(
+      join(homeRoot, ".pi/agent/npm/node_modules/some-pkg/skills", name),
     );
-    mockedFs.existsSync.mockImplementation((p) => p === npmHit);
+  });
+});
 
-    expect(resolveSkillPath("foo")).toBe(npmHit);
+describe("resolveSkillPath — 结果缓存（IF8/DM3）", () => {
+  it("hit 不再 existsSync：二次调用零 stat", () => {
+    vi.spyOn(process, "cwd").mockReturnValue(projRoot);
+    const name = "cache-hit";
+    const expected = join(projRoot, ".agents/skills", name);
+    mkdirp(expected);
+
+    const first = resolveSkillPath(name);
+    const callsAfterFirst = existsSyncCalls.count;
+    expect(first).toBe(expected);
+    expect(callsAfterFirst).toBeGreaterThan(0);
+
+    const second = resolveSkillPath(name);
+    expect(second).toBe(expected);
+    expect(existsSyncCalls.count).toBe(callsAfterFirst); // 零增量
   });
 
-  it("npm 候选路径构造含 agentDir（getAgentDir 迁移后的候选断言，防回退硬编码）", () => {
-    mockedGetAgentDir.mockReturnValue("/mock/agent-dir-2");
-    const npmSkillsDir = path.join("/mock/agent-dir-2", "npm/node_modules");
-    const probed: string[] = [];
-    mockedFs.existsSync.mockImplementation((p) => {
-      probed.push(p as string);
-      return false;
-    });
-    mockedFs.readdirSync.mockImplementation((dir) =>
-      dir === npmSkillsDir ? ["pkg-a", "pkg-b"] : [],
-    );
+  it("未命中 undefined 也缓存：不存在的名字二次调用零 stat", () => {
+    vi.spyOn(process, "cwd").mockReturnValue(projRoot);
+    const name = "no-such-skill-xyz";
 
-    expect(resolveSkillPath("missing")).toBeUndefined();
-    // 探测过的候选必须包含 agentDir 派生的 npm 路径
-    expect(probed).toContain(path.join(npmSkillsDir, "pkg-a", "skills", "missing"));
-    expect(probed).toContain(path.join(npmSkillsDir, "pkg-b", "skills", "missing"));
+    const first = resolveSkillPath(name);
+    expect(first).toBeUndefined();
+    const callsAfterFirst = existsSyncCalls.count;
+    expect(callsAfterFirst).toBeGreaterThan(0);
+
+    const second = resolveSkillPath(name);
+    expect(second).toBeUndefined();
+    expect(existsSyncCalls.count).toBe(callsAfterFirst); // 零增量（未命中也缓存）
   });
 
-  it("全部 miss 返回 undefined（含 npm 目录不存在时 readdirSync 抛错兜底）", () => {
-    mockedFs.readdirSync.mockImplementation(() => {
-      throw new Error("ENOENT");
-    });
-    mockedFs.existsSync.mockReturnValue(false);
+  it("clearSkillPathCache 后重扫：计数恢复增长且结果一致", () => {
+    vi.spyOn(process, "cwd").mockReturnValue(projRoot);
+    const name = "cache-clear";
+    const expected = join(projRoot, ".agents/skills", name);
+    mkdirp(expected);
 
-    expect(resolveSkillPath("nope")).toBeUndefined();
+    expect(resolveSkillPath(name)).toBe(expected);
+    const callsAfterFirst = existsSyncCalls.count;
+    expect(callsAfterFirst).toBeGreaterThan(0);
+
+    clearSkillPathCache();
+    expect(resolveSkillPath(name)).toBe(expected);
+    expect(existsSyncCalls.count).toBeGreaterThan(callsAfterFirst); // 重扫发生
   });
 });

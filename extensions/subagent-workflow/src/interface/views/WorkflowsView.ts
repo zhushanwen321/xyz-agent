@@ -17,9 +17,9 @@
  *
  * 关键实现点：(a) overlay 第二参数必须传，否则 view 不全屏；(b) trace 必须 per-render
  * 重读（run.state.trace.toArray 返回内部数组引用，trace.append 后下次 render 可见），
- * 配 1s tick invalidate + requestRender 保证运行中刷新；(c) 's' save 模式无条件可用
- * （saveWorkflow 内部对非 tmp workflow 返回错误消息）；(d) pause/resume/abort 失败时
- * notify 反馈，不静默吞。
+ * 配条件失效 tick（签名比对，IF11）+ requestRender 保证运行中刷新；(c) 's' save 模式无条件可用
+ * （saveWorkflow 内部对非 tmp workflow 返回错误消息）；(d) abort 失败时 notify 反馈，
+ * 不静默吞（run 一次性生命周期——无 pause/resume，abort 是唯一提前停止方式）。
  */
 
 import { promises as fsPromises } from "node:fs";
@@ -30,12 +30,14 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
 
 import {
+  countAllToolCalls,
   getAllToolCalls,
   projectLiveProgress,
 } from "../../execution/execution-record.ts";
 import type { ExecutionTraceNode } from "../../orchestration/models/types.ts";
 import type { WorkflowRun } from "../../orchestration/models/workflow-run.ts";
 import { saveWorkflow } from "../../orchestration/workflow-files.ts";
+import { displayAgentName } from "../../shared/agent-ref.ts";
 import {
   BOX_BORDER_CHARS,
   BUDGET_TOKENS_DIVISOR,
@@ -122,12 +124,73 @@ interface TuiLike {
 
 /**
  * view 可触发的 lifecycle 操作（由调用方注入，避免 view 直接依赖 Engine 函数）。
- * 每个 action 接收 runId；调用方绑到 pauseRun/resumeRun/abortRun。
+ * 每个 action 接收 runId；调用方绑到 abortRun（一次性生命周期——仅 abort）。
  */
 export interface ViewActions {
-  pause: (runId: string) => Promise<void>;
-  resume: (runId: string) => Promise<void>;
   abort: (runId: string) => Promise<void>;
+}
+
+// ── 渲染签名（IF11/TC7/DM6：tick 条件失效的判据，渲染动态字段 SSOT）──────
+
+/**
+ * computeRenderSignature — 渲染输出中全部动态决定字段的签名（now 参数化，供测试）。
+ *
+ * 纯度说明：now 是显式参数，但 live 节点的 elapsedSeconds 经 projectLiveProgress
+ * 内的 computeElapsedSeconds 现算（record.endedAt 缺省时取 Date.now()）——即使两次
+ * 调用传同一 now，跨秒的真实时钟也会使签名变。该内含实时源只朝「多失效」方向
+ * 偏离（多失效、不多绘、更不漏绘），对「签名同 → 跳过重绘」的单向判据安全。
+ *
+ * 用途：200ms tick 用它与上次签名比对——相同则该帧内容无可见变化，跳过清缓存 +
+ * requestRender（纯等待场景零重建零重绘）；不同则走现状失效路径。可见行为逐帧
+ * 等价的前提 = 签名字段集覆盖当前渲染的全部动态字段（漏字段 = 该字段渲染滞后一拍，
+ * ES7；签名取原始值时粒度细于显示量化值，只多失效不多绘不漏绘）。
+ *
+ * **字段核对表**（每字段 ↔ 渲染消费点 file:line，完备性唯一证据——测试只能证
+ * 「已入字段变 → 签名变」，不能证无漏字段）：
+ *
+ * | 签名字段 | 消费点 |
+ * |---|---|
+ * | run.state.status | WorkflowsView.ts renderHeader :652 / detail-content.ts :75（statusDotStr+statusLabel）/ renderFooter :695-699 |
+ * | 秒桶 Math.floor(now/1000) | renderHeader :651 formatElapsed（现算 elapsed）+ detail-content.ts :69-72（now 参与未完成节点 elapsed）|
+ * | completed/total（节点 status 推导）| renderHeader :649-652 |
+ * | budget 量化值（tokens round-k + cost toFixed(4)=BUDGET_COST_DECIMALS，与 :654 同精度——第 3-4 位小数变化是可见变化）| renderHeader :654 / saveTraceToFile :942 |
+ * | run.state.errorLogs 指纹 = length+末条 level:message（errorLogs 仅经 push + slice(-MAX_ERROR_LOGS) 变异——append-only + 前向淘汰、条目不可变；封顶后 length 不变内容移，单取 length 会漏失效，而任何可见变化必伴随 length 变或末条变，故 length+末条是完备且最小的指纹）| detail-content.ts :174-191（renderWorkerLogSection：total 标签 + 末 20 条）|
+ * | 节点 stepIndex | nodeParts 首字段（trace 数组序参与拼接，节点重排→签名变）/ saveTraceToFile :947（trace 导出 `### [#stepIndex]` 标题）|
+ * | 节点 sessionFile | detail-content.ts :314-317（renderSessionSection）|
+ * | 节点 status | 节点行 :832 statusDotStr / detail :75 |
+ * | live.totalTokens | 节点行 :836 / detail :79 / :275 |
+ * | 工具计数（签名路径用 countAllToolCalls 免克隆计数，与 getAllToolCalls(node.live).length 恒等——projectLiveProgress 投影无 toolCallCount 字段，不得引用）| 节点行 :837 / detail :80 / :223 |
+ * | live.elapsedSeconds | 节点行 :838 / detail :81 / :276 |
+ * | live.turns | detail :224 / :276 |
+ * | live.eventLog.length（append-only，长度变化即尾部窗口右移出新事件）| detail :222（filter turn_end）+ :231-235 |
+ * | live.currentActivity（type+label 均入签名）| detail :227-228 |
+ * | live.lastError（内容入签名，防同存在性不同文本漏绘）| detail :277-278 |
+ *
+ * 维护约定（DS8）：WorkflowsView/detail-content 新增任何动态展示字段必须同步
+ * 并入本签名并更新上表，否则该字段渲染滞后一拍。本文件编辑会使表内 WorkflowsView
+ * 行号漂移——改动核对表下方代码后必须 grep 实际位置刷新本表。
+ */
+/** 秒桶宽度（ms）：签名取 Math.floor(now / SECOND_MS)，秒桶推进 = 可见 elapsed 变化。 */
+const SECOND_MS = 1000;
+
+export function computeRenderSignature(run: WorkflowRun, now: number): string {
+  const traceArr = run.state.trace.toArray();
+  const completed = traceArr.filter((n) => n.status === "completed").length;
+  const budget = run.state.budget;
+  // budget 量化串与 renderHeader budgetStr 同源同精度（round-k token / toFixed(4) cost）
+  const budgetPart = `${Math.round(budget.usedTokens / BUDGET_TOKENS_DIVISOR)}k/${budget.maxTokens ? `${Math.round(budget.maxTokens / BUDGET_TOKENS_DIVISOR)}k` : "∞"}::$${budget.usedCost.toFixed(BUDGET_COST_DECIMALS)}`;
+  // errorLogs 指纹：detail 只渲染 total 标签 + 末 20 条（renderWorkerLogSection），
+  // 而 errorLogs 仅经 push + slice(-MAX_ERROR_LOGS) 变异（append-only + 前向淘汰、
+  // 条目不可变）——封顶后 length 不变内容移，单取 length 漏失效；任何可见变化必
+  // 伴随「length 变」或「末条变」，故 length+末条（level:message）是完备最小指纹。
+  const logs = run.state.errorLogs;
+  const lastLog = logs && logs.length > 0 ? `${logs[logs.length - 1].level}:${logs[logs.length - 1].message}` : "-";
+  const errorLogsPart = `${logs?.length ?? 0}:${lastLog}`;
+  const nodeParts = traceArr.map((n) => {
+    const live = n.live ? projectLiveProgress(n.live) : undefined;
+    return `${n.stepIndex}:${n.status}:${n.sessionFile ?? "-"}:${live?.totalTokens ?? -1}:${n.live ? countAllToolCalls(n.live) : -1}:${live?.elapsedSeconds ?? -1}:${live?.turns ?? -1}:${live?.eventLog.length ?? -1}:${live?.currentActivity ? `${live.currentActivity.type}:${live.currentActivity.label}` : "-"}:${live?.lastError ?? "-"}`;
+  });
+  return [run.state.status, Math.floor(now / SECOND_MS), `${completed}/${traceArr.length}`, budgetPart, errorLogsPart, ...nodeParts].join("|");
 }
 
 // ── View state ────────────────────────────────────────────────
@@ -181,7 +244,7 @@ function createInitialState(): ViewState {
  * @param run WorkflowRun 聚合根（读 state.status/spec/trace/meta）
  * @param theme ThemeLike（避免直接 import Pi runtime）
  * @param ctx ExtensionContext（调 ui.custom 渲染 + ui.notify 错误反馈）
- * @param actions lifecycle 操作（pause/resume/abort），由调用方注入
+ * @param actions lifecycle 操作（abort），由调用方注入
  */
 export function createWorkflowsView(
   run: WorkflowRun,
@@ -212,10 +275,17 @@ export function createWorkflowsView(
     const requestRender = () => tui.requestRender();
 
  // ── 轮询 tick：engine 无事件推送，view 自轮询 trace 变化 ──
- // 每 200ms 重绘，保证 header 动态数据（elapsed/tokens）实时更新。
- // 行数固定后，diff-redraw 引擎能正确逐行对比，不会出现残影。
+ // 每 200ms 条件失效（IF11/TC7）：先算渲染签名（computeRenderSignature，
+ // 覆盖 header/节点行/L2 detail 全部动态字段），与上次相同 → 该帧内容无可见
+ // 变化，直接 return（不清 cache、不 requestRender——纯等待场景零重建零重绘）；
+ // 不同 → 现状路径（清缓存 + requestRender）。lastSignature 初始 undefined，
+ // 首 tick 必失效（保证首绘）。签名计算 O(N)（N=trace 节点数）远低于全量 render。
+    let lastSignature: string | undefined;
     const tick = setInterval(() => {
       if (state.disposed) return;
+      const signature = computeRenderSignature(run, Date.now());
+      if (signature === lastSignature) return;
+      lastSignature = signature;
       cache.key = undefined;
       cache.lines = undefined;
       requestRender();
@@ -358,21 +428,9 @@ export function createWorkflowsView(
         return;
       }
 
- // ── Lifecycle shortcuts (no restart per D-9) ──
-      if (data === "p") {
-        if (run.state.status === "running") {
-          void actions.pause(run.runId)
-            .then(() => { cache.key = undefined; requestRender(); })
-            .catch((err: Error) => ctx.ui.notify(`Pause failed: ${err.message}`, "error"));
-        } else if (run.state.status === "paused") {
-          void actions.resume(run.runId)
-            .then(() => { cache.key = undefined; requestRender(); })
-            .catch((err: Error) => ctx.ui.notify(`Resume failed: ${err.message}`, "error"));
-        }
-        return;
-      }
+ // ── Lifecycle shortcuts (no restart per D-9; no pause/resume — one-shot) ──
       if (data === "a") {
-        if (run.state.status === "running" || run.state.status === "paused") {
+        if (run.state.status === "running") {
           void actions.abort(run.runId)
             .then(() => { cache.key = undefined; requestRender(); })
             .catch((err: Error) => ctx.ui.notify(`Abort failed: ${err.message}`, "error"));
@@ -498,7 +556,7 @@ export function createWorkflowsView(
 // │ ● 2 deploy 0/1 │ ● tester model ... │
 // │ (pad) │ (pad) │
 // ╰───────────────────────────────────────────────────╯
-// ↑↓ phase · ⏎ enter · p pause · a abort · s save · esc back ← footer (框外)
+// ↑↓ phase · ⏎ enter · a abort · s save · esc back ← footer (框外)
 //
 // body = sidebar(SIDEBAR_WIDTH) │ main(rest)
 // save overlay 活跃时居中覆盖 body。
@@ -621,10 +679,8 @@ function renderFooter(
       ? "↑↓ agent · ⏎ detail"
       : "↑↓ agent · ⏎ prompt · PgUp/PgDn scroll";
   const actionParts: string[] = [];
-  const status = run.state.status;
-  if (status === "running" || status === "paused") {
+  if (run.state.status === "running") {
     actionParts.push("a abort");
-    actionParts.push(status === "paused" ? "p resume" : "p pause");
   }
   actionParts.push("s save");
   actionParts.push("S trace");
@@ -765,7 +821,7 @@ function renderLevel1(
       const tokStr = live.totalTokens > 0 ? `${Math.round(live.totalTokens / BUDGET_TOKENS_DIVISOR)}k tok` : "";
       const tcCount = getAllToolCalls(node.live).length;
       const elapsed = formatElapsedSeconds(live.elapsedSeconds);
-      rightLines.push(`${pointer}${dot} ${node.agent}    ${node.model}    ${tokStr} · ${tcCount} tools · ${elapsed}`);
+      rightLines.push(`${pointer}${dot} ${displayAgentName(node.agent)}    ${node.model}    ${tokStr} · ${tcCount} tools · ${elapsed}`);
     } else {
       const elapsed = formatElapsed(
         node.startedAt,
@@ -774,7 +830,7 @@ function renderLevel1(
       const tok = node.result?.usage;
       const tokStr = tok ? `${Math.round((tok.input + tok.output) / BUDGET_TOKENS_DIVISOR)}k tok` : "";
       const tcCount = node.result?.toolCalls?.length ?? 0;
-      rightLines.push(`${pointer}${dot} ${node.agent}    ${node.model}    ${tokStr} · ${tcCount} tools · ${elapsed}`);
+      rightLines.push(`${pointer}${dot} ${displayAgentName(node.agent)}    ${node.model}    ${tokStr} · ${tcCount} tools · ${elapsed}`);
     }
   }
   state.agentScrollOffset = agentStart;
@@ -808,9 +864,10 @@ function renderLevel2(
     const a = agents[i];
     const pointer = i === state.agentIdx ? "❯ " : "  ";
     const maxNameWidth = SIDEBAR_WIDTH - AGENT_NAME_BUDGET;
-    const agentName = visibleLen(a.agent) > maxNameWidth
-      ? a.agent.slice(0, maxNameWidth - 1) + ELLIPSIS
-      : a.agent;
+    const agentRef = displayAgentName(a.agent);
+    const agentName = visibleLen(agentRef) > maxNameWidth
+      ? agentRef.slice(0, maxNameWidth - 1) + ELLIPSIS
+      : agentRef;
     leftLines.push(`${pointer}${agentName}`);
   }
 

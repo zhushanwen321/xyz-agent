@@ -8,6 +8,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { getSubagentService } from "../execution/subagent-service.ts";
+import { displayAgentName } from "../shared/agent-ref.ts";
 import { parseSubagentRpcCommand } from "./command-actions.ts";
 import { LIST_LIMIT } from "./list-shared.ts";
 import { createSubagentsView } from "./list-view.ts";
@@ -39,7 +40,7 @@ export function registerSubagentsCommand(pi: ExtensionAPI): void {
           return records.map((r) => ({
             label: r.id,
             value: r.id,
-            description: `${r.agent} [${r.status}]`,
+            description: `${displayAgentName(r.agent)} [${r.status}]`,
           }));
         } catch {
           // 拿不到运行时数据（service disposed 等）→ 静默降级，补全失败不影响 command

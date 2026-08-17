@@ -30,12 +30,15 @@ import {
   ModelConfigService,
   setModelConfigService,
 } from "./execution/model-config-service.ts";
+import { IDENTITY_CUSTOM_TYPE, type SubagentIdentityData } from "./execution/session-reconstructor.ts";
+import type { ExecutionMode, SubagentRecord } from "./execution/types.ts";
 import { maybeCleanupExpiredSessionFiles } from "./execution/session-file-gc.ts";
 import {
   getSubagentService,
   setSubagentService,
   SubagentService,
 } from "./execution/subagent-service.ts";
+import { killAllSpawnedChildren } from "./execution/session-runner.ts";
 import { SubprocessAgentRunner } from "./execution/subprocess-agent-runner.ts";
 import { WorktreeManager } from "./execution/worktree-manager.ts";
 import { setupSubagentListInjector } from "./injectors/subagent-list-injector.ts";
@@ -43,17 +46,23 @@ import { setupWorkflowListInjector } from "./injectors/workflow-list-injector.ts
 import { renderBgNotifyMessage } from "./interface/bg-notify-render.ts";
 import { registerWorkflowsCommand } from "./interface/commands.ts";
 import { toGuiCtx } from "./interface/gui-mappers.ts";
-import { notifyDone } from "./interface/helpers.ts";
+import { notifyDone, trackNotifiedRunId } from "./interface/helpers.ts";
 import { registerSubagentTool } from "./interface/subagent-tool.ts";
 // ═══ interface/ 层（tools/commands/tui 合并） ═══
 import { registerSubagentsCommand } from "./interface/subagents.ts";
 import { registerWorkflowTool } from "./interface/tool-workflow.ts";
 import { registerWorkflowScriptTool } from "./interface/tool-workflow-script.ts";
 import { JsonlRunStore } from "./orchestration/jsonl-run-store.ts";
+import { clearSkillPathCache } from "./orchestration/skill-discovery.ts";
 // ═══ orchestration/ 层（workflow engine + infra） ═══
 import type { LauncherDeps } from "./orchestration/launcher.ts";
 import { executeNestedWorkflow, runAndWait, type WorkflowRunResult } from "./orchestration/launcher.ts";
-import { pauseRun, scheduleTimeBudget } from "./orchestration/lifecycle.ts";
+import {
+  evictDoneRunsBeyondCap,
+  MAX_RETAINED_DONE_RUNS,
+  scheduleTimeBudget,
+  terminateRunningRuns,
+} from "./orchestration/lifecycle.ts";
 import type { WorkflowRun } from "./orchestration/models/workflow-run.ts";
 import { WorkerHostImpl } from "./orchestration/worker-host.ts";
 import { WorkflowScriptRegistryImpl } from "./orchestration/workflow-script-registry-impl.ts";
@@ -75,6 +84,75 @@ declare module "@earendil-works/pi-coding-agent" {
 
 // 模块级 logger（setPiHandle 注入后自动走 appendEntry）
 const logger = getLogger("subagents");
+
+// ── subagent 状态快照格式化 ──
+//
+// [v4 A-6] before_agent_start 注入 hook 已删（活跃 subagent 清单改由 agent 按需调
+// action:'list' 拉取，消除每 loop 注入的上下文税与盲点）。本函数保留为纯格式化工具：
+// before-agent-start-injection / parent-child-matrix 测试覆盖其正确性，未来 list
+// 视图或其他注入点可复用。
+
+/** 活跃 subagent 数量上限（超过截断显示）。 */
+const MAX_STATUS_INJECTION = 10;
+
+/**
+ * 将活跃 subagent record 格式化为一行一条的快照文本。
+ *
+ * 格式：
+ *   [subagent-status] N active subagents:
+ *   - sa-xxx (slug): running, rounds 0
+ *   - sa-yyy (slug): idle, rounds 3
+ *   +2 more, use action:'list'
+ *
+ * @param records 已筛选的活跃 record（running + idle）
+ */
+export function formatSubagentStatusSnapshot(records: SubagentRecord[]): string {
+  const lines = [`[subagent-status] ${records.length} active subagent${records.length === 1 ? "" : "s"}:`];
+  const shown = records.slice(0, MAX_STATUS_INJECTION);
+  for (const r of shown) {
+    const slug = r.slug || r.agent;
+    const roundPart = r.round !== undefined && r.round > 0 ? `, rounds ${r.round}` : "";
+    lines.push(`- ${r.id} (${slug}): ${r.status}${roundPart}`);
+  }
+  const remaining = records.length - MAX_STATUS_INJECTION;
+  if (remaining > 0) {
+    lines.push(`+${remaining} more, use action:'list'`);
+  }
+  return lines.join("\n");
+}
+
+// ═══ [V2 决策 7 防线 i] process 级 shutdown hook ═══
+//
+// session_shutdown 是 pi 的 async hook，进程被 SIGTERM/SIGINT 强杀或崩溃时来不及
+// 触发；sync 子进程（controller 为 undefined，abortRunningControllers 跳过它们）会
+// 泄漏为孤儿。process.on 兜底显式 killAllSpawnedChildren 收割全部活子进程。
+// guard 防多信号叠加（如 SIGINT 后又 beforeExit）重复 kill。
+let processShutdownHookFired = false;
+
+function reapSpawnedChildrenOnShutdown(): void {
+  if (processShutdownHookFired) return;
+  processShutdownHookFired = true;
+  try {
+    killAllSpawnedChildren("SIGTERM");
+  } catch (err) {
+    // best-effort：收割失败不阻断退出流程——debug 留痕（孤儿子进程排查线索），
+    // 不静默吞错，对齐「错误必须可操作」。
+    logger.debug(
+      "[subagents] process shutdown reap best-effort failed (killAllSpawnedChildren SIGTERM)",
+      { reason: err instanceof Error ? err.message : String(err) },
+    );
+  }
+}
+
+/**
+ * 测试钩子：重置 module 级 shutdown guard。
+ *
+ * 对齐 lifecycle-manager._resetLifecycleState 模式——processShutdownHookFired 是
+ * module 级单例状态，跨 test 持久，单测需显式重置以验证 idempotent 行为。
+ */
+export function _resetProcessShutdownGuardForTest(): void {
+  processShutdownHookFired = false;
+}
 
 export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // 注入 pi handle 给全局 extension-logger，让深层代码（best-effort / error-recovery）
@@ -187,7 +265,23 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       runner: state.runner,
       runs: state.runs,
       registry,
-      onRunDone: (run: WorkflowRun) => notifyDone(pi, run.runId, run, notifiedRunIds, toGuiCtx(sessionCtx)),
+      // onRunDone 是全部 done 路径的单点汇聚（abortRun + error-recovery），顺序固化为
+      // notify → track → evict：notifyDone 先发完整聚合通知（淘汰后聚合根仍在闭包参数
+      // run 引用上不受影响），trackNotifiedRunId 有界化去重窗口，最后裁剪 done run 内存。
+      // 本轮 run 的 completedAt 在 transition("done") 时同步设为当前时刻=全局最新，
+      // 恒在保留端——结构性保证其不被自身触发的裁剪淘汰，无需 protectRunId。
+      onRunDone: (run: WorkflowRun) => {
+        notifyDone(pi, run.runId, run, notifiedRunIds, toGuiCtx(sessionCtx));
+        trackNotifiedRunId(notifiedRunIds, run.runId);
+        const evicted = evictDoneRunsBeyondCap(state.runs, MAX_RETAINED_DONE_RUNS);
+        if (evicted > 0) {
+          logger.debug("[subagent-workflow] evicted done runs beyond cap", {
+            evicted,
+            keep: MAX_RETAINED_DONE_RUNS,
+            sessionId: lsRef.lastSessionId,
+          });
+        }
+      },
       eventBus: pi.events,
       scheduleTimeBudget: (runId: string, budgetTimeMs: number) =>
         scheduleTimeBudget(runId, deps, budgetTimeMs),
@@ -216,6 +310,55 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     const agentDir = getAgentDir();
     const sessionId = ctx.sessionManager.getSessionId();
     lsRef.lastSessionId = sessionId;
+
+    // skill 路径两级缓存 session 级失效：pi 同进程可能有多个 session（TUI /new、/fork），
+    // 运行中安装的 skill 需对新 session 可见（含曾 miss 缓存的 undefined 条目与 npm 新装
+    // 包的候选目录）。session 内复用收益不变（IF8/DM3 消重发生在同 session 的重复调用）。
+    clearSkillPathCache();
+
+    // ── [M4] identity 子进程写入（V2 决策 5）──
+    // 子进程经 env（PI_SUBAGENT_*）接收自己的 identity，在 session_start 用 pi.appendEntry
+    // 写 subagent-identity custom entry。pi 自动生成 id/parentId → message tree 连续。
+    // 旧实现父进程 fs.appendFileSync 补写的 custom entry 缺 id/parentId → 污染 _buildIndex
+    // leafId 指针 → message tree 断成两棵 → 多轮对话丢上下文（bug 根因）。
+    // 主/子进程判定：PI_SUBAGENT_SELF_RECORD_ID 仅 session-runner spawn 子进程时注入，
+    // 主进程无此 env → 跳过（identity 只在子进程写一次）。
+    const selfRecordId = process.env.PI_SUBAGENT_SELF_RECORD_ID;
+    if (selfRecordId) {
+      try {
+        const modeEnv = process.env.PI_SUBAGENT_MODE;
+        // ExecutionMode 联合窄化：父进程经 env 注入（record.mode 恒为 "background"），
+        // 运行时校验合法值，非法兜底 background（避免裸 cast，符合 taste/no-unsafe-cast）。
+        const mode: ExecutionMode = modeEnv === "background" ? modeEnv : "background";
+        const identity: SubagentIdentityData = {
+          id: selfRecordId,
+          agent: process.env.PI_SUBAGENT_AGENT ?? "",
+          mode,
+          task: process.env.PI_SUBAGENT_TASK ?? "",
+          slug: process.env.PI_SUBAGENT_SLUG,
+          startedAt: Number(process.env.PI_SUBAGENT_STARTED_AT ?? Date.now()),
+          rootSessionId: process.env.PI_SUBAGENT_ROOT_SESSION_ID,
+          parentRecordId: process.env.PI_SUBAGENT_PARENT_RECORD_ID,
+          depth:
+            process.env.PI_SUBAGENT_DEPTH !== undefined
+              ? Number(process.env.PI_SUBAGENT_DEPTH)
+              : undefined,
+          forkDepth:
+            process.env.PI_SUBAGENT_FORK_DEPTH !== undefined
+              ? Number(process.env.PI_SUBAGENT_FORK_DEPTH)
+              : undefined,
+          chatMode: process.env.PI_SUBAGENT_CHAT_MODE === "true",
+          // [review round2] worktree 隔离标志（session-runner 注入）：跨重启重建路径据此
+          // 拒绝续聊（handle 不可序列化，reattach 不可行）。
+          worktree: process.env.PI_SUBAGENT_WORKTREE === "true",
+        };
+        pi.appendEntry(IDENTITY_CUSTOM_TYPE, identity);
+      } catch (err) {
+        logger.warn("[subagents] identity appendEntry failed in session_start", {
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
 
     // ── subagents 域：双 Service 装配 ──
     const existingService = getSubagentService();
@@ -267,6 +410,9 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       setSubagentService(service);
     }
 
+    // S-2: 启动 idle record GC 定时器（30 天 TTL，每小时检查一次）
+    service.startGcTimer();
+
     cachedMainSessionFile = ctx.sessionManager.getSessionFile() ?? undefined;
 
     try {
@@ -292,7 +438,7 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
 
     try {
       const wtm = new WorktreeManager(agentDir);
-      wtm.scan();
+      await wtm.scan();
     } catch (err) {
       logger.warn("[subagents] worktree reaper scan failed", {
         reason: err instanceof Error ? err.message : String(err),
@@ -327,6 +473,22 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
           });
         }
         runs.set(run.runId, run);
+      }
+      // done run 内存有界性：loadAll 全量重水合后立即裁剪到 K。kill-9 恢复（上方
+      // running → transition("done","failed")）的 run completedAt 为 transition 时刻
+      // （当前时间=全局最新）参与排序且必在保留端；多条恢复 run 同 ms completedAt →
+      // tie 稳定排序。淘汰只 delete runs Map 条目——磁盘 state 文件与
+      // workflow-state-link 指针条目均不动（历史审计保留）；下次 session_start loadAll
+      // 从指针全量重水合后再次裁剪，该循环每次 session 启动重复且可接受：内存峰值只在
+      // 启动期，常驻 O(K + 活跃 run)。消除启动峰值需指针 compaction，属 append+replay
+      // 长期方案问题域，非本范围。
+      const evicted = evictDoneRunsBeyondCap(runs, MAX_RETAINED_DONE_RUNS);
+      if (evicted > 0) {
+        logger.debug("[subagent-workflow] evicted done runs beyond cap after loadAll", {
+          evicted,
+          keep: MAX_RETAINED_DONE_RUNS,
+          sessionId,
+        });
       }
     } catch (err) {
       // QMF-4 fix: store.loadAll 失败是关键路径错误，workflow 域将未初始化
@@ -371,7 +533,7 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   });
 
   // ════════════════════════════════════════════════════════════
-  //  session_tree：切分支前 pause 所有 running run
+  //  session_tree：切分支前终止所有 running run（一次性生命周期——切走即作废）
   // ════════════════════════════════════════════════════════════
   pi.on("session_tree", async (_event: SessionTreeEvent, ctx: ExtensionContext) => {
     const sessionId = ctx.sessionManager.getSessionId();
@@ -379,33 +541,90 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
 
     const state = sessionState.get(sessionId);
     if (state) {
-      for (const run of state.runs.values()) {
-        if (run.state.status === "running") {
-          try {
-            await pauseRun(run.runId, makeDeps(state, ctx));
-          } catch (err) {
-            bestEffort(err, "pauseRun (session_tree handler)");
-          }
-        }
+      // 一次性生命周期（D-2）：running run 转 done,failed 落盘（helper 内部自过滤
+      // running，单 run 失败不中断其余）。此处不再挂起待恢复。
+      try {
+        await terminateRunningRuns(makeDeps(state, ctx), "Session switched: run terminated");
+      } catch (err) {
+        bestEffort(err, "terminateRunningRuns (session_tree handler)");
       }
     }
   });
 
   // ════════════════════════════════════════════════════════════
-  //  session_shutdown：dispose subagents + pause workflows + cleanup
+  //  SP-4: session_before_fork（/fork）/ session_before_switch（/new）级联关闭
+  // ════════════════════════════════════════════════════════════
+  //  主 session /fork 或 /new 时，清理旧 record（disposeAllRecords：CAS 转终态 +
+  //  archive + worktree 清理）。before 事件在 session 替换前触发，确保旧 session 的
+  //  subagent 在新 session 创建前被清理（随后的 session_shutdown → dispose 收割子进程）。
+  //
+  //  [M2 修复] 旧实现把 /new 级联挂在 session_before_tree 上——SDK 中该事件只由
+  //  AgentSession.navigateTree()（/tree 同 session 分支切换）触发，/new 走
+  //  session_before_switch(reason:"new") + session_shutdown(reason:"new")，从不触发
+  //  before_tree。后果双向：/new 级联是死代码；普通 /tree 分支导航反而误杀全部活跃
+  //  subagent。现 /new 改挂 session_before_switch(reason==="new")，before_tree handler
+  //  移除（/tree 是同 session 内导航，record/子进程归属不变，无级联关闭诉求）。
+  pi.on("session_before_fork", (_event, _ctx) => {
+    const service = getSubagentService();
+    if (service) {
+      const count = service.onParentFork();
+      if (count > 0) {
+        logger.warn(`[subagents] /fork 级联关闭 ${count} 个 subagent`);
+      }
+    }
+  });
+
+  pi.on("session_before_switch", (event, _ctx) => {
+    // /new（reason:"new"）创建全新 session → 级联关闭旧 record。
+    // reason:"resume"（/resume /import 回到已有 session）不级联：record 按 rootSessionId
+    // 归属隔离，跨 session 读写由 store 过滤守卫，无需销毁。
+    if (event.reason !== "new") return;
+    const service = getSubagentService();
+    if (service) {
+      const count = service.onParentNew();
+      if (count > 0) {
+        logger.warn(`[subagents] /new 级联关闭 ${count} 个 subagent`);
+      }
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════
+  //  session_shutdown：dispose subagents + terminate workflows + store 收尾 + cleanup
+  //
+  //  store 收尾：每 session 的 JsonlRunStore 在 terminateRunningRuns 之后 dispose（刷
+  //  pending 去抖批 + await in-flight 链，见 W2C5）。R3 声明：SIGTERM/SIGINT 走下方
+  //  process handler 不触发本路径，pending 去抖丢失等价崩溃链（重启后 kill-9 恢复
+  //  收编 running 残留——终态/创建均冷路径已落盘，丢的只有 ≤saveDebounceMs 的
+  //  running 尾巴，ES1 已接受）；不做 best-effort SIGTERM dispose（需同步 IO 改造，
+  //  超出 wave 边界）。
   // ════════════════════════════════════════════════════════════
   pi.on("session_shutdown", async (_event: SessionShutdownEvent, _ctx: ExtensionContext) => {
     // ── subagents 域：dispose SubagentService ──
     getSubagentService()?.dispose();
 
-    // ── workflow 域：pause 所有 running run + 清理 temp files ──
+    // ── workflow 域：terminate 所有 running run + store 收尾 + 清理 temp files ──
     // H-5: 遍历所有 sessionState 条目清理（而不只 lastSessionId——
     // 防御 session 切换但 session_tree 未先触发导致 lastSessionId 指向已删除 session 的情况）。
     for (const [sessionId, state] of sessionState) {
-      const running = Array.from(state.runs.values()).filter((r) => r.state.status === "running");
-      await Promise.allSettled(
-        running.map((run) => pauseRun(run.runId, makeDeps(state, _ctx))),
-      );
+      // 编排顺序（W2C5）：terminate（await，failed 落盘——重启后 kill-9 恢复不误判）
+      // → store.dispose（await，刷 pending 去抖批 + await in-flight 链，关「shutdown
+      // 时刻 pending 去抖写丢失」窗口）→ delete。terminate 的 running 过滤在 helper
+      // 内部（单 run 失败不中断其余）；外层 try/catch 兜底防单 session 异常中断后续
+      // session 条目的 dispose + delete（对齐原 allSettled 的不中断语义）。
+      try {
+        await terminateRunningRuns(makeDeps(state, _ctx), "Session shutdown: run terminated");
+      } catch (err) {
+        bestEffort(err, "terminateRunningRuns (session_shutdown handler)");
+      }
+      // dispose 自身恒 resolve，catch 兜底防御——handler 内抛错会中断后续 session
+      // 条目清理。不留静默吞错（错误必须可操作）：debug 留痕带 sessionId/sessionDir，
+      // 排查「shutdown 后 run 状态不落盘」类问题时有迹可循。
+      await state.store.dispose().catch((err: unknown) => {
+        logger.debug(
+          `[subagent-workflow] session_shutdown store.dispose failed (sessionId=${sessionId}, sessionDir=${state.sessionDir})`,
+          { reason: err instanceof Error ? err.message : String(err) },
+        );
+      });
       sessionState.delete(sessionId);
     }
 
@@ -421,6 +640,45 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     const dialogQueue = getOrCreateDialogQueue();
     dialogQueue.rejectAll();
   });
+
+  // ════════════════════════════════════════════════════════════
+  //  [V2 决策 7 防线 i] process 级 shutdown hook（显式收割三道防线之一）
+  //
+  //  上方 session_shutdown（pi async hook）在进程被 SIGTERM/SIGINT 强杀或崩溃时
+  //  不触发，此处 process.on 兜底确保 sync 子进程被收割（防线 i：shutdown 时显式
+  //  SIGTERM 全部 activation）。
+  //
+  //  - SIGTERM：pi 各 mode（rpc/interactive/print）自带 SIGTERM handler 负责退出编排，
+  //    本 extension 的 handler 只做收割 + 设 exitCode（不 re-raise、不抢 pi 的退出语义；
+  //    xyz-agent 桌面 supervisor 用 SIGTERM 杀 pi 走这条路）。
+  //  - SIGINT：pi 本体不注册常规 SIGINT handler（interactive/print/rpc 均 SIGTERM only），
+  //    依赖 Node 默认终止。本 extension 注册 listener 即取消默认终止——若只设 exitCode，
+  //    本地 pi CLI 的 Ctrl-C 杀不死进程（TUI/stdin/agent loop 仍在事件循环）。故收割
+  //    完成后 re-raise 恢复默认终止，见下方 sigintHandler。
+  //  - beforeExit 是退出前最后事件，不 exit（自然退出）。
+  //  - idempotent guard（reapSpawnedChildrenOnShutdown 内）防多信号叠加重复 kill。
+  //
+  //  防线 iii（activate 互斥）已接入：subagent-service.ts 冷路径 resume 调
+  //  acquireActivateLock（含 30s 超时兜底，见 lifecycle-manager.ts ACTIVATE_LOCK_TIMEOUT_MS）。
+  //  防线 ii（启动 scanOrphanProcesses）骨架就位，启动时接入待实现。
+  // ════════════════════════════════════════════════════════════
+  process.on("SIGTERM", () => {
+    reapSpawnedChildrenOnShutdown();
+    // S-3: 改用 process.exitCode 而非 process.exit(0)，让子进程 cleanup 完成后再自然退出。
+    // process.exit(0) 会立即终止，可能在 reapSpawnedChildrenOnShutdown 完成前截断。
+    // 退出编排归 pi 自身的 SIGTERM handler（rpc-mode 会主动退出）。
+    process.exitCode = 0;
+  });
+  // [review 修复] SIGINT re-raise：收割同步完成后，先移除自身 listener 再向自身重发
+  // SIGINT，恢复 Node 默认终止。不 removeListener 直接 kill(process.pid) 会再次进入
+  // 本 handler 递归；移除后无其他 SIGINT listener（pi 不注册）→ 默认行为终止进程。
+  const sigintHandler = (): void => {
+    reapSpawnedChildrenOnShutdown();
+    process.removeListener("SIGINT", sigintHandler);
+    process.kill(process.pid, "SIGINT");
+  };
+  process.on("SIGINT", sigintHandler);
+  process.on("beforeExit", reapSpawnedChildrenOnShutdown);
 
   // ════════════════════════════════════════════════════════════
   //  pi.__workflowRun（D-8 签名）

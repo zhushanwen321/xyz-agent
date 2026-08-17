@@ -18,12 +18,19 @@ import {
 
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
 import { computeElapsedSeconds } from "../execution/execution-record.ts";
+import { isResumable } from "../execution/lifecycle-predicates.ts";
+import type { ExecutionRecord } from "../execution/types.ts";
 import type { ModelInfo } from "../execution/model-resolver.ts";
 import type { SubagentService } from "../execution/subagent-service.ts";
+import { displayAgentName } from "../shared/agent-ref.ts";
 import type {
   BgResponse,
   CancelResponse,
+  CloseResponse,
+  ExecutionStatus,
+  ExternalState,
   ListResponse,
+  MessageResponse,
   SubagentListItem,
   SubagentRecord,
   SubagentToolResult,
@@ -70,6 +77,10 @@ export interface StartHandlerInput {
   worktree?: boolean;
   /** 覆盖子 agent 工作目录（默认 mainCwd）。 */
   cwd?: string;
+  /** 可持续对话模式（true = chatMode，轮次完成进 idle 等续聊）。 */
+  conversation?: boolean;
+  /** 空闲超时毫秒数（仅 conversation 模式有意义，覆盖默认 5min）。 */
+  idleTimeoutMs?: number;
 }
 
 /** start 领域对象（adapter 包成 bgResponse）。 */
@@ -114,18 +125,53 @@ export interface CancelHandlerResult {
  * 不新增 sessionId 到 ExecutionRecord（YAGNI，修跨 session 清理是独立问题）。
  */
 
-/** SubagentRecord → SubagentListItem（8 字段，duration 实时计算）。 */
-function recordToListItem(r: SubagentRecord): SubagentListItem {
+/** exhaustiveness 兜底：default 分支把 status 收敛为 never，ExecutionStatus 加态时 tsc 报错。 */
+function assertNever(value: never): string {
+  return String(value);
+}
+
+/**
+ * 内部 ExecutionStatus → 对外 state 映射（设计决策 10 细则 3）。
+ * v4 B-1 两态收敛后的真实映射只有两条：
+ *   running → active / closed → ended（closed 统一终态，含 cancelled）
+ * ExternalState 仍声明 waiting/error 四态联合（对外契约不变），但当前状态机不产生
+ * 这两个值——它们是历史多态映射（idle→waiting / failed+crashed→error）的遗留声明。
+ * 未来内部加态必须扩展此处，漏加会在 default 分支编译报错（而非静默返回 undefined
+ * 让 state 字段以无主值进入 listResponse JSON）。
+ */
+export function mapExternalState(status: ExecutionStatus): ExternalState {
+  switch (status) {
+    case "running":
+      return "active";
+    case "closed":
+      // v4 B-1: closed 统一终态（含 cancelled）。对外映射为 ended。
+      return "ended";
+    default:
+      throw new Error(`mapExternalState: unhandled ExecutionStatus ${assertNever(status)}`);
+  }
+}
+
+/** SubagentRecord → SubagentListItem（state 四态主字段 + status 调试字段，duration 实时计算）。
+ *  [v4 A-6] 新增 parent/resumable/closedReason：parent 从 record.parentRecordId 派生
+ *  （配合 A-5 直接父守卫），resumable 从 isResumable 派生（B-1「可续聊」对外表达），
+ *  closedReason 透传（SP-4 级联关闭告知替代 before_agent_start 注入）。
+ *  agent 是 GUI/TUI list 共用的显示名——取 basename 短名（displayAgentName），
+ *  完整路径保留在 record.agent（数据层）。 */
+export function recordToListItem(r: SubagentRecord): SubagentListItem {
   return {
     subagentId: r.id,
-    agent: r.agent,
+    agent: displayAgentName(r.agent),
     slug: r.slug,
+    state: mapExternalState(r.status),
     status: r.status,
     mode: r.mode,
     duration: computeElapsedSeconds(r),
     model: r.model,
     totalTokens: r.totalTokens,
     sessionFile: r.sessionFile,
+    parent: r.parentRecordId,
+    resumable: isResumable(r),
+    closedReason: r.closedReason,
   };
 }
 
@@ -171,10 +217,11 @@ export async function startHandler(
     fork: input.fork,
     worktree: input.worktree,
     cwd: input.cwd,
+    conversation: input.conversation,
+    idleTimeoutMs: input.idleTimeoutMs,
     ctxModel,
     signal,
-    // background 不回流 onUpdate：detached 运行，完成由 notify 驱动新 turn。
-    onUpdate: undefined,
+    // background detached 运行，完成由 notify 驱动新 turn。
   });
 
   return {
@@ -207,7 +254,12 @@ export function listHandler(
   // 防截断（先多取再过滤）已下沉到 store 层——这里直接传 limit + filter。
   const filter = includeFinished ? "all" : "running";
   const all = service.collectRecords(limit, filter);
-  const items: SubagentListItem[] = all.map(recordToListItem);
+  // [perf] collectRecords 磁盘源是 light（无 totalTokens/model 等）：SubagentListItem 对
+  // LLM 消费方暴露 totalTokens/model，逐项 getFullRecord 补全（per-file 缓存，仅首次
+  // 全量解析；显式 tool 调用非渲染热路径，成本可接受）。
+  const items: SubagentListItem[] = all.map((r) =>
+    recordToListItem(service.getFullRecord(r.id) ?? r),
+  );
   const running = items.filter((i) => i.status === "running").length;
 
   return { response: { running, items } };
@@ -245,6 +297,14 @@ export async function cancelHandler(
   if (rec.mode !== "background") {
     throw new Error(`Cannot cancel subagent ${id} (unsupported mode: ${rec.mode})`);
   }
+  // 对话模式 cancel = close(force:true) 别名（设计决策 5）：chatMode record（running/idle）
+  // 走 close 行为路径（idle 终态化 done；running 立即 SIGTERM cancelled），
+  // 返回 cancel 响应（向后兼容 cancel action 的返回类型）。非 chatMode 保持现有 cancel 行为。
+  if (rec.chatMode) {
+    const chatRecord = service.getRecordForAction(id);
+    await service.closeSubagent(chatRecord, true);
+    return { subagentId: id, response: { cancelled: true } };
+  }
   // step 3: service.cancel boolean（list-view 契约不变）；false = 已终态（CAS 抢锁失败）。
   // 注意：不嵌入 rec.status——findRecord 快照可能已过期（TOCTOU：cancel 期间 detached
   // 路径 CAS 到 done/failed）。重新查当前状态，避免「status: running」与「already finished」矛盾。
@@ -260,6 +320,127 @@ export async function cancelHandler(
 }
 
 // ============================================================
+// message handler（M2-B3 对话模式续聊/插入）
+// ============================================================
+
+export interface MessageHandlerInput {
+  subagentId?: string;
+  text?: string;
+  interrupt?: boolean;
+}
+
+/** message 领域对象（adapter 包成 messageResponse）。 */
+export type MessageHandlerResult = {
+  kind: "message";
+  subagentId: string;
+  response: MessageResponse;
+};
+
+/**
+ * message action handler：向对话模式 subagent 续聊/插入消息。
+ *
+ * 状态 × interrupt 自动映射（agent 只表达意图）：
+ *   running → deliverMessage 热路径（进程活：prompt + streamingBehavior，interrupt=true
+ *             抢占 / false 排队，pi 权威裁决 busy/idle）
+ *   进程死  → deliverMessage 冷路径（resumeRound 重开 session + prompt，interrupt 自动
+ *             退化，agent 无感）
+ *   终态    → throw ended（正常路径不命中——终态 record 已 archive，getRecordForAction 先 throw not found）
+ * （旧 deliverToRunning busy 投递已删除——SP-5 upgrade 后 running 恒走 deliverMessage）
+ *
+ * 归属守卫（决策 3）：getRecordForAction 内部校验 rootSessionId。
+ *
+ * @throws Error subagentId/text 缺失 / 不存在或非本 session 所有 / 已结束
+ */
+export async function messageHandler(
+  service: SubagentService,
+  input: MessageHandlerInput | undefined,
+): Promise<MessageHandlerResult> {
+  const id = input?.subagentId?.trim();
+  if (!id) throw new Error("messageParam.subagentId is required for action:'message'");
+  const text = input?.text?.trim();
+  if (!text) throw new Error(
+    "messageParam.text is required for action:'message' (must not be whitespace-only). " +
+    'Correct: {"action":"message","messageParam":{"subagentId":"sa-...","text":"your follow-up"}}',
+  );
+  const interrupt = input?.interrupt === true;
+
+  // 归属守卫（决策 3）：getRecordForAction 内部校验 rootSessionId
+  const record = service.getRecordForAction(id);
+
+  // SP-5 one-shot upgrade：非 chatMode 的 active record（running/idle）收到 message 时
+  // 自动升级为 chatMode，后续走 deliverMessage 统一投递路径（热路径或冷路径 resume）。
+  // closed/cancelled 终态 record 不可 upgrade（getRecordForAction 已抛 not found）。
+  // chatMode 是 ExecutionRecord 的 readonly 字段，用 Mutable<T> 显式断言绕过 readonly 约束（upgrade 语义）。
+  // Object.assign 隐式绕过 readonly 不可追踪，改为单字段显式赋值。
+  // [v4 A-3] 进程内 upgrade 入口（SP-5）——one-shot 首条 message 触发 upgrade 置位
+  // chatMode=true。与 subagent-service.ts getRecordForAction 磁盘重建（跨重启恢复入口）
+  // 分工：本入口服务进程内 one-shot，跨重启路径恒被 getRecordForAction 磁盘重建绕过
+  // （该处无条件 chatMode=true）。改动这两处必须协同，带 S3 回归。
+  if (!record.chatMode && record.status === "running") {
+    type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+    (record as Mutable<ExecutionRecord>).chatMode = true;
+  }
+
+  // [V2 决策 3] chatMode 统一投递：按进程死活分流（热路径 prompt+streamingBehavior / 冷路径 resume），
+  // 不按 record.status（V2 进程长驻，idle 态进程仍活，续聊走热路径 prompt 而非重开 session）。
+  // SP-5：upgrade 后 record.chatMode 已为 true，统一进此分支。
+  if (record.chatMode) {
+    await service.deliverMessage(record, text, interrupt);
+  } else {
+    // 终态（closed/cancelled）：防御性兜底（终态 record 已 archive，正常走 not found）
+    throw new Error(
+      `subagent ${id} has ended (status: ${record.status}), cannot message. ` +
+      `Recovery: use action:'close' to clean up, then action:'start' a new subagent.`,
+    );
+  }
+  return { kind: "message", subagentId: id, response: { delivered: true } };
+}
+
+// ============================================================
+// close handler（M2-B3 对话模式结束）
+// ============================================================
+
+export interface CloseHandlerInput {
+  subagentId?: string;
+  force?: boolean;
+}
+
+/** close 领域对象（adapter 包成 closeResponse）。 */
+export type CloseHandlerResult = {
+  kind: "close";
+  subagentId: string;
+  response: CloseResponse;
+};
+
+/**
+ * close action handler：结束 subagent（对话模式为主，one-shot 同样支持）。
+ *
+ * force 语义（设计决策 5/10，v4 B-1 两态收敛 + M5 修正）：
+ *   force:false（默认）= 优雅关闭——
+ *     无在跑轮（等待续聊 timer armed / 无活进程）→ 立即终态化（closed + user-close，回收保活进程）
+ *     有活进程在跑轮 → 置 closeAfterRound，轮完成时终态化（chatMode 消费点 onRoundSettled，
+ *     one-shot 在 runAndFinalize 轮完成分支）——返回 {closed:true} 即承诺轮结束后资源已释放
+ *   force:true = 立即终止——running 立即 SIGTERM（cancelBackground 显式 kill）+ closed+cancelled
+ *
+ * 行为分流委托 service.closeSubagent（归属守卫由 getRecordForAction 把关）。
+ * 已终态 record 由 getRecordForAction throw not found（「已结束的不能再操作」语义）。
+ */
+export async function closeHandler(
+  service: SubagentService,
+  input: CloseHandlerInput | undefined,
+): Promise<CloseHandlerResult> {
+  const id = input?.subagentId?.trim();
+  if (!id) throw new Error("closeParam.subagentId is required for action:'close'");
+  const force = input?.force === true;
+
+  // 归属守卫（决策 3）+ 行为分流（service.closeSubagent）
+  const record = service.getRecordForAction(id);
+  await service.closeSubagent(record, force);
+
+  return { kind: "close", subagentId: id, response: { closed: true } };
+}
+
+// ============================================================
 // adapter（领域对象 → SubagentToolResult + {content, details}）
 // ============================================================
 
@@ -270,7 +451,9 @@ export async function cancelHandler(
 type AdapterInput =
   | { action: "start"; domain: StartHandlerResult }
   | { action: "list"; domain: ListHandlerResult }
-  | { action: "cancel"; domain: CancelHandlerResult };
+  | { action: "cancel"; domain: CancelHandlerResult }
+  | { action: "message"; domain: MessageHandlerResult }
+  | { action: "close"; domain: CloseHandlerResult };
 
 export function adapter(
   input: AdapterInput,
@@ -280,20 +463,35 @@ export function adapter(
   let result: SubagentToolResult;
   if (action === "start") {
     const d = input.domain;
-    result = { action, subagentId: d.subagentId, sessionFile: d.sessionFile ?? null, slug: d.slug, bgResponse: d.response };
+    // MF-3（决策 10 细则 4）：LLM content (text) 用 null 瘦身，防诱导 agent 用 read 绕过工具
+    // 直接读 session 文件。真实 sessionFile 仅 details 保留（供 GUI/程序化消费）。
+    result = { action, subagentId: d.subagentId, sessionFile: null, slug: d.slug, bgResponse: d.response };
   } else if (action === "list") {
     result = { action, subagentId: null, sessionFile: null, listResponse: input.domain.response };
-  } else {
+  } else if (action === "cancel") {
     result = { action, subagentId: input.domain.subagentId, sessionFile: null, cancelResponse: input.domain.response };
+  } else if (action === "message") {
+    result = { action, subagentId: input.domain.subagentId, sessionFile: null, messageResponse: input.domain.response };
+  } else {
+    // action === "close"
+    result = { action, subagentId: input.domain.subagentId, sessionFile: null, closeResponse: input.domain.response };
   }
 
   // content JSON：LLM 看的结构化结果（schema 模式 parsedOutput 作为嵌套 JSON 值可接受）。
   const text = JSON.stringify(result);
 
+  // MF-3：start 的 LLM content 已瘦身（sessionFile:null），details 保留真实 sessionFile 供 GUI/程序化消费。
+  // result 已是合法 SubagentToolResult（start 变体 sessionFile:null）；start 时重建一个带真实 sessionFile 的副本。
+  let detailsBase: SubagentToolResult = result;
+  if (action === "start") {
+    const d = input.domain;
+    detailsBase = { action: "start", subagentId: d.subagentId, sessionFile: d.sessionFile ?? null, slug: d.slug, bgResponse: d.response };
+  }
+
   // GUI 协议：RPC 模式下附加结构化渲染数据（union 各成员已声明 __gui__?，无需强转）
   const details: SubagentToolResult = ctx && isGuiCapable(ctx)
-    ? { ...result, __gui__: guiResult(buildGuiComponent(action, input, result)) }
-    : result;
+    ? { ...detailsBase, __gui__: guiResult(buildGuiComponent(input, result)) }
+    : detailsBase;
 
   // [W3 修复] list action 追加 reminder text block：LLM 调 list 时提醒不要轮询。
   // reminder 作为第二个 text block（独立追加，不污染 details/JSON schema）。
@@ -308,16 +506,20 @@ export function adapter(
   };
 }
 
-/** 按 action 构造对应的 GuiComponent。 */
+/**
+ * 按 input.action 构造对应的 GuiComponent。
+ * 分支判定用 discriminated key（input.action）而非独立宽类型参数——TS 自动
+ * 收窄 input.domain 到对应 HandlerResult，无需 `as` 断言（与 adapter() 同款模式）。
+ */
 export function buildGuiComponent(
-  action: string,
   input: AdapterInput,
   _result: SubagentToolResult,
 ) {
+  const { action } = input;
   if (action === "start") {
     // subagent-trace 多层语义（agent名+slug+状态）用 card(stats-line) 组合表达。
     // 利用 input.domain 的身份信息，让并发 subagent 可区分。
-    const d = input.domain as StartHandlerResult;
+    const d = input.domain;
     return guiComponent("card", {
       header: d.slug ? `${d.slug}` : d.subagentId.slice(0, SUBAGENT_ID_PREVIEW),
       body: [guiComponent("stats-line", {
@@ -326,7 +528,7 @@ export function buildGuiComponent(
     });
   }
   if (action === "list") {
-    const listResp = input.domain as ListHandlerResult;
+    const listResp = input.domain;
     return guiComponent("list-tree", {
       items: listResp.response.items.map((it) => ({
         label: it.slug ? `${it.agent} · ${it.slug} · ${it.subagentId}` : `${it.agent} · ${it.subagentId}`,
@@ -335,8 +537,24 @@ export function buildGuiComponent(
       })),
     });
   }
-  // cancel
+  if (action === "message") {
+    return guiComponent("stats-line", {
+      items: [{ label: "messaged", value: input.domain.subagentId, severity: "ok" }],
+    });
+  }
+  if (action === "close") {
+    return guiComponent("stats-line", {
+      items: [{ label: "closed", value: input.domain.subagentId, severity: "warn" }],
+    });
+  }
+  // cancel（fall-through：前四分支已 return）。
+  // 穷尽检查（同 mapExternalState 的 assertNever 先例）：AdapterInput 未来新增
+  // action 时，action 在此不再收窄为 "cancel"，assertNever 的 never 参数处编译
+  // 报错——防止新分支静默落入 cancelled 渲染。
+  if (action !== "cancel") {
+    throw new Error(`buildGuiComponent: unhandled action ${assertNever(action)}`);
+  }
   return guiComponent("stats-line", {
-    items: [{ label: "cancelled", value: (input.domain as CancelHandlerResult).subagentId, severity: "warn" }],
+    items: [{ label: "cancelled", value: input.domain.subagentId, severity: "warn" }],
   });
 }

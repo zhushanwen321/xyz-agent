@@ -16,6 +16,7 @@ import { resolve } from "node:path";
 
 // WorkflowMeta 规范来源是 shared/resource-meta.ts（m1 DM1）；WorkflowSource 来自 workflow-script
 import type { WorkflowSource } from "./models/workflow-script.ts";
+import { clearLintMemo } from "./models/workflow-script.ts";
 import type { WorkflowMeta } from "../shared/resource-meta.ts";
 import { getCachedFile, getCachedFileContent, clearFileCache } from "../shared/resource-discovery.ts";
 import { parseResourceMeta } from "../shared/meta-parser.ts";
@@ -91,6 +92,20 @@ function stem(filePath: string): string {
 /** 统一模块的 ResourceSource 映射为 workflow 的 saved/tmp 语义 */
 function toWorkflowSource(source: ResourceSource): WorkflowSource {
   return source === "project-pi-tmp" ? "tmp" : "saved";
+}
+
+/**
+ * 按路径推导 ResourceSource（IF4/外部 #5 残留）。
+ *
+ * getWorkflowByPath 可加载任意绝对路径（不限扫描源），此前硬编码 "user-pi"
+ * 使 workspaceRoot/.pi/workflows/.tmp/ 下的临时脚本按路径加载被错标 saved
+ * （discoverWorkflows 对同文件正确标 tmp，两路径不一致）。修正：路径落在
+ * tmp 目录前缀内 → "project-pi-tmp"，其余 → "user-pi"（非 tmp 路径输出不变，DS4）。
+ */
+function deriveResourceSource(filePath: string, workspaceRoot: string): ResourceSource {
+  const tmpDir = resolve(workspaceRoot, ".pi/workflows/.tmp");
+  const normalized = resolve(filePath);
+  return normalized === tmpDir || normalized.startsWith(`${tmpDir}/`) ? "project-pi-tmp" : "user-pi";
 }
 
 // ── 单文件 → CachedWorkflowMeta（IF1 parseResourceMeta + 整对象透传）──
@@ -264,11 +279,23 @@ export async function getWorkflow(name: string): Promise<CachedWorkflowMeta | un
  * - ~/ 前缀展开；相对路径/非 .js 引用返回 undefined（引用唯一形态 = 绝对路径）
  * - 任意路径（不限扫描源）：内置包内脚本、用户任意位置脚本均可执行
  * - meta 提取失败/文件不可读 → available=false（fail-safe，不抛）
+ * - [perf] 与 getWorkflow(name) 对称走 bucket 缓存（key=绝对路径，与 stem 名不冲突），
+ *   消除 workflow tool 主路径每次 run 的全文 regex + YAML.parse（mtime 判变失效）
  */
 export async function getWorkflowByPath(ref: string): Promise<CachedWorkflowMeta | undefined> {
   const filePath = normalizeRef(ref, WORKFLOW_REF_EXT);
   if (filePath === null) return undefined;
-  return toCachedMeta(filePath, "user-pi");
+  const workspaceRoot = findWorkspaceRoot();
+  const bucket = getCacheBucket(workspaceRoot);
+  const cached = bucket.get(filePath);
+  if (cached && isCacheValid(cached)) {
+    return cached.meta;
+  }
+  // IF4：source 按路径推导——.tmp 前缀 → project-pi-tmp（→ "tmp"），其余 user-pi 维持现值
+  const meta = await toCachedMeta(filePath, deriveResourceSource(filePath, workspaceRoot));
+  const file = getCachedFile(filePath);
+  if (file) bucket.set(filePath, { meta, mtimeMs: file.mtimeMs });
+  return meta;
 }
 
 /**
@@ -277,6 +304,8 @@ export async function getWorkflowByPath(ref: string): Promise<CachedWorkflowMeta
  */
 export function invalidateCache(): void {
   // m5：清统一 mtime 缓存层 + bucket（测试隔离 + mtime 漏判场景手动刷新兜底）
+  // IF9：连带清 workflow-script validate 的 lint memo（同源文件缓存，测试隔离统一走它）
   clearFileCache();
   cache.clear();
+  clearLintMemo();
 }

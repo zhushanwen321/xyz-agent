@@ -21,7 +21,7 @@ import { getSubagentService } from "../execution/subagent-service.ts";
 import type { SubagentToolResult } from "../execution/types.ts";
 import { extractAgentName } from "./format.ts";
 import { toGuiCtx } from "./gui-mappers.ts";
-import { adapter, cancelHandler, listHandler, startHandler } from "./subagent-actions.ts";
+import { adapter, cancelHandler, closeHandler, listHandler, messageHandler, startHandler } from "./subagent-actions.ts";
 import { type RenderContext,renderSubagentCall, renderSubagentResult } from "./tool-render.ts";
 
 // ============================================================
@@ -71,8 +71,8 @@ type SubagentRenderResultCb = (
 // （subagent_start / subagent_list / subagent_cancel），让每个 tool 的 schema 真实
 // 反映必填性。勿在此基础上继续堆 action 条件逻辑——要加就拆 tool。
 const SubagentParams = Type.Object({
-  action: StringEnum(["start", "list", "cancel"], {
-    description: "Operation: 'start' runs a subagent, 'list' shows running subagents (optional includeFinished), 'cancel' stops a background subagent by id.",
+  action: StringEnum(["start", "list", "cancel", "message", "close"], {
+    description: "Operation: 'start' runs a subagent, 'list' shows subagents, 'cancel' stops a background subagent, 'message' sends a follow-up to a running subagent (one-shot subagents are auto-upgraded to conversation mode on first message), 'close' ends a running subagent (conversation-mode or one-shot).",
   }),
   // ── action:"start" fields (flattened to top level). task/slug REQUIRED for start. ──
   // Missing/empty task or slug throws at runtime (startHandler).
@@ -93,7 +93,7 @@ const SubagentParams = Type.Object({
     description: 'Model override in "provider/modelId" format. Resolution order (top wins): (1) this param, (2) agent .md frontmatter model, (3) the main agent\'s current model (zero-config default). An explicit model (param or frontmatter) that is missing or unauthorized THROWS — there is no silent fallback to the main model. Omit this param to inherit the main model.',
   })),
   thinkingLevel: Type.Optional(StringEnum(THINKING_ORDER, {
-    description: "Thinking depth override (derived from THINKING_ORDER SSOT, includes 'max'). Omit to inherit the main agent's thinking level.",
+    description: "Thinking depth override (derived from THINKING_ORDER SSOT, includes 'max'). Omit to default to the model's highest available level (not the main agent's level).",
   })),
   skillPath: Type.Optional(Type.String()),
   appendSystemPrompt: Type.Optional(Type.Array(Type.String())),
@@ -113,6 +113,20 @@ const SubagentParams = Type.Object({
   cwd: Type.Optional(Type.String({
     description: 'Override the working directory for the subagent execution. Must be an absolute path. Defaults to the parent session\'s cwd.',
   })),
+  conversation: Type.Optional(Type.Boolean({
+    description:
+      "Enable continuous chat with this subagent. When true, the subagent stays available after each reply — you can send follow-up messages (action:'message') and it keeps the full conversation context across rounds, with no need to re-spawn or re-explain. " +
+      "\nUse conversation:true for: multi-round collaboration (iterative review-fix loops, back-and-forth refinement), any task where you expect to send follow-up messages after the initial result. " +
+      "\nOmit (or false) for: one-shot tasks — single exploration, lookup, file read, code generation that needs no follow-up. The subagent runs once, notifies on completion, and is cleaned up automatically (default). " +
+      "\nFor long-interval collaboration (each round spaced >5min apart), set conversation:true AND increase idleTimeoutMs to avoid premature timeout. " +
+      "Cost: a conversation-mode subagent holds resources (memory, and a worktree if enabled) until you explicitly end it with action:'close'. Always close when done.",
+  })),
+  idleTimeoutMs: Type.Optional(Type.Number({
+    description:
+      "Idle timeout in milliseconds for conversation-mode subagents. Controls how long an idle subagent (between rounds) stays alive before automatic cleanup. " +
+      "Default: 300000 (5min). Override for long-interval collaboration where each round is spaced >5min apart. " +
+      "Only meaningful with conversation:true; ignored for one-shot subagents.",
+  })),
   // action:"list" → listParam OPTIONAL (all fields optional, defaults apply). Ignored by other actions.
   listParam: Type.Optional(Type.Object({
     includeFinished: Type.Optional(Type.Boolean({
@@ -128,6 +142,29 @@ const SubagentParams = Type.Object({
       description: "REQUIRED for action:'cancel'. The subagentId to cancel. Throws if missing. Only background subagents can be cancelled.",
     }),
   })),
+  // action:"message" → messageParam.subagentId + text REQUIRED. Any RUNNING subagent works —
+  // one-shot subagents are auto-upgraded to conversation mode on first message (SP-5); ended ones throw.
+  messageParam: Type.Optional(Type.Object({
+    subagentId: Type.String({
+      description: "REQUIRED for action:'message'. The subagentId to message (any running subagent; a one-shot subagent is auto-upgraded to conversation mode on first message, so you may also message one-shot subagents that are still running).",
+    }),
+    text: Type.String({
+      description: "REQUIRED for action:'message'. The message to send. Whitespace-only throws.",
+    }),
+    interrupt: Type.Optional(Type.Boolean({
+      description: "If true, interrupt the subagent's current work immediately (in-progress output stops, it switches to your new message). If false (default), the message is queued and processed after the current round completes. When the subagent is idle (between rounds), interrupt has no effect — the message always starts a new round.",
+    })),
+  })),
+  // action:"close" → closeParam.subagentId REQUIRED. Ends a running subagent (conversation-mode
+  // or one-shot — closeSubagent behavior split covers both).
+  closeParam: Type.Optional(Type.Object({
+    subagentId: Type.String({
+      description: "REQUIRED for action:'close'. The subagentId to close (any running subagent, conversation-mode or one-shot).",
+    }),
+    force: Type.Optional(Type.Boolean({
+      description: "If true, terminate immediately even if mid-round (in-progress work is lost). If false (default), let the current round finish, then close. When idle, the subagent closes immediately regardless.",
+    })),
+  })),
 });
 
 // ============================================================
@@ -142,13 +179,13 @@ function assertNever(value: never): string {
 }
 
 /** Subagent action 字面量联合（与 parameters schema 的 StringEnum 取值一致）。 */
-type SubagentAction = "start" | "list" | "cancel";
+type SubagentAction = "start" | "list" | "cancel" | "message" | "close";
 
 /** 类型守卫：把 schema 投影出的 string 形式 action 收窄回字面量联合。
  *  typebox v1 的 StringEnum Static 退化为 string，需运行时校验 + 类型收窄
  *  才能恢复 switch 的 exhaustiveness 约束。 */
 function isSubagentAction(value: string): value is SubagentAction {
-  return value === "start" || value === "list" || value === "cancel";
+  return value === "start" || value === "list" || value === "cancel" || value === "message" || value === "close";
 }
 
 /** unknown 是否为含 model/thinkingLevel 的对象（类型守卫，替代全可选结构 `as`）。 */
@@ -182,26 +219,36 @@ CRITICAL — executionMode "sequential": multiple \`subagent\` calls in the SAME
 
 ## When to delegate
 
-Delegate when the task needs a distinct specialized role, context isolation (fork/worktree), or parallelism while you do other work. Delegate FIRST when the task involves any of: reading 3+ files, writing 100+ lines of implementation, parallel research, or specialized review — doing these yourself floods your context with implementation detail and loses the orchestration view.
+Delegate when the task needs a distinct specialized role, context isolation (fork/worktree), or parallelism while you do other work. Delegate FIRST when the task involves any of: reading 3+ files, writing 100+ lines of implementation, parallel research, or specialized review — doing these yourself floods your context.
+
+## Before starting — list first
+
+action:"list" before action:"start" — a reusable running subagent may exist; compaction can swallow its id.
 
 ## Actions
 
-- action:"start" — run a subagent. Pass task and slug as top-level fields (REQUIRED). Optional: agent, model, thinkingLevel, skillPath, appendSystemPrompt, schema, maxTurns, graceTurns, fork, worktree, cwd. Background only: returns a subagentId immediately, notifies on completion.
+- action:"start" — run a subagent. Pass task and slug as top-level fields (REQUIRED). Optional: agent, model, thinkingLevel, skillPath, appendSystemPrompt, schema, maxTurns, graceTurns, fork, worktree, cwd, conversation, idleTimeoutMs. Background only: returns a subagentId immediately, notifies on completion.
+- action:"message" — send a follow-up message to a running subagent (conversation-mode or one-shot); it keeps the full context across rounds. REQUIRED messageParam: { subagentId, text }. Optional: interrupt (default false). The reply auto-notifies when the round completes.
+- action:"close" — end a running subagent and release its resources. REQUIRED closeParam: { subagentId }. Optional: force (default false; true terminates mid-round immediately). Always close when done.
 - action:"list" — list subagents. Pass listParam: { includeFinished?, limit? } (all optional). Read an item's sessionFile for full detail.
-- action:"cancel" — cancel a background subagent. REQUIRED cancelParam: { subagentId }.
+- action:"cancel" — stop a background subagent (legacy verb; for conversation-mode use close). REQUIRED cancelParam: { subagentId }.
 
 ## Examples
 
 \`\`\`
 {"action":"start","task":"<your task>","slug":"<kebab-case>"}
 {"action":"start","task":"...","slug":"fix-login","agent":"coder","model":"anthropic/claude-3.5-sonnet","fork":true}
+{"action":"start","task":"review iteratively","slug":"review","conversation":true}
+{"action":"message","messageParam":{"subagentId":"sa-550e8400","text":"now also handle the empty-list case"}}
+{"action":"message","messageParam":{"subagentId":"sa-550e8400","text":"stop, switch direction to X","interrupt":true}}
+{"action":"close","closeParam":{"subagentId":"sa-550e8400"}}
 {"action":"list","listParam":{"includeFinished":false,"limit":20}}
 {"action":"cancel","cancelParam":{"subagentId":"sa-550e8400"}}
 \`\`\`
 
 ## After launching — do NOT wait
 
-Completion auto-notifies you (steer wakes next turn, even mid-poll). So:
+Completion auto-notifies you (steer wakes the next turn):
 - DO NOT sleep, busy-wait, or poll — there is no poll action; use action:"list" only when you concretely need state.
 - DO useful non-overlapping work, otherwise STOP.
 - On auto-injected completion: process directly. The notification IS the confirmation — do NOT call action:"list" to re-confirm.
@@ -209,25 +256,39 @@ Completion auto-notifies you (steer wakes next turn, even mid-poll). So:
 
 ## Anti-patterns
 
-- Forgetting the REQUIRED top-level task/slug fields for action:"start" — both must be present at the top level (not nested).
+- Forgetting the REQUIRED top-level task/slug fields for action:"start" (not nested).
 - Over-generalizing the flatten: ONLY start fields are top-level. list and cancel params stay nested under listParam / cancelParam (e.g. {"action":"list","listParam":{"includeFinished":true}}, NOT {"action":"list","includeFinished":true}).
 - Launching background, then sleeping/polling instead of working or stopping.
 - Treating subagent results as authoritative without verification.
 - Canceling by guessing a subagentId instead of using action:"list" first.
 
+## Continuous chat (conversation mode)
+
+For multi-round work, set conversation:true on start. The subagent stays available across replies — action:"message" continues with full context retained, action:"close" releases it. Always close when finished.
+
+When to use:
+- ✅ Multi-round collaboration (review/fix loops) → conversation:true
+- ✅ Long-interval rounds (>5min apart) → conversation:true + idleTimeoutMs increased
+- ❌ Single exploration/lookup → default (one-shot)
+
+idleTimeoutMs: per-subagent idle timeout (default 300000 / 5min). Env XYZ_SUBAGENT_IDLE_TIMEOUT_MS sets the global default; per-call param takes precedence.
+
 ## You cannot
 
-- Get a synchronous/inline result — always background, returns a subagentId immediately.
-- Pause or resume a subagent (only cancel).
+- Get a synchronous/inline result — start always returns a subagentId immediately (background).
 - Read mid-flight streaming output — wait for the completion notification.
 
 ## Calling patterns
 
-Single (one subagent, one task) is the common case. Chain dependent tasks: send the next start after the prior completion. Run N independent tasks concurrently: send N action:"start" calls in the SAME message — each returns a subagentId at once. Start long tasks and move on; cancel if the direction changes.
+Chain dependent tasks: send the next start after prior completion. Run N independent tasks concurrently: N action:"start" calls in the SAME message. Cancel if direction changes.
 
-## Nested spawning
+## Nested spawning (recursion)
 
-A subagent MAY call the \`subagent\` tool itself (each level spawns its own child process). Nesting depth appears in the environment block ("Depth: N/10") — spawn deeper while N < 10; the 11th level fails gracefully. Do NOT refuse a sub-subagent — only the depth limit applies.`,
+A subagent MAY call the \`subagent\` tool itself (depth appears in the environment block as "Depth: N/10"). The hard cap is 10 levels — depth 11 fails as a tool error, NOT a reason to avoid nesting entirely (Do NOT refuse a sub-subagent).
+
+Recursion is for TREE-SHAPED work only: a task that decomposes naturally into independent, independently-verifiable sub-tasks. Each level's \`task\` must be SELF-CONTAINED — the child does not see your conversation (unless fork:true). Each level must have its own acceptance criteria, or errors compound silently down the chain.
+
+Do NOT recurse when: the work is linear/flat (use chain or parallel instead); the child needs your context to do the job; or you are delegating the judgment/decision your own level is responsible for. Depth should match the task tree (2-3 levels for most work; deep trees only when the decomposition genuinely demands it) — 10 is a safety rail against infinite delegation loops, not a budget to spend. Prefer fork:false in recursion: fork chains copy parent history at every level and blow up context volume linearly.`,
     executionMode: "sequential",
     parameters: SubagentParams,
     renderCall: subagentRenderCall,
@@ -321,6 +382,10 @@ const executeSubagent: SubagentExecuteCb = async (
       return adapter({ action: "list", domain: listHandler(service, params.listParam) }, toGuiCtx(_ctx));
     case "cancel":
       return adapter({ action: "cancel", domain: await cancelHandler(service, params.cancelParam) }, toGuiCtx(_ctx));
+    case "message":
+      return adapter({ action: "message", domain: await messageHandler(service, params.messageParam) }, toGuiCtx(_ctx));
+    case "close":
+      return adapter({ action: "close", domain: await closeHandler(service, params.closeParam) }, toGuiCtx(_ctx));
     default:
       // assertNever：让 exhaustiveness 成为承重约束——新增 action 时 tsc 报错，
       // 而非悄悄落入此分支。

@@ -5,7 +5,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { parseRunSnapshot, renderWorkflowOverview } from '../core/workflow.js'
-import { readRunSnapshot } from '../discovery/workflows.js'
+import { extractCallSessionFiles, readRunSnapshot } from '../discovery/workflows.js'
 import { REAL_AGENT_DIR } from './real-data.js'
 
 // ============================================================
@@ -46,6 +46,42 @@ const NEW_SNAPSHOT_FIXTURE = {
     ],
   },
   meta: { startedAt: '2026-08-03T13:05:50.111Z', completedAt: '2026-08-03T13:05:55.384Z' },
+}
+
+/**
+ * v2 格式 fixture（pi-subagent-workflow 8.x 一次性生命周期写入的 wf-run-v2 快照）。
+ * 读取面形状与 v1 一致（state.calls[].sessionFile/result 保留），差异仅版本字面量与
+ * status 两态（running/done）、meta 无 pausedAt——v2 不该因版本字面量被挡在读之外。
+ */
+const V2_SNAPSHOT_FIXTURE = {
+  v: 'wf-run-v2',
+  runId: 'wf-ignore',
+  spec: { scriptName: 'one-shot-flow', name: 'Flow Name', scriptSource: '// ...' },
+  state: {
+    status: 'done',
+    reason: 'completed',
+    budget: { usedTokens: 22000, usedCost: 0, totalCallCount: 2, maxTokens: 200000 },
+    calls: [
+      {
+        id: 0,
+        opts: { prompt: 'task 0', model: 'default', thinkingLevel: 'high', description: 'v2-step-0' },
+        status: 'done',
+        attempts: 1,
+        sessionId: '019v2a',
+        sessionFile: '/abs/v2-call0.jsonl',
+        traceNode: { stepIndex: 0, agent: 'dev-W1', task: 'task 0', model: 'default', status: 'completed', phase: 'P0' },
+      },
+      {
+        id: 1,
+        opts: { prompt: 'task 1', model: 'default' },
+        status: 'done',
+        attempts: 1,
+        result: { content: 'OK', durationMs: 567, sessionId: '019v2b', sessionFile: '/abs/v2-call1.jsonl' },
+        traceNode: { stepIndex: 1, agent: 'dev-W2', task: 'task 1', model: 'default', status: 'completed', phase: 'P1' },
+      },
+    ],
+  },
+  meta: { startedAt: '2026-08-10T10:00:00.000Z', completedAt: '2026-08-10T10:05:00.000Z' },
 }
 
 /** OLD 格式 fixture（对齐 wf-skip-ok.jsonl：无 v，callCache value 无 sessionFile/result）。 */
@@ -98,6 +134,23 @@ describe('parseRunSnapshot', () => {
     expect(step.contentPreview).toBe('PROBE-OK')
   })
 
+  it('TC-w5-parse-new-v2：v2 快照（pi-subagent-workflow 8.x 写入）解析非 null，calls sessionFile 读出', () => {
+    const overview = parseRunSnapshot(V2_SNAPSHOT_FIXTURE, 'wf-v2-link-runid', '/abs/wf-v2.jsonl')
+    expect(overview).not.toBeNull()
+    expect(overview!.version).toBe('wf-run-v2')
+    expect(overview!.status).toBe('done')
+    expect(overview!.reason).toBe('completed')
+    expect(overview!.script).toBe('one-shot-flow')
+    // steps：两个 call 的 sessionFile 均读出（顶层优先 / result.sessionFile 回退）
+    expect(overview!.steps).toHaveLength(2)
+    expect(overview!.steps[0].sessionFile).toBe('/abs/v2-call0.jsonl')
+    expect(overview!.steps[0].sessionId).toBe('019v2a')
+    expect(overview!.steps[0].description).toBe('v2-step-0')
+    expect(overview!.steps[1].sessionFile).toBe('/abs/v2-call1.jsonl')
+    expect(overview!.steps[1].sessionId).toBe('019v2b')
+    expect(overview!.steps[1].contentPreview).toBe('OK')
+  })
+
   it('TC-w5-parse-old：OLD 格式 (无 v) 尽力解析为 legacy overview，step status 推测', () => {
     const overview = parseRunSnapshot(OLD_SNAPSHOT_FIXTURE, 'wf-old-link', '/abs/wf-old.jsonl')
     expect(overview).not.toBeNull()
@@ -123,10 +176,28 @@ describe('parseRunSnapshot', () => {
   })
 
   it('TC-w5-parse-malformed：既非 NEW 也非 OLD（缺关键字段）返回 null', () => {
-    // (a) 有 v 但 v!=='wf-run-v1' 且无 callCache（未来版本 wf-run-v2）
-    expect(parseRunSnapshot({ v: 'wf-run-v2', state: { calls: [] } }, 'r', 's')).toBeNull()
+    // (a) 有 v 但 v 非 v1/v2 且无 callCache（未来版本 wf-run-v3 及之后——届时须评估
+    // 新版本读取面形状再扩判定，v2 因形状兼容被接受）
+    expect(parseRunSnapshot({ v: 'wf-run-v3', state: { calls: [] } }, 'r', 's')).toBeNull()
     // (b) 无 v 无 callCache 无 status（异构对象）
     expect(parseRunSnapshot({ foo: 'bar', baz: 1 }, 'r', 's')).toBeNull()
+  })
+})
+
+// ============================================================
+// extractCallSessionFiles（纯逻辑，family/workflows 腿的 sessionFile 提取入口）
+// ============================================================
+
+describe('extractCallSessionFiles', () => {
+  it('v2 快照（wf-run-v2）state.calls 的 sessionFile 能被读出，不因版本字面量挡读', () => {
+    const files = extractCallSessionFiles(V2_SNAPSHOT_FIXTURE)
+    // 顶层 sessionFile + result.sessionFile 回退，两个 call 都读出
+    expect(files).toEqual(['/abs/v2-call0.jsonl', '/abs/v2-call1.jsonl'])
+  })
+
+  it('v1 快照（wf-run-v1）行为不变：state.calls 提取', () => {
+    const files = extractCallSessionFiles(NEW_SNAPSHOT_FIXTURE)
+    expect(files).toEqual(['/abs/session.jsonl'])
   })
 })
 

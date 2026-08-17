@@ -3,7 +3,7 @@
 // ============================================================
 //
 // 本文件消费 discovery/workflows.ts 的 readRunSnapshot（返 unknown 原始快照对象），
-// 把 unknown 类型化为 WorkflowOverview（NEW v='wf-run-v1' / OLD 无 v 双格式分支），
+// 把 unknown 类型化为 WorkflowOverview（NEW v='wf-run-v1'/'wf-run-v2' / OLD 无 v 双格式分支），
 // 再渲染为人类可读文本。零 IO：parseRunSnapshot/renderWorkflowOverview 喂 mock 即可单测
 //（w5 TC-wf-core-pure-logic，对齐 session-reader core/* 纯逻辑约定）。
 //
@@ -78,8 +78,8 @@ export interface WorkflowOverview {
   stateFile: string
   /** NEW state.status / OLD 顶层 status */
   status: string
-  /** 格式标记（渲染/调试用） */
-  version: 'wf-run-v1' | 'legacy'
+  /** 格式标记（渲染/调试用）。v2 读取面形状与 v1 一致（pi-subagent-workflow 8.x 一次性生命周期） */
+  version: 'wf-run-v1' | 'wf-run-v2' | 'legacy'
   /** NEW spec.scriptName / spec.name / OLD name */
   script?: string
   /** NEW meta.startedAt / OLD startedAt（统一 string） */
@@ -199,9 +199,9 @@ function mapCacheEntryToStep(entry: unknown, index: number): WorkflowStep {
  *
  * 分支（C-parserunsnapshot-dualformat，TC-wf-snapshot-version-union）：
  * - 非对象 → null（调用方跳过，ES-wf-snapshot-unparseable）
- * - NEW (snapshot.v === 'wf-run-v1')：state.* / meta.* / spec.*
+ * - NEW (snapshot.v === 'wf-run-v1' 或 'wf-run-v2'，读取面形状一致)：state.* / meta.* / spec.*
  * - OLD (无 v，有 callCache 数组或顶层 status)：顶层 status/budget/startedAt + callCache
- * - 既非 NEW 也非 OLD → null（未来版本 wf-run-v2 / 异构内容）
+ * - 既非 NEW 也非 OLD → null（未来版本（如 wf-run-v3）/ 异构内容）
  *
  * runId/stateFile 透传参数（不读 snapshot.runId，保证与 family.workflows 一致，避免 OLD 顶层
  * runId 可信度低的不一致）。零 any（全程 typeof/Array.isArray/isRecord 守卫收窄）。
@@ -213,8 +213,9 @@ export function parseRunSnapshot(
 ): WorkflowOverview | null {
   if (!isRecord(snapshot)) return null
 
-  // NEW 格式（v === 'wf-run-v1'）
-  if (snapshot.v === 'wf-run-v1') {
+  // NEW 格式（v === 'wf-run-v1' || 'wf-run-v2'，v2 读取面形状兼容 v1）
+  const v = snapshot.v
+  if (v === 'wf-run-v1' || v === 'wf-run-v2') {
     const state = isRecord(snapshot.state) ? snapshot.state : {}
     const meta = isRecord(snapshot.meta) ? snapshot.meta : {}
     const spec = isRecord(snapshot.spec) ? snapshot.spec : {}
@@ -223,7 +224,7 @@ export function parseRunSnapshot(
       runId,
       stateFile,
       status: typeof state.status === 'string' ? state.status : '',
-      version: 'wf-run-v1',
+      version: v,
       script:
         typeof spec.scriptName === 'string'
           ? spec.scriptName

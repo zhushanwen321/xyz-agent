@@ -40,7 +40,15 @@ vi.mock("node:child_process", async () => {
 
   return {
     spawn: vi.fn(() => new FakeChild()),
-    execFileSync: vi.fn(() => ""),
+    // buildEnvBlock 的 git branch 调用（execFile 异步）：默认 err-first 兜底 → catch → branch=""
+    execFile: vi.fn(
+      (
+        _cmd: string,
+        _args: readonly string[],
+        _opts: unknown,
+        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
+      ) => cb(new Error("execFile not configured in this test")),
+    ),
   };
 });
 
@@ -188,9 +196,48 @@ describe("executeAndAwait worktree 失败收尾", () => {
     expect(archiveSpy).toHaveBeenCalledTimes(1);
     // store 现已强类型为 RecordStore → archive 入参为 ExecutionRecord，无需 `as` 断言。
     const archivedRecord = archiveSpy.mock.calls[0]![0];
-    expect(archivedRecord.status).toBe("failed");
+    expect(archivedRecord.status).toBe("closed");
     // archive 后 record 已移出 running map → listRunning 空、getMutable 取不到。
     expect(store.listRunning()).toHaveLength(0);
     expect(store.getMutable(archivedRecord.id)).toBeUndefined();
+  });
+
+  // ============================================================
+  // create-await 竞态守卫（Phase 2）：create await 窗口内 dispose 抢先把
+  // record CAS 成 closed → 守卫 cleanup + throw cancelled（失败 throw 语义，
+  // SAR.run 的 catch 会转 AgentResult.error）。守卫 throw 不落在 try 内
+  // （否则被上方 catch 当 create 失败再走 finalizeFailed，对已 closed record 语义未定义）。
+  // ============================================================
+  it("守卫：create await 窗口内 dispose 抢先 → cleanup 被调 + throw cancelled（不进 runAndFinalize）", async () => {
+    const { service, worktreeManager } = setup();
+
+    const handle = Object.freeze({
+      path: "/tmp/wt-guard2",
+      branch: "pi-sub-guard2",
+      baseCommit: "abc123",
+      mainCwd: "/repo",
+    }) as Parameters<WorktreeManager["cleanup"]>[0];
+    let resolveCreate!: (h: unknown) => void;
+    vi.spyOn(worktreeManager, "create").mockImplementation(
+      () => new Promise((r) => { resolveCreate = r; }) as ReturnType<WorktreeManager["create"]>,
+    );
+    const cleanupSpy = vi.spyOn(worktreeManager, "cleanup").mockResolvedValue(undefined);
+
+    const execP = service.executeAndAwait({
+      task: "guard test",
+      slug: "guard-test",
+      worktree: true,
+      fork: true,
+      ctxModel,
+    });
+    // 微任务推进：record 已建 + executeAndAwait 挂在 pending create 上
+    await new Promise((r) => { setTimeout(r, 0); });
+    // dispose 抢先：CAS running → closed（此刻 worktreeHandle 仍 undefined，
+    // dispose 的 fire-and-forget cleanup 跳过）——守卫是唯一清理点
+    service.disposeAllRecords("parent-shutdown");
+    resolveCreate(handle);
+
+    await expect(execP).rejects.toThrow("cancelled during worktree creation");
+    expect(cleanupSpy).toHaveBeenCalledWith(handle);
   });
 });

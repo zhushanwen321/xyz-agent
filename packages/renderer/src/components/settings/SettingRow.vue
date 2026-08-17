@@ -11,53 +11,21 @@ defineProps<{
 </script>
 
 <template>
-  <div class="setting-row">
-    <div class="sr-left">
-      <div class="sr-label">
-        <span class="label">{{ label }}</span>
+  <!--
+    行范式与 SystemShortcutSection 对齐（flex items-center gap-4 px-1.5 py-2.5 min-h-12）。
+    行分隔：border-hairline（--hairline 0.05 弱分隔 token，等价原 color-mix 50% 弱化）；
+    first:border-t-0 与旧 `.setting-row + .setting-row` 语义等价（消费方均为 SettingRow
+    连续兄弟排列、首个 SettingRow 即容器 first child）。
+  -->
+  <div class="flex items-center gap-4 px-1.5 py-2.5 min-h-12 border-t border-hairline first:border-t-0">
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2">
+        <span class="text-[length:var(--text-base)] font-medium text-neutral-fg">{{ label }}</span>
       </div>
-      <p v-if="desc" class="desc">{{ desc }}</p>
+      <p v-if="desc" class="mt-0.5 text-[length:var(--text-sm)] text-neutral-mid">{{ desc }}</p>
     </div>
-    <div class="sr-right">
+    <div class="flex shrink-0 items-center gap-2">
       <slot />
     </div>
   </div>
 </template>
-
-<style scoped>
-.setting-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: 10px 6px;
-  min-height: 48px;
-}
-.setting-row + .setting-row {
-  border-top: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
-}
-.sr-left {
-  flex: 1;
-  min-width: 0;
-}
-.sr-label {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.label {
-  font-size: var(--text-base);
-  color: var(--neutral-fg);
-  font-weight: 500;
-}
-.desc {
-  font-size: var(--text-sm);
-  color: var(--neutral-mid);
-  margin-top: 2px;
-}
-.sr-right {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-</style>

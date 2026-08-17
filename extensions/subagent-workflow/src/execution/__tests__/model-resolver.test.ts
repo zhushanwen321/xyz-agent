@@ -190,10 +190,47 @@ describe("resolveModel — thinkingLevel resolution", () => {
     expect(r.thinkingLevel).toBe("medium");
   });
 
-  it("ctxModel path: thinkingLevel undefined when no override anywhere", () => {
+  it("ctxModel path: thinkingLevel undefined when no override and ctxModel non-reasoning", () => {
     const reg = makeRegistry([]);
+    // ctxModel（makeModel 默认 reasoning=false）无 override → 非 reasoning 不支持 thinking
     const r = resolveModel(undefined, reg, undefined, ctxModel);
     expect(r.thinkingLevel).toBeUndefined();
+  });
+
+  // ── 默认 thinking 兜底：无显式指定时用「模型最高可用档」（不落 pi 默认 medium）──
+
+  it("ctxModel path: no override + reasoning model with map → highest mapped level", () => {
+    const reg = makeRegistry([]);
+    const m = makeModel({ id: "r-main", provider: "rm", reasoning: true, thinkingLevelMap: { low: 1, high: 2, xhigh: 3 } });
+    const r = resolveModel(undefined, reg, undefined, m);
+    expect(r.thinkingLevel).toBe("xhigh");
+  });
+
+  it("ctxModel path: no override + reasoning model with map containing max → max", () => {
+    const reg = makeRegistry([]);
+    const m = makeModel({ id: "r-max", provider: "rm", reasoning: true, thinkingLevelMap: { high: 2, max: 99 } });
+    const r = resolveModel(undefined, reg, undefined, m);
+    expect(r.thinkingLevel).toBe("max");
+  });
+
+  it("ctxModel path: no override + reasoning model without map → xhigh (pi-legal ceiling)", () => {
+    const reg = makeRegistry([]);
+    // 无 map 时不能用 "max"——pi 侧 model:"max" 后缀非法会导致 model 解析失败
+    const m = makeModel({ id: "r-nomap", provider: "rm", reasoning: true });
+    const r = resolveModel(undefined, reg, undefined, m);
+    expect(r.thinkingLevel).toBe("xhigh");
+  });
+
+  it("override path: no thinkingLevel param → defaults to model's highest mapped level", () => {
+    const m = makeModel({
+      id: "default-thinking",
+      provider: "dt",
+      reasoning: true,
+      thinkingLevelMap: { minimal: 1, medium: 2, high: 3 },
+    });
+    const reg = makeRegistry([m]);
+    const r = resolveModel(undefined, reg, { model: "dt/default-thinking" });
+    expect(r.thinkingLevel).toBe("high");
   });
 });
 

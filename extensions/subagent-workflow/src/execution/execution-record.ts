@@ -20,6 +20,7 @@ import type {
   AgentResult,
   AgentUsage,
   AgentUsageTotal,
+  ClosedReason,
   DisplayItem,
   ExecutionMode,
   ExecutionRecord,
@@ -156,6 +157,10 @@ export function createRecord(
     parentRecordId?: string;
     /** subagent 递归深度。顶层=0。 */
     depth?: number;
+    /** 对话模式标志（true = 可持续对话，轮次完成进 idle）。默认 undefined/false = 一次性。 */
+    chatMode?: boolean;
+    /** 空闲超时毫秒数（仅 chatMode 有意义）。覆盖默认 5min。 */
+    idleTimeoutMs?: number;
     controller?: AbortController;
   },
 ): ExecutionRecord {
@@ -171,6 +176,8 @@ export function createRecord(
     rootSessionId: identity.rootSessionId,
     parentRecordId: identity.parentRecordId,
     depth: identity.depth ?? 0,
+    chatMode: identity.chatMode,
+    idleTimeoutMs: identity.idleTimeoutMs,
 
     // 状态（实时更新）
     status: "running",
@@ -180,6 +187,8 @@ export function createRecord(
     turnCount: 0,
     totalTokens: 0,
     lastError: undefined,
+    // 对话轮次计数（首轮 = 0，每完成一轮 finalizeRoundToIdle +1）。非 chatMode 不自增。
+    round: 0,
 
     // 完成（completeRecord 唯一写点）
     endedAt: undefined,
@@ -234,6 +243,30 @@ function findRunningToolCall(
 }
 
 /**
+ * [perf] running toolCall 倒序索引：tool_start push 位置入索引，tool_end 弹尾定位
+ *（尾部 = 最后 push 的同名项，与 findRunningToolCall 倒序全扫的语义等价），把每次
+ * tool_end 的 O(所有 turns × toolCalls) 扫描降为 O(1)。WeakMap 按 record 实例隔离
+ *（createRecord 新实例从空索引开始，不影响旧实例）。
+ * 索引 miss（重建 record 的历史 running toolCall / 外部注入工具无 tool_start）
+ * 回退 findRunningToolCall 全扫兜底——正确性不依赖索引完整性。
+ */
+const runningToolIndex = new WeakMap<ExecutionRecord, Map<string, Array<{ turn: Turn; idx: number }>>>();
+
+function indexToolStart(record: ExecutionRecord, turn: Turn, toolName: string): void {
+  let byName = runningToolIndex.get(record);
+  if (byName === undefined) {
+    byName = new Map();
+    runningToolIndex.set(record, byName);
+  }
+  const arr = byName.get(toolName);
+  if (arr === undefined) {
+    byName.set(toolName, [{ turn, idx: turn.toolCalls.length - 1 }]);
+  } else {
+    arr.push({ turn, idx: turn.toolCalls.length - 1 });
+  }
+}
+
+/**
  * 从 AgentEvent 更新 record。所有数据收口进 record.turns[]。
  *   - text/thinking：流式累积进 currentTurn()（完整内容，非切片）
  *   - tool_start/end：push 进 currentTurn().toolCalls（含完整 result）
@@ -271,13 +304,30 @@ export function updateFromEvent(record: ExecutionRecord, event: AgentEvent): voi
         _status: "running",
         startedTs: Date.now(),
       };
-      currentTurn(record).toolCalls.push(tc);
+      const turn = currentTurn(record);
+      turn.toolCalls.push(tc);
+      indexToolStart(record, turn, event.toolName);
       return;
     }
 
-    // ── tool_end：跨 turn 找 running 同名 toolCall，补全 result/isError/_status ──
+    // ── tool_end：索引弹尾 O(1) 定位 running 同名 toolCall，miss 回退全扫兜底 ──
     case "tool_end": {
-      const matched = findRunningToolCall(record, event.toolName);
+      let matched: readonly [Turn, number] | undefined;
+      const byName = runningToolIndex.get(record);
+      const arr = byName?.get(event.toolName);
+      if (arr !== undefined && arr.length > 0) {
+        const item = arr[arr.length - 1];
+        arr.pop();
+        const tc = item.turn.toolCalls[item.idx];
+        if (tc !== undefined && tc._status === "running") {
+          matched = [item.turn, item.idx] as const;
+        }
+      }
+      if (matched === undefined) {
+        // 兜底：重建 record 的历史 running toolCall（索引未覆盖）、索引项被外部路径
+        // 置非 running 等场景——保持与旧实现一致的跨 turn 倒序全扫。
+        matched = findRunningToolCall(record, event.toolName);
+      }
       if (matched !== undefined) {
         const [turn, i] = matched;
         const tc = turn.toolCalls[i]!;
@@ -489,6 +539,51 @@ export function getFullText(record: ExecutionRecord): string {
 }
 
 /**
+ * [增量通知] 从 fromTurnIndex 起聚合 turn 文本（getFullText 的增量视图）。
+ *
+ * 语义：record.turns.slice(Math.max(0, fromTurnIndex)) 的 text 数组
+ * filter(text => text.length > 0)（判据与 getFullText 逐字对齐——空白串 " " 按非空
+ * 处理，不发散）后 join("\n\n")。
+ *
+ * 不变式（单测锁死）：
+ *   - fromTurnIndex = 0 与 getFullText(record) 逐字节等价（one-shot/首轮回退零成本）
+ *   - fromTurnIndex >= turns.length 返回 ""（不抛错、不回绕）
+ *   - fromTurnIndex < 0 规范化为 0（防御，Math.max 不产生 slice 负偏移语义）
+ *
+ * 纯函数只读；getFullText 本体与既有调用方（collectResult 等）零改动。
+ * 唯一调用点 onRoundSettled 的增量派生（record.roundBaseTurnIndex ?? 0）。
+ */
+export function getFullTextFrom(record: ExecutionRecord, fromTurnIndex: number): string {
+  return record.turns
+    .slice(Math.max(0, fromTurnIndex))
+    .map((t) => t.text)
+    .filter((text) => text.length > 0)
+    .join("\n\n");
+}
+
+/**
+ * [增量通知] 轮次边界推进公式（D1）：返回下一轮增量的 turns[] 起始下标。
+ *
+ * record.turns.length - (末 turn 存在且 !closed 且 text.length === 0 ? 1 : 0)
+ *
+ * - 末 turn 已闭合（pi 现序常态：带 usage 的 message_end 恒先于 turn_end，settle 时
+ *   全闭合）→ 返回 length，下一轮从新 turn 起。
+ * - 末 turn 是滞后 message_end 开出的空 turn（防御分支，pi 现序不可达）→ 不计入边界
+ *   （-1），留在下一轮增量内：新轮首个 text_delta 经 currentTurn 复用该空 turn，复用
+ *   累积被 slice(from) 覆盖；若直用 turns.length 会把这段文本挤出 slice 范围静默丢失（D1）。
+ * - 末 turn 未闭合且 text 非空（防御形态，pi 现序不可达）→ 计入本轮返回 length（该形态
+ *   即 onRoundSettled 推进前观测哨 logger.warn 的触发条件）。
+ *
+ * 纯函数只读不写 record；唯一调用点 onRoundSettled 第 5 步（notify 之后推进）。
+ */
+export function nextRoundBaseTurnIndex(record: ExecutionRecord): number {
+  const last = record.turns[record.turns.length - 1];
+  const trailingOpenEmpty =
+    last !== undefined && !last.closed && last.text.length === 0 ? 1 : 0;
+  return record.turns.length - trailingOpenEmpty;
+}
+
+/**
  * 聚合所有 turn 的 toolCalls（扁平化），并 strip InternalToolCall 的内部字段。
  * 供 collectResult / schema enforcement 读，替代旧闭包 toolCalls 旁路。
  *
@@ -497,6 +592,17 @@ export function getFullText(record: ExecutionRecord): string {
  */
 export function getAllToolCalls(record: ExecutionRecord): ToolCall[] {
   return record.turns.flatMap((t) => t.toolCalls.map(stripInternal));
+}
+
+/**
+ * 聚合所有 turn 的 toolCalls 总数（免克隆计数）。
+ *
+ * getAllToolCalls 会 flatMap + strip 克隆出完整数组——只需计数的调用方（渲染签名
+ * 每 200ms tick 调用一次）用它是纯浪费；本函数 reduce 累加各 turn 的 length，零分配。
+ * 与 getAllToolCalls(...).length 恒等（同一 turns 源）。
+ */
+export function countAllToolCalls(record: ExecutionRecord): number {
+  return record.turns.reduce((sum, t) => sum + t.toolCalls.length, 0);
 }
 
 /** 把 InternalToolCall 映射回纯净的 ToolCall（丢弃 _status / startedTs）。 */
@@ -540,21 +646,26 @@ export function getTotalUsage(record: ExecutionRecord): AgentUsageTotal | undefi
 /**
  * status 状态机的 CAS 互斥锁。仅当 `record.status === "running"` 时改为 target
  * 并返回 true，否则返回 false。**status 状态机本身就是互斥锁**——终态
- * （done/failed/cancelled/crashed）不可逆，check-then-set 在 JS 单线程事件循环里天然原子。
+ * （closed/cancelled）不可逆，check-then-set 在 JS 单线程事件循环里天然原子。
  *
  * 用途：executor 的收尾竞争。cancelBackground 与 background detached 完成回调
  * 都调 tryTransition 抢锁：抢到负责完整收尾，没抢到闭嘴不做事。
  *
- * target 仅限正常执行流的三终态。crashed 不作 target——它由重建路径推断
- * （alive marker 存在但 session 文件无终态），不走 CAS；重建路径用 markReconstructedStatus
- * 直接赋值。收窄 target 类型可在编译期拒绍误用 tryTransition(record, "crashed")。
+ * target 仅限正常执行流的两终态（closed + cancelled）。
+ * closed 携带 closedReason（L2 原因子枚举），由重建路径或正常执行流写入。
+ * 重建路径也可用 markReconstructedStatus 直接赋值（跳过 CAS）。
+ *
+ * @param closedReason closed 终态的 L2 关闭原因。仅 target="closed" 时有意义；
+ *   target="cancelled" 时忽略。缺省 "gc"（通用完成/失败）。
  */
 export function tryTransition(
   record: ExecutionRecord,
-  target: "done" | "failed" | "cancelled",
+  target: "closed",
+  closedReason?: ClosedReason,
 ): boolean {
   if (record.status !== "running") return false;
   record.status = target;
+  record.closedReason = closedReason ?? "gc";
   return true;
 }
 
@@ -577,13 +688,18 @@ export function markReconstructedStatus(
  * 不修改 turns/totalTokens——已由 updateFromEvent 累积，completeRecord 只读不重置。
  *
  * ⚠ 前置条件：调用方必须先通过 tryTransition 抢到锁（status 已被 CAS 设为 target）。
+ *
+ * @param closedReason closed 终态的 L2 关闭原因。仅 status="closed" 时写入；
+ *   "cancelled" 时忽略。
  */
 export function completeRecord(
   record: ExecutionRecord,
   result: AgentResult,
-  status: "done" | "failed" | "cancelled",
+  status: "closed",
+  closedReason?: ClosedReason,
 ): void {
   record.status = status;
+  record.closedReason = closedReason ?? "gc";
   record.endedAt = Date.now();
   record.agentResult = result;
   record.result = result.text;
@@ -663,6 +779,7 @@ export function snapshot(record: ExecutionRecord): RecordSnapshot {
     task: record.task,
     slug: record.slug,
     status: record.status,
+    chatMode: record.chatMode,
     turns: record.turnCount,
     totalTokens: record.totalTokens,
     startedAt: record.startedAt,

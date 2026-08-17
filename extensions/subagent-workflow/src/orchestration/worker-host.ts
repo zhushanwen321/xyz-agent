@@ -40,7 +40,7 @@ export class WorkerHostImpl implements WorkerHost {
  * handle.isCurrent 做竞态防护，G-025）
  *
  * 返回的 WorkerHandle 由调用方（lifecycle）保存到 RunRuntime.worker。
- * 终止/pause/resume 时由 RunRuntime.release 接管。
+ * 终止/崩溃重建（rebuild）时由 RunRuntime.release 接管。
  */
   start(
     spec: RunSpec,

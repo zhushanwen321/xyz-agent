@@ -304,6 +304,8 @@ export default {
   bgNotify: {
     title: '后台通知',
     cancelled: '已取消',
+    roundLabel: '第 {round} 轮完成',
+    roundDone: '完成一轮',
     patchHint: '改动以 patch 形式保存：{file}（用 git apply 应用到当前仓库）',
   },
   forkNotice: {

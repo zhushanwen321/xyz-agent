@@ -51,12 +51,32 @@ function isGenericRuntime(execPath: string): boolean {
  *   2. execPath 非通用运行时（pi standalone binary）→ <execPath> <userArgs>
  *   3. 通用运行时但无可用脚本路径 → "pi" <userArgs>（依赖 PATH 中可找到 pi）
  */
+// [perf] 决策链只依赖 process.argv[1] / process.execPath（进程内恒定），其中唯一的
+// 磁盘探测（existsSync）结果 memo 一次——每次 spawn 免重复 syscall。memo 键含
+// argv[1] 值：测试 mock 切换 argv[1] 模拟不同运行时时自动失效重算。
+let scriptExistsCache: { script: string | undefined; exists: boolean } | undefined;
+
+/** process.argv[1] 是真实磁盘脚本（非 bun 虚拟路径）且存在。 */
+function currentScriptExists(): boolean {
+  const currentScript = process.argv[1];
+  if (scriptExistsCache === undefined || scriptExistsCache.script !== currentScript) {
+    scriptExistsCache = {
+      script: currentScript,
+      exists:
+        currentScript !== undefined &&
+        !currentScript.startsWith(BUN_VIRTUAL_PREFIX) &&
+        fs.existsSync(currentScript),
+    };
+  }
+  return scriptExistsCache.exists;
+}
+
 export function getPiInvocation(userArgs: string[]): PiInvocation {
   const currentScript = process.argv[1];
   const isBunVirtualScript = currentScript?.startsWith(BUN_VIRTUAL_PREFIX);
 
   // 分支 1：有真实脚本路径 → 复现启动方式（node <pi-script> <args>）
-  if (currentScript && !isBunVirtualScript && fs.existsSync(currentScript)) {
+  if (currentScript && !isBunVirtualScript && currentScriptExists()) {
     return { command: process.execPath, args: [currentScript, ...userArgs] };
   }
 

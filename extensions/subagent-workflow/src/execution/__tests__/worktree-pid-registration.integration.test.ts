@@ -15,13 +15,13 @@
 //   真实注册表文件，仅 mock ./pi-invocation.ts（把 pi 二进制替换为 node -e 脚本）。
 //
 // mock 最小化原则：
-//   - node:child_process 不 mock（真实 spawn / execFileSync git）
+//   - node:child_process 不 mock（真实 spawn / spawnSync git）
 //   - node:fs 不 mock（真实目录/文件：worktree checkout、注册表 JSON）
 //   - alive-store 不 mock（真实 process.kill(pid, 0) 探活）
 //   - 仅 vi.mock("./pi-invocation.ts")：getPiInvocation 返回 node -e 脚本
 //   - fake timers 仅 toFake: ["Date"]：推进注册表宽限判定用，不干扰真实 I/O 事件
 
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -67,7 +67,8 @@ let handle: WorktreeHandle | undefined;
 let spawnedPid: number | undefined;
 
 function git(args: string[], cwd: string): string {
-  return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+  const r = spawnSync("git", args, { cwd, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+  return (r.stdout ?? "").trim();
 }
 
 /** 初始化临时 git repo（至少一个 commit，worktreeManager.create 需要 clean tree + HEAD）。 */
@@ -97,7 +98,7 @@ async function waitForPid(branch: string, timeoutMs = 5000): Promise<number> {
 }
 
 /** 清理：kill 子进程 + worktree cleanup + 删除临时目录。 */
-function cleanup(): void {
+async function cleanup(): Promise<void> {
   if (spawnedPid) {
     try {
       process.kill(spawnedPid, "SIGKILL");
@@ -108,7 +109,7 @@ function cleanup(): void {
   }
   if (handle) {
     try {
-      wtm.cleanup(handle);
+      await wtm.cleanup(handle);
     } catch (err) {
       // best-effort：git worktree remove 失败不阻断测试清理
       // eslint-disable-next-line no-console
@@ -131,9 +132,9 @@ beforeEach(() => {
   registry = new WorktreeRegistry(agentDir);
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers();
-  cleanup();
+  await cleanup();
 });
 
 // ── 用例 ──
@@ -142,7 +143,7 @@ describe("worktree pid 注册链路（真实 spawn 集成）", () => {
   it("正向：spawn 返回后注册表 pid 同步补全，活 worktree 超宽限不被 scan 误清", async () => {
     // 0. 长驻脚本（子进程 90s 内不退出，模拟长跑子 agent）
     scriptHolder.script = LONG_RUNNING_SCRIPT;    // 1. 真实创建 worktree（pid=0 占位）
-    handle = wtm.create(repoDir, "rec-1");
+    handle = await wtm.create(repoDir, "rec-1");
     expect(readEntry(handle.branch)).toMatchObject({ pid: 0 });
 
     // 2. runSpawn 挂后台（不 await——长驻子进程 close 不触发，await 会挂死），
@@ -170,7 +171,7 @@ describe("worktree pid 注册链路（真实 spawn 集成）", () => {
     vi.setSystemTime(Date.now() + SPAWN_GRACE_MS + 1000);
 
     // 5. scan()：活 worktree 必须不被清（修复前：pid=0 超宽限 → 误删 → 红）
-    wtm.scan();
+    await wtm.scan();
     expect(fs.existsSync(handle.path)).toBe(true);
 
     // 6. 收尾：真实时钟恢复 + kill 子进程让 runPromise settle
@@ -183,7 +184,7 @@ describe("worktree pid 注册链路（真实 spawn 集成）", () => {
     await runPromise;
 
     // 7. 反向：进程死后 scan 回收真孤儿
-    wtm.scan();
+    await wtm.scan();
     expect(fs.existsSync(handle.path)).toBe(false);
     const entryAfter = readEntry(handle.branch);
     expect(entryAfter).toBeUndefined();
@@ -193,7 +194,7 @@ describe("worktree pid 注册链路（真实 spawn 集成）", () => {
     // 0. 短命脚本（子进程立即退出，模拟快速完成的子 agent）
     scriptHolder.script = SHORT_LIVED_SCRIPT;
     // 1. 真实创建 worktree
-    handle = wtm.create(repoDir, "rec-2");
+    handle = await wtm.create(repoDir, "rec-2");
 
     // 2. 短命脚本子进程：spawn 后同步补 pid（修复前 pid=0，且未超宽限 → 不回收 → 红）
     const ctx = makeCtx({
@@ -218,7 +219,7 @@ describe("worktree pid 注册链路（真实 spawn 集成）", () => {
     spawnedPid = entry!.pid;
 
     // 4. scan：pid>0 且进程死 → 立即判孤儿回收（无需等宽限）
-    wtm.scan();
+    await wtm.scan();
     expect(fs.existsSync(handle.path)).toBe(false);
     expect(readEntry(handle.branch)).toBeUndefined();
   }, 15000);
