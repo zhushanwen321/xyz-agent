@@ -4,12 +4,13 @@
  * IF5 契约 + ES2：
  * ① 已 subscribed 且 fromSeq undefined → 幂等直接 return（subscribe 不被调用）
  * ② fromSeq 显式传入 → 跳过守卫发 RPC（reconcile backfill）
- * ③ snapshot/stateSnapshot 依次回放 dispatchSession
+ * ③ snapshot/stateSnapshot 依次回放 replay 端口
  * ④ lastSeenSeq = max(reply.lastSeq, maxSnapshotSeq, maxStateSnapshotSeq, prevLastSeen)
  * ⑤ subscribe RPC 失败 → console.warn + 不标记 subscribed
  * ⑥ clearSubscription 删除、resetSubscriptionStates 清空、updateLastSeenSeq 更新基线
  *
- * 注入驱动：setSubscriptionPorts 注入 subscribe spy + dispatchSession spy；
+ * 注入驱动：setSubscriptionPorts 注入 subscribe spy + replay spy（回放分发入口；
+ * routeInbound 语义的集成测试见 subscription-replay.test.ts）；
  * beforeEach resetSubscriptionStates() 清 Map（测试隔离）。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -32,12 +33,9 @@ function makeMsg(seq: number, type = 'session.ping'): ServerMessage {
 function setup() {
   // TransportPorts['subscribe'] 形状的 mock（resolve 形状在用例内 mockResolvedValue 给定）
   const subscribe = vi.fn() as Mock<TransportPorts['subscribe']>
-  const dispatchSession = vi.fn()
-  setSubscriptionPorts({
-    subscribe,
-    events: { dispatchSession, dispatchGlobal: vi.fn(), dispatchCrossSession: vi.fn() },
-  })
-  return { subscribe, dispatchSession }
+  const replay = vi.fn()
+  setSubscriptionPorts({ subscribe, replay })
+  return { subscribe, replay }
 }
 
 describe('subscribeSession', () => {
@@ -96,18 +94,18 @@ describe('subscribeSession', () => {
     expect(subscribe).toHaveBeenLastCalledWith('s1', 7)
   })
 
-  it('③ snapshot/stateSnapshot 依次回放 dispatchSession', async () => {
-    const { subscribe, dispatchSession } = setup()
+  it('③ snapshot/stateSnapshot 依次回放 replay 端口', async () => {
+    const { subscribe, replay } = setup()
     subscribe.mockResolvedValue({
       snapshot: [makeMsg(1), makeMsg(2)],
       stateSnapshot: [makeMsg(3, 'session.commands'), makeMsg(4, 'session.context')],
       lastSeq: 10,
     })
     await subscribeSession('s1')
-    expect(dispatchSession).toHaveBeenCalledTimes(4)
-    expect(dispatchSession.mock.calls.map((c) => c[1].seq)).toEqual([1, 2, 3, 4])
+    expect(replay).toHaveBeenCalledTimes(4)
+    expect(replay.mock.calls.map((c) => c[1].seq)).toEqual([1, 2, 3, 4])
     // 全部以 sessionId 路由
-    for (const call of dispatchSession.mock.calls) {
+    for (const call of replay.mock.calls) {
       expect(call[0]).toBe('s1')
     }
   })

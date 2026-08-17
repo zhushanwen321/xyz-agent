@@ -21,7 +21,7 @@ import * as core from '@xyz-agent/core'
 // ── 端口 spy：经 core.setSubscriptionPorts 注入（S2 行为冒烟用） ─────
 const portSpy = vi.hoisted(() => ({
   subscribe: vi.fn(),
-  dispatchSession: vi.fn(),
+  replay: vi.fn(),
 }))
 // core 是模块级单例 Map，spy 注入后需在测试间重置
 import { setSubscriptionPorts } from '@xyz-agent/core'
@@ -68,20 +68,20 @@ describe('S1: shim 5 导出 === core 同引用（纯转发，无本地实现）'
 })
 
 describe('S2: 行为等价冒烟——经 shim 走 core 订阅流程（原 TC1 核心路径）', () => {
-  it('注入端口后 subscribeSession：RPC + snapshot 逐条 dispatch + 记 lastSeenSeq + 标记 subscribed', async () => {
+  it('注入端口后 subscribeSession：RPC + snapshot 逐条 replay + 记 lastSeenSeq + 标记 subscribed', async () => {
     const snapshot = [msgWithSeq(1), msgWithSeq(2)]
     portSpy.subscribe.mockResolvedValue({ snapshot, stateSnapshot: [], lastSeq: 2 })
-    setSubscriptionPorts({ subscribe: portSpy.subscribe, events: { dispatchSession: portSpy.dispatchSession } })
+    setSubscriptionPorts({ subscribe: portSpy.subscribe, replay: portSpy.replay })
 
     await subscribeSession('s1')
 
     // RPC 被调一次，未传 fromSeq（首次订阅）
     expect(portSpy.subscribe).toHaveBeenCalledTimes(1)
     expect(portSpy.subscribe).toHaveBeenCalledWith('s1', undefined)
-    // snapshot 逐条 dispatchSession（按顺序）
-    expect(portSpy.dispatchSession).toHaveBeenCalledTimes(2)
-    expect(portSpy.dispatchSession).toHaveBeenNthCalledWith(1, 's1', snapshot[0])
-    expect(portSpy.dispatchSession).toHaveBeenNthCalledWith(2, 's1', snapshot[1])
+    // snapshot 逐条 replay（按顺序）
+    expect(portSpy.replay).toHaveBeenCalledTimes(2)
+    expect(portSpy.replay).toHaveBeenNthCalledWith(1, 's1', snapshot[0])
+    expect(portSpy.replay).toHaveBeenNthCalledWith(2, 's1', snapshot[1])
     // state 记录正确
     const state = getSubscriptionState('s1')
     expect(state).toEqual({ lastSeenSeq: 2, subscribed: true })
@@ -89,7 +89,7 @@ describe('S2: 行为等价冒烟——经 shim 走 core 订阅流程（原 TC1 �
 
   it('lastSeq 小于 snapshot 末尾 seq（ring 溢出）：取 max 作基线', async () => {
     portSpy.subscribe.mockResolvedValue({ snapshot: [msgWithSeq(5)], stateSnapshot: [], lastSeq: 3, gap: true })
-    setSubscriptionPorts({ subscribe: portSpy.subscribe, events: { dispatchSession: portSpy.dispatchSession } })
+    setSubscriptionPorts({ subscribe: portSpy.subscribe, replay: portSpy.replay })
 
     await subscribeSession('s1')
 
@@ -99,20 +99,20 @@ describe('S2: 行为等价冒烟——经 shim 走 core 订阅流程（原 TC1 �
 
   it('连续两次 subscribeSession：第二次 no-op（幂等守卫，不重复 RPC）', async () => {
     portSpy.subscribe.mockResolvedValue({ snapshot: [msgWithSeq(1)], stateSnapshot: [], lastSeq: 1 })
-    setSubscriptionPorts({ subscribe: portSpy.subscribe, events: { dispatchSession: portSpy.dispatchSession } })
+    setSubscriptionPorts({ subscribe: portSpy.subscribe, replay: portSpy.replay })
 
     await subscribeSession('s1')
     await subscribeSession('s1')
 
     expect(portSpy.subscribe).toHaveBeenCalledTimes(1)
-    expect(portSpy.dispatchSession).toHaveBeenCalledTimes(1)
+    expect(portSpy.replay).toHaveBeenCalledTimes(1)
   })
 })
 
 describe('S3: RPC 失败防御路径（core 语义经 shim 透传）', () => {
   it('subscribe RPC 失败：不标记 subscribed（意图条目留存，可重试）', async () => {
     portSpy.subscribe.mockRejectedValue(new Error('RPC failed'))
-    setSubscriptionPorts({ subscribe: portSpy.subscribe, events: { dispatchSession: portSpy.dispatchSession } })
+    setSubscriptionPorts({ subscribe: portSpy.subscribe, replay: portSpy.replay })
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     await subscribeSession('s1')
@@ -129,7 +129,7 @@ describe('S3: RPC 失败防御路径（core 语义经 shim 透传）', () => {
 describe('S4: clearSubscription / updateLastSeenSeq 行为等价（原 TC7 子集）', () => {
   it('subscribe 后 clear：state 变 undefined；clear 不存在 session：no-op', async () => {
     portSpy.subscribe.mockResolvedValue({ snapshot: [msgWithSeq(1)], stateSnapshot: [], lastSeq: 1 })
-    setSubscriptionPorts({ subscribe: portSpy.subscribe, events: { dispatchSession: portSpy.dispatchSession } })
+    setSubscriptionPorts({ subscribe: portSpy.subscribe, replay: portSpy.replay })
 
     await subscribeSession('s1')
     expect(getSubscriptionState('s1')).toBeDefined()
@@ -142,7 +142,7 @@ describe('S4: clearSubscription / updateLastSeenSeq 行为等价（原 TC7 子�
 
   it('updateLastSeenSeq：已订阅更新基线；state 不存在 no-op', async () => {
     portSpy.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
-    setSubscriptionPorts({ subscribe: portSpy.subscribe, events: { dispatchSession: portSpy.dispatchSession } })
+    setSubscriptionPorts({ subscribe: portSpy.subscribe, replay: portSpy.replay })
     await subscribeSession('s1')
     expect(getSubscriptionState('s1')!.lastSeenSeq).toBe(5)
 

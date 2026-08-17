@@ -113,9 +113,7 @@ let replayedVersion = 0
 // 本视图的 flush 监听反注册（mount 注册 / unmount 与切 session 反注册）
 let unregisterFlush: (() => void) | null = null
 
-// ── 回放分批写队列（Fix-5）──
-// 全量回放（mount）可达 5000 chunks × 4KB ≈ 20MB，replayChunksBatched 拆批逐帧写；
-// 顺序 = 入队序，队列空闲时单批同步写（增量 flush 立即可见），指针入队即推进。
+// ── 回放分批写队列（Fix-5）：全量回放可达 5000 chunks × 4KB ≈ 20MB，拆批逐帧写；指针入队即推进 ──
 let replayWriteQueue: string[] = []
 let replayWriteScheduled = false
 
@@ -139,12 +137,14 @@ function enqueueReplayWrites(batches: string[]): void {
 
 /**
  * 版本回放（D-6.2）：fromVersion（含）之后 append 的 chunk 分批复放（每批 ≤500，Fix-5）。
- * 幂等（E6-b）；指针立即推进到 targetVersion，后续增量从新指针起算，不重叠不重复。
+ * 指针立即推进到 targetVersion，后续增量从新指针起算，不重叠不重复（重复回放不幂等——
+ * xterm.write 追加语义，靠下方 clamped 清屏守卫保证不重复显示）。
  */
 function replayFrom(fromVersion: number, buffer: TerminalBuffer): void {
   if (!xterm) return
   const result = replayChunksBatched(buffer, fromVersion)
   if (result === null) return
+  if (result.clamped) { xterm.clear(); replayWriteQueue.length = 0 } // S-15：指针落后裁剪线钳 0 全量重放 → 先清屏+丢挂起批次再写，防屏上旧内容与全量重放重复（对齐 onFlushed 回退 clear 模式）
   replayedVersion = result.targetVersion
   enqueueReplayWrites(result.batches)
 }

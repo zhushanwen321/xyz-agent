@@ -33,6 +33,7 @@ import {
   subscribeSession,
   updateLastSeenSeq,
   setSubscriptionPorts,
+  recordGapDispatchedSeq,
 } from './subscription-state'
 
 // ── 端口契约（IF1） ────────────────────────────────────────────────
@@ -139,6 +140,14 @@ function applySeqGap(sid: string, msg: ServerMessage): boolean {
     // 成功后其 max() 收敛把基线推进到 max(reply.lastSeq, snapshot seqs)（>= msg.seq，不回退）；
     // 失败则基线保持原位，后续 live 消息再次触发 reconcile 形成自愈重试（无无限循环：
     // 每次新消息至多 1 次 RPC，in-flight 去重收敛并发）。
+    //
+    // [PR #175 review R1] gap 触发消息去重簿记：本消息即将 dispatch 但基线不推进，而
+    // reconcile 的 subscribe(fromSeq=排他下界) 返回的 snapshot 必含本消息本身 → 回放时
+    // 靠 gapDispatchedSeqs drop（见 seq-gap.ts 分支 4b），否则 message_start 双实体 /
+    // customStart 双 system notice。
+    if (typeof msg.seq === 'number') {
+      recordGapDispatchedSeq(sid, msg.seq)
+    }
     void subscribeSession(sid, decision.reconcileFromSeq)
     return true
   }
@@ -278,15 +287,21 @@ const FALLBACK: RouteTableEntry['handle'] = (msg, { ports, effects, sid }) => {
  * 构造并返回入站 dispatcher（IF4）。
  *
  * 一次性注入三件套（pending/events/subscribe）+ 可选 effects（TC2/TC3）：
- * - setSubscriptionPorts(ports) 把 subscribe/events 注入 subscription-state（C1）
+ * - setSubscriptionPorts 注入 subscribe RPC + replay 回放 dispatcher（C1，PR #175 review R1）
  * - 幂等由调用方 ensureDispatcher 保证（renderer 侧只安装一次）
  *
- * 处理顺序：
+ * 处理顺序（live dispatcher）：
  *   1. msg.id 命中 pending → resolveEnvelope 委托 pending 层（error envelope 展开 code+details
  *      到 Error，收尾 6 R2/ES1），return 不再进路由表（id/seq 来源互斥 D7）
  *   2. 查 ROUTE_TABLE 精确 type 条目 → seq gap 中间件 + dispatchSession + effect 回调
  *   3. 恒真 FALLBACK：有 sessionId → seq gap + dispatchSession；无 → dispatchGlobal + L9 warn
  *      + error 无 id → onGlobalError
+ *
+ * 步骤 2+3 抽成共享核心 dispatchRouted——subscription-state 的 snapshot/stateSnapshot
+ * 回放经注入的 replay 走同一条路径（sid 固定为 subscribe 目标，跳过步骤 1 的 pending
+ * 分流：回放消息来自 bus ring 广播而非 RPC reply），使回放与 live 共享 seq 去重 +
+ * effects + crossSession 语义。此前回放裸调 events.dispatchSession 绕过全部三样，导致
+ * gap 触发消息重复实体 + 回放帧不触发 subagent 终态兜底（PR #175 review R1 MUST_FIX）。
  *
  * @param ports renderer 注入的 WS 能力（必填三件套）
  * @param effects 可选 effect 回调集（undefined 跳过）
@@ -296,9 +311,32 @@ export function configureRouteInbound(
   ports: TransportPorts,
   effects?: InboundEffects,
 ): (msg: ServerMessage) => void {
-  setSubscriptionPorts(ports)
-
   const ctx: RouteContext = { ports, effects: effects ?? {} }
+
+  // 共享路由核心（步骤 2+3）：live 与回放同一条路径，行为差异只在 sid 来源与 pending 分流。
+  function dispatchRouted(msg: ServerMessage, sid: string | undefined): void {
+    if (typeof sid === 'string' && sid) {
+      // [Q1-4] Record 直查（O(1)）。hasOwnProperty.call 守卫原型成员名（'constructor' 等），
+      // 语义与旧数组 .find 严格等价（只匹配自有 type 键）。不用 Object.hasOwn：renderer
+      // vue-tsc 的 lib 不含 ES2022（TS2550）。
+      const entry = Object.prototype.hasOwnProperty.call(ROUTE_TABLE, msg.type)
+        ? ROUTE_TABLE[msg.type]
+        : undefined
+      if (entry) {
+        entry.handle(msg, { ...ctx, sid })
+        return
+      }
+    }
+    FALLBACK(msg, { ...ctx, sid })
+  }
+
+  // 回放 dispatcher：subscription-state 的 subscribeSession 回放入口（C1 注入）。
+  // 与 live dispatcher 的差异仅两点（见上方注释），其余（seq gap 去重 + ROUTE_TABLE
+  // effects + crossSession 分发）完全共享。
+  setSubscriptionPorts({
+    subscribe: ports.subscribe,
+    replay: (sid, msg) => dispatchRouted(msg, sid),
+  })
 
   return function routeInbound(msg: ServerMessage): void {
     // ── 1. pending 分流（D7：id/seq 互斥，命中 pending 的 RPC reply 不进路由表） ──
@@ -319,22 +357,6 @@ export function configureRouteInbound(
     // payload 跨多种 type：有的含 sessionId（session 通道），有的不含（global 通道）。
     // 联合类型无法直接 .sessionId，窄断言为可选字段做路由判定（隔离规则不变）。
     const sid = (msg.payload as { sessionId?: string }).sessionId
-
-    // ── 2. ROUTE_TABLE 精确 type 匹配（TC1，仅 session 通道；无 sid 直接落 FALLBACK） ──
-    if (typeof sid === 'string' && sid) {
-      // [Q1-4] Record 直查（O(1)）。hasOwnProperty.call 守卫原型成员名（'constructor' 等），
-      // 语义与旧数组 .find 严格等价（只匹配自有 type 键）。不用 Object.hasOwn：renderer
-      // vue-tsc 的 lib 不含 ES2022（TS2550）。
-      const entry = Object.prototype.hasOwnProperty.call(ROUTE_TABLE, msg.type)
-        ? ROUTE_TABLE[msg.type]
-        : undefined
-      if (entry) {
-        entry.handle(msg, { ...ctx, sid })
-        return
-      }
-    }
-
-    // ── 3. 恒真 fallback（未注册 type / 无 sid 消息落现状语义） ──
-    FALLBACK(msg, { ...ctx, sid })
+    dispatchRouted(msg, sid)
   }
 }

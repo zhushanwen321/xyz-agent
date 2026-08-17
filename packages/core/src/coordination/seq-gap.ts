@@ -8,6 +8,12 @@
  *   - seq > lastSeenSeq+1 → 触发 subscribeSession(sid, lastSeenSeq) reconcile，当前消息仍 dispatch
  *   - seq === lastSeenSeq+1 → 正常递进，dispatch
  *
+ * gap 触发消息去重（PR #175 review R1）：gap 分支 dispatch 了触发消息但基线不推进（MF-3），
+ * 而 reconcile 的 subscribe(fromSeq=排他下界) 返回的 snapshot 必含触发消息本身 → 回放时
+ * 该 seq 既不满足 seq<=lastSeenSeq（超前于基线）也不是正常递进（缺失段回放会先把基线
+ * 推到 seq-1，触发消息恰好变成「递进」再次 dispatch）。靠 SubscriptionState.gapDispatchedSeqs
+ * 簿记（applySeqGap gap 分支写入）识别「已 dispatch 但基线未覆盖」的 seq，drop 之。
+ *
  * 本模块是纯函数：零副作用、零 import 业务层。副作用（reconcile RPC / updateLastSeenSeq /
  * dispatch）由 route-inbound.ts 依据返回值执行（IF3 契约）。
  */
@@ -42,8 +48,11 @@ export function evalSeqGap(
   if (typeof msg.seq !== 'number') {
     return { action: 'pass' }
   }
-  // 分支 4：seq <= lastSeenSeq → 重复/乱序（reconcile 回放），丢弃
-  if (msg.seq <= state.lastSeenSeq) {
+  // 分支 4：重复/乱序（reconcile 回放）→ 丢弃。两种形态：
+  //   a) seq <= lastSeenSeq：基线已覆盖（正常递进路径 dispatch 时同步推进基线）
+  //   b) seq ∈ gapDispatchedSeqs：gap 触发消息已 dispatch 但基线未推进（MF-3 禁止提前推进），
+  //      reconcile 回放 / 重复 push 到达时靠簿记去重
+  if (msg.seq <= state.lastSeenSeq || state.gapDispatchedSeqs?.has(msg.seq)) {
     return { action: 'drop' }
   }
   // 分支 5：seq > lastSeenSeq + 1 → gap，当前消息仍 dispatch + 回拉缺失段。

@@ -315,8 +315,10 @@ function clearPartition(sid: string): void {
 /**
  * 版本回放纯函数（D-6.2）：从 fromVersion（含）之后 append 的 chunk 合并为单块。
  * fromVersion 是逻辑索引版本（= 已回放的 chunk 总数）；裁剪后物理起点
- * = fromVersion - 裁剪量，钳制到 0（指针落后裁剪线时保留内容全在新指针后，全量无重复）。
- * 返回 null = 无新增（fromVersion 已是最新）。幂等：重复回放只是重写既有内容（E6-b）。
+ * = fromVersion - 裁剪量，指针落后裁剪线时钳制到 0（保留区全量重放，内容层面无重复）。
+ * 返回 null = 无新增（fromVersion 已是最新）。
+ * 注意：本函数只保证返回内容不与「指针语义上的已回放区间」重复；xterm.write 是追加
+ * 语义，视图侧需配合 replayChunksBatched 的 clamped 信号先清屏（S-15，见下）。
  */
 export function replayChunks(buffer: TerminalBuffer, fromVersion: number): string | null {
   if (fromVersion >= buffer.version) return null
@@ -330,20 +332,28 @@ export function replayChunks(buffer: TerminalBuffer, fromVersion: number): strin
  * write 会卡住主线程）拆成每批 ≤ maxBatchChunks 个 chunk 的批次数组，由视图侧分帧写
  * （TerminalView enqueueReplayWrites）。物理起点/幂等语义与 replayChunks 完全一致。
  * 返回 null = 无新增；targetVersion = 本批覆盖的最终版本（视图回放指针推进目标）。
+ *
+ * clamped（S-15，PR #175 R1）：指针落后裁剪线（fromVersion < 裁剪量）时 physicalStart
+ * 被钳到 0、保留区全量重放。xterm.write 是追加语义，若视图屏上旧内容与全量重放区间
+ * 重叠（指针失步场景：通知丢失/批量挂起/多视图），全量重写会重复显示——视图收到
+ * clamped=true 必须先 xterm.clear() + 丢挂起批次再写（对齐 TerminalView onFlushed 的
+ * version 回退 clear 模式）。当前可达路径（mount/切 session/clear 后，指针恒为 0 且
+ * xterm 空或新建）clear 幂等无害；本信号同时是防御性守卫。
  */
 export function replayChunksBatched(
   buffer: TerminalBuffer,
   fromVersion: number,
   maxBatchChunks = REPLAY_BATCH_CHUNKS,
-): { batches: string[]; targetVersion: number } | null {
+): { batches: string[]; targetVersion: number; clamped: boolean } | null {
   if (fromVersion >= buffer.version) return null
   const cropped = buffer.version - buffer.chunks.length
-  const physicalStart = Math.max(fromVersion - cropped, 0)
+  const clamped = fromVersion < cropped
+  const physicalStart = clamped ? 0 : fromVersion - cropped
   const batches: string[] = []
   for (let i = physicalStart; i < buffer.chunks.length; i += maxBatchChunks) {
     batches.push(buffer.chunks.slice(i, i + maxBatchChunks).join(''))
   }
-  return { batches, targetVersion: buffer.version }
+  return { batches, targetVersion: buffer.version, clamped }
 }
 
 /**

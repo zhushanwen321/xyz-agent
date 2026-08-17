@@ -642,3 +642,90 @@ describe('W27 D-6.2 分区生命周期上提 + 版本回放', () => {
     expect(xterm.write).toHaveBeenNthCalledWith(3, 'tail')
   })
 })
+
+// ── Part 4：S-15 全量重放清屏信号（PR #175 R1）──────────────────────────
+// 契约：回放指针落后裁剪线（physicalStart 钳 0 全量重放）时，replayChunksBatched
+// 返回 clamped=true，视图先 xterm.clear() 再写——xterm.write 追加语义下，屏上旧内容
+// 与全量重放区间重叠会重复显示。指针同步的常规增量路径 clamped=false，不触发清屏。
+describe('S-15 全量重放清屏信号', () => {
+  it('S15-1: replayChunksBatched clamped 信号真值表 —— 仅指针落后裁剪线时置位', () => {
+    // 未裁剪（cropped=0）：任何指针都不触发（含 mount 全量 fromVersion=0）
+    const uncropped = { chunks: ['a', 'b', 'c'], version: 3 }
+    expect(replayChunksBatched(uncropped, 0)!.clamped).toBe(false)
+    expect(replayChunksBatched(uncropped, 2)!.clamped).toBe(false)
+
+    // 已裁剪（version 6、物理 2 条、裁剪量 4）：指针落后裁剪线（fromVersion < 4）→ 钳 0
+    const croppedBuf = { chunks: ['e', 'f'], version: 6 }
+    expect(replayChunksBatched(croppedBuf, 0)!.clamped).toBe(true)
+    expect(replayChunksBatched(croppedBuf, 3)!.clamped).toBe(true)
+    // 指针恰在裁剪线上（fromVersion=4=裁剪量）：物理起点 0 是自然对齐（保留区起点即指针），非钳制
+    expect(replayChunksBatched(croppedBuf, 4)!.clamped).toBe(false)
+    // 指针在保留区内：正常增量
+    expect(replayChunksBatched(croppedBuf, 5)!.clamped).toBe(false)
+    // 指针 = 版本：无新增
+    expect(replayChunksBatched(croppedBuf, 6)).toBeNull()
+  })
+
+  it('S15-2: 指针落后裁剪线（视图 mount 前已 >5000 裁剪）→ 全量重放前 xterm 先 clear，内容恰为保留区全量', async () => {
+    // 无视图期间累积 5050 chunk（裁剪 50）：host 建立模块订阅，flush 无监听器（纯累积）
+    const Host = makeHost('s1')
+    const w = mount(Host)
+    ;(w.vm.terminal as UseTerminalReturn).attachTerminal()
+    const total = 5050
+    for (let i = 0; i < total; i++) {
+      dispatchSession('s1', makeDataMsg('s1', `x${i};`))
+      if (i % 100 === 99) advanceFrame()
+    }
+    advanceFrame()
+    await flushPromises()
+    w.unmount() // 移除 host（模块订阅保留），视图尚未挂载 → 无 flush 监听
+
+    // mount 视图：replayFrom(0) 落后裁剪线 50 → clamped=true → 清屏 + 保留区全量重放
+    const wrapper = mount(TerminalView, { props: { sessionId: 's1' } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    const xterm = xtermInstances[xtermInstances.length - 1]!
+
+    // 清屏信号生效：clear 恰一次，且先于首个 write（invocationCallOrder 全局单调序）
+    expect(xterm.clear).toHaveBeenCalledTimes(1)
+    const clearOrder = xterm.clear.mock.invocationCallOrder[0]
+    const firstWriteOrder = xterm.write.mock.invocationCallOrder[0]
+    expect(clearOrder).toBeDefined()
+    expect(firstWriteOrder).toBeDefined()
+    expect(clearOrder).toBeLessThan(firstWriteOrder)
+
+    // 排空 10 批（5000 chunks / 500 每批）：总内容 = 保留区全量 x50..x5049，
+    // join 严格相等 ⇒ 无重复（每 chunk 恰出现一次）、无缺漏（被裁的 x0..x49 不出现）
+    for (let i = 0; i < 12; i++) advanceFrame()
+    await flushPromises()
+    const written = xterm.write.mock.calls.map((c) => c[0]).join('')
+    expect(written).toBe(Array.from({ length: 5000 }, (_, i) => `x${i + 50};`).join(''))
+
+    // 后续增量 flush 指针已同步 → clamped=false → 不再清屏，只追加增量
+    dispatchSession('s1', makeDataMsg('s1', 'tail'))
+    advanceFrame()
+    await flushPromises()
+    expect(xterm.clear).toHaveBeenCalledTimes(1)
+    expect(xterm.write).toHaveBeenLastCalledWith('tail')
+  })
+
+  it('S15-3: 未裁剪 buffer 的 mount 全量回放 → clamped=false，不触发 clear（信号只在指针落后裁剪线时置位）', async () => {
+    const Host = makeHost('s1')
+    const w = mount(Host)
+    ;(w.vm.terminal as UseTerminalReturn).attachTerminal()
+    for (const c of ['a1', 'a2', 'a3']) dispatchSession('s1', makeDataMsg('s1', c))
+    advanceFrame()
+    await flushPromises()
+    w.unmount()
+
+    const wrapper = mount(TerminalView, { props: { sessionId: 's1' } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    const xterm = xtermInstances[xtermInstances.length - 1]!
+
+    // cropped=0：mount 全量回放是自然对齐，无需清屏（防止「每次回放都 clear」回归——
+    // 增量/常规路径误清会丢失屏上可见历史）
+    expect(xterm.clear).not.toHaveBeenCalled()
+    expect(xterm.write).toHaveBeenCalledWith('a1a2a3')
+  })
+})
