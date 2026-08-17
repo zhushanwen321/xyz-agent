@@ -28,6 +28,11 @@
       ]
     },
     {
+      "name": "@zhushanwen/pi-structured-output",
+      "directory": "extensions/structured-output",
+      "dependsOn": []
+    },
+    {
       "name": "@zhushanwen/pi-model-switch",
       "directory": "extensions/model-switch",
       "dependsOn": [
