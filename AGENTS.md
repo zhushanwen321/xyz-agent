@@ -10,8 +10,6 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 - **Runtime** (`packages/runtime/src/`): Node.js WebSocket 服务（三层架构 transport/services/infra），通过子进程 RPC 与 pi 通信
 - **共享类型** (`packages/shared/src/`): 前端与 runtime 之间的 TypeScript 类型定义
 
-**完整编码规范**: [docs/standards.md](docs/standards.md)
-
 **功能开发地图**: [docs/feature-map/](docs/feature-map/) — 长期功能规划、现状盘点、待开发阶段、关键决策点、完整资料链接
   - 每次启动新 Phase 前更新地图，确认当前阶段和优先级
   - 构建能力地图和架构图时，从该目录获取全貌
@@ -40,7 +38,7 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 - **pi**: [badlogic/pi-mono](https://github.com/badlogic/pi-mono) — AI coding agent CLI，xyz-agent 通过子进程 RPC 调用。session tree / fork / clone 核心能力为 pi 原生，xyz-agent 不依赖任何 fork 特有改动
   - npm 包: `@earendil-works/pi-coding-agent`
   - 当前版本: `0.84.1`（devDependency 提供 extensions 开发期类型；打包的 pi binary 见 `resources/pi/`）
-  - 历史背景：此前使用 fork `zhushanwen321/pi`（包名 `xyz-pi`），fork 唯一改动是在 `get_state` RPC 响应中透出 `leafId` 字段。该字段在 xyz-agent 前端从未消费，2026-07 已切回上游；leafId 现直接取自上游 `get_entries` RPC 响应的 `data.leafId` 字段（runtime 历史增量缓存用作 since 基准，见 `session-service.ts` getHistory），无 JSONL session 文件解析代码（旧说法「从 JSONL 解析近似值」与代码不符，已勘误）
+  - 历史：曾用 fork `zhushanwen321/pi`（包名 `xyz-pi`），2026-07 已切回上游。leafId 取自上游 `get_entries` 响应的 `data.leafId` 字段（runtime 历史增量缓存用作 since 基准，见 `session-service.ts` getHistory），无 JSONL session 文件解析代码
   - Skill 加载: `packages/coding-agent/src/core/skills.ts`
   - Skill 展开: `packages/coding-agent/src/core/agent-session.ts` — `_expandSkillCommand()`
   - Slash 命令: `packages/coding-agent/src/core/slash-commands.ts`
@@ -50,11 +48,11 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 **Pi Extension 源码（本项目维护）**:
 - `extensions/` 目录下 14 个 `@zhushanwen/pi-*` extension 包 + `extensions/shared/` 下共享库（quota-providers / llm-shared / extension-logger），由本项目继续发布到 npm（main 线走 `npm-*` tag 人工版本判定，dev-npm 预发布走 changeset version）。完整清单见下方「Pi Extension 全集」
 - **[HISTORICAL] xyz-pi-extensions-workspace 已废弃**：原独立仓库 `~/Code/xyz-pi-extensions-workspace` 已停止维护，本仓 `extensions/` 是 `@zhushanwen/pi-*` 的**统一开发仓库**。所有 extension 的源码改动、bug 修复、版本发布都在本仓进行，不再回写到旧仓。旧仓的 `main` 分支可能滞后于本仓，排查问题时以本仓为准
-- **structured-output 方案 A（权威 schema 校验）[HISTORICAL]**：workflow 模式下 `PI_WORKFLOW_SCHEMA` env 注入的权威 schema 是唯一校验权威，LLM 传入的 `schema` 参数不参与校验（仅错误回显）。2026-08-01 事故：ds-flash 重写 `add_channels.items` schema 后自洽通过，4 条 channel 修复静默丢失。根因是旧实现校验 LLM 自报 schema 而非权威 schema。修复见 `extensions/structured-output/src/index.ts` 的 `executeStructuredOutput` authoritativeSchema 分支
+- **structured-output 方案 A（权威 schema 校验）[HISTORICAL]**：workflow 模式下 `PI_WORKFLOW_SCHEMA` env 注入的权威 schema 是唯一校验权威，LLM 传入的 `schema` 参数不参与校验（仅错误回显）——曾因校验 LLM 自报 schema 导致修复静默丢失。实现见 `extensions/structured-output/src/index.ts` 的 `executeStructuredOutput` authoritativeSchema 分支
 - **Extension 开发规范**: [docs/extensions/development-guide.md](docs/extensions/development-guide.md)（完整指南）、[docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)（强约束）、[docs/extensions/glossary.md](docs/extensions/glossary.md)（术语表）
 - 类型检查: `pnpm extensions:typecheck`；Lint: `pnpm extensions:lint`；测试: `pnpm extensions:test`
 - **本地开发调试**: `.agents/skills/dev-link/` 管理 `XYZ_EXTENSION_PATHS` 环境变量，在本地源码（live edit）和 npm 版本间切换 extension。`link-local.sh <pkg>` 添加 link → `set -a && source .env.dev-extensions && set +a && pnpm dev` 启动 → 改源码后新建 session 即生效。详见 [本地开发指南](docs/extensions/local-dev-guide.md)
-- **[MANDATORY] pi extension 测试优先在本地 pi 实测，不优先在 xyz-agent 验证**：`extensions/` 下 `@zhushanwen/pi-*` 扩展的改动，功能验证优先在**本地 pi CLI 环境**实测（RPC mode + 真实模型跑最小场景，检查 session 文件 / `XYZ_AGENT_DEBUG=1` 扩展日志），而不是优先在 xyz-agent 桌面应用中验证。原因：xyz-agent 有 mandatory 打包内置机制、数据目录隔离、runtime 中转等额外层，会掩盖或引入版本差异（2026-08-10 事故：嵌套 subagent keep-alive 拦截在本地 pi 7.0.1 实测正常，但用户 xyz-agent 环境滞留 dev 旧版 5.0.0-dev.1 导致拦截缺失）；pi CLI 是最接近扩展真实运行环境的验证场，子进程扩展加载（`mirrorMainProcessFlags` 镜像主进程 `--extension`）行为与 xyz-agent 一致。实测方法：`pi --mode rpc --session-dir <dir> --model <m> --approve --extension <ext-path>` + stdin JSONL 发 `prompt` 命令，配合 `XYZ_AGENT_DEBUG=1` 看 `~/.pi/agent/logs/` 扩展日志、检查子进程 session 文件（`~/.pi/agent/subagents/<enc>/sessions/`）的 `pending:register`/`pending:unregister` 差集。测试模型用 `xiaomi-token-plan-cn/mimo-v2.5-pro`（禁止用 kimi 模型做测试）
+- **[MANDATORY] pi extension 测试优先在本地 pi 实测，不优先在 xyz-agent 验证**：`extensions/` 下 `@zhushanwen/pi-*` 扩展的改动，功能验证优先在**本地 pi CLI 环境**实测（RPC mode + 真实模型跑最小场景，检查 session 文件 / `XYZ_AGENT_DEBUG=1` 扩展日志），而不是优先在 xyz-agent 桌面应用中验证。原因：xyz-agent 有 builtin 打包内置、数据目录隔离、runtime 中转等额外层，会掩盖或引入版本差异（曾发生本地实测通过的拦截在用户 xyz-agent 环境因滞留 dev 旧版而缺失的事故）；pi CLI 是最接近扩展真实运行环境的验证场，子进程扩展加载（`mirrorMainProcessFlags` 镜像主进程 `--extension`）行为与 xyz-agent 一致。实测方法：`pi --mode rpc --session-dir <dir> --model <m> --approve --extension <ext-path>` + stdin JSONL 发 `prompt` 命令，配合 `XYZ_AGENT_DEBUG=1` 看 `~/.pi/agent/logs/` 扩展日志、检查子进程 session 文件（`~/.pi/agent/subagents/<enc>/sessions/`）的 `pending:register`/`pending:unregister` 差集。测试模型用 `xiaomi-token-plan-cn/mimo-v2.5-pro`（禁止用 kimi 模型做测试）
 - **Review 工作流**: `.agents/skills/pr-cr-fix/` 是 PR 完整生命周期 skill（开 PR → 多维 review → 修 must-fix → pre-merge → push，内化原 pull-request / code-review / pre-push-checks / trim-cot-leakage 四个 skill）。review agent 定义内化在 `.agents/skills/pr-cr-fix/agents/` 下（7 维审查 + 1 聚合器，不全局暴露）。维度覆盖：arch-boundary / business-logic / electron-build / extension-api / monorepo-impact / test-coverage / type-safety。触发词："review 完开 PR"、"pr-cr-fix"、"review"、"提交 PR"、"push 前检查"。仅用于 xyz-agent worktree 的 PR 场景
 
 **Pi Extension 全集**（`extensions/` 下 14 个 `@zhushanwen/pi-*` 包 + `extensions/shared/` 下共享库；新增/删包时同步更新此表）：
@@ -105,35 +103,10 @@ pnpm extensions:test        # 全部 extension 包 vitest 测试
 
 ## 前端调试（Playwright 连 dev app）
 
-`pnpm dev` 启动后，Electron 开 `--remote-debugging-port=9222`。用 browser-automation skill 的 Playwright 脚本连接，可截图/DOM 快照/点击/填表/执行 JS，**不抢焦点**（连接已有进程，非新开）。
+`pnpm dev` 启动后 Electron 开 `--remote-debugging-port=9222`，用 browser-automation skill 的 Playwright 脚本连接（`http://localhost:9222`）：截图 / DOM 快照 / 点击 / 执行 JS，**不抢焦点**（连接已有进程，非新开）。完整命令参考：[browser-automation skill](file:///Users/zhushanwen/.agents/skills/browser-automation/SKILL.md)
 
-```bash
-PW="/Users/zhushanwen/.agents/skills/browser-automation/scripts/pw.js"
-EP="http://localhost:9222"
-
-# 确认 dev app 在 9222（dev Electron 的 renderer）
-lsof -i :9222 2>/dev/null
-node $PW $EP list-pages
-
-# 截图
-node $PW $EP screenshot -o /tmp/debug.png
-
-# DOM 快照（可交互元素）
-node $PW $EP snapshot
-
-# 执行 JS（查状态/读 DOM）
-node $PW $EP evaluate "document.querySelector('[data-testid=chip-branch]')?.textContent"
-
-# 点击/填表
-node $PW $EP click "[data-testid=chip-branch]"
-node $PW $EP fill "input[name=x]" "value"
-```
-
-**注意多个 xyz-agent 实例**：打包版 `/Applications/太极.app` 也可能同时在跑（占 3210 端口）。dev 实例的 renderer 在 9222、runtime 在 3310（tsx 跑 `packages/runtime/src/index.ts`）。连错实例会看到旧代码——先确认 `list-pages` 的 URL 是 `localhost:1420`（vite dev server）。
-
-**runtime 代码改动不热重载**：dev runtime 用 `tsx`（非 `tsx watch`）运行，改 runtime 源码后**必须重启 dev**（`pnpm dev` 重跑）才生效。renderer 走 vite HMR 自动热重载。
-
-完整命令参考：[browser-automation skill](file:///Users/zhushanwen/.agents/skills/browser-automation/SKILL.md)
+- **多实例坑**：打包版 `/Applications/太极.app` 可能同时在跑（占 3210 端口）。dev 实例 renderer 在 9222、runtime 在 3310。连错实例会看到旧代码——先确认 `list-pages` 的 URL 是 `localhost:1420`（vite dev server）
+- **runtime 改动不热重载**：dev runtime 用 `tsx`（非 watch）运行，改 runtime 源码必须重启 `pnpm dev` 才生效；renderer 走 vite HMR 自动重载
 
 ## 关键规则（违反必出 bug）
 
@@ -482,7 +455,7 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 - agent 的 `tools` frontmatter 受限到某 extension 提供的工具（如 cw review-agent `tools: cw_review` 强相关 cw-tool）
 - 移除该 extension 后 agent / workflow 无法正常工作
 
-反例：`review-arch-boundary`（tools: 通用 read/bash）不强相关 → 留 `.agents/agents/`。
+反例：tools 为通用 read/bash 的 review agent 不强相关任何 extension → 放 `.agents/agents/`（项目级）或全局 `~/.agents/agents/`（当前项目的 review agent 已内化到 `pr-cr-fix/agents/`，因为只在 PR 流程内使用）。
 
 ### 发现机制
 
