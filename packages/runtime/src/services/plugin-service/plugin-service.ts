@@ -107,11 +107,13 @@ export function resolveEsmLoaderExecArgv(): string[] | undefined {
  *      bridge-interop。
  */
 export class PluginService implements IPluginService {
-  private registry: PluginRegistry
+  /** 插件注册表（与 host/rpcServer/activator 同为协作者装配位，公开供测试直注 descriptor） */
+  readonly registry: PluginRegistry
   private storage: PluginStorage
   rpcServer: PluginRpcServer
   host: PluginHost
-  private activator: PluginActivator
+  /** 激活状态机（与 host/rpcServer 同为协作者装配位，公开供编排层与测试直查状态） */
+  readonly activator: PluginActivator
   private broker: IMessageBroker
   private initialized = false
 
@@ -343,6 +345,18 @@ export class PluginService implements IPluginService {
       for (const pluginId of pluginIds) {
         this.activator.markCrashed(pluginId)
       }
+      // D6/W4 贡献清理：崩溃插件的 statusBar/hook/tool/command 贡献不残留——对齐
+      // togglePlugin(false) 的清理集（僵尸 statusbar 条目/仍可被路由的 tool/command
+      // 都指向已死 Worker，调用必超时）。rebuild 成功后 onRebuilt 重激活会重新注册。
+      for (const pluginId of pluginIds) {
+        this.statusBarRegistry.clearForPlugin(pluginId)
+        this.removeHookEntriesFor(pluginId)
+        this.removeToolEntriesFor(pluginId)
+        this.removeCommandEntriesFor(pluginId)
+      }
+      void this.syncToolsToBridge().catch((err: unknown) => {
+        console.error('[plugin-service] syncToolsToBridge after crash failed:', toErrorMessage(err))
+      })
       for (const pluginId of pluginIds) {
         this.broker.broadcast({
           type: 'plugin:crashed',
@@ -355,28 +369,44 @@ export class PluginService implements IPluginService {
 
     // 4a. Worker 重建后的重新加载回调
     this.host.setRebuiltCallback((newWorkerId, pluginIds) => {
-      for (const pluginId of pluginIds) {
-        try {
-          const descriptor = this.registry.getDescriptor(pluginId)
-          if (descriptor) {
-            this.host.loadPlugin(newWorkerId, pluginId, descriptor.pluginPath, 'trusted').then(() => {
-              // Re-activate the plugin after loading
-              return this.activator.activatePlugin(pluginId, { type: 'onStartupFinished' }, this.host)
-            }).catch((err: unknown) => {
-              console.error(`[plugin-service] failed to reload plugin ${pluginId}:`, err)
-            })
-          }
-        // eslint-disable-next-line taste/no-silent-catch -- worker reload: error logged, other plugins unaffected
-        } catch (err: unknown) {
-          console.error(`[plugin-service] failed to reload plugin ${pluginId}:`, err)
-        }
-      }
+      this.handleWorkerRebuilt(newWorkerId, pluginIds)
     })
 
     // 4b. Worker 生命周期回复回调（activated/deactivated/error）
     this.host.setReplyCallback((msg) => {
       this.activator.handleWorkerReply(msg as import('./plugin-types.js').WorkerToHostMessage)
     })
+  }
+
+  /**
+   * Worker 重建后的重载编排（rebuild 回调实现，D6/W3）。
+   *
+   * 只重激活当前状态为 CRASHED 的插件：冷却窗口内用户 disable（UNLOADED）或
+   * uninstall（状态已移除）的插件跳过——rebuild 无条件重激活会复活用户明确
+   * 关闭的插件（幽灵激活）。单插件重载失败只记日志，不影响同 Worker 其他插件。
+   */
+  handleWorkerRebuilt(newWorkerId: string, pluginIds: string[]): void {
+    for (const pluginId of pluginIds) {
+      const state = this.activator.getState(pluginId)
+      if (state !== 'CRASHED') {
+        console.log(`[plugin-service] skip reload after rebuild: ${pluginId} state=${state ?? 'REMOVED'}（非 CRASHED，用户已 disable/uninstall）`)
+        continue
+      }
+      try {
+        const descriptor = this.registry.getDescriptor(pluginId)
+        if (descriptor) {
+          this.host.loadPlugin(newWorkerId, pluginId, descriptor.pluginPath, 'trusted').then(() => {
+            // Re-activate the plugin after loading
+            return this.activator.activatePlugin(pluginId, { type: 'onStartupFinished' }, this.host)
+          }).catch((err: unknown) => {
+            console.error(`[plugin-service] failed to reload plugin ${pluginId}:`, err)
+          })
+        }
+      // eslint-disable-next-line taste/no-silent-catch -- worker reload: error logged, other plugins unaffected
+      } catch (err: unknown) {
+        console.error(`[plugin-service] failed to reload plugin ${pluginId}:`, err)
+      }
+    }
   }
 
   /**
@@ -635,17 +665,64 @@ export class PluginService implements IPluginService {
 
   async shutdown(): Promise<void> {
     if (!this.initialized) return
-    // F5：停 timer 前先 flush 全部 dirty sessionData——WriteBackCache 是 per-write
-    // 500ms debounce + 5s 周期 flush，只停 timer 不 flush 会丢最后 ≤500ms 的写入。
-    // flush（同步 atomicWrite）完成后再关停，保证正常退出零丢失。
-    this.sessionDataStore.flushAll()
-    this.sessionDataStore.stopFlushTimer()
-    this.activator.stopAllWatchers()
-    await this.activator.deactivateAll(this.host)
-    this.storage.flushAll()
-    await this.host.shutdown()
-    this.rpcServer.dispose()
     this.initialized = false
+
+    // D6/W3 rebuild 受约束：关停第一步立即关闭 rebuild 通道——deactivateAll 可能耗时
+    // 数秒（单插件 deactivate 5s 超时），期间 rebuild 冷却到期会复活插件（LC-C2）。
+    // host.shutdown 在链末尾才清，此时已晚。
+    this.host.cancelPendingRebuilds()
+
+    // D6/W4 关停顺序（反转）：deactivateAll（allSettled，单插件 deactivate 超时不
+    // 阻塞整体——每插件自带 DEACTIVATE_TIMEOUT_MS 兜底）→ sessionData flush+dispose
+    // → storage flush+dispose → host.shutdown。旧顺序 flush 先于 deactivateAll，
+    // 插件在 onDeactivate 里写的 sessionData 落在「表已停」窗口（debounce 500ms 的
+    // flush timer 永不再触发）→ 正常关停丢数据（G6）。每步独立 catch：一步失败
+    // 不跳过后续步骤（关停是 best-effort 链，错误只记日志）。
+    try {
+      this.activator.stopAllWatchers()
+    } catch (err: unknown) {
+      // best-effort 降级：watcher 清理失败不阻塞关停链（fs 句柄随进程退出释放）
+      console.error('[plugin-service] shutdown: stopAllWatchers failed:', toErrorMessage(err))
+    }
+
+    try {
+      // 插件 onDeactivate 在此执行（其 sessionData/storage 写入发生在后面两步 flush 之前）
+      await this.activator.deactivateAll(this.host)
+    } catch (err: unknown) {
+      // best-effort 降级：单步失败继续 flush/dispose，保数据优先于保插件状态
+      console.error('[plugin-service] shutdown: deactivateAll failed:', toErrorMessage(err))
+    }
+
+    try {
+      this.sessionDataStore.flushAll()
+      this.sessionDataStore.dispose()
+      console.log('[plugin-service] shutdown: sessionData flushed and disposed')
+    } catch (err: unknown) {
+      // best-effort 降级：flush 失败仍继续后续关停（进程即将退出，重试无消费方）
+      console.error('[plugin-service] shutdown: sessionData flush/dispose failed:', toErrorMessage(err))
+    }
+
+    try {
+      this.storage.flushAll()
+      this.storage.dispose()
+    } catch (err: unknown) {
+      // best-effort 降级：同上，一步失败不跳过 host.shutdown（Worker/子进程必须终止）
+      console.error('[plugin-service] shutdown: storage flush/dispose failed:', toErrorMessage(err))
+    }
+
+    try {
+      await this.host.shutdown()
+    } catch (err: unknown) {
+      // best-effort 降级：Worker/子进程终止失败记日志（进程退出兜底回收）
+      console.error('[plugin-service] shutdown: host shutdown failed:', toErrorMessage(err))
+    }
+
+    try {
+      this.rpcServer.dispose()
+    } catch (err: unknown) {
+      // best-effort 降级：注册表清理由进程退出兜底
+      console.error('[plugin-service] shutdown: rpcServer dispose failed:', toErrorMessage(err))
+    }
   }
 
   private registerRpcMethods(): void {
