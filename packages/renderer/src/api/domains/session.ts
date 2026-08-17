@@ -7,7 +7,7 @@
  * 注：ServerMessage(id) → pending.resolve 的回灌由 features 层 dispatcher 串联（Wave 3）。
  *      mock 模式下不走本域（api/index 切到 mock 门面）。
  */
-import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message, BatchDeleteResult, ServerMessage } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message, BatchDeleteResult, ServerMessage, ThinkingLevel } from '@xyz-agent/shared'
 import { command } from '../request'
 
 /**
@@ -34,13 +34,25 @@ export async function list(): Promise<SessionGroup[]> {
  * presetId：session 创建时锁定的 pi 启动预设 id（设计文档 §4.1），透传给 runtime。
  * reply envelope 是 { session }，解包 .session。
  */
-export async function create(cwd?: string, label?: string, presetId?: string, projectId?: string): Promise<SessionSummary> {
-  const payload: { cwd?: string; label?: string; presetId?: string; projectId?: string } = {}
+export async function create(
+  cwd?: string,
+  label?: string,
+  presetId?: string,
+  projectId?: string,
+  modelOverride?: string,
+  thinkingOverride?: ThinkingLevel,
+): Promise<SessionSummary> {
+  const payload: { cwd?: string; label?: string; presetId?: string; projectId?: string; modelOverride?: string; thinkingOverride?: ThinkingLevel } = {}
   if (cwd !== undefined) payload.cwd = cwd
   if (label !== undefined) payload.label = label
   if (presetId !== undefined) payload.presetId = presetId
   // D14 语义修正（2026-08-04）：创建时归属当前 activeProject（空 = 默认项目兑底）。
   if (projectId !== undefined) payload.projectId = projectId
+  // B3：透传 modelOverride / thinkingOverride（Landing Chip 覆盖值）。
+  // 优先级：Landing Chip override > preset.modelOverride/thinkingLevel > 全局默认。
+  // session 创建即带正确模型，消除 config.sessions 广播覆盖的竞态。
+  if (modelOverride !== undefined) payload.modelOverride = modelOverride
+  if (thinkingOverride !== undefined) payload.thinkingOverride = thinkingOverride
   const reply = await command('session.create', payload)
   return reply.session
 }
