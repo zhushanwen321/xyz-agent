@@ -1,84 +1,35 @@
 # xyz-agent AGENTS.md
 
-## 项目概述
+Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作台。架构分层：
 
-xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作台。架构：
+- **Electron 主进程** (`apps/electron/main/`)：窗口管理、runtime 子进程生命周期、快捷键
+- **Preload** (`apps/electron/preload/`)：安全桥接，暴露 `electronAPI`
+- **渲染进程** (`packages/renderer/src/`)：Vue 3 + TS + Pinia + Tailwind v3 + xyz-ui（太极纯灰设计系统）
+- **Runtime** (`packages/runtime/src/`)：Node.js WebSocket 服务（transport/services/infra 三层），子进程 RPC 与 pi 通信
+- **共享类型** (`packages/shared/src/`)
 
-- **Electron 主进程** (`apps/electron/main/`): 窗口管理、runtime 子进程生命周期、快捷键
-- **Preload** (`apps/electron/preload/`): 安全桥接，暴露 `electronAPI` 给渲染进程
-- **前端渲染进程** (`packages/renderer/src/`): Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui 组件库（v3 冷蓝暗色设计系统）
-- **Runtime** (`packages/runtime/src/`): Node.js WebSocket 服务（三层架构 transport/services/infra），通过子进程 RPC 与 pi 通信
-- **共享类型** (`packages/shared/src/`): 前端与 runtime 之间的 TypeScript 类型定义
+## 文档索引
 
-**完整编码规范**: [docs/standards.md](docs/standards.md)
+| 主题 | 文档 |
+|------|------|
+| 完整编码规范 / UI 设计演变 / 术语表 | [docs/standards.md](docs/standards.md) · [design-evolution.md](docs/design-evolution.md) · [architecture/context.md](docs/architecture/context.md) |
+| 设计系统（tokens / 原语层 / v6 SSOT / 视觉规格） | [docs/page-design/](docs/page-design/)（design-tokens.md · design-system.md · v6-master-spec.md · v6-spec-*.html；能力设计 spec 在 `archive/v3/`。禁止创建 `demos/`、`impeccable/` 目录） |
+| 窗口顶部 traffic light 布局数值 SSOT | [traffic-light-layout.md](docs/page-design/traffic-light-layout.md)（v3 刻意调整形态，不遵循 v6 demo） |
+| Renderer 七层目标架构 / v6 重构 | [architecture/renderer-target-architecture.md](docs/architecture/renderer-target-architecture.md) · [architecture/v6-architecture-refactor.md](docs/architecture/v6-architecture-refactor.md) |
+| 功能开发地图（启动新 Phase 前更新） | [docs/feature-map/](docs/feature-map/)（最新 2026-06-20.md） |
+| 测试策略 SSOT | [TEST-STRATEGY.md](TEST-STRATEGY.md) + [docs/testing/](docs/testing/)（00 总览入口；testid 清单/调用链/已知坑） |
+| 问题排查（日志/诊断/常见问题/历史排查规则） | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| Pi Extension 开发 | [docs/extensions/development-guide.md](docs/extensions/development-guide.md)（指南）· [extension-conventions.md](docs/extensions/extension-conventions.md)（强约束）· [glossary.md](docs/extensions/glossary.md) · [local-dev-guide.md](docs/extensions/local-dev-guide.md) |
+| 待执行架构任务 | [docs/todo/remote-use-merge-architecture.md](docs/todo/remote-use-merge-architecture.md)（合并 remote-use 后删除） |
 
-**功能开发地图**: [docs/feature-map/](docs/feature-map/) — 长期功能规划、现状盘点、待开发阶段、关键决策点、完整资料链接
-  - 每次启动新 Phase 前更新地图，确认当前阶段和优先级
-  - 构建能力地图和架构图时，从该目录获取全貌
-  - 最新版本: [2026-06-20.md](docs/feature-map/2026-06-20.md)（v3 重建后）；旧版 [2026-05-19.md](docs/feature-map/2026-05-19.md) 保留作重构前状态快照
+**外部依赖 pi**：[badlogic/pi-mono](https://github.com/badlogic/pi-mono) 上游（npm `@earendil-works/pi-coding-agent@0.84.1`，曾用 fork xyz-pi 已切回）。**[MANDATORY] 不修改 pi 源码、不提 PR、不 fork**——pi 没有的能力由 xyz-agent 自实现。pi 源码查阅：`~/Code/git-fork/pi-mono-workspace/main/packages/`（coding-agent/src 核心逻辑、ai/src/providers provider 层），不靠网络搜索。
 
-**规范与设计文档**:
-- [完整编码规范](docs/standards.md) — 组件使用、样式规则、TypeScript 约束
-- [UI 设计演变史](docs/design-evolution.md) — Warm&Soft → v3 → v6 → 太极纯灰的完整演变叙事
-- [设计 Tokens（太极 V3 SSOT）](docs/page-design/design-tokens.md) — 纯灰暗色原子值（色/字/距/影/动效），ADR-0019 确立
-- [设计系统原语层](docs/page-design/design-system.md) — 组件原语如何使用 tokens
-- [v6 单一权威源](docs/page-design/v6-master-spec.md) — 决策与范式（整合自 28 份过程文档 + demo，D1-D14 裁决）
-- [v6 视觉规格](docs/page-design/v6-spec-shell.html) — 逐组件验收基准（15 个 v6-spec-*.html）
-- [领域术语表](docs/architecture/context.md) — Session/Panel/Runtime/v3 UI 结构术语
-- [UI/UX 设计原则与参考](docs/page-design/ui-design-principles.md) — 设计方法论 + 竞品案例 + 行动清单
+**Pi Extension 源码（本项目维护）**：`extensions/` 下 14 个 `@zhushanwen/pi-*` 包 + `extensions/shared/` 共享库（quota-providers / llm-shared / extension-logger），统一在本仓开发发布（旧仓 xyz-pi-extensions-workspace 已废弃，以本仓为准）。全集：ask-user / cw-tool / goal / model-switch / pending-notifications / permission / plan / rename-session / session-reader / scheduler / structured-output / subagent-workflow / todo / unified-hooks（新增/删包时更新此列举）。校验：`pnpm extensions:typecheck` / `extensions:lint` / `extensions:test`。
 
-**前端架构文档**:
-- [Renderer 目标架构（七层）](docs/architecture/renderer-target-architecture.md) — Shell/Workspace/Feature/ExtensionHost/RenderingProtocol/Transport&Coordination/Foundation 七层 + 层归属规则表 + 依赖铁律
-- [v6 架构重构](docs/architecture/v6-architecture-refactor.md) — 现状审查 + 落地改动（阶段 0/A/B/C，B1-B9）
-
-**待执行架构任务**（`docs/todo/`）:
-- [远程化合并架构指引](docs/todo/remote-use-merge-architecture.md) — `feat-remote-use`（86 commits）合并进 main 时的 T&C 层归位清单 + routeInbound 合并设计 + sync 兼容纪律。**合并 remote-use 之后删除此文档**
-
-**页面设计目录**: `docs/page-design/` — 前端设计 SSOT 与设计稿。结构：`design-tokens.md`（原子 SSOT）+ `design-system.md`（原语层）+ `v6-master-spec.md`（v6 单一权威源）+ `v6-spec-*.html`（视觉规格）+ `archive/v3/`（能力设计 spec：fast-*/flow-*/coding-plan-quota 等活跃功能设计）。禁止在项目根目录或其他位置创建 `demos/`、`impeccable/` 等目录
-
-**外部项目源码**:
-- **pi**: [badlogic/pi-mono](https://github.com/badlogic/pi-mono) — AI coding agent CLI，xyz-agent 通过子进程 RPC 调用。session tree / fork / clone 核心能力为 pi 原生，xyz-agent 不依赖任何 fork 特有改动
-  - npm 包: `@earendil-works/pi-coding-agent`
-  - 当前版本: `0.84.1`（devDependency 提供 extensions 开发期类型；打包的 pi binary 见 `resources/pi/`）
-  - 历史背景：此前使用 fork `zhushanwen321/pi`（包名 `xyz-pi`），fork 唯一改动是在 `get_state` RPC 响应中透出 `leafId` 字段。该字段在 xyz-agent 前端从未消费，2026-07 已切回上游；leafId 现直接取自上游 `get_entries` RPC 响应的 `data.leafId` 字段（runtime 历史增量缓存用作 since 基准，见 `session-service.ts` getHistory），无 JSONL session 文件解析代码（旧说法「从 JSONL 解析近似值」与代码不符，已勘误）
-  - Skill 加载: `packages/coding-agent/src/core/skills.ts`
-  - Skill 展开: `packages/coding-agent/src/core/agent-session.ts` — `_expandSkillCommand()`
-  - Slash 命令: `packages/coding-agent/src/core/slash-commands.ts`
-  - RPC 协议: `packages/coding-agent/src/modes/rpc/rpc-mode.ts`
-  - TUI 交互: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
-
-**Pi Extension 源码（本项目维护）**:
-- `extensions/` 目录下 14 个 `@zhushanwen/pi-*` extension 包 + `extensions/shared/` 下共享库（quota-providers / llm-shared / extension-logger），由本项目继续发布到 npm（main 线走 `npm-*` tag 人工版本判定，dev-npm 预发布走 changeset version）。完整清单见下方「Pi Extension 全集」
-- **[HISTORICAL] xyz-pi-extensions-workspace 已废弃**：原独立仓库 `~/Code/xyz-pi-extensions-workspace` 已停止维护，本仓 `extensions/` 是 `@zhushanwen/pi-*` 的**统一开发仓库**。所有 extension 的源码改动、bug 修复、版本发布都在本仓进行，不再回写到旧仓。旧仓的 `main` 分支可能滞后于本仓，排查问题时以本仓为准
-- **structured-output 方案 A（权威 schema 校验）[HISTORICAL]**：workflow 模式下 `PI_WORKFLOW_SCHEMA` env 注入的权威 schema 是唯一校验权威，LLM 传入的 `schema` 参数不参与校验（仅错误回显）。2026-08-01 事故：ds-flash 重写 `add_channels.items` schema 后自洽通过，4 条 channel 修复静默丢失。根因是旧实现校验 LLM 自报 schema 而非权威 schema。修复见 `extensions/structured-output/src/index.ts` 的 `executeStructuredOutput` authoritativeSchema 分支
-- **Extension 开发规范**: [docs/extensions/development-guide.md](docs/extensions/development-guide.md)（完整指南）、[docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)（强约束）、[docs/extensions/glossary.md](docs/extensions/glossary.md)（术语表）
-- 类型检查: `pnpm extensions:typecheck`；Lint: `pnpm extensions:lint`；测试: `pnpm extensions:test`
-- **本地开发调试**: `.agents/skills/dev-link/` 管理 `XYZ_EXTENSION_PATHS` 环境变量，在本地源码（live edit）和 npm 版本间切换 extension。`link-local.sh <pkg>` 添加 link → `set -a && source .env.dev-extensions && set +a && pnpm dev` 启动 → 改源码后新建 session 即生效。详见 [本地开发指南](docs/extensions/local-dev-guide.md)
-- **[MANDATORY] pi extension 测试优先在本地 pi 实测，不优先在 xyz-agent 验证**：`extensions/` 下 `@zhushanwen/pi-*` 扩展的改动，功能验证优先在**本地 pi CLI 环境**实测（RPC mode + 真实模型跑最小场景，检查 session 文件 / `XYZ_AGENT_DEBUG=1` 扩展日志），而不是优先在 xyz-agent 桌面应用中验证。原因：xyz-agent 有 mandatory 打包内置机制、数据目录隔离、runtime 中转等额外层，会掩盖或引入版本差异（2026-08-10 事故：嵌套 subagent keep-alive 拦截在本地 pi 7.0.1 实测正常，但用户 xyz-agent 环境滞留 dev 旧版 5.0.0-dev.1 导致拦截缺失）；pi CLI 是最接近扩展真实运行环境的验证场，子进程扩展加载（`mirrorMainProcessFlags` 镜像主进程 `--extension`）行为与 xyz-agent 一致。实测方法：`pi --mode rpc --session-dir <dir> --model <m> --approve --extension <ext-path>` + stdin JSONL 发 `prompt` 命令，配合 `XYZ_AGENT_DEBUG=1` 看 `~/.pi/agent/logs/` 扩展日志、检查子进程 session 文件（`~/.pi/agent/subagents/<enc>/sessions/`）的 `pending:register`/`pending:unregister` 差集。测试模型用 `xiaomi-token-plan-cn/mimo-v2.5-pro`（禁止用 kimi 模型做测试）
-- **Review 工作流**: `.agents/skills/pr-cr-fix/` 是 review→fix→PR 统一编排 skill，调度 `.agents/agents/` 下的 8 个 review agent（7 维审查 + 1 聚合器）。维度覆盖：arch-boundary / business-logic / electron-build / extension-api / monorepo-impact / test-coverage / type-safety。触发词："review 完开 PR"、"pr-cr-fix"。仅用于 xyz-agent worktree 的 PR 场景
-
-**Pi Extension 全集**（`extensions/` 下 14 个 `@zhushanwen/pi-*` 包 + `extensions/shared/` 下共享库；新增/删包时同步更新此表）：
-
-| npm 包名 | 目录 | 用途 |
-|---|---|---|
-| `@zhushanwen/pi-ask-user` | `ask-user` | 结构化多问题输入工具（单/多问，分栏预览 + 内联编辑） |
-| `@zhushanwen/pi-cw-tool` | `cw-tool` | cw CLI 的 role 工具封装（cw_planning/wave/dev/review）+ 5 个编排 agent + pi-cw skill，硬约束层主不自审 |
-| `@zhushanwen/pi-goal` | `goal` | Codex 风格 /goal 命令（持久目标驱动自治循环，证据验收） |
-| `@zhushanwen/pi-model-switch` | `model-switch` | 智能模型推荐与切换 |
-| `@zhushanwen/pi-pending-notifications` | `pending-notifications` | 跨扩展异步操作注册/查询（长任务期间防消息注入） |
-| `@zhushanwen/pi-permission` | `permission` | 四档权限模式（yolo/auto/approve/strict）+ 三层管道（AST + 规则 + AI 分类） |
-| `@zhushanwen/pi-plan` | `plan` | 轻量 plan 模式 |
-| `@zhushanwen/pi-rename-session` | `rename-session` | session 自动/手动重命名 |
-| `@zhushanwen/pi-session-reader` | `session-reader` | 读取/查询 pi session 历史（find/family/outline/expand/detail/search/export/extract/workflow 动作） |
-| `@zhushanwen/pi-scheduler` | `scheduler` | 定时任务调度（cron / interval，once / recurring） |
-| `@zhushanwen/pi-structured-output` | `structured-output` | 结构化输出（JSON Schema + Ajv 校验的 tool call 机制） |
-| `@zhushanwen/pi-subagent-workflow` | `subagent-workflow` | 统一 subagent 执行 + 多 agent workflow 编排（有状态工作流管理） |
-| `@zhushanwen/pi-todo` | `todo` | AI 驱动的 todo 列表（会话持久化 + /todos） |
-| `@zhushanwen/pi-unified-hooks` | `unified-hooks` | 统一 hooks 收集（散落 hook 集中维护） |
-
-**Settings 模块设计文档**:
-- [Settings spec](.xyz-harness/2026-05-12-settings-redesign/spec.md) — 需求规格（WS 协议、数据流、组件结构）
-- [Settings plan](.xyz-harness/2026-05-12-settings-redesign/plan.md) — 实现计划（12 个 Task）
+- **[MANDATORY] extension 改动优先在本地 pi CLI 实测**（不是 xyz-agent 桌面）：`pi --mode rpc --session-dir <dir> --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve --extension <path>` + stdin JSONL 发 prompt；`XYZ_AGENT_DEBUG=1` 看 `~/.pi/agent/logs/` 扩展日志。xyz-agent 的 builtin 打包/数据隔离/runtime 中转层会掩盖版本差异
+- **structured-output 方案 A [HISTORICAL]**：workflow 模式 `PI_WORKFLOW_SCHEMA` 注入的权威 schema 是唯一校验权威，LLM 自报 schema 不参与校验（曾因校验自报 schema 致修复静默丢失）
+- 本地开发调试（live edit ↔ npm 版切换）：`.agents/skills/dev-link/`
+- **Review 工作流**：`pr-cr-fix` skill 是 PR 完整生命周期入口（开 PR → 7 维 review → 修 must-fix → pre-merge → push；review agent 内化在 `pr-cr-fix/agents/`，不全局暴露）
 
 ## 常用命令
 
@@ -86,697 +37,98 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 pnpm run dev          # 开发模式 (Electron + Vite HMR)
 pnpm run build        # 生产构建 (electron-builder)
 pnpm run lint         # ESLint 检查
-pnpm run prepare      # 安装 git hooks
-
-# 打包流程（pnpm workspace 单步安装，无需 cd 子目录）
-pnpm install          # 安装所有依赖（根 + packages/* + apps/*，ELECTRON_SKIP_BINARY_DOWNLOAD=1 跳过二进制下载）
-bash scripts/preflight-check.sh   # 打包前检查
-pnpm build                             # 构建 DMG/ZIP/EXE
-bash scripts/postbuild-validate.sh         # 打包后验证
-
-# 单独验证 runtime bundle
-bash scripts/validate-runtime-bundle.sh
-
-# Pi Extension 开发（extensions/ 目录）
-pnpm extensions:typecheck   # 全量 tsc 类型检查
-pnpm extensions:lint        # ESLint（extensions/ override 规则）
-pnpm extensions:test        # 全部 extension 包 vitest 测试
+pnpm install          # workspace 单步安装（根 + packages/* + apps/*，ELECTRON_SKIP_BINARY_DOWNLOAD=1）
+pnpm extensions:typecheck && pnpm extensions:lint && pnpm extensions:test   # extensions/ 三连
+bash scripts/validate-runtime-bundle.sh    # runtime bundle 深度验证
 ```
 
 ## 前端调试（Playwright 连 dev app）
 
-`pnpm dev` 启动后，Electron 开 `--remote-debugging-port=9222`。用 browser-automation skill 的 Playwright 脚本连接，可截图/DOM 快照/点击/填表/执行 JS，**不抢焦点**（连接已有进程，非新开）。
+`pnpm dev` 后 Electron 开 `--remote-debugging-port=9222`，用 browser-automation skill 连 `http://localhost:9222`（截图/DOM/执行 JS，不抢焦点）。
 
-```bash
-PW="/Users/zhushanwen/.agents/skills/browser-automation/scripts/pw.js"
-EP="http://localhost:9222"
-
-# 确认 dev app 在 9222（dev Electron 的 renderer）
-lsof -i :9222 2>/dev/null
-node $PW $EP list-pages
-
-# 截图
-node $PW $EP screenshot -o /tmp/debug.png
-
-# DOM 快照（可交互元素）
-node $PW $EP snapshot
-
-# 执行 JS（查状态/读 DOM）
-node $PW $EP evaluate "document.querySelector('[data-testid=chip-branch]')?.textContent"
-
-# 点击/填表
-node $PW $EP click "[data-testid=chip-branch]"
-node $PW $EP fill "input[name=x]" "value"
-```
-
-**注意多个 xyz-agent 实例**：打包版 `/Applications/太极.app` 也可能同时在跑（占 3210 端口）。dev 实例的 renderer 在 9222、runtime 在 3310（tsx 跑 `packages/runtime/src/index.ts`）。连错实例会看到旧代码——先确认 `list-pages` 的 URL 是 `localhost:1420`（vite dev server）。
-
-**runtime 代码改动不热重载**：dev runtime 用 `tsx`（非 `tsx watch`）运行，改 runtime 源码后**必须重启 dev**（`pnpm dev` 重跑）才生效。renderer 走 vite HMR 自动热重载。
-
-完整命令参考：[browser-automation skill](file:///Users/zhushanwen/.agents/skills/browser-automation/SKILL.md)
+- 多实例坑：打包版太极.app 可能同跑（占 3210）；dev renderer 在 9222、runtime 在 3310。连错看到旧代码——先确认 `list-pages` URL 是 `localhost:1420`
+- runtime 改动不热重载（tsx 非 watch）：改 runtime 源码必须重启 `pnpm dev`；renderer 走 vite HMR
 
 ## 关键规则（违反必出 bug）
 
-### 1. emit 只传单个 payload 对象
-禁止 `emit('event', arg1, arg2)` — handler 极易混淆参数顺序。必须 `emit('event', { arg1, arg2 })`。
+**runtime ↔ 前端编码核心**：
 
-### 2. Event bus listener 防重复注册
-组件可能多实例（split mode），listener 必须用模块级 refCount 保护，否则事件处理翻倍。
+1. **emit 只传单个 payload 对象**：`emit('event', { arg1, arg2 })`，禁止多参数
+2. **Event bus listener 防重复注册**：组件可能多实例（split mode），listener 用模块级 refCount 保护
+3. **错误必须重置 isGenerating + streamingMessage**：错误作为 assistant 消息插入聊天流，不用顶部 banner
+4. **外部系统对接先验证再编码**：对接 pi RPC 等先写独立验证脚本确认字段格式，用完归档移除
+5. **pi 适配层不信任外部格式**：EventAdapter / session-pool 是 pi 协议唯一适配点；`sendCommand` 必须检查 `success`
+6. **pi session 文件延迟写入**：首条 assistant 消息前文件可能不存在，读取代码必须处理；**[HISTORICAL] 禁止任何代码在 pi 首次 flush 前创建/触碰 session 文件**（EEXIST → session 永久卡死；活跃 session 靠 `SessionScanner.listAll()` 合并内存 Map 显示）
+7. **Session 隔离：所有 runtime → 前端消息必须带 `sessionId`**，缺失的消息应被前端忽略（三层：ChatStore Map 分区 / useChat 路由 / PaneSessionView 过滤；`sendError` 必须传 sessionId）
+8. **per-session 状态隔离范式 [ADR-0049]**：持有 per-session 状态的 composable 必须用 `useSessionScopedState` 工厂（Map 分区范式），禁止实例级状态 / watch(sessionId) 手动清空。**WS handler 必须用 `updateFor(capturedSid)` 不用 `update`**（结构性消除切 session 竞态）；cleanup 由 `useSidebar.deleteSession` 统一编排。新增/修改 composable 时 reviewer 按 [ADR-0049 Checklist](docs/adr/0049-session-isolation-map-partition.md#code-review-checklist范式守护替代-eslint-规则) 逐条确认
+9. **对话流状态必须实时可见 + 重开 session 仍可见 [HISTORICAL]**：实时链路（message.* 广播 + chat-message-effects）与持久化链路（RPC 路径 converter 不丢弃任何 pi entry 类型 / 文件路径 JSONL filter 不只留 message）两条通路必须同时实现。命令副作用归 `message-dispatcher.ts` 编排，不散落 event-adapter。检测：操作后关闭重开 session，对话流应一致
 
-### 3. 错误必须重置 isGenerating + streamingMessage
-任何错误路径都必须重置状态，否则 UI 卡死在「思考中」。错误作为 assistant 消息插入聊天流，不用顶部 banner。
+**workspace / git**：
 
-### 4. 外部系统对接先验证再编码
-对接 pi RPC 等外部系统时，先写独立验证脚本（如 `verify-<system>.cjs`，放项目根或临时位置），确认字段名和格式后再写业务代码。验证使命完成后脚本即归档/移除，不长期保留。
+10. **Worktree 创建必须走 `git-cwt`**（自动 pnpm install + Electron dist 缓存 symlink）；Vite `strictPort: true`，1420 被占则静默失败加载旧代码——`lsof -i :1420 -P` 确认端口归属
+11. **Bare repo 模式**：`origin` = 本地 `.bare`，GitHub remote 叫 `github`（push 用 `git push github HEAD:fix-xxx`）；workspace root 不是 git repo，`gh` 命令带 `--repo zhushanwen321/xyz-agent`；merge 脚本无 main worktree 时用 `git --git-dir` 指向 `.bare`，版本 bump push 用 `HEAD:refs/heads/main`
 
-### 5. pi 适配层不信任外部格式
-EventAdapter 和 session-pool 是 pi 协议的唯一适配点。业务代码不直接处理 pi 格式。`sendCommand` 必须检查 `success` 字段。
+**架构机制**：
 
-### 6. pi session 文件延迟写入
+12. **Electron 打包约束（事故最高发）**：① runtime 源码禁止 `import.meta.url` / `globalThis.__dirname`（CJS bundle 下失效），路径用 `typeof __dirname !== 'undefined' ? __dirname : undefined`；② 新增 runtime 依赖必须同步加 `tsup.config.ts` 的 `noExternal`；③ 打包子系统改动逐个 commit 逐个验证。细节核对见 `pr-cr-fix/agents/review-electron-build.md`；验证三阶段（preflight → build → postbuild）+ validate-runtime-bundle 由脚本自动化
+13. **目录规范**：禁止 `demos/` / `impeccable/` 目录；禁止外部绝对路径 symlink（pre-commit 检查）；`.xyz-harness/` 必须提交不可删除（决策追溯）；`DESIGN.md` 保留作历史参考（已 DEPRECATED by ADR-0019）
+14. **项目 skill 必须自包含 [HISTORICAL]**：`.agents/skills/` 引用的脚本复制到 skill 目录内随 git 跟踪（`merge/scripts/` 已自包含），禁止依赖 `~/.agents/skills/` 全局脚本或 symlink
+15. **排查规则（untracked 展开 `-uall` / 禁止写死绝对路径用 `getDataDir()` 等动态推导 / 跨层机制穷尽 pi extension 层）**：详见 [docs/troubleshooting.md](docs/troubleshooting.md) 的「历史排查规则」
 
-pi 的 `SessionManager._persist()` 在收到第一个 **assistant** 消息之前不会写入 session 文件（延迟写入策略：所有 entry 缓存在内存，等 assistant 到达才 flush）。这意味着 `get_state` 返回的 `sessionFile` 路径对应的文件在首次 assistant 回复前**可能不存在**。
+**Plugin / Builtin extensions**：
 
-所有读取 session 文件的代码必须处理文件不存在的场景：
-- `session-tree-reader.buildTreeFromFile()` → 文件不存在时返回空树
-- `getHistoryFromFile()` → 文件不存在时返回空消息列表
-- **禁止**假设 `get_state` 返回 `sessionFile` 后文件就已存在
+16. **Plugin System**：PluginService 是唯一适配层（WS → server.ts → PluginService）；trusted 插件跑 Worker Thread、sandbox 跑独立 fork 子进程；hook 按 priority 串行（单 handler 5s 超时放行）；sessionData 写入 debounce 缓存 + shutdown flushAll；WS 命名 Client→Server 点号（`plugin.xxx`）/ Server→Client 冒号 camelCase（`plugin:statusBarUpdate`）
+17. **Builtin pi-extensions 打包内置（现行）**：10 个 `@zhushanwen/pi-*` 包 esbuild bundle 后 staged 到 `apps/electron/resources/extensions/` 随应用打包（不走 npm 安装）。清单 SSOT = `packages/shared/src/mandatory-extensions.json`（infrastructure 3 包不可禁、feature 7 包可禁、都不可卸；守卫抛 `builtin_cannot_*`）。[HISTORICAL] 演化：builtin 依赖 → 推荐安装 → mandatory npm → 打包内置（2026-08-12）；「删除打包所需依赖致产物缺失」教训始终适用（pi binary、xyz-system-prompt-extension.js 同理）
 
-**[HISTORICAL] 禁止提前创建 session 文件**：曾经有 `ensureSessionFile()` 在 session 创建后立即用 `openSync(filePath, 'wx')` 创建含 session+session_info 两行的最小文件，理由是「确保 scanPiSessions 能找到该 session」。但这与 pi 0.80.3 `SessionManager._persist` 首次 flush 的 `openSync(sessionFile, "wx")` 冲突 → **EEXIST** → pi 抛 `message_start{stopReason:"error"}` → 整个 session 永久卡死（坏 session 文件只有 2 行，pi 自己的内容从未写入）。正确做法是依赖 `SessionScanner.listAll()` 合并内存 active session（`this.sessions` Map）：活跃 session 即使磁盘无文件也显示在列表里。**禁止任何代码在 pi 首次 flush 前创建/触碰 session 文件**。
+## 测试
 
-### 7. Session 隔离：所有消息必须带 sessionId
-
-所有 runtime → 前端的消息，如果涉及特定 session，`payload` 必须包含 `sessionId`。前端靠 `payload.sessionId` 路由到正确的 panel/store 分区。**缺失 `sessionId` 的消息应被忽略**，否则会广播到所有 panel。
-
-三层隔离机制：
-
-| 层 | 职责 | 位置 |
-|---|---|---|
-| ChatStore 分区 | `chatSessions: Map<sessionId, ChatSessionState>`，所有操作要求显式 sessionId | `stores/chat.ts` |
-| useChat 全局路由 | 事件处理器从 `msg.payload.sessionId` 提取 sid，路由到 store 分区 | `composables/useChat.ts` |
-| PaneSessionView 过滤 | 组件级事件监听（error、compacted 等）严格按 `props.sessionId` 过滤 | `PaneSessionView.vue` |
-
-Runtime 侧：`server.ts` 的 `sendError` 必须传入 `sessionId`（外层 catch 从原始消息 `msg.payload.sessionId` 提取）。不带 `sessionId` 的 error 会被前端所有 panel 忽略。
-
-### 7.6 per-session 状态隔离范式 [ADR-0049]
-
-**所有持有 per-session 状态的 composable 必须用 `useSessionScopedState` 工厂（`composables/useSessionScopedState.ts`），统一采用 Map 分区派范式。** 禁止实例级状态 + watch(sessionId) 手动清空（脆弱模式）。
-
-#### 范式定义
-
-| 范式 | 含义 | 评价 |
-|------|------|------|
-| **Map 分区派（SSOT）** | 单例 composable 内部 `Map<sessionId, T>`，按 sid 查分区，切 sid 切分区 | ✅ 正确范式。天然隔离，切回恢复，不依赖人记得清空 |
-| **实例级隔离（反模式）** | 每组件实例各自状态，靠组件树天然多实例隔离 | ❌ 脆弱。切 sid 时同一实例的状态没清就泄漏（useExtensionUI bug 即此模式失效） |
-| **watch 清理派（反模式）** | 单实例状态 + `watch(sessionId)` 切换时手动清空 | ❌ 脆弱。依赖开发者记得清空**所有**字段，新加字段忘了清就泄漏 |
-
-#### 三个术语区分
-
-- **Map 分区**：单例 composable 内 `Map<sessionId, T>`，本次统一目标范式
-- **实例级隔离**：每组件实例各自状态（靠组件树多实例）。useExtensionUI 旧实现
-- **watch 清理派**：单实例状态 + watch(sessionId) 手动清空。SideDrawer/useComposerHistory 旧实现
-
-#### useSessionScopedState 工厂用法
-
-```ts
-import { reactive } from 'vue'
-import { useSessionScopedState } from '@/composables/useSessionScopedState'
-
-// init 工厂必须返回 **reactive** 容器（plain object mutate 不触发下游 computed）
-const state = useSessionScopedState(
-  sessionIdRef,  // Ref<string|null>
-  () => reactive({ count: 0, items: [] as string[] }),
-)
-
-state.current.value  // 当前 sid 分区（null sid 返回默认实例不写 Map）
-state.update(s => { s.count++ })  // 操作当前 sid 分区（null sid no-op）。用于 UI 操作（用户主动操作当前 session）
-state.updateFor(sid, s => { s.count++ })  // 显式指定分区，不读 sid.value 实时值。用于 WS handler（消息属于固定 sid）
-state.cleanup(sid)  // 移除指定 sid 分区（手动调用，正常由 deleteSession 编排）
-```
-
-**WS handler 必须用 `updateFor` 不用 `update`**：WS handler 闭包捕获订阅时 sid，调 `updateFor(capturedSid, ...)`。即使 session 切换的退订是异步的（watch flush:pre），旧 sid 的迟到消息也只写旧 sid 分区，不污染新 sid（结构性消除竞态，M1 修复）。UI handler（用户主动操作）用 `update`（读实时 sid 正确）。useExtensionUI / SideDrawer 已遵守此契约。
-
-#### session 销毁 → cleanup 自动触发
-
-`useSidebar.deleteSession(id)` 是 session 销毁的唯一编排点（所有真正释放 per-session 分区的路径都经过它）。其内部调 `triggerSessionCleanups(id)`（与 `invalidateStatusCache(id)` 并列），遍历所有 `useSessionScopedState` 实例注册的 cleanup 函数，移除该 sid 的 Map 分区。**新 composable 用工厂后，无需手动挂钩 cleanup**——工厂在 setup 时自动注册，scope dispose 时反注册。
-
-#### 例外（不需迁移）
-
-- `useSessionEvents.ts`：订阅编排层，不持有 per-session 业务状态（registrations 是 handler 路由表，随实例销毁清）。不套 Map 分区。
-- `useDetailPane` / `useFileTree` 等：已正确隔离（loadToken / 现有 Map 分区），不在本次重构范围。
-
-详见 [ADR-0049](docs/adr/0049-session-isolation-map-partition.md)。
-
-**Code Review 强制检查项**：新增/修改 composable 时，reviewer 必须按 ADR-0049 的 [Code Review Checklist](docs/adr/0049-session-isolation-map-partition.md#code-review-checklist范式守护替代-eslint-规则) 逐条确认（是否持有 per-session 状态 / 是否用工厂 / WS handler 是否 updateFor / cleanup 是否挂钩）。例外须在 ADR 例外清单登记审批。
-
-### 7.5 对话流状态必须可重开恢复 [HISTORICAL]
-
-**所有进入对话流的状态（消息、系统通知、压缩记录、工具结果等），必须同时满足两条：实时可见 + 重开 session 后仍可见。** 只做到实时可见、重开后消失的，视为未完成。
-
-事故背景：compact 执行后实时反馈缺失 + 重开 session 看不到压缩记录。根因是「实时链路」和「持久化链路」是两条独立的通路，只打通一条会导致：关掉 session 重开后，对话流回到压缩前的状态，用户以为压缩没发生或丢失了数据。
-
-两条通路必须同时维护：
-
-| 通路 | 职责 | 关键检查点 |
-|---|---|---|
-| **实时链路**（事件/RPC 响应 → 前端消息流） | 操作发生时立即在对话流显示反馈 | runtime 广播 `message.*` 事件携带完整 payload；前端 `chat-message-effects.ts` 有对应 effect 处理 |
-| **持久化链路**（session JSONL → 重开加载） | 重开 session 后历史完整呈现 | pi 写入 JSONL 的 entry 类型，runtime 读取时（`session-history.ts` 文件路径 / `message-converter.ts` RPC 路径）**都不能过滤掉**；前端 hydrate 能还原 |
-
-持久化链路的两条读取路径都要覆盖（缺一会导致「在线重开能看到、离线重开看不到」或反之）：
-
-1. **RPC 路径**（session 在线，有 pi 子进程）：`session-service.getHistory` → `client.getEntries()` → pi `get_entries` → `mapSessionEntries`（entry 树 → 伪消息，session-entry-mapper.ts）→ `convertPiHistory`（message-converter.ts，converter M1-M4 已改走 entry 树重建）。converter 必须处理所有 pi 返回的 message role（`user`/`assistant`/`toolResult`/`compactionSummary`/`branchSummary` 等），不能静默丢弃未知 role。
-2. **文件路径**（session 离线，无 pi 子进程）：`session-history.ts` 的 `getHistoryFromFile` → 解析 JSONL。filter 不能只留 `type === 'message'`，pi 的顶层 entry 类型（`compaction`/`branch`/`bashExecution` 等）需按需放开并转换。
-
-**新增任何进入对话流的状态时，必须同时实现两条通路**。只补实时广播、不改 converter/文件读取的，会在重开时丢失。检测方法：操作后关闭 session 再重开，对话流应与关闭前一致。
-
-命令编排层（`message-dispatcher.ts`）是实时链路的归位点——主动发起的命令（如 compact）的副作用（生命周期广播 + summary 消息 + 关联状态刷新如 context 用量）都在 dispatcher 编排，不要分散到 event-adapter（event-adapter 只翻译 pi 推送的事件流，不编排命令副作用）。
-
-### 8. Worktree 创建必须走 `git-cwt`
-
-创建新 worktree **必须使用 `git-cwt`**（`~/.shell/07-git-ws.sh`），不要手动 `git worktree add`。
-
-- `git-cwt` 调用 `.bare/custom-hooks/setup-worktree.sh`，该脚本执行：`pnpm install`（workspace 单步装完根 + packages/* + apps/*，`ELECTRON_SKIP_BINARY_DOWNLOAD=1`）+ Electron dist 缓存复用
-- 项目使用 pnpm workspace（`pnpm-workspace.yaml` 声明 `packages/*` + `apps/*`），手动创建的 worktree 缺少依赖时必须跑 `pnpm install`
-- Electron dist 缓存在 `<workspace>/.electron-dist-cache/`，新 worktree 通过 symlink 复用
-- 删除 worktree 不影响缓存，后续 `git-cwt` 新建时自动从缓存链接
-
-### 9. 多 Worktree 端口冲突排查
-
-Vite 使用 `strictPort: true`（端口 1420 被占则静默失败）。同一机器上另一个进程（main worktree 或其他项目）占 1420 端口时，当前 worktree 的 Vite 不会启动，Electron 加载的是旧代码。现象：代码改了但浏览器不更新，DOM 出现已删除的旧元素。
-
-```bash
-# 确认 1420 端口属于当前 worktree
-lsof -i :1420 -P | grep node
-# 检查进程 cwd 是否指向当前 worktree 的 renderer 目录
-```
-
-### 10. Bare Repo Workspace 模式下的 Git/gh 注意事项
-
-本项目使用 bare repo + worktree 模式（`xyz-agent-workspace/.bare/`），以下是此模式特有的问题：
-
-#### Remote 命名
-- `origin` 指向本地 bare repo（`xyz-agent-workspace/.bare`），不是 GitHub
-- GitHub 的 remote 叫 `github`（`git@github.com:zhushanwen321/xyz-agent.git`）
-- push 到 GitHub：`git push github HEAD:fix-xxx`，不是 `git push origin`
-
-#### `gh` CLI 在 workspace root 不可用
-- workspace root（`xyz-agent-workspace/`）不是 git repo，`gh` 无法自动发现 repo
-- 所有 `gh` 命令必须带 `--repo zhushanwen321/xyz-agent`
-- 或在 worktree 目录内运行（此时 `gh` 能从 `.git` 文件追溯到 bare repo）
-
-#### worktree 的 upstream tracking
-- `git-cwt` 创建 worktree 时不自动设置分支 tracking
-- 默认 `@{upstream}` 可能指向 `origin/main`，导致 `git log @{upstream}..HEAD` 显示所有 feature commits
-- 修复：`git branch --set-upstream-to=origin/<branch-name>`
-
-#### pnpm workspace 单步安装（2026-07-04 重构后）
-- 项目使用 pnpm workspace（`pnpm-workspace.yaml`），`pnpm install` 一次装完根 + `packages/*` + `apps/*`
-- `.npmrc` 配置 `node-linker=hoisted` 保证 Electron 兼容性（详见 ADR-0036）
-- `git-cwt` 的 `setup-worktree.sh` 会自动跑 `pnpm install`，手动操作时跑一次即可
-
-#### merge-worktree 脚本的 bare repo 兼容
-- 脚本已修复：自动检测 `GH_REPO` 并给所有 `gh` 调用加 `--repo`
-- 没有 main worktree 时，用 bare repo（`.bare/`）做 `git --git-dir`
-- 版本 bump push 用 `HEAD:refs/heads/main` 而不是 `main`（worktree 中本地没有 main 分支）
-
-Vite 使用 `strictPort: true`（端口 1420 被占则静默失败）。同一机器上另一个进程（main worktree 或其他项目）占 1420 端口时，当前 worktree 的 Vite 不会启动，Electron 加载的是旧代码。现象：代码改了但浏览器不更新，DOM 出现已删除的旧元素。
-
-```bash
-# 确认 1420 端口属于当前 worktree
-lsof -i :1420 -P | grep node
-# 检查进程 cwd 是否指向当前 worktree 的 renderer 目录
-```
-
-### 11. Plugin System 架构约束
-
-- **Plugin Service 是唯一的适配层**: 所有前端 ↔ 插件系统通信必须通过 WS → server.ts → PluginService 路径。前端不直接与 Worker 通信
-- **执行隔离（两层）**: trusted 插件运行在 Worker Thread 中；sandbox 插件运行在独立 fork 子进程中（`XYZ_PLUGIN_SANDBOX_DIR` + ESM loader 路径边界，plugin-host-process.ts）。插件崩溃不影响其他插件或主进程
-- **Hook 串行执行**: executeHooks 按 priority 排序串行 invoke 每个 handler。单个 handler 超时 5s 视为放行。blocked 终止链
-- **Tool RPC 路由**: handleBridgeToolExecute 通过 toolRegistry 查找 → Worker RPC invoke（超时 30s）→ 返回结果。不是 stub
-- **sessionData 缓存**: 读取走内存缓存，写入先缓存（per-write 500ms debounce + 5s 周期 flush），runtime shutdown 时先 flushAll 再停 timer（正常关停零丢失）。容量上限 10MB/plugin
-- **Hot Reload**: 外部插件通过 fs.watch 监听（300ms debounce）。built-in 插件不监听
-- **WS 命名约定**: Client→Server 用点号（`plugin.xxx`），Server→Client 用冒号+camelCase（`plugin:statusBarUpdate`）
-- **Plugin Store**: 前端使用 `stores/plugin.ts` + `composables/usePlugin.ts` 管理 plugin 状态和 WS 事件
-- **数据目录隔离**: `~/.xyz-agent/` 与 `~/.pi/agent/` 完全隔离（已有规则 #10）
-- **[HISTORICAL] Builtin pi-extensions 改为 Settings 推荐安装**（2026-07-04 推翻旧规则）：5 个 `@zhushanwen/pi-*` 包（`pi-goal`/`pi-todo`/`pi-subagents`/`pi-workflow`/`pi-structured-output`）**不再作为根 `package.json` dependencies 集成进打包产物**。改为 Settings → Extensions 页面的「推荐扩展」快捷按钮，用户点击从 npm 安装到 `~/.xyz-agent/pi/agent/npm/node_modules/`。
-  - 推荐列表 SSOT：`packages/shared/src/recommended-extensions.json`（runtime import，前端经 `extension.recommended` WS 拉取）
-  - runtime `ExtensionService.getRecommendedExtensions()` 计算已安装状态（按 npm 包名精确匹配 `ExtensionInfo.name`，不经 normalizeExtName 转换）
-  - electron-builder.yml 不再 `extraResources` 拷贝 `@zhushanwen/`，preflight-check.sh 移除了原 npm packages / 传递依赖检查（步骤 7、8）
-  - **代价**：新用户首次启动无这些 extension，需到 Settings 手动安装；离线环境无法安装（npm-installer 需联网）
-  - 旧规则背景：曾经发生过误删 builtin 依赖导致打包产物缺失的事故，故设禁止删除规则。现改为推荐安装机制后该约束不再适用，但「删除打包所需依赖」的事故教训仍适用于其他 builtin 资源（如 pi binary、xyz-agent-extension.js）
-  - **2026-07-30 推翻（升格 mandatory）**：上面的「Settings 推荐安装」机制**已被取代**。原 6 个推荐包（`pi-ask-user`/`pi-goal`/`pi-todo`/`pi-pending-notifications`/`pi-subagent-workflow`/`pi-structured-output`）已升格为 **mandatory**（强制安装），并新增 3 包（`pi-permission`/`pi-scheduler`/`pi-rename-session`），共 **9 包**改为 mandatory。mandatory 语义：runtime boot 时 `ensureMandatoryExtensions()` 自动 `npm install` 到 `~/.xyz-agent/npm/node_modules/` 并设 `autoUpgrade`、清 disabled 残留；**不可卸载/不可禁用**（`uninstallExtension`/`toggleExtension` 双重守卫，抛 `mandatory_cannot_disable`/`mandatory_cannot_uninstall`）。`recommended-extensions.json` 已清空为 `[]`（推荐机制保留给未来非强制可选扩展，当前为空）。**SSOT 迁移**：mandatory 列表 SSOT = `packages/shared/src/mandatory-extensions.json`（含 `tier: infrastructure | feature` 两级），recommended-extensions.json 不再是这些包的 SSOT。离线安装/用户手动安装等「推荐机制」结论不再适用。
-  - **2026-08-12 推翻（改为打包内置）**：上面的「boot npm install 到 `~/.xyz-agent/npm/node_modules/`」机制**已被取代**（ada6c0466 重构 + `prepare-builtin-extensions.sh`）。mandatory 包改为**随应用打包内置**：esbuild 把每个包 bundle 成自包含 `index.js`（JS value 依赖 inline，仅 pi virtualModules external）→ staged 到 `apps/electron/resources/extensions/@zhushanwen/<pkg>/` → electron-builder extraResources 拷进 `Resources/extensions/` → resolver `bundled` 源扫描。dev 与 build 同源（dev 直读 staged 目录）。**语义变化**：不再 boot npm install（`migrateBuiltinExtensions()` 反向清理历史 npm 记录：settings.json packages[] / auto-upgrade / disabled）；禁止用户 npm 安装（`installExtension` 抛 `builtin_already_installed`）；infrastructure 级不可禁用守卫保留。**SSOT 不变**：`mandatory-extensions.json` 仍是清单 SSOT（`prepare-builtin-extensions.sh` 读它生成 staged 产物，新增包**自动生效**，无需改 electron-builder.yml——extraResources filter 为 `**/*` 全量）；2026-08-12 加入 `pi-session-reader`（tier: infrastructure），共 **10 包**。打包产物存在性/完整性校验在 `postbuild-validate.sh`（`verify-staged-extensions.mjs`：index.js 存在 / 无 .ts 残留 / permission wasm / import dry-run）。**后续术语演化（builtin）**：守卫错误码与判定函数已从 mandatory 切到 builtin——`uninstallExtension` 抛 `builtin_cannot_uninstall`，`toggleExtension` 抛 `infrastructure_cannot_disable`（仅拦 infrastructure 级，feature 级可禁）。分级行为：infrastructure 3 包（`pi-pending-notifications`/`pi-session-reader`/`pi-structured-output`）不可禁且 UI 无启用开关；feature 7 包可禁（开关可见可操作）；两者都不可卸（UI 无卸载按钮，`ExtensionActions.vue` `v-if="ext.layer !== 'builtin'"` 隐藏）。判定函数 `isBuiltinExtension`（`packages/shared/src/extension.ts`，`isMandatoryExtension` 的新语义别名）、`isInfrastructureBuiltin`，底层 SSOT 仍是 `mandatory-extensions.json`。非 builtin 扩展（任意第三方 npm/local-dir/git 安装）仍正常装卸。
-  - **xyz-system-prompt-extension.js**（repo root）：builtin 文件型 pi 扩展，before_agent_start hook 实现系统提示词追加注入。走 `--extension` CLI 注入（extension-service.getExtensionPaths 在 xyz-agent-extension.js 之后追加）。打包走 electron-builder.yml extraResources（`../../xyz-system-prompt-extension.js`），postbuild-validate.sh 校验产物存在性。「删除打包所需依赖」事故教训同样适用
-  - extension/skill 都不走 vendor submodule（2026-07-04 移除了 `vendor/xyz-pi-extensions` + `vendor/xyz-harness` 两个 submodule，`prepare-pi-resources.sh` 现只负责下载 pi binary，extensions 走 npm 源、skills 走用户/project 级目录 `~/.agents/skills` / `<cwd>/.pi/agent/skills`）
-
-### 12. Electron 打包约束（违反必出 bug）
-
-#### tsup 配置 (`packages/runtime/tsup.config.ts`)
-- `platform: 'node'` + `target` 匹配当前 Electron 内置 Node 版本（见 `packages/runtime/tsup.config.ts`，Electron 42 → Node 24）— 自动处理所有 Node 内置模块 external
-- `noExternal` 必须覆盖 **所有** runtime `dependencies` — 新增 npm 依赖时必须同步追加，否则 `asar.unpacked` 运行时 `Cannot find module`
-- **Worker 入口必须独立打包**：`plugin-bootstrap.ts` 是 Worker Thread 入口，tsup `entry` 必须包含它，输出为 `plugin-bootstrap.cjs`，与 `index.cjs` 同目录。禁止只打包 `index.ts` 一个 entry
-- 禁止在 runtime 源码中使用 `import.meta.url` 或 `fileURLToPath(import.meta.url)` — tsup CJS bundle 将 `import.meta` 替换为 `var import_meta = {}`，`import_meta.url` 始终为 `undefined`。禁止用 `globalThis.__dirname` — CJS 中 `__dirname` 是模块局部变量，不在 `globalThis` 上。正确做法：用 `typeof __dirname !== 'undefined' ? __dirname : undefined` 直接检查 CJS 模块变量，tsup/esbuild 会原样保留到 CJS 输出
-
-#### electron-builder 配置 (`apps/electron/electron-builder.yml`)
-- `asarUnpack: dist/runtime/**/*` — runtime 必须在 unpacked 目录，子进程无法读取 asar 内的 JS 文件
-- **`files` 与 `asarUnpack` 的致命交互**：`asarUnpack` 只作用于**已被 `files` 包含的文件**。如果 `files` 中用了 `!dist/runtime/**/*` 排除 runtime，asarUnpack 将无文件可解压，导致打包产物中**缺失整个 runtime**。必须确保 `files` 包含 `dist/runtime/**/*`
-- `files` 只包含主进程直接 `require` 的 `node_modules`（其余已被 tsup 打包进 runtime bundle）
-
-#### extraResources 与 symlink
-- `resources/pi/` 中**禁止存在指向外部绝对路径的 symlink**。electron-builder 的 `extraResources` 复制时保留 symlink，用户机器上目标路径不存在会导致 pi 运行时资源缺失
-- 构建前必须 dereference：`cp -RL` 替代 `cp -R`，或脚本中显式将 symlink 替换为真实目录拷贝
-
-#### 子进程启动 (`apps/electron/main/supervisor/runtime-supervisor.ts`)
-- 必须用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 启动 runtime，不能用 `node` 路径
-- 打包后路径必须用 `process.resourcesPath/app.asar.unpacked/...`，不能用 `app.getAppPath()`（返回 asar 虚拟路径）
-
-#### 打包验证流程（三阶段，缺一不可）
-1. **Preflight** (`scripts/preflight-check.sh`)：
-   - 产物存在性（dist/main, dist/preload, dist/runtime/index.cjs, dist/runtime/plugin-bootstrap.cjs, renderer/dist）
-   - tsup noExternal 与 runtime dependencies 一致性
-   - `files` 显式包含 `dist/runtime/**/*`（不只是"未排除"）
-   - `files` 未排除 `dist/runtime`（正则扫描 `!dist/runtime` 模式）
-   - `resources/pi` 无 symlink
-2. **Build** (`pnpm run build`)：electron-builder 执行打包，产出 dmg/zip/exe
-3. **Postbuild** (`scripts/postbuild-validate.sh`)：
-   - asar 内容正确性（dist/main/main.cjs, dist/preload/preload.cjs）
-   - `app.asar.unpacked/dist/runtime/` 存在且包含 `index.cjs` + `plugin-bootstrap.cjs`
-   - `Resources/pi` 无 symlink
-   - 产物大小合理性
-4. **CI Runtime Smoke Test**（release workflow）：
-   - macOS: `ELECTRON_RUN_AS_NODE=1 <electron> <runtime> --port=<random>` → `/health` 返回 ok
-   - Windows/Linux: 验证 `app.asar.unpacked/dist/runtime/index.cjs` 存在
-
-#### 打包相关改动规范（违反必出 bug）
-
-**tsup.config.ts、electron-builder.yml、plugin-host.ts、runtime 相关文件的改动必须逐个 commit、逐个验证。** 禁止在一个 commit 中同时修改多个打包子系统。
-
-原因：v0.3.8 的 PR #61 在一个 commit 中同时改了 tsup 配置、electron-builder files、plugin-host 路径解析、plugin-version-checker，引入了两个独立致命 bug，无法定位是哪个改动导致的问题。
-
-正确流程：
-1. 每个改动独立 commit
-2. 每次 commit 后运行 `bash scripts/validate-runtime-bundle.sh`（含第 6 步 smoke test）
-3. 打包配置变更（electron-builder.yml/tsup.config.ts）额外触发 pre-commit 的 runtime bundle 验证
-
-#### 自动验证脚本
-- `scripts/preflight-check.sh` — 打包前检查
-- `scripts/postbuild-validate.sh` — 打包后验证 + CI 自动拦截
-- `scripts/validate-runtime-bundle.sh` — runtime bundle 深度验证（依赖打包、CJS 兼容、Worker bootstrap 存在性、健康检查、plugin 初始化成功）
-- pre-commit hook 自动触发 `validate-runtime-bundle.sh`（当 `packages/runtime/src/` 有变更时）
-
-**跳过检查**:
-```bash
-SKIP_RUNTIME_BUNDLE_CHECK=1 git commit   # 跳过 runtime bundle 验证
-SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
-```
-
-### 13. 目录规范（违反必出 bug）
-
-- **禁止创建 `demos/` 或 `impeccable/` 目录** — 页面设计稿统一放 `docs/page-design/`：视觉规格在 `v6-spec-*.html`，能力设计 spec 在 `archive/v3/`。pre-commit hook 自动检查
-- **禁止 symlink 指向外部绝对路径** — 项目内 symlink 白名单仅允许 `../` 相对路径（指向同 workspace 内的兄弟 worktree）。外部绝对路径 symlink 打包后目标不存在，导致运行时资源缺失。pre-commit hook 自动检查
-- **`.xyz-harness/` 目录必须提交且不能删除** — 该目录存放所有 spec/plan 的历史设计文档（按 `YYYY-MM-DD-<slug>/` 命名），是项目决策追溯的重要依据。禁止 `git rm -r .xyz-harness/` 或将其加入 `.gitignore`
-- **`DESIGN.md` 必须保留在项目根目录** — ~~产品设计系统的核心定义文件~~（已 DEPRECATED by ADR-0019，Warm & Soft 被推翻）。真身设计系统见 `docs/page-design/design-tokens.md` + `docs/page-design/design-system.md`（v3 冷蓝暗色）。文件保留作历史参考，不作为当前规范
-
-### 14. 项目 skill 必须自包含 [HISTORICAL]
-
-**项目维度 skill（`.agents/skills/`）引用的所有脚本必须复制到项目 skill 目录内，禁止依赖全局脚本目录（`~/.agents/skills/`）或 symlink。**
-
-- **根因**：项目 skill 依赖全局脚本时，全局脚本变更会悄悄影响项目行为（如 pre-merge-check.sh 改了 remote 检查逻辑），且 bare repo workspace 项目的 remote 语义（`origin`=本地 bare repo，`github`=真正远程）与通用脚本不一致，导致检查误报。全局脚本不随项目 git 跟踪，无法保证可复现。
-- **规则**：
-  1. 项目 skill 需要的脚本 → 复制到 `.agents/skills/<skill-name>/scripts/` 下，随 git 跟踪推送
-  2. SKILL.md 里的路径引用 → 用项目内相对路径（`.agents/skills/merge/scripts/pre-merge-check.sh`），不用 `~/.agents/...`
-  3. 禁止用 symlink 指向全局脚本（symlink 不随 git 跟踪，且违反 §13 外部 symlink 禁令）
-  4. 如果复制的脚本有问题（如 remote 检查逻辑不适用本项目），直接改项目内副本，不影响全局
-- **事故记录**：2026-07-22 merge 流程阶段 1 pre-merge-check.sh 报"有未推送 commits"误报。根因是全局脚本检查 `origin/$BRANCH`（bare repo），但实际推送到 `github/$BRANCH`。修复方式：复制脚本到项目内，改为优先检查 `github` remote（bare repo workspace），fallback `origin`（普通 repo）
-- **当前项目内自包含脚本**：`.agents/skills/merge/scripts/` 含 init.sh / pr-merge.sh / pre-merge-check.sh / release.sh / remove-worktree.sh / wait-for-ci.sh（全部 git 跟踪）
-
-### 15. git status untracked 目录展开 [HISTORICAL]
-
-`GitService.getStatus` 执行 `git status --porcelain=v1 -z -b` **必须带 `--untracked-files=all`**。
-
-- **根因**：默认 git 把整个 untracked 目录折叠成一行 `?? dir/`（**带尾斜杠**）。文件树 `FileNode.path` 无尾斜杠，两者失配 → overlay key 查不到 → 目录徽章误显（前缀匹配命中自身那条带斜杠记录）、展开后子文件无角标无行数（git 根本没报告这些文件）。
-- **修复**：`--untracked-files=all`（`-uall`）强制展开每个 untracked 文件到文件级（`dir/file.py`，无尾斜杠），与 `FileNode.path` 格式一致。`.gitignore` 仍生效，只展开未忽略的 untracked 文件，不会因 node_modules 等爆量。
-- **修改位置**：`packages/runtime/src/services/git-service.ts` getStatus 的 status 命令。commit 用 `git diff --numstat HEAD`（不受此约束，numstat 只管 tracked 改动）。
-- **测试基线**：`git-service.test.ts` 的 `status 命令带 --untracked-files=all 展开未跟踪目录到单文件` 用例断言了命令参数。
-
-### 16. 禁止写死项目绝对路径（必须动态推导）[HISTORICAL]
-
-**runtime 代码禁止出现特定项目的绝对路径（如 `/Users/.../xyz-agent-workspace`）或对特定项目的硬编码假设。所有 workspace / bare repo / 数据目录路径必须从运行时上下文动态推导。**
-
-- **根因**：xyz-agent 是通用工具，用户会在任意 bare repo + worktree 结构的项目中使用（不只限 xyz-agent 自身）。写死 `xyz-agent-workspace` 等特定路径会导致其他项目（如 xyz-pi-extensions-workspace）功能失效。用户报告在 xyz-pi-extensions-workspace 执行「新建 worktree」失败，初看像写死路径，实际排查后发现 detector 正确动态查找 .bare，真正的 bug 是 spawn 权限（见下）——但「禁止写死路径」作为通用原则必须固化为规范。
-- **正确做法**：
-  - workspace 根 / bare repo 路径：用 `WorkspaceDetector.detect(currentCwd)` 从当前 cwd 向上逐级查找 `.bare`（`packages/runtime/src/services/worktree/workspace-detector.ts`）
-  - 数据目录：用 `getDataDir()` / `getConfigDir()`（`packages/shared/src/paths.ts`），禁止硬编码 `~/.xyz-agent`
-  - 路径白名单：用动态函数推导，禁止硬编码（见架构约定 #2）
-- **事故关联**（spawn 脚本权限）：`ShellRunner.execute` 原用 `spawn(scriptPath, args)` 直接 spawn 脚本，依赖文件 +x 权限位。git 跟踪的脚本默认 644（无 x 位）→ EACCES。修复为 `spawn('bash', [scriptPath, ...args])`（不依赖 +x）。这是独立 bug，但与「路径」无关——记在 `shell-runner.ts` 的 [HISTORICAL] 注释中。教训：执行外部脚本用 bash 包装，不依赖文件权限位。
-- **检查方法**：`grep -rn "xyz-agent-workspace\|/Users/zhushanwen" packages/runtime/src/` 应只在注释/示例中出现，不得在逻辑代码中出现硬编码绝对路径。
-
-### 17. 跨层机制排查必须穷尽所有层（pi extension ↔ xyz-agent runtime）[HISTORICAL]
-
-**分层架构里，每层只看自己视角，「我这层没做」≠「没发生」。涉及 pi extension ↔ xyz-agent runtime 的跨层机制排查，必须穷尽所有可能发起方，不能只看 xyz-agent runtime 侧就下结论。**
-
-**事故背景**：排查「background subagent 完成后主 agent 是否续跑」。前次 explorer 只看 xyz-agent runtime（event-interpreter / session-service / message-dispatcher），发现 `handleSubagentBgNotify` 只更新 subagent 状态、不调 steer/followUp/prompt，据此下结论「主 agent 不续跑」。基于此错误结论，差点把修复方案设计成「加守卫跳过有 background 任务的 message.complete，不新增触发点」——净效果是**从「早响」变成「永不响」**（subagent 完成后没有任何 message.complete 会触发提示）。
-
-**真相**：续跑机制由 **pi 进程内部的 extension**（pi-subagent-workflow notifier）发起，xyz-agent runtime 完全不参与：
-- pi-subagent-workflow 在 subagent 完成时调 `pi.sendMessage({customType:'subagent-bg-notify', ...}, {triggerTurn:true, deliverAs:'steer'})`
-- pi 核心（session loop）收到 `triggerTurn:true` 后开新一轮 turn（steer 抢占当前 streaming，followUp 排队）
-- 主 agent 续跑 → 产出 → 最终 `message.complete`（此时 subagent 已 done，hasBackgroundWork===false，守卫放行自然响）
-
-xyz-agent runtime 只是旁观转发：它看到 pi 又开始流 `message_start`，与用户手动发消息触发的 turn 无法区分。`triggerTurn`/`deliverAs` 是 pi 私有协议，xyz-agent 从未实现——因为它不需要，pi 自己做了。
-
-**为什么前次 explorer 会错判**：只看 xyz-agent runtime 的「通知到达后 xyz-agent 做什么」，没看「通知到达 xyz-agent 之前 pi 已经自己做了什么」。这是分层架构的典型陷阱——每层的代码都在自己职责内自洽，但跨层机制的发起方/执行方分布在不同进程/扩展中，单一层视角必然遗漏。
-
-**排查跨层机制的强制步骤**：
-1. xyz-agent runtime 侧（event-interpreter / session-service / message-dispatcher / session-message-handler）：这些只是「旁观 + 转发 + UI 同步」，不主动编排 pi 行为
-2. pi extension 机制（运行在 pi 进程内）：`@zhushanwen/pi-subagent-workflow` / `pi-subagents` 等扩展的 notifier / hook 才是续跑/编排的发起方。**开发期源码**在本项目 `extensions/`（@zhushanwen/pi-* 包），**运行时安装版**在用户机器 `~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/pi-*/src/`（排查用户环境问题时看这个）
-3. pi 私有协议（`triggerTurn`/`deliverAs`/`before_agent_start` 等）：`packages/shared/src/message.ts` 的注释会提到这些语义（如「triggerTurn:true 唤醒父 agent 接力处理结果」），但 xyz-agent 不实现它们
-4. 设计文档：`docs/page-design/archive/v3/` 下常有 extension adaptation 文档（如 `subagent-panel/workflow-extension-adaptation.md`）说明跨层协议。extension 的 `ctx.mode`、运行环境、SDK 接口契约等前提知识见 [docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)
-
-**判断「是 xyz-agent 职责还是 pi 职责」的依据**：如果一个行为涉及 pi 的 session loop / turn 调度 / LLM 调用，它的发起方几乎一定在 pi 进程内（extension 或 pi 核心），xyz-agent runtime 只是通过 RPC/事件流与 pi 交互，不会自己编排 pi 的 turn。xyz-agent 的职责是 UI 状态同步 + 用户命令转发，不是 pi 行为编排。
-
-**教训记录**：2026-07-27 completion-sound-bg-guard wave，前次 explorer 误判续跑机制，差点导致「永不响」错方案。幸亏用户坚称「主 agent 会续跑」与 explorer 结论冲突，触发二次排查（穷尽 pi extension 源码 + 设计文档）才定位真相。教训：当用户的领域知识与 explorer 结论冲突时，**优先怀疑 explorer 排查范围不全**，而非怀疑用户。explorer 单次排查的盲点（尤其跨层机制）比用户对自家产品的认知更容易出错。
-
-## 测试规范 [HISTORICAL]
-
-> **执行测试或设计测试计划前，先读 [TEST-STRATEGY.md](TEST-STRATEGY.md)（分层策略/mock 策略/回归基线 SSOT）+ [docs/testing/](docs/testing/) 对应功能文档**（各页面组件的 MOCK/非MOCK 测试步骤 + Playwright E2E 调用链 + 每步期望输入输出 + 已知坑）。docs/testing/ 00 总览是入口篇。复用已有 testid 清单/调用链/fixture 数据/历史踩坑经验，不从零重新探索——这些文档记录了 mock 回显双匹配、thinking 收起态 v-if 时序、initApp 预填 cwd 等仅靠读组件代码无法发现的运行时行为。
-
-1. **测试框架用 vitest，禁止 `node:test`**：`packages/runtime/` 子项目使用 vitest（配置在 `packages/runtime/vitest.config.ts`，依赖 `vitest@^4.1.6`，test script 为 `vitest run`）。所有测试文件必须从 `vitest` 导入 `describe/it/expect/vi/beforeEach` 等，禁止从 `node:test` 导入。vitest 不识别 `node:test` 格式的测试，会导致 "No test suite found" 错误。
-
-2. **运行测试命令**: `npx vitest run <test-file>`，不是 `tsx --test`。虽然 `tsx --test` 能正常运行（不会卡住），但它跑的是 node:test 原生 runner，不支持 vitest 的 mock（`vi.fn()`/`vi.useFakeTimers()`）和配置（vitest.config.ts）。项目 CI 和开发流程都用 vitest。
-
-3. **测试超时**: vitest 单个测试默认 5s 超时。涉及 setTimeout/timer 的测试必须使用 `vi.useFakeTimers()` + `vi.advanceTimersByTime()` 而不是真实等待，避免超时失败。
-
-4. **subagent task prompt 必须明确测试框架**: 派遣编码 subagent 时，task prompt 中必须写明 "测试框架使用 vitest（从 vitest 导入 describe/it/expect/vi），运行命令 npx vitest run，禁止 node:test 和 tsx --test"。
-
-### 测试视角与覆盖质量 [HISTORICAL — 2026-06-27「新建任务」事故]
-
-> 事故：「新建任务」功能 77 单测 + 24 集成全绿、vue-tsc/tsc EXIT 0、verdict pass，用户手动打开却发现 Landing 态根本没有 composer 输入区——阻塞级 bug。根因：测试只做了构建者（白盒）视角（验状态机/API 契约），缺使用者（黑盒：能否完成目标）与观察者（形态：渲染长什么样）两个视角。
-
-5. **每条集成/E2E 用例至少一个用户可见断言** [MANDATORY]：每条 `it` 至少含一个 `wrapper.find(...).exists()` / `wrapper.text()` / `wrapper.html()` 断言（DOM 元素存在、文案渲染、可见状态）。纯内部断言（`state.value`、`expect(apiMock).toHaveBeenCalled`）不计入 DoD 覆盖。反模式：39 用例全断言 state/testid，零个断言「用户能否看到输入框」。
-
-6. **集成/E2E 测试必须 mount 文档指定入口** [MANDATORY]：必须 mount test-strategy.md 集成章节指定的组件树入口（如 `Panel`），断言渲染结果。禁止悄悄用更小被测对象替换（文档写 `mount(Panel)`，代码却只调 `useNewTaskFlow()` 断言 `state.value`）。入口确无法 mount 时必须显式说明并降级入口，不得擅改。
-
-7. **用户旅程步骤不可降级** [MANDATORY]：E2E 场景表里每个用户操作步骤必须有对应 DOM 断言。不得因某步「难 mock」跳过整步或降级成内部状态断言。某步确实无法自动化（OS 原生 dialog 等），标注 `[需手工]` 并保留该步占位断言，**不得删除该步骤**。
-
-8. **测试验收 DoD 增加「渲染 gate」** [MANDATORY]：DoD 第三项——mount 功能顶层容器，断言 spec 结构章节（§3.x 等）列出的每个「结构元素」对应 DOM 节点存在。**spec 结构条目 = 渲染断言清单**（spec 写了 composer，测试就验证 composer 在 DOM 里）。只数用例编号 + 测试全绿不构成 DoD。
-
-**首屏冒烟模板**（每功能必含 1 条）：mount 顶层容器，断言关键交互元素**存在于 DOM**。本次 bug 回归防护：
-
-```typescript
-it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
-  const wrapper = mount(Panel, { props: { sessionId: null } })
-  expect(wrapper.find('[data-testid="composer-input"]').exists()).toBe(true)
-  expect(wrapper.find('[data-testid="chip-directory"]').exists()).toBe(true)
-})
-```
-
-> 三视角缺一不可：构建者（白盒）+ 使用者（黑盒）+ 观察者（形态）。任一缺失即重蹈「测试全绿但功能不可用」。
+**先读 [TEST-STRATEGY.md](TEST-STRATEGY.md)（分层/mock/回归基线 SSOT）+ [docs/testing/](docs/testing/) 对应功能文档**，复用已有 testid/调用链/踩坑经验。红线：vitest（禁 `node:test` / `tsx --test`，配置在子包 vitest.config.ts，从子包目录运行）；timer 测试用 fake timers；派编码 subagent 时 task 写明测试框架。**三视角缺一不可 [HISTORICAL]**（构建者白盒 + 使用者黑盒 + 观察者形态；每条用例至少一个用户可见 DOM 断言；spec 结构条目 = 渲染断言清单）——细则见 TEST-STRATEGY.md §3。
 
 ## 前端编码规范
 
-**权威标准文档**: `~/Code/xyz-ui/CONVENTIONS.md`
+权威标准：`~/Code/xyz-ui/CONVENTIONS.md`。核心：
 
-### 核心规则
+1. 禁止原生 HTML 表单元素（用 xyz-ui 组件）；禁止 Emoji（inline `<svg>` / @lucide/vue）
+2. 样式三层：tokens（`style.css` 只放 CSS 变量 + reset）/ Tailwind 工具类（组件样式统一在此）/ `<style scoped>` 仅 escape hatch（伪元素、后代选择器、Transition 类）。禁止 `@apply`
+3. `<template>` ≤ 400 行，`<script setup>` ≤ 300 行；禁止 `any`（断言须有运行时 guard，extensions/ 由 taste/no-unsafe-cast 强制）
+4. `v-model`（禁 `:value` + `@input`）；独立数据源用 `Promise.allSettled`
+5. 禁止硬编码颜色 / 魔数间距（用 CSS 变量与标准 Tailwind scale）
+6. border-radius 遵循 v3 tokens（`--radius-sm:3px` 默认 / `--radius:8px` / `--radius-lg:12px`，ADR-0019）
+7. **窗口顶部 traffic light 布局**：v3 刻意调整形态（非 v6 demo），全部数值（AppShell p-1 / pt-11 / {x:8,y:8} / h-[22px] 共线等）见 [traffic-light-layout.md](docs/page-design/traffic-light-layout.md)——改窗口顶部 UI 前必读
+8. **reka ScrollAreaViewport 默认 `overflow-x: hidden` [HISTORICAL]**：横向滚动需给 `ScrollArea` 传 `horizontal` prop（`!overflow-x-auto` 覆盖内联；`:deep()` 会破坏 reka Root 渲染顺序）
 
-1. **禁止原生 HTML 表单元素** — 必须使用 xyz-ui 组件（Button/Input/Select/Dialog 等）
-2. **禁止 Emoji** — 使用 inline `<svg>` 或 @lucide/vue 图标
-3. **样式统一 Tailwind 类（三层结构）**
-   - **Design tokens**（`style.css`）：只放 `:root` / `[data-theme]` 的 CSS 变量和 base reset，不放组件样式
-   - **Template class**（组件模板）：组件样式统一使用 Tailwind 工具类（`class="flex items-center gap-2 ..."`），不在 `style.css` 或 `<style scoped>` 中写组件样式
-   - **Escape hatch**（`<style scoped>`）：只用于 Tailwind 无法表达的场景：伪元素（`::placeholder`）、后代选择器（`.msg__body p`）、Vue Transition 类（`.xxx-enter-from`）
-   - 禁止 `@apply`，禁止在 `style.css` 中新增组件级样式规则
-4. **行数上限** — `<template>` ≤ 400 行, `<script setup>` ≤ 300 行
-5. **禁止 `any`** — 用 `unknown` 或具体类型。`as never` / `as any` / `as unknown as T` 会绕过类型检查：不可替代的断言必须有运行时 guard 兜底；`(x as any).field` 改为类型守卫函数。extensions/ 代码由 `taste/no-unsafe-cast` 规则强制（warn），前端代码作为原则遵守
-6. **v-model 绑定** — 禁止 `:value` + `@input`，用 `v-model`
-7. **Promise.allSettled** — 独立数据源用 `allSettled`，不用 `all`
-8. **禁止硬编码颜色** — 用 CSS 变量（`var(--accent)`）或语义 Tailwind 类
-9. **禁止魔数间距** — 用标准 Tailwind scale，不用 `p-[17px]`
-10. **border-radius 遵循 v3 design-tokens**（`--radius-sm:3px` / `--radius:8px` / `--radius-lg:12px`）— `rounded-sm`(3px) 默认，`rounded-md`/`rounded-lg`(8/12px) 特殊场景。SSOT 见 [docs/page-design/design-tokens.md](docs/page-design/design-tokens.md)，裁决依据 ADR-0019（旧 Warm 时期的 1px/2px 规则已推翻）。详见 docs/standards.md §7.1
-11. **窗口顶部 traffic light 安全区（v3 shell 拓扑 + 刻意调整形态）** — v3 重建采用 zcode-demo 拓扑：base 平铺全屏 → sidebar 透明融合 → main 是唯一 float-panel 浮起。traffic light 靠 **aside-region 顶部留白**兼容，而非旧版 padding-left 避让。**2026-08 二次裁决：本拓扑是刻意调整，不遵循 v6 demo**（PanelHeader 调小至 22px 与 trafficlight 行共线对齐、main-panel 与窗口边框间距收紧至 4px、折叠态 chrome 落入 header 等，出自 8c62f64bc/0251b6d40/860ee6007 等 commit）。此前一次裁决曾按「以 v6 demo 为准」回填 v6 拓扑（38px header / trafficLight {16,26} / p-3 / 52px 安全区），后经用户确认刻意调整被误改，已整体恢复。具体要求：
-    - AppShell `p-1`(4px) 四周统一：上下左右各 4px（紧凑但有呼吸，对称）。注意：左右 4 使 aside 左缘 x=4，与红黄绿 x=8 有 4px 差（红黄绿保持原生位置不动，用户明确不移动 trafficLightPosition）；折叠态 `!gap-0`（aside 归零，padding 保持 p-1 四周 4px，与展开态一致）
-    - `.aside-region` 恒定 `padding-top: 44px`(pt-11)（安全区 + 拉开 trafficlight 行与 LOGO 行间距），**三平台统一，全屏也保留**（mac 全屏 hover 时系统下拉覆盖层会落进这块留白）。AppShell py-1 使 aside 顶在窗口 y=4，红黄绿 y=8~20，安全区让出，与 trafficlight 行（nav 按钮 bottom y27）视觉间距约 12px
-    - mac 红黄绿位置由主进程 `titleBarStyle:'hidden'` + `trafficLightPosition:{x:8,y:8}` 放到 macOS 原生左上角（**不用 hiddenInset**——inset 模式强制水平内缩，`trafficLightPosition.x` 被系统忽略）；win/linux 自绘圆点 `left:0 top:[4px]`（TrafficLight.vue 挂载于 AsideRegion 内，aside 顶在窗口 y=4，故 top-4 = 窗口 y8，与 mac 同位）。圆点 12px，顶理论 y=8 / **实测中线 y≈15.75**（macOS 渲染亚像素偏置，比理论 y14 低 ~2pt）/ 右缘 x=60
-    - app-nav-controls（收起侧栏/←/→）浮在 AppShell 层（aside 外，避免折叠态 overflow-hidden 裁剪），**非折叠态** `left:72px top:5px`（按钮中线 y=5+11=16，对齐红黄绿**实测**中线 ~15.75；红黄绿右缘 60 + 12 呼吸），全屏 `left:8px`（320ms 平移与 traffic-light opacity 同步）。**PanelHeader `h-[22px]` 与 trafficlight 行共线对齐**：main-panel 顶=AppShell p-1(4)+border(1)=y5，h-22 → header bottom y27 = nav 按钮 bottom，内容中线 y16 ≈ 红黄绿实测中线 y15.75（三者顶/底/中线全对齐）。右侧 drawer/git 按钮 `size-[22px]` 适配 22 高 header
-    - **折叠态** chrome 迁入 P1 PanelHeader 内（header `pl-[88px]` 让位红黄绿右缘 60），chrome 按钮在 header 中线（header h-22 中线 y16 = 红黄绿中线，无高度差）；AppShell 折叠态 `!gap-0`（强制覆盖 gap-3，padding 保持 p-1）
-    - 全屏两态：非全屏（traffic light opacity 1，按钮 left:72px）/ 全屏（opacity 0，按钮左移 left:8px）。**无第三态**，mac 全屏 hover 红黄绿由系统提供，应用不渲染。全屏态 TrafficLight 圆点 `opacity-0 pointer-events-none` 成对（review MF-1：隐形圆点仍可命中会劫持 header chrome 点击）
-    - win/linux 走 mimic_mac：自绘彩色圆点放左侧模拟 mac，三平台左上视觉统一
-    - 唤回侧栏：⌘B + header chrome 按钮（**rail-restore 左缘细条已移除**）
-    - 新增或修改任何窗口顶部区域 UI 时，先对照本条目数值，再读 [v6 shell spec](docs/page-design/v6-spec-shell.html) 了解设计稿差异（v6 demo/spec 的 38px/16,26/52px 拓扑不适用本实现，属刻意偏离）
-    - 设计决策记录：[ADR 0017](docs/adr/0017-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已 Superseded**）；8c62f64bc/0251b6d40/860ee6007（刻意调整序列，现版形态来源）
-12. **reka ScrollAreaViewport 默认 `overflow-x: hidden` [HISTORICAL]** — reka-ui 的 `ScrollAreaViewport` 内联注入 `overflow-x: hidden`，横向溢出的内容被**裁掉不滚动**（非 `scroll` 也非 `auto`）。文件树等需横向滚动看长文件名的场景，必须给 `ScrollArea` 传 `horizontal` prop（`src/components/ui/scroll-area/ScrollArea.vue`，渲染额外横向 ScrollBar + 用 `!overflow-x-auto` 覆盖内联 style）。覆盖用 Tailwind `!` 前缀（`!important` 压过 inline）；scoped `<style>` 的 `:deep()` 不行——会注入 `<style>` 元素破坏 reka Root 的子组件渲染顺序，导致 ScrollBar/Corner 不挂载
+自动化检查：taste-lint（no-native-html / no-emoji / prefer-v-model 等，`pnpm run lint` + pre-commit）· vue_rules_checker.py（行数/选择器/Tab/原生元素，pre-commit）。
 
-### 自动化检查
+**Lint / Hooks 原则 [MANDATORY]**：按全局 AGENTS.md「Pre-commit Hook 问题处理」执行——检出问题全部正面修复（含存量、含 warning），禁 `--no-verify` / `SKIP_*`（仅限线上热修复并说明）；规则误报修正规则本体并加 `[HISTORICAL]` 注释，禁 `eslint-disable-next-line` 静默。
 
-| 检查工具 | 覆盖范围 | 触发时机 |
-|---------|---------|---------|
-| taste-lint (ESLint) | no-native-html / no-emoji / prefer-v-model / no-hardcoded-colors / no-magic-spacing / no-silent-catch / prefer-allsettled / no-multi-arg-emit | `pnpm run lint` + pre-commit |
-| vue_rules_checker.py | 行数上限 / CSS 选择器 / Tab 缩进 / 原生元素 / Emoji / v-model | pre-commit |
-
-### Lint / Git Hooks 问题处理原则 [MANDATORY]
-
-**lint（ESLint / vue_rules_checker）或 githooks（pre-commit 的任何 check_*.py）检出的问题，无论等级（warning / error，或 critical / major / minor），也无论是否本次改动引入（预存存量问题一律同视），必须全部正面修复，不得跳过。不得以"不是本次改动导致"为由而不修复。**
-
-- **存量问题也要修**：携改动的 commit 触发了检查，检查出的所有问题（含本次改动前就存在的）都是本次提交的责任范围。
-- **不得以”只是 warning / minor”为由跳过**：低等级问题也必须修。等级只影响修复顺序，不影响”必须修复”的结论。reviewer 报告的 minor、ESLint 的 warning 同样必须解决。
-- **不得绕过检查**：禁止 `git commit --no-verify` 或项目专属的 `SKIP_*` 变量（`SKIP_FRONTEND_LINT` / `SKIP_CODE_RULES_CHECK` / `SKIP_ALL_CHECKS` 等）— 仅限线上故障热修复等紧急场景，且必须在 commit message 说明原因。
-- **不得仅“消除报错”而不解决根因**：例如把原生 `<button>` 改成 `<Button>` 是正面修复；但把检测规则改成“放过该写法”只有在确认规则误报时才可（且须在规则中加注释说明）。
-- **规则误报的唯一正当处理**：修正规则本身使其准确（如 reka-ui `SelectItem :value` 是选项值语义，应排除），并在规则文件加 `[HISTORICAL]` 注释记录原因。禁止用 `// eslint-disable-next-line` 局部静默。
-- pre-commit 每个检查失败分支已内置提示：”无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过”。
-
-### 完成即提交 [MANDATORY]
-
-**所有变更改完并在本地验证通过后，在向用户汇报完成 / 结束本轮工作（stop）之前，必须执行 git commit。** 禁止留下”改了代码但未提交”的脏工作区就结束。
-
-- 若因**穷尽正面修复后仍未解决的**检查失败、冲突、认知外改动等原因无法提交，必须在结束前**明确说明未提交原因**，不得静默跳过（见失败模式防护 #3「失败要出声」）。注意：pre-commit 检出的问题必须先按上文「Lint / Git Hooks 问题处理原则」全部修复，「检查未过」本身不构成停笔理由
-- 提交范围遵循全局提交策略：优先提交本次会话产生的改动，文件级颗粒度
-
+**完成即提交 [MANDATORY]**：按全局「提交策略 → 完成即提交」；「检查未过」不构成不提交理由（先修复）。
 
 ## Git 规范
 
-- **分支命名**：`feat/`、`fix/`、`refactor/`、`chore/` 前缀（如 `feat/merge-extensions`、`fix/app-start-error`）
-- **Commit 信息**：英文，遵循 conventional commits 风格（`feat:`/`fix:`/`refactor:`/`docs:`/`chore:`/`ci:` 前缀）
-- **提交粒度**：见全局 AGENTS.md「提交策略」——优先提交自己的改动，认知外的改动不碰
+分支 `feat:`/`fix:`/`refactor:`/`chore:` 前缀；commit 英文 conventional 风格；粒度见全局提交策略（优先本次会话改动，文件级）。
 
-## pi 资源放置规范
+## pi 资源放置
 
-本项目既开发 pi extension（`extensions/`）又有自己的项目资源（`.agents/`），agent.md / workflow.js 放错地方会不被发现或不可移植。以下约束强制资源归位。
-
-### 资源该放哪
-
-| 资源性质 | 放置位置 | 声明 |
-|---|---|---|
-| 与某个 extension **强相关**的 agent.md / workflow.js | `extensions/<pkg>/agents/`、`extensions/<pkg>/workflows/` | package.json `pi.agents` / `pi.workflows` |
-| 项目本身开发要用的 subagent | `.agents/agents/` | 自动发现（project-agents 源） |
-| 项目本身开发要用的 workflow | `.agents/workflows/` | 自动发现（project 源） |
-| 当前开发环境要用的 agent / workflow（跨项目通用） | 全局 `~/.agents/agents/`、`~/.agents/workflows/` | 自动发现（user-agents 源） |
-
-### 「与 extension 强相关」判据
-
-满足任一即强相关，必须进 extension 目录：
-- agent 的 `tools` frontmatter 受限到某 extension 提供的工具（如 cw review-agent `tools: cw_review` 强相关 cw-tool）
-- 移除该 extension 后 agent / workflow 无法正常工作
-
-反例：`review-arch-boundary`（tools: 通用 read/bash）不强相关 → 留 `.agents/agents/`。
-
-### 发现机制
-
-- agent / workflow：pi-subagent-workflow `resource-discovery` 扫 7 源，同名 last-writer-wins（project-agents 优先级最高）。extension 内置 agent 必须在 package.json 声明 `pi.agents`，且**安装到 npm / npm-dev 扫描目录**才被发现——dev-link（`XYZ_EXTENSION_PATHS`）**不发现 agent**（只发现 skill + 工具）。
-- skill：pi core 经扩展 `pi.skills` 声明发现（first-writer-wins），独立通路。
-- SSOT：`extensions/subagent-workflow/src/shared/resource-discovery.ts`。
+agent.md / workflow.js 归位：与 extension 强相关（tools 受限某 extension / 离开该 extension 不可用）→ `extensions/<pkg>/agents|workflows/` + package.json `pi.agents`/`pi.workflows`；项目自用 → `.agents/agents|workflows/`；跨项目通用 → `~/.agents/`。发现机制：resource-discovery 扫 7 源同名 last-writer-wins（project-agents 最高）；extension 内置 agent 须装到 npm 扫描目录才被发现（dev-link 不发现 agent）；skill 走 `pi.skills` 独立通路（first-writer-wins）。SSOT：`extensions/subagent-workflow/src/shared/resource-discovery.ts`。
 
 ## 架构约定
 
-- **视图切换**: 状态驱动（settingsStore.currentView），不用 vue-router
-- **Mock 模式**: `VITE_MOCK=true` 环境变量控制，在 ws-client 层拦截
-- **共享类型**: `packages/shared/src/` 通过 npm workspace 在前端和 runtime 间共享
-- **Runtime 通信**: WebSocket，前端通过 `ws-client.ts` + `event-bus.ts` 消息分发
-- **Electron IPC**: 主进程通过 preload 暴露 `window.electronAPI`，渲染进程不直接使用 `ipcRenderer`
-- **Runtime broadcast 时序竞争 [HISTORICAL]**: session 级 broadcast（如 `session.commands`）若在 session 激活/创建流程内部发出（`ensureActive`/`lifecycle.create` 内的 `fetchAndBroadcastCommands`），会**早于** renderer 订阅该 sessionId 通道——订阅依赖 `switchSession`/`create` 的 RPC resolve → `activeId`/`currentSessionId` 更新 → `CommandPopover` 的 `watch(sessionId)` 重订，而 broadcast 已在此之前发出 → 消息丢失，renderer transport 只收到同流程的 `reply`（RPC 响应，走 pending map，不依赖订阅）。**约束：renderer 切换/创建 session 后需立即消费的 session 级状态，必须主动拉取**（新增 `session.getCommands` RPC，`useSidebar.selectSession` / `useNewTaskFlow.precreateSessionAndLoadCommands` 在 session 建立后调它 + `events.dispatchSession` 本地投递），不可依赖 broadcast 到达。新增任何 session 级 broadcast 必须对照本条评估。
-- **pi 源码不可改约束 [MANDATORY]**: xyz-agent 作为 pi 的封装消费者，**不修改 pi 源码、不向 pi 上游提 PR、不 fork pi**。所有 pi 没提供但 xyz-agent 需要的能力（如 OAuth login 的 device/callback flow、auth.json 写入器），由 xyz-agent 自己实现。与「项目概述」的「不依赖 fork 特有改动」一致——保持 pi 升级路径畅通。
+- 视图切换状态驱动（settingsStore.currentView），不用 vue-router；Mock 用 `VITE_MOCK=true` 在 ws-client 层拦截
+- 共享类型经 `packages/shared/` workspace 共享；Runtime 通信走 WebSocket（ws-client.ts + event-bus.ts）；Electron IPC 经 preload 暴露 `electronAPI`
+- **Runtime broadcast 时序竞争 [HISTORICAL]**：session 激活/创建流程内部发出的 session 级 broadcast 早于 renderer 订阅 → 消息丢失。renderer 切换/创建 session 后需立即消费的 session 级状态必须主动拉取（`session.getCommands` RPC），不可依赖 broadcast
+- **数据目录隔离**：`~/.xyz-agent/` 与 `~/.pi/agent/` 完全隔离；路径白名单禁止硬编码，从 `getConfigDir()` / `getPiAgentDir()` 动态推导（pre-commit 检查）
+- **ENV_WHITELIST_PREFIXES SSOT**：只许定义在 `packages/shared/src/constants.ts`，main/runtime 只 import（pre-commit 检查）
+- **Runtime/pi 日志必须落盘 + 轮转**（`<getDataDir>/logs/`，date + size 双策略，dev debug / prod info）；pi stdout tee 到 `pi-<date>-<sessionId>.jsonl`（pi 卡死时唯一证据）；新增日志库必须加 tsup `noExternal`
+- **包管理器纪律 [HISTORICAL]**：pnpm workspace 单一管理器，`pnpm-lock.yaml` 唯一权威，通用纪律按全局 lock 规则。npm 例外（不要"统一"）：外部消费者安装指引 / `npm publish` / runtime 安装用户 extension / 规则正文描述被禁命令 / `npx`。标准：执行者是本项目开发者/CI/AI → pnpm；外部消费者/终端用户 → npm
 
 ## 发布与 CI 验证 [HISTORICAL]
 
-本项目有**两条独立的发布管线**，通过不同 tag 前缀解耦：
+两条独立管线：Electron 打包（`v*` tag → release.yml → `verify-ci-release.sh` 验证）与 npm 发布（`npm-*` tag → release-npm.yml）。npm 两条机制：main 稳定发布（人工定 type + `check-version-changes.sh` + `apply-version.sh`，merge skill 阶段 4N 封装，**禁止本地 `changeset publish`**，曾因 registry 最终一致性 E403）与 dev-npm 预发布（changeset pre，`scripts/npm-prerelease.sh`）。
 
-| 管线 | 产物 | 触发 tag | Workflow | 验证 |
-|------|------|----------|----------|------|
-| **Electron 打包** | DMG/EXE/AppImage 桌面应用 | `v*` | `release.yml` | `scripts/verify-ci-release.sh` |
-| **npm 包发布** | `@xyz-agent/extension-protocol` + `@zhushanwen/pi-*` extensions | `npm-*` | `release-npm.yml` | changeset publish 输出 + npm registry 核对 |
-
-**npm 发布有两条独立机制**（设计详见 docs「版本号人工判定机制」）：
-
-| 机制 | 适用 | 版本判定 | tag |
-|------|------|----------|-----|
-| **main 稳定发布** | merge 后正式发布 | **人工定 type**（不再用 `changeset version` 自动推算，避免 shouldBumpMajor/applyLinks 把声明的 minor 误放大成 major）+ `scripts/check-version-changes.sh` + `scripts/apply-version.sh` | `npm-<slug>-<date>-<time>` |
-| **dev-npm 预发布** | 预发布测试 | 保留 `changeset version` + `changeset pre`（生成 `-dev.*` 版本） | `dev-npm-*` 分支 push |
-
-main 稳定发布流程（merge skill 阶段 4N 封装）：
-1. 开发者在 PR 写 `.changeset/<slug>.md`（声明包 + 描述，type 初判）
-2. merge 时跑 `check-version-changes.sh` 列出待处理包（CHANGED + DEPENDENTS 传递闭包）
-3. 人工对 CHANGED_PACKAGES 定 type，`apply-version.sh` 自动 patch DEPENDENTS 刷新范围
-4. commit + 打 `npm-<slug>-<stamp>` tag + push
-5. tag 触发 `release-npm.yml` → 验证非 prerelease 模式 → `pnpm changeset publish`（预查 registry 只发未发布版本）
-6. **禁止本地 `pnpm changeset publish` 或 `npm publish`**（曾因 npm registry 最终一致性导致 E403）；预发布走 `scripts/npm-prerelease.sh`（指定包名如 `bash scripts/npm-prerelease.sh @zhushanwen/pi-goal`）
-
-**changeset 写作准则**（PR 阶段，写入贡献文档）：
-- changeset 的 type 字段是**初判**，最终由 merge 时人工定（不绑死）
-- changeset 的 **body 要认真写**（会进 CHANGELOG，消费者可见），不只写「fix bug」
-- **dep 传播不在 PR 声明**：linked/peerDep 的连带包不用在 PR 写 changeset，merge 时由 `check-version-changes.sh` 传递闭包 + `apply-version.sh` 自动 patch
-
-> **merge skill 集成**：merge skill 阶段 4N 封装了上述 main 稳定发布流程。仅当 PR 含 `extensions/` 改动时执行，与 Electron 发布线（阶段 4，`v*` tag）独立。dev-npm 预发布不走阶段 4N。详见 `.agents/skills/merge/SKILL.md`
-
-每次 push tag 触发 CI（release workflow）构建 Electron 产物后，**必须等待 CI 完成并验证产物存在**。多次发生 AI push 后直接宣布"已完成"，实际 CI 构建失败或产物缺失而无人察觉。
-
-### [MANDATORY] Release Notes 必须中英双语
-
-Release Notes 需要同时包含中文和英文版本，使用 `<!-- LANG:zh -->` 和 `<!-- LANG:en -->` 标记分隔。前端会根据用户语言偏好自动提取对应部分。
-
-格式示例：
-```markdown
-<!-- LANG:en -->
-## What's New
-- Fix bug X
-- Add feature Y
-
-<!-- LANG:zh -->
-## 更新内容
-- 修复 bug X
-- 添加功能 Y
-```
-
-注意事项：
-- 英文在前，中文在后（便于 GitHub 默认显示英文）
-- 每个语言部分保持独立的 markdown 结构
-- 标记必须独占一行，前后可有空行
-- 向后兼容：无标记的 release 仍正常显示完整内容
-
-### [MANDATORY] 必须遵守的规则
-
-**错误做法（禁止）：**
-```
-# 坏 — push 后直接结束
-pnpm version patch && git push github HEAD --tags
-echo "已推送，CI 会构建"
-# ← AI 在此结束，不检查 CI 结果
-```
-
-**正确做法：**
-```
-# 好 — push 后必须验证
-pnpm version patch && git push github HEAD --tags
-bash scripts/verify-ci-release.sh "v$(node -p "require('./package.json').version")"
-# ← 脚本会轮询 CI 直到完成，验证 dmg/exe/AppImage 存在
-# ← exit 0 = 通过，exit 非 0 = 失败（AI 必须修复直到 exit 0）
-```
-
-### 适用场景
-
-| 操作 | 验证命令 |
-|------|---------|
-| 预发布测试 | `scripts/prerelease-test.sh` 内置自动验证 |
-| 正式发布（merge） | `bash scripts/verify-ci-release.sh v<version>` |
-| 手动 push tag | `bash scripts/verify-ci-release.sh <tagname>` |
-
-### 验证失败时的处理
-
-脚本 exit 非 0 意味着：
-1. CI workflow 未完成或失败 → 打开 CI 链接排查
-2. Release 未创建 → 检查 release.yml 是否正常触发
-3. 产物缺失 → 检查对应平台构建日志
-
-**禁止行为**：说"CI 可能还在跑"或"应该没问题"后结束。必须等脚本 exit 0。
-
-
-
-详细的问题排查指南（日志获取、诊断路径、常见问题清单、环境变量速查）见 [docs/troubleshooting.md](docs/troubleshooting.md)。
-
-### 1. xyz-agent 数据目录与 pi 数据目录完全隔离
-
-xyz-agent 的数据目录（`~/.xyz-agent/`）与 pi 的数据目录（`~/.pi/agent/`）必须完全隔离。不得读写 pi 的 extension/skill/config 目录，不得复用 pi 的包管理命令管理 xyz-agent 的 extension。两边的 extension 列表、配置、安装状态互不影响。Extension 通过 `--extension` CLI 参数在 pi 启动时注入路径，pi 原生 loader 加载。
-
-### 2. 路径安全白名单必须动态化
-
-所有涉及路径匹配的访问控制（`allowedPrefixes`、白名单校验、沙箱边界），禁止硬编码 `~/.xyz-agent` 或 `~/.pi` 路径。必须从 `getConfigDir()` / `getPiAgentDir()` 动态推导。
-
-原因：实例隔离机制允许通过 `XYZ_AGENT_DATA_DIR` 环境变量改变数据目录（dev 模式为 `~/.xyz-agent-dev`），硬编码路径会导致白名单失效。
-
-**Pre-commit 自动检查**：`check_path_whitelist.py` 会扫描含 `allowedPrefixes` 的文件，验证是否使用了动态路径函数。
-
-### 3. ENV_WHITELIST_PREFIXES SSOT 单一性
-
-`ENV_WHITELIST_PREFIXES` 的定义只允许在 `packages/shared/src/constants.ts`（单一权威源）。main/ 和 runtime/ 层禁止本地定义，只能 `import` 自 shared：
-- `main/supervisor/safe-env.ts`：`[...ENV_WHITELIST_PREFIXES, 'ELECTRON_']`（主进程特权，可扩展）
-- `runtime/src/infra/pi/rpc-client.ts`：`= ENV_WHITELIST_PREFIXES`（子进程用全集，不加额外）
-
-[历史] 旧规则曾要求 runtime-manager.ts 和 rpc-client.ts 「各有一份常量并 diff 同步」。commit 863f0704 收敛到 shared SSOT 后，「两处不同步」物理不可能，检查改为 SSOT 单一性防护。
-
-**Pre-commit 自动检查**：`check_env_whitelist_sync.py` 验证 `const ENV_WHITELIST_PREFIXES` 定义只出现在 shared/constants.ts，检测 SSOT 退化（未来有人在 main/runtime 本地重新定义）。
-
-### 4. Runtime/pi 日志必须落盘 + 轮转 + 动态数据目录
-
-runtime 子进程（`packages/runtime/src/`）与 pi 子进程的所有日志输出，**禁止只走 `console.*` → 终端**（关终端即丢，无法事后诊断 pi 静默卡死类问题）。必须持久化到文件。
-
-**强制要求**：
-
-- **数据目录动态推导**：日志目录必须 `<getDataDir()/logs/`（dev=`~/.xyz-agent-dev/logs/`，prod=`~/.xyz-agent/logs/`），由 `getDataDir()`（`shared/src/paths.ts`）推导。**禁止硬编码 `~/.xyz-agent`**（违反架构约定 #2，`check_path_whitelist.py` 会拦，且实例隔离后 dev/prod 路径不同会导致串台）
-- **必须轮转**：单文件无限增长会撑爆磁盘。采用 date（按天文件 `runtime-YYYY-MM-DD.log`）+ size（单文件上限 ~50MB 触发 `.1` 滚动）双策略，保留期默认 7 天（`XYZ_LOG_KEEP_DAYS` 可调）。优先用 `node:fs` 自实现（当前实现：`runtime/src/infra/logger.ts`），**新增第三方日志库（pino/winston/rfs）必须同步追加到 `runtime/tsup.config.ts` 的 `noExternal`**（规则 #12），否则打包后 `Cannot find module`
-- **dev vs prod 级别差异**：dev 默认 debug（含 `XYZ_DEBUG_PI_EVENTS=1` 的 pi 原始事件流），prod 默认 info（屏蔽 pi 原始事件，避免 PII/性能/磁盘问题）。级别由 `XYZ_LOG_LEVEL` 控制（`XYZ_` 前缀自动过 `ENV_WHITELIST_PREFIXES`，无需改白名单，符合架构约定 #3）
-- **pi 子进程输出落盘**：pi 卡死时其 stdout JSONL 事件流是**唯一决定性证据**。pi stdout（`rpc-client.ts` 的 `createInterface` 消费点，`rl.on('line')`）必须 tee 一份原始行到 `<dataDir>/logs/pi-<date>-<sessionId>.jsonl`；pi stderr 进主 runtime 日志（经 `[rpc:stderr]` 前缀随 console 落盘）
-- **实现位置**：logger 模块在 `runtime/src/infra/logger.ts`，在 `index.ts` 组合根最早期初始化（`initLogger(getDataDir())`），console 作为 logger 语法糖（monkey-patch 全局 console 覆盖 runtime 内既有的裸 console，tee 到终端 + 文件）。supervisor 层（`main/supervisor/process-control.ts`）仍捕获 runtime stdout 打终端，日志落盘责任在 runtime 自身
-
-**[HISTORICAL] 背景**：handoff 2026-07-04 P1「pi 静默卡死」——坏 session 的 JSONL 只有 2 行、零 message，pi 子进程 0% CPU 不退出。runtime 发了 prompt 后 pi 发了什么事件（或什么都没发）无法事后追溯，因为日志只在 concurrently 终端，关掉即丢。此条目把「日志必须落盘」固化为规范，避免再次因证据丢失而无法定位。实现见 commit（logger.ts + index.ts initLogger + rpc-client.ts pi stdout tee）。
-
-### 5. 包管理器与 lock 文件纪律 [HISTORICAL]
-
-本项目是 **pnpm workspace 单一包管理器**项目（`pnpm-workspace.yaml` 声明 `packages/*` + `apps/*`）。`pnpm-lock.yaml` 是**唯一权威 lock 文件**，必须跟踪。**禁止跟踪任何 npm 产物**（`package-lock.json`）。
-
-**三件套（缺一不可）**：
-
-1. **`package.json` 必须声明 `packageManager` 字段**（锁定包管理器 + 版本）。示例：`"packageManager": "pnpm@10.27.0"`。corepack/IDE 据此自动切换，避免有人误用 npm install 生成 `package-lock.json`。新增项目或发现缺失时补全；pnpm 升级时同步更新此字段
-2. **`.gitignore` 必须忽略 `package-lock.json`**（连同 `package-lock.json.*`）。即使误生成也不进版本库
-3. **发现 `package-lock.json` 被 git 跟踪时，用 `git rm --cached package-lock.json` 停止跟踪**（保留磁盘文件），不要 `rm` 物理删除
-
-**根因**：`package-lock.json` 与 `pnpm-lock.yaml` 双轨跟踪时，版本号长期各跑各的（package.json / pnpm-lock / package-lock 三处版本号各不相同），且 npm 与 pnpm 的依赖解析算法不同（npm flat hoisting vs pnpm 严格隔离 + symlink），双 lock 会产生幽灵依赖、重复安装、解析不一致类 bug。2026-07-30 事故：`package-lock.json` 版本滞留在 0.8.32（main 已 0.8.38、package.json 0.8.37），且 `package.json` 未声明 `packageManager`，是 lock 双轨的根因。
-
-**操作纪律**：
-- 所有安装/添加依赖命令用 `pnpm install` / `pnpm add`，禁止 `npm install` / `npm ci`
-- 禁止 `npm version` 改版本号（会同步改写 package-lock.json），版本号用 `changeset version` 或手改 package.json
-- 子包若确需独立用 npm（罕见，如某个 vendored 工具），在该子包自己的 `.gitignore` 里放开 `package-lock.json` 规则，并在子包 package.json 声明对应 `packageManager`
-
-**保留 npm 的例外（不要"统一"成 pnpm）**：以下场景的 npm 命令是**刻意保留**的，未来 agent 做统一审查时**不要改**：
-- **第三方消费者安装指引**：`docs/extensions/local-dev-guide.md` 的 `npm install -g @earendil-works/pi-coding-agent`、`npm-prerelease/SKILL.md` 与 `release-npm-dev.yml` 的 `npm install @xyz-agent/extension-protocol@dev` 等。这些是发给 npm registry 的外部消费者的指引，他们环境未必装了 pnpm，npm 是最通用的兜底
-- **`npm publish`**：发包命令。`pnpm changeset publish` 内部最终也调 `npm publish`，文档里描述发包用 npm 是准确的
-- **runtime 安装用户 extension 的机制**：`extension-service.ts`/`installer.ts` 等代码里对用户 extension 执行 `npm install` 到数据目录——这是面向终端用户的 extension 安装机制，用户环境不可控，必须用 npm
-- **反例描述 / 规则正文**：「错误做法」表格里引用被禁的 `npm version`、§5 本节禁止 `npm install` 的规则条文，必须保留 npm 字样（描述被禁的命令名）
-- **`npx` 命令**：中立包执行器，不算 npm 风格违纪，保留
-
-**判断标准一句话**：命令执行者若是「本项目的开发者/CI/AI」→ 用 pnpm；若是「外部消费者/终端用户」或「描述被禁行为」→ 保留 npm。
+- changeset 准则（PR 阶段）：type 是初判最终人工定；body 认真写（进 CHANGELOG）；dep 传播不在 PR 声明（merge 时自动闭包）
+- **[MANDATORY] push tag 后必须验证 CI 产物**：push 发布 tag 后禁直接宣布完成，轮询 CI 验证产物直到脚本 exit 0（预发布 `prerelease-test.sh` 内置 / 正式 `bash scripts/verify-ci-release.sh v<version>`）。exit 非 0 修到 0，禁说「应该没问题」
+- **[MANDATORY] Release Notes 中英双语**：`<!-- LANG:en -->` 在前 `<!-- LANG:zh -->` 在后，标记独占一行，无标记旧 release 向后兼容
 
 ## 跳过检查
 
-### cw v1 testRunner cwd 对 monorepo 失效 [HISTORICAL]
-
-cw v1 的 testRunner 硬编码 `cwd: workspacePath`（仓库根）跑 `npx vitest run`。本项目的 vitest 配置在 `packages/renderer/vitest.config.ts`（含 `@/` alias 等），根目录跑出大量「配置/alias 找不到」的假失败（test files 层面 200+ failed），gate `tests-all-pass` 永远不过——**即使本次改动零回归**。
-
-2026-07-23 事故：session-bg-work-status wave 的 renderer 目录内 vitest 是 1827 passed / 5 认知外失败，但 cw 在根目录跑出 160 passed / 32 failed（解析还受彩色输出干扰），test gate 卡死无法推进 exec-review。
-
-**临时对策**（coding-workflow 修复前）：wave test gate 的判定**以 `packages/renderer` 目录内的 `npx vitest run` 结果为准**，不用 cw gate 的数字。具体：
-1. `cd packages/renderer && npx vitest run` 拿真实 pass/fail
-2. 确认失败的测试是否在本次 wave 范围（看 plan.files）——范围外的预存失败需单独修，但不阻塞本 wave
-3. 若本 wave 范围内测试全绿，人工判定 test 阶段通过，推进 exec-review
-
-**已修复（2026-08 验证）**：当前 cw 版本（@zhushanwen/coding-workflow）已支持 `plan.testCwd` 字段——wave design/replan 阶段填 `testCwd: "<子包目录>"`（相对仓库根，如 `packages/runtime`），testRunner 即在该子包目录跑 testCommand，gate 数字与本地 `npx vitest run` 一致。monorepo 项目在 wave design 填 testCwd 即生效，上述「临时对策」的人工判定不再需要。验证来源：plugin-mock-isolation wave 填 `testCwd: "packages/runtime"`，cw test gate 33/0 与本地一致（R3 风险未 materialize）。
-
-**原根治方向（已由 testCwd 超额实现，保留作记录）**：testRunner 检测 monorepo（workspacePath 下有 `packages/*/vitest.config.ts`）时定位到含配置的子包跑；或读 `unit.plan.files` 推断测试范围。
-
-> **默认禁止跳过**（见上文「Lint / Git Hooks 问题处理原则 [MANDATORY]」）。以下变量仅供线上热修复等紧急场景，使用时必须在 commit message 说明原因。
-
-```bash
-SKIP_ALL_CHECKS=1 git commit       # 跳过所有（仅紧急情况）
-SKIP_FRONTEND_LINT=1 git commit    # 跳过 ESLint
-SKIP_EXTENSION_LINT=1 git commit   # 跳过 extensions ESLint + tsc + manifest/convention 检查
-SKIP_CODE_RULES_CHECK=1 git commit # 跳过 vue_rules_checker
-SKIP_ENV_WHITELIST_CHECK=1 git commit   # 跳过 ENV 白名单同步检查
-SKIP_PATH_WHITELIST_CHECK=1 git commit   # 跳过路径白名单动态化检查
-SKIP_DIRECTORY_RULES_CHECK=1 git commit  # 跳过目录规范检查（禁止 demos/impeccable + 外部 symlink）
-SKIP_TOOL_SCHEMA_CHECK=1 git commit      # 跳过 Pi extension tool schema 顶层 Object 合规检查
-```
+cw testRunner 的 monorepo 坑已修复（wave design 填 `plan.testCwd: "<子包目录>"`，gate 数字与本地一致）[HISTORICAL]。默认禁止跳过检查；`SKIP_*` 变量（SKIP_ALL_CHECKS / SKIP_FRONTEND_LINT / SKIP_EXTENSION_LINT / SKIP_CODE_RULES_CHECK / SKIP_ENV_WHITELIST_CHECK / SKIP_PATH_WHITELIST_CHECK / SKIP_DIRECTORY_RULES_CHECK / SKIP_TOOL_SCHEMA_CHECK）仅限线上热修复且须 commit message 说明原因。
