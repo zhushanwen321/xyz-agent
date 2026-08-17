@@ -315,24 +315,13 @@ lsof -i :1420 -P | grep node
 
 ### 12. Electron 打包约束（违反必出 bug）
 
-事故最高发领域。完整审查清单（含逐项核对方法）见 `.agents/skills/pr-cr-fix/agents/review-electron-build.md`，验证由脚本自动化，日常编码按下述约束执行。
+事故最高发领域。开发时三条硬规则（写代码 / 加依赖 / 提交那一刻就要遵守，其余由 review + 脚本自动把关）：
 
-**tsup 配置**（`packages/runtime/tsup.config.ts`）：
-- `platform: 'node'` + `target` 匹配 Electron 内置 Node 版本（Electron 42 → Node 24）
-- `noExternal` 必须覆盖**所有** runtime `dependencies`——新增 npm 依赖必须同步追加，否则打包后 `Cannot find module`
-- Worker 入口 `plugin-bootstrap.ts` 必须独立打包（tsup `entry` 包含，输出 `plugin-bootstrap.cjs`），禁止只打包 `index.ts`
-- runtime 源码禁止 `import.meta.url` / `fileURLToPath(import.meta.url)` / `globalThis.__dirname`（CJS bundle 下全部失效）；路径用 `typeof __dirname !== 'undefined' ? __dirname : undefined`
+1. runtime 源码禁止 `import.meta.url` / `fileURLToPath(import.meta.url)` / `globalThis.__dirname`（CJS bundle 下全部失效）；路径用 `typeof __dirname !== 'undefined' ? __dirname : undefined`
+2. 新增 runtime npm 依赖必须同步追加 `packages/runtime/tsup.config.ts` 的 `noExternal`（否则打包后 `Cannot find module`）
+3. 打包子系统改动（tsup / electron-builder / plugin-host / runtime）必须逐个 commit、逐个验证——混在一个 commit 出 bug 无法定位是哪个改动引入
 
-**electron-builder**（`apps/electron/electron-builder.yml`）：
-- `asarUnpack` 只作用于已被 `files` 包含的文件——`files` 必须显式含 `dist/runtime/**/*`；误加 `!dist/runtime` 排除 = 产物缺失整个 runtime（子进程无法读 asar 内 JS）
-- `files` 只包含主进程直接 `require` 的 `node_modules`（其余已被 tsup 打进 runtime bundle）
-- `resources/pi/` 禁止外部绝对路径 symlink（打包保留 symlink，用户机器目标不存在）；构建前 `cp -RL` dereference
-
-**子进程启动**（`runtime-supervisor.ts`）：必须 `process.execPath` + `ELECTRON_RUN_AS_NODE=1`；打包后路径用 `process.resourcesPath/app.asar.unpacked/...`，禁止 `app.getAppPath()`（返回 asar 虚拟路径）
-
-**逐 commit 纪律**：tsup.config.ts / electron-builder.yml / plugin-host / runtime 相关改动必须逐个 commit、逐个验证——一个 commit 混多个打包子系统时，出 bug 无法定位是哪个改动引入
-
-**验证三阶段**（脚本自动化，禁止 skip）:preflight-check.sh（打包前）→ `pnpm build` → postbuild-validate.sh（打包后 + CI 拦截）；runtime bundle 深度验证用 validate-runtime-bundle.sh（pre-commit 在 `packages/runtime/src/` 变更时自动触发，含 smoke test）
+打包配置细节（electron-builder files/asarUnpack 交互、symlink、子进程启动、tsup target 匹配等）的逐项核对方法见 pr-cr-fix 的 `agents/review-electron-build.md`（PR review 强制核对）；打包验证三阶段（preflight-check.sh → `pnpm build` → postbuild-validate.sh）+ `validate-runtime-bundle.sh`（pre-commit 在 `packages/runtime/src/` 变更时自动触发，含 CJS 兼容检查与 smoke test）由脚本自动化，发布流程见 merge skill。
 
 ### 13. 目录规范（违反必出 bug）
 
