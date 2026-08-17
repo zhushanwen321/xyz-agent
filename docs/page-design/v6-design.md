@@ -2,7 +2,7 @@
 
 > 日期：2026-07-30
 > 状态：定稿（决策已确认，待架构重构后实施视觉层）
-> 关联 demo：[`v6-demo.html`](./v6-demo.html)（综合交互 demo）
+> 关联 demo：[`v6-demo.html`](./archive/v6-demo.html)（综合交互 demo，已归档）
 > 取代：visual-modernization-2026-07.md（已合并进本文档，见 design-evolution.md）
 > 性质：**全面重新设计**。落在视觉语言层（架构/色相/字体保留），授权大刀阔斧重构。
 

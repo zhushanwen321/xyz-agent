@@ -1,7 +1,7 @@
 /**
  * Tasks Drawer REAL E2E —— 真实 runtime + pi 子进程 + 真实 LLM。
  *
- * 与 mock 轨（tasks-drawer.spec.ts）的差异：
+ * 与 mock 轨的差异：
  * - 不设 VITE_MOCK/XYZ_MOCK → main spawn runtime → runtime spawn pi 子进程
  * - 真实 goal/todo extension 被 pi load，真实协议格式（__gui__ / ANSI widget）
  * - 真实 LLM 调用（慢/flaky，断言宽松，timeout 长）
@@ -196,7 +196,7 @@ test('R1: pi load goal/todo extension + session.create 成功', async () => {
  * 改为 WS 发 prompt + 监听 runtime 广播的 tool_call_end 事件，验证真实 extension
  * 返回的 __gui__ GuiComponent 格式（这是 real 轨独有的协议契约验证）。
  *
- * UI drawer 渲染部分由 mock 轨覆盖（tasks-drawer.spec.ts）。
+ * UI drawer 渲染部分由 mock 轨 gui-components.spec.ts 覆盖。
  */
 test('R2: 真实 todo tool 调用 → 协议格式含 __gui__ list-tree', async () => {
   test.setTimeout(180_000) // LLM 慢，3 分钟

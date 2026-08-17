@@ -245,7 +245,7 @@ lucide-vue v1.23.0，重命名映射：Loader2→LoaderCircle, FileEdit→FilePe
 | 文件 | 覆盖范围 | 行数 |
 |------|----------|------|
 | [v6-spec-tokens.html](./v6-spec-tokens.html) | Token 集 + 标注规范 + 页面骨架 CSS（**所有 spec 引用的 token SSOT**） | 1,128 |
-| [v6-demo.html](./v6-demo.html) | 综合交互 demo（视觉验收 SSOT） | 1,276 |
+| [v6-demo.html](./archive/v6-demo.html) | 综合交互 demo（已归档，视觉验收以 master-spec 为准） | 1,276 |
 | [v6-spec-container.html](./v6-spec-container.html) | §1 MessageStream / §1.5 瞬时覆盖层 / §2 PanelHeader / §3 TurnMeta / §3.5 TurnRail（R5 保留修范式：active 用 §3.2 bg-surface+蓝字、viewport indicator 用 accent 短粗线非 border-l-2；D11 动态高度拆层：spec 删 h-340 固定值画变体示意，高度=turn 数×行高 renderer 实现） | ~873 |
 | [v6-spec-blocks.html](./v6-spec-blocks.html) | §4-7, §10, §10.5, §11, §11.5 消息块（thinking/bash/tool/subagent/workflow） | ~1,173 |
 | [v6-spec-content.html](./v6-spec-content.html) | assistant 正文 markdown / 代码块 / 表格 / TurnSummary hover actions | ~634 |
@@ -260,7 +260,7 @@ lucide-vue v1.23.0，重命名映射：Loader2→LoaderCircle, FileEdit→FilePe
 | [v6-spec-shell.html](./v6-spec-shell.html) | Shell 三栏 + 三层明度 + traffic-light + 折叠态 | 1,368 |
 | [v6-spec-sidebar.html](./v6-spec-sidebar.html) | 5 tab（4 原生 + plugin 第 5，D4 授权）/ SegmentedTab / SessionItem / ForkGroup / FileTree | 1,442 |
 | [v6-spec-drawer.html](./v6-spec-drawer.html) | Drawer 9 sections（§1-§5 W3-A + §6-§9 W3-B），**7 个一级 tab**（terminal/browser/git/doc/detail/subagent/workflow，D3 移除 tasks），形态 B：icon 一级 + 各 tab 自治二级 | 2,552 |
-| [v6-drawer-tabs-demo.html](./v6-drawer-tabs-demo.html) | Drawer 二级 tab 形态 B 交互 demo | 333 |
+| [v6-drawer-tabs-demo.html](./archive/v6-drawer-tabs-demo.html) | Drawer 二级 tab 形态 B 交互 demo（已归档） | 333 |
 
 ### 5.4 Overlays 视觉稿
 

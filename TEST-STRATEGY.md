@@ -50,6 +50,9 @@ cd packages/runtime && npx vitest run
 # typecheck（vue-tsc 在 apps/electron/node_modules）
 pnpm --filter @xyz-agent/frontend run typecheck
 cd packages/runtime && npx tsc --noEmit
+
+# pi-scheduler 真实环境端到端实测（spawn 真实 pi + LLM，设计契约见脚本头部）
+node scripts/verify-scheduler-e2e.cjs
 ```
 
 ## 3. 三视角模型 + 渲染 gate DoD [HISTORICAL — 2026-06-27「新建任务」事故]

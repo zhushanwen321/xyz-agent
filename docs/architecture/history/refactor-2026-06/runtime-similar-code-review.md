@@ -12,10 +12,10 @@
 > - ✅ P1-D（server.ts 内部结构化）已完成——sendInitialState descriptor 循环（D7）
 > - ✅ P1-E（plugin-service API，缩减版）已完成——LocalHandlerRegistry 收 C7+C8（不动 register/create 对偶骨架，尊重 D5）
 > - ✅ P2 全量已完成——见下方 P2 表各项状态（F3/E3 经评估为真差异/已完成，跳过并记录理由）
-> 与 [`duplicate-code-audit.md`](./duplicate-code-audit.md)（D1–D28）的关系：
+> 与 [`duplicate-code-audit.md`](../../duplicate-code-audit.md)（D1–D28）的关系：
 > - 既有审计 D1–D28 多已标 ✅ 解决。本文件是**对未解决/新发现相似代码的第二轮审查**。
 > - 本文件不重复 D1–D28 的已解决项，仅在**与既有结论冲突或补充**处交叉引用并标注「修正 Dxx」。
-> - 分级口径沿用既有文档的 P0–P3 四档（见 [`duplicate-code-audit.md`](./duplicate-code-audit.md) 处置汇总表）。
+> - 分级口径沿用既有文档的 P0–P3 四档（见 [`duplicate-code-audit.md`](../../duplicate-code-audit.md) 处置汇总表）。
 >
 > 核心原则：**只列形式/逻辑相似的代码，不预判真假重复**；判定在分级时单独给出。
 
@@ -103,7 +103,7 @@ class WriteBackCache<K, V> {                  // write-back，组合 JsonStore
 
 **吸收相似点**：A5（pi-provider-store 9 处 RMW 绕过）。
 
-**对既有文档的修正**：[`duplicate-code-audit.md`](./duplicate-code-audit.md) 的 **D17 标 ✅ 已解决，但核实当前代码后发现只完成了一半**——D17 收了 settings.json 的读写**归属**（建立了 pi-settings-store 单一读写层、两域分区），但 pi-provider-store 里 model 域的 setter **仍手写 RMW**，没有用 D17 一并建好的 `updateSettingsSync()`：
+**对既有文档的修正**：[`duplicate-code-audit.md`](../../duplicate-code-audit.md) 的 **D17 标 ✅ 已解决，但核实当前代码后发现只完成了一半**——D17 收了 settings.json 的读写**归属**（建立了 pi-settings-store 单一读写层、两域分区），但 pi-provider-store 里 model 域的 setter **仍手写 RMW**，没有用 D17 一并建好的 `updateSettingsSync()`：
 
 - `pi-provider-store.ts` 第 150、155、191、196、273、283、294、304、316 行——共 9 处仍是 `const settings = JSON.parse(JSON.stringify(readSettings())); settings.xxx = ...; writeSettings(settings)`。
 - `pi-settings-store.ts:181-186` 的 `updateSettingsSync(mutator)` 正是为收口这批而建，但未被调用。
@@ -126,7 +126,7 @@ class WriteBackCache<K, V> {                  // write-back，组合 JsonStore
 
 **吸收相似点**：D1 switch 骨架（6 处）、D2 reply 惯用法（40+ 处）、D3 service 守卫（7+1 处）、D4 mutate→scan→reply、D5 try/catch→toErrorMessage、D8 getClient→空抛→op（3 处）、D9 DI 构造器 + TreeHandlerContext 没 extends。
 
-> 与既有 D8 的关系：[`duplicate-code-audit.md`](./duplicate-code-audit.md) D8 已抽 `MessageHandlerContext { send; sendError }`（ctx 契约），但**只解决了 D9 的 ctx 部分**，switch/reply/守卫三组重复仍在。
+> 与既有 D8 的关系：[`duplicate-code-audit.md`](../../duplicate-code-audit.md) D8 已抽 `MessageHandlerContext { send; sendError }`（ctx 契约），但**只解决了 D9 的 ctx 部分**，switch/reply/守卫三组重复仍在。
 
 **修复方向（局限 transport 子层）**：
 - `MessageHandler` 基类或 `Record<MsgType, (msg,ctx)=>Promise<void>>` map，消灭 6 个 switch 骨架（D1）。
@@ -155,7 +155,7 @@ class WriteBackCache<K, V> {                  // write-back，组合 JsonStore
 
 **吸收相似点**：C1（28 处 register）、C2（已被 P1-B 覆盖）、C3（25 处 client 代理）、C4/C5/C6（.then 丢弃 / null 默认 / 无参 eslint 不一致）、C7（Disposable 注册 3 处）、C8（onNotification dispatch 3 处）。
 
-> 与既有 D5 的关系：[`duplicate-code-audit.md`](./duplicate-code-audit.md) D5 判定「api/* 对偶结构非重复，不动」。本项**不推翻 D5**（D5 说的是「register/create 骨架本身」不要强行合并），而是指**骨架内的样板**（params 解构、.then 丢弃、null 默认）可以声明式化。
+> 与既有 D5 的关系：[`duplicate-code-audit.md`](../../duplicate-code-audit.md) D5 判定「api/* 对偶结构非重复，不动」。本项**不推翻 D5**（D5 说的是「register/create 骨架本身」不要强行合并），而是指**骨架内的样板**（params 解构、.then 丢弃、null 默认）可以声明式化。
 
 **修复方向**：改为**声明式 method 表**——定义 `{name, params[], scope?}`，自动生成 server 注册 + client 代理。Disposable/onNotification 的 Map 管理可抽一个 `LocalHandlerRegistry`（收 C7/C8）。
 

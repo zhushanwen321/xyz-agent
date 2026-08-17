@@ -100,20 +100,18 @@ Node.js WebSocket 服务，三层架构（端口-适配器模式，[ADR 驱动](
 ## 详细设计文档
 
 - [完整架构设计](architecture/design.md) — 逐点决策 D1–D9 + 分层规则 + 依赖矩阵 + 迁移路线
-- [架构评审问题记录](architecture/review-issues.md) — 9 个盲点 D1–D9 的来源与验证
+- [架构评审问题记录](architecture/history/refactor-2026-06/review-issues.md) — 9 个盲点 D1–D9 的来源与验证（2026-06 重构期，已归档）
 - [领域术语表](architecture/context.md) — Session/Panel/Runtime + v3 UI 结构术语
 
-## v3 视觉与交互层
+## 视觉与交互层
 
-前端视觉层于 2026-06 完成 v3 重建（冷蓝暗色，W01–W20 视觉验收全部 PASS）：
-
-- [v3 UI 设计稿](./page-design/archive/v3/README.md) — L0–L4 递归骨架 + 22 个 draft
-- [设计 Tokens（SSOT）](./page-design/design-tokens.md) · [组件原语层](./page-design/design-system.md)
-- v3 视觉/交互 ADR 0019–0023（见下）
+- [设计 Tokens（SSOT）](./page-design/design-tokens.md) — 太极纯灰暗色原子值 · [v6 主规范](./page-design/v6-master-spec.md)
+- [v3 UI 设计稿（归档）](./page-design/archive/v3/README.md) — L0–L4 递归骨架 + 22 个 draft
+- 视觉/交互 ADR 0019–0023（见下）
 
 ## 架构决策（ADR）
 
-[ADR 目录](adr/) — 共 57 条（0001–0057）。重要的几条：
+[ADR 目录](adr/) — 索引见 [adr/README.md](adr/README.md)。重要的几条：
 
 - [ADR-0005 Bun 编译二进制 vs npm 包](adr/0005-bun-binary-over-npm-package.md)
 - [ADR-0009 xyz-agent 数据目录与 pi 隔离](adr/0009-xyz-agent-data-dir-isolation-from-pi.md)
@@ -132,7 +130,7 @@ Node.js WebSocket 服务，三层架构（端口-适配器模式，[ADR 驱动](
 
 ## 演进 / 调研 / 历史
 
-- [重构迁移计划](architecture/migration-plan.md) — 5 阶段路线 · [术语对齐](architecture/terminology.md) R1–R5
+- [重构迁移计划](architecture/history/refactor-2026-06/migration-plan.md) — 2026-06 重构期 5 阶段路线（已归档） · [术语对齐](architecture/terminology.md) R1–R5
 - [架构调研](architecture/research/) — Electron 打包 · Node.js 路径安全 · Pi Extension 通道
 - [历史归档](architecture/history/) — 被 supersede 的旧架构（pre-electron Tauri 方案等）
 

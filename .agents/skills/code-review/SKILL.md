@@ -67,7 +67,7 @@ pi workflow run review-fix-loop --args '{
 内置 workflow 行为（参数 → 效果，对照 `~/.pi/agent/npm/node_modules/@zhushanwen/pi-subagent-workflow/workflows/review-fix-loop.js` 核实）：
 - **审查范围**：`targetType=git-diff` + `target=main` → 审查 `git diff main...HEAD`（base 在 run 启动时锁定 hash，防 run 期间 ref 漂移）；同时含未提交工作区改动
 - **维度 agent**：`batch1` 逗号分隔 7 个 **.md 绝对路径**，批内全并行 review。各 agent 审查焦点内置于 `.agents/agents/review-*.md` 正文，workflow 用 loadAgentMd 加载，无需额外注入 focus
-- **聚合**：内置 aggregator prompt 合并去重 7 份报告为 `aggregated.md` + `must_fix` 计数（workflow 自带，不依赖 `review-aggregator.md`）
+- **聚合**：内置 aggregator prompt 合并去重 7 份报告为 `aggregated.md` + `must_fix` 计数（workflow 自带）
 - **clean 判定**：某 agent `must_fix === 0` 判该 agent clean；否则 fix agent 批量修复并 `autoCommit` commit，进入下一轮
 - **clean 跳过**（`skipCleanAgents` 默认 true）：单轮 clean 的 agent 下轮跳过；`recheckAfterFix` 默认 false（省 token），传 true 开启强回归模式（fix 后重派全批，clean agent 走限定 prompt 只审 fix 改动文件 ∪ 自检关联点）
 - **stuck 检测**：连续 `stuckThreshold`（默认 3）轮 must_fix 不降则终止（`terminated=stuck`）
