@@ -121,6 +121,27 @@ describe("acquireActivateLock 30s 超时兜底 (v4 A-2)", () => {
     await waiter2; // release1 后链推进，waiter2 获锁
     expect(gotRelease2).toBe(true);
   });
+
+  it("[review 修复] 超时者对称自清：前序 release 推进链尾后 Map 条目回收；前序持锁期间不提前删", async () => {
+    // round2 INFO 残留：超时者 releaseFn 永不被调用，原实现条目滞留 Map 直到下次
+    // 同 recordId acquire 覆盖。修复后挂 tail 尾部自清——tail settle（前序已
+    // release）时回收；tail pending（前序仍持锁）时回调不执行，条目保留（后续
+    // acquire 仍排队等待，互斥不被破坏）。
+    const release1 = await acquireActivateLock("sa-timeout-gc");
+
+    const waiter = acquireActivateLock("sa-timeout-gc").catch(() => {});
+    await vi.advanceTimersByTimeAsync(0); // waiter 挂链，Map 链尾已覆盖为 waiter 的 tail
+    expect(_getActivateLockTailCountForTest()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(30001); // 超时：reject + settleCurrent + tail.then 自清排队
+    await waiter;
+    // 前序仍持锁 → tail 仍 pending → 自清回调未执行 → 条目仍在
+    expect(_getActivateLockTailCountForTest()).toBe(1);
+
+    release1(); // 前序释放 → tail settle → 自清回调执行（identity 匹配，无新 waiter）
+    await vi.advanceTimersByTimeAsync(0);
+    expect(_getActivateLockTailCountForTest()).toBe(0);
+  });
 });
 
 describe("activateLockTails tail-identity 自清（release 后回收）", () => {

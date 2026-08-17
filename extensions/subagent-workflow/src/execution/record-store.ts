@@ -440,8 +440,11 @@ export class RecordStore {
     //期间 250ms 动画 timer + 120ms debounce 双驱动高频扫描，快路径把 ~N×4 stat 降到
     // 1 次（目录本身）+ 少量 pid 探活（refreshAlive，内存无 IO）。
     // 已知局限（与 mtime 缓存同族）：目录 mtime 粒度粗糙的文件系统（NFS/2s FAT）
-    // 可能漏判——APFS 微秒级可靠；invalidate 语义由文件写入侧保证（sidecar 写入
-    //必改目录 mtime）。
+    // 可能漏判——APFS 微秒级可靠。invalidate 语义由文件写入侧保证，但**仅限 sidecar
+    // 新建/删除/重命名**（这些操作必改目录 mtime）；覆盖写已存在的 sidecar 不改目录
+    // mtime——`.alive` 覆盖写（resume spawn 后 pid 变化重写 marker）后快路径会复用旧
+    // aliveData（旧 pid/旧 startedAt），refreshAlive 探活与 1h 软超时判定可能滞后一拍
+    //（status 判定不受影响：分支 3 探活失败只清 externalInstance，不改 status）。
     let dirMtimeMs: number;
     try {
       dirMtimeMs = fs.statSync(this.sessionsDir).mtimeMs;

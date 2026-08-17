@@ -8,12 +8,15 @@
 // 所有「副作用」能力（kill / 探活 / 超时回调）都由调用方经回调/参数注入，本模块
 // 只管状态记账 + 调度顺序。这让模块可独立编译 + 单测，无需拉起真实子进程。
 //
-// 五项职责（对应 V2 决策 1/4/7）：
+// 五项职责（对应 V2 决策 1/4/7），接线现状（防止「已防护」错觉，详见各节 [状态] 注释）：
 //   1. idle timer —— agent_settled arm / 新 turn disarm / 超时触发 onTimeout（决策 4）
-//   2. 全局 ceiling —— 活进程上限，超限时按 LRU 挤出最久空闲（决策 4）
+//      【已接线：session-runner.ts agent_settled arm / subagent-service 新 turn disarm】
+//   2. 全局 ceiling —— 活进程上限，超限时按 LRU 挤出最久空闲（决策 4）【未接线，deferred】
 //   3. shutdown 收割 —— 父进程 shutdown 时显式 SIGTERM 全部 activation（决策 7 防线 i）
-//   4. 孤儿扫描 —— 父进程启动时按持久化 PID 扫收上次崩溃遗留的孤儿（决策 7 防线 ii）
+//      【未接线：index.ts reapSpawnedChildrenOnShutdown + killAllSpawnedChildren 已等价覆盖】
+//   4. 孤儿扫描 —— 父进程启动时按持久化 PID 扫收上次崩溃遗留的孤儿（决策 7 防线 ii）【deferred】
 //   5. activate 互斥 —— 同 recordId 的并发 activate 串行化（决策 7 防线 iii，防双写者）
+//      【已接线：subagent-service.ts 冷路径 resume 前 acquireActivateLock】
 //
 // 触发点（谁在何时调 arm/disarm/reap）散落在 session-runner / subagent-service /
 // index.ts，由后续步骤接入；本模块不 import 它们，避免循环依赖。
@@ -138,6 +141,13 @@ export function hasIdleTimer(recordId: string): boolean {
 
 // ============================================================
 // 职责 2：全局 ceiling（活进程上限 + LRU）
+//
+// [状态：未接线（deferred）] register/touch/unregister/evictIfOverCeiling 均无生产
+// 调用方（仅本模块单测引用）——「N 个 chatMode 长驻进程内存高水位」防护当前**未生效**。
+// 接线条件：spawn/activate 完成处 registerActiveProcess + 事件驱动或周期调
+// evictIfOverCeiling（注入 SIGTERM 回调），busy 进程按 evictIfOverCeiling docstring
+// 约束移出集合。保留理由：activeProcesses 记账同时是职责 4 孤儿判定（scanOrphanProcesses
+// 的「不在当前活进程集合」检查）的数据通路，与职责 4 一并待接入，不宜单删。
 // ============================================================
 
 interface ActiveProcessEntry {
@@ -232,6 +242,13 @@ export function getActiveProcessCount(): number {
 
 // ============================================================
 // 职责 3：shutdown 收割（防线 i）
+//
+// [状态：未接线，已有等价实现] reapAllAliveProcesses 无生产调用方——shutdown 收割
+// 已由 index.ts 的 reapSpawnedChildrenOnShutdown（process hook → killAllSpawnedChildren
+// 发 SIGTERM，覆盖 SIGTERM/SIGINT/beforeExit 挂点）等价覆盖；后者直接遍历
+// spawnedChildren 句柄表，不依赖本模块 activeProcesses 记账的 register 时机，覆盖面
+// 更可靠。本函数保留作跨模块等价实现；若未来接入须先保证 register/unregister 记账
+// 完整，否则收割列表不全。
 // ============================================================
 
 /**
@@ -412,6 +429,18 @@ export function acquireActivateLock(recordId: string): Promise<() => void> {
       // tail 可 settle（不绕过前序等待——prev 未 settle 时 tail 仍等 prev，互斥保持），
       // 后续 acquire 不被本超时者的永久 pending tail 卡死。
       settleCurrent();
+      // [review 修复] 超时者对称自清（round2 INFO 残留）：releaseFn 永不被调用（race
+      // 已 reject），tail-identity 自清 microtask 不排队，条目滞留 Map 直到下次同
+      // recordId acquire 覆盖。此处挂 tail 尾部做同款 identity 自清——只有 tail
+      // 真正 settle（prev 也已 release）才回收：不能直接 queueMicrotask 删除——前序
+      // 仍持锁（tail pending）时删条目会让后续 acquire 不再排队等前序 release，
+      // 破坏互斥（超时放行的是链尾 settle，不是锁获取）。tail 永不 settle（前序
+      // 崩溃）时回调不执行，条目与现状一致由 _resetLifecycleState 兜底清理。
+      tail.then(() => {
+        if (activateLockTails.get(recordId) === tail) {
+          activateLockTails.delete(recordId);
+        }
+      });
       reject(
         new Error(
           `subagent ${recordId} activation timed out; retry action: message`,

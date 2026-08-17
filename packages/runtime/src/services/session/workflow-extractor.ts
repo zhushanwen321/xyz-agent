@@ -191,13 +191,20 @@ function readAndMapSnapshot(runId: string, stateFilePath: string): WorkflowRunRe
   const lastLine = lines[lines.length - 1]
   if (!lastLine) return null
 
-  let snapshot: RunSnapshot
+  let parsed: unknown
   try {
-    snapshot = JSON.parse(lastLine) as RunSnapshot
+    parsed = JSON.parse(lastLine)
   } catch {
     // JSON 解析失败（损坏的 state 文件）
     return null
   }
+
+  // [review 修复] 结构守卫：JSON.parse 对 "null" / "42" / '"str"' / '[]' 等合法 JSON
+  // 产出 null / 非对象 / 缺 v 字段值，直接 as RunSnapshot 后 .v 访问会抛 TypeError
+  // 而非走「跳过」路径——按坏行处理跳过，与上方 malformed 行为一致（状态文件由本
+  // 扩展生成，防御并发截断 / 外部覆写）。
+  if (typeof parsed !== 'object' || parsed === null || !('v' in parsed)) return null
+  const snapshot = parsed as RunSnapshot
 
   // D-5 版本守卫：版本不匹配跳过（旧格式不向后兼容）
   if (snapshot.v !== SNAPSHOT_VERSION) return null

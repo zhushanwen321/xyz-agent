@@ -23,6 +23,8 @@ vi.mock("@zhushanwen/pi-extension-logger", () => ({
   getLogger: () => loggerMock,
 }));
 
+import type { CustomEntry } from "@earendil-works/pi-coding-agent";
+
 import { AgentCall } from "../models/agent-call.ts";
 import { Budget } from "../models/budget.ts";
 import { Trace } from "../models/trace.ts";
@@ -30,6 +32,7 @@ import type { ExecutionTraceNode } from "../models/types.ts";
 import type { RunSpec } from "../models/run-spec.ts";
 import { WorkflowRun } from "../models/workflow-run.ts";
 import { JsonlRunStore } from "../jsonl-run-store.ts";
+import { mkCtx, mkPi } from "./test-mocks.ts";
 
 function makeSpec(): RunSpec {
   return {
@@ -55,11 +58,15 @@ function makeRunWithDoneCall(): WorkflowRun {
   const trace = new Trace();
   const node = makeTraceNode(0);
   trace.append(node);
-  const call = new AgentCall(0, {
-    prompt: "task",
-    agent: "worker",
-    cwd: "/tmp",
-  } as never, node);
+  const call = new AgentCall(
+    0,
+    {
+      prompt: "task",
+      agent: "worker",
+      cwd: "/tmp",
+    },
+    node,
+  );
   // 模拟已完成 agent call：带 sessionId + sessionFile
   call.markRunning();
   call.markDone({
@@ -174,21 +181,15 @@ describe("W1: JsonlRunStore sessionFile 序列化 round-trip", () => {
     // 闭环测试：serialize（save）→ deserialize（loadAll）→ 验证 run.state.calls 的 AgentCall.sessionFile
     const sessionFilePath = "/abs/.pi/agent/subagents/enc/sessions/2026-07-15T_session-abc.jsonl";
 
-    // mock pi + ctx：save 写 pointer entry，loadAll 读同一组 entries
-    const entries: Array<{ type: string; customType?: string; data?: unknown }> = [];
-    const mockPi = {
-      appendEntry: vi.fn((type: string, data: unknown) => {
-        entries.push({ type: "custom", customType: type, data });
-      }),
-    };
-    const mockCtx = {
-      sessionManager: { getEntries: () => entries },
-    };
+    // mock pi + ctx 共享同一 entries 数组：save 写 pointer entry，loadAll 读同一组 entries
+    const entries: CustomEntry[] = [];
+    const mockPi = mkPi(entries);
+    const mockCtx = mkCtx(entries);
 
     const storeWithCtx = new JsonlRunStore({
       sessionDir: tmpDir,
-      pi: mockPi as never,
-      ctx: mockCtx as never,
+      pi: mockPi,
+      ctx: mockCtx,
     });
 
     const run = makeRunWithDoneCall();
@@ -251,15 +252,17 @@ describe("W9: 快照版本守卫（v2 当前 / v1 跳过）", () => {
     };
     fs.writeFileSync(filePath, JSON.stringify(legacySnapshot) + "\n", "utf8");
 
-    const entries: Array<{ type: string; customType?: string; data?: unknown }> = [
+    const entries: CustomEntry[] = [
       {
         type: "custom",
         customType: "workflow-state-link",
         data: { runId: "run-legacy-v1", path: filePath },
+        id: "seed-pointer",
+        parentId: null,
+        timestamp: new Date().toISOString(),
       },
     ];
-    const mockCtx = { sessionManager: { getEntries: () => entries } };
-    const store = new JsonlRunStore({ sessionDir: tmpDir, ctx: mockCtx as never });
+    const store = new JsonlRunStore({ sessionDir: tmpDir, ctx: mkCtx(entries) });
 
     // 版本不匹配 → deserializeRun 返回 null → loadAll 跳过（空数组），不崩
     await expect(store.loadAll()).resolves.toEqual([]);
@@ -441,8 +444,8 @@ describe("W4: save 去抖（热路径合并 / 冷路径同步 flush）", () => {
   });
 
   it("W2TC7: 终态冷路径同步 flush：立即落盘（绕过 timer）+ 终态指针", async () => {
-    const mockPi = { appendEntry: vi.fn() };
-    const store7 = new JsonlRunStore({ sessionDir: tmpDir, pi: mockPi as never });
+    const mockPi = mkPi();
+    const store7 = new JsonlRunStore({ sessionDir: tmpDir, pi: mockPi });
     const run = makeRunningRun("run-w2tc7");
     await store7.save(run); // 首写 + 创建指针
     expect(mockPi.appendEntry).toHaveBeenCalledTimes(1);
@@ -463,8 +466,8 @@ describe("W4: save 去抖（热路径合并 / 冷路径同步 flush）", () => {
   });
 
   it("W2TC8: 首写冷路径（跨 session resume）：本 store 实例首 save 立即落盘 + 写创建指针", async () => {
-    const mockPi = { appendEntry: vi.fn() };
-    const storeA = new JsonlRunStore({ sessionDir: tmpDir, pi: mockPi as never });
+    const mockPi = mkPi();
+    const storeA = new JsonlRunStore({ sessionDir: tmpDir, pi: mockPi });
     const run = makeRunningRun("run-w2tc8");
 
     // 实例 A 首写：status 是 running 也立即落盘（首写判定优先于 status）
@@ -474,7 +477,7 @@ describe("W4: save 去抖（热路径合并 / 冷路径同步 flush）", () => {
     expect(mockPi.appendEntry).toHaveBeenCalledTimes(1);
 
     // 实例 B（另一 session 的 store）对同一 runId 再 save：又是一次实例首写
-    const storeB = new JsonlRunStore({ sessionDir: tmpDir, pi: mockPi as never });
+    const storeB = new JsonlRunStore({ sessionDir: tmpDir, pi: mockPi });
     run.state.trace.append(makeTraceNode(9));
     await storeB.save(run);
     // 跨实例指针仍有界：每实例每 run ≤2 条（此处各 1 条创建指针）
@@ -536,8 +539,8 @@ describe("W5: 批 settle 与 IO 错误语义", () => {
   });
 
   it("W2TC4(ES9): 首写失败回滚 writtenOnce——running 中间态 save 重走冷路径补写指针", async () => {
-    const mockPi = { appendEntry: vi.fn() };
-    const store4 = new JsonlRunStore({ sessionDir: tmpDir, pi: mockPi as never });
+    const mockPi = mkPi();
+    const store4 = new JsonlRunStore({ sessionDir: tmpDir, pi: mockPi });
     const run = makeRunningRun("run-w2tc4b");
 
     // 首写冷路径遇 writeFile EACCES reject
@@ -597,8 +600,8 @@ describe("W6: 指针收敛（仅创建/终态写）", () => {
   });
 
   it("W2TC6: 指针 appendEntry 计数：创建+终态=2 次，中间 N 次 save 0 次", async () => {
-    const mockPi = { appendEntry: vi.fn() };
-    const store6 = new JsonlRunStore({ sessionDir: tmpDir, pi: mockPi as never });
+    const mockPi = mkPi();
+    const store6 = new JsonlRunStore({ sessionDir: tmpDir, pi: mockPi });
     const run = makeRunningRun("run-w2tc6");
 
     // 创建首写 → 1 次
@@ -832,20 +835,14 @@ describe("W8: 去抖窗口崩溃语义与 timer unref", () => {
 
   it("W2TC13: 去抖窗口崩溃语义：未 flush 的 run 对 loadAll 不可见（丢失边界 = 最后一次成功 flush）", async () => {
     // mockPi + mockCtx entries 数组模式（对齐 W1 round-trip 用例）
-    const entries: Array<{ type: string; customType?: string; data?: unknown }> = [];
-    const mockPi = {
-      appendEntry: vi.fn((type: string, data: unknown) => {
-        entries.push({ type: "custom", customType: type, data });
-      }),
-    };
-    const mockCtx = {
-      sessionManager: { getEntries: () => entries },
-    };
+    const entries: CustomEntry[] = [];
+    const mockPi = mkPi(entries);
+    const mockCtx = mkCtx(entries);
 
     const storeA = new JsonlRunStore({
       sessionDir: tmpDir,
-      pi: mockPi as never,
-      ctx: mockCtx as never,
+      pi: mockPi,
+      ctx: mockCtx,
     });
     const run = makeRunningRun("run-w2tc13");
     await storeA.save(run); // 首写冷路径落盘 + 创建指针
@@ -856,7 +853,7 @@ describe("W8: 去抖窗口崩溃语义与 timer unref", () => {
     const pHot = storeA.save(run);
 
     // 重启恢复：新 store 实例 loadAll 只能看到最后一次成功 flush 的状态
-    const storeB = new JsonlRunStore({ sessionDir: tmpDir, ctx: mockCtx as never });
+    const storeB = new JsonlRunStore({ sessionDir: tmpDir, ctx: mkCtx(entries) });
     const loaded1 = await storeB.loadAll();
     expect(loaded1).toHaveLength(1);
     expect(loaded1[0]!.state.trace.toArray()).toHaveLength(1); // 中间态丢失（崩溃窗口 ≤saveDebounceMs 的已接受语义）

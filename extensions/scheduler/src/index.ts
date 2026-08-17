@@ -27,6 +27,14 @@ import { renderSchedulerWidget } from './widget.js'
  */
 export default function schedulerExtension(pi: ExtensionAPI): void {
   let service: SchedulerService | null = null
+  // G1（代际检测，S9）：session 代际计数器，每次 session_start 递增。各代 runtime 构造时
+  // 捕获自己的代数，tick 前比对当前代数即可判定「本 runtime 所属 session 是否已被替换」——
+  // stale 分诊不再依赖 pi 错误文案（Error message 非契约 API，pi 升级改文案即静默失效）。
+  // 已核 pi 源码（agent-session.ts）：newSession/fork/switchSession 均在同一 extension
+  // factory 闭包上重新 fire session_start，故闭包计数器可覆盖这些替换路径；
+  // reload 会重跑 factory（旧闭包计数不再递增），该盲区由 runtime 侧 STALE_CTX_MARKER
+  // 文案兜底（防御纵深）。
+  let sessionGeneration = 0
   // IMPORT-FLUSH-GUARD（MF-1）：importLegacyStore 对未 flush 的新 session 返回延迟删除 .imported
   // 的 cleanup——turn_end / session_shutdown 时执行：确认 flush（sessionFile 已出现）则删，
   // 未 flush 保留供崩溃恢复重导入（否则未 flush 即退出 → 全部旧任务丢失且源文件已销毁）。
@@ -41,6 +49,10 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
   }
 
   pi.on('session_start', (_event, ctx: ExtensionContext) => {
+    // G1：先递增代数再装配——自此所有前代 runtime 的 isCtxStale 返回 true（stale）。
+    // myGeneration 是本 handler 的代数，注入的比对闭包读实时 sessionGeneration 与之比较。
+    sessionGeneration += 1
+    const myGeneration = sessionGeneration
     // F1（治本）：session 替换/重入时先停上一代 runtime 的 tick interval——dispatch 的 await sendMessage
     // 窗口与 session 替换交错时旧 session_shutdown 可能永远等不到（timer 泄漏源头）。stopScheduler 幂等，
     // shutdown 已停过再停一次无副作用。
@@ -51,7 +63,9 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
     // append 的 upsert entry 进入 pi 内存 fileEntries，紧接的 loadTasks replay 统一重放读到导入任务。
     // ctx.cwd 类型为 string（SDK ExtensionContext 必填），无需 ?? process.cwd() 兜底（CL2）。
     importCleanup = importLegacyStore(ctx.cwd, pi, ctx.sessionManager.getSessionFile())
-    const runtime = new SchedulerRuntime(backend, ctx)
+    // G1：注入代际比对（本 runtime 建立时的代数 vs 实时代数），供 tick 前置检查与
+    // F2 catch 分诊判定 stale——不依赖 pi 错误文案。
+    const runtime = new SchedulerRuntime(backend, ctx, () => sessionGeneration !== myGeneration)
     runtime.loadTasks(backend.loadTasks())
     // W2：tick 后回调刷新 widget（替代独立 widgetTimer + setInterval，节奏对齐 TICK_INTERVAL_MS）
     runtime.onAfterTick(() => refreshWidget(ctx))

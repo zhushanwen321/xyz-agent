@@ -32,7 +32,22 @@ export function stringifySchemaCached(schema: object, mode: "compact" | "pretty"
   }
   const hit = entry[mode];
   if (hit !== undefined) return hit;
-  const serialized = mode === "compact" ? JSON.stringify(schema) : JSON.stringify(schema, null, 2);
+  // [review 修复] TS lib 盲区：lib 对 object 参数声明 JSON.stringify 返回 string，但
+  // schema 含 `toJSON: () => undefined` 钩子时运行时返回 undefined——直接违反本函数
+  // 声明的 string 返回类型，且 `entry[mode] = undefined` 赋值不生效（缓存永不命中，
+  // 重复 stringify 仅是性能损耗）。显式标注 string | undefined 捕获该窗口，fail-loud
+  // 抛含恢复指引的错误——不回退 String(value)（"[object Object]" 会静默拼进 LLM
+  // 指令，比崩溃更难排查）。抛错时 entry[mode] 未被赋值，缓存无毒化。
+  const serialized: string | undefined =
+    mode === "compact" ? JSON.stringify(schema) : JSON.stringify(schema, null, 2);
+  if (serialized === undefined) {
+    throw new Error(
+      `[subagent-workflow] stringifySchemaCached: JSON.stringify returned undefined (mode=${mode}) — ` +
+        `the schema object defines a toJSON hook returning undefined. ` +
+        `Recovery: check the schema source (agent definition / workflow script), remove that toJSON ` +
+        `or make it return a JSON-serializable value.`,
+    );
+  }
   entry[mode] = serialized;
   return serialized;
 }

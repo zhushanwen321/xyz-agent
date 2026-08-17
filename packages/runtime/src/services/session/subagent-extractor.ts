@@ -220,10 +220,12 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
 
       // status 归一：v4 起 notify.status 是两态枚举（running/closed，详见 subagent-extractor.ts 头部
       // 契约注释），legacy 值 done/failed/cancelled 仅为历史 session 数据保留；走
-      // normalizeSubagentStatus 统一兼容上游变体（completed/error/crashed 等）。notify 缺失时回落到 listItem/bgResponse。
+      // normalizeSubagentStatus 统一兼容上游变体（completed/error/crashed 等）。notify 缺失时回落
+      // listItem.status（[review 修复] 删除原 `?? normalizeSubagentStatus(tr.bgResponse.status)` 右支——
+      // normalizeSubagentStatus 恒返回非空（falsy 输入回 'running'），?? 右支永不可达）。
       const status: SubagentStatus = notify
         ? normalizeSubagentStatus(notify.status)
-        : normalizeSubagentStatus(listItem?.status) ?? normalizeSubagentStatus(tr.bgResponse.status)
+        : normalizeSubagentStatus(listItem?.status)
 
       // sessionFile 回退查找：listResponse/bg-notify 都不带 sessionFile 时，
       // 扫描 subagent session 目录用 startedAt 时间戳匹配最近的 JSONL 文件。

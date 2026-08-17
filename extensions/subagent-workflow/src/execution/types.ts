@@ -644,11 +644,13 @@ export interface CloseResponse {
 
 /**
  * Tool 外层出参（renderResult + LLM content JSON 同源）。
- * adapter 唯一产出：领域对象（bg/list/cancel 三选一）+ action/subagentId/sessionFile。
+ * adapter 唯一产出：领域对象（bg/list/cancel/message/close 五选一）+ action/subagentId/sessionFile。
  *
  *   - background 启动 → bgResponse（subagentId 有值；sessionFile 窗口期可能 undefined）
  *   - list → listResponse（最外层 subagentId/sessionFile 为 null，sessionFile 在各 item 内）
  *   - cancel → cancelResponse（subagentId 有值；sessionFile 无意义，可为 null）
+ *   - message → messageResponse（subagentId 有值；sessionFile 无意义，可为 null）
+ *   - close → closeResponse（subagentId 有值；sessionFile 无意义，可为 null）
  */
 export type SubagentToolResult =
   | { action: "start"; subagentId: string; sessionFile: string | null; slug: string; bgResponse: BgResponse; __gui__?: GuiRenderResult }

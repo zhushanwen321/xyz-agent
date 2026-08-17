@@ -180,7 +180,7 @@
 - **实际实现**：
   - `ExecuteOptions.idleTimeoutMs` → `createRecord` → `record.idleTimeoutMs`
   - `session-runner.ts` agent_settled handler 调 `armIdleTimer(record.id, ..., record.idleTimeoutMs)`
-  - `lifecycle-manager.ts` 优先级：参数 > env PI_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms
+  - `lifecycle-manager.ts` 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms（[review 修复] 原文记录时为 PI_ 前缀，2026-08-17 已改名 XYZ_ 以过 safe-env 白名单透传）
 - **偏差描述**：完整覆盖设计的三级优先级
 - **严重度**：**INFO**（正确实现）
 

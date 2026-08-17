@@ -720,9 +720,9 @@ describe("RecordStore", () => {
   });
 
   // ============================================================
-  // SP-2: reconstructAll 兜底分支输出 idle（非 crashed）
+  // SP-2: reconstructAll 兜底分支输出 running（非 crashed；v4 两态后旧 idle 折入 running）
   // ============================================================
-  describe("SP-2: reconstructAll 兜底 idle（跨重启恢复）", () => {
+  describe("SP-2: reconstructAll 兜底 running（跨重启恢复）", () => {
     // TC-1: 兜底分支输出 running（非 crashed）
     it("TC-1: 无 sidecar + 死 pid → reconstructAll 输出 running（可冷路径 resume）", () => {
       const sessionFile = path.join(tmpDir, "sp2-tc1.jsonl");

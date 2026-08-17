@@ -197,6 +197,46 @@ describe('extractWorkflowsFromSessionFile', () => {
     expect(result).toEqual([])
   })
 
+  // [review 修复] 结构守卫回归：JSON.parse 对 "null" / "42" / 缺 v 字段的合法 JSON
+  // 产出非 RunSnapshot 结构，守卫前 `.v` 访问会抛 TypeError 而非走「跳过」路径。
+  it('边界：state 文件最后一行为 null / 数字 / 缺 v 字段对象 → 按坏行跳过不抛', () => {
+    const sessionFile = join(tempDir, 'main-session.jsonl')
+
+    const stateNull = join(tempDir, 'wf-null.jsonl')
+    writeFileSync(stateNull, 'null\n')
+    const stateNum = join(tempDir, 'wf-num.jsonl')
+    writeFileSync(stateNum, '42\n')
+    const stateNoV = join(tempDir, 'wf-nov.jsonl')
+    writeFileSync(stateNoV, JSON.stringify({ runId: 'wf-nov' }) + '\n')
+
+    const sessionEntries = [
+      { type: 'session', version: 3, id: 'main-sess', cwd: '/proj', timestamp: '2026-07-10T10:00:00Z' },
+      {
+        type: 'custom',
+        customType: 'workflow-state-link',
+        data: { runId: 'wf-null', path: stateNull, updatedAt: '2026-07-10T10:01:00Z' },
+        timestamp: '2026-07-10T10:01:00Z',
+      },
+      {
+        type: 'custom',
+        customType: 'workflow-state-link',
+        data: { runId: 'wf-num', path: stateNum, updatedAt: '2026-07-10T10:02:00Z' },
+        timestamp: '2026-07-10T10:02:00Z',
+      },
+      {
+        type: 'custom',
+        customType: 'workflow-state-link',
+        data: { runId: 'wf-nov', path: stateNoV, updatedAt: '2026-07-10T10:03:00Z' },
+        timestamp: '2026-07-10T10:03:00Z',
+      },
+    ]
+    writeFileSync(sessionFile, sessionEntries.map((e) => JSON.stringify(e)).join('\n') + '\n')
+
+    // 三种坏结构均跳过，不抛 TypeError
+    const result = extractWorkflowsFromSessionFile(sessionFile)
+    expect(result).toEqual([])
+  })
+
   // 三源一致性护栏：wf-run-v* 快照版本字面量分布在 3 个包（跨包依赖方向不允许互相
   // import 源码），extension bump 格式版本时任何一处漏改都会静默丢数据：
   // - 源 1（权威）：extension jsonl-run-store.ts 的 SNAPSHOT_VERSION——漏改不会（它是生产方）

@@ -247,11 +247,11 @@ export const DEFAULT_SAVE_DEBOUNCE_MS = 200;
 interface PendingSaveBatch {
   latestRun: WorkflowRun;
   /**
-   * 批的去抖 timer。类型上可选（批对象先构造、timer 后赋值再入 Map——timer 回调
-   * 闭包需持有自身批引用做身份守卫，见 save 热路径）；运行时凡从 pending Map 取出
-   * 的批 timer 恒已赋值。
+   * 批的去抖 timer（构造时即确定——经 {@link JsonlRunStore.armPendingBatch} 工厂
+   * 内联组装，timer 与批对象在同一同步段成型，类型上不存在「先构造后赋值」的
+   * 可选窗口）。
    */
-  timer?: NodeJS.Timeout;
+  timer: NodeJS.Timeout;
   settlers: Array<{ resolve: () => void; reject: (e: unknown) => void }>;
 }
 
@@ -363,9 +363,23 @@ export class JsonlRunStore {
     const promise = new Promise<void>((resolve, reject) => {
       settlers.push({ resolve, reject });
     });
-    // 批对象先构造、timer 后赋值：timer 回调闭包需持有自身批引用做身份守卫。
-    const batch: PendingSaveBatch = { latestRun: run, timer: undefined, settlers };
-    batch.timer = setTimeout(() => {
+    this.pending.set(runId, this.armPendingBatch(runId, run, settlers));
+    return promise;
+  }
+
+  /**
+   * 构造去抖批（[review 修复] 工厂内联组装：timer 与批对象在同一同步段成型，
+   * PendingSaveBatch.timer 保持非可选——消除「批先构造、timer 后赋值」靠注释维持
+   * 的可选窗口）。timer 回调闭包经局部 batch 变量持批引用做身份守卫（ES3）。
+   */
+  private armPendingBatch(
+    runId: string,
+    run: WorkflowRun,
+    settlers: PendingSaveBatch["settlers"],
+  ): PendingSaveBatch {
+    // timer 回调闭包经下方 const batch 持批引用做身份守卫——前向引用在运行时安全：
+    // 回调最早 saveDebounceMs 后才执行，届时 batch 已在本同步段尾部初始化完毕。
+    const timer = setTimeout(() => {
       // ES3 幂等守卫（批身份比较）：回调闭包持自身批引用，与 pending Map 现值做
       // 身份比较而非仅按键存在性判断。除「批已被冷路径/flushPendingSaves/dispose
       // 原子取走（clearTimeout 与回调触发在 fake timers 下可能交错）」的交接语义外，
@@ -379,9 +393,9 @@ export class JsonlRunStore {
       this.enqueueFlush(runId, batch.latestRun, batch.settlers, false).catch(() => {});
     }, this.saveDebounceMs);
     // DS5：timer 必须 unref——不 unref 会钉住空转的 extension 进程不退出。
-    batch.timer.unref();
-    this.pending.set(runId, batch);
-    return promise;
+    timer.unref();
+    const batch: PendingSaveBatch = { latestRun: run, timer, settlers };
+    return batch;
   }
 
   /**
