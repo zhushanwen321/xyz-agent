@@ -1,5 +1,16 @@
 # @zhushanwen/pi-scheduler
 
+## 0.3.1
+
+### Patch Changes
+
+- a769aea2f: Fix a pi-process crash caused by a leaked tick timer after session replacement:
+
+  - **Root cause**: when a scheduled task dispatch was inside its `await sendMessage` window and the session got replaced (`new_session` / `switch_session`), the old 30s tick timer could survive. Its next tick called `refreshWidget` on the captured stale ctx whose `ui` getter throws, and the fire-and-forget `void tickScheduler()` turned that rejection into an `unhandledRejection` that killed the pi process (exit 1).
+  - **Source fix**: the `session_start` handler now stops the prior runtime's timer first (`service?.runtime.stopScheduler()`) — an idempotent guard against multi-fired/re-entered `session_start` leaking the previous interval. On the production factory-rerun topology (`newSession`/`fork`/`switchSession`), pi re-runs the extension factory and the new closure's `service` is still null at `session_start`, so this stopScheduler call is a no-op there — the real stop point for those replacement paths is the `session_shutdown` teardown that pi awaits (fires) before creating the replacement runtime.
+  - **Defense in depth**: the tick interval callback now catches tick rejections, and stale-ctx triage runs in two layers. Primary: a module-level session generation counter — every `session_start` increments it, each runtime captures its generation at construction, and ticks bail out early (or self-retire on in-flight errors) once the generation flips. This covers the session replacement paths (`newSession`/`fork`/`switchSession`), where pi re-runs the extension factory but the cached factory shares one module environment, so the counter survives across factory re-runs. Fallback: stale-ctx error text matching ("stale after session replacement") covers the residual blind spot — an explicit reload (or cwd change) clears pi's extension cache and re-imports the module into a fresh environment, freezing the old closures' generation reference; there, only the error text can still identify a stale ctx. Other errors warn and keep scheduling. The timer is deliberately not `unref`-ed — in rpc/daemon mode that would let the process exit early and kill scheduled tasks.
+  - **Companion hardening (not part of the crash fix itself)**: `dispatchTask` now keeps a per-task in-flight guard. A tick is fire-and-forget, so if a dispatch's `await sendMessage` hangs longer than the 30s tick interval (e.g. pi unresponsive), the next tick could start a second dispatch of the same task and double-inject the prompt (force tasks bypass the idle gate). The guard skips the task for that tick with a warning and clears on settle; other tasks are unaffected. Included here because it hardens the same dispatch path the crash fix touched, but it prevents duplicate task execution rather than the crash.
+
 ## 0.3.0
 
 ### Minor Changes
