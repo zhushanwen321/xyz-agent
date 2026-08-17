@@ -329,6 +329,9 @@ export class PluginHost implements PluginHostContract {
     if (!worker) return
 
     const handle = this.workers.get(workerId)
+    // 预期终止先置状态：运行中 Worker 被 terminate() 时 exit code=1，
+    // 不标记会被 exit handler 误判为崩溃（对齐 plugin-host-process 的 terminated 范式）
+    if (handle) handle.status = 'terminated'
     if (handle) this.removeIndexEntries(workerId, handle.pluginIds)
 
     this.rpcServer.unregisterWorker(workerId)
@@ -405,6 +408,8 @@ export class PluginHost implements PluginHostContract {
     }
     // 子进程宿主先关（内部也 dispose rpcServer——dispose 幂等，重复调用无害）
     await this.processHost?.shutdown()
+    // 同 terminateWorker：先统一置 terminated，terminate() 触发的 exit code=1 不误判崩溃
+    for (const handle of this.workers.values()) handle.status = 'terminated'
     await Promise.allSettled(
       [...this.workerInstances.values()].map(w => w.terminate()),
     )

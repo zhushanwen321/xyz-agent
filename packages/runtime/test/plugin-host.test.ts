@@ -21,6 +21,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const WORKER_MOCK = resolve(__dirname, 'fixtures/mock-bootstrap.cjs')
 /** sandbox fork 子进程的 mock bootstrap（经 bootstrapPathOverride 注入） */
 const PROCESS_MOCK_SOURCE = resolve(__dirname, 'fixtures/plugin-bootstrap-process.mock.cjs')
+/** 常驻版 trusted Worker mock（事件循环保持存活，复现运行中被 terminate → exit code=1） */
+const WORKER_MOCK_ALIVE = resolve(__dirname, 'fixtures/mock-bootstrap-alive.cjs')
 /** MF-1：sandbox fork 边界断言 execArgv 含 --import；测试用 noop loader 满足契约 */
 const NOOP_ESM_LOADER = resolve(__dirname, 'fixtures/noop-esm-loader.cjs')
 
@@ -152,5 +154,64 @@ describe('PluginHost', () => {
     expect(crashes[0].pluginIds).toContain('crash-test')
 
     await host.shutdown()
+  })
+
+  // ── 回归：预期终止不误报崩溃（退出 toast「插件 statusline 崩溃」事故）──
+  // 运行中的 Worker 被 terminate() 时 exit code=1（Node 语义），若不先置
+  // handle.status='terminated'，exit handler 会误判崩溃 → 假 toast + 无意义 rebuild
+  it('terminateWorker does not report crash for expected termination (exit code 1)', async () => {
+    const rpc = new PluginRpcServer()
+    const host = new PluginHost(rpc, { workerBootstrapOverride: WORKER_MOCK_ALIVE })
+
+    const crashes: Array<{ workerId: string; pluginIds: string[]; error: string }> = []
+    host.setCrashCallback((workerId, pluginIds, error) => {
+      crashes.push({ workerId, pluginIds, error })
+    })
+
+    const workerId = await host.assignWorker('term-trusted', 'trusted')
+    // 先 loadPlugin 等 loaded 回执：保证脚本已求值、常驻句柄已挂，
+    // 此时 terminate 才是「运行中被终止 → exit code=1」（否则脚本未求值，自然退出 code=0）
+    await host.loadPlugin(workerId, 'term-trusted', '/virtual/plugin', 'trusted')
+    const handle = host.getWorkerHandleById(workerId)!
+
+    // 自挂 exit 监听证明场景确为 exit code=1（运行中被 terminate），
+    // 排除「Worker 已自然退出 code=0 才没误报」的假通过
+    const exitCodes: number[] = []
+    host.getWorkerInstance(workerId)!.on('exit', (code) => exitCodes.push(code))
+
+    await host.terminateWorker(workerId)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(exitCodes).toEqual([1])
+    expect(handle.status).toBe('terminated')
+    expect(crashes).toEqual([])
+    expect(host.getCrashCount('term-trusted')).toBe(0)
+
+    await host.shutdown()
+  })
+
+  it('shutdown does not report crash for expected termination of live workers', async () => {
+    const rpc = new PluginRpcServer()
+    const host = new PluginHost(rpc, { workerBootstrapOverride: WORKER_MOCK_ALIVE })
+
+    const crashes: Array<{ workerId: string; pluginIds: string[]; error: string }> = []
+    host.setCrashCallback((workerId, pluginIds, error) => {
+      crashes.push({ workerId, pluginIds, error })
+    })
+
+    const workerId = await host.assignWorker('shutdown-trusted', 'trusted')
+    await host.loadPlugin(workerId, 'shutdown-trusted', '/virtual/plugin', 'trusted')
+    const handle = host.getWorkerHandleById(workerId)!
+
+    const exitCodes: number[] = []
+    host.getWorkerInstance(workerId)!.on('exit', (code) => exitCodes.push(code))
+
+    await host.shutdown()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(exitCodes).toEqual([1])
+    expect(handle.status).toBe('terminated')
+    expect(crashes).toEqual([])
+    expect(host.getCrashCount('shutdown-trusted')).toBe(0)
   })
 })
