@@ -17,7 +17,7 @@ import { fork, type ChildProcess, type Serializable } from 'node:child_process'
 import { dirname as pathDirname } from 'node:path'
 import type { ProcessHandle } from './plugin-types.js'
 import { PluginRpcServer, type RpcIdentity } from './plugin-rpc-server.js'
-import { resolveAndValidateFile, dispatchHostRpcMessage } from './plugin-host.js'
+import { resolveAndValidateFile, dispatchHostRpcMessage, safeDispatchHostMessage, isRecordMessage } from './plugin-host.js'
 
 const MAX_PLUGINS_PER_TRUSTED_PROCESS = 10
 const LOAD_PLUGIN_TIMEOUT_MS = 10_000
@@ -167,8 +167,13 @@ export class PluginHostProcess implements PluginHostProcessContract {
       }, this.loadTimeoutMs)
 
       const onMessage = (msg: unknown) => {
-        const m = msg as Record<string, unknown>
-        if (m.type === 'loaded' || m.type === 'error') {
+        // D6 入口防御 + loadPlugin 过滤：trusted 子进程多插件共享（≤10），loaded/error
+        // 回复必须按 pluginId 归属——只匹配 m.type 会命中并发加载的其他插件的回复
+        //（张冠李戴；bootstrap 回消息本就带 pluginId）。畸形消息（null/非对象）静默
+        // 忽略不抛错（主回调统一 warn；旧实现取 m.type 即 TypeError）。
+        if (!isRecordMessage(msg)) return
+        const m = msg
+        if ((m.type === 'loaded' || m.type === 'error') && m.pluginId === pluginId) {
           clearTimeout(timeout)
           child.off('message', onMessage)
           if (m.type === 'loaded') resolve()
@@ -435,24 +440,22 @@ export class PluginHostProcess implements PluginHostProcessContract {
     }, identity)
 
     child.on('message', (msg: unknown) => {
-      const m = msg as Record<string, unknown>
-      if (m.type === 'rpc') {
-        // 子进程发来的 RPC 消息格式与 Worker 版一致——统一分发单一真相（Fix-3，
-        // 原 TR1「分发逻辑复制，独立维护」改为与 plugin-host / e2e 共享实现）
-        dispatchHostRpcMessage(this.rpcServer, processId, m)
-      } else if (m.type === 'fatal_error') {
-        this.handleProcessCrash(processId, String(m.error ?? 'unknown'))
-      } else if (
-        m.type === 'activated' ||
-        m.type === 'deactivated' ||
-        m.type === 'error'
-      ) {
-        // 生命周期回复：转发给 Activator
-        this.onReply?.(msg)
-        if (m.type === 'error') {
-          console.error(`[plugin-host-process] plugin error: ${(m as { pluginId?: string }).pluginId}: ${m.error}`)
-        }
-      }
+      // D6 入口防御：safe-dispatch（非对象/null 落 warning 丢弃 + 回调体 try/catch）
+      safeDispatchHostMessage('plugin-host-process', processId, msg, {
+        rpc: (m) => {
+          // 子进程发来的 RPC 消息格式与 Worker 版一致——统一分发单一真相（Fix-3，
+          // 原 TR1「分发逻辑复制，独立维护」改为与 plugin-host / e2e 共享实现）
+          dispatchHostRpcMessage(this.rpcServer, processId, m)
+        },
+        crash: (error) => this.handleProcessCrash(processId, error),
+        reply: (m) => {
+          // 生命周期回复：转发给 Activator
+          this.onReply?.(m)
+          if (m.type === 'error') {
+            console.error(`[plugin-host-process] plugin error: ${m.pluginId}: ${m.error}`)
+          }
+        },
+      })
     })
 
     child.on('error', (err: Error) => {

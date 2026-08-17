@@ -1,0 +1,414 @@
+/**
+ * 生命周期竞态回归（spec §3.3 D6 / S2-W1 + S2-W2）
+ *
+ * 覆盖三组缺陷修复：
+ * 1. LC-C1（并发开关错配）：
+ *    - pendingReplies 复合键 `${pluginId}:${op}`——activate/deactivate 并发在飞时
+ *      activated/deactivated 回复精确匹配各自 op 的 entry，不张冠李戴
+ *    - deactivatePlugin 对 ACTIVATING 态的取消标志（激活完成 → finally 反卷停用）
+ *    - loadPlugin 回复按 pluginId 匹配——同宿主并发加载 N 插件不互相消费回复
+ * 2. LC-C3（回调异常）：宿主消息回调内 handler 抛错被 safe-dispatch 捕获记日志，
+ *    不冒泡为 uncaughtException，后续正常消息仍处理
+ * 3. LC-U1-ENTRY（入口防御）：null / 非对象 / 超大非对象消息不炸宿主
+ *
+ * 测试层级说明：按任务边界用「真实 PluginHost + PluginActivator + mock worker 通道」
+ * （workerBootstrapOverride / bootstrapPathOverride 注入现有 fixtures）。renderer
+ * 广播层（plugin:statusChange）挂在 PluginService 之上，本层无该链路——广播效果的
+ * 等价物是状态终态断言。fork 宿主侧的畸形消息用例需要子进程真实发送 null/大字符串，
+ * 现有 fixtures 不提供该分支，故在 tmpdir 运行时生成一次性 mock 子进程脚本
+ * （不触碰仓库文件）。
+ *
+ * 运行命令: cd packages/runtime && npx vitest run test/lifecycle-races.test.ts
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { resolve, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+
+import { PluginHost, safeDispatchHostMessage } from '../src/services/plugin-service/plugin-host.js'
+import { PluginHostProcess } from '../src/services/plugin-service/plugin-host-process.js'
+import { PluginRpcServer } from '../src/services/plugin-service/plugin-rpc-server.js'
+import { PluginActivator } from '../src/services/plugin-service/plugin-activator.js'
+import type { PluginHost as ActivatorHost } from '../src/services/plugin-service/plugin-activator.js'
+import type { PluginDescriptor, WorkerToHostMessage } from '../src/services/plugin-service/plugin-types.js'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+/** trusted Worker 线程 mock（真实 Worker + 即时回复，回复带 pluginId） */
+const WORKER_MOCK = resolve(__dirname, 'fixtures/mock-bootstrap.cjs')
+
+/** 一次性 mock 子进程脚本：真实 IPC 上发畸形消息 + 按 pluginId 回 load 结果（lc-fail 报错） */
+const MALFORMED_CHILD_SCRIPT = `'use strict'
+process.on('message', (msg) => {
+  const m = msg || {}
+  if (m.type === 'load') {
+    if (m.pluginId === 'lc-fail') process.send({ type: 'error', pluginId: m.pluginId, error: 'load failed (lc-fail)' })
+    else process.send({ type: 'loaded', pluginId: m.pluginId })
+  } else if (m.type === 'send-null') {
+    process.send(null)
+  } else if (m.type === 'send-big') {
+    process.send('x'.repeat(2 * 1024 * 1024))
+  }
+})
+`
+
+function makeDescriptor(overrides: Partial<PluginDescriptor> = {}): PluginDescriptor {
+  return {
+    pluginId: 'race-plugin',
+    version: '1.0.0',
+    displayName: 'Race Plugin',
+    description: '',
+    main: 'index.js',
+    activationEvents: ['onStartupFinished'],
+    trustLevel: 'trusted',
+    status: 'UNLOADED',
+    contributes: {},
+    permissions: [],
+    engines: { 'xyz-agent': '*' },
+    pluginPath: '/tmp/race-plugin/index.js',
+    source: 'built-in',
+    extensionDependencies: [],
+    ...overrides,
+  }
+}
+
+/** 轮询等待条件成立（上限 timeoutMs），避免固定 sleep 猜时序 */
+async function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<void> {
+  const start = Date.now()
+  while (!cond()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error('waitFor timeout')
+    }
+    await new Promise((r) => setTimeout(r, 25))
+  }
+}
+
+describe('生命周期竞态（lifecycle races）', () => {
+  let warnCalls: string[][] = []
+  let errorCalls: unknown[][] = []
+
+  beforeEach(() => {
+    warnCalls = []
+    errorCalls = []
+    vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warnCalls.push(args.map(String))
+    })
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errorCalls.push(args)
+    })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  // ── LC-C1: 真实链路 20 轮并发竞态 ──────────────────────────────
+  it('LC-C1: 同一 pluginId 并发 activate/deactivate/toggle 20 轮毫秒间隔——终态与操作序列一致、无假超时、无回复错配', async () => {
+    const rpc = new PluginRpcServer()
+    const host = new PluginHost(rpc, { workerBootstrapOverride: WORKER_MOCK })
+    const activator = new PluginActivator()
+    // 生产同构 wiring（plugin-service.ts 的 setReplyCallback → handleWorkerReply）
+    const replies: Array<Record<string, unknown>> = []
+    host.setReplyCallback((msg) => {
+      const m = msg as Record<string, unknown>
+      if (m.type === 'activated' || m.type === 'deactivated') replies.push(m)
+      activator.handleWorkerReply(msg as WorkerToHostMessage)
+    })
+
+    const pid = 'race-plugin'
+    activator.registerDescriptors([makeDescriptor({ pluginId: pid })])
+
+    // 记录发往 Worker 的生命周期消息：mock 对每条 activate/deactivate 恰回一次成功
+    // 回复且 Worker 按消息序（IPC FIFO）处理——末次消息类型 = Worker 内真实激活态
+    const sentLifecycle: string[] = []
+    const origGetWorkerHandle = host.getWorkerHandle.bind(host)
+    host.getWorkerHandle = (pluginId: string) => {
+      const h = origGetWorkerHandle(pluginId)
+      if (!h) return h
+      return {
+        workerId: h.workerId,
+        postMessage: (message: unknown) => {
+          const t = (message as { type?: unknown }).type
+          if (t === 'activate' || t === 'deactivate') sentLifecycle.push(t)
+          h.postMessage(message)
+        },
+      }
+    }
+
+    const t0 = Date.now()
+    const ops: Array<Promise<void>> = []
+    try {
+      for (let round = 0; round < 20; round++) {
+        const phase = round % 3
+        if (phase === 0) {
+          ops.push(activator.activatePlugin(pid, { type: 'onStartupFinished' }, host))
+        } else if (phase === 1) {
+          ops.push(activator.deactivatePlugin(pid, host))
+        } else {
+          // toggle 语义（对齐 plugin-service.togglePlugin：按当前状态反相驱动）
+          if (activator.getState(pid) !== 'ACTIVE') {
+            ops.push(activator.activatePlugin(pid, { type: 'onStartupFinished' }, host))
+          } else {
+            ops.push(activator.deactivatePlugin(pid, host))
+          }
+        }
+        await new Promise((r) => setTimeout(r, 1)) // 毫秒间隔制造真实交错
+      }
+      await Promise.allSettled(ops)
+
+      const elapsed = Date.now() - t0
+
+      // 1) 终态为稳定态（不卡在 ACTIVATING/DEACTIVATING）
+      const finalState = activator.getState(pid)
+      expect(['ACTIVE', 'UNLOADED']).toContain(finalState)
+
+      // 2) 无幽灵态：宿主终态 = Worker 真实激活态（末次生命周期消息决定）
+      expect(sentLifecycle.length).toBeGreaterThan(0)
+      const lastMsg = sentLifecycle[sentLifecycle.length - 1]!
+      expect(finalState).toBe(lastMsg === 'activate' ? 'ACTIVE' : 'UNLOADED')
+      expect(activator.getActivePlugins()).toEqual(finalState === 'ACTIVE' ? [pid] : [])
+
+      // 3) 无回复错配/丢失：每条发出的消息恰收到一次对应回复
+      expect(replies.filter(m => m.type === 'activated')).toHaveLength(sentLifecycle.filter(t => t === 'activate').length)
+      expect(replies.filter(m => m.type === 'deactivated')).toHaveLength(sentLifecycle.filter(t => t === 'deactivate').length)
+
+      // 4) 无假超时：全部经真实回复完成（旧单键实现的假超时会让 deactivate 挂满
+      //    DEACTIVATE_TIMEOUT_MS=5s / activate 挂满 ACTIVATE_TIMEOUT_MS=30s）
+      expect(elapsed).toBeLessThan(5_000)
+
+      // 5) 竞态后状态机仍可正常驱动（无卡死 pending、无残留中间态）
+      await activator.activatePlugin(pid, { type: 'onStartupFinished' }, host)
+      expect(activator.getState(pid)).toBe('ACTIVE')
+      await activator.deactivatePlugin(pid, host)
+      expect(activator.getState(pid)).toBe('UNLOADED')
+    } finally {
+      await host.shutdown()
+    }
+  })
+
+  // ── LC-C1: 复合键确定性场景（fake timers 推进验证无假超时）───────
+  it('LC-C1: pendingReplies 复合键——deactivate 与 re-activate 并发在飞时 deactivated/activated 回复各归各（fake timers 推进 30s 无假超时副作用）', async () => {
+    vi.useFakeTimers()
+    const flush = () => vi.advanceTimersByTimeAsync(0)
+
+    const activator = new PluginActivator()
+    activator.registerDescriptors([makeDescriptor({ pluginId: 'p' })])
+
+    const sent: Array<{ type: string; pluginId: string }> = []
+    const scriptedHost: ActivatorHost = {
+      assignWorker: vi.fn(() => Promise.resolve('worker-1')),
+      loadPlugin: vi.fn(() => Promise.resolve()),
+      getWorkerHandle: vi.fn((pluginId: string) => ({
+        workerId: 'worker-1',
+        postMessage: (m: unknown) => { sent.push(m as { type: string; pluginId: string }) },
+      })),
+      terminateWorker: vi.fn(() => Promise.resolve()),
+    }
+
+    // 1) 先激活到 ACTIVE（测试显式投递回复，不依赖通道时序）
+    const act1 = activator.activatePlugin('p', { type: 'onStartupFinished' }, scriptedHost)
+    await flush()
+    activator.handleWorkerReply({ type: 'activated', pluginId: 'p' })
+    await act1
+    expect(activator.getState('p')).toBe('ACTIVE')
+
+    // 2) 并发窗口：deactivate 在飞（DEACTIVATING）+ 立即重入 activate——
+    //    旧实现两 entry 以 pluginId 单键互相覆盖，是回复错配的触发场景
+    let deactDone = false
+    const deact = activator.deactivatePlugin('p', scriptedHost).then(() => { deactDone = true })
+    let reactDone = false
+    const react = activator.activatePlugin('p', { type: 'onStartupFinished' }, scriptedHost).then(() => { reactDone = true })
+    await flush()
+    expect(sent.filter(m => m.type === 'deactivate')).toHaveLength(1)
+    expect(sent.filter(m => m.type === 'activate')).toHaveLength(2) // 初始 1 + 重入 1
+
+    // 3) deactivated 回复先到（IPC FIFO）：必须立即 resolve deactivate 的等待——
+    //    旧实现该回复被后注册的 activate entry 抢走，deactivate 只能挂到 5s 假超时
+    activator.handleWorkerReply({ type: 'deactivated', pluginId: 'p' })
+    await flush()
+    expect(deactDone).toBe(true)
+    expect(activator.getState('p')).toBe('UNLOADED')
+
+    // 4) activated 回复后到：resolve activate 的等待
+    activator.handleWorkerReply({ type: 'activated', pluginId: 'p' })
+    await flush()
+    expect(reactDone).toBe(true)
+    expect(activator.getState('p')).toBe('ACTIVE')
+
+    // 5) 无假超时/无陈旧 timer 副作用：推进 ACTIVATE_TIMEOUT_MS(30s)-ε，状态不翻转
+    //   （若存在被错配遗弃的 pending timer，此处会把 ACTIVE 翻回 UNLOADED）
+    vi.advanceTimersByTime(30_000 - 1)
+    expect(activator.getState('p')).toBe('ACTIVE')
+
+    await Promise.allSettled([deact, react])
+  })
+
+  // ── LC-C1: loadPlugin 回复按 pluginId 匹配（Worker 宿主）─────────
+  it('LC-C1: 并发 loadPlugin 两个插件到同一 trusted Worker——loaded/error 回复按 pluginId 匹配，不张冠李戴', async () => {
+    const rpc = new PluginRpcServer()
+    const host = new PluginHost(rpc, { workerBootstrapOverride: WORKER_MOCK })
+    try {
+      const workerId = await host.assignWorker('lc-load-a', 'trusted')
+      const worker = host.getWorkerInstance(workerId)!
+      expect(worker).toBeDefined()
+
+      const aP = host.loadPlugin(workerId, 'lc-load-a', '/tmp/lc-load-a')
+      const bP = host.loadPlugin(workerId, 'lc-load-b', '/tmp/lc-load-b')
+
+      // 真实 mock Worker 的回复走异步事件循环；同步 emit 保证注入先于真实回复到达。
+      // B 的 loaded 先到 + A 的 error 后到：旧实现只匹配 m.type，第一条回复同时
+      // 命中两个 listener（B 被 A 的 error 错误 reject / A 被 B 的 loaded 错误 resolve）
+      worker.emit('message', { type: 'loaded', pluginId: 'lc-load-b' })
+      worker.emit('message', { type: 'error', pluginId: 'lc-load-a', error: 'load failed (lc-load-a)' })
+
+      await expect(bP).resolves.toBeUndefined()
+      await expect(aP).rejects.toThrow('load failed (lc-load-a)')
+    } finally {
+      await host.shutdown()
+    }
+  })
+
+  // ── LC-C3: 宿主消息回调注入抛异常的 handler ──────────────────────
+  it('LC-C3: 回调内抛异常不冒泡不炸宿主——记日志后，后续正常消息仍处理', async () => {
+    const rpc = new PluginRpcServer()
+    const host = new PluginHost(rpc, { workerBootstrapOverride: WORKER_MOCK })
+    try {
+      const workerId = await host.assignWorker('lc-cb-throw', 'trusted')
+      const worker = host.getWorkerInstance(workerId)!
+
+      const replies: string[] = []
+      host.setReplyCallback((msg) => {
+        const m = msg as Record<string, unknown>
+        if (m.pluginId === 'boom') throw new Error('reply handler exploded')
+        replies.push(String(m.type))
+      })
+
+      // 生命周期回复触发抛错的回调：EventEmitter 回调抛错会升级为
+      // uncaughtException → 进程退出；safe-dispatch 必须吞掉并记日志
+      expect(() => worker.emit('message', { type: 'activated', pluginId: 'boom' })).not.toThrow()
+      expect(errorCalls.some(c => String(c[0]).includes('error handling message'))).toBe(true)
+
+      // 后续正常消息仍处理（宿主未进入坏状态）
+      expect(() => worker.emit('message', { type: 'deactivated', pluginId: 'ok' })).not.toThrow()
+      expect(replies).toEqual(['deactivated'])
+
+      // 正常功能链路恢复：loadPlugin 完整往返
+      await expect(host.loadPlugin(workerId, 'lc-cb-throw', '/tmp/lc-cb-throw')).resolves.toBeUndefined()
+    } finally {
+      await host.shutdown()
+    }
+  })
+
+  // ── LC-C3: safe-dispatch 纯函数——rpc/crash/reply 三分支抛错全覆盖 ──
+  it('LC-C3: safeDispatchHostMessage——rpc/crash/reply 分支回调抛错均被捕获记日志，畸形消息落 warning 丢弃', () => {
+    const handlers = {
+      rpc: () => { throw new Error('rpc boom') },
+      crash: () => { throw new Error('crash boom') },
+      reply: () => { throw new Error('reply boom') },
+    }
+    expect(() => safeDispatchHostMessage('plugin-host', 'w-unit', { type: 'rpc', method: 'x' }, handlers)).not.toThrow()
+    expect(() => safeDispatchHostMessage('plugin-host', 'w-unit', { type: 'fatal_error', error: 'e' }, handlers)).not.toThrow()
+    expect(() => safeDispatchHostMessage('plugin-host', 'w-unit', { type: 'activated', pluginId: 'p' }, handlers)).not.toThrow()
+
+    const logged = errorCalls.map(c => c.map(String).join(' ')).join('\n')
+    expect(logged).toContain('error handling message from w-unit')
+    expect(logged).toContain('rpc boom')
+    expect(logged).toContain('crash boom')
+    expect(logged).toContain('reply boom')
+
+    // 畸形消息（null）落 warning 丢弃，不触发任何 handler
+    safeDispatchHostMessage('plugin-host', 'w-unit', null, handlers)
+    expect(warnCalls.some(c => c[0]!.includes('discarding malformed message'))).toBe(true)
+  })
+
+  // ── LC-U1-ENTRY: Worker 宿主入口防御 ────────────────────────────
+  it('LC-U1-ENTRY: null 与超大非对象消息不炸 Worker 宿主（warning 丢弃 + 截断描述），宿主继续工作', async () => {
+    const rpc = new PluginRpcServer()
+    const host = new PluginHost(rpc, { workerBootstrapOverride: WORKER_MOCK })
+    try {
+      const workerId = await host.assignWorker('lc-entry-worker', 'trusted')
+      const worker = host.getWorkerInstance(workerId)!
+
+      // null / number / 2MB 字符串：旧实现 m.type 对 null 抛 TypeError →
+      // uncaughtException → 进程退出
+      expect(() => worker.emit('message', null)).not.toThrow()
+      expect(() => worker.emit('message', 12345)).not.toThrow()
+      expect(() => worker.emit('message', 'x'.repeat(2 * 1024 * 1024))).not.toThrow()
+
+      // 畸形消息被丢弃且记 warning（截断描述，非整段 2MB 进日志）
+      const warns = warnCalls.map(c => String(c[0]))
+      expect(warns.some(w => w.includes('discarding malformed message from'))).toBe(true)
+      const big = warns.find(w => w.includes('chars)'))
+      expect(big).toBeDefined()
+      expect(big!.length).toBeLessThan(1000)
+
+      // 宿主继续正常工作：loadPlugin 完整往返
+      await expect(host.loadPlugin(workerId, 'lc-entry-worker', '/tmp/lc-entry-worker')).resolves.toBeUndefined()
+    } finally {
+      await host.shutdown()
+    }
+  })
+
+  // ── fork 宿主（PluginHostProcess）：真实 IPC 上的入口防御与 loadPlugin 过滤 ──
+  describe('PluginHostProcess（真实 fork IPC）', () => {
+    let tmpDir: string
+    let scriptPath: string
+    const procs: PluginHostProcess[] = []
+
+    beforeEach(async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'lc-races-'))
+      scriptPath = join(tmpDir, 'malformed-child.cjs')
+      await writeFile(scriptPath, MALFORMED_CHILD_SCRIPT)
+    })
+
+    afterEach(async () => {
+      await Promise.allSettled(procs.map(h => h.shutdown()))
+      procs.length = 0
+      await rm(tmpDir, { recursive: true, force: true })
+    })
+
+    it('LC-U1-ENTRY: 真实 IPC 上的 null 与超大字符串消息不炸 fork 宿主（warning 丢弃 + 截断），宿主继续工作', async () => {
+      const rpc = new PluginRpcServer()
+      const host = new PluginHostProcess(rpc, { bootstrapPathOverride: scriptPath })
+      procs.push(host)
+      const processId = await host.assignProcess('lc-entry', 'trusted')
+      const handle = host.getProcessHandle('lc-entry')!
+      expect(handle).toBeDefined()
+
+      // 触发子进程在真实 IPC 通道上回 null / 2MB 字符串
+      handle.postMessage({ type: 'send-null' })
+      handle.postMessage({ type: 'send-big' })
+
+      await waitFor(() => warnCalls.length >= 2)
+
+      const warns = warnCalls.map(c => String(c[0]))
+      expect(warns.some(w => w.includes('discarding malformed message from'))).toBe(true)
+      const big = warns.find(w => w.includes('chars)'))
+      expect(big).toBeDefined()
+      expect(big!.length).toBeLessThan(1000)
+
+      // 宿主继续正常工作：loadPlugin 完整往返
+      await expect(host.loadPlugin(processId, 'lc-entry', '/tmp/lc-entry')).resolves.toBeUndefined()
+    })
+
+    it('LC-C1: 并发 loadPlugin 两个插件到同一 trusted 子进程——error/loaded 回复按 pluginId 匹配（真实 IPC FIFO）', async () => {
+      const rpc = new PluginRpcServer()
+      const host = new PluginHostProcess(rpc, { bootstrapPathOverride: scriptPath })
+      procs.push(host)
+      const processId = await host.assignProcess('lc-fail', 'trusted')
+      const reusedId = await host.assignProcess('lc-ok', 'trusted')
+      expect(reusedId).toBe(processId)
+
+      // IPC FIFO：先发的 lc-fail 的 error 回复先到。旧实现只匹配 m.type，
+      // 第一条 error 同时命中两个 listener，lc-ok 被错误 reject
+      const failP = host.loadPlugin(processId, 'lc-fail', '/tmp/lc-fail')
+      const okP = host.loadPlugin(processId, 'lc-ok', '/tmp/lc-ok')
+
+      await expect(failP).rejects.toThrow('load failed (lc-fail)')
+      await expect(okP).resolves.toBeUndefined()
+    })
+  })
+})

@@ -147,6 +147,61 @@ type CrashCallback = (workerId: string, pluginIds: string[], error: string) => v
 type ReplyCallback = (msg: unknown) => void
 
 /**
+ * 判断消息是否为可分发的对象（非 null / typeof object / 非数组）。
+ * Worker 线程与 fork IPC 的序列化边界只应送出对象；收到 null、原始值或数组
+ * 说明对端异常（bootstrap 早退、恶意/损坏消息），入口直接丢弃。
+ * 两宿主共用（plugin-host-process.ts 经 import 消费，loadPlugin 的
+ * onMessage 过滤同样依赖）。
+ */
+export function isRecordMessage(msg: unknown): msg is Record<string, unknown> {
+  return typeof msg === 'object' && msg !== null && !Array.isArray(msg)
+}
+
+/** 畸形消息的截断描述（超大字符串/数字不能整段进日志，防日志被单条消息放大） */
+function describeMalformedMessage(msg: unknown): string {
+  const text = typeof msg === 'string' ? msg : String(msg)
+  return text.length > 120 ? `${text.slice(0, 120)}…(${text.length} chars)` : text
+}
+
+/**
+ * 两宿主（Worker 线程版 / fork 子进程版）消息回调的统一安全分发外壳（D6 入口防御）：
+ * - 非对象/null 消息落 warning 丢弃：`m.type` 对 null 抛 TypeError → uncaughtException
+ *   → 进程退出，单条脏消息的代价被放大为整个 runtime 崩溃
+ * - 回调体 try/catch：单条消息的处理异常记日志不冒泡（EventEmitter 回调抛错
+ *   同样升级为 uncaughtException；index.ts 的进程级兜底是最后防线，宿主层先挡一道，
+ *   避免「可丢弃的坏消息」触发整机 shutdown）
+ * rpc 分支复用 dispatchHostRpcMessage（单一真相）；fatal_error / 生命周期回复
+ * 经 handlers 注入（两宿主的 crash/reply 实现不同）。
+ */
+export function safeDispatchHostMessage(
+  label: string,
+  workerId: string,
+  msg: unknown,
+  handlers: {
+    rpc: (m: Record<string, unknown>) => void
+    crash: (error: string) => void
+    reply: (m: Record<string, unknown>) => void
+  },
+): void {
+  if (!isRecordMessage(msg)) {
+    console.warn(`[${label}] discarding malformed message from ${workerId}: ${describeMalformedMessage(msg)}`)
+    return
+  }
+  const m = msg
+  try {
+    if (m.type === 'rpc') {
+      handlers.rpc(m)
+    } else if (m.type === 'fatal_error') {
+      handlers.crash(String(m.error ?? 'unknown'))
+    } else if (m.type === 'activated' || m.type === 'deactivated' || m.type === 'error') {
+      handlers.reply(m)
+    }
+  } catch (e: unknown) {
+    console.error(`[${label}] error handling message from ${workerId} (type=${String(m.type)}):`, e)
+  }
+}
+
+/**
  * PluginHost 的最小接口契约（P8 收口）。
  *
  * 此前该接口定义在 plugin-activator.ts（消费方），由本类（供应商）实现，构成
@@ -304,8 +359,14 @@ export class PluginHost implements PluginHostContract {
       }, LOAD_PLUGIN_TIMEOUT_MS)
 
       const onMessage = (msg: unknown) => {
-        const m = msg as Record<string, unknown>
-        if (m.type === 'loaded' || m.type === 'error') {
+        // D6 入口防御 + loadPlugin 过滤：trusted Worker 多插件共享（≤10），同宿主并发
+        // 加载 N 插件时 loaded/error 回复必须按 pluginId 归属——只匹配 m.type 会命中
+        // 其他插件的回复（张冠李戴，plugin-bootstrap 回消息本就带 pluginId）。
+        // 畸形消息（null/非对象）静默忽略不抛错（主回调统一 warn；旧实现取 m.type
+        // 即 TypeError）。
+        if (!isRecordMessage(msg)) return
+        const m = msg
+        if ((m.type === 'loaded' || m.type === 'error') && m.pluginId === pluginId) {
           clearTimeout(timeout)
           worker.off('message', onMessage)
           if (m.type === 'loaded') resolve()
@@ -493,23 +554,21 @@ export class PluginHost implements PluginHostContract {
     this.rpcServer.registerWorker(workerId, worker, { trustLevel })
 
     worker.on('message', (msg: unknown) => {
-      const m = msg as Record<string, unknown>
-      if (m.type === 'rpc') {
-        // 三种 RPC 消息格式的统一分发（Fix-3：与 plugin-host-process / e2e 共享单一真相）
-        dispatchHostRpcMessage(this.rpcServer, workerId, m)
-      } else if (m.type === 'fatal_error') {
-        this.handleWorkerCrash(workerId, String(m.error ?? 'unknown'))
-      } else if (
-        m.type === 'activated' ||
-        m.type === 'deactivated' ||
-        m.type === 'error'
-      ) {
-        // 生命周期回复：转发给 Activator
-        this.onReply?.(msg)
-        if (m.type === 'error') {
-          console.error(`[plugin-host] plugin error: ${(m as { pluginId?: string }).pluginId}: ${m.error}`)
-        }
-      }
+      // D6 入口防御：safe-dispatch（非对象/null 落 warning 丢弃 + 回调体 try/catch）
+      safeDispatchHostMessage('plugin-host', workerId, msg, {
+        rpc: (m) => {
+          // 三种 RPC 消息格式的统一分发（Fix-3：与 plugin-host-process / e2e 共享单一真相）
+          dispatchHostRpcMessage(this.rpcServer, workerId, m)
+        },
+        crash: (error) => this.handleWorkerCrash(workerId, error),
+        reply: (m) => {
+          // 生命周期回复：转发给 Activator
+          this.onReply?.(m)
+          if (m.type === 'error') {
+            console.error(`[plugin-host] plugin error: ${m.pluginId}: ${m.error}`)
+          }
+        },
+      })
     })
 
     worker.on('error', (err: Error) => {

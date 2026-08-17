@@ -517,7 +517,7 @@ async function main(): Promise<void> {
 
   // Graceful shutdown on signals
   let shuttingDown = false
-  const shutdown = async (signal: string) => {
+  const shutdown = async (signal: string, exitCode = 0) => {
     if (shuttingDown) return
     shuttingDown = true
     console.log(`\n[runtime] received ${signal}, shutting down...`)
@@ -536,7 +536,7 @@ async function main(): Promise<void> {
     // session 写流并等待落盘）。process.exit 立即终止进程不等待异步 IO，必须在 flush
     // 完成后才退出，否则缓冲窗口内尾部日志丢失（pi 卡死诊断证据，见 logger.ts 头部）。
     await closeLogger()
-    process.exit(0)
+    process.exit(exitCode)
   }
 
   process.on('SIGINT', () => shutdown('SIGINT'))
@@ -548,6 +548,21 @@ async function main(): Promise<void> {
   // 虽然 server.ts 已修复（加了 .catch），这里作为最后防线保留。
   process.on('unhandledRejection', (reason) => {
     console.error('[runtime] *** UNHANDLED REJECTION *** (should not happen):', reason)
+  })
+
+  // [HISTORICAL] uncaughtException 兜底（D6 入口防御）：进程级最后防线。
+  // 与上方 unhandledRejection handler 的分工：unhandledRejection 捕获「未被 await
+  // 的 async 异常」（Promise 断头链），记录后进程继续运行（有明确的后续处理边界，
+  // 单条 rejection 不破坏运行时一致性）；uncaughtException 捕获「同步回调链的异常
+  // 逃逸」（WS/Worker/IPC 消息回调 throw 等），Node 默认行为是进程立即退出——
+  // runtime 一崩全部 session 的 pi 子进程失去管理。宿主层（plugin-host* 的
+  // safeDispatchHostMessage）已挡第一道；这里兜住所有其他来源：记日志 + 走优雅
+  // shutdown（flush 日志与 session 数据），退出码 1 让 supervisor 感知异常退出。
+  // 不尝试带伤继续服务：uncaught 后运行时一致性无法保证，可观测 + 有序退出是
+  // 本防线的目标。
+  process.on('uncaughtException', (err) => {
+    console.error('[runtime] *** UNCAUGHT EXCEPTION *** (attempting graceful shutdown):', err)
+    void shutdown('uncaughtException', 1)
   })
 
   // D8-1（perf W29）：先 listen（端口即就绪）——迁移/探测等无 listen 前依赖的后置项
