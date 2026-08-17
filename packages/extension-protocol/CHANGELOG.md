@@ -1,5 +1,15 @@
 # @xyz-agent/extension-protocol
 
+## 0.5.0
+
+### Minor Changes
+
+- 07b5a813d: GUI widget protocol v1.1: meta-head architecture and new layout primitives
+
+  `WidgetMeta` introduces a single head row (title, status dot, progress count "N/M", mini progress bar) rendered by the host shell, replacing per-row icons and ids burned into labels. The body now uses a numbered `list-tree` (optional `numbered` field for flat ordered lists) and gains a `vertical-group` container primitive — a visually transparent grouping root for composing multiple components inside a widget once the host shell owns the card chrome. The head status field maps running/done/failed/idle onto accent/success/danger/neutral dots.
+
+  Extensions push widget state through the new `guiSetWidget` channel (marker-encoded `GuiRenderResult` over the native `setWidget` transport) instead of attaching `details.__gui__` to tool results. `extractGui` keeps v1/v1.1 dual-format support as a legacy read path during the transition.
+
 ## 0.4.0
 
 ### Minor Changes
