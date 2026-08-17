@@ -86,6 +86,11 @@ screenshot.png
 # .cw/<slug>/ 子目录是 cw v1 运行时中间产物（clarify/plan/design-review 等 input JSON），不是源码，忽略。
 # 只忽略子目录，保留 .cw/*.sh tracked 测试脚本（run-*.sh）。
 /.cw/*/
+# .cw/ 直下的 *-design.json 是 cw 当前版本（wave-plan 流程）的运行时设计产物，同样忽略；
+# 仍保留 .cw/*.sh tracked。
+/.cw/*.json
+# 根目录散落的截图调试脚本（browser-automation 临时产物）。
+/.shot-*.mjs
 # wave-* / clarify / plan / design-review 等是 cw 当前 wave 的运行时产物。
 /wave-*.json
 /wave-*.md
