@@ -1,5 +1,17 @@
 # @zhushanwen/pi-scheduler
 
+## 0.3.2
+
+### Patch Changes
+
+- 87ee3e571: Fix stale tools/ path reference in sdk-contract test comment
+
+  The comment in `sdk-contract.test.ts` still pointed to `tools/verify-scheduler-e2e.cjs` after the script was migrated to `scripts/`. Comment-only change, no runtime behavior affected.
+
+- a55773e67: Use a single now basis for relative-time labels in create/list messages
+
+  `formatRelativeTime` previously read `Date.now()` independently from the injected `backend.now()`, so task summaries could drift at unit boundaries (`in 1h` → `in 59m`). create/list now capture one `now` and pass it to all relative-time formatting, eliminating the flake.
+
 ## 0.3.1
 
 ### Patch Changes
