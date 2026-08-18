@@ -249,19 +249,23 @@ bg-notify 的 60s 滑动窗口（`notifier.ts:126-156`，还有 background 在�
 
 **错位事实**（v2 曾豁免，v3 修正）：扩展的 `record.status` 是会话生命周期状态——`running` = 「record 未 closed」，内部三种子状态（真在跑：活进程+非 timer-armed；chatMode 轮完成等续聊：isIdle；one-shot 完成可 resume：isResumable，进程已死），谓词是执行状态的真相但未暴露。重建矩阵分支 4（`record-store.ts:822-826`：无 sidecar / `.alive` 但 pid 死 / 软超时）落点 running——这些记录**进程必然不存在，不可能在 streaming**，UI 显示 running 是误导。扩展把「可续聊」编码进 running 只是实现耦合（`isResumable` 谓词读 `status==='running'`，subagent-service.ts:582），不是产品语义。
 
-**方案：xyz-agent 侧投影，扩展内部语义不动**（改扩展 status 落点会断续聊判定链，爆炸半径在扩展内）。extractor 对每条 subagent 记录按执行事实投影 UI 状态：
+**方案：xyz-agent 侧投影，扩展内部语义不动**（改扩展 status 落点会断续聊判定链，爆炸半径在扩展内）。**投影目标枚举对齐 dev-0.9.2 的 session 状态抽象**（`DerivedStatus` 9 态，`packages/core/src/domain/chat/derive-status.ts`；语义 SSOT：streaming=文本流式、waiting=等输入阻塞、stopped=用户停、error=错、working=后台任务在跑）——subagent 是「子 session」，状态语义应与主 session 同一哲学，UI 视觉复用同一套 `STATUS_ICON`/`DOT_CLASS` 语言。对齐后的 `SubagentStatus`（UI 投影层）6 态：`streaming` / `waiting` / `done` / `cancelled` / `stopped` / `error`（现有 `running`/`closed`/`crashed`/`failed` 在投影层退役：running 拆分为 streaming+waiting，closed/crashed/failed 归并入 done/stopped/error，细分经 closedReason/error 字段保留）。
+
+extractor 对每条 subagent 记录按执行事实投影：
 
 | 磁盘事实（按优先级） | UI 投影 |
 |---------------------|---------|
-| 主 JSONL 有 bg-notify 终态 entry | 该 entry 状态（含 result/error/agent 等元数据，最权威） |
-| `.cancelled` sidecar 存在 | cancelled |
-| `.finalized` sidecar 存在 | done/failed（细分读子进程 session JSONL 末行 stopReason；sidecar 本身是空文件） |
-| `.alive` + pid 活 + 未超 1h 软超时（`ALIVE_SOFT_TIMEOUT_MS`，防 pid 复用，与扩展矩阵分支 3 同规则） | running（进程真活着） |
-| 其余（无标记 / pid 死 / 超时——孤儿与崩溃） | 读子进程 session JSONL 末行：正常收尾（有 stopReason 的完整 assistant turn）→ **done**；截断/异常 → **crashed**（不再 running） |
+| 主 JSONL 有 bg-notify 终态 entry | 该 entry 状态（含 result/error/agent 等元数据，最权威；closed→done/error、cancelled→cancelled） |
+| `.cancelled` sidecar 存在 | cancelled（用户中止，对齐 stopped 族语义） |
+| `.finalized` sidecar 存在 | 读子进程 session JSONL 末行：正常收尾 → done；截断/异常 → error |
+| `.alive` + pid 活 + 未超 1h 软超时（`ALIVE_SOFT_TIMEOUT_MS`，防 pid 复用，与扩展矩阵分支 3 同规则） | streaming（进程真在跑）或 waiting（chatMode 轮完成等续聊）——区分依赖轻量信号携带 idle 位（A10 候选 a 的 payload）；**无轻量信号时回落 streaming**（进程活着的事实优先于 idle 细分） |
+| 其余（无标记 / pid 死 / 超时——孤儿与崩溃） | 读子进程 session JSONL 末行：正常收尾 → done；截断/异常 → error（不再 running） |
 
-「可续聊」在 UI 是 Resume 动作入口（是否可续 = sessionFile 存在性），不占用 status 字段。**已知 gap**：chatMode 轮次完成等续聊（进程活着但 idle，非 streaming）第一版仍投影 running——精确区分需轻量信号携带 idle 位（A10 候选 a 的 payload 可扩展），列为后续增强，不阻塞本设计。
+「可续聊」在 UI 是 Resume 动作入口（是否可续 = sessionFile 存在性），不占用 status 字段。**waiting 态的数据源依赖**：`.alive` sidecar 只有 pid/startedAt，无 idle 位——等续聊（waiting）与真在跑（streaming）的实时区分依赖 A10 候选 a 的轻量信号携带 idle 位；候选不可用时等续聊显示 streaming（「进程活着」是事实下界，比显示 running 大杂烩仍是一步改进），waiting 态作为 A10a 落地后的增量。
 
-此投影同时**替代 v2 决策 6.3**（subagent 崩溃重建补终态）：不需要改扩展重建矩阵、不需要补通知——重开 session 时 focus 首拉，extractor 从 sidecar + pid 探测直接投影 crashed。扩展改动面缩小到 workflow 域（决策 6.1/6.2）+ 可能的轻量事件（A10 候选 a）。
+**对 `hasBackgroundWork` 的连带语义**（dev-0.9.2 `useBackgroundWork.ts:25-27`）：投影后 `hasRunning` 改判「streaming ∨ waiting」——chatMode 等续聊的 subagent 任务未完成（等主 agent/用户续），session 级 working 态应继续点亮；streaming/waiting 在 session 层都聚合为 working，两层各自表达粒度。
+
+此投影同时**替代 v2 决策 6.3**（subagent 崩溃重建补终态）：不需要改扩展重建矩阵、不需要补通知——重开 session 时 focus 首拉，extractor 从 sidecar + pid 探测直接投影终态。扩展改动面缩小到 workflow 域（决策 6.1/6.2）+ 可能的轻量事件（A10 候选 a）。
 
 ### 6.6 决策 6：extension 补落盘/通知缺口（workflow 域 + 可能的轻量事件）
 
@@ -297,6 +301,8 @@ bg-notify 的 60s 滑动窗口（`notifier.ts:126-156`，还有 background 在�
 - `message-bus.ts:131-137` `STATE_TYPE_KEY_MAP` 的 `'session.subagents': 'subagents'` 条目；
 - `packages/core/src/coordination/route-inbound.ts:173-219`（`ROUTE_TABLE`）与 `:90-96`（`InboundEffects.onSubagents`）；
 - renderer `useMessageEffects.handleSubagents`（`packages/renderer/src/composables/effects/useMessageEffects.ts:55-58`）。
+
+`SubagentStatus` 枚举变更连带（决策 5 对齐 DerivedStatus）：`packages/shared` 类型定义（running/closed/crashed/failed → streaming/waiting/done/cancelled/stopped/error）+ extractor 投影产出 + sidebar `SubagentList`/drawer `SubagentTab` 消费 + `useBackgroundWork.hasRunning` 判定（→ streaming∨waiting）+ 视觉映射对齐 `sessionStatus.ts` 的 `STATUS_ICON`（同一状态语言）。
 
 新类型必须**显式**加入 `TOPIC_TABLE`（transient）——未入表 fallback 是 'stream'（`message-bus.ts:109-115`），违背信号语义。
 
@@ -384,3 +390,4 @@ bg-notify 的 60s 滑动窗口（`notifier.ts:126-156`，还有 background 在�
 - v1：初稿（基于 2026-08-18 全链路分析 + 三项事实查证：pi 同步落盘、bg-notify triggerTurn、级联关闭不落盘）。
 - v2：按对抗式审查（4 must-fix / 5 suggestion，报告见 `subagent-workflow-sidebar-sync-design-review.md`）修订：A2 探针改锚真实路径并降级为「立即拉通常新鲜、对账拉保证新鲜」；决策 6 从两处扩为三处（workflow kill-9 落盘、恢复通知去 turn 副作用、subagent 崩溃重建补终态）；目标 1 措辞收窄（pi 崩溃场景 = 重开后有界收敛）；验收补场景 7（subagent kill -9）与场景 8（信号丢失→对账收敛）、场景 5 改为只杀 runtime 子进程；补协议删除连带清单、M1 过渡症状、extractor 空/错误语义边界。
 - v3：按 owner 对 running 语义与 60s 窗口的质询修订：决策 4 重写（UI 收敛与 LLM 通知解耦——秒级轻量信号 + sidecar 投影，60s 窗口回归纯 LLM 职责，探针 A9/A10）；决策 5 重写（running = 扩展生命周期状态 ≠ 执行状态，加 extractor 四级投影表，孤儿/崩溃投影 done/crashed 不再 running，替代 v2 的扩展重建矩阵改动）；决策 6.3 收窄为 extractor 投影（扩展 subagent 域不再必改）；目标 1 收敛上界从「窗口+turn」提升为「秒级」。
+- v4：投影目标枚举对齐 dev-0.9.2 的 session 状态抽象（`DerivedStatus` 9 态语义 SSOT，`derive-status.ts`）：`SubagentStatus` 重定义为 streaming/waiting/done/cancelled/stopped/error 6 态（running 拆分 streaming+waiting，closed/crashed/failed 归并）；waiting 态数据源标注依赖 A10 候选 a 的 idle 位（无轻量信号时回落 streaming）；补 `hasBackgroundWork` 连带语义（streaming∨waiting → session working 态）与枚举变更连带清单。
