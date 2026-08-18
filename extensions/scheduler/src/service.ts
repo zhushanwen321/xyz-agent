@@ -71,19 +71,21 @@ export class SchedulerService {
     }
 
     const count = task.kind === 'once' ? 1 : PREVIEW_RUN_COUNT
-    const nextRuns = await computeNextRuns(task.schedule, this.now(), count)
+    // 消息内相对时间与 nextRuns 必须同基准：分开读时钟会在整点边界漂移（in 1h → in 59m）
+    const now = this.now()
+    const nextRuns = await computeNextRuns(task.schedule, now, count)
     // once 单行内联回显（只执行 1 次，编号列表会误导）；recurring 保持 5 行编号列表
     const runPreview =
       task.kind === 'once'
-        ? `Next run: ${formatRelativeTime(nextRuns[0]!)}`
+        ? `Next run: ${formatRelativeTime(nextRuns[0]!, now)}`
         : [
             'Next 5 runs:',
-            ...nextRuns.map((t, i) => `  ${i + 1}. ${formatRelativeTime(t)}`),
+            ...nextRuns.map((t, i) => `  ${i + 1}. ${formatRelativeTime(t, now)}`),
           ].join('\n')
     // 一行紧凑：name(id) + schedule(含 kind 信息) + expires + force。
     // 删冗余 Kind 行（formatSchedule 已含 once/every）；Expires/Force 合并（默认 no-expires/no-force 显式）。
     const expiresLabel = task.expiresAt
-      ? `expires ${formatRelativeTime(task.expiresAt)}`
+      ? `expires ${formatRelativeTime(task.expiresAt, now)}`
       : 'no-expires'
     const forceLabel = task.force ? 'force' : 'no-force'
     const message = [
@@ -99,8 +101,10 @@ export class SchedulerService {
     if (tasks.length === 0) {
       return { success: true, message: 'No scheduled tasks.', data: { tasks: [] } }
     }
+    // 同 create：同一基准渲染全部相对时间，避免逐项读时钟的边界漂移
+    const now = this.now()
     const message = tasks.map(t =>
-      `${t.enabled ? '●' : '○'} ${t.id} ${t.name} · ${formatSchedule(t.schedule, t.kind)} · ${formatRelativeTime(t.nextRunAt)}`
+      `${t.enabled ? '●' : '○'} ${t.id} ${t.name} · ${formatSchedule(t.schedule, t.kind)} · ${formatRelativeTime(t.nextRunAt, now)}`
     ).join('\n')
     return { success: true, message, data: { tasks } }
   }
