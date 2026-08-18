@@ -215,7 +215,7 @@ API 入口统一 `assertSafeKey(name, value)`：`/^[A-Za-z0-9._-]+$/` 且长度 
 
 ### 实施顺序与依赖
 
-三个方向（cw slice）文件集基本不相交，可并行；仅 D1（鉴权）与 D7（方法名 SSOT）共享 `plugin-permission`/`plugin-rpc-server` 接线点，先做 D1 的 SSOT 常量再并行。方向内按「防线从外到内」排序（先传输/身份，再边界/注入，再生命周期/契约）。
+三个方向（cw slice）存在真实文件交集：lifecycle 的 D6 改动大量落在 plugin-host.ts / plugin-host-process.ts / index.ts（与 security 共享），plugin-service.ts 为 lifecycle 与 contract 共享。因此**串行链：security → lifecycle → contract**（contract 另依赖 security 的 D1 方法名映射 SSOT）。C3 验收拆分：lifecycle 承载「notification handler 兜底」（直接对 rpcClient.handleNotification 注入异常回调的单元级验证，不依赖真实 sessions 链路），contract 承载「sessions 端到端」（真实回调触发）。cw verify 协议适配：根验收的包装脚本（自含 pnpm install + 输出 `<验收id> PASS/FAIL` 标记行）由 contract slice 落地；verify-plugin-e2e.sh 的标记行格式改造属 S1-W3。
 
 ### Slice 1：security-trust-boundary（安全信任边界）
 
@@ -241,7 +241,7 @@ API 入口统一 `assertSafeKey(name, value)`：`/^[A-Za-z0-9._-]+$/` 且长度 
 | Unit | 内容 | 主文件 |
 |------|------|--------|
 | S3-W1 | 命令执行链修复 + 复合键 + 方法名常量化收尾（D7） | commands-api.ts、plugin-service.ts、plugin-rpc-setup.ts、useExtensionHostBridge.ts、statusline |
-| S3-W2 | SDK 死链路处置（sessions 事件实现：四创建入口收敛 + 定向投递注册表；events 降级报错）（D7） | session-api.ts、session-service.ts、plugin-sdk/src/types.ts、plugin-bootstrap.ts |
+| S3-W2 | SDK 死链路处置（sessions 事件实现：四创建入口收敛 + 定向投递注册表；events 降级报错）（D7） | session-api.ts、session-service.ts、plugin-sdk/src/types.ts、plugin-bootstrap.ts（仅 events.on/emit 降级段 :284-290，与 S2-W4 同文件不同段） |
 | S3-W3 | api 入口窄校验层（全 40+ 方法）（D7） | plugin-service/api/*.ts、shared 校验工具 |
 | S3-W4 | 限流（notify/statusbar 令牌桶 + 合并）+ 前端 toast 上限 + error 事件消费（D7） | notify-api.ts、plugin-rpc-setup.ts、status-bar-registry.ts、notification-host-controller.ts、useToast.ts |
 
