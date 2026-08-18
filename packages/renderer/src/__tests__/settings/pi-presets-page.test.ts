@@ -310,6 +310,6 @@ describe('PiPresetsPage 内置扩展提示', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('3 个内置扩展')
-    expect(wrapper.text()).toContain('xyz-agent-extension')
+    expect(wrapper.text()).toContain('@zhushanwen/pi-agent-ext')
   })
 })

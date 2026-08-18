@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
   BUILTIN_TOOLS,
-  BUILTIN_EXTENSION_FILES,
   BUILTIN_PRESET_IDS,
   DEFAULT_PRESETS,
   isPiLaunchPreset,
@@ -16,15 +15,6 @@ describe('pi-preset 常量', () => {
   it('BUILTIN_TOOLS 含 pi 的 7 个内置工具', () => {
     expect(BUILTIN_TOOLS.length).toBe(7)
     expect([...BUILTIN_TOOLS]).toEqual(['read', 'write', 'bash', 'edit', 'grep', 'find', 'ls'])
-  })
-
-  it('BUILTIN_EXTENSION_FILES 含 3 个 builtin 文件名', () => {
-    expect(BUILTIN_EXTENSION_FILES.length).toBe(3)
-    expect([...BUILTIN_EXTENSION_FILES]).toEqual([
-      'xyz-agent-extension.js',
-      'xyz-system-prompt-extension.js',
-      'xyz-client-msg-id-mapper.js',
-    ])
   })
 
   it('BUILTIN_PRESET_IDS 映射正确', () => {

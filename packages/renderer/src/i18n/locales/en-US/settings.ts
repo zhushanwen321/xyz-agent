@@ -598,7 +598,7 @@ export default {
     defaultOn: 'Default On',
     defaultOff: 'Default Off',
     noExtensions: 'No extensions',
-    builtinExtensionHint: 'Note: 3 built-in extensions (xyz-agent-extension / xyz-system-prompt-extension / xyz-client-msg-id-mapper) are always loaded and not affected by extension policies.',
+    builtinExtensionHint: 'Note: 3 built-in extensions (@zhushanwen/pi-agent-ext / @zhushanwen/pi-system-prompt / @zhushanwen/pi-msg-id-mapper) are always loaded and not affected by extension policies.',
     summaryAll: 'All available',
     summaryNone: 'All disabled',
     summaryAllowlist: 'Allowlist {count} item(s)',

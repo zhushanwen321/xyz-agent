@@ -106,7 +106,6 @@ export type {
 } from './pi-preset'
 export {
   BUILTIN_TOOLS,
-  BUILTIN_EXTENSION_FILES,
   BUILTIN_PRESET_IDS,
   DEFAULT_PRESETS,
   isPiLaunchPreset,
