@@ -95,7 +95,7 @@ describe('useNewTaskFlow: create 透传归属 projectId（D14 语义修正）', 
     await flow.submitFirstMessage(textToSegments('修 bug'))
 
     expect(apiMock.create).toHaveBeenCalledTimes(1)
-    expect(apiMock.create).toHaveBeenCalledWith('/repo', '修 bug', undefined, projectStore.activeProjectId)
+    expect(apiMock.create).toHaveBeenCalledWith('/repo', '修 bug', undefined, projectStore.activeProjectId, undefined, undefined)
   })
 
   it('默认项目下新建任务 → create 第 4 参数为 undefined（未归类，不写 sidecar）', async () => {
