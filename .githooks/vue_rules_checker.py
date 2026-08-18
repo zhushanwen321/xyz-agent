@@ -50,19 +50,19 @@ MAX_SCRIPT_LINES = 300
 # 允许保留 <style scoped> 的文件（子串匹配）
 # [HISTORICAL] MainPanel.vue 的 .main-panel { box-shadow: var(--shadow-1), var(--shadow-2) }
 # 是 float-panel 双 shadow 叠加（spec §一），Tailwind 单 box-shadow 工具类无法表达多值叠加。
-# 属于 AGENTS.md §3 明确允许的 escape hatch（Tailwind 无法表达的场景），加白名单避免误报。
+# 属于 AGENTS.md 前端编码规范明确允许的 escape hatch（Tailwind 无法表达的场景），加白名单避免误报。
 # [HISTORICAL] UpdateButton.vue 的 release-notes 排版样式（h1/h2/p/ul 的 margin + scrollbar-width）
 # 复用 MarkdownRenderer 的核心 markdown 排版，是 Tailwind 无法表达的 :deep() 后代选择器组 +
-# Firefox 专有 scrollbar-width 属性。属 AGENTS.md §3 escape hatch（与 MarkdownRenderer 同模式）。
+# Firefox 专有 scrollbar-width 属性。属 AGENTS.md 前端编码规范 escape hatch（与 MarkdownRenderer 同模式）。
 # 待后续抽取轻量只读 MarkdownView 组件后再移出白名单。
 # [HISTORICAL] SettingsModal.vue 的 .nav-item:focus-visible / .xbtn:focus-visible 双环
 # box-shadow `0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4)` 是多值叠加（内环 accent +
-# 外环半透明黑），Tailwind 单个 box-shadow 工具类无法表达多值叠加，属 AGENTS.md §3 escape
+# 外环半透明黑），Tailwind 单个 box-shadow 工具类无法表达多值叠加，属 AGENTS.md 前端编码规范 escape
 # hatch（与 MainPanel.vue 多值 shadow 同类）。其余 scoped 样式已迁移至 Tailwind 工具类。
 # [HISTORICAL] CollapsibleContent.vue 的 .reka-collapsible-transition 是 reka data-state
 # 驱动 + @starting-style 的展开淡入过渡。tailwindcss-animate 插件未安装，
 # data-[state]:animate-* 死类不生成 CSS；@starting-style + [data-state] 属性选择器
-# 是 Tailwind 无法表达的，属 AGENTS.md §3 escape hatch（与 MainPanel 多值 shadow 同类）。
+# 是 Tailwind 无法表达的，属 AGENTS.md 前端编码规范 escape hatch（与 MainPanel 多值 shadow 同类）。
 # 单组件样式归 scoped（多组件共享原语 popover/dialog/overlay 才进 style.css 全局层，
 # 见 check_css_tokens.py ALLOWED_GLOBAL_ANIMATION_CLASSES 判据）。
 STYLE_SCOPED_WHITELIST: list[str] = ['shell/MainPanel.vue', 'sidebar/UpdateButton.vue', 'settings/SettingsModal.vue', 'collapsible/CollapsibleContent.vue']

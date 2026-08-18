@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pr-submit.sh — push + 创建/更新 PR 一体化
 #
-# 等价于 .agents/skills/pull-request/SKILL.md Step 4。
+# 对应 .agents/skills/pr-cr-fix/SKILL.md 阶段 1.3。
 # 自动检测 PR 是否已存在、仅在 title/body 有变化时更新。
 #
 # 用法:

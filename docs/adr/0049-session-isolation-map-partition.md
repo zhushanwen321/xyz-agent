@@ -72,7 +72,7 @@ xyz-agent 前端有大量 per-session 状态（聊天消息、ask-user 队列、
 
 ### Code Review Checklist（范式守护，替代 ESLint 规则）
 
-ESLint 规则放弃后，per-session 范式靠 **code-review 强制检查项** 守护。以下检查项纳入 PR review（pr-cr-fix / pull-request skill 的 review checklist）与 AGENTS.md §7.6 范式说明：
+ESLint 规则放弃后，per-session 范式靠 **code-review 强制检查项** 守护。以下检查项纳入 PR review（pr-cr-fix 的 review checklist）与 AGENTS.md §8 范式说明：
 
 新增/修改 composable 时，reviewer **必须逐条确认**：
 
