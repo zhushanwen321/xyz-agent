@@ -108,7 +108,7 @@ describe('useNewTaskFlow: create 透传归属 projectId（D14 语义修正）', 
     await flow.submitFirstMessage(textToSegments('修 bug'))
 
     expect(apiMock.create).toHaveBeenCalledTimes(1)
-    expect(apiMock.create).toHaveBeenCalledWith('/repo', '修 bug', undefined, undefined)
+    expect(apiMock.create).toHaveBeenCalledWith('/repo', '修 bug', undefined, undefined, undefined, undefined)
   })
 
   it('切到另一个命名 project 后新建 → 携带新 project id', async () => {
