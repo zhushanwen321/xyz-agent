@@ -1,19 +1,21 @@
-# xyz-agent
+<p align="center"><img src="docs/page-design/logo/assets/qianwen/logo.png" width="96" alt="TaiJi logo" /></p>
 
-AI Agent 桌面工作台，基于 Electron + Vue 3 + Node.js Runtime 架构。
+# 太极 TaiJi
 
-通过 [pi](https://github.com/badlogic/pi-mono)（npm 包名 `@earendil-works/pi-coding-agent`）的子进程 RPC 协议与各类 AI Agent 通信，提供多 session 管理、split view、focus mode、drawer 面板等功能。
+AI Agent 桌面工作台（macOS / Windows / Linux），基于 Electron + Vue 3 + Node.js Runtime 架构。
 
-> 本项目使用上游 [pi-mono](https://github.com/badlogic/pi-mono)。详见 [AGENTS.md](AGENTS.md)。
+通过 [pi](https://github.com/badlogic/pi-mono)（npm 包名 `@earendil-works/pi-coding-agent`）的子进程 RPC 协议与各类 AI Agent 通信，提供多 session 管理、双 Panel split view、subagent/workflow 编排、目标驱动自治循环、定时调度等能力，面向长时间、多任务的 Agent 协作场景。10 个 Agent 扩展随应用打包内置，开箱即用。
+
+> 开发约定、关键规则与调试纪律见 [AGENTS.md](AGENTS.md)。
 
 ## 安装
 
-首次安装用以下命令。安装后 app 内会自动检测新版本，提示一键升级。
+从 [Releases](https://github.com/zhushanwen321/xyz-agent/releases) 获取最新版本（产物文件名含版本号，下例以 v0.9.0 为例）。安装后 app 内会自动检测新版本，提示一键升级。
 
 ### macOS（Apple Silicon）
 
 ```bash
-curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/TaiJi-mac-arm64.zip -o /tmp/TaiJi.zip \
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-0.9.0-mac-arm64.zip -o /tmp/TaiJi.zip \
   && unzip /tmp/TaiJi.zip -d /Applications \
   && open /Applications/太极.app
 ```
@@ -27,26 +29,73 @@ xattr -cr /Applications/太极.app
 ### Linux
 
 ```bash
-curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/TaiJi-x86_64.AppImage -o ~/TaiJi.AppImage \
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-0.9.0-x86_64.AppImage -o ~/TaiJi.AppImage \
   && chmod +x ~/TaiJi.AppImage \
   && ~/TaiJi.AppImage
 ```
+
+`.deb` 包（`TaiJi-<版本>-amd64.deb`）同步发布于 Release 页。
 
 ### Windows
 
 PowerShell（用 Invoke-WebRequest，避免 curl 在 PowerShell 是别名导致的参数冲突）：
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/zhushanwen321/xyz-agent/releases/latest/download/TaiJi-setup-x64.exe" -OutFile "$env:TEMP\TaiJi-setup.exe" -UseBasicParsing; & "$env:TEMP\TaiJi-setup.exe"
+Invoke-WebRequest -Uri "https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-0.9.0-setup-x64.exe" -OutFile "$env:TEMP\TaiJi-setup.exe" -UseBasicParsing; & "$env:TEMP\TaiJi-setup.exe"
 ```
 
 命令提示符（cmd.exe，需系统自带 curl.exe，Win10 1803+ 默认含）：
 
 ```cmd
-curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/TaiJi-setup-x64.exe -o "%TEMP%\TaiJi-setup.exe" && "%TEMP%\TaiJi-setup.exe"
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-0.9.0-setup-x64.exe -o "%TEMP%\TaiJi-setup.exe" && "%TEMP%\TaiJi-setup.exe"
 ```
 
 ---
+
+## 核心能力
+
+### 会话与工作台
+
+- **多 session 管理** — 侧栏会话列表，⌘/Ctrl+N 新建；session 树状分支（fork / clone）为 pi 原生能力，可从任意 assistant 消息分叉（⌘/Ctrl+G fork、⌘/Ctrl+⇧+G fork 模式、⌘/Ctrl+J handoff）
+- **双 Panel split view** — 单 Panel 为默认态，打开第二个 session 即分屏；支持 focus mode 聚焦当前会话
+- **Overview** — 独立的多会话鸟瞰视图（卡片网格 + 筛选 + 后台 agent 聚合）
+- **全局效率入口** — ⌘/Ctrl+K 全局搜索、⌘/Ctrl+B 折叠侧栏、⌘/Ctrl+, 设置、⌘/Ctrl+[ ] 会话前进后退、⌘/Ctrl+⇧+P 预设切换；快捷键均可在设置中重录
+
+### 对话流
+
+- **流式渲染** — markdown 增量渲染、回合折叠、thinking 展开收起
+- **GUI Widget 面板** — todo / goal 等以独立 widget 面板呈现，带统一 meta 头行（标题、状态点、进度 N/M、迷你进度条），Agent 侧状态与展示层单通道同步
+- **结构化交互** — ask-user 多问题结构化输入（分栏预览 + 内联编辑）、JSON Schema 校验的结构化输出
+
+### 文件 / 终端 / Git
+
+- **文件树** — 虚拟化渲染（扁平可见行），大仓库下保持流畅；文件状态角标与行数统计
+- **终端** — 命令式缓冲区渲染，版本化重放，会话级持久分区
+- **Git** — 分支与变更状态展示，worktree 创建/切换/清理
+
+### 内置扩展（10 个，随应用打包）
+
+| 扩展 | 用途 |
+|------|------|
+| `pi-permission` | 四档权限模式（yolo / auto / approve / strict）+ 三层审批管道 |
+| `pi-subagent-workflow` | 统一 subagent 执行 + 多 agent workflow 编排（parallel / chain 等有状态工作流） |
+| `pi-goal` | `/goal` 持久目标驱动自治循环，证据验收 |
+| `pi-todo` | AI 驱动的 todo 列表（会话持久化 + `/todos`） |
+| `pi-ask-user` | 结构化多问题输入工具 |
+| `pi-structured-output` | 结构化输出（JSON Schema + Ajv 校验） |
+| `pi-scheduler` | 定时任务调度（cron / interval，once / recurring） |
+| `pi-session-reader` | 读取 / 查询 session 历史（树、家族、执行树、搜索、导出） |
+| `pi-rename-session` | 首轮对话后自动生成会话标题 |
+| `pi-pending-notifications` | 跨扩展异步操作注册 / 查询（长任务期间防消息注入） |
+
+其中 3 个基础设级（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output`）常驻不可禁用，其余 7 个可在设置中禁用。另有 `pi-cw-tool`（coding-workflow 编排）、`pi-model-switch`（模型推荐切换）、`pi-plan`（轻量 plan 模式）、`pi-unified-hooks`（统一 hooks）4 个包经 npm 发布，可按需安装。
+
+### 模型与设置
+
+- **Provider 管理** — 多 provider 配置、内置 provider 目录、API key 管理
+- **配额展示** — 各 provider / 模型的用量配额查询
+- **设置中心** — 全屏 overlay，覆盖 Provider / 扩展 / 技能 / 终端 / 预设 / worktree / 系统更新等 11 个菜单域
+- **自动更新** — 周期检测新版本，确认后重启升级；Release Notes 中英双语
 
 ## 架构
 
@@ -65,44 +114,56 @@ curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/TaiJ
          │                          │ child_process RPC
          ▼                          ▼
 ┌──────────────────────────────────────────────────┐
-│        渲染进程 (Vue 3 + Vite · v3 冷蓝暗色)        │
+│        渲染进程 (Vue 3 + Vite · 太极纯灰暗色)      │
 │  Pinia 状态 · xyz-ui 组件 · ws-client · event-bus │
 └──────────────────────────────────────────────────┘
 ```
 
-四个核心模块：
+五个核心模块：
 
 | 模块 | 路径 | 职责 |
 |------|------|------|
-| **主进程** | `apps/electron/main/` | BrowserWindow 生命周期、runtime spawn/stop、全局快捷键注册 |
+| **主进程** | `apps/electron/main/` | BrowserWindow 生命周期、runtime spawn/stop、全局快捷键（supervisor / window / gateway 三编排子系统） |
 | **Preload** | `apps/electron/preload/` | `contextIsolation` 安全桥接，暴露 `window.electronAPI` |
-| **前端** | `packages/renderer/` | Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui（v3 冷蓝暗色设计系统）|
+| **前端** | `packages/renderer/` | Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui（太极纯灰暗色设计系统） |
 | **Runtime** | `packages/runtime/` | WebSocket 服务，三层架构（transport/services/infra），通过 pi RPC 协议与 Agent 通信 |
-| **共享类型** | `packages/shared/` | 前端与 runtime 间的 TypeScript 类型定义（pnpm workspace）|
+| **共享类型** | `packages/shared/` | 前端与 runtime 间的 TypeScript 类型定义（pnpm workspace） |
 
 渲染进程有两条出口通道：**WS**（→ Runtime，业务/数据）与 **IPC**（→ Main，窗口/进程/OS 特权）。渲染进程不直接调 `window.electronAPI`，统一走 [`lib/ipc.ts`](packages/renderer/src/lib/ipc.ts) 门面。
 
 ### 为什么是 Electron
 
-项目早期使用 Tauri，后迁移至 Electron，原因：
-
-1. **渲染稳定性** — Electron 使用 Chromium，CSS/布局渲染结果与 Chrome DevTools 完全一致，不存在 WebView2/WebKit 的平台差异
+1. **渲染稳定性** — Chromium 的 CSS/布局渲染结果与 Chrome DevTools 完全一致，不存在 WebView2/WebKit 的平台差异
 2. **视觉锐利度** — 字体渲染、亚像素抗锯齿、GPU 合成行为完全可控，跨平台表现一致
-3. **生态成熟度** — electron-builder、electron-store、DevTools 扩展、Sentry 集成等工具链完善
+3. **生态成熟度** — electron-builder、DevTools 扩展、崩溃上报等工具链完善
 4. **Node.js 原生能力** — 主进程直接使用 Node API（child_process、fs、net），不需要 Rust 后端进程或 FFI
 
-## 快速开始
+### 双扩展机制
 
-**前置条件**: Node.js >= 20, pnpm >= 10
+太极有两套独立的扩展机制：
+
+**pi Extension** — 运行在 pi 子进程内，经 `--extension` 参数加载，负责 Agent 能力扩展（工具、命令、事件钩子）。源码在本仓 `extensions/` 目录（14 个 `@zhushanwen/pi-*` 包 + `shared/` 共享库），其中 10 个经 esbuild bundle 后随应用打包内置。开发文档：
+
+- [扩展开发指南](docs/extensions/development-guide.md) — 单一权威源：结构、生命周期、发布
+- [扩展强约束](docs/extensions/extension-conventions.md) — 必须遵守的约定
+- [本地开发调试](docs/extensions/local-dev-guide.md) — `XYZ_EXTENSION_PATHS` live link、日志查看
+- [GUI 协议接入](docs/extensions/gui-protocol-guide.md) — TUI extension 的 TUI/GUI 双模改造
+- [术语表](docs/extensions/glossary.md) / [Agent 编写指南](docs/extensions/agent-authoring-guide.md)
+
+**Plugin System** — 运行在 xyz-agent Runtime 侧的插件沙箱，负责 UI 与宿主能力扩展（tools、hooks、slash commands、status bar items、message decorations、settings 表单）。trusted 插件与 sandbox 插件两级隔离（Worker Thread / 独立 fork 子进程），单个插件崩溃不影响其他插件或主进程。开发用 [`packages/plugin-sdk`](packages/plugin-sdk/)（类型 + mock），脚手架 `create-xyz-plugin`。
+
+## 快速开始（开发）
+
+**前置条件**: Node.js >= 22.19（推荐 24，见 `.nvmrc`），pnpm >= 10
 
 ```bash
-# 安装依赖（pnpm workspace 单步装完 packages/* + apps/*）
+# 安装依赖（pnpm workspace 单步装完 apps/* + packages/* + extensions/*）
 pnpm install
 
 # 开发模式（Vite HMR + Electron 主进程）
 pnpm dev
 
-# 生产构建
+# 生产构建（electron-builder，产出 DMG/ZIP/AppImage/deb/EXE）
 pnpm build
 
 # 类型检查
@@ -110,21 +171,17 @@ pnpm --filter @xyz-agent/frontend run typecheck
 
 # ESLint
 pnpm run lint
+
+# extensions/ 下的 pi 扩展
+pnpm extensions:typecheck
+pnpm extensions:lint
+pnpm extensions:test
+
+# Playwright E2E
+pnpm build:e2e && pnpm test:e2e
 ```
 
-### 调试 dev app（Playwright 连 9222）
-
-`pnpm dev` 启动后 Electron 开 `--remote-debugging-port=9222`。用 [browser-automation skill](file:///Users/zhushanwen/.agents/skills/browser-automation/SKILL.md) 的 Playwright 脚本连接，可截图/DOM 快照/点击/执行 JS，不抢焦点：
-
-```bash
-PW="$HOME/.agents/skills/browser-automation/scripts/pw.js"
-node $PW http://localhost:9222 list-pages        # 确认连接
-node $PW http://localhost:9222 screenshot -o /tmp/debug.png   # 截图
-node $PW http://localhost:9222 snapshot                     # DOM 快照
-node $PW http://localhost:9222 evaluate "document.title"     # 执行 JS
-```
-
-> runtime 源码改动不热重载（tsx 非 watch），改 runtime 后需重启 `pnpm dev`。renderer 走 vite HMR 自动生效。详见 [AGENTS.md「前端调试」](AGENTS.md)。
+调试 dev app：`pnpm dev` 启动后 Electron 开 `--remote-debugging-port=9222`，可用 Playwright 连接截图 / DOM 快照 / 执行 JS（不抢焦点），详见 [AGENTS.md「前端调试」](AGENTS.md)。注意 runtime 源码不热重载（tsx 非 watch），改 runtime 后需重启 `pnpm dev`；renderer 走 vite HMR 自动生效。
 
 ### 环境变量
 
@@ -132,72 +189,7 @@ node $PW http://localhost:9222 evaluate "document.title"     # 执行 JS
 |------|------|--------|
 | `XYZ_MOCK` | 设为 `1` 跳过 runtime 子进程启动，使用 Mock 数据 | — |
 | `VITE_MOCK` | 设为 `true` 在 ws-client 层拦截所有 WS 消息 | — |
-| `XYZ_AGENT_DATA_DIR` | 自定义数据目录（dev 模式默认 `~/.xyz-agent-dev`，与 pi 的 `~/.pi/agent/` 完全隔离）| `~/.xyz-agent` |
-
-## 核心功能（v3 UI）
-
-v3 前端于 2026-06 完成冷蓝暗色设计系统重建（ADR-0019 视觉方向）。当前视觉 SSOT 见 [docs/page-design/v6-master-spec.md](docs/page-design/v6-master-spec.md)，设计演变见 [docs/design-evolution.md](docs/design-evolution.md)，术语见 [领域术语表](docs/architecture/context.md)。
-
-- **Sidebar（侧栏）** — 持久容器（非单列表），顶部 Logo + 主操作 → segmented tab（会话｜文件）互斥切换 → 子视图列表 → 底部设置/用户。透明融合于 base，支持折叠（⌘B）
-- **Workspace（工作区）** — 双 Panel 主从模式（单 Panel = 默认态，开第二 session 才 split）
-- **Panel 5 zone** — 每个 Panel 自上而下：① panel-header（面包屑）② message-stream（消息流 + 回合折叠）③ progress-zone ④ composer（输入 + 工具区）⑤ git-zone
-- **Overview（概览）** — 独立 L1 Region，多会话鸟瞰统筹（卡片网格 + 筛选 + 后台 agent 聚合），⌘⇧O 触发（ADR-0022）
-- **Settings** — modal 形态，Provider / Extension / Agent / System 四菜单（ADR-0020 资源加载）
-- **Search Modal** — ⌘K 全局搜索浮层（归 Overlay 层，非 Sidebar 子组件）
-- **Traffic Light 安全区** — macOS 三按钮 + 跨平台 AppNavControls（ADR-0016，已实现）
-
-> v1 范围限制：Overview/Settings/Overlays 在 v1 仅实现骨架 + 入口隐藏（功能未全部落地，详见 [spec §8.5/§9](.xyz-harness/2026-06-20-frontend-rebuild/spec.md)）。
-
-## Plugin System
-
-xyz-agent 内置插件系统，支持扩展功能（tools、hooks、slash commands、status bar items）。
-
-### 架构
-
-- **Backend**: PluginService 管理 Worker Thread 池，每个插件独立 Worker 进程
-- **Frontend**: Pinia store + Vue 组件（PluginsPane、PluginSettingsForm、MessageDecoration）
-- **Communication**: WebSocket（前端↔后端）+ JSON-RPC over MessagePort（后端↔Worker）
-
-### Built-in Plugins
-
-- **Goal**: 目标管理（create_tasks, update_tasks, complete_goal, cancel_goal）
-- **Todo**: 待办清单（add, update, delete, clear, list）
-
-### Extension Points
-
-| 扩展点 | 描述 |
-|--------|------|
-| Tools | 注册 LLM 可调用的工具（通过 Pi Bridge Extension） |
-| Hooks | 拦截消息流（onBeforeSendMessage, onAfterToolUse 等） |
-| Slash Commands | 注册 /command 快捷操作 |
-| Status Bar Items | 在状态栏显示插件状态 |
-| Message Decorations | 在消息气泡上显示标签 |
-| Settings | 插件配置项（自动渲染表单） |
-
-## Extension 开发
-
-xyz-agent 通过 pi 的 extension 机制扩展能力（注册工具、命令、事件钩子等）。Extension 与上文的 Plugin System 是两套独立机制——Extension 走 pi 子进程的 `--extension` 参数加载，Plugin 走 xyz-agent 自有的 Worker Thread。
-
-- [本地开发调试指南](docs/extensions/local-dev-guide.md) — 环境搭建、`XYZ_EXTENSION_PATHS` live link、日志查看、生效机制
-- [GUI 协议接入指南](docs/extensions/gui-protocol-guide.md) — TUI extension 改造为 TUI/GUI 双模
-
-## 功能开发地图
-
-项目长期规划按 7 个 Phase 推进，详见 [docs/feature-map/](docs/feature-map/)。
-
-```
-Phase 0  生产可用化        →  Runtime 编译 · electron-builder · Markdown 渲染优化
-Phase 1  基础修复          →  tool_execution_update · 手动触发修复 · 布局切换 · Tag 分组
-Phase 2  聊天核心增强      →  @-mention · Command Palette · 文件变更 Diff · 系统通知
-Phase 3  SubAgent 数据流   →  TaskTree 真实数据 · Side Drawer · 终止 subagent · PanelBar 联动
-Phase 4  高级模式          →  Parallel/Chain 渲染 · Background agent · Overview 状态聚合
-Phase 5  树形引擎          →  RPC 桥接 · ask_user · 递归分解 · Preset/Fork · 预算控制
-Phase 6  树形 GUI          →  SubAgent Tab 栏 · 子 Agent 对话面板 · 用户介入 · 全局任务树
-```
-
-**当前进展（2026-06-20）**：前端视觉层 v3 重建完成（W01–W20 视觉验收全 PASS），冷蓝暗色设计系统落地。下一阶段：真实模式集成（`transport.on → events.dispatch` 打通）+ SubAgent 数据流（Phase 3）。
-
-关键决策点和完整资料链接见 [docs/feature-map/2026-06-20.md](docs/feature-map/2026-06-20.md)（v3 重建后最新版）。旧版 [2026-05-19.md](docs/feature-map/2026-05-19.md) 保留作重构前状态快照。
+| `XYZ_AGENT_DATA_DIR` | 自定义数据目录（dev 模式默认 `~/.xyz-agent-dev`，与 pi 的 `~/.pi/agent/` 完全隔离） | `~/.xyz-agent` |
 
 ## 技术栈
 
@@ -205,64 +197,62 @@ Phase 6  树形 GUI          →  SubAgent Tab 栏 · 子 Agent 对话面板 · 
 |----|------|
 | 桌面框架 | Electron 42 |
 | 前端框架 | Vue 3.5 + TypeScript 5.8 |
-| 状态管理 | Pinia 3 + persistedstate |
-| 构建工具 | Vite 8 (renderer) + Vite (main/preload lib mode) |
-| UI 组件 | xyz-ui (内部组件库) + radix-vue / reka-ui |
-| 样式 | Tailwind CSS v3（v3 冷蓝暗色 tokens，禁 scoped CSS / 禁 @apply）|
-| 图标 | lucide-vue-next |
+| 状态管理 | Pinia 3 |
+| 构建工具 | Vite 8 (renderer) + Vite lib mode (main/preload) |
+| UI 组件 | xyz-ui（内部组件库）+ reka-ui |
+| 样式 | Tailwind CSS v3（太极纯灰 tokens，禁 scoped CSS 组件样式 / 禁 `@apply`） |
+| 图标 | @lucide/vue |
 | 国际化 | vue-i18n 10 |
 | 后端通信 | ws (WebSocket) + pi 子进程 RPC |
-| 打包 | electron-builder |
+| 打包 | electron-builder 26 |
 
 ## 项目结构
 
 ```
-xyz-agent/
-├── packages/                      # 可复用层（pnpm workspace）
-│   ├── shared/                    # @xyz-agent/shared — 共享类型（protocol/message/session/...）
-│   ├── renderer/                  # @xyz-agent/frontend — Vue 前端
-│   │   └── src/
-│   │       ├── components/        # v3 组件分组：shell/sidebar/workspace/panel/overview/settings/overlays/ui
-│   │       ├── composables/       # 分层：effects/ features/ logic/ + useConnection.ts
-│   │       ├── stores/            # Pinia stores (chat/navigation/panel/session/sidebar)
-│   │       └── lib/               # ws-client/event-bus/markdown/ipc 门面
-│   ├── runtime/                   # @xyz-agent/runtime — Node.js Runtime
-│   │   └── src/                   # 三层架构：transport/ services/ infra/ + plugins/
-│   └── plugin-sdk/                # 插件 SDK
-├── apps/
-│   └── electron/                  # @xyz-agent/electron — Electron 壳
-│       ├── main/                  # 主进程（三编排子系统 M1/M2/M3）
-│       │   ├── main.ts            # 应用入口、窗口创建、生命周期
-│       │   ├── supervisor/        # M1 Process Supervisor（runtime-supervisor + 端口发现/健康检查）
-│       │   ├── window/            # M2 Window Manager（window-factory + traffic-light 安全区）
-│       │   ├── gateway/           # M3 OS Gateway + IPC handlers（privileged/bridge/input-validators）
-│       │   └── shortcuts/         # 全局快捷键注册（shortcut-registry）
-│       └── preload/               # 安全桥接，暴露 electronAPI
-├── docs/
-│   ├── architecture/          # 架构文档（design.md/ADR/context/术语表）
-│   ├── designs/               # v3 设计 SSOT：design-tokens.md + design-system.md + v3-demo/
-│   ├── feature-map/           # 功能开发地图（长期规划、现状、决策）
-│   ├── project/               # 功能清单（已完成 / 规划 / 最高优先级）
-│   └── standards.md           # 编码规范与架构标准
-├── tools/                     # 验证脚本 (verify-*.cjs)
-└── package.json               # 根 package（workspaces 配置）
+├── apps/electron/            # Electron 壳
+│   ├── main/                 # 主进程（supervisor / window / gateway / shortcuts）
+│   └── preload/              # 安全桥接（electronAPI）
+├── packages/                 # pnpm workspace 包
+│   ├── renderer/             # Vue 前端（components / composables / stores / lib）
+│   ├── runtime/              # Node.js Runtime（transport / services / infra + plugins）
+│   ├── shared/               # 前后端共享类型
+│   ├── ui/                   # xyz-ui 组件库
+│   ├── core/                 # 前端核心层（coordination / domain / extension-host / foundation）
+│   ├── dom-core/             # composer DOM 层
+│   ├── mobile-renderer/      # 移动端渲染入口
+│   ├── plugin-sdk/           # 插件开发 SDK（类型 + mock）
+│   ├── extension-protocol/   # Extension GUI 渲染协议（TUI/GUI 双模类型）
+│   └── create-xyz-plugin/    # 插件项目脚手架
+├── extensions/               # 14 个 @zhushanwen/pi-* pi 扩展源码 + shared/ 共享库
+├── e2e/                      # Playwright E2E spec + 视觉基线（visual-baselines）
+├── scripts/                  # 构建 / 验证 / 发布脚本（preflight / postbuild / verify-* / bundle-extensions）
+├── resources/                # pi binary + 内置 statusline 插件
+├── docs/                     # 文档（架构 / 设计 SSOT / 扩展指南 / 测试 / ADR / 排查）
+└── .agents/                  # 项目级 agent / skill（merge / review 等）
 ```
 
-## 编码规范
+## 发布
 
-详见 [docs/standards.md](docs/standards.md) 和 [AGENTS.md](AGENTS.md)。
+两条独立发布管线，通过 tag 前缀解耦：
 
-关键规则摘要：
+| 管线 | 产物 | 触发 tag | Workflow |
+|------|------|----------|----------|
+| Electron 打包 | DMG / ZIP / AppImage / deb / EXE | `v*` | `release.yml` |
+| npm 包发布 | `@zhushanwen/pi-*` + `@xyz-agent/extension-protocol` | `npm-*` | `release-npm.yml` |
 
-- **禁止原生 HTML 表单元素** — 必须使用 xyz-ui 组件
-- **禁止 Emoji** — 使用 SVG 或 lucide-vue-next
-- **样式三层结构** — design tokens（`:root`）→ Template class（Tailwind）→ `<style scoped>`（仅伪元素/后代选择器/transition）。**禁止 `@apply`，禁止在 `<style scoped>` 写组件样式**
-- **border-radius v3** — 三档：`rounded-sm`(3px) / `rounded`/`rounded-md`(8px) / `rounded-lg`(12px)（SSOT 见 [design-tokens.md](docs/page-design/design-tokens.md)）
-- **emit 只传单个 payload 对象** — 禁止多参数 emit
-- **行数上限** — `<template>` ≤ 400 行, `<script setup>` ≤ 300 行
-- **禁止 `any`** — 用 `unknown` 或具体类型
-- **独立数据源用 `Promise.allSettled`** — 不用 `Promise.all`
-- **IPC 门面** — 渲染进程不直接调 `window.electronAPI`，统一走 `lib/ipc.ts`
+## 文档索引
+
+| 文档 | 内容 |
+|------|------|
+| [AGENTS.md](AGENTS.md) | 开发约定、关键规则、调试与发布纪律 |
+| [PRODUCT.md](PRODUCT.md) / [ARCHITECTURE.md](ARCHITECTURE.md) | 产品定位 / 架构总览 |
+| [docs/standards.md](docs/standards.md) | 编码规范与架构标准 |
+| [docs/page-design/](docs/page-design/) | 设计 SSOT（`design-tokens.md` 太极纯灰原子值 + `v6-master-spec.md` 范式） |
+| [docs/extensions/](docs/extensions/) | pi 扩展开发全套指南 |
+| [docs/feature-map/](docs/feature-map/) | 功能规划与阶段现状 |
+| [docs/testing/](docs/testing/) + [TEST-STRATEGY.md](TEST-STRATEGY.md) | 测试策略与分功能测试手册 |
+| [docs/adr/](docs/adr/) | 架构决策记录 |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | 问题排查指南 |
 
 ## License
 

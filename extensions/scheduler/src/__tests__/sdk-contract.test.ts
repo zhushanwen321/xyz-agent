@@ -21,7 +21,7 @@ import { describe, expect, it, vi } from 'vitest'
 // 会触碰真实用户 FS（~/.pi/agent/scheduler/root/test/scheduler.json 的 renameSync/existsSync/
 // unlinkSync；该目录是活跃数据目录，一旦路径存在会 rename+unlink 真实用户数据且结果不确定）。
 // mock 掉 importer 模块：session_start 装配路径仍被调用（vi.fn 记录调用），FS 副作用为零；
-// 装配时序由 tools/verify-scheduler-e2e.cjs 的 S10/S12/S17 真实环境覆盖。
+// 装配时序由 scripts/verify-scheduler-e2e.cjs 的 S10/S12/S17 真实环境覆盖。
 // mock 返回 vi.fn() 作为延迟删除 cleanup（MF-1：turn_end / session_shutdown 装配链路可测）。
 vi.mock('../importer.js', () => ({ importLegacyStore: vi.fn(() => vi.fn()) }))
 

@@ -20,6 +20,8 @@
 | ② | PoC 特征测试（3-5 个）在新 core 上跑通 | **通过** | `packages/core/src/__tests__/bootstrap.test.ts`（5 passed）+ `packages/core/src/transport/__tests__/ws-client.invariants.test.ts`（15 it.todo 声明） |
 | ③ | 新旧共存接缝机制（构建 flag / 双入口按域灰度）spike 验证通过 | **在途（pending）** | `.cw/recursive-root-p0-foundation-spike-coexistence-seam-spike/plan.json`（方案对比 + 推荐 A；实证待 execute） |
 
+> 2026-08-17 注：PlatformPort spike（①）已完成使命删除，接口落地于 `packages/core/src/platform/port.ts`；`.cw/` 过程产物已清理。本文路径引用为验收时点（2026-08-03）的历史记录。
+
 ---
 
 ## ① PlatformPort spike（结论：通过）

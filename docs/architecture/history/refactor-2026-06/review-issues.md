@@ -151,7 +151,7 @@ plugin-service/
 - `server.ts` 注释写 "pure Transport layer",但它通过 `setServices()` 持有 6 个 Service 引用 + 6 个 Handler 实例--注释与实现不符
 - 提议的 `transport/` 重命名正确,但应明确这是「消除认知债务」的一部分,而非单纯「挪目录」
 
-> 详见 [terminology.md](terminology.md)(已存在的 R1-R5 命名对齐计划)。
+> 详见 [terminology.md](../../terminology.md)(已存在的 R1-R5 命名对齐计划)。
 
 ---
 
@@ -183,8 +183,8 @@ plugin-service/
 | D4 | Runtime 内部 infra/adapters/services 分层 | 🟡 细化 | 防腐层独立 + 目录结构 |
 | D5 | PluginService 垂直切片定位 | 🟡 细化 | 水平层 × 垂直切片双维度模型 |
 | D6 | 横切关注点归宿 | 🟡 细化 | 错误流 / session 路由 / DI 循环解耦 |
-| D7 | 命名债(sidecar→runtime 等) | 🟢 已有计划 | 引用 [terminology.md](terminology.md) |
+| D7 | 命名债(sidecar→runtime 等) | 🟢 已有计划 | 引用 [terminology.md](../../terminology.md) |
 | D8 | Mock 边界 | 🟢 收尾 | API Client 注入点 |
 | D9 | 协议复用 | 🟢 收尾 | 直接复用 protocol.ts union |
 
-以上 9 点逐项解决后,汇总为完整架构设计文档([design.md](design.md))。
+以上 9 点逐项解决后,汇总为完整架构设计文档([design.md](../../design.md))。

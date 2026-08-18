@@ -1,6 +1,6 @@
 # 阶段 4 · 命名对齐（引用既有计划）
 
-> 上游：[migration-plan.md](../migration-plan.md) · 关联决策：D7 · 既有计划：[terminology.md](../terminology.md)
+> 上游：[migration-plan.md](../migration-plan.md) · 关联决策：D7 · 既有计划：[terminology.md](../../../terminology.md)
 
 ## 目标
 

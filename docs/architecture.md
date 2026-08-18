@@ -36,14 +36,14 @@
 
 ## 渲染进程（renderer）
 
-Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui 组件库。设计系统遵循 v3 冷蓝暗色（[page-design/](./page-design/README.md)）。
+Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui 组件库。设计系统为太极纯灰暗色（token SSOT：[design-tokens.md](./page-design/design-tokens.md)，范式：[v6-master-spec.md](./page-design/v6-master-spec.md)）。
 
 | 职责 | 位置 | 说明 |
 |------|------|------|
-| 状态管理 | `src/stores/` | 6 个 store：chat（按 sessionId 分区）/ session / panel / settings / sidebar / navigation |
+| 状态管理 | `src/stores/` | 按域拆分的 store：chat（按 sessionId 分区）/ session / panel / sidebar / navigation / workflow / subagent / quota / fileTree / preset 等 |
 | WS 通信 | `composables/useConnection.ts` + `lib/ws-client` | 唯一与 Runtime 通信的出口 |
 | 事件分发 | `event-bus` | ServerMessage 按 `payload.sessionId` 路由到对应 store 分区 |
-| 组件 | `components/` | v3 L0-L4 拓扑：shell / sidebar / workspace(panel×N) / overlays |
+| 组件 | `components/` | 按域分组：shell / sidebar / workspace(panel×N) / panel / overview / settings / new-task / extension / icons / ui |
 
 **Session 隔离**：所有涉及特定 session 的消息必须带 `sessionId`，前端三层隔离（store 分区 → useChat 路由 → PaneSessionView 过滤）。缺失 `sessionId` 的消息被忽略，避免广播到所有 panel。详见 [context.md](architecture/context.md)。
 
@@ -100,20 +100,18 @@ Node.js WebSocket 服务，三层架构（端口-适配器模式，[ADR 驱动](
 ## 详细设计文档
 
 - [完整架构设计](architecture/design.md) — 逐点决策 D1–D9 + 分层规则 + 依赖矩阵 + 迁移路线
-- [架构评审问题记录](architecture/review-issues.md) — 9 个盲点 D1–D9 的来源与验证
+- [架构评审问题记录](architecture/history/refactor-2026-06/review-issues.md) — 9 个盲点 D1–D9 的来源与验证（2026-06 重构期，已归档）
 - [领域术语表](architecture/context.md) — Session/Panel/Runtime + v3 UI 结构术语
 
-## v3 视觉与交互层
+## 视觉与交互层
 
-前端视觉层于 2026-06 完成 v3 重建（冷蓝暗色，W01–W20 视觉验收全部 PASS）：
-
-- [v3 UI 设计稿](./page-design/archive/v3/README.md) — L0–L4 递归骨架 + 22 个 draft
-- [设计 Tokens（SSOT）](./page-design/design-tokens.md) · [组件原语层](./page-design/design-system.md)
-- v3 视觉/交互 ADR 0019–0023（见下）
+- [设计 Tokens（SSOT）](./page-design/design-tokens.md) — 太极纯灰暗色原子值 · [v6 主规范](./page-design/v6-master-spec.md)
+- [v3 UI 设计稿（归档）](./page-design/archive/v3/README.md) — L0–L4 递归骨架 + 22 个 draft
+- 视觉/交互 ADR 0019–0023（见下）
 
 ## 架构决策（ADR）
 
-[ADR 目录](adr/) — 共 57 条（0001–0057）。重要的几条：
+[ADR 目录](adr/) — 索引见 [adr/README.md](adr/README.md)。重要的几条：
 
 - [ADR-0005 Bun 编译二进制 vs npm 包](adr/0005-bun-binary-over-npm-package.md)
 - [ADR-0009 xyz-agent 数据目录与 pi 隔离](adr/0009-xyz-agent-data-dir-isolation-from-pi.md)
@@ -132,7 +130,7 @@ Node.js WebSocket 服务，三层架构（端口-适配器模式，[ADR 驱动](
 
 ## 演进 / 调研 / 历史
 
-- [重构迁移计划](architecture/migration-plan.md) — 5 阶段路线 · [术语对齐](architecture/terminology.md) R1–R5
+- [重构迁移计划](architecture/history/refactor-2026-06/migration-plan.md) — 2026-06 重构期 5 阶段路线（已归档） · [术语对齐](architecture/terminology.md) R1–R5
 - [架构调研](architecture/research/) — Electron 打包 · Node.js 路径安全 · Pi Extension 通道
 - [历史归档](architecture/history/) — 被 supersede 的旧架构（pre-electron Tauri 方案等）
 
