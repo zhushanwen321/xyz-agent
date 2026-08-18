@@ -144,7 +144,8 @@ function computePriority(descriptor: PluginDescriptor): number {
  *
  * 注册的方法：
  * - `plugin.hooks.register` — 注册 hook handler，按 priority 排序存储
- * - `plugin.hooks.unregister` — 注销 hook handler
+ * - `plugin.hooks.unregister` — 注销 hook handler（归属隔离：只删 pluginId 与
+ *   请求一致的条目，D7 语义，见 handler 注释）
  */
 export function registerHookRpcHandlers(
   rpcServer: PluginRpcServer,
@@ -179,10 +180,15 @@ export function registerHookRpcHandlers(
   rpcServer.registerMethod('plugin.hooks.unregister', async (params) => {
     const handlerId = asSafeKey(params.handlerId, 'handlerId')
     const hookType = asString(params.hookType, 'hookType')
+    // D7 归属隔离（对齐 commands/tools.unregister 语义）：pluginId 必填，且只删除
+    // pluginId 与请求一致的条目。sandbox 通道 params.pluginId 已被 dispatch 覆写为
+    // 通道身份（不可伪造）——插件 B 传他人 handlerId（'hook_A_1'）不命中 → no-op，
+    // A 的注册不受影响。
+    const pluginId = asSafeKey(params.pluginId, 'pluginId')
 
     const entries = service.hookRegistry.get(hookType)
     if (entries) {
-      const idx = entries.findIndex(e => e.handlerId === handlerId)
+      const idx = entries.findIndex(e => e.handlerId === handlerId && e.pluginId === pluginId)
       if (idx >= 0) {
         entries.splice(idx, 1)
       }

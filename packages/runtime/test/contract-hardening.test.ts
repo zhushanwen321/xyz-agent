@@ -6,6 +6,9 @@
  * - 命令执行链复合键：插件 B 无法覆盖/注销插件 A 的同名命令（register/unregister
  *   按 `pluginId:commandId` 复合键隔离）；commandId 含 ':' 被拒；sandbox 通道
  *   身份覆写后伪冒 pluginId 不改变键归属
+ * - tool/hook 注销归属隔离（MF-1，D7 同语义）：tools.unregister 校验 toolKey
+ *   前缀 `${pluginId}:`、hooks.unregister 比对 entry.pluginId，跨插件注销 no-op；
+ *   sandbox 通道身份覆写后伪冒 pluginId 无法跨插件注销
  * - runtime→Worker 发送段闭环：executeCommand 经 rpcServer.notify 发
  *   plugin.commands.invoke（mock Worker port 收到），Worker 经
  *   plugin.commands.invoke.result 回传结果/错误 → pending resolve/reject
@@ -236,6 +239,117 @@ describe('命令表复合键隔离（pluginId:commandId）', () => {
     // dispatch 身份覆写后 params.pluginId 被强制改为 'B' → 键 B:x，A:x 未被伪造
     expect(registry.has(commandCompositeKey('A', 'x'))).toBe(false)
     expect(registry.get(commandCompositeKey('B', 'x'))).toMatchObject({ pluginId: 'B', handlerId: 'h-spoof' })
+  })
+})
+
+// ──────────────────────────────────────────────────────────
+// MF-1 — tool/hook 注销归属隔离（D7：与 commands 域复合键语义对齐）
+// ──────────────────────────────────────────────────────────
+
+describe('tool/hook 注销归属隔离（D7）', () => {
+  let rpc: PluginRpcServer
+  let toolRegistry: Map<string, unknown>
+  let hookRegistry: Map<string, Array<{ pluginId: string; handlerId: string; priority: number }>>
+  let port: ReturnType<typeof createMockPort>
+  let syncCalls: number
+
+  beforeEach(() => {
+    rpc = new PluginRpcServer()
+    toolRegistry = new Map()
+    hookRegistry = new Map()
+    syncCalls = 0
+    port = createMockPort()
+    rpc.registerWorker('w1', port)
+    registerToolRpcHandlers(rpc, {
+      toolRegistry: toolRegistry as never,
+      syncToolsToBridge: async () => {
+        syncCalls++
+      },
+    })
+    registerHookRpcHandlers(rpc, {
+      hookRegistry: hookRegistry as never,
+      getDescriptor: () => undefined,
+    })
+  })
+
+  function seedTool(pluginId: string, name: string): void {
+    toolRegistry.set(`${pluginId}:${name}`, {
+      pluginId,
+      handlerId: `${pluginId}:${name}`,
+      schema: { name, description: '', parameters: {} },
+    })
+  }
+
+  function seedHook(pluginId: string, handlerId: string, hookType = 'onPiEvent'): void {
+    const entries = hookRegistry.get(hookType) ?? []
+    entries.push({ pluginId, handlerId, priority: 200 })
+    hookRegistry.set(hookType, entries)
+  }
+
+  it('tools.unregister：插件 B 传 A:xxx → no-op，A 的注册不受影响；B 注销自身前缀正常删除', async () => {
+    seedTool('A', 'xxx')
+    seedTool('B', 'yyy')
+
+    // B 试图注销 A 的工具（裸 toolKey 无归属校验时会被删）
+    await rpc.dispatch('w1', {
+      jsonrpc: '2.0', id: 1, method: 'plugin.tools.unregister',
+      params: { pluginId: 'B', toolKey: 'A:xxx' },
+    })
+    expect(toolRegistry.has('A:xxx')).toBe(true)
+    expect(syncCalls).toBe(0)
+
+    // B 注销自身工具 → 删除 + sync
+    await rpc.dispatch('w1', {
+      jsonrpc: '2.0', id: 2, method: 'plugin.tools.unregister',
+      params: { pluginId: 'B', toolKey: 'B:yyy' },
+    })
+    expect(toolRegistry.has('B:yyy')).toBe(false)
+    expect(syncCalls).toBe(1)
+  })
+
+  it('tools.unregister：sandbox 通道身份覆写后 B 伪冒 pluginId="A" 仍无法删 A 的工具', async () => {
+    rpc.registerIdentity('w1', { trustLevel: 'sandbox', pluginId: 'B' })
+    seedTool('A', 'xxx')
+
+    // 消息体自报 pluginId='A'，dispatch 覆写为通道身份 'B' → 前缀不匹配 → no-op
+    await rpc.dispatch('w1', {
+      jsonrpc: '2.0', id: 3, method: 'plugin.tools.unregister',
+      params: { pluginId: 'A', toolKey: 'A:xxx' },
+    })
+    expect(toolRegistry.has('A:xxx')).toBe(true)
+    expect(syncCalls).toBe(0)
+  })
+
+  it('hooks.unregister：插件 B 传 hook_A_1 → no-op，A 的条目不受影响；B 注销自身正常删除', async () => {
+    seedHook('A', 'hook_A_1')
+    seedHook('B', 'hook_B_1')
+
+    // B 试图注销 A 的 handler（handlerId 格式 hook_${pluginId}_${n} 可猜测）
+    await rpc.dispatch('w1', {
+      jsonrpc: '2.0', id: 4, method: 'plugin.hooks.unregister',
+      params: { pluginId: 'B', hookType: 'onPiEvent', handlerId: 'hook_A_1' },
+    })
+    expect(hookRegistry.get('onPiEvent')!.some(e => e.handlerId === 'hook_A_1')).toBe(true)
+
+    // B 注销自身 handler → 条目被删（该类型仅剩 A 的条目，hookType 键保留）
+    await rpc.dispatch('w1', {
+      jsonrpc: '2.0', id: 5, method: 'plugin.hooks.unregister',
+      params: { pluginId: 'B', hookType: 'onPiEvent', handlerId: 'hook_B_1' },
+    })
+    const entries = hookRegistry.get('onPiEvent')!
+    expect(entries.some(e => e.handlerId === 'hook_B_1')).toBe(false)
+    expect(entries.some(e => e.handlerId === 'hook_A_1')).toBe(true)
+  })
+
+  it('hooks.unregister：sandbox 通道身份覆写后 B 伪冒 pluginId="A" 仍无法删 A 的 handler', async () => {
+    rpc.registerIdentity('w1', { trustLevel: 'sandbox', pluginId: 'B' })
+    seedHook('A', 'hook_A_1')
+
+    await rpc.dispatch('w1', {
+      jsonrpc: '2.0', id: 6, method: 'plugin.hooks.unregister',
+      params: { pluginId: 'A', hookType: 'onPiEvent', handlerId: 'hook_A_1' },
+    })
+    expect(hookRegistry.get('onPiEvent')!.some(e => e.handlerId === 'hook_A_1')).toBe(true)
   })
 })
 

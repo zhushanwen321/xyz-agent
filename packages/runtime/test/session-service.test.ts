@@ -991,6 +991,33 @@ describe('SessionService · Facade', () => {
     })
   })
 
+  describe('setLabelCache 回写缓存（session_info_changed 打通用例，MF-3 ③）', () => {
+    // 链路：pi session_info_changed → interpreter onSessionRenamed → setLabelCache →
+    // 内存 session.label（唯一数据源，commit 9aec7748a toSummary 直读 session.label）→
+    // getSummary / listPersistedSessions（broadcastSessionList 数据源）。缺刻痕时 runtime
+    // 内存 label 过期会覆盖前端 rename（本批修复的核心 bug）。
+    it('U-setLabel-1：setLabelCache 写入后 getSummary().label 读回新值', async () => {
+      const { id } = await setup.seedSession({ label: 'old-label' })
+      expect(setup.service.getSummary(id)?.label).toBe('old-label')
+      // 模拟 EventInterpreter onSessionRenamed 回调（pi auto-rename）
+      setup.service.setLabelCache(id, 'renamed-by-pi')
+      expect(setup.service.getSummary(id)?.label).toBe('renamed-by-pi')
+    })
+
+    it('U-setLabel-2：setLabelCache 后 listPersistedSessions()（broadcastSessionList 数据源）summary.label 为新值', async () => {
+      const cwd = tmpdir()
+      const { id } = await setup.seedSession({ cwd, label: 'old-label' })
+      setup.service.setLabelCache(id, 'renamed-by-pi')
+      const groups = setup.service.listPersistedSessions()
+      const summary = groups.flatMap(g => g.sessions).find(s => s.id === id)
+      expect(summary?.label).toBe('renamed-by-pi')
+    })
+
+    it('U-setLabel-3：setLabelCache 对不存在的 session 不抛错（迟到事件的迟到回调）', () => {
+      expect(() => setup.service.setLabelCache('ghost', 'x')).not.toThrow()
+    })
+  })
+
   describe('inputTokens 缓存（W3：经 applyContextUpdate + handleTurnEndSideEffects 迁移）', () => {
     // W3：attachUsageListener 已删除，inputTokens/tokenCount 回写经中间事件链路：
     //   - applyContextUpdate(sid, inputTokens, totalTokens)：写 inputTokens + tokenCount

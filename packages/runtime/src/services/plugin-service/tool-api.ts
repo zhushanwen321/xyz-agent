@@ -27,7 +27,8 @@ export interface ToolService {
  *
  * 注册的方法：
  * - `plugin.tools.register` — 注册工具，返回 toolKey
- * - `plugin.tools.unregister` — 注销工具，不存在的 key 静默成功
+ * - `plugin.tools.unregister` — 注销工具，不存在的 key 静默成功（复合键归属隔离：
+ *   只允许注销自身前缀 `${pluginId}:` 的 toolKey，D7 语义，见 handler 注释）
  */
 export function registerToolRpcHandlers(
   rpcServer: PluginRpcServer,
@@ -70,6 +71,12 @@ export function registerToolRpcHandlers(
     // toolKey 是宿主返回的复合键 `${pluginId}:${name}`，合法含 ':'——过 asString
     // （白名单校验会误杀自身格式），只需防错类型
     const toolKey = asString(params.toolKey, 'toolKey')
+    // D7 归属隔离（对齐 commands.unregister 复合键语义）：pluginId 必填，且只允许
+    // 注销自身前缀 `${pluginId}:` 的 toolKey。sandbox 通道 params.pluginId 已被
+    // dispatch 覆写为通道身份（不可伪造）——插件 B 传他人 toolKey（'A:xxx'）不属
+    // 自身前缀 → no-op，A 的注册不受影响。
+    const pluginId = asSafeKey(params.pluginId, 'pluginId')
+    if (!toolKey.startsWith(`${pluginId}:`)) return
     if (service.toolRegistry.has(toolKey)) {
       service.toolRegistry.delete(toolKey)
       await service.syncToolsToBridge()
