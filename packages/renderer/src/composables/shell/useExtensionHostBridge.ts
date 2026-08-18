@@ -269,6 +269,8 @@ export function initExtensionHostBridge(app: App): {
   // CommandExecutor 适配 = runtime plugin.executeCommand RPC（通道名已核实 plugin-message-handler.ts:50）。
   // 惰性调用：execute 时才发 WS；commandId = registry 记录 id，pluginId 经闭包查 registry（CommandExecutor
   // 接口签名只有 id——壳层补查）。未注册命令 no-op（CommandRegistry.execute 已先发 ERR6 error 事件）。
+  // 契约（S3-W1 命令链复合键）：payload 携带分离的 pluginId + commandId，runtime 侧按
+  // `pluginId:commandId` 复合键查注册表——命令表按插件隔离，插件 B 无法覆盖/注销插件 A 的同名命令。
   const commandExecutor: CommandExecutor = {
     execute: async (id, args) => {
       const cmd = commandRegistry.get(id)

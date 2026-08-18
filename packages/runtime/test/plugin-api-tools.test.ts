@@ -4,7 +4,7 @@
  * 验证 registerToolRpcHandlers 的主线程侧 RPC handler：
  * - plugin.tools.register 注册工具 → 返回 toolKey
  * - plugin.tools.register name 重名 → 抛出错误
- * - plugin.tools.unregister 已注册工具 → 成功删除
+ * - plugin.tools.unregister 已注册工具 → 成功删除（复合键归属隔离，D7）
  * - plugin.tools.unregister 不存在工具 → 静默成功
  */
 
@@ -134,7 +134,7 @@ describe('Tool API — registerToolRpcHandlers', () => {
       jsonrpc: '2.0',
       id: 3,
       method: 'plugin.tools.unregister',
-      params: { toolKey: 'my-plugin:my-tool' },
+      params: { pluginId: 'my-plugin', toolKey: 'my-plugin:my-tool' },
     })
 
     const resp = extractLastResponse(port)
@@ -152,7 +152,7 @@ describe('Tool API — registerToolRpcHandlers', () => {
       jsonrpc: '2.0',
       id: 4,
       method: 'plugin.tools.unregister',
-      params: { toolKey: 'nonexistent:tool' },
+      params: { pluginId: 'nonexistent', toolKey: 'nonexistent:tool' },
     })
 
     const resp = extractLastResponse(port)
@@ -162,10 +162,11 @@ describe('Tool API — registerToolRpcHandlers', () => {
     expect(syncCalls).toBe(0)
   })
 
-  // ── unregister 不带 pluginId 向前兼容 ─────────────────────────
+  // ── D7 归属隔离（MF-1）─────────────────────────────────
 
-  it('unregister does not require pluginId in params', async () => {
-    // 即使 tool-api.ts 发请求时带了 pluginId，handler 只读取 toolKey
+  it('unregister requires pluginId in params (缺省 → INVALID_PLUGIN_ID，他人工具不被删)', async () => {
+    // D7 归属校验：pluginId 必填（fail-closed）——Worker 代理 createToolApi 恒携带，
+    // 缺省只可能是绕过 SDK 的裸 RPC 调用，拒绝且不删除任何注册。
     toolRegistry.set('other:tool', {
       pluginId: 'other',
       handlerId: 'other:tool',
@@ -179,6 +180,29 @@ describe('Tool API — registerToolRpcHandlers', () => {
       params: { toolKey: 'other:tool' },
     })
 
-    expect(toolRegistry.size).toBe(0)
+    const resp = extractLastResponse(port)
+    expect('error' in resp).toBeTruthy()
+    expect(String(resp.error!.code)).toBe('INVALID_PLUGIN_ID')
+    expect(toolRegistry.size).toBe(1)
+  })
+
+  it('unregister 跨插件 toolKey（B 传 A:xxx）→ no-op，A 的注册不受影响', async () => {
+    toolRegistry.set('A:xxx', {
+      pluginId: 'A',
+      handlerId: 'A:xxx',
+      schema: { name: 'xxx', description: '', parameters: {} },
+    })
+
+    await rpc.dispatch('w1', {
+      jsonrpc: '2.0',
+      id: 6,
+      method: 'plugin.tools.unregister',
+      params: { pluginId: 'B', toolKey: 'A:xxx' },
+    })
+
+    const resp = extractLastResponse(port)
+    expect('result' in resp).toBeTruthy()
+    expect(toolRegistry.has('A:xxx')).toBe(true)
+    expect(syncCalls).toBe(0)
   })
 })

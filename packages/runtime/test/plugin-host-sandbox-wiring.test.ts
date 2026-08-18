@@ -113,13 +113,14 @@ describe('PluginHost sandbox wiring', () => {
     expect(vi.mocked(childProcess.fork)).toHaveBeenCalledTimes(0)
   })
 
-  it('TC8: sandbox fork env 注入 XYZ_PLUGIN_SANDBOX_DIR（loader initialize() 依赖）', async () => {
-    await host.assignWorker('p1', 'sandbox', '/fake/plugin-dir')
+  it('TC8: sandbox fork env 注入 XYZ_PLUGIN_SANDBOX_DIR = dirname(pluginPath)（目录形态，S1-W3）', async () => {
+    await host.assignWorker('p1', 'sandbox', '/fake/plugins/p1/index.js')
     expect(vi.mocked(childProcess.fork)).toHaveBeenCalledTimes(1)
     const forkCall = vi.mocked(childProcess.fork).mock.calls[0]
     const opts = forkCall?.[2] as { env?: NodeJS.ProcessEnv } | undefined
-    // ESM loader initialize() 读此 env 做 sandbox 边界判定，缺失则 fail-closed throw
-    expect(opts?.env?.XYZ_PLUGIN_SANDBOX_DIR).toBe('/fake/plugin-dir')
+    // ESM loader initialize() 读此 env 做 sandbox 边界判定（startsWith(sandboxDir + sep)），
+    // 必须是插件根目录形态——此前原样注入入口文件路径导致边界 0% 命中（S1-W3 回归锚）
+    expect(opts?.env?.XYZ_PLUGIN_SANDBOX_DIR).toBe('/fake/plugins/p1')
     // 打包约束（AGENTS.md #12）仍生效
     expect(opts?.env?.ELECTRON_RUN_AS_NODE).toBe('1')
   })
@@ -134,15 +135,15 @@ describe('PluginHost sandbox wiring', () => {
 
   // ── MF-4：ESM loader execArgv 注入 wiring 集成测试 ───────────
   it('TC10 (MF-4): sandbox fork 第 3 参 options.execArgv 含 --import <loader 绝对路径>', async () => {
-    await host.assignWorker('p1', 'sandbox', '/fake/plugin-dir')
+    await host.assignWorker('p1', 'sandbox', '/fake/plugins/p1/index.js')
     expect(vi.mocked(childProcess.fork)).toHaveBeenCalledTimes(1)
     const forkCall = vi.mocked(childProcess.fork).mock.calls[0]
     const opts = forkCall?.[2] as { execArgv?: string[]; env?: NodeJS.ProcessEnv } | undefined
     // resolveEsmLoaderExecArgv → PluginHost({execArgv}) → PluginHostProcess.execArgv → fork options.execArgv
     // 这条安全命门在 fork 边界必须断言 execArgv === ['--import', <loader 绝对路径>]
     expect(opts?.execArgv).toEqual(['--import', NOOP_ESM_LOADER])
-    // 同步校验 env 仍注入（TC8 的回归保护，与 execArgv 共同构成 sandbox fork 完整 wiring）
-    expect(opts?.env?.XYZ_PLUGIN_SANDBOX_DIR).toBe('/fake/plugin-dir')
+    // 同步校验 env 仍注入 dirname 目录形态（TC8 的回归保护，与 execArgv 共同构成 sandbox fork 完整 wiring）
+    expect(opts?.env?.XYZ_PLUGIN_SANDBOX_DIR).toBe('/fake/plugins/p1')
   })
 
   it('TC11 (MF-4+MF-1): loader 缺失（execArgv 无 --import）时 sandbox fork fail-closed', async () => {

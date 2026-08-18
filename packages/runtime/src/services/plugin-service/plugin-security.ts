@@ -19,7 +19,10 @@
  *   2. ESM loader（plugin-esm-loader.cjs）经 execArgv --import 注入子进程，resolve hook
  *      封堵 node:* 内置模块黑名单 + 越界路径 import（重构 3）
  *   3. XYZ_PLUGIN_SANDBOX_DIR env 注入 fork 子进程（loader initialize() 读此 env 做边界
- *      判定，缺失 fail-closed throw）—— sandboxDir 之前恒空导致边界判定不生效
+ *      判定，缺失 fail-closed throw）—— 之前宿主注入的是入口文件路径（<dir>/index.js），
+ *      loader 的 filePath.startsWith(sandboxDir + path.sep) 判定要求模块路径以
+ *      …/index.js/ 开头，恒 false，边界判定形同虚设（修正后注入 dirname(pluginPath)
+ *      目录形态，判界才生效）
  *   4. postbuild-validate.sh 校验 plugin-esm-loader.cjs 产物存在（macOS + Windows）
  * 任一环节回退时须同步把本常量改回 false（external 插件在 sandbox 未就绪时的危险面
  * 不应暴露给任何调用方）。

@@ -104,7 +104,13 @@ function createMockHost(
         if (m.type === 'activate' || m.type === 'deactivate') {
           queueMicrotask(() => {
             activator.handleWorkerReply({
-              type: replyType,
+              // 回复类型必须与消息类型对应：真实 plugin-bootstrap 对 activate 回
+              // activated、对 deactivate 回 deactivated（plugin-bootstrap.ts 的
+              // post 调用）。旧 mock 对 deactivate 也回固定的 activated，单键匹配
+              // 时代被掩盖；pendingReplies 复合键（D6）按 (pluginId, replyType)
+              // 精确匹配后，deactivate 会永远等不到 deactivated 而假超时。
+              // replyType 参数保留为 activate 回复的注入位（本文件全部用例传默认值）。
+              type: m.type === 'activate' ? replyType : 'deactivated',
               pluginId: m.pluginId ?? pluginId,
             } as { type: 'activated' | 'deactivated'; pluginId: string })
           })

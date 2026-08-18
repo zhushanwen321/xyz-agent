@@ -233,6 +233,9 @@ describe('PluginService: registerSendMessageHook', () => {
       listPersistedSessions: vi.fn().mockReturnValue([]),
       getSummary: vi.fn().mockReturnValue(undefined),
       sendMessage: vi.fn(),
+      // S3-W2：session 生命周期事件接线（registerSendMessageHook 内挂）
+      setOnSessionCreated: vi.fn(),
+      setOnSessionDestroyed: vi.fn(),
     }
 
     return { registry, broker, sessionService, setSendMessageHook }

@@ -1,8 +1,10 @@
 // ws-client 不变量测试（D2：AC7 双交付之可执行骨架 → P1 已激活 ①⑤）。
 //
-// 激活范围（F4）：① 连接状态机 3 条 + ⑤ 重连退避 2 条为真实断言（fake 注入 + vi.useFakeTimers）。
+// 激活范围（F4 → S-33 扩）：① 连接状态机 3 条 + ② auth 握手 3 条 + ⑤ 重连退避 2 条为真实断言
+//   （fake 注入 + vi.useFakeTimers）。② 原为 C4 deferred（「auth 能力迁入 core 时激活」），
+//   S-33 复审确认 auth 握手已落地 core ws-client（connect(url, token) 双参），defer 理由失效。
 // 保持 todo 范围（C4 deferred）：
-//   ② auth 握手、③ close code 分流、④ seq 回放 —— 属后续迁移 wave（auth/seq/RTT 能力迁入 core 时激活）。
+//   ③ close code 分流、④ seq 回放 reconcile 后半段 —— close code / RTT 能力未迁入 core，激活待后续 wave。
 //   ⑤ visibilitychange 立即重连 —— 归 coordination/connection-lifecycle（架构文档 §5.2），
 //      headless core 无 document，本 wave 不实现。
 //
@@ -100,10 +102,87 @@ describe('ws-client 不变量 ① 连接状态机', () => {
 })
 
 describe('ws-client 不变量 ② auth 握手', () => {
-  // [C4 deferred] auth 握手属后续迁移 wave（auth 能力迁入 core 时激活，本 wave 不转断言）
-  it.todo('auth.ok 后触发 session 通道订阅 + flush pending 队列')
-  it.todo('auth.reject 后触发降级（不进入消息处理，标记连接不可用）')
-  it.todo('auth 消息在 open 前不发（连接就绪后才握手）')
+  // S-33 复审激活：auth 握手已落地 core ws-client（onopen 首条 auth / auth.result ok 才
+  // markConnected / reject 走 close 重连链），C4 defer 理由失效。原 todo 前提修正：
+  // core ws-client 层无「订阅触发 + pending flush」——resubscribeAll / pending.rejectAll
+  // 归 use-connection 编排层（connected 状态监听驱动），故按 ws-client 实际行为断言等价语义
+  // （connected 置位 + 握手期业务消息丢弃）。
+  beforeEach(() => {
+    vi.useFakeTimers()
+    installTestPlatform()
+    disconnect() // 重置模块级单例状态（上轮残留连接/定时器）
+  })
+  afterEach(() => {
+    disconnect()
+    // currentToken 是模块级残留（connect(url, token) 设置，disconnect 不清）：经 mock url
+    // 复位为 null（connect 对 mock: 前缀强制清空），避免本 describe 的 token 改变后续
+    // describe（④ seq / ⑤ 退避）connect('ws://test') 的无 token 行为
+    connect('mock://reset-token')
+    disconnect()
+    vi.useRealTimers()
+  })
+
+  it('auth.result ok=true 后进入 connected；握手期业务消息被丢弃（不进消息处理）', () => {
+    const handler = vi.fn()
+    const off = onMessage(handler)
+
+    connect('ws://test', 'tok-1')
+    const f = latestFake()
+    f.triggerOpen()
+    // open 后首条 send 是 auth 握手消息
+    expect(JSON.parse(f.sent[0])).toEqual({ type: 'auth', payload: { token: 'tok-1' } })
+    // 握手未完成：不置 connected
+    expect(getState().value).toBe('connecting')
+
+    // 握手期业务消息（合法 ServerMessage 形状）不进入消息处理
+    f.triggerMessage(JSON.stringify({ type: 'message.chunk', seq: 1, payload: { sessionId: 's1' } }))
+    expect(handler).not.toHaveBeenCalled()
+
+    // auth.ok → markConnected
+    f.triggerMessage(JSON.stringify({ type: 'auth.result', payload: { ok: true } }))
+    expect(getState().value).toBe('connected')
+
+    // 对照：握手完成后同一形状消息正常进入消息处理（丢弃仅发生在握手期）
+    f.triggerMessage(JSON.stringify({ type: 'message.chunk', seq: 2, payload: { sessionId: 's1' } }))
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'message.chunk' }))
+    off()
+  })
+
+  it('auth.result ok=false（reject）后不进入 connected，close 走重连链', () => {
+    const handler = vi.fn()
+    const off = onMessage(handler)
+
+    connect('ws://test', 'tok-2')
+    const f = latestFake()
+    f.triggerOpen()
+    expect(getState().value).toBe('connecting')
+
+    f.triggerMessage(JSON.stringify({ type: 'auth.result', payload: { ok: false } }))
+    // 拒绝：不 markConnected（降级 = 主动断开走重连链，新 token 由上层 connect(url, newToken) 刷新）
+    expect(getState().value).toBe('connecting')
+    expect(f.closeCalls).toBe(1)
+
+    // 拒绝后仍处握手期：业务消息不进入消息处理
+    f.triggerMessage(JSON.stringify({ type: 'message.chunk', seq: 1, payload: { sessionId: 's1' } }))
+    expect(handler).not.toHaveBeenCalled()
+
+    // close 完成（onclose 到达）→ 进入正常重连退避链
+    f.triggerClose()
+    expect(getState().value).toBe('reconnecting')
+    off()
+  })
+
+  it('auth 消息在 open 前不发（open 后首条 send 即 auth，含 payload.token 结构）', () => {
+    connect('ws://test', 'tok-3')
+    const f = latestFake()
+    // open 前（CONNECTING）：不发送任何消息
+    expect(f.sent).toHaveLength(0)
+
+    f.triggerOpen()
+    expect(f.sent).toHaveLength(1)
+    expect(JSON.parse(f.sent[0])).toEqual({ type: 'auth', payload: { token: 'tok-3' } })
+  })
 })
 
 describe('ws-client 不变量 ③ close code 分流', () => {

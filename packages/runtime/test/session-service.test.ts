@@ -26,6 +26,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join, relative } from 'node:path'
 
 import type { IGitInfoReader } from '../src/services/ports/git-info.js'
+import { sessionMetaCache } from '../src/services/session/session-meta-cache.js'
 
 import type {
   IMessageBroker,
@@ -191,6 +192,7 @@ function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
 /** 重置跨用例共享状态。 */
 function resetMockState(): void {
   mockScannedSessions.length = 0
+  sessionMetaCache.clear()
   mocks.defaultModel.value = { provider: 'test-provider', modelId: 'test-model' }
   mocks.convertPiHistoryMock.mockImplementation((raw: unknown) => raw)
   mocks.rebuildHistoryFromEntriesMock.mockImplementation((entries: unknown[]) => ({ messages: entries as unknown[], clientUuidMap: new Map<string, string>() }))
@@ -986,6 +988,33 @@ describe('SessionService · Facade', () => {
 
     it('U-setThinking-2b：setThinkingLevelCache 对不存在的 session 不抛错', () => {
       expect(() => setup.service.setThinkingLevelCache('ghost', 'high')).not.toThrow()
+    })
+  })
+
+  describe('setLabelCache 回写缓存（session_info_changed 打通用例，MF-3 ③）', () => {
+    // 链路：pi session_info_changed → interpreter onSessionRenamed → setLabelCache →
+    // 内存 session.label（唯一数据源，commit 9aec7748a toSummary 直读 session.label）→
+    // getSummary / listPersistedSessions（broadcastSessionList 数据源）。缺刻痕时 runtime
+    // 内存 label 过期会覆盖前端 rename（本批修复的核心 bug）。
+    it('U-setLabel-1：setLabelCache 写入后 getSummary().label 读回新值', async () => {
+      const { id } = await setup.seedSession({ label: 'old-label' })
+      expect(setup.service.getSummary(id)?.label).toBe('old-label')
+      // 模拟 EventInterpreter onSessionRenamed 回调（pi auto-rename）
+      setup.service.setLabelCache(id, 'renamed-by-pi')
+      expect(setup.service.getSummary(id)?.label).toBe('renamed-by-pi')
+    })
+
+    it('U-setLabel-2：setLabelCache 后 listPersistedSessions()（broadcastSessionList 数据源）summary.label 为新值', async () => {
+      const cwd = tmpdir()
+      const { id } = await setup.seedSession({ cwd, label: 'old-label' })
+      setup.service.setLabelCache(id, 'renamed-by-pi')
+      const groups = setup.service.listPersistedSessions()
+      const summary = groups.flatMap(g => g.sessions).find(s => s.id === id)
+      expect(summary?.label).toBe('renamed-by-pi')
+    })
+
+    it('U-setLabel-3：setLabelCache 对不存在的 session 不抛错（迟到事件的迟到回调）', () => {
+      expect(() => setup.service.setLabelCache('ghost', 'x')).not.toThrow()
     })
   })
 

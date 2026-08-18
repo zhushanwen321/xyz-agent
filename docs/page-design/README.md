@@ -15,15 +15,12 @@ page-design/
 ├── v6-master-spec.md                  ★ v6 单一权威源（决策与范式，整合自 28 份过程文档 + demo）
 ├── v6-design.md                       v6 五原则原始定稿（被 master-spec 取代为实现细节参考）
 ├── v6-summary.md                      v6 设计稿总览（索引与摘要）
-├── zcode-ui-spec.md                   ZCode 风格 Chat UI/UX 规格（布局规则）
 ├── ui-design-principles.md            UI/UX 设计方法论（认知负荷/格式塔/WCAG，色相无关）
 ├── pi-launch-presets.md               pi 启动预设设计（被 packages/ 5 处源文件引用）
 ├── 2026-08-02-taiji-v3-color-decision.md  太极 V3 纯灰配色决策记录
 ├── v6-spec-tokens.html                v6 token 集 + 标注规范
 ├── v6-spec-*.html                     v6 各视图视觉稿（15 个文件，部分已滞后于 master-spec）
 ├── v6-spec-base.css                   对话流共享 CSS
-├── v6-demo.html                       综合交互 demo
-├── v6-drawer-tabs-demo.html           drawer tabs 交互原型
 ├── v6-plugin-max-demo.html            plugin 最大化交互原型
 ├── markdown-filepath-redesign/        Markdown 文件路径识别重构设计（已落地）
 ├── logo/                              品牌 logo 素材与设计稿
@@ -53,6 +50,11 @@ v6-tokens.css          ← token 值真值固化（自 .tmp/v6 demo，随仓库�
 ## archive/ 目录说明
 
 archive/ 是历史设计稿归档区。pre-v3 探索稿（Warm & Soft 时期 demo HTML、过程审查日志等）已于 2026-08-02 清理，完整演变叙事见 [design-evolution.md](../design-evolution.md)。
+
+### archive/ 根 — 早期探索稿与过期规格
+
+- `v6-demo.html` / `v6-drawer-tabs-demo.html` — 早期 HTML 探索稿（已被 `.tmp/v6/` Vue demo 取代，master-spec §附录已降级）
+- `zcode-ui-spec.md` — v3 冷蓝期 Chat UI/UX 布局规格（色值已过期，布局规则仅历史参考）
 
 ### archive/v3/ — 能力设计 spec（活跃，非死稿）
 

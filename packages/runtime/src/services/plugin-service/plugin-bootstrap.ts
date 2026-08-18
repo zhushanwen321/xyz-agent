@@ -11,6 +11,7 @@
 
 import { parentPort } from 'node:worker_threads'
 import { Module } from 'node:module'
+import { dirname as pathDirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type {
   HostToWorkerMessage,
@@ -115,9 +116,11 @@ export async function handleMessage(msg: HostToWorkerMessage): Promise<void> {
   switch (msg.type) {
     case 'load': {
       try {
-        // sandbox 模式下初始化 require 拦截
+        // sandbox 模式下初始化 require 拦截（S1-W3：msg.pluginPath 是入口文件路径，
+        // CJS 拦截器的边界判定需要插件根目录——与 fork env 注入处（plugin-host-process）
+        // 同款 dirname 修正，两处各自在「宿主传入点→边界判定消费点」的转换处完成）
         if (msg.trustLevel === 'sandbox') {
-          initSandbox(msg.pluginPath)
+          initSandbox(pathDirname(msg.pluginPath))
         }
 
         const moduleUrl = pathToFileURL(msg.pluginPath).href
@@ -281,13 +284,27 @@ export function createAgentAPI(pluginId: string): Phase2AgentAPI {
     },
     notify: createNotifyApi(rpcClient, pluginId),
     sessions: createSessionApi(rpcClient, pluginId),
+    // S3-W2 events 显式降级：插件间事件总线从未实现（plugin.event.* 通知全仓无
+    // 生产方），SDK 已从 @stable 移到 @experimental。调用即抛 NOT_IMPLEMENTED
+    //（带 issue 指引）——显式失败优于静默失效（G4：SDK 允诺的能力全部真实可用或显式报错）。
+    // 需要订阅 session 生命周期的插件请用 api.sessions.onDidCreateSession（已实现）。
     events: {
-      on: (event: string, handler: (data: unknown) => void): Disposable => {
-        const unsubscribe = rpcClient.onNotification(`plugin.event.${event}`, handler)
-        return { dispose: unsubscribe }
+      on: (event: string, _handler: (data: unknown) => void): Disposable => {
+        throw errorWithCode(
+          `NOT_IMPLEMENTED: api.events.on('${event}') — plugin-to-plugin event bus is not implemented. ` +
+          'This API is experimental (removed from the stable SDK surface). ' +
+          'Use specific APIs (e.g. api.sessions.onDidCreateSession) instead. ' +
+          'If you need the bus, open an issue at https://github.com/zhushanwen321/xyz-agent/issues so a real consumer drives the design.',
+          PluginRpcErrorCodes.METHOD_NOT_FOUND,
+        )
       },
-      emit: (event: string, data: unknown): void => {
-        rpcClient.notify(`plugin.event.${event}`, { pluginId, data })
+      emit: (event: string, _data: unknown): void => {
+        throw errorWithCode(
+          `NOT_IMPLEMENTED: api.events.emit('${event}', ...) — plugin-to-plugin event bus is not implemented. ` +
+          'This API is experimental (removed from the stable SDK surface). ' +
+          'Open an issue at https://github.com/zhushanwen321/xyz-agent/issues if you need it.',
+          PluginRpcErrorCodes.METHOD_NOT_FOUND,
+        )
       },
     },
     tools: createToolApi(rpcClient, pluginId),
@@ -342,11 +359,23 @@ export function initSandbox(pluginDir: string): void {
   // 生产 CJS bundle 中 esbuild 将该 import 编译为 require('node:module') 解构，等价。
   const ModuleApi = Module as ModuleWithResolveFilename
   const _originalResolveFilename = ModuleApi._resolveFilename
+  // S-36（spec §5 待验证检查点）：CJS 混用路径的真实存在性未证实——sandbox 插件
+  // 加载主通路走 ESM loader 边界，尚未观察到插件代码走 CJS require。保留拦截器但
+  // 加一次性监控日志作观察信号：首次有 CJS require 经过本 patch（无论 interceptor
+  // 放行还是拒绝）即输出，之后静默。观察期至 ~2026-11，无命中再删除拦截器（减法）。
+  // fork 子进程的 console 输出经 stdio 管道进 runtime 日志，可见性足够。
+  let interceptionLogged = false
   ModuleApi._resolveFilename = function (
     request: string,
     ...args: unknown[]
   ): string {
     const resolved = _originalResolveFilename.call(this, request, ...args) as string
+    if (!interceptionLogged) {
+      interceptionLogged = true
+      console.log(
+        `[plugin-sandbox] CJS require interception active for plugin dir: ${pluginDir} — spec gate S1-W3 usage monitor (observation window ends ~2026-11)`,
+      )
+    }
     interceptor(request, resolved)
     return resolved
   }

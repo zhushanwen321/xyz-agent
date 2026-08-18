@@ -12,10 +12,10 @@ import type { StatusBarItemOptions, IPluginServiceDeps } from './plugin-types.js
 import type { SessionDataStore } from './session-data-store.js'
 import { registerToolRpcHandlers } from './tool-api.js'
 import { registerHookRpcHandlers } from './hook-api.js'
-import { registerSessionRpcHandlers, ActiveSessionResolver } from './api/session-api.js'
+import { registerSessionRpcHandlers, ActiveSessionResolver, sessionInfoFromSummary, type SessionEventDispatch } from './api/session-api.js'
 import { registerConfigRpcHandlers, toConfigKey, fromConfigKey, isConfigKey } from './api/config-api.js'
 import { registerStorageRpcHandlers, storageHandlersFrom } from './api/storage-api.js'
-import { registerNotifyRpcHandler, notifyHandlersFrom, broadcastPluginNotification } from './api/notify-api.js'
+import { registerNotifyRpcHandler, notifyHandlersFrom, broadcastPluginNotification, NotifyRateLimiter } from './api/notify-api.js'
 import { registerSessionDataRpcHandlers } from './api/session-data-api.js'
 import { registerUiRpcHandlers } from './api/ui-api.js'
 import { registerAgentRpcHandlers } from './api/agent-api.js'
@@ -59,10 +59,14 @@ export interface RpcSetupContext {
   sessionDataStore: SessionDataStore
   /** 活跃 session 解析器（P6：替代模块级全局 _activeSessionCache） */
   activeSessionResolver: ActiveSessionResolver
-  /** 命令注册表（commandId→CommandRegistration），PluginService 实例字段注入 */
+  /** 命令注册表（复合键 `pluginId:commandId` → CommandRegistration），PluginService 实例字段注入 */
   commandRegistry: Map<string, CommandRegistration>
+  /** session 事件注册表（S3-W2）：registerCreate/registerDestroy 的定向投递通道 */
+  sessionEvents: SessionEventDispatch
   /** 挂载点集合（renderer 经 plugin.mountPoints.sync 上报的副本，AC10） */
   mountPoints: string[]
+  /** Worker invoke.result 回传的 pending resolve/reject（S3-W1，PluginService 私有）；sourceWorkerId 为回传来源通道（D2 回传归属校验） */
+  deliverInvokeResult: (handlerId: string, payload: { result?: unknown; error?: unknown }, sourceWorkerId: string) => void
   /**
    * views.update 的广播出口（wave:perf-w08，02 文档 D1-1）：PluginService 实现的
    * bus 定向发布（transient）/ 全局广播兜底分流，见 publishViewUpdate 实现。
@@ -84,6 +88,10 @@ interface PluginServiceLike {
 export function registerAllRpcMethods(ctx: RpcSetupContext): void {
   const { rpcServer, storage, toolRegistry, hookRegistry, statusBarItems, deps } = ctx
 
+  // S3-W4：每插件 notify 令牌桶——plugin.notify 与 plugin.ui.notify 两入口共享
+  // 同一实例（同一插件的配额跨入口合并计费），默认 20 条/s（shared SSOT）。
+  const notifyLimiter = new NotifyRateLimiter()
+
   // Tool RPC handlers
   registerToolRpcHandlers(rpcServer, {
     toolRegistry,
@@ -100,37 +108,30 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
   registerStorageRpcHandlers(rpcServer, storageHandlersFrom(storage))
 
   // Notify RPC handler — P6 收口到 api/notify-api.ts（fire-and-forget via broadcastFn）
-  registerNotifyRpcHandler(rpcServer, notifyHandlersFrom(deps.broadcastFn))
+  registerNotifyRpcHandler(rpcServer, { ...notifyHandlersFrom(deps.broadcastFn), limiter: notifyLimiter })
 
   // ── Sessions RPC handlers ────────────────────────────────
   registerSessionRpcHandlers(rpcServer, {
     listSessions: () => {
       if (!deps.sessionService) return []
       const groups = deps.sessionService.listPersistedSessions()
-      return groups.flatMap(g => g.sessions.map(s => ({
-        id: s.id,
-        label: s.label,
-        cwd: s.cwd,
-        status: s.status,
-        createdAt: 0,
-        lastActiveAt: s.lastActiveAt,
-      })))
+      return groups.flatMap(g => g.sessions.map(sessionInfoFromSummary))
     },
     getSession: (id: string) => {
       if (!deps.sessionService) return undefined
       const s = deps.sessionService.getSummary(id)
-      if (!s) return undefined
-      return { id: s.id, label: s.label, cwd: s.cwd, status: s.status, createdAt: 0, lastActiveAt: s.lastActiveAt }
+      return s ? sessionInfoFromSummary(s) : undefined
     },
     getActiveSession: () => {
       const active = ctx.activeSessionResolver.resolve()
-      if (!active) return undefined
-      return { id: active.id, label: active.label, cwd: active.cwd, status: active.status, createdAt: 0, lastActiveAt: active.lastActiveAt }
+      return active ? sessionInfoFromSummary(active) : undefined
     },
     sendMessage: async (sessionId: string | undefined, _role: string, content: string) => {
       if (!deps.sessionService || !sessionId) return
       await deps.sessionService.sendMessage(sessionId, content)
     },
+    // S3-W2：session 生命周期事件注册表（registerCreate/registerDestroy 方法在此注册）
+    sessionEvents: ctx.sessionEvents,
   })
 
   // ── Config RPC handlers ──────────────────────────────────
@@ -163,6 +164,8 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
 
   // ── UI RPC handlers ─────────────────────────────────────
   registerUiRpcHandlers(rpcServer, {
+    // S3-W4：与 plugin.notify 共享同一令牌桶（limiter 上注入，见 registerAllRpcMethods 顶部）
+    limiter: notifyLimiter,
     showSelect: (title: string, options: string[], pluginId: string) =>
       ctx.handleUiRequest('select', { title, options }, pluginId) as Promise<string | undefined>,
     showConfirm: (title: string, message: string, pluginId: string) =>
@@ -243,9 +246,10 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
   })
 
   // ── Commands RPC handlers ────────────────────────────────
-  // 主线程侧命令注册表（register 建表 + 下行广播 plugin:commandRegistered）。
-  // worker 侧 invoke 监听在 createCommandsApi（plugin-bootstrap），主线程发送段
-  // （查 commandId→pluginId 映射 → 向 worker 发 plugin.commands.invoke）归后续 wave。
+  // 主线程侧命令注册表（register 建复合键 `pluginId:commandId` + 下行广播
+  // plugin:commandRegistered）。Worker 侧 invoke 监听在 createCommandsApi，
+  // 主线程发送段（executeCommand 查表 → rpcServer.notify 发 plugin.commands.invoke
+  // → invoke.result 回传 resolve pending）在 PluginService.executeCommand（S3-W1）。
   registerCommandRpcHandlers(rpcServer, {
     registry: ctx.commandRegistry,
     broadcastRegistered: (reg) => {
@@ -255,6 +259,8 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
         console.warn('[plugin-rpc-setup] commands.register broadcast dropped: no broadcastFn configured')
       }
     },
+    deliverInvokeResult: (handlerId, payload, sourceWorkerId) =>
+      ctx.deliverInvokeResult(handlerId, payload, sourceWorkerId),
   })
 
   // ── Views RPC handlers ───────────────────────────────────

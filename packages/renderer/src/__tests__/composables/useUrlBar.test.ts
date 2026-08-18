@@ -13,10 +13,10 @@
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/useUrlBar.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { ref } from 'vue'
 import { useUrlBar } from '@/composables/features/url-bar/useUrlBar'
-import { useToast } from '@/composables/useToast'
+import { useToast, setToastLimiter } from '@/composables/useToast'
 
 describe('useUrlBar', () => {
   let displayUrl: ReturnType<typeof ref<string>>
@@ -111,6 +111,13 @@ describe('useUrlBar — 危险协议拦截（PR #100 S2）', () => {
     result = useUrlBar(displayUrl, navigateFn)
     // 进入编辑态：与真实使用路径一致（聚焦后输入）
     result.isEditingUrl.value = true
+    // 禁用限流：8 个 dangerous scheme 用例共享 toast 状态，需要每个都能创建 toast
+    setToastLimiter(() => false)
+  })
+
+  // 恢复默认限流
+  afterEach(() => {
+    setToastLimiter(null)
   })
 
   // 危险 scheme 表格：[scheme, sample-url]

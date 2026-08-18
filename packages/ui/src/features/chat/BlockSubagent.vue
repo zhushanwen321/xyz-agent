@@ -20,7 +20,7 @@
         class="size-3.5 shrink-0 text-neutral-ico hover:text-neutral-ico-hover"
         :class="isFailed ? 'hover:text-warn' : ''"
       />
-      <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">subagent</span>
+      <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold tracking-[0.08em] text-neutral-fg">Subagent</span>
       <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ subagentAgent }}</span>
       <template v-if="subagentSlug">
         <span class="text-neutral-faint">·</span>
@@ -63,10 +63,18 @@ const inputObj = computed<Record<string, unknown>>(() => {
   return input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
 })
 
-/** agent 名（顶层 input.agent，默认 general-purpose）。 */
+/** agent 名（顶层 input.agent，默认 general-purpose）。
+ *  完整路径仅显示最后一段（去掉目录和 .md 后缀），如 `~/.agents/skills/explorer/agent.md` → `explorer`。 */
+function extractAgentBasename(raw: string): string {
+  const trimmed = raw.trim()
+  if (!trimmed) return 'general-purpose'
+  const lastSlash = trimmed.lastIndexOf('/')
+  const base = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed
+  return base.replace(/\.md$/i, '') || 'general-purpose'
+}
 const subagentAgent = computed(() => {
   const agent = inputObj.value.agent
-  return typeof agent === 'string' && agent.trim() ? agent : 'general-purpose'
+  return typeof agent === 'string' ? extractAgentBasename(agent) : 'general-purpose'
 })
 
 /** slug（顶层 input.slug，短标签，≤35 字符）。 */

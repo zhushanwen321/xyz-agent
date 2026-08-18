@@ -23,8 +23,10 @@ import type {
  * 不出现在前端↔runtime 的共享协议中。
  *
  * 分层标注（IF2）：
- * - @stable — 稳定契约面（Phase1AgentAPI 核心面 storage/notify/sessions/events、
+ * - @stable — 稳定契约面（Phase1AgentAPI 核心面 storage/notify/sessions、
  *   PermissionConstants、PluginRpcErrorCodes、Disposable、SessionInfo、PluginStateStorage）
+ * - @experimental — 已显式降级的 API（events 插件间事件总线：未实现，调用即抛
+ *   NOT_IMPLEMENTED；已移出稳定面）
  * - @proposed — 演进中 API（Phase2AgentAPI 扩展面 tools/hooks/config/sessionData/
  *   ui/agent/workspace、ToolRegistration、HookEntry、StatusBarItemOptions 等）
  * - @internal — runtime 内部塑形对象（WorkerHandle、PluginContext、Bridge* 等，
@@ -104,10 +106,11 @@ export interface PluginModule {
 // 待 tool/hook 域各自稳定、API 表面收敛后再独立。
 
 /**
- * @stable — Phase 1 最小集 AgentAPI 核心面（storage/notify/sessions/events）。
+ * @stable — Phase 1 最小集 AgentAPI 核心面（storage/notify/sessions）。
  *
  * 此核心面是插件可依赖的稳定契约：storage（全局/工作区存储）、notify（通知）、
- * sessions（会话查询与消息发送）、events（事件订阅/发布）。
+ * sessions（会话查询、消息发送与生命周期事件订阅）。events 面已降级为
+ * @experimental（见下方 events 字段注释）。
  */
 export interface Phase1AgentAPI {
   readonly storage: {
@@ -127,6 +130,12 @@ export interface Phase1AgentAPI {
     onDidCreateSession(handler: (session: SessionInfo) => void): Disposable
     onDidDestroySession(handler: (session: SessionInfo) => void): Disposable
   }
+  /**
+   * @experimental — 插件间事件总线**未实现**（plugin.event.* 通知全仓无生产方，
+   * 曾是 SDK 稳定面上的死链路，2026-08 显式降级）。调用 events.on/emit 即抛
+   * NOT_IMPLEMENTED（带 issue 指引）。等出现真实消费方再设计实现；订阅 session
+   * 生命周期请用 api.sessions.onDidCreateSession / onDidDestroySession（已实现）。
+   */
   readonly events: {
     on(event: string, handler: (data: unknown) => void): Disposable
     emit(event: string, data: unknown): void

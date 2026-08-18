@@ -18,7 +18,7 @@ import { PluginRpcServer } from '../src/services/plugin-service/plugin-rpc-serve
 import type { WorkerPort } from '../src/services/plugin-service/plugin-rpc-server.js'
 import type { PluginRpcClient } from '../src/services/plugin-service/plugin-rpc-client.js'
 
-import { registerSessionRpcHandlers, createSessionApi } from '../src/services/plugin-service/api/session-api.js'
+import { registerSessionRpcHandlers, createSessionApi, SessionEventDispatch } from '../src/services/plugin-service/api/session-api.js'
 import type { SessionHandlers } from '../src/services/plugin-service/api/session-api.js'
 import { registerConfigRpcHandlers, createConfigApi } from '../src/services/plugin-service/api/config-api.js'
 import type { ConfigHandlers } from '../src/services/plugin-service/api/config-api.js'
@@ -108,6 +108,8 @@ describe('Session API — registerSessionRpcHandlers', () => {
       getSession: (id: string) => mockSessions.find(s => s.id === id),
       getActiveSession: () => mockSessions.find(s => s.status === 'active'),
       sendMessage: async (_sessionId: string | undefined, _role: string, _content: string) => {},
+      // S3-W2：session 事件注册表（本测试不触事件投递，空表即可）
+      sessionEvents: new SessionEventDispatch(rpc),
     })
 
     port = createMockPort()

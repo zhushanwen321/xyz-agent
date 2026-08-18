@@ -189,6 +189,8 @@ export type PiTranslatedEvent =
   | { kind: 'extension-ui'; requestId: string; sessionId: string; method: string; payload: Record<string, unknown> }
   /** thinking_level_changed —— interpreter 回写 session 缓存（与 session.thinkingLevelSet WS 帧成对）。 */
   | { kind: 'thinking-level'; level: string | undefined }
+  /** session_info_changed —— interpreter 回写 session label 缓存（与 session.renamed WS 帧成对）。 */
+  | { kind: 'session-renamed'; name: string | undefined }
   /** 触发 plugin hook（agent_start / tool_execution_* / agent_end 等观测事件）—— interpreter 调 pluginService.executeHooks。 */
   | { kind: 'hook'; eventType: string; data: Record<string, unknown> }
   /**

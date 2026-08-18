@@ -13,6 +13,7 @@ import {
   mockPiPathsModule,
   createMockTrashModule,
 } from './helpers/service-mocks.js'
+import { startOnFreePort } from './helpers/free-port.js'
 
 /**
  * Boundary & error path tests for RuntimeServer message.send with subagent.
@@ -95,20 +96,8 @@ import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { ModelApiDiscoverer } from '../src/infra/model-api-discoverer.js'
 import { ModelService } from '../src/services/model-service.js'
 
-function getFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-  const server = require('node:http').createServer()
-  server.listen(0, () => {
-    const addr = server.address()
-    if (addr && typeof addr === 'object') {
-    const port = addr.port
-    server.close(() => resolve(port))
-    } else {
-    reject(new Error('Failed to get port'))
-    }
-  })
-  })
-}
+/** S1-W1：真实 WS 测试统一 token（ConnectionManager auth 握手，见 ws-listen-hardening.test.ts） */
+const TEST_WS_TOKEN = 'test-ws-token-subagent-boundary'
 
 describe('RuntimeServer message.send subagent — boundary & error paths', () => {
   let server: RuntimeServer
@@ -118,15 +107,19 @@ describe('RuntimeServer message.send subagent — boundary & error paths', () =>
   beforeEach(async () => {
   sendMessageMock.mockClear()
   sendSubagentMessageMock.mockClear()
-  port = await getFreePort()
-  server = new RuntimeServer(port, '/tmp/test-project')
-  server.setServices(
-    new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, { readGitInfo: () => undefined, pruneStaleCache: () => {} } as never, {} as never),
-    new ConfigService('/tmp', new PiConfigStore()),
-    new ModelService(new ModelApiDiscoverer()),
-    {} as never,
-  )
-  await server.start()
+  // EADDRINUSE 韧性：端口在 RuntimeServer 构造函数绑定，重试需整体重建（startOnFreePort 语义）
+  const started = await startOnFreePort((p) => {
+    const s = new RuntimeServer(p, '/tmp/test-project', TEST_WS_TOKEN)
+    s.setServices(
+      new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, { readGitInfo: () => undefined, pruneStaleCache: () => {} } as never, {} as never),
+      new ConfigService('/tmp', new PiConfigStore()),
+      new ModelService(new ModelApiDiscoverer()),
+      {} as never,
+    )
+    return s
+  })
+  server = started.instance
+  port = started.port
   })
 
   afterEach(async () => {
@@ -140,7 +133,14 @@ describe('RuntimeServer message.send subagent — boundary & error paths', () =>
   return new Promise((resolve, reject) => {
     ws = new WebSocket(`ws://localhost:${port}`)
     ws.on('open', () => {
-    setTimeout(() => resolve(ws), 100)
+    // S1-W1：首条消息 auth，等 auth.result ok 后连接才可用
+    ws.send(JSON.stringify({ type: 'auth', payload: { token: TEST_WS_TOKEN } }))
+    })
+    ws.on('message', (data) => {
+    const msg = JSON.parse(String(data))
+    if (msg.type === 'auth.result' && msg.payload?.ok === true) {
+      setTimeout(() => resolve(ws), 100)
+    }
     })
     ws.on('error', reject)
   })

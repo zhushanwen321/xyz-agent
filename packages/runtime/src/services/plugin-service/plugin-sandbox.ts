@@ -8,50 +8,76 @@
  * 同时替换 process.env 为空 Proxy，防止环境变量泄露。
  */
 
+import { realpathSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { errorWithCode } from '../../utils/errors.js'
+// 黑名单 SSOT（S1-W3）：default import 取 module.exports 整体（named import 在
+// vitest/esbuild/node 的 CJS interop 下行为不一，属性访问在所有实现下安全）。
+// 修改黑名单只改 plugin-blocked-builtins.cjs（与 plugin-esm-loader.cjs 共享同一份）。
+import blockedBuiltinsModule from './plugin-blocked-builtins.cjs'
 
-/** 被阻止的 Node.js 内置模块列表 */
-export const BLOCKED_BUILTINS: readonly string[] = [
-  'fs',
-  'fs/promises',
-  'child_process',
-  'cluster',
-  'crypto',
-  'dgram',
-  'dns',
-  'http',
-  'https',
-  'net',
-  'os',
-  'readline',
-  'tls',
-  'v8',
-  'vm',
-  'worker_threads',
-  // module：node:module 暴露 createRequire，可构造绕过本拦截器的 require（M6a-01）
-  'module',
-]
+/** 被阻止的 Node.js 内置模块列表（单一来源 plugin-blocked-builtins.cjs 的 re-export） */
+export const BLOCKED_BUILTINS: readonly string[] = blockedBuiltinsModule.BLOCKED_BUILTINS
+
+/**
+ * require 请求的解析结果是否在插件目录内。
+ *
+ * CJS `_resolveFilename` 的返回值形态：
+ * - 内置模块：原样返回（'path' / 'node:path'，非绝对路径）→ 不适用本判定（调用方分流）
+ * - 文件类请求：绝对路径，或（file: 前缀场景）file:// URL——先转路径再判界
+ */
+function isResolvedInsidePluginDir(resolvedPath: string, normalizedPluginDir: string): boolean {
+  let filePath = resolvedPath
+  if (filePath.startsWith('file:')) {
+    try {
+      filePath = fileURLToPath(filePath)
+    } catch {
+      return false
+    }
+  }
+  if (!filePath.startsWith('/')) return false
+  return filePath.startsWith(normalizedPluginDir)
+}
 
 /**
  * 创建 require 拦截函数。
  *
  * 拦截规则：
- * - 相对路径 (./ ../): 检查解析后的绝对路径是否在 pluginDir 内
- * - npm 包名: 检查是否在 BLOCKED_BUILTINS 列表中
+ * - 路径类请求（./ ../ / file:）：解析结果必须在 pluginDir 内（出界即拒，
+ *   含 / 绝对路径——S1-W3 前该前缀不落入边界分支直接放行，是 CJS 沙箱逃逸口）
+ * - npm 裸名：黑名单检查；非黑名单裸名解析结果（绝对路径形态）也必须在
+ *   pluginDir 内——CJS 与 ESM 同样从当前目录向上遍历 node_modules，可命中
+ *   pluginDir 外的沙箱外副本（对齐 ESM loader 裸名解析后校验）
+ * - 内置模块裸名（path/util 等）：resolvedPath 非绝对路径，黑名单未命中即放行
  * - 不满足条件: throw Error(code: 'PERMISSION_DENIED')
  *
- * @param pluginDir 插件根目录，用于相对路径边界检查
+ * @param pluginDir 插件根目录（目录形态；initSandbox 调用方负责传 dirname(pluginPath)），
+ *   用于路径边界检查
  * @returns 拦截函数，返回允许的模块标识符或抛出 PERMISSION_DENIED
  */
 export function createRequireInterceptor(pluginDir: string): (request: string, resolvedPath?: string) => string {
-  const normalizedPluginDir = pluginDir.endsWith('/') ? pluginDir : pluginDir + '/'
+  // realpath 规范化（对齐 ESM loader initialize 的同款处理）：CJS resolver 返回
+  // realpath（macOS /tmp → /private/var|tmp symlink），pluginDir 不规范化则
+  // startsWith 判界恒 false——合法插件自带的 .cjs 模块（ESM import CJS 走本拦截器）
+  // 会被整体误杀。realpath 失败（目录消失）保持原值，后续判界 fail-closed。
+  let normalizedDir = pluginDir
+  try {
+    normalizedDir = realpathSync(pluginDir)
+  } catch {
+    // 保持原值（无更优选择；目录不存在时插件 load 本就会失败）
+  }
+  const normalizedPluginDir = normalizedDir.endsWith('/') ? normalizedDir : normalizedDir + '/'
 
   return (request: string, resolvedPath?: string): string => {
-    // 相对路径：检查是否在 pluginDir 内
-    if (request.startsWith('./') || request.startsWith('../')) {
-      if (resolvedPath) {
-        const normalizedResolved = resolvedPath.startsWith('/') ? resolvedPath : ''
-        if (!normalizedResolved.startsWith(normalizedPluginDir)) {
+    // 路径类请求（相对 / 绝对 / file: URL）：解析结果必须在 pluginDir 内
+    if (
+      request.startsWith('./') ||
+      request.startsWith('../') ||
+      request.startsWith('/') ||
+      request.startsWith('file:')
+    ) {
+      if (resolvedPath !== undefined) {
+        if (!isResolvedInsidePluginDir(resolvedPath, normalizedPluginDir)) {
           throw errorWithCode(`Sandbox: require('${request}') resolves outside plugin directory`, 'PERMISSION_DENIED')
         }
       }
@@ -64,6 +90,19 @@ export function createRequireInterceptor(pluginDir: string): (request: string, r
     const bareName = request.startsWith('node:') ? request.slice('node:'.length) : request
     if (BLOCKED_BUILTINS.includes(bareName)) {
       throw errorWithCode(`Sandbox: require('${request}') is blocked`, 'PERMISSION_DENIED')
+    }
+
+    // 非黑名单裸名：文件类解析结果（绝对路径 / file: URL）必须在 pluginDir 内——
+    // CJS 与 ESM 同样从当前目录向上遍历 node_modules，可命中 pluginDir 外的
+    // 沙箱外副本（对齐 ESM loader 裸名解析后校验）。内置裸名（'path' 等）
+    // resolvedPath 非文件形态，无界可判，放行；resolvedPath 缺失（无解析信息）
+    // 不拦截，由调用方（initSandbox 的 _resolveFilename patch 总是传真实解析结果）保证。
+    if (
+      resolvedPath !== undefined &&
+      (resolvedPath.startsWith('/') || resolvedPath.startsWith('file:')) &&
+      !isResolvedInsidePluginDir(resolvedPath, normalizedPluginDir)
+    ) {
+      throw errorWithCode(`Sandbox: require('${request}') resolves outside plugin directory`, 'PERMISSION_DENIED')
     }
 
     return request

@@ -60,6 +60,8 @@ import { LivenessMonitor } from './liveness-probe.js'
 export class RuntimeSupervisor implements IRuntimeSupervisor {
   private child: ChildProcess | null = null
   private _port: number | null = null
+  /** 当前 runtime 的 WS auth token（S1-W1：spawn 时生成，随进程生命周期存续；stop/exit 清 null） */
+  private _token: string | null = null
   /** 重启策略（纯逻辑，可单测） */
   private readonly policy = new RestartPolicy()
   /** 重启定时器（在途幂等：存在时不叠加新重启） */
@@ -70,6 +72,11 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
   /** 当前监听端口（未启动为 null） */
   get port(): number | null {
     return this._port
+  }
+
+  /** 当前 runtime 的 WS auth token（未启动为 null）。renderer 经 get-runtime-token IPC 读取 */
+  get token(): string | null {
+    return this._token
   }
 
   /** 端口偏移量（dev 模式 +DEV_PORT_OFFSET），clamp 到合法范围 */
@@ -100,7 +107,10 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
 
     const port = await findAvailablePort()
     console.log(`[runtime] Starting on port ${port}`)
-    this.child = spawnRuntimeProcess(port, (code) => this.onRuntimeExit(code))
+    const spawned = spawnRuntimeProcess(port, (code) => this.onRuntimeExit(code))
+    this.child = spawned.child
+    // S1-W1：持有本生命周期 token（spawnRuntimeProcess 已注入 env + 写 token 文件）
+    this._token = spawned.token
 
     // [HISTORICAL] W5 改动 4：spawn 成功但 waitForHealth 可能失败（进程半活）。
     // 必须包 try-catch：失败时主动 stop() 清理半活 child，
@@ -192,6 +202,8 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
     await stopRuntimeProcess(this.child, timeoutMs)
     this.child = null
     this._port = null
+    // token 随进程生命周期结束失效（下次 start 重新生成）
+    this._token = null
   }
 
   /**
@@ -246,9 +258,10 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
    * @param code 子进程退出码（null=被信号杀死）
    */
   private onRuntimeExit(code: number | null): void {
-    // 清状态（幂等守卫据此判定无活进程）
+    // 清状态（幂等守卫据此判定无活进程）；token 随进程死亡失效（防旧 token 复用）
     this.child = null
     this._port = null
+    this._token = null
 
     // 主动停止：不重启（stop() 已 markStopping）
     if (this.policy.stopping) {

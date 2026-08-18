@@ -13,6 +13,7 @@ import type { PluginRpcServer } from './plugin-rpc-server.js'
 import type { PluginRpcClient } from './plugin-rpc-client.js'
 import type { ToolRegistration, ToolEntry } from './plugin-types.js'
 import { PluginRpcErrorCodes } from './plugin-types.js'
+import { asOptionalString, asRecord, asSafeKey, asString } from './validation.js'
 /** Tool 注册服务依赖（主线程侧） */
 export interface ToolService {
   /** 工具注册表，key 为 toolKey */
@@ -26,17 +27,22 @@ export interface ToolService {
  *
  * 注册的方法：
  * - `plugin.tools.register` — 注册工具，返回 toolKey
- * - `plugin.tools.unregister` — 注销工具，不存在的 key 静默成功
+ * - `plugin.tools.unregister` — 注销工具，不存在的 key 静默成功（复合键归属隔离：
+ *   只允许注销自身前缀 `${pluginId}:` 的 toolKey，D7 语义，见 handler 注释）
  */
 export function registerToolRpcHandlers(
   rpcServer: PluginRpcServer,
   service: ToolService,
 ): void {
   rpcServer.registerMethod('plugin.tools.register', async (params) => {
-    const pluginId = params.pluginId as string
-    const name = params.name as string
-    const description = (params.description as string) ?? ''
-    const parameters = (params.parameters as Record<string, unknown>) ?? {}
+    // S3-W3 窄校验：name 进复合键 toolKey `${pluginId}:${name}`，过 asSafeKey
+    // 白名单从语法上排除 ':' 复合键注入与路径字符（与 commands.register 同语义）。
+    const pluginId = asSafeKey(params.pluginId, 'pluginId')
+    const name = asSafeKey(params.name, 'name')
+    const description = asOptionalString(params.description, 'description') ?? ''
+    const parameters = params.parameters === undefined
+      ? {}
+      : asRecord(params.parameters, 'parameters')
 
     const toolKey = `${pluginId}:${name}`
 
@@ -62,7 +68,15 @@ export function registerToolRpcHandlers(
   })
 
   rpcServer.registerMethod('plugin.tools.unregister', async (params) => {
-    const toolKey = params.toolKey as string
+    // toolKey 是宿主返回的复合键 `${pluginId}:${name}`，合法含 ':'——过 asString
+    // （白名单校验会误杀自身格式），只需防错类型
+    const toolKey = asString(params.toolKey, 'toolKey')
+    // D7 归属隔离（对齐 commands.unregister 复合键语义）：pluginId 必填，且只允许
+    // 注销自身前缀 `${pluginId}:` 的 toolKey。sandbox 通道 params.pluginId 已被
+    // dispatch 覆写为通道身份（不可伪造）——插件 B 传他人 toolKey（'A:xxx'）不属
+    // 自身前缀 → no-op，A 的注册不受影响。
+    const pluginId = asSafeKey(params.pluginId, 'pluginId')
+    if (!toolKey.startsWith(`${pluginId}:`)) return
     if (service.toolRegistry.has(toolKey)) {
       service.toolRegistry.delete(toolKey)
       await service.syncToolsToBridge()
