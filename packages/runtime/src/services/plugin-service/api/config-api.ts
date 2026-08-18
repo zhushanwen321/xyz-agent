@@ -15,6 +15,7 @@
 
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { PluginRpcClient } from '../plugin-rpc-client.js'
+import { asSafeKey } from '../validation.js'
 
 /**
  * 配置 key 前缀约定（P7 收口）。
@@ -51,20 +52,23 @@ export function registerConfigRpcHandlers(
   rpcServer: PluginRpcServer,
   deps: ConfigHandlers,
 ): void {
+  // S3-W3 窄校验：pluginId 会 join 进 PluginStorage 持久化路径、key 会拼
+  // 'config:' 前缀进存储键——两者均过 asSafeKey（白名单 + 1-128 上限），
+  // 畸形即抛 INVALID_PLUGIN_ID / INVALID_KEY，不落盘。
   rpcServer.registerMethod('plugin.config.get', async (params) => {
-    const pluginId = params.pluginId as string
-    const key = params.key as string
+    const pluginId = asSafeKey(params.pluginId, 'pluginId')
+    const key = asSafeKey(params.key, 'key')
     return deps.get(pluginId, key)
   })
 
   rpcServer.registerMethod('plugin.config.getAll', async (params) => {
-    const pluginId = params.pluginId as string
+    const pluginId = asSafeKey(params.pluginId, 'pluginId')
     return deps.getAll(pluginId)
   })
 
   rpcServer.registerMethod('plugin.config.set', async (params) => {
-    const pluginId = params.pluginId as string
-    const key = params.key as string
+    const pluginId = asSafeKey(params.pluginId, 'pluginId')
+    const key = asSafeKey(params.key, 'key')
     const value = params.value
     await deps.set(pluginId, key, value)
   })

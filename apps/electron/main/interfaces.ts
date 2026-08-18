@@ -63,6 +63,12 @@ export interface IRuntimeSupervisor {
   /** 当前监听端口（未启动为 null） */
   readonly port: number | null
 
+  /**
+   * 当前 runtime 的 WS auth token（S1-W1，spec §3.3 D4；未启动为 null）。
+   * renderer 经 get-runtime-token IPC 读取后作为 WS 首条 auth 消息发送。
+   */
+  readonly token: string | null
+
   /** 端口偏移量（dev 模式 +DEV_PORT_OFFSET） */
   readonly portOffset: number
 }

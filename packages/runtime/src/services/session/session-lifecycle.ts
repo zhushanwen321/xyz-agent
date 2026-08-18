@@ -275,7 +275,10 @@ export class SessionLifecycle {
     if (!options?.hidden) {
       this.workspaceService.record(sessionCwd)
     }
-    return this.svc.toSummary(session)
+    const createdSummary = this.svc.toSummary(session)
+    // S3-W2：创建入口收敛点（create 路径）——触发插件 didCreateSession 定向投递。
+    this.svc.notifySessionCreated(createdSummary)
+    return createdSummary
   }
 
   async renameSession(sessionId: string, newName: string): Promise<void> {
@@ -463,7 +466,10 @@ export class SessionLifecycle {
     void this.svc.fetchAndBroadcastContext(id)
     // W-RT-4：恢复后 session 变 active，patch 内存态 launchPresetId（与 sidecar 并列兜底）。
     ;(session as { launchPresetId?: string }).launchPresetId = presetId
-    return this.svc.toSummary(session)
+    const restoredSummary = this.svc.toSummary(session)
+    // S3-W2：创建入口收敛点（restoreSession 路径）——session 复活进 Map，插件 didCreate 投递。
+    this.svc.notifySessionCreated(restoredSummary)
+    return restoredSummary
   }
 
   /**
@@ -639,6 +645,9 @@ export class SessionLifecycle {
     void this.svc.fetchAndBroadcastContext(forkedId)
     // W-RT-4：fork 出的新 session 变 active，patch 内存态 launchPresetId（继承源 preset）。
     ;(session as { launchPresetId?: string }).launchPresetId = forkPresetId
-    return this.svc.toSummary(session)
+    const forkedSummary = this.svc.toSummary(session)
+    // S3-W2：创建入口收敛点（forkSession 路径）——新 session 诞生，插件 didCreate 投递。
+    this.svc.notifySessionCreated(forkedSummary)
+    return forkedSummary
   }
 }

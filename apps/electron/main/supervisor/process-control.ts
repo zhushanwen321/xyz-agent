@@ -39,7 +39,8 @@
  * 依赖方向：process-control → node:child_process + safe-env + windows-process + electron(app)
  */
 import { type ChildProcess, spawn, execFileSync } from 'node:child_process'
-import { createWriteStream, existsSync, mkdirSync, type WriteStream } from 'node:fs'
+import { createWriteStream, existsSync, mkdirSync, writeFileSync, chmodSync, type WriteStream } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import { app } from 'electron'
 import { getDataDir } from '@xyz-agent/shared/paths'
@@ -135,6 +136,31 @@ export const RUNTIME_ENTRY_FILE = 'index.cjs'
 export const SPAWN_ERROR_EXIT_CODE = -1
 
 /**
+ * spawn 结果：child 进程 + 本次生成的 WS auth token（S1-W1，spec §3.3 D4）。
+ * token 双通道分发——env XYZ_RUNTIME_TOKEN（runtime 自身 + renderer 经 IPC 读 supervisor）+
+ * <dataDir>/runtime-token 文件（CLI / 脚本消费）。每次 spawn 重新生成（旧 token 随旧进程死亡）。
+ */
+export interface SpawnRuntimeResult {
+  child: ChildProcess
+  token: string
+}
+
+/**
+ * 生成新 token 并写入 <dataDir>/runtime-token（0600，mkdir -p 数据目录）。
+ * writeFileSync 的 mode 仅创建时生效；chmodSync 兜底「文件已存在但被外部放宽权限」的场景
+ * （重写不收紧既有文件权限是 writeFileSync 语义）。
+ */
+function issueRuntimeToken(): string {
+  const token = randomBytes(32).toString('hex')
+  const dataDir = getDataDir()
+  mkdirSync(dataDir, { recursive: true })
+  const tokenFile = path.join(dataDir, 'runtime-token')
+  writeFileSync(tokenFile, token, { mode: 0o600 })
+  chmodSync(tokenFile, 0o600)
+  return token
+}
+
+/**
  * 启动 runtime 子进程（按打包状态选 spawn 方式）。
  *
  * 打包：process.execPath + ELECTRON_RUN_AS_NODE=1 运行 unpacked 的 index.cjs
@@ -146,10 +172,14 @@ export const SPAWN_ERROR_EXIT_CODE = -1
  *
  * @param port runtime 监听端口
  * @param onExit 子进程退出回调（传入 code），supervisor 用它清理状态
- * @returns ChildProcess 实例（已绑定 stdout/stderr/exit 事件）
+ * @returns { child, token }——child 为已绑定 stdout/stderr/exit 事件的进程实例；
+ *          token 为本次 spawn 生成的 WS auth token（supervisor 持有并经 get-runtime-token IPC 暴露给 renderer）
  * @throws runtime 入口文件不存在
  */
-export function spawnRuntimeProcess(port: number, onExit?: (code: number | null) => void): ChildProcess {
+export function spawnRuntimeProcess(port: number, onExit?: (code: number | null) => void): SpawnRuntimeResult {
+  // S1-W1：每次 spawn 生成新 token（env 注入 + 文件双通道），renderer 重连时经 IPC 拿新值
+  const runtimeToken = issueRuntimeToken()
+
   // 根据打包状态选择 runtime 启动方式
   const projectRoot = app.getAppPath()
   let cmd: string
@@ -169,8 +199,12 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
       throw new Error(`Runtime bundle not found at ${runtimeDist}`)
     }
     cmd = process.execPath
-    args = [runtimeDist, `--port=${port}`]
-    console.log(`[runtime] ${cmd} ${runtimeDist} --port=${port}`)
+    // S1-W4（D3）：built-in 插件目录显式注入（打包形态 = electron-builder
+    // extraResources 拷贝目标 Resources/resources/plugins）。registry 收到后不再做
+    // cwd 探测，防用户 repo 内预置同名目录冒充 built-in 插件获得 trusted 权限。
+    const builtinPluginsDir = path.join(process.resourcesPath, 'resources', 'plugins')
+    args = [runtimeDist, `--port=${port}`, `--builtin-plugins-dir=${builtinPluginsDir}`]
+    console.log(`[runtime] ${cmd} ${runtimeDist} --port=${port} --builtin-plugins-dir=${builtinPluginsDir}`)
   } else {
     // 开发环境：tsx 运行 TS 源码
     // projectRoot = app.getAppPath() = apps/electron。
@@ -205,9 +239,12 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
       throw new Error(`Runtime entry not found at ${runtimeEntry}`)
     }
 
+    // S1-W4（D3）：dev 形态 built-in 插件目录 = repo 根 resources/plugins（repoRoot 已知），
+    // 与打包形态同参数名显式注入（registry 不做 cwd 探测）。
+    const builtinPluginsDir = path.join(repoRoot, 'resources', 'plugins')
     cmd = 'node'
-    args = [tsxPath, runtimeEntry, `--port=${port}`]
-    console.log(`[runtime] node ${tsxPath} ${runtimeEntry} --port=${port}`)
+    args = [tsxPath, runtimeEntry, `--port=${port}`, `--builtin-plugins-dir=${builtinPluginsDir}`]
+    console.log(`[runtime] node ${tsxPath} ${runtimeEntry} --port=${port} --builtin-plugins-dir=${builtinPluginsDir}`)
   }
 
   // 打包后 app.getAppPath() 返回 app.asar（虚拟路径），不能作为 cwd
@@ -224,6 +261,9 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
       // 透传实例隔离 env var，使 runtime 子进程使用隔离的数据目录
       XYZ_AGENT_DATA_DIR: process.env.XYZ_AGENT_DATA_DIR,
       XYZ_AGENT_PORT_OFFSET: process.env.XYZ_AGENT_PORT_OFFSET,
+      // S1-W1：WS auth token（token 分发通道①env；通道② <dataDir>/runtime-token 文件
+      // 在 issueRuntimeToken 内写入）。XYZ_ 前缀在 ENV_WHITELIST_PREFIXES 白名单内。
+      XYZ_RUNTIME_TOKEN: runtimeToken,
     }),
   }
   const child = spawn(cmd, args, spawnOptions)
@@ -272,7 +312,7 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
     onExit?.(code)
   })
 
-  return child
+  return { child, token: runtimeToken }
 }
 
 /**

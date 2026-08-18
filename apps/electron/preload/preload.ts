@@ -19,6 +19,12 @@ export interface ElectronAPI {
   getRuntimePort(): Promise<number>
   /** 获取 runtime 端口偏移（dev 模式 +100） */
   getRuntimePortOffset(): Promise<number>
+  /**
+   * 获取当前 runtime 的 WS auth token（S1-W1）：连接 open 后作首条 auth 消息发送。
+   * runtime 重启后 token 刷新（supervisor 每次 spawn 重新生成），重连时需重新获取。
+   * 未启动（无 IPC / mock）时由调用方兜底 undefined。
+   */
+  getRuntimeToken(): Promise<string | null>
   // ── 窗口管理 ──────────────────────────────────────────────────
   /** 创建新窗口，可选携带 sessionId 迁移 */
   createWindow(sessionId?: string): Promise<{ windowId: string }>
@@ -198,6 +204,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   getRuntimePort: () => ipcRenderer.invoke('get-runtime-port'),
   getRuntimePortOffset: () => ipcRenderer.invoke('get-runtime-port-offset'),
+  getRuntimeToken: () => ipcRenderer.invoke('get-runtime-token'),
 
   // ── 窗口管理 ──────────────────────────────────────────────────
   createWindow: (sessionId?: string) => ipcRenderer.invoke('create-window', { sessionId }),

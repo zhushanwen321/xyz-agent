@@ -40,6 +40,8 @@
  *
  * ERR2（C2 契约）：未知 type → error（'unknown message type: <type>'）；payload 解析
  * 失败 → error（'<type> payload parse failed: ...'）。两条路径都不静默吞。
+ * 例外（CT-D5 毒化隔离）：statusBarUpdate 的 items 内单条坏值跳过该条保留其余
+ * （全坏才整包 error）——坏条目来自单个插件，不连坐其余插件的条目。
  */
 import type { InternalEvent, StatusBarEntry } from './types'
 import type { InternalEventBus } from './internal-event-bus'
@@ -72,7 +74,15 @@ const PLUGIN_STATUS_VALUES = new Set(['discovered', 'loaded', 'active', 'inactiv
 
 // ── 9 个 plugin:* 窄化守卫（返回 InternalEvent | null，null=解析失败）──
 
-function parseStatusBarUpdate(msg: IncomingPluginMessage): InternalEvent | null {
+/**
+ * statusbar 更新解析（CT-D5 毒化隔离，导出供单元测试）。
+ *
+ * 单条坏 item（id/pluginId/text 非 string、priority 非 number）跳过该条保留
+ * 其余——恶意/缺陷插件投递的坏条目不连坐整包，其余插件的条目正常上屏。
+ * 全部条目均坏（原始 items 非空但零条存活）→ 返回 null（整包 error）：
+ * 「清空」的合法 wire 形态是 items: []，全坏与清空不可混淆，仍按毒化上报。
+ */
+export function parseStatusBarUpdate(msg: IncomingPluginMessage): InternalEvent | null {
   const payload = asRecord(msg.payload)
   if (!payload) return null
   const rawItems = payload.items
@@ -80,12 +90,12 @@ function parseStatusBarUpdate(msg: IncomingPluginMessage): InternalEvent | null 
   const items: StatusBarEntry[] = []
   for (const raw of rawItems) {
     const item = asRecord(raw)
-    if (!item) return null
+    if (!item) continue
     const id = asString(item.id)
     const pluginId = asString(item.pluginId)
     const text = asString(item.text)
     const priority = typeof item.priority === 'number' ? item.priority : undefined
-    if (id === null || pluginId === null || text === null || priority === undefined) return null
+    if (id === null || pluginId === null || text === null || priority === undefined) continue
     const alignment = item.alignment === 'left' || item.alignment === 'right' ? item.alignment : 'left'
     items.push({
       id,
@@ -99,6 +109,7 @@ function parseStatusBarUpdate(msg: IncomingPluginMessage): InternalEvent | null 
       sessionId: asOptionalString(item.sessionId),
     })
   }
+  if (items.length === 0 && rawItems.length > 0) return null
   return { kind: 'plugin-status-bar-update', sessionId: resolveSessionId(msg, payload), items }
 }
 

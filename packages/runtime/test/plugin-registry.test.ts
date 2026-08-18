@@ -50,7 +50,9 @@ describe('PluginRegistry', () => {
     expect(hw.displayName).toBe('Hello World')
     expect(hw.description).toBe('A test plugin for xyz-agent')
     expect(hw.main).toBe('index.js')
-    expect(hw.trustLevel).toBe('trusted')
+    // S1-W4（D3）新语义：external 插件 trustLevel 由宿主按 source 强制判定（sandbox），
+    // manifest 自报 "trusted" 不再生效（回归防护见 plugin-registry-trust.test.ts）
+    expect(hw.trustLevel).toBe('sandbox')
     expect(hw.activationEvents.includes('onStartupFinished')).toBeTruthy()
     expect(hw.activationEvents.includes('onSlashCommand:hello')).toBeTruthy()
   })

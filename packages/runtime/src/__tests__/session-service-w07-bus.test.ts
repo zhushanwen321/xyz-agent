@@ -66,7 +66,8 @@ function makeEnv() {
     {} as never, // extensionService：initializeManagedSession / 被测路径未消费
     { getDefaultModel: () => ({ provider: 'test-provider', modelId: 'test-model' }) } as never, // configStore：fallbackModelId 需 'provider/model' 形状，resolveContextWindow 才会经 resolver
     { scanSessions: vi.fn(() => []), extractSessionOutcome: vi.fn(() => null), persistSessionEnd: vi.fn() } as never, // sessionStore
-    { pruneStaleCache: vi.fn() } as never, // gitInfoReader：listPersistedSessions → pruneGitCache 用
+    // readGitInfo：S3-W2 起 removeSessionEntry 内 toSummary（销毁通知 summary 富化）也会同步调用
+    { pruneStaleCache: vi.fn(), readGitInfo: vi.fn(() => undefined) } as never, // gitInfoReader
     {} as never, // workspaceService：SessionLifecycle 构造存引用，被测路径未触发
     bus,
   )

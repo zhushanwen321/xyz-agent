@@ -76,7 +76,26 @@ export class PluginActivator {
   private eventMap = new Map<string, string[]>() // eventPattern → pluginIds
   private contexts = new Map<string, PluginContextState>()
   private descriptors = new Map<string, PluginDescriptor>()
+  /**
+   * 进行中的生命周期回复等待。key 为复合键 `${pluginId}:${op}`（op ∈
+   * 'activate' | 'deactivate'，D6 并发模型）：同一插件 activate/deactivate 并发
+   * 在飞时两个 entry 互不覆盖，activated/deactivated 回复按 (pluginId, replyType)
+   * 精确匹配到各自 op 的 entry。旧 pluginId 单键实现 Map.set 互相覆盖 + 旧 entry
+   * 的超时 timer 到点无条件 delete 新 entry，是回复错配（activated 回复被
+   * deactivate 的 entry 消费）、假超时、宿主/Worker 幽灵态的根源。
+   */
   private pendingReplies = new Map<string, PendingReply>()
+  /**
+   * 取消标志（D6 并发守卫）：ACTIVATING 期间收到 deactivate 请求的插件集合，
+   * 由 doActivatePlugin 的 finally 消费（成功 → 立即反卷真实 deactivate；否则 →
+   * 终一化 UNLOADED）。
+   * 选「取消标志」而非「排队」的理由：排队需要 per-plugin 队列 + 消费循环 +
+   * 顺序保证三件套；取消标志只需一个 Set + 激活终态路径上的一处消费点，且能
+   * 复用既有 activationInFlight 幂等基建（本分支 await in-flight promise，
+   * deactivatePlugin 返回时停用语义已收敛），语义等价、状态更少、可直接单测
+   * （LC-C1）。
+   */
+  private deactivateRequested = new Set<string>()
   /**
    * 进行中的激活 promise（pluginId → in-flight activatePlugin）。
    * 幂等守卫的支撑状态：重入 activatePlugin 返回同一 promise 而非静默丢弃，
@@ -240,6 +259,7 @@ export class PluginActivator {
         handle,
         { type: 'activate', pluginId, pluginDir: descriptor.pluginPath, event },
         pluginId,
+        'activate',
         ACTIVATE_TIMEOUT_MS,
       )
 
@@ -252,6 +272,24 @@ export class PluginActivator {
     } catch (err: unknown) {
       console.error(`[plugin-activator] failed to activate ${pluginId}:`, err)
       this.setState(pluginId, 'UNLOADED')
+    } finally {
+      // D6 取消标志消费（finally 覆盖全部出口：成功 / 异常 / 审批作废与权限拒绝
+      // 的早退 return）：激活期间收到过 deactivatePlugin 请求时——
+      // - 成功 → 立即反卷真实 deactivate：此时插件在 Worker 内确实 active，必须
+      //   发 deactivate 消息清理 hooks/subscriptions，只改状态会留下 Worker 侧幽灵激活
+      // - 未成功（作废/失败/拒绝）→ 状态仍处中间态（DEACTIVATING）时终一化 UNLOADED；
+      //   已是稳定态（UNLOADED）不重复写。removeDescriptor 已删状态时严禁回写
+      //  （卸载后幽灵 setState 复活，见上方早退检查注释）。
+      if (this.deactivateRequested.delete(pluginId)) {
+        if (this.pluginStates.get(pluginId) === 'ACTIVE') {
+          await this.deactivatePlugin(pluginId, host)
+        } else {
+          const s = this.pluginStates.get(pluginId)
+          if (s === 'DEACTIVATING' || s === 'ACTIVATING') {
+            this.setState(pluginId, 'UNLOADED')
+          }
+        }
+      }
     }
   }
 
@@ -264,13 +302,31 @@ export class PluginActivator {
     const currentState = this.pluginStates.get(pluginId)
     if (!currentState || currentState === 'UNLOADED' || currentState === 'DEACTIVATING') return
 
-    this.pluginStates.set(pluginId, 'DEACTIVATING')
-
     // 该插件正挂在权限审批等待（ACTIVATING 中）→ 唤醒为「拒绝」：不 resolve 的话
     // 挂起中的激活要干等 30s 超时；且若等待期间用户批准（resolvePermissionApproval
     // (pluginId, true)），醒来的激活会绕过本次停用把插件拉回 ACTIVE。此处
-    // resolve(false) + doActivatePlugin 醒来后的 ACTIVATING 状态检查双保险收敛到停用语义。
+    // resolve(false) + doActivatePlugin 醒来后的 ACTIVATING 状态检查双保险收敛到停用
+    // 语义。（对非 ACTIVATING 态是 no-op：pending approval 只在 ACTIVATING 期间存在，
+    // 但 CRASHED 等边缘态下残留的 pending 也在此一并清理。）
     this.resolvePermissionApproval(pluginId, false)
+
+    // D6 并发守卫：ACTIVATING 中不直接走停用主流程——① 激活早期（assignWorker/
+    // loadPlugin 未完成）getWorkerHandle 可能拿不到句柄，主流程会「假成功」停用而
+    // 激活继续跑完把插件拉回 ACTIVE（幽灵复活）；② 直接发 deactivate 会与 activate
+    // 消息并发在飞，正是旧单键 pendingReplies 回复错配的触发场景。处理：设取消标志
+    // （由 doActivatePlugin 的 finally 消费：成功 → 立即反卷真实 deactivate；否则 →
+    // 终一化 UNLOADED），状态改写 DEACTIVATING 使审批醒来的激活经 ACTIVATING 状态
+    // 检查作废，最后 await in-flight 激活尝试——deactivatePlugin 返回时停用语义已
+    // 收敛（最坏等待 ACTIVATE_TIMEOUT_MS，激活不完成就无法安全停用，代价可接受）。
+    if (currentState === 'ACTIVATING') {
+      this.deactivateRequested.add(pluginId)
+      this.pluginStates.set(pluginId, 'DEACTIVATING')
+      const inFlight = this.activationInFlight.get(pluginId)
+      if (inFlight) await inFlight
+      return
+    }
+
+    this.pluginStates.set(pluginId, 'DEACTIVATING')
 
     const handle = host.getWorkerHandle(pluginId)
     if (handle) {
@@ -278,6 +334,7 @@ export class PluginActivator {
         handle,
         { type: 'deactivate', pluginId },
         pluginId,
+        'deactivate',
         DEACTIVATE_TIMEOUT_MS,
       )
     }
@@ -325,17 +382,21 @@ export class PluginActivator {
         this.eventMap.set(pattern, filtered)
       }
     }
-    const pendingReply = this.pendingReplies.get(pluginId)
-    if (pendingReply) {
-      clearTimeout(pendingReply.timer)
-      pendingReply.resolve(false)
-      this.pendingReplies.delete(pluginId)
-    }
     const pendingPermission = this.pendingPermissions.get(pluginId)
     if (pendingPermission) {
       clearTimeout(pendingPermission.timer)
       pendingPermission.resolve(false)
       this.pendingPermissions.delete(pluginId)
+    }
+    // D6 复合键：activate/deactivate 两个 op 的 pending entry 都要清理（并发开关
+    // 在飞时卸载，任一残留都会悬挂到已卸载插件的回复匹配上）
+    for (const op of ['activate', 'deactivate'] as const) {
+      const pendingReply = this.pendingReplies.get(`${pluginId}:${op}`)
+      if (pendingReply) {
+        clearTimeout(pendingReply.timer)
+        pendingReply.resolve(false)
+        this.pendingReplies.delete(`${pluginId}:${op}`)
+      }
     }
   }
 
@@ -380,21 +441,41 @@ export class PluginActivator {
   /**
    * PluginHost 在收到 Worker 消息时调用，解析 pending promises。
    *
-   * 处理 activated / deactivated / error 三种回复类型。
+   * 处理 activated / deactivated / error 三种回复类型。D6 复合键精确匹配：
+   * activated/deactivated 回复各自找对应 op（'activate'/'deactivate'）的 entry——
+   * activate 与 deactivate 并发在飞时（如 DEACTIVATING 态重入激活），回复不再
+   * 张冠李戴到另一 op 的 pending（旧单键实现 activated 回复会 resolve 掉
+   * deactivate 的等待、反之亦然，引发假超时与 Worker/宿主幽灵态）。
    */
   handleWorkerReply(msg: WorkerToHostMessage): void {
     if (!('pluginId' in msg) || typeof msg.pluginId !== 'string') return
 
-    const pending = this.pendingReplies.get(msg.pluginId)
-    if (!pending) return
-
-    clearTimeout(pending.timer)
-    this.pendingReplies.delete(msg.pluginId)
-
     if (msg.type === 'activated' || msg.type === 'deactivated') {
+      const key = `${msg.pluginId}:${msg.type === 'activated' ? 'activate' : 'deactivate'}`
+      const pending = this.pendingReplies.get(key)
+      if (!pending) return
+      clearTimeout(pending.timer)
+      this.pendingReplies.delete(key)
       pending.resolve(true)
-    } else if (msg.type === 'error') {
-      pending.resolve(false)
+      return
+    }
+
+    if (msg.type === 'error') {
+      // error 回复不带 op 维度（plugin-bootstrap 的 activate/deactivate 失败路径都发
+      // 同型 {type:'error', pluginId, error}，见其 post 调用），无法精确归属——把该
+      // 插件全部在飞 entry resolve(false)：activate/deactivate 两 op 的失败终态都收敛
+      // UNLOADED，fail-fast 优于各自挂到超时。activate/deactivate 各自至多一个在飞
+      // entry（pendingReplies 以 `${pluginId}:${op}` 复合键存取，Map 键唯一，不依赖
+      // DEACTIVATING 入口守卫——DEACTIVATING 态重入激活时 activate 消息按 Worker IPC
+      // FIFO 排队于 deactivate 之后，回复按复合键精确归属，无错配面），不存在误伤面。
+      for (const op of ['activate', 'deactivate'] as const) {
+        const key = `${msg.pluginId}:${op}`
+        const pending = this.pendingReplies.get(key)
+        if (!pending) continue
+        clearTimeout(pending.timer)
+        this.pendingReplies.delete(key)
+        pending.resolve(false)
+      }
     }
   }
 
@@ -573,21 +654,27 @@ export class PluginActivator {
 
   /**
    * 发送消息并注册 pending promise，等待 handleWorkerReply() 解析。
-   * 超时自动 resolve(false)。
+   * op 参与复合键（`${pluginId}:${op}`，D6 并发模型），超时自动 resolve(false)。
    */
   private sendAndWaitReply(
     handle: { workerId: string; postMessage(message: unknown): void },
     message: unknown,
     pluginId: string,
+    op: 'activate' | 'deactivate',
     timeoutMs: number,
   ): Promise<boolean> {
     return new Promise((resolve) => {
+      const key = `${pluginId}:${op}`
       const timer = setTimeout(() => {
-        this.pendingReplies.delete(pluginId)
+        // 超时只清理自己注册的 entry（复合键 + timer 身份比对：并发重入同 op 时
+        // 旧 timer 不误删新 entry——旧实现无条件 delete 是回复错配的帮凶）
+        if (this.pendingReplies.get(key)?.timer === timer) {
+          this.pendingReplies.delete(key)
+        }
         resolve(false)
       }, timeoutMs)
 
-      this.pendingReplies.set(pluginId, { resolve, timer })
+      this.pendingReplies.set(key, { resolve, timer })
       handle.postMessage(message)
     })
   }

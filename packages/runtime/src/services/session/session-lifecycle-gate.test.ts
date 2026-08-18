@@ -46,6 +46,8 @@ function makeEnv() {
     getLaunchPresetOptions: vi.fn(async () => undefined),
     initializeManagedSession: vi.fn(async (_id: string, _c: unknown, _cwd: string, _label: string) => makeSessionView(_id)),
     toSummary: vi.fn((s: IManagedSessionView) => makeSummary(s.id)),
+    // S3-W2：创建入口收敛点（lifecycle 三处 return 前调用）
+    notifySessionCreated: vi.fn(),
     findScannedSession: vi.fn(() => undefined),
     getSession: vi.fn(() => undefined),
     fetchAndBroadcastContext: vi.fn(() => undefined),

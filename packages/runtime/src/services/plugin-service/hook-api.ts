@@ -30,6 +30,7 @@ import type {
 } from './plugin-types.js'
 import { toErrorMessage } from '../../utils/errors.js'
 import { registerHandler } from './handler-registry.js'
+import { asSafeKey, asString } from './validation.js'
 
 /** Hook 注册服务依赖（主线程侧） */
 export interface HookService {
@@ -150,9 +151,12 @@ export function registerHookRpcHandlers(
   service: HookService,
 ): void {
   rpcServer.registerMethod('plugin.hooks.register', async (params) => {
-    const pluginId = params.pluginId as string
-    const hookType = params.hookType as string
-    const handlerId = params.handlerId as string
+    // S3-W3 窄校验：handlerId 形如 `hook_<pluginId>_<n>`（Worker 侧生成模式），
+    // 与 pluginId 均在 asSafeKey 白名单内；hookType 是枚举词汇（onXxx），只需
+    // 防「缺字段/错类型」（未知 hookType 注册后无触发点，不构成毒化）。
+    const pluginId = asSafeKey(params.pluginId, 'pluginId')
+    const hookType = asString(params.hookType, 'hookType')
+    const handlerId = asSafeKey(params.handlerId, 'handlerId')
 
     // 获取插件描述符以计算优先级
     const descriptor = service.getDescriptor(pluginId)
@@ -173,8 +177,8 @@ export function registerHookRpcHandlers(
   })
 
   rpcServer.registerMethod('plugin.hooks.unregister', async (params) => {
-    const handlerId = params.handlerId as string
-    const hookType = params.hookType as string
+    const handlerId = asSafeKey(params.handlerId, 'handlerId')
+    const hookType = asString(params.hookType, 'hookType')
 
     const entries = service.hookRegistry.get(hookType)
     if (entries) {

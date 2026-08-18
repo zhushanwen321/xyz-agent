@@ -140,7 +140,10 @@ if [ -n "$IMPORTS_META" ]; then
     exit 1
 fi
 
-FILE_URL_USAGE=$(grep -rn "fileURLToPath" "$RUNTIME_DIR/src" --include="*.ts" --exclude-dir=__tests__ 2>/dev/null | grep -v "plugin-host.ts" || true)
+# [HISTORICAL] 2026-08-17：检查收窄到 fileURLToPath(import.meta...) 危险模式——对普通
+# 字符串参数的调用（如 plugin-sandbox.ts 转换插件传入的 file:// URL）在 CJS bundle 下
+# require('node:url') 正常可用，与 import.meta 无关，原全量匹配属误报（security slice W3 实证）。
+FILE_URL_USAGE=$(grep -rn "fileURLToPath(import\.meta" "$RUNTIME_DIR/src" --include="*.ts" --exclude-dir=__tests__ 2>/dev/null | grep -v "plugin-host.ts" || true)
 if [ -n "$FILE_URL_USAGE" ]; then
     echo -e "${RED}[ERROR] runtime 源码使用了 fileURLToPath（CJS 中需要 import.meta.url）：${NC}"
     echo "$FILE_URL_USAGE" | sed 's/^/  /'

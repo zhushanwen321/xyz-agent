@@ -51,6 +51,11 @@ export interface ConnectionPorts {
   ipc: {
     getRuntimePort(): Promise<number | undefined>
     getRuntimePortOffset(): Promise<number | undefined>
+    /**
+     * 获取当前 runtime 的 WS auth token（S1-W1）。runtime 重启后值刷新（supervisor
+     * 每次 spawn 重新生成）——onRuntimePort 重连路径必须重新调用本方法拿新 token。
+     */
+    getRuntimeToken(): Promise<string | null | undefined>
     onRuntimePort(cb: (port: number) => void): () => void
     onRuntimeRestarting(cb: () => void): () => void
     onRuntimeFailed(cb: () => void): () => void
@@ -133,10 +138,32 @@ function ensureDispatcher(ports: ConnectionPorts): void {
 /**
  * 连接 WS 并记录 url（W4 visibility 重连复用）。
  * 包装 ws-client connect：调前把 url 存入 lastConnectedUrl，供用户切回前台时主动重连。
+ * token（S1-W1）透传给 ws-client：传值时 open 后走 auth 握手；未传时 ws-client 复用
+ * 上次 token（内部退避重连场景，runtime 未重启 token 不变）。
  */
-function connectWs(url: string): void {
+function connectWs(url: string, token?: string): void {
   lastConnectedUrl = url
-  connect(url)
+  connect(url, token)
+}
+
+/**
+ * 拉取最新 token 后连接（runtime 重启路径专用：supervisor 每次 spawn 重新生成 token，
+ * 旧 token 对新 runtime 无效，auth 必失败——必须先 invoke 拿新值）。
+ */
+async function refreshTokenAndConnect(url: string): Promise<void> {
+  let token: string | null | undefined
+  try {
+    token = await currentPorts().ipc.getRuntimeToken()
+  } catch (e) {
+    console.warn('[core/use-connection] getRuntimeToken failed, connecting without token:', e)
+    token = undefined
+  }
+  connectWs(url, token ?? undefined)
+}
+
+/** 当前注入端口（requirePorts 已在 init 校验，此处于事件回调内兜底取值） */
+function currentPorts(): ConnectionPorts {
+  return portsImpl as ConnectionPorts
 }
 
 /** 获取 fallback 端口（考虑 dev 偏移） */
@@ -176,7 +203,7 @@ export function useConnection() {
     if (initialised) {
       // HMR 后重连
       if (!ports.env.isMock) {
-        connectWs('ws://localhost:' + await resolveFallbackPort(ports))
+        await refreshTokenAndConnect('ws://localhost:' + await resolveFallbackPort(ports))
       }
       return
     }
@@ -208,11 +235,13 @@ export function useConnection() {
       return
     }
 
-    // 监听 runtime 端口推送（runtime 重启成功后推新端口 → 断开重连）
+    // 监听 runtime 端口推送（runtime 重启成功后推新端口 → 断开重连）。
+    // S1-W1：runtime 重启 = supervisor 重新 spawn = token 已刷新，重连前必须重新拉取
+    // （旧 token 对新 runtime 的 auth 必失败 → 1008 → 重连循环直到 failed）。
     removeRuntimePortListener = ports.ipc.onRuntimePort((newPort) => {
       if (newPort && state.value !== 'disconnected') {
         disconnect()
-        connectWs('ws://localhost:' + newPort)
+        void refreshTokenAndConnect('ws://localhost:' + newPort)
       }
     })
 
@@ -237,15 +266,15 @@ export function useConnection() {
       ports.onRuntimeUnavailable('disconnect')
     })
 
-    // 尝试从主进程获取已知端口
+    // 尝试从主进程获取已知端口（S1-W1：连接前拉 token——auth 握手凭据经 IPC 下发）
     const knownPort = await ports.ipc.getRuntimePort()
     if (knownPort) {
-      connectWs('ws://localhost:' + knownPort)
+      await refreshTokenAndConnect('ws://localhost:' + knownPort)
       return
     }
 
     // Runtime 尚未启动：用 fallback 端口（ws-client 会自动重连，runtime 起来后连上）
-    connectWs('ws://localhost:' + await resolveFallbackPort(ports))
+    await refreshTokenAndConnect('ws://localhost:' + await resolveFallbackPort(ports))
   }
 
   /**
