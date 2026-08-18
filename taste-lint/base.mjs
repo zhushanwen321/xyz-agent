@@ -21,6 +21,8 @@ import noUnboundedWhileTrue from './rules/no-unbounded-while-true.mjs';
 import noInlineImportType from './rules/no-inline-import-type.mjs';
 import noEslintDisable from './rules/no-eslint-disable.mjs';
 import noUnsafeCast from './rules/no-unsafe-cast.mjs';
+import requireDataOwnerAnnotation from './rules/require-data-owner-annotation.mjs';
+import noNonOwnerStoreMutation from './rules/no-non-owner-store-mutation.mjs';
 
 export const tastePlugin = {
   meta: { name: 'eslint-plugin-taste' },
@@ -41,6 +43,11 @@ export const tastePlugin = {
     'no-inline-import-type': noInlineImportType,
     'no-eslint-disable': noEslintDisable,
     'no-unsafe-cast': noUnsafeCast,
+    // 数据源治理护栏（data-source-governance P0，plan W4）：R3 缓存注解 + R2 store 写入口。
+    // error 级（非品味类 warn）——治理护栏的语义是阻断（对齐 R1 pre-commit 检查退出非 0），
+    // 误报豁免走登记表 + 行内豁免注释闭环，见各规则 docstring。
+    'require-data-owner-annotation': requireDataOwnerAnnotation,
+    'no-non-owner-store-mutation': noNonOwnerStoreMutation,
   },
 };
 
@@ -85,6 +92,11 @@ export const tasteRules = {
   'taste/no-emoji-in-template': 'warn',
   'taste/prefer-v-model': 'warn',
   'taste/no-multi-arg-emit': 'warn',
+
+  // 数据源治理护栏（data-source-governance P0）：R3 模块级缓存 @data-owner 注解 +
+  // R2 store mutation 许可文件直呼。error 级 = 阻断（规则内部自带范围/豁免裁定）。
+  'taste/require-data-owner-annotation': 'error',
+  'taste/no-non-owner-store-mutation': 'error',
 };
 
 export default [
