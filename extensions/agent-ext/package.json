@@ -1,0 +1,35 @@
+{
+  "name": "@zhushanwen/pi-agent-ext",
+  "version": "1.0.0",
+  "description": "xyz-agent extension for Pi — session tree navigation and internal reload command",
+  "type": "module",
+  "main": "src/index.ts",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "keywords": [
+    "pi-package",
+    "extension",
+    "agent",
+    "navigate",
+    "reload"
+  ],
+  "license": "MIT",
+  "files": [
+    "src/",
+    "index.ts"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "scripts": {
+    "typecheck": "npx tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "vitest": "^4.1.8"
+  }
+}
