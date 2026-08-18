@@ -196,7 +196,9 @@ test('R1: pi load goal/todo extension + session.create 成功', async () => {
  * 改为 WS 发 prompt + 监听 runtime 广播的 tool_call_end 事件，验证真实 extension
  * 返回的 __gui__ GuiComponent 格式（这是 real 轨独有的协议契约验证）。
  *
- * UI drawer 渲染部分由 mock 轨 gui-components.spec.ts 覆盖。
+ * UI 渲染部分由 mock 轨 gui-components.spec.ts 覆盖（chat 流 tool result __gui__ card
+ * 与 extension:widgetGui SideDrawer widget 渲染）。tasks drawer UI 已随功能在 main 删除
+ * （renderer 无对应 testid），不在其覆盖范围。
  */
 test('R2: 真实 todo tool 调用 → 协议格式含 __gui__ list-tree', async () => {
   test.setTimeout(180_000) // LLM 慢，3 分钟

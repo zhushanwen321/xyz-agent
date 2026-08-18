@@ -23,9 +23,9 @@
  * 额外清理 getLegacyStorePath(tempCwd) 推导的 ~/.pi/agent/scheduler/<segments>/ 整棵子树。
  *
  * 用法：
- *   node tools/verify-scheduler-e2e.cjs              # 默认跑全部 A 类
- *   node tools/verify-scheduler-e2e.cjs S1           # 单场景（S1..S17 / V / aclass / bclass / all）
- *   SCHED_E2E_MODEL=... node tools/verify-scheduler-e2e.cjs   # 覆盖测试模型
+ *   node scripts/verify-scheduler-e2e.cjs              # 默认跑全部 A 类
+ *   node scripts/verify-scheduler-e2e.cjs S1           # 单场景（S1..S17 / V / aclass / bclass / all）
+ *   SCHED_E2E_MODEL=... node scripts/verify-scheduler-e2e.cjs   # 覆盖测试模型
  *
  * 退出码：0 = 全过；1 = 任一失败；2 = 脚本异常
  */

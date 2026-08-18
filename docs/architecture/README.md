@@ -15,7 +15,7 @@ docs/architecture/
 └── history/             # 历史版本归档（被 supersede 的旧架构与重构期过程文档）
 ```
 
-> ADR 统一在 [`../adr/`](../../adr/)（索引见其 README.md）。**v3 设计稿** 在 `docs/page-design/archive/v3/`（L0-L4 递归骨架 spec + draft），基础件 `design-tokens.md` / `design-system.md` 在 `docs/page-design/` 根。
+> ADR 统一在 [`../adr/`](../adr/)（索引见其 README.md）。**v3 设计稿** 在 `docs/page-design/archive/v3/`（L0-L4 递归骨架 spec + draft），基础件 `design-tokens.md` / `design-system.md` 在 `docs/page-design/` 根。
 
 ## 三条核心规则
 

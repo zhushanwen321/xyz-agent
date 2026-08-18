@@ -117,15 +117,16 @@ event handler（如 `tool_execution_end`）中注入消息**必须用 `pi.sendUs
 | sendUserMessage / sendMessage | 仅 ExtensionCommandContext（command handler 内可用） | 任何位置 |
 | sessionManager / signal / cwd | ✅ | ❌ |
 
-`tool_execution_end` 事件字段是 `{ toolCallId, toolName, args, result, isError }`——输入参数字段名是 `args`（不是 `input`），结果是 `result`（不是 `content`/`details`）。
+`tool_execution_end` 事件字段是 `{ toolCallId, toolName, result, isError }`——**没有 `args`**（输入参数只在 `tool_execution_start` / `tool_execution_update` 事件上，字段名是 `args` 不是 `input`），结果是 `result`（不是 `content`/`details`）。
 
-`sendUserMessage` 的 `deliverAs` 三模式：
+`sendUserMessage` 的 `deliverAs` 两模式：
 
 | 模式 | 行为 |
 |------|------|
 | `"steer"` | 当前 turn 完成后、下一个 LLM 调用前投递（需要 AI 立即处理用这个） |
 | `"followUp"` | 等 agent 完全空闲后投递 |
-| `"nextTurn"` | 队列到下一个用户 prompt |
+
+`"nextTurn"`（队列到下一个用户 prompt）只属于 `pi.sendMessage()` 的 `deliverAs`，`sendUserMessage` 不支持。
 
 **消息注入不触发 skill 命令**：`pi.sendUserMessage("/skill-name")` 只是普通用户消息文本，不会触发 skill 机制（skill 由命令系统解析）。正确做法：把期望行为直接写进消息内容（如 `Run fix_whitespace.py --fix <file>, then retry the edit`），不依赖 skill 命令。
 
