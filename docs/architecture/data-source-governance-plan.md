@@ -132,13 +132,13 @@
 
 1. 按父文档 §2.2 的 12 类清单逐条建表，每条字段：`编号 / GUI 数据 / 权威源 / owner（目标模块，P0 标注「现状 → 目标（W 编号）」）/ 唯一写入口 / 字段空值语义 / 已知例外`。
 2. 字段空值语义按父文档 D1b 落字：`sessionName` 空 = 合法态（未命名，必须整字段覆盖）——`label` 是 sessionName 在 xyz 侧的同一数据链投影（W7 label 实例 fetch 即 `get_state().sessionName`），**不单独登记**「label 空 = 未设置（可守卫）」语义（空值语义必须唯一，曾双登记致矛盾，r2 审查修正）；`thinkingLevel` 无空值语义（永不 guard）；`modelId`/`tokenCount` 磁盘扫描占位值 `''`/`0` 不覆盖已知真值（对齐 `session-scanner.ts` L81-82 现状）。
-3. 已知例外登记四条（r3 审查补全写方全集）：① 非活跃 rename 直写（`persistSessionName` 非活跃分支 `session-lifecycle.ts:302`，移除期限 = W11）；② `persistHandedOff` handoff_marker 直写（`session-file-utils.ts:464` `openSync('a')`，活跃交接时源 pi 在场；移除期限 = W11，迁移形态 = sidecar，父文档 D3b 裁决）；③ `patchSessionCwd` 整文件重写（`session-file-utils.ts:518`，`atomicWrite` :540；竞态边界 = 仅 restoreSession 在 pi spawn 前调用、目标文件无并发写方；移除期限 = W11，迁移形态 = restore tmp 读改写管线，D3b）；④ 队列内容唯一提交方 = renderer（D6，扩展 `deliverAs` 注入禁用，S1 checklist 拦截）。另登记两类**合法边界形态**（非例外，父文档原则 1/D3b）：⑤ sidecar 家族（`.meta.json` `persistSessionEnd` / `.preset.json` `persistPresetBinding` / `.project.json` `persistProjectBinding`，xyz 自有文件，W19 收口确认）；⑥ fork 文件创建型（`createForkedSessionFile` session-fork.ts:175，唯一创建入口，目标写前不存在、写后即移交 pi）。再在 #1 label 条目登记「已知写点处置」：**xyz 指向 pi JSONL 的写点全集 6 处全部有着落**——活跃 rename 直写（`session-lifecycle.ts:296`）与 turn_end/agent_end 兜底直写（`session-service.ts:1284` tryPersistLabel）已于 W1 移除（切 RPC / 退役为显示派生）；非活跃 rename 直写（`:302`）与 `persistHandedOff`（:464）、`patchSessionCwd`（:540）带 W11 期限登记；`createForkedSessionFile`（session-fork.ts:175）登记创建型合法形态保留——写点集合与源码真实状态一致，防后续 review 误判「另有未登记写方」（r1/r2/r3 连续三轮审查均在此处扫出遗漏，本轮以全量 grep 自查收口：`grep -rn "openSync\|appendFile\|writeFile\|atomicWrite" packages/runtime/src --include="*.ts" | grep -iv test` 逐条核对指向 sessions 目录的写点）。
+3. 已知例外登记四条（r3 审查补全写方全集）：① 非活跃 rename 直写（`persistSessionName` 非活跃分支 `session-lifecycle.ts:302`，移除期限 = W11）；② `persistHandedOff` handoff_marker 直写（`session-file-utils.ts:464` `openSync('a')`，活跃交接时源 pi 在场；移除期限 = W11，迁移形态 = sidecar，父文档 D3b 裁决）；③ `patchSessionCwd` 整文件重写（`session-file-utils.ts:518`，`atomicWrite` :540；竞态边界 = 仅 restoreSession 在 pi spawn 前调用、目标文件无并发写方；移除期限 = W11，迁移形态 = restore tmp 读改写管线，D3b）；④ 队列内容唯一提交方 = renderer（D6，扩展 `deliverAs` 注入禁用，S1 checklist 拦截）。另登记两类**合法边界形态**（非例外，父文档原则 1/D3b）：⑤ sidecar 家族（`.meta.json` `persistSessionEnd` / `.preset.json` `persistPresetBinding` / `.project.json` `persistProjectBinding` / `.handoff.json`（W11 迁入 `persistHandedOff` 后启用，登记先行——家族全集四后缀对齐父文档 D3b），xyz 自有文件，W19 收口确认）；⑥ fork 文件创建型（`createForkedSessionFile` session-fork.ts:175，唯一创建入口，目标写前不存在、写后即移交 pi）；⑦ 非写点注记（r4 补，防后续审查误问）：session 删除链（`pm.destroySession` 先行 + `session-store.trash` → system/trash OS 垃圾桶移动 + sidecar unlink，无并发持有）与 pi-maintenance.ts（infra/pi/）一次性目录布局迁移 `renameSync` 属**非内容写**，不在「写点」定义与 R1 检查范围。再在 #1 label 条目登记「已知写点处置」：**xyz 指向 pi JSONL 的写点全集 6 处全部有着落**——活跃 rename 直写（`session-lifecycle.ts:296`）与 turn_end/agent_end 兜底直写（`session-service.ts:1284` tryPersistLabel）已于 W1 移除（切 RPC / 退役为显示派生）；非活跃 rename 直写（`:302`）与 `persistHandedOff`（:464）、`patchSessionCwd`（:540）带 W11 期限登记；`createForkedSessionFile`（session-fork.ts:175）登记创建型合法形态保留——写点集合与源码真实状态一致，防后续 review 误判「另有未登记写方」（r1/r2/r3 连续三轮审查均在此处扫出遗漏，本轮以全量 grep 自查收口：`grep -rn "openSync\|appendFile\|writeFile\|atomicWrite" packages/runtime/src --include="*.ts" | grep -iv test` 逐条核对指向 sessions 目录的写点）。
 4. 登记 plugin sessionData 为「已 owner 化声明」条目（权威 = runtime `SessionDataStore`，`packages/runtime/src/services/plugin-service/session-data-store.ts`，非多源病灶，见父文档 §2.2 覆盖范围说明）。
 5. 表头声明：本表 P1 起演进为可执行配置（ReplicatedState 配置即登记条目，W6-W8 执行时同步维护）。
 
 **验收标准**：
 
-1. 文件存在且 `grep -c "^| " docs/architecture/data-source-registry.md` 覆盖 12 条数据行 + 1 条 plugin sessionData 声明 + 4 条例外 + 2 条合法形态登记（人工计数核对）。
+1. 文件存在且 `grep -c "^| " docs/architecture/data-source-registry.md` 覆盖 12 条数据行 + 1 条 plugin sessionData 声明 + 4 条例外 + 2 条合法形态登记 + 1 条非写点注记（人工计数核对）。
 2. 内容级：表内含「移除期限 = W11」字样（legacy 例外带期限，D2 要求）；含 sessionName（label 同链、不另设可守卫语义）/ thinkingLevel 无空值语义 / 磁盘扫描占位值守卫三类的区分表述（D1b）；#1 label 条目含 6 处写点的处置去向（两处已移除 + 三处带 W11 期限 + 一处创建型登记保留）；handoff/patchCwd 例外条目含竞态边界表述（活跃 pi 在场 / restore 时 pi 未起）。
 3. 一致性：登记表中对非活跃 rename 的现状描述与代码一致——`grep -n "persistSessionName" packages/runtime/src/services/session/session-lifecycle.ts` 的**代码命中**（排除注释行）仅剩非活跃分支 1 处（`:302`），注释命中（`:291-292`/`:306`，随 W1 扩围已改写或删除的除外）逐条核对为历史机制说明；`grep -n "persistHandedOff\|patchSessionCwd" packages/runtime/src/infra/pi/session-file-utils.ts` 命中确认两条 W11 例外登记的实现本体在位（W1 不动它们——非 label 链路）。
 
@@ -157,7 +157,7 @@
 
 **任务步骤**：
 
-1. 新增 `check_pi_direct_write.py`，模式（对齐父文档 R1 定义）：扫描 `packages/runtime/src/` 与仓库根 `scripts/` 中指向 sessions 目录 **pi JSONL 本体**的写操作——`openSync('a')` / `openSync('w')` / `appendFile` / `appendFileSync` / `writeFile` / `writeFileSync`，**以及 `atomicWrite`**（已知 util 形态——`patchSessionCwd` 经 `utils/fs-utils.ts` 的 atomicWrite 整文件重写 JSONL，r3 补漏：不含它则该写点穿透），且调用参数或邻近上下文含 sessions 路径推导（`getSessionsDir` / `sessions` 字面量）。**内置豁免（非 allowlist）**：目标为 sidecar 家族后缀（`.meta.json` / `.preset.json` / `.project.json`，xyz 自有文件，父文档 D3）不报错。**检出边界（docstring 写明）**：`session-fork.ts:175` 的目标路径经形参间接（调用点传 `getSessionsDir()`，fork 文件内无 sessions 字面量），R1 不命中——fork 的守卫 = 登记表「创建型唯一写入口」声明 + S1 语义层（父文档 D3b 诚实声明）。实现风格对齐 `check_path_whitelist.py`（读其开头 docstring 与 main 结构复刻）。
+1. 新增 `check_pi_direct_write.py`，模式（对齐父文档 R1 定义）：扫描 `packages/runtime/src/` 与仓库根 `scripts/` 中指向 sessions 目录 **pi JSONL 本体**的写操作——`openSync('a')` / `openSync('w')` / `appendFile` / `appendFileSync` / `writeFile` / `writeFileSync`，**以及 `atomicWrite`**（已知 util 形态——`patchSessionCwd` 经 `utils/fs-utils.ts` 的 atomicWrite 整文件重写 JSONL，r3 补漏：不含它则该写点穿透）。**匹配粒度（r4 补定义：「邻近上下文」落字为文件级邻近）**：写调用所在文件内含 sessions 路径推导（`getSessionsDir` 的 import/调用或 `sessions` 字面量）即视为指向 sessions 目录——该粒度覆盖目标路径为形参、函数体内无路径字面量的间接形态（session-file-utils 三条 legacy 写点即此形态：目标 filePath 形参 + 文件级 `getSessionsDir` import（:12）/ 调用（:735），文件级命中；若取函数级粒度则这些写点全部漏拦，allowlist 与 sidecar 豁免形同虚设，W11 验收 1 的「归零」空转）；调用参数或所在函数体直接含路径推导当然也命中。**内置豁免（非 allowlist）**：目标为 sidecar 家族后缀（`.meta.json` / `.preset.json` / `.project.json` / `.handoff.json`——四后缀全集对齐父文档 D3b；`.handoff.json` 的写点 W11 迁移才出现，此处先预留，保证豁免清单与登记表 sidecar 家族条目始终一一对应，W11 步骤 7 迁入后核对；xyz 自有文件）不报错。**检出边界（docstring 写明）**：目标路径经形参间接且**整个文件**无任何 sessions 路径推导的写点不命中（跨文件数据流静态不可判定）——`session-fork.ts:175` 即此形态（调用点传 `getSessionsDir()`，fork 文件内无 sessions 字面量），R1 不命中——fork 的守卫 = 登记表「创建型唯一写入口」声明 + S1 语义层（父文档 D3b 诚实声明，粒度与覆盖差以该声明为准）。实现风格对齐 `check_path_whitelist.py`（读其开头 docstring 与 main 结构复刻）。
 2. allowlist 机制：脚本内置 `ALLOWLIST` 数组，初始条目**枚举执行时三条 legacy 直写链路的全部真实写点**（W1 扩围后、W11 迁移前的存活全集）：① `persistSessionName` 实现本体（`packages/runtime/src/infra/pi/session-file-utils.ts:415`，写点 `openSync('a')` :427）+ 唯一剩余调用点非活跃 rename（`session-lifecycle.ts:302`；活跃 `:296` 与 tryPersistLabel 兜底（`session-service.ts:1284`）已随 W1 删除）；② `persistHandedOff` 实现本体（`session-file-utils.ts:452`，写点 :464）；③ `patchSessionCwd` 实现本体（`session-file-utils.ts:518`，写点 atomicWrite :540）。执行时以 `grep -rn "persistSessionName\|persistHandedOff\|patchSessionCwd" packages/runtime/src --include="*.ts"` 排除注释行与测试 mock 的命中为准逐一登记，allowlist 与真实写点集必须严格相等（若发现 tryPersistLabel 路径仍存活 = W1 未按扩围执行完毕，停止并上报，**禁止登记放行**）。每条 allowlist 项必须带 `# 移除期限: W11` 注释——注意这是本脚本**新引入**的约定：`.githooks/check_sidecar_session.py` 只有通用例外注释先例（:42 附近 `SENDERROR_NO_SID_WHITELIST`，无期限式注释形态），该新约定须写进 R1 脚本 docstring 说明。
 3. `install-hooks.sh` heredoc 内追加 R1 段（对齐 `PATH_WHITELIST_CHECKER` 段的结构：print_section → python3 调用 → 非 0 退出报错文案指向 `docs/architecture/data-source-registry.md`）；重跑 `./install-hooks.sh`。
 4. 报错文案遵守「错误信息必须可操作」：输出违规文件:行号 + 恢复动作（「改经 pi RPC 或扩展 appendEntry；若为登记例外，先在 data-source-registry.md 补条目 + 本脚本 allowlist 登记」）。
@@ -386,18 +386,18 @@
 1. process-manager 新增 `withEphemeralPi(sessionFile, fn)`（或对齐现有命名风格的等价入口）：spawn `pi --mode rpc` 附着该 session 文件（探针场景 B 形态）→ 等就绪（上限 5s）→ 执行 fn(rpcClient) → kill 进程。端到端预算 ~600ms（探针数据）。
 2. `renameSession` 非活跃分支：`findScannedSession` 后改调 `withEphemeralPi(target.filePath, (c) => c.setSessionName(newName))`；失败（spawn 失败 / RPC 失败）按父文档 §3.1 失败路径报错保留旧名可重试。
 3. 删除 `persistSessionName` 全链路：session-file-utils.ts 实现、session-store.ts 转发、ports/session.ts 端口声明、相关测试与 mock（代码引用按验收 1 两段式清零；注释按 [HISTORICAL] 惯例保留，逐条核对归属）。
-4. **`persistHandedOff` 迁 sidecar（D3b 裁决，r3 补漏链路①）**：`persistHandedOff` 从 `openSync('a')` 直写 `handoff_marker` entry 改为写 xyz 自有 sidecar（与 `.meta.json`/`.preset.json`/`.project.json` 同目录同风格，如 `<sessionFile>.handoff.json`，命名对齐 sidecar 家族）；`extractHandedOff` 改为优先读 sidecar、未命中 fallback 尾读旧 JSONL `handoff_marker`（存量 session 兼容——旧 marker 永在尾部窗口，现有仅尾读实现保留为 fallback 分支）；`scanSessionMeta` 消费不变（仍经 extractHandedOff）；`markHandedOff`（session-service.ts:1080）内存态写与调用链（handoff-service.ts:286）不动。sidecar 写沿用规则 #6 守卫（JSONL 不存在时跳过）+ 写后失效 sessionMetaCache（对齐 persistSessionEnd :152）。
-5. **`patchSessionCwd` 迁 restore tmp 读改写管线（D3b 裁决，r3 补漏链路②）**：`restoreSession`（session-lifecycle.ts:405 附近）的 cwd 降级分支不再 patch 源文件；在既有「读源文件 → `stripSessionEndEntries` → 写 tmpdir → pi `switchSession(tmp)`」管线中，对 tmp 内容的首行 session header 应用 cwd fallback（读改写同处完成，源文件零写——源文件 header 保持旧 cwd 的后果仅是下次 restore 再走一次 fallback 判定，功能等价）。随后删除 session-file-utils.patchSessionCwd 及其 session-store 转发、端口声明；`restoreSession` 内现传给 `patchSessionCwd` 的防御性 mtime 检查随之退役。
+4. **`persistHandedOff` 迁 sidecar（D3b 裁决，r3 补漏链路①）**：`persistHandedOff` 从 `openSync('a')` 直写 `handoff_marker` entry 改为写 xyz 自有 sidecar（与 `.meta.json`/`.preset.json`/`.project.json` 同目录同风格，如 `<sessionFile>.handoff.json`，命名对齐 sidecar 家族）；`extractHandedOff` 改为优先读 sidecar、未命中 fallback 尾读旧 JSONL `handoff_marker`（存量 session 兼容——旧 marker 永在尾部窗口，现有仅尾读实现保留为 fallback 分支）；`scanSessionMeta` 消费不变（仍经 extractHandedOff）；`markHandedOff`（session-service.ts:1074，体内 :1080 调用 persistHandedOff——r4 锚核正：:1080 是调用行非方法签名行）内存态写与调用链（handoff-service.ts:286）不动。sidecar 写沿用规则 #6 守卫（JSONL 不存在时跳过）+ 写后失效 sessionMetaCache（对齐 persistSessionEnd :152）。
+5. **`patchSessionCwd` 迁 restore tmp 读改写管线（D3b 裁决，r3 补漏链路②）**：`restoreSession`（session-lifecycle.ts:405 附近）的 cwd 降级分支不再 patch 源文件；在既有「读源文件 → `stripSessionEndEntries` → 写 tmpdir → pi `switchSession(tmp)`」管线中，对 tmp 内容的首行 session header 应用 cwd fallback（读改写同处完成，源文件零写）。**扫描侧消费差异边界（r4 补全）**：迁 tmp 后源文件 header 永久保持旧 cwd（死路径——pi append 不重写 header），而 header cwd 的消费方不止 restore fallback——① scanner label fallback（session-scanner.ts:73 `label: s.name ?? basename(s.cwd)`，未命名 session 的显示名）与侧栏 cwd 分组读扫描出的 header cwd；② `deleteByCwd`（session-lifecycle.ts:365-372，folder 删除按扫描条目 `s.cwd === cwd` 匹配）。迁 tmp 后这两个消费方按死路径值工作，与现状（patch 把 header 改写为 home）的差异：未命名 session 重启后扫描 label 显示 basename(死路径) 而非 basename(home)；`deleteByCwd(home)` 不再命中该 session、`deleteByCwd(死路径)` 命中（arguably 更正确——死路径是 header 的真实历史值，home 是旧方案的修补值，按真实值分组/删除符合直觉）。**接受该行为差异**，理由：差异仅出现在「cwd 已被删除」的异常场景 session 上，且发生在 restore 后未产生新 turn 即重启的窗口；活路径 session 的两消费方行为不变。验收覆盖见验收 4 扫描侧断言。随后删除 session-file-utils.patchSessionCwd 及其 session-store 转发、端口声明；`restoreSession` 内现传给 `patchSessionCwd` 的防御性 mtime 检查随之退役。
 6. **fork 创建型登记核对（零代码改动，r3 补漏链路③）**：核对登记表（W2 步骤 3 登记⑥）的「fork 文件唯一创建入口 = `createForkedSessionFile`（session-fork.ts:175）」条目在位且未被演进为「重写既有 session 文件」形态；失败分支 `unlink(forkedFilePath)` 清理孤儿文件的语义在条目边界说明中登记（创建者清理，非删 pi 文件）。
-7. R1 allowlist 清空：`ALLOWLIST = []`，删除「移除期限: W11」注释；登记表 legacy 例外条目①②③状态改「已移除（W11）」；fork 创建型与 sidecar 家族条目保留（合法形态，非例外）。
+7. R1 allowlist 清空：`ALLOWLIST = []`，删除「移除期限: W11」注释；**R1 sidecar 内置豁免清单同步核对含 `.handoff.json`**（r4 补——W3 建立时已按 D3b 四后缀全集预留；本 wave 该后缀写点落地，豁免若缺失则验收 1 的 exit 0 不成立、与验收 3 的「允许命中」矛盾；核对豁免与登记表 sidecar 家族条目一一对应，实现偏差在此同步修正）；登记表 legacy 例外条目①②③状态改「已移除（W11）」；fork 创建型与 sidecar 家族条目保留（合法形态，非例外；家族子行补 `.handoff.json`（`persistHandedOff` 迁入））。
 8. 行为验收照父文档场景 1 后半执行。
 
 **验收标准**：
 
-1. 代码级（两段式，防注释误伤——r2 修框架、r3 修过滤器）：① **代码引用清零**：`grep -rn "persistSessionName\|persistHandedOff\|patchSessionCwd" packages/ --include="*.ts" | grep -vE ':[[:space:]]*(//|\*)' | grep -v "\.test\.ts"` 输出为空（排除注释行与测试文件。过滤器匹配 `grep -rn` 输出的**路径前缀后**注释形态 `path:line: //...` / `path:line: *...`——r3 实测：旧写法 `grep -v "^\s*//"` 对带路径前缀的输出永不匹配、注释行穿透（jsonl.ts:60 块注释续行实测漏过），新写法经同一样例实测正确滤除且代码命中全保留；被测代码删除后测试内 mock 引用一并清零，最终以无过滤全量 grep 复核：命中仅剩注释）；② **注释命中逐条人工核对归属**：注释**不删**（[HISTORICAL] 注释保留惯例——解释设计缘由），逐条确认其描述的是历史机制而非现存调用。现存注释位置（写本文档时已核实，W1/W11 前序删除会自然缩减该集合，执行时以 grep 实测为准）：`packages/runtime/src/utils/jsonl.ts:60`、`services/session/session-service.ts:1279`（属 tryPersistLabel docstring，W1 已随机制删除）、`infra/pi/session-file-utils.ts:96`、`infra/pi/session-file-utils.ts:443`、`services/session/types.ts:104`（同属 W1 删除范围）、`infra/pi/session-store.ts:5`、`services/session/session-lifecycle.ts:291-292/306`（部分随 W1 改写）。另：`python3 .githooks/check_pi_direct_write.py` 在 ALLOWLIST 空的情况下 exit 0（fork 写点路径经形参间接本就不命中 R1，sidecar 后缀内置豁免——「归零」的机器语义 = 无可拦模式残留）；`grep -n "ALLOWLIST" .githooks/check_pi_direct_write.py` 显示空数组。
+1. 代码级（两段式，防注释误伤——r2 修框架、r3 修过滤器）：① **代码引用清零**：`grep -rn "persistSessionName\|persistHandedOff\|patchSessionCwd" packages/ --include="*.ts" | grep -vE ':[[:space:]]*(//|\*)' | grep -v "\.test\.ts"` 输出为空（排除注释行与测试文件。过滤器匹配 `grep -rn` 输出的**路径前缀后**注释形态 `path:line: //...` / `path:line: *...`——r3 实测：旧写法 `grep -v "^\s*//"` 对带路径前缀的输出永不匹配、注释行穿透（jsonl.ts:60 块注释续行实测漏过），新写法经同一样例实测正确滤除且代码命中全保留；被测代码删除后测试内 mock 引用一并清零，最终以无过滤全量 grep 复核：命中仅剩注释）；② **注释命中逐条人工核对归属**：注释**不删**（[HISTORICAL] 注释保留惯例——解释设计缘由），逐条确认其描述的是历史机制而非现存调用。现存注释位置（写本文档时已核实，W1/W11 前序删除会自然缩减该集合，执行时以 grep 实测为准）：`packages/runtime/src/utils/jsonl.ts:60`、`services/session/session-service.ts:1279`（属 tryPersistLabel docstring，W1 已随机制删除）、`infra/pi/session-file-utils.ts:96`、`infra/pi/session-file-utils.ts:443`、`services/session/types.ts:104`（同属 W1 删除范围）、`infra/pi/session-store.ts:5`、`services/session/session-lifecycle.ts:291-292/306`（部分随 W1 改写）。另：`python3 .githooks/check_pi_direct_write.py` 在 ALLOWLIST 空的情况下 exit 0（fork 写点路径经形参间接且文件内零路径推导，本就不命中 R1；sidecar 四后缀内置豁免——含本 wave 迁入的 `.handoff.json`，与验收 3 的允许命中清单一致，r4 修正后两条验收不再矛盾；「归零」的机器语义 = 豁免清单外命中为 0——sidecar 四后缀内置豁免之外、全仓无文件级邻近粒度命中的写点，即无可拦模式残留）；`grep -n "ALLOWLIST" .githooks/check_pi_direct_write.py` 显示空数组。
 2. 行为级（父文档场景 1 后半）：`pnpm dev` → 对非活跃 session（重开 app 后未打开的）右键改名 → 侧栏更新，session JSONL 尾部出现改名 `session_info` entry（由短命 pi 写入：`tail -3 <sessionFile>` 核对）；改名词耗时 <1.5s（探针 ~600ms + 余量，超时即 fail）。
 3. 行为级（父文档场景 1 代码断言，r3 修正后与真实全集一致）：`git grep -nE "openSync\('(a|w)'|appendFile|writeFile|atomicWrite" packages/runtime/src/` 的命中逐条核对——**指向 pi JSONL 本体的写路径为零**；允许命中：sidecar 家族（session-file-utils 的 `.meta.json`/`.preset.json`/`.project.json`/`.handoff.json` atomicWrite——xyz 自有文件，D3/D3b）、`session-fork.ts:175`（文件创建型，登记在案，D3b）、session-lifecycle 的 tmpdir 写（restore/fork 的 tmp 拷贝，非 sessions 目录）、各配置/日志/附件目录写（非 sessions 目录）。
-4. 回归：`RUNTIME_TEST` 通过；活跃 rename（W1 路径）与非活跃 rename（本 wave 路径）行为级各验一次；handoff 全流程（发起 → 源 session 标记 handedOffTo → 新 session 承接）+ 重开 app 后源 session 的交接标记/跳转正常（sidecar 读取路径）；restore 一个 cwd 已不存在的 session 正常复活（tmp patch 路径）且复活后继续对话的持久化落在 pi 认知的 session 文件（现状行为不回归）；删除的端口无悬挂引用（typecheck 通过即证）；存量旧 session（JSONL 内含 handoff_marker）重开后交接标记仍可读（fallback 兼容路径）。
+4. 回归：`RUNTIME_TEST` 通过；活跃 rename（W1 路径）与非活跃 rename（本 wave 路径）行为级各验一次；handoff 全流程（发起 → 源 session 标记 handedOffTo → 新 session 承接）+ 重开 app 后源 session 的交接标记/跳转正常（sidecar 读取路径）；restore 一个 cwd 已不存在的 session 正常复活（tmp patch 路径）且复活后继续对话的持久化落在 pi 认知的 session 文件（现状行为不回归）；删除的端口无悬挂引用（typecheck 通过即证）；存量旧 session（JSONL 内含 handoff_marker）重开后交接标记仍可读（fallback 兼容路径）。**扫描侧断言（r4 补，步骤 5 声明的消费差异验收覆盖）**：迁 tmp 后 scanner 的 label fallback（session-scanner.ts:73）与 `deleteByCwd`（session-lifecycle.ts:365）行为不回归——构造 header cwd 为死路径的未命名 session（cwd 目录删除后 restore、不产生新 turn 即重启），断言扫描 label = basename(该死路径)（一致派生，非空非 undefined）、`deleteByCwd(该死路径)` 正常命中删除；活路径 session 的 label fallback 与 deleteByCwd 行为与迁移前一致；basename(死路径) vs basename(home) 的显示差异属步骤 5 已声明并接受的行为差异，不计为回归失败。
 
 ### W12 5 个 state 话题数据源切换为 ReplicatedState 发布（P1.5）
 
@@ -572,7 +572,7 @@
 
 **涉及文件**：
 
-- `packages/runtime/src/infra/pi/event-adapter.ts`（修改：NULL_EVENTS（L712-718）移除 `entry_appended`，新增翻译 handler——输出失效事件；已核实现状 `entry_appended` 在 NULL_EVENTS 且注释说明移出需接消费方）
+- `packages/runtime/src/infra/pi/event-adapter.ts`（修改：NULL_EVENTS（L712-716，Set 字面量；r4 核正行号）移除 `entry_appended`，新增翻译 handler——输出失效事件；已核实现状 `entry_appended` 在 NULL_EVENTS 且注释说明移出需接消费方）
 - `packages/runtime/src/services/session/event-interpreter.ts`（修改：`subagentRecords` Map 改纯派生缓存——唯一写方 = entry 扫描（get_entries 重拉结果）；`entry_appended` 到达 → 对应实例 markDirty → 防抖增量拉取）
 - `packages/runtime/src/services/session/session-service.ts`（修改：新增 `getEntries(since)` 增量拉取编排——rpc-client.getEntries（L528）已存在；游标失效（since 指向 entry 不存在返回错误）退化为全量重拉（父文档 §3.1 失败路径））
 - `packages/runtime/src/services/session/subagent-extractor.ts`（修改：标注 legacy——降级为冷启动旧 session（无自描述 entry）兜底）
@@ -594,18 +594,18 @@
 
 ### W19 session_end sidecar 登记收口（P3.2）
 
-**目标**：session_end 维持 sidecar 单写方（D3 裁决选项 a）——读写收口确认 + 登记表按 **sidecar 家族**登记为 xyz 自有合法形态（D3b：`.meta.json` / `.preset.json` / `.project.json` + W11 迁入的 handoff sidecar）；不做 appendEntry 改造（选项 b 仅在真实需求出现时启动，本 wave 禁止实施）。
+**目标**：session_end 维持 sidecar 单写方（D3 裁决选项 a）——读写收口确认 + 登记表按 **sidecar 家族**登记为 xyz 自有合法形态（D3b：`.meta.json` / `.preset.json` / `.project.json` / `.handoff.json` 四后缀全集，第 4 后缀 W11 迁入）；不做 appendEntry 改造（选项 b 仅在真实需求出现时启动，本 wave 禁止实施）。
 
 **前置依赖**：W2（登记表存在）、W11（直写清零后，「sessions 目录内 xyz 写入仅剩 sidecar 家族与 fork 创建型两类登记形态」的语境成立——fork 创建型是 pi 体系内文件、与 sidecar 分属两类，见 D3b）。
 
 **涉及文件**：
 
-- `docs/architecture/data-source-registry.md`（修改：登记 sidecar 家族条目——`.meta.json`（owner = `persistSessionEnd` 唯一写入口，session-file-utils.ts:137，已核实）、`.preset.json`（`persistPresetBinding` :271/:281）、`.project.json`（`persistProjectBinding` :196/:223）、handoff sidecar（`persistHandedOff`，W11 迁入），形态 = xyz 自有 sidecar，非 pi 文件，绝对写规则管不到（规则管 pi 的 JSONL 本体）；R1 对 sidecar 后缀的内置豁免与登记条目一一对应）
+- `docs/architecture/data-source-registry.md`（修改：登记 sidecar 家族条目——`.meta.json`（owner = `persistSessionEnd` 唯一写入口，session-file-utils.ts:137，已核实）、`.preset.json`（`persistPresetBinding` :271/:281）、`.project.json`（`persistProjectBinding` :196/:223）、`.handoff.json`（`persistHandedOff`，W11 迁入），形态 = xyz 自有 sidecar，非 pi 文件，绝对写规则管不到（规则管 pi 的 JSONL 本体）；R1 对 sidecar 后缀的内置豁免与登记条目一一对应——家族四后缀与 R1 豁免清单四后缀同源同集）
 - `packages/runtime/src/infra/pi/session-file-utils.ts`（修改：仅当 read 核实发现多处读写未收口时收口——现状按 D3「读写收口到登记表声明的单一 util（现状已是）」预期为零改动或纯注释补登；若发现收口外的读写点，收口进该文件并加 `@data-owner` 注解）
 
 **任务步骤**：
 
-1. 全量核查 sidecar 家族读写点：`grep -rn "persistSessionEnd\|persistPresetBinding\|persistProjectBinding\|persistHandedOff\|\.meta\.json\|\.preset\.json\|\.project\.json" packages/runtime/src --include="*.ts" | grep -v __tests__`——确认读方都经 session-file-utils 的函数（`check_sidecar_session.py` pre-commit 已有相关守卫，输出对齐）。
+1. 全量核查 sidecar 家族读写点：`grep -rn "persistSessionEnd\|persistPresetBinding\|persistProjectBinding\|persistHandedOff\|\.meta\.json\|\.preset\.json\|\.project\.json\|\.handoff\.json" packages/runtime/src --include="*.ts" | grep -v __tests__`——确认读方都经 session-file-utils 的函数（`check_sidecar_session.py` pre-commit 已有相关守卫，输出对齐）。
 2. 登记表按家族登记（一条家族条目 + 各文件子行）：session 终态（status/outcome）/ launch preset / project 归属 / handoff 标记——权威 = 各 sidecar 文件；owner = session-file-utils；唯一写入口 = 对应 persist 函数；例外 = 无。W2 已登记的家族初版条目（步骤 3 ⑤）在此收口核对。
 3. 本 wave 预期是小 wave：以核查 + 登记为主，代码零到微量改动；任何「顺手把 sidecar 改 appendEntry」的冲动 = 违反 D3 裁决，禁止。
 
@@ -649,7 +649,7 @@
 
 **涉及文件**：
 
-- `packages/runtime/src/infra/pi/event-adapter.ts`（修改：`message_end` / tool_execution_end 等事件翻译时**重构出 entry 形态**（字段对齐 pi entry schema：messageId/contentIndex/turnId 等）作为实时 feed 载体，替代现直译 message.* 中间形态——本 wave 是替换不是并存；**同时把 `message_end` 移出 NULL_EVENTS**（Set 字面量 :712-718 现含 `'turn_start', 'message_end', …`——r3 补漏：只加 handler 不移出集合，事件被 short-circuit、实时 feed 静默为空；对齐 W18 对 `entry_appended` 的处置写法）。
+- `packages/runtime/src/infra/pi/event-adapter.ts`（修改：`message_end` / tool_execution_end 等事件翻译时**重构出 entry 形态**（字段对齐 pi entry schema：messageId/contentIndex/turnId 等）作为实时 feed 载体，替代现直译 message.* 中间形态——本 wave 是替换不是并存；**同时把 `message_end` 移出 NULL_EVENTS**（Set 字面量 :712-716 现含 `'turn_start', 'message_end', …`——r3 补漏、r4 核正行号：只加 handler 不移出集合，事件被 short-circuit、实时 feed 静默为空；对齐 W18 对 `entry_appended` 的处置写法）。
 - `packages/core/src/domain/chat/effects/registry.ts`（修改：effect handler 的输入从「事件 payload」改为「重构 entry 经 applyEntry 后的 state 增量」——effects 退化为 reducer 的薄封装（副作用类如 toast 保留 effect，状态类全走 reducer）；改动量大时允许分两 commit：先 message_end 路径后 tool 路径）。
 - `packages/core/src/domain/chat/store.ts`（修改：`applyMessageEvent`（store.ts 现状入口）内部改喂 reducer）。
 - `packages/runtime/src/__tests__/equivalence/live-reload.test.ts`（修改：断言升级——实时累积 state == 文件重放 state（store 级，非 entry 级））。
@@ -657,7 +657,7 @@
 **任务步骤**：
 
 1. 事件 → entry 重构映射表：`message_end` → message entry（含 turnId 分组字段——分组语义本身归 fix-chat-flow-order，本 wave 只保证字段在 entry 里稳定存在）；`tool_execution_start/end` → toolCall/toolResult entry；`message_update` 的 partial content 不进 reducer（临时 UI overlay，entry 提交时丢弃，D5）。
-2. 实时链路改造：先 `message_end` 移出 NULL_EVENTS（:712-718，事件不再被 short-circuit）；event-adapter 重构 entry → message-bus（stream 话题 wire 形态不变，payload 换 entry 形态——**协议变更须同步** `packages/shared/src/protocol.ts` 类型）→ chat store `applyMessageEvent` → `applyEntry`。streaming 期间的 delta 渲染走 overlay（现状 transient 类话题不动，TOPIC_TABLE 不改）。
+2. 实时链路改造：先 `message_end` 移出 NULL_EVENTS（:712-716，事件不再被 short-circuit）；event-adapter 重构 entry → message-bus（stream 话题 wire 形态不变，payload 换 entry 形态——**协议变更须同步** `packages/shared/src/protocol.ts` 类型）→ chat store `applyMessageEvent` → `applyEntry`。streaming 期间的 delta 渲染走 overlay（现状 transient 类话题不动，TOPIC_TABLE 不改）。
 3. 扩展 entry：`entry_appended`（W18）→ 直接构 entry 喂 reducer（D5：扩展 entry 直接走该通道）。
 4. 等价性断言升级：W5 fixture 跑操作序列（steer + bash + 后台 subagent 完成），断言实时 store 快照 == `get_entries` 重放喂 reducer 快照（同构断言——断言不变量而非两个实现的等价，D5）。
 5. 若 pi 上游未来补发射 entry_appended（父文档预留）：只换喂入源头 reducer 不动——本 wave 在 event-adapter 留一行注释锚点即可，不写任何投机代码。
@@ -699,25 +699,25 @@
 
 ### W23 ADR-0062 落档 + ADR-0042 修订 + review checklist（P4.2 第一件）
 
-**目标**：架构决策落档：新 ADR-0062「单一数据 owner + 绝对写规则」；修订 ADR-0042 正文与 W1 sidecar 实现的矛盾；review checklist 对齐 ADR-0049 先例。
+**目标**：架构决策落档：新 ADR-0062「单一数据 owner + 绝对写规则」；修订 ADR-0042 正文与 ADR-0042 前案 W1 sidecar 实现的矛盾（「前案 W1」= ADR-0042 历史 effort 的 W1 sidecar 修订，**非本计划 wave W1**——本计划 W1 是活跃 label 直写切 RPC，与 sidecar 无关，r4 撞名消歧）；review checklist 对齐 ADR-0049 先例。
 
 **前置依赖**：W11（绝对写规则全线生效的事实）、W13（renderer 收敛事实）、W18（扩展单源事实）——ADR 记录已发生的裁决。
 
 **涉及文件**：
 
 - `docs/adr/0062-single-data-owner-absolute-write-rule.md` [新增]（编号顺延已核实：当前最高 0061）
-- `docs/adr/0042-runtime-session-end-entry.md`（修改：已核实真实文件名；正文「append JSONL」原决策更新为「runtime 单写 sidecar」（W1 修订），显式标注修订记录——对齐项目「推翻/修订 ADR 需显式落档」惯例）
+- `docs/adr/0042-runtime-session-end-entry.md`（修改：已核实真实文件名；正文「append JSONL」原决策更新为「runtime 单写 sidecar」（ADR-0042 前案 W1 的历史修订，非本计划 wave W1），显式标注修订记录——对齐项目「推翻/修订 ADR 需显式落档」惯例）
 - `.agents/skills/pr-cr-fix/agents/review-data-governance.md`（修改：checklist 从「以本文档 §2.2 清单为准绳」切换为「以登记表为准绳」（登记表 W2 起已是 SSOT）+ 附 ADR-0062 引用）
 
 **任务步骤**：
 
 1. ADR-0062 内容（父文档 §3.6 第 5 层）：判据（缓存第二写入者判定表 D1）/ 事件只做失效 / pi JSONL 唯一写方 = pi 进程（含扩展经 pi API）/ sidecar 是登记在案的 xyz 自有合法形态（D3）/ 队列按字段分权威（D6）/ ReplicatedState 配置即登记条目。
-2. ADR-0042 修订：只改与实现矛盾处 + 顶部修订记录块（date + W1 引用），不动其他历史内容。
+2. ADR-0042 修订：只改与实现矛盾处 + 顶部修订记录块（date + ADR-0042 前案 W1 引用——历史 effort 的 W1，非本计划 wave W1，防修订归因错误），不动其他历史内容。
 3. review-data-governance.md checklist 更新准绳引用；pr-cr-fix SKILL.md 维度表不动（8 维已含 data-governance，已核实）。
 
 **验收标准**：
 
-1. 内容级：`grep -n "绝对写规则\|单一数据 owner" docs/adr/0062-*.md` 命中；ADR-0042 含修订记录块（`grep -n "修订" docs/adr/0042-*.md` 命中且含 W1/sidecar 字样）。
+1. 内容级：`grep -n "绝对写规则\|单一数据 owner" docs/adr/0062-*.md` 命中；ADR-0042 含修订记录块（`grep -n "修订" docs/adr/0042-*.md` 命中且含 sidecar 与 ADR-0042 前案 W1 引用字样——前案 W1 指 ADR-0042 历史 effort 的 W1，非本计划 wave W1）。
 2. 一致性：ADR-0062 中 sidecar/队列分工表述与登记表（W2/W19）一致——三处交叉核对无矛盾（汇报中列出核对结论）。
 3. 回归：`git diff` 仅涉 3 个文件（新增 ADR + 修订 ADR + review agent checklist），无代码改动（`git diff --stat` 改动行数 ≤120）。
 
@@ -784,7 +784,7 @@
 8. **record-store 已有 appendEntry 注入通道**：`extensions/subagent-workflow/src/execution/record-store.ts:175/223`（现为 manifest-invalid 上报用）——W16 复用该通道扩展为 record 全量上报。
 9. **S1 已上线**：`.agents/skills/pr-cr-fix/agents/review-data-governance.md` 已存在且已入 SKILL.md 8 维 batch2（已核实）——P0 无 S1 接入 wave，与父文档 P0.3 一致。
 10. **`get_messages` 已标 DEAD**：`rpc-client.ts:511` 标注 `[DEAD]`，getHistory 实际走 `getEntries` entry 树重建——W20 重放路径以此为准。
-11. **xyz 指向 pi JSONL 的写点全集（r3 审查补漏后收口，写本文档时全量 grep 实测）**：`persistSessionName`（session-file-utils.ts:415，写点 openSync('a') :427；调用 = 活跃 rename session-lifecycle.ts:296 / 非活跃 :302 / tryPersistLabel session-service.ts:1284）、`persistHandedOff`（:452，写点 :464；调用链 handoff-service.ts:286 → session-service.ts:1080，活跃交接 pi 在场）、`patchSessionCwd`（:518，写点 atomicWrite :540；调用 = session-lifecycle.ts:405 restoreSession，pi spawn 前）、`createForkedSessionFile`（`services/session/session-fork.ts:175` writeFile，创建型——调用点 session-lifecycle.ts:532 传 `getSessionsDir()`，失败分支 unlink 清理孤儿）。sidecar 家族（非 pi JSONL，同目录 xyz 自有）：`.meta.json` :146 / `.preset.json` :281 / `.project.json` :223。自查命令：`grep -rn "openSync\|appendFile\|writeFile\|atomicWrite" packages/runtime/src --include="*.ts" | grep -iv test`（注意：session-fork 在 `packages/runtime/src/services/session/`，不存在独立的 `packages/session/`）。W1/W11/W19 的处置对象以此清单为准，发现新增写点即停止上报。
+11. **xyz 指向 pi JSONL 的写点全集（r3 审查补漏后收口，写本文档时全量 grep 实测）**：`persistSessionName`（session-file-utils.ts:415，写点 openSync('a') :427；调用 = 活跃 rename session-lifecycle.ts:296 / 非活跃 :302 / tryPersistLabel session-service.ts:1284）、`persistHandedOff`（:452，写点 :464；调用链 handoff-service.ts:286 → session-service.ts:1074 markHandedOff（体内 :1080 调用 persistHandedOff），活跃交接 pi 在场）、`patchSessionCwd`（:518，写点 atomicWrite :540；调用 = session-lifecycle.ts:405 restoreSession，pi spawn 前）、`createForkedSessionFile`（`services/session/session-fork.ts:175` writeFile，创建型——调用点 session-lifecycle.ts:532 传 `getSessionsDir()`，失败分支 unlink 清理孤儿）。sidecar 家族（非 pi JSONL，同目录 xyz 自有）：`.meta.json` :146 / `.preset.json` :281 / `.project.json` :223 / `.handoff.json`（W11 迁入后新增，写本文档时无代码——家族全集四后缀对齐父文档 D3b）。自查命令：`grep -rn "openSync\|appendFile\|writeFile\|atomicWrite" packages/runtime/src --include="*.ts" | grep -iv test`（注意：session-fork 在 `packages/runtime/src/services/session/`，不存在独立的 `packages/session/`）。W1/W11/W19 的处置对象以此清单为准，发现新增写点即停止上报。
 
 ## 附录 B：父文档验收场景 × wave 对照
 

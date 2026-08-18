@@ -34,7 +34,7 @@ pi 的能力面（本设计调研期已逐一 read 源码核实，见 §3.3 各�
 **扩展在 pi 内的持久化与上报通道（extension-in-pi 的官方机制）**：
 
 - `pi.appendEntry(customType, data)`（core/extensions/types.ts:1261）→ `sessionManager.appendCustomEntry` 把 `type:"custom"` entry **由 pi 自己持久化**进 session JSONL（agent-session.ts:2264-2271）。session-manager.ts:92-95 的注释明言这就是扩展状态重建的官方通道（"scan entries for their customType and reconstruct internal state"）；custom entry 持久化但不进 LLM context（session-manager.ts:377-385）；
-- `entry_appended` 事件经 `session.subscribe((event) => output(event))` **全量转发**到 RPC 客户端（rpc-mode.ts:354-356）——扩展数据的实时失效信号已经存在，xyz 当前只是在 event-adapter 的 NULL_EVENTS 里忽略了它（event-adapter.ts:712-718）；
+- `entry_appended` 事件经 `session.subscribe((event) => output(event))` **全量转发**到 RPC 客户端（rpc-mode.ts:354-356）——扩展数据的实时失效信号已经存在，xyz 当前只是在 event-adapter 的 NULL_EVENTS 里忽略了它（event-adapter.ts:712-716，Set 字面量；r4 核正——前稿 :712-718 尾行偏 2）；
 - `pi.sendMessage` 的 custom message（customType）走消息流到达 GUI（event-adapter.ts:517-527 已消费，如 subagent-bg-notify）——适合用户可见通知，不适合状态记录。
 
 **问题在于 xyz 没有以这些快照与官方通道为中心组织数据流**，而是把快照拆成事件流、再在 runtime/renderer 各自拼回状态，每类数据自建「事件驱动缓存 + 专属回写路径 + 专属兜底拉取」。
@@ -42,7 +42,7 @@ pi 的能力面（本设计调研期已逐一 read 源码核实，见 §3.3 各�
 ### 关键术语（首次定义，全文通用）
 
 - **权威源（source of truth）**：某数据唯一正确的最终存储。本文中 = pi 进程（session 文件 + agent 内存态）。subagent/workflow 是例外——pi 没有此概念，权威源是 xyz 扩展经 `appendEntry` 写入 pi 文件的自描述 custom entry（存储由 pi 执行，语义归 xyz 扩展）。
-- **绝对写规则**：xyz 的任何代码（runtime / renderer / 脚本）永不写 pi **当前持有**的 session JSONL——对 pi 持有文件的修改只发生在 pi 内部（内置 RPC 或扩展 API）。规则的精确边界含两类**登记在案的合法形态**（非例外，裁定见 D3）：① **sidecar 家族**——`<sessionFile>.meta.json` / `.preset.json` / `.project.json` 等 pi 体系外的 xyz 自有文件；② **文件创建型**——创建 pi 将来才持有的新 session 文件（创建时目标不存在、无并发写方、写后即移交 pi，fork 是唯一实例）。改写「pi 将来才附着、当前无进程持有」的既有文件（restore 的 patchSessionCwd）不属前两类，登记为迁移期例外并带移除期限。这条规则的力量在于绝对性——一旦有例外，例外就会衰变（label 双写方就是前车之鉴）。
+- **绝对写规则**：xyz 的任何代码（runtime / renderer / 脚本）永不写 pi **当前持有**的 session JSONL——对 pi 持有文件的修改只发生在 pi 内部（内置 RPC 或扩展 API）。规则的精确边界含两类**登记在案的合法形态**（非例外，裁定见 D3）：① **sidecar 家族**——`<sessionFile>.meta.json` / `.preset.json` / `.project.json` / `.handoff.json`（第 4 后缀由 W11 迁入，见 D3b）等 pi 体系外的 xyz 自有文件；② **文件创建型**——创建 pi 将来才持有的新 session 文件（创建时目标不存在、无并发写方、写后即移交 pi，fork 是唯一实例）。改写「pi 将来才附着、当前无进程持有」的既有文件（非活跃 rename 的 session_info 直写、restore 的 patchSessionCwd——两者同属该形态，与原则 1 的 legacy 清单对齐）不属前两类，登记为迁移期例外并带移除期限。这条规则的力量在于绝对性——一旦有例外，例外就会衰变（label 双写方就是前车之鉴）。
 - **pi 内操作原则**：pi 没有而 xyz 需要的能力，默认解法是开发 pi 扩展在 pi 进程内实现（经 `appendEntry` 持久化、经 `entry_appended`/`get_entries` 上报），runtime 只经 RPC 存取。禁止 runtime 绕过 pi 直接读改 pi 的内部数据。
 - **owner（数据所有者）**：xyz 侧某类数据唯一的写入者——一个模块、一个状态容器、一个写入口。所有来源（事件/RPC/文件）都汇入 owner 的单一入口，读方只读 owner。
 - **投影宿主**：runtime 是唯一的投影发生地——所有派生（merge/normalize/计数对齐/状态推导）在 runtime（或 core 包的唯一实现）发生一次；**renderer 零派生**，stores 只是视图模型容器，经单一 `applySnapshot` 入口接收 view-ready 数据。
@@ -107,7 +107,7 @@ pi.setSessionName(title)
 
 ### 2.3 四种多源模式（根因的四种表现）
 
-1. **双写方直写 pi JSONL**（现存实例：#1 label + handoff_marker）：xyz runtime 与 pi 进程互不知情地写同一文件，靠 last-write-wins。最危险——**label 链路现行有一个已证实的覆盖 bug**；`persistHandedOff`（`session-file-utils.ts:464` `openSync('a')` 直写 `handoff_marker`，活跃 session 交接时源 pi 进程在场，真实并发窗口）同属此类（r3 审查补漏）。另有两处触碰 pi JSONL 的写点不构成双写方，按边界形态登记处置（见 D3 裁定）：`patchSessionCwd`（:540，restore 时 pi 未起、无并发窗口的时序安全改写，登记带期限例外）与 `createForkedSessionFile`（`session-fork.ts:175`，创建 pi 将来才持有的新文件，登记「文件创建型」合法形态）。（session 终态 session_end 曾属此类：ADR-0042 原版 append JSONL，后经 W1 修订改为 runtime 单写 sidecar `.meta.json`，已非双写方——见 §3.3 D3 的重新评估。）
+1. **双写方直写 pi JSONL**（现存实例：#1 label + handoff_marker）：xyz runtime 与 pi 进程互不知情地写同一文件，靠 last-write-wins。最危险——**label 链路现行有一个已证实的覆盖 bug**；`persistHandedOff`（`session-file-utils.ts:464` `openSync('a')` 直写 `handoff_marker`，活跃 session 交接时源 pi 进程在场，真实并发窗口）同属此类（r3 审查补漏）。另有两处触碰 pi JSONL 的写点不构成双写方，按边界形态登记处置（见 D3 裁定）：`patchSessionCwd`（:540，restore 时 pi 未起、无并发窗口的时序安全改写，登记带期限例外）与 `createForkedSessionFile`（`session-fork.ts:175`，创建 pi 将来才持有的新文件，登记「文件创建型」合法形态）。（session 终态 session_end 曾属此类：ADR-0042 原版 append JSONL，后经 ADR-0042 前案 W1（历史 effort 的 sidecar 修订，与子文档 wave 编号 W1 无关——本计划子文档 W1 = 活跃 label 直写切 RPC，见 r4 撞名消歧）改为 runtime 单写 sidecar `.meta.json`，已非双写方——见 §3.3 D3 的重新评估。）
 2. **内存态 vs 磁盘扫描双管线**（#2/#7/#8/#10）：live 一套解析、reload 一套解析，语义漂移是常态。
 3. **多事件 + 多缓存重组**（#3/#4/#5/#11）：把 pi 单一快照拆成事件流再拼回去，每条事件的丢失/乱序/不发射特例各需一个兜底，兜底之间再竞态。
 4. **扩展借 pi 文件当数据库**（#8/#9 + label 的 session_info 直写）：pi 无概念的数据被编码成 pi entry 类型持久化，读取方要逆向理解扩展的编码约定。
@@ -133,7 +133,7 @@ fork 截断: session-fork.createForkedSessionFile ──writeFile 新建文件�
 auto-rename: rename-session 扩展 ──pi.setSessionName──► sessionManager.appendSessionInfo ────────────►│ pi 内部写方
 ```
 
-xyz 指向 pi JSONL 的写点全集共 6 处（r3 审查补漏 handoff / patchCwd / fork 三条，此前各版图均遗漏）：写方 1/2 = 手动 rename 活跃/非活跃两分支（`persistSessionName`，session-lifecycle.ts:296/:302）；写方 3 = `tryPersistLabel` 兜底（turn_end（`handleTurnUsageSideEffects`）/ agent_end（`handleTurnEndSideEffects`）时把未持久化的初始 label 经 `persistSessionName` 直写 JSONL，session-service.ts:1282-1286 → session-file-utils.ts:415-433 `openSync('a')`）；写方 4 = `persistHandedOff`（活跃 session 交接必经，handoff-service.ts:286 → session-service.ts:1080 markHandedOff，源 pi 进程在场——真实并发窗口）；写方 5 = `patchSessionCwd`（session-file-utils.ts:518 整文件 atomicWrite 重写，restore 时 pi 未起、无并发窗口，登记带期限例外）；写方 6 = `createForkedSessionFile`（session-fork.ts:175，创建型——目标文件写前不存在、写后即移交 pi，登记合法形态）。写方 1-5 由 W1/W11 全部消灭或迁移，写方 6 登记后保留（裁定见 D3）。读取方（pi sessionManager / xyz extractSessionName / renderer store）各自取「最后一条 session_info」，谁后写谁赢。
+xyz 指向 pi JSONL 的写点全集共 6 处（r3 审查补漏 handoff / patchCwd / fork 三条，此前各版图均遗漏）：写方 1/2 = 手动 rename 活跃/非活跃两分支（`persistSessionName`，session-lifecycle.ts:296/:302）；写方 3 = `tryPersistLabel` 兜底（turn_end（`handleTurnUsageSideEffects`）/ agent_end（`handleTurnEndSideEffects`）时把未持久化的初始 label 经 `persistSessionName` 直写 JSONL，session-service.ts:1282-1286 → session-file-utils.ts:415-433 `openSync('a')`）；写方 4 = `persistHandedOff`（活跃 session 交接必经，handoff-service.ts:286 → session-service.ts:1074 markHandedOff（体内 :1080 调用 persistHandedOff——r4 锚核正：:1080 是调用行非方法签名行），源 pi 进程在场——真实并发窗口）；写方 5 = `patchSessionCwd`（session-file-utils.ts:518 整文件 atomicWrite 重写，restore 时 pi 未起、无并发窗口，登记带期限例外）；写方 6 = `createForkedSessionFile`（session-fork.ts:175，创建型——目标文件写前不存在、写后即移交 pi，登记合法形态）。写方 1-5 由 W1/W11 全部消灭或迁移，写方 6 登记后保留（裁定见 D3）。另有两类**非内容写**的文件触碰不在「写点」定义内（登记表注明防误问，r4 补）：session 删除链（`pm.destroySession` 先行 + `session-store.trash` → system/trash OS 垃圾桶移动 + sidecar unlink，无并发持有）与 pi-maintenance.ts（infra/pi/）一次性目录布局迁移 `renameSync`。读取方（pi sessionManager / xyz extractSessionName / renderer store）各自取「最后一条 session_info」，谁后写谁赢。
 
 ---
 
@@ -141,7 +141,7 @@ xyz 指向 pi JSONL 的写点全集共 6 处（r3 审查补漏 handoff / patchCw
 
 ### 3.0 终态架构原则（五条，全方案的判断准绳）
 
-1. **绝对写规则**：xyz 代码永不写 pi **当前持有**的文件。pi 持有状态的所有修改发生在 pi 内部——内置 RPC（`set_session_name` 等）或扩展 API（`appendEntry` 等）。对「永不写」的精确边界（两类登记在案的合法形态，裁定与实例见 D3）：**sidecar 家族**（pi 体系外的 xyz 自有文件：`.meta.json` / `.preset.json` / `.project.json`）与**文件创建型**（创建 pi 将来才持有的新 session 文件，fork 唯一实例）；迁移期 legacy 例外（非活跃 rename 直写、restore 的 patchSessionCwd）必须登记并带移除期限。无白名单——合法形态是规则边界的一部分，例外是带期限的债务。
+1. **绝对写规则**：xyz 代码永不写 pi **当前持有**的文件。pi 持有状态的所有修改发生在 pi 内部——内置 RPC（`set_session_name` 等）或扩展 API（`appendEntry` 等）。对「永不写」的精确边界（两类登记在案的合法形态，裁定与实例见 D3）：**sidecar 家族**（pi 体系外的 xyz 自有文件：`.meta.json` / `.preset.json` / `.project.json` / `.handoff.json`——第 4 后缀由 W11 迁入，家族全集见 D3b）与**文件创建型**（创建 pi 将来才持有的新 session 文件，fork 唯一实例）；迁移期 legacy 例外（非活跃 rename 直写、restore 的 patchSessionCwd）必须登记并带移除期限。无白名单——合法形态是规则边界的一部分，例外是带期限的债务。
 2. **pi 内操作原则**：pi 能力缺口由 pi 扩展在 pi 进程内补齐（持久化经 `appendEntry`，上报经 `entry_appended` + `get_entries`），runtime 只经 RPC 存取。runtime 对 pi 数据只有两种动作：调 RPC 命令、订阅事件。
 3. **投影只发生一次**：runtime 是唯一投影宿主。所有派生逻辑（merge / normalize / 计数对齐 / 状态推导）在 runtime（或 core 包唯一实现）发生一次；renderer 零派生，stores 是视图模型容器，唯一写入口是 `applySnapshot`。多 pane / 多窗口是 runtime 副本的下游扇出，绝不出现两个消费者各自从 pi 独立推导。
 4. **两种复制模式按数据形态分流**：标量 session 状态走通用快照复制原语 `ReplicatedState<T>`（快照拉取 + 事件只做失效 + 周期/重连兜底重拉）；append-only 日志（消息流）走单一 `applyEntry` reducer 双路喂入（实时 feed 与文件重放共用一份派生代码）。不发明第三种模式；权威源能力缺失处（队列内容）降级该通道为对账信号 + 按字段重划权威，而非绕过权威源另起炉灶。
@@ -205,19 +205,19 @@ xyz 指向 pi JSONL 的写点全集共 6 处（r3 审查补漏 handoff / patchCw
 - **迁移期 legacy 例外集合**（r3 审查补全为三条）：P0 消灭活跃 session **label 链路**的全部直写（手动 rename + `tryPersistLabel` 兜底，并发危险所在）；以下三条若未能同阶段消灭/迁移，必须在登记表登记为「legacy 例外 + P1（W11）移除期限」，并在 pre-commit R1 的 allowlist 里单独列出——① 非活跃 rename 直写（`persistSessionName` 非活跃分支）；② `persistHandedOff` 直写（活跃交接，W11 迁 sidecar）；③ `patchSessionCwd`（restore 时序安全改写，W11 迁 tmp 读改写管线）。例外是带期限的债务，不是制度；fork 文件创建型与 sidecar 家族不是例外，是规则边界内的登记形态（D3 裁定）。
 - 探针：✅ pi RPC 命令存在性与行为（read 源码核实）；⛔ rename-session 守卫日志 "skip: name exists" 在真实链路出现（实施期 P0 用 `pi --mode rpc` 实测，复用 AGENTS.md 的扩展实测流程）。
 
-**D3 session 终态（session_end）存储——维持 sidecar，且在绝对写规则下合法（D3b 补写边界形态裁定）**：现状核实（对抗审查纠错）：ADR-0042 原版决策是 append JSONL，但其后 **W1 修订已改为 runtime 单写 sidecar `.meta.json`**（`persistSessionEnd`，session-file-utils.ts:111-157，注释明言「不污染 JSONL」+ 规则 #6 规避 pi `openSync("wx")` 竞态）。sidecar 是 **xyz 自有文件**，不是 pi 的文件——runtime 单写 sidecar **不违反绝对写规则**（规则管的是 pi 的 JSONL）。裁决：
+**D3 session 终态（session_end）存储——维持 sidecar，且在绝对写规则下合法（D3b 补写边界形态裁定）**：现状核实（对抗审查纠错）：ADR-0042 原版决策是 append JSONL，但其后 **ADR-0042 前案 W1 修订已改为 runtime 单写 sidecar `.meta.json`**（前案 W1 = 该历史 effort 的 W1，非子文档 wave 编号）（`persistSessionEnd`，session-file-utils.ts:111-157，注释明言「不污染 JSONL」+ 规则 #6 规避 pi `openSync("wx")` 竞态）。sidecar 是 **xyz 自有文件**，不是 pi 的文件——runtime 单写 sidecar **不违反绝对写规则**（规则管的是 pi 的 JSONL）。裁决：
 
-- **选项 a（维持 sidecar，默认推荐 ✅）**：sidecar 已是单写方、无并发冲突、无 pi 兼容性风险；W1 的两个原始动机依然成立。工作收窄为：sidecar 读写收口到登记表声明的单一 util（现状已是），登记表登记「sidecar 是 pi 体系外 xyz 自有数据的合法形态」。
-- **选项 b（改扩展 appendEntry 进 pi 文件）**：技术上已可行（appendEntry 通道已核实，见 D4），动机是「session 导出/迁移时终态随文件走」。若未来因真实需求选 b，必须先补三件迁移设计：① 存量 sidecar 兼容读取（优先级 custom entry > sidecar > 旧直填）；② sidecar 退役时间表；③ 显式修订 ADR-0042 + W1 并落档。
+- **选项 a（维持 sidecar，默认推荐 ✅）**：sidecar 已是单写方、无并发冲突、无 pi 兼容性风险；前案 W1 的两个原始动机依然成立。工作收窄为：sidecar 读写收口到登记表声明的单一 util（现状已是），登记表登记「sidecar 是 pi 体系外 xyz 自有数据的合法形态」。
+- **选项 b（改扩展 appendEntry 进 pi 文件）**：技术上已可行（appendEntry 通道已核实，见 D4），动机是「session 导出/迁移时终态随文件走」。若未来因真实需求选 b，必须先补三件迁移设计：① 存量 sidecar 兼容读取（优先级 custom entry > sidecar > 旧直填）；② sidecar 退役时间表；③ 显式修订 ADR-0042 + 前案 W1 并落档。
 - 探针：✅ sidecar 实现已 read 核实（原子写 tmpfile+rename + 写后失效 meta 缓存）；⛔ 选项 b 的实际收益场景当前不存在，不做投机改造。
 
 **D3b 写边界形态裁定（r3 审查补漏三条写链路的处置，源码逐一核实）**：
 
-- **sidecar 家族全集**：`.meta.json`（`persistSessionEnd`，session-file-utils.ts:137/:146）之外，sessions 目录内还有同类 xyz 自有 sidecar——`.preset.json`（`persistPresetBinding`，:281）与 `.project.json`（`persistProjectBinding`，:223）：三者读写全部收口在 session-file-utils 单一 util、写前 `existsSync` 守卫（规则 #6）、写后失效 meta 缓存，与 session_end 完全同构。登记表（W19）按「sidecar 家族」整体登记，R1 对 sidecar 后缀内置豁免。
-- **handoff_marker → 迁 sidecar（W11）**：`persistHandedOff`（:464 `openSync('a')` 直写 `handoff_marker`）在活跃 session 交接时执行——源 pi 进程在场（markHandedOff docstring 自述「handoff 编排保证源 session 在交接时仍 active」；runHandoff 在 agent_end 之后、源进程退出之前调 markHandedOff），是真实并发窗口，属模式 1 双写方。裁决**迁 sidecar（与 persistSessionEnd 同构）而非 appendEntry（D4 通道）**，理由：① `appendEntry` 是扩展 API 不是 RPC 命令（rpc-mode 命令面固定，§1 已核实），runtime 无法直接经 RPC 写 custom entry，走 D4 须为一条 marker 新增「xyz 扩展写通道 + runtime 触发机制」，成本与收益不成比例；② `handedOffTo` 是 xyz 自有语义（pi 无 handoff 概念），现状把它编码成 pi entry 恰是模式 4「借 pi 文件当数据库」的实例；③ 消费方唯一（scanner 尾读 `extractHandedOff` + 内存态），与 session_end（outcome）数据形态完全同构。迁移 = `persistHandedOff` 改写 sidecar + `extractHandedOff` 优先读 sidecar、fallback 尾读旧 JSONL marker（存量 session 兼容）。
-- **patchSessionCwd → 登记带期限例外，W11 迁 restore tmp 读改写管线**：唯一生产调用链 restoreSession（session-lifecycle.ts:405）在 `pm.createSession`（spawn pi）**之前**执行 patch——docstring PRECONDITION（「必须在 pi session 启动之前调用」）由调用链结构保证，目标文件无 pi 进程持有、无并发写方（实现内含 mtime<1s 的并发写防御性警告）。「改经 pi」不可行：pi 无「修改 session header cwd」的 RPC 命令；「先起 pi 再 patch」恰是 docstring 自认的写写竞态（pi `_persist` flush 与 atomicWrite 并发），顺序反转更危险。移除路径 = cwd fallback 并入 restoreSession 既有的 tmp 读改写管线：该流程本就「读源文件 → `stripSessionEndEntries` → 写 tmpdir → pi `switchSession(tmp)`」，header.cwd 的 fallback 改在 tmp 拷贝上应用即可，源文件零写（源文件 header 保持旧 cwd 的后果 = 下次 restore 再走一次 fallback 判定，功能等价）。
+- **sidecar 家族全集（终态四后缀，r4 补第 4 成员）**：`.meta.json`（`persistSessionEnd`，session-file-utils.ts:137/:146）之外，sessions 目录内还有同类 xyz 自有 sidecar——`.preset.json`（`persistPresetBinding`，:281）与 `.project.json`（`persistProjectBinding`，:223），读写全部收口在 session-file-utils 单一 util、写前 `existsSync` 守卫（规则 #6）、写后失效 meta 缓存，与 session_end 完全同构；第 4 后缀 `.handoff.json` 由 W11 把 `persistHandedOff` 迁入家族（同构形态：单一 util 收口 + 规则 #6 守卫 + 写后失效缓存，裁定见下条、迁移规格见子文档 W11 步骤 4）。登记表（W19）按「sidecar 家族」整体登记，R1 对 sidecar 后缀内置豁免——豁免清单 = 四后缀（`.meta.json` / `.preset.json` / `.project.json` / `.handoff.json`），与登记条目一一对应（W11 步骤 7 负责迁入后的同步核对）。
+- **handoff_marker → 迁 sidecar（W11）**：`persistHandedOff`（:464 `openSync('a')` 直写 `handoff_marker`）在活跃 session 交接时执行——源 pi 进程在场（markHandedOff docstring 自述「handoff 编排保证源 session 在交接时仍 active」；runHandoff 在 agent_end 之后、源进程退出之前调 markHandedOff），是真实并发窗口，属模式 1 双写方。裁决**迁 sidecar（与 persistSessionEnd 同构）而非 appendEntry（D4 通道）**，理由：① `appendEntry` 是扩展 API 不是 RPC 命令（rpc-mode 命令面固定，§1 已核实），runtime 无法直接经 RPC 写 custom entry，走 D4 须为一条 marker 新增「xyz 扩展写通道 + runtime 触发机制」，成本与收益不成比例；② `handedOffTo` 是 xyz 自有语义（pi 无 handoff 概念），现状把它编码成 pi entry 恰是模式 4「借 pi 文件当数据库」的实例；③ 消费方唯一（scanner 尾读 `extractHandedOff` + 内存态），与 session_end（outcome）数据形态完全同构。迁移 = `persistHandedOff` 改写 sidecar（`<sessionFile>.handoff.json`，家族第 4 后缀，见上条全集）+ `extractHandedOff` 优先读 sidecar、fallback 尾读旧 JSONL marker（存量 session 兼容）。
+- **patchSessionCwd → 登记带期限例外，W11 迁 restore tmp 读改写管线**：唯一生产调用链 restoreSession（session-lifecycle.ts:405）在 `pm.createSession`（spawn pi）**之前**执行 patch——docstring PRECONDITION（「必须在 pi session 启动之前调用」）由调用链结构保证，目标文件无 pi 进程持有、无并发写方（实现内含 mtime<1s 的并发写防御性警告）。「改经 pi」不可行：pi 无「修改 session header cwd」的 RPC 命令；「先起 pi 再 patch」恰是 docstring 自认的写写竞态（pi `_persist` flush 与 atomicWrite 并发），顺序反转更危险。移除路径 = cwd fallback 并入 restoreSession 既有的 tmp 读改写管线：该流程本就「读源文件 → `stripSessionEndEntries` → 写 tmpdir → pi `switchSession(tmp)`」，header.cwd 的 fallback 改在 tmp 拷贝上应用即可，源文件零写（源文件 header 保持旧 cwd——restore fallback 路径功能等价；header cwd 的扫描侧消费差异〔scanner label fallback / deleteByCwd 按死路径值工作〕为已声明并接受的行为差异，边界与理由见子文档 W11 步骤 5，r4 补）。
 - **createForkedSessionFile → 登记「文件创建型」合法形态（零代码改动）**：fork 流程（session-lifecycle.ts forkSession）先 `createForkedSessionFile` 写**新文件**（新 sessionId + 新文件名，写前不存在、无任何进程持有）→ 再 spawn 新 pi 进程 → `switchSession` 附着——写入发生在 pi 附着之前，不属「写 pi 当前持有的文件」。「pi 侧 fork」被否：pi 原生 fork RPC 有语义限制（只支持 user message + position="before"、clone 只能 leaf、当前进程内 rebind 会破坏源 session 活跃状态——session-fork.ts 文件头核实），xyz 的 fork 语义（任意 entryId 截断 + 独立 pi 进程 + 源进程不动）pi 原生能力覆盖不了，走 pi 侧 = 功能阉割。失败分支 `unlink(forkedFilePath)` 清理的是本流程刚创建、pi 未附着成功的孤儿文件（创建者清理，非删 pi 的文件）。边界约束：创建型仅限「目标写前不存在的新文件」，登记表显式登记「fork 文件唯一创建入口 = `createForkedSessionFile`」，禁止演进为「重写既有 session 文件」。
-- **R1 检出边界诚实声明**：session-fork.ts:175 的目标路径经形参间接（调用点传 `getSessionsDir()`，session-fork.ts 内无 sessions 路径字面量），R1 模式级检查对该写点**不命中**——fork 的守卫 = 登记表「创建型唯一写入口」声明 + S1 语义层（机器拦模式、语义归 review，与 §3.6 现状诚实声明同源）。
+- **R1 检出边界诚实声明（匹配粒度与覆盖差，r4 补定义）**：R1 的匹配粒度 = **文件级邻近上下文**（定义见 §3.6 R1）——「文件内含路径推导（含形参间接形态）承诺拦 / 跨文件传入路径诚实声明不拦」两条边界均经源码核实：session-file-utils 的三条 legacy 写点目标路径同为形参（filePath，函数体内无 sessions 字面量），但所在文件含 `getSessionsDir` import（:12）与调用（:735），文件级粒度**命中**（allowlist 与 sidecar 豁免因此有意义）；session-fork.ts:175 的目标路径同样经形参间接（调用点传 `getSessionsDir()`），但 session-fork.ts 整个文件无任何 sessions 路径推导（仅注释提及），文件级粒度下 R1 仍**不命中**——跨文件数据流静态不可判定。fork 的守卫 = 登记表「创建型唯一写入口」声明 + S1 语义层（机器拦模式、语义归 review，与 §3.6 现状诚实声明同源）。
 
 **D4 subagent/workflow 单一来源——extension-in-pi 官方通道**：pi 无 subagent/workflow 概念，但提供了扩展持久化的官方机制（§1「系统是什么」已核实）：`appendEntry` 由 pi 持久化 custom entry + `entry_appended` 全量转发 + `get_entries(since)` 增量拉取。终态：
 
@@ -281,7 +281,7 @@ P0 止血 + 护栏先行（活跃 rename 接 RPC 修覆盖 bug + 登记表 + rev
 
 **第 2 层 静态拦截（提交前，模式级）**
 
-- **R1 pi 文件直写检查**（新增 `.githooks/check_pi_direct_write.py` + pre-commit 接入，复用现有 checker 同体系；已核实 pre-commit 本体不在 git 跟踪——由 `.githooks/install-hooks.sh` heredoc 生成到 commondir（`--git-common-dir`）hooks，改 checker 接入必须改 install-hooks.sh 并重跑，见子文档附录 A #6）：runtime/scripts 代码对 pi session JSONL 本体的写操作（`openSync('a'/'w')` / `appendFile(StorageSync)` / `writeFile(StorageSync)` / `atomicWrite`（已知 util 形态——patchSessionCwd 经它整文件重写）指向 sessions 目录）一律报错；sidecar 家族后缀（`.meta.json` / `.preset.json` / `.project.json`）为规则内置豁免（登记形态，非 allowlist 条目）；迁移期 legacy 例外（非活跃 rename、persistHandedOff、patchSessionCwd——D2 补全）显式 allowlist + 期限注释，P1（W11）删除/迁移直写代码后 allowlist 清空，规则变为无条件（sidecar 内置豁免与 fork 登记除外）。**检出边界**：拦字面量/已知 util 形态的直写模式；变量拼接路径静态不可判定（fork 写点路径经形参间接，R1 不命中，由登记声明 + S1 守卫，见 D3b 诚实声明）——拦模式，不承诺拦刻意绕过的语义（语义归 S1）。
+- **R1 pi 文件直写检查**（新增 `.githooks/check_pi_direct_write.py` + pre-commit 接入，复用现有 checker 同体系；已核实 pre-commit 本体不在 git 跟踪——由 `.githooks/install-hooks.sh` heredoc 生成到 commondir（`--git-common-dir`）hooks，改 checker 接入必须改 install-hooks.sh 并重跑，见子文档附录 A #6）：runtime/scripts 代码对 pi session JSONL 本体的写操作（`openSync('a'/'w')` / `appendFile(StorageSync)` / `writeFile(StorageSync)` / `atomicWrite`（已知 util 形态——patchSessionCwd 经它整文件重写）指向 sessions 目录）一律报错；sidecar 家族后缀（`.meta.json` / `.preset.json` / `.project.json` / `.handoff.json`——第 4 后缀随 W11 的 handoff 迁移启用，豁免清单与登记表 sidecar 家族条目一一对应，见 D3b）为规则内置豁免（登记形态，非 allowlist 条目）；迁移期 legacy 例外（非活跃 rename、persistHandedOff、patchSessionCwd——D2 补全）显式 allowlist + 期限注释，P1（W11）删除/迁移直写代码后 allowlist 清空，规则变为无条件（sidecar 内置豁免与 fork 登记除外）。**检出边界（匹配粒度，r4 补定义）**：「指向 sessions 目录」的判定取**文件级邻近上下文**——写调用所在文件内含 sessions 路径推导（`getSessionsDir` 的 import/调用或 `sessions` 字面量）即命中，明确覆盖目标路径为形参、函数体内无路径字面量的间接形态（session-file-utils 的三条 legacy 写点即以此粒度命中）；调用参数或所在函数体直接含路径推导的更近形态当然命中。**承诺拦**：文件级邻近命中的全部已知写形态（字面量直写 + `atomicWrite` 已知 util 形态）；**诚实声明不拦**：目标路径经形参间接且**整个文件**无任何 sessions 路径推导的写点——跨文件数据流静态不可判定（fork 写点即此形态，由登记声明 + S1 守卫，见 D3b 诚实声明）；拦模式，不承诺拦刻意绕过的语义（语义归 S1）。该粒度下 W11「归零」验收的语义 = 豁免清单（sidecar 四后缀内置豁免；allowlist 已清空）之外命中为 0，即检查脚本 exit 0。
 - **R2 store 写入口检查**（taste-lint 自定义规则，项目已有 no-native-html 等先例；R2/R3 规则落点 = 仓库根 `taste-lint/rules/*.mjs`，不在 packages 内——已核实）：每个 store 的 mutation 方法只能被其 owner 文件调用，许可表来自登记表。**实现路线**：跨文件调用图分析（复用 check-domain-boundaries 的 import 边分析思路）；首版降级为「拦直呼形态」（import 目标 store 后直调 mutation），登记表条目驱动逐步收紧。
 - **R3 新缓存强制注解**：新增模块级 Map/ref 缓存必须带 `@data-owner <登记表条目>` 注解，lint 校验注解存在且条目真实。没有「顺手加个缓存」这回事。ReplicatedState 原语落地后（P1），标量状态缓存的合法形态收敛为原语实例，R3 检查「原语之外不得新建 session 状态缓存」。
 - **误报豁免闭环**：R1/R2/R3 拦到合法写入时，豁免路径 = 先在登记表补条目/例外 + 豁免 allowlist 登记（对齐 check-domain-boundaries 既有 allowlist + 注释先例），禁止在代码里静默绕过——预防机制自身不能成为无出口的阻塞源。
@@ -305,7 +305,7 @@ P0 止血 + 护栏先行（活跃 rename 接 RPC 修覆盖 bug + 登记表 + rev
 ### 场景 1：手动命名不被覆盖 + 绝对写规则生效（P0/P1，回溯 G1）
 
 - **步骤**：`pnpm dev` 起真实环境 → 新建 session 发首条消息 → 等自动命名出现（观察 rename-session 扩展日志 `renamed to`；日志查看方式：`XYZ_AGENT_DEBUG=1` 起环境后看 `~/.pi/agent/logs/`，AGENTS.md 扩展调试约定）→ 侧栏右键手动改名「重构计划」→ 继续对话 3 轮 → 检查侧栏名与 `get_state.sessionName`。再对另一个**非活跃** session 执行右键改名（P1 验收）。
-- **通过标准**：3 轮对话后侧栏名仍为「重构计划」；扩展日志出现 `skip: name exists`；session JSONL 尾部无新增 auto 标题的 session_info entry；`get_state` 返回「重构计划」。非活跃改名后 JSONL 尾部出现改名 entry（由短命 pi 进程写入）。代码断言（P1）：`git grep -nE "openSync\('(a|w)'|appendFile|writeFile|atomicWrite" packages/runtime/src/` 的命中逐条核对，**不存在指向 pi JSONL 本体的写路径**；允许命中 = sidecar 家族（`.meta.json`/`.preset.json`/`.project.json`，xyz 自有，D3）与 `session-fork.ts:175` 文件创建型（登记在案，D3b）。（R1 检查脚本 exit 0：allowlist 为空，sidecar 后缀与创建型为规则内置豁免。）
+- **通过标准**：3 轮对话后侧栏名仍为「重构计划」；扩展日志出现 `skip: name exists`；session JSONL 尾部无新增 auto 标题的 session_info entry；`get_state` 返回「重构计划」。非活跃改名后 JSONL 尾部出现改名 entry（由短命 pi 进程写入）。代码断言（P1）：`git grep -nE "openSync\('(a|w)'|appendFile|writeFile|atomicWrite" packages/runtime/src/` 的命中逐条核对，**不存在指向 pi JSONL 本体的写路径**；允许命中 = sidecar 家族（`.meta.json`/`.preset.json`/`.project.json`/`.handoff.json`——第 4 后缀 W11 迁入，xyz 自有，D3/D3b）与 `session-fork.ts:175` 文件创建型（登记在案，D3b）。（R1 检查脚本 exit 0：allowlist 为空，sidecar 四后缀与创建型为规则内置豁免/登记形态。）
 
 ### 场景 2：断连自愈（P1/P2，回溯 G1/G3）
 
@@ -376,7 +376,7 @@ P0 止血 + 护栏先行（活跃 rename 接 RPC 修覆盖 bug + 登记表 + rev
 | 单元 | 内容 | justification |
 |---|---|---|
 | P3.1 | subagent/workflow 扩展 `appendEntry` 自描述上报 + runtime `entry_appended`（移出 NULL_EVENTS）+ `get_entries(since)` 消费 + 内存 Map 改纯派生缓存 + extractor 降级 legacy + workflow link entry 形态收敛 | 模式 2/4 的收敛，D4；pi 官方通道，已核实 |
-| P3.2 | session_end 维持 sidecar 单写方（D3 裁决选项 a）：读写收口 + 登记表登记 sidecar 为 xyz 自有合法形态；appendEntry 改造（选项 b）仅在出现真实需求时启动，并按 D3 的迁移三件套执行 | W1 sidecar 已消除双写方，重造无净收益 |
+| P3.2 | session_end 维持 sidecar 单写方（D3 裁决选项 a）：读写收口 + 登记表登记 sidecar 为 xyz 自有合法形态；appendEntry 改造（选项 b）仅在出现真实需求时启动，并按 D3 的迁移三件套执行 | ADR-0042 前案 W1 的 sidecar 修订已消除双写方，重造无净收益 |
 | P3.3 | 消息流单一 reducer：core 包 `applyEntry` 双路喂入（实时 feed + 文件重放）；实时 feed 形态已定（D5 探针已核实 message entry 不发射 `entry_appended`）——message 部分由 `message_end` 等事件重构 entry 喂 reducer，扩展 entry 直接走 `entry_appended`；若 pi 上游补发射则无缝切换（换喂入源头，reducer 不动） | #7 的根治，与 fix-chat-flow-order 分组修复协同 |
 
 回滚：自描述 entry 是新增 custom entry 类型，旧代码不解析即忽略且不进 LLM context（session-manager.ts:377-385）——revert 后存量自描述 entry 留在 JSONL 中无害；回退验证 = extractor legacy 路径（P3.1 保留为兜底）仍能重建 subagent/workflow 列表，场景 3/5 通过。
@@ -386,7 +386,7 @@ P0 止血 + 护栏先行（活跃 rename 接 RPC 修覆盖 bug + 登记表 + rev
 | 单元 | 内容 | justification |
 |---|---|---|
 | P4.1 | 等价性测试族全量化（broadcast ≡ get_state / 混沌注入）入 CI | G3 的长期回归基线 |
-| P4.2 | ADR-0062 落档 + 修订 ADR-0042 落档（W1 sidecar 修订：正文「append JSONL」原决策更新为「runtime 单写 sidecar」，消除正文与实现矛盾，对齐项目「推翻 ADR 需显式落档」惯例）+ review checklist（对齐 ADR-0049 先例）；R2 从直呼形态收紧到调用图 | 流程层固化 |
+| P4.2 | ADR-0062 落档 + 修订 ADR-0042 落档（ADR-0042 前案 W1 的 sidecar 修订——历史 effort 的 W1，非子文档 wave 编号：正文「append JSONL」原决策更新为「runtime 单写 sidecar」，消除正文与实现矛盾，对齐项目「推翻 ADR 需显式落档」惯例）+ review checklist（对齐 ADR-0049 先例）；R2 从直呼形态收紧到调用图 | 流程层固化 |
 | P4.3 | pi 升级契约测试接线（ADR-0037 exhaustive 检查复用） | 上游漂移防线 |
 
 回滚：纯测试与文档（ADR/checklist），无生产行为，revert 即回退；等价性测试族与 CI 接线随 commit 一并回退。
