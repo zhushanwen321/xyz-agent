@@ -11,9 +11,12 @@
  * 设计：
  * - JsonlRunStore implements RunStore（而非散落的 persist/reconstruct 自由函数）。
  * - **D-5: 不向后兼容**——reconstruct 时检查 snapshotVersion，无版本号或版本不匹配
- * 的 session 返回空数组（spec 决策：旧 run 历史价值低，不尝试兼容迁移）。
+ *   的 session 返回空数组（spec 决策：旧 run 历史价值低，不尝试兼容迁移）。
  * - rewrite mode（writeFile 覆盖，文件始终是最新单行快照）。
- * - workflow-state-link 指针条目机制保留（pi.appendEntry）。
+ * - **W17 [D4] workflow-record 自描述 entry**：每次成功 flush 同步 append 一条完整
+ *   快照 entry（pi.appendEntry）——pi 文件（session JSONL）是 workflow 数据持久化
+ *   权威，state 文件降级为纯性能缓存（读序 = entry > state 文件 > 空，写路径保留）。
+ *   旧 `workflow-state-link` 指针 entry 退役（loadAll 保留兼容读，存量 run 不丢）。
  *
  * save 去抖语义（cw swf-perf wave2）：
  * - **热路径**（running 中间态，本实例已写过）：per-runId pending 批合并——窗口内
@@ -21,11 +24,12 @@
  *   固定窗口不重置 timer（批创建时定时一次），保证 flush 延迟有界 ≤saveDebounceMs；
  *   agent-call 间隔秒级下 trailing 重置无合并增益反可无限推迟。
  * - **冷路径**（本实例对该 runId 首写，或 status !== "running" 即 done）：
- *   同步挂链 flush 绕过 timer——首写立即可见（跨 session 重启后 loadAll 依赖指针
- *   发现文件）、done 立即落盘（终态优先持久化：transition("done") 后的 save
+ *   同步挂链 flush 绕过 timer——首写立即可见（跨 session 重启后 loadAll 从 entry
+ *   发现 run）、done 立即落盘（终态优先持久化：transition("done") 后的 save
  *   不进去抖批，去抖窗口内的崩溃不吞终态）。
- * - 指针（workflow-state-link）只在两处写：创建（本实例首写，即使 status 是
- *   running）与终态（status==="done"）。中间态 flush 永不写指针——每实例每 run ≤2 条。
+ * - workflow-record entry 每次成功 flush 都 append（含热路径中间态 flush）——
+ *   entry 流 = 落盘历史（最后一条 = 最后一次成功 flush，崩溃丢失边界语义与
+ *   state 文件路径一致）；去抖已把 flush 频率控制在与 agent-call 周期同量级。
  * - per-runId 串行 flush 链：同 runId 的 flush 排队顺序执行（不跳过、永不并发
  *   writeFile），链尾吞错防断链——错误只经各 save() Promise 的 settlers 传播。
  * - dispose()：幂等（缓存自身 Promise）；刷全部 pending 批 + await 全部 in-flight
@@ -112,6 +116,37 @@ interface RunSnapshot {
     workerErrorCount?: number;
     scriptErrorCount?: number;
   };
+}
+
+// ── Workflow-record self-describing entry (W17, D4) ─────────
+
+/**
+ * 自描述 workflow record entry 的 customType（W17 [D4]）。命名对齐 W16 的
+ * `subagent-record`（连字符风格）。写点字面量与本常量的等值由
+ * __tests__/jsonl-run-store-session-file.test.ts 断言钉住（消费方引用本常量，勿用裸字符串）。
+ */
+export const WORKFLOW_RECORD_CUSTOM_TYPE = "workflow-record";
+
+/**
+ * `workflow-record` entry 的 data schema（v1）。
+ *
+ * = 完整 RunSnapshot 快照（runId/status/calls/trace 等全部重建需要的字段）+ 版本号。
+ * 读取方无需逆向解析 state 文件或指针（D4 自描述原则）；snapshot 内部自带 D-5
+ * snapshotVersion guard（deserializeRun 检查），entry 层 v 与 snapshot 层 v 是两级
+ * 独立版本（entry schema 演化 vs 快照格式演化）。
+ */
+export interface WorkflowRecordEntryData {
+  /** schema 版本（W17 起 v1）。消费方按 v 判别解析，不认识的版本跳过而非猜测。 */
+  v: 1;
+  /** 完整 RunSnapshot（与同次 flush 写入 state 文件的内容是同一份，不二次序列化）。 */
+  snapshot: RunSnapshot;
+  /** append 时刻 ISO 时间（诊断用；重建不依赖）。 */
+  updatedAt: string;
+}
+
+/** 已序列化快照 → 自描述 entry data（doFlush 消费同一 snapshot，保证 entry 与 state 文件一致）。 */
+function toWorkflowRecordEntryData(snapshot: RunSnapshot): WorkflowRecordEntryData {
+  return { v: 1, snapshot, updatedAt: new Date().toISOString() };
 }
 
 // ── Serialization ────────────────────────────────────────────
@@ -258,7 +293,7 @@ interface PendingSaveBatch {
 export interface JsonlRunStoreOptions {
   /** Session directory root (state files live under <sessionDir>/workflow-state/). */
   sessionDir: string;
-  /** Pi ExtensionAPI for appendEntry pointer writes (optional for testing). */
+  /** Pi ExtensionAPI for workflow-record appendEntry writes (optional for testing). */
   pi?: ExtensionAPI;
   /** Pi ExtensionContext for sessionManager.getEntries (optional for testing). */
   ctx?: ExtensionContext;
@@ -313,7 +348,7 @@ export class JsonlRunStore {
    *
    * 去抖路由：
    * - 冷路径（本实例首写，或 status !== "running"）→ 立即挂链 flush（绕过 timer），
-   *   writePointer = 首写 || status==="done"；
+   *   回滚资格 = 首写（flush 失败时 doFlush 回滚 writtenOnce，下次 save 重走冷路径）；
    * - 热路径（running 且已写过）→ 并入 per-runId 去抖批（固定窗口不重置 timer）。
    *
    * Promise 语义：本批实际落盘后 resolve（同批多次调用共享 settle）；IO 错误
@@ -335,9 +370,9 @@ export class JsonlRunStore {
     const isFirstWrite = !this.writtenOnce.has(runId);
     const isCold = isFirstWrite || run.state.status !== "running";
     if (isCold) {
-      // 判定即记录：原子防并发双冷（两次并发首写都判 true 会写两条创建指针）。
-      // ENOENT 边界：首写 flush 遇 ENOENT 时指针未写但 writtenOnce 已记——
-      // sessionDir 已删场景指针无意义，接受（非 ENOENT 失败由 doFlush 回滚，重走冷路径）。
+      // 判定即记录：原子防并发双冷（两次并发首写都判 true 会各 flush 一次 entry）。
+      // ENOENT 边界：首写 flush 遇 ENOENT 时 entry 未写但 writtenOnce 已记——
+      // sessionDir 已删场景持久化无意义，接受（非 ENOENT 失败由 doFlush 回滚，重走冷路径）。
       this.writtenOnce.add(runId);
       // 原子取走 pending 批（终态与最后一个 agent-call 的 debounced save 交错时，
       // pending 批 settlers 并入本次同步 flush 的批合并 settle，timer 取消防二次写）。
@@ -346,8 +381,7 @@ export class JsonlRunStore {
         clearTimeout(batch.timer);
         this.pending.delete(runId);
       }
-      const writePointer = isFirstWrite || run.state.status === "done";
-      return this.enqueueFlush(runId, run, batch ? batch.settlers : [], writePointer);
+      return this.enqueueFlush(runId, run, batch ? batch.settlers : [], isFirstWrite);
     }
 
     // 热路径：running 中间态，并入去抖批
@@ -406,7 +440,7 @@ export class JsonlRunStore {
     runId: string,
     run: WorkflowRun,
     settlers: PendingSaveBatch["settlers"],
-    writePointer: boolean,
+    rollbackFirstWrite: boolean,
   ): Promise<void> {
     const promise = new Promise<void>((resolve, reject) => {
       settlers.push({ resolve, reject });
@@ -414,7 +448,7 @@ export class JsonlRunStore {
     // 排队不跳过：前一 flush in-flight 时本次挂链尾顺序执行，同 runId 永不并发
     // writeFile（整文件覆盖写并发会互相截断）。链尾吞错防断链——错误只经 settlers 传播。
     const next = (this.chains.get(runId) ?? Promise.resolve())
-      .then(() => this.doFlush(runId, run, settlers, writePointer))
+      .then(() => this.doFlush(runId, run, settlers, rollbackFirstWrite))
       .catch(() => {});
     this.chains.set(runId, next);
     return promise;
@@ -428,7 +462,7 @@ export class JsonlRunStore {
     runId: string,
     run: WorkflowRun,
     settlers: PendingSaveBatch["settlers"],
-    writePointer: boolean,
+    rollbackFirstWrite: boolean,
   ): Promise<void> {
     const filePath = this.filePathFor(runId);
     try {
@@ -451,23 +485,21 @@ export class JsonlRunStore {
       // serialize-at-flush：写 flush 时刻的最新聚合状态（latestRun 语义）
       const snapshot = serializeRun(run);
       await fs.promises.writeFile(filePath, JSON.stringify(snapshot) + "\n", "utf8");
-      if (writePointer && this.pi) {
-        this.pi.appendEntry("workflow-state-link", {
-          runId,
-          path: filePath,
-          updatedAt: new Date().toISOString(),
-        });
-      }
+      // W17 [D4]：每次成功 flush 同步 append 自描述 workflow-record entry（同一份
+      // snapshot，entry 与 state 文件内容一致）。pi 文件是 workflow 数据持久化权威
+      //（loadAll 优先从 entry 重建），state 文件降级纯性能缓存。pi 未注入（测试）时跳过。
+      this.pi?.appendEntry(
+        WORKFLOW_RECORD_CUSTOM_TYPE,
+        toWorkflowRecordEntryData(snapshot),
+      );
       for (const s of settlers) s.resolve();
     } catch (err) {
-      // ES9 失败回滚：应写指针的 flush 未写成时回滚首写资格——下次 save 判
-      // !writtenOnce.has(runId) 重走冷路径、writePointer 再判 true 重试指针。堵住
-      // 「首写失败后热路径 writePointer 恒 false → 指针永失 → run 对重启后
-      // loadAll 不可见」窗口（loadAll 仅经指针发现文件）。
-      // 残余窗口（已知接受）：回滚后若仅剩 writePointer=false 的热批 flush 成功且
-      // 再无任何 save（随即崩溃/退出），指针仍可能缺失——窗口远窄于 ES9 所堵场景，
-      // 由崩溃等价论证覆盖（kill-9 恢复兜底）。
-      if (writePointer) {
+      // ES9 失败回滚（热路径 flush 也会写 entry，回滚的意义收敛为「下次 save 重走
+      // 冷路径立即重试」——不再有旧指针形态下「热路径永不写 entry → run 对重启
+      // 不可见」的窗口）。堵住首写失败后还得等去抖窗的恢复延迟。
+      // 残余窗口（已知接受）：回滚后若再无任何 save（随即崩溃/退出），entry 与
+      // state 文件双双缺失——等价崩溃丢失，由 kill-9 恢复兜底。
+      if (rollbackFirstWrite) {
         this.writtenOnce.delete(runId);
       }
       for (const s of settlers) s.reject(err);
@@ -520,10 +552,14 @@ export class JsonlRunStore {
   }
 
  /**
- * Reconstruct all runs from session JSONL pointer entries.
+ * Reconstruct all runs（W17 [D4] 读序 = workflow-record entry > state 文件 > 空）。
  *
- * D-5:旧格式（无版本号 / 版本不匹配）返回空——loadAll 跳过这些条目，
- * 不尝试向后兼容旧 session（spec 决策）。
+ * 1. 优先扫描自描述 `workflow-record` entry（重建源——同一 runId 多条时最后一条
+ *    胜出，等价「最后一次成功 flush」）。entry 层 v1 guard：不认识的版本跳过而非
+ *    猜测；snapshot 层 D-5 snapshotVersion guard 保持（版本不匹配 → deserializeRun
+ *    返回 null → 跳过，不做兼容迁移）。
+ * 2. 旧 `workflow-state-link` 指针 entry 兼容读取（优先级低——存量 run 不静默
+ *    丢失，父文档 #9 踩坑）：entry 未覆盖的 runId 经指针读 state 文件最后行。
  *
  * 需要 ctx（构造时注入）——无 ctx 时返回空（测试或非 Pi 环境下）。
  */
@@ -532,18 +568,33 @@ export class JsonlRunStore {
     const runs: WorkflowRun[] = [];
     try {
       const entries = this.ctx.sessionManager.getEntries();
+      const recordRuns = new Map<string, WorkflowRun>();
       const pointers = new Map<string, { path: string }>();
 
       for (const entry of entries) {
         if (entry.type !== "custom") continue;
-        if (entry.customType !== "workflow-state-link") continue;
-        const data = entry.data as { runId?: string; path?: string } | undefined;
-        if (data?.runId && data?.path) {
-          pointers.set(data.runId, { path: data.path });
+        if (entry.customType === WORKFLOW_RECORD_CUSTOM_TYPE) {
+          // v1 entry guard：schema 版本不认识 → 跳过（不猜测解析）
+          const data = entry.data as WorkflowRecordEntryData | undefined;
+          if (data?.v !== 1 || !data.snapshot) continue;
+          const run = deserializeRun(data.snapshot);
+          // D-5: null = old snapshot format / version mismatch — skip silently
+          if (run) recordRuns.set(run.runId, run); // 后写覆盖 = 最后一条 entry 胜出
+        } else if (entry.customType === "workflow-state-link") {
+          // 旧指针形态（W17 前写入）：仅作 state 文件的发现通道
+          const data = entry.data as { runId?: string; path?: string } | undefined;
+          if (data?.runId && data?.path) {
+            pointers.set(data.runId, { path: data.path });
+          }
         }
       }
 
-      for (const [, pointer] of pointers) {
+      // 1) 自描述 entry 重建（优先——pi 文件是持久化权威）
+      runs.push(...recordRuns.values());
+
+      // 2) 旧 link 指针 → state 文件兼容（entry 已覆盖的 runId 跳过——link 优先级低）
+      for (const [runId, pointer] of pointers) {
+        if (recordRuns.has(runId)) continue;
         try {
           const content = await fs.promises.readFile(pointer.path, "utf8");
           const lines = content.split("\n").filter((l) => l.trim());
