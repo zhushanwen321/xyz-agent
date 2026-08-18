@@ -8,19 +8,14 @@
 docs/architecture/
 ├── README.md            # 本文件（规范说明）
 ├── design.md            # 当前生效的完整架构设计
-├── review-issues.md     # 架构评审问题记录（盲点 D1–D9）
-├── migration-plan.md    # 重构迁移路线（索引）
 ├── terminology.md       # 术语对齐计划（R1–R3 生效 · R4/R5 已被 v3 推翻标注过时）
 ├── context.md           # 领域术语表（Session/Panel/Runtime 等）
-├── plan/                # 迁移各阶段细节
-├── changes/             # 阶段评审记录
-├── adr/                 # 架构决策记录（0001-0017 系统/运行时 · 0018-0022 v3 视觉/交互 · 0023 statusline 封装）
 ├── subsystems/          # 子系统架构（如 plugin/）
 ├── research/            # 架构调研（非 UI 调研）
-└── history/             # 历史版本归档（被 supersede 的旧架构）
+└── history/             # 历史版本归档（被 supersede 的旧架构与重构期过程文档）
 ```
 
-> **v3 设计稿** 在 `docs/page-design/archive/v3/`（L0-L4 递归骨架 spec + draft），基础件 `design-tokens.md` / `design-system.md` 在 `docs/page-design/` 根。v3 视觉/交互 ADR（0018-0022）已归位到本目录 `adr/`。
+> ADR 统一在 [`../adr/`](../adr/)（索引见其 README.md）。**v3 设计稿** 在 `docs/page-design/archive/v3/`（L0-L4 递归骨架 spec + draft），基础件 `design-tokens.md` / `design-system.md` 在 `docs/page-design/` 根。
 
 ## 三条核心规则
 
@@ -56,12 +51,12 @@ docs/architecture/
 | 系统分层 / 模块边界 / 依赖方向 | UI 设计稿（`docs/page-design/`） |
 | 跨进程通信 / 数据流 | 设计规范（`docs/page-design/design-system.md`） |
 | 架构决策（ADR） | 编码规范（`docs/standards.md`） |
-| 子系统设计（plugin 等） | 功能规划（`docs/project/`、`docs/feature-map/`） |
-| 架构调研（打包/路径安全/RPC 通道） | UI 调研（TUI→GUI 映射等，留 `docs/research/`） |
-| 迁移 / 重构路线 | 竞品分析（`docs/templates/`） |
+| 子系统设计（plugin 等） | 功能规划（`docs/feature-map/`） |
+| 架构调研（打包/路径安全/RPC 通道） | UI 调研（TUI→GUI 映射等，留 `docs/extensions/`） |
+| 迁移 / 重构路线 | 竞品分析（`docs/extensions/archive/`） |
 
 **判定标准**：描述「系统如何被组织和约束」→ 架构；描述「系统长什么样/怎么用」→ 其他。
 
-## 与 CLAUDE.md 的关系
+## 与 AGENTS.md 的关系
 
-`CLAUDE.md`（项目根）是**编码规范 + 关键规则**，引用本目录的 ADR 作为决策依据（如 `docs/adr/0017-...`）。CLAUDE.md 不重复架构内容，只链接。
+`AGENTS.md`（项目根）是**编码规范 + 关键规则**，引用 `docs/adr/` 的 ADR 作为决策依据（如 `docs/adr/0017-...`）。AGENTS.md 不重复架构内容，只链接。

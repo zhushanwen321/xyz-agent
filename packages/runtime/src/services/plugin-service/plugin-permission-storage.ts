@@ -7,6 +7,7 @@
  */
 
 import { join } from 'node:path'
+import { normalizePermissionInput } from '@xyz-agent/shared/plugin-permission-map'
 import { JsonStore } from '../../utils/json-store.js'
 
 const PERMISSIONS_FILE = 'permissions.json'
@@ -37,10 +38,24 @@ export class PermissionStorage {
   /**
    * 从磁盘加载权限数据。
    * 文件不存在或 JSON 损坏时返回空 Map。
+   *
+   * 旧数据迁移：磁盘上的历史持久化权限是声明形口径（SDK 常量 / manifest 短形 /
+   * legacy 形态），逐条过 normalizePermissionInput 归一化为完整 RPC 方法名
+   * （去重保序）。已是完整方法名的数据幂等透传，不变形。
    */
   async load(): Promise<Map<string, string[]>> {
     const record = this.store.read()
-    return new Map(Object.entries(record))
+    const result = new Map<string, string[]>()
+    for (const [pluginId, permissions] of Object.entries(record)) {
+      const methods = new Set<string>()
+      for (const p of permissions) {
+        for (const method of normalizePermissionInput(p)) {
+          methods.add(method)
+        }
+      }
+      result.set(pluginId, [...methods])
+    }
+    return result
   }
 
   /**

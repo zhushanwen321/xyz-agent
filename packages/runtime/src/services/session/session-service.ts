@@ -147,6 +147,17 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    */
   private onSessionDelete: ((sessionId: string) => void) | null = null
   /**
+   * S3-W2：session 创建回调（PluginService 注入——session 事件注册表定向投递）。
+   * 全部创建入口（lifecycle create/restoreSession/forkSession）经
+   * notifySessionCreated 收敛触发。回调异常不外抛（创建主流程优先）。
+   */
+  private onSessionCreated: ((summary: SessionSummary) => void) | null = null
+  /**
+   * S3-W2：session 销毁回调（同上）。全部删除路径汇聚于 removeSessionEntry
+   * （lifecycle.delete 主动删 / onSessionExit 进程退出 / restore 清场），触发点在彼处。
+   */
+  private onSessionDestroyed: ((summary: SessionSummary) => void) | null = null
+  /**
    * MessageBus 引用（组合根注入，wave:runtime-wiring）。
    *
    * session 级消息（带 sessionId payload）单通道走 bus.publish（per-session 单调 seq +
@@ -272,6 +283,16 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   /** R3：注入 session 删除回调（组合根绑 ReloadOrchestrator.clearPending）。 */
   setOnSessionDelete(handler: (sessionId: string) => void): void {
     this.onSessionDelete = handler
+  }
+
+  /** S3-W2：注入 session 创建回调（PluginService 绑 session 事件注册表投递）。 */
+  setOnSessionCreated(handler: (summary: SessionSummary) => void): void {
+    this.onSessionCreated = handler
+  }
+
+  /** S3-W2：注入 session 销毁回调（同上，触发点 removeSessionEntry）。 */
+  setOnSessionDestroyed(handler: (summary: SessionSummary) => void): void {
+    this.onSessionDestroyed = handler
   }
 
   /**
@@ -473,6 +494,17 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     if (level === undefined) return
     const session = this.sessions.get(sessionId)
     if (session) session.thinkingLevel = level
+  }
+
+  /**
+   * 更新活跃 session 的 label（内存态）。
+   *
+   * 调用方：pi session_info_changed 事件到达时（pi extension auto-rename）。
+   * 不持久化——pi 侧已写 session_info，此处只同步内存态。
+   */
+  setLabelCache(sessionId: string, label: string): void {
+    const session = this.sessions.get(sessionId)
+    if (session) session.label = label
   }
 
   hasActiveSession(sessionId: string): boolean { return this.pm.hasClient(sessionId) }
@@ -1048,11 +1080,36 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       this.sessionStore.persistHandedOff(session.sessionFilePath, newSessionId)
     }
   }
+  /**
+   * S3-W2：session 创建通知（lifecycle 全部创建入口收敛点：create / restoreSession /
+   * forkSession 三处 spawn 路径的 return 前调用）。触发 onSessionCreated →
+   * PluginService session 事件注册表定向投递插件 didCreate。回调异常不外抛。
+   */
+  notifySessionCreated(summary: SessionSummary): void {
+    try {
+      this.onSessionCreated?.(summary)
+    } catch (e: unknown) {
+      console.error(`[session-service] onSessionCreated listener error (sessionId=${summary.id}):`, e)
+    }
+  }
+
   removeSessionEntry(sessionId: string): void {
+    // S3-W2：删除前缓存 summary（插件 didDestroy 通知需要 SessionInfo；删除后 Map 查不到）。
+    // Map 无条目（防御路径）时构造最小形状——id 之外的字段无从得知，宁发少知不发错。
+    const session = this.sessions.get(sessionId)
+    const destroyedSummary: SessionSummary = session
+      ? this.toSummary(session)
+      : { id: sessionId, label: sessionId, cwd: '', status: 'dead', lastActiveAt: 0, modelId: '', tokenCount: 0 }
     this.sessions.delete(sessionId)
     // R3：所有删除路径（lifecycle.delete 主动删 + onSessionExit 进程异常退）汇聚于此，
     // 触发 onSessionDelete 清 ReloadOrchestrator.pendingReload 残留。
     this.onSessionDelete?.(sessionId)
+    // S3-W2：同一汇聚点触发插件 didDestroy 定向投递（回调异常不阻塞删除主流程）。
+    try {
+      this.onSessionDestroyed?.(destroyedSummary)
+    } catch (e: unknown) {
+      console.error(`[session-service] onSessionDestroyed listener error (sessionId=${sessionId}):`, e)
+    }
     // wave:perf-w20（D6-1）：session 删除 / pi 进程退出时清历史重建缓存 + lastLeafId。
     // pi 进程退出后缓存基线（lastLeafId）不再与新进程的 entry 集合对应，保留只会
     // 走 "Entry not found" fallback（防御兜底存在，但清理是正路径）。

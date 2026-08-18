@@ -22,6 +22,16 @@ export function getRuntimePortOffset(): Promise<number | undefined> {
   return api ? api.getRuntimePortOffset() : Promise.resolve(undefined)
 }
 
+/**
+ * 读取当前 runtime 的 WS auth token（S1-W1）：连接 open 后作首条 auth 消息发送。
+ * runtime 重启后值刷新（supervisor 每次 spawn 重新生成），重连路径须重新调用。
+ * 无 IPC（web/mock）返回 undefined——调用方（use-connection / transport）以不带
+ * token 连接（mock 平台无需 auth）。
+ */
+export function getRuntimeToken(): Promise<string | null | undefined> {
+  return api?.getRuntimeToken ? api.getRuntimeToken() : Promise.resolve(undefined)
+}
+
 /** 监听 runtime 端口推送（runtime 重启后 main 推新端口触发重连），返回取消函数 */
 export function onRuntimePort(cb: (port: number) => void): () => void {
   return api?.onRuntimePort(cb) ?? (() => {})

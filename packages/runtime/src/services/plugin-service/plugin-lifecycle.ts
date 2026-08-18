@@ -83,9 +83,10 @@ export async function bootstrapPluginService(ctx: PluginLifecycleContext): Promi
   // 3b. 加载权限
   await ctx.permissionChecker.load()
 
-  // 3c. 设置 RPC 权限检查
-  ctx.rpcServer.setPermissionChecker((pluginId, method) => {
-    return ctx.permissionChecker.check(pluginId, method)
+  // 3c. 设置 RPC 权限检查（签名收通道反查身份 RpcIdentity，dispatch 传入；
+  // 消息体自报 pluginId 不进入 checker——见 plugin-rpc-server dispatch 的 D1 改造）
+  ctx.rpcServer.setPermissionChecker((identity, method) => {
+    return ctx.permissionChecker.check(identity, method)
   })
 
   // 5. 启动内存监控

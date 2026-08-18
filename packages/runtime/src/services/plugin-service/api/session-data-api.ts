@@ -13,10 +13,19 @@
  *   get → SessionDataStore.get（内存读）
  *   delete → SessionDataStore.delete
  *   底层缓存 + dirty + size + flush 由 WriteBackCache 统一管理。
+ *
+ * [SEC-A5 路径注入防御] sessionId 会 join 进持久化文件名（${sessionId}.json），
+ * 此前 `params.sessionId as string` 零校验，`../../` 可越出数据目录。
+ * 现全部 RPC 方法入口对 sessionId / key 过 asSafeKey 白名单（字符集 +
+ * 1-128 上限），拒绝即抛 INVALID_SESSION_ID / INVALID_KEY 结构化错误；
+ * store 层另有 path.resolve 深度防御兜底。key 的长度上限取 SAFE_KEY 的
+ * 128 字符（现有实现对 key 无显式上限，此处统一到标识符白名单，防超长
+ * 键名进入 JSON 键位与 WriteBackCache size 跟踪）。
  */
 
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { PluginRpcClient } from '../plugin-rpc-client.js'
+import { asSafeKey } from '../validation.js'
 
 /** SessionData 服务依赖（主线程侧）——经 SessionDataStore 的 KV 方法操作。 */
 export interface SessionDataHandlers {
@@ -31,19 +40,19 @@ export function registerSessionDataRpcHandlers(
   deps: SessionDataHandlers,
 ): void {
   rpcServer.registerMethod('plugin.sessionData.get', async (params) => {
-    return deps.get(params.sessionId as string, params.key as string)
+    return deps.get(asSafeKey(params.sessionId, 'sessionId'), asSafeKey(params.key, 'key'))
   })
 
   rpcServer.registerMethod('plugin.sessionData.set', async (params) => {
-    deps.set(params.sessionId as string, params.key as string, params.value)
+    deps.set(asSafeKey(params.sessionId, 'sessionId'), asSafeKey(params.key, 'key'), params.value)
   })
 
   rpcServer.registerMethod('plugin.sessionData.delete', async (params) => {
-    deps.delete(params.sessionId as string, params.key as string)
+    deps.delete(asSafeKey(params.sessionId, 'sessionId'), asSafeKey(params.key, 'key'))
   })
 
   rpcServer.registerMethod('plugin.sessionData.keys', async (params) => {
-    return deps.keys(params.sessionId as string)
+    return deps.keys(asSafeKey(params.sessionId, 'sessionId'))
   })
 }
 

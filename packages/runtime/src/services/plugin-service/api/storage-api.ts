@@ -12,12 +12,21 @@
  * 此前这些 handler 内联在 plugin-rpc-setup.ts，Worker 侧代理内联在
  * plugin-bootstrap.ts（createStateStorageProxy）。P6 收口到本 api 文件，
  * 与其它 6 个域（session/config/session-data/ui/agent/workspace）保持一致。
+ *
+ * [SEC-A5 路径注入防御] pluginId 来自插件 Worker 的 RPC params（可伪造），
+ * 且会 join 进持久化路径（plugins/<pluginId>/*.json），`../../` 可越出
+ * 数据目录。入口层对 pluginId 过 asSafeKey 白名单，拒绝即抛
+ * INVALID_PLUGIN_ID 结构化错误；PluginStorage.getFilePath 另有
+ * path.resolve 深度防御兜底。scope 取自方法名枚举（主线程常量，非插件
+ * 输入），仍过 asSafeKey 作零成本深度防御——未来若 scope 改由 params
+ * 传入，校验已在位。
  */
 
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { PluginRpcClient } from '../plugin-rpc-client.js'
 import type { PluginStorage } from '../plugin-storage.js'
 import type { PluginStateStorage } from '../plugin-types.js'
+import { asSafeKey } from '../validation.js'
 
 const STORAGE_SCOPES = ['global', 'workspace'] as const
 type StorageScope = (typeof STORAGE_SCOPES)[number]
@@ -40,17 +49,20 @@ export function registerStorageRpcHandlers(
   deps: StorageHandlers,
 ): void {
   for (const scope of STORAGE_SCOPES) {
+    // scope 来自方法名枚举（主线程常量），不来自插件输入；asSafeKey 是零成本
+    // 深度防御——未来若 scope 改由 params 传入，校验已在位。
+    asSafeKey(scope, 'scope')
     rpcServer.registerMethod(`plugin.storage.${scope}.get`, async (params) => {
-      return deps.get(params.pluginId as string, params.key as string, scope)
+      return deps.get(asSafeKey(params.pluginId, 'pluginId'), asSafeKey(params.key, 'key'), scope)
     })
     rpcServer.registerMethod(`plugin.storage.${scope}.set`, async (params) => {
-      deps.set(params.pluginId as string, params.key as string, params.value, scope)
+      deps.set(asSafeKey(params.pluginId, 'pluginId'), asSafeKey(params.key, 'key'), params.value, scope)
     })
     rpcServer.registerMethod(`plugin.storage.${scope}.delete`, async (params) => {
-      deps.delete(params.pluginId as string, params.key as string, scope)
+      deps.delete(asSafeKey(params.pluginId, 'pluginId'), asSafeKey(params.key, 'key'), scope)
     })
     rpcServer.registerMethod(`plugin.storage.${scope}.keys`, async (params) => {
-      return deps.keys(params.pluginId as string, scope)
+      return deps.keys(asSafeKey(params.pluginId, 'pluginId'), scope)
     })
   }
 }

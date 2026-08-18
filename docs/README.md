@@ -12,7 +12,7 @@ docs/
 ├── troubleshooting.md     ← 问题排查指南
 ├── design-evolution.md    ← UI 设计演变史（Warm&Soft → v3 → v6 → 太极纯灰）
 │
-├── adr/                   ← 架构决策记录（57 篇，统一编号 0001-0057 + README 索引）
+├── adr/                   ← 架构决策记录（统一编号 + README 索引 + 旧→新编号映射）
 ├── architecture/          ← 架构设计文档（design/context/terminology/subsystems/plan/history）
 ├── extensions/            ← pi 扩展系统（开发指南/约定/术语/ADR/注册表）
 ├── page-design/           ← 前端设计 SSOT + 视觉规格 + 能力 spec
@@ -39,7 +39,7 @@ docs/
 - [standards.md](./standards.md) — 前端编码规范
 - [troubleshooting.md](./troubleshooting.md) — 问题排查指南
 - [design-evolution.md](./design-evolution.md) — UI 设计演变史
-- [adr/README.md](./adr/README.md) — ADR 索引（57 篇 + 旧→新编号映射）
+- [adr/README.md](./adr/README.md) — ADR 索引（含旧→新编号映射）
 - [page-design/README.md](./page-design/README.md) — 前端设计 SSOT 索引
 - [architecture/README.md](./architecture/README.md) — 架构文档目录规范
 - [extensions/local-dev-guide.md](./extensions/local-dev-guide.md) — pi extension 本地开发调试

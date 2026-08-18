@@ -1,5 +1,9 @@
 /**
- * EventInterpreter compaction 编排测试（M4 事件驱动：interpreter 唯一源）。
+ * EventInterpreter 编排测试。
+ *
+ * - session-renamed（MF-3 ②）：session_info_changed 中间事件 → onSessionRenamed 回调
+ *   （组合根接 sessionService.setLabelCache，runtime 内存 label 自动同步链）
+ * - compaction（M4 事件驱动：interpreter 唯一源）：
  *
  * 锁定（SSOT §3.3.4 编排表）：
  * - TC1: compaction_start{reason} → 广播 session.compacting{reason} + onCompactingStateChange(sid,true)
@@ -21,14 +25,34 @@ function makeInterpreter(overrides: {
   send?: (m: ServerMessage) => void
   onCompactingStateChange?: (sid: string, v: boolean) => void
   onContextUpdate?: (sid: string, data: { inputTokens: number; totalTokens: number }) => void
+  onSessionRenamed?: (sid: string, name: string | undefined) => void
 } = {}) {
   const sent: ServerMessage[] = []
   const send = overrides.send ?? ((m: ServerMessage) => { sent.push(m) })
   const onCompactingStateChange = overrides.onCompactingStateChange ?? vi.fn()
   const onContextUpdate = overrides.onContextUpdate ?? vi.fn()
-  const interp = new EventInterpreter('s1', { send, onCompactingStateChange, onContextUpdate })
-  return { interp, sent, onCompactingStateChange, onContextUpdate }
+  const onSessionRenamed = overrides.onSessionRenamed ?? vi.fn()
+  const interp = new EventInterpreter('s1', { send, onCompactingStateChange, onContextUpdate, onSessionRenamed })
+  return { interp, sent, onCompactingStateChange, onContextUpdate, onSessionRenamed }
 }
+
+describe('EventInterpreter session-renamed 编排（MF-3 ②，label 自动同步链）', () => {
+  // 链路：event-adapter session_info_changed → {kind:'session-renamed'} → 本 case →
+  // onSessionRenamed → 组合根 sessionService.setLabelCache（runtime 内存 label 唯一
+  // 数据源）。缺测刻痕：本链路历经 3 个 fix commit 仍无回归钉住。
+  it('TC-RN1: session-renamed{name} → onSessionRenamed(sid, name)', () => {
+    const { interp, onSessionRenamed } = makeInterpreter()
+    interp.interpret([{ kind: 'session-renamed', name: 'renamed-by-pi' }])
+    expect(onSessionRenamed).toHaveBeenCalledTimes(1)
+    expect(onSessionRenamed).toHaveBeenCalledWith('s1', 'renamed-by-pi')
+  })
+
+  it('TC-RN2: name undefined → 回调透传 undefined（组合根 ?? "" 兜底，不伪造名字）', () => {
+    const { interp, onSessionRenamed } = makeInterpreter()
+    interp.interpret([{ kind: 'session-renamed', name: undefined }])
+    expect(onSessionRenamed).toHaveBeenCalledWith('s1', undefined)
+  })
+})
 
 describe('EventInterpreter compaction 编排 (M4 事件驱动)', () => {
   it('TC1: compaction_start{reason} → session.compacting{reason} + isCompacting=true', () => {

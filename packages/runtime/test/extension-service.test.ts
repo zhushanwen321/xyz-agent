@@ -62,6 +62,7 @@ describe('ExtensionService', () => {
     writeFileSync(join(testSettingsDir, 'npm', 'package.json'), JSON.stringify({ private: true }), 'utf-8')
 
     service = new ExtensionService({
+      packaged: false,
       settingsDir: testSettingsDir,
       projectRoot: process.cwd(),
       installer: new NpmGitInstaller(),

@@ -19,7 +19,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createEventAdapter, type WsSender, type EventAdapterOptions } from './helpers/event-adapter-test-fixture.js'
-import type { EventAdapter } from '../src/infra/pi/event-adapter.js'
+import { EventAdapter } from '../src/infra/pi/event-adapter.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { PiMessage } from '../src/infra/pi/rpc-client.js'
 
@@ -255,6 +255,36 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
       expect(sent[0].payload).toMatchObject({
         name: 'new-name',
       })
+    })
+
+    it('U-session-0：翻译产出中间事件 {kind:"session-renamed", name}（MF-3 ①，interpreter 回写链入口）', async () => {
+      // 直接捕获 EventAdapter 的 PiTranslatedEvent[] 产出——钉住 session_info_changed
+      // → session-renamed 中间事件翻译（label 回写链的第一段，丢失则 runtime 内存
+      // label 过期覆盖前端 rename，即本批修复的核心 bug）
+      const translated: Array<Record<string, unknown>> = []
+      const rawAdapter = new EventAdapter('test-session-1', (events) => {
+        translated.push(...(events as Array<Record<string, unknown>>))
+      })
+      dispatchOne(rawAdapter, { type: 'session_info_changed', name: 'new-name' })
+      await flushAsync()
+
+      expect(translated).toContainEqual({ kind: 'session-renamed', name: 'new-name' })
+    })
+
+    it('U-session-1：session_info_changed 触发 onSessionRenamed 回调并广播 session.renamed（MF-3 ②，对齐 thinking-level 模式）', async () => {
+      const onSessionRenamed = vi.fn()
+      const { adapter, sent } = createAdapter({ onSessionRenamed })
+      dispatchOne(adapter, { type: 'session_info_changed', name: 'new-name' })
+      await flushAsync()
+
+      // 回调被调用，参数为 (sessionId, 'new-name')——组合根（index.ts）在此回写
+      // sessionService.setLabelCache 同步内存态 label
+      expect(onSessionRenamed).toHaveBeenCalledTimes(1)
+      expect(onSessionRenamed).toHaveBeenCalledWith('test-session-1', 'new-name')
+      // 产出 session.renamed 消息（前端侧栏改名）
+      expect(sent).toHaveLength(1)
+      expect(sent[0].type).toBe('session.renamed')
+      expect(sent[0].payload).toMatchObject({ name: 'new-name' })
     })
   })
 

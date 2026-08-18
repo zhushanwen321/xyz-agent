@@ -23,6 +23,7 @@ import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
 import { EventInterpreter } from './services/session/event-interpreter.js'
+import { sessionMetaCache } from './services/session/session-meta-cache.js'
 import { join, resolve, isAbsolute } from 'node:path'
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
@@ -62,12 +63,13 @@ import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 // autoUpgrade 顺序」可 spy 断言（06 §5 门禁），组合根只负责构造与注入。
 import { runStartupBackgroundInit } from './services/startup-background-init.js'
 
-function parseArgs(): { port: number; projectRoot?: string } {
+function parseArgs(): { port: number; projectRoot?: string; builtinPluginsDir?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
   const args = process.argv.slice(2)
   const portOffset = Math.max(0, Math.min(parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0, MAX_PORT - BASE_PORT))
   let port = BASE_PORT + portOffset
   let projectRoot: string | undefined
+  let builtinPluginsDir: string | undefined
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && i + 1 < args.length) {
       const parsed = parseInt(args[i + 1], 10)
@@ -87,13 +89,39 @@ function parseArgs(): { port: number; projectRoot?: string } {
       projectRoot = args[i + 1]
     } else if (args[i].startsWith('--project-root=')) {
       projectRoot = args[i].split('=')[1]
+    } else if (args[i] === '--builtin-plugins-dir' && i + 1 < args.length) {
+      builtinPluginsDir = args[i + 1]
+    } else if (args[i].startsWith('--builtin-plugins-dir=')) {
+      builtinPluginsDir = args[i].split('=')[1]
     }
   }
-  return { port, projectRoot }
+  return { port, projectRoot, builtinPluginsDir }
+}
+
+/**
+ * 解析 WS auth token（S1-W1，spec §3.3 D4）：优先 env XYZ_RUNTIME_TOKEN（Electron 主进程
+ * spawn 时注入），缺失时 fallback 读 <dataDir>/runtime-token 文件（CLI / 脚本消费的通道）。
+ * 两者都缺失 → 返回 null（fail-closed：ConnectionManager 拒绝全部 WS 连接）。
+ *
+ * 独立函数而非内联：解析链与 fail-closed 语义是传输安全的关键路径，后续 D4 校验期
+ * 单测可直接 import 此函数探针（env 注入 / 文件注入 / 双缺失三态）。
+ */
+function resolveRuntimeToken(): string | null {
+  const envToken = process.env.XYZ_RUNTIME_TOKEN
+  if (envToken && envToken.trim().length > 0) return envToken.trim()
+  try {
+    const fileToken = fs.readFileSync(join(getDataDir(), 'runtime-token'), 'utf-8').trim()
+    if (fileToken.length > 0) return fileToken
+  } catch {
+    // token 文件不存在/不可读 → 落到下方 fail-closed warning（正常 dev 直跑场景，
+    // scripts/verify-*.sh 会显式注入 env 或写 token 文件）
+  }
+  console.warn('[runtime] WS auth token unavailable (XYZ_RUNTIME_TOKEN env / <dataDir>/runtime-token both missing) — fail-closed: ALL WebSocket connections will be rejected')
+  return null
 }
 
 async function main(): Promise<void> {
-  const { port, projectRoot } = parseArgs()
+  const { port, projectRoot, builtinPluginsDir } = parseArgs()
   const effectiveRoot = projectRoot ?? process.cwd()
   // perf W29（D8-1）启动耗时分解探针（06 §5 m-7）：listen 前各段打点，
   // 输出进日志文件供 D8 价值评估（基线实测：getPiVersion 1.1-1.3s 主导 listen 延迟）。
@@ -106,11 +134,14 @@ async function main(): Promise<void> {
   // <dataDir>/logs/runtime-YYYY-MM-DD.log。
   initLogger(getDataDir())
 
+  // S1-W1：token 解析在 initLogger 之后（fail-closed warning 落盘）、server 构造之前。
+  const runtimeToken = resolveRuntimeToken()
+
   // Infrastructure
   const pm = new ProcessManager(effectiveRoot)
 
   // Transport layer
-  const server = new RuntimeServer(port, projectRoot)
+  const server = new RuntimeServer(port, projectRoot, runtimeToken)
 
   // MessageBus 单例（wave:runtime-wiring）：per-session 消息广播核心。
   // 在 server 构造后、setServices 前创建并注入——server 的 ConnectionManager.onDisconnect
@@ -188,7 +219,10 @@ async function main(): Promise<void> {
   // ProjectStore：project 列表持久化（D14，2026-08-04 迁 runtime projects.json，
   // 与 recent-workspaces 同模式；前端 localStorage 仅首启迁移源）。
   const projectStore = new ProjectStore(configDir)
-  const pluginRegistry = new PluginRegistry(effectiveRoot, configDir)
+  // S1-W4（D3）：built-in 插件目录显式注入（主进程 spawn 时传 --builtin-plugins-dir）。
+  // 提供时 registry 只扫该目录、不做 cwd 探测（防用户 repo 预置目录冒充 built-in）；
+  // 缺失（dev 直跑/测试）时 registry 回退探测链并落 warning。
+  const pluginRegistry = new PluginRegistry(effectiveRoot, configDir, builtinPluginsDir)
   const pluginInstaller = new NpmPluginInstaller(join(configDir, 'plugins'))
   const pluginService = new PluginService(pluginRegistry, server, {
     configService,
@@ -256,6 +290,12 @@ async function main(): Promise<void> {
         // pi 切模型 / 用户手切档位后推 thinking_level_changed 事件。
         // 回写 session 缓存，使后续 broadcastSessionState 读到真值（而非 undefined）。
         sessionService.setThinkingLevelCache(sid, level)
+      },
+      onSessionRenamed: (sid, name) => {
+        // pi extension auto-rename (session_info_changed) 事件到达时。
+        // 同步更新内存态 session.label（唯一数据源）+ 缓存（扫描路径兜底）。
+        sessionService.setLabelCache(sid, name ?? '')
+        sessionMetaCache.setLabel(sid, name ?? '')
       },
       executeHooks: (hookType, context) => pluginService.executeHooks(hookType, {
         pluginId: '',
@@ -484,7 +524,7 @@ async function main(): Promise<void> {
 
   // Graceful shutdown on signals
   let shuttingDown = false
-  const shutdown = async (signal: string) => {
+  const shutdown = async (signal: string, exitCode = 0) => {
     if (shuttingDown) return
     shuttingDown = true
     console.log(`\n[runtime] received ${signal}, shutting down...`)
@@ -503,7 +543,7 @@ async function main(): Promise<void> {
     // session 写流并等待落盘）。process.exit 立即终止进程不等待异步 IO，必须在 flush
     // 完成后才退出，否则缓冲窗口内尾部日志丢失（pi 卡死诊断证据，见 logger.ts 头部）。
     await closeLogger()
-    process.exit(0)
+    process.exit(exitCode)
   }
 
   process.on('SIGINT', () => shutdown('SIGINT'))
@@ -517,10 +557,40 @@ async function main(): Promise<void> {
     console.error('[runtime] *** UNHANDLED REJECTION *** (should not happen):', reason)
   })
 
+  // [HISTORICAL] uncaughtException 兜底（D6 入口防御）：进程级最后防线。
+  // 与上方 unhandledRejection handler 的分工：unhandledRejection 捕获「未被 await
+  // 的 async 异常」（Promise 断头链），记录后进程继续运行（有明确的后续处理边界，
+  // 单条 rejection 不破坏运行时一致性）；uncaughtException 捕获「同步回调链的异常
+  // 逃逸」（WS/Worker/IPC 消息回调 throw 等），Node 默认行为是进程立即退出——
+  // runtime 一崩全部 session 的 pi 子进程失去管理。宿主层（plugin-host* 的
+  // safeDispatchHostMessage）已挡第一道；这里兜住所有其他来源：记日志 + 走优雅
+  // shutdown（flush 日志与 session 数据），退出码 1 让 supervisor 感知异常退出。
+  // 不尝试带伤继续服务：uncaught 后运行时一致性无法保证，可观测 + 有序退出是
+  // 本防线的目标。
+  process.on('uncaughtException', (err) => {
+    console.error('[runtime] *** UNCAUGHT EXCEPTION *** (attempting graceful shutdown):', err)
+    void shutdown('uncaughtException', 1)
+  })
+
   // D8-1（perf W29）：先 listen（端口即就绪）——迁移/探测等无 listen 前依赖的后置项
   // 全部移入下方后台初始化块（06 §3.3 D8-1）。listen 前仅剩：同步迁移 + 服务构造 + setServices。
   const tListen = performance.now()
-  await server.start()
+  try {
+    await server.start()
+  } catch (err) {
+    // 与 ConnectionManager.start reject 的分工：传输层对 listen 失败（EADDRINUSE 等）只
+    // reject（对齐 callback-server.ts 先例，可被测试捕获/换端口重试，不杀进程）；
+    // 进程退出决策归组合根——生产语义不变：端口被占即快速失败 exit(1)，但打可操作
+    // 排查指引（指向恢复动作：查占用 → 关实例 → 重启），而非静默退出。
+    const code = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined
+    if (code === 'EADDRINUSE') {
+      console.error(`[runtime] fatal: 端口 ${port} 被占用（EADDRINUSE）——可能已有另一个 xyz-agent 实例在运行。`)
+      console.error(`  排查: lsof -i :${port} 查看占用进程；关闭其他实例后重启。原始错误: ${err instanceof Error ? err.message : String(err)}`)
+    } else {
+      console.error('[runtime] fatal: WS listen failed:', err)
+    }
+    process.exit(1)
+  }
   console.log('[runtime] ready')
   // 启动耗时分解探针（06 §5 m-7）：listen-ready 各段耗时（baseline 对比见汇报——
   // 改造前 getPiVersion 占 listen 延迟 1.1-1.3s，重排后该段归零）。

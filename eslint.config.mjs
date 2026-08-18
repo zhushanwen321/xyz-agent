@@ -7,7 +7,9 @@ export default [
       'src/dist/**',
       'src-tauri/**',
       'taste-lint/**',
-      'tools/*.cjs',
+      // 独立 CJS 验证脚本（verify-scheduler-e2e.cjs，随 tools→scripts 目录迁移更新路径）：
+      // require() 是 CJS 唯一导入方式 + 内部 `_` 占位变量，no-require-imports/no-unused-vars 均误报
+      'scripts/*.cjs',
       'vendor/**',
       '.pi/**',
       // 临时/历史 demo 目录（.tmp 已 gitignore，v6 是重构前的遗留 demo）

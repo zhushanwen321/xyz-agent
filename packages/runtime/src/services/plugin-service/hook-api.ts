@@ -30,6 +30,7 @@ import type {
 } from './plugin-types.js'
 import { toErrorMessage } from '../../utils/errors.js'
 import { registerHandler } from './handler-registry.js'
+import { asSafeKey, asString } from './validation.js'
 
 /** Hook 注册服务依赖（主线程侧） */
 export interface HookService {
@@ -143,16 +144,20 @@ function computePriority(descriptor: PluginDescriptor): number {
  *
  * 注册的方法：
  * - `plugin.hooks.register` — 注册 hook handler，按 priority 排序存储
- * - `plugin.hooks.unregister` — 注销 hook handler
+ * - `plugin.hooks.unregister` — 注销 hook handler（归属隔离：只删 pluginId 与
+ *   请求一致的条目，D7 语义，见 handler 注释）
  */
 export function registerHookRpcHandlers(
   rpcServer: PluginRpcServer,
   service: HookService,
 ): void {
   rpcServer.registerMethod('plugin.hooks.register', async (params) => {
-    const pluginId = params.pluginId as string
-    const hookType = params.hookType as string
-    const handlerId = params.handlerId as string
+    // S3-W3 窄校验：handlerId 形如 `hook_<pluginId>_<n>`（Worker 侧生成模式），
+    // 与 pluginId 均在 asSafeKey 白名单内；hookType 是枚举词汇（onXxx），只需
+    // 防「缺字段/错类型」（未知 hookType 注册后无触发点，不构成毒化）。
+    const pluginId = asSafeKey(params.pluginId, 'pluginId')
+    const hookType = asString(params.hookType, 'hookType')
+    const handlerId = asSafeKey(params.handlerId, 'handlerId')
 
     // 获取插件描述符以计算优先级
     const descriptor = service.getDescriptor(pluginId)
@@ -173,12 +178,17 @@ export function registerHookRpcHandlers(
   })
 
   rpcServer.registerMethod('plugin.hooks.unregister', async (params) => {
-    const handlerId = params.handlerId as string
-    const hookType = params.hookType as string
+    const handlerId = asSafeKey(params.handlerId, 'handlerId')
+    const hookType = asString(params.hookType, 'hookType')
+    // D7 归属隔离（对齐 commands/tools.unregister 语义）：pluginId 必填，且只删除
+    // pluginId 与请求一致的条目。sandbox 通道 params.pluginId 已被 dispatch 覆写为
+    // 通道身份（不可伪造）——插件 B 传他人 handlerId（'hook_A_1'）不命中 → no-op，
+    // A 的注册不受影响。
+    const pluginId = asSafeKey(params.pluginId, 'pluginId')
 
     const entries = service.hookRegistry.get(hookType)
     if (entries) {
-      const idx = entries.findIndex(e => e.handlerId === handlerId)
+      const idx = entries.findIndex(e => e.handlerId === handlerId && e.pluginId === pluginId)
       if (idx >= 0) {
         entries.splice(idx, 1)
       }

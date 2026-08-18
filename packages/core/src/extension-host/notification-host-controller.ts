@@ -1,9 +1,12 @@
 /**
  * notification-host-controller.ts —— NotificationHostController（DM3 消费端，audit 缺失消费方补齐）。
  *
- * 订阅 InternalEventBus 的 6 类通知/生命周期事件，做最小可行消费（完整 UX 待 P5）：
+ * 订阅 InternalEventBus 的 7 类通知/生命周期事件，做最小可行消费（完整 UX 待 P5）：
  * - plugin-crashed / plugin-notification / extension-notify → toast（经 deps.showToast 注入）
  * - plugin-config-changed / plugin-message-decoration / plugin-status-change → log 降级
+ * - error → log 降级（D7 S3-W4 补齐：bridge 的 ERR2 错误此前零消费方，坏消息
+ *   只进 bus 无处落地。console 消费满足可观测；不弹 toast——毒化插件的高频坏
+ *   消息会刷屏，toast 只留给用户可行动的通知）
  *
  * 零 UI 依赖（AC7 边界，与 StatusBarController 同范式）：toast 函数经构造 deps 注入，
  * 壳（装配层）提供命令式 toast 实现。core 不 import 任何 Vue 单文件组件 / 不直连 toast UI 组件 /
@@ -31,7 +34,7 @@ export class NotificationHostController {
   constructor(private deps: NotificationHostControllerDeps) {}
 
   /**
-   * 订阅 6 类事件，返回取消订阅函数（listener 防翻倍，项目规则#2）。
+   * 订阅 7 类事件，返回取消订阅函数（listener 防翻倍，项目规则#2）。
    * 重复调用 subscribe() 直接返回已绑定的 dispose，不重复注册。
    */
   subscribe(): () => void {
@@ -42,6 +45,9 @@ export class NotificationHostController {
     this.unsubscribe.push(this.deps.bus.on('plugin-config-changed', (e) => this.handleConfigChanged(e)))
     this.unsubscribe.push(this.deps.bus.on('plugin-message-decoration', (e) => this.handleMessageDecoration(e)))
     this.unsubscribe.push(this.deps.bus.on('plugin-status-change', (e) => this.handleStatusChange(e)))
+    // D7 S3-W4：error（bridge ERR2）此前零消费方——未知 type / payload 解析失败
+    // 只进 bus 无处落地，毒化消息排查无迹可循。console 消费补齐最小可观测。
+    this.unsubscribe.push(this.deps.bus.on('error', (e) => this.handleError(e)))
     return this.dispose.bind(this)
   }
 
@@ -80,5 +86,10 @@ export class NotificationHostController {
   private handleStatusChange(e: { pluginId: string; status: string }): void {
     // 完整：插件状态分发/状态栏刷新，待 P5。当前最小：仅日志记录。
     this.deps.deps.log?.(`[extension-host] plugin ${e.pluginId} -> ${e.status}`)
+  }
+
+  /** error（bridge ERR2）：未知 type / payload 解析失败。log 降级，不弹 toast（防毒化刷屏）。 */
+  private handleError(e: { source: string; message: string }): void {
+    this.deps.deps.log?.(`[extension-host] bus error from ${e.source}: ${e.message}`)
   }
 }

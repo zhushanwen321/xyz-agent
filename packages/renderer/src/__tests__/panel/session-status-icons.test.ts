@@ -5,7 +5,7 @@
  * 覆盖 cw-2026-07-15-session-status-icons 新增状态：
  * - streaming / pending / compacting / waiting / retrying 派生正确
  * - DOT_CLASS / STATUS_ICON 映射完整
- * - SessionItem 列表主行按状态渲染右侧 badge（spec §5.6A / D12；图标范式移至非列表场景）
+ * - SessionItem 列表主行按状态渲染左侧 7px icon（单一 icon 范式）
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/panel/session-status-icons.test.ts
  */
@@ -97,10 +97,10 @@ describe('session status icons extended states', () => {
         status: 'streaming',
       },
     })
-    // 列表主行不再用语义图标（STATUS_ICON 保留给非列表场景）
-    expect(wrapper.find('[data-testid="sidebar-session-icon"]').exists()).toBe(false)
-    // streaming → running badge（脉动小条 + 耗时）
-    expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(true)
+    // streaming → 左侧 spinning icon（旋转箭头）
+    const icon = wrapper.find('[data-testid="session-icon"]')
+    expect(icon.exists()).toBe(true)
+    expect(icon.find('.animate-spin').exists()).toBe(true)
   })
 
   it('waiting 状态 SessionItem 渲染 waiting … badge', () => {
@@ -111,8 +111,9 @@ describe('session status icons extended states', () => {
         status: 'waiting',
       },
     })
-    expect(wrapper.find('[data-testid="sidebar-session-icon"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="session-badge-waiting"]').exists()).toBe(true)
+    const icon = wrapper.find('[data-testid="session-icon"]')
+    expect(icon.exists()).toBe(true)
+    expect(icon.find('.bg-warn').exists()).toBe(true)
   })
 
   it('error 状态 SessionItem 渲染 ! 胶囊 badge（danger，需用户介入）', () => {
@@ -123,13 +124,10 @@ describe('session status icons extended states', () => {
         status: 'error',
       },
     })
-    // error → 专用 badge（! 胶囊，bg-danger-soft）
-    const badge = wrapper.find('[data-testid="session-badge-error"]')
-    expect(badge.exists()).toBe(true)
-    expect(badge.text()).toBe('!')
-    // 其他状态 badge 不渲染（互斥）
-    expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="session-badge-waiting"]').exists()).toBe(false)
+    // error → danger 实心圆 icon
+    const icon = wrapper.find('[data-testid="session-icon"]')
+    expect(icon.exists()).toBe(true)
+    expect(icon.find('.bg-danger').exists()).toBe(true)
   })
 
   it('done / stopped 状态 SessionItem 无 badge（仅耗时文字）', () => {
@@ -141,11 +139,13 @@ describe('session status icons extended states', () => {
           status,
         },
       })
-      // 终态：running/waiting/error 三类 badge 均不渲染，meta 区只剩耗时文字
-      expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="session-badge-waiting"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="session-badge-error"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="sidebar-session-meta"]').exists()).toBe(true)
+      // 终态：左侧显示 success icon（done）或 neutral-dim icon（stopped），右侧仅时间文字
+      expect(wrapper.find('[data-testid="session-icon"]').exists()).toBe(true)
+      if (status === 'done') {
+        expect(wrapper.find('.bg-success').exists()).toBe(true)
+      } else {
+        expect(wrapper.find('.border-neutral-dim').exists()).toBe(true)
+      }
     }
   })
 
@@ -157,11 +157,11 @@ describe('session status icons extended states', () => {
         status: 'dead',
       },
     })
-    // dead 由 isDead 抑制 badge（badgeKind=none），整行 opacity-50 表达（spec §5.6A）
-    expect(wrapper.find('[data-testid="session-badge-error"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="session-badge-waiting"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="sidebar-session-meta"]').exists()).toBe(true)
+    // dead → 左侧 neutral-dim 实心圆 50%，整行 opacity-50
+    const icon = wrapper.find('[data-testid="session-icon"]')
+    expect(icon.exists()).toBe(true)
+    expect(icon.find('.bg-neutral-dim').exists()).toBe(true)
+    expect(icon.find('.opacity-50').exists()).toBe(true)
     expect(wrapper.find('.session-item').classes()).toContain('opacity-50')
   })
 })

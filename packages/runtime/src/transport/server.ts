@@ -102,17 +102,19 @@ export class RuntimeServer implements IMessageBroker {
    */
   private routes!: Map<ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown>
 
-  constructor(port: number, projectRoot?: string) {
+  constructor(port: number, projectRoot?: string, authToken: string | null = null) {
     this.projectRoot = projectRoot ?? process.cwd()
-    // ConnectionManager 注入回调：连接建立 → broker 推送 initial state；
-    // 消息到达 → server.handleMessage 路由；解析/兜底错误 → broker.sendError；
+    // ConnectionManager 注入回调：连接通过 auth → broker 推送 initial state；
+    // 消息到达（必然 authed）→ server.handleMessage 路由；解析/兜底错误 → broker.sendError；
     // 连接关闭 → bus.unsubscribeAll(ws) 清理该 ws 的所有 session 订阅（wave:runtime-wiring）。
+    // authToken 缺省 null = fail-closed（S1-W1：组合根 index.ts 经 resolveRuntimeToken
+    // 显式传入 env/文件解析出的 token；直接构造不传 token 的调用方将被拒绝连接）。
     this.conn = new ConnectionManager(port, {
       onConnect: (ws) => this.broker.sendInitialState(ws),
       onMessage: (msg, ws) => this.handleMessage(msg, ws),
       sendError: (ws, code, message, id, details) => this.broker.sendError(ws, code, message, id, details),
       onDisconnect: (ws) => this.messageBus?.unsubscribeAll(ws as unknown as import('../services/message-bus/types.js').BusClient),
-    })
+    }, authToken)
   }
 
   /**

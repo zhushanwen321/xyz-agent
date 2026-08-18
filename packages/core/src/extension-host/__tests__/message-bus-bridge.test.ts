@@ -7,7 +7,7 @@
  * 窄化映射抽查（scope/sessionId 保留、alignment 默认、widgetGui gui:null、editor 兜底）。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { MessageBusBridge } from '../message-bus-bridge'
+import { MessageBusBridge, parseStatusBarUpdate } from '../message-bus-bridge'
 import { InternalEventBus } from '../internal-event-bus'
 import { MockMessageSource } from '../plugin-message-source'
 import type { IncomingPluginMessage } from '../plugin-message-source'
@@ -394,6 +394,67 @@ describe('MessageBusBridge', () => {
       const req = (e as { request: Record<string, unknown> }).request
       expect(req.kind).toBe('input')
       expect(req.method).toBe('editor')
+    })
+  })
+
+  describe('CT-D5 毒化隔离：statusbar 更新单条坏值跳过该条而非整包丢弃', () => {
+    /** 好条目工厂（runtime StatusBarItem 形状：id/pluginId/text/priority 必填） */
+    const goodItem = (id: string, text: string) => ({ id, pluginId: `p-${id}`, text, priority: 1 })
+
+    it('CT-D5 parseStatusBarUpdate 直调（导出供测试）：text:{} 单条坏值跳过该条，保留其余条目', () => {
+      const result = parseStatusBarUpdate({
+        type: 'plugin:statusBarUpdate',
+        payload: {
+          items: [
+            goodItem('good1', 'ok1'),
+            { id: 'bad', pluginId: 'p-bad', text: {}, priority: 2 },
+            goodItem('good2', 'ok2'),
+          ],
+        },
+      })
+      // 旧行为（整包 null 丢弃）已改造：单条坏值不再连坐其余条目
+      expect(result).not.toBeNull()
+      expect(result?.kind).toBe('plugin-status-bar-update')
+      expect(result?.items.map((i) => i.id)).toEqual(['good1', 'good2'])
+    })
+
+    it('CT-D5 经 bridge 完整链路：坏条目跳过、好条目正常上屏、不 emit error', () => {
+      const { source, bus } = makeBridge()
+      const { emitted } = spyEmit(bus)
+      source.emit({
+        type: 'plugin:statusBarUpdate',
+        payload: {
+          items: [
+            goodItem('good1', 'ok1'),
+            { id: 'bad', pluginId: 'p-bad', text: {}, priority: 2 },
+          ],
+        },
+      })
+      const e = emitted.find((x) => x.kind === 'plugin-status-bar-update')
+      expect(e).toBeDefined()
+      expect((e as { items: Array<{ id: string }> }).items.map((i) => i.id)).toEqual(['good1'])
+      expect(emitted.some((x) => x.kind === 'error')).toBe(false)
+    })
+
+    it('CT-D5 全部条目均坏（items 非空零存活）→ 仍整包 error（毒化上报），与合法清空区分', () => {
+      const { source, bus } = makeBridge()
+      const { emitted } = spyEmit(bus)
+      source.emit({
+        type: 'plugin:statusBarUpdate',
+        payload: { items: [{ id: 'bad', pluginId: 'p', text: {}, priority: 1 }] },
+      })
+      expect(emitted.find((x) => x.kind === 'plugin-status-bar-update')).toBeUndefined()
+      expect(emitted.some((x) => x.kind === 'error')).toBe(true)
+    })
+
+    it('CT-D5 合法清空语义不受影响：items:[] → 正常事件（非 error）', () => {
+      const { source, bus } = makeBridge()
+      const { emitted } = spyEmit(bus)
+      source.emit({ type: 'plugin:statusBarUpdate', payload: { items: [] } })
+      const e = emitted.find((x) => x.kind === 'plugin-status-bar-update')
+      expect(e).toBeDefined()
+      expect((e as { items: unknown[] }).items).toHaveLength(0)
+      expect(emitted.some((x) => x.kind === 'error')).toBe(false)
     })
   })
 })

@@ -84,10 +84,11 @@ describe('E1: 提交后空窗期 pending 态（核心 bug 回归）', () => {
     const wrapper = mount(SessionItem, {
       props: { session, active: true, status },
     })
-    // 列表主行不再用语义图标
-    expect(wrapper.find('[data-testid="sidebar-session-icon"]').exists()).toBe(false)
-    // pending → running badge（脉动小条）
-    expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(true)
+    // pending → 左侧 hollow icon（accent 空心圆）
+    const icon = wrapper.find('[data-testid="session-icon"]')
+    expect(icon.exists()).toBe(true)
+    expect(icon.find('.border-accent').exists()).toBe(true)
+    expect(icon.find('.animate-spin').exists()).toBe(false)
 
     // 清理 pendingSend timer 避免 leak
     chat.clearPendingSend('s1')
@@ -121,8 +122,10 @@ describe('E2: 非焦点 session 提交后 pending 态（activeId 限定已移除
     const wrapper = mount(SessionItem, {
       props: { session: sessionB, active: false, status: statusB },
     })
-    expect(wrapper.find('[data-testid="sidebar-session-icon"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(true)
+    const icon = wrapper.find('[data-testid="session-icon"]')
+    expect(icon.exists()).toBe(true)
+    expect(icon.find('.border-accent').exists()).toBe(true)
+    expect(icon.find('.animate-spin').exists()).toBe(false)
 
     chat.clearPendingSend('B')
   })

@@ -10,18 +10,25 @@ import { checkPluginCompatibility } from './plugin-version-checker.js'
  * 扫描目录优先级：
  *   1. <configDir>/plugins/        （全局插件，configDir 由组合根注入）
  *   2. <projectRoot>/.xyz-agent/plugins/  （项目级插件）
- *   3. built-in 目录（resolveBuiltinPluginsDir，多运行形态候选探测，见其注释）
+ *   3. built-in 目录（resolveBuiltinPluginsDir：--builtin-plugins-dir 显式注入优先，
+ *      缺失时回退多形态候选探测，见其注释）
  */
 export class PluginRegistry {
   private cache = new Map<string, PluginDescriptor>()
   private projectRoot: string
   private pluginsConfigDir: string
+  private builtinPluginsDir: string | undefined
 
   /** @param projectRoot 项目根（项目级插件扫描用）
-   *  @param pluginsConfigDir 全局配置根（~/.xyz-agent/，全局插件扫描用），由组合根注入。 */
-  constructor(projectRoot: string, pluginsConfigDir: string) {
+   *  @param pluginsConfigDir 全局配置根（~/.xyz-agent/，全局插件扫描用），由组合根注入。
+   *  @param builtinPluginsDir 显式 built-in 插件目录（S1-W4/D3：Electron 主进程经
+   *    --builtin-plugins-dir 注入的绝对路径）。提供时 built-in 扫描只用该目录，
+   *    不做 cwd 探测（防用户 repo 预置同名目录冒充 built-in 插件，供应链攻击面）；
+   *    缺失时回退旧探测链（dev 直跑/测试无主进程场景兼容）并落 warning。 */
+  constructor(projectRoot: string, pluginsConfigDir: string, builtinPluginsDir?: string) {
     this.projectRoot = projectRoot
     this.pluginsConfigDir = pluginsConfigDir
+    this.builtinPluginsDir = builtinPluginsDir
   }
 
   async scan(): Promise<PluginDescriptor[]> {
@@ -57,10 +64,21 @@ export class PluginRegistry {
   }
 
   /**
-   * 解析 built-in 插件目录（resources/plugins/，多运行形态候选探测）。
+   * 解析 built-in 插件目录（resources/plugins/）。
    *
-   * projectRoot = runtime cwd（组合根 effectiveRoot），不同运行形态下仓库根/打包资源
-   * 相对 cwd 的位置不同，按序探测候选目录、首个存在者胜出：
+   * S1-W4（D3）起优先级两级：
+   *
+   *   1. 显式注入（this.builtinPluginsDir，来自 --builtin-plugins-dir）——唯一权威来源。
+   *      提供时直接使用，绝不再做 cwd 探测（探测链可被用户 repo 内预置的
+   *      resources/plugins 目录劫持，冒充 built-in 插件获得 trusted 权限）。
+   *      目录不存在时同样不回退到探测（scan() 的 readdir 失败分支按既有语义跳过），
+   *      避免「显式路径缺失 → 捡到 cwd 里攻击者目录」的降级路径。
+   *   2. 回退：cwd 多运行形态候选探测（dev 直跑 / vitest / e2e 脚本起 runtime
+   *      无主进程传参的场景兼容）。使用回退时每次落 warning（fail-visible——
+   *      生产主进程总是显式传参，看到此日志即说明 built-in 目录回到了
+   *      可被 cwd 影响的探测路径）。
+   *
+   * 回退候选（projectRoot = runtime cwd，组合根 effectiveRoot）：
    *
    *   候选 1  <projectRoot>/resources/plugins
    *     - 打包形态：cwd=Resources/，electron-builder extraResources 拷贝目标即
@@ -80,6 +98,11 @@ export class PluginRegistry {
    * 让 scan() 的 readdir 失败分支按既有语义静默跳过。
    */
   private async resolveBuiltinPluginsDir(): Promise<string> {
+    if (this.builtinPluginsDir) return this.builtinPluginsDir
+
+    console.warn(
+      '[plugin-registry] --builtin-plugins-dir not provided; falling back to cwd-based probing for built-in plugins dir (host process should always inject it explicitly)',
+    )
     const candidates = [
       join(this.projectRoot, 'resources', 'plugins'),
       resolve(this.projectRoot, '..', '..', 'resources', 'plugins'),
@@ -156,6 +179,23 @@ export class PluginRegistry {
       return null
     }
 
+    // S1-W4（D3）：信任级判定权归宿主，manifest 声明不参与判定——
+    //   external（用户安装）一律 sandbox（进程沙箱隔离 + 权限审批照走）；
+    //   built-in（随应用分发）一律 trusted。
+    // external 声明非 sandbox 的 trustLevel 被忽略时落 warning（fail-visible，
+    // 含插件 id 与被忽略的声明值）；声明值与强制值一致（sandbox/缺省）时无需提示。
+    let trustLevel: 'trusted' | 'sandbox'
+    if (source === 'built-in') {
+      trustLevel = 'trusted'
+    } else {
+      trustLevel = 'sandbox'
+      if (manifest.trustLevel && manifest.trustLevel !== 'sandbox') {
+        console.warn(
+          `[plugin-registry] ${dirName}: external plugin manifest declares trustLevel "${manifest.trustLevel}" — ignored and forced to 'sandbox' (trust level is host-decided by plugin source)`,
+        )
+      }
+    }
+
     const descriptor: PluginDescriptor = {
       pluginId: dirName,
       version: pkg.version ?? '0.0.0',
@@ -163,7 +203,7 @@ export class PluginRegistry {
       description: pkg.description ?? '',
       main,
       activationEvents,
-      trustLevel: manifest.trustLevel ?? 'sandbox',
+      trustLevel,
       status: compat.compatible ? ('UNLOADED' as PluginState) : ('DEPS_MISSING' as PluginState),
       contributes: manifest.contributes ?? {} as PluginContributes,
       permissions: manifest.permissions ?? [],

@@ -11,7 +11,7 @@ import { watch } from 'vue'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import { BASE_PORT } from '@xyz-agent/shared'
 import * as wsClient from '@/lib/ws-client'
-import { getRuntimePort } from '@/lib/ipc'
+import { getRuntimePort, getRuntimeToken } from '@/lib/ipc'
 
 /** mock 模式自举 url（ws-client 内部按 isMock 走 mockConnect，url 仅占位） */
 const MOCK_URL = 'mock://bootstrap'
@@ -20,12 +20,19 @@ const MOCK_URL = 'mock://bootstrap'
 const CONNECT_TIMEOUT = 10_000
 
 /** 建立 WS 连接（mock 模式 200ms 直进 connected）。幂等：ws-client 已处理重入。
+ *  real 模式经 IPC 并行拉取端口 + auth token（S1-W1：open 后首条消息 auth 握手）。
  *  @throws 超过 CONNECT_TIMEOUT 仍未连接（联调阶段对齐用） */
 export async function connect(): Promise<void> {
-  const url = import.meta.env.VITE_MOCK === 'true'
-    ? MOCK_URL
-    : `ws://localhost:${(await getRuntimePort()) ?? BASE_PORT}`
-  wsClient.connect(url)
+  if (import.meta.env.VITE_MOCK === 'true') {
+    wsClient.connect(MOCK_URL)
+    await waitForConnected()
+    return
+  }
+  // 独立 IPC 数据源并行拉取（allSettled：单路失败不拖垮另一路）
+  const [portRes, tokenRes] = await Promise.allSettled([getRuntimePort(), getRuntimeToken()])
+  const port = portRes.status === 'fulfilled' ? portRes.value : undefined
+  const token = tokenRes.status === 'fulfilled' ? tokenRes.value : undefined
+  wsClient.connect(`ws://localhost:${port ?? BASE_PORT}`, token ?? undefined)
   await waitForConnected()
 }
 

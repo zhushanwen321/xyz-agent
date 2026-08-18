@@ -12,6 +12,9 @@ describe('SchedulerService', () => {
 
   beforeEach(() => {
     backend = new MockSchedulerBackend()
+    // 固定时间避免 clock-boundary flake：formatRelativeTime 内部读 Date.now()，
+    // 两次读之间的延迟可能导致 "in 1h" 变成 "in 59m"。
+    backend.nowValue = Date.now()
     service = new SchedulerService(new SchedulerRuntime(backend, mockCtx), () => backend.now())
   })
 

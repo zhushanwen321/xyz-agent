@@ -16,10 +16,78 @@
  * payload + 调用 broadcastFn"，plugin.notify 与 plugin.ui.notify 两个 RPC 入口共用。
  * 无 broadcastFn 时返回 false，由调用方各自打印 warn 文案（两入口的原始文案不同，
  * 因此 warn 不进核心函数——去重的是"广播逻辑"，可观测文案各自保留，行为逐字不变）。
+ *
+ * S3-W4（D7 限流与防毒化）：入口两道防线——
+ *   1. 窄校验（S3-W3）：pluginId/level/message 类型 + message ≤8KB，
+ *      畸形即抛 INVALID_* 结构化错误（fire-and-forget 场景 dispatch 会落日志）；
+ *   2. 每插件令牌桶（NotifyRateLimiter）：默认 20 条/s（shared SSOT，含实测校准
+ *      依据注释），超限丢弃并记日志——通知是 fire-and-forget，丢弃即设计行为，
+ *      不抛错（抛错与丢弃对插件同样无回包，但会污染 error 日志通道）。
  */
 
+import { PLUGIN_NOTIFY_LIMITS } from '@xyz-agent/shared'
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { PluginRpcClient } from '../plugin-rpc-client.js'
+import { asBoundedString, asString } from '../validation.js'
+
+/**
+ * 每插件 notify 令牌桶（D7「限流与防毒化」）。
+ *
+ * 标准 token bucket：容量 = 速率（可瞬时突发 ratePerSec 条），按 ratePerSec/s
+ * 连续补充。按 pluginId 独立分桶——一个插件失控不影响其它插件的通知。
+ *
+ * 可配置：构造接受 { ratePerSec } 覆盖（默认取 shared PLUGIN_NOTIFY_LIMITS
+ * SSOT 值）；nowMs 参数供 fake-timers 测试注入。实测校准依据见 shared 常量注释。
+ */
+export class NotifyRateLimiter {
+  private readonly buckets = new Map<string, { tokens: number; lastRefillMs: number }>()
+
+  constructor(
+    public readonly config: { ratePerSec: number } = { ratePerSec: PLUGIN_NOTIFY_LIMITS.NOTIFY_RATE_PER_SEC },
+  ) {}
+
+  /**
+   * 尝试为 pluginId 消费一个令牌。true = 放行，false = 超限（调用方丢弃 + 记日志）。
+   */
+  tryAcquire(pluginId: string, nowMs: number = Date.now()): boolean {
+    const capacity = this.config.ratePerSec
+    const bucket = this.buckets.get(pluginId) ?? { tokens: capacity, lastRefillMs: nowMs }
+    const elapsedSec = Math.max(0, nowMs - bucket.lastRefillMs) / 1000
+    bucket.tokens = Math.min(capacity, bucket.tokens + elapsedSec * this.config.ratePerSec)
+    bucket.lastRefillMs = nowMs
+    if (bucket.tokens < 1) {
+      this.buckets.set(pluginId, bucket)
+      return false
+    }
+    bucket.tokens -= 1
+    this.buckets.set(pluginId, bucket)
+    return true
+  }
+
+  /** 清空（或按 pluginId 清空）令牌桶（测试/插件卸载清理用） */
+  reset(pluginId?: string): void {
+    if (pluginId === undefined) this.buckets.clear()
+    else this.buckets.delete(pluginId)
+  }
+}
+
+/**
+ * notify 入口的窄校验 + 限流水线（plugin.notify 与 plugin.ui.notify 共用）。
+ *
+ * 返回校验通过的 { pluginId, level, message }；畸形输入抛 INVALID_*（fail-fast，
+ * 供 request 形态回结构化错误给插件）；超限返回 null（丢弃 + 由调用方记日志）。
+ */
+export function guardNotifyParams(
+  limiter: NotifyRateLimiter,
+  params: Record<string, unknown>,
+  nowMs: number = Date.now(),
+): { pluginId: string; level: string; message: string } | null {
+  const pluginId = asString(params.pluginId, 'pluginId')
+  const level = asString(params.level, 'level')
+  const message = asBoundedString(params.message, 'message', PLUGIN_NOTIFY_LIMITS.NOTIFY_MESSAGE_MAX_BYTES)
+  if (!limiter.tryAcquire(pluginId, nowMs)) return null
+  return { pluginId, level, message }
+}
 
 /** broadcastFn 类型：Server→Client 推送（[HISTORICAL] 冒号 + camelCase 命名约定） */
 export type PluginBroadcastFn = (type: string, payload: unknown) => void
@@ -57,6 +125,11 @@ export interface NotifyHandlers {
    * @param message 消息文本
    */
   notify(pluginId: string, level: string, message: string): void
+  /**
+   * 每插件令牌桶（S3-W4）。缺省时 registerNotifyRpcHandler 自建默认桶
+   * （20 条/s，shared SSOT）；plugin.ui.notify 入口应传入同一实例共享配额。
+   */
+  limiter?: NotifyRateLimiter
 }
 
 /**
@@ -64,17 +137,24 @@ export interface NotifyHandlers {
  *
  * Notify 是 fire-and-forget：直接通过 broadcastFn 广播。无 broadcastFn 时打印警告
  * 并丢弃（保持原行为）。
+ *
+ * S3-W4：入口先窄校验（畸形 → INVALID_* 结构化错误）再过令牌桶（超限丢弃 +
+ * warn 日志，不抛错——丢弃是设计行为）。
  */
 export function registerNotifyRpcHandler(
   rpcServer: PluginRpcServer,
   deps: NotifyHandlers,
 ): void {
+  const limiter = deps.limiter ?? new NotifyRateLimiter()
   rpcServer.registerMethod('plugin.notify', async (params) => {
-    deps.notify(
-      params.pluginId as string,
-      params.level as string,
-      params.message as string,
-    )
+    const guarded = guardNotifyParams(limiter, params)
+    if (guarded === null) {
+      console.warn(
+        `[plugin-notify-api] plugin.notify dropped: rate limit ${limiter.config.ratePerSec}/s exceeded (plugin=${String(params.pluginId)})`,
+      )
+      return
+    }
+    deps.notify(guarded.pluginId, guarded.level, guarded.message)
   })
 }
 

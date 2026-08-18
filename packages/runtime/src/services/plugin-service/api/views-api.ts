@@ -14,6 +14,8 @@
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { PluginRpcClient } from '../plugin-rpc-client.js'
+import { errorWithCode } from '../../../utils/errors.js'
+import { asSafeKey, asString } from '../validation.js'
 
 /** Views 服务依赖（主线程侧） */
 export interface ViewService {
@@ -38,11 +40,20 @@ export function registerViewRpcHandlers(
   service: ViewService,
 ): void {
   rpcServer.registerMethod('plugin.views.update', async (params) => {
-    const pluginId = params.pluginId as string
-    const viewId = params.viewId as string
-    const guiTree = params.guiTree as GuiComponent[]
+    // S3-W3 窄校验：viewId 进 ViewHostStore 分区键（白名单排除路径分隔符），
+    // guiTree 必须是数组（条目结构由渲染端 ViewHostStore 二次窄化）。
+    // 畸形即抛 INVALID_*，不触发广播。
+    const pluginId = asString(params.pluginId, 'pluginId')
+    const viewId = asSafeKey(params.viewId, 'viewId')
+    const guiTree = params.guiTree
+    if (!Array.isArray(guiTree)) {
+      throw errorWithCode(
+        `Invalid guiTree: expected an array of GuiComponent but received (${typeof guiTree}).`,
+        'INVALID_GUI_TREE',
+      )
+    }
 
-    service.handleViewUpdate(pluginId, viewId, guiTree)
+    service.handleViewUpdate(pluginId, viewId, guiTree as GuiComponent[])
 
     return { updated: true }
   })

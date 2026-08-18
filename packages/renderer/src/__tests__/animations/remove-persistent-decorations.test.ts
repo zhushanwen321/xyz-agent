@@ -25,11 +25,10 @@ describe('plan 04 删除常驻装饰性动画', () => {
     expect(segmentedTab).toContain('absolute right-1 top-1 size-[7px] rounded-full bg-accent')
   })
 
-  it('TC2: SessionItem running 指示条尺寸/底色保留（bfa37cbc5 起恢复呼吸：animate-pulse-dot 复用全局 keyframes）', () => {
-    // bfa37cbc5（breathing badges）产品决策推翻 plan 04 对 SessionItem 的静态化：
-    // running/waiting badge 呼吸动画复用全局 pulse-dot keyframes，plan 04 旧断言
-    // （not.toContain pulse-dot 类）不再适用；SegmentedTab（TC1）静态化仍有效
-    expect(sessionItem).toContain('inline-block h-[9px] w-[3px] animate-pulse-dot rounded-[2px] bg-accent')
+  it('TC2: SessionItem running 态保留旋转动画（7px spinning icon 范式）', () => {
+    // 新范式：running 状态由 7px 旋转箭头 icon 表达（animate-spin），
+    // 替代旧版右侧 pulse-dot badge（已移除）。SegmentedTab（TC1）静态化仍有效。
+    expect(sessionItem).toContain('animate-spin')
   })
 
   it('TC3: composer-shell isActive 分支为静态 ring（无 steer-breathe，border+shadow 保留）', () => {

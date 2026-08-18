@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
-import { isEnoent, toErrorMessage } from '../../utils/errors.js'
+import { errorWithCode, isEnoent, toErrorMessage } from '../../utils/errors.js'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { WriteBackCache } from '../../utils/json-store.js'
 
@@ -13,6 +13,8 @@ const MAX_VALUE_SIZE = 1 * MB // 1MB
 const FLUSH_DEBOUNCE_MS = 500
 const JSON_FORMAT_INDENT = 2
 const HASH_SLICE_LENGTH = 12
+/** [SEC-A5] 防御拒绝 message 中 pluginId 的回显截断长度（防超长输入撑爆日志） */
+const PLUGIN_ID_PREVIEW_CHARS = 64
 
 /** KV 分区键：${pluginId}:${scope} */
 type PartitionKey = string
@@ -138,18 +140,29 @@ export class PluginStorage {
     pluginId: string,
     scope: 'global' | 'workspace',
   ): string {
+    // [SEC-A5 深度防御] pluginId 是路径段，resolve 后必须仍落在 plugins 目录内。
+    // 入口层（storage-api 的 asSafeKey 白名单）已拒绝非法 pluginId，这里兜底
+    // 拦「上游漏网」的 `..` 遍历与跨盘绝对路径——load/persist 共用本方法，
+    // 一处校验同时覆盖读与写。合法 pluginId 行为与 resolve 前完全一致。
+    const pluginsDir = resolve(this.baseDir, 'plugins')
+    const pluginDir = resolve(pluginsDir, pluginId)
+    const rel = relative(pluginsDir, pluginDir)
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+      throw errorWithCode(
+        `Invalid pluginId ${JSON.stringify(pluginId.slice(0, PLUGIN_ID_PREVIEW_CHARS))}: resolved path escapes `
+        + `the plugins directory (${pluginsDir}). pluginId must match /^[A-Za-z0-9._-]{1,128}$/ `
+        + `(no path separators or '..'). This defense-in-depth rejection means the RPC entry `
+        + `layer validation was bypassed — report it as a bug if reached via plugin RPC.`,
+        'INVALID_PLUGIN_ID',
+      )
+    }
     if (scope === 'global') {
-      return join(this.baseDir, 'plugins', pluginId, 'globalState.json')
+      return join(pluginDir, 'globalState.json')
     }
     const cwdHash = createHash('sha256')
       .update(this.projectRoot)
       .digest('hex')
       .slice(0, HASH_SLICE_LENGTH)
-    return join(
-      this.baseDir,
-      'plugins',
-      pluginId,
-      `workspace-${cwdHash}.json`,
-    )
+    return join(pluginDir, `workspace-${cwdHash}.json`)
   }
 }

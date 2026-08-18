@@ -8,7 +8,7 @@
     <!-- 编辑态：编辑后 fork 新会话 -->
     <div
       v-if="isEditingThisUser"
-      class="w-full max-w-[76%] rounded-[14px] border border-accent bg-bg-input p-2 shadow-[0_0_0_3px_color-mix(in_oklch,var(--accent)_22%,transparent)]"
+      class="w-full max-w-[85%] min-w-0 break-words rounded-[14px] border border-accent bg-bg-input p-2 shadow-[0_0_0_3px_color-mix(in_oklch,var(--accent)_22%,transparent)]"
     >
       <Textarea v-model="draftText" class="min-h-[64px] border-0 bg-transparent px-1 text-[length:var(--text-base)] leading-[1.55] focus-visible:ring-0" />
       <div class="mt-1.5 flex items-center justify-between px-1">
@@ -24,7 +24,7 @@
     <!-- 展示态气泡 -->
     <div
       v-else
-      class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-[var(--bubble-bg)] px-[13px] py-[9px] text-[length:var(--text-base)] leading-[1.55] text-neutral-fg"
+      class="max-w-[85%] min-w-0 break-words rounded-[14px_14px_4px_14px] border border-border-strong bg-[var(--bubble-bg)] px-[13px] py-[9px] text-[length:var(--text-base)] leading-[1.55] text-neutral-fg"
     >
       <template v-for="(seg, i) in userSegments" :key="i">
         <span

@@ -1,14 +1,14 @@
 # xyz-agent 问题排查
 
-项目没有文件日志系统，所有日志通过 console 输出。以下是各层的日志获取方式。
+Runtime 日志落盘到 `<数据目录>/logs/`（`runtime-YYYY-MM-DD.log`，按天轮转 + 大小滚动），pi 子进程 stdout 的 JSONL 事件流独立落盘为 `pi-<date>-<sessionId>.jsonl`（pi 卡死类问题的决定性证据）。console 输出同步 tee 到终端。以下是各层的日志获取方式。
 
 ## 日志获取
 
 | 层级 | 开发模式 | 打包模式 |
 |------|---------|---------|
 | **Electron 主进程** | 终端直接看 | 终端启动 `/Applications/太极.app/Contents/MacOS/TaiJi` 或 `log show --process TaiJi` |
-| **Runtime（原 Sidecar）** | 终端 `[runtime:out]` / `[runtime:err]` 前缀 | 同主进程，stdout/stderr 转发到主进程 console |
-| **pi 子进程** | 终端 pi 自身输出 | pi 日志目录 `~/.xyz-agent/pi/agent/logs/` |
+| **Runtime** | 终端 `[runtime:out]` / `[runtime:err]` 前缀 + `~/.xyz-agent-dev/logs/runtime-*.log` | 同主进程转发 + `~/.xyz-agent/logs/runtime-*.log` |
+| **pi 子进程** | 终端 pi 自身输出 + `~/.xyz-agent-dev/logs/pi-<date>-<sessionId>.jsonl` | `~/.xyz-agent/logs/pi-<date>-<sessionId>.jsonl` + pi 日志目录 `~/.xyz-agent/pi/agent/logs/` |
 | **前端 DevTools** | Cmd+Option+I 打开 | 同左 |
 
 **打包模式启动应用获取完整日志**：
@@ -36,10 +36,12 @@ Resources/
 │   ├── pi-darwin-arm64                # pi 可执行文件
 │   ├── agent/                         # agent skills/extensions
 │   └── assets/                        # agent 资源文件
-└── xyz-agent-extension.js            # xyz-agent 定制 pi extension
+├── extensions/                        # builtin pi extensions
+│   └── @zhushanwen/<pkg>/             # 10 个 @zhushanwen/pi-*（esbuild bundle 产物）
+└── xyz-agent-extension.js             # xyz-agent 定制 pi extension
 ```
 
-> **注**：builtin pi extensions（`@zhushanwen/pi-*`）不再打包进产物。用户首次使用时在 Settings → Extensions 页面的「推荐扩展」区一键安装，安装到 `~/.xyz-agent/pi/agent/npm/node_modules/`。
+> **注**：builtin pi extensions（10 个 `@zhushanwen/pi-*`）随应用打包内置在 `Resources/extensions/@zhushanwen/` 下，离线可用、无需安装。其中 infrastructure 级 3 个（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output`）不可禁用，feature 级 7 个可在 Settings → Extensions 中禁用/启用。第三方扩展（任意 npm 包 / 本地目录 / git）经 Settings → Extensions 安装到数据目录。
 
 **数据目录** (`~/.xyz-agent/`)：
 
@@ -112,9 +114,19 @@ lsof -i :3210 -P | grep LISTEN
 lsof -i :3210-3220 -P | grep LISTEN | awk '{print $2}' | sort -u
 ```
 
-### 4. Extension 推荐安装失败
+### 4. Extension 相关问题
 
-builtin pi extensions（`@zhushanwen/pi-goal` / `pi-todo` / `pi-subagents` / `pi-workflow` / `pi-structured-output`）不再打包进产物，用户在 Settings → Extensions 页面的「推荐扩展」区一键安装（走 `npm install` 到数据目录）。
+builtin pi extensions（10 个 `@zhushanwen/pi-*`）随应用打包内置，不经过 npm 安装，离线可用：
+
+```bash
+# 检查打包产物中的 builtin extensions
+ls /Applications/太极.app/Contents/Resources/extensions/@zhushanwen/
+
+# builtin 扩展不生效时，检查是否被禁用（infrastructure 级 3 个不可禁用）
+cat ~/.xyz-agent/pi/agent/settings.json
+```
+
+第三方扩展（任意 npm 包 / 本地目录 / git）经 Settings → Extensions 页面安装，走 `npm install` 到数据目录，安装失败最常见原因是网络：
 
 ```bash
 # 检查用户级 npm extension 安装目录
@@ -123,11 +135,11 @@ ls ~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/
 # 检查 settings.json 的 packages[] 是否记录了该 extension
 cat ~/.xyz-agent/pi/agent/settings.json | grep '@zhushanwen/pi'
 
-# 检查 npm registry 可达性（安装失败最常见原因是网络）
+# 检查 npm registry 可达性
 npm view @zhushanwen/pi-goal version
 ```
 
-若安装失败，在 Settings · Extensions 页面会有错误提示（红色横幅），含错误码：`not_found`（包名错误）、`network`（npm registry 不可达）、`not_extension`（包不是有效 pi extension）。
+若安装失败，在 Settings · Extensions 页面会有错误提示，错误码来自 npm installer：`not_found`（包名错误）、`network`（npm registry 不可达）、`extract` / `integrity`（下载内容异常）。
 
 ### 5. Dev 模式 Vite 不更新
 
