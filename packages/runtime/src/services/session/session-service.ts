@@ -497,6 +497,17 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     if (session) session.thinkingLevel = level
   }
 
+  /**
+   * 更新活跃 session 的 label（内存态）。
+   *
+   * 调用方：pi session_info_changed 事件到达时（pi extension auto-rename）。
+   * 不持久化——pi 侧已写 session_info，此处只同步内存态。
+   */
+  setLabelCache(sessionId: string, label: string): void {
+    const session = this.sessions.get(sessionId)
+    if (session) session.label = label
+  }
+
   hasActiveSession(sessionId: string): boolean { return this.pm.hasClient(sessionId) }
 
   /** 活跃 session id 列表（含公共 session，供 SkillRegistry 计算 skill 变更广播范围）。 */
@@ -1023,7 +1034,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   toSummary(s: IManagedSessionView): SessionSummary {
     const git = this.gitInfoReader.readGitInfo(s.cwd)
     return {
-      id: s.id, label: sessionMetaCache.getLabel(s.id) ?? s.label, cwd: s.cwd,
+      id: s.id, label: s.label, cwd: s.cwd,
       gitBranch: git?.branch, gitIsWorktree: git?.isWorktree,
       // R1：复用 WorkspaceDetector 检测 .bare workspace（带缓存），填 isBareWorkspace
       // 供前端 Landing.vue 派生「新建 worktree」动作项显隐。

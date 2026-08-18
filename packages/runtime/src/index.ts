@@ -293,7 +293,8 @@ async function main(): Promise<void> {
       },
       onSessionRenamed: (sid, name) => {
         // pi extension auto-rename (session_info_changed) 事件到达时。
-        // 回写 session label 缓存，使后续 broadcastSessionList 读到新名称（而非旧值）。
+        // 同步更新内存态 session.label（唯一数据源）+ 缓存（扫描路径兜底）。
+        sessionService.setLabelCache(sid, name ?? '')
         sessionMetaCache.setLabel(sid, name ?? '')
       },
       executeHooks: (hookType, context) => pluginService.executeHooks(hookType, {
