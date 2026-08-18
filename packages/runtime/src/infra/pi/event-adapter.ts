@@ -624,15 +624,19 @@ function handleQueueUpdate(event: PiQueueUpdateEvent, sid: string): PiTranslated
   }]
 }
 
-/** session_info_changed → session.renamed */
+/** session_info_changed → session.renamed + 回写 session 缓存（interpreter 处理） */
 function handleSessionInfoChanged(event: PiSessionInfoChangedEvent, sid: string): PiTranslatedEvent[] {
-  return [{
-    kind: 'message',
-    message: {
-      type: 'session.renamed',
-      payload: { sessionId: sid, name: event.name },
+  return [
+    // 回写 session.label 缓存（interpreter 调 sessionMetaCache）
+    { kind: 'session-renamed', name: event.name },
+    {
+      kind: 'message',
+      message: {
+        type: 'session.renamed',
+        payload: { sessionId: sid, name: event.name },
+      },
     },
-  }]
+  ]
 }
 
 /** thinking_level_changed → session.thinkingLevelSet + 回写 session 缓存（interpreter 处理） */

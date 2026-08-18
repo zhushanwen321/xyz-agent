@@ -84,6 +84,8 @@ export interface EventInterpreterOptions {
   onTurnFinalize?: (sessionId: string, stopReason?: string) => void
   /** thinking_level_changed 回写 session 缓存（组合根注入 sessionService.setThinkingLevelCache）。 */
   onThinkingLevelChanged?: (sessionId: string, level: string | undefined) => void
+  /** session_info_changed 回写 session label 缓存（组合根注入 sessionMetaCache.setLabel）。 */
+  onSessionRenamed?: (sessionId: string, name: string | undefined) => void
   /** extension 交互式 UI 请求（注册前端超时 + 缓存 pending 请求）。组合根注入 server.registerExtensionTimeout。 */
   onExtensionUIRequest?: (requestId: string, sessionId: string, method: string, payload: Record<string, unknown>) => void
   /** bridge:* 前缀请求（直接路由不经前端超时）。组合根注入 server.handleBridgeRequest。 */
@@ -293,6 +295,9 @@ export class EventInterpreter {
         return
       case 'thinking-level':
         this.opts.onThinkingLevelChanged?.(this.sessionId, ev.level)
+        return
+      case 'session-renamed':
+        this.opts.onSessionRenamed?.(this.sessionId, ev.name)
         return
       case 'hook':
         // agent_start 等纯观测事件（无 WS 帧产出）

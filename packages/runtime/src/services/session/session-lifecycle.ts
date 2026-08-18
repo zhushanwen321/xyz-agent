@@ -18,6 +18,7 @@ import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
+import { sessionMetaCache } from './session-meta-cache.js'
 import type { PresetResolution } from '../preset-service.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
@@ -281,6 +282,8 @@ export class SessionLifecycle {
     const session = this.svc.getSession(sessionId)
     if (session) {
       session.label = newName
+      // 回写集中式缓存，确保后续 broadcastSessionList 读到新名称
+      sessionMetaCache.setLabel(sessionId, newName)
       // 重置 labelPersisted：rename 后新名需要重新写盘。
       // 若文件已存在（pi 已 flush），persistSessionName 的 append 分支立即写 session_info；
       // 若文件不存在（pi 延迟写入窗口），persistSessionName no-op，labelPersisted=false 让
