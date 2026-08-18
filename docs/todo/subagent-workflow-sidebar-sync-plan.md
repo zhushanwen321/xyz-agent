@@ -65,12 +65,13 @@ pi --mode rpc --session-dir /tmp/probe-sessions \
 
 新建 `scripts/probe/subagent-sync-probes.sh`（形态 B），内含 4 个子探针，各自输出 `PROBE-A5 PASS/FAIL` 等行首标记：
 
-- **A5 toolResult entry 时序**：pi CLI 起 subagent start（stdin JSONL 发「调用 subagent tool 启动一个后台任务」）；第二进程 tail -F 主 JSONL，在 tool_execution_end 事件到达的同一时刻检查 toolResult entry 是否已落盘（事件到达 = pi stdout 出现该事件行）。
+- **A5 toolResult entry 时序**：pi CLI 起 subagent start（stdin JSONL 发「调用 subagent tool 启动一个后台任务」）；探针主进程**逐行读 pi stdout**，见到 tool_execution_end 事件行的瞬间直接 `readFileSync` 主 JSONL 全文 grep entry（毫秒级、无中间流；**不要用 tail -F**——tail 的 poll 间隔与 stdout 是两个异步流，会把「已落盘但 tail 未刷出」误判为 FAIL，单向假阴性失真）。
 - **A7 pi 版本一致性**：runtime 捆绑 `@earendil-works/pi-coding-agent` 0.84.1 ≠ 已核 dist 0.84.0，直接对捆绑版本重跑 A1（appendFileSync 探针：grep 捆绑 dist 源码确认 `_appendEntry` 同步写）+ A2（emit→persist 顺序）。
 - **A8 无 turn 注入**：pi CLI 空闲态注入不带 `triggerTurn` 的 custom_message——经**最小测试 extension**（node 进程内调 `pi.sendMessage`；pi RPC stdin 命令集无 sendMessage 命令，外部注入通道不存在），断言：entry 落盘 ✓、收到 `message_start` 事件 ✓、**无 agent_start/turn 活动**（60s 观察窗）。
 - **A10 秒级信号选型**：
   - 候选 a：测试 extension 在终态转换点发 `{customType:'subagent-state-changed', display:false}`（无 triggerTurn）→ 验证 runtime 侧能收到 message_start 事件、且该消息**不进 LLM 下一 turn 的上下文**（检查下一 turn 的 message entry 不含它；若进上下文，记录 token 代价并评级）。
-  - 候选 b：验证 background subagent 结束时 `subagent.stream_delta` 终止帧（lines:undefined）必然到达 runtime——两步：① pi CLI 直连跑真实 subagent，grep pi stdout JSONL 确认终止帧必然发出（streamSink 在 RPC 模式恒注入）；② 形态 B 隔离 runtime 挂探针日志于 event-adapter 的 stream 终止帧解析点（`event-adapter.ts:303-304`），确认帧到达 interpreter。
+  - 候选 b：验证 background subagent 结束时 `subagent.stream_delta` 终止帧（lines:undefined）必然到达 runtime——三步：① pi CLI 直连跑真实 subagent，grep pi stdout JSONL 确认终止帧必然发出（streamSink 在 RPC 模式恒注入）；② 形态 B 隔离 runtime 挂探针日志于 event-adapter 的 stream 终止帧解析点（`event-adapter.ts:303-304`），确认帧到达 interpreter；③ **特异性验证**：跑 chatMode（conversation:true）一轮完成，断言终止帧是否在**轮次边界**（非终态）也发出（预期：是——`stream.dispose()` 在 runAndFinalize finally，chatMode 每轮触发）。裁决评分纳入「轮次误触发」：若仍选 b，P3 的信号 kind 必须降级为幂等 `changed`（或翻译处过滤），不得用 `terminal`。
+  - 候选 a 补充：发起点集合 = **终态转换 + 轮次完成（idle 位翻转）**（仅挂终态转换则 waiting 无数据源）；每轮一条 custom_message entry 的落盘积累与「不进 LLM 上下文」在探针中一并评估。
   - 产出裁决：a/b/退化（都不可用则 UI 走窗口 + 对账，正确性不变）。
 
 ### 验证（本阶段产出即验证）
@@ -148,7 +149,7 @@ pi --mode rpc --session-dir /tmp/probe-sessions \
 
 | 文件 | 改动 |
 |------|------|
-| `packages/runtime/src/services/session/event-interpreter.ts` | 删 `subagentRecords` / `pendingStartParams` / `broadcastSubagents` / `handleSubagentBgNotify` 内存更新逻辑；`handleSubagentEnd` → 广播 `session.subagentsChanged{kind:'started'}`；bg-notify → `{kind:'notify'}`；P0-A10 选定的秒级信号 → `{kind:'terminal'}`（候选 b 则挂 stream 终止帧翻译处） |
+| `packages/runtime/src/services/session/event-interpreter.ts` | 删 `subagentRecords` / `pendingStartParams` / `broadcastSubagents` / `handleSubagentBgNotify` 内存更新逻辑；`handleSubagentEnd` → 广播 `session.subagentsChanged{kind:'started'}`；bg-notify → `{kind:'notify'}`；P0-A10 选定的秒级信号 → `{kind:'terminal'}`（候选 a）/ `{kind:'changed'}`（候选 b——chatMode 每轮完成也发终止帧，信号语义只能是「状态变了」幂等重拉，禁用 terminal 语义） |
 | `packages/runtime/src/infra/pi/event-adapter.ts` | （若 P0-A10 选 a）扩展轻量事件的透传：customType 识别 + 翻译为 interpreter 中间事件；候选 b 则在 stream 终止帧解析点（:303-304 附近）产出事件 |
 | `packages/runtime/src/services/message-bus/message-bus.ts` | TOPIC_TABLE 增 `session.subagentsChanged: 'transient'`（**必须显式**，fallback 是 stream 违背语义）；删 STATE_TYPE_KEY_MAP 的 `session.subagents` 条目 |
 | `packages/shared/src/protocol.ts` | 删 `session.subagents` push 类型（P1 已解耦 reply） |
@@ -177,14 +178,14 @@ runtime 不再持有 subagent 状态（grep `subagentRecords` 零命中）；单
 | 文件 | 改动 |
 |------|------|
 | `packages/shared/src/subagent.ts`（SubagentStatus 类型定义处） | `SubagentStatus` 重定义：`streaming / waiting / done / cancelled / stopped / error`（running 拆分、closed/crashed/failed 归并；细分保留在 closedReason/error 字段） |
-| `packages/runtime/src/services/session/subagent-status.ts` | `normalizeSubagentStatus` 映射表**重写**（旧输出 running/closed/crashed/failed → 新 6 态；上游变体 done/completed/success/error/canceled/crashed/active 等的归一目标是语义设计工作，编译断只能暴露类型不匹配）；连带重写 `runtime/test/subagent-status.test.ts`、`packages/shared/__tests__/subagent.test.ts` |
-| `packages/runtime/src/services/session/subagent-extractor.ts` | 四级投影（设计决策 5 表格）：bg-notify entry（最权威）→ `.cancelled` → `.finalized`+子进程 JSONL 末行 → `.alive`+pid+1h 软超时 → 孤儿兜底（子进程 JSONL 正常收尾→done，否则 error）。**waiting 的 idle 位从主 JSONL 的轻量事件 custom_message entry 读取**（A10a 事件无 triggerTurn 会落盘，extractor 读同一 JSONL）；sidecar 路径从 sessionFile 推导，null 时走既有 `findSubagentSessionFile` 时间戳匹配。**A10 裁决非 a 时 waiting 运行时不可达**（类型保留、渲染测试仍覆盖 6 态，UI 短期不出现该值——设计决策 5「A10a 落地后的增量」） |
-| `packages/renderer/src/composables/features/chat/useBackgroundWork.ts` | `hasRunning` → 判 `streaming ∨ waiting` |
+| `packages/runtime/src/services/session/subagent-status.ts` | `normalizeSubagentStatus` **保留签名**（legacy 单值归一，输入 status 字符串），归一目标改为新 6 态（done/completed/success→done、failed/error/crashed→error、cancelled/canceled→cancelled、active/pending→streaming、closed→交给组合层）；`(status, closedReason, error) → 6 态` 的**组合判定落在新投影函数（extractor 组合层）**，closedReason 6 值映射按设计决策 5 v5 表格（gc 按 error 判成败、user-close/parent-* → stopped）；连带更新 `runtime/test/subagent-status.test.ts`、`packages/shared/__tests__/subagent.test.ts` |
+| `packages/runtime/src/services/session/subagent-extractor.ts` | **六级投影**（设计决策 5 v5 表格）：① 终态 bg-notify entry（按 `(status, closedReason, error) → 6 态` 映射表，映射表见设计）→ ② `.cancelled` → ③ `.finalized`+子进程 JSONL 末行 → ④ `.alive`+pid+1h 软超时（streaming/waiting 依 A10a idle 位，无则 streaming）→ ⑤ 轮次 running entry（含 round）→ waiting → ⑥ 孤儿兜底（子进程 JSONL 正常收尾→done，否则 error）。**waiting 的 idle 位从主 JSONL 的轻量事件 custom_message entry 读取**（A10a 事件无 triggerTurn 会落盘）；sidecar 路径从 sessionFile 推导，null 时走既有 `findSubagentSessionFile` 时间戳匹配。**A10 裁决非 a 时级 ④ 回落 streaming、级 ⑤ 仍可用（轮次 entry 窗口 flush 后到达）**——waiting 短期低频，渲染测试仍覆盖 6 态 |
+| `packages/renderer/src/stores/subagent.ts` | `hasRunning` 实现（`:108`，`s.status === 'running'`）改判 `streaming ∨ waiting`——判定逻辑在 store 不在 useBackgroundWork（后者只转发调用，编译断会暴露旧枚举但改动点在此文件） |
 | sidebar `SubagentList` / drawer `SubagentTab` / `sessionStatus.ts` | 状态消费与视觉映射对齐 `STATUS_ICON`（同一状态语言；subagent 无 compacting/retrying 态，映射表裁剪） |
 
 ### 验证
 
-**单测（runtime，extractor 是纯函数，测试矩阵）**：fixture 工厂生成 主 JSONL × sidecar（.finalized/.cancelled/.alive+pid 活/死/超时）× 子进程 JSONL（正常收尾/截断）的全组合投影断言（≥10 用例，含回归基线价值：孤儿不再 running）；**A10a 分支下矩阵增加轻量事件 entry 维度**（含/不含 idle 位 → waiting/streaming）。
+**单测（runtime，extractor 是纯函数，测试矩阵）**：fixture 工厂生成 主 JSONL（终态 entry × closedReason 6 值 × error 空/非空 / 轮次 running entry / 无 entry）× sidecar（.finalized/.cancelled/.alive+pid 活/死/超时/被删）× 子进程 JSONL（正常收尾/截断）的组合投影断言（≥14 用例）。**必含组合**：「one-shot 成功（roundToIdle：无任何 sidecar、`.alive` 已删、无终态 entry）→ 级 6 → done」（最高频路径，A9 路径 I）、「chatMode 轮次完成 Path B（无 sidecar、无 `.alive`、有轮次 running entry）→ 级 5 → waiting」（与孤儿同形的区分用例）、「chatMode close 窗口期（轮次 entry + `.finalized`）→ 级 3 优先 → 终态」；A10a 分支下矩阵增加轻量事件 entry 维度（含/不含 idle 位 → waiting/streaming）。
 
 **单测（renderer）**：useBackgroundWork 新判定；SubagentList 各状态 testid/状态点 class 断言（观察者视角，含首屏冒烟模板）。
 
@@ -192,7 +193,7 @@ runtime 不再持有 subagent 状态（grep `subagentRecords` 零命中）；单
 
 **E2E real（形态 A，`e2e/subagent-crash-real.spec.ts`）**——设计 §8 场景 7：
 1. 强引导 prompt 明示「启动一个几秒内完成的短任务 subagent」（kill 后孤儿等待时长可控）→ subagent running 中 `kill -9` **pi 进程**（pgrep 按 E2E dataDir/session-dir 路径消歧，见 §1）。
-2. 等子进程自然结束（轮询 pid 消失）。
+2. 等子进程自然结束（轮询 pid 消失，**60s 超时兜底**——孤儿退出机制为 stdin EOF → shutdown → exit，但 dispose 卡住会长挂；超时判 FAIL 并 dump 子进程 ps/栈，不无限等）。
 3. UI 重开该 session（点击侧栏 session 项或 session.restore 链路；protocol 的 session.create 无 resume 参数）。
 4. 断言：该 subagent 显示 done 或 error（依子进程 JSONL 收尾），**不是 running/streaming**；无扩展补写依赖（本阶段 extension 未改也成立——投影纯 runtime 侧）。
 

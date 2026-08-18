@@ -139,8 +139,8 @@ if (!existing) continue   // bg-notify 只更新内存已有记录，否则静�
 | A6 | 大 session JSONL 全读耗时可接受（对账频率下） | 实施期门：拿 ≥10MB 真实 session 实测 extractor 耗时 | ⛏ 实施期验证 |
 | A7 | 全局安装的 pi dist（0.84.0）与 runtime 捆绑版本（0.84.1）行为一致 | 实施期门：对捆绑版本重跑 A1/A2 探针 | ⛏ 实施期验证 |
 | A8 | 不带 `triggerTurn` 的 `pi.sendMessage` 只落盘 + 发 `message_start`/`message_end` 事件，不触发 LLM turn | 实施期门：pi CLI 实测注入后无自发 turn（决策 6.2 依赖） | ⛏ 实施期验证 |
-| A9 | subagent 终态转换时 `.finalized`/`.cancelled` sidecar **同步写盘，早于 bg-notify 入 60s 窗口**——窗口期内磁盘已有终态，只是主 JSONL 无 entry | `subagent-service.ts:1533-1543`（`runAndFinalize`（内含 finalizeRecord→writeFinalized）→ `.then` → `notifyComplete`）；`finalized-marker.ts`（空文件，存在性即信号） | ✅ 已核 |
-| A10 | 「秒级轻量信号」可用：候选 a = 扩展在终态转换时发无 turn 轻量事件；候选 b = runtime 挂 subagent stream 终止帧（`subagent.stream_delta` lines:undefined）转发信号（零扩展改动；依赖 session_start 注入 streamSink） | 实施期门：M0 用 pi CLI 实测两个候选的事件到达时序与副作用（a 需验证不进 LLM 上下文的通道；b 需验证 streamSink 在 RPC 模式恒注入） | ⛏ 实施期验证（决策 4 依赖） |
+| A9 | subagent 收尾双路径的磁盘时序（R3 修正）：**失败/cancel/用户 close**（`doFinalizeRecord`）→ `.finalized`/`.cancelled` sidecar 同步写盘、早于 bg-notify 入 60s 窗口；**one-shot 成功与 chatMode 轮次完成**（`doFinalizeRoundToIdle`，subagent-service.ts:1478-1508）→ **不写任何 sidecar 且删除 `.alive`**（finalize-record.ts:187-242），窗口期内磁盘信号 = `.alive` 消失 + pid 死 + 子进程 JSONL 收尾（投影级 6 兜住）+ 窗口 flush 后的 bg-notify entry | `subagent-service.ts:1533-1543`（runAndFinalize → .then → notifyComplete）；`finalize-record.ts:99-116`（record 路径写 sidecar）`:187-242`（roundToIdle 无 sidecar + removeAliveMarker） | ✅ 已核（v5 分路径修正：v3 曾误把 sidecar 覆盖到全部路径） |
+| A10 | 「秒级轻量信号」可用：候选 a = 扩展发无 turn 轻量事件（**发起点集合 = 终态转换 + 轮次完成 idle 位翻转**，见决策 6.3）；候选 b = runtime 挂 subagent stream 终止帧转发信号（零扩展改动；**注意 chatMode 每轮完成也发终止帧——信号只代表「状态变了」不代表终态**，见 MF-4） | 实施期门：M0 用 pi CLI 实测两候选的事件到达时序、特异性（b 是否轮次误触发）与副作用 | ⛏ 实施期验证（决策 4 依赖） |
 
 A1+A2+A3 合起来是本设计的地基：**「信号 → RPC 重拉」的立即拉取可能读到写前快照（A2 竞态窗口 = 同步调用栈内的 emit→append 间隔，叠加跨进程 RPC 往返后实际极窄，但机制上无保证）；确定性收敛由 A3 保证——终态通知必然驱动一个 turn，turn 结束（`message.complete` 对账点）时磁盘必已含终态 entry（A1 同步写在 turn 边界之前完成）**。即：立即拉是「通常新鲜」，对账拉是「保证新鲜」。这消除了传统「拉模式」的最大风险，代价是终态收敛上界从「一个 RPC 往返」变为「通知 + 一个 turn 完成」。
 
@@ -178,10 +178,14 @@ T+0s   主 agent 调 subagent start(A) → tool-call-end
        renderer → RPC getSubagents(S) → extractor 读 JSONL → 侧栏出现 A(running)
 T+5s   subagent B 同上 → 侧栏 A、B 均 running
 T+40s  A 完成 → notifier 入队（B 还在跑，60s 窗口未到期，暂不发）
-T+40s  A 完成 → 终态转换：`.finalized` sidecar 同步落盘（A9，早于通知窗口）
+T+40s  A 完成 → 收尾路径分流（A9 双路径）：
+       · 失败/cancel：`.finalized` sidecar 同步落盘（早于窗口）
+       · 成功（最高频）：roundToIdle——删 `.alive`、无 sidecar，磁盘信号 = pid 死 + 子 JSONL 收尾
        └ 轻量信号（A10 候选 a/b）→ runtime 广播 session.subagentsChanged{kind:'terminal'}
-           renderer → RPC getSubagents → extractor 投影（sidecar → done/failed）
-                                                         ← 秒级收敛（决策 4）
+           renderer → RPC getSubagents → extractor 六级投影（成功走级 6 子 JSONL 收尾 → done；
+           失败走级 3 sidecar → error）                          ← 秒级收敛（决策 4）
+           （候选 b 注：stream 终止帧早于 sidecar 落盘——finally 先于 finalizeRecord，
+            但两级投影结果一致，收敛不受影响）
 T+70s  B 完成 → 窗口内全部完成 → flush bg-notify(batch: A done, B done)（面向 LLM，60s 窗口职责）
        ├ runtime 广播 session.subagentsChanged{kind:'notify'} → 重拉（幂等，状态已是终态）
        └ bg-notify triggerTurn 驱动主 agent 新 turn → turn 结束
@@ -198,7 +202,7 @@ T+70s  B 完成 → 窗口内全部完成 → flush bg-notify(batch: A done, B d
 | 信号 WS 帧丢失 | 该次不刷新 | 下一个对账点（bg-notify 必触发 turn → `message.complete` 对账；或切 session/切 tab 首拉）自动收敛，无需用户动作 |
 | `getSubagents` RPC 失败 | 侧栏显示错误态 + 保留旧数据（现状 M1 语义，`subagent.ts:146-149`） | 👉 侧栏错误态提供重试按钮（现状已有）；下一个对账点自动重试 |
 | pi 进程 kill -9（workflow 运行中） | workflow state 文件停留 running | 👉 session 重开时 extension 恢复路径落盘 done/failed（决策 6.1）+ 恢复后补发无 turn 通知（决策 6.2）→ 侧栏显示 failed；若通知又丢，session focus 首拉兜底 |
-| pi 进程 kill -9（subagent 运行中） | 主 session JSONL 无终态 entry（父扩展死，bg-notify 是唯一终态写入通路）；`.finalized` 亦由父侧写、无人补 | 👉 extractor 投影（决策 5）：子进程活着 → running（真在跑）；子进程已死 → 读子进程 JSONL 末行 → done/crashed。session 重开后 focus 首拉即显示正确状态，无扩展依赖、无通知依赖 |
+| pi 进程 kill -9（subagent 运行中） | 主 session JSONL 无终态 entry（父扩展死，bg-notify 是唯一终态写入通路）；成功路径本就无 sidecar（A9 路径 I），失败路径的 `.finalized` 亦由父侧写、无人补 | 👉 extractor 六级投影（决策 5）：子进程活着 → streaming（真在跑）；子进程已死 → 读子进程 JSONL 末行 → done/error（孤儿）或轮次 entry → waiting（Path B）。session 重开后 focus 首拉即显示正确状态，无扩展依赖、无通知依赖 |
 | runtime 重启 / renderer 重连 | 订阅与快照全空 | 👉 重连成功后对全部已知 session 重拉一次（决策 3 对账点） |
 
 ---
@@ -239,8 +243,8 @@ T+70s  B 完成 → 窗口内全部完成 → flush bg-notify(batch: A done, B d
 
 bg-notify 的 60s 滑动窗口（`notifier.ts:126-156`，还有 background 在跑时每来一条完成通知重置计时器）是按「LLM 上下文注入」优化的合并策略——一条通知双职责（UI 刷新触发 + LLM 注入），窗口不该约束 UI。事实 A9 表明终态转换时磁盘已有终态（sidecar 先于窗口写入），缺的只是「出口」：
 
-- **秒级信号**：subagent 终态转换时刻发一条轻量信号（候选 a/b 见探针 A10），runtime 转发 `session.subagentsChanged{kind:'terminal'}` → renderer RPC 重拉；
-- **extractor 读 sidecar**（决策 5 投影的一部分）：重拉时主 JSONL 尚无 bg-notify entry（还在窗口里），终态来自 `.finalized`/`.cancelled` sidecar 投影；
+- **秒级信号**：subagent 收尾时刻发一条轻量信号（候选 a/b 见探针 A10；候选 b 的终止帧对 chatMode 轮次完成也会发出——信号语义是「状态变了，去拉」而非「终态」，若选 b 则 kind 用幂等的 `changed` 或在翻译处过滤），runtime 转发 `session.subagentsChanged` → renderer RPC 重拉；
+- **extractor 六级投影**（决策 5）：重拉时按 bg-notify entry / sidecar / `.alive`+pid / 轮次 entry / 子进程 JSONL 六级判定——成功路径（无 sidecar）靠级 6 子 JSONL 收尾、失败路径靠级 3 sidecar，两级都在窗口期内可用；
 - bg-notify（60s 窗口、steer 注入、面向 LLM）原样保留，只服务主 agent 编排。
 
 窗口本身不动（token 取舍属扩展）；UI 收敛上界从「窗口 + 一个 turn」降到「终态转换 + 一个 RPC 往返」。若 A10 两个候选都不可用，退化为 v2 形态（窗口 + 对账有界收敛），正确性不变、只有实时性回退。
@@ -251,19 +255,41 @@ bg-notify 的 60s 滑动窗口（`notifier.ts:126-156`，还有 background 在�
 
 **方案：xyz-agent 侧投影，扩展内部语义不动**（改扩展 status 落点会断续聊判定链，爆炸半径在扩展内）。**投影目标枚举对齐 dev-0.9.2 的 session 状态抽象**（`DerivedStatus` 9 态，`packages/core/src/domain/chat/derive-status.ts`；语义 SSOT：streaming=文本流式、waiting=等输入阻塞、stopped=用户停、error=错、working=后台任务在跑）——subagent 是「子 session」，状态语义应与主 session 同一哲学，UI 视觉复用同一套 `STATUS_ICON`/`DOT_CLASS` 语言。对齐后的 `SubagentStatus`（UI 投影层）6 态：`streaming` / `waiting` / `done` / `cancelled` / `stopped` / `error`（现有 `running`/`closed`/`crashed`/`failed` 在投影层退役：running 拆分为 streaming+waiting，closed/crashed/failed 归并入 done/stopped/error，细分经 closedReason/error 字段保留）。
 
-extractor 对每条 subagent 记录按执行事实投影：
+**扩展收尾的双路径事实**（R3 核实，投影矩阵的地基）：终态收尾有两条路径——
+- **路径 R（record 终结）**：失败/cancel/用户 close 走 `doFinalizeRecord`，写 `.finalized`/`.cancelled` sidecar（finalize-record.ts:99-116）；
+- **路径 I（roundToIdle）**：one-shot **成功完成**与 chatMode 轮次完成走 `doFinalizeRoundToIdle`，**不写任何 sidecar、删除 `.alive` marker**（finalize-record.ts:187-242、subagent-service.ts:1478-1508）——即最高频的「成功」路径在窗口期内磁盘上没有任何 sidecar，其磁盘信号是 `.alive` 消失 + pid 死 + 子进程 JSONL 收尾，以及（窗口 flush 后）bg-notify entry（one-shot 成功的 notify status=closed；chatMode 轮次的 notify status=running 含 round 字段）。
 
-| 磁盘事实（按优先级） | UI 投影 |
-|---------------------|---------|
-| 主 JSONL 有 bg-notify 终态 entry | 该 entry 状态（含 result/error/agent 等元数据，最权威；closed→done/error、cancelled→cancelled） |
-| `.cancelled` sidecar 存在 | cancelled（用户中止，对齐 stopped 族语义） |
-| `.finalized` sidecar 存在 | 读子进程 session JSONL 末行：正常收尾 → done；截断/异常 → error |
-| `.alive` + pid 活 + 未超 1h 软超时（`ALIVE_SOFT_TIMEOUT_MS`，防 pid 复用，与扩展矩阵分支 3 同规则） | streaming（进程真在跑）或 waiting（chatMode 轮完成等续聊）——区分依赖轻量信号携带 idle 位（A10 候选 a 的 payload）；**无轻量信号时回落 streaming**（进程活着的事实优先于 idle 细分） |
-| 其余（无标记 / pid 死 / 超时——孤儿与崩溃） | 读子进程 session JSONL 末行：正常收尾 → done；截断/异常 → error（不再 running） |
+extractor 六级投影（按序判定，先命中先停）：
 
-「可续聊」在 UI 是 Resume 动作入口（是否可续 = sessionFile 存在性），不占用 status 字段。**waiting 态的数据源依赖**：`.alive` sidecar 只有 pid/startedAt，无 idle 位——等续聊（waiting）与真在跑（streaming）的实时区分依赖 A10 候选 a 的轻量信号携带 idle 位；候选不可用时等续聊显示 streaming（「进程活着」是事实下界，比显示 running 大杂烩仍是一步改进），waiting 态作为 A10a 落地后的增量。
+| 级 | 磁盘事实 | UI 投影 | 说明 |
+|----|---------|---------|------|
+| 1 | 最后 bg-notify entry 为**终态**（status='closed' 或 legacy 终态值 done/failed/cancelled/completed/error/crashed） | 按 `(status, closedReason, error) → 6 态` 映射表（见下） | 最权威（含 result/agent 等元数据）；轮次 running entry **不是**终态，不入本级 |
+| 2 | `.cancelled` sidecar 存在 | cancelled | 用户中止 |
+| 3 | `.finalized` sidecar 存在 | 读子进程 JSONL 末行：正常收尾 → done；截断/异常 → error | chatMode close 的窗口期组合（轮次 running entry + `.finalized`）由本级接住——sidecar 优先于 entry 解析 |
+| 4 | `.alive` + pid 活 + 未超 1h 软超时（`ALIVE_SOFT_TIMEOUT_MS`，防 pid 复用，与扩展矩阵分支 3 同规则） | streaming；waiting 依 idle 位（轻量事件 entry，A10a；无则 streaming） | Path A（chatMode 轮完成进程保活） |
+| 5 | 最后 bg-notify entry 为 **running 轮次通知**（status='running'，含 round 字段） | waiting | chatMode 活跃会话（Path B：idle 超时进程已回收，`/`.alive 已删）——与孤儿同形，靠轮次 entry 区分：有轮次通知说明是等续聊的活会话，不走孤儿兜底 |
+| 6 | 其余（孤儿与崩溃：无终态 entry、无 sidecar、无 `.alive`、无轮次 entry） | 读子进程 session JSONL 末行：正常收尾 → done；截断/异常 → error | 覆盖 one-shot 成功（roundToIdle 后窗口期内，无任何 sidecar/entry——靠子 JSONL 收尾判 done）与真孤儿 |
 
-**对 `hasBackgroundWork` 的连带语义**（dev-0.9.2 `useBackgroundWork.ts:25-27`）：投影后 `hasRunning` 改判「streaming ∨ waiting」——chatMode 等续聊的 subagent 任务未完成（等主 agent/用户续），session 级 working 态应继续点亮；streaming/waiting 在 session 层都聚合为 working，两层各自表达粒度。
+**`(status, closedReason, error) → 6 态` 映射表**（closedReason 实测 6 值：`parent-shutdown | parent-fork | parent-new | user-close | cancelled | gc`，types.ts:62）：
+
+| 输入 | 输出 | 依据 |
+|------|------|------|
+| closed + gc + error 空 | done | gc 是 done/failed/crashed 的合并态（record-store.ts:806），error 字段是成败判据 |
+| closed + gc + error 非空 | error | 同上 |
+| closed + cancelled | cancelled | 用户取消 |
+| closed + user-close | stopped | 用户手动关（对齐 DerivedStatus stopped=用户停） |
+| closed + parent-shutdown / parent-fork / parent-new | stopped | 级联关闭（父 session 结束被清），非任务成败 |
+| closed（无 closedReason）+ error 空/非空 | done / error | 兜底按 error |
+| legacy done/completed/success | done | normalizeSubagentStatus 现状兼容层保留 |
+| legacy failed/error/crashed | error | 同上 |
+| legacy cancelled/canceled | cancelled | 同上 |
+| legacy active/pending | streaming | 同上 |
+
+判定逻辑落点：extractor 组合层新增投影函数（输入 status + closedReason + error + 上述磁盘事实）；`normalizeSubagentStatus` 保留为 legacy 单值归一（签名不变），组合判定不塞进它。
+
+「可续聊」在 UI 是 Resume 动作入口（是否可续 = sessionFile 存在性），不占用 status 字段。**waiting 的数据源**：级 5 的轮次 entry（60s 窗口后可用）+ A10a 轻量事件的 idle 位（发起点集合 = 终态转换 **+ 轮次完成**，见决策 6.3——仅挂终态转换点则等续聊期间无 idle 位，waiting 不可达）；窗口期内 Path A 回落 streaming（级 4）。chatMode 多轮 session 的 A10a 事件落盘积累（每轮一条 entry）在 A10 探针评估。
+
+**对 `hasBackgroundWork` 的连带语义**（dev-0.9.2 `useBackgroundWork.ts:25-27`，落点在 renderer `stores/subagent.ts` 的 `hasRunning` 实现）：投影后 `hasRunning` 改判「streaming ∨ waiting」——chatMode 等续聊（含 Path B）的 subagent 任务未完成，session 级 working 态应继续点亮；streaming/waiting 在 session 层都聚合为 working，两层各自表达粒度。
 
 此投影同时**替代 v2 决策 6.3**（subagent 崩溃重建补终态）：不需要改扩展重建矩阵、不需要补通知——重开 session 时 focus 首拉，extractor 从 sidecar + pid 探测直接投影终态。扩展改动面缩小到 workflow 域（决策 6.1/6.2）+ 可能的轻量事件（A10 候选 a）。
 
@@ -273,7 +299,7 @@ extractor 对每条 subagent 记录按执行事实投影：
 
 **6.2 workflow 恢复通知用无 turn 注入（不复用 notifyDone）**：恢复路径转终态后需要让 sidebar 刷新，但**不能复用 `notifyDone`**——它以 `{triggerTurn:true, deliverAs:'steer'}` 发送（`helpers.ts:271-279`），而恢复发生在 `session_start`、agent 空闲，复用会导致「用户只是重开 session，agent 就自发跑一轮 LLM turn」（token 消耗 + 未请求的自主行为）。改用不带 `triggerTurn` 的 `pi.sendMessage({customType:'workflow-result', ...})`：走 append + `message_start` 事件分支，正好满足 sidebar 收敛所需的两个条件（entry 落盘 + runtime 事件），且不唤醒 agent（行为依赖探针 A8 验证）。正常完成路径的 `notifyDone`（带 turn，主 agent 需要被唤醒继续编排）不变。
 
-**6.3 subagent 域（v3 收窄）**：崩溃/孤儿场景的终态不再依赖扩展补写——由决策 5 的 extractor 投影直接解决（sidecar + pid 探测 → crashed）。扩展侧 subagent 域唯一可能的改动是 A10 候选 a（终态转换时发轻量信号，含 idle 位扩展），属增强非必需。
+**6.3 subagent 域（v3 收窄）**：崩溃/孤儿场景的终态不再依赖扩展补写——由决策 5 的 extractor 投影直接解决（六级投影表）。扩展侧 subagent 域唯一可能的改动是 A10 候选 a（轻量状态事件），**发起点集合 = 终态转换 + 轮次完成（idle 位翻转）**——只挂终态转换点则 chatMode 等续聊期间无 idle 位 entry、waiting 在 A10a 落地后仍不可达；每轮一条 custom_message entry 的落盘积累与上下文代价在 A10 探针评估（不进上下文为前提）。
 
 ### 6.7 决策 7：性能边界——接受每 turn 一次磁盘全读，超阈值再加缓存
 
@@ -311,7 +337,7 @@ extractor 对每条 subagent 记录按执行事实投影：
 - 删：`subagentRecords` / `pendingStartParams` / `broadcastSubagents` / `handleSubagentBgNotify` 的内存更新逻辑。
 - 改：`handleSubagentEnd` → 广播 `session.subagentsChanged{kind:'started'}`；bg-notify 处理 → 广播 `session.subagentsChanged{kind:'notify'}`；轻量信号（A10 验证后）→ `{kind:'terminal'}`（三者均为无状态转发，不再持有/查询任何记录）。
 - `TOPIC_TABLE` 增加新类型（transient）。
-- **extractor 投影**（决策 5 表格的实现点）：`subagent-extractor.ts` 对「主 JSONL 无终态 entry 的记录」按 `.cancelled`/`.finalized`/`.alive`+pid/子进程 JSONL 末行四级投影；sidecar 路径由 sessionFile 推导（sessionFile 为 null 的记录经既有 `findSubagentSessionFile` 时间戳匹配兜底，匹配不到时保守投影 crashed）。workflow 侧广播逻辑不变（已是信号）。
+- **extractor 六级投影**（决策 5 表格的实现点）：`subagent-extractor.ts` 对每条记录按 entry → sidecar → `.alive`+pid → 轮次 entry → 子进程 JSONL 六级判定；sidecar 路径由 sessionFile 推导（sessionFile 为 null 的记录经既有 `findSubagentSessionFile` 时间戳匹配兜底，匹配不到时保守投影 error）。workflow 侧广播逻辑不变（已是信号）。
 
 ### 7.3 Core + Renderer
 
@@ -349,7 +375,7 @@ extractor 对每条 subagent 记录按执行事实投影：
 | 4. workflow kill -9 恢复 | 目标 1/3 | workflow running 中 `kill -9` pi 进程 → 重开该 session | Flows tab 显示 failed（非 running）；`workflow-state/<runId>.jsonl` 末行含 done/failed；**重开后主 agent 无自发 LLM turn**（决策 6.2 副作用断言，日志无未经用户输入的 agent_start） |
 | 5. runtime 重启恢复（重连重拉） | 目标 3 | subagent 运行中**只杀 runtime 子进程**（保持 Electron/renderer 存活，runtime 崩溃自动重启机制接管）→ 等待 renderer 重连 | 侧栏列表与磁盘 JSONL 一致；无空列表、无幻影记录——重连全量重拉对**存活的 store** 生效（不是靠重开应用的首拉） |
 | 6. 链路同构回归 | 目标 4 | code review 层面：grep 确认 runtime 不再持有 `subagentRecords`；subagent 与 workflow 的触发路径调用同一 `trigger*Reload` 模式 | 无平行真相源残留；两条链路代码形态对称 |
-| 7. subagent kill -9 恢复 | 目标 1/3 | subagent running 中 `kill -9` pi 进程 → 等子进程自然结束 → 重开该 session | 该 subagent 显示 done 或 crashed（投影依据子进程 JSONL 末行收尾状态，决策 5），**不是 running**；无需扩展补写终态 |
+| 7. subagent kill -9 恢复 | 目标 1/3 | subagent running 中 `kill -9` pi 进程 → 等子进程自然结束 → 重开该 session | 该 subagent 显示 done 或 error（投影依据子进程 JSONL 末行收尾状态，决策 5），**不是 running/streaming**；无需扩展补写终态 |
 | 8. 信号丢失 → 对账收敛 | 目标 1 | subagent 终态通知窗口内，断开 renderer↔runtime WS（或场景 5 的 runtime 重启窗口）保持 renderer 存活，让 `session.subagentsChanged` 帧丢失 | 侧栏在下一个对账点（turn 结束 / 重连）有界收敛到终态——证明收敛不依赖信号送达 |
 
 > 单测（vitest，interpreter 信号广播 / routeInbound 触发 / store 重试逻辑）作为回归辅助，不计入验收。
@@ -382,6 +408,7 @@ extractor 对每条 subagent 记录按执行事实投影：
 | A6 | 大 JSONL 全读耗时可接受 | ≥10MB 真实 session 实测 extractor 耗时 | 加「mtime+size 未变跳过解析」缓存（决策 7 预留） |
 | A7 | 全局 dist（0.84.0）与 runtime 捆绑 pi（0.84.1）行为一致 | 对捆绑版本重跑 A1/A2 探针 | 按捆绑版实测结果修正 A2 竞态描述与重试参数 |
 | A8 | 无 turn 注入不触发 LLM turn（决策 6.2/6.3 依赖） | pi CLI 实测 `sendMessage`（无 triggerTurn）注入后无 agent_start | 改用 `display` 通道或轮询 state 文件的替代通知形态 |
+| A10 | 秒级轻量信号可用性与特异性（决策 4 依赖；探针定义见 §4.1 表 A10 行） | M0 探针脚本：候选 a 发起点集合（终态 + 轮次）与不进上下文验证；候选 b 到达性 + **chatMode 轮次误触发特异性** | 退化为「窗口 + 对账」（决策 4 预留） |
 | 边界 | extractor「读取失败」与「真空集」语义合并（`readFileSync` 失败与无记录都返回 `[]`，`subagent-extractor.ts:107-110`）——信号触发的重拉可能用空数组瞬时覆盖非空历史列表 | 下一层设计 RPC 层 error/empty 区分（reply 带 error 字段），或 store 对「prior 非空且新结果为空」做守卫（不覆盖 + 记日志） | 记录为已知边界：错误语义只在 M1 期间风险最高（全集广播覆盖面大），M2 后影响面缩小为单次拉取窗口 |
 
 ---
@@ -392,3 +419,4 @@ extractor 对每条 subagent 记录按执行事实投影：
 - v2：按对抗式审查（4 must-fix / 5 suggestion，报告见 `subagent-workflow-sidebar-sync-design-review.md`）修订：A2 探针改锚真实路径并降级为「立即拉通常新鲜、对账拉保证新鲜」；决策 6 从两处扩为三处（workflow kill-9 落盘、恢复通知去 turn 副作用、subagent 崩溃重建补终态）；目标 1 措辞收窄（pi 崩溃场景 = 重开后有界收敛）；验收补场景 7（subagent kill -9）与场景 8（信号丢失→对账收敛）、场景 5 改为只杀 runtime 子进程；补协议删除连带清单、M1 过渡症状、extractor 空/错误语义边界。
 - v3：按 owner 对 running 语义与 60s 窗口的质询修订：决策 4 重写（UI 收敛与 LLM 通知解耦——秒级轻量信号 + sidecar 投影，60s 窗口回归纯 LLM 职责，探针 A9/A10）；决策 5 重写（running = 扩展生命周期状态 ≠ 执行状态，加 extractor 四级投影表，孤儿/崩溃投影 done/crashed 不再 running，替代 v2 的扩展重建矩阵改动）；决策 6.3 收窄为 extractor 投影（扩展 subagent 域不再必改）；目标 1 收敛上界从「窗口+turn」提升为「秒级」。
 - v4：投影目标枚举对齐 dev-0.9.2 的 session 状态抽象（`DerivedStatus` 9 态语义 SSOT，`derive-status.ts`）：`SubagentStatus` 重定义为 streaming/waiting/done/cancelled/stopped/error 6 态（running 拆分 streaming+waiting，closed/crashed/failed 归并）；waiting 态数据源标注依赖 A10 候选 a 的 idle 位（无轻量信号时回落 streaming）；补 `hasBackgroundWork` 连带语义（streaming∨waiting → session working 态）与枚举变更连带清单。
+- v5：按 R3 对抗审查（4 must-fix / 6 suggestion，报告 `-plan-review-r3.md`）修正「sidecar 中心」系统性偏差：A9 改分路径表述（`doFinalizeRecord` 写 sidecar 仅覆盖失败/cancel/close；one-shot 成功与 chatMode 轮次完成走 `doFinalizeRoundToIdle` 无 sidecar 且删 `.alive`——成功路径靠投影级 6 子 JSONL 收尾兜住）；决策 5 投影从四级重构为**六级**（补「轮次 running entry → waiting」级，解 chatMode Path B 与孤儿同形误报 done）；补 `(status, closedReason, error) → 6 态` 完整映射表（closedReason 实测 6 值、gc 按 error 判成败、parent-*/user-close → stopped——stopped 由此获得数据源）；A10 候选 b 补轮次误触发特异性（信号语义降为「状态变了」）；A10a 发起点集合扩为终态 + 轮次完成（否则 waiting 断链）；清理 v4 旧枚举值残留（§5.2/§7.2/§8）；§11 补 A10 行。
