@@ -568,7 +568,22 @@ async function main(): Promise<void> {
   // D8-1（perf W29）：先 listen（端口即就绪）——迁移/探测等无 listen 前依赖的后置项
   // 全部移入下方后台初始化块（06 §3.3 D8-1）。listen 前仅剩：同步迁移 + 服务构造 + setServices。
   const tListen = performance.now()
-  await server.start()
+  try {
+    await server.start()
+  } catch (err) {
+    // 与 ConnectionManager.start reject 的分工：传输层对 listen 失败（EADDRINUSE 等）只
+    // reject（对齐 callback-server.ts 先例，可被测试捕获/换端口重试，不杀进程）；
+    // 进程退出决策归组合根——生产语义不变：端口被占即快速失败 exit(1)，但打可操作
+    // 排查指引（指向恢复动作：查占用 → 关实例 → 重启），而非静默退出。
+    const code = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined
+    if (code === 'EADDRINUSE') {
+      console.error(`[runtime] fatal: 端口 ${port} 被占用（EADDRINUSE）——可能已有另一个 xyz-agent 实例在运行。`)
+      console.error(`  排查: lsof -i :${port} 查看占用进程；关闭其他实例后重启。原始错误: ${err instanceof Error ? err.message : String(err)}`)
+    } else {
+      console.error('[runtime] fatal: WS listen failed:', err)
+    }
+    process.exit(1)
+  }
   console.log('[runtime] ready')
   // 启动耗时分解探针（06 §5 m-7）：listen-ready 各段耗时（baseline 对比见汇报——
   // 改造前 getPiVersion 占 listen 延迟 1.1-1.3s，重排后该段归零）。

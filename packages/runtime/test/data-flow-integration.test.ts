@@ -98,6 +98,7 @@ vi.mock('../src/infra/system/trash.js', () => createMockTrashModule())
 import { RuntimeServer } from '../src/transport/server.js'
 import { EventAdapter } from '../src/infra/pi/event-adapter.js'
 import { createEventAdapter } from './helpers/event-adapter-test-fixture.js'
+import { startOnFreePort } from './helpers/free-port.js'
 import { SessionService } from '../src/services/session/session-service.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
@@ -105,21 +106,6 @@ import { ModelApiDiscoverer } from '../src/infra/model-api-discoverer.js'
 import { ModelService } from '../src/services/model-service.js'
 
 // ── Helpers ────────────────────────────────────────────────────────
-
-function getFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const httpServer = require('node:http').createServer()
-    httpServer.listen(0, () => {
-      const addr = httpServer.address()
-      if (addr && typeof addr === 'object') {
-        const port = addr.port
-        httpServer.close(() => resolve(port))
-      } else {
-        reject(new Error('Failed to get port'))
-      }
-    })
-  })
-}
 
 function waitForMessage(ws: WebSocket, type: string, timeout = 3000): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
@@ -202,18 +188,26 @@ interface WSFixture {
 }
 
 async function createWSFixture(extensionService?: object): Promise<WSFixture> {
-  const port = await getFreePort()
-  const server = new RuntimeServer(port, '/tmp/test-project', TEST_WS_TOKEN)
-  const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
+  // EADDRINUSE 韧性：端口在 RuntimeServer 构造函数绑定，重试需整体重建（startOnFreePort 语义）。
+  // sessionService 经 refs 容器从 factory 带出，保证 fixture 返回的引用 = server 实际持有的实例
+  //（后续 vi.mocked(sessionService.getRpcClient) mock 的必须是同一个实例）。
+  const refs: { svc?: SessionService } = {}
+  const started = await startOnFreePort((p) => {
+    const server = new RuntimeServer(p, '/tmp/test-project', TEST_WS_TOKEN)
+    const svc = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
+    refs.svc = svc
+    server.setServices(
+      svc,
+      new ConfigService('/tmp', new PiConfigStore()),
+      new ModelService(new ModelApiDiscoverer()),
+      extensionService as never | undefined,
+    )
+    return server
+  })
+  const { instance: server, port } = started
+  const sessionService = refs.svc
+  if (!sessionService) throw new Error('unreachable: startOnFreePort factory always assigns refs.svc')
 
-  server.setServices(
-    sessionService,
-    new ConfigService('/tmp', new PiConfigStore()),
-    new ModelService(new ModelApiDiscoverer()),
-    extensionService as never | undefined,
-  )
-
-  await server.start()
   const ws = await connectClient(port)
 
   const rpcClient = createMockRpcClient()
@@ -589,10 +583,7 @@ describe('DF-4: Extension 列表管理', () => {
     mockSendRaw.mockClear()
     mockSendExtensionUiResponse.mockClear()
 
-    const port = await getFreePort()
-    server = new RuntimeServer(port, '/tmp/test-project', TEST_WS_TOKEN)
-    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
-
+    // EADDRINUSE 韧性：端口在 RuntimeServer 构造函数绑定，重试需整体重建（startOnFreePort 语义）
     mockExtensionService = {
       scanExtensions: vi.fn().mockResolvedValue([
         { name: 'ext-a', version: '1.0.0', description: 'Extension A', path: '/path/a', enabled: true },
@@ -603,15 +594,18 @@ describe('DF-4: Extension 列表管理', () => {
       getExtensionPaths: vi.fn().mockResolvedValue([]),
     }
 
-    server.setServices(
-      sessionService,
-      new ConfigService('/tmp', new PiConfigStore()),
-      new ModelService(new ModelApiDiscoverer()),
-      mockExtensionService as never,
-    )
-
-    await server.start()
-    ws = await connectClient(port)
+    const started = await startOnFreePort((p) => {
+      const s = new RuntimeServer(p, '/tmp/test-project', TEST_WS_TOKEN)
+      s.setServices(
+        new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never),
+        new ConfigService('/tmp', new PiConfigStore()),
+        new ModelService(new ModelApiDiscoverer()),
+        mockExtensionService as never,
+      )
+      return s
+    })
+    server = started.instance
+    ws = await connectClient(started.port)
   })
 
   afterEach(async () => {
@@ -650,12 +644,17 @@ describe('DF-4: Extension 列表管理', () => {
   })
 
   it('ExtensionService 为 null → 返回空列表', async () => {
-    const port2 = await getFreePort()
-    const server2 = new RuntimeServer(port2, '/tmp/test-project', TEST_WS_TOKEN)
-    const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
-    server2.setServices(sessionService2, new ConfigService('/tmp', new PiConfigStore()), new ModelService(new ModelApiDiscoverer()))
-    await server2.start()
-    const ws2 = await connectClient(port2)
+    const started2 = await startOnFreePort((p) => {
+      const s = new RuntimeServer(p, '/tmp/test-project', TEST_WS_TOKEN)
+      s.setServices(
+        new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never),
+        new ConfigService('/tmp', new PiConfigStore()),
+        new ModelService(new ModelApiDiscoverer()),
+      )
+      return s
+    })
+    const server2 = started2.instance
+    const ws2 = await connectClient(started2.port)
 
     const responsePromise = waitForMessage(ws2, 'config.extensions')
 
@@ -693,10 +692,7 @@ describe('DF-5: Extension 启用/禁用', () => {
     mockSendRaw.mockClear()
     mockSendExtensionUiResponse.mockClear()
 
-    const port = await getFreePort()
-    server = new RuntimeServer(port, '/tmp/test-project', TEST_WS_TOKEN)
-    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
-
+    // EADDRINUSE 韧性：端口在 RuntimeServer 构造函数绑定，重试需整体重建（startOnFreePort 语义）
     mockExtensionService = {
       scanExtensions: vi.fn().mockResolvedValue([
         { name: 'ext-a', version: '1.0.0', description: 'Extension A', path: '/path/a', enabled: false },
@@ -706,15 +702,18 @@ describe('DF-5: Extension 启用/禁用', () => {
       getExtensionPaths: vi.fn().mockResolvedValue([]),
     }
 
-    server.setServices(
-      sessionService,
-      new ConfigService('/tmp', new PiConfigStore()),
-      new ModelService(new ModelApiDiscoverer()),
-      mockExtensionService as never,
-    )
-
-    await server.start()
-    ws = await connectClient(port)
+    const started = await startOnFreePort((p) => {
+      const s = new RuntimeServer(p, '/tmp/test-project', TEST_WS_TOKEN)
+      s.setServices(
+        new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never),
+        new ConfigService('/tmp', new PiConfigStore()),
+        new ModelService(new ModelApiDiscoverer()),
+        mockExtensionService as never,
+      )
+      return s
+    })
+    server = started.instance
+    ws = await connectClient(started.port)
   })
 
   afterEach(async () => {
@@ -749,12 +748,17 @@ describe('DF-5: Extension 启用/禁用', () => {
   })
 
   it('ExtensionService 为 null → 返回 error', async () => {
-    const port2 = await getFreePort()
-    const server2 = new RuntimeServer(port2, '/tmp/test-project', TEST_WS_TOKEN)
-    const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
-    server2.setServices(sessionService2, new ConfigService('/tmp', new PiConfigStore()), new ModelService(new ModelApiDiscoverer()))
-    await server2.start()
-    const ws2 = await connectClient(port2)
+    const started2 = await startOnFreePort((p) => {
+      const s = new RuntimeServer(p, '/tmp/test-project', TEST_WS_TOKEN)
+      s.setServices(
+        new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never),
+        new ConfigService('/tmp', new PiConfigStore()),
+        new ModelService(new ModelApiDiscoverer()),
+      )
+      return s
+    })
+    const server2 = started2.instance
+    const ws2 = await connectClient(started2.port)
 
     const errorPromise = waitForMessage(ws2, 'error')
 

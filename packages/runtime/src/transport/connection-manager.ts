@@ -84,6 +84,14 @@ export class ConnectionManager {
       }
     })
     this.wss = new WebSocketServer({ server: this.httpServer, maxPayload: MAX_WS_PAYLOAD_BYTES })
+    // ws 库会把 httpServer 的 'error' 转发到 wss 上再 emit（websocket-server.js 的
+    // addListeners）。EventEmitter 语义下 wss 无 error listener 时 emit('error') 直接
+    // throw 成 uncaughtException，并中断 httpServer listeners 的后续执行——start()
+    // 注册的 reject listener 永远跑不到，Promise 悬挂（TOCTOU 撞端口事故的放大器）。
+    // 这里接住转发通道；错误的权威处理在 httpServer 侧（start 的 reject）。
+    this.wss.on('error', (err) => {
+      console.warn(`[runtime] wss error (forwarded, handled by http server error path): ${String((err as NodeJS.ErrnoException).code ?? err.message)}`)
+    })
   }
 
   /** 启动 HTTP + WS 监听（显式绑回环，不对局域网开放）；注册 connection 回调。 */
@@ -91,9 +99,11 @@ export class ConnectionManager {
     return new Promise((resolve, reject) => {
       this.wss.on('connection', (ws) => this.handleConnection(ws))
       this.httpServer.on('error', (err: NodeJS.ErrnoException) => {
+        // 传输层不决定进程生死（对齐 callback-server.ts 先例）：EADDRINUSE 只 reject，
+        // 进程退出决策上移到组合根（index.ts）。直接终止进程会杀掉测试 worker、
+        // 剥夺调用方换端口重试的机会。文案按错误信息可操作规范指向恢复动作。
         if (err.code === 'EADDRINUSE') {
-          console.error(`[runtime] port ${this.port} already in use, exiting`)
-          process.exit(1)
+          err.message = `${err.message} — 端口 ${this.port} 被占用（EADDRINUSE）：可能已有另一个 xyz-agent 实例在运行，请关闭其他实例后重试；可用 lsof -i :${this.port} 查看占用进程`
         }
         reject(err)
       })

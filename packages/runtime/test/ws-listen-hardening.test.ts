@@ -11,39 +11,26 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket } from 'ws'
+import { createServer } from 'node:http'
 import { ConnectionManager } from '../src/transport/connection-manager.js'
+import { startOnFreePort } from './helpers/free-port.js'
 import { MAX_WS_PAYLOAD_BYTES } from '@xyz-agent/shared'
 import type { ClientMessage } from '@xyz-agent/shared'
 
 const TEST_TOKEN = 'sec-u2-token-0123456789abcdef'
 
-/** Find a free port */
-function getFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = require('node:http').createServer()
-    server.listen(0, '127.0.0.1', () => {
-      const addr = server.address()
-      if (addr && typeof addr === 'object') {
-        const port = addr.port
-        server.close(() => resolve(port))
-      } else {
-        reject(new Error('Failed to get port'))
-      }
-    })
-  })
-}
-
-/** 起一个最小 ConnectionManager（onMessage/onConnect 全 mock，只测传输层行为）。 */
+/** 起一个最小 ConnectionManager（onMessage/onConnect 全 mock，只测传输层行为）。
+ * EADDRINUSE 韧性：经 startOnFreePort 撞端口自动换号重试（helpers/free-port.ts）。 */
 async function startManager(token: string | null): Promise<{ conn: ConnectionManager; port: number; onMessage: ReturnType<typeof vi.fn>; onConnect: ReturnType<typeof vi.fn> }> {
-  const port = await getFreePort()
   const onMessage = vi.fn().mockResolvedValue(undefined)
   const onConnect = vi.fn()
-  const conn = new ConnectionManager(port, {
-    onConnect,
-    onMessage,
-    sendError: vi.fn(),
-  }, token)
-  await conn.start()
+  const { instance: conn, port } = await startOnFreePort(
+    (p) => new ConnectionManager(p, {
+      onConnect,
+      onMessage,
+      sendError: vi.fn(),
+    }, token),
+  )
   return { conn, port, onMessage, onConnect }
 }
 
@@ -184,5 +171,34 @@ describe('SEC-U2 WS transport hardening (loopback + maxPayload + auth handshake)
     expect(reply.reason).toBe('no_token_configured')
     const { code } = await closed
     expect(code).toBe(1008)
+  })
+
+  it('SEC-U2 EADDRINUSE → reject（非 process.exit）+ 可操作文案', async () => {
+    // 先用真实 http server 占住一个端口，再让 ConnectionManager 对同端口 listen。
+    // 旧实现对 EADDRINUSE 直接 process.exit(1)——测试 worker 会被整个杀掉（本用例
+    // 以 crash/超时的可观察方式失败）。新语义（对齐 callback-server.ts 先例）：reject
+    // 保留 code=EADDRINUSE + 可操作排查文案，进程生死由调用方（组合根）决定。
+    const occupied = createServer()
+    const port = await new Promise<number>((resolve, reject) => {
+      occupied.once('error', reject)
+      occupied.listen(0, '127.0.0.1', () => {
+        const addr = occupied.address()
+        if (addr && typeof addr === 'object') resolve(addr.port)
+        else reject(new Error('occupied server address() returned non-object'))
+      })
+    })
+    cleanup.push(() => new Promise<void>((resolve) => occupied.close(() => resolve())))
+
+    const conn = new ConnectionManager(port, {
+      onConnect: vi.fn(),
+      onMessage: vi.fn().mockResolvedValue(undefined),
+      sendError: vi.fn(),
+    }, TEST_TOKEN)
+    cleanup.push(() => conn.stop())
+
+    await expect(conn.start()).rejects.toMatchObject({
+      code: 'EADDRINUSE',
+      message: expect.stringMatching(/端口 \d+ 被占用.*lsof -i :\d+/s),
+    })
   })
 })
