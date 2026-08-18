@@ -11,7 +11,7 @@
 | wave | 名称 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
 | W1 | 活跃 session label 直写全量切 set_session_name RPC（含 tryPersistLabel 扩围删除） | committed | 337a7c79d | verifier PASS（sha256 09bd117a…，报告 w1-report.md：防篡改越界 0 / 3104 全绿 / 四 grep 全过 / 真实性 5 点 / 对抗 6 条含 throw guard→toast 链路、派生 label 永不进 RPC、非活跃 else 字节级原样 / 三裁决全接受）。打回修复一轮：grep#3 残留 2 处过时注释（session-file-utils，验收条款互斥）→ 主 agent 授权仅注释修正 → 闭环。清单外机械适配 12（6×fixture 单行删 + 5×注释清理 + 1×授权注释）逐文件 diff 核对零行为夹带。观察：persistExplicitLabel await 致 create/fork 最坏 10s 尾延迟（有界，合规「不阻断≠不等待」，W7 实例化时复评） |
-| W2 | 数据登记表初版（12 条 + 空值语义 + legacy 例外） | pending | — | 依赖 W1（legacy 例外以 W1 后现状为准） |
+| W2 | 数据登记表初版（12 条 + 空值语义 + legacy 例外） | committed | 118e6169e | verifier PASS（报告 w2-report.md：防篡改 3/3、命令 3/3、真实性逐行源码核实、**反向写点扫描零未登记**（SSOT 完备性）、裁决 2 项全过）。打回修复一轮：registry.md:23 命令名前缀 session.steer→message.steer / follow_up（verifier minor，源码 protocol.ts:61 依据），主 agent 核对后收口。观察：#10 FileChanges / #11 活跃态父文档无专门 wave，登记表如实标注「无专门 wave + 原则性约束」——计划层缺口，待用户裁决是否补 wave；行号与 plan 基线偏差已在表头声明记录（:302→:331 等） |
 | W3 | R1：pi 文件直写 pre-commit 检查 | pending | — | 依赖 W2；与 W4/W5 可并行 |
 | W4 | R2 骨架 + R3：taste-lint 两条规则 | pending | — | 依赖 W2 |
 | W5 | 等价性测试骨架（pi fixture + live≡reload 雏形） | committed | 337a7c79d | verifier PASS（sha256 3968d16c…，报告 w5-report.md：真实 spawn 5.49s、deep equal + parentId 链断言、对抗 4 条全过含断言红绿闭环/pi 缺席 skip/零残留/冷启动 1ms 边界）。401 行超 M 档 5%（清理/诊断逻辑，裁决接受）。观察：①pnpm exec 恒注入 node_modules/.bin（内有 pi），仓内 skip 分支实际难触发，仅未 install 环境触发；②live 侧等价源 = message_end 事件流（pi 0.84 常规 entry 不发 entry_appended——父文档 D5 探针⛔ 已由实测收口，依据 pi-mono 源码三处核实写进 fixture 头「协议事实」节）；③本雏形不触发工具流（bash 消息不经 message_end），带工具流等价性留后续 wave 同目录扩展 |
