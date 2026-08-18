@@ -37,12 +37,14 @@
 
 | wave | 名称 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
-| W16 | subagent 扩展自描述 appendEntry | pending | — | 依赖 W2/W5（已满足），可与 P1 并行 |
-| W17 | workflow 自描述收敛 | pending | — | 依赖 W16 |
+| W16 | subagent 扩展自描述 appendEntry | committed | 763d76e40 | verifier PASS（报告 w16-report.md：防篡改/三连绿/终态路径全景无反例/独立 pi 实测 3 entry 603-961B 复测一致/三裁决全合理）。**P-1 major 移交 W17 修复**：closeChatIdle 合成 text:"" 经 completeRecord 覆盖 record.result（close 终态快照抹空轮终真实 result——entry 重建源缺陷，W18 消费后重开 result 回退空串，verifier 实测复现根因链）。P-2 minor（字面量 vs 常量，测试钉住）/P-3 minor（登记表笔误，主 agent 已修正） |
+| W17 | workflow 自描述收敛（含 W16 P-1 修复） | pending | 962e51c5e | 依赖 W16（已 committed）；派发词附加 P-1 修复要求 |
+| W20 | applyEntry reducer + 文件重放喂入 | committed | 763d76e40 | verifier PASS（报告 w20-report.md：pi 源码逐项对照 9 类型 + 7 role 无遗漏/红性 3/3 含 legacy 删 4037 字符等价防线全线红/五决策全认可含 tsup 内联 L51298 实证）。pi 事实发现：compactionSummary/custom/branchSummary 双形态存储（message role + 专用 entry），reducer 两路径用例锁定。2 minor 移交 W21（history-rebuild-cache 过时注释顺带更新；fillToolCallOutput 生产共用勿误删） |
 | W18 | runtime 消费管线（entry_appended + get_entries） | pending | — | 依赖 W12/W16/W17 |
 | W19 | session_end sidecar 登记收口 | pending | — | 依赖 W2/W11；小 wave |
 | W20 | applyEntry reducer + 文件重放喂入 | pending | — | 依赖 W5（已满足）；禁与 W13/W14 并行 |
-| W21 | 实时 feed 喂入 + 等价性断言升级 | pending | — | 依赖 W20 |
+| W20 | applyEntry reducer + 文件重放喂入 | committed | 763d76e40 | verifier PASS（报告 w20-report.md：pi 源码逐项对照 9 类型 + 7 role 无遗漏/红性 3/3 含 legacy 删 4037 字符等价防线全线红/五决策全认可含 tsup 内联 L51298 实证）。pi 事实发现：compactionSummary/custom/branchSummary 双形态存储（message role + 专用 entry），reducer 两路径用例锁定。2 minor 移交 W21（history-rebuild-cache 过时注释顺带更新；fillToolCallOutput 生产共用勿误删）。设计事实：modelId 快照是 `Model` 对象需投影 `${provider}/${id}`（W7 builder 发现，同样适用 W8） |
+| W21 | 实时 feed 喂入 + 等价性断言升级 | pending | 962e51c5e | 依赖 W20（已 committed）；与 W18 串行警戒（同碰 event-adapter） |
 
 ## P4 wave 表（W22-W25）
 
@@ -66,3 +68,4 @@
 
 - 2026-08-19 P1-P4 协调启动（用户指示「启动后续全部开发，仍然使用 cw-orchestrator 流程」）：读 plan 全 25 wave 详规 + 附录 A 路径核实；P0 已完成（五 wave + gate PASS，账本封存）。首波 W6 + W16 + W20 三并行（领地：runtime services/session/ 新增 vs extensions/subagent-workflow vs core domain/chat + runtime message-converter，互不相交）。账本 + 三份验收基线入 git。
 - 2026-08-19 W6 committed（首波首个完成，verifier PASS 一轮过）：ReplicatedState 原语 13 用例 + 红性验证 4 篡改全红。W7 解锁派发（主链推进；W16/W20 builder 仍在运行）。调度警戒记入：W21 与 W18 同碰 event-adapter.ts 必须串行；登记表改动统一由主 agent 串行落表（builder 只交草稿）。
+- 2026-08-19 W16 + W20 committed（双 PASS）：W16 探针落表（569-956B / 3 次生命周期，未触发分流）+ P-1 major 移交 W17（close 终态快照抹空 result）；W20 pi 双形态存储发现 + 2 minor 移交 W21。W7 builder 完成（3124 全绿，采样 5 次 get_state / p95 4.9ms 远低于阈值——P0.5② 首采），verifier 派发中。

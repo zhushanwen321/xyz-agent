@@ -28,6 +28,7 @@ import * as path from "node:path";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { getCurrentActivity, getDisplayItems, getEventLog, markReconstructedStatus, snapshot as toSnapshot } from "./execution-record.ts";
+import { toSubagentRecordEntry } from "./record-entry.ts";
 import type { ManifestRecord, ManifestStore } from "./manifest-store.ts";
 import { INDEX_WRITE_MIN_INTERVAL_MS, loadIndex, saveIndex } from "./sessions-index.ts";
 import type { SessionsIndexEntry, SessionsIndexNegativeEntry } from "./sessions-index.ts";
@@ -236,9 +237,12 @@ export class RecordStore {
     this.pi = pi ?? null;
   }
 
-  /** 注册新 record。触发 onChange。 */
+  /** 注册新 record。触发 onChange。
+   *  W16 [D4]：record 诞生（→ running）即 append 自描述快照 entry——pi 文件是
+   *  扩展数据持久化权威，custom entry 不进 LLM context。 */
   register(record: ExecutionRecord): void {
     this.records.set(record.id, record);
+    this.pi?.appendEntry?.("subagent-record", toSubagentRecordEntry(RecordStore.recordToSubagent(record)));
     this.notifyChange();
   }
 
@@ -246,10 +250,26 @@ export class RecordStore {
    * 归档：record 已被 completeRecord 设置了终态 status。
    * 立即从内存移除（终态 record 下次读时从 session.jsonl 重建）。
    * cancelled record 由调用方先写 tombstone（cancel 路径），此处只负责移除。
+   *
+   * W16 [D4]：终态冻结字段（result/endedAt/closedReason）在 completeRecord 已就绪，
+   * 此处 append 的快照即完整终态记录（所有终态路径的必经锚点）。
    */
   archive(record: ExecutionRecord): void {
     this.records.delete(record.id);
+    this.pi?.appendEntry?.("subagent-record", toSubagentRecordEntry(RecordStore.recordToSubagent(record)));
     this.notifyChange();
+  }
+
+  /**
+   * W16 [D4]：类外状态写点上报（record-store 内的迁移点 register/archive 已内置）。
+   *
+   * 供 service 层直接改 record.status 的恢复写点调用（chatMode 续轮 idle→running
+   * 冷路径 resumeRound、轮终 finalizeRoundToIdle 回 running-resumable）——这些
+   * 写点绕过 register/archive，若不显式上报，pi 文件缺失该次迁移、重建源滞后。
+   * pi 未注入（session_start 前）时可选链静默降级，不阻断主流程。
+   */
+  reportRecordTransition(record: ExecutionRecord): void {
+    this.pi?.appendEntry?.("subagent-record", toSubagentRecordEntry(RecordStore.recordToSubagent(record)));
   }
 
   /** 按 id 查找。返回可变 record（仅 runtime 内部用）。 */

@@ -804,6 +804,8 @@ export class SubagentService {
 
     // 手动设回 running（M2-A 边界：绕过 tryTransition，idle→running 恢复非终态 CAS）。
     record.status = "running";
+    // W16 [D4]：冷路径续轮是类外状态写点（不走 register/archive），显式上报迁移。
+    this.store.reportRecordTransition(record);
 
     // resume 参数从 record identity 读（防漂移，P-10）。
     const resume: SpawnResumeOpts = {

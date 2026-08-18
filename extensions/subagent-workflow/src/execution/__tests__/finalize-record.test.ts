@@ -86,7 +86,7 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
     return {
       manifestStore,
       worktreeManager: {} as never,
-      store: { archive: vi.fn() } as never,
+      store: { archive: vi.fn(), reportRecordTransition: vi.fn() } as never,
       modelService: {} as never,
       pi: { appendEntry: vi.fn() },
       emitUnregister: vi.fn(),
@@ -206,7 +206,7 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     return {
       manifestStore,
       worktreeManager: { cleanup: vi.fn(), collectPatch: vi.fn() } as never,
-      store: { archive: vi.fn() } as never,
+      store: { archive: vi.fn(), reportRecordTransition: vi.fn() } as never,
       modelService: {} as never,
       pi: { appendEntry: vi.fn() } as never,
       emitUnregister: vi.fn(),
@@ -232,6 +232,17 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     expect(record.round).toBe(1);
     // .alive marker 被删（进程已 SIGTERM 回收）
     expect(fs.existsSync(`${sessionFile}.alive`)).toBe(false);
+  });
+
+  it("W16: 轮终上报 reportRecordTransition（record-store 类外恢复写点迁移落 entry）", async () => {
+    const deps = makeDeps();
+    const record = makeMinimalRecord({ id: "rec-report", chatMode: true, round: 2 });
+    record.status = "closed";
+    await doFinalizeRoundToIdle(deps, record, makeMinimalResult());
+    expect(deps.store.reportRecordTransition).toHaveBeenCalledTimes(1);
+    // 上报发生在 round 推进之后（entry 携带新轮计数，重建源不滞后）
+    expect(record.round).toBe(3);
+    expect(record.status).toBe("running");
   });
 
   it("record.round 已为 N → round 变 N+1", async () => {

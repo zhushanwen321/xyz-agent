@@ -237,6 +237,10 @@ export async function doFinalizeRoundToIdle(
   record.round = (record.round ?? 0) + 1;
   record.idleSince = Date.now();
 
+  // W16 [D4]：轮终回 running-resumable 是类外状态写点（record 留内存不走 archive），
+  // 显式上报迁移——entry 携带新 round 与本轮 result，pi 文件的重建源不滞后。
+  deps.store.reportRecordTransition(record);
+
   // [review 修复] 已删除残留 pendingMessages 的 redeliverPending 补投段（MF-1 消费
   // 确认安全网）：三段消费链随 deliverToRunning 一并移除，本段不可达。
 }
