@@ -277,10 +277,10 @@ async function main(): Promise<void> {
         // W3：totalTokens 写入 session.tokenCount（原 attachUsageListener 的 tokenCount 回写迁移至此）。
         sessionService.applyContextUpdate(sid, ctxData.inputTokens, ctxData.totalTokens)
       },
-      // W3：turn_end 单 turn 副作用——tryPersistLabel 主路径（首 turn 即持久化）。
-      // 原 attachUsageListener turn_end 分支迁移至此，经中间事件链路触发。
+      // W3：turn_end 单 turn 副作用（原 attachUsageListener turn_end 分支迁移至此，经中间事件链路触发；
+      // W1 后 label 持久化移交 pi set_session_name RPC，此处承载 project sidecar 兜底）。
       onTurnUsage: (sid) => sessionService.handleTurnUsageSideEffects(sid),
-      // W3：agent_end 副作用——isGenerating 复位 + tryPersistLabel 兜底。
+      // W3：agent_end 副作用——isGenerating 复位（W1 后 label 直写兜底已随机制删除）。
       // 原 attachUsageListener agent_end 分支迁移至此。不迁移则 session 永远 busy（下条消息被拒）。
       // W4：转发 stopReason 用于 session_end 终态判定（'error'→error，其余→done）。
       onTurnFinalize: (sid, stopReason) => {

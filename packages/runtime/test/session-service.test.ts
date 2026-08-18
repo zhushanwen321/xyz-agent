@@ -135,6 +135,8 @@ interface MockClient {
   followUp: MockInstance<(content: string) => Promise<unknown>>
   setModel: MockInstance<(provider: string, modelId: string) => Promise<unknown>>
   setThinkingLevel: MockInstance<(level: string) => Promise<unknown>>
+  /** set_session_name RPC mock（W1 数据源治理：活跃 label 持久化唯一写入口）。 */
+  setSessionName: MockInstance<(name: string) => Promise<unknown>>
   compact: MockInstance<() => Promise<unknown>>
   clear: MockInstance<() => Promise<unknown>>
   getHistory: MockInstance<() => Promise<unknown>>
@@ -165,6 +167,7 @@ function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
     followUp: vi.fn<(content: string) => Promise<unknown>>().mockResolvedValue(undefined),
     setModel: vi.fn<(provider: string, modelId: string) => Promise<unknown>>().mockResolvedValue(undefined),
     setThinkingLevel: vi.fn<(level: string) => Promise<unknown>>().mockResolvedValue(undefined),
+    setSessionName: vi.fn<(name: string) => Promise<unknown>>().mockResolvedValue(undefined),
     compact: vi.fn<() => Promise<unknown>>().mockResolvedValue(undefined),
     clear: vi.fn<() => Promise<unknown>>().mockResolvedValue(undefined),
     getHistory: vi.fn<() => Promise<unknown>>().mockResolvedValue({ data: { messages: [] } }),
@@ -710,12 +713,26 @@ describe('SessionService · lifecycle', () => {
   })
 
   describe('renameSession', () => {
-    it('persists new name for active session via pi-config-bridge', async () => {
-      const { id } = await setup.seedSession({ sessionFile: '/fake/x.jsonl' })
+    it('active session：新名经 pi set_session_name RPC 持久化（W1：不再直写 session JSONL）', async () => {
+      const { id, client } = await setup.seedSession({ sessionFile: '/fake/x.jsonl' })
       await setup.service.renameSession(id, 'new name')
-      expect(mocks.persistSessionNameMock).toHaveBeenCalledWith('/fake/x.jsonl', 'new name', id, expect.any(String))
+      // W1 接口契约：活跃分支唯一写入口 = setSessionName RPC（seedSession 的 create 显式
+      // label 也走同一 RPC，故断言最后一次调用是 rename 的新名）
+      expect(client.setSessionName).toHaveBeenLastCalledWith('new name')
+      // 直写路径必须消失（回归守卫：last-write-wins bug 的根源）
+      expect(mocks.persistSessionNameMock).not.toHaveBeenCalled()
       expect(mocks.refreshAllMock).toHaveBeenCalled()
       expect(setup.service.getSummary(id)?.label).toBe('new name')
+    })
+
+    it('active session：pi client 不可用（崩溃窗口）时 throw，不静默丢写', async () => {
+      const { id } = await setup.seedSession({ sessionFile: '/fake/x.jsonl' })
+      // 模拟 pi 崩溃：clientMap 移除该 session 的 client（pm.getClient 返回 undefined）
+      setup.clientMap.delete(id)
+      await expect(setup.service.renameSession(id, 'new name')).rejects.toThrow('pi process is not available')
+      // 未持久化、内存 label 也未变（先 RPC 后改内存，失败保留旧名可重试）
+      expect(mocks.persistSessionNameMock).not.toHaveBeenCalled()
+      expect(setup.service.getSummary(id)?.label).toBe('seed')
     })
 
     it('persists name via scanned file when session is not active', async () => {
@@ -724,6 +741,7 @@ describe('SessionService · lifecycle', () => {
         lastModified: Date.now(), timestamp: new Date().toISOString(), size: 0, outcome: null,
       })
       await setup.service.renameSession('scan-ren', 'renamed')
+      // 非活跃分支保持 legacy 直写（W11 前登记例外）
       expect(mocks.persistSessionNameMock).toHaveBeenCalledWith('/fake/scan-ren.jsonl', 'renamed', 'scan-ren', tmpdir())
     })
   })

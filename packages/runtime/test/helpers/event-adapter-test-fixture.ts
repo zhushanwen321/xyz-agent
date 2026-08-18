@@ -32,9 +32,9 @@ export interface EventAdapterOptions {
   onBridgeUIRequest?: (requestId: string, sessionId: string, method: string, data: Record<string, unknown>) => void
   onStatusSetUpdate?: (payload: { sessionId: string; key: string; text: string }) => void
   onContextUpdate?: (sessionId: string, data: { inputTokens: number; totalTokens: number }) => void
-  /** W3：pi turn_end 单 turn 用量到达（tryPersistLabel 主路径）。 */
+  /** W3：pi turn_end 单 turn 用量到达（turn 级副作用触发点）。 */
   onTurnUsage?: (sessionId: string) => void
-  /** W3：pi agent_end 整循环结束（isGenerating 复位 + tryPersistLabel 兜底）。 */
+  /** W3：pi agent_end 整循环结束（isGenerating 复位 + 终态副作用）。 */
   onTurnFinalize?: (sessionId: string) => void
   onThinkingLevelChanged?: (sessionId: string, level: string | undefined) => void
   /** session_info_changed 事件到达（pi extension auto-rename）——回写 session label 缓存。 */

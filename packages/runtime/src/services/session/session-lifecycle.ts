@@ -15,7 +15,7 @@ import { unlink } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import type { SessionSummary, BatchDeleteResult, ThinkingLevel } from '@xyz-agent/shared'
 import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
-import type { IProcessManager } from '../ports/pi-engine.js'
+import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
 import { sessionMetaCache } from './session-meta-cache.js'
@@ -98,6 +98,28 @@ export class SessionLifecycle {
    */
   private async safeDestroy(id: string): Promise<void> {
     await this.pm.destroySession(id).catch(() => {})
+  }
+
+  /**
+   * W1（数据源治理）：create / forkSession 的**显式**初始 label 经 pi set_session_name RPC
+   * 持久化（取代原 turn_end/agent_end 兜底直写机制），调用点在 client 就绪后
+   *（create 流程 getState 成功即证 RPC 可用）。
+   *
+   * 派生 label（basename(cwd)）**不调 RPC**——不再持久化：显示由内存 session.label +
+   * 既有 scanner fallback（extractSessionName 返回 null → basename(cwd)）承担，重启后
+   * 显示值不变；pi 内存 sessionName 保持空，auto-rename 守卫照常通过（行为与现状等价：
+   * 现状直写也不进 pi 内存）。
+   *
+   * RPC 失败**不阻断** create/fork：label 留内存显示 + console.error 上报，
+   * 恢复动作 = 手动 rename（renameSession 的 RPC 路径）重试。
+   */
+  private async persistExplicitLabel(client: IPiEngine, sessionId: string, label: string | undefined, source: string): Promise<void> {
+    if (label === undefined) return
+    try {
+      await client.setSessionName(label)
+    } catch (e) {
+      console.error(`[session-lifecycle] ${source}: setSessionName RPC failed for ${sessionId} (label kept in memory only):`, e)
+    }
   }
 
   /**
@@ -239,6 +261,9 @@ export class SessionLifecycle {
       throw initErr
     }
 
+    // W1：显式初始 label 经 pi RPC 持久化（派生 basename 值不持久化，见 helper 注释）
+    await this.persistExplicitLabel(client, id, label, 'create')
+
     // [HISTORICAL] 不再调 ensureSessionFile 提前创建 session 文件。
     // 之前的实现在此处用 openSync(wx) 创建含 session+session_info 两行的最小文件，理由是
     // 「pi 延迟写入期间 scanPiSessions 找不到该 session」。但这与 pi 0.80.3 SessionManager._persist
@@ -284,17 +309,21 @@ export class SessionLifecycle {
   async renameSession(sessionId: string, newName: string): Promise<void> {
     const session = this.svc.getSession(sessionId)
     if (session) {
+      // W1（数据源治理）：活跃 session 的 label 持久化唯一写入口 = pi set_session_name RPC
+      //（pi 内部 appendSessionInfo 落盘 + 广播 session_info_changed）。xyz 不再直写 session
+      // JSONL，消除「用户手动命名被 pi rename-session 扩展 auto-rename 直写竞争覆盖」的
+      // last-write-wins bug。
+      // client undefined（pi 崩溃窗口）或 RPC 失败（success:false / 超时）一律 throw 走上层
+      // toast——静默 no-op 会造成 UI 显示新名、零持久化、无提示的静默丢写。先 RPC 后改内存：
+      // 失败时旧名保留可重试。
+      const client = this.pm.getClient(sessionId)
+      if (!client) {
+        throw new Error(`Cannot rename session ${sessionId}: pi process is not available (try again after the session is reactivated)`)
+      }
+      await client.setSessionName(newName)
       session.label = newName
       // 回写集中式缓存，确保后续 broadcastSessionList 读到新名称
       sessionMetaCache.setLabel(sessionId, newName)
-      // 重置 labelPersisted：rename 后新名需要重新写盘。
-      // 若文件已存在（pi 已 flush），persistSessionName 的 append 分支立即写 session_info；
-      // 若文件不存在（pi 延迟写入窗口），persistSessionName no-op，labelPersisted=false 让
-      // tryPersistLabel 在下次 turn_end/agent_end 兜底写新名（规则 #6：绝不提前建文件）。
-      session.labelPersisted = false
-      if (session.sessionFilePath) {
-        this.sessionStore.persistSessionName(session.sessionFilePath, newName, session.id, session.cwd)
-      }
     } else {
       // 非 active session:从磁盘查找 jsonl 文件并写入
       const target = this.svc.findScannedSession(sessionId)
@@ -303,9 +332,9 @@ export class SessionLifecycle {
       }
     }
 
-    // wave:perf-w26（D9-1 rename 失效点）：persistSessionName append session_info 改变文件
-    // mtime/size（sessionMetaCache 键控自然 miss），但目录列举 TTL 快照 1s 内仍返回旧 name——
-    // rename 后侧栏刷新立即显示新名，显式失效目录缓存。
+    // wave:perf-w26（D9-1 rename 失效点）：写路径改变 name（非活跃分支 persistSessionName
+    // append session_info 改变文件 mtime/size；活跃分支 RPC 更新 pi 内存 + 内存 label），
+    // 但目录列举 TTL 快照 1s 内仍返回旧 name——rename 后侧栏刷新立即显示新名，显式失效目录缓存。
     this.sessionStore.invalidateScanCache()
     this.sessionStore.refreshAll()
   }
@@ -641,6 +670,9 @@ export class SessionLifecycle {
       this.sessionStore.invalidateScanCache()
       throw initErr
     }
+
+    // W1：显式初始 label 经 pi RPC 持久化（派生 basename 值不持久化，见 helper 注释）
+    await this.persistExplicitLabel(client, forkedId, label, 'forkSession')
 
     void this.svc.fetchAndBroadcastContext(forkedId)
     // W-RT-4：fork 出的新 session 变 active，patch 内存态 launchPresetId（继承源 preset）。

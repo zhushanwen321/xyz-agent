@@ -408,17 +408,20 @@ function findLastEntryField<R>(
  * [HISTORICAL] 文件不存在时**绝不创建文件**（规则 #6）。原实现用 openSync(wx)
  * 提前建文件，与 pi 0.80.3 SessionManager._persist 的 openSync("wx") 冲突 →
  * EEXIST → pi 抛 error → session 永久卡死（见上方 ensureSessionFile 删除记录）。
- * 文件不存在时只 console.warn + return，由调用方（tryPersistLabel 在 turn_end /
- * agent_end 兜底）等 pi 首次 flush 完成后再写。active session 即使磁盘无文件也
- * 经 SessionScanner.listAll 合并内存 Map 显示，不依赖文件提前创建。
+ * 文件不存在时只 console.warn + return。W1（数据源治理）后活跃 session 的 label
+ * 持久化走 pi set_session_name RPC（pi 自身落盘），本函数仅剩非活跃 rename 调用
+ * （legacy 直写例外，W11 处置）；turn_end/agent_end 的兜底直写机制已随 W1 删除。
+ * active session 即使磁盘无文件也经 SessionScanner.listAll 合并内存 Map 显示，
+ * 不依赖文件提前创建。
  */
 export function persistSessionName(filePath: string, name: string, id?: string, cwd?: string): void {
   void id
   void cwd
   if (!filePath) return
   if (!existsSync(filePath)) {
-    // 文件不存在（pi 延迟写入窗口）：绝不创建文件，等 tryPersistLabel 在
-    // turn_end/agent_end 兜底写盘。此处只 warn 不抛，避免阻断 rename 调用方。
+    // 文件不存在（pi 延迟写入窗口 / 扫描后文件被删）：绝不创建文件（规则 #6），
+    // 跳过——活跃 label 由 pi 经 set_session_name RPC 自行持久化，非活跃 rename
+    // 文件缺失即无可写目标。此处只 warn 不抛，避免阻断 rename 调用方。
     console.warn(`[session-file-utils] persistSessionName: file does not exist, skipping (pi delayed write window): ${filePath}`)
     return
   }

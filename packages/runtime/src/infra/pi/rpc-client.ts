@@ -508,6 +508,19 @@ export class RpcClient implements IPiEngine {
     return this.sendCommand('set_thinking_level', { level })
   }
 
+  /**
+   * 设置 pi session 名（set_session_name）。
+   *
+   * W1（数据源治理）：活跃 session 的 label 持久化唯一写入口——pi 内部经
+   * sessionManager.appendSessionInfo 落盘 + 广播 session_info_changed，取代 xyz
+   * 直写 session JSONL（消除与 pi 进程内 rename-session 扩展的 last-write-wins 竞争）。
+   * success:false / 超时由 sendCommand 既有约定 reject（调用方决定失败语义）。
+   */
+  setSessionName(name: string): Promise<PiMessage> {
+    // L6：set_session_name 是毫秒级 RPC（pi 内存缓冲 append），用 FAST_TIMEOUT_MS 快速失败
+    return this.sendCommand('set_session_name', { name }, FAST_TIMEOUT_MS)
+  }
+
   /** [DEAD] pi get_messages 死路径——生产零调用（session-service.getHistory 走 client.getEntries entry 树重建）。
    *  保留供未来扁平 message 列表场景；删除前确认无 mock/测试依赖。 */
   getHistory(): Promise<PiMessage> {

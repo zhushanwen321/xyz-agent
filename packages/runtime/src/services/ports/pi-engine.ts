@@ -143,6 +143,12 @@ export interface IPiEngine {
   followUp(content: string): Promise<PiMessage>
   setModel(provider: ProviderId, modelId: string): Promise<PiMessage>
   setThinkingLevel(level: string): Promise<PiMessage>
+  /**
+   * 设置 session 名（set_session_name）——活跃 session label 持久化的唯一写入口
+   * （W1 数据源治理：经 pi 落盘 + 广播，xyz 不再直写 session JSONL）。
+   * success:false / 超时 reject，失败语义由调用方决定（rename 抛错 / create-fork 降级）。
+   */
+  setSessionName(name: string): Promise<PiMessage>
   /** [DEAD] pi get_messages 死路径——见 RpcPiEngine.getHistory（生产零调用） */
   getHistory(): Promise<PiMessage>
   /**

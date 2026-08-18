@@ -10,7 +10,7 @@
 
 | wave | 名称 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
-| W1 | 活跃 session label 直写全量切 set_session_name RPC（含 tryPersistLabel 扩围删除） | building | 337a7c79d | 唯一已证实 bug，第一个 wave |
+| W1 | 活跃 session label 直写全量切 set_session_name RPC（含 tryPersistLabel 扩围删除） | committed | 337a7c79d | verifier PASS（sha256 09bd117a…，报告 w1-report.md：防篡改越界 0 / 3104 全绿 / 四 grep 全过 / 真实性 5 点 / 对抗 6 条含 throw guard→toast 链路、派生 label 永不进 RPC、非活跃 else 字节级原样 / 三裁决全接受）。打回修复一轮：grep#3 残留 2 处过时注释（session-file-utils，验收条款互斥）→ 主 agent 授权仅注释修正 → 闭环。清单外机械适配 12（6×fixture 单行删 + 5×注释清理 + 1×授权注释）逐文件 diff 核对零行为夹带。观察：persistExplicitLabel await 致 create/fork 最坏 10s 尾延迟（有界，合规「不阻断≠不等待」，W7 实例化时复评） |
 | W2 | 数据登记表初版（12 条 + 空值语义 + legacy 例外） | pending | — | 依赖 W1（legacy 例外以 W1 后现状为准） |
 | W3 | R1：pi 文件直写 pre-commit 检查 | pending | — | 依赖 W2；与 W4/W5 可并行 |
 | W4 | R2 骨架 + R3：taste-lint 两条规则 | pending | — | 依赖 W2 |
@@ -28,3 +28,4 @@
 - 2026-08-19 首波派发：W1 builder（worker）+ W5 builder（worker）后台并行。流水线重叠：W2 acceptance 预写 + 基线先行 commit（W2 派发仍等 W1 committed 解锁）。
 - 2026-08-19 W5 built→committed 一轮过：builder 交付 pi-fixture.ts + live-reload.test.ts（401 行，真实 spawn 跑通 + 断言非空转自验闭环 + 全量 4 failed 归因 W1 中途态）；verifier PASS（防篡改/typecheck/真实性 5 点/对抗 4 条；3105 全绿复核）；主 agent 核对 diff 空 + sha256 一致后流转。W3/W4 acceptance 预写随本 commit 入（派发等 W2）。
 - 2026-08-19 W1 打回修复一轮：首验前 builder 自报 grep#3 残留 2 处（session-file-utils docstring 提及已删机制，验收条款互斥）→ 主 agent 裁决授权仅注释修正 → 修复后 grep=0、四条 grep 全过、注释 diff 干净。W1 verifier 派发中。
+- 2026-08-19 W1 committed（verifier PASS 全链）：唯一已证实 bug（手动命名被 auto-rename 覆盖）的活跃链路止血完成。verifier 独立核实 pi 上游 rpc-mode.ts:632 命令存在性与参数一致。W2 解锁派发。

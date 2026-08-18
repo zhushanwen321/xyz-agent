@@ -865,17 +865,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   /**
    * turn_end 单 turn 副作用（W3 迁移自 attachUsageListener turn_end 分支）。
    *
-   * 承载 tryPersistLabel 主路径——「首 turn 即持久化」时序保证：
-   * 第一个 turn_end 时 pi 已完成该轮 flush（session 文件已存在），此时 append session_info 安全。
-   * 不等 agent_end（后者要等所有工具调用轮次跑完，中途关 app 仍会丢 label）。
-   *
-   * tryPersistLabel 经此方法间接暴露（不直接 public）：封装 existsSync guard（规则 #6，
-   * 禁止在 pi flush 前创建文件 → EEXIST → session 卡死）。
+   * 承载 turn_end 时机的 project sidecar 兜底补写——第一个 turn_end 时 pi 已完成该轮
+   * flush（session 文件已存在），existsSync 守卫通过。label 持久化已不在此承载
+   *（W1 数据源治理：活跃 label 唯一写入口 = renameSession/create/fork 的 set_session_name RPC）。
    */
   handleTurnUsageSideEffects(sessionId: string): void {
     const session = this.sessions.get(sessionId)
     if (!session) return
-    this.tryPersistLabel(session)
     // D14 语义修正：turn_end 时 pi 已完成 flush（文件存在）→ 兜底补写归属 project sidecar
     //（create 时文件未落盘被 existsSync 守卫跳过，内存态 projectId 在此落盘）。
     this.tryPersistProjectBinding(session)
@@ -887,7 +883,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 承载三个副作用：
    *   1. 复位 isGenerating=false —— 不迁移则正常生成完成后 session 永远 isGenerating=true，
    *      下一条消息被 busy 拒绝（message-dispatcher preemptive reject），用户无法继续对话。
-   *   2. tryPersistLabel 兜底 —— turn_end 时 pi flush 尚未完成（文件不存在）则在此补写。
+   *   2. project sidecar 兜底补写 —— turn_end 时仍未落盘则在此补写（label 持久化已不在此
+   *      承载：W1 起活跃 label 唯一写入口 = set_session_name RPC）。
    *   3. session_end 终态写入（W4，ADR 0042）—— 让 scanner 读到终态，前端无需预加载历史。
    *
    * @param stopReason pi agent_end 的 stopReason。
@@ -899,7 +896,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const session = this.sessions.get(sessionId)
     if (!session) return
     session.isGenerating = false
-    this.tryPersistLabel(session)
     // D14 语义修正：agent_end 兜底补写归属（turn_end 时仍未落盘则在此补写）。
     this.tryPersistProjectBinding(session)
     // W4：写 session_end 终态。aborted→stopped（与 abort 路径一致），error→error，其余→done
@@ -1188,7 +1184,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       hidden,
       parentSession,
       forkEntryId,
-      labelPersisted: false,
     }
     this.sessions.set(id, session)
     await this.fetchAndBroadcastCommands(id)
@@ -1270,22 +1265,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /**
-   * 首次将 label 持久化到 session JSONL 的 session_info 行。
-   *
-   * pi 自身 flush 不写 session_info（已验证：真实 session 文件 0 个 session_info 行），
-   * 不持久化会导致重启后 label 丢失（extractSessionName 返回 null → fallback basename(cwd)）。
-   *
-   * [HISTORICAL] 禁止在 pi 首次 flush 前创建文件（openSync wx → EEXIST → session 卡死，规则 #6），
-   * 故必须先 existsSync 确认文件已由 pi 创建，只走 persistSessionName 的 append 分支。
-   * 文件尚不存在时跳过，不重置 labelPersisted，下次 turn_end/agent_end 会补写。
-   */
-  private tryPersistLabel(s: IManagedSessionView): void {
-    if (s.labelPersisted || !s.sessionFilePath || !existsSync(s.sessionFilePath)) return
-    this.sessionStore.persistSessionName(s.sessionFilePath, s.label, s.id, s.cwd)
-    s.labelPersisted = true
-  }
-
-  /**
    * 归属 project sidecar 延迟写入兑底（D14 语义修正，2026-08-04）。
    *
    * create 时 session 文件可能未落盘（pi 延迟写入窗口）→ persistProjectBinding 的
@@ -1293,7 +1272,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 本方法在 turn_end（主路径）/ agent_end（兑底）时补写——此时 pi 已完成 flush，
    * 文件存在，写 sidecar 安全。无归属（undefined）或文件仍不存在 → 跳过（下次兑底）。
    *
-   * 用 projectBindingPersisted 标记防重复写（对齐 labelPersisted 模式）。
+   * 用 projectBindingPersisted 标记防重复写（session 级运行时标记，不进 toSummary）。
    */
   private tryPersistProjectBinding(s: IManagedSessionView): void {
     const projectId = (s as IManagedSessionView & { projectId?: string }).projectId

@@ -62,12 +62,12 @@ export interface ISessionServiceInternal {
    */
   applyContextUpdate(sessionId: string, inputTokens: number, totalTokens?: number): void
   /**
-   * turn_end 单 turn 副作用（W3）：tryPersistLabel 主路径——首 turn 即持久化。
+   * turn_end 单 turn 副作用（W3）：project sidecar 兜底补写（label 持久化 W1 起移交 pi RPC）。
    * 经 EventInterpreter.onTurnUsage 回调注入。
    */
   handleTurnUsageSideEffects(sessionId: string): void
   /**
-   * agent_end 副作用（W3 + W4）：复位 isGenerating=false + tryPersistLabel 兜底 + session_end 终态写入。
+   * agent_end 副作用（W3 + W4）：复位 isGenerating=false + project sidecar 兜底 + session_end 终态写入。
    * 经 EventInterpreter.onTurnFinalize 回调注入。
    * @param stopReason pi agent_end 的 stopReason（W4：决定 outcome=error|done）
    */

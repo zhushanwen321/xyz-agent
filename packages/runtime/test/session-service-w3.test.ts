@@ -1,13 +1,17 @@
 /**
  * W3 TDD tests：SessionService 副作用迁移（U7 + E2）。
  *
- * 背景：attachUsageListener（第二条 pi 事件订阅）承载 3 个副作用，W3 迁移到中间事件链路：
+ * 背景：attachUsageListener（第二条 pi 事件订阅）承载副作用，W3 迁移到中间事件链路：
  *   1. isGenerating 复位（agent_end）—— handleTurnEndSideEffects
- *   2. tryPersistLabel（turn_end 主路径 + agent_end 兜底）—— handleTurnUsageSideEffects / handleTurnEndSideEffects
- *   3. tokenCount 写入（turn_end + agent_end）—— applyContextUpdate 接收 totalTokens
+ *   2. tokenCount 写入（turn_end + agent_end）—— applyContextUpdate 接收 totalTokens
+ *   3. project sidecar 兜底 —— handleTurnUsageSideEffects / handleTurnEndSideEffects
+ *
+ * W1（数据源治理）改写：label 持久化不再经 turn_end/agent_end 兜底直写（机制已删），
+ * 活跃 label 唯一写入口 = renameSession / create / forkSession 的 set_session_name RPC。
+ * 本文件保留「turn/agent 结束不再直写 session_info」回归守卫。
  *
  * U7：副作用经中间事件链路保留（不走 attachUsageListener）
- *   - onTurnFinalize→handleTurnEndSideEffects：isGenerating=false + tryPersistLabel 被调
+ *   - onTurnFinalize→handleTurnEndSideEffects：isGenerating=false
  *   - onContextUpdate 含 totalTokens→applyContextUpdate：tokenCount 写入
  * E2：完整 pi 事件流集成（message_start→...→turn_end→agent_end），断言终态
  *   isGenerating===false + tokenCount>0 + inputTokens>0
@@ -84,6 +88,8 @@ interface MockClient {
   followUp: MockInstance<(content: string) => Promise<unknown>>
   setModel: MockInstance<(provider: string, modelId: string) => Promise<unknown>>
   setThinkingLevel: MockInstance<(level: string) => Promise<unknown>>
+  /** set_session_name RPC mock（W1：create 显式 label / 活跃 rename 经此持久化）。 */
+  setSessionName: MockInstance<(name: string) => Promise<unknown>>
   compact: MockInstance<() => Promise<unknown>>
   clear: MockInstance<() => Promise<unknown>>
   getHistory: MockInstance<() => Promise<unknown>>
@@ -110,6 +116,7 @@ function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
     followUp: vi.fn().mockResolvedValue(undefined),
     setModel: vi.fn().mockResolvedValue(undefined),
     setThinkingLevel: vi.fn().mockResolvedValue(undefined),
+    setSessionName: vi.fn<(name: string) => Promise<unknown>>().mockResolvedValue(undefined),
     compact: vi.fn().mockResolvedValue(undefined),
     clear: vi.fn().mockResolvedValue(undefined),
     getHistory: vi.fn().mockResolvedValue({ data: { messages: [] } }),
@@ -233,10 +240,11 @@ describe('SessionService · W3 副作用迁移（U7）', () => {
     setup = createSetup()
   })
 
-  // ── handleTurnUsageSideEffects（turn_end 主路径：tryPersistLabel）──
-  describe('handleTurnUsageSideEffects（turn_end → tryPersistLabel 主路径）', () => {
-    it('session 文件已存在时调 tryPersistLabel（首 turn 即持久化）', async () => {
-      // 用真实临时文件让 existsSync 返回 true
+  // ── handleTurnUsageSideEffects（turn_end：label 兜底直写已随 W1 机制删除）──
+  describe('handleTurnUsageSideEffects（turn_end → label 不再直写）', () => {
+    it('session 文件已存在时也不直写 session_info（W1：label 持久化唯一路径 = set_session_name RPC）', async () => {
+      // 用真实临时文件让 existsSync 返回 true——即便文件存在也不再写（回归守卫：
+      // 直写与 pi rename-session 扩展构成 last-write-wins，会覆盖用户手动命名）
       const dir = mkdtempSync(join(tmpdir(), 'w3-tu-'))
       try {
         const filePath = join(dir, 's.jsonl')
@@ -245,35 +253,7 @@ describe('SessionService · W3 副作用迁移（U7）', () => {
 
         setup.service.handleTurnUsageSideEffects(id)
 
-        // tryPersistLabel 经 persistSessionName 调用（label 已持久化到 session_info 行）
-        expect(mocks.persistSessionNameMock).toHaveBeenCalledTimes(1)
-        expect(mocks.persistSessionNameMock).toHaveBeenCalledWith(filePath, 'my-label', id, expect.any(String))
-      } finally {
-        rmSync(dir, { recursive: true, force: true })
-      }
-    })
-
-    it('文件尚不存在时跳过 tryPersistLabel（existsSync guard，不重置 labelPersisted）', async () => {
-      const { id } = await setup.seedSession({ sessionFile: '/nonexistent/path/s.jsonl' })
-
-      setup.service.handleTurnUsageSideEffects(id)
-
-      // 文件不存在，不调 persistSessionName（规则 #6：禁止在 pi flush 前创建文件）
-      expect(mocks.persistSessionNameMock).not.toHaveBeenCalled()
-    })
-
-    it('labelPersisted=true 时不再重复持久化（幂等）', async () => {
-      const dir = mkdtempSync(join(tmpdir(), 'w3-tu-idem-'))
-      try {
-        const filePath = join(dir, 's.jsonl')
-        writeFileSync(filePath, '{}')
-        const { id } = await setup.seedSession({ label: 'lbl', sessionFile: filePath })
-
-        setup.service.handleTurnUsageSideEffects(id)
-        setup.service.handleTurnUsageSideEffects(id)
-
-        // 第二次因 labelPersisted=true 被短路，只调一次
-        expect(mocks.persistSessionNameMock).toHaveBeenCalledTimes(1)
+        expect(mocks.persistSessionNameMock).not.toHaveBeenCalled()
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
@@ -285,8 +265,8 @@ describe('SessionService · W3 副作用迁移（U7）', () => {
     })
   })
 
-  // ── handleTurnEndSideEffects（agent_end：isGenerating=false + tryPersistLabel 兜底）──
-  describe('handleTurnEndSideEffects（agent_end → isGenerating 复位 + tryPersistLabel 兜底）', () => {
+  // ── handleTurnEndSideEffects（agent_end：isGenerating 复位；label 兜底直写已删）──
+  describe('handleTurnEndSideEffects（agent_end → isGenerating 复位；label 不再直写）', () => {
     it('复位 isGenerating=false（不迁移则 session 永远 busy，下条消息被拒）', async () => {
       const { id } = await setup.seedSession()
       // 先标记为生成中（模拟 sendPrompt 后的状态）
@@ -299,18 +279,16 @@ describe('SessionService · W3 副作用迁移（U7）', () => {
       expect(setup.service.getSummary(id)?.status).toBe('idle')
     })
 
-    it('兜底调 tryPersistLabel（turn_end 漏写时 agent_end 补写）', async () => {
+    it('agent_end 也不直写 session_info（W1：兜底直写机制已整体删除）', async () => {
       const dir = mkdtempSync(join(tmpdir(), 'w3-te-'))
       try {
         const filePath = join(dir, 's.jsonl')
         writeFileSync(filePath, '{}')
         const { id } = await setup.seedSession({ label: 'fallback-label', sessionFile: filePath })
 
-        // 模拟 turn_end 没触发 handleTurnUsageSideEffects，直接到 agent_end
         setup.service.handleTurnEndSideEffects(id)
 
-        expect(mocks.persistSessionNameMock).toHaveBeenCalledTimes(1)
-        expect(mocks.persistSessionNameMock).toHaveBeenCalledWith(filePath, 'fallback-label', id, expect.any(String))
+        expect(mocks.persistSessionNameMock).not.toHaveBeenCalled()
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
