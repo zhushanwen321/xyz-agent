@@ -10,11 +10,11 @@
 
 | wave | 名称 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
-| W1 | 活跃 session label 直写全量切 set_session_name RPC（含 tryPersistLabel 扩围删除） | pending | — | 唯一已证实 bug，第一个 wave |
+| W1 | 活跃 session label 直写全量切 set_session_name RPC（含 tryPersistLabel 扩围删除） | building | 337a7c79d | 唯一已证实 bug，第一个 wave |
 | W2 | 数据登记表初版（12 条 + 空值语义 + legacy 例外） | pending | — | 依赖 W1（legacy 例外以 W1 后现状为准） |
 | W3 | R1：pi 文件直写 pre-commit 检查 | pending | — | 依赖 W2；与 W4/W5 可并行 |
 | W4 | R2 骨架 + R3：taste-lint 两条规则 | pending | — | 依赖 W2 |
-| W5 | 等价性测试骨架（pi fixture + live≡reload 雏形） | pending | — | 无依赖，与 W1 并行派发 |
+| W5 | 等价性测试骨架（pi fixture + live≡reload 雏形） | building | 337a7c79d | 无依赖，与 W1 并行派发 |
 
 ## P0 gate
 
@@ -25,3 +25,4 @@
 ## 事件
 
 - 2026-08-19 协调启动（定时任务触发）：read 治理文档三件（父文档/plan/review r2-r6 已核）+ plan §2 P0 详规；核实 W1-W5 产物均不存在（registry / check_pi_direct_write.py / taste-lint 两规则 / equivalence 目录 / rpc-client set_session_name 均无）→ 全量待执行，无既有 wave 进度可接续。首波 W1 + W5 并行（领地不相交：W1 = runtime services/infra + test/，W5 = runtime src/__tests__/equivalence/）。账本 + W1/W5 验收基线入 git。
+- 2026-08-19 首波派发：W1 builder（worker）+ W5 builder（worker）后台并行。流水线重叠：W2 acceptance 预写 + 基线先行 commit（W2 派发仍等 W1 committed 解锁）。
