@@ -80,8 +80,29 @@ export interface EventInterpreterOptions {
   onTurnFinalize?: (sessionId: string, stopReason?: string) => void
   /** thinking_level_changed 回写 session 缓存（组合根注入 sessionService.setThinkingLevelCache）。 */
   onThinkingLevelChanged?: (sessionId: string, level: string | undefined) => void
-  /** session_info_changed 回写 session label 缓存（组合根注入 sessionMetaCache.setLabel）。 */
+  /**
+   * session_info_changed 的旧缓存回写（双写过渡，W9 删）。组合根注入：session.label
+   * 内存态回写（setLabelCache）+ sessionMetaCache 的 label 改读 label 实例快照写入
+   * （W7 起数据链归一，事件 payload 不再直写缓存）。实例失效走 labelState markDirty。
+   */
   onSessionRenamed?: (sessionId: string, name: string | undefined) => void
+  /**
+   * W7 data-source-governance：label ReplicatedState 实例的延迟解析器。
+   *
+   * session_info_changed 到达时调 labelState()?.markDirty()——事件只做失效（置 dirty +
+   * 防抖重拉 get_state），事件 payload 永不直接写实例数据（D7 原则 4）。
+   * 延迟解析（与 pingPi 同款模式）：interpreter 在 session 创建时构造，那时实例可能尚未
+   * 注册（initializeManagedSession 先建 adapter 后注册实例）；session 已销毁时解析为
+   * undefined（实例已 dispose，markDirty 本也是 no-op），安全跳过。
+   */
+  labelState?: () => { markDirty: () => void } | undefined
+  /**
+   * W7 data-source-governance：thinkingLevel ReplicatedState 实例的延迟解析器。
+   *
+   * thinking_level_changed 到达时调 thinkingLevelState()?.markDirty()——同 labelState，
+   * 事件只做失效；pi 同档位切换不发射事件，由实例的周期兜底（pollIntervalMs 30s）覆盖。
+   */
+  thinkingLevelState?: () => { markDirty: () => void } | undefined
   /** extension 交互式 UI 请求（注册前端超时 + 缓存 pending 请求）。组合根注入 server.registerExtensionTimeout。 */
   onExtensionUIRequest?: (requestId: string, sessionId: string, method: string, payload: Record<string, unknown>) => void
   /** bridge:* 前缀请求（直接路由不经前端超时）。组合根注入 server.handleBridgeRequest。 */
@@ -290,9 +311,18 @@ export class EventInterpreter {
         this.opts.onExtensionUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.payload)
         return
       case 'thinking-level':
+        // W7 数据源治理：thinking_level_changed 只做失效——markDirty 置 dirty + 防抖重拉
+        // get_state（唯一写路径），事件 payload 不再是 thinkingLevel 的数据源。
+        this.opts.thinkingLevelState?.()?.markDirty()
+        // 双写过渡（W7 → W9 删）：旧缓存回写保留，读方逐步切实例。
         this.opts.onThinkingLevelChanged?.(this.sessionId, ev.level)
         return
       case 'session-renamed':
+        // W7 数据源治理：session_info_changed 只做失效——markDirty 置 dirty + 防抖重拉
+        // get_state，事件 payload 不再是 label 的数据源（session.renamed 广播帧由上方
+        // 'message' 分支照常转发，type 名 W12 统一切 state 话题）。
+        this.opts.labelState?.()?.markDirty()
+        // 双写过渡（W7 → W9 删）：旧缓存回写保留，读方逐步切实例。
         this.opts.onSessionRenamed?.(this.sessionId, ev.name)
         return
       case 'hook':

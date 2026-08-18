@@ -42,6 +42,15 @@ import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { SessionLifecycle } from './session-lifecycle.js'
 import { MessageDispatcher } from './message-dispatcher.js'
 import { SessionScanner } from './session-scanner.js'
+import { ReplicatedState } from './replicated-state.js'
+import {
+  createLabelStateConfig,
+  createThinkingLevelStateConfig,
+  createModelIdStateConfig,
+  type LabelSnapshot,
+  type ThinkingLevelSnapshot,
+  type ModelIdSnapshot,
+} from './replicated-states.config.js'
 import { HistoryRebuildCache, mergeIncrementalMessages } from './history-rebuild-cache.js'
 import { toErrorMessage, isEnoent } from '../../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
@@ -79,6 +88,19 @@ interface ManagedSession extends IManagedSessionView {
 
 /** 百分比上限（usagePercent 计算唯一常量，消除 model-service / index.ts 的重复）。 */
 const MAX_PERCENT = 100
+
+/**
+ * per-session 标量 ReplicatedState 实例组（W7 data-source-governance）。
+ *
+ * label / thinkingLevel / modelId 三实例：快照唯一来源 get_state，失效源分别是
+ * session_info_changed / thinking_level_changed / switchModel RPC 响应（只 markDirty，
+ * 事件与 RPC 响应永不直接写数据）。双写过渡期与旧缓存（session.label 等）并存，W9 删旧缓存。
+ */
+interface ScalarReplicatedStates {
+  label: ReplicatedState<LabelSnapshot>
+  thinkingLevel: ReplicatedState<ThinkingLevelSnapshot>
+  modelId: ReplicatedState<ModelIdSnapshot>
+}
 
 /**
  * fork 点 entryId 按 timestamp 匹配时的容差（W7）。
@@ -181,6 +203,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 先完成者的新缓存交错写回」竞态。finally 清理，无泄漏。
    */
   private readonly inflightGetHistory = new Map<string, Promise<{ messages: Message[]; truncated: boolean }>>()
+  /**
+   * W7：per-session 标量 ReplicatedState 实例组（label / thinkingLevel / modelId）。
+   * Map 分区（ADR-0049）：注册点 initializeManagedSession（create/restore/fork 三入口汇聚），
+   * 销毁点 removeSessionEntry（主动删 + 进程退出汇聚，dispose 停防抖/退避/周期兜底定时器）。
+   */
+  private readonly replicatedStates = new Map<string, ScalarReplicatedStates>()
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
@@ -476,6 +504,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       console.error(`[session-service] switchModel RPC failed: sessionId=${sessionId}, model=${newModelId}`, e)
       throw e
     }
+    // W7：switchModel RPC 成功响应 = modelId 实例的失效源（RPC 响应驱动，「事件只做失效」的
+    // 补充合法形态，D7）。markDirty 防抖重拉 get_state，实例快照与 pi 权威值收敛（行为级
+    // 验收：模型名 1s 内更新）。失败路径（上方 throw）不失效——pi 侧未生效，实例保持旧快照。
+    this.replicatedStates.get(sessionId)?.modelId.markDirty()
     session.modelId = newModelId
 
     // 切模型后立即广播 session 级状态（modelId + 按新 contextWindow 重算用量 + thinkingLevel）
@@ -520,6 +552,17 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   getRpcClient(sessionId: string): IPiEngine | undefined { return this.pm.getClient(sessionId) }
+
+  /**
+   * W7：per-session 标量实例组访问器。消费方：
+   * - 组合根（index.ts）：interpreter 的失效回调延迟解析（markDirty）+ onSessionRenamed 读
+   *   label 快照（sessionMetaCache 数据链归一）；
+   * - 测试：断言 switchModel 后 modelId 实例 markDirty。
+   * session 未注册（非活跃 / 已销毁）返回 undefined，调用方安全跳过。
+   */
+  getScalarReplicatedStates(sessionId: string): ScalarReplicatedStates | undefined {
+    return this.replicatedStates.get(sessionId)
+  }
 
   /** 确保会话活跃;不存在则自动 restore。并发 restore 时去重拒绝。 */
   async ensureActive(sessionId: string): Promise<IPiEngine> {
@@ -1110,6 +1153,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // pi 进程退出后缓存基线（lastLeafId）不再与新进程的 entry 集合对应，保留只会
     // 走 "Entry not found" fallback（防御兜底存在，但清理是正路径）。
     this.historyCache.delete(sessionId)
+    // W7：销毁 per-session 标量实例（与 historyCache.delete 同汇聚点——主动删 + 进程退出）。
+    // dispose 停防抖/退避/周期兜底全部定时器（thinkingLevel 的 30s poll 不清会泄漏定时器）。
+    const scalarStates = this.replicatedStates.get(sessionId)
+    if (scalarStates) {
+      scalarStates.label.dispose()
+      scalarStates.thinkingLevel.dispose()
+      scalarStates.modelId.dispose()
+      this.replicatedStates.delete(sessionId)
+    }
     // wave:runtime-wiring（GAP1 决策）：session 销毁时清理 MessageBus 的该 session 状态
     // （ring buffer + state snapshot + 订阅者集合 + 反查表）。幂等（ES1：session 不存在 no-op）。
     // 不在 pi flush / turn 结束时清理——ring 容量 1000 会自然 FIFO 淘汰旧 turn delta，
@@ -1186,11 +1238,52 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       forkEntryId,
     }
     this.sessions.set(id, session)
+    // W7：注册 per-session 标量实例并播种首份快照（create/restore/fork 三入口的汇聚点）。
+    // 播种走 refetch 立即拉取——session 激活后 renderer 要消费的 session 级状态必须主动拉取
+    //（Runtime broadcast 时序竞争 [HISTORICAL]，架构约定）。
+    this.registerReplicatedStates(id)
     await this.fetchAndBroadcastCommands(id)
     return session
   }
 
   // ── 私有协作者 ────────────────────────────────────────────────
+
+  /**
+   * W7：注册 per-session 标量实例组（label / thinkingLevel / modelId）并 refetch 播种。
+   * 配置即登记表条目（replicated-states.config.ts）；fetch 统一走 fetchStateSnapshot
+   * （复用 rpc-client getState）。幂等注册（同 id 重复注册先 dispose 旧实例，防定时器泄漏）。
+   */
+  private registerReplicatedStates(sessionId: string): ScalarReplicatedStates {
+    const existing = this.replicatedStates.get(sessionId)
+    if (existing) {
+      existing.label.dispose()
+      existing.thinkingLevel.dispose()
+      existing.modelId.dispose()
+    }
+    const fetchState = () => this.fetchStateSnapshot(sessionId)
+    const states: ScalarReplicatedStates = {
+      label: new ReplicatedState(createLabelStateConfig(fetchState)),
+      thinkingLevel: new ReplicatedState(createThinkingLevelStateConfig(fetchState)),
+      modelId: new ReplicatedState(createModelIdStateConfig(fetchState)),
+    }
+    this.replicatedStates.set(sessionId, states)
+    states.label.refetch()
+    states.thinkingLevel.refetch()
+    states.modelId.refetch()
+    return states
+  }
+
+  /**
+   * W7：get_state 快照拉取——三标量实例的唯一 fetch 入口（复用 rpc-client getState）。
+   * 无活跃 client 时抛错 → 实例按快照失败处理（退避重试 + 保留旧值，W6 核心不变量 2）。
+   */
+  private async fetchStateSnapshot(sessionId: string): Promise<Record<string, unknown> | undefined> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) {
+      throw new Error(`[session-service] get_state unavailable: no active pi client for session ${sessionId}`)
+    }
+    return client.getState()
+  }
 
   /**
    * usagePercent 计算的唯一实现（消除 model-service / index.ts 两处重复）。

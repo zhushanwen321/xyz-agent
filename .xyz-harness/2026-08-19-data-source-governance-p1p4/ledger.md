@@ -18,7 +18,7 @@
 | wave | 名称 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
 | W6 | ReplicatedState<T> 原语 | committed | 763d76e40 | verifier PASS（报告 w6-report.md：防篡改/13 用例/3118 全绿/真实性 4 项/红性验证 4 篡改全红字节还原——事件直写退化、空值跳过、去 epoch、无条件 pollTimer）。契约外增量 2 项裁决合理（dispose=ADR-0049 定时器清理必需 / isDirty=可证伪观测点）。观察：doFetch 空 catch 吞错无失败可观测通道（W7 接线补 onError）；dispose 后在途 fetch 仍写 snapshot（纯内存，JSDoc 已声明） |
-| W7 | label/thinkingLevel/modelId 三实例 + 失效接线 | pending | — | 依赖 W6 |
+| W7 | label/thinkingLevel/modelId 三实例 + 失效接线 | committed | 962e51c5e | verifier PASS（报告 w7-report.md：3124 全绿 + equivalence 7/7 含真实 pi 2 用例/红性事件直写回退变红/三值差异化手法核实/**modelId 投影事实独立证实**——pi get_state.model 是 Model 对象 `${provider}/${id}` 投影正确/WireSnapshotSchemaError 防线探针实跑/dispose ADR-0049 双路径汇入）。采样（P0.5② 首采）：5 次 get_state（播种 3 + 失效 2）恒定、p95 0.7-4.9ms 数量级——远低于阈值，与 W8 终判一并落登记表。2 minor：markDirty 计数自报 11 实测 10；mock makeState 缺 provider 字段（W8 补齐） |
 | W8 | usage/queue/commands 三实例 + 频率量化 | pending | — | 依赖 W6，W7 后串行（共享 session-service） |
 | W9 | 删除 sessionMetaCache | pending | — | 依赖 W7 |
 | W10 | applyContextUpdate 收编 + switchModel 入 owner | pending | — | 依赖 W8 |
