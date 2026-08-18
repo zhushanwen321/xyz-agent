@@ -324,7 +324,8 @@ extractor 对每条 subagent 记录按执行事实投影：
 
 - workflow kill-9 恢复循环补 `await store.save(run)`（决策 6.1，`index.ts:466-475`）。
 - workflow 恢复通知改无 turn 注入（决策 6.2，`index.ts` 恢复路径）。
-- subagent 重建矩阵「`.alive` 存在但 pid 已死」子分支转终态 + 补发无 turn bg-notify（决策 6.3，`record-store.ts:822-826` 分支 4）。
+- （可选，A10 候选 a 时）终态转换点发轻量状态事件（含 idle 位，供决策 5 的 streaming/waiting 区分）。
+- ~~subagent 重建矩阵分支 4 转终态 + 补发无 turn bg-notify~~（v2 残留，已被 v3/v4 决策 6.3 取代——extractor 投影解决，扩展 subagent 域不再必改）。
 
 ---
 
