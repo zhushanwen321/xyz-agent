@@ -20,7 +20,7 @@
 
 | gate | 内容 | 状态 |
 |------|------|------|
-| P0 gate | 父文档场景 1 前半（真实环境手动命名不被覆盖）+ 场景 4（预防拦截三违规） | pending |
+| P0 gate | 父文档场景 1 前半（真实环境手动命名不被覆盖）+ 场景 4（预防拦截三违规） | PASS |
 
 ## 事件
 
@@ -30,5 +30,6 @@
 - 2026-08-19 W1 打回修复一轮：首验前 builder 自报 grep#3 残留 2 处（session-file-utils docstring 提及已删机制，验收条款互斥）→ 主 agent 裁决授权仅注释修正 → 修复后 grep=0、四条 grep 全过、注释 diff 干净。W1 verifier 派发中。
 - 2026-08-19 W1 committed（verifier PASS 全链）：唯一已证实 bug（手动命名被 auto-rename 覆盖）的活跃链路止血完成。verifier 独立核实 pi 上游 rpc-mode.ts:632 命令存在性与参数一致。W2 解锁派发。
 - 2026-08-19 W2 committed（verifier PASS + 1 打回修复）：登记表 29 表行落地，反向写点扫描零未登记（SSOT 完备性实证）；registry:23 命令名前缀 session.steer→message.steer 修正。W3+W4 并行派发（.githooks/ vs taste-lint/ 领地不相交）。
-- 2026-08-19 W3+W4 committed（双 PASS）：P0 五 wave 全部 committed（W1 9dcffa736 / W2 e411a010f / W3 c3faee469 / W4 本条 / W5 2dc3c443c）。双层护栏机器层全量上线（R1 pre-commit + R2/R3 taste-lint error 级）。W3 流转前主 agent 亲测 pre-commit 活拦截（探针 commit 被拒、HEAD 未动、清理闭环）。R1 在自身 commit 上即生效自证。进入 P0 gate。
+- 2026-08-19 W3+W4 committed（双 PASS）：P0 五 wave 全部 committed（W1 9dcffa736 / W2 e411a010f / W3 c3faee469 / W4 3a56faf96 / W5 2dc3c443c）。双层护栏机器层全量上线（R1 pre-commit + R2/R3 taste-lint error 级）。W3 流转前主 agent 亲测 pre-commit 活拦截（探针 commit 被拒、HEAD 未动、清理闭环）。R1 在自身 commit 上即生效自证。进入 P0 gate。
+- 2026-08-19 P0 gate **PASS**（双执行者）：场景 1 前半 pi 层端到端（报告 p0-gate-scenario1-report.md）——真实 pi 0.84.1 + rename-session 本地源码 + mimo LLM，竞态实验直击本质（set_session_name 落在 rename LLM 1.83s 窗口内 → 守卫 `skip: name exists` 真实出现、renamed to 零新增、JSONL 有且仅有手动名）；主实验严格流程 + 对照组 auto-rename 不误伤。**新认知**：`skip: name exists` 只在 rename LLM 调用窗口内可能出现（扩展 count!==1 前置守卫使后续轮 skip: count=N）——plan 验收 2 的字面预期按扩展代码不可能出现，验收语义以「名字保持 + 零覆盖 entry」为准（报告 §1 偏差说明）。场景 4（报告 p0-gate-scenario4-report.md）——①②机器拦截证据 = 主 agent 亲测 R1 pre-commit 活拦截 + W4 verifier R2/R3 探针；③ S1 语义层：违规样本（queue_update 回调直写 label，机器层漏拦逐一核实）被 review-data-governance checklist 判 MUST_FIX × 3 + 修复方向对齐 W7；合规样本（markDirty 正解）0 MUST_FIX 零误拦。**P0 全部完成（五 wave + gate），双层护栏上线，止血 bug 修复验证。**
 - 2026-08-19 W2 上报处置：#10 FileChanges / #11 活跃态父文档 19 单元无对应 wave——登记表如实标注「无专门 wave」，属计划层缺口待用户裁决（P0 范围外，最终汇报披露）。
