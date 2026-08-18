@@ -19,8 +19,8 @@
 |------|------|------|----------------|------|
 | W6 | ReplicatedState<T> 原语 | committed | 763d76e40 | verifier PASS（报告 w6-report.md：防篡改/13 用例/3118 全绿/真实性 4 项/红性验证 4 篡改全红字节还原——事件直写退化、空值跳过、去 epoch、无条件 pollTimer）。契约外增量 2 项裁决合理（dispose=ADR-0049 定时器清理必需 / isDirty=可证伪观测点）。观察：doFetch 空 catch 吞错无失败可观测通道（W7 接线补 onError）；dispose 后在途 fetch 仍写 snapshot（纯内存，JSDoc 已声明） |
 | W7 | label/thinkingLevel/modelId 三实例 + 失效接线 | committed | 962e51c5e | verifier PASS（报告 w7-report.md：3124 全绿 + equivalence 7/7 含真实 pi 2 用例/红性事件直写回退变红/三值差异化手法核实/**modelId 投影事实独立证实**——pi get_state.model 是 Model 对象 `${provider}/${id}` 投影正确/WireSnapshotSchemaError 防线探针实跑/dispose ADR-0049 双路径汇入）。采样（P0.5② 首采）：5 次 get_state（播种 3 + 失效 2）恒定、p95 0.7-4.9ms 数量级——远低于阈值，与 W8 终判一并落登记表。2 minor：markDirty 计数自报 11 实测 10；mock makeState 缺 provider 字段（W8 补齐） |
-| W8 | usage/queue/commands 三实例 + 频率量化 | pending | — | 依赖 W6，W7 后串行（共享 session-service） |
-| W9 | 删除 sessionMetaCache | pending | — | 依赖 W7 |
+| W8 | usage/queue/commands 三实例 + 频率量化 | committed | ebc6f6991 | verifier PASS（报告 w8-report.md：3131 全绿 + equivalence 14/14/**event-adapter 段级核验警戒线完好**/红性直写回退红/深度公式与 pi agent-session.ts:1428 同源/三接线无第二写路径）。量化终判（P0.5② 收口）：7 次快照 RPC 合并 p95 0.7ms——无需降级，已落登记表表头第 5 条。2 minor：protocol.ts queue_update 契约未声明 pendingMessageCount（W12 补）；usage config「contextUsage 恒在」注释不准（影响有界） |
+| W9 | 删除 sessionMetaCache | pending | b8db5afe7 | 依赖 W7（已 committed）；acceptance 已备 |
 | W10 | applyContextUpdate 收编 + switchModel 入 owner | pending | — | 依赖 W8 |
 | W11 | 非活跃 rename 短命 pi + 直写全删 + R1 allowlist 清空 | pending | — | 依赖 W1/W3/W6 |
 | W12 | 5 个 state 话题切实例快照发布 | pending | — | 依赖 W7/W8；5 话题各独立 commit |
@@ -38,7 +38,7 @@
 | wave | 名称 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
 | W16 | subagent 扩展自描述 appendEntry | committed | 763d76e40 | verifier PASS（报告 w16-report.md：防篡改/三连绿/终态路径全景无反例/独立 pi 实测 3 entry 603-961B 复测一致/三裁决全合理）。**P-1 major 移交 W17 修复**：closeChatIdle 合成 text:"" 经 completeRecord 覆盖 record.result（close 终态快照抹空轮终真实 result——entry 重建源缺陷，W18 消费后重开 result 回退空串，verifier 实测复现根因链）。P-2 minor（字面量 vs 常量，测试钉住）/P-3 minor（登记表笔误，主 agent 已修正） |
-| W17 | workflow 自描述收敛（含 W16 P-1 修复） | pending | 962e51c5e | 依赖 W16（已 committed）；派发词附加 P-1 修复要求 |
+| W17 | workflow 自描述收敛（含 W16 P-1 修复） | committed | 962e51c5e | verifier PASS（报告 w17-report.md：2230 全绿/loadAll 三分支逐行核实/P-1 修复双对抗——红性 + 反事实选项三必要性证明/**独立 pi 实测 4 条 entry 含终态 done** calls 递增证实每次 flush append/崩溃语义结构性消解）。裁决：每次 flush append（vs plan 字面迁移点）——D4「entry 可完整重建才允许 state 文件存在」硬前提的必要条件，认可。探针落表 #9（4 条/7.9-52.5KB 未触发分流）。W16 P-1 关闭（close entry result 保真 + emptyBody 契约显式化）。2 观察项领域外不阻塞 |
 | W20 | applyEntry reducer + 文件重放喂入 | committed | 763d76e40 | verifier PASS（报告 w20-report.md：pi 源码逐项对照 9 类型 + 7 role 无遗漏/红性 3/3 含 legacy 删 4037 字符等价防线全线红/五决策全认可含 tsup 内联 L51298 实证）。pi 事实发现：compactionSummary/custom/branchSummary 双形态存储（message role + 专用 entry），reducer 两路径用例锁定。2 minor 移交 W21（history-rebuild-cache 过时注释顺带更新；fillToolCallOutput 生产共用勿误删） |
 | W18 | runtime 消费管线（entry_appended + get_entries） | pending | — | 依赖 W12/W16/W17 |
 | W19 | session_end sidecar 登记收口 | pending | — | 依赖 W2/W11；小 wave |

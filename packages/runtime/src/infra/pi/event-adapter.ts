@@ -609,7 +609,16 @@ function handleAutoRetryEnd(event: PiAutoRetryEndEvent, sid: string): PiTranslat
   }]
 }
 
-/** queue_update → message.queue_update */
+/**
+ * queue_update → message.queue_update（W8 D6：输出附深度信息）。
+ *
+ * 深度 = pendingMessageCount = steering.length + followUp.length（pi agent-session.ts
+ * `get pendingMessageCount()` 同源公式，rpc-mode get_state 的 pendingMessageCount 字段同值）。
+ * 本帧附带的深度是事件自报的即时值（供前端过渡展示），**不是深度数据源**——深度权威 =
+ * queue 实例的 get_state 快照（replicated-states.config.ts 队列条目），queue_update 事件到达
+ * 只做深度失效信号（session-service 的 send 汇聚点对 queue 实例 markDirty，防抖重拉快照），
+ * 事件 payload 永不直接写深度数据（ReplicatedState 核心不变量 1）。
+ */
 function handleQueueUpdate(event: PiQueueUpdateEvent, sid: string): PiTranslatedEvent[] {
   return [{
     kind: 'message',
@@ -619,6 +628,7 @@ function handleQueueUpdate(event: PiQueueUpdateEvent, sid: string): PiTranslated
         sessionId: sid,
         steering: [...event.steering],
         followUp: [...event.followUp],
+        pendingMessageCount: event.steering.length + event.followUp.length,
       },
     },
   }]
