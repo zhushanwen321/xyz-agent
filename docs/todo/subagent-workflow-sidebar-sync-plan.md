@@ -10,8 +10,8 @@
 |------|------|------|------------------|
 | P0 | 探针 A5/A7/A8/A10（可重复执行的脚本 + 结论回写设计 §11） | 无 | 消解 A5/A7/A8/A10 前提，锁定 A10 信号形态（A6 大文件性能探针在 P2 落地） |
 | P1 | 协议 + core/renderer 信号消费（U1） | P0（A5 定重试参数） | 决策 2 的 renderer 半 |
-| P2 | 三个对账点（U2） | 无（可与 P1 并行） | 决策 3 |
-| P3 | runtime 无状态化（U3a） | P1 | 决策 1/2 的 runtime 半 |
+| P2 | 三个对账点（U2） | 逻辑无依赖（可与 P1 并行；顺序图中 P0→P2 箭头仅为「探针结论可用后再开工更稳」的软顺序） | 决策 3 |
+| P3 | runtime 无状态化（U3a） | **P1+P2**（P1 供信号消费端；P2 的重连重拉是 P3 删除 stateSnapshot 恢复的替代机制——P3 先于 P2 落地会让重连场景丢列表恢复） | 决策 1/2 的 runtime 半 |
 | P4 | extractor 投影 + SubagentStatus 枚举（U3b） | P3（广播已信号化） | 决策 5 |
 | P5 | extension 修复（U4） | P0（A8/A10） | 决策 6 + 轻量信号（若 A10 选 a） |
 | P6 | 全链路验收（设计 §8 的 8 场景） | P1-P5 | 验收关闭 |
@@ -31,11 +31,11 @@
    + npm extension 目录 + 分支源码 symlink（extension 必须分支优先，§5.1）
    （注：makePresetDataDir 是各 spec 私有复制函数，新 spec 复制既有实现 ~50 行；
    依赖本机 DEV_PI_AGENT 配置与可用 provider key）
-② launchRealApp({dataDir}) + waitForRuntime + waitForExtensionsReady
-   —— e2e/fixtures/launch-app-real.ts。关键：runtime ready（runtime.port 出现）≠ extension
-   就绪；session.create 前必须调 waitForExtensionsReady（runtime 日志 "resolved N extensions"
-   N≥8，90s 超时），否则 mandatory npm install（~16s）竞态导致 pi --extension 列表空 →
-   LLM 无 subagent/workflow tool → 强引导必然 skip（§5.3/§7）
+② launchRealApp({dataDir}) + waitForRuntime —— e2e/fixtures/launch-app-real.ts（仅导出这两个）；
+   session.create 前必须调 waitForExtensionsReady——它是 spec 私有复制函数
+   （唯一实现在 ask-user-real.spec.ts:203，90s 超时 / minCount=8），新 spec 复制实现。
+   关键：runtime ready（runtime.port 出现）≠ extension 就绪；不等待则 mandatory npm install
+   （~16s）竞态导致 pi --extension 列表空 → LLM 无 subagent/workflow tool → 强引导必然 skip（§5.3/§7）
 ③ WS session.create（cwd=临时 sample-project，绕过 OS dialog）
 ④ 开第二 WS 连接监听广播（先 listen 再发 prompt，防 broadcast 时序竞争）
 ⑤ WS message.send 强引导 prompt（明确「必须调用 subagent tool」）
@@ -92,6 +92,7 @@ pi --mode rpc --session-dir /tmp/probe-sessions \
 | `packages/core/src/coordination/route-inbound.ts` | ROUTE_TABLE 增 `session.subagentsChanged` → `effects.onSubagentsChanged(sid, kind)`；InboundEffects 接口更新 |
 | `packages/renderer/src/composables/effects/useMessageEffects.ts` | 实现 `onSubagentsChanged` → `subagentStore.triggerSubagentReload` |
 | `packages/renderer/src/stores/subagent.ts` | 新增 `triggerSubagentReload(sid, kind)`：立即 `loadSubagents`；`kind==='started'` 且结果为空 → 500ms 重试一次（对齐 workflow `RUNNING_RETRY_MS` 模式；重试参数按 P0-A5 结论调整）。**承接设计 §11「边界」**：`loadSubagents` 加空结果守卫——RPC 成功返回 `[]` 且当前分区非空时**不覆盖**（记 warn 日志），防 extractor 读取失败（catch 返回 `[]`）瞬时清空历史列表；RPC 抛错路径维持现状 loadError 语义 |
+| `packages/renderer/src/stores/workflow.ts` | **同款空结果守卫加在 `loadWorkflows`**（workflow-extractor 的 readFileSync catch 同样返回 `[]`，暴露同构；P2 三个对账点会同时拉 workflows、放大暴露面）。两条链路抽公共守卫逻辑共用（目标 4「一种心智模型」），单测两侧各断言一次 |
 
 此阶段 runtime 尚未发新信号（P3 才改）——renderer 先就位，M1 过渡期靠 P2 对账点即可收敛。
 
@@ -99,15 +100,16 @@ pi --mode rpc --session-dir /tmp/probe-sessions \
 
 ### 验证
 
-**单测（vitest，renderer 目录跑）**：
+**单测（vitest，各子包目录跑，见 §1 通用约束）**：
 - `subagent.ts` store：triggerSubagentReload 触发 loadSubagents（vi.mock api）；started+空结果 → fake timers 推进 500ms → 二次拉取；notify → 不重试；RPC 抛错 → loadError + 分区保留；**RPC 成功返回 [] 且分区非空 → 不覆盖**（设计边界承接的断言）。
+- `workflow.ts` store：**RPC 成功返回 [] 且分区非空 → 不覆盖**（与 subagent 同款守卫断言）。
 - `route-inbound`（core）：session.subagentsChanged 帧 → effects 回调收到 (sid, kind)；带 seq 的 gap 语义不破坏既有用例。
 
 **集成（renderer，@vue/test-utils）**：mount `SubagentList` → 直调 `useMessageEffects` 的 `onSubagentsChanged` 回调（注入 mock api 返回）→ 断言列表刷新后的 DOM testid（使用者视角，TEST-STRATEGY §3 规则 1）。
 
 ### DoD
 
-上述单测/集成/mock E2E 全绿；typecheck（`pnpm --filter @xyz-agent/frontend run typecheck` + runtime tsc）通过；`session.subagents` 旧类型仍共存（删除在 P3）。
+上述单测/集成全绿（无 mock E2E——本阶段已明确放弃，见开发内容）；typecheck（`pnpm --filter @xyz-agent/frontend run typecheck` + runtime tsc）通过；`session.subagents` 旧类型仍共存（删除在 P3）。
 
 ## 4. P2 — 三个对账点（U2）
 
@@ -117,7 +119,8 @@ pi --mode rpc --session-dir /tmp/probe-sessions \
 |------|------|
 | `packages/renderer/src/composables/effects/useMessageEffects.ts` | `handleMessageComplete` 追加对账：对该 sid 触发 `subagentStore.loadSubagents` + `workflowStore.loadWorkflows`；同 sid 1s 去抖合并（防 steer turn 频繁读放大） |
 | 同上 | `handleSessionExited` 追加对账（pi 死后磁盘即终局） |
-| `packages/core` use-connection / renderer 装配点 | 重连成功回调：遍历 `sessionStore.list` 全量重拉 subagents+workflows（替代原 `session.subagents` stateSnapshot 恢复语义） |
+| `packages/core` use-connection / renderer 装配点 | 重连成功回调：遍历 `sessionStore.list` 全量重拉 subagents+workflows（替代原 `session.subagents` stateSnapshot 恢复语义；挂点 use-connection.ts:226 `connected` watch） |
+| `scripts/probe/` | 新增 JSONL fixture 合成器（A6 探针用：复制真实 session entry 结构生成 ≥10MB，随探针脚本入库） |
 
 ### 验证
 
@@ -130,7 +133,7 @@ pi --mode rpc --session-dir /tmp/probe-sessions \
 2. 等 `session.subagents` 广播出现 running（第二 WS 监听）。
 3. 在 subagent 运行中 `pkill -9` **runtime 子进程**（Electron/renderer 存活；PID 用 `--port=<waitForRuntime 端口>` 消歧，见 §1 消歧规则）。
 4. 等 renderer 自动重启 runtime + WS 重连（重读 runtime.port/runtime-token 后第二 WS 重连成功；「runtime 日志 ready」作兜底观测）。
-5. 断言：侧栏 Agents tab（data-testid）列表与磁盘 JSONL 一致（subagent 条目存在，无空列表/幻影）；日志可见重连全量重拉 RPC。
+5. 断言：侧栏 Agents tab（data-testid）列表与磁盘 JSONL 一致（subagent 条目存在，无空列表/幻影）。重拉 RPC 的观测面：第二 WS 只收广播看不到 RPC 帧——改断言**间接效果**（重拉后若有变化会触发新广播 / DOM 状态），并在守卫与重拉路径补 console 日志后经 `page.on('console')` 捕获（Playwright routeWebSocket 拦不到 Electron renderer WS，§5.2）。
 6. 通过标准：状态收敛到磁盘真相。**归因注意**：本阶段 `session.subagents` stateSnapshot 快照仍在（删除在 P3），重连后快照恢复与对账重拉并存——「纯对账收敛（零信号/零快照）」的归因由 P6 场景 8 在 P3 之后重跑关闭。
 
 **flaky 处理**：LLM 不调 subagent tool → skip + diag（real 轨既有模式）。
@@ -158,7 +161,7 @@ pi --mode rpc --session-dir /tmp/probe-sessions \
 
 **E2E real（形态 A，`e2e/subagent-signal-real.spec.ts`）**——设计 §8 场景 1/2/3：
 - 场景 1（并发终态收敛）：强引导并行启动 2 个 subagent（「必须并行调用两次 subagent tool」）→ **本阶段只验「有界收敛」路径**（bg-notify 60s 窗口 flush → notify 信号 → 重拉；或 turn 结束对账重拉）——秒级断言依赖 P4 的 sidecar 投影（本阶段终态数据仍来自主 JSONL entry，窗口期内拉不到），移至 P4/P6 验证。
-- 场景 2（列表不回退）：preset 一个含 ≥3 条历史 subagent 的 session（fixture：预写主 JSONL 含 toolCall/toolResult/bg-notify entry）→ 打开 → 再启动 1 个 → 断言 4 条全在（F1 结构性消除的直接证明）。
+- 场景 2（列表不回退）：fixture 前置——预写主 JSONL 到 E2E dataDir 的 pi sessions 目录（含 ≥3 组 toolCall/toolResult/bg-notify entry；**首行必须是 session header entry**，extractor 依赖它推导 cwd），SessionScanner.listAll 扫磁盘后侧栏可发现；打开走 UI 点击 session 项或 session.restore RPC（protocol.ts:255；session.create 无 resume 参数）。→ 打开 → 再启动 1 个 → 断言 4 条全在（F1 结构性消除的直接证明）。
 - 场景 3（workflow 完成）：强引导跑最小 workflow → Flows tab running → done。
 
 **过渡症状核验**：P3 落地后 F1 不再出现（对比 P2 之前的复现）。
@@ -175,20 +178,20 @@ runtime 不再持有 subagent 状态（grep `subagentRecords` 零命中）；单
 |------|------|
 | `packages/shared/src/subagent.ts`（SubagentStatus 类型定义处） | `SubagentStatus` 重定义：`streaming / waiting / done / cancelled / stopped / error`（running 拆分、closed/crashed/failed 归并；细分保留在 closedReason/error 字段） |
 | `packages/runtime/src/services/session/subagent-status.ts` | `normalizeSubagentStatus` 映射表**重写**（旧输出 running/closed/crashed/failed → 新 6 态；上游变体 done/completed/success/error/canceled/crashed/active 等的归一目标是语义设计工作，编译断只能暴露类型不匹配）；连带重写 `runtime/test/subagent-status.test.ts`、`packages/shared/__tests__/subagent.test.ts` |
-| `packages/runtime/src/services/session/subagent-extractor.ts` | 四级投影（设计决策 5 表格）：bg-notify entry（最权威）→ `.cancelled` → `.finalized`+子进程 JSONL 末行 → `.alive`+pid+1h 软超时（streaming/waiting 按 A10a idle 位；无则 streaming）→ 孤儿兜底（子进程 JSONL 正常收尾→done，否则 error）。sidecar 路径从 sessionFile 推导，null 时走既有 `findSubagentSessionFile` 时间戳匹配 |
+| `packages/runtime/src/services/session/subagent-extractor.ts` | 四级投影（设计决策 5 表格）：bg-notify entry（最权威）→ `.cancelled` → `.finalized`+子进程 JSONL 末行 → `.alive`+pid+1h 软超时 → 孤儿兜底（子进程 JSONL 正常收尾→done，否则 error）。**waiting 的 idle 位从主 JSONL 的轻量事件 custom_message entry 读取**（A10a 事件无 triggerTurn 会落盘，extractor 读同一 JSONL）；sidecar 路径从 sessionFile 推导，null 时走既有 `findSubagentSessionFile` 时间戳匹配。**A10 裁决非 a 时 waiting 运行时不可达**（类型保留、渲染测试仍覆盖 6 态，UI 短期不出现该值——设计决策 5「A10a 落地后的增量」） |
 | `packages/renderer/src/composables/features/chat/useBackgroundWork.ts` | `hasRunning` → 判 `streaming ∨ waiting` |
 | sidebar `SubagentList` / drawer `SubagentTab` / `sessionStatus.ts` | 状态消费与视觉映射对齐 `STATUS_ICON`（同一状态语言；subagent 无 compacting/retrying 态，映射表裁剪） |
 
 ### 验证
 
-**单测（runtime，extractor 是纯函数，测试矩阵）**：fixture 工厂生成 主 JSONL × sidecar（.finalized/.cancelled/.alive+pid 活/死/超时）× 子进程 JSONL（正常收尾/截断）的全组合投影断言（≥10 用例，含回归基线价值：孤儿不再 running）。
+**单测（runtime，extractor 是纯函数，测试矩阵）**：fixture 工厂生成 主 JSONL × sidecar（.finalized/.cancelled/.alive+pid 活/死/超时）× 子进程 JSONL（正常收尾/截断）的全组合投影断言（≥10 用例，含回归基线价值：孤儿不再 running）；**A10a 分支下矩阵增加轻量事件 entry 维度**（含/不含 idle 位 → waiting/streaming）。
 
 **单测（renderer）**：useBackgroundWork 新判定；SubagentList 各状态 testid/状态点 class 断言（观察者视角，含首屏冒烟模板）。
 
 **集成**：mount SubagentList 全状态快照（6 态渲染正确）。
 
 **E2E real（形态 A，`e2e/subagent-crash-real.spec.ts`）**——设计 §8 场景 7：
-1. subagent running 中 `kill -9` **pi 进程**（pgrep 按 E2E dataDir/session-dir 路径消歧，见 §1）。
+1. 强引导 prompt 明示「启动一个几秒内完成的短任务 subagent」（kill 后孤儿等待时长可控）→ subagent running 中 `kill -9` **pi 进程**（pgrep 按 E2E dataDir/session-dir 路径消歧，见 §1）。
 2. 等子进程自然结束（轮询 pid 消失）。
 3. UI 重开该 session（点击侧栏 session 项或 session.restore 链路；protocol 的 session.create 无 resume 参数）。
 4. 断言：该 subagent 显示 done 或 error（依子进程 JSONL 收尾），**不是 running/streaming**；无扩展补写依赖（本阶段 extension 未改也成立——投影纯 runtime 侧）。
@@ -212,8 +215,12 @@ runtime 不再持有 subagent 状态（grep `subagentRecords` 零命中）；单
 
 **三连**：`pnpm extensions:typecheck && pnpm extensions:lint && pnpm extensions:test`。
 
-**pi CLI 直连实测（AGENTS.md [MANDATORY]：extension 改动优先本地 pi CLI 实测，不经桌面）**：
-1. `pi --mode rpc --session-dir /tmp/xxx --approve --extension <打包产物>` 跑一个 workflow run → `kill -9` pi → 同 session-dir 重启 pi（触发 session_start recovery）。
+**pi CLI 直连实测（AGENTS.md [MANDATORY]：extension 改动优先本地 pi CLI 实测，不经桌面）。`--extension` 产物三选一（前置命令必须执行，否则测到旧代码假通过；extension 包无 build 脚本、main 即 TS 源码）**：
+- 源码直连：`--extension <repo>/extensions/subagent-workflow/index.ts`（pi 支持 TS 入口，最简）；
+- staged 产物：先 `bash scripts/prepare-builtin-extensions.sh` 重新 staging，再 `--extension apps/electron/resources/extensions/@zhushanwen/pi-subagent-workflow`（改源码后必须重跑 staging）；
+- dev-link skill 的 pi 模式（symlink 到 `~/.pi/agent/extensions/` 后 loader 自动发现，**不需要** --extension 参数）。
+
+1. `pi --mode rpc --session-dir /tmp/xxx --approve --extension <上述三选一>` 跑一个 workflow run → `kill -9` pi → 同 session-dir 重启 pi（触发 session_start recovery）。
 2. 断言：`workflow-state/<runId>.jsonl` 末行含 done/failed（6.1 生效）；pi stdout 出现 workflow-result 事件且 **60s 内无自发 agent_start**（6.2 生效）。
 3. 若 A10a：断言轻量事件到达 + 不进下一 turn 上下文。
 
@@ -229,8 +236,8 @@ runtime 不再持有 subagent 状态（grep `subagentRecords` 零命中）；单
 
 **前置**：real renderer bundle 手动构建（与 mock bundle 分批，见 §1 形态 A 前置）——P6 套件全跑前必须确认，否则 global-setup 会 build mock bundle 导致 real spec 全挂。
 
-1. **real E2E 套件全跑**：`npx playwright test e2e/subagent-*-real.spec.ts e2e/workflow-kill-recovery-real.spec.ts`（本计划新增的 4 个 spec）。其中**场景 1 的秒级断言在本阶段补齐**（P3 时只验有界收敛）：A10 信号（P3）+ sidecar 投影（P4）+ 轻量事件（P5，若选 a）全就位后，断言第一个完成的 subagent 秒级显示终态；场景 8 在 P3 后的代码上重跑，关闭「纯对账收敛（零信号/零快照）」归因（P2 遗留）。
-2. **手工场景**（自动化覆盖不到的）：场景 1 的 60s 窗口尾部收敛观察（真并发 2+ subagent 等 60s+）、场景 6 链路同构 code review（grep `subagentRecords` 零命中 + 两条链路 `trigger*Reload` 对称）。
+1. **real E2E 套件全跑**：`npx playwright test e2e/subagent-*-real.spec.ts e2e/workflow-kill-recovery-real.spec.ts`（本计划新增的 4 个 spec）。其中**场景 1 的秒级断言在本阶段补齐**（P3 时只验有界收敛），**按 P0-A10 裁决条件化**：裁决 a/b → 断言第一个完成的 subagent 秒级显示终态（A10 信号 P3 + sidecar 投影 P4 + 轻量事件 P5 全就位）；裁决**退化** → 断言 60s 窗口 + 一个 turn 内有界收敛（对齐设计 §8 场景 1 双分支通过标准——退化分支的实时性回退是设计已接受的，不判 FAIL）。场景 8 在 P3 后的代码上重跑，关闭「纯对账收敛（零信号/零快照）」归因（P2 遗留）。
+2. **手工场景**（自动化覆盖不到的）：场景 1 的 60s 窗口尾部收敛观察——真并发 2+ subagent，等最后一个完成后观察：**PASS 判定 = 最后一个 subagent 完成后 ≤60s 窗口 flush + 一个 turn 内，侧栏全部条目收敛终态；runtime 日志可见 bg-notify custom_message 与 `session.subagentsChanged{kind:'notify'}` 信号**（日志路径从 getDataDir() 动态推导）；场景 6 链路同构 code review（grep `subagentRecords` 零命中 + 两条链路 `trigger*Reload` 对称 + 空结果守卫两 store 同款）。
 3. **dev 冒烟闸门**：`pnpm dev:smoke`。
 4. **既有回归**：renderer/runtime 全量 vitest + `bash scripts/validate-runtime-bundle.sh`（涉及 runtime 打包面）。
 5. **验收记录**：每场景一行结论（PASS/FAIL + 日志路径）回写本文件附录。
@@ -258,7 +265,7 @@ P0 ──→ P1 ──┐
   └──→ P5 ────────────────────┘
 ```
 
-P1/P2 并行（renderer 内不同文件面）；P5 独立 npm 包可与 P3/P4 并行；P6 收口。
+P1/P2 并行（同文件不同函数：都改 useMessageEffects.ts，P1 加 onSubagentsChanged、P2 改 handleMessageComplete/handleSessionExited，冲突面小但需注意 merge）；P5 独立 npm 包可与 P3/P4 并行；P6 收口。P3 必须等 P1+P2 都落地（快照恢复的替代机制就位）。
 
 ## 附录：验收记录（P6 回填）
 
