@@ -54,6 +54,7 @@ vi.mock('../../../core/src/transport/ws-client', () => ({
 vi.mock('@/lib/ipc', () => ({
   getRuntimePort: vi.fn(async () => undefined),
   getRuntimePortOffset: vi.fn(async () => undefined),
+  getRuntimeToken: vi.fn(async () => undefined),
   onRuntimePort: vi.fn(() => () => {}),
   onRuntimeRestarting: vi.fn(() => () => {}),
   onRuntimeFailed: vi.fn(() => () => {}),
