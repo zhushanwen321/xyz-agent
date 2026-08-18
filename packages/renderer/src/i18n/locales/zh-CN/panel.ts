@@ -59,7 +59,7 @@ export default {
     collapse: '收起',
     thinkingBlock: '思考',
     inProgress: '进行中',
-    workflow: 'workflow',
+    workflow: 'Workflow',
     workflowDone: '已完成',
     workflowRunning: '运行中',
     workflowFailed: '失败',

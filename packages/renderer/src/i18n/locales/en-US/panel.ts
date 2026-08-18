@@ -59,7 +59,7 @@ export default {
     collapse: 'Collapse',
     thinkingBlock: 'Thinking',
     inProgress: 'In progress',
-    workflow: 'workflow',
+    workflow: 'Workflow',
     workflowDone: 'Done',
     workflowRunning: 'Running',
     workflowFailed: 'Failed',

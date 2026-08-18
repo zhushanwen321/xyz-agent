@@ -6,7 +6,7 @@
  *  - 点击选项 emit setProject {sessionId, projectId} 且菜单关闭（归类可逆，无两段确认）
  *  - 当前归属项 accent 高亮：命名归属 → 对应项；未归类（projectId undefined）→ 默认项目项
  *    （review S-2：默认项 id='' 与 undefined 归一匹配）
- *  - 未读圆点：unread → session-unread-dot + bg-accent；非未读 → 透明占位 span（aria-hidden）
+ *  - 未读标记：unread → session-unread-dot（7px accent 圆点叠在 icon 右上角）；非未读 → 无标记
  *
  * 菜单经 reka PopoverPortal teleport 到 body（同 command-popover-landing 范式：
  * attachTo: document.body + document.body 查询）。
@@ -64,15 +64,12 @@ describe('SessionItem 未读圆点（review S-5）', () => {
     expect(dot.classes()).toContain('bg-accent')
   })
 
-  it('unread=false → 不渲染 unread dot，渲染透明占位 span（aria-hidden，保 label 对齐）', () => {
+  it('unread=false → 不渲染 unread dot，7px 状态 icon 存在', () => {
     // 注意：markers 模块级 cache 只 hydrate 一次（首查即定），此用例用另一 session id 避免读到上例缓存
     const wrapper = mountItem({ id: 's2' })
     expect(wrapper.find('[data-testid="session-unread-dot"]').exists()).toBe(false)
-    const placeholder = wrapper
-      .findAll('span')
-      .find((s) => s.classes().includes('bg-transparent') && s.classes().includes('rounded-full'))
-    expect(placeholder?.exists()).toBe(true)
-    expect(placeholder!.attributes('aria-hidden')).toBe('true')
+    // 新范式：状态 icon 始终存在（7px 单一 icon 范式），无透明占位 span
+    expect(wrapper.find('[data-testid="session-icon"]').exists()).toBe(true)
   })
 })
 
