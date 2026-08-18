@@ -27,7 +27,7 @@ pi 的能力面（本设计调研期已逐一 read 源码核实，见 §3.3 各�
 
 - `get_state`（rpc-mode.ts:442）：一次返回 model / thinkingLevel / isStreaming / isCompacting / sessionName / pendingMessageCount / messageCount / sessionFile——session 级状态类数据的真值全在此；
 - `get_session_stats`（rpc-mode.ts:566）：contextUsage（上下文用量真值）；
-- `get_messages`（rpc-mode.ts:645）：消息列表真值；
+- `get_messages`（rpc-mode.ts:645）：消息列表真值（xyz 侧已核实：rpc-client 该方法标 `[DEAD]` 生产零调用，getHistory 实际走 `get_entries` entry 树重建，见 `packages/runtime/src/infra/pi/rpc-client.ts:511`）；
 - `get_entries`（rpc-mode.ts:609）：entry 列表，支持 `since=<entryId>` 增量游标；游标失效（entry 不存在）返回错误，调用方退化为全量重拉——**扩展数据的官方增量拉取通道**；
 - `set_session_name`（rpc-mode.ts:632）：pi 侧正确落盘（sessionManager.appendSessionInfo，agent-session.ts:2718）并广播 `session_info_changed`。
 
@@ -95,7 +95,7 @@ pi.setSessionName(title)
 | 3 | 上下文用量 | `get_session_stats` | 5 写点：turn_end / agent_end / compaction 估算 / switchModel 重算 / restore 拉取 | inputTokens 竞态（session-service.ts:461、:837） |
 | 4 | thinkingLevel | `get_state` | 事件 + 主动查询 + 双层缓存 + renderer 字段 | 恒 undefined（session-service.ts:450：pi 同档位切换不 emit 事件） |
 | 5 | modelId | pi agent 态 | 缓存 + 广播 + 全局默认 + 磁盘空串 | 同 #2 |
-| 6 | 消息队列（steer/followUp） | pi `_steering/_followUp` 队列 | pi 快照 + renderer pendingBuffer，文本匹配对接 | 展开失配丢消息（decoupling 文档 P-fifo 风险项） |
+| 6 | 消息队列（steer/followUp） | pi `_steering/_followUp` 队列 | pi 快照 + pendingBuffer（`packages/core/src/domain/chat/store.ts`，core 包，renderer 经 ADR-0059 薄壳消费——已核实），文本匹配对接 | 展开失配丢消息（decoupling 文档 P-fifo 风险项） |
 | 7 | 消息列表/内容 | session 文件 entries | 事件流累积 + agent_end 权威覆盖 + 文件重放 | 分组错乱（fix-chat-flow-order 分支主题） |
 | 8 | subagent 列表/状态 | xyz 扩展 record-store（pi 无概念） | 实时事件 Map + JSONL extractor 双管线；状态 6+ 命名出口 | normalizeSubagentStatus 注释（历史 bug） |
 | 9 | workflow 记录 | xyz 扩展 RunStore | 5 环节：内存 → state 文件 → link entry → 信号广播 → extractor | 旧格式 run 静默丢失（orchestration/jsonl-run-store.ts D-5 version guard：snapshotVersion 不匹配 loadAll 跳过，不向后兼容） |
@@ -179,11 +179,11 @@ auto-rename: rename-session 扩展 ──pi.setSessionName──► sessionManag
 | 缓存 | 判定 | 处置 |
 |---|---|---|
 | session 目录扫描缓存 / git-info 缓存 / quota 缓存 / history-rebuild-cache / turn-render-cache | 纯派生（写方=扫描/转换本身） | 保留不动 |
-| runtime `sessionMetaCache` | 影子状态（label/thinkingLevel 各 3-4 写方） | 收编进 ReplicatedState 实例，删除 |
+| runtime `sessionMetaCache`（= `packages/runtime/src/services/session/session-meta-cache.ts`，sessionId 键；`infra/pi/session-file-utils.ts` 内同名 filePath 键文件头纯派生缓存属「保留」类不动——已核实） | 影子状态（label/thinkingLevel 各 3-4 写方） | 收编进 ReplicatedState 实例，删除 |
 | runtime `session.inputTokens/tokenCount` | 影子状态（5 写点） | 收编；switchModel 重算改在 owner 内部读自己的缓存，竞态从「注释约定」变「结构不可能」 |
 | event-interpreter `subagentRecords` Map | 影子状态（双管线之一） | 收编：扩展自描述 entry（经 get_entries 拉取）为唯一源，Map 变纯派生缓存 |
 | renderer summary 字段（updateLabel/updateSessionState/setGroups 三路写） | 影子状态 | 收编为单一 `applySnapshot` 入口（合并规则见 D1b） |
-| renderer `pendingBuffer` | 职责错位（承担投递定位） | 保留但改**计数 FIFO**：queue_update 差集已算出被投递条数，按条数顺序取 segments，删除文本相等匹配。queue 的 owner 分工见 D6 |
+| `pendingBuffer`（`packages/core/src/domain/chat/store.ts`，core 包，renderer 经 ADR-0059 薄壳消费——已核实） | 职责错位（承担投递定位） | 保留但改**计数 FIFO**：queue_update 差集已算出被投递条数，按条数顺序取 segments，删除文本相等匹配。queue 的 owner 分工见 D6 |
 
 被否：全删（同方案 A）。「先干掉再重建」的过渡态成本极高且不解决独立写路径问题。
 
@@ -212,7 +212,7 @@ auto-rename: rename-session 扩展 ──pi.setSessionName──► sessionManag
 - 扩展侧 record-store/RunStore 保持内存权威；**状态变更时扩展 `appendEntry` 一条自描述完整记录**（字段即 SubagentRecord/WorkflowRunRecord，不依赖读取方逆向解析 toolCall/toolResult 编码）——pi 文件成为扩展数据的持久化权威，写方是 pi（符合绝对写规则），语义归扩展；
 - runtime 消费：`entry_appended` 作失效信号 → `get_entries(since=cursor)` 增量重拉 → 内存 Map 重建为**纯派生缓存**（唯一写方 = entry 扫描）；实时与重开走同一份扫描代码，模式 2 双管线结构性消亡；
 - `subagent-extractor`/`workflow-extractor` 降级为「冷启动旧 session（无自描述 entry）兜底」并标注 legacy；扩展的 state 文件退役或降级为纯性能缓存（可从 entry 完整重建时才允许存在）；
-- workflow 现有 link entry 形态向自描述记录收敛（统一 #8/#9 为同一形态）。
+- workflow 现有 link entry 形态向自描述记录收敛（统一 #8/#9 为同一形态）——现状已核实：`workflow-state-link` 指针 appendEntry 已存在（`extensions/subagent-workflow/src/orchestration/jsonl-run-store.ts:455`），record-store 已有 appendEntry 注入通道（`extensions/subagent-workflow/src/execution/record-store.ts:175/223`，现为 manifest-invalid 上报用），P3.1 是形态收敛（指针 → 自描述全量）而非从零接线（子文档附录 A #7/#8）。
 - 探针：⛔ 自描述 entry 的大小与 append 频率（长 workflow 的 trace 全量快照可能膨胀——实施期 P3 量化，必要时 trace 增量 append + 状态全量 append 两种 customType 分流）；✅ appendEntry 持久化 / entry_appended 转发 / get_entries since 语义均已 read 源码核实（agent-session.ts:2264-2271、rpc-mode.ts:354-356、:609-619；session-manager.ts:92-95 官方状态重建通道）。
 
 **D5 消息流——单一 reducer 双路喂入**：消息是 append-only 日志，不适合快照重拉（streaming 太重）。终态：
@@ -269,8 +269,8 @@ P0 止血 + 护栏先行（活跃 rename 接 RPC 修覆盖 bug + 登记表 + rev
 
 **第 2 层 静态拦截（提交前，模式级）**
 
-- **R1 pi 文件直写检查**（新增 `.githooks/check_pi_direct_write.py` + pre-commit 接入，复用现有 checker 同体系）：runtime/scripts 代码对 session JSONL 的写操作（`openSync('a'/'w')` / `appendFile` / `writeFile` 指向 sessions 目录）一律报错；迁移期唯一 legacy 例外（D2 非活跃 rename）显式 allowlist + 期限注释，P1 删除直写代码后 allowlist 清空，规则变为无条件。**检出边界**：拦字面量/已知 util 形态的直写模式；变量拼接路径静态不可判定——拦模式，不承诺拦刻意绕过的语义（语义归 S1）。
-- **R2 store 写入口检查**（taste-lint 自定义规则，项目已有 no-native-html 等先例）：每个 store 的 mutation 方法只能被其 owner 文件调用，许可表来自登记表。**实现路线**：跨文件调用图分析（复用 check-domain-boundaries 的 import 边分析思路）；首版降级为「拦直呼形态」（import 目标 store 后直调 mutation），登记表条目驱动逐步收紧。
+- **R1 pi 文件直写检查**（新增 `.githooks/check_pi_direct_write.py` + pre-commit 接入，复用现有 checker 同体系；已核实 pre-commit 本体不在 git 跟踪——由 `.githooks/install-hooks.sh` heredoc 生成到 commondir（`--git-common-dir`）hooks，改 checker 接入必须改 install-hooks.sh 并重跑，见子文档附录 A #6）：runtime/scripts 代码对 session JSONL 的写操作（`openSync('a'/'w')` / `appendFile` / `writeFile` 指向 sessions 目录）一律报错；迁移期唯一 legacy 例外（D2 非活跃 rename）显式 allowlist + 期限注释，P1 删除直写代码后 allowlist 清空，规则变为无条件。**检出边界**：拦字面量/已知 util 形态的直写模式；变量拼接路径静态不可判定——拦模式，不承诺拦刻意绕过的语义（语义归 S1）。
+- **R2 store 写入口检查**（taste-lint 自定义规则，项目已有 no-native-html 等先例；R2/R3 规则落点 = 仓库根 `taste-lint/rules/*.mjs`，不在 packages 内——已核实）：每个 store 的 mutation 方法只能被其 owner 文件调用，许可表来自登记表。**实现路线**：跨文件调用图分析（复用 check-domain-boundaries 的 import 边分析思路）；首版降级为「拦直呼形态」（import 目标 store 后直调 mutation），登记表条目驱动逐步收紧。
 - **R3 新缓存强制注解**：新增模块级 Map/ref 缓存必须带 `@data-owner <登记表条目>` 注解，lint 校验注解存在且条目真实。没有「顺手加个缓存」这回事。ReplicatedState 原语落地后（P1），标量状态缓存的合法形态收敛为原语实例，R3 检查「原语之外不得新建 session 状态缓存」。
 - **误报豁免闭环**：R1/R2/R3 拦到合法写入时，豁免路径 = 先在登记表补条目/例外 + 豁免 allowlist 登记（对齐 check-domain-boundaries 既有 allowlist + 注释先例），禁止在代码里静默绕过——预防机制自身不能成为无出口的阻塞源。
 
@@ -319,6 +319,8 @@ P0 止血 + 护栏先行（活跃 rename 接 RPC 修覆盖 bug + 登记表 + rev
 
 ## §5 下一层拆分
 
+> 实施计划（单元 → wave 拆分与执行规格）见子文档 [data-source-governance-plan.md](data-source-governance-plan.md)；本节单元表保留为概览。
+
 **结论：五阶段递进，每阶段独立可验收可回滚；P0 把唯一的已证实 bug 修掉并立起双层护栏，P1-P3 在守护下逐域收敛，P4 固化为长期回归基线。**
 
 **回滚通则**：每阶段保持独立 commit 序列；回滚 = revert 该阶段全部 commit + 等价性测试基线随 commit 一并回退（测试与代码同 commit，revert 即同步）。各阶段特殊回退验证见阶段表后「回滚」行。
@@ -341,7 +343,7 @@ P0 止血 + 护栏先行（活跃 rename 接 RPC 修覆盖 bug + 登记表 + rev
 |---|---|---|
 | P1.1 | `ReplicatedState<T>` 原语 + label/thinkingLevel/modelId/usage/queue 深度/commands 六个配置实例（合并策略含字段空值语义，规则见 D1b）；登记表条目演进为配置 | §2 模式 3 的收敛点，六类数据同构；配置即登记表 |
 | P1.2 | 事件改失效信号：session_info_changed/thinking_level_changed/queue_update/context 相关事件 → dirty + 防抖重拉。modelId 失效源 = switchModel RPC 响应后主动拉快照（已核实 RPC 层无 model 事件，见 D7） | 「事件只做失效」落地的第一步 |
-| P1.3 | 删除 sessionMetaCache；applyContextUpdate 五写点收编为单入口；switchModel 重算移入 owner | 影子状态库退场 |
+| P1.3 | 删除 sessionMetaCache（= `packages/runtime/src/services/session/session-meta-cache.ts`，sessionId 键；`infra/pi/session-file-utils.ts` 内同名 filePath 键纯派生缓存不在删除范围——已核实）；applyContextUpdate 五写点收编为单入口；switchModel 重算移入 owner | 影子状态库退场 |
 | P1.4 | 非活跃 rename 切换短命 pi 进程——形态已定「逐次冷起」（P0.5 冷启动探针已核实 ~500ms 中位数可接受；与 RPC 频率探针为软依赖，不阻塞本单元）；删除 persistSessionName 全部直写代码；R1 allowlist 清空 | 绝对写规则全线生效 |
 | P1.5 | 现有 subscribe/ring/stateSnapshot 快照通道收编（D7 处置决定）：5 个 state 类话题（session.commands / context.update / session.subagents / session.workflowUpdate / session.state_changed）的数据源从事件直写 runtime 缓存切换为对应 ReplicatedState 实例发布，stateSnapshot last-value 从影子缓存快照变为 owner 快照；stream 类话题维持 ring 语义不动。迁移顺序 = P1.1 六实例落地后逐话题切换，每话题独立 commit + 等价性测试断言切换前后 stateSnapshot 内容一致，全部切完后删除 state 话题旧直写路径 | D7「投影一次」的衔接单元——不收编则 renderer 重连仍从 stateSnapshot 收到影子缓存快照，恰是设计要消灭的通道 |
 
@@ -352,7 +354,7 @@ P0 止血 + 护栏先行（活跃 rename 接 RPC 修覆盖 bug + 登记表 + rev
 | 单元 | 内容 | justification |
 |---|---|---|
 | P2.1 | 每个 store 单一 `applySnapshot` 入口，setGroups/updateLabel/updateSessionState 收敛；派生逻辑（merge/normalize/推导）上移 runtime/core 唯一实现，WS 消息改 view-ready DTO | D7 投影一次的 renderer 侧落地 |
-| P2.2 | pendingBuffer 计数 FIFO（删除文本匹配） | #6 失联即丢消息的修复，改动小收益确定 |
+| P2.2 | pendingBuffer 计数 FIFO（删除文本匹配）——已核实计数差集 `countDrained` 已存在（`packages/core/src/domain/chat/effects/registry.ts:65-84`），实际改动面 = `drainPending` 删文本匹配改按条数取 | #6 失联即丢消息的修复，改动小收益确定 |
 | P2.3 | scannedToSummary 空值守卫全量路径核查 | #2 空串覆盖的最后防线 |
 
 回滚：P2.1 写入口收敛是删除性变更（旧写入口删除）——revert 该阶段 commit 即整体回退，等价性测试基线随 commit 回退到上一阶段版本；回退验证 = 重跑场景 2 确认无残留（`applySnapshot` 入口与旧写入口不共存，revert 后不得出现双入口并存）。
@@ -380,7 +382,7 @@ P0 止血 + 护栏先行（活跃 rename 接 RPC 修覆盖 bug + 登记表 + rev
 ### 文件改动地图（核心，非穷举）
 
 - **新增**：`docs/architecture/data-source-registry.md`（P0 起为 SSOT，P1 起由配置生成）；`.agents/skills/pr-cr-fix/agents/review-data-governance.md`（S1，本文档配套交付）；`packages/runtime/src/services/session/replicated-state.ts`（原语）+ 配置实例；`.githooks/check_pi_direct_write.py`（R1）；taste-lint 规则 2 条（R2/R3）；等价性测试 `packages/runtime/src/__tests__/equivalence/`；core 包 `applyEntry` reducer。
-- **收敛**：`rpc-client.ts`（+setSessionName）；`session-lifecycle.ts` / `session-file-utils.ts`（直写收口 → P1 删除）；`session-meta-cache.ts` 删除；`session-service.ts` applyContextUpdate 收编；`event-interpreter.ts` 事件改失效；renderer/core 两侧 store 写入口（含 `packages/core/src/domain/session/store.ts` 等 core 包真实位置——renderer `stores/session.ts` 是 ADR-0059 薄壳）；`effects/registry.ts` queue_update 计数 FIFO。
+- **收敛**：`packages/runtime/src/infra/pi/rpc-client.ts`（+setSessionName）；`session-lifecycle.ts` / `packages/runtime/src/infra/pi/session-file-utils.ts`（直写收口 → P1 删除；rpc-client 与 session-file-utils 实际在 infra/pi/ 不在 services/session/——已核实，见子文档附录 A #1）；`session-meta-cache.ts` 删除；`session-service.ts` applyContextUpdate 收编；`event-interpreter.ts` 事件改失效；renderer/core 两侧 store 写入口（含 `packages/core/src/domain/session/store.ts` 等 core 包真实位置——renderer `stores/session.ts` 是 ADR-0059 薄壳）；`effects/registry.ts` queue_update 计数 FIFO。
 - **扩展**：`extensions/subagent-workflow`（自描述 appendEntry 上报）。session_end 按 D3 裁决 a 维持 sidecar，不新增 appendEntry 扩展。
 - **skill**：`pr-cr-fix/SKILL.md` 维度表 7 → 8（S1 接入）——已随本文档同提交（c8def4a0c）落地，P0 无需再改。
 
