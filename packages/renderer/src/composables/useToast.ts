@@ -40,9 +40,20 @@ function scheduleRemove(id: number): void {
   timers.set(id, timer)
 }
 
+/** 限流策略类型：返回 true 表示应丢弃当前 toast */
+type ToastLimiter = (toasts: Toast[]) => boolean
+
+const defaultLimiter: ToastLimiter = (toasts) => toasts.length >= UI_TOAST_LIMITS.MAX_IN_FLIGHT
+let activeLimiter: ToastLimiter = defaultLimiter
+
+/** 注入自定义限流策略（测试用）。传 null 恢复默认。 */
+export function setToastLimiter(custom: ToastLimiter | null): void {
+  activeLimiter = custom ?? defaultLimiter
+}
+
 /** 入列公共路径：在列上限守门（超出丢弃计数 + warn，防风暴刷屏） */
 function push(type: Toast['type'], message: string): void {
-  if (toasts.value.length >= UI_TOAST_LIMITS.MAX_IN_FLIGHT) {
+  if (activeLimiter(toasts.value)) {
     droppedCount.value += 1
     console.warn(
       `[toast] dropped (in-flight limit ${UI_TOAST_LIMITS.MAX_IN_FLIGHT}, total dropped ${droppedCount.value}): ${message}`,
