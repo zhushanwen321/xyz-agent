@@ -261,10 +261,11 @@ describe('命令执行发送段闭环（executeCommand → plugin.commands.invok
     rpcServer = (service as unknown as { rpcServer: PluginRpcServer }).rpcServer
     port = createMockPort()
     rpcServer.registerWorker('w1', port)
-    // 预置命令注册表条目（register 链路由复合键用例覆盖；此处聚焦发送段）
+    // 预置命令注册表条目（register 链路由复合键用例覆盖；此处聚焦发送段）。
+    // workerId='w1' 与回传 dispatch 来源一致（D2 回传归属校验比对基准）
     const commandRegistry = (service as unknown as { commandRegistry: Map<string, CommandRegistration> }).commandRegistry
     commandRegistry.set(commandCompositeKey('p1', 'cmd1'), {
-      commandId: 'cmd1', pluginId: 'p1', handlerId: 'h1', registeredAt: Date.now(),
+      commandId: 'cmd1', pluginId: 'p1', handlerId: 'h1', workerId: 'w1', registeredAt: Date.now(),
     })
     // host 替换：getWorkerHandle 返回受控 workerId（PluginHost 真实装配归集成层）
     ;(service as unknown as {
@@ -320,6 +321,139 @@ describe('命令执行发送段闭环（executeCommand → plugin.commands.invok
     // 收尾：resolve 第一个，避免悬挂 timer
     await workerReplies('h1', { result: undefined })
     await expect(first).resolves.toBeUndefined()
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// D2 — invoke.result 回传归属校验（handlerId 必须属于来源通道）
+// ══════════════════════════════════════════════════════════════════
+
+describe('invoke.result 回传归属校验（D2 回传段：handlerId 必须属于来源通道）', () => {
+  let tmpDir: string
+  let service: PluginService
+  let rpcServer: PluginRpcServer
+  let portA: ReturnType<typeof createMockPort>
+  let portB: ReturnType<typeof createMockPort>
+  let warnSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'contract-cmdown-'))
+    const registryMock = {
+      getDescriptor: vi.fn(() => ({ pluginId: 'p1', pluginPath: '/tmp/p1' })),
+      getAllDescriptors: () => [],
+    }
+    service = new PluginService(registryMock as never, createMockBroker(), { configDir: tmpDir })
+    ;(service as unknown as { registerRpcMethods(): void }).registerRpcMethods()
+    rpcServer = (service as unknown as { rpcServer: PluginRpcServer }).rpcServer
+    portA = createMockPort()
+    portB = createMockPort()
+    rpcServer.registerWorker('wA', portA)
+    rpcServer.registerWorker('wB', portB)
+    // 命令 p1:cmd1 的执行 Worker 是通道 A（executeCommand 经它发 invoke 通知）
+    ;(service as unknown as {
+      host: { getWorkerHandle: (pluginId: string) => { workerId: string } | undefined }
+    }).host = { getWorkerHandle: () => ({ workerId: 'wA' }) }
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    warnSpy.mockRestore()
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  /** 归属拒绝类 warn 的全部调用文案（滤除无关 warn，如 broadcastFn 缺失提示） */
+  function ownershipWarnMessages(): string[] {
+    return warnSpy.mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .filter((msg: string) => msg.includes('invoke result'))
+  }
+
+  /** 经真实 register dispatch 在通道 A 注册命令 p1:cmd1（registration.workerId 由 ctx 捕获为 'wA'） */
+  function registerOnA(handlerId: string): Promise<void> {
+    return rpcServer.dispatch('wA', {
+      jsonrpc: '2.0',
+      id: 880000 + Math.floor(Math.random() * 999),
+      method: COMMAND_RPC_METHODS.register,
+      params: { pluginId: 'p1', command: { id: 'cmd1' }, handlerId },
+    })
+  }
+
+  /** 从指定通道回传 invoke.result（workerId 即来源通道，归属校验比对对象） */
+  function replyFrom(workerId: string, handlerId: string, payload: { result?: unknown; error?: unknown }): Promise<void> {
+    return rpcServer.dispatch(workerId, {
+      jsonrpc: '2.0',
+      id: 890000 + Math.floor(Math.random() * 999),
+      method: COMMAND_RPC_METHODS.invokeResult,
+      params: { handlerId, ...payload },
+    })
+  }
+
+  it('register 从 ctx 捕获注册通道：registration.workerId = 来源 workerId（通道身份，非消息体自报）', async () => {
+    await registerOnA('h-A')
+    const commandRegistry = (service as unknown as { commandRegistry: Map<string, CommandRegistration> }).commandRegistry
+    expect(commandRegistry.get(commandCompositeKey('p1', 'cmd1'))?.workerId).toBe('wA')
+  })
+
+  it('a) 通道 B 伪造通道 A 的 handlerId 回 result：pending 不被 resolve，挂起至超时 reject + warn 落日志', async () => {
+    vi.useFakeTimers()
+    try {
+      await registerOnA('h-A')
+      const pending = service.executeCommand('p1', 'cmd1', {}) // 故意不 await：保持挂起观察
+      // 发送段已到通道 A
+      expect(notificationsOf(portA).some(n => n.method === COMMAND_RPC_METHODS.invoke)).toBe(true)
+
+      // 通道 B（wB）伪造 h-A 的成功回传
+      await replyFrom('wB', 'h-A', { result: 'forged' })
+
+      // 拒绝投递落宿主日志：含 handlerId + 双方 workerId（可直接排查）
+      const warns = ownershipWarnMessages()
+      expect(warns).toHaveLength(1)
+      expect(warns[0]).toContain('h-A')
+      expect(warns[0]).toContain('wA')
+      expect(warns[0]).toContain('wB')
+
+      // pending 保持挂起（未被 forged resolve）：推进超时窗口后以超时 reject。
+      // 若归属校验缺失，pending 已被 resolve('forged')，此 rejects 断言失败。
+      vi.advanceTimersByTime(10_000)
+      await expect(pending).rejects.toThrow('Command execution timeout: p1:cmd1')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('b) 通道 A 自身回传（归属一致）：pending 正常 resolve，无归属拒绝日志', async () => {
+    await registerOnA('h-A')
+    const pending = service.executeCommand('p1', 'cmd1', {})
+
+    await replyFrom('wA', 'h-A', { result: 'legit' })
+
+    await expect(pending).resolves.toBe('legit')
+    expect(ownershipWarnMessages()).toHaveLength(0)
+  })
+
+  it('c) handlerId 无对应 registration（执行中被注销）：即使归属通道正确也拒绝投递，pending 挂起至超时', async () => {
+    vi.useFakeTimers()
+    try {
+      await registerOnA('h-A')
+      const pending = service.executeCommand('p1', 'cmd1', {})
+
+      // 执行期间命令被注销（registration 清除——插件禁用/crash 清理的对偶场景）
+      await rpcServer.dispatch('wA', {
+        jsonrpc: '2.0', id: 888001, method: COMMAND_RPC_METHODS.unregister,
+        params: { pluginId: 'p1', commandId: 'cmd1' },
+      })
+      // 来源通道正确（wA），但注册表已无该 handlerId 条目 → fail-closed 拒绝
+      await replyFrom('wA', 'h-A', { result: 'late' })
+
+      const warns = ownershipWarnMessages()
+      expect(warns).toHaveLength(1)
+      expect(warns[0]).toContain('h-A')
+
+      vi.advanceTimersByTime(10_000)
+      await expect(pending).rejects.toThrow('Command execution timeout: p1:cmd1')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

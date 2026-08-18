@@ -709,8 +709,51 @@ export class PluginService implements IPluginService {
   /**
    * Worker 经 plugin.commands.invoke.result 回传的执行结果（commands 域 RPC
    * handler 调用）。error 非空 = handler 抛错，reject 对应 pending。
+   *
+   * 归属校验（D2 回传段）：handlerId 必须属于来源通道——查注册表找该 handlerId
+   * 的 registration，registration.workerId（register 时从 ctx 捕获）不等于
+   * sourceWorkerId 即拒绝投递（warn 落日志，pending 留给自身超时）。否则恶意/
+   * 失控 Worker 可伪造他人 handlerId 的 result/error，resolve/reject 其他插件
+   * 的命令 pending。registration 不存在（执行中被注销/禁用清理）同样 fail-closed
+   * 拒绝——归属无从比对即不放行。
+   *
+   * 查表方式：registry 键是复合键 `pluginId:commandId` 而非 handlerId，此处直接
+   * 遍历 values 找 handlerId 匹配。不建 handlerId 反查表的原因：反查表需在
+   * register/unregister handler、removeCommandEntriesFor 及一切直接 set/delete
+   * registry 的路径同步维护，多一处数据源多一处漂移出安全漏洞的机会；命令注册
+   * 量级（单插件个位数 × 插件数十）下每次回传遍历 O(n) 为微秒级，且仅在命令
+   * 执行回传时发生。单一数据源（registry 本身）无一致性风险。
    */
-  private deliverInvokeResult(handlerId: string, payload: { result?: unknown; error?: unknown }): void {
+  private deliverInvokeResult(
+    handlerId: string,
+    payload: { result?: unknown; error?: unknown },
+    sourceWorkerId: string,
+  ): void {
+    let registration: CommandRegistration | undefined
+    for (const reg of this.commandRegistry.values()) {
+      if (reg.handlerId === handlerId) {
+        registration = reg
+        break
+      }
+    }
+
+    if (!registration) {
+      console.warn(
+        `[plugin-service] invoke result dropped: no registration for handlerId='${handlerId}' ` +
+          `(command unregistered or plugin cleaned up?) sourceWorker=${sourceWorkerId}; ` +
+          `pending (if any) left to its own timeout`,
+      )
+      return
+    }
+    if (registration.workerId !== sourceWorkerId) {
+      console.warn(
+        `[plugin-service] invoke result dropped: handlerId='${handlerId}' belongs to ` +
+          `worker='${registration.workerId}' but result arrived from worker='${sourceWorkerId}' ` +
+          `(possible forgery); pending left to its own timeout`,
+      )
+      return
+    }
+
     if (payload.error !== undefined) {
       this.commandInvokes.reject(
         handlerId,
@@ -825,7 +868,8 @@ export class PluginService implements IPluginService {
       activeSessionResolver: this.activeSessionResolver,
       commandRegistry: this.commandRegistry,
       sessionEvents: this.sessionEventDispatch,
-      deliverInvokeResult: (handlerId, payload) => this.deliverInvokeResult(handlerId, payload),
+      deliverInvokeResult: (handlerId, payload, sourceWorkerId) =>
+        this.deliverInvokeResult(handlerId, payload, sourceWorkerId),
       mountPoints: this.mountPoints,
       publishViewUpdate: (payload) => this.publishViewUpdate(payload),
     })

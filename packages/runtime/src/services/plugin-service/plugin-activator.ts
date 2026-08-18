@@ -465,7 +465,9 @@ export class PluginActivator {
       // 同型 {type:'error', pluginId, error}，见其 post 调用），无法精确归属——把该
       // 插件全部在飞 entry resolve(false)：activate/deactivate 两 op 的失败终态都收敛
       // UNLOADED，fail-fast 优于各自挂到超时。activate/deactivate 各自至多一个在飞
-      // entry（in-flight 幂等 + DEACTIVATING 守卫），不存在误伤面。
+      // entry（pendingReplies 以 `${pluginId}:${op}` 复合键存取，Map 键唯一，不依赖
+      // DEACTIVATING 入口守卫——DEACTIVATING 态重入激活时 activate 消息按 Worker IPC
+      // FIFO 排队于 deactivate 之后，回复按复合键精确归属，无错配面），不存在误伤面。
       for (const op of ['activate', 'deactivate'] as const) {
         const key = `${msg.pluginId}:${op}`
         const pending = this.pendingReplies.get(key)

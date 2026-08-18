@@ -6,7 +6,9 @@
  * - sandbox 插件独占子进程；trusted 插件共享（≤10 插件/进程）
  * - IPC 走 fork 默认 channel（child.send/process.on('message')），经 WorkerPort 适配
  *   （{ postMessage: child.send }）注册进 PluginRpcServer——HostToWorkerMessage 消息族零改动复用
- * - 崩溃检测：exit（非 0）/ error / disconnect / fatal_error 消息 → crash 回调（status 幂等守卫）
+ * - 崩溃检测：exit（非 0）/ error / fatal_error 消息 → crash 回调（status 幂等守卫）；
+ *   exit(0) → clean exit 清理不报 crash（L-5，对齐 Worker 版 handleWorkerCleanExit）；
+ *   disconnect → grace 延迟分流（exit 事件权威裁决，仅存活进程断开才报 crash）
  *
  * 打包约束（AGENTS.md #12）：
  * - fork 必须用 process.execPath + env ELECTRON_RUN_AS_NODE='1'（打包后无独立 node）
@@ -23,6 +25,14 @@ const MAX_PLUGINS_PER_TRUSTED_PROCESS = 10
 const LOAD_PLUGIN_TIMEOUT_MS = 10_000
 /** shutdown 等待子进程退出的上限（超过则 SIGKILL） */
 const SHUTDOWN_KILL_TIMEOUT_MS = 2000
+/**
+ * disconnect 后等待 exit 事件的兜底窗口（L-5）。
+ * 实测探针：子进程退出时父进程事件序为 disconnect → exit，且 exit 事件晚于
+ * disconnect 约一个事件循环圈（SIGCHLD 传播 ms 级）——窗口取 25 倍余量，既让
+ * 伴随进程退出的 disconnect 稳稳等到 exit 权威分流，又不让真异常（存活进程断开
+ * IPC）的 crash 上报推迟过久。
+ */
+const DISCONNECT_GRACE_MS = 250
 
 type CrashCallback = (processId: string, pluginIds: string[], error: string) => void
 type ReplyCallback = (msg: unknown) => void
@@ -463,19 +473,65 @@ export class PluginHostProcess implements PluginHostProcessContract {
       this.handleProcessCrash(processId, err.message)
     })
 
-    // disconnect 先于 exit 到达（R3）：统一走 crash 处理，幂等守卫拦截正常 terminate 场景
+    // disconnect 先于 exit 到达（L-5 实测探针：子进程退出时父进程事件序为
+    // disconnect → exit，且 exit 晚约一个事件循环圈，setImmediate 回调里
+    // child.exitCode 仍为 null，占实测 49/50）。此刻无法同步区分「进程退出伴随的
+    // 断开」与「存活进程主动断开 IPC」，立即判死会把 exit(0) 的正常退出误报为
+    // crash（假崩溃 toast + CRASHED 标记 + crashCounts 累积）。故 disconnect 不做
+    // 即时裁决，只挂 grace 兜底，权威分流交给 exit handler：
+    // - exit 随后到达 → clean exit（code 0）/ crash（code≠0）已完成清理，grace
+    //   到期时 handle 已删/已标记，幂等守卫直接返回
+    // - grace 窗口内 exit 未到（进程仍存活）→ IPC 单方面断开的真异常 → 报 crash
+    // - 窗口内 rebuild 已换新 child（processId 是 `sandbox-<pluginId>` 确定值，重建
+    //   不换 id）→ 本定时器捕获的是旧 child 实例，必须按实例归属放行：旧 child 的
+    //   迟到 disconnect/exit 不归新 handle 管（TC13：stale child late exit 不得
+    //   crash 新 handle；removeAllListeners 只摘旧 child 的监听器，摘不掉已在飞的
+    //   本定时器）
     child.on('disconnect', () => {
-      this.handleProcessCrash(processId, 'Child process IPC channel disconnected')
+      const graceTimer = setTimeout(() => {
+        if (this.processInstances.get(processId) !== child) return
+        const handle = this.processes.get(processId)
+        if (!handle || handle.status === 'crashed' || handle.status === 'terminated') return
+        // exit 已到但 handle 尚未被清理的窄窗防御：code 0 的分流归 exit handler
+        if (child.exitCode === 0) return
+        this.handleProcessCrash(processId, 'Child process IPC channel disconnected while process alive')
+      }, DISCONNECT_GRACE_MS)
+      // 兜底定时器不得阻塞 runtime 退出（进程退出场景 exit 已分流，timer 到期即空转）
+      graceTimer.unref?.()
     })
 
     child.on('exit', (code: number | null, signal: string | null) => {
-      if (code !== 0) {
-        console.error(`[plugin-host-process] process ${processId} exited with code ${code} signal ${signal}`)
-        this.handleProcessCrash(processId, `Child process exited with code ${code}`)
+      if (code === 0) {
+        // L-5：exit code 0 是「正常退出」不是崩溃——不触发 onCrash、不进 crash 链
+        // （假崩溃 toast / CRASHED 标记 / crashCounts 累积），但 handle、反向索引与
+        // rpcServer 注册必须清理：残留 handle 会让 assignProcess 把插件分配到已死
+        // 进程（child.send 落空），反向索引指向死进程
+        this.handleProcessCleanExit(processId)
+        return
       }
+      console.error(`[plugin-host-process] process ${processId} exited with code ${code} signal ${signal}`)
+      this.handleProcessCrash(processId, `Child process exited with code ${code}`)
     })
 
     return handle
+  }
+
+  /**
+   * exit code 0 的子进程清理（L-5，对齐 Worker 版 handleWorkerCleanExit）：正常退出
+   * 与崩溃分流——不报 crash（onCrash 不触发、不进上层 crashCounts/rebuild 链）。
+   * 幂等守卫与 crash 路径同款（crashed/terminated 已处理过则跳过；terminateProcess /
+   * shutdown 的 pre-mark 路径自带清理，不会重复到达这里）。
+   */
+  private handleProcessCleanExit(processId: string): void {
+    const handle = this.processes.get(processId)
+    if (!handle || handle.status === 'crashed' || handle.status === 'terminated') return
+    handle.status = 'terminated'
+    const pluginIds = [...handle.pluginIds]
+    this.rpcServer.unregisterWorker(processId)
+    this.removeIndexEntries(processId, pluginIds)
+    this.processInstances.delete(processId)
+    this.processes.delete(processId)
+    console.log(`[plugin-host-process] process ${processId} exited cleanly (code 0); handle cleaned up`)
   }
 
   /**

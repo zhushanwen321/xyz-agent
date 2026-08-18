@@ -359,11 +359,23 @@ export function initSandbox(pluginDir: string): void {
   // 生产 CJS bundle 中 esbuild 将该 import 编译为 require('node:module') 解构，等价。
   const ModuleApi = Module as ModuleWithResolveFilename
   const _originalResolveFilename = ModuleApi._resolveFilename
+  // S-36（spec §5 待验证检查点）：CJS 混用路径的真实存在性未证实——sandbox 插件
+  // 加载主通路走 ESM loader 边界，尚未观察到插件代码走 CJS require。保留拦截器但
+  // 加一次性监控日志作观察信号：首次有 CJS require 经过本 patch（无论 interceptor
+  // 放行还是拒绝）即输出，之后静默。观察期至 ~2026-11，无命中再删除拦截器（减法）。
+  // fork 子进程的 console 输出经 stdio 管道进 runtime 日志，可见性足够。
+  let interceptionLogged = false
   ModuleApi._resolveFilename = function (
     request: string,
     ...args: unknown[]
   ): string {
     const resolved = _originalResolveFilename.call(this, request, ...args) as string
+    if (!interceptionLogged) {
+      interceptionLogged = true
+      console.log(
+        `[plugin-sandbox] CJS require interception active for plugin dir: ${pluginDir} — spec gate S1-W3 usage monitor (observation window ends ~2026-11)`,
+      )
+    }
     interceptor(request, resolved)
     return resolved
   }

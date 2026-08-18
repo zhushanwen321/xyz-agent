@@ -65,8 +65,8 @@ export interface RpcSetupContext {
   sessionEvents: SessionEventDispatch
   /** 挂载点集合（renderer 经 plugin.mountPoints.sync 上报的副本，AC10） */
   mountPoints: string[]
-  /** Worker invoke.result 回传的 pending resolve/reject（S3-W1，PluginService 私有） */
-  deliverInvokeResult: (handlerId: string, payload: { result?: unknown; error?: unknown }) => void
+  /** Worker invoke.result 回传的 pending resolve/reject（S3-W1，PluginService 私有）；sourceWorkerId 为回传来源通道（D2 回传归属校验） */
+  deliverInvokeResult: (handlerId: string, payload: { result?: unknown; error?: unknown }, sourceWorkerId: string) => void
   /**
    * views.update 的广播出口（wave:perf-w08，02 文档 D1-1）：PluginService 实现的
    * bus 定向发布（transient）/ 全局广播兜底分流，见 publishViewUpdate 实现。
@@ -259,7 +259,8 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
         console.warn('[plugin-rpc-setup] commands.register broadcast dropped: no broadcastFn configured')
       }
     },
-    deliverInvokeResult: (handlerId, payload) => ctx.deliverInvokeResult(handlerId, payload),
+    deliverInvokeResult: (handlerId, payload, sourceWorkerId) =>
+      ctx.deliverInvokeResult(handlerId, payload, sourceWorkerId),
   })
 
   // ── Views RPC handlers ───────────────────────────────────

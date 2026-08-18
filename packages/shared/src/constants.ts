@@ -83,11 +83,13 @@ export const IMAGE_LIMITS = {
  *
  * 实施期校准依据（S1-W1 ⛔ 门，spec §3.3 D4）：最大合法单条消息是贴图通路
  * （session.writeImage / message.send 的 base64 图片数组，base64 膨胀 4/3）。
- * 实测贴图分布：粘贴截图典型 1-3MB PNG，P99.9 × 2 ≈ 8MB，与 16MB 取小 → 16MB
- * 仍有余量。注意边界：IMAGE_LIMITS.SINGLE_MAX_BYTES（20MB 原图解码后）允许的单图
- * base64 化后约 26.7MB，超过 16MB 的极端原图会被本传输层上限先拒——属预期收紧
- * （贴图应压缩到 12MB 原图以内；若后续实测用户贴图 P99.9 上移，调大此常量并同步
- * 复核贴图回归验收）。
+ * 实测贴图分布：粘贴截图典型 1-3MB PNG，P99.9 约 4-8MB；16MB 为绝对上限，
+ * 约合 P99.9 的 2~4 倍余量（并非与 P99.9×2 做取小——min(8MB, 16MB)=8MB，
+ * 与实际取值 16MB 矛盾，取小表述不成立）。注意边界：IMAGE_LIMITS.
+ * SINGLE_MAX_BYTES（20MB 原图解码后）允许的单图 base64 化后约 26.7MB，超过
+ * 16MB 传输上限——单图 >12MB 的原图会被本传输层上限先拒，属预期收紧（12MB ×
+ * 4/3 = 16MB 恰为上限，贴图应压缩到 12MB 原图以内；若后续实测用户贴图 P99.9
+ * 上移，调大此常量并同步复核贴图回归验收）。
  */
 // eslint-disable-next-line no-magic-numbers
 export const MAX_WS_PAYLOAD_BYTES: number = 16 * 1024 * 1024

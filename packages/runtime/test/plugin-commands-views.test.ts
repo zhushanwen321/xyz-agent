@@ -128,6 +128,7 @@ describe('commands.register（主线程侧）', () => {
       commandId: 'cmd1',
       pluginId: 'p1',
       handlerId: 'h1',
+      workerId: 'w1',
       registeredAt: Date.now(),
     })
     const port = createMockPort<WorkerPort>()

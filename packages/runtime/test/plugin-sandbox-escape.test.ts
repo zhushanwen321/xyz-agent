@@ -235,3 +235,99 @@ describe('S1-W3: BLOCKED_BUILTINS SSOT 防退化', () => {
     expect(loaderSrc).toContain("require('./plugin-blocked-builtins.cjs')")
   })
 })
+
+describe('S-36: CJS 拦截一次性监控日志（usage monitor）', () => {
+  // 与 plugin-sandbox-process-guards.test.ts 同一隔离模式：initSandbox 修改全局
+  // process.env / process.kill / process.ppid / Module._resolveFilename，必须在 fork
+  // 子进程调用（进程退出即丢弃污染，in-process 不可恢复）。区别在于本 fixture 由
+  // 测试动态生成到 mkdtemp（不新增仓库 fixture 文件），经 --import tsx 加载 .ts 源码；
+  // cwd 指向 packages/runtime 保证 tsx 从项目 node_modules 解析（对齐既有 fork 用例）。
+  const PLUGIN_BOOTSTRAP_TS = join(__dirname, '../src/services/plugin-service/plugin-bootstrap.ts')
+  const RUNTIME_ROOT = join(__dirname, '..')
+
+  interface MonitorResult {
+    monitorCalls: string[]
+    resolveCount: number
+    loaded: string[]
+  }
+
+  it('插件 CJS require 触发 patch 后，监控日志恰好输出一次，第二次 require 静默', async () => {
+    const workDir = mkdtempSync(join(tmpdir(), 's36-monitor-'))
+    const pluginDir = join(workDir, 'plugin')
+    mkdirSync(pluginDir)
+    // 两个不同 helper：两次 require 都真实走 _resolveFilename（require 同一文件第二
+    // 次命中 CJS 模块缓存不触发 resolve，会把「恰好一次」变成缓存假阴性）
+    writeFileSync(join(pluginDir, 'helper-a.cjs'), "module.exports = { tag: 'a' }\n")
+    writeFileSync(join(pluginDir, 'helper-b.cjs'), "module.exports = { tag: 'b' }\n")
+    const fixturePath = join(workDir, 'fixture.cjs')
+    writeFileSync(
+      fixturePath,
+      [
+        "'use strict'",
+        '// S-36 fixture：spy console.log → initSandbox → 两次界内 CJS require → 回传计数',
+        'const calls = []',
+        'const originalLog = console.log',
+        'console.log = (...args) => { calls.push(args.map(String).join(" ")) }',
+        '// node:module 在 BLOCKED_BUILTINS 黑名单内，须在 initSandbox 装 patch 前取好构造器',
+        "const Module = require('node:module').Module",
+        `const { initSandbox } = require(${JSON.stringify(PLUGIN_BOOTSTRAP_TS)})`,
+        `initSandbox(${JSON.stringify(pluginDir)})`,
+        '// 计数后续 _resolveFilename 触发次数（证明两次 require 都经过了 sandbox patch）',
+        'const sandboxPatched = Module._resolveFilename',
+        'let resolveCount = 0',
+        'Module._resolveFilename = function (...args) {',
+        '  resolveCount++',
+        '  return sandboxPatched.apply(this, args)',
+        '}',
+        `const a = require(${JSON.stringify(join(pluginDir, 'helper-a.cjs'))})`,
+        `const b = require(${JSON.stringify(join(pluginDir, 'helper-b.cjs'))})`,
+        'console.log = originalLog',
+        "process.stdout.write('S36_RESULT:' + JSON.stringify({",
+        '  monitorCalls: calls.filter((c) => c.includes("CJS require interception active")),',
+        '  resolveCount,',
+        '  loaded: [a.tag, b.tag],',
+        '}))',
+        '',
+      ].join('\n'),
+    )
+
+    const result = await new Promise<MonitorResult>((resolveP, reject) => {
+      const child = fork(fixturePath, [], {
+        execPath: process.execPath,
+        execArgv: ['--import', 'tsx'],
+        cwd: RUNTIME_ROOT,
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      })
+      let stdout = ''
+      let stderr = ''
+      child.stdout?.on('data', (d: Buffer) => { stdout += d.toString() })
+      child.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
+      child.on('error', reject)
+      child.on('close', (code) => {
+        const line = stdout.split('\n').find((l) => l.startsWith('S36_RESULT:'))
+        if (code !== 0 || !line) {
+          reject(new Error(`fixture exited ${code}. stdout=${stdout} stderr=${stderr}`))
+          return
+        }
+        try {
+          resolveP(JSON.parse(line.slice('S36_RESULT:'.length)) as MonitorResult)
+        } catch (e) {
+          reject(new Error(`fixture result parse failed: ${(e as Error).message}`))
+        }
+      })
+    })
+    rmSync(workDir, { recursive: true, force: true })
+
+    // 两次 require 都真实经过了 sandbox patch 且加载成功（排除缓存假阴性）
+    expect(result.resolveCount).toBeGreaterThanOrEqual(2)
+    expect(result.loaded).toEqual(['a', 'b'])
+    // 监控日志恰好一次：首次 patch 触发输出，第二次 require 静默
+    expect(result.monitorCalls).toHaveLength(1)
+    expect(result.monitorCalls[0]).toContain(
+      `[plugin-sandbox] CJS require interception active for plugin dir: ${pluginDir}`,
+    )
+    expect(result.monitorCalls[0]).toContain(
+      'spec gate S1-W3 usage monitor (observation window ends ~2026-11)',
+    )
+  }, 30_000)
+})

@@ -68,11 +68,18 @@ export interface CommandDescriptor {
  * handlerRef 语义：handlerId 是 Worker 本地 handler 引用（invoke 回调用），
  * pluginId 定位 Worker，与 s2 IF6 CommandRecord.handlerRef 对齐（仅契约对齐，不依赖 s2 代码）。
  * registry 的 key 是复合键 `pluginId:commandId`（commandCompositeKey），非裸 commandId。
+ *
+ * workerId：注册通道归属（register 时从 RpcDispatchContext 捕获，来源宿主闭包
+ * 不可伪造）。invoke.result 回传按它做归属校验（D2 回传段）：来源通道不是注册
+ * 通道的回传一律拒绝投递——否则恶意/失控 Worker 可伪造他人 handlerId 的
+ * result/error，resolve/reject 其他插件的命令 pending。
  */
 export interface CommandRegistration {
   commandId: string
   pluginId: string
   handlerId: string
+  /** 注册通道归属（ctx.workerId，register 时捕获）——回传归属校验的比对基准 */
+  workerId: string
   title?: string
   category?: string
   keybinding?: string
@@ -86,11 +93,17 @@ export interface CommandService {
   registry: Map<string, CommandRegistration>
   /** register 后下行广播 plugin:commandRegistered（payload 为 CommandRegistration） */
   broadcastRegistered: (reg: CommandRegistration) => void
-  /**
+/**
    * Worker 经 plugin.commands.invoke.result 回传的执行结果（S3-W1 发送段闭环）。
    * error 非空 = handler 抛错（reject 对应 pending），否则 resolve result。
+   * sourceWorkerId 是回传消息的来源通道（dispatch ctx 捕获，不可伪造），
+   * 实现方须按注册表做归属校验后投递（D2 回传段）。
    */
-  deliverInvokeResult: (handlerId: string, payload: { result?: unknown; error?: unknown }) => void
+  deliverInvokeResult: (
+    handlerId: string,
+    payload: { result?: unknown; error?: unknown },
+    sourceWorkerId: string,
+  ) => void
 }
 
 /**
@@ -105,7 +118,7 @@ export function registerCommandRpcHandlers(
   rpcServer: PluginRpcServer,
   service: CommandService,
 ): void {
-  rpcServer.registerMethod(COMMAND_RPC_METHODS.register, async (params) => {
+  rpcServer.registerMethod(COMMAND_RPC_METHODS.register, async (params, ctx) => {
     // S3-W3 窄校验（fail-fast，畸形不建注册表条目不广播）：
     // pluginId/command.id/handlerId 过 asSafeKey（白名单含 1-128 上限，
     // 语法上排除路径分隔符与复合键注入字符）；可选元数据字段 present
@@ -133,6 +146,9 @@ export function registerCommandRpcHandlers(
       commandId,
       pluginId,
       handlerId,
+      // D2 回传归属：注册通道从 dispatch ctx 捕获（宿主闭包来源，插件不可
+      // 自报），invoke.result 回传据此校验来源通道一致才投递 pending。
+      workerId: ctx.workerId,
       ...(title !== undefined ? { title } : {}),
       ...(category !== undefined ? { category } : {}),
       ...(keybinding !== undefined ? { keybinding } : {}),
@@ -158,12 +174,14 @@ export function registerCommandRpcHandlers(
     return { unregistered: true }
   })
 
-  rpcServer.registerMethod(COMMAND_RPC_METHODS.invokeResult, async (params) => {
+  rpcServer.registerMethod(COMMAND_RPC_METHODS.invokeResult, async (params, ctx) => {
     const handlerId = asString(params.handlerId, 'handlerId')
     const payload: { result?: unknown; error?: unknown } = params.error !== undefined
       ? { error: params.error }
       : { result: params.result }
-    service.deliverInvokeResult(handlerId, payload)
+    // D2 回传归属：来源通道（ctx.workerId，宿主闭包捕获不可伪造）随回传下传，
+    // 由 deliverInvokeResult 比对注册表归属后决定是否投递 pending。
+    service.deliverInvokeResult(handlerId, payload, ctx.workerId)
     return { delivered: true }
   })
 }
