@@ -114,7 +114,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { getSettingsStore } from '@xyz-agent/core'
-import { BUILTIN_TOOLS, BUILTIN_EXTENSION_FILES } from '@xyz-agent/shared'
+import { BUILTIN_TOOLS, isBuiltinExtension } from '@xyz-agent/shared'
 import type { PiLaunchPreset, ToolMode, ExtensionMode } from '@xyz-agent/shared'
 
 const props = defineProps<{
@@ -153,18 +153,13 @@ const EXT_MODES = computed(() => [
 ])
 
 /**
- * 可用扩展列表（排除 3 个内置文件型 extension）。
+ * 可用扩展列表（排除内置扩展）。
  *
- * S-RN-4：用 BUILTIN_EXTENSION_FILES 精确匹配（shared SSOT），而非 endsWith('.js')
- * 兜底——后者会误伤未来任何 .js 扩展。
- *
- * 类型注记：BUILTIN_EXTENSION_FILES 是 `as const` 字面量元组，`.includes(string)`
- * 会因字面量类型不匹配报 TS2345，故断言为 readonly string[] 做包含判断。
+ * 使用 isBuiltinExtension 函数检查扩展是否是内置的（基于 mandatory-extensions.json SSOT）。
  */
-const BUILTIN_EXT_FILES: readonly string[] = BUILTIN_EXTENSION_FILES
 const availableExtensions = computed(() =>
   extensions.value
-    .filter((e) => !BUILTIN_EXT_FILES.includes(e.name))
+    .filter((e) => !isBuiltinExtension(e.name))
     .map((e) => ({ name: e.name, displayName: e.displayName ?? e.name })),
 )
 

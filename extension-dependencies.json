@@ -159,6 +159,21 @@
       "name": "@zhushanwen/pi-session-reader",
       "directory": "extensions/session-reader",
       "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-agent-ext",
+      "directory": "extensions/agent-ext",
+      "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-system-prompt",
+      "directory": "extensions/system-prompt",
+      "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-msg-id-mapper",
+      "directory": "extensions/msg-id-mapper",
+      "dependsOn": []
     }
   ]
 }

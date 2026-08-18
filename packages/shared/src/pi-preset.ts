@@ -39,11 +39,6 @@ export const BUILTIN_TOOLS = ['read', 'write', 'bash', 'edit', 'grep', 'find', '
  * 消费方：extension-service.ts 的 builtinExts（Subagent C 打通）。
  * 本 shared 层仅声明标识，runtime 消费由 Wave 2 的 Subagent C 处理。
  */
-export const BUILTIN_EXTENSION_FILES = [
-  'xyz-agent-extension.js',
-  'xyz-system-prompt-extension.js',
-  'xyz-client-msg-id-mapper.js',
-] as const
 
 /** Pi 启动参数预设 */
 export interface PiLaunchPreset {

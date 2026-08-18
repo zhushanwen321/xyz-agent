@@ -1,13 +1,12 @@
 /**
- * ExtensionService.getExtensionPaths 追加 xyz-system-prompt-extension.js 单测（TDD 红灯）。
+ * ExtensionService 扩展加载测试。
  *
  * 断言：
- * - 当 xyz-system-prompt-extension.js 存在时，返回路径列表包含它
- * - 它位于 xyz-agent-extension.js 之后
- * - 当该文件不存在时，路径列表不包含它
+ * - 新的扩展包（@zhushanwen/pi-agent-ext 等）通过 mandatory-extensions.json 机制加载
+ * - 旧的文件型扩展机制已被移除
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ExtensionService } from '../src/services/extension-service.js'
@@ -46,24 +45,6 @@ let tmpRoot: string
 let projectRoot: string
 let settingsDir: string
 let service: ExtensionService
-
-/**
- * 3 个 builtin extension 文件位于 repo root（= tmpRoot，模拟真实仓库根目录），
- * dev 模式 projectRoot = `<repo>/apps/electron`（见 process-control.ts:154 app.getAppPath()），
- * getExtensionFilePath dev 分支从 projectRoot/../.. 解析回 repo root（见 runtime-env.ts [HISTORICAL] 注释）。
- * 故这里把文件放在 tmpRoot、projectRoot 设为 tmpRoot/apps/electron 以对齐真实 dev 场景。
- */
-function agentExtensionPath(): string {
-  return join(tmpRoot, 'xyz-agent-extension.js')
-}
-
-function systemPromptExtensionPath(): string {
-  return join(tmpRoot, 'xyz-system-prompt-extension.js')
-}
-
-function clientMsgIdMapperPath(): string {
-  return join(tmpRoot, 'xyz-client-msg-id-mapper.js')
-}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -106,53 +87,10 @@ afterEach(() => {
   }
 })
 
-describe('ExtensionService.getExtensionPaths system-prompt extension', () => {
-  it('xyz-system-prompt-extension.js 存在时，结果包含它且位于 xyz-agent-extension.js 之后', async () => {
-    writeFileSync(agentExtensionPath(), '// agent', 'utf-8')
-    writeFileSync(systemPromptExtensionPath(), '// system-prompt', 'utf-8')
-
+describe('ExtensionService 扩展加载', () => {
+  it('getExtensionPaths 返回空数组（旧文件型扩展已移除）', async () => {
     const paths = await service.getExtensionPaths()
-
-    expect(paths.some(p => p.endsWith('xyz-agent-extension.js'))).toBe(true)
-    expect(paths.some(p => p.endsWith('xyz-system-prompt-extension.js'))).toBe(true)
-
-    const agentIdx = paths.findIndex(p => p.endsWith('xyz-agent-extension.js'))
-    const systemIdx = paths.findIndex(p => p.endsWith('xyz-system-prompt-extension.js'))
-    expect(systemIdx).toBeGreaterThan(agentIdx)
-  })
-
-  it('xyz-system-prompt-extension.js 不存在时，结果不包含它', async () => {
-    writeFileSync(agentExtensionPath(), '// agent', 'utf-8')
-    expect(existsSync(systemPromptExtensionPath())).toBe(false)
-
-    const paths = await service.getExtensionPaths()
-
-    expect(paths.some(p => p.endsWith('xyz-agent-extension.js'))).toBe(true)
-    expect(paths.some(p => p.endsWith('xyz-system-prompt-extension.js'))).toBe(false)
-  })
-})
-
-describe('ExtensionService.getExtensionPaths client-msg-id-mapper extension', () => {
-  it('xyz-client-msg-id-mapper.js 存在时，结果包含它且位于 system-prompt 之后', async () => {
-    writeFileSync(agentExtensionPath(), '// agent', 'utf-8')
-    writeFileSync(systemPromptExtensionPath(), '// system-prompt', 'utf-8')
-    writeFileSync(clientMsgIdMapperPath(), '// client-msg-id-mapper', 'utf-8')
-
-    const paths = await service.getExtensionPaths()
-
-    expect(paths.some(p => p.endsWith('xyz-client-msg-id-mapper.js'))).toBe(true)
-    // 位于 system-prompt 之后（追加顺序：agent → system-prompt → client-msg-id-mapper）
-    const systemIdx = paths.findIndex(p => p.endsWith('xyz-system-prompt-extension.js'))
-    const mapperIdx = paths.findIndex(p => p.endsWith('xyz-client-msg-id-mapper.js'))
-    expect(mapperIdx).toBeGreaterThan(systemIdx)
-  })
-
-  it('xyz-client-msg-id-mapper.js 不存在时，结果不包含它', async () => {
-    writeFileSync(agentExtensionPath(), '// agent', 'utf-8')
-    expect(existsSync(clientMsgIdMapperPath())).toBe(false)
-
-    const paths = await service.getExtensionPaths()
-
-    expect(paths.some(p => p.endsWith('xyz-client-msg-id-mapper.js'))).toBe(false)
+    // 新的扩展通过 mandatory-extensions.json 机制加载，不在 getExtensionPaths 中
+    expect(paths).toEqual([])
   })
 })

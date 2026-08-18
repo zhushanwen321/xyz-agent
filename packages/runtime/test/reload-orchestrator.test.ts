@@ -10,10 +10,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 describe('reload-orchestrator (W5)', () => {
   it('U10: builtin extension 注册 __xyz_reload__', async () => {
-    // 读 xyz-agent-extension.js 源码断言注册
+    // 读 extensions/agent-ext/src/index.ts 源码断言注册
     const fs = await import('node:fs')
     const src = fs.readFileSync(
-      path.resolve(__dirname, '../../../xyz-agent-extension.js'),
+      path.resolve(__dirname, '../../../extensions/agent-ext/src/index.ts'),
       'utf-8',
     )
     expect(src).toContain("registerCommand('__xyz_reload__'")
