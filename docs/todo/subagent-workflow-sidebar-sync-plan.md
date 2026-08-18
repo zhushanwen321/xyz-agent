@@ -1,6 +1,6 @@
 # subagent/workflow 侧边栏状态同步 — 开发计划
 
-> **一句话结论**：把设计文档（`subagent-workflow-sidebar-sync-design.md` v4）的 M0-M3 展开为 7 个阶段（P0-P6），每阶段「开发内容（文件级）+ 单测 + E2E real 验证（启动真实 pi）+ DoD」；P0 探针先行消解全部未验证前提，P1/P2 可并行，P5 与 P3/P4 可并行。
+> **一句话结论**：把设计文档（`subagent-workflow-sidebar-sync-design.md` v6）的 M0-M3 展开为 7 个阶段（P0-P6），每阶段「开发内容（文件级）+ 单测 + E2E real 验证（启动真实 pi）+ DoD」；P0 探针先行消解全部未验证前提，P1/P2 可并行，P5 与 P3/P4 可并行。
 
 <!-- 层声明：本计划是设计文档的下一层（实现计划），文件级任务 + 可执行验证步骤，不再展开函数实现。 -->
 
@@ -14,7 +14,7 @@
 | P3 | runtime 无状态化（U3a） | **P1+P2**（P1 供信号消费端；P2 的重连重拉是 P3 删除 stateSnapshot 恢复的替代机制——P3 先于 P2 落地会让重连场景丢列表恢复） | 决策 1/2 的 runtime 半 |
 | P4 | extractor 投影 + SubagentStatus 枚举（U3b） | P3（广播已信号化） | 决策 5 |
 | P5 | extension 修复（U4） | P0（A8/A10） | 决策 6 + 轻量信号（若 A10 选 a） |
-| P6 | 全链路验收（设计 §8 的 8 场景） | P1-P5 | 验收关闭 |
+| P6 | 全链路验收（设计 §8 的 9 场景，v6 含场景 9 chatMode 等续聊语义） | P1-P5 | 验收关闭 |
 
 每个阶段的 git 粒度：阶段内按单元 commit，每 commit 过 pre-commit（全量修复，禁 SKIP）。
 
@@ -72,7 +72,8 @@ pi --mode rpc --session-dir /tmp/probe-sessions \
   - 候选 a：测试 extension 在终态转换点发 `{customType:'subagent-state-changed', display:false}`（无 triggerTurn）→ 验证 runtime 侧能收到 message_start 事件、且该消息**不进 LLM 下一 turn 的上下文**（检查下一 turn 的 message entry 不含它；若进上下文，记录 token 代价并评级）。
   - 候选 b：验证 background subagent 结束时 `subagent.stream_delta` 终止帧（lines:undefined）必然到达 runtime——三步：① pi CLI 直连跑真实 subagent，grep pi stdout JSONL 确认终止帧必然发出（streamSink 在 RPC 模式恒注入）；② 形态 B 隔离 runtime 挂探针日志于 event-adapter 的 stream 终止帧解析点（`event-adapter.ts:303-304`），确认帧到达 interpreter；③ **特异性验证**：跑 chatMode（conversation:true）一轮完成，断言终止帧是否在**轮次边界**（非终态）也发出（预期：是——`stream.dispose()` 在 runAndFinalize finally，chatMode 每轮触发）。裁决评分纳入「轮次误触发」：若仍选 b，P3 的信号 kind 必须降级为幂等 `changed`（或翻译处过滤），不得用 `terminal`。
   - 候选 a 补充：发起点集合 = **终态转换 + 轮次完成（idle 位翻转）**（仅挂终态转换则 waiting 无数据源）；每轮一条 custom_message entry 的落盘积累与「不进 LLM 上下文」在探针中一并评估。
-  - 产出裁决：a/b/退化（都不可用则 UI 走窗口 + 对账，正确性不变）。
+  - **冷路径窗口期抖动探针**（级 5 依赖）：chatMode 冷路径（idle 超时回收后续聊一轮）完成瞬间立即重拉，断言投影是否落级 6 误报 done（轮次 entry 尚在窗口内）——真实发生则实施级 6 的 startedAt 窗口宽限（start entry 时间距今 < 窗口期 + 1 turn 且无终态 entry → 保守 streaming）。
+  - 产出裁决：a/b/退化（都不可用则 UI 走窗口 + 对账，正确性不变）+ 冷路径抖动是否需要宽限规则。
 
 ### 验证（本阶段产出即验证）
 
@@ -161,7 +162,7 @@ pi --mode rpc --session-dir /tmp/probe-sessions \
 **单测（runtime 目录跑）**：现有 event-interpreter 测试改造——subagent tool-call-end → 断言广播 `session.subagentsChanged`（不再断言全集 payload）；bg-notify → 信号；确认无 `subagentRecords` 残留（grep 断言进测试或 review 清单）。
 
 **E2E real（形态 A，`e2e/subagent-signal-real.spec.ts`）**——设计 §8 场景 1/2/3：
-- 场景 1（并发终态收敛）：强引导并行启动 2 个 subagent（「必须并行调用两次 subagent tool」）→ **本阶段只验「有界收敛」路径**（bg-notify 60s 窗口 flush → notify 信号 → 重拉；或 turn 结束对账重拉）——秒级断言依赖 P4 的 sidecar 投影（本阶段终态数据仍来自主 JSONL entry，窗口期内拉不到），移至 P4/P6 验证。
+- 场景 1（并发终态收敛）：强引导并行启动 2 个 subagent（「必须并行调用两次 subagent tool」）→ **本阶段只验「有界收敛」路径**（bg-notify 60s 窗口 flush → notify 信号 → 重拉；或 turn 结束对账重拉）——秒级断言依赖 P4 的六级投影（本阶段终态数据仍来自主 JSONL entry，窗口期内拉不到），移至 P4/P6 验证。
 - 场景 2（列表不回退）：fixture 前置——预写主 JSONL 到 E2E dataDir 的 pi sessions 目录（含 ≥3 组 toolCall/toolResult/bg-notify entry；**首行必须是 session header entry**，extractor 依赖它推导 cwd），SessionScanner.listAll 扫磁盘后侧栏可发现；打开走 UI 点击 session 项或 session.restore RPC（protocol.ts:255；session.create 无 resume 参数）。→ 打开 → 再启动 1 个 → 断言 4 条全在（F1 结构性消除的直接证明）。
 - 场景 3（workflow 完成）：强引导跑最小 workflow → Flows tab running → done。
 
@@ -171,23 +172,24 @@ pi --mode rpc --session-dir /tmp/probe-sessions \
 
 runtime 不再持有 subagent 状态（grep `subagentRecords` 零命中）；单测 + real E2E 三场景通过；M1→M2 过渡窗口关闭。
 
-## 6. P4 — extractor 四级投影 + SubagentStatus 枚举（U3b）
+## 6. P4 — extractor 六级投影 + SubagentStatus 枚举（U3b）
 
 ### 开发内容
 
 | 文件 | 改动 |
 |------|------|
 | `packages/shared/src/subagent.ts`（SubagentStatus 类型定义处） | `SubagentStatus` 重定义：`streaming / waiting / done / cancelled / stopped / error`（running 拆分、closed/crashed/failed 归并；细分保留在 closedReason/error 字段） |
-| `packages/runtime/src/services/session/subagent-status.ts` | `normalizeSubagentStatus` **保留签名**（legacy 单值归一，输入 status 字符串），归一目标改为新 6 态（done/completed/success→done、failed/error/crashed→error、cancelled/canceled→cancelled、active/pending→streaming、closed→交给组合层）；`(status, closedReason, error) → 6 态` 的**组合判定落在新投影函数（extractor 组合层）**，closedReason 6 值映射按设计决策 5 v5 表格（gc 按 error 判成败、user-close/parent-* → stopped）；连带更新 `runtime/test/subagent-status.test.ts`、`packages/shared/__tests__/subagent.test.ts` |
-| `packages/runtime/src/services/session/subagent-extractor.ts` | **六级投影**（设计决策 5 v5 表格）：① 终态 bg-notify entry（按 `(status, closedReason, error) → 6 态` 映射表，映射表见设计）→ ② `.cancelled` → ③ `.finalized`+子进程 JSONL 末行 → ④ `.alive`+pid+1h 软超时（streaming/waiting 依 A10a idle 位，无则 streaming）→ ⑤ 轮次 running entry（含 round）→ waiting → ⑥ 孤儿兜底（子进程 JSONL 正常收尾→done，否则 error）。**waiting 的 idle 位从主 JSONL 的轻量事件 custom_message entry 读取**（A10a 事件无 triggerTurn 会落盘）；sidecar 路径从 sessionFile 推导，null 时走既有 `findSubagentSessionFile` 时间戳匹配。**A10 裁决非 a 时级 ④ 回落 streaming、级 ⑤ 仍可用（轮次 entry 窗口 flush 后到达）**——waiting 短期低频，渲染测试仍覆盖 6 态 |
+| `packages/runtime/src/services/session/subagent-status.ts` | `normalizeSubagentStatus` **接口裁决（设计 v6）**：extractor 组合层在调用前按 `status === 'closed'` 分流（closed 走组合映射表），normalize 只处理非 closed 输入、返回类型保持 `SubagentStatus` 单一；归一目标 done/completed/success→done、failed/error/crashed→error、cancelled/canceled→cancelled、active/pending→streaming（**仅兼容层防御值**，非级 1 输入）；**default 兜底从 closed 改 error**（closed 已不存在于新枚举；「未知更可能是终态」理由不变）。`(status, closedReason, error)` 组合判定落在新投影函数（extractor 组合层），映射按设计决策 5 v6 表格（gc 按 error、user-close → stopped、**parent-* 三值标注不可达死行——仅 normalize 兼容层保留**）；连带更新 `runtime/test/subagent-status.test.ts`、`packages/shared/__tests__/subagent.test.ts` |
+| `packages/runtime/src/services/session/subagent-extractor.ts` | **六级投影**（设计决策 5 v6 表格）：① 终态 bg-notify entry（映射表；级联关闭实际落级 6）→ ② `.cancelled` → ③ `.finalized`+子进程 JSONL 末行 → ④ `.alive`+pid+1h 软超时（streaming/waiting 依 A10a idle 位，无则 streaming）→ ⑤ 轮次 running entry（含 round）→ waiting → ⑥ 孤儿兜底（子 JSONL 正常收尾→done、截断→error、**不存在→streaming start 早期保守**）。**sessionFile 解析优先级链（设计 v6，六级投影地基）**：toolResult entry 的 `message.details.sessionFile`（**新增解析点**——现状只读 LLM content 恒 null）> bg-notify entry sessionFile > listItem > `findSubagentSessionFile`（**限 startedAt 存在才匹配**——无 startedAt 返回最近文件在并发时拿错）。waiting 的 idle 位从轻量事件 entry 读取（A10a）；A10 非 a 时级 ④ 回落 streaming、级 ⑤ 窗口 flush 后仍可用。A10 探针若证实冷路径抖动 → 级 6 加 startedAt 窗口宽限（P0 已列） |
+| `packages/shared/src/message.ts` | `BgNotifyRecord` 补 `sessionFile?: string` + `parseBgNotifyDetails` 解析链（扩展 chatMode 轮次通知实际透传了 sessionFile，现状被类型层丢弃——优先级链第 2 级数据源） |
 | `packages/renderer/src/stores/subagent.ts` | `hasRunning` 实现（`:108`，`s.status === 'running'`）改判 `streaming ∨ waiting`——判定逻辑在 store 不在 useBackgroundWork（后者只转发调用，编译断会暴露旧枚举但改动点在此文件） |
 | sidebar `SubagentList` / drawer `SubagentTab` / `sessionStatus.ts` | 状态消费与视觉映射对齐 `STATUS_ICON`（同一状态语言；subagent 无 compacting/retrying 态，映射表裁剪） |
 
 ### 验证
 
-**单测（runtime，extractor 是纯函数，测试矩阵）**：fixture 工厂生成 主 JSONL（终态 entry × closedReason 6 值 × error 空/非空 / 轮次 running entry / 无 entry）× sidecar（.finalized/.cancelled/.alive+pid 活/死/超时/被删）× 子进程 JSONL（正常收尾/截断）的组合投影断言（≥14 用例）。**必含组合**：「one-shot 成功（roundToIdle：无任何 sidecar、`.alive` 已删、无终态 entry）→ 级 6 → done」（最高频路径，A9 路径 I）、「chatMode 轮次完成 Path B（无 sidecar、无 `.alive`、有轮次 running entry）→ 级 5 → waiting」（与孤儿同形的区分用例）、「chatMode close 窗口期（轮次 entry + `.finalized`）→ 级 3 优先 → 终态」；A10a 分支下矩阵增加轻量事件 entry 维度（含/不含 idle 位 → waiting/streaming）。
+**单测（runtime，extractor 是纯函数，测试矩阵）**：fixture 工厂生成 主 JSONL（终态 entry × closedReason 可达值 × error 空/非空 / 轮次 running entry / 无 entry）× sidecar（.finalized/.cancelled/.alive+pid 活/死/超时/被删）× 子进程 JSONL（正常收尾/截断/**不存在**）的组合投影断言（≥16 用例）。**必含组合**：「one-shot 成功（roundToIdle：无任何 sidecar、`.alive` 已删、无终态 entry）→ 级 6 → done」（最高频路径，A9 路径 I）、「chatMode 轮次完成 Path B（无 sidecar、无 `.alive`、有轮次 running entry）→ 级 5 → waiting」（与孤儿同形的区分用例）、「chatMode close 窗口期（轮次 entry + `.finalized`）→ 级 3 优先 → 终态」、**「级联关闭（无 entry、无 sidecar、`.alive` 残留、pid 死）→ 级 6 → done/error」**（parent-* 死行的实际落点验证）、**「start 早期（子 JSONL 不存在）→ 级 6 → streaming」**、**「sessionFile 优先级链：toolResult details 有值 > 无 details 有 notify sessionFile > 都无 + 有 startedAt > 都无 + 无 startedAt → null」**；closedReason 的 parent-* 三值只进 normalize 兼容层单测（标注「六级矩阵不可达」，防 fixture 全绿掩盖死行）；A10a 分支下矩阵增加轻量事件 entry 维度（含/不含 idle 位 → waiting/streaming）。
 
-**单测（renderer）**：useBackgroundWork 新判定；SubagentList 各状态 testid/状态点 class 断言（观察者视角，含首屏冒烟模板）。
+**单测（renderer）**：useBackgroundWork 新判定（**连带更新其头注释与 docstring**——现状引用退役值集「running/done/failed/cancelled/crashed」，编译断不暴露注释过时）；SubagentList 各状态 testid/状态点 class 断言（观察者视角，含首屏冒烟模板）。
 
 **集成**：mount SubagentList 全状态快照（6 态渲染正确）。
 
@@ -237,15 +239,16 @@ runtime 不再持有 subagent 状态（grep `subagentRecords` 零命中）；单
 
 **前置**：real renderer bundle 手动构建（与 mock bundle 分批，见 §1 形态 A 前置）——P6 套件全跑前必须确认，否则 global-setup 会 build mock bundle 导致 real spec 全挂。
 
-1. **real E2E 套件全跑**：`npx playwright test e2e/subagent-*-real.spec.ts e2e/workflow-kill-recovery-real.spec.ts`（本计划新增的 4 个 spec）。其中**场景 1 的秒级断言在本阶段补齐**（P3 时只验有界收敛），**按 P0-A10 裁决条件化**：裁决 a/b → 断言第一个完成的 subagent 秒级显示终态（A10 信号 P3 + sidecar 投影 P4 + 轻量事件 P5 全就位）；裁决**退化** → 断言 60s 窗口 + 一个 turn 内有界收敛（对齐设计 §8 场景 1 双分支通过标准——退化分支的实时性回退是设计已接受的，不判 FAIL）。场景 8 在 P3 后的代码上重跑，关闭「纯对账收敛（零信号/零快照）」归因（P2 遗留）。
+1. **real E2E 套件全跑**：`npx playwright test e2e/subagent-*-real.spec.ts e2e/workflow-kill-recovery-real.spec.ts`（本计划新增的 4 个 spec）。其中**场景 1 的秒级断言在本阶段补齐**（P3 时只验有界收敛），**按 P0-A10 裁决条件化**：裁决 a/b → 断言第一个完成的 subagent 秒级显示终态（A10 信号 P3 + 六级投影 P4 + 轻量事件 P5 全就位）；裁决**退化** → 断言 60s 窗口 + 一个 turn 内有界收敛（对齐设计 §8 场景 1 双分支通过标准——退化分支的实时性回退是设计已接受的，不判 FAIL）。场景 8 在 P3 后的代码上重跑，关闭「纯对账收敛（零信号/零快照）」归因（P2 遗留）。
 2. **手工场景**（自动化覆盖不到的）：场景 1 的 60s 窗口尾部收敛观察——真并发 2+ subagent，等最后一个完成后观察：**PASS 判定 = 最后一个 subagent 完成后 ≤60s 窗口 flush + 一个 turn 内，侧栏全部条目收敛终态；runtime 日志可见 bg-notify custom_message 与 `session.subagentsChanged{kind:'notify'}` 信号**（日志路径从 getDataDir() 动态推导）；场景 6 链路同构 code review（grep `subagentRecords` 零命中 + 两条链路 `trigger*Reload` 对称 + 空结果守卫两 store 同款）。
-3. **dev 冒烟闸门**：`pnpm dev:smoke`。
-4. **既有回归**：renderer/runtime 全量 vitest + `bash scripts/validate-runtime-bundle.sh`（涉及 runtime 打包面）。
-5. **验收记录**：每场景一行结论（PASS/FAIL + 日志路径）回写本文件附录。
+3. **场景 9（chatMode 等续聊语义，设计 §8 v6 新增——决策 5 立项动机的行为验收）**：形态 A spec 或手工——conversation:true 启动 subagent → 一轮完成 → 等续聊期间断言侧栏显示 waiting（A10a 前 streaming）**而非 running**、session 状态点 working 点亮；续聊一轮后再断言恢复 streaming。
+4. **dev 冒烟闸门**：`pnpm dev:smoke`。
+5. **既有回归**：renderer/runtime 全量 vitest + `bash scripts/validate-runtime-bundle.sh`（涉及 runtime 打包面）。
+6. **验收记录**：每场景一行结论（PASS/FAIL + 日志路径）回写本文件附录。
 
 ### DoD
 
-8/8 场景 PASS；无回归；验收记录入档。
+9/9 场景 PASS（含场景 9 chatMode 等续聊语义）；无回归；验收记录入档。
 
 ## 9. 风险与回退
 
