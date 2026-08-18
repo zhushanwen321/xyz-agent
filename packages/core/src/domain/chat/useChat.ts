@@ -13,8 +13,9 @@
  *            → api.events.streamSubscribe → store.applyMessageEvent（message.* 单一入口）
  *            → MessageStream 响应式渲染 + useVirtuaFollow.followIfStuck
  *
- * hydrate：首次进入 session 调 api.chat.getHistory 注入历史 fixture（含 tool_call/summary），
- * 让 UC-2 切换会话可见块类型丰富度（G2-006）。
+ * hydrate：首次进入 session 调 api.chat.getHistory 注入历史（含 tool_call/summary），
+ * 让 UC-2 切换会话可见块类型丰富度（G2-006）。messages 为 applyEntry reducer 重放投影
+ * （W20 D5，详见 hydrateHistory 注释）。
  *
  * abort：调 api.chat.abort（方法存在，中断流转 DEFERRED G-025）。
  */
@@ -605,6 +606,12 @@ export function createUseChat(deps: UseChatDeps) {
   /**
    * 拉取并注入历史（首次进入 session）。
    * 无历史（空 session）也标记 hydrated，避免反复请求。
+   *
+   * [W20 D5 重放喂入侧] getHistory 返回的 messages 是 core applyEntry reducer 对
+   * pi entry 日志的重放投影（runtime wire 层：getEntries → liftHistoryToEntries →
+   * replayEntries，见 infra/pi/message-converter.ts）——hydrate 直接消费 reducer 产物，
+   * 不做二次转换；getHistory RPC 链不变（session-service getEntries 增量现状保留）。
+   * 实时侧喂同一 reducer 是 W21（store.applyMessageEvent 接 applyEntry）。
    */
   async function hydrateHistory(sessionId: string): Promise<void> {
     if (chat.isHydrated(sessionId)) return

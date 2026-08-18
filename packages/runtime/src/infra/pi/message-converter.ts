@@ -1,3 +1,23 @@
+/**
+ * message-converter —— 历史路径 entry → Message 转换的 wire 层（data-source-governance W20）。
+ *
+ * [W20 架构位] 派生规则（content parts 解析 / skill 剖离 / toolResult 配对 / compaction /
+ * branchSummary / custom / bashExecution / fileChanges / usage）已全部迁入 core reducer：
+ * packages/core/src/domain/chat/apply-entry.ts（applyEntry —— D5 单一 reducer，D7 投影一次）。
+ * 本文件保留 wire 层职责：RPC reply / JSONL 读到的原始形态 → pi entry 列表（liftHistoryToEntries）
+ * → 喂 core reducer → Message[]。
+ *
+ * 相对路径 import core 说明：runtime 包依赖图不含 @xyz-agent/core（core 依赖 vue/pinia，
+ * 加包级依赖会把 vue 拉进 runtime bundle）；apply-entry.ts 是自包含纯函数模块（只依赖
+ * @xyz-agent/shared，tsup 已随 noExternal 打包 shared），相对路径引用使派生规则单点化。
+ * W21/W22 若把 reducer 输入上收到 protocol 层，可重新评估包边界（如 shared 收敛）。
+ *
+ * [迁移期双实现] convertPiHistoryLegacy = 迁移前实现逐字保留，仅供 W20 等价性迁移防线测试
+ * （packages/core/src/domain/chat/__tests__/apply-entry-equivalence.test.ts 断言新旧 deep equal）
+ * 消费；W21 断言升级后随 live-reload 一起删除，勿在新代码引用。
+ *
+ * 实时路径（event-adapter.ts）不在本文件历史路径管辖内（W21 领地）。
+ */
 import type {
   PiHistoryMessage,
   PiHistoryToolResult,
@@ -5,14 +25,163 @@ import type {
 import type { Message, ThinkingBlock, ToolCall, FileChange, Segment } from '@xyz-agent/shared'
 import { textToSegments } from '@xyz-agent/shared'
 import { normalizePiToolResult } from './normalize-tool-result.js'
+import {
+  applyEntry,
+  createInitialChatViewState,
+  replayEntries,
+} from '../../../../core/src/domain/chat/apply-entry.js'
+import type { PiEntry, PiMessageEntry } from '../../../../core/src/domain/chat/apply-entry.js'
+
+// ════════════════════════════════════════════════════════════════════
+// 新路径：wire lift + core reducer（W20 起的历史路径唯一生产实现）
+// ════════════════════════════════════════════════════════════════════
 
 /**
- * Parse `<skill name="xxx" location="...">...</skill>` blocks from
- * a user message's text content. Returns the extracted skill name and the
- * remaining user text (everything after the closing `</skill>` tag).
- * Returns `null` if no skill block is found.
+ * 把历史读取链路拿到的伪消息列表 lift 为 pi message entry 形态（wire 层职责：RPC reply → entry 列表）。
+ *
+ * 输入形态（mapSessionEntries 产出的伪消息 / get_messages 扁平列表 / JSONL 提取）全部包成
+ * message entry——pi AgentMessage 联合本身含 toolResult/bashExecution/compactionSummary/custom/
+ * branchSummary role（与专用 entry 类型双形态存储），role 细分语义归 reducer 的 message case。
+ *
+ * entryId 解析优先级与迁移前一致：平行 entryIds[i] > 消息体 __entryId（文件路径旧注入）；
+ * 都缺失时 entry 不带 id（reducer 不回填 piEntryId，piEntryId 缺失语义与迁移前一致）。
+ *
+ * 缺失 timestamp 的兜底（Date.now）在 lift 时落定——与迁移前同点位，保证 reducer 输入
+ * 确定后输出确定（reducer 内部无 Date.now / randomUUID）。
+ *
+ * 导出供等价性测试（lift 保真断言）消费，生产调用方只有 convertPiHistory。
  */
-function parseSkillBlock(text: string): Segment[] | null {
+export function liftHistoryToEntries(raw: unknown[], entryIds?: string[]): PiEntry[] {
+  const entries: PiEntry[] = []
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i]
+    if (typeof item !== 'object' || item === null) {
+      console.warn(`[message-converter] skipping non-object history item at index ${i}`)
+      continue
+    }
+    const rec = item as Record<string, unknown>
+    const inlineId = typeof rec.__entryId === 'string' ? rec.__entryId : undefined
+    const entryId = entryIds?.[i] ?? inlineId
+    const tsMs = typeof rec.timestamp === 'number' ? rec.timestamp : Date.now()
+    const entry: PiMessageEntry = {
+      type: 'message',
+      ...(entryId !== undefined && { id: entryId }),
+      parentId: null,
+      timestamp: new Date(tsMs).toISOString(),
+      message: rec,
+    }
+    entries.push(entry)
+  }
+  return entries
+}
+
+/**
+ * 转换单条 pi message 为 xyz-agent Message（W20 起经 core reducer；保留导出供
+ * message-converter-order.test 的 contentBlocks 顺序回归与潜在外部消费者）。
+ *
+ * 仅处理 user/assistant message。未知 role 在 reducer 内 warn + 跳过（返回 null）。
+ *
+ * @param m pi history message
+ * @param options 可选 entryId（填到 msg.piEntryId；缺省时回退读 m.__entryId）
+ */
+export function convertSinglePiMessage(
+  m: PiHistoryMessage,
+  options?: { entryId?: string },
+): Message | null {
+  const inlineId = '__entryId' in m && typeof (m as { __entryId?: unknown }).__entryId === 'string'
+    ? (m as { __entryId: string }).__entryId
+    : undefined
+  const entryId = options?.entryId ?? inlineId
+  const entry: PiMessageEntry = {
+    type: 'message',
+    ...(entryId !== undefined && { id: entryId }),
+    parentId: null,
+    timestamp: new Date(m.timestamp ?? Date.now()).toISOString(),
+    message: m,
+  }
+  const state = applyEntry(createInitialChatViewState(), entry)
+  return state.messages.length > 0 ? state.messages[0] : null
+}
+
+/**
+ * Convert pi message list into frontend Message[], merging toolResult
+ * entries into their parent assistant message's matching toolCall.
+ *
+ * [W20] 实现 = liftHistoryToEntries（wire lift）+ replayEntries（core reducer fold）。
+ * 签名与行为契约不变（等价性由 apply-entry-equivalence.test 对 legacy 断言锁定）：
+ *
+ * 签名收 unknown[]：pi 的历史结构（PiHistoryMessage/PiHistoryToolResult）是 pi 协议类型，
+ * 只在此 infra 文件内部断言，不暴露给 service。service 传 RPC/文件读到的原始 JSON 即可。
+ *
+ * @param raw pi history message 列表（get_messages 返回 / JSONL 读取 / entry 树提取）
+ * @param entryIds 可选，与 raw 一一对应的 entry id 列表（entry 树重建路径用）。
+ *   传时 user/assistant message 会带上 piEntryId（按 index 取 entryIds[i]）。
+ * @param orphanToolResults 可选 out 数组：窗口内无法配对的 toolResult（无 preceding
+ *   assistant 或其 toolCalls 无匹配 toolCallId）push 进来供增量合并阶段回填
+ *   （W20 review Fix-1）。不传时保持原行为（warn 丢弃）——全量窗口正常时序无孤儿。
+ */
+export function convertPiHistory(raw: unknown[], entryIds?: string[], orphanToolResults?: PiHistoryToolResult[]): Message[] {
+  const state = replayEntries(liftHistoryToEntries(raw, entryIds))
+  if (orphanToolResults !== undefined) {
+    for (const orphan of state.orphanToolResults) {
+      // orphan 已由 reducer 按 role==='toolResult' 收窄构造（apply-entry.ts toolResult 分支），
+      // 此处断言只还原「宽形态 body → pi 协议类型」的静态差异，字段集运行时一致。
+      orphanToolResults.push(orphan as PiHistoryToolResult)
+    }
+  }
+  return state.messages
+}
+
+/**
+ * 把增量窗口的孤儿 toolResult 按 toolCallId 回填到已合并消息列表的 assistant toolCall
+ * （W20 review Fix-1）。reducer fold 后的增量合并阶段调用；匹配不到 warn 丢弃。
+ *
+ * 签名收 unknown[]（与 convertPiHistory 同模式）：pi 结构只在此 infra 文件内部断言。
+ */
+export function applyOrphanToolResults(messages: Message[], orphanToolResults: unknown[]): void {
+  for (const raw of orphanToolResults) {
+    const toolResult = raw as PiHistoryToolResult
+    let matched: ToolCall | undefined
+    for (const m of messages) {
+      matched = m.toolCalls?.find(t => t.id === toolResult.toolCallId)
+      if (matched) break
+    }
+    if (matched) {
+      fillToolCallOutput(matched, toolResult)
+    } else {
+      console.warn('[message-converter] orphan toolResult has no matching toolCall in merged messages:', toolResult.toolCallId)
+    }
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 迁移期参照实现（W20 等价性防线专用，W21 删除）
+// ════════════════════════════════════════════════════════════════════
+
+/**
+ * [迁移期参照] 把 toolResult 归一回填到单个 toolCall（迁移前实现，供 legacy 家族与
+ * applyOrphanToolResults 共用——后者是生产路径，语义必须与迁移前逐字一致）。
+ */
+function fillToolCallOutput(tc: ToolCall, toolResult: PiHistoryToolResult): void {
+  // 对称恢复 outputRaw（规则 7.5：对话流状态必须可重开恢复）。
+  // 实时路径（event-adapter handleToolExecutionEnd）已统一委托 normalizePiToolResult（W1），
+  // 此处历史路径对称：output 存 stripAnsi 版本，outputRaw 存原始 ANSI 文本（仅当含 ANSI 时）。
+  const { output, outputRaw } = normalizePiToolResult(toolResult)
+  tc.output = output
+  if (outputRaw) tc.outputRaw = outputRaw
+  if (toolResult.isError) tc.status = 'error'
+  // F1 修复：透传 details（含 __gui__），与实时路径（event-interpreter tool_call_end）对齐。
+  // 规则 7.5：对话流状态必须可重开恢复——重开 session 后 __gui__ 不丢。
+  if (toolResult.details && typeof toolResult.details === 'object' && !Array.isArray(toolResult.details)) {
+    tc.details = toolResult.details
+  }
+}
+
+/**
+ * [迁移期参照] Parse `<skill name="xxx" location="...">...</skill>` blocks from
+ * a user message's text content（迁移前实现逐字保留）。
+ */
+function parseSkillBlockLegacy(text: string): Segment[] | null {
   const match = text.match(/<skill\s+name="([^"]+)"(?:\s+location="([^"]+)")?[^>]*>[\s\S]*?<\/skill>([\s\S]*)$/)
   if (!match) return null
   // Segment 类型的 skill 变体本身已有 location?: string 字段（shared/segments.ts:26），
@@ -28,26 +197,18 @@ function parseSkillBlock(text: string): Segment[] | null {
   return segments
 }
 
+// [迁移期参照] write/edit 工具名集合（迁移前实现；新实现在 core apply-entry.ts）。
+const WRITE_TOOL_NAMES = new Set(['write', 'write_file', 'writeFile', 'create_file'])
+const EDIT_TOOL_NAMES = new Set(['edit', 'edit_file', 'editFile', 'str_replace', 'replace'])
+
 /**
- * [W6 #9 G5] 从历史 assistant 消息的 toolCalls 提取 fileChanges（write/edit 工具）。
+ * [迁移期参照] 从历史 assistant 消息的 toolCalls 提取 fileChanges（迁移前实现）。
  *
  * 历史路径无 cwd 做 existsSync 判定（write added/modified 无法区分），
  * 按 AC-9.3 graceful 降级：write 一律标 modified（方案 B 兜底，与 event-adapter 缺 cwd 时一致），
  * edit 恒 modified。filePath 取 toolCall.arguments.path（pi 契约权威参数名，file_path 防御 fallback）。
- *
- * 与实时路径语义对齐（都按"工具改了哪些文件"判定），但两条路径实现不同：
- * - 实时路径（event-adapter）：ADR-0024 D5 后改用 git baseline diff（file-change-reconciler），
- *   覆盖 write/edit/bash（bash 经 sed/echo 改的文件无法静态解析，只能靠 diff 兜底），并计算行数。
- * - 历史路径（此处）：从 toolCall 参数静态解析（无法覆盖 bash），且不计算行数
- *   （patch 不在历史 toolCall 里，需 toolResult 解析，复杂度高且非 file-tree 主链路，留 TODO）。
  */
-// 下方 write/edit 工具名集合与 event-adapter 的实时 diff 触发条件（write/edit/bash）刻意不复用：
-// 此处面向历史 toolCall 静态解析，历史数据工具名更杂（含 write_file/str_replace 等别名）故需宽匹配，
-// 且历史无 bash（bash 改的文件无法从参数静态解析，历史路径无法还原）。
-const WRITE_TOOL_NAMES = new Set(['write', 'write_file', 'writeFile', 'create_file'])
-const EDIT_TOOL_NAMES = new Set(['edit', 'edit_file', 'editFile', 'str_replace', 'replace'])
-
-function extractHistoryFileChanges(toolCalls: ToolCall[]): FileChange[] {
+function extractHistoryFileChangesLegacy(toolCalls: ToolCall[]): FileChange[] {
   const changes: FileChange[] = []
   const seen = new Set<string>()
   for (const tc of toolCalls) {
@@ -65,22 +226,13 @@ function extractHistoryFileChanges(toolCalls: ToolCall[]): FileChange[] {
 }
 
 /**
- * 转换单条 pi message 为 xyz-agent Message（从 convertPiHistory 抽出，供 entry-tree-builder 复用）。
- *
- * 仅处理 user/assistant message（toolResult/compactionSummary/custom/branchSummary 等特殊 role
- * 仍由 convertPiHistory 内部分支处理——这些类型不是 message entry 的 message 字段，不进本 helper）。
- *
- * @param m pi history message（user/assistant/toolResult 任一，但只有 user/assistant 产出 Message）
- * @param options 可选上下文：
- *   - entryId：从 entry 树重建时传入，填到 msg.piEntryId（替代从 __entryId 读，entry-tree-builder 路径用）
- * @returns user/assistant → Message；未知 role → null（调用方跳过）
+ * [迁移期参照] 迁移前 convertSinglePiMessage 逐字保留（legacy 家族内部使用）。
  */
-export function convertSinglePiMessage(
+function convertSinglePiMessageLegacy(
   m: PiHistoryMessage,
   options?: { entryId?: string },
 ): Message | null {
   // W11：显式拒绝未知 role，避免把任何非 user 也非已处理特殊类型的 entry 默认归入 assistant
-  // （旧实现 `m.role === 'user' ? 'user' : 'assistant'` 把未知 role 当 assistant，掩盖数据异常）。
   if (m.role !== 'user' && m.role !== 'assistant') {
     console.warn(`[message-converter] unknown role: ${String(m.role)}, skipping`)
     return null
@@ -92,16 +244,12 @@ export function convertSinglePiMessage(
   const thinking: ThinkingBlock[] = []
   const toolCalls: ToolCall[] = []
   const contentBlocks: import('@xyz-agent/shared').ContentBlock[] = []
-  // wave:perf-w20 微项 2：text 块只 push 一次的哨兵——用布尔标志替代循环内
-  // contentBlocks.some() 的 O(n) 重扫（长 content 数组的累积 O(n²)），行为等价。
   let hasTextBlock = false
 
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i]
     if (part.type === 'text') {
       textContent += part.text ?? ''
-      // text 块按真实到达顺序 push（首次遇到时 push 一次，多次 text part 只累加不重复 push）。
-      // contentIndex = parts 下标（pi content array 顺序），与 streaming 路径对称（§11 检查点 3）。
       if (!hasTextBlock) {
         hasTextBlock = true
         contentBlocks.push({ type: 'text', refId: 'text', contentIndex: i })
@@ -127,8 +275,6 @@ export function convertSinglePiMessage(
     }
   }
 
-  // piEntryId 解析：options.entryId 优先（entry-tree-builder 路径），
-  // 否则回退读 m.__entryId（convertPiHistory 文件路径，session-history 注入）。
   const resolvedEntryId = options?.entryId
     ?? ('__entryId' in m && typeof (m as { __entryId?: unknown }).__entryId === 'string'
       ? (m as { __entryId: string }).__entryId
@@ -139,18 +285,14 @@ export function convertSinglePiMessage(
     role: m.role === 'user' ? 'user' : 'assistant',
     content: textContent,
     status: 'complete',
-    // 文件路径读取时 session-history 注入的 pi entry id（fork 定位截断点用）。
-    // RPC 路径无此字段，fork 时 fallback 读 JSONL 按 timestamp 匹配。
     ...(resolvedEntryId !== undefined && { piEntryId: resolvedEntryId }),
     ...(thinking.length > 0 && { thinking }),
     ...(toolCalls.length > 0 && { toolCalls }),
     ...(contentBlocks.length > 0 && { contentBlocks }),
-    // [W6 #9 G5] 历史路径还原 fileChanges（write/edit 工具提取，AC-9.1/9.3）
     ...(m.role === 'assistant' && toolCalls.length > 0 && (() => {
-      const fc = extractHistoryFileChanges(toolCalls)
+      const fc = extractHistoryFileChangesLegacy(toolCalls)
       return fc.length > 0 ? { fileChanges: fc } : {}
     })()),
-    // Extract usage from pi assistant messages (input/output token counts)
     ...(() => {
       if (m.role !== 'assistant') return {}
       const u = (m as { usage?: { input?: number; output?: number } }).usage
@@ -159,11 +301,8 @@ export function convertSinglePiMessage(
     timestamp: m.timestamp ?? Date.now(),
   }
 
-  // For user messages, parse <skill> blocks injected by pi backend.
-  // content 统一为 Segment[]：有 skill 标签时拆出 skill segment + 后续 user text，
-  // 无 skill 标签时用 textToSegments 包成纯 text segment。
   if (m.role === 'user' && textContent) {
-    const parsed = parseSkillBlock(textContent)
+    const parsed = parseSkillBlockLegacy(textContent)
     if (parsed) {
       msg.content = parsed
     } else {
@@ -174,80 +313,13 @@ export function convertSinglePiMessage(
 }
 
 /**
- * 把 toolResult 归一回填到单个 toolCall（W20 review Fix-1 提取的共用点）。
+ * [迁移期参照] 迁移前 convertPiHistory 逐字保留。
  *
- * convertPiHistory 窗口内配对与 applyOrphanToolResults 增量回填共用，保证两条路径
- * 填充语义一致（output stripAnsi / outputRaw / isError / details 透传）。
+ * 唯一消费方：packages/core/src/domain/chat/__tests__/apply-entry-equivalence.test.ts
+ * （W20 等价性迁移防线——同 fixture 序列下新旧路径 messages deep equal）。
+ * W21 断言升级为 store 级 live≡reload 后删除本函数与上方 legacy 家族。
  */
-function fillToolCallOutput(tc: ToolCall, toolResult: PiHistoryToolResult): void {
-  // 对称恢复 outputRaw（规则 7.5：对话流状态必须可重开恢复）。
-  // 实时路径（event-adapter handleToolExecutionEnd）已统一委托 normalizePiToolResult（W1），
-  // 此处历史路径对称：直接传 toolResult（顶层有 content 数组，走归一函数的 content-array 分支），
-  // output 存 stripAnsi 版本，outputRaw 存原始 ANSI 文本（仅当含 ANSI 时）。
-  const { output, outputRaw } = normalizePiToolResult(toolResult)
-  tc.output = output
-  if (outputRaw) tc.outputRaw = outputRaw
-  if (toolResult.isError) tc.status = 'error'
-  // F1 修复：透传 details（含 __gui__），与实时路径（event-interpreter tool_call_end）对齐。
-  // 规则 7.5：对话流状态必须可重开恢复——重开 session 后 __gui__ 不丢。
-  // 来源是顶层 toolResult.details（历史路语义），与归一函数返回的 details（来自 raw 内，通常 undefined）不同——保留不变。
-  if (toolResult.details && typeof toolResult.details === 'object' && !Array.isArray(toolResult.details)) {
-    tc.details = toolResult.details
-  }
-}
-
-/**
- * 把增量窗口的孤儿 toolResult 按 toolCallId 回填到已合并消息列表的 assistant toolCall
- * （W20 review Fix-1）。
- *
- * 背景：增量缓存基线（leafId）可能切在 assistant(toolCalls) 与其 toolResults 之间
- * （后台 session 生成中 getHistory 会写缓存），下次增量窗口以 toolResult 开头 →
- * convertPiHistory 的 toolResult→toolCall 配对是窗口局部的，窗口内无 preceding
- * assistant → 不收集则该 toolCall 永久无输出（缓存 leafId 持续前进，永不触发全量重建）。
- * 增量合并（mergeIncrementalMessages）后在合并结果上调用本函数回填。
- *
- * 匹配不到（缓存中也无该 toolCall）→ warn 丢弃（无更多信息可用）。
- *
- * 签名收 unknown[]（与 convertPiHistory 同模式）：pi 结构只在此 infra 文件内部断言。
- */
-export function applyOrphanToolResults(messages: Message[], orphanToolResults: unknown[]): void {
-  for (const raw of orphanToolResults) {
-    const toolResult = raw as PiHistoryToolResult
-    let matched: ToolCall | undefined
-    for (const m of messages) {
-      matched = m.toolCalls?.find(t => t.id === toolResult.toolCallId)
-      if (matched) break
-    }
-    if (matched) {
-      fillToolCallOutput(matched, toolResult)
-    } else {
-      console.warn('[message-converter] orphan toolResult has no matching toolCall in merged messages:', toolResult.toolCallId)
-    }
-  }
-}
-
-/**
- * Convert pi message list into frontend Message[], merging toolResult
- * entries into their parent assistant message's matching toolCall.
- *
- * 签名收 unknown[]：pi 的历史结构（PiHistoryMessage/PiHistoryToolResult）是 pi 协议类型，
- * 只在此 infra 文件内部断言，不暴露给 service。service 传 RPC/文件读到的原始 JSON 即可。
- *
- * user/assistant 单条转换委托 convertSinglePiMessage（抽出供 entry-tree-builder 复用），
- * toolResult/compactionSummary/custom/branchSummary 等特殊 role 仍在此处内联处理
- * （这些类型不是 message entry 的 message 字段，不进 convertSinglePiMessage）。
- *
- * @param raw pi history message 列表（get_messages 返回 / JSONL 读取 / entry 树提取）
- * @param entryIds 可选，与 raw 一一对应的 entry id 列表（entry 树重建路径用）。
- *   传时 user/assistant message 会带上 piEntryId（按 index 取 entryIds[i]）。
- *   不传时行为不变（兼容 session-store.convertHistory / session-history 等 RPC/文件路径）。
- *   toolResult/系统消息分支不消费 entryId（它们或合并到上一个 assistant，或不需回填）。
- * @param orphanToolResults 可选 out 数组：窗口内无法配对的 toolResult（无 preceding
- *   assistant 或其 toolCalls 无匹配 toolCallId）push 进来供增量合并阶段回填
- *   （W20 review Fix-1——增量窗口以 toolResult 开头时配对失败，不收集则输出静默丢失）。
- *   不传时保持原行为（warn 丢弃）——全量窗口正常时序无孤儿。
- */
-export function convertPiHistory(raw: unknown[], entryIds?: string[], orphanToolResults?: PiHistoryToolResult[]): Message[] {
+export function convertPiHistoryLegacy(raw: unknown[], entryIds?: string[], orphanToolResults?: PiHistoryToolResult[]): Message[] {
   const result: Message[] = []
   let lastAssistantWithToolCalls = -1
 
@@ -256,24 +328,18 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[], orphanTool
     const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number } | { role: 'custom'; customType: string; content?: string; details?: Record<string, unknown>; timestamp?: number } | { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number } | { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp: number; fullOutputPath?: string }
     if (m.role === 'toolResult') {
       const toolResult = m as PiHistoryToolResult
-      // Merge tool result into the last assistant message's matching toolCall（窗口局部配对）
       const tc = lastAssistantWithToolCalls >= 0
         ? result[lastAssistantWithToolCalls]?.toolCalls?.find(t => t.id === toolResult.toolCallId)
         : undefined
       if (tc) {
         fillToolCallOutput(tc, toolResult)
       } else {
-        // 窗口内无 preceding assistant（增量窗口以 toolResult 开头）或 toolCallId 无匹配 →
-        // 孤儿：收集给增量合并阶段回填到缓存中的 assistant toolCall（W20 review Fix-1）
         orphanToolResults?.push(toolResult)
         console.warn('[message-converter] toolResult has no matching toolCall in window:', toolResult.toolCallId)
       }
       continue
     }
 
-    // compactionSummary：pi 压缩记录（role !== user/assistant/toolResult，结构不同：无 content，有 summary/tokensBefore）。
-    // 转成 system 消息 + compactionSummary 字段，前端 SystemNotice 渲染「上下文已压缩」。
-    // AGENTS.md 规则 7.5：对话流状态必须可重开恢复——重开 session 时历史压缩记录经此分支还原。
     if (m.role === 'compactionSummary') {
       const cm = m as { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number }
       result.push({
@@ -291,11 +357,6 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[], orphanTool
       continue
     }
 
-    // custom message（pi CustomMessage，扩展经 sendMessage 注入的结构化通知）。
-    // pi get_messages 返回 role:'custom'，带 customType/content/details。
-    // 转成 system 消息（messageTurns 产出独立 RenderItem 穿插在 turn 间），
-    // details 原始透传（__gui__ 等由前端消费；bgNotify 派生字段已删——前端零消费，§3.3.6）。
-    // AGENTS.md 规则 7.5：对话流状态必须可重开恢复——重开 session 时 background 完成通知经此分支还原。
     if (m.role === 'custom') {
       const cm = m as {
         role: 'custom'
@@ -319,9 +380,6 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[], orphanTool
       continue
     }
 
-    // branchSummary：pi 分支摘要记录（实时链路 event-adapter.ts:487 已处理）。
-    // 历史路径（文件读取/RPC get_messages 返回 role:'branchSummary'）对称还原，
-    // 否则重开 session 后分支摘要丢失（AGENTS.md 规则 7.5：可重开恢复）。
     if (m.role === 'branchSummary') {
       const bm = m as { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number }
       result.push({
@@ -339,14 +397,6 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[], orphanTool
       continue
     }
 
-    // bashExecution：pi bash 执行记录（composer-bash-execute）。
-    // pi get_messages 返回 role:'bashExecution'（与 message entry 平级的顶层 entry 类型），
-    // 转成带 bashExecution 字段的 system 消息——bash 是元信息非用户输入（W3 WC5 决策），
-    // 与实时路径（message.bashResult effect 创建 system 消息）统一走 BashOutputBlock 渲染。
-    // exitCode undefined → null（与 dispatcher 广播 bashResult 时 `?? null` 对称，防 JSON 丢值）。
-    // [S3] timestamp `?? Date.now()` 兜底，与 compactionSummary/branchSummary/custom 分支对齐
-    // （pi 理论上必填 timestamp，但 malformed 时缺字段会让 timestamp=undefined→前端 NaN）。
-    // AGENTS.md 规则 7.5：对话流状态必须可重开恢复——重开 session 时 bash 执行记录经此分支还原。
     if (m.role === 'bashExecution') {
       const bm = m as { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp?: number; fullOutputPath?: string }
       const ts = bm.timestamp ?? Date.now()
@@ -370,14 +420,8 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[], orphanTool
       continue
     }
 
-    // user or assistant → 委托 convertSinglePiMessage（未知 role 在 helper 内 warn + 返回 null 跳过）。
-    // 抽出后行为不变：toolResult/compactionSummary/custom/branchSummary 上面已 continue，
-    // 此处只剩 user/assistant/未知 role，与 helper 的判定一致。
-    // entryIds 路径（entry 树重建）：按 index 取 entryId 传给 helper，填到 msg.piEntryId
-    // （供 rebuildHistoryFromEntries 回查 clientUuidMap + segmentsMetadata 回填 badge）。
-    // 不传 entryIds 时 entryId 为 undefined，helper 回退读 m.__entryId（文件路径注入），行为不变。
     const entryId = entryIds?.[i]
-    const msg = convertSinglePiMessage(m as PiHistoryMessage, entryId !== undefined ? { entryId } : undefined)
+    const msg = convertSinglePiMessageLegacy(m as PiHistoryMessage, entryId !== undefined ? { entryId } : undefined)
     if (!msg) continue
     result.push(msg)
     if (msg.toolCalls && msg.toolCalls.length > 0) {
