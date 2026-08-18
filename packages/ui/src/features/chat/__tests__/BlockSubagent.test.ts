@@ -53,8 +53,8 @@ describe('BlockSubagent: 标题行渲染（顶层 input 拍平字段）', () => 
       props: { tool: makeSubagent(), sessionId: 's1' },
     })
     const text = wrapper.text()
-    // subagent prefix 文案
-    expect(text).toContain('subagent')
+    // subagent prefix 文案（大写 S，CSS uppercase 已移除改为首字母大写文字）
+    expect(text).toContain('Subagent')
     // agent 名（顶层 input.agent，非默认值）
     expect(text).toContain('researcher')
     // slug（顶层 input.slug）

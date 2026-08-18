@@ -276,8 +276,9 @@ const iconKind = computed<IconKind>(() => {
     case 'streaming':
     case 'working':
     case 'compacting':
-    case 'pending':
       return 'spinning'
+    case 'pending':
+      return 'hollow'
     case 'waiting':
     case 'retrying':
       return 'waiting'
