@@ -5,7 +5,7 @@
 
 ## 1. 结论
 
-**四单元全部 verified**：security-trust-boundary（8 pass/0 fail/1 manual）、lifecycle-robustness（5/0/1）、api-contract-hardening（6/0/1）、根单元 plugin-trust-hardening（4/0/2）。设计 §4 的 16 个验收场景全部有承载（§3 映射表）。6 个实施期门全部有结论（§4）。设计偏差 8 条已逐条裁决并记录（§5）。3 个 UI 手动项按 spec 设计留待用户执行（§6）。已知问题 1 项（测试基建 flake，与本次改动无关，§7）。
+**四单元全部 verified**：security-trust-boundary（8 pass/0 fail/1 manual）、lifecycle-robustness（5/0/1）、api-contract-hardening（6/0/1）、根单元 plugin-trust-hardening（4/0/2，终态 commit 365f77572 复验）。设计 §4 的 16 个验收场景全部有承载（§3 映射表）。6 个实施期门全部有结论（§4）。设计偏差 8 条已逐条裁决并记录（§5；其中 3 条设计侧失准已回写勘误，commit 953ada4de）。3 个 UI 手动项按 spec 设计留待用户执行（§6）。已知问题 1 项已根治（测试端口竞态，§7）。
 
 ### 交付 commit 链（分支 cw/plugin-trust-hardening/api-contract-hardening）
 
@@ -19,8 +19,10 @@
 | 9e3fae6a1 | contract S3-W1+W2（命令链复合键/sessions 事件/events 降级） |
 | 5cc2d61ae | contract S3-W3+W4（窄校验层/限流/毒化隔离） |
 | 74ab61503 | verify-plugin-contract.sh + scripts/cw-acceptance/ 根验收包装 |
+| 953ada4de | 设计文档勘误回写（§5 偏差 2/4/5 的设计侧修正） |
+| 365f77572 | 测试端口竞态修复：传输层 EADDRINUSE 归位 reject + wss error 转发修复 + 共享 startOnFreePort helper（§7 已知问题的根治） |
 
-全量回归终态：runtime 262 files / 3047 tests 零回归（工程起点基线 3002 → 3047）；core 35 pass；extensions:typecheck 零错误。
+全量回归终态：runtime 263 files / 3052 tests 零回归（工程起点基线 3002 → 3052）；core 35 pass；extensions:typecheck 零错误。根单元在 365f77572 重新 verify 通过（AC-I1 在曾触发 flake 的干净 clone 条件下直接绿）。
 
 ## 2. 金丝雀验证汇总
 
@@ -72,10 +74,10 @@
 | # | 偏差 | 理由与裁决 |
 |---|---|---|
 | 1 | `plugin-hot-reload.test.ts` mock 协议修正（deactivate 应回 `deactivated`，旧 mock 回 `activated`） | 真实协议（plugin-bootstrap.ts:169）核实无误；旧单键匹配掩盖失真，复合键落地后必须修正。接受 |
-| 2 | `cancelPendingRebuilds()` 落点从 host.shutdown（链末）前移到 PluginService.shutdown 第一步 | 设计只写「shutdown 清 timer」未指定落点；LC-C2 首跑实测证明链末清理太晚（deactivateAll 期间冷却到期会复活）。接受 |
+| 2 | `cancelPendingRebuilds()` 落点从 host.shutdown（链末）前移到 PluginService.shutdown 第一步 | 设计只写「shutdown 清 timer」未指定落点；LC-C2 首跑实测证明链末清理太晚（deactivateAll 期间冷却到期会复活）。接受；设计原文已勘误回写（落点明确为关停链第一步） |
 | 3 | `assignWorker` trusted 复用补 pluginIds 去重 | e2e 实测暴露 crash-rebuild 轮次 id 累积；process 宿主同款修复（M6a-06）的对称补齐。接受 |
-| 4 | sessions 创建入口 3 处（create/restoreSession/forkSession），非设计写的 4 处（无独立 clone/precreate 方法） | 设计期事实偏差；三处全挂 + 全测。接受（以代码为准） |
-| 5 | sessions 定向投递用 rpcServer.notify（Worker onNotification 契约），非设计原文「rpcServer.invoke 通道」 | Worker 侧 session-api 既有监听形态决定；invoke 为 request/response 形态不匹配。接受 |
+| 4 | sessions 创建入口 3 处（create/restoreSession/forkSession），非设计写的 4 处（无独立 clone/precreate 方法） | 设计期事实偏差；三处全挂 + 全测。接受（以代码为准；设计原文已勘误回写，见 spec.md 勘误记录） |
+| 5 | sessions 定向投递用 rpcServer.notify（Worker onNotification 契约），非设计原文「rpcServer.invoke 通道」 | Worker 侧 session-api 既有监听形态决定；invoke 为 request/response 形态不匹配。接受；设计原文已勘误回写 |
 | 6 | commands invoke 用通知形态 + invoke.result 回传，非 request 形态 | plugin-bootstrap 的 handleIncomingRequest 属 lifecycle 已验证产物（禁改段）；通知形态复用 Worker 既有监听且 handler 抛错毫秒级回传（优于 10s 超时）。接受 |
 | 7 | CT-D2「返回值回传」以三路口径断言（reply 非 error + 错误毫秒级回传 + handler 调用计数/args 日志） | 既有 WS 契约 `plugin.executeCommand` reply 固定 `pong` 不含返回值——契约形态，非实现缺陷。接受（口径如实记录） |
 | 8 | notify/ui 限流常量 20/s、8KB、4KB、100ms、toast≤5 全部实测校准后落地（见 shared/constants.ts 注释：日志均值 0.005 条/s + 探针突发峰值 2 条/s） | 实施期门要求项，非偏差，记录备查 |
@@ -94,7 +96,7 @@ AC-I4 / AC-I5 两条根 manual 验收由本文档 §3 / §4 完成核对，即�
 
 ## 7. 已知问题
 
-**测试端口 TOCTOU 竞态 flake（与本次改动无关）**：`data-flow-integration.test.ts` 等 6 个测试文件使用「listen(0) 拿临时端口 → close → 再绑」的 `getFreePort` 模式，close 到重绑之间并行 worker 可拿到同端口 → `EADDRINUSE` unhandled error → 同 worker 内等回包的用例超时。根单元 verify 首跑命中一次（AC-I1 FAIL），诊断后重跑通过（本地全量多轮稳定）。生产语义「EADDRINUSE → process.exit(1)」是 security slice 刻意的 fail-fast（防端口劫持，ws-listen-hardening.test.ts 锁定），不应为测试便利修改。后续改进（独立事项）：测试侧引入「EADDRINUSE 重试换端口」的共享 fixture helper 替换 6 处复制粘贴的 getFreePort。
+**测试端口 TOCTOU 竞态 flake（与本次改动无关，已根治）**：`data-flow-integration.test.ts` 等 6 个测试文件使用「listen(0) 拿临时端口 → close → 再绑」的 `getFreePort` 模式，close 到重绑之间并行 worker 可拿到同端口 → `EADDRINUSE`。根单元 verify 首跑命中一次（AC-I1 FAIL），诊断后重跑通过。**修复（commit 365f77572，2026-08-18）**：探针实测发现更深层根因——ws 库把 httpServer 的 error 转发到 wss 对象再 emit，wss 无 error listener 时 `emit('error')` 直接抛 uncaughtException 并中断 httpServer listeners 遍历（这解释了首跑事故中「unhandled EADDRINUSE 而非 exit/reject」的现象）。三层修复：① `connection-manager.ts` EADDRINUSE 归位为 reject + 可操作文案（对齐 callback-server.ts 先例），补 wss error listener；② 进程退出决策上移到 `index.ts` 组合根（生产 fail-fast 语义不变）；③ 共享 `test/helpers/free-port.ts` 的 `startOnFreePort`（撞端口换号重试，上限 5 次）迁移全部 6 文件。新增确定性回归用例（占端口 → 第二个 server 必须 reject）+ helper 重试单测；全量 3052 绿 ×3 轮 + 8-worker 并行压力轮绿；根单元在 365f77572 干净 clone 复验 AC-I1 直接通过。
 
 ## 8. 工程过程备注
 
