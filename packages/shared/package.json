@@ -13,6 +13,10 @@
     "./paths": {
       "types": "./src/paths.ts",
       "import": "./src/paths.ts"
+    },
+    "./plugin-permission-map": {
+      "types": "./src/plugin-permission-map.ts",
+      "import": "./src/plugin-permission-map.ts"
     }
   },
   "scripts": {

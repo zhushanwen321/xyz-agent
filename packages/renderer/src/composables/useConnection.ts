@@ -23,6 +23,7 @@ import i18n from '@/i18n'
 import {
   getRuntimePort,
   getRuntimePortOffset,
+  getRuntimeToken,
   onRuntimePort,
   onRuntimeRestarting,
   onRuntimeFailed,
@@ -46,6 +47,7 @@ const connectionPorts: ConnectionPorts = {
   ipc: {
     getRuntimePort,
     getRuntimePortOffset,
+    getRuntimeToken,
     onRuntimePort: (cb) => onRuntimePort(cb),
     onRuntimeRestarting: (cb) => onRuntimeRestarting(cb),
     onRuntimeFailed: (cb) => onRuntimeFailed(cb),

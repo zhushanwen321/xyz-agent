@@ -24,9 +24,13 @@ import type { IpcHandlerDeps } from '../interfaces.js'
  * @param deps 注入的依赖（runtime/windowManager/createWindow）
  */
 export function registerBridgeHandlers(deps: IpcHandlerDeps): void {
-  // ── runtime 端口（只读 supervisor 状态）─────────────────────────
+  // ── runtime 端口 / token（只读 supervisor 状态）───────────────────
   ipcMain.handle('get-runtime-port', () => deps.runtime.port)
   ipcMain.handle('get-runtime-port-offset', () => deps.runtime.portOffset)
+  // S1-W1（spec §3.3 D4）：WS auth token 下发通道①——renderer 经 preload
+  // getRuntimeToken 读取（与 get-runtime-port 同模式），连接 open 后作首条 auth 消息发送。
+  // 通道②（<dataDir>/runtime-token 文件）面向 CLI / 脚本，不经此 IPC。
+  ipcMain.handle('get-runtime-token', () => deps.runtime.token)
 
   // ── 数据目录（只读，Settings 强制目录展示动态化用）─────────────────
   // 返回 ~ 缩写的展示路径（home 前缀 → ~），dev 下为 ~/.xyz-agent-dev，prod 为 ~/.xyz-agent。

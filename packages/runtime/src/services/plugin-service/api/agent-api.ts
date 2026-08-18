@@ -18,6 +18,14 @@
 
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { PluginRpcClient } from '../plugin-rpc-client.js'
+import { asBoundedString } from '../validation.js'
+
+/**
+ * model / thinkingLevel 标识符长度上限（UTF-8 字节）。
+ * provider/modelId 复合串与枚举值均远小于此；上限防超长串进入
+ * sessionService.switchModel 的 split/join 与缓存键。
+ */
+const AGENT_ID_MAX_BYTES = 512
 
 /** Agent 服务依赖（主线程侧） */
 export interface AgentHandlers {
@@ -33,7 +41,8 @@ export function registerAgentRpcHandlers(
   deps: AgentHandlers,
 ): void {
   rpcServer.registerMethod('plugin.agent.setModel', async (params) => {
-    const model = params.model as string
+    // S3-W3 窄校验：model 非字符串/超长 → INVALID_MODEL，不进 switchModel
+    const model = asBoundedString(params.model, 'model', AGENT_ID_MAX_BYTES)
     await deps.setModel(model)
   })
 
@@ -46,7 +55,7 @@ export function registerAgentRpcHandlers(
   })
 
   rpcServer.registerMethod('plugin.agent.setThinkingLevel', async (params) => {
-    const level = params.level as string
+    const level = asBoundedString(params.level, 'level', AGENT_ID_MAX_BYTES)
     await deps.setThinkingLevel(level)
   })
 

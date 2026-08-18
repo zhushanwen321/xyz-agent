@@ -13,6 +13,7 @@ import type { PluginRpcServer } from './plugin-rpc-server.js'
 import type { PluginRpcClient } from './plugin-rpc-client.js'
 import type { ToolRegistration, ToolEntry } from './plugin-types.js'
 import { PluginRpcErrorCodes } from './plugin-types.js'
+import { asOptionalString, asRecord, asSafeKey, asString } from './validation.js'
 /** Tool 注册服务依赖（主线程侧） */
 export interface ToolService {
   /** 工具注册表，key 为 toolKey */
@@ -33,10 +34,14 @@ export function registerToolRpcHandlers(
   service: ToolService,
 ): void {
   rpcServer.registerMethod('plugin.tools.register', async (params) => {
-    const pluginId = params.pluginId as string
-    const name = params.name as string
-    const description = (params.description as string) ?? ''
-    const parameters = (params.parameters as Record<string, unknown>) ?? {}
+    // S3-W3 窄校验：name 进复合键 toolKey `${pluginId}:${name}`，过 asSafeKey
+    // 白名单从语法上排除 ':' 复合键注入与路径字符（与 commands.register 同语义）。
+    const pluginId = asSafeKey(params.pluginId, 'pluginId')
+    const name = asSafeKey(params.name, 'name')
+    const description = asOptionalString(params.description, 'description') ?? ''
+    const parameters = params.parameters === undefined
+      ? {}
+      : asRecord(params.parameters, 'parameters')
 
     const toolKey = `${pluginId}:${name}`
 
@@ -62,7 +67,9 @@ export function registerToolRpcHandlers(
   })
 
   rpcServer.registerMethod('plugin.tools.unregister', async (params) => {
-    const toolKey = params.toolKey as string
+    // toolKey 是宿主返回的复合键 `${pluginId}:${name}`，合法含 ':'——过 asString
+    // （白名单校验会误杀自身格式），只需防错类型
+    const toolKey = asString(params.toolKey, 'toolKey')
     if (service.toolRegistry.has(toolKey)) {
       service.toolRegistry.delete(toolKey)
       await service.syncToolsToBridge()

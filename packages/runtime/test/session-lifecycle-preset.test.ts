@@ -97,6 +97,8 @@ function makeMocks(opts: {
       id: session.id, cwd: session.cwd, label: 'repo', status: 'idle', lastActiveAt: 1,
       modelId: 'test-model', tokenCount: 0,
     })),
+    // S3-W2：创建入口收敛点（lifecycle 三处 return 前调用）
+    notifySessionCreated: vi.fn(),
     findScannedSession: vi.fn(() => undefined),
     fetchAndBroadcastContext: vi.fn(async () => undefined),
     detachSession: vi.fn(),

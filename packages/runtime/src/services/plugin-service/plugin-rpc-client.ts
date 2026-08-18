@@ -104,9 +104,23 @@ export class PluginRpcClient {
   /** 处理来自主线程的 RPC 通知 */
   handleNotification(notification: RpcNotification): void {
     const handlers = this.notificationHandlers.get(notification.method)
-    if (handlers) {
-      for (const handler of handlers) {
+    if (!handlers) return
+    for (const handler of handlers) {
+      // D6/W4 per-handler 兜底：同一 Worker/子进程承载多个插件（trusted ≤10 共享；
+      // sessions/hooks 通知按 handler 分发），单插件 handler 抛错若冒泡，会沿
+      // bootstrap 的 handleMessage catch 升级为 fatal_error → 整 Worker 崩溃连坐。
+      // 逐 handler try/catch：记日志（含归属 pluginId）后继续分发后续 handler。
+      try {
         handler(notification.params)
+      } catch (e: unknown) {
+        const p = notification.params
+        const pluginId = typeof p === 'object' && p !== null && !Array.isArray(p)
+          ? String((p as Record<string, unknown>).pluginId ?? 'unknown')
+          : 'unknown'
+        console.error(
+          `[plugin-rpc-client] notification handler error (method=${notification.method}, pluginId=${pluginId}):`,
+          e,
+        )
       }
     }
   }

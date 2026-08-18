@@ -130,7 +130,7 @@
 
 #### D3 信任级判定权（治 R3）——宿主强制覆盖
 
-registry 层：`source === 'external'` 一律强制 `trustLevel = 'sandbox'`（无视 manifest）；`source === 'built-in'` 一律 `trusted`。built-in 目录不再 cwd 探测：Electron 主进程 spawn 时显式注入 `--builtin-plugins-dir <绝对路径>`（打包 = `process.resourcesPath/resources/plugins`，dev = repo 根 `resources/plugins`，主进程两侧都已知），runtime 缺该参数时 built-in 扫描跳过并落 warning（fail-visible 而非 fail-open）。
+registry 层：`source === 'external'` 一律强制 `trustLevel = 'sandbox'`（无视 manifest）；`source === 'built-in'` 一律 `trusted`。built-in 目录不再 cwd 探测：Electron 主进程 spawn 时显式注入 `--builtin-plugins-dir <绝对路径>`（打包 = `process.resourcesPath/resources/plugins`，dev = repo 根 `resources/plugins`，主进程两侧都已知），runtime 缺该参数时回退 cwd 多形态探测并每次落 warning（fail-visible 而非 fail-open；仅限无主进程的 dev/test 形态，生产主进程恒显式传参——勘误 2026-08-18：原文写「跳过扫描」，实施保留 cwd 回退以维持 dev 直跑与 e2e 基线可用）。
 
 - 被否（安装时「信任此插件」审批，允许 external trusted）：为未来需求引入交互与状态复杂度（违反「不加推测性功能」）；当前无任何 external trusted 需求，等真实需求再议。
 
@@ -138,11 +138,11 @@ registry 层：`source === 'external'` 一律强制 `trustLevel = 'sandbox'`（�
 
 **WS 消费方全集**（设计核实）：① Electron renderer（经 preload IPC）；② `packages/runtime/src/cli/ws-client.ts`（xyz-settings CLI，终端进程，无 IPC 通道）；③ `scripts/verify-plugin-e2e.sh`（E2E 编排）。token 必须三条通路都可获取，否则 CLI 与插件 E2E 基线直接挂掉。
 
-方案：Electron 主进程 spawn runtime 时生成随机 32B token，**两个分发通道**——注入 `XYZ_RUNTIME_TOKEN` env（renderer 经 preload 新增 `getRuntimeToken` IPC 获取，与 `getRuntimePort` 同模式，落点 `bridge-handlers.ts`）；写入 `getDataDir()/runtime-token` 文件（**0600 权限**，CLI 与脚本读此文件）。WS 连接建立后首条消息必须是 `{type:'auth', token}`，校验通过前不受理任何其他消息、10s 超时断开；失败以 1008 关闭。`listen(port, '127.0.0.1')` 显式绑回环。
+方案：Electron 主进程 spawn runtime 时生成随机 32B token，**两个分发通道**——注入 `XYZ_RUNTIME_TOKEN` env（renderer 经 preload 新增 `getRuntimeToken` IPC 获取，与 `getRuntimePort` 同模式，落点 `bridge-handlers.ts`）；写入 `getDataDir()/runtime-token` 文件（**0600 权限**，CLI 与脚本读此文件）。WS 连接建立后首条消息必须是 `{type:'auth', payload:{token}}`（勘误 2026-08-18：原文写 `{type:'auth', token}`，实施为 payload 包裹形态），校验通过前不受理任何其他消息、10s 超时断开；失败以 1008 关闭。`listen(port, '127.0.0.1')` 显式绑回环。
 
 **威胁模型声明（诚实边界）**：0600 token 文件对**同用户**本机进程可读——这是刻意接受的边界，因为同用户恶意进程对 renderer/runtime 的攻击面等价于用户自身（可 ptrace、可读 renderer 进程内存拿 token，任何分发方式都挡不住）。token 防的是：局域网任意机器（回环绑定 + token 双保险）、本机**其他用户**进程（0600）、无凭据的本机粗粒度扫描。G2 按此表述。
 
-**maxPayload**：数值不拍脑袋——现有最大合法单条消息是贴图通路（`shared/src/protocol.ts:317` session.writeImage、`:334` message.send 的 base64 图片数组，原图经 base64 膨胀 4/3，原图 >3.7MB 即破 5MB 天真上限）。S1-W1 实施时先实测现有贴图消息大小分布，`maxPayload` 定为「实测 P99.9 × 2 与 16MB 取小」的配置常量，并加贴图回归验收（⛔ 实施期门）。
+**maxPayload**：数值不拍脑袋——现有最大合法单条消息是贴图通路（`shared/src/protocol.ts:317` session.writeImage、`:334` message.send 的 base64 图片数组，原图经 base64 膨胀 4/3，原图 >3.7MB 即破 5MB 天真上限）。S1-W1 实施时先实测现有贴图消息大小分布，`maxPayload` 定为「实测 P99.9 × 2 与 16MB 取小」的配置常量，并加贴图回归验收（⛔ 实施期门）。勘误 2026-08-18：实施定值 `MAX_WS_PAYLOAD_BYTES = 16MB`——实测 P99.9 约 4-8MB，公式字面「取小」结果 8MB 未采用，取 16MB 作绝对上限（≈P99.9 × 2~4 倍余量）；单图 >12MB 原图 base64 化超限被传输层先拒，相对 IPC 层 20MB 单图上限属预期收紧。
 
 - 被否 A（Unix domain socket）：Chromium renderer 的 `ws://` 不支持 UDS，renderer 侧物理不可行。
 - 被否 B（仅绑 127.0.0.1 不加 token）：本机任意进程仍可直连（CLI 证明这条通路真实存在且发的是 config.* 全量设置命令），token 把可见性收窄到「持有 token 文件/env 的进程」。
@@ -155,20 +155,20 @@ API 入口统一 `assertSafeKey(name, value)`：`/^[A-Za-z0-9._-]+$/` 且长度 
 #### D6 生命周期并发模型（治 R5）
 
 - **入口防御**：两宿主的消息回调统一 `safeDispatch`（非对象/null 消息落 warning 丢弃，回调 try/catch）；`index.ts` 加 `uncaughtException` 兜底（记日志 + 尝试优雅 shutdown，进程级最后防线）。
-- **状态机守卫**：`deactivatePlugin` 对 ACTIVATING 态先置「取消标志」（activate 完成后立即反卷）或排队；`activatePlugin` 补 DEACTIVATING 态守卫（现状该态可直接再激活，是并发错配的入口之一）；`onRebuilt` 只重激活当前状态为 CRASHED 的插件（用户已 disable/uninstall 的跳过）。
+- **状态机守卫**：`deactivatePlugin` 对 ACTIVATING 态先置「取消标志」（activate 完成后立即反卷）或排队；DEACTIVATING 态重入激活的错配面由 pending 复合键 + 单通道 IPC FIFO 结构性消除（勘误 2026-08-18：原文要求 `activatePlugin` 补显式守卫，实施采用结构性方案——activate 消息天然排队于在飞 deactivate 之后，回复按复合键精确匹配，终态收敛为用户最后意图，显式守卫不再需要）；`onRebuilt` 只重激活当前状态为 CRASHED 的插件（用户已 disable/uninstall 的跳过）。
 - **pending 复合键**：`pendingReplies` key 改 `${pluginId}:${op}`，`handleWorkerReply` 按 `(pluginId, replyType)` 精确匹配；超时 timer 随 entry 删除而 clear。
 - **loadPlugin 过滤**：listener 比对 `m.pluginId === pluginId` 再 resolve/reject。
-- **rebuild 受约束**：timer 保存引用 + `unref()`；`shutdown()` 清全部 rebuild timer + `crashedTrustedWorkers`；`rebuildWorker` 入口检查 disposed 标志。
+- **rebuild 受约束**：timer 保存引用 + `unref()`；关停时清全部 rebuild timer + `crashedTrustedWorkers`——落点为 `PluginService.shutdown()` **第一步**（`cancelPendingRebuilds()`；deactivateAll 可耗时数秒，等链末 `host.shutdown()` 才清理的话，等待窗口内冷却到期会复活插件，LC-C2 e2e 实测证明）；`rebuildWorker` 入口检查 disposed 标志。（勘误 2026-08-18：原文只写「`shutdown()` 清」未定落点，实施后收敛至关停链第一步。）
 - **崩溃处理对称化**：`handleWorkerCrash` 补 `worker.terminate()`（对齐 process 版 kill 兜底）；`handleNotification` 单插件回调 try/catch（记日志，不升级为 Worker 崩溃）；exit code 0 也做 handle/索引清理（不报 crash）；crash 回调补 statusBar/tool/command 贡献清理；rebuild 成功且 60s 无新崩溃清零 crashCounts（「连续 3 次」语义修复）。
 - **关停顺序**：`deactivateAll`（allSettled，单插件超时不阻塞）→ `sessionData.flushAll + dispose` → `storage.flushAll + dispose` → `host.shutdown()`；每步独立 catch（一步失败不跳过后续）。
 
 #### D7 契约闭环（治 R6）
 
 - **权限/方法名 SSOT**：`shared` 包新增 RPC 方法名常量 + permission 名映射模块（D1 已覆盖，此处指把 `plugin.command.execute` vs `plugin.commands.invoke` 类漂移用常量消灭）。
-- **命令执行链修复**：Worker 侧 handler 统一为 `plugin.commands.invoke` 常量，补齐 runtime→Worker 发送段（`plugin-rpc-setup.ts:248` 标记的未实现段），端到端测试（注册→前端触发→插件 handler 收到→返回）。commandId 改复合键 `pluginId:commandId`（消费方唯一——`useExtensionHostBridge.ts:272-280`，迁移影响面可控；builtin 插件命令同步迁移）。
-- **SDK 死链路处置**：`sessions.onDidCreateSession/onDidDestroySession` **实现**——钩子挂 session-service 的全部创建入口（create/clone/fork/precreate 四条路径收敛为一个内部 `notifySessionCreated`）与销毁入口（deleteSession），主线程侧新建 registerCreate/registerDestroy 注册表（按 handlerId 记 workerId），事件发生时按注册表**定向投递**到对应 Worker（复用 rpcServer.invoke 通道）；`events.on/emit` 插件间事件总线**显式降级**——SDK 从 `@stable` 移到 experimental 且调用即抛 `NOT_IMPLEMENTED`（带 issue 指引），等真实消费方再实现。注：`handleNotification` 的 Worker 内兜底（D6）因此不能随 events 降级而省略——sessions 通知走同一入口，无兜底则单插件回调 bug 仍连坐整 Worker。
+- **命令执行链修复**：Worker 侧 handler 统一为 `plugin.commands.invoke` 常量，补齐 runtime→Worker 发送段（`plugin-rpc-setup.ts:248` 标记的未实现段），端到端测试（注册→前端触发→插件 handler 收到→返回）。commandId 改复合键 `pluginId:commandId`（消费方唯一——`useExtensionHostBridge.ts:272-280`，迁移影响面可控；builtin 插件命令同步迁移——勘误 2026-08-18：实测 statusline 不注册动态命令，该项影响面为空）。返回值闭环终点为 runtime pending 层（`executeCommand` promise 的 resolve/reject）；WS `plugin.executeCommand` reply 保持既有 pong 契约不含返回值，前端消费场景待真实需求再议（对齐复核 2026-08-18 补注）。
+- **SDK 死链路处置**：`sessions.onDidCreateSession/onDidDestroySession` **实现**——钩子挂 session-service 的全部创建入口（create/restoreSession/forkSession 三处收敛为一个内部 `notifySessionCreated`——勘误 2026-08-18：原文写「create/clone/fork/precreate 四条路径」，代码实际无独立 clone/precreate 方法）与销毁入口（deleteSession），主线程侧新建 registerCreate/registerDestroy 注册表（按 handlerId 记 workerId），事件发生时按注册表**定向投递**到对应 Worker（经 rpcServer.notify 通知形态——勘误 2026-08-18：原文写「复用 rpcServer.invoke 通道」，但 Worker 侧 session-api 以 onNotification 监听 didCreate/didDestroy，invoke 的 request/response 形态不匹配）；`events.on/emit` 插件间事件总线**显式降级**——SDK 从 `@stable` 移到 experimental 且调用即抛 `NOT_IMPLEMENTED`（带 issue 指引），等真实消费方再实现。注：`handleNotification` 的 Worker 内兜底（D6）因此不能随 events 降级而省略——sessions 通知走同一入口，无兜底则单插件回调 bug 仍连坐整 Worker。
 - **输入校验层**：不引入 ajv（runtime 无该依赖，为窄校验引入打包依赖违反最小化；`noExternal` 纪律）。在 `plugin-service/api/` 入口统一手写窄校验工具（`asString`/`asSafeKey`/`asBoundedString`，对齐 core 侧 `message-bus-bridge` 既有模式），覆盖全部 40+ RPC 方法的 params。
-- **限流与防毒化**：runtime 侧每插件令牌桶——notify 默认 20 条/s（依据：正常插件通知是用户动作触发型，20/s 已是失控水平的 10 倍量级；做成 shared 常量可调，S3-W4 实施时以现有 statusline 通知频率实测校准）、单条 message 8KB、statusbar 单条 text 4KB（D3 验收「1MB text 被拒」即依此规则）、statusbar 更新 100ms 合并窗口；前端 toast 在列 ≤5（超出丢弃计数）。数值全部为可配置常量并注明默认值理由，不写死在逻辑里。statusBar item 入口逐条校验（坏条目拒绝该条而非整包）；`error` 总线事件前端接 consumer（console + 可选 toast）。
+- **限流与防毒化**：runtime 侧每插件令牌桶——notify 默认 20 条/s（依据：正常插件通知是用户动作触发型，20/s 已是失控水平的 10 倍量级；做成 shared 常量可调，S3-W4 实施时以现有 statusline 通知频率实测校准；`plugin.notify` 与 `plugin.ui.notify` 双入口共享同一桶实例合并计费——对齐复核 2026-08-18 补注，否则双入口合计 40/s 限流语义减半）、单条 message 8KB、statusbar 单条 text 4KB（D3 验收「1MB text 被拒」即依此规则）、statusbar 更新 100ms 合并窗口；前端 toast 在列 ≤5（超出丢弃计数）。数值全部为可配置常量并注明默认值理由，不写死在逻辑里。statusBar item 入口逐条校验（坏条目拒绝该条而非整包）；`error` 总线事件前端接 consumer（console + 可选 toast）。
 
 ### 3.4 决策汇总
 
@@ -194,7 +194,7 @@ API 入口统一 `assertSafeKey(name, value)`：`/^[A-Za-z0-9._-]+$/` 且长度 
 |---|------|------|--------|---------|
 | A1 | 沙箱 import 拦截 | 构造 sandbox 测试插件（`import 'node:fs'`），走真实 activator 链路激活 | 激活失败，错误含 `Sandbox: import('node:fs') is blocked`；同插件 `import './sibling.js'` 成功 | G1 |
 | A2 | 沙箱裸名/绝对路径逃逸 | 插件分别尝试 `import(<沙箱外存在的裸名包>)`、CJS `require('/tmp/evil.js')` | 两者均 `PERMISSION_DENIED` + 落插件错误日志 | G1 |
-| A3 | 身份伪冒（含分区） | sandbox 测试插件**声明并获批** `storage.set` 权限后，在 RPC params 填 `pluginId: 'statusline'` 调 `plugin.storage.set` | 返回 `PERMISSION_DENIED: plugin identity mismatch`（鉴权层拒）；即使方法本身在授权集内，写入分区为自身 pluginId 而非 statusline（分区键由通道身份覆写，`getDataDir()` 下无 statusline 分区新文件）；statusline 自身调用不受影响 | G1 |
+| A3 | 身份伪冒（含分区） | sandbox 测试插件**声明并获批** `storage.set` 权限后，在 RPC params 填 `pluginId: 'statusline'` 调 `plugin.storage.set` | 未授权方法伪冒 → `PERMISSION_DENIED`（identity mismatch，鉴权层拒）；已授权方法伪冒 → 放行但写入分区为通道覆写的自身 pluginId 而非 statusline（`getDataDir()` 下无 statusline 分区新文件）；statusline 自身调用不受影响（勘误 2026-08-18：原文前半句无条件要求鉴权层拒，与 D1 身份覆写语义自相矛盾——覆写后已授权伪冒按设计本就不拒） | G1 |
 | A4 | 合规 sandbox 插件全通 | 声明 `permissions: ["storage.set"]` 的插件经审批后调全部已授权 API | 全部 200；未授权方法（如 `agent.setModel`）PERMISSION_DENIED | G1/G4 |
 | A5 | 路径注入 | 插件传 `sessionId='../../evil'` 调 `plugin.sessionData.set` | `INVALID_SESSION_ID`；数据目录外无新文件 | G1 |
 | B1 | WS 认证 | 本机进程无 token 直连 `ws://127.0.0.1:<port>` 发 `plugin.toggle`；xyz-settings CLI 带 token 文件正常执行 config 命令 | 无 token 连接在 auth 阶段被 1008 关闭；带 token 的 renderer 与 CLI 均正常（三方消费方全通） | G2 |
@@ -205,7 +205,7 @@ API 入口统一 `assertSafeKey(name, value)`：`/^[A-Za-z0-9._-]+$/` 且长度 
 | C4 | 关停零丢失 | 插件 `onDeactivate` 内写 sessionData 后退出应用 | 重启后数据在 | G6 |
 | D1 | SDK 死链路 | 插件调 `api.sessions.onDidCreateSession`；新建/删除 session | handler 触发且收到 sessionId；`api.events.emit` 抛 `NOT_IMPLEMENTED` 且 SDK 类型不再标 @stable | G4 |
 | D2 | 命令执行 | 插件 `api.commands.register('x', h)` → 前端触发 | handler 收到调用并返回；另一插件无法覆盖/注销 `x`（复合键 + 归属校验） | G4/G5 |
-| D3 | 风暴限流 | 插件 1s 内发 200 条 notify + 1 条 1MB statusbar text | 前端 toast ≤20/s 展示、无卡顿；超大 statusbar 条目按单条 4KB 上限被拒并有日志 | G5 |
+| D3 | 风暴限流 | 插件 1s 内发 200 条 notify + 1 条 1MB statusbar text | runtime 侧超 20/s 的 notify 被丢弃（日志含 pluginId）、前端 toast 在列 ≤5、无卡顿；超大 statusbar 条目按单条 4KB 上限被拒并有日志（勘误 2026-08-18：原文「前端 toast ≤20/s 展示」口径失准——20/s 是 runtime 丢弃率，前端展示上限是在列 ≤5） | G5 |
 | D4 | 毒化隔离 | 恶意插件发 `text: {}` 的 statusbar item | 仅该条被拒，statusline 等其他插件状态栏正常更新 | G5 |
 | E1 | 全量回归 | `cd packages/runtime && npx vitest run`；`pnpm extensions:typecheck`；`bash scripts/verify-plugin-e2e.sh` | 全绿零回归（以实际输出为准） | 全部 |
 
@@ -262,3 +262,16 @@ feature:plugin-trust-hardening
 - ⛔ statusline（唯一 builtin 插件）在 external-强制-sandbox 与 builtin-trusted 规则下的回归——S1-W4 验收必含
 - ⛔ 存量 external 插件影响：`EXTERNAL_PLUGIN_ENABLED` 于 2026-08 才翻 true，当前无已知安装面（无 external 插件分发渠道与用户），强制降级 sandbox 的影响集判定为空；若实施时发现存量自报 trusted 的 external 插件，行为变化（首次权限审批 + import node:* 激活失败）属预期安全收紧，在 release notes 说明——S1-W4 实施时复核
 - ⛔ CJS `createRequire` 混用路径的真实插件存在性——S1-W3 保留拦截器但加监控日志，若 3 个月内无命中再减法删除
+
+---
+
+## 勘误记录（2026-08-18，实施后回写；1-3 实施期发现，4-6 实施后设计-代码对齐复审发现）
+
+实施与对齐复审发现的设计原文失准，已就地修正并在此汇总（1-3 见 exec-review.md §5 偏差裁决；4-6 见 exec-review.md §8 对齐复审）：
+
+1. §3.3 D6「rebuild 受约束」：rebuild timer 清理落点明确为 `PluginService.shutdown()` 第一步（原文未定落点；链末清理在 deactivateAll 等待窗口内会放行冷却到期复活，LC-C2 e2e 实测）。
+2. §3.3 D7「命令执行链」：builtin 插件命令迁移影响面为空（statusline 不注册动态命令，实测 grep 证实）。
+3. §3.3 D7「SDK 死链路」：创建入口为 create/restoreSession/forkSession 三处（原文写四条路径，代码无独立 clone/precreate 方法）；定向投递经 rpcServer.notify 通知形态（原文写 invoke 通道，Worker 侧 onNotification 契约决定形态）。
+4. §3.3 D3「缺参时 built-in 扫描跳过」：实施为回退 cwd 多形态探测 + 每次落 warning——完全跳过会废掉无主进程形态（dev 直跑、verify 脚本）的 e2e 基线；生产主进程恒显式传参，注入面收敛到显式注入路径。
+5. §3.3 D6「activatePlugin 补 DEACTIVATING 态守卫」：由 pending 复合键 + 单通道 IPC FIFO 结构性达成——DEACTIVATING 态重入激活时 activate 消息排队于在飞 deactivate 之后，回复按 `${pluginId}:${op}` 复合键精确匹配，终态收敛为用户最后意图（ACTIVE），无回复错配面；显式守卫不再需要（lifecycle-races.test.ts 固化该语义）。
+6. 传输 listen 失败路径（原文无条款覆盖）：EADDRINUSE 等 listen 错误在传输层 reject（错误信息含端口排查指引），进程退出决策归组合根 `index.ts`（捕获 → 可操作日志 + exit(1) fail-fast）；测试基建补 `test/helpers/free-port.ts` 重试 helper，消除 getFreePort 的 TOCTOU 端口竞态。

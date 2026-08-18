@@ -159,6 +159,8 @@ describe('SessionLifecycle — 写入时机 record', () => {
       getReplaceSystemPrompt: vi.fn(() => undefined),
       initializeManagedSession: vi.fn().mockResolvedValue({ id: 's1', cwd: '/test', label: 'test' }),
       toSummary: vi.fn().mockReturnValue({ id: 's1', cwd: '/test', label: 'test' }),
+      // S3-W2：创建入口收敛点
+      notifySessionCreated: vi.fn(),
     }
     const pm = {
       createSession: vi.fn().mockResolvedValue(mockClient),

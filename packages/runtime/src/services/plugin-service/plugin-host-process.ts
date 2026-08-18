@@ -6,7 +6,9 @@
  * - sandbox 插件独占子进程；trusted 插件共享（≤10 插件/进程）
  * - IPC 走 fork 默认 channel（child.send/process.on('message')），经 WorkerPort 适配
  *   （{ postMessage: child.send }）注册进 PluginRpcServer——HostToWorkerMessage 消息族零改动复用
- * - 崩溃检测：exit（非 0）/ error / disconnect / fatal_error 消息 → crash 回调（status 幂等守卫）
+ * - 崩溃检测：exit（非 0）/ error / fatal_error 消息 → crash 回调（status 幂等守卫）；
+ *   exit(0) → clean exit 清理不报 crash（L-5，对齐 Worker 版 handleWorkerCleanExit）；
+ *   disconnect → grace 延迟分流（exit 事件权威裁决，仅存活进程断开才报 crash）
  *
  * 打包约束（AGENTS.md #12）：
  * - fork 必须用 process.execPath + env ELECTRON_RUN_AS_NODE='1'（打包后无独立 node）
@@ -14,14 +16,23 @@
  */
 
 import { fork, type ChildProcess, type Serializable } from 'node:child_process'
+import { dirname as pathDirname } from 'node:path'
 import type { ProcessHandle } from './plugin-types.js'
-import { PluginRpcServer } from './plugin-rpc-server.js'
-import { resolveAndValidateFile, dispatchHostRpcMessage } from './plugin-host.js'
+import { PluginRpcServer, type RpcIdentity } from './plugin-rpc-server.js'
+import { resolveAndValidateFile, dispatchHostRpcMessage, safeDispatchHostMessage, isRecordMessage } from './plugin-host.js'
 
 const MAX_PLUGINS_PER_TRUSTED_PROCESS = 10
 const LOAD_PLUGIN_TIMEOUT_MS = 10_000
 /** shutdown 等待子进程退出的上限（超过则 SIGKILL） */
 const SHUTDOWN_KILL_TIMEOUT_MS = 2000
+/**
+ * disconnect 后等待 exit 事件的兜底窗口（L-5）。
+ * 实测探针：子进程退出时父进程事件序为 disconnect → exit，且 exit 事件晚于
+ * disconnect 约一个事件循环圈（SIGCHLD 传播 ms 级）——窗口取 25 倍余量，既让
+ * 伴随进程退出的 disconnect 稳稳等到 exit 权威分流，又不让真异常（存活进程断开
+ * IPC）的 crash 上报推迟过久。
+ */
+const DISCONNECT_GRACE_MS = 250
 
 type CrashCallback = (processId: string, pluginIds: string[], error: string) => void
 type ReplyCallback = (msg: unknown) => void
@@ -33,11 +44,14 @@ type ReplyCallback = (msg: unknown) => void
 export interface PluginHostProcessContract {
   /**
    * 为插件分配子进程。
-   * @param pluginDir 插件根目录绝对路径（sandbox 必传，注入 fork env XYZ_PLUGIN_SANDBOX_DIR；
+   * @param pluginPath 插件入口文件绝对路径（descriptor.pluginPath，`<dir>/index.js` 形态；
+   *   sandbox 经此派生沙箱目录——本宿主在 fork env 注入处 dirname(pluginPath) 一次
+   *   （S1-W3 修正落点，spec §3.3 D2-①：此前原样注入文件路径，ESM loader 的
+   *   `startsWith(sandboxDir + sep)` 恒 false，边界检查 0% 命中）；
    *   ESM loader 的 initialize() 在进程启动时读该 env，缺失 fail-closed throw，
-   *   故 sandbox 进程必须在 fork 前拿到 pluginDir——loadPlugin 时机太晚）。
+   *   故 sandbox 进程必须在 fork 前拿到 pluginPath——loadPlugin 时机太晚）。
    */
-  assignProcess(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginDir?: string): Promise<string>
+  assignProcess(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginPath?: string): Promise<string>
   loadPlugin(processId: string, pluginId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void>
   terminateProcess(processId: string): Promise<void>
   getProcessHandle(pluginId: string): { processId: string; postMessage(message: unknown): void } | undefined
@@ -101,11 +115,12 @@ export class PluginHostProcess implements PluginHostProcessContract {
   /**
    * 为插件分配子进程。
    *
-   * - sandbox: 每个插件独占一个子进程（pluginDir 注入 fork env XYZ_PLUGIN_SANDBOX_DIR，
-   *   供 ESM loader initialize() 在进程启动时读取——晚于 fork 的 loadPlugin 时机无法注入）
+   * - sandbox: 每个插件独占一个子进程（pluginPath 派生的沙箱目录注入 fork env
+   *   XYZ_PLUGIN_SANDBOX_DIR，供 ESM loader initialize() 在进程启动时读取——
+   *   晚于 fork 的 loadPlugin 时机无法注入）
    * - trusted: 查找有空位的 trusted 子进程（≤10），没有则新建
    */
-  async assignProcess(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginDir?: string): Promise<string> {
+  async assignProcess(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginPath?: string): Promise<string> {
     if (trustLevel === 'sandbox') {
       const processId = `sandbox-${pluginId}`
       const existing = this.processes.get(processId)
@@ -118,7 +133,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
         this.pluginToProcess.set(pluginId, processId)
         return processId
       }
-      return this.createProcess(processId, 'sandbox', pluginId, pluginDir).processId
+      return this.createProcess(processId, 'sandbox', pluginId, pluginPath).processId
     }
 
     // trusted: 复用空闲子进程
@@ -162,8 +177,13 @@ export class PluginHostProcess implements PluginHostProcessContract {
       }, this.loadTimeoutMs)
 
       const onMessage = (msg: unknown) => {
-        const m = msg as Record<string, unknown>
-        if (m.type === 'loaded' || m.type === 'error') {
+        // D6 入口防御 + loadPlugin 过滤：trusted 子进程多插件共享（≤10），loaded/error
+        // 回复必须按 pluginId 归属——只匹配 m.type 会命中并发加载的其他插件的回复
+        //（张冠李戴；bootstrap 回消息本就带 pluginId）。畸形消息（null/非对象）静默
+        // 忽略不抛错（主回调统一 warn；旧实现取 m.type 即 TypeError）。
+        if (!isRecordMessage(msg)) return
+        const m = msg
+        if ((m.type === 'loaded' || m.type === 'error') && m.pluginId === pluginId) {
           clearTimeout(timeout)
           child.off('message', onMessage)
           if (m.type === 'loaded') resolve()
@@ -306,7 +326,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
     processId: string,
     trustLevel: 'trusted' | 'sandbox',
     pluginId: string,
-    pluginDir?: string,
+    pluginPath?: string,
   ): ProcessHandle {
     // M6a-03：覆盖同 processId 前先清理残留句柄（崩溃→重建竞态防护）。
     // 崩溃（handleProcessCrash 不 kill 不删 map）后重激活走 createProcess 直接 set 覆盖，
@@ -359,12 +379,17 @@ export class PluginHostProcess implements PluginHostProcessContract {
       )
     }
 
-    // sandbox 子进程 env：注入 XYZ_PLUGIN_SANDBOX_DIR（ESM loader initialize() 读此 env
-    // 做路径边界判定，缺失则 fail-closed throw）。trusted 不需要（ESM loader 仅 sandbox
-    // 进程经 execArgv --import 注入；trusted 走 Worker 线程不经此 fork 路径）。
+    // sandbox 子进程 env：注入 XYZ_PLUGIN_SANDBOX_DIR = dirname(pluginPath)（S1-W3
+    // dirname 修正落点，spec §3.3 D2-①：ESM loader 以 startsWith(sandboxDir + sep)
+    // 判界，目录必须传插件根目录形态。此前把入口文件路径原样注入，任何真实模块
+    // 都不可能以 `<dir>/index.js/` 开头 → 边界/黑名单/scheme 检查 0% 命中）。
+    // dirname 修正只在本宿主 env 注入处一处（activator 继续传 pluginPath 原语义），
+    // loader 的 fail-closed 语义不变（env 缺失仍 initialize throw）。
+    // trusted 不需要（ESM loader 仅 sandbox 进程经 execArgv --import 注入；
+    // trusted 走 Worker 线程不经此 fork 路径）。
     const env: NodeJS.ProcessEnv = { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
-    if (trustLevel === 'sandbox' && pluginDir) {
-      env.XYZ_PLUGIN_SANDBOX_DIR = pluginDir
+    if (trustLevel === 'sandbox' && pluginPath) {
+      env.XYZ_PLUGIN_SANDBOX_DIR = pathDirname(pluginPath)
     }
 
     let child: ChildProcess
@@ -407,6 +432,11 @@ export class PluginHostProcess implements PluginHostProcessContract {
     this.processes.set(processId, handle)
     this.processInstances.set(processId, child)
     this.pluginToProcess.set(pluginId, processId)
+    // D1 通道身份：sandbox 进程与插件一对一（processId = sandbox-<pluginId>），
+    // 身份携带唯一 pluginId（鉴权按它查 granted，dispatch 覆写 params.pluginId）；
+    // trusted 进程多插件共享（≤10）→ worker 级身份，无唯一归属。
+    const identity: RpcIdentity =
+      trustLevel === 'sandbox' ? { trustLevel: 'sandbox', pluginId } : { trustLevel: 'trusted' }
     // WorkerPort 适配：child.send → postMessage（IPC channel 与 Worker postMessage 语义同构）
     this.rpcServer.registerWorker(processId, {
       postMessage: (message: unknown) => {
@@ -417,27 +447,25 @@ export class PluginHostProcess implements PluginHostProcessContract {
           console.debug(`[plugin-host-process] send failed for ${processId}:`, e)
         }
       },
-    })
+    }, identity)
 
     child.on('message', (msg: unknown) => {
-      const m = msg as Record<string, unknown>
-      if (m.type === 'rpc') {
-        // 子进程发来的 RPC 消息格式与 Worker 版一致——统一分发单一真相（Fix-3，
-        // 原 TR1「分发逻辑复制，独立维护」改为与 plugin-host / e2e 共享实现）
-        dispatchHostRpcMessage(this.rpcServer, processId, m)
-      } else if (m.type === 'fatal_error') {
-        this.handleProcessCrash(processId, String(m.error ?? 'unknown'))
-      } else if (
-        m.type === 'activated' ||
-        m.type === 'deactivated' ||
-        m.type === 'error'
-      ) {
-        // 生命周期回复：转发给 Activator
-        this.onReply?.(msg)
-        if (m.type === 'error') {
-          console.error(`[plugin-host-process] plugin error: ${(m as { pluginId?: string }).pluginId}: ${m.error}`)
-        }
-      }
+      // D6 入口防御：safe-dispatch（非对象/null 落 warning 丢弃 + 回调体 try/catch）
+      safeDispatchHostMessage('plugin-host-process', processId, msg, {
+        rpc: (m) => {
+          // 子进程发来的 RPC 消息格式与 Worker 版一致——统一分发单一真相（Fix-3，
+          // 原 TR1「分发逻辑复制，独立维护」改为与 plugin-host / e2e 共享实现）
+          dispatchHostRpcMessage(this.rpcServer, processId, m)
+        },
+        crash: (error) => this.handleProcessCrash(processId, error),
+        reply: (m) => {
+          // 生命周期回复：转发给 Activator
+          this.onReply?.(m)
+          if (m.type === 'error') {
+            console.error(`[plugin-host-process] plugin error: ${m.pluginId}: ${m.error}`)
+          }
+        },
+      })
     })
 
     child.on('error', (err: Error) => {
@@ -445,19 +473,65 @@ export class PluginHostProcess implements PluginHostProcessContract {
       this.handleProcessCrash(processId, err.message)
     })
 
-    // disconnect 先于 exit 到达（R3）：统一走 crash 处理，幂等守卫拦截正常 terminate 场景
+    // disconnect 先于 exit 到达（L-5 实测探针：子进程退出时父进程事件序为
+    // disconnect → exit，且 exit 晚约一个事件循环圈，setImmediate 回调里
+    // child.exitCode 仍为 null，占实测 49/50）。此刻无法同步区分「进程退出伴随的
+    // 断开」与「存活进程主动断开 IPC」，立即判死会把 exit(0) 的正常退出误报为
+    // crash（假崩溃 toast + CRASHED 标记 + crashCounts 累积）。故 disconnect 不做
+    // 即时裁决，只挂 grace 兜底，权威分流交给 exit handler：
+    // - exit 随后到达 → clean exit（code 0）/ crash（code≠0）已完成清理，grace
+    //   到期时 handle 已删/已标记，幂等守卫直接返回
+    // - grace 窗口内 exit 未到（进程仍存活）→ IPC 单方面断开的真异常 → 报 crash
+    // - 窗口内 rebuild 已换新 child（processId 是 `sandbox-<pluginId>` 确定值，重建
+    //   不换 id）→ 本定时器捕获的是旧 child 实例，必须按实例归属放行：旧 child 的
+    //   迟到 disconnect/exit 不归新 handle 管（TC13：stale child late exit 不得
+    //   crash 新 handle；removeAllListeners 只摘旧 child 的监听器，摘不掉已在飞的
+    //   本定时器）
     child.on('disconnect', () => {
-      this.handleProcessCrash(processId, 'Child process IPC channel disconnected')
+      const graceTimer = setTimeout(() => {
+        if (this.processInstances.get(processId) !== child) return
+        const handle = this.processes.get(processId)
+        if (!handle || handle.status === 'crashed' || handle.status === 'terminated') return
+        // exit 已到但 handle 尚未被清理的窄窗防御：code 0 的分流归 exit handler
+        if (child.exitCode === 0) return
+        this.handleProcessCrash(processId, 'Child process IPC channel disconnected while process alive')
+      }, DISCONNECT_GRACE_MS)
+      // 兜底定时器不得阻塞 runtime 退出（进程退出场景 exit 已分流，timer 到期即空转）
+      graceTimer.unref?.()
     })
 
     child.on('exit', (code: number | null, signal: string | null) => {
-      if (code !== 0) {
-        console.error(`[plugin-host-process] process ${processId} exited with code ${code} signal ${signal}`)
-        this.handleProcessCrash(processId, `Child process exited with code ${code}`)
+      if (code === 0) {
+        // L-5：exit code 0 是「正常退出」不是崩溃——不触发 onCrash、不进 crash 链
+        // （假崩溃 toast / CRASHED 标记 / crashCounts 累积），但 handle、反向索引与
+        // rpcServer 注册必须清理：残留 handle 会让 assignProcess 把插件分配到已死
+        // 进程（child.send 落空），反向索引指向死进程
+        this.handleProcessCleanExit(processId)
+        return
       }
+      console.error(`[plugin-host-process] process ${processId} exited with code ${code} signal ${signal}`)
+      this.handleProcessCrash(processId, `Child process exited with code ${code}`)
     })
 
     return handle
+  }
+
+  /**
+   * exit code 0 的子进程清理（L-5，对齐 Worker 版 handleWorkerCleanExit）：正常退出
+   * 与崩溃分流——不报 crash（onCrash 不触发、不进上层 crashCounts/rebuild 链）。
+   * 幂等守卫与 crash 路径同款（crashed/terminated 已处理过则跳过；terminateProcess /
+   * shutdown 的 pre-mark 路径自带清理，不会重复到达这里）。
+   */
+  private handleProcessCleanExit(processId: string): void {
+    const handle = this.processes.get(processId)
+    if (!handle || handle.status === 'crashed' || handle.status === 'terminated') return
+    handle.status = 'terminated'
+    const pluginIds = [...handle.pluginIds]
+    this.rpcServer.unregisterWorker(processId)
+    this.removeIndexEntries(processId, pluginIds)
+    this.processInstances.delete(processId)
+    this.processes.delete(processId)
+    console.log(`[plugin-host-process] process ${processId} exited cleanly (code 0); handle cleaned up`)
   }
 
   /**

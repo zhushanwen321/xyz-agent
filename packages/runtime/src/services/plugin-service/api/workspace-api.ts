@@ -15,6 +15,10 @@
  */
 
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
+import { asBoundedString } from '../validation.js'
+
+/** glob pattern 长度上限（UTF-8 字节）：防超长 pattern 打爆 fast-glob 匹配 */
+const GLOB_PATTERN_MAX_BYTES = 1024
 
 /** Workspace 服务依赖（主线程侧） */
 export interface WorkspaceHandlers {
@@ -36,7 +40,8 @@ export function registerWorkspaceRpcHandlers(
   })
 
   rpcServer.registerMethod('plugin.workspace.findFiles', async (params) => {
-    const pattern = params.pattern as string
+    // S3-W3 窄校验：pattern 进 fast-glob（非字符串/超长 → INVALID_PATTERN）
+    const pattern = asBoundedString(params.pattern, 'pattern', GLOB_PATTERN_MAX_BYTES)
     return deps.findFiles(pattern)
   })
 }
