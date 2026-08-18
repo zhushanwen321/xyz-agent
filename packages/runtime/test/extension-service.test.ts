@@ -64,6 +64,7 @@ describe('ExtensionService', () => {
     service = new ExtensionService({
       settingsDir: testSettingsDir,
       projectRoot: process.cwd(),
+      packaged: false, // 环境可能设 XYZ_AGENT_PACKAGED=1（pi 桌面进程），测试显式覆盖为 dev 模式
       installer: new NpmGitInstaller(),
       resolver: new ExtensionResolver({
         settingsDir: testSettingsDir,
