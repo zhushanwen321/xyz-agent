@@ -1,7 +1,8 @@
 /**
- * contract-hardening.test.ts — api-contract-hardening slice 单元验收（S3-W1 + S3-W2）
+ * contract-hardening.test.ts — api-contract-hardening slice 单元验收
+ * （S3-W1 + S3-W2 + S3-W3 窄校验 + S3-W4 限流/毒化隔离）
  *
- * 覆盖（后续批次在此文件追加限流/毒化隔离/窄校验用例）：
+ * 覆盖：
  * - 命令执行链复合键：插件 B 无法覆盖/注销插件 A 的同名命令（register/unregister
  *   按 `pluginId:commandId` 复合键隔离）；commandId 含 ':' 被拒；sandbox 通道
  *   身份覆写后伪冒 pluginId 不改变键归属
@@ -15,6 +16,14 @@
  *   spawn 路径均触发 notifySessionCreated；销毁汇聚点 removeSessionEntry 触发
  *   onSessionDestroyed
  * - events 显式降级：api.events.on / emit 调用即抛 NOT_IMPLEMENTED（含 issue 指引）
+ * - CT-U1（S3-W3）：40+ RPC 方法 params 畸形输入（缺字段/错类型/越界键）返回
+ *   INVALID_* 结构化错误（error.code）且零写副作用；asString/asSafeKey/
+ *   asBoundedString 工具正反例
+ * - CT-D3（S3-W4）：notify 每插件令牌桶（默认 20 条/s，超限丢弃记日志）；
+ *   message >8KB 拒；statusbar text >4KB 拒；statusbar 更新 100ms 合并窗口；
+ *   常量可配置（构造参数覆盖 shared SSOT 默认值）
+ * - CT-D4（S3-W4）：statusbar 单条坏 item（text:{}）拒绝该条并记宿主日志，
+ *   其余条目与后续更新不受影响（不整包丢弃）
  *
  * 运行：cd packages/runtime && npx vitest run test/contract-hardening.test.ts
  */
@@ -43,6 +52,19 @@ import {
   SESSION_EVENT_METHODS,
   registerSessionRpcHandlers,
 } from '../src/services/plugin-service/api/session-api.js'
+import { registerAgentRpcHandlers } from '../src/services/plugin-service/api/agent-api.js'
+import { registerConfigRpcHandlers } from '../src/services/plugin-service/api/config-api.js'
+import { registerStorageRpcHandlers } from '../src/services/plugin-service/api/storage-api.js'
+import { registerSessionDataRpcHandlers } from '../src/services/plugin-service/api/session-data-api.js'
+import { registerUiRpcHandlers } from '../src/services/plugin-service/api/ui-api.js'
+import { registerViewRpcHandlers } from '../src/services/plugin-service/api/views-api.js'
+import { registerWorkspaceRpcHandlers } from '../src/services/plugin-service/api/workspace-api.js'
+import { registerToolRpcHandlers } from '../src/services/plugin-service/tool-api.js'
+import { registerHookRpcHandlers } from '../src/services/plugin-service/hook-api.js'
+import { NotifyRateLimiter, registerNotifyRpcHandler } from '../src/services/plugin-service/api/notify-api.js'
+import { StatusBarRegistry } from '../src/services/plugin-service/status-bar-registry.js'
+import { asBoundedString, asSafeKey, asString } from '../src/services/plugin-service/validation.js'
+import { PLUGIN_NOTIFY_LIMITS } from '@xyz-agent/shared'
 import type { SessionInfo } from '../src/services/plugin-service/plugin-types.js'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 import { createAgentAPI } from '../src/services/plugin-service/plugin-bootstrap.js'
@@ -513,5 +535,420 @@ describe('events 面显式降级：调用即抛 NOT_IMPLEMENTED', () => {
     const api = createAgentAPI('p1')
     expect(() => api.events.emit('some-event', { a: 1 })).toThrow(/NOT_IMPLEMENTED/)
     expect(() => api.events.emit('some-event', { a: 1 })).toThrow(/zhushanwen321\/xyz-agent\/issues/)
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// S3-W3 — CT-U1 api 入口窄校验层（40+ 方法畸形输入 → INVALID_*）
+// ══════════════════════════════════════════════════════════════════
+
+describe('CT-U1 api 入口窄校验层（畸形输入 → INVALID_* 结构化错误且零写副作用）', () => {
+  let rpc: PluginRpcServer
+  let port: ReturnType<typeof createMockPort>
+  /** 全部写通道副作用 mock：畸形输入必须零触达（不落盘/不建注册表/不广播） */
+  let effects: {
+    configSet: ReturnType<typeof vi.fn<(pluginId: string, key: string, value: unknown) => Promise<void>>>
+    storageSet: ReturnType<typeof vi.fn<(pluginId: string, key: string, value: unknown, scope: 'global' | 'workspace') => void>>
+    sessionDataSet: ReturnType<typeof vi.fn<(sessionId: string, key: string, value: unknown) => void>>
+    messageSent: ReturnType<typeof vi.fn<(sessionId: string | undefined, role: string, content: string) => Promise<void>>>
+    notifySent: ReturnType<typeof vi.fn<(pluginId: string, level: string, message: string) => void>>
+    statusBarSet: ReturnType<typeof vi.fn<(pluginId: string, id: string, text: string, options?: Record<string, unknown>) => Promise<void>>>
+    viewUpdated: ReturnType<typeof vi.fn<(pluginId: string, viewId: string, guiTree: unknown[]) => void>>
+    setModel: ReturnType<typeof vi.fn<(model: string) => Promise<void>>>
+    syncTools: ReturnType<typeof vi.fn<() => Promise<void>>>
+  }
+  let commandRegistry: Map<string, CommandRegistration>
+  let toolRegistry: Map<string, unknown>
+  let hookRegistry: Map<string, unknown[]>
+
+  beforeEach(() => {
+    rpc = new PluginRpcServer()
+    port = createMockPort()
+    rpc.registerWorker('w1', port)
+    effects = {
+      configSet: vi.fn<(pluginId: string, key: string, value: unknown) => Promise<void>>(),
+      storageSet: vi.fn<(pluginId: string, key: string, value: unknown, scope: 'global' | 'workspace') => void>(),
+      sessionDataSet: vi.fn<(sessionId: string, key: string, value: unknown) => void>(),
+      messageSent: vi.fn<(sessionId: string | undefined, role: string, content: string) => Promise<void>>(),
+      notifySent: vi.fn<(pluginId: string, level: string, message: string) => void>(),
+      statusBarSet: vi.fn<(pluginId: string, id: string, text: string, options?: Record<string, unknown>) => Promise<void>>(),
+      viewUpdated: vi.fn<(pluginId: string, viewId: string, guiTree: unknown[]) => void>(),
+      setModel: vi.fn<(model: string) => Promise<void>>(),
+      syncTools: vi.fn<() => Promise<void>>(),
+    }
+    commandRegistry = new Map()
+    toolRegistry = new Map()
+    hookRegistry = new Map()
+
+    registerAgentRpcHandlers(rpc, {
+      getModel: () => '',
+      setModel: effects.setModel,
+      getThinkingLevel: () => '',
+      setThinkingLevel: vi.fn<(level: string) => Promise<void>>(),
+      getActiveTools: () => [],
+    })
+    registerCommandRpcHandlers(rpc, {
+      registry: commandRegistry,
+      broadcastRegistered: vi.fn(),
+      deliverInvokeResult: vi.fn(),
+    })
+    registerConfigRpcHandlers(rpc, {
+      get: vi.fn<(pluginId: string, key: string) => Promise<unknown>>(),
+      getAll: vi.fn<(pluginId: string) => Promise<Record<string, unknown>>>(),
+      set: effects.configSet,
+    })
+    registerStorageRpcHandlers(rpc, {
+      get: vi.fn<(pluginId: string, key: string, scope: 'global' | 'workspace') => unknown>(),
+      set: effects.storageSet,
+      delete: vi.fn<(pluginId: string, key: string, scope: 'global' | 'workspace') => void>(),
+      keys: () => [],
+    })
+    registerSessionDataRpcHandlers(rpc, {
+      get: vi.fn<(sessionId: string, key: string) => unknown>(),
+      set: effects.sessionDataSet,
+      delete: vi.fn<(sessionId: string, key: string) => void>(),
+      keys: () => [],
+    })
+    registerNotifyRpcHandler(rpc, { notify: effects.notifySent })
+    registerSessionRpcHandlers(rpc, {
+      listSessions: () => [],
+      getSession: () => undefined,
+      getActiveSession: () => undefined,
+      sendMessage: effects.messageSent,
+      sessionEvents: new SessionEventDispatch(rpc),
+    })
+    registerUiRpcHandlers(rpc, {
+      showSelect: vi.fn<(title: string, options: string[], pluginId: string) => Promise<string | undefined>>(),
+      showConfirm: vi.fn<(title: string, message: string, pluginId: string) => Promise<boolean>>(),
+      showInput: vi.fn<(title: string, defaultValue: string | undefined, pluginId: string) => Promise<string | undefined>>(),
+      notify: vi.fn<(pluginId: string, level: string, message: string) => Promise<void>>(),
+      updateStatusBarItem: effects.statusBarSet as never,
+    })
+    registerViewRpcHandlers(rpc, { handleViewUpdate: effects.viewUpdated as never, mountPoints: [] })
+    registerWorkspaceRpcHandlers(rpc, {
+      getRootPath: () => '/tmp',
+      getName: () => 'test-ws',
+      findFiles: vi.fn<(pattern: string) => Promise<string[]>>(),
+    })
+    registerToolRpcHandlers(rpc, {
+      toolRegistry: toolRegistry as never,
+      syncToolsToBridge: effects.syncTools,
+    })
+    registerHookRpcHandlers(rpc, {
+      hookRegistry: hookRegistry as never,
+      getDescriptor: () => undefined,
+    })
+  })
+
+  let seq = 500000
+  /** dispatch 一条畸形 params，断言返回结构化错误（error.code = INVALID_*）且 message 含字段名 */
+  async function expectInvalid(method: string, params: Record<string, unknown>, code: string, fieldHint: string): Promise<void> {
+    await rpc.dispatch('w1', { jsonrpc: '2.0', id: ++seq, method, params })
+    const responses = port.messages.filter(m => m.type === 'rpc' && (m as { response?: unknown }).response)
+    const last = responses[responses.length - 1] as { response: { error?: { code?: unknown; message?: string } } }
+    expect(last.response.error, `${method} 畸形输入必须返回错误响应`).toBeDefined()
+    expect(last.response.error?.code, `${method} 错误码`).toBe(code)
+    expect(last.response.error?.message, `${method} 错误 message 含字段名（可指导插件作者修正）`).toContain(fieldHint)
+  }
+
+  it('CT-U1 工具函数 asString/asSafeKey/asBoundedString：正例收窄返回，反例抛 INVALID_* 错误码', () => {
+    // asString：正例原样收窄；错类型抛 INVALID_F（code 在 err.code）
+    expect(asString('x', 'f')).toBe('x')
+    expect(() => asString(42, 'f')).toThrow(/Invalid f: expected a string/)
+    try {
+      asString(42, 'f')
+      expect.unreachable('asString 应抛错')
+    } catch (e) {
+      expect((e as { code?: string }).code).toBe('INVALID_F')
+    }
+
+    // asSafeKey：白名单内放行；路径分隔符 / ':' / 超长 / 错类型全拒
+    expect(asSafeKey('a.b_c-1', 'key')).toBe('a.b_c-1')
+    for (const bad of ['../evil', 'a/b', 'a:b', 'a b', '', 'x'.repeat(129), 42, null]) {
+      try {
+        asSafeKey(bad, 'sessionId')
+        expect.unreachable(`asSafeKey 应拒绝 ${String(bad)}`)
+      } catch (e) {
+        expect((e as { code?: string }).code).toBe('INVALID_SESSION_ID')
+      }
+    }
+
+    // asBoundedString：上限内放行；按 UTF-8 字节数（非字符数）计长
+    expect(asBoundedString('abc', 'message', 8)).toBe('abc')
+    expect(asBoundedString('你'.repeat(2), 'message', 8)).toBe('你你') // 6 字节 ≤ 8
+    for (const [value, maxBytes] of [['123456789', 8], ['你'.repeat(3), 8]] as const) {
+      try {
+        asBoundedString(value, 'message', maxBytes)
+        expect.unreachable('asBoundedString 应抛错')
+      } catch (e) {
+        expect((e as { code?: string }).code).toBe('INVALID_MESSAGE')
+      }
+    }
+  })
+
+  it('CT-U1 标识符域（storage/config/sessionData/session/commands/hooks/tools）：越界键/错类型/缺字段全部 INVALID_*', async () => {
+    await expectInvalid('plugin.storage.global.set', { pluginId: 'p', key: 'k/../..', value: 1 }, 'INVALID_KEY', 'key')
+    await expectInvalid('plugin.storage.global.get', { pluginId: '../p', key: 'k' }, 'INVALID_PLUGIN_ID', 'pluginId')
+    await expectInvalid('plugin.storage.workspace.get', { pluginId: 'p' }, 'INVALID_KEY', 'key')
+    await expectInvalid('plugin.config.get', { pluginId: 'p', key: 'a:b' }, 'INVALID_KEY', 'key')
+    await expectInvalid('plugin.config.getAll', { pluginId: {} }, 'INVALID_PLUGIN_ID', 'pluginId')
+    await expectInvalid('plugin.config.set', { pluginId: 'p' }, 'INVALID_KEY', 'key')
+    await expectInvalid('plugin.sessionData.set', { sessionId: '../x', key: 'k', value: 1 }, 'INVALID_SESSION_ID', 'sessionId')
+    await expectInvalid('plugin.sessionData.keys', { sessionId: [] }, 'INVALID_SESSION_ID', 'sessionId')
+    await expectInvalid('plugin.sessions.get', { sessionId: '../../etc' }, 'INVALID_SESSION_ID', 'sessionId')
+    await expectInvalid('plugin.sessions.sendMessage', { sessionId: 's1', role: 'user', content: 42 }, 'INVALID_CONTENT', 'content')
+    await expectInvalid(COMMAND_RPC_METHODS.register, { pluginId: '../evil', command: { id: 'x' }, handlerId: 'h' }, 'INVALID_PLUGIN_ID', 'pluginId')
+    await expectInvalid(COMMAND_RPC_METHODS.register, { pluginId: 'p', command: 'not-object', handlerId: 'h' }, 'INVALID_COMMAND', 'command')
+    await expectInvalid(COMMAND_RPC_METHODS.unregister, { pluginId: 'p' }, 'INVALID_COMMAND_ID', 'commandId')
+    await expectInvalid(COMMAND_RPC_METHODS.invokeResult, { handlerId: 42 }, 'INVALID_HANDLER_ID', 'handlerId')
+    await expectInvalid(SESSION_EVENT_METHODS[0], { pluginId: 'p' }, 'INVALID_HANDLER_ID', 'handlerId')
+    await expectInvalid(SESSION_EVENT_METHODS[1], { pluginId: 'p', handlerId: 123 }, 'INVALID_HANDLER_ID', 'handlerId')
+    await expectInvalid('plugin.sessions.unregisterCreate', {}, 'INVALID_HANDLER_ID', 'handlerId')
+    await expectInvalid('plugin.sessions.unregisterDestroy', { handlerId: 'a/b' }, 'INVALID_HANDLER_ID', 'handlerId')
+    await expectInvalid('plugin.hooks.register', { pluginId: 'p', handlerId: 'h' }, 'INVALID_HOOK_TYPE', 'hookType')
+    await expectInvalid('plugin.hooks.unregister', { hookType: 'onPiEvent' }, 'INVALID_HANDLER_ID', 'handlerId')
+    await expectInvalid('plugin.tools.register', { pluginId: 'p', name: 'x:y' }, 'INVALID_NAME', 'name')
+    await expectInvalid('plugin.tools.register', { pluginId: 'p' }, 'INVALID_NAME', 'name')
+    await expectInvalid('plugin.tools.unregister', { toolKey: 42 }, 'INVALID_TOOL_KEY', 'toolKey')
+  })
+
+  it('CT-U1 文本域（ui/notify/agent/workspace/views）：错类型/缺字段/超长全部 INVALID_*', async () => {
+    await expectInvalid('plugin.ui.showSelect', { pluginId: 'p', title: 't', options: 'nope' }, 'INVALID_OPTIONS', 'options')
+    await expectInvalid('plugin.ui.showSelect', { pluginId: 'p', title: 't', options: ['a', 42] }, 'INVALID_OPTIONS', 'options')
+    await expectInvalid('plugin.ui.showConfirm', { pluginId: 'p', title: 't', message: [] }, 'INVALID_MESSAGE', 'message')
+    await expectInvalid('plugin.ui.showInput', { pluginId: 'p' }, 'INVALID_TITLE', 'title')
+    await expectInvalid('plugin.ui.updateStatusBarItem', { pluginId: 'p', id: 'a/b', text: 't' }, 'INVALID_ID', 'id')
+    await expectInvalid('plugin.ui.notify', { pluginId: 'p', level: 'info', message: {} }, 'INVALID_MESSAGE', 'message')
+    await expectInvalid('plugin.notify', { level: 'info', message: 'x' }, 'INVALID_PLUGIN_ID', 'pluginId')
+    await expectInvalid('plugin.notify', { pluginId: 'p', level: 'info', message: {} }, 'INVALID_MESSAGE', 'message')
+    await expectInvalid('plugin.agent.setModel', { model: {} }, 'INVALID_MODEL', 'model')
+    await expectInvalid('plugin.agent.setThinkingLevel', {}, 'INVALID_LEVEL', 'level')
+    await expectInvalid('plugin.workspace.findFiles', { pattern: 999 }, 'INVALID_PATTERN', 'pattern')
+    await expectInvalid('plugin.views.update', { pluginId: 'p', viewId: 'v', guiTree: 'not-array' }, 'INVALID_GUI_TREE', 'guiTree')
+    await expectInvalid('plugin.views.update', { pluginId: 'p', guiTree: [] }, 'INVALID_VIEW_ID', 'viewId')
+  })
+
+  it('CT-U1 畸形输入零写副作用：全部写通道未被调用、注册表零条目（不落盘不毒化）', async () => {
+    const malformed: Array<[string, Record<string, unknown>]> = [
+      ['plugin.storage.global.set', { pluginId: 'p', key: '../k', value: 1 }],
+      ['plugin.config.set', { pluginId: 'p', key: '../k', value: 1 }],
+      ['plugin.sessionData.set', { sessionId: '../s', key: 'k', value: 1 }],
+      ['plugin.sessions.sendMessage', { sessionId: '../s', role: 'user', content: 'x' }],
+      ['plugin.notify', { pluginId: 'p', level: 'info', message: 42 }],
+      ['plugin.ui.updateStatusBarItem', { pluginId: 'p', id: 'i', text: {} }],
+      ['plugin.views.update', { pluginId: 'p', viewId: 'v', guiTree: {} }],
+      ['plugin.agent.setModel', { model: 42 }],
+      ['plugin.commands.register', { pluginId: 'p', command: { id: 'x' }, handlerId: 42 }],
+      ['plugin.tools.register', { pluginId: 'p', name: {}}],
+      ['plugin.hooks.register', { pluginId: 'p', hookType: 42, handlerId: 'h' }],
+    ]
+    for (const [method, params] of malformed) {
+      await rpc.dispatch('w1', { jsonrpc: '2.0', id: ++seq, method, params })
+    }
+
+    expect(effects.storageSet).not.toHaveBeenCalled()
+    expect(effects.configSet).not.toHaveBeenCalled()
+    expect(effects.sessionDataSet).not.toHaveBeenCalled()
+    expect(effects.messageSent).not.toHaveBeenCalled()
+    expect(effects.notifySent).not.toHaveBeenCalled()
+    expect(effects.statusBarSet).not.toHaveBeenCalled()
+    expect(effects.viewUpdated).not.toHaveBeenCalled()
+    expect(effects.setModel).not.toHaveBeenCalled()
+    expect(effects.syncTools).not.toHaveBeenCalled()
+    expect(commandRegistry.size).toBe(0)
+    expect(toolRegistry.size).toBe(0)
+    expect(hookRegistry.size).toBe(0)
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// S3-W4 — CT-D3 限流与大小上限
+// ══════════════════════════════════════════════════════════════════
+
+describe('CT-D3 限流与防毒化（notify 令牌桶 / 大小上限 / statusbar 合并窗口）', () => {
+  it('CT-D3 NotifyRateLimiter 默认 20 条/s（shared SSOT）：瞬时突发 20 条放行、第 21 条拒、每插件独立分桶、1s 后配额恢复（nowMs 注入）', () => {
+    const limiter = new NotifyRateLimiter()
+    // 默认值来自 shared SSOT（可配置性：config 暴露且等于 PLUGIN_NOTIFY_LIMITS）
+    expect(limiter.config.ratePerSec).toBe(PLUGIN_NOTIFY_LIMITS.NOTIFY_RATE_PER_SEC)
+    expect(limiter.config.ratePerSec).toBe(20)
+
+    const t0 = 1_000_000
+    for (let i = 0; i < 20; i++) {
+      expect(limiter.tryAcquire('p1', t0), `第 ${i + 1} 条应放行（容量=速率，可瞬时突发）`).toBe(true)
+    }
+    expect(limiter.tryAcquire('p1', t0), '第 21 条超限应丢弃').toBe(false)
+    expect(limiter.tryAcquire('p2', t0), '每插件独立分桶：p1 超限不连坐 p2').toBe(true)
+    // 半秒后按速率补充 0.5×20=10 个令牌：可再取 10 条，第 11 条拒
+    for (let i = 0; i < 10; i++) {
+      expect(limiter.tryAcquire('p1', t0 + 500)).toBe(true)
+    }
+    expect(limiter.tryAcquire('p1', t0 + 500), '补充的 10 个令牌耗尽后仍拒').toBe(false)
+    expect(limiter.tryAcquire('p1', t0 + 1000), '再过半秒又补充 10 个令牌，恢复放行').toBe(true)
+  })
+
+  it('CT-D3 常量可配置：构造参数覆盖默认值（ratePerSec=5 时第 6 条拒）', () => {
+    const limiter = new NotifyRateLimiter({ ratePerSec: 5 })
+    expect(limiter.config.ratePerSec).toBe(5)
+    for (let i = 0; i < 5; i++) expect(limiter.tryAcquire('p', 0)).toBe(true)
+    expect(limiter.tryAcquire('p', 0)).toBe(false)
+  })
+
+  it('CT-D3 plugin.notify 超限丢弃并记日志（真实 dispatch 链路，20/s 打满后第 21 条丢弃 + warn）', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const rpc = new PluginRpcServer()
+    const port = createMockPort()
+    rpc.registerWorker('w1', port)
+    const notify = vi.fn()
+    registerNotifyRpcHandler(rpc, { notify })
+
+    const dispatchNotify = (i: number) =>
+      rpc.dispatch('w1', {
+        jsonrpc: '2.0',
+        id: 700000 + i,
+        method: 'plugin.notify',
+        params: { pluginId: 'storm', level: 'info', message: `m${i}` },
+      })
+
+    for (let i = 0; i < 20; i++) await dispatchNotify(i)
+    expect(notify).toHaveBeenCalledTimes(20)
+
+    await dispatchNotify(20)
+    expect(notify, '超限第 21 条被丢弃（notify 不再被调用）').toHaveBeenCalledTimes(20)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('rate limit 20/s exceeded'))
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('storm'))
+
+    warnSpy.mockRestore()
+  })
+
+  it('CT-D3 notify message >8KB 拒（INVALID_MESSAGE），8KB 整放行', async () => {
+    const rpc = new PluginRpcServer()
+    const port = createMockPort()
+    rpc.registerWorker('w1', port)
+    const notify = vi.fn()
+    registerNotifyRpcHandler(rpc, { notify })
+
+    // 8KB 整（默认值 + 1 字节越界；边界值本体合法）
+    await rpc.dispatch('w1', {
+      jsonrpc: '2.0', id: 710001, method: 'plugin.notify',
+      params: { pluginId: 'p', level: 'info', message: 'x'.repeat(PLUGIN_NOTIFY_LIMITS.NOTIFY_MESSAGE_MAX_BYTES) },
+    })
+    expect(notify).toHaveBeenCalledTimes(1)
+
+    await rpc.dispatch('w1', {
+      jsonrpc: '2.0', id: 710002, method: 'plugin.notify',
+      params: { pluginId: 'p', level: 'info', message: 'x'.repeat(PLUGIN_NOTIFY_LIMITS.NOTIFY_MESSAGE_MAX_BYTES + 1) },
+    })
+    expect(notify, '>8KB 条目被拒，不触达 notify').toHaveBeenCalledTimes(1)
+    const responses = port.messages.filter(m => m.type === 'rpc' && (m as { response?: unknown }).response)
+    const last = responses[responses.length - 1] as { response: { error?: { code?: unknown } } }
+    expect(last.response.error?.code).toBe('INVALID_MESSAGE')
+  })
+
+  it('CT-D3 statusbar text >4KB 拒（INVALID_TEXT，D3 验收「1MB text 被拒」依此规则）', async () => {
+    const rpc = new PluginRpcServer()
+    const port = createMockPort()
+    rpc.registerWorker('w1', port)
+    const updateStatusBarItem = vi.fn()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    registerUiRpcHandlers(rpc, {
+      showSelect: vi.fn(), showConfirm: vi.fn(), showInput: vi.fn(), notify: vi.fn(), updateStatusBarItem,
+    })
+
+    const dispatchStatus = (id: number, text: string) =>
+      rpc.dispatch('w1', {
+        jsonrpc: '2.0', id, method: 'plugin.ui.updateStatusBarItem',
+        params: { pluginId: 'p', id: 'item', text },
+      })
+
+    // 1MB text（验收场景）：拒绝
+    await dispatchStatus(720001, 'x'.repeat(1024 * 1024))
+    expect(updateStatusBarItem).not.toHaveBeenCalled()
+    const responses = port.messages.filter(m => m.type === 'rpc' && (m as { response?: unknown }).response)
+    const last = responses[responses.length - 1] as { response: { error?: { code?: unknown } } }
+    expect(last.response.error?.code).toBe('INVALID_TEXT')
+
+    // 4KB 整放行（边界值本体合法）
+    await dispatchStatus(720002, 'x'.repeat(PLUGIN_NOTIFY_LIMITS.STATUSBAR_TEXT_MAX_BYTES))
+    expect(updateStatusBarItem).toHaveBeenCalledTimes(1)
+    warnSpy.mockRestore()
+  })
+
+  it('CT-D3 statusbar 更新 100ms 合并窗口（fake timers）：窗口内多次更新合并为一次广播，coalesceMs=0 退化立即广播，dispose 清 pending timer', () => {
+    vi.useFakeTimers()
+    try {
+      const broadcasts: Array<{ items: unknown[] }> = []
+      const registry = new StatusBarRegistry(p => broadcasts.push(p))
+      // 默认值来自 shared SSOT（可配置性）
+      expect(registry).toBeDefined()
+
+      registry.items.set('p:a', { id: 'a', pluginId: 'p', text: 't1', priority: 1 } as never)
+      registry.broadcastAll()
+      registry.items.set('p:b', { id: 'b', pluginId: 'p', text: 't2', priority: 2 } as never)
+      registry.broadcastAll()
+      expect(broadcasts, '合并窗口内不广播（trailing-edge）').toHaveLength(0)
+
+      vi.advanceTimersByTime(PLUGIN_NOTIFY_LIMITS.STATUSBAR_COALESCE_MS)
+      expect(broadcasts, '窗口到期合并为一次广播').toHaveLength(1)
+      expect(broadcasts[0]!.items, '广播内容是最新全量快照（合并不丢终态）').toHaveLength(2)
+
+      // coalesceMs=0（构造参数覆盖默认）：退化为立即广播
+      const immediate: Array<{ items: unknown[] }> = []
+      const noCoalesce = new StatusBarRegistry(p => immediate.push(p), { coalesceMs: 0 })
+      noCoalesce.broadcastAll()
+      expect(immediate).toHaveLength(1)
+
+      // dispose：pending timer 清理（关停后不再广播）
+      registry.items.set('p:c', { id: 'c', pluginId: 'p', text: 't3', priority: 3 } as never)
+      registry.broadcastAll()
+      registry.dispose()
+      vi.advanceTimersByTime(PLUGIN_NOTIFY_LIMITS.STATUSBAR_COALESCE_MS * 2)
+      expect(broadcasts, 'dispose 后 pending 广播不发出').toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// S3-W4 — CT-D4 毒化隔离（runtime 侧 statusbar 逐条校验）
+// ══════════════════════════════════════════════════════════════════
+
+describe('CT-D4 毒化隔离（runtime 侧）：statusbar 单条坏 item 拒绝该条，不整包丢弃', () => {
+  it('CT-D4 text:{} 单条坏 item：该条 INVALID_TEXT 拒绝并记宿主日志，好条目与后续更新不受影响', async () => {
+    const rpc = new PluginRpcServer()
+    const port = createMockPort()
+    rpc.registerWorker('w1', port)
+    const updateStatusBarItem = vi.fn()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    registerUiRpcHandlers(rpc, {
+      showSelect: vi.fn(), showConfirm: vi.fn(), showInput: vi.fn(), notify: vi.fn(), updateStatusBarItem,
+    })
+
+    const dispatchStatus = (id: number, itemId: string, text: unknown) =>
+      rpc.dispatch('w1', {
+        jsonrpc: '2.0', id, method: 'plugin.ui.updateStatusBarItem',
+        params: { pluginId: 'p', id: itemId, text },
+      })
+
+    // 1) 好条目正常注册
+    await dispatchStatus(800001, 'good', '正常文案')
+    expect(updateStatusBarItem).toHaveBeenCalledTimes(1)
+
+    // 2) 坏条目（text:{}，spec 点名形态）：该条拒绝（INVALID_TEXT 回包 + 宿主日志）
+    await dispatchStatus(800002, 'bad', {})
+    expect(updateStatusBarItem, '坏条目不触达 registry 写通道').toHaveBeenCalledTimes(1)
+    const responses = port.messages.filter(m => m.type === 'rpc' && (m as { response?: unknown }).response)
+    const last = responses[responses.length - 1] as { response: { error?: { code?: unknown } } }
+    expect(last.response.error?.code).toBe('INVALID_TEXT')
+    expect(warnSpy, '坏条目拒绝留宿主侧日志（可观测）').toHaveBeenCalledWith(
+      expect.stringContaining('statusbar item rejected'),
+    )
+
+    // 3) 坏条目之后的好条目正常放行（毒化不扩散——不整包丢弃后续更新）
+    await dispatchStatus(800003, 'good2', '后续好条目')
+    expect(updateStatusBarItem).toHaveBeenCalledTimes(2)
+    expect(warnSpy.mock.calls.filter(c => String(c[0]).includes('good2')), '好条目不产生拒绝日志').toHaveLength(0)
+
+    warnSpy.mockRestore()
   })
 })

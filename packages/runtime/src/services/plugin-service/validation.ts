@@ -1,5 +1,5 @@
 /**
- * 插件 RPC 入口参数校验器（SEC-A5 路径注入防御）
+ * 插件 RPC 入口参数校验器（SEC-A5 路径注入防御 + S3-W3 窄校验层）
  *
  * 插件 Worker 经 RPC 传入的字符串标识符（sessionId / pluginId / key / scope）
  * 此前以 `params.sessionId as string` 直接下发，并 join 进持久化路径——
@@ -7,6 +7,12 @@
  * 凡会进入文件系统路径的标识符必须过 asSafeKey（字符集白名单），从语法上
  * 排除路径分隔符与 `..` 遍历序列。store 层另有 path.resolve 深度防御兜底
  * （session-data-store.ts / plugin-storage.ts），两层独立生效。
+ *
+ * S3-W3（D7 输入校验层）扩展：全部 40+ plugin.* RPC 方法入口的手写窄校验
+ * 工具（不引入 ajv——runtime 无该依赖，为窄校验引入打包依赖违反最小化与
+ * tsup noExternal 纪律）。工具族：asString / asBoundedString / asSafeKey /
+ * asStringArray / asOptionalString / asRecord，对齐 core 侧 message-bus-bridge
+ * 既有窄化模式（返回值收窄，坏值抛结构化错误）。
  *
  * 错误契约：抛 `errorWithCode(message, 'INVALID_<FIELD>')`——code 由字段名
  * 推导（sessionId → INVALID_SESSION_ID，pluginId → INVALID_PLUGIN_ID，
@@ -91,4 +97,65 @@ export function asSafeKey(value: unknown, field: string): string {
     )
   }
   return value
+}
+
+/**
+ * 断言 value 是 string[]，否则抛 `INVALID_<FIELD>`。
+ *
+ * 数组内任一元素非 string 即整体拒绝（showSelect options 等——半坏的选项列表
+ * 无法安全裁剪：插件作者应修自己的数据，而不是让用户看到被静默阉割的选项）。
+ */
+export function asStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || !value.every(x => typeof x === 'string')) {
+    throw errorWithCode(
+      `Invalid ${field}: expected an array of strings but received ${previewValue(value)}. `
+      + `Pass ${field} as a JSON string array, e.g. ${field}: ["a", "b"].`,
+      fieldToErrorCode(field),
+    )
+  }
+  return value
+}
+
+/**
+ * 断言 value 缺省（undefined）或是 string，否则抛 `INVALID_<FIELD>`。
+ *
+ * 可选字段的类型守卫：缺省合法放行（undefined），present 但类型错即拒绝——
+ * 与 asString 的区别仅在不把「缺省」当错误。
+ */
+export function asOptionalString(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string') {
+    throw errorWithCode(
+      `Invalid ${field}: expected a string (or omit the field) but received ${previewValue(value)}.`,
+      fieldToErrorCode(field),
+    )
+  }
+  return value
+}
+
+/**
+ * 断言 value 是普通对象（非 null/数组），否则抛 `INVALID_<FIELD>`。
+ *
+ * 嵌套结构（command / options / guiTree 条目）的第一层形状守卫；字段级校验
+ * 由调用方在解构后用本模块其它工具继续做。
+ */
+export function asRecord(value: unknown, field: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw errorWithCode(
+      `Invalid ${field}: expected an object but received ${previewValue(value)}.`,
+      fieldToErrorCode(field),
+    )
+  }
+  return value as Record<string, unknown>
+}
+
+/**
+ * 断言 value 缺省（undefined）或符合安全标识符白名单，否则抛 `INVALID_<FIELD>`。
+ *
+ * 可选的路径敏感标识符（如 sendMessage 的 sessionId——缺省表示发给活跃
+ * session）：缺省放行，present 即必须过白名单。
+ */
+export function asOptionalSafeKey(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined
+  return asSafeKey(value, field)
 }

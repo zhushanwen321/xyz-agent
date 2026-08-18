@@ -20,6 +20,7 @@ import type { IPluginServiceDeps } from '../plugin-types.js'
 import type { SessionSummary } from '../../../../../shared/src/session.js'
 import { registerHandler, dispatchHandler } from '../handler-registry.js'
 import { toErrorMessage } from '../../../utils/errors.js'
+import { asOptionalSafeKey, asSafeKey, asString } from '../validation.js'
 
 /**
  * session 生命周期事件注册方法（冻结契约，集成 verify 逐字比对——一字不差）。
@@ -190,7 +191,9 @@ export function registerSessionRpcHandlers(
   })
 
   rpcServer.registerMethod('plugin.sessions.get', async (params) => {
-    const sessionId = params.sessionId as string
+    // S3-W3 窄校验：sessionId 用于 sessionService 查询（磁盘扫描键），
+    // 畸形即抛 INVALID_SESSION_ID
+    const sessionId = asSafeKey(params.sessionId, 'sessionId')
     return deps.getSession(sessionId)
   })
 
@@ -199,38 +202,43 @@ export function registerSessionRpcHandlers(
   })
 
   rpcServer.registerMethod('plugin.sessions.sendMessage', async (params) => {
-    const sessionId = params.sessionId as string | undefined
-    const role = params.role as string
-    const content = params.content as string
+    // sessionId 可选（缺省 = 发给活跃 session）；present 即过白名单
+    const sessionId = asOptionalSafeKey(params.sessionId, 'sessionId')
+    const role = asString(params.role, 'role')
+    const content = asString(params.content, 'content')
     await deps.sendMessage(sessionId, role, content)
   })
 
   // ── session 生命周期事件注册（S3-W2，SESSION_EVENT_METHODS）──────────
   // ctx.workerId 来自宿主消息回调闭包（不可伪造），注册表据此定向投递；
   // params.pluginId 经 dispatch 身份覆写后为通道真实归属（sandbox 场景）。
+  // S3-W3：handlerId 过 asSafeKey（Worker 侧生成模式 `session_*_<pluginId>_<n>`
+  // 均在白名单内），畸形注册不进注册表（防毒化投递目标）。
   rpcServer.registerMethod(SESSION_EVENT_METHODS[0], async (params, ctx) => {
-    deps.sessionEvents.register('create', params.handlerId as string, {
+    const handlerId = asSafeKey(params.handlerId, 'handlerId')
+    deps.sessionEvents.register('create', handlerId, {
       workerId: ctx.workerId,
-      pluginId: params.pluginId as string,
+      pluginId: asString(params.pluginId, 'pluginId'),
     })
     return { registered: true }
   })
 
   rpcServer.registerMethod(SESSION_EVENT_METHODS[1], async (params, ctx) => {
-    deps.sessionEvents.register('destroy', params.handlerId as string, {
+    const handlerId = asSafeKey(params.handlerId, 'handlerId')
+    deps.sessionEvents.register('destroy', handlerId, {
       workerId: ctx.workerId,
-      pluginId: params.pluginId as string,
+      pluginId: asString(params.pluginId, 'pluginId'),
     })
     return { registered: true }
   })
 
   rpcServer.registerMethod(SESSION_EVENT_UNREGISTER_METHODS.create, async (params) => {
-    deps.sessionEvents.unregister(params.handlerId as string)
+    deps.sessionEvents.unregister(asSafeKey(params.handlerId, 'handlerId'))
     return { unregistered: true }
   })
 
   rpcServer.registerMethod(SESSION_EVENT_UNREGISTER_METHODS.destroy, async (params) => {
-    deps.sessionEvents.unregister(params.handlerId as string)
+    deps.sessionEvents.unregister(asSafeKey(params.handlerId, 'handlerId'))
     return { unregistered: true }
   })
 }

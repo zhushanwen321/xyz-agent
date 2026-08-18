@@ -6,8 +6,13 @@
  *   error('操作失败')
  *
  * ToastContainer 组件负责渲染，App.vue 挂载。
+ *
+ * 在列上限（D7 S3-W4 限流与防毒化）：在列 toast 达到 UI_TOAST_LIMITS.MAX_IN_FLIGHT
+ * （shared SSOT，默认 5）时新 toast 丢弃并累计 droppedCount——通知风暴（恶意/缺陷
+ * 插件高频 notify）不刷屏，runtime 侧 20/s 令牌桶是第一道防线，此处是前端兜底。
  */
 import { ref } from 'vue'
+import { UI_TOAST_LIMITS } from '@xyz-agent/shared'
 
 export interface Toast {
   id: number
@@ -17,6 +22,9 @@ export interface Toast {
 
 const toasts = ref<Toast[]>([])
 let nextId = 0
+
+/** 因在列上限被丢弃的 toast 累计计数（可观测：排查通知风暴的量级证据） */
+const droppedCount = ref(0)
 
 const TOAST_DURATION_MS = 4000
 
@@ -32,23 +40,31 @@ function scheduleRemove(id: number): void {
   timers.set(id, timer)
 }
 
+/** 入列公共路径：在列上限守门（超出丢弃计数 + warn，防风暴刷屏） */
+function push(type: Toast['type'], message: string): void {
+  if (toasts.value.length >= UI_TOAST_LIMITS.MAX_IN_FLIGHT) {
+    droppedCount.value += 1
+    console.warn(
+      `[toast] dropped (in-flight limit ${UI_TOAST_LIMITS.MAX_IN_FLIGHT}, total dropped ${droppedCount.value}): ${message}`,
+    )
+    return
+  }
+  const id = nextId++
+  toasts.value = [...toasts.value, { id, message, type }]
+  scheduleRemove(id)
+}
+
 export function useToast() {
   function error(message: string): void {
-    const id = nextId++
-    toasts.value = [...toasts.value, { id, message, type: 'error' }]
-    scheduleRemove(id)
+    push('error', message)
   }
 
   function info(message: string): void {
-    const id = nextId++
-    toasts.value = [...toasts.value, { id, message, type: 'info' }]
-    scheduleRemove(id)
+    push('info', message)
   }
 
   function warning(message: string): void {
-    const id = nextId++
-    toasts.value = [...toasts.value, { id, message, type: 'warning' }]
-    scheduleRemove(id)
+    push('warning', message)
   }
 
   function remove(id: number): void {
@@ -61,5 +77,5 @@ export function useToast() {
     toasts.value = toasts.value.filter((t) => t.id !== id)
   }
 
-  return { toasts, error, info, warning, remove }
+  return { toasts, error, info, warning, remove, droppedCount }
 }

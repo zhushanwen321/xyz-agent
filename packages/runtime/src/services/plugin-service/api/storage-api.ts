@@ -53,13 +53,13 @@ export function registerStorageRpcHandlers(
     // 深度防御——未来若 scope 改由 params 传入，校验已在位。
     asSafeKey(scope, 'scope')
     rpcServer.registerMethod(`plugin.storage.${scope}.get`, async (params) => {
-      return deps.get(asSafeKey(params.pluginId, 'pluginId'), params.key as string, scope)
+      return deps.get(asSafeKey(params.pluginId, 'pluginId'), asSafeKey(params.key, 'key'), scope)
     })
     rpcServer.registerMethod(`plugin.storage.${scope}.set`, async (params) => {
-      deps.set(asSafeKey(params.pluginId, 'pluginId'), params.key as string, params.value, scope)
+      deps.set(asSafeKey(params.pluginId, 'pluginId'), asSafeKey(params.key, 'key'), params.value, scope)
     })
     rpcServer.registerMethod(`plugin.storage.${scope}.delete`, async (params) => {
-      deps.delete(asSafeKey(params.pluginId, 'pluginId'), params.key as string, scope)
+      deps.delete(asSafeKey(params.pluginId, 'pluginId'), asSafeKey(params.key, 'key'), scope)
     })
     rpcServer.registerMethod(`plugin.storage.${scope}.keys`, async (params) => {
       return deps.keys(asSafeKey(params.pluginId, 'pluginId'), scope)

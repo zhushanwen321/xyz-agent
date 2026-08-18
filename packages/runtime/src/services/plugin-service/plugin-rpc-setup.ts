@@ -15,7 +15,7 @@ import { registerHookRpcHandlers } from './hook-api.js'
 import { registerSessionRpcHandlers, ActiveSessionResolver, sessionInfoFromSummary, type SessionEventDispatch } from './api/session-api.js'
 import { registerConfigRpcHandlers, toConfigKey, fromConfigKey, isConfigKey } from './api/config-api.js'
 import { registerStorageRpcHandlers, storageHandlersFrom } from './api/storage-api.js'
-import { registerNotifyRpcHandler, notifyHandlersFrom, broadcastPluginNotification } from './api/notify-api.js'
+import { registerNotifyRpcHandler, notifyHandlersFrom, broadcastPluginNotification, NotifyRateLimiter } from './api/notify-api.js'
 import { registerSessionDataRpcHandlers } from './api/session-data-api.js'
 import { registerUiRpcHandlers } from './api/ui-api.js'
 import { registerAgentRpcHandlers } from './api/agent-api.js'
@@ -88,6 +88,10 @@ interface PluginServiceLike {
 export function registerAllRpcMethods(ctx: RpcSetupContext): void {
   const { rpcServer, storage, toolRegistry, hookRegistry, statusBarItems, deps } = ctx
 
+  // S3-W4：每插件 notify 令牌桶——plugin.notify 与 plugin.ui.notify 两入口共享
+  // 同一实例（同一插件的配额跨入口合并计费），默认 20 条/s（shared SSOT）。
+  const notifyLimiter = new NotifyRateLimiter()
+
   // Tool RPC handlers
   registerToolRpcHandlers(rpcServer, {
     toolRegistry,
@@ -104,7 +108,7 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
   registerStorageRpcHandlers(rpcServer, storageHandlersFrom(storage))
 
   // Notify RPC handler — P6 收口到 api/notify-api.ts（fire-and-forget via broadcastFn）
-  registerNotifyRpcHandler(rpcServer, notifyHandlersFrom(deps.broadcastFn))
+  registerNotifyRpcHandler(rpcServer, { ...notifyHandlersFrom(deps.broadcastFn), limiter: notifyLimiter })
 
   // ── Sessions RPC handlers ────────────────────────────────
   registerSessionRpcHandlers(rpcServer, {
@@ -160,6 +164,8 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
 
   // ── UI RPC handlers ─────────────────────────────────────
   registerUiRpcHandlers(rpcServer, {
+    // S3-W4：与 plugin.notify 共享同一令牌桶（limiter 上注入，见 registerAllRpcMethods 顶部）
+    limiter: notifyLimiter,
     showSelect: (title: string, options: string[], pluginId: string) =>
       ctx.handleUiRequest('select', { title, options }, pluginId) as Promise<string | undefined>,
     showConfirm: (title: string, message: string, pluginId: string) =>

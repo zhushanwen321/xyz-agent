@@ -753,6 +753,9 @@ export class PluginService implements IPluginService {
     this.commandInvokes.rejectAll(new Error('Plugin service shutting down'))
     this.sessionEventDispatch.clearAll()
 
+    // S3-W4：statusbar 广播合并窗口的待发 timer 清理（关停后不再广播）
+    this.statusBarRegistry.dispose()
+
     // D6/W4 关停顺序（反转）：deactivateAll（allSettled，单插件 deactivate 超时不
     // 阻塞整体——每插件自带 DEACTIVATE_TIMEOUT_MS 兜底）→ sessionData flush+dispose
     // → storage flush+dispose → host.shutdown。旧顺序 flush 先于 deactivateAll，

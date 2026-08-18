@@ -27,7 +27,8 @@ import type { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { PluginRpcClient } from '../plugin-rpc-client.js'
 import type { Disposable } from '../plugin-types.js'
 import { registerHandler, dispatchHandler } from '../handler-registry.js'
-import { toErrorMessage } from '../../../utils/errors.js'
+import { toErrorMessage, errorWithCode } from '../../../utils/errors.js'
+import { asOptionalString, asRecord, asSafeKey, asString } from '../validation.js'
 
 /**
  * 命令域 RPC 方法名常量（D7 方法名 SSOT）。
@@ -105,49 +106,60 @@ export function registerCommandRpcHandlers(
   service: CommandService,
 ): void {
   rpcServer.registerMethod(COMMAND_RPC_METHODS.register, async (params) => {
-    const pluginId = params.pluginId as string
-    const command = params.command as CommandDescriptor
-    const handlerId = params.handlerId as string
-
+    // S3-W3 窄校验（fail-fast，畸形不建注册表条目不广播）：
+    // pluginId/command.id/handlerId 过 asSafeKey（白名单含 1-128 上限，
+    // 语法上排除路径分隔符与复合键注入字符）；可选元数据字段 present
+    // 但类型错即拒。
+    const pluginId = asSafeKey(params.pluginId, 'pluginId')
+    const command = asRecord(params.command, 'command')
     // 复合键完整性：commandId 含 ':' 会与 `pluginId:commandId` 键格式歧义
-    // （恶意插件可用它伪造他人前缀的键），register 侧拒绝。
-    if (typeof command?.id === 'string' && command.id.includes(':')) {
-      throw Object.assign(
-        new Error(`INVALID_COMMAND_ID: command id must not contain ':' (got '${command.id}')`),
-        { code: -32602 },
+    // （恶意插件可用它伪造他人前缀的键）。先于 asSafeKey 检查并保留原始
+    // 文案（message 前缀 'INVALID_COMMAND_ID:' 是 S3-W1 冻结用例断言的
+    // 可观测契约）。
+    if (typeof command.id === 'string' && command.id.includes(':')) {
+      throw errorWithCode(
+        `INVALID_COMMAND_ID: command id must not contain ':' (got '${command.id}')`,
+        'INVALID_COMMAND_ID',
       )
     }
+    const commandId = asSafeKey(command.id, 'commandId')
+    const handlerId = asSafeKey(params.handlerId, 'handlerId')
+    const title = asOptionalString(command.title, 'title')
+    const category = asOptionalString(command.category, 'category')
+    const keybinding = asOptionalString(command.keybinding, 'keybinding')
+    const when = asOptionalString(command.when, 'when')
 
     const registration: CommandRegistration = {
-      commandId: command.id,
+      commandId,
       pluginId,
       handlerId,
-      title: command.title,
-      category: command.category,
-      keybinding: command.keybinding,
-      when: command.when,
+      ...(title !== undefined ? { title } : {}),
+      ...(category !== undefined ? { category } : {}),
+      ...(keybinding !== undefined ? { keybinding } : {}),
+      ...(when !== undefined ? { when } : {}),
       registeredAt: Date.now(),
     }
 
-    service.registry.set(commandCompositeKey(pluginId, command.id), registration)
+    service.registry.set(commandCompositeKey(pluginId, commandId), registration)
     service.broadcastRegistered(registration)
 
     return { registered: true }
   })
 
   rpcServer.registerMethod(COMMAND_RPC_METHODS.unregister, async (params) => {
-    const pluginId = params.pluginId as string
-    const commandId = params.commandId as string
+    const pluginId = asSafeKey(params.pluginId, 'pluginId')
+    const commandId = asSafeKey(params.commandId, 'commandId')
 
     // ES1 + 复合键隔离：只删 `${自身pluginId}:${commandId}`——插件 B 传
     // commandId='A:x' 时键为 'B:A:x'（不存在）→ no-op，A:x 不受影响。
+    // （asSafeKey 已排除 ':'，注入形态在入口即被 INVALID_COMMAND_ID 拒绝。）
     service.registry.delete(commandCompositeKey(pluginId, commandId))
 
     return { unregistered: true }
   })
 
   rpcServer.registerMethod(COMMAND_RPC_METHODS.invokeResult, async (params) => {
-    const handlerId = params.handlerId as string
+    const handlerId = asString(params.handlerId, 'handlerId')
     const payload: { result?: unknown; error?: unknown } = params.error !== undefined
       ? { error: params.error }
       : { result: params.result }
