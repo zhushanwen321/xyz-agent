@@ -6,11 +6,11 @@
 
 ## §0 单元 → wave 映射
 
-父文档 §5 的 17 个单元全部映射到 wave（P0.5 无实施 wave，理由见表内备注）：
+父文档 §5 的 19 个单元全部映射到 wave（P0 5 + P1 5 + P2 3 + P3 3 + P4 3；P0.5 无实施 wave，理由见表内备注）：
 
 | 父文档单元 | wave | 备注 |
 |---|---|---|
-| P0.1 活跃 rename 切 RPC | W1 | 唯一已证实 bug，最先执行 |
+| P0.1 活跃 session label 直写全量切 RPC（含 tryPersistLabel 扩围） | W1 | 唯一已证实 bug，最先执行；turn_end/agent_end 兜底直写与手动 rename 直写同源同性质，同 wave 处置（r2 审查 MUST_FIX 1 扩围） |
 | P0.2 数据登记表初版 | W2 | |
 | P0.3 R1/R2/R3 机器检查 | W3（R1）+ W4（R2 骨架 + R3） | S1 语义层已上线（pr-cr-fix 8 维，含 review-data-governance），无 wave |
 | P0.4 等价性测试骨架 | W5 | |
@@ -37,7 +37,7 @@
 | wave | 名称 | 依赖 wave | 预估规模 | 父文档依据 |
 |---|---|---|---|---|
 | **P0 止血 + 护栏先行** | | | | |
-| W1 | 活跃 session rename 切 `set_session_name` RPC（止血） | 无 | M | P0.1 / D2 |
+| W1 | 活跃 session label 直写全量切 `set_session_name` RPC（rename + tryPersistLabel 扩围，止血） | 无 | M | P0.1 / D2 |
 | W2 | 数据登记表初版（12 条 + 空值语义 + legacy 例外） | W1 | S | P0.2 / §3.6 第 4 层 / D1b |
 | W3 | R1：pi 文件直写 pre-commit 检查 | W2 | M | P0.3 / D2 / §3.6 第 2 层 |
 | W4 | R2 骨架 + R3：taste-lint 两条规则 | W2 | M | P0.3 / §3.6 第 2 层 |
@@ -82,39 +82,46 @@
 
 ## §2 P0 止血 + 护栏先行（W1-W5）
 
-### W1 活跃 session rename 切 `set_session_name` RPC（P0.1，止血）
+### W1 活跃 session label 直写全量切 pi RPC（rename + tryPersistLabel 扩围，P0.1，止血）
 
-**目标**：活跃 session 的手动 rename 经 pi RPC 落盘，pi 成为 session 文件唯一写方，auto-rename 覆盖手动命名的 bug 消失。
+**目标**：活跃 session 的**全部** xyz 直写 pi JSONL 路径切换为经 pi（手动 rename 切 `set_session_name` RPC + `tryPersistLabel` turn_end/agent_end 兜底直写整体删除）——label 持久化责任整体移交 pi：显式初始 label 改在 create/fork 时经 RPC 写入，未命名 session 的派生初始 label 退役为显示派生（不再持久化）。W1 后活跃 session 不存在任何 xyz 直写 pi session 文件的代码路径，auto-rename 覆盖手动命名的 bug 消失。非活跃 rename 直写保留为登记的 legacy 例外（W2 登记、W11 移除）。
 
-**前置依赖**：无（第一个 wave）。pi `set_session_name` RPC 存在性与行为已由父文档 D2 探针核实（rpc-mode.ts:632，内部 `sessionManager.appendSessionInfo` 落盘 + 广播 `session_info_changed`）。
+**前置依赖**：无（第一个 wave）。pi `set_session_name` RPC 存在性与行为已由父文档 D2 探针核实（rpc-mode.ts:632，内部 `sessionManager.appendSessionInfo` 落盘 + 广播 `session_info_changed`）。create 期即调 RPC 的安全性也已核实：pre-flush 期 `appendSessionInfo` → `_appendEntry` → `_persist` 只进 pi 内存缓冲（首条 assistant 消息前不落盘），随首次 `openSync("wx")` flush 一并写出（session-manager.ts `_persist`）——EEXIST 场景（规则 #6）只发生在「pi 之外的代码提前建文件」，RPC 路径文件只会由 pi 创建，无此风险。
 
 **涉及文件**（均已核实存在）：
 
 - `packages/runtime/src/infra/pi/rpc-client.ts`（修改：新增 `setSessionName` 方法；现状已有 `get_state`/`get_entries`/`get_commands`/`get_session_stats`，无 `set_session_name`）
-- `packages/runtime/src/services/session/session-lifecycle.ts`（修改：`renameSession`（L284）活跃分支）
+- `packages/runtime/src/services/session/session-lifecycle.ts`（修改：`renameSession`（L284）活跃分支；create（L234）/ forkSession（L633）的显式 label 经 RPC 持久化；删除 L294 `labelPersisted` 重置）
+- `packages/runtime/src/services/session/session-service.ts`（修改：删除 `tryPersistLabel`（L1282-1286）及其在 `handleTurnUsageSideEffects`（L878）/ `handleTurnEndSideEffects`（L902）的调用、`labelPersisted` 初始化（L1191））
+- `packages/runtime/src/services/session/types.ts`（修改：删除 `labelPersisted` 字段声明（L110）——1 行机械删除）
 - `packages/runtime/test/rpc-client.test.ts`（修改：已核实真实位置——runtime 测试双目录布局，rpc-client 用例在 `test/` 而非 `src/__tests__/`；补 `setSessionName` 用例）
+- `packages/runtime/test/session-service.test.ts` + `test/session-service-w3.test.ts`（修改：rename 活跃分支直写断言（:716 附近）改 RPC 断言；tryPersistLabel 用例（:248-313 附近）删除或改写为「显式 label 经 RPC 持久化」用例）
+
+文件数 6-7 个超单 wave 5 文件基准，但其中 types.ts 为 1 行删除、两个测试文件为断言机械适配，核心生产改动集中在 rpc-client / session-lifecycle / session-service 三文件，总量 <300 行，符合「一个 subagent 一次会话」粒度。
 
 注意：父文档文件地图中 `rpc-client.ts` 未带目录，真实路径在 `packages/runtime/src/infra/pi/`（见附录 A）。
 
 **任务步骤**：
 
 1. `rpc-client.ts` 新增方法 `setSessionName(name: string)`：`sendCommand('set_session_name', { name })`，返回 `success` 检查遵循该文件既有 `sendCommand` 约定（规则：`sendCommand` 必须检查 `success`）。对齐现有 `getState`（L590 附近）的方法风格与 JSDoc。
-2. `session-lifecycle.ts` `renameSession` 活跃分支（`if (session)` 内）：保留 `session.label = newName` 与 `sessionMetaCache.setLabel(...)` 内存更新（P0 阶段 metaCache 未删，W9 再删）；把 `this.sessionStore.persistSessionName(...)`（L296）替换为 `this.svc.getRpcClient(sessionId)?.setSessionName(newName)`（`getRpcClient` 已存在于 session-service.ts:522）；RPC 失败时抛错给上层 toast（父文档 §3.1 失败路径：rename RPC 失败保留旧名可重试）。`labelPersisted` 标志在活跃分支删除（落盘责任已移交 pi）。
-3. 非活跃分支（`else`）**保持不动**（仍走 `persistSessionName`，登记为 legacy 例外，W2 登记、W11 删除）。
-4. 测试：rpc-client 用例覆盖 `set_session_name` 命令名与参数；session-lifecycle 相关测试（若无专门测试文件则新增 `packages/runtime/test/session-lifecycle-rename.test.ts` [新增]，与 rpc-client.test.ts 同目录）断言活跃分支走 RPC、非活跃分支不变。
+2. `session-lifecycle.ts` `renameSession` 活跃分支（`if (session)` 内）：保留 `session.label = newName` 与 `sessionMetaCache.setLabel(...)` 内存更新（P0 阶段 metaCache 未删，W9 再删）；把 `this.sessionStore.persistSessionName(...)`（L296）替换为 `this.svc.getRpcClient(sessionId)?.setSessionName(newName)`（`getRpcClient` 已存在于 session-service.ts:522）；RPC 失败时抛错给上层 toast（父文档 §3.1 失败路径：rename RPC 失败保留旧名可重试）。L290-294 的 `labelPersisted` 重置及其注释随机制删除。
+3. 删除 `tryPersistLabel` 机制（扩围核心）：session-service.ts 的 `tryPersistLabel` 方法（L1282-1286，含 docstring）、两处调用（`handleTurnUsageSideEffects` L878 / `handleTurnEndSideEffects` L902——删 tryPersistLabel 行并同步改写两 handler 的 docstring，移除其中「承载 tryPersistLabel 主路径/兜底」段落（L866-873 / L890），方法本身保留承载其余副作用）、L1191 `labelPersisted: false` 初始化、types.ts:110 字段声明（含其 docstring），全链删除。
+4. 显式初始 label 改经 RPC（替代原 tryPersistLabel 的持久化职责）：create（session-lifecycle.ts:234 `label ?? basename(sessionCwd)`）与 forkSession（L633）在 RpcClient 就绪后（create 流程内 `client.getState()` 成功即证 RPC 可用，L207）对**显式传入**的 label 调 `client.setSessionName(label)`（现有调用方已核实：renderer create payload（session-message-handler.ts:62）、handoff-service.ts:279、forkSession label 参数）。无显式 label 的派生值（basename(cwd)）**不再持久化**——显示由内存 `session.label` 与既有 scanner fallback（extractSessionName 返回 null → basename(cwd)）承担，重启后显示值不变；pi 内存 sessionName 保持空，auto-rename 守卫照常通过，行为与现状等价（现状直写也不进 pi 内存）。RPC 失败不阻断 create/fork（label 留内存显示，console.error 上报），恢复动作 = 手动 rename（本 wave RPC 路径）重试。
+5. 非活跃分支（`else`）**保持不动**（仍走 `persistSessionName`，登记为 legacy 例外，W2 登记、W11 删除）。
+6. 测试：rpc-client 用例覆盖 `set_session_name` 命令名与参数；session-lifecycle 相关测试（若无专门测试文件则新增 `packages/runtime/test/session-lifecycle-rename.test.ts` [新增]，与 rpc-client.test.ts 同目录）断言活跃分支走 RPC、create/fork 显式 label 走 RPC、派生 label 不触发 RPC、非活跃分支不变；session-service-w3.test.ts 的 tryPersistLabel 直写断言删除。
 
 **验收标准**：
 
-1. 代码级：`grep -n "set_session_name" packages/runtime/src/infra/pi/rpc-client.ts` ≥1 命中；`sed -n '284,312p' packages/runtime/src/services/session/session-lifecycle.ts` 输出中，`if (session)` 分支内无 `persistSessionName` 调用且 `else` 分支仍有（W11 前非活跃是登记在案的 legacy 例外）。
+1. 代码级：`grep -n "set_session_name" packages/runtime/src/infra/pi/rpc-client.ts` ≥1 命中；`sed -n '284,312p' packages/runtime/src/services/session/session-lifecycle.ts` 输出中，`if (session)` 分支内无 `persistSessionName` 调用且 `else` 分支仍有（W11 前非活跃是登记在案的 legacy 例外）；`grep -rn "tryPersistLabel\|labelPersisted" packages/runtime/src packages/runtime/test --include="*.ts"` 命中数 = 0（机制含其自述注释整体退场——与 persistSessionName 历史注释保留惯例不同，此处注释是已删机制的 docstring，随机制删除）；`grep -n "setSessionName" packages/runtime/src/services/session/session-lifecycle.ts` ≥2 命中（活跃 rename + create/fork 显式 label）。
 2. 行为级（父文档场景 1 前半）：`pnpm dev` → 新建 session 发首条消息 → 等自动命名出现（`~/.pi/agent/logs/` 中 rename-session 扩展日志出现 `renamed to`）→ 侧栏右键手动改名「重构计划」→ 继续对话 3 轮 → 侧栏名仍为「重构计划」，扩展日志出现 `skip: name exists`，session JSONL 尾部无新增 auto 标题的 `session_info` entry（`tail -5 <sessionFile> | grep session_info` 仅见手动改名那一条）。
-3. 回归：`RUNTIME_TEST` 通过；对**非活跃** session（重开 app 后未打开的）右键改名，名字持久（legacy 直写路径行为不变）。
+3. 回归：`RUNTIME_TEST` 通过；对**非活跃** session（重开 app 后未打开的）右键改名，名字持久（legacy 直写路径行为不变）；新建 session **不带名** → 首 turn 后 auto-rename 正常出现（派生初始值不再持久化不阻碍 auto-rename——pi 内存名保持空、守卫照常通过）；新建 session **带显式名**（handoff 场景或 renderer 传 label）→ 重启 app 后名字保留（session_info 由 pi 经 RPC 写入）且不被 auto-rename 覆盖（RPC 已更新 pi 内存，守卫 skip）；未命名且 auto-rename 未发生的 session 重启后显示 basename(cwd)（scanner fallback 既有路径）。
 4. 行为级补充：活跃 session 手动改名后（RPC 生效）用 `get_state`（`pi --mode rpc` 附着该 session）确认 `sessionName` 返回「重构计划」。
 
 ### W2 数据登记表初版（P0.2）
 
 **目标**：12 类 GUI 数据的 owner / 权威源 / 唯一写入口 / 字段空值语义 / 已知例外有一张可查的 SSOT 表，成为后续全部 wave 与护栏（S1/R2/R3）的依据。
 
-**前置依赖**：W1（legacy 例外登记以 W1 之后的现状为准——活跃直写已删、非活跃直写仍在）。
+**前置依赖**：W1（legacy 例外登记以 W1 之后的现状为准——活跃 rename 直写与 tryPersistLabel 兜底直写均已删、非活跃直写仍在）。
 
 **涉及文件**：
 
@@ -123,16 +130,16 @@
 **任务步骤**：
 
 1. 按父文档 §2.2 的 12 类清单逐条建表，每条字段：`编号 / GUI 数据 / 权威源 / owner（目标模块，P0 标注「现状 → 目标（W 编号）」）/ 唯一写入口 / 字段空值语义 / 已知例外`。
-2. 字段空值语义按父文档 D1b 落字：`sessionName` 空 = 合法态（未命名，必须整字段覆盖）；`label` 空 = 未设置（可守卫）；`thinkingLevel` 无空值语义（永不 guard）；`modelId`/`tokenCount` 磁盘扫描占位值 `''`/`0` 不覆盖已知真值（对齐 `session-scanner.ts` L79-80 现状）。
-3. 已知例外登记两条：① 非活跃 rename 直写（`persistSessionName` 非活跃分支，移除期限 = W11）；② 队列内容唯一提交方 = renderer（D6，扩展 `deliverAs` 注入禁用，S1 checklist 拦截）。
+2. 字段空值语义按父文档 D1b 落字：`sessionName` 空 = 合法态（未命名，必须整字段覆盖）——`label` 是 sessionName 在 xyz 侧的同一数据链投影（W7 label 实例 fetch 即 `get_state().sessionName`），**不单独登记**「label 空 = 未设置（可守卫）」语义（空值语义必须唯一，曾双登记致矛盾，r2 审查修正）；`thinkingLevel` 无空值语义（永不 guard）；`modelId`/`tokenCount` 磁盘扫描占位值 `''`/`0` 不覆盖已知真值（对齐 `session-scanner.ts` L81-82 现状）。
+3. 已知例外登记两条：① 非活跃 rename 直写（`persistSessionName` 非活跃分支 `session-lifecycle.ts:302`，移除期限 = W11）；② 队列内容唯一提交方 = renderer（D6，扩展 `deliverAs` 注入禁用，S1 checklist 拦截）。另在 #1 label 条目登记「已知写点处置」：历史三个直写点全部有着落——活跃 rename 直写（`session-lifecycle.ts:296`）与 turn_end/agent_end 兜底直写（`session-service.ts:1284` tryPersistLabel）已于 W1 移除（切 RPC / 退役为显示派生），非活跃 rename 直写（`:302`）带 W11 期限登记——写点集合与源码真实状态一致，防后续 review 误判「另有未登记写方」。
 4. 登记 plugin sessionData 为「已 owner 化声明」条目（权威 = runtime `SessionDataStore`，`packages/runtime/src/services/plugin-service/session-data-store.ts`，非多源病灶，见父文档 §2.2 覆盖范围说明）。
 5. 表头声明：本表 P1 起演进为可执行配置（ReplicatedState 配置即登记条目，W6-W8 执行时同步维护）。
 
 **验收标准**：
 
 1. 文件存在且 `grep -c "^| " docs/architecture/data-source-registry.md` 覆盖 12 条数据行 + 1 条 plugin sessionData 声明 + 2 条例外（人工计数核对）。
-2. 内容级：表内含「移除期限 = W11」字样（legacy 例外带期限，D2 要求）；含 sessionName / label / thinkingLevel 三种空值语义的区分表述（D1b）。
-3. 一致性：登记表中对非活跃 rename 的现状描述与代码一致——`grep -n "persistSessionName" packages/runtime/src/services/session/session-lifecycle.ts` 的命中数与登记表「现状写入口」列描述吻合（W1 后应仅剩非活跃分支 1 处调用）。
+2. 内容级：表内含「移除期限 = W11」字样（legacy 例外带期限，D2 要求）；含 sessionName（label 同链、不另设可守卫语义）/ thinkingLevel 无空值语义 / 磁盘扫描占位值守卫三类的区分表述（D1b）；#1 label 条目含三个历史写点的处置去向（两处已移除 + 一处带期限）。
+3. 一致性：登记表中对非活跃 rename 的现状描述与代码一致——`grep -n "persistSessionName" packages/runtime/src/services/session/session-lifecycle.ts` 的**代码命中**（排除注释行）仅剩非活跃分支 1 处（`:302`），注释命中（`:291-292`/`:306`，随 W1 扩围已改写或删除的除外）逐条核对为历史机制说明。
 
 ### W3 R1：pi 文件直写 pre-commit 检查（P0.3 第一件）
 
@@ -142,7 +149,7 @@
 
 **涉及文件**：
 
-- `.githooks/check_pi_direct_write.py` [新增]（`.githooks/` 目录存在，已有 `check_path_whitelist.py` 等 14 个 checker 同体系）
+- `.githooks/check_pi_direct_write.py` [新增]（`.githooks/` 目录存在，已有 `check_path_whitelist.py` 等 13 个 .py checker 同体系——`ls .githooks/*.py | wc -l` 实测）
 - `.githooks/install-hooks.sh`（修改：heredoc 生成的 pre-commit 里追加 R1 段）
 
 接入机制（已核实）：pre-commit 本体**不在 git 跟踪**，由 `install-hooks.sh` 的 heredoc 生成到 `$(git rev-parse --git-common-dir)/hooks/pre-commit`（commondir，842 行）；checker 以 `PATH_WHITELIST_CHECKER=".githooks/check_path_whitelist.py"` 形式调用。改完 `install-hooks.sh` 必须重跑 `cd .githooks && ./install-hooks.sh` 再生成。
@@ -150,7 +157,7 @@
 **任务步骤**：
 
 1. 新增 `check_pi_direct_write.py`，模式（对齐父文档 R1 定义）：扫描 `packages/runtime/src/` 与仓库根 `scripts/` 中指向 sessions 目录的写操作——`openSync('a')` / `openSync('w')` / `appendFile` / `appendFileSync` / `writeFile` / `writeFileSync`，且调用参数或邻近上下文含 sessions 路径推导（`getSessionsDir` / `sessions` 字面量）。实现风格对齐 `check_path_whitelist.py`（读其开头 docstring 与 main 结构复刻）。
-2. allowlist 机制：脚本内置 `ALLOWLIST` 数组，初始唯一条目 = 非活跃 rename 的 `persistSessionName`（`packages/runtime/src/infra/pi/session-file-utils.ts` L415 的实现 + 调用点），每条 allowlist 项必须带 `# 移除期限: W11` 注释（对应 `.githooks/check_sidecar_session.py` 的注释先例）。
+2. allowlist 机制：脚本内置 `ALLOWLIST` 数组，初始条目**枚举执行时 `persistSessionName` 的全部真实代码调用点**——按 W1 扩围后的预期 = 实现本体（`packages/runtime/src/infra/pi/session-file-utils.ts:415`）+ 唯一剩余调用点非活跃 rename（`session-lifecycle.ts:302`；活跃 `:296` 与 tryPersistLabel 兜底（`session-service.ts:1284`）已随 W1 删除）；执行时以 `grep -rn "persistSessionName" packages/runtime/src --include="*.ts"` 排除注释行与测试 mock 的命中为准逐一登记，allowlist 与真实调用点集必须严格相等（若发现 tryPersistLabel 路径仍存活 = W1 未按扩围执行完毕，停止并上报，**禁止登记放行**）。每条 allowlist 项必须带 `# 移除期限: W11` 注释（对应 `.githooks/check_sidecar_session.py` 的注释先例）。
 3. `install-hooks.sh` heredoc 内追加 R1 段（对齐 `PATH_WHITELIST_CHECKER` 段的结构：print_section → python3 调用 → 非 0 退出报错文案指向 `docs/architecture/data-source-registry.md`）；重跑 `./install-hooks.sh`。
 4. 报错文案遵守「错误信息必须可操作」：输出违规文件:行号 + 恢复动作（「改经 pi RPC 或扩展 appendEntry；若为登记例外，先在 data-source-registry.md 补条目 + 本脚本 allowlist 登记」）。
 
@@ -158,8 +165,8 @@
 
 1. 代码级：临时在 `packages/runtime/src/services/session/` 新建含 `appendFileSync(join(getSessionsDir(), 'x.jsonl'), '')` 的文件 → `python3 .githooks/check_pi_direct_write.py` exit 非 0 且输出含该文件路径与 registry 指引；删除临时文件后 exit 0。
 2. 行为级（父文档场景 4② 的 R1 部分）：在测试分支新增直写 JSONL 的 `appendFileSync` 并 `git add` → `git commit` 被 pre-commit 拦截（输出含 check_pi_direct_write 段报错）；revert 后 commit 通过。
-3. 回归：`install-hooks.sh` 重跑后 `grep -c "CHECKER=" "$(git rev-parse --git-common-dir)/hooks/pre-commit"` 比改前多 1（既有 7 个 checker 段不受影响，逐一仍可执行：`bash -n` 通过）。
-4. allowlist 验证：当前 HEAD 下 `python3 .githooks/check_pi_direct_write.py` exit 0（allowlist 覆盖现存唯一例外 `persistSessionName`）。
+3. 回归：`install-hooks.sh` 重跑后 `grep -c "CHECKER=" "$(git rev-parse --git-common-dir)/hooks/pre-commit"` 比改前多 1（生成体现有 16 行 `CHECKER=`——带缩进，无锚点 grep 实测；heredoc 与生成体一致——逐一仍可执行：`bash -n` 通过）。
+4. allowlist 验证：当前 HEAD 下 `python3 .githooks/check_pi_direct_write.py` exit 0，且 allowlist 条目与 `grep -rn "persistSessionName" packages/runtime/src --include="*.ts"` 排除注释后的代码命中一一对应（W1 扩围后预期 = 实现本体 + 非活跃调用点；多登 = 掩盖未登记写方，漏登 = R1 误报，两者都算验收失败）。
 
 ### W4 R2 骨架 + R3：taste-lint 两条规则（P0.3 第二、三件）
 
@@ -192,18 +199,20 @@
 
 **目标**：`packages/runtime/src/__tests__/equivalence/` 目录就绪——真实 pi 子进程 fixture 可复用，`live ≡ reload` 断言雏形可运行，后续 wave 的等价性断言都在此挂载。
 
-**前置依赖**：无（可与 W3/W4 并行）。
+**前置依赖**：无（可与 W3/W4 并行）。**先例诚实声明（r2 审查修正）**：仓库内**不存在**任何真实 pi spawn 测试先例，也无「pi binary 缺席时 skip」的既有惯例——`packages/runtime/src/__tests__/rpc-client-bash.test.ts` 是 `vi.mock('node:child_process')` 的全 mock 测试（其 docstring 自述「投递伪造 pi response」，仅 mock 层面覆盖 stdin JSONL 命令结构），不提供可复用的 spawn/环境检测写法。本 wave 的等价性 fixture 是**净新增基建**，spawn 命令形态按 workspace AGENTS.md 的 pi CLI 实测流程自行定义：`pi --mode rpc --session-dir <tmp> --model <model> --approve` + stdin JSONL 发命令、stdout 逐行收 RPC reply/event。
 
 **涉及文件**：
 
-- `packages/runtime/src/__tests__/equivalence/pi-fixture.ts` [新增]（目录 `equivalence/` 随本 wave 创建；spawn 真实 `pi --mode rpc` 子进程——模式复用 `packages/runtime/src/__tests__/rpc-client-bash.test.ts` 已核实的真实 spawn 先例：临时 `--session-dir`、stdin JSONL 发命令、收 RPC reply）
+- `packages/runtime/src/__tests__/equivalence/pi-fixture.ts` [新增]（目录 `equivalence/` 随本 wave 创建；spawn 真实 `pi --mode rpc` 子进程——净新增基建，无既有先例；临时 `--session-dir`、stdin JSONL 发命令、收 RPC reply）
 - `packages/runtime/src/__tests__/equivalence/live-reload.test.ts` [新增]（断言雏形；W22/W25 的 chaos / broadcast-getstate / pi-protocol-contract 同目录后续追加）
+
+规模复核（r2 要求）：净新增基建无先例可抄、需含冷启动就绪等待与临时目录清理，按 M 档上限预估（~250-300 行）执行；若实现中发现需要多 pi 版本矩阵等超出单 wave 预算的形态，上报调级而非压缩清理逻辑。
 
 **任务步骤**：
 
-1. `pi-fixture.ts`：导出 `spawnPiFixture()`——临时目录 session-dir、spawn pi（可执行文件定位方式复用 rpc-client-bash.test.ts 现状）、`sendCommand` 封装、`collectEvents()`（订阅 `session.subscribe` 收事件流）、`dispose()`（kill + 清理临时目录）。fixture 必须处理 pi 冷启动就绪等待（探针结论：冷启动中位数 ~500ms，等待上限取 5s）。
+1. `pi-fixture.ts`：导出 `spawnPiFixture()`——临时目录 session-dir、spawn pi（可执行文件定位为 fixture 自有逻辑：`execSync('command -v pi')`（macOS/Linux）/ `where pi`（Windows）探测 PATH，命令形态对齐生产代码 `process-manager.ts:52` 的 `which pi`/`where pi`；探测失败返回 null 并进入步骤 3 的 skip 语义）、`sendCommand` 封装（stdin 写 JSONL 行）、`collectEvents()`（订阅 `session.subscribe` 收事件流）、`dispose()`（kill + 清理临时目录）。fixture 必须处理 pi 冷启动就绪等待（探针结论：冷启动中位数 ~500ms，等待上限取 5s）。
 2. `live-reload.test.ts` 雏形：跑最小操作序列（发一条 prompt 等 turn 完成）→ 断言「实时累积的 entry/消息快照 == `get_entries` 全量重放快照」。此阶段断言对象为原始 entry 序列（W20-W21 后升级为 store 级快照），vite/vitest 配置沿用 `packages/runtime/vitest.config.ts`。
-3. 测试标记：真实 pi 测试按仓库既有惯例处理环境依赖（pi binary 不存在时 skip 而非 fail——沿用 rpc-client-bash.test.ts 的环境检测写法）。
+3. skip-if-no-pi 语义（本 wave 净新增约定，非既有惯例——全仓 `skipIf` 仅 `packages/runtime/test/e1-e3-real-verify.test.ts:71` 一处且用于 provider 环境检测，不覆盖 pi binary）：fixture 模块顶层 `const PI_PATH = detectPi()`；测试文件用 `describe.skipIf(!PI_PATH)` / `it.skipIf(!PI_PATH)` 包裹真实 spawn 用例——pi 缺席时用例 skip（skip 计数 >0）而非 fail；该约定写进 fixture 文件头注释，作为 W22/W25 及后续 equivalence 用例的唯一引用点。
 4. 验收工具性：此测试成为 W7-W12、W20-W22 各 wave 验收的运行基线（各 wave 在此文件族新增用例，不另起炉灶）。
 
 **验收标准**：
@@ -260,7 +269,7 @@
 **任务步骤**：
 
 1. `replicated-states.config.ts` 建 3 个配置条目（每条 = 登记表条目的代码化，条目编号与 W2 登记表一一对应）：
-   - label：fetch = `get_state().sessionName`；失效源 = `session_info_changed`；空值语义 = `sessionName 缺失 = 未命名 = 覆盖`；
+   - label：fetch = `get_state().sessionName`；失效源 = `session_info_changed`；空值语义 = `sessionName 缺失 = 未命名 = 覆盖`（label 与 sessionName 是同一数据链，无独立「可守卫」空值语义——D1b 归一，登记表不双登记）；
    - thinkingLevel：fetch = `get_state().thinkingLevel`；失效源 = `thinking_level_changed`（pi 同档位切换不发射事件——session-service.ts:450 已记录——配置同时登记周期兜底重拉，间隔取 30s）；
    - modelId：fetch = `get_state().modelId`；失效源 = `switchModel` RPC 响应（RPC 响应驱动是「事件只做失效」的补充合法形态，D7 登记）。
 2. `event-interpreter.ts`：两事件的 handler 改为调实例 `markDirty()`；翻译输出（`session.renamed` / `session.thinkingLevelSet` 广播）改为在实例快照更新后由实例发布（广播形态本 wave 维持现状 type 名，W12 统一切 state 话题）。
@@ -338,7 +347,7 @@
 
 **涉及文件**：
 
-- `packages/runtime/src/services/session/session-service.ts`（修改：`applyContextUpdate`（L830 附近）与 switchModel 重算（L453 附近）两块；`setInputTokens`（L826）删除）
+- `packages/runtime/src/services/session/session-service.ts`（修改：`applyContextUpdate`（L842）与 switchModel 重算（L467）两块；`setInputTokens`（L824）删除）
 - `packages/runtime/src/__tests__/`（修改/新增：context-owner 收编用例）
 
 **任务步骤**：
@@ -357,7 +366,7 @@
 
 **目标**：绝对写规则全线生效——xyz runtime 对 pi session JSONL 的直接写入代码归零，R1 变为无条件检查。
 
-**前置依赖**：W1（活跃分支已切）、W3（allowlist 存在才有清空动作）、W6（短命 pi 的 RPC 调用复用原语时代的 rpc-client）。探针结论直接采用：冷启动中位数 ~500ms（附着 session 534ms，瓶颈在 Node 冷启动，`set_session_name` RPC 本身 <1ms），形态定为**逐次冷起**，不引入 warm pi（父文档 D2 已裁决，禁止重开）。
+**前置依赖**：W1（活跃 rename 与 tryPersistLabel 兜底均已切）、W3（allowlist 存在才有清空动作）、W6（短命 pi 的 RPC 调用复用原语时代的 rpc-client）。探针结论直接采用：冷启动中位数 ~500ms（附着 session 534ms，瓶颈在 Node 冷启动，`set_session_name` RPC 本身 <1ms），形态定为**逐次冷起**，不引入 warm pi（父文档 D2 已裁决，禁止重开）。
 
 **涉及文件**：
 
@@ -374,13 +383,13 @@
 
 1. process-manager 新增 `withEphemeralPi(sessionFile, fn)`（或对齐现有命名风格的等价入口）：spawn `pi --mode rpc` 附着该 session 文件（探针场景 B 形态）→ 等就绪（上限 5s）→ 执行 fn(rpcClient) → kill 进程。端到端预算 ~600ms（探针数据）。
 2. `renameSession` 非活跃分支：`findScannedSession` 后改调 `withEphemeralPi(target.filePath, (c) => c.setSessionName(newName))`；失败（spawn 失败 / RPC 失败）按父文档 §3.1 失败路径报错保留旧名可重试。
-3. 删除 `persistSessionName` 全链路：session-file-utils.ts 实现、session-store.ts 转发、ports/session.ts 端口声明、相关测试（`grep -rn "persistSessionName" packages/ --include="*.ts"` 逐一清零）。
+3. 删除 `persistSessionName` 全链路：session-file-utils.ts 实现、session-store.ts 转发、ports/session.ts 端口声明、相关测试与 mock（代码引用按验收 1 两段式清零；注释按 [HISTORICAL] 惯例保留，逐条核对归属）。
 4. R1 allowlist 清空：`ALLOWLIST = []`，删除「移除期限: W11」注释；登记表 legacy 例外条目状态改「已移除（W11）」。
 5. 行为验收照父文档场景 1 后半执行。
 
 **验收标准**：
 
-1. 代码级：`grep -rn "persistSessionName" packages/ --include="*.ts" | wc -l` = 0；`python3 .githooks/check_pi_direct_write.py` 在 ALLOWLIST 空的情况下 exit 0（全仓已无直写模式）；`grep -n "ALLOWLIST" .githooks/check_pi_direct_write.py` 显示空数组。
+1. 代码级（两段式，防注释误伤——r2 审查修正）：① **代码引用清零**：`grep -rn "persistSessionName" packages/ --include="*.ts" | grep -v "^\s*//" | grep -v "^\s*\*" | grep -v "\.test\.ts"` 输出为空（排除注释行与测试文件；被测代码删除后测试内 mock 引用一并清零，最终以无过滤全量 grep 复核：命中仅剩注释）；② **注释命中逐条人工核对归属**：注释**不删**（[HISTORICAL] 注释保留惯例——解释设计缘由），逐条确认其描述的是历史机制而非现存调用。现存注释位置（写本文档时已核实，W1/W11 前序删除会自然缩减该集合，执行时以 grep 实测为准）：`packages/runtime/src/utils/jsonl.ts:60`、`services/session/session-service.ts:1279`（属 tryPersistLabel docstring，W1 已随机制删除）、`infra/pi/session-file-utils.ts:96`、`infra/pi/session-file-utils.ts:443`、`services/session/types.ts:104`（同属 W1 删除范围）、`infra/pi/session-store.ts:5`、`services/session/session-lifecycle.ts:291-292/306`（部分随 W1 改写）。另：`python3 .githooks/check_pi_direct_write.py` 在 ALLOWLIST 空的情况下 exit 0（全仓已无直写模式）；`grep -n "ALLOWLIST" .githooks/check_pi_direct_write.py` 显示空数组。
 2. 行为级（父文档场景 1 后半）：`pnpm dev` → 对非活跃 session（重开 app 后未打开的）右键改名 → 侧栏更新，session JSONL 尾部出现改名 `session_info` entry（由短命 pi 写入：`tail -3 <sessionFile>` 核对）；改名词耗时 <1.5s（探针 ~600ms + 余量，超时即 fail）。
 3. 行为级（父文档场景 1 代码断言）：`git grep -nE "openSync\('(a|w)'|appendFile|writeFile" packages/runtime/src/` 的命中逐条核对，无一指向 sessions 目录写路径（允许命中 sidecar 与日志路径——sidecar 是 xyz 自有文件，D3）。
 4. 回归：`RUNTIME_TEST` 通过；活跃 rename（W1 路径）与非活跃 rename（本 wave 路径）行为级各验一次；删除的端口无悬挂引用（typecheck 通过即证）。
@@ -406,6 +415,7 @@
    - commit 3 `session.state_changed` → modelId/thinkingLevel 等 state_changed 载荷字段全部来自实例快照；
    - commit 4 `session.subagents` → 新建包装实例（现有事件流为写入口）后发布；
    - commit 5 `session.workflowUpdate` → 同上。
+   （commit 4/5 过渡态加注：W12→W18 窗口这两个条目的写入口**仍是事件流**——事件直写数据，非「事件只做失效」，属已知过渡结构。commit 4/5 执行时同步在登记表为这两个条目登记过渡态例外：「W12-W18 过渡：写入口 = 事件流（已登记例外），W18 起源 = entry 扫描」，防止 S1 review 在窗口期误报；W18 执行时更新登记表撤销该例外。）
 2. 每个 commit 附等价性断言：切换前后同场景 stateSnapshot 内容一致（对比 fastify：切换前录制 stateSnapshot JSON → 切换后同操作序列重放对比——W5 fixture 跑）。
 3. 全部切完后删除 state 话题旧直写路径（事件直写 runtime 缓存再转发的中间层）；stream 类话题（message.* / queue_update 等）**维持 ring 语义不动**（D7：改动面仅 5 个 state 话题，越界即偏离）。
 
@@ -480,7 +490,7 @@
 
 **涉及文件**：
 
-- `packages/runtime/src/services/session/session-scanner.ts`（修改：`scannedToSummary` L79-80 的 `modelId: ''` / `tokenCount: 0` 产出处——占位值语义显式化，扫描输出标记「占位」而非真值）
+- `packages/runtime/src/services/session/session-scanner.ts`（修改：`scannedToSummary` L81-82 的 `modelId: ''` / `tokenCount: 0` 产出处——占位值语义显式化，扫描输出标记「占位」而非真值）
 - `packages/core/src/domain/session/store.ts`（修改：`applySnapshot` 合并策略挂守卫——扫描来源的字段为空占位时不覆盖实例/广播来的真值）
 
 **任务步骤**：
@@ -674,7 +684,7 @@
 
 1. broadcast≡get_state：fixture 发事件风暴（多轮对话 + 切模型 + 队列操作），断言实例快照 + stateSnapshot 广播内容 == `get_state` + `get_session_stats` + `get_commands` 逐字段。
 2. 混沌三态：乱序（打乱非 streaming 事件顺序）/ 丢失（拦截不下发）/ 重放（同事件发两次）——每种 ≥1 用例，全部断言收敛到权威快照（拉取自愈的结构性验证，父文档 §3.6 第 3 层）。
-3. CI 接线：确认 `pnpm test`（root CI 调用路径以 `.github/workflows/` 现状为准——read 后接线，禁止假设）覆盖 equivalence；pi binary 缺席环境的 skip 语义保持（W5 约定）。
+3. CI 接线：确认 `pnpm test`（root CI 调用路径以 `.github/workflows/` 现状为准——read 后接线，禁止假设）覆盖 equivalence；pi binary 缺席环境的 skip 语义沿用 W5 步骤 3 定义的净新增约定（`describe.skipIf(!PI_PATH)`，fixture 文件头注释为唯一权威表述——非仓库既有惯例，勿在别处另起写法）。
 
 **验收标准**：
 

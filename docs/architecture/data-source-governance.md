@@ -47,7 +47,7 @@ pi 的能力面（本设计调研期已逐一 read 源码核实，见 §3.3 各�
 - **owner（数据所有者）**：xyz 侧某类数据唯一的写入者——一个模块、一个状态容器、一个写入口。所有来源（事件/RPC/文件）都汇入 owner 的单一入口，读方只读 owner。
 - **投影宿主**：runtime 是唯一的投影发生地——所有派生（merge/normalize/计数对齐/状态推导）在 runtime（或 core 包的唯一实现）发生一次；**renderer 零派生**，stores 只是视图模型容器，经单一 `applySnapshot` 入口接收 view-ready 数据。
 - **纯派生缓存**：只有一个写方（扫描/转换/计算本身）、可随时丢弃并从权威源完整重建的缓存。例：session 目录扫描缓存。
-- **影子状态库**：有独立写路径（被多条事件/RPC 回写直写）、承载真值的缓存。它是 12 类问题的载体。例：runtime `sessionMetaCache`（4 个写方）。
+- **影子状态库**：有独立写路径（被多条事件/RPC 回写直写）、承载真值的缓存。它是 12 类问题的载体。例：runtime `sessionMetaCache`（生产写点仅 2 处 `setLabel`，`setThinkingLevel` 生产调用 0 处，`getLabel`/`getThinkingLevel` 无生产读者——接近只写死代码；计数为源码实测，曾误记 3-4 写方）。
 - **快照拉取 + 事件失效**：标量状态的复制模式——数据只由 owner 从权威源拉取快照填充；事件到达只做一件事：标 dirty 并触发（防抖后的）重拉。事件永远不直接写数据。
 - **单一 reducer 双路喂入**：append-only 日志数据（消息流）的复制模式——renderer 的消息列表是 entry 日志的纯函数，一个 `applyEntry` reducer 同时被实时事件流与文件重放喂入。「live ≡ reload」从构造上成立，而非两个独立实现靠纪律保持等价。
 - **按字段分权威**：当权威源对某数据只覆盖部分字段（已核实：队列深度有快照、内容无任何 pi 通道），按字段拆分权威并显式登记，而不是虚构一个单一权威。
@@ -82,7 +82,7 @@ pi.setSessionName(title)
 
 用户在这 2-30s 窗口内手动改名。xyz 的手动 rename 路径（`session-lifecycle.ts renameSession` → `persistSessionName`）**直接 append `session_info` entry 到 session JSONL + 改 runtime 内存，全程不通知 pi 进程**（runtime 的 rpc-client 从未接线 `set_session_name`）。于是 pi 内存里 sessionName 仍为空 → 守卫必过 → `setSessionName(title)` 在文件尾部追加新 entry → last-write-wins **覆盖用户手动名**，且经 `session.renamed` 广播把 UI 也翻回 LLM 标题。
 
-**失败模式 B（已证实，断连/重开后状态漂移）**：现状的重连补偿机制已部分具备快照语义——`session.subscribe` RPC 返回 ring snapshot + state 类话题的 last-value `stateSnapshot`，stream 类溢出（fromSeq 早于 ring 最旧 seq）时 gap=true 触发全量重拉（session-message-handler.ts:314-326；话题三分类见 message-bus.ts TOPIC_TABLE:55 起）。按分类：用量/模型属 state 类（`context.update` / `session.state_changed`），重连由 stateSnapshot last-value 兜底；消息流与 `queue_update` 属 stream 类，受 ring 覆盖窗口限制（core/coordination/subscription-state.ts:293 的「永久丢失」注释讲的是另一件事——W09 删 broadcast 兜底后订阅不重建，`resubscribeAll` 已修——不是 ring 溢出自认）。真正的问题在于：**stateSnapshot 兜底的是 runtime 影子缓存而非 pi 权威**——它回放的是 runtime 内存里事件转发拼出的 last-value，缓存自身的多写方漂移（§2.2 #3/#4/#5）原样进入快照，重连只是把漂移状态再推一遍。这正是 ReplicatedState 直拉 pi 快照的动因（§3.0 原则 4）。重开 app 后 session 列表来自磁盘扫描，`scannedToSummary` 硬编码 `modelId: ''`、`tokenCount: 0`（`session-scanner.ts:79-80`），renderer `setGroups` 全量覆盖曾把真值抹成空串（`packages/core/src/domain/session/store.ts:70` 注释记录的踩坑史）。
+**失败模式 B（已证实，断连/重开后状态漂移）**：现状的重连补偿机制已部分具备快照语义——`session.subscribe` RPC 返回 ring snapshot + state 类话题的 last-value `stateSnapshot`，stream 类溢出（fromSeq 早于 ring 最旧 seq）时 gap=true 触发全量重拉（session-message-handler.ts:314-326；话题三分类见 message-bus.ts TOPIC_TABLE:55 起）。按分类：用量/模型属 state 类（`context.update` / `session.state_changed`），重连由 stateSnapshot last-value 兜底；消息流与 `queue_update` 属 stream 类，受 ring 覆盖窗口限制（core/coordination/subscription-state.ts:293 的「永久丢失」注释讲的是另一件事——W09 删 broadcast 兜底后订阅不重建，`resubscribeAll` 已修——不是 ring 溢出自认）。真正的问题在于：**stateSnapshot 兜底的是 runtime 影子缓存而非 pi 权威**——它回放的是 runtime 内存里事件转发拼出的 last-value，缓存自身的多写方漂移（§2.2 #3/#4/#5）原样进入快照，重连只是把漂移状态再推一遍。这正是 ReplicatedState 直拉 pi 快照的动因（§3.0 原则 4）。重开 app 后 session 列表来自磁盘扫描，`scannedToSummary` 硬编码 `modelId: ''`、`tokenCount: 0`（`session-scanner.ts:81-82`），renderer `setGroups` 全量覆盖曾把真值抹成空串（`packages/core/src/domain/session/store.ts:70` 注释记录的踩坑史）。
 
 **失败模式 C（已证实，双管线解析漂移）**：subagent 后台任务完成后，侧栏状态、主对话注入 turn、重开后的 extractor 解析可能不一致——实时路径（event-interpreter 内存 Map）与磁盘路径（subagent-extractor 重新解析 JSONL）是两条独立管线，各自演进；文件改动展示同样双管线（实时 git baseline diff vs 历史从 toolCall 参数静态解析，`message-converter.ts:44` 注释自认「两条路径实现不同、bash 无法覆盖」）。
 
@@ -123,13 +123,14 @@ pi.setSessionName(title)
 session store.updateLabel  ◄── session.renamed 广播 ◄── event-interpreter ◄── session_info_changed ◀──┤
         ▲                                                              ▲                              │ session.jsonl
         └── setGroups 全量覆盖（来自 RPC list） ◄── SessionScanner ◄── 内存 Map + scanSessions ◀────────┤
-                                                （内存 Map label ◄── metaCache.setLabel ◄─ 3 个写方）    │
+                                            （内存 Map label ◄── metaCache.setLabel ◄─ 2 个生产写方）  │
                                                                                                       │
-手动 rename: session-lifecycle.renameSession ──persistSessionName 直写───────────────────────────────►│ ⚠ 写方 1
-auto-rename: rename-session 扩展 ──pi.setSessionName──► sessionManager.appendSessionInfo ────────────►│ ⚠ 写方 2
+手动 rename（活跃/非活跃两分支）: session-lifecycle.renameSession ──persistSessionName 直写───────────►│ ⚠ xyz 写方 1/2
+turn_end/agent_end 兜底: session-service.tryPersistLabel ──persistSessionName 直写（初始 label）─────►│ ⚠ xyz 写方 3
+auto-rename: rename-session 扩展 ──pi.setSessionName──► sessionManager.appendSessionInfo ────────────►│ pi 内部写方
 ```
 
-两个写方物理上互不知道对方存在；读取方（pi sessionManager / xyz extractSessionName / renderer store）各自取「最后一条 session_info」，谁后写谁赢。
+xyz 的三个直写方与 pi 互不知道对方存在（写方 3 = `tryPersistLabel` 兜底：turn_end（`handleTurnUsageSideEffects`）/ agent_end（`handleTurnEndSideEffects`）时把未持久化的初始 label 经 `persistSessionName` 直写 JSONL，session-service.ts:1282-1286 → session-file-utils.ts:415-433 `openSync('a')`——r2 审查补漏，此前两版图均遗漏）；读取方（pi sessionManager / xyz extractSessionName / renderer store）各自取「最后一条 session_info」，谁后写谁赢。
 
 ---
 
@@ -179,7 +180,7 @@ auto-rename: rename-session 扩展 ──pi.setSessionName──► sessionManag
 | 缓存 | 判定 | 处置 |
 |---|---|---|
 | session 目录扫描缓存 / git-info 缓存 / quota 缓存 / history-rebuild-cache / turn-render-cache | 纯派生（写方=扫描/转换本身） | 保留不动 |
-| runtime `sessionMetaCache`（= `packages/runtime/src/services/session/session-meta-cache.ts`，sessionId 键；`infra/pi/session-file-utils.ts` 内同名 filePath 键文件头纯派生缓存属「保留」类不动——已核实） | 影子状态（label/thinkingLevel 各 3-4 写方） | 收编进 ReplicatedState 实例，删除 |
+| runtime `sessionMetaCache`（= `packages/runtime/src/services/session/session-meta-cache.ts`，sessionId 键；`infra/pi/session-file-utils.ts` 内同名 filePath 键文件头纯派生缓存属「保留」类不动——已核实） | 影子状态（结构上多写方注入；实际生产写点仅 2 处 `setLabel`——`packages/runtime/src/index.ts:298` / `session-lifecycle.ts:289`，`setThinkingLevel` 生产调用 0 处，`getLabel`/`getThinkingLevel` 无生产读者——接近只写死代码，计数为源码实测） | 纯删除（无生产读者，无收编负担；W9） |
 | runtime `session.inputTokens/tokenCount` | 影子状态（5 写点） | 收编；switchModel 重算改在 owner 内部读自己的缓存，竞态从「注释约定」变「结构不可能」 |
 | event-interpreter `subagentRecords` Map | 影子状态（双管线之一） | 收编：扩展自描述 entry（经 get_entries 拉取）为唯一源，Map 变纯派生缓存 |
 | renderer summary 字段（updateLabel/updateSessionState/setGroups 三路写） | 影子状态 | 收编为单一 `applySnapshot` 入口（合并规则见 D1b） |
@@ -189,16 +190,16 @@ auto-rename: rename-session 扩展 ──pi.setSessionName──► sessionManag
 
 **D1b 快照合并规则（两条规则不可混用 + wire 层归一细则）**：
 
-- **owner 快照合并 = 权威源整字段覆盖，含显式空值**。真实反例（源码核实）：pi `get_state.sessionName` 的合法值为 `string | undefined`——未命名 session 就是 undefined（agent-session.ts:891-892 getter 签名；session-manager.ts:1067-1075 注释明言「Empty names explicitly clear the session title」，空名是显式语义而非占位）——若一刀切「空值不覆盖非空值」，用户清空名字后 owner 将永远保留旧名，影子状态复活，恰是本方案要消灭的东西。（前稿曾以 `thinkingLevel` 为反例，源码核实**不成立**：pi `ThinkingLevel` 是具体字符串联合类型、不含 undefined（`"off"` 或可用档位，不支持思考的模型被 `setThinkingLevel` 钳到具体值）；xyz 侧缓存曾恒 undefined 是缓存自身的踩坑症状，不是 pi 权威值域——恰是「把影子状态当权威」的混淆。）
+- **owner 快照合并 = 权威源整字段覆盖，含显式空值**。真实反例（源码核实）：pi `get_state.sessionName` 的合法值为 `string | undefined`——未命名 session 就是 undefined（agent-session.ts:891-892 getter 签名；session-manager.ts:1067-1075 注释明言「Empty names explicitly clear the session title」，空名是显式语义而非占位）——若一刀切「空值不覆盖非空值」，未命名 session 的初始快照为 undefined，owner 将永远保留旧名，影子状态复活，恰是本方案要消灭的东西（注：r2 审查修正反例叙事——「用户清空名字」无法经 RPC 到达 pi，`set_session_name` 显式拒绝空名（rpc-mode.ts:633-637「Session name cannot be empty」）；sessionName 为 undefined 的真实来源是未命名初始态与文件级空 session_info，规则本身不受影响）。（前稿曾以 `thinkingLevel` 为反例，源码核实**不成立**：pi `ThinkingLevel` 是具体字符串联合类型、不含 undefined（`"off"` 或可用档位，不支持思考的模型被 `setThinkingLevel` 钳到具体值）；xyz 侧缓存曾恒 undefined 是缓存自身的踩坑症状，不是 pi 权威值域——恰是「把影子状态当权威」的混淆。）
 - **wire 层空值归一**：`get_state` 经 JSON 序列化时值为 undefined 的字段 key 被丢弃——「整字段覆盖含显式空值」在 wire 层实际是「key 缺失」。快照解析必须按字段 schema 归一：缺失 key 按该字段登记的空值语义处理（sessionName 缺失 = 未命名 = 覆盖；thinkingLevel 无空值语义，key 缺失按协议异常处理），禁止把「key 缺失」当「字段不动」。
 - **空值守卫仅用于磁盘扫描占位值路径**：`scannedToSummary` 硬编码的 `modelId:''`/`tokenCount:0` 是「无数据」占位符而非权威空值，P2.3 守卫语义是「占位符不覆盖已知真值」。
-- 落实到登记表：按字段登记空值语义——sessionName 空 = 合法态（未命名，必须整字段覆盖）；label 空 = 未设置（可守卫）；thinkingLevel 无空值语义（永不 guard）。字段空值语义是 `ReplicatedState` 配置的一部分。
+- 落实到登记表：按字段登记空值语义——sessionName 空 = 合法态（未命名，必须整字段覆盖）；label 与 sessionName 是同一数据链（label 实例 fetch 即 `get_state().sessionName`），空值语义唯一化、**不单独登记**「label 空 = 可守卫」（曾双登记出相反语义，r2 审查并轨修正——「可守卫」语义仅属磁盘扫描占位值语境，已被上一条规则覆盖）；thinkingLevel 无空值语义（永不 guard）。字段空值语义是 `ReplicatedState` 配置的一部分。
 
 **D2 label 写路径——绝对写规则的落地**：
 
-- **活跃 session**：手动 rename → runtime rpc-client 接线 pi `set_session_name` RPC（✅ 已验证存在于 rpc-mode.ts:632，内部 `sessionManager.appendSessionInfo` 落盘 + emit `session_info_changed`，agent-session.ts:2718）→ pi 成为该文件唯一写方。删除 `persistSessionName` 对活跃 session 的直写。
+- **活跃 session**：手动 rename → runtime rpc-client 接线 pi `set_session_name` RPC（✅ 已验证存在于 rpc-mode.ts:632，内部 `sessionManager.appendSessionInfo` 落盘 + emit `session_info_changed`，agent-session.ts:2718）；同时删除 `tryPersistLabel` 的 turn_end/agent_end 兜底直写（r2 审查补漏：session-service.ts:1282-1286 经 `persistSessionName` 直写初始 label，与手动 rename 直写同源同性质，P0 同 wave 处置）——label 持久化责任整体移交 pi：显式初始 label 在 create/fork 时经 RPC 写入（pre-flush 期 pi 只做内存缓冲、随首次 `openSync("wx")` flush 落盘——✅ 已核实 session-manager `_persist`，文件只会由 pi 创建，无 EEXIST 风险），未命名 session 的派生初始 label（basename(cwd)）退役为显示派生（显示由内存态与扫描 fallback 承担，重启后显示值不变）。此后 pi 成为活跃 session 该文件唯一写方。
 - **非活跃 session**（无 pi 进程）：终态机制 = runtime 短命拉起 pi 进程附着该 session 文件 → `set_session_name` RPC → 关闭。复用既有 spawn/revive 机制，无新子系统。✅ 探针已核实（P0.5，`pi --mode rpc` 真实子进程 spawn，≥5 次采样）：冷启动中位数 ~500ms——场景 A 无 session 附着 481ms（范围 429-558ms）、场景 B 附着 session 534ms（范围 429-586ms）；瓶颈全在 Node 进程冷启动，`set_session_name` RPC 本身 <1ms。端到端（spawn → RPC 就绪 → rename 完成）~500ms，右键改名弹出输入框前最多等 ~600ms，属「即时」体感——**定形态为逐次冷起**，warm 常驻 utility pi 不引入（~80-120MB RSS 常驻成本，仅未来出现批量改名需求再评估）。
-- **迁移期唯一 legacy 例外**：P0 只消灭活跃 session 直写（并发危险所在）；非活跃直写若未能同阶段切换，必须在登记表登记为「唯一 legacy 例外 + P1 移除期限」，并在 pre-commit R1 的 allowlist 里单独列出——例外是带期限的债务，不是制度。
+- **迁移期唯一 legacy 例外**：P0 消灭活跃 session 的**全部**直写（手动 rename + `tryPersistLabel` 兜底，并发危险所在）；非活跃直写若未能同阶段切换，必须在登记表登记为「唯一 legacy 例外 + P1 移除期限」，并在 pre-commit R1 的 allowlist 里单独列出——例外是带期限的债务，不是制度。
 - 探针：✅ pi RPC 命令存在性与行为（read 源码核实）；⛔ rename-session 守卫日志 "skip: name exists" 在真实链路出现（实施期 P0 用 `pi --mode rpc` 实测，复用 AGENTS.md 的扩展实测流程）。
 
 **D3 session 终态（session_end）存储——维持 sidecar，且在绝对写规则下合法**：现状核实（对抗审查纠错）：ADR-0042 原版决策是 append JSONL，但其后 **W1 修订已改为 runtime 单写 sidecar `.meta.json`**（`persistSessionEnd`，session-file-utils.ts:111-157，注释明言「不污染 JSONL」+ 规则 #6 规避 pi `openSync("wx")` 竞态）。sidecar 是 **xyz 自有文件**，不是 pi 的文件——runtime 单写 sidecar **不违反绝对写规则**（规则管的是 pi 的 JSONL）。裁决：
@@ -252,7 +253,7 @@ session store.applySnapshot  ◄── 快照 diff 广播  ◄── ReplicatedS
 auto-rename:    rename-session 扩展在 pi 内 ──► pi.setSessionName（守卫读到全部写，因为所有写都经 pi）
 ```
 
-与 §2.5 对比：pi 文件的写方从 2 个（互不知情）变为**恒 1 个**（pi 自己，含扩展经 pi API）；xyz 侧写入口从「runtime 直写 + metaCache 3 写方 + renderer 3 路写」变为「ReplicatedState 实例 + applySnapshot」两处单入口。
+与 §2.5 对比：pi 文件的写方从 4 条路径（xyz 侧 3 条直写——活跃 rename / 非活跃 rename / `tryPersistLabel` 兜底——加 pi 侧 1 条，互不知情）变为**恒 1 个**（pi 自己，含扩展经 pi API）；xyz 侧写入口从「runtime 直写 + metaCache 2 个生产写方 + renderer 3 路写」变为「ReplicatedState 实例 + applySnapshot」两处单入口。
 
 ### 3.5 分阶段迁移（概览，详见 §5）
 
@@ -329,7 +330,7 @@ P0 止血 + 护栏先行（活跃 rename 接 RPC 修覆盖 bug + 登记表 + rev
 
 | 单元 | 内容 | justification |
 |---|---|---|
-| P0.1 | rpc-client 接线 `set_session_name`；`renameSession` 活跃分支改走 RPC；删除活跃 session 的 `persistSessionName` 直写；非活跃分支若暂留直写，登记为唯一 legacy 例外 + P1 移除期限 | 唯一已证实 bug，pi API 现成（✅ 已核实），改动面最小 |
+| P0.1 | rpc-client 接线 `set_session_name`；`renameSession` 活跃分支改走 RPC；删除活跃 session 的**全部** `persistSessionName` 直写（rename 分支 + `tryPersistLabel` turn_end/agent_end 兜底——label 持久化责任整体移交 pi：显式初始 label 经 RPC、派生初始 label 退役为显示派生）；非活跃分支若暂留直写，登记为唯一 legacy 例外 + P1 移除期限 | 唯一已证实 bug，pi API 现成（✅ 已核实），改动面最小 |
 | P0.2 | 数据登记表初版（12 条 + 字段空值语义 + legacy 例外登记） | 护栏的 SSOT 依据，先于一切重构 |
 | P0.3 | R1 pre-commit 直写检查 + R3 缓存注解规则 + R2 骨架（拦直呼形态）。S1 已随本文档（c8def4a0c）接入 pr-cr-fix（8 维已生效），P0 剩余 = R1/R2/R3 机器检查三件 | 先立守护再动大刀；语义层（S1）已上线，机器层（R1-R3）P0 补齐，P1-P3 每步重构被双层覆盖 |
 | P0.4 | 等价性测试骨架（真实 pi 子进程 fixture + `live ≡ reload` 断言脚本雏形） | 后续阶段的验收工具，P0 就绪 |
