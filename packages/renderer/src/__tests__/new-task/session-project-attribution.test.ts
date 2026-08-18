@@ -123,7 +123,7 @@ describe('useNewTaskFlow: create 透传归属 projectId（D14 语义修正）', 
     await flow.startFlow()
     await flow.submitFirstMessage(textToSegments('任务一'))
 
-    expect(apiMock.create).toHaveBeenCalledWith('/repo', '任务一', undefined, a)
+    expect(apiMock.create).toHaveBeenCalledWith('/repo', '任务一', undefined, a, undefined, undefined)
   })
 
   it('create 失败（空 content guard 返回 null）→ 无 create 调用', async () => {
