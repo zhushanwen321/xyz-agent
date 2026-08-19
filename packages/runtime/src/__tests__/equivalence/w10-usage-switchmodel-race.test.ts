@@ -5,10 +5,11 @@
  * 模拟「switchModel 与 context.update 乱序到达」（fake timers 控制防抖窗口），断言最终
  * usagePercent 与 get_session_stats 快照一致——结构自愈，不依赖写入顺序。
  *
- * 结构自愈的机制（W10 五写点收编后）：
+ * 结构自愈的机制（W10 五写点收编；W12 后广播形态更新）：
  * - inputTokens 唯一数据源 = usage 实例快照（fetch get_session_stats 写入；旧 setInputTokens
- *   / session.inputTokens 直写已删），switchModel 重算读快照 + resolver 新窗口
- *   （recomputeUsageWithWindow），与 context.update 事件的到达顺序无关。
+ *   / session.inputTokens 直写已删）。W12 起 state_changed / context.update 都由「快照应用后
+ *   挂钩」发布（payload 全字段读快照），W10 的「快照 tokens × resolver 新窗口」本地重算
+ *   （recomputeUsageWithWindow）已随即时广播退役删除。
  * - 两条失效（switchModel 的 usage markDirty / applyContextUpdate 的 usage markDirty）
  *   任意顺序到达，防抖聚合后一次拉取收敛 pi 权威值——pi 侧 getContextUsage 按当前 model
  *   的 contextWindow 算 percent，setModel 后天然是新窗口。
@@ -147,12 +148,15 @@ describe('W10 竞态回归：switchModel 与 context.update 乱序到达（结�
     // pi 侧新 turn 完成 + 已切模型 B：get_session_stats 权威翻新（tokens 不变，窗口 100k → 20%）
     vi.mocked(fx.bus.publish).mockClear()
 
-    // 乱序：switchModel 先到（setModel RPC 即时生效 → markDirty modelId + usage）
+    // 乱序：switchModel 先到（setModel RPC 即时生效 → markDirty modelId/usage/thinkingLevel）
     await fx.svc.switchModel(sid, 'p' as ProviderId, 'model-b')
     // context.update 后到（新 turn 的 agent_end 事件 → applyContextUpdate 只失效）
     fx.svc.applyContextUpdate(sid, TOKENS, TOKENS)
 
-    // 防抖前即时广播断言：session.state_changed 已按新窗口重算（快照 tokens × resolver 新窗口）
+    // W12：即时广播退役——防抖到点三实例收敛后，快照挂钩发布 session.state_changed
+    //（payload 全字段来自实例快照：mock 权威按当前模型 B 的窗口 100k / percent 20 投影，
+    // 与旧「快照 tokens × resolver 新窗口重算」的 20 同值——切换前后等价）
+    await vi.advanceTimersByTimeAsync(SCALAR_STATE_DEBOUNCE_MS + 50)
     const stateChanged = lastPublished(fx, 'session.state_changed')
     expect(stateChanged?.payload).toMatchObject({
       sessionId: sid,
@@ -162,7 +166,7 @@ describe('W10 竞态回归：switchModel 与 context.update 乱序到达（结�
       usagePercent: 20, // Math.round(20000 / 100000 * 100)
     })
 
-    // 防抖到点：两次失效聚合一次拉取，快照收敛 pi 权威（不依赖两个信号的先后顺序）
+    // 快照收敛断言（两次失效聚合一次拉取，不依赖两个信号的先后顺序）
     await vi.advanceTimersByTimeAsync(SCALAR_STATE_DEBOUNCE_MS + 1)
     const expected = await authoritativeProjection(fx)
     expect(fx.svc.getScalarReplicatedStates(sid)?.usage.get()).toEqual(expected)

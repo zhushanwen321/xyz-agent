@@ -270,10 +270,10 @@ async function main(): Promise<void> {
         server.handleStatusSetUpdate(payload)
       },
       onContextUpdate: (sid, ctxData) => {
-        // session 级状态单一 owner：inputTokens 回写 + tokenCount 写入 + usagePercent 计算 + context.update 广播
-        // 全部由 SessionService.applyContextUpdate 负责（contextWindow 经注入的 resolver 解析）。
-        // context.update 与 switchModel 的竞态保护（inputTokens 回写打通数据源）也收敛在该方法内。
-        // W3：totalTokens 写入 session.tokenCount（原 attachUsageListener 的 tokenCount 回写迁移至此）。
+        // session 级状态单一 owner：context 事件（turn-usage / turn-end / compaction）经
+        // SessionService.applyContextUpdate 只做 usage 实例失效（W10 五写点收编；W12 起
+        // context.update 广播也退役为快照挂钩发布——payload 全字段来自 usage 实例快照，
+        // 事件参数不再进任何 payload）。竞态保护由单一数据源结构保证（见该方法注释）。
         sessionService.applyContextUpdate(sid, ctxData.inputTokens, ctxData.totalTokens)
       },
       // W3：turn_end 单 turn 副作用（原 attachUsageListener turn_end 分支迁移至此，经中间事件链路触发；

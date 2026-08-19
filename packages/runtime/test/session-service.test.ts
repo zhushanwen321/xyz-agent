@@ -352,6 +352,19 @@ function findBroadcast<T extends ServerMessage['type']>(setup: Setup, type: T): 
 }
 
 /**
+ * W12：按 type 取**最后一条** publish——state 话题快照挂钩在多实例收敛过程中可能发
+ * 中间组合帧（如 modelId 先收敛、thinkingLevel 在途），终态 = 最后一条（last-value 语义，
+ * 与 renderer stateSnapshot 回放同口径）。
+ */
+function findLastBroadcast<T extends ServerMessage['type']>(setup: Setup, type: T): ServerMessage<T> | undefined {
+  const calls = vi.mocked(setup.messageBus.publish).mock.calls
+  for (let i = calls.length - 1; i >= 0; i--) {
+    if (calls[i]![1].type === type) return calls[i]![1] as ServerMessage<T>
+  }
+  return undefined
+}
+
+/**
  * W10：播种 usage 实例快照（inputTokens 唯一数据源 = get_session_stats，旧 setInputTokens
  * 缓存直写已删——用例需要预设 inputTokens 时经权威源播种，对齐生产行为）。
  * refetch 绕过防抖立即拉取，flush 一个 macrotask 等 doFetch promise 落位。
@@ -365,6 +378,15 @@ async function seedUsageSnapshot(
   client.getSessionStats.mockResolvedValue({ contextUsage })
   setup.service.getScalarReplicatedStates(id)?.usage.refetch()
   await new Promise<void>(r => setTimeout(r, 0))
+}
+
+/**
+ * W12：等 state 话题快照挂钩发布落地——事件/查询失效后防抖 300ms（SCALAR_STATE_DEBOUNCE_MS）
+ * + 快照 fetch（mock 即时 resolve）+ setTimeout 0 挂钩宏任务，400ms 覆盖整链
+ *（真 timers，本文件无 fake timers）。
+ */
+async function waitForSnapshotPublish(): Promise<void> {
+  await new Promise<void>(r => setTimeout(r, 400))
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -632,6 +654,8 @@ describe('SessionService · lifecycle', () => {
 
     it('queries commands and broadcasts session.commands on create', async () => {
       const { id } = await setup.seedSession({ commands: [{ name: 'xyz-navigate', source: 'extension' }] })
+      // W12：激活发布 = 播种 fetch 快照应用后的挂钩（异步宏任务），等落地
+      await waitForSnapshotPublish()
       // commands 广播给前端
       const cmds = findBroadcast(setup, 'session.commands')
       expect(cmds?.payload).toMatchObject({ sessionId: id })
@@ -647,8 +671,10 @@ describe('SessionService · lifecycle', () => {
           },
         ],
       })
+      // W12：激活发布经快照挂钩，等落地
+      await waitForSnapshotPublish()
       const cmds = findBroadcast(setup, 'session.commands')
-      // sourceInfo 从 pi get_commands 透传到 session.commands 广播 payload
+      // sourceInfo 从 pi get_commands 透传到快照（commands 实例整字段持有）再到广播 payload
       expect(cmds?.payload.commands[0]).toMatchObject({
         name: 'fix',
         source: 'skill',
@@ -847,22 +873,28 @@ describe('SessionService · Facade', () => {
       await expect(setup.service.switchModel('ghost', 'p' as ProviderId, 'm')).rejects.toThrow('session not active')
     })
 
-    it('切换后广播 session.state_changed（含按新 contextWindow 重算用量——读 usage 实例快照，W10）', async () => {
+    it('切换后广播 session.state_changed（payload 全字段来自三实例快照，W12）', async () => {
       const { id, client } = await setup.seedSession()
-      // 注入 resolver：anthropic/claude-x contextWindow=200000
+      // 注入 resolver：anthropic/claude-x contextWindow=200000（W12 起 resolver 不进 payload，
+      // 保留注入以证伪「resolver 影子」——payload 数值与 pi 快照一致而非 resolver 重算）
       setup.service.setModelContextWindowResolver((_p, _m) => 200000)
       // W10：inputTokens 唯一数据源 = usage 实例快照（播种替代旧 setInputTokens 直写）
       await seedUsageSnapshot(setup, id, client, { tokens: 12000, contextWindow: 200000, percent: 6 })
       vi.mocked(client.setModel).mockClear()
       vi.mocked(setup.broker.broadcast).mockClear()
       vi.mocked(setup.messageBus.publish).mockClear()
-      // get_state 返回 thinkingLevel（broadcastSessionState 查 pi get_state）
-      // W2 收口后用 client.getState()，返回归一后的 state 对象
-      vi.mocked(client.getState).mockResolvedValueOnce({ thinkingLevel: 'high' })
+      // W12：get_state 权威翻新（thinkingLevel + 新模型）——mockResolvedValue 持续，
+      // modelId / thinkingLevel 两实例防抖重拉都消费同一权威值
+      vi.mocked(client.getState).mockResolvedValue({
+        thinkingLevel: 'high',
+        model: { id: 'claude-x', provider: 'anthropic' },
+      })
 
       await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
+      // W12：即时广播退役——三实例防抖重拉收敛后经快照挂钩发布
+      await waitForSnapshotPublish()
 
-      const stateChanged = findBroadcast(setup, 'session.state_changed')
+      const stateChanged = findLastBroadcast(setup, 'session.state_changed')
       expect(stateChanged).toBeDefined()
       expect(stateChanged!.payload).toMatchObject({
         sessionId: id,
@@ -870,34 +902,37 @@ describe('SessionService · Facade', () => {
         thinkingLevel: 'high',
         inputTokens: 12000,
         contextLimit: 200000,
-        usagePercent: 6, // Math.round(12000 / 200000 * 100)，resolver 新窗口 × 快照 tokens
+        usagePercent: 6,
       })
     })
 
-    it('未注入 resolver 时 contextLimit=0 usagePercent=0，仍广播 state_changed', async () => {
+    it('未注入 resolver 时 payload 仍读快照真值（旧「resolver 缺省 0」口径随 W12 退役）', async () => {
       const { id, client } = await setup.seedSession()
-      // 不注入 resolver；快照播种 inputTokens（广播 payload 仍透出 tokens）
+      // 不注入 resolver；快照播种 inputTokens（payload 透出快照三字段真值）
       await seedUsageSnapshot(setup, id, client, { tokens: 5000, contextWindow: 100000, percent: 5 })
 
       await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
+      await waitForSnapshotPublish()
 
       const stateChanged = findBroadcast(setup, 'session.state_changed')
       expect(stateChanged).toBeDefined()
       expect(stateChanged!.payload).toMatchObject({
-        contextLimit: 0,
-        usagePercent: 0,
+        contextLimit: 100000,
+        usagePercent: 5,
         inputTokens: 5000,
       })
     })
 
-    it('get_state 失败时不阻塞，thinkingLevel 回退缓存值', async () => {
+    it('get_state 失败时不阻塞：快照播种失败，payload 回退缓存值（fetch 失败兜底发布）', async () => {
       const { id, client } = await setup.seedSession()
       setup.service.setModelContextWindowResolver(() => 100000)
       setup.service.setThinkingLevelCache(id, 'medium')
-      // W2 收口后 broadcastSessionState 用 client.getState()，失败时 thinkingLevel 回退缓存值
-      vi.mocked(client.getState).mockRejectedValueOnce(new Error('get_state boom'))
+      // W12：get_state 持续失败 → modelId/thinkingLevel 实例退避重试、快照缺失 →
+      // fetch 落定兜底发布（对齐旧 broadcastSessionState「失败不阻塞、thinkingLevel 回退缓存」）
+      vi.mocked(client.getState).mockRejectedValue(new Error('get_state boom'))
 
       await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
+      await waitForSnapshotPublish()
 
       const stateChanged = findBroadcast(setup, 'session.state_changed')
       expect(stateChanged).toBeDefined()
@@ -935,28 +970,32 @@ describe('SessionService · Facade', () => {
     })
   })
 
-  describe('applyContextUpdate（session 级状态单一 owner：失效 usage 实例 + 即时广播）', () => {
-    it('广播 context.update（事件即时值 + resolver 窗口重算 usagePercent），不直写快照', async () => {
+  describe('applyContextUpdate（session 级状态单一 owner：W12 事件只失效，发布归快照挂钩）', () => {
+    it('失效收敛后广播 context.update（payload 全字段来自 usage 快照），不直写快照', async () => {
       const { id, client } = await setup.seedSession()
       setup.service.setModelContextWindowResolver(() => 100000)
       // modelId 初始为 default 'test-provider/test-model'，resolver 按 provider/model 查 contextWindow
       await seedUsageSnapshot(setup, id, client, { tokens: 10000, contextWindow: 100000, percent: 10 })
+      // pi 侧权威已翻新为事件值 25000（同源：turn_end 事件与 get_session_stats 同一数据，
+      // 事件即时值即快照将收敛的值——等价性依据）
+      client.getSessionStats.mockResolvedValue({ contextUsage: { tokens: 25000, contextWindow: 100000, percent: 25 } })
       vi.mocked(setup.broker.broadcast).mockClear()
       vi.mocked(setup.messageBus.publish).mockClear()
 
+      // W12：事件只失效（markDirty），发布由防抖重拉的快照挂钩承担
       setup.service.applyContextUpdate(id, 25000)
+      await waitForSnapshotPublish()
 
-      // 广播 payload = 事件即时值 25000 + resolver 窗口重算（与旧实现数值等价）
-      const ctxUpdate = findBroadcast(setup, 'context.update')
+      const ctxUpdate = findLastBroadcast(setup, 'context.update')
       expect(ctxUpdate).toBeDefined()
       expect(ctxUpdate!.payload).toMatchObject({
         sessionId: id,
         inputTokens: 25000,
         contextLimit: 100000,
-        usagePercent: 25, // Math.round(25000 / 100000 * 100)
+        usagePercent: 25, // round(pi percent 25)——与旧「事件值 + resolver 重算」round(25000/100000*100) 同值
       })
-      // 事件不直写快照：getInputTokens 保持播种值（唯一数据写路径 = fetch get_session_stats）
-      expect(setup.service.getInputTokens(id)).toBe(10000)
+      // 快照经唯一数据写路径（fetch）收敛 pi 权威值
+      expect(setup.service.getInputTokens(id)).toBe(25000)
     })
 
     it('inputTokens 为 0 时不广播（agent_end 前的空 usage；markDirty 失效仍发出）', async () => {
@@ -976,14 +1015,16 @@ describe('SessionService · Facade', () => {
       expect(findBroadcast(setup, 'context.update')).toBeUndefined()
     })
 
-    it('未注入 resolver 时 contextLimit=0 usagePercent=0', async () => {
-      const { id } = await setup.seedSession()
+    it('未注入 resolver：payload 读快照 pi 权威值（resolver 不再参与，W12）', async () => {
+      const { id, client } = await setup.seedSession()
+      await seedUsageSnapshot(setup, id, client, { tokens: 5000, contextWindow: 100000, percent: 5 })
 
       setup.service.applyContextUpdate(id, 5000)
+      await waitForSnapshotPublish()
 
       const ctxUpdate = findBroadcast(setup, 'context.update')
       expect(ctxUpdate).toBeDefined()
-      expect(ctxUpdate!.payload).toMatchObject({ contextLimit: 0, usagePercent: 0, inputTokens: 5000 })
+      expect(ctxUpdate!.payload).toMatchObject({ contextLimit: 100000, usagePercent: 5, inputTokens: 5000 })
     })
   })
 
@@ -1094,18 +1135,21 @@ describe('SessionService · Facade', () => {
   })
 
   describe('fetchAndBroadcastContext（session 恢复后推送用量）', () => {
-    it('contextUsage.tokens 有值 → 广播 context.update（含 inputTokens/contextLimit/usagePercent）', async () => {
-      const client = setup.mountClient('sid-ctx')
-      client.getSessionStats.mockResolvedValueOnce({
+    it('contextUsage.tokens 有值 → 查询失效收敛后经快照挂钩广播 context.update（W12）', async () => {
+      const { id, client } = await setup.seedSession()
+      // mockResolvedValue 持续：fetchContext 查询 RPC 与防抖重拉 RPC 拿同一权威值
+      client.getSessionStats.mockResolvedValue({
         contextUsage: { tokens: 69000, contextWindow: 512000, percent: 13.5 },
       })
 
-      await setup.service.fetchAndBroadcastContext('sid-ctx')
+      await setup.service.fetchAndBroadcastContext(id)
+      // W12：fetchAndBroadcastContext 只做查询失效，发布归 usage fetch 快照挂钩
+      await waitForSnapshotPublish()
 
       const msg = findBroadcast(setup, 'context.update')
       expect(msg).toBeDefined()
       expect(msg!.payload).toMatchObject({
-        sessionId: 'sid-ctx',
+        sessionId: id,
         inputTokens: 69000,
         contextLimit: 512000,
         usagePercent: 14, // Math.round(13.5)
