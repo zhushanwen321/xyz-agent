@@ -381,6 +381,11 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     // SR-3: 无论 new 还是 existing（/resume /fork 复用），session_start 都必须注入 handler
     service.setUiRequestHandler(uiRequestHandler);
 
+    // 主 session 文件缓存必须先于下方 initSession 赋值——initSession 末尾的孤儿恢复
+    //（recoverEntryOnlyOrphans）经 getMainSessionFile 读它，晚赋值会读到 undefined
+    //（曾因此漏判 entry-born 孤儿，E2E 实测）。
+    cachedMainSessionFile = ctx.sessionManager.getSessionFile() ?? undefined;
+
     service.initSession({
       pi,
       sessionId: ctx.sessionManager.getSessionId(),
@@ -412,8 +417,6 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
 
     // S-2: 启动 idle record GC 定时器（30 天 TTL，每小时检查一次）
     service.startGcTimer();
-
-    cachedMainSessionFile = ctx.sessionManager.getSessionFile() ?? undefined;
 
     try {
       maybeCleanupExpiredSessionFiles(agentDir, cwd);
