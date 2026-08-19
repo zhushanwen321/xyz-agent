@@ -91,9 +91,10 @@ export interface IManagedSessionView {
    * 透传此字段到 SessionSummary.handedOffTo，保持双路径输出一致。ManagedSession 经
    * extends 自动继承此字段。
    *
-   * [KNOWN-LIMIT] handedOffTo 的写入逻辑（persistHandedOff 调用）在批 2 handoff-service
-   * 中接线，当前 active session 的 handedOffTo 恒 undefined——但字段透传链路要完整，
-   * 待批 2 接线后即生效。
+   * [HISTORICAL] 批 1 时期该字段曾恒 undefined（写入逻辑待批 2 handoff-service 接线）。
+   * 现写入链 = handoff-service.runHandoff → markHandedOff（内存态 + W11 起
+   * persistHandoffSidecar 写 `.handoff.json` sidecar，原 persistHandedOff 直写 JSONL
+   * 已随 W11 删除）。
    */
   handedOffTo?: string
 }

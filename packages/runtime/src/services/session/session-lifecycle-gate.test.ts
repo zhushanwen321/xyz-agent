@@ -69,7 +69,6 @@ function makeEnv() {
     invalidateScanCache: vi.fn(),
     persistPresetBinding: vi.fn(),
     persistProjectBinding: vi.fn(),
-    patchSessionCwd: vi.fn(),
   } as unknown as ISessionStore
   const workspaceService = { record: vi.fn() } as unknown as WorkspaceService
 

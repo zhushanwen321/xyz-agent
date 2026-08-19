@@ -118,8 +118,6 @@ function makeMocks(opts: {
     persistPresetBinding: persistPresetBindingFn,
     trash: vi.fn(),
     invalidateMetaCache: vi.fn(),
-    patchSessionCwd: vi.fn(() => true),
-    persistSessionName: vi.fn(),
   } as unknown as ISessionStore
 
   const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspace)

@@ -5,7 +5,7 @@
  * 从 pi-config-bridge.ts 提取以控制文件行数（pi-config-bridge 已删除）。
  */
 
-import { existsSync, readFileSync, statSync, openSync, readSync, writeSync, closeSync, readdirSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, openSync, readSync, closeSync, readdirSync, unlinkSync } from 'node:fs'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { parseJsonl, readTailEntries } from '../../utils/jsonl.js'
 import { join } from 'node:path'
@@ -93,7 +93,8 @@ export function parseSessionHeader(filePath: string): SessionHeader | null {
  * pi 的 session 会 append 多条 session_info，取最后一条作为当前名称。
  *
  * W2 尾读优化：先尾读（readTailEntries）找尾部最后一条 session_info。
- * pi persistSessionName 是 append，晚期 rename 的 session_info 在尾部可命中。
+ * pi 对 session_info 的持久化是 append（[HISTORICAL] xyz 侧同名直写函数已于 W11
+ * 删除，append 语义现仅指 pi 自身的落盘行为），晚期 rename 的 session_info 在尾部可命中。
  * 未命中（INVAR-tail-2 SR1）→ fallback 全量读——早期命名 + 长对话追加会把最后一条
  * session_info 推到文件头部，尾窗找不到，必须 fallback 保证正确性（不丢名字）。
  */
@@ -142,7 +143,8 @@ export function persistSessionEnd(filePath: string, outcome: SessionOutcome, rea
   }
   const meta = { type: 'session_end', outcome, reason, timestamp: new Date().toISOString() }
   try {
-    // 原子写（tmpfile + rename）：与 patchSessionCwd 一致，防止并发读读到半写的 sidecar。
+    // 原子写（tmpfile + rename）：与 sidecar 家族各写点一致，防止并发读读到半写的 sidecar。
+    // （[HISTORICAL] 原注释参照 patchSessionCwd——该直写函数已随 W11 删除。）
     atomicWrite(filePath + '.meta.json', JSON.stringify(meta), `meta-${Date.now()}`)
     // W2-2：sidecar 写入后主动失效该文件的 meta 缓存。
     // scanSessionMeta 缓存键只含 JSONL 的 (mtimeMs, size)，sidecar 变更不会让 JSONL 的 stat 变化，
@@ -399,98 +401,83 @@ function findLastEntryField<R>(
 // 现在依赖 SessionScanner.listAll 合并内存 active session（this.sessions Map），
 // 即使磁盘无文件也显示；重启后内存清空，未 flush 的空 session 丢失是合理行为。
 
-/**
- * 将 session 名称持久化到 .jsonl 文件。
- *
- * 追加一条 `session_info` entry（pi 的标准格式），使 extractSessionName
- * 和 pi 进程都能读到新名称。
- *
- * [HISTORICAL] 文件不存在时**绝不创建文件**（规则 #6）。原实现用 openSync(wx)
- * 提前建文件，与 pi 0.80.3 SessionManager._persist 的 openSync("wx") 冲突 →
- * EEXIST → pi 抛 error → session 永久卡死（见上方 ensureSessionFile 删除记录）。
- * 文件不存在时只 console.warn + return。W1（数据源治理）后活跃 session 的 label
- * 持久化走 pi set_session_name RPC（pi 自身落盘），本函数仅剩非活跃 rename 调用
- * （legacy 直写例外，W11 处置）；turn_end/agent_end 的兜底直写机制已随 W1 删除。
- * active session 即使磁盘无文件也经 SessionScanner.listAll 合并内存 Map 显示，
- * 不依赖文件提前创建。
- */
-export function persistSessionName(filePath: string, name: string, id?: string, cwd?: string): void {
-  void id
-  void cwd
-  if (!filePath) return
-  if (!existsSync(filePath)) {
-    // 文件不存在（pi 延迟写入窗口 / 扫描后文件被删）：绝不创建文件（规则 #6），
-    // 跳过——活跃 label 由 pi 经 set_session_name RPC 自行持久化，非活跃 rename
-    // 文件缺失即无可写目标。此处只 warn 不抛，避免阻断 rename 调用方。
-    console.warn(`[session-file-utils] persistSessionName: file does not exist, skipping (pi delayed write window): ${filePath}`)
-    return
-  }
-  const entry = JSON.stringify({ type: 'session_info', name, timestamp: new Date().toISOString() }) + '\n'
-  try {
-    const fd = openSync(filePath, 'a')
-    writeSync(fd, entry)
-    closeSync(fd)
-  // eslint-disable-next-line taste/no-silent-catch -- file append: failure to write must not crash caller
-  } catch (e) {
-    console.error(`[config-bridge] persistSessionName: failed to write: ${filePath}`, e)
-  }
-}
+// [HISTORICAL] persistSessionName 已删除（W11，数据源治理——绝对写规则全线生效）。
+// 原实现 openSync('a') 向 session JSONL 直写 session_info entry（W1 前活跃 + 非活跃
+// rename 共用；W1 起仅剩非活跃分支调用）。W11 后 rename 全路径经 pi：活跃分支走既有
+// pi 进程 set_session_name RPC，非活跃分支经 process-manager.withEphemeralPi 短命
+// 附着同一 RPC——session JSONL 的唯一写方是 pi（pi 对已 flush 文件的 appendSessionInfo
+// 立即 appendFileSync 落盘，session-manager.ts _persist）。
+// [HISTORICAL] 规则 #6 历史包袱：更早的实现（ensureSessionFile 同期）用 openSync(wx)
+// 提前建文件，与 pi _persist 的 openSync("wx") 冲突 → EEXIST → session 永久卡死，
+// 后改为「文件不存在时跳过」守卫——该守卫语义已由 sidecar 家族
+// （persistSessionEnd/persistPresetBinding/persistProjectBinding/persistHandoffSidecar）继承。
 
 /**
- * 将 handoff marker 追加到 session JSONL（FR-5）。
+ * 将 handoff 标记持久化到 sidecar `.handoff.json`（FR-5，W11 迁移——D3b 裁决）。
  *
- * 源 session 交接给新 session 后，append 一条 `handoff_marker` entry，记录新 session id。
- * extractHandedOff 尾读此行；scanner scanSessionMeta 提取后填入 ScannedSessionMeta.handedOffTo，
- * 供前端识别「该 session 已交接，可在 UI 标记/跳转新 session」。
+ * 源 session 交接给新 session 后记录交接目标 id。extractHandedOff 读回；scanner
+ * scanSessionMeta 提取后填入 ScannedSessionMeta.handedOffTo，供前端识别「该 session
+ * 已交接，可在 UI 标记/跳转新 session」。
  *
- * [HISTORICAL/规则 #6] 文件不存在时**绝不创建文件**（与 persistSessionName 同理由）。
+ * [W11 迁移] 原实现 openSync('a') 向 session JSONL 直写 `handoff_marker` entry——
+ * 活跃交接时源 pi 进程在场，xyz 与 pi 是同文件双写方（违反绝对写规则）。迁 sidecar
+ * 后 handedOffTo 是 xyz 自有语义（pi 无 handoff 概念），与 `.meta.json` 家族同构。
  *
- * ⚠️ 批 1 只铺基础层接口，业务调用在批 2 handoff-service.runHandoff 中接线。
- * 当前无生产调用方是预期的（见 plan.md D7）——本函数是 handoff 持久化的原子原语，
- * 不应在批 1 引入调用方以免耦合未稳定的 handoff-service。待批 2 接线后即有调用。
+ * [规则 #6] JSONL 文件不存在时**绝不创建 sidecar**（与 persistSessionEnd 同守卫）：
+ * pi 延迟写入窗口内 existsSync=false → console.warn + 静默跳过。
+ * 写后失效 sessionMetaCache（缓存键只含 JSONL 的 mtime/size，sidecar 变更不变 JSONL
+ * stat → 不失效会命中缓存返回旧 handedOffTo）。
  *
- * @param filePath 源 session JSONL 绝对路径
+ * @param filePath 源 session JSONL 绝对路径（sidecar = filePath + '.handoff.json'）
  * @param newSessionId 交接目标的新 session id
  */
-export function persistHandedOff(filePath: string, newSessionId: string): void {
+export function persistHandoffSidecar(filePath: string, newSessionId: string): void {
   if (!filePath) return
   if (!existsSync(filePath)) {
-    console.warn(`[session-file-utils] persistHandedOff: file does not exist, skipping (pi delayed write window): ${filePath}`)
+    console.warn(`[session-file-utils] persistHandoffSidecar: file does not exist, skipping (pi delayed write window): ${filePath}`)
     return
   }
-  const entry = JSON.stringify({
-    type: 'handoff_marker',
-    handedOffTo: newSessionId,
-    timestamp: new Date().toISOString(),
-  }) + '\n'
+  const marker = { type: 'handoff_marker', handedOffTo: newSessionId, version: 1 as const, timestamp: new Date().toISOString() }
   try {
-    const fd = openSync(filePath, 'a')
-    writeSync(fd, entry)
-    closeSync(fd)
-  // eslint-disable-next-line taste/no-silent-catch -- file append: failure to write must not crash caller
+    // 原子写（tmpfile + rename）：与 persistSessionEnd 一致，防止并发读读到半写的 sidecar。
+    atomicWrite(filePath + '.handoff.json', JSON.stringify(marker), `handoff-${Date.now()}`)
+    // sidecar 写入后主动失效 sessionMetaCache（对齐 persistSessionEnd：缓存键只含
+    // JSONL 的 (mtimeMs, size)，sidecar 变更不变 JSONL stat → 命中缓存返回旧值）。
+    sessionMetaCache.delete(filePath)
+  // eslint-disable-next-line taste/no-silent-catch -- file write: failure must not crash caller
   } catch (e) {
-    console.error(`[session-file-utils] persistHandedOff: failed to write: ${filePath}`, e)
+    console.error(`[session-file-utils] persistHandoffSidecar failed: ${filePath}`, e)
   }
 }
 
 /**
- * 从 .jsonl 文件提取最后一条 handoff_marker 的 handedOffTo（FR-5）。
+ * 从 session 提取交接目标 id（FR-5，W11 起优先读 sidecar）。
  *
- * 仅尾读（readTailEntries）：persistHandedOff 是 append，handoff_marker 始终是文件
- * 最后写入的 entry → 总在尾部窗口（32KB）内。无需 fallback 全量读——这保持了
- * scanSessionMeta 三读合一的 readFileSync 预算（W3 AC-merge-1：每文件固定读取次数，
- * 若此函数也全量读会打破计数契约）。未命中（无 marker / 尾窗外）→ 返回 undefined。
+ * 1. 优先读 sidecar `.handoff.json`（W11 后的权威写点）。
+ * 2. sidecar 未命中 → fallback 仅尾读旧 JSONL `handoff_marker` entry（存量 session
+ *    兼容——W11 前写入的 marker 永在文件尾部窗口 32KB 内；handoff 是一次性标记，
+ *    写入后无后继写方把它推出尾窗）。
  *
- * [NOTE 不复用 findLastEntryField] 此处手写「尾读 + 倒序找 + 类型守卫」循环看似与
- * findLastEntryField 骨架重复，但**刻意不复用**：findLastEntryField 在尾读未命中时会
- * fallback 全量读（readFileSync + parseJsonl），那会打破 scanSessionMeta 的三读合一预算
- * （W3 AC-merge-1）。handoff_marker 总在文件最尾部，尾读必中，永远走不到 fallback——
- * 但若复用 findLastEntryField，未来若有人放宽其 predicate 会意外引入全量读。
- * 故保持独立的「仅尾读」实现，返回类型为 `undefined`（非 null）以匹配 ScannedSessionMeta.handedOffTo 的可选字段语义。
+ * [NOTE 不复用 findLastEntryField] fallback 刻意保持「仅尾读」——findLastEntryField
+ * 尾读未命中会 fallback 全量读（readFileSync + parseJsonl），那会打破 scanSessionMeta
+ * 的三读合一预算（W3 AC-merge-1）。旧 marker 总在文件最尾部，尾读必中。返回类型
+ * `undefined`（非 null）匹配 ScannedSessionMeta.handedOffTo 的可选字段语义。
  *
- * @returns 交接目标的新 session id；文件无 handoff_marker（未交接）返回 undefined
+ * @returns 交接目标的新 session id；无标记（未交接）返回 undefined
  */
 export function extractHandedOff(filePath: string): string | undefined {
+  // 优先读 sidecar（W11 后权威写点；对齐 extractSessionOutcome 的 sidecar-first 结构）
+  try {
+    const raw = readFileSync(filePath + '.handoff.json', 'utf-8')
+    const marker = JSON.parse(raw)
+    // 类型守卫：handedOffTo 必须是字符串（sidecar 是文件，内容可能损坏/被篡改）
+    if (marker && typeof marker.handedOffTo === 'string') {
+      return marker.handedOffTo
+    }
+    // handedOffTo 非字符串：sidecar 损坏，与 sidecar 不存在等价 → fallthrough 尾读兜底。
+  } catch { void 0 /* no sidecar or invalid → fallback to legacy JSONL marker */ }
+
+  // fallback：存量旧 session 的 JSONL `handoff_marker` 尾读（W11 前写入的兼容路径）
   const tailEntries = readTailEntries(filePath)
   if (tailEntries !== null) {
     for (let i = tailEntries.length - 1; i >= 0; i--) {
@@ -505,49 +492,15 @@ export function extractHandedOff(filePath: string): string | undefined {
   return undefined
 }
 
-/**
- * Patch session 文件首行的 cwd 字段。用于 session 的原始 cwd 已不存在时，
- * 将 cwd 更新为 fallback 值，使 pi 的 switch_session 不会因 cwd 不存在而失败。
- * 只修改首行（session header），不影响后续 entry。
- *
- * ⚠️ PRECONDITION: 必须在 pi session 启动（createSession）之前调用。
- * pi 的 _persist() 会在 assistant 消息到达后异步写入 session 文件，
- * 如果 pi 已启动，patchSessionCwd 与 _persist() 之间存在写写竞态。
- * 当前调用链 restoreSession → patchSessionCwd → createSession 保证了时序安全。
- *
- * @throws 此函数不抛异常（catch-all），但调用方必须保证在 pi 进程启动前调用。
- *         如果 pi 已启动，其 _persist() flush 可能与本次写操作并发，导致数据静默丢失。
- */
-export function patchSessionCwd(filePath: string, newCwd: string): boolean {
-  try {
-    // 防御性检查：如果文件最近被修改过，可能存在并发写入者（如 pi 的 _persist()）
-    try {
-      const stat = statSync(filePath)
-      const ageMs = Date.now() - stat.mtimeMs
-      // eslint-disable-next-line no-magic-numbers -- 1s threshold: file modified within last second = concurrent write risk
-      if (ageMs < 1000) {
-        console.warn(`[session-file-utils] patchSessionCwd: file modified ${ageMs}ms ago, possible concurrent writer — data loss risk`)
-      }
-    // eslint-disable-next-line taste/no-silent-catch -- stat failure is non-fatal for cwd patching
-    } catch { /* stat failed is not fatal */ }
-
-    const content = readFileSync(filePath, 'utf-8')
-    const lines = content.split('\n')
-    if (!lines[0]) return false
-    const header = JSON.parse(lines[0])
-    if (header.type !== 'session') return false
-    header.cwd = newCwd
-    lines[0] = JSON.stringify(header)
-    // 原子写入：tmpfile + rename，防止与 pi 的 _persist() 并发写导致数据丢失。
-    // 使用唯一 tmp 后缀防止并发 restoreSession 对同一文件的 TOCTOU 风险。
-    atomicWrite(filePath, lines.join('\n'), `patch-${Date.now()}`)
-    console.log(`[session-file-utils] patched session cwd: ${filePath} -> ${newCwd}`)
-    return true
-  } catch (e) {
-    console.error(`[session-file-utils] failed to patch session cwd: ${filePath}`, e)
-    return false
-  }
-}
+// [HISTORICAL] patchSessionCwd 已删除（W11，数据源治理——绝对写规则全线生效）。
+// 原实现读源 JSONL → 改首行 session header 的 cwd 字段 → atomicWrite 整文件重写
+// （restoreSession 在 pi spawn 前调用：session cwd 已被删除时降级 homedir，防 pi
+// switch_session 因 cwd 不存在失败）。W11 后 cwd fallback 改在 restore 的 tmp 读改写
+// 管线内应用（session-lifecycle.restoreSession：读源文件 → stripSessionEndEntries →
+// 对 tmp 内容首行 header 应用 fallback → 写 tmpdir → pi switchSession(tmp)），
+// 源文件零写。已知并接受的行为差异：源文件 header 永久保持旧（死路径）cwd——
+// pi append 不重写 header；scanner label fallback 与 deleteByCwd 按该真实历史值
+// 工作（登记表 §4 例外③，W11 已移除）。
 
 // ── Session 扫描 ─────────────────────────────────────────────
 

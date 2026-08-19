@@ -58,7 +58,7 @@ vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
 })
 vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/infra/pi/session-file-utils.js')>()
-  return { ...actual, scanPiSessions: () => mockScannedSessions, patchSessionCwd: () => true }
+  return { ...actual, scanPiSessions: () => mockScannedSessions }
 })
 vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()

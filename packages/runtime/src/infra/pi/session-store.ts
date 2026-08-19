@@ -2,26 +2,26 @@
  * ISessionStore 的 infra 实现 —— 封装 pi session 文件操作 + 历史翻译 + 废纸篓。
  *
  * 🔒 归属（R3e1，三层架构）：infra/pi/，实现 services/ports.ts 的 ISessionStore。
- * 聚合 session-file-utils 的 session 函数（scanPiSessions/persistSessionName/
- * patchSessionCwd）+ pi-provider-store 的 refreshAll +
+ * 聚合 session-file-utils 的 session 函数（scanPiSessions/persistSessionEnd/
+ * persistHandoffSidecar 等 sidecar 家族）+ pi-provider-store 的 refreshAll +
  * message-converter 的 convertPiHistory + system/trash。
  * service 经此 port 访问这些 session 域操作，不直接 import 各 infra 模块。
+ * [HISTORICAL] persistSessionName / patchSessionCwd 转发已随 W11 删除（绝对写规则：
+ * xyz 对 pi session JSONL 的直写归零，分别迁 pi RPC 与 restore tmp 管线）。
  */
 import type { ISessionStore, ScannedSessionMeta, SessionOutcome, SessionHeader, RebuiltHistory, ScanSessionsOptions } from '../../services/ports/session.js'
 import type { Message, SegmentsMetadataFile } from '@xyz-agent/shared'
 import type { PiSessionEntry } from './pi-protocol.js'
 import {
   scanPiSessions,
-  persistSessionName,
   persistSessionEnd,
   persistPresetBinding,
   persistProjectBinding,
   extractSessionOutcome,
-  patchSessionCwd,
   invalidateSessionMetaCache,
   invalidateScanDirCache,
   parseSessionHeader,
-  persistHandedOff,
+  persistHandoffSidecar,
 } from './session-file-utils.js'
 import { refreshAll } from './pi-provider-store.js'
 import { convertPiHistory } from './message-converter.js'
@@ -39,10 +39,6 @@ export class PiSessionStore implements ISessionStore {
 
   refreshAll(): void {
     refreshAll()
-  }
-
-  persistSessionName(filePath: string, name: string, id?: string, cwd?: string): void {
-    persistSessionName(filePath, name, id, cwd)
   }
 
   persistSessionEnd(filePath: string, outcome: SessionOutcome, reason?: string): void {
@@ -65,10 +61,6 @@ export class PiSessionStore implements ISessionStore {
     invalidateSessionMetaCache(filePath)
   }
 
-  patchSessionCwd(filePath: string, newCwd: string): boolean {
-    return patchSessionCwd(filePath, newCwd)
-  }
-
   convertHistory(raw: unknown[], entryIds?: string[]): Message[] {
     // MF5：透传平行 entryIds 给 convertPiHistory，使文件路径产出的 user/assistant message
     // 带 piEntryId（fork 定位用）。entryIds 与 raw 按 index 对齐（mapSessionEntries 产出）。
@@ -85,8 +77,8 @@ export class PiSessionStore implements ISessionStore {
     return parseSessionHeader(filePath)
   }
 
-  persistHandedOff(filePath: string, newSessionId: string): void {
-    persistHandedOff(filePath, newSessionId)
+  persistHandoffSidecar(filePath: string, newSessionId: string): void {
+    persistHandoffSidecar(filePath, newSessionId)
   }
 
   trash(path: string): void {

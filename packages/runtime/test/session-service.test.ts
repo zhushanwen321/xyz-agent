@@ -56,8 +56,6 @@ const mocks = vi.hoisted(() => ({
       { provider: string; modelId: string } | null,
   },
   refreshAllMock: vi.fn(),
-  persistSessionNameMock: vi.fn(),
-  patchSessionCwdMock: vi.fn(() => true),
   trashMock: vi.fn(),
   convertPiHistoryMock: vi.fn((raw: unknown) => raw),
   // entry-tree-builder.rebuildHistoryFromEntries mock：默认 identity-ish（返 entries 当 messages），
@@ -79,8 +77,6 @@ vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
   return {
     ...actual,
     scanPiSessions: () => mockScannedSessions,
-    persistSessionName: mocks.persistSessionNameMock,
-    patchSessionCwd: mocks.patchSessionCwdMock,
   }
 })
 vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
@@ -256,6 +252,9 @@ function createSetup(): Setup {
     }),
     onSessionExit: vi.fn((cb) => { exitCb = cb }),
     destroyAll: vi.fn(async () => { clientMap.clear() }),
+    // W11：短命 pi 附着 mock——默认以新 ephemeral client 执行 fn（受控可断言）
+    withEphemeralPi: vi.fn(async <T,>(_sessionFile: string, fn: (c: IPiEngine) => Promise<T>) =>
+      fn(makeMockClient() as unknown as IPiEngine)),
   } as unknown as IProcessManager
 
   const broker: IMessageBroker = {
@@ -733,8 +732,7 @@ describe('SessionService · lifecycle', () => {
       // W1 接口契约：活跃分支唯一写入口 = setSessionName RPC（seedSession 的 create 显式
       // label 也走同一 RPC，故断言最后一次调用是 rename 的新名）
       expect(client.setSessionName).toHaveBeenLastCalledWith('new name')
-      // 直写路径必须消失（回归守卫：last-write-wins bug 的根源）
-      expect(mocks.persistSessionNameMock).not.toHaveBeenCalled()
+      // 直写路径已随 W11 全删（persistSessionName 不存在），回归守卫由 R1 检查承担
       expect(mocks.refreshAllMock).toHaveBeenCalled()
       expect(setup.service.getSummary(id)?.label).toBe('new name')
     })
@@ -745,18 +743,21 @@ describe('SessionService · lifecycle', () => {
       setup.clientMap.delete(id)
       await expect(setup.service.renameSession(id, 'new name')).rejects.toThrow('pi process is not available')
       // 未持久化、内存 label 也未变（先 RPC 后改内存，失败保留旧名可重试）
-      expect(mocks.persistSessionNameMock).not.toHaveBeenCalled()
       expect(setup.service.getSummary(id)?.label).toBe('seed')
     })
 
-    it('persists name via scanned file when session is not active', async () => {
+    it('non-active session：短命 pi 附着后 set_session_name RPC（W11：直写全删）', async () => {
       mockScannedSessions.push({
         id: 'scan-ren', filePath: '/fake/scan-ren.jsonl', cwd: tmpdir(), name: null,
         lastModified: Date.now(), timestamp: new Date().toISOString(), size: 0, outcome: null,
       })
+      const ephemeral = makeMockClient()
+      vi.mocked(setup.pm.withEphemeralPi).mockImplementationOnce(async (_f, fn) =>
+        fn(ephemeral as unknown as IPiEngine))
       await setup.service.renameSession('scan-ren', 'renamed')
-      // 非活跃分支保持 legacy 直写（W11 前登记例外）
-      expect(mocks.persistSessionNameMock).toHaveBeenCalledWith('/fake/scan-ren.jsonl', 'renamed', 'scan-ren', tmpdir())
+      // 非活跃分支经短命 pi 附着目标文件后 RPC（xyz 不再直写 session JSONL）
+      expect(setup.pm.withEphemeralPi).toHaveBeenCalledWith('/fake/scan-ren.jsonl', expect.any(Function))
+      expect(ephemeral.setSessionName).toHaveBeenCalledWith('renamed')
     })
   })
 

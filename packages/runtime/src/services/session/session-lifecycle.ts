@@ -56,6 +56,36 @@ export function stripSessionEndEntries(jsonlContent: string): string {
 }
 
 /**
+ * 对 JSONL 文本首行的 session header 应用 cwd fallback（W11，替代已删的 patchSessionCwd）。
+ *
+ * 纯字符串变换（不落盘）：restore 的 tmp 读改写管线内调用——session 原始 cwd 已被删除
+ * 时把 tmp 拷贝首行 header 的 cwd 改为 fallback 值，使 pi switch_session 不因 cwd 不存在
+ * 失败；源文件零写（原 patchSessionCwd 整文件重写源 JSONL 的行为已退役）。
+ *
+ * 防御语义与原实现一致：首行缺失/非 session 类型/JSON parse 失败 → 原样返回（不抛）。
+ *
+ * @param jsonlContent stripSessionEndEntries 后的 JSONL 文本
+ * @param fallbackCwd  降级 cwd（调用方传 homedir()）
+ * @returns 首行 header.cwd 替换为 fallbackCwd 后的文本；无法解析时原样返回
+ */
+export function applyHeaderCwdFallback(jsonlContent: string, fallbackCwd: string): string {
+  const lines = jsonlContent.split('\n')
+  if (!lines[0]) return jsonlContent
+  try {
+    const header = JSON.parse(lines[0])
+    if (typeof header !== 'object' || header === null || header.type !== 'session') {
+      return jsonlContent
+    }
+    header.cwd = fallbackCwd
+    lines[0] = JSON.stringify(header)
+    return lines.join('\n')
+  } catch {
+    // 首行 JSON parse 失败：原样返回（交 pi switch_session 报错），不阻断 restore 主流程
+    return jsonlContent
+  }
+}
+
+/**
  * thinkingLevel 合法值集合（S-RT-5）。
  *
  * 与 shared ThinkingLevel 类型对齐（pi CLI --thinking 参数值域，附录 A.4）。
@@ -116,6 +146,7 @@ export class SessionLifecycle {
     if (label === undefined) return
     try {
       await client.setSessionName(label)
+    // eslint-disable-next-line taste/no-silent-catch -- best-effort 降级（docstring：RPC 失败不阻断 create/fork，label 留内存显示 + console.error 上报，恢复动作 = 手动 rename 重试）
     } catch (e) {
       console.error(`[session-lifecycle] ${source}: setSessionName RPC failed for ${sessionId} (label kept in memory only):`, e)
     }
@@ -324,15 +355,21 @@ export class SessionLifecycle {
       // 事件 markDirty 防抖重拉收敛到同值——W9 影子缓存已删，label 不再有第三份状态）。
       session.label = newName
     } else {
-      // 非 active session:从磁盘查找 jsonl 文件并写入
+      // 非 active session：W11（绝对写规则）改经短命 pi——withEphemeralPi 附着该文件
+      // 后调 set_session_name RPC，session JSONL 仍由 pi 写（pi 对已 flush 文件的
+      // appendSessionInfo 立即落盘，尾部出现改名 session_info entry）。xyz 直写
+      // （persistSessionName openSync('a')）已随 W11 删除。探针 ~600ms 端到端
+      // （冷启动 ~500ms + RPC <1ms），逐次冷起（D2 裁决，无 warm pi）。
+      // 失败（spawn 失败 / 附着超时 / RPC 失败）rethrow 走上层 toast——旧名保留可重试
+      // （与活跃分支同语义）。
       const target = this.svc.findScannedSession(sessionId)
       if (target) {
-        this.sessionStore.persistSessionName(target.filePath, newName, target.id, target.cwd)
+        await this.pm.withEphemeralPi(target.filePath, (c) => c.setSessionName(newName))
       }
     }
 
-    // wave:perf-w26（D9-1 rename 失效点）：写路径改变 name（非活跃分支 persistSessionName
-    // append session_info 改变文件 mtime/size；活跃分支 RPC 更新 pi 内存 + 内存 label），
+    // wave:perf-w26（D9-1 rename 失效点）：写路径改变 name（活跃分支 RPC 更新 pi 内存
+    // + 内存 label；非活跃分支短命 pi 落盘 session_info 改变文件 mtime/size），
     // 但目录列举 TTL 快照 1s 内仍返回旧 name——rename 后侧栏刷新立即显示新名，显式失效目录缓存。
     this.sessionStore.invalidateScanCache()
     this.sessionStore.refreshAll()
@@ -429,10 +466,15 @@ export class SessionLifecycle {
       this.svc.removeSessionEntry(sessionId)
     }
 
-    // session cwd 可能已被删除(如 worktree 清理后),降级到 home + patch session 文件
+    // session cwd 可能已被删除(如 worktree 清理后),降级到 home。
+    // W11（绝对写规则）：不再 patch 源文件（patchSessionCwd 已删）——cwd fallback 改在
+    // 下方 tmp 读改写管线的首行 header 上应用（读改写同处，源文件零写）。
+    // 已声明并接受的行为差异：源文件 header 永久保持旧（死路径）cwd——pi append 不重写
+    // header；scanner label fallback 与 deleteByCwd 按该真实历史值工作（登记表 §4 例外③）。
+    let cwdFellBack = false
     const sessionCwd = existsSync(target.cwd) ? target.cwd : (() => {
       console.warn(`[session-lifecycle] session cwd does not exist: ${target.cwd}, falling back to home`)
-      this.sessionStore.patchSessionCwd(target.filePath, homedir())
+      cwdFellBack = true
       return homedir()
     })()
 
@@ -460,7 +502,13 @@ export class SessionLifecycle {
       // 避免 pi 可能的写回污染原 JSONL（原文件仍是 source of truth，需保持完整）。
       // W9：历史 session（迁移前写入的）JSONL 可能含 session_end 行，pi 对该 type 处理未验证 →
       // 拷贝时 stripSessionEndEntries 保守剔除（比让 pi 报错更安全；其他行原样保留）。
-      const cleaned = stripSessionEndEntries(readFileSync(target.filePath, 'utf-8'))
+      let cleaned = stripSessionEndEntries(readFileSync(target.filePath, 'utf-8'))
+      // W11：cwd 死路径降级时，对 tmp 内容首行 session header 应用 cwd fallback——
+      // pi switch_session 加载 header cwd 不存在的 session 会失败（MissingSessionCwdError
+      // 语义），须让 pi 看到存在的 cwd。读改写同处完成，源文件零写（patchSessionCwd 已删）。
+      if (cwdFellBack) {
+        cleaned = applyHeaderCwdFallback(cleaned, homedir())
+      }
       const tmpFile = join(tmpdir(), `xyz-session-${sessionId}-${Date.now()}.jsonl`)
       writeFileSync(tmpFile, cleaned)
       try {

@@ -1164,7 +1164,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       session.handedOffTo = newSessionId
     }
     if (session?.sessionFilePath) {
-      this.sessionStore.persistHandedOff(session.sessionFilePath, newSessionId)
+      this.sessionStore.persistHandoffSidecar(session.sessionFilePath, newSessionId)
     }
   }
   /**

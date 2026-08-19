@@ -20,7 +20,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { tmpdir } from 'node:os'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { IGitInfoReader } from '../src/services/ports/git-info.js'
@@ -43,7 +43,6 @@ const mocks = vi.hoisted(() => ({
     value: { provider: 'test-provider', modelId: 'test-model' } as
       { provider: string; modelId: string } | null,
   },
-  persistSessionNameMock: vi.fn(),
 }))
 
 vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
@@ -51,8 +50,6 @@ vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
   return {
     ...actual,
     scanPiSessions: () => mocks.mockScannedSessions,
-    persistSessionName: mocks.persistSessionNameMock,
-    patchSessionCwd: vi.fn(() => true),
   }
 })
 vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
@@ -228,7 +225,6 @@ interface Setup {
 function resetMockState(): void {
   mocks.mockScannedSessions.length = 0
   mocks.defaultModel.value = { provider: 'test-provider', modelId: 'test-model' }
-  mocks.persistSessionNameMock.mockClear()
 }
 
 describe('SessionService · W3 副作用迁移（U7）', () => {
@@ -250,10 +246,12 @@ describe('SessionService · W3 副作用迁移（U7）', () => {
         const filePath = join(dir, 's.jsonl')
         writeFileSync(filePath, '{}')
         const { id } = await setup.seedSession({ label: 'my-label', sessionFile: filePath })
+        const before = readFileSync(filePath, 'utf-8')
 
         setup.service.handleTurnUsageSideEffects(id)
 
-        expect(mocks.persistSessionNameMock).not.toHaveBeenCalled()
+        // W11 后 xyz 已无任何直写 session JSONL 的代码路径（R1 无条件检查），文件字节不变
+        expect(readFileSync(filePath, 'utf-8')).toBe(before)
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
@@ -261,7 +259,6 @@ describe('SessionService · W3 副作用迁移（U7）', () => {
 
     it('未知 session 不抛错（静默 no-op）', () => {
       expect(() => setup.service.handleTurnUsageSideEffects('ghost')).not.toThrow()
-      expect(mocks.persistSessionNameMock).not.toHaveBeenCalled()
     })
   })
 
@@ -285,10 +282,11 @@ describe('SessionService · W3 副作用迁移（U7）', () => {
         const filePath = join(dir, 's.jsonl')
         writeFileSync(filePath, '{}')
         const { id } = await setup.seedSession({ label: 'fallback-label', sessionFile: filePath })
+        const before = readFileSync(filePath, 'utf-8')
 
         setup.service.handleTurnEndSideEffects(id)
 
-        expect(mocks.persistSessionNameMock).not.toHaveBeenCalled()
+        expect(readFileSync(filePath, 'utf-8')).toBe(before)
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }

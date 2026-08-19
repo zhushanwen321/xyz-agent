@@ -6,7 +6,7 @@
 
 1. **地位**：本表是 12 类 GUI 数据的 owner / 权威源 / 唯一写入口 / 字段空值语义 / 已知例外的唯一登记 SSOT，是 S1（review-data-governance checklist）、R2（store 写入口许可表）、R3（缓存注解条目校验）的依据，review 时的对照 SSOT（父文档 §3.6 第 4 层）。
 2. **演进**：本表 P1 起演进为可执行配置——`ReplicatedState` 配置三元组（快照 RPC / 失效触发源 / 合并策略含字段空值语义）即登记条目，**W6-W8 执行时同步维护本表**（实例落地一条、登记表同步一行），P1 后 markdown 由配置生成或双向校验。
-3. **现状基线**：W1 之后——活跃 rename 直写与 `tryPersistLabel` 兜底直写已删（label 活跃链路唯一写入口 = pi `set_session_name` RPC）；legacy 例外三条（非活跃 rename 直写 / `persistHandedOff` / `patchSessionCwd`）在位，均带 W11 移除期限。
+3. **现状基线**：W11 之后——xyz 对 pi JSONL 的直写链路全部消灭（活跃 rename + 兜底直写 W1 删；非活跃 rename W11 切 `withEphemeralPi`；handoff W11 迁 sidecar；patchCwd W11 迁 restore tmp），R1 allowlist 空集、检查无条件化。
 4. **行号口径**：行号为 W1 后实测（按符号名定位）；与 plan 基线行号的偏差——非活跃 rename 直写 `:302→:331`（W1 改动使 renameSession 内行号后移），`persistHandedOff` 实现体 `:464→:455`（append `openSync('a')` 在 `:467`），`patchSessionCwd` `:518→:521`（`atomicWrite` 在 `:543`）。
 5. **快照 RPC 频率量化（P0.5② 终判，W7/W8 实测）**：标量六实例全量接线后，典型操作序列（3 轮对话 + 1 次切模型）的快照 RPC 总量 5-7 次（W7 标量 5 次：播种 3 + 失效 2；W8 补三实例后合计 7 次：get_session_stats 3 + get_state 2 + get_commands 2），p95 0.6-1.7ms（毫秒级，远低于 UI 可感知阈值）；事件风暴被 300ms 防抖聚合（20 次失效 → 1 次拉取，用例实测），无队列堆积。**结论：已量化，无感知，无需降级**——父文档 P0.5 失败预案（防抖拉长 / 批量快照 / 仅活跃 session 拉取）均不启用。
 
@@ -44,12 +44,12 @@ xyz runtime 指向 pi session JSONL 的写点全集共 6 处（r3 审查补漏�
 |---|---|---|
 | 1. 活跃 session 手动 rename 直写 | 原 `session-lifecycle.ts` renameSession 活跃分支（`persistSessionName` 直写，plan 基线 `:296`） | **W1 已移除**：切 pi `set_session_name` RPC（`rpc-client.ts:519`，`session-lifecycle.ts:323` 调用；client undefined / RPC 失败一律 throw 走上层 toast，禁静默 no-op） |
 | 2. turn_end / agent_end 兜底直写（tryPersistLabel） | 原 `session-service.ts:1282-1286`（经 `persistSessionName` 直写初始 label） | **W1 已移除**：机制全链删除（`tryPersistLabel` / `labelPersisted` 全仓 0 命中）；显式初始 label 改 create/fork 时经 RPC（`session-lifecycle.ts:116` persistExplicitLabel → setSessionName），派生 label（basename(cwd)）退役为显示派生不再持久化 |
-| 3. 非活跃 session 手动 rename 直写 | `session-lifecycle.ts:331`（renameSession else 分支，`sessionStore.persistSessionName` → `session-file-utils.ts:417` 实现、`:430` `openSync('a')`） | **legacy 例外登记，移除期限 = W11**（切短命 pi 附着 + RPC，见例外①） |
-| 4. `persistHandedOff` handoff_marker 直写 | `session-file-utils.ts:455` 实现、`:467` `openSync('a')`（调用链 handoff-service.ts:286 → session-service.ts:1076 → session-store.ts:88） | **legacy 例外登记，移除期限 = W11**（迁 sidecar `.handoff.json`，见例外②） |
-| 5. `patchSessionCwd` 整文件重写 | `session-file-utils.ts:521` 实现、`:543` `atomicWrite`（唯一生产调用 `session-lifecycle.ts:434` restoreSession） | **legacy 例外登记，移除期限 = W11**（迁 restore tmp 读改写管线，见例外③） |
+| 3. 非活跃 session 手动 rename 直写 | `session-lifecycle.ts:331`（renameSession else 分支，`sessionStore.persistSessionName` → `session-file-utils.ts:417` 实现、`:430` `openSync('a')`） | **已移除（W11）**：切 `process-manager.withEphemeralPi` 短命附着 + `set_session_name` RPC（renameSession else 分支，失败走既有报错保留旧名，见例外①） |
+| 4. `persistHandedOff` handoff_marker 直写 | `session-file-utils.ts:455` 实现、`:467` `openSync('a')`（调用链 handoff-service.ts:286 → session-service.ts:1076 → session-store.ts:88） | **已移除（W11）**：迁 sidecar `.handoff.json`（`persistHandoffSidecar`；读侧 `extractHandedOff` sidecar 优先 + 尾读 fallback 存量兼容，见例外②/⑤） |
+| 5. `patchSessionCwd` 整文件重写 | `session-file-utils.ts:521` 实现、`:543` `atomicWrite`（唯一生产调用 `session-lifecycle.ts:434` restoreSession） | **已移除（W11）**：迁 restore tmp 读改写管线（`applyHeaderCwdFallback` 对 tmp 首行 header 应用、仅降级时生效，源文件零写，见例外③） |
 | 6. `createForkedSessionFile` fork 文件写入 | `session-fork.ts:74` 函数、`:175` `writeFile` 新建文件 | **创建型合法形态，登记保留（零代码改动）**：目标文件写前不存在、无任何进程持有，写后即 spawn pi 移交——不属「写 pi 当前持有的文件」（见合法形态⑥） |
 
-写点 1-2 已消灭，3-5 由 W11 全部消灭或迁移，6 登记后保留；W11 完成后 pi JSONL 本体的 xyz 侧写点归零、R1 allowlist 清空（写点集合与源码真实状态一致，防后续 review 误判「另有未登记写方」——r1/r2/r3 连续三轮审查均在此处扫出遗漏）。
+写点 1-5 已全部消灭或迁移（W1×2 + W11×3），6 登记后保留；pi JSONL 本体的 xyz 侧写点已归零、R1 allowlist 已清空为空集（写点集合与源码真实状态一致，防后续 review 误判「另有未登记写方」——r1/r2/r3 连续三轮审查均在此处扫出遗漏）。
 
 ## 4. 例外与合法形态登记（七项）
 
@@ -57,18 +57,18 @@ xyz runtime 指向 pi session JSONL 的写点全集共 6 处（r3 审查补漏�
 
 | 项 | 登记内容 | 竞态边界 / 合法性依据 | 移除期限 / 处置 |
 |---|---|---|---|
-| ① 非活跃 rename 直写 | `persistSessionName` 非活跃分支（`session-lifecycle.ts:331`，目标文件无 pi 进程持有） | 无 pi 进程时无并发写方，时序安全；但属 xyz 直写 pi JSONL，违反绝对写规则 | **移除期限 = W11**：切「runtime 短命拉起 pi 进程附着该文件 → set_session_name RPC → 关闭」（冷启动中位数 ~500ms 已探明，逐次冷起定型） |
-| ② `persistHandedOff` handoff_marker 直写 | `session-file-utils.ts:455`，`openSync('a')` append `handoff_marker` entry | **竞态边界 = 活跃交接时源 pi 在场**（handoff 编排保证源 session 交接时仍 active，runHandoff 在 agent_end 后、源进程退出前调 markHandedOff）——真实并发窗口，模式 1 双写方实例 | **移除期限 = W11，迁移形态 = sidecar**：迁 `<sessionFile>.handoff.json`（家族第 4 后缀）；裁决不走 appendEntry——runtime 无法直接经 RPC 写 custom entry，且 handedOffTo 是 xyz 自有语义（pi 无 handoff 概念），消费方唯一（scanner 尾读）与 session_end 同构 |
-| ③ `patchSessionCwd` 整文件重写 | `session-file-utils.ts:521`，`:543` `atomicWrite` 重写全文件（header.cwd 降级 homedir） | **竞态边界 = 仅 restoreSession 在 pi spawn 前调用**（`session-lifecycle.ts:434`，调用链结构保证 docstring PRECONDITION「必须在 pi session 启动之前」；实现内含 mtime<1s 并发写防御警告）——目标文件无并发写方。「改经 pi」不可行：pi 无修改 header cwd 的 RPC；「先起 pi 再 patch」恰是写写竞态，顺序反转更危险 | **移除期限 = W11，迁移形态 = restore tmp 读改写管线**：cwd fallback 改在 tmp 拷贝上应用（该流程本就读源 → stripSessionEndEntries → 写 tmpdir → switchSession），源文件零写；header cwd 保持旧值为已声明并接受的行为差异（scanner label fallback / deleteByCwd 按旧值工作） |
+| ① 非活跃 rename 直写 | `persistSessionName` 非活跃分支（`session-lifecycle.ts:331`，目标文件无 pi 进程持有） | 无 pi 进程时无并发写方，时序安全；但属 xyz 直写 pi JSONL，违反绝对写规则 | **已移除（W11）**：切「`process-manager.withEphemeralPi` 短命拉起 pi 附着该文件 → set_session_name RPC → 关闭」（冷启动中位数 ~500ms 已探明，逐次冷起定型；5s 就绪上限，失败保留旧名） |
+| ② `persistHandedOff` handoff_marker 直写 | `session-file-utils.ts:455`，`openSync('a')` append `handoff_marker` entry | **竞态边界 = 活跃交接时源 pi 在场**（handoff 编排保证源 session 交接时仍 active，runHandoff 在 agent_end 后、源进程退出前调 markHandedOff）——真实并发窗口，模式 1 双写方实例 | **已移除（W11），迁移形态 = sidecar**：迁 `<sessionFile>.handoff.json`（家族第 4 后缀，`persistHandoffSidecar` 写 + `extractHandedOff` sidecar 优先/尾读 fallback）；裁决不走 appendEntry——runtime 无法直接经 RPC 写 custom entry，且 handedOffTo 是 xyz 自有语义（pi 无 handoff 概念），消费方唯一（scanner 尾读）与 session_end 同构 |
+| ③ `patchSessionCwd` 整文件重写 | `session-file-utils.ts:521`，`:543` `atomicWrite` 重写全文件（header.cwd 降级 homedir） | **竞态边界 = 仅 restoreSession 在 pi spawn 前调用**（`session-lifecycle.ts:434`，调用链结构保证 docstring PRECONDITION「必须在 pi session 启动之前」；实现内含 mtime<1s 并发写防御警告）——目标文件无并发写方。「改经 pi」不可行：pi 无修改 header cwd 的 RPC；「先起 pi 再 patch」恰是写写竞态，顺序反转更危险 | **已移除（W11），迁移形态 = restore tmp 读改写管线**：cwd fallback 改在 tmp 拷贝上应用（`applyHeaderCwdFallback`，该流程本就读源 → stripSessionEndEntries → 写 tmpdir → switchSession），源文件零写；header cwd 保持旧值为已声明并接受的行为差异（scanner label fallback = basename(死路径) / deleteByCwd 按真实历史值命中） |
 | ④ 队列内容唯一提交方 = renderer | queue 内容权威 = renderer 提交日志（D6 按字段分权威；深度权威 = pi `pendingMessageCount`） | pi RPC 命令全集无队列内容快照、ExtensionAPI 无队列内容读口（均源码穷尽核实）——内容权威只能归 renderer 提交日志；pi 入队存展开后文本，提交原文无法反查 | 长期规则（非债务）：xyz 自研扩展**禁止**使用 `sendUserMessage({deliverAs})` 注入队列（注入条目不在 renderer 提交日志，破坏计数差集）——S1 checklist 拦截；第三方扩展注入的残余风险 = 计数 FIFO 有界偏差，深度仍由 pendingMessageCount 结构性对账 |
-| ⑤ sidecar 家族四后缀合法形态 | `.meta.json`（persistSessionEnd，`session-file-utils.ts:146` atomicWrite）/ `.preset.json`（persistPresetBinding，`:281`）/ `.project.json`（persistProjectBinding，`:223`）/ `.handoff.json`（W11 迁入 persistHandedOff 后启用，登记先行） | **合法性依据 = xyz 自有文件**（pi 体系外的 xyz 数据，不是 pi 的文件）——绝对写规则管的是 pi 的 JSONL；读写收口 session-file-utils 单一 util、写前 existsSync 守卫（规则 #6 防 pi `openSync("wx")` 竞态）、写后失效 meta 缓存，四者同构（D3 选项 a 裁决） | 长期形态（非例外）：R1 对四后缀内置豁免，豁免清单与本条一一对应；**W19 收口确认**（登记条目与豁免清单核对）；W11 步骤 7 负责迁入 `.handoff.json` 后的同步核对 |
+| ⑤ sidecar 家族四后缀合法形态 | `.meta.json`（persistSessionEnd，`session-file-utils.ts:146` atomicWrite）/ `.preset.json`（persistPresetBinding，`:281`）/ `.project.json`（persistProjectBinding，`:223`）/ `.handoff.json`（persistHandoffSidecar，W11 已迁入启用） | **合法性依据 = xyz 自有文件**（pi 体系外的 xyz 数据，不是 pi 的文件）——绝对写规则管的是 pi 的 JSONL；读写收口 session-file-utils 单一 util、写前 existsSync 守卫（规则 #6 防 pi `openSync("wx")` 竞态）、写后失效 meta 缓存，四者同构（D3 选项 a 裁决） | 长期形态（非例外）：R1 对四后缀内置豁免，豁免清单与本条一一对应；**W19 收口确认**（登记条目与豁免清单核对）；W11 步骤 7 负责迁入 `.handoff.json` 后的同步核对 |
 | ⑥ fork 文件创建型 | `createForkedSessionFile`（`session-fork.ts:74`，写入点 `:175`），唯一创建入口 | **合法性依据 = 目标文件写前不存在**（新 sessionId + 新文件名，无任何进程持有），写入后 spawn pi 附着——不属「写 pi 当前持有的文件」；「pi 侧 fork」被否（pi 原生 fork RPC 语义限制覆盖不了 xyz fork：任意 entryId 截断 + 独立进程 + 源进程不动）；失败分支 unlink 清理的是本流程刚创建、pi 未附着的孤儿文件（创建者清理） | 长期形态（非例外，零代码改动）：边界约束 = 创建型仅限「目标写前不存在的新文件」，**禁止演进为「重写既有 session 文件」**；R1 对此形态静态不可拦（跨文件数据流），守卫 = 本条登记 + S1 语义层 |
 | ⑦ 非写点注记（防后续审查误问） | session 删除链（`pm.destroySession` 先行 + `session-store.trash` → system/trash OS 垃圾桶移动 + sidecar unlink，无并发持有）与 `pi-maintenance.ts`（`packages/runtime/src/infra/pi/`）一次性目录布局迁移 `renameSync` | **合法性依据 = 均属非内容写**：前者是文件系统移动/删除（OS 垃圾桶），后者是一次性迁移的重命名——均不产生对文件内容的并发写，不在「写点」定义内 | 范围注记（非例外、无期限）：明确排除在 R1 检查范围与写点全集计数外 |
 
 ## 5. 维护规约
 
 1. **W6-W8 同步维护（强制）**：`ReplicatedState` 每落地一个实例，主表对应行的「唯一写入口 / 字段空值语义」列即更新为配置引用——本表 P1 起演进为可执行配置，条目失真即护栏失真。
-2. **例外是带期限的债务**：①-③ 移除期限 = W11；W11 完成后 §4 前三项改记「已移除（W11）」，R1 allowlist 同步清空。
+2. **例外是带期限的债务**：①-③ 已移除（W11，§4 前三项已改记），R1 allowlist 已清空（空集 + 检查无条件化）。
 3. **误报豁免闭环**：R1/R2/R3 拦到合法写入时，豁免路径 = 先在本表补条目/例外 + 豁免 allowlist 登记，禁止在代码里静默绕过。
 4. **无专门 wave 条目（#10 / #11）**：父文档 §5 的 19 个实施单元未覆盖，登记现状 + 原则性目标；改动这两条链路时须遵守 §3.0 原则（绝对写规则 / 投影一次），并先在本表补登记再动手。
 5. **新数据先登记**：新增 GUI 数据（新 store 字段 / 新缓存 / 新 WS 推送）必须先在本表建行（编号顺延）或并入既有条目，再写代码——R3 强制注解的条目即指本表编号。

@@ -216,6 +216,13 @@ export interface IProcessManager {
   getClient(sessionId: string): IPiEngine | undefined
   /** 反查：由 pi 引擎句柄找 sessionId（不存在返回 undefined）。 */
   getSessionIdByClient(client: IPiEngine): string | undefined
+  /**
+   * W11（数据源治理）：短命 pi 附着指定 session 文件执行一次性 RPC，用后即毁
+   * （spawn → switchSession 附着，就绪上限 5s → fn(client) → 销毁）。
+   * session JSONL 的唯一写方是 pi——fn 内 RPC（如 setSessionName）由 pi 自身落盘。
+   * spawn 失败 / 就绪超时 / fn 抛错一律 rethrow，调用方保留旧值可重试。
+   */
+  withEphemeralPi<T>(sessionFile: string, fn: (client: IPiEngine) => Promise<T>): Promise<T>
   /** sessionId 是否有活跃的 pi 进程。 */
   hasClient(sessionId: string): boolean
   /** 重绑定：把 oldId 的 pi 进程改挂到 newId（fork / rebind 用）。 */

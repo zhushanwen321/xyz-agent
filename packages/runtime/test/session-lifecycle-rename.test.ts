@@ -11,7 +11,8 @@
  *      client 不可用（pi 崩溃窗口）/ RPC 失败必须 throw（禁静默丢写）
  *   2. create / forkSession 显式 label 走 RPC（失败不阻断创建）
  *   3. 派生 label（basename(cwd)）不触发 RPC（退役为显示派生，auto-rename 守卫照常通过）
- *   4. 非活跃 rename 仍走 persistSessionName 直写（legacy 例外，W2 登记 W11 移除）
+ *   4. 非活跃 rename 经短命 pi（W11：withEphemeralPi 附着 + set_session_name RPC，
+ *      persistSessionName 直写已删——绝对写规则全线生效）
  *
  * Mock 边界与 contract-hardening.test.ts 同款：svc/pm/configStore/sessionStore 注入 mock，
  * session-fork 模块 mock（返回受控产物指向真实 tmp 文件）；fs 相关 fixture 用真实 tmp。
@@ -80,6 +81,8 @@ function makeSessionView(overrides: Partial<IManagedSessionView> = {}): IManaged
 function makeEnv() {
   // pm.getClient 的数据源（renameSession 活跃分支经 pm.getClient 查 client）
   const clientMap = new Map<string, MockClient>()
+  // withEphemeralPi mock 交给 fn 的受控 client（断言组 4 断言其 RPC 调用）
+  const ephemeralClient = makeClient()
   // svc.getSession 的数据源（活跃 session 视图）
   const sessionMap = new Map<string, IManagedSessionView>()
 
@@ -116,6 +119,9 @@ function makeEnv() {
     }),
     onSessionExit: vi.fn(() => {}),
     destroyAll: vi.fn(async () => {}),
+    // W11：短命 pi 附着 mock——以受控 ephemeral client 执行 fn（可断言 RPC 调用）
+    withEphemeralPi: vi.fn(async <T,>(_sessionFile: string, fn: (c: IPiEngine) => Promise<T>) =>
+      fn(ephemeralClient as unknown as IPiEngine)),
   } as unknown as IProcessManager
 
   const configStore = {
@@ -125,7 +131,6 @@ function makeEnv() {
   const sessionStore = {
     refreshAll: vi.fn(),
     invalidateScanCache: vi.fn(),
-    persistSessionName: vi.fn(),
     persistPresetBinding: vi.fn(),
     persistProjectBinding: vi.fn(),
   } as unknown as ISessionStore
@@ -135,7 +140,7 @@ function makeEnv() {
   const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService)
 
   return {
-    lifecycle, svc, pm, sessionStore, clientMap, sessionMap,
+    lifecycle, svc, pm, sessionStore, clientMap, sessionMap, ephemeralClient,
     /** 手动挂载活跃 session + client（rename 用例直入活跃分支）。 */
     mountActive: (id: string, client: MockClient, session?: IManagedSessionView) => {
       clientMap.set(id, client)
@@ -179,8 +184,7 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
 
       expect(client.setSessionName).toHaveBeenCalledTimes(1)
       expect(client.setSessionName).toHaveBeenCalledWith('重构计划')
-      // 直写路径必须消失（last-write-wins bug 根源）
-      expect(env.sessionStore.persistSessionName).not.toHaveBeenCalled()
+      // 直写路径已随 W11 全删（persistSessionName 不存在），回归守卫由 R1 承担
       // 内存 label 更新（W9 影子缓存已删，label 只有内存态 + label 实例两份数据）
       expect(session.label).toBe('重构计划')
       // 列表缓存失效仍触发（侧栏立即显示新名）
@@ -195,7 +199,6 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
 
       await expect(env.lifecycle.renameSession('sid-2', '新名')).rejects.toThrow('pi process is not available')
 
-      expect(env.sessionStore.persistSessionName).not.toHaveBeenCalled()
       // 先 RPC 后改内存：失败时旧名保留可重试
       expect(session.label).toBe('旧名')
     })
@@ -210,7 +213,6 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
 
       await expect(env.lifecycle.renameSession('sid-3', '新名')).rejects.toThrow('set_session_name')
 
-      expect(env.sessionStore.persistSessionName).not.toHaveBeenCalled()
       expect(session.label).toBe('旧名')
     })
   })
@@ -228,7 +230,6 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
 
       expect(client.setSessionName).toHaveBeenCalledTimes(1)
       expect(client.setSessionName).toHaveBeenCalledWith('显式名')
-      expect(env.sessionStore.persistSessionName).not.toHaveBeenCalled()
     })
 
     it('create 显式 label 的 RPC 失败不阻断 create（summary 正常返回 + console.error 上报）', async () => {
@@ -269,7 +270,6 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
 
       expect(client.setSessionName).toHaveBeenCalledTimes(1)
       expect(client.setSessionName).toHaveBeenCalledWith('fork 显式名')
-      expect(env.sessionStore.persistSessionName).not.toHaveBeenCalled()
     })
   })
 
@@ -290,7 +290,6 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
         undefined, undefined, undefined,
       )
       expect(client.setSessionName).not.toHaveBeenCalled()
-      expect(env.sessionStore.persistSessionName).not.toHaveBeenCalled()
     })
 
     it('forkSession 不传 label → 同样不调 setSessionName', async () => {
@@ -312,13 +311,12 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
       await env.lifecycle.forkSession('src-2', 'e1', true)
 
       expect(client.setSessionName).not.toHaveBeenCalled()
-      expect(env.sessionStore.persistSessionName).not.toHaveBeenCalled()
     })
   })
 
-  // ── 断言组 4：非活跃分支不变（legacy 直写例外）───────────────────
-  describe('断言组 4：非活跃 rename 仍走 persistSessionName 直写（W11 前登记例外）', () => {
-    it('非活跃 rename → persistSessionName(filePath, name, id, cwd)，不调 setSessionName', async () => {
+  // ── 断言组 4：非活跃分支切短命 pi（W11）───────────────────────────
+  describe('断言组 4：非活跃 rename → withEphemeralPi 附着 + set_session_name RPC（W11）', () => {
+    it('非活跃 rename → withEphemeralPi(filePath, fn)，fn 内 setSessionName(newName)', async () => {
       const file = join(tmpDir, 'inactive.jsonl')
       writeFileSync(file, '{"type":"session","id":"scan-1"}\n')
       vi.mocked(env.svc.findScannedSession).mockReturnValue({
@@ -326,16 +324,37 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
         lastModified: Date.now(), timestamp: new Date().toISOString(), size: 0, outcome: null,
       })
 
-      await env.lifecycle.renameSession('scan-1', 'legacy 直写')
+      await env.lifecycle.renameSession('scan-1', '短命 pi 改名')
 
-      expect(env.sessionStore.persistSessionName).toHaveBeenCalledTimes(1)
-      expect(env.sessionStore.persistSessionName).toHaveBeenCalledWith(file, 'legacy 直写', 'scan-1', tmpDir)
-      // 非活跃分支无 pi 进程，不经 RPC
-      for (const client of env.clientMap.values()) {
-        expect(client.setSessionName).not.toHaveBeenCalled()
-      }
+      // 附着目标文件（短命 pi spawn → switchSession(file) → RPC → kill 由 pm 负责）
+      expect(env.pm.withEphemeralPi).toHaveBeenCalledTimes(1)
+      expect(env.pm.withEphemeralPi).toHaveBeenCalledWith(file, expect.any(Function))
+      // fn 内经附着的 client 调 set_session_name（session JSONL 由 pi 写）
+      expect(env.ephemeralClient.setSessionName).toHaveBeenCalledTimes(1)
+      expect(env.ephemeralClient.setSessionName).toHaveBeenCalledWith('短命 pi 改名')
       expect(env.sessionStore.invalidateScanCache).toHaveBeenCalled()
       expect(env.sessionStore.refreshAll).toHaveBeenCalled()
+    })
+
+    it('withEphemeralPi 失败（spawn 失败 / 附着超时 / RPC 失败）→ throw，可重试', async () => {
+      vi.mocked(env.svc.findScannedSession).mockReturnValue({
+        id: 'scan-err', filePath: join(tmpDir, 'missing.jsonl'), cwd: tmpDir, name: null,
+        lastModified: Date.now(), timestamp: new Date().toISOString(), size: 0, outcome: null,
+      })
+      vi.mocked(env.pm.withEphemeralPi).mockRejectedValueOnce(
+        new Error('Ephemeral pi attach timed out after 5000ms'))
+
+      await expect(env.lifecycle.renameSession('scan-err', '新名'))
+        .rejects.toThrow('Ephemeral pi attach timed out')
+      // 失败不触发列表失效（无变更）
+      expect(env.sessionStore.invalidateScanCache).not.toHaveBeenCalled()
+    })
+
+    it('扫描目标不存在 → no-op 不抛（与旧行为一致）', async () => {
+      vi.mocked(env.svc.findScannedSession).mockReturnValue(undefined)
+
+      await expect(env.lifecycle.renameSession('ghost', '新名')).resolves.toBeUndefined()
+      expect(env.pm.withEphemeralPi).not.toHaveBeenCalled()
     })
   })
 })

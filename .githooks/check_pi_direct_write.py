@@ -23,14 +23,12 @@
        无 sessions 痕迹（可见的 sessions 构造不豁免），目标不指向 sessions 目录则放行。
 
 allowlist（ALLOWLIST）：
-  三条 legacy 直写链路的全部真实写点（W1 扩围后、W11 迁移前的存活全集，与登记表
-  §3 写点 3-5 / §4 例外 ①-③ 一一对应），以执行时
-  grep -rn "persistSessionName\\|persistHandedOff\\|patchSessionCwd" packages/runtime/src --include="*.ts"
-  排除注释行与测试后的代码命中为准逐一登记。每条必须带「# 移除期限: W11」注释——
-  这是本脚本新引入的约定（.githooks/check_sidecar_session.py 只有通用例外注释先例，
-  无期限式注释形态）。W11 完成后 allowlist 清空（登记表 §5 维护规约第 2 条）；
-  误报豁免闭环 = 先在 data-source-registry.md 补条目 + 本表登记（§5 第 3 条），
-  禁止在代码里静默绕过。
+  空（W11 清空）：三条 legacy 直写链路（persistSessionName 非活跃 rename 直写 /
+  persistHandedOff handoff_marker 直写 / patchSessionCwd 整文件重写）已随 W11 全部
+  迁移或删除（分别切短命 pi set_session_name RPC / 迁 .handoff.json sidecar /
+  迁 restore tmp 读改写管线），规则自此无条件化——条件 A 命中且不落入内置豁免的
+  写点为 0（登记表 §5 维护规约第 2 条）。后续合法新形态的豁免闭环 = 先在
+  data-source-registry.md 补条目 + 本表登记（§5 第 3 条），禁止在代码里静默绕过。
 
 与参照实现 check_path_whitelist.py 的差异（有意设计，非疏漏）：
   参照实现全文 re.search 不滤注释；本脚本匹配前剥离注释（// 行注释与块注释，保留字符串
@@ -46,7 +44,7 @@ allowlist（ALLOWLIST）：
     getSessionsDir()，fork 文件内唯一 sessions token 在 JSDoc 注释）。该形态的守卫 =
     登记表「创建型唯一写入口」声明（§4 ⑥）+ S1 语义层。
   - fd 型续写（writeSync(fd, …)）不在写调用清单——其源头 openSync('a') 已被拦截
-    （session-file-utils 的 append 实现形态）。
+    （W11 前 session-file-utils 的 append 实现形态，该形态已随 W11 删除）。
   - 条件 B 可见性为「语句级 + 同函数单跳赋值链（最近同名赋值）」，更深数据流不可见
     （与 plan r5/r6 的单跳实现取向一致）；字符串字面量内的 API 名提及、正则字面量
     属剥离器/匹配器的已知盲区。
@@ -131,18 +129,10 @@ CHAIN_LOOKBACK_LINES = 10   # 同函数单跳赋值链的最大回溯行数
 STATEMENT_MAX_SPAN = 5      # 多行语句（括号未闭合）向下拼接的最大行数
 
 # ---------------------------------------------------------------------------
-# allowlist：三条 legacy 直写链路的全部真实写点（行号为 W1 后实测，与登记表 §3 一致）
+# allowlist：空（W11 清空——三条 legacy 直写链路已全部迁移/删除，见文件 docstring；
+# 后续合法新形态按登记表 §5 第 3 条流程登记，禁止静默绕过）
 # ---------------------------------------------------------------------------
-ALLOWLIST = {
-    # 移除期限: W11 —— 例外① 非活跃 rename 直写：persistSessionName 实现本体（openSync('a') append session_info）
-    "packages/runtime/src/infra/pi/session-file-utils.ts:430",
-    # 移除期限: W11 —— 例外① 非活跃 rename 直写：persistSessionName 唯一剩余调用点（renameSession else 分支）
-    "packages/runtime/src/services/session/session-lifecycle.ts:331",
-    # 移除期限: W11 —— 例外② persistHandedOff 实现本体（openSync('a') append handoff_marker）
-    "packages/runtime/src/infra/pi/session-file-utils.ts:467",
-    # 移除期限: W11 —— 例外③ patchSessionCwd 实现本体（atomicWrite 整文件重写 header.cwd）
-    "packages/runtime/src/infra/pi/session-file-utils.ts:543",
-}
+ALLOWLIST: set[str] = set()
 
 
 def strip_comments(text: str) -> str:
@@ -340,10 +330,10 @@ def main() -> int:
         return 2
 
     if not all_errors:
-        hits = ", ".join(sorted(consumed_allowlist)) if consumed_allowlist else "无"
+        hits = ", ".join(sorted(consumed_allowlist)) if consumed_allowlist else "无（W11 已清空）"
         print(
             f"[OK] R1 pi session 直写检查通过：扫描 {scanned} 文件，"
-            f"allowlist 生效 {len(consumed_allowlist)} 处 legacy 写点（{REGISTRY_DOC} §3）: {hits}"
+            f"allowlist 命中 {len(consumed_allowlist)} 处（{hits}）"
         )
 
     return 0
