@@ -826,9 +826,11 @@ export class SubagentService {
 
     // 手动设回 running（M2-A 边界：绕过 tryTransition，idle→running 恢复非终态 CAS）。
     record.status = "running";
-    // 执行态信号清除（residual-fixes）：进程启动 = 有驱动 = 非 resumable——
-    // 轮终迁移置的 true 若不清，GUI 侧会把续轮流显示为 waiting（断流活动判定）。
+    // 执行态信号清除（residual-fixes U3 补全）：新一轮开跑 = 无轮终信号——resumable
+    // 与上一轮 result 都要清（§5.4 isStreaming 公式要求 result undefined 才显示
+    // streaming，不清则续轮流仍显示 waiting、spinner 无法恢复）。
     record.resumable = undefined;
+    record.result = undefined;
     // W16 [D4]：冷路径续轮是类外状态写点（不走 register/archive），显式上报迁移。
     this.store.reportRecordTransition(record);
 
@@ -909,6 +911,14 @@ export class SubagentService {
         sendPromptCommand(child, text, { streamingBehavior: interrupt ? "steer" : "followUp" });
         // 热路径成功，清零 EPIPE 连续失败计数（[v4 A-1] 计数器已迁移到 stdin-writer）
         clearEpipeFailure(record.id);
+        // 轮始执行态信号清除 + 迁移上报（residual-fixes U3 补全，与冷路径 resumeRound
+        // 对称）：新一轮开跑 = 无轮终信号——清上一轮 result（§5.4 isStreaming 公式要求
+        // result undefined 才显示 streaming）与 resumable，appendEntry 让 runtime/W18
+        // 派生缓存失效、GUI 侧从 waiting 切回 spinner。仅在投递成功后清（失败保留
+        // 上一轮信号，EPIPE 兜底走 resumeRound 时由其再清）。
+        record.result = undefined;
+        record.resumable = undefined;
+        this.store.reportRecordTransition(record);
       } catch (err) {
         // EPIPE 兜底：stdin 管道已断，进程实际已死但 close 事件尚未到达。
         // 检测 EPIPE 关键词 → 进程按 dead 处理 → 自动转冷路径 resume + 消息重放。
@@ -1818,6 +1828,13 @@ export class SubagentService {
         // [增量] base 推进（notify 之后）：下一轮增量从本轮边界起。滞后空 turn 不计入边界
         //（防御分支，留在下一轮增量内防丢文本——nextRoundBaseTurnIndex 注释）。
         record.roundBaseTurnIndex = nextRoundBaseTurnIndex(record);
+        // 轮终迁移持久化（residual-fixes U3 补全）：热路径轮终不经 doFinalizeRoundToIdle
+        //（agent_settled 恒 arm idle timer → runAndFinalize 恒 early return，MF-2 原写点
+        // 不可达）——不 appendEntry 则 runtime/W18 派生缓存不失效，renderer 停留在
+        // register 快照（无 result），chat 等续聊的 waiting 形态显示不出来、spinner
+        // 卡死。显式上报：entry 携带本轮 result/round/chatMode（§5.4：result 有值 +
+        // chatMode=true → waiting）。closeAfterRound 的终态 entry 在此后追加，序不变。
+        this.store.reportRecordTransition(record);
         // [M5] closeAfterRound 消费点：chatMode 每轮完成的统一汇聚点（热路径轮不经
         // runAndFinalize CAS 分支——agent_settled 恒 arm idle timer → runAndFinalize 恒
         // early return，旧消费点对 chatMode 不可达，标志置了无人消费、tool 谎报 closed:true）。
