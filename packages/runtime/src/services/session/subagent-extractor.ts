@@ -176,6 +176,10 @@ function collectSelfDescribedSubagentRecords(entries: unknown[]): SubagentRecord
         ? Math.round((endedAt - startedAt) / 1000)
         : undefined,
       error: typeof d.error === 'string' ? d.error : undefined,
+      // 轮终结果文本（running-resumable 轮终信号）：entry v1 的轮终迁移写点
+      // （reportRecordTransition ← finalize-round 的 doFinalizeRoundToIdle /
+      // onRoundSettled）恒写非空——renderer hasRunning 据此排除轮终 running（review #8）。
+      result: typeof d.result === 'string' ? d.result : undefined,
     })
   }
   return records.size > 0 ? Array.from(records.values()) : null

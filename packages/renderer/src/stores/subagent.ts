@@ -104,9 +104,19 @@ export const useSubagentStore = defineStore('subagent', () => {
     return recordsBySession.value.get(sessionId) ?? []
   }
 
-  /** 该 session 是否有 subagent 仍在 running（供 derivedStatus 计算 hasBackgroundWork） */
+  /**
+   * 该 session 是否有 subagent 仍在 running（供 derivedStatus 计算 hasBackgroundWork）。
+   *
+   * [review findings-confirmation #8] 排除 running-resumable：v4 轮终迁移故意回写
+   * status='running'（可冷路径 resume）但已携带本轮 result（轮终写点恒写非空）——「已有
+   * 轮终信号的 running」不是后台真在跑，不算 working。否则 subagent 完成注入后
+   * derivedStatus 恒 working → isSessionActive 恒 true → 末位 turn 永久「工作中」（重开
+   * 后 record=closed 才恢复，live 与 reload 不一致）。result === undefined 的 running
+   * （首轮在跑 / legacy W16 前旧 session）仍算真在跑。isRunning（单 record 判定）不随之
+   * 收紧——SubagentTab 依赖它决定是否订阅实时增量流（resumable 续轮仍有流活动）。
+   */
   function hasRunning(sessionId: string): boolean {
-    return getRecordsBySession(sessionId).some((s) => s.status === 'running')
+    return getRecordsBySession(sessionId).some((s) => s.status === 'running' && s.result === undefined)
   }
 
   /**

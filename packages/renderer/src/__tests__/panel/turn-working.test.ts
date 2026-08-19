@@ -663,6 +663,95 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
 })
 
 /**
+ * [review findings-confirmation #8] subagent 轮终 running-resumable → isWorkingTurn false。
+ *
+ * 根因：v4 轮终迁移故意回写 record.status='running'（可冷路径 resume，extensions 禁改的
+ * 既定设计）→ hasRunning 恒 true → derivedStatus 恒 working → isSessionActive 恒 true →
+ * 完成注入后末位 turn 永久「工作中」。修复在 renderer 派生侧：hasRunning 排除「已携带
+ * 轮终 result 的 running」。本组测试走真实派生链（subagentStore → useSessionActive）+
+ * Turn DOM 断言（label/trace 收起 = isWorkingTurn false 的用户可见形态）。
+ */
+describe('Turn · subagent 轮终 running-resumable → isWorkingTurn false（review #8）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  /** 最小合法 SubagentRecord（对齐 useBackgroundWork.test.ts fixture） */
+  function makeSubagentRecord(overrides: Partial<import('@xyz-agent/shared').SubagentRecord>) {
+    return {
+      subagentId: 'sub-1',
+      sessionFile: null,
+      agent: 'general-purpose',
+      slug: 'worker',
+      task: 'do something',
+      status: 'running',
+      ...overrides,
+    } as import('@xyz-agent/shared').SubagentRecord
+  }
+
+  it('record running + result（轮终回写）→ sessionActive false → 末位 turn「已工作」+ trace 收起', async () => {
+    const { computed, ref } = await import('vue')
+    const { useSessionActive } = await import('@/composables/panel/useSessionActive')
+    const { useSubagentStore } = await import('@/stores/subagent')
+    const { invalidateStatusCache } = await import('@/composables/features/chat/useSessionDerivations')
+    invalidateStatusCache()
+
+    const sessionId = ref<string | null>('s-resumable')
+    const sessionActive = useSessionActive(sessionId, computed(() => false))
+    const sub = useSubagentStore()
+
+    // 真在跑（首轮无轮终信号）→ working 态 → sessionActive true
+    sub.applyRecords('s-resumable', [makeSubagentRecord({ status: 'running' })])
+    expect(sessionActive.value).toBe(true)
+
+    // 轮终回写：running + result（resumable）→ 不算 working → sessionActive false
+    sub.applyRecords('s-resumable', [makeSubagentRecord({ status: 'running', result: '本轮产出正文' })])
+    expect(sessionActive.value).toBe(false)
+
+    // Turn 挂载（isSessionActive = 真实派生值，isLastTurn=true）：isWorkingTurn=false 的
+    // 用户可见形态——label「已工作」（非「工作中」），trace 收起（thinking 隐藏，仅 text）
+    const wrapper = mountTurn({
+      turn: makeTurn({
+        isStreaming: false,
+        hasFoldable: true,
+        assistants: [
+          msg({
+            status: 'complete',
+            content: '结果已注入',
+            thinking: [{ id: 'th1', content: '推理', collapsed: true }],
+            contentBlocks: [{ type: 'thinking', refId: 'th1' }, { type: 'text', refId: 'text' }],
+          }),
+        ],
+      }),
+      isSessionActive: sessionActive.value,
+    })
+    expect(wrapper.find('.lbl').text()).toBe('已工作')
+    const blocks = wrapper.findAllComponents({ name: 'Block' })
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].props('type')).toBe('text')
+  })
+
+  it('record closed（重开后形态）与 running + result（live 轮终）派生一致（live ≡ reload 语义）', async () => {
+    const { computed, ref } = await import('vue')
+    const { useSessionActive } = await import('@/composables/panel/useSessionActive')
+    const { useSubagentStore } = await import('@/stores/subagent')
+    const { invalidateStatusCache } = await import('@/composables/features/chat/useSessionDerivations')
+    invalidateStatusCache()
+
+    const sessionId = ref<string | null>('s-parity')
+    const sessionActive = useSessionActive(sessionId, computed(() => false))
+    const sub = useSubagentStore()
+
+    sub.applyRecords('s-parity', [makeSubagentRecord({ status: 'running', result: 'done' })])
+    const liveFinal = sessionActive.value
+    sub.applyRecords('s-parity', [makeSubagentRecord({ status: 'closed', closedReason: 'parent-shutdown' })])
+    const reloadFinal = sessionActive.value
+    expect(liveFinal).toBe(false)
+    expect(reloadFinal).toBe(false)
+  })
+})
+
+/**
  * edges wave：forceWorking 虚拟 session working turn 回归（CL1 裁决固化）。
  *
  * subagent 虚拟 session：renderer 为保持 useStreamingPin keepMounted 设 turn.isStreaming=true，

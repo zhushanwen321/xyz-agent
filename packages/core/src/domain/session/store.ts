@@ -139,16 +139,27 @@ export function createSessionStore() {
   /**
    * 标记 session 为 dead 态（进程已退出）。
    * dead session 在侧栏置灰，panel 显示「进程已退出」占位，点击不触发 restore。
+   *
+   * [W13 单入口薄壳，goal-audit 问题 3] 内部经 applySnapshot(id, { status }) 局部快照
+   * 写入（D7：status 是 applySnapshot 托管字段，此前直写 target.status 是唯一旁路写）。
+   * 语义成立性论证：dead 的数据源是 runtime 广播的 session.exited（handleSessionExited
+   * 调本方法）——owner 权威信号的事件形式，折算为局部快照经单一入口写入，与
+   * applySnapshot 既有「乐观更新本地入参」形态（rename 先显示 { label }，权威经广播
+   * 回流收敛）同型，非 renderer 凭空派生，故不需登记表例外条目。
    */
   function markDead(id: string): void {
-    const target = list.value.find((s) => s.id === id)
-    if (target) target.status = 'dead'
+    applySnapshot(id, { status: 'dead' })
   }
 
-  /** 重置 session 为 idle（重开进程后调） */
+  /**
+   * 重置 session 为 idle（重开进程后调，useSidebarNew.restoreSession 编排）。
+   * 同为 applySnapshot 薄壳；dead→idle guard（读判定，非写旁路）保留原语义——
+   * 非 dead（如 runtime 广播的 active/streaming 真态）不被本地 revive 覆盖。
+   */
   function revive(id: string): void {
-    const target = list.value.find((s) => s.id === id)
-    if (target && target.status === 'dead') target.status = 'idle'
+    if (list.value.find((s) => s.id === id)?.status === 'dead') {
+      applySnapshot(id, { status: 'idle' })
+    }
   }
 
   /** 设置列表加载错误消息（loadSessions 失败时调，null 清空） */

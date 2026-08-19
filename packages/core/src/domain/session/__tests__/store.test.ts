@@ -275,6 +275,29 @@ describe('createSessionStore', () => {
     expect(store.list.value.length).toBe(2)
   })
 
+  // [W13 单入口薄壳，goal-audit 问题 3] markDead/revive 内部改经 applySnapshot(id, { status })
+  // 局部快照——行为等价性固化：局部写不吞同条目其它托管字段（D1b undefined=快照未涉及），
+  // status 变化保持响应式（侧栏 dead 置灰 / revive 恢复由同一链路驱动）。
+  it('TC-5b: markDead/revive 经 applySnapshot 薄壳——局部快照不吞其它托管字段', () => {
+    const store = createSessionStore()
+    store.applySnapshot({
+      groups: [{
+        cwd: '/a',
+        sessions: [makeSession({ id: 's1', label: '原名', modelId: 'provider/m1', status: 'active' })],
+      }],
+    })
+
+    store.markDead('s1')
+    const dead = store.list.value.find((s) => s.id === 's1')
+    expect(dead?.status).toBe('dead')
+    // 局部快照只带 status：label/modelId 等托管字段原样保留（不被 undefined 覆盖）
+    expect(dead?.label).toBe('原名')
+    expect(dead?.modelId).toBe('provider/m1')
+
+    store.revive('s1')
+    expect(store.list.value.find((s) => s.id === 's1')?.status).toBe('idle')
+  })
+
   it('TC-6: listLoadError set/清空 + active 按 activeId 派生', () => {
     const store = createSessionStore()
     expect(store.listLoadError.value).toBeNull()
