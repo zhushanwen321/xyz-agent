@@ -56,9 +56,12 @@ let noticeSeq = 0
  * feedMap 是全局 feed SSOT（多 MessageStream 实例共读），强套破坏消费者签名 + 语义错位
  * （对齐 w4 retrospect 教训 #3：handoff 范式要求需结合代码所在层判断适用性）。
  */
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：fork 通知 feed 全局 SSOT（无 sidRef 的显式 sid 协调器，上方注释已述 ADR-0049 例外）
 const feedMap = shallowRef<Map<string, ForkNoticeEntry[]>>(new Map())
 /** 模块级分支追踪：trackedBranches / unreadByBranch（由 bindForkNoticeEffect 写入，侧栏角标读） */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：分支追踪集合（侧栏角标读，bindForkNoticeEffect 写——12 类未覆盖的分支角标 GUI 态）
 const trackedBranchesRef = ref<ReadonlySet<string>>(new Set())
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：分支未读角标 Map（同上，12 类未覆盖的分支角标 GUI 态）
 const unreadByBranchRef = ref<ReadonlyMap<string, boolean>>(new Map())
 
 /** 模块级 registerFork 实现引用（bindForkNoticeEffect 写入，pushForkNoticeAsk 复用 RV2 分支追踪） */

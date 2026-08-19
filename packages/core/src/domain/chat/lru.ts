@@ -46,6 +46,7 @@ export const LRU_MAX_SESSIONS = 8
  * 同属 ADR-0049「全局 sid 协调器例外类（模块级 Map 合理）」。session 销毁清理：disposeLruEntry(sid)
  * 由 disposeSession 编排调用（R5 内存泄漏修复）；测试隔离：_resetLruForTest()。
  */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：session LRU 访问序元数据（驱逐算法内部结构，非 GUI 数据）
 const sessionLastAccessed = new Map<string, number>()
 
 /**

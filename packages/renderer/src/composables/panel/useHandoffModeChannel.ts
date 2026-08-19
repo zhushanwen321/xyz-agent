@@ -29,6 +29,7 @@ interface HandoffEnterRequest {
 /** 模块级自增 id（仅用于生成递增 id，确保每次请求是新的 ref 值，watch 不去重） */
 let nextId = 0
 /** 模块级单例 signal（跨组件树共享，同 useForkModeChannel 模式） */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：handoff 进入请求 signal 单例（跨组件树共享，12 类未覆盖）
 const signal = ref<HandoffEnterRequest | null>(null)
 
 /** Sidebar/全局快捷键侧调用：请求 Composer 进入 handoff 模式（从指定 session 的末条 assistant） */

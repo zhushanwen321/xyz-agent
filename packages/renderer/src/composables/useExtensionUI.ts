@@ -44,6 +44,7 @@ export const askUserFilter: UIRequestFilter = (req) => req.askUser === true
 type UiRequestEvent = Extract<InternalEvent, { kind: 'ui-request' }>
 type BusHandler = (e: UiRequestEvent) => void
 
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：扩展 UI 事件 bus handler 注册表，非 GUI 数据
 const busHandlers = new Set<BusHandler>()
 let busUnsub: (() => void) | null = null
 

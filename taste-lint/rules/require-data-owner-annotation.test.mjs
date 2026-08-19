@@ -1,13 +1,16 @@
 /**
- * require-data-owner-annotation 规则最小用例（data-source-governance R3）。
+ * require-data-owner-annotation 规则用例（data-source-governance R3）。
  *
- * taste-lint 既有 13 条规则不带测试文件（无先例），按 plan W4 验收 4 的兜底方式：
- * node:test + eslint Linter 直挂规则，不依赖仓库 eslint.config。
- * 运行：node --test taste-lint/rules/
+ * W4 首版（stores/ 范围）+ W24 扩围（renderer/core 全域 + 空容器口径 + 登记表运行时解析）。
+ * node:test + eslint Linter 直挂规则；条目校验经 taste-lint/lib/parse-registry.mjs
+ * 读真实登记表（登记表驱动）。parser 换 typescript-eslint：扩围用例含 TS 泛型
+ * ref<Set<string>>(new Set()) 真实形态（useChat 同款）。
+ * 运行：node --test taste-lint/rules/*.test.mjs（node 24 目录形式不发现用例，须 glob）
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Linter } from 'eslint';
+import tseslint from 'typescript-eslint';
 import rule from './require-data-owner-annotation.mjs';
 
 const RULE_ID = 'taste/require-data-owner-annotation';
@@ -18,15 +21,16 @@ function lint(code, filename = STORES_FILE) {
   return linter.verify(
     code,
     {
-      // flat config 默认不 lint .ts 扩展，须显式 files 才对 .ts 文件名生效；
-      // 用例代码刻意保持纯 JS 语法（规则不依赖 TS 专有节点），espree 即可解析
       files: ['**/*.ts'],
+      languageOptions: { parser: tseslint.parser },
       plugins: { taste: { rules: { 'require-data-owner-annotation': rule } } },
       rules: { [RULE_ID]: 'error' },
     },
     { filename },
   );
 }
+
+// ── W4 首版用例（保留）────────────────────────────────────────────────────
 
 test('R3: 模块级 new Map 无注解 → 报错且文案指向登记表', () => {
   const messages = lint('const cache = new Map()\nexport const size = () => cache.size\n');
@@ -50,7 +54,7 @@ test('R3: 同行尾注释 @data-owner P1 → 通过', () => {
   assert.equal(messages.length, 0);
 });
 
-test('R3: 引用不存在的登记条目 #99 → 报错（条目必须真实）', () => {
+test('R3: 引用不存在的登记条目 #99 → 报错（条目必须真实——登记表解析驱动）', () => {
   const messages = lint('// @data-owner #99\nconst cache = new Map()\n');
   assert.equal(messages.length, 1);
   assert.match(messages[0].message, /#99/);
@@ -68,14 +72,6 @@ test('R3: 测试文件豁免 → 通过', () => {
   assert.equal(messages.length, 0);
 });
 
-test('R3: stores/ 之外的文件（首版范围裁定）→ 通过', () => {
-  const messages = lint(
-    'const cache = new Map()\nexport const read = () => cache.size\n',
-    'packages/renderer/src/composables/probe.ts',
-  );
-  assert.equal(messages.length, 0);
-});
-
 test('R3: useSessionScopedState 原语本体豁免 → 通过', () => {
   const messages = lint(
     'const registry = new Set()\nexport const add = (fn) => registry.add(fn)\n',
@@ -86,5 +82,69 @@ test('R3: useSessionScopedState 原语本体豁免 → 通过', () => {
 
 test('R3: 行内豁免注释 taste:allow-no-data-owner → 通过', () => {
   const messages = lint('// taste:allow-no-data-owner\nconst cache = new Map()\n');
+  assert.equal(messages.length, 0);
+});
+
+// ── W24 扩围用例 ──────────────────────────────────────────────────────────
+
+test('R3/W24: composables/ 模块级缓存（W4 范围外）→ 报错（扩围生效）', () => {
+  const messages = lint(
+    'const cache = new Map()\nexport const read = () => cache.size\n',
+    'packages/renderer/src/composables/probe.ts',
+  );
+  assert.equal(messages.length, 1);
+});
+
+test('R3/W24: core 包模块级缓存 → 报错（扩围生效）', () => {
+  const messages = lint(
+    'const cache = new Map()\nexport const read = () => cache.size\n',
+    'packages/core/src/coordination/probe.ts',
+  );
+  assert.equal(messages.length, 1);
+});
+
+test('R3/W24: runtime 包模块级缓存 → 通过（范围外：runtime 非 GUI 数据层）', () => {
+  const messages = lint(
+    'const cache = new Map()\nexport const read = () => cache.size\n',
+    'packages/runtime/src/services/session/probe.ts',
+  );
+  assert.equal(messages.length, 0);
+});
+
+test('R3/W24: 常量查表（字面量初始化容器）→ 通过（W24 检测口径）', () => {
+  const messages = lint(
+    "const EXTS = new Set(['png', 'jpg'])\nexport const is = (e) => EXTS.has(e)\n" +
+      "const NAMES = new Map([['a', 1]])\nexport const get = (k) => NAMES.get(k)\n",
+  );
+  assert.equal(messages.length, 0);
+});
+
+test('R3/W24: TS 泛型响应式声明 ref<Set<string>>(new Set()) → 报错（useChat 真实形态）', () => {
+  const messages = lint(
+    'const flags = ref<Set<string>>(new Set())\nexport const has = (k) => flags.value.has(k)\n',
+  );
+  assert.equal(messages.length, 1);
+});
+
+test('R3/W24: 扩围后豁免注释对 composables 生效 → 通过', () => {
+  const messages = lint(
+    '// taste:allow-no-data-owner\nconst timers = new Map()\nexport const clear = () => timers.clear()\n',
+    'packages/renderer/src/composables/features/probe.ts',
+  );
+  assert.equal(messages.length, 0);
+});
+
+test('R3/W24: export const 声明 + 紧贴豁免注释 → 通过（attach 边界：注释挂外层 ExportNamedDeclaration）', () => {
+  const messages = lint(
+    '// taste:allow-no-data-owner\nexport const signal = ref(null)\n',
+    'packages/core/src/domain/drawer/probe.ts',
+  );
+  assert.equal(messages.length, 0);
+});
+
+test('R3/W24: docstring 块中部的 @data-owner → 归属下方声明（源码行回溯）', () => {
+  const messages = lint(
+    '/**\n * 模块级缓存说明。\n * @data-owner #2\n */\nconst cache = new Map()\n',
+  );
   assert.equal(messages.length, 0);
 });

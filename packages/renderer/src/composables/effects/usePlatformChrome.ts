@@ -31,6 +31,7 @@ export function detectPlatform(): Platform {
  * 全屏态单例 ref：全应用共享（TrafficLight + AppNavControls 都读它）。
  * 初始 false；首次 usePlatformChrome 调用时注册 IPC 监听同步它。
  */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：窗口全屏态 renderer 镜像（平台事件回写，12 类未覆盖）
 const isFullscreen = ref(false)
 let listening = false
 

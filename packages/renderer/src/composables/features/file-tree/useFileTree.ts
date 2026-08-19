@@ -23,6 +23,7 @@ import { watchFileChangesForInvalidation } from './useFileChangeInvalidation'
 import { findNodeByPath, findNodePath } from '@/composables/logic/file-tree-utils'
 
 /** 在途请求追踪（expandNode 幂等去重：同 path loading 时不重发） */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：expandNode 在途请求幂等去重表，非 GUI 数据
 const inFlight = new Map<string, Set<string>>() // sessionId → Set<path>
 
 /**

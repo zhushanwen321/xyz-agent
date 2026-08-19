@@ -52,6 +52,7 @@ const MAX_RECONNECT_DURATION_MS = 60_000
 const AUTH_TIMEOUT_MS = 5_000
 
 // ── 状态 ────────────────────────────────────────────────────
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：WS 连接状态单例 ref（UI 连接指示的数据源，12 类未覆盖）
 const state = ref<ConnectionState>('disconnected')
 let ws: WebSocketLike | null = null
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null

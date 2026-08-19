@@ -51,9 +51,9 @@ xyz runtime 指向 pi session JSONL 的写点全集共 6 处（r3 审查补漏�
 
 写点 1-5 已全部消灭或迁移（W1×2 + W11×3），6 登记后保留；pi JSONL 本体的 xyz 侧写点已归零、R1 allowlist 已清空为空集（写点集合与源码真实状态一致，防后续 review 误判「另有未登记写方」——r1/r2/r3 连续三轮审查均在此处扫出遗漏）。
 
-## 4. 例外与合法形态登记（七项）
+## 4. 例外与合法形态登记（八项）
 
-前四项 = 例外（带期限的债务，非制度）；后三项 = 合法边界形态（规则边界的一部分，非例外）与范围注记。
+前四项 = 例外（带期限的债务，非制度）；⑤-⑦ = 合法边界形态（规则边界的一部分，非例外）与范围注记；⑧ = 护栏口径登记（R3 规则豁免清单，非数据写方例外）。
 
 | 项 | 登记内容 | 竞态边界 / 合法性依据 | 移除期限 / 处置 |
 |---|---|---|---|
@@ -64,6 +64,7 @@ xyz runtime 指向 pi session JSONL 的写点全集共 6 处（r3 审查补漏�
 | ⑤ sidecar 家族四后缀合法形态 | `.meta.json`（persistSessionEnd，`session-file-utils.ts:138`）/ `.preset.json`（persistPresetBinding，`:273`）/ `.project.json`（persistProjectBinding，`:198`）/ `.handoff.json`（persistHandoffSidecar，`:434`，W11 迁入启用；行号 W19 实测按入口函数定位） | **合法性依据 = xyz 自有文件**（pi 体系外的 xyz 数据，不是 pi 的文件）——绝对写规则管的是 pi 的 JSONL；读写收口 session-file-utils 单一 util、写前 existsSync 守卫（规则 #6 防 pi `openSync("wx")` 竞态）、写后失效 meta 缓存，四者同构（D3 选项 a 裁决） | 长期形态（非例外）：R1 对四后缀内置豁免（`check_pi_direct_write.py` `SIDECAR_SUFFIX_RE` :110），豁免清单与本条一一对应（W19 核对同源同集）；**W19 收口确认完成**——读写点全量核查全部经 SFU 收口（读方消费 = `scanSessionMeta` 三读合一 + `session-store` port 转发；写方 persist 四函数生产调用全经 sessionStore port）；delete 链（session-lifecycle delete 两分支）sidecar 清理扩为四后缀全集——`.project.json`/`.handoff.json` 此前残留（W11 verifier 观察项，SFU:189「删除 session 归属自动消失」声明语义的实现补齐，W19） |
 | ⑥ fork 文件创建型 | `createForkedSessionFile`（`session-fork.ts:74`，写入点 `:175`），唯一创建入口 | **合法性依据 = 目标文件写前不存在**（新 sessionId + 新文件名，无任何进程持有），写入后 spawn pi 附着——不属「写 pi 当前持有的文件」；「pi 侧 fork」被否（pi 原生 fork RPC 语义限制覆盖不了 xyz fork：任意 entryId 截断 + 独立进程 + 源进程不动）；失败分支 unlink 清理的是本流程刚创建、pi 未附着的孤儿文件（创建者清理） | 长期形态（非例外，零代码改动）：边界约束 = 创建型仅限「目标写前不存在的新文件」，**禁止演进为「重写既有 session 文件」**；R1 对此形态静态不可拦（跨文件数据流），守卫 = 本条登记 + S1 语义层 |
 | ⑦ 非写点注记（防后续审查误问） | session 删除链（`pm.destroySession` 先行 + `session-store.trash` → system/trash OS 垃圾桶移动 + sidecar unlink（W19 起四后缀全集清理），无并发持有）与 `pi-maintenance.ts`（`packages/runtime/src/infra/pi/`）一次性目录布局迁移 `renameSync` | **合法性依据 = 均属非内容写**：前者是文件系统移动/删除（OS 垃圾桶），后者是一次性迁移的重命名——均不产生对文件内容的并发写，不在「写点」定义内 | 范围注记（非例外、无期限）：明确排除在 R1 检查范围与写点全集计数外 |
+| ⑧ R3 注解规则全域豁免清单（W24 落表） | `require-data-owner-annotation` 扫描范围扩全仓 renderer/core 后的 58 处标记（28 生产文件）= **EX-A 14**（ADR-0049 全局 sid 协调器/订阅注册基建：refCount 保护 listener、useSessionScopedState 工厂基础设施等）+ **EX-B 30**（模块级单例 UI 瞬态，12 类未覆盖存量：toast/fork notice/permission 请求/drawer/search modal/ws-client 重连态等）+ **EX-C 10**（非 GUI 数据技术结构：RPC pending promise 表/防抖 timer 句柄/LRU/i18n loadedLocales 等）+ **EX-D 4**（VITE_MOCK 测试基建，全部 `api/mock/index.ts`）；另有 3 处 `@data-owner` 正向注解（useSessionDerivations #11 活跃态派生缓存 + #7 消息 digest 派生缓存、useChat #7 historyTruncatedSessions——renderer 纯派生缓存非第二写方，注解指向主表编号） | **合法性依据 = 护栏口径而非写方例外**：R3 管的是「GUI 数据 owner 可查」，四类均非 12 类 GUI 数据（基建自身/瞬态 UI 态/非 GUI 结构/测试桩）。**loadedLocales 特注（verifier W24 minor 3）**：`i18n/index.ts:56` 字面量初始化后仍被运行时 `add('en-US')`（`:73`）变异——「字面量初始化后运行时写」罕见形态，显式例外登记归 S1 语义层兜底，非口径内豁免 | 长期口径（非债务）：EX-B 30 处 12 类未覆盖存量随 UI 重构逐步 owner 化（每归一处删一处标记）；新豁免先本表登记再打标记（规约 3 闭环）；豁免标记格式 = `taste:allow-no-data-owner W24-EX-<类>`，类别语义以本行为准 |
 
 ## 5. 维护规约
 

@@ -25,12 +25,14 @@ interface SoundPlayResult {
 
 // ── 默认音解析缓存（Q1-3）：detectPlatform 已在 sound-platform 侧 memo，
 // 此处再缓存「kind → 平台默认音名」，连续播放不再重复解析。preferred 非空时直传，无需缓存。 ──
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：kind→平台默认音名解析缓存（纯性能缓存，非 GUI 数据）
 const defaultNameByKind = new Map<'success' | 'error', string>()
 
 /**
  * win 平台 Audio 复用（Q1-3）：同音重播不重复 new Audio（base64 data URI 每次解码
  * 重建开销无意义）。按音名缓存；main 返回的 data URI 变化时重建（防御音文件更新）。
  */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：Audio 对象复用池（同音重播不重建，非 GUI 数据）
 const audioBySound = new Map<string, { uri: string; audio: HTMLAudioElement }>()
 
 function getOrCreateAudio(name: string, uri: string): HTMLAudioElement {

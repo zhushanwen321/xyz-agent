@@ -32,6 +32,7 @@ const DEFAULT_TIMEOUT_MS = 65_000
  */
 const MAX_PENDING = 256
 
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：RPC pending promise 去重/超时表（容量上限 256，非 GUI 数据）
 const pendingMap = new Map<string, PendingRequest>()
 
 /**

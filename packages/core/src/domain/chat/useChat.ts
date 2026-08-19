@@ -93,6 +93,7 @@ export interface UseChatDeps {
  * 强行套用破坏消费方签名 + 语义错位（w4 retrospect 教训 #3：handoff 范式要求需结合代码
  * 所在层判断适用性）。
  */
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：会话级流订阅表（ADR-0049 例外：全局 sid 协调器模块级 Map，上方注释已述）
 const streamSubscriptions = new Map<string, () => void>()
 
 /**
@@ -111,6 +112,7 @@ const coalescer = createMessageCoalescer()
  * MessageStream 据此显隐「加载更多历史」按钮。hydrate 时设置。
  * 用 ref<Set> 保证响应式（MessageStream 的 computed showLoadMore 能自动更新）。
  */
+// @data-owner #7 —— #7 消息列表 hydrate 派生标记（尾读截断→「加载更多」显隐；权威 = session 文件 entries）
 const historyTruncatedSessions = ref<Set<string>>(new Set())
 
 /**
@@ -121,6 +123,7 @@ const historyTruncatedSessions = ref<Set<string>>(new Set())
  * RPC 未达 pi / dispatcher busy 预检拒绝，pi 未发 compaction_end，interpreter 不参与，零反馈）→ toast 兜底。
  * 仅 manual compact() 路径读写 key——auto-compaction 的 compaction_end handler 见 key 不在则跳过（不污染）。
  */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：manual compact in-flight 到达标记（流程状态，非 GUI 数据）
 const manualCompactionState = new Map<string, boolean>()
 
 /**
