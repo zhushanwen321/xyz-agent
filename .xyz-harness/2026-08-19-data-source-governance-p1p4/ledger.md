@@ -61,12 +61,18 @@
 |------|------|------|
 | P1 gate | 场景 1 后半（非活跃改名 + R1 归零）+ 场景 2 前半（断连自愈） | PASS（报告 gate/p1p2-gate-report.md：非活跃改名三方铁证——短命 pi 546ms spawn→RPC→销毁 + pi tee 日志 ephemeral 文件名 + 全目录 diff 唯一写入；R1 exit 0 + 62 命中逐条核对；断连自愈 CDP offline + WS close 真实链路，v4/v5 逐字段一致零 toast，断连窗口 followUp 回复完整） |
 | P2 gate | 场景 2 后半（renderer 一致性） | PASS（同报告：模型/thinkingLevel/用量/队列深度重连 5s 内与 get_state + get_session_stats 一致；live≡reload 断言一致。附 2 高危发现见事件节——均计划外既有） |
-| P3 gate | 场景 3（重开一致性）+ 场景 5（subagent 单源 + 混沌） | PASS（报告 gate/p3-gate-report.md：create 路径重开 4 turn 分组/注入/用量一致 + 等价性 9 文件 40/40；场景 5 四处一致 + 3 条 subagent-record 自描述 entry + W18 混沌 2/2。**边界条件**：restore 路径 session 因计划外数据丢失 bug 会 FAIL——归因 40f2e0300（2026-07-17）tmp 附着管线，W11 仅迁移 cwd patch 目标未触碰该管线，根因链 session-lifecycle.ts:516-523 switchSession(tmp) → pi setSessionFile 永久写目标 → 原 JSONL 零更新） |
+| P3 gate | 场景 3（重开一致性）+ 场景 5（subagent 单源 + 混沌） | **FAIL（用户裁决 2026-08-19：restore 数据丢失绝不能判 PASS）**（场景 5 子项 PASS：四处一致 + 3 条 subagent-record 自描述 entry + W18 混沌 2/2 + 等价性 40/40。场景 3 create 路径实测一致但 restore 路径数据丢失成立——深挖根因见事件节 2026-08-19 末条：40f2e0300（2026-07-17）引入 tmp 附着管线，**fork 路径同 commit 同形态受累**；pi 侧证据链闭合 setSessionFile 永久重绑写目标 + _persist appendFileSync 重建 tmp） |
 | P4 gate | 全场景回归 + 预防机制终态 | PASS（报告 gate/p4-prevention-gate-report.md：三形态全拦——①W24 调用图形态 wrappedFactoryMutation error 含登记条目 + pre-commit ESLint 段 HOOK_EXIT=1；②R1 直写 exit 2 + 恢复动作文案；③语义级字段直赋值被 review checklist MUST_FIX x2 引用登记表 #1 + ADR-0062；试验零残留） |
 
 ## 事件（续）
 
 - 2026-08-19 **四 gate 全 PASS，P1-P4 计划收官**。Gate A（P1+P2）与 Gate C（P4 预防拦截）并行、Gate B（P3）串行后置（dev app 独占）。发现项全部归因计划外既有链路（非本计划引入）：**[高] restore tmp 附着数据丢失**（40f2e0300 引入，重启丢当天对话——P3 gate 一手复现 + 根因链）、**[高] 断连涉及 turn 的已工作指示不复位**、[中] model error turn UI 卡死 + 重连初始化批次 pre-auth 丢弃、[中] `!` bash live 实时输出丢失（e5c9e33e2 shape guard）、[低] cwd 死路径非活跃改名静默失败等 8 项——详见各 gate 报告，**建议单开后续修复计划**（本计划范围外）。gate 产物（3 报告 + 9 截图 + 1 探针）随本 commit 入库。
+- 2026-08-19 **用户裁决推翻 P3 gate PASS：restore 数据丢失「绝不能判 PASS」→ P3 gate 改判 FAIL**。主 agent 深挖根因（xyz + pi 双侧源码 + git 历史逐环验证，证据链闭合）：
+  ① xyz 侧（session-lifecycle.ts restoreSession :511-522 / forkSession :670-681）：`writeFileSync(tmpdir()/xyz-<session|fork>-<id>-<ts>.jsonl, cleaned)` → `client.switchSession(tmpFile)` → finally `unlinkSync(tmpFile)`——注释「pi 已读入内存」假设错误；`initializeManagedSession(..., target.filePath)` 仍按**原路径**登记会话（双头分裂：runtime 记原路径 / pi 写 tmp）。
+  ② pi 侧（pi-mono 0.84.1 源码）：rpc-mode.ts:576 switch_session → agent-session-runtime.ts:193 `SessionManager.open(sessionPath)` + createRuntime **永久采纳**该 SessionManager → session-manager.ts:815 `setSessionFile`：`this.sessionFile = resolvePath(tmp)` 成为**永久写目标**并 `flushed=true`（:842）→ :934 `_persist` 每轮走 `appendFileSync(this.sessionFile, entry)` **按路径追加**——xyz unlink 后该调用重建 tmp 孤儿文件（gate 实测 1220B 首行为 message entry 非 header，与代码推断一致）。
+  ③ git 历史：40f2e0300（2026-07-17 sidecar metadata W1）引入 tmp 管线，前态是 `client.switchSession(target.filePath)` 直切原文件（对话落原 JSONL，无此问题）；**同一 commit 把 fork 路径也改成同形态**（fork 后对话同样只进 tmp，重启丢 fork 全部新增轮次——gate 未覆盖 fork，按代码同形判受累）；W11（5ae15ff46）仅迁移 cwd patch 到 tmp 内容（applyHeaderCwdFallback），未改 tmp/switch/unlink 结构。
+  ④ 根因定性：**对 switch_session 的错误心智模型**——把它当「读入历史」用，实际是「永久重绑读+写目标」；「保守隔离防写回污染」的注释与绝对写规则自相矛盾（pi 写回正是唯一合法持久化路径，隔离的结果是原文件永不再更新 = source of truth 永久陈旧）。B7 注释自认 sidecar 方案下 strip 已无必要——管线原始动机已死，只剩 bug 载体。withEphemeralPi（W11 非活跃改名）用 switchSession 附着**真实文件**是正确用法（对照证明问题不在 switchSession 本身）。
+  修复方向（未实施，待用户定夺）：a) restore/fork 改为 switchSession 前把 cleaned 写回 sessions 目录内一个正式文件（pi 附着真实文件，对话自然落盘）；或 b) strip/cwd-fallback 结果原位生效前先复制到 sessions 目录新文件再附着，原文件按需保留。禁直接回切 `switchSession(target.filePath)`（session_end strip 与 cwd fallback 语义需保留）。
 
 ## 事件
 
