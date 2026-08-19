@@ -50,6 +50,7 @@ import {
   createUsageStateConfig,
   createQueueDepthStateConfig,
   createCommandsStateConfig,
+  recomputeUsageWithWindow,
   type LabelSnapshot,
   type ThinkingLevelSnapshot,
   type ModelIdSnapshot,
@@ -92,22 +93,23 @@ interface ManagedSession extends IManagedSessionView {
   projectId?: string
 }
 
-/** 百分比上限（usagePercent 计算唯一常量，消除 model-service / index.ts 的重复）。 */
-const MAX_PERCENT = 100
-
 /**
  * per-session ReplicatedState 实例组（W7 + W8 data-source-governance，六实例齐备）。
  *
  * label / thinkingLevel / modelId（W7）：快照唯一来源 get_state，失效源分别是
  * session_info_changed / thinking_level_changed / switchModel RPC 响应。
- * usage（W8）：快照唯一来源 get_session_stats().contextUsage，失效源 = context 相关事件
- * turn_end / agent_end / compaction（三路径汇聚于 applyContextUpdate）。
+ * usage（W8 + W10 收编）：快照唯一来源 get_session_stats().contextUsage，失效源 = context
+ * 相关事件 turn_end / agent_end / compaction（汇聚于 applyContextUpdate）+ restore 拉取
+ * （fetchContext）+ switchModel RPC（contextWindow 随模型变化）。W10 起五写点全部收编：
+ * inputTokens 的旧 session 缓存直写（applyContextUpdate / fetchContext 回写）已删，
+ * usage 实例快照是唯一数据源（getInputTokens / tokenCount 派生 / switchModel
+ * 重算全读快照），inputTokens 竞态从「时序约定」变「结构不可能」。
  * queue 深度（W8）：快照唯一来源 get_state().pendingMessageCount（深度权威 = pi，D6），
  * 失效源 = queue_update 翻译帧（send 汇聚点）。
  * commands（W8）：快照唯一来源 get_commands，失效源 = getCommands 全部调用路径
  * （激活发布 + renderer 主动查询，查询即失效）。
- * 事件与 RPC 响应永不直接写实例数据（只 markDirty）。双写过渡期与旧缓存
- * （session.label 等会话字段缓存）并存，W9/W10 删旧缓存。
+ * 事件与 RPC 响应永不直接写实例数据（只 markDirty）。session.label / thinkingLevel /
+ * modelId 等会话字段缓存仍在双写过渡期（W12+ 收编），usage 双写已终结（W10）。
  */
 interface SessionReplicatedStates {
   label: ReplicatedState<LabelSnapshot>
@@ -495,7 +497,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 3. 查 pi get_state 拿当前 thinkingLevel 并回写缓存（thinkingLevel 从 get_state 查询
    *    而非依赖 thinking_level_changed 事件：pi 切模型时若新模型 thinkingLevel 与当前相同
    *    则不 emit 事件，导致缓存恒为 undefined。get_state 是可靠来源）。
-   * 4. 按「新 modelId 的 contextWindow + 当前 inputTokens」重算 usagePercent 并广播。
+   * 4. 按「新 modelId 的 contextWindow + usage 实例快照的 inputTokens」重算 usagePercent
+   *    并广播（重算口径 SSOT = recomputeUsageWithWindow，W10）。
    *
    * 为什么除 config.defaults 外还要广播 session.state_changed（原 model-service 注释保留）：
    * config.defaults 是全局默认（不带 sessionId），前端无法据它定位「哪个 session 换了模型」。
@@ -503,11 +506,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 缺这条广播导致切换模型后 UI 不跟随（用量停在旧值、模型显示靠 defaultModel fallback 而非
    * per-session 真值）。
    *
-   * context.update 与 switchModel 竞态（已踩过坑，2026-07-01 inputTokens 修复）：
-   * inputTokens 由 onContextUpdate（agent_end 触发）回写到 session 缓存。switchModel 重算
-   * usagePercent 时读的是该缓存。两者经 setInputTokens 缓存打通数据源——context.update 先回写、
-   * switchModel 后读取，时序由「缓存写入先于 switchModel 读取」保证。本方法读 inputTokens
-   * 必须在 setInputTokens 之后（getInputTokens），不可另起来源。
+   * W10 owner 结构（取代旧「context.update 与 switchModel 竞态」时序约定，2026-07-01
+   * inputTokens 修复的历史背景）：inputTokens 唯一数据源 = usage 实例快照（fetch
+   * get_session_stats 写入，事件只 markDirty），外部缓存（旧 setter 与
+   * session.inputTokens 直写）已删。switchModel 重算读快照，与本方法的到达顺序无关——
+   * 无论 context.update 事件先到后到，快照防抖到点后收敛 pi 权威值，结构自愈。
+   * tokens 不随切模型变化（context 占用只跟对话内容有关），变化的只是分母 contextWindow：
+   * 即时广播用 resolver 按新 modelId 解析的新窗口，权威收敛用 pi 侧 setModel 后的
+   * contextUsage（同公式，见 recomputeUsageWithWindow 注释）。
    */
   async switchModel(sessionId: string, provider: ProviderId, modelId: string): Promise<string> {
     const session = this.sessions.get(sessionId)
@@ -525,9 +531,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // 补充合法形态，D7）。markDirty 防抖重拉 get_state，实例快照与 pi 权威值收敛（行为级
     // 验收：模型名 1s 内更新）。失败路径（上方 throw）不失效——pi 侧未生效，实例保持旧快照。
     this.replicatedStates.get(sessionId)?.modelId.markDirty()
-    // W8：switchModel 重算写点 = usage 失效源（contextWindow 随模型变化，用量百分比须按新
-    // 窗口重算——markDirty 重拉 get_session_stats 后由实例快照持有新值；下方旧缓存重算
-    // 直写保留，双写过渡 W10 收编）。失败路径不失效（同上）。
+    // W10：switchModel 重算 = usage 失效源（contextWindow 随模型变化，markDirty 重拉
+    // get_session_stats 后快照持有 pi 侧新窗口的权威值；下方 broadcastSessionState 的即时
+    // 重算读快照 inputTokens + resolver 新窗口，口径 SSOT = recomputeUsageWithWindow）。
+    // 失败路径不失效（同上）。
     this.replicatedStates.get(sessionId)?.usage.markDirty()
     session.modelId = newModelId
 
@@ -885,42 +892,46 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return session ? this.toSummary(session) : undefined
   }
 
+  /**
+   * W10：inputTokens 读点唯一化——usage 实例快照派生（fetch get_session_stats 写入的唯一
+   * 数据源）。旧 session.inputTokens 缓存直写（applyContextUpdate / fetchContext 回写，
+   * 及已删除的外部 setter）已删，sessions Map 内字段退化为恒 0 的派生基线（types 必填
+   * 字段，读点全部走本方法）。
+   */
   getInputTokens(sessionId: string): number {
-    return this.sessions.get(sessionId)?.inputTokens ?? 0
-  }
-  setInputTokens(sessionId: string, tokens: number): void {
-    const s = this.sessions.get(sessionId)
-    if (s && typeof tokens === 'number') s.inputTokens = tokens
+    return this.replicatedStates.get(sessionId)?.usage.get()?.inputTokens ?? 0
   }
 
   /**
    * 处理 context.update（pi agent_end/turn_end 推送 inputTokens + totalTokens）。session 级状态单一 owner：
-   * 回写 inputTokens 缓存 + 写 tokenCount + 算 usagePercent + 广播 context.update。
+   * 失效 usage 实例 + 即时广播 context.update。
    * index.ts onContextUpdate 仅调本方法，不再自己算 usagePercent。
    *
-   * totalTokens（W3 迁移自 attachUsageListener）：写入 session.tokenCount。turn_end 与 agent_end
-   * 双路径对称回写——SessionSummary.tokenCount 是 UI token 用量显示的数据源，不写则恒 0。
-   *
-   * context.update 与 switchModel 竞态（已踩过坑，原 index.ts onContextUpdate 注释保留）：
-   * 此处回写 inputTokens 缓存是打通 context.update 与 switchModel 数据源的关键——
-   * 使 switchModel 重算 usagePercent 时读到真实值而非恒 0（2026-07-01 inputTokens 竞态修复）。
-   * 顺序保证：onContextUpdate 回写在先、switchModel 读取在后（缓存写入先于 switchModel 读）。
+   * W10 owner 结构（五写点收编：turn_end 的 turn-usage / agent_end 的 turn-end / compaction
+   * 的成功估算三路径汇聚于本方法，restore 拉取在 fetchContext，switchModel 重算在
+   * broadcastSessionState——五点全部只做 usage 实例 markDirty，实例 fetch get_session_stats
+   * 是唯一数据写路径）：
+   * - 事件参数 inputTokens 不再直写 session 缓存（旧「外部 setter + 缓存回写」机制整体删除）。
+   *   即时广播 payload 用事件即时值（pi 刚推的真实值）+ resolver 当前窗口重算——数值与
+   *   旧实现等价（旧 computeUsage 读的缓存即本事件刚写入的参数值），行为零回归。
+   * - totalTokens 参数不再消费：事件链路三条路径（turn-usage / turn-end / compaction）的
+   *   totalTokens 与 inputTokens 同值（event-adapter 翻译层同源直出），tokenCount 改由
+   *   usage 实例快照派生（toSummary 读点，见彼处注释）。
+   * - 与 switchModel 的乱序竞态从结构上不可能：单一数据源（实例快照）+ 单一写入路径
+   *   （fetch），本方法的失效与 switchModel 的失效任意顺序到达，防抖到点后快照收敛
+   *   pi 权威值（结构自愈，见 switchModel 注释的 W10 段）。
    */
-  applyContextUpdate(sessionId: string, inputTokens: number, totalTokens?: number): void {
-    // W8 usage 失效接线：本方法是 context 相关事件的三路径汇聚点（turn_end 的 turn-usage /
-    // agent_end 的 turn-end / compaction 的成功估算回写，interpreter 均经 onContextUpdate 到达）。
-    // 事件只做失效——markDirty 置 dirty + 防抖重拉 get_session_stats 快照（usage 实例唯一
-    // 数据写路径），下方旧缓存直写保留（双写过渡，估算类写点 W10 收编时删）。
+  applyContextUpdate(sessionId: string, inputTokens: number, _totalTokens?: number): void {
+    // usage 失效（事件只做失效——markDirty 置 dirty + 防抖重拉 get_session_stats 快照，
+    // usage 实例唯一数据写路径）。
     this.replicatedStates.get(sessionId)?.usage.markDirty()
     if (!inputTokens || inputTokens === 0) return
     const session = this.sessions.get(sessionId)
     if (!session) return
-    // 回写缓存（打通数据源）
-    session.inputTokens = inputTokens
-    // W3：tokenCount 写入（原 attachUsageListener 的 s.tokenCount = usage.totalTokens）
-    if (typeof totalTokens === 'number') session.tokenCount = totalTokens
-    // 算 usagePercent + 广播
-    const { usagePercent, contextLimit } = this.computeUsage(sessionId, session.modelId)
+    // 即时广播：事件即时值 + resolver（当前 modelId）窗口重算（口径 SSOT =
+    // recomputeUsageWithWindow，owner 内读自己的 contextWindow，不引入第二数据源）。
+    const contextLimit = this.resolveContextWindow(session.modelId)
+    const { usagePercent } = recomputeUsageWithWindow(inputTokens, contextLimit)
     // wave:perf-w07（D1-1）：turn-end 路径补 bus publish，对齐 restore 路径 fetchAndBroadcastContext。
     // context.update 是 state topic（分配 seq 写 stateSnapshot（'context' typeKey
     // 同 key 覆盖）、不入 ring），重连订阅由快照恢复。
@@ -988,11 +999,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     this.sessionStore.persistSessionEnd(session.sessionFilePath, outcome, reason)
   }
 
-  /** 取 session 当前 usagePercent（按缓存 inputTokens + 当前 modelId 的 contextWindow 算）。 */
+  /**
+   * W10：取 session 当前 usagePercent——usage 实例快照派生（pi 权威 percent 投影）。
+   * 旧实现按「缓存 inputTokens + resolver 窗口」本地重算（computeUsage），W10 起快照
+   * 已持有 pi 侧按当前模型窗口算出的权威 percent，读点直接派生；dirty 期间返回上次
+   * 快照（核心不变量 2 的 UI 语义）。
+   */
   getUsagePercent(sessionId: string): number {
-    const session = this.sessions.get(sessionId)
-    if (!session) return 0
-    return this.computeUsage(sessionId, session.modelId).usagePercent
+    return this.replicatedStates.get(sessionId)?.usage.get()?.usagePercent ?? 0
   }
 
   async destroyAll(): Promise<void> {
@@ -1108,7 +1122,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       isBareWorkspace: detectBareWorkspaceCached(s.cwd),
       status: s.isGenerating ? ('active' as SessionStatus) : ('idle' as SessionStatus),
       lastActiveAt: s.lastActiveAt, modelId: s.modelId,
-      thinkingLevel: s.thinkingLevel, tokenCount: s.tokenCount,
+      thinkingLevel: s.thinkingLevel,
+      // W10：tokenCount 派生自 usage 实例快照（context 占用口径——事件链路三条路径的
+      // totalTokens 与 inputTokens 同值直出，快照 inputTokens 保持同语义）。旧
+      // session.tokenCount 直写（applyContextUpdate）已删，字段退化为恒 0 派生基线
+      // （types 必填）；磁盘 session（非 active）无实例，fallback 字段值。
+      tokenCount: this.replicatedStates.get(s.id)?.usage.get()?.inputTokens ?? s.tokenCount,
       hidden: s.hidden,
       parentSession: s.parentSession,
       forkEntryId: s.forkEntryId,
@@ -1156,6 +1175,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   notifySessionCreated(summary: SessionSummary): void {
     try {
       this.onSessionCreated?.(summary)
+    // eslint-disable-next-line taste/no-silent-catch -- best-effort 降级：插件 didCreate 投递异常不外抛（创建主流程优先），仅落日志供排查
     } catch (e: unknown) {
       console.error(`[session-service] onSessionCreated listener error (sessionId=${summary.id}):`, e)
     }
@@ -1175,6 +1195,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // S3-W2：同一汇聚点触发插件 didDestroy 定向投递（回调异常不阻塞删除主流程）。
     try {
       this.onSessionDestroyed?.(destroyedSummary)
+    // eslint-disable-next-line taste/no-silent-catch -- best-effort 降级：插件 didDestroy 投递异常不外抛（删除主流程优先），仅落日志供排查
     } catch (e: unknown) {
       console.error(`[session-service] onSessionDestroyed listener error (sessionId=${sessionId}):`, e)
     }
@@ -1269,6 +1290,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       id, cwd, label,
       modelId: modelOverride ?? fallbackModelId,
       createdAt: Date.now(), lastActiveAt: Date.now(),
+      // W10：inputTokens/tokenCount 退化为恒 0 派生基线（types 必填字段保留）——真值由
+      // usage 实例快照持有，读点（getInputTokens / toSummary.tokenCount）从实例派生，
+      // 任何路径不再直写这两个字段（旧外部 setter / applyContextUpdate 直写已删）。
       tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, isBashRunning: false, bashRunToken: undefined,
       adapter, sessionFilePath,
       hidden,
@@ -1358,21 +1382,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return client.getCommands()
   }
 
-  /**
-   * usagePercent 计算的唯一实现（消除 model-service / index.ts 两处重复）。
-   * 公式：contextWindow>0 ? Math.min(Math.round(inputTokens/contextWindow*100), 100) : 0。
-   * 与原两处实现结果一致（验证见 model-service / index.ts 旧代码）。
-   * contextLimit 同步返回（广播 payload 用），未配置 contextWindow 时为 0。
-   */
-  private computeUsage(sessionId: string, modelId: string): { usagePercent: number; contextLimit: number } {
-    const inputTokens = this.getInputTokens(sessionId)
-    const contextWindow = this.resolveContextWindow(modelId)
-    const usagePercent = contextWindow > 0
-      ? Math.min(Math.round((inputTokens / contextWindow) * MAX_PERCENT), MAX_PERCENT)
-      : 0
-    return { usagePercent, contextLimit: contextWindow }
-  }
-
   /** 按 modelId（'provider/model' 形式）经 resolver 查 contextWindow；未注入 resolver 返回 0。 */
   private resolveContextWindow(modelId: string): number {
     if (!this.modelContextWindowResolver) return 0
@@ -1387,6 +1396,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 广播 session.state_changed：切换模型后立即把新 modelId + 按新 contextWindow 重算的用量
    * + pi 当前 thinkingLevel 推给前端，无需等下一次 agent_end。（原 model-service.broadcastSessionState
    * 逻辑迁入，时序/竞态保护全部保留。）
+   *
+   * W10：重算 = owner 内读「自己的 contextWindow + 最新快照」——inputTokens 取 usage 实例
+   * 快照（唯一数据源，旧 getInputTokens 外部缓存已删），contextWindow 取 resolver 按新
+   * modelId 解析的新窗口（防抖到点前即时反映新模型），口径 SSOT = recomputeUsageWithWindow。
+   * 快照 tokens 不随切模型变化，读「上次成功快照」与 context.update 事件到达顺序无关
+   * （竞态结构不可能，见 switchModel 注释的 W10 段）。
    *
    * thinkingLevel 从 pi get_state 查询（而非依赖 thinking_level_changed 事件）：
    * pi 切模型时若新模型的 thinkingLevel 与当前相同则不 emit 事件，导致缓存恒为 undefined。
@@ -1411,7 +1426,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       }
     }
     const inputTokens = this.getInputTokens(sessionId)
-    const { usagePercent, contextLimit } = this.computeUsage(sessionId, `${provider}/${modelId}`)
+    const { usagePercent, contextLimit } = recomputeUsageWithWindow(
+      inputTokens,
+      this.resolveContextWindow(`${provider}/${modelId}`),
+    )
     // wave:perf-w09（D1-2）：session.state_changed 单通道走 bus publish
     //（wave:perf-w06：state_changed 已入 bus 的 STATE_TYPE_KEY_MAP（D5-2 补全，修 ADR-0055 3b）——
     // publish 分配 seq 写 stateSnapshot、不入 streamRing，重连由 stateSnapshot 恢复。）
@@ -1503,14 +1521,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // （含 cacheRead），远大于当前 context 占用，会显示荒谬的百分比（如 compact 后 978%）。
     // 正确行为：返回 null，前端不显示 ctx 用量，等用户发消息后 turn_end 刷成精确值。
     if (cu && cu.tokens != null) {
-      // W8：restore 拉取写点 = usage 失效源（session 激活后 context 权威值可能已变——markDirty
-      // 防抖重拉 get_session_stats 快照刷新 usage 实例）。下方旧缓存回写保留（双写过渡 W10 删）。
+      // W10：restore 拉取写点 = usage 失效源（session 激活后 context 权威值可能已变——markDirty
+      // 防抖重拉 get_session_stats 快照刷新 usage 实例，快照是 inputTokens 唯一数据源）。
+      // 旧外部 setter 缓存回写已删：switchModel → broadcastSessionState 读实例快照，
+      // 注册播种（registerReplicatedStates refetch）已保证快照非空，不再依赖本方法回写。
       this.replicatedStates.get(sessionId)?.usage.markDirty()
-      // 回写 session.inputTokens 缓存：fetchContext 是 restoreSession / session.getContext RPC
-      // 的共同落点。initializeManagedSession 把 inputTokens 初始化为 0，若不在此回写，
-      // switchModel → broadcastSessionState 读缓存拿到 0 → 推 inputTokens=0 → 前端 ctx 按钮变「—」。
-      // 与 applyContextUpdate（turn-end 路径）对称，两者是 inputTokens 缓存的全部写入点。
-      this.setInputTokens(sessionId, cu.tokens)
       return {
         inputTokens: cu.tokens,
         contextLimit: cu.contextWindow,

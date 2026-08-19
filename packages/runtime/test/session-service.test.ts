@@ -352,6 +352,22 @@ function findBroadcast<T extends ServerMessage['type']>(setup: Setup, type: T): 
   return undefined
 }
 
+/**
+ * W10：播种 usage 实例快照（inputTokens 唯一数据源 = get_session_stats，旧 setInputTokens
+ * 缓存直写已删——用例需要预设 inputTokens 时经权威源播种，对齐生产行为）。
+ * refetch 绕过防抖立即拉取，flush 一个 macrotask 等 doFetch promise 落位。
+ */
+async function seedUsageSnapshot(
+  setup: Setup,
+  id: string,
+  client: MockClient,
+  contextUsage: { tokens: number; contextWindow: number; percent: number },
+): Promise<void> {
+  client.getSessionStats.mockResolvedValue({ contextUsage })
+  setup.service.getScalarReplicatedStates(id)?.usage.refetch()
+  await new Promise<void>(r => setTimeout(r, 0))
+}
+
 // ───────────────────────────────────────────────────────────────────
 // dispatcher 类
 // ───────────────────────────────────────────────────────────────────
@@ -830,12 +846,12 @@ describe('SessionService · Facade', () => {
       await expect(setup.service.switchModel('ghost', 'p' as ProviderId, 'm')).rejects.toThrow('session not active')
     })
 
-    it('切换后广播 session.state_changed（含按新 contextWindow 重算用量）', async () => {
+    it('切换后广播 session.state_changed（含按新 contextWindow 重算用量——读 usage 实例快照，W10）', async () => {
       const { id, client } = await setup.seedSession()
       // 注入 resolver：anthropic/claude-x contextWindow=200000
       setup.service.setModelContextWindowResolver((_p, _m) => 200000)
-      // 预置 inputTokens 缓存（模拟 onContextUpdate 已回写）
-      setup.service.setInputTokens(id, 12000)
+      // W10：inputTokens 唯一数据源 = usage 实例快照（播种替代旧 setInputTokens 直写）
+      await seedUsageSnapshot(setup, id, client, { tokens: 12000, contextWindow: 200000, percent: 6 })
       vi.mocked(client.setModel).mockClear()
       vi.mocked(setup.broker.broadcast).mockClear()
       vi.mocked(setup.messageBus.publish).mockClear()
@@ -853,14 +869,14 @@ describe('SessionService · Facade', () => {
         thinkingLevel: 'high',
         inputTokens: 12000,
         contextLimit: 200000,
-        usagePercent: 6, // Math.round(12000 / 200000 * 100)
+        usagePercent: 6, // Math.round(12000 / 200000 * 100)，resolver 新窗口 × 快照 tokens
       })
     })
 
     it('未注入 resolver 时 contextLimit=0 usagePercent=0，仍广播 state_changed', async () => {
-      const { id } = await setup.seedSession()
-      // 不注入 resolver
-      setup.service.setInputTokens(id, 5000)
+      const { id, client } = await setup.seedSession()
+      // 不注入 resolver；快照播种 inputTokens（广播 payload 仍透出 tokens）
+      await seedUsageSnapshot(setup, id, client, { tokens: 5000, contextWindow: 100000, percent: 5 })
 
       await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
 
@@ -898,30 +914,38 @@ describe('SessionService · Facade', () => {
     })
   })
 
-  describe('setInputTokens 回写缓存（onContextUpdate 打通用例）', () => {
-    it('U-setInput-1：setInputTokens 写入后 getInputTokens 读回正确值', async () => {
-      const { id } = await setup.seedSession()
-      setup.service.setInputTokens(id, 12345)
+  describe('getInputTokens（W10：usage 实例快照派生，唯一数据源 = get_session_stats）', () => {
+    it('U-setInput-1：快照播种后 getInputTokens 读回快照 inputTokens', async () => {
+      const { id, client } = await setup.seedSession()
+      await seedUsageSnapshot(setup, id, client, { tokens: 12345, contextWindow: 200000, percent: 6 })
       expect(setup.service.getInputTokens(id)).toBe(12345)
     })
 
-    it('U-setInput-2：setInputTokens 对不存在的 session 不抛错（静默忽略）', () => {
-      expect(() => setup.service.setInputTokens('nonexistent', 100)).not.toThrow()
+    it('U-setInput-2：不存在的 session（无实例）返回 0，不抛错', () => {
       expect(setup.service.getInputTokens('nonexistent')).toBe(0)
+    })
+
+    it('U-setInput-3：applyContextUpdate 事件不直写快照（事件只做失效，W10 五写点收编）', async () => {
+      const { id, client } = await setup.seedSession()
+      await seedUsageSnapshot(setup, id, client, { tokens: 12345, contextWindow: 200000, percent: 6 })
+      setup.service.applyContextUpdate(id, 99999)
+      // 事件参数不直写：快照保持播种值（真 timers 下防抖未到点，无重拉）
+      expect(setup.service.getInputTokens(id)).toBe(12345)
     })
   })
 
-  describe('applyContextUpdate（session 级状态单一 owner：回写缓存 + 算用量 + 广播）', () => {
-    it('回写 inputTokens 缓存 + 广播 context.update（含按 contextWindow 重算的 usagePercent）', async () => {
-      const { id } = await setup.seedSession()
+  describe('applyContextUpdate（session 级状态单一 owner：失效 usage 实例 + 即时广播）', () => {
+    it('广播 context.update（事件即时值 + resolver 窗口重算 usagePercent），不直写快照', async () => {
+      const { id, client } = await setup.seedSession()
       setup.service.setModelContextWindowResolver(() => 100000)
       // modelId 初始为 default 'test-provider/test-model'，resolver 按 provider/model 查 contextWindow
+      await seedUsageSnapshot(setup, id, client, { tokens: 10000, contextWindow: 100000, percent: 10 })
       vi.mocked(setup.broker.broadcast).mockClear()
       vi.mocked(setup.messageBus.publish).mockClear()
 
       setup.service.applyContextUpdate(id, 25000)
 
-      expect(setup.service.getInputTokens(id)).toBe(25000)
+      // 广播 payload = 事件即时值 25000 + resolver 窗口重算（与旧实现数值等价）
       const ctxUpdate = findBroadcast(setup, 'context.update')
       expect(ctxUpdate).toBeDefined()
       expect(ctxUpdate!.payload).toMatchObject({
@@ -930,16 +954,18 @@ describe('SessionService · Facade', () => {
         contextLimit: 100000,
         usagePercent: 25, // Math.round(25000 / 100000 * 100)
       })
+      // 事件不直写快照：getInputTokens 保持播种值（唯一数据写路径 = fetch get_session_stats）
+      expect(setup.service.getInputTokens(id)).toBe(10000)
     })
 
-    it('inputTokens 为 0 时不回写不广播（agent_end 前的空 usage）', async () => {
+    it('inputTokens 为 0 时不广播（agent_end 前的空 usage；markDirty 失效仍发出）', async () => {
       const { id } = await setup.seedSession()
       setup.service.setModelContextWindowResolver(() => 100000)
       vi.mocked(setup.broker.broadcast).mockClear()
 
       setup.service.applyContextUpdate(id, 0)
 
-      expect(setup.service.getInputTokens(id)).toBe(0) // 未回写
+      expect(setup.service.getInputTokens(id)).toBe(0) // 快照未播种（mock getSessionStats 默认 {} → 拉取失败保留空）
       expect(findBroadcast(setup, 'context.update')).toBeUndefined()
     })
 
@@ -960,26 +986,23 @@ describe('SessionService · Facade', () => {
     })
   })
 
-  describe('getUsagePercent', () => {
-    it('按缓存 inputTokens + 当前 modelId contextWindow 算百分比', async () => {
-      const { id } = await setup.seedSession()
-      setup.service.setModelContextWindowResolver(() => 200000)
-      setup.service.setInputTokens(id, 100000)
+  describe('getUsagePercent（W10：usage 实例快照派生 pi 权威 percent）', () => {
+    it('读快照 usagePercent（pi get_session_stats 投影，不再本地按缓存重算）', async () => {
+      const { id, client } = await setup.seedSession()
+      await seedUsageSnapshot(setup, id, client, { tokens: 100000, contextWindow: 200000, percent: 50 })
 
-      expect(setup.service.getUsagePercent(id)).toBe(50) // 100000/200000*100
+      expect(setup.service.getUsagePercent(id)).toBe(50)
     })
 
-    it('usagePercent 上限 100（inputTokens 超过 contextWindow）', async () => {
-      const { id } = await setup.seedSession()
-      setup.service.setModelContextWindowResolver(() => 100000)
-      setup.service.setInputTokens(id, 150000)
+    it('快照 percent 已被 pi clamp 到 100（inputTokens 超过 contextWindow）', async () => {
+      const { id, client } = await setup.seedSession()
+      await seedUsageSnapshot(setup, id, client, { tokens: 150000, contextWindow: 100000, percent: 100 })
 
-      expect(setup.service.getUsagePercent(id)).toBe(100) // Math.min(150, 100)
+      expect(setup.service.getUsagePercent(id)).toBe(100)
     })
 
-    it('未注入 resolver 返回 0', async () => {
+    it('快照未播种（percent 缺失）返回 0', async () => {
       const { id } = await setup.seedSession()
-      setup.service.setInputTokens(id, 99999)
       expect(setup.service.getUsagePercent(id)).toBe(0)
     })
 
@@ -1034,23 +1057,26 @@ describe('SessionService · Facade', () => {
     })
   })
 
-  describe('inputTokens 缓存（W3：经 applyContextUpdate + handleTurnEndSideEffects 迁移）', () => {
-    // W3：attachUsageListener 已删除，inputTokens/tokenCount 回写经中间事件链路：
-    //   - applyContextUpdate(sid, inputTokens, totalTokens)：写 inputTokens + tokenCount
+  describe('inputTokens / tokenCount（W3 事件链路迁移 → W10 usage 实例收编）', () => {
+    // W3：attachUsageListener 已删除，回写经中间事件链路（applyContextUpdate /
+    // handleTurnEndSideEffects）。W10：applyContextUpdate 不再直写 inputTokens/tokenCount
+    //   - applyContextUpdate(sid, inputTokens, totalTokens)：只失效 usage 实例 + 即时广播
+    //   - getInputTokens / tokenCount（toSummary）：usage 实例快照派生
     //   - handleTurnEndSideEffects(sid)：复位 isGenerating（agent_end 副作用）
-    it('agent_end usage 经 applyContextUpdate 回写 inputTokens + tokenCount', async () => {
-      const { id } = await setup.seedSession()
-      // 模拟 EventInterpreter onContextUpdate 回调（agent_end usage）
-      setup.service.applyContextUpdate(id, 15000, 20000)
+    it('getInputTokens / tokenCount 均派生自 usage 实例快照（唯一数据源）', async () => {
+      const { id, client } = await setup.seedSession()
+      // 播种权威快照（事件链路三条路径 totalTokens 与 inputTokens 同值，tokenCount 同语义派生）
+      await seedUsageSnapshot(setup, id, client, { tokens: 15000, contextWindow: 100000, percent: 15 })
       expect(setup.service.getInputTokens(id)).toBe(15000)
-      expect(setup.service.getSummary(id)?.tokenCount).toBe(20000)
+      expect(setup.service.getSummary(id)?.tokenCount).toBe(15000)
     })
 
-    it('agent_end 无 usage（inputTokens=0）时 applyContextUpdate 早退，保持原值', async () => {
-      const { id } = await setup.seedSession()
-      // inputTokens=0 守卫，整个方法早退（不回写不广播）
+    it('agent_end 无 usage（inputTokens=0）时 applyContextUpdate 早退，快照保持', async () => {
+      const { id, client } = await setup.seedSession()
+      await seedUsageSnapshot(setup, id, client, { tokens: 15000, contextWindow: 100000, percent: 15 })
+      // inputTokens=0 守卫：不广播（markDirty 失效仍发出，真 timers 防抖未到点无重拉）
       setup.service.applyContextUpdate(id, 0, 0)
-      expect(setup.service.getInputTokens(id)).toBe(0)
+      expect(setup.service.getInputTokens(id)).toBe(15000)
     })
 
     it('handleTurnEndSideEffects 复位 isGenerating（agent_end 迁移）', async () => {

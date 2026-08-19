@@ -212,17 +212,16 @@ export interface ISessionService {
   ): Promise<SessionSummary>
   hasActiveSession(sessionId: string): boolean
   getSummary(sessionId: string): SessionSummary | undefined
-  /** 取 session 缓存的最近 inputTokens（供 model.switch 重算 usagePercent，见 onContextUpdate/handleTurnEndSideEffects） */
+  /** W10：取最近 inputTokens——usage 实例快照派生（唯一数据源 = get_session_stats，旧缓存直写已删）。 */
   getInputTokens(sessionId: string): number
-  /** 回写 session 缓存的 inputTokens（onContextUpdate 拿到真实值后同步写入，打通 context.update 与 state_changed 数据源） */
-  setInputTokens(sessionId: string, tokens: number): void
   /**
    * 处理 context.update（pi agent_end/turn_end 推 inputTokens + totalTokens）。session 级状态单一 owner：
-   * 回写 inputTokens 缓存 + 写 tokenCount + 算 usagePercent + 广播 context.update。
-   * index.ts onContextUpdate 仅调本方法。totalTokens（W3）写入 session.tokenCount。
+   * 失效 usage 实例 + 即时广播 context.update（事件参数即时值 + resolver 窗口重算）。
+   * index.ts onContextUpdate 仅调本方法。W10：事件参数不再直写 session 缓存
+   * （totalTokens 与 inputTokens 同值，tokenCount 由 usage 实例快照派生）。
    */
   applyContextUpdate(sessionId: string, inputTokens: number, totalTokens?: number): void
-  /** 取 session 当前 usagePercent（按缓存 inputTokens + 当前 modelId contextWindow 算）。 */
+  /** W10：取 session 当前 usagePercent——usage 实例快照派生（pi 权威 percent 投影）。 */
   getUsagePercent(sessionId: string): number
   /** 仅回写 thinkingLevel 缓存（不调 pi RPC），供 thinking_level_changed 事件 callback 用 */
   setThinkingLevelCache(sessionId: string, level: string | undefined): void

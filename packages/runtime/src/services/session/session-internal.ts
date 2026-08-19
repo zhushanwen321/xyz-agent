@@ -57,8 +57,9 @@ export interface ISessionServiceInternal {
   /** 按 RPC client 反查 managed session（更新 lastActiveAt / isGenerating 用）。 */
   getSessionByClient(client: IPiEngine): IManagedSessionView | undefined
   /**
-   * 回写 inputTokens 缓存 + 写 tokenCount + 算 usagePercent + 广播 context.update。
-   * totalTokens（W3）写入 session.tokenCount；compact 后用 estimatedTokensAfter 刷新用量。
+   * 失效 usage 实例 + 即时广播 context.update（W10 五写点收编：事件参数不直写缓存，
+   * usage 实例快照是 inputTokens/tokenCount 唯一数据源；compact 后用 estimatedTokensAfter
+   * 触发同样的失效刷新）。
    */
   applyContextUpdate(sessionId: string, inputTokens: number, totalTokens?: number): void
   /**

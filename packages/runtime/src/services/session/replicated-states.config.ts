@@ -208,6 +208,12 @@ export type FetchCommandsFn = () => Promise<unknown>
  * tokens=null（pi compact 后无新 turn）是合法「无值」态：投影为空快照 {}，ownerSnapshotMerge
  * 的 spread 语义保持旧值——与既有 fetchContext「返回 null 不更新」口径等价（退避重拉无意义，
  * 值要等下一次 turn 产生新 assistant usage 才有）。空值语义登记 = 无（验收锁定）。
+ *
+ * W10：switchModel 即时重算的重算口径归本条目（见 {@link recomputeUsageWithWindow}）——
+ * owner（session-service）切模型时读自己的 contextWindow（resolver 按新 modelId 解析）+
+ * usage 实例最新快照的 inputTokens，按新窗口重算 usagePercent/contextLimit 即时广播；
+ * 防抖到点后快照收敛 pi 权威值（pi getContextUsage 用当前 model 的 contextWindow 算 percent，
+ * setModel 后天然按新窗口），即时值与权威值同公式收敛一致。
  */
 export function createUsageStateConfig(
   fetchSessionStats: FetchSessionStatsFn,
@@ -243,6 +249,30 @@ export function createUsageStateConfig(
     backoffSchedule: SCALAR_STATE_BACKOFF_SCHEDULE,
     merge: ownerSnapshotMerge,
     fieldsNullSemantics: {},
+  }
+}
+
+/**
+ * W10：usage 重算口径 SSOT（switchModel 即时广播 / applyContextUpdate 即时广播共用）。
+ *
+ * owner 内读「自己的 contextWindow + 最新快照」：inputTokens 唯一来源 = usage 实例快照
+ * （或本事件的权威 payload），外部不得再传入独立 inputTokens 数据源（旧 setInputTokens
+ * 缓存已删——「缓存写入先于 switchModel 读取」的时序约定随之消解为结构不可能：单一数据
+ * 源下没有第二个写入者可与 switchModel 竞争顺序）。
+ *
+ * 公式与 pi getContextUsage 同构（tokens / contextWindow * 100，四舍五入 + clamp 100），
+ * 与 fetchSnapshot 的 percent 投影口径一致——pi 报 percent 时两路数值相等，防抖到点后
+ * 快照收敛权威值（结构自愈，不依赖事件与 RPC 响应的到达顺序）。
+ */
+export function recomputeUsageWithWindow(
+  inputTokens: number,
+  contextWindow: number,
+): { usagePercent: number; contextLimit: number } {
+  return {
+    usagePercent: contextWindow > 0
+      ? Math.min(Math.round((inputTokens / contextWindow) * MAX_USAGE_PERCENT), MAX_USAGE_PERCENT)
+      : 0,
+    contextLimit: contextWindow,
   }
 }
 

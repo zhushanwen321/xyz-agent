@@ -299,33 +299,37 @@ describe('SessionService · W3 副作用迁移（U7）', () => {
     })
   })
 
-  // ── applyContextUpdate 接收 totalTokens（tokenCount 写入）──
-  describe('applyContextUpdate 接收 totalTokens（tokenCount 写入）', () => {
-    it('传 totalTokens 时写入 session.tokenCount', async () => {
-      const { id } = await setup.seedSession()
-      // 初始 tokenCount=0
+  // ── applyContextUpdate 接收 totalTokens（W10：tokenCount 改由 usage 实例快照派生）──
+  describe('applyContextUpdate 接收 totalTokens（W10：tokenCount 派生自 usage 快照）', () => {
+    it('tokenCount 不再被事件直写，派生自 usage 实例快照（事件链路 totalTokens 与 inputTokens 同值）', async () => {
+      const { id, client } = await setup.seedSession()
+      // 初始 tokenCount=0（快照未播种）
       expect(setup.service.getSummary(id)?.tokenCount).toBe(0)
 
+      // 事件到达：只失效，不直写 tokenCount
       setup.service.applyContextUpdate(id, 25000, 30000)
-
-      // tokenCount 写入（totalTokens）
-      expect(setup.service.getSummary(id)?.tokenCount).toBe(30000)
-    })
-
-    it('未传 totalTokens 时 tokenCount 不变（向后兼容）', async () => {
-      const { id } = await setup.seedSession()
-      setup.service.applyContextUpdate(id, 25000)
-      // tokenCount 保持 0（未传 totalTokens）
       expect(setup.service.getSummary(id)?.tokenCount).toBe(0)
-      // inputTokens 仍正常回写
-      expect(setup.service.getInputTokens(id)).toBe(25000)
+
+      // 快照播种（fetch get_session_stats 唯一数据写路径）后派生
+      client.getSessionStats.mockResolvedValue({
+        contextUsage: { tokens: 25000, contextWindow: 100000, percent: 25 },
+      })
+      setup.service.getScalarReplicatedStates(id)?.usage.refetch()
+      await new Promise<void>(r => setTimeout(r, 0))
+      expect(setup.service.getSummary(id)?.tokenCount).toBe(25000)
     })
 
-    it('totalTokens=0 时 tokenCount 写 0（agent_end usage 缺失场景）', async () => {
-      const { id } = await setup.seedSession()
+    it('inputTokens=0 时 applyContextUpdate 早退（不广播），快照派生值保持', async () => {
+      const { id, client } = await setup.seedSession()
+      client.getSessionStats.mockResolvedValue({
+        contextUsage: { tokens: 18000, contextWindow: 100000, percent: 18 },
+      })
+      setup.service.getScalarReplicatedStates(id)?.usage.refetch()
+      await new Promise<void>(r => setTimeout(r, 0))
       setup.service.applyContextUpdate(id, 0, 0)
-      // inputTokens=0 守卫，整个方法早退（不广播不回写）
-      expect(setup.service.getSummary(id)?.tokenCount).toBe(0)
+      // inputTokens=0 守卫早退；tokenCount/inputTokens 保持快照派生值
+      expect(setup.service.getSummary(id)?.tokenCount).toBe(18000)
+      expect(setup.service.getInputTokens(id)).toBe(18000)
     })
   })
 })
@@ -413,6 +417,11 @@ describe('SessionService · W3 E2：完整 pi 事件流集成', () => {
       getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({
         sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl`,
       }),
+      // W10：get_session_stats 是 usage 唯一数据源——E2 断言的 inputTokens/tokenCount
+      // 派生自 usage 实例快照（agent_end 事件 usage 与此快照口径同源，tokens 一致）。
+      getSessionStats: vi.fn<() => Promise<unknown>>().mockResolvedValue({
+        contextUsage: { tokens: 163500, contextWindow: 200000, percent: 81.75 },
+      }),
       onEvent: vi.fn<(listener: PiEventListener) => () => void>((listener) => {
         eventListeners.push(listener)
         return () => {}
@@ -457,14 +466,19 @@ describe('SessionService · W3 E2：完整 pi 事件流集成', () => {
     // flush 异步 hook（tool-call-* 是 void this.handle...）
     await new Promise<void>(r => setTimeout(r, 10))
 
+    // W10：事件只失效——usage 实例 markDirty 后防抖（真 timers 300ms）未到点，显式 refetch
+    // 让快照收敛权威值（模拟防抖到点的拉取），再断言派生读点。
+    service2.getScalarReplicatedStates(piSid)?.usage.refetch()
+    await new Promise<void>(r => setTimeout(r, 10))
+
     // ── 断言终态（3 个副作用全迁移后应满足）──
     const finalSummary = service2.getSummary(piSid)
     expect(finalSummary).toBeDefined()
     // 1. isGenerating 复位（agent_end onTurnFinalize → handleTurnEndSideEffects）
     expect(finalSummary!.status).toBe('idle')
-    // 2. tokenCount 写入（>0，经 onContextUpdate totalTokens → applyContextUpdate）
+    // 2. tokenCount 派生（>0，usage 实例快照 inputTokens 投影，W10 事件直写已删）
     expect(finalSummary!.tokenCount).toBeGreaterThan(0)
-    // 3. inputTokens 写入（>0，agent_end usage 回写）
+    // 3. inputTokens 派生（>0，usage 实例快照读点）
     expect(service2.getInputTokens(piSid)).toBeGreaterThan(0)
 
     // 附带验证：message.complete 已发布（EventAdapter handleAgentEnd → interpreter 转发；
