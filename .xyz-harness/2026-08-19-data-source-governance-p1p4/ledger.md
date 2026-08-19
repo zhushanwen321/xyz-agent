@@ -59,10 +59,14 @@
 
 | gate | 内容 | 状态 |
 |------|------|------|
-| P1 gate | 场景 1 后半（非活跃改名 + R1 归零）+ 场景 2 前半（断连自愈） | pending |
-| P2 gate | 场景 2 后半（renderer 一致性） | pending |
-| P3 gate | 场景 3（重开一致性）+ 场景 5（subagent 单源 + 混沌） | pending |
-| P4 gate | 全场景回归 + 预防机制终态 | pending |
+| P1 gate | 场景 1 后半（非活跃改名 + R1 归零）+ 场景 2 前半（断连自愈） | PASS（报告 gate/p1p2-gate-report.md：非活跃改名三方铁证——短命 pi 546ms spawn→RPC→销毁 + pi tee 日志 ephemeral 文件名 + 全目录 diff 唯一写入；R1 exit 0 + 62 命中逐条核对；断连自愈 CDP offline + WS close 真实链路，v4/v5 逐字段一致零 toast，断连窗口 followUp 回复完整） |
+| P2 gate | 场景 2 后半（renderer 一致性） | PASS（同报告：模型/thinkingLevel/用量/队列深度重连 5s 内与 get_state + get_session_stats 一致；live≡reload 断言一致。附 2 高危发现见事件节——均计划外既有） |
+| P3 gate | 场景 3（重开一致性）+ 场景 5（subagent 单源 + 混沌） | PASS（报告 gate/p3-gate-report.md：create 路径重开 4 turn 分组/注入/用量一致 + 等价性 9 文件 40/40；场景 5 四处一致 + 3 条 subagent-record 自描述 entry + W18 混沌 2/2。**边界条件**：restore 路径 session 因计划外数据丢失 bug 会 FAIL——归因 40f2e0300（2026-07-17）tmp 附着管线，W11 仅迁移 cwd patch 目标未触碰该管线，根因链 session-lifecycle.ts:516-523 switchSession(tmp) → pi setSessionFile 永久写目标 → 原 JSONL 零更新） |
+| P4 gate | 全场景回归 + 预防机制终态 | PASS（报告 gate/p4-prevention-gate-report.md：三形态全拦——①W24 调用图形态 wrappedFactoryMutation error 含登记条目 + pre-commit ESLint 段 HOOK_EXIT=1；②R1 直写 exit 2 + 恢复动作文案；③语义级字段直赋值被 review checklist MUST_FIX x2 引用登记表 #1 + ADR-0062；试验零残留） |
+
+## 事件（续）
+
+- 2026-08-19 **四 gate 全 PASS，P1-P4 计划收官**。Gate A（P1+P2）与 Gate C（P4 预防拦截）并行、Gate B（P3）串行后置（dev app 独占）。发现项全部归因计划外既有链路（非本计划引入）：**[高] restore tmp 附着数据丢失**（40f2e0300 引入，重启丢当天对话——P3 gate 一手复现 + 根因链）、**[高] 断连涉及 turn 的已工作指示不复位**、[中] model error turn UI 卡死 + 重连初始化批次 pre-auth 丢弃、[中] `!` bash live 实时输出丢失（e5c9e33e2 shape guard）、[低] cwd 死路径非活跃改名静默失败等 8 项——详见各 gate 报告，**建议单开后续修复计划**（本计划范围外）。gate 产物（3 报告 + 9 截图 + 1 探针）随本 commit 入库。
 
 ## 事件
 
