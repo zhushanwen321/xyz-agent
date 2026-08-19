@@ -20,7 +20,7 @@
 | W6 | ReplicatedState<T> 原语 | committed | 763d76e40 | verifier PASS（报告 w6-report.md：防篡改/13 用例/3118 全绿/真实性 4 项/红性验证 4 篡改全红字节还原——事件直写退化、空值跳过、去 epoch、无条件 pollTimer）。契约外增量 2 项裁决合理（dispose=ADR-0049 定时器清理必需 / isDirty=可证伪观测点）。观察：doFetch 空 catch 吞错无失败可观测通道（W7 接线补 onError）；dispose 后在途 fetch 仍写 snapshot（纯内存，JSDoc 已声明） |
 | W7 | label/thinkingLevel/modelId 三实例 + 失效接线 | committed | 962e51c5e | verifier PASS（报告 w7-report.md：3124 全绿 + equivalence 7/7 含真实 pi 2 用例/红性事件直写回退变红/三值差异化手法核实/**modelId 投影事实独立证实**——pi get_state.model 是 Model 对象 `${provider}/${id}` 投影正确/WireSnapshotSchemaError 防线探针实跑/dispose ADR-0049 双路径汇入）。采样（P0.5② 首采）：5 次 get_state（播种 3 + 失效 2）恒定、p95 0.7-4.9ms 数量级——远低于阈值，与 W8 终判一并落登记表。2 minor：markDirty 计数自报 11 实测 10；mock makeState 缺 provider 字段（W8 补齐） |
 | W8 | usage/queue/commands 三实例 + 频率量化 | committed | ebc6f6991 | verifier PASS（报告 w8-report.md：3131 全绿 + equivalence 14/14/**event-adapter 段级核验警戒线完好**/红性直写回退红/深度公式与 pi agent-session.ts:1428 同源/三接线无第二写路径）。量化终判（P0.5② 收口）：7 次快照 RPC 合并 p95 0.7ms——无需降级，已落登记表表头第 5 条。2 minor：protocol.ts queue_update 契约未声明 pendingMessageCount（W12 补）；usage config「contextUsage 恒在」注释不准（影响有界） |
-| W9 | 删除 sessionMetaCache | verified | b8db5afe7 | verifier PASS 限定范围模式（报告 w9-report.md：删除性/保留性 grep 全过 + **session-file-utils 0 行改动防误删完好** + scanner 45/45 + 三判定实证（setLabelCache 保留防 label bug 复活 / thinkingLevelSet 直发帧 / 只写不读死影子）+ 红性 TS2304）。**commit 延迟**：event-adapter-new-events.test.ts diff 混合 W21 半成品（U-adapter-1=W9 / [w21] 段=W21），主 agent 裁决等 W21 完成后按归属分两次 commit。观察：event-adapter.ts:722 过期注释 W21 收尾清理 |
+| W9 | 删除 sessionMetaCache | committed (09a1da745) | b8db5afe7 | verifier PASS 限定范围模式（报告 w9-report.md：删除性/保留性 grep 全过 + **session-file-utils 0 行改动防误删完好** + scanner 45/45 + 三判定实证（setLabelCache 保留防 label bug 复活 / thinkingLevelSet 直发帧 / 只写不读死影子）+ 红性 TS2304）。**commit 延迟**：event-adapter-new-events.test.ts diff 混合 W21 半成品（U-adapter-1=W9 / [w21] 段=W21），主 agent 裁决等 W21 完成后按归属分两次 commit。观察：event-adapter.ts:722 过期注释 W21 收尾清理 |
 | W10 | applyContextUpdate 收编 + switchModel 入 owner | pending | — | 依赖 W8 |
 | W11 | 非活跃 rename 短命 pi + 直写全删 + R1 allowlist 清空 | pending | — | 依赖 W1/W3/W6 |
 | W12 | 5 个 state 话题切实例快照发布 | pending | — | 依赖 W7/W8；5 话题各独立 commit |
@@ -44,7 +44,7 @@
 | W19 | session_end sidecar 登记收口 | pending | — | 依赖 W2/W11；小 wave |
 | W20 | applyEntry reducer + 文件重放喂入 | pending | — | 依赖 W5（已满足）；禁与 W13/W14 并行 |
 | W20 | applyEntry reducer + 文件重放喂入 | committed | 763d76e40 | verifier PASS（报告 w20-report.md：pi 源码逐项对照 9 类型 + 7 role 无遗漏/红性 3/3 含 legacy 删 4037 字符等价防线全线红/五决策全认可含 tsup 内联 L51298 实证）。pi 事实发现：compactionSummary/custom/branchSummary 双形态存储（message role + 专用 entry），reducer 两路径用例锁定。2 minor 移交 W21（history-rebuild-cache 过时注释顺带更新；fillToolCallOutput 生产共用勿误删）。设计事实：modelId 快照是 `Model` 对象需投影 `${provider}/${id}`（W7 builder 发现，同样适用 W8） |
-| W21 | 实时 feed 喂入 + 等价性断言升级 | pending | 962e51c5e | 依赖 W20（已 committed）；与 W18 串行警戒（同碰 event-adapter） |
+| W21 | 实时 feed 喂入 + 等价性断言升级 | committed (9bf7c9d45) | 962e51c5e | verifier PASS（报告 w21-report.md：四包全量 984/3111/3054/162 含 W9 补跑/红性双验证（丢 toolResult→等价红、跳 message→store 红）/四定案全维持——wire 上收 entry 形态、store 纯累积不投影（**W22 broadcast≡get_state 对账是硬前置**，ref 收敛项写入 W22 验收）、turnId 类型在不填（pi 无 turn 边界）、断言改 reducer 确定性）。entry_appended 段完好 + TODO(W18) 锚点。混合文件归属注记：event-interpreter W9 段与 U-adapter-1 随本 commit 入库。3 备忘：双喂收敛用例/TOPIC_TABLE 显式登记 message_end/场景 3 留 P3 gate |
 
 ## P4 wave 表（W22-W25）
 
