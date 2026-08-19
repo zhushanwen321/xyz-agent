@@ -426,7 +426,10 @@ export async function actionRun(
   // 平铺事故更严重。m6：先 registry.getPath（动态参数集来源——schema 即 SSOT），
   // not_found 优先返回；平铺检测报错带 Correct 正例纠正。
   const script = await deps.registry.getPath(name);
-  if (!script) {
+  // W4c：config-loader 的 toCachedMeta 对不可读/不存在文件返回 available:false 的
+  // stub（非 undefined），仅判 !script 会绕过 not_found → 空 sourceCode 假启动
+  //（W4b verifier 探针实测复现）。与下方 suggestions 分支的 wf.available 过滤口径对齐。
+  if (!script || !script.available) {
  // 模糊匹配建议。throw（W4）：pi 只对 execute throw 置 isError:true，
  // 返回值里的 isError 被 agent-loop 丢弃（agent-loop.js:453-483）——文案原样进 toolResult。
     const all = await deps.registry.loadAll();

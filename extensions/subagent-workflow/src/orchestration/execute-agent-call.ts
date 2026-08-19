@@ -48,7 +48,7 @@ const MAX_ATTEMPTS = 3;
  *
  * W4b：原 "stale context"/"stalecontext" 与 pi 真实文案零匹配（真实文案为
  * "This extension ctx is stale after session replacement or reload. ..."——
- * runner.ts:531，词序是 "ctx is stale" 而非 "stale context"），stale 分诊对
+ * runner.ts:544（dist runner.js:352），词序是 "ctx is stale" 而非 "stale context"），stale 分诊对
  * 真实文案失效。现对齐：
  * - "ctx is stale"：真实文案核心子串（词序修正）
  * - "stale after session replacement"：scheduler 已验证 marker（runtime.ts

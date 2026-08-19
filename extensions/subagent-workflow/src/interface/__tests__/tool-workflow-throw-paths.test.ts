@@ -78,6 +78,32 @@ describe("W4b: workflow tool 错误路径 throw 语义", () => {
     );
   });
 
+  it("W4c not_found：run 目标路径不可读（getPath 返回 available:false stub 而非 undefined）→ throw，不假启动", async () => {
+    // config-loader.toCachedMeta 对不存在/不可读文件返回 available:false 的空壳实体
+    // （非 undefined）——旧判定仅 !script 绕过 not_found，空 sourceCode 的 run 假启动
+    // （W4b verifier 探针实测复现）。registry 层真行为见 config-loader.ts:143-151。
+    const deps = makeDeps({
+      registry: {
+        getPath: vi.fn().mockResolvedValue({
+          name: "ghost-wf",
+          path: "/tmp/no-such-workflow.js",
+          available: false,
+          sourceCode: "",
+          meta: { description: "", parameters: undefined },
+          toExecutable: () => "",
+        }),
+        loadAll: vi.fn().mockResolvedValue([]),
+      },
+    });
+    const tool = captureTool(deps, { isProcessing: false });
+    await expect(
+      tool.execute("id", { action: "run", name: "/tmp/no-such-workflow.js" }, undefined, undefined, {}),
+    ).rejects.toThrow("Workflow '/tmp/no-such-workflow.js' not found.");
+    // 未假启动：runs 注册表不出现该 run
+    expect(deps.runs).toBeInstanceOf(Map);
+    expect((deps.runs as Map<string, unknown>).size).toBe(0);
+  });
+
   it("reentry-busy：guard 占用 → throw REENTRY_BUSY_MESSAGE，且 guard 状态不被污染", async () => {
     const guard: ReentryGuardRef = { isProcessing: true };
     const tool = captureTool(makeDeps(), guard);
