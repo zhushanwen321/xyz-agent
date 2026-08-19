@@ -11,7 +11,10 @@
     参数形态）；或 'sessions/' 路径段字面量。普通标识符（如 sessions Map 字段名）、注释、
     字符串文案普通提及不计入。
   - 写调用形态：openSync(path, 'a'/'w') / appendFile(Sync) / writeFile(Sync) /
-    atomicWrite 家族（含 atomicWriteAsync 同族 async 变体）。
+    atomicWrite 家族（含 atomicWriteAsync 同族 async 变体）/ createWriteStream
+    （流式写，无 flag 限定——默认 'w'，append 形态同属写；W5 补齐，此前该形态可
+    完全绕过。logger.ts 的 logs 常驻写流是合法用例：文件内 sessions token 仅存在于
+    注释，条件 A 不命中，无需豁免）。
   - 条件 B（内置豁免，写目标路径层级判定，命中任一则放行）：
     ① sidecar 家族四后缀（xyz 自有文件，登记表 §4 ⑤）：写目标语句含 '.meta.json' /
        '.preset.json' / '.project.json' / '.handoff.json' 字面量（filePath + '.meta.json'
@@ -49,8 +52,9 @@ allowlist（ALLOWLIST）：
     静态不可判定）——session-fork.ts:175 createForkedSessionFile 即此形态（调用点传
     getSessionsDir()，fork 文件内唯一 sessions token 在 JSDoc 注释）。该形态的守卫 =
     登记表「创建型唯一写入口」声明（§4 ⑥）+ S1 语义层。
-  - fd 型续写（writeSync(fd, …)）不在写调用清单——其源头 openSync('a') 已被拦截
-    （W11 前 session-file-utils 的 append 实现形态，该形态已随 W11 删除）。
+  - fd 型续写（writeSync(fd, …)）与流实例的 .write(chunk) 方法调用不在写调用清单——
+    其源头 openSync('a') / createWriteStream(path) 已被拦截（同根拦截口径；openSync 形态
+    随 W11 删除，createWriteStream 形态 W5 补入）。
   - 条件 B 可见性为「语句级 + 同函数单跳赋值链（最近同名赋值）」，更深数据流不可见
     （与 plan r5/r6 的单跳实现取向一致）；字符串字面量内的 API 名提及、正则字面量
     属剥离器/匹配器的已知盲区。
@@ -102,11 +106,15 @@ WRITE_CALL_PATTERNS = [
     ("appendFile(Sync)", re.compile(r"\bappendFile(?:Sync)?\s*\(")),
     ("writeFile(Sync)", re.compile(r"\bwriteFile(?:Sync)?\s*\(")),
     ("atomicWrite(家族)", re.compile(r"\batomicWrite(?:Async)?\s*\(")),
+    # createWriteStream：流式写形态（W5 补齐审计 #9 缺口），无 flag 限定（默认 'w'）。
+    # 写目标判定复用条件 A/B 框架：logger.ts 等合法用例靠「条件 A 不命中（sessions 仅
+    # 注释）」或 B② NON_SESSIONS_DERIVATIONS 豁免，无需 allowlist 条目。
+    ("createWriteStream", re.compile(r"\bcreateWriteStream\s*\(")),
 ]
 
 # 写目标首参标识符提取（用于同函数单跳赋值链回溯）
 TARGET_ARG_RE = re.compile(
-    r"\b(?:openSync|appendFile(?:Sync)?|writeFile(?:Sync)?|atomicWrite(?:Async)?)"
+    r"\b(?:openSync|appendFile(?:Sync)?|writeFile(?:Sync)?|atomicWrite(?:Async)?|createWriteStream)"
     r"\s*\(\s*([A-Za-z_$][\w$]*)\s*[,)]"
 )
 

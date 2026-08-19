@@ -22,6 +22,19 @@ import {
 } from '../apply-entry'
 import type { PiEntry, PiMessageEntry } from '../apply-entry'
 
+/**
+ * [W5] 读取 spread 保字段的 images（shared.ToolCall/Message 暂无 images 类型声明，
+ * 运行时窄化后读取——断言不裸 as）。形态：Array<{ data: string; mimeType: string }>。
+ */
+function readImagesField(obj: object): Array<{ data: string; mimeType: string }> | undefined {
+  const v = (obj as Record<string, unknown>).images
+  if (!Array.isArray(v)) return undefined
+  return v.map((x) => {
+    const r = x as Record<string, unknown>
+    return { data: String(r.data), mimeType: String(r.mimeType) }
+  })
+}
+
 // ── 测试数据工厂（真实形态：ISO timestamp / parentId 链 / uuid 风格 id）──────────
 
 function msgEntry(
@@ -67,6 +80,34 @@ describe('applyEntry —— entry 类型逐类型覆盖', () => {
       { type: 'skill', name: 'code-review', location: '/abs/SKILL.md' },
       { type: 'text', text: 'do it' },
     ])
+  })
+
+  it('message/user：content 含 image part → images 保字段不丢（W5，pi UserMessage content 可含 ImageContent）', () => {
+    const state = replayEntries([
+      msgEntry('e-user-img', {
+        role: 'user',
+        content: [
+          { type: 'text', text: '看这张图' },
+          { type: 'image', data: 'YmFzZTY0', mimeType: 'image/jpeg' },
+          { type: 'image', data: '', mimeType: '' }, // 双空块过滤
+        ],
+        timestamp: 1000,
+      }),
+    ])
+    expect(state.messages).toHaveLength(1)
+    const m = state.messages[0]
+    // text part 正常转 Segment（image 不混入文本）
+    expect(m.content).toEqual([{ type: 'text', text: '看这张图' }])
+    // image part → images 运行时字段（shared.Message 暂无类型声明，spread 保字段）
+    expect(readImagesField(m)).toEqual([{ data: 'YmFzZTY0', mimeType: 'image/jpeg' }])
+  })
+
+  it('message/user：无 image part → 不设 images 字段（既有消息形态不变）', () => {
+    const state = replayEntries([
+      msgEntry('e-user-plain', { role: 'user', content: [{ type: 'text', text: '纯文本' }], timestamp: 1000 }),
+    ])
+    expect(readImagesField(state.messages[0])).toBeUndefined()
+    expect('images' in state.messages[0]).toBe(false)
   })
 
   // ── message entry：assistant ─────────────────────────────────────
@@ -126,6 +167,53 @@ describe('applyEntry —— entry 类型逐类型覆盖', () => {
     expect(tc.outputRaw).toBe('\x1b[31mfailed\x1b[0m') // 原始 ANSI
     expect(tc.status).toBe('error')
     expect(tc.details).toEqual({ __gui__: { v: 1 } })
+  })
+
+  it('message/toolResult：content 含 image 块 → 回填 images（W5 live≡replay，对齐 runtime 版语义）', () => {
+    const state = replayEntries([
+      msgEntry('e-asst-img', {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'tc-img', name: 'read', arguments: { path: 'a.png' } }],
+        timestamp: 1000,
+      }),
+      msgEntry('e-tr-img', {
+        role: 'toolResult',
+        toolCallId: 'tc-img',
+        toolName: 'read',
+        content: [
+          { type: 'text', text: 'screenshot' },
+          { type: 'image', data: 'aWNn', mimeType: 'image/png' },
+          { type: 'image', data: '', mimeType: '' }, // 双空块过滤（对齐 runtime 版）
+        ],
+        timestamp: 2000,
+      }),
+    ])
+    expect(state.messages).toHaveLength(1)
+    const tc = state.messages[0].toolCalls![0]
+    // output 只含 text join（image 不混入文本，与 runtime normalizePiToolResult 逐字对齐）
+    expect(tc.output).toBe('screenshot')
+    expect(tc.status).toBe('completed')
+    expect(readImagesField(tc)).toEqual([{ data: 'aWNn', mimeType: 'image/png' }])
+  })
+
+  it('message/toolResult：纯 text content → 不设 images 字段（既有回填形态不变）', () => {
+    const state = replayEntries([
+      msgEntry('e-asst-plain', {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'tc-plain', name: 'read', arguments: { path: 'x' } }],
+        timestamp: 1000,
+      }),
+      msgEntry('e-tr-plain', {
+        role: 'toolResult',
+        toolCallId: 'tc-plain',
+        toolName: 'read',
+        content: [{ type: 'text', text: 'ok' }],
+        timestamp: 2000,
+      }),
+    ])
+    const tc = state.messages[0].toolCalls![0]
+    expect(readImagesField(tc)).toBeUndefined()
+    expect('images' in tc).toBe(false)
   })
 
   it('message/toolResult：窗口内无 preceding assistant → 收集为孤儿不产消息', () => {

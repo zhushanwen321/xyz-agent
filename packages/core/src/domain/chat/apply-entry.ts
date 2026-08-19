@@ -20,7 +20,9 @@
  * infra/pi/normalize-tool-result.ts（event-adapter 实时路径 hook 上下文消费）仍为两份：
  * core 不依赖 runtime（包依赖方向）。W21 起 core 版已导出（effects/registry 的
  * tool_call_end overlay 收口消费，输入语义 = toolResult message body），shared 收敛
- * 留待后续 wave 统一处理。
+ * 留待后续 wave 统一处理。W5（2026-08-20）images 提取差异已消除——两份行为对齐
+ * （此前 core 副本丢 toolResult content 的 ImageContent → 图片工具结果重开消失，
+ * 破 live≡replay；审计 #3，pi-assumption-remediation）。
  *
  * 本文件自包含约束（runtime tsup 打包 / renderer vite 消费双重入口）：
  * 只 import '@xyz-agent/shared'，不 import core 内其他模块（防 vue 依赖渗入 runtime bundle）。
@@ -145,21 +147,30 @@ function stripAnsi(text: string): string {
   return text.replace(ANSI_REGEX, '')
 }
 
-/** 归一后的工具结果（镜像 runtime NormalizedToolResult）。 */
+/** 归一后的工具结果（镜像 runtime NormalizedToolResult；W5 起含 images，行为对齐）。 */
 export interface NormalizedToolResult {
   output: string
   outputRaw?: string
+  /**
+   * 提取出的 image 块（来自 content-array 的 type==='image' 块，过滤空 data）。
+   * W5 对齐 runtime 版：pi ToolResultMessage.content 是 (TextContent | ImageContent)[]
+   * （pi-ai types.d.ts ToolResultMessage），extension 工具可返回 image block。
+   */
+  images?: Array<{ data: string; mimeType: string }>
 }
 
 /**
- * 工具产出三态归一（string / content block 数组 / 对象 → output + outputRaw）。
+ * 工具产出三态归一（string / content block 数组 / 对象 → output + outputRaw + images）。
  * [W21] 导出供 effects/registry 消费（tool_call_end 的 entry.message.content 是原始
  * 产出——与 pi 持久化 toolResult entry 同构，归一化在消费侧做）；本文件 reducer 的
  * computeToolCallFill 同源调用。
+ * [W5] content-array 分支的 image 块提取与 runtime 版逐字对齐（images 差异消除，
+ * 见文件头分叉注释）。
  */
 export function normalizePiToolResult(raw: unknown): NormalizedToolResult {
   let output: string
   let outputRaw: string | undefined
+  let images: Array<{ data: string; mimeType: string }> | undefined
 
   if (typeof raw === 'string') {
     output = stripAnsi(raw)
@@ -172,13 +183,18 @@ export function normalizePiToolResult(raw: unknown): NormalizedToolResult {
       .join('\n')
     output = stripAnsi(rawText)
     if (output !== rawText) outputRaw = rawText
+    const imageBlocks = contentArr
+      .filter((c) => c.type === 'image')
+      .map((c) => ({ data: String(c.data ?? ''), mimeType: String(c.mimeType ?? '') }))
+      .filter((img) => img.data !== '' || img.mimeType !== '')
+    if (imageBlocks.length > 0) images = imageBlocks
   } else if (raw != null) {
     output = JSON.stringify(raw)
   } else {
     output = ''
   }
 
-  return { output, outputRaw }
+  return { output, outputRaw, images }
 }
 
 // ── user 消息 skill block 剖离（迁移自 message-converter parseSkillBlock）──────────
@@ -234,6 +250,9 @@ interface PiContentPart {
   type: string
   text?: string
   thinking?: string
+  /** [W5] image 块（pi ImageContent：base64 data + mimeType），user 消息可含。 */
+  data?: string
+  mimeType?: string
   id?: string
   name?: string
   arguments?: Record<string, unknown>
@@ -264,6 +283,11 @@ function convertMessageBody(
   const thinking: ThinkingBlock[] = []
   const toolCalls: ToolCall[] = []
   const contentBlocks: ContentBlock[] = []
+  // [W5] user 消息 image part 收集（pi UserMessage.content 可为 (TextContent | ImageContent)[]
+  // ——pi-ai types.d.ts UserMessage；xyz 发送路径走 segments 路径模式不经此形态，但
+  // extension sendMessage images 通道 / 外部手写 session 文件可达，此前静默丢弃无 warn。
+  // Segment image 是磁盘路径形态，与 base64 ImageContent 不可互转 → 保 images 字段不丢）。
+  const imageParts: Array<{ data: string; mimeType: string }> = []
   // text 块只 push 一次的哨兵（多次 text part 只累加不重复 push，perf-w20 微项 2 同优化）。
   let hasTextBlock = false
 
@@ -295,6 +319,11 @@ function convertMessageBody(
         startTime: body.timestamp ?? fallbackTs,
       })
       contentBlocks.push({ type: 'toolCall', refId: tcId, contentIndex: i })
+    } else if (part.type === 'image') {
+      // 提取语义与 normalizePiToolResult 的 image 块一致（data/mimeType String 归一，
+      // 过滤双空）；不进 contentBlocks（ContentBlockType 无 image，保序渲染归后续 wave）。
+      const img = { data: String(part.data ?? ''), mimeType: String(part.mimeType ?? '') }
+      if (img.data !== '' || img.mimeType !== '') imageParts.push(img)
     }
   }
 
@@ -309,6 +338,10 @@ function convertMessageBody(
     ...(thinking.length > 0 && { thinking }),
     ...(toolCalls.length > 0 && { toolCalls }),
     ...(contentBlocks.length > 0 && { contentBlocks }),
+    // [W5] user 消息 image part → images 保字段：shared.Message 暂无 images 类型声明
+    //（W5 边界未动 shared），spread 保运行时字段（数据不丢优先），渲染消费与类型
+    // 声明待后续 wave shared 加字段后收口。
+    ...(imageParts.length > 0 && { images: imageParts }),
     // [W6 #9 G5] 历史路径还原 fileChanges（write/edit 工具静态提取，AC-9.1/9.3）
     ...(body.role === 'assistant' && toolCalls.length > 0 && (() => {
       const fc = extractHistoryFileChanges(toolCalls)
@@ -347,12 +380,14 @@ function computeToolCallFill(body: PiMessageBody): {
   outputRaw?: string
   isError: boolean
   details?: Record<string, unknown>
+  /** [W5] toolResult content 的 ImageContent 块（live≡replay：此前仅实时路径可见）。 */
+  images?: Array<{ data: string; mimeType: string }>
 } {
-  const { output, outputRaw } = normalizePiToolResult(body)
+  const { output, outputRaw, images } = normalizePiToolResult(body)
   const isError = body.isError === true
   // F1 透传 details（含 __gui__），排除数组形态（迁移前显式判定，规则 7.5 可重开恢复）。
   const details = isPlainRecord(body.details) ? body.details : undefined
-  return { output, outputRaw, isError, details }
+  return { output, outputRaw, isError, details, images }
 }
 
 // ── reducer 本体 ────────────────────────────────────────────────────
@@ -396,6 +431,10 @@ export function applyEntry(state: ChatViewState, entry: PiEntry): ChatViewState 
               ...(fill.outputRaw !== undefined && { outputRaw: fill.outputRaw }),
               ...(fill.isError && { status: 'error' as const }),
               ...(fill.details !== undefined && { details: fill.details }),
+              // [W5] images 保字段：shared.ToolCall 暂无 images 类型声明（W5 边界未动
+              // shared），spread 条件属性保运行时字段——数据不丢优先（live≡replay），
+              // 类型声明与渲染消费待后续 wave shared 加字段后收口。
+              ...(fill.images !== undefined && { images: fill.images }),
             }
             const updatedHost: Message = { ...host, toolCalls: tcs.map((t) => (t === matched ? filled : t)) }
             const messages = state.messages.map((m, idx) => (idx === last ? updatedHost : m))
