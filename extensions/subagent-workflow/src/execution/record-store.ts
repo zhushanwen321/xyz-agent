@@ -1053,6 +1053,12 @@ export class RecordStore {
       error: r.error,
       sessionFile: r.sessionFile,
       round: r.round,
+      // [E2E 实测抓漏] 缺这两行时 chatMode/resumable 在 recordToSubagent 处被丢弃，
+      // entry 序列化后无此字段 → renderer isDone（需显式 chatMode===false）恒不成立，
+      // 完成态 one-shot 永远显示 waiting。单测 schema 断言曾因内存对象保留 undefined
+      // 键名而未拦截（真实 JSONL 丢 undefined 值），故 schema 测试改为序列化后断言。
+      chatMode: r.chatMode,
+      resumable: r.resumable,
       // [review round2] worktree 隔离标志：内存源有 handle 或跨重启重建带 hadWorktree 均为 true。
       worktree: r.worktreeHandle !== undefined || r.hadWorktree === true,
     };

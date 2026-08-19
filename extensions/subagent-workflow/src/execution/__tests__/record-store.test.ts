@@ -38,6 +38,8 @@ function makeRecord(over: Partial<ExecutionRecord> = {}): ExecutionRecord {
     task: "t",
     startedAt: 1000,
     rootSessionId: "sess-current",
+    // 对齐生产 register 路径（subagent-service createRecord：one-shot 显式 false）
+    chatMode: false,
   });
   return { ...base, ...over };
 }
@@ -922,14 +924,16 @@ describe("RecordStore", () => {
       expect(appended).toHaveLength(1);
       // 写点字面量与 record-entry.ts 常量等值（钉住双源一致性）
       expect(appended[0]?.customType).toBe(SUBAGENT_RECORD_CUSTOM_TYPE);
-      const data = asEntryData(appended[0]?.data);
-      // schema 完整性：27 字段（v + SubagentRecord 持久化字段全集，无缺无余；
-      // residual-fixes 增 chatMode/resumable 执行态细分判据）
+      // [E2E 实测教训] 必须先 JSON 序列化再断言：appendEntry 捕获的是内存对象，
+      // undefined 值的键名仍在（旧 27-key 断言因此漏检 recordToSubagent 丢
+      // chatMode 的 bug）；真实 JSONL 会丢 undefined 值键，此处对齐生产行为。
+      const data = asEntryData(JSON.parse(JSON.stringify(appended[0]?.data)));
+      // register 时点序列化存活字段（undefined 值字段按生产序列化丢弃）：
+      // chatMode 必须显式在场（one-shot=false）——renderer isDone 判据依赖它。
       expect(Object.keys(data).sort()).toEqual([
-        "agent", "chatMode", "closedReason", "depth", "displayItems", "endedAt", "error", "eventLog",
-        "id", "mode", "model", "parentRecordId", "patchFile", "result", "resumable", "rootSessionId",
-        "round", "sessionFile", "slug", "startedAt", "status", "task", "thinkingLevel",
-        "totalTokens", "turns", "v", "worktree",
+        "agent", "chatMode", "depth", "displayItems", "eventLog",
+        "id", "mode", "model", "rootSessionId", "round", "startedAt",
+        "status", "task", "totalTokens", "turns", "v", "worktree",
       ]);
       expect(data).toMatchObject({
         v: 1,
@@ -940,6 +944,7 @@ describe("RecordStore", () => {
         mode: "sync",
         startedAt: 1000,
         rootSessionId: "sess-current",
+        chatMode: false,
         turns: 0,
         totalTokens: 0,
         model: "m",
