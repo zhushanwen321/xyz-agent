@@ -520,7 +520,8 @@ export function extractHandedOff(filePath: string): string | undefined {
  * 同目录 rename 是 POSIX 原子操作，无中间态可见；rename 前崩溃残留的
  * `.tmp-migrate-*.jsonl` 由 scanPiSessionsFromDisk 按文件名显式排除
  * （isScannableSessionFile——scanner 按内容识别 session 不按文件名，不过滤会产生
- * 同 sessionId 双条目，见该函数注释）。
+ * 同 sessionId 双条目，见该函数注释）；残留清理由三处机制承接（见
+ * cleanupMigrateResidues）：rename 失败本函数回滚删除 + 附着前清扫 + delete 链清扫。
  *
  * @param filePath    原 session JSONL 绝对路径（内容被原子覆盖，路径不变）
  * @param transformed 变换后的完整 JSONL 文本
@@ -530,7 +531,44 @@ export function normalizeSessionFileInPlace(filePath: string, transformed: strin
   // R1 检查的豁免锚点 = '.tmp-migrate-' 字面量后缀，经写目标单跳赋值链回溯判定）
   const tmpPath = join(dirname(filePath), basename(filePath) + '.tmp-migrate-' + Date.now() + '.jsonl')
   writeFileSync(tmpPath, transformed, 'utf-8')
-  renameSync(tmpPath, filePath)
+  try {
+    renameSync(tmpPath, filePath)
+  } catch (e) {
+    // rename 失败回滚（差距复审 suggestion 6）：删除刚写的临时文件不留孤儿——原文件
+    // 未被触碰仍完整，重试归一化即可；回滚删除自身失败（极端：目录权限突变）时仅
+    // 残留一个被 scanner 排除的孤儿，附着前清扫 / delete 链清扫兜底。
+    try { unlinkSync(tmpPath) } catch { void 0 }
+    throw e
+  }
+}
+
+/**
+ * 清扫该 session 文件的 `.tmp-migrate-*.jsonl` 残留（差距复审 suggestion 6）。
+ *
+ * 残留来源 = normalizeSessionFileInPlace 在 writeFileSync 与 renameSync 之间崩溃
+ * （或回滚删除失败的极端场景）。残留不被 scanner 收录（isScannableSessionFile 排除，
+ * 不会错位附着），但属永久磁盘垃圾，本函数在两个自然时机将其回收：
+ * ① 附着前（normalizeInactiveSessionFileIfNeeded 顶部，restore / 非活跃 rename 共用）
+ * ——此刻本会话无归一化在途（restore 已销毁同 id 会话），同 basename 的残留必然 stale；
+ * ② delete 链（与 sidecar 四后缀清理同点）——session 已删，残留随之清走。
+ *
+ * best-effort：目录列举失败 / 单个删除失败静默跳过（不阻塞附着/删除主流程）；
+ * 只删「basename 前缀精确匹配 + .jsonl 后缀」的文件，不碰其他 session 的文件。
+ */
+export function cleanupMigrateResidues(filePath: string): void {
+  const dir = dirname(filePath)
+  const prefix = basename(filePath) + '.tmp-migrate-'
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return
+  }
+  for (const name of names) {
+    if (name.startsWith(prefix) && name.endsWith('.jsonl')) {
+      try { unlinkSync(join(dir, name)) } catch { void 0 }
+    }
+  }
 }
 
 // ── Session 扫描 ─────────────────────────────────────────────

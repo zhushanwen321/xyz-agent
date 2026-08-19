@@ -102,6 +102,9 @@ function makeEnv(opts: { switchSessionImpl?: (path: string) => Promise<void> } =
     invalidateScanCache: vi.fn(),
     persistPresetBinding: vi.fn(),
     persistProjectBinding: vi.fn(),
+    // delete 链（S6 清扫用例）：trash 走 mock（文件本体不真删，清扫断言不依赖它）
+    trash: vi.fn(async () => undefined),
+    invalidateMetaCache: vi.fn(),
   } as unknown as ISessionStore
   const workspaceService = { record: vi.fn() } as unknown as WorkspaceService
 
@@ -321,5 +324,86 @@ describe('W1 restore/fork 直附着正式文件（F1/F2/F3）', () => {
     const forkedHeader = JSON.parse(readFileSync(attachedPath, 'utf-8').split('\n')[0]!)
     expect(forkedHeader.cwd).toBe(homedir())
     expect(forkedHeader.cwd).not.toBe(deadCwd)
+  })
+})
+
+describe('S6 归一化残留清理（差距复审 suggestion 6）', () => {
+  let dir: string
+  let env: ReturnType<typeof makeEnv>
+  let filePath: string
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setMigrationGate(Promise.resolve())
+    env = makeEnv()
+    dir = mkdtempSync(join(tmpdir(), 's6-attach-'))
+    filePath = join(dir, '2026-08-19T00-00-00-000Z_sess-s6.jsonl')
+    currentSourceFile.value = filePath
+    sessionsDirMock.value = dir
+  })
+
+  afterEach(() => {
+    setMigrationGate(Promise.resolve())
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  function tmpMigrateLeftovers(): string[] {
+    return readdirSync(dir).filter(f => f.includes('.tmp-migrate-'))
+  }
+
+  /** 会话文件行集（id 固定 sess-s6，makeLines 本文件上方已有 sess-w1 版本，此处自备）。 */
+  function s6Lines(cwd: string, opts: { sessionEnd?: boolean } = {}): string[] {
+    const lines = [
+      JSON.stringify({ type: 'session', version: 3, id: 'sess-s6', timestamp: '2026-08-19T00:00:00.000Z', cwd }),
+      JSON.stringify({ type: 'message', id: 'u1', parentId: null, timestamp: '2026-08-19T00:00:01.000Z', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } }),
+    ]
+    if (opts.sessionEnd) {
+      lines.push(JSON.stringify({ type: 'session_end', outcome: 'done', timestamp: '2026-08-19T00:00:03.000Z' }))
+    }
+    return lines
+  }
+
+  it('S6-1: F2 直附着前清扫——正常文件 + 预置崩溃残留 → restore 后残留消失、文件零改写', async () => {
+    const content = s6Lines(dir).join('\n') + '\n'
+    writeFileSync(filePath, content, 'utf-8')
+    // 模拟上次进程在 write 与 rename 之间崩溃留下的残留（合法 session 内容、同 basename）
+    const residue = `${filePath}.tmp-migrate-1787139239905.jsonl`
+    writeFileSync(residue, content, 'utf-8')
+    expect(tmpMigrateLeftovers().length).toBe(1)
+
+    await env.lifecycle.restoreSession('sess-s6')
+
+    expect(tmpMigrateLeftovers()).toEqual([])
+    expect(readFileSync(filePath, 'utf-8')).toBe(content)
+    expect(env.switchCalls).toEqual([filePath])
+  })
+
+  it('S6-2: F3 归一化前清扫——legacy 文件 + 预置旧残留 → 归一化成功且新旧残留都不剩', async () => {
+    writeFileSync(filePath, s6Lines(dir, { sessionEnd: true }).join('\n') + '\n', 'utf-8')
+    writeFileSync(`${filePath}.tmp-migrate-1111111111111.jsonl`, 'stale\n', 'utf-8')
+
+    await env.lifecycle.restoreSession('sess-s6')
+
+    // 旧残留被清扫 + 本次归一化的临时文件被 rename 消费 → 目录零残留
+    expect(tmpMigrateLeftovers()).toEqual([])
+    // 归一化本身仍正确：session_end 被 strip
+    expect(readFileSync(filePath, 'utf-8')).not.toContain('session_end')
+    expect(env.switchCalls).toEqual([filePath])
+  })
+
+  it('S6-3: delete 链清扫——session 删除时残留与 sidecar 一并清走', async () => {
+    writeFileSync(filePath, s6Lines(dir).join('\n') + '\n', 'utf-8')
+    writeFileSync(`${filePath}.tmp-migrate-2222222222222.jsonl`, 'stale\n', 'utf-8')
+    writeFileSync(`${filePath}.meta.json`, '{"outcome":"done"}', 'utf-8')
+    // 另一个 session 的残留：不被误删（basename 前缀精确匹配）
+    const otherResidue = join(dir, '2026-08-19T00-00-00-000Z_sess-other.jsonl.tmp-migrate-3333333333333.jsonl')
+    writeFileSync(otherResidue, 'other\n', 'utf-8')
+
+    await env.lifecycle.delete('sess-s6')
+
+    expect(env.sessionStore.trash).toHaveBeenCalledWith(filePath)
+    expect(readdirSync(dir)).not.toContain('2026-08-19T00-00-00-000Z_sess-s6.jsonl.tmp-migrate-2222222222222.jsonl')
+    expect(readdirSync(dir)).not.toContain('2026-08-19T00-00-00-000Z_sess-s6.jsonl.meta.json')
+    expect(readdirSync(dir)).toContain('2026-08-19T00-00-00-000Z_sess-other.jsonl.tmp-migrate-3333333333333.jsonl')
   })
 })

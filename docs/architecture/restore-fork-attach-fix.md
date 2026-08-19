@@ -143,7 +143,7 @@ F3 做两件事（按需）：strip 全部 session_end 行（复用 `stripSessio
 
 - 长期架构合理性：**路径不变 = 按路径关联的一切都不用迁移**——sidecar 四后缀（`.meta.json` 等，与主文件同路径派生）、fork 血缘指针（header 的 `parentSession` 指向源文件路径）、scanner（无双文件窗口）、`deleteByCwd`。归一化是一次性动作，执行后收敛到 F2，无长期残留机制。
 - 短期实现成本：低——写临时名 + rename 两步，变换复用现有两个纯函数。
-- 风险与对策：rename 瞬间的崩溃窗口（写完临时名、rename 前崩溃）残留 `.tmp-migrate-*.jsonl`——由 `scanPiSessionsFromDisk` 按文件名显式排除（`isScannableSessionFile`，W1 verifier F1 修复：scanner 原本按内容识别不按文件名，残留会产生同 id 双条目错位附着，「天然忽略」是错误声明，已改为机制保证）；并发持有——restore 语义天然满足 inactive（restoreSession 开头已 detach/destroy 同 id 会话，:466-471）。**已知接受的交错窗口（对抗式审查 S3）**：`withEphemeralPi` 以 `ephemeral-*` id 附着他人会话文件（如非活跃改名），若恰在 rename 瞬间 in-flight，理论上存在交错——触发需要「restore 同一文件 + 并发 ephemeral 操作同一文件 + cwd 死路径」三重叠加且窗口秒级，现状 tmp 管线有同类交错；接受现状风险不改（守卫升级留给未来实际发生时再议，不为假想敌加机制）。
+- 风险与对策：rename 瞬间的崩溃窗口（写完临时名、rename 前崩溃）残留 `.tmp-migrate-*.jsonl`——双保险：scanner 按文件名显式排除（`isScannableSessionFile`，W1 verifier F1 修复：scanner 原本按内容识别不按文件名，残留会产生同 id 双条目错位附着，「天然忽略」是错误声明，已改为机制保证）+ **残留清理三机制（差距复审 suggestion 6 实施）**：rename 失败时 `normalizeSessionFileInPlace` 回滚删除刚写的临时文件 / 附着前 `cleanupMigrateResidues` 清扫同 basename 旧残留（F2/F3 共用入口）/ delete 链与 sidecar 同点清扫；并发持有——restore 语义天然满足 inactive（restoreSession 开头已 detach/destroy 同 id 会话，:466-471）。**已知接受的交错窗口（对抗式审查 S3）**：`withEphemeralPi` 以 `ephemeral-*` id 附着他人会话文件（如非活跃改名），若恰在 rename 瞬间 in-flight，理论上存在交错——触发需要「restore 同一文件 + 并发 ephemeral 操作同一文件 + cwd 死路径」三重叠加且窗口秒级，现状 tmp 管线有同类交错；接受现状风险不改（守卫升级留给未来实际发生时再议，不为假想敌加机制）。
 
 **方案 B：新文件 + 旧文件 trash（否决）**
 
@@ -237,4 +237,4 @@ fork:
 2. **helper 落独立模块 `session-attach-assert.ts`**（原定 process-manager.ts）：services 侧 import process-manager 新符号会把 rpc-client 传递链带进 services 模块面，撞既有单测模块级 vi.mock（误伤 13 用例）；独立零依赖模块 + process-manager re-export 保持「helper 可从 process-manager 引用」口径。
 3. **W1 verifier F1：scanner 过滤从声明变机制**——「崩溃残留 scanner 天然忽略」被探针证伪（scanner 按内容识别，残留产生同 id 双条目错位附着）→ `isScannableSessionFile` 收口 `scanPiSessionsFromDisk` 两处枚举点，三处「天然忽略」声明（源码注释 / 登记表 / 本文档 §3.3）全部改为机制表述。
 4. **W2 首验 5 mock 失败裁决**：两个既有测试 mock 的 `getState` 返回固定假路径（不跟随 switchSession 实参）恰好构成 I1 分裂被断言正确 throw——修 mock 语义（跟随实参 = 真实 pi 行为）而非弱化断言；授权范围记录于 W2 验收流程。
-5. **实施后差距复审（reviewer 对抗审查，2026-08-19 深夜）**：1 must-fix（ADR-0063 I1 未如实记录跳过分支 ③）+ 6 suggestion 全部处置——must-fix 与 5 条文档/注释回写本 commit 落地；`.tmp-migrate-` 残留无清理机制（rename 失败无回滚删除、delete 链不清扫——scanner 已排除，纯磁盘垃圾，触发窗口 = 写临时名后崩溃）按最小代码原则记录为观察项不实现（计划 ledger）。
+5. **实施后差距复审（reviewer 对抗审查，2026-08-19 深夜）**：1 must-fix（ADR-0063 I1 未如实记录跳过分支 ③）+ 6 suggestion 全部实施——must-fix 与 5 条文档/注释回写随复审 commit（4a8936e26）落地；**suggestion 6（`.tmp-migrate-` 残留清理）随后实施**（用户指示）：`normalizeSessionFileInPlace` rename 失败回滚删除 + `cleanupMigrateResidues` 附着前清扫（F2/F3 共用入口 `normalizeInactiveSessionFileIfNeeded` 顶部，renameSession 非活跃分支同沾）+ delete 链与 sidecar 同点清扫；单元测试 `test/session-file-utils-migrate-cleanup.test.ts`（4 用例）+ 集成用例 `test/session-lifecycle-attach.test.ts` S6 describe（3 用例：F2 前清扫 / F3 前清扫 / delete 链清扫含不误删他人残留）。观察项 ② 随之关闭；观察项 ①（helper 跳过分支 ③ 收紧）维持 deferred（W2 verifier 既有裁决，非 reviewer 条目）。

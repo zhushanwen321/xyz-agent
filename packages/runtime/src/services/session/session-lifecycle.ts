@@ -25,7 +25,7 @@ import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND } from '../../utils/errors.js'
 import { createForkedSessionFile } from './session-fork.js'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
-import { normalizeSessionFileInPlace } from '../../infra/pi/session-file-utils.js'
+import { normalizeSessionFileInPlace, cleanupMigrateResidues } from '../../infra/pi/session-file-utils.js'
 import { assertPiSessionFile } from '../../infra/pi/session-attach-assert.js'
 
 /**
@@ -442,6 +442,8 @@ export class SessionLifecycle {
         try { unlinkSync(session.sessionFilePath + '.preset.json') } catch { void 0 }
         try { unlinkSync(session.sessionFilePath + '.project.json') } catch { void 0 }
         try { unlinkSync(session.sessionFilePath + '.handoff.json') } catch { void 0 }
+        // 清理归一化残留 .tmp-migrate-*.jsonl（差距复审 suggestion 6，与 sidecar 同点 best-effort）
+        cleanupMigrateResidues(session.sessionFilePath)
         // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
         // 派生缓存，非已删的 label 影子缓存）中的 stale 条目（避免无界增长）
         this.sessionStore.invalidateMetaCache(session.sessionFilePath)
@@ -456,6 +458,8 @@ export class SessionLifecycle {
       try { unlinkSync(target.filePath + '.preset.json') } catch { void 0 }
       try { unlinkSync(target.filePath + '.project.json') } catch { void 0 }
       try { unlinkSync(target.filePath + '.handoff.json') } catch { void 0 }
+      // 清理归一化残留 .tmp-migrate-*.jsonl（差距复审 suggestion 6，与 sidecar 同点 best-effort）
+      cleanupMigrateResidues(target.filePath)
       // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
       // 派生缓存，非已删的 label 影子缓存）中的 stale 条目（避免无界增长）
       this.sessionStore.invalidateMetaCache(target.filePath)
@@ -535,6 +539,10 @@ export class SessionLifecycle {
    *                    header 读出的 ScannedSession.cwd）
    */
   private normalizeInactiveSessionFileIfNeeded(filePath: string, cwdFellBack: boolean): void {
+    // 附着前清扫该文件的 .tmp-migrate-* 崩溃/失败残留（差距复审 suggestion 6；F2/F3
+    // 两路都过此处——F2 判定未命中会提前 return，清扫必须在其前）。此刻无归一化在途
+    //（restore 已销毁同 id 会话），同 basename 残留必然 stale，best-effort 清除。
+    cleanupMigrateResidues(filePath)
     const raw = readFileSync(filePath, 'utf-8')
     const needsNormalize = containsSessionEndLine(raw) || cwdFellBack
     if (!needsNormalize) return
