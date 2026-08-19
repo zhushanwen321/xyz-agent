@@ -149,6 +149,11 @@ export interface SubagentServiceInit {
 export interface SubagentServiceSessionInit {
   pi: PiLike;
   sessionId: string;
+  /** 主 session 文件路径（session_start 解析后直传）。
+   *  [E2E 实测] 不能经闭包缓存（getCachedMainSessionFile）读：jiti 多实例分裂下闭包
+   *  变量不跨实例共享，恢复逻辑读到的是滞后一个事件的值（读到未 flush 的新 session
+   *  ENOENT 路径，entry-born 孤儿整段漏判）。 */
+  mainSessionFile?: string;
   /** UI streaming sink（ctx.ui.setWidget），用于 background text_delta 转发。 */
   streamSink?: StreamSink;
   /** 主进程运行模式（W4 守卫：headless 不注入 ask_user RPC 提示词）。
@@ -217,6 +222,8 @@ export class SubagentService {
   private pi: PiLike | null = null;
   /** 当前 Pi session ID（本进程 pi session，事件路由等用；record 过滤不用它）。initSession 时注入。 */
   private sessionId: string | null = null;
+  /** 主 session 文件（initSession 按值直传——jiti 多实例下闭包缓存不可靠，见 SessionInit 注释）。 */
+  private mainSessionFile: string | undefined;
   /** 所属根 session ID（record 归属过滤用）。根进程 = sessionId（自己是 root）；
    *  子进程 = env PI_SUBAGENT_ROOT_SESSION_ID 贯穿的真 ROOT（initSession 读取）。
    *  与 sessionId 正交：sessionId 是本进程 pi session（事件路由等），sessionRootId 是所属根
@@ -323,6 +330,8 @@ export class SubagentService {
     // 上报通道永远是 no-op，事故排查依然静默。
     this.store.setPi(this.pi);
     this.sessionId = init.sessionId;
+    // 主 session 文件按值直传（jiti 多实例下闭包缓存不可靠，见接口注释）。
+    this.mainSessionFile = init.mainSessionFile;
     this.streamSink = init.streamSink ?? null;
     this.isIdleFn = init.isIdle;
     // 读取 mode（W4 守卫透传给 session-runner）+ session 级 handler 覆盖。
@@ -397,7 +406,7 @@ export class SubagentService {
       });
     }
     try {
-      this.store.recoverEntryOnlyOrphans(this.getMainSessionFile?.(), this.sessionRootId ?? undefined);
+      this.store.recoverEntryOnlyOrphans(this.mainSessionFile, this.sessionRootId ?? undefined);
     } catch (err) {
       logger.warn("[subagents] entry-only orphan recovery failed", {
         reason: err instanceof Error ? err.message : String(err),

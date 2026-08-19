@@ -399,10 +399,11 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     // SR-3: 无论 new 还是 existing（/resume /fork 复用），session_start 都必须注入 handler
     service.setUiRequestHandler(uiRequestHandler);
 
-    // 主 session 文件缓存必须先于下方 initSession 赋值——initSession 末尾的孤儿恢复
-    //（recoverEntryOnlyOrphans）经 getMainSessionFile 读它。按 sessionId 解析为准
-    //（getSessionFile() 在 attach 场景会返回前一 session 的文件，E2E 实测），
-    // 未 flush 的新 session 回退 getSessionFile()。
+    // 主 session 文件：按 sessionId 解析（getSessionFile() 在 attach 场景会返回前一
+    // session 的文件，E2E 实测），未 flush 的新 session 回退 getSessionFile()。
+    // 值直传 initSession——jiti 多实例分裂下闭包缓存（cachedMainSessionFile）不跨
+    // 实例共享，恢复逻辑经缓存读会拿到滞后一个事件的值（E2E 实测 ENOENT 漏判）；
+    // 缓存本身保留给既有 getter 消费者（fork source 解析）。
     cachedMainSessionFile =
       resolveMainSessionFileById(ctx.sessionManager.getSessionId()) ??
       ctx.sessionManager.getSessionFile() ??
@@ -411,6 +412,7 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     service.initSession({
       pi,
       sessionId: ctx.sessionManager.getSessionId(),
+      mainSessionFile: cachedMainSessionFile,
       // 注入 ctx.ui.setWidget 作为 streaming sink（只绑方法，不持有整个 ctx）。
       // background subagent 执行期间，text_delta 经 SubagentStream 合并后由此通道转发。
       // [W1 修复] ctx.mode === 'rpc' 守卫：TUI/json/print 下 streamSink = undefined（无 widget 噪音），

@@ -551,7 +551,7 @@ export class RecordStore {
     try {
       content = fs.readFileSync(mainSessionFile, "utf-8");
     } catch {
-      return; // 主文件不可读：静默跳过（best-effort 恢复，不阻断 session_start）
+      return; // 主文件不可读（含新 session 未 flush 的 ENOENT）：静默跳过（best-effort 恢复）
     }
     const lastById = new Map<string, Record<string, unknown>>();
     for (const line of content.split("\n")) {
