@@ -1,7 +1,7 @@
 // Client → Runtime message types
 
 import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig, ScannedSkillInfo, ScannedAgentInfo, BuiltinProviderTemplate, ProviderId } from './provider'
-import type { SessionGroup, SessionSummary, SessionStatus } from './session'
+import type { SessionGroup, SessionSummary, SessionStatus, SessionDataSource } from './session'
 import type { FileChange, ChangeSetStatus, Message } from './message'
 import type { PiMessageEntry, PiToolCallEntryForm } from './pi-entry'
 import type { FileNode } from './file-tree'
@@ -1503,8 +1503,9 @@ export function isSessionSummary(value: unknown): value is SessionSummary {
  * createSessionStore.applySnapshot 以此为单 session 快照入参（session store 唯一写入口）。
  *
  * 合并语义 = D1b 整字段覆盖：字段值非 undefined 即覆盖现值，含显式空值（owner 声明空即空）；
- * undefined = 快照未涉及该字段，保留现值。磁盘扫描占位值（modelId:''/tokenCount:0）不覆盖
- * 真值的守卫在 applySnapshot 合并策略留挂点（W15 交付）。
+ * undefined = 快照未涉及该字段，保留现值。W15 起按来源分流（SessionDataSource）：磁盘扫描
+ * 来源快照（source='scan'）的占位空值（modelId:''/tokenCount:0）在 core 合并侧被守卫，
+ * 不覆盖已知真值；owner 来源（缺省）显式空值仍正常覆盖——两条空值语义并存不混用。
  *
  * 字段 → runtime 来源对照（W12 后 publish payload）：
  * - label：session.renamed（pi 改名）/ config.sessions（整表 SessionSummary.label）
@@ -1535,6 +1536,12 @@ export interface SessionViewSnapshot {
   commands?: ServerMessageMap['session.commands']['commands']
   /** 累计 token 数（SessionSummary 同名字段；磁盘扫描占位值 0 是 W15 守卫对象）。 */
   tokenCount?: number
+  /**
+   * 快照数据来源（W15 守卫判定依据）：'scan' = 磁盘扫描占位快照（modelId/tokenCount
+   * 的空值是占位，core mergeViewSnapshot 守卫其不覆盖已知真值）；缺省 = owner
+   * （runtime 实例广播 / 乐观更新，D1b 整字段覆盖含显式空值）。
+   */
+  source?: SessionDataSource
 }
 
 /** 运行时检查值是否为 SubagentRecord（含必需字段 subagentId/agent/slug/task/status）。 */

@@ -65,8 +65,11 @@ export function createSessionStore() {
    * 乐观更新形态：本地入参只带乐观字段（如 rename 先显示 { label }），权威确认经 runtime
    * 广播回流（config.sessions 整表 / state_changed 单条），同一入口重复写入幂等。
    *
-   * [W15 挂点] 磁盘占位值守卫（扫描来源快照的 modelId:''/tokenCount:0 占位值不覆盖
-   * 实例/广播真值）将接入 mergeViewSnapshot 合并策略——本 wave 仅收口挂点，守卫实现 W15 交付。
+   * [W15 守卫] 磁盘占位值守卫已在 mergeViewSnapshot 落地（扫描来源快照的 modelId:''/
+   * tokenCount:0 占位值不覆盖实例/广播真值——#2 空串覆盖事故的最后防线，详该函数注释）。
+   * 历史：三入口时代 setGroups 整表覆盖曾把实例广播入列表的真值抹回磁盘扫描的空串
+   * （updateSessionState 局部更新正是当时为避开此坑而设），W13 收敛单入口 + 本守卫
+   * 后按来源分流根治。
    */
   function applySnapshot(id: string, snapshot: SessionViewSnapshot): void
   function applySnapshot(listSnapshot: { groups: SessionGroup[] }): void
@@ -90,16 +93,28 @@ export function createSessionStore() {
    * 列表展示字段（label/status/modelId/thinkingLevel/tokenCount）；usagePercent/
    * pendingMessageCount/commands 等归各自消费 store（W15+ 收敛对象），不在本 store 落盘。
    *
-   * [W15 挂点] 磁盘占位值守卫的唯一接入位置：守卫就位后，扫描来源快照的占位空值
-   * （modelId:''/tokenCount:0）在此跳过覆盖，不侵蚀实例/广播真值（#2 空串覆盖事故防线）。
+   * [W15 守卫] 磁盘占位值守卫（#2 空串覆盖事故最后防线）：仅 source === 'scan' 的快照生效——
+   * 扫描读不出 modelId/tokenCount，其 ''/0 是占位值而非权威空值，target 已有非空真值时跳过
+   * 覆盖。与 owner 快照空值语义**按来源分流、不混用**（D1b 两条规则并存）：owner 快照
+   * （缺省来源）的显式空值是权威声明（如 sessionName 空 = 未命名，wire 形态 label:''），
+   * 必须整字段覆盖（TC-4b 锁定）；守卫只拦扫描占位，不拦 owner 权威空。历史踩坑：setGroups
+   * 全量覆盖曾把真值抹成空串（见 applySnapshot 注释），本守卫是该事故路径的结构性收口。
    */
   function mergeViewSnapshot(target: SessionSummary, snapshot: SessionViewSnapshot | undefined): void {
     if (!snapshot) return
+    // W15：来源分流——仅扫描来源快照的占位空值触发守卫（判定不依赖魔法值，靠显式标记）。
+    const isScan = snapshot.source === 'scan'
     if (snapshot.label !== undefined) target.label = snapshot.label
     if (snapshot.status !== undefined) target.status = snapshot.status
-    if (snapshot.modelId !== undefined) target.modelId = snapshot.modelId
+    // 守卫条件 = 快照值是占位空 && target 有非空真值可保；target 本身也是占位（同为 ''/0）时
+    // 覆盖与否等值，走覆盖分支保持行为单一。
+    if (snapshot.modelId !== undefined && !(isScan && snapshot.modelId === '' && target.modelId !== '')) {
+      target.modelId = snapshot.modelId
+    }
     if (snapshot.thinkingLevel !== undefined) target.thinkingLevel = snapshot.thinkingLevel
-    if (snapshot.tokenCount !== undefined) target.tokenCount = snapshot.tokenCount
+    if (snapshot.tokenCount !== undefined && !(isScan && snapshot.tokenCount === 0 && target.tokenCount !== 0)) {
+      target.tokenCount = snapshot.tokenCount
+    }
   }
 
   /** 更新 session 归属 project（乐观更新，setProject RPC 后调用；广播全量覆盖幂等）。 */
