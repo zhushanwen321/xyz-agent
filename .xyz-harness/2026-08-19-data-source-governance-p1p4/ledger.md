@@ -30,7 +30,7 @@
 | wave | 名称 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
 | W13 | session store applySnapshot 单入口 + DTO | building | 996063a6f | 依赖 W12✓；builder 后台运行中（core domain/session store 三 mutation 收敛 + shared SessionViewSnapshot DTO + renderer 消费改写 + R2 受管清单联动；与 W14/W18 三方并行，领地 core-domain/session vs core-domain/chat vs runtime） |
-| W14 | pendingBuffer 计数 FIFO | verifying | 9382ccb57 | 依赖 W8✓/W12✓；builder 交付 7 文件：drainN（FIFO+sendMode 隔离+取尽即止）+ reconcilePending 双向对账（>裁僵尸/<接受有界偏差）+ effect 接线（countDrained 差集 N 各自计数）+ 5 用例（组2 skill 展开核心：原文引用级断言）+ abortPending 保留文本匹配 D6 标注。自报 core 992 绿/2 失败归因 W13 在途（useChat.test mock 未跟上 applySnapshot）。**两解读待裁决**：① plan 对账算式代数等价落地（drain 后 buffer.length===帧内深度不变式）；② 深度权威用帧内 pendingMessageCount 非跨域读（避免 chat→session 域依赖） |
+| W14 | pendingBuffer 计数 FIFO | verified (PASS 待 commit) | 9382ccb57 | verifier PASS（报告 w14-report.md：9 检查点全过——防篡改零 diff/范围 6 文件（自报 7 计数口误，useChat 系 W13）/drainN 全达标/组 2 引用级断言真 dispatch 链/红性双组——回退文本匹配组 2 红（丢消息复现）+删 reconcile 组 4 红，字节还原指纹一致/core 全量 994 全绿（builder 报 2 failed 已被 W13 补 mock 自愈，三点独立核实）/两解读均支持——代数等价 + 帧内字段三点证实）。**R1 终裁（主 agent）**：裁剪方向接受 builder slice(0,depth) 保头——稳态对齐点在头部 + 组 4 测试锚定 + 反方向在入队失败场景同样丢消息，行为级实测留 P2 gate。minor 4 条（登记表行号 :123→:132 待落表等）。**commit 等 W13 verifier 收尾**（registry.ts 混 W13 两行注释，避免移动在跑 verifier 的 diff 基线） |
 | W15 | scannedToSummary 空值守卫 | pending | — | 依赖 W13 |
 
 ## P3 wave 表（W16-W21）
