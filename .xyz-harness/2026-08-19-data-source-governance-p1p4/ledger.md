@@ -51,7 +51,7 @@
 | wave | 名称 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
 | W22 | 等价性测试族全量化入 CI | committed (331beb627) | ed26b3da8 | verifier PASS（报告 w22-report.md：24 用例 21s/反证 +1000 偏移红/防空调跑对抗——恒真断言下 0 skipped 且语料守卫在位/CI 链条行号实测零改动接线/ref 收敛裁决如实——条数级无缺口、id 形态异源 = W21 定案遗留态）。残余观察：it1 stateSnapshot 手工复刻投影口径（文件头声明，生产公式漂移不复现） |
-| W23 | ADR-0062 + ADR-0042 修订 + checklist | verifying | ed26b3da8 | 依赖 W11✓/W13✓/W18✓；builder 交付纯文档 62 行：ADR-0062 新增 52 行（六块决策 + 前案追认）+ ADR-0042 +5/-1（修订块含前案 W1 消歧，原文保留历史原貌）+ review-data-governance 准绳三层切换（含过时契约句必要修正）。编号实测 0062 成立；一致性四条交叉核对全一致。三上报：基线漂移非冲突/untracked 行数口径/契约句修正属切换必要组成 |
+| W23 | ADR-0062 + ADR-0042 修订 + checklist | committed (96d8daa87) | ed26b3da8 | verifier PASS（报告 w23-report.md：七检查点全过——防篡改零 diff/62 行零代码/ADR-0062 六块齐全 + 实现引用实测全真（SFU:138/scanSessionMeta:581/config.ts 均存在）/ADR-0042 只加不删原文保留/准绳三层切换 + §2.2 残留 0 + 契约句修正裁决合理（review agent 拿契约当前提不怀疑）/一致性独立复核 4 条/红性删 D6 句 grep 锚点仍稳）。minor 2 条（替代方案节历史负面评价靠修订块消歧/「当前持有」措辞精度）。**18/20** |
 | W24 | R2 调用图收紧 | building | ed26b3da8 | 依赖 W2✓/W13✓；builder 后台运行中（mjs vs scripts 扫描器二选一定案 + 许可表来自登记表 + R3 扩围全仓补注解——W15 领地两文件跳过待协调 + 三层转发超集证明用例） |
 | W25 | pi 升级契约测试 | committed (a44b068e6) | ed26b3da8 | verifier PASS（报告 w25-report.md：契约 2/2 绿 spawn 真实 pi 0.84.1/反证三组独立复跑红→绿还原 diff 空/D5 固化 N=21 实测非写死/三差异全裁决接受——pi 依赖实测在 root package.json 双位置检测、entry_appended 负向边界充分（agent-session.ts:2266-2271 唯一发射点佐证）、新契约事实固化进断言/接线挂 merge 阶段 3.5 既有链合理/RUNTIME_TEST 3135 全绿）。minor 5 条不阻塞（REDUCER_CASE_TYPES 手写镜像未编译锚定留观察） |
 
