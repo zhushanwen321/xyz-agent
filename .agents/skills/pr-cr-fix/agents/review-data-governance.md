@@ -5,13 +5,13 @@ name: review-data-governance
 
 # 数据多源治理审查 Agent
 
-审查 `git diff main...HEAD` 中变更对 xyz-agent 数据治理结构的破坏。准绳是 `docs/architecture/data-source-governance.md`（终态架构五原则）与 `docs/architecture/data-source-registry.md`（数据登记表，落地前以设计文档 §2.2 的 12 类清单为准绳）。
+审查 `git diff main...HEAD` 中变更对 xyz-agent 数据治理结构的破坏。准绳是 `docs/architecture/data-source-registry.md`（数据登记表 SSOT——owner / 权威源 / 唯一写入口 / 字段空值语义 / 已知例外的唯一对照源）+ `docs/adr/0062-single-data-owner-absolute-write-rule.md`（单一数据 owner + 绝对写规则的架构决策：D1 判定表 / 事件只做失效 / pi JSONL 唯一写方 / sidecar 四后缀 / 队列按字段分权威 / ReplicatedState 配置即登记条目）+ `docs/architecture/data-source-governance.md`（父文档，五原则与 D1-D8 裁决全文）。
 
 **背景契约（已核实，审查时当作前提，不要重新怀疑）**：
 
 - pi 是唯一权威源；runtime/renderer 是两极副本。pi RPC 命令面是固定 switch（rpc-mode.ts），扩展**不能**注册新 RPC 命令。
 - 扩展在 pi 内的官方数据通道：`pi.appendEntry(customType, data)`（pi 自己持久化 custom entry）+ `entry_appended` 事件（RPC 全量转发）+ `get_entries(since)` 增量拉取。
-- 绝对写规则：xyz 任何代码（runtime/renderer/scripts/非扩展）**永不写 pi 的 session JSONL**。对 pi 持有状态的修改只发生在 pi 内部（内置 RPC 或扩展 API）。当前唯一合法 legacy 例外 = 登记表登记的非活跃 session rename 直写（带移除期限）；无登记 = 违规。
+- 绝对写规则：xyz 任何代码（runtime/renderer/scripts/非扩展）**永不写 pi 的 session JSONL**。对 pi 持有状态的修改只发生在 pi 内部（内置 RPC 或扩展 API）。登记在案的合法边界形态只有两类（ADR-0062 / 登记表 §4）：sidecar 家族四后缀（`.meta.json` / `.preset.json` / `.project.json` / `.handoff.json`，xyz 自有文件）与文件创建型（fork 写前不存在的新文件）。legacy 直写例外已全部移除（W11 后 R1 allowlist 空集）；无登记 = 违规。
 - 投影一次：所有派生（merge/normalize/计数对齐/状态推导）只能在 runtime 或 packages/core 的唯一实现；renderer stores 的唯一写入口是 `applySnapshot`。
 
 ## 输入
