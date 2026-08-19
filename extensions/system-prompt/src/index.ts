@@ -93,8 +93,9 @@ function readGlobalAgentsFile(): { path: string; content: string } | null {
           return { path: filePath, content }
         }
       }
-    } catch {
-      // Try the next candidate; never throw into the agent loop.
+    } catch (err) {
+      // best-effort：候选文件 stat/read 失败（如权限）→ 试下一个候选，never throw into the agent loop。
+      console.debug('[xyz-system-prompt-extension] candidate file read failed, trying next:', err)
     }
   }
   return null
@@ -181,7 +182,10 @@ export default function (pi: ExtensionAPI): void {
       try {
         const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
         process.stderr.write(`[xyz-system-prompt-extension] before_agent_start hook failed: ${msg}\n`)
-      } catch { /* stderr 写失败也忽略 */ }
+      } catch (nestedErr) {
+        // best-effort：stderr 写失败的终极兜底——console 内部吞错不会抛，仍不外泄到 agent loop。
+        console.debug('[xyz-system-prompt-extension] stderr write also failed:', nestedErr)
+      }
       return undefined
     }
   })

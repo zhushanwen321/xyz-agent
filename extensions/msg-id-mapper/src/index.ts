@@ -74,6 +74,7 @@ export default function (pi: ExtensionAPI): void {
         awaitingUserPersist = true
       }
     } catch (err) {
+      // best-effort：置 flag 失败不阻断消息流——仅丢失该条 clientUuid↔entryId 映射，对话不受影响。
       console.error('[xyz-client-msg-id-mapper] message_end hook error:', err)
     }
     return undefined
@@ -95,6 +96,7 @@ export default function (pi: ExtensionAPI): void {
       pendingClientUuid = undefined
       awaitingUserPersist = false
     } catch (err) {
+      // best-effort：映射写入失败不阻断消息流——丢的是本条映射，下次 hook 会因 flag 未清而幂等重试。
       console.error('[xyz-client-msg-id-mapper] flush error:', err)
     }
   }
