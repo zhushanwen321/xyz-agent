@@ -387,6 +387,8 @@ export class SessionLifecycle {
         try { unlinkSync(session.sessionFilePath + '.meta.json') } catch { void 0 }
         // 清理 preset 绑定 sidecar（设计文档 §4，delete 是唯一清理点）
         try { unlinkSync(session.sessionFilePath + '.preset.json') } catch { void 0 }
+        try { unlinkSync(session.sessionFilePath + '.project.json') } catch { void 0 }
+        try { unlinkSync(session.sessionFilePath + '.handoff.json') } catch { void 0 }
         // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
         // 派生缓存，非已删的 label 影子缓存）中的 stale 条目（避免无界增长）
         this.sessionStore.invalidateMetaCache(session.sessionFilePath)
@@ -399,6 +401,8 @@ export class SessionLifecycle {
       try { unlinkSync(target.filePath + '.meta.json') } catch { void 0 }
       // 清理 preset 绑定 sidecar（设计文档 §4，delete 是唯一清理点）
       try { unlinkSync(target.filePath + '.preset.json') } catch { void 0 }
+      try { unlinkSync(target.filePath + '.project.json') } catch { void 0 }
+      try { unlinkSync(target.filePath + '.handoff.json') } catch { void 0 }
       // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
       // 派生缓存，非已删的 label 影子缓存）中的 stale 条目（避免无界增长）
       this.sessionStore.invalidateMetaCache(target.filePath)

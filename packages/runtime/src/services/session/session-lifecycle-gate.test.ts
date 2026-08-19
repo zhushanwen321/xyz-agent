@@ -13,7 +13,7 @@
  * 运行：cd packages/runtime && npx vitest run src/services/session/session-lifecycle-gate.test.ts
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { SessionLifecycle, setMigrationGate, getMigrationGate } from './session-lifecycle.js'
@@ -192,5 +192,29 @@ describe('SessionLifecycle × migration gate（D8-3）', () => {
     const deferred = new Promise(() => undefined)
     setMigrationGate(deferred)
     expect(getMigrationGate()).toBe(deferred)
+  })
+})
+
+describe('SessionLifecycle.delete（W19：sidecar 四后缀全家族清理，W11 观察项收口）', () => {
+  it('active 与 scanned 两分支都 unlink .meta/.preset/.project/.handoff 全部四后缀', async () => {
+    const { lifecycle, svc, sessionStore } = makeEnv()
+    const suffixes = ['.meta.json', '.preset.json', '.project.json', '.handoff.json']
+    const setup = (tag: string) => {
+      const f = join(mkdtempSync(join(tmpdir(), `w19-del-${tag}-`)), 's.jsonl')
+      writeFileSync(f, '{"type":"session"}\n')
+      suffixes.forEach((s) => writeFileSync(f + s, '{}'))
+      return f
+    }
+    Object.assign(sessionStore, { trash: vi.fn(async () => {}), invalidateMetaCache: vi.fn() })
+    const scanned = setup('scanned')
+    svc.findScannedSession = vi.fn(() => ({ id: 's1', filePath: scanned })) as never
+    await lifecycle.delete('s1')
+    suffixes.forEach((s) => expect(existsSync(scanned + s)).toBe(false))
+    const active = setup('active')
+    svc.getSession = vi.fn(() => ({ id: 's2', sessionFilePath: active })) as never
+    svc.detachSession = vi.fn() as never
+    svc.removeSessionEntry = vi.fn() as never
+    await lifecycle.delete('s2')
+    suffixes.forEach((s) => expect(existsSync(active + s)).toBe(false))
   })
 })
