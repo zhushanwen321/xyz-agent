@@ -135,4 +135,48 @@ describe('SessionScanner W15 磁盘占位值来源标记', () => {
     expect(f6?.modelId).toBe('provider/m-live')
     expect(f6?.source).toBeUndefined()
   })
+
+  // ── W1 F1 修复：.tmp-migrate- 崩溃残留按文件名排除 ─────────────────
+  // restore-time 归一化（normalizeSessionFileInPlace）在写临时名与 rename 之间崩溃时，
+  // sessions 目录残留 <原名>.tmp-migrate-<ts>.jsonl。scanner 按内容（首行 header）识别
+  // session 不按文件名——残留内容是合法 session（同 sessionId），不过滤会产生同 id
+  // 双条目且残留 mtime 更新排序在前，findScannedSession 命中残留 → restore 附着错位
+  // 文件（verifier F1 实锤探针场景）。isScannableSessionFile 把排除变成机制保证。
+  it('W1 F1: .tmp-migrate- 崩溃残留不进扫描列表，findScannedSession 数据源不命中（同 sessionId 唯一指向原文件）', () => {
+    // 原文件（cwd 子目录形态）
+    const origPath = writeSessionFile(sessionsDir, 'proj-a', 'sess-dup', '/work/a')
+    // 残留 1（子目录内）：内容为合法 session 且同 sessionId——模拟 write 完成、rename 前崩溃
+    //（残留写入晚于原文件 → mtime 更新，未过滤时排序在前，正是 verifier 探针命中的形态）
+    const leftoverSub = join(sessionsDir, 'proj-a', 'sess-dup.jsonl.tmp-migrate-1755561600000.jsonl')
+    writeFileSync(
+      leftoverSub,
+      JSON.stringify({ type: 'session', id: 'sess-dup', cwd: '/work/a', timestamp: '2026-08-19T00:00:01Z' }) + '\n',
+      'utf-8',
+    )
+    // 残留 2（sessions 目录顶层）：覆盖顶层 .jsonl 枚举分支
+    const leftoverTop = join(sessionsDir, 'top.jsonl.tmp-migrate-1755561600999.jsonl')
+    writeFileSync(
+      leftoverTop,
+      JSON.stringify({ type: 'session', id: 'sess-top-leftover', cwd: '/work/a', timestamp: '2026-08-19T00:00:02Z' }) + '\n',
+      'utf-8',
+    )
+
+    // 列表侧：残留不进扫描列表，sess-dup 唯一且指向原文件
+    const groups = makeScanner([], new Set()).listPersistedSessions()
+    const all = groups.flatMap((g) => g.sessions)
+    expect(all.find((s) => s.sessionFile === leftoverSub)).toBeUndefined()
+    expect(all.find((s) => s.sessionFile === leftoverTop)).toBeUndefined()
+    expect(all.find((s) => s.sessionFile === origPath)).toBeDefined()
+    const dupEntries = all.filter((s) => s.id === 'sess-dup')
+    expect(dupEntries).toHaveLength(1)
+    expect(dupEntries[0].sessionFile).toBe(origPath)
+
+    // findScannedSession 数据源侧（其实现 = sessionStore.scanSessions({force}).find，
+    // session-service.ts:1189）：数组不含残留路径 → 按 id 查找只命中原文件
+    const scanned = new PiSessionStore().scanSessions({ force: true })
+    expect(scanned.find(s => s.filePath === leftoverSub)).toBeUndefined()
+    expect(scanned.find(s => s.filePath === leftoverTop)).toBeUndefined()
+    const found = scanned.find(s => s.id === 'sess-dup')
+    expect(found?.filePath).toBe(origPath)
+  })
 })

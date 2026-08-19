@@ -5,10 +5,10 @@
  * 从 pi-config-bridge.ts 提取以控制文件行数（pi-config-bridge 已删除）。
  */
 
-import { existsSync, readFileSync, statSync, openSync, readSync, closeSync, readdirSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, openSync, readSync, closeSync, readdirSync, unlinkSync, writeFileSync, renameSync } from 'node:fs'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { parseJsonl, readTailEntries } from '../../utils/jsonl.js'
-import { join } from 'node:path'
+import { join, dirname, basename } from 'node:path'
 import { getSessionsDir } from './pi-paths.js'
 
 // ── 类型定义 ─────────────────────────────────────────────────
@@ -493,14 +493,45 @@ export function extractHandedOff(filePath: string): string | undefined {
 }
 
 // [HISTORICAL] patchSessionCwd 已删除（W11，数据源治理——绝对写规则全线生效）。
-// 原实现读源 JSONL → 改首行 session header 的 cwd 字段 → atomicWrite 整文件重写
+// 原实现读源 JSONL → 改首行 session header 的 cwd 字段 → atomicWrite 整文件重写源文件
 // （restoreSession 在 pi spawn 前调用：session cwd 已被删除时降级 homedir，防 pi
-// switch_session 因 cwd 不存在失败）。W11 后 cwd fallback 改在 restore 的 tmp 读改写
-// 管线内应用（session-lifecycle.restoreSession：读源文件 → stripSessionEndEntries →
-// 对 tmp 内容首行 header 应用 fallback → 写 tmpdir → pi switchSession(tmp)），
-// 源文件零写。已知并接受的行为差异：源文件 header 永久保持旧（死路径）cwd——
-// pi append 不重写 header；scanner label fallback 与 deleteByCwd 按该真实历史值
-// 工作（登记表 §4 例外③，W11 已移除）。
+// switch_session 因 cwd 不存在失败）。W11 后 cwd fallback 改在 tmp 拷贝上应用；
+// W1（restore-fork-attach-fix）tmp 管线整体删除，fallback 并入 F3 归一化管线：
+// stripSessionEndEntries + applyHeaderCwdFallback 的变换产物经下方
+// normalizeSessionFileInPlace 原地 rename-over 落回原文件（header cwd 降级值持久化
+// 在原文件内；「header 永久保持旧 cwd」的旧声明已被取代，登记表 §4 例外③已更新）。
+
+/**
+ * restore-time 会话文件原地归一化（restore-fork-attach-fix W1 F3，登记表 §4 ⑨ 合法形态）。
+ *
+ * 用途：legacy 会话文件（含 session_end 行 / header cwd 死路径）restore 时的一次性
+ * 变换落盘。调用方（restoreSession）已完成纯字符串变换（stripSessionEndEntries /
+ * applyHeaderCwdFallback），本 helper 负责把变换产物写同目录临时名
+ * `<原名>.tmp-migrate-<时间戳>.jsonl` → `renameSync` 原子覆盖原文件。
+ *
+ * 为什么必须原地 rename-over 而非写新文件：pi 的 switch_session 永久重绑读写目标
+ * （pi-mono session-manager.ts setSessionFile 把传入路径存为永久 sessionFile，_persist
+ * 每轮 appendFileSync 该路径），附着目标必须是原路径本身；且路径不变使按路径关联的
+ * sidecar 四后缀派生 / fork 血缘 parentSession 指针 / scanner 关联全部无需迁移。
+ *
+ * 合法边界（登记表 §4 ⑨）：仅 inactive 文件（restoreSession 开头已销毁同 id 会话）；
+ * 变换白名单 = strip session_end / header cwd fallback；每文件最多一次（归一化产物
+ * 无 session_end 且 cwd 已修活 → 下次 restore 走 F2 直附着零改写，幂等收敛）。
+ * 同目录 rename 是 POSIX 原子操作，无中间态可见；rename 前崩溃残留的
+ * `.tmp-migrate-*.jsonl` 由 scanPiSessionsFromDisk 按文件名显式排除
+ * （isScannableSessionFile——scanner 按内容识别 session 不按文件名，不过滤会产生
+ * 同 sessionId 双条目，见该函数注释）。
+ *
+ * @param filePath    原 session JSONL 绝对路径（内容被原子覆盖，路径不变）
+ * @param transformed 变换后的完整 JSONL 文本
+ */
+export function normalizeSessionFileInPlace(filePath: string, transformed: string): void {
+  // 临时名形态 = basename + '.tmp-migrate-' + 时间戳 + '.jsonl'（登记表 §4 ⑨；
+  // R1 检查的豁免锚点 = '.tmp-migrate-' 字面量后缀，经写目标单跳赋值链回溯判定）
+  const tmpPath = join(dirname(filePath), basename(filePath) + '.tmp-migrate-' + Date.now() + '.jsonl')
+  writeFileSync(tmpPath, transformed, 'utf-8')
+  renameSync(tmpPath, filePath)
+}
 
 // ── Session 扫描 ─────────────────────────────────────────────
 
@@ -705,6 +736,20 @@ export function scanPiSessions(opts?: ScanSessionsOptions): ScannedSessionMeta[]
   return [...results]
 }
 
+/**
+ * 判断目录项文件名是否为 scan 应收录的 session JSONL。
+ *
+ * 除 `.jsonl` 后缀外，显式排除 `.tmp-migrate-` 命名（W1 F1 修复）：restore-time 归一化
+ * （normalizeSessionFileInPlace）在写临时名与 rename 之间崩溃时会残留
+ * `<原名>.tmp-migrate-<ts>.jsonl` 于 sessions 目录。scanner 按内容（首行 session header）
+ * 识别 session、不按文件名——残留文件内容是合法 session（同 sessionId），不过滤会产生
+ * 同 id 双条目，且残留 mtime 更新、排序在前，findScannedSession 会命中残留路径 →
+ * restore 附着错位文件。文件名过滤把「残留无害」从声明变成机制保证。
+ */
+function isScannableSessionFile(name: string): boolean {
+  return name.endsWith('.jsonl') && !name.includes('.tmp-migrate-')
+}
+
 function scanPiSessionsFromDisk(sessionsDir: string): ScannedSessionMeta[] {
   if (!existsSync(sessionsDir)) return []
 
@@ -731,7 +776,8 @@ function scanPiSessionsFromDisk(sessionsDir: string): ScannedSessionMeta[] {
 
     if (stat.isDirectory()) {
       try {
-        const files = readdirSync(entryPath).filter(f => f.endsWith('.jsonl'))
+        // 文件名过滤（isScannableSessionFile）：排除 .tmp-migrate- 归一化崩溃残留
+        const files = readdirSync(entryPath).filter(isScannableSessionFile)
         for (const file of files) {
           const filePath = join(entryPath, file)
           try {
@@ -746,7 +792,7 @@ function scanPiSessionsFromDisk(sessionsDir: string): ScannedSessionMeta[] {
       } catch {
         // skip unreadable dir
       }
-    } else if (entry.endsWith('.jsonl')) {
+    } else if (isScannableSessionFile(entry)) {
       try {
         const meta = scanSessionMeta(entryPath)
         if (meta) results.push(meta)

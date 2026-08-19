@@ -222,15 +222,17 @@ describe('SessionService.restoreSession', () => {
 
   it('should call switch_session with the scanned session file path', async () => {
   const id = 'switch-test-id'
-  addScannedSession(id, '/my/project')
+  const entry = addScannedSession(id, '/my/project')
   const mockClient = makeMockClient()
   createSessionMock.mockResolvedValue(mockClient)
 
   await service.restoreSession(id)
 
-  // W2 收口后 restoreSession 读原文件 → 写 tmpFile → switchSession(tmpFile)
-  // B7: 不再收到原 entry.filePath，而是 tmpFile（xyz-session-{id}-{ts}.jsonl）
-  expect(mockClient.switchSession).toHaveBeenCalledWith(expect.stringContaining('xyz-session-switch-test-id'))
+  // [W1 语义变更：直附着正式文件] restoreSession 直接 switchSession(原 filePath)，
+  // 不再走「写 $TMPDIR tmpFile → switchSession(tmp)」弯路（pi switch_session 永久
+  // 重绑读写目标，附着 tmp 后原文件永不更新）。cwd 死路径时先经 F3 归一化原地
+  // rename-over 原文件，附着目标仍是原路径。
+  expect(mockClient.switchSession).toHaveBeenCalledWith(entry.filePath)
   })
 
   // ── Boundary ─────────────────────────────────────────────────

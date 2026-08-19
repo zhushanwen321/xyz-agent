@@ -4,7 +4,9 @@
  * [HISTORICAL] 本文件原测 session-file-utils 的 persistSessionName / patchSessionCwd
  * （两个直写 pi session JSONL 的函数），两者已随 W11 删除——label 持久化切 pi
  * set_session_name RPC（活跃走既有进程、非活跃走 process-manager.withEphemeralPi 短命
- * 附着）；cwd 降级迁 restore 的 tmp 读改写管线（本文件测试的纯字符串变换 helper）。
+ * 附着）；cwd 降级改经纯字符串变换 helper（[W1 语义变更：直附着正式文件] 现用于
+ * restoreSession F3 归一化管线，变换产物经 normalizeSessionFileInPlace 原地落回原文件，
+ * 不再走 tmp 拷贝）。
  * 原「规则 #6：文件不存在不创建」守卫语义由 sidecar 家族测试承接
  * （session-fork-fields.test.ts U3 系）。
  *
@@ -13,7 +15,7 @@
 import { describe, it, expect } from 'vitest'
 import { applyHeaderCwdFallback } from '../src/services/session/session-lifecycle.js'
 
-describe('applyHeaderCwdFallback（W11：tmp 首行 header cwd 降级，纯字符串变换）', () => {
+describe('applyHeaderCwdFallback（F3 归一化管线内 header cwd 降级，纯字符串变换）', () => {
   it('替换首行 session header 的 cwd，其余 entry 原样保留', () => {
     const content = [
       JSON.stringify({ type: 'session', version: 3, id: 'test-id', cwd: '/dead/cwd', timestamp: '2025-01-01T00:00:00Z' }),

@@ -21,6 +21,12 @@
        const tmpFile = join(tmpdir(), …) 随后的 writeFileSync(tmpFile, …)）可见地经
        tmpdir() 或 NON_SESSIONS_DERIVATIONS 枚举的 xyz 自有目录推导函数构造，且该语句
        无 sessions 痕迹（可见的 sessions 构造不豁免），目标不指向 sessions 目录则放行。
+    ③ restore-time 归一化临时名（登记表 §4 ⑨，restore-fork-attach-fix W1 F3）：写目标
+       语句或其同函数单跳赋值链（如 const tmpPath = join(dirname, basename + '.tmp-migrate-'
+       + ts + '.jsonl') 后的 writeFileSync(tmpPath, …)）含 '.tmp-migrate-' 字面量后缀
+       （normalizeSessionFileInPlace 构造的同目录临时名，写后紧跟 renameSync 原子覆盖
+       原文件）。该形态是 inactive-only 的一次性 legacy 文件归一化，合法边界以登记表
+       条目为准。
 
 allowlist（ALLOWLIST）：
   空（W11 清空）：三条 legacy 直写链路（persistSessionName 非活跃 rename 直写 /
@@ -109,6 +115,14 @@ TARGET_ARG_RE = re.compile(
 # ---------------------------------------------------------------------------
 SIDECAR_SUFFIX_RE = re.compile(r"['\"]\.(?:meta|preset|project|handoff)\.json['\"]")
 SIDECAR_HELPER_RE = re.compile(r"\b(?:project|preset)SidecarPath\s*\(")
+
+# ---------------------------------------------------------------------------
+# 条件 B③：restore-time 归一化临时名（登记表 §4 ⑨，restore-fork-attach-fix W1 F3）。
+#   normalizeSessionFileInPlace 写同目录临时名 <原名>.tmp-migrate-<ts>.jsonl 后紧跟
+#   renameSync 原子覆盖原文件——inactive-only 一次性 legacy 归一化（strip session_end /
+#   header cwd fallback），与 B① 同为「登记表条目 ↔ 豁免模式一一对应」的语句级判定。
+# ---------------------------------------------------------------------------
+TMP_MIGRATE_SUFFIX_RE = re.compile(r"['\"]\.tmp-migrate-")
 
 # ---------------------------------------------------------------------------
 # 条件 B②：非 sessions 目标的可见推导锚点（spec 指定「脚本内维护枚举清单」）
@@ -235,20 +249,47 @@ def has_trace(text: str) -> bool:
     return any(p.search(text) for p in TRACE_PATTERNS)
 
 
+def lookup_single_hop_assignment(lines: list[str], lineno: int, stmt: str) -> str | None:
+    """写目标首参为标识符时，回溯最近的同名赋值行文本（更早的旧赋值不追——遮蔽语义）。
+
+    B②（非 sessions 目标）与 B③（.tmp-migrate- 临时名）共用的单跳赋值链查找。
+    """
+    m = TARGET_ARG_RE.search(stmt)
+    if not m:
+        return None
+    assign_re = re.compile(ASSIGN_RE_TMPL.format(name=re.escape(m.group(1))))
+    for k in range(lineno - 1, max(lineno - 1 - CHAIN_LOOKBACK_LINES, 0), -1):
+        prev = lines[k - 1]
+        if assign_re.search(prev):
+            return prev
+    return None
+
+
 def exempt_non_sessions_target(lines: list[str], lineno: int) -> bool:
     """条件 B②：写目标可见地经 tmpdir()/xyz 自有目录推导构造，且语句无 sessions 痕迹。"""
     stmt = statement_text(lines, lineno)
     if NON_SESSIONS_DERIVATIONS_RE.search(stmt) and not has_trace(stmt):
         return True
-    # 单跳赋值链：写目标为标识符时，回溯最近的同名赋值行（更早的旧赋值不追——遮蔽语义）
-    m = TARGET_ARG_RE.search(stmt)
-    if not m:
-        return False
-    assign_re = re.compile(ASSIGN_RE_TMPL.format(name=re.escape(m.group(1))))
-    for k in range(lineno - 1, max(lineno - 1 - CHAIN_LOOKBACK_LINES, 0), -1):
-        prev = lines[k - 1]
-        if assign_re.search(prev):
-            return bool(NON_SESSIONS_DERIVATIONS_RE.search(prev)) and not has_trace(prev)
+    # 单跳赋值链：写目标为标识符时，回溯最近的同名赋值行
+    assign_line = lookup_single_hop_assignment(lines, lineno, stmt)
+    if assign_line is not None:
+        return bool(NON_SESSIONS_DERIVATIONS_RE.search(assign_line)) and not has_trace(assign_line)
+    return False
+
+
+def exempt_tmp_migrate_target(lines: list[str], lineno: int) -> bool:
+    """条件 B③：写目标经 '.tmp-migrate-' 临时名构造（语句级，或单跳赋值链回溯）。
+
+    normalizeSessionFileInPlace 的形态：先 const tmpPath = join(dirname, basename + '.tmp-migrate-'
+    + ts + '.jsonl')，再 writeFileSync(tmpPath, …) —— 字面量在赋值行，写语句是标识符，
+    故除语句级匹配外还需赋值链回溯（与 B② 同一单跳口径）。
+    """
+    stmt = statement_text(lines, lineno)
+    if TMP_MIGRATE_SUFFIX_RE.search(stmt):
+        return True
+    assign_line = lookup_single_hop_assignment(lines, lineno, stmt)
+    if assign_line is not None:
+        return bool(TMP_MIGRATE_SUFFIX_RE.search(assign_line))
     return False
 
 
@@ -278,6 +319,9 @@ def check_file(filepath: Path) -> tuple[list[str], list[str]]:
             # B① sidecar 家族四后缀（语句级，文件内任意位置的后缀提及不豁免无关写点）
             stmt = statement_text(lines, lineno)
             if SIDECAR_SUFFIX_RE.search(stmt) or SIDECAR_HELPER_RE.search(stmt):
+                continue
+            # B③ restore-time 归一化临时名（登记表 §4 ⑨，语句级 + 单跳赋值链回溯）
+            if exempt_tmp_migrate_target(lines, lineno):
                 continue
             # allowlist：legacy 登记例外（data-source-registry.md §3/§4）
             key = f"{rel_str}:{lineno}"

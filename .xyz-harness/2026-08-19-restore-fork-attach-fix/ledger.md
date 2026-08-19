@@ -14,8 +14,8 @@
 
 | wave | 名称 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
-| W1 | 附着路径修复（F1+F2+F3 + R1 豁免） | pending | — | — |
-| W2 | 护栏收尾（F4：断言/等价测试/ADR/登记表/checklist） | pending | — | — |
+| W1 | 附着路径修复（F1+F2+F3 + R1 豁免） | committed | 8e1591cde | verifier PASS（报告 acceptance/w1-report.md：防篡改 sha256 一致/越界 35 条零越界（22 条认知外豁免）/3178 全绿/红性 5 红（C2-C6）字节还原四重证明/真实性 6 项）。**F1 major（对抗新发现）**：「崩溃残留 scanner 天然忽略」声明证伪（scanner 按内容识别，残留同 id 双条目 + findScannedSession 命中错位）→ 打回 builder 修复：`isScannableSessionFile` 过滤收口 `scanPiSessionsFromDisk` 两处枚举（session-scanner.ts 核实无需改）+ 双侧断言测试 + docstring/登记表声明修正 → 针对性复审 PASS 维持（红性独立复验/全域无第三枚举点/误伤面零/TTL 缓存不可绕过；R2 minor = 设计文档第三处同源声明，主 agent 已修正）。R1 豁免 B③ 与 B① 同构（F2 裁决不动） |
+| W2 | 护栏收尾（F4：断言/等价测试/ADR/登记表/checklist） | pending | — | 领地避开认知外未提交文件（helper 放 process-manager.ts） |
 
 ## 事件
 

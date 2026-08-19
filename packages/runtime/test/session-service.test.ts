@@ -802,8 +802,9 @@ describe('SessionService · lifecycle', () => {
         vi.mocked(setup.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
         const summary = await setup.service.restoreSession('persist-1')
         expect(summary.id).toBe('persist-1')
-        // restoreSession 读原文件 → 写 tmpFile → switchSession(tmpFile)
-        expect(client.switchSession).toHaveBeenCalledWith(expect.stringContaining('xyz-session-persist-1'))
+        // [W1 语义变更：直附着正式文件] switchSession 收到原 filePath（不再写
+        // $TMPDIR tmpFile 后切 tmp——pi switch_session 永久重绑读写目标）
+        expect(client.switchSession).toHaveBeenCalledWith(filePath)
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }

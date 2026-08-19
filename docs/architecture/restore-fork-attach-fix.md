@@ -143,7 +143,7 @@ F3 做两件事（按需）：strip 全部 session_end 行（复用 `stripSessio
 
 - 长期架构合理性：**路径不变 = 按路径关联的一切都不用迁移**——sidecar 四后缀（`.meta.json` 等，与主文件同路径派生）、fork 血缘指针（header 的 `parentSession` 指向源文件路径）、scanner（无双文件窗口）、`deleteByCwd`。归一化是一次性动作，执行后收敛到 F2，无长期残留机制。
 - 短期实现成本：低——写临时名 + rename 两步，变换复用现有两个纯函数。
-- 风险与对策：rename 瞬间的崩溃窗口（写完临时名、rename 前崩溃）残留 `.tmp-migrate-*.jsonl`——scanner 只认会话命名格式，天然忽略，无害；并发持有——restore 语义天然满足 inactive（restoreSession 开头已 detach/destroy 同 id 会话，:466-471）。**已知接受的交错窗口（对抗式审查 S3）**：`withEphemeralPi` 以 `ephemeral-*` id 附着他人会话文件（如非活跃改名），若恰在 rename 瞬间 in-flight，理论上存在交错——触发需要「restore 同一文件 + 并发 ephemeral 操作同一文件 + cwd 死路径」三重叠加且窗口秒级，现状 tmp 管线有同类交错；接受现状风险不改（守卫升级留给未来实际发生时再议，不为假想敌加机制）。
+- 风险与对策：rename 瞬间的崩溃窗口（写完临时名、rename 前崩溃）残留 `.tmp-migrate-*.jsonl`——由 `scanPiSessionsFromDisk` 按文件名显式排除（`isScannableSessionFile`，W1 verifier F1 修复：scanner 原本按内容识别不按文件名，残留会产生同 id 双条目错位附着，「天然忽略」是错误声明，已改为机制保证）；并发持有——restore 语义天然满足 inactive（restoreSession 开头已 detach/destroy 同 id 会话，:466-471）。**已知接受的交错窗口（对抗式审查 S3）**：`withEphemeralPi` 以 `ephemeral-*` id 附着他人会话文件（如非活跃改名），若恰在 rename 瞬间 in-flight，理论上存在交错——触发需要「restore 同一文件 + 并发 ephemeral 操作同一文件 + cwd 死路径」三重叠加且窗口秒级，现状 tmp 管线有同类交错；接受现状风险不改（守卫升级留给未来实际发生时再议，不为假想敌加机制）。
 
 **方案 B：新文件 + 旧文件 trash（否决）**
 

@@ -1,9 +1,12 @@
 /**
- * W9: stripSessionEndEntries 单测——restore/fork 拷贝 JSONL 时剔除 session_end 行。
+ * W9: stripSessionEndEntries 单测——剔除 JSONL 中的 session_end 行。
  *
  * 背景：B7 sidecar 方案下 runtime 不再往 JSONL 写 session_end，但历史 session（迁移前）
- * JSONL 仍可能含 `type:"session_end"` 行。pi switchSession 对该 entry type 处理未验证，
- * restore/fork 拷贝时保守 strip（比让 pi 报错更安全）。
+ * JSONL 仍可能含 `type:"session_end"` 行。[W1 语义变更：直附着正式文件] 现调用点 =
+ * restoreSession F3 归一化（一次性原地 rename-over，见 containsSessionEndLine 判定）；
+ * strip 动机（restore-fork-attach-fix §2.3 复核）= 防 pi _buildIndex 树索引污染
+ * （legacy 行无 id → leafId=undefined → parentId 断链 → 历史不进 LLM 上下文），
+ * 非防 pi 报错。
  *
  * 运行：cd packages/runtime && npx vitest run test/session-lifecycle-strip-session-end.test.ts
  */

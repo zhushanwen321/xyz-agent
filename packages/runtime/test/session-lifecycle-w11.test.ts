@@ -1,27 +1,27 @@
 /**
- * SessionLifecycle.restoreSession 的 cwd fallback 迁 tmp 管线测试（W11，数据源治理）。
+ * SessionLifecycle.restoreSession 的 cwd fallback 落点测试（W11 引入，W1 语义变更）。
  *
- * [HISTORICAL] 原 patchSessionCwd（session-file-utils，atomicWrite 整文件重写源 JSONL
- * 的 header.cwd）已随 W11 删除；cwd 降级改在「读源文件 → stripSessionEndEntries →
- * 对 tmp 首行 header 应用 fallback → 写 tmpdir → switchSession(tmp)」管线内完成，
- * 源文件零写。
+ * [W1 语义变更：直附着正式文件]（restore-fork-attach-fix）：原「读源文件 → strip →
+ * 对 tmp 首行 header 应用 fallback → 写 $TMPDIR → switchSession(tmp) → unlink tmp」
+ * 管线已整体删除——pi switch_session 永久重绑读写目标（pi-mono session-manager.ts
+ * setSessionFile），附着 tmp 后每轮写按路径重建的 tmp 孤儿文件，原会话文件永不更新。
  *
- * 锁定（plan W11 步骤 5 / 验收 4）：
- * - 死路径 cwd：spawn cwd 与 tmp 首行 header.cwd 降级 homedir；**源文件字节不变**
- *   （header 永久保持死路径——扫描侧消费差异已声明接受，见 deleteByCwd/label 用例）
- * - 活路径 cwd：tmp 首行 header.cwd 保持原值，源文件不变（行为与迁移前一致）
- * - stripSessionEndEntries 与 cwd fallback 组合：session_end 行剔除后首行仍正确改写
+ * 现行语义（F2/F3 分流）：
+ * - cwd 活 + 无 session_end 行（F2）：switchSession 直接收 target.filePath，源文件零写
+ * - cwd 死路径（F3）：spawn cwd 降级 homedir + 原文件被原地归一化——首行 header.cwd
+ *   持久化为 homedir（W11「源文件 header 永久保持旧 cwd」声明已被 W1 取代）
+ * - cwd 死 + 含 session_end 行（F3）：strip 与 cwd fallback 两种变换都发生在原文件上
  *
  * 运行：cd packages/runtime && npx vitest run test/session-lifecycle-w11.test.ts
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 
 import { SessionLifecycle, setMigrationGate } from '../src/services/session/session-lifecycle.js'
 import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
-import type { IProcessManager, IPiEngine } from '../src/services/ports/pi-engine.js'
+import type { IProcessManager } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
 import type { ISessionStore } from '../src/services/ports/session.js'
 import type { WorkspaceService } from '../src/services/workspace/workspace-service.js'
@@ -32,13 +32,13 @@ function makeSummary(id: string): SessionSummary {
   return { id, label: 'test', cwd: '/tmp', status: 'idle', lastActiveAt: Date.now(), modelId: 'p/m', tokenCount: 0 }
 }
 
-/** switchSession mock：捕获 pi 实际收到的 tmp 文件内容（restore 内部写后即删）。 */
+/** switchSession mock：记录 pi 实际收到的附着路径（W1 后 = 原文件路径本身）。 */
 function makeEnv() {
-  const capturedTmp: Array<{ path: string; content: string }> = []
+  const switchCalls: string[] = []
   const client = {
     getState: vi.fn(async () => ({ sessionId: 's-1' })),
     switchSession: vi.fn(async (sessionPath: string) => {
-      capturedTmp.push({ path: sessionPath, content: readFileSync(sessionPath, 'utf-8') })
+      switchCalls.push(sessionPath)
     }),
   }
   const svc = {
@@ -69,7 +69,7 @@ function makeEnv() {
   const workspaceService = { record: vi.fn() } as unknown as WorkspaceService
 
   const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService)
-  return { lifecycle, svc, pm, sessionStore, client, capturedTmp }
+  return { lifecycle, svc, pm, switchCalls }
 }
 
 /** 构造一个含 session header + 消息 entry 的 JSONL 文本。 */
@@ -84,7 +84,7 @@ function makeJsonl(cwd: string, opts: { sessionEnd?: boolean } = {}): string {
   return lines.join('\n') + '\n'
 }
 
-describe('restoreSession cwd fallback 迁 tmp 管线（W11）', () => {
+describe('restoreSession cwd fallback 落点（W11 → W1 直附着正式文件）', () => {
   let dir: string
   let env: ReturnType<typeof makeEnv>
   let filePath: string
@@ -109,25 +109,28 @@ describe('restoreSession cwd fallback 迁 tmp 管线（W11）', () => {
     ;(env.svc.findScannedSession as ReturnType<typeof vi.fn>).mockReturnValue(target)
   }
 
-  it('死路径 cwd：tmp 首行 header.cwd 降级 homedir，源文件字节不变（零写）', async () => {
+  it('死路径 cwd（F3）：spawn cwd 降级 homedir，原文件 header.cwd 被归一化为 homedir', async () => {
     const deadCwd = join(dir, 'deleted-worktree')
-    const original = makeJsonl(deadCwd)
-    writeFileSync(filePath, original)
+    writeFileSync(filePath, makeJsonl(deadCwd))
     mountTarget(deadCwd)
 
     await env.lifecycle.restoreSession('s-restore')
 
-    // spawn cwd 降级 homedir
+    // spawn cwd 降级 homedir（C8：cwdFellBack 时 spawn cwd = homedir）
     expect(env.pm.createSession).toHaveBeenCalledWith('s-restore', homedir(), expect.anything())
-    // pi 收到的 tmp 拷贝首行 header.cwd = homedir（读改写同处完成）
-    expect(env.capturedTmp).toHaveLength(1)
-    const header = JSON.parse(env.capturedTmp[0].content.split('\n')[0])
+    // pi 附着原路径（W1 语义变更：不再附着 $TMPDIR tmp 文件）
+    expect(env.switchCalls).toEqual([filePath])
+    // [W1 语义变更] 原文件被 F3 归一化原地覆盖：header.cwd 持久化为 homedir
+    const after = readFileSync(filePath, 'utf-8')
+    const header = JSON.parse(after.split('\n')[0]!)
     expect(header.cwd).toBe(homedir())
-    // 源文件零写：header 永久保持死路径（已声明接受的行为差异）
-    expect(readFileSync(filePath, 'utf-8')).toBe(original)
+    // 消息 entry 保留
+    expect(after).toContain('"u1"')
+    // 目录无 .tmp-migrate- 临时名残留（rename 已原子完成）
+    expect(readdirSync(dir).filter(f => f.includes('.tmp-migrate-'))).toEqual([])
   })
 
-  it('活路径 cwd：tmp 首行 header.cwd 保持原值，源文件不变（与迁移前一致）', async () => {
+  it('活路径 cwd（F2）：header.cwd 保持原值，源文件零写（与迁移前一致）', async () => {
     const liveCwd = dir
     const original = makeJsonl(liveCwd)
     writeFileSync(filePath, original)
@@ -136,26 +139,25 @@ describe('restoreSession cwd fallback 迁 tmp 管线（W11）', () => {
     await env.lifecycle.restoreSession('s-restore')
 
     expect(env.pm.createSession).toHaveBeenCalledWith('s-restore', liveCwd, expect.anything())
-    expect(env.capturedTmp).toHaveLength(1)
-    const header = JSON.parse(env.capturedTmp[0].content.split('\n')[0])
-    expect(header.cwd).toBe(liveCwd)
+    expect(env.switchCalls).toEqual([filePath])
     expect(readFileSync(filePath, 'utf-8')).toBe(original)
   })
 
-  it('死路径 cwd + 历史含 session_end 行：strip 与 cwd fallback 组合生效', async () => {
+  it('死路径 cwd + 历史含 session_end 行（F3）：strip 与 cwd fallback 组合生效', async () => {
     const deadCwd = join(dir, 'another-deleted')
     writeFileSync(filePath, makeJsonl(deadCwd, { sessionEnd: true }))
     mountTarget(deadCwd)
 
     await env.lifecycle.restoreSession('s-restore')
 
-    const tmpContent = env.capturedTmp[0].content
-    // session_end 行被 strip（W9 行为不回归）
-    expect(tmpContent).not.toContain('session_end')
-    // 首行 header cwd 已降级
-    const header = JSON.parse(tmpContent.split('\n')[0])
+    const after = readFileSync(filePath, 'utf-8')
+    // session_end 行被 strip（防 pi _buildIndex 树索引污染，W9 动机经 W1 复核保留）
+    expect(after).not.toContain('session_end')
+    // 首行 header cwd 已降级并持久化在原文件
+    const header = JSON.parse(after.split('\n')[0]!)
     expect(header.cwd).toBe(homedir())
     // 消息 entry 保留
-    expect(tmpContent).toContain('"u1"')
+    expect(after).toContain('"u1"')
+    expect(env.switchCalls).toEqual([filePath])
   })
 })
