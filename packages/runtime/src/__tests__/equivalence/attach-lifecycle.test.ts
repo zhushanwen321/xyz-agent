@@ -4,7 +4,12 @@
  * 被测不变量：附着正式文件后，会话进程退出/切换前，**登记文件必须包含 pi 已写的全部
  * entry**；重新 spawn 附着同一文件，状态（entry 数 / 最后 assistant 消息 / sessionId）
  * 与退出前一致。这正是 P0 根因（附着 tmp 文件 + unlink，pi 每轮 append 按路径重建孤儿，
- * 登记文件永不更新，重启全部丢失）的回归网——把实现回退为 tmp 附着，本测试族必红（C5 红性）。
+ * 登记文件永不更新，重启全部丢失）的回归网。
+ *
+ * 覆盖边界（如实声明，ADR-0063 I3）：本测试族直接驱动 switchSession + attach 断言，
+ * 不经过生产 restoreSession/forkSession 全管线——生产管线整段回退 tmp 附着时本测试族
+ * 不红；该形态的运行时守卫是 I1 断言（接线在生产管线内，tmp 附着瞬间 mismatch 即
+ * throw）+ 第三用例（mismatch-throw 行为锁定）。
  *
  * 三用例：
  * - restore 路径：真实会话文件 switchSession 附着 → 一轮真实 prompt → kill（dispose，
