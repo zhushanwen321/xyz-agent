@@ -36,14 +36,14 @@
 
 ### 2.2 批次二：值域/文案与 0.84.1 对齐（漂移类）
 
-- **thinking `max` 缺失**（A-03 / C#1，双 agent 独立发现）：pi 0.84.1 `cli/args.js:6` 值域含 `max`，composer UI 默认档就是 max，但 runtime `VALID_THINKING_LEVELS`（session-lifecycle.ts:123）与 shared `ThinkingLevel` 类型（pi-preset.ts:27）均缺 → spawn 校验失败静默丢弃 `--thinking`。协议文件 `pi-protocol.ts:403` 的 `PiThinkingLevel` 已是全集（含 max）——SSOT 已存在只是没人从它派生。
+- **thinking `max` 缺失**（A-03 / C#1，双 agent 独立发现）：pi 0.84.1 `cli/args.js:5` 值域含 `max`，composer UI 默认档就是 max，但 runtime `VALID_THINKING_LEVELS`（session-lifecycle.ts:123）与 shared `ThinkingLevel` 类型（pi-preset.ts:27）均缺 → spawn 校验失败静默丢弃 `--thinking`。协议文件 `pi-protocol.ts:403` 的 `PiThinkingLevel` 已是全集（含 max）——SSOT 已存在只是没人从它派生。
 - **KNOWN_PI_API_TYPES 3/10**（A-09 / C#2）：shared/constants.ts:53-57 只列 3 个，pi-ai 0.82.1 `KnownApi` 实为 10 个 → 7 种合法 api 误 warn、前端选不了。
 - **DEFAULT_PI_SYSTEM_PROMPT 过时一行**（C#7）：0.84.1 新增 environment variables 文档路由行。
 - **旧包名文案**（A-07 / C#4）：process-manager.ts:228 恢复指引指向已迁移的 `@mariozechner/` scope。
 
 ### 2.3 批次三：wire 层死代码（字段可见性模式）
 
-- **tool-call-index 永不产出**（A-01，major）：event-adapter.ts:111-125 从 `event.message?.content?.[i]?.id` 提取 toolCallId，但 pi `toJsonEvent`（`modes/json-event.js:3-15`）对 message_update 只输出 `{type, assistantMessageEvent}`，顶层 `message` 被整体剥离 → 提取恒 undefined，机制声称要修的 toolCall 顺序错位从未被修过；单测 mock 自带 message 字段故测试绿生产死。
+- **tool-call-index 永不产出**（A-01，major）：event-adapter.ts:111-125 从 `event.message?.content?.[i]?.id` 提取 toolCallId，但 pi `toJsonEvent`（`modes/json-event.js:1-11`）对 message_update 只输出 `{type, assistantMessageEvent}`，顶层 `message` 被整体剥离 → 提取恒 undefined，机制声称要修的 toolCall 顺序错位从未被修过；单测 mock 自带 message 字段故测试绿生产死。
 - **协议 SSOT 自相矛盾**（A-05）：pi-protocol.ts:470 声明 select options 为 `Array<{label,value}>`，pi 实为 `options: string[]`（extensions/types.d.ts:70）——协议真契约文件反而保留了已被修过的错误认知。
 
 ### 2.4 批次四：extensions 错误语义范式（跨 5 包）
@@ -83,19 +83,19 @@
 
 ### 3.3 批次三方案（W3）：wire 层修复
 
-- tool-call-index：builder 首步用真实 pi 跑一轮含工具调用的对话，抓 message_update 的 `assistantMessageEvent` 实际形态（ToolCall part 的 start/delta/end 事件里 id 与 index 的可得性），据实实现提取；**验收锚 = 真实 pi 事件流中 tool-call-index 事件真实产出**（非 mock——现有 mock 必须改为按真实形态构造，消除「mock 自带 message 字段」的自欺）。若调查证实 assistantMessageEvent 不可得 id（pi 未暴露），则方案降级：删除死机制 + 在协议文件登记 pi 能力缺口（诚实删除优于死代码），此分支需在交付报告中显式选定。
+- tool-call-index：builder 首步用真实 pi 跑一轮含工具调用的对话，抓 message_update 的 `assistantMessageEvent` 实际形态（ToolCall part 的 start/delta/end 事件里 id 与 index 的可得性；判定探针 = 抓到的 JSON 中 ToolCall part 事件是否携带稳定 id 字段——携带则实现提取、不携带则走降级分支），据实实现提取；**验收锚 = 真实 pi 事件流中 tool-call-index 事件真实产出**（非 mock——现有 mock 必须改为按真实形态构造，消除「mock 自带 message 字段」的自欺）。若调查证实 assistantMessageEvent 不可得 id（pi 未暴露），则方案降级：删除死机制 + 在协议文件登记 pi 能力缺口（诚实删除优于死代码），此分支需在交付报告中显式选定。
 - pi-protocol select options：类型改 `options: string[]`（附 types.d.ts:70 锚点），消费侧（ask-user 等 UI 渲染）适配——label=value 渲染或映射。
 
 ### 3.4 批次四方案（W4）：isError 范式收敛
 
-- 9 处 `return {isError:true,...}` 改为 `throw new Error(message)`（pi 采信 throw；错误信息保持原文案）；逐处确认 throw 后的扩展内部状态清理（原 return 路径的收尾逻辑移到 throw 前）。
+- 9 处 `return {isError:true,...}` 改为 `throw new Error(message)`（pi 采信 throw；错误信息保持原文案）；逐处确认 throw 后的扩展内部状态清理（原 return 路径的收尾逻辑移到 throw 前；高风险两处 = subagent-workflow `tool-workflow.ts:442/:501`，throw 前须先完成 workflow 运行态清理登记——对照原 return 收尾逐项搬迁，禁止跳过）。
 - goal：STALE_CONTEXT_PATTERNS 对齐真实文案（复用 scheduler 已验证的 `'stale after session replacement'` marker），isStaleContextError 无调用方——调查后要么接线要么删除（禁止留死函数）。
 - 6 条注释失实逐条修正；session-reader data.id 死分支删除。
 
 ### 3.5 批次五方案（W5）：core 对齐 + 守卫
 
 - core normalizePiToolResult 补 images 提取（对齐 runtime 版行为，分叉注释登记该差异已消除）；convertMessageBody 补 image part 处理（渲染层若无消费，先保数据不丢——entry 转换保 images 字段）。
-- R1 补 `createWriteStream` pattern（写目标判定复用现有条件 A/B 框架；logger 等合法用例靠 NON_SESSIONS_DERIVATIONS 豁免——补豁免验证）；C#8 版本标签顺手更新。
+- R1 补 `createWriteStream` pattern（写目标判定复用现有条件 A/B 框架；logger.ts 不命中条件 A——文件内 sessions token 仅存在于注释、条件 A 限定代码语境，无需豁免条目、勿误加 allowlist；豁免验证对象 = 确有代码语境痕迹的流式写用例，走条件 B 目标豁免通道）；C#8 版本标签顺手更新。
 
 ### 3.6 批次六方案（W6）：治本
 
@@ -119,7 +119,7 @@
 | V3 | thinking max | dev app 选「最高(max)」创建 session | pi 进程 args 含 `--thinking max`（或 `get_state().thinkingLevel === 'max'`） | G3 |
 | V4 | tool-call-index 真产出 | 真实 pi 跑一轮含工具调用的对话，抓 runtime 事件流 | tool-call-index 事件真实出现且 toolCallId 与 pi entry 对得上（或降级分支：机制删除 + 缺口登记，测试同步） | G4 |
 | V5 | 扩展错误被采信 | 本地 pi CLI 触发 session-reader 读不存在文件（等构造错误路径） | pi tool_execution_end 带 isError / turn 记录错误；unified-hooks 审计可见 | G5 |
-| V6 | 图片不丢 | 构造含 images 的 toolResult entry session → 实时与重开对比 | 重开后图片仍在（live≡replay） | G5 |
+| V6 | 图片不丢 | 真实 pi CLI 会话中用 read 工具读一张图片文件（toolResult 含 images）→ 实时流与重开 session 对比 | 重开后图片仍在（live≡replay） | G5 |
 | V7 | 全量回归 | runtime/core/renderer 三包全量 + `extensions:typecheck && extensions:lint && extensions:test` + R1 + taste-lint | 全绿；R1 含 createWriteStream 后 exit 0 且豁免闭环 | G6 |
 
 Final gate：真实 dev app 抽查 V1/V3/V4 的端到端形态（扩展经 builtin 打包链生效）。
@@ -132,7 +132,7 @@ Final gate：真实 dev app 抽查 V1/V3/V4 的端到端形态（扩展经 built
 | W1b | provider-repair 八字段对齐 + 防误删测试 | runtime infra/pi（provider 域） | 无（与 W1a 并行） |
 | W2 | thinking SSOT 派生 + KnownApi 全集 + system prompt + 包名 + 值域类注释 | shared + runtime（session-lifecycle/process-manager 值域行） | 无（与 W3/W4 并行；不碰 event-adapter/pi-protocol） |
 | W3 | tool-call-index 修复（含真实事件形态调查 + 降级分支）+ pi-protocol select 类型 | runtime infra/pi（event-adapter/pi-protocol） + ask-user 消费适配 | 无（与 W2/W4 并行） |
-| W4 | isError throw 范式 9 处 + goal stale 对齐 + 6 注释 | extensions/（5 包，除 model-switch） | 无（与 W2/W3 并行；不碰 model-switch=W1a 领地） |
+| W4 | isError throw 范式 9 处 + goal stale 对齐 + 6 注释 | extensions/（5 包，除 model-switch） | 无（与 W2/W3 并行；不碰 model-switch=W1a 领地。W3 亦改 ask-user 的 select 渲染适配——不同文件不同函数，可并行、merge 时注意） |
 | W5 | core images 双修 + R1 createWriteStream + 版本标签 | packages/core + .githooks | W2 后（pi-protocol 不冲突即可，实际无依赖可提前） |
 | W6 | clone 更新 + AGENTS/ADR 规则 + A-10/A-11 探针 + 观察项登记 | 仓外 clone + 根文档 + troubleshooting | W1-W5 落定后收尾 |
 | gate | V1-V7 + dev app 端到端 | — | 全 wave 后 |
