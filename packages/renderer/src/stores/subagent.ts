@@ -113,7 +113,8 @@ export const useSubagentStore = defineStore('subagent', () => {
    * derivedStatus 恒 working → isSessionActive 恒 true → 末位 turn 永久「工作中」（重开
    * 后 record=closed 才恢复，live 与 reload 不一致）。result === undefined 的 running
    * （首轮在跑 / legacy W16 前旧 session）仍算真在跑。isRunning（单 record 判定）不随之
-   * 收紧——SubagentTab 依赖它决定是否订阅实时增量流（resumable 续轮仍有流活动）。
+   * 收紧——SubagentTab 依赖它决定是否订阅实时增量流（resumable 续轮仍有流活动）；
+   * 单 record 窄口径（虚拟 session forceWorking 用）见 isStreamingSubagent。
    */
   function hasRunning(sessionId: string): boolean {
     return getRecordsBySession(sessionId).some((s) => s.status === 'running' && s.result === undefined)
@@ -139,6 +140,24 @@ export const useSubagentStore = defineStore('subagent', () => {
   /** 指定主 session 名下的 subagent 是否仍在 running（读该 sid 分区，不全扫） */
   function isRunning(mainSessionId: string, subagentId: string): boolean {
     return getRecordsBySession(mainSessionId).find((s) => s.subagentId === subagentId)?.status === 'running'
+  }
+
+  /**
+   * 指定 subagent 是否「真在流活动中」（running 且无轮终 result）——虚拟 session working
+   * 判定的窄口径 [review round2 R1-遗留-1]。
+   *
+   * hasRunning 同判据的单 record 版：running + result 在场 = 轮终 running-resumable
+   * （v4 轮终迁移故意回写 running，见 hasRunning 注释），不是后台真在跑。与 isRunning 的
+   * 分工（两口径并存是刻意设计，非重复）：isRunning（宽松，running 即 true）供 SubagentTab
+   * 决定是否订阅增量流——resumable 续轮仍有真实流活动，收紧会断数据通路；本函数（窄口径）
+   * 供 MessageStream 虚拟 session forceWorking——轮终后虚拟 session 末位 turn 不再卡
+   * streaming，与主 session working 判定（hasRunning）语义一致。续轮流活动的 streaming
+   * 显示由消息级 status 承担（subscribeStream → applySubagentStreamDelta push
+   * status='streaming' 消息），不依赖本函数。
+   */
+  function isStreamingSubagent(mainSessionId: string, subagentId: string): boolean {
+    const record = getRecordsBySession(mainSessionId).find((s) => s.subagentId === subagentId)
+    return record?.status === 'running' && record.result === undefined
   }
 
   // ── actions ──
@@ -278,6 +297,7 @@ export const useSubagentStore = defineStore('subagent', () => {
     loadError,
     // getters
     isRunning,
+    isStreamingSubagent,
     // per-session 分区读写（ADR-0049 Map 分区派）
     recordsOf,
     getRecordsBySession,

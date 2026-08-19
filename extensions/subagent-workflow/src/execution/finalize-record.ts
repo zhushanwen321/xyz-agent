@@ -191,12 +191,14 @@ export async function doFinalizeRoundToIdle(
 ): Promise<void> {
   // MF-2：设 record.result 供 notifier idle 回复正文（否则恒 "(empty)"，G1/G2 不成立）。
   // MF-6 兜底：失败轮次（success=false）的 result.text 可能为空，用 error 让 notify 可读。
-  // [增量 G2] 第三分支 chatMode 条件占位：本写点被 one-shot 成功路径共用（subagent-service
-  // runAndFinalize 的 `!record.chatMode && !aborted && result.success` 分支 → finalizeRoundToIdle），
-  // 非 chatMode 必须保持 `|| record.result` 现状——one-shot 空文本成功完成（collectResult
-  // getFullText 返回 ""、success=true、真实可达）时 result 前值 undefined → notifier
-  // buildLlmContent 的 `record.result ?? "(empty)"` 兜底确定性产出 "(empty)"，通知逐字节
-  // 不变（G4）；无条件替换会把文案漂移为占位。chatMode 空增量轮 → 固定占位
+  // [R2-1] 轮终写点恒写非空：one-shot 空文本成功完成（collectResult getFullText 返回 ""、
+  // success=true、真实可达，本写点被 subagent-service runAndFinalize 的成功分支共用）首轮
+  // result 前值 undefined，兜底补 "(empty)" 占位——措辞与 notifier buildLlmContent 的
+  // `record.result ?? "(empty)"` 兜底同款，通知文案逐字节不变（[增量 G2] G4 取舍保持）。
+  // 轮终信号优先：record.result 非 undefined 是 renderer hasRunning 排除「轮终
+  // running-resumable」的判据（shared SubagentRecord.result 契约），保持 undefined 会让
+  // 完成注入后末位 turn 永久「工作中」。续轮（前值存在）沿用前值：one-shot 无增量语义，
+  // record.result = 该 subagent 最终输出。chatMode 空增量轮 → 固定占位
   // "(no output this round)"（D5：增量语义下沿用旧 record.result = 上一轮增量，本轮通知
   // 正文 = 上一轮内容，父 agent 误读为原样重复回复）。
   let nextResult: string | undefined;
@@ -207,7 +209,7 @@ export async function doFinalizeRoundToIdle(
   } else if (record.chatMode) {
     nextResult = "(no output this round)";
   } else {
-    nextResult = record.result;
+    nextResult = record.result ?? "(empty)";
   }
   record.result = nextResult;
 

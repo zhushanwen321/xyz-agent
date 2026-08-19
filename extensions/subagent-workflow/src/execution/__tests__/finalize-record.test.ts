@@ -333,7 +333,7 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     expect(record.result).not.toContain("PREV-ROUND-TEXT");
   });
 
-  it("C1TC11: 非 chatMode 空文本沿用旧值——one-shot 空文本完成 record.result 保持 undefined（G2/G4）", async () => {
+  it("C1TC11 [R2-1]: one-shot 首轮空文本成功完成 → record.result 补占位「(empty)」（非 undefined）", async () => {
     const record = makeMinimalRecord({ id: "rec-oneshot-empty", chatMode: false });
     record.status = "closed";
     // one-shot 成功空文本完成路径（collectResult getFullText 返回 ""、success=true）：
@@ -344,10 +344,25 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     result.success = true;
     result.error = undefined;
     await doFinalizeRoundToIdle(makeDeps(), record, result);
-    // 非 chatMode 侧维持现状（第三分支 record.chatMode ? 占位 : record.result）
-    expect(record.result).toBeUndefined();
-    // notifier buildLlmContent 的 record.result ?? "(empty)" 确定性链保 G4：
-    // 通知文案逐字节产出 "completed. Result:\n(empty)"，不漂移为 "(no output this round)"
+    // [R2-1] 轮终信号优先：占位非 undefined 是 renderer hasRunning 排除轮终 running 的
+    // 判据——保持 undefined 会让完成注入后末位 turn 永久「工作中」
+    expect(record.result).toBe("(empty)");
+    // notifier buildLlmContent 的 record.result ?? "(empty)" 兜底同款措辞：
+    // 通知文案逐字节产出 "completed. Result:\n(empty)"（G4 保持）
     expect(record.result ?? "(empty)").toBe("(empty)");
+  });
+
+  it("C1TC11b [R2-1]: one-shot 续轮空文本 → 沿用前值（one-shot 无增量语义，不覆盖为占位）", async () => {
+    const record = makeMinimalRecord({ id: "rec-oneshot-cont", chatMode: false });
+    record.status = "closed";
+    // 上一轮真实产出（续轮 record.result 前值）
+    record.result = "first round output";
+    const result = makeMinimalResult();
+    result.text = "";
+    result.success = true;
+    result.error = undefined;
+    await doFinalizeRoundToIdle(makeDeps(), record, result);
+    // one-shot record.result = 该 subagent 最终输出：空文本续轮沿用前值，不被 "(empty)" 覆盖
+    expect(record.result).toBe("first round output");
   });
 });
