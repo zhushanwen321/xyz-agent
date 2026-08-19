@@ -22,7 +22,7 @@
 | W8 | usage/queue/commands 三实例 + 频率量化 | committed | ebc6f6991 | verifier PASS（报告 w8-report.md：3131 全绿 + equivalence 14/14/**event-adapter 段级核验警戒线完好**/红性直写回退红/深度公式与 pi agent-session.ts:1428 同源/三接线无第二写路径）。量化终判（P0.5② 收口）：7 次快照 RPC 合并 p95 0.7ms——无需降级，已落登记表表头第 5 条。2 minor：protocol.ts queue_update 契约未声明 pendingMessageCount（W12 补）；usage config「contextUsage 恒在」注释不准（影响有界） |
 | W9 | 删除 sessionMetaCache | committed (09a1da745) | b8db5afe7 | verifier PASS 限定范围模式（报告 w9-report.md：删除性/保留性 grep 全过 + **session-file-utils 0 行改动防误删完好** + scanner 45/45 + 三判定实证（setLabelCache 保留防 label bug 复活 / thinkingLevelSet 直发帧 / 只写不读死影子）+ 红性 TS2304）。**commit 延迟**：event-adapter-new-events.test.ts diff 混合 W21 半成品（U-adapter-1=W9 / [w21] 段=W21），主 agent 裁决等 W21 完成后按归属分两次 commit。观察：event-adapter.ts:722 过期注释 W21 收尾清理 |
 | W10 | applyContextUpdate 收编 + switchModel 入 owner | committed (59c9b3137) | b8db5afe7 | verifier PASS（报告 w10-report.md：3119 一次全绿/五写点收编逐点核实/红性注入 tokenCount 直写即红/pi 侧 getContextUsage 用 this.model 窗口核实/三裁决全过——超清单 3 文件机械连带、tokenCount 恒 0 基线零 UI 消费、竞态未复现）。2 minor：index.ts:273-276 过时注释（W12 顺带清理）；session-service 两处 eslint-disable no-silent-catch 与规范张力（留 W24 评估规则误报面） |
-| W11 | 非活跃 rename 短命 pi + 直写全删 + R1 allowlist 清空 | building | — | 依赖 W1/W3/W6；builder 后台运行中（L 档最重 wave：withEphemeralPi + persistHandedOff/patchSessionCwd 迁移 + R1 allowlist 清空） |
+| W11 | 非活跃 rename 短命 pi + 直写全删 + R1 allowlist 清空 | building | — | 依赖 W1/W3/W6；首任 builder 因账号 5h 限额中断（22 分钟，死于自验阶段——核心 6 文件全有实质改动：R1 清空/withEphemeralPi/183 行 file-utils 改写/3 新测试，旁证 W25 终检时全包 tsc 0 错）。续任 builder 已派：指令=盘点在途差距→补缺不推倒 |
 | W12 | 5 个 state 话题切实例快照发布 | pending | — | 依赖 W7/W8；5 话题各独立 commit |
 
 ## P2 wave 表（W13-W15）
@@ -70,3 +70,5 @@
 - 2026-08-19 W6 committed（首波首个完成，verifier PASS 一轮过）：ReplicatedState 原语 13 用例 + 红性验证 4 篡改全红。W7 解锁派发（主链推进；W16/W20 builder 仍在运行）。调度警戒记入：W21 与 W18 同碰 event-adapter.ts 必须串行；登记表改动统一由主 agent 串行落表（builder 只交草稿）。
 - 2026-08-19 W16 + W20 committed（双 PASS）：W16 探针落表（569-956B / 3 次生命周期，未触发分流）+ P-1 major 移交 W17（close 终态快照抹空 result）；W20 pi 双形态存储发现 + 2 minor 移交 W21。W7 builder 完成（3124 全绿，采样 5 次 get_state / p95 4.9ms 远低于阈值——P0.5② 首采），verifier 派发中。
 - 2026-08-19 W21+W9 拆分入库（9bf7c9d45 / 09a1da745）→ W10（59c9b3137）→ W22（331beb627）十 wave committed。W11+W25 双 builder 后台并行派发（用户指示不阻塞等待）。**W12 暂不派**：依赖 W7/W8 虽满足，但主链 W11→W12 串行——W11 builder 在途改动含 session-service.ts（git status 实证），与 W12 领地相交；W13-W15/W18/W19/W23/W24 全部阻塞在 W11→W12 链上，(W11+W25) 即当前最大可运行并发集。W25 TaskOutput 阻塞等待曾被用户取消——后续一律不阻塞轮询，靠完成通知流转。
+- 2026-08-19 W25 builder 交付（契约三断言 + check-version-bump 接线 + 反证三组 + RUNTIME_TEST 3123 绿；三差异待裁决：pi 依赖实际在 root package.json / entry_appended 负向固化 / 新契约事实两条），verifier 派发。
+- 2026-08-19 **账号 5h 限额中断**（重置于 11:25:49）：W11 builder（22 分钟，自验阶段）+ W25 verifier（8 分钟，未写报告）双双 [1308] 失败。用户指示可重派。主 agent 盘点 W11 在途进度（23 文件 462+/355-，其中 W25 领地 2 文件；W11 核心 6 文件全有实质改动 + R1 allowlist 清空已实证）后续任 builder 派发（盘点差距→补缺不推倒）；W25 verifier 原词重派。若新 agent 立即再撞限额，改 11:26 后重试。
