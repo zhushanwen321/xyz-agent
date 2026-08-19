@@ -831,6 +831,29 @@ describe("RecordStore", () => {
       expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
     });
 
+    it("末行 >64KB 完整 JSON → 不误判截断，判 done（V1 探针实测回归）", () => {
+      const sessionFile = path.join(tmpDir, "orphan-longline.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-orphan-5", agent: "worker", mode: "background", task: "orphan long line",
+        startedAt: 5000, rootSessionId: "sess-orphan",
+      });
+      // 真实库实测形态：末行为超长完整 entry（subagent-identity 的 task 内嵌大 payload，
+      // 28/4822 个文件末行 65KB-776KB）——固定 64KB 尾窗曾把这类行从中间切开误判截断。
+      const bigEntry = JSON.stringify({
+        type: "custom", id: "id-big", parentId: null,
+        timestamp: new Date(5000).toISOString(), customType: "subagent-identity",
+        data: { id: "sa-orphan-5", agent: "worker", mode: "background", task: "x".repeat(70 * 1024), startedAt: 5000 },
+      });
+      fs.appendFileSync(sessionFile, bigEntry + "\n", "utf-8");
+      const { store, appended } = makeRecoveryStore();
+      store.recoverOrphanRecords("sess-orphan");
+
+      const entry = appended.find((c) => c.data.id === "sa-orphan-5");
+      expect(entry?.data.status).toBe("closed");
+      expect(entry?.data.error).toBeUndefined();
+      expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
+    });
+
     it("chatMode 孤儿 → 不终态化，落 resumable entry（可续聊产品语义）", () => {
       const sessionFile = path.join(tmpDir, "orphan-chat.jsonl");
       writeSessionJsonl(sessionFile, {

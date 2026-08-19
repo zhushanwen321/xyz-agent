@@ -152,27 +152,45 @@ interface NegativeFileEntry {
 /** fileCache 值类型：正常条目或负缓存条目。 */
 type FileCacheValue = FileCacheEntry | NegativeFileEntry;
 
-/** 孤儿判定的末行读取窗口：64KB 足以容纳任何单行 entry（identity 含 task 全文上限
- *  ~62KB 已实测），避免全文件读。 */
+/** 孤儿判定的末行读取初始窗口（常规 entry 远小于此，避免全文件读）。 */
 // eslint-disable-next-line no-magic-numbers -- 64KB = 64 * 1024 bytes 字节换算常数
 const LAST_LINE_WINDOW_BYTES = 64 * 1024;
+/** 末行超出初始窗口时的扩窗倍数（64KB → 256KB → 1MB → …，上限=文件头）。
+ *  [HISTORICAL] 曾断言「64KB 足以容纳任何单行 entry（task 上限 ~62KB 实测）」并被
+ *  V1 探针推翻：真实库 4822 个子文件中 28 个末行为 65KB-776KB 的完整 entry
+ *  （subagent-identity 的 task 内嵌大 payload）——固定尾窗会把超长末行从中间切开
+ *  误判截断，孤儿恢复错落 error。 */
+const WINDOW_GROWTH_FACTOR = 4;
+/** 窗口内 ≥2 个非空段 = 末行之前存在换行边界（首段可能被窗口切开，末段完整到 EOF）。 */
+const MIN_SEGMENTS_WITH_BOUNDARY = 2;
 
 /**
  * 读 JSONL 文件的最后一个非空行（孤儿终态判定用，residual-fixes §5.2）。
- * 只读文件尾部窗口（大文件不全读）。返回 ok=false 表示 IO 错误（open/read 阶段抛出，
- * 含权限/磁盘故障——可能是暂时状态，调用方按保守方向处理）。
+ * 读文件尾部窗口起步；窗口内只有单个非空段且未到文件头时，该段可能是被窗口切开的
+ * 超长末行，按 WINDOW_GROWTH_FACTOR 扩窗直到看见末行前的换行边界或抵达文件头。
+ * 返回 ok=false 表示 IO 错误（open/read 阶段抛出，含权限/磁盘故障——可能是暂时
+ * 状态，调用方按保守方向处理）。
  */
 function readLastJsonlLine(sessionFile: string): { ok: true; line: string } | { ok: false } {
   let fd: number | undefined;
   try {
     fd = fs.openSync(sessionFile, "r");
     const size = fs.fstatSync(fd).size;
-    const windowStart = Math.max(0, size - LAST_LINE_WINDOW_BYTES);
-    const buf = Buffer.alloc(size - windowStart);
-    fs.readSync(fd, buf, 0, buf.length, windowStart);
-    const text = buf.toString("utf-8");
-    // 尾窗口可能从行中间开始——丢掉第一段（除非文件整体小于窗口，此时首段即完整首行）。
-    const lines = text.split("\n").filter((l) => l.length > 0);
+    let windowBytes = LAST_LINE_WINDOW_BYTES;
+    let windowStart = Math.max(0, size - windowBytes);
+    let lines: string[] = [];
+    while (true) {
+      const buf = Buffer.alloc(size - windowStart);
+      fs.readSync(fd, buf, 0, buf.length, windowStart);
+      lines = buf.toString("utf-8").split("\n").filter((l) => l.length > 0);
+      // 末行完整可提取 = 窗口内末行之前还有换行（≥2 个非空段）或已覆盖到文件头。
+      if (windowStart === 0 || lines.length >= MIN_SEGMENTS_WITH_BOUNDARY) break;
+      windowBytes *= WINDOW_GROWTH_FACTOR;
+      const nextStart = Math.max(0, size - windowBytes);
+      if (nextStart === windowStart) break;
+      windowStart = nextStart;
+    }
+    // 窗口仍可能从行中间开始（首段被切开）——丢掉第一段；到文件头则首段是完整首行。
     const candidates = windowStart > 0 && lines.length > 0 ? lines.slice(1) : lines;
     const last = candidates.length > 0 ? candidates[candidates.length - 1] : lines[lines.length - 1];
     if (last === undefined) return { ok: true, line: "" }; // 空文件：视为不可判终态的截断形态由 parse 失败兜住
