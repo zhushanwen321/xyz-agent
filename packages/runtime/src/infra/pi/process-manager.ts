@@ -277,8 +277,9 @@ export class ProcessManager implements IProcessManager {
    */
   async withEphemeralPi<T>(sessionFile: string, fn: (client: RpcClient) => Promise<T>): Promise<T> {
     // spawn cwd 只影响 pi 初始（弃用）session 的上下文，不影响 switchSession 后的目标
-    // session；取 sessions 目录（文件所在处，扫描结果保证存在）——目标 session 自身的
-    // cwd 死路径场景由调用方处理（restore tmp 管线），与本入口无关。目录竞态消失时
+    // session；取 sessions 目录（文件所在处，扫描结果保证存在）——目标 session 自身
+    // header 的 cwd 死路径场景由调用方处理（renameSession 非活跃分支附着前 F3 归一化
+    // cwd fallback，p1p4-closure W1；restoreSession 同款），与本入口无关。目录竞态消失时
     // 兜底 homedir，让失败落在 switchSession（pi 报「文件不存在」）而非 spawn ENOENT。
     const spawnCwd = existsSync(dirname(sessionFile)) ? dirname(sessionFile) : homedir()
     const ephemeralId = `ephemeral-${Date.now()}-${crypto.randomUUID()}`

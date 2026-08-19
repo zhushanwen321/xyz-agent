@@ -391,9 +391,34 @@ export class SessionLifecycle {
       // 失败（spawn 失败 / 附着超时 / RPC 失败）rethrow 走上层 toast——旧名保留可重试
       // （与活跃分支同语义）。
       const target = this.svc.findScannedSession(sessionId)
-      if (target) {
-        await this.pm.withEphemeralPi(target.filePath, (c) => c.setSessionName(newName))
+      // D3（p1p4-closure W1）：未命中必须 throw——旧形态 if (target) 无 else 静默
+      // return，UI 改名静默不生效（无持久化、无提示）。错误信息含 sessionId 与恢复
+      // 动作（全局规则 16），上层 toast 路径既有。
+      if (!target) {
+        throw new Error(
+          `Cannot rename session ${sessionId}: not found in active sessions or persisted files `
+          + `(refresh the sidebar and verify the session still exists, then retry the rename)`,
+        )
       }
+      // findings #4（p1p4-closure W1）：header cwd 死路径（如 worktree 清理后）时
+      // pi 0.84.1 switchSession 内 assertSessionCwdExists 直接拒绝附着（pi-mono
+      // coding-agent/src/core/agent-session-runtime.ts switchSession；binary strings
+      // 实证，findings §4.1；RPC switch_session 不透传 cwdOverride，无法绕过）——
+      // 附着前按 restoreSession 同款 F3 形态归一化（cwd fallback 落回原文件；
+      // 判定含 session_end 时一并 strip），然后附着原文件。cwd 检测源 = scanner
+      // 从 header 读出的 target.cwd（与 restoreSession 一致）；正常文件（cwd 活
+      // 且无 session_end）判定不命中，零变换直附着（探针 ~600ms 预期不变）。
+      const cwdFellBack = !existsSync(target.cwd)
+      if (cwdFellBack) {
+        console.warn(`[session-lifecycle] rename target cwd does not exist: ${target.cwd}, normalizing header cwd to home before attach`)
+      }
+      // 扫描 stale（文件已消失）时跳过预读归一化——「文件不存在」的报错分工归
+      // withEphemeralPi 内 switchSession（pi 报错，见其 docstring 的 @param 语义），
+      // 预读 ENOENT 会短路该分工。restoreSession 无此守卫（既有行为保持，不动）。
+      if (existsSync(target.filePath)) {
+        this.normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack)
+      }
+      await this.pm.withEphemeralPi(target.filePath, (c) => c.setSessionName(newName))
     }
 
     // wave:perf-w26（D9-1 rename 失效点）：写路径改变 name（活跃分支 RPC 更新 pi 内存
@@ -483,6 +508,43 @@ export class SessionLifecycle {
     return { cwd, deleted, failed }
   }
 
+  /**
+   * 附着前 F2/F3 分流归一化（restore-fork-attach-fix W1 形态；p1p4-closure W1 起
+   * renameSession 非活跃分支共用——两处附着前检测/变换必须同源，否则行为漂移）。
+   *
+   * 判定：containsSessionEndLine(raw) || cwdFellBack。禁止用
+   * stripSessionEndEntries(raw) === raw 字符串全等——strip 有末尾换行规范化副作用
+   * （原文末尾无 \n 时零剔除也产出不等文本），见 containsSessionEndLine。
+   *
+   * 变换（F3 一次性归一化，legacy 文件；每文件最多一次，产物收敛到 F2，幂等）：
+   * - strip session_end：legacy 行无 id/parentId，pi _buildIndex 对所有非 session
+   *   entry 无差别 byId.set(entry.id); leafId = entry.id（pi-mono session-manager.ts），
+   *   session_end 使 leafId=undefined → 新 entry parentId 断链 → 历史不进 LLM 上下文
+   * - header cwd fallback：仅 cwd 死时应用（cwdFellBack）——pi 0.84.1 switchSession
+   *   内 assertSessionCwdExists 对死 cwd 硬拒绝（pi-mono coding-agent/src/core/
+   *   agent-session-runtime.ts switchSession，binary strings 实证见 findings §4.1；
+   *   抛 MissingSessionCwdError，pi-mono session-cwd.ts；RPC switch_session 不透传
+   *   cwdOverride，只能由 xyz 附着前修）
+   *
+   * 落盘经 normalizeSessionFileInPlace（同目录临时名 rename-over 原子替换，路径
+   * 不变，登记表 §4 ⑨ 合法形态）。判定未命中（正常文件）时零变换：不写不拷贝，
+   * 调用方直附着原文件。
+   *
+   * @param filePath    目标 session JSONL 绝对路径（原地归一化，路径不变）
+   * @param cwdFellBack 调用方已判定的 session cwd 死路径标记（检测源 = scanner 从
+   *                    header 读出的 ScannedSession.cwd）
+   */
+  private normalizeInactiveSessionFileIfNeeded(filePath: string, cwdFellBack: boolean): void {
+    const raw = readFileSync(filePath, 'utf-8')
+    const needsNormalize = containsSessionEndLine(raw) || cwdFellBack
+    if (!needsNormalize) return
+    let cleaned = stripSessionEndEntries(raw)
+    if (cwdFellBack) {
+      cleaned = applyHeaderCwdFallback(cleaned, homedir())
+    }
+    normalizeSessionFileInPlace(filePath, cleaned)
+  }
+
   /** 从持久化文件恢复 session。 */
   async restoreSession(sessionId: string): Promise<SessionSummary> {
     const target = this.svc.findScannedSession(sessionId)
@@ -534,23 +596,10 @@ export class SessionLifecycle {
       // 每轮 appendFileSync 该路径——文件被删后 append 按路径重建），必须直接附着 sessions
       // 目录内的正式文件。旧「拷贝 $TMPDIR → 附着 tmp → 立即 unlink」管线使 pi 终身写
       // tmp 孤儿文件、原会话文件永不更新（P0 数据丢失），已整体删除。
-      // 判定禁止用 stripSessionEndEntries(raw) === raw 字符串全等——strip 有末尾换行
-      // 规范化副作用（原文末尾无 \n 时零剔除也产出不等文本），见 containsSessionEndLine。
-      const raw = readFileSync(target.filePath, 'utf-8')
-      const needsNormalize = containsSessionEndLine(raw) || cwdFellBack
-      if (needsNormalize) {
-        // F3 一次性归一化（legacy 文件；每文件最多一次，产物收敛到 F2）：
-        // - strip session_end：legacy 行无 id/parentId，pi _buildIndex 对所有非 session
-        //   entry 无差别 byId.set(entry.id); leafId = entry.id（pi-mono session-manager.ts），
-        //   session_end 使 leafId=undefined → 新 entry parentId 断链 → 历史不进 LLM 上下文
-        // - header cwd fallback：仅 cwd 死时应用（cwdFellBack）
-        let cleaned = stripSessionEndEntries(raw)
-        if (cwdFellBack) {
-          cleaned = applyHeaderCwdFallback(cleaned, homedir())
-        }
-        normalizeSessionFileInPlace(target.filePath, cleaned)
-      }
-      // F2 直附着（!needsNormalize）：零拷贝零改写，pi 的读写目标 = 登记路径 = 原文件。
+      // 判定/变换逻辑抽至 normalizeInactiveSessionFileIfNeeded（renameSession 非活跃
+      // 分支共用，p1p4-closure W1），行为不变。
+      this.normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack)
+      // F2 直附着（归一化判定未命中）：零拷贝零改写，pi 的读写目标 = 登记路径 = 原文件。
       await client.switchSession(target.filePath)
       // W2（restore-fork-attach-fix F4）：附着必断言（I1「登记路径 ≡ pi 写路径」）——
       // get_state().sessionFile 与登记路径 resolve 归一后必须一致，不一致即 throw

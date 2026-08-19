@@ -9,8 +9,8 @@
 
 | wave | 名称 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
-| W1 | renameSession 非活跃分支健壮性（D3 else throw + findings #4 死 cwd 降级） | building | 本文件同 commit | 验收基线 acceptance/w1-acceptance.md；阻塞解除依据 ec38e546f（用户 W2 已提交） |
-| W2 | P3 gate 复验改判（场景 3 restore/fork 重开一致性，根因修复后行为级验证） | pending | — | 主 agent 亲自（dev app 独占，同前四 gate 模式）；前置 W1 committed（避免工作区半成品污染 dev app 代码态） |
+| W1 | renameSession 非活跃分支健壮性（D3 else throw + findings #4 死 cwd 降级） | committed | f24760494 | verifier PASS（报告 acceptance/w1-report.md：0 major/防篡改 4 文件一致 + harness 零改动/等价重构逐行比对成立（共享方法 normalizeInactiveSessionFileIfNeeded，判定函数本体零改动）/两超授权项裁决成立（契约用例翻转 = CP1+CP5 唯一解；existsSync 守卫保 pi 报错分工）/红性 3 注入全红 + sha256 字节还原/独立全量 3185 passed + tsc 0/R1 exit 0/pi 锚点 3 条命中）。builder 裁量：裸 Error 不带 SESSION_NOT_FOUND code（该 code 触发 Panel.vue ghost 删除面板，rename 走 toast）——裁决合理。V-CP5 首跑 3 failed 判环境竞争（与并行 gate 流程 dev 启停时间重叠），复跑连续两次 3185 全绿 |
+| W2 | P3 gate 复验改判（场景 3 restore/fork 重开一致性，根因修复后行为级验证） | building | 26f1f7419 | **执行形态变更（2026-08-19 23:05 主 agent 裁定）**：用户并行会话 final gate（dcf0efe12，restore-fork-attach-fix 收官）已做超集行为级验证（G-V1 上次失败点反转 PASS：二次重启零丢失 + 用量单调 + tmp 零孤儿；G-V3 fork 落盘 + 血缘完好；G-V2a/V2b legacy 超集；G-X 9 附着零断言误报；执行窗口 22:08-22:42 真实 dev app 8 次精确重启）。W2 = 引用该证据 + 在含 W1 的 HEAD 上跑最小冒烟（restore F2 直附着 + 暗号 + 二次重启，封住 W1 等价重构未经真实环境验证的缺口）；fork 路径 W1 零触碰（forkSession 未改）引用豁免。时间线重叠风险已评估：gate 核心场景 22:33 前完成，W1 builder 22:40 后写文件，且 gate 全 PASS 证明加载态行为正确 |
 
 ## 范围裁决（主 agent 2026-08-19 22:35）
 

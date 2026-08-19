@@ -350,10 +350,13 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
       expect(env.sessionStore.invalidateScanCache).not.toHaveBeenCalled()
     })
 
-    it('扫描目标不存在 → no-op 不抛（与旧行为一致）', async () => {
+    it('扫描目标不存在 → throw 含 sessionId 与恢复指引，不附着（p1p4-closure W1 D3：旧静默 no-op 已判缺陷移除）', async () => {
       vi.mocked(env.svc.findScannedSession).mockReturnValue(undefined)
 
-      await expect(env.lifecycle.renameSession('ghost', '新名')).resolves.toBeUndefined()
+      await expect(env.lifecycle.renameSession('ghost', '新名'))
+        .rejects.toThrow(/ghost/)
+      await expect(env.lifecycle.renameSession('ghost', '新名'))
+        .rejects.toThrow(/refresh the sidebar/)
       expect(env.pm.withEphemeralPi).not.toHaveBeenCalled()
     })
   })
