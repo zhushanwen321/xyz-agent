@@ -208,6 +208,12 @@ export class RpcClient implements IPiEngine {
     // 不依赖 process.cwd() 查找 package.json。因此 spawn cwd 可以安全地设为用户项目目录。
     // 这样 pi 的初始 session、system prompt、CLAUDE.md 查找、bash 工具都基于正确的 cwd。
     // Verified: xyz-pi 0.75.5-xyz-0.1 uses process.execPath for resource resolution.
+    // Re-verified 2026-08-20 (W6 A-11 探针) on upstream 0.84.1，双形态均不依赖 cwd：
+    // - bun binary（打包产物 apps/electron/resources/pi/pi-darwin-arm64）：getPackageDir() =
+    //   dirname(process.execPath)（pi 0.84.1 dist config.js isBunBinary 分支）；cwd=/tmp spawn
+    //   --version 输出 0.84.1 正常，资源布局 binary 同目录 theme/package.json 与该分支一致。
+    // - node dist（dev 形态）：从 __dirname 向上找 package.json（config.js getPackageDir Node 分支），
+    //   实测 cwd=HOME//tmp//usr 三种 cwd 下 getPackageDir/getThemesDir 返回完全一致。
     const spawnCwd = this.options.cwd ?? process.cwd()
 
     console.log('[rpc] spawning pi:', piCmd, args.join(' '), 'cwd:', spawnCwd)

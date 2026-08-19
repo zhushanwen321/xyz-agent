@@ -10,6 +10,8 @@
 
 pi 附着语义（锚点均为 pi-mono 0.84.1 源码，本地 `~/Code/git-fork/pi-mono-workspace/main/packages/coding-agent/src/`；I4 要求：本文档全部 pi 行为断言带此级锚点）：
 
+> **修订注（2026-08-20，pi-assumption-remediation W6）**：本文撰写时上述 clone 实际停留在 0.80.3 而 node_modules 实装为 0.84.1，锚点行号实为「0.84.1 dist 语义 + clone 行号形态」（审计报告 C #6 抽验核心锚点 setSessionFile / `_persist` 在 0.84.1 dist 成立，结论未失效；clone 现已更新，详见 troubleshooting 观察项）。查阅规则修订（只加不删）：**pi 语义断言的权威源 = node_modules 实装版**（断言前 `npm ls @earendil-works/pi-coding-agent` 核对版本），clone 仅作可读 TS 参照且引用前须核对版本。
+
 - `modes/rpc/rpc-mode.ts:575-577`：`switch_session` RPC → `runtimeHost.switchSession(command.sessionPath)`。
 - `core/agent-session-runtime.ts:193-209`：`switchSession` → `SessionManager.open(sessionPath)` → `createRuntime` **永久采纳**该 SessionManager（不是临时读一遍历史）。
 - `core/session-manager.ts:815-816`：`setSessionFile` 把传入路径 resolve 后存为实例**永久字段** `sessionFile`。

@@ -106,6 +106,14 @@ export interface PiAgentEndEvent extends PiBaseMessage {
   messages: PiAgentEndMessage[]
   /** pi 始终发送：本次 agent 循环结束是否将自动重试（pi agent-session.ts AgentSessionEvent.agent_end）。 */
   willRetry: boolean
+  // [W6 A-10 探针 2026-08-20] xyz 不消费 willRetry 是安全的：真实 pi 0.84.1 实测（rpc + 500 provider
+  // 触发 auto-retry，退避窗口内抢发 prompt），retry 全程 session.isStreaming=true（isStreaming =
+  // _isAgentRunActive，仅 _runAgentPrompt finally 的 _emitAgentSettled 复位——agent-session.js:327-328,744-754），
+  // 窗口内新 prompt 被 pi 拒绝（"Agent is already processing..."，agent-session.js:831-836）→ runtime prompt
+  // catch → message.error 广播 + isGenerating 复位（message-dispatcher.ts:146-157），无数据竞争。
+  // 已知 UX 瑕疵（登记不修）：retry 窗口内 UI 视为空闲（isGenerating 已被首个 agent_end 复位），用户
+  // 发消息会收到 pi 英文错误而非 busy 拒绝。注：0.80.3 旧版 isStreaming = agent.state.isStreaming（loop 级），
+  // retry 窗口为 false——审计 A-10 的竞争前提来自旧 clone 语义，0.84.1 已不可复现。
 }
 
 /** A message object within agent_end — mirrors the shape from message_end. */
