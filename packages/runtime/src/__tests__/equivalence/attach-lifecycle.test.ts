@@ -365,4 +365,39 @@ describe.skipIf(!REAL_PI_READY)(
       }
     },
   )
+
+  it(
+    'I1 契约报警器：附着成功后 get_state().sessionFile 必为非空 string（pi 改字段形态时先红）',
+    { timeout: TEST_TIMEOUT_MS },
+    async () => {
+      // 背景（W3 遗留 1）：session-attach-assert 的跳过分支 2——get_state 无 sessionFile
+      // 字段时 console.warn 后跳过断言。护栏有效性依赖 pi 持续提供该字段；本用例在契约层
+      // 锁定「附着成功 ⇒ sessionFile 为非空 string」，未来 pi 升级改字段名/形态时此处先红，
+      // 静默跳过分支的前提被拦截（护栏失效的报警器）。
+      const workDir = mkdtempSync(join(tmpdir(), 'attach-equiv-contract-'))
+      try {
+        // 空文件可被 pi 附着并初始化 header（同第三用例的先例口径）
+        const fileA = join(workDir, 'contract.jsonl')
+        writeFileSync(fileA, '')
+        let fx: PiFixture | null = await spawnPiFixture()
+        fixture = fx
+        try {
+          await fx.sendCommand('switch_session', { sessionPath: fileA }, SWITCH_TIMEOUT_MS)
+          const state = await fx.sendCommand('get_state')
+          // 断言强度刻意非 truthy：''（空串）或非 string 形态（null/undefined/对象）都要红
+          const sessionFile: unknown = state.data?.sessionFile
+          expect(typeof sessionFile).toBe('string')
+          expect((sessionFile as string).length).toBeGreaterThan(0)
+          // 附着绑定语义自证：回报路径就是附着目标（resolve 词法归一口径，同 assertPiSessionFile）
+          expect(resolve(sessionFile as string)).toBe(resolve(fileA))
+        } finally {
+          await fx.dispose()
+          fixture = null
+          fx = null
+        }
+      } finally {
+        rmSync(workDir, { recursive: true, force: true })
+      }
+    },
+  )
 })

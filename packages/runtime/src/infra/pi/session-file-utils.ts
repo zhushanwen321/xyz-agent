@@ -571,6 +571,74 @@ export function cleanupMigrateResidues(filePath: string): void {
   }
 }
 
+/**
+ * 残留默认过期阈值（1 小时）。为什么是 1h：归一化临时文件的 lifecycle 是毫秒级
+ * （writeFileSync 后立即 renameSync），1h ≫ 生命周期，即使时钟精度/调度延迟极端放大
+ * 也留足「不误删进行中临时文件」的余量；同时残留（磁盘垃圾）留 1h 无任何成本。
+ */
+const TMP_MIGRATE_RESIDUE_MAX_AGE_MS = 3_600_000
+
+/**
+ * 启动期清扫 sessions 目录下的 `.tmp-migrate-*.jsonl` 崩溃残留（W3 残留清理）。
+ *
+ * cleanupMigrateResidues 只在「附着前 / delete 链」两个 session 级时机触发——若某
+ * session 从此不再被 restore/删除，其残留永久留存（磁盘垃圾 + 排查困惑源）。本函数在
+ * runtime 启动后台序列补上目录级兜底：一次性枚举整个 sessions 目录（含按 cwd 分组的
+ * 子目录结构，与 scanPiSessionsFromDisk 同构）。
+ *
+ * 新鲜度阈值（maxAgeMs，默认 1 小时）：mtime 早于 now-maxAgeMs 才删——正在进行的
+ * 归一化临时文件必然秒级新鲜（normalizeSessionFileInPlace 写后立即 rename），阈值内
+ * 不删可防并发误删扩大 S3 交错窗口。1 小时 ≫ 归一化的毫秒级生命周期，即使时钟精度
+ * /调度延迟极端放大也留足余量。
+ *
+ * 只删「`.tmp-migrate-` 命名 + `.jsonl` 后缀」的文件，其余零触碰；目录不存在 no-op。
+ * 单个删除失败（权限等）跳过不中断（调用方接线在启动链，失败不得阻断启动）。
+ *
+ * @param sessionsDir sessions 根目录（getSessionsDir() 产出）
+ * @param maxAgeMs    残留被认为是 stale 的最小年龄（ms）
+ * @returns 实际删除的文件数（诊断用）
+ */
+export function cleanupTmpMigrateResidue(sessionsDir: string, maxAgeMs = TMP_MIGRATE_RESIDUE_MAX_AGE_MS): number {
+  if (!existsSync(sessionsDir)) return 0
+  const cutoff = Date.now() - maxAgeMs
+  let removed = 0
+  // 与 scanPiSessionsFromDisk 同构的两层结构：根目录直接文件 + cwd 分组子目录
+  //（normalizeSessionFileInPlace 的临时文件写在 dirname(filePath)，即 session 所在层）。
+  const dirs: string[] = [sessionsDir]
+  try {
+    for (const name of readdirSync(sessionsDir)) {
+      const entryPath = join(sessionsDir, name)
+      try {
+        if (statSync(entryPath).isDirectory()) dirs.push(entryPath)
+      } catch { void 0 /* 单项 stat 失败跳过，不影响整体清扫 */ }
+    }
+  } catch {
+    return 0 // 根目录不可读：no-op（启动链兜底，失败不上抛）
+  }
+  for (const dir of dirs) {
+    let names: string[]
+    try {
+      names = readdirSync(dir)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      if (!name.includes('.tmp-migrate-') || !name.endsWith('.jsonl')) continue
+      const filePath = join(dir, name)
+      try {
+        if (statSync(filePath).mtimeMs < cutoff) {
+          unlinkSync(filePath)
+          removed++
+        }
+      // eslint-disable-next-line taste/no-silent-catch -- best-effort: 单文件失败跳过，不阻断启动链
+      } catch (e) {
+        console.warn(`[session-file-utils] cleanupTmpMigrateResidue: failed to remove residue: ${filePath}`, e)
+      }
+    }
+  }
+  return removed
+}
+
 // ── Session 扫描 ─────────────────────────────────────────────
 
 /** scanPiSessions 返回的单条 session 元信息（持久化会话扫描结果）。 */
