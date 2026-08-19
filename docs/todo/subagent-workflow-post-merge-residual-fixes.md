@@ -291,6 +291,32 @@ chatMode: typeof d.chatMode === 'boolean' ? d.chatMode : undefined,
 
 单测（vitest，extension 目录跑）：分支 4 三条判据的 fixture 化用例（正常收尾/截断/IO 错误注入 mock）、resumable 字段写入点、恢复循环 save 调用与失败不阻断——作为回归辅助，不计入验收。
 
+### 7.1 验收记录（2026-08-20 E2E real 实测，全部通过）
+
+实测环境：本 worktree `pnpm dev`（dev 数据目录 `~/.xyz-agent-dev`）+ Playwright 连 9222；模型 MiMo-V2.5-Pro（xiaomi token plan 的 mimo-v2-pro 已被 API 下架，HTTP 400 "Unsupported model"，实测换 v2.5-pro）。
+
+| 项 | 结果 | 实测证据（节选） |
+|----|------|----------------|
+| 场景 1 workflow kill-9 | **通过** | chain 工作流运行中 kill -9 父 pi → 重开 session：恢复段落 workflow-record entry（state.status=done + reason=failed，U1 store.save 生效）；无自发 LLM turn（pi 日志 agent_start 均对应用户 prompt） |
+| 场景 2 孤儿 done 形态 | **通过** | sleep-90 后台 subagent 运行中 kill -9 → 重开：Agents 卡片 bg-success；entry = closed+gc；子文件末行完整（实测修正：子进程经 stdio 管道 EOF **级联死亡**，并非「等子进程自然结束」——但 pi 整行写保证末行完整，判 done 语义不变） |
+| 场景 3 孤儿截断形态 | **通过** | 同上前置 + 对子文件 append 半行 JSON → 重开：卡片 bg-danger；entry = closed+gc+error "orphan recovery: … (truncated last line)"；13s 内收敛 |
+| 场景 4 四形态细分 | **通过** | one-shot 完成 → bg-success；chat 轮终 → bg-accent 静态点+无取消按钮（waiting）；续聊 → spinner+取消按钮恢复（entry 序列：轮终 result=Y round=1 → 轮始 result 清除 → 轮终 round=2）；legacy 存量（entry 无 chatMode）→ waiting 兜底 |
+| 场景 5 既有链路回归 | **通过** | 3 并发 subagent 全部收敛；4 个 session 跨多次应用重启历史列表/记录稳定不回退 |
+| V1 | **通过（抓出并修复真 bug）** | 4822 个真实子文件：0 个真截断（pi 整行写可靠，SIGTERM/EOF 死法末行均完整）；**28 个（0.58%，Stock cwd）末行为 65KB-776KB 完整 entry（subagent-identity 内嵌大 task）——固定 64KB 尾窗从行中间切开全部误判截断**。修复：找不到末行边界时按 ×4 指数扩窗（c0e045e7b）。设计 fallback（判据降级）不需要 |
+| V2 | **通过** | 恢复在 session_start 同步段完成：打开 session 即触发 pi spawn + switch_session → 恢复 entry 立即落盘（无需用户发 prompt） |
+| V3 | **通过** | record-store.test.ts 全文件 37ms（50 用例含 4 孤儿用例），无 perf 回归 |
+| V4 | **通过** | 收敛路径实测：冷投影（runtime entry 扫描）即时 + 恢复 entry 落盘后秒级刷新；最快路径 = 打开 session 即收敛 |
+
+**E2E 抓出并修复的 5 个实现层 bug**（单测盲区，均已加回归用例或注释锚定）：
+
+1. **64KB 尾窗误判**（V1，c0e045e7b）：见上表 V1。
+2. **recordToSubagent 丢 chatMode/resumable 投影**（f67246386）：三处 W16 appendEntry 入口共用的内存投影函数漏投影两字段 → 真实 JSONL entry 恒缺 chatMode → renderer isDone（需显式 false）恒不成立，完成态 one-shot 永远显示 waiting。单测 schema 断言作用在内存捕获对象上（undefined 值键名仍在）而漏检——已改为 **JSON 序列化后断言**（对齐生产行为）。
+3. **chat 热路径轮终不落 entry + 轮始不清信号**（08624246f）：onRoundSettled（chat 轮终唯一真实路径）不经 doFinalizeRoundToIdle（runAndFinalize 恒 early return，MF-2 原写点不可达）→ 轮终只改内存不 appendEntry → waiting 形态永远显示不出、spinner 卡死；且续轮开始不清上一轮 result → spinner 无法恢复。修复：轮终显式 reportRecordTransition + 热/冷两路径轮始清 result/resumable 并上报。
+4. **entry-born 孤儿（spawn 窗口期死亡）不可收敛**（6487e6021）：register entry 已落主 session、子文件未创建即父死（实测 kill -9 落在 spawn 后 2s 命中）——目录扫描看不见、恢复判不到、侧栏（runtime entry 源）永久 spinner。R4 的「文件不存在不可达」证明只覆盖目录扫描源。新增 `recoverEntryOnlyOrphans`：读主 session entry，对「末条 running 且无子文件锚且非内存活 record」收敛（chatMode → resumable；否则 closed+gc+error）。外部删除子文件的已知边界同路径收敛。
+5. **主 session 文件定位两层错误**（a25a6241d/807da87c9/800883d05）：① attach 场景 `ctx.sessionManager.getSessionFile()` 返回**前一 session** 的文件 → 改按 sessionId 从 sessions 目录解析（文件名约定 `<ts>_<sessionId>.jsonl`）；② jiti 多实例分裂下闭包缓存（cachedMainSessionFile）不跨实例——resolver 写实例 A 闭包、恢复读实例 B（滞后一个事件，ENOENT）→ 改为 **initSession 按值直传**。代码库对 jiti 分裂已有 globalThis 单例先例（channelRegistry 注释），闭包缓存是同类陷阱。
+
+**登记的存量缺口（非本次范围）**：runtime session pool 对被 kill -9 的 pi 不 respawn——应用存活期间该 session 新 prompt 报 "pi process is not running"（僵尸 session），重开等价于应用重启后冷启动（本验收的场景路径）。属 runtime 层健壮性，另行立项。
+
 ## 8. 下一层拆分（wave）
 
 | 单元 | 内容 | 独立验收 |
