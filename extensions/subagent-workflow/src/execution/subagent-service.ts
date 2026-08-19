@@ -40,6 +40,7 @@ import { RecordStore } from "./record-store.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import { getChildByRecord, killAllSpawnedChildren, runSpawn, spawnedChildren, type SessionRunnerContext, type SpawnResumeOpts } from "./session-runner.ts";
 import { isIdle, isResumable, hasLiveProcessHandle } from "./lifecycle-predicates.ts";
+import { startIdleGc } from "./idle-gc.ts";
 import {
   clearEpipeFailure,
   EPIPE_FAILURE_THRESHOLD,
@@ -68,6 +69,9 @@ import { registerGlobalObservability, UiRequestObservability } from "./ui-reques
 import { WorktreeManager } from "./worktree-manager.ts";
 
 const logger = getLogger("subagents");
+
+/** SP-2 冷路径按 id 查 record 的 collectRecords 扫描上限（全扫兜底的容量 cap）。 */
+const COLD_LOOKUP_SCAN_LIMIT = 1000;
 
 // [v4 A-1] EPIPE 连续失败计数器已迁移到 stdin-writer.ts（stdin 错误域，避免 session-runner
 // 反向 import 本文件 helper 产生循环依赖）。同步路径（deliverMessage）与异步路径
@@ -463,40 +467,19 @@ export class SubagentService {
     return this.disposeAllRecords("parent-new");
   }
 
-  /** SP-4: idle record GC 定时器（30 天 TTL）。防止 idle record 永久驻留内存。
-   *  session_start 时启动，session_shutdown 时清理。每小时检查一次。 */
-  private gcTimer: NodeJS.Timeout | undefined;
+  /** SP-4: idle record GC（30 天 TTL，实现抽至 idle-gc.ts）。stop 函数（dispose 调）。 */
+  private stopIdleGc: (() => void) | undefined;
 
-  /** 启动 idle record GC 定时器（session_start 调用）。 */
+  /** 启动 idle record GC 定时器（session_start 调用，幂等）。 */
   startGcTimer(): void {
-    if (this.gcTimer) return;
-    const GC_INTERVAL_MS = 60 * 60 * 1000; // 1 小时
-    const IDLE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 天
-    this.gcTimer = setInterval(() => {
-      const now = Date.now();
-      for (const record of this.store.listAllActive()) {
-        if (isResumable(record) && record.idleSince) {
-          const age = now - record.idleSince;
-          if (age > IDLE_TTL_MS) {
-            logger.warn(`[subagents] GC: archiving idle record ${record.id} (idle for ${Math.round(age / 86400000)}d)`);
-            try {
-              this.store.archive(record);
-            } catch (err) {
-              bestEffort(err, `GC archive record ${record.id}`);
-            }
-          }
-        }
-      }
-    }, GC_INTERVAL_MS);
-    this.gcTimer.unref?.();
+    if (this.stopIdleGc) return;
+    this.stopIdleGc = startIdleGc(this.store);
   }
 
   /** 停止 idle record GC 定时器（dispose 调用）。 */
   private stopGcTimer(): void {
-    if (this.gcTimer) {
-      clearInterval(this.gcTimer);
-      this.gcTimer = undefined;
-    }
+    this.stopIdleGc?.();
+    this.stopIdleGc = undefined;
   }
 
   /** session 结束清理（清定时器，丢弃 pending 通知）。幂等。
@@ -1000,7 +983,7 @@ export class SubagentService {
       const found =
         (direct?.status === "running" ? direct : undefined) ??
         this.store
-          .collectRecords(1000, "all", undefined)
+          .collectRecords(COLD_LOOKUP_SCAN_LIMIT, "all", undefined)
           .find((r) => r.id === id && r.status === "running");
       if (found) {
         record = createRecord(id, {
