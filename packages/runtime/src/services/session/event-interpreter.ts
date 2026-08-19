@@ -5,7 +5,8 @@
  *   1. plugin hook 触发（onBeforeToolCall 阻断/改写、onAfterToolResult 改写、onPiEvent 观测）
  *   2. file_changes diff（turn 内写操作实时 + agent_end 最终对账）—— 经 IFileChangeDiff port
  *      （W18 采集异步化：diffChain 串行链 + turnGen 代际 + turnFinalizing 压制，03 D3-3）
- *   3. context.update 回写 session 缓存（sessionService.applyContextUpdate）
+ *   3. context 事件失效（sessionService.applyContextUpdate——W12 起只做 usage 实例失效，
+ *      context.update 广播由快照应用后的挂钩发布）
  *   4. status/bridge/extension-ui 路由到 server（注册超时 / 处理 bridge 请求）
  *
  * 持有的可变态（从 event-adapter 迁来）：
@@ -63,7 +64,7 @@ export interface EventInterpreterOptions {
   fileChangeDiff?: IFileChangeDiff
   /** plugin hook 执行（onBeforeToolCall/onAfterToolResult/onPiEvent）。组合根注入 pluginService.executeHooks。 */
   executeHooks?: ExecuteHookFn
-  /** agent_end usage 回写 session 缓存（组合根注入 sessionService.applyContextUpdate）。 */
+  /** context 事件失效（组合根注入 sessionService.applyContextUpdate——W12 起只做 usage 实例 markDirty）。 */
   onContextUpdate?: (sessionId: string, data: { inputTokens: number; totalTokens: number }) => void
   /**
    * pi turn_end 单 turn 用量到达后触发（组合根注入 sessionService.handleTurnUsageSideEffects，
@@ -144,6 +145,82 @@ export interface EventInterpreterOptions {
 /** 可能改文件的工具（baseline diff 触发判定，与原 event-adapter 一致）。 */
 const FILE_MUTATING_TOOLS = new Set(['write', 'edit', 'bash'])
 
+/**
+ * W12（data-source-governance P1.5）：subagents 状态包装实例——session.subagents 话题的
+ * runtime 侧 owner（数据持有者），publish（stateSnapshot last-value）唯一数据源。
+ *
+ * 写入口 = 现有事件流经单入口写入（applyStart / applyNotify——subagent tool-call-end 建
+ * running 记录、bg-notify 合并终态，两路事件全部经包装实例公开方法写入，Map 不外露）。
+ * **[W12-W18 过渡态例外·已登记]**：事件流直写 owner 数据（违反 ReplicatedState「事件只做
+ * 失效」不变量的登记例外，登记表条目：W12-W18 过渡写入口 = 事件流，W18 起底层源换
+ * entry 扫描后写入口退役为失效信号）。
+ * snapshot() 返回浅拷贝数组——publish 后的写入不打穿已发布快照与 stateSnapshot last-value。
+ */
+class SubagentsState {
+  private readonly records = new Map<string, SubagentRecord>()
+
+  /** 单入口写入①：subagent tool-call-end 建 running 记录（新发起的 subagent 恒为 running）。 */
+  applyStart(record: SubagentRecord): void {
+    this.records.set(record.subagentId, record)
+  }
+
+  /**
+   * 单入口写入②：bg-notify 合并终态到已有记录（合并逻辑原样迁自 handleSubagentBgNotify，
+   * 行为零变化）。只更新已存在的内存记录（running 初始记录由 applyStart 建入），无命中
+   * 返回 false 不写入。agent 字段以 notify.agent 为准（pi 执行期回传的真实值，比 startParam
+   * 兜底权威）；closedReason 仅 closed 终态有意义（running 轮次完成通知显式清空，防脏组合）。
+   */
+  applyNotify(notify: BgNotifyRecord): boolean {
+    const existing = this.records.get(notify.id)
+    if (!existing) return false
+    const status = normalizeSubagentStatus(notify.status)
+    this.records.set(notify.id, {
+      ...existing,
+      status,
+      agent: notify.agent ?? existing.agent,
+      model: notify.model ?? existing.model,
+      error: notify.error ?? existing.error,
+      startedAt: notify.startedAt ?? existing.startedAt,
+      endedAt: notify.endedAt ?? existing.endedAt,
+      closedReason: status === 'closed' ? (notify.closedReason ?? existing.closedReason) : undefined,
+    })
+    return true
+  }
+
+  /** 快照读（publish 唯一数据源；浅拷贝数组隔离后续写入）。 */
+  snapshot(): SubagentRecord[] {
+    return Array.from(this.records.values())
+  }
+}
+
+/** workflow 增量信号形态（与 shared protocol session.workflowUpdate payload.update 同构）。 */
+type WorkflowUpdateSignal = { runId: string; status: string; reason?: string }
+
+/**
+ * W12（data-source-governance P1.5）：workflow 增量信号包装实例——session.workflowUpdate
+ * 话题的 runtime 侧 owner（数据持有者），publish（stateSnapshot last-value）唯一数据源。
+ *
+ * 话题语义是增量信号（发起 running / 终态 done），owner 持有最新一条——last-value 语义
+ * 与 state 话题同 typeKey 去重缓存（STATE_TYPE_KEY_MAP 'workflows'）一致。
+ * 写入口 = 现有事件流经单入口写入（apply：workflow tool-call-end 发起 / workflow-result
+ * customStart 终态，两路事件都经 broadcastWorkflowUpdate 内的 apply 写入）。
+ * **[W12-W18 过渡态例外·已登记]**：事件流直写 owner 数据（同 SubagentsState 的登记例外，
+ * W18 起底层源换 entry 扫描后写入口退役为失效信号）。
+ */
+class WorkflowUpdatesState {
+  private latest: WorkflowUpdateSignal | undefined
+
+  /** 单入口写入：最新增量信号覆盖（last-value 语义）。 */
+  apply(update: WorkflowUpdateSignal): void {
+    this.latest = update
+  }
+
+  /** 快照读（publish 唯一数据源）。 */
+  snapshot(): WorkflowUpdateSignal | undefined {
+    return this.latest
+  }
+}
+
 export class EventInterpreter {
   /** 当前 assistant message 的 id（message_start 设置，file_changes 挂载目标，跨事件保持） */
   private currentMessageId: string | undefined
@@ -160,11 +237,11 @@ export class EventInterpreter {
   /** turn-end 压制标记：true 后到达的 accumulating 直接 no-op（同回合迟到 tool-call-end 不产生新帧） */
   private turnFinalizing = false
   /**
-   * subagent 内存态：subagentId → SubagentRecord。
-   * tool-call-end 建 running 记录，bg-notify 更新终态。每次变更广播 session.subagents。
+   * subagents 状态包装实例（W12）：session.subagents 话题的 runtime 侧 owner。
+   * 写入口 = 现有事件流经单入口写入（applyStart / applyNotify），publish 读 snapshot()。
    * per-session（interpreter 实例级），session 销毁时随实例释放。
    */
-  private subagentRecords: Map<string, SubagentRecord> = new Map()
+  private readonly subagentsState = new SubagentsState()
   /** subagent tool-call-start 的 startParam 缓存（toolCallId → startParam），end 时取出合并 */
   private pendingStartParams: Map<string, { agent: string; slug: string; task: string }> = new Map()
   /**
@@ -601,7 +678,8 @@ export class EventInterpreter {
       status,
     }
 
-    this.subagentRecords.set(subagentId, record)
+    // W12：事件流经包装实例单入口写入（applyStart），publish 读快照
+    this.subagentsState.applyStart(record)
     this.broadcastSubagents()
   }
 
@@ -627,45 +705,37 @@ export class EventInterpreter {
 
     const records: BgNotifyRecord[] = 'batch' in parsed ? parsed.items : [parsed]
     let changed = false
+    // W12：合并逻辑经包装实例单入口写入（applyNotify，含「只更新已存在记录」守卫与
+    // closedReason 清空语义，行为零变化），批量多条更新后只广播一次（避免 N 次广播）。
     for (const notify of records) {
-      const existing = this.subagentRecords.get(notify.id)
-      // 只更新已存在的内存记录（running 初始记录由 handleSubagentEnd 建入，v4 唯一非终态），不新建
-      if (!existing) continue
-
-      const status = normalizeSubagentStatus(notify.status)
-      const updated: SubagentRecord = {
-        ...existing,
-        status,
-        // notify.agent 是 pi 执行期回传的真实 agent（finalize 时从 record.agent 来），
-        // 覆盖 startParam 兜底的 'general-purpose'
-        agent: notify.agent ?? existing.agent,
-        model: notify.model ?? existing.model,
-        error: notify.error ?? existing.error,
-        startedAt: notify.startedAt ?? existing.startedAt,
-        endedAt: notify.endedAt ?? existing.endedAt,
-        // closedReason 仅 closed 终态有意义（v4 B-1）；running 轮次完成通知显式清空，
-        // 防 extension 异常回退路径的 closedReason 残留脏组合（running + closedReason）。
-        closedReason: status === 'closed' ? (notify.closedReason ?? existing.closedReason) : undefined,
-      }
-      this.subagentRecords.set(notify.id, updated)
-      changed = true
+      if (this.subagentsState.applyNotify(notify)) changed = true
     }
 
     if (changed) this.broadcastSubagents()
   }
 
-  /** 广播当前内存态的全量 subagent 列表（session.subagents server push） */
+  /**
+   * 广播当前 subagent 全量列表（session.subagents server push）。
+   * W12：payload 数据源 = 包装实例快照（owner）——stateSnapshot last-value 恒 == 实例快照。
+   */
   private broadcastSubagents(): void {
     this.opts.send({
       type: 'session.subagents' as ServerMessageType,
       payload: {
         sessionId: this.sessionId,
-        subagents: Array.from(this.subagentRecords.values()),
+        subagents: this.subagentsState.snapshot(),
       },
     })
   }
 
   // ── workflow 实时推送 ──
+
+  /**
+   * workflow 增量信号包装实例（W12）：session.workflowUpdate 话题的 runtime 侧 owner。
+   * 写入口 = 现有事件流经单入口写入（applyWorkflowToolEnd 发起 / applyWorkflowResult 终态，
+   * 详见各 handler），publish 读 snapshot()（最新一条增量）。
+   */
+  private readonly workflowUpdatesState = new WorkflowUpdatesState()
 
   /**
    * workflow-result customStart（run 完成通知）：广播 session.workflows 增量信号。
@@ -704,13 +774,19 @@ export class EventInterpreter {
    * 推送 {runId, status, reason?} 增量，非全量列表——前端收到后触发 loadWorkflows RPC 拉取完整数据。
    * 设计理由：发起时刻 runtime 无 agentCalls（workflow 刚启动），全量需读 state 文件增加复杂度；
    * 增量信号 + RPC 拉取复用现有 loadWorkflows 链路，零新增 IO 逻辑。
+   *
+   * W12：事件流经包装实例单入口写入（apply）后读快照发布——stateSnapshot 的 'workflows'
+   * last-value 恒 == owner 快照（最新一条增量）。
    */
   private broadcastWorkflowUpdate(update: { runId: string; status: string; reason?: string }): void {
+    this.workflowUpdatesState.apply(update)
+    const latest = this.workflowUpdatesState.snapshot()
+    if (latest === undefined) return
     this.opts.send({
       type: 'session.workflowUpdate' as ServerMessageType,
       payload: {
         sessionId: this.sessionId,
-        update,
+        update: latest,
       },
     })
   }
