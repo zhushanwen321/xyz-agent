@@ -7,14 +7,14 @@
  * openTasksPanelOnFirstData 回调已随 tasks 域删除移除。
  *
  * 背景：原 chat-chunk-processor（21 case，更新 messages/retryStates/queueStates）
- * 与 useChat.ensureStreamSubscription（9 case，翻 isStreaming + updateLabel）对同一
+ * 与 useChat.ensureStreamSubscription（9 case，翻 isStreaming + applySnapshot）对同一
  * ServerMessage 流 switch 两次。新增 message.* type 必须两处同步改，易漏。
  *
  * 归一：本文件把「每个 message.* type 触发的全部副作用」集中到单一 handler：
  * (a) chunk 状态更新（原 applyChunk 逻辑）+ (b) 终态收口（finalizeSession，替代原 useChat
  * setStreaming 的 lifecycle flag 翻转）。useChat 收到 message.* 只调 store.applyMessageEvent（单一入口），
  * 不再自己 switch message.*。session.*（compacting/compacted/renamed/state_changed/
- * thinkingLevelSet）涉及跨 store（sessionStore.updateLabel/updateSessionState），
+ * thinkingLevelSet）涉及跨 store（sessionStore.applySnapshot），
  * 保留在 useChat。
  *
  * 行为等价性：
@@ -78,8 +78,9 @@ import { bashStartEffect, bashResultEffect } from '../bash-effects'
  * prev=['A','A'] → next=['A'] → 差集 ['A']（drain 了一条）。用 includes 会因 'A' 仍在 next 里
  * 漏判，导致第二条 pending 永久卡住。计数差集精确匹配出现次数差。
  *
- * 与 drainPending 的 findIndex FIFO 配合：countDrained 返回 N 条相同文本 →
- * 调 N 次 drainPending，每次取最早的 pending segments（FIFO，与 pi splice 顺序一致）。
+ * [W14] 与 drainN 计数 FIFO 配合：countDrained 返回数组的 length = 被投递条数 N →
+ * drainN(sid, mode, N) 按入队顺序取 N 条（FIFO，与 pi splice 顺序一致），不按文本找——
+ * pi 入队存 skill 展开后文本 ≠ 提交原文，文本匹配在该场景必挂（D6）。
  */
 function countDrained(prev: string[], next: string[]): string[] {
   const remaining = [...next]
@@ -548,7 +549,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   },
 
   'message.queue_update': (ctx, sid, payload) => {
-    const { queueStates, drainPending, appendUser } = ctx
+    const { queueStates, drainN, reconcilePending, appendUser } = ctx
     // W06-B：消息队列更新。payload（event-adapter）：{ steering?, followUp? }。
     // pi 发空数组 []（_emitQueueUpdate 总展开为数组），空数组视为无内容（length 判断）。
     const state: QueueState = {}
@@ -557,23 +558,26 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const followUp = readStringArray(payload, 'followUp')
     if (followUp?.length) state.followUp = followUp
 
-    // pending→complete 驱动：计数差集找出「被 drain 投递的」项（prev 比 new 多出的元素）。
+    // pending→complete 驱动：计数差集找出「被 drain 投递的」条数（prev 比 new 多出的元素）。
     // [B1] 不能用 includes（子串语义）——重复文本 'A' 入队两条、drain 一条后 new=['A']，
     // includes('A')===true 会漏判，第二条 pending 永久卡住。计数差集按出现次数精确匹配。
-    // [W5] 带 sendMode 调 drainPending，避免跨类型同文本误取（steer「补」与 followUp「补」）。
+    // [W14] 差集数组的 length = N，drainN 计数 FIFO 取前 N 条（不按文本匹配——pi 入队存
+    // skill 展开后文本 ≠ 提交原文，文本相等匹配在该场景必丢消息，D1 表末行 + D6）。
+    // steer / follow-up 各自差集各自计数（sendMode 隔离，防跨类型同文本误取——W5 语义保留）。
     const prev = queueStates.value.get(sid)
     if (prev) {
-      // m2：drain 分支接线 drainPending + appendUser——drainPending FIFO 取匹配 pending 的
-      // segments，appendUser 追加进对话流（complete user）。
-      for (const text of countDrained(prev.steering ?? [], steering ?? [])) {
-        const segs = drainPending(sid, text, 'steer')
-        if (segs) appendUser(sid, segs)
-      }
-      for (const text of countDrained(prev.followUp ?? [], followUp ?? [])) {
-        const segs = drainPending(sid, text, 'follow-up')
-        if (segs) appendUser(sid, segs)
-      }
+      const steerN = countDrained(prev.steering ?? [], steering ?? []).length
+      for (const segs of drainN(sid, 'steer', steerN)) appendUser(sid, segs)
+      const followN = countDrained(prev.followUp ?? [], followUp ?? []).length
+      for (const segs of drainN(sid, 'follow-up', followN)) appendUser(sid, segs)
     }
+
+    // [W14 D6] 深度结构性对账：帧内 pendingMessageCount（event-adapter 翻译恒附 =
+    // steering.length + followUp.length，与 rpc-mode get_state 同源公式）为 pi 队列深度。
+    // drain 处理后 pendingBuffer 存量应等于深度，偏差则全量重对（reconcilePending：
+    // buffer > 深度裁剪僵尸暂存；buffer < 深度 = 扩展注入例外，有界偏差，队列清空时收敛）。
+    // 字段缺失（旧 runtime / mock 帧）时退化为帧内数组长度和（W8 恒等公式，等价）。
+    reconcilePending(sid, readNumber(payload, 'pendingMessageCount') ?? (steering?.length ?? 0) + (followUp?.length ?? 0))
 
     const hasContent = !!state.steering?.length || !!state.followUp?.length
     if (!hasContent) {
@@ -610,7 +614,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
  *
  * useChat.ensureStreamSubscription 收到任意 ServerMessage 后：
  * - message.* → 调本函数（经 store.applyMessageEvent 转发），注册表执行全部 effect
- * - session.* → useChat 保留处理（跨 store：sessionStore.updateLabel 等）
+ * - session.* → useChat 保留处理（跨 store：sessionStore.applySnapshot 等）
  *
  * 非 message.* 或未注册的 message.* type 直接 no-op（等价原 applyChunk 的 default return）。
  */

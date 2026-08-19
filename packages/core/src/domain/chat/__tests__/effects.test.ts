@@ -36,8 +36,9 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     armStreamingTimer: vi.fn(),
     armBashTimer: vi.fn(),
     clearBashTimer: vi.fn(),
-    // m2：queue_update drain 接线 drainPending + appendUser
-    drainPending: vi.fn(),
+    // m2→W14：queue_update drain 接线 drainN（计数 FIFO）+ appendUser + 深度对账 reconcilePending
+    drainN: vi.fn(() => []),
+    reconcilePending: vi.fn(),
     appendUser: vi.fn(),
     // w21：entry 载体帧喂 reducer 的接入点（store.applyEntryFrame 注入）
     applyEntryFrame: vi.fn(),
@@ -207,50 +208,60 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
   })
 })
 
-describe('dispatchMessageEvent queue_update drain（m2 steer/followup 解耦）', () => {
+describe('dispatchMessageEvent queue_update drain（m2 steer/followup 解耦，W14 计数 FIFO）', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
-  // TC1-TC3：m2 把 queue_update drain 分支从 markPendingDelivered 切换为 drainPending + appendUser。
-  // drainPending FIFO 取匹配 pending 的 segments，appendUser 追加进对话流（complete user）。
-  // 此处为 integration——测 handler 接线（调对 ctx 方法 + 参数），appendUser 内部逻辑在 store 单测。
+  // TC1-TC3：queue_update drain 分支 = countDrained 差集条数 N → drainN(sid, mode, N) 计数
+  // FIFO 取 segments + appendUser 追加进对话流（W14：不按文本匹配）。此处为 integration——
+  // 测 handler 接线（调对 ctx 方法 + 参数），drainN/appendUser 内部逻辑在 store 单测。
 
-  it('TC1: steering drain → drainPending 取 segments + appendUser 追加', () => {
+  it('TC1: steering drain → 差集条数 N=1 调 drainN(sid, steer, 1) + appendUser 追加', () => {
     const ctx = makeCtx()
     // prev queueStates：steering 队列有 1 项（模拟之前 steer 入队）
     ctx.queueStates.value = new Map([[SID, { steering: ['adjust plan'] }]])
-    // drainPending mock 返回 segments（模拟 pendingBuffer 命中）
+    // drainN mock 返回 segments（模拟 pendingBuffer 命中）
     const segs: Segment[] = [{ type: 'text', text: 'adjust plan' }]
-    vi.mocked(ctx.drainPending).mockReturnValue(segs)
+    vi.mocked(ctx.drainN).mockReturnValue([segs])
 
     dispatchMessageEvent(ctx, SID, msg('message.queue_update', { steering: [] }))
 
-    // countDrained(['adjust plan'], []) → ['adjust plan']（prev 有 next 没有）
-    expect(ctx.drainPending).toHaveBeenCalledWith(SID, 'adjust plan', 'steer')
+    // countDrained(['adjust plan'], []) → ['adjust plan'].length = 1（prev 有 next 没有）
+    expect(ctx.drainN).toHaveBeenCalledWith(SID, 'steer', 1)
     expect(ctx.appendUser).toHaveBeenCalledWith(SID, segs)
   })
 
-  it('TC2: followUp drain → drainPending 取 segments + appendUser 追加', () => {
+  it('TC2: followUp drain → 差集条数 N=1 调 drainN(sid, follow-up, 1) + appendUser 追加', () => {
     const ctx = makeCtx()
     ctx.queueStates.value = new Map([[SID, { followUp: ['next step'] }]])
     const segs: Segment[] = [{ type: 'text', text: 'next step' }]
-    vi.mocked(ctx.drainPending).mockReturnValue(segs)
+    vi.mocked(ctx.drainN).mockReturnValue([segs])
 
     dispatchMessageEvent(ctx, SID, msg('message.queue_update', { followUp: [] }))
 
-    expect(ctx.drainPending).toHaveBeenCalledWith(SID, 'next step', 'follow-up')
+    expect(ctx.drainN).toHaveBeenCalledWith(SID, 'follow-up', 1)
     expect(ctx.appendUser).toHaveBeenCalledWith(SID, segs)
   })
 
-  it('TC3: drainPending 无匹配返回 undefined 时 appendUser 不调（幂等）', () => {
+  it('TC3: drainN 取尽返回 [] 时 appendUser 不调（幂等）', () => {
     const ctx = makeCtx()
-    // prev queueStates 有项（drain 会触发 countDrained），但 pendingBuffer 空（drainPending 返回 undefined）
+    // prev queueStates 有项（drain 会触发 countDrained），但 pendingBuffer 空（drainN 返回 []）
     ctx.queueStates.value = new Map([[SID, { steering: ['x'] }]])
-    // drainPending 默认 vi.fn() 返回 undefined（模拟 pendingBuffer 空 / 已 abort）
+    // drainN 默认 vi.fn(() => [])（模拟 pendingBuffer 空 / 已 abort）
 
     dispatchMessageEvent(ctx, SID, msg('message.queue_update', { steering: [] }))
 
-    expect(ctx.drainPending).toHaveBeenCalledWith(SID, 'x', 'steer')
+    expect(ctx.drainN).toHaveBeenCalledWith(SID, 'steer', 1)
     expect(ctx.appendUser).not.toHaveBeenCalled()
+  })
+
+  it('TC4: 深度对账——reconcilePending 以帧内 pendingMessageCount 为深度调用', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.queue_update', { steering: ['a'], pendingMessageCount: 1 }))
+    expect(ctx.reconcilePending).toHaveBeenCalledWith(SID, 1)
+
+    // 字段缺失（旧 runtime / mock 帧）时退化为帧内数组长度和（W8 恒等公式，等价）
+    dispatchMessageEvent(ctx, SID, msg('message.queue_update', { steering: ['a', 'b'] }))
+    expect(ctx.reconcilePending).toHaveBeenLastCalledWith(SID, 2)
   })
 })
 

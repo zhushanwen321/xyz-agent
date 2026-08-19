@@ -54,14 +54,20 @@ export interface MessageEffectContext {
   clearBashTimer: (sessionId: string) => void
   /**
    * 追加 user 消息（Segment[]，ADR-0043）。
-   * m2 阶段 queue_update 投递时经 drainPending 取 segments 后 appendUser 进对话流。
+   * m2 阶段 queue_update 投递时经 drainN 计数 FIFO 取 segments 后 appendUser 进对话流。
    */
   appendUser: (sessionId: string, segments: Segment[]) => string
   /**
-   * queue_update 投递信号：FIFO 取出匹配 pending segments（m1 数据层）。
-   * queue_update handler 经 drainPending 取 segments + appendUser 进对话流。
+   * [W14] queue_update 投递信号：计数 FIFO 取前 n 条 pending segments（D1 表末行 + D6）。
+   * 不按文本匹配——pi 入队存 skill 展开后文本 ≠ 提交原文，文本相等匹配必挂。
+   * queue_update handler 经 countDrained 差集算出被投递条数 N，调 drainN(sid, mode, N)。
    */
-  drainPending: (sessionId: string, text: string, sendMode?: SteerFollowUpMode) => Segment[] | undefined
+  drainN: (sessionId: string, sendMode: SteerFollowUpMode, n: number) => Segment[][]
+  /**
+   * [W14] 深度结构性对账（D6：深度权威 = pi pendingMessageCount）——queue_update
+   * handler 每帧 drain 处理后调，偏差时全量重对 pendingBuffer（见 store.reconcilePending）。
+   */
+  reconcilePending: (sessionId: string, depth: number) => void
   /**
    * [W21] 重构 entry 喂 store 内 per-session reducer state（applyEntry）。
    * message_end / tool_call_end 等 entry 载体帧的 handler 经此把实时 feed 喂入与文件重放

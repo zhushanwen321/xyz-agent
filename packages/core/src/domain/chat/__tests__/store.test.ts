@@ -91,7 +91,7 @@ describe('createChatStore factory', () => {
     })
   })
 
-  describe('pendingBuffer 数据层（m1：pushPending / drainPending / abortPending）', () => {
+  describe('pendingBuffer 数据层（m1：pushPending / drainN 计数 FIFO / abortPending）', () => {
     it('TC1: pushPending 暂存到 buffer 不碰 messages', () => {
       const sid = 's1'
       sut.store.pushPending(sid, textToSegments('steer msg'), 'steer')
@@ -104,19 +104,31 @@ describe('createChatStore factory', () => {
       expect(sut.store.getMessages(sid)).toHaveLength(0)
     })
 
-    it('TC2: drainPending FIFO + 幂等（同 text 多次暂存，依次取出，第 3 次返回 undefined）', () => {
+    it('TC2: drainN 计数 FIFO（同 text 多次暂存，取 n 条按入队顺序，超出取尽即止）', () => {
       const sid = 's1'
       const seg = textToSegments('dup')
       sut.store.pushPending(sid, seg, 'steer')
       sut.store.pushPending(sid, seg, 'steer')
 
-      const r1 = sut.store.drainPending(sid, 'dup', 'steer')
-      const r2 = sut.store.drainPending(sid, 'dup', 'steer')
-      const r3 = sut.store.drainPending(sid, 'dup', 'steer')
+      const r1 = sut.store.drainN(sid, 'steer', 1)
+      const r2 = sut.store.drainN(sid, 'steer', 5) // n 超过存量 → 取尽即止（扩展注入例外收敛路径）
+      const r3 = sut.store.drainN(sid, 'steer', 1)
 
-      expect(r1).toBeDefined()
-      expect(r2).toBeDefined()
-      expect(r3).toBeUndefined()
+      expect(r1).toHaveLength(1)
+      expect(r2).toHaveLength(1)
+      expect(r3).toHaveLength(0)
+      expect(sut.store.pendingBuffer.value.get(sid) ?? []).toHaveLength(0)
+    })
+
+    it('TC2b: drainN sendMode 隔离（steer 计数不动 follow-up 项）', () => {
+      const sid = 's1'
+      sut.store.pushPending(sid, textToSegments('steer one'), 'steer')
+      sut.store.pushPending(sid, textToSegments('follow one'), 'follow-up')
+
+      const r = sut.store.drainN(sid, 'steer', 5)
+
+      expect(r).toHaveLength(1)
+      expect(sut.store.drainN(sid, 'follow-up', 1)).toHaveLength(1)
       expect(sut.store.pendingBuffer.value.get(sid) ?? []).toHaveLength(0)
     })
 
@@ -131,13 +143,19 @@ describe('createChatStore factory', () => {
       expect(sut.store.getMessages(sid)).toHaveLength(0)
     })
 
-    it('drainPending 无 sendMode 时退化为仅 content 匹配（跨 sendMode 命中）', () => {
+    it('TC3b: abortPending 保留文本匹配（W14 D6 差异：回滚有准确原文，sendMode 必填隔离）', () => {
       const sid = 's1'
-      sut.store.pushPending(sid, textToSegments('same'), 'steer')
-      // 不传 sendMode——仅按 text 匹配（normalizeContent + trim 归一化）
-      const r = sut.store.drainPending(sid, 'same')
-      expect(r).toBeDefined()
-      expect(sut.store.pendingBuffer.value.get(sid) ?? []).toHaveLength(0)
+      sut.store.pushPending(sid, textToSegments('rollback target'), 'steer')
+      sut.store.pushPending(sid, textToSegments('other'), 'steer')
+
+      // sendMode 不匹配（follow-up）→ no-op
+      sut.store.abortPending(sid, 'rollback target', 'follow-up')
+      expect(sut.store.pendingBuffer.value.get(sid) ?? []).toHaveLength(2)
+
+      sut.store.abortPending(sid, 'rollback target', 'steer')
+      const buf = sut.store.pendingBuffer.value.get(sid) ?? []
+      expect(buf).toHaveLength(1)
+      expect(buf[0].text).toBe('other')
     })
   })
 
