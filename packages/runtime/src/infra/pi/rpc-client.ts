@@ -49,6 +49,14 @@ export type PiEventListener = (event: PiMessage) => void
 export interface RpcClientOptions {
   cwd?: string
   model?: string
+  /**
+   * 附着恢复模式（restoreSession 专用）：true 时 start() 不拼 --model——options.model
+   * 与全局默认兜底都被抑制。pi 的 CLI model 恒优先于 session entry 恢复（main.js
+   * buildSessionOptions 的 `if (parsed.model)` 分支），拼了就会把用户在会话内切换过的
+   * 模型在重启重开时静默压回默认（final gate V1⑤ 实证）；模型终态由 pi 从
+   * model_change entry 恢复。create/fork 保持 launch 语义（不设此开关）。
+   */
+  inheritSessionModel?: boolean
   env?: Record<string, string>
   skillPaths?: string[]
   /** pi 可执行文件路径（默认 'pi'，从 PATH 查找） */
@@ -123,7 +131,11 @@ export class RpcClient implements IPiEngine {
 
   async start(): Promise<void> {
     const modelRef = getDefaultModel()
-    const model = this.options.model ?? (modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '')
+    // P1（pi-assumption final gate）：附着恢复路径不拼 --model——pi CLI model 恒优先于
+    // session entry 恢复，全局默认兜底一旦拼进 args，用户切换过的模型就被静默压回默认。
+    const model = this.options.inheritSessionModel
+      ? undefined
+      : this.options.model ?? (modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '')
 
     const env = buildSafeEnv({
       ...this.options.env,

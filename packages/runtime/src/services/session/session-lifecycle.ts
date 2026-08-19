@@ -598,7 +598,10 @@ export class SessionLifecycle {
     const presetId = target.launchPresetId ?? BUILTIN_PRESET_IDS.FULL
     const resolution = await this.svc.getLaunchPresetOptions(presetId, sessionCwd)
     const allExtPaths = resolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
-    // restore 不接收 Landing Chip override（无用户交互），只透传 preset 自身的 model/thinking。
+    // restore 不接收 Landing Chip override（无用户交互）。preset 的 model 是 launch 配置
+    // 只在创建时生效——附着路径的模型终态由 pi 从 model_change entry 恢复（见下方
+    // inheritSessionModel），presetClientOptions.model 在此处被显式清空；thinking 仍透传
+    // preset（launch 档位；session 内切档由 thinking_level_change entry 承载）。
     const presetClientOptions = this.buildPresetClientOptions(resolution, undefined, undefined)
     // D8-3（perf W29）：restore 同样 spawn pi——gate 等待（启动时恢复路径与 create 一致过 gate）。
     await migrationGate
@@ -607,6 +610,12 @@ export class SessionLifecycle {
       extensionPaths: allExtPaths,
       systemPrompt: this.svc.getReplaceSystemPrompt(),
       ...presetClientOptions,
+      // P1（pi-assumption final gate V1⑤）：pi CLI --model 恒优先于 session entry 恢复
+      //（main.js buildSessionOptions），restore 路径曾因全局默认兜底把 --model 拼进 spawn
+      // args，用户切换过的模型在重启重开时被静默压回默认。模型终态改由 pi 从
+      // model_change entry 恢复（每次创建/切换都会写该 entry，W1a 实证）。
+      model: undefined,
+      inheritSessionModel: true,
     })
 
     try {

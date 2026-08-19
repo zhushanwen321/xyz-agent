@@ -35,6 +35,7 @@ import {
   spawnPiFixture,
   REAL_PI_READY,
   REAL_PI_SKIP_REASON,
+  DEFAULT_MODEL,
   type PiFixture,
 } from './pi-fixture.js'
 import { assertPiSessionFile } from '../../infra/pi/session-attach-assert.js'
@@ -394,6 +395,87 @@ describe.skipIf(!REAL_PI_READY)(
           await fx.dispose()
           fixture = null
           fx = null
+        }
+      } finally {
+        rmSync(workDir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it(
+    'restore 模型恢复（P1）：无 CLI --model 附着 → pi 从 model_change entry 恢复切换终态；带 --model 附着压过（bug 形态锁定）',
+    { timeout: TEST_TIMEOUT_MS },
+    async () => {
+      // 背景（pi-assumption final gate V1⑤）：restoreSession 曾把全局默认 --model 拼进
+      // spawn args，pi 的 CLI model 恒优先于 entry 恢复（main.js buildSessionOptions），
+      // 用户切换过的模型重启重开后被静默压回默认。生产修复 = RpcClientOptions.
+      // inheritSessionModel（不拼 --model）。本用例在真实 pi 上锁定两侧行为：
+      // 无 CLI model 附着 → entry 终态生效；带 CLI model 附着 → CLI 压过 entry
+      //（后者同时是差异归因对照：证明恢复差异源于 CLI flag 本身，而非附着其他副作用）。
+      const [defProvider, defModelId] = DEFAULT_MODEL.split('/')
+      // 切换目标 = DEFAULT_MODEL 的同 provider 兄弟（gate V1 实测该 provider 三模型可用；
+      // set_model 参数 = 裸 provider + 裸 modelId，broadcast-getstate.test.ts 同款口径）
+      const targetProvider = defProvider
+      const targetModelId = 'mimo-v2.5'
+      const workDir = mkdtempSync(join(tmpdir(), 'attach-equiv-model-'))
+      try {
+        // ── 阶段 1：默认模型会话 + 一轮真实对话（session 落盘）+ set_model 切换 ──
+        let targetFile: string | undefined
+        let fx1: PiFixture | null = await spawnPiFixture()
+        fixture = fx1
+        try {
+          await fx1.sendCommand('prompt', { message: 'Reply with exactly the word: model-seed' })
+          await fx1.waitForEvent((e) => e.type === 'agent_end', TURN_TIMEOUT_MS)
+          await fx1.sendCommand('set_model', { provider: targetProvider, modelId: targetModelId })
+          const state1 = await fx1.sendCommand('get_state')
+          const model1 = state1.data?.model as { provider?: string; id?: string } | undefined
+          expect(model1?.provider).toBe(targetProvider)
+          expect(model1?.id).toBe(targetModelId)
+          const srcFile = state1.data?.sessionFile
+          if (typeof srcFile !== 'string') throw new Error('get_state.sessionFile missing after set_model')
+          // model_change 原生 entry 已落盘（W1a：pi setModel 自写；附着恢复的数据源）
+          const changeEntries = readSessionEntries(srcFile).filter((e) => e.type === 'model_change')
+          expect(changeEntries.length).toBeGreaterThanOrEqual(1)
+          expect(JSON.stringify(changeEntries)).toContain(targetModelId)
+          // 复制到 workDir + cwd 归一（seedSessionFile 同款：fixture sessionDir 即将被删）
+          targetFile = join(workDir, 'model-restore-session.jsonl')
+          writeFileSync(targetFile, applyHeaderCwdFallback(readFileSync(srcFile, 'utf-8'), workDir))
+        } finally {
+          await fx1.dispose()
+          fixture = null
+          fx1 = null
+        }
+
+        // ── 阶段 2：无 CLI --model 附着（= P1 修复后的生产 spawn 形态）→ entry 终态恢复 ──
+        let fx2: PiFixture | null = await spawnPiFixture({ model: null })
+        fixture = fx2
+        try {
+          await fx2.sendCommand('switch_session', { sessionPath: targetFile! }, SWITCH_TIMEOUT_MS)
+          const state2 = await fx2.sendCommand('get_state')
+          const model2 = state2.data?.model as { provider?: string; id?: string } | undefined
+          expect(model2?.provider).toBe(targetProvider)
+          expect(model2?.id).toBe(targetModelId)
+        } finally {
+          await fx2.dispose()
+          fixture = null
+          fx2 = null
+        }
+
+        // ── 阶段 3：对照（bug 形态锁定）——带 CLI --model 附着同一文件 → CLI 压过 entry ──
+        // pi 优先级语义的行为级锚：未来 pi 改变「CLI model 恒优先」语义时此处先红，
+        // 提示重验 inheritSessionModel 的前提。
+        let fx3: PiFixture | null = await spawnPiFixture()
+        fixture = fx3
+        try {
+          await fx3.sendCommand('switch_session', { sessionPath: targetFile! }, SWITCH_TIMEOUT_MS)
+          const state3 = await fx3.sendCommand('get_state')
+          const model3 = state3.data?.model as { provider?: string; id?: string } | undefined
+          expect(model3?.provider).toBe(defProvider)
+          expect(model3?.id).toBe(defModelId)
+        } finally {
+          await fx3.dispose()
+          fixture = null
+          fx3 = null
         }
       } finally {
         rmSync(workDir, { recursive: true, force: true })
