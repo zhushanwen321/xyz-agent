@@ -21,4 +21,12 @@
 
 - 2026-08-19 计划启动：设计文档定稿并 committed（d6ab28d75，含用户质疑触发的逐动机 pi 侧查证 + tech-design-review 对抗式审查 4 must-fix 修复记录，见设计文档附录）。裁决记录：F5 孤儿抢救不做（用户）；F3 方案 A rename-over 定案（用户「直接删掉」直觉 + 查证修正）。W1 验收基线入 git 后派 builder。
 - 2026-08-19 **W1 一轮交付 + 修复循环收官**：builder 交付（tmp 管线删除 + 分流 + 归一化 + R1 豁免 B③）→ verifier PASS 含红性验证（回退 tmp 管线 5 红）→ F1 major（「scanner 天然忽略」声明证伪：按内容识别致同 id 双条目错位附着）打回 → builder 修复 isScannableSessionFile 收口两枚举点 → 针对性复审 PASS 维持 → committed 668273adb。R2 minor（设计文档第三处同源声明）主 agent 修正。
-- 2026-08-19 **W2 交付 + 修复循环收官，计划完成**：builder 交付护栏五件套（session-attach-assert.ts helper + 三接线 + attach-lifecycle.test.ts 真实 pi 等价 3 用例 + ADR-0062 §2 第三类 + ADR-0063 I1-I5 + 登记表 ⑩ + checklist 步骤 9/10）→ 首验 5 mock 失败裁决授权修（mock getState 跟随 switchSession 实参 = 真实 pi 行为；护栏对假分裂 throw 是正确行为）→ verifier PASS（0 major 3 minor，跳过分支专项评估不架空）。builder 固化协议事实两条入档：pi get_state.sessionFile 不展开 symlink（双侧 resolve 足够）；附着瞬间 pi 即写目标文件。**并行会话注意**：验收期间用户并行工作流提交 10 commits（transport reliability / subagent working / applyEntry 收敛等），W2 验收豁免清单随之消化为已提交状态，无冲突。观察项：helper 跳过分支 3 收紧（verifier W2 F1，真实环境不可达，低优先）。
+- 2026-08-19 **W2 交付 + 修复循环收官**：builder 交付护栏五件套（session-attach-assert.ts helper + 三接线 + attach-lifecycle.test.ts 真实 pi 等价 3 用例 + ADR-0062 §2 第三类 + ADR-0063 I1-I5 + 登记表 ⑩ + checklist 步骤 9/10）→ 首验 5 mock 失败裁决授权修（mock getState 跟随 switchSession 实参 = 真实 pi 行为；护栏对假分裂 throw 是正确行为）→ verifier PASS（0 major 3 minor，跳过分支专项评估不架空）。builder 固化协议事实两条入档：pi get_state.sessionFile 不展开 symlink（双侧 resolve 足够）；附着瞬间 pi 即写目标文件。观察项：helper 跳过分支 3 收紧（verifier W2 F1，真实环境不可达，低优先）。
+
+## 里程碑 gate
+
+| gate | 内容 | 状态 |
+|------|------|------|
+| final gate | 场景 G-V1/G-V2a/G-V2b/G-V3 + G-X（真实 dev app + 真实 pi，8 次精确启停，无 mock） | **PASS 4/4 + G-X**（报告 gate/final-gate-report.md：G-V1 前次丢失点反转——restore 后对话落登记文件 7→16 行 mtime 推进、二次重启暗号轮完整、用量单调无回退；G-V2a session_end 9→0 归一化 + AI 复述「香蕉37」（树索引防线生效）+ 幂等三项字节级全同；G-V2b cwd 死路径归一化 homedir 未阻塞 + AI 复述「芒果88」；G-V3 fork 暗号轮落 fork 文件 + 血缘指针完整 + 源文件字节不变；G-X 9 次附着零断言误伤 + $TMPDIR 零新孤儿。附注：fixture 保真度教训（assistant message 需带 usage 字段，pi getState 无守卫）；gate 尾段并行会话空降 session-lifecycle renameSession 重构（认知外未触碰，主流程在干净 HEAD ec38e546f 执行）） |
+
+- 2026-08-19 **final gate PASS，计划收官（2/2 wave + gate 全绿）**。目标终态达成：restore 与 fork 后的每一轮对话都落进 sessions 目录内被登记的那个文件，重启零丢失；护栏（attach 断言 + 生命周期等价测试 + ADR-0062/0063 + 登记表 + checklist）全部就位。修复 commits：668273adb（W1）+ ec38e546f（W2）+ gate 报告本 commit。
