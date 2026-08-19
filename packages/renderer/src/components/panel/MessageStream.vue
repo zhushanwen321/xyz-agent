@@ -84,12 +84,12 @@
     </div>
 
     <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代）。
-         文档流 block（Virtualizer 之后），样式对齐 SystemNotice 横线分隔行；宽度随对话流自动对齐。
+         文档流 block（Virtualizer 之后），样式对齐 SystemNotice 横线分隔行；mx-auto max-w 与对话流内容列对齐。
          ref 供 dev-only 断言：实测高度 vs COMPACTING_NOTICE_HEIGHT 常量漂移检测。 -->
     <div
       v-if="isCompacting"
       ref="compactingNoticeEl"
-      class="system-notice flex min-w-0 items-center gap-2 py-1"
+      class="system-notice mx-auto flex w-full max-w-[var(--content-max-w)] min-w-0 items-center gap-2 py-1"
     >
       <span class="h-px flex-1 bg-border" />
       <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
@@ -103,7 +103,7 @@
          dispatching 占位现在是对话流文档流的一部分（已计入 vlistBottom），不再是独立浮层。 -->
 
     <!-- ForkNotice 反馈行（transient，RV1）。文档流 block（Virtualizer 之后），多条通知垂直堆叠；
-         宽度随对话流自动对齐。 -->
+         宽度约束在 ForkNotice 根（mx-auto max-w content-max-w），与对话流内容列对齐。 -->
     <div
       v-for="notice in forkNotices"
       :key="notice.id"
