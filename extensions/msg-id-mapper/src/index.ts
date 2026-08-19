@@ -1,28 +1,33 @@
 /**
- * xyz-client-msg-id-mapper.js — pi file-type extension.
+ * Client UUID ↔ user entry ID mapping extension for Pi.
  *
- * 建立 clientUuid ↔ userEntryId 映射，供 xyz-agent 重开 session 时回填 segment 元数据
- * （image path/displayName、file path/lineRange 等）。
+ * Establishes clientUuid ↔ userEntryId mapping for xyz-agent session metadata
+ * preservation across sessions.
  *
- * 机制（不改 pi 源码，纯 extension hook）：
- *  1. xyz-agent 发 prompt 时在文本末尾加 HTML 注释标记 `<!--xyz:msg:<uuid>-->`
- *     （uuid 是 appendUser 生成的完整 user message id，形如 `u-<36hex>`）。
- *  2. `input` hook 拦截 source==='rpc' 的 prompt，剥离标记（LLM 看不到 transform 后的版本
- *     之外的内容），并把 uuid 记到 pendingClientUuid。
- *  3. user `message_end` 后下一个触发的 hook（message_start/turn_end/agent_end）读
- *     `ctx.sessionManager.getLeafId()` —— 此时它返回的是已持久化的 userEntryId。
- *  4. `pi.appendEntry("xyz.client-msg-id", {clientUuid, userEntryId})` 把映射写进 pi JSONL
- *     （CustomEntry，不进 LLM 上下文）。
+ * Mechanism (no pi source modification, pure extension hooks):
+ *  1. xyz-agent appends HTML comment marker `<!--xyz:msg:<uuid>-->` to prompt text
+ *     (uuid is the full user message id from appendUser, formatted as `u-<36hex>`).
+ *  2. `input` hook intercepts prompts with source==='rpc', strips the marker
+ *     (LLM doesn't see the transformed content beyond the transform), and stores
+ *     the uuid in pendingClientUuid.
+ *  3. After user `message_end`, the next triggered hook (message_start/turn_end/agent_end)
+ *     reads `ctx.sessionManager.getLeafId()` which now returns the persisted userEntryId.
+ *  4. `pi.appendEntry("xyz.client-msg-id", {clientUuid, userEntryId})` writes the mapping
+ *     into pi JSONL (CustomEntry, not in LLM context).
  *
- * 映射随 fork/clone 自动保留（在同一 JSONL 里）。xyz-agent 重开时调 `get_entries` 扫描
- * customType==="xyz.client-msg-id" 的 entry 重建映射表。
+ * Mapping is automatically preserved with fork/clone (in the same JSONL).
+ * When xyz-agent reopens a session, it scans customType==="xyz.client-msg-id" entries
+ * to rebuild the mapping table.
  *
- * 降级策略：任何 hook 抛错 → pi runner 的 try/catch 吞掉，映射缺失，重开时 xyz-agent
- * 自动降级为 textToSegments（按纯文本拆 segment）。映射缺失不影响 agent 主流程。
+ * Degradation strategy: any hook error → pi runner's try/catch swallows it,
+ * mapping is missing, and xyz-agent degrades to textToSegments (split by plain text).
+ * Missing mapping doesn't affect the agent main flow.
  *
- * 单文件 ESM，与 xyz-system-prompt-extension.js 同模式（无 build step、无 npm deps），
- * pi 通过 `--extension <path>` 在 spawn 时加载。
+ * Single-file ESM, same pattern as xyz-system-prompt-extension.js (no build step, no npm deps),
+ * loaded by pi via `--extension <path>` at spawn.
  */
+
+import type { ExtensionAPI, ExtensionContext, InputEvent, MessageEndEvent, MessageStartEvent, TurnEndEvent, AgentEndEvent } from '@earendil-works/pi-coding-agent'
 
 // uuid = appendUser 生成的 user message id（`u-` + 36 字符 hex uuid，共 38 字符）。
 // 与 shared SegmentsMetadataEntry.clientUuid 严格一致（同 appendUser 返回值）：
@@ -37,23 +42,23 @@ const TAG_MATCH = /<!--xyz:msg:(u-[0-9a-fA-F-]{36})-->/
 const TAG_STRIP = /<!--xyz:msg:u-[0-9a-fA-F-]{36}-->/g
 const ENTRY_TYPE = 'xyz.client-msg-id'
 
-export default function (pi) {
+export default function (pi: ExtensionAPI): void {
   // 待处理的 client uuid（input hook 抓到标记后写入，flush 后清空）。
-  let pendingClientUuid = undefined
+  let pendingClientUuid: string | undefined = undefined
   // user message 已 message_end、等待 flush（拿到 leafId 后写映射）。
   let awaitingUserPersist = false
 
   // input hook：拦截 xyz-agent 发来的 prompt（source === 'rpc'），剥离标记。
   // 非 rpc（interactive/extension）输入不含标记，直接 continue。
-  pi.on('input', (event) => {
+  pi.on('input', (event: InputEvent) => {
     try {
-      if (event.source !== 'rpc') return { action: 'continue' }
+      if (event.source !== 'rpc') return { action: 'continue' as const }
       const m = event.text && event.text.match(TAG_MATCH)
-      if (!m) return { action: 'continue' }
+      if (!m) return { action: 'continue' as const }
       pendingClientUuid = m[1]
       // transform 后 LLM 看到的是剥离了标记的纯文本。
       // TAG_STRIP 全局替换：防多个标记残留时只剥掉第一个（m1 修复）。
-      return { action: 'transform', text: event.text.replace(TAG_STRIP, '').trimEnd() }
+      return { action: 'transform' as const, text: event.text.replace(TAG_STRIP, '').trimEnd() }
     } catch (err) {
       // 吞错，不阻断主流程（pi runner 也会 try/catch，但显式兜底避免意外 return）。
       console.error('[xyz-client-msg-id-mapper] input hook error:', err)
@@ -63,12 +68,13 @@ export default function (pi) {
 
   // message_end：user message 持久化前触发。此时 getLeafId() 还指向上一条 entry
   // （user message 尚未落盘），所以只置 flag，真正 flush 在下一个 hook。
-  pi.on('message_end', (event) => {
+  pi.on('message_end', (event: MessageEndEvent) => {
     try {
       if (event.message && event.message.role === 'user' && pendingClientUuid) {
         awaitingUserPersist = true
       }
     } catch (err) {
+      // best-effort：置 flag 失败不阻断消息流——仅丢失该条 clientUuid↔entryId 映射，对话不受影响。
       console.error('[xyz-client-msg-id-mapper] message_end hook error:', err)
     }
     return undefined
@@ -76,7 +82,7 @@ export default function (pi) {
 
   // flush：读 getLeafId()（= userEntryId，user message 已持久化）+ appendEntry 写映射。
   // 幂等：写完即清空 pendingClientUuid / awaitingUserPersist，重复触发无副作用。
-  const flush = (ctx) => {
+  const flush = (ctx: ExtensionContext): void => {
     if (!awaitingUserPersist || !pendingClientUuid) return
     try {
       const userEntryId = ctx && ctx.sessionManager && typeof ctx.sessionManager.getLeafId === 'function'
@@ -90,14 +96,15 @@ export default function (pi) {
       pendingClientUuid = undefined
       awaitingUserPersist = false
     } catch (err) {
+      // best-effort：映射写入失败不阻断消息流——丢的是本条映射，下次 hook 会因 flag 未清而幂等重试。
       console.error('[xyz-client-msg-id-mapper] flush error:', err)
     }
   }
 
   // 三重安全网：user message_end 后第一个触发的 hook 拿到的 leafId 才是 userEntryId。
   // message_start（assistant 开始，此时 user message 已落盘）—— 主路径。
-  pi.on('message_start', (_event, ctx) => flush(ctx))
+  pi.on('message_start', (_event: MessageStartEvent, ctx: ExtensionContext) => flush(ctx))
   // turn_end / agent_end 兜底（abort 等场景 message_start 可能不来）。
-  pi.on('turn_end', (_event, ctx) => flush(ctx))
-  pi.on('agent_end', (_event, ctx) => flush(ctx))
+  pi.on('turn_end', (_event: TurnEndEvent, ctx: ExtensionContext) => flush(ctx))
+  pi.on('agent_end', (_event: AgentEndEvent, ctx: ExtensionContext) => flush(ctx))
 }

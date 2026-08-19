@@ -95,7 +95,7 @@ describe('useNewTaskFlow: create 透传归属 projectId（D14 语义修正）', 
     await flow.submitFirstMessage(textToSegments('修 bug'))
 
     expect(apiMock.create).toHaveBeenCalledTimes(1)
-    expect(apiMock.create).toHaveBeenCalledWith('/repo', '修 bug', undefined, projectStore.activeProjectId)
+    expect(apiMock.create).toHaveBeenCalledWith('/repo', '修 bug', undefined, projectStore.activeProjectId, undefined, undefined)
   })
 
   it('默认项目下新建任务 → create 第 4 参数为 undefined（未归类，不写 sidecar）', async () => {
@@ -108,7 +108,7 @@ describe('useNewTaskFlow: create 透传归属 projectId（D14 语义修正）', 
     await flow.submitFirstMessage(textToSegments('修 bug'))
 
     expect(apiMock.create).toHaveBeenCalledTimes(1)
-    expect(apiMock.create).toHaveBeenCalledWith('/repo', '修 bug', undefined, undefined)
+    expect(apiMock.create).toHaveBeenCalledWith('/repo', '修 bug', undefined, undefined, undefined, undefined)
   })
 
   it('切到另一个命名 project 后新建 → 携带新 project id', async () => {
@@ -123,7 +123,7 @@ describe('useNewTaskFlow: create 透传归属 projectId（D14 语义修正）', 
     await flow.startFlow()
     await flow.submitFirstMessage(textToSegments('任务一'))
 
-    expect(apiMock.create).toHaveBeenCalledWith('/repo', '任务一', undefined, a)
+    expect(apiMock.create).toHaveBeenCalledWith('/repo', '任务一', undefined, a, undefined, undefined)
   })
 
   it('create 失败（空 content guard 返回 null）→ 无 create 调用', async () => {

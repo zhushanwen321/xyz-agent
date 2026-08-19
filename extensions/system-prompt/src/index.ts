@@ -1,5 +1,5 @@
 /**
- * xyz-system-prompt-extension.js — pi file-type extension.
+ * System prompt injection extension for Pi.
  *
  * Registers a `before_agent_start` hook that:
  *  1. Reads <dataDir>/system-prompt.json every turn (never cached).
@@ -18,14 +18,12 @@
  *
  * Fail-safe: any error in the handler is swallowed and `undefined` is returned
  * so the agent loop is never blocked.
- *
- * The factory is symmetric with `xyz-agent-extension.js` (single file, no
- * build step, no npm deps). pi loads it via `--extension <path>` at spawn.
  */
 
 import path from 'node:path'
 import { homedir } from 'node:os'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
+import type { ExtensionAPI, BeforeAgentStartEvent } from '@earendil-works/pi-coding-agent'
 
 const CONFIG_FILE = 'system-prompt.json'
 
@@ -43,7 +41,7 @@ const GLOBAL_AGENTS_CANDIDATES = ['AGENTS.md', 'AGENTS.MD', 'CLAUDE.md', 'CLAUDE
  * Re-read on every handler invocation so env changes between turns/sessions
  * take effect without reloading the extension.
  */
-function resolveDataDir() {
+function resolveDataDir(): string {
   if (process.env.XYZ_AGENT_DATA_DIR) {
     return process.env.XYZ_AGENT_DATA_DIR
   }
@@ -60,7 +58,7 @@ function resolveDataDir() {
  *
  * Re-read on every handler invocation so env changes take effect.
  */
-function resolveGlobalAgentsDir() {
+function resolveGlobalAgentsDir(): string {
   if (process.env.XYZ_GLOBAL_AGENTS_DIR) {
     return process.env.XYZ_GLOBAL_AGENTS_DIR
   }
@@ -72,14 +70,14 @@ function resolveGlobalAgentsDir() {
  * regular file with non-blank content wins (mirrors pi's loadContextFileFromDir
  * semantics). Returns { path, content } or null; never throws.
  */
-function readGlobalAgentsFile() {
+function readGlobalAgentsFile(): { path: string; content: string } | null {
   const dir = resolveGlobalAgentsDir()
   // Match candidates against real directory entries (exact case) instead of
   // existsSync-per-candidate: on case-insensitive filesystems (macOS APFS
   // default) existsSync('AGENTS.md') would hit a file actually named
   // AGENTS.MD, reporting an injected path that differs from the on-disk
   // filename and shadowing the later exact-case candidate.
-  let entries
+  let entries: Set<string>
   try {
     entries = new Set(readdirSync(dir))
   } catch {
@@ -95,8 +93,9 @@ function readGlobalAgentsFile() {
           return { path: filePath, content }
         }
       }
-    } catch {
-      // Try the next candidate; never throw into the agent loop.
+    } catch (err) {
+      // best-effort：候选文件 stat/read 失败（如权限）→ 试下一个候选，never throw into the agent loop。
+      console.debug('[xyz-system-prompt-extension] candidate file read failed, trying next:', err)
     }
   }
   return null
@@ -106,22 +105,26 @@ function readGlobalAgentsFile() {
  * Read & parse the config file. Missing / malformed / partial → all-default.
  * Returns the effective config object; never throws.
  */
-function readConfig(dataDir) {
+function readConfig(dataDir: string): {
+  version: number
+  replace: { enabled: boolean; prompt: string }
+  append: { enabled: boolean; prompt: string }
+} {
   const defaults = {
     version: 1,
     replace: { enabled: false, prompt: '' },
     append: { enabled: false, prompt: '' },
   }
   const cfgPath = path.join(dataDir, CONFIG_FILE)
-  let raw
+  let raw: string
   try {
     raw = readFileSync(cfgPath, 'utf-8')
   } catch {
     return defaults
   }
-  let parsed
+  let parsed: Record<string, unknown>
   try {
-    parsed = JSON.parse(raw)
+    parsed = JSON.parse(raw) as Record<string, unknown>
   } catch {
     return defaults
   }
@@ -131,8 +134,8 @@ function readConfig(dataDir) {
   // Merge defensively — every field has its own default.
   // replace 字段仅防御性解析保持 config 结构完整，不参与本 hook 逻辑——
   // replace 走 --system-prompt CLI（ADR-0038），hook 只处理 append。
-  const replaceRaw = parsed.replace && typeof parsed.replace === 'object' ? parsed.replace : {}
-  const appendRaw = parsed.append && typeof parsed.append === 'object' ? parsed.append : {}
+  const replaceRaw = parsed.replace && typeof parsed.replace === 'object' ? parsed.replace as Record<string, unknown> : {}
+  const appendRaw = parsed.append && typeof parsed.append === 'object' ? parsed.append as Record<string, unknown> : {}
   return {
     version: typeof parsed.version === 'number' ? parsed.version : 1,
     replace: {
@@ -146,8 +149,8 @@ function readConfig(dataDir) {
   }
 }
 
-export default function (pi) {
-  pi.on('before_agent_start', (event) => {
+export default function (pi: ExtensionAPI): void {
+  pi.on('before_agent_start', (event: BeforeAgentStartEvent) => {
     try {
       const dataDir = resolveDataDir()
       const cfg = readConfig(dataDir)
@@ -179,7 +182,10 @@ export default function (pi) {
       try {
         const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
         process.stderr.write(`[xyz-system-prompt-extension] before_agent_start hook failed: ${msg}\n`)
-      } catch { /* stderr 写失败也忽略 */ }
+      } catch (nestedErr) {
+        // best-effort：stderr 写失败的终极兜底——console 内部吞错不会抛，仍不外泄到 agent loop。
+        console.debug('[xyz-system-prompt-extension] stderr write also failed:', nestedErr)
+      }
       return undefined
     }
   })

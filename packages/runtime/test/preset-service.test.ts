@@ -678,28 +678,3 @@ function statSyncOptional(path: string): { mtimeMs: number; size: number } | und
     return undefined
   }
 }
-
-describe('ExtensionService.getBuiltinExtensionPaths · wave 2 提取', () => {
-  // w2-tc1 + w2-tc2：用真实 ExtensionService 验证 getBuiltinExtensionPaths 提取后行为不变。
-  // 真实 ExtensionService 构造较重（需 resolver/installer/settings 等依赖），这里用最小集成：
-  // 复用 extension-service.test.ts 的 setup（已在 w2-tc2 通过回归覆盖）。
-  // 此处只做契约级断言：方法存在于 IExtensionService 接口 + 真实 ExtensionService 原型上。
-
-  it('w2-tc1: ExtensionService 原型上有 getBuiltinExtensionPaths 方法', async () => {
-    const { ExtensionService } = await import('../src/services/extension-service.js')
-    expect(typeof ExtensionService.prototype.getBuiltinExtensionPaths).toBe('function')
-  })
-
-  it('w2-tc1b: IExtensionService 接口契约——getExtensionPaths 内部调用 getBuiltinExtensionPaths（间接验证）', async () => {
-    // 间接验证：getExtensionPaths 的返回值末尾应包含 getBuiltinExtensionPaths 的返回值
-    // （因为提取后 getExtensionPaths 末尾 push(...getBuiltinExtensionPaths())）。
-    // 此处不构造真实 service（依赖太重），仅断言类型契约已对齐——
-    // 完整的 getExtensionPaths 行为回归由 extension-service.test.ts 现有 it 覆盖（w2-tc2 跑全套）。
-    const { ExtensionService } = await import('../src/services/extension-service.js')
-    // 方法存在 + 是 public（非 _ 前缀）
-    const desc = Object.getOwnPropertyDescriptor(ExtensionService.prototype, 'getBuiltinExtensionPaths')
-    expect(desc).toBeDefined()
-    expect(desc!.value).toBeTypeOf('function')
-    expect(typeof ExtensionService.prototype.getBuiltinExtensionPaths).toBe('function')
-  })
-})

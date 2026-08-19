@@ -20,7 +20,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSy
 import { join, resolve, basename, dirname, relative, isAbsolute, delimiter } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
-import { recommendedExtensions, isMandatoryExtension, isBuiltinExtension, isInfrastructureBuiltin, BUILTIN_EXTENSION_FILES, mandatoryExtensions } from '@xyz-agent/shared'
+import { recommendedExtensions, isMandatoryExtension, isBuiltinExtension, isInfrastructureBuiltin, mandatoryExtensions } from '@xyz-agent/shared'
 import semver from 'semver'
 import type { IInstaller, IExtensionResolver, DiscoveredExtension } from './ports/installer.js'
 import { resolveExtensions, dedupeLoadedExtensions, readPkgMeta, type ResolvedExtension } from './extension-filter.js'
@@ -28,7 +28,7 @@ import type { IExtensionSettings } from './ports/extension-settings.js'
 import type { IConfigStore } from './ports/config.js'
 import { isStrictlyUnder, isUnderOrEqual, extractRepoName, expandHome } from '../utils/path-utils.js'
 import { toErrorMessage } from '../utils/errors.js'
-import { isPackaged, getExtensionFilePath } from '../utils/runtime-env.js'
+import { isPackaged } from '../utils/runtime-env.js'
 import { getExtensionsDir, getNpmDir, getTmpDir } from '../infra/pi/pi-paths.js'
 
 const log = {
@@ -46,35 +46,6 @@ const DISCOVERY_TEMP_PREFIX = 'ext-scan-'
 // eslint-disable-next-line no-magic-numbers
 const ORPHAN_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
 const ALLOWED_GIT_PREFIXES = ['https://', 'ssh://', 'git@'] as const
-
-/**
- * W-SH-2 编译期一致性断言：extension-service 的 builtinExts 顺序必须与 shared 的
- * BUILTIN_EXTENSION_FILES 完全一致（name 字段引用常量做 SSOT）。若 shared 常量变更
- *（增删项/改顺序），下面类型断言会 tsc 报错，强制同步此处 path 推导逻辑。
- *
- * 断言顺序：[0]=xyz-agent-extension.js / [1]=xyz-system-prompt-extension.js /
- * [2]=xyz-client-msg-id-mapper.js（与 getExtensionFilePath 默认 + 显式 fileName 推导对应）。
- */
-type _AssertBuiltinExtOrder<
-  A extends string,
-  B extends string,
-  C extends string,
-> = A extends 'xyz-agent-extension.js'
-  ? B extends 'xyz-system-prompt-extension.js'
-    ? C extends 'xyz-client-msg-id-mapper.js'
-      ? true
-      : never
-    : never
-  : never
-// 索引按 BUILTIN_EXTENSION_FILES 元组顺序：0=主扩展 / 1=系统提示 / 2=消息 ID 映射器
-const _BUILTIN_EXT_AGENT_EXT_IDX = 0
-const _BUILTIN_EXT_SYS_PROMPT_IDX = 1
-const _BUILTIN_EXT_MSG_MAPPER_IDX = 2
-type _AssertBuiltinExtOrderCheck = _AssertBuiltinExtOrder<
-  (typeof BUILTIN_EXTENSION_FILES)[typeof _BUILTIN_EXT_AGENT_EXT_IDX],
-  (typeof BUILTIN_EXTENSION_FILES)[typeof _BUILTIN_EXT_SYS_PROMPT_IDX],
-  (typeof BUILTIN_EXTENSION_FILES)[typeof _BUILTIN_EXT_MSG_MAPPER_IDX]
->
 
 // ── Error classes ─────────────────────────────────────────────────
 
@@ -140,15 +111,6 @@ export class ExtensionService {
   /** discovery.json SSOT 访问 port（读 extensionDirs）。可选，测试可不注入。 */
   private readonly configStore?: IConfigStore
 
-  /** 文件型 extension 路径（如 xyz-agent-extension.js），打包/开发模式不同 */
-  private extensionFilePath: string
-
-  /** 第二个文件型 extension 路径（xyz-system-prompt-extension.js），链式位置在 extensionFilePath 之后 */
-  private systemPromptExtensionFilePath: string
-
-  /** 第三个文件型 extension 路径（xyz-client-msg-id-mapper.js），建立 clientUuid↔userEntryId 映射 */
-  private clientMsgIdMapperFilePath: string
-
   /** npm install 串行锁——多个扩展共享同一 --prefix 目录（~/.xyz-agent/pi/agent/npm/），
    * npm 不支持对同一 prefix 的并发安装，并发会损坏 node_modules。
    * 所有写操作（install/uninstall/upgrade/autoUpgrade）走此锁串行化。 */
@@ -171,13 +133,6 @@ export class ExtensionService {
     this.npmDir = options.npmDir ?? getNpmDir()
     this.tmpDir = options.tmpDir ?? getTmpDir()
     this.configStore = options.configStore
-
-    // 文件型 extension 路径
-    this.extensionFilePath = getExtensionFilePath(this.projectRoot, this.packaged)
-    // 第二个文件型 extension 路径（system-prompt 扩展，链式位置在 agent extension 之后）
-    this.systemPromptExtensionFilePath = getExtensionFilePath(this.projectRoot, this.packaged, 'xyz-system-prompt-extension.js')
-    // 第三个 builtin：client-msg-id-mapper（input hook 剥标记 + appendEntry 写映射，重开 session 回填 badge）
-    this.clientMsgIdMapperFilePath = getExtensionFilePath(this.projectRoot, this.packaged, 'xyz-client-msg-id-mapper.js')
 
     // Cleanup orphaned temp directories from previous crashes (>24h old)
     // Defer to next tick to avoid blocking constructor
@@ -382,8 +337,6 @@ export class ExtensionService {
     // scanExtensions 全局视图不去重（列表仍显示），仅 --extension 注入去重。
     const deduped = dedupeLoadedExtensions(resolved)
     const filtered = deduped.filter(r => r.loadable).map(r => r.path)
-    // builtin extension 永远前置（设计文档 §2.3）
-    filtered.unshift(...this.getBuiltinExtensionPaths())
     return filtered
   }
 
@@ -424,30 +377,6 @@ export class ExtensionService {
    * 顺序约束：system-prompt 扩展必须在 agent extension 之后（spec §4 链式位置——
    * 最后追加 → 链上靠后，快照≈最终生效值）。client-msg-id-mapper 位置无关，追加末尾稳定。
    */
-  getBuiltinExtensionPaths(): string[] {
-    // W-SH-2：name 字段引用 shared 常量 BUILTIN_EXTENSION_FILES，保证此处与 shared SSOT 一致。
-    // 用一致性断言锁死顺序（编译期检查，若 shared 常量变更此处会 tsc 报错提醒同步）。
-    const builtinExts: Array<{ path: string; name: string }> = [
-      { path: this.extensionFilePath, name: BUILTIN_EXTENSION_FILES[0] },
-      { path: this.systemPromptExtensionFilePath, name: BUILTIN_EXTENSION_FILES[1] },
-      { path: this.clientMsgIdMapperFilePath, name: BUILTIN_EXTENSION_FILES[2] },
-    ]
-    const paths: string[] = []
-    for (const ext of builtinExts) {
-      if (existsSync(ext.path)) {
-        paths.push(ext.path)
-      } else if (this.packaged) {
-        // W-RT-7：packaged 模式下 builtin 文件缺失 = 打包错误（installer 漏拷文件），
-        // fail-fast 抛错让用户/CI 立即感知，而非静默降级（builtin 缺失会导致系统提示词/
-        // msg id 映射失效，pi 行为严重退化）。dev 模式仍只 warn（路径漂移常见，非致命）。
-        throw new Error(`[extension] builtin extension missing in packaged build: ${ext.name} (path: ${ext.path})`)
-      } else {
-        // existsSync 为 false 时 warn（防 dev 模式路径漂移静默失效，与 getSkillPaths L703 同模式）。
-        log.warn(`builtin extension not found, skipping: ${ext.name} (path: ${ext.path})`)
-      }
-    }
-    return paths
-  }
 
   /**
    * 一次性迁移：清理旧版 mandatory 机制遗留的 9 个 builtin 包历史记录。
