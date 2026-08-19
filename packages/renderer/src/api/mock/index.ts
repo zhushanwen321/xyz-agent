@@ -202,9 +202,15 @@ function emitQueueUpdate(sessionId: string): void {
   const steering = q?.steering.length ? q.steering : undefined
   const followUp = q?.followUp.length ? q.followUp : undefined
   // 两者皆空时仍 emit（空 payload），让 store 侧 queue_update handler delete queueState
+  // pendingMessageCount = steering + followUp 条数和（W8 契约必填，对齐 event-adapter 翻译口径）
   emit(sessionId, {
     type: 'message.queue_update',
-    payload: { sessionId, steering, followUp },
+    payload: {
+      sessionId,
+      steering,
+      followUp,
+      pendingMessageCount: (q?.steering.length ?? 0) + (q?.followUp.length ?? 0),
+    },
   })
 }
 
