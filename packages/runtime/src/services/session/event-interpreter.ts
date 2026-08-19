@@ -8,6 +8,9 @@
  *   3. context 事件失效（sessionService.applyContextUpdate——W12 起只做 usage 实例失效，
  *      context.update 广播由快照应用后的挂钩发布）
  *   4. status/bridge/extension-ui 路由到 server（注册超时 / 处理 bridge 请求）
+ *   5. subagent/workflow record 失效信号（W18 D4：entry_appended 主信号 + bg-notify/
+ *      workflow-result/tool-call-end 兜底信号 → onRecordEntriesInvalidated——事件直写
+ *      退役，数据由 sessionService 的 entry 扫描派生缓存承载）
  *
  * 持有的可变态（从 event-adapter 迁来）：
  *   - currentMessageId（message_start 设置，file_changes 挂载目标）
@@ -36,9 +39,7 @@ export const PING_INTERVAL_MS = 60_000
 export const PING_FAIL_THRESHOLD = 3
 /** [AC-8] 连续 2 次失败（120s）→ 广播 message.stream_warn 一次（提示性，不中断）。export 供测试（SR6）。 */
 export const PING_WARN_FAIL_COUNT = 2
-import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, parseBgNotifyDetails } from '@xyz-agent/shared'
-import { normalizeSubagentStatus } from './subagent-status.js'
-import type { SubagentRecord, SubagentStatus, BgNotifyRecord } from '@xyz-agent/shared'
+import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
 import type { IFileChangeDiff } from '../ports/file-change-diff.js'
 import type { PiTranslatedEvent } from './types.js'
@@ -140,86 +141,24 @@ export interface EventInterpreterOptions {
    * 详见 ADR-0047「ping 可行性验证」。
    */
   pingPi?: () => Promise<Record<string, unknown> | undefined> | undefined
+  /**
+   * W18（data-source-governance P3.1）：自描述 record entry 到达 → subagent/workflow
+   * 派生缓存失效。组合根注入 sessionService.invalidateRecordEntries——markDirty + 防抖
+   * get_entries(since) 增量重拉，entry 扫描（scanSubagentEntries / scanWorkflowEntries）
+   * 是派生缓存唯一数据写路径，事件 payload 永不直写缓存（ReplicatedState「事件只做
+   * 失效」不变量；W12-W18 过渡态例外至此撤销）。
+   *
+   * 触发源（全部降级为失效信号，W18 起事件直写退役）：
+   * - entry_appended{customType: subagent-record | workflow-record}（主信号，adapter 过滤）
+   * - subagent-bg-notify / subagent tool-call-end / workflow-result / workflow tool-call-end
+   *   （兜底信号：extension 在同一状态迁移点既 append 自描述 entry 又发上述事件——主信号
+   *   丢失（W22 混沌）时兜底触发重拉收敛）
+   */
+  onRecordEntriesInvalidated?: (sessionId: string, customType: 'subagent-record' | 'workflow-record') => void
 }
 
 /** 可能改文件的工具（baseline diff 触发判定，与原 event-adapter 一致）。 */
 const FILE_MUTATING_TOOLS = new Set(['write', 'edit', 'bash'])
-
-/**
- * W12（data-source-governance P1.5）：subagents 状态包装实例——session.subagents 话题的
- * runtime 侧 owner（数据持有者），publish（stateSnapshot last-value）唯一数据源。
- *
- * 写入口 = 现有事件流经单入口写入（applyStart / applyNotify——subagent tool-call-end 建
- * running 记录、bg-notify 合并终态，两路事件全部经包装实例公开方法写入，Map 不外露）。
- * **[W12-W18 过渡态例外·已登记]**：事件流直写 owner 数据（违反 ReplicatedState「事件只做
- * 失效」不变量的登记例外，登记表条目：W12-W18 过渡写入口 = 事件流，W18 起底层源换
- * entry 扫描后写入口退役为失效信号）。
- * snapshot() 返回浅拷贝数组——publish 后的写入不打穿已发布快照与 stateSnapshot last-value。
- */
-class SubagentsState {
-  private readonly records = new Map<string, SubagentRecord>()
-
-  /** 单入口写入①：subagent tool-call-end 建 running 记录（新发起的 subagent 恒为 running）。 */
-  applyStart(record: SubagentRecord): void {
-    this.records.set(record.subagentId, record)
-  }
-
-  /**
-   * 单入口写入②：bg-notify 合并终态到已有记录（合并逻辑原样迁自 handleSubagentBgNotify，
-   * 行为零变化）。只更新已存在的内存记录（running 初始记录由 applyStart 建入），无命中
-   * 返回 false 不写入。agent 字段以 notify.agent 为准（pi 执行期回传的真实值，比 startParam
-   * 兜底权威）；closedReason 仅 closed 终态有意义（running 轮次完成通知显式清空，防脏组合）。
-   */
-  applyNotify(notify: BgNotifyRecord): boolean {
-    const existing = this.records.get(notify.id)
-    if (!existing) return false
-    const status = normalizeSubagentStatus(notify.status)
-    this.records.set(notify.id, {
-      ...existing,
-      status,
-      agent: notify.agent ?? existing.agent,
-      model: notify.model ?? existing.model,
-      error: notify.error ?? existing.error,
-      startedAt: notify.startedAt ?? existing.startedAt,
-      endedAt: notify.endedAt ?? existing.endedAt,
-      closedReason: status === 'closed' ? (notify.closedReason ?? existing.closedReason) : undefined,
-    })
-    return true
-  }
-
-  /** 快照读（publish 唯一数据源；浅拷贝数组隔离后续写入）。 */
-  snapshot(): SubagentRecord[] {
-    return Array.from(this.records.values())
-  }
-}
-
-/** workflow 增量信号形态（与 shared protocol session.workflowUpdate payload.update 同构）。 */
-type WorkflowUpdateSignal = { runId: string; status: string; reason?: string }
-
-/**
- * W12（data-source-governance P1.5）：workflow 增量信号包装实例——session.workflowUpdate
- * 话题的 runtime 侧 owner（数据持有者），publish（stateSnapshot last-value）唯一数据源。
- *
- * 话题语义是增量信号（发起 running / 终态 done），owner 持有最新一条——last-value 语义
- * 与 state 话题同 typeKey 去重缓存（STATE_TYPE_KEY_MAP 'workflows'）一致。
- * 写入口 = 现有事件流经单入口写入（apply：workflow tool-call-end 发起 / workflow-result
- * customStart 终态，两路事件都经 broadcastWorkflowUpdate 内的 apply 写入）。
- * **[W12-W18 过渡态例外·已登记]**：事件流直写 owner 数据（同 SubagentsState 的登记例外，
- * W18 起底层源换 entry 扫描后写入口退役为失效信号）。
- */
-class WorkflowUpdatesState {
-  private latest: WorkflowUpdateSignal | undefined
-
-  /** 单入口写入：最新增量信号覆盖（last-value 语义）。 */
-  apply(update: WorkflowUpdateSignal): void {
-    this.latest = update
-  }
-
-  /** 快照读（publish 唯一数据源）。 */
-  snapshot(): WorkflowUpdateSignal | undefined {
-    return this.latest
-  }
-}
 
 export class EventInterpreter {
   /** 当前 assistant message 的 id（message_start 设置，file_changes 挂载目标，跨事件保持） */
@@ -236,14 +175,6 @@ export class EventInterpreter {
   private turnGen = 0
   /** turn-end 压制标记：true 后到达的 accumulating 直接 no-op（同回合迟到 tool-call-end 不产生新帧） */
   private turnFinalizing = false
-  /**
-   * subagents 状态包装实例（W12）：session.subagents 话题的 runtime 侧 owner。
-   * 写入口 = 现有事件流经单入口写入（applyStart / applyNotify），publish 读 snapshot()。
-   * per-session（interpreter 实例级），session 销毁时随实例释放。
-   */
-  private readonly subagentsState = new SubagentsState()
-  /** subagent tool-call-start 的 startParam 缓存（toolCallId → startParam），end 时取出合并 */
-  private pendingStartParams: Map<string, { agent: string; slug: string; task: string }> = new Map()
   /**
    * toolCall 产出顺序锚点缓存（toolCallId → contentIndex，pi toolcall_start 提供）。
    * tool-call-start（tool_execution_start）到达时取出附到 tool_call_start WS 帧，
@@ -409,6 +340,11 @@ export class EventInterpreter {
           payload: { sessionId: ev.sessionId, recordId: ev.recordId, lines: ev.lines },
         })
         return
+      case 'record-entry-appended':
+        // W18：自描述 record entry 到达 → 派生缓存失效（sessionService 防抖增量重拉）。
+        // 事件 payload 不进数据缓存——entry 扫描是唯一数据写路径。
+        this.opts.onRecordEntriesInvalidated?.(this.sessionId, ev.customType)
+        return
       case 'compaction-start':
         this.handleCompactionStart(ev)
         return
@@ -468,11 +404,6 @@ export class EventInterpreter {
     })
     // 锚点已消费，清除缓存（防 Map 无限增长；同 id 重复 start 无意义）
     this.toolCallContentIndex.delete(toolCallId)
-
-    // subagent tool-call-start：缓存 startParam（agent/slug/task），end 时取出合并 details 建记录
-    if (SUBAGENT_TOOL_NAMES.has(toolName)) {
-      this.cacheSubagentStartParam(toolCallId, input)
-    }
   }
 
   /** tool-call-end：跑 onAfterToolResult hook（改写 output）+ 触发 file_changes diff + 产出 tool_call_end WS 帧 + onPiEvent hook。 */
@@ -525,13 +456,14 @@ export class EventInterpreter {
       },
     })
 
-    // subagent tool-call-end：合并缓存 startParam + details 建记录 → 广播 session.subagents
+    // W18：subagent/workflow tool-call-end 事件直写退役为兜底失效信号——extension 在
+    // record 状态迁移点（register / run flush）已 append 自描述 entry（entry_appended
+    // 主信号先于本事件到达），此处失效用于主信号丢失时的双保险收敛。
     if (SUBAGENT_TOOL_NAMES.has(toolName)) {
-      this.handleSubagentEnd(toolCallId, details)
+      this.opts.onRecordEntriesInvalidated?.(this.sessionId, 'subagent-record')
     }
-    // workflow tool-call-end：action=run 发起 → 广播 session.workflows running 信号
     if (WORKFLOW_TOOL_NAMES.has(toolName)) {
-      this.handleWorkflowToolEnd(details)
+      this.opts.onRecordEntriesInvalidated?.(this.sessionId, 'workflow-record')
     }
   }
 
@@ -635,160 +567,33 @@ export class EventInterpreter {
     return next
   }
 
-  // ── subagent 内存态 + session.subagents 广播 ──
+  // ── subagent / workflow record 失效信号（W18：事件直写退役）──
 
   /**
-   * 缓存 subagent tool-call-start 的 startParam（agent/slug/task）。
-   * tool-call-end 时按 toolCallId 取出，合并 details 的 subagentId/sessionFile/bgResponse 建记录。
-   */
-  private cacheSubagentStartParam(toolCallId: string, input: unknown): void {
-    const args = input as { action?: string; startParam?: Record<string, unknown> } | undefined
-    if (!args || args.action !== 'start' || !args.startParam) return
-    const sp = args.startParam
-    this.pendingStartParams.set(toolCallId, {
-      agent: typeof sp.agent === 'string' ? sp.agent : 'general-purpose',
-      slug: typeof sp.slug === 'string' ? sp.slug : '',
-      task: typeof sp.task === 'string' ? sp.task : '',
-    })
-  }
-
-  /**
-   * subagent tool-call-end：合并缓存 startParam + details(SubagentToolResult) 建 running 记录。
-   * details 结构（pi-subagent-workflow）：{action:'start', subagentId, sessionFile, bgResponse:{status:'running',...}}
-   */
-  private handleSubagentEnd(toolCallId: string, details: Record<string, unknown> | undefined): void {
-    const startParam = this.pendingStartParams.get(toolCallId)
-    this.pendingStartParams.delete(toolCallId)
-    // start 事件丢失或不匹配 → 无法建记录（agent/slug/task 缺失），跳过
-    if (!startParam) return
-    if (!details) return
-
-    const subagentId = typeof details.subagentId === 'string' ? details.subagentId : null
-    if (!subagentId) return
-
-    // 新发起的 subagent 恒为 running（pi-subagent-workflow 的 start action 返回 bgResponse.status='running'）
-    const status: SubagentStatus = 'running'
-
-    const record: SubagentRecord = {
-      subagentId,
-      sessionFile: typeof details.sessionFile === 'string' ? details.sessionFile : null,
-      agent: startParam.agent,
-      slug: startParam.slug,
-      task: startParam.task,
-      status,
-    }
-
-    // W12：事件流经包装实例单入口写入（applyStart），publish 读快照
-    this.subagentsState.applyStart(record)
-    this.broadcastSubagents()
-  }
-
-  /**
-   * subagent bg-notify（custom_message）：更新已有记录的终态。
+   * subagent bg-notify（custom_message）→ 派生缓存失效（W18）。
    *
-   * details 两种形态（pi-subagent-workflow notifier 滑动窗口 60s 内合并）：
-   *   - 单条：BgNotifyRecord = {id, status:'running'|'closed'（legacy 兼容
-   *     done/failed/cancelled）, agent, model, result, error, closedReason?, round?, startedAt, endedAt}
-   *   - 批量：{batch:true, items: BgNotifyRecord[]}
+   * W12-W18 过渡期本方法曾直写 SubagentsState 包装实例（applyNotify 合并终态 + 广播），
+   * W18 起事件直写退役：extension 在 record 状态迁移点已 append 自描述 subagent-record
+   * entry（entry_appended 主信号），本事件降级为兜底失效信号——主信号丢失（广播被拦截 /
+   * 事件流损坏）时仍触发 get_entries 重拉收敛（equivalence 混沌用例场景 5）。
    *
-   * 用 parseBgNotifyDetails 解析（统一处理两种形态 + 防御性校验），
-   * 用 normalizeSubagentStatus 归一（兼容 completed/error/crashed 等上游变体）。
-   * agent 字段以 notify.agent 为准（pi 执行期回传的真实值，比 startParam 兜底权威）。
-   * 批量多条更新后只广播一次（避免 N 次广播）。
+   * details 不再解析（customType 判定即失效条件）；customStart WS 帧由上方 'message'
+   * 分支照常转发前端（BgNotifyCard 渲染不受影响）。
    */
   private handleSubagentBgNotify(msg: ServerMessage): void {
-    const payload = msg.payload as { customType?: string; details?: unknown } | undefined
+    const payload = msg.payload as { customType?: string } | undefined
     if (payload?.customType !== 'subagent-bg-notify') return
-
-    const parsed = parseBgNotifyDetails(payload.details)
-    if (!parsed) return
-
-    const records: BgNotifyRecord[] = 'batch' in parsed ? parsed.items : [parsed]
-    let changed = false
-    // W12：合并逻辑经包装实例单入口写入（applyNotify，含「只更新已存在记录」守卫与
-    // closedReason 清空语义，行为零变化），批量多条更新后只广播一次（避免 N 次广播）。
-    for (const notify of records) {
-      if (this.subagentsState.applyNotify(notify)) changed = true
-    }
-
-    if (changed) this.broadcastSubagents()
+    this.opts.onRecordEntriesInvalidated?.(this.sessionId, 'subagent-record')
   }
 
   /**
-   * 广播当前 subagent 全量列表（session.subagents server push）。
-   * W12：payload 数据源 = 包装实例快照（owner）——stateSnapshot last-value 恒 == 实例快照。
-   */
-  private broadcastSubagents(): void {
-    this.opts.send({
-      type: 'session.subagents' as ServerMessageType,
-      payload: {
-        sessionId: this.sessionId,
-        subagents: this.subagentsState.snapshot(),
-      },
-    })
-  }
-
-  // ── workflow 实时推送 ──
-
-  /**
-   * workflow 增量信号包装实例（W12）：session.workflowUpdate 话题的 runtime 侧 owner。
-   * 写入口 = 现有事件流经单入口写入（applyWorkflowToolEnd 发起 / applyWorkflowResult 终态，
-   * 详见各 handler），publish 读 snapshot()（最新一条增量）。
-   */
-  private readonly workflowUpdatesState = new WorkflowUpdatesState()
-
-  /**
-   * workflow-result customStart（run 完成通知）：广播 session.workflows 增量信号。
-   * details 结构（pi-subagent-workflow notifyDone）：{runId, name, status:'done', reason, traceLength, __gui__?}
-   * 前端收到推送后调 loadWorkflows RPC 拉取完整列表（含 agentCalls）。
+   * workflow-result customStart（run 完成通知）→ 派生缓存失效（W18，同 handleSubagentBgNotify
+   * 的退役语义）。customStart WS 帧照常转发前端（完成 turn 注入渲染不受影响）。
    */
   private handleWorkflowResult(msg: ServerMessage): void {
-    const payload = msg.payload as { customType?: string; details?: Record<string, unknown> } | undefined
+    const payload = msg.payload as { customType?: string } | undefined
     if (payload?.customType !== 'workflow-result') return
-    const details = payload.details
-    if (!details) return
-
-    const runId = typeof details.runId === 'string' ? details.runId : null
-    if (!runId) return
-
-    const reason = typeof details.reason === 'string' ? details.reason : undefined
-    this.broadcastWorkflowUpdate({ runId, status: 'done', reason })
-  }
-
-  /**
-   * workflow tool-call-end（action=run 发起）：广播 session.workflows running 信号。
-   * details 结构（pi-subagent-workflow tool-workflow.ts）：{action:'run', runId, status:'running', name, slug?}
-   * 前端收到推送后调 loadWorkflows RPC 拉取完整列表。
-   */
-  private handleWorkflowToolEnd(details: Record<string, unknown> | undefined): void {
-    if (!details) return
-    if (details.action !== 'run' || details.status !== 'running') return
-    const runId = typeof details.runId === 'string' ? details.runId : null
-    if (!runId) return
-
-    this.broadcastWorkflowUpdate({ runId, status: 'running' })
-  }
-
-  /**
-   * 广播 workflow 增量信号（session.workflows server push）。
-   * 推送 {runId, status, reason?} 增量，非全量列表——前端收到后触发 loadWorkflows RPC 拉取完整数据。
-   * 设计理由：发起时刻 runtime 无 agentCalls（workflow 刚启动），全量需读 state 文件增加复杂度；
-   * 增量信号 + RPC 拉取复用现有 loadWorkflows 链路，零新增 IO 逻辑。
-   *
-   * W12：事件流经包装实例单入口写入（apply）后读快照发布——stateSnapshot 的 'workflows'
-   * last-value 恒 == owner 快照（最新一条增量）。
-   */
-  private broadcastWorkflowUpdate(update: { runId: string; status: string; reason?: string }): void {
-    this.workflowUpdatesState.apply(update)
-    const latest = this.workflowUpdatesState.snapshot()
-    if (latest === undefined) return
-    this.opts.send({
-      type: 'session.workflowUpdate' as ServerMessageType,
-      payload: {
-        sessionId: this.sessionId,
-        update: latest,
-      },
-    })
+    this.opts.onRecordEntriesInvalidated?.(this.sessionId, 'workflow-record')
   }
 
   // ── compaction 生命周期编排（M4 事件驱动：interpreter 唯一源）──

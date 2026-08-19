@@ -94,7 +94,7 @@ function makeFixture(): Fixture {
     bus,
   )
   svc.setMessageBus(bus)
-  svc.setModelContextWindowResolver((_provider, modelId) => MODEL_WINDOWS[modelId] ?? 0)
+  // W18：resolver 注入链已删（W12 后生产零消费）——usage 全字段来自 pi getSessionStats 快照
   return { svc, bus, client, setCurrentModel: (m) => { currentModel = m } }
 }
 

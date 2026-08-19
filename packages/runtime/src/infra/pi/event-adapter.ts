@@ -20,7 +20,7 @@
  * 产出一组中间事件），可变态由 EventInterpreter 持有。
  */
 import type { ServerMessage, ServerMessageType, ExtensionInteractMethod, PiMessageEntry, PiToolCallEntryForm } from '@xyz-agent/shared'
-import { EXTENSION_EVENTS } from '@xyz-agent/shared'
+import { EXTENSION_EVENTS, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
 import { GUI_WIDGET_MARKER, ASK_USER_MARKER, isGuiComponent, isGuiRenderResult } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import type { PiTranslatedEvent } from '../../services/session/types.js'
@@ -47,6 +47,7 @@ import type {
   PiErrorEvent,
   PiCompactionStartEvent,
   PiCompactionEndEvent,
+  PiEntryAppendedEvent,
 } from './pi-protocol.js'
 
 // ── Sub-handler types ──────────────────────────────────────────────
@@ -801,23 +802,46 @@ function handleCompactionEnd(event: PiCompactionEndEvent, _sid: string): PiTrans
   ]
 }
 
+/**
+ * entry_appended → record-entry-appended 失效信号（W18，D4）。
+ *
+ * pi 只对 extension appendEntry 发射本事件（agent-session.ts appendEntry 回调唯一发射点，
+ * message entry 不发射——W25 契约测试固化）。customType 过滤：只对 subagent-record /
+ * workflow-record 自描述 entry 产出失效信号（interpreter → sessionService markDirty → 防抖
+ * get_entries 增量重拉，唯一数据写路径），其他 custom type（含未来新增的 extension 自有
+ * entry）no-op——避免无关 entry 触发拉取。
+ *
+ * 事件 payload（entry 对象）不进任何数据缓存：失效信号只携带 customType，数据本体由
+ * get_entries 权威拉取获得（ReplicatedState「事件只做失效」核心不变量）。
+ */
+function handleEntryAppended(event: PiEntryAppendedEvent, _sid: string): PiTranslatedEvent[] {
+  const entry = event.entry as { type?: unknown; customType?: unknown } | null
+  if (!entry || entry.type !== 'custom') return [{ kind: 'noop' }]
+  if (entry.customType === SUBAGENT_RECORD_CUSTOM_TYPE) {
+    return [{ kind: 'record-entry-appended', customType: SUBAGENT_RECORD_CUSTOM_TYPE }]
+  }
+  if (entry.customType === WORKFLOW_RECORD_CUSTOM_TYPE) {
+    return [{ kind: 'record-entry-appended', customType: WORKFLOW_RECORD_CUSTOM_TYPE }]
+  }
+  return [{ kind: 'noop' }]
+}
+
 // ── Null-event types (lifecycle events not forwarded to frontend) ──
 // 注意：turn_end 不在此列——它经 handleTurnEndPi 提取 usage 触发 context.update（见 DISPATCHER）。
 // agent_settled 是 pi 0.80.3 稳态事件（无待处理工具/消息），xyz-agent 不消费——显式登记忽略。
 // compaction_start/compaction_end 在 M4 移出此列（改事件驱动，interpreter 唯一编排 compaction 生命周期）。
 // agent_start 在 M5 移出此列——其 hook 分支在 translate() 内单独消费（onPiEvent/agent_start hook，
 // 消费方是插件 executeHooks，S1）。若放回 NULL_EVENTS 会被此处 short-circuit，hook 分支不可达。
-// entry_appended 在 M5 登记此列——pi extension appendEntry 会 emit，xyz-agent 无前端消费方，
-// 不登记会刷 console.warn unhandled。
+// [W18] entry_appended 移出此列——对 subagent-record / workflow-record customType 产出失效信号
+// （handleEntryAppended：subagent/workflow 派生缓存 markDirty → 防抖 get_entries 增量重拉），
+// 其他 custom type no-op（W21 TODO(W18) 锚点在此兑现；message entry 不发射本事件，W25 契约）。
 // [W21] message_end 移出此列——重构 message entry 喂前端 reducer（handleMessageEnd，实时 feed
-// 权威载体）。对齐 W18 对 entry_appended 的处置写法：W18 接线 entry_appended 后它也将移出此列
-// （TODO(W18)：entry_appended → 直接构 entry 喂 reducer；W18 未 committed 前本段禁动——并行警戒，
-// 见 w21-acceptance 禁改清单）。pi 上游未来若为常规 message append 补发射 entry_appended：只换
-// 喂入源头（entry_appended → entry 构造），reducer 不动。
+// 权威载体）。pi 上游未来若为常规 message append 补发射 entry_appended：只换喂入源头
+// （entry_appended → entry 构造），reducer 不动。
 const NULL_EVENTS = new Set([
   'turn_start',
   'extension_config', 'extension_ui_response', 'response',
-  'agent_settled', 'entry_appended',
+  'agent_settled',
 ])
 
 // ── Dispatcher map ─────────────────────────────────────────────────
@@ -848,6 +872,9 @@ const DISPATCHER = new Map<string, Handler>()
   DISPATCHER.set('error', handleError as Handler)
   DISPATCHER.set('compaction_start', handleCompactionStart as Handler)
   DISPATCHER.set('compaction_end', handleCompactionEnd as Handler)
+  // [W18] entry_appended：移出 NULL_EVENTS 后在此注册——subagent-record / workflow-record
+  // 失效信号（handleEntryAppended），其他 custom type no-op
+  DISPATCHER.set('entry_appended', handleEntryAppended as Handler)
 })()
 
 /**

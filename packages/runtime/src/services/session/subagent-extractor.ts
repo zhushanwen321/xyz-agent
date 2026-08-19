@@ -1,20 +1,26 @@
 /**
- * Subagent 提取器 —— 从主 session JSONL 提取 SubagentRecord[]。
+ * Subagent 提取器 —— 从 session entry 列表派生 SubagentRecord[]。
  *
- * 数据来源：主 session JSONL 中的 `subagent` tool 调用。
- * pi-subagent-workflow 扩展注册了 `subagent` tool，主 agent 调用时会 spawn 子 agent。
+ * [W18] 本文件重构为 entry 扫描器：`scanSubagentEntries(entries)` 是 subagent 列表唯一派生
+ * 函数，实时（entry_appended 失效 → get_entries 增量/全量拉取）与冷启动（磁盘 JSONL 全量
+ * 解析 → getSubagents RPC）两条通路都调它（D4「实时与重开走同一份扫描代码」，模式 2 双
+ * 管线消亡）。
  *
- * JSONL 中的 entry 模式（pi-subagent-workflow，仅 background 模式）：
+ * 数据来源优先级：
+ * 1. **自描述 `subagent-record` entry（W16 v1，权威）**：pi-subagent-workflow 在 record 状态
+ *    迁移点（register/archive/reportRecordTransition）经 pi.appendEntry 落完整快照（customType
+ *    常量 = shared SUBAGENT_RECORD_CUSTOM_TYPE）。读取方无需逆向解析 toolCall/toolResult。
+ * 2. **legacy 解析（降级兜底）**：无自描述 entry 命中（W16 改造前创建的旧 session）时走
+ *    旧双管线的磁盘解析逻辑——从 toolCall/toolResult/bg-notify 配对重建。降级表现 = 旧
+ *    session 数据滞后但可用（登记表 #8 标注）。
+ *
+ * legacy JSONL 中的 entry 模式（pi-subagent-workflow，仅 background 模式）：
  * 1. assistant message 含 toolCall{name:'subagent', arguments:{action:'start', startParam:{task, slug, agent?, model?, thinkingLevel?, fork?, worktree?, ...}}}
  * 2. toolResult message 含 content[0].text = JSON 字符串，解析后含：
  *    - background 模式：{action:'start', subagentId, sessionFile:null, bgResponse:{status:'running', message:'detached...'}}
  *    - list 模式：{action:'list', subagentId:null, sessionFile:null, listResponse:{running, items:[{subagentId, agent, status, sessionFile, model, totalTokens, duration}]}}
  * 3. custom_message customType:'subagent-bg-notify' 含 details:{id, status:'running'|'closed'（legacy 兼容 done/failed/cancelled）, agent, model, result, error, startedAt, endedAt, closedReason?, round?}
  *    （background 完成终态 / 对话模式轮次完成时注入，可用来更新状态）
- *
- * 提取策略：
- * - 遍历所有 message entry，收集 subagent toolCall（按 toolCallId 索引）和对应 toolResult
- * - background 模式：从 bgResponse（初始 running）+ 后续 listResponse（更新状态/sessionFile）+ bg-notify（终态）合并
  *
  * 2026-07-13 对齐 pi-subagent-workflow feat-ask-user-gui 分支：
  * - startParam 新增 slug（短标签），extractor 提取到 SubagentRecord.slug
@@ -26,7 +32,7 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { parseJsonl } from '../../utils/jsonl.js'
 import { getSubagentSessionDir } from '../../infra/pi/pi-paths.js'
-import { parseBgNotifyDetails } from '@xyz-agent/shared'
+import { parseBgNotifyDetails, SUBAGENT_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
 import { normalizeSubagentStatus } from './subagent-status.js'
 import type { SubagentRecord, SubagentStatus, BgNotifyRecord } from '@xyz-agent/shared'
 
@@ -88,18 +94,97 @@ interface JsonlMessageEntry {
   }
 }
 
-/** JSONL 中的 custom_message entry 结构 */
+/** JSONL 中的 custom / custom_message entry 结构 */
 interface JsonlCustomEntry {
   type: string
   customType?: string
+  data?: unknown
   details?: unknown
   timestamp?: string
 }
 
 /**
- * 从主 session JSONL 文件提取 SubagentRecord[]。
+ * [W18] entry 扫描器：从 entry 列表派生 SubagentRecord[]。
  *
- * 读取文件 → parseJsonl → 配对 toolCall/toolResult → 合并 bg-notify → 返回列表。
+ * 实时（session-service 增量拉取）与冷启动（getSubagents 磁盘全量）唯一共用派生函数：
+ * 1. 先扫自描述 `subagent-record` entry（W16 v1 完整快照，同 id 后到覆盖——extension 在
+ *    状态迁移点 append，后者更新）；命中（≥1 条有效）直接返回自描述派生列表。
+ * 2. 无命中（W16 前创建的旧 session）→ legacy 解析兜底（toolCall/toolResult/bg-notify
+ *    配对重建，数据滞后但可用）。
+ *
+ * entries 来源两种形态同构（pi SessionEntry 内存对象与 JSONL 行反序列化），type 判定
+ * 'custom'（pi appendCustomEntry；workflow-extractor 实测注释同源）。
+ */
+export function scanSubagentEntries(entries: unknown[]): SubagentRecord[] {
+  const selfDescribed = collectSelfDescribedSubagentRecords(entries)
+  if (selfDescribed !== null) return selfDescribed
+  return extractSubagentsFromEntriesLegacy(entries)
+}
+
+/**
+ * 收集自描述 subagent-record entry（W16 v1）。
+ *
+ * data schema = extensions/subagent-workflow/src/execution/record-entry.ts 的
+ * SubagentRecordEntryData（v1；跨包依赖方向不允许 import extensions/ 源码，此处按
+ * 防御式逐字段守卫消费——runtime 只取 shared SubagentRecord 投影需要的字段，
+ * eventLog/displayItems 等扩展内部字段不进 runtime 契约）。
+ *
+ * @returns null = 无有效命中（走 legacy 兜底）；SubagentRecord[] = 命中（同 id 后到覆盖）。
+ * 版本不认识的 entry 跳过并 warn（可观测，对齐 workflow-extractor R4 版本漂移语义）；
+ * 全部无效视同无命中。
+ */
+function collectSelfDescribedSubagentRecords(entries: unknown[]): SubagentRecord[] | null {
+  const records = new Map<string, SubagentRecord>()
+  for (const entry of entries) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const e = entry as JsonlCustomEntry
+    if (e.type !== 'custom' || e.customType !== SUBAGENT_RECORD_CUSTOM_TYPE) continue
+    const data = e.data
+    if (typeof data !== 'object' || data === null) continue
+    const d = data as Record<string, unknown>
+    if (d.v !== 1) {
+      console.warn(
+        `[subagent-extractor] subagent-record entry schema version '${String(d.v)}' unsupported (expected 1) — ` +
+          `extension/runtime version skew, skip this entry. Fix: align schema with ` +
+          `extensions/subagent-workflow/src/execution/record-entry.ts (W16 v1).`,
+      )
+      continue
+    }
+    if (typeof d.id !== 'string' || typeof d.status !== 'string') continue
+    const status = normalizeSubagentStatus(d.status)
+    const startedAt = typeof d.startedAt === 'number' ? d.startedAt : undefined
+    const endedAt = typeof d.endedAt === 'number' ? d.endedAt : undefined
+    records.set(d.id, {
+      subagentId: d.id,
+      sessionFile: typeof d.sessionFile === 'string' ? d.sessionFile : null,
+      agent: typeof d.agent === 'string' ? d.agent : 'general-purpose',
+      slug: typeof d.slug === 'string' ? d.slug : '',
+      task: typeof d.task === 'string' ? d.task : '',
+      status,
+      // closedReason 仅 closed 终态投影（与 legacy 路径同构，防 running + closedReason 脏组合）
+      closedReason: status === 'closed' && typeof d.closedReason === 'string' ? d.closedReason : undefined,
+      turns: typeof d.turns === 'number' ? d.turns : undefined,
+      totalTokens: typeof d.totalTokens === 'number' ? d.totalTokens : undefined,
+      model: typeof d.model === 'string' ? d.model : undefined,
+      thinkingLevel: typeof d.thinkingLevel === 'string' ? d.thinkingLevel : undefined,
+      startedAt,
+      endedAt,
+      // elapsedSeconds 派生：entry 无 duration 字段（extension 快照不含），从 startedAt/
+      // endedAt 差值派生（与 legacy 的 listResponse.duration 同语义，秒）
+      elapsedSeconds: startedAt !== undefined && endedAt !== undefined && endedAt >= startedAt
+        // eslint-disable-next-line no-magic-numbers -- 1000 = ms→s 换算常数，无语义歧义
+        ? Math.round((endedAt - startedAt) / 1000)
+        : undefined,
+      error: typeof d.error === 'string' ? d.error : undefined,
+    })
+  }
+  return records.size > 0 ? Array.from(records.values()) : null
+}
+
+/**
+ * 从主 session JSONL 文件提取 SubagentRecord[]（冷启动 / getSubagents RPC 路径）。
+ *
+ * 读取文件 → parseJsonl → scanSubagentEntries（与实时增量拉取同一份派生代码）。
  * 文件不存在或无 subagent 调用时返回空数组。
  */
 export function extractSubagentsFromSessionFile(filePath: string): SubagentRecord[] {
@@ -111,6 +196,16 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
   }
 
   const entries = parseJsonl(content)
+  return scanSubagentEntries(entries)
+}
+
+/**
+ * [legacy] 旧双管线的磁盘解析逻辑（W18 前的 extractSubagentsFromSessionFile 主体）。
+ *
+ * 降级兜底：仅当 session 无自描述 subagent-record entry（W16 改造前创建）时被
+ * scanSubagentEntries 调用。W16 前创建的存量 session 由此路径继续可见（不静默丢失）。
+ */
+function extractSubagentsFromEntriesLegacy(entries: unknown[]): SubagentRecord[] {
 
   // 提取主 session 的 cwd（首行 session entry），用于推导 subagent session 目录
   const sessionEntry = entries.find(

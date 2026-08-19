@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { expandHome, isStrictlyUnder } from '../../utils/path-utils.js'
 import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord, BatchDeleteResult, SegmentsMetadataFile, SegmentsMetadataEntry, ProviderId } from '@xyz-agent/shared'
-import { BUILTIN_PRESET_IDS, IMAGE_LIMITS } from '@xyz-agent/shared'
+import { BUILTIN_PRESET_IDS, IMAGE_LIMITS, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
 import { getAttachmentsDir } from '@xyz-agent/shared/paths'
@@ -30,8 +30,8 @@ import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine, PiCommandInfo } from '../ports/pi-engine.js'
 import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
 import { parseJsonl } from '../../utils/jsonl.js'
-import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
-import { extractWorkflowsFromSessionFile } from './workflow-extractor.js'
+import { extractSubagentsFromSessionFile, scanSubagentEntries } from './subagent-extractor.js'
+import { extractWorkflowsFromSessionFile, scanWorkflowEntries } from './workflow-extractor.js'
 import { getSubagentSessionDir, getPiAgentDir } from '../../infra/pi/pi-paths.js'
 import { applyOrphanToolResults } from '../../infra/pi/message-converter.js'
 import type { IConfigStore } from '../ports/config.js'
@@ -56,6 +56,7 @@ import {
   type UsageSnapshot,
   type QueueDepthSnapshot,
   type CommandsSnapshot,
+  SCALAR_STATE_DEBOUNCE_MS,
 } from './replicated-states.config.js'
 import { HistoryRebuildCache, mergeIncrementalMessages } from './history-rebuild-cache.js'
 import { toErrorMessage, isEnoent } from '../../utils/errors.js'
@@ -135,15 +136,31 @@ interface SessionReplicatedStates {
 const TIMESTAMP_TOLERANCE_MS = 1000
 
 /**
- * 按 provider/modelId 解析模型 contextWindow 的窄函数（port）。
+ * W18：per-session record entry 派生缓存（subagent/workflow 列表的 runtime 侧 owner）。
  *
- * SessionService 作为 session 级状态单一 owner，需读 model contextWindow 才能算
- * usagePercent。直接依赖 IModelService/IConfigService 会形成依赖环
- * （ModelService 依赖 SessionService 反过来也成立），故抽出此窄 port，由组合根
- * （index.ts）在所有服务构造完毕后经 setModelContextWindowResolver 注入。
- * 取值与 IConfigService.listProviders + IModelService.aggregateModels 等价（纯数据查询）。
+ * 三路径（父文档 §3.1 失效-重拉模式）：
+ * - 初始态：cursor = null → 首次失效触发全量 get_entries 拉取，扫描结果整体建缓存。
+ * - 增量：cursor 指向最后已拉 entryId → get_entries(since=cursor)，增量 entry 扫描结果
+ *   merge 入派生 Map（自描述 entry 是完整快照，同 id 后到覆盖）。
+ * - 失效自愈：游标指向的 entry 不在 pi 当前集合（"Entry not found"，session 文件被外部
+ *   改写 / pi 重启）→ 丢 cursor 全量重拉重建（纯派生缓存可随时丢弃，正确性优先）。
+ *
+ * 数据写路径唯一 = refreshRecordEntries 的 entry 扫描（scanSubagentEntries /
+ * scanWorkflowEntries，与冷启动磁盘路径同一份派生代码，D4）；发布经 messageBus
+ * stateSnapshot（'subagents' / 'workflows' typeKey，W12 语义延续）。
  */
-export type ModelContextWindowResolver = (provider: string, modelId: string) => number
+interface RecordEntriesCache {
+  /** 最后已拉 entryId（增量游标）。null = 从未拉过（下次全量）。 */
+  cursor: string | null
+  /** subagent 派生缓存（subagentId → 最新快照记录）。 */
+  subagents: Map<string, SubagentRecord>
+  /** workflow 派生缓存（runId → 最新快照记录）。 */
+  workflows: Map<string, WorkflowRunRecord>
+  /** 防抖定时器（null = 未在等待）。 */
+  debounceTimer: ReturnType<typeof setTimeout> | null
+  /** in-flight 拉取 promise（并发失效共享一次拉取，消除重复 RPC）。 */
+  inflight: Promise<void> | null
+}
 
 export class SessionService implements ISessionService, ISessionServiceInternal {
   private readonly sessions = new Map<string, ManagedSession>()
@@ -152,11 +169,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   private readonly lifecycle: SessionLifecycle
   private readonly dispatcher: MessageDispatcher
   private readonly scanner: SessionScanner
-  /**
-   * model contextWindow 解析器（组合根注入）。算 usagePercent 用——按 provider/modelId
-   * 查 ProviderInfo→ModelInfo 得到 contextWindow。未注入时 fallback 0（无法算百分比）。
-   */
-  private modelContextWindowResolver: ModelContextWindowResolver | null = null
   /**
    * ConfigService 引用（组合根注入）。getReplaceSystemPrompt 委托用——
    * spawn pi 时透传用户配置的替换系统提示词。经 setter 注入而非构造参数，与
@@ -174,7 +186,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   private presetService: PresetService | null = null
   /**
    * W5：message.complete 广播回调（组合根注入 ReloadOrchestrator.onMessageComplete）。
-   * 经 setter 注入（同 setModelContextWindowResolver 模式），避免构造参数环
+   * 经 setter 注入（同 setConfigService 模式），避免构造参数环
    * （orchestrator 依赖 sessionService，sessionService 不能反向依赖 orchestrator 具体类型）。
    * 未注入时 message.complete 广播无额外副作用（reload 编排不生效）。
    */
@@ -227,6 +239,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * dispose 停防抖/退避/周期兜底全部定时器）。
    */
   private readonly replicatedStates = new Map<string, SessionReplicatedStates>()
+  /**
+   * W18（data-source-governance P3.1）：per-session record entry 派生缓存——subagent /
+   * workflow 列表的唯一 runtime 数据持有（entry 扫描结果纯派生，事件 payload 永不直写）。
+   * 注册点 initializeManagedSession（与 replicatedStates 同汇聚），销毁点
+   * removeSessionEntry（清防抖定时器）。
+   */
+  private readonly recordEntriesCaches = new Map<string, RecordEntriesCache>()
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
@@ -294,14 +313,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       // 前端据此标记 session dead 态 + 插入 error 消息 + toast 提示。
       //（wave:perf-w09：exitedMsg 的 broadcast 腿已删——session 级单通道，上方 publish 唯一出口。）
     })
-  }
-
-  /**
-   * 注入 model contextWindow 解析器（组合根在所有服务构造后调用）。
-   * session 级状态 owner 需读 contextWindow 才能算 usagePercent / 推 contextLimit。
-   */
-  setModelContextWindowResolver(resolver: ModelContextWindowResolver): void {
-    this.modelContextWindowResolver = resolver
   }
 
   /**
@@ -537,13 +548,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const client = this.pm.getClient(sessionId)
     if (client) await client.setThinkingLevel(level)
   }
-  /** 仅回写 thinkingLevel 缓存（不调 pi RPC），供 thinking_level_changed 事件 callback 用 */
-  setThinkingLevelCache(sessionId: string, level: string | undefined): void {
-    if (level === undefined) return
-    const session = this.sessions.get(sessionId)
-    if (session) session.thinkingLevel = level
-  }
-
   /**
    * 更新活跃 session 的 label（内存态）。
    *
@@ -581,6 +585,139 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    */
   getScalarReplicatedStates(sessionId: string): SessionReplicatedStates | undefined {
     return this.replicatedStates.get(sessionId)
+  }
+
+  // ── W18：record entry 派生缓存（entry_appended 失效 → get_entries 增量重拉）──
+
+  /**
+   * W18：自描述 record entry 失效信号唯一入口（interpreter 经组合根注入；entry_appended
+   * 主信号 + subagent/workflow 事件兜底信号都汇于此）。
+   *
+   * 只做失效（防抖调度 markDirty 等价），事件 payload 不进数据缓存。防抖窗口内多次失效
+   * 合并为一次增量拉取（自描述 entry append 频率 = record 状态迁移频率，防抖削峰）。
+   * session 未激活（无缓存条目）时 no-op——冷启动路径由 getSubagents/getWorkflows RPC
+   * 的磁盘扫描承接。
+   */
+  invalidateRecordEntries(sessionId: string, customType: string): void {
+    if (customType !== SUBAGENT_RECORD_CUSTOM_TYPE && customType !== WORKFLOW_RECORD_CUSTOM_TYPE) return
+    const cache = this.recordEntriesCaches.get(sessionId)
+    if (!cache) return
+    if (cache.debounceTimer !== null) return // 已在防抖等待中：合并
+    cache.debounceTimer = setTimeout(() => {
+      cache.debounceTimer = null
+      void this.refreshRecordEntries(sessionId)
+    }, SCALAR_STATE_DEBOUNCE_MS)
+  }
+
+  /** 取/建 per-session record entry 派生缓存（initializeManagedSession 注册点调用）。 */
+  private ensureRecordEntriesCache(sessionId: string): RecordEntriesCache {
+    const existing = this.recordEntriesCaches.get(sessionId)
+    if (existing) return existing
+    const cache: RecordEntriesCache = {
+      cursor: null,
+      subagents: new Map(),
+      workflows: new Map(),
+      debounceTimer: null,
+      inflight: null,
+    }
+    this.recordEntriesCaches.set(sessionId, cache)
+    return cache
+  }
+
+  /**
+   * W18：get_entries 拉取编排（cursor 三路径见 RecordEntriesCache 注释）。
+   *
+   * 拉取 → scanSubagentEntries / scanWorkflowEntries（与冷启动同一份派生代码）→ merge
+   * 派生 Map → 有变化才发布（session.subagents 全量帧 / session.workflowUpdate 增量信号）。
+   * 失败语义：Entry not found → 丢 cursor 就地重试一次全量自愈（两轮上限，防坏 pi 反复全量）；
+   * 其他 RPC 错误 → warn 后保留 cursor（下次失效重试仍走增量），不发布（快照未变）。
+   */
+  private async refreshRecordEntries(sessionId: string): Promise<void> {
+    const cache = this.recordEntriesCaches.get(sessionId)
+    if (!cache) return
+    if (cache.inflight) return cache.inflight // 并发失效共享一次拉取
+    const run = async (): Promise<void> => {
+      const client = this.pm.getClient(sessionId)
+      if (!client) return // session 已死：缓存冻结（removeSessionEntry 会清），冷启动走磁盘路径
+      // 两轮：第 1 轮按 cursor 增量；Entry not found 丢 cursor 后第 2 轮全量自愈
+      const MAX_REFRESH_ROUNDS = 2
+      for (let round = 0; round < MAX_REFRESH_ROUNDS; round++) {
+        let entries: unknown[]
+        let leafId: string | undefined
+        try {
+          if (cache.cursor !== null) {
+            const inc = await client.getEntries(cache.cursor) as { data?: { entries?: PiSessionEntry[]; leafId?: string | null } }
+            entries = inc.data?.entries ?? []
+            leafId = inc.data?.leafId ?? undefined
+          } else {
+            const full = await client.getEntries() as { data?: { entries?: PiSessionEntry[]; leafId?: string | null } }
+            entries = full.data?.entries ?? []
+            leafId = full.data?.leafId ?? undefined
+            // 全量重建：派生缓存整体重置（纯派生语义——全量扫描结果就是新基线）
+            cache.subagents.clear()
+            cache.workflows.clear()
+          }
+        } catch (e) {
+          if (cache.cursor !== null && isEntryNotFoundError(e)) {
+            // 游标失效自愈：since 指向的 entry 不在 pi 当前集合 → 丢 cursor 全量重拉重建
+            console.warn(`[session-service] record entries incremental Entry-not-found for ${sessionId}, dropping cursor and full rebuild`)
+            cache.cursor = null
+            continue
+          }
+          // 其他错误（超时 / pi 内部错误）：不发布（快照未变），cursor 保留，下次失效重试仍走增量
+          console.warn(`[session-service] refresh record entries via getEntries failed for ${sessionId}: ${toErrorMessage(e)}`)
+          return
+        }
+        this.applyRecordEntries(cache, entries, sessionId)
+        if (leafId !== undefined) cache.cursor = leafId
+        return
+      }
+    }
+    cache.inflight = run().finally(() => { cache.inflight = null })
+    return cache.inflight
+  }
+
+  /**
+   * 扫描结果 merge 入派生缓存 + 变化发布。
+   *
+   * - subagents：merge 后与发布基线（缓存内当前值）比对，有变化 publish session.subagents
+   *   全量帧（payload = 派生缓存快照数组）。
+   * - workflows：merge 时收集状态变化的 run（含新增），按扫描序逐个 publish
+   *   session.workflowUpdate 增量信号——最后一条即 stateSnapshot 'workflows' last-value
+   *   （话题 last-value 语义与 W12 一致）。
+   */
+  private applyRecordEntries(cache: RecordEntriesCache, entries: unknown[], sessionId: string): void {
+    const subagents = scanSubagentEntries(entries)
+    let subagentsChanged = false
+    for (const record of subagents) {
+      const prev = cache.subagents.get(record.subagentId)
+      if (prev === undefined || !subagentRecordEquals(prev, record)) subagentsChanged = true
+      cache.subagents.set(record.subagentId, record)
+    }
+
+    const workflows = scanWorkflowEntries(entries)
+    const workflowUpdates: Array<{ runId: string; status: string; reason?: string }> = []
+    for (const record of workflows) {
+      const prev = cache.workflows.get(record.runId)
+      if (prev === undefined || prev.status !== record.status || prev.reason !== record.reason) {
+        workflowUpdates.push({ runId: record.runId, status: record.status, reason: record.reason })
+      }
+      cache.workflows.set(record.runId, record)
+    }
+
+    if (!this.sessions.has(sessionId)) return // session 已销毁：不 publish（防 bus 重建已 clearSession 的 entry）
+    if (subagentsChanged) {
+      this.messageBus?.publish(sessionId, {
+        type: 'session.subagents',
+        payload: { sessionId, subagents: Array.from(cache.subagents.values()) },
+      })
+    }
+    for (const update of workflowUpdates) {
+      this.messageBus?.publish(sessionId, {
+        type: 'session.workflowUpdate',
+        payload: { sessionId, update },
+      })
+    }
   }
 
   /** 确保会话活跃;不存在则自动 restore。并发 restore 时去重拒绝。 */
@@ -1182,6 +1319,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       replicated.commands.dispose()
       this.replicatedStates.delete(sessionId)
     }
+    // W18：销毁 record entry 派生缓存（同汇聚点）。停防抖定时器（在途 inflight 的拉取
+    // 完成后 applyRecordEntries 的 sessions.has 守卫拦住发布，不复活已清 bus 条目）。
+    const recordCache = this.recordEntriesCaches.get(sessionId)
+    if (recordCache) {
+      if (recordCache.debounceTimer !== null) clearTimeout(recordCache.debounceTimer)
+      this.recordEntriesCaches.delete(sessionId)
+    }
     // W12：state_changed 组合投影的 diff 基线随 session 销毁清除（防同 id 重建后误判同值）。
     this.lastPublishedStateChanged.delete(sessionId)
     // wave:runtime-wiring（GAP1 决策）：session 销毁时清理 MessageBus 的该 session 状态
@@ -1275,6 +1419,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // W12：session.commands 的激活发布不再单独直连 RPC（旧 fetchAndBroadcastCommands 已删），
     // 播种 fetch 经 fetchCommandsSnapshot 的快照应用后挂钩发布（publishCommandsSnapshot）。
     this.registerReplicatedStates(id)
+    // W18：注册 record entry 派生缓存（不播种——首个 entry_appended 失效时全量拉取；
+    // 激活后 renderer 的初始列表由 getSubagents/getWorkflows RPC 磁盘扫描承接，同 scan 函数）。
+    this.ensureRecordEntriesCache(id)
     return session
   }
 
@@ -1403,19 +1550,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     this.messageBus?.publish(sessionId, msg)
   }
 
-  /** 按 modelId（'provider/model' 形式）经 resolver 查 contextWindow；未注入 resolver 返回 0。 */
-  private resolveContextWindow(modelId: string): number {
-    if (!this.modelContextWindowResolver) return 0
-    const sepIdx = modelId.indexOf('/')
-    if (sepIdx < 0) return 0
-    const provider = modelId.slice(0, sepIdx)
-    const id = modelId.slice(sepIdx + 1)
-    return this.modelContextWindowResolver(provider, id) ?? 0
-  }
-
   /**
    * W12：读 modelId / thinkingLevel / usage 三实例快照组合发布 session.state_changed
-   * （state topic，payload 全字段来自实例快照）。
+   *（state topic，payload 全字段来自实例快照）。
    *
    * 触发点 = 三实例各自的 fetch 成功挂钩（fetchStateSnapshotWithStatePublish /
    * fetchSessionStatsSnapshot）——任一实例快照应用后刷新组合，全部收敛后 last-value 为
@@ -1768,6 +1905,28 @@ async function readSegmentsMetadataFile(sessionId: string): Promise<SegmentsMeta
 function isEntryNotFoundError(e: unknown): boolean {
   const msg = e instanceof Error ? e.message : String(e)
   return /^entry not found/i.test(msg)
+}
+
+/**
+ * W18：SubagentRecord 逐字段相等判定（record entry 派生缓存的发布 diff 基线）。
+ * 结构固定（shared SubagentRecord），逐字段比对而非 JSON.stringify（顺序无关、无序列化抖动）。
+ */
+function subagentRecordEquals(a: SubagentRecord, b: SubagentRecord): boolean {
+  return a.subagentId === b.subagentId
+    && a.sessionFile === b.sessionFile
+    && a.agent === b.agent
+    && a.slug === b.slug
+    && a.task === b.task
+    && a.status === b.status
+    && a.model === b.model
+    && a.thinkingLevel === b.thinkingLevel
+    && a.turns === b.turns
+    && a.totalTokens === b.totalTokens
+    && a.elapsedSeconds === b.elapsedSeconds
+    && a.startedAt === b.startedAt
+    && a.endedAt === b.endedAt
+    && a.error === b.error
+    && a.closedReason === b.closedReason
 }
 
 /**

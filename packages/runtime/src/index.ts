@@ -34,7 +34,6 @@ import { PluginService } from './services/plugin-service/plugin-service.js'
 import { GitService } from './services/git-service.js'
 import { GitExecutor } from './infra/git-executor.js'
 import { GitStateService } from './services/git/git-state-service.js'
-import { createContextWindowResolver } from './services/model-context-cache.js'
 import { GitInfoReader } from './infra/system/git-info-reader.js'
 import { ShellRunner } from './infra/shell-runner.js'
 import { WorktreeService } from './services/worktree/worktree-service.js'
@@ -324,6 +323,13 @@ async function main(): Promise<void> {
         if (!client) return undefined
         return client.getState()
       },
+      // W18（data-source-governance P3.1）：自描述 record entry（subagent-record /
+      // workflow-record）到达 → 派生缓存失效。sessionService 同 labelState/
+      // thinkingLevelState 的延迟解析模式（createAdapter 闭包先于 sessionService 构造，
+      // 调用发生在 session 创建后，引用恒就绪）。
+      onRecordEntriesInvalidated: (sid, customType) => {
+        sessionService.invalidateRecordEntries(sid, customType)
+      },
     })
     // EventAdapter：纯翻译器，把翻译结果喂给 interpreter 编排。
     return new EventAdapter(sessionId, (events) => interpreter.interpret(events))
@@ -411,22 +417,7 @@ async function main(): Promise<void> {
 
   modelService.setServices(sessionService, configService, server)
 
-  // SessionService 是 session 级状态（modelId/thinkingLevel/inputTokens/usagePercent）单一 owner，
-  // 需读 model contextWindow 才能 switchModel / applyContextUpdate 时算 usagePercent。
-  // 直接注入 modelService/configService 会形成依赖环（modelService 反过来依赖 sessionService），
-  // 故注入窄 resolver（纯数据查询，等价 configService.listProviders + modelService.aggregateModels）。
-  // 微项 5（perf W17）：resolver 经 createContextWindowResolver 加 TTL 缓存——原实现每次
-  // context.update / switchModel 都全量重算 listProviders + aggregateModels（streaming 期高频），
-  // 缓存后聚合每 5s 至多一次，查询热点只剩 find。
-  sessionService.setModelContextWindowResolver(
-    createContextWindowResolver({
-      listProviders: () => configService.listProviders(),
-      aggregateModels: (providers) => modelService.aggregateModels(providers),
-    }),
-  )
-
   // 注入 ConfigService 供 getReplaceSystemPrompt 委托（spawn pi 时透传替换系统提示词）。
-  // 与 setModelContextWindowResolver 同模式：避免构造参数破坏 SessionService 的测试调用点。
   sessionService.setConfigService(configService)
   // 注入 PresetService 供 getLaunchPresetOptions 委托（spawn pi 时按 launch preset 构建 args）。
   // 与 setConfigService 同模式（pi-launch-presets 设计 §8.1 + §4.3）。

@@ -86,9 +86,6 @@ function makeEnv() {
   // 对齐组合根（index.ts）：构造参数的 bus 只喂给 dispatcher，SessionService 自身的
   // this.messageBus 靠 setMessageBus setter 注入（applyContextUpdate / onSessionExit 的 publish 用）。
   svc.setMessageBus(bus)
-  // contextWindow resolver：computeUsage 算 usagePercent 用（128k 窗口）
-  svc.setModelContextWindowResolver(() => 128000)
-
   return {
     svc, bus, broadcasts,
     triggerExit: (sid: string, code: number | null, stderr: string) => {

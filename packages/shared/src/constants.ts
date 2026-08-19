@@ -24,6 +24,23 @@ export const SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set(['subagent'])
  *  捕获发起时刻（action=run → 广播 session.workflows 增量信号）。 */
 export const WORKFLOW_TOOL_NAMES: ReadonlySet<string> = new Set(['workflow'])
 
+/**
+ * W16/W17 [D4]：subagent/workflow 自描述持久化 entry 的 customType（runtime 侧消费值）。
+ *
+ * 权威源在 extensions/subagent-workflow（跨包依赖方向不允许 runtime import extensions/
+ * 源码，只能在此复制字面量并保持等值——同 workflow-extractor SNAPSHOT_VERSION 的本地
+ * 副本模式）：
+ * - `subagent-record`：extensions/subagent-workflow/src/execution/record-entry.ts 的
+ *   SUBAGENT_RECORD_CUSTOM_TYPE（record 状态迁移点 append 完整快照，data schema v1）
+ * - `workflow-record`：extensions/subagent-workflow/src/orchestration/jsonl-run-store.ts 的
+ *   WORKFLOW_RECORD_CUSTOM_TYPE（每次成功 flush append 完整 RunSnapshot，data schema v1）
+ *
+ * 消费方：event-adapter（entry_appended 失效过滤）、subagent/workflow-extractor（entry
+ * 扫描的自描述分支）。extension 升级 customType 值时必须同步此处。
+ */
+export const SUBAGENT_RECORD_CUSTOM_TYPE = 'subagent-record'
+export const WORKFLOW_RECORD_CUSTOM_TYPE = 'workflow-record'
+
 /** pi 支持的 provider api 标识全集（前后端共享 SSOT）。
  *  runtime 的 applyTypeTranslation 改为透传后，前端 Select 必须直接发送此集合内的终值。
  *  注意：pi 不支持 ollama；ollama 的前端适配在 W4 处理，runtime 不做别名翻译。 */

@@ -875,9 +875,7 @@ describe('SessionService · Facade', () => {
 
     it('切换后广播 session.state_changed（payload 全字段来自三实例快照，W12）', async () => {
       const { id, client } = await setup.seedSession()
-      // 注入 resolver：anthropic/claude-x contextWindow=200000（W12 起 resolver 不进 payload，
-      // 保留注入以证伪「resolver 影子」——payload 数值与 pi 快照一致而非 resolver 重算）
-      setup.service.setModelContextWindowResolver((_p, _m) => 200000)
+      // W18：resolver 注入链已删（W12 后生产零消费）——payload 数值全部来自 pi 快照
       // W10：inputTokens 唯一数据源 = usage 实例快照（播种替代旧 setInputTokens 直写）
       await seedUsageSnapshot(setup, id, client, { tokens: 12000, contextWindow: 200000, percent: 6 })
       vi.mocked(client.setModel).mockClear()
@@ -925,8 +923,9 @@ describe('SessionService · Facade', () => {
 
     it('get_state 失败时不阻塞：快照播种失败，payload 回退缓存值（fetch 失败兜底发布）', async () => {
       const { id, client } = await setup.seedSession()
-      setup.service.setModelContextWindowResolver(() => 100000)
-      setup.service.setThinkingLevelCache(id, 'medium')
+      // thinkingLevel 过渡期缓存播种（getSummary fallback 值）：经公开 setThinkingLevel
+      // 写入（旧 setThinkingLevelCache 直写缓存已随 W12 移交死代码删除）
+      await setup.service.setThinkingLevel(id, 'medium')
       // W12：get_state 持续失败 → modelId/thinkingLevel 实例退避重试、快照缺失 →
       // fetch 落定兜底发布（对齐旧 broadcastSessionState「失败不阻塞、thinkingLevel 回退缓存」）
       vi.mocked(client.getState).mockRejectedValue(new Error('get_state boom'))
@@ -973,8 +972,6 @@ describe('SessionService · Facade', () => {
   describe('applyContextUpdate（session 级状态单一 owner：W12 事件只失效，发布归快照挂钩）', () => {
     it('失效收敛后广播 context.update（payload 全字段来自 usage 快照），不直写快照', async () => {
       const { id, client } = await setup.seedSession()
-      setup.service.setModelContextWindowResolver(() => 100000)
-      // modelId 初始为 default 'test-provider/test-model'，resolver 按 provider/model 查 contextWindow
       await seedUsageSnapshot(setup, id, client, { tokens: 10000, contextWindow: 100000, percent: 10 })
       // pi 侧权威已翻新为事件值 25000（同源：turn_end 事件与 get_session_stats 同一数据，
       // 事件即时值即快照将收敛的值——等价性依据）
@@ -1000,7 +997,6 @@ describe('SessionService · Facade', () => {
 
     it('inputTokens 为 0 时不广播（agent_end 前的空 usage；markDirty 失效仍发出）', async () => {
       const { id } = await setup.seedSession()
-      setup.service.setModelContextWindowResolver(() => 100000)
       vi.mocked(setup.broker.broadcast).mockClear()
 
       setup.service.applyContextUpdate(id, 0)
@@ -1010,7 +1006,6 @@ describe('SessionService · Facade', () => {
     })
 
     it('session 不存在时不广播', async () => {
-      setup.service.setModelContextWindowResolver(() => 100000)
       expect(() => setup.service.applyContextUpdate('ghost', 1000)).not.toThrow()
       expect(findBroadcast(setup, 'context.update')).toBeUndefined()
     })
@@ -1050,25 +1045,6 @@ describe('SessionService · Facade', () => {
 
     it('session 不存在返回 0', () => {
       expect(setup.service.getUsagePercent('ghost')).toBe(0)
-    })
-  })
-
-  describe('setThinkingLevelCache 回写缓存（thinking_level_changed 打通用例）', () => {
-    it('U-setThinking-1：setThinkingLevelCache 写入后 getSummary().thinkingLevel 读回正确值', async () => {
-      const { id } = await setup.seedSession()
-      setup.service.setThinkingLevelCache(id, 'high')
-      expect(setup.service.getSummary(id)?.thinkingLevel).toBe('high')
-    })
-
-    it('U-setThinking-2：setThinkingLevelCache 传 undefined 时不覆盖已有值', async () => {
-      const { id } = await setup.seedSession()
-      setup.service.setThinkingLevelCache(id, 'high')
-      setup.service.setThinkingLevelCache(id, undefined)
-      expect(setup.service.getSummary(id)?.thinkingLevel).toBe('high')
-    })
-
-    it('U-setThinking-2b：setThinkingLevelCache 对不存在的 session 不抛错', () => {
-      expect(() => setup.service.setThinkingLevelCache('ghost', 'high')).not.toThrow()
     })
   })
 

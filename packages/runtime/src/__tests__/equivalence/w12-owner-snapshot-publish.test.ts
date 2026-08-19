@@ -94,7 +94,6 @@ describe('W12 阶段 2：context.update publish 数据源 = usage 实例快照�
     // 旧口径：applyContextUpdate(8000) + resolver(128000) → round(8000/128000*100) = 6
     // 新口径：权威 stats percent 6.25 → 快照投影 round = 6（同值——pi percent 与事件值同源）
     const fx = makeFixture({ stats: { contextUsage: { tokens: 8000, contextWindow: 128000, percent: 6.25 } } })
-    fx.svc.setModelContextWindowResolver(() => 128000)
     const sid = 'w12-ctx-eq'
     await fx.svc.initializeManagedSession(sid, {} as unknown as IPiEngine, '/tmp', 'test')
     await vi.advanceTimersByTimeAsync(1) // 播种（contextUsage 旧值 5000/128000/3.9 投影）
@@ -207,11 +206,10 @@ describe('W12 阶段 3：session.state_changed payload 全字段来自三实例�
     expect(states?.usage.get()).toEqual({ inputTokens: 20000, contextLimit: 100000, usagePercent: 20 })
   })
 
-  it('数据源层：resolver 窗口 ≠ pi 窗口时，payload.contextLimit == pi 快照窗口（非 resolver 影子）', async () => {
+  it('数据源层：payload.contextLimit == pi 快照窗口（W18 起 resolver 注入链已删，快照唯一数据源）', async () => {
     const fx = makeFixture({ stats: { contextUsage: { tokens: 5000, contextWindow: 64000, percent: 7.8 } } })
-    // resolver 刻意返回与 pi 权威不同的窗口——切换前旧口径会重算出 5000/999999 ≈ 1%，
-    // 切换后 payload 读 pi 快照（64000 / round(7.8) = 8），证明字段来自快照
-    fx.svc.setModelContextWindowResolver(() => 999999)
+    // W12 曾注入窗口 ≠ pi 的 resolver 证伪「resolver 影子」；W18 死代码移交删除注入链后
+    // 结构上不可能有 resolver 参与路径——payload 读 pi 快照（64000 / round(7.8) = 8）
     const sid = 'w12-state-src'
     await fx.svc.initializeManagedSession(sid, {} as unknown as IPiEngine, '/tmp', 'test')
     await vi.advanceTimersByTimeAsync(1)
@@ -259,15 +257,27 @@ describe('W12 阶段 3：session.state_changed payload 全字段来自三实例�
   })
 })
 
-describe('W12 阶段 4：session.subagents publish 数据源 = SubagentsState 包装实例（mock 事件流）', () => {
-  /** 构造带 send 收集器的 EventInterpreter（无 hook / 无 diff，subagent 路径纯同步）。 */
-  function makeInterpreter(sessionId: string): { interpreter: EventInterpreter; frames: ServerMessage[] } {
+describe('W12→W18 阶段 4：session.subagents 数据源 = entry 扫描派生缓存（事件直写退役，mock 事件流）', () => {
+  /**
+   * 构造带 send 收集器 + 失效回调收集器的 EventInterpreter。
+   * W18 起事件流不再直写 subagents 数据——全部 subagent 相关事件降级为失效信号
+   * （onRecordEntriesInvalidated，组合根注入 sessionService.invalidateRecordEntries）。
+   */
+  function makeInterpreter(sessionId: string): {
+    interpreter: EventInterpreter
+    frames: ServerMessage[]
+    invalidations: Array<{ sessionId: string; customType: string }>
+  } {
     const frames: ServerMessage[] = []
-    const interpreter = new EventInterpreter(sessionId, { send: (m) => { frames.push(m) } })
-    return { interpreter, frames }
+    const invalidations: Array<{ sessionId: string; customType: string }> = []
+    const interpreter = new EventInterpreter(sessionId, {
+      send: (m) => { frames.push(m) },
+      onRecordEntriesInvalidated: (sid, customType) => { invalidations.push({ sessionId: sid, customType }) },
+    })
+    return { interpreter, frames, invalidations }
   }
 
-  /** subagent tool-call-start + tool-call-end 事件对（建 running 记录的唯一事件流）。 */
+  /** subagent tool-call-start + tool-call-end 事件对（W12 曾直写建 running 记录的事件流）。 */
   function subagentStartEvents(toolCallId: string): PiTranslatedEvent[] {
     return [
       {
@@ -290,7 +300,7 @@ describe('W12 阶段 4：session.subagents publish 数据源 = SubagentsState �
     ]
   }
 
-  /** bg-notify 事件（message 帧 customType=subagent-bg-notify，终态更新写入口）。 */
+  /** bg-notify 事件（message 帧 customType=subagent-bg-notify；W12 曾是终态直写入口）。 */
   function bgNotifyEvent(sessionId: string, id: string, status: string, overrides: Record<string, unknown> = {}): PiTranslatedEvent {
     return {
       kind: 'message',
@@ -301,63 +311,41 @@ describe('W12 阶段 4：session.subagents publish 数据源 = SubagentsState �
     } as PiTranslatedEvent
   }
 
-  it('等价层：tool-call-end 建记录 → publish payload == 旧口径构造的 SubagentRecord 全量列表', () => {
-    const sid = 'w12-sub-eq'
-    const { interpreter, frames } = makeInterpreter(sid)
+  /** record-entry-appended 中间事件（entry_appended 主信号，adapter customType 过滤后产物）。 */
+  function recordEntryAppendedEvent(): PiTranslatedEvent {
+    return { kind: 'record-entry-appended', customType: 'subagent-record' } as PiTranslatedEvent
+  }
+
+  it('事件直写退役：tool-call-end / bg-notify / record-entry-appended 都只触发失效回调，不产 session.subagents 帧', () => {
+    const sid = 'w18-sub-retire'
+    const { interpreter, frames, invalidations } = makeInterpreter(sid)
     interpreter.interpret(subagentStartEvents('tc-1'))
+    interpreter.interpret([bgNotifyEvent(sid, 'sa-tc-1', 'closed', { model: 'p/m', endedAt: 200 })])
+    interpreter.interpret([recordEntryAppendedEvent()])
 
-    const subMsg = frames.find((m) => m.type === 'session.subagents')
-    expect(subMsg?.payload).toEqual({
-      sessionId: sid,
-      subagents: [{
-        subagentId: 'sa-tc-1',
-        sessionFile: '/tmp/sa-tc-1.jsonl',
-        agent: 'researcher',
-        slug: 'res',
-        task: 'do research',
-        status: 'running',
-      }],
-    })
-  })
-
-  it('等价层 + 数据源层：bg-notify 终态合并后 last-value == 合并记录；先前已发布快照不被后续写入打穿', () => {
-    const sid = 'w12-sub-src'
-    const { interpreter, frames } = makeInterpreter(sid)
-    interpreter.interpret(subagentStartEvents('tc-1'))
-    const firstPayload = frames.find((m) => m.type === 'session.subagents')?.payload
-
-    interpreter.interpret([bgNotifyEvent(sid, 'sa-tc-1', 'done', { model: 'p/m', endedAt: 200 })])
-    const subFrames = frames.filter((m) => m.type === 'session.subagents')
-    expect(subFrames).toHaveLength(2)
-    // 终态合并（旧口径 handleSubagentBgNotify 的合并结果逐字段一致：status 归一 + agent 保留 +
-    // model/endedAt 合并；normalizeSubagentStatus('done') → 'done'）
-    expect(subFrames[1]!.payload).toEqual({
-      sessionId: sid,
-      subagents: [{
-        subagentId: 'sa-tc-1',
-        sessionFile: '/tmp/sa-tc-1.jsonl',
-        agent: 'researcher',
-        slug: 'res',
-        task: 'do research',
-        status: 'done',
-        model: 'p/m',
-        startedAt: 100,
-        endedAt: 200,
-        closedReason: undefined,
-      }],
-    })
-    // 快照隔离（数据源层）：第二次写入不改变第一次已发布的快照（snapshot 浅拷贝数组）
-    expect(firstPayload).toEqual({
-      sessionId: sid,
-      subagents: [{ subagentId: 'sa-tc-1', sessionFile: '/tmp/sa-tc-1.jsonl', agent: 'researcher', slug: 'res', task: 'do research', status: 'running' }],
-    })
-  })
-
-  it('未命中记录的 bg-notify 不写入不广播（守卫语义零变化）', () => {
-    const sid = 'w12-sub-miss'
-    const { interpreter, frames } = makeInterpreter(sid)
-    interpreter.interpret([bgNotifyEvent(sid, 'sa-unknown', 'done')])
+    // 证伪影子路径：事件 payload 不再进任何数据缓存——无 session.subagents 帧产出
     expect(frames.filter((m) => m.type === 'session.subagents')).toHaveLength(0)
+    // 三路事件全部降级为 subagent-record 失效信号（tool-call-end 兜底 / bg-notify 兜底 / 主信号）
+    expect(invalidations).toEqual([
+      { sessionId: sid, customType: 'subagent-record' },
+      { sessionId: sid, customType: 'subagent-record' },
+      { sessionId: sid, customType: 'subagent-record' },
+    ])
+    // customStart WS 帧照常转发前端（BgNotifyCard 渲染不受 W18 退役影响）
+    expect(frames.some((m) => m.type === 'message.customStart' && (m.payload as { customType?: string }).customType === 'subagent-bg-notify')).toBe(true)
+  })
+
+  it('未命中 customType 的事件不触发失效（守卫语义保持）', () => {
+    const sid = 'w18-sub-miss'
+    const { interpreter, invalidations } = makeInterpreter(sid)
+    interpreter.interpret([{
+      kind: 'message',
+      message: {
+        type: 'message.customStart' as ServerMessage['type'],
+        payload: { sessionId: sid, customType: 'unrelated-notify', details: {} },
+      } as ServerMessage,
+    } as PiTranslatedEvent])
+    expect(invalidations).toHaveLength(0)
   })
 })
 
@@ -420,17 +408,25 @@ describe('W12 阶段 1：session.commands publish 数据源 = commands 实例快
   })
 })
 
-describe('W12 阶段 5：session.workflowUpdate publish 数据源 = WorkflowUpdatesState 包装实例（mock 事件流）', () => {
-  /** 构造带 send 收集器的 EventInterpreter。 */
-  function makeInterpreter(sessionId: string): { interpreter: EventInterpreter; frames: ServerMessage[] } {
+describe('W12→W18 阶段 5：session.workflowUpdate 数据源 = entry 扫描派生缓存（事件直写退役，mock 事件流）', () => {
+  /** 构造带 send 收集器 + 失效回调收集器的 EventInterpreter（同阶段 4 模式）。 */
+  function makeInterpreter(sessionId: string): {
+    interpreter: EventInterpreter
+    frames: ServerMessage[]
+    invalidations: Array<{ sessionId: string; customType: string }>
+  } {
     const frames: ServerMessage[] = []
-    const interpreter = new EventInterpreter(sessionId, { send: (m) => { frames.push(m) } })
-    return { interpreter, frames }
+    const invalidations: Array<{ sessionId: string; customType: string }> = []
+    const interpreter = new EventInterpreter(sessionId, {
+      send: (m) => { frames.push(m) },
+      onRecordEntriesInvalidated: (sid, customType) => { invalidations.push({ sessionId: sid, customType }) },
+    })
+    return { interpreter, frames, invalidations }
   }
 
-  it('等价层：workflow tool-call-end 发起 → publish payload == 旧口径 {runId, status:running} 增量', () => {
-    const sid = 'w12-wf-run'
-    const { interpreter, frames } = makeInterpreter(sid)
+  it('事件直写退役：workflow tool-call-end / workflow-result / record-entry-appended 都只触发失效回调，不产 session.workflowUpdate 帧', () => {
+    const sid = 'w18-wf-retire'
+    const { interpreter, frames, invalidations } = makeInterpreter(sid)
     interpreter.interpret([
       {
         kind: 'tool-call-end',
@@ -443,58 +439,41 @@ describe('W12 阶段 5：session.workflowUpdate publish 数据源 = WorkflowUpda
         entry: { toolCallId: 'tc-wf-1' },
       } as unknown as PiTranslatedEvent,
     ])
-
-    const wfMsg = frames.find((m) => m.type === 'session.workflowUpdate')
-    expect(wfMsg?.payload).toEqual({ sessionId: sid, update: { runId: 'w-run-1', status: 'running' } })
-  })
-
-  it('等价层 + 数据源层：workflow-result 终态覆盖 → last publish == 最新快照（done + reason）', () => {
-    const sid = 'w12-wf-done'
-    const { interpreter, frames } = makeInterpreter(sid)
-    // 发起（running）
     interpreter.interpret([
       {
-        kind: 'tool-call-end',
-        toolCallId: 'tc-wf-2',
-        toolName: 'workflow',
-        isError: false,
-        output: 'ok',
-        details: { action: 'run', runId: 'w-run-2', status: 'running' },
-        images: undefined,
-        entry: { toolCallId: 'tc-wf-2' },
+        kind: 'message',
+        message: {
+          type: 'message.customStart' as ServerMessage['type'],
+          payload: { sessionId: sid, customType: 'workflow-result', details: { runId: 'w-run-1', status: 'done', reason: 'completed', traceLength: 3 } },
+        } as ServerMessage,
       } as unknown as PiTranslatedEvent,
     ])
-    // 终态（workflow-result customStart）
-    interpreter.interpret([
-      {
-        kind: 'message',
-        message: {
-          type: 'message.customStart' as ServerMessage['type'],
-          payload: { sessionId: sid, customType: 'workflow-result', details: { runId: 'w-run-2', status: 'done', reason: 'completed', traceLength: 3 } },
-        } as ServerMessage,
-      } as PiTranslatedEvent,
-    ])
+    interpreter.interpret([{ kind: 'record-entry-appended', customType: 'workflow-record' } as PiTranslatedEvent])
 
-    const wfFrames = frames.filter((m) => m.type === 'session.workflowUpdate')
-    expect(wfFrames).toHaveLength(2)
-    // 增量语义（旧口径一致）：发起 running → 终态 done（reason 透传），最后一条 == owner 最新快照
-    expect(wfFrames[0]!.payload).toEqual({ sessionId: sid, update: { runId: 'w-run-2', status: 'running' } })
-    expect(wfFrames[1]!.payload).toEqual({ sessionId: sid, update: { runId: 'w-run-2', status: 'done', reason: 'completed' } })
+    // 证伪影子路径：事件 payload 不再进任何数据缓存——无 session.workflowUpdate 帧产出
+    expect(frames.filter((m) => m.type === 'session.workflowUpdate')).toHaveLength(0)
+    expect(invalidations).toEqual([
+      { sessionId: sid, customType: 'workflow-record' },
+      { sessionId: sid, customType: 'workflow-record' },
+      { sessionId: sid, customType: 'workflow-record' },
+    ])
+    // workflow-result customStart 帧照常转发前端（完成 turn 注入渲染不受影响）
+    expect(frames.some((m) => m.type === 'message.customStart' && (m.payload as { customType?: string }).customType === 'workflow-result')).toBe(true)
   })
 
-  it('无 runId 的 workflow 终态通知不写入不广播（守卫语义零变化）', () => {
-    const sid = 'w12-wf-miss'
-    const { interpreter, frames } = makeInterpreter(sid)
+  it('无 customType 命中的 workflow 相关通知不触发失效（守卫语义保持）', () => {
+    const sid = 'w18-wf-miss'
+    const { interpreter, invalidations } = makeInterpreter(sid)
     interpreter.interpret([
       {
         kind: 'message',
         message: {
           type: 'message.customStart' as ServerMessage['type'],
-          payload: { sessionId: sid, customType: 'workflow-result', details: { status: 'done' } },
+          payload: { sessionId: sid, customType: 'workflow-other', details: { status: 'done' } },
         } as ServerMessage,
       } as PiTranslatedEvent,
     ])
-    expect(frames.filter((m) => m.type === 'session.workflowUpdate')).toHaveLength(0)
+    expect(invalidations).toHaveLength(0)
   })
 })
 
