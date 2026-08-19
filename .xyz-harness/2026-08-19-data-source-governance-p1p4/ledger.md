@@ -30,7 +30,7 @@
 | wave | 名称 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
 | W13 | session store applySnapshot 单入口 + DTO | building | 996063a6f | 依赖 W12✓；builder 后台运行中（core domain/session store 三 mutation 收敛 + shared SessionViewSnapshot DTO + renderer 消费改写 + R2 受管清单联动；与 W14/W18 三方并行，领地 core-domain/session vs core-domain/chat vs runtime） |
-| W14 | pendingBuffer 计数 FIFO | building | 9382ccb57 | 依赖 W8✓/W12✓；builder 后台运行中（drainN FIFO + countDrained 差集 + pendingMessageCount 深度对账 + skill 展开核心回归用例；abortPending 保留文本匹配留 D6 差异草稿） |
+| W14 | pendingBuffer 计数 FIFO | verifying | 9382ccb57 | 依赖 W8✓/W12✓；builder 交付 7 文件：drainN（FIFO+sendMode 隔离+取尽即止）+ reconcilePending 双向对账（>裁僵尸/<接受有界偏差）+ effect 接线（countDrained 差集 N 各自计数）+ 5 用例（组2 skill 展开核心：原文引用级断言）+ abortPending 保留文本匹配 D6 标注。自报 core 992 绿/2 失败归因 W13 在途（useChat.test mock 未跟上 applySnapshot）。**两解读待裁决**：① plan 对账算式代数等价落地（drain 后 buffer.length===帧内深度不变式）；② 深度权威用帧内 pendingMessageCount 非跨域读（避免 chat→session 域依赖） |
 | W15 | scannedToSummary 空值守卫 | pending | — | 依赖 W13 |
 
 ## P3 wave 表（W16-W21）
