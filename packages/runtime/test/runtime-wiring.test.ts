@@ -186,7 +186,6 @@ describe('wave:runtime-wiring · TC3/TC4/TC5 session.subscribe/unsubscribe RPC',
       messageBus,
       nextPushId: () => 'push_test',
       broadcastSessionList: vi.fn(),
-      clearExtensionTimeoutsForSession: vi.fn(),
       broadcast: vi.fn(),
     }
     const handler = new SessionMessageHandler(ctx)
@@ -291,7 +290,6 @@ describe('wave:runtime-wiring · TC3/TC4/TC5 session.subscribe/unsubscribe RPC',
       sessionService: {} as never,
       nextPushId: () => 'push_test',
       broadcastSessionList: vi.fn(),
-      clearExtensionTimeoutsForSession: vi.fn(),
       broadcast: vi.fn(),
       // messageBus 故意不注入
     } as unknown as SessionHandlerContext

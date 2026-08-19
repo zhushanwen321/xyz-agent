@@ -15,7 +15,7 @@ Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作台。架构分层�
 | 完整编码规范 / UI 设计演变 / 术语表 | [docs/standards.md](docs/standards.md) · [design-evolution.md](docs/design-evolution.md) · [architecture/context.md](docs/architecture/context.md) |
 | 设计系统（tokens / 原语层 / v6 SSOT / 视觉规格） | [docs/page-design/](docs/page-design/)（design-tokens.md · design-system.md · v6-master-spec.md · v6-spec-*.html；能力设计 spec 在 `archive/v3/`。禁止创建 `demos/`、`impeccable/` 目录） |
 | 窗口顶部 traffic light 布局数值 SSOT | [traffic-light-layout.md](docs/page-design/traffic-light-layout.md)（v3 刻意调整形态，不遵循 v6 demo） |
-| Renderer 七层目标架构 / v6 重构 | [architecture/renderer-target-architecture.md](docs/architecture/renderer-target-architecture.md) · [architecture/v6-architecture-refactor.md](docs/architecture/v6-architecture-refactor.md) |
+| Renderer 终态包拓扑（现行 SSOT）/ 七层目标概念与 v6 重构（历史） | [architecture/renderer-rebuild-architecture.md](docs/architecture/renderer-rebuild-architecture.md)（现行 SSOT：§3 包拓扑 / §4 core 分层）· 历史：[renderer-target-architecture.md](docs/architecture/renderer-target-architecture.md)（七层目标概念，已 supersede）· [v6-architecture-refactor.md](docs/architecture/v6-architecture-refactor.md)（已 supersede） |
 | 功能开发地图（启动新 Phase 前更新） | [docs/feature-map/](docs/feature-map/)（最新 2026-06-20.md） |
 | 测试策略 SSOT | [TEST-STRATEGY.md](TEST-STRATEGY.md) + [docs/testing/](docs/testing/)（00 总览入口；testid 清单/调用链/已知坑） |
 | 问题排查（日志/诊断/常见问题/历史排查规则） | [docs/troubleshooting.md](docs/troubleshooting.md) |

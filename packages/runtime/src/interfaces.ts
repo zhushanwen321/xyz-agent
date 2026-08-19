@@ -248,7 +248,11 @@ export interface ISessionService {
   setSendMessageHook(hook: (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string; modifiedContent?: string } | null>): void
   /** S3-W2：注册 session 创建回调（PluginService 绑插件 session 事件注册表投递） */
   setOnSessionCreated(handler: (summary: SessionSummary) => void): void
-  /** S3-W2：注册 session 销毁回调（触发点 removeSessionEntry，全部删除路径汇聚处） */
+  /**
+   * S3-W2：注册 session 销毁回调（触发点 removeSessionEntry，全部删除路径汇聚处：
+   * 主动删 / 进程退出 / restore 清场）。D6a：追加式注册（回调列表），多方共存互不覆盖
+   *（PluginService didDestroy 投递 + server 的挂起 UI 请求汇聚清理），单 handler 异常被隔离。
+   */
   setOnSessionDestroyed(handler: (summary: SessionSummary) => void): void
   /** Set thinking level for a session's pi subprocess. Returns pi-effective level (P3: pi clamps unsupported levels). */
   setThinkingLevel(sessionId: string, level: string): Promise<string>

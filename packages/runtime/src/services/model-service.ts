@@ -3,10 +3,10 @@
  *
  * The unified business entry for switchModel and setThinkingLevel.
  * All callers (frontend WS handler, plugin RPC) must go through this
- * service to ensure consistent side-effects (persist, broadcast).
+ * service to ensure consistent side-effects (broadcast).
  *
  * session 级状态（modelId / thinkingLevel / inputTokens / usagePercent）的单一 owner 是
- * SessionService；本服务只负责「全局默认模型持久化 + config.defaults 广播」+ 委托
+ * SessionService；本服务只负责「config.defaults 广播」+ 委托
  * SessionService 做 session 级 RPC/缓存/broadcast。usagePercent 不再在此计算（去重到
  * SessionService.computeUsage）。
  *
@@ -77,25 +77,22 @@ export class ModelService implements IModelService {
    * Unified switchModel entry point.
    *
    * 编排：pi RPC + 缓存更新 + 广播 session 级状态（全部委托 SessionService.switchModel，
-   * 它是 session 级状态唯一 owner）→ persist 全局默认模型 → 广播 config.defaults。
+   * 它是 session 级状态唯一 owner）→ 广播 config.defaults。
+   *
+   * 全局默认模型的持久化由 pi 侧 setModel 完成（pi 持久化 defaultModel/defaultProvider
+   * 到 settings.json）——xyz 不再冗余写一次（D1d）：configService.setDefaultModel 的
+   * 全量覆盖写会在 pi 并发写其他字段时把它们回滚，且每次切模型都开双写窗口。
    *
    * session.state_changed 的广播由 SessionService.switchModel 内部负责（含按新 contextWindow
    * 重算的用量 + thinkingLevel），本方法不再自己 broadcastSessionState。
    */
   async switchModel(sessionId: string, provider: ProviderId, modelId: string): Promise<void> {
     this.ensureInitialized()
-    // 1. pi RPC + 缓存更新 + 广播 session.state_changed（session 级状态单一 owner）
+    // 1. pi RPC + 缓存更新 + 广播 session.state_changed（session 级状态单一 owner；
+    //    pi 侧同时持久化 defaultModel/defaultProvider）
     await this.sessionService.switchModel(sessionId, provider, modelId)
 
-    // 2. Persist default model (best-effort)
-    try {
-      this.configService.setDefaultModel(provider, modelId)
-    // eslint-disable-next-line taste/no-silent-catch -- best-effort persist; model switch already succeeded in pi
-    } catch (persistErr) {
-      console.error('[ModelService] failed to persist default model:', persistErr)
-    }
-
-    // 3. Broadcast 全局默认模型（landing 态 Composer 的 fallback）
+    // 2. Broadcast 全局默认模型（landing 态 Composer 的 fallback）
     this.broker.broadcast({
       type: 'config.defaults',
       id: this.nextPushId(),

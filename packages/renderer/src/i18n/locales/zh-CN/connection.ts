@@ -7,6 +7,7 @@ export default {
   failed: 'runtime 不可用，重试多次仍失败',
   retry: '重试',
   runtimeExited: '会话进程已退出：{reason}',
+  sessionRequestFailed: '会话请求失败：{message}',
   runtimeRestarting: 'Runtime 正在重启',
   runtimeUnavailable: 'Runtime 不可用',
   requestFailed: '请求失败',

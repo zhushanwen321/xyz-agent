@@ -7,6 +7,7 @@ export default {
   failed: 'Runtime unavailable after multiple retries',
   retry: 'Retry',
   runtimeExited: 'Session process exited: {reason}',
+  sessionRequestFailed: 'Session request failed: {message}',
   runtimeRestarting: 'Runtime is restarting',
   runtimeUnavailable: 'Runtime is unavailable',
   requestFailed: 'Request failed',
