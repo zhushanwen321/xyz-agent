@@ -346,11 +346,13 @@ export function registerWorkflowTool(
     ): Promise<ToolResult> {
  // P1-2: Honor abort signal up-front
       if (signal?.aborted) {
-        return textResult("Operation aborted before start", true);
+        // throw（W4b）：pi 只对 execute throw 置 isError:true，返回值里的 isError
+        // 被 agent-loop 丢弃（agent-loop.js:453-483）——文案原样进 toolResult。
+        throw new Error("Operation aborted before start");
       }
- // P1-6: Reentry guard
+ // P1-6: Reentry guard（acquire 失败时尚未持有 guard，throw 前无需 release）
       if (!acquireReentryGuard(reentryRef)) {
-        return textResult(REENTRY_BUSY_MESSAGE, true);
+        throw new Error(REENTRY_BUSY_MESSAGE);
       }
       try {
         let result: ToolResult;
@@ -370,7 +372,7 @@ export function registerWorkflowTool(
           default: {
             // Exhaustiveness check — 新增 WorkflowAction 成员时未补 case，tsc 在此报错。
             const _exhaustive: never = action;
-            return textResult(`Unknown action: ${String(_exhaustive)}`, true);
+            throw new Error(`Unknown action: ${String(_exhaustive)}`);
           }
         }
         // GUI 协议：RPC 模式下附加 __gui__ 到 details
@@ -417,7 +419,7 @@ export async function actionRun(
 ): Promise<ToolResult> {
   const name = params.name;
   if (!name) {
-    return textResult("run requires 'name' parameter (absolute .js path from <available_workflows> <location>). Correct: {\"action\":\"run\",\"name\":\"<ref>\",\"args\":{...}}", true);
+    throw new Error("run requires 'name' parameter (absolute .js path from <available_workflows> <location>). Correct: {\"action\":\"run\",\"name\":\"<ref>\",\"args\":{...}}");
   }
   // 弱模型常见误用（P0 静默失败）：把 task/items 等 args 子字段平铺到 workflow params
   // 顶层（缺 args 嵌套）。args ?? {} 会静默 args={}，启动缺参 run 不报错——比 subagent
@@ -449,17 +451,15 @@ export async function actionRun(
   }
   const flattened = findFlattenedArgKeys(params, knownKeys, knownPatterns);
   if (flattened.length > 0) {
-    return textResult(
+    throw new Error(
       `Detected ${flattened.join(", ")} at top level — they belong inside 'args'. ` +
       `Correct: {"action":"run","name":"${name}","args":{${flattened.map((k) => `"${k}": "<value>"`).join(", ")}}}`,
-      true,
     );
   }
   // slug 运行时护栏（与 subagent startHandler 对称的纵深防御；schema maxLength 是第一道关卡）
   if (params.slug !== undefined && params.slug.length > SLUG_MAX_LENGTH) {
-    return textResult(
+    throw new Error(
       `slug exceeds ${SLUG_MAX_LENGTH} chars (got ${params.slug.length}). Shorten to a kebab-case label, e.g. "fix-login", "extract-urls".`,
-      true,
     );
   }
   const args = params.args ?? {};
@@ -534,13 +534,12 @@ async function actionLifecycle(
 ): Promise<ToolResult> {
   const runId = params.runId;
   if (!runId) {
-    return textResult(`'runId' is required for ${action}. Correct: {"action":"${action}","runId":"<id>"} (use action:"status" to find runId)`, true);
+    throw new Error(`'runId' is required for ${action}. Correct: {"action":"${action}","runId":"<id>"} (use action:"status" to find runId)`);
   }
   const run = deps.runs.get(runId);
   if (!run) {
-    return textResult(
+    throw new Error(
       `Workflow '${runId}' not found. Use action:status to list active runs and their runIds.`,
-      true,
     );
   }
   try {
@@ -558,8 +557,9 @@ async function actionLifecycle(
       details: { action, runId, status: newStatus, reason: run.state.reason },
     };
   } catch (err) {
+    // throw（W4b）：abortRun 失败改 throw（原 return isError 被 pi 丢弃），"Error: " 前缀保持
     const msg = err instanceof Error ? err.message : String(err);
-    return textResult(`Error: ${msg}`, true);
+    throw new Error(`Error: ${msg}`);
   }
 }
 
@@ -580,10 +580,6 @@ function toRunSummary(run: WorkflowRun, store: RunStore): RunSummary {
   };
 }
 
-function textResult(text: string, isError = false): ToolResult {
-  return {
-    content: [{ type: "text", text }],
-    details: undefined,
-    isError: isError || undefined,
-  };
-}
+// W4b：原 textResult(text, isError) helper 已删除——23 处错误路径全部改 throw
+// （pi 只对 execute throw 置 isError:true，返回值里的 isError 被 agent-loop 丢弃，
+// agent-loop.js:453-483），且本文件无非错误纯文本结果用途，无残留调用方。

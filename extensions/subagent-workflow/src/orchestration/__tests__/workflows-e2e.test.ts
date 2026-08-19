@@ -489,24 +489,25 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     expect(notFoundErr.message).toContain("not found"); // DoD 用户可见断言
     expect(notFoundErr.message).toContain("<available_workflows>");
     expect(notFoundErr.message).toContain("<location>");
-    // chain 平铺 task → isError Correct 正例（动态集来自 registry；textResult 间接路径，
-    // 不在 W4 9 处清单——保留 isError 返回，见 W4 报告残留登记）
-    const flat = await actionRun(
+    // chain 平铺 task → throw Correct 正例（动态集来自 registry；W4b：原 textResult
+    // 间接 isError 返回改 throw——pi 只对 execute throw 置 isError:true，
+    // 返回值里的 isError 被 agent-loop 丢弃）
+    const flatErr: Error = await actionRun(
       { action: "run", name: wf("chain"), task: "x" },
       deps,
       undefined,
-    );
-    expect(flat.isError).toBe(true);
-    expect(flat.content![0]!.text).toContain("Detected task at top level");
-    expect(flat.content![0]!.text).toContain("Correct:");
-    // slug 护栏保留（m6 顺序调整后仍在 runWorkflow 前；textResult 间接路径同上）
-    const slug = await actionRun(
+    ).catch((e: unknown) => e as Error);
+    expect(flatErr).toBeInstanceOf(Error);
+    expect(flatErr.message).toContain("Detected task at top level");
+    expect(flatErr.message).toContain("Correct:");
+    // slug 护栏保留（m6 顺序调整后仍在 runWorkflow 前；W4b 同改 throw）
+    const slugErr: Error = await actionRun(
       { action: "run", name: wf("chain"), args: { task: "x" }, slug: "a".repeat(40) },
       deps,
       undefined,
-    );
-    expect(slug.isError).toBe(true);
-    expect(slug.content![0]!.text).toContain("slug exceeds");
+    ).catch((e: unknown) => e as Error);
+    expect(slugErr).toBeInstanceOf(Error);
+    expect(slugErr.message).toContain("slug exceeds");
   });
 
   it("TC6: 跨 workflow 平铺语义——review-fix-loop 平铺 task（非其参数）走 args-validator", async () => {

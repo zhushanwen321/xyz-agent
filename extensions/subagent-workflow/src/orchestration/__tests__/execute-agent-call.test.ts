@@ -5,7 +5,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { executeAgentCall } from "../execute-agent-call.ts";
+import {
+  executeAgentCall,
+  isStaleContextErrorMsg,
+  STALE_CONTEXT_PATTERNS,
+} from "../execute-agent-call.ts";
 import { AgentCall } from "../models/agent-call.ts";
 import { Budget } from "../models/budget.ts";
 import type { AgentRunner } from "../models/ports.ts";
@@ -262,5 +266,49 @@ describe("isOrphaned 守卫", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ── W4b: STALE_CONTEXT_PATTERNS 对齐 pi 真实文案（stale 分诊） ──
+//
+// pi 0.84.x 真实 stale 文案（extensions/runner.ts:531，dist runner.js:567）：
+// "This extension ctx is stale after session replacement or reload. Do not use
+//  a captured pi or command ctx after ctx.newSession(), ..."
+// 旧 patterns（"stale context"/"stalecontext"）与该文案零匹配（词序相反），
+// stale 错误曾退化为普通错误照常重试 3 次——W4b 词序修正 + 对齐 scheduler
+// 已验证 marker 'stale after session replacement'（runtime.ts STALE_CTX_MARKER）。
+
+/** pi 真实 stale 文案前半（含 marker 全文前缀，锚定真实串而非自造缩写）。 */
+const PI_REAL_STALE_MESSAGE =
+  "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload().";
+
+describe("W4b: stale 分诊对齐 pi 真实文案", () => {
+  it("真实文案全文 → isStaleContextErrorMsg true（'ctx is stale' 词序 + scheduler marker 双命中）", () => {
+    expect(isStaleContextErrorMsg(PI_REAL_STALE_MESSAGE)).toBe(true);
+  });
+
+  it("patterns 含 scheduler 已验证 marker 'stale after session replacement'", () => {
+    expect(STALE_CONTEXT_PATTERNS).toContain("stale after session replacement");
+    expect(STALE_CONTEXT_PATTERNS).toContain("ctx is stale");
+  });
+
+  it("真实文案 → executeAgentCall 不重试（runner.run 恰 1 次）+ markDone failed", async () => {
+    const { call, trace } = makeAgentCallAndTrace();
+    const runner = createMockRunner(
+      vi.fn().mockResolvedValue(makeMockResult({ error: PI_REAL_STALE_MESSAGE })),
+    );
+    const budget = new Budget();
+
+    await executeAgentCall(call, runner, budget, new AbortController().signal, trace);
+
+    expect(runner.run).toHaveBeenCalledTimes(1);
+    expect(call.status).toBe("done");
+    expect(call.result?.error).toBe(PI_REAL_STALE_MESSAGE);
+    expect(trace.find(0)?.status).toBe("failed");
+  });
+
+  it("普通 transient 错误 → 不命中 stale（照常进入重试路径，现状回归）", () => {
+    expect(isStaleContextErrorMsg("transient network error")).toBe(false);
+    expect(isStaleContextErrorMsg(undefined)).toBe(false);
   });
 });

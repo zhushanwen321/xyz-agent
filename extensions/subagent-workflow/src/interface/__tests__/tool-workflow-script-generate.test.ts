@@ -112,6 +112,12 @@ describe("actionGenerate (m0: @pi-meta 认可 + round-trip)", () => {
     vi.clearAllMocks();
   });
 
+  /**
+   * W4b：generate 校验族错误路径从 return {isError:true} 改为 throw（pi 只对
+   * execute throw 置 isError:true，返回值 isError 被 agent-loop 丢弃）。
+   * actionGenerate 是同步函数——断言用同步 toThrow。
+   */
+
   it("TC1: 合法 @pi-meta → ready + writeFileSync 被调用", () => {
     const r = actionGenerate(gen(PI_META_VALID), undefined);
     expect(r.isError).toBeFalsy();
@@ -119,10 +125,10 @@ describe("actionGenerate (m0: @pi-meta 认可 + round-trip)", () => {
     expect(mockedWriteFileSync).toHaveBeenCalledTimes(1);
   });
 
-  it("TC2: malformed @pi-meta YAML → error + writeFileSync 未调用 [P-generate-roundtrip]", () => {
-    const r = actionGenerate(gen(PI_META_MALFORMED), undefined);
-    expect(r.isError).toBe(true);
-    expect(textOf(r)).toMatch(/cannot be parsed|无法解析|line/i);
+  it("TC2: malformed @pi-meta YAML → throw + writeFileSync 未调用 [P-generate-roundtrip]", () => {
+    expect(() => actionGenerate(gen(PI_META_MALFORMED), undefined)).toThrow(
+      /cannot be parsed/i,
+    );
     expect(mockedWriteFileSync).not.toHaveBeenCalled();
   });
 
@@ -132,39 +138,49 @@ describe("actionGenerate (m0: @pi-meta 认可 + round-trip)", () => {
     expect(mockedWriteFileSync).toHaveBeenCalledTimes(1);
   });
 
-  it("TC4: 无 meta → error 提及 @pi-meta 新格式", () => {
-    const r = actionGenerate(gen(NO_META), undefined);
-    expect(r.isError).toBe(true);
-    expect(textOf(r)).toMatch(/meta declaration/i);
-    expect(textOf(r)).toMatch(/pi-meta/i);
+  it("TC4: 无 meta → throw 提及 @pi-meta 新格式", () => {
+    expect(() => actionGenerate(gen(NO_META), undefined)).toThrow(/meta declaration/i);
     expect(mockedWriteFileSync).not.toHaveBeenCalled();
   });
 
-  it("TC5: @pi-meta 单反斜杠正则 → error（LLM 高频错）[P-generate-roundtrip]", () => {
-    const r = actionGenerate(gen(PI_META_REGEX_SINGLE_BS), undefined);
-    expect(r.isError).toBe(true);
-    expect(textOf(r)).toMatch(/escape|cannot be parsed|无法解析|line/i);
+  it("TC5: @pi-meta 单反斜杠正则 → throw（LLM 高频错）[P-generate-roundtrip]", () => {
+    expect(() => actionGenerate(gen(PI_META_REGEX_SINGLE_BS), undefined)).toThrow(
+      /escape|cannot be parsed/i,
+    );
     expect(mockedWriteFileSync).not.toHaveBeenCalled();
   });
 
-  it("TC6: ESM import → reject（保留现有行为）", () => {
-    const r = actionGenerate(gen(ESM_IMPORT), undefined);
-    expect(r.isError).toBe(true);
-    expect(textOf(r)).toMatch(/ESM|import/i);
+  it("TC6: ESM import → throw（保留现有行为）", () => {
+    expect(() => actionGenerate(gen(ESM_IMPORT), undefined)).toThrow(/ESM|import/i);
   });
 
-  it("TC7: 无 agent() → reject（保留现有行为）", () => {
-    const r = actionGenerate(gen(NO_AGENT), undefined);
-    expect(r.isError).toBe(true);
-    expect(textOf(r)).toMatch(/agent\(\)/i);
+  it("TC7: 无 agent() → throw（保留现有行为）", () => {
+    expect(() => actionGenerate(gen(NO_AGENT), undefined)).toThrow(/agent\(\)/i);
   });
 
-  it("TC8: signal aborted → reject（保留现有行为）", () => {
+  it("TC8: signal aborted → throw（保留现有行为）", () => {
     const controller = new AbortController();
     controller.abort();
-    const r = actionGenerate(gen(PI_META_VALID), controller.signal);
-    expect(r.isError).toBe(true);
-    expect(textOf(r)).toMatch(/abort/i);
+    expect(() => actionGenerate(gen(PI_META_VALID), controller.signal)).toThrow(/abort/i);
+  });
+
+  it("TC9: 缺 name/script 参数 → throw 'generate requires'（防御性，schema 先拦）", () => {
+    expect(() => actionGenerate({ action: "generate" } as ScriptParams, undefined)).toThrow(
+      "generate requires 'name' and 'script' parameters",
+    );
+  });
+
+  it("TC10: ESM export（非 meta）→ throw（W4b 收敛路径）", () => {
+    const script = `/* @pi-meta
+name: x
+description: d
+phases: [a]
+*/
+const agent = require("./agent");
+export const foo = 1;
+agent("w");
+`;
+    expect(() => actionGenerate(gen(script), undefined)).toThrow(/ESM 'export'/i);
   });
 });
 
