@@ -611,7 +611,9 @@ export function createUseChat(deps: UseChatDeps) {
    * pi entry 日志的重放投影（runtime wire 层：getEntries → liftHistoryToEntries →
    * replayEntries，见 infra/pi/message-converter.ts）——hydrate 直接消费 reducer 产物，
    * 不做二次转换；getHistory RPC 链不变（session-service getEntries 增量现状保留）。
-   * 实时侧喂同一 reducer 是 W21（store.applyMessageEvent 接 applyEntry）。
+   * [W21 已接] 实时侧喂同一 reducer：message_end / tool_call_end 重构 entry 经
+   * store.applyMessageEvent → applyEntryFrame 累积 per-session reducer state
+   * （messages ref 的实时渲染仍走 overlay 路径，ref 与 reducer state 收敛归 W22 对账）。
    */
   async function hydrateHistory(sessionId: string): Promise<void> {
     if (chat.isHydrated(sessionId)) return

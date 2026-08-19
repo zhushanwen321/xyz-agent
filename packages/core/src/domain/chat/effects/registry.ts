@@ -27,15 +27,27 @@
  * 非 message.* 或未注册 type 直接 no-op。MessageEffectContext 含 store refs
  * 上下文 + finalizeSession/clearPendingSend/armStreamingTimer 回调（由 store 注入，
  * 完成收口与超时兜底）。
+ *
+ * [W21 data-source-governance] entry 形态实时 feed：message.message_end /
+ * message.tool_call_start / message.tool_call_end 的 handler 输入从「直译事件 payload」
+ * 改为「重构 entry」（event-adapter 翻译时重构，字段对齐 pi entry schema）。状态类更新
+ * 全走 reducer（ctx.applyEntryFrame 喂 store 内 per-session ChatViewState，与文件重放
+ * 的 replayEntries 同一个 applyEntry——「live ≡ reload」构造性成立）；overlay 语义
+ * （streaming 气泡 / running toolCall / delta 累积）保留 effect（transient 态 reducer
+ * 无法表达，D5：partial content 不进 reducer，entry 提交时以 reducer 为权威）。
  */
 import type {
   ContentBlock,
   Message,
+  PiEntry,
+  PiMessageEntry,
+  PiToolCallEntryForm,
   ServerMessage,
   ServerMessageType,
   ToolCall,
 } from '@xyz-agent/shared'
 import { COMPLETE_NOTIFY_CUSTOM_TYPES } from '@xyz-agent/shared'
+import { normalizePiToolResult } from '../apply-entry'
 import type { RetryState, QueueState, FinalizeReason } from '../store-types'
 import type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
 export type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
@@ -317,7 +329,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     commitMessages(messages, sid, next)
   },
 
-  // ── tool_call 流（ID 锚定，W05 detail）──
+  // ── tool_call 流（ID 锚定，W05 detail；[W21] 输入换 entry 形态）──
   'message.tool_call_start': (ctx, sid, payload) => {
     const { messages } = ctx
     // [D-010 sealed]
@@ -325,12 +337,17 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const prev = messages.value.get(sid)?.value ?? []
     const idx = findLastAssistantIndex(prev)
     if (idx < 0) return
-    const callId = readString(payload, 'toolCallId') ?? `tc-${crypto.randomUUID()}`
-    const toolName = readString(payload, 'toolName') ?? 'tool'
+    // [W21] 输入从直译平铺 payload 改为 toolCall entry 形态（event-adapter 翻译时重构，
+    // interpreter 补 contentIndex/messageId 锚点）。entry 缺失（异常帧）降级丢弃；
+    // toolCallId 缺失时 fallback 随机 id（迁移前同款宽容防御：异常事件不断流）。
+    const entry = payload['entry'] as PiToolCallEntryForm | undefined
+    if (entry === undefined) return
+    const callId = typeof entry.toolCallId === 'string' ? entry.toolCallId : `tc-${crypto.randomUUID()}`
+    const toolName = typeof entry.toolName === 'string' ? entry.toolName : 'tool'
     const call: ToolCall = {
       id: callId,
       toolName,
-      input: readRecord(payload, 'input'),
+      input: entry.arguments ?? {},
       status: 'running',
       startTime: Date.now(),
     }
@@ -340,7 +357,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const toolCalls = [...(next[idx].toolCalls ?? []), call]
     // push 到 contentBlocks（callId 复用，与 toolCalls[].id 一致）。
     // 按 contentIndex 有序插入（§11 检查点 3），无 index 时退化为 append。
-    const contentBlocks = insertContentBlockByIndex(next[idx].contentBlocks ?? [], { type: 'toolCall', refId: callId, ...(readNumber(payload, 'contentIndex') !== undefined ? { contentIndex: readNumber(payload, 'contentIndex') } : {}) } satisfies ContentBlock)
+    const contentBlocks = insertContentBlockByIndex(next[idx].contentBlocks ?? [], { type: 'toolCall', refId: callId, ...(entry.contentIndex !== undefined ? { contentIndex: entry.contentIndex } : {}) } satisfies ContentBlock)
     next[idx] = { ...next[idx], toolCalls, contentBlocks }
     commitMessages(messages, sid, next)
   },
@@ -348,7 +365,15 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   'message.tool_call_end': (ctx, sid, payload) => {
     const { messages } = ctx
     const prev = messages.value.get(sid)?.value ?? []
-    const callId = readString(payload, 'toolCallId')
+    // [W21] 输入从直译平铺 payload 改为 toolResult message entry 形态（与 pi 持久化
+    // toolResult entry 同构）。overlay 收口（streaming 气泡上的 running toolCall → 终态）
+    // 语义保留；权威回填经 ctx.applyEntryFrame 喂 reducer（先于 overlay 早 return——
+    // ref 无 owner 时 reducer 喂入照常，ref 收敛归 W22）。
+    const entry = payload['entry'] as PiMessageEntry | undefined
+    if (entry === undefined || entry.type !== 'message') return
+    // 状态类全走 reducer（w21）：toolResult entry 喂 per-session reducer state
+    ctx.applyEntryFrame(sid, entry)
+    const callId = typeof entry.message.toolCallId === 'string' ? entry.message.toolCallId : undefined
     // ID 锚定：按 toolCallId 精确定位所属 assistant message（见 findToolCallOwner 注释），
     // 不靠 findLastAssistantIndex（位置定位会被乱序/噪声 message 干扰）。
     // callId 缺失或未命中时降级为最后一条 assistant（防御：兼容异常事件）。
@@ -356,24 +381,41 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     if (idx < 0) return
     // details：pi tool_execution_end result.details（结构化扩展数据）。
     // subagent sync 模式的 progress 快照（currentTool/turn/tokens）在这里，前端 Block.vue 据此滚动更新。
-    const details = readRecord(payload, 'details')
-
+    // 三态归一在消费侧做：传 entry.message（body）——与 reducer computeToolCallFill 同语义
+    //（content block 数组 → join text），entry.content 已由 adapter 归一为数组形态（W21）。
+    // content 缺失（mock/异常帧）保留 running 期间的旧值（迁移前 `?? c.output` 同语义）。
+    const hasContent = entry.message.content !== undefined
+    const { output, outputRaw } = hasContent
+      ? normalizePiToolResult(entry.message)
+      : { output: undefined, outputRaw: undefined }
+    const details = entry.message.details
+    const isError = entry.message.isError === true
     const next = [...prev]
     const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
       c.id === callId
         ? truncateToolCall({
           ...c,
-          output: readString(payload, 'output') ?? c.output,
-          outputRaw: readString(payload, 'outputRaw') ?? c.outputRaw,
-          status: (readString(payload, 'status') as ToolCall['status']) ?? 'completed',
-          error: readString(payload, 'error') ?? c.error,
+          ...(output !== undefined && { output }),
+          ...(outputRaw !== undefined && { outputRaw }),
+          // 与重放路径（reducer：isError → status:'error'）保持一致：实时失败的 tool call
+          // 必须带 status:'error'，否则前端 Block.vue 的 isFailed 判定恒为 false（恒显示成功）。
+          status: isError ? 'error' : 'completed',
+          ...(isError && { error: output ?? c.error }),
           endTime: Date.now(),
-          details,
+          ...(details !== undefined && { details: details as Record<string, unknown> }),
         })
         : c,
     )
     next[idx] = { ...next[idx], toolCalls }
     commitMessages(messages, sid, next)
+  },
+
+  // ── [W21] message_end —— 重构 entry 喂 reducer（实时 feed 权威载体，reducer 薄封装）──
+  'message.message_end': (ctx, sid, payload) => {
+    const entry = payload['entry']
+    // entry 形态守卫：message entry（type:'message'）才喂（协议契约，异常帧降级丢弃）
+    if (typeof entry !== 'object' || entry === null || (entry as { type?: unknown }).type !== 'message') return
+    ctx.applyEntryFrame(sid, entry as PiEntry)
   },
 
   'message.tool_call_update': (ctx, sid, payload) => {

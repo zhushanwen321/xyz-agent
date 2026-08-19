@@ -3,6 +3,7 @@
 import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig, ScannedSkillInfo, ScannedAgentInfo, BuiltinProviderTemplate, ProviderId } from './provider'
 import type { SessionGroup, SessionSummary } from './session'
 import type { FileChange, ChangeSetStatus, Message } from './message'
+import type { PiMessageEntry, PiToolCallEntryForm } from './pi-entry'
 import type { FileNode } from './file-tree'
 // 领域 DTO 已下沉到各自领域文件（E2 架构候选）：protocol.ts 仅保留 type→payload 映射 SSOT，
 // 领域形状（ExtensionInfo / GitStatusResult / PluginInfo …）按领域就近归属。
@@ -636,6 +637,8 @@ export type ServerMessageType =
   | 'extension.recommended'
   | 'extension.pendingRequests'
   | 'message.tool_call_update' | 'config.extensions'
+  // w21 data-source-governance：message_end 重构 entry 的实时 feed 载体帧（见 ServerMessageMapBase 条目注释）
+  | 'message.message_end'
   | 'session.commands'
   | 'session.exited'
   | 'app.info'
@@ -1180,6 +1183,22 @@ export interface ServerMessageMapBase {
     details?: Record<string, unknown>
     display?: boolean
   }
+  // ── W21 entry 形态实时 feed（data-source-governance P3.3）──
+  // message.message_end：pi message_end 事件重构的 message entry（user/assistant/toolResult/custom
+  // 的持久化触发点，agent-session.ts:545-561），实时路径与文件重放（get_entries）喂同一个
+  // core reducer（applyEntry）的权威载体。entry.id 恒缺省（pi 在 emit 之后才 appendMessage
+  // 分配 uuidv7，事件上拿不到）——reducer 按 `e<N>` 确定性派生，W22 对账靠 get_entries。
+  'message.message_end': { sessionId: string; entry: PiMessageEntry }
+  // message.tool_call_start：tool_execution_start 重构的 toolCall entry 形态（替换直译平铺
+  // payload——overlay 挂 running toolCall 从 entry 读取）。contentIndex/messageId 由
+  // event-interpreter 从缓存补齐（产出顺序锚点 + 挂载目标）；turnId 恒缺省（值填充归
+  // fix-chat-flow-order 分组 wave）。
+  'message.tool_call_start': { sessionId: string; entry: PiToolCallEntryForm }
+  // message.tool_call_end：tool_execution_end 重构的 toolResult message entry 形态。
+  // entry.message.content 是 plugin hook 改写后的工具产出（string 或 content block 数组，
+  // 与 pi 持久化 toolResult entry 同构）；isError/details 透传。前端 registry 喂
+  // applyEntry（toolResult 窗口局部配对回填）+ overlay 收口。
+  'message.tool_call_end': { sessionId: string; entry: PiMessageEntry }
 }
 
 /**

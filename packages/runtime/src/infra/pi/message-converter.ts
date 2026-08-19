@@ -12,18 +12,18 @@
  * @xyz-agent/shared，tsup 已随 noExternal 打包 shared），相对路径引用使派生规则单点化。
  * W21/W22 若把 reducer 输入上收到 protocol 层，可重新评估包边界（如 shared 收敛）。
  *
- * [迁移期双实现] convertPiHistoryLegacy = 迁移前实现逐字保留，仅供 W20 等价性迁移防线测试
- * （packages/core/src/domain/chat/__tests__/apply-entry-equivalence.test.ts 断言新旧 deep equal）
- * 消费；W21 断言升级后随 live-reload 一起删除，勿在新代码引用。
+ * [W21] 迁移期参照实现（convertPiHistoryLegacy 家族）已删除——等价性防线升级为
+ * live≡reload store 级同构（src/__tests__/equivalence/live-reload.test.ts，真实 pi fixture
+ * + 同一 reducer）+ apply-entry 确定性断言（core __tests__/apply-entry*.test.ts）。
  *
- * 实时路径（event-adapter.ts）不在本文件历史路径管辖内（W21 领地）。
+ * 实时路径（event-adapter.ts）不在本文件历史路径管辖内（W21 已接：message_end / tool
+ * 事件翻译时重构 entry，见 event-adapter.ts handleMessageEnd / handleToolExecution*）。
  */
 import type {
   PiHistoryMessage,
   PiHistoryToolResult,
 } from './pi-protocol.js'
-import type { Message, ThinkingBlock, ToolCall, FileChange, Segment } from '@xyz-agent/shared'
-import { textToSegments } from '@xyz-agent/shared'
+import type { Message, ToolCall } from '@xyz-agent/shared'
 import { normalizePiToolResult } from './normalize-tool-result.js'
 import {
   applyEntry,
@@ -154,13 +154,10 @@ export function applyOrphanToolResults(messages: Message[], orphanToolResults: u
   }
 }
 
-// ════════════════════════════════════════════════════════════════════
-// 迁移期参照实现（W20 等价性防线专用，W21 删除）
-// ════════════════════════════════════════════════════════════════════
-
 /**
- * [迁移期参照] 把 toolResult 归一回填到单个 toolCall（迁移前实现，供 legacy 家族与
- * applyOrphanToolResults 共用——后者是生产路径，语义必须与迁移前逐字一致）。
+ * 把 toolResult 归一回填到单个 toolCall（applyOrphanToolResults 生产路径消费；
+ * [W21] legacy 家族删除后为唯一实现，语义与迁移前逐字一致——reducer 的
+ * computeToolCallFill（copy-on-write 版）为重放/实时路径对应实现）。
  */
 function fillToolCallOutput(tc: ToolCall, toolResult: PiHistoryToolResult): void {
   // 对称恢复 outputRaw（规则 7.5：对话流状态必须可重开恢复）。
@@ -175,259 +172,5 @@ function fillToolCallOutput(tc: ToolCall, toolResult: PiHistoryToolResult): void
   if (toolResult.details && typeof toolResult.details === 'object' && !Array.isArray(toolResult.details)) {
     tc.details = toolResult.details
   }
-}
 
-/**
- * [迁移期参照] Parse `<skill name="xxx" location="...">...</skill>` blocks from
- * a user message's text content（迁移前实现逐字保留）。
- */
-function parseSkillBlockLegacy(text: string): Segment[] | null {
-  const match = text.match(/<skill\s+name="([^"]+)"(?:\s+location="([^"]+)")?[^>]*>[\s\S]*?<\/skill>([\s\S]*)$/)
-  if (!match) return null
-  // Segment 类型的 skill 变体本身已有 location?: string 字段（shared/segments.ts:26），
-  // 构造时直接带 location，无需运行时断言赋值。
-  const skillSeg: Segment = match[2]
-    ? { type: 'skill', name: match[1], location: match[2] }
-    : { type: 'skill', name: match[1] }
-  const segments: Segment[] = [skillSeg]
-  const userText = match[3].trim()
-  if (userText) {
-    segments.push({ type: 'text', text: userText })
-  }
-  return segments
-}
-
-// [迁移期参照] write/edit 工具名集合（迁移前实现；新实现在 core apply-entry.ts）。
-const WRITE_TOOL_NAMES = new Set(['write', 'write_file', 'writeFile', 'create_file'])
-const EDIT_TOOL_NAMES = new Set(['edit', 'edit_file', 'editFile', 'str_replace', 'replace'])
-
-/**
- * [迁移期参照] 从历史 assistant 消息的 toolCalls 提取 fileChanges（迁移前实现）。
- *
- * 历史路径无 cwd 做 existsSync 判定（write added/modified 无法区分），
- * 按 AC-9.3 graceful 降级：write 一律标 modified（方案 B 兜底，与 event-adapter 缺 cwd 时一致），
- * edit 恒 modified。filePath 取 toolCall.arguments.path（pi 契约权威参数名，file_path 防御 fallback）。
- */
-function extractHistoryFileChangesLegacy(toolCalls: ToolCall[]): FileChange[] {
-  const changes: FileChange[] = []
-  const seen = new Set<string>()
-  for (const tc of toolCalls) {
-    const isWrite = WRITE_TOOL_NAMES.has(tc.toolName)
-    const isEdit = EDIT_TOOL_NAMES.has(tc.toolName)
-    if (!isWrite && !isEdit) continue
-    const args = (tc.input ?? {}) as Record<string, unknown>
-    const filePath = typeof args.path === 'string' ? args.path : typeof args.file_path === 'string' ? args.file_path : ''
-    if (!filePath || seen.has(filePath)) continue
-    seen.add(filePath)
-    // write 历史无 cwd 无法判 added/modified，一律 modified（graceful，AC-9.3）；edit 恒 modified
-    changes.push({ filePath, status: 'modified' })
-  }
-  return changes
-}
-
-/**
- * [迁移期参照] 迁移前 convertSinglePiMessage 逐字保留（legacy 家族内部使用）。
- */
-function convertSinglePiMessageLegacy(
-  m: PiHistoryMessage,
-  options?: { entryId?: string },
-): Message | null {
-  // W11：显式拒绝未知 role，避免把任何非 user 也非已处理特殊类型的 entry 默认归入 assistant
-  if (m.role !== 'user' && m.role !== 'assistant') {
-    console.warn(`[message-converter] unknown role: ${String(m.role)}, skipping`)
-    return null
-  }
-  const parts = Array.isArray(m.content)
-    ? m.content
-    : [{ type: 'text' as const, text: m.content != null ? String(m.content) : '' }]
-  let textContent = ''
-  const thinking: ThinkingBlock[] = []
-  const toolCalls: ToolCall[] = []
-  const contentBlocks: import('@xyz-agent/shared').ContentBlock[] = []
-  let hasTextBlock = false
-
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i]
-    if (part.type === 'text') {
-      textContent += part.text ?? ''
-      if (!hasTextBlock) {
-        hasTextBlock = true
-        contentBlocks.push({ type: 'text', refId: 'text', contentIndex: i })
-      }
-    } else if (part.type === 'thinking') {
-      const thkId = crypto.randomUUID()
-      thinking.push({
-        id: thkId,
-        content: part.thinking ?? '',
-        collapsed: true,
-      })
-      contentBlocks.push({ type: 'thinking', refId: thkId, contentIndex: i })
-    } else if (part.type === 'toolCall' || part.type === 'tool_use') {
-      const tcId = part.id ?? crypto.randomUUID()
-      toolCalls.push({
-        id: tcId,
-        toolName: part.name ?? '',
-        input: part.arguments ?? {},
-        status: 'completed',
-        startTime: m.timestamp ?? Date.now(),
-      })
-      contentBlocks.push({ type: 'toolCall', refId: tcId, contentIndex: i })
-    }
-  }
-
-  const resolvedEntryId = options?.entryId
-    ?? ('__entryId' in m && typeof (m as { __entryId?: unknown }).__entryId === 'string'
-      ? (m as { __entryId: string }).__entryId
-      : undefined)
-
-  const msg: Message = {
-    id: crypto.randomUUID(),
-    role: m.role === 'user' ? 'user' : 'assistant',
-    content: textContent,
-    status: 'complete',
-    ...(resolvedEntryId !== undefined && { piEntryId: resolvedEntryId }),
-    ...(thinking.length > 0 && { thinking }),
-    ...(toolCalls.length > 0 && { toolCalls }),
-    ...(contentBlocks.length > 0 && { contentBlocks }),
-    ...(m.role === 'assistant' && toolCalls.length > 0 && (() => {
-      const fc = extractHistoryFileChangesLegacy(toolCalls)
-      return fc.length > 0 ? { fileChanges: fc } : {}
-    })()),
-    ...(() => {
-      if (m.role !== 'assistant') return {}
-      const u = (m as { usage?: { input?: number; output?: number } }).usage
-      return u ? { usage: { inputTokens: u.input ?? 0, outputTokens: u.output ?? 0 } } : {}
-    })(),
-    timestamp: m.timestamp ?? Date.now(),
-  }
-
-  if (m.role === 'user' && textContent) {
-    const parsed = parseSkillBlockLegacy(textContent)
-    if (parsed) {
-      msg.content = parsed
-    } else {
-      msg.content = textToSegments(textContent)
-    }
-  }
-  return msg
-}
-
-/**
- * [迁移期参照] 迁移前 convertPiHistory 逐字保留。
- *
- * 唯一消费方：packages/core/src/domain/chat/__tests__/apply-entry-equivalence.test.ts
- * （W20 等价性迁移防线——同 fixture 序列下新旧路径 messages deep equal）。
- * W21 断言升级为 store 级 live≡reload 后删除本函数与上方 legacy 家族。
- */
-export function convertPiHistoryLegacy(raw: unknown[], entryIds?: string[], orphanToolResults?: PiHistoryToolResult[]): Message[] {
-  const result: Message[] = []
-  let lastAssistantWithToolCalls = -1
-
-  for (let i = 0; i < raw.length; i++) {
-    const item = raw[i]
-    const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number } | { role: 'custom'; customType: string; content?: string; details?: Record<string, unknown>; timestamp?: number } | { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number } | { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp: number; fullOutputPath?: string }
-    if (m.role === 'toolResult') {
-      const toolResult = m as PiHistoryToolResult
-      const tc = lastAssistantWithToolCalls >= 0
-        ? result[lastAssistantWithToolCalls]?.toolCalls?.find(t => t.id === toolResult.toolCallId)
-        : undefined
-      if (tc) {
-        fillToolCallOutput(tc, toolResult)
-      } else {
-        orphanToolResults?.push(toolResult)
-        console.warn('[message-converter] toolResult has no matching toolCall in window:', toolResult.toolCallId)
-      }
-      continue
-    }
-
-    if (m.role === 'compactionSummary') {
-      const cm = m as { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number }
-      result.push({
-        id: crypto.randomUUID(),
-        role: 'system',
-        content: cm.summary ?? '上下文已压缩',
-        status: 'complete',
-        compactionSummary: {
-          summary: cm.summary,
-          tokensBefore: cm.tokensBefore,
-          timestamp: cm.timestamp ?? Date.now(),
-        },
-        timestamp: cm.timestamp ?? Date.now(),
-      })
-      continue
-    }
-
-    if (m.role === 'custom') {
-      const cm = m as {
-        role: 'custom'
-        customType: string
-        content?: string
-        details?: Record<string, unknown>
-        timestamp?: number
-        display?: boolean
-      }
-      const msg: Message = {
-        id: crypto.randomUUID(),
-        role: 'system',
-        content: cm.content ?? '',
-        status: 'complete',
-        customType: cm.customType,
-        details: cm.details as Record<string, unknown> | undefined,
-        timestamp: cm.timestamp ?? Date.now(),
-        display: cm.display,
-      }
-      result.push(msg)
-      continue
-    }
-
-    if (m.role === 'branchSummary') {
-      const bm = m as { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number }
-      result.push({
-        id: crypto.randomUUID(),
-        role: 'system',
-        content: bm.summary ?? '',
-        status: 'complete',
-        branchSummary: {
-          summary: bm.summary,
-          fromId: bm.fromId,
-          timestamp: bm.timestamp ?? Date.now(),
-        },
-        timestamp: bm.timestamp ?? Date.now(),
-      })
-      continue
-    }
-
-    if (m.role === 'bashExecution') {
-      const bm = m as { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp?: number; fullOutputPath?: string }
-      const ts = bm.timestamp ?? Date.now()
-      result.push({
-        id: crypto.randomUUID(),
-        role: 'system',
-        content: '',
-        status: 'complete',
-        timestamp: ts,
-        bashExecution: {
-          command: bm.command,
-          output: bm.output,
-          exitCode: bm.exitCode ?? null,
-          cancelled: bm.cancelled,
-          truncated: bm.truncated,
-          excludeFromContext: !!bm.excludeFromContext,
-          timestamp: ts,
-          ...(bm.fullOutputPath !== undefined && { fullOutputPath: bm.fullOutputPath }),
-        },
-      } satisfies Message)
-      continue
-    }
-
-    const entryId = entryIds?.[i]
-    const msg = convertSinglePiMessageLegacy(m as PiHistoryMessage, entryId !== undefined ? { entryId } : undefined)
-    if (!msg) continue
-    result.push(msg)
-    if (msg.toolCalls && msg.toolCalls.length > 0) {
-      lastAssistantWithToolCalls = result.length - 1
-    }
-  }
-
-  return result
 }

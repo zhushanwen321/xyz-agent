@@ -11,6 +11,7 @@
 import type {
   ChangeSetStatus,
   FileChange,
+  PiEntry,
   Segment,
   SteerFollowUpMode,
 } from '@xyz-agent/shared'
@@ -61,6 +62,13 @@ export interface MessageEffectContext {
    * queue_update handler 经 drainPending 取 segments + appendUser 进对话流。
    */
   drainPending: (sessionId: string, text: string, sendMode?: SteerFollowUpMode) => Segment[] | undefined
+  /**
+   * [W21] 重构 entry 喂 store 内 per-session reducer state（applyEntry）。
+   * message_end / tool_call_end 等 entry 载体帧的 handler 经此把实时 feed 喂入与文件重放
+   * （get_entries → replayEntries）同一个 reducer——effects 退化为 reducer 薄封装（状态类
+   * 全走 reducer，副作用类保留 effect）。实现在 store.applyEntryFrame。
+   */
+  applyEntryFrame: (sessionId: string, entry: PiEntry) => void
 }
 
 /**

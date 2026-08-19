@@ -19,6 +19,12 @@ export type {
   BgNotifyRecord, BgNotifyDetails,
 } from './message'
 export { parseBgNotifyDetails, COMPLETE_NOTIFY_CUSTOM_TYPES } from './message'
+// w21 pi-entry：pi session entry wire 类型（runtime 实时重构 ↔ core reducer ↔ protocol payload 三方共用）
+export type {
+  PiEntry, PiEntryBase, PiMessageEntry, PiMessageBody,
+  PiCustomEntry, PiLabelEntry, PiCompactionEntry, PiBranchSummaryEntry, PiCustomMessageEntry,
+  PiToolCallEntryForm,
+} from './pi-entry'
 export type { Segment } from './segments'
 export { segmentsToText, textToSegments, segmentsToPrompt, normalizeContent } from './segments'
 export type { SegmentsMetadataFile, SegmentsMetadataEntry } from './message-metadata'

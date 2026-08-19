@@ -33,6 +33,13 @@ describe('EventInterpreter · subagent 内存态 + session.subagents 广播', ()
       toolCallId,
       toolName: 'subagent',
       input: { action: 'start', startParam },
+      entry: {
+        type: 'toolCall',
+        toolCallId,
+        toolName: 'subagent',
+        arguments: { action: 'start', startParam },
+        timestamp: new Date(0).toISOString(),
+      },
     }
   }
 
@@ -46,6 +53,12 @@ describe('EventInterpreter · subagent 内存态 + session.subagents 广播', ()
       details,
       images: undefined,
       isError: false,
+      entry: {
+        type: 'message',
+        parentId: null,
+        timestamp: new Date(0).toISOString(),
+        message: { role: 'toolResult', toolCallId, toolName: 'subagent', content: JSON.stringify(details), isError: false, details, timestamp: 0 },
+      },
     }
   }
 
@@ -291,7 +304,7 @@ describe('EventInterpreter · subagent 内存态 + session.subagents 广播', ()
       const interpreter = new EventInterpreter('sid-u3', { send })
 
       interpreter.interpret([
-        { kind: 'tool-call-start', toolCallId: 'call-w', toolName: 'write', input: { path: '/a.ts' } },
+        { kind: 'tool-call-start', toolCallId: 'call-w', toolName: 'write', input: { path: '/a.ts' }, entry: { type: 'toolCall', toolCallId: 'call-w', toolName: 'write', arguments: { path: '/a.ts' }, timestamp: new Date(0).toISOString() } },
         {
           kind: 'tool-call-end',
           toolCallId: 'call-w',
@@ -300,6 +313,12 @@ describe('EventInterpreter · subagent 内存态 + session.subagents 广播', ()
           details: undefined,
           images: undefined,
           isError: false,
+          entry: {
+            type: 'message',
+            parentId: null,
+            timestamp: new Date(0).toISOString(),
+            message: { role: 'toolResult', toolCallId: 'call-w', toolName: 'write', content: [{ type: 'text', text: 'ok' }], isError: false, timestamp: 0 },
+          },
         },
       ])
 

@@ -370,10 +370,14 @@ describe('EventAdapter: extension event translation', () => {
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('message.tool_call_start')
+      // [w21] payload 换 toolCall entry 形态（event-adapter 翻译时重构）
       expect(sent[0].payload).toMatchObject({
         sessionId: 'test-session-1',
-        toolCallId: 'tc-reg',
-        toolName: 'write_file',
+        entry: {
+          type: 'toolCall',
+          toolCallId: 'tc-reg',
+          toolName: 'write_file',
+        },
       })
     })
 

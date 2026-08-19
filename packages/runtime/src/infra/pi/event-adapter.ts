@@ -19,7 +19,7 @@
  * Each session gets its own adapter instance. translate() is stateless（一个 pi 事件
  * 产出一组中间事件），可变态由 EventInterpreter 持有。
  */
-import type { ServerMessage, ServerMessageType, ExtensionInteractMethod } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageType, ExtensionInteractMethod, PiMessageEntry, PiToolCallEntryForm } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS } from '@xyz-agent/shared'
 import { GUI_WIDGET_MARKER, ASK_USER_MARKER, isGuiComponent, isGuiRenderResult } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
@@ -30,6 +30,7 @@ import type {
   PiEvent,
   PiMessageStartEvent,
   PiMessageUpdateEvent,
+  PiMessageEndEvent,
   PiAgentEndEvent,
   PiToolExecutionStartEvent,
   PiToolExecutionUpdateEvent,
@@ -135,24 +136,52 @@ function handleMessageUpdate(event: PiMessageUpdateEvent, sid: string): PiTransl
 }
 
 /**
- * tool_execution_start — 产出 tool-call-start 中间事件（携带原始 input）。
- * EventInterpreter 据此跑 onBeforeToolCall hook（可阻断 / 改写 input）后产出 tool_call_start WS 帧。
+ * tool_execution_start — 重构 toolCall entry 形态（W21）+ 产出 tool-call-start 中间事件。
+ * EventInterpreter 据此跑 onBeforeToolCall hook（可阻断 / 改写 input，改写同步回 entry.arguments）
+ * 后产出 tool_call_start WS 帧（payload 为 entry 形态）；contentIndex/messageId 锚点由
+ * interpreter 从缓存补进 entry（toolcall_start 产出顺序锚点 + currentMessageId 挂载目标）。
+ *
+ * entry 形态对齐 pi entry schema（字段风格见 shared/pi-entry.ts PiToolCallEntryForm）；
+ * turnId 恒缺省（值填充归 fix-chat-flow-order 分组 wave，见 handleMessageEnd 同款注释）。
+ * input 平铺字段保留：interpreter 的 hook 上下文消费（HookTransform 契约），WS 帧只发 entry。
  */
 function handleToolExecutionStart(event: PiToolExecutionStartEvent, _sid: string): PiTranslatedEvent[] {
   const toolName = event.toolName
   // pi 用 args 是规范字段名（pi 从不发 input，ADR-0037）。
   const input = event.args
+  const tsMs = Date.now()
+  const entry: PiToolCallEntryForm = {
+    type: 'toolCall',
+    toolCallId: event.toolCallId,
+    toolName,
+    arguments: (input ?? {}) as Record<string, unknown>,
+    timestamp: new Date(tsMs).toISOString(),
+  }
   return [{
     kind: 'tool-call-start',
     toolCallId: event.toolCallId,
     toolName,
     input,
+    entry,
   }]
 }
 
 /**
- * tool_execution_end — 产出 tool-call-end 中间事件（携带原始 output/details/images）。
- * EventInterpreter 据此跑 onAfterToolResult hook（改写 output）+ 触发 file_changes baseline diff。
+ * tool_execution_end — 重构 toolResult message entry 形态（W21）+ 产出 tool-call-end 中间事件。
+ * EventInterpreter 据此跑 onAfterToolResult hook（改写 output，改写同步回 entry.message.content）
+ * + 触发 file_changes baseline diff 后产出 tool_call_end WS 帧（payload 为 entry 形态）。
+ *
+ * entry 与 pi 持久化的 toolResult entry 同构（message.role='toolResult'，content 为原始/改写后
+ * 的工具产出——归一化归消费方：core reducer / registry 各自 normalizePiToolResult，幂等），
+ * 前端可直接喂 applyEntry（toolResult 窗口局部配对回填）。
+ *
+ * output/outputRaw/details/images 平铺字段保留：interpreter 的 hook 上下文与 subagent/workflow
+ * 编排消费（HookTransform 契约），WS 帧只发 entry。
+ *
+ * [已知限制] pi tool_execution_end 从不发 args（pi types.ts:430 无此字段），故 write 工具的
+ * content 无法在此提取。writeContent 提取逻辑已删除（原为恒 undefined 的死代码）。
+ * EventInterpreter 的 writeContents Map 因此恒为空——untracked 行数回退当前不生效，
+ * 待后续在 tool_execution_start 路径（该事件发 args）补齐后恢复。详见 pi-protocol.ts 相关注释。
  */
 function handleToolExecutionEnd(event: PiToolExecutionEndEvent, _sid: string): PiTranslatedEvent[] {
   // pi 用 result 是规范字段名（pi 从不发 output，ADR-0037）。
@@ -163,11 +192,29 @@ function handleToolExecutionEnd(event: PiToolExecutionEndEvent, _sid: string): P
   const toolCallId = event.toolCallId
   const toolName = event.toolName
   const isError = event.isError
-
-  // [已知限制] pi tool_execution_end 从不发 args（pi types.ts:430 无此字段），故 write 工具的
-  // content 无法在此提取。writeContent 提取逻辑已删除（原为恒 undefined 的死代码）。
-  // EventInterpreter 的 writeContents Map 因此恒为空——untracked 行数回退当前不生效，
-  // 待后续在 tool_execution_start 路径（该事件发 args）补齐后恢复。详见 pi-protocol.ts 相关注释。
+  const tsMs = Date.now()
+  // content 归一为 content block 数组——对齐 pi 持久化形态（ToolResultMessage.content 恒为
+  // (Text|Image)[]，messages.ts:398）：raw 的 .content 数组透传；string / null / 其他对象
+  // 包成 text block（output 是 normalize 后文本，其他对象已 JSON.stringify 化）。
+  // live entry 与 reload entry 同构 → 两侧 reducer 的 computeToolCallFill 走同一数组分支。
+  const rawObj = raw as { content?: unknown } | null
+  const content: unknown[] = Array.isArray(rawObj?.content)
+    ? (rawObj.content as unknown[])
+    : [{ type: 'text', text: output }]
+  const entry: PiMessageEntry = {
+    type: 'message',
+    parentId: null,
+    timestamp: new Date(tsMs).toISOString(),
+    message: {
+      role: 'toolResult',
+      toolCallId,
+      toolName,
+      content,
+      isError,
+      ...(details !== undefined && { details }),
+      timestamp: tsMs,
+    },
+  }
 
   return [{
     kind: 'tool-call-end',
@@ -178,6 +225,7 @@ function handleToolExecutionEnd(event: PiToolExecutionEndEvent, _sid: string): P
     toolName,
     isError,
     outputRaw,
+    entry,
   }]
 }
 
@@ -540,6 +588,48 @@ function handleMessageStart(event: PiMessageStartEvent, sid: string): PiTranslat
   ]
 }
 
+/**
+ * message_end — 重构 message entry 作为实时 feed 载体（W21，D5 单一 reducer 双路喂入的实时侧）。
+ *
+ * pi 把 message_end 作为 user/assistant/toolResult/custom 四种 message 持久化的唯一触发点
+ * （agent-session.ts:545-561：emit message_end → appendMessage/appendCustomMessageEntry），
+ * 事件流顺序 ≡ entry 追加顺序——这是 live ≡ reload 的协议层依据（W5 实测）。
+ *
+ * entry 字段：
+ * - id 恒缺省：pi 在 emit **之后**才 appendMessage 分配 uuidv7 entry id，事件上拿不到。
+ *   reducer 按 `e<N>` 确定性派生；W22 权威对账（broadcast≡get_state）靠 get_entries。
+ * - timestamp 取 message.timestamp（message 对象内字段，与持久化 entry 的 .message 同源），
+ *   缺失时降级当前时间（与 liftHistoryToEntries 同点位，保 reducer 输入确定后输出确定）。
+ * - turnId 不填：pi 事件不带 turn 边界信息，值填充归 fix-chat-flow-order 分组 wave（类型契约
+ *   字段稳定存在即可，不写投机代码——pi 上游若补 turnId 只改本构造点，reducer 不动）。
+ *
+ * 与 message_start 的 role 过滤（[HISTORICAL] user/toolResult 记账噪声）不同：message_end 是
+ * 权威 entry 流，全量下发不过滤——user 消息与 appendUser 的乐观插入、toolResult 与
+ * tool_execution_end 的回填，去重/合并归 core store 的 reducer 接入层编排。
+ */
+function handleMessageEnd(event: PiMessageEndEvent, sid: string): PiTranslatedEvent[] {
+  const msg = event.message as unknown as Record<string, unknown> | undefined
+  if (msg === undefined || typeof msg.role !== 'string') {
+    // 防御：message_end 恒带 message（pi 契约），缺失/畸形时降级丢弃（warn 可观测，不中断事件流）
+    console.warn(`[EventAdapter] message_end without message or role, skipping sid=${sid}`)
+    return [{ kind: 'noop' }]
+  }
+  const tsMs = typeof msg.timestamp === 'number' ? msg.timestamp : Date.now()
+  const entry: PiMessageEntry = {
+    type: 'message',
+    parentId: null,
+    timestamp: new Date(tsMs).toISOString(),
+    message: msg as PiMessageEntry['message'],
+  }
+  return [{
+    kind: 'message',
+    message: {
+      type: 'message.message_end' as ServerMessageType,
+      payload: { sessionId: sid, entry },
+    },
+  }]
+}
+
 /** tool_execution_update — forward detail (partialResult is unknown: string or object, extract details if present) */
 function handleToolExecutionUpdate(event: PiToolExecutionUpdateEvent, sid: string): PiTranslatedEvent[] {
   // partialResult 是 unknown（pi 声明 any，运行时形态不定）。按 typeof 分流：
@@ -719,8 +809,13 @@ function handleCompactionEnd(event: PiCompactionEndEvent, _sid: string): PiTrans
 // 消费方是插件 executeHooks，S1）。若放回 NULL_EVENTS 会被此处 short-circuit，hook 分支不可达。
 // entry_appended 在 M5 登记此列——pi extension appendEntry 会 emit，xyz-agent 无前端消费方，
 // 不登记会刷 console.warn unhandled。
+// [W21] message_end 移出此列——重构 message entry 喂前端 reducer（handleMessageEnd，实时 feed
+// 权威载体）。对齐 W18 对 entry_appended 的处置写法：W18 接线 entry_appended 后它也将移出此列
+// （TODO(W18)：entry_appended → 直接构 entry 喂 reducer；W18 未 committed 前本段禁动——并行警戒，
+// 见 w21-acceptance 禁改清单）。pi 上游未来若为常规 message append 补发射 entry_appended：只换
+// 喂入源头（entry_appended → entry 构造），reducer 不动。
 const NULL_EVENTS = new Set([
-  'turn_start', 'message_end',
+  'turn_start',
   'extension_config', 'extension_ui_response', 'response',
   'agent_settled', 'entry_appended',
 ])
@@ -739,6 +834,8 @@ const DISPATCHER = new Map<string, Handler>()
   DISPATCHER.set('turn_end', handleTurnEndPi as Handler)
   DISPATCHER.set('extension_ui_request', handleExtensionUIRequest as Handler)
   DISPATCHER.set('message_start', handleMessageStart as Handler)
+  // [W21] message_end：移出 NULL_EVENTS 后在此注册——重构 message entry 喂前端 reducer
+  DISPATCHER.set('message_end', handleMessageEnd as Handler)
   DISPATCHER.set('tool_execution_update', handleToolExecutionUpdate as Handler)
   DISPATCHER.set('extension_error', handleExtensionError as Handler)
   DISPATCHER.set('auto_retry_start', handleAutoRetryStart as Handler)

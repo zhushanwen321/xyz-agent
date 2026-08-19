@@ -448,11 +448,93 @@ describe('createChatStore factory', () => {
       const sid = 's1'
       s.store.applyMessageEvent(sid, msg(sid, 'message.message_start', { messageId: 'a1' }))
       s.store.applyMessageEvent(sid, msg(sid, 'message.tool_call_start', {
-        toolCallId: 'tc1', toolName: 'read', input: {},
+        // [w21] entry 形态 payload（event-adapter 翻译时重构的 toolCall entry）
+        entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'read', arguments: {}, timestamp: new Date(0).toISOString() },
       }))
       const msgs = s.store.getMessages(sid)
       const last = msgs[msgs.length - 1]
       expect(last.toolCalls?.[0]).toMatchObject({ id: 'tc1', toolName: 'read', status: 'running' })
+      s.dispose()
+    })
+  })
+
+  // ── [W21] entry 形态实时 feed 喂 reducer（applyEntryFrame）──
+  // 实时路径（message_end / tool_call_end 重构 entry）与文件重放（replayEntries）喂同一个
+  // applyEntry reducer；messages ref 走 overlay 路径不受影响（ref 收敛归 W22 对账）。
+  describe('applyEntryFrame（w21 实时 feed 喂 reducer）', () => {
+    it('message_end（user entry）→ reducer state 累积 user 投影；messages ref 不受影响（overlay 路径不动）', () => {
+      const s = makeStore()
+      const sid = 's-w21-user'
+      s.store.applyMessageEvent(sid, msg(sid, 'message.message_end', {
+        entry: {
+          type: 'message',
+          parentId: null,
+          timestamp: new Date(1000).toISOString(),
+          message: { role: 'user', content: 'hello', timestamp: 1000 },
+        },
+      }))
+      const state = s.store._entryStatesForTest.get(sid)
+      expect(state?.messages).toHaveLength(1)
+      expect(state?.messages[0]).toMatchObject({ role: 'user', content: [{ type: 'text', text: 'hello' }], status: 'complete' })
+      // ref 不动（send 时 appendUser 的乐观消息负责实时渲染；ref 收敛归 W22 对账）
+      expect(s.store.getMessages(sid)).toHaveLength(0)
+      s.dispose()
+    })
+
+    it('message_end（assistant entry with toolCalls）→ tool_call_end（toolResult entry）→ reducer 回填 output/isError', () => {
+      const s = makeStore()
+      const sid = 's-w21-tool'
+      // pi 时序：assistant message_end（含 toolCalls）先于 tool_execution_end（探针定论，agent-session.ts:545）
+      s.store.applyMessageEvent(sid, msg(sid, 'message.message_end', {
+        entry: {
+          type: 'message',
+          parentId: null,
+          timestamp: new Date(2000).toISOString(),
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'checking' },
+              { type: 'toolCall', id: 'tc-9', name: 'read', arguments: { path: '/x' } },
+            ],
+            timestamp: 2000,
+          },
+        },
+      }))
+      s.store.applyMessageEvent(sid, msg(sid, 'message.tool_call_end', {
+        entry: {
+          type: 'message',
+          parentId: null,
+          timestamp: new Date(3000).toISOString(),
+          message: { role: 'toolResult', toolCallId: 'tc-9', toolName: 'read', content: [{ type: 'text', text: 'file body' }], isError: true, timestamp: 3000 },
+        },
+      }))
+      const state = s.store._entryStatesForTest.get(sid)
+      // reducer：assistant 投影（toolCalls completed）+ toolResult 窗口局部配对回填（isError → error 态）
+      expect(state?.messages).toHaveLength(1)
+      const tc = state?.messages[0].toolCalls?.[0]
+      expect(tc).toMatchObject({ id: 'tc-9', toolName: 'read', output: 'file body', status: 'error' })
+      s.dispose()
+    })
+
+    it('message_end 异常帧（entry 非 message type）→ 丢弃不累积', () => {
+      const s = makeStore()
+      const sid = 's-w21-bad'
+      s.store.applyMessageEvent(sid, msg(sid, 'message.message_end', {
+        entry: { type: 'compaction', timestamp: new Date(0).toISOString(), summary: 'x' },
+      }))
+      expect(s.store._entryStatesForTest.has(sid)).toBe(false)
+      s.dispose()
+    })
+
+    it('disposeSession 清 entryStates 分区', () => {
+      const s = makeStore()
+      const sid = 's-w21-clean'
+      s.store.applyMessageEvent(sid, msg(sid, 'message.message_end', {
+        entry: { type: 'message', parentId: null, timestamp: new Date(0).toISOString(), message: { role: 'user', content: 'x', timestamp: 0 } },
+      }))
+      expect(s.store._entryStatesForTest.has(sid)).toBe(true)
+      s.store.disposeSession(sid)
+      expect(s.store._entryStatesForTest.has(sid)).toBe(false)
       s.dispose()
     })
   })

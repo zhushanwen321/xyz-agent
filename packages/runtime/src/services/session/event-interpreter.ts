@@ -6,8 +6,7 @@
  *   2. file_changes diff（turn 内写操作实时 + agent_end 最终对账）—— 经 IFileChangeDiff port
  *      （W18 采集异步化：diffChain 串行链 + turnGen 代际 + turnFinalizing 压制，03 D3-3）
  *   3. context.update 回写 session 缓存（sessionService.applyContextUpdate）
- *   4. thinkingLevel 回写 session 缓存（sessionService.setThinkingLevelCache）
- *   5. status/bridge/extension-ui 路由到 server（注册超时 / 处理 bridge 请求）
+ *   4. status/bridge/extension-ui 路由到 server（注册超时 / 处理 bridge 请求）
  *
  * 持有的可变态（从 event-adapter 迁来）：
  *   - currentMessageId（message_start 设置，file_changes 挂载目标）
@@ -78,12 +77,10 @@ export interface EventInterpreterOptions {
    * + project sidecar 兜底 + session_end 终态写入。
    */
   onTurnFinalize?: (sessionId: string, stopReason?: string) => void
-  /** thinking_level_changed 回写 session 缓存（组合根注入 sessionService.setThinkingLevelCache）。 */
-  onThinkingLevelChanged?: (sessionId: string, level: string | undefined) => void
   /**
-   * session_info_changed 的旧缓存回写（双写过渡，W9 删）。组合根注入：session.label
-   * 内存态回写（setLabelCache）+ sessionMetaCache 的 label 改读 label 实例快照写入
-   * （W7 起数据链归一，事件 payload 不再直写缓存）。实例失效走 labelState markDirty。
+   * session_info_changed 的内存态回写（组合根注入 sessionService.setLabelCache——
+   * W9 后是 session.label 的唯一即时数据源，toSummary/config.sessions 读它；W12/W13
+   * state 话题发布切实例快照后由 applySnapshot 承接）。实例失效走 labelState markDirty。
    */
   onSessionRenamed?: (sessionId: string, name: string | undefined) => void
   /**
@@ -311,18 +308,17 @@ export class EventInterpreter {
         this.opts.onExtensionUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.payload)
         return
       case 'thinking-level':
-        // W7 数据源治理：thinking_level_changed 只做失效——markDirty 置 dirty + 防抖重拉
-        // get_state（唯一写路径），事件 payload 不再是 thinkingLevel 的数据源。
+        // W7/W9 数据源治理：thinking_level_changed 只做失效——markDirty 置 dirty + 防抖重拉
+        // get_state（唯一写路径），事件 payload 不再是 thinkingLevel 的数据源（session.thinkingLevelSet
+        // WS 帧由 event-adapter 翻译直发，前端即时更新不依赖任何缓存回写）。
         this.opts.thinkingLevelState?.()?.markDirty()
-        // 双写过渡（W7 → W9 删）：旧缓存回写保留，读方逐步切实例。
-        this.opts.onThinkingLevelChanged?.(this.sessionId, ev.level)
         return
       case 'session-renamed':
         // W7 数据源治理：session_info_changed 只做失效——markDirty 置 dirty + 防抖重拉
-        // get_state，事件 payload 不再是 label 的数据源（session.renamed 广播帧由上方
+        // get_state，事件 payload 不再是 label 实例的数据源（session.renamed 广播帧由上方
         // 'message' 分支照常转发，type 名 W12 统一切 state 话题）。
         this.opts.labelState?.()?.markDirty()
-        // 双写过渡（W7 → W9 删）：旧缓存回写保留，读方逐步切实例。
+        // 内存态回写（setLabelCache）：W12/W13 前 toSummary/config.sessions 的即时数据源。
         this.opts.onSessionRenamed?.(this.sessionId, ev.name)
         return
       case 'hook':
@@ -377,17 +373,20 @@ export class EventInterpreter {
     // 观测 hook（tool_execution_start）
     this.opts.executeHooks?.('onPiEvent', { event: 'tool_execution_start', toolCallId, toolName, input }).catch(() => {})
 
+    // [W21] hook 改写同步回 entry（WS 帧只发 entry——实时 feed 权威载体与 hook 语义一致）；
+    // contentIndex 锚点（§11 检查点 3：pi toolcall_start 提供，模型输出 tool_use 时——无此锚点
+    // 时同 turn 内 text 在 tool 之后 contentBlocks 顺序会错位）与 messageId 挂载目标从
+    // interpreter 缓存补进 entry。锚点缺失（旧 pi/异常）时字段缺省，前端退化为 append 尾部。
+    ev.entry.arguments = (input ?? {}) as Record<string, unknown>
+    const contentIndex = this.toolCallContentIndex.get(toolCallId)
+    if (contentIndex !== undefined) ev.entry.contentIndex = contentIndex
+    if (this.currentMessageId !== undefined) ev.entry.messageId = this.currentMessageId
+
     this.opts.send({
       type: 'message.tool_call_start',
       payload: {
         sessionId: this.sessionId,
-        toolCallId,
-        toolName,
-        input,
-        // §11 检查点 3：toolCall 产出顺序锚点（pi toolcall_start 提供，模型输出 tool_use 时）。
-        // tool_call_start 帧由 tool_execution_start（工具执行时）驱动，若无此锚点，同 turn 内
-        // text 在 tool 之后时 contentBlocks 顺序会错位（text_delta 先到）。缺失（旧 pi/异常）时不带。
-        ...(this.toolCallContentIndex.get(toolCallId) !== undefined ? { contentIndex: this.toolCallContentIndex.get(toolCallId) } : {}),
+        entry: ev.entry,
       },
     })
     // 锚点已消费，清除缓存（防 Map 无限增长；同 id 重复 start 无意义）
@@ -408,7 +407,13 @@ export class EventInterpreter {
     if (this.opts.executeHooks) {
       try {
         const hookResult = await this.opts.executeHooks('onAfterToolResult', { toolCallId, output })
-        if (hookResult.transformedData !== undefined) output = hookResult.transformedData as string
+        if (hookResult.transformedData !== undefined) {
+          output = hookResult.transformedData as string
+          // [W21] 仅 hook 实际改写时同步回 entry.message.content（WS 帧只发 entry）——
+          // 包成 text block 数组保持 pi 持久化形态（live≡reload 同构）；无改写时保持
+          // adapter 归一后的原数组。
+          ev.entry.message.content = [{ type: 'text', text: output }]
+        }
       } catch (e) {
         // 插件 hook 失败不影响主流程（best-effort 数据改写），降级到 debug 日志
         console.debug(`[event-interpreter] hook tool_execution_end error: ${toErrorMessage(e)}`)
@@ -437,15 +442,9 @@ export class EventInterpreter {
       type: 'message.tool_call_end',
       payload: {
         sessionId: this.sessionId,
-        toolCallId,
-        output,
-        outputRaw: ev.outputRaw,
-        details,
-        images,
-        // 与历史路径 convertPiHistory（tc.status='error'）保持一致：实时失败的 tool call
-        // 必须带 status:'error'，否则前端 Block.vue 的 isFailed 判定恒为 false（恒显示成功）。
-        status: isError ? 'error' : 'completed',
-        error: isError ? output : undefined,
+        // [W21] entry：toolResult message entry 形态（hook 改写时 content 已同步，
+        // 见上方 hook 分支注释），前端直接喂 applyEntry 回填。
+        entry: ev.entry,
       },
     })
 

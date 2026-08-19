@@ -16,9 +16,11 @@
  * bashExecution 分支）。runtime 保留 wire 层职责（RPC reply → entry 列表 → 喂本 reducer，
  * 见 message-converter.ts liftHistoryToEntries），派生规则唯一实现在此（D7 投影一次）。
  *
- * [已知分叉，W21 后收敛] stripAnsi/normalizePiToolResult 与 runtime
- * infra/pi/normalize-tool-result.ts（event-adapter 实时路径 SSOT，W21 领地禁碰）暂为两份：
- * core 不依赖 runtime（包依赖方向），shared 收敛留待后续 wave 统一处理。
+ * [已知分叉，收敛待后续 wave] stripAnsi/normalizePiToolResult 与 runtime
+ * infra/pi/normalize-tool-result.ts（event-adapter 实时路径 hook 上下文消费）仍为两份：
+ * core 不依赖 runtime（包依赖方向）。W21 起 core 版已导出（effects/registry 的
+ * tool_call_end overlay 收口消费，输入语义 = toolResult message body），shared 收敛
+ * 留待后续 wave 统一处理。
  *
  * 本文件自包含约束（runtime tsup 打包 / renderer vite 消费双重入口）：
  * 只 import '@xyz-agent/shared'，不 import core 内其他模块（防 vue 依赖渗入 runtime bundle）。
@@ -27,115 +29,41 @@ import type {
   ContentBlock,
   FileChange,
   Message,
+  PiEntry,
+  PiEntryBase,
+  PiMessageBody,
   Segment,
   ThinkingBlock,
   ToolCall,
 } from '@xyz-agent/shared'
 import { textToSegments, COMPLETE_NOTIFY_CUSTOM_TYPES } from '@xyz-agent/shared'
 
-// ── pi entry 类型（pi session-manager.ts SessionEntry 联合的结构镜像）───────────
+// ── pi entry 类型（W21 下沉 shared/pi-entry.ts，此处 re-export 保持 core API 兼容）───────
+//
+// 下沉动机：entry 形态成为三方共用 wire 契约（runtime event-adapter 实时重构 /
+// protocol.ts message.* payload 类型 / 本 reducer 输入），shared 是唯一不破坏包依赖
+// 方向的归属地。类型定义与注释见 @xyz-agent/shared/pi-entry.ts。
 //
 // 与 runtime infra/pi/pi-protocol.ts 的 PiSessionEntry 结构兼容（TS 结构类型，runtime 侧
 // 无需 import 本文件类型即可喂入）。pi 还有 thinking_level_change / model_change /
 // session_info 三个 entry 类型，xyz-agent 未建模——reducer 对未建模 type 走 default no-op
 // （不丢弃 entry 语义 = 不崩溃不吞整个重放，见 default 分支注释）。
 //
-// id 可选的原因：pi 真实 entry 恒有 id（uuidv7）；runtime wire 层 lift 无真实 entry id 的
-// 伪消息（get_messages 扁平列表 / __entryId 缺失）时为 undefined——此时 piEntryId 不回填
-// （对齐迁移前 convertPiHistory 的 entryIds?.[i] ?? __entryId 解析语义）。
-
-/** entry 公共字段（pi SessionEntryBase 镜像；timestamp 是 ISO string）。 */
-export interface PiEntryBase {
-  type: string
-  id?: string
-  parentId?: string | null
-  timestamp: string
-}
-
-/**
- * message entry 体（user/assistant/toolResult/bashExecution 四种 role 都在 message 字段里，
- * pi messages.ts AgentMessage 联合镜像）。字段按「消费到的」宽形态声明为 unknown，
- * 读取点全部运行时守卫收窄（禁 any，malformed 数据降级不抛错——session JSONL 可能截断）。
- */
-export interface PiMessageBody {
-  /** role 可选：wire 层 lift 无 role 的畸形记录时为 undefined——reducer 按 unknown role 降级（warn + 跳过） */
-  role?: string
-  content?: unknown
-  timestamp?: number
-  usage?: unknown
-  /** toolResult role 专属 */
-  toolCallId?: unknown
-  toolName?: unknown
-  isError?: unknown
-  details?: unknown
-  /** bashExecution role 专属 */
-  command?: unknown
-  output?: unknown
-  exitCode?: unknown
-  cancelled?: unknown
-  truncated?: unknown
-  excludeFromContext?: unknown
-  fullOutputPath?: unknown
-  /** compactionSummary role 专属 */
-  summary?: unknown
-  tokensBefore?: unknown
-  /** custom role 专属 */
-  customType?: unknown
-  display?: unknown
-  /** branchSummary role 专属 */
-  fromId?: unknown
-}
-
-export interface PiMessageEntry extends PiEntryBase {
-  type: 'message'
-  message: PiMessageBody
-}
-
-/** custom entry（extension appendEntry 写入，不进 LLM 上下文）。 */
-export interface PiCustomEntry extends PiEntryBase {
-  type: 'custom'
-  customType: string
-  data?: unknown
-}
-
-/** label entry（用户书签；重放侧不产出消息，显式 no-op case）。 */
-export interface PiLabelEntry extends PiEntryBase {
-  type: 'label'
-  label?: string
-  targetId?: string
-}
-
-/** compaction entry（compact 摘要）。summary/tokensBefore 在 pi 是必填，lift 容忍缺失。 */
-export interface PiCompactionEntry extends PiEntryBase {
-  type: 'compaction'
-  summary?: string
-  tokensBefore?: number
-}
-
-/** branch_summary entry（branch 摘要）。 */
-export interface PiBranchSummaryEntry extends PiEntryBase {
-  type: 'branch_summary'
-  fromId?: string
-  summary?: string
-}
-
-/** custom_message entry（扩展 sendMessage 注入，进 LLM 上下文 + 对话流渲染）。 */
-export interface PiCustomMessageEntry extends PiEntryBase {
-  type: 'custom_message'
-  customType: string
-  content?: unknown
-  display?: boolean
-  details?: unknown
-}
-
-/** reducer 输入的 pi entry 联合（6 个 xyz-agent 建模类型）。 */
-export type PiEntry =
-  | PiMessageEntry
-  | PiCustomEntry
-  | PiLabelEntry
-  | PiCompactionEntry
-  | PiBranchSummaryEntry
-  | PiCustomMessageEntry
+// id 可选的原因：pi 真实 entry 恒有 id（uuidv7）；wire 层 lift 无真实 entry id 的伪消息
+// （get_messages 扁平列表 / __entryId 缺失）与实时路径 message_end 重构（pi 在 emit 之后才
+// appendMessage 分配 id）均为 undefined——此时 piEntryId 不回填（对齐迁移前 convertPiHistory
+// 的 entryIds?.[i] ?? __entryId 解析语义），reducer 按 `e<N>` 确定性派生。
+export type {
+  PiEntry,
+  PiEntryBase,
+  PiMessageEntry,
+  PiMessageBody,
+  PiCustomEntry,
+  PiLabelEntry,
+  PiCompactionEntry,
+  PiBranchSummaryEntry,
+  PiCustomMessageEntry,
+} from '@xyz-agent/shared'
 
 /** toolResult role 的窄化 body（role 字面量收窄后构造，供 orphan 收集的类型自洽）。 */
 interface PiToolResultBody extends PiMessageBody {
@@ -218,12 +146,18 @@ function stripAnsi(text: string): string {
 }
 
 /** 归一后的工具结果（镜像 runtime NormalizedToolResult）。 */
-interface NormalizedToolResult {
+export interface NormalizedToolResult {
   output: string
   outputRaw?: string
 }
 
-function normalizePiToolResult(raw: unknown): NormalizedToolResult {
+/**
+ * 工具产出三态归一（string / content block 数组 / 对象 → output + outputRaw）。
+ * [W21] 导出供 effects/registry 消费（tool_call_end 的 entry.message.content 是原始
+ * 产出——与 pi 持久化 toolResult entry 同构，归一化在消费侧做）；本文件 reducer 的
+ * computeToolCallFill 同源调用。
+ */
+export function normalizePiToolResult(raw: unknown): NormalizedToolResult {
   let output: string
   let outputRaw: string | undefined
 

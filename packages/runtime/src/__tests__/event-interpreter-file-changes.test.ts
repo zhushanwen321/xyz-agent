@@ -102,6 +102,12 @@ const WRITE_TOOL_END = (toolCallId: string): PiTranslatedEvent => ({
   images: undefined,
   toolName: 'write',
   isError: false,
+  entry: {
+    type: 'message',
+    parentId: null,
+    timestamp: new Date(0).toISOString(),
+    message: { role: 'toolResult', toolCallId, toolName: 'write', content: [{ type: 'text', text: 'ok' }], isError: false, timestamp: 0 },
+  },
 })
 const TURN_END = (): PiTranslatedEvent => ({
   kind: 'turn-end',

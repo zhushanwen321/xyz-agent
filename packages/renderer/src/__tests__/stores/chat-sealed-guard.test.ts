@@ -87,7 +87,7 @@ describe('sealed guard（D-010：finalizeSession 后晚到事件幂等丢弃）'
     })
     store.applyMessageEvent(sid, {
       type: 'message.tool_call_start',
-      payload: { sessionId: sid, toolCallId: 'tc1', toolName: 'bash' },
+      payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'bash', arguments: {}, timestamp: new Date(0).toISOString() } },
     })
     store.applyMessageEvent(sid, {
       type: 'message.complete',
@@ -98,7 +98,7 @@ describe('sealed guard（D-010：finalizeSession 后晚到事件幂等丢弃）'
     // 晚到 tool_call_start
     store.applyMessageEvent(sid, {
       type: 'message.tool_call_start',
-      payload: { sessionId: sid, toolCallId: 'tc-late', toolName: 'read' },
+      payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc-late', toolName: 'read', arguments: {}, timestamp: new Date(0).toISOString() } },
     })
     expect(store.getMessages(sid)[0].toolCalls!.length).toBe(1) // 不新增
   })
@@ -112,7 +112,7 @@ describe('sealed guard（D-010：finalizeSession 后晚到事件幂等丢弃）'
     })
     store.applyMessageEvent(sid, {
       type: 'message.tool_call_start',
-      payload: { sessionId: sid, toolCallId: 'tc1', toolName: 'bash' },
+      payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'bash', arguments: {}, timestamp: new Date(0).toISOString() } },
     })
     store.applyMessageEvent(sid, {
       type: 'message.complete',
@@ -183,7 +183,7 @@ describe('sealed guard（D-010：finalizeSession 后晚到事件幂等丢弃）'
     })
     store.applyMessageEvent(sid, {
       type: 'message.tool_call_start',
-      payload: { sessionId: sid, toolCallId: 'tc1', toolName: 'bash' },
+      payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'bash', arguments: {}, timestamp: new Date(0).toISOString() } },
     })
     // complete 收口：running toolCall → end_not_received
     store.applyMessageEvent(sid, {
@@ -196,9 +196,13 @@ describe('sealed guard（D-010：finalizeSession 后晚到事件幂等丢弃）'
       type: 'message.tool_call_end',
       payload: {
         sessionId: sid,
-        toolCallId: 'tc1',
-        status: 'completed',
-        output: '实际输出',
+        // [w21] toolResult message entry 形态
+        entry: {
+          type: 'message',
+          parentId: null,
+          timestamp: new Date(0).toISOString(),
+          message: { role: 'toolResult', toolCallId: 'tc1', content: [{ type: 'text', text: '实际输出' }], isError: false, timestamp: 0 },
+        },
       },
     })
     expect(store.getMessages(sid)[0].toolCalls![0].status).toBe('completed')

@@ -55,14 +55,14 @@ describe('tool_call_end/update — ID 锚定（乱序免疫）', () => {
     const sid = 's5'
     // assistant#0 建 tc-1(running)
     store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
-    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'read', input: { path: '/f' } } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc-1', toolName: 'read', arguments: { path: '/f' }, timestamp: new Date(0).toISOString() } } })
 
     // 模拟 toolResult 噪声：空 assistant#1 插在后面（虽然 W1 已在 runtime 侧过滤，
     // 但防御：万一漏网，前端 ID 锚定仍应正确命中）
     store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a1' } })
 
     // tool_call_end(tc-1) 必须命中 assistant#0（ID 锚定），不能落在空 assistant#1
-    store.applyMessageEvent(sid, { type: 'message.tool_call_end', payload: { sessionId: sid, toolCallId: 'tc-1', output: 'done', status: 'completed' } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_end', payload: { sessionId: sid, entry: { type: 'message', parentId: null, timestamp: new Date(0).toISOString(), message: { role: 'toolResult', toolCallId: 'tc-1', content: [{ type: 'text', text: 'done' }], isError: false, timestamp: 0 } } } })
 
     const msgs = store.getMessages(sid)
     const owner = msgs[0] // assistant#0
@@ -77,7 +77,7 @@ describe('tool_call_end/update — ID 锚定（乱序免疫）', () => {
     const store = useChatStore()
     const sid = 's8'
     store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
-    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'bash', input: {} } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc-1', toolName: 'bash', arguments: {}, timestamp: new Date(0).toISOString() } } })
     store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a1' } })
 
     store.applyMessageEvent(sid, { type: 'message.tool_call_update', payload: { sessionId: sid, toolCallId: 'tc-1', detail: '读取中' } })
@@ -91,10 +91,10 @@ describe('tool_call_end/update — ID 锚定（乱序免疫）', () => {
     const store = useChatStore()
     const sid = 's9'
     store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
-    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'read', input: {} } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc-1', toolName: 'read', arguments: {}, timestamp: new Date(0).toISOString() } } })
 
     // toolCallId 'tc-ghost' 不存在任何 message（历史消息无索引 / 已归档场景）
-    store.applyMessageEvent(sid, { type: 'message.tool_call_end', payload: { sessionId: sid, toolCallId: 'tc-ghost', output: 'ghost', status: 'completed' } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_end', payload: { sessionId: sid, entry: { type: 'message', parentId: null, timestamp: new Date(0).toISOString(), message: { role: 'toolResult', toolCallId: 'tc-ghost', content: [{ type: 'text', text: 'ghost' }], isError: false, timestamp: 0 } } } })
 
     const msgs = store.getMessages(sid)
     // tc-1 不被误改（仍 running，未被 ghost 的 end 污染）
@@ -110,7 +110,7 @@ describe('message.complete — 残留 running toolCall 收口', () => {
     const store = useChatStore()
     const sid = 's6'
     store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
-    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'read', input: {} } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc-1', toolName: 'read', arguments: {}, timestamp: new Date(0).toISOString() } } })
     // 跳过 tool_call_end（模拟丢失），直接 complete
     store.applyMessageEvent(sid, { type: 'message.complete', payload: { sessionId: sid, stopReason: 'end_turn' } })
 
@@ -123,7 +123,7 @@ describe('message.complete — 残留 running toolCall 收口', () => {
     const store = useChatStore()
     const sid = 's7'
     store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
-    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'read', input: {} } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc-1', toolName: 'read', arguments: {}, timestamp: new Date(0).toISOString() } } })
     store.applyMessageEvent(sid, { type: 'message.complete', payload: { sessionId: sid, stopReason: 'error' } })
 
     const msgs = store.getMessages(sid)
@@ -135,8 +135,8 @@ describe('message.complete — 残留 running toolCall 收口', () => {
     const store = useChatStore()
     const sid = 's11'
     store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
-    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'read', input: {} } })
-    store.applyMessageEvent(sid, { type: 'message.tool_call_end', payload: { sessionId: sid, toolCallId: 'tc-1', output: 'ok', status: 'completed' } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc-1', toolName: 'read', arguments: {}, timestamp: new Date(0).toISOString() } } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_end', payload: { sessionId: sid, entry: { type: 'message', parentId: null, timestamp: new Date(0).toISOString(), message: { role: 'toolResult', toolCallId: 'tc-1', content: [{ type: 'text', text: 'ok' }], isError: false, timestamp: 0 } } } })
     store.applyMessageEvent(sid, { type: 'message.complete', payload: { sessionId: sid, stopReason: 'end_turn' } })
 
     const msgs = store.getMessages(sid)

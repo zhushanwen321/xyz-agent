@@ -33,6 +33,12 @@ describe('EventInterpreter · workflow 实时推送 session.workflowUpdate', () 
       details,
       images: undefined,
       isError: false,
+      entry: {
+        type: 'message',
+        parentId: null,
+        timestamp: new Date(0).toISOString(),
+        message: { role: 'toolResult', toolCallId: 'call-wf-1', toolName: 'workflow', content: JSON.stringify(details), isError: false, details, timestamp: 0 },
+      },
     }
   }
 
@@ -108,6 +114,12 @@ describe('EventInterpreter · workflow 实时推送 session.workflowUpdate', () 
         details: { action: 'run', runId: 'wf-x', status: 'running' },
         images: undefined,
         isError: false,
+        entry: {
+          type: 'message',
+          parentId: null,
+          timestamp: new Date(0).toISOString(),
+          message: { role: 'toolResult', toolCallId: 'call-other', toolName: 'read', content: [{ type: 'text', text: 'ok' }], isError: false, details: { action: 'run', runId: 'wf-x', status: 'running' }, timestamp: 0 },
+        },
       },
     ])
 

@@ -10,7 +10,7 @@
  * 子模块经 ISessionServiceInternal 只看到 IManagedSessionView,
  * 但拿到的是 ManagedSession 实例,可读写字段(lastActiveAt / isGenerating)。
  */
-import type { ServerMessage } from '@xyz-agent/shared'
+import type { ServerMessage, PiMessageEntry, PiToolCallEntryForm } from '@xyz-agent/shared'
 import type { ScannedSessionMeta } from '../ports/session.js'
 
 /**
@@ -132,6 +132,12 @@ export type PiTranslatedEvent =
       toolCallId: string
       toolName: string
       input: unknown
+      /**
+       * [W21] toolCall entry 形态（实时 feed 权威载体，event-adapter 翻译时重构）。
+       * interpreter hook 改写 input 后同步回 entry.arguments，WS 帧 payload 只发 entry；
+       * contentIndex/messageId 锚点由 interpreter 从缓存补进。平铺字段保留供 hook 上下文消费。
+       */
+      entry: PiToolCallEntryForm
     }
   /**
    * toolCall 产出顺序锚点（pi toolcall_start，模型输出 tool_use 时，带 contentIndex）。
@@ -150,6 +156,13 @@ export type PiTranslatedEvent =
       images: Array<{ data: string; mimeType: string }> | undefined
       toolName: string
       isError: boolean
+      /**
+       * [W21] toolResult message entry 形态（实时 feed 权威载体，event-adapter 翻译时重构，
+       * 与 pi 持久化 toolResult entry 同构）。interpreter hook 改写 output 后同步回
+       * entry.message.content，WS 帧 payload 只发 entry。平铺字段保留供 hook 上下文与
+       * subagent/workflow 编排消费。
+       */
+      entry: PiMessageEntry
     }
   /** turn 结束（agent_end）—— interpreter 触发 context.update 回写 + file_changes ready diff（排 diff 链尾）+ hook。 */
   | {

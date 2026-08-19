@@ -39,11 +39,36 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     // m2：queue_update drain 接线 drainPending + appendUser
     drainPending: vi.fn(),
     appendUser: vi.fn(),
+    // w21：entry 载体帧喂 reducer 的接入点（store.applyEntryFrame 注入）
+    applyEntryFrame: vi.fn(),
   }
 }
 
 function msg(type: string, payload: Record<string, unknown> = {}): ServerMessage {
   return { type, payload: { sessionId: SID, ...payload } } as ServerMessage
+}
+
+/** [w21] toolCall entry 形态构造（payload.entry——event-adapter 重构载体） */
+function toolCallEntry(fields: { toolCallId: string; toolName: string; arguments: Record<string, unknown>; contentIndex?: number }): Record<string, unknown> {
+  return {
+    type: 'toolCall',
+    toolCallId: fields.toolCallId,
+    toolName: fields.toolName,
+    arguments: fields.arguments,
+    ...(fields.contentIndex !== undefined ? { contentIndex: fields.contentIndex } : {}),
+    timestamp: new Date(0).toISOString(),
+  }
+}
+
+/** [w21] toolResult message entry 形态构造（payload.entry——与 pi 持久化 toolResult entry 同构） */
+function toolResultEntry(fields: { toolCallId: string; toolName: string; content: unknown; isError: boolean; details?: Record<string, unknown> }): Record<string, unknown> {
+  return {
+    type: 'message',
+    parentId: null,
+    timestamp: new Date(0).toISOString(),
+    // content 包 text block 数组（pi 持久化形态，W21 契约）
+    message: { role: 'toolResult', toolCallId: fields.toolCallId, toolName: fields.toolName, content: [{ type: 'text', text: String(fields.content) }], isError: fields.isError, ...(fields.details !== undefined ? { details: fields.details } : {}), timestamp: 0 },
+  }
 }
 
 function getMsgs(ctx: MessageEffectContext): Message[] {
@@ -97,8 +122,8 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
   it('tool_call_start/end：ID 锚定更新 status + output', () => {
     const ctx = makeCtx()
     dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read', input: { path: '/x' } }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { toolCallId: 'tc1', status: 'completed', output: 'data' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'read', arguments: { path: '/x' } }) }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { entry: toolResultEntry({ toolCallId: 'tc1', toolName: 'read', content: 'data', isError: false }) }))
     const a = lastAssistant(ctx)
     expect(a.toolCalls).toHaveLength(1)
     expect(a.toolCalls![0].status).toBe('completed')
@@ -130,7 +155,7 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
     // 事件到达顺序：thinking → text（模型先输出 thinking，再输出 tool_use，turn 结束后才执行工具）
     dispatchMessageEvent(ctx, SID, msg('message.thinking_start', { thinkingId: 'th1', contentIndex: 0 }))
     dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'answer', contentIndex: 2 }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read', input: { path: '/x' }, contentIndex: 1 }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'read', arguments: { path: '/x' }, contentIndex: 1 }) }))
     const a = lastAssistant(ctx)
     expect(a.contentBlocks).toEqual([
       { type: 'thinking', refId: 'th1', contentIndex: 0 },
@@ -143,7 +168,7 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
     const ctx = makeCtx()
     dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
     dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'let me check', contentIndex: 0 }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read', input: { path: '/x' }, contentIndex: 1 }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'read', arguments: { path: '/x' }, contentIndex: 1 }) }))
     const a = lastAssistant(ctx)
     expect(a.contentBlocks).toEqual([
       { type: 'text', refId: 'text', contentIndex: 0 },
@@ -155,7 +180,7 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
     const ctx = makeCtx()
     dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
     dispatchMessageEvent(ctx, SID, msg('message.thinking_start', { thinkingId: 'th1' }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read', input: {} }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'read', arguments: {} }) }))
     dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'text' }))
     const a = lastAssistant(ctx)
     expect(a.contentBlocks).toEqual([
@@ -170,8 +195,8 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
     dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
     dispatchMessageEvent(ctx, SID, msg('message.thinking_start', { thinkingId: 'th1', contentIndex: 0 }))
     dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'mid', contentIndex: 2 }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read', input: {}, contentIndex: 1 }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc2', toolName: 'grep', input: {}, contentIndex: 3 }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'read', arguments: {}, contentIndex: 1 }) }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc2', toolName: 'grep', arguments: {}, contentIndex: 3 }) }))
     const a = lastAssistant(ctx)
     expect(a.contentBlocks).toEqual([
       { type: 'thinking', refId: 'th1', contentIndex: 0 },
