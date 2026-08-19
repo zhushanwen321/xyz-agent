@@ -58,9 +58,13 @@ import type { WorkspaceService } from '../src/services/workspace/workspace-servi
 import type { SessionSummary } from '@xyz-agent/shared'
 
 function makeClient(overrides: Partial<IPiEngine> = {}): IPiEngine {
+  // [W2 语义变更] mock getState 的 sessionFile 跟随最近一次 switchSession 实参——真实 pi
+  // 行为（switch_session 后 get_state.sessionFile 即写目标，ADR-0063 I1）；未 switch 过时
+  // 保持原固定值。session-lifecycle 的 attach 断言依赖该语义（原固定假路径会被判 I1 分裂）。
+  let lastSwitchTarget: string | undefined
   return {
-    getState: vi.fn(async () => ({ sessionId: 'pi-x', sessionFile: '/fake/x.jsonl' })),
-    switchSession: vi.fn(async () => {}),
+    getState: vi.fn(async () => ({ sessionId: 'pi-x', sessionFile: lastSwitchTarget ?? '/fake/x.jsonl' })),
+    switchSession: vi.fn(async (p: string) => { lastSwitchTarget = p }),
     prompt: vi.fn(async () => ({})),
     setModel: vi.fn(async () => {}),
     getCommands: vi.fn(async () => []),

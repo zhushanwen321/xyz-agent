@@ -29,6 +29,7 @@ xyz 的任何代码（runtime / renderer / 脚本）永不写 pi **当前持有*
 
 - **sidecar 家族四后缀（D3）**：`.meta.json` / `.preset.json` / `.project.json` / `.handoff.json`——xyz 自有文件（pi 体系外的 xyz 数据，不是 pi 的文件），读写收口 session-file-utils 单一 util、写前 existsSync 守卫（规则 #6 防 pi `openSync("wx")` 竞态）、写后失效 meta 缓存；R1 检查对四后缀内置豁免，豁免清单与登记表条目一一对应。
 - **文件创建型（fork）**：创建 pi 将来才持有的新 session 文件（写前不存在、无进程持有、写后即移交 pi，`createForkedSessionFile` 唯一实例）。边界约束：禁止演进为「重写既有 session 文件」。
+- **restore-time 归一化 rename-over（修订增补 2026-08-19，restore-fork-attach-fix W2——第三类，登记表 §4 ⑨）**：`normalizeSessionFileInPlace` 对 **inactive** 旧 session 文件（无 pi 进程持有，restoreSession 语义天然满足）的一次性归一化——变换产物写**同目录**临时名 `<原名>.tmp-migrate-<ts>.jsonl` → `renameSync` 原子覆盖原文件 → pi `switch_session` 附着**原路径**。与上条 fork 创建型的禁令关系（澄清）：**独立受限形态，不经创建型入口、非其演化**——「禁止演进为重写既有 session 文件」的禁令对创建型继续成立且不被本类削弱；本类的内容写发生在 rename 之前、目标是写前不存在的临时名（创建型语义），rename 本体是文件系统元数据操作（同 `pi-maintenance.ts` 一次性迁移先例），**路径不变正是本类要保住的属性**（sidecar 四后缀按同路径派生 / fork 血缘 `parentSession` 指针 / scanner 关联均按路径绑定，换路径 = 身份漂移）。边界约束五项：inactive-only + 同目录临时名 + rename 原子替换 + 变换白名单仅两项（strip `session_end` 行 / header cwd fallback，各有 pi 侧依据）+ 每文件最多一次（归一化产物无 `session_end` 且 cwd 已修活 → 下次 restore 走零改写直附着，幂等收敛）；**禁止演进为常态改写机制**——白名单之外的内容变更不得经此路径。R1 豁免（`check_pi_direct_write.py` `TMP_MIGRATE_SUFFIX_RE`）与登记表 §4 ⑨ 一一对应。
 
 无白名单：迁移期 legacy 例外是带期限的债务（W11 已全部消灭），合法形态是规则边界，例外必须登记并带移除期限。
 
@@ -50,3 +51,4 @@ pi 无队列内容通道（RPC 命令全集与 ExtensionAPI 均已穷尽核实�
 - 正面：双层护栏以此为准绳——机器层（R1/R2/R3）+ 语义层（pr-cr-fix review-data-governance checklist）均对照登记表。
 - 负面：sidecar 家族与 fork 创建型的跨文件数据流静态不可判定，机器层只能拦模式，语义守卫依赖登记纪律 + S1 review。
 - 修订追认：ADR-0042 正文「append JSONL」原决策已由其前案 W1（历史 effort 的 W1，非本计划 wave W1）修订为 runtime 单写 sidecar，本 ADR（D3 选项 a）追认该形态为 sidecar 家族合法成员。
+- 修订追认（2026-08-19，restore-fork-attach-fix W2）：§2 合法边界形态自本日起由两类（§2 原文「两类」为增补前封闭列举）增补为三类——第三类 = restore-time 归一化 rename-over（inactive-only + 同目录 `.tmp-migrate-` 临时名 + `renameSync` 原子替换 + 变换白名单 strip `session_end` / header cwd fallback + 每文件最多一次幂等收敛），登记于登记表 §4 ⑨，R1 豁免（`TMP_MIGRATE_SUFFIX_RE`）与之一一对应；它与 fork 创建型各自独立，后者「禁止演进为重写既有 session 文件」的边界约束不变（形态定义与关系澄清见 §2 第三条 bullet）。

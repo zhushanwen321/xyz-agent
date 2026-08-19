@@ -26,6 +26,7 @@ import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND 
 import { createForkedSessionFile } from './session-fork.js'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
 import { normalizeSessionFileInPlace } from '../../infra/pi/session-file-utils.js'
+import { assertPiSessionFile } from '../../infra/pi/session-attach-assert.js'
 
 /**
  * 匹配 `"type":"session_end"` 或 `'type':'session_end'`（容忍引号/空格差异）。
@@ -551,6 +552,10 @@ export class SessionLifecycle {
       }
       // F2 直附着（!needsNormalize）：零拷贝零改写，pi 的读写目标 = 登记路径 = 原文件。
       await client.switchSession(target.filePath)
+      // W2（restore-fork-attach-fix F4）：附着必断言（I1「登记路径 ≡ pi 写路径」）——
+      // get_state().sessionFile 与登记路径 resolve 归一后必须一致，不一致即 throw
+      //（D3 fail loud；本 try 的 catch 分支 safeDestroy + rethrow 保证进程不泄漏）。
+      await assertPiSessionFile(client, target.filePath, `restoreSession(${sessionId})`)
       // W2-4：清理旧 sidecar 移到 switchSession 成功之后。
       // 原顺序是 switchSession 之前 unlink，若 switchSession 抛错，原 session 的终态 sidecar
       //（done/stopped）已被删 → 原会话终态永久丢失。现在只在切换成功后才删，失败时保留旧终态。
@@ -706,6 +711,9 @@ export class SessionLifecycle {
       // 无需 strip：fork 产物由 createForkedSessionFile 按树过滤生成（登记表 §4 ⑥ 创建型
       // 合法形态），游离的 legacy session_end 行（无 id 不在树内）天然不进产物。
       await client.switchSession(forkedFilePath)
+      // W2（restore-fork-attach-fix F4）：附着必断言（I1「登记路径 ≡ pi 写路径」）——
+      // 登记的 forkedFilePath 必须就是 pi 的终身写目标，不一致即 throw（D3 fail loud）。
+      await assertPiSessionFile(client, forkedFilePath, `forkSession(${srcSessionId})`)
       // W2-4：清理旧 sidecar 移到 switchSession 成功之后。
       // 原顺序是 switchSession 之前 unlink，若 switchSession 抛错，session 的终态 sidecar
       //（done/stopped）已被删 → 终态永久丢失。现在只在切换成功后才删，失败时保留旧终态。

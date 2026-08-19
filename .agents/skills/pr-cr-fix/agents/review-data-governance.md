@@ -5,7 +5,7 @@ name: review-data-governance
 
 # 数据多源治理审查 Agent
 
-审查 `git diff main...HEAD` 中变更对 xyz-agent 数据治理结构的破坏。准绳是 `docs/architecture/data-source-registry.md`（数据登记表 SSOT——owner / 权威源 / 唯一写入口 / 字段空值语义 / 已知例外的唯一对照源）+ `docs/adr/0062-single-data-owner-absolute-write-rule.md`（单一数据 owner + 绝对写规则的架构决策：D1 判定表 / 事件只做失效 / pi JSONL 唯一写方 / sidecar 四后缀 / 队列按字段分权威 / ReplicatedState 配置即登记条目）+ `docs/architecture/data-source-governance.md`（父文档，五原则与 D1-D8 裁决全文）。
+审查 `git diff main...HEAD` 中变更对 xyz-agent 数据治理结构的破坏。准绳是 `docs/architecture/data-source-registry.md`（数据登记表 SSOT——owner / 权威源 / 唯一写入口 / 字段空值语义 / 已知例外的唯一对照源）+ `docs/adr/0062-single-data-owner-absolute-write-rule.md`（单一数据 owner + 绝对写规则的架构决策：D1 判定表 / 事件只做失效 / pi JSONL 唯一写方 / sidecar 四后缀 / 队列按字段分权威 / ReplicatedState 配置即登记条目）+ `docs/adr/0063-session-attachment-invariants.md`（session 附着不变量：I1 登记路径 ≡ pi 写路径 / I2 会话内容只存在于 sessions 目录 / I3 持久性屏障 / I4 pi 行为断言带 pi-mono 源码锚点 / I5 会话文件身份登记条目）+ `docs/architecture/data-source-governance.md`（父文档，五原则与 D1-D8 裁决全文）。
 
 **背景契约（已核实，审查时当作前提，不要重新怀疑）**：
 
@@ -43,11 +43,15 @@ task prompt 中必须包含：
    - 新代码把状态编码进 message/toolCall 让读取方逆向解析 = MUST_FIX；`pi.sendMessage` custom message 用于用户可见通知合法，用于状态记录 = MUST_FIX。
 8. **登记表同步检查**：
    - 改了数据流（写路径/缓存/事件消费/派生位置）的 PR 必须同步更新 `data-source-registry.md`；漏更新 = MUST_FIX。
-9. **输出审查报告**到 `output` 路径。
+9. **会话数据落点检查（ADR-0063 I2，MUST）**：
+   - diff 中是否出现把**对话/会话内容**（session JSONL、消息、entry、会话拷贝产物）写入 `$TMPDIR` / `os.tmpdir()` / 其他临时目录的路径（`mkdtemp`/`tmpdir`/`/tmp` 与 writeFile/appendFile 组合）。会话内容合法位置只有 sessions 目录（pi 的写目标）与活跃进程内存；临时目录会被 OS 清空、不被 xyz 扫描——放进去 = 慢性数据丢失（2026-07-17 tmp 附着管线曾致 P0 数据丢失静默 40 天）。命中 = MUST_FIX（唯一例外：测试 fixture 的隔离 session-dir，须带清理断言）。
+10. **pi 行为断言锚点检查（ADR-0063 I4，MUST）**：
+   - diff 中对 pi 内部行为的断言（注释 / 测试断言 / 文档声明「pi 会 / 不会 / 已 / 忽略 / 持久化 …」）是否附 pi-mono 源码锚点（文件 + 行号，本地 clone `~/Code/git-fork/pi-mono-workspace/main/packages/` 只读查阅）。无锚点的臆断（如「pi 已读入内存」——实为永久重绑写目标）= MUST_FIX；有锚点但只覆盖单层消费面（如只查 parse 层漏 index/append 层）= MUST_FIX（MF1 教训：单层「无害」≠ 整体无害）。
+11. **输出审查报告**到 `output` 路径。
 
 ## 严重度判定
 
-数据治理违规 = 架构约束违规，**不允许降级**：pi 文件直写、第二写入者、事件直写状态、renderer 派生、无登记缓存、扩展通道违规一律 MUST_FIX。仅「WS 消息非 view-ready 但有短期理由」「登记表字段描述不清晰」类可 SUGGESTION。
+数据治理违规 = 架构约束违规，**不允许降级**：pi 文件直写、第二写入者、事件直写状态、renderer 派生、无登记缓存、扩展通道违规、会话数据入 $TMPDIR（I2）、pi 行为断言无锚点（I4）一律 MUST_FIX。仅「WS 消息非 view-ready 但有短期理由」「登记表字段描述不清晰」类可 SUGGESTION。
 
 ## 输出格式
 
@@ -71,7 +75,7 @@ must_fix: <数字>
 | MUST_FIX | session-lifecycle.ts | 88 | pi-file-write | 新增 appendFileSync 直写 session JSONL | 改经 rpc-client.set_session_name，活跃走 RPC / 非活跃走短命 pi 进程 |
 ```
 
-类别包括：pi-file-write / second-writer / event-as-data / renderer-derivation / unregistered-cache / extension-channel / registry-sync
+类别包括：pi-file-write / second-writer / event-as-data / renderer-derivation / unregistered-cache / extension-channel / registry-sync / tmpdir-session-data / unanchored-pi-assertion
 
 优先级：MUST_FIX / SUGGESTION / INFO
 
