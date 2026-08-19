@@ -31,7 +31,7 @@
 |------|------|------|----------------|------|
 | W13 | session store applySnapshot 单入口 + DTO | committed (9c7af948b) | 996063a6f | verifier PASS（报告 w13-report.md：10 检查点全过——防篡改 0 diff/11 源 + 38 测试与 git status 一一对应/**useChat 6 hunk 机械改写 + registry 恰 3 行注释与 W14 零重叠实证**/mergeViewSnapshot D1b + W15 挂点锚定/DTO 与 W12 payload 逐字段对上/三入口 grep 清零/R2 WATCHED_MUTATIONS 单键化/红性两组——falsy 跳过 TC-4b 红 + 直呼 lint 实弹，字节还原/core 994 + renderer 3054 全绿/三冲突裁决全支持 builder——chat 域以 plan「全部调用点改」为准）。minor 5 条（W15 落盘字段确认→已写入 W15 派发词/usage 丢弃存量行为/index.ts 混 W18 导出→归 W18 commit/store 残余写方法归 W24/行超长）。registry.ts 归 W14 commit（W13 3 行注释搭车） |
 | W14 | pendingBuffer 计数 FIFO | committed (08b4edf8e) | 9382ccb57 | verifier PASS（报告 w14-report.md：9 检查点全过——防篡改零 diff/范围 6 文件（自报 7 计数口误，useChat 系 W13）/drainN 全达标/组 2 引用级断言真 dispatch 链/红性双组——回退文本匹配组 2 红（丢消息复现）+删 reconcile 组 4 红，字节还原指纹一致/core 全量 994 全绿（builder 报 2 failed 已被 W13 补 mock 自愈，三点独立核实）/两解读均支持——代数等价 + 帧内字段三点证实）。**R1 终裁（主 agent）**：裁剪方向接受 builder slice(0,depth) 保头——稳态对齐点在头部 + 组 4 测试锚定 + 反方向在入队失败场景同样丢消息，行为级实测留 P2 gate。minor 4 条（登记表行号 :123→:132 待落表等） |
-| W15 | scannedToSummary 空值守卫 | building | 9382ccb57 | 依赖 W13✓；builder 后台运行中（scanner 占位来源标记 + mergeViewSnapshot 仅扫描来源生效守卫 + ≥4 用例 + W13 移交字段落盘确认项） |
+| W15 | scannedToSummary 空值守卫 | verifying | 9382ccb57 | 依赖 W13✓；builder 交付 6 文件：定案快照级单标记 `source?: 'scan'`（缺省 undefined = owner 零改动兼容）+ mergeViewSnapshot isScan 分流守卫（仅 modelId/tokenCount 占位空+target 真值时保留；label 权威空仍覆盖）+ 5+3 用例（TC-W15-3 防守卫扩大化）。自报 core 999 + runtime 3163 全绿（3 真实 pi flaky 复跑排除如实报告）。W13 移交确认项收口：pendingMessageCount→chat store/commands→command-store/usage 三字段→组件本地态（唯一不经 store 落点，观察项）。**一冲突待裁决**：acceptance「sessionName=undefined 必须覆盖」与 D1b 表述落差——builder 按 wire 等价形态 {label:''} 落断言 |
 
 ## P3 wave 表（W16-W21）
 
