@@ -53,7 +53,7 @@
 | W22 | 等价性测试族全量化入 CI | committed (331beb627) | ed26b3da8 | verifier PASS（报告 w22-report.md：24 用例 21s/反证 +1000 偏移红/防空调跑对抗——恒真断言下 0 skipped 且语料守卫在位/CI 链条行号实测零改动接线/ref 收敛裁决如实——条数级无缺口、id 形态异源 = W21 定案遗留态）。残余观察：it1 stateSnapshot 手工复刻投影口径（文件头声明，生产公式漂移不复现） |
 | W23 | ADR-0062 + ADR-0042 修订 + checklist | pending | — | 依赖 W11/W13/W18 |
 | W24 | R2 调用图收紧 | pending | — | 依赖 W2/W13 |
-| W25 | pi 升级契约测试 | building | — | 依赖 W5/W21；builder 后台运行中（pi-protocol-contract.test.ts + entry_appended 不发射事实固化 + CI 接线）；验收基线 ed26b3da8 |
+| W25 | pi 升级契约测试 | verifying | — | 依赖 W5/W21；builder 交付（2 用例真实 fixture：RPC 五命令/事件五发射含 entry_appended 负向/PiEntry exhaustive 三断言 + check-version-bump.sh L39-85 双位置签名接线 + 反证三组红绿 + RUNTIME_TEST 3123 全绿）。三差异待 verifier 裁决：pi 依赖实际在 root package.json（plan 写 runtime）；entry_appended 正向未测以负向固化；新契约事实 set_session_name 追加 session_info entry / 空 session get_entries 非空 |
 
 ## 里程碑 gate
 
