@@ -25,3 +25,4 @@
 ## 事件
 
 - 2026-08-19 **计划收官（2/2 wave committed）**：W1 `96f37a754`（verifier PASS 0 major）+ W2 gate 复验（冒烟断言 A/B 全过 + 引用豁免）。p1p4 P3 gate 改判 PASS 并回写 p1p4 ledger（gate 表 + 事件收官条目）。data-source-governance 全链路（P0 止血 → P1-P4 二十 wave → 对抗循环 3 轮 → restore 根因修复 → gate 复验）闭环。仍开放移交后续：bash_execution_update live 流式渲染（可选增强未立项）、thinking 档显示波动（W2 观察）。
+| W3 | attach 护栏报警器 + tmp-migrate 残留清理（审查遗留修复） | building | 本文件同 commit | 用户裁决「剩余问题都修复，再跑一轮测试」（2026-08-19 23:45）；来源 = 主 agent 对 restore-fork-attach-fix 第三视角审查两项：①I1 护栏静默失效面（跳过分支 2 无报警器）②崩溃残留无清理。验收基线 acceptance/w3-acceptance.md；完成后全量回归轮 |
