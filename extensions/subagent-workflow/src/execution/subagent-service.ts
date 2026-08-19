@@ -385,12 +385,21 @@ export class SubagentService {
   }
 
   /** 孤儿终态恢复委托（RecordStore.recoverOrphanRecords 的唯一公开入口，维持 store
-   *  private 封装——与 recoverManifestTmpFiles 同模式）。判定语义见 store 侧注释。 */
+   *  private 封装——与 recoverManifestTmpFiles 同模式）。判定语义见 store 侧注释。
+   *  随后跑 entry-born 孤儿恢复（无子文件锚的 register-only record，spawn 窗口期死亡，
+   *  E2E 实测缺口）——主 session 文件经 getMainSessionFile 注入（构造期可空）。 */
   recoverOrphanRecords(): void {
     try {
       this.store.recoverOrphanRecords(this.sessionRootId ?? undefined);
     } catch (err) {
       logger.warn("[subagents] orphan recovery failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+    try {
+      this.store.recoverEntryOnlyOrphans(this.getMainSessionFile?.(), this.sessionRootId ?? undefined);
+    } catch (err) {
+      logger.warn("[subagents] entry-only orphan recovery failed", {
         reason: err instanceof Error ? err.message : String(err),
       });
     }

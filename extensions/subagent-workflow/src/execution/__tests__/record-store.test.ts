@@ -888,6 +888,62 @@ describe("RecordStore", () => {
       store.recoverOrphanRecords("sess-orphan");
       expect(appended.find((c) => c.data.id === "sa-orphan-4")).toBeUndefined();
     });
+
+    /** 写主 session fixture（含指定 subagent-record entry 序列）。 */
+    function writeMainSession(entries: Array<Record<string, unknown>>): string {
+      const mainFile = path.join(tmpDir, "main-session.jsonl");
+      const lines = entries.map((d) => JSON.stringify({ type: "custom", id: `e-${Math.random()}`, parentId: null, customType: "subagent-record", data: d }));
+      fs.writeFileSync(mainFile, lines.join("\n") + "\n", "utf-8");
+      return mainFile;
+    }
+
+    it("entry-born 孤儿（无子文件，spawn 窗口期死亡）→ closed+gc+error（E2E 实测回归）", () => {
+      const mainFile = writeMainSession([
+        { v: 1, id: "sa-entryonly-1", agent: "worker", task: "spawn interrupted", slug: "s", status: "running", mode: "background", startedAt: 6000, rootSessionId: "sess-orphan", depth: 0, turns: 0, totalTokens: 0, model: "m", eventLog: [], displayItems: [] },
+      ]);
+      const { store, appended } = makeRecoveryStore();
+      store.recoverEntryOnlyOrphans(mainFile, "sess-orphan");
+
+      const entry = appended.find((c) => c.data.id === "sa-entryonly-1");
+      expect(entry?.data.status).toBe("closed");
+      expect(entry?.data.closedReason).toBe("gc");
+      expect(entry?.data.error).toContain("no child session file");
+      // 防重：orphanJudged 缓存拦截二次判定
+      const count = appended.length;
+      store.recoverEntryOnlyOrphans(mainFile, "sess-orphan");
+      expect(appended.length).toBe(count);
+    });
+
+    it("entry-born chatMode 孤儿 → 不终态化，落 resumable entry", () => {
+      const mainFile = writeMainSession([
+        { v: 1, id: "sa-entryonly-2", agent: "worker", task: "chat spawn interrupted", slug: "s", status: "running", mode: "background", startedAt: 7000, rootSessionId: "sess-orphan", depth: 0, turns: 0, totalTokens: 0, model: "m", eventLog: [], displayItems: [], chatMode: true },
+      ]);
+      const { store, appended } = makeRecoveryStore();
+      store.recoverEntryOnlyOrphans(mainFile, "sess-orphan");
+
+      const entry = appended.find((c) => c.data.id === "sa-entryonly-2");
+      expect(entry?.data.status).toBe("running");
+      expect(entry?.data.resumable).toBe(true);
+      expect(entry?.data.error).toBeUndefined();
+    });
+
+    it("有子文件锚 / 末条已终态 / 他 session 的 entry-born id 不进判定", () => {
+      const anchoredFile = path.join(tmpDir, "orphan-anchored.jsonl");
+      writeSessionJsonl(anchoredFile, {
+        id: "sa-anchored", agent: "worker", mode: "background", task: "has file",
+        startedAt: 8000, rootSessionId: "sess-orphan",
+      });
+      const mainFile = writeMainSession([
+        { v: 1, id: "sa-anchored", agent: "worker", task: "has file", slug: "s", status: "running", mode: "background", startedAt: 8000, rootSessionId: "sess-orphan", depth: 0, turns: 0, totalTokens: 0, model: "m", eventLog: [], displayItems: [] },
+        { v: 1, id: "sa-settled", agent: "worker", task: "settled", slug: "s", status: "closed", mode: "background", startedAt: 8100, rootSessionId: "sess-orphan", depth: 0, turns: 1, totalTokens: 0, model: "m", eventLog: [], displayItems: [] },
+        { v: 1, id: "sa-foreign", agent: "worker", task: "other session", slug: "s", status: "running", mode: "background", startedAt: 8200, rootSessionId: "sess-other", depth: 0, turns: 0, totalTokens: 0, model: "m", eventLog: [], displayItems: [] },
+      ]);
+      const { store, appended } = makeRecoveryStore();
+      store.recoverEntryOnlyOrphans(mainFile, "sess-orphan");
+      expect(appended.find((c) => c.data.id === "sa-anchored")).toBeUndefined();
+      expect(appended.find((c) => c.data.id === "sa-settled")).toBeUndefined();
+      expect(appended.find((c) => c.data.id === "sa-foreign")).toBeUndefined();
+    });
   });
 
   // ============================================================

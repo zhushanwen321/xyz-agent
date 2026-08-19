@@ -29,7 +29,7 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { getCurrentActivity, getDisplayItems, getEventLog, markReconstructedStatus, snapshot as toSnapshot } from "./execution-record.ts";
 import { writeFinalized } from "./finalized-marker.ts";
-import { toSubagentRecordEntry } from "./record-entry.ts";
+import { toSubagentRecordEntry, SUBAGENT_RECORD_CUSTOM_TYPE } from "./record-entry.ts";
 import type { ManifestRecord, ManifestStore } from "./manifest-store.ts";
 import { INDEX_WRITE_MIN_INTERVAL_MS, loadIndex, saveIndex } from "./sessions-index.ts";
 import type { SessionsIndexEntry, SessionsIndexNegativeEntry } from "./sessions-index.ts";
@@ -206,6 +206,16 @@ function readLastJsonlLine(sessionFile: string): { ok: true; line: string } | { 
       }
     }
   }
+}
+
+/** unknown → subagent-record entry 的运行时守卫（taste/no-unsafe-cast：断言前收窄）。 */
+function asSubagentRecordEntry(o: unknown): { id: string; data: Record<string, unknown> } | null {
+  if (typeof o !== "object" || o === null) return null;
+  const obj = o as Record<string, unknown>;
+  if (obj.type !== "custom" || obj.customType !== SUBAGENT_RECORD_CUSTOM_TYPE) return null;
+  if (typeof obj.data !== "object" || obj.data === null) return null;
+  const data = obj.data as Record<string, unknown>;
+  return typeof data.id === "string" ? { id: data.id, data } : null;
 }
 
 /** stat 戳（不存在 → null）。 */
@@ -497,7 +507,7 @@ export class RecordStore {
         continue;
       }
       const sessionFile = rec.sessionFile;
-      if (sessionFile === undefined) continue; // 无子文件锚，无从判定（防御）
+      if (sessionFile === undefined) continue; // 无子文件锚（目录扫描源不可达，防御）
       const lastLine = readLastJsonlLine(sessionFile);
       if (!lastLine.ok) {
         // IO 错误可能暂时——判终态不可逆，保守落 resumable 等重开重判。
@@ -519,6 +529,92 @@ export class RecordStore {
         closedReason: "gc",
         endedAt: Date.now(),
         ...(parseOk ? {} : { error: "orphan recovery: subagent session ended abnormally (truncated last line)" }),
+      });
+    }
+  }
+
+  /**
+   * [E2E 实测缺口] entry-born 孤儿恢复：register entry 已落主 session、但子 session 文件
+   * 从未创建（父进程死在 spawn 窗口期——register 写点与子进程首笔写入之间的窗口；外部
+   * 删除子文件的已知边界同形）。目录扫描（reconstructAll）看不见这类 record（无文件即
+   * 无扫描集），recoverOrphanRecords 判不到，侧栏（runtime entry 扫描源）永久 spinner。
+   *
+   * 判定：读主 session 的 subagent-record entry，取每 id 末条；末条 status=running 且
+   * 无子文件锚（不在 reconstructAll 结果中）且不在内存活 record（防误杀刚 register 的
+   * 在途 spawn）→ 按无文件判据收敛：chatMode=true → resumable（分流语义一致）；否则
+   * closed+gc+error（子文件由子进程创建，无文件 = 子进程从未开跑，error 方向安全）。
+   * 调用点：initSession 的 recoverOrphanRecords 之后（session_start，内存恒空）。
+   */
+  recoverEntryOnlyOrphans(mainSessionFile: string | undefined, rootSessionFilter?: string): void {
+    if (mainSessionFile === undefined) return;
+    let content: string;
+    try {
+      content = fs.readFileSync(mainSessionFile, "utf-8");
+    } catch {
+      return; // 主文件不可读：静默跳过（best-effort 恢复，不阻断 session_start）
+    }
+    const lastById = new Map<string, Record<string, unknown>>();
+    for (const line of content.split("\n")) {
+      if (!line.includes(SUBAGENT_RECORD_CUSTOM_TYPE)) continue; // 快过滤：绝大多数行不是本类型
+      let entry: { id: string; data: Record<string, unknown> } | null = null;
+      try {
+        entry = asSubagentRecordEntry(JSON.parse(line));
+      } catch (err) {
+        // 截断/异构行跳过（主文件末行可能正被写入）——行级 best-effort，debug 留痕
+        logger.debug("[subagents] entry-only orphan scan: skip unparsable line", {
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+      if (entry !== null) lastById.set(entry.id, entry.data);
+    }
+    if (lastById.size === 0) return;
+    const anchoredIds = new Set(this.reconstructAll(rootSessionFilter).map((r) => r.id));
+    for (const [id, d] of lastById) {
+      if (d.status !== "running") continue; // 末条已终态/轮终：entry 自洽，无需恢复
+      if (rootSessionFilter !== undefined && d.rootSessionId !== rootSessionFilter) continue;
+      if (anchoredIds.has(id)) continue; // 有子文件锚：主循环已判（或 sidecar 已终态）
+      if (this.records.has(id)) continue; // 内存活 record：在途 spawn，不得误杀
+      if (this.orphanJudged.has(id)) continue;
+      this.orphanJudged.add(id);
+      // entry data 即 SubagentRecord v1 快照——带运行时 guard 重建（taste/no-unsafe-cast）。
+      const str = (k: string): string | undefined => (typeof d[k] === "string" ? (d[k] as string) : undefined);
+      const num = (k: string): number | undefined => (typeof d[k] === "number" ? (d[k] as number) : undefined);
+      const agent = str("agent");
+      const task = str("task");
+      const startedAt = num("startedAt");
+      if (agent === undefined || task === undefined || startedAt === undefined) continue; // 损坏 entry：跳过
+      const rec: SubagentRecord = {
+        id,
+        agent,
+        task,
+        slug: str("slug") ?? "",
+        status: "running",
+        mode: "background",
+        startedAt,
+        rootSessionId: str("rootSessionId"),
+        parentRecordId: str("parentRecordId"),
+        depth: num("depth") ?? 0,
+        endedAt: undefined,
+        turns: num("turns") ?? 0,
+        totalTokens: num("totalTokens") ?? 0,
+        model: str("model") ?? "",
+        thinkingLevel: str("thinkingLevel"),
+        eventLog: [],
+        displayItems: [],
+        sessionFile: undefined,
+        chatMode: d.chatMode === true,
+        round: num("round"),
+      };
+      this.reportSubagentRecord({
+        ...rec,
+        ...(d.chatMode === true
+          ? { resumable: true }
+          : {
+              status: "closed" as const,
+              closedReason: "gc" as const,
+              endedAt: Date.now(),
+              error: "orphan recovery: no child session file (spawn interrupted or file removed externally)",
+            }),
       });
     }
   }
