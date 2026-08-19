@@ -27,3 +27,4 @@
 
 - 2026-08-19 **计划收官（2/2 wave committed）**：W1 `96f37a754`（verifier PASS 0 major）+ W2 gate 复验（冒烟断言 A/B 全过 + 引用豁免）。p1p4 P3 gate 改判 PASS 并回写 p1p4 ledger（gate 表 + 事件收官条目）。data-source-governance 全链路（P0 止血 → P1-P4 二十 wave → 对抗循环 3 轮 → restore 根因修复 → gate 复验）闭环。仍开放移交后续：bash_execution_update live 流式渲染（可选增强未立项）、thinking 档显示波动（W2 观察）。
 - 2026-08-19 **W3 追加（审查遗留修复轮）**：主 agent 对 restore-fork-attach-fix 第三视角审查（用户裁决全修复）→ W3 一轮过（builder → verifier PASS 0 major）→ committed。修复两项：I1 护栏契约报警器（真实 pi 用例锁定 get_state().sessionFile 非空 string + resolve 归一绑定语义，pi 升级改字段形态时契约层先红）+ tmp-migrate 残留清理（startup-background-init 步骤 ⑧，1h 阈值两层枚举，新鲜残留不删防并发误删）。全量回归轮见下一事件。
+- 2026-08-20 **W3 回归轮（用户指令「再跑一轮测试」）**：runtime 全量 3204/3204 全绿（含 W3 新增 6 + 认知外 3af2baa71 域新增测试）+ tsc exit 0 + R1 exit 0。工作区剩余改动均为认知外在途（pi-provider-store/repair、sanitize 测试、model-switch、chat-app/），零触碰。W3 commit 首次遇 pre-commit hook 瞬时 EOF（同 W12/W18 已知模式），重试全套通过。
