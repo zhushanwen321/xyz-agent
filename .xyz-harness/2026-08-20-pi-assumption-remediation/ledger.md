@@ -14,8 +14,8 @@
 
 | wave | 名称 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
-| W1a | model-switch setModel 真切 | pending | — | critical：切换从未生效 |
-| W1b | provider-repair 八字段对齐 | pending | — | major：sanitize 删合法配置（数据丢失） |
+| W1a | model-switch setModel 真切 | committed | 5481b2e9d | verifier PASS（报告 acceptance/w1a-report.md：锚点 4 组复核全真/plan≠provider 连带 bug 独立证实（setup.ts PROVIDER_TO_PLAN 8 条映射为证，-router 变体有仓内依据）/appendEntry 删除零破坏（customType=model_change 消费方全仓 0 + appendEntry 恒写 type:custom 双证）/独立 pi CLI 实测切换生效 + --continue 恢复 + 原生 entry 2 条 custom 0 条/红性删 setModel → 4/7 红字节还原）。2 observation 不阻塞（豁免清单滞后说明 / W1b 文件归属） |
+| W1b | provider-repair 八字段对齐 | committed | 5481b2e9d | verifier PASS（报告 acceptance/w1b-report.md：同构 16 形态探针全一致（authHeader:false 等 pi 原文核实）/仅 2 zod 缝隙差异判定保守自愈合理/「刻意不纳入」两项评估 = pi 单 provider 粒度报错优于静默删除/红性退五字段 → V2 红字节还原/3204 一次全绿/store.ts 仅注释 diff 逐行核实）。2 suggestion 级不阻塞（headers:{} 与 zod 缝隙形态无显式用例） |
 | W2 | 值域 SSOT 派生（thinking max/KnownApi/prompt/包名/注释） | pending | — | — |
 | W3 | wire 层（tool-call-index + 协议 select 类型） | pending | — | 含降级分支（D3） |
 | W4 | extensions isError throw 范式（9 处 5 包）+ goal stale + 6 注释 | pending | — | — |
