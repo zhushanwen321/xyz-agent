@@ -133,6 +133,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Test
+        # 等价性基线双轨（TEST-STRATEGY.md §4）：CI 无 pi 凭证（属用户基础设施，不注入
+        # secrets），显式声明本环境只跑凭证无关子集——真实 LLM turn 用例 skip 且理由
+        # 注入 describe 名（探测机制 SSOT = equivalence/pi-fixture.ts REAL_PI_READY）。
+        env:
+          XYZ_SKIP_REAL_PI: '1'
         run: pnpm --filter @xyz-agent/runtime run test -- --reporter=junit --outputFile=test-results.xml
 
       - name: Upload test results

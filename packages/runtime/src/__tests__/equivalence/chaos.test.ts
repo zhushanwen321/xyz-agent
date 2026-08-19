@@ -22,12 +22,13 @@
  * 不依赖随机种子）；脏化信号 = toolResult 先于 owner assistant 到达 → 孤儿收集（applyEntry
  * 窗口局部配对语义，console.warn 为预期可观测噪声）。
  *
- * skip-if-no-pi：pi 缺席环境本 describe 整体 skip（约定见 pi-fixture.ts 文件头注释，W5 契约）。
+ * skip-if-no-real-pi：pi binary 或 LLM 凭证缺席的环境（如 CI）本 describe 整体 skip，
+ * describe 名注入 skip 理由（约定见 pi-fixture.ts 文件头）。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { effectScope } from 'vue'
 import type { ServerMessage } from '@xyz-agent/shared'
-import { spawnPiFixture, PI_PATH, type PiFixture } from './pi-fixture.js'
+import { spawnPiFixture, REAL_PI_READY, REAL_PI_SKIP_REASON, type PiFixture } from './pi-fixture.js'
 import { translate } from '../../infra/pi/event-adapter.js'
 import type { PiEvent } from '../../infra/pi/pi-protocol.js'
 import { EventInterpreter } from '../../services/session/event-interpreter.js'
@@ -65,7 +66,9 @@ function hasToolUse(entry: PiEntry): boolean {
   )
 }
 
-describe.skipIf(!PI_PATH)('W22 equivalence: 混沌注入 → 收敛权威快照（真实 pi 子进程）', () => {
+describe.skipIf(!REAL_PI_READY)(
+  `W22 equivalence: 混沌注入 → 收敛权威快照（真实 pi 子进程${REAL_PI_SKIP_REASON ? `｜skip：${REAL_PI_SKIP_REASON}` : ''}）`,
+  () => {
   let fixture: PiFixture | null = null
   /** 非 transient 帧语料（translate 产出的全部 message kind 帧，到达序） */
   let frames: ServerMessage[] = []

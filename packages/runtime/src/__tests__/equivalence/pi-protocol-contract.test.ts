@@ -25,13 +25,14 @@
  * message entry 不发射」是当前契约。上游若补发射此断言红 → 触发 W21 预留的换源适配
  * （message_end 流不再是等价源），而非静默分叉。
  *
- * 禁 mock pi（真实 fixture）；skip-if-no-pi 约定见 pi-fixture.ts 文件头。
+ * 禁 mock pi（真实 fixture）；skip-if-no-real-pi 约定见 pi-fixture.ts 文件头。
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { execSync } from 'node:child_process'
 import {
   spawnPiFixture,
-  PI_PATH,
+  REAL_PI_READY,
+  REAL_PI_SKIP_REASON,
   type PiFixture,
   type PiRpcResponse,
 } from './pi-fixture.js'
@@ -193,7 +194,9 @@ function assertObservedEntryTypesKnown(observedTypes: string[]): Set<string> {
   return new Set(observedTypes)
 }
 
-describe.skipIf(!PI_PATH)('pi 协议契约（真实 pi 子进程，W25）', () => {
+describe.skipIf(!REAL_PI_READY)(
+  `pi 协议契约（真实 pi 子进程，W25${REAL_PI_SKIP_REASON ? `｜skip：${REAL_PI_SKIP_REASON}` : ''}）`,
+  () => {
   let fixture: PiFixture | null = null
 
   afterEach(async () => {

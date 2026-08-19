@@ -18,13 +18,15 @@
  * prompt 同走 message_end 全量通道（本测试以多轮 prompt 覆盖 user/assistant/toolResult 序列）；
  * 后台 subagent 完成通知依赖扩展安装（fixture 无扩展），subagent 侧栏等价性留场景 3。
  *
- * skip-if-no-pi：pi 缺席时本 describe 整体 skip（约定见 pi-fixture.ts 文件头）。
+ * skip-if-no-real-pi：pi binary 或 LLM 凭证缺席时本 describe 整体 skip（describe 名注入理由，
+ * 约定见 pi-fixture.ts 文件头）。
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { existsSync } from 'node:fs'
 import {
   spawnPiFixture,
-  PI_PATH,
+  REAL_PI_READY,
+  REAL_PI_SKIP_REASON,
   type PiFixture,
 } from './pi-fixture.js'
 import { translate } from '../../infra/pi/event-adapter.js'
@@ -79,7 +81,9 @@ function normalizeBashTimestamps(state: ChatViewState): ChatViewState {
   }
 }
 
-describe.skipIf(!PI_PATH)('equivalence: live ≡ reload（真实 pi 子进程）', () => {
+describe.skipIf(!REAL_PI_READY)(
+  `equivalence: live ≡ reload（真实 pi 子进程${REAL_PI_SKIP_REASON ? `｜skip：${REAL_PI_SKIP_REASON}` : ''}）`,
+  () => {
   let fixture: PiFixture | null = null
 
   afterEach(async () => {

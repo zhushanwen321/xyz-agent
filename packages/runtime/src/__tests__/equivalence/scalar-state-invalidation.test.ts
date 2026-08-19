@@ -12,8 +12,9 @@
  *   p95 延迟 → describe「真实 pi 子进程」it 2（数字 console.log 输出，写进 builder 汇报；
  *   落登记表由主 agent 串行处理，本 wave 只记录不决策）
  *
- * skip-if-no-pi：真实 pi 用例以 describe.skipIf(!PI_PATH) 包裹（约定见 pi-fixture.ts 头注释）。
- * mock 层用例用 fake timers（项目规范，禁真实 sleep）。
+ * skip-if-no-real-pi：真实 pi 用例以 describe.skipIf(!REAL_PI_READY) 包裹（binary + LLM 凭证
+ * 双判定，describe 名注入理由，约定见 pi-fixture.ts 头注释）；mock 层 describe 不依赖凭证，
+ * 无条件执行（CI 覆盖凭证无关子集）。mock 层用例用 fake timers（项目规范，禁真实 sleep）。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { ProviderId } from '@xyz-agent/shared'
@@ -28,7 +29,7 @@ import {
 } from '../../services/session/replicated-states.config.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import type { IPiEngine, IProcessManager } from '../../services/ports/pi-engine.js'
-import { spawnPiFixture, PI_PATH, type PiFixture } from './pi-fixture.js'
+import { spawnPiFixture, REAL_PI_READY, REAL_PI_SKIP_REASON, type PiFixture } from './pi-fixture.js'
 
 /** pi get_state 的宽形态 mock（三字段齐全的最小权威快照）。 */
 type StateShape = Record<string, unknown>
@@ -186,7 +187,9 @@ async function waitUntil(label: string, predicate: () => boolean, timeoutMs = 5_
 /** 等 turn 完成的上限（真实 LLM 调用；对齐 live-reload.test.ts 的余量口径） */
 const TURN_TIMEOUT_MS = 120_000
 
-describe.skipIf(!PI_PATH)('W7 equivalence: 标量实例失效收敛（真实 pi 子进程）', () => {
+describe.skipIf(!REAL_PI_READY)(
+  `W7 equivalence: 标量实例失效收敛（真实 pi 子进程${REAL_PI_SKIP_REASON ? `｜skip：${REAL_PI_SKIP_REASON}` : ''}）`,
+  () => {
   let fixture: PiFixture | null = null
 
   afterEach(async () => {

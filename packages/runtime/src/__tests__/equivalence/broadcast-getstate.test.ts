@@ -10,9 +10,9 @@
  *   断言仍成立（任何内部源都必须等于权威 RPC 投影）。
  * - W21 定案联动（store 纯累积，W21 verifier 裁决 2 硬前置）→ it 2：事件帧经 core store 生产
  *   入口（applyMessageEvent → registry → applyEntryFrame）喂入后，断言 reducer state（权威镜像）
- *   ≡ get_entries 重放；渲染 ref（overlay 路径）与 reducer state 的收敛对账以探针指标记录
- *   （console.log + builder 汇报缺口形态），不做 ref 判等断言——ref 走 overlay 是 W21 已裁决的
- *   遗留态，收敛投影归后续 wave，本 wave 发现缺口如实上报不改生产代码。
+ *   ≡ get_entries 重放；渲染 ref（overlay 路径）与重开视图（hydrate 权威重放）的消息条数 +
+ *   role 序列 deep equal（原 console.log 探针已升级为真实断言；id 形态差异是 W21 裁决的
+ *   遗留态，收敛投影归后续 wave）。
  *
  * 双喂形态（W21 verifier 备忘 1）：生产 registry 中 toolResult 经 tool_call_end + message_end
  * 两帧都喂 reducer（it 2 帧语料天然含双通道），applyEntry toolResult 覆盖式配对回填幂等——
@@ -21,14 +21,14 @@
  * fixture 进程复用（验收 4，总时长 <120s 预算）：整 describe 一个 pi 进程（beforeAll/afterAll），
  * 两用例共享累积事件流；it 2 以事件起点标记切分本用例增量（it 1 的事件不进本次 live 侧）。
  *
- * skip-if-no-pi：pi 缺席环境（如无 pi binary 的 CI）本 describe 整体 skip（skip 计数 >0、
- * fail 数 = 0；约定见 pi-fixture.ts 文件头注释，W5 净新增契约）。
+ * skip-if-no-real-pi：pi binary 或 LLM 凭证缺席的环境（如 CI）本 describe 整体 skip
+ * （skip 计数 >0、fail 数 = 0；describe 名注入理由，约定见 pi-fixture.ts 文件头）。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { effectScope } from 'vue'
 import { textToSegments } from '@xyz-agent/shared'
 import type { ServerMessage } from '@xyz-agent/shared'
-import { spawnPiFixture, PI_PATH, type PiFixture } from './pi-fixture.js'
+import { spawnPiFixture, REAL_PI_READY, REAL_PI_SKIP_REASON, type PiFixture } from './pi-fixture.js'
 import { translate } from '../../infra/pi/event-adapter.js'
 import type { PiEvent } from '../../infra/pi/pi-protocol.js'
 import { EventInterpreter } from '../../services/session/event-interpreter.js'
@@ -80,7 +80,9 @@ function entryOfMessageEndFrame(frame: ServerMessage): PiEntry | undefined {
   return entry as PiEntry
 }
 
-describe.skipIf(!PI_PATH)('W22 equivalence: broadcast ≡ get_state（真实 pi 子进程）', () => {
+describe.skipIf(!REAL_PI_READY)(
+  `W22 equivalence: broadcast ≡ get_state（真实 pi 子进程${REAL_PI_SKIP_REASON ? `｜skip：${REAL_PI_SKIP_REASON}` : ''}）`,
+  () => {
   let fixture: PiFixture | null = null
 
   beforeAll(async () => {
@@ -310,7 +312,7 @@ describe.skipIf(!PI_PATH)('W22 equivalence: broadcast ≡ get_state（真实 pi 
   )
 
   it(
-    'store 级生产喂入：事件帧经 applyMessageEvent 后 reducer state ≡ get_entries 重放（双喂收敛）+ ref 收敛对账探针',
+    'store 级生产喂入：事件帧经 applyMessageEvent 后 reducer state ≡ get_entries 重放（双喂收敛）+ ref 收敛断言（重开视图 deep equal）',
     { timeout: STORE_TEST_TIMEOUT_MS },
     async () => {
       const fx = fixture!
@@ -385,20 +387,21 @@ describe.skipIf(!PI_PATH)('W22 equivalence: broadcast ≡ get_state（真实 pi 
       expect(toolOwner).toBeDefined()
       expect(toolOwner?.toolCalls?.[0]?.output).toContain('w22-store')
 
-      // ── 断言 2（W21 定案联动·ref 收敛对账探针）：渲染 ref（overlay）vs reducer state（权威镜像）。
-      //   只记录指标不做判等断言——ref 收敛投影是 W21 裁决的遗留态，缺口形态如实写进 builder 汇报。
+      // ── 断言 2（W21 定案联动·ref 收敛，真实断言）：实时渲染 ref（overlay 路径：乐观 user +
+      //   流式 assistant 气泡）与「重开视图」（生产重开链路 get_entries → replayEntries → hydrate
+      //   首入）的消息条数 + role 序列 deep equal——live 喂入与权威重放在用户可见对话流层面一致。
+      //   （原 console.log 探针恒真，已升级为断言；id 形态不比——overlay 乐观 u-<uuid> 与
+      //   reducer e<N> 派生是 W21 裁决的遗留差异，收敛投影归后续 wave。）
       const refMsgs = store.getMessages(sid)
-      const refRoles = refMsgs.map((m) => m.role)
-      const reducerMsgs = reducerLive!.messages
-      const reducerRoles = reducerMsgs.map((m) => m.role)
-      const refIdShapes = [...new Set(refMsgs.map((m) => m.id.slice(0, 2)))]
-      console.log(
-        `[W22 ref 收敛对账探针] ref=${refMsgs.length} 条（roles=[${refRoles.join(',')}]，` +
-          `id 形态=${refIdShapes.join('/') || '(空)'}） vs reducer=${reducerMsgs.length} 条` +
-          `（roles=[${reducerRoles.join(',')}]，id 形态=e<N> 派生）——overlay 与 reducer state ` +
-          `${refMsgs.length === reducerMsgs.length ? '条数一致' : `条数不一致（缺口 ${reducerMsgs.length - refMsgs.length} 条）`}`,
-      )
-      // 探针有效性守卫（非收敛断言）：overlay 路径确已产出实体（乐观 user + assistant 气泡）
+      const reopenScope = effectScope(true)
+      const reopenStore = reopenScope.run(() => createChatStore())!
+      reopenStore.hydrate(sid, reloadTailState.messages)
+      const reopenMsgs = reopenStore.getMessages(sid)
+      expect(reopenMsgs.length).toBe(refMsgs.length)
+      expect(reopenMsgs.map((m) => m.role)).toEqual(refMsgs.map((m) => m.role))
+      reopenScope.stop()
+
+      // 探针有效性守卫（防 0==0 空转）：overlay 路径确已产出实体（乐观 user + assistant 气泡）
       expect(refMsgs.length).toBeGreaterThanOrEqual(2)
       expect(refMsgs.some((m) => m.role === 'user' && m.id.startsWith('u-'))).toBe(true)
 

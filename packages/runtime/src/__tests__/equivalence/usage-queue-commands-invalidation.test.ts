@@ -11,8 +11,9 @@
  *   真实 pi it 2（数字 console.log 输出，写进 builder 汇报做量化终判；落登记表由主 agent
  *   串行处理）
  *
- * skip-if-no-pi：真实 pi 用例以 describe.skipIf(!PI_PATH) 包裹（约定见 pi-fixture.ts 头注释）。
- * mock 层用例用 fake timers（项目规范，禁真实 sleep）。
+ * skip-if-no-real-pi：真实 pi 用例以 describe.skipIf(!REAL_PI_READY) 包裹（binary + LLM 凭证
+ * 双判定，describe 名注入理由，约定见 pi-fixture.ts 头注释）；mock 层 describe 不依赖凭证，
+ * 无条件执行（CI 覆盖凭证无关子集）。mock 层用例用 fake timers（项目规范，禁真实 sleep）。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { ServerMessage } from '@xyz-agent/shared'
@@ -28,7 +29,7 @@ import { translate } from '../../infra/pi/event-adapter.js'
 import type { PiQueueUpdateEvent } from '../../infra/pi/pi-protocol.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import type { IPiEngine, IProcessManager } from '../../services/ports/pi-engine.js'
-import { spawnPiFixture, PI_PATH, type PiFixture } from './pi-fixture.js'
+import { spawnPiFixture, REAL_PI_READY, REAL_PI_SKIP_REASON, type PiFixture } from './pi-fixture.js'
 
 /** 事件风暴规模：模拟风暴期密集到达的 context 相关事件（防抖应聚合为一次拉取）。 */
 const EVENT_STORM_SIZE = 20
@@ -252,7 +253,9 @@ interface ContextUsageShape {
   percent: number | null
 }
 
-describe.skipIf(!PI_PATH)('W8 equivalence: usage / queue / commands 实例收敛（真实 pi 子进程）', () => {
+describe.skipIf(!REAL_PI_READY)(
+  `W8 equivalence: usage / queue / commands 实例收敛（真实 pi 子进程${REAL_PI_SKIP_REASON ? `｜skip：${REAL_PI_SKIP_REASON}` : ''}）`,
+  () => {
   let fixture: PiFixture | null = null
 
   afterEach(async () => {
