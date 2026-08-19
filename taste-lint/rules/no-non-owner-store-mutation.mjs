@@ -106,7 +106,7 @@ export default {
       detachedMethodRef:
         '受管 mutation 方法引用 {{mutation}} 被作为值传递/脱离 store 接收者持有（登记条目：{{entries}}）——' +
         '脱离接收者后可在任意回调内被调，等价于转发写入口。合法路径：改为显式调用或在 owner 文件内收口；' +
-        '确属合法：登记表补例外 + 行内豁免注释 taste:allow-non-owner-mutation。',
+        '确属合法：在 docs/architecture/data-source-registry.md 补条目/例外 + 行内豁免注释 taste:allow-non-owner-mutation。',
       stalePermittedEntry:
         '规则许可表引用的登记条目 {{entry}}（许可文件 {{suffix}}）不在 docs/architecture/data-source-registry.md ' +
         '登记表内——护栏配置失真（登记表条目已删/改号？）。修复：登记表 §1 主表与规则 PERMITTED_FILES ' +
@@ -278,12 +278,14 @@ export default {
       },
 
       'Program:exit'() {
-        // 激活前提：文件 import 了 store 工厂（无 import 边 = port 注入/无关联，W4 语义对齐）
-        if (factoryBindings.size === 0) return
-
         const sourceCode = context.sourceCode ?? context.getSourceCode?.()
 
-        // 许可表条目失真检测（登记表驱动：条目失效即护栏失真）
+        // 许可表条目失真检测（登记表驱动：条目失效即护栏失真）——必须先于下方
+        // factoryBindings 提前 return：不 import store 工厂的文件（core 包多数文件）
+        // 也要跑，否则护栏配置失真在这些文件上静默。loadRegistryEntries 模块级缓存，
+        // 多文件 lint 零增量成本。取舍：多文件 lint 时同一 stale 每文件报一次
+        // （ESLint 规则实例 per-file、无跨文件去重通道；模块级去重状态会破坏
+        // node --test 用例隔离）——重复不改变 fail-loud 语义与 CI 判定，接受。
         const permittedForCheck = [
           ...PERMITTED_FILES,
           ...Object.entries(WATCHED_MUTATIONS).map(([name, w]) => ({
@@ -303,6 +305,9 @@ export default {
           }
         }
 
+        // 激活前提：文件 import 了 store 工厂（无 import 边 = port 注入/无关联，W4 语义对齐）
+        if (factoryBindings.size === 0) return
+
         const hasInlineAllow = (node) =>
           sourceCode &&
           [
@@ -310,13 +315,18 @@ export default {
             ...sourceCode.getCommentsAfter(node),
           ].some((c) => INLINE_ALLOW_RE.test(c.value))
 
-        // 形参通道：f(store) 的 f 是本文件函数 → 第 idx 个 Identifier 形参绑定 store
+        // 形参通道：f(store) 的 f 是本文件函数 → 第 idx 个 Identifier 形参绑定 store。
+        // 形参名 → 函数名集合（多函数绑定）：f(store) 与 g(store) 并存时两个函数都
+        // 建通道——按形参名 last-write-wins 会漏报被覆盖函数体内的调用
         const paramOwnerFn = new Map()
         for (const { fnName, idx } of paramChannels) {
           const params = fnDecls.get(fnName)
           if (!params) continue // 外部 import 函数：跨文件数据流不可判定，S1 兜底
           const paramName = params[idx]
-          if (paramName) paramOwnerFn.set(paramName, fnName)
+          if (!paramName) continue
+          let owners = paramOwnerFn.get(paramName)
+          if (!owners) paramOwnerFn.set(paramName, (owners = new Set()))
+          owners.add(fnName)
         }
 
         // 表达式体箭头工厂：词法序陷阱在此统一消解（instanceBindings/factoryBindings 已齐）
@@ -333,7 +343,8 @@ export default {
               messageId = 'nonOwnerMutation'
             } else if (
               paramOwnerFn.has(obj.name) &&
-              stack.includes(paramOwnerFn.get(obj.name))
+              // 同名形参多函数绑定：fnStack 命中任一绑定函数即报（非 last-write-wins）
+              stack.some((fn) => paramOwnerFn.get(obj.name).has(fn))
             ) {
               messageId = 'forwardedMutation'
               data = { ...data, param: obj.name }

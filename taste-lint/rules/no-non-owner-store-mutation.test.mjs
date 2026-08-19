@@ -9,13 +9,14 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { Linter } from 'eslint';
 import tseslint from 'typescript-eslint';
 import rule from './no-non-owner-store-mutation.mjs';
 
 const RULE_ID = 'taste/no-non-owner-store-mutation';
 
-function lint(code, filename = 'packages/renderer/src/stores/probe.ts') {
+function lintWith(ruleModule, code, filename = 'packages/renderer/src/stores/probe.ts') {
   const linter = new Linter();
   return linter.verify(
     code,
@@ -24,11 +25,15 @@ function lint(code, filename = 'packages/renderer/src/stores/probe.ts') {
       // parser 用 typescript-eslint（对齐仓库真实 lint，type-only import 用例需要 TS 语法）
       files: ['**/*.ts'],
       languageOptions: { parser: tseslint.parser },
-      plugins: { taste: { rules: { 'no-non-owner-store-mutation': rule } } },
+      plugins: { taste: { rules: { 'no-non-owner-store-mutation': ruleModule } } },
       rules: { [RULE_ID]: 'error' },
     },
     { filename },
   );
+}
+
+function lint(code, filename = 'packages/renderer/src/stores/probe.ts') {
+  return lintWith(rule, code, filename);
 }
 
 // ── W4 直呼用例（保留：收紧是超集，不是替换）──────────────────────────────
@@ -171,6 +176,8 @@ test('R2/W24: 方法引用传递 wire(store.applySnapshot) → 报错', () => {
   assert.equal(messages.length, 1);
   assert.match(messages[0].message, /applySnapshot/);
   assert.match(messages[0].message, /值传递|脱离/);
+  // detachedMethodRef 文案与同规则其他 message 一致：含登记表路径（可操作性闭环）
+  assert.match(messages[0].message, /data-source-registry\.md/);
 });
 
 test('R2/W24: 工厂包装 getStore().applySnapshot → 报错', () => {
@@ -292,4 +299,51 @@ test('R2/W24: 非 store 的表达式体箭头 / 对象方法返回值调 applySn
       '}\n',
   );
   assert.equal(messages.length, 0);
+});
+
+// ── W24 对抗审查修复回归（findings-confirmation-report.md #10）───────────────
+
+test('R2/W24: 无 store import 的文件 + 许可表 stale 条目 → 仍报 stalePermittedEntry（stale 检查先于 factoryBindings 提前 return）', async (t) => {
+  // 临时把 PERMITTED_FILES/WATCHED_MUTATIONS 的条目改为登记表不存在的编号（#999/#998）。
+  // ESM 绑定不可写，经源码文本变换生成临时规则模块；须写在同目录保住 '../lib' 相对导入。
+  const ruleUrl = new URL('./no-non-owner-store-mutation.mjs', import.meta.url);
+  const mutated = readFileSync(ruleUrl, 'utf8')
+    .replaceAll(`'#1'`, `'#999'`)
+    .replaceAll(`'#2'`, `'#998'`);
+  const tmpUrl = new URL('./.tmp-stale-probe-rule.mjs', import.meta.url);
+  writeFileSync(tmpUrl, mutated);
+  t.after(() => rmSync(tmpUrl));
+  const mutatedRule = (await import(tmpUrl.href)).default;
+
+  // 被 lint 文件无任何 store import（core 包典型形态）——stale 检查若仍在
+  // factoryBindings.size === 0 提前 return 之后，这里静默 0 报（红性锚点）
+  const messages = lintWith(
+    mutatedRule,
+    'export function helper() { return 1 }\n',
+    'packages/core/src/domain/session/helper.ts',
+  );
+  assert.ok(messages.length >= 1);
+  assert.ok(messages.every((m) => m.messageId === 'stalePermittedEntry'));
+  assert.match(messages[0].message, /#999/);
+  assert.match(messages[0].message, /data-source-registry\.md/);
+});
+
+test('R2/W24: 同名形参双函数 f(store)/g(store) 并存 → 两处转发均报（形参通道多函数绑定，非 last-write-wins）', () => {
+  const messages = lint(
+    'import { useSessionStore } from "@/stores/session"\n' +
+      'export function f(store) {\n' +
+      '  store.applySnapshot({ groups: [] })\n' +
+      '}\n' +
+      'export function g(store) {\n' +
+      '  store.applySnapshot({ groups: [] })\n' +
+      '}\n' +
+      'export function setup() {\n' +
+      '  const s = useSessionStore()\n' +
+      '  f(s)\n' +
+      '  g(s)\n' +
+      '}\n',
+  );
+  // last-write-wins 版 paramOwnerFn 只保留后写通道（g），f 体内调用漏报 → 仅 1 条（红性锚点）
+  assert.equal(messages.length, 2);
+  assert.ok(messages.every((m) => m.messageId === 'forwardedMutation'));
 });
