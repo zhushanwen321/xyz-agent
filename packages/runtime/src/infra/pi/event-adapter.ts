@@ -10,8 +10,11 @@
  *   ✓ 只产出结构化中间事件（PiTranslatedEvent[]），交由 service 层 EventInterpreter 编排。
  *
  * pi RPC events have this structure:
- * - `message_update` with nested `assistantMessageEvent` containing `type`, `delta`, `contentIndex`
- *   - sub-types: text_start, text_delta, text_end, thinking_start, thinking_delta, thinking_end
+ * - `message_update` = `{type, assistantMessageEvent, usage?}`（wire 恒无顶层 message——RPC
+ *   toJsonEvent 剥离，见 pi-protocol.ts PiMessageUpdateEvent 注释）with nested
+ *   `assistantMessageEvent` containing `type`, `delta`, `contentIndex`
+ *   - sub-types: text_start, text_delta, text_end, thinking_start, thinking_delta,
+ *     thinking_end, toolcall_start, toolcall_delta, toolcall_end（toolCall.id 锚点）, error
  * - `message_start` / `message_end` with `message` containing role, content, usage, stopReason
  * - `agent_start` / `turn_start` / `turn_end` / `agent_end` for lifecycle
  * - `extension_ui_request` for tool approvals etc.
@@ -94,7 +97,7 @@ const METHOD_EDITOR = 'editor' as const
 /** message_update — streaming text/thinking deltas and stream errors */
 function handleMessageUpdate(event: PiMessageUpdateEvent, sid: string): PiTranslatedEvent[] {
   const sub = event.assistantMessageEvent as
-    { type: string; delta?: string; content?: string; contentIndex?: number } | undefined
+    { type: string; delta?: string; content?: string; contentIndex?: number; toolCall?: { id?: string } } | undefined
   if (!sub) return [{ kind: 'noop' }]
 
   switch (sub.type) {
@@ -108,22 +111,30 @@ function handleMessageUpdate(event: PiMessageUpdateEvent, sid: string): PiTransl
       return [{ kind: 'message', message: { type: 'message.thinking_delta', payload: { sessionId: sid, delta: sub.delta ?? '', ...(sub.contentIndex !== undefined ? { contentIndex: sub.contentIndex } : {}) } } }]
     case 'thinking_end':
       return [{ kind: 'message', message: { type: 'message.thinking_end', payload: { sessionId: sid } } }]
-    case 'toolcall_start': {
-      // toolCall 块顺序锚点（§11 检查点 3）：pi 在模型输出 tool_use 时发 toolcall_start（带 contentIndex），
+    case 'toolcall_end': {
+      // toolCall 块顺序锚点（§11 检查点 3）：pi 在模型流输出 tool_use 时发 toolcall_*（带 contentIndex），
       // 远早于 tool_execution_start（工具执行时，无 contentIndex）。toolCall 块若由 tool_execution_start 驱动，
       // 同 turn 内 text 在 tool 之后时顺序会错位（text_delta 先到、toolCall 后到）。
+      //
+      // 提取点 = toolcall_end（W3 修正，非 toolcall_start）：wire 上 toolcall_start 只有
+      // {type, contentIndex}——pi-ai AssistantMessageEvent 的 partial（含 content[contentIndex].id）
+      // 被 RPC toJsonEvent 剥离（dist/modes/json-event.js:6-10），旧代码从
+      // event.message?.content?.[contentIndex]?.id 提取恒 undefined（wire 无顶层 message，
+      // 单测 mock 自带该字段故测试绿生产死）。toolcall_end 携带完整 toolCall 对象
+      // （{type:'toolCall', id, name, arguments}，pi-ai types.d.ts:405-409 + 244-250，非 partial
+      // 字段不被剥离）。实测 0.84.1：toolCall.id 与后续 tool_execution_start.toolCallId 同值；
+      // toolcall_end（LLM 流中工具参数输出完成）仍远早于 tool_execution_start（assistant
+      // message 完成后才开始执行工具），顺序锚点语义不变。
       // 此处产出 tool-call-index 中间事件（toolCallId + contentIndex），interpreter 缓存后
       // 在 tool-call-start 到达时附到 tool_call_start WS 帧，前端按 contentIndex 有序插入。
       const contentIndex = sub.contentIndex
-      const toolCallId = contentIndex !== undefined
-        ? (event.message?.content?.[contentIndex] as { id?: string } | undefined)?.id
-        : undefined
-      if (toolCallId && contentIndex !== undefined) {
+      const toolCallId = sub.toolCall?.id
+      if (toolCallId !== undefined && contentIndex !== undefined) {
         return [{ kind: 'tool-call-index', toolCallId, contentIndex }]
       }
       return [{ kind: 'noop' }]
     }
-    case 'toolcall_delta': case 'toolcall_end':
+    case 'toolcall_start': case 'toolcall_delta':
     case 'text_start': case 'text_end':
       return [{ kind: 'noop' }]
     // FR-5: streaming error — surface as message.stream_error
@@ -464,7 +475,7 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
     // 检测成功后透传 questions 等字段，前端路由到 AskUserOverlay；检测失败（非合法 JSON）
     // 降级为普通 select（下方分支）。
     if (method === 'select' && event.title === ASK_USER_MARKER) {
-      const rawOptions = Array.isArray(event.options) ? event.options as unknown[] : []
+      const rawOptions = Array.isArray(event.options) ? event.options : []
       let askUserData: { questions?: unknown; allowCancel?: boolean } | undefined
       try {
         askUserData = rawOptions.length > 0 ? JSON.parse(String(rawOptions[0])) : undefined
@@ -501,7 +512,7 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
     // [HISTORICAL] options 透传修复：pi select 严格传 string[]（types.ts select 签名 +
     // rpc-mode.js 原样透传），旧代码把 rawOptions 断言为 Array<{label,value}> 后 .map(o=>o.label)
     // 对 string 元素调 .label 产出 undefined[]——普通 select 在前端是坏的。改为 .map(String) 透传。
-    const rawOptions = Array.isArray(event.options) ? event.options as unknown[] : undefined
+    const rawOptions = Array.isArray(event.options) ? event.options : undefined
     const requestPayload = {
       sessionId: sid,
       requestId,
@@ -545,10 +556,17 @@ function handleMessageStart(event: PiMessageStartEvent, sid: string): PiTranslat
 
   const role = msg.role as string | undefined
 
-  // [HISTORICAL] user role 的 message_start 必须忽略：pi 0.80.3 agent-loop 在每个 turn
-  // 末尾 emit message_start{role:'user'} + message_end（见 agent-loop.ts:112-113）。
-  // 若不过滤，前端会为 user prompt 再建一个空气泡（渲染撕裂、findLastAssistantIndex 错位）。
-  // fork 0.75.5 不发此事件；切 upstream 0.80.3（ac83b578）后出现。与 toolResult 同属「内部记账」语义。
+  // [HISTORICAL] user role 的 message_start 必须忽略（A-08，W3 时序注释更新）：
+  // pi 0.84.1 实态 = **agent 循环开头 + turn 边界注入 pending 时**发射——pi-agent-core
+  // agent-loop.js:52-54（runAgentLoop 入口：agent_start → turn_start → 逐 prompt emit
+  // message_start/end{role:'user'}，先于首个 assistant 流）与 :95-99（runLoop turn 边界
+  // 注入 pending（steering/followUp 转入的 user 消息）时 emit）。实测事件序：
+  // agent_start → turn_start → message_start{user} → message_end{user} → message_start{assistant}
+  // → message_update*...（旧注释「每个 turn 末尾 emit」描述的是 toolResult role 的 message_start，
+  // agent-loop.js:550 emitToolResultMessage——turn 末尾发的是 toolResult，非 user）。
+  // 若不过滤 user role，前端会为 user prompt 再建一个空气泡（渲染撕裂、findLastAssistantIndex
+  // 错位）。fork 0.75.5 不发此事件；切 upstream 0.80.3（ac83b578）后出现。与 toolResult
+  // 同属「内部记账」语义。过滤行为不变。
   if (role === 'user') return [{ kind: 'noop' }]
 
   // toolResult 是 pi agent-core 工具执行完毕的内部记账（agent-loop.js emitToolResultMessage：

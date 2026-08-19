@@ -15,6 +15,7 @@
  * - tool_execution_start uses `args` (pi 的规范字段名，非漂移——pi 从不发 input)
  * - tool_execution_end uses `result` (pi 的规范字段名，非漂移——pi 从不发 output)
  * - message_update.toolcall_* events are incomplete; prefer tool_execution_* instead
+ *   (唯一例外：toolcall_end.toolCall.id 供 contentIndex 顺序锚点提取)
  *
  * 本文件是 pi 协议的真契约（ADR-0037）。PiEvent 联合覆盖 AgentSessionEvent 全部事件类型，
  * pi 升级时需同步维护（编译器 exhaustive check 会提示）。
@@ -181,14 +182,22 @@ export interface PiMessageEndEvent extends PiBaseMessage {
  *
  * IMPORTANT: toolcall_start/toolcall_delta/toolcall_end sub-types carry
  * INCOMPLETE data (missing full arguments). Always use tool_execution_*
- * events instead for tool call information.
+ * events instead for tool call information——唯一例外：toolcall_end.toolCall.id
+ * 是 contentIndex 顺序锚点的来源（tool_execution_* 无 contentIndex，见
+ * event-adapter handleMessageUpdate 的 toolcall_end 分支）。
  */
 export interface PiMessageUpdateEvent extends PiBaseMessage {
   type: 'message_update'
-  /** 运行时 pi 带完整 partial message（agent-session.js:462 确认）。toolcall_start 提取 toolCallId 用。 */
-  message?: {
-    content?: Array<{ type?: string; id?: string; name?: string }>
-  }
+  /**
+   * wire 形态（W3 实测锁定）：`{type, assistantMessageEvent, usage?}`——顶层 message 恒不存在。
+   * pi 内部事件确带完整 partial message（agent-session.js:473-479），但 RPC wire 经
+   * toJsonEvent（dist/modes/json-event.js:3-15）对 message_update 只输出 {type, assistantMessageEvent}
+   * 并剥离 assistantMessageEvent.partial。旧声明 `message?: {...}`（供 toolcall_start 提取
+   * toolCallId）据此写成——生产恒 undefined，tool-call-index 恒不产出（单测 mock 自带 message
+   * 字段故测试绿生产死，W3 审计 A-01）。toolCallId 的真实提取点 = toolcall_end 的
+   * toolCall.id（见 PiToolcallEndSubEvent）。
+   */
+  usage?: PiUsage
   assistantMessageEvent: PiAssistantMessageSubEvent
 }
 
@@ -236,11 +245,18 @@ export interface PiThinkingEndSubEvent {
 }
 
 /**
- * INCOMPLETE: use tool_execution_start/end instead.
- * These events stream incremental tool call info but may lack full arguments.
+ * INCOMPLETE: use tool_execution_end instead.
+ * The toolCall object here may not have complete arguments.
  */
 export interface PiToolcallStartSubEvent {
   type: 'toolcall_start'
+  /**
+   * wire 形态（W3 实测锁定）：{type, contentIndex}——无 id。
+   * pi-ai AssistantMessageEvent.toolcall_start 声明带 partial（AssistantMessage，id 在
+   * partial.content[contentIndex].id，pi-ai types.d.ts:397-400），但 RPC wire 的 toJsonEvent
+   * 剥离 partial（dist/modes/json-event.js:6-10）→ 此事件上拿不到 toolCallId。
+   * toolCallId 提取点 = toolcall_end（见 PiToolcallEndSubEvent）。
+   */
   contentIndex?: number
 }
 
@@ -254,6 +270,11 @@ export interface PiToolcallDeltaSubEvent {
 /**
  * INCOMPLETE: use tool_execution_end instead.
  * The toolCall object here may not have complete arguments.
+ *
+ * toolCallId 顺序锚点的唯一 wire 提取点（W3）：toolCall 是非 partial 字段，toJsonEvent
+ * 剥离 partial 时保留（pi-ai types.d.ts:405-409 `{type:'toolcall_end', contentIndex,
+ * toolCall: ToolCall, partial}`，ToolCall 含 id/name/arguments，types.d.ts:244-250）。
+ * 实测 0.84.1：toolCall.id 与后续 tool_execution_start.toolCallId 同值。
  */
 export interface PiToolcallEndSubEvent {
   type: 'toolcall_end'
@@ -466,8 +487,11 @@ export interface PiExtensionUiRequestEvent extends PiBaseMessage {
   title?: string
   /** Message body shown to the user. */
   message?: string
-  /** Options for 'select' method. */
-  options?: Array<{ label: string; value: string; description?: string }>
+  /** Options for 'select' method. pi 严格传 `string[]`（dist/core/extensions/types.d.ts:70
+   *  `select(title: string, options: string[], ...)`，rpc-mode 原样透传；W3 修正——旧声明
+   *  `Array<{label,value}>` 与 pi 实态不符）。渲染侧 label=value 归一在 renderer
+   *  normalizeOptions（双形状归一，兼容历史 plugin 源对象形态）。 */
+  options?: string[]
   /** The original tool call context (forwarded to frontend for approval UI). */
   [key: string]: unknown
 }
