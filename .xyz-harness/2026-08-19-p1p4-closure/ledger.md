@@ -10,7 +10,7 @@
 | wave | 名称 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
 | W1 | renameSession 非活跃分支健壮性（D3 else throw + findings #4 死 cwd 降级） | committed | f24760494 | verifier PASS（报告 acceptance/w1-report.md：0 major/防篡改 4 文件一致 + harness 零改动/等价重构逐行比对成立（共享方法 normalizeInactiveSessionFileIfNeeded，判定函数本体零改动）/两超授权项裁决成立（契约用例翻转 = CP1+CP5 唯一解；existsSync 守卫保 pi 报错分工）/红性 3 注入全红 + sha256 字节还原/独立全量 3185 passed + tsc 0/R1 exit 0/pi 锚点 3 条命中）。builder 裁量：裸 Error 不带 SESSION_NOT_FOUND code（该 code 触发 Panel.vue ghost 删除面板，rename 走 toast）——裁决合理。V-CP5 首跑 3 failed 判环境竞争（与并行 gate 流程 dev 启停时间重叠），复跑连续两次 3185 全绿 |
-| W2 | P3 gate 复验改判（场景 3 restore/fork 重开一致性，根因修复后行为级验证） | building | 26f1f7419 | **执行形态变更（2026-08-19 23:05 主 agent 裁定）**：用户并行会话 final gate（dcf0efe12，restore-fork-attach-fix 收官）已做超集行为级验证（G-V1 上次失败点反转 PASS：二次重启零丢失 + 用量单调 + tmp 零孤儿；G-V3 fork 落盘 + 血缘完好；G-V2a/V2b legacy 超集；G-X 9 附着零断言误报；执行窗口 22:08-22:42 真实 dev app 8 次精确重启）。W2 = 引用该证据 + 在含 W1 的 HEAD 上跑最小冒烟（restore F2 直附着 + 暗号 + 二次重启，封住 W1 等价重构未经真实环境验证的缺口）；fork 路径 W1 零触碰（forkSession 未改）引用豁免。时间线重叠风险已评估：gate 核心场景 22:33 前完成，W1 builder 22:40 后写文件，且 gate 全 PASS 证明加载态行为正确 |
+| W2 | P3 gate 复验改判（场景 3 restore/fork 重开一致性，根因修复后行为级验证） | committed | 26f1f7419 | **PASS 改判成立**（报告 gate/w2-gate-report.md：冒烟断言 A/B 全过——restore 零变换（16 行/md5/mtime 三项不动）→ 暗号轮落原文件 16→21 行/mtime 推进 → kill 后完好 → 第二次重启暗号轮完整在列/用量 50.8K 无回退/无进行中残留；$TMPDIR 零新孤儿；fork 引用 dcf0efe12 G-V3 豁免（W1 零触碰 forkSession）；执行形态变更依据与时间线重叠风险评估见报告 §3。观察 2 项非阻断：thinking 档「最高→高→最高」显示波动（状态感知族，不阻断）；变更集面板投影本仓 W1 diff 属正常）。p1p4 ledger P3 gate 行已改判 PASS + 事件收官条目随本 commit 入库 |
 
 ## 范围裁决（主 agent 2026-08-19 22:35）
 
@@ -21,3 +21,7 @@
 ## 事件
 
 - 2026-08-19 计划启动（用户指示「阅读设计文档，进入开发，subagent 分批分 wave」）：盘点 p1p4 全量遗留（gate 5+3 项发现 × 对抗循环 3 轮处置矩阵 + restore-fork-attach-fix 并行计划交叠）→ 确认仅两项待做。事实核实：runtime 3182 全绿（R2-4 解除）/断连瞬态清理已闭环/`if (target)` 无 else 与死 cwd 无降级坐实（session-lifecycle.ts:385-397 现读）/F2F3 分流形态可复用（:539-554）。W1 验收基线入 git 后派 builder。
+
+## 事件
+
+- 2026-08-19 **计划收官（2/2 wave committed）**：W1 `96f37a754`（verifier PASS 0 major）+ W2 gate 复验（冒烟断言 A/B 全过 + 引用豁免）。p1p4 P3 gate 改判 PASS 并回写 p1p4 ledger（gate 表 + 事件收官条目）。data-source-governance 全链路（P0 止血 → P1-P4 二十 wave → 对抗循环 3 轮 → restore 根因修复 → gate 复验）闭环。仍开放移交后续：bash_execution_update live 流式渲染（可选增强未立项）、thinking 档显示波动（W2 观察）。
