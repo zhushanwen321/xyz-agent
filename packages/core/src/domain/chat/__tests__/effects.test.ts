@@ -298,3 +298,48 @@ describe('dispatchMessageEvent message.customStart 完成通知 display 覆写�
     expect(sys[2].display).toBeUndefined()
   })
 })
+
+describe('message.complete error 路径的 errorMessage 可见性（模型 400 秒败回归）', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('streaming 气泡收口：errorMessage 写入最后一条 assistant 的 error 字段（追加形态）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: '部分正文' }))
+    dispatchMessageEvent(ctx, SID, msg('message.complete', {
+      stopReason: 'error',
+      errorMessage: '400: {"code":"400","message":"Unsupported model mimo-v2-pro"}',
+    }))
+    const a = lastAssistant(ctx)
+    expect(a.status).toBe('error')
+    expect(a.content).toBe('部分正文')
+    expect(a.error).toBe('400: {"code":"400","message":"Unsupported model mimo-v2-pro"}')
+  })
+
+  it('无 streaming 气泡（message_start 丢失）：errorMessage 追加为纯 error 气泡', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.complete', {
+      stopReason: 'error',
+      errorMessage: '400: Unsupported model mimo-v2-pro',
+    }))
+    const list = getMsgs(ctx)
+    expect(list).toHaveLength(1)
+    expect(list[0].role).toBe('assistant')
+    expect(list[0].status).toBe('error')
+    expect(list[0].content).toBe('400: Unsupported model mimo-v2-pro')
+  })
+
+  it('非 error stopReason 不消费 errorMessage 字段（正常完成不受影响）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'ok' }))
+    dispatchMessageEvent(ctx, SID, msg('message.complete', {
+      stopReason: 'stop',
+      content: 'ok',
+      errorMessage: undefined,
+    }))
+    const a = lastAssistant(ctx)
+    expect(a.status).toBe('complete')
+    expect(a.error).toBeUndefined()
+  })
+})

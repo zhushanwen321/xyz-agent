@@ -159,6 +159,13 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const prev = messages.value.get(sid)?.value ?? []
     const stopReason = readString(payload, 'stopReason')
     const isErrorStop = stopReason === 'error'
+    // [HISTORICAL] pi turn 失败（stopReason='error'）时 runtime event-adapter 从 agent_end 提取
+    // errorMessage 放进本 payload。曾经过往 handler 只读 stopReason/content/usage 把它丢弃——
+    // 秒败 turn（如模型 400 拒绝首请求）content 为空，气泡仅剩一个空 error 态，用户完全不可见。
+    // 消费双通道（SSOT docs/architecture/conversation-error-visibility.md §3.3.2）：
+    // 有 streaming 气泡 → errorMessage 写最后一条 assistant 的 Message.error 字段（追加形态，
+    // content 崩溃前正文不动）；无 streaming 气泡 → 追加纯 error 气泡（errorMessage 即全文）。
+    const errorMessage = readString(payload, 'errorMessage')
     // [HISTORICAL] 收口**所有** status==='streaming' 的 assistant 气泡，不只用
     // findLastAssistantIndex 收最后一条。一个 turn 可能产生多个 assistant 气泡
     // （工具调用气泡 + 文字总结气泡）：只转最后一条会让前面的 toolCall 气泡永远 streaming，
@@ -186,9 +193,19 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
         ...m,
         status: isErrorStop ? 'error' : 'complete',
         ...(usage ? { usage } : {}),
+        // 追加形态错误：仅最后一条 assistant 写 Message.error（finalizeMessages 双通道同语义）
+        ...(i === lastAssistantIdx && isErrorStop && errorMessage ? { error: errorMessage } : {}),
         ...(shouldOverrideContent ? { content: finalContent } : {}),
       } satisfies Message
     })
+    // 秒败 turn（message_start 丢失/未广播）无 streaming 气泡可收口：错误信息必须以纯 error
+    // 气泡落进聊天流，否则 complete 事件被消费后错误只剩 stopReason 标志，用户不可见。
+    if (isErrorStop && errorMessage && !changed) {
+      commitMessages(messages, sid, [
+        ...prev,
+        { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: errorMessage, status: 'error', timestamp: Date.now() },
+      ])
+    }
     if (changed) commitMessages(messages, sid, next)
     // 统一收口（finalizeSession 幂等：entity 已改则 no-op，只清 pendingSend + timer）
     // 此处 message status 已改终态 → finalizeSession 内走「只补 toolCall 收口」分支。
