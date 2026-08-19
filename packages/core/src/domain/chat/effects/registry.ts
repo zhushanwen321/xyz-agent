@@ -39,6 +39,7 @@
 import type {
   ContentBlock,
   Message,
+  PiCustomMessageEntry,
   PiEntry,
   PiMessageEntry,
   PiToolCallEntryForm,
@@ -46,14 +47,12 @@ import type {
   ServerMessageType,
   ToolCall,
 } from '@xyz-agent/shared'
-import { COMPLETE_NOTIFY_CUSTOM_TYPES } from '@xyz-agent/shared'
-import { normalizePiToolResult } from '../apply-entry'
+import { applyEntry, createInitialChatViewState, normalizePiToolResult } from '../apply-entry'
 import type { RetryState, QueueState, FinalizeReason } from '../store-types'
 import type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
 export type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
 import {
   readString,
-  readRecord,
   readNumber,
   readBool,
   readStringArray,
@@ -416,6 +415,11 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const entry = payload['entry']
     // entry 形态守卫：message entry（type:'message'）才喂（协议契约，异常帧降级丢弃）
     if (typeof entry !== 'object' || entry === null || (entry as { type?: unknown }).type !== 'message') return
+    // custom role 去双计：pi 对同一条 custom message 双发 message_start + message_end（同一
+    // message 对象——agent-loop.ts:112 prompt 路径 / agent-session sendCustomMessage no-trigger
+    // 路径双发）。customStart effect 已在 message_start 时点以 custom_message entry 形态喂入
+    // reducer + ref（display 覆写语义对齐重开 custom_message case），此处再喂会双计。
+    if ((entry as { message?: { role?: unknown } }).message?.role === 'custom') return
     ctx.applyEntryFrame(sid, entry as PiEntry)
   },
 
@@ -447,37 +451,39 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   // ── pi CustomMessage 注入（扩展向对话流注入结构化通知）──
   'message.customStart': (ctx, sid, payload) => {
     const { messages } = ctx
-    const customType = readString(payload, 'customType') ?? ''
-    const content = readString(payload, 'content') ?? ''
-    const details = readRecord(payload, 'details')
-    // display 来自 event-adapter.ts 的 custom message 分支（payload.display，~line 509 透传）。
-    // FR-2 依赖 event-adapter 已透传；extension 声明 display:false 的 context 消息据此在渲染层隐藏。
-    // display 不能用 readBool（缺失时返回 false），需三态保留：
-    // true/false 显式透传，undefined 安全保留显示（!== false 即显示，ADR-0048 决策点 3）。
+    // [custom 双管线收敛（data-source-governance 审计问题 4）] 实时侧不再独立构造 system
+    // 消息 + display 覆写：payload 重构为 custom_message entry（与 pi 持久化形态同构），
+    // 经 ctx.applyEntryFrame 喂与文件重放（get_entries → replayEntries）同一个 applyEntry
+    // ——display 覆写（完成通知类 COMPLETE_NOTIFY_CUSTOM_TYPES → false）、details/content
+    // 窄化全部单点收敛在 reducer 的 custom_message case，实时与重开逐字段一致
+    // （等价性断言见 __tests__/custom-start-equivalence.test.ts）。
     //
-    // [M2 display 前置] 完成通知（COMPLETE_NOTIFY_CUSTOM_TYPES）由消费端统一覆写 display:false，
-    // 不再依赖 filterDisplayableMessages 黑名单（conversation-renderer-model-unification §3.3.2）。
-    // pi 扩展生产端（pi-subagent-workflow notifier/helpers）写 display:true（pi 原生语义：
-    // 通知在 pi TUI 显示）——对 xyz-agent 用户是噪声（triggerTurn 唤醒 agent 后续 turn 处理，
-    // 结果由新 turn 体现），此处统一隐藏。与重开路径 mapper 覆写（session-entry-mapper.ts）对称。
-    const isCompleteNotify = COMPLETE_NOTIFY_CUSTOM_TYPES.has(customType)
-    const display = isCompleteNotify
-      ? false
-      : (payload['display'] === true || payload['display'] === false ? payload['display'] : undefined)
-    const prev = messages.value.get(sid)?.value ?? []
-    // role:'system' → messageTurns 产出独立 RenderItem（穿插在 turn 间，不并入 user/assistant turn）
-    const msg: Message = {
+    // entry 构造点注入两个异源字段（与 message_end 实时重构同款语义，差异归一见测试）：
+    // - id：cm-uuid 客户端生成（保证 ref 消息 id 唯一；reducer 从 entry.id 派生，ref 与
+    //   reducer state 同 id。重开侧为 pi 持久化的 uuidv7 entry id——id 值异源属 W21 已裁决
+    //   的 live/reload 差异类，等价性断言按字段归一）。
+    // - timestamp：客户端时钟（customStart payload 不携带 timestamp——event-adapter 翻译
+    //   不透传；重开侧为 pi 持久化时刻，差值为投递延迟）。
+    // display 三态原样进 entry（true/false 显式透传，undefined 安全保留显示，ADR-0048
+    // 决策点 3），覆写归 reducer——本文件不再是覆写点。
+    const entry: PiCustomMessageEntry = {
+      type: 'custom_message',
       id: `cm-${crypto.randomUUID()}`,
-      role: 'system',
-      content,
-      status: 'complete',
-      customType,
-      display,
-      // 保留原始 details（含 __gui__），tool RPC 的 __gui__ 由 Block.vue extractGui 内联渲染
-      details,
-      timestamp: Date.now(),
+      parentId: null,
+      timestamp: new Date().toISOString(),
+      customType: readString(payload, 'customType') ?? '',
+      content: readString(payload, 'content') ?? '',
+      details: payload['details'],
+      display: payload['display'] === true || payload['display'] === false ? payload['display'] : undefined,
     }
-    commitMessages(messages, sid, [...prev, msg])
+    // 权威喂入：per-session reducer state（与重开 replayEntries 同一个 applyEntry）
+    ctx.applyEntryFrame(sid, entry)
+    // overlay 投影：渲染 ref 消费同一份派生（W21 裁决：ref 不由 reducer state 直接投影，
+    // 收敛归 W22）——applyEntry 在空 state 上派生本条消息（custom_message 投影不依赖前置
+    // state，id 已由 entry.id 提供），commit 进 messages ref。
+    const derived = applyEntry(createInitialChatViewState(), entry)
+    const prev = messages.value.get(sid)?.value ?? []
+    commitMessages(messages, sid, [...prev, ...derived.messages])
   },
 
   // ── 运行态 / 元信息（system 提示行，W05-A/W07-C）──

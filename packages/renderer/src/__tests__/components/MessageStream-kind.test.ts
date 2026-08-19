@@ -250,7 +250,8 @@ describe('MessageStream kind 查表分发（M1）', () => {
   })
 
   it('TC2: bgNotify 消息（customType=subagent-bg-notify, display:false）不渲染任何专属组件（M1 死分支回归防护）', async () => {
-    // [M2 display 前置] 黑名单已删：subagent-bg-notify 由生产端（registry customStart /
+    // [M2 display 前置] 黑名单已删：subagent-bg-notify 由生产端（core apply-entry
+    // custom_message case——实时 customStart 喂 entry 与重开 replay 同一覆写点 /
     // runtime mapper）统一写 display:false → filterDisplayableMessages 按 display 字段过滤移除。
     // 若未来有人给 kind 全集加回 bgNotify 类分支/嗅探，本用例确保至少不渲染专属卡片。
     const chat = useChatStore()
