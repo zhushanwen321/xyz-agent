@@ -542,11 +542,28 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return sessionId
   }
 
-  async setThinkingLevel(sessionId: string, level: string): Promise<void> {
-    const session = this.sessions.get(sessionId)
-    if (session) session.thinkingLevel = level
+  /**
+   * 设置思考档并返回 pi 生效值。
+   *
+   * P3（pi-assumption final gate）：pi 会钳制模型族不支持的档位（如 mimo 族 max →
+   * high，clampThinkingLevel 就近回落），且钳制时不发事件不写 entry——reply 与内存
+   * 缓存若用请求值，会把 UI 的 pending 确认与 session 缓存污染成未生效档位。生效值
+   * 以 set 后 get_state 快照为准（标量状态唯一权威读路径，ADR-0062）。
+   */
+  async setThinkingLevel(sessionId: string, level: string): Promise<string> {
     const client = this.pm.getClient(sessionId)
-    if (client) await client.setThinkingLevel(level)
+    if (!client) {
+      // 无活跃进程（理论不可达：调用方都在活跃 session 语境）——请求值兜底，行为同旧版
+      const session = this.sessions.get(sessionId)
+      if (session) session.thinkingLevel = level
+      return level
+    }
+    await client.setThinkingLevel(level)
+    const state = await client.getState()
+    const effective = typeof state?.thinkingLevel === 'string' ? state.thinkingLevel : level
+    const session = this.sessions.get(sessionId)
+    if (session) session.thinkingLevel = effective
+    return effective
   }
   /**
    * 更新活跃 session 的 label（内存态）。

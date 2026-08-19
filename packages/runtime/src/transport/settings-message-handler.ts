@@ -377,8 +377,10 @@ export class SettingsMessageHandler {
       }
       case 'session.setThinkingLevel': {
         const { sessionId: sid, level } = msg.payload
-        await this.ctx.modelService.setThinkingLevel(sid as string, level as string)
-        this.ctx.reply(ws, msg.id, 'session.thinkingLevelSet', { sessionId: sid, level })
+        // P3（final gate）：reply 生效值而非请求值——pi 会钳制模型族不支持的档位
+        //（mimo 族 max → high，钳制时不发事件不写 entry），回显请求值会污染前端 pending 确认
+        const effective = await this.ctx.modelService.setThinkingLevel(sid as string, level as string)
+        this.ctx.reply(ws, msg.id, 'session.thinkingLevelSet', { sessionId: sid, level: effective })
         return true
       }
       case 'config.setWorktreeRootDir': {
