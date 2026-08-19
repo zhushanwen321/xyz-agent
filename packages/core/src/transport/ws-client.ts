@@ -50,6 +50,11 @@ const MAX_RECONNECT_DELAY_MS = 30_000
 const MAX_RECONNECT_DURATION_MS = 60_000
 /** auth 握手客户端超时（S1-W1）：短于 runtime 侧 10s 握手超时，客户端先主动断开走重连。 */
 const AUTH_TIMEOUT_MS = 5_000
+/**
+ * pre-auth 发送队列容量上限（防泄漏）：入队消息与 request 层 pending 一一对应
+ * （renderer pending 层 MAX_PENDING=256 同界），超限驱逐最老并经 onQueueDrop 通知。
+ */
+const MAX_PREAUTH_QUEUE = 256
 
 // ── 状态 ────────────────────────────────────────────────────
 // taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：WS 连接状态单例 ref（UI 连接指示的数据源，12 类未覆盖）
@@ -64,6 +69,53 @@ let wsGeneration = 0
 let currentUrl: string | null = null
 /** 本次连接凭据（S1-W1）：connect(url, token) 更新；内部重连复用；mock url 强制清空。 */
 let currentToken: string | null = null
+/**
+ * 本代连接是否已完成 auth（模块级真源，send() 的发送门槛）。
+ * WS 握手完成即 readyState=OPEN，但 token 模式下要等 auth.result ok 才算完成——
+ * TCP open → auth.result 窗口内 send() 真实送出的消息会被 runtime 设计性静默丢弃
+ * （connection-manager handleUnauthedMessage，spec §3.3 D4），故未完成 auth 前入队。
+ * connect() 开始时按「无 token 模式视为已完成」初始化；gen 检查保证只有当前代写入。
+ */
+let connectionAuthed = false
+/** pre-auth 窗口入队的出站消息（FIFO；auth.result ok 后按序 flush） */
+// taste:allow-no-data-owner W24-EX-B（模块级单例传输瞬态，登记草稿）：pre-auth 发送队列（容量上限 256，非 GUI 数据）
+const preAuthQueue: ClientMessage[] = []
+
+/** 队列丢弃原因（onQueueDrop 回调第二参，消费方按需区分日志/错误文案） */
+export type SendQueueDropReason = 'auth-failed' | 'closed' | 'overflow' | 'disconnected'
+
+/** 队列丢弃回调（单槽，对齐 onMessage 体例）：use-connection 注册，对带 id 消息 reject 对应 pending */
+let queueDropHandler: ((msgs: ClientMessage[], reason: SendQueueDropReason) => void) | null = null
+
+/** 注册 pre-auth 队列丢弃回调，返回取消函数 */
+export function onQueueDrop(cb: (msgs: ClientMessage[], reason: SendQueueDropReason) => void): () => void {
+  queueDropHandler = cb
+  return () => {
+    if (queueDropHandler === cb) queueDropHandler = null
+  }
+}
+
+/** 通知队列丢弃（清空方负责 splice，此处只广播） */
+function notifyQueueDrop(msgs: ClientMessage[], reason: SendQueueDropReason): void {
+  if (msgs.length === 0) return
+  queueDropHandler?.(msgs, reason)
+}
+
+/** 清空 pre-auth 队列并通知（auth 失败 / 连接关闭 / 终止态；幂等） */
+function dropPreAuthQueue(reason: SendQueueDropReason): void {
+  notifyQueueDrop(preAuthQueue.splice(0), reason)
+}
+
+/** auth 完成后按序 flush 队列（markConnected 内调用；防御连接已失效时走 drop） */
+function flushPreAuthQueue(): void {
+  if (preAuthQueue.length === 0) return
+  const batch = preAuthQueue.splice(0)
+  if (ws?.readyState === WS_READY_STATE.OPEN) {
+    for (const msg of batch) ws.send(JSON.stringify(msg))
+  } else {
+    notifyQueueDrop(batch, 'closed')
+  }
+}
 /** 本轮重连起始时间戳（首次 scheduleReconnect 设置，connect 成功后置 null 重置） */
 let reconnectStartedAt: number | null = null
 
@@ -98,6 +150,7 @@ export function setRestarting(): void {
  */
 export function setFailed(): void {
   clearTimers()
+  dropPreAuthQueue('disconnected') // 终止态：残留队列消息不再有机会发出
   // 重置重连簿记：failed 为终止态，残留的 reconnectAttempts/reconnectStartedAt（约 60s 前的旧值）
   // 会让后续用户重试 / visibility 重连在首次掉线时立即被判超时 → 一次失败即回 failed，指数退避失效。
   reconnectAttempts = 0
@@ -126,8 +179,9 @@ export function connect(url: string, token?: string): void {
 
   state.value = 'connecting'
   const gen = ++wsGeneration
-  /** 本代连接是否已完成 auth（无 token 模式在 onopen 即视为完成） */
-  let authed = currentToken === null
+  // 本代 auth 状态初始化（无 token 模式在 onopen 即视为完成）；后续读写都走模块级
+  // connectionAuthed——send() 需要在 connect 闭包外感知 auth 进度（pre-auth 入队门槛）。
+  connectionAuthed = currentToken === null
   ws = getPlatform().webSocket.create(url)
   console.log('[ws] connecting to', url)
 
@@ -138,18 +192,19 @@ export function connect(url: string, token?: string): void {
     }
   }
 
-  /** connected 化（auth 成功或无 token 模式）：置位状态 + 重连簿记 + 启动心跳。 */
+  /** connected 化（auth 成功或无 token 模式）：置位状态 + 重连簿记 + 启动心跳 + flush 队列。 */
   const markConnected = () => {
     state.value = 'connected'
     reconnectAttempts = 0
     // 连接成功 → 重置重连计时窗口（下次掉线重新开始计数）
     reconnectStartedAt = null
     startHeartbeat()
+    flushPreAuthQueue()
   }
 
   ws.onopen = () => {
     if (gen !== wsGeneration) return // 旧 WS 残余回调，忽略
-    if (!authed) {
+    if (!connectionAuthed) {
       // S1-W1：首条消息必须是 auth；connected 推迟到 auth.result ok（心跳/重订阅随后）
       ws!.send(JSON.stringify({ type: 'auth', payload: { token: currentToken } }))
       authTimer = setTimeout(() => {
@@ -173,16 +228,18 @@ export function connect(url: string, token?: string): void {
       return
     }
     // auth 握手期：只消费 auth.result，其余消息（握手期不应出现）丢弃
-    if (!authed) {
+    if (!connectionAuthed) {
       const r = parsed as { type?: unknown; payload?: { ok?: unknown } | null }
       if (r.type === 'auth.result' && r.payload != null) {
         clearAuthTimer()
         if (r.payload.ok === true) {
-          authed = true
+          connectionAuthed = true
           markConnected()
         } else {
           // runtime 拒绝（token 失效，如 runtime 已换 token 重启）→ close 走重连链，
-          // 新 token 由 use-connection 的 onRuntimePort 路径刷新
+          // 新 token 由 use-connection 的 onRuntimePort 路径刷新；
+          // pre-auth 队列清空 + 通知（入队消息的 pending 由 onQueueDrop 消费方快速 reject）
+          dropPreAuthQueue('auth-failed')
           console.warn('[ws] auth rejected by runtime, closing for reconnect')
           ws?.close()
         }
@@ -201,6 +258,7 @@ export function connect(url: string, token?: string): void {
     state.value = 'disconnected'
     stopHeartbeat()
     clearAuthTimer()
+    dropPreAuthQueue('closed')
     scheduleReconnect()
   }
 
@@ -216,6 +274,7 @@ export function disconnect(): void {
   // 递增 generation 使旧 WS 的回调失效
   wsGeneration++
   clearTimers()
+  dropPreAuthQueue('disconnected') // 回调将被摘除，onclose 清队路径不可达，此处显式清
   if (ws) {
     // 先摘回调再 close，避免触发 onclose → scheduleReconnect
     ws.onclose = null
@@ -231,11 +290,22 @@ export function disconnect(): void {
  * 发送消息（W4：返回 boolean，让调用方 fast-fail）。
  *
  * 返回契约：
- * - readyState=OPEN → 实际发送，返回 true（已发送确认）
- * - readyState≠OPEN（CONNECTING/CLOSED）→ 不发送，返回 false（调用方可立即 reject / 重试）
+ * - readyState=OPEN 且本代 auth 已完成 → 实际发送，返回 true（已发送确认）
+ * - readyState=OPEN 但 auth 未完成（TCP open → auth.result 窗口）→ 入 pre-auth 队列
+ *   （有界 MAX_PREAUTH_QUEUE），auth 成功后按序 flush，返回 true（已接受）；
+ *   auth 失败 / 连接关闭时清队并经 onQueueDrop 通知（消费方 reject 对应 pending）
+ * - readyState≠OPEN（CONNECTING/CLOSED）→ 不发送不入队，返回 false（调用方可立即 reject / 重试）
  */
 export function send(msg: ClientMessage): boolean {
   if (ws?.readyState === WS_READY_STATE.OPEN) {
+    if (!connectionAuthed) {
+      if (preAuthQueue.length >= MAX_PREAUTH_QUEUE) {
+        // 防泄漏：驱逐最老（FIFO 队头）并通知 drop
+        notifyQueueDrop(preAuthQueue.splice(0, 1), 'overflow')
+      }
+      preAuthQueue.push(msg)
+      return true
+    }
     ws.send(JSON.stringify(msg))
     return true
   }

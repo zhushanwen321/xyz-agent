@@ -315,6 +315,51 @@ describe('createChatStore factory', () => {
     })
   })
 
+  describe('finalizeAllStreaming（断连 / 崩溃兜底收口，review #1.2）', () => {
+    it('disconnect → 全部候选 session 的 streaming 复位（isGenerating false）+ 消息 error 收口 + 独立瞬态清空', () => {
+      const s1 = 's1'
+      const s2 = 's2'
+      // s1：streaming assistant（messages 分区来源的候选）
+      sut.store.setMessages(s1, [userMsg('u1'), streamingAssistant('a1', { content: '生成中' })])
+      // s2：无消息实体、仅 retry/queue 瞬态（瞬态 Map 来源的候选——只遍历 messages 会漏）
+      sut.store.applyMessageEvent(s2, msg(s2, 'message.auto_retry_start', { attempt: 1 }))
+      sut.store.applyMessageEvent(s2, msg(s2, 'message.queue_update', { steering: ['q1'] }))
+      sut.store.setCompacting(s2, true)
+      expect(sut.store.isGenerating(s1)).toBe(true)
+      expect(sut.store.getRetryState(s2)).toBeDefined()
+      expect(sut.store.getQueueState(s2)).toBeDefined()
+      expect(sut.store.isCompacting(s2)).toBe(true)
+
+      sut.store.finalizeAllStreaming('disconnect')
+
+      // streaming 实体收口为 error（disconnect 属 error 类 reason）→ isGenerating 复位
+      expect(sut.store.getMessages(s1)[1].status).toBe('error')
+      expect(sut.store.isGenerating(s1)).toBe(false)
+      // 独立瞬态（retry/queue/compacting）清空——clearIndependentTransient 断连兜底
+      expect(sut.store.getRetryState(s2)).toBeUndefined()
+      expect(sut.store.getQueueState(s2)).toBeUndefined()
+      expect(sut.store.isCompacting(s2)).toBe(false)
+    })
+
+    it('幂等：已收口 session 二次调用 no-op（重连成功后 ring 回放已收口的场景）', () => {
+      const sid = 's1'
+      sut.store.setMessages(sid, [streamingAssistant('a1', { content: '生成中' })])
+      sut.store.finalizeAllStreaming('disconnect')
+      expect(sut.store.getMessages(sid)[0].status).toBe('error')
+      // 二次调用（如 grace 到期与 IPC 崩溃路径竞态双触发）：sealed 不再改状态
+      sut.store.finalizeAllStreaming('disconnect')
+      expect(sut.store.getMessages(sid)[0].status).toBe('error')
+      expect(sut.store.isGenerating(sid)).toBe(false)
+    })
+
+    it('无瞬态 session（全部已 complete）不受影响', () => {
+      const sid = 's1'
+      sut.store.setMessages(sid, [userMsg('u1'), { id: 'a1', role: 'assistant', content: '已完成', status: 'complete', timestamp: 1 }])
+      sut.store.finalizeAllStreaming('disconnect')
+      expect(sut.store.getMessages(sid)[1].status).toBe('complete')
+    })
+  })
+
   describe('disposeSession（清理全部 per-session ref）', () => {
     it('清 messages / hydrated / pendingSend / compactingSessions', () => {
       const sid = 's1'

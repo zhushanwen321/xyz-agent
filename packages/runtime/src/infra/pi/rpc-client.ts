@@ -326,8 +326,17 @@ export class RpcClient implements IPiEngine {
   }
 
   private handleMessage(msg: PiMessage): void {
-    // If id matches a pending request, resolve it; otherwise emit as event
-    if (msg.id && this.pending.has(msg.id)) {
+    // If id matches a pending request, resolve it; otherwise emit as event.
+    // resolve 只认 RPC response：pi 的 RpcResponse union 所有变体 type === 'response'
+    // （pi-mono coding-agent/src/modes/rpc/rpc-types.ts:114-223），事件各有独立 type 字符串。
+    // pi 0.84.1 新增 bash_execution_update 流事件复用发起 RPC 的 id
+    // （node_modules @earendil-works/pi-coding-agent dist/core/agent-session.d.ts:103-106
+    // {type:"bash_execution_update", id?, delta}；docs/rpc.md:26「bash_execution_update
+    // events also include the id of their originating bash command」）——仅凭 id 命中
+    // pending 就 resolve 会把首条 delta 误当 response（真 response 到达时 pending 已删，
+    // 真实 output 丢失，bash() shape guard 落 [protocol error: malformed] fallback）。
+    // 非 response 的带 id 消息走下方 listener 路径（event-adapter NULL_EVENTS 已登记）。
+    if (msg.type === 'response' && msg.id && this.pending.has(msg.id)) {
       const entry = this.pending.get(msg.id)!
       clearTimeout(entry.timer)
       this.pending.delete(msg.id)

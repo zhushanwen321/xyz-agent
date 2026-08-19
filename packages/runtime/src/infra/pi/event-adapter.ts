@@ -838,10 +838,16 @@ function handleEntryAppended(event: PiEntryAppendedEvent, _sid: string): PiTrans
 // [W21] message_end 移出此列——重构 message entry 喂前端 reducer（handleMessageEnd，实时 feed
 // 权威载体）。pi 上游未来若为常规 message append 补发射 entry_appended：只换喂入源头
 // （entry_appended → entry 构造），reducer 不动。
+// bash_execution_update：pi 0.84.1 新增 live bash 流事件（dist/core/agent-session.d.ts:103-106
+// {type:"bash_execution_update", id?, delta}，emit 点 agent-session.js:2210 executeBash 的
+// onChunk 回调），复用发起 bash RPC 的 id（docs/rpc.md:26）。rpc-client 的 resolve 守卫修复后
+// 该事件正确流入本层，但 xyz 暂不做 live bash 流式 UI 消费（最终 output 经 bash RPC response
+// 全量到达）——显式登记为已知 no-op，防止落入 default 分支被误判为「事件丢失」。
 const NULL_EVENTS = new Set([
   'turn_start',
   'extension_config', 'extension_ui_response', 'response',
   'agent_settled',
+  'bash_execution_update',
 ])
 
 // ── Dispatcher map ─────────────────────────────────────────────────

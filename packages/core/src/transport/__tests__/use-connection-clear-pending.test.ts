@@ -17,7 +17,7 @@
  * 运行：cd packages/core && npx vitest run src/transport/__tests__/use-connection-clear-pending.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { ref, type Ref } from 'vue'
+import { nextTick, ref, type Ref } from 'vue'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { ConnectionState } from '../ws-client'
 import { useConnection, setConnectionPorts, type ConnectionPorts } from '../use-connection'
@@ -30,9 +30,16 @@ vi.mock('../ws-client', () => ({
   connect: (...args: unknown[]) => mockConnect(...args),
   disconnect: (...args: unknown[]) => mockDisconnect(...args),
   getState: () => mockStateRef,
-  setRestarting: vi.fn(),
-  setFailed: vi.fn(),
+  // [汇合点改造] setRestarting/setFailed 置态（与真实实现对齐）——IPC 崩溃监听器只置态，
+  // pending 清理 + onRuntimeUnavailable 经 stateWatch 的 state 迁移汇合触发。
+  setRestarting: () => {
+    mockStateRef.value = 'restarting'
+  },
+  setFailed: () => {
+    mockStateRef.value = 'failed'
+  },
   onMessage: vi.fn(() => () => {}),
+  onQueueDrop: vi.fn(() => () => {}),
 }))
 
 // ── 端口 mock：捕获 onRuntimeRestarting/onRuntimeFailed/onRuntimePort 注册的回调 ──
@@ -109,7 +116,12 @@ describe('T5: runtime 重连清理 ask-user pending（clearAllPending）', () =>
     await init()
     expect(restartingCb).not.toBeNull()
 
+    // 先连上（汇合点按 connected→restarting 迁移触发清理；未连上场景由 restarting 分支无条件覆盖）
+    mockStateRef.value = 'connected'
+    await nextTick()
     restartingCb!()
+    // setRestarting 置态 → stateWatch flush（微任务）触发汇合清理
+    await nextTick()
     expect(mockRuntimeCleanup).toHaveBeenCalledTimes(1)
     expect(mockRuntimeCleanup).toHaveBeenCalledWith('restart')
     expect(mockRejectAll).toHaveBeenCalledTimes(1)
@@ -121,10 +133,26 @@ describe('T5: runtime 重连清理 ask-user pending（clearAllPending）', () =>
     await init()
     expect(failedCb).not.toBeNull()
 
+    mockStateRef.value = 'connected'
+    await nextTick()
     failedCb!()
+    await nextTick()
     expect(mockRuntimeCleanup).toHaveBeenCalledTimes(1)
     expect(mockRuntimeCleanup).toHaveBeenCalledWith('disconnect')
     expect(mockRejectAll).toHaveBeenCalledTimes(1)
+    teardown()
+  })
+
+  it('未连上时 runtime 崩溃（disconnected → restarting）→ 仍触发清理（对齐原 IPC 监听器无条件语义）', async () => {
+    const { init, teardown } = useConnection()
+    await init()
+    expect(restartingCb).not.toBeNull()
+
+    // 从未进入 connected，IPC 崩溃仍收口（restarting 分支不要求 oldState=connected）
+    restartingCb!()
+    await nextTick()
+    expect(mockRuntimeCleanup).toHaveBeenCalledTimes(1)
+    expect(mockRuntimeCleanup).toHaveBeenCalledWith('restart')
     teardown()
   })
 
@@ -135,8 +163,9 @@ describe('T5: runtime 重连清理 ask-user pending（clearAllPending）', () =>
 
     // 模拟 runtime 重启成功推新端口（state 非 disconnected 才会重连，但清理与 connect 无关）
     mockStateRef.value = 'connected'
+    await nextTick()
     portCb!(9999)
-    // 关键断言：正常端口重连不清 pending、不触发清理
+    // 关键断言：正常端口重连不清 pending、不触发清理（state 未离开 connected）
     expect(mockRuntimeCleanup).not.toHaveBeenCalled()
     expect(mockRejectAll).not.toHaveBeenCalled()
     teardown()
