@@ -94,6 +94,8 @@ vi.mock('@xyz-agent/shared', () => ({
   ENV_WHITELIST_PREFIXES: ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'NODE_', 'NVM_', 'XYZ_', 'XDG_', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP'],
   // session-lifecycle.restoreSession L259 用 BUILTIN_PRESET_IDS.FULL 兜底历史 session 的 presetId
   BUILTIN_PRESET_IDS: { FULL: 'builtin:full', ORCHESTRATOR: 'builtin:orchestrator', READONLY: 'builtin:readonly' },
+  // session-lifecycle 的 VALID_THINKING_LEVELS（W2 值域 SSOT）import 此值数组
+  PI_THINKING_LEVELS: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
 }))
 
 // Mock @xyz-agent/shared/paths — getDataDir 被 pi-paths 子路径 import（Node-only，隔离于 barrel）

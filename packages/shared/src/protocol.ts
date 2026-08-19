@@ -236,7 +236,7 @@ export interface ClientMessageMap {
   // modelOverride / thinkingOverride：Landing Model/Thinking Chip 的覆盖值（设计文档 §5.2）。
   // 优先级：Landing Chip override > preset.modelOverride/thinkingLevel > 全局默认。
   //   - modelOverride：模型 ID 字符串（如 'anthropic/claude-sonnet-4'），覆盖 preset.modelOverride
-  //   - thinkingOverride：ThinkingLevel 值（'off'|'minimal'|'low'|'medium'|'high'|'xhigh'），覆盖 preset.thinkingLevel
+  //   - thinkingOverride：ThinkingLevel 值（= PI_THINKING_LEVELS 全集 7 值，含 'max'），覆盖 preset.thinkingLevel
   // 两者均可选——省略时按 preset 字段或全局默认回退。
   'session.create': {
     cwd?: string

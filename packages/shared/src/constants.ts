@@ -48,12 +48,24 @@ export const PROVIDER_API_TYPES = ['anthropic-messages', 'openai-completions'] a
 export type ProviderApiType = (typeof PROVIDER_API_TYPES)[number]
 
 /** pi 运行时实际支持的所有 api 终值（用于 runtime warn 校验）。
- *  比 PROVIDER_API_TYPES 多 openai-responses —— 前端 Select 暂未暴露该类型，
- *  但 pi 运行时支持，传入时不应 warn。两个常量分离：前者是「前端可选」，后者是「pi 认识」。 */
+ *  = pi-ai KnownApi 10 值全集（W2 对齐 pi-assumption-remediation A-09，2026-08-20 现场核实）。
+ *  锚点：pi 0.84.1 实装依赖内嵌 pi-ai 0.84.2
+ *  `node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/types.d.ts:15`
+ *  的 KnownApi 联合（与根 pi-ai 0.82.1 `node_modules/@earendil-works/pi-ai/dist/types.d.ts:14` 同集）。
+ *  维护注：升级 pi / pi-ai 时 diff 上面锚点行并同步此处（顺序保持与 KnownApi 定义一致便于逐值对照），
+ *  避免白名单再漂移——此前仅 3 值导致 7 种合法 api type 误报「pi 可能不支持」warn。
+ *  比 PROVIDER_API_TYPES 多 8 值：前者是「前端可选」，本集合是「pi 认识」。 */
 export const KNOWN_PI_API_TYPES: ReadonlySet<string> = new Set([
-  'anthropic-messages',
   'openai-completions',
+  'mistral-conversations',
   'openai-responses',
+  'azure-openai-responses',
+  'openai-codex-responses',
+  'anthropic-messages',
+  'bedrock-converse-stream',
+  'google-generative-ai',
+  'google-vertex',
+  'pi-messages',
 ])
 
 /** Environment variable prefixes allowed to pass to child processes */

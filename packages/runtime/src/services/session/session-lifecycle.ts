@@ -14,7 +14,8 @@ import { existsSync, unlinkSync, readFileSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import type { SessionSummary, BatchDeleteResult, ThinkingLevel } from '@xyz-agent/shared'
-import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
+import { BUILTIN_PRESET_IDS, PI_THINKING_LEVELS } from '@xyz-agent/shared'
+import type { PiThinkingLevel } from '../../infra/pi/pi-protocol.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
@@ -77,7 +78,9 @@ export function stripSessionEndEntries(jsonlContent: string): string {
     if (SESSION_END_RE.test(line)) continue
     kept.push(line)
   }
-  // 末尾统一补一个换行（pi _persist 期望每行以 \n 结尾）
+  // 末尾统一补一个换行（W2/A-06 注释修正：pi 读取侧按行 trim 分行——session-manager.js
+  // parseSessionEntries/parseSessionEntryLine 对内容先 trim 再 split("\n")，末尾 \n 非必须；
+  // 补 \n 是保守对齐 pi 写出格式，非 pi 期望）
   return kept.length > 0 ? kept.join('\n') + '\n' : ''
 }
 
@@ -114,13 +117,20 @@ export function applyHeaderCwdFallback(jsonlContent: string, fallbackCwd: string
 }
 
 /**
- * thinkingLevel 合法值集合（S-RT-5）。
+ * thinkingLevel 合法值集合（S-RT-5；W2 值域 SSOT 派生，A-03 修复）。
  *
- * 与 shared ThinkingLevel 类型对齐（pi CLI --thinking 参数值域，附录 A.4）。
+ * 值 = shared PI_THINKING_LEVELS（pi 0.84.1 全集 7 值，锚点见 pi-preset.ts），
+ * 不再手写数组——手写值域曾缺 'max' 导致 composer 最高档被静默丢弃。
  * 用 readonly 数组做运行时校验：lifecycle 透传 thinkingOverride 到 pi 前先校验，
  * 非法值 warn 后忽略（不传给 pi，避免 pi 报错或行为异常）。
+ *
+ * 类型标注同时做编译期双向防漂移（shared 不能反向 import runtime，由本文件——
+ * 唯一同时 import 两边者——锁定一致性）：
+ * - `readonly PiThinkingLevel[]`：shared 全集出现 pi-protocol 之外的值 → 编译错；
+ * - `& AssertSharedCoversPi`：pi-protocol 全集有而 shared 缺（pi 升级加档位未同步）→ 编译错。
  */
-const VALID_THINKING_LEVELS: readonly string[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+type AssertSharedCoversPi = [Exclude<PiThinkingLevel, ThinkingLevel>] extends [never] ? unknown : never
+const VALID_THINKING_LEVELS: readonly PiThinkingLevel[] & AssertSharedCoversPi = PI_THINKING_LEVELS
 
 // D8-3 迁移 promise gate（06 §3.3，perf W29）：provider 迁移（apiKey → auth.json +
 // enabledModels 白名单）完成前禁止 spawn pi——迁移窗口内 spawn 的 session 会读到迁移前
@@ -214,10 +224,11 @@ export class SessionLifecycle {
     // S-RT-5：thinkingLevel 校验合法值。Landing 传入与 preset 字段都可能是非法值
     //（如前端未约束 / preset JSON 手改），透传给 pi 会触发 pi 报错或静默忽略，统一在此拦截。
     const rawThinking = thinkingOverride ?? resolution?.thinkingLevel
-    const effectiveThinking = rawThinking && VALID_THINKING_LEVELS.includes(rawThinking)
-      ? rawThinking
-      : undefined
-    if (rawThinking && !VALID_THINKING_LEVELS.includes(rawThinking)) {
+    // widening cast（与 shared isPiLaunchPreset 的 TOOL_MODES 同款惯例）：includes 收窄参数类型，
+    // 此处本意就是对任意 string 做白名单判定。
+    const knownThinking = rawThinking !== undefined && (VALID_THINKING_LEVELS as readonly string[]).includes(rawThinking)
+    const effectiveThinking = knownThinking ? rawThinking : undefined
+    if (rawThinking !== undefined && !knownThinking) {
       console.warn(`[lifecycle] invalid thinking level: ${rawThinking}, ignored`)
     }
 

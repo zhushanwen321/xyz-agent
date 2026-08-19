@@ -225,7 +225,7 @@ export class ProcessManager implements IProcessManager {
           )
         }
         throw new Error(
-          `Failed to start pi process. Ensure pi is installed globally (npm i -g @mariozechner/pi-coding-agent). `
+          `Failed to start pi process. Ensure pi is installed globally (npm i -g @earendil-works/pi-coding-agent). `
           + `Searched: PATH, ~/.nvm/versions/*/bin/pi, /usr/local/bin/pi. `
           + `Original error: ${msg}`,
         )

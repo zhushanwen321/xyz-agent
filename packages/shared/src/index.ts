@@ -116,6 +116,7 @@ export {
   BUILTIN_EXTENSION_FILES,
   BUILTIN_PRESET_IDS,
   DEFAULT_PRESETS,
+  PI_THINKING_LEVELS,
   isPiLaunchPreset,
 } from './pi-preset'
 export type { LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState, IProxyConfig, UpdateSettings } from './update'
