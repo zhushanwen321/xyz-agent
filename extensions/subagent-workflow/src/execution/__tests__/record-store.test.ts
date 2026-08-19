@@ -48,7 +48,7 @@ function makeRecord(over: Partial<ExecutionRecord> = {}): ExecutionRecord {
  */
 function writeSessionJsonl(
   filePath: string,
-  identity: { id: string; agent: string; mode: "sync" | "background"; task: string; startedAt: number; rootSessionId?: string; parentRecordId?: string; depth?: number; lastTs?: number },
+  identity: { id: string; agent: string; mode: "sync" | "background"; task: string; startedAt: number; rootSessionId?: string; parentRecordId?: string; depth?: number; lastTs?: number; chatMode?: boolean },
   assistantText = "result text",
 ): void {
   const lastTs = identity.lastTs ?? identity.startedAt + 1000;
@@ -65,6 +65,7 @@ function writeSessionJsonl(
   if (identity.rootSessionId !== undefined) identityData.rootSessionId = identity.rootSessionId;
   if (identity.parentRecordId !== undefined) identityData.parentRecordId = identity.parentRecordId;
   if (identity.depth !== undefined) identityData.depth = identity.depth;
+  if (identity.chatMode !== undefined) identityData.chatMode = identity.chatMode;
   const identityEntry = JSON.stringify({
     type: "custom",
     id: "id-1",
@@ -775,6 +776,96 @@ describe("RecordStore", () => {
   });
 
   // ============================================================
+  // 孤儿终态恢复（residual-fixes）：分支 4 兜底 record 的判定与落盘
+  // ============================================================
+  describe("recoverOrphanRecords 孤儿终态恢复", () => {
+    /** 带真实磁盘 fixture + appendEntry 捕获的 store。 */
+    function makeRecoveryStore(): { store: RecordStore; appended: Array<{ customType: string; data: Record<string, unknown> }> } {
+      const appended: Array<{ customType: string; data: Record<string, unknown> }> = [];
+      const store = new RecordStore(tmpDir, undefined, {
+        appendEntry: (customType: string, data: unknown) => {
+          appended.push({ customType, data: data as Record<string, unknown> });
+        },
+      } as never);
+      return { store, appended };
+    }
+
+    it("末行完整 → closed 终态 entry + .finalized sidecar（防重锚）", () => {
+      const sessionFile = path.join(tmpDir, "orphan-done.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-orphan-1", agent: "worker", mode: "background", task: "orphan done",
+        startedAt: 1000, rootSessionId: "sess-orphan",
+      });
+      const { store, appended } = makeRecoveryStore();
+      store.recoverOrphanRecords("sess-orphan");
+
+      const entry = appended.find((c) => c.data.id === "sa-orphan-1");
+      expect(entry?.customType).toBe("subagent-record");
+      expect(entry?.data.status).toBe("closed");
+      expect(entry?.data.closedReason).toBe("gc");
+      expect(entry?.data.endedAt).toEqual(expect.any(Number));
+      expect(entry?.data.error).toBeUndefined();
+      expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
+      // 防重：sidecar 使下次重建走分支 2（closed），不再进判定
+      const again = [...appended];
+      store.recoverOrphanRecords("sess-orphan");
+      expect(appended.length).toBe(again.length);
+      const found = store.collectRecords(100, "all", "sess-orphan").find((r) => r.id === "sa-orphan-1");
+      expect(found?.status).toBe("closed");
+    });
+
+    it("末行截断 → closed + error（保守方向）", () => {
+      const sessionFile = path.join(tmpDir, "orphan-truncated.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-orphan-2", agent: "worker", mode: "background", task: "orphan truncated",
+        startedAt: 2000, rootSessionId: "sess-orphan",
+      });
+      // 制造截断：append 半行 JSON（无换行结尾）
+      fs.appendFileSync(sessionFile, '{"type":"message","id":"msg-2","pare', "utf-8");
+      const { store, appended } = makeRecoveryStore();
+      store.recoverOrphanRecords("sess-orphan");
+
+      const entry = appended.find((c) => c.data.id === "sa-orphan-2");
+      expect(entry?.data.status).toBe("closed");
+      expect(entry?.data.error).toContain("truncated");
+      expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
+    });
+
+    it("chatMode 孤儿 → 不终态化，落 resumable entry（可续聊产品语义）", () => {
+      const sessionFile = path.join(tmpDir, "orphan-chat.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-orphan-3", agent: "worker", mode: "background", task: "orphan chat",
+        startedAt: 3000, rootSessionId: "sess-orphan", chatMode: true,
+      });
+      const { store, appended } = makeRecoveryStore();
+      store.recoverOrphanRecords("sess-orphan");
+
+      const entry = appended.find((c) => c.data.id === "sa-orphan-3");
+      expect(entry?.data.status).toBe("running");
+      expect(entry?.data.resumable).toBe(true);
+      expect(entry?.data.chatMode).toBe(true);
+      // chat 分流不写终态 sidecar
+      expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(false);
+      // orphanJudged 缓存：同 store 重复调用不重复 append
+      const count = appended.length;
+      store.recoverOrphanRecords("sess-orphan");
+      expect(appended.length).toBe(count);
+    });
+
+    it("非分支 4 record（closed / 活进程）不进判定", () => {
+      const closedFile = path.join(tmpDir, "orphan-closed.jsonl");
+      writeSessionJsonl(closedFile, {
+        id: "sa-orphan-4", agent: "worker", mode: "background", task: "already closed",
+        startedAt: 4000, rootSessionId: "sess-orphan",
+      });
+      writeFinalized(closedFile);
+      const { store, appended } = makeRecoveryStore();
+      store.recoverOrphanRecords("sess-orphan");
+      expect(appended.find((c) => c.data.id === "sa-orphan-4")).toBeUndefined();
+    });
+  });
+
+  // ============================================================
   // W16 [D4]：subagent-record 自描述 appendEntry 上报（状态迁移点）
   // ============================================================
   describe("W16 subagent-record 自描述 appendEntry 上报", () => {
@@ -809,10 +900,11 @@ describe("RecordStore", () => {
       // 写点字面量与 record-entry.ts 常量等值（钉住双源一致性）
       expect(appended[0]?.customType).toBe(SUBAGENT_RECORD_CUSTOM_TYPE);
       const data = asEntryData(appended[0]?.data);
-      // schema 完整性：25 字段（v + SubagentRecord 持久化字段全集，无缺无余）
+      // schema 完整性：27 字段（v + SubagentRecord 持久化字段全集，无缺无余；
+      // residual-fixes 增 chatMode/resumable 执行态细分判据）
       expect(Object.keys(data).sort()).toEqual([
-        "agent", "closedReason", "depth", "displayItems", "endedAt", "error", "eventLog",
-        "id", "mode", "model", "parentRecordId", "patchFile", "result", "rootSessionId",
+        "agent", "chatMode", "closedReason", "depth", "displayItems", "endedAt", "error", "eventLog",
+        "id", "mode", "model", "parentRecordId", "patchFile", "result", "resumable", "rootSessionId",
         "round", "sessionFile", "slug", "startedAt", "status", "task", "thinkingLevel",
         "totalTokens", "turns", "v", "worktree",
       ]);

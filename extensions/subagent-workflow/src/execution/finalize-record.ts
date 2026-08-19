@@ -238,6 +238,9 @@ export async function doFinalizeRoundToIdle(
   record.closedReason = undefined;
   record.round = (record.round ?? 0) + 1;
   record.idleSince = Date.now();
+  // 执行态信号（residual-fixes）：轮终回 running-resumable = 无活进程驱动（idle timer
+  // 回收/保活等待续聊），GUI 侧据此判 waiting（非 streaming）。冷路径续轮（进程启动）清除。
+  record.resumable = true;
 
   // W16 [D4]：轮终回 running-resumable 是类外状态写点（record 留内存不走 archive），
   // 显式上报迁移——entry 携带新 round 与本轮 result，pi 文件的重建源不滞后。

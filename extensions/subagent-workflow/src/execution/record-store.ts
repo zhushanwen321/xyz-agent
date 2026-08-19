@@ -28,6 +28,7 @@ import * as path from "node:path";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { getCurrentActivity, getDisplayItems, getEventLog, markReconstructedStatus, snapshot as toSnapshot } from "./execution-record.ts";
+import { writeFinalized } from "./finalized-marker.ts";
 import { toSubagentRecordEntry } from "./record-entry.ts";
 import type { ManifestRecord, ManifestStore } from "./manifest-store.ts";
 import { INDEX_WRITE_MIN_INTERVAL_MS, loadIndex, saveIndex } from "./sessions-index.ts";
@@ -151,6 +152,44 @@ interface NegativeFileEntry {
 /** fileCache 值类型：正常条目或负缓存条目。 */
 type FileCacheValue = FileCacheEntry | NegativeFileEntry;
 
+/** 孤儿判定的末行读取窗口：64KB 足以容纳任何单行 entry（identity 含 task 全文上限
+ *  ~62KB 已实测），避免全文件读。 */
+// eslint-disable-next-line no-magic-numbers -- 64KB = 64 * 1024 bytes 字节换算常数
+const LAST_LINE_WINDOW_BYTES = 64 * 1024;
+
+/**
+ * 读 JSONL 文件的最后一个非空行（孤儿终态判定用，residual-fixes §5.2）。
+ * 只读文件尾部窗口（大文件不全读）。返回 ok=false 表示 IO 错误（open/read 阶段抛出，
+ * 含权限/磁盘故障——可能是暂时状态，调用方按保守方向处理）。
+ */
+function readLastJsonlLine(sessionFile: string): { ok: true; line: string } | { ok: false } {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(sessionFile, "r");
+    const size = fs.fstatSync(fd).size;
+    const windowStart = Math.max(0, size - LAST_LINE_WINDOW_BYTES);
+    const buf = Buffer.alloc(size - windowStart);
+    fs.readSync(fd, buf, 0, buf.length, windowStart);
+    const text = buf.toString("utf-8");
+    // 尾窗口可能从行中间开始——丢掉第一段（除非文件整体小于窗口，此时首段即完整首行）。
+    const lines = text.split("\n").filter((l) => l.length > 0);
+    const candidates = windowStart > 0 && lines.length > 0 ? lines.slice(1) : lines;
+    const last = candidates.length > 0 ? candidates[candidates.length - 1] : lines[lines.length - 1];
+    if (last === undefined) return { ok: true, line: "" }; // 空文件：视为不可判终态的截断形态由 parse 失败兜住
+    return { ok: true, line: last };
+  } catch {
+    return { ok: false };
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch (_e) {
+        void _e; // 关闭失败不影响已读结果（对齐 finalized-marker best-effort 模式）
+      }
+    }
+  }
+}
+
 /** stat 戳（不存在 → null）。 */
 function statStamp(p: string): Stamp | null {
   try {
@@ -192,6 +231,8 @@ export class RecordStore {
   private readonly records = new Map<string, ExecutionRecord>();
   private readonly listeners = new Set<ChangeListener>();
   private _disposed = false;
+  /** 孤儿终态恢复的已判定缓存（residual-fixes）：resumable 形态无 sidecar 锚，同进程重复调用跳过。 */
+  private orphanJudged = new Set<string>();
   /** Pi handle（用于 appendEntry 上报损坏 manifest）。构造时可空，setPi() 后续注入。
    *  显式存为字段而非构造参数 readonly：setPi 需要写权限。 */
   private pi: RecordStorePi = null;
@@ -397,6 +438,73 @@ export class RecordStore {
       .slice(0, limit);
   }
 
+  // ── 孤儿终态恢复（residual-fixes 设计 §6.1.2）──────────────────
+
+  /**
+   * 重建 SubagentRecord 的自描述 entry 落盘入口（签名适配：reportRecordTransition 收
+   * ExecutionRecord，重建孤儿的数据源是 SubagentRecord——直接经 toSubagentRecordEntry
+   * 投影 appendEntry，绕过 recordToSubagent）。pi 未注入时可选链静默。
+   */
+  reportSubagentRecord(record: SubagentRecord): void {
+    this.pi?.appendEntry?.("subagent-record", toSubagentRecordEntry(record));
+  }
+
+  /**
+   * 孤儿终态恢复：对重建矩阵分支 4 兜底（running 且无 externalInstance）的 record
+   * 判定真实终态并落 entry，消除「父扩展死后再无人写终态 → 侧栏永久 running」。
+   *
+   * 判定（residual-fixes §5.2 三判据 + chat 分流）：
+   * - chatMode = true → 不终态化（跨重启可续聊是产品语义，v4 B-1），落 resumable
+   *   entry 供侧栏 waiting 细分；
+   * - 子 JSONL 末行完整 JSON.parse → closed（closedReason=gc，与分支 2 重建映射一致；
+   *   done/failed 细分由 error 字段经 deriveClosedDisplay 派生）+ 写 .finalized sidecar
+   *   （防重锚——下次重建走分支 2 不再进判定）；
+   * - 末行截断 → closed + error（保守，错误方向安全）+ sidecar；
+   * - 文件不可读（IO 错误，可能暂时）→ 不判终态，落 resumable entry（防御性路径，
+   *   IO 恢复后重开可重判）。
+   *
+   * 防重：orphanJudged 实例级缓存（resumable 形态无 sidecar 锚，同进程重复调用跳过；
+   * 终态形态双重防护 = sidecar + 缓存）。调用方：index.ts session_start 恢复段（一次）。
+   */
+  recoverOrphanRecords(rootSessionFilter?: string): void {
+    for (const rec of this.reconstructAll(rootSessionFilter)) {
+      // 分支 4 命中集 = running 且无活进程实例（分支 3 带 externalInstance，分支 1/2 已 closed）。
+      if (rec.status !== "running" || rec.externalInstance !== undefined) continue;
+      if (this.orphanJudged.has(rec.id)) continue;
+      this.orphanJudged.add(rec.id);
+
+      if (rec.chatMode === true) {
+        // chat 会话跨重启等续聊：保留 running（可续聊），仅落执行态信号。
+        this.reportSubagentRecord({ ...rec, resumable: true });
+        continue;
+      }
+      const sessionFile = rec.sessionFile;
+      if (sessionFile === undefined) continue; // 无子文件锚，无从判定（防御）
+      const lastLine = readLastJsonlLine(sessionFile);
+      if (!lastLine.ok) {
+        // IO 错误可能暂时——判终态不可逆，保守落 resumable 等重开重判。
+        this.reportSubagentRecord({ ...rec, resumable: true });
+        continue;
+      }
+      let parseOk = false;
+      try {
+        JSON.parse(lastLine.line);
+        parseOk = true;
+      } catch {
+        parseOk = false;
+      }
+      // .finalized sidecar：防重锚（同 doFinalizeRecord 终态路径的收尾标记）。
+      writeFinalized(sessionFile);
+      this.reportSubagentRecord({
+        ...rec,
+        status: "closed",
+        closedReason: "gc",
+        endedAt: Date.now(),
+        ...(parseOk ? {} : { error: "orphan recovery: subagent session ended abnormally (truncated last line)" }),
+      });
+    }
+  }
+
   /** 订阅变更。返回取消订阅函数。 */
   onChange(listener: ChangeListener): () => void {
     this.listeners.add(listener);
@@ -422,6 +530,7 @@ export class RecordStore {
     this.fileCache.clear();
     this.idToFile.clear();
     this.dirStamp = null;
+    this.orphanJudged.clear();
     // [perf L-1] 索引状态重置为初始值（「清内存」语义完备）。不取消挂起的 fire-and-forget
     // 写——in-flight 写的丢失显式接受（revive 后 dirStamp===null 重扫会重新装载/重写）。
     this.indexEntries = null;
@@ -783,6 +892,7 @@ export class RecordStore {
         result: base.result,
         error: base.error,
         sessionFile: base.sessionFile,
+        chatMode: base.chatMode,
         worktree: base.worktree,
       };
     } else {
@@ -809,6 +919,7 @@ export class RecordStore {
         result: undefined,
         error: undefined,
         sessionFile: base.sessionFile,
+        chatMode: base.chatMode,
         worktree: base.worktree,
       };
     }

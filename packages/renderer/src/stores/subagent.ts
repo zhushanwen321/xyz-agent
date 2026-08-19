@@ -117,7 +117,10 @@ export const useSubagentStore = defineStore('subagent', () => {
    * 单 record 窄口径（虚拟 session forceWorking 用）见 isStreamingSubagent。
    */
   function hasRunning(sessionId: string): boolean {
-    return getRecordsBySession(sessionId).some((s) => s.status === 'running' && s.result === undefined)
+    // resumable（无活进程驱动的 running，residual-fixes）与轮终 result 一样不算真在跑
+    return getRecordsBySession(sessionId).some(
+      (s) => s.status === 'running' && s.result === undefined && s.resumable !== true,
+    )
   }
 
   /**
@@ -157,7 +160,9 @@ export const useSubagentStore = defineStore('subagent', () => {
    */
   function isStreamingSubagent(mainSessionId: string, subagentId: string): boolean {
     const record = getRecordsBySession(mainSessionId).find((s) => s.subagentId === subagentId)
-    return record?.status === 'running' && record.result === undefined
+    // resumable 排除（residual-fixes R3-SG1）：孤儿兜底/轮终 running 无流活动，不算
+    // streaming——否则与 SubagentList 的四形态口径分叉（列表 waiting、虚拟 session 转圈）。
+    return record?.status === 'running' && record.result === undefined && record.resumable !== true
   }
 
   // ── actions ──

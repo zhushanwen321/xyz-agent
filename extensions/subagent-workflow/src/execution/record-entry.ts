@@ -74,6 +74,14 @@ export interface SubagentRecordEntryData {
   worktree?: boolean;
   /** 对话轮次计数（仅 chatMode 有意义；round+1 由轮终迁移写点携带）。 */
   round?: number;
+  /**
+   * 对话模式标志（residual-fixes）：chat 与否——GUI 侧 done/waiting 细分判据
+   * （one-shot 轮终 chatMode=false + result 有值 → 完成态）。register 起写入显式值
+   * （one-shot 为显式 false）；v1 前存量 entry 缺省，消费端按保守方向处理。
+   */
+  chatMode?: boolean;
+  /** 执行态信号（residual-fixes）：true = 无活进程驱动的 running（轮终/孤儿兜底）。 */
+  resumable?: boolean;
 }
 
 /** SubagentRecord → 自描述 entry data（快照投影，不 mutate 源）。 */
@@ -104,5 +112,7 @@ export function toSubagentRecordEntry(record: SubagentRecord): SubagentRecordEnt
     patchFile: record.patchFile,
     worktree: record.worktree,
     round: record.round,
+    chatMode: record.chatMode,
+    resumable: record.resumable,
   };
 }

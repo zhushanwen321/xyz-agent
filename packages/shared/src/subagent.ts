@@ -90,6 +90,21 @@ export interface SubagentRecord {
    * shared 是跨进程契约 SSOT，extension 新增 reason 值时读侧不因类型收窄丢字段。
    */
   closedReason?: string
+  /**
+   * 对话模式标志（residual-fixes 设计）：chat 与否——侧栏执行态细分判据
+   * （one-shot 轮终 = chatMode 显式 false + result 有值 → 完成态；chat 轮终 → 等续聊）。
+   * 来源：自描述 subagent-record entry（register 起写入显式值，one-shot 为显式 false）；
+   * v1 前存量 entry 缺省 undefined——消费端按保守方向处理（无法确认不是 chat →
+   * 不宣告完成，落等续聊）。
+   */
+  chatMode?: boolean
+  /**
+   * 执行态信号（residual-fixes 设计）：true = 无活进程驱动的 running（chat 轮终 idle /
+   * 重建孤儿兜底），不是后台真在跑。写点：轮终迁移（doFinalizeRoundToIdle）、重建分支 4
+   * 兜底（IO 不可读形态）；进程启动（冷路径续轮）清除。renderer 的 isStreaming 判定
+   * （SubagentList spinner / isStreamingSubagent 虚拟 session）据此排除轮终/孤儿 running。
+   */
+  resumable?: boolean
 }
 
 /**

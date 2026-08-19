@@ -180,6 +180,10 @@ function collectSelfDescribedSubagentRecords(entries: unknown[]): SubagentRecord
       // （reportRecordTransition ← finalize-round 的 doFinalizeRoundToIdle /
       // onRoundSettled）恒写非空——renderer hasRunning 据此排除轮终 running（review #8）。
       result: typeof d.result === 'string' ? d.result : undefined,
+      // 执行态细分判据（residual-fixes）：chatMode 显式值（register 起写入；缺省 = v1 前
+      // 存量 entry，消费端按保守方向处理）；resumable = 无活进程驱动的 running。
+      chatMode: typeof d.chatMode === 'boolean' ? d.chatMode : undefined,
+      resumable: typeof d.resumable === 'boolean' ? d.resumable : undefined,
     })
   }
   return records.size > 0 ? Array.from(records.values()) : null

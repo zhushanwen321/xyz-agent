@@ -40,7 +40,7 @@
           <!-- 状态指示 -->
           <div class="flex items-center gap-2">
             <Loader2
-              v-if="record.status === 'running'"
+              v-if="isStreaming(record)"
               class="size-[13px] shrink-0 animate-spin text-accent"
               data-testid="subagent-card-spinner"
             />
@@ -52,9 +52,9 @@
             <span class="min-w-0 flex-1 truncate text-[12px] font-medium leading-[1.35] text-neutral-fg">
               {{ record.agent }}
             </span>
-            <!-- cancel 按钮（running 态显示，inline 两段式确认） -->
+            <!-- cancel 按钮（streaming 态显示，inline 两段式确认；waiting/done 投影无进程可取消，不显示） -->
             <Button
-              v-if="record.status === 'running'"
+              v-if="isStreaming(record)"
               variant="ghost"
               size="icon"
               :data-testid="cancellingId === record.subagentId ? 'subagent-action-cancel-confirm' : 'subagent-action-cancel'"
@@ -141,10 +141,34 @@ function onCancelClick(subagentId: string): void {
   }
 }
 
+/** 执行态四形态判据（residual-fixes 设计 §5.4 等价公式，权威判据）：
+ *  streaming = 真在跑（进程驱动中，spinner + 取消按钮）；
+ *  done = one-shot 轮终（result 有值且 chatMode 显式 false——缺省视为不可确认，
+ *    落 waiting 保守兜底：无法确认不是 chat → 不宣告完成）；
+ *  waiting = 兜底（chat 轮终等续聊 / 孤儿 IO 兜底 / legacy 轮终），静态圆点无取消。 */
+function isStreaming(record: SubagentRecord): boolean {
+  return record.status === 'running' && record.result === undefined && record.resumable !== true
+}
+
+function isDone(record: SubagentRecord): boolean {
+  return record.status === 'running' && record.result !== undefined && record.chatMode === false
+}
+
+function isWaiting(record: SubagentRecord): boolean {
+  return record.status === 'running' && !isStreaming(record) && !isDone(record)
+}
+
 /** 状态点颜色映射（design-tokens 语义色）。
  *  v4 两态：closed 是统一终态，成功/失败/取消按 closedReason/error 经 deriveClosedDisplay
  *  派生（closed 落 default bg-accent 会丢失终态语义——成功/失败都显示 accent 点）。 */
 function statusDotClass(record: SubagentRecord): string {
+  if (record.status === 'running') {
+    // spinner 只给 isStreaming；one-shot 轮终投影 done 用绿点、其余（等续聊/孤儿兜底）
+    // 用 accent 静态点（进行中的非活跃态，区别于 done 绿/error 红/cancelled 灰）。
+    if (isDone(record)) return 'bg-success'
+    if (isWaiting(record)) return 'bg-accent opacity-60'
+    return 'bg-accent'
+  }
   switch (record.status) {
     case 'done':
       return 'bg-success'

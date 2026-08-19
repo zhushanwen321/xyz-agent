@@ -373,6 +373,23 @@ export class SubagentService {
     this._disposed = false;
     this.store.revive();
     this.notifier.revive();
+    // 孤儿终态恢复（residual-fixes）：session_start 主动触发一次——父扩展死后再无人写
+    // 终态 entry 的 record 在此判定落盘（否则侧栏永久 running）。放 initSession 末尾：
+    // setPi 已注入（appendEntry 可用），sessionRootId 已建立（过滤当前根的 record）。
+    // 幂等不 throw，失败不阻断 session_start。
+    this.recoverOrphanRecords();
+  }
+
+  /** 孤儿终态恢复委托（RecordStore.recoverOrphanRecords 的唯一公开入口，维持 store
+   *  private 封装——与 recoverManifestTmpFiles 同模式）。判定语义见 store 侧注释。 */
+  recoverOrphanRecords(): void {
+    try {
+      this.store.recoverOrphanRecords(this.sessionRootId ?? undefined);
+    } catch (err) {
+      logger.warn("[subagents] orphan recovery failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /** 启动恢复：扫描 manifest tmp 残留（崩溃打断的 writeManifest 留下的 *.json.tmp.<pid>），
@@ -809,6 +826,9 @@ export class SubagentService {
 
     // 手动设回 running（M2-A 边界：绕过 tryTransition，idle→running 恢复非终态 CAS）。
     record.status = "running";
+    // 执行态信号清除（residual-fixes）：进程启动 = 有驱动 = 非 resumable——
+    // 轮终迁移置的 true 若不清，GUI 侧会把续轮流显示为 waiting（断流活动判定）。
+    record.resumable = undefined;
     // W16 [D4]：冷路径续轮是类外状态写点（不走 register/archive），显式上报迁移。
     this.store.reportRecordTransition(record);
 
@@ -949,7 +969,7 @@ export class SubagentService {
    *
    * 同进程内 running + idle record 都在内存（getMutable）；终态 record 已 archive。
    * 跨重启（SP-2）内存空时，从磁盘 collectRecords 重建 idle record 并 register 进内存。
-   * reconstructAll 已将跨重启 record（无 sidecar marker + pid 死）标记为 idle，
+   * reconstructAll 已将跨重启 record（无 sidecar marker + pid 死）标记为 running（v4 B-1 跨重启可续聊语义，record-store buildRecord 分支 4），
    * collectRecords 返回的 SubagentRecord 可直接转为可变 ExecutionRecord 供续操作。
    *
    * @param id subagent record id
@@ -960,7 +980,7 @@ export class SubagentService {
     this.assertReady();
     let record = this.store.getMutable(id);
     // SP-2 跨重启恢复：内存未命中时，从磁盘 collectRecords 重建 idle record。
-    // reconstructAll 已将跨重启 record（无 sidecar + pid 死）标记为 idle（非 crashed），
+    // reconstructAll 已将跨重启 record（无 sidecar + pid 死）标记为 running（v4 B-1 可续聊语义，非 crashed），
     // 直接转为可变 ExecutionRecord register 进内存，供 message/close action 续操作。
     if (!record) {
       // [perf] SP-2 冷路径：先走 idToFile 索引直查（单文件 stat 校验），未命中

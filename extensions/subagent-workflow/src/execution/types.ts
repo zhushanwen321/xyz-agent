@@ -372,6 +372,13 @@ export interface ExecutionRecord {
    */
   readonly chatMode?: boolean;
   /**
+   * 执行态信号（residual-fixes 设计）：true = 该 record 无活进程驱动（轮终 idle /
+   * 重建孤儿兜底），处于「可续聊/等续聊」态——不是后台真在跑。轮终迁移
+   * （doFinalizeRoundToIdle）置 true，冷路径续轮（进程启动）清除；GUI 侧
+   * streaming/waiting 细分与 hasRunning 判据消费。缺省 falsy = 有进程或旧数据。
+   */
+  resumable?: boolean;
+  /**
    * 空闲超时毫秒数（仅 chatMode 有意义）。覆盖默认 5min idle timeout。
    * 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
    * 向后兼容：旧 record 无此字段，按默认值处理。
@@ -709,6 +716,17 @@ export interface SubagentRecord {
    * ExecutionRecord.round 投影。
    */
   round?: number;
+  /**
+   * 对话模式标志（与 ExecutionRecord.chatMode 同义；投影给 GUI 侧 streaming/waiting/done
+   * 细分判据——one-shot 轮终（chatMode 非 true + result 有值）显示完成态，chat 轮终显示
+   * 等续聊。内存源由 recordToSubagent 投影，磁盘源经 subagent-record entry 重建）。
+   */
+  chatMode?: boolean;
+  /**
+   * 执行态信号（与 ExecutionRecord.resumable 同义）：true = 无活进程驱动的 running
+   * （轮终 idle / 重建孤儿兜底），GUI 侧据此排除「真在跑」判定。
+   */
+  resumable?: boolean;
   /** 外部 Pi 实例（进程隔离模式下由外部启动的子进程）。 */
   externalInstance?: AliveMarker;
   /** fork 模式下的 worktree handle。 */
