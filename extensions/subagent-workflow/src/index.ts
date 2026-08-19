@@ -183,6 +183,24 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     return cachedMainSessionFile;
   }
 
+  /**
+   * 按 sessionId 解析主 session 文件路径（文件名约定 `<ISO 时间戳>_<sessionId>.jsonl`）。
+   * [E2E 实测] attach 场景下 ctx.sessionManager.getSessionFile() 会返回前一 session 的
+   * 文件（session_start(root=01a01bf5) 时仍返回刚新建 session 的路径）——恢复逻辑
+   * 读错文件会整段漏判。此处按 id 从 sessions 目录解析为准；新 session 文件未 flush
+   * 时（AGENTS.md 规则 6：首条 assistant 消息前可能不存在）返回 undefined，调用方
+   * （fork 解析 / 孤儿恢复）对该场景本就无 entry 可读。
+   */
+  function resolveMainSessionFileById(sessionId: string): string | undefined {
+    const sessionsDir = path.join(getAgentDir(), "..", "sessions");
+    try {
+      const match = fs.readdirSync(sessionsDir).find((f) => f.endsWith(`_${sessionId}.jsonl`));
+      return match === undefined ? undefined : path.join(sessionsDir, match);
+    } catch {
+      return undefined;
+    }
+  }
+
   // resources_discover：不再注入额外 skill 目录（ADR-031 废弃 discovery.json）。
   // pi 核心 auto-discovery 已覆盖 .agents/skills 等标准目录，子 session 的
   // --skill 由 agent({skill}) 调用方显式传入，无需 extension 额外补充。
@@ -382,9 +400,13 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     service.setUiRequestHandler(uiRequestHandler);
 
     // 主 session 文件缓存必须先于下方 initSession 赋值——initSession 末尾的孤儿恢复
-    //（recoverEntryOnlyOrphans）经 getMainSessionFile 读它，晚赋值会读到 undefined
-    //（曾因此漏判 entry-born 孤儿，E2E 实测）。
-    cachedMainSessionFile = ctx.sessionManager.getSessionFile() ?? undefined;
+    //（recoverEntryOnlyOrphans）经 getMainSessionFile 读它。按 sessionId 解析为准
+    //（getSessionFile() 在 attach 场景会返回前一 session 的文件，E2E 实测），
+    // 未 flush 的新 session 回退 getSessionFile()。
+    cachedMainSessionFile =
+      resolveMainSessionFileById(ctx.sessionManager.getSessionId()) ??
+      ctx.sessionManager.getSessionFile() ??
+      undefined;
 
     service.initSession({
       pi,
