@@ -250,8 +250,8 @@ export interface ISessionService {
   setOnSessionCreated(handler: (summary: SessionSummary) => void): void
   /** S3-W2：注册 session 销毁回调（触发点 removeSessionEntry，全部删除路径汇聚处） */
   setOnSessionDestroyed(handler: (summary: SessionSummary) => void): void
-  /** Set thinking level for a session's pi subprocess */
-  setThinkingLevel(sessionId: string, level: string): Promise<void>
+  /** Set thinking level for a session's pi subprocess. Returns pi-effective level (P3: pi clamps unsupported levels). */
+  setThinkingLevel(sessionId: string, level: string): Promise<string>
   /** Steer an actively generating session */
   steerMessage(sessionId: string, content: string): Promise<void>
   /** Queue a follow-up message for a session */
@@ -483,8 +483,8 @@ export interface IModelService {
   /** Switch model with full side-effects: pi RPC + persist default + broadcast. */
   switchModel(sessionId: string, provider: string, modelId: string): Promise<void>
 
-  /** Set thinking level for a session's pi subprocess. */
-  setThinkingLevel(sessionId: string, level: string): Promise<void>
+  /** Set thinking level for a session's pi subprocess. Returns pi-effective level (P3: pi clamps unsupported levels). */
+  setThinkingLevel(sessionId: string, level: string): Promise<string>
 }
 
 // ── IPluginService ────────────────────────────────────────────────

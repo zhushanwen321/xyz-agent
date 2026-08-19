@@ -36,8 +36,8 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
-/** 低成本测试模型（workspace AGENTS.md pi 实测流程同款，验收契约锁定） */
-const DEFAULT_MODEL = 'xiaomi-token-plan-cn/mimo-v2.5-pro'
+/** 低成本测试模型（workspace AGENTS.md pi 实测流程同款，验收契约锁定）。导出供附着恢复用例做 CLI-model 对照断言。 */
+export const DEFAULT_MODEL = 'xiaomi-token-plan-cn/mimo-v2.5-pro'
 /** 冷启动就绪等待上限（探针结论中位数 ~500ms，取 10 倍余量） */
 const DEFAULT_COLD_START_TIMEOUT_MS = 5_000
 /** 单条 RPC 命令默认超时 */
@@ -82,7 +82,12 @@ export interface PiSessionEntry {
 }
 
 export interface PiFixtureOptions {
-  model?: string
+  /**
+   * spawn 模型（默认 DEFAULT_MODEL）。显式 null = 不拼 --model——P1（final gate）附着
+   * 恢复用例专用：pi CLI model 恒优先于 session entry 恢复，不拼才能让 model_change
+   * entry 终态生效（生产对应 RpcClientOptions.inheritSessionModel）。
+   */
+  model?: string | null
   coldStartTimeoutMs?: number
   commandTimeoutMs?: number
 }
@@ -268,12 +273,14 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
     // describe.skipIf 已挡住正常路径；此处兜底防新用例漏包 skip 条件时以含理由的错误暴露
     throw new Error(`real pi unavailable：${REAL_PI_SKIP_REASON} —— 真实 pi 用例必须以 describe.skipIf(!REAL_PI_READY) 包裹`)
   }
-  const model = options.model ?? DEFAULT_MODEL
+  const model = options.model === undefined ? DEFAULT_MODEL : options.model
   const coldStartTimeoutMs = options.coldStartTimeoutMs ?? DEFAULT_COLD_START_TIMEOUT_MS
   const commandTimeoutMs = options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
 
   const sessionDir = mkdtempSync(join(tmpdir(), 'pi-equiv-'))
-  const args = ['--mode', 'rpc', '--session-dir', sessionDir, '--model', model, '--approve']
+  const args = ['--mode', 'rpc', '--session-dir', sessionDir]
+  if (model) args.push('--model', model)
+  args.push('--approve')
   const proc: ChildProcess = spawn(PI_PATH, args, {
     cwd: sessionDir,
     stdio: ['pipe', 'pipe', 'pipe'],

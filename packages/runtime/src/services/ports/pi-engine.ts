@@ -99,6 +99,8 @@ export interface PiSessionOptions {
   cwd?: string
   provider?: string
   model?: string
+  /** 附着恢复模式：true 不拼 --model（含全局默认兜底），模型由 pi 从 model_change entry 恢复。语义见 RpcClientOptions 同名字段。 */
+  inheritSessionModel?: boolean
   env?: Record<string, string>
   skillPaths?: string[]
   extensionPaths?: string[]

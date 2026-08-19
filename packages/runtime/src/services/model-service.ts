@@ -107,11 +107,12 @@ export class ModelService implements IModelService {
    * Unified setThinkingLevel entry point.
    *
    * Delegates to SessionService (pi RPC). Thinking level is per-session
-   * runtime state — no persistence needed.
+   * runtime state — no persistence needed. Returns pi-effective level
+   * (P3: pi clamps levels unsupported by the model family).
    */
-  async setThinkingLevel(sessionId: string, level: string): Promise<void> {
+  async setThinkingLevel(sessionId: string, level: string): Promise<string> {
     this.ensureInitialized()
-    await this.sessionService.setThinkingLevel(sessionId, level)
+    return this.sessionService.setThinkingLevel(sessionId, level)
   }
 
   aggregateModels(providers: ProviderInfo[]): ModelInfo[] {
