@@ -11,7 +11,7 @@
  * （它需同时读 chat store 的消息分区 + 全局 isStreaming，跨 store 协调属 composable 职责）。
  */
 import { computed, ref } from 'vue'
-import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
+import type { SessionGroup, SessionSummary, SessionViewSnapshot } from '@xyz-agent/shared'
 
 /**
  * 创建 session 列表 store（纯 factory，无 pinia 依赖）。
@@ -27,7 +27,7 @@ export function createSessionStore() {
   const groups = ref<SessionGroup[]>([])
 
   /**
-   * 扁平索引（groups.flatMap 展平），供 active/updateLabel/updateSessionState 等按 id 查找。
+   * 扁平索引（groups.flatMap 展平），供 active/applySnapshot 等按 id 查找。
    * 派生自 groups：单一真源（groups）→ 扁平视图（list），避免两处分别维护导致漂移。
    */
   const list = computed<SessionSummary[]>(() =>
@@ -52,29 +52,60 @@ export function createSessionStore() {
     () => list.value.find((s) => s.id === activeId.value) ?? null,
   )
 
-  /** 更新 session label（乐观更新，rename 后调用） */
-  function updateLabel(id: string, label: string): void {
-    const target = list.value.find((s) => s.id === id)
-    if (target) target.label = label
+  /**
+   * 应用 owner 快照——session store 数据写入口（W13 收敛为唯一入口：原标签更新 /
+   * 模型状态局部更新 / 整表载入三个写入口全部删除，D7：renderer 零派生）。
+   *
+   * 两种快照粒度，均以 runtime owner 实例为权威：
+   * - 整表：config.sessions 广播 / session.list RPC 的全量分组投影，直接替换 groups 真源
+   *   （整表语义，含分组增删与重排——单条快照无法表达）；
+   * - 单 session：session.renamed / state_changed 广播 + 乐观更新本地入参，按 D1b 整字段
+   * 覆盖合并进既有条目（未知 id 静默跳过）。
+   *
+   * 乐观更新形态：本地入参只带乐观字段（如 rename 先显示 { label }），权威确认经 runtime
+   * 广播回流（config.sessions 整表 / state_changed 单条），同一入口重复写入幂等。
+   *
+   * [W15 挂点] 磁盘占位值守卫（扫描来源快照的 modelId:''/tokenCount:0 占位值不覆盖
+   * 实例/广播真值）将接入 mergeViewSnapshot 合并策略——本 wave 仅收口挂点，守卫实现 W15 交付。
+   */
+  function applySnapshot(id: string, snapshot: SessionViewSnapshot): void
+  function applySnapshot(listSnapshot: { groups: SessionGroup[] }): void
+  function applySnapshot(
+    idOrList: string | { groups: SessionGroup[] },
+    snapshot?: SessionViewSnapshot,
+  ): void {
+    if (typeof idOrList !== 'string') {
+      groups.value = idOrList.groups
+      return
+    }
+    const target = list.value.find((s) => s.id === idOrList)
+    if (!target) return
+    mergeViewSnapshot(target, snapshot)
+  }
+
+  /**
+   * D1b 合并：view 快照字段整字段覆盖到 SessionSummary 条目——显式提供的字段（值 !==
+   * undefined）直接覆盖，含显式空值（owner 声明空即空，''/0 与真值一视同仁）；undefined =
+   * 快照未涉及，保留现值。SessionViewSnapshot 的 view-ready 字段中 session store 只托管
+   * 列表展示字段（label/status/modelId/thinkingLevel/tokenCount）；usagePercent/
+   * pendingMessageCount/commands 等归各自消费 store（W15+ 收敛对象），不在本 store 落盘。
+   *
+   * [W15 挂点] 磁盘占位值守卫的唯一接入位置：守卫就位后，扫描来源快照的占位空值
+   * （modelId:''/tokenCount:0）在此跳过覆盖，不侵蚀实例/广播真值（#2 空串覆盖事故防线）。
+   */
+  function mergeViewSnapshot(target: SessionSummary, snapshot: SessionViewSnapshot | undefined): void {
+    if (!snapshot) return
+    if (snapshot.label !== undefined) target.label = snapshot.label
+    if (snapshot.status !== undefined) target.status = snapshot.status
+    if (snapshot.modelId !== undefined) target.modelId = snapshot.modelId
+    if (snapshot.thinkingLevel !== undefined) target.thinkingLevel = snapshot.thinkingLevel
+    if (snapshot.tokenCount !== undefined) target.tokenCount = snapshot.tokenCount
   }
 
   /** 更新 session 归属 project（乐观更新，setProject RPC 后调用；广播全量覆盖幂等）。 */
   function updateProjectId(id: string, projectId: string): void {
     const target = list.value.find((s) => s.id === id)
     if (target) target.projectId = projectId || undefined
-  }
-
-  /**
-   * 更新 session 的模型/思考等级状态（session.state_changed 广播驱动）。
-   * 局部更新，非全量 setGroups —— 模型切换后 runtime 推送新 modelId/thinkingLevel，
-   * 前端据此同步 Composer 工具条，不触发整表覆盖（避免磁盘 session 的 '' modelId 覆盖真值）。
-   * patch 中 undefined 字段跳过（不更新）。
-   */
-  function updateSessionState(id: string, patch: { modelId?: string; thinkingLevel?: string }): void {
-    const target = list.value.find((s) => s.id === id)
-    if (!target) return
-    if (patch.modelId !== undefined) target.modelId = patch.modelId
-    if (patch.thinkingLevel !== undefined) target.thinkingLevel = patch.thinkingLevel
   }
 
   /**
@@ -103,11 +134,6 @@ export function createSessionStore() {
   function revive(id: string): void {
     const target = list.value.find((s) => s.id === id)
     if (target && target.status === 'dead') target.status = 'idle'
-  }
-
-  /** 载入分组列表（useSidebar.loadSessions 调用，单一写入入口） */
-  function setGroups(next: SessionGroup[]): void {
-    groups.value = next
   }
 
   /** 设置列表加载错误消息（loadSessions 失败时调，null 清空） */
@@ -140,5 +166,5 @@ export function createSessionStore() {
     return list.value
   }
 
-  return { groups, list, activeId, active, listLoadError, setGroups, setListLoadError, appendSession, updateLabel, updateProjectId, updateSessionState, removeFromList, markDead, revive, getActiveId, setActiveId, getList }
+  return { groups, list, activeId, active, listLoadError, applySnapshot, setListLoadError, appendSession, updateProjectId, removeFromList, markDead, revive, getActiveId, setActiveId, getList }
 }

@@ -120,7 +120,7 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
   it('TC-1 selectSession 全编排：ensureStreamSubscription 先于 panel.loadSession；首次 hydrate；focusedSessionId 派生', async () => {
     const sidebar = useSidebarNew()
     // seed 接缝本地 store（C-W5-5 raw createSessionStore 实例）
-    useSessionStore().setGroups([group([summary('s1'), summary('s2')])])
+    useSessionStore().applySnapshot({ groups: [group([summary('s1'), summary('s2')])] })
     // panel 绑定模拟：selectSession 内 syncSessionToPanel 调 panel.loadSession(activePanelId, id)
     // focusedSessionId 读 panel.focusedSessionId（= active panel leaf.sessionId）
 
@@ -155,7 +155,7 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
       presetCwd: vi.fn(),
     } as unknown as ReturnType<typeof useNewTaskFlow>)
     const sidebar = useSidebarNew()
-    useSessionStore().setGroups([group([summary('s1')])])
+    useSessionStore().applySnapshot({ groups: [group([summary('s1')])] })
 
     await sidebar.selectSession('s1')
 
@@ -166,7 +166,7 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
     const removeMock = (await import('@/api/domains/session')).remove as ReturnType<typeof vi.fn>
     removeMock.mockResolvedValue(undefined)
     const sidebar = useSidebarNew()
-    useSessionStore().setGroups([group([summary('s1'), summary('s2')])])
+    useSessionStore().applySnapshot({ groups: [group([summary('s1'), summary('s2')])] })
     // 先 select s1 使其 active（触发 wasActive 回退路径）
     await sidebar.selectSession('s1')
     mocks.switchSession.mockClear()

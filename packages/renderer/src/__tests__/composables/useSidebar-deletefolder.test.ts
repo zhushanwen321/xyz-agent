@@ -95,7 +95,7 @@ function makeSummary(id: string, cwd = '/p'): SessionSummary {
 /** 种入指定 cwd 下若干 session（单组）—— seed pinia session store（ADR-0059） */
 function seedSessions(_sidebar: ReturnType<typeof useSidebarNew>, ids: string[], cwd = '/p'): void {
   const group: SessionGroup = { cwd, sessions: ids.map((id) => makeSummary(id, cwd)) }
-  useSessionStore().setGroups([group])
+  useSessionStore().applySnapshot({ groups: [group] })
 }
 
 beforeEach(() => {
@@ -144,10 +144,10 @@ describe('useSidebar.deleteFolder 全成功（W2TC2）', () => {
     const scope = effectScope()
     const sidebar = scope.run(() => useSidebarNew())!
     // folder('/p') 下 2 session（s1 + active 的 s2），另一 cwd 有 s3（删除后仍留存）
-    useSessionStore().setGroups([
+    useSessionStore().applySnapshot({ groups: [
       { cwd: '/p', sessions: [makeSummary('s1', '/p'), makeSummary('s2', '/p')] },
       { cwd: '/other', sessions: [makeSummary('s3', '/other')] },
-    ])
+    ] })
     const panel = usePanelStore()
     panel.loadSession(ROOT_PANEL_ID, 's2')
     useSessionStore().setActiveId('s2')

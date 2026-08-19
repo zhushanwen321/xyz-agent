@@ -7,27 +7,27 @@
  * 文件之外对 store 实例直调受管 mutation —— 跨文件调用图分析留 W24（plan W4 步骤 2）。
  *
  * 已知检出边界（docstring 声明，W24 收紧对象）：
- * - 方法引用传递（如 bindSessionListBroadcast(session.setGroups)）与参数注入形态
+ * - 方法引用传递（如 bindSessionListBroadcast 的整表快照回调注入）与参数注入形态
  *   （core useChat/use-session 经 port 接收 store）不可见——本规则只看 import 边直呼；
  * - 接收者变量需可追溯到 store 工厂调用（const s = useSessionStore()），
  *   形参/解构等间接形态不追踪。
  *
  * 首版许可清单（= 登记表条目声明的现行写路径实现文件；owner 化目标落地后同步删条目）：
  * - owner（mutation 定义处）：stores/session.ts（pinia 注册壳）+ core domain/session/store.ts（factory）；
- * - useSidebar.ts：#1「renderer store 三路写」的 setGroups（列表载入/config.sessions 广播，
- *   store.ts docstring 声明「单一写入入口」）+ updateLabel（rename 流）；
- * - useModel.ts：#1 三路写的 updateSessionState（模型/思考等级乐观更新，useModel docstring 声明）。
+ * - useSidebar.ts：#1「renderer store 三路写」的 applySnapshot 整表形态（列表载入/config.sessions
+ *   广播，原 setGroups/updateLabel 写路径 W13 收敛为唯一入口）+ rename 乐观更新（单 session 形态）；
+ * - useModel.ts：#1 三路写的 applySnapshot 单 session 形态（模型/思考等级乐观更新，
+ *   原 updateSessionState 写路径，useModel docstring 声明）。
  *
  * 误报豁免闭环（对齐 check-domain-boundaries allowlist 先例）：规则拦到合法写入时，
  * 豁免路径 = 先在 data-source-registry.md 补条目/例外 + 本文件 PERMITTED_FILES 登记，
  * 再加行内豁免注释 `taste:allow-non-owner-mutation`——禁止只加注释不登记。
  */
 
-/** 受管 mutation → 登记表条目引用（登记表 §1 主表；新增受管 mutation 须先在登记表落条目） */
+/** 受管 mutation → 登记表条目引用（登记表 §1 主表；新增受管 mutation 须先在登记表落条目）。
+ *  W13 起三入口（setGroups/updateLabel/updateSessionState）收敛为唯一写入口 applySnapshot。 */
 const WATCHED_MUTATIONS = {
-  setGroups: '#1（renderer 三路写）/ #2（session 列表载入）',
-  updateLabel: '#1（session 标签）',
-  updateSessionState: '#1（renderer 三路写）/ #2（modelId/thinkingLevel 局部更新）',
+  applySnapshot: '#1（renderer 三路写）/ #2（session 列表载入 + modelId/thinkingLevel 局部更新）——W13 起唯一写入口',
 }
 
 /** session store 工厂的 import 识别：绑定名 + import source 形态（renderer 壳 / core 包出口 / core 深路径） */
@@ -44,9 +44,9 @@ const PERMITTED_FILES = [
   'packages/renderer/src/stores/session.ts',
   // owner：mutation 定义处（core factory 本体）
   'packages/core/src/domain/session/store.ts',
-  // #1/#2 现行写路径：setGroups 单一写入入口（store.ts docstring）+ updateLabel rename 流
+  // #1/#2 现行写路径：applySnapshot 唯一写入口的整表形态（config.sessions 广播/列表载入）+ rename 乐观更新
   'packages/renderer/src/composables/features/sidebar/useSidebar.ts',
-  // #1 现行写路径：updateSessionState 乐观更新（switchModel/setThinkingLevel）
+  // #1 现行写路径：applySnapshot 单 session 乐观更新（switchModel/setThinkingLevel）
   'packages/renderer/src/composables/features/model/useModel.ts',
 ]
 

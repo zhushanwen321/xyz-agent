@@ -1,7 +1,7 @@
 // Client → Runtime message types
 
 import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig, ScannedSkillInfo, ScannedAgentInfo, BuiltinProviderTemplate, ProviderId } from './provider'
-import type { SessionGroup, SessionSummary } from './session'
+import type { SessionGroup, SessionSummary, SessionStatus } from './session'
 import type { FileChange, ChangeSetStatus, Message } from './message'
 import type { PiMessageEntry, PiToolCallEntryForm } from './pi-entry'
 import type { FileNode } from './file-tree'
@@ -1492,6 +1492,49 @@ export function isSessionSummary(value: unknown): value is SessionSummary {
     typeof v.status === 'string' &&
     typeof v.modelId === 'string'
   )
+}
+
+/**
+ * session 级 view-ready 快照 DTO（W13 data-source-governance P2.1，D7 原则）。
+ *
+ * 单 session 的 owner 权威投影：runtime 侧 W12 起 5 个 state 话题（state_changed/queue_update/
+ * commands/context/subagents-类）publish 均以实例快照为数据源，本 DTO 是这些 payload 的
+ * renderer 渲染字段并集——renderer 收到后直接渲染，零 merge/normalize/推导。core
+ * createSessionStore.applySnapshot 以此为单 session 快照入参（session store 唯一写入口）。
+ *
+ * 合并语义 = D1b 整字段覆盖：字段值非 undefined 即覆盖现值，含显式空值（owner 声明空即空）；
+ * undefined = 快照未涉及该字段，保留现值。磁盘扫描占位值（modelId:''/tokenCount:0）不覆盖
+ * 真值的守卫在 applySnapshot 合并策略留挂点（W15 交付）。
+ *
+ * 字段 → runtime 来源对照（W12 后 publish payload）：
+ * - label：session.renamed（pi 改名）/ config.sessions（整表 SessionSummary.label）
+ * - status：SessionStatus 六态（session.exited → dead 等）
+ * - modelId / thinkingLevel / usagePercent / inputTokens / contextLimit：session.state_changed
+ * - pendingMessageCount：message.queue_update（W8 队列深度实例快照）
+ * - commands：session.commands（pi 扩展命令清单，形状与广播 payload 一致）
+ * - tokenCount：SessionSummary.tokenCount（磁盘扫描占位值 0，守卫对象）
+ */
+export interface SessionViewSnapshot {
+  /** session 标签（侧栏列表项 / panel 标题）。 */
+  label?: string
+  /** 进程三态 + 终态（侧栏状态点 / dead 置灰）。 */
+  status?: SessionStatus
+  /** 当前模型复合串 "provider/modelId"（Composer 工具条）。 */
+  modelId?: string
+  /** 思考等级（前端 6 级枚举串）。undefined = 未设置，快照省略不覆盖。 */
+  thinkingLevel?: string
+  /** 上下文用量百分比 0-100（ContextCapacityPopover）。 */
+  usagePercent?: number
+  /** 当前输入 token 数（与 usagePercent 同源推送）。 */
+  inputTokens?: number
+  /** 上下文窗口上限（与 usagePercent 同源推送）。 */
+  contextLimit?: number
+  /** 队列深度（steering + followUp 条数和，QueueBubble 计数）。 */
+  pendingMessageCount?: number
+  /** slash 命令清单（Composer 补全数据源）。 */
+  commands?: ServerMessageMap['session.commands']['commands']
+  /** 累计 token 数（SessionSummary 同名字段；磁盘扫描占位值 0 是 W15 守卫对象）。 */
+  tokenCount?: number
 }
 
 /** 运行时检查值是否为 SubagentRecord（含必需字段 subagentId/agent/slug/task/status）。 */

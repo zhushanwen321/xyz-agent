@@ -20,7 +20,7 @@
  * abort：调 api.chat.abort（方法存在，中断流转 DEFERRED G-025）。
  */
 import { ref } from 'vue'
-import type { Segment } from '@xyz-agent/shared'
+import type { Segment, SessionViewSnapshot } from '@xyz-agent/shared'
 import { segmentsToPrompt } from '@xyz-agent/shared'
 import {
   subscribeSession,
@@ -35,12 +35,12 @@ import { createMessageCoalescer } from './delta-coalescer'
  * SessionStoreLike —— useChat 消费 session store 的最小结构类型。
  *
  * 不 import 整个 SessionStoreInstance（避免 core 内 chat→session 域强耦合 + 返回类型膨胀）。
- * useChat 只用 updateLabel（session.renamed）+ updateSessionState（state_changed/thinkingLevelSet）。
- * 结构性类型，renderer useSessionStore() 返回值自动满足。
+ * useChat 只用 applySnapshot 的单 session 形态（session.renamed / state_changed /
+ * thinkingLevelSet 三个广播驱动的跨 store 字段更新）。结构性类型，renderer useSessionStore()
+ * 返回值自动满足。
  */
 export interface SessionStoreLike {
-  updateLabel(id: string, label: string): void
-  updateSessionState(id: string, patch: { modelId?: string; thinkingLevel?: string }): void
+  applySnapshot(id: string, snapshot: SessionViewSnapshot): void
 }
 
 /**
@@ -209,7 +209,7 @@ export function ensureStreamSubscription(
       coalescer.enqueue(sid, msg, (m) => chat.applyMessageEvent(sid, m))
       return
     }
-    // session.* → 跨 store 协调（sessionStore.updateLabel/updateSessionState/setCompacting），
+    // session.* → 跨 store 协调（sessionStore.applySnapshot/setCompacting），
     // 保留在 useChat（stores 间禁止互相 import）。
     switch (msg.type) {
       // [fix-handoff-with-message] session.handoffStarted 不再处理：前端已删除「正在交接…」
@@ -252,17 +252,18 @@ export function ensureStreamSubscription(
         // (events.on(sid, ...))，payload.sessionId 恒等于订阅 sid，不信任 payload 可能的篡改。
         const payload = msg.payload as { name?: string }
         if (payload.name) {
-          sessionStore.updateLabel(sid, payload.name)
+          sessionStore.applySnapshot(sid, { label: payload.name })
         }
         break
       }
       case 'session.state_changed': {
         // 模型切换后 runtime 推送（model-service switchModel 末尾广播，含新 modelId/thinkingLevel
-        // + 按新 contextWindow 重算的用量）。局部更新 session 状态，不触发整表 setGroups。
+        // + 按新 contextWindow 重算的用量）。applySnapshot 单 session 快照按 D1b 合并
+        // （undefined 字段 = 快照未涉及，不覆盖），不触发整表替换。
         // thinkingLevel optional：未设置时（undefined）不更新，保留旧值。
         const p = msg.payload as { sessionId?: string; modelId?: string; thinkingLevel?: string }
         if (p.sessionId) {
-          sessionStore.updateSessionState(p.sessionId, {
+          sessionStore.applySnapshot(p.sessionId, {
             ...(p.modelId !== undefined && { modelId: p.modelId }),
             ...(p.thinkingLevel !== undefined && { thinkingLevel: p.thinkingLevel }),
           })
@@ -276,7 +277,7 @@ export function ensureStreamSubscription(
         // 本 handler 独立更新 thinkingLevel，不依赖两条消息的先后顺序。
         const p = msg.payload as { sessionId?: string; level?: string }
         if (p.sessionId && p.level) {
-          sessionStore.updateSessionState(p.sessionId, { thinkingLevel: p.level })
+          sessionStore.applySnapshot(p.sessionId, { thinkingLevel: p.level })
         }
         break
       }

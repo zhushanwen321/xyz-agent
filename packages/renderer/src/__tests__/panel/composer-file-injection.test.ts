@@ -68,7 +68,7 @@ vi.mock('@/stores/chat', () => ({
   }),
 }))
 vi.mock('@/stores/session', () => ({
-  useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
+  useSessionStore: () => ({ active: undefined, list: [], applySnapshot: vi.fn() }),
 }))
 // commandStore mock：pendingSlash 不触发（本测试关注 file 注入，非 slash）
 vi.mock('@/stores/command', () => ({
