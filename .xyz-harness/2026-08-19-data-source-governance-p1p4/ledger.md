@@ -53,7 +53,7 @@
 | W22 | 等价性测试族全量化入 CI | committed (331beb627) | ed26b3da8 | verifier PASS（报告 w22-report.md：24 用例 21s/反证 +1000 偏移红/防空调跑对抗——恒真断言下 0 skipped 且语料守卫在位/CI 链条行号实测零改动接线/ref 收敛裁决如实——条数级无缺口、id 形态异源 = W21 定案遗留态）。残余观察：it1 stateSnapshot 手工复刻投影口径（文件头声明，生产公式漂移不复现） |
 | W23 | ADR-0062 + ADR-0042 修订 + checklist | pending | — | 依赖 W11/W13/W18 |
 | W24 | R2 调用图收紧 | pending | — | 依赖 W2/W13 |
-| W25 | pi 升级契约测试 | verifying | — | 依赖 W5/W21；builder 交付（2 用例真实 fixture：RPC 五命令/事件五发射含 entry_appended 负向/PiEntry exhaustive 三断言 + check-version-bump.sh L39-85 双位置签名接线 + 反证三组红绿 + RUNTIME_TEST 3123 全绿）。三差异待 verifier 裁决：pi 依赖实际在 root package.json（plan 写 runtime）；entry_appended 正向未测以负向固化；新契约事实 set_session_name 追加 session_info entry / 空 session get_entries 非空 |
+| W25 | pi 升级契约测试 | committed (a44b068e6) | ed26b3da8 | verifier PASS（报告 w25-report.md：契约 2/2 绿 spawn 真实 pi 0.84.1/反证三组独立复跑红→绿还原 diff 空/D5 固化 N=21 实测非写死/三差异全裁决接受——pi 依赖实测在 root package.json 双位置检测、entry_appended 负向边界充分（agent-session.ts:2266-2271 唯一发射点佐证）、新契约事实固化进断言/接线挂 merge 阶段 3.5 既有链合理/RUNTIME_TEST 3135 全绿）。minor 5 条不阻塞（REDUCER_CASE_TYPES 手写镜像未编译锚定留观察） |
 
 ## 里程碑 gate
 
@@ -72,3 +72,4 @@
 - 2026-08-19 W21+W9 拆分入库（9bf7c9d45 / 09a1da745）→ W10（59c9b3137）→ W22（331beb627）十 wave committed。W11+W25 双 builder 后台并行派发（用户指示不阻塞等待）。**W12 暂不派**：依赖 W7/W8 虽满足，但主链 W11→W12 串行——W11 builder 在途改动含 session-service.ts（git status 实证），与 W12 领地相交；W13-W15/W18/W19/W23/W24 全部阻塞在 W11→W12 链上，(W11+W25) 即当前最大可运行并发集。W25 TaskOutput 阻塞等待曾被用户取消——后续一律不阻塞轮询，靠完成通知流转。
 - 2026-08-19 W25 builder 交付（契约三断言 + check-version-bump 接线 + 反证三组 + RUNTIME_TEST 3123 绿；三差异待裁决：pi 依赖实际在 root package.json / entry_appended 负向固化 / 新契约事实两条），verifier 派发。
 - 2026-08-19 **账号 5h 限额中断**（重置于 11:25:49）：W11 builder（22 分钟，自验阶段）+ W25 verifier（8 分钟，未写报告）双双 [1308] 失败。用户指示可重派。主 agent 盘点 W11 在途进度（23 文件 462+/355-，其中 W25 领地 2 文件；W11 核心 6 文件全有实质改动 + R1 allowlist 清空已实证）后续任 builder 派发（盘点差距→补缺不推倒）；W25 verifier 原词重派。若新 agent 立即再撞限额，改 11:26 后重试。
+- 2026-08-19 W11 续任 builder 交付（首任实现全对，续任仅补 persistHandoffSidecar 改名裁决 + 2 注释修正；自报 grep 清零/R1 命中 0/3135 全绿），W11 verifier 派发（重点：删除彻底性写点审计 + 红性双组 + 登记表草稿核对）。W25 verifier PASS（反证三组独立复跑、三差异全接受、无 must-fix），W25 committed（a44b068e6）——**wave 编号收官（第 11/20 个 committed），实现类 wave 仅剩主链 W12-W15/W18/W19 与文档守卫 W23/W24**。
