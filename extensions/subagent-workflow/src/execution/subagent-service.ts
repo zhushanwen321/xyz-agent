@@ -538,11 +538,16 @@ export class SubagentService {
    *  closeSubagent 的 status 分流守卫（closed 后幂等 no-op）/ CAS 抢锁保证只执行一次，
    *  本方法自身不重复发送；迟到的 kickOffBackground.then 通知与轮次通知同 key=`id:round`，
    *  60s 窗内仍被吞，不构成第三条。 */
-  private notifyClosed(record: ExecutionRecord): void {
+  /** @param emptyBody true = 终态通知正文置空串（D2 路径②）。W16 P-1 修复后
+   *  closeChatIdle 的 doneResult.text 改用 record.result 保真（close 终态
+   *  subagent-record entry 的 result 不抹空轮终真实值），「正文空」不再由合成空
+   *  text 的副作用承载，改为显式参数——持久化 result 与通知正文两个关注点解耦。 */
+  private notifyClosed(record: ExecutionRecord, emptyBody = false): void {
     if (!record.chatMode) return;
     const notify = this.toNotifyRecord(record);
     if (!notify) return;
     notify.round = undefined;
+    if (emptyBody) notify.result = "";
     if (record.round != null) notify.totalRounds = record.round;
     this.notifier.notify(notify);
   }
@@ -804,6 +809,8 @@ export class SubagentService {
 
     // 手动设回 running（M2-A 边界：绕过 tryTransition，idle→running 恢复非终态 CAS）。
     record.status = "running";
+    // W16 [D4]：冷路径续轮是类外状态写点（不走 register/archive），显式上报迁移。
+    this.store.reportRecordTransition(record);
 
     // resume 参数从 record identity 读（防漂移，P-10）。
     const resume: SpawnResumeOpts = {
@@ -1077,9 +1084,13 @@ export class SubagentService {
     disarmIdleTimer(record.id);
     const child = getChildByRecord(record.id);
     if (child && !child.killed) child.kill("SIGTERM");
-    // 合成 closed result（无在途 AgentResult，对齐 cancelBackground cancelledResult）
+    // 合成 closed result（无在途 AgentResult，对齐 closeAfterRoundSettled 的
+    // `record.result ?? ""` 模式）。[W16 P-1 修复] text 必须沿用轮终真实 result：
+    // completeRecord 会执行 record.result = result.text，合成空串会把轮终真实值抹空，
+    // archive 落的 close 终态 subagent-record entry（D4 重建源）随之失真——重开
+    // session 后 result 回退空串。
     const doneResult: AgentResult = {
-      text: "",
+      text: record.result ?? "",
       turns: record.turnCount,
       durationMs: Date.now() - record.startedAt,
       success: true,
@@ -1100,11 +1111,12 @@ export class SubagentService {
       "closed",
       "user-close", // close action 主动关闭
     );
-    // [C-1] 终态通知（设计 D2 路径②）：doneResult.text 恒空串 → 终态通知正文空 +
-    // sessionFile 指针行（idle 下末轮增量已由该轮轮次通知送达，终态再发属重复）。
+    // [C-1] 终态通知（设计 D2 路径②）：正文空串占位 + sessionFile 指针行（idle 下
+    // 末轮增量已由该轮轮次通知送达，终态再发属重复）。doneResult.text 已改保真
+    // （P-1 修复），正文空由 notifyClosed 的 emptyBody 参数显式表达。
     // dedup 身份独立于轮次通知（notifyClosed 置 round=undefined），60s 窗内不被吞。
     // 防重入：closeSubagent 对 closed record 幂等 no-op，本路径不会被二次进入。
-    this.notifyClosed(record);
+    this.notifyClosed(record, true);
   }
 
   /**

@@ -39,6 +39,7 @@ vi.mock('../ws-client', () => ({
       inboundHandler = null
     }
   },
+  onQueueDrop: vi.fn(() => () => {}),
 }))
 
 // ── 端口 mock ────────────────────────────────────────────────────

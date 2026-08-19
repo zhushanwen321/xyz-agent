@@ -33,7 +33,9 @@ interface ToolExecutionEndLikeEvent {
 
 /** ExtensionContext 的最小子集，仅声明 unified-hooks 内部用到的 ui 字段。 */
 export interface HookContext {
-  // headless / RPC 会话 ctx.ui 可能为 undefined（TUI 未初始化）。
+  // ctx.ui 恒为对象（pi runner createContext：默认 noOpUIContext；RPC 模式
+  // setUIContext(createExtensionUIContext(), "rpc")，rpc-mode.js:87-96）——
+  // headless 下不会是 undefined。可选标记仅是本接口作为最小子集的宽松声明。
   ui?: {
     // type 必须用 SDK 字面量联合，否则非法值（如 "warn"）会被 Pi 降级为 info 静默丢失。
     notify(msg: string, type?: "info" | "warning" | "error"): void;

@@ -20,15 +20,18 @@ export interface Toast {
   type: 'error' | 'info' | 'warning'
 }
 
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：toast 通知列表（全局通知 UI 状态）
 const toasts = ref<Toast[]>([])
 let nextId = 0
 
 /** 因在列上限被丢弃的 toast 累计计数（可观测：排查通知风暴的量级证据） */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：toast 丢弃计数（节流统计，非 GUI 数据）
 const droppedCount = ref(0)
 
 const TOAST_DURATION_MS = 4000
 
 /** [Q1-8] toast 自动移除 timer 句柄：remove 提前关 toast 时 clearTimeout，避免 4s 后空跑回调 */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：toast 定时器句柄表，非 GUI 数据
 const timers = new Map<number, ReturnType<typeof setTimeout>>()
 
 /** 自动移除 toast（4s 后），记录句柄供 remove 清理 */

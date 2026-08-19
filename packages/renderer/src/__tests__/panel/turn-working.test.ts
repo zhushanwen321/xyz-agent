@@ -663,6 +663,227 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
 })
 
 /**
+ * [review findings-confirmation #8] subagent 轮终 running-resumable → isWorkingTurn false。
+ *
+ * 根因：v4 轮终迁移故意回写 record.status='running'（可冷路径 resume，extensions 禁改的
+ * 既定设计）→ hasRunning 恒 true → derivedStatus 恒 working → isSessionActive 恒 true →
+ * 完成注入后末位 turn 永久「工作中」。修复在 renderer 派生侧：hasRunning 排除「已携带
+ * 轮终 result 的 running」。本组测试走真实派生链（subagentStore → useSessionActive）+
+ * Turn DOM 断言（label/trace 收起 = isWorkingTurn false 的用户可见形态）。
+ */
+describe('Turn · subagent 轮终 running-resumable → isWorkingTurn false（review #8）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  /** 最小合法 SubagentRecord（对齐 useBackgroundWork.test.ts fixture） */
+  function makeSubagentRecord(overrides: Partial<import('@xyz-agent/shared').SubagentRecord>) {
+    return {
+      subagentId: 'sub-1',
+      sessionFile: null,
+      agent: 'general-purpose',
+      slug: 'worker',
+      task: 'do something',
+      status: 'running',
+      ...overrides,
+    } as import('@xyz-agent/shared').SubagentRecord
+  }
+
+  it('record running + result（轮终回写）→ sessionActive false → 末位 turn「已工作」+ trace 收起', async () => {
+    const { computed, ref } = await import('vue')
+    const { useSessionActive } = await import('@/composables/panel/useSessionActive')
+    const { useSubagentStore } = await import('@/stores/subagent')
+    const { invalidateStatusCache } = await import('@/composables/features/chat/useSessionDerivations')
+    invalidateStatusCache()
+
+    const sessionId = ref<string | null>('s-resumable')
+    const sessionActive = useSessionActive(sessionId, computed(() => false))
+    const sub = useSubagentStore()
+
+    // 真在跑（首轮无轮终信号）→ working 态 → sessionActive true
+    sub.applyRecords('s-resumable', [makeSubagentRecord({ status: 'running' })])
+    expect(sessionActive.value).toBe(true)
+
+    // 轮终回写：running + result（resumable）→ 不算 working → sessionActive false
+    sub.applyRecords('s-resumable', [makeSubagentRecord({ status: 'running', result: '本轮产出正文' })])
+    expect(sessionActive.value).toBe(false)
+
+    // Turn 挂载（isSessionActive = 真实派生值，isLastTurn=true）：isWorkingTurn=false 的
+    // 用户可见形态——label「已工作」（非「工作中」），trace 收起（thinking 隐藏，仅 text）
+    const wrapper = mountTurn({
+      turn: makeTurn({
+        isStreaming: false,
+        hasFoldable: true,
+        assistants: [
+          msg({
+            status: 'complete',
+            content: '结果已注入',
+            thinking: [{ id: 'th1', content: '推理', collapsed: true }],
+            contentBlocks: [{ type: 'thinking', refId: 'th1' }, { type: 'text', refId: 'text' }],
+          }),
+        ],
+      }),
+      isSessionActive: sessionActive.value,
+    })
+    expect(wrapper.find('.lbl').text()).toBe('已工作')
+    const blocks = wrapper.findAllComponents({ name: 'Block' })
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].props('type')).toBe('text')
+  })
+
+  it('record closed（重开后形态）与 running + result（live 轮终）派生一致（live ≡ reload 语义）', async () => {
+    const { computed, ref } = await import('vue')
+    const { useSessionActive } = await import('@/composables/panel/useSessionActive')
+    const { useSubagentStore } = await import('@/stores/subagent')
+    const { invalidateStatusCache } = await import('@/composables/features/chat/useSessionDerivations')
+    invalidateStatusCache()
+
+    const sessionId = ref<string | null>('s-parity')
+    const sessionActive = useSessionActive(sessionId, computed(() => false))
+    const sub = useSubagentStore()
+
+    sub.applyRecords('s-parity', [makeSubagentRecord({ status: 'running', result: 'done' })])
+    const liveFinal = sessionActive.value
+    sub.applyRecords('s-parity', [makeSubagentRecord({ status: 'closed', closedReason: 'parent-shutdown' })])
+    const reloadFinal = sessionActive.value
+    expect(liveFinal).toBe(false)
+    expect(reloadFinal).toBe(false)
+  })
+
+  it('record running + result 占位形态「(empty)」（one-shot 空文本轮终，R2-1）→ sessionActive false', async () => {
+    const { computed, ref } = await import('vue')
+    const { useSessionActive } = await import('@/composables/panel/useSessionActive')
+    const { useSubagentStore } = await import('@/stores/subagent')
+    const { invalidateStatusCache } = await import('@/composables/features/chat/useSessionDerivations')
+    invalidateStatusCache()
+
+    const sessionId = ref<string | null>('s-oneshot-empty')
+    const sessionActive = useSessionActive(sessionId, computed(() => false))
+    const sub = useSubagentStore()
+
+    // [R2-1] one-shot 空文本成功轮：轮终写点补的占位「(empty)」（extensions finalize-record
+    // 第四分支）经 extractor 投影为 SubagentRecord.result——判据只看非 undefined，占位形态
+    // 同样排除 working。写点若保持 undefined（修复前），此 record 会让末位 turn 永久「工作中」
+    sub.applyRecords('s-oneshot-empty', [makeSubagentRecord({ status: 'running', result: '(empty)' })])
+    expect(sessionActive.value).toBe(false)
+  })
+})
+
+/**
+ * [review round2 R1-遗留-1] subagent 虚拟 session forceWorking 收紧（轮终 running-resumable）。
+ *
+ * 主 session 的 turn 工作指示已在第 1 轮修复（hasRunning 排除 running+result），但虚拟
+ * session（MessageStream 呈现的 subagent 视图）的 forceWorking 仍走未收紧的 isRunning——
+ * 轮终回写 status='running' 后虚拟 session 末位 turn 永久卡 streaming。修复：forceWorking
+ * 改接窄口径 isStreamingSubagent（running 且无轮终 result，与 hasRunning 同判据）；订阅
+ * 判定继续用宽松 isRunning（SubagentTab，resumable 续轮仍有流活动，收紧会断数据通路）。
+ * 本组走真实派生链（subagentStore 两口径 → useSessionActive 虚拟 session 回退 forceWorking）
+ * + Turn DOM 断言。
+ */
+describe('Turn · subagent 虚拟 session 轮终 running-resumable 不再卡 streaming（review round2 R1-遗留-1）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  /** 最小合法 SubagentRecord（对齐上方 review #8 组 fixture） */
+  function makeSubagentRecord(overrides: Partial<import('@xyz-agent/shared').SubagentRecord>) {
+    return {
+      subagentId: 'sub-1',
+      sessionFile: null,
+      agent: 'general-purpose',
+      slug: 'worker',
+      task: 'do something',
+      status: 'running',
+      ...overrides,
+    } as import('@xyz-agent/shared').SubagentRecord
+  }
+
+  it('虚拟 session 轮终 record（running + result）→ forceWorking false、isRunning 仍 true（订阅口径保留）、末位 turn「已工作」+ trace 收起', async () => {
+    const { computed, ref } = await import('vue')
+    const { useSessionActive } = await import('@/composables/panel/useSessionActive')
+    const { useSubagentStore, subagentVirtualId } = await import('@/stores/subagent')
+    const sub = useSubagentStore()
+
+    // 轮终回写：running + result（resumable）
+    sub.applyRecords('s-virt-main', [makeSubagentRecord({ status: 'running', result: '本轮产出正文' })])
+    // 窄口径（forceWorking 数据源）：轮终信号在场 → 不算真在跑
+    expect(sub.isStreamingSubagent('s-virt-main', 'sub-1')).toBe(false)
+    // 宽松口径（SubagentTab 订阅判定）不收紧：resumable 续轮仍有流活动
+    expect(sub.isRunning('s-virt-main', 'sub-1')).toBe(true)
+
+    // useSessionActive 虚拟 session 分支直接回退 forceWorking（MessageStream 同款链）
+    const sessionId = ref<string | null>(subagentVirtualId('s-virt-main', 'sub-1'))
+    const forceWorking = computed(() => sub.isStreamingSubagent('s-virt-main', 'sub-1'))
+    const sessionActive = useSessionActive(sessionId, forceWorking)
+    expect(sessionActive.value).toBe(false)
+
+    // 用户可见形态：末位 turn「已工作」（非「工作中」）、thinking 收起（仅 text 可见）
+    const wrapper = mountTurn({
+      turn: makeTurn({
+        isStreaming: false,
+        hasFoldable: true,
+        assistants: [
+          msg({
+            status: 'complete',
+            content: '本轮产出正文',
+            thinking: [{ id: 'th1', content: '推理', collapsed: true }],
+            contentBlocks: [{ type: 'thinking', refId: 'th1' }, { type: 'text', refId: 'text' }],
+          }),
+        ],
+      }),
+      isSessionActive: sessionActive.value,
+    })
+    expect(wrapper.find('.lbl').text()).toBe('已工作')
+    const blocks = wrapper.findAllComponents({ name: 'Block' })
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].props('type')).toBe('text')
+  })
+
+  it('虚拟 session 真 running record（无 result）→ forceWorking true、末位 turn「工作中」+ spinner', async () => {
+    const { computed, ref } = await import('vue')
+    const { useSessionActive } = await import('@/composables/panel/useSessionActive')
+    const { useSubagentStore, subagentVirtualId } = await import('@/stores/subagent')
+    const sub = useSubagentStore()
+
+    // 首轮真在跑：running 无 result
+    sub.applyRecords('s-virt-run', [makeSubagentRecord({ status: 'running' })])
+    expect(sub.isStreamingSubagent('s-virt-run', 'sub-1')).toBe(true)
+    expect(sub.isRunning('s-virt-run', 'sub-1')).toBe(true)
+
+    const sessionId = ref<string | null>(subagentVirtualId('s-virt-run', 'sub-1'))
+    const forceWorking = computed(() => sub.isStreamingSubagent('s-virt-run', 'sub-1'))
+    const sessionActive = useSessionActive(sessionId, forceWorking)
+    expect(sessionActive.value).toBe(true)
+
+    // 用户可见形态：末位 turn「工作中」+ spinner（streaming 工作态）
+    const wrapper = mountTurn({
+      turn: makeTurn({
+        isStreaming: true,
+        hasFoldable: false,
+        assistants: [msg({ status: 'complete', content: '历史正文' })],
+      }),
+      isSessionActive: sessionActive.value,
+    })
+    expect(wrapper.find('.lbl').text()).toBe('工作中')
+    expect(wrapper.find('.turn-meta .animate-spin').exists()).toBe(true)
+  })
+
+  it('轮终到达时派生翻转：真 running → 轮终（running + result）→ forceWorking true → false（视图复位）', async () => {
+    const { computed } = await import('vue')
+    const { useSubagentStore } = await import('@/stores/subagent')
+    const sub = useSubagentStore()
+
+    const forceWorking = computed(() => sub.isStreamingSubagent('s-virt-flip', 'sub-1'))
+    sub.applyRecords('s-virt-flip', [makeSubagentRecord({ status: 'running' })])
+    expect(forceWorking.value).toBe(true)
+
+    // 轮终迁移（WS 推送 record 更新，running + result 回写）
+    sub.applyRecords('s-virt-flip', [makeSubagentRecord({ status: 'running', result: '轮终产出' })])
+    expect(forceWorking.value).toBe(false)
+  })
+})
+
+/**
  * edges wave：forceWorking 虚拟 session working turn 回归（CL1 裁决固化）。
  *
  * subagent 虚拟 session：renderer 为保持 useStreamingPin keepMounted 设 turn.isStreaming=true，

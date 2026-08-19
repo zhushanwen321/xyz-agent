@@ -21,6 +21,8 @@
  */
 
 import { readFile, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { parseJsonl } from '../../utils/jsonl.js'
@@ -155,10 +157,17 @@ export async function createForkedSessionFile(
   const resolvedParentSession = fallbackParentId ?? sourceFilePath
 
   // 新 session header（parentSession 指回源文件/源 sessionId，形成父子链）
+  // W1（restore-fork-attach-fix F1/MF2）：cwd 做存活兜底——newHeader 原样 spread 会继承
+  // 源文件的死路径 cwd（如 worktree 清理后的源会话），fork 产物直附着时 pi 必 throw
+  // MissingSessionCwdError（pi-mono session-cwd.ts；RPC switch_session 无 cwdOverride
+  // 字段）。fork 文件是创建型新文件（登记表 §4 ⑥），生成 header 时兜底 = 写自己的产物，
+  // 无合规问题，且是最早、最便宜的拦截点。
+  const headerCwd = existsSync(header.cwd) ? header.cwd : homedir()
   const newHeader: SessionHeaderEntry = {
     ...header,
     id: newSessionId,
     timestamp: now.toISOString(),
+    cwd: headerCwd,
     parentSession: resolvedParentSession,
     ...(forkEntryIdField !== undefined ? { forkEntryId: forkEntryIdField } : {}),
   }

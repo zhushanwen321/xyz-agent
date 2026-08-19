@@ -377,11 +377,11 @@ describe('wave:runtime-wiring · TC7 removeSessionEntry → bus.clearSession', (
 })
 
 // ───────────────────────────────────────────────────────────────────
-// TC8：fetchAndBroadcastCommands 双写（session.commands 走 bus + broker）
+// TC8：session.commands 发布单通道（W12 起激活发布 = 播种 fetch 快照挂钩，仍只走 bus.publish）
 // ───────────────────────────────────────────────────────────────────
 
-describe('wave:runtime-wiring · TC8 fetchAndBroadcastCommands（wave:perf-w09 单通道）', () => {
-  it('fetchAndBroadcastCommands 只调 bus.publish(sessionId, msg)，broker.broadcast 不再被调', async () => {
+describe('wave:runtime-wiring · TC8 session.commands 激活发布（W12 快照挂钩）', () => {
+  it('播种 fetch → 快照应用挂钩发布 session.commands，只调 bus.publish(sessionId, msg)，broker.broadcast 不再被调', async () => {
     const messageBus = createMockMessageBus()
     const broadcast = vi.fn()
     // 构造 SessionService + mock pm.getClient 返回带 getCommands 的 client
@@ -392,18 +392,29 @@ describe('wave:runtime-wiring · TC8 fetchAndBroadcastCommands（wave:perf-w09 �
       pm as never,
       { broadcast, send: vi.fn(), sendError: vi.fn() } as never,
       () => ({ attach: vi.fn(), detach: vi.fn() }) as never,
-      '/tmp', {} as never, {} as never, {} as never,
+      '/tmp', {} as never, { getDefaultModel: () => undefined } as never, {} as never,
       { readGitInfo: () => undefined, pruneStaleCache: () => {} } as never, {} as never,
     )
     service.setMessageBus(messageBus)
 
-    // fetchAndBroadcastCommands 是 private，经 initializeManagedSession 触发——但它依赖较多。
-    // 改用 (service as unknown as ...) 直接调 private 方法（测试专用 escape hatch，与 session-service-w3.test.ts 同范式）。
-    await (service as unknown as { fetchAndBroadcastCommands: (id: string) => Promise<void> }).fetchAndBroadcastCommands('s-cmd')
+    // W12：旧 fetchAndBroadcastCommands（RPC 直连 publish）已删——激活发布 = initializeManagedSession
+    // 注册播种 refetch → commands 快照应用 → fetchCommandsSnapshot 挂钩（setTimeout 0 宏任务）
+    // 读快照发布（publishCommandsSnapshot 有 sessions.has 防护，须经真实 session 建立路径）。
+    await service.initializeManagedSession('s-cmd', { getCommands: fakeClient.getCommands } as never, '/tmp', 't')
+    // 播种 fetch 是 fire-and-forget（微任务链 applySnapshot），挂钩宏任务在其后——轮询等
+    // publish 落地（全量并行负载下固定 sleep 不可靠，2s 上限兜底）
+    const deadline = Date.now() + 2_000
+    while (vi.mocked(messageBus.publish).mock.calls.length === 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10))
+    }
 
-    // session.commands 单通道（wave:perf-w09 D1-2）：只 bus.publish，broadcast 腿已删
-    expect(messageBus.publish).toHaveBeenCalledTimes(1)
-    const publishCall = vi.mocked(messageBus.publish).mock.calls[0]
+    // session.commands 单通道（wave:perf-w09 D1-2）：只 bus.publish，broadcast 腿已删。
+    // payload 数据源 = commands 实例快照（W12），值与 mock RPC 返回逐字段一致。
+    //（publish 总数可能含 modelId/thinkingLevel 播种失败后的 state_changed 兜底帧——
+    // fakeClient 无 getState，与本用例的 commands 通道断言无关，按 type 过滤。）
+    const cmdPublishes = vi.mocked(messageBus.publish).mock.calls.filter((c) => c[1].type === 'session.commands')
+    expect(cmdPublishes).toHaveLength(1)
+    const publishCall = cmdPublishes[0]
     expect(publishCall[0]).toBe('s-cmd')
     expect(publishCall[1]).toMatchObject({ type: 'session.commands', payload: { sessionId: 's-cmd', commands } })
 

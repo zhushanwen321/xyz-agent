@@ -37,6 +37,7 @@ function safeForEach(set: Set<MessageHandler>, msg: ServerMessage): void {
 }
 
 // ── session 通道（按 sessionId 路由）──
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：事件总线 session 通道 handler 注册表，非 GUI 数据
 const sessionHandlers = new Map<string, Set<MessageHandler>>()
 
 /** 按 sessionId 订阅 ServerMessage，返回取消函数 */
@@ -66,7 +67,9 @@ export function dispatchSession(sessionId: string, msg: ServerMessage): void {
 }
 
 // ── global 通道（无 sessionId 的 server-push）──
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：全局 all-handler 注册表，非 GUI 数据
 const globalAllHandlers = new Set<MessageHandler>()
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：全局 type 通道 handler 注册表，非 GUI 数据
 const globalTypeHandlers = new Map<string, Set<MessageHandler>>()
 
 /** 订阅所有全局 ServerMessage（不区分 type），返回取消函数 */
@@ -113,6 +116,7 @@ export function dispatchGlobal(msg: ServerMessage): void {
 // payload.sessionId 路由，有 sid 的下行（extension:widget/notify 等）走 dispatchSession 不
 // 触发 onGlobal，全局消费者经本通道才能收到。**这不是广播**：合法消费者仅 ExtensionHost
 // （+ 未来远程化协同态 busy/idle/presence），per-session 消费用 on(sid, handler)。
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：跨 session 通道 handler 注册表，非 GUI 数据
 const crossSessionHandlers = new Set<MessageHandler>()
 
 /** 订阅 crossSession 通道（全局消费者接收带 sid 消息），返回取消函数。ADR-0060。 */

@@ -117,18 +117,22 @@ describe('parseSessionContent', () => {
     expect(result.lastLinePartial).toBe(true)
   })
 
-  it('custom entry 无顶层 id 时 fallback 到 data.id（pi subagent-identity 等格式）', () => {
-    const content = line({
-      type: 'custom',
-      customType: 'subagent-identity',
-      data: { id: 'sa-abc123', rootSessionId: 'sess-1', slug: 'fix' },
-    })
+  it('custom entry 无顶层 id → 坏行跳过（W4：data.id fallback 死分支已删，pi appendCustomEntry 恒写顶层 id）', () => {
+    // pi appendCustomEntry 恒写顶层 id（session-manager.js:820-828）；data.id 是扩展
+    // 业务字段而非 entry id。无顶层 id 的行按坏行跳过（skippedLines++）。
+    const content = [
+      line({ type: 'custom', customType: 'ok-entry', id: 'top-level-id', data: {} }),
+      line({
+        type: 'custom',
+        customType: 'subagent-identity',
+        data: { id: 'sa-abc123', rootSessionId: 'sess-1', slug: 'fix' },
+      }),
+    ].join('\n')
     const result = parseSessionContent(content)
 
     expect(result.entries).toHaveLength(1)
-    expect(result.entries[0].id).toBe('sa-abc123')
-    expect(result.entries[0].customType).toBe('subagent-identity')
-    expect(result.skippedLines).toBe(0)
+    expect(result.entries[0].id).toBe('top-level-id')
+    expect(result.skippedLines).toBe(1)
   })
 
   it('session header 无 parentId → 归一化为 null（root 判定）', () => {

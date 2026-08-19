@@ -60,15 +60,11 @@ function toEntry(raw: unknown): Entry | undefined {
   const obj = raw as Record<string, unknown>
   if (typeof obj.type !== 'string') return undefined
 
-  // id 解析：顶层 id 优先；custom entry 无顶层 id 时 fallback 到 data.id
-  //（pi 的 subagent-identity 等 custom entry 把 id 放在 data.id，非顶层——真实样本确认）
-  let id: unknown = obj.id
-  if (typeof id !== 'string' && obj.type === 'custom') {
-    const data = obj.data
-    if (typeof data === 'object' && data !== null && typeof (data as Record<string, unknown>).id === 'string') {
-      id = (data as Record<string, unknown>).id
-    }
-  }
+  // id 解析：pi appendCustomEntry 恒写顶层 id（session-manager.js:820-828）——
+  // 无需 fallback。data.id 是扩展业务字段（如 subagent-identity payload），不是 entry id。
+  // [W4 删除] 原 data.id fallback 分支对 pi 写出的 entry 是死分支（对历史/异构文件
+  // 也无必要——entry id 语义以顶层为准）。
+  const id: unknown = obj.id
   if (typeof id !== 'string') return undefined
 
   const entry: Entry = {

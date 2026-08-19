@@ -10,11 +10,17 @@ import { mkdirSync, writeFileSync } from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { actionGenerate, type ScriptParams, type TextContent } from "../tool-workflow-script.ts";
+import { actionGenerate, type ScriptParams, type TextContent, registerWorkflowScriptTool } from "../tool-workflow-script.ts";
+import { deleteWorkflow, saveWorkflow } from "../../orchestration/workflow-files.ts";
 
 vi.mock("node:fs", () => ({
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
+}));
+
+vi.mock("../../orchestration/workflow-files.ts", () => ({
+  saveWorkflow: vi.fn(),
+  deleteWorkflow: vi.fn(),
 }));
 
 const mockedWriteFileSync = vi.mocked(writeFileSync);
@@ -106,6 +112,12 @@ describe("actionGenerate (m0: @pi-meta 认可 + round-trip)", () => {
     vi.clearAllMocks();
   });
 
+  /**
+   * W4b：generate 校验族错误路径从 return {isError:true} 改为 throw（pi 只对
+   * execute throw 置 isError:true，返回值 isError 被 agent-loop 丢弃）。
+   * actionGenerate 是同步函数——断言用同步 toThrow。
+   */
+
   it("TC1: 合法 @pi-meta → ready + writeFileSync 被调用", () => {
     const r = actionGenerate(gen(PI_META_VALID), undefined);
     expect(r.isError).toBeFalsy();
@@ -113,10 +125,10 @@ describe("actionGenerate (m0: @pi-meta 认可 + round-trip)", () => {
     expect(mockedWriteFileSync).toHaveBeenCalledTimes(1);
   });
 
-  it("TC2: malformed @pi-meta YAML → error + writeFileSync 未调用 [P-generate-roundtrip]", () => {
-    const r = actionGenerate(gen(PI_META_MALFORMED), undefined);
-    expect(r.isError).toBe(true);
-    expect(textOf(r)).toMatch(/cannot be parsed|无法解析|line/i);
+  it("TC2: malformed @pi-meta YAML → throw + writeFileSync 未调用 [P-generate-roundtrip]", () => {
+    expect(() => actionGenerate(gen(PI_META_MALFORMED), undefined)).toThrow(
+      /cannot be parsed/i,
+    );
     expect(mockedWriteFileSync).not.toHaveBeenCalled();
   });
 
@@ -126,38 +138,103 @@ describe("actionGenerate (m0: @pi-meta 认可 + round-trip)", () => {
     expect(mockedWriteFileSync).toHaveBeenCalledTimes(1);
   });
 
-  it("TC4: 无 meta → error 提及 @pi-meta 新格式", () => {
-    const r = actionGenerate(gen(NO_META), undefined);
-    expect(r.isError).toBe(true);
-    expect(textOf(r)).toMatch(/meta declaration/i);
-    expect(textOf(r)).toMatch(/pi-meta/i);
+  it("TC4: 无 meta → throw 提及 @pi-meta 新格式", () => {
+    expect(() => actionGenerate(gen(NO_META), undefined)).toThrow(/meta declaration/i);
     expect(mockedWriteFileSync).not.toHaveBeenCalled();
   });
 
-  it("TC5: @pi-meta 单反斜杠正则 → error（LLM 高频错）[P-generate-roundtrip]", () => {
-    const r = actionGenerate(gen(PI_META_REGEX_SINGLE_BS), undefined);
-    expect(r.isError).toBe(true);
-    expect(textOf(r)).toMatch(/escape|cannot be parsed|无法解析|line/i);
+  it("TC5: @pi-meta 单反斜杠正则 → throw（LLM 高频错）[P-generate-roundtrip]", () => {
+    expect(() => actionGenerate(gen(PI_META_REGEX_SINGLE_BS), undefined)).toThrow(
+      /escape|cannot be parsed/i,
+    );
     expect(mockedWriteFileSync).not.toHaveBeenCalled();
   });
 
-  it("TC6: ESM import → reject（保留现有行为）", () => {
-    const r = actionGenerate(gen(ESM_IMPORT), undefined);
-    expect(r.isError).toBe(true);
-    expect(textOf(r)).toMatch(/ESM|import/i);
+  it("TC6: ESM import → throw（保留现有行为）", () => {
+    expect(() => actionGenerate(gen(ESM_IMPORT), undefined)).toThrow(/ESM|import/i);
   });
 
-  it("TC7: 无 agent() → reject（保留现有行为）", () => {
-    const r = actionGenerate(gen(NO_AGENT), undefined);
-    expect(r.isError).toBe(true);
-    expect(textOf(r)).toMatch(/agent\(\)/i);
+  it("TC7: 无 agent() → throw（保留现有行为）", () => {
+    expect(() => actionGenerate(gen(NO_AGENT), undefined)).toThrow(/agent\(\)/i);
   });
 
-  it("TC8: signal aborted → reject（保留现有行为）", () => {
+  it("TC8: signal aborted → throw（保留现有行为）", () => {
     const controller = new AbortController();
     controller.abort();
-    const r = actionGenerate(gen(PI_META_VALID), controller.signal);
-    expect(r.isError).toBe(true);
-    expect(textOf(r)).toMatch(/abort/i);
+    expect(() => actionGenerate(gen(PI_META_VALID), controller.signal)).toThrow(/abort/i);
+  });
+
+  it("TC9: 缺 name/script 参数 → throw 'generate requires'（防御性，schema 先拦）", () => {
+    expect(() => actionGenerate({ action: "generate" } as ScriptParams, undefined)).toThrow(
+      "generate requires 'name' and 'script' parameters",
+    );
+  });
+
+  it("TC10: ESM export（非 meta）→ throw（W4b 收敛路径）", () => {
+    const script = `/* @pi-meta
+name: x
+description: d
+phases: [a]
+*/
+const agent = require("./agent");
+export const foo = 1;
+agent("w");
+`;
+    expect(() => actionGenerate(gen(script), undefined)).toThrow(/ESM 'export'/i);
+  });
+});
+
+describe("actionSave/actionDelete error paths (W4: throw 范式)", () => {
+  /**
+   * W4：save/delete 失败路径从 return {isError:true} 改为 throw——pi 只对 execute
+   * throw 置 isError:true（agent-loop.js:453-483 丢弃返回值里的 isError）。
+   * 经 registerWorkflowScriptTool 注册层测（mock workflow-files 的 FS 依赖）。
+   */
+  interface CapturedTool {
+    execute: (
+      toolCallId: string,
+      params: Record<string, unknown>,
+      signal: AbortSignal | undefined,
+      onUpdate: unknown,
+      ctx: unknown,
+    ) => Promise<TextContent>;
+  }
+  function captureTool(): CapturedTool {
+    const tools: CapturedTool[] = [];
+    const pi = { registerTool: (t: unknown) => tools.push(t as CapturedTool) };
+    // registry 最小 stub：delete 成功路径会调 invalidate（失败路径 throw 前不触达）
+    const registry = { invalidate: vi.fn() };
+    registerWorkflowScriptTool(pi as never, registry as never, () => false);
+    if (!tools[0]) throw new Error("registerWorkflowScriptTool did not register");
+    return tools[0];
+  }
+  const ctx = { mode: "tui" as const, hasUI: true };
+
+  it("save 失败 → throw 'Save failed: <原因>'（pi catch 后置 isError:true）", async () => {
+    vi.mocked(saveWorkflow).mockRejectedValueOnce(new Error("disk full"));
+    const tool = captureTool();
+    await expect(
+      tool.execute("id", { action: "save", name: "tmp-wf" }, undefined, undefined, ctx),
+    ).rejects.toThrow("Save failed: disk full");
+  });
+
+  it("delete 失败 → throw 'Delete failed: <原因>'", async () => {
+    // deleteWorkflow 是同步函数——mock 用同步 throw（mockRejectedValue 不会被
+    // actionDelete 的同步 try/catch 捕获）
+    vi.mocked(deleteWorkflow).mockImplementationOnce(() => {
+      throw new Error("script is running");
+    });
+    const tool = captureTool();
+    await expect(
+      tool.execute("id", { action: "delete", name: "tmp-wf" }, undefined, undefined, ctx),
+    ).rejects.toThrow("Delete failed: script is running");
+  });
+
+  it("save 成功路径不受影响（ok details 正常返回）", async () => {
+    vi.mocked(saveWorkflow).mockResolvedValueOnce("saved tmp-wf");
+    const tool = captureTool();
+    const r = await tool.execute("id", { action: "save", name: "tmp-wf" }, undefined, undefined, ctx);
+    expect(r.isError).toBeFalsy();
+    expect(r.details).toMatchObject({ action: "save", name: "tmp-wf", ok: true });
   });
 });

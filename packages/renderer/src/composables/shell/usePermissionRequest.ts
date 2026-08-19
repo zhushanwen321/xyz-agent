@@ -37,6 +37,7 @@ interface PermissionRequestState {
  * 模块级 reactive 不绑定任何 effectScope，跟随应用生命周期存活——
  * 符合「全局弹窗」语义，App.vue 卸载（HMR/退出）随之销毁。
  */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：权限弹窗全局单例状态（session 无关的全局弹窗，上方注释已述）
 const state = reactive<PermissionRequestState>({
   pluginId: '',
   permissions: [],

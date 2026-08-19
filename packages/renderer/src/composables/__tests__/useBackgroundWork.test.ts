@@ -55,6 +55,27 @@ describe('useBackgroundWork', () => {
     expect(hasBackgroundWork('s1')).toBe(true)
   })
 
+  // [review findings-confirmation #8] TC1b：running-resumable（轮终回写 running + result）
+  // 不是后台真在跑——v4 轮终迁移故意回写 running（可冷路径 resume），result 有值即轮终信号。
+  // 不排除会致 derivedStatus 恒 working → 末位 turn 永久「工作中」。
+  it('TC1b: subagent running + result（轮终 running-resumable）→ false', () => {
+    const sub = useSubagentStore()
+    sub.applyRecords('s1', [makeSubagent({ status: 'running', result: '本轮产出' })])
+    const { hasBackgroundWork } = useBackgroundWork()
+    expect(hasBackgroundWork('s1')).toBe(false)
+  })
+
+  // TC1c：混跑场景——一个轮终 resumable + 一个真在跑（首轮无 result）→ 仍算 working
+  it('TC1c: 轮终 resumable + 首轮真在跑混合 → true（任一真在跑即 working）', () => {
+    const sub = useSubagentStore()
+    sub.applyRecords('s1', [
+      makeSubagent({ subagentId: 'sub-idle', status: 'running', result: 'done text' }),
+      makeSubagent({ subagentId: 'sub-live', status: 'running' }),
+    ])
+    const { hasBackgroundWork } = useBackgroundWork()
+    expect(hasBackgroundWork('s1')).toBe(true)
+  })
+
   it('TC2: workflow running → true', () => {
     const wf = useWorkflowStore()
     wf.applyRecords('s1', [makeWorkflow({ status: 'running' })])
@@ -132,6 +153,29 @@ describe('TC9: useSessionDerivations.derivedStatus working 态回归（useBackgr
 
     // subagent 全 done → 回落 done（响应式：computed 重算）
     sub.applyRecords(sessionId, [makeSubagent({ subagentId: 'sub-tc9', status: 'done' })])
+    expect(derivedStatus(sessionId).value).toBe('done')
+  })
+
+  // [review findings-confirmation #8] TC9b：subagent 轮终（record 有 result 仍 running，
+  // v4 running-resumable 设计）→ derivedStatus 不再 working（回 done）→ sessionActive
+  // false → isWorkingTurn false。这是「完成注入后末位 turn 永久工作中」的核心回归：
+  // live 期行为对齐重开后（record=closed → done）。
+  it('subagent 轮终（running + result）→ derivedStatus = done（非 working）；真在跑（无 result）→ working', async () => {
+    const { useSessionDerivations, invalidateStatusCache } = await import(
+      '@/composables/features/chat/useSessionDerivations'
+    )
+    invalidateStatusCache()
+
+    const { derivedStatus } = useSessionDerivations()
+    const sub = useSubagentStore()
+    const sessionId = 's-tc9c'
+
+    // 真在跑（首轮，无轮终信号）→ working
+    sub.applyRecords(sessionId, [makeSubagent({ subagentId: 'sub-tc9c', status: 'running' })])
+    expect(derivedStatus(sessionId).value).toBe('working')
+
+    // 轮终回写 running + result（resumable）→ 不算 working，回落 done
+    sub.applyRecords(sessionId, [makeSubagent({ subagentId: 'sub-tc9c', status: 'running', result: '本轮产出' })])
     expect(derivedStatus(sessionId).value).toBe('done')
   })
 

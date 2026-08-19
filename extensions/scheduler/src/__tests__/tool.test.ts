@@ -25,12 +25,12 @@ describe('schedule tool', () => {
     expect(details.task.schedule).toEqual({ mode: 'interval', intervalMs: 300000 })
   })
 
-  it('invalid schedule returns isError with message (not throw)', async () => {
-    const result = await handler({ prompt: 'test', schedule: 'invalid' })
-    expect(result.isError).toBe(true)
-    expect(result.content[0]!.text).toContain('Invalid schedule')
-    const details = result.details as { errorCode: string }
-    expect(details.errorCode).toBe('INVALID_SCHEDULE')
+  // W4：业务失败 throw（pi 只对 execute throw 置 isError:true，返回值里的 isError
+  // 被 agent-loop 丢弃——错误轮曾被标成功）。原 errorCode details 随 throw 不再产出。
+  it('invalid schedule throws with message (W4: pi 采信 throw)', async () => {
+    await expect(handler({ prompt: 'test', schedule: 'invalid' })).rejects.toThrow(
+      'Invalid schedule',
+    )
   })
 })
 
@@ -62,19 +62,17 @@ describe('schedule_control tool', () => {
     expect(result.content[0]!.text).toContain('disabled')
   })
 
-  it('missing id on toggle returns isError', async () => {
-    const result = await handler({ action: 'toggle', enabled: true })
-    expect(result.isError).toBe(true)
-    expect(result.content[0]!.text).toContain('id is required')
+  it('missing id on toggle throws (W4)', async () => {
+    await expect(handler({ action: 'toggle', enabled: true })).rejects.toThrow(
+      'id is required',
+    )
   })
 
-  // TC5 tool 侧：toggle 不存在 id → 结构化 isError + TASK_NOT_FOUND
-  it('TC5: toggle unknown id returns isError with TASK_NOT_FOUND', async () => {
-    const result = await handler({ action: 'toggle', id: 'deadbeef', enabled: false })
-    expect(result.isError).toBe(true)
-    const details = result.details as { errorCode: string }
-    expect(details.errorCode).toBe('TASK_NOT_FOUND')
-    expect(result.content[0]!.text).toBe('Task deadbeef not found.')
+  // TC5 tool 侧：toggle 不存在 id → throw（service message 原文即 TASK_NOT_FOUND 文案）
+  it('TC5: toggle unknown id throws with TASK_NOT_FOUND message (W4)', async () => {
+    await expect(handler({ action: 'toggle', id: 'deadbeef', enabled: false })).rejects.toThrow(
+      'Task deadbeef not found.',
+    )
   })
 
   it('deletes task', async () => {

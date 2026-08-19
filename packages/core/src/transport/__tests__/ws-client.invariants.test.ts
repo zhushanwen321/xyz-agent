@@ -13,14 +13,17 @@
 //   新「特征测试覆盖的关键行为不变」（5 类行为特征断言）。
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { providePlatform } from '../../platform/port'
+import type { ClientMessage } from '@xyz-agent/shared'
 import {
   connect,
   disconnect,
   getState,
   onMessage,
+  onQueueDrop,
   setFailed,
   setRestarting,
   send,
+  type SendQueueDropReason,
 } from '../ws-client'
 import { configureRouteInbound, type TransportPorts } from '../../coordination/route-inbound'
 import { subscribeSession, resetSubscriptionStates } from '../../coordination/subscription-state'
@@ -312,6 +315,129 @@ describe('ws-client 不变量 ⑤ 重连退避', () => {
   it.todo('visibilitychange（页面可见）触发立即重连，并重置退避计数')
   // [C4 deferred] visibility 重连归 coordination/connection-lifecycle（架构文档 §5.2），
   // headless core 无 document，本 wave 不实现该行为。
+})
+
+describe('ws-client 不变量 ⑥ pre-auth 发送队列', () => {
+  // review findings-confirmation #3：TCP open → auth.result 窗口内 send() 真实送出会被 runtime
+  // 设计性静默丢弃（connection-manager handleUnauthedMessage），pending 挂满 65s sweep。
+  // 修复：OPEN 但本代未 auth → 入队；auth ok 后按序 flush；auth 失败 / 连接关闭 → 清队 +
+  // onQueueDrop 通知（use-connection 消费方对带 id 消息 reject 对应 pending）。
+  beforeEach(() => {
+    vi.useFakeTimers()
+    installTestPlatform()
+    disconnect()
+  })
+  afterEach(() => {
+    disconnect()
+    // currentToken 复位（同 ② describe 体例）：避免 token 残留改变后续 describe 的无 token 行为
+    connect('mock://reset-token')
+    disconnect()
+    vi.useRealTimers()
+  })
+
+  /** 构造带 id 的 RPC 型 ClientMessage（生产 request.ts command() 同款形状，as 断言体例一致） */
+  function rpcMsg(id: string): ClientMessage {
+    return { type: 'config.sessions', id, payload: {} } as ClientMessage
+  }
+
+  it('pre-auth 窗口 send 入队（返回 true，不上 wire）；auth ok 后按序 flush', () => {
+    connect('ws://test', 'tok-q1')
+    const f = latestFake()
+    f.triggerOpen()
+    expect(f.sent).toHaveLength(1) // 仅 auth 握手帧
+
+    expect(send(rpcMsg('q-a'))).toBe(true)
+    expect(send(rpcMsg('q-b'))).toBe(true)
+    // pre-auth：接受但未上 wire（旧行为此处真实送出 → runtime 静默丢弃）
+    expect(f.sent).toHaveLength(1)
+
+    f.triggerMessage(JSON.stringify({ type: 'auth.result', payload: { ok: true } }))
+    expect(getState().value).toBe('connected')
+    // flush 到达且保序
+    expect(f.sent).toHaveLength(3)
+    expect(JSON.parse(f.sent[1]).id).toBe('q-a')
+    expect(JSON.parse(f.sent[2]).id).toBe('q-b')
+  })
+
+  it('auth 失败清队并通知 drop（带 id 消息可被消费方 reject），消息永不上 wire', () => {
+    // 消费方模拟（生产由 use-connection 注册）：带 id 消息 → reject 对应 pending
+    const rejectedIds: string[] = []
+    let dropReason: SendQueueDropReason | undefined
+    const off = onQueueDrop((msgs, reason) => {
+      dropReason = reason
+      for (const m of msgs) {
+        const id = (m as { id?: string }).id
+        if (typeof id === 'string') rejectedIds.push(id)
+      }
+    })
+
+    connect('ws://test', 'tok-q2')
+    const f = latestFake()
+    f.triggerOpen()
+    expect(send(rpcMsg('q-rej'))).toBe(true)
+
+    f.triggerMessage(JSON.stringify({ type: 'auth.result', payload: { ok: false } }))
+    f.triggerClose() // auth reject 的 close 到达（走重连链）
+    expect(getState().value).toBe('reconnecting')
+
+    expect(f.sent).toHaveLength(1) // 只有 auth 帧，队列消息未上 wire
+    expect(dropReason).toBe('auth-failed')
+    expect(rejectedIds).toEqual(['q-rej'])
+    off()
+  })
+
+  it('auth 握手超时（close）→ 清队并通知 drop（reason=closed）', () => {
+    const droppedIds: string[] = []
+    let dropReason: SendQueueDropReason | undefined
+    const off = onQueueDrop((msgs, reason) => {
+      dropReason = reason
+      for (const m of msgs) droppedIds.push(...msgs.map((m2) => String((m2 as { id?: string }).id)))
+    })
+
+    connect('ws://test', 'tok-q3')
+    const f = latestFake()
+    f.triggerOpen()
+    expect(send(rpcMsg('q-timeout'))).toBe(true)
+
+    vi.advanceTimersByTime(5_000) // AUTH_TIMEOUT_MS：客户端先断（短于 runtime 侧 10s）
+    f.triggerClose() // close 事件到达
+    expect(f.sent).toHaveLength(1)
+    expect(dropReason).toBe('closed')
+    expect(droppedIds).toEqual(['q-timeout'])
+    off()
+  })
+
+  it('队列超限（256）驱逐最老并通知 overflow；flush 只发余下且保序', () => {
+    const overflowIds: string[] = []
+    const off = onQueueDrop((msgs, reason) => {
+      expect(reason).toBe('overflow')
+      overflowIds.push(...msgs.map((m) => String((m as { id?: string }).id)))
+    })
+
+    connect('ws://test', 'tok-q4')
+    const f = latestFake()
+    f.triggerOpen()
+    for (let i = 0; i <= 256; i++) send(rpcMsg(`q-${i}`)) // 257 条 → 驱逐 q-0
+    expect(overflowIds).toEqual(['q-0'])
+
+    f.triggerMessage(JSON.stringify({ type: 'auth.result', payload: { ok: true } }))
+    // 1 auth 帧 + 256 条队列消息
+    expect(f.sent).toHaveLength(257)
+    expect(JSON.parse(f.sent[1]).id).toBe('q-1')
+    expect(JSON.parse(f.sent[256]).id).toBe('q-256')
+    off()
+  })
+
+  it('已 auth 的连接 send 直发不入队（无回归）', () => {
+    connect('ws://test', 'tok-q5')
+    const f = latestFake()
+    f.triggerOpen()
+    f.triggerMessage(JSON.stringify({ type: 'auth.result', payload: { ok: true } }))
+    expect(send(rpcMsg('q-direct'))).toBe(true)
+    // auth 帧 + 直发消息，无队列中转延迟
+    expect(f.sent).toHaveLength(2)
+    expect(JSON.parse(f.sent[1]).id).toBe('q-direct')
+  })
 })
 
 describe('ws-client 辅助状态（restarting/failed IPC 驱动）', () => {

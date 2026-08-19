@@ -616,6 +616,38 @@ else
 fi
 
 # ============================================================================
+# R1 pi session JSONL 直写检查（data-source-governance P0.3）
+#   拦截 runtime/scripts 代码对 pi session JSONL 本体的直写，报错指向登记表。
+#   注：不设独立跳过开关——新增 SKIP_* 逃生口须同步登记 AGENTS.md 的 SKIP_* 清单
+#   （W3 改动范围仅限本文件与 checker 本体），故本段仅受既有 SKIP_ALL_CHECKS 总闸管辖。
+# ============================================================================
+
+PI_DIRECT_WRITE_CHECKER=".githooks/check_pi_direct_write.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    print_section "[R1 pi session 直写检查]"
+    echo -e "${BLUE}[INFO] 运行 pi session JSONL 直写检查（R1）...${NC}"
+
+    if [ ! -f "$PI_DIRECT_WRITE_CHECKER" ]; then
+        echo -e "${YELLOW}[WARN] 找不到检查脚本 $PI_DIRECT_WRITE_CHECKER${NC}"
+    else
+        python3 "$PI_DIRECT_WRITE_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -eq 2 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] R1 pi session JSONL 直写检查失败${NC}"
+            echo -e "${YELLOW}[INFO] session JSONL 本体唯一写方 = pi；例外与豁免登记见 docs/architecture/data-source-registry.md${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}[OK] R1 pi session 直写检查通过${NC}"
+    fi
+else
+    echo -e "${YELLOW}[SKIP] R1 pi session 直写检查已跳过${NC}"
+fi
+
+# ============================================================================
 # ws-client send 直调检查（D3 统一门面）
 # ============================================================================
 
@@ -913,6 +945,7 @@ echo -e "  ${GREEN}[+]${NC} CSS tokens 检查"
 echo -e "  ${GREEN}[+]${NC} ENV_WHITELIST_PREFIXES SSOT 单一性检查"
 echo -e "  ${GREEN}[+]${NC} Pi extension tool schema 顶层 Object 合规检查（OpenAI 兼容性）"
 echo -e "  ${GREEN}[+]${NC} 路径白名单动态化检查"
+echo -e "  ${GREEN}[+]${NC} R1 pi session JSONL 直写检查（data-source-governance，指向 data-source-registry.md）"
 echo -e "  ${GREEN}[+]${NC} 目录规范检查（禁止 demos/impeccable + 外部 symlink）"
 echo -e "  ${GREEN}[+]${NC} ws-client send 直调检查（D3 统一门面）"
 echo -e "  ${GREEN}[+]${NC} runtime services 循环依赖检查（D6c 防护）"

@@ -208,6 +208,12 @@ export class RpcClient implements IPiEngine {
     // 不依赖 process.cwd() 查找 package.json。因此 spawn cwd 可以安全地设为用户项目目录。
     // 这样 pi 的初始 session、system prompt、CLAUDE.md 查找、bash 工具都基于正确的 cwd。
     // Verified: xyz-pi 0.75.5-xyz-0.1 uses process.execPath for resource resolution.
+    // Re-verified 2026-08-20 (W6 A-11 探针) on upstream 0.84.1，双形态均不依赖 cwd：
+    // - bun binary（打包产物 apps/electron/resources/pi/pi-darwin-arm64）：getPackageDir() =
+    //   dirname(process.execPath)（pi 0.84.1 dist config.js isBunBinary 分支）；cwd=/tmp spawn
+    //   --version 输出 0.84.1 正常，资源布局 binary 同目录 theme/package.json 与该分支一致。
+    // - node dist（dev 形态）：从 __dirname 向上找 package.json（config.js getPackageDir Node 分支），
+    //   实测 cwd=HOME//tmp//usr 三种 cwd 下 getPackageDir/getThemesDir 返回完全一致。
     const spawnCwd = this.options.cwd ?? process.cwd()
 
     console.log('[rpc] spawning pi:', piCmd, args.join(' '), 'cwd:', spawnCwd)
@@ -326,8 +332,17 @@ export class RpcClient implements IPiEngine {
   }
 
   private handleMessage(msg: PiMessage): void {
-    // If id matches a pending request, resolve it; otherwise emit as event
-    if (msg.id && this.pending.has(msg.id)) {
+    // If id matches a pending request, resolve it; otherwise emit as event.
+    // resolve 只认 RPC response：pi 的 RpcResponse union 所有变体 type === 'response'
+    // （pi-mono coding-agent/src/modes/rpc/rpc-types.ts:114-223），事件各有独立 type 字符串。
+    // pi 0.84.1 新增 bash_execution_update 流事件复用发起 RPC 的 id
+    // （node_modules @earendil-works/pi-coding-agent dist/core/agent-session.d.ts:103-106
+    // {type:"bash_execution_update", id?, delta}；docs/rpc.md:26「bash_execution_update
+    // events also include the id of their originating bash command」）——仅凭 id 命中
+    // pending 就 resolve 会把首条 delta 误当 response（真 response 到达时 pending 已删，
+    // 真实 output 丢失，bash() shape guard 落 [protocol error: malformed] fallback）。
+    // 非 response 的带 id 消息走下方 listener 路径（event-adapter NULL_EVENTS 已登记）。
+    if (msg.type === 'response' && msg.id && this.pending.has(msg.id)) {
       const entry = this.pending.get(msg.id)!
       clearTimeout(entry.timer)
       this.pending.delete(msg.id)
@@ -506,6 +521,19 @@ export class RpcClient implements IPiEngine {
 
   setThinkingLevel(level: string): Promise<PiMessage> {
     return this.sendCommand('set_thinking_level', { level })
+  }
+
+  /**
+   * 设置 pi session 名（set_session_name）。
+   *
+   * W1（数据源治理）：活跃 session 的 label 持久化唯一写入口——pi 内部经
+   * sessionManager.appendSessionInfo 落盘 + 广播 session_info_changed，取代 xyz
+   * 直写 session JSONL（消除与 pi 进程内 rename-session 扩展的 last-write-wins 竞争）。
+   * success:false / 超时由 sendCommand 既有约定 reject（调用方决定失败语义）。
+   */
+  setSessionName(name: string): Promise<PiMessage> {
+    // L6：set_session_name 是毫秒级 RPC（pi 内存缓冲 append），用 FAST_TIMEOUT_MS 快速失败
+    return this.sendCommand('set_session_name', { name }, FAST_TIMEOUT_MS)
   }
 
   /** [DEAD] pi get_messages 死路径——生产零调用（session-service.getHistory 走 client.getEntries entry 树重建）。

@@ -42,15 +42,18 @@ import { useHandoffActions } from '@/composables/features/fork-handoff/useHandof
 
 // ── session.list server-push 订阅（#7 方案 A；CLAUDE.md 规则 #2 防重复注册）──
 // useSidebar 被 6+ 组件实例化（Sidebar/Turn/AppShell/PanelContainer/Workspace/Overview），
-// 若每实例各注册一次 onGlobalType，每次广播会触发 N 次相同 setGroups（事件处理翻倍）。
+// 若每实例各注册一次 onGlobalType，每次广播会触发 N 次相同整表快照应用（事件处理翻倍）。
 // 模块级 refCount：首个实例注册，末个实例卸载时取消，中间实例共享同一监听。
 let sessionListSubCount = 0
 let sessionListUnsub: (() => void) | null = null
 
-function bindSessionListBroadcast(setGroups: (groups: SessionGroup[]) => void): void {
+function bindSessionListBroadcast(applyListSnapshot: (groups: SessionGroup[]) => void): void {
   sessionListSubCount += 1
   if (sessionListSubCount === 1) {
-    sessionListUnsub = events.onGlobalType('config.sessions', (msg) => setGroups(msg.payload.groups))
+    sessionListUnsub = events.onGlobalType(
+      'config.sessions',
+      (msg) => applyListSnapshot(msg.payload.groups),
+    )
   }
 }
 
@@ -110,12 +113,12 @@ export function useSidebar() {
   /**
    * session.list server-push 订阅（#7 方案 A）。
    * runtime 在 create/delete/rename 后 broadcastSessionList 推全量分组（server.ts:322），
-   * 这里 setGroups 更新列表——只换列表，不重载历史（history hydrate 仅 loadSessions/按需做）。
-   * 与 newSession/deleteSession/renameSession 的本地乐观更新互补：乐观更新让 UI 即时响应，
-   * 广播随后用 runtime 权威分组对齐（同一 store，重复写入幂等）。
+   * 这里 applySnapshot（整表形态）更新列表——只换列表，不重载历史（history hydrate 仅
+   * loadSessions/按需做）。与 newSession/deleteSession/renameSession 的本地乐观更新互补：
+   * 乐观更新让 UI 即时响应，广播随后用 runtime 权威分组对齐（同一入口，重复写入幂等）。
    * refCount + onScopeDispose：useSidebar 多实例只注册一次，随组件卸载自动收尾。
    */
-  bindSessionListBroadcast(session.setGroups)
+  bindSessionListBroadcast((groups) => session.applySnapshot({ groups }))
   onScopeDispose(unbindSessionListBroadcast)
 
   /**
@@ -252,10 +255,11 @@ export function useSidebar() {
   /**
    * 重命名 session（API + 乐观更新 store）。
    * 编排点在 features 层：跨 api + store 的唯一合法层。
+   * 乐观更新 = applySnapshot 本地入参只带 label；权威确认经 config.sessions 整表广播回流。
    */
   async function renameSession(id: string, label: string): Promise<void> {
     await sessionApi.rename(id, label)
-    session.updateLabel(id, label)
+    session.applySnapshot(id, { label })
   }
 
   /**
@@ -399,7 +403,7 @@ export function useSidebar() {
    * 加载 session 列表（W6 去全量预 hydrate）。
    * 铁律 1：api 调用只在此 features 层，组件不直接 import api。
    *
-   * sessionApi.list() 返 SessionGroup[]（按 cwd 分组，D7），setGroups 填入分组真源。
+   * sessionApi.list() 返 SessionGroup[]（按 cwd 分组，D7），applySnapshot 整表形态填入分组真源。
  * 不再全量预 hydrate 各 session 历史——侧栏 status 由元数据 status（W5 session_end 终态）
  * + 瞬态（isGenerating per-session 惰性派生 flag（W11 D-3）/ compactingSessions Set）派生，
  * 用户点开 session 时按需 hydrate
@@ -408,7 +412,7 @@ export function useSidebar() {
   async function loadSessions(): Promise<void> {
     try {
       const groups = await sessionApi.list()
-      session.setGroups(groups)
+      session.applySnapshot({ groups })
       session.setListLoadError(null)
     } catch (e) {
       // S5：list 失败设 listLoadError，SessionList 据此显示「加载失败，点击重试」

@@ -68,7 +68,7 @@ describe('useSidebarNew.assignSessionToProject（RPC + 乐观更新）', () => {
   it('成功：setProject RPC 调用（sessionId, projectId 透传）+ 乐观更新同步（聚合数据源实时变化）', async () => {
     apiMocks.setProject.mockResolvedValue(undefined)
     const store = useSessionStore()
-    store.setGroups([{ cwd: '/proj', sessions: [makeSummary('s1', 'p0')] }])
+    store.applySnapshot({ groups: [{ cwd: '/proj', sessions: [makeSummary('s1', 'p0')] }] })
 
     const scope = effectScope()
     const sidebar = scope.run(() => useSidebarNew())!
@@ -87,7 +87,7 @@ describe('useSidebarNew.assignSessionToProject（RPC + 乐观更新）', () => {
       () => new Promise<void>((res) => { resolveRpc = res }),
     )
     const store = useSessionStore()
-    store.setGroups([{ cwd: '/proj', sessions: [makeSummary('s1', 'p0')] }])
+    store.applySnapshot({ groups: [{ cwd: '/proj', sessions: [makeSummary('s1', 'p0')] }] })
 
     const scope = effectScope()
     const sidebar = scope.run(() => useSidebarNew())!
@@ -104,7 +104,7 @@ describe('useSidebarNew.assignSessionToProject（RPC + 乐观更新）', () => {
   it('setProject reject → 不乐观更新（归属保持原值）且错误向上传播（Sidebar 层 toast 分支）', async () => {
     apiMocks.setProject.mockRejectedValue(new Error('rpc-fail'))
     const store = useSessionStore()
-    store.setGroups([{ cwd: '/proj', sessions: [makeSummary('s1', 'p0')] }])
+    store.applySnapshot({ groups: [{ cwd: '/proj', sessions: [makeSummary('s1', 'p0')] }] })
 
     const scope = effectScope()
     const sidebar = scope.run(() => useSidebarNew())!
@@ -119,7 +119,7 @@ describe('useSidebarNew.assignSessionToProject（RPC + 乐观更新）', () => {
   it('projectId 空串 = 归回默认项目（RPC 透传空串，store 清为 undefined）', async () => {
     apiMocks.setProject.mockResolvedValue(undefined)
     const store = useSessionStore()
-    store.setGroups([{ cwd: '/proj', sessions: [makeSummary('s1', 'p1')] }])
+    store.applySnapshot({ groups: [{ cwd: '/proj', sessions: [makeSummary('s1', 'p1')] }] })
 
     const scope = effectScope()
     const sidebar = scope.run(() => useSidebarNew())!

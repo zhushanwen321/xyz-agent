@@ -415,8 +415,8 @@ export interface ExecutionRecord {
    *   范围静默丢失。
    * - D4 不持久化：磁盘重建走 createRecord（turns 仅为初始 [emptyTurn()]），base=0 对空 turn
    *   的增量派生等价为空、天然产出仅新轮增量，持久化是死数据。故不写 manifest、不参与重建。
-   * - pi 内部序锚定依据（R1 mitigation）：@earendil-works/pi-agent-core 0.84.0
-   *   dist/agent-loop.js :106-113（error/aborted stopReason 也先 emit turn_end 再 agent_end）
+   * - pi 内部序锚定依据（R1 mitigation）：@earendil-works/pi-agent-core 0.84.2
+   *   dist/agent-loop.js :108-111（error/aborted stopReason 也先 emit turn_end 再 agent_end）
    *   与 :131（正常路径 turn_end 收尾）；agent_settled 在 agent_end 之后 emit，故未闭合
    *   turn 只可能来自滞后事件。pi 升级若改变 turn_end/agent_end 时序，onRoundSettled 推进前
    *   的观测哨（末 turn 未闭合且 text 非空 → logger.warn）会留痕。

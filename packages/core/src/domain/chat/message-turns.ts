@@ -194,7 +194,8 @@ function signatureEquals(a: Message[], b: Message[]): boolean {
 
 /**
  * 快路径（源数组引用未变 = 本 sid 无新 commit）：按当前 forceWorking 重驱动末位 turn 的
- * isStreaming——subagent forceWorking 翻转（subagentStore.isRunning）在源数组不变时触发本函数。
+ * isStreaming——消费方的 forceWorking 翻转（虚拟 session 的 subagent streaming 判定）在
+ * 源数组不变时触发本函数。
  * 期望值未变 → cachedItems 引用恒等返回（零重算）；变化 → 不可变替换末位 turn 对象
  * （不原地改，历史 turn 与其余项全部复用）并同步缓存自洽。
  */

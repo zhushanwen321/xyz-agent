@@ -93,7 +93,7 @@ python3 .agents/skills/pr-cr-fix/scripts/validate-extensions-yaml.py <extension-
 
 **适用条件**：当前主 agent 是 pi agent，且能调用内置 workflow（`pi workflow list` 中名为 `review-fix-loop`、无 `.js` 路径后缀的条目即内置版；解析顺序：内置 → npm 包 → 项目 `.pi/workflows/`）。
 
-主 agent 直接用 workflow 工具跑内置 `review-fix-loop`（7 维并行 review → 聚合 → fix → 重审直到 clean/converged/stuck）：
+主 agent 直接用 workflow 工具跑内置 `review-fix-loop`（8 维并行 review → 聚合 → fix → 重审直到 clean/converged/stuck）：
 
 > **[MANDATORY] 主 agent 直接派，禁止 subagent 封装**：workflow 工具 `action:"run"` 是异步后台运行 + notifyDone 自动注入结果，主 agent 直接拿 `terminated/rounds/aggregated_file`。workflow 自己会派 review agent + fix agent，subagent 封装只是多一层中转，白耗 context。
 
@@ -106,7 +106,7 @@ python3 .agents/skills/pr-cr-fix/scripts/validate-extensions-yaml.py <extension-
 pi workflow run review-fix-loop --args '{
   targetType: "git-diff",
   target: "main",
-  batch1: "<repo>/.agents/skills/pr-cr-fix/agents/review-arch-boundary.md,<repo>/.agents/skills/pr-cr-fix/agents/review-business-logic.md,<repo>/.agents/skills/pr-cr-fix/agents/review-extension-api.md,<repo>/.agents/skills/pr-cr-fix/agents/review-monorepo-impact.md,<repo>/.agents/skills/pr-cr-fix/agents/review-type-safety.md,<repo>/.agents/skills/pr-cr-fix/agents/review-electron-build.md,<repo>/.agents/skills/pr-cr-fix/agents/review-test-coverage.md",
+  batch1: "<repo>/.agents/skills/pr-cr-fix/agents/review-arch-boundary.md,<repo>/.agents/skills/pr-cr-fix/agents/review-business-logic.md,<repo>/.agents/skills/pr-cr-fix/agents/review-extension-api.md,<repo>/.agents/skills/pr-cr-fix/agents/review-monorepo-impact.md,<repo>/.agents/skills/pr-cr-fix/agents/review-type-safety.md,<repo>/.agents/skills/pr-cr-fix/agents/review-electron-build.md,<repo>/.agents/skills/pr-cr-fix/agents/review-test-coverage.md,<repo>/.agents/skills/pr-cr-fix/agents/review-data-governance.md",
   maxRounds: 10,
   autoCommit: true,
   recheckAfterFix: false,
@@ -129,7 +129,7 @@ pi workflow run review-fix-loop --args '{
 git diff main...HEAD --stat
 ```
 
-**Step 2 — 并行派 reviewer subagent**：7 个维度按「维度 → Agent 映射」表全派。**并行上限 ≤5**（全局 AGENTS.md subagent 约束）：分两批派发（batch1: arch-boundary / business-logic / type-safety / electron-build / test-coverage，batch2: extension-api / monorepo-impact），或按全局规则「一般用 3 个」分三批。每个 subagent 的 task 必须包含：
+**Step 2 — 并行派 reviewer subagent**：8 个维度按「维度 → Agent 映射」表全派。**并行上限 ≤5**（全局 AGENTS.md subagent 约束）：分两批派发（batch1: arch-boundary / business-logic / type-safety / electron-build / test-coverage，batch2: extension-api / monorepo-impact / data-governance），或按全局规则「一般用 3 个」分三批。每个 subagent 的 task 必须包含：
 
 - worktree cwd（绝对路径，避免 multi-worktree cwd 陷阱）
 - focus（见下方「维度 → Agent 映射」表对应审查焦点）
@@ -169,6 +169,7 @@ Agent 定义位于本 skill 目录 `agents/review-<维度>.md`（不全局暴露
 | 测试覆盖 | `agents/review-test-coverage.md` | 新增逻辑有测试、边缘情况覆盖、vitest 合规（禁 node:test）、领域测试点（session 双状态/Extension vs Plugin/ports 接口） |
 | 扩展接口 | `agents/review-extension-api.md` | Pi 扩展 tool/command schema 完整性、向后兼容性、扩展规范合规（docs/extensions/extension-conventions.md + development-guide.md） |
 | Monorepo 影响 | `agents/review-monorepo-impact.md` | workspace 包间依赖（packages/* + apps/* + extensions/* + extensions/shared/*）、循环依赖、公共 API 变更对下游影响 |
+| 数据治理 | `agents/review-data-governance.md` | pi 文件直写（绝对写规则）、第二写入者、事件直写状态、renderer 零派生、未登记缓存、扩展数据通道（appendEntry/get_entries）、登记表同步。准绳：docs/architecture/data-source-governance.md + data-source-registry.md |
 
 ### 严重度分级
 
@@ -360,6 +361,7 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 │   ├── review-test-coverage.md
 │   ├── review-extension-api.md
 │   ├── review-monorepo-impact.md
+│   ├── review-data-governance.md
 │   └── review-aggregator.md
 └── scripts/              # 校验脚本
     ├── validate-skill-yaml.py

@@ -50,7 +50,8 @@ describe('filterDisplayableMessages —— 按 display 字段过滤（FR-5 / AC-
   })
 
   // [M2 display 前置] customType 黑名单已删（§3.3.2 收敛为 display 单一判别），完成通知
-  // （subagent-bg-notify / workflow-result）由生产端（registry customStart / runtime mapper）
+  // （subagent-bg-notify / workflow-result）由生产端（core apply-entry custom_message case：
+  // 实时 customStart 喂 entry 与重开 replay 同一覆写点 / runtime mapper）
   // 统一写 display:false，filter 只按 display===false 纯字段过滤。用例输入对齐生产端契约。
   // 消息仍进 store 供 fork/compact/replay（filter 不丢消息）。
   it('subagent-bg-notify 完成通知（display:false）被过滤', () => {

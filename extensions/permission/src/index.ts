@@ -227,7 +227,8 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 
 	/**
 	 * 注册 permission footer line renderer（consumer 端握手）。
-	 * 不依赖 ctx.ui：pi 的 ExtensionUIContext 无 theme 字段（类型权威），theme 由
+	 * 不依赖 ctx.ui.theme：theme 不从 ExtensionUIContext 取——pi 的 ExtensionUIContext
+	 * 虽有 theme 字段（types.d.ts:174-175），但 statusline 渲染的权威 theme 由
 	 * pi-statusline 每次 render 时经 render(ctx, theme) 传入（render hook 的 theme 参数 = pi Theme 对象）。
 	 * headless（rpc/json mode）时 render 收不到有效 theme → 返回 null，statusline 跳过。
 	 */

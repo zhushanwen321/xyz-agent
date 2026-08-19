@@ -53,6 +53,7 @@ vi.mock('../ws-client', () => ({
       inboundHandler = null
     }
   },
+  onQueueDrop: vi.fn(() => () => {}),
 }))
 
 // ── pending mock（routeInbound id 路径需要）─────────────────────────

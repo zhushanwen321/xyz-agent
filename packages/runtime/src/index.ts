@@ -23,7 +23,6 @@ import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
 import { EventInterpreter } from './services/session/event-interpreter.js'
-import { sessionMetaCache } from './services/session/session-meta-cache.js'
 import { join, resolve, isAbsolute } from 'node:path'
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
@@ -35,7 +34,6 @@ import { PluginService } from './services/plugin-service/plugin-service.js'
 import { GitService } from './services/git-service.js'
 import { GitExecutor } from './infra/git-executor.js'
 import { GitStateService } from './services/git/git-state-service.js'
-import { createContextWindowResolver } from './services/model-context-cache.js'
 import { GitInfoReader } from './infra/system/git-info-reader.js'
 import { ShellRunner } from './infra/shell-runner.js'
 import { WorktreeService } from './services/worktree/worktree-service.js'
@@ -271,32 +269,30 @@ async function main(): Promise<void> {
         server.handleStatusSetUpdate(payload)
       },
       onContextUpdate: (sid, ctxData) => {
-        // session 级状态单一 owner：inputTokens 回写 + tokenCount 写入 + usagePercent 计算 + context.update 广播
-        // 全部由 SessionService.applyContextUpdate 负责（contextWindow 经注入的 resolver 解析）。
-        // context.update 与 switchModel 的竞态保护（inputTokens 回写打通数据源）也收敛在该方法内。
-        // W3：totalTokens 写入 session.tokenCount（原 attachUsageListener 的 tokenCount 回写迁移至此）。
+        // session 级状态单一 owner：context 事件（turn-usage / turn-end / compaction）经
+        // SessionService.applyContextUpdate 只做 usage 实例失效（W10 五写点收编；W12 起
+        // context.update 广播也退役为快照挂钩发布——payload 全字段来自 usage 实例快照，
+        // 事件参数不再进任何 payload）。竞态保护由单一数据源结构保证（见该方法注释）。
         sessionService.applyContextUpdate(sid, ctxData.inputTokens, ctxData.totalTokens)
       },
-      // W3：turn_end 单 turn 副作用——tryPersistLabel 主路径（首 turn 即持久化）。
-      // 原 attachUsageListener turn_end 分支迁移至此，经中间事件链路触发。
+      // W3：turn_end 单 turn 副作用（原 attachUsageListener turn_end 分支迁移至此，经中间事件链路触发；
+      // W1 后 label 持久化移交 pi set_session_name RPC，此处承载 project sidecar 兜底）。
       onTurnUsage: (sid) => sessionService.handleTurnUsageSideEffects(sid),
-      // W3：agent_end 副作用——isGenerating 复位 + tryPersistLabel 兜底。
+      // W3：agent_end 副作用——isGenerating 复位（W1 后 label 直写兜底已随机制删除）。
       // 原 attachUsageListener agent_end 分支迁移至此。不迁移则 session 永远 busy（下条消息被拒）。
       // W4：转发 stopReason 用于 session_end 终态判定（'error'→error，其余→done）。
       onTurnFinalize: (sid, stopReason) => {
         sessionService.handleTurnEndSideEffects(sid, stopReason)
       },
-      onThinkingLevelChanged: (sid, level) => {
-        // pi 切模型 / 用户手切档位后推 thinking_level_changed 事件。
-        // 回写 session 缓存，使后续 broadcastSessionState 读到真值（而非 undefined）。
-        sessionService.setThinkingLevelCache(sid, level)
-      },
       onSessionRenamed: (sid, name) => {
         // pi extension auto-rename (session_info_changed) 事件到达时。
-        // 同步更新内存态 session.label（唯一数据源）+ 缓存（扫描路径兜底）。
+        // 同步更新内存态 session.label（W9 后唯一即时数据源：toSummary/config.sessions 读它，
+        // 实例快照经 labelState markDirty 防抖重拉收敛，W12/W13 逐步成为权威发布源）。
         sessionService.setLabelCache(sid, name ?? '')
-        sessionMetaCache.setLabel(sid, name ?? '')
       },
+      // W7：标量实例失效接线（延迟解析——interpreter 构造时实例尚未注册，见 opts 类型注释）。
+      labelState: () => sessionService.getScalarReplicatedStates(sessionId)?.label,
+      thinkingLevelState: () => sessionService.getScalarReplicatedStates(sessionId)?.thinkingLevel,
       executeHooks: (hookType, context) => pluginService.executeHooks(hookType, {
         pluginId: '',
         hookType: hookType as import('./services/plugin-service/plugin-types.js').HookType,
@@ -326,6 +322,13 @@ async function main(): Promise<void> {
         const client = pm.getClient(sessionId)
         if (!client) return undefined
         return client.getState()
+      },
+      // W18（data-source-governance P3.1）：自描述 record entry（subagent-record /
+      // workflow-record）到达 → 派生缓存失效。sessionService 同 labelState/
+      // thinkingLevelState 的延迟解析模式（createAdapter 闭包先于 sessionService 构造，
+      // 调用发生在 session 创建后，引用恒就绪）。
+      onRecordEntriesInvalidated: (sid, customType) => {
+        sessionService.invalidateRecordEntries(sid, customType)
       },
     })
     // EventAdapter：纯翻译器，把翻译结果喂给 interpreter 编排。
@@ -414,22 +417,7 @@ async function main(): Promise<void> {
 
   modelService.setServices(sessionService, configService, server)
 
-  // SessionService 是 session 级状态（modelId/thinkingLevel/inputTokens/usagePercent）单一 owner，
-  // 需读 model contextWindow 才能 switchModel / applyContextUpdate 时算 usagePercent。
-  // 直接注入 modelService/configService 会形成依赖环（modelService 反过来依赖 sessionService），
-  // 故注入窄 resolver（纯数据查询，等价 configService.listProviders + modelService.aggregateModels）。
-  // 微项 5（perf W17）：resolver 经 createContextWindowResolver 加 TTL 缓存——原实现每次
-  // context.update / switchModel 都全量重算 listProviders + aggregateModels（streaming 期高频），
-  // 缓存后聚合每 5s 至多一次，查询热点只剩 find。
-  sessionService.setModelContextWindowResolver(
-    createContextWindowResolver({
-      listProviders: () => configService.listProviders(),
-      aggregateModels: (providers) => modelService.aggregateModels(providers),
-    }),
-  )
-
   // 注入 ConfigService 供 getReplaceSystemPrompt 委托（spawn pi 时透传替换系统提示词）。
-  // 与 setModelContextWindowResolver 同模式：避免构造参数破坏 SessionService 的测试调用点。
   sessionService.setConfigService(configService)
   // 注入 PresetService 供 getLaunchPresetOptions 委托（spawn pi 时按 launch preset 构建 args）。
   // 与 setConfigService 同模式（pi-launch-presets 设计 §8.1 + §4.3）。

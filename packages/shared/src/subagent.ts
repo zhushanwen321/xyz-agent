@@ -65,6 +65,23 @@ export interface SubagentRecord {
   /** failed 状态的错误文本 */
   error?: string
   /**
+   * 轮终结果文本（running-resumable 轮终信号，review findings-confirmation #8）。
+   *
+   * v4 起 subagent 完成一轮注入结果后轮终**故意回写 status='running'**（可冷路径
+   * resume；closed 只在显式关闭，extensions finalize-record.ts v4 B-1）——「后台真在跑」
+   * 与「轮终 resumable」无法凭 status 区分。result 有值即「至少完成过一轮」的轮终信号。
+   * 轮终迁移写点对空文本轮写占位（R2-1 修复后才恒写非空）：本轮正文 / 错误兜底文本 /
+   * chatMode 空增量轮 "(no output this round)" / one-shot 空文本成功轮 "(empty)"（与
+   * notifier 兜底同款措辞）；首轮未完成前恒 undefined。renderer 的 working 判定
+   * （subagent store hasRunning）据此排除轮终 running，消除「完成注入后末位 turn
+   * 永久工作中」。
+   *
+   * 来源：自描述 subagent-record entry（W16 v1，reportRecordTransition 轮终迁移携带
+   * result 字段）；legacy 路径（W16 前旧 session entry）无此字段 → running 无 result 仍按
+   * 真在跑判定（旧扩展无 running-resumable 设计，语义正确）。
+   */
+  result?: string
+  /**
    * L2 关闭原因（仅 status='closed' 时有意义）。对齐 extension 侧 ClosedReason 六值
    * （extensions/subagent-workflow/src/execution/types.ts）：
    * 'parent-shutdown' | 'parent-fork' | 'parent-new' | 'user-close' | 'cancelled' | 'gc'。

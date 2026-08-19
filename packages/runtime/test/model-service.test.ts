@@ -24,7 +24,6 @@ function makeMockSessionService(overrides: Partial<ISessionService> = {}): ISess
     setThinkingLevelCache: vi.fn(),
     getSummary: vi.fn(() => undefined),
     getInputTokens: vi.fn((): number => 0),
-    setInputTokens: vi.fn(),
     applyContextUpdate: vi.fn(),
     getUsagePercent: vi.fn((): number => 0),
     ...overrides,

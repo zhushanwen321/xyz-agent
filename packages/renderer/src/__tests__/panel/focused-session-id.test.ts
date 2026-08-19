@@ -43,7 +43,7 @@ function makeSummary(id: string): SessionSummary {
 function seedSession(s: SessionSummary): void {
   const store = useSessionStore()
   const group: SessionGroup = { cwd: s.cwd, sessions: [s] }
-  store.setGroups([group])
+  store.applySnapshot({ groups: [group] })
 }
 
 beforeEach(() => {

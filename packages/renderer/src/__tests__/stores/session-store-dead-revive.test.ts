@@ -28,7 +28,7 @@ function seedIdleStore(): ReturnType<typeof useSessionStore> {
       { id: 's2', label: 'active-session', cwd: '/repo', status: 'active', lastActiveAt: 200, modelId: 'm/y', tokenCount: 0 },
     ],
   }
-  store.setGroups([group])
+  store.applySnapshot({ groups: [group] })
   return store
 }
 

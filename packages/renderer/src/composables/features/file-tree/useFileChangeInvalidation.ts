@@ -72,6 +72,7 @@ const OVERLAY_DEBOUNCE_MS = 300
  * 组件卸载后触发只写一个 store 分桶、无 UI 副作用，one-shot 300ms 自清——取消反而会丢掉
  * 已确认 turn 的最终态刷新。sid 切换互不影响（timer 按 sid 分桶，各写各的）。
  */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：overlay 刷新防抖定时器表（one-shot 300ms 自清，非 GUI 数据）
 const overlayTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 /** ready 后调度 overlay 回写（trailing debounce，窗口内多次 ready 只保留最后一次） */

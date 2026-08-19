@@ -18,11 +18,12 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { writeAliveMarker } from "../alive-store.ts";
-import { createRecord } from "../execution-record.ts";
+import { completeRecord, createRecord, tryTransition } from "../execution-record.ts";
 import { writeFinalized } from "../finalized-marker.ts";
 import type { ManifestRecord } from "../manifest-store.ts";
 import { ManifestStore } from "../manifest-store.ts";
 import { getSubagentRecordsDir, getSubagentSessionDir } from "../path-encoding.ts";
+import { SUBAGENT_RECORD_CUSTOM_TYPE } from "../record-entry.ts";
 import type { StatusFilter } from "../record-store.ts";
 import { RecordStore } from "../record-store.ts";
 import { writeCancelledTombstone } from "../tombstone-store.ts";
@@ -770,6 +771,111 @@ describe("RecordStore", () => {
       expect(found).toBeDefined();
       expect(found?.status).toBe("closed");
       expect(found?.closedReason).toBe("cancelled");
+    });
+  });
+
+  // ============================================================
+  // W16 [D4]：subagent-record 自描述 appendEntry 上报（状态迁移点）
+  // ============================================================
+  describe("W16 subagent-record 自描述 appendEntry 上报", () => {
+    /** appendEntry 捕获（RecordStorePi 最小实现）。 */
+    interface AppendedCall {
+      customType: string;
+      data: unknown;
+    }
+
+    /** 构造带 appendEntry 捕获的 store（pi 注入通道，对齐生产 setPi 后形态）。 */
+    function makeStoreWithPi(): { store: RecordStore; appended: AppendedCall[] } {
+      const appended: AppendedCall[] = [];
+      const store = new RecordStore(tmpDir, undefined, {
+        appendEntry: (customType: string, data: unknown) => {
+          appended.push({ customType, data });
+        },
+      });
+      return { store, appended };
+    }
+
+    /** unknown → 对象的运行时 guard（taste/no-unsafe-cast：断言前先收窄）。 */
+    function asEntryData(d: unknown): Record<string, unknown> {
+      if (typeof d !== "object" || d === null) throw new Error("entry data is not an object");
+      return d as Record<string, unknown>;
+    }
+
+    it("register：append subagent-record entry，data = v1 + SubagentRecord 完整快照 schema", () => {
+      const { store, appended } = makeStoreWithPi();
+      store.register(makeRecord());
+
+      expect(appended).toHaveLength(1);
+      // 写点字面量与 record-entry.ts 常量等值（钉住双源一致性）
+      expect(appended[0]?.customType).toBe(SUBAGENT_RECORD_CUSTOM_TYPE);
+      const data = asEntryData(appended[0]?.data);
+      // schema 完整性：25 字段（v + SubagentRecord 持久化字段全集，无缺无余）
+      expect(Object.keys(data).sort()).toEqual([
+        "agent", "closedReason", "depth", "displayItems", "endedAt", "error", "eventLog",
+        "id", "mode", "model", "parentRecordId", "patchFile", "result", "rootSessionId",
+        "round", "sessionFile", "slug", "startedAt", "status", "task", "thinkingLevel",
+        "totalTokens", "turns", "v", "worktree",
+      ]);
+      expect(data).toMatchObject({
+        v: 1,
+        id: "r1",
+        agent: "worker",
+        task: "t",
+        status: "running",
+        mode: "sync",
+        startedAt: 1000,
+        rootSessionId: "sess-current",
+        turns: 0,
+        totalTokens: 0,
+        model: "m",
+        eventLog: [],
+        displayItems: [],
+      });
+    });
+
+    it("archive：append 终态完整快照（result/endedAt/closedReason）；one-shot 生命周期共 2 次 append", () => {
+      const { store, appended } = makeStoreWithPi();
+      const r = makeRecord();
+      store.register(r);
+      // 模拟正常终态路径：tryTransition CAS → completeRecord 冻结 → archive（D-017 时序）
+      tryTransition(r, "closed", "gc");
+      completeRecord(r, { text: "task done", turns: 1, durationMs: 500, success: true, sessionId: "r1", toolCalls: [] }, "closed", "gc");
+      store.archive(r);
+
+      // 探针基线（单测级）：one-shot 生命周期 = register + archive = 2 次 append
+      expect(appended).toHaveLength(2);
+      const data = asEntryData(appended[1]?.data);
+      expect(data).toMatchObject({
+        v: 1,
+        id: "r1",
+        status: "closed",
+        closedReason: "gc",
+        result: "task done",
+        endedAt: expect.any(Number) as number,
+      });
+    });
+
+    it("reportRecordTransition：类外恢复写点上报（chatMode 续轮 round 携带）", () => {
+      const { store, appended } = makeStoreWithPi();
+      const r = makeRecord({ chatMode: true, round: 1 });
+      store.reportRecordTransition(r);
+
+      expect(appended).toHaveLength(1);
+      expect(appended[0]?.customType).toBe(SUBAGENT_RECORD_CUSTOM_TYPE);
+      expect(asEntryData(appended[0]?.data)).toMatchObject({
+        v: 1,
+        id: "r1",
+        status: "running",
+        round: 1,
+      });
+    });
+
+    it("pi 未注入（session_start 前）：三写点均安全降级不抛错", () => {
+      const store = new RecordStore(tmpDir);
+      const r = makeRecord();
+      expect(() => store.register(r)).not.toThrow();
+      expect(() => store.archive(r)).not.toThrow();
+      expect(() => store.reportRecordTransition(r)).not.toThrow();
     });
   });
 });

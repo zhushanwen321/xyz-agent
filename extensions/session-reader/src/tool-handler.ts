@@ -7,8 +7,9 @@
  * 按 action 分发到 8 条路径，串联 M1 core（parser/tree/turns/render）+ M2 discovery
  *（find/subagents）。content 给 LLM 读（人类可读摘要），details 供程序化消费/测试断言。
  *
- * 错误规格 F1-F6：handler 抛 Error（message 含 👉 恢复指引），由 index.ts 的 execute
- * 闭包 catch 转 isError:true 文本返回——handler 可抛（纯逻辑可测），execute 不抛（pi 契约）。
+ * 错误规格 F1-F6：handler 抛 Error（message 含 👉 恢复指引），index.ts 的 execute 闭包
+ * 原样传播给 pi——pi-agent-core 只对 execute throw 置 isError:true（返回值里的 isError
+ * 字段被丢弃，agent-loop.js:453-483）。handler 可抛（纯逻辑可测）。
  * 例外：F2 多匹配与 F1 find 零匹配「不视为错误」，返回消歧/提示结果而非抛错。
  */
 import { existsSync, openSync, readSync, closeSync } from 'node:fs'

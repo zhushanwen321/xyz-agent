@@ -49,6 +49,7 @@ vi.mock('../../../core/src/transport/ws-client', () => ({
     mockHolder.routeHandler = cb
     return () => { mockHolder.routeHandler = null }
   }),
+  onQueueDrop: vi.fn(() => () => {}),
 }))
 
 vi.mock('@/lib/ipc', () => ({
@@ -91,7 +92,7 @@ beforeEach(async () => {
       { id: 's-exit', label: 'test', cwd: '/repo', status: 'idle', lastActiveAt: 100, modelId: 'm/x', tokenCount: 0 },
     ],
   }
-  sessionStore.setGroups([group])
+  sessionStore.applySnapshot({ groups: [group] })
 })
 
 async function initAndConnect(): Promise<void> {

@@ -9,6 +9,7 @@ export type {
   WorktreeErrorCode, WorktreeUnknownErrorCode, WorktreeEnvelopeCode,
   TerminalConfig, TerminalErrorCode, TerminalUnknownErrorCode, TerminalEnvelopeCode,
   SkillCacheScope, SkillCacheInvalidatedPayload,
+  SessionViewSnapshot,
 } from './protocol'
 export { isMessage, isSessionSummary, isSubagentRecord } from './protocol'
 export type {
@@ -19,6 +20,12 @@ export type {
   BgNotifyRecord, BgNotifyDetails,
 } from './message'
 export { parseBgNotifyDetails, COMPLETE_NOTIFY_CUSTOM_TYPES } from './message'
+// w21 pi-entry：pi session entry wire 类型（runtime 实时重构 ↔ core reducer ↔ protocol payload 三方共用）
+export type {
+  PiEntry, PiEntryBase, PiMessageEntry, PiMessageBody,
+  PiCustomEntry, PiLabelEntry, PiCompactionEntry, PiBranchSummaryEntry, PiCustomMessageEntry,
+  PiToolCallEntryForm,
+} from './pi-entry'
 export type { Segment } from './segments'
 export { segmentsToText, textToSegments, segmentsToPrompt, normalizeContent } from './segments'
 export type { SegmentsMetadataFile, SegmentsMetadataEntry } from './message-metadata'
@@ -41,7 +48,7 @@ export type {
 export * from './extension'
 export * from './git'
 export * from './plugin'
-export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, AMBIENT_ENV_NAMES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS, IMAGE_LIMITS, MAX_WS_PAYLOAD_BYTES, PLUGIN_NOTIFY_LIMITS, UI_TOAST_LIMITS } from './constants'
+export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, AMBIENT_ENV_NAMES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS, IMAGE_LIMITS, MAX_WS_PAYLOAD_BYTES, PLUGIN_NOTIFY_LIMITS, UI_TOAST_LIMITS } from './constants'
 export type { ProviderApiType } from './constants'
 export { DEFAULT_PI_SYSTEM_PROMPT, DEFAULT_PI_SYSTEM_PROMPT_VERSION } from './pi-default-prompt'
 // 推荐扩展列表 SSOT（runtime 读取，前端经 extension.recommended WS 拉取）
@@ -109,6 +116,7 @@ export {
   BUILTIN_EXTENSION_FILES,
   BUILTIN_PRESET_IDS,
   DEFAULT_PRESETS,
+  PI_THINKING_LEVELS,
   isPiLaunchPreset,
 } from './pi-preset'
 export type { LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState, IProxyConfig, UpdateSettings } from './update'

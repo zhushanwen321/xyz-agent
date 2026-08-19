@@ -104,7 +104,7 @@ vi.mock('@/composables/features/new-task/useNewTaskFlow', async () => {
   }
 })
 vi.mock('@/stores/session', () => ({
-  useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
+  useSessionStore: () => ({ active: undefined, list: [], applySnapshot: vi.fn() }),
 }))
 
 // ── ComposerInput mock：渲染 data-testid="composer-input"（AGENTS.md 冒烟模板 + 02-composer.md §3

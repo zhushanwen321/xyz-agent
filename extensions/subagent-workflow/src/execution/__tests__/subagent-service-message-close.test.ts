@@ -595,4 +595,35 @@ describe("[C-4] onRoundSettled 轮次增量 + [C-1] close 终态通知", () => {
     expect(record.status).toBe("closed");
     expect(pi.sendMessage).not.toHaveBeenCalled();
   });
+
+  it("[W16 P-1 回归] close 终态 subagent-record entry 的 result == 轮终真实值（closeChatIdle 不抹空）", async () => {
+    // 完整生命周期：register（entry: running）→ 轮终（record.result = 轮终真实值）→
+    // idle close（archive 落 close 终态 entry——D4 重建源）。
+    // 缺陷形态（verifier W16 实测复现）：closeChatIdle 合成 text:"" 经 completeRecord
+    // 覆盖 record.result → close entry 的 result=''（轮终 'ok' 被抹空），W18 消费后
+    // 重开 session result 回退空串。修复：doneResult.text 沿用 record.result。
+    const record = makeRecord({ id: "sa-close-entry-result", status: "running" });
+    record.sessionFile = path.join(agentDir, "close-entry-result.jsonl");
+    store.register(record);
+    armIdleTimer(record.id, () => {});
+    try {
+      updateFromEvent(record, { type: "text_delta", delta: "ok" });
+      updateFromEvent(record, { type: "turn_end" });
+      settleRound(record); // 轮终：onRoundSettled 写 record.result = "ok"
+      expect(record.result).toBe("ok"); // 前提锚点：轮终真实值在位
+      await service.closeSubagent(record, false); // idle close → completeRecord + archive
+    } finally {
+      disarmIdleTimer(record.id);
+    }
+
+    // appendEntry 序列中的 subagent-record 快照：register（running）→ close（closed）。
+    const snapshots = pi.appendEntry.mock.calls
+      .filter(([type]) => type === "subagent-record")
+      .map(([, data]) => data as { status: string; result?: string });
+    expect(snapshots.length).toBeGreaterThanOrEqual(2);
+    const closeEntry = snapshots[snapshots.length - 1]!;
+    expect(closeEntry.status).toBe("closed");
+    // 修复断言：close 终态 entry 保持轮终真实值（缺陷形态为 ''）
+    expect(closeEntry.result).toBe("ok");
+  });
 });
