@@ -471,6 +471,19 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
             id: run.runId,
             reason: "failed",
           });
+          // 恢复终态必须落盘：save 走冷路径（done 绕过去抖）同步写 state 文件 +
+          // append 终态 workflow-record entry——entry_appended 事件驱动 runtime 派生
+          // 缓存失效重拉（无 triggerTurn 副作用）。不 save 则 entry/state 双双停留
+          // running，侧栏永久卡 running。失败仅记日志不阻断其余 run 的恢复（下次
+          // session_start 重开重试，恢复循环天然幂等）。
+          try {
+            await store.save(run);
+          } catch (err) {
+            logger.error("[subagent-workflow] kill-9 recovery store.save failed", {
+              runId: run.runId,
+              reason: err instanceof Error ? err.message : String(err),
+            });
+          }
         }
         runs.set(run.runId, run);
       }
