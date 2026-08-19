@@ -576,8 +576,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   /**
    * W7/W8：per-session 实例组访问器。消费方：
-   * - 组合根（index.ts）：interpreter 的失效回调延迟解析（markDirty）+ onSessionRenamed 读
-   *   label 快照（sessionMetaCache 数据链归一）；
+   * - 组合根（index.ts）：interpreter 的失效回调延迟解析（markDirty）；
    * - session-service 自身（W8）：usage / queue / commands 失效接线（applyContextUpdate /
    *   send 汇聚点 / getCommands）；
    * - 测试：断言 switchModel 后 modelId 实例 markDirty、事件路径写点后 usage/queue/commands markDirty。

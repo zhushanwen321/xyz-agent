@@ -124,7 +124,7 @@ describe('W7 scalar-state 失效接线（mock RPC 层）', () => {
     // 权威源已变更（get_state 将返回新名）；事件 payload 是第三个值（证明数据来自快照而非事件）
     fetchState.mockResolvedValue(makeState({ sessionName: '权威新名' }))
     const markDirtySpy = vi.spyOn(labelState, 'markDirty')
-    const onSessionRenamed = vi.fn() // 双写过渡回调（W9 删）
+    const onSessionRenamed = vi.fn() // 组合根接 setLabelCache（W12 前列表 label 即时数据源）
 
     const interpreter = new EventInterpreter('s-label', {
       send: vi.fn(),
@@ -136,7 +136,7 @@ describe('W7 scalar-state 失效接线（mock RPC 层）', () => {
     // 事件唯一动作 = 失效；实例数据未被直写（立即读 = 旧快照）
     expect(markDirtySpy).toHaveBeenCalledTimes(1)
     expect(labelState.get()).toEqual({ sessionName: '旧名' })
-    // 双写过渡：旧缓存回调保留（W7 → W9 删）
+    // 内存态回写回调照常触发（session.label 即时数据源，W12/W13 后退役）
     expect(onSessionRenamed).toHaveBeenCalledWith('s-label', '事件payload名')
 
     // 防抖到点 → 唯一写路径 get_state 快照；值是权威新名而非事件 payload 名
@@ -155,18 +155,16 @@ describe('W7 scalar-state 失效接线（mock RPC 层）', () => {
 
     fetchState.mockResolvedValue(makeState({ thinkingLevel: 'high' }))
     const markDirtySpy = vi.spyOn(thinkingLevelState, 'markDirty')
-    const onThinkingLevelChanged = vi.fn()
 
+    // W9：onThinkingLevelChanged 旧缓存回写回调已删——事件唯一动作是失效，无任何直写。
     const interpreter = new EventInterpreter('s-tl', {
       send: vi.fn(),
       thinkingLevelState: () => thinkingLevelState,
-      onThinkingLevelChanged,
     })
     interpreter.interpret([{ kind: 'thinking-level', level: '事件payload档位' }])
 
     expect(markDirtySpy).toHaveBeenCalledTimes(1)
     expect(thinkingLevelState.get()).toEqual({ thinkingLevel: 'low' }) // 不直写
-    expect(onThinkingLevelChanged).toHaveBeenCalledWith('s-tl', '事件payload档位') // 双写保留
 
     await vi.advanceTimersByTimeAsync(SCALAR_STATE_DEBOUNCE_MS + 1)
     expect(thinkingLevelState.get()).toEqual({ thinkingLevel: 'high' }) // 快照来自 get_state

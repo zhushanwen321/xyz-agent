@@ -18,7 +18,6 @@ import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
-import { sessionMetaCache } from './session-meta-cache.js'
 import type { PresetResolution } from '../preset-service.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
@@ -321,9 +320,9 @@ export class SessionLifecycle {
         throw new Error(`Cannot rename session ${sessionId}: pi process is not available (try again after the session is reactivated)`)
       }
       await client.setSessionName(newName)
+      // 内存态同步（toSummary/config.sessions 的即时数据源；label 实例经 session_info_changed
+      // 事件 markDirty 防抖重拉收敛到同值——W9 影子缓存已删，label 不再有第三份状态）。
       session.label = newName
-      // 回写集中式缓存，确保后续 broadcastSessionList 读到新名称
-      sessionMetaCache.setLabel(sessionId, newName)
     } else {
       // 非 active session:从磁盘查找 jsonl 文件并写入
       const target = this.svc.findScannedSession(sessionId)
@@ -351,7 +350,8 @@ export class SessionLifecycle {
         try { unlinkSync(session.sessionFilePath + '.meta.json') } catch { void 0 }
         // 清理 preset 绑定 sidecar（设计文档 §4，delete 是唯一清理点）
         try { unlinkSync(session.sessionFilePath + '.preset.json') } catch { void 0 }
-        // W-Runtime4：清理 sessionMetaCache 中的 stale 条目（避免无界增长）
+        // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
+        // 派生缓存，非已删的 label 影子缓存）中的 stale 条目（避免无界增长）
         this.sessionStore.invalidateMetaCache(session.sessionFilePath)
       }
     } else {
@@ -362,7 +362,8 @@ export class SessionLifecycle {
       try { unlinkSync(target.filePath + '.meta.json') } catch { void 0 }
       // 清理 preset 绑定 sidecar（设计文档 §4，delete 是唯一清理点）
       try { unlinkSync(target.filePath + '.preset.json') } catch { void 0 }
-      // W-Runtime4：清理 sessionMetaCache 中的 stale 条目（避免无界增长）
+      // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
+      // 派生缓存，非已删的 label 影子缓存）中的 stale 条目（避免无界增长）
       this.sessionStore.invalidateMetaCache(target.filePath)
     }
     // wave:perf-w26（D9-1 delete 失效点）：session 文件已 trash，目录 TTL 快照 1s 内仍含

@@ -36,7 +36,6 @@ export interface EventAdapterOptions {
   onTurnUsage?: (sessionId: string) => void
   /** W3：pi agent_end 整循环结束（isGenerating 复位 + 终态副作用）。 */
   onTurnFinalize?: (sessionId: string) => void
-  onThinkingLevelChanged?: (sessionId: string, level: string | undefined) => void
   /** session_info_changed 事件到达（pi extension auto-rename）——回写 session label 缓存。 */
   onSessionRenamed?: (sessionId: string, name: string | undefined) => void
   onHookExecute?: (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
@@ -61,7 +60,6 @@ export function createEventAdapter(
     onContextUpdate: options?.onContextUpdate,
     onTurnUsage: options?.onTurnUsage,
     onTurnFinalize: options?.onTurnFinalize,
-    onThinkingLevelChanged: options?.onThinkingLevelChanged,
     onSessionRenamed: options?.onSessionRenamed,
     executeHooks: options?.onHookExecute,
   }

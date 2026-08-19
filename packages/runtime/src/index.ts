@@ -23,7 +23,6 @@ import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
 import { EventInterpreter } from './services/session/event-interpreter.js'
-import { sessionMetaCache } from './services/session/session-meta-cache.js'
 import { join, resolve, isAbsolute } from 'node:path'
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
@@ -286,24 +285,11 @@ async function main(): Promise<void> {
       onTurnFinalize: (sid, stopReason) => {
         sessionService.handleTurnEndSideEffects(sid, stopReason)
       },
-      onThinkingLevelChanged: (sid, level) => {
-        // pi 切模型 / 用户手切档位后推 thinking_level_changed 事件。
-        // 回写 session 缓存，使后续 broadcastSessionState 读到真值（而非 undefined）。
-        // [W7 双写过渡] 实例失效已在 interpreter 侧 markDirty（thinkingLevelState 注入，
-        // 见下方）；此旧缓存回写保留，W9 删。
-        sessionService.setThinkingLevelCache(sid, level)
-      },
       onSessionRenamed: (sid, name) => {
         // pi extension auto-rename (session_info_changed) 事件到达时。
-        // 同步更新内存态 session.label（唯一数据源）+ 缓存（扫描路径兜底）。
+        // 同步更新内存态 session.label（W9 后唯一即时数据源：toSummary/config.sessions 读它，
+        // 实例快照经 labelState markDirty 防抖重拉收敛，W12/W13 逐步成为权威发布源）。
         sessionService.setLabelCache(sid, name ?? '')
-        // [W7] sessionMetaCache 直写点改读 label 实例快照：值与实例同源 get_state（数据链
-        // 归一），事件 payload 不再直接成为缓存数据源。快照未就绪（首拉在途）时 fallback
-        // 事件 payload，过渡期行为不劣化；快照就绪后 sessionName undefined = 未命名 =
-        // 权威合法态，映射空串（'explicit-null' 覆盖语义，不以 payload 旧值顶替）。
-        // 防抖窗口内读到实例上次快照是 D7「事件永不直接写数据」的固有代价（W9 删本点）。
-        const labelSnapshot = sessionService.getScalarReplicatedStates(sid)?.label.get()
-        sessionMetaCache.setLabel(sid, labelSnapshot ? (labelSnapshot.sessionName ?? '') : (name ?? ''))
       },
       // W7：标量实例失效接线（延迟解析——interpreter 构造时实例尚未注册，见 opts 类型注释）。
       labelState: () => sessionService.getScalarReplicatedStates(sessionId)?.label,

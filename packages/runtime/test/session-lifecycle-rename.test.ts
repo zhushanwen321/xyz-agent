@@ -31,7 +31,6 @@ vi.mock('../src/services/session/session-fork.js', () => ({
 }))
 
 import { SessionLifecycle, setMigrationGate } from '../src/services/session/session-lifecycle.js'
-import { sessionMetaCache } from '../src/services/session/session-meta-cache.js'
 import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
 import type { IProcessManager, IPiEngine } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
@@ -157,7 +156,6 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
   beforeEach(() => {
     vi.clearAllMocks()
     setMigrationGate(Promise.resolve())
-    sessionMetaCache.clear()
     env = makeEnv()
     tmpDir = mkdtempSync(join(tmpdir(), 'w1-rename-'))
     // RPC 降级路径的 console.error 静音（防噪 + 可断言）
@@ -183,9 +181,8 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
       expect(client.setSessionName).toHaveBeenCalledWith('重构计划')
       // 直写路径必须消失（last-write-wins bug 根源）
       expect(env.sessionStore.persistSessionName).not.toHaveBeenCalled()
-      // 内存 label + metaCache 更新保留（P0 阶段 metaCache 未删）
+      // 内存 label 更新（W9 影子缓存已删，label 只有内存态 + label 实例两份数据）
       expect(session.label).toBe('重构计划')
-      expect(sessionMetaCache.getLabel('sid-1')).toBe('重构计划')
       // 列表缓存失效仍触发（侧栏立即显示新名）
       expect(env.sessionStore.invalidateScanCache).toHaveBeenCalled()
       expect(env.sessionStore.refreshAll).toHaveBeenCalled()

@@ -26,7 +26,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join, relative } from 'node:path'
 
 import type { IGitInfoReader } from '../src/services/ports/git-info.js'
-import { sessionMetaCache } from '../src/services/session/session-meta-cache.js'
 
 import type {
   IMessageBroker,
@@ -195,7 +194,6 @@ function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
 /** 重置跨用例共享状态。 */
 function resetMockState(): void {
   mockScannedSessions.length = 0
-  sessionMetaCache.clear()
   mocks.defaultModel.value = { provider: 'test-provider', modelId: 'test-model' }
   mocks.convertPiHistoryMock.mockImplementation((raw: unknown) => raw)
   mocks.rebuildHistoryFromEntriesMock.mockImplementation((entries: unknown[]) => ({ messages: entries as unknown[], clientUuidMap: new Map<string, string>() }))
