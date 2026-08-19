@@ -10,11 +10,17 @@ import { mkdirSync, writeFileSync } from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { actionGenerate, type ScriptParams, type TextContent } from "../tool-workflow-script.ts";
+import { actionGenerate, type ScriptParams, type TextContent, registerWorkflowScriptTool } from "../tool-workflow-script.ts";
+import { deleteWorkflow, saveWorkflow } from "../../orchestration/workflow-files.ts";
 
 vi.mock("node:fs", () => ({
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
+}));
+
+vi.mock("../../orchestration/workflow-files.ts", () => ({
+  saveWorkflow: vi.fn(),
+  deleteWorkflow: vi.fn(),
 }));
 
 const mockedWriteFileSync = vi.mocked(writeFileSync);
@@ -159,5 +165,60 @@ describe("actionGenerate (m0: @pi-meta 认可 + round-trip)", () => {
     const r = actionGenerate(gen(PI_META_VALID), controller.signal);
     expect(r.isError).toBe(true);
     expect(textOf(r)).toMatch(/abort/i);
+  });
+});
+
+describe("actionSave/actionDelete error paths (W4: throw 范式)", () => {
+  /**
+   * W4：save/delete 失败路径从 return {isError:true} 改为 throw——pi 只对 execute
+   * throw 置 isError:true（agent-loop.js:453-483 丢弃返回值里的 isError）。
+   * 经 registerWorkflowScriptTool 注册层测（mock workflow-files 的 FS 依赖）。
+   */
+  interface CapturedTool {
+    execute: (
+      toolCallId: string,
+      params: Record<string, unknown>,
+      signal: AbortSignal | undefined,
+      onUpdate: unknown,
+      ctx: unknown,
+    ) => Promise<TextContent>;
+  }
+  function captureTool(): CapturedTool {
+    const tools: CapturedTool[] = [];
+    const pi = { registerTool: (t: unknown) => tools.push(t as CapturedTool) };
+    // registry 最小 stub：delete 成功路径会调 invalidate（失败路径 throw 前不触达）
+    const registry = { invalidate: vi.fn() };
+    registerWorkflowScriptTool(pi as never, registry as never, () => false);
+    if (!tools[0]) throw new Error("registerWorkflowScriptTool did not register");
+    return tools[0];
+  }
+  const ctx = { mode: "tui" as const, hasUI: true };
+
+  it("save 失败 → throw 'Save failed: <原因>'（pi catch 后置 isError:true）", async () => {
+    vi.mocked(saveWorkflow).mockRejectedValueOnce(new Error("disk full"));
+    const tool = captureTool();
+    await expect(
+      tool.execute("id", { action: "save", name: "tmp-wf" }, undefined, undefined, ctx),
+    ).rejects.toThrow("Save failed: disk full");
+  });
+
+  it("delete 失败 → throw 'Delete failed: <原因>'", async () => {
+    // deleteWorkflow 是同步函数——mock 用同步 throw（mockRejectedValue 不会被
+    // actionDelete 的同步 try/catch 捕获）
+    vi.mocked(deleteWorkflow).mockImplementationOnce(() => {
+      throw new Error("script is running");
+    });
+    const tool = captureTool();
+    await expect(
+      tool.execute("id", { action: "delete", name: "tmp-wf" }, undefined, undefined, ctx),
+    ).rejects.toThrow("Delete failed: script is running");
+  });
+
+  it("save 成功路径不受影响（ok details 正常返回）", async () => {
+    vi.mocked(saveWorkflow).mockResolvedValueOnce("saved tmp-wf");
+    const tool = captureTool();
+    const r = await tool.execute("id", { action: "save", name: "tmp-wf" }, undefined, undefined, ctx);
+    expect(r.isError).toBeFalsy();
+    expect(r.details).toMatchObject({ action: "save", name: "tmp-wf", ok: true });
   });
 });

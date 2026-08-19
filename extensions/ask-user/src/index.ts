@@ -17,7 +17,6 @@ import { answerValueText } from "./submit-view";
 import {
 	type AnswerValue,
 	type AskUserDetails,
-	type ErrorDetails,
 	HEADER_MAX_CHARS,
 	InputSchema,
 	type Option,
@@ -28,10 +27,13 @@ import {
 import { validateInput } from "./validate";
 
 /**
- * execute 的返回形状：复用 SDK AgentToolResult<AskUserDetails>，叠加运行时使用的 isError 标记。
- * SDK 的 AgentToolResult 类型未声明 isError（运行时通过它标记错误），这里显式补齐。
+ * execute 的返回形状：复用 SDK AgentToolResult<AskUserDetails>。
+ * SDK 的 AgentToolResult 类型未声明 isError（pi-agent-core types.d.ts:316-334）——
+ * 因为 pi 契约里返回值不携带错误标记：execute 只有 throw 才被置 isError:true
+ * （agent-loop.js:453-483），返回值里的 isError 字段会被丢弃（W4 修复前曾误用）。
+ * 取消（用户取消 / abort）不是错误，正常返回 cancelled result。
  */
-type ExecuteResult = AgentToolResult<AskUserDetails> & { isError?: boolean };
+type ExecuteResult = AgentToolResult<AskUserDetails>;
 
 /** 禁用 ask_user 工具（headless / RPC 通道不可用时调用，防 LLM 反复重试）。 */
 function disableAskUser(pi: ExtensionAPI): void {
@@ -43,11 +45,10 @@ function disableAskUser(pi: ExtensionAPI): void {
 	);
 }
 
-/** 构造 cancelled 结果（用户取消 / abort / 校验失败共用）。 */
-function cancelledResult(questions: Question[], text: string, isError = false): ExecuteResult {
+/** 构造 cancelled 结果（用户取消 / abort 共用；错误路径已改为 throw，不走此函数）。 */
+function cancelledResult(questions: Question[], text: string): ExecuteResult {
 	return {
 		content: [{ type: "text" as const, text }],
-		isError: isError || undefined,
 		details: { questions, answers: {}, cancelled: true } satisfies Result,
 	};
 }
@@ -268,16 +269,17 @@ Don't:
 			// validateInput 会先拦截 string options 再跑其余校验。通过后 questions 已是干净 Question[]。
 			const validationError = validateInput(questions);
 			if (validationError) {
-				return cancelledResult(questions, `Error: ${validationError}`, true);
+				// 错误路径 throw（W4）：pi 只对 execute throw 置 isError:true，
+				// return {isError:true} 会被 agent-loop 丢弃（错误轮被标成功）。
+				throw new Error(`Error: ${validationError}`);
 			}
 
-			// 2. Headless 检查（spec FR-8）：mode 非 tui 非 rpc = 无交互通道
+			// 2. Headless 检查（spec FR-8）：mode 非 tui 非 rpc = 无交互通道。
+			// 先 disableAskUser 收尾（防 LLM 反复重试），再 throw——pi catch 后文案原样进 toolResult。
 			if (ctx.mode !== "tui" && ctx.mode !== "rpc") {
 				disableAskUser(pi);
-				return cancelledResult(
-					questions,
+				throw new Error(
 					"Error: ask_user requires an interactive session. The tool has been disabled for this session. Do not retry — proceed without user input (make a defensible decision and state it) or wait for the user to reconnect.",
-					true,
 				);
 			}
 
@@ -303,18 +305,14 @@ Don't:
 			} catch (err) {
 				// RPC 通道不可用（真 headless / select 缺失）→ 禁用工具（spec FR-8）。
 				// TUI 分支不禁用——custom 抛错通常是组件临时故障，允许 LLM 重试。
+				// 禁用收尾先行，再 throw（W4）：pi catch 后文案原样成为 toolResult content。
 				const message = err instanceof Error ? err.message : String(err);
 				if (useRpc) disableAskUser(pi);
-				return {
-					content: [{
-						type: "text" as const,
-						text: useRpc
-							? `ask_user failed: ${message}. The tool has been disabled for this session. Do not retry — proceed without user input (make a defensible decision and state it) or wait for the user to reconnect.`
-							: `ask_user failed: ${message}. Treat as cancelled — do not assume an answer; retry the call with corrected parameters, or proceed with a defensible decision if the user cannot be reached.`,
-					}],
-					isError: true,
-					details: { error: message } satisfies ErrorDetails,
-				};
+				throw new Error(
+					useRpc
+						? `ask_user failed: ${message}. The tool has been disabled for this session. Do not retry — proceed without user input (make a defensible decision and state it) or wait for the user to reconnect.`
+						: `ask_user failed: ${message}. Treat as cancelled — do not assume an answer; retry the call with corrected parameters, or proceed with a defensible decision if the user cannot be reached.`,
+				);
 			}
 
 			// 5. 取消（null / cancelled）

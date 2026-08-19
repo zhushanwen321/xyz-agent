@@ -476,18 +476,21 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
 
   it("TC4: actionRun 顺序——not_found 优先（平铺 + 不存在名）；slug 护栏保留；chain 平铺 Correct 文案", async () => {
     const deps = makeDeps();
-    // 平铺 + 不存在 name → not_found 优先（m6：registry.get 先于平铺检测）
-    const notFound = await actionRun(
+    // 平铺 + 不存在 name → not_found 优先（m6：registry.get 先于平铺检测）。
+    // W4：not_found 改 throw（pi 只对 execute throw 置 isError:true，返回值里的
+    // isError 被 agent-loop 丢弃）——文案含 <available_workflows> <location> 恢复指引，
+    // pi catch 后原样进 toolResult content。
+    const notFoundErr: Error = await actionRun(
       { action: "run", name: wf("nope"), task: "x" },
       deps,
       undefined,
-    );
-    expect(notFound.isError).toBe(true);
-    expect(notFound.content![0]!.text).toContain("not found"); // DoD 用户可见断言
-    // R5（D7）：workflow not_found 文案含 <available_workflows> <location> 恢复指引
-    expect(notFound.content![0]!.text).toContain("<available_workflows>");
-    expect(notFound.content![0]!.text).toContain("<location>");
-    // chain 平铺 task → isError Correct 正例（动态集来自 registry）
+    ).catch((e: unknown) => e as Error);
+    expect(notFoundErr).toBeInstanceOf(Error);
+    expect(notFoundErr.message).toContain("not found"); // DoD 用户可见断言
+    expect(notFoundErr.message).toContain("<available_workflows>");
+    expect(notFoundErr.message).toContain("<location>");
+    // chain 平铺 task → isError Correct 正例（动态集来自 registry；textResult 间接路径，
+    // 不在 W4 9 处清单——保留 isError 返回，见 W4 报告残留登记）
     const flat = await actionRun(
       { action: "run", name: wf("chain"), task: "x" },
       deps,
@@ -496,7 +499,7 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     expect(flat.isError).toBe(true);
     expect(flat.content![0]!.text).toContain("Detected task at top level");
     expect(flat.content![0]!.text).toContain("Correct:");
-    // slug 护栏保留（m6 顺序调整后仍在 runWorkflow 前）
+    // slug 护栏保留（m6 顺序调整后仍在 runWorkflow 前；textResult 间接路径同上）
     const slug = await actionRun(
       { action: "run", name: wf("chain"), args: { task: "x" }, slug: "a".repeat(40) },
       deps,
@@ -509,30 +512,24 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
   it("TC6: 跨 workflow 平铺语义——review-fix-loop 平铺 task（非其参数）走 args-validator", async () => {
     const deps = makeDeps();
     // task 是 chain 参数非 review-fix-loop 参数 → 不报平铺 → args 缺 targetType
-    // → m3 chokepoint invalid_args（错误更准——评审 m-5 语义锁定）
-    const result = await actionRun(
-      { action: "run", name: wf("review-fix-loop"), task: "x" },
-      deps,
-      undefined,
-    );
-    expect(result.isError).toBe(true);
-    expect(result.content![0]!.text).toContain("Invalid args for workflow 'review-fix-loop'");
-    expect(result.content![0]!.text).toContain("targetType");
+    // → m3 chokepoint invalid_args（错误更准——评审 m-5 语义锁定）。
+    // W4：ArgsValidationError 直接 throw（message 原文即 §5.3 指引）
+    await expect(
+      actionRun({ action: "run", name: wf("review-fix-loop"), task: "x" }, deps, undefined),
+    ).rejects.toThrow(/Invalid args for workflow 'review-fix-loop'[\s\S]*targetType/);
   });
 
-  it("TC9: actionRun 参数校验失败 → isError ToolResult + §5.3 指引", async () => {
+  it("TC9: actionRun 参数校验失败 → throw + §5.3 指引（W4）", async () => {
     const deps = makeDeps();
-    const result = await actionRun(
-      { action: "run", name: wf("review-fix-loop"), args: { batch1: agentMd("code-reviewer") } },
-      deps,
-      undefined,
+    await expect(
+      actionRun(
+        { action: "run", name: wf("review-fix-loop"), args: { batch1: agentMd("code-reviewer") } },
+        deps,
+        undefined,
+      ),
+    ).rejects.toThrow(
+      /Invalid args for workflow 'review-fix-loop'[\s\S]*targetType[\s\S]*Read the workflow script file/,
     );
-
-    expect(result.isError).toBe(true);
-    const text = result.content?.[0]?.text ?? "";
-    expect(text).toContain("Invalid args for workflow 'review-fix-loop'");
-    expect(text).toContain("targetType");
-    expect(text).toContain("Read the workflow script file");
   });
 
 

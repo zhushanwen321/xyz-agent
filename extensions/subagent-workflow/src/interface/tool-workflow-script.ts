@@ -395,12 +395,10 @@ async function actionSave(params: ScriptParams): Promise<TextContent> {
       details: { action: "save", name, ok: true },
     };
   } catch (err: unknown) {
+    // throw（W4）：pi 只对 execute throw 置 isError:true（返回值里的 isError 被
+    // agent-loop 丢弃，agent-loop.js:453-483）——文案原样进 toolResult。
     const msg = err instanceof Error ? err.message : String(err);
-    return {
-      content: [{ type: "text", text: `Save failed: ${msg}` }],
-      details: { action: "save", name, ok: false },
-      isError: true,
-    };
+    throw new Error(`Save failed: ${msg}`);
   }
 }
 
@@ -425,12 +423,9 @@ function actionDelete(
       details: { action: "delete", name, ok: true },
     };
   } catch (err: unknown) {
+    // throw（W4）：同 save——pi 契约只有 throw 才置 isError:true。
     const msg = err instanceof Error ? err.message : String(err);
-    return {
-      content: [{ type: "text", text: `Delete failed: ${msg}` }],
-      details: { action: "delete", name, ok: false },
-      isError: true,
-    };
+    throw new Error(`Delete failed: ${msg}`);
   }
 }
 

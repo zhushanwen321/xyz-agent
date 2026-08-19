@@ -139,102 +139,90 @@ const validSingle = {
 };
 
 // ── I-1 ~ I-4: 参数校验（AC-8/13）──────────────────────
+// W4：错误路径 throw（pi 只对 execute throw 置 isError:true，返回值 isError 被丢弃）
 describe("execute — validation (FR-2 / AC-8 / AC-13)", () => {
-	it("I-1: duplicate question → isError", async () => {
+	it("I-1: duplicate question → throw", async () => {
 		const tool = getTool();
-		const result = await tool.execute(
-			"id",
-			{
-				questions: [
-					{ question: "Same", options: [{ label: "A" }, { label: "B" }] },
-					{ question: "Same", options: [{ label: "C" }, { label: "D" }] },
-				],
-			},
-			undefined,
-			undefined,
-			makeCtx(),
-		);
-		expect(result.isError).toBe(true);
-		expect(result.content[0].text).toContain("Duplicate");
+		await expect(
+			tool.execute(
+				"id",
+				{
+					questions: [
+						{ question: "Same", options: [{ label: "A" }, { label: "B" }] },
+						{ question: "Same", options: [{ label: "C" }, { label: "D" }] },
+					],
+				},
+				undefined,
+				undefined,
+				makeCtx(),
+			),
+		).rejects.toThrow("Duplicate");
 	});
 
-	it("I-2: duplicate option label → isError", async () => {
+	it("I-2: duplicate option label → throw", async () => {
 		const tool = getTool();
-		const result = await tool.execute(
-			"id",
-			{
-				questions: [
-					{ question: "Q", options: [{ label: "A" }, { label: "A" }] },
-				],
-			},
-			undefined,
-			undefined,
-			makeCtx(),
-		);
-		expect(result.isError).toBe(true);
-		expect(result.content[0].text).toContain("Duplicate option");
+		await expect(
+			tool.execute(
+				"id",
+				{
+					questions: [
+						{ question: "Q", options: [{ label: "A" }, { label: "A" }] },
+					],
+				},
+				undefined,
+				undefined,
+				makeCtx(),
+			),
+		).rejects.toThrow("Duplicate option");
 	});
 
-	it("I-3: multi-question missing header → isError", async () => {
+	it("I-3: multi-question missing header → throw", async () => {
 		const tool = getTool();
-		const result = await tool.execute(
-			"id",
-			{
-				questions: [
-					{ question: "Q1", header: "H1", options: [{ label: "A" }, { label: "B" }] },
-					{ question: "Q2", options: [{ label: "C" }, { label: "D" }] },
-				],
-			},
-			undefined,
-			undefined,
-			makeCtx(),
-		);
-		expect(result.isError).toBe(true);
-		expect(result.content[0].text).toContain("header");
+		await expect(
+			tool.execute(
+				"id",
+				{
+					questions: [
+						{ question: "Q1", header: "H1", options: [{ label: "A" }, { label: "B" }] },
+						{ question: "Q2", options: [{ label: "C" }, { label: "D" }] },
+					],
+				},
+				undefined,
+				undefined,
+				makeCtx(),
+			),
+		).rejects.toThrow("header");
 	});
 
-	it("I-4: validation error details.cancelled = true", async () => {
-		const tool = getTool();
-		const result = await tool.execute(
-			"id",
-			{ questions: [{ question: "Q", options: [{ label: "A" }, { label: "A" }] }] },
-			undefined,
-			undefined,
-			makeCtx(),
-		);
-		expect(result.details.cancelled).toBe(true);
-	});
-
-	it("I-4b: string options (schema-relaxed) → execute → validateInput catches → isError + Correct hint", async () => {
+	it("I-4b: string options (schema-relaxed) → execute → validateInput catches → throw + Correct hint", async () => {
 		// 端到端证明：schema 放宽（Union([OptionSchema, string])）后 string options
-		// 能穿过 TypeCompiler.Check、抵达 execute → validateInput 友好拦截。
+		// 能穿过 TypeCompiler.Check、抵达 execute → validateInput 友好拦截（W4 后以 throw
+		// 表达，pi catch 后文案进 toolResult content）。
 		// test-coverage reviewer 点名的“execute wiring 未测”缺口。
 		const tool = getTool();
-		const result = await tool.execute(
-			"id",
-			{ questions: [{ question: "Q", options: ["A", "B"] }] },
-			undefined,
-			undefined,
-			makeCtx(),
-		);
-		expect(result.isError).toBe(true);
-		expect(result.details.cancelled).toBe(true);
-		expect(result.content[0].text).toContain("not strings");
-		expect(result.content[0].text).toContain("Correct");
+		await expect(
+			tool.execute(
+				"id",
+				{ questions: [{ question: "Q", options: ["A", "B"] }] },
+				undefined,
+				undefined,
+				makeCtx(),
+			),
+		).rejects.toThrow(/not strings[\s\S]*Correct/);
 	});
 });
 
 // ── I-5 ~ I-7: Headless（FR-8 / AC-7）──────────────────
-// 真 headless：hasUI=false 且 ui 上无 select（print 模式），askUserInteract 抛错 → 禁用工具。
+// 真 headless：hasUI=false 且 ui 上无 select（print 模式）→ 禁用工具 + throw（W4）。
 describe("execute — headless (FR-8 / AC-7)", () => {
-	it("I-5: headless (no select) → isError with disabled message", async () => {
+	it("I-5: headless (no select) → throw with disabled message", async () => {
 		const tool = getTool();
-		const result = await tool.execute("id", validSingle, undefined, undefined, makeHeadlessCtx());
-		expect(result.isError).toBe(true);
-		expect(result.content[0].text).toContain("disabled");
+		await expect(
+			tool.execute("id", validSingle, undefined, undefined, makeHeadlessCtx()),
+		).rejects.toThrow(/disabled/);
 	});
 
-	it("I-6: headless disables ask_user tool via setActiveTools", async () => {
+	it("I-6: headless disables ask_user tool via setActiveTools (收尾先于 throw)", async () => {
 		let captured: string[] | null = null;
 		const tool2 = getTool({
 			getAllTools: () => [{ name: "ask_user" }, { name: "other" }],
@@ -242,16 +230,11 @@ describe("execute — headless (FR-8 / AC-7)", () => {
 				captured = names;
 			},
 		});
-		await tool2.execute("id", validSingle, undefined, undefined, makeHeadlessCtx());
+		await expect(
+			tool2.execute("id", validSingle, undefined, undefined, makeHeadlessCtx()),
+		).rejects.toThrow();
 		expect(captured).not.toContain("ask_user");
 		expect(captured).toContain("other");
-	});
-
-	it("I-7: headless details.cancelled = true", async () => {
-		const tool = getTool();
-		const result = await tool.execute("id", validSingle, undefined, undefined, makeHeadlessCtx());
-		// headless 走 step 2 提前返回：cancelled Result（禁用工具，不进交互分支）
-		expect(result.details.cancelled).toBe(true);
 	});
 });
 
@@ -295,31 +278,20 @@ describe("execute — signal abort (FR-10 / AC-14)", () => {
 });
 
 // ── I-10 ~ I-11: 错误兜底（FR-13 / AC-15）─────────────
+// W4：错误路径 throw（原 return {isError, details.error} 的 details 在 pi catch 后
+// 不再产出——pi createErrorToolResult 只保留 content）
 describe("execute — error fallback (FR-13 / AC-15)", () => {
-	it("I-10: ui.custom throws → isError with 'ask_user failed'", async () => {
+	it("I-10: ui.custom throws → throw with 'ask_user failed'", async () => {
 		const tool = getTool();
-		const result = await tool.execute(
-			"id",
-			validSingle,
-			undefined,
-			undefined,
-			makeCtx({ customThrows: new Error("boom") }),
-		);
-		expect(result.isError).toBe(true);
-		expect(result.content[0].text).toContain("ask_user failed");
-		expect(result.content[0].text).toContain("boom");
-	});
-
-	it("I-11: error details contains error message", async () => {
-		const tool = getTool();
-		const result = await tool.execute(
-			"id",
-			validSingle,
-			undefined,
-			undefined,
-			makeCtx({ customThrows: new Error("crash") }),
-		);
-		expect(result.details.error).toBe("crash");
+		await expect(
+			tool.execute(
+				"id",
+				validSingle,
+				undefined,
+				undefined,
+				makeCtx({ customThrows: new Error("boom") }),
+			),
+		).rejects.toThrow(/ask_user failed[\s\S]*boom/);
 	});
 });
 
@@ -677,18 +649,17 @@ describe("execute — RPC mode (askUserInteract via select channel)", () => {
 		expect(result.details.cancelled).toBe(true);
 	});
 
-	it("R-6: select throws → isError + disabled (not retriable)", async () => {
+	it("R-6: select throws → throw + disabled message (not retriable; W4)", async () => {
 		const tool = getTool();
-		const result = await tool.execute(
-			"id",
-			validSingle,
-			undefined,
-			undefined,
-			makeCtx({ mode: "rpc", selectThrows: new Error("channel broken") }),
-		);
-		expect(result.isError).toBe(true);
-		expect(result.content[0].text).toContain("disabled");
-		expect(result.details.error).toBe("channel broken");
+		await expect(
+			tool.execute(
+				"id",
+				validSingle,
+				undefined,
+				undefined,
+				makeCtx({ mode: "rpc", selectThrows: new Error("channel broken") }),
+			),
+		).rejects.toThrow(/channel broken[\s\S]*disabled/);
 	});
 
 	it("R-7: header used as answers key when provided", async () => {
