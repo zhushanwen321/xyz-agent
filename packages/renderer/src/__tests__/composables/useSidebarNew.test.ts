@@ -11,10 +11,11 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import type { SessionGroup, SessionSummary } from '@xyz-agent/shared'
+import type { SessionGroup, SessionSummary, SubagentRecord } from '@xyz-agent/shared'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useSessionStore } from '@/stores/session'
 import { useNavigationStore } from '@/stores/navigation'
+import { useSubagentStore } from '@/stores/subagent'
 
 // vi.hoisted 保证 mock fn 在 vi.mock factory（hoisted 到顶部）执行时已初始化
 const mocks = vi.hoisted(() => ({
@@ -26,6 +27,9 @@ const mocks = vi.hoisted(() => ({
   loadTree: vi.fn(),
   cancelFlow: vi.fn(),
   startFlow: vi.fn().mockResolvedValue(undefined),
+  // TC-5 重连重拉：extension scan / workspace listRecent 走 fire-and-forget，需可控 spy
+  extensionScan: vi.fn().mockResolvedValue(undefined),
+  workspaceListRecent: vi.fn().mockResolvedValue([]),
 }))
 
 // ── api 层 mock ──
@@ -55,6 +59,20 @@ vi.mock('@/api/events', () => ({
 }))
 vi.mock('@/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
 vi.mock('@/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
+// ── TC-5 onConnected 依赖的 domain：importActual 部分覆盖（保其他导出可用），scan/listRecent 可控 ──
+vi.mock('@/api/domains/extension', async (importActual) => {
+  const actual = await importActual<typeof import('@/api/domains/extension')>()
+  return { ...actual, scan: mocks.extensionScan }
+})
+vi.mock('@/api/domains/workspace', async (importActual) => {
+  const actual = await importActual<typeof import('@/api/domains/workspace')>()
+  return { ...actual, listRecent: mocks.workspaceListRecent }
+})
+// project domain 全量 stub（initApp 的 useProjectStoreSafe().init 依赖；仅 load/save 两导出）
+vi.mock('@/api/domains/project', () => ({
+  load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }),
+  save: vi.fn().mockResolvedValue(undefined),
+}))
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
   const session = await import('@/api/domains/session')
@@ -218,5 +236,53 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
     const navigation = useNavigationStore()
     sidebar.goOverview()
     expect(navigation.current.view).toBe('overview')
+  })
+
+  it('TC-5 重连 onConnected 对聚焦 session 重拉 subagent/workflow（首连不拉；分区数据刷新用户可见）', async () => {
+    const sessionDomain = await import('@/api/domains/session')
+    const getSubagentsMock = sessionDomain.getSubagents as ReturnType<typeof vi.fn>
+    const getWorkflowsMock = sessionDomain.getWorkflows as ReturnType<typeof vi.fn>
+    const record: SubagentRecord = {
+      subagentId: 'sa-1',
+      sessionFile: null,
+      agent: 'worker',
+      slug: 'probe',
+      task: 'reconnect re-pull',
+      status: 'running',
+      chatMode: true,
+      resumable: true,
+    }
+    getSubagentsMock.mockClear()
+    getWorkflowsMock.mockClear()
+    getSubagentsMock.mockResolvedValueOnce([record])
+
+    const sidebar = useSidebarNew()
+    useSessionStore().applySnapshot({ groups: [group([summary('s1')])] })
+    await sidebar.selectSession('s1')
+    getSubagentsMock.mockClear()
+    getWorkflowsMock.mockClear()
+
+    // 首连（initApp 路径）不含 subagent/workflow 重拉——列表首拉归 useSubagentListSync
+    await sidebar.onConnected()
+    expect(getSubagentsMock).not.toHaveBeenCalled()
+    expect(getWorkflowsMock).not.toHaveBeenCalled()
+
+    // 重连：对聚焦 s1 重拉（RPC 直读磁盘，不依赖派生缓存事件）；分区更新 = 侧栏列表数据源
+    await sidebar.onConnected()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(getSubagentsMock).toHaveBeenCalledWith('s1')
+    expect(getWorkflowsMock).toHaveBeenCalledWith('s1')
+    expect(useSubagentStore().getRecordsBySession('s1')).toEqual([record])
+  })
+
+  it('TC-5b 重连时空焦点（无聚焦 session）不触发重拉', async () => {
+    const sessionDomain = await import('@/api/domains/session')
+    const getSubagentsMock = sessionDomain.getSubagents as ReturnType<typeof vi.fn>
+    const sidebar = useSidebarNew()
+
+    await sidebar.onConnected() // 首连（initApp，空态无 session）
+    await sidebar.onConnected() // 重连（focusedSessionId=null）
+    await new Promise((r) => setTimeout(r, 0))
+    expect(getSubagentsMock).not.toHaveBeenCalled()
   })
 })

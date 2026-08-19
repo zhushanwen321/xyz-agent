@@ -34,7 +34,7 @@ extension 状态迁移（register / archive / reportRecordTransition / workflow 
 | v11 决策 | 合流后现实 | 本设计动作 |
 |---------|-----------|-----------|
 | 决策 1/2：runtime 无状态 + transient 信号 + RPC 重拉 | 已等效实现（派生缓存 + entry_appended 失效 + 增量拉取；协议零改动） | 无 |
-| 决策 3：三对账点（message.complete / session.exited / 重连） | 部分被替代：失效自愈（Entry-not-found 全量重建）+ 冷启动磁盘扫描承接大部分兜底；重连后派生缓存空 → 首次失效走全量重建 | 不重建对账点，验证合流后场景 5/8 是否仍有缺口（附录 A-3） |
+| 决策 3：三对账点（message.complete / session.exited / 重连） | 部分被替代：失效自愈（Entry-not-found 全量重建）+ 冷启动磁盘扫描承接大部分兜底；重连项经对审确认缺口后补显式重拉（附录 A-3） | 重连重拉已实现（renderer onConnected 对聚焦 session），详见附录 A-3 |
 | 决策 4：秒级信号与 60s 窗口解耦 | 已实现（300ms 防抖 + 增量拉取，不经 notifier 窗口） | 无 |
 | 决策 5：六级投影 + 新 6 态枚举 | 前提消失：自描述 entry 正向携带 status/sessionFile/result，逆向推断（sidecar 链 / identity-id 消歧 / timestamp 锚）整体作废；**唯一保留需求的子集** = 崩溃/孤儿终态兜底与执行态细分 | 本设计缺口 ②③ |
 | 决策 6.1/6.2：workflow kill-9 恢复落盘 + 无 turn 恢复通知 | 未实现（恢复循环仍只改内存）；6.2 的无 turn 通道被 appendEntry 结构性消解（不触发 LLM turn） | 本设计缺口 ① |
@@ -84,7 +84,7 @@ kill -9 父 pi 后的磁盘事实：主 session JSONL 里该 record 的最后一
 重开 session 时的两个观察者现状：
 
 - **runtime extractor**（`scanSubagentEntries`）：纯函数扫 entry，读到 running → 侧栏显示 running。它不读 .alive/sidecar/子文件（也不应读——见 §4.2 方案 B 的否决理由）。
-- **extension 重建矩阵**（`record-store.ts` `buildRecord` :816-846 的四分支实现；:440-447 JSDoc 描述同一矩阵）：session_start 时重建内存 record。分支 1（:818 `.cancelled`）→ closed(cancelled)；分支 2（:825 `.finalized`）→ closed(gc)；分支 3（:834 `.alive` + pid 活 + <24h 软超时）→ running；**分支 4 兜底（:842-846，无 marker / pid 死 / 超时）→ 刻意落 running**（v4 B-1「跨重启可续聊」产品语义：用户重开后可继续与 subagent 对话）。且重建路径**不写 entry**——entry 写入口共 5 处：`register`（record-store.ts:245）与 `archive`（:259）内部直接 `pi.appendEntry`（不经 reportRecordTransition）、`reportRecordTransition` 自身（:272）及其仅有的 2 个外部调用点（冷路径续轮 subagent-service.ts:813、轮终 finalize-record.ts:244）——重建结果只影响扩展内存，不改变 runtime 读到的 entry。
+- **extension 重建矩阵**（`record-store.ts` `buildRecord` :816-846 的四分支实现；:440-447 JSDoc 描述同一矩阵）：session_start 时重建内存 record。分支 1（:818 `.cancelled`）→ closed(cancelled)；分支 2（:825 `.finalized`）→ closed(gc)；分支 3（:834 `.alive` + pid 活 + <1h 软超时，`ALIVE_SOFT_TIMEOUT_MS`——monorepo 集成起即 1h，自旧仓 24h 收紧以压缩 PID 复用窗口）→ running；**分支 4 兜底（:842-846，无 marker / pid 死 / 超时）→ 刻意落 running**（v4 B-1「跨重启可续聊」产品语义：用户重开后可继续与 subagent 对话）。且重建路径**不写 entry**——entry 写入口共 5 处：`register`（record-store.ts:245）与 `archive`（:259）内部直接 `pi.appendEntry`（不经 reportRecordTransition）、`reportRecordTransition` 自身（:272）及其仅有的 2 个外部调用点（冷路径续轮 subagent-service.ts:813、轮终 finalize-record.ts:244）——重建结果只影响扩展内存，不改变 runtime 读到的 entry。
 
 推演结论：无论等多久，entry 停留 running，侧栏永久 running。子进程明明已跑完（子 JSONL 有正常收尾），用户看到的却是「正在跑」。
 
@@ -345,7 +345,7 @@ U1 与 U2/U3 无依赖可并行；U2 先行（类型字段），U3 依赖 U2 的
 |---------|------|------|
 | 决策 1（无状态信号+重拉，方案 B） | **已被等效实现** | W18 派生缓存：唯一写路径 = entry 扫描、事件只做失效、可丢弃重建。机制差异（协议零改动 vs 新 transient 类型）是实现选择，目标一致 |
 | 决策 2（session.subagentsChanged 协议） | **作废** | entry_appended 官方事件替代自建信号；session.subagents 全量帧协议保留但数据源已换 |
-| 决策 3（三对账点） | **大部分被替代，一项待验证** | 失效自愈（Entry-not-found 全量重建）+ 冷启动磁盘扫描承接兜底；「重连后派生缓存空→首次失效全量重建」是否覆盖场景 8（信号丢失收敛）待合流后实测（V4 同族），不预先补建 |
+| 决策 3（三对账点） | **大部分被替代；重连项缺口经对审确认后已补显式重拉** | 失效自愈（Entry-not-found 全量重建）+ 冷启动磁盘扫描承接兜底；message.complete/session.exited 对账点由派生缓存事件驱动等效覆盖。**重连项**（2026-08-20 设计-实现对审闭环）：合流后确认真实缺口——重连后若无新 entry 写入（如断连前 subagent 已全部终态），派生缓存不刷新，侧栏停留断连前 stale 数据直到用户切 tab。修复：renderer `useSidebarNew.onConnected` 重连分支对聚焦 session 显式 `loadSubagents`/`loadWorkflows`（RPC 直读磁盘，不依赖缓存事件），fire-and-forget 与 workspace/extension 重连刷新同模式；测试 useSidebarNew.test.ts TC-5/TC-5b |
 | 决策 4（秒级信号与 60s 窗口解耦） | **已被实现** | 300ms 防抖 + get_entries 增量，不经 notifier |
 | 决策 5（六级投影 + 6 态枚举） | **前提消失，子集保留** | 自描述 entry 正向携带 status/sessionFile → sidecar 链/identity-id 消歧/timestamp 锚全部作废；保留子集 = 本设计缺口 ②（孤儿终态，挂点从 runtime extractor 改 extension 重建矩阵）与 ③（细分，用字段而非枚举） |
 | 决策 6.1（workflow kill-9 落盘） | **保留，本设计缺口 ①** | 合流分支未实现 |
@@ -363,3 +363,4 @@ U1 与 U2/U3 无依赖可并行；U2 先行（类型字段），U3 依赖 U2 的
 - v6：按 R5 对抗审查（1 must-fix / 2 suggestion，报告 `subagent-workflow-post-merge-residual-fixes-review-r5.md`）修复：**① chmod 000 分支被证伪（R5-MF）**——EACCES 发生在上游 identity 发现阶段（readIdentityHeader openSync），record 从列表消失而非进分支 4，场景 3 的 chmod 分支不可执行；删之，场景 3 只留截断分支；IO 错误判据（§5.2 第三条）保留为防御性路径并加可达性注（常规操作无可行触发手段，验收以单测注入覆盖）。② reportRecordTransition 签名适配（R5-SG1）——签名收 ExecutionRecord 而分支 4 数据源是 SubagentRecord，§6.1 补新增 SubagentRecord 入口方法（内部直接 pi.appendEntry 绕过 recordToSubagent）。③ 防重频率补 fast-path 限频说明（R5-SG2）——dir mtime 快路径结构性限频，实际频率 ≈ 重开次数 + 全量重扫，同 id 覆盖无害。R5 另核实 chatMode 链路自洽（one-shot 显式 false，isDone 判据对新 entry 有效）与四形态公式穷举通过。
 - v7：按 R6 对抗审查（2 must-fix / 1 suggestion，报告 `subagent-workflow-post-merge-residual-fixes-review-r6.md`）修复：**① 类型字段矩阵补全（R6-MF1）**——§6.2 从两类型扩为四类型字段矩阵：extension `ExecutionRecord`（+resumable，chatMode 已有）与 extension 侧同名 `SubagentRecord`（+resumable+chatMode，recordToSubagent 投影目标）此前遗漏，缺则对应写点编译失败；shared 与 entry schema 原已覆盖。**② wave 拆分补全（R6-MF2+SG）**——U2 从「extension 侧」扩为跨 extension/shared/runtime 三包全链路（四类型必须同一单元落地，拆开中间态编译失败）；U3 补轮终/续轮两写点 + 冷路径清 resumable，措辞从「两点小改」改为四处两文件。R6 另核实：全文口径统一、旧术语残留清零、v1-v6 变更历史无矛盾。
 - v8：按 R7 对抗审查（**0 must-fix** / 2 suggestion，报告 `subagent-workflow-post-merge-residual-fixes-review-r7.md`——**审查循环收敛：七轮后首次零 must-fix**，rubric P0-1~P0-18 全清单通过、自包含性与附录 A 一致性确认）收尾：矩阵行 2 行号修正（types.ts:590-607 是 SubagentListItem——TUI 列表类型，其 :602 已有 resumable 同名字段先例；真正的 extension SubagentRecord 在 668-716——R6 的「已核实」引用链曾把 SubagentListItem 误认成 SubagentRecord，R7 复检纠正）；U3 措辞确认 v7 已修（N/A）。R7 另核实：分支 4 可经 rec.sessionFile 定位子 JSONL（buildRecord 两路均透传）、session_start 主动触发可行（collectRecords 在 initSession :384 后任意时点可调）、轮终/续轮两写点的补字段位置（finalize-record :244 前 / subagent-service :813 前）精确成立。
+- v9（合流后，2026-08-20）：设计-实现对审（双 subagent 对抗审查 residual-fixes 与 v11 两份设计 vs 代码，0 must-fix）后的收尾修复：**① 附录 A-3 重连项闭环**——对审确认真实缺口（重连后无新 entry 写入则派生缓存不刷新，侧栏停留 stale 直到用户切 tab），renderer `useSidebarNew.onConnected` 重连分支对聚焦 session 显式 `loadSubagents`/`loadWorkflows`（测试 TC-5/TC-5b）；开篇对照表决策 3 行同步。**② §3.2 事实修正**——分支 3 软超时实际 `ALIVE_SOFT_TIMEOUT_MS`=1h（monorepo 集成起即如此，自旧仓 24h 收缩），原文「<24h」为笔误。对审另报到一条「§5.2 可达性注 IO 推理混淆」经复核实为**误报**（readIdentityHeader 与 readLastJsonlLine 读同一子 session JSONL，「identity 可读而末行读取失败」窄窗推理成立，不改）。
