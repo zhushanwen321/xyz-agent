@@ -199,10 +199,12 @@ v1 设想用 `conversation:true` 跨轮复用 reviewer 会话。审查发现两�
 
 ## 11. 待验证检查点
 
-- ⛔ P-cache：主用 provider 前缀缓存支持（S2）。
-- ⛔ P-sys：system 段逐 spawn 稳定性 / 动态因子清单（S3）。
-- ⛔ P-shared：批内不同 reviewer（不同 .md → 不同 system prompt）天然无法跨 reviewer 共享缓存前缀——前缀稳定的收益边界是「同一 reviewer 跨轮」，不是「跨 reviewer 同轮」，如实标注。
+- ✅ P-cache（已探明，2026-08-20 实测）：扫描 ~400 份历史 pi session JSONL 的 usage 字段——本环境所有主用 provider 消息级缓存命中率 97-99%（glm-5.1/5.2、minimax-m3、ds-flash、deepseek-v4-flash、ds-pro、**mimo-router/mimo-v2.5-pro 97%**、kimi-for-coding）。前缀缓存在本环境事实上普及，前缀稳定化的收益前提成立。探针脚本（T2）仍保留，用于新 provider 接入时复测。
+- ✅ P-sys（已探明，源码核实）：env block = 固定头行 + Working directory + 可选 Depth + 可选 Git branch（branchCache 按 cwd 缓存），**无时间戳等逐 spawn 随机因子**（session-runner.ts buildEnvBlock）；同一 run 内同一 cwd 的 env block 字节稳定。残余未知：tools 清单稳定性（实施期快照测试覆盖）。
+- ⛔ P-shared：批内不同 reviewer（不同 .md → 不同 system prompt）天然无法跨 reviewer 共享缓存前缀——前缀稳定收益边界 = 「同一 reviewer 跨轮」。
 - ✅ 已核实（源码）：`_KNOWN_FIELDS` 白名单无会话字段（worker-script-builder.ts:69）；schema JSON 逐字嵌入 appendSystemPrompt（agent-opts-resolver.ts）；R1/R2+ schema required 分叉（review-fix-loop.js）；现状模板 header/roundDir 靠前（review-fix-loop.js buildReviewCall）。
+
+**P-cache/P-sys 转 ✅ 后对 6.3 的影响**：持久会话成本公式（C_single ≤ C_multi）的缓存前提在本环境成立，机制③ 的剩余门槛收敛为「引擎改动 + 梯队 1 实测数据显示静态前缀重付仍是大头」——P-cache 不再是阻塞项。
 
 ## 附录：变更历史
 
