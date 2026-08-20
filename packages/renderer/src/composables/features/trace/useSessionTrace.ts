@@ -18,7 +18,7 @@
  * 不随 TraceView 卸载退订（切回对话视图增量继续收集，切回 Trace 不丢数据）；
  * 分区 cleanup 由 useSidebar.deleteSession 经 triggerSessionCleanups 统一编排（ADR-0049）。
  */
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import { useSessionScopedState } from '@/composables/useSessionScopedState'
 import { registerSessionCleanup } from '@xyz-agent/core/foundation/use-session-scoped-state'
@@ -60,8 +60,9 @@ export interface TraceSessionPartition {
 }
 
 function createDefaultPartition(): TraceSessionPartition {
-  // [HISTORICAL] reactive 容器（ADR-0049 响应式契约）：plain object 的 mutate 不触发下游 computed。
-  return {
+  // [HISTORICAL] 必须 reactive 容器（ADR-0049 响应式契约，W2 useExtensionUI 原坑）：
+  // plain object 的 mutate 不触发下游 computed/watch 重算——曾让分区加载后 TraceView 停在旧 render。
+  return reactive({
     status: 'idle',
     source: null,
     entries: [],
@@ -74,7 +75,7 @@ function createDefaultPartition(): TraceSessionPartition {
     activeGroups: [],
     searchText: '',
     selectedKey: null,
-  }
+  })
 }
 
 // ── 模块级单例（trace 数据物理只有一份；分区键 = panel store focusedSessionId 惰性绑定）──
@@ -244,7 +245,7 @@ export function useSessionTrace(): {
   clearSelection: typeof clearTraceSelection
   setView: typeof setTraceView
   setFilter: typeof setTraceFilter
-} {
+  } {
   return {
     partition: partitions.current,
     ensureLoaded: ensureTraceLoaded,

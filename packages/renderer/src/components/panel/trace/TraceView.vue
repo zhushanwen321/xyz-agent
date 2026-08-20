@@ -120,10 +120,9 @@ import { AlertCircle, Hourglass, ListTree, Loader2, RotateCcw } from '@lucide/vu
 import { Button } from '@/components/ui/button'
 import {
   filterTraceRows,
-  mapSessionTraceRows,
 } from '@xyz-agent/core/domain/session-trace'
 import type { TraceKindGroup, TraceRow } from '@xyz-agent/core/domain/session-trace'
-import { mergeTraceLines } from '@/composables/features/trace/trace-lines'
+import { useTraceRows } from '@/composables/features/trace/useTraceRows'
 import {
   ensureTraceLoaded,
   retryTraceLoad,
@@ -153,16 +152,8 @@ const ESTIMATED_ROW_HEIGHT = 28
 /** 列表项：台账行或 context 分界行（demo .tr-divider）。 */
 type TraceListItemSpec = { kind: 'row'; row: TraceRow } | { kind: 'divider' }
 
-/** store 分区 → core TraceRow[]（mapSessionTraceRows 派生；分区 mutate 触发重算）。 */
-const rows = computed<TraceRow[]>(() => {
-  const p = partition.value
-  if (p.status !== 'ready') return []
-  return mapSessionTraceRows({
-    lines: mergeTraceLines(p.header, p.entries, p.malformed),
-    sessionEnd: p.sessionEnd,
-    leafId: p.leafId ?? undefined,
-  })
-})
+/** store 分区 → core TraceRow[]（useTraceRows 共享派生，TraceInspector 同源）。 */
+const rows = useTraceRows()
 
 /** 行可搜索文本（kind + headline + meta 值拼接，demo data-text 同源语义）。 */
 function searchableText(row: TraceRow): string {

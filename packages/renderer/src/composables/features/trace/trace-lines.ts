@@ -9,10 +9,7 @@
  * RPC 路径 malformed 恒空（pi 已静默跳坏行），归并退化为直拼，无精度损失。
  */
 import type { ParsedSessionTraceLine, TraceFileEntry } from '@xyz-agent/core/domain/session-trace'
-import type {
-  SessionTraceHeaderPayload,
-  SessionTraceMalformedLine,
-} from '@xyz-agent/shared'
+import type { SessionTraceMalformedLine } from '@xyz-agent/shared'
 
 /** entry 未知 JSON → TraceFileEntry 的宽松收窄（pi session 解析不做校验，宽松结构见 core types）。 */
 function asEntry(value: unknown): TraceFileEntry {
@@ -25,9 +22,11 @@ const FIRST_ENTRY_LINE = 2
 /**
  * header + entries + malformed → 逐行产物（行序 = 文件行序的最好复原）。
  * header 存在时占第 1 行（pi 约定 JSONL 首行）；malformed 按行号升序穿插。
+ * header 类型宽到 object（shared payload 与 core TraceSessionHeader 结构兼容即协议兼容，
+ * 本函数只判断存在性 + 透传，不读字段）。
  */
 export function mergeTraceLines(
-  header: SessionTraceHeaderPayload | undefined,
+  header: object | undefined,
   entries: readonly unknown[],
   malformed: readonly SessionTraceMalformedLine[],
 ): ParsedSessionTraceLine[] {
@@ -40,7 +39,6 @@ export function mergeTraceLines(
     lines.push({ ok: true, lineNumber: 1, entry: asEntry(header) })
     nextLine = FIRST_ENTRY_LINE
   }
-
   for (const entry of entries) {
     // 坏行行号 ≤ 当前行号 → 插在当前 entry 之前（原位语义的最好近似；空行跳号延后到尾部）
     while (mi < bad.length && bad[mi]!.lineNumber <= nextLine) {

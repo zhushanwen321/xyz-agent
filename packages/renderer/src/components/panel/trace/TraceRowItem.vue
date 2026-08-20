@@ -51,7 +51,8 @@
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { TraceRow, TraceRowKind } from '@xyz-agent/core/domain/session-trace'
+import type { TraceRow } from '@xyz-agent/core/domain/session-trace'
+import { KIND_BADGE_CLASS } from './trace-kind-style'
 
 const props = defineProps<{
   row: TraceRow
@@ -61,23 +62,6 @@ const props = defineProps<{
 const emit = defineEmits<{ select: [row: TraceRow] }>()
 
 const { t } = useI18n()
-
-/** kind badge 色板（trace-tab-demo.html .k-* 同源：消息中性 / 系统信息蓝 / 压缩与 NOTICE 警黄 / lifecycle 与 DATA 弱描边）。 */
-const KIND_BADGE_CLASS: Record<TraceRowKind, string> = {
-  SESSION: 'bg-surface-2 text-neutral-mid',
-  SYSTEM: 'bg-info-soft text-info',
-  USER: 'bg-surface-hover text-neutral-fg',
-  ASSISTANT: 'bg-surface-hover text-neutral-fg',
-  TOOL: 'bg-surface-2 text-neutral-mid',
-  BASH: 'bg-surface-2 text-neutral-mid',
-  NOTICE: 'bg-warn-soft text-warn',
-  COMPACTED: 'bg-warn-soft text-warn',
-  BRANCH: 'bg-info-soft text-info',
-  LIFECYCLE: 'text-neutral-dim shadow-[inset_0_0_0_1px_var(--hairline)]',
-  DATA: 'text-neutral-dim shadow-[inset_0_0_0_1px_var(--hairline)]',
-  BOUNDARY: 'bg-surface-2 text-neutral-mid',
-  MALFORMED: 'bg-danger-soft text-danger',
-}
 
 /** 行 headline：空值兜底为 kind 标签（core 契约「空 headline 由 UI 以 kind 标签兜底」）。 */
 const headline = computed(() => props.row.headline || props.row.kind)

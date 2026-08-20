@@ -72,7 +72,7 @@
           :docked="drawerDocked"
           :session-id="panelSessionId"
           @close="closeDrawer"
-          @set-tab="setDrawerTab"
+          @set-tab="onDrawerSetTab"
           @toggle-dock="toggleDrawerDock"
         >
           <!-- 桌面独占内容面板（C2 v-if chain，对齐旧 SideDrawer 内容区结构）：
@@ -82,7 +82,12 @@
                Browser tab 有 browserUrl → BrowserPane（嵌入式 WebContentsView 导航）；
                  无 browserUrl → 不注入 → DrawerPanel 空态 fallback
                Terminal tab → TerminalView（PTY 优先，交互式终端） -->
-          <GitPanel v-if="drawerTab === 'git'" />
+          <!-- session-trace inspector（D5b 临时上下文页）：选中 trace 行时切入 default slot
+               最前（v-if chain 首项——优先于 activeTab 面板，点击即明确意图）；「← 返回」清
+               selectedKey 后回到 activeTab 内容（复原前 tab，SideDrawerTab 体系不变）。
+               未选中不注入（C2 v-if chain 语义保持，slot 空时走 DrawerPanel 空态 fallback）。 -->
+          <TraceInspector v-if="traceSelected" :session-id="panelSessionId ?? ''" />
+          <GitPanel v-else-if="drawerTab === 'git'" />
           <CommandDocPanel v-else-if="drawerTab === 'doc'" :session-id="panelSessionId" />
           <DetailPane
             v-else-if="drawerTab === 'detail'"
@@ -148,6 +153,8 @@ import { useSessionDerivations } from '@/composables/features/chat/useSessionDer
 import { provideGitStatus } from '@/composables/features/file-tree/useGitStatus'
 import type { GitIndicator } from '@/composables/features/file-tree/useGitStatus'
 import { useChatStore } from '@/stores/chat'
+import { useSessionTrace, clearTraceSelection } from '@/composables/features/trace/useSessionTrace'
+import TraceInspector from '@/components/panel/trace/TraceInspector.vue'
 import Panel from '@/components/panel/Panel.vue'
 import PanelHeader from '@/components/panel/PanelHeader.vue'
 import GitPanel from '@/components/panel/GitPanel.vue'
@@ -252,6 +259,21 @@ const { isOpen: drawerOpen, activeTab: drawerTab, docked: drawerDocked } = useDr
 
 /** panel 的 session（git 状态数据源） */
 const panelSessionId = computed<string | null>(() => leaf.value?.sessionId ?? null)
+
+/** session-trace（A44）：选中 trace 行时 drawer default slot 最前注入 inspector 临时页（D5b）。 */
+const { partition: tracePartition } = useSessionTrace()
+const traceSelected = computed(() => tracePartition.value.selectedKey !== null)
+
+/**
+ * drawer set-tab 壳层包装（D5b 对称语义）：inspector 临时页期间用户点其它一级 tab =
+ * 明确离开 inspector → 清 trace 选中（activeTab 链接管内容）。「单向 main→drawer」保持：
+ * 这里只清 main 发起的选中态，drawer 不反向写 main 的过滤/视图状态。
+ */
+function onDrawerSetTab(tab: Parameters<typeof setDrawerTab>[0]): void {
+  const sid = panelSessionId.value
+  if (sid && tracePartition.value.selectedKey !== null) clearTraceSelection(sid)
+  setDrawerTab(tab)
+}
 
 /** git 状态唯一数据源（panel/spec.md：git 移入抽屉后）。
  *  在 PanelContainer 层按 panel 的 session 持有实例 → GIT_STATUS_KEY provide →

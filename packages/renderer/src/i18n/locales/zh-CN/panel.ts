@@ -389,9 +389,9 @@ export default {
   trace: {
     viewChat: '对话',
     viewTrace: 'Trace',
-    entriesCount: '{count} entries',
-    inContextCount: '{count} 在当前 context',
-    compactionCount: '{count} 次压缩',
+    entriesCount: '共 {count} 条',
+    inContextCount: '{count} 条在当前 context',
+    compactionCount: '压缩 {count} 次',
     promptVersion: 'system prompt v{version}',
     promptNoTrace: 'system prompt 无留痕',
     chipAll: '全部',
