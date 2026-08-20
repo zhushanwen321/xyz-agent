@@ -309,3 +309,17 @@ export async function writeSegments(payload: {
 }): Promise<void> {
   await command('session.writeSegments', payload)
 }
+
+// ── session-trace（design D4，trace-ui 单元）──
+/**
+ * 拉取 session trace 台账全量快照（session.getTraceEntries 端口，A1 混合路由：
+ * 活跃 session 走 RPC get_entries + 文件首行补 header；非活跃/降级走 JSONL 直读）。
+ * reply payload = ServerMessageMap['session.traceEntries']（source/header/entries/
+ * malformed/sessionEnd/leafId，结构镜像 runtime SessionTraceSnapshot）。增量腿不走本函数
+ * （server-push session.traceEntryAppended，由 useSessionTrace 订阅 events 合并）。
+ */
+export function getTraceEntries(
+  sessionId: string,
+): Promise<import('@xyz-agent/shared').ServerMessageMap['session.traceEntries']> {
+  return command('session.getTraceEntries', { sessionId })
+}
