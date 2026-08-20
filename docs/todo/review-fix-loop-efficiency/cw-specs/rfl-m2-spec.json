@@ -14,7 +14,7 @@
       "type": "unit",
       "core": false,
       "command": "pnpm install --frozen-lockfile --prefer-offline --ignore-scripts --filter @zhushanwen/pi-subagent-workflow... >/dev/null 2>&1 && cd extensions/subagent-workflow && npx vitest run src/__tests__/review-fix-loop-utils.test.ts",
-      "scenario": "backfillFixRegression({scores, fixResult, issues, round})——参数 round = reconcile 发生的轮（调用点传当前轮；被回填对象所在轮 = round-1）。score = 10 − 10×(regressed/fixes)，regressed = fixResult.fixes[].issue_id 经 findIssueKey 归一后 history 含 {round: <参数 round>, status:'regressed'} 的条目数；fixes=0 返回原 scores 不动（无 fix 可评）。已有上轮 fix LLM entry → 只补 dimensions.regression（LLM 三维度与 total 保持原值不重算）；无 entry（clean 轮）→ 创建 {round: round-1, targetKind:'fix', targetName:'fix', dimensions:{coverage:null,selfCheck:null,minimality:null,regression:X}, total:null, note:确定性回填标注}；全 fixed → regression=10；部分回归数字断言：fixes=2 且 regressed=1 → regression=5；幂等（重复回填不重复创建）"
+      "scenario": "backfillFixRegression({scores, fixResult, issues, round})——参数 round = reconcile 发生的轮（调用点传当前轮；被回填对象所在轮 = round-1）。score = 10 − 10×(regressed/fixes)，regressed = fixResult.fixes[].issue_id 经 findIssueKey 归一后 history 含 {round: <参数 round>, status:'regressed'} 的条目数；fixes=0 返回原 scores 不动（无 fix 可评）。已有上轮 fix LLM entry → 只补 dimensions.regression（LLM 三维度与 total 保持原值不重算）；无 entry（clean 轮）→ 创建 {round: round-1, targetKind:'fix', targetName:'fix', dimensions:{coverage:null,selfCheck:null,minimality:null,regression:X}, total:null, note:确定性回填标注}；全 fixed → regression=10；部分回归数字断言：fixes=2 且 regressed=1 → regression=5；幂等（重复回填不重复创建）。exec-review 修复补batch 维度：匹配键含 batch（round 批局部编号），跨批同 round 不冲突（批 2 回填不丢、批 1 不被污染）；cleanRound 参数区分确定性 entry 的 note 成因；正常用例见 C2 测试"
     },
     {
       "id": "C3",
@@ -49,9 +49,9 @@
       "kind": "schema",
       "provider": "rfl-m2",
       "consumer": "rfl-mp",
-      "signature": "state.scores: [{round, targetKind: reviewer|fix, targetName, dimensions: {evidence|severity|actionability|reconciliation|coverage|selfCheck|minimality|regression: 0-10|null}, total: number|null, note?}]；regression 维度恒为 workflow 确定性回填（LLM 不输出）",
+      "signature": "state.scores: [{round, batch, targetKind: reviewer|fix, targetName, dimensions: {evidence|severity|actionability|reconciliation|coverage|selfCheck|minimality|regression: 0-10|null}, total: number|null, note?}]——batch 由脚本落盘时权威补齐（round 是批局部编号，无批标识会跨批冲突）；regression 维度恒为 workflow 确定性回填（LLM 不输出）；无 LLM entry 的确定性 entry note 区分成因（clean 轮无聚合 / 聚合发生但打分缺失）",
       "file": "extensions/subagent-workflow/workflows/review-fix-loop-utils.cjs",
-      "description": "rfl CLI stats 与 eval 报告（S8）消费；T9 前缀稳定化重构 prompt 模板时打分段属静态段文本，不得把 per-run 数据内联"
+      "description": "rfl CLI stats 与 eval 报告（S8）消费；T9 前缀稳定化重构 prompt 模板时打分段属静态段文本，不得把 per-run 数据内联。batch 字段为 exec-review 修复（跨批 round 冲突）新增"
     }
   ],
   "split": []

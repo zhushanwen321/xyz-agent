@@ -710,7 +710,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       // LLM）：fix-attempted 未再现 → fixed + 上轮 fix 的 regression 维度回填。
       if (round > 1) {
         applyCleanRoundBackfill(state, {
-          reconSeen, reconEscalate, round, stuckThreshold,
+          reconSeen, reconEscalate, round, stuckThreshold, batch: batchIndex,
         });
         log("Clean-round backfill applied (reconcile + regression backfill for the previous fix).");
       }
@@ -784,10 +784,16 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     // （权威层是状态机客观回填，见 reconcileIssues + backfillFixRegression）。
     if (Array.isArray(agg.scores) && agg.scores.length > 0) {
       if (!Array.isArray(state.scores)) state.scores = [];
+      let landed = 0;
       for (const sc of agg.scores) {
         if (sc && typeof sc === "object" && typeof sc.targetKind === "string" && sc.targetKind) {
-          state.scores.push(sc);
+          // exec-review 修复：脚本权威补 batch（round 是批局部编号，无批标识会跨批冲突）
+          state.scores.push({ ...sc, batch: batchIndex });
+          landed++;
         }
+      }
+      if (landed === 0) {
+        log("WARN: aggregator scores all malformed (targetKind missing) — quality scoring degraded this round");
       }
     } else {
       log("WARN: aggregator returned no usable scores — quality scoring degraded this round");
@@ -918,7 +924,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       if (state.fixResults && state.fixResults.length > 0) {
         state.scores = backfillFixRegression({
           scores: state.scores, fixResult: state.fixResults[state.fixResults.length - 1],
-          issues: state.issues || {}, round,
+          issues: state.issues || {}, round, batch: batchIndex, cleanRound: false,
         });
       }
     } else {

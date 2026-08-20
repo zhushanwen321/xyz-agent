@@ -1492,15 +1492,49 @@ describe("C2 backfillFixRegression：regression 确定性回填", () => {
       "MF-1": { firstSeen: 1, severity: "major", status: "fixed", history: [{ round: 3, status: "fixed" }], fixAttempts: 0 },
       "MF-2": { firstSeen: 1, severity: "major", status: "fixed", history: [{ round: 3, status: "fixed" }], fixAttempts: 0 },
     };
-    const out = backfillFixRegression({ scores: [], fixResult, issues, round: 3 });
+    const out = backfillFixRegression({ scores: [], fixResult, issues, round: 3, batch: 1, cleanRound: true });
     expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({ round: 2, targetKind: "fix" });
+    expect(out[0]).toMatchObject({ round: 2, targetKind: "fix", batch: 1 });
     expect(out[0].dimensions).toEqual({ coverage: null, selfCheck: null, minimality: null, regression: 10 });
     expect(out[0].total).toBeNull();
     expect(out[0].note).toContain("clean-round deterministic backfill");
     // 幂等：再跑一次不重复创建/不覆盖
-    const again = backfillFixRegression({ scores: out, fixResult, issues, round: 3 });
+    const again = backfillFixRegression({ scores: out, fixResult, issues, round: 3, batch: 1, cleanRound: true });
     expect(again).toHaveLength(1);
+  });
+
+  it("C2 正常轮聚合发生但 LLM 无 fix entry（cleanRound:false）→ note 标注降级成因（非 clean 轮）", () => {
+    const issues = {
+      "MF-1": { firstSeen: 1, severity: "major", status: "fixed", history: [{ round: 2, status: "fixed" }], fixAttempts: 0 },
+    };
+    const out = backfillFixRegression({
+      scores: [], fixResult: { fixed_count: 1, fixes: [{ issue_id: "MF-1", description: "d", self_check: "x", affected_files: [] }], deferred: [] },
+      issues, round: 2, batch: 1, cleanRound: false,
+    });
+    expect(out[0].note).toContain("aggregation ran but returned no usable fix score entry");
+  });
+
+  it("C2 exec-review 修复：跨批同 round 不冲突——批 2 回填不丢、批 1 entry 不被污染", () => {
+    // 批 1 已回填的 entry（round=1, batch=1, regression=10）；批 2 R2 的 LLM entry（round=1, batch=2）
+    const scores = [
+      { round: 1, targetKind: "fix", targetName: "fix", batch: 1, dimensions: { coverage: 7, selfCheck: 7, minimality: 7, regression: 10 }, total: 7 },
+      { round: 1, targetKind: "fix", targetName: "fix", batch: 2, dimensions: { coverage: 8, selfCheck: 9, minimality: 7 }, total: 8 },
+    ];
+    const issues = {
+      // 批 2 的 MF-1 本轮 regressed（history round=2）
+      "MF-1": { firstSeen: 1, severity: "major", status: "regressed", history: [{ round: 2, status: "regressed" }], fixAttempts: 1 },
+    };
+    const out = backfillFixRegression({
+      scores, fixResult: { fixed_count: 1, fixes: [{ issue_id: "MF-1", description: "d", self_check: "x", affected_files: [] }], deferred: [] },
+      issues, round: 2, batch: 2, cleanRound: false,
+    });
+    expect(out).toHaveLength(2);
+    // 批 1 entry 原样（不被批 2 污染）
+    expect(out[0].dimensions.regression).toBe(10);
+    expect(out[0].dimensions.coverage).toBe(7);
+    // 批 2 entry 被正确回填（1/1 regressed → 0），不因批 1 的 regression!=null 幂等误判而丢失
+    expect(out[1].batch).toBe(2);
+    expect(out[1].dimensions.regression).toBe(0);
   });
 
   it("C2 fixes=0 → 返回原 scores 不动（无 fix 可评）", () => {
