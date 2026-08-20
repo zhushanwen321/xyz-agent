@@ -224,29 +224,22 @@ hash 与 `BuildSystemPromptOptions` 全部 8 字段的对应口径：`contextFil
 - 口径升级路径见 §11 检查点 5：若 `before_provider_request` 事件能拿到最终发出的请求前缀，spFull 改以该口径为准。
 
 ```
-state（进程内存）: { lastHashes | null, seq, needsBaseline }
-on(session_start):  state = { null, 0, true }，记录 startReason（startup/reload/new/resume/fork 之一）
-on(before_agent_start):
+state（进程内存）: { lastHashes | null, seq, needsBaseline, pending, startReason }
+on(session_start):  state 重置（记录 startReason：startup/reload/new/resume/fork 之一）
+on(before_agent_start):  [每 turn 1 次，实测确认]
   seq += 1
-  try:
-    hashes = {
-      spFull:        sha256(stable(event.systemPrompt)),
-      contextFiles:  sha256(stable(event.systemPromptOptions.contextFiles)),
-      skills:        sha256(stable(event.systemPromptOptions.skills)),
-      toolsList:     sha256(stable([selectedTools, toolSnippets])),
-      toolsReg:      sha256(stable(pi.getAllTools() 每项取 name/description/parameters/promptGuidelines)),
-      append:        sha256(stable(appendSystemPrompt)),
-      guidelines:    sha256(stable(promptGuidelines)),
-      customPrompt:  sha256(stable(customPrompt)),
-    }
-    if needsBaseline:
-      appendEntry("cache-probe", { seq, baseline: true, startReason, changed: ["*"], cwd, hashes })
-    else if 任一 hash != lastHashes 对应值:
-      appendEntry("cache-probe", { seq, baseline: false, changed: [变化字段名], cwd, hashes })
-    lastHashes = hashes; needsBaseline = false
-  catch e:
-    appendEntry("cache-probe", { seq, error: String(e) })   // error entry 无 hashes
-    needsBaseline = true   // 下一 turn 重建基线，恢复正常记录
+  pending = { cwd, 7 个输入侧 hash: contextFiles/skills/toolsList/append/guidelines/customPrompt/toolsReg }
+             （各字段 ?? null 归一后 stable stringify + sha256；toolsReg 取 getAllTools() 的
+               name/description/parameters/promptGuidelines）
+on(before_provider_request):  [每笔 LLM 请求，仅消费 turn 首笔；pending 为空即 skip]
+  合并 payload 侧 2 个 hash：spFull = hash(system 消息，role 兼容 system/developer，
+    缺失记 'no-system')、toolsSent = hash(payload.tools，缺失记 'no-tools')
+  cur = pending + { spFull, toolsSent }   // 共 9 个 hash
+  if needsBaseline:        appendEntry("cache-probe", { seq, baseline: true, startReason, changed: ["*"], cwd, hashes: cur })
+  elif 任一 hash 变化:     appendEntry("cache-probe", { seq, baseline: false, changed: [变化字段], cwd, hashes: cur })
+  lastHashes = cur; needsBaseline = false; pending = null
+  catch e: appendEntry("cache-probe", { seq, error: ... }); needsBaseline = true
+on(agent_end): pending = null   // turn 无 provider 请求（用户取消等）则丢弃，防跨 turn 污染
 ```
 
 entry schema（落在 session JSONL 的一行）。两类 entry 分别示例（未列出的字段视为 undefined，JSON 序列化时省略——`hashes` 在 baseline 与 normal entry 均存在；normal entry 无 `startReason`；error entry 无 `hashes`）：
@@ -257,7 +250,7 @@ baseline entry（进程首个 turn，或异常恢复后的重建基线）：
 {"type":"custom","customType":"cache-probe","data":{
   "seq":1,"baseline":true,"startReason":"resume","changed":["*"],
   "cwd":"/Users/...",
-  "hashes":{"spFull":"…","contextFiles":"…","skills":"…","toolsList":"…","toolsReg":"…","append":"…","guidelines":"…","customPrompt":"…"}
+  "hashes":{"spFull":"…","toolsSent":"…","contextFiles":"…","skills":"…","toolsList":"…","toolsReg":"…","append":"…","guidelines":"…","customPrompt":"…"}
 }}
 ```
 
@@ -267,7 +260,7 @@ normal change entry（后续 turn 检测到变化）：
 {"type":"custom","customType":"cache-probe","data":{
   "seq":12,"baseline":false,"changed":["contextFiles"],
   "cwd":"/Users/...",
-  "hashes":{"spFull":"…","contextFiles":"…","skills":"…","toolsList":"…","toolsReg":"…","append":"…","guidelines":"…","customPrompt":"…"}
+  "hashes":{"spFull":"…","toolsSent":"…","contextFiles":"…","skills":"…","toolsList":"…","toolsReg":"…","append":"…","guidelines":"…","customPrompt":"…"}
 }}
 ```
 
@@ -320,13 +313,18 @@ normal change entry（后续 turn 检测到变化）：
 | unit-2 归因脚本 analyze.py | §7.2 全部逻辑；纯读 | 只依赖 entry schema 契约，可用手工构造的 session 文件先开发（场景 G 的旧文件即现成测试数据） |
 | unit-3 数据收集计划 | 挂载方式说明 + 收集期检查点（每日跑一次 analyze.py 确认数据在积累）+ G5 决策标准；**终止标准内联**：达到「≥ 200 turn、跨 AGENTS.md 编辑 / extension 升级事件 ≥ 3 次」即触发决策评审（对应验收场景 H）；GO → 探针转正进 builtin 清单另立设计；NO-GO → 停用加载即退役，已写 entry 留存无影响（§1 机制 3），并归档本设计文档结论 | 把「收集多久、何时决策、NO-GO 怎么退役」显式化，防止探针无限期挂着无人问津 |
 
-## 11. 待验证检查点
+## 11. 检查点实测结论（v5 实施验收后更新）
 
-1. **`before_agent_start` 触发粒度**：源码 `_installAgentNextTurnRefresh` 表明每 turn 一次，但未实测确认。若实测为每笔 LLM 请求触发，hash 对比逻辑不变（同状态不写 entry），仅 seq 语义变为请求数——验收场景 A 顺带确认。
-2. **extension 链盲区是否实际存在（§7.1 口径约束的实测确认）**：检查常用 installed extensions（model-switch、xyz-system-prompt-extension 等）是否通过 `before_agent_start` 返回值修改 systemPrompt 全文——若均不修改，spFull 的链头视角与最终视角等效，盲区为空；若存在修改者，记录哪些 extension 参与，作为归因矩阵第二档解释的佐证。
-3. **`systemPromptOptions` 各字段可能为 undefined**（如无 SYSTEM.md 时 customPrompt 缺失）：stable hash 需把 undefined 规范化为固定值（如空串），实施时按实际类型定义处理。
-4. **xyz-agent 桌面内收集的可行性**：桌面 runtime 经 builtin 打包加载 extension，本地探针在桌面的挂载方式与 CLI 不同（--extension 参数桌面不可配）。数据收集期以 CLI 为主；桌面侧是否值得接，等 G5 结论后再议。
-5. **spFull 口径升级路径（before_provider_request）**：若 `before_provider_request` 事件（`extensions/types.ts:692`）携带最终发出的请求体（含经全部 extension 修改后的 systemPrompt），spFull 改以该口径为准——每笔 LLM 请求触发，恰与被测请求一一对应，同时消除 §7.1 的链视角盲区。实施 unit-1 前先核实该事件字段。
+1. **`before_agent_start` 触发粒度**：实测每 turn 一次（场景 A/B/D 中 seq 递增与消息数一致）。
+2. **extension 链盲区是否实际存在**：**存在，且是每 turn 级的**。场景 A 实测：第 2 turn 输入侧 7 hash 全未变，spFull 变化（debug diff 证实内容为 model-switch 注入的模型列表被 subagent-workflow 注入的 `<available_subagents>` 清单替换）——链上 extension 动态注入导致 turn 间前缀真实漂移，spFull（payload 口径）成功捕获。
+3. **`systemPromptOptions` undefined 规范化**：已实现（`?? null` 归一），实测无假变化。
+4. **xyz-agent 桌面内收集的可行性**：待数据收集期首日 GUI 检查（源码级与生产先例已确认全链路安全）。
+5. **spFull 口径升级**：`before_provider_request` 已核实可行并实施（payload 含最终请求体）；实施中发现 system 消息 role 可能为 `developer`（pi 源码 `openai-completions.ts:1176` 的 useDeveloperRole 分支），已兼容。
+
+实施验收新查明的事实（影响数据解读）：
+
+- **AGENTS.md 是启动快照**：同进程内修改 AGENTS.md 不进入 system prompt（场景 B），contextFiles 变化只能跨进程（resume）检测——归因矩阵中 contextFiles 漂移即对应真实跨进程事件。
+- **CLI 启动路径 session_start reason 恒为 `startup`**（`agent-session.ts:396` 默认构造，`--session`/`--continue` 均如此）；`resume` reason 仅运行时 switch session（桌面 rpc 场景）出现。漂移检测不依赖 reason（靠 baseline hash 对比），CLI 数据收集不受影响。
 
 ## 附录 A：数据与事实来源
 
@@ -340,3 +338,4 @@ normal change entry（后续 turn 检测到变化）：
 - v2：对抗式审查修复——修正 `session_start` reason 枚举为源码实际的 5 种（startup/reload/new/resume/fork）；补齐 hash 与 `BuildSystemPromptOptions` 8 字段的对应口径（toolSnippets 并入 toolsList、cwd 明文）；链尾加载从待验证项提升为 §7.1 设计约束；验收场景 A 追加 hashes 完整性校验；unit-3 内联终止标准与 NO-GO 退役流程。
 - v3：二轮审查修复——撤回 v2 的「链尾加载约束」（源码 `resource-loader.ts:452` 证实 CLI extension 恒在链头，不可达），改为 §7.1「加载位置与测量视角约束」：options 分 hash 口径可靠、spFull 明示为链头视角并标注 extension 链盲区；§7.2 归因矩阵第二档改为双解释并存不做单一断言；entry schema 拆 baseline / normal 两类示例消除 startReason 矛盾；§4 hash 口径注释修正（全文 1 + 部分 7）；伪代码补 error entry 无 hashes 约定；新增 §11 检查点 2（盲区实测）与 5（before_provider_request 升级路径）。
 - v4：三轮终审通过（0 must-fix），采纳 1 条 suggestion：schema 说明补「hashes 在 baseline 与 normal entry 均存在」。
+- v5：实施验收后更新——§11 检查点全部落为实测结论（链盲区实证存在且为每 turn 级；spFull 升级为 payload 口径并兼容 developer role；AGENTS.md 启动快照语义；CLI reason 恒 startup）。验收场景 A-E + D2 + G 实测通过（F 留收集期首日 GUI 检查）。
