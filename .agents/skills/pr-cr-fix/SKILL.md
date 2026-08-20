@@ -18,11 +18,12 @@ description: >-
 - xyz-agent git worktree 中
 - 当前分支相对 main 有 commits（`git log main..HEAD` 非空）
 - 有 GitHub CLI（`gh`）认证
+- 全局安装 fallow（`npm i -g fallow`，实测 2.88.2）——阶段 1.5 度量门禁依赖
 
 ## 调用约定
 
 - `cwd`：git 根目录绝对路径（`git rev-parse --show-toplevel`）
-- 阶段 1 / 3a 派 subagent 执行；阶段 2 由主 agent 直接派 workflow（不经 subagent 封装）
+- 阶段 1 / 3a 派 subagent 执行；阶段 1.5（确定性度量脚本）主 agent 直接跑；阶段 2 由主 agent 直接派 workflow（不经 subagent 封装）
 - 主 agent 全程只做编排 + Gate 校验 + push 前用户授权确认
 
 ---
@@ -85,7 +86,50 @@ python3 .agents/skills/pr-cr-fix/scripts/validate-extensions-yaml.py <extension-
 
 ---
 
+## 阶段 1.5：度量快照 + Gate-1.5（硬门禁）[MANDATORY]
+
+确定性代码度量（圈复杂度 / 循环依赖 / 重复 / 死代码），机器计算、脚本判定，不经 LLM。**未过 Gate-1.5 禁止进入阶段 2。**
+
+### 执行（主 agent 直接跑）
+
+```bash
+python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main
+```
+
+- 产出 `.review/metrics.json`（fail/warn 清单 + 高 CRAP 靶子清单）；exit 1 = fail，exit 2 = 工具错误（中止）
+- 阈值 SSOT = 仓库根 `.fallowrc.json` 的 `health` 节；脚本读取该文件，禁止在命令行另传阈值
+- fallow 缺失时脚本 exit 2 并给出安装命令
+
+### Gate-1.5 判定
+
+| verdict | 含义 | 动作 |
+|---------|------|------|
+| `fail` | 有 fail 级 introduced 问题 | **打回**：派 worker 修复 → 重跑本脚本，上限 3 轮；超限停手上报用户 |
+| `warn` | 仅 warn 级 | 放行；`.review/metrics.json` 的 warn + targets 清单由阶段 2 对应 agent 消费 |
+| `pass` | 干净 | 放行 |
+
+### 门禁项分级
+
+| 级别 | 项 | 阈值 |
+|------|----|------|
+| **fail** | introduced 函数圈复杂度 | > 15 |
+| **fail** | 新增循环依赖 | 全部 |
+| **fail** | 新增无法解析的 import | 全部 |
+| **warn** | introduced 认知复杂度 > 15 / CRAP ≥ 30 | 注入阶段 2 review |
+| **warn** | introduced 死代码（未用文件/导出/类型/依赖等） | 注入阶段 2 review |
+| **warn** | 新增重复块 | 注入阶段 2 review |
+
+### 设计理由（为什么不直接用 fallow verdict 门禁）
+
+fallow audit 的 complexity findings 超阈值即 fail、无 warn 档；且无 `--coverage` 数据时覆盖率是静态估算（无测试路径的文件按 cov≈0，CC≥5 即 CRAP≥30），认知复杂度/CRAP 放 fail 档会被估算噪声误杀。metrics-gate.py 用同一份 audit JSON 做显式双轨判定：结构性硬指标（CC / cycle / unresolved import）fail；覆盖率相关指标（认知 / CRAP / 死代码 / 重复）warn 给阶段 2 消费。接入真实覆盖率（vitest coverage-final.json + `fallow audit --coverage`）后 CRAP 可升级为 fail 档。
+
+---
+
 ## 阶段 2：review + fix
+
+### 阶段 1.5 产物消费约定
+
+`.review/metrics.json`（阶段 1.5 必然产出）由以下两个维度按各自 agent 定义的输入约定消费：review-test-coverage 消费 `targets.high_crap` 靶子清单（优先核对这些函数的测试覆盖）；review-monorepo-impact 消费 `fail`/`warn` 中的循环依赖条目（不再手工 grep import 链）。其余 6 维不变。
 
 ### [MANDATORY] 双路径选择
 
@@ -208,10 +252,10 @@ Agent 定义位于本 skill 目录 `agents/review-<维度>.md`（不全局暴露
 - [ ] 错误路径必须重置 `isGenerating` / `streamingMessage` 等加载状态
 - [ ] `finally` 块或显式 error handler 中清理状态；无可能的无限加载态
 
-**6. 代码质量**
-- [ ] 无死代码（unused imports / variables）、无 console.log 残留
-- [ ] 无硬编码 magic numbers / strings
-- [ ] 可先跑 fallow 静态分析取基线：`fallow scan $(git diff main...HEAD --name-only)`，关注复杂度热点（函数 > 80 行 / 圈复杂度 > 15）、重复代码、未使用导出、循环依赖
+**6. 代码质量（确定性度量）**
+- [ ] 跑阶段 1.5 同一门禁：`python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main`，fail 项必须修复
+- [ ] `.review/metrics.json` 的 warn 项人工过一遍：认知复杂度 / CRAP 热点、重复块、死代码
+- [ ] 无 console.log 残留、无硬编码 magic numbers / strings
 
 **7. Electron IPC 安全**
 - [ ] 通过 preload 桥接，渲染进程不直接 `require('electron')`
@@ -320,7 +364,7 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 
 ## 关键约束 [MANDATORY]
 
-1. **阶段顺序不可调换**：1 (PR) → 2 (review+fix) → 3 (pre-merge + push)
+1. **阶段顺序不可调换**：1 (PR) → 1.5 (度量门禁) → 2 (review+fix) → 3 (pre-merge + push)；Gate-1.5 fail 时禁止进入阶段 2
 2. **主 agent 不跑 review/fix 实现命令**：review 委托 workflow（路径 1）或 subagent（路径 2）。PR 生命周期操作（commit / push / pr-status.sh / pr-pre-merge.sh）主 agent 可直接跑
 3. **push 必须用户授权**：任何 push 操作前必须告知用户结果并获得确认
 4. **force-push 决策传递**：阶段 1 `force_push=true` → 阶段 3b 必须用 `--force-with-lease`；裸 `--force` 禁止
@@ -343,6 +387,7 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 | 失败 | 动作 |
 |------|------|
 | Gate-1 拿不到 URL | 重试阶段 1；gh 认证问题先 `gh auth login` |
+| Gate-1.5 fail 超 3 轮 | 上报用户决策（不自动继续，不进阶段 2） |
 | Gate-2 `terminated=needs-redesign` | 结构性问题，上报用户决策（不自动重试） |
 | Gate-2 `terminated=stuck` | 看 aggregated.md 判断是 reviewer 误报还是真问题；误报可人工 ack 后进阶段 3，真问题上报用户 |
 | Gate-3a pre-merge FAIL | 按 `failed_step` 重派 worker 修复后重跑 |
@@ -364,6 +409,7 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 │   ├── review-data-governance.md
 │   └── review-aggregator.md
 └── scripts/              # 校验脚本
+    ├── metrics-gate.py   # 阶段 1.5 度量门禁（fallow audit 包装 + 显式双轨判定）
     ├── validate-skill-yaml.py
     └── validate-extensions-yaml.py
 ```

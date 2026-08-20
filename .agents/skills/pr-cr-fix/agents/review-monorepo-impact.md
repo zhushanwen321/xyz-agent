@@ -14,6 +14,8 @@ name: review-monorepo-impact
 task prompt 中必须包含：
 - `output`：审查报告输出路径（绝对路径）
 
+阶段 1.5 产物 `<repo>/.review/metrics.json` 存在时必须消费其中的循环依赖条目（见步骤 3）。
+
 ## 执行步骤
 
 1. **获取变更范围**：`git diff main...HEAD --stat` + `git diff main...HEAD`。
@@ -21,10 +23,10 @@ task prompt 中必须包含：
    - 变更的 `package.json` 中 `workspace:*` 引用是否正确（被引用的包必须在本 workspace 内）
    - 已知依赖链：`quota-providers` ← `model-switch`/`statusline`；`structured-output` ← `subagent-workflow` ← `ask-user`（这些在 `.changeset/config.json` 的 `linked` 组中，版本需同步）
    - 新增的包间依赖是否破坏了 changeset `linked` 组的版本同步约束
-3. **循环依赖检查**：
-   - 检查变更是否引入新的循环引用（import 链）
-   - 使用 `grep -r "from.*@" src/` 追踪 import 链
-   - extensions 之间的依赖必须单向（如 subagent-workflow → structured-output，不能反向）
+3. **循环依赖检查**（消费阶段 1.5 度量报告，禁止手工 `grep` 追 import 链——确定性计算归机器）：
+   - 读 `<repo>/.review/metrics.json` 的 `fail`/`warn` 中 `circular-dependency` 条目；新增 cycle 在 Gate-1.5 已 fail 打回，若仍流到本维度说明是门禁后新增或脚本未覆盖场景 → MUST_FIX
+   - inherited cycle（存量）：变更若加重纠缠（如向既有 cycle 中加新模块、深化相互依赖）→ SUGGESTION
+   - extensions 之间的依赖必须单向（如 subagent-workflow → structured-output，不能反向）——cycle 的架构方向合理性判断是本维度的职责，cycle 的存在性检测不是
 4. **公共 API 变更**：
    - 变更的 export 签名是否破坏下游包
    - 类型导出是否向后兼容（新增字段可选？类型收窄？）
