@@ -86,7 +86,7 @@ function makeRaceMocks() {
 describe('MessageDispatcher —— W1 abortBash/sendBash 竞态守卫', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('W1a: abortBash 在 sendBash await 期间抢先收口后，pi resolve 到达时 sendBash 不再广播真实 bashResult（无重复终态）', async () => {
+  it('W1a: abortBash 在 sendBash await 期间抢先收口后，pi resolve 到达时 sendBash 仍发布真实 bashResult（D1 closure——与 pi 落盘一致，例外①消灭）', async () => {
     const { dispatcher, broadcasts, bashResolve, abortBashFn } = makeRaceMocks()
 
     // sendBash 启动，await client.bash() 挂起
@@ -97,10 +97,9 @@ describe('MessageDispatcher —— W1 abortBash/sendBash 竞态守卫', () => {
     expect(broadcasts.some((m) => m.type === 'message.bashStart')).toBe(true)
     expect(abortBashFn).not.toHaveBeenCalled()
 
-    // 用户调 abortBash：抢先广播 cancelled bashResult 终态
+    // 用户调 abortBash：广播哨兵帧 cancelled bashResult（command:''，bash-effects 只清态不产 entry）
     await dispatcher.abortBash('s1')
     expect(abortBashFn).toHaveBeenCalledTimes(1)
-    // abortBash 广播了 cancelled bashResult
     const cancelledResults = broadcasts.filter(
       (m) => m.type === 'message.bashResult' && (m as BashResultMsg).payload.cancelled === true,
     )
@@ -110,18 +109,21 @@ describe('MessageDispatcher —— W1 abortBash/sendBash 竞态守卫', () => {
     bashResolve({ output: 'real output', exitCode: 0, cancelled: false, truncated: false })
     const result = await sendPromise
 
-    // 关键断言：sendBash 检测到被 abort 抢先收口，不再广播带真实 output 的 bashResult。
-    // bashResult 总数应仍为 1（只有 abortBash 广播的 cancelled 那条），无第二条带 real output 的。
+    // 关键断言（D1 closure 修订，conversation-turn-attribution-closure D1）：旧逻辑静默跳过
+    // 导致 pi 文件有 entry 而 live 无（登记例外①）；新逻辑发布真实数据——两条帧职责正交
+    // （哨兵只清态、真实帧产 entry，均幂等），双终态担忧不成立。bashResult 总数 = 2。
     const allResults = findBashResults(broadcasts)
-    expect(allResults).toHaveLength(1)
+    expect(allResults).toHaveLength(2)
+    // 第一条 = abortBash 哨兵（cancelled:true）
     expect(allResults[0]!.payload.cancelled).toBe(true)
-    expect(allResults.some((r) => r.payload.output === 'real output')).toBe(false)
+    // 第二条 = sendBash 发布的真实数据（token 已旋转仍发布）
+    expect(allResults[1]!.payload).toMatchObject({ output: 'real output', cancelled: false })
 
     // 不广播 message.error（pi 是正常 resolve，无错误）
     expect(broadcasts.some((m) => m.type === 'message.error')).toBe(false)
 
-    // sendBash 返回 blocked（静默跳过）
-    expect(result).toEqual({ blocked: true })
+    // sendBash 正常完成（发布路径走完）
+    expect(result).toEqual({ blocked: false })
   })
 
   it('W1b: abortBash 抢先收口后，client.bash reject 到达时 sendBash 不广播 message.error（避免双重报错）', async () => {

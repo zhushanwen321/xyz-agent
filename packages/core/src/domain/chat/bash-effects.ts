@@ -37,10 +37,13 @@ type Payload = Record<string, unknown>
 
 // ── executingBash：per-session ephemeral 执行态（W1 fix-chat-flow-order）──────────
 //
-// ADR-0049 Map 分区范式：per-session 槽，跨 session 不串扰。归属说明：设计文档 D2 将本态
-// 记为「chat store 内 Map 分区槽」，因 store.ts 归并行 wave W2 领地（appendUser entry 化），
-// 本文件（bash 状态唯一 owner 文件）以模块级分区 Map 承载——写方仍严格成对（见下），
-// W2 落地后可随 store 分区槽统一迁移。不进 messages、不持久化（live 瞬时态）。
+// ADR-0049 Map 分区范式：per-session 槽，跨 session 不串扰。归属定案（D3 closure，
+// conversation-turn-attribution-closure）：形态保留 bash-effects 模块级分区 Map——store 是
+// factory 模式（createChatStore，renderer 经 pinia 包装），渲染层 getExecutingBash 是模块级
+// import（MessageStream computed 直调），迁入 store 实例会迫使读方改走 pinia 解包（超出
+// 「读方签名不变」约束）；架构目标以「cleanup 编排可达」达成——store.disposeSession 同点
+// 调 clearExecutingBash（session 删除无残留，与 messages/hydrateAnchors 分区同编排清理）。
+// 不进 messages、不持久化（live 瞬时态）。
 // 唯一写方（成对保证）：bashStartEffect 置 / bashResultEffect 清 / markBashError 清
 // （abortBash RPC 失败的前端兜底错误路径）。
 
@@ -52,8 +55,9 @@ export interface ExecutingBash {
 
 /**
  * per-session 执行态分区（shallowRef 整体替换保响应式；读方 = 渲染层/测试）。
- * taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，登记草稿）：bash 执行中瞬时反馈态
- * （非任何数据源的缓存投影——唯一事实来源就是 bashStart/bashResult 帧本身，终态即清、不持久化）。
+ * taste:allow-no-data-owner W24-EX-B（已落定非草稿）：bash 执行中瞬时反馈态（非任何数据源
+ * 的缓存投影——唯一事实来源就是 bashStart/bashResult 帧本身，终态即清、不持久化）；
+ * 生命周期挂接 store.disposeSession 统一 cleanup 编排（D3 closure，见文件头注释）。
  */
 const executingBashMap = shallowRef(new Map<string, ExecutingBash>())
 
@@ -66,7 +70,8 @@ function setExecutingBash(sessionId: string, state: ExecutingBash): void {
   executingBashMap.value = new Map(executingBashMap.value).set(sessionId, state)
 }
 
-function clearExecutingBash(sessionId: string): void {
+/** 清指定 session 执行态（幂等）。写方三腿 + store.disposeSession cleanup 编排共四处调用。 */
+export function clearExecutingBash(sessionId: string): void {
   if (!executingBashMap.value.has(sessionId)) return
   const next = new Map(executingBashMap.value)
   next.delete(sessionId)
@@ -118,9 +123,14 @@ export const bashResultEffect: MessageEffectHandler = (ctx: MessageEffectContext
   const command = readString(payload, 'command') ?? ''
   const cancelled = readBool(payload, 'cancelled')
   // abortBash 合成哨兵帧（command:'' + cancelled:true，dispatcher.abortBash 兜底广播，
-  // 见 message-dispatcher abortBash）：无文件对应物（pi 侧被 abort 的真实 cancelled 记录
-  // 因 sendBash token 守卫的防双终态语义被丢弃，live/file 分歧已登记设计 §3.3 D2 例外、
-  // 等价性归 W6），只清 executingBash，不产 entry（否则渲染空命令 cancelled 卡片）。
+  // 见 message-dispatcher abortBash）：无文件对应物，只清 executingBash，不产 entry。
+  // [D1 closure] 正常 abort 路径 live/file 已一致：sendBash await 返回的真实 cancelled 结果
+  // 照常发布并 entry 化（与 pi recordBashResult 落盘同位同值，原「live/file 分歧」例外①
+  // 消灭）。command === '' 独占哨兵形态是结构性不变式（dispatcher sendBash 入口空命令
+  // 早退守卫保证，r3 审查补）——真实帧 command 恒非空，两类帧永不混淆。
+  // 收窄例外（仅剩场景）：sendBash catch 分支（transport 抛错，无真实数据可发布）跳过
+  // 发布，live 无 cancelled entry 而 pi 进程独立落盘有——触发条件「abort 且 transport
+  // 抛错」，登记 data-source-registry #7。
   if (command === '' && cancelled) {
     clearExecutingBash(sid)
     return

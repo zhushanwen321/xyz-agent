@@ -297,6 +297,15 @@ export class MessageDispatcher {
       throw e
     }
 
+    // ── 哨兵不变式守卫（D1 closure r3 审查补）──
+    // bash-effects 哨兵帧判定 command === '' && cancelled（识别 abortBash 兜底广播、只清态不产
+    // entry）。真实帧 command 恒非空是「约定」——空命令在此早退使其升级为结构性不变式：入口
+    // 不可能发出 command === '' 的 bash，两类帧永不混淆。
+    if (command === '') {
+      console.warn(`[message-dispatcher] sendBash: empty command rejected (sentinel invariant), sid=${sessionId}`)
+      return { blocked: true }
+    }
+
     // ── busy 预检（W2: bash↔streaming 放宽并发，对齐 pi-tui）──
     // 语义变化（w2）：bash 不再与 AI streaming（isGenerating）互斥，允许 streaming 期间执行 bash。
     // 原因（spec C1）：pi 把 bash RPC 排入 _pendingBashMessages，待当前 turn 结束后按 JSONL
@@ -332,13 +341,16 @@ export class MessageDispatcher {
     // ── 调 pi bash + 广播终态 ──
     try {
       const result = await client.bash(command, excludeFromContext)
-      // [W1] 竞态守卫：await 期间若 abortBash 被调用，它已置 isBashRunning=false 并广播
-      // cancelled bashResult 终态（且旋转了 bashRunToken）。此处若再广播带真实 output 的
-      // bashResult 会导致前端收到两条终态（先 cancelled 后真实结果），渲染错乱。
-      // 检测 token 变化即说明被 abort 抢先收口，静默跳过本次广播。
+      // [W1 → D1 closure 修订] abort 抢收口守卫：await 期间若 abortBash 被调用，它已广播
+      // 哨兵帧（command:''，bash-effects 只清 executingBash 不产 entry）并旋转 token。旧逻辑
+      // 在此静默丢弃真实结果——但 pi 侧 recordBashResult 对 cancelled 无分支照常落盘
+      // （bash-executor abort 返回 cancelled 结果而非 throw），丢弃导致 live 无记录、重开多出
+      // 一条（登记例外①）。哨兵帧与真实帧职责正交（一个只清态、一个产 entry，均幂等），
+      // 双终态担忧不成立——故此处不再跳过，发布真实数据（含 streaming 双分支延迟，与 pi
+      // 落盘位置一致）。例外收窄登记：仅 catch 分支（transport 抛错，无真实数据可发布）
+      // 维持哨兵不产 entry。
       if (activeSession && myToken !== undefined && activeSession.bashRunToken !== myToken) {
-        console.warn(`[message-dispatcher] sendBash: aborted during await, skip duplicate terminal. sid=${sessionId}`)
-        return { blocked: true }
+        console.warn(`[message-dispatcher] sendBash: aborted during await, publishing real cancelled terminal. sid=${sessionId}`)
       }
       // 终态数据在 RPC 完成时刻构造（timestamp = pi recordBashResult 落盘时刻，非 flush 时刻，
       // 保证与文件 entry timestamp 一致）。emit 只传单个 payload 对象。

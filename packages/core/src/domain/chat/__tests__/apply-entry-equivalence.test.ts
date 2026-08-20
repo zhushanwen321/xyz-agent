@@ -145,7 +145,7 @@ describe('applyEntry reducer 确定性 —— 同序列两次喂入 state 全等
     expect(state.orphanToolResults).toHaveLength(1)
   })
 
-  it('全类型混合序列 + 平行 entryIds（display:false custom 不丢，规则 7.5）', () => {
+  it('全类型混合序列 + 平行 entryIds（display:false custom 不丢，关键规则 9）', () => {
     expectDeterministic(
       [
         { role: 'user', content: [{ type: 'text', text: '问题' }], timestamp: 100 },
@@ -276,13 +276,62 @@ describe('live ≡ reload 构造性等价（W6 全类型）', () => {
     expect(liveTurns[2]!.user?.content).toEqual([{ type: 'text', text: '继续' }])
   })
 
-  it('E3: abort 例外（W1 登记）——pi 文件含 cancelled bash 记录、live 因 token 守卫丢弃：差异恰为该 entry，分组不因它变化', () => {
-    // 语义链（dispatcher abortBash/sendBash token 守卫 + bash-effects 哨兵帧分支）：
-    // 用户 abort bash → dispatcher 兑底广播哨兵帧 bashResult{command:'', cancelled:true}
-    // → bashResultEffect 只清 executingBash 不产 entry；sendBash await 返回后 token 已被
-    // 旋转 → 静默跳过真实结果广播（防双终态）。pi 侧 abort 非 throw 仍 recordBashResult
-    // 落盘（bash-executor abort 返回 cancelled 结果）→ 重开侧多一条 cancelled bash 记录。
-    // live 侧：无 bash entry（哨兵帧不产 entry）
+  it('E3: abort 等价（D1 closure——sendBash 解除丢弃后真实 cancelled 结果照常发布 entry 化，两侧同位同值）', () => {
+    // 语义链（dispatcher D1 closure 修订 + bash-effects 哨兵帧分支）：
+    // 用户 abort bash → abortBash 广播哨兵帧 bashResult{command:'', cancelled:true}
+    // → bashResultEffect 只清 executingBash 不产 entry；sendBash await 返回后 token 虽被
+    // 旋转但**不再跳过**——真实 cancelled 结果（bash-executor abort 返回 cancelled 结果
+    // 而非 throw）经双分支发布 → bashResultEffect entry 化。pi 侧 recordBashResult 同数据
+    // 落盘 → live/replay 同位（run 级联末）同值，原登记例外①（live 无 / 文件有）消灭。
+    const cancelledBashBody = { role: 'bashExecution' as const, command: 'sleep 300', output: '部分输出\n', exitCode: null, cancelled: true, truncated: false, timestamp: 3000 }
+    // live 侧：真实 cancelled 帧 entry 化（bash- 前缀客户端 id，bashResultEffect 构造形态）
+    const liveState = replayEntries([
+      { type: 'message', id: 'u-1', parentId: null, timestamp: ts(1000), message: { role: 'user', content: [{ type: 'text', text: '跑个长命令' }], timestamp: 1000 } },
+      { type: 'message', id: undefined, parentId: null, timestamp: ts(2000), message: { role: 'assistant', content: [{ type: 'text', text: '执行中' }], timestamp: 2000 } },
+      { type: 'message', id: 'bash-00000003-0000-4000-8000-000000000003', parentId: null, timestamp: ts(3000), message: cancelledBashBody },
+      { type: 'message', id: 'u-2', parentId: null, timestamp: ts(5000), message: { role: 'user', content: [{ type: 'text', text: '换个任务' }], timestamp: 5000 } },
+      { type: 'message', id: undefined, parentId: null, timestamp: ts(6000), message: { role: 'assistant', content: [{ type: 'text', text: '好的' }], timestamp: 6000 } },
+    ])
+    // replay 侧：pi 文件 cancelled bash entry（uuidv7 id，落盘位置 = run 级联末）
+    const replayState = replayEntries([
+      { type: 'message', id: piId(1), parentId: null, timestamp: ts(1000), message: { role: 'user', content: [{ type: 'text', text: '跑个长命令' }], timestamp: 1000 } },
+      { type: 'message', id: piId(2), parentId: piId(1), timestamp: ts(2000), message: { role: 'assistant', content: [{ type: 'text', text: '执行中' }], timestamp: 2000 } },
+      { type: 'message', id: piId(3), parentId: piId(2), timestamp: ts(3000), message: cancelledBashBody },
+      { type: 'message', id: piId(4), parentId: piId(3), timestamp: ts(5000), message: { role: 'user', content: [{ type: 'text', text: '换个任务' }], timestamp: 5000 } },
+      { type: 'message', id: piId(5), parentId: piId(4), timestamp: ts(6000), message: { role: 'assistant', content: [{ type: 'text', text: '好的' }], timestamp: 6000 } },
+    ])
+
+    // ① 数量一致 + 归一 deep-equal（无任何剔除——等价性恢复到全量）
+    expect(replayState.messages).toHaveLength(liveState.messages.length)
+    expect(normalizeIds(liveState)).toEqual(normalizeIds(replayState))
+
+    // ② 分组骨架一致：cancelled bash 是 turn 内 inline notice（W3 规则），两侧 turn 数 /
+    //    user / assistants / notices 全等（含 noticeCommands——不再需要剥离分歧点）
+    const skeleton = (state: ChatViewState) =>
+      toRenderItems(normalizeIds(state).messages)
+        .map((item) =>
+          item.kind === 'turn'
+            ? {
+                kind: 'turn' as const,
+                user: item.turn.user?.content ?? null,
+                assistants: item.turn.assistants.map((a) => a.content),
+                trigger: item.turn.trigger ?? null,
+                noticeCommands: (item.turn.notices ?? []).map((n) => n.bashExecution?.command ?? n.content),
+              }
+            : { kind: item.kind, content: item.message.content },
+        )
+    expect(skeleton(liveState)).toEqual(skeleton(replayState))
+    expect(skeleton(liveState)).toHaveLength(2) // 两个 user 锚 turn
+    expect(skeleton(liveState)[0]).toMatchObject({ kind: 'turn', noticeCommands: ['sleep 300'] }) // cancelled 归首 turn notices
+  })
+
+  it('E3b: transport 抛错例外锁定（收窄后唯一残余分歧——abort 且 await 抛错时 live 无 cancelled entry、pi 独立落盘有）', () => {
+    // 语义链（收窄例外，dispatcher catch 分支维持 skip）：abort 后 sendBash await **抛错**
+    // （transport 断 / pi 死——与正常 resolve 的 cancelled result 不同路径）→ 无真实数据可
+    // 发布，catch 守卫跳过（哨兵帧已清态）。pi 进程若独立存活仍 recordBashResult 落盘 →
+    // 重开侧多一条 cancelled bash 记录。触发条件「abort 且 transport 抛错」——比原例外①
+    // 「任何 abort」窄，登记 data-source-registry #7。
+    // live 侧：无 bash entry（哨兵帧不产 entry、catch 无数据）
     const liveState = replayEntries([
       { type: 'message', id: 'u-1', parentId: null, timestamp: ts(1000), message: { role: 'user', content: [{ type: 'text', text: '跑个长命令' }], timestamp: 1000 } },
       { type: 'message', id: undefined, parentId: null, timestamp: ts(2000), message: { role: 'assistant', content: [{ type: 'text', text: '执行中' }], timestamp: 2000 } },
@@ -362,6 +411,46 @@ describe('live ≡ reload 构造性等价（W6 全类型）', () => {
     })
     // 分组语义：compaction 作 boundary systemNotice 独立行（关闭当前 turn，W3 规则 5）
     const items = toRenderItems(normalizeIds(replayEntries([liveCompaction])).messages)
+    expect(items).toHaveLength(1)
+    expect(items[0]!.kind).toBe('systemNotice')
+  })
+
+  it('E4b: compaction summary-less 处置（D2 closure——interpreter 恒发帧后，无摘要 compaction 两侧同产 fallback 行）', () => {
+    // 语义链（conversation-turn-attribution-closure D2）：pi appendCompaction 无条件落盘，
+    // summary 缺失（undefined）的成功 compaction——interpreter 恒发帧（payload.summary 缺省
+    // 透传）→ registry readCompactionSummary 不设 summary 字段 → 构造的 entry 无 summary →
+    // reducer `summary ?? '上下文已压缩'` fallback。replay 侧文件 entry 同样无 summary →
+    // 同一 fallback。原登记例外④（live 无 / reload 有）消灭。
+    // live 侧：帧构造 entry（cmp- 前缀客户端 id，无 summary 字段）
+    const liveCompaction: PiEntry = {
+      type: 'compaction',
+      id: 'cmp-00000007-0000-4000-8000-000000000007',
+      parentId: null,
+      timestamp: ts(9000),
+      tokensBefore: 99999,
+    }
+    // replay 侧：pi 持久化 compaction entry（uuidv7 id，同样无 summary 字段）
+    const replayCompaction: PiEntry = {
+      type: 'compaction',
+      id: piId(9),
+      parentId: null,
+      timestamp: ts(9000),
+      tokensBefore: 99999,
+    }
+    const liveState = normalizeIds(replayEntries([liveCompaction]))
+    const replayState = normalizeIds(replayEntries([replayCompaction]))
+    // 归一 deep-equal（含 fallback 投影两侧一致）
+    expect(liveState).toEqual(replayState)
+    // 用户可见行为：两侧都产出 fallback 文案行（原 live 无消息的差异消灭）
+    expect(liveState.messages).toHaveLength(1)
+    expect(liveState.messages[0]).toMatchObject({
+      role: 'system',
+      content: '上下文已压缩',
+      status: 'complete',
+      compactionSummary: { summary: undefined, tokensBefore: 99999 },
+    })
+    // 分组语义：同 E4——boundary systemNotice 独立行
+    const items = toRenderItems(liveState.messages)
     expect(items).toHaveLength(1)
     expect(items[0]!.kind).toBe('systemNotice')
   })
