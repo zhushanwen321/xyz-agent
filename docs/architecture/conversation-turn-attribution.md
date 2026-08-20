@@ -118,7 +118,7 @@ W20/W21 解决了「**内容**从哪来」（entry reducer 单源），没解决
 | **B 边界规则集 + 全类型 entry 化 + 锚定切分**（本设计） | 「什么开 turn」成为分组 SSOT 内的一张显式规则表；live 全类型过 reducer 使 live≡reload 构造性成立；锚定切分消灭 id 同一性判断；**不新增任何物化派生字段**（多源红线合规） | 中（分组重写 + dispatcher/registry 三处改造 + Turn 模型扩展） | bash 延迟入流的 UX 取舍（D2 论证）；分组重写需等价性测试护航 | ✅ |
 | **C Message 物化 turnId 字段**：写时定 turn、读时纯分桶 | 表面最强（分桶 O(1)），但 pi entry 无 turn 概念，turnId 只能由 xyz 推导后**物化缓存**——replay 时仍需同一推导重放，物化值即第二真相，**恰好违反刚以 ADR-0062/治理线 D1-D8 清理掉的「派生数据不落第二份」原则**；且 turnId 写入点分散到所有消息创建处（每处都是潜在第二写方） | 高 | 多源真相回归——本项目 2026-08 刚用 20 个 wave 清理完的病灶 | ❌（被否关键论据：若用它，§2.3 机制 5 的「id 空间多源」会以「turnId 多写方」形态复活） |
 
-**被否方案推演**（准则 4）：若用 A，机制 A 的修复（前插伪 user 行）在新 session 的重开路径也要伪造同一条伪 user——伪消息进入持久化边界，「渲染过滤不丢消息」（AGENTS 规则 7.5）语义被污染；若用 C，三个月后排查「这条消息 turnId 为什么错了」会面对 N 个写点——正是本仓 `sessionMetaCache` 影子状态（登记表 #1，W9 删除）的翻版。
+**被否方案推演**（准则 4）：若用 A，机制 A 的修复（前插伪 user 行）在新 session 的重开路径也要伪造同一条伪 user——伪消息进入持久化边界，「渲染过滤不丢消息」（AGENTS 关键规则 9，写作时编号 7.5）语义被污染；若用 C，三个月后排查「这条消息 turnId 为什么错了」会面对 N 个写点——正是本仓 `sessionMetaCache` 影子状态（登记表 #1，W9 删除）的翻版。
 
 ### 3.3 关键决策
 
@@ -255,5 +255,5 @@ Final gate：V1/V2/V4 在打包链 dev app 端到端复跑一次（builtin 扩�
 
 - **compactionSummary 判定：entry 化（消灭双路径）**。帧数据源 = runtime event-interpreter 从 pi `compaction_end` 事件 result 提取的 `{ summary, tokensBefore, timestamp }`，与 pi 落盘 compaction entry（`sessionManager.appendCompaction`，手动 :1441 / auto :1670 两路都在 emit 前以同一批局部变量先落盘，0.84.1 dist 实测）**同源同值**，帧字段足以构造 `PiCompactionEntry` → registry handler 改直插为构造 entry → `applyEntryFrame`（user/custom/bash 同款范式）。fallback 文案由英文占位收敛为 reducer 中文（live/reload 一致）。剩余窄差异登记 #7 例外④：interpreter 仅 summary 真值时发帧，summary 缺失的 compaction（成功路径罕见）live 无消息、重开有 fallback 行。
 - **等价性机器化（`apply-entry-equivalence.test.ts` W6 describe）**：E1 全类型归一 deep-equal（live 客户端 id 前缀 vs replay uuidv7）、E2 分组等价（toRenderItems 输出 deep-equal + turn 数/trigger/notices/边界行显式断言）、E3 abort 例外显式锁定（差异恰为 cancelled bash entry、分组不因它变化）、E4 compaction 处置（live 帧 entry ≡ replay entry）。
-- **登记表 #7 注记**：turn 归属语义落地（边界规则集纯派生，无物化 turnId）+ 四项例外登记（bash abort 分歧 / executingBash ephemeral 态 / stream_warn liveOnly / compaction 窄差异）。
-- **AGENTS.md 规则 9（历史编号 7.5）**：两通路落点更新为「共用同一 applyEntry reducer」，补全类型 entry 化 + 等价性测试守卫一句（全仓代码注释中「规则 7.5」历史编号引用未清理——语义指向不变，归后续统一编号时处理）。
+- **登记表 #7 注记**：turn 归属语义落地（边界规则集纯派生，无物化 turnId）+ 四项例外登记（bash abort 分歧 / executingBash ephemeral 态 / stream_warn liveOnly / compaction 窄差异）。**closure 收尾更新（2026-08-20）**：例外①④已消灭、②落定、新增收窄例外⑤，见登记表现行文案。
+- **AGENTS.md 规则 9（历史编号 7.5）**：两通路落点更新为「共用同一 applyEntry reducer」，补全类型 entry 化 + 等价性测试守卫一句（写作时全仓代码注释中「规则 7.5」历史编号引用未清理——**closure F3/D4 已清**：packages 源码区 26 处 + 活文档区 10 处（含本文档 2 处）归「关键规则 9」，历史记录区 as-written 保留，明细见 closure §6）。

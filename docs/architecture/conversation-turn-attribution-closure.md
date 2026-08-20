@@ -213,7 +213,7 @@ Final gate：V1 / V2 / V4 在打包链 dev app 端到端复跑一次（builtin �
 |------|------|------|
 | F1 | dispatcher sendBash：入口空命令早退守卫（哨兵不变式结构化）+ guard 命中分支改发布真实 cancelled 结果（注释重写，catch 分支维持 skip）；bash-effects 哨兵注释更新为收窄语义；E3 改判为 abort 等价（两侧 deep-equal）+ 新增 E3b transport 抛错例外锁定；runtime W1a 测试改判（2 条帧断言） | 例外①消灭 |
 | F2 | interpreter handleCompactionEnd 删 `if (r.summary)` 真值门（恒发帧，summary 缺省透传）；新增 TC2b（runtime）与 E4b（core）锁定 | 例外④消灭 |
-| F3 | executingBash cleanup 挂接（**实施期定案**：形态保留 bash-effects 模块级分区 Map——store 是 factory 模式，渲染层 `getExecutingBash` 模块级读签名不变，迁入 store 实例会迫使读方改走 pinia 解包超出「读方签名不变」约束；架构目标「cleanup 编排可达」以 store.disposeSession 同点调 `clearExecutingBash` 达成，taste 豁免 W24-EX-B 从草稿转落定）；「规则 7.5」→「关键规则 9」packages 源码区 26 处清理（0 残留；`.xyz-harness/` 与 `docs/adr/` 历史记录区另存 25 处按 as-written 保留，见实施审查 S-3）；登记表 #7 例外清单演进（①④消灭 / ②落定 / 新增收窄例外⑤） | 技术债清偿 |
+| F3 | executingBash cleanup 挂接（**实施期定案**：形态保留 bash-effects 模块级分区 Map——store 是 factory 模式，渲染层 `getExecutingBash` 模块级读签名不变，迁入 store 实例会迫使读方改走 pinia 解包超出「读方签名不变」约束；架构目标「cleanup 编排可达」以 store.disposeSession 同点调 `clearExecutingBash` 达成，taste 豁免 W24-EX-B 从草稿转落定）；「规则 7.5」→「关键规则 9」编号清理（r2 复审 MF-2 修正口径，**本仓 grep 实测分布**）：packages 源码区 26 处已清（0 残留）；**活文档区 10 处已清**（conversation-history-unified-converter 5 / conversation-renderer-model-unification 2 / extension-gui-protocol 1 / 主设计 2——后者含过时「未清理」表述改写为已清并回指本文）；**as-written 保留 19 处**（docs/adr 4 + .xyz-harness 6 = 历史决策记录；*.review.md 3 = 历史审查报告；closure 自身 5 = 对 L6 客体的自指性命名 + §6 处置记录引用，改写反而失真）；登记表 #7 例外清单演进（①④消灭 / ②落定 / 新增收窄例外⑤） | 技术债清偿 |
 
 **探针门 1（§3.5 ⛔）状态**：pi dist 侧依据为静态源码锚定（bash-executor.js:86-109 abort 返回 cancelled 不 throw）+ W1a mock 测试按此语义改判并通过；按门定义的本地 pi CLI 真机腿 + dev app 复跑（V8）归 F4 验收阶段执行。F4（真机验收 V1-V6 + V8-V10 + final gate）未执行——独立阶段，发现问题回投对应 wave。
 
@@ -222,6 +222,6 @@ Final gate：V1 / V2 / V4 在打包链 dev app 端到端复跑一次（builtin �
 - **MF-1（major，已修）**：空串 summary 分叉——原设计 §2.2 论证漏算 `readCompactionSummary` 的 truthiness 中转门，live 帧 `''` 被丢成 undefined 走 fallback 而 pi 落盘 `''` 保留空行。修复：readers 门改 `s !== undefined`（readBranchSummary 同型门一并修）+ readers 单测空串断言 + E4c 用例 + interpreter 注释与 §2.2 论证同步修正。
 - S-1（已修）：registry compactionSummary handler 例外④注释更新为销案表述。
 - S-2（已修）：空命令守卫上移至 ensureActive 之前（真入口，空命令不再拉起 pi 子进程）+ 注释显式声明「程序不变式守卫不广播用户可见错误」契约。
-- S-3（表述修正）：「全仓 0 残留」改为如实口径——packages 源码区 26 处已清（0 残留）；`.xyz-harness/`（4 文件）与 `docs/adr/`（2 文件）另存 25 处，属历史决策记录区，按 as-written 原则保留（ADR/harness spec 是写作时刻的记录，改写会篡改历史语境）。
+- S-3（表述修正，**r2 复审 MF-2 二次修正**）：r1 报告给出的残留分布（「.xyz-harness 4 文件 + docs/adr 2 文件共 25 处」）未经核实被 85133e338 原样固化——实际两区仅 10 处，另有 15 处在 docs/architecture 活文档区（其中 8 处是与 L6 同性质的活引用漂移，as-written 理由不成立）。二次修正：活文档 10 处（含主设计 2 处，其中过时「未清理」自登记改写为已清）一并清理；as-written 保留 19 处（历史决策记录 / 历史审查报告 / closure 自指性命名）如上分述。教训：subagent 报告的数字必须本仓 grep 复核后再落文档。
 - S-4（表述修正）：见上文探针门状态段（原文「已实测锚定」夸大为真机实测，实为 dist 静态 + mock）。
 - S-5（备案，pre-existing 非本次回归）：sendBash finally 无条件 `isBashRunning = false` 在 abort 后新旧 sendBash 交叠的窄窗口会破坏 bash↔bash 互斥并短路 abortBash 的 isBashRunning 守卫——旧代码同病且设计明言「finally 复位逻辑不变」，登记为已知问题（触发条件：abort 后立即发起下一次 `!` bash 的毫秒级窗口），归后续 bash 互斥专项处理，不在本收尾范围。

@@ -4,7 +4,7 @@
 
 ## §1 背景目标
 
-- **S（情境）**：xyz-agent 的对话历史有两条读取路径——**RPC 路径**（session 活跃有 pi 进程，`get_entries` → `rebuildHistoryFromEntries`）与**文件路径**（session 离线无进程，解析 session JSONL → `mapEntriesToPiMessages` → `convertPiHistory`）。项目规则 7.5 要求：进入对话流的状态（压缩记录、分支摘要、扩展通知等）必须「实时可见 + 重开可见」，且两条读取路径都要覆盖。
+- **S（情境）**：xyz-agent 的对话历史有两条读取路径——**RPC 路径**（session 活跃有 pi 进程，`get_entries` → `rebuildHistoryFromEntries`）与**文件路径**（session 离线无进程，解析 session JSONL → `mapEntriesToPiMessages` → `convertPiHistory`）。项目关键规则 9 要求：进入对话流的状态（压缩记录、分支摘要、扩展通知等）必须「实时可见 + 重开可见」，且两条读取路径都要覆盖。
 - **C（冲突）**：现状两路覆盖**倒挂**——RPC 路径（活跃 session 重开的主路径）丢弃 compaction / branch_summary / custom_message 三类记录，文件路径（离线重开）反而完整；auto-compaction（pi 自动压缩）实时与重开**双双隐形**；AGENTS.md 7.5 描述的 `get_messages → convertPiHistory` 路径已成死代码，文档过期。
 - **Q（问题）**：怎么让两条路径的覆盖**by construction**（结构上不可能分叉）一致，且 compaction 生命周期对用户全程可见？
 - **A（答案）**：把「entry 筛选 + 非 message entry → 伪消息映射」抽为共享单点 `mapSessionEntries`，两条路径只声明各自附加需求（RPC 要 clientUuidMap 回填 badge，文件要尾读窗口）；compaction 生命周期改由 pi 事件驱动（`compaction_start{reason}` 区分手动/自动，`compaction_end.result` 携带全部所需数据），dispatcher 只保留 RPC 触发与失败复位。本文展开这个答案。
@@ -33,7 +33,7 @@ session JSONL 文件 ──→ session-history.ts ─────┘
 ### Scope
 
 - **当前层 → 下一层**：runtime 历史链路技术方案 → 文件级实现拆分（§5）。
-- **In-scope**：共享 mapper 抽取与两路径接入；compaction 生命周期事件驱动（dispatcher 零广播、interpreter 唯一源）；compacting reason 文案区分手动/自动（store + MessageStream + i18n）；**display 历史链路归一（完成通知 customType 在历史链路也写 display:false，消除规则 7.5 实时/重开可见性分叉，方案 Z，MF-新2）**；直接相关的契约清理（死分支、entry_appended、AGENTS.md 7.5 文档同步）。
+- **In-scope**：共享 mapper 抽取与两路径接入；compaction 生命周期事件驱动（dispatcher 零广播、interpreter 唯一源）；compacting reason 文案区分手动/自动（store + MessageStream + i18n）；**display 历史链路归一（完成通知 customType 在历史链路也写 display:false，消除关键规则 9 实时/重开可见性分叉，方案 Z，MF-新2）**；直接相关的契约清理（死分支、entry_appended、AGENTS.md 7.5 文档同步）。
 - **Out-of-scope**：renderer 消息模型归一（`conversation-renderer-model-unification.md`，本次仅改 compacting 浮层文案；**display 历史链路归一除外**——MF-新2 把完成通知 customType 的 display 覆写前移到 runtime mapper + shared SSOT 常量，core/message-turns.ts 仅改引用源不过滤逻辑，非消息模型变更）；pi 侧行为（不改 pi）；WS 全量契约 SSOT 文档化（仅同步本文触及的消息注释）；`getHistoryTailFromFile` 的 20 turn 窗口策略（不改，场景测试约束 ≤20 turn）。
 
 ## §2 现状与问题分析
@@ -89,7 +89,7 @@ session JSONL（~/.xyz-agent/pi/agent/sessions/.../*.jsonl）
 
 - `convertPiHistory`（message-converter.ts:189-336）本身是两路**共用**的，role 分支（toolResult 合并 :196、compactionSummary :231、custom :253、branchSummary :283、bashExecution :308）完整。
 - 但 `entry-tree-builder.ts:92-116` 的第一遍扫描只放行 `type==='message'` + `custom/client-msg-id`，其余 entry 注释一句「跳过（未来扩展点）」。`entry-tree-builder` 的头注释自称「C1 修复核心：复用 convertPiHistory 做 message→Message 翻译（含 toolResult 合并 / compactionSummary / custom / branchSummary 系统消息处理）」——**修复修对了下游转换器，漏了上游输入端**：系统消息分支在 RPC 路径永远拿不到这三类输入。
-- 于是规则 7.5 的事故换了个路径复活：当年修的是「converter 不能过滤掉 compaction」，现在变成「RPC 路径的 entry 筛选根本没把 compaction 交给 converter」。
+- 于是关键规则 9 的事故换了个路径复活：当年修的是「converter 不能过滤掉 compaction」，现在变成「RPC 路径的 entry 筛选根本没把 compaction 交给 converter」。
 
 **auto-compaction 全链路隐形**是同一根因的另一面，叠加实时链路的事件吞噬：
 
@@ -183,7 +183,7 @@ function mapSessionEntries(entries: PiSessionEntry[]): MappedSessionEntries
 - `custom` → 不进 messages，进 `customDataEntries`（RPC 路径建 clientUuidMap 用）
 - 其余（label/session_info 等）→ 跳过
 
-**display 历史链路归一（方案 Z，MF-新2）**：完成通知类 custom_message（`subagent-bg-notify`/`workflow-result`）在实时链路被前端 `filterDisplayableMessages` 的 `HIDDEN_NOTIFY_CUSTOM_TYPES`（core/message-turns.ts:51）挡住不渲染——但历史链路（converter custom 分支 message-converter.ts:266 `display: cm.display`）直接透传 pi 持久化的 display 值，**无 HIDDEN_NOTIFY 兜底** → pi 持久化 display:true 时重开后这些通知冒出来显示，与实时链路可见性分叉（规则 7.5 实时/重开一致被破坏）。裁决：完成通知 customType 在 mapper 层强制覆写 `display:false`，与实时链路 registry 对称（实时靠 HIDDEN_NOTIFY 挡住，历史靠 display:false，两者都进 `filterDisplayableMessages` 的 `display===false` 分支统一挡住）。判别不分散在两处——**shared 层定义 SSOT 常量** `COMPLETE_NOTIFY_CUSTOM_TYPES = new Set(['subagent-bg-notify','workflow-result'])`（放 `packages/shared/src/message.ts`，从 core/message-turns.ts:51 提升），mapper 与 core/message-turns.ts 双向引用（消除分散判别，新增完成通知 customType 只改 shared 一处）。
+**display 历史链路归一（方案 Z，MF-新2）**：完成通知类 custom_message（`subagent-bg-notify`/`workflow-result`）在实时链路被前端 `filterDisplayableMessages` 的 `HIDDEN_NOTIFY_CUSTOM_TYPES`（core/message-turns.ts:51）挡住不渲染——但历史链路（converter custom 分支 message-converter.ts:266 `display: cm.display`）直接透传 pi 持久化的 display 值，**无 HIDDEN_NOTIFY 兜底** → pi 持久化 display:true 时重开后这些通知冒出来显示，与实时链路可见性分叉（关键规则 9 实时/重开一致被破坏）。裁决：完成通知 customType 在 mapper 层强制覆写 `display:false`，与实时链路 registry 对称（实时靠 HIDDEN_NOTIFY 挡住，历史靠 display:false，两者都进 `filterDisplayableMessages` 的 `display===false` 分支统一挡住）。判别不分散在两处——**shared 层定义 SSOT 常量** `COMPLETE_NOTIFY_CUSTOM_TYPES = new Set(['subagent-bg-notify','workflow-result'])`（放 `packages/shared/src/message.ts`，从 core/message-turns.ts:51 提升），mapper 与 core/message-turns.ts 双向引用（消除分散判别，新增完成通知 customType 只改 shared 一处）。
 
 #### 3.3.2 `__entryId` 注入删除，统一平行 entryIds
 
@@ -324,7 +324,7 @@ function mapSessionEntries(entries: PiSessionEntry[]): MappedSessionEntries
 | `packages/renderer/src/components/panel/MessageStream.vue` | compacting 浮层（:93）按 reason 切文案：手动 `t('panel.message.compressing')` / 自动 `t('panel.message.autoCompressing')`（MF4） |
 | i18n 文件（zh/en） | 新增 `panel.message.autoCompressing` key（MF4） |
 | `packages/core/src/domain/chat/useChat.ts` | compacting handler（:186）传 reason 给 setCompacting；compacted handler（:190）注释更新「错误反馈归 interpreter」；**compact() catch 删 toast（:506）**——错误统一归 interpreter（compaction_end{errorMessage}），transport 级失败走 chatApi 通用错误处理（非 compact 专属 toast，MF-新1） |
-| `AGENTS.md` 规则 7.5 | RPC 路径描述同步为 get_entries → mapper → convertPiHistory |
+| `AGENTS.md` 关键规则 9 | RPC 路径描述同步为 get_entries → mapper → convertPiHistory |
 | 测试 | mapper 单测新增；entry-tree-builder/session-history/dispatcher/interpreter 相关用例同步 |
 
 ### 待验证检查点
