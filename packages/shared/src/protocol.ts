@@ -1499,8 +1499,10 @@ export function isSessionSummary(value: unknown): value is SessionSummary {
 /**
  * session 级 view-ready 快照 DTO（W13 data-source-governance P2.1，D7 原则）。
  *
- * 单 session 的 owner 权威投影：runtime 侧 W12 起 5 个 state 话题（state_changed/queue_update/
- * commands/context/subagents-类）publish 均以实例快照为数据源，本 DTO 是这些 payload 的
+ * 单 session 的 owner 权威投影：runtime 侧 state 话题（state_changed/queue_update/
+ * commands/context/subagents-类，W12 起）publish 以 owner 数据源为基准（ReplicatedState
+ * 实例快照，或事件帧投影——如 queue_update 的 pendingMessageCount，见 message.queue_update
+ * 注释，PR #185 MF2 定口径），本 DTO 是这些 payload 的
  * renderer 渲染字段并集——renderer 收到后直接渲染，零 merge/normalize/推导。core
  * createSessionStore.applySnapshot 以此为单 session 快照入参（session store 唯一写入口）。
  *
@@ -1513,7 +1515,7 @@ export function isSessionSummary(value: unknown): value is SessionSummary {
  * - label：session.renamed（pi 改名）/ config.sessions（整表 SessionSummary.label）
  * - status：SessionStatus 六态（session.exited → dead 等）
  * - modelId / thinkingLevel / usagePercent / inputTokens / contextLimit：session.state_changed
- * - pendingMessageCount：message.queue_update（W8 队列深度实例快照）
+ * - pendingMessageCount：message.queue_update（帧 = pi 队列深度推送投影，与 get_state 同公式同源，PR #185 MF2 撤销 W8 实例后帧即权威）
  * - commands：session.commands（pi 扩展命令清单，形状与广播 payload 一致）
  * - tokenCount：SessionSummary.tokenCount（磁盘扫描占位值 0，守卫对象）
  */
