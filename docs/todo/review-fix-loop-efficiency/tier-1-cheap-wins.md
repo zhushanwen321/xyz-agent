@@ -1,6 +1,6 @@
 # review-fix-loop 效率优化 梯队 1：全量仪表与 eval + 轮次归因 + 证据裁决落盘
 
-> **一句话结论**：把 review-fix-loop 从「黑盒循环」改造成「可观测、可归因、可评估」的循环——全量仪表（每次 agent 调用的耗时/token/缓存命中落 state.json，持久化到 `~/.review-fix-loop/` 并配 rfl CLI）是地基；其上一条数据传输链（聚合条目结构化扩展，含 normalizeAggregatorResult 透传修复）供养归因/指引/裁决落盘三个机制；质量评估用「4 维度 × 10 分制 + 加权综合总分」，权威层是状态机客观回填；R2+ 保持全量重扫（聚焦审查回退为数据门槛触发的决策记录）。
+> **一句话结论**：把 review-fix-loop 从「黑盒循环」改造成「可观测、可归因、可评估」的循环——全量仪表（每次 agent 调用的耗时/token/缓存命中落 state.json，持久化到 `~/.review-fix-loop/` 并配 rfl CLI）是地基；其上一条数据传输链（聚合条目结构化扩展，含 normalizeAggregatorResult 透传修复）供养归因/指引/裁决落盘三个机制；质量评估用「4 维度 × 10 分制 + 加权综合总分」，权威层是状态机客观回填；R2+ 保持全量重扫（聚焦审查回退为数据门槛触发的决策记录）。**v6 起并入梯队 2 的 prompt 前缀稳定化**（模板/schema 跨轮逐字节对齐 + 快照守护，两个前置探针已探明）；梯队 2 其余机制（diff 指纹、持久会话）已分别否决与标记暂时不做，见该文档附录。
 
 ## 开篇（SCQA）
 
@@ -37,8 +37,9 @@
 5. **质量可评**：10 分制分维度打分 + 综合总分落 state.json；客观回填（含 clean 轮的确定性对账回填）为权威层。
 6. **聚合便宜**：`aggregatorModel` 参数支持降档（模型选择写用户 AGENTS.md）。
 7. **run 完整性**：一个逻辑 run 一个 state 目录（引擎注入稳定 _runId，rebuild 不漂移）。
+8. **prompt 前缀稳定**（v6 并入自梯队 2）：同一 reviewer 跨轮的完整 prompt（system 段含 schema 指令 + user 段静态文本）逐字节稳定，变化内容全部后置到动态段；快照测试守护。
 
-**In-scope**：review-fix-loop.js / utils / aggregator schema 与 prompt / state.json 结构与存储 / rfl CLI / 引擎两处透传（returnMeta 字段、_runId 注入）。**Out-of-scope**：reviewerSchema 破坏性变更；R2+ 聚焦/审计轮（6.5 回退记录）；持久会话与缓存前缀（梯队 2）；可执行验证（梯队 3）；recheckAfterFix 语义。
+**In-scope**：review-fix-loop.js / utils / aggregator schema 与 prompt / state.json 结构与存储 / rfl CLI / 引擎两处透传（returnMeta 字段、_runId 注入）/ reviewer prompt 模板与 reviewerSchema required 统一（6.9 前缀稳定化）。**Out-of-scope**：reviewerSchema 其他破坏性变更；R2+ 聚焦/审计轮（6.5 回退记录）；持久会话（梯队 2 已标记暂时不做，见该文档 §6.3）；可执行验证（梯队 3，暂时不做）；recheckAfterFix 语义。
 
 ## 3. 现状：使用者眼里是什么样的
 
@@ -182,6 +183,14 @@ aggregator 打分单独承担 eval 的两个结构缺陷：自评冲突 + 无 gr
 - **存储**：`~/.review-fix-loop/<slug>/<runId>/`，slug = git toplevel 路径 slug 化，非 git 用 cwd，home 不可写降级 $TMPDIR + WARN。**跨版本兼容**：旧 $TMPDIR run 不做迁移（易失数据不抢救）；loadState 只从新位置读。
 - **CLI**（`scripts/rfl.mjs`，零依赖）：`rfl list [repo]` / `rfl stats <runId|latest>` / `rfl trends [repo]` / `rfl clean --older-than 30d`（默认干跑，`--yes` 执行）。
 
+### 6.9 prompt 前缀稳定化：三层对齐 + 快照守护（v6 并入自梯队 2）
+
+**机制**：① reviewerSchema.required 恒含 `reconciliation`（R1 prompt 明示「首轮无前轮对账，返回空数组」）——消除 R1↔R2+ schema 分叉导致的 system 段字节差异（schema JSON 逐字嵌入 appendSystemPrompt，agent-opts-resolver.ts）；② R1/R2+/scoped 三个 prompt 模板共享单一静态段文本来源，变化内容（轮次 header/roundDir/对账数据/fix 结果）全部后置到 `--- ROUND CONTEXT ---` 动态段起点标记之后；③ 快照单测守护「动态段起点标记之前逐字节相同」。
+
+**前提已探明**（梯队 2 §11，两个探针均 ✅）：本环境主用 provider 消息级缓存命中 97-99%（前缀稳定化收益前提成立）；env block 无逐 spawn 动态因子（session-runner.ts buildEnvBlock，无时间戳/随机数）。**收益边界**（P-shared）：批内不同 reviewer 的 system prompt 不同，前缀无法跨 reviewer 共享——收益 = 「同一 reviewer 跨轮」。
+
+方案对比与三层（引擎 system 段 / 脚本 user 段 / provider 缓存判定）对齐的详细论证见梯队 2 文档 §4/§6.1，本文不重复。改动文件：`review-fix-loop-utils.cjs`（三模板重构）+ `review-fix-loop.js`（schema required 统一 + R1 空数组说明）+ `src/__tests__/review-fix-loop-utils.test.ts`（快照测试）。
+
 ## 7. 数据结构规格（开发可直接依据）
 
 ### 7.1 引擎透传（worker-script-builder.ts + run 启动路径）
@@ -251,6 +260,7 @@ returnMeta resolve 与 `_callCache` 重放重建各扩 `{usage, durationMs}`（�
 | S6 打分结构 | 目标 5 | S1 的 state.scores | 每轮每 reviewer 一条；fix 轮一条（R1 除外）；维度齐全；total=加权和抽查一致；regression 为下轮回填 |
 | S7 降级与回退 | 护栏 | `evidenceGate=false` 重跑；非 git 目录跑一次 | 门槛关闭行为正确；非 git 落 cwd slug |
 | S8 首份 eval 报告 | 目标 5 | S1+S7 共 3 个 run 后 `rfl trends` | 客观层指标成表；scores 标注弱信号 |
+| S9 跨轮字节稳定（6.9） | 目标 8 | S1 的 run（≥2 轮）：从落盘日志/pi stdout jsonl 提取同一 reviewer 相邻两轮完整 prompt（system + user 段） | 动态段起点标记之前逐字节相同；快照单测通过；R1 报告含 reconciliation 空数组字段且下游对账逻辑无异常 |
 
 ## 9. 实施
 
@@ -259,6 +269,7 @@ returnMeta resolve 与 `_callCache` 重放重建各扩 `{usage, durationMs}`（�
 | M0 | 引擎两处透传（usage/durationMs + _runId）+ calls[] + 存储迁移 + CLI | 目标 1/7 |
 | M1 | 聚合条目扩展（含归一化透传修复）+ origin + adjudication 落盘 + dormant + guidance | 目标 2/3/4 |
 | M2 | 打分 + clean 轮回填 + aggregatorModel + 首份 eval | 目标 5/6 |
+| MP（与 M0-M2 任意并行） | T9 prompt 前缀稳定化（模板/schema 统一 + 快照测试） | 目标 8 |
 
 ## 10. 下一层拆分
 
@@ -272,6 +283,7 @@ returnMeta resolve 与 `_callCache` 重放重建各扩 `{usage, durationMs}`（�
 | T6 computeOrigin + dormant 落盘/复活注入 + guidance 落盘 | utils + 集成 | 依赖 T5 |
 | T7 打分 rubric 进 aggregator prompt（含 prevFixResult 入参）+ scores 落盘 + clean 轮确定性回填 | 6.6 | 依赖 T5；黑洞修复独立关注点 |
 | T8 aggregatorModel 参数 + usage 提示 + P-agg 复测 | 参数与文案 | 独立 |
+| T9 prompt 前缀稳定化（6.9） | utils 三模板共享静态段 + 动态后置 + reviewerSchema.required 恒含 reconciliation + R1 空数组说明 + 快照单测 | 与 T1-T8 全无依赖，可任意并行；设计细节见梯队 2 文档 §6.1/§7 |
 
 ## 11. 待验证检查点
 
@@ -279,9 +291,13 @@ returnMeta resolve 与 `_callCache` 重放重建各扩 `{usage, durationMs}`（�
 - 🟡 P-agg：降档 aggregator 能力下限已实测通过（mimo-v2.5-pro 合成探针：去重/空证据/分维度打分正确）；真实 run 填充率与去重一致率待 S1。
 - ⛔ P-dormant-first：首个产生 adjudication 降级的真实 run 补验 S5（dormant 记录 + 复活注入）。
 - ⛔ P-score-drift：降档模型打分稳定性（同一报告两次打分差异 >2 分则不可用作趋势信号）。
+- ✅ P-cache（已探明，2026-08-20）：主用 provider 消息级缓存命中 97-99%，6.9 前缀稳定化收益前提成立。
+- ✅ P-sys（已探明，源码）：env block 无逐 spawn 动态因子；残余未知 = tools 清单稳定性（T9 快照测试覆盖）。
+- ⛔ P-shared：6.9 收益边界 = 同一 reviewer 跨轮（不同 reviewer 的 system prompt 不同，无法共享前缀）。
 - ✅ 已核实（源码）：AgentResult.usage/durationMs 存在、returnMeta 不透传（两个对称改动点、无第三路径）；引擎不注入 _runId；normalizeAggregatorResult 白名单截断（utils.cjs:638-663）；adjudication 段已存在于 aggregator prompt（utils.cjs:317-405）；clean 轮在聚合/reconcile 前 break（review-fix-loop.js all-clean 分支）；reviewerSchema.must_fix 为 number；state.json 现仅 meta.startedAt 一个时间字段。
 
 ## 附录：变更历史
 
 - v1：初版。v2：首轮对抗审查后重写（19 must-fix 分布在三个梯队）。v3：仪表地基 + 持久化 + CLI + eval 双层。v4：聚焦审查回退（6.5）；打分细化 10 分制；§7 数据规格；四个前置探针探明（P-cache/P-sys/P-replay 点位/P-agg 能力下限）。
 - v5：第二轮对抗审查后修 8 must-fix——clean 轮黑洞修复（确定性对账回填，6.6）；normalizeAggregatorResult 白名单透传修复入 T5；6.3 重定位为 adjudication 落盘（裁决是现实现，不新增平行机制）；引擎 _runId 稳定注入入 T2（修 rebuild 漂移碎裂）；6.5 触发器①改可计算指标；fix 打分输入补 prevFixResult 入参 + R1 reconciliation 维度定义；S3 改错误注入法、S5 改条件断言 + P-dormant-first；§3.2 自包含展开。审查报告见同目录 `tier-1-cheap-wins-review-v4.md`。
+- v6：并入梯队 2 的前缀稳定化（6.9 / T9 / S9 / MP 里程碑；其前置探针 P-cache/P-sys 已探明随附 §11）。梯队 2 整体处置为「前缀稳定化并入本文档、diff 指纹否决、持久会话暂时不做」（见 tier-2 文档附录 v3）；梯队 3 标记暂时不做、由本文档 M1 仪表数据触发再评估（见 tier-3 文档附录 v3）。

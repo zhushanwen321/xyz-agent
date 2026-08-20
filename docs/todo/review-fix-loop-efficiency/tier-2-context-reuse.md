@@ -1,5 +1,7 @@
 # review-fix-loop 效率优化 梯队 2：prompt 前缀稳定化（含两个前置探针与一个被否决机制）
 
+> **处置状态（v3）：本梯队整体拆解处置，无遗留实施项。** ① 前缀稳定化（模板/schema 统一 + 快照测试）**已并入梯队 1**（tier-1 文档 §6.9 / T9），两个前置探针已探明（本文 §11）；② diff 指纹跳轮维持**否决**（§6.2）；③ 持久 reviewer 会话标记**暂时不做**（§6.3 v3 更新：机制可造但经济性与审查独立性双不利）。以下正文保留作决策记录。
+
 > **一句话结论**：梯队 2 收敛为一件可实施的事——把 reviewer 的各轮 prompt（含 system 段的 schema 注入）做成跨轮逐字节稳定，为多 provider 环境下的潜在缓存命中铺路；v1 的「diff 指纹跳轮」机制经审查证明自相矛盾且会漏审真实变更，**否决**；「持久 reviewer 会话」在 workflow 沙箱里无 API 支撑且无缓存时严格更贵，**降级为条件触发的引擎级议题**，不在本文档实施范围。
 
 ## 开篇（SCQA）
@@ -143,7 +145,9 @@ v1 设想用 `conversation:true` 跨轮复用 reviewer 会话。审查发现两�
 1. **API 不存在**：workflow 沙箱 `agent()` 的 `_KNOWN_FIELDS` 白名单无 conversation/message/close，唯一 runner 是一次性 SubprocessAgentRunner。v1 核实的 conversation 能力是 LLM 面向的 subagent **tool** 契约，与 workflow 脚本的 `agent()` 是两个层面。实施需先改引擎（白名单 + 会话型 runner + 生命周期管理），v1 声称的「不动引擎」同时破产。
 2. **收益前提不存在于多 provider 现实**：学术成本公式 C_single ≤ C_multi 的前提是 KV/前缀缓存可复用；**无 provider 缓存时，持久会话每轮重放增长中的历史，严格比「新 spawn + 固定前缀」更贵**。主用 provider 缓存支持未知（P-cache 未探测前）。
 
-**裁决：降级。** 触发条件（两者同时满足才另立引擎级设计）：P-cache 证明主用 provider 支持前缀缓存；且梯队 1 上线后真实 run 数据显示「R2+ 静态前缀重付」仍是 token 大头。v1 设想的轮末压缩（锚定式摘要）在 subagent 会话服务中同样无 API 支撑，一并移出。
+**裁决（v2）：降级。** 触发条件（两者同时满足才另立引擎级设计）：P-cache 证明主用 provider 支持前缀缓存；且梯队 1 上线后真实 run 数据显示「R2+ 静态前缀重付」仍是 token 大头。v1 设想的轮末压缩（锚定式摘要）在 subagent 会话服务中同样无 API 支撑，一并移出。
+
+> **v3 更新（处置：暂时不做）**：P-cache 转 ✅ 后复核——resume 机制本身可造（pi CLI 有 `--session <path|id>` 非交互 resume；引擎 execute-agent-call 已逐 call 记录 sessionId/sessionFile，改造点 = agent() 白名单 + runner 接受 sessionFile + 生命周期管理）。但复核结论为不值得做：① **经济性反转**——缓存命中 97-99% 时，新 spawn + 稳定前缀每轮只付 O(1) 静态前缀的缓存读；持久会话每轮重放含历史长报告输出的增长上下文，缓存读累计 O(n²)，两轮后即反超；② **审查独立性**——向「写报告的会话」注入「已修复再审」是 anchoring 邀请，每轮换新眼睛本是循环的独立性保证（Huang et al. 退化反证同向）。重评估仅剩理论触发器：provider 缓存定价/机制发生本质变化。
 
 ### 6.4 减法门检
 
@@ -210,3 +214,4 @@ v1 设想用 `conversation:true` 跨轮复用 reviewer 会话。审查发现两�
 
 - v1：初版（前缀稳定化 + diff 指纹 + 持久会话试点三机制）。
 - v2：对抗式审查后推倒重来——机制② diff 指纹否决（动机例子错误：注释改动改变哈希；autoCommit=true 下 git diff 恒空全跳过；untracked 文件漏判真变更；跨批误伤）；机制③ 持久会话降级为条件触发议题（workflow 沙箱 agent() 无会话 API，唯一 runner 是一次性子进程；无 provider 缓存时持久会话严格更贵）；机制① 保留但修正为「三层对齐」（schema 统一消除 system 段分叉 + 模板静态段统一 + 动态后置），验收方法从未定义的「dump prompt」落到具体日志路径。审查报告见同目录 `tier-2-context-reuse-review.md`。
+- v3：处置标记——① 前缀稳定化并入梯队 1（tier-1 §6.9/T9，前置探针 P-cache/P-sys 已探明）；② 持久会话从「降级」改判「暂时不做」（补充可造性核实：pi `--session` resume 存在、引擎已记录 sessionFile；否决理由：缓存普及下持久会话 O(n²) 重放成本反超新 spawn 的 O(1)/轮 + anchoring 损害审查独立性，详见 §6.3 v3 更新）；③ diff 指纹维持否决。本梯队无遗留实施项，正文保留作决策记录。
