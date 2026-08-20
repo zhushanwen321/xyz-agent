@@ -1878,16 +1878,32 @@ describe("A9 backfillFixRegression mode 三态（unverifiable 边缘缺口）", 
     expect(out[0].note).toContain("regression unverifiable: no tracked issues matched this round");
     expect(out[0].note).toContain("treat as missing data");
   });
-  it("A9 unverifiable entry 可被后续轮真实数据覆盖（幂等 guard 对 null 通过）", () => {
+  it("A9/W3: unverifiable entry（regression=null）为终态——同轮 clean/normal 再回填不被覆盖", () => {
     const first = backfillFixRegression({ scores: [], fixResult, issues: {}, round: 2, batch: 1, mode: "unverifiable" });
     expect(first[0].dimensions.regression).toBeNull();
-    // 下一轮 reconcile 产生了真实 regressed 数据 → 覆盖回填（null 不拦截）
+    // clean 模式再次回填（旧 guard 用 != null，null 通过 → 被覆盖为虚假计算值 10，
+    // 与 note "treat as missing data" 自相矛盾；新终态 guard 拦截）
+    const againClean = backfillFixRegression({ scores: first, fixResult, issues: {}, round: 2, batch: 1, cleanRound: true });
+    expect(againClean).toHaveLength(1);
+    expect(againClean[0].dimensions.regression).toBeNull();
+    expect(againClean[0].note).toContain("treat as missing data");
+    // normal 模式（有真实 regressed 数据）同样不覆盖——回填只针对最近一次 fix 的
+    // entry，永不重访旧轮，该轮 regression 维度永久缺失（CLI 显示 n/a）
     const issues = {
       "MF-1": { firstSeen: 1, severity: "major", status: "regressed", history: [{ round: 2, status: "regressed" }], fixAttempts: 1 },
     };
-    const second = backfillFixRegression({ scores: first, fixResult, issues, round: 2, batch: 1, cleanRound: false });
-    expect(second).toHaveLength(1); // 不重复创建
-    expect(second[0].dimensions.regression).toBe(0); // 1/1 regressed → 10-10
+    const againNormal = backfillFixRegression({ scores: first, fixResult, issues, round: 2, batch: 1, cleanRound: false });
+    expect(againNormal[0].dimensions.regression).toBeNull();
+  });
+  it("A9/W3: LLM entry（dimensions 无 regression 键）→ undefined → 正常回填计算值", () => {
+    const scores = [{ round: 1, targetKind: "fix", targetName: "fix", batch: 1, dimensions: { coverage: 8, selfCheck: 9, minimality: 7 }, total: 8 }];
+    const issues = {
+      "MF-1": { firstSeen: 1, severity: "major", status: "fixed", history: [{ round: 2, status: "fixed" }], fixAttempts: 0 },
+    };
+    const out = backfillFixRegression({ scores, fixResult, issues, round: 2, batch: 1 });
+    expect(out).toHaveLength(1); // 不重复创建（命中既有 LLM entry）
+    expect(out[0].dimensions.regression).toBe(10); // 无键 = undefined → 正常回填（全 fixed → 10）
+    expect(out[0].dimensions.coverage).toBe(8); // LLM 维度保持
   });
   it("A9 mode 缺省从 cleanRound 派生（向后兼容：clean / normal 两态 note 不变）", () => {
     const clean = backfillFixRegression({ scores: [], fixResult, issues: {}, round: 2, batch: 1, cleanRound: true });

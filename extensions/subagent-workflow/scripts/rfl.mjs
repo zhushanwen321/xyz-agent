@@ -146,9 +146,9 @@ function cmdStats(runIdOrLatest, repoSlug) {
   const regressed = issues.filter((i) => (i.history || []).some((h) => h.status === "regressed")).length;
   const origins = {};
   for (const i of issues) origins[i.origin || "-"] = (origins[i.origin || "-"] || 0) + 1;
-  // dormant 是批作用域（最终 state 只含末批降级条目，非 run 累计）——表述显式限定
-  // 作用域，防止被误读为整个 run 的 dormant 总数
-  console.log("  issues: total " + issues.length + " → fixed " + fixed +
+  // issues 与 dormant 都是批作用域（state.issues 每批重置，最终 state 只含末批
+  // 条目，非 run 累计）——表述显式限定作用域，防止被误读为整个 run 的总数
+  console.log("  issues (last batch): total " + issues.length + " → fixed " + fixed +
     "  regressed-ever " + regressed +
     "  origins " + (issues.length ? Object.entries(origins).map(([k, v]) => k + " " + v).join("/") : "-") +
     "  dormant (last batch) " + ((s.dormant || []).length));
@@ -179,22 +179,23 @@ function cmdStats(runIdOrLatest, repoSlug) {
 function cmdTrends(repoSlug) {
   const runs = listRuns(repoSlug);
   if (runs.length === 0) { console.log("no runs found (root: " + ROOT + ")"); return 0; }
-  const header = "runId".padEnd(28) + "  " + "started".padEnd(20) + "  " + "rounds".padEnd(6) + "  " + "tokens".padEnd(8) + "  " + "cache%".padEnd(6) + "  " + "regressed/attempted";
+  // started 列宽 = ISO 8601 恒长 24（padEnd(20) 会让表头比数据行左移 4 字符错位）
+  const header = "runId".padEnd(28) + "  " + "started".padEnd(24) + "  " + "rounds".padEnd(6) + "  " + "tokens".padEnd(8) + "  " + "cache%".padEnd(6) + "  " + "regressed/attempted";
   console.log(header);
   for (const r of runs) {
     const { sum, cachePct } = summarizeCalls(r.state.calls);
     const issues = r.state.issues ? Object.values(r.state.issues) : [];
     const regressed = issues.filter((i) => (i.history || []).some((h) => h.status === "regressed")).length;
-    // 分母 = Σ fixAttempts（§7.4 要求 regression 率：只有 regressed 绝对数时不同规模
-    // run 间不可比，"2/6" 才可跨 run 比较）。issue 缺 fixAttempts 字段（旧 state）时
-    // fallback 用 history 中 fix-attempted 条目数近似。分母 0（从未尝试修复）率无
-    // 意义，显示 "-"。
-    const attempted = issues.reduce((acc, i) => acc + (typeof i.fixAttempts === "number"
-      ? i.fixAttempts
-      : (i.history || []).filter((h) => h.status === "fix-attempted").length), 0);
+    // 分母 = 曾进入 fix-attempted 的 issue 数，与分子（含 regressed history 的 issue
+    // 数）同为 issue 计数口径（§6.7「fix 质量 = 1 − regressed/fix-attempted」的分母
+    // 应是被尝试修复过的 issue）。不能用 Σ fixAttempts：该字段权威语义是「修复失败
+    // 次数」（初始 0，每次转 regressed 才 +1），5 个 issue 修 4 成 1 败会算成 1/1
+    // （字面 100% 回归率），正确口径是 1/5；进入过修复的痕迹只有 history 的
+    // fix-attempted 条目。分母 0（从未尝试修复）率无意义，显示 "-"。
+    const attempted = issues.filter((i) => (i.history || []).some((h) => h.status === "fix-attempted")).length;
     const regressedCol = attempted > 0 ? regressed + "/" + attempted : "-";
     console.log(
-      r.runId.padEnd(28) + "  " + String((r.state.meta && r.state.meta.startedAt) || "?").padEnd(20) + "  " +
+      r.runId.padEnd(28) + "  " + String((r.state.meta && r.state.meta.startedAt) || "?").padEnd(24) + "  " +
       String(roundCount(r.state)).padEnd(6) + "  " +
       fmtTokens(sum.input + sum.cacheRead + sum.output).padEnd(8) + "  " +
       String(cachePct == null ? "-" : cachePct + "%").padEnd(6) + "  " + regressedCol,

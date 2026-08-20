@@ -464,8 +464,10 @@ function buildAggregatorPrompt({ header, round, max, roundDir, reviewResults, pr
     "}",
     "",
     "- must_fix_ids: issue ids of the deduplicated must-fix list, matching the first column of the Must-Fix table.",
+    // W7：生成侧只要求 objects——「旧 string[] 仍接受」与上方 MUST be objects 自相矛盾
+    //（消费侧 string[] 兼容保留在 schema oneOf + normalizeAggregatorResult，不进 prompt）。
     "- must_fix_ids: EACH element is an object; severity is one of critical/major/minor",
-    "  (the converged-termination 'no critical' check depends on it). Old string-array format is still accepted.",
+    "  (the converged-termination 'no critical' check depends on it).",
     "- adjudication (rfl, per-entry): your evidence verdict for this issue —",
     "  \"evidence\" (verified with cited files/lines), \"unverified\" (no evidence or could not verify),",
     "  \"downgraded\" (adjudicated down to minor in the table). Keep ALL must-fix-table entries in",
@@ -1035,8 +1037,11 @@ function countMissingFields(entries) {
  * regressed = 上轮 fix 的 fixes[].issue_id（findIssueKey 归一匹配）中，本轮 reconcile
  * 后 history 含 {round, status:"regressed"} 的条目数。fixes=0 → 不动（无 fix 可评）。
  * 已有该轮 fix 的 LLM entry → 填 dimensions.regression；无 entry → 创建确定性 entry
- * （LLM 三维度 null + total null + note 标注成因）。幂等：已含非 null regression 维度
- * 的 entry 不重复处理（null 通过——unverifiable entry 可被后续轮真实数据覆盖回填）。
+ * （LLM 三维度 null + total null + note 标注成因）。幂等（W3 终态语义）：entry 的
+ * dimensions 已含 regression 键即终态、不再处理——键值 null = unverifiable 终态
+ * （该轮 regression 维度永久缺失，CLI 显示 n/a）、number = 已回填；LLM entry 无该键
+ * （undefined）→ 正常回填。回填只匹配最近一次 fix 的 entry（调用方传最后一个
+ * fixResult），永不重访旧轮 entry。
  * A9（regression 回填边缘缺口）：mode 参数三态——"clean"（clean 轮，无聚合调用）/
  * "normal"（聚合发生但 LLM 未返回可用打分）/ "unverifiable"（无对账数据，regressed
  * 数不可判定：regression 置 null 而非诚实缺失的造分，note 说明成因）。缺省从旧
@@ -1054,7 +1059,10 @@ function backfillFixRegression({ scores, fixResult, issues, round, batch, cleanR
   const batchId = batch ?? 1;
   let entry = list.find((s) => s && s.targetKind === "fix" && s.round === scoredRound
     && (s.batch ?? 1) === batchId);
-  if (entry && entry.dimensions && entry.dimensions.regression != null) return list; // 已回填（幂等；null 通过）
+  // W3 终态 guard：regression 键存在（!== undefined）即终态——null=unverifiable 终态、
+  // number=已回填，同轮/后续回填均不再覆盖（旧 guard 用 != null，null 会被同轮后续
+  // clean/normal 回填覆盖为虚假计算值，与 note "treat as missing data" 自相矛盾）。
+  if (entry && entry.dimensions && entry.dimensions.regression !== undefined) return list;
   if (!entry) {
     // 无 LLM entry 的成因（note 如实区分，exec-review minor 修复 + A9 三态化）：
     // clean 轮（无聚合调用）/ 正常轮聚合发生但 LLM 未返回可用打分 / 无对账数据不可判定
@@ -1073,8 +1081,9 @@ function backfillFixRegression({ scores, fixResult, issues, round, batch, cleanR
     entry.batch = batchId; // 旧 entry（无 batch 字段）补齐权威批标识
   }
   if (m === "unverifiable") {
-    // 无对账数据时 regressed 数不可判定——置 null（不诚实造 10 分）；后续轮有真实
-    // 对账数据时可经幂等 guard（null 通过）覆盖为计算值。
+    // 无对账数据时 regressed 数不可判定——置 null（不诚实造 10 分）。unverifiable 为
+    // 终态（W3）：该轮 regression 维度永久缺失（CLI 显示 n/a），后续/同轮回填经上方
+    // 终态 guard 不会被覆盖为虚假计算值。
     entry.dimensions.regression = null;
     return list;
   }

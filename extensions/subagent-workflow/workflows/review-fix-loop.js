@@ -469,7 +469,10 @@ function warnTelemetryMissingOnce() {
 function buildCallRecord({ batch, round, role, name, model, prompt, promptMode, meta }) {
   const promptStr = typeof prompt === "string" ? prompt : "";
   const metaObj = meta && typeof meta === "object" ? meta : undefined;
-  if (metaObj && (normUsage(metaObj) === undefined || typeof metaObj.durationMs !== "number")) {
+  // W1：失败调用（returnMeta = {value, error}）天然无 usage/durationMs——排除
+  // error 分支，否则 agent 调用失败被误诊为「引擎透传未上线」并烧掉 once 名额。
+  // 三个 recordCall 调用点（review/aggregator/fixer）共用本函数，一处修复全覆盖。
+  if (metaObj && !metaObj.error && (normUsage(metaObj) === undefined || typeof metaObj.durationMs !== "number")) {
     warnTelemetryMissingOnce();
   }
   return {
@@ -708,6 +711,10 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         // 审查 agent 调用失败（含 AgentRegistry not found / 超时）。不裸 throw——与
         // aggregator-failure/stuck/fix-failure 路径一致：saveState + terminated 结构化终止，
         // 保证 state.json 有记录、调用方拿到结构化结果而非裸异常（MF-3）。
+        // W8：失败轮的当前轮条目也落 batchRounds（该轮 phase 时长不因结构化终止
+        // 从时间线消失）；mustFix/suggestion 聚合未发生故为 0，agents 为已收集的
+        // 部分结果，aggregate/fix 相位 null 是如实采集（未到达）。
+        batchRounds.push({ round, mustFix: 0, suggestion: 0, agents: agentRoundResults, modifiedFiles: [], phaseTimings });
         state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
         saveState(state);
         terminated = "review-failure";
@@ -728,7 +735,14 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
             log("WARN: failed to write report_content to " + reportPath + " — " + e.message);
           }
         }
-        reviewResults.push(parsed);
+        // W6：report_content 已落盘（上方 resolveReviewReportPath 写盘 + report_file
+        // 回填），aggregator prompt 指示其 read report_file——整份正文再随 reviewResults
+        // JSON 内嵌即同一内容双份付费（实测 ~48% 重复）。push 前剥离；下游
+        // （buildAggregatorPrompt 路径清单 / must_fix 计数 / all-clean 判定）只消费
+        // report_file 与计数字段，无 report_content 消费。
+        const parsedWithoutContent = { ...parsed };
+        delete parsedWithoutContent.report_content;
+        reviewResults.push(parsedWithoutContent);
         for (const r of parsed.reconciliation) {
           if (r.status === "escalate") reconEscalate.add(r.prev_id);
           else if (r.status !== "fixed") reconSeen.add(r.prev_id);
@@ -745,6 +759,8 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       } else {
         // tools 受限的 agent（如 tools: read）会过滤掉 structured-output → schema 失效，
         // 结果缺 must_fix。结构化终止（MF-3），raw 完整 dump 便于定位。
+        // W8：同 review-failure——当前轮条目落 batchRounds（phase 时长保留在时间线）。
+        batchRounds.push({ round, mustFix: 0, suggestion: 0, agents: agentRoundResults, modifiedFiles: [], phaseTimings });
         state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
         saveState(state);
         terminated = "review-failure";
@@ -819,6 +835,9 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
 
       if (!agg || typeof agg.must_fix !== "number") {
         log("Aggregator failed and fallback failed, stopping.");
+        // W8：aggregator-failure 轮的当前轮条目落 batchRounds——review/aggregate 相位
+        // 时长已实测（fix 相位 null 如实采集）；mustFix/suggestion 聚合失败故为 0。
+        batchRounds.push({ round, mustFix: 0, suggestion: 0, agents: agentRoundResults, modifiedFiles: [], phaseTimings });
         state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
         saveState(state);
         terminated = "aggregator-failure";
@@ -983,8 +1002,9 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       // A9（regression 回填边缘缺口）：else 分支 = reconCount===0 且无 fix-attempted
       //（aggregator numeric-only fallback 等无对账数据场景）——上轮 fix 的 regressed
       // 数本轮不可判定，此前该场景的 regression entry 永缺。以 unverifiable 模式补
-      // 确定性 entry（regression=null，不诚实造 10 分）；后续轮有真实对账数据时可经
-      // 幂等 guard（null 通过）覆盖为计算值。
+      // 确定性 entry（regression=null，不诚实造 10 分）。unverifiable 为终态（W3）：
+      // 回填只匹配最近一次 fix 的 entry、永不重访旧轮，该轮 regression 维度永久
+      // 缺失（CLI 显示 n/a），同轮后续回填经终态 guard 不覆盖。
       if (round > 1 && state.fixResults && state.fixResults.length > 0) {
         state.scores = backfillFixRegression({
           scores: state.scores, fixResult: state.fixResults[state.fixResults.length - 1],
@@ -1070,19 +1090,33 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     }
 
     // A4（全降级轮不驱动 fix，设计 §6.3 省轮次的兑现）：reviewer 原始计数有 must-fix
-    // 但 aggregator 裁决后全部降级（mustFix===0 且活跃条目为 0）时，:705 的 all-clean
-    // break 用的是 reviewer 原始计数拦不住本路径——不守卫会空转派发 fixer（fixCount++
-    // 且无问题可修）。suggestions-only 轮不受影响（reviewer 全 0 已在 :705 break）。
+    // 但 aggregator 裁决后全部降级（mustFix===0 且活跃条目为 0）时，all-clean break
+    //（reviewer 原始计数口径，见上方 reviewResults.every 判定）拦不住本路径——不守卫
+    // 会空转派发 fixer（fixCount++ 且无问题可修）。suggestions-only 轮不受影响
+    //（reviewer 全 0 已在 all-clean break 提前终止）。
     if (mustFix === 0
       && reviewResults.some((r) => r.must_fix > 0)
       && (agg.must_fix_ids ? filterActiveIds(agg.must_fix_ids).length : 0) === 0) {
       log("All reviewer must-fix entries adjudicated down this round — no active fix queue, skipping fix stage.");
-      if (round > 1) {
-        // 对齐 all-clean 路径：break 前做确定性对账 + 上轮 fix 的 regression 回填
-        applyCleanRoundBackfill(state, {
-          reconSeen, reconEscalate, round, stuckThreshold, batch: batchIndex,
+      if (round > 1 && state.fixResults && state.fixResults.length > 0) {
+        // W4：本轮对账已在 stuck 检测处完成（reconCount>0 走 reconcileIssues，seen 中
+        // open 条目的 openStreak 已计一次），此处仅补上轮 fix 的 regression 维度——
+        // 不再走 applyCleanRoundBackfill（其内部第二次 reconcileIssues 会把 seen 中
+        // open 条目同轮 openStreak 双计）。mode 缺省 = normal（A4 轮聚合发生过，走
+        // 计算路径）；W3 终态 guard（regression 键存在即不再处理）自动跳过本轮已在
+        // 上面 else 分支写入的 unverifiable entry。
+        state.scores = backfillFixRegression({
+          scores: state.scores, fixResult: state.fixResults[state.fixResults.length - 1],
+          issues: state.issues || {}, round, batch: batchIndex,
         });
-        log("Clean-round backfill applied (reconcile + regression backfill for the previous fix).");
+      }
+      // W5：A4 场景 reviewer 原始 must_fix>0 走了 recordAgentDirty，但裁决后全部降级
+      // = 无真实问题（语义等价 clean）——对 active 中本轮 must_fix>0 的 reviewer 补记
+      // recordAgentClean（快照语义对齐常规调用点：lastCleanBatch + 当时 fixCount），
+      // 让「裁决降级=噪声」也推进跨批 skip（否则同 agent 后续批每批全价重扫）。
+      // 本轮无 fix（fixCount 不变），批后快照比较成立。
+      for (const a of agentRoundResults) {
+        if (a.must_fix > 0) recordAgentClean(state, a.name, batchIndex);
       }
       batchRounds.push({ round, mustFix: 0, suggestion: reviewResults.reduce((a, r) => a + (r.suggestion ?? 0), 0), agents: agentRoundResults, modifiedFiles: [], phaseTimings });
       saveState(state);
@@ -1114,11 +1148,17 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         "- Commit with message: `fix: review batch " + batchIndex + " round " + round + " — " + mustFix + " must-fix`"
       : "- Do NOT commit. Leave the fixes in the working tree (autoCommit=false).";
 
-    // A3（guidance 链最后一跳）：聚合条目中带非空 guidance 的活跃/降级条目清单——
-    // 构造确定性通道传给 fixer（reportContent 正文之外，per-issue 直达）。normalize 后
-    // 条目均为对象；string 旧格式（经 fallback 等路径）无 guidance 自然跳过。
+    // A3（guidance 链最后一跳）：活跃条目中带非空 guidance 的清单——构造确定性通道
+    // 传给 fixer（reportContent 正文之外，per-issue 直达）。W2：先 filterActiveIds 过滤
+    //（与修复队列/ES3 校验同口径）——降级条目（adjudication downgraded/unverified）的
+    // guidance 不再以 "MUST-FIX GUIDANCE" 标题混给 fixer（口径不一致会诱导修复已裁决
+    // 噪声）。normalize 后条目均为对象；string 旧格式（经 fallback 等路径）无 guidance
+    // 自然跳过；must_fix_ids 为 undefined（fallback 路径）时 activeGuidanceIds 为空集
+    // → fixGuidance 仍为空清单。
+    const activeGuidanceIds = new Set(filterActiveIds(agg.must_fix_ids || []));
     const fixGuidance = (agg.must_fix_ids || [])
-      .filter((e) => e && typeof e === "object" && typeof e.guidance === "string" && e.guidance.trim())
+      .filter((e) => e && typeof e === "object" && typeof e.guidance === "string" && e.guidance.trim()
+        && activeGuidanceIds.has(e.id))
       .map((e) => ({ id: e.id, guidance: e.guidance }));
 
     const fixT0 = Date.now();
