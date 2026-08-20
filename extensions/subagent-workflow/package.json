@@ -22,6 +22,7 @@
     "agents/",
     "skills/",
     "workflows/",
+    "scripts/",
     "src/index.ts",
     "src/execution/",
     "src/injectors/",
