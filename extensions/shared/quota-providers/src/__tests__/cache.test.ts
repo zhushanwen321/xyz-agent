@@ -19,6 +19,7 @@ const {
   mockMkdirSync,
   mockExistsSync,
   mockUnlinkSync,
+  mockStatSync,
   mockBuildRuntimeProviders,
   mockAvgSpeed,
 } = vi.hoisted(() => ({
@@ -28,6 +29,7 @@ const {
   mockMkdirSync: vi.fn(),
   mockExistsSync: vi.fn(),
   mockUnlinkSync: vi.fn(),
+  mockStatSync: vi.fn(),
   mockBuildRuntimeProviders: vi.fn(),
   mockAvgSpeed: vi.fn().mockReturnValue(0),
 }));
@@ -37,6 +39,7 @@ vi.mock("node:fs", () => ({
   mkdirSync: mockMkdirSync,
   readFileSync: mockReadFileSync,
   renameSync: mockRenameSync,
+  statSync: mockStatSync,
   unlinkSync: mockUnlinkSync,
   writeFileSync: mockWriteFileSync,
 }));
@@ -47,6 +50,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 
 vi.mock("../paths.js", () => ({
   getCachePath: () => "/tmp/test-cache.json",
+  getProvidersConfigPath: () => "/tmp/agent/config/providers.json",
   getSpeedDir: () => "/tmp/agent/token-stats",
 }));
 
@@ -445,5 +449,87 @@ describe("trackCacheRatio", () => {
 
     expect(result.current).toBe(33);
     expect(result.day).toBeNull();
+  });
+});
+
+describe("prune removed provider entries (D8d)", () => {
+  // prune 用模块级 prunedForMtime 标志，需 resetModules + 动态 import 隔离
+  async function importFresh() {
+    vi.resetModules();
+    return import("../cache.js");
+  }
+
+  /** providers.json 路径（paths.js mock 固定值）。 */
+  const PROVIDERS_JSON = "/tmp/agent/config/providers.json";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("prunes disk cache entries of providers removed from providers.json", async () => {
+    // providers.json 存在且 mtime 变化；provider b 已被删除（只剩 a）
+    mockExistsSync.mockImplementation((p: unknown) => p === PROVIDERS_JSON || p === NEW_CACHE_PATH);
+    mockStatSync.mockReturnValue({ mtimeMs: 1000 });
+    mockReadFileSync.mockReturnValue(
+      JSON.stringify({ updatedAt: 1, a: { pct: 10 }, b: { pct: 20 } }),
+    );
+    mockBuildRuntimeProviders.mockReturnValue([{ id: "a", fetch: vi.fn() }]);
+    mockMkdirSync.mockImplementation(() => undefined);
+    mockWriteFileSync.mockImplementation(() => undefined);
+    mockRenameSync.mockImplementation(() => undefined);
+
+    const { readCache } = await importFresh();
+    readCache();
+
+    // b 的条目被同步清除并原子写回（tmp → rename），a 保留
+    const written = JSON.parse(mockWriteFileSync.mock.calls[0]![1] as string);
+    expect(written).toEqual({ updatedAt: 1, a: { pct: 10 } });
+    expect(mockRenameSync).toHaveBeenCalledWith(
+      expect.stringContaining(".tmp"),
+      NEW_CACHE_PATH,
+    );
+  });
+
+  it("does not rewrite cache when mtime unchanged (second read is a noop)", async () => {
+    mockExistsSync.mockImplementation((p: unknown) => p === PROVIDERS_JSON || p === NEW_CACHE_PATH);
+    mockStatSync.mockReturnValue({ mtimeMs: 1000 });
+    mockReadFileSync.mockReturnValue(JSON.stringify({ updatedAt: 1, a: { pct: 10 } }));
+    mockBuildRuntimeProviders.mockReturnValue([{ id: "a", fetch: vi.fn() }]);
+
+    const { readCache } = await importFresh();
+    readCache();
+    readCache();
+
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+  });
+
+  it("keeps all entries when providers.json is missing", async () => {
+    mockExistsSync.mockImplementation((p: unknown) => p === NEW_CACHE_PATH);
+    // fresh updatedAt：不触发 TTL 过期的 triggerUpdate（它内部也会调 buildRuntimeProviders）
+    mockReadFileSync.mockReturnValue(JSON.stringify({ updatedAt: Date.now(), a: { pct: 10 } }));
+
+    const { readCache } = await importFresh();
+    expect(() => readCache()).not.toThrow();
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+    expect(mockBuildRuntimeProviders).not.toHaveBeenCalled();
+  });
+
+  it("does not clear cache when provider set resolves empty (config anomaly guard)", async () => {
+    mockExistsSync.mockImplementation((p: unknown) => p === PROVIDERS_JSON || p === NEW_CACHE_PATH);
+    mockStatSync.mockReturnValue({ mtimeMs: 1000 });
+    mockReadFileSync.mockReturnValue(JSON.stringify({ updatedAt: 1, a: { pct: 10 } }));
+    // providers.json 解析失败/为空 → buildRuntimeProviders 返回 []，不能清掉全部条目
+    mockBuildRuntimeProviders.mockReturnValue([]);
+
+    const { readCache } = await importFresh();
+    readCache();
+
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
   });
 });

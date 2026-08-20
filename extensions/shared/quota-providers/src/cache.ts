@@ -7,12 +7,12 @@
  *   - 新增 provider：实现 QuotaProvider 接口 → 在 PROVIDERS 注册（零改动 cache.ts）
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
-import { getCachePath, getSpeedDir } from "./paths.js";
+import { getCachePath, getProvidersConfigPath, getSpeedDir } from "./paths.js";
 // 架构修复：doUpdate 用 buildRuntimeProviders() 替代静态 PROVIDERS，
 // 使 providers.json 中 enabled=false 的 provider 不会被 fetch。
 // registry.ts 内部 import PROVIDERS，此处不直接引用。
@@ -97,7 +97,44 @@ export interface CacheRatioData {
 
 // ── Cache 公共 API ─────────────────────────────────────
 
+// [D8d write-after-invalidate] providers.json 变化（provider 删除/禁用）被 registry 按
+// mtime 感知，但磁盘缓存条目要等 TTL 过期的 doUpdate 重建才消失——窗口内已删 provider
+// 的旧数据仍被读到；进程不再读 cache 时残留永久。此处改为 mtime 变化即同步 prune。
+let prunedForMtime = -1;
+
+function pruneRemovedProviderEntries(): void {
+	const configPath = getProvidersConfigPath();
+	if (!existsSync(configPath)) return;
+	const mtime = statSync(configPath).mtimeMs;
+	if (mtime === prunedForMtime) return;
+	prunedForMtime = mtime;
+	// 集合为空（providers.json 解析失败/全删）时不清——防配置异常窗口误清全部条目
+	const ids = new Set(buildRuntimeProviders().map((p) => p.id));
+	if (ids.size === 0) return;
+
+	const cached: Record<string, unknown> = { ...readCacheSync() };
+	let removed = false;
+	for (const key of Object.keys(cached)) {
+		if (key !== "updatedAt" && !ids.has(key)) {
+			delete cached[key];
+			removed = true;
+		}
+	}
+	if (!removed) return;
+	try {
+		mkdirSync(dirname(CACHE_PATH), { recursive: true });
+		const tmpPath = `${CACHE_PATH}.tmp`;
+		writeFileSync(tmpPath, JSON.stringify(cached, null, JSON_INDENT), "utf-8");
+		renameSync(tmpPath, CACHE_PATH);
+		console.warn("[quota-cache] pruned entries of removed providers");
+	} catch (e) {
+		// best-effort：写失败保留旧缓存，下次 mtime 变化重试；消费方按 plan key 取，残留不产生错误数据
+		console.warn("[quota-cache] prune write failed (keeping old):", e);
+	}
+}
+
 export function readCache(): CacheData {
+	pruneRemovedProviderEntries();
 	const cached = readCacheSync();
 	if (Date.now() - cached.updatedAt > CACHE_TTL_MS) triggerUpdate();
 	return cached;

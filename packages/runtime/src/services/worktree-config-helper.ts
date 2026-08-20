@@ -268,6 +268,8 @@ export function setRenameModel(model: string): void {
     }
     base['model'] = { type: 'ref', ref: normalized }
     mkdirSync(dirname(configPath), { recursive: true })
-    atomicWrite(configPath, `${JSON.stringify(base, null, JSON_INDENT)}\n`)
+    // tmp 唯一化：对端（rename-session 扩展 llm-shared saveConfig）写同一文件，其 tmp 已带
+    // pid+随机段；本侧留固定 .tmp 会与旧版对端碰撞（锁互斥下无害但脏残留），对齐同形态。
+    atomicWrite(configPath, `${JSON.stringify(base, null, JSON_INDENT)}\n`, `${process.pid}_${Math.random().toString(36).slice(2, 8)}`)
   }, renameConfigLockOptions)
 }

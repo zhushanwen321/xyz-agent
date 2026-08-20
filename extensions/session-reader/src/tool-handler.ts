@@ -426,7 +426,9 @@ function formatOutlineText(r: OutlineResult): string {
   })
   const tail = [
     '',
-    `${r.stats.totalTurns} turns · ${r.stats.totalEntries} entries · ~${r.tokenEstimate} tokens`,
+    `${r.stats.totalTurns} turns · ${r.stats.totalEntries} entries · ~${r.tokenEstimate} tokens${
+      r.stats.skippedLines > 0 ? ` · ${r.stats.skippedLines} skipped lines` : ''
+    }`,
     r.truncated ? `[还有 ${r.truncated} 轮未显示，用 detail 或调大 budget]` : '',
   ]
     .filter(Boolean)
@@ -678,7 +680,7 @@ async function doFamily(params: SessionReadParams, agentDir: string): Promise<To
 async function doOutline(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
   const resolved = await resolveSessionId(params.session, 'outline', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
-  const { entries, totalBytes } = await safeParse(resolved.fileName)
+  const { entries, totalBytes, skippedLines } = await safeParse(resolved.fileName)
   const tree = buildTreeView(entries)
   const turns = segmentTurns(entries, new Set(tree.leafPath))
   const opts: OutlineOptions = {
@@ -690,6 +692,9 @@ async function doOutline(params: SessionReadParams, agentDir: string): Promise<T
   // 覆盖 stats.totalBytes：render 用 parsedBytes（leaf entry JSON 字节和）近似，
   // 此处用 ParseResult.totalBytes（原始文件字节数，design §3.4 stats.totalBytes 语义）
   result.stats.totalBytes = totalBytes
+  // [D8d] skippedLines 同模式覆盖：parser 已检测坏行计数（render 签名不含 ParseResult 恒 0），
+  // 有检测必有报告——静默跳过行对调用方不可见 = 数据完整性缺口
+  result.stats.skippedLines = skippedLines
   return { content: [{ type: 'text', text: formatOutlineText(result) }], details: result }
 }
 

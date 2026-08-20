@@ -294,6 +294,91 @@ jobs:
           path: test-results/
           retention-days: 7
 
+  # D8b（integrity-hardening §3.8）护栏机制化：本地 pre-commit 挂的检查在此建立
+  # CI 等价拦截点，使本地 hooks 未安装/被 SKIP 时不变量仍有红灯。
+  # - 前两步直调 .githooks/ 自包含检查脚本（纯文件系统扫描，无 git index 依赖）；
+  # - 后两步等效实现 scripts/validate-runtime-bundle.sh 的静态段（[2/6] noExternal、
+  #   [3/6] 源码禁令）——该脚本无 preflight 模式，第 [1/6] 步起需构建产物无法在 CI
+  #   单独跑静态段，故等效实现并注明同步维护：改脚本对应段时须同步本 job。
+  # 只加红灯：不进 build needs，不阻塞发布链。
+  invariants:
+    name: Invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: pnpm install --frozen-lockfile
+
+      # ENV_WHITELIST_PREFIXES SSOT 单一性（与 pre-commit SKIP_ENV_WHITELIST_CHECK 同源）
+      - name: ENV whitelist SSOT check
+        run: python3 .githooks/check_env_whitelist_sync.py
+
+      # 路径白名单动态化（getConfigDir/getPiAgentDir，与 pre-commit SKIP_PATH_WHITELIST_CHECK 同源）
+      - name: Path whitelist check
+        run: python3 .githooks/check_path_whitelist.py
+
+      # 等效 validate-runtime-bundle.sh [3/6]：runtime 源码 CJS 兼容禁令。
+      # 豁免与脚本一致：plugin-host.ts / plugin-version-checker.ts（__dirname 兼容层）、
+      # __tests__（vitest ESM 直跑源码，import.meta 有效）。
+      - name: Runtime source bans (import.meta / globalThis.__dirname)
+        run: |
+          HITS=$(grep -rn "import\.meta" packages/runtime/src --include="*.ts" --exclude-dir=__tests__ 2>/dev/null | grep -v "plugin-host.ts\|plugin-version-checker.ts" || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::runtime 源码使用了 import.meta（CJS bundle 下为 undefined）。与 scripts/validate-runtime-bundle.sh [3/6] 段同步维护"
+            echo "$HITS"
+            exit 1
+          fi
+          HITS=$(grep -rn "globalThis\.__dirname" packages/runtime/src --include="*.ts" --exclude-dir=__tests__ 2>/dev/null || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::runtime 源码使用了 globalThis.__dirname（CJS bundle 中恒为 undefined，用 typeof __dirname !== 'undefined' 兼容层）。与 scripts/validate-runtime-bundle.sh [3/6] 段同步维护"
+            echo "$HITS"
+            exit 1
+          fi
+
+      # 等效 validate-runtime-bundle.sh [2/6]：runtime dependencies（workspace:* 除外，tsup
+      # inline）必须列入 tsup.config.ts noExternal；native module（binding.gyp / prebuilds /
+      # *.node）必须保持 external，豁免判定与脚本一致。
+      - name: Runtime deps bundled (noExternal parity)
+        run: |
+          node -e '
+          const fs = require("fs");
+          const path = require("path");
+          const pkg = JSON.parse(fs.readFileSync("packages/runtime/package.json", "utf-8"));
+          const tsup = fs.readFileSync("packages/runtime/tsup.config.ts", "utf-8");
+          const m = tsup.match(/noExternal:\s*\[([^\]]+)\]/);
+          const noExternal = new Set(m ? m[1].split(/[,\n]/).map((s) => s.trim().replace(/["\x27]/g, "")).filter(Boolean) : []);
+          const isNative = (dep) => {
+            const dir = path.join("node_modules", dep);
+            try {
+              if (fs.existsSync(path.join(dir, "binding.gyp"))) return true;
+              if (fs.existsSync(path.join(dir, "prebuilds"))) return true;
+              const walk = (d) => fs.readdirSync(d, { withFileTypes: true })
+                .some((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : e.name.endsWith(".node")));
+              return walk(dir);
+            } catch { return false; }
+          };
+          const missing = Object.entries(pkg.dependencies || {})
+            .filter(([name, spec]) => !spec.startsWith("workspace:") && !noExternal.has(name) && !isNative(name))
+            .map(([name]) => name);
+          if (missing.length > 0) {
+            console.error("runtime 依赖未在 tsup noExternal 中: " + missing.join(" ") + " —— 修复：packages/runtime/tsup.config.ts noExternal 追加。与 scripts/validate-runtime-bundle.sh [2/6] 段同步维护");
+            process.exit(1);
+          }
+          console.log("noExternal parity OK (" + noExternal.size + " entries)");
+          '
+
   # PR 构建检查：electron-builder 打包流程，不在 PR 上传产物。
   # dir-only=true：只产出 unpacked 目录，跳过安装器压缩（省 ~185s）。安装器配置回归交给 release.yml。
   # needs gate：lint/typecheck/sdk-sync + 4 个 test job + e2e-visual 任一已知失败时不浪费 mac runner（mac 构建 5-8min）。

@@ -125,7 +125,7 @@ fi
 
 # ── 3. CJS 兼容性检查 ───────────────────────────────────────────────
 echo ""
-echo -e "${BLUE}[3/6] 检查 CJS 兼容性（禁止 import.meta / fileURLToPath）...${NC}"
+echo -e "${BLUE}[3/6] 检查 CJS 兼容性（禁止 import.meta / fileURLToPath / globalThis.__dirname）...${NC}"
 
 # 允许的 import.meta 用法：有 __dirname 兼容层或 getAppVersion/getPluginHostDir 的注释说明
 # plugin-host.ts 和 plugin-version-checker.ts 有专门的 __dirname 兼容层，予以排除
@@ -151,7 +151,19 @@ if [ -n "$FILE_URL_USAGE" ]; then
     exit 1
 fi
 
-echo -e "${GREEN}[OK] 无 import.meta / fileURLToPath 引用${NC}"
+# [D8b] globalThis.__dirname 禁令（AGENTS.md #12）：CJS 中 __dirname 是模块作用域变量，
+# 不在 globalThis 上——globalThis.__dirname 恒为 undefined，路径解析静默指向错误位置。
+# 合规形态：typeof __dirname !== 'undefined' ? __dirname : undefined（plugin-host.ts 范本）。
+GLOBAL_DIRNAME_USAGE=$(grep -rn "globalThis\.__dirname" "$RUNTIME_DIR/src" --include="*.ts" --exclude-dir=__tests__ 2>/dev/null || true)
+
+if [ -n "$GLOBAL_DIRNAME_USAGE" ]; then
+    echo -e "${RED}[ERROR] runtime 源码使用了 globalThis.__dirname（CJS bundle 中恒为 undefined）：${NC}"
+    echo "$GLOBAL_DIRNAME_USAGE" | sed 's/^/  /'
+    echo -e "${YELLOW}[FIX] 使用模块作用域 __dirname（typeof __dirname !== 'undefined' 兼容层），见 plugin-host.ts resolvePluginHostDir${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}[OK] 无 import.meta / fileURLToPath / globalThis.__dirname 引用${NC}"
 
 # ── 4. 产物自包含验证 ────────────────────────────────────────────────
 echo ""

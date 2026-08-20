@@ -372,6 +372,48 @@ describe('F2 多匹配消歧（fixture，MF-9）', () => {
   })
 })
 
+describe('outline skippedLines 报告（fixture，D8d 有检测必有报告）', () => {
+  let dir: string
+  const SID = '019e6c96-bbbb-cccc-dddd-00000000000b'
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'tool-handler-skipped-'))
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('坏行计入 stats.skippedLines 且文本尾部可见（不静默跳过）', async () => {
+    // 中间注入 1 行坏 JSON（半截对象）：parser 计 skippedLines=1，outline 必须报告
+    const slug = '--demo-cwd--'
+    await mkdir(join(dir, 'sessions', slug), { recursive: true })
+    const lines = [
+      JSON.stringify({ type: 'session', id: SID, cwd: '/demo' }),
+      JSON.stringify({
+        type: 'message',
+        id: SID + '-m1',
+        parentId: SID,
+        message: { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      }),
+      '{"broken json line',
+    ]
+    await writeFile(join(dir, 'sessions', slug, SID + '.jsonl'), lines.join('\n') + '\n')
+
+    const r = await handleSessionRead({ action: 'outline', session: SID }, dir)
+    const d = r.details as { stats: { skippedLines: number } }
+    expect(d.stats.skippedLines).toBe(1)
+    expect(r.content[0].text).toContain('1 skipped lines')
+  })
+
+  it('无坏行时不输出 skipped 片段（正常 session 零噪音）', async () => {
+    await makeFixtureSession(dir, SID, 'clean session')
+    const r = await handleSessionRead({ action: 'outline', session: SID }, dir)
+    const d = r.details as { stats: { skippedLines: number } }
+    expect(d.stats.skippedLines).toBe(0)
+    expect(r.content[0].text).not.toContain('skipped lines')
+  })
+})
+
 describe('search 灾难性正则降级 + abort（fixture，MF-5 回归）', () => {
   let dir: string
   const SID = '019e6c96-bbbb-cccc-dddd-00000000000a'
