@@ -26,7 +26,7 @@ import {
   disposeLruEntry,
 } from './lru'
 import { findLastAssistantIndex } from './chunk-processor'
-import { findLastStreamingBashIndex, markBashError } from './bash-effects'
+import { findLastStreamingBashIndex, markBashError, clearExecutingBash } from './bash-effects'
 import { createChangeSetController } from './changeset'
 import { createHandoffController } from './handoff'
 import type {
@@ -713,6 +713,9 @@ export function createChatStore() {
     entryStates.delete(sessionId)
     // [W5 D5] hydrate 尾窗锚同点清理（唯一写方 hydrate 已随 hydrated 守卫失效，锚无独立存活意义）
     hydrateAnchors.delete(sessionId)
+    // [D3 closure] executingBash ephemeral 分区同点清理（bash-effects 模块级 Map 挂接本
+    // 编排——session 删除无残留；形态定案理由见 bash-effects.ts 文件头注释）
+    clearExecutingBash(sessionId)
     // D-3 生命周期：streaming flag 惰性派生缓存随 messages 分区同点清理（漏删即慢泄漏，
     // 07 文档 §3.3.2 cleanup 契约）。
     sessionStreamingFlags.delete(sessionId)

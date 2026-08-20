@@ -36,7 +36,7 @@ describe('filterDisplayableMessages —— 按 display 字段过滤（FR-5 / AC-
   // pi-goal/pi-todo 的 context 消息（<goal_context>/<todo_context>）声明 display:false。
   // 本次修复 message-converter/session-history/customStart 三路径透传 display 后，
   // filterDisplayableMessages 从 HIDDEN_CUSTOM_TYPES 黑名单改为读 m.display !== false。
-  // 过滤只在渲染层（本函数），chat store 保留完整 messages（规则 7.5 fork/compact/replay）。
+  // 过滤只在渲染层（本函数），chat store 保留完整 messages（关键规则 9 fork/compact/replay）。
   it('display:false 的消息过滤掉（goal/todo context 类）', () => {
     const messages: Message[] = [
       makeMsg({ id: 'u1', role: 'user', content: '开始' }),

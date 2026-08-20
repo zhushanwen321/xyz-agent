@@ -2,7 +2,7 @@
  * session-history 文件路径接入测试（converter M3）。
  *
  * 覆盖 design.json TC1-TC3：
- * - TC1：文件路径换 mapper 后历史含 compaction/branch/custom_message（与 RPC 路径一致，规则 7.5）
+ * - TC1：文件路径换 mapper 后历史含 compaction/branch/custom_message（与 RPC 路径一致，关键规则 9）
  * - TC2：port 签名 convertHistory(raw, entryIds?) 透传（MF5）
  * - TC3：删 __entryId 后 fork 定位（piEntryId 从平行 entryIds）
  *
@@ -87,11 +87,11 @@ const realStore: ISessionStore = new PiSessionStore()
 // TC1：文件路径换 mapper 后含 compaction/branch/custom_message
 // ════════════════════════════════════════════════════════════════════
 // 背景：M3 把 getHistoryFromFilePath/tailReadHistory 的「放行四类 + 伪消息映射」
-// 整体替换为共享 mapSessionEntries。换 mapper 前后这三类记录都该还原（规则 7.5），
+// 整体替换为共享 mapSessionEntries。换 mapper 前后这三类记录都该还原（关键规则 9），
 // 本组验证 mapper 接入后行为不回归，且与 RPC 路径（rebuildHistoryFromEntries）一致。
 
 describe('TC1 文件路径换 mapper 后含 compaction/branch/custom_message', () => {
-  it('getHistoryFromFilePath: 三类记录都还原为 system 消息（与 RPC 路径一致，规则 7.5）', async () => {
+  it('getHistoryFromFilePath: 三类记录都还原为 system 消息（与 RPC 路径一致，关键规则 9）', async () => {
     const filePath = writeJsonl([
       msgEntry('e1', 'user', '问题'),
       compactionEntry('e2', '上下文已压缩', 8000),

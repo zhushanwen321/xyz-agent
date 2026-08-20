@@ -4,7 +4,7 @@
  * 从 .jsonl session 文件解析消息历史。经 ISessionStore port 访问 scanSessions（发现）+
  * convertHistory（翻译，透传 entryIds）。entry → 伪消息映射复用 infra 共享单点
  * mapSessionEntries（converter M3），与 RPC 路径（rebuildHistoryFromEntries）共用单点，
- * by construction 保证两路径覆盖一致（AGENTS.md 规则 7.5：可重开恢复）。
+ * by construction 保证两路径覆盖一致（AGENTS.md 关键规则 9：可重开恢复）。
  */
 
 import { readFile } from 'node:fs/promises'
@@ -89,7 +89,7 @@ export async function getHistoryFromFilePath(filePath: string, sessionStore: ISe
   }
   // 经共享 mapper（mapSessionEntries）映射四类 entry → 伪消息 + 平行 entryIds（M3）。
   // 替代旧本地 mapEntriesToPiMessages，与 RPC 路径（rebuildHistoryFromEntries）共用单点，
-  // by construction 保证两路径覆盖一致（AGENTS.md 规则 7.5：分支摘要/压缩记录/扩展通知都需还原）。
+  // by construction 保证两路径覆盖一致（AGENTS.md 关键规则 9：分支摘要/压缩记录/扩展通知都需还原）。
   // filterObjectEntries 前置过滤非 object（parseJsonl 可能返回裸数字/字符串/null）。
   const { messages, entryIds } = mapSessionEntries(filterObjectEntries(parseJsonl(content)))
 

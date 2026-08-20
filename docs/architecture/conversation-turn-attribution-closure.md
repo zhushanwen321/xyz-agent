@@ -206,3 +206,13 @@ Final gate：V1 / V2 / V4 在打包链 dev app 端到端复跑一次（builtin �
 **并行协调（r3 审查修正）**：F1/F2 的 runtime 侧领地不相交（F1 碰 message-dispatcher.ts、F2 碰 event-interpreter.ts），可两路并行开发；**但两者的测试都落在 `packages/core/src/domain/chat/__tests__/apply-entry-equivalence.test.ts`**（F1 改判 E3 :279 附近、F2 在 E4 :333 附近增用例）——该文件须串行（F1 先改判 E3、F2 后增 E4，或反之，按先合入者为准），否则并行 diff 冲突。F3 串行收尾，F4 最后。启动前 `git log` 复核并行 session 在途改动。
 
 **待验证检查点**：§3.5 实施期门 1；F3 的 ctx 访问方式（store 单例 import vs ctx 扩展，实施期按依赖方向定案）。
+
+## §6 实施记录（F1-F3，2026-08-20）
+
+| wave | 内容 | 落定 |
+|------|------|------|
+| F1 | dispatcher sendBash：入口空命令早退守卫（哨兵不变式结构化）+ guard 命中分支改发布真实 cancelled 结果（注释重写，catch 分支维持 skip）；bash-effects 哨兵注释更新为收窄语义；E3 改判为 abort 等价（两侧 deep-equal）+ 新增 E3b transport 抛错例外锁定；runtime W1a 测试改判（2 条帧断言） | 例外①消灭 |
+| F2 | interpreter handleCompactionEnd 删 `if (r.summary)` 真值门（恒发帧，summary 缺省透传）；新增 TC2b（runtime）与 E4b（core）锁定 | 例外④消灭 |
+| F3 | executingBash cleanup 挂接（**实施期定案**：形态保留 bash-effects 模块级分区 Map——store 是 factory 模式，渲染层 `getExecutingBash` 模块级读签名不变，迁入 store 实例会迫使读方改走 pinia 解包超出「读方签名不变」约束；架构目标「cleanup 编排可达」以 store.disposeSession 同点调 `clearExecutingBash` 达成，taste 豁免 W24-EX-B 从草稿转落定）；「规则 7.5」→「关键规则 9」全仓 26 处清理（0 残留）；登记表 #7 例外清单演进（①④消灭 / ②落定 / 新增收窄例外⑤） | 技术债清偿 |
+
+**探针门 1（§3.5 ⛔）状态**：pi dist 侧依据已实测锚定（bash-executor.js:86-109 abort 返回 cancelled 不 throw，W1a mock 测试按此语义改判并通过）；dev app 真机复跑（V8）归 F4 验收阶段执行。F4（真机验收 V1-V6 + V8-V10 + final gate）未执行——独立阶段，发现问题回投对应 wave。

@@ -3,7 +3,7 @@
  *
  * 把 pi session JSONL entry 数组映射为三类产物，供 RPC/文件两条历史读取链路共用：
  * - messages：四类 entry（message 透传 / compaction / branch_summary / custom_message）转成的伪消息，
- *   role 集合与 RPC get_messages 返回对齐，供 convertPiHistory 单点消费（AGENTS.md 规则 7.5）。
+ *   role 集合与 RPC get_messages 返回对齐，供 convertPiHistory 单点消费（AGENTS.md 关键规则 9）。
  * - entryIds：与 messages 平行对齐的来源 entry id（替代旧 __entryId 注入，M1 不再塞消息体）。
  * - customDataEntries：纯数据 custom entry（type:'custom'，不进 LLM 上下文），按需读取。
  *

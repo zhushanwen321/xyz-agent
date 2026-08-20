@@ -400,7 +400,7 @@ describe('rebuildHistoryFromEntries', () => {
 
   // ── 用例 8：label/other-custom 跳过；compaction M2 后转 system 消息 ──
   // M2 语义变化：compaction（type:'compaction'）经 mapSessionEntries 转成 compactionSummary
-  // 伪消息 → convertPiHistory 产 system 消息。M2 前 RPC 路径丢弃它（违反规则 7.5）。
+  // 伪消息 → convertPiHistory 产 system 消息。M2 前 RPC 路径丢弃它（违反关键规则 9）。
   it('case 8: label/other-custom skipped; compaction → system message (M2: was dropped, now preserved)', () => {
     const labelEntry: PiSessionLabelEntry = {
       type: 'label',
@@ -410,7 +410,7 @@ describe('rebuildHistoryFromEntries', () => {
       label: '重要',
       targetId: 'msg00800',
     }
-    // compaction entry：M2 前被 RPC 路径丢弃，M2 后经 mapSessionEntries 转 system 消息（规则 7.5 修复）
+    // compaction entry：M2 前被 RPC 路径丢弃，M2 后经 mapSessionEntries 转 system 消息（关键规则 9 修复）
     const compactionEntry: PiSessionCompactionEntry = {
       type: 'compaction',
       id: 'sum00800',
@@ -443,7 +443,7 @@ describe('rebuildHistoryFromEntries', () => {
     expect(messages).toHaveLength(2)
     expect(messages.map((m) => m.role)).toEqual(['user', 'system'])
     expect(messages[0].content).toEqual([{ type: 'text', text: '正常消息' }])
-    // compaction 转 system 消息 + compactionSummary 字段（M2 修复，规则 7.5）
+    // compaction 转 system 消息 + compactionSummary 字段（M2 修复，关键规则 9）
     expect(messages[1].compactionSummary).toMatchObject({ summary: '已压缩', tokensBefore: 1000 })
     // other custom（非 xyz.client-msg-id）不影响 clientUuidMap
     expect(clientUuidMap.size).toBe(0)
@@ -540,7 +540,7 @@ describe('rebuildHistoryFromEntries', () => {
     expect(tc.output).toBe('file contents here')
     // status: 非 error → completed（默认值，不被 toolResult 改写）
     expect(tc.status).toBe('completed')
-    // ★ C1 核心断言：details（含 __gui__）透传（之前丢失，违反规则 7.5）
+    // ★ C1 核心断言：details（含 __gui__）透传（之前丢失，违反关键规则 9）
     expect(tc.details).toEqual({
       __gui__: { v: 1, component: { type: 'stats-line', props: { items: [] } } },
     })
@@ -747,7 +747,7 @@ describe('rebuildHistoryFromEntries', () => {
     const { messages } = rebuildHistoryFromEntries(entries, null)
 
     // user + system(compaction) + system(branch) + system(custom) + assistant = 5
-    // M2 前 RPC 路径只产 user + assistant = 2（丢三类，违反规则 7.5）
+    // M2 前 RPC 路径只产 user + assistant = 2（丢三类，违反关键规则 9）
     expect(messages).toHaveLength(5)
     expect(messages.map((m) => m.role)).toEqual(['user', 'system', 'system', 'system', 'assistant'])
     // compaction → system + compactionSummary 字段

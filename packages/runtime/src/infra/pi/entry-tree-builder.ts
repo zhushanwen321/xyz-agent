@@ -12,7 +12,7 @@ import { mapSessionEntries } from './session-entry-mapper.js'
  *
  * 与 convertPiHistory（消费 get_messages 扁平 message 列表）的关系：
  * - 复用 convertPiHistory 做 message→Message 翻译（含 toolResult 合并 / compactionSummary /
- *   custom / branchSummary 系统消息处理），保证与 RPC/文件路径行为一致（规则 7.5）。
+ *   custom / branchSummary 系统消息处理），保证与 RPC/文件路径行为一致（关键规则 9）。
  * - 额外能力：用 custom entry "xyz.client-msg-id" 的 clientUuid 映射 +
  *   segments.json sidecar 的结构化 Segment[]，精确还原 composer 提交时的 badge 结构
  *   （convertPiHistory 路径无 entry 树信息，只能用 textToSegments 兜底纯文本）。
@@ -96,10 +96,10 @@ export function rebuildHistoryFromEntries(
 ): RebuiltHistory {
   // 1. mapSessionEntries 统一映射（共享单点，M2 接入）。
   //    四类 entry（message/compaction/custom_message/branch_summary）→ messages 伪消息，
-  //    供 convertPiHistory 单点消费（AGENTS.md 规则 7.5：RPC/文件两路径覆盖一致）；
+  //    供 convertPiHistory 单点消费（AGENTS.md 关键规则 9：RPC/文件两路径覆盖一致）；
   //    custom → customDataEntries（下方建 clientUuidMap 用）；label/session_info 等跳过。
   //    替代旧手写两遍扫（旧实现只提取 message entry，丢弃 compaction/branch/custom_message，
-  //    导致活跃 session 重开时这三类记录消失——违反规则 7.5「可重开恢复」）。
+  //    导致活跃 session 重开时这三类记录消失——违反关键规则 9「可重开恢复」）。
   const { messages, entryIds, customDataEntries } = mapSessionEntries(entries)
 
   // 2. clientUuidMap 从 customDataEntries 建（扫 xyz.client-msg-id custom entry）。
