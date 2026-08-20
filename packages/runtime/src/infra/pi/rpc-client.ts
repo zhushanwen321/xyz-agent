@@ -113,7 +113,14 @@ export class RpcClient implements IPiEngine {
   private msgCounter = 0
   private _exited = false
   private _killing = false
-  private exitCallback: ((code: number | null, stderr: string) => void) | null = null
+  /**
+   * 进程退出回调集合（多播）。
+   *
+   * 曾是单槽字段（exitCallback = cb）：第二个注册者会静默覆盖第一个——若覆盖
+   * ProcessManager 的清理回调即复刻「僵尸 session」根因（handoff-service.ts:63-70
+   * 曾因此被迫轮询 exited 绕开）。改 Set + onExit 返回 unsubscribe，与 onEvent 对称。
+   */
+  private exitCallbacks = new Set<(code: number | null, stderr: string) => void>()
   /** 收集 pi 进程的 stderr 输出，用于在启动失败时提供具体错误信息 */
   private stderrChunks: string[] = []
   /** pi stdout JSONL 原始流落盘（架构约定 #4，诊断 pi 卡死的决定性证据） */
@@ -242,8 +249,8 @@ export class RpcClient implements IPiEngine {
       // via a separate safety net to avoid leaving callers hanging until CMD_TIMEOUT_MS.
       if (!this._killing) {
         this.rejectAll(new Error(`pi process exited with code ${code}${this.formatStderrSuffix()}`))
-        if (this.exitCallback) {
-          this.exitCallback(code, this.getStderrTail())
+        for (const cb of this.exitCallbacks) {
+          cb(code, this.getStderrTail())
         }
       }
     })
@@ -268,10 +275,25 @@ export class RpcClient implements IPiEngine {
     // 管道断裂（EPIPE / ECONNRESET）时 stdout 会 emit 'error'，若无 listener 则升级为
     // uncaughtException → runtime 主进程崩溃。此处捕获后 rejectAll pending 并标记 _exited，
     // 把 stream error 纳入与进程退出相同的清理路径。
+    //
+    // 管道断裂但进程可能仍存活（孤儿泄漏）：SIGKILL 加速其死亡，让下方 proc.on('exit')
+    // 作为死亡通知的唯一出口（避免「stream error 通知 + exit 通知」双触发）。
+    // 刻意调 ChildProcess 原生 kill 而非 this.kill()：后者置 _killing=true，
+    // exit 处理器会跳过 exitCallbacks —— 死亡通知整条丢失。
+    const killProcAfterStreamError = (stream: 'stdout' | 'stderr'): void => {
+      try {
+        this.proc?.kill('SIGKILL')
+      } catch (e) {
+        // best-effort 降级：kill 抛错说明进程已死，exit 事件已/将至并走唯一出口，无需传播
+        console.error(`[rpc] SIGKILL after ${stream} stream error failed (process may already be dead):`, e)
+      }
+    }
+
     proc.stdout?.on('error', (err: NodeJS.ErrnoException) => {
       console.error('[rpc] stdout stream error:', err)
       this._exited = true
       this.rejectAll(new Error(`pi stdout stream error: ${err.message}`))
+      killProcAfterStreamError('stdout')
     })
 
     // 收集 stderr 用于错误诊断，同时转发到日志
@@ -292,6 +314,7 @@ export class RpcClient implements IPiEngine {
         console.error('[rpc] stderr stream error:', err)
         this._exited = true
         this.rejectAll(new Error(`pi stderr stream error: ${err.message}`))
+        killProcAfterStreamError('stderr')
       })
     }
 
@@ -435,9 +458,15 @@ export class RpcClient implements IPiEngine {
     })
   }
 
-  /** Register a callback for when the pi process exits unexpectedly. stderr 为 pi 进程尾部输出。 */
-  onExit(callback: (code: number | null, stderr: string) => void): void {
-    this.exitCallback = callback
+  /**
+   * Register a callback for when the pi process exits unexpectedly. stderr 为 pi 进程尾部输出。
+   * 多播（可多订阅者，后注册者不再覆盖先注册者），返回 unsubscribe（与 onEvent 对称）。
+   * 每个进程 exit 恰好通知一次：proc.on('exit') 是唯一出口（stream error 只 kill 不通知）；
+   * _killing=true 的主动 kill 流程不通知，语义不变。
+   */
+  onExit(callback: (code: number | null, stderr: string) => void): () => void {
+    this.exitCallbacks.add(callback)
+    return () => { this.exitCallbacks.delete(callback) }
   }
 
   /**

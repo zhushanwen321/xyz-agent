@@ -24,6 +24,7 @@ import { segmentsToPrompt } from '@xyz-agent/shared'
 import {
   subscribeSession,
   clearSubscription,
+  invalidateSubscription,
   resetSubscriptionStates,
 } from '../../coordination/subscription-state'
 import type { ChatStoreInstance } from './store'
@@ -693,4 +694,32 @@ export function createUseChat(deps: UseChatDeps) {
     sendBash,
     abortBash,
   }
+}
+
+/**
+ * 失效指定 session 的本地流订阅标记（session.exited 时由 useMessageEffects 调用）。
+ *
+ * 收到 session.exited = 服务端订阅必然已被 bus.clearSession 清除（pi 死亡 →
+ * removeSessionEntry → clearSession），本地两层幂等标记必须同步失效，否则 respawn 后
+ * ensureStreamSubscription 被短路，链路断裂：
+ * - streamSubscriptions 条目不清 → events 层 handler 不重挂 + 残留旧 handler（若只删
+ *   标记不 unsub，重挂后同 sid 双 handler 双 dispatch）；
+ * - subscriptionStates 条目不清（clearSubscription）→ subscribeSession 幂等守卫
+ *   （subscribed=true）短路，不重发 subscribe RPC → 新 pi 的 message.* 定向推送无订阅者，
+ *   UI 卡「进行中…」而回复实际已生成。
+ *
+ * 与 disposeSession 的区别：session 仍存在（dead 占位 UI 可「重新打开」），只失效订阅，
+ * 不清 chat store 分区/historyTruncated/manualCompaction 等业务状态。
+ */
+export function invalidateStreamSubscription(sessionId: string): void {
+  const unsub = streamSubscriptions.get(sessionId)
+  if (unsub) {
+    unsub()
+    streamSubscriptions.delete(sessionId)
+  }
+  // 收口兜底（对齐 disposeSession）：unsub 后不会再有新消息入缓冲，残留 delta 落地显示
+  coalescer.flush(sessionId)
+  // invalidateSubscription（非 clearSubscription）：额外清 in-flight 去重条目，防 respawn 后
+  // 首次 ensureStreamSubscription 复用死 Promise 而不重发 subscribe RPC
+  invalidateSubscription(sessionId)
 }

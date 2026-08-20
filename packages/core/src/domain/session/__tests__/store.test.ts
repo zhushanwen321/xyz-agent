@@ -130,6 +130,49 @@ describe('createSessionStore', () => {
     expect(store.list.value.length).toBe(2)
   })
 
+  it('TC-5b: markDead 后 setGroups 保留 dead 态（session.exited 后紧接 config.sessions 全量覆盖不冲掉 dead）', () => {
+    const store = createSessionStore()
+    const s1 = makeSession({ id: 's1', cwd: '/a', status: 'active' })
+    const s2 = makeSession({ id: 's2', cwd: '/a', status: 'active' })
+    store.setGroups([{ cwd: '/a', sessions: [s1, s2] }])
+
+    store.markDead('s1')
+    expect(store.list.value.find((s) => s.id === 's1')?.status).toBe('dead')
+
+    // runtime 全量广播 config.sessions：s1 来自磁盘 outcome（stopped），s2 正常 idle。
+    // dead 是运行时进程态（比磁盘 outcome 新），不得被覆盖
+    store.setGroups([
+      {
+        cwd: '/a',
+        sessions: [
+          makeSession({ id: 's1', cwd: '/a', status: 'stopped' }),
+          makeSession({ id: 's2', cwd: '/a', status: 'idle' }),
+        ],
+      },
+    ])
+    expect(store.list.value.find((s) => s.id === 's1')?.status).toBe('dead')
+    expect(store.list.value.find((s) => s.id === 's2')?.status).toBe('idle')
+
+    // 新列表中不存在的 dead session 不保留（首 turn 无文件死亡的终结语义：随列表消失）
+    store.markDead('s2')
+    store.setGroups([{ cwd: '/a', sessions: [makeSession({ id: 's1', cwd: '/a', status: 'done' })] }])
+    expect(store.list.value.map((s) => s.id)).toEqual(['s1'])
+    expect(store.list.value.find((s) => s.id === 's1')?.status).toBe('dead')
+  })
+
+  it('TC-5c: revive 后 setGroups 不再保持 dead（restoreSession 成功后磁盘态正常生效）', () => {
+    const store = createSessionStore()
+    const s1 = makeSession({ id: 's1', cwd: '/a', status: 'active' })
+    store.setGroups([{ cwd: '/a', sessions: [s1] }])
+    store.markDead('s1')
+    store.revive('s1')
+    expect(store.list.value.find((s) => s.id === 's1')?.status).toBe('idle')
+
+    // revive 后全量刷新：新列表状态原样生效（不再被 dead 保留逻辑钉住）
+    store.setGroups([{ cwd: '/a', sessions: [makeSession({ id: 's1', cwd: '/a', status: 'idle' })] }])
+    expect(store.list.value.find((s) => s.id === 's1')?.status).toBe('idle')
+  })
+
   it('TC-6: listLoadError set/清空 + active 按 activeId 派生', () => {
     const store = createSessionStore()
     expect(store.listLoadError.value).toBeNull()

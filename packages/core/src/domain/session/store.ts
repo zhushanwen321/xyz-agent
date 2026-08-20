@@ -105,9 +105,34 @@ export function createSessionStore() {
     if (target && target.status === 'dead') target.status = 'idle'
   }
 
-  /** 载入分组列表（useSidebar.loadSessions 调用，单一写入入口） */
+  /**
+   * 载入分组列表（useSidebar.loadSessions 调用，单一写入入口）。
+   *
+   * [HISTORICAL] dead 态穿越刷新：runtime 在 pi 死亡时先广播 session.exited（markDead
+   * 置 dead），同一回调末尾紧接全量广播 config.sessions（磁盘 outcome：done/stopped 等），
+   * 两者数十 ms 内先后到达。dead 是运行时进程态（比磁盘 outcome 新），全量覆盖会把 dead
+   * 冲回终态 → panel 的 dead 占位 UI 与「重新打开」入口永不渲染（dead 恒不可达）。
+   * 故已 dead 的 session 在新列表中 status 非 dead 时保留 dead，仅显式 revive
+   * （restoreSession 成功后）清除。新列表中不存在的 session 不保留（首 turn 无文件死亡的
+   * 终结语义：随列表消失）。
+   */
   function setGroups(next: SessionGroup[]): void {
-    groups.value = next
+    const deadIds = new Set(
+      groups.value
+        .flatMap((g) => g.sessions)
+        .filter((s) => s.status === 'dead')
+        .map((s) => s.id),
+    )
+    if (deadIds.size === 0) {
+      groups.value = next
+      return
+    }
+    groups.value = next.map((g) => ({
+      ...g,
+      sessions: g.sessions.map((s) =>
+        deadIds.has(s.id) && s.status !== 'dead' ? { ...s, status: 'dead' } : s,
+      ),
+    }))
   }
 
   /** 设置列表加载错误消息（loadSessions 失败时调，null 清空） */
