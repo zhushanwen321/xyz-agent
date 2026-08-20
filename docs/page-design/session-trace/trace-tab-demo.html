@@ -225,7 +225,8 @@ svg { display: block; }
   box-shadow: inset 0 0 0 1px transparent;
 }
 .tr-row:hover { background: var(--surface-2); }
-.tr-row.selected { background: var(--surface-hover); box-shadow: inset 0 0 0 1px var(--accent-ring); }
+.tr-row.selected { background: var(--surface-hover); }
+.tr-row.selected .tr-summary { color: var(--accent); }
 .tr-row.hidden-by-filter { display: none; }
 
 .tr-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -493,7 +494,7 @@ svg { display: block; }
             <div class="tr-kv"><span class="k">session id</span><span class="v mono">019feb3c-8a21-7d3e-b441-2c09d1a7e552</span></div>
             <div class="tr-kv"><span class="k">cwd</span><span class="v mono">~/Code/dag-executor-workspace/feat-retry</span></div>
             <div class="tr-kv"><span class="k">fork 来源</span><span class="v"><a href="#">019fe69b…（源 session trace）</a> · fork 点 <span class="mono">#113</span>（includeFrom=true）</span></div>
-            <div class="tr-kv"><span class="k">文件</span><span class="v mono">~/.xyz-agent/pi/agent/sessions/--Users-zhushanwen-Code-dag-executor-workspace-feat-retry--/2026-08-20T09-41-02-112Z_019feb3c….jsonl</span></div>
+            <div class="tr-kv"><span class="k">文件</span><span class="v mono">~/.xyz-agent/pi/sessions/--Users-zhushanwen-Code-dag-executor-workspace-feat-retry--/2026-08-20T09-41-02-112Z_019feb3c….jsonl</span></div>
           </div>
         </div>
 
@@ -508,7 +509,7 @@ svg { display: block; }
           </div>
           <div class="tr-detail">
             <div class="tr-kv"><span class="k">留痕来源</span><span class="v">custom entry <span class="mono">xyz:system-prompt</span>（system-prompt-trace extension 写入，pi 本身不落盘 system prompt）</span></div>
-            <div class="tr-kv"><span class="k">reason</span><span class="v">initial（session 首次构建）</span></div>
+            <div class="tr-kv"><span class="k">reason</span><span class="v">initial（首个 turn_start 写入——session_start 时 prompt 尚未构建完，见 design.md §3.3 D2）</span></div>
             <div class="tr-pre"><span class="c-dim"># 全文（12,436 字符，节录）</span>
 You are an expert coding assistant operating inside pi…
 <span class="c-dim">…工具定义 ×14 · 技能 ×6 · AGENTS.md（全局 + 项目）· extension 注入 ×3…</span>
@@ -673,7 +674,7 @@ export async function withRetry&lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;, opts: Re
             <span class="tr-ctx-tag">不进 context</span>
           </div>
           <div class="tr-detail">
-            <div class="tr-kv"><span class="k">reason</span><span class="v">resume（用户关闭 app 后重开 session，pi 重新动态构建 system prompt——不落盘，无此留痕则变化不可查，design.md §2.2）</span></div>
+            <div class="tr-kv"><span class="k">reason</span><span class="v">resume（关闭 app 重开后首个 turn_start 写入；pi resume 时重新动态构建 system prompt——不落盘，无此留痕则变化不可查，design.md §2.2 / §3.3 D2）</span></div>
             <div class="tr-kv"><span class="k">与 v1 差异</span><span class="v">AGENTS.md 新增 1 条规则 · extension 注入 ×3 → ×4</span></div>
             <div class="tr-pre"><span class="c-dim"># diff 摘要（v1 → v2，节录）</span>
 <span class="c-add">+ 10. 选择性提交用 `git apply --cached`：只提交文件 X 里自己的改动 A…</span>
