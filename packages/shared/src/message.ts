@@ -306,4 +306,11 @@ export interface Message {
    * 缺失时（在线重开的 session 走 RPC）fork 需 fallback 读 JSONL 按 timestamp 匹配。
    */
   piEntryId?: string
+  /**
+   * live-only 消息标记（conversation-turn-attribution D4）：该消息在 pi session 文件中
+   * 无对应 entry（如 stream_warn 健康警告），重开 session 后不存在。唯一写入点 = 消息
+   * 创建处（registry stream_warn handler）；分组层据此归为 turn 内 notice（不切断 turn），
+   * 不参与「live ≡ reload」等价性断言。
+   */
+  liveOnly?: boolean
 }
