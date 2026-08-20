@@ -15,13 +15,18 @@
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/components/MessageStream-bash.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore } from '@/stores/chat'
 import MessageStream from '@/components/panel/MessageStream.vue'
 // [w6 chat-ui-and-shell T7] ui 包 BashOutputBlock（MessageStream 壳 provide 真 deps → mock useChatViewDeps）
 import { BashOutputBlock } from '@xyz-agent/ui'
+// [W4] executingBash 瞬时态置/清：直接调 core bash-effects 的帧 handler（bashStart 置 /
+// bashResult abort 哨兵帧清，均不触碰 ctx——哨兵分支在解构后 return 前短路，传最小 fake ctx）
+import { bashEffects } from '@xyz-agent/core'
+import type { MessageEffectContext } from '@xyz-agent/core'
 import type { Message } from '@xyz-agent/shared'
 import { defineComponent, h } from 'vue'
 
@@ -264,5 +269,62 @@ describe('MessageStream 共存钉扎（W5T1，streaming turn + bash 消息双挂
     const relation = turnEl.element.compareDocumentPosition(bashEl)
     // 期望 bash 在 turn 之后 → turn 在 bash 之前 → relation 含 Node.DOCUMENT_POSITION_FOLLOWING (4)
     expect(relation & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})
+
+/**
+ * W4 executing bash 瞬时行（turn-attribution D2 ephemeral 通道，完整形态）。
+ *
+ * 覆盖（出现/消失生命周期 + 内容）：
+ * - bashStart 帧置位 → executing-bash-notice 行出现，含 i18n 前缀（zh locale「正在执行」）+ mono 命令
+ * - bashResult 到达（abort 哨兵帧 command:''+cancelled:true 只清执行态不产 entry）→ 行消失
+ * - 行位于 Virtualizer 之外（文档流），空消息 session 也可见——不依赖 virtua 窗口（与 skip 的
+ *   T10/gap3 相反，本用例不受 happy-dom viewportSize=0 限制）
+ *
+ * 状态说明：executingBash 是 core 模块级 per-session Map（不进 messages）；bashStartEffect /
+ * bashResultEffect 哨兵分支均不解构使用 ctx，传最小 fake ctx 即可驱动真实 effect 代码路径。
+ */
+describe('MessageStream executing bash 瞬时行（W4 完整形态）', () => {
+  /** 最小 fake ctx：两个帧 handler 的目标分支都不触碰 ctx 字段（哨兵分支在解构后短路） */
+  const fakeCtx = { messages: undefined, applyEntryFrame: undefined } as unknown as MessageEffectContext
+
+  /** 清残留（模块级 Map 跨用例共享，哨兵帧幂等清除） */
+  function clearExecutingBash(sid: string): void {
+    bashEffects['message.bashResult']?.(fakeCtx, sid, { command: '', cancelled: true })
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.stubGlobal('ResizeObserver', NoopResizeObserver)
+    HTMLElement.prototype.scrollTo = vi.fn()
+  })
+
+  afterEach(() => {
+    clearExecutingBash('sess-exec-bash')
+  })
+
+  it('W4-E1: bashStart 置位 → 瞬时行出现（前缀文案 + 命令文本）；bashResult 到达 → 行消失', async () => {
+    const sid = 'sess-exec-bash'
+    clearExecutingBash(sid)
+    const wrapper = mountStream(sid)
+
+    // 初始：无执行态 → 瞬时行不渲染
+    expect(wrapper.find('[data-testid="executing-bash-notice"]').exists()).toBe(false)
+
+    // bashStart 帧置位 → 瞬时行出现（live 中途出现的真实时序）
+    bashEffects['message.bashStart']?.(fakeCtx, sid, { command: 'npm test', timestamp: 1 })
+    await nextTick()
+    const row = wrapper.find('[data-testid="executing-bash-notice"]')
+    expect(row.exists()).toBe(true)
+    // W4 完整形态：i18n 前缀（renderer 测试 t() 从 zh-CN locale 真实取值）+ mono 命令文本
+    expect(row.text()).toContain('正在执行')
+    expect(row.text()).toContain('npm test')
+
+    // bashResult 到达（abort 哨兵帧：只清执行态不产 entry）→ 瞬时行消失，无残留 spinner
+    bashEffects['message.bashResult']?.(fakeCtx, sid, { command: '', cancelled: true })
+    await nextTick()
+    expect(wrapper.find('[data-testid="executing-bash-notice"]').exists()).toBe(false)
+
+    wrapper.unmount()
   })
 })

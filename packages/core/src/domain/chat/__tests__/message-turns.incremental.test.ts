@@ -29,7 +29,6 @@ import {
   toRenderItems,
   toRenderItemsIncremental,
   createTurnRenderCache,
-  filterDisplayableMessages,
   turnStableId,
   groupTurns,
 } from '../message-turns'
@@ -96,7 +95,7 @@ describe('toRenderItemsIncremental —— 退化路径与等价性', () => {
   it('cache=undefined 退化为全量版：输出与 toRenderItems deepEqual（forceWorking 双态）', () => {
     for (const fw of [false, true]) {
       const msgs = mixedFixture()
-      expect(toRenderItemsIncremental(msgs, filterDisplayableMessages, fw, undefined)).toEqual(
+      expect(toRenderItemsIncremental(msgs, fw, undefined)).toEqual(
         toRenderItems(msgs, fw),
       )
     }
@@ -127,7 +126,7 @@ describe('toRenderItemsIncremental —— 退化路径与等价性', () => {
       ],
     ]
     for (const step of steps) {
-      expect(toRenderItemsIncremental(step, filterDisplayableMessages, false, cache)).toEqual(
+      expect(toRenderItemsIncremental(step, false, cache)).toEqual(
         toRenderItems(step, false),
       )
     }
@@ -141,7 +140,7 @@ describe('toRenderItemsIncremental —— 退化路径与等价性', () => {
       makeMsg({ id: 'h1', role: 'system', customType: 'todo-context', display: false, content: 'hidden' }),
       makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
     ]
-    const items = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
+    const items = toRenderItemsIncremental(msgs, false, cache)
     expect(items.map((i) => i.kind)).toEqual(['turn'])
     // a2 仍归 u1 的 turn（隐藏消息透明，不切断）；输出与全量版一致
     expect(turnOf(items[0]).assistants.map((m) => m.id)).toEqual(['a1', 'a2'])
@@ -150,14 +149,13 @@ describe('toRenderItemsIncremental —— 退化路径与等价性', () => {
 })
 
 describe('toRenderItemsIncremental —— ① 快路径零重算', () => {
-  it('同源数组引用第二次调用：返回引用恒等 + filter 零调用 + turn 对象 toBe 恒等', () => {
+  it('同源数组引用第二次调用：返回引用恒等 + turn 对象 toBe 恒等', () => {
     const cache = createTurnRenderCache()
     const msgs = mixedFixture()
-    const filterSpy = (m: Message[]) => filterDisplayableMessages(m)
-    const r1 = toRenderItemsIncremental(msgs, filterSpy, false, cache)
+    const r1 = toRenderItemsIncremental(msgs, false, cache)
     expect(r1).toBe(cache.cachedItems)
-    // 快路径：同引用再次调用直接复用 cachedItems（含非 turn 项），不进 filter 不重扫
-    const r2 = toRenderItemsIncremental(msgs, filterSpy, false, cache)
+    // 快路径：同引用再次调用直接复用 cachedItems（含非 turn 项）不重扫（W4 起 filter 参数已移除——分组恒消费全量数组）
+    const r2 = toRenderItemsIncremental(msgs, false, cache)
     expect(r2).toBe(r1)
     expect(turnOf(r2[0])).toBe(turnOf(r1[0]))
     expect(cache.lastSourceRef).toBe(msgs)
@@ -170,9 +168,9 @@ describe('toRenderItemsIncremental —— ② 末位追加只重建末位 turn',
     const u1 = makeMsg({ id: 'u1', role: 'user' })
     const a1 = makeMsg({ id: 'a1', role: 'assistant', content: 'r1' })
     const u2 = makeMsg({ id: 'u2', role: 'user' })
-    const r1 = toRenderItemsIncremental([u1, a1, u2], filterDisplayableMessages, false, cache)
+    const r1 = toRenderItemsIncremental([u1, a1, u2], false, cache)
     const a2 = makeMsg({ id: 'a2', role: 'assistant', content: 'r2' })
-    const r2 = toRenderItemsIncremental([u1, a1, u2, a2], filterDisplayableMessages, false, cache)
+    const r2 = toRenderItemsIncremental([u1, a1, u2, a2], false, cache)
     expect(turnOf(r2[0])).toBe(turnOf(r1[0])) // 历史 turn 复用（身份恒等）
     expect(turnOf(r2[1])).not.toBe(turnOf(r1[1])) // 末位 turn 重建（[u2] → [u2,a2]）
     expect(turnOf(r2[1]).assistants.map((m) => m.id)).toEqual(['u2', 'a2'].slice(1))
@@ -183,10 +181,10 @@ describe('toRenderItemsIncremental —— ② 末位追加只重建末位 turn',
     const cache = createTurnRenderCache()
     const u1 = makeMsg({ id: 'u1', role: 'user' })
     const a1 = makeMsg({ id: 'a1', role: 'assistant', content: 'r1' })
-    const r1 = toRenderItemsIncremental([u1, a1], filterDisplayableMessages, false, cache)
+    const r1 = toRenderItemsIncremental([u1, a1], false, cache)
     const u2 = makeMsg({ id: 'u2', role: 'user' })
     const a2 = makeMsg({ id: 'a2', role: 'assistant', content: 'r2' })
-    const r2 = toRenderItemsIncremental([u1, a1, u2, a2], filterDisplayableMessages, false, cache)
+    const r2 = toRenderItemsIncremental([u1, a1, u2, a2], false, cache)
     expect(turnOf(r2[0])).toBe(turnOf(r1[0]))
     expect(turnOf(r2[1])).not.toBe(turnOf(r1[0]))
     expect(turnOf(r2[1]).index).toBe(2)
@@ -196,10 +194,10 @@ describe('toRenderItemsIncremental —— ② 末位追加只重建末位 turn',
     const cache = createTurnRenderCache()
     const u1 = makeMsg({ id: 'u1', role: 'user' })
     const a1s = makeMsg({ id: 'a1', role: 'assistant', content: 'r', status: 'streaming' })
-    const r1 = toRenderItemsIncremental([u1, a1s], filterDisplayableMessages, false, cache)
+    const r1 = toRenderItemsIncremental([u1, a1s], false, cache)
     expect(turnOf(r1[0]).isStreaming).toBe(true)
     const u2 = makeMsg({ id: 'u2', role: 'user' })
-    const r2 = toRenderItemsIncremental([u1, a1s, u2], filterDisplayableMessages, false, cache)
+    const r2 = toRenderItemsIncremental([u1, a1s, u2], false, cache)
     // turn1 不再是末位：isStreaming 校正为 false，对象不可变替换（ assistants 引用保留）
     expect(turnOf(r2[0]).isStreaming).toBe(false)
     expect(turnOf(r2[0])).not.toBe(turnOf(r1[0]))
@@ -210,14 +208,14 @@ describe('toRenderItemsIncremental —— ② 末位追加只重建末位 turn',
   it('hasFoldable 随成员变化重算：追加带 thinking 的 assistant 后末位 turn hasFoldable=true', () => {
     const cache = createTurnRenderCache()
     const u1 = makeMsg({ id: 'u1', role: 'user' })
-    const r1 = toRenderItemsIncremental([u1], filterDisplayableMessages, false, cache)
+    const r1 = toRenderItemsIncremental([u1], false, cache)
     expect(turnOf(r1[0]).hasFoldable).toBe(false)
     const a1 = makeMsg({
       id: 'a1',
       role: 'assistant',
       thinking: [{ id: 'th1', content: '推理', collapsed: false }],
     })
-    const r2 = toRenderItemsIncremental([u1, a1], filterDisplayableMessages, false, cache)
+    const r2 = toRenderItemsIncremental([u1, a1], false, cache)
     expect(turnOf(r2[0])).not.toBe(turnOf(r1[0]))
     expect(turnOf(r2[0]).hasFoldable).toBe(true)
   })
@@ -229,8 +227,8 @@ describe('toRenderItemsIncremental —— ③ forceWorking 变化只重算末位
     // mixedFixture items = [turn, systemNotice, bashExecution, turn]（v2：bash 在可见 system
     // 边界后无当前 turn，退化独立 static 项），末位 turn 在 index 3
     const msgs = mixedFixture()
-    const r1 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
-    const r2 = toRenderItemsIncremental(msgs, filterDisplayableMessages, true, cache)
+    const r1 = toRenderItemsIncremental(msgs, false, cache)
+    const r2 = toRenderItemsIncremental(msgs, true, cache)
     expect(r2).not.toBe(r1)
     expect(turnOf(r2[0])).toBe(turnOf(r1[0])) // 历史 turn 复用
     const t1 = turnOf(r1[3])
@@ -242,10 +240,10 @@ describe('toRenderItemsIncremental —— ③ forceWorking 变化只重算末位
     expect(r2[2]).toBe(r1[2])
     expect(r2[2].kind).toBe('bashExecution')
     // cache 自洽：替换后再次同参 → 引用恒等（零重算）
-    const r3 = toRenderItemsIncremental(msgs, filterDisplayableMessages, true, cache)
+    const r3 = toRenderItemsIncremental(msgs, true, cache)
     expect(r3).toBe(r2)
     // fw true→false 对称回退
-    const r4 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
+    const r4 = toRenderItemsIncremental(msgs, false, cache)
     expect(turnOf(r4[3]).isStreaming).toBe(false)
     expect(turnOf(r4[0])).toBe(turnOf(r1[0]))
   })
@@ -259,9 +257,9 @@ describe('toRenderItemsIncremental —— ③ forceWorking 变化只重算末位
     const c1 = makeMsg({ id: 'c1', role: 'system', content: 'notice' })
     const bash = bashMsg('bash-1')
     const msgs = [u1, a1, c1, bash]
-    const r1 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
+    const r1 = toRenderItemsIncremental(msgs, false, cache)
     expect(r1.map((i) => i.kind)).toEqual(['turn', 'systemNotice', 'bashExecution'])
-    const r2 = toRenderItemsIncremental(msgs, filterDisplayableMessages, true, cache)
+    const r2 = toRenderItemsIncremental(msgs, true, cache)
     expect(turnOf(r2[0]).isStreaming).toBe(true) // static 项之后的最后一个 turn 被正确驱动
     // static 项本身引用复用（不依赖 forceWorking）
     expect(r2[1]).toBe(r1[1])
@@ -274,9 +272,9 @@ describe('toRenderItemsIncremental —— ③ forceWorking 变化只重算末位
       makeMsg({ id: 'u1', role: 'user' }),
       makeMsg({ id: 'a1', role: 'assistant', content: 'r', status: 'streaming' }),
     ]
-    const r1 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
+    const r1 = toRenderItemsIncremental(msgs, false, cache)
     expect(turnOf(r1[0]).isStreaming).toBe(true)
-    const r2 = toRenderItemsIncremental(msgs, filterDisplayableMessages, true, cache)
+    const r2 = toRenderItemsIncremental(msgs, true, cache)
     expect(r2).toBe(r1) // 期望值不变 → cachedItems 引用恒等
   })
 })
@@ -285,8 +283,8 @@ describe('toRenderItemsIncremental —— ④ 非 turn 项行为等价', () => {
   it('快路径：systemNotice/bashExecution 项引用恒等复用（cachedItems 整体复用）', () => {
     const cache = createTurnRenderCache()
     const msgs = mixedFixture()
-    const r1 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
-    const r2 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
+    const r1 = toRenderItemsIncremental(msgs, false, cache)
+    const r2 = toRenderItemsIncremental(msgs, false, cache)
     expect(r2[1]).toBe(r1[1]) // systemNotice
     // items = [turn, systemNotice, bashExecution, turn]（长度 4，bash 在下标 2）
     expect(r2[2]).toBe(r1[2]) // bashExecution
@@ -299,10 +297,10 @@ describe('toRenderItemsIncremental —— ④ 非 turn 项行为等价', () => {
     const a1 = makeMsg({ id: 'a1', role: 'assistant' })
     const c1 = makeMsg({ id: 'c1', role: 'system', content: '压缩记录' })
     const bash = bashMsg('bash-1')
-    const r1 = toRenderItemsIncremental([u1, a1, c1, bash], filterDisplayableMessages, false, cache)
+    const r1 = toRenderItemsIncremental([u1, a1, c1, bash], false, cache)
     const u2 = makeMsg({ id: 'u2', role: 'user' })
     const src2 = [u1, a1, c1, bash, u2]
-    const r2 = toRenderItemsIncremental(src2, filterDisplayableMessages, false, cache)
+    const r2 = toRenderItemsIncremental(src2, false, cache)
     expect(r2[1]).not.toBe(r1[1]) // static 项重扫重建（新 wrapper 对象）
     expect(r2[1]).toEqual(r1[1]) // 内容等价
     if (r2[1].kind !== 'systemNotice' || r1[1].kind !== 'systemNotice') throw new Error('expected systemNotice')
@@ -316,7 +314,7 @@ describe('toRenderItemsIncremental —— ④b 平移场景（W21 review Fix-5�
     const cache = createTurnRenderCache()
     const u1 = makeMsg({ id: 'u1', role: 'user' })
     const a1s = makeMsg({ id: 'a1', role: 'assistant', content: 'r', status: 'streaming' })
-    const r1 = toRenderItemsIncremental([u1, a1s], filterDisplayableMessages, false, cache)
+    const r1 = toRenderItemsIncremental([u1, a1s], false, cache)
     expect(turnOf(r1[0]).isStreaming).toBe(true)
 
     // 头部 prepend：system notice + 一个完整 turn → 旧 turn 签名整体下移一位，
@@ -325,7 +323,7 @@ describe('toRenderItemsIncremental —— ④b 平移场景（W21 review Fix-5�
     const u0 = makeMsg({ id: 'u0', role: 'user', content: 'history q' })
     const a0 = makeMsg({ id: 'a0', role: 'assistant', content: 'history a' })
     const src2 = [sys, u0, a0, u1, a1s]
-    const r2 = toRenderItemsIncremental(src2, filterDisplayableMessages, false, cache)
+    const r2 = toRenderItemsIncremental(src2, false, cache)
 
     // 正确性兜底：平移场景输出与全量版 deepEqual（错位复用会导致 index/user 错乱，此处兜住）
     expect(r2).toEqual(toRenderItems(src2, false))
@@ -346,12 +344,12 @@ describe('toRenderItemsIncremental —— ④b 平移场景（W21 review Fix-5�
       makeMsg({ id: 'u3', role: 'user', content: 'q3' }),
       makeMsg({ id: 'a3', role: 'assistant', content: 'r3' }),
     ]
-    const r1 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
+    const r1 = toRenderItemsIncremental(msgs, false, cache)
     expect(r1.map((i) => i.kind)).toEqual(['turn', 'turn', 'turn'])
 
     // 删中间 turn2（[u2,a2] 整组移除）：位置 1 旧签名 [u2,a2] vs 新 [u3,a3] 错位 → 重算
     const src2 = msgs.filter((m) => m.id !== 'u2' && m.id !== 'a2')
-    const r2 = toRenderItemsIncremental(src2, filterDisplayableMessages, false, cache)
+    const r2 = toRenderItemsIncremental(src2, false, cache)
 
     // 前缀 turn 引用复用（位置 0 签名对齐）
     expect(turnOf(r2[0])).toBe(turnOf(r1[0]))
@@ -389,7 +387,7 @@ describe('toRenderItemsIncremental —— ⑤ 缓存分区隔离（useSessionSco
       deriveFor = (sid: string, forceWorking = false) => {
         sidRef.value = sid
         const cacheRef = state.current.value
-        return toRenderItemsIncremental(store[sid], filterDisplayableMessages, forceWorking, cacheRef.value)
+        return toRenderItemsIncremental(store[sid], forceWorking, cacheRef.value)
       }
     })
     return { deriveFor, state: () => state, store }
@@ -710,7 +708,7 @@ describe('groupRenderInput 分组规则 v2 —— 纯函数等价性（W6 等价
       ],
     ]
     for (const step of steps) {
-      expect(toRenderItemsIncremental(step, filterDisplayableMessages, false, cache)).toEqual(
+      expect(toRenderItemsIncremental(step, false, cache)).toEqual(
         toRenderItems(step, false),
       )
     }
@@ -720,9 +718,9 @@ describe('groupRenderInput 分组规则 v2 —— 纯函数等价性（W6 等价
     const cache = createTurnRenderCache()
     const u1 = makeMsg({ id: 'u1', role: 'user' })
     const a1 = makeMsg({ id: 'a1', role: 'assistant', content: 'r' })
-    const r1 = toRenderItemsIncremental([u1, a1], filterDisplayableMessages, false, cache)
+    const r1 = toRenderItemsIncremental([u1, a1], false, cache)
     expect(turnOf(r1[0]).notices).toBeUndefined()
-    const r2 = toRenderItemsIncremental([u1, a1, bashMsg('bash-1')], filterDisplayableMessages, false, cache)
+    const r2 = toRenderItemsIncremental([u1, a1, bashMsg('bash-1')], false, cache)
     expect(turnOf(r2[0])).not.toBe(turnOf(r1[0])) // notice 追加 → 签名变化重建
     // 重扫路径 turn 对象新建，但成员消息引用保留（user/assistants 不换对象）
     expect(turnOf(r2[0]).user).toBe(u1)

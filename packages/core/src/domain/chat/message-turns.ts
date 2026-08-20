@@ -110,8 +110,9 @@ export function renderKey(item: RenderItem): string {
  *  （conversation-renderer-model-unification §3.3.2，supersede ADR-0048）。
  *  消息仍进 chat store 供 fork/compact/replay，agent 仍能读到；此处仅过滤渲染，不丢消息。
  *  [W3·D3 演进] display 过滤从「分组前置」挪到渲染项输出层（toRenderItems 内建）——
- *  隐藏完成通知须参与分组边界语义，不能再在分组前滤除。本函数保留供旧调用点兼容
- *  （toRenderItemsIncremental 的 filter 参数占位），不再被分组路径消费。 */
+ *  隐藏完成通知须参与分组边界语义，不能再在分组前滤除。分组路径不再消费本函数
+ *  （toRenderItemsIncremental 的 filter 参数占位已于 W4 移除）；保留供调用方独立
+ *  过滤场景使用。 */
 
 /** 过滤掉不在对话流展示的消息（display===false：完成通知由生产端写死，
  *  goal/todo context 由 pi 扩展声明——纯字段过滤，无 customType 黑名单）。
@@ -343,7 +344,7 @@ function redriveLastTurnStreaming(cache: TurnRenderCache, forceWorking: boolean)
 }
 
 /**
- * 增量派生版 toRenderItems（D-4）：以「成员消息对象引用序列」为复用键。
+ * toRenderItemsIncremental（增量版，D-4，08 §3.3.1 perf W21）：
  * - 快路径：源数组引用未变 → 零重算（仅按 forceWorking 重驱动末位 isStreaming）
  * - 重扫：源数组引用变化 → 全量重分组（分组规则 v2 消费全量数组），同位置签名对齐的
  *   turn 复用上次对象，只重建成员变化的 turn。首版只做同位置匹配（位置平移的 turn 重算，
@@ -353,15 +354,11 @@ function redriveLastTurnStreaming(cache: TurnRenderCache, forceWorking: boolean)
  *   按「期望 isStreaming」校正——不一致时不可变替换。
  *
  * @param sourceMessages 源消息数组（per-sid 分区数组，全量含 display:false）
- * @param _filter 已弃用占位（W3·D3）：display 过滤已内化到输出层（分组须消费全量数组，
- *  隐藏完成通知参与边界语义）。参数保留仅为既有调用点（MessageStream.vue）签名兼容，
- *  W4 渲染适配时移除。
  * @param forceWorking subagent 虚拟 session 强制 streaming
  * @param cache 增量缓存；undefined 时退化为全量版（等价现状 toRenderItems）
  */
 export function toRenderItemsIncremental(
   sourceMessages: Message[],
-  _filter: (msgs: Message[]) => Message[],
   forceWorking: boolean,
   cache: TurnRenderCache | undefined,
 ): RenderItem[] {
