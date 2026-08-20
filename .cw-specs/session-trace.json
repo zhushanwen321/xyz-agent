@@ -1,0 +1,27 @@
+{
+  "acceptance": [
+    {
+      "id": "R1",
+      "title": "全部子单元机器验收套件通过(core/runtime/frontend/extension 四套 vitest)",
+      "type": "integration",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && bash scripts/cw/trace-root-gate.sh"
+    },
+    {
+      "id": "R2",
+      "title": "全部手工 gate 勾选(P2/P3/V1/V3/V4/V5/V6/V2/V7, 见 manual-checks.md)",
+      "type": "integration",
+      "core": false,
+      "command": "bash scripts/cw/trace-root-gate.sh"
+    },
+    {
+      "id": "R3",
+      "title": "账本一致性: cw status 5 个子单元全部 closed",
+      "type": "unit",
+      "core": false,
+      "command": "bash scripts/cw/trace-root-ledger.sh"
+    }
+  ],
+  "contracts": [],
+  "split": []
+}
