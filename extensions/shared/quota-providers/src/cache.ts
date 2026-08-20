@@ -195,8 +195,38 @@ function readCacheSync(): CacheData {
 		// 确保 updatedAt 存在，其余字段原样保留（由 provider 动态管理）
 		return { ...parsed, updatedAt: parsed.updatedAt ?? 0 };
 	} catch (e) {
+		// D1c quarantine：文件存在但读/parse 失败 → 隔离开现场再降级
+		//（ENOENT = 尚无缓存，正常态不隔离）
+		if (existsSync(CACHE_PATH)) quarantineCorrupt(CACHE_PATH, e);
 		console.warn(`[quota-cache] cache read failed (using empty):`, e);
 		return { ...EMPTY_CACHE };
+	}
+}
+
+// ── 损坏隔离（D1c 同模式，对齐 runtime json-store quarantineCorruptFile；
+//    extension 环境无该依赖，就地最小实现）──────────────
+
+/**
+ * 把 parse 失败的文件 rename 为 <path>.corrupt-<ts> 保留取证并落 error 日志
+ * （含恢复指引），防止后续写回把「半截文件」合法化为「全空文件」。
+ * rename 失败（目录只读等）仅升级日志，不阻断调用方的降级路径。
+ */
+function quarantineCorrupt(path: string, cause: unknown): void {
+	const ts = new Date().toISOString().replace(/[:.]/g, "");
+	const quarantinePath = `${path}.corrupt-${ts}`;
+	const msg = cause instanceof Error ? cause.message : String(cause);
+	try {
+		renameSync(path, quarantinePath);
+		console.error(
+			`[quota-cache] corrupt file quarantined to ${quarantinePath}; continuing with empty. ` +
+			`Recovery: compare the .corrupt copy to restore history. Cause: ${msg}`,
+		);
+	// eslint-disable-next-line taste/no-silent-catch -- 隔离失败不阻断读流程（调用方仍降级继续），只升级日志提示人工介入
+	} catch (renameErr) {
+		console.error(
+			`[quota-cache] quarantine rename failed for ${path} (original kept in place, please inspect manually). ` +
+			`Cause: ${msg}; rename error: ${renameErr instanceof Error ? renameErr.message : String(renameErr)}`,
+		);
 	}
 }
 
@@ -228,8 +258,10 @@ function persistDailyRecord<T extends unknown[]>(
 				);
 			}
 		}
-	// eslint-disable-next-line taste/no-silent-catch -- 文件损坏属于容错路径：fallback 到空 records
 	} catch (e) {
+		// D1c quarantine：文件损坏属于容错路径——先隔离开现场（防下方写回把半截文件
+		// 合法化为空），再 fallback 到空 records
+		if (existsSync(filePath)) quarantineCorrupt(filePath, e);
 		console.warn(`[quota-cache] ${recordName} record read failed (using empty):`, e);
 	}
 

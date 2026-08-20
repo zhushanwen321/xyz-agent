@@ -23,6 +23,11 @@
  * 归属：跨层共享叶子层 utils/（与 json-store 同层），无业务语义，可被
  * settings.json / ext-config 等任何跨进程共享文件复用（须登记锁协议，
  * 见 docs/architecture/data-source-registry.md 跨进程文件登记表）。
+ *
+ * 孪生实现：extension 侧 @zhushanwen/pi-file-lock（extensions/shared/file-lock/
+ * src/file-lock.ts，async 版 + sync 版，D5a/D1e）——其中 sync 版与本模块是同一协议的
+ * 两侧实现，默认参数（stale 30s / retry 25ms / 预算 1s）必须一致，**参数变更须双侧
+ * 同步**；对照测试 test/file-lock-parity.test.ts 断言两侧默认值相等。
  */
 
 import { existsSync, mkdirSync } from 'node:fs'
@@ -38,9 +43,13 @@ export interface SyncFileLockOptions {
   retryBudgetMs?: number
 }
 
-const DEFAULT_STALE_MS = 30_000
-const DEFAULT_RETRY_DELAY_MS = 25
-const DEFAULT_RETRY_BUDGET_MS = 1_000
+/**
+ * 默认锁参数（导出供对照测试断言与 extension 侧孪生实现 @zhushanwen/pi-file-lock
+ * 的 sync 版默认值相等——两侧参数漂移会破坏「同一把锁」的互斥语义）。
+ */
+export const DEFAULT_STALE_MS = 30_000
+export const DEFAULT_RETRY_DELAY_MS = 25
+export const DEFAULT_RETRY_BUDGET_MS = 1_000
 
 /**
  * 同步跨进程文件锁内执行 fn：lockSync(realpath:false) + ELOCKED busy-wait 重试，

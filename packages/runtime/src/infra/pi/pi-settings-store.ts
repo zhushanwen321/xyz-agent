@@ -55,6 +55,8 @@ export interface PiSettings {
   defaultModel?: string
   defaultThinkingLevel?: string
   enabledModels?: string[]
+  // pi 侧 UI 偏好字段：不在 xyz 侧 SCOPE_FIELDS.model 写域（xyz 无写入方，pi 自写），
+  // 由字段域 merge 的「其余 key 取锁内最新读」保住 pi 的最新值不被 xyz 写回覆盖
   hideThinkingBlock?: boolean
   skills?: string[]
   // ── extension 域（extension-service 管理）──

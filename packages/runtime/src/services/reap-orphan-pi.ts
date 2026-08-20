@@ -21,10 +21,12 @@
  * ② ppid === 1（reparent 证据，跨实例保护的关键防线）。xyz 直接 spawn pi、无 wrapper，
  *   父 runtime 活着时 pi 的 ppid 恒等于该 runtime pid；父死后内核把孤儿 reparent 到
  *   init/launchd（pid 1）。因此「argv 匹配 + ppid=1」= 原父已死 = 真孤儿。为什么不用
- *   「ppid ≠ 本 runtime pid」排除法：dev 与打包版默认共用同一数据目录（--session-dir
- *   同值），而 W0 单实例锁按 userData 路径区分（dev/prod userData 不同）——两实例可
- *   同时合法并存，对方的活跃 pi（ppid=对方 runtime pid）必须不杀（本机实测形态：打包
- *   版 runtime 40842 名下 3 个活跃 pi，ppid=40842）。已知边界：Linux subreaper 场景
+ *   「ppid ≠ 本 runtime pid」排除法：dev 自动隔离 userData 与数据目录（main.ts dev 分支
+ *   setPath，XYZ_AGENT_DATA_DIR 缺省 ~/.xyz-agent-dev），dev/prod 默认并存已天然不同
+ *   目录；跨实例误杀的真实场景是 XYZ_AGENT_DATA_DIR 显式指向同一目录双开
+ *   （--session-dir 同值），该场景下两实例可同时合法并存，对方的活跃 pi
+ *   （ppid=对方 runtime pid）必须不杀（本机实测形态：打包版 runtime 40842 名下
+ *   3 个活跃 pi，ppid=40842）。已知边界：Linux subreaper 场景
  *   （用户级 systemd 等）孤儿 reparent 到 subreaper 而非 1，此时漏收（fail-safe 方向，
  *   宁漏不误杀）。
  * ③ Electron 单实例锁（W0 已落地 requestSingleInstanceLock）：只排除同 userData 的

@@ -249,8 +249,9 @@ export function getRenameModel(): string {
  * 🔒 跨进程锁（D1e，integrity-hardening.md §3.1）：RMW 全程持 withFileLockSync
  * （lockfile 路径 = <rename-session-ext-config.json>.lock，锁目标文件自身）。
  * 该文件被 runtime 与 pi-rename-session extension 双方 RMW——extension 侧
- * （extensions/shared/llm-shared saveConfig）当前不持锁，本侧持锁先把 runtime
- * 自身的读-改-写窗口闭合，extension 侧的对齐留待主 agent 决策（登记表条目）。
+ * （extensions/shared/llm-shared saveConfig）W4 起已持同一把锁（@zhushanwen/pi-file-lock
+ * withFileLockSync，协议与本侧逐字对齐），双端闭环；extension 侧锁失败返回
+ * success:false 不降级（对端持锁时无锁写会交错丢字段）。见登记表 §6 rename-session 行。
  */
 export function setRenameModel(model: string): void {
   const normalized = model.includes('/') ? model : ''

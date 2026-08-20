@@ -52,10 +52,12 @@ export interface SyncFileLockOptions {
 	retryBudgetMs?: number;
 }
 
-const DEFAULT_STALE_MS = 30_000;
+// 默认锁参数（sync 版导出供对照测试断言与 runtime 侧 utils/file-lock.ts 默认值相等
+// ——两侧参数漂移会破坏「同一把锁」的互斥语义；runtime 侧 test/file-lock-parity.test.ts）
+export const DEFAULT_STALE_MS = 30_000;
 const DEFAULT_RETRIES = 10;
-const DEFAULT_RETRY_DELAY_MS = 25;
-const DEFAULT_RETRY_BUDGET_MS = 1_000;
+export const DEFAULT_RETRY_DELAY_MS = 25;
+export const DEFAULT_RETRY_BUDGET_MS = 1_000;
 
 /**
  * 跨进程文件锁内执行 async fn：拿不到锁时指数退避重试（100ms~10s/randomize），
