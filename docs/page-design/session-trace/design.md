@@ -1,6 +1,6 @@
-# Session Trace 可视化设计（drawer 一级 tab）
+# Session Trace 可视化设计（main 区 Trace 视图 + drawer inspector）
 
-> **一句话结论**：在 drawer 新增一级 tab「Trace」，把 pi session 文件（append-only JSONL 事件日志）的**全部 entry** 渲染成一条线性时间线台账——含 system prompt 留痕、user/assistant 每条 message、compaction、lifecycle 事件、extension 自定义 entry、xyz-agent 自定义边界标记——并用「当前 context 边界标注」区分「仍在模型视野里的 entry」与「已被压缩影子化的历史」；system prompt 不落盘的问题用 builtin extension 在变化时写 custom entry 解决（DSH `request/header` 模式）。
+> **一句话结论**：在 main 区 panel header 增加「对话 | Trace」SegmentedTab 视图切换——Trace 视图把 pi session 文件（append-only JSONL 事件日志）的**全部 entry** 渲染成占满 main 区的线性时间线台账（含 system prompt 留痕、user/assistant 每条 message、compaction、lifecycle 事件、extension 自定义 entry、xyz-agent 自定义边界标记），用「当前 context 边界标注」区分「仍在模型视野里的 entry」与「已被压缩影子化的历史」；点击任意行，右侧 drawer 切入临时 inspector 页展示该 entry 完整详情（不占一级 tab 位）。system prompt 不落盘的问题用 builtin extension 在变化时写 custom entry 解决（DSH `request/header` 模式）。
 
 - **S（情境）**：xyz-agent 的主界面是每个 session 的对话流（message-stream），展示消息级内容：user 气泡、assistant 正文、turn 内 thinking/tool 块、压缩摘要 notice。这是用户与 agent 协作的主界面。
 - **C（冲突）**：对话流只是 session 文件的「消息投影」。pi session 文件里还有大量 entry 在 GUI 完全不可见——model_change / thinking_level_change / label / extension 的 custom 数据 entry 被 converter 直接丢弃；system prompt 每次运行时动态重建、**不落盘**，resume/reload/换模型后它变了，文件里毫无痕迹。排查「模型为什么这样回答」「上下文里到底有什么」「这个 session 经历了几次压缩/恢复」只能手工翻 JSONL 文件。
@@ -21,7 +21,7 @@ xyz-agent 是 Electron + Vue 3 的 AI Agent 桌面工作台，每个 session 由
 
 **术语锚定**（本文反复使用，且第一个存在命名冲突）：
 
-- **session trace（本文主角）**：session 文件的完整事件台账——所有 entry 按时间序的只读回放。命名冲突警告：项目已有「trace」一词指 **turn 内 trace**（对话流里一个 turn 的 thinking/tool/text 块渲染区域，见 `streaming-trace-window/design.md` §1.1）。两者是不同层级的概念：turn trace 是「一个回合内模型干了什么」，session trace 是「整个 session 历史上发生了什么」。本文及代码内一律用 **session trace / `session-trace`** 区分；drawer tab 显示名定为「Trace」（用户面向无冲突，对话流里 turn trace 不出现文字标签）。
+- **session trace（本文主角）**：session 文件的完整事件台账——所有 entry 按时间序的只读回放。命名冲突警告：项目已有「trace」一词指 **turn 内 trace**（对话流里一个 turn 的 thinking/tool/text 块渲染区域，见 `streaming-trace-window/design.md` §1.1）。两者是不同层级的概念：turn trace 是「一个回合内模型干了什么」，session trace 是「整个 session 历史上发生了什么」。本文及代码内一律用 **session trace / `session-trace`** 区分；用户面向的形态是 main 区 SegmentedTab 的「Trace」段（对话流里 turn trace 不出现文字标签，无冲突）。
 - **当前 context**：模型下一次请求实际看到的上下文 = `buildContextEntries()` 的输出（pi 源码 `core/session-manager.ts:418`）：沿 leaf 路径取最后一条 compaction，context = 该 compaction 自身（转为 summary 消息）+ 其 `firstKeptEntryId` 起（含）到 compaction 前的 entries + compaction 后的全部 entries。多次压缩时只有最后一次决定当前 context。
 - **影子化（shadowed）**：entry 存在于文件中但因 compaction 已不在当前 context（DSH 术语 shadowed）。
 - **lifecycle entry**：不进 LLM context 的元信息 entry——`model_change` / `thinking_level_change` / `session_info` / `label` / `session` header（`sessionEntryToContextMessages()` 不转换它们，`session-manager.ts:379`）。
@@ -37,8 +37,8 @@ xyz-agent 是 Electron + Vue 3 的 AI Agent 桌面工作台，每个 session 由
 - **G5 实时性**：活跃 session 的新 entry 实时追加到 trace（不用重开）。
 - **G6 只读无副作用**：trace 是诊断视图，不提供任何写操作（v1 不做 fork-from-here / 编辑 label 等交互）。
 
-**In scope**：drawer trace tab 的数据通路（runtime 端口 + WS + renderer store）、渲染模型（entry → 行）、system prompt 留痕 extension、过滤/搜索/详情展开。
-**Out of scope**：对话流（message-stream）任何改动；turn trace 收编机制（streaming-trace-window 已设计）；跨 session 的全局搜索（DSH session-query 那种，未来独立设计）；trace 导出（pi 自带 `export_html` RPC 可后续暴露）；编辑/交互操作。
+**In scope**：main 区 Trace 视图 + drawer inspector 的数据通路（runtime 端口 + WS + renderer store）、渲染模型（entry → 行 → inspector）、system prompt 留痕 extension、过滤/搜索/视图切换交互。
+**Out of scope**：对话流（message-stream）内部渲染任何改动（Trace 是它的平级视图，不改它）；turn trace 收编机制（streaming-trace-window 已设计）；跨 session 的全局搜索（DSH session-query 那种，未来独立设计）；trace 导出（pi 自带 `export_html` RPC 可后续暴露）；编辑/交互操作。
 
 ---
 
@@ -134,34 +134,33 @@ DSH 的对应物是 **Trajectory 视图**（`packages/client/ui-trajectory/`，W
 
 ### 3.1 终态（使用者视角）
 
-drawer 一级 icon 栏新增第 8 个 tab「Trace」（icon：list-tree）。打开后看到：
+main 区 panel header 新增 SegmentedTab「对话 | Trace」（v6 §3.4 tab 型范式：`bg-bg-elevated` + `text-neutral-fg`），默认在「对话」。切到「Trace」后 main 区变为台账视图（composer 保留在底部，不打断对话能力）：
 
 ```
-┌─ Trace ────────────────────────────────────────────────
-│ [全部][消息][工具][系统][生命周期][边界]  🔍搜索   ☐仅当前context
-│ 30 entries · 9 在当前 context · 1 次压缩 · prompt v2
-├────────────────────────────────────────────────────────
-│ #1   SESSION    09:41:02  dag-executor-workspace · fork 自 019fe69b…
-│ #2   SYSTEM     09:41:02  system prompt v1 · initial · 12,436 字符 · ⌄
-│ #3   USER       09:41:15  帮我修一下 dag-executor 的重试逻辑…
-│ #4   ASSISTANT  09:41:18  mimo-v2.5-pro · thinking×2 tool×3 · 891 out · ⌄
-│ #5   TOOL       09:41:20  read ✓ · packages/core/src/retry.ts · ⌄
-│ …    （影子化区：降透明，hover 恢复）
-│ #21  COMPACTED  10:02:44  压缩 152,311 tok → summary · 保留自 #18 · ⌄
-│ ─── 当前 context = #21 summary + 保留区 #18–#20 + #22 之后 ───
-│ #22  SYSTEM     10:03:01  system prompt v2 · resume · 较 v1 +266 · ⌄
-│ #23  USER       10:03:40  继续，把测试补上
-│ …
-└────────────────────────────────────────────────────────
+┌─ main ──────────────────────────────────────────────────┬─ drawer ──────────────┐
+│ feat-retry · 工作中 2m41s        [ 对话 | Trace ]        │ ← 返回   TRACE #22    │
+│ [全部][消息][工具][系统][生命周期][边界] 🔍  ☐仅当前context │ SYSTEM · 10:03:01      │
+│ 30 entries · 9 在当前 context · 1 次压缩 · prompt v2      │ system prompt v2       │
+│────────────────────────────────────────────────────────│ reason: resume         │
+│ #1   SESSION    09:41:02  dag-executor-workspace · fork…  │ 12,702 字符 · 较 v1 +266│
+│ #2   SYSTEM     09:41:02  system prompt v1 · initial …    │ ┌ diff 摘要 ─────────┐ │
+│ #3   USER       09:41:15  帮我修一下 dag-executor 的重试…  │ │+ 10. 选择性提交用…  │ │
+│ …    （影子化区：降透明，hover 恢复）                       │ │+ [extension 注入]… │ │
+│ #21  COMPACTED  10:02:44  压缩 152,311 tok → summary …    │ └────────────────────┘ │
+│ ─── 当前 context = #21 summary + 保留区 #18–#20 + #22+ ──│ [查看 v2 全文] [与 v1…│
+│ #22  SYSTEM     10:03:01  system prompt v2 · resume … ◀选中态                       │
+│ #23  USER       10:03:40  继续，把测试补上                │                       │
+└────────────────────────────────────────────────────────┴───────────────────────┘
 ```
 
 **交互样例（成功路径）**：
 
-1. **总览**：打开 tab → 从尾部加载最近一页，滚动到顶自动加载更早（DSH Trajectory 同范式）；顶部状态行显示 entries 总数 / 当前 context 内数量 / 压缩次数 / system prompt 当前版本。
-2. **下钻**：点任意行 → 就地展开详情（assistant：逐 content block 渲染 thinking/text/toolCall；tool：完整输出；compaction：summary 全文 + readFiles/modifiedFiles 清单；SYSTEM：system prompt 全文 + hash + 与上一版本的字符级 diff 摘要）。
-3. **过滤**：kind chips（消息/工具/系统/生命周期/边界）+ 文本搜索（命中行高亮）；「仅当前 context」toggle 一键隐藏影子化与不进 context 的 entry——这就是用户问的「session 视角」，作为过滤态免费获得，不做独立视图。
-4. **实时**：活跃 session 流式期间新 entry 追加到底部（compaction 发生时影子化标注即时更新）。
-5. **溯源**：SESSION header 行的 parentSession 链接点击 → 跳到源 session 的 trace（新 tab 内容切换，source 定位 forkEntryId 行高亮）。
+1. **总览**：切到 Trace 视图 → 从尾部加载最近一页，滚动到顶自动加载更早（DSH Trajectory 同范式）；顶部状态行显示 entries 总数 / 当前 context 内数量 / 压缩次数 / system prompt 当前版本。
+2. **下钻**：点任意行 → 行进入选中态（`bg-surface-hover` + `accent-ring` 内描边），drawer 切入 inspector 页显示该 entry 完整详情（assistant：逐 content block；tool：完整输出；compaction：summary 全文 + readFiles/modifiedFiles；SYSTEM：全文 + 与上版 diff 摘要）。drawer 未开时自动打开。inspector 顶部「← 返回」回到之前的 drawer tab。
+3. **过滤**：kind chips（消息/工具/系统/生命周期/边界）+ 文本搜索（命中行高亮）；「仅当前 context」toggle 一键隐藏影子化与不进 context 的 entry——这就是「session 视角」，作为过滤态获得，不做独立视图。
+4. **实时**：活跃 session 流式期间新 entry 追加到底部（compaction 发生时影子化标注即时更新）；对话与 Trace 视图共享数据，切回不丢状态。
+5. **溯源**：SESSION header 行的 parentSession 链接点击 → 跳源 session 的 Trace 视图并定位 forkEntryId 行高亮。
+6. **分屏对照**：split 双 pane 下 pane A 留对话、pane B 开 Trace（视图状态 per-pane），实现「对话流 ↔ 台账」同屏对照。
 
 **失败路径**：
 
@@ -184,6 +183,15 @@ drawer 一级 icon 栏新增第 8 个 tab「Trace」（icon：list-tree）。打
 
 **决策点 B：展示形态**（已被用户裁决为线性，此处记录被否项）：线性时间线 + parentSession 溯源链接 vs 树形视图。用户确认 xyz-agent 的 fork 是「截断源文件写新文件」的 clone 式（`session-fork.ts`：不用 pi 原生 in-file fork RPC），**每个 session 文件内部是线性链**，分支表现为另一个 session（header `parentSession` + `forkEntryId` 指回源）。故树形视图无对象，线性即可。
 
+**决策点 D：承载位置**（用户裁决，2026-08-20）：main 区视图切换 + drawer inspector vs drawer 一级 tab（初稿方案）。
+
+| 方案 | 长期架构合理性 | 短期实现成本 | 风险 | 裁决 |
+|---|---|---|---|---|
+| **B. main 区「对话 | Trace」SegmentedTab 切换 + 点行进 drawer inspector** | 高：trace 台账是主视图级信息密度，归 main；详情归 drawer（辅助/详情区）——与项目「main 主视图 / drawer 辅助」层级自洽；与 DSH Trajectory / LangSmith 的 trace 工具标准形态一致 | 中：net 增量 = per-pane 视图状态 + 单向联动（main 选中 → drawer inspector）；行组件/过滤/搜索两方案都要做 | drawer 被 inspector「抢走」的打扰（靠「选中才切入 + 返回按钮」缓解）；split 下视图状态需 per-pane 而非 per-session | **选定（用户裁决）** |
+| A. drawer 一级 tab + 就地展开详情 | 中：把主视图级密度塞进半宽 drawer，长内容（system prompt 全文/tool 输出）就地展开推挤列表、上下文跳动；扫列表↔看详情循环体验差 | 略低：少视图切换与联动 | drawer tab 持续膨胀（第 8 个）；accordion 详情在窄栏可读性差 | 不选（初稿方案，被用户以交互体验否决） |
+
+B 的附带约束（用户一并裁决）：切换控件用 SegmentedTab（非单按钮）；inspector 是**临时上下文页**（选中才切入，不占一级 tab 位，顶部带返回）；drawer 未开时点行自动打开。
+
 **决策点 C：system prompt 留痕**（用户已裁决「extension 留痕，变化才写」，此处记录被否项备查）：
 
 | 方案 | 被否理由 |
@@ -197,7 +205,10 @@ drawer 一级 icon 栏新增第 8 个 tab「Trace」（icon：list-tree）。打
 - **D2 system prompt 用 builtin extension 留痕**（用户裁决）：新 extension 在 session start / resume 及每个 turn 前对 `getSystemPrompt()` 做 hash 对比，变化才 `appendEntry('xyz:system-prompt', { version, hash, reason, fullText, charCount, parentVersionDiffSummary? })`。reason 枚举对齐 DSH：initial / resume / change。被否：C2/C3（见上）。权衡：fullText 每次 ~12KB 落盘，hash 去重后典型 session 只写 1-3 次，体积可接受；留痕 entry 本身是 `custom` 类型不进 context，零模型侧影响。探针 P2 门禁：extension 拿不到 resume 事件的可靠钩子时要降级（见探针清单）。
 - **D3 线性时间线，fork = 另一个 session**（用户裁决 + 代码确认 `session-fork.ts:58` 截断写新文件）。trace 提供 parentSession 链接溯源，不做树。
 - **D4 数据通路 = A1 混合**（推荐，待用户确认）。runtime 新增 `session.getTraceEntries` 端口；增量走 `entry_appended` 透传。**已核实 pi 0.84.1 支持**：`get_entries` 返回 `{ entries, leafId }`（node_modules dist rpc-types.d.ts:115）；`entry_appended` 在每次 append 时广播（agent-session.ts:2517，含 extension `appendEntry` 写入的 custom entry）。
-- **D5 行 = entry，详情就地展开**。不发明聚合结构（一个 assistant turn 的多条 message 各自成行）；assistant 行摘要显示 blocks 计数与 usage，展开后逐 block 渲染（复用 Block.vue 的 thinking/tool 形态或轻量复刻）。被否：按 turn 聚合行——turn 是消息级概念，trace 的权威性来自「与文件逐行对应」，聚合会破坏可核对性。drawer 宽度有限（默认 1:1 可拖），详情就地展开（accordion）而非 DSH 的右侧 inspector 栏。
+- **D5 行 = entry，详情进 drawer inspector**（用户裁决修正）。不发明聚合结构（一个 assistant turn 的多条 message 各自成行）；行摘要显示关键字段（assistant：模型/blocks 计数/usage；compaction：tokensBefore/保留起点），点击后详情在 drawer inspector 渲染（assistant 逐 block 复用 Block.vue 形态或轻量复刻）。被否：① 按 turn 聚合行——turn 是消息级概念，trace 的权威性来自「与文件逐行对应」，聚合破坏可核对性；② 就地 accordion 展开（初稿）——长内容推挤列表，「扫列表↔看详情↔对比多行」循环体验差（决策点 D）。
+- **D5a 切换控件 = SegmentedTab「对话 | Trace」**（用户裁决）：放 main panel header，遵循 v6 §3.4 tab 型范式。被否：单个 toggle 按钮——不能明确表达「当前在哪一态」。
+- **D5b inspector = drawer 临时上下文页**（用户裁决）：选中 trace entry 才切入，不占一级 tab 位，顶部「← 返回」复原前一个 tab。被否：新增常驻「详情」tab——inspector 无选中即空态，不配常驻；tab 栏不膨胀。正在使用其他 drawer tab 时点 trace 行会切入 inspector（点击即明确意图），返回可复原。
+- **D5c 视图状态 per-pane**：split 双 pane 下 pane A 对话 + pane B Trace 同 session 是合法对照场景；selectedEntryId 同样 per-pane。对话/Trace 视图切换不重建数据（共享同一 store 分区，ADR-0049）。
 - **D6 命名：代码/文件名一律 `session-trace`**，tab 显示名「Trace」。理由 §1.1：与 turn trace（streaming-trace-window）分层，避免代码库里 `trace` 一词两义。
 - **D7 只读（G6）**：v1 不提供 fork-from-entry / label 编辑等写操作。被否：顺手做 fork 入口——写操作引入权限/状态同步问题面，且对话流已有 fork 模式入口（composer forkMode）。
 - **D8 过滤维度 = kind chips + 文本搜索 + context toggle**，不做正则/时间区间筛选（减法优先；DSH 的时间线缩放留待 v2 验证需求）。
@@ -220,18 +231,18 @@ drawer 一级 icon 栏新增第 8 个 tab「Trace」（icon：list-tree）。打
 | DATA | custom（其他 customType） | customType + data 概要 | 完整 JSON |
 | BOUNDARY | handoff_marker / session_end(sidecar) | 交接目标 / 终态 outcome | 原始记录 |
 
-「不进 context」的 kind（LIFECYCLE/DATA/SESSION/BOUNDARY）在 context 过滤态下隐藏，在全部态下有弱标记（不计入影子化——它们本来就不进）。
+上表「展开详情」列即 drawer inspector 的内容（决策点 D）。「不进 context」的 kind（LIFECYCLE/DATA/SESSION/BOUNDARY）在 context 过滤态下隐藏，在全部态下有弱标记（不计入影子化——它们本来就不进）。
 
 ## 4. 验收（真实场景，非单测非 mock）
 
 改动规模：新功能（新 tab + runtime 端口 + 新 extension）。在 dev app（`pnpm dev`）用真实 session 验证，禁止 mock entry 流。每个场景回溯 §1.2 目标。
 
-- **V1（G1/G3，主场景）**：在本仓跑一个真实编码任务（>20 次工具调用，中途手动 `/compact` 一次），完成后打开 trace tab：user/assistant/tool/bash/compaction/NOTICE 各行齐全；compaction 行展开可见 summary 全文与 tokensBefore；`firstKeptEntryId` 之前的 message 行影子化标注、保留区（firstKeptEntryId 至 compaction 之间）不影子化，「仅当前 context」toggle 后仅剩 summary + 保留区 + 压缩后 entries——与手工用 `buildContextEntries` 规则对该 JSONL 核算的结果逐条一致。
-- **V2（G2）**：同一 session 中途修改 `config.systemPrompt`（或切换 profile）后继续对话 → trace 出现 SYSTEM v2 行，reason=change，展开可见与 v1 的差异摘要；关闭 app 重开该 session（resume）再发一条消息 → SYSTEM v3 行 reason=resume（若内容未变则按 hash 去重不写，trace 顶部「prompt 当前版本」标注仍为 v2——两种情形按实际行为断言其一，探针 P2 定论）。
+- **V1（G1/G3，主场景）**：在本仓跑一个真实编码任务（>20 次工具调用，中途手动 `/compact` 一次），完成后切到 Trace 视图：user/assistant/tool/bash/compaction/NOTICE 各行齐全；点 compaction 行 → drawer inspector 可见 summary 全文与 tokensBefore；`firstKeptEntryId` 之前的 message 行影子化标注、保留区（firstKeptEntryId 至 compaction 之间）不影子化，「仅当前 context」toggle 后仅剩 summary + 保留区 + 压缩后 entries——与手工用 `buildContextEntries` 规则对该 JSONL 核算的结果逐条一致。
+- **V2（G2）**：同一 session 中途修改 `config.systemPrompt`（或切换 profile）后继续对话 → Trace 视图出现 SYSTEM v2 行，reason=change，inspector 可见与 v1 的差异摘要；关闭 app 重开该 session（resume）再发一条消息 → SYSTEM v3 行 reason=resume（若内容未变则按 hash 去重不写，顶部「prompt 当前版本」标注仍为 v2——两种情形按实际行为断言其一，探针 P2 定论）。连续点选 v1/v2 两行对比 inspector 内容（B 形态的核心动作）。
 - **V3（G1，lifecycle）**：session 中切一次模型、切一次 thinking level、重命名一次 → LIFECYCLE 三行可见且字段正确（对话流里这三者均不可见，对照验证 F4 修复）。
-- **V4（G5，实时）**：trace tab 开着的同时发新消息 → 新 entries 实时追加到底部；触发一次自动 compaction → 影子化标注即时重排。
-- **V5（G4，长 session）**：打开一个 >2000 entry 的真实历史 session（非活跃，走路径 B）→ 首屏 <1s，滚动流畅，翻页加载正常；kind chips 过滤与搜索可用。
-- **V6（G1，边界）**：fork 出的 session → SESSION 行显示 parentSession 链接，点击跳源 session trace 并高亮 forkEntryId 行；交接过的 session → handoff_marker BOUNDARY 行可见；已结束 session → session_end 终态行可见（来自 sidecar）。
+- **V4（G5，实时）**：Trace 视图开着的同时经底部 composer 发新消息 → 新 entries 实时追加到底部；触发一次自动 compaction → 影子化标注即时重排；切回「对话」再切回，过滤/选中状态保留。
+- **V5（G4，长 session）**：打开一个 >2000 entry 的真实历史 session（非活跃，走路径 B）切到 Trace 视图 → 首屏 <1s，滚动流畅，翻页加载正常；kind chips 过滤与搜索可用。
+- **V6（G1，边界 + B 形态交互）**：fork 出的 session → SESSION 行显示 parentSession 链接，点击跳源 session Trace 视图并高亮 forkEntryId 行；交接过的 session → handoff_marker BOUNDARY 行可见；已结束 session → session_end 终态行可见（来自 sidecar）。点行进 inspector：drawer 未开时自动打开；inspector「← 返回」复原前 tab；split 双 pane 下 pane A 对话 + pane B Trace 同 session 互不干扰。
 - **V7（失败路径）**：手工往 JSONL 追加一行坏 JSON → trace 显示「无法解析的 entry」行不崩溃；首条消息前的新 session → 空态文案正确，落盘后自动加载；禁用留痕 extension → SYSTEM 行降级文案 + 「现取当前值」可用。
 - **通过标准**：V1~V7 全部通过。单元测试（entry→行映射纯函数、context 边界计算）仅作回归辅助，不计入验收。
 
@@ -242,10 +253,10 @@ drawer 一级 icon 栏新增第 8 个 tab「Trace」（icon：list-tree）。打
 | 1 | 留痕 extension | 新 builtin extension（或并入 unified-hooks，实现层定）：getSystemPrompt() hash 对比 + `appendEntry('xyz:system-prompt', …)`；register 进 mandatory-extensions.json | 独立可交付：装上后 JSONL 里即出现留痕 entry，不依赖 GUI | V2 |
 | 2 | core 纯函数 | `packages/core/src/domain/session-trace/`：entry→TraceRow 映射、context 边界计算（复刻 buildContextEntries 语义）、影子化标记 | 纯逻辑落 core（绞杀模式），可脱离 Vue 单测；与 pi 语义的一致性用同一 JSONL 双边核算 | 纯函数单测 + V1 核算 |
 | 3 | runtime 端口 | `session.getTraceEntries`（A1 混合路由）+ `entry_appended` 透传 + sidecar 合并 + WS 消息（带 sessionId，规则 7） | 两条通路归一化是独立的 runtime 工作 | V4/V5 的 runtime 侧 |
-| 4 | TracePane 渲染 | drawer tab 注册（types.ts + PanelContainer.vue）+ TracePane.vue + 行组件 + 虚拟滚动 + 过滤/搜索/context toggle + per-session store（ADR-0049） | UI 主体；复用 Block.vue 块形态与 ScrollArea/virtua 设施 | V1/V3/V4/V5/V6/V7 |
+| 4 | TraceView 渲染 + inspector | main panel header 加 SegmentedTab（per-pane 视图状态）+ TraceView.vue + 行组件 + 虚拟滚动 + 过滤/搜索/context toggle + 点行联动 drawer（selectedEntryId per-pane + inspector 临时上下文页：选中切入/返回复原/未开自动打开）+ per-session store（ADR-0049） | UI 主体；复用 Block.vue 块形态与 ScrollArea/virtua 设施；联动单向（main→drawer），无双向同步 | V1/V3/V4/V5/V6/V7 |
 | 5 | i18n + 边界 | zh-CN/en-US 文案；空态/损坏行/降级文案 | 文案集中收口 | V7 |
 
-**文件改动地图**：新增 `extensions/system-prompt-trace/`（或 unified-hooks 内模块）、`packages/core/src/domain/session-trace/`、`packages/renderer/src/components/panel/TracePane.vue` 及行组件；修改 `packages/core/src/domain/drawer/types.ts`（SideDrawerTab + `'trace'`）、`PanelContainer.vue`（v-if 分支）、runtime `services/ports/session.ts` + session-service + session-message-handler + event-interpreter（entry_appended 透传）、`mandatory-extensions.json`、两个 locale 文件。**不动** message-converter / session-entry-mapper 现有行为（对话流投影不变，trace 是新增并行投影）。
+**文件改动地图**：新增 `extensions/system-prompt-trace/`（或 unified-hooks 内模块）、`packages/core/src/domain/session-trace/`、`packages/renderer/src/components/panel/TraceView.vue` 及行组件、drawer inspector 内容页组件；修改 main panel header 容器（SegmentedTab + per-pane 视图状态，遵循现有「视图切换状态驱动」约定）、drawer 容器（inspector 临时页的切入/复原）、runtime `services/ports/session.ts` + session-service + session-message-handler + event-interpreter（entry_appended 透传）、`mandatory-extensions.json`、两个 locale 文件。**不动** drawer 一级 tab 体系（types.ts 的 SideDrawerTab 不变——inspector 是临时页不是 tab）、不动 message-converter / session-entry-mapper 现有行为（对话流投影不变，trace 是新增并行投影）。
 
 **待验证检查点**（设计期无法确定，实施期定）：extension 侧 resume 的可靠检测钩子（P2）；`entry_appended` 在 xyz-agent runtime event-interpreter 的现有翻译表里是否已覆盖（未覆盖则加透传，改动小）；get_entries 在超大 session（>5MB JSONL）的 RPC 响应耗时（若超阈值则活跃路径也加分页）。
 
