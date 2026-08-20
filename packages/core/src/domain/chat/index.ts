@@ -31,6 +31,6 @@ export * from './message-turns'
 export * from './summarize-turn'
 export * from './trace-window'
 
-export { createUseChat, ensureStreamSubscription, resetChatModuleStateForTest } from './useChat'
+export { createUseChat, ensureStreamSubscription, invalidateStreamSubscription, resetChatModuleStateForTest } from './useChat'
 export type { UseChatDeps, EnsureStreamSubDeps, SessionStoreLike } from './useChat'
 export type { ChatApiPort, WriteSegmentsFn } from './api-port'

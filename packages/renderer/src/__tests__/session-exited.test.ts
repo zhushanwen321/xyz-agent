@@ -19,7 +19,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import type { ServerMessage, SessionGroup } from '@xyz-agent/shared'
 
 // vi.hoisted 保证 mock 工厂在模块加载前就绪；resetModules 后重新加载 useConnection 时
@@ -70,6 +70,11 @@ let useToast: typeof import('@/composables/useToast').useToast
 beforeEach(async () => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
+  // 强制 real api domains：本文件验证 ws 订阅链路（subscribe RPC / events.on），mock 门面
+  //（vitest.config 默认 VITE_MOCK=true）会把 sessionApi.subscribe/chatApi.streamSubscribe
+  // 换成不发 ws、不挂 events 的 stub，链路断言全部失效。resetModules 前设置，
+  // 动态 import 时 api/index 的 isMock 按此求值
+  vi.stubEnv('VITE_MOCK', 'false')
   // 重置 mock holder + useConnection 模块级状态
   mockHolder.routeHandler = null
   // 用真正的 vue ref 初始化（vi.hoisted 时 vue 未加载，只能在此创建）
@@ -186,5 +191,59 @@ describe('session.exited 事件端到端反馈链路', () => {
     expect(sessionStore.list.length).toBe(beforeCount)
     // 但 toast 仍触发（不静默丢弃）
     expect(toasts.value.some((t) => t.message.includes('orphan exit'))).toBe(true)
+  })
+
+  it('session.exited 失效本地流订阅：旧 events handler 移除 + respawn 后 ensure 重发 subscribe', async () => {
+    await initAndConnect()
+    // resetModules 后动态加载（与 useConnection/useMessageEffects 共享同一模块实例）
+    const chatMod = await import('@/composables/features/chat/useChat')
+    const events = await import('@/api/events')
+    const { getSubscriptionState } = await import('../../../core/src/coordination/subscription-state')
+    const wsSend = vi.mocked((await import('../../../core/src/transport/ws-client')).send)
+
+    const chatStore = useChatStore()
+    const sessionStore = useSessionStore()
+    /** ws 上 session.subscribe RPC 发出次数（reply 无人回会 reject，不影响计数） */
+    const subscribeCalls = () =>
+      wsSend.mock.calls.filter((args) => (args[0] as { type?: string }).type === 'session.subscribe').length
+    const dispatchStart = (messageId: string) =>
+      events.dispatchSession('s-exit', {
+        type: 'message.message_start',
+        payload: { sessionId: 's-exit', messageId },
+      })
+    const flushAsync = () => new Promise((r) => setTimeout(r, 0))
+
+    // 首次订阅（模拟用户首次 send 前的惰性订阅建立）：subscribe RPC 发出 + events handler 挂载
+    chatMod.ensureStreamSubscription('s-exit', chatStore, sessionStore)
+    await flushAsync()
+    expect(subscribeCalls()).toBe(1)
+    dispatchStart('m1')
+    await nextTick()
+    expect(chatStore.isGenerating('s-exit')).toBe(true)
+
+    // pi 死亡
+    mockHolder.routeHandler!({
+      type: 'session.exited',
+      payload: { sessionId: 's-exit', code: 1, reason: 'crashed' },
+    })
+
+    // invalidateStreamSubscription 已执行：订阅状态条目清除 + 旧 events handler 移除。
+    // isGenerating 已由 markSessionError 复位（前述用例锁定），dispatch m2 验证 handler 缺位
+    //——若旧 handler 仍在，message_start 会重新点亮 streaming 态
+    expect(getSubscriptionState('s-exit')).toBeUndefined()
+    dispatchStart('m2')
+    await nextTick()
+    expect(chatStore.isGenerating('s-exit')).toBe(false)
+
+    // respawn 后再次 ensure：不被 streamSubscriptions/subscriptionStates 幂等守卫短路，
+    // 重发 subscribe RPC（否则新 pi 的 message.* 定向推送无订阅者，UI 卡「进行中…」）
+    chatMod.ensureStreamSubscription('s-exit', chatStore, sessionStore)
+    await flushAsync()
+    expect(subscribeCalls()).toBe(2)
+
+    // 新 events handler 生效：dispatch message_start 驱动 streaming 态
+    dispatchStart('m3')
+    await nextTick()
+    expect(chatStore.isGenerating('s-exit')).toBe(true)
   })
 })

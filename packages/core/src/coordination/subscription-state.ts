@@ -267,6 +267,26 @@ export function clearSubscription(sessionId: string): void {
 }
 
 /**
+ * 失效指定 session 的全部订阅簿记（状态条目 + in-flight 去重条目），session.exited 时调用。
+ *
+ * 与 clearSubscription 的差异：额外清 inFlightSubscribes 里该 session 的条目。残留的
+ * in-flight Promise 对应死 session 的 subscribe RPC（runtime 侧 session 已删，reply 要么
+ * 报错要么 65s 超时），不清会让 respawn 后首次 ensureStreamSubscription 被 in-flight
+ * 去重收敛到死 Promise——不重发 subscribe RPC，新 pi 的流式推送无订阅者。
+ *
+ * 被清的旧 Promise 自身无害：resolve 路径（订阅真实成功）才写回状态条目，reject 路径
+ * 不写；其 finally 对已删 key 的 delete 是 no-op。
+ */
+export function invalidateSubscription(sessionId: string): void {
+  subscriptionStates.delete(sessionId)
+  for (const key of [...inFlightSubscribes.keys()]) {
+    if (key === sessionId || key.startsWith(`${sessionId}:`)) {
+      inFlightSubscribes.delete(key)
+    }
+  }
+}
+
+/**
  * 更新 session 的 lastSeenSeq（routeInbound 收到合法递进 seq 时调用）。
  *
  * state 不存在时 no-op（兼容路径不维护基线）。仅更新 lastSeenSeq，不动 subscribed 标记。
