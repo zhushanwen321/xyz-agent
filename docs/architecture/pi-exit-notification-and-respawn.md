@@ -326,9 +326,42 @@ if (existing && !existing.exited) return existing   // 新增 exited 校验
 3. **fork 路径死亡**：本设计推理其行为与 restore 路径一致（无 rekey，`createForkedSessionFile` 生成的 `forkedId` 直接传 `createSession`，无后续 getState/rekey），V4 只实测 restore 路径；fork 路径由 process-manager 单测（rekey-exit / destroy-no-notify）覆盖 createSession 原语义分支，端到端正确性由 V4 回归保证（restore 路径已验证，fork 同构）。
 4. dev 实测中 `MiMo-V2.5-Pro`（注意非 `mimo-v2-pro`，已下架）的可用性——若 provider 侧变化导致 spawn 即退，恰好构成 §5.2 失败路径的实测样本。
 
+## 12. 实施与验收结果（2026-08-20 回写）
+
+实施 commit：`baafd553e`（Wave 1 传播链）、`61d2d63fe`（Wave 2 消费端防御）、`0e3052b20`（实测发现的前端缺口补修）。单测：runtime 全量 268 files / 3104 tests、core 952、renderer 3055 全绿；tsc / vue-tsc / lint 全过。
+
+### 12.1 实测结果对照
+
+首轮实测（V1-V5 + V3b + 二次死亡，共 7 次 kill -9）：
+
+| 场景 | 结果 | 说明 |
+|---|---|---|
+| 修复核心断言（真实 piSessionId 的 exited 日志） | PASS | 7/7 次全部为 uuidv7 真实 id，零 tempId；pi tee 日志死亡时刻停止增长 |
+| V3b 首 turn 无文件死亡（终结语义） | PASS | toast 3ms 级到达、session 消失、无残留进程、新建 session 恢复可用 |
+| V5 正常流程回归（删除） | PASS | 无 PROCESS-LEAK-RISK、无残留 pi |
+| V1/V2/V3/V4 | PARTIAL（后转 PASS） | runtime 层全过；失分点全部来自下述两个前端缺口，补修后复测 4/4 PASS |
+| 僵尸 session 核心症状 | 已消除 | 死后发消息不再报 `pi process is not running`，respawn 后对话可继续 |
+
+补修（`0e3052b20`）后复测 4/4 PASS：dead 占位 UI + 「重新打开」按钮可达且持续保持（90s+ 不被 config.sessions 覆盖）、respawn 后回复实时流式显示（不卡「进行中」）、同 session 二次死亡 dead UI/错误消息再次出现、正常对话零回归（无重复消息/无渲染报错）。
+
+实测还确认一个优于设计的路径：**侧栏点击 dead session 即自动 revive**（runtime 侧 ensureActive → restore 链路），「重新打开」按钮与它等价，双入口可用。
+
+### 12.2 实测发现并已修的两个前端缺口（设计盲区，回写）
+
+1. **dead 态被列表刷新覆盖**：onSessionExit 回调先 publish `session.exited`（前端 markDead）随后 broadcast `config.sessions`（磁盘 outcome），数十 ms 内 dead 被冲回 done/stopped，§5.1 的 dead 占位 UI 实际不可达——§6.7#6 与 §3.1 对「前端 dead UI 已有」的判断在「到达后保持」这一环不成立。修复：前端 `setGroups` 保留已知 dead 态，仅显式 revive 清除。
+2. **respawn 后事件订阅断裂**：死亡时服务端 `bus.clearSession` 清订阅集合，但客户端三层订阅簿记（模块级 unsub map / subscriptionStates / in-flight 去重）不清，respawn 后 `ensureStreamSubscription` 幂等 no-op，新 turn 全部 `message.*` 事件丢失（回复已生成但 UI 卡「进行中」；二次死亡无感知）。§6.7#6「respawn 后前端 postLoadSession 重新订阅 | 已有机制覆盖」判断不成立——postLoadSession 确实调用，但幂等短路。修复：`handleSessionExited` 内 `invalidateStreamSubscription` 清三层，下次 ensure 重发 subscribe（message-bus subscribe 已核实为 Set 幂等语义，重订阅无副作用）。
+
+### 12.3 登记的 follow-up 缺口（本设计范围外，未修）
+
+1. **respawn/restore 后新 turn 持久化到 tmpdir 副本而非原 session 文件**（中等，数据丢失面）：`restoreSession` 拷贝原 JSONL 到 tmpdir 后 `switchSession(tmpFile)`；pi 的 `_setSessionFile` 会把 sessionFile 直接切到 switch 目标路径（pi 源码 session-manager.ts:908/926 `preserve explicit path` 语义），后续 flush 写到 tmpdir 路径（unlink 后重建），原 session 文件不增长——respawn 后的新 turn 在应用重启后丢失。**既有行为**（restoreSession 的 tmpdir 隔离设计引入以来如此，非本设计引入），正常冷启动 restore 同样受影响。正确修法需重新评估「switchSession 直接用原文件路径」当初的保守前提（「pi 写回行为未确认」现已确认：pi 就是写回 switch 目标），独立立项。
+2. **`session.exited` 错误消息不持久**（轻微）：死亡时插入聊天流的错误消息是 renderer 本地态，revive 后被文件历史覆盖消失；感知链路实际依赖 dead UI + toast。
+3. **侧栏无 dead 视觉标记**（轻微）：dead 态只在主区占位体现，列表项与正常 session 无区别。
+4. **`[rename-session] model not available, skipping` 以 ERROR 级刷日志**（轻微，extension 降噪）。
+
 ## 附录：变更历史
 
 - v1（2026-08-20）：初版。基于 handoff（fix-subagent-workflow-sidebar-sync worktree 的 E2E 发现）+ 本仓代码复核；修正 handoff「runtime 无 respawn 逻辑」的判断为「传播链断裂」（§3.2 失败模式 A）。
 - v2（2026-08-20）：第一轮对抗式审查（0 must-fix / 6 suggestion）修复：V1 通过标准证伪化、`proc.kill()` 与 `this.kill()` 区分警示、wave 依赖关系精确化（pi-engine.ts 共享编译依赖）、hidden session 覆盖声明、fork 路径验证措辞、onExit 签名变更影响面结论补录。
 - v3（2026-08-20）：第二轮对抗式审查（1 must-fix / 6 suggestion）修复：must-fix = 首 turn 无文件死亡的状态组合——新增 §6.9 显式裁决「session 终结语义」（被否审查者建议的写文件/留 dead 条目两方案，理由：HISTORICAL 规则 #6 / 与目标 3 矛盾）+ V3b 验收场景 + not-found 错误恢复指引；suggestion：start() 失败与 exitCallback 的 no-op 时序说明、exitCallbacks 命名消歧、ensureActive 影响面声明（未覆盖入口清单）、SIGKILL 附带修复 scope 声明、stream error 单测断言措辞对齐 mock 层、接口契约变更标注。
 - v4（2026-08-20）：第三轮对抗式审查（1 must-fix / 6 suggestion）修复：must-fix = v3 引入的 V3b「再发 prompt」验收不可执行（session 从 list 消失后 composer/dead UI 均不可达）——改为「新建 session 正常对话」恢复路径 + SESSION_NOT_FOUND 文案改由单测断言覆盖；suggestion：§6.9 补前端 Panel 实际渲染分析（isSessionDead 依赖 list 命中，终结态 dead UI 不可达）+ 用户首条 prompt 丢失显式裁决、toThrow 子串兼容性说明（两个既有测试）、§6.6 补 setThinkingLevel、V3b 补未 flush 判定手段与 ps 检查命令、文案消费点说明。
+- v5（2026-08-20）：实施完成，新增 §12 回写：实测结果对照（runtime 层 7/7 全过、复测 4/4 PASS）、两个实测发现的前端缺口（dead 态覆盖 / 订阅断裂，已修）与设计盲区反思、follow-up 登记（tmpdir 持久化缺口等 4 项）。第四轮审查 0 must-fix / 0 suggestion 收敛。
