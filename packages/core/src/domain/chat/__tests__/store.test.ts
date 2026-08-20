@@ -13,12 +13,13 @@
  * 运行：cd packages/core && npx vitest run src/domain/chat/__tests__/store.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { effectScope, effect } from 'vue'
+import { effectScope, effect, toRaw } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { createChatStore } from '../store'
 import type { ChatStoreInstance } from '../store'
-import { textToSegments } from '@xyz-agent/shared'
-import type { Message, ServerMessage } from '@xyz-agent/shared'
+import { textToSegments, segmentsToText } from '@xyz-agent/shared'
+import type { Message, Segment, ServerMessage } from '@xyz-agent/shared'
+import { replayEntries } from '../apply-entry'
 
 /** 构造独立 store 实例（effectScope 包裹 onScopeDispose 注册 + 测试隔离）。返回 store + dispose。 */
 function makeStore(): { store: ChatStoreInstance; dispose: () => void } {
@@ -80,14 +81,95 @@ describe('createChatStore factory', () => {
       expect(msgs[0].id).toBe('m2')
     })
 
-    it('appendUser 返回 id（u- 前缀）+ 注入 complete user 消息', () => {
+    it('appendUser 返回 id（u- 前缀）+ 注入 complete user 消息（segments 保留）', () => {
       const sid = 's1'
-      const id = sut.store.appendUser(sid, textToSegments('hi'))
+      const segs: Segment[] = [{ type: 'skill', name: 'code-review' }, { type: 'text', text: 'please review' }]
+      const id = sut.store.appendUser(sid, segs)
       expect(id).toMatch(/^u-/)
       const msgs = sut.store.getMessages(sid)
       expect(msgs).toHaveLength(1)
       expect(msgs[0].role).toBe('user')
       expect(msgs[0].status).toBe('complete')
+      // entry 化后 overlay 覆写回原 segments（badge 不丢）+ 引用原样透传（FIFO 断言锚定）
+      expect(msgs[0].content).toBe(segs)
+    })
+  })
+
+  // ── [W2 fix-chat-flow-order D6] appendUser entry 化：user 消息经 reducer 唯一入流 ──
+  describe('appendUser entry 化（W2：applyEntryFrame 喂入 + overlay 投影）', () => {
+    it('reducer state 同步累积 user 投影：id = 返回 id（entry.id 派生）、content 为 entry 反解窄化', () => {
+      const sid = 's-w2'
+      const id = sut.store.appendUser(sid, textToSegments('hello'))
+      const state = sut.store._entryStatesForTest.get(sid)
+      expect(state?.messages).toHaveLength(1)
+      // 返回值 = reducer 派生 id（deriveBaseId 从 entry.id 派生）——ref 消息与 reducer
+      // state 同 id，clientUuid 映射链（useChat）消费同一值
+      expect(state?.messages[0].id).toBe(id)
+      expect(sut.store.getMessages(sid)[0].id).toBe(id)
+      expect(state?.messages[0].role).toBe('user')
+      // reducer 从 entry 反解 content：纯文本窄化（badge 归 overlay/sidecar，见 appendUser 注释）
+      expect(state?.messages[0].content).toEqual([{ type: 'text', text: 'hello' }])
+    })
+
+    it('结构化 segments（skill/file/mention/image/text）在消息流原样保留——badge 不丢', () => {
+      const sid = 's-w2-badge'
+      const segs: Segment[] = [
+        { type: 'skill', name: 'code-review' },
+        { type: 'file', path: '/a/b.ts', lineRange: [1, 9] },
+        { type: 'mention', name: 'dev' },
+        { type: 'image', id: 'img1', path: '/tmp/x.png', fileName: 'x.png', displayName: 'x.png' },
+        { type: 'text', text: 'please review' },
+      ]
+      sut.store.appendUser(sid, segs)
+      const msgs = sut.store.getMessages(sid)
+      expect(msgs).toHaveLength(1)
+      expect(msgs[0].content).toBe(segs)
+      expect((msgs[0].content as Segment[])[0]).toEqual({ type: 'skill', name: 'code-review' })
+    })
+
+    it('clientUuid 形态契约：返回 id 匹配 extension TAG 正则 u-[0-9a-fA-F-]{36}', () => {
+      const id = sut.store.appendUser('s-w2-uuid', textToSegments('x'))
+      // xyz-client-msg-id-mapper.js TAG_MATCH 锚定该形态——重开 badge 回填链的硬约束
+      expect(id).toMatch(/^u-[0-9a-fA-F-]{36}$/)
+    })
+
+    it('live ≡ reload（user 类型）：appendUser 喂入的 reducer 投影 ≡ 同形态 user entry 重放', () => {
+      const sid = 's-w2-equiv'
+      sut.store.appendUser(sid, textToSegments('same question'))
+      const liveMsgs = sut.store._entryStatesForTest.get(sid)!.messages
+      // 重开侧：同形态 user entry（pi 持久化形态——content 纯文本）重放同一 reducer
+      const reloadState = replayEntries([{
+        type: 'message',
+        id: 'pi-uuidv7-entry',
+        parentId: null,
+        timestamp: new Date(0).toISOString(),
+        message: { role: 'user', content: 'same question', timestamp: 0 },
+      }])
+      // 剥异源字段（id：客户端 u-uuid vs pi uuidv7；timestamp：双时钟；piEntryId：
+      // entry.id 的衍生——异源同因）后逐字段等价——Segment[] 形态（live entry content）
+      // 与 string 形态（pi 持久化）归一到同一投影
+      const strip = (m: Message) => {
+        const { id: _i, timestamp: _t, piEntryId: _p, ...rest } = m
+        return rest
+      }
+      expect(liveMsgs.map(strip)).toEqual(reloadState.messages.map(strip))
+    })
+
+    it('steer 投递（queue_update drain）后 user 气泡进消息流且 segments 完整（用户可见行为）', () => {
+      const sid = 's-w2-steer'
+      const segs: Segment[] = [{ type: 'skill', name: 'deploy' }, { type: 'text', text: ' --prod' }]
+      sut.store.pushPending(sid, segs, 'steer')
+      // pi 入队（全量数组，展开后文本 ≠ 原文）→ 投递（数组清空）：countDrained N=1 → FIFO 取出
+      sut.store.applyMessageEvent(sid, { type: 'message.queue_update', payload: { sessionId: sid, steering: ['skill deploy 展开后全文'], pendingMessageCount: 1 } } as ServerMessage)
+      sut.store.applyMessageEvent(sid, { type: 'message.queue_update', payload: { sessionId: sid, steering: [], pendingMessageCount: 0 } } as ServerMessage)
+      const msgs = sut.store.getMessages(sid)
+      expect(msgs).toHaveLength(1)
+      expect(msgs[0].role).toBe('user')
+      expect(msgs[0].status).toBe('complete')
+      // 引用断言：drainN 从深响应式 pendingBuffer 取出的 segments 是 reactive Proxy，
+      // toRaw 解回原引用（与 pending-drain-fifo.test.ts 同判据——FIFO 取最早的精确判据）
+      expect(toRaw(msgs[0].content)).toBe(segs)
+      expect(segmentsToText(msgs[0].content as Segment[])).toBe('/skill:deploy --prod')
     })
   })
 

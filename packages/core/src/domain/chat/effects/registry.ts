@@ -246,13 +246,17 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   // B1（PR#86 review）：pi 静默卡死 WARN（120s 无活动，提示性，不中断流）。
   // 与 stream_error 物理隔离——仅追加 system 提示消息，不调 finalizeSession，
   // session 保持 streaming 态（pi 可能只是慢，130s 后恢复产出）。
+  // [W2 fix-chat-flow-order D4] liveOnly 标记（全仓唯一写入点）：stream_warn 是 xyz runtime
+  // 自产健康警告，pi 无对应 entry、重开即消失——无 entry 可构故不 entry 化（直插即本类
+  // 消息的正确入流路径），分组层据此归 turn 内 notice（不切断 turn，W3 消费），不参与
+  // 「live ≡ reload」等价性断言。
   'message.stream_warn': (ctx, sid, payload) => {
     const { messages } = ctx
     const warnContent = readString(payload, 'content') ?? '长时间无响应'
     const prev = messages.value.get(sid)?.value ?? []
     commitMessages(messages, sid, [
       ...prev,
-      { id: `s-${crypto.randomUUID()}`, role: 'system', content: warnContent, status: 'complete', timestamp: Date.now() },
+      { id: `s-${crypto.randomUUID()}`, role: 'system', content: warnContent, status: 'complete', timestamp: Date.now(), liveOnly: true },
     ])
   },
 
