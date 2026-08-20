@@ -40,6 +40,7 @@ import {
   computeOrigin,
   recordDormant,
   filterActiveIds,
+  filterDormantFromRecon,
   backfillFixRegression,
   applyCleanRoundBackfill,
   resolveAggregatorModel,
@@ -1686,5 +1687,40 @@ describe("D3 R1 空数组说明 + 修复建议必填列（T9 连带）", () => {
     for (const p of [r1, r2, scoped]) {
       expect(p.split(ROUND_CONTEXT_MARKER)[0]).toContain("'Fix suggestion' column");
     }
+  });
+});
+
+
+// ── exec-review 复审补充：dormant 对账分区的定向单测 ──────────────
+
+describe("filterDormantFromRecon + applyCleanRoundBackfill 的 dormant 分区", () => {
+  it("pending dormant id 从 seen/escalate 剔除；revived=true 与非 dormant id 保留；空 dormant 原样返回", () => {
+    const dormant = [
+      { id: "MF-D1", reason: "adjudication-downgraded", detail: "x", round: 1, revived: false },
+      { id: "MF-D2", reason: "adjudication-unverified", detail: "y", round: 1, revived: true },
+    ];
+    const seen = new Set(["MF-D1", "MF-D2", "MF-LIVE"]);
+    const escalate = new Set(["MF-D1"]);
+    const out = filterDormantFromRecon(seen, escalate, dormant);
+    expect([...out.seen].sort()).toEqual(["MF-D2", "MF-LIVE"]); // D1 剔除（pending），D2 revived 保留
+    expect([...out.escalate]).toEqual([]); // D1 剔除
+    // 空/无 dormant：原引用返回（不新建 Set）
+    const empty = filterDormantFromRecon(seen, escalate, []);
+    expect(empty.seen).toBe(seen);
+  });
+
+  it("clean 轮场景：reconSeen 只含 pending dormant id 时无过滤会新建 issue、有过滤则不建", () => {
+    const state = {
+      issues: {},
+      knownRemaining: [],
+      scores: [],
+      fixResults: [],
+      dormant: [{ id: "MF-D1", reason: "adjudication-downgraded", detail: "x", round: 1, revived: false }],
+    };
+    // reviewer 在 clean 终止轮对 dormant id 声明 not-fixed（绕过向量）
+    const out = applyCleanRoundBackfill(state, { reconSeen: new Set(["MF-D1"]), reconEscalate: new Set(), round: 2, stuckThreshold: 3 });
+    // 过滤生效：MF-D1 不经对账通道建 issue（复活唯一入口 = 聚合活跃重报）
+    expect(out.issues["MF-D1"]).toBeUndefined();
+    expect(out.dormant[0].revived).toBe(false);
   });
 });
