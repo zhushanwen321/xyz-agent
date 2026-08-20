@@ -15,7 +15,7 @@
  */
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IPiEngine, IProcessManager } from '../ports/pi-engine.js'
-import type { SendMessageHook } from './types.js'
+import type { SendMessageHook, PendingBashResultData } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import type { IMessageBus } from '../message-bus/message-bus.js'
 import { toErrorMessage } from '../../utils/errors.js'
@@ -265,7 +265,18 @@ export class MessageDispatcher {
    *
    * 不走 sendPrompt（bash 不调 client.prompt，不需 BeforeSend hook、不需图片附件、不触发 isGenerating 流式态）。
    *
-   * 生命周期：bashStart 广播（开始）→ pi bash RPC → bashResult 广播（终态）。
+   * [W1 fix-chat-flow-order D2] bashResult 双分支延迟——镜像 pi recordBashResult 的双分支
+   * （agent-session.js:2225-2247：streaming 期间 bash 缓存到 _pendingBashMessages、级联结束
+   * 统一落盘；空闲立即落盘），消除「live 即时入流 vs 文件级联末落盘」的顺序分叉（重开分组跳变）：
+   * - session streaming（isGenerating，活跃 run）→ 结果压入 activeSession.pendingBashResults
+   *   待落列（不立即广播），agent_settled（级联结束，晚于 pi finally flush 的 bash 落盘，
+   *   探针 ②）到达时 flushPendingBashResults 按序以帧发布；
+   * - 空闲 → 立即以帧发布。
+   * 前端（core registry bashResult handler）把帧转 bashExecution entry 经 applyEntryFrame 入流
+   * ——两侧位置都构造性等于 pi 落盘位置。
+   *
+   * 生命周期：bashStart 广播（开始，执行中反馈——前端 ephemeral executingBash 态，不建消息）
+   * → pi bash RPC → bashResult 广播（终态，双分支延迟如上）。
    * 返回 { blocked: true } 表示被预检拒绝（send.rejected 已广播）或执行失败（message.error 已广播），
    * 调用方（session-message-handler）据此走对应 ack 路径，与 sendMessage 的返回语义对称。
    */
@@ -329,21 +340,29 @@ export class MessageDispatcher {
         console.warn(`[message-dispatcher] sendBash: aborted during await, skip duplicate terminal. sid=${sessionId}`)
         return { blocked: true }
       }
-      const bashResultMsg = {
-        type: 'message.bashResult' as const,
-        payload: {
-          sessionId,
-          command,
-          output: result.output,
-          exitCode: result.exitCode ?? null,
-          cancelled: result.cancelled,
-          truncated: result.truncated,
-          excludeFromContext: excludeFlag,
-          timestamp: Date.now(),
-          ...(result.fullOutputPath !== undefined && { fullOutputPath: result.fullOutputPath }),
-        },
+      // 终态数据在 RPC 完成时刻构造（timestamp = pi recordBashResult 落盘时刻，非 flush 时刻，
+      // 保证与文件 entry timestamp 一致）。emit 只传单个 payload 对象。
+      const bashResultData: PendingBashResultData = {
+        command,
+        output: result.output,
+        exitCode: result.exitCode ?? null,
+        cancelled: result.cancelled,
+        truncated: result.truncated,
+        excludeFromContext: excludeFlag,
+        timestamp: Date.now(),
+        ...(result.fullOutputPath !== undefined && { fullOutputPath: result.fullOutputPath }),
       }
-      this.messageBus?.publish(sessionId, bashResultMsg)
+      // [W1 fix-chat-flow-order D2] 双分支镜像 pi recordBashResult（agent-session.js:2237-2247）：
+      // pi 在 isStreaming 时把 bash 缓存到 _pendingBashMessages（run 级联 finally 统一落盘），
+      // xyz 镜像为——session 处于活跃 run（isGenerating）时结果进待落列，agent_settled
+      // （级联结束信号，晚于 pi 的 finally flush，探针 ②）到达时 flushPendingBashResults
+      // 按序发布；空闲立即发布。已知窄竞态（设计已登记）：xyz 判空闲但 pi 实际 streaming
+      // 的窗口内两侧位置短暂不一致，重开后以文件为准收敛。
+      if (activeSession?.isGenerating) {
+        activeSession.pendingBashResults = [...(activeSession.pendingBashResults ?? []), bashResultData]
+      } else {
+        this.publishBashResult(sessionId, bashResultData)
+      }
     } catch (e) {
       const errMsg = toErrorMessage(e)
       console.error(`[message-dispatcher] sendBash failed: sessionId=${sessionId}`, errMsg)
@@ -358,20 +377,17 @@ export class MessageDispatcher {
       // role==='assistant' 过滤），不收口 role==='system' 的 streaming bash 消息——
       // 若只发 message.error，前端 bash 气泡会卡在 streaming 态。故此处补发一条
       // cancelled:false + exitCode:null + output 含错误信息的 bashResult 终态让 bash 收口。
-      const bashResultErrMsg = {
-        type: 'message.bashResult' as const,
-        payload: {
-          sessionId,
-          command,
-          output: `[bash error] ${errMsg}`,
-          exitCode: null,
-          cancelled: false,
-          truncated: false,
-          excludeFromContext: excludeFlag,
-          timestamp: Date.now(),
-        },
-      }
-      this.messageBus?.publish(sessionId, bashResultErrMsg)
+      // [W1 fix-chat-flow-order] 错误帧不进待落列（立即发布）：它是 xyz 合成帧，无 pi 落盘
+      // 时序语义；且失败场景（transport 断/pi 死）级联可能永不结束，延迟会让用户无反馈。
+      this.publishBashResult(sessionId, {
+        command,
+        output: `[bash error] ${errMsg}`,
+        exitCode: null,
+        cancelled: false,
+        truncated: false,
+        excludeFromContext: excludeFlag,
+        timestamp: Date.now(),
+      })
       const bashErrMsg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
       this.messageBus?.publish(sessionId, bashErrMsg)
       return { blocked: true }
@@ -386,6 +402,37 @@ export class MessageDispatcher {
       }
     }
     return { blocked: false }
+  }
+
+  /**
+   * 发布单条 bashResult 帧（sendBash 空闲分支 / 错误兜底 / 待落列 flush 共用）。
+   * emit 只传单个 payload 对象（架构规则 1）。
+   */
+  private publishBashResult(sessionId: string, data: PendingBashResultData): void {
+    this.messageBus?.publish(sessionId, { type: 'message.bashResult' as const, payload: { sessionId, ...data } })
+  }
+
+  /**
+   * [W1 fix-chat-flow-order D2] 按 sessionId 定向 flush bash 待落列。
+   *
+   * 触发：pi agent_settled（run 级联结束）经 EventInterpreter.onAgentSettled →
+   * sessionService.flushPendingBashResults 到达（组合根 index.ts 接线）。时序保证（探针 ②）：
+   * pi 在 _runAgentPrompt finally 先 _flushPendingBashMessages（bash entry 统一落盘，
+   * agent-session.js:754）再 _emitAgentSettled（:755），故本方法发布帧时 pi 文件内 bash
+   * entry 已就位，live 入流位置（级联末）与落盘位置一致。
+   *
+   * 语义：按入列序（= pi RPC 完成序 = pi _pendingBashMessages 落盘序）发布；先清空再发布
+   * （发布中若新 bash 压入，下一轮 settled flush 处理，不混批）。session 已删除 → 条目随
+   * session 对象丢弃（挂 activeSession 同区的生命周期语义，见 types.ts 注释），此处自然 no-op。
+   */
+  flushPendingBashResults(sessionId: string): void {
+    const session = this.svc.getSession(sessionId)
+    const queue = session?.pendingBashResults
+    if (!session || !queue || queue.length === 0) return
+    session.pendingBashResults = []
+    for (const data of queue) {
+      this.publishBashResult(sessionId, data)
+    }
   }
 
   /**

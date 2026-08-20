@@ -330,6 +330,11 @@ async function main(): Promise<void> {
       onRecordEntriesInvalidated: (sid, customType) => {
         sessionService.invalidateRecordEntries(sid, customType)
       },
+      // W1（fix-chat-flow-order 探针 ②）：agent_settled（run 级联结束，晚于 pi finally 的
+      // bash 落盘 flush）→ dispatcher 按序发布 per-session bash 待落列（D2 双分支延迟）。
+      onAgentSettled: (sid) => {
+        sessionService.flushPendingBashResults(sid)
+      },
     })
     // EventAdapter：纯翻译器，把翻译结果喂给 interpreter 编排。
     return new EventAdapter(sessionId, (events) => interpreter.interpret(events))

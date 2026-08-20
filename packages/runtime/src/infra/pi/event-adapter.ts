@@ -51,6 +51,7 @@ import type {
   PiCompactionStartEvent,
   PiCompactionEndEvent,
   PiEntryAppendedEvent,
+  PiAgentSettledEvent,
 } from './pi-protocol.js'
 
 // ── Sub-handler types ──────────────────────────────────────────────
@@ -844,9 +845,29 @@ function handleEntryAppended(event: PiEntryAppendedEvent, _sid: string): PiTrans
   return [{ kind: 'noop' }]
 }
 
+/**
+ * agent_settled —— run 级联结束信号（W1 fix-chat-flow-order，探针 ②）。
+ *
+ * pi 侧时序（0.84.1 dist 实测锚点）：_runAgentPrompt 的 finally 先
+ * _flushPendingBashMessages()（agent-session.js:754，streaming 期间缓存的 bash entry
+ * 此刻统一落盘）再 await _emitAgentSettled()（:755 → :327-336 emit agent_settled）。
+ * 故本事件到达时，pi session 文件内 bash entry 已就位——dispatcher 据此 flush
+ * per-session bash 待落列（message-dispatcher.flushPendingBashResults），xyz live
+ * 入流位置构造性对齐 pi 落盘位置（级联末）。与 agent_end 的区别：followUp drain
+ * 续跑发生在 _runAgentPrompt 内部 while 循环（同一次 settled 级联），agent_end 每
+ * agent loop 迭代都发，不是级联边界。
+ */
+function handleAgentSettled(_event: PiAgentSettledEvent, _sid: string): PiTranslatedEvent[] {
+  return [{ kind: 'agent-settled' }]
+}
+
 // ── Null-event types (lifecycle events not forwarded to frontend) ──
 // 注意：turn_end 不在此列——它经 handleTurnEndPi 提取 usage 触发 context.update（见 DISPATCHER）。
-// agent_settled 是 pi 0.80.3 稳态事件（无待处理工具/消息），xyz-agent 不消费——显式登记忽略。
+// [W1 fix-chat-flow-order] agent_settled 移出此列（原「xyz-agent 不消费——显式登记忽略」）：
+// bash entry 化（conversation-turn-attribution D2）需要它作「run 级联结束」信号——pi 在
+// _runAgentPrompt 的 finally 先 _flushPendingBashMessages()（agent-session.js:744-756）再
+// _emitAgentSettled()（:327-336），故 agent_settled 是唯一保证晚于 bash 落盘 flush 的可观测
+// 信号（agent_end 不行：followUp drain 级联中每轮 agent loop 都发，非级联边界）。
 // compaction_start/compaction_end 在 M4 移出此列（改事件驱动，interpreter 唯一编排 compaction 生命周期）。
 // agent_start 在 M5 移出此列——其 hook 分支在 translate() 内单独消费（onPiEvent/agent_start hook，
 // 消费方是插件 executeHooks，S1）。若放回 NULL_EVENTS 会被此处 short-circuit，hook 分支不可达。
@@ -864,7 +885,6 @@ function handleEntryAppended(event: PiEntryAppendedEvent, _sid: string): PiTrans
 const NULL_EVENTS = new Set([
   'turn_start',
   'extension_config', 'extension_ui_response', 'response',
-  'agent_settled',
   'bash_execution_update',
 ])
 
@@ -899,6 +919,9 @@ const DISPATCHER = new Map<string, Handler>()
   // [W18] entry_appended：移出 NULL_EVENTS 后在此注册——subagent-record / workflow-record
   // 失效信号（handleEntryAppended），其他 custom type no-op
   DISPATCHER.set('entry_appended', handleEntryAppended as Handler)
+  // [W1 fix-chat-flow-order] agent_settled：run 级联结束信号（bash 待落列 flush 触发点，
+  // 见 handleAgentSettled 注释）
+  DISPATCHER.set('agent_settled', handleAgentSettled as Handler)
 })()
 
 /**

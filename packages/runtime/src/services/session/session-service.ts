@@ -500,6 +500,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return this.dispatcher.sendBash(sessionId, command, excludeFromContext)
   }
   async abortBash(sessionId: string): Promise<void> { return this.dispatcher.abortBash(sessionId) }
+  /**
+   * W1（fix-chat-flow-order 探针 ②）：run 级联结束（pi agent_settled，晚于 pi finally 的
+   * bash 落盘 flush）→ dispatcher 按序发布 per-session bash 待落列（D2 双分支延迟的 flush 腿）。
+   * 经 EventInterpreter.onAgentSettled 回调注入（组合根 index.ts）。
+   */
+  flushPendingBashResults(sessionId: string): void { this.dispatcher.flushPendingBashResults(sessionId) }
   async steerMessage(sessionId: string, content: string): Promise<void> { return this.dispatcher.steerMessage(sessionId, content) }
   async followUpMessage(sessionId: string, content: string): Promise<void> { return this.dispatcher.followUpMessage(sessionId, content) }
   async compact(sessionId: string, customInstructions?: string): Promise<void> { return this.dispatcher.compact(sessionId, customInstructions) }

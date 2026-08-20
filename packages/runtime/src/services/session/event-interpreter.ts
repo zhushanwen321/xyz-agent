@@ -155,6 +155,15 @@ export interface EventInterpreterOptions {
    *   丢失（W22 混沌）时兜底触发重拉收敛）
    */
   onRecordEntriesInvalidated?: (sessionId: string, customType: 'subagent-record' | 'workflow-record') => void
+  /**
+   * W1（fix-chat-flow-order 探针 ②）：pi agent_settled（run 级联结束）到达时触发。
+   * 组合根注入 sessionService.flushPendingBashResults——dispatcher 把 streaming 期间
+   * 压入的 per-session bash 待落列按序转 message.bashResult 帧发布。时序保证：pi 在
+   * _runAgentPrompt finally 先 _flushPendingBashMessages（bash entry 落盘）再 emit
+   * agent_settled（agent-session.js:744-756），故本回调触发时 pi 文件内 bash entry 已就位，
+   * xyz flush 的 live 入流位置与落盘位置一致（级联末）。
+   */
+  onAgentSettled?: (sessionId: string) => void
 }
 
 /** 可能改文件的工具（baseline diff 触发判定，与原 event-adapter 一致）。 */
@@ -344,6 +353,11 @@ export class EventInterpreter {
         // W18：自描述 record entry 到达 → 派生缓存失效（sessionService 防抖增量重拉）。
         // 事件 payload 不进数据缓存——entry 扫描是唯一数据写路径。
         this.opts.onRecordEntriesInvalidated?.(this.sessionId, ev.customType)
+        return
+      case 'agent-settled':
+        // W1（fix-chat-flow-order）：run 级联结束（晚于 pi finally 的 bash 落盘 flush）→
+        // dispatcher 按序发布 per-session bash 待落列（见 opts.onAgentSettled 注释）。
+        this.opts.onAgentSettled?.(this.sessionId)
         return
       case 'compaction-start':
         this.handleCompactionStart(ev)

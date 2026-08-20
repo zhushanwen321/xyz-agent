@@ -97,6 +97,21 @@
       <span class="h-px flex-1 bg-border" />
     </div>
 
+    <!-- bash 执行中反馈行（W1 fix-chat-flow-order D2 ephemeral 通道）：`!` 命令执行期间的
+         瞬时反馈（命令 + 转圈，样式对齐 compacting 行；与 isCompacting 互斥——sendBash
+         预检拒 compacting 中执行）。不进 messages 不持久化：bashStart 置 / bashResult·错误
+         路径清；run 级联结束后由 bashExecution entry 入流承担持久语义（live≡reload 双通路分工）。 -->
+    <div
+      v-if="executingBash"
+      class="system-notice flex min-w-0 items-center gap-2 py-1"
+      data-testid="executing-bash-notice"
+    >
+      <span class="h-px flex-1 bg-border" />
+      <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
+      <span class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ executingBash.command }}</span>
+      <span class="h-px flex-1 bg-border" />
+    </div>
+
     <!-- [方案 D] dispatching 空窗期占位已移除：原 absolute 浮层改为末尾空 turn 的 TurnMeta 占位。
          message_start 前末尾空 turn（user 已发、assistants=[]）经 TurnMeta 的 isPendingPlaceholder
          渲染「思考中」+ spinner，message_start 后 assistant 填入同一 turn，原地变为 working 态。
@@ -155,6 +170,7 @@ import { ChevronDown, ChevronUp, Loader2, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Virtualizer, type VirtualizerHandle } from 'virtua/vue'
 import { useChatStore } from '@/stores/chat'
+import { getExecutingBash } from '@xyz-agent/core'
 import { useVirtuaFollow } from '@/composables/panel/useVirtuaFollow'
 import { useConstantHeightAssert } from '@/composables/panel/useConstantHeightAssert'
 import { toRenderItemsIncremental, createTurnRenderCache, filterDisplayableMessages, renderKey } from '@/composables/logic/messageTurns'
@@ -195,6 +211,10 @@ const currentMessages = computed(() => chat.getMessages(props.sessionId))
 
 /** session id（template 内多处引用：Turn :session-id / rail 等）。 */
 const sessionId = computed(() => props.sessionId)
+
+/** 执行中 bash 瞬时态（W1 fix-chat-flow-order D2）：bashStart 置 / bashResult·错误路径清，
+ *  不进 messages（执行中反馈 ephemeral 通道；run 结束后 bashExecution entry 入流承担持久语义）。 */
+const executingBash = computed(() => getExecutingBash(props.sessionId))
 
 /** subagent 虚拟 session 真在跑时强制 streaming（JSONL 读出 status 恒 complete，但 subagent 可能还在跑）。
  *  [review round2 R1-遗留-1] 窄口径判定（isStreamingSubagent，与主 session hasRunning 同判据）：

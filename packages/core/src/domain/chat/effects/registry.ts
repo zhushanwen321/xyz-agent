@@ -444,7 +444,9 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     commitMessages(messages, sid, next)
   },
 
-  // ── Bash 执行（composer-bash-execute W3）── 提取到 chat-bash-effects.ts（避免本文件超 ESLint max-lines）
+  // ── Bash 执行（W1 fix-chat-flow-order：bashStart 写 ephemeral executingBash 不建消息项；
+  //    bashResult 构造 bashExecution entry 走 applyEntryFrame——reducer 唯一入流通道，
+  //    dispatcher 双分支延迟使帧时序构造性对齐 pi 落盘。实现提取于 bash-effects.ts 避免本文件超行）──
   'message.bashStart': bashStartEffect,
   'message.bashResult': bashResultEffect,
 
