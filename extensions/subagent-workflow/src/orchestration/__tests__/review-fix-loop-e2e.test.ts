@@ -156,7 +156,9 @@ function assertScriptOutcome(scriptResult: unknown): {
 }
 
 interface Scenario {
-  /** review 调用序 → 返回数据生成器；R2+ 回调收到 prompt 文本（可用于对账/传递断言）。 */
+  /** review 调用序 → 返回数据生成器；R2+ 回调收到 prompt 文本（可用于对账/传递断言）。
+   * 返回 { __invalidOutput: value } 哨兵 = 模拟「reviewer 输出无效」（F3 锁定用例，
+   * 语义同 aggregate 哨兵）。 */
   review: Array<(prompt: string) => Record<string, unknown>>;
   /**
    * aggregate 剧本（回调收到 prompt 文本——可从中解析 roundDir 预写 fallback 依赖的
@@ -192,7 +194,14 @@ function makeScenarioRunner(scenario: Scenario) {
       const gen = scenario.review[Math.min(idx, scenario.review.length - 1)];
       const result = gen(prompt);
       reviewCalls.push({ prompt, result });
-      parsed = result;
+      // F3 锁定用例：review 剧本同样支持 __invalidOutput 哨兵——模拟 reviewer 违约
+      // 输出（缺 must_fix），绕过 miniValidator（契约校验防的是 mock 无意脱节）。
+      if (result && typeof result === "object" && "__invalidOutput" in result) {
+        parsed = (result as { __invalidOutput: unknown }).__invalidOutput;
+        skipContractCheck = true;
+      } else {
+        parsed = result;
+      }
     } else if (kind === "aggregate") {
       const raw = scenario.aggregate(prompt);
       if (raw && typeof raw === "object" && "__invalidOutput" in raw) {
@@ -1699,6 +1708,53 @@ describe("startup fail-fast (ADR-0003 D6)", () => {
       expect(kinds.filter((k) => k === "review").length).toBe(2);
       expect(kinds.filter((k) => k === "aggregate").length).toBe(2);
       expect(kinds.filter((k) => k === "fix").length).toBe(1);
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
+    "F3: review-failure 轮的 batchRounds 条目 mustFix/suggestion 为 null（未知非 0）",
+    async () => {
+      // 第 3 轮终审 info 锁定：失败轮（review-failure）聚合未发生，mustFix 是未知
+      // 而非 0——W8 曾落 0，时间线行会被误读为 clean 轮（消费侧 rfl.mjs `?? "-"`）。
+      // 剧本：reviewer 返回缺 must_fix 的违约输出（__invalidOutput 哨兵绕过契约校验）
+      // → 脚本结构化终止 review-failure，断言该轮 rounds 条目 mustFix/suggestion 为 null。
+      const runner = makeScenarioRunner({
+        review: [() => ({ __invalidOutput: { report_file: "/tmp/f3-invalid.md", suggestion: 0 } })],
+        aggregate: () => {
+          throw new Error("aggregate must not run after review-failure");
+        },
+        fix: () => ({ fixed_count: 0, fixes: [], deferred: [] }),
+      });
+      const deps = makeDeps(runner);
+
+      const result = await runAndWait(
+        wf("review-fix-loop"),
+        {
+          targetType: "file", target: "README.md",
+          batch1: agentMd("reviewer-a"), _runId: RUN_ID(),
+        },
+        deps, undefined, RUN_TIMEOUT_MS,
+      );
+
+      expect(result.reason).toBe("completed");
+      expect(result.error).toBeUndefined();
+      const outcome = assertScriptOutcome(result.scriptResult);
+      expect(outcome.terminated).toBe("review-failure");
+
+      const st = JSON.parse(readFileSync(join(outcome.runDir!, "state.json"), "utf8")) as {
+        batches: Array<{ rounds: Array<{ round: number; mustFix: number | null; suggestion: number | null }> }>;
+      };
+      expect(st.batches).toHaveLength(1);
+      expect(st.batches[0].rounds).toHaveLength(1);
+      // 判别点：失败轮 mustFix/suggestion = null（未知），非 0（clean 语义）——
+      // 回退为 0 时时间线 "mustFix 0" 与真实 clean 轮无法区分，本断言拦截。
+      expect(st.batches[0].rounds[0].mustFix).toBeNull();
+      expect(st.batches[0].rounds[0].suggestion).toBeNull();
+      // 聚合/修复未发生（review-failure 在聚合前终止）
+      const { kinds } = runner.stats();
+      expect(kinds.filter((k) => k === "aggregate").length).toBe(0);
+      expect(kinds.filter((k) => k === "fix").length).toBe(0);
     },
     RUN_TIMEOUT_MS,
   );

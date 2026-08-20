@@ -767,8 +767,12 @@ function normalizeAggregatorResult(raw) {
   if (typeof mustFix !== "number") return null;
   // 5.1/5.7 severity 结构化：must_fix_ids 支持 ["MF-1"]（旧）与 [{id, severity}]（新，
   // severity: critical/major/minor——converged 终止的「无 critical」判定数据源）。
-  const idsRaw = Array.isArray(parsed.must_fix_ids) ? parsed.must_fix_ids : [];
-  const must_fix_ids = idsRaw.map((x) => {
+  // 终审 minor（F2 边缘）：字段缺失不缺省合并为 []——「降档模型漏输出 must_fix_ids」
+  // （无条目级裁决证据）与「显式空数组」（明确裁决无活跃条目）语义不同，保持键缺失
+  // 让消费侧 `agg.must_fix_ids &&` gate 生效（如 A4/W5 的跨批 clean-skip 授予；
+  // [] 恒 truthy，合并缺省会让 gate 对漏输出放行）。
+  const idsRaw = Array.isArray(parsed.must_fix_ids) ? parsed.must_fix_ids : null;
+  const must_fix_ids = idsRaw ? idsRaw.map((x) => {
     if (typeof x === "string") return { id: x, severity: "major" };
     if (x && typeof x === "object" && typeof x.id === "string") {
       // M1: severity 小写归一——LLM 可能返回 "Critical"/"MAJOR"，js 侧 === "critical"
@@ -795,12 +799,12 @@ function normalizeAggregatorResult(raw) {
       return entry;
     }
     return null;
-  }).filter(Boolean);
+  }).filter(Boolean) : undefined;
   const result = {
     report_file: parsed.report_file || parsed.reportFile,
     must_fix: mustFix,
     suggestion,
-    must_fix_ids,
+    ...(idsRaw ? { must_fix_ids } : {}),
     fixes_caution: Array.isArray(parsed.fixes_caution)
       ? parsed.fixes_caution.filter((x) => typeof x === "string")
       : [],

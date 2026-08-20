@@ -732,8 +732,16 @@ describe("normalizeAggregatorResult must_fix_ids", () => {
     const r = normalizeAggregatorResult({ report_file: "/tmp/agg.md", must_fix: 2, suggestion: 0, must_fix_ids: ["MF-1", { id: "MF-2", severity: "critical" }, 42, null] });
     expect(r!.must_fix_ids).toEqual([{ id: "MF-1", severity: "major" }, { id: "MF-2", severity: "critical" }]);
   });
-  it("旧格式（无 must_fix_ids）→ 缺省 []（TC6）", () => {
+  it("旧格式（无 must_fix_ids）→ 键缺失（终审 F2 边缘：不与显式空数组合并）", () => {
     const r = normalizeAggregatorResult({ report_file: "/tmp/agg.md", must_fix: 2, suggestion: 1 });
+    // 字段缺失 = 无条目级裁决证据（降档模型漏输出）——保持 undefined 让消费侧
+    // `agg.must_fix_ids &&` gate 生效；显式空数组才是「裁决后无活跃条目」。
+    expect("must_fix_ids" in r!).toBe(false);
+    expect(r!.must_fix_ids).toBeUndefined();
+  });
+  it("显式空数组 must_fix_ids: [] → 键保留（明确裁决无活跃条目，与字段缺失区分）", () => {
+    const r = normalizeAggregatorResult({ report_file: "/tmp/agg.md", must_fix: 0, suggestion: 0, must_fix_ids: [] });
+    expect("must_fix_ids" in r!).toBe(true);
     expect(r!.must_fix_ids).toEqual([]);
   });
 });
@@ -766,12 +774,12 @@ describe("parseResult", () => {
 describe("normalizeAggregatorResult", () => {
   it("标准字段 must_fix/suggestion → 归一化", () => {
     expect(normalizeAggregatorResult({ report_file: "/r.md", must_fix: 4, suggestion: 2 }))
-      .toEqual({ report_file: "/r.md", must_fix: 4, suggestion: 2, must_fix_ids: [], fixes_caution: [] });
+      .toEqual({ report_file: "/r.md", must_fix: 4, suggestion: 2, fixes_caution: [] });
   });
 
   it("别名字段（totalMustFix/mustFix/reportFile）→ 归一化", () => {
     expect(normalizeAggregatorResult({ reportFile: "/r.md", totalMustFix: 5, totalSuggestions: 1 }))
-      .toEqual({ report_file: "/r.md", must_fix: 5, suggestion: 1, must_fix_ids: [], fixes_caution: [] });
+      .toEqual({ report_file: "/r.md", must_fix: 5, suggestion: 1, fixes_caution: [] });
   });
 
   it("must_fix 缺失/非 number（LLM 返回无效 JSON）→ null", () => {
