@@ -95,20 +95,19 @@ describe('createChatStore factory', () => {
     })
   })
 
-  // ── [W2 fix-chat-flow-order D6] appendUser entry 化：user 消息经 reducer 唯一入流 ──
-  describe('appendUser entry 化（W2：applyEntryFrame 喂入 + overlay 投影）', () => {
-    it('reducer state 同步累积 user 投影：id = 返回 id（entry.id 派生）、content 为 entry 反解窄化', () => {
+  // ── [W2 fix-chat-flow-order D6 → 后修 overlay-only] appendUser：entry 形态派生 ref 消息，
+  //    reducer 的 user entry 唯一来源 = 真实 message_end(user) 帧（乐观 entry 不喂——双计防护）──
+  describe('appendUser entry 化（W2 后修：overlay-only + 权威帧入流）', () => {
+    it('overlay-only：ref 消息 id = 返回 id（entry.id 派生）、segments 原样；reducer 不吃乐观 entry（防双计）', () => {
       const sid = 's-w2'
       const id = sut.store.appendUser(sid, textToSegments('hello'))
-      const state = sut.store._entryStatesForTest.get(sid)
-      expect(state?.messages).toHaveLength(1)
-      // 返回值 = reducer 派生 id（deriveBaseId 从 entry.id 派生）——ref 消息与 reducer
-      // state 同 id，clientUuid 映射链（useChat）消费同一值
-      expect(state?.messages[0].id).toBe(id)
+      // reducer 不喂：user entry 唯一来源 = 真实 message_end(user)（W22 等价性——乐观 entry
+      // 与真实帧双喂会双计同一条 user 消息）
+      expect(sut.store._entryStatesForTest.get(sid)).toBeUndefined()
+      // ref 消息（overlay）：id = entry.id 派生——clientUuid 映射链（useChat）消费同一值
       expect(sut.store.getMessages(sid)[0].id).toBe(id)
-      expect(state?.messages[0].role).toBe('user')
-      // reducer 从 entry 反解 content：纯文本窄化（badge 归 overlay/sidecar，见 appendUser 注释）
-      expect(state?.messages[0].content).toEqual([{ type: 'text', text: 'hello' }])
+      expect(sut.store.getMessages(sid)[0].role).toBe('user')
+      expect(sut.store.getMessages(sid)[0].content).toEqual([{ type: 'text', text: 'hello' }])
     })
 
     it('结构化 segments（skill/file/mention/image/text）在消息流原样保留——badge 不丢', () => {
@@ -133,10 +132,28 @@ describe('createChatStore factory', () => {
       expect(id).toMatch(/^u-[0-9a-fA-F-]{36}$/)
     })
 
-    it('live ≡ reload（user 类型）：appendUser 喂入的 reducer 投影 ≡ 同形态 user entry 重放', () => {
+    it('live ≡ reload（user 类型）：appendUser 派生的 ref 投影 ≡ 真实 message_end 帧喂入的 reducer 投影 ≡ 同形态 entry 重放', () => {
       const sid = 's-w2-equiv'
+      // live 乐观（ref 投影）
       sut.store.appendUser(sid, textToSegments('same question'))
+      // live 权威：真实 message_end(user) 帧（adapter 重构形态：无 id）→ registry → reducer
+      sut.store.applyMessageEvent(sid, {
+        type: 'message.message_end',
+        payload: {
+          sessionId: sid,
+          entry: {
+            type: 'message',
+            parentId: null,
+            timestamp: new Date(0).toISOString(),
+            message: { role: 'user', content: 'same question', timestamp: 0 },
+          },
+        },
+      } as ServerMessage)
+      // ref：乐观 user 一条（真实帧不 commit ref——与 W21 assistant 同款 overlay 分工）
+      expect(sut.store.getMessages(sid)).toHaveLength(1)
+      // reducer：真实帧一条（乐观不喂）
       const liveMsgs = sut.store._entryStatesForTest.get(sid)!.messages
+      expect(liveMsgs).toHaveLength(1)
       // 重开侧：同形态 user entry（pi 持久化形态——content 纯文本）重放同一 reducer
       const reloadState = replayEntries([{
         type: 'message',
@@ -145,11 +162,10 @@ describe('createChatStore factory', () => {
         timestamp: new Date(0).toISOString(),
         message: { role: 'user', content: 'same question', timestamp: 0 },
       }])
-      // 剥异源字段（id：客户端 u-uuid vs pi uuidv7；timestamp：双时钟；piEntryId：
-      // entry.id 的衍生——异源同因）后逐字段等价——Segment[] 形态（live entry content）
-      // 与 string 形态（pi 持久化）归一到同一投影
+      // 剥异源字段（id：位置派生 vs pi uuidv7；piEntryId：entry.id 衍生）后逐字段等价——
+      // 权威帧与重放对 user 类型构造性同构（Segment[]/string 归一到同一投影）
       const strip = (m: Message) => {
-        const { id: _i, timestamp: _t, piEntryId: _p, ...rest } = m
+        const { id: _i, piEntryId: _p, ...rest } = m
         return rest
       }
       expect(liveMsgs.map(strip)).toEqual(reloadState.messages.map(strip))

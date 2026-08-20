@@ -375,6 +375,8 @@ describe.skipIf(!REAL_PI_READY)(
 
       // ── 断言 1：生产 registry 喂入（含 toolResult 双喂：tool_call_end + message_end 两帧）≡
       //   message_end 单通道重放 ≡ get_entries 尾部重放（覆盖式配对回填幂等 → 双喂收敛）
+      //   [W2 后修] user entry 经真实 message_end(user) 帧入流（appendUser 乐观 entry 不喂
+      //   reducer——防双计），两侧同为权威帧派生：id 位置派生、timestamp 同源，严格 deep-equal。
       expect(reducerLive!.messages).toEqual(liveSingleState.messages)
       expect(reducerLive!.messages).toEqual(reloadTailState.messages)
       expect(reducerLive!.clientUuidMap).toEqual(reloadTailState.clientUuidMap)

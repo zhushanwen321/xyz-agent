@@ -362,14 +362,13 @@ export function createChatStore() {
    * （prompt 标记 `<!--xyz:msg:u-<uuid>-->` + segments sidecar 主键——extension TAG 正则锚定
    * `u-[0-9a-fA-F-]{36}` 形态，xyz-client-msg-id-mapper.js）。
    *
-   * [W2 fix-chat-flow-order D6] entry 化：构造 user message entry（形态对照 apply-entry user
-   * 分支消费的 PiMessageEntry——segments 原样放 message.content）→ applyEntryFrame（reducer
-   * 唯一入流通道，与重开 replayEntries 同一个 applyEntry）+ overlay 投影 commit（bash-effects
-   * / customStart 同款范式）。乐观 send 与 drainN 投递两个调用方零改动：entry.id 客户端生成
-   * `u-<uuid>`（bash-/cm- 同款先例），reducer deriveBaseId 从 entry.id 派生消息 id → 返回值
-   * 保持 `u-<uuid>` 形态（clientUuid 映射链不断）。
+   * [W2 fix-chat-flow-order D6 → 后修 overlay-only] 消息形态从 user message entry 派生（形态
+   * 对照 apply-entry user 分支——segments 原样放 message.content，applyEntry 空态派生），但
+   * **不喂 reducer**：reducer 的 user entry 唯一来源 = 真实 message_end(user) 帧（见实现内
+   * 注释——乐观 entry 也喂会双计，W22 等价性测试捕获）。乐观 send 与 drainN 投递两个调用方
+   * 零改动，返回值保持 `u-<uuid>` 形态（clientUuid 映射链不断）。
    *
-   * overlay 投影 content 覆写回原 segments：reducer 从 entry 反解 content 是纯文本窄化
+   * overlay content 覆写回原 segments：entry 反解 content 是纯文本窄化
    * （skill/file/mention/image badge 不可从 entry 重放推导——重开侧由 segments sidecar +
    * clientUuidMap 回填，textToSegments 已知限制），live 渲染层必须保留原始 segments；
    * 引用原样透传（drainN FIFO 取出的 segments 原引用直接进消息流）。
@@ -383,11 +382,12 @@ export function createChatStore() {
       timestamp: new Date().toISOString(),
       message: { role: 'user', content: segments, timestamp: Date.now() },
     }
-    // 权威喂入：per-session reducer state（乐观 user 插入自此落入 reducer 可表达域）
-    applyEntryFrame(sessionId, entry)
-    // overlay 投影：空 state 派生（user 投影不依赖前置 state），末位即本条——apply-entry
-    // user case 对合法 user entry 恒 append 一条（构造点 role 字面量 'user'，
-    // convertMessageBody 仅对非 user/assistant role 返回 null）。
+    // [W2 后修] overlay-only：不喂 reducer（applyEntryFrame）。reducer 的 user entry 唯一来源 =
+    // 真实 message_end(user) 帧（权威、无客户端 id → 位置派生，与重放天然同构——live≡reload
+    // 对 user 类型经权威帧成立）。乐观 entry 若也喂 reducer，同一条 user 消息双计（W22 等
+    // 价性测试捕获；steer 场景 pi 展开文本与乐观 segments 内容失配，内容/替换式去重均不可靠）。
+    // ref 消息形态仍从 entry 派生（与 replay 产物同构的构造保证），id = entry.id 派生的
+    // u-<uuid>（clientUuid 契约不变）。
     // piEntryId 剥除：reducer 会把 entry.id 回填为 piEntryId，但乐观 entry 的 id 是客户端
     // 生成（u-<uuid>）非真实 pi entry id——带着假值会改变 fork 截断行为（useForkActions
     // 按 piEntryId 精确定位，原直插路径无此字段走 timestamp+role JSONL 匹配兜底）。
