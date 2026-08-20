@@ -9,6 +9,7 @@ import { type ChildProcess, execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
 
 import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { bestEffort } from "./best-effort.ts";
 import { armIdleTimer } from "./lifecycle-manager.ts";
 import { readActivePendingFromSessionFile } from "./session-pending.ts";
 
@@ -338,8 +339,10 @@ export interface SessionRunnerContext {
    * worktree 子进程 pid 就绪回调（first header 时触发）。
    * Runtime 层接线为 WorktreeManager.registerPid，用于注册表补全 pid。
    * 解耦 Core 与 Runtime——session-runner 不直接依赖 WorktreeManager。
+   * [D5a] 返回 Promise（注册表 pid 补全走跨进程锁内 RMW）；实现方保证不 reject
+   * （WorktreeRegistry.mutate 内部降级兜底），本侧 fire-and-forget 安全。
    */
-  onWorktreePid?: (branch: string, pid: number, sessionFile?: string) => void;
+  onWorktreePid?: (branch: string, pid: number, sessionFile?: string) => void | Promise<void>;
   /**
    * UI 请求处理回调。子进程发 extension_ui_request 时调用。
    *
@@ -1113,10 +1116,17 @@ export async function runSpawn(
           // [全局注册表] worktree 模式：补全注册表条目的 pid。
           // create 时 pid 未知写 0 占位，此处拿到 child.pid 后回调 WorktreeManager.registerPid。
           // 取代旧的 .session mapping sidecar——注册表是 reaper 的唯一数据源。
+          // [D5a] fire-and-forget：回调内部走跨进程锁（毫秒级），且实现方保证不
+          // reject（锁降级兜底）；stdout data 回调是同步上下文，不 await。
           if (opts.worktree && child.pid) {
             // 透传 record.sessionFile：填入 registry entry（reaper 据 pid 死活判孤儿），
             // first header 时 sessionFile 已回填（deriveSessionFilePath 在本分支上方）。
-            ctx.onWorktreePid?.(opts.worktree.branch, child.pid, record.sessionFile);
+            try {
+              void ctx.onWorktreePid?.(opts.worktree.branch, child.pid, record.sessionFile);
+            } catch (err) {
+              // 同步段异常（回调本身 throw）不阻断 stdout 解析；锁内错误由回调内部 warn。
+              bestEffort(err, "onWorktreePid callback (first header)");
+            }
           }
           // FR-4 加速路径：header 到达即 finishHandshake（header 已提供 sessionId，
           // 足以推导 sessionFile + 兜底查找，无需等 get_state response）。

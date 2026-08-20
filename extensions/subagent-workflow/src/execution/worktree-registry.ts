@@ -11,17 +11,22 @@
 //      无人写终态 → 孤儿永久泄漏。→ 新判据：pid 死活一条判到底。
 //
 // 并发模型：
-//   - 同步 IO（readFileSync/writeFileSync）。Node 单线程保证 sync read-modify-write
-//     在一个 event loop turn 内原子完成，进程内无需 mutex。
-//   - 多 WorktreeManager 实例（reaper + service）共享同一文件，sync 操作天然串行。
-//   - 跨进程（用户开两个 pi）：last-write-wins，丢失条目靠 OS tmpdir + 分支对账兜底。
+//   - 跨进程互斥（D5a）：add/updatePid/remove 的 load→mutate→save 全程持
+//     proper-lockfile 异步锁（<worktrees.json>.lock，协议登记 data-source-registry.md §6）。
+//     锁不可用（重试耗尽）时降级为无锁 RMW + warn——注册表是 best-effort 数据，
+//     降级不比锁前更差，条目丢失由 reaper 对账兜底（worktree-manager scan 的
+//     双向 diff，见 reconcileWithPhysical）。
+//   - 同步 IO（readFileSync/writeFileSync）持锁执行：锁内临界区毫秒级，
+//     async 锁 + sync IO 组合在单线程 event loop 内无 interleaving。
 //   - 原子写：写 .tmp → rename，防写一半崩溃产生损坏 JSON。
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { bestEffort } from "./best-effort.ts";
+import { withFileLock } from "@zhushanwen/pi-file-lock";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+import { bestEffort } from "./best-effort.ts";
 
 const logger = getLogger("subagents");
 
@@ -30,6 +35,11 @@ export const SPAWN_GRACE_MS = 60_000;
 
 /** JSON 缩进空格数（可读性 + diff 友好）。 */
 const JSON_INDENT = 2;
+
+/** tmp 随机段：36 进制取 8 字符（跳过 "0." 前缀），与 pid 组合保证并发唯一。 */
+const TMP_RANDOM_BASE = 36;
+const TMP_RANDOM_SLICE_START = 2; // 跳过 Math.random 字符串的 "0." 前缀
+const TMP_RANDOM_SLICE_END = 10;
 
 /** 注册表 JSON 顶层结构的运行时类型守卫。 */
 function isRegistryData(value: unknown): value is { entries: WorktreeEntry[] } {
@@ -80,16 +90,17 @@ export class WorktreeRegistry {
   /**
    * 新增条目（create 成功后调，pid=0 占位）。
    * 同 branch 已存在则覆盖（防残留覆盖）。
+   * 跨进程锁内 RMW（D5a）；锁降级路径见 mutate。
    */
-  add(entry: WorktreeEntry): void {
-    const entries = this.load();
-    const idx = entries.findIndex((e) => e.branch === entry.branch);
-    if (idx >= 0) {
-      entries[idx] = entry;
-    } else {
-      entries.push(entry);
-    }
-    this.save(entries);
+  async add(entry: WorktreeEntry): Promise<void> {
+    await this.mutate((entries) => {
+      const idx = entries.findIndex((e) => e.branch === entry.branch);
+      if (idx >= 0) {
+        entries[idx] = entry;
+      } else {
+        entries.push(entry);
+      }
+    });
   }
 
   /**
@@ -97,28 +108,73 @@ export class WorktreeRegistry {
    * branch 不存在则忽略（create 后崩溃 + reaper 已清的竞态）。
    * sessionFile 可选补全：传入时填入 entry（reaper 据 pid 死活判孤儿，不读本字段）。
    */
-  updatePid(branch: string, pid: number, sessionFile?: string): void {
-    const entries = this.load();
-    const idx = entries.findIndex((e) => e.branch === branch);
-    if (idx >= 0) {
-      entries[idx] = {
-        ...entries[idx],
-        pid,
-        ...(sessionFile !== undefined ? { sessionFile } : {}),
-      };
-      this.save(entries, { branch, pid });
-    }
+  async updatePid(branch: string, pid: number, sessionFile?: string): Promise<void> {
+    await this.mutate(
+      (entries) => {
+        const idx = entries.findIndex((e) => e.branch === branch);
+        if (idx >= 0) {
+          entries[idx] = {
+            ...entries[idx],
+            pid,
+            ...(sessionFile !== undefined ? { sessionFile } : {}),
+          };
+        }
+      },
+      { branch, pid },
+    );
   }
 
   /**
    * 移除条目（cleanup/reaper 清理后调）。
    * branch 不存在则忽略（幂等）。
    */
-  remove(branch: string): void {
-    const entries = this.load();
-    const filtered = entries.filter((e) => e.branch !== branch);
-    if (filtered.length !== entries.length) {
-      this.save(filtered);
+  async remove(branch: string): Promise<void> {
+    await this.mutate(
+      (entries) => {
+        const filtered = entries.filter((e) => e.branch !== branch);
+        if (filtered.length !== entries.length) {
+          entries.length = 0;
+          entries.push(...filtered);
+        }
+      },
+      { branch },
+    );
+  }
+
+  /**
+   * 锁内 RMW 统一入口：withLock(load → mutate → save)。
+   *
+   * 降级语义（对齐本类既有 best-effort 约定——注册表写失败不阻断 create/cleanup
+   * 主流程）：锁获取失败（重试耗尽 ELOCKED 等）→ warn + 无锁执行同一段 RMW
+   * （= D5a 之前的 last-write-wins 行为，条目丢失由 reaper 对账兜底），
+   * 不抛错、永不 reject（调用方含 session-runner 的 fire-and-forget 回调）。
+   */
+  private async mutate(
+    mutate: (entries: WorktreeEntry[]) => void,
+    context?: { branch?: string; pid?: number },
+  ): Promise<void> {
+    const run = (): void => {
+      const entries = this.load();
+      mutate(entries);
+      this.save(entries, context);
+    };
+    try {
+      await withFileLock(this.filePath, () => {
+        run();
+        return Promise.resolve();
+      });
+    } catch (lockErr) {
+      // 锁不可用（ELOCKED 重试耗尽 / 锁目录损坏等）：降级无锁 RMW。
+      // 竞争窗口内可能丢条目（旧缺陷形态），由 reaper 对账（scan 双向 diff）收敛。
+      logger.warn("[worktree] registry lock unavailable, degraded to lock-free RMW", {
+        ...(context ?? {}),
+        err: lockErr instanceof Error ? lockErr.message : String(lockErr),
+      });
+      try {
+        run();
+      } catch (err) {
+        bestEffort(err, "worktree registry degraded RMW");
+      }
     }
   }
 
@@ -144,12 +200,13 @@ export class WorktreeRegistry {
    * 原子写入全部条目。
    * best-effort：写入失败不阻断主流程（create/cleanup 的 git 操作已执行，
    * 注册表与 git 状态的短暂不一致靠下次 reaper 对账收敛）。
-   * 写盘失败时 warn 日志（updatePid 路径带 branch/pid，补全失败可观测闭环）。
+   * 写盘失败时 warn 日志（带 branch/pid 上下文，补全失败可观测闭环）。
    */
-  private save(entries: WorktreeEntry[], context?: { branch: string; pid: number }): void {
+  private save(entries: WorktreeEntry[], context?: { branch?: string; pid?: number }): void {
     try {
       fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-      const tmp = `${this.filePath}.tmp`;
+      // tmp 名带 pid + 随机段：锁降级（无锁并发 RMW）时多进程 tmp 互不覆盖
+      const tmp = `${this.filePath}.tmp_${process.pid}_${Math.random().toString(TMP_RANDOM_BASE).slice(TMP_RANDOM_SLICE_START, TMP_RANDOM_SLICE_END)}`;
       fs.writeFileSync(tmp, JSON.stringify({ entries }, null, JSON_INDENT), "utf-8");
       fs.renameSync(tmp, this.filePath);
     } catch (err) {

@@ -16,6 +16,11 @@ import { access, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+// 模块级 logger（setPiHandle 注入后自动走 appendEntry，未注入时 console 兜底）
+const logger = getLogger("subagents");
+
 // ── 类型 ─────────────────────────────────────────────────────
 
 /** 资源种类：agent 或 workflow */
@@ -531,9 +536,18 @@ export async function discoverResources(config: ScanConfig): Promise<DiscoveredR
   for (const { resources } of allBySource) {
     for (const r of resources) {
       const key = stem(r.path);
+      const existing = merged.get(key);
       // available=false 的占位不覆盖已有的 available=true
-      if (!r.available && merged.has(key)) {
+      if (!r.available && existing) {
         continue;
+      }
+      // [D8d] 同名遮蔽可观测：高优先级源覆盖低优先级同名资源时 warn——此前
+      // 「有检测无报告」，用户自定义 agent/workflow 被静默遮蔽后排查无从下手。
+      if (existing && existing.path !== r.path) {
+        logger.warn(
+          `[resource-discovery] duplicate ${config.kind} "${key}" from ${r.source} shadows ${existing.source}`,
+          { shadowed: existing.path, kept: r.path },
+        );
       }
       merged.set(key, r);
     }
