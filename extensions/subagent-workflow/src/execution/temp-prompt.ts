@@ -1,7 +1,8 @@
 // src/core/temp-prompt.ts
 //
 // 将 agent systemPrompt 写入临时文件，供 pi CLI --append-system-prompt 使用。
-// Core 叶子原语（node 内置 + 同目录 bestEffort 清理 helper，无 Pi 依赖）。
+// Core 叶子原语（node 内置 + 同目录 bestEffort 清理 helper）。注意 bestEffort
+// 经 extension-logger 有到 pi 的传递依赖（仅日志通路，无 pi 运行时调用）。
 //
 // pi CLI 的 --append-system-prompt 接受文件路径（非内联字符串），故 spawn 前
 // 需把 systemPrompt 落盘。每次调用创建唯一临时目录，用完由 runSpawn 清理。

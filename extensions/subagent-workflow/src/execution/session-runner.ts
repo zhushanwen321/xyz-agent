@@ -171,10 +171,9 @@ export function computeWatchdogMs(maxTurns: number | undefined | null): number {
   return Math.max(SPAWN_WATCHDOG_FLOOR_MS, effectiveTurns * WATCHDOG_MS_PER_TURN);
 }
 
-/** stderr 累积上限（字符）。防止失控子进程打满父进程内存。保留尾部便于诊断。 */
-const STDERR_MAX_KB = 64;
-const BYTES_PER_KB = 1024;
-const STDERR_MAX_CHARS = STDERR_MAX_KB * BYTES_PER_KB;
+/** stderr 累积上限——按字符截断（.slice 语义），非字节；64K 规模沿自原实现。
+ *  防止失控子进程打满父进程内存。保留尾部便于诊断。 */
+const STDERR_MAX_CHARS = 65_536;
 
 /**
  * 跨包契约 env 名：workflow 子进程把权威 JSON Schema 通过此 env 传给 structured-output 扩展。
