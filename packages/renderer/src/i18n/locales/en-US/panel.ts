@@ -410,6 +410,15 @@ export default {
     emptyNotPersisted: 'Session not persisted yet (visible after the first assistant reply)',
     emptyNoRows: 'No trace entries',
     emptyFiltered: 'No rows match the current filters',
+    // RPC degraded banner (§3.1 failure paths: pi RPC failed / inactive session reads the
+    // file directly — no live incremental updates)
+    degradedFileSource: 'From disk file (live updates unavailable)',
+    // SYSTEM no-trace degradation (§3.1: trace pack absent/disabled or legacy session —
+    // fetch-current channel lives in the resident extension; button disabled until wired)
+    systemNoTraceHint: 'not traced (trace extension not active in that period)',
+    systemFetchCurrent: 'Fetch current',
+    systemCurrentNotHistory: 'Current value, not historical',
+    malformedOpenDir: 'Reveal in folder',
     loadFailed: 'Failed to load trace',
     loadFailedHint: 'Retry by reopening the Trace view; if it persists, check the session JSONL file is readable',
     retry: 'Retry',

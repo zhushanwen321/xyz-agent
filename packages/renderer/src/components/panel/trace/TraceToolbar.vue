@@ -20,7 +20,25 @@
       <span aria-hidden="true" class="text-neutral-faint">·</span>
       <span>{{ t('panel.trace.compactionCount', { count: stats.compactions }) }}</span>
       <span aria-hidden="true" class="text-neutral-faint">·</span>
-      <span data-testid="trace-stats-prompt">{{ stats.promptVersion === null ? t('panel.trace.promptNoTrace') : t('panel.trace.promptVersion', { version: stats.promptVersion }) }}</span>
+      <span
+        data-testid="trace-stats-prompt"
+        :title="stats.promptVersion === null ? t('panel.trace.systemNoTraceHint') : undefined"
+      >{{ stats.promptVersion === null ? t('panel.trace.promptNoTrace') : t('panel.trace.promptVersion', { version: stats.promptVersion }) }}</span>
+      <!-- SYSTEM 无留痕降级（§3.1）：现取按钮 + 「当前值，非历史」标注。现取通道在常驻
+           文件扩展（不随可禁留痕包），接线前按钮置灰（trace-i18n 只收口文案）。 -->
+      <template v-if="stats.promptVersion === null">
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled
+          class="h-4 gap-0.5 px-1 text-[10px]"
+          data-testid="trace-fetch-current"
+        >
+          <RefreshCw class="size-2.5" />
+          {{ t('panel.trace.systemFetchCurrent') }}
+        </Button>
+        <span class="text-[10px] text-neutral-faint" data-testid="trace-fetch-current-note">{{ t('panel.trace.systemCurrentNotHistory') }}</span>
+      </template>
     </div>
     <!-- 控制行：chips + 搜索 + context toggle -->
     <div class="flex flex-wrap items-center gap-1.5">
@@ -68,7 +86,7 @@
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Search } from '@lucide/vue'
+import { RefreshCw, Search } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'

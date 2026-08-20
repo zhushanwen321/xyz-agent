@@ -48,6 +48,16 @@
     </div>
     <!-- 台账主体 -->
     <template v-else>
+      <!-- RPC 降级 banner（§3.1 失败路径：pi RPC 失败/非活跃 session 走文件直读，无实时增量）。
+           source='file' 涵盖两种情形，语义统一：凡文件路径均无实时更新（增量腿只随 RPC 建立）。 -->
+      <div
+        v-if="partition.source === 'file'"
+        class="flex flex-shrink-0 items-center gap-1.5 border-b border-hairline px-3.5 py-1 text-[11px] text-neutral-dim"
+        data-testid="trace-degraded-banner"
+      >
+        <FileWarning class="size-3 shrink-0 opacity-70" />
+        <span>{{ t('panel.trace.degradedFileSource') }}</span>
+      </div>
       <TraceToolbar
         :rows="rows"
         :context-only="partition.contextOnly"
@@ -116,7 +126,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Virtualizer } from 'virtua/vue'
 import type { VirtualizerHandle } from 'virtua/vue'
-import { AlertCircle, Hourglass, ListTree, Loader2, RotateCcw } from '@lucide/vue'
+import { AlertCircle, FileWarning, Hourglass, ListTree, Loader2, RotateCcw } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   filterTraceRows,

@@ -410,6 +410,13 @@ export default {
     emptyNotPersisted: 'session 尚未落盘（首条 assistant 回复到达后可见）',
     emptyNoRows: '暂无 trace entry',
     emptyFiltered: '当前过滤条件下无匹配行',
+    // RPC 降级 banner（§3.1 失败路径：pi RPC 失败/非活跃 session 走文件直读，无实时增量）
+    degradedFileSource: '来自磁盘文件（实时更新不可用）',
+    // SYSTEM 无留痕降级（§3.1：留痕包未装/被禁/旧 session——现取通道在常驻扩展，接线前按钮置灰）
+    systemNoTraceHint: '无留痕（该时段留痕 extension 未启用）',
+    systemFetchCurrent: '现取当前值',
+    systemCurrentNotHistory: '当前值，非历史',
+    malformedOpenDir: '打开所在目录',
     loadFailed: '加载 trace 失败',
     loadFailedHint: '重新打开 Trace 视图重试；若持续失败，检查 session JSONL 文件是否可读',
     retry: '重试',

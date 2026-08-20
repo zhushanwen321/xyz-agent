@@ -30,6 +30,23 @@
     <p class="flex-shrink-0 px-2.5 pb-1.5 pt-1 text-[11px] text-neutral-faint">{{ t('panel.trace.inspectorSubtitle') }}</p>
     <!-- body：kind 分支详情 -->
     <div class="min-h-0 flex-1 overflow-y-auto px-2.5 pb-4" data-testid="trace-inspector-body">
+      <!-- 损坏行恢复指引（§3.1）：打开 JSONL 所在目录（通道待常驻扩展接线，先置灰收口文案） -->
+      <div
+        v-if="row.kind === 'MALFORMED'"
+        class="mb-2 flex flex-wrap items-center gap-2 rounded-sm border border-hairline bg-bg-input px-2.5 py-2"
+        data-testid="trace-malformed-actions"
+      >
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled
+          class="h-5 gap-1 px-1.5 text-[11px] text-neutral-dim"
+        >
+          <FolderOpen class="size-3" />
+          {{ t('panel.trace.malformedOpenDir') }}
+        </Button>
+        <span class="min-w-0 flex-1 text-[11px] text-neutral-faint">{{ t('panel.trace.malformedHint', { line: row.lineNumber ?? 0 }) }}</span>
+      </div>
       <!-- 消息类：USER / NOTICE(role=custom) 文本全文 -->
       <pre v-if="preText !== null" class="mb-2 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[11px] leading-relaxed text-neutral-mid">{{ preText }}</pre>
       <!-- ASSISTANT：逐 content block -->
@@ -65,7 +82,7 @@
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft } from '@lucide/vue'
+import { ArrowLeft, FolderOpen } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { TraceRow } from '@xyz-agent/core/domain/session-trace'
 import { useTraceRows } from '@/composables/features/trace/useTraceRows'
