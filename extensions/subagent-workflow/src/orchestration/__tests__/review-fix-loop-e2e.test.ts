@@ -21,7 +21,7 @@
  */
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -967,7 +967,13 @@ describe("startup fail-fast (ADR-0003 D6)", () => {
         expect(typeof c.model).toBe("string");
         expect(typeof c.durationMs).toBe("number");
         expect(c.usage).toMatchObject({ input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0 });
-        expect(c.promptMode).toBe("full");
+        // A12 语义精确化：promptMode = review prompt 模式（reviewer full/scoped）；
+        // 非 reviewer 角色（aggregator/fixer）该字段无意义，显式落 null
+        if (c.role === "reviewer") {
+          expect(c.promptMode).toBe("full");
+        } else {
+          expect(c.promptMode).toBeNull();
+        }
         expect(typeof c.promptBytes).toBe("number");
         expect(c.promptBytes).toBeGreaterThan(0);
         expect(c.sessionId).toMatch(/^sess-e2e-\d+$/);
@@ -1453,5 +1459,265 @@ describe("startup fail-fast (ADR-0003 D6)", () => {
       expect(wfSource).not.toContain("...reviewerSchema, required:");
     },
     RUN_TIMEOUT_MS,
+  );
+
+  // ── 实施后对抗式审查修复（v7.1）：A1/A2/A3/A4 ──────────────────────
+
+  it(
+    "A4: 全降级轮（reviewer 报 must-fix、aggregator 全部降级）→ 不派 fixer，批推进",
+    async () => {
+      // 剧本：批 1 R1 reviewer-a 报 1 must-fix，aggregator 裁决全部降级
+      //（must_fix=0、唯一条目 downgraded）→ A4 守卫生效：批 1 视同 clean 终止本轮，
+      // 不空转派发 fixer（修复前：mustFix===0 混过 :705 all-clean 判定（用的是 reviewer
+      // 原始计数）→ 照常进 Fix 阶段 → fixCount++ 白跑）；批 2 reviewer-b 直接 clean。
+      const runner = makeScenarioRunner({
+        review: [
+          () => ({ report_file: "/tmp/a4-r1.md", must_fix: 1, suggestion: 0, reconciliation: [] }),
+          () => ({ report_file: "/tmp/a4-r2.md", must_fix: 0, suggestion: 0, reconciliation: [] }),
+        ],
+        aggregate: () => ({
+          report_file: "/tmp/a4-agg.md", must_fix: 0, suggestion: 0,
+          must_fix_ids: [{ id: "MF-1", severity: "major", adjudication: "downgraded", note: "no reproducible evidence" }],
+          fixes_caution: [],
+        }),
+        fix: () => ({ fixed_count: 0, fixes: [], deferred: [] }),
+      });
+      const deps = makeDeps(runner);
+
+      const result = await runAndWait(
+        wf("review-fix-loop"),
+        {
+          targetType: "file", target: "README.md",
+          batch1: agentMd("reviewer-a"), batch2: agentMd("reviewer-b"), _runId: RUN_ID(),
+        },
+        deps, undefined, RUN_TIMEOUT_MS,
+      );
+
+      expect(result.reason).toBe("completed");
+      expect(result.error).toBeUndefined();
+      const outcome = assertScriptOutcome(result.scriptResult);
+      expect(outcome.terminated).toBe("clean");
+      // 无 fixer 调用（守卫生效）；聚合 1 次（批 1），批 2 全 clean 不聚合
+      const { kinds } = runner.stats();
+      expect(kinds.filter((k) => k === "fix").length).toBe(0);
+      expect(kinds.filter((k) => k === "aggregate").length).toBe(1);
+      expect(kinds.filter((k) => k === "review").length).toBe(2);
+      // 批推进到批 2（守卫视同 clean，不 fail-fast）+ fixCount 不虚增
+      const st = JSON.parse(readFileSync(join(outcome.runDir!, "state.json"), "utf8")) as {
+        batches: unknown[];
+        fixCount: number;
+        dormant: Array<{ id: string }>;
+      };
+      expect(st.batches).toHaveLength(2);
+      expect(st.fixCount).toBe(0);
+      // 批 1 的降级条目在批 1 期间落过 dormant（中间 saveState 可查）；批 2 开始时
+      // dormant 批作用域重置（A2）且批 2 无降级 → 最终落盘为空
+      expect(st.dormant).toEqual([]);
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
+    "A2+A3: dormant 批作用域重置（跨批同 id 不污染对账）+ fix prompt 含 guidance 通道",
+    async () => {
+      // A2 剧本（跨批 id 冲突）：批 1 R1 聚合 2 条目（MF-1 活跃带 guidance / MF-3 降级
+      // 落 dormant）→ fix 修 MF-1；批 1 R2 clean（对账 MF-1 fixed）→ 批 1 终止，
+      // dormant=[批1的 MF-3]。批 2 R1 reviewer-b 报 1 must-fix，聚合返回活跃 MF-3
+      //（aggregator id 空间每批从 MF-1 重新编号，批 2 的 MF-3 是新问题）→ fix 修它；
+      // 批 2 R2 对账声明 MF-3 not-fixed（未修好）→ 聚合仍报活跃 MF-3 → fix 再修。
+      // 修复前：批 1 残留 dormant MF-3 被 filterDormantFromRecon 从 reconSeen 剥离 →
+      // 批 2 的 MF-3 fix-attempted 被误反转 fixed → converged 提前终止（掩盖未修复）；
+      // 修复后：dormant 批作用域重置 → reconcile 正常转 regressed → 继续 fix → max-rounds。
+      let aggN = 0;
+      let fixN = 0;
+      const runner = makeScenarioRunner({
+        review: [
+          // 批 1 R1（reviewer-a）：2 must-fix
+          () => ({ report_file: "/tmp/a2-b1r1.md", must_fix: 2, suggestion: 0, reconciliation: [] }),
+          // 批 1 R2（reviewer-a）：clean + 对账 MF-1 fixed → all-clean 终止批 1
+          () => ({
+            report_file: "/tmp/a2-b1r2.md", must_fix: 0, suggestion: 0,
+            reconciliation: [{ prev_id: "MF-1", status: "fixed", evidence: "read confirmed" }],
+          }),
+          // 批 2 R1（reviewer-b）：1 must-fix（批 2 的 MF-3）
+          () => ({ report_file: "/tmp/a2-b2r1.md", must_fix: 1, suggestion: 0, reconciliation: [] }),
+          // 批 2 R2（reviewer-b）：MF-3 not-fixed（未修好）
+          () => ({
+            report_file: "/tmp/a2-b2r2.md", must_fix: 1, suggestion: 0,
+            reconciliation: [{ prev_id: "MF-3", status: "not-fixed", evidence: "still wrong" }],
+          }),
+        ],
+        aggregate: () => {
+          aggN++;
+          if (aggN === 1) {
+            return {
+              report_file: "/tmp/a2-agg1.md", must_fix: 1, suggestion: 0,
+              must_fix_ids: [
+                { id: "MF-1", severity: "major", adjudication: "evidence",
+                  files: ["src/a.ts"], evidence: "off-by-one", guidance: "fix the boundary check in parser" },
+                { id: "MF-3", severity: "major", adjudication: "downgraded", note: "weak evidence at the time" },
+              ],
+              fixes_caution: [],
+            };
+          }
+          if (aggN === 2) {
+            return {
+              report_file: "/tmp/a2-agg2.md", must_fix: 1, suggestion: 0,
+              must_fix_ids: [{ id: "MF-3", severity: "major", adjudication: "evidence",
+                files: ["src/z.ts"], evidence: "new issue in batch 2", guidance: "patch the z guard" }],
+              fixes_caution: [],
+            };
+          }
+          return {
+            report_file: "/tmp/a2-agg3.md", must_fix: 1, suggestion: 0,
+            must_fix_ids: [{ id: "MF-3", severity: "major", adjudication: "evidence",
+              files: ["src/z.ts"], evidence: "still broken" }],
+            fixes_caution: [],
+          };
+        },
+        fix: () => {
+          fixN++;
+          return {
+            fixed_count: 1,
+            fixes: [{
+              issue_id: fixN === 1 ? "MF-1" : "MF-3",
+              description: "fix " + fixN, self_check: "grep: 1 hit; synced", affected_files: [],
+            }],
+            deferred: [],
+          };
+        },
+      });
+      const deps = makeDeps(runner);
+
+      const result = await runAndWait(
+        wf("review-fix-loop"),
+        {
+          targetType: "file", target: "README.md", maxRounds: 2,
+          batch1: agentMd("reviewer-a"), batch2: agentMd("reviewer-b"), _runId: RUN_ID(),
+        },
+        deps, undefined, RUN_TIMEOUT_MS,
+      );
+
+      expect(result.reason).toBe("completed");
+      expect(result.error).toBeUndefined();
+      const outcome = assertScriptOutcome(result.scriptResult);
+      // 判别点：修复前批 2 R2 的 MF-3 被误反转 fixed → converged 提前终止；
+      // 修复后 regressed → 不收敛 → R2 再修一轮 → maxRounds=2 到顶 → max-rounds。
+      expect(outcome.terminated).toBe("max-rounds");
+
+      const st = JSON.parse(readFileSync(join(outcome.runDir!, "state.json"), "utf8")) as {
+        issues: Record<string, { status: string; history: Array<{ round: number; status: string }> }>;
+        dormant: Array<{ id: string }>;
+      };
+      // 核心断言：批 2 的 MF-3 走 regressed（对账 not-fixed 生效）而非被批 1 dormant
+      // 残留反转 fixed。批 1 的 MF-1 已被批 2 的 issues 批作用域重置清除（MF-1 批级
+      // 生命周期，不跨批残留——与 dormant 同点重置）。
+      expect(st.issues["MF-1"]).toBeUndefined();
+      expect(st.issues["MF-3"].history).toContainEqual({ round: 2, status: "regressed" });
+      expect(st.issues["MF-3"].history).not.toContainEqual({ round: 2, status: "fixed" });
+      // dormant 批作用域：批 1 记录的 MF-3 在批 2 被重置；批 2 的 MF-3 活跃不落 dormant
+      expect(st.dormant).toEqual([]);
+
+      // fix 正常派发：批 1 R1 + 批 2 R1 + 批 2 R2（regressed 后再修）= 3 次
+      const { kinds, prompts } = runner.stats();
+      const fixIdxs = kinds.map((k, i) => (k === "fix" ? i : -1)).filter((i) => i >= 0);
+      expect(fixIdxs.length).toBe(3);
+
+      // A3 e2e：fix prompt 含 guidance 确定性通道（mock guidance 文本 + wrapUntrusted）
+      const fixPrompts = fixIdxs.map((i) => prompts[i]);
+      expect(fixPrompts[0]).toContain("MUST-FIX GUIDANCE (adjudicated, per-issue)");
+      expect(fixPrompts[0]).toContain('<untrusted source="must_fix_guidance">');
+      expect(fixPrompts[0]).toContain("- MF-1: fix the boundary check in parser");
+      // R2+（批 2 的 fix）同样生效
+      expect(fixPrompts[1]).toContain("- MF-3: patch the z guard");
+      // 无 guidance 条目的轮（agg3 无 guidance）→ 无该段（prompt 形状稳定）
+      expect(fixPrompts[2]).not.toContain("MUST-FIX GUIDANCE");
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
+    "A1: engine rebuild 后同 _runId 残留 state 被重置——calls/fixResults 无双记 + previousAttempts=1",
+    async () => {
+      // 受控脚本故障注入（设计 §8.2 S4 方法）：临时脚本副本在首次 fix 完成后写 marker
+      // 文件并抛错 → engine script-error → rebuildRuntime（同 _runId / 同 RUN_ROOT 重跑，
+      // 已完成调用按 callId 缓存重放）。attempt-2 读到 marker 不再抛。
+      // 修复前：loadState 原样复用 attempt-1 残留 → 重放的 recordCall/fixResults/fixCount
+      // 全部双记（calls=7/fixResults=2/fixCount=2）；修复后（A1）重置易变字段，
+      // 仅 meta.previousAttempts=1 留痕。
+      const faultDir = mkdtempSync(join(tmpdir(), "rfl-e2e-fault-"));
+      try {
+        const original = readFileSync(wf("review-fix-loop"), "utf-8");
+        const utilsSrc = readFileSync(join(WORKFLOWS_DIR, "review-fix-loop-utils.cjs"), "utf-8");
+        // 注入点：R1 fix 完成后的 log 行（此刻 state.json 已 saveState 落盘一次）
+        const anchor = 'log("Fixed " + fixedCount + " issue(s). Total: " + totalFixed + ". Modified " + modifiedFiles.length + " file(s). Continuing...");';
+        if (!original.includes(anchor)) {
+          throw new Error("A1 e2e: fault anchor not found in review-fix-loop.js");
+        }
+        const faultCode = anchor + "\n"
+          + "// [TEST-INJECTED FAULT] attempt-1 写 marker 后抛错触发 engine rebuild；attempt-2 读到 marker 不再抛\n"
+          + "try {\n"
+          + "  fs.accessSync(RUN_ROOT + \"/e2e-fault-marker\");\n"
+          + "} catch (e) {\n"
+          + "  if (String(e).includes(\"e2e-fault-marker\") === false && String(e).includes(\"ENOENT\") === false) throw e;\n"
+          + "  fs.writeFileSync(RUN_ROOT + \"/e2e-fault-marker\", \"1\");\n"
+          + "  throw new Error(\"e2e-injected fault: simulate script-error after first state write (A1)\");\n"
+          + "}";
+        const injected = original.replace(anchor, faultCode);
+        const faultScriptPath = join(faultDir, "review-fix-loop.js");
+        writeFileSync(faultScriptPath, injected, "utf-8");
+        // utils 经 workerData.scriptPath dirname 定位——副本目录内放同版 utils
+        writeFileSync(join(faultDir, "review-fix-loop-utils.cjs"), utilsSrc, "utf-8");
+
+        // 剧本：R1 1 must-fix → fix（saveState 后触发注入 fault）→ rebuild 重放 R1 → R2 clean
+        const runner = makeScenarioRunner({
+          review: [
+            () => ({ report_file: "/tmp/a1-r1.md", must_fix: 1, suggestion: 0, reconciliation: [] }),
+            () => ({
+              report_file: "/tmp/a1-r2.md", must_fix: 0, suggestion: 0,
+              reconciliation: [{ prev_id: "MF-1", status: "fixed", evidence: "read confirmed" }],
+            }),
+          ],
+          aggregate: () => ({
+            report_file: "/tmp/a1-agg.md", must_fix: 1, suggestion: 0,
+            must_fix_ids: [{ id: "MF-1", severity: "major" }], fixes_caution: [],
+          }),
+          fix: () => ({
+            fixed_count: 1,
+            fixes: [{ issue_id: "MF-1", description: "mock fix", self_check: "grep: 1 hit; synced", affected_files: [] }],
+            deferred: [],
+          }),
+        });
+        const deps = makeDeps(runner);
+        const result = await runAndWait(
+          faultScriptPath,
+          { targetType: "file", target: "README.md", agents: agentMd("reviewer"), _runId: RUN_ID() },
+          deps, undefined, RUN_TIMEOUT_MS,
+        );
+
+        expect(result.reason).toBe("completed");
+        expect(result.error).toBeUndefined();
+        const outcome = assertScriptOutcome(result.scriptResult);
+        expect(outcome.terminated).toBe("clean");
+        expect(outcome.totalFixed).toBe(1);
+
+        const st = JSON.parse(readFileSync(join(outcome.runDir!, "state.json"), "utf8")) as {
+          meta: { previousAttempts?: number };
+          calls: Array<Record<string, unknown>>;
+          fixResults: unknown[];
+          fixCount: number;
+        };
+        // attempt-1 残留被识别并留痕
+        expect(st.meta.previousAttempts).toBe(1);
+        // calls 无双记：attempt-2 重放 R1（review/agg/fix）+ R2 review = 4
+        //（修复前 = attempt-1 的 3 + attempt-2 的 4 = 7）
+        expect(st.calls.length).toBe(4);
+        expect(st.fixResults.length).toBe(1);
+        expect(st.fixCount).toBe(1);
+      } finally {
+        rmSync(faultDir, { recursive: true, force: true });
+      }
+    },
+    RUN_TIMEOUT_MS * 2,
   );
 });

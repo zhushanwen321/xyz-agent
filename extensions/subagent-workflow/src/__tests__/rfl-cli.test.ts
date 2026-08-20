@@ -23,6 +23,9 @@ function fixtureState(opts: {
   terminated: string;
   calls: Array<{ batch: number; round: number; role: string; name: string; usage?: Record<string, number> }>;
   rounds?: Array<{ round: number; phaseTimings: Record<string, [number, number] | null> }>;
+  issues?: Record<string, unknown>;
+  scores?: unknown[];
+  dormant?: unknown[];
 }): Record<string, unknown> {
   return {
     meta: { runId: "x", startedAt: opts.startedAt, terminated: opts.terminated, baseHash: "" },
@@ -32,7 +35,10 @@ function fixtureState(opts: {
       promptMode: "full", promptBytes: 500, sessionId: "s1",
     })),
     batches: [{ index: 1, name: "batch-1", rounds: opts.rounds ?? [{ round: 1, mustFix: 1, phaseTimings: { review: [1, 2], aggregate: [2, 3], fix: [3, 4] } }] }],
-    issues: {},
+    issues: opts.issues ?? {},
+    // M1/M2 字段按需注入：缺省不写字段（保留"旧 state 无该字段"的真实容错场景）
+    ...(opts.scores ? { scores: opts.scores } : {}),
+    ...(opts.dormant ? { dormant: opts.dormant } : {}),
     fixResults: [],
   };
 }
@@ -157,6 +163,62 @@ describe("A7 rfl CLI（list/stats/trends/clean）", () => {
     expect(existsSync(join(dir, "state.json"))).toBe(true);
     const { stdout } = await rfl(["stats", "latest", "repo-e"]);
     expect(stdout).toContain("wf-bare");
-    expect(stdout).toContain("dormant 0");
+    // B3：dormant 是批作用域（最终 state 只含末批），表述显式限定 last batch
+    expect(stdout).toContain("dormant (last batch) 0");
+  });
+
+  it("B1 trends：regressed 列输出 regressed/attempted（分母=ΣfixAttempts，缺字段 fallback history fix-attempted 条数），分母 0 显示 -", async () => {
+    // run1：三个 issue 的 fixAttempts 总和 6，其中 2 个含 regressed history → 2/6
+    writeRun("repo-f", "wf-b1a", fixtureState({
+      startedAt: "2026-08-16T10:00:00.000Z", terminated: "clean",
+      calls: [{ batch: 1, round: 1, role: "reviewer", name: "r" }],
+      issues: {
+        "MF-1": { status: "regressed", fixAttempts: 2, history: [{ round: 1, status: "open" }, { round: 1, status: "fix-attempted" }, { round: 2, status: "regressed" }] },
+        "MF-2": { status: "fixed", fixAttempts: 2, history: [{ round: 1, status: "open" }, { round: 1, status: "fix-attempted" }, { round: 2, status: "regressed" }, { round: 3, status: "fixed" }] },
+        "MF-3": { status: "fixed", fixAttempts: 2, history: [{ round: 1, status: "open" }, { round: 1, status: "fix-attempted" }, { round: 2, status: "fixed" }] },
+      },
+    }));
+    // run2：MF-4 缺 fixAttempts 字段 → fallback 数 history 中 fix-attempted 条数（2）；
+    // MF-5 有字段（1）→ 混合分母 3；仅 MF-4 含 regressed → 1/3
+    writeRun("repo-f", "wf-b1b", fixtureState({
+      startedAt: "2026-08-17T10:00:00.000Z", terminated: "clean",
+      calls: [{ batch: 1, round: 1, role: "reviewer", name: "r" }],
+      issues: {
+        "MF-4": { status: "fix-attempted", history: [{ round: 1, status: "open" }, { round: 1, status: "fix-attempted" }, { round: 2, status: "regressed" }, { round: 2, status: "fix-attempted" }] },
+        "MF-5": { status: "fixed", fixAttempts: 1, history: [{ round: 1, status: "open" }, { round: 2, status: "fixed" }] },
+      },
+    }));
+    // run3：无 issue（分母 0）→ -
+    writeRun("repo-f", "wf-b1c", fixtureState({
+      startedAt: "2026-08-18T10:00:00.000Z", terminated: "clean",
+      calls: [{ batch: 1, round: 1, role: "reviewer", name: "r" }],
+    }));
+    const { stdout } = await rfl(["trends", "repo-f"]);
+    // 列头同步改为 regressed/attempted
+    expect(stdout).toContain("regressed/attempted");
+    expect(stdout).toMatch(/wf-b1a[^\n]*2\/6/);
+    expect(stdout).toMatch(/wf-b1b[^\n]*1\/3/);
+    // 分母 0：行尾 regressed 列为 -（cache% 列有值 75%，行尾 - 只能是 regressed 列）
+    expect(stdout).toMatch(/wf-b1c[^\n]*75%\s+-\s*$/m);
+  });
+
+  it("B2 stats：scores 的 dimensions.regression=null 显示 n/a（不输出字面量 null）+ B3 dormant (last batch) 计数", async () => {
+    writeRun("repo-g", "wf-b2", fixtureState({
+      startedAt: "2026-08-19T10:00:00.000Z", terminated: "clean",
+      calls: [{ batch: 1, round: 1, role: "reviewer", name: "r" }],
+      scores: [
+        { round: 1, targetKind: "diff", targetName: "fixer-a", total: 8, dimensions: { quality: 8, regression: null } },
+        { round: 2, targetKind: "diff", targetName: "fixer-b", total: null, dimensions: { quality: 7, regression: 6 } },
+      ],
+      dormant: [{ id: "MF-9", reason: "unverified", detail: "d", round: 1, revived: false }],
+    }));
+    const { stdout } = await rfl(["stats", "latest", "repo-g"]);
+    // null 维度显示 n/a（unverifiable），非 null 维度正常输出
+    expect(stdout).toContain("regression n/a");
+    expect(stdout).toContain("quality 8");
+    expect(stdout).toContain("regression 6");
+    expect(stdout).not.toContain("regression null");
+    // B3：dormant 计数为末批作用域，非 0 时同样带限定
+    expect(stdout).toContain("dormant (last batch) 1");
   });
 });

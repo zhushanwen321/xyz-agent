@@ -146,14 +146,18 @@ function cmdStats(runIdOrLatest, repoSlug) {
   const regressed = issues.filter((i) => (i.history || []).some((h) => h.status === "regressed")).length;
   const origins = {};
   for (const i of issues) origins[i.origin || "-"] = (origins[i.origin || "-"] || 0) + 1;
+  // dormant 是批作用域（最终 state 只含末批降级条目，非 run 累计）——表述显式限定
+  // 作用域，防止被误读为整个 run 的 dormant 总数
   console.log("  issues: total " + issues.length + " → fixed " + fixed +
     "  regressed-ever " + regressed +
     "  origins " + (issues.length ? Object.entries(origins).map(([k, v]) => k + " " + v).join("/") : "-") +
-    "  dormant " + ((s.dormant || []).length));
+    "  dormant (last batch) " + ((s.dormant || []).length));
   // scores 表（M2 字段缺省容错）
   if (Array.isArray(s.scores) && s.scores.length > 0) {
     for (const sc of s.scores) {
-      const dims = sc.dimensions ? Object.entries(sc.dimensions).map(([k, v]) => k + " " + v).join(" ") : "";
+      // regression=null = 该维度 unverifiable（workflow 无对账数据可回填），无分值
+      // 语义——显示 n/a 而非 JS 字面量 "null"（与 total 缺省 "(no total)" 惯例一致）
+      const dims = sc.dimensions ? Object.entries(sc.dimensions).map(([k, v]) => k + " " + (v == null ? "n/a" : v)).join(" ") : "";
       console.log("  score R" + (sc.round ?? "?") + " " + (sc.targetKind || "?") + "/" + (sc.targetName || "?") +
         ": " + (sc.total != null ? sc.total + "/10" : "(no total)") + "  [" + dims + "]");
     }
@@ -175,17 +179,25 @@ function cmdStats(runIdOrLatest, repoSlug) {
 function cmdTrends(repoSlug) {
   const runs = listRuns(repoSlug);
   if (runs.length === 0) { console.log("no runs found (root: " + ROOT + ")"); return 0; }
-  const header = "runId".padEnd(28) + "  " + "started".padEnd(20) + "  " + "rounds".padEnd(6) + "  " + "tokens".padEnd(8) + "  " + "cache%".padEnd(6) + "  " + "regressed";
+  const header = "runId".padEnd(28) + "  " + "started".padEnd(20) + "  " + "rounds".padEnd(6) + "  " + "tokens".padEnd(8) + "  " + "cache%".padEnd(6) + "  " + "regressed/attempted";
   console.log(header);
   for (const r of runs) {
     const { sum, cachePct } = summarizeCalls(r.state.calls);
     const issues = r.state.issues ? Object.values(r.state.issues) : [];
     const regressed = issues.filter((i) => (i.history || []).some((h) => h.status === "regressed")).length;
+    // 分母 = Σ fixAttempts（§7.4 要求 regression 率：只有 regressed 绝对数时不同规模
+    // run 间不可比，"2/6" 才可跨 run 比较）。issue 缺 fixAttempts 字段（旧 state）时
+    // fallback 用 history 中 fix-attempted 条目数近似。分母 0（从未尝试修复）率无
+    // 意义，显示 "-"。
+    const attempted = issues.reduce((acc, i) => acc + (typeof i.fixAttempts === "number"
+      ? i.fixAttempts
+      : (i.history || []).filter((h) => h.status === "fix-attempted").length), 0);
+    const regressedCol = attempted > 0 ? regressed + "/" + attempted : "-";
     console.log(
       r.runId.padEnd(28) + "  " + String((r.state.meta && r.state.meta.startedAt) || "?").padEnd(20) + "  " +
       String(roundCount(r.state)).padEnd(6) + "  " +
       fmtTokens(sum.input + sum.cacheRead + sum.output).padEnd(8) + "  " +
-      String(cachePct == null ? "-" : cachePct + "%").padEnd(6) + "  " + regressed,
+      String(cachePct == null ? "-" : cachePct + "%").padEnd(6) + "  " + regressedCol,
     );
   }
   return 0;

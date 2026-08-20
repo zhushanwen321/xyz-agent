@@ -105,6 +105,8 @@ const {
   recordDormant,
   filterActiveIds,
   filterDormantFromRecon,
+  landScores,
+  countMissingFields,
   backfillFixRegression,
   applyCleanRoundBackfill,
   resolveAggregatorModel,
@@ -260,7 +262,9 @@ const aggregatorSchema = {
             required: ["id"],
             properties: {
               id: { type: "string" },
-              severity: { type: "string" },
+              // A5: severity 加 enum 约束生成侧（prompt 已列三值）；normalize 侧另有
+              // 枚举回退兜底（畸形值 → major），双层防御。
+              severity: { type: "string", enum: ["critical", "major", "minor"] },
               files: { type: "array", items: { type: "string" }, description: "File paths cited by the issue (regression attribution)" },
               evidence: { type: "string", description: "Cited evidence (files/lines/test results) from the sub-review" },
               guidance: { type: "string", description: "One-line fix direction for the fixer (code wins on conflict)" },
@@ -379,26 +383,43 @@ validateAgentPaths(startupDefs);
 
 // ── State management (persistent, atomic writes) ────────────────────
 
+// 全新初始 state 模板：catch 分支（无残留）与「读到残留 state」分支共用（A1）。
+// 易变累积字段（calls/fixResults/fixCount/issues/dormant...）全部归零——
+// attempt-2 重放会重新 recordCall/push，复用旧 state 必然双记。
+function freshState() {
+  return {
+    meta: {
+      runId: RUN_ID, workspace: $WORKSPACE || "", model: MODEL || "(default)",
+      targetType, target, batches: BATCHES, startedAt: new Date().toISOString(),
+    },
+    agentStatus: {},
+    fixCount: 0,
+    batches: [],
+    calls: [],
+    dormant: [],
+    fixResults: [],
+    issues: undefined,
+    knownRemaining: [],
+    convergeStreak: 0,
+    lastModifiedFiles: [],
+  };
+}
+
 function loadState() {
   try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
+    const parsed = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
+    // A1（rebuild 双记修复）：读到既有 state = 同 _runId 上一 attempt 的残留——
+    // engine 因 script-error rebuild 后同 RUN_ROOT 重跑本脚本，原样返回旧 state 会让
+    // attempt-2 重放的 recordCall/fixResults/fixCount/issues 全部双记。state.json 在
+    // RUN_ROOT（按 runId 隔离）内，存在即属本 run 前次 attempt，无跨 run 误判。
+    // 只保留 previousAttempts 计数（观测 rebuild 次数），其余全部重置。
+    const prev = (parsed && parsed.meta && parsed.meta.previousAttempts) || 0;
+    log("INFO: found leftover state.json for this run (previous attempt residue after engine rebuild?) — resetting volatile accumulators (previousAttempts=" + (prev + 1) + ")");
+    const s = freshState();
+    s.meta.previousAttempts = prev + 1;
+    return s;
   } catch {
-    return {
-      meta: {
-        runId: RUN_ID, workspace: $WORKSPACE || "", model: MODEL || "(default)",
-        targetType, target, batches: BATCHES, startedAt: new Date().toISOString(),
-      },
-      agentStatus: {},
-      fixCount: 0,
-      batches: [],
-      calls: [],
-      dormant: [],
-      fixResults: [],
-      issues: undefined,
-      knownRemaining: [],
-      convergeStreak: 0,
-      lastModifiedFiles: [],
-    };
+    return freshState();
   }
 }
 
@@ -416,8 +437,8 @@ function saveState(state) {
 
 // ── rfl 仪表（tier-1 §7.3）：calls[] 采集 + phaseTimings ───────────
 // 每次 agent() 调用记录资源与耗时；数据源 = returnMeta 透传的 usage/durationMs/
-// sessionId（引擎 T1 透传；旧引擎缺字段时 usage/durationMs 落 null——call 级无
-// 独立打点，phase 级耗时由 phaseTimings 覆盖）。
+// sessionId（引擎 T1 透传；旧引擎缺字段时 usage 键省略（undefined）、durationMs
+// 落 null——phase 级耗时由 phaseTimings 覆盖）。
 function recordCall(entry) {
   if (!Array.isArray(state.calls)) state.calls = [];
   state.calls.push(entry);
@@ -430,24 +451,52 @@ function normUsage(meta) {
     cacheRead: u.cacheRead ?? 0, cacheWrite: u.cacheWrite ?? 0, cost: u.cost ?? 0,
   };
 }
+// A10：引擎 T1 透传缺位（returnMeta 在但 usage 缺失 / durationMs 非数）只 WARN 一次
+//（逐调用都打会淹没日志）——提示引擎版本或透传链路问题，calls[] usage 已降级。
+let warnedTelemetryMissing = false;
+function warnTelemetryMissingOnce() {
+  if (warnedTelemetryMissing) return;
+  warnedTelemetryMissing = true;
+  log("WARN: returnMeta usage/durationMs missing — engine telemetry passthrough (T1) not active? calls[] usage degraded");
+}
 // returnMeta 对象 → calls[] 条目（十字段，设计 §7.3）。
+// A11（model 字段语义）：model = 请求时参数。agent-ref 调用的实际模型由主线程按
+// .md frontmatter 解析（resolveAgentOpts），此处可能记 "(default)" 而实际跑 frontmatter
+// 模型——引擎侧透传实际 model 是后续工作，消费侧（§6.4 降档归因）需知此局限。
+// A12（promptMode 语义）：该字段 = review prompt 模式（"full" | "scoped"），对非
+// reviewer 角色（aggregator/fixer）无意义、显式传 null；仅缺省（undefined）回退
+// "full"——空串/null 不再被 || 误转 "full"。
 function buildCallRecord({ batch, round, role, name, model, prompt, promptMode, meta }) {
   const promptStr = typeof prompt === "string" ? prompt : "";
+  const metaObj = meta && typeof meta === "object" ? meta : undefined;
+  if (metaObj && (normUsage(metaObj) === undefined || typeof metaObj.durationMs !== "number")) {
+    warnTelemetryMissingOnce();
+  }
   return {
     batch, round, role, name: name || role,
     model: model || "(default)",
-    durationMs: (meta && typeof meta === "object" && typeof meta.durationMs === "number")
-      ? meta.durationMs
+    durationMs: (metaObj && typeof metaObj.durationMs === "number")
+      ? metaObj.durationMs
       : null,
-    usage: normUsage(meta),
-    promptMode: promptMode || "full",
+    usage: normUsage(metaObj),
+    promptMode: promptMode === undefined ? "full" : promptMode,
     promptBytes: Buffer.byteLength(promptStr, "utf8"),
-    sessionId: (meta && typeof meta === "object" && typeof meta.sessionId === "string") ? meta.sessionId : undefined,
+    sessionId: (metaObj && typeof metaObj.sessionId === "string") ? metaObj.sessionId : undefined,
   };
 }
 
 // clean 记录（recordAgentClean/recordAgentDirty 与跨批跳过判定 shouldSkipAgent
 // 在 review-fix-loop-utils.cjs，vitest 单测见 src/__tests__/review-fix-loop-utils.test.ts）
+
+// A8（guidance/evidence 缺失观测）：活跃条目缺 guidance/evidence 的单行 WARN——
+// 数据链断点（aggregator 未提取 / 归一化丢失）的可观测信号；fixer 免侦查降级提示。
+// 仅 N+M>0 时打，不逐条刷屏。
+function warnMissingFields(mustFixIds) {
+  const miss = countMissingFields(mustFixIds);
+  if (miss.missingGuidance > 0 || miss.missingEvidence > 0) {
+    log("WARN: " + miss.missingGuidance + " active must-fix entries lack guidance (" + miss.missingEvidence + " lack evidence) — fixer self-investigation expected");
+  }
+}
 
 // ── Agent defs（loadAgentMd/resolveAgentDefs 在 review-fix-loop-utils.cjs） ──
 
@@ -591,6 +640,11 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
   state.issues = undefined;
   state.convergeStreak = 0;
   state.knownRemaining = [];
+  // A2（dormant 跨批污染修复）：aggregator id 空间每批从 MF-1 重新编号，批 1 降级的
+  // dormant MF-3 会与批 2 活跃 MF-3 冲突——filterDormantFromRecon 把它从 reconSeen
+  // 剥离后，批 2 的 fix-attempted 被误反转 fixed；且批 1 dormant 持续注入批 2+ prompt。
+  // dormant 必须与 issues 同点做批作用域重置。
+  state.dormant = [];
 
   // 跨批跳过：agent 在更早批 clean 且此后无 fix → 本批不派发
   if (batchIndex > 1) {
@@ -743,7 +797,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     phaseTimings.aggregate = [aggT0, Date.now()];
     recordCall(buildCallRecord({
       batch: batchIndex, round, role: "aggregator", name: "aggregate",
-      model: AGG_MODEL, prompt: aggPrompt, meta: aggRaw,
+      model: AGG_MODEL, prompt: aggPrompt, promptMode: null, meta: aggRaw,
     }));
 
     // returnMeta 下 aggRaw = {value, error}；失败时 value 为空串、error 在 finalMessage 透出（MF-1）
@@ -780,23 +834,17 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     log("Aggregated: " + mustFix + " must-fix + " + suggestion + " suggestion(s).");
 
     // rfl 打分落盘（tier-1 6.6，T7）：aggregator 顺手输出的弱信号 scores（reviewer
-    // 分每轮 / fix LLM 三维度 R2+）。缺失/畸形一律降级 WARN——打分失败不影响循环
-    // （权威层是状态机客观回填，见 reconcileIssues + backfillFixRegression）。
-    if (Array.isArray(agg.scores) && agg.scores.length > 0) {
-      if (!Array.isArray(state.scores)) state.scores = [];
-      let landed = 0;
-      for (const sc of agg.scores) {
-        if (sc && typeof sc === "object" && typeof sc.targetKind === "string" && sc.targetKind) {
-          // exec-review 修复：脚本权威补 batch（round 是批局部编号，无批标识会跨批冲突）
-          state.scores.push({ ...sc, batch: batchIndex });
-          landed++;
-        }
+    // 分每轮 / fix LLM 三维度 R2+）。A6：逐条形状校验（landScores 纯函数）——畸形
+    // （targetKind 缺失/round 非数/dimensions 非 object）不再静默落盘，计数进 WARN。
+    // 打分失败不影响循环（权威层是状态机客观回填，见 reconcileIssues + backfillFixRegression）。
+    {
+      const landed0 = landScores(state.scores, Array.isArray(agg.scores) ? agg.scores : [], batchIndex);
+      state.scores = landed0.scores;
+      if (landed0.landed === 0) {
+        log("WARN: aggregator scores unusable this round (landed=0, malformed=" + landed0.malformed + ") — quality scoring degraded");
+      } else if (landed0.malformed > 0) {
+        log("WARN: aggregator scores partially malformed (landed=" + landed0.landed + ", malformed=" + landed0.malformed + ") — malformed entries dropped");
       }
-      if (landed === 0) {
-        log("WARN: aggregator scores all malformed (targetKind missing) — quality scoring degraded this round");
-      }
-    } else {
-      log("WARN: aggregator returned no usable scores — quality scoring degraded this round");
     }
 
     // 5.1：R1 的 aggregator must_fix_ids 初始化 state.issues（数字 ID 起点）
@@ -821,6 +869,8 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
           ...(entry && typeof entry.evidence === "string" && entry.evidence ? { evidence: entry.evidence } : {}),
         };
       }
+      // A8：R1 落盘后观测 guidance/evidence 缺失（数据链断点信号）
+      warnMissingFields(agg.must_fix_ids);
     }
 
     // rfl dormant（tier-1 6.3）：adjudication 降级条目落盘（含裁决理由），R2+ prompt
@@ -906,6 +956,8 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         };
         added++;
       }
+      // A8：R2+ merge 落盘后观测 guidance/evidence 缺失（与 R1 init 同一观测口径）
+      warnMissingFields(agg.must_fix_ids);
       if (added > 0) log("New findings tracked: " + added + " new or re-reported issue(s) in round " + round);
     }
 
@@ -928,6 +980,17 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         });
       }
     } else {
+      // A9（regression 回填边缘缺口）：else 分支 = reconCount===0 且无 fix-attempted
+      //（aggregator numeric-only fallback 等无对账数据场景）——上轮 fix 的 regressed
+      // 数本轮不可判定，此前该场景的 regression entry 永缺。以 unverifiable 模式补
+      // 确定性 entry（regression=null，不诚实造 10 分）；后续轮有真实对账数据时可经
+      // 幂等 guard（null 通过）覆盖为计算值。
+      if (round > 1 && state.fixResults && state.fixResults.length > 0) {
+        state.scores = backfillFixRegression({
+          scores: state.scores, fixResult: state.fixResults[state.fixResults.length - 1],
+          issues: state.issues || {}, round, batch: batchIndex, mode: "unverifiable",
+        });
+      }
       const s = updateStuckState(prevMustFix, stuckCount, mustFix, stuckThreshold);
       stuckCount = s.stuckCount;
       prevMustFix = s.prevMustFix;
@@ -1006,6 +1069,27 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       }
     }
 
+    // A4（全降级轮不驱动 fix，设计 §6.3 省轮次的兑现）：reviewer 原始计数有 must-fix
+    // 但 aggregator 裁决后全部降级（mustFix===0 且活跃条目为 0）时，:705 的 all-clean
+    // break 用的是 reviewer 原始计数拦不住本路径——不守卫会空转派发 fixer（fixCount++
+    // 且无问题可修）。suggestions-only 轮不受影响（reviewer 全 0 已在 :705 break）。
+    if (mustFix === 0
+      && reviewResults.some((r) => r.must_fix > 0)
+      && (agg.must_fix_ids ? filterActiveIds(agg.must_fix_ids).length : 0) === 0) {
+      log("All reviewer must-fix entries adjudicated down this round — no active fix queue, skipping fix stage.");
+      if (round > 1) {
+        // 对齐 all-clean 路径：break 前做确定性对账 + 上轮 fix 的 regression 回填
+        applyCleanRoundBackfill(state, {
+          reconSeen, reconEscalate, round, stuckThreshold, batch: batchIndex,
+        });
+        log("Clean-round backfill applied (reconcile + regression backfill for the previous fix).");
+      }
+      batchRounds.push({ round, mustFix: 0, suggestion: reviewResults.reduce((a, r) => a + (r.suggestion ?? 0), 0), agents: agentRoundResults, modifiedFiles: [], phaseTimings });
+      saveState(state);
+      batchClean = true;
+      break;
+    }
+
     // ── Fix ─────────────────────────────────────────────────
     phase("Fix");
     let reportContent;
@@ -1030,6 +1114,13 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         "- Commit with message: `fix: review batch " + batchIndex + " round " + round + " — " + mustFix + " must-fix`"
       : "- Do NOT commit. Leave the fixes in the working tree (autoCommit=false).";
 
+    // A3（guidance 链最后一跳）：聚合条目中带非空 guidance 的活跃/降级条目清单——
+    // 构造确定性通道传给 fixer（reportContent 正文之外，per-issue 直达）。normalize 后
+    // 条目均为对象；string 旧格式（经 fallback 等路径）无 guidance 自然跳过。
+    const fixGuidance = (agg.must_fix_ids || [])
+      .filter((e) => e && typeof e === "object" && typeof e.guidance === "string" && e.guidance.trim())
+      .map((e) => ({ id: e.id, guidance: e.guidance }));
+
     const fixT0 = Date.now();
     const fixPromptBuilt = buildFixPrompt({
       header: "Fix round " + round + " (batch " + batchIndex + ")",
@@ -1037,6 +1128,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       fixPrompt,
       commitInstr,
       caution: agg.fixes_caution && agg.fixes_caution.length ? agg.fixes_caution : [],
+      guidance: fixGuidance,
     });
     const fxRaw = await agent({
       prompt: fixPromptBuilt,
@@ -1053,7 +1145,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     phaseTimings.fix = [fixT0, Date.now()];
     recordCall(buildCallRecord({
       batch: batchIndex, round, role: "fixer",
-      name: (FIX_DEF && FIX_DEF.name) || "fix", model: MODEL, prompt: fixPromptBuilt, meta: fxRaw,
+      name: (FIX_DEF && FIX_DEF.name) || "fix", model: MODEL, prompt: fixPromptBuilt, promptMode: null, meta: fxRaw,
     }));
 
     // returnMeta 下 fxRaw = {value, error}：先查 error（失败分支可达，MF-1），再对 value 做 parseResult
