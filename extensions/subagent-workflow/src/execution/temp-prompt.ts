@@ -1,7 +1,7 @@
 // src/core/temp-prompt.ts
 //
 // 将 agent systemPrompt 写入临时文件，供 pi CLI --append-system-prompt 使用。
-// Core 叶子原语（仅依赖 node 内置）。
+// Core 叶子原语（node 内置 + 同目录 bestEffort 清理 helper，无 Pi 依赖）。
 //
 // pi CLI 的 --append-system-prompt 接受文件路径（非内联字符串），故 spawn 前
 // 需把 systemPrompt 落盘。每次调用创建唯一临时目录，用完由 runSpawn 清理。
@@ -12,6 +12,8 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+
+import { bestEffort } from "./best-effort.ts";
 
 /** 临时 prompt 文件创建结果。dir 供调用方清理。 */
 export interface TempPromptFile {
@@ -51,7 +53,9 @@ export async function writePromptToTempFile(
 export async function cleanupTempPrompt(file: TempPromptFile): Promise<void> {
   try {
     await fs.promises.rm(file.dir, { recursive: true, force: true });
-  } catch {
-    // best-effort：临时文件泄漏不影响功能，OS tmpdir 清理机制兜底
+  } catch (err) {
+    // best-effort：临时文件泄漏不影响功能，OS tmpdir 清理机制兜底；失败经
+    // bestEffort 记 debug 日志（对齐 idle-gc / finalize-record 的清理惯例）
+    bestEffort(err, `cleanup temp prompt dir ${file.dir}`);
   }
 }

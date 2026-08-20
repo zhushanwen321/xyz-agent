@@ -63,6 +63,9 @@ const EXPONENTIAL_BACKOFF_BASE = 2;
 /** errorLogs 最大保留条数（防止超长 session 中日志无界增长）。 */
 const MAX_ERROR_LOGS = 500;
 
+/** malformed agent-call 日志中 opts JSON 的预览截断长度（字符）。 */
+const MALFORMED_MSG_LOG_PREVIEW_CHARS = 200;
+
 // ── Worker 消息类型（与 infra/worker-script-builder.ts WorkerInMsg 对齐） ──
 
 interface AgentCallMsg {
@@ -312,7 +315,7 @@ function dispatchAgentCall(
   if (typeof msg.callId !== "number" || !Number.isFinite(msg.callId) ||
       typeof msg.opts !== "object" || msg.opts === null ||
       typeof msg.opts.prompt !== "string") {
-    logger.error(`[workflow] malformed agent-call message: callId=${JSON.stringify(msg.callId)}, opts=${JSON.stringify(msg.opts)?.slice(0, 200)}`);
+    logger.error(`[workflow] malformed agent-call message: callId=${JSON.stringify(msg.callId)}, opts=${JSON.stringify(msg.opts)?.slice(0, MALFORMED_MSG_LOG_PREVIEW_CHARS)}`);
     return;
   }
 
