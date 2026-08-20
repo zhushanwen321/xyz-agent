@@ -134,15 +134,18 @@ export interface UseSessionDeps {
 
 // ── session.list server-push 订阅（#7 方案 A；CLAUDE.md 规则 #2 防重复注册）──
 // useSidebar 被 6+ 组件实例化（Sidebar/Turn/AppShell/PanelContainer/Workspace/Overview），
-// 若每实例各注册一次 onGlobalType，每次广播会触发 N 次相同 setGroups（事件处理翻倍）。
+// 若每实例各注册一次 onGlobalType，每次广播会触发 N 次相同整表快照应用（事件处理翻倍）。
 // 模块级 refCount：首个实例注册，末个实例卸载时取消，中间实例共享同一监听。
 let sessionListSubCount = 0
 let sessionListUnsub: (() => void) | null = null
 
-function bindSessionListBroadcast(api: SessionApiPort, setGroups: (groups: SessionGroup[]) => void): void {
+function bindSessionListBroadcast(
+  api: SessionApiPort,
+  applyListSnapshot: (groups: SessionGroup[]) => void,
+): void {
   sessionListSubCount += 1
   if (sessionListSubCount === 1) {
-    sessionListUnsub = api.onConfigSessions((groups) => setGroups(groups))
+    sessionListUnsub = api.onConfigSessions((groups) => applyListSnapshot(groups))
   }
 }
 
@@ -187,10 +190,10 @@ export function createUseSession(deps: UseSessionDeps) {
   /**
    * session.list server-push 订阅（#7 方案 A）。
    * runtime 在 create/delete/rename 后 broadcastSessionList 推全量分组，
-   * 这里 setGroups 更新列表——只换列表，不重载历史。
+   * 这里 applySnapshot（整表形态）更新列表——只换列表，不重载历史。
    * refCount + onScopeDispose：多实例只注册一次，随组件卸载自动收尾。
    */
-  bindSessionListBroadcast(api, store.setGroups)
+  bindSessionListBroadcast(api, (groups) => store.applySnapshot({ groups }))
   onScopeDispose(unbindSessionListBroadcast)
 
   /**
@@ -279,10 +282,11 @@ export function createUseSession(deps: UseSessionDeps) {
   /**
    * 重命名 session（API + 乐观更新 store）。
    * 编排点在 features 层：跨 api + store 的唯一合法层。
+   * 乐观更新 = applySnapshot 本地入参只带 label；权威确认经 config.sessions 整表广播回流。
    */
   async function renameSession(id: string, label: string): Promise<void> {
     await api.rename(id, label)
-    store.updateLabel(id, label)
+    store.applySnapshot(id, { label })
   }
 
   /**
@@ -395,13 +399,13 @@ export function createUseSession(deps: UseSessionDeps) {
   /**
    * 加载 session 列表（去全量预 hydrate）。
    * 铁律 1：api 调用只在 features 层，组件不直接 import api。
-   * sessionApi.list() 返 SessionGroup[]（按 cwd 分组，D7），setGroups 填入分组真源。
+   * sessionApi.list() 返 SessionGroup[]（按 cwd 分组，D7），applySnapshot 整表形态填入分组真源。
    * 失败（ES2/S5）：setListLoadError(msg)，SessionList 据此显示「加载失败，点击重试」。
    */
   async function loadSessions(): Promise<void> {
     try {
       const groups = await api.list()
-      store.setGroups(groups)
+      store.applySnapshot({ groups })
       store.setListLoadError(null)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)

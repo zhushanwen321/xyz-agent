@@ -3,6 +3,7 @@ import {
   BUILTIN_TOOLS,
   BUILTIN_PRESET_IDS,
   DEFAULT_PRESETS,
+  PI_THINKING_LEVELS,
   isPiLaunchPreset,
   type PiLaunchPreset,
   type PresetExportPayload,
@@ -101,17 +102,31 @@ describe('DEFAULT_PRESETS', () => {
   })
 })
 
-describe('ThinkingLevel', () => {
-  // 测试增强 #4：ThinkingLevel 联合的 6 个值覆盖。
-  it('覆盖 6 个合法思考级别', () => {
-    const levels: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
-    expect(levels.length).toBe(6)
-    expect(new Set(levels).size).toBe(6)
+describe('ThinkingLevel（W2 值域 SSOT：PI_THINKING_LEVELS 全集派生）', () => {
+  // 测试增强 #4（W2 更新 7 值）：ThinkingLevel 联合全集覆盖，max 必须在列
+  //（A-03：曾缺 'max' 致 composer 最高档被 runtime 白名单静默丢弃）。
+  it('覆盖 7 个合法思考级别（含 max）', () => {
+    const levels: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+    expect(levels.length).toBe(7)
+    expect(new Set(levels).size).toBe(7)
     // 每个值都是非空字符串（防御性）
     for (const lvl of levels) {
       expect(typeof lvl).toBe('string')
       expect(lvl.length).toBeGreaterThan(0)
     }
+  })
+
+  it('PI_THINKING_LEVELS 常量 = pi 0.84.1 dist/cli/args.js:6 全集（顺序一致）', () => {
+    // 锚点：node_modules/@earendil-works/pi-coding-agent/dist/cli/args.js:6
+    // VALID_THINKING_LEVELS = ["off","minimal","low","medium","high","xhigh","max"]
+    expect([...PI_THINKING_LEVELS]).toEqual(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+  })
+
+  it('ThinkingLevel 类型编译期从常量派生（max 可赋值，回退防漂移用例）', () => {
+    // 若 ThinkingLevel 退化回手写 6 值联合，此赋值编译报错（vitest 不做类型检查，
+    // 但 packages/shared 的 `pnpm typecheck` 覆盖本文件）。
+    const maxLevel: ThinkingLevel = 'max'
+    expect(PI_THINKING_LEVELS).toContain(maxLevel)
   })
 })
 

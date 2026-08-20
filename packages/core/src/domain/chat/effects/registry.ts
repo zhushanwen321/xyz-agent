@@ -7,14 +7,14 @@
  * openTasksPanelOnFirstData 回调已随 tasks 域删除移除。
  *
  * 背景：原 chat-chunk-processor（21 case，更新 messages/retryStates/queueStates）
- * 与 useChat.ensureStreamSubscription（9 case，翻 isStreaming + updateLabel）对同一
+ * 与 useChat.ensureStreamSubscription（9 case，翻 isStreaming + applySnapshot）对同一
  * ServerMessage 流 switch 两次。新增 message.* type 必须两处同步改，易漏。
  *
  * 归一：本文件把「每个 message.* type 触发的全部副作用」集中到单一 handler：
  * (a) chunk 状态更新（原 applyChunk 逻辑）+ (b) 终态收口（finalizeSession，替代原 useChat
  * setStreaming 的 lifecycle flag 翻转）。useChat 收到 message.* 只调 store.applyMessageEvent（单一入口），
  * 不再自己 switch message.*。session.*（compacting/compacted/renamed/state_changed/
- * thinkingLevelSet）涉及跨 store（sessionStore.updateLabel/updateSessionState），
+ * thinkingLevelSet）涉及跨 store（sessionStore.applySnapshot），
  * 保留在 useChat。
  *
  * 行为等价性：
@@ -27,21 +27,32 @@
  * 非 message.* 或未注册 type 直接 no-op。MessageEffectContext 含 store refs
  * 上下文 + finalizeSession/clearPendingSend/armStreamingTimer 回调（由 store 注入，
  * 完成收口与超时兜底）。
+ *
+ * [W21 data-source-governance] entry 形态实时 feed：message.message_end /
+ * message.tool_call_start / message.tool_call_end 的 handler 输入从「直译事件 payload」
+ * 改为「重构 entry」（event-adapter 翻译时重构，字段对齐 pi entry schema）。状态类更新
+ * 全走 reducer（ctx.applyEntryFrame 喂 store 内 per-session ChatViewState，与文件重放
+ * 的 replayEntries 同一个 applyEntry——「live ≡ reload」构造性成立）；overlay 语义
+ * （streaming 气泡 / running toolCall / delta 累积）保留 effect（transient 态 reducer
+ * 无法表达，D5：partial content 不进 reducer，entry 提交时以 reducer 为权威）。
  */
 import type {
   ContentBlock,
   Message,
+  PiCustomMessageEntry,
+  PiEntry,
+  PiMessageEntry,
+  PiToolCallEntryForm,
   ServerMessage,
   ServerMessageType,
   ToolCall,
 } from '@xyz-agent/shared'
-import { COMPLETE_NOTIFY_CUSTOM_TYPES } from '@xyz-agent/shared'
+import { applyEntry, createInitialChatViewState, normalizePiToolResult } from '../apply-entry'
 import type { RetryState, QueueState, FinalizeReason } from '../store-types'
 import type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
 export type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
 import {
   readString,
-  readRecord,
   readNumber,
   readBool,
   readStringArray,
@@ -66,8 +77,9 @@ import { bashStartEffect, bashResultEffect } from '../bash-effects'
  * prev=['A','A'] → next=['A'] → 差集 ['A']（drain 了一条）。用 includes 会因 'A' 仍在 next 里
  * 漏判，导致第二条 pending 永久卡住。计数差集精确匹配出现次数差。
  *
- * 与 drainPending 的 findIndex FIFO 配合：countDrained 返回 N 条相同文本 →
- * 调 N 次 drainPending，每次取最早的 pending segments（FIFO，与 pi splice 顺序一致）。
+ * [W14] 与 drainN 计数 FIFO 配合：countDrained 返回数组的 length = 被投递条数 N →
+ * drainN(sid, mode, N) 按入队顺序取 N 条（FIFO，与 pi splice 顺序一致），不按文本找——
+ * pi 入队存 skill 展开后文本 ≠ 提交原文，文本匹配在该场景必挂（D6）。
  */
 function countDrained(prev: string[], next: string[]): string[] {
   const remaining = [...next]
@@ -334,7 +346,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     commitMessages(messages, sid, next)
   },
 
-  // ── tool_call 流（ID 锚定，W05 detail）──
+  // ── tool_call 流（ID 锚定，W05 detail；[W21] 输入换 entry 形态）──
   'message.tool_call_start': (ctx, sid, payload) => {
     const { messages } = ctx
     // [D-010 sealed]
@@ -342,12 +354,17 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const prev = messages.value.get(sid)?.value ?? []
     const idx = findLastAssistantIndex(prev)
     if (idx < 0) return
-    const callId = readString(payload, 'toolCallId') ?? `tc-${crypto.randomUUID()}`
-    const toolName = readString(payload, 'toolName') ?? 'tool'
+    // [W21] 输入从直译平铺 payload 改为 toolCall entry 形态（event-adapter 翻译时重构，
+    // interpreter 补 contentIndex/messageId 锚点）。entry 缺失（异常帧）降级丢弃；
+    // toolCallId 缺失时 fallback 随机 id（迁移前同款宽容防御：异常事件不断流）。
+    const entry = payload['entry'] as PiToolCallEntryForm | undefined
+    if (entry === undefined) return
+    const callId = typeof entry.toolCallId === 'string' ? entry.toolCallId : `tc-${crypto.randomUUID()}`
+    const toolName = typeof entry.toolName === 'string' ? entry.toolName : 'tool'
     const call: ToolCall = {
       id: callId,
       toolName,
-      input: readRecord(payload, 'input'),
+      input: entry.arguments ?? {},
       status: 'running',
       startTime: Date.now(),
     }
@@ -357,7 +374,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const toolCalls = [...(next[idx].toolCalls ?? []), call]
     // push 到 contentBlocks（callId 复用，与 toolCalls[].id 一致）。
     // 按 contentIndex 有序插入（§11 检查点 3），无 index 时退化为 append。
-    const contentBlocks = insertContentBlockByIndex(next[idx].contentBlocks ?? [], { type: 'toolCall', refId: callId, ...(readNumber(payload, 'contentIndex') !== undefined ? { contentIndex: readNumber(payload, 'contentIndex') } : {}) } satisfies ContentBlock)
+    const contentBlocks = insertContentBlockByIndex(next[idx].contentBlocks ?? [], { type: 'toolCall', refId: callId, ...(entry.contentIndex !== undefined ? { contentIndex: entry.contentIndex } : {}) } satisfies ContentBlock)
     next[idx] = { ...next[idx], toolCalls, contentBlocks }
     commitMessages(messages, sid, next)
   },
@@ -365,7 +382,15 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   'message.tool_call_end': (ctx, sid, payload) => {
     const { messages } = ctx
     const prev = messages.value.get(sid)?.value ?? []
-    const callId = readString(payload, 'toolCallId')
+    // [W21] 输入从直译平铺 payload 改为 toolResult message entry 形态（与 pi 持久化
+    // toolResult entry 同构）。overlay 收口（streaming 气泡上的 running toolCall → 终态）
+    // 语义保留；权威回填经 ctx.applyEntryFrame 喂 reducer（先于 overlay 早 return——
+    // ref 无 owner 时 reducer 喂入照常，ref 收敛归 W22）。
+    const entry = payload['entry'] as PiMessageEntry | undefined
+    if (entry === undefined || entry.type !== 'message') return
+    // 状态类全走 reducer（w21）：toolResult entry 喂 per-session reducer state
+    ctx.applyEntryFrame(sid, entry)
+    const callId = typeof entry.message.toolCallId === 'string' ? entry.message.toolCallId : undefined
     // ID 锚定：按 toolCallId 精确定位所属 assistant message（见 findToolCallOwner 注释），
     // 不靠 findLastAssistantIndex（位置定位会被乱序/噪声 message 干扰）。
     // callId 缺失或未命中时降级为最后一条 assistant（防御：兼容异常事件）。
@@ -373,24 +398,46 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     if (idx < 0) return
     // details：pi tool_execution_end result.details（结构化扩展数据）。
     // subagent sync 模式的 progress 快照（currentTool/turn/tokens）在这里，前端 Block.vue 据此滚动更新。
-    const details = readRecord(payload, 'details')
-
+    // 三态归一在消费侧做：传 entry.message（body）——与 reducer computeToolCallFill 同语义
+    //（content block 数组 → join text），entry.content 已由 adapter 归一为数组形态（W21）。
+    // content 缺失（mock/异常帧）保留 running 期间的旧值（迁移前 `?? c.output` 同语义）。
+    const hasContent = entry.message.content !== undefined
+    const { output, outputRaw } = hasContent
+      ? normalizePiToolResult(entry.message)
+      : { output: undefined, outputRaw: undefined }
+    const details = entry.message.details
+    const isError = entry.message.isError === true
     const next = [...prev]
     const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
       c.id === callId
         ? truncateToolCall({
           ...c,
-          output: readString(payload, 'output') ?? c.output,
-          outputRaw: readString(payload, 'outputRaw') ?? c.outputRaw,
-          status: (readString(payload, 'status') as ToolCall['status']) ?? 'completed',
-          error: readString(payload, 'error') ?? c.error,
+          ...(output !== undefined && { output }),
+          ...(outputRaw !== undefined && { outputRaw }),
+          // 与重放路径（reducer：isError → status:'error'）保持一致：实时失败的 tool call
+          // 必须带 status:'error'，否则前端 Block.vue 的 isFailed 判定恒为 false（恒显示成功）。
+          status: isError ? 'error' : 'completed',
+          ...(isError && { error: output ?? c.error }),
           endTime: Date.now(),
-          details,
+          ...(details !== undefined && { details: details as Record<string, unknown> }),
         })
         : c,
     )
     next[idx] = { ...next[idx], toolCalls }
     commitMessages(messages, sid, next)
+  },
+
+  // ── [W21] message_end —— 重构 entry 喂 reducer（实时 feed 权威载体，reducer 薄封装）──
+  'message.message_end': (ctx, sid, payload) => {
+    const entry = payload['entry']
+    // entry 形态守卫：message entry（type:'message'）才喂（协议契约，异常帧降级丢弃）
+    if (typeof entry !== 'object' || entry === null || (entry as { type?: unknown }).type !== 'message') return
+    // custom role 去双计：pi 对同一条 custom message 双发 message_start + message_end（同一
+    // message 对象——agent-loop.ts:112 prompt 路径 / agent-session sendCustomMessage no-trigger
+    // 路径双发）。customStart effect 已在 message_start 时点以 custom_message entry 形态喂入
+    // reducer + ref（display 覆写语义对齐重开 custom_message case），此处再喂会双计。
+    if ((entry as { message?: { role?: unknown } }).message?.role === 'custom') return
+    ctx.applyEntryFrame(sid, entry as PiEntry)
   },
 
   'message.tool_call_update': (ctx, sid, payload) => {
@@ -421,37 +468,39 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   // ── pi CustomMessage 注入（扩展向对话流注入结构化通知）──
   'message.customStart': (ctx, sid, payload) => {
     const { messages } = ctx
-    const customType = readString(payload, 'customType') ?? ''
-    const content = readString(payload, 'content') ?? ''
-    const details = readRecord(payload, 'details')
-    // display 来自 event-adapter.ts 的 custom message 分支（payload.display，~line 509 透传）。
-    // FR-2 依赖 event-adapter 已透传；extension 声明 display:false 的 context 消息据此在渲染层隐藏。
-    // display 不能用 readBool（缺失时返回 false），需三态保留：
-    // true/false 显式透传，undefined 安全保留显示（!== false 即显示，ADR-0048 决策点 3）。
+    // [custom 双管线收敛（data-source-governance 审计问题 4）] 实时侧不再独立构造 system
+    // 消息 + display 覆写：payload 重构为 custom_message entry（与 pi 持久化形态同构），
+    // 经 ctx.applyEntryFrame 喂与文件重放（get_entries → replayEntries）同一个 applyEntry
+    // ——display 覆写（完成通知类 COMPLETE_NOTIFY_CUSTOM_TYPES → false）、details/content
+    // 窄化全部单点收敛在 reducer 的 custom_message case，实时与重开逐字段一致
+    // （等价性断言见 __tests__/custom-start-equivalence.test.ts）。
     //
-    // [M2 display 前置] 完成通知（COMPLETE_NOTIFY_CUSTOM_TYPES）由消费端统一覆写 display:false，
-    // 不再依赖 filterDisplayableMessages 黑名单（conversation-renderer-model-unification §3.3.2）。
-    // pi 扩展生产端（pi-subagent-workflow notifier/helpers）写 display:true（pi 原生语义：
-    // 通知在 pi TUI 显示）——对 xyz-agent 用户是噪声（triggerTurn 唤醒 agent 后续 turn 处理，
-    // 结果由新 turn 体现），此处统一隐藏。与重开路径 mapper 覆写（session-entry-mapper.ts）对称。
-    const isCompleteNotify = COMPLETE_NOTIFY_CUSTOM_TYPES.has(customType)
-    const display = isCompleteNotify
-      ? false
-      : (payload['display'] === true || payload['display'] === false ? payload['display'] : undefined)
-    const prev = messages.value.get(sid)?.value ?? []
-    // role:'system' → messageTurns 产出独立 RenderItem（穿插在 turn 间，不并入 user/assistant turn）
-    const msg: Message = {
+    // entry 构造点注入两个异源字段（与 message_end 实时重构同款语义，差异归一见测试）：
+    // - id：cm-uuid 客户端生成（保证 ref 消息 id 唯一；reducer 从 entry.id 派生，ref 与
+    //   reducer state 同 id。重开侧为 pi 持久化的 uuidv7 entry id——id 值异源属 W21 已裁决
+    //   的 live/reload 差异类，等价性断言按字段归一）。
+    // - timestamp：客户端时钟（customStart payload 不携带 timestamp——event-adapter 翻译
+    //   不透传；重开侧为 pi 持久化时刻，差值为投递延迟）。
+    // display 三态原样进 entry（true/false 显式透传，undefined 安全保留显示，ADR-0048
+    // 决策点 3），覆写归 reducer——本文件不再是覆写点。
+    const entry: PiCustomMessageEntry = {
+      type: 'custom_message',
       id: `cm-${crypto.randomUUID()}`,
-      role: 'system',
-      content,
-      status: 'complete',
-      customType,
-      display,
-      // 保留原始 details（含 __gui__），tool RPC 的 __gui__ 由 Block.vue extractGui 内联渲染
-      details,
-      timestamp: Date.now(),
+      parentId: null,
+      timestamp: new Date().toISOString(),
+      customType: readString(payload, 'customType') ?? '',
+      content: readString(payload, 'content') ?? '',
+      details: payload['details'],
+      display: payload['display'] === true || payload['display'] === false ? payload['display'] : undefined,
     }
-    commitMessages(messages, sid, [...prev, msg])
+    // 权威喂入：per-session reducer state（与重开 replayEntries 同一个 applyEntry）
+    ctx.applyEntryFrame(sid, entry)
+    // overlay 投影：渲染 ref 消费同一份派生（W21 裁决：ref 不由 reducer state 直接投影，
+    // 收敛归 W22）——applyEntry 在空 state 上派生本条消息（custom_message 投影不依赖前置
+    // state，id 已由 entry.id 提供），commit 进 messages ref。
+    const derived = applyEntry(createInitialChatViewState(), entry)
+    const prev = messages.value.get(sid)?.value ?? []
+    commitMessages(messages, sid, [...prev, ...derived.messages])
   },
 
   // ── 运行态 / 元信息（system 提示行，W05-A/W07-C）──
@@ -523,7 +572,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   },
 
   'message.queue_update': (ctx, sid, payload) => {
-    const { queueStates, drainPending, appendUser } = ctx
+    const { queueStates, drainN, reconcilePending, appendUser } = ctx
     // W06-B：消息队列更新。payload（event-adapter）：{ steering?, followUp? }。
     // pi 发空数组 []（_emitQueueUpdate 总展开为数组），空数组视为无内容（length 判断）。
     const state: QueueState = {}
@@ -532,23 +581,26 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const followUp = readStringArray(payload, 'followUp')
     if (followUp?.length) state.followUp = followUp
 
-    // pending→complete 驱动：计数差集找出「被 drain 投递的」项（prev 比 new 多出的元素）。
+    // pending→complete 驱动：计数差集找出「被 drain 投递的」条数（prev 比 new 多出的元素）。
     // [B1] 不能用 includes（子串语义）——重复文本 'A' 入队两条、drain 一条后 new=['A']，
     // includes('A')===true 会漏判，第二条 pending 永久卡住。计数差集按出现次数精确匹配。
-    // [W5] 带 sendMode 调 drainPending，避免跨类型同文本误取（steer「补」与 followUp「补」）。
+    // [W14] 差集数组的 length = N，drainN 计数 FIFO 取前 N 条（不按文本匹配——pi 入队存
+    // skill 展开后文本 ≠ 提交原文，文本相等匹配在该场景必丢消息，D1 表末行 + D6）。
+    // steer / follow-up 各自差集各自计数（sendMode 隔离，防跨类型同文本误取——W5 语义保留）。
     const prev = queueStates.value.get(sid)
     if (prev) {
-      // m2：drain 分支接线 drainPending + appendUser——drainPending FIFO 取匹配 pending 的
-      // segments，appendUser 追加进对话流（complete user）。
-      for (const text of countDrained(prev.steering ?? [], steering ?? [])) {
-        const segs = drainPending(sid, text, 'steer')
-        if (segs) appendUser(sid, segs)
-      }
-      for (const text of countDrained(prev.followUp ?? [], followUp ?? [])) {
-        const segs = drainPending(sid, text, 'follow-up')
-        if (segs) appendUser(sid, segs)
-      }
+      const steerN = countDrained(prev.steering ?? [], steering ?? []).length
+      for (const segs of drainN(sid, 'steer', steerN)) appendUser(sid, segs)
+      const followN = countDrained(prev.followUp ?? [], followUp ?? []).length
+      for (const segs of drainN(sid, 'follow-up', followN)) appendUser(sid, segs)
     }
+
+    // [W14 D6] 深度结构性对账：帧内 pendingMessageCount（event-adapter 翻译恒附 =
+    // steering.length + followUp.length，与 rpc-mode get_state 同源公式）为 pi 队列深度。
+    // drain 处理后 pendingBuffer 存量应等于深度，偏差则全量重对（reconcilePending：
+    // buffer > 深度裁剪僵尸暂存；buffer < 深度 = 扩展注入例外，有界偏差，队列清空时收敛）。
+    // 字段缺失（旧 runtime / mock 帧）时退化为帧内数组长度和（W8 恒等公式，等价）。
+    reconcilePending(sid, readNumber(payload, 'pendingMessageCount') ?? (steering?.length ?? 0) + (followUp?.length ?? 0))
 
     const hasContent = !!state.steering?.length || !!state.followUp?.length
     if (!hasContent) {
@@ -585,7 +637,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
  *
  * useChat.ensureStreamSubscription 收到任意 ServerMessage 后：
  * - message.* → 调本函数（经 store.applyMessageEvent 转发），注册表执行全部 effect
- * - session.* → useChat 保留处理（跨 store：sessionStore.updateLabel 等）
+ * - session.* → useChat 保留处理（跨 store：sessionStore.applySnapshot 等）
  *
  * 非 message.* 或未注册的 message.* type 直接 no-op（等价原 applyChunk 的 default return）。
  */

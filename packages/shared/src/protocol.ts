@@ -1,8 +1,9 @@
 // Client → Runtime message types
 
 import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig, ScannedSkillInfo, ScannedAgentInfo, BuiltinProviderTemplate, ProviderId } from './provider'
-import type { SessionGroup, SessionSummary } from './session'
+import type { SessionGroup, SessionSummary, SessionStatus, SessionDataSource } from './session'
 import type { FileChange, ChangeSetStatus, Message } from './message'
+import type { PiMessageEntry, PiToolCallEntryForm } from './pi-entry'
 import type { FileNode } from './file-tree'
 // 领域 DTO 已下沉到各自领域文件（E2 架构候选）：protocol.ts 仅保留 type→payload 映射 SSOT，
 // 领域形状（ExtensionInfo / GitStatusResult / PluginInfo …）按领域就近归属。
@@ -235,7 +236,7 @@ export interface ClientMessageMap {
   // modelOverride / thinkingOverride：Landing Model/Thinking Chip 的覆盖值（设计文档 §5.2）。
   // 优先级：Landing Chip override > preset.modelOverride/thinkingLevel > 全局默认。
   //   - modelOverride：模型 ID 字符串（如 'anthropic/claude-sonnet-4'），覆盖 preset.modelOverride
-  //   - thinkingOverride：ThinkingLevel 值（'off'|'minimal'|'low'|'medium'|'high'|'xhigh'），覆盖 preset.thinkingLevel
+  //   - thinkingOverride：ThinkingLevel 值（= PI_THINKING_LEVELS 全集 7 值，含 'max'），覆盖 preset.thinkingLevel
   // 两者均可选——省略时按 preset 字段或全局默认回退。
   'session.create': {
     cwd?: string
@@ -636,6 +637,8 @@ export type ServerMessageType =
   | 'extension.recommended'
   | 'extension.pendingRequests'
   | 'message.tool_call_update' | 'config.extensions'
+  // w21 data-source-governance：message_end 重构 entry 的实时 feed 载体帧（见 ServerMessageMapBase 条目注释）
+  | 'message.message_end'
   | 'session.commands'
   | 'session.exited'
   | 'app.info'
@@ -1146,7 +1149,10 @@ export interface ServerMessageMapBase {
   // ── 消息流控制（W11+ 审查补充类型）──
   'message.auto_retry_start': { sessionId: string; attempt: number; maxAttempts?: number; delayMs?: number; errorMessage?: string }
   'message.auto_retry_end': { sessionId: string; success: boolean; attempt: number; finalError?: string }
-  'message.queue_update': { sessionId: string; steering?: string[]; followUp?: string[] }
+  // message.queue_update：队列深度变化广播。pendingMessageCount = steering + followUp 条数和
+  //（event-adapter 翻译恒附，W8 补声明——renderer 窄读取此前读不到该字段类型；深度权威 =
+  // runtime queue 实例快照（get_state().pendingMessageCount），帧内值仅事件即时信号）。
+  'message.queue_update': { sessionId: string; steering?: string[]; followUp?: string[]; pendingMessageCount: number }
   // message.bashStart：bash 执行开始广播（与 message.bashResult 对称的实时反馈）。
   // excludeFromContext 透传自请求（前端据此渲染「不进上下文」标记）。
   'message.bashStart': {
@@ -1180,6 +1186,22 @@ export interface ServerMessageMapBase {
     details?: Record<string, unknown>
     display?: boolean
   }
+  // ── W21 entry 形态实时 feed（data-source-governance P3.3）──
+  // message.message_end：pi message_end 事件重构的 message entry（user/assistant/toolResult/custom
+  // 的持久化触发点，agent-session.ts:545-561），实时路径与文件重放（get_entries）喂同一个
+  // core reducer（applyEntry）的权威载体。entry.id 恒缺省（pi 在 emit 之后才 appendMessage
+  // 分配 uuidv7，事件上拿不到）——reducer 按 `e<N>` 确定性派生，W22 对账靠 get_entries。
+  'message.message_end': { sessionId: string; entry: PiMessageEntry }
+  // message.tool_call_start：tool_execution_start 重构的 toolCall entry 形态（替换直译平铺
+  // payload——overlay 挂 running toolCall 从 entry 读取）。contentIndex/messageId 由
+  // event-interpreter 从缓存补齐（产出顺序锚点 + 挂载目标）；turnId 恒缺省（值填充归
+  // fix-chat-flow-order 分组 wave）。
+  'message.tool_call_start': { sessionId: string; entry: PiToolCallEntryForm }
+  // message.tool_call_end：tool_execution_end 重构的 toolResult message entry 形态。
+  // entry.message.content 是 plugin hook 改写后的工具产出（string 或 content block 数组，
+  // 与 pi 持久化 toolResult entry 同构）；isError/details 透传。前端 registry 喂
+  // applyEntry（toolResult 窗口局部配对回填）+ overlay 收口。
+  'message.tool_call_end': { sessionId: string; entry: PiMessageEntry }
 }
 
 /**
@@ -1470,6 +1492,56 @@ export function isSessionSummary(value: unknown): value is SessionSummary {
     typeof v.status === 'string' &&
     typeof v.modelId === 'string'
   )
+}
+
+/**
+ * session 级 view-ready 快照 DTO（W13 data-source-governance P2.1，D7 原则）。
+ *
+ * 单 session 的 owner 权威投影：runtime 侧 W12 起 5 个 state 话题（state_changed/queue_update/
+ * commands/context/subagents-类）publish 均以实例快照为数据源，本 DTO 是这些 payload 的
+ * renderer 渲染字段并集——renderer 收到后直接渲染，零 merge/normalize/推导。core
+ * createSessionStore.applySnapshot 以此为单 session 快照入参（session store 唯一写入口）。
+ *
+ * 合并语义 = D1b 整字段覆盖：字段值非 undefined 即覆盖现值，含显式空值（owner 声明空即空）；
+ * undefined = 快照未涉及该字段，保留现值。W15 起按来源分流（SessionDataSource）：磁盘扫描
+ * 来源快照（source='scan'）的占位空值（modelId:''/tokenCount:0）在 core 合并侧被守卫，
+ * 不覆盖已知真值；owner 来源（缺省）显式空值仍正常覆盖——两条空值语义并存不混用。
+ *
+ * 字段 → runtime 来源对照（W12 后 publish payload）：
+ * - label：session.renamed（pi 改名）/ config.sessions（整表 SessionSummary.label）
+ * - status：SessionStatus 六态（session.exited → dead 等）
+ * - modelId / thinkingLevel / usagePercent / inputTokens / contextLimit：session.state_changed
+ * - pendingMessageCount：message.queue_update（W8 队列深度实例快照）
+ * - commands：session.commands（pi 扩展命令清单，形状与广播 payload 一致）
+ * - tokenCount：SessionSummary.tokenCount（磁盘扫描占位值 0，守卫对象）
+ */
+export interface SessionViewSnapshot {
+  /** session 标签（侧栏列表项 / panel 标题）。 */
+  label?: string
+  /** 进程三态 + 终态（侧栏状态点 / dead 置灰）。 */
+  status?: SessionStatus
+  /** 当前模型复合串 "provider/modelId"（Composer 工具条）。 */
+  modelId?: string
+  /** 思考等级（前端 6 级枚举串）。undefined = 未设置，快照省略不覆盖。 */
+  thinkingLevel?: string
+  /** 上下文用量百分比 0-100（ContextCapacityPopover）。 */
+  usagePercent?: number
+  /** 当前输入 token 数（与 usagePercent 同源推送）。 */
+  inputTokens?: number
+  /** 上下文窗口上限（与 usagePercent 同源推送）。 */
+  contextLimit?: number
+  /** 队列深度（steering + followUp 条数和，QueueBubble 计数）。 */
+  pendingMessageCount?: number
+  /** slash 命令清单（Composer 补全数据源）。 */
+  commands?: ServerMessageMap['session.commands']['commands']
+  /** 累计 token 数（SessionSummary 同名字段；磁盘扫描占位值 0 是 W15 守卫对象）。 */
+  tokenCount?: number
+  /**
+   * 快照数据来源（W15 守卫判定依据）：'scan' = 磁盘扫描占位快照（modelId/tokenCount
+   * 的空值是占位，core mergeViewSnapshot 守卫其不覆盖已知真值）；缺省 = owner
+   * （runtime 实例广播 / 乐观更新，D1b 整字段覆盖含显式空值）。
+   */
+  source?: SessionDataSource
 }
 
 /** 运行时检查值是否为 SubagentRecord（含必需字段 subagentId/agent/slug/task/status）。 */

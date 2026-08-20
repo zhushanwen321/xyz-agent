@@ -146,7 +146,19 @@ export const useWorkflowStore = defineStore('workflow', () => {
     isLoading.value = true
     loadError.value = null
     try {
-      applyRecords(sessionId, await sessionApi.getWorkflows(sessionId))
+      const records = await sessionApi.getWorkflows(sessionId)
+      // 空结果守卫（sidebar-sync-plan P1）：runtime getWorkflows 读盘失败时 catch 降级返回 []，
+      // 瞬时读失败若当空列表覆盖会清掉分区历史。RPC 成功且空 + 分区非空 → 保留旧分区
+      // （极端场景 stale 不自动纠正，由下次 session.workflows 推送纠正）。推送路径是权威数据，
+      // 不经此守卫。
+      if (records.length === 0 && getRecordsBySession(sessionId).length > 0) {
+        console.warn(
+          '[workflow-store] getWorkflows returned empty list but partition non-empty, keeping existing records:',
+          sessionId,
+        )
+        return
+      }
+      applyRecords(sessionId, records)
     } catch (e) {
       // M1：失败不覆盖现有分区（保留旧数据），设 loadError 让组件显示重试态
       const msg = e instanceof Error ? e.message : String(e)

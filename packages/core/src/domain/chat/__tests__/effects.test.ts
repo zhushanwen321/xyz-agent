@@ -36,14 +36,40 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     armStreamingTimer: vi.fn(),
     armBashTimer: vi.fn(),
     clearBashTimer: vi.fn(),
-    // m2：queue_update drain 接线 drainPending + appendUser
-    drainPending: vi.fn(),
+    // m2→W14：queue_update drain 接线 drainN（计数 FIFO）+ appendUser + 深度对账 reconcilePending
+    drainN: vi.fn(() => []),
+    reconcilePending: vi.fn(),
     appendUser: vi.fn(),
+    // w21：entry 载体帧喂 reducer 的接入点（store.applyEntryFrame 注入）
+    applyEntryFrame: vi.fn(),
   }
 }
 
 function msg(type: string, payload: Record<string, unknown> = {}): ServerMessage {
   return { type, payload: { sessionId: SID, ...payload } } as ServerMessage
+}
+
+/** [w21] toolCall entry 形态构造（payload.entry——event-adapter 重构载体） */
+function toolCallEntry(fields: { toolCallId: string; toolName: string; arguments: Record<string, unknown>; contentIndex?: number }): Record<string, unknown> {
+  return {
+    type: 'toolCall',
+    toolCallId: fields.toolCallId,
+    toolName: fields.toolName,
+    arguments: fields.arguments,
+    ...(fields.contentIndex !== undefined ? { contentIndex: fields.contentIndex } : {}),
+    timestamp: new Date(0).toISOString(),
+  }
+}
+
+/** [w21] toolResult message entry 形态构造（payload.entry——与 pi 持久化 toolResult entry 同构） */
+function toolResultEntry(fields: { toolCallId: string; toolName: string; content: unknown; isError: boolean; details?: Record<string, unknown> }): Record<string, unknown> {
+  return {
+    type: 'message',
+    parentId: null,
+    timestamp: new Date(0).toISOString(),
+    // content 包 text block 数组（pi 持久化形态，W21 契约）
+    message: { role: 'toolResult', toolCallId: fields.toolCallId, toolName: fields.toolName, content: [{ type: 'text', text: String(fields.content) }], isError: fields.isError, ...(fields.details !== undefined ? { details: fields.details } : {}), timestamp: 0 },
+  }
 }
 
 function getMsgs(ctx: MessageEffectContext): Message[] {
@@ -97,8 +123,8 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
   it('tool_call_start/end：ID 锚定更新 status + output', () => {
     const ctx = makeCtx()
     dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read', input: { path: '/x' } }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { toolCallId: 'tc1', status: 'completed', output: 'data' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'read', arguments: { path: '/x' } }) }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { entry: toolResultEntry({ toolCallId: 'tc1', toolName: 'read', content: 'data', isError: false }) }))
     const a = lastAssistant(ctx)
     expect(a.toolCalls).toHaveLength(1)
     expect(a.toolCalls![0].status).toBe('completed')
@@ -130,7 +156,7 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
     // 事件到达顺序：thinking → text（模型先输出 thinking，再输出 tool_use，turn 结束后才执行工具）
     dispatchMessageEvent(ctx, SID, msg('message.thinking_start', { thinkingId: 'th1', contentIndex: 0 }))
     dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'answer', contentIndex: 2 }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read', input: { path: '/x' }, contentIndex: 1 }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'read', arguments: { path: '/x' }, contentIndex: 1 }) }))
     const a = lastAssistant(ctx)
     expect(a.contentBlocks).toEqual([
       { type: 'thinking', refId: 'th1', contentIndex: 0 },
@@ -143,7 +169,7 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
     const ctx = makeCtx()
     dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
     dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'let me check', contentIndex: 0 }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read', input: { path: '/x' }, contentIndex: 1 }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'read', arguments: { path: '/x' }, contentIndex: 1 }) }))
     const a = lastAssistant(ctx)
     expect(a.contentBlocks).toEqual([
       { type: 'text', refId: 'text', contentIndex: 0 },
@@ -155,7 +181,7 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
     const ctx = makeCtx()
     dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
     dispatchMessageEvent(ctx, SID, msg('message.thinking_start', { thinkingId: 'th1' }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read', input: {} }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'read', arguments: {} }) }))
     dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'text' }))
     const a = lastAssistant(ctx)
     expect(a.contentBlocks).toEqual([
@@ -170,8 +196,8 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
     dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
     dispatchMessageEvent(ctx, SID, msg('message.thinking_start', { thinkingId: 'th1', contentIndex: 0 }))
     dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'mid', contentIndex: 2 }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read', input: {}, contentIndex: 1 }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc2', toolName: 'grep', input: {}, contentIndex: 3 }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'read', arguments: {}, contentIndex: 1 }) }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc2', toolName: 'grep', arguments: {}, contentIndex: 3 }) }))
     const a = lastAssistant(ctx)
     expect(a.contentBlocks).toEqual([
       { type: 'thinking', refId: 'th1', contentIndex: 0 },
@@ -182,50 +208,60 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
   })
 })
 
-describe('dispatchMessageEvent queue_update drain（m2 steer/followup 解耦）', () => {
+describe('dispatchMessageEvent queue_update drain（m2 steer/followup 解耦，W14 计数 FIFO）', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
-  // TC1-TC3：m2 把 queue_update drain 分支从 markPendingDelivered 切换为 drainPending + appendUser。
-  // drainPending FIFO 取匹配 pending 的 segments，appendUser 追加进对话流（complete user）。
-  // 此处为 integration——测 handler 接线（调对 ctx 方法 + 参数），appendUser 内部逻辑在 store 单测。
+  // TC1-TC3：queue_update drain 分支 = countDrained 差集条数 N → drainN(sid, mode, N) 计数
+  // FIFO 取 segments + appendUser 追加进对话流（W14：不按文本匹配）。此处为 integration——
+  // 测 handler 接线（调对 ctx 方法 + 参数），drainN/appendUser 内部逻辑在 store 单测。
 
-  it('TC1: steering drain → drainPending 取 segments + appendUser 追加', () => {
+  it('TC1: steering drain → 差集条数 N=1 调 drainN(sid, steer, 1) + appendUser 追加', () => {
     const ctx = makeCtx()
     // prev queueStates：steering 队列有 1 项（模拟之前 steer 入队）
     ctx.queueStates.value = new Map([[SID, { steering: ['adjust plan'] }]])
-    // drainPending mock 返回 segments（模拟 pendingBuffer 命中）
+    // drainN mock 返回 segments（模拟 pendingBuffer 命中）
     const segs: Segment[] = [{ type: 'text', text: 'adjust plan' }]
-    vi.mocked(ctx.drainPending).mockReturnValue(segs)
+    vi.mocked(ctx.drainN).mockReturnValue([segs])
 
     dispatchMessageEvent(ctx, SID, msg('message.queue_update', { steering: [] }))
 
-    // countDrained(['adjust plan'], []) → ['adjust plan']（prev 有 next 没有）
-    expect(ctx.drainPending).toHaveBeenCalledWith(SID, 'adjust plan', 'steer')
+    // countDrained(['adjust plan'], []) → ['adjust plan'].length = 1（prev 有 next 没有）
+    expect(ctx.drainN).toHaveBeenCalledWith(SID, 'steer', 1)
     expect(ctx.appendUser).toHaveBeenCalledWith(SID, segs)
   })
 
-  it('TC2: followUp drain → drainPending 取 segments + appendUser 追加', () => {
+  it('TC2: followUp drain → 差集条数 N=1 调 drainN(sid, follow-up, 1) + appendUser 追加', () => {
     const ctx = makeCtx()
     ctx.queueStates.value = new Map([[SID, { followUp: ['next step'] }]])
     const segs: Segment[] = [{ type: 'text', text: 'next step' }]
-    vi.mocked(ctx.drainPending).mockReturnValue(segs)
+    vi.mocked(ctx.drainN).mockReturnValue([segs])
 
     dispatchMessageEvent(ctx, SID, msg('message.queue_update', { followUp: [] }))
 
-    expect(ctx.drainPending).toHaveBeenCalledWith(SID, 'next step', 'follow-up')
+    expect(ctx.drainN).toHaveBeenCalledWith(SID, 'follow-up', 1)
     expect(ctx.appendUser).toHaveBeenCalledWith(SID, segs)
   })
 
-  it('TC3: drainPending 无匹配返回 undefined 时 appendUser 不调（幂等）', () => {
+  it('TC3: drainN 取尽返回 [] 时 appendUser 不调（幂等）', () => {
     const ctx = makeCtx()
-    // prev queueStates 有项（drain 会触发 countDrained），但 pendingBuffer 空（drainPending 返回 undefined）
+    // prev queueStates 有项（drain 会触发 countDrained），但 pendingBuffer 空（drainN 返回 []）
     ctx.queueStates.value = new Map([[SID, { steering: ['x'] }]])
-    // drainPending 默认 vi.fn() 返回 undefined（模拟 pendingBuffer 空 / 已 abort）
+    // drainN 默认 vi.fn(() => [])（模拟 pendingBuffer 空 / 已 abort）
 
     dispatchMessageEvent(ctx, SID, msg('message.queue_update', { steering: [] }))
 
-    expect(ctx.drainPending).toHaveBeenCalledWith(SID, 'x', 'steer')
+    expect(ctx.drainN).toHaveBeenCalledWith(SID, 'steer', 1)
     expect(ctx.appendUser).not.toHaveBeenCalled()
+  })
+
+  it('TC4: 深度对账——reconcilePending 以帧内 pendingMessageCount 为深度调用', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.queue_update', { steering: ['a'], pendingMessageCount: 1 }))
+    expect(ctx.reconcilePending).toHaveBeenCalledWith(SID, 1)
+
+    // 字段缺失（旧 runtime / mock 帧）时退化为帧内数组长度和（W8 恒等公式，等价）
+    dispatchMessageEvent(ctx, SID, msg('message.queue_update', { steering: ['a', 'b'] }))
+    expect(ctx.reconcilePending).toHaveBeenLastCalledWith(SID, 2)
   })
 })
 

@@ -6,7 +6,8 @@ import { Check } from 'typebox/value'
  * M3 pi 边界层（src/index.ts）单测（MF-6：此前该层零测试）。
  *
  * mock pi/ctx（as unknown as ExtensionAPI），测：
- * 1. execute catch → isError:true 文本返回（「execute 不向 pi 抛」契约守护）
+ * 1. execute 错误路径 throw（W4：pi 只对 execute throw 置 isError:true——agent-loop
+ *    丢弃返回值里的 isError 字段，「错误轮被标成功」契约守护）
  * 2. session_start handler 的 ctx.mode!=='tui' 守卫
  * 3. registeredPis WeakSet 去重：同 pi 二次 session_start 不重复注册；不同 pi 可注册
  * 4. typeof ctx.ui.addAutocompleteProvider 运行时守卫（ui 缺方法 → 跳过，不崩）
@@ -78,7 +79,7 @@ describe('sessionReaderExtension - execute 契约', () => {
     sessionReaderExtension(fake.pi as unknown as ExtensionAPI)
   })
 
-  it('handler 抛错 → execute 返回 isError:true + 👉 文本，不向 pi 抛', async () => {
+  it('handler 抛错 → execute 向 pi throw（W4：throw 才置 isError:true，返回值 isError 被 agent-loop 丢弃）', async () => {
     const toolDef = fake.registerTool.mock.calls[0][0] as {
       name: string
       execute: (
@@ -87,18 +88,14 @@ describe('sessionReaderExtension - execute 契约', () => {
         signal: AbortSignal | undefined,
         onUpdate: unknown,
         ctx: unknown,
-      ) => Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }>
+      ) => Promise<{ content: Array<{ type: string; text: string }> }>
     }
     expect(toolDef.name).toBe('session_read')
-    // action=find 缺 query → F5 requireStr 抛错 → execute catch 转换
-    const result = await toolDef.execute('tc-1', { action: 'find' }, undefined, undefined, undefined)
-    expect(result.isError).toBe(true)
-    expect(result.content[0].type).toBe('text')
-    expect(result.content[0].text).toContain('👉')
-    // 非 Error 抛错（string）也能转文本
-    const result2 = await toolDef.execute('tc-2', { action: 123 }, undefined, undefined, undefined)
-    expect(result2.isError).toBe(true)
-    expect(typeof result2.content[0].text).toBe('string')
+    // action=find 缺 query → F5 requireStr 抛错 → execute 原样传播（pi catch 后
+    // isError:true + message 成为 toolResult content[0].text）
+    await expect(
+      toolDef.execute('tc-1', { action: 'find' }, undefined, undefined, undefined),
+    ).rejects.toThrow(/👉/)
   })
 })
 

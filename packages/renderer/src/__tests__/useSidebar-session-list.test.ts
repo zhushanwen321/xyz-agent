@@ -2,8 +2,8 @@
  * useSidebar config.sessions 订阅单测（#7 方案 A；CLAUDE.md 规则 #2 防重复注册）。
  *
  * 覆盖：
- * - config.sessions 广播 → session store setGroups 更新列表（不重载历史）
- * - 多实例 refCount 去重：N 次 useSidebarNew() 只注册 1 个 handler，一次广播只触发 1 次 setGroups
+ * - config.sessions 广播 → session store applySnapshot 整表更新列表（不重载历史）
+ * - 多实例 refCount 去重：N 次 useSidebarNew() 只注册 1 个 handler，一次广播只触发 1 次整表快照应用
  * - 全部 effect scope 释放后监听取消（onScopeDispose 收尾），广播不再更新
  *
  * 注：WS 消息类型原为 session.list，PR #87 D1 重构重命名为 config.sessions（useSidebar 同步订阅 config.sessions）。
@@ -89,7 +89,7 @@ it('全部 scope 释放后监听取消：广播不再更新 store', () => {
   const scope = effectScope()
   scope.run(() => useSidebarNew())
   // 先填入一组数据，释放后广播应保持不变
-  useSessionStore().setGroups(makeGroups())
+  useSessionStore().applySnapshot({ groups: makeGroups() })
   const before = useSessionStore().groups
 
   scope.stop() // onScopeDispose → refCount 1→0 → 取消监听

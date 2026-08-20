@@ -303,16 +303,13 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
       })
     })
 
-    it('U-adapter-1：thinking_level_changed 触发 onThinkingLevelChanged 回调并广播 session.thinkingLevelSet', async () => {
-      const onThinkingLevelChanged = vi.fn()
-      const { adapter, sent } = createAdapter({ onThinkingLevelChanged })
+    it('U-adapter-1：thinking_level_changed 广播 session.thinkingLevelSet，无旧缓存回写回调（W9）', async () => {
+      const { adapter, sent } = createAdapter()
       dispatchOne(adapter, { type: 'thinking_level_changed', level: 'high' })
       await flushAsync()
 
-      // 回调被调用，参数为 (sessionId, 'high')
-      expect(onThinkingLevelChanged).toHaveBeenCalledTimes(1)
-      expect(onThinkingLevelChanged).toHaveBeenCalledWith('test-session-1', 'high')
-      // 产出 session.thinkingLevelSet 消息
+      // W9：onThinkingLevelChanged 旧缓存回写回调已删（事件只做实例 markDirty，实例解析器
+      // 由组合根注入，fixture 不接线）——回归断言帧翻译路径不受回调删除影响。
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('session.thinkingLevelSet')
       expect(sent[0].payload).toMatchObject({ level: 'high' })
@@ -339,11 +336,15 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('message.tool_call_end')
-      const payload = sent[0].payload as Record<string, unknown>
-      expect(payload.toolCallId).toBe('tc1')
-      expect(payload.output).toBe('ok')
-      expect(payload.images).toEqual([
-        { data: 'base64', mimeType: 'image/png' },
+      // [w21] payload 换 toolResult message entry 形态：content 是原始 result（含 image 块，
+      // 归一化 output/images 提取移到消费侧——adapter 中间事件仍 normalize 供 hook 上下文）。
+      // image 块保留在 entry.message.content 中不丢（规则 #9）。
+      const payload = sent[0].payload as { entry: { toolCallId?: string; message: { toolCallId?: unknown; content?: unknown } } }
+      expect(payload.entry.message.toolCallId).toBe('tc1')
+      // [w21] content 已归一为 pi 持久化数组形态（.content 数组透传，image 块保留不丢）
+      expect(payload.entry.message.content).toEqual([
+        { type: 'text', text: 'ok' },
+        { type: 'image', data: 'base64', mimeType: 'image/png' },
       ])
     })
   })

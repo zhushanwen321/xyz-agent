@@ -18,11 +18,12 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { writeAliveMarker } from "../alive-store.ts";
-import { createRecord } from "../execution-record.ts";
+import { completeRecord, createRecord, tryTransition } from "../execution-record.ts";
 import { writeFinalized } from "../finalized-marker.ts";
 import type { ManifestRecord } from "../manifest-store.ts";
 import { ManifestStore } from "../manifest-store.ts";
 import { getSubagentRecordsDir, getSubagentSessionDir } from "../path-encoding.ts";
+import { SUBAGENT_RECORD_CUSTOM_TYPE } from "../record-entry.ts";
 import type { StatusFilter } from "../record-store.ts";
 import { RecordStore } from "../record-store.ts";
 import { writeCancelledTombstone } from "../tombstone-store.ts";
@@ -37,6 +38,8 @@ function makeRecord(over: Partial<ExecutionRecord> = {}): ExecutionRecord {
     task: "t",
     startedAt: 1000,
     rootSessionId: "sess-current",
+    // 对齐生产 register 路径（subagent-service createRecord：one-shot 显式 false）
+    chatMode: false,
   });
   return { ...base, ...over };
 }
@@ -47,7 +50,7 @@ function makeRecord(over: Partial<ExecutionRecord> = {}): ExecutionRecord {
  */
 function writeSessionJsonl(
   filePath: string,
-  identity: { id: string; agent: string; mode: "sync" | "background"; task: string; startedAt: number; rootSessionId?: string; parentRecordId?: string; depth?: number; lastTs?: number },
+  identity: { id: string; agent: string; mode: "sync" | "background"; task: string; startedAt: number; rootSessionId?: string; parentRecordId?: string; depth?: number; lastTs?: number; chatMode?: boolean },
   assistantText = "result text",
 ): void {
   const lastTs = identity.lastTs ?? identity.startedAt + 1000;
@@ -64,6 +67,7 @@ function writeSessionJsonl(
   if (identity.rootSessionId !== undefined) identityData.rootSessionId = identity.rootSessionId;
   if (identity.parentRecordId !== undefined) identityData.parentRecordId = identity.parentRecordId;
   if (identity.depth !== undefined) identityData.depth = identity.depth;
+  if (identity.chatMode !== undefined) identityData.chatMode = identity.chatMode;
   const identityEntry = JSON.stringify({
     type: "custom",
     id: "id-1",
@@ -770,6 +774,284 @@ describe("RecordStore", () => {
       expect(found).toBeDefined();
       expect(found?.status).toBe("closed");
       expect(found?.closedReason).toBe("cancelled");
+    });
+  });
+
+  // ============================================================
+  // 孤儿终态恢复（residual-fixes）：分支 4 兜底 record 的判定与落盘
+  // ============================================================
+  describe("recoverOrphanRecords 孤儿终态恢复", () => {
+    /** 带真实磁盘 fixture + appendEntry 捕获的 store。 */
+    function makeRecoveryStore(): { store: RecordStore; appended: Array<{ customType: string; data: Record<string, unknown> }> } {
+      const appended: Array<{ customType: string; data: Record<string, unknown> }> = [];
+      const store = new RecordStore(tmpDir, undefined, {
+        appendEntry: (customType: string, data: unknown) => {
+          appended.push({ customType, data: data as Record<string, unknown> });
+        },
+      } as never);
+      return { store, appended };
+    }
+
+    it("末行完整 → closed 终态 entry + .finalized sidecar（防重锚）", () => {
+      const sessionFile = path.join(tmpDir, "orphan-done.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-orphan-1", agent: "worker", mode: "background", task: "orphan done",
+        startedAt: 1000, rootSessionId: "sess-orphan",
+      });
+      const { store, appended } = makeRecoveryStore();
+      store.recoverOrphanRecords("sess-orphan");
+
+      const entry = appended.find((c) => c.data.id === "sa-orphan-1");
+      expect(entry?.customType).toBe("subagent-record");
+      expect(entry?.data.status).toBe("closed");
+      expect(entry?.data.closedReason).toBe("gc");
+      expect(entry?.data.endedAt).toEqual(expect.any(Number));
+      expect(entry?.data.error).toBeUndefined();
+      expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
+      // 防重：sidecar 使下次重建走分支 2（closed），不再进判定
+      const again = [...appended];
+      store.recoverOrphanRecords("sess-orphan");
+      expect(appended.length).toBe(again.length);
+      const found = store.collectRecords(100, "all", "sess-orphan").find((r) => r.id === "sa-orphan-1");
+      expect(found?.status).toBe("closed");
+    });
+
+    it("末行截断 → closed + error（保守方向）", () => {
+      const sessionFile = path.join(tmpDir, "orphan-truncated.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-orphan-2", agent: "worker", mode: "background", task: "orphan truncated",
+        startedAt: 2000, rootSessionId: "sess-orphan",
+      });
+      // 制造截断：append 半行 JSON（无换行结尾）
+      fs.appendFileSync(sessionFile, '{"type":"message","id":"msg-2","pare', "utf-8");
+      const { store, appended } = makeRecoveryStore();
+      store.recoverOrphanRecords("sess-orphan");
+
+      const entry = appended.find((c) => c.data.id === "sa-orphan-2");
+      expect(entry?.data.status).toBe("closed");
+      expect(entry?.data.error).toContain("truncated");
+      expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
+    });
+
+    it("末行 >64KB 完整 JSON → 不误判截断，判 done（V1 探针实测回归）", () => {
+      const sessionFile = path.join(tmpDir, "orphan-longline.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-orphan-5", agent: "worker", mode: "background", task: "orphan long line",
+        startedAt: 5000, rootSessionId: "sess-orphan",
+      });
+      // 真实库实测形态：末行为超长完整 entry（subagent-identity 的 task 内嵌大 payload，
+      // 28/4822 个文件末行 65KB-776KB）——固定 64KB 尾窗曾把这类行从中间切开误判截断。
+      const bigEntry = JSON.stringify({
+        type: "custom", id: "id-big", parentId: null,
+        timestamp: new Date(5000).toISOString(), customType: "subagent-identity",
+        data: { id: "sa-orphan-5", agent: "worker", mode: "background", task: "x".repeat(70 * 1024), startedAt: 5000 },
+      });
+      fs.appendFileSync(sessionFile, bigEntry + "\n", "utf-8");
+      const { store, appended } = makeRecoveryStore();
+      store.recoverOrphanRecords("sess-orphan");
+
+      const entry = appended.find((c) => c.data.id === "sa-orphan-5");
+      expect(entry?.data.status).toBe("closed");
+      expect(entry?.data.error).toBeUndefined();
+      expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
+    });
+
+    it("chatMode 孤儿 → 不终态化，落 resumable entry（可续聊产品语义）", () => {
+      const sessionFile = path.join(tmpDir, "orphan-chat.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-orphan-3", agent: "worker", mode: "background", task: "orphan chat",
+        startedAt: 3000, rootSessionId: "sess-orphan", chatMode: true,
+      });
+      const { store, appended } = makeRecoveryStore();
+      store.recoverOrphanRecords("sess-orphan");
+
+      const entry = appended.find((c) => c.data.id === "sa-orphan-3");
+      expect(entry?.data.status).toBe("running");
+      expect(entry?.data.resumable).toBe(true);
+      expect(entry?.data.chatMode).toBe(true);
+      // chat 分流不写终态 sidecar
+      expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(false);
+      // orphanJudged 缓存：同 store 重复调用不重复 append
+      const count = appended.length;
+      store.recoverOrphanRecords("sess-orphan");
+      expect(appended.length).toBe(count);
+    });
+
+    it("非分支 4 record（closed / 活进程）不进判定", () => {
+      const closedFile = path.join(tmpDir, "orphan-closed.jsonl");
+      writeSessionJsonl(closedFile, {
+        id: "sa-orphan-4", agent: "worker", mode: "background", task: "already closed",
+        startedAt: 4000, rootSessionId: "sess-orphan",
+      });
+      writeFinalized(closedFile);
+      const { store, appended } = makeRecoveryStore();
+      store.recoverOrphanRecords("sess-orphan");
+      expect(appended.find((c) => c.data.id === "sa-orphan-4")).toBeUndefined();
+    });
+
+    /** 写主 session fixture（含指定 subagent-record entry 序列）。 */
+    function writeMainSession(entries: Array<Record<string, unknown>>): string {
+      const mainFile = path.join(tmpDir, "main-session.jsonl");
+      const lines = entries.map((d) => JSON.stringify({ type: "custom", id: `e-${Math.random()}`, parentId: null, customType: "subagent-record", data: d }));
+      fs.writeFileSync(mainFile, lines.join("\n") + "\n", "utf-8");
+      return mainFile;
+    }
+
+    it("entry-born 孤儿（无子文件，spawn 窗口期死亡）→ closed+gc+error（E2E 实测回归）", () => {
+      const mainFile = writeMainSession([
+        { v: 1, id: "sa-entryonly-1", agent: "worker", task: "spawn interrupted", slug: "s", status: "running", mode: "background", startedAt: 6000, rootSessionId: "sess-orphan", depth: 0, turns: 0, totalTokens: 0, model: "m", eventLog: [], displayItems: [] },
+      ]);
+      const { store, appended } = makeRecoveryStore();
+      store.recoverEntryOnlyOrphans(mainFile, "sess-orphan");
+
+      const entry = appended.find((c) => c.data.id === "sa-entryonly-1");
+      expect(entry?.data.status).toBe("closed");
+      expect(entry?.data.closedReason).toBe("gc");
+      expect(entry?.data.error).toContain("no child session file");
+      // 防重：orphanJudged 缓存拦截二次判定
+      const count = appended.length;
+      store.recoverEntryOnlyOrphans(mainFile, "sess-orphan");
+      expect(appended.length).toBe(count);
+    });
+
+    it("entry-born chatMode 孤儿 → 不终态化，落 resumable entry", () => {
+      const mainFile = writeMainSession([
+        { v: 1, id: "sa-entryonly-2", agent: "worker", task: "chat spawn interrupted", slug: "s", status: "running", mode: "background", startedAt: 7000, rootSessionId: "sess-orphan", depth: 0, turns: 0, totalTokens: 0, model: "m", eventLog: [], displayItems: [], chatMode: true },
+      ]);
+      const { store, appended } = makeRecoveryStore();
+      store.recoverEntryOnlyOrphans(mainFile, "sess-orphan");
+
+      const entry = appended.find((c) => c.data.id === "sa-entryonly-2");
+      expect(entry?.data.status).toBe("running");
+      expect(entry?.data.resumable).toBe(true);
+      expect(entry?.data.error).toBeUndefined();
+    });
+
+    it("有子文件锚 / 末条已终态 / 他 session 的 entry-born id 不进判定", () => {
+      const anchoredFile = path.join(tmpDir, "orphan-anchored.jsonl");
+      writeSessionJsonl(anchoredFile, {
+        id: "sa-anchored", agent: "worker", mode: "background", task: "has file",
+        startedAt: 8000, rootSessionId: "sess-orphan",
+      });
+      const mainFile = writeMainSession([
+        { v: 1, id: "sa-anchored", agent: "worker", task: "has file", slug: "s", status: "running", mode: "background", startedAt: 8000, rootSessionId: "sess-orphan", depth: 0, turns: 0, totalTokens: 0, model: "m", eventLog: [], displayItems: [] },
+        { v: 1, id: "sa-settled", agent: "worker", task: "settled", slug: "s", status: "closed", mode: "background", startedAt: 8100, rootSessionId: "sess-orphan", depth: 0, turns: 1, totalTokens: 0, model: "m", eventLog: [], displayItems: [] },
+        { v: 1, id: "sa-foreign", agent: "worker", task: "other session", slug: "s", status: "running", mode: "background", startedAt: 8200, rootSessionId: "sess-other", depth: 0, turns: 0, totalTokens: 0, model: "m", eventLog: [], displayItems: [] },
+      ]);
+      const { store, appended } = makeRecoveryStore();
+      store.recoverEntryOnlyOrphans(mainFile, "sess-orphan");
+      expect(appended.find((c) => c.data.id === "sa-anchored")).toBeUndefined();
+      expect(appended.find((c) => c.data.id === "sa-settled")).toBeUndefined();
+      expect(appended.find((c) => c.data.id === "sa-foreign")).toBeUndefined();
+    });
+  });
+
+  // ============================================================
+  // W16 [D4]：subagent-record 自描述 appendEntry 上报（状态迁移点）
+  // ============================================================
+  describe("W16 subagent-record 自描述 appendEntry 上报", () => {
+    /** appendEntry 捕获（RecordStorePi 最小实现）。 */
+    interface AppendedCall {
+      customType: string;
+      data: unknown;
+    }
+
+    /** 构造带 appendEntry 捕获的 store（pi 注入通道，对齐生产 setPi 后形态）。 */
+    function makeStoreWithPi(): { store: RecordStore; appended: AppendedCall[] } {
+      const appended: AppendedCall[] = [];
+      const store = new RecordStore(tmpDir, undefined, {
+        appendEntry: (customType: string, data: unknown) => {
+          appended.push({ customType, data });
+        },
+      });
+      return { store, appended };
+    }
+
+    /** unknown → 对象的运行时 guard（taste/no-unsafe-cast：断言前先收窄）。 */
+    function asEntryData(d: unknown): Record<string, unknown> {
+      if (typeof d !== "object" || d === null) throw new Error("entry data is not an object");
+      return d as Record<string, unknown>;
+    }
+
+    it("register：append subagent-record entry，data = v1 + SubagentRecord 完整快照 schema", () => {
+      const { store, appended } = makeStoreWithPi();
+      store.register(makeRecord());
+
+      expect(appended).toHaveLength(1);
+      // 写点字面量与 record-entry.ts 常量等值（钉住双源一致性）
+      expect(appended[0]?.customType).toBe(SUBAGENT_RECORD_CUSTOM_TYPE);
+      // [E2E 实测教训] 必须先 JSON 序列化再断言：appendEntry 捕获的是内存对象，
+      // undefined 值的键名仍在（旧 27-key 断言因此漏检 recordToSubagent 丢
+      // chatMode 的 bug）；真实 JSONL 会丢 undefined 值键，此处对齐生产行为。
+      const data = asEntryData(JSON.parse(JSON.stringify(appended[0]?.data)));
+      // register 时点序列化存活字段（undefined 值字段按生产序列化丢弃）：
+      // chatMode 必须显式在场（one-shot=false）——renderer isDone 判据依赖它。
+      expect(Object.keys(data).sort()).toEqual([
+        "agent", "chatMode", "depth", "displayItems", "eventLog",
+        "id", "mode", "model", "rootSessionId", "round", "startedAt",
+        "status", "task", "totalTokens", "turns", "v", "worktree",
+      ]);
+      expect(data).toMatchObject({
+        v: 1,
+        id: "r1",
+        agent: "worker",
+        task: "t",
+        status: "running",
+        mode: "sync",
+        startedAt: 1000,
+        rootSessionId: "sess-current",
+        chatMode: false,
+        turns: 0,
+        totalTokens: 0,
+        model: "m",
+        eventLog: [],
+        displayItems: [],
+      });
+    });
+
+    it("archive：append 终态完整快照（result/endedAt/closedReason）；one-shot 生命周期共 2 次 append", () => {
+      const { store, appended } = makeStoreWithPi();
+      const r = makeRecord();
+      store.register(r);
+      // 模拟正常终态路径：tryTransition CAS → completeRecord 冻结 → archive（D-017 时序）
+      tryTransition(r, "closed", "gc");
+      completeRecord(r, { text: "task done", turns: 1, durationMs: 500, success: true, sessionId: "r1", toolCalls: [] }, "closed", "gc");
+      store.archive(r);
+
+      // 探针基线（单测级）：one-shot 生命周期 = register + archive = 2 次 append
+      expect(appended).toHaveLength(2);
+      const data = asEntryData(appended[1]?.data);
+      expect(data).toMatchObject({
+        v: 1,
+        id: "r1",
+        status: "closed",
+        closedReason: "gc",
+        result: "task done",
+        endedAt: expect.any(Number) as number,
+      });
+    });
+
+    it("reportRecordTransition：类外恢复写点上报（chatMode 续轮 round 携带）", () => {
+      const { store, appended } = makeStoreWithPi();
+      const r = makeRecord({ chatMode: true, round: 1 });
+      store.reportRecordTransition(r);
+
+      expect(appended).toHaveLength(1);
+      expect(appended[0]?.customType).toBe(SUBAGENT_RECORD_CUSTOM_TYPE);
+      expect(asEntryData(appended[0]?.data)).toMatchObject({
+        v: 1,
+        id: "r1",
+        status: "running",
+        round: 1,
+      });
+    });
+
+    it("pi 未注入（session_start 前）：三写点均安全降级不抛错", () => {
+      const store = new RecordStore(tmpDir);
+      const r = makeRecord();
+      expect(() => store.register(r)).not.toThrow();
+      expect(() => store.archive(r)).not.toThrow();
+      expect(() => store.reportRecordTransition(r)).not.toThrow();
     });
   });
 });

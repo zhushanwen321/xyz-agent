@@ -167,16 +167,20 @@ const TIMING: Timing = {
   steerDrain: 1500, // steer/followUp 入队 → 模拟 drain（pi 投递）间隔，让 QueueBubble 可见
 }
 
+// taste:allow-no-data-owner W24-EX-D（VITE_MOCK 测试基建，登记草稿）：mock 流式 handler 表
 const streamHandlers = new Map<string, Set<(msg: ServerMessage) => void>>()
 /** 已 abort 的 session：send 循环检查后提前返回 */
+// taste:allow-no-data-owner W24-EX-D（VITE_MOCK 测试基建，登记草稿）：mock 取消标记集合
 const cancelled = new Set<string>()
 /** 运行中的 setTimeout 句柄，resolve 后自动移除，避免 Set 无限增长 */
+// taste:allow-no-data-owner W24-EX-D（VITE_MOCK 测试基建，登记草稿）：mock 定时器句柄集合
 const timers = new Set<ReturnType<typeof setTimeout>>()
 /**
  * mock 队列状态镜像（steer/followUp pending）。
  * steer/followUp 入队时 push + emit 全量 queue_update（QueueBubble 渲染），
  * 延迟后 splice 模拟 drain（pi 投递）+ emit 全量（移除该项）→ drainPending 取 segments + appendUser（complete user 进对话流）。
  */
+// taste:allow-no-data-owner W24-EX-D（VITE_MOCK 测试基建，登记草稿）：mock 队列缓冲
 const mockQueues = new Map<string, { steering: string[]; followUp: string[] }>()
 
 /** 清理所有未触发的 timer（测试 teardown / 模块卸载时调用） */
@@ -202,9 +206,15 @@ function emitQueueUpdate(sessionId: string): void {
   const steering = q?.steering.length ? q.steering : undefined
   const followUp = q?.followUp.length ? q.followUp : undefined
   // 两者皆空时仍 emit（空 payload），让 store 侧 queue_update handler delete queueState
+  // pendingMessageCount = steering + followUp 条数和（W8 契约必填，对齐 event-adapter 翻译口径）
   emit(sessionId, {
     type: 'message.queue_update',
-    payload: { sessionId, steering, followUp },
+    payload: {
+      sessionId,
+      steering,
+      followUp,
+      pendingMessageCount: (q?.steering.length ?? 0) + (q?.followUp.length ?? 0),
+    },
   })
 }
 

@@ -212,20 +212,25 @@ export interface ISessionService {
   ): Promise<SessionSummary>
   hasActiveSession(sessionId: string): boolean
   getSummary(sessionId: string): SessionSummary | undefined
-  /** 取 session 缓存的最近 inputTokens（供 model.switch 重算 usagePercent，见 onContextUpdate/handleTurnEndSideEffects） */
+  /** W10：取最近 inputTokens——usage 实例快照派生（唯一数据源 = get_session_stats，旧缓存直写已删）。 */
   getInputTokens(sessionId: string): number
-  /** 回写 session 缓存的 inputTokens（onContextUpdate 拿到真实值后同步写入，打通 context.update 与 state_changed 数据源） */
-  setInputTokens(sessionId: string, tokens: number): void
   /**
    * 处理 context.update（pi agent_end/turn_end 推 inputTokens + totalTokens）。session 级状态单一 owner：
-   * 回写 inputTokens 缓存 + 写 tokenCount + 算 usagePercent + 广播 context.update。
-   * index.ts onContextUpdate 仅调本方法。totalTokens（W3）写入 session.tokenCount。
+   * W12 起事件只做 usage 实例失效（markDirty + 防抖重拉 get_session_stats），发布归
+   * 快照应用后的挂钩（payload 全字段来自实例快照；W18 起 resolver 窗口重算链已删）。
+   * index.ts onContextUpdate 仅调本方法。W10：事件参数不再直写 session 缓存
+   * （totalTokens 与 inputTokens 同值，tokenCount 由 usage 实例快照派生）。
    */
   applyContextUpdate(sessionId: string, inputTokens: number, totalTokens?: number): void
-  /** 取 session 当前 usagePercent（按缓存 inputTokens + 当前 modelId contextWindow 算）。 */
+  /**
+   * W18（data-source-governance P3.1）：自描述 record entry（subagent-record /
+   * workflow-record）失效信号唯一入口（interpreter 经组合根注入；entry_appended 主信号
+   * + subagent/workflow 事件兜底信号汇于此）。只做失效（防抖调度），事件 payload 不进
+   * 数据缓存——entry 扫描（get_entries 重拉）是派生缓存唯一数据写路径。
+   */
+  invalidateRecordEntries(sessionId: string, customType: string): void
+  /** W10：取 session 当前 usagePercent——usage 实例快照派生（pi 权威 percent 投影）。 */
   getUsagePercent(sessionId: string): number
-  /** 仅回写 thinkingLevel 缓存（不调 pi RPC），供 thinking_level_changed 事件 callback 用 */
-  setThinkingLevelCache(sessionId: string, level: string | undefined): void
   /** Get the underlying RpcClient for direct command sending (e.g., extension responses). */
   getRpcClient(sessionId: string): IRpcClient | undefined
 
@@ -245,8 +250,8 @@ export interface ISessionService {
   setOnSessionCreated(handler: (summary: SessionSummary) => void): void
   /** S3-W2：注册 session 销毁回调（触发点 removeSessionEntry，全部删除路径汇聚处） */
   setOnSessionDestroyed(handler: (summary: SessionSummary) => void): void
-  /** Set thinking level for a session's pi subprocess */
-  setThinkingLevel(sessionId: string, level: string): Promise<void>
+  /** Set thinking level for a session's pi subprocess. Returns pi-effective level (P3: pi clamps unsupported levels). */
+  setThinkingLevel(sessionId: string, level: string): Promise<string>
   /** Steer an actively generating session */
   steerMessage(sessionId: string, content: string): Promise<void>
   /** Queue a follow-up message for a session */
@@ -478,8 +483,8 @@ export interface IModelService {
   /** Switch model with full side-effects: pi RPC + persist default + broadcast. */
   switchModel(sessionId: string, provider: string, modelId: string): Promise<void>
 
-  /** Set thinking level for a session's pi subprocess. */
-  setThinkingLevel(sessionId: string, level: string): Promise<void>
+  /** Set thinking level for a session's pi subprocess. Returns pi-effective level (P3: pi clamps unsupported levels). */
+  setThinkingLevel(sessionId: string, level: string): Promise<string>
 }
 
 // ── IPluginService ────────────────────────────────────────────────

@@ -35,8 +35,11 @@ import {
 import { errorWithCode } from '../../../utils/errors.js'
 import { guardNotifyParams, NotifyRateLimiter } from './notify-api.js'
 
-/** 对话框 title/message 等短文本上限（UTF-8 字节）：防超长文本撑爆前端弹窗 */
-const UI_TEXT_MAX_BYTES = 8 * 1024
+/** KB → 字节换算 */
+const BYTES_PER_KB = 1024
+/** 对话框 title/message 等短文本上限：8KB（UTF-8 字节），防超长文本撑爆前端弹窗 */
+const UI_TEXT_MAX_KB = 8
+const UI_TEXT_MAX_BYTES = UI_TEXT_MAX_KB * BYTES_PER_KB
 
 /** UI 服务依赖（主线程侧） */
 export interface UiHandlers {

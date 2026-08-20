@@ -60,6 +60,7 @@ export interface SubscriptionState {
  * 跨 routeInbound / subscribeSession 共享同一份（routeInbound 读 + 更新，subscribeSession 写，
  * 消费方 disposeSession 删）。与 renderer useChat.streamSubscriptions 同范式（会话级状态在模块顶层）。
  */
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：模块级单例订阅状态表（ADR-0049 全局 sid 协调器，上方注释已述与 useChat 同范式）
 const subscriptionStates = new Map<string, SubscriptionState>()
 
 /**
@@ -73,6 +74,7 @@ const subscriptionStates = new Map<string, SubscriptionState>()
  * 语义不同，不得互吞；同参并发（重复相同 backfill）则复用同一 Promise。
  * 失败也清理（finally）：failed subscribe 可重试，不残留死 Promise。
  */
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：in-flight 订阅去重表（并发收敛到同一 Promise，非 GUI 数据）
 const inFlightSubscribes = new Map<string, Promise<void>>()
 
 function subscribeKey(sessionId: string, fromSeq?: number): string {

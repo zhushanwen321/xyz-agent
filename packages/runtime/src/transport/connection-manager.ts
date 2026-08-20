@@ -117,7 +117,14 @@ export class ConnectionManager {
   // ── Connection ────────────────────────────────────────────────
 
   private handleConnection(ws: WsType): void {
-    console.log(`[runtime] client connected (total: ${this.clients.size + 1})`)
+    // 连接数日志两个口径分开输出（review findings-confirmation #5）：旧 `total: clients.size + 1`
+    // 把未 auth 新连接混进 authed 池计数——重连风暴期（pre-auth drop 443 条现场）半开旧连接 +
+    // 未 auth 新连接堆积时 total 虚高误导排查。authenticated = 已认证池（clients，同
+    // authedConnections 同步维护）；pending auth = 握手中连接（authTimers）含本条（set 在本行之后）。
+    console.log(
+      `[runtime] client connected (authenticated: ${this.authedConnections.size}, ` +
+        `pending auth incl. this one: ${this.authTimers.size + 1})`,
+    )
     // fail-closed：无 token 配置时拒绝全部连接（组合根已落 warning，这里只拒绝）。
     if (this.authToken === null) {
       this.rejectAuth(ws, 'no_token_configured')
@@ -186,7 +193,8 @@ export class ConnectionManager {
     ws.send(JSON.stringify({ type: 'auth.result', payload: { ok: true } }))
     this.callbacks.onConnect(ws)
     this.resetHeartbeat(ws)
-    console.log(`[runtime] client authenticated (total: ${this.clients.size})`)
+    // 口径对齐上方 handleConnection：authenticated 只计已认证池（旧文案 total 同值但语义混用）
+    console.log(`[runtime] client authenticated (authenticated: ${this.clients.size})`)
   }
 
   /** 认证失败路径：回执结果 + close 1008。 */

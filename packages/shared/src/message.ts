@@ -12,7 +12,9 @@ export type SteerFollowUpMode = 'steer' | 'follow-up'
  *
  * 这些 custom_message 触发 pi triggerTurn 唤醒 agent 在后续 turn 处理结果——对用户是噪声，
  * 结果由 agent 后续 turn 体现。两条消费通路共用此 SSOT，避免字面量漂移：
- * - core registry customStart：完成通知类覆写 display:false（实时链路）
+ * - core apply-entry custom_message case：完成通知类覆写 display:false（实时 customStart
+ *   喂 entry 与重开 replay 同一个 reducer 覆写点，2026-08-19 custom 双管线收敛；实时侧
+ *   registry customStart 只构造 entry，不再独立覆写）
  * - runtime mapSessionEntries / entry-tree-builder：对称覆写 display:false（历史链路，方案 Z）
  */
 export const COMPLETE_NOTIFY_CUSTOM_TYPES = new Set(['subagent-bg-notify', 'workflow-result'])

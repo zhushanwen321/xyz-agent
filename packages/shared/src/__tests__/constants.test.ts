@@ -7,7 +7,7 @@
  * 本文件是 testCommand 最后一跳，用例数需 >= wave testCases 数。
  */
 import { describe, it, expect } from 'vitest'
-import { ENV_WHITELIST_PREFIXES, AMBIENT_ENV_NAMES } from '../constants.js'
+import { ENV_WHITELIST_PREFIXES, AMBIENT_ENV_NAMES, KNOWN_PI_API_TYPES } from '../constants.js'
 
 const AMBIENT_NAMES = [
   'GOOGLE_APPLICATION_CREDENTIALS',
@@ -60,5 +60,40 @@ describe('AMBIENT_ENV_NAMES', () => {
     for (const name of AMBIENT_ENV_NAMES) {
       expect(ENV_WHITELIST_PREFIXES).toContain(name)
     }
+  })
+})
+
+describe('KNOWN_PI_API_TYPES（W2 A-09：pi-ai KnownApi 10 值全集）', () => {
+  // 锚点：pi 0.84.1 实装依赖内嵌 pi-ai 0.84.2
+  // node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/types.d.ts:15
+  // 的 KnownApi 联合（与根 pi-ai 0.82.1 dist/types.d.ts:14 同集，2026-08-20 现场核实）。
+  // 升级 pi / pi-ai 时 diff 锚点行同步——此前仅 3 值导致 7 种合法 api type 误报 warn。
+  const PI_AI_KNOWN_API = [
+    'openai-completions',
+    'mistral-conversations',
+    'openai-responses',
+    'azure-openai-responses',
+    'openai-codex-responses',
+    'anthropic-messages',
+    'bedrock-converse-stream',
+    'google-generative-ai',
+    'google-vertex',
+    'pi-messages',
+  ]
+
+  it('= KnownApi 10 值全集（逐值对照）', () => {
+    expect([...KNOWN_PI_API_TYPES].sort()).toEqual([...PI_AI_KNOWN_API].sort())
+  })
+
+  it('历史 3 值子集仍全在（前端已暴露的终值不丢）', () => {
+    for (const t of ['anthropic-messages', 'openai-completions', 'openai-responses']) {
+      expect(KNOWN_PI_API_TYPES.has(t)).toBe(true)
+    }
+  })
+
+  it('不在 KnownApi 的值不误收（pi-ai 类型系统外）', () => {
+    // ollama 经审计核实 pi 确不支持（A-09 附带核实），不得进白名单
+    expect(KNOWN_PI_API_TYPES.has('ollama')).toBe(false)
+    expect(KNOWN_PI_API_TYPES.has('')).toBe(false)
   })
 })

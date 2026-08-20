@@ -12,7 +12,9 @@ import { createSessionCommand } from './tui/session-command.js'
  * 分层（同 scheduler/cw-tool）：
  * - tool-handler.ts：纯逻辑 handler，agentDir 注入，零 pi 依赖，可单测
  * - index.ts（本文件）：pi 依赖层，registerTool + getAgentDir() 调用 + execute 闭包
- *   （catch handler 抛的 Error 转 isError:true，execute 不向 pi 抛——pi 工具契约）
+ *   （错误直接 throw 给 pi——pi-agent-core agent-loop 只对 execute throw 置
+ *   isError:true，返回值里的 isError 字段被丢弃；W4 修复，锚点
+ *   agent-loop.js:453-483/525-547，pi 自带 bash 工具同范式）
  *
  * M4 将在此 addAutocompleteProvider（TUI # 补全，ctx.mode === 'tui' 时）。
  */
@@ -164,17 +166,12 @@ export default function sessionReaderExtension(pi: ExtensionAPI): void {
       _onUpdate: unknown,
       _ctx: ExtensionContext,
     ) {
-      try {
-        // signal 仅 search 消费（MF-5：长扫描可中断，Esc 不再挂死）；其余 action 有界不接
-        return await handleSessionRead(params, getAgentDir(), signal)
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        return {
-          content: [{ type: 'text' as const, text: msg }],
-          details: {},
-          isError: true,
-        }
-      }
+      // 错误路径直接 throw：pi 契约只有 throw 才置 isError:true（tool_execution_end /
+      // ToolResultMessage），handler 抛的 Error 文案（含 👉 恢复提示）原样成为
+      // toolResult content，模型仍可读到。曾用 return {isError:true}——被 agent-loop
+      // 丢弃，错误轮被标成功（W4 修复）。
+      // signal 仅 search 消费（MF-5：长扫描可中断，Esc 不再挂死）；其余 action 有界不接
+      return handleSessionRead(params, getAgentDir(), signal)
     },
   })
 

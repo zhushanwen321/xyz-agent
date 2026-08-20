@@ -121,20 +121,25 @@ const REPLAY_BATCH_CHUNKS = 500
 // ADR-0049「全局 sid 协调器例外类」：无 setup 上下文、方法显式接收 sid、buffer 非响应式。
 // 分区生命周期 = session 生命周期（session 销毁经 registerSessionCleanup 清理），
 // 独立于任何 TerminalView 组件实例——切 tab（unmount）只移除视图 flush 监听器，数据不丢。
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：终端输出分区表（ADR-0049「全局 sid 协调器例外类」，生命周期= session 生命周期，上方注释已述）
 const partitions = new Map<string, TerminalPartition>()
 
 /** 分区表结构版本：cleanup 删分区时 bump，让各实例 current computed 失效重算（同 core 工厂）。 */
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：分区表结构版本计数（cleanup 删分区时 bump 使 computed 失效，同 ADR-0049 例外类基建）
 const mapVersion = ref(0)
 
 // ── 模块级 terminal.* 订阅（生命周期 = PTY 生命周期）──────────────────────
 // publish-only 契约（W09）：runtime 只把 terminal.data 发给订阅该 sid 的连接，且
 // renderer 侧 events.on(sid) 无 handler 时 dispatchSession 直接丢弃——订阅必须跨组件
 // 存活，否则切走期间输出无人接收（分区在组件外但没有订阅同样空转）。
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：terminal.* 订阅 sid 集合（订阅生命周期 = PTY 生命周期）
 const subscribedSids = new Set<string>()
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：terminal.* 订阅退订函数表（同上）
 const subscriptionUnsubs = new Map<string, () => void>()
 
 // ── flush 监听器注册表（sid → 已挂载视图的增量回放回调）────────────────────
 // 组件 mount 注册、unmount 反注册。flush 后直接通知，替代 W14 的 watch(flush 版本) 链。
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：flush 监听器注册表（mount 注册/unmount 反注册）
 const flushListeners = new Map<string, Set<(buffer: TerminalBuffer) => void>>()
 
 /**

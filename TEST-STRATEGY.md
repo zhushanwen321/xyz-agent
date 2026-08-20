@@ -143,6 +143,21 @@ it('首屏渲染：<页面> DOM 含关键交互元素', () => {
 | **v6 像素 diff baseline（C 层）** | `e2e/visual-baselines/` baseline 快照对照（**git tracked**），visual-chromium project + `maxDiffPixelRatio:0.01` + `caret:'hide'`。破坏=可见像素级回归（布局错位/元素消失） | `v6-ui-refactor-test-infra S2-W3`（snapshotDir 是 project 直接属性非 use）`[from: S2-W3]` | `e2e/visual/*.spec.ts` + `e2e/visual-baselines/` |
 | **v6 选中态二分 D8（B 层 VLM）** | sidebar 选中项 bg-surface + 蓝字（D8 二分规则：列表项型），minimax-m3 VLM 对照 v6-master-spec 语义验证。破坏=选中态视觉不符 spec（选中项无背景/颜色错） | `v6-ui-refactor-test-infra S2-W2`（VLM 三段式 task 派发+schema 内嵌）`[from: S2-W2]` | `docs/testing/visual/vlm-prompt-template.md` + `.xyz-harness/visual/` |
 | **插件系统非 mock 端到端** | 隔离 runtime（tsx 源码形态）+ 真实插件文件 + 真实 WS：sandbox 激活 / toggle 往返 / built-in statusline 发现 / onBeforeSendMessage hook 真实执行。破坏=插件真实加载路径回归（mock 层不可见的 F1-F4 类 bug） | `2026-08 插件系统 F1-F4`（测试金字塔底部全 mock、真实加载路径零覆盖） | `scripts/verify-plugin-e2e.sh`（挂 `validate-runtime-bundle.sh` 第 7 步，pre-commit 于 runtime src 变更触发）+ `packages/runtime/test/plugin-registry.test.ts` TC-1-09/10/11（built-in 扫描两形态）；手册 [docs/testing/13-plugin-e2e.md](docs/testing/13-plugin-e2e.md) |
+| **等价性测试双轨** | live ≡ reload / broadcast ≡ get_state / 混沌注入收敛等不变量断言。CI 只跑凭证无关子集（mock RPC / fixture 重放），真实 LLM turn 用例由凭证探测 skip；完整基线跑在开发机（详见下方「等价性测试双轨」小节） | `2026-08-19 data-source-governance P1-P4` goal-audit 问题 1（CI 无 pi 凭证，push 后 test-runtime 预期红） | `packages/runtime/src/__tests__/equivalence/` 10 文件（skip 机制 SSOT = `pi-fixture.ts` `REAL_PI_READY`） |
+
+### 等价性测试双轨（真实 LLM turn 基线跑在开发机）[from: 2026-08-19 data-source-governance]
+
+等价性测试族（`packages/runtime/src/__tests__/equivalence/`，G3 长期回归基线）按「是否发起真实 LLM 调用」分两轨：
+
+- **凭证无关子集（CI 覆盖）**：mock RPC 层 describe（`scalar-state-invalidation` / `usage-queue-commands-invalidation` 各自的「mock RPC 层」describe、`w10-usage-switchmodel-race` / `w12-owner-snapshot-publish` / `w18-record-entry-chaos` 整文件）——不 spawn pi、不发 LLM 请求，无条件执行。
+- **完整基线（开发机跑）**：真实 pi 子进程 + 真实 LLM turn 用例（`live-reload` / `broadcast-getstate` / `chaos` / `pi-protocol-contract` 整文件，及 `scalar-state-invalidation` / `usage-queue-commands-invalidation` 的「真实 pi 子进程」describe）——依赖本机 pi 凭证（默认模型 `xiaomi-token-plan-cn/mimo-v2.5-pro`）。**凭证属用户基础设施，不由 CI secrets 虚构注入**。
+
+**何时跑完整基线**：改动涉及 pi 协议链路（`event-adapter` / `message-converter` / `pi-protocol`）、entry reducer（core `apply-entry`）、replicated-states 失效收敛、或 equivalence 目录本身时，merge 前在开发机跑 `cd packages/runtime && pnpm test:equivalence` 全量。
+
+**skip 机制（SSOT = `pi-fixture.ts`）**：模块顶层 `REAL_PI_READY`（binary `which pi` + 凭证三源探测：env `XIAOMI_TOKEN_PLAN_CN_API_KEY` / `<agentDir>/auth.json` stored 条目 / `models.json` providers apiKey，探测链对齐 pi AuthStorage 静态 source）。真实 LLM 用例一律 `describe.skipIf(!REAL_PI_READY)` 包裹；skip 理由注入 describe 名 + 模块加载时 console.warn（双通道显式可见，不静默消失）。
+
+- CI（ci.yml test-runtime job）显式设 `XYZ_SKIP_REAL_PI=1`：把「CI 只跑凭证无关子集」从隐式事实（CI 恰好无 `~/.pi`）变为显式声明，skip 理由直接指向本节。
+- 本机模拟无凭证验证 skip 语义：`XYZ_SKIP_REAL_PI=1 pnpm test:equivalence`（真实 LLM 用例 skip 且理由可见、mock 子集照跑）；去掉 env 即恢复全量。
 
 ## 5. mock 策略
 

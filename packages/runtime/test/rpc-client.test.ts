@@ -319,4 +319,27 @@ describe('RpcClient W1', () => {
     const result = await p
     expect(result.contextUsage?.tokens).toBe(50)
   })
+
+  // ── U7: setSessionName 写 set_session_name + name（W1 数据源治理）────
+  it('U7a: setSessionName writes {type:"set_session_name", name} to stdin and resolves on success', async () => {
+    const p = client.setSessionName('重构计划')
+    await Promise.resolve()
+
+    // 命令名与参数是 W1 接口契约锁定项（字面量 'set_session_name'，参数 { name }）
+    const sent = lastWrittenJson()
+    expect(sent.type).toBe('set_session_name')
+    expect(sent.name).toBe('重构计划')
+
+    emitPiLine({ type: 'response', id: sent.id, success: true, data: {} })
+    await p
+  })
+
+  it('U7b: setSessionName rejects when pi responds success:false（success 检查对齐 sendCommand 约定）', async () => {
+    const p = client.setSessionName('x')
+    await Promise.resolve()
+    const sent = lastWrittenJson()
+    emitPiLine({ type: 'response', id: sent.id, success: false, error: 'pi internal error' })
+
+    await expect(p).rejects.toThrow('pi internal error')
+  })
 })

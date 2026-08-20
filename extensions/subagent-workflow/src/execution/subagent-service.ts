@@ -40,6 +40,7 @@ import { RecordStore } from "./record-store.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import { getChildByRecord, killAllSpawnedChildren, runSpawn, spawnedChildren, type SessionRunnerContext, type SpawnResumeOpts } from "./session-runner.ts";
 import { isIdle, isResumable, hasLiveProcessHandle } from "./lifecycle-predicates.ts";
+import { startIdleGc } from "./idle-gc.ts";
 import {
   clearEpipeFailure,
   EPIPE_FAILURE_THRESHOLD,
@@ -68,6 +69,9 @@ import { registerGlobalObservability, UiRequestObservability } from "./ui-reques
 import { WorktreeManager } from "./worktree-manager.ts";
 
 const logger = getLogger("subagents");
+
+/** SP-2 冷路径按 id 查 record 的 collectRecords 扫描上限（全扫兜底的容量 cap）。 */
+const COLD_LOOKUP_SCAN_LIMIT = 1000;
 
 // [v4 A-1] EPIPE 连续失败计数器已迁移到 stdin-writer.ts（stdin 错误域，避免 session-runner
 // 反向 import 本文件 helper 产生循环依赖）。同步路径（deliverMessage）与异步路径
@@ -145,6 +149,11 @@ export interface SubagentServiceInit {
 export interface SubagentServiceSessionInit {
   pi: PiLike;
   sessionId: string;
+  /** 主 session 文件路径（session_start 解析后直传）。
+   *  [E2E 实测] 不能经闭包缓存（getCachedMainSessionFile）读：jiti 多实例分裂下闭包
+   *  变量不跨实例共享，恢复逻辑读到的是滞后一个事件的值（读到未 flush 的新 session
+   *  ENOENT 路径，entry-born 孤儿整段漏判）。 */
+  mainSessionFile?: string;
   /** UI streaming sink（ctx.ui.setWidget），用于 background text_delta 转发。 */
   streamSink?: StreamSink;
   /** 主进程运行模式（W4 守卫：headless 不注入 ask_user RPC 提示词）。
@@ -213,6 +222,8 @@ export class SubagentService {
   private pi: PiLike | null = null;
   /** 当前 Pi session ID（本进程 pi session，事件路由等用；record 过滤不用它）。initSession 时注入。 */
   private sessionId: string | null = null;
+  /** 主 session 文件（initSession 按值直传——jiti 多实例下闭包缓存不可靠，见 SessionInit 注释）。 */
+  private mainSessionFile: string | undefined;
   /** 所属根 session ID（record 归属过滤用）。根进程 = sessionId（自己是 root）；
    *  子进程 = env PI_SUBAGENT_ROOT_SESSION_ID 贯穿的真 ROOT（initSession 读取）。
    *  与 sessionId 正交：sessionId 是本进程 pi session（事件路由等），sessionRootId 是所属根
@@ -319,6 +330,8 @@ export class SubagentService {
     // 上报通道永远是 no-op，事故排查依然静默。
     this.store.setPi(this.pi);
     this.sessionId = init.sessionId;
+    // 主 session 文件按值直传（jiti 多实例下闭包缓存不可靠，见接口注释）。
+    this.mainSessionFile = init.mainSessionFile;
     this.streamSink = init.streamSink ?? null;
     this.isIdleFn = init.isIdle;
     // 读取 mode（W4 守卫透传给 session-runner）+ session 级 handler 覆盖。
@@ -373,6 +386,32 @@ export class SubagentService {
     this._disposed = false;
     this.store.revive();
     this.notifier.revive();
+    // 孤儿终态恢复（residual-fixes）：session_start 主动触发一次——父扩展死后再无人写
+    // 终态 entry 的 record 在此判定落盘（否则侧栏永久 running）。放 initSession 末尾：
+    // setPi 已注入（appendEntry 可用），sessionRootId 已建立（过滤当前根的 record）。
+    // 幂等不 throw，失败不阻断 session_start。
+    this.recoverOrphanRecords();
+  }
+
+  /** 孤儿终态恢复委托（RecordStore.recoverOrphanRecords 的唯一公开入口，维持 store
+   *  private 封装——与 recoverManifestTmpFiles 同模式）。判定语义见 store 侧注释。
+   *  随后跑 entry-born 孤儿恢复（无子文件锚的 register-only record，spawn 窗口期死亡，
+   *  E2E 实测缺口）——主 session 文件经 getMainSessionFile 注入（构造期可空）。 */
+  recoverOrphanRecords(): void {
+    try {
+      this.store.recoverOrphanRecords(this.sessionRootId ?? undefined);
+    } catch (err) {
+      logger.warn("[subagents] orphan recovery failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+    try {
+      this.store.recoverEntryOnlyOrphans(this.mainSessionFile, this.sessionRootId ?? undefined);
+    } catch (err) {
+      logger.warn("[subagents] entry-only orphan recovery failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /** 启动恢复：扫描 manifest tmp 残留（崩溃打断的 writeManifest 留下的 *.json.tmp.<pid>），
@@ -446,40 +485,19 @@ export class SubagentService {
     return this.disposeAllRecords("parent-new");
   }
 
-  /** SP-4: idle record GC 定时器（30 天 TTL）。防止 idle record 永久驻留内存。
-   *  session_start 时启动，session_shutdown 时清理。每小时检查一次。 */
-  private gcTimer: NodeJS.Timeout | undefined;
+  /** SP-4: idle record GC（30 天 TTL，实现抽至 idle-gc.ts）。stop 函数（dispose 调）。 */
+  private stopIdleGc: (() => void) | undefined;
 
-  /** 启动 idle record GC 定时器（session_start 调用）。 */
+  /** 启动 idle record GC 定时器（session_start 调用，幂等）。 */
   startGcTimer(): void {
-    if (this.gcTimer) return;
-    const GC_INTERVAL_MS = 60 * 60 * 1000; // 1 小时
-    const IDLE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 天
-    this.gcTimer = setInterval(() => {
-      const now = Date.now();
-      for (const record of this.store.listAllActive()) {
-        if (isResumable(record) && record.idleSince) {
-          const age = now - record.idleSince;
-          if (age > IDLE_TTL_MS) {
-            logger.warn(`[subagents] GC: archiving idle record ${record.id} (idle for ${Math.round(age / 86400000)}d)`);
-            try {
-              this.store.archive(record);
-            } catch (err) {
-              bestEffort(err, `GC archive record ${record.id}`);
-            }
-          }
-        }
-      }
-    }, GC_INTERVAL_MS);
-    this.gcTimer.unref?.();
+    if (this.stopIdleGc) return;
+    this.stopIdleGc = startIdleGc(this.store);
   }
 
   /** 停止 idle record GC 定时器（dispose 调用）。 */
   private stopGcTimer(): void {
-    if (this.gcTimer) {
-      clearInterval(this.gcTimer);
-      this.gcTimer = undefined;
-    }
+    this.stopIdleGc?.();
+    this.stopIdleGc = undefined;
   }
 
   /** session 结束清理（清定时器，丢弃 pending 通知）。幂等。
@@ -538,11 +556,16 @@ export class SubagentService {
    *  closeSubagent 的 status 分流守卫（closed 后幂等 no-op）/ CAS 抢锁保证只执行一次，
    *  本方法自身不重复发送；迟到的 kickOffBackground.then 通知与轮次通知同 key=`id:round`，
    *  60s 窗内仍被吞，不构成第三条。 */
-  private notifyClosed(record: ExecutionRecord): void {
+  /** @param emptyBody true = 终态通知正文置空串（D2 路径②）。W16 P-1 修复后
+   *  closeChatIdle 的 doneResult.text 改用 record.result 保真（close 终态
+   *  subagent-record entry 的 result 不抹空轮终真实值），「正文空」不再由合成空
+   *  text 的副作用承载，改为显式参数——持久化 result 与通知正文两个关注点解耦。 */
+  private notifyClosed(record: ExecutionRecord, emptyBody = false): void {
     if (!record.chatMode) return;
     const notify = this.toNotifyRecord(record);
     if (!notify) return;
     notify.round = undefined;
+    if (emptyBody) notify.result = "";
     if (record.round != null) notify.totalRounds = record.round;
     this.notifier.notify(notify);
   }
@@ -804,6 +827,13 @@ export class SubagentService {
 
     // 手动设回 running（M2-A 边界：绕过 tryTransition，idle→running 恢复非终态 CAS）。
     record.status = "running";
+    // 执行态信号清除（residual-fixes U3 补全）：新一轮开跑 = 无轮终信号——resumable
+    // 与上一轮 result 都要清（§5.4 isStreaming 公式要求 result undefined 才显示
+    // streaming，不清则续轮流仍显示 waiting、spinner 无法恢复）。
+    record.resumable = undefined;
+    record.result = undefined;
+    // W16 [D4]：冷路径续轮是类外状态写点（不走 register/archive），显式上报迁移。
+    this.store.reportRecordTransition(record);
 
     // resume 参数从 record identity 读（防漂移，P-10）。
     const resume: SpawnResumeOpts = {
@@ -882,6 +912,14 @@ export class SubagentService {
         sendPromptCommand(child, text, { streamingBehavior: interrupt ? "steer" : "followUp" });
         // 热路径成功，清零 EPIPE 连续失败计数（[v4 A-1] 计数器已迁移到 stdin-writer）
         clearEpipeFailure(record.id);
+        // 轮始执行态信号清除 + 迁移上报（residual-fixes U3 补全，与冷路径 resumeRound
+        // 对称）：新一轮开跑 = 无轮终信号——清上一轮 result（§5.4 isStreaming 公式要求
+        // result undefined 才显示 streaming）与 resumable，appendEntry 让 runtime/W18
+        // 派生缓存失效、GUI 侧从 waiting 切回 spinner。仅在投递成功后清（失败保留
+        // 上一轮信号，EPIPE 兜底走 resumeRound 时由其再清）。
+        record.result = undefined;
+        record.resumable = undefined;
+        this.store.reportRecordTransition(record);
       } catch (err) {
         // EPIPE 兜底：stdin 管道已断，进程实际已死但 close 事件尚未到达。
         // 检测 EPIPE 关键词 → 进程按 dead 处理 → 自动转冷路径 resume + 消息重放。
@@ -942,7 +980,7 @@ export class SubagentService {
    *
    * 同进程内 running + idle record 都在内存（getMutable）；终态 record 已 archive。
    * 跨重启（SP-2）内存空时，从磁盘 collectRecords 重建 idle record 并 register 进内存。
-   * reconstructAll 已将跨重启 record（无 sidecar marker + pid 死）标记为 idle，
+   * reconstructAll 已将跨重启 record（无 sidecar marker + pid 死）标记为 running（v4 B-1 跨重启可续聊语义，record-store buildRecord 分支 4），
    * collectRecords 返回的 SubagentRecord 可直接转为可变 ExecutionRecord 供续操作。
    *
    * @param id subagent record id
@@ -953,7 +991,7 @@ export class SubagentService {
     this.assertReady();
     let record = this.store.getMutable(id);
     // SP-2 跨重启恢复：内存未命中时，从磁盘 collectRecords 重建 idle record。
-    // reconstructAll 已将跨重启 record（无 sidecar + pid 死）标记为 idle（非 crashed），
+    // reconstructAll 已将跨重启 record（无 sidecar + pid 死）标记为 running（v4 B-1 可续聊语义，非 crashed），
     // 直接转为可变 ExecutionRecord register 进内存，供 message/close action 续操作。
     if (!record) {
       // [perf] SP-2 冷路径：先走 idToFile 索引直查（单文件 stat 校验），未命中
@@ -963,7 +1001,7 @@ export class SubagentService {
       const found =
         (direct?.status === "running" ? direct : undefined) ??
         this.store
-          .collectRecords(1000, "all", undefined)
+          .collectRecords(COLD_LOOKUP_SCAN_LIMIT, "all", undefined)
           .find((r) => r.id === id && r.status === "running");
       if (found) {
         record = createRecord(id, {
@@ -1077,9 +1115,13 @@ export class SubagentService {
     disarmIdleTimer(record.id);
     const child = getChildByRecord(record.id);
     if (child && !child.killed) child.kill("SIGTERM");
-    // 合成 closed result（无在途 AgentResult，对齐 cancelBackground cancelledResult）
+    // 合成 closed result（无在途 AgentResult，对齐 closeAfterRoundSettled 的
+    // `record.result ?? ""` 模式）。[W16 P-1 修复] text 必须沿用轮终真实 result：
+    // completeRecord 会执行 record.result = result.text，合成空串会把轮终真实值抹空，
+    // archive 落的 close 终态 subagent-record entry（D4 重建源）随之失真——重开
+    // session 后 result 回退空串。
     const doneResult: AgentResult = {
-      text: "",
+      text: record.result ?? "",
       turns: record.turnCount,
       durationMs: Date.now() - record.startedAt,
       success: true,
@@ -1100,11 +1142,12 @@ export class SubagentService {
       "closed",
       "user-close", // close action 主动关闭
     );
-    // [C-1] 终态通知（设计 D2 路径②）：doneResult.text 恒空串 → 终态通知正文空 +
-    // sessionFile 指针行（idle 下末轮增量已由该轮轮次通知送达，终态再发属重复）。
+    // [C-1] 终态通知（设计 D2 路径②）：正文空串占位 + sessionFile 指针行（idle 下
+    // 末轮增量已由该轮轮次通知送达，终态再发属重复）。doneResult.text 已改保真
+    // （P-1 修复），正文空由 notifyClosed 的 emptyBody 参数显式表达。
     // dedup 身份独立于轮次通知（notifyClosed 置 round=undefined），60s 窗内不被吞。
     // 防重入：closeSubagent 对 closed record 幂等 no-op，本路径不会被二次进入。
-    this.notifyClosed(record);
+    this.notifyClosed(record, true);
   }
 
   /**
@@ -1786,6 +1829,13 @@ export class SubagentService {
         // [增量] base 推进（notify 之后）：下一轮增量从本轮边界起。滞后空 turn 不计入边界
         //（防御分支，留在下一轮增量内防丢文本——nextRoundBaseTurnIndex 注释）。
         record.roundBaseTurnIndex = nextRoundBaseTurnIndex(record);
+        // 轮终迁移持久化（residual-fixes U3 补全）：热路径轮终不经 doFinalizeRoundToIdle
+        //（agent_settled 恒 arm idle timer → runAndFinalize 恒 early return，MF-2 原写点
+        // 不可达）——不 appendEntry 则 runtime/W18 派生缓存不失效，renderer 停留在
+        // register 快照（无 result），chat 等续聊的 waiting 形态显示不出来、spinner
+        // 卡死。显式上报：entry 携带本轮 result/round/chatMode（§5.4：result 有值 +
+        // chatMode=true → waiting）。closeAfterRound 的终态 entry 在此后追加，序不变。
+        this.store.reportRecordTransition(record);
         // [M5] closeAfterRound 消费点：chatMode 每轮完成的统一汇聚点（热路径轮不经
         // runAndFinalize CAS 分支——agent_settled 恒 arm idle timer → runAndFinalize 恒
         // early return，旧消费点对 chatMode 不可达，标志置了无人消费、tool 谎报 closed:true）。

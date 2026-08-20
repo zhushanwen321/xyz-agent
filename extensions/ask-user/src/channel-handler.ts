@@ -122,7 +122,10 @@ async function runTuiProtoInteraction(
 			return comp;
 		},
 	);
-	if (result === null || result.cancelled) return null;
+	// json/print 模式 ctx.ui 是 noOpUIContext，custom 返回 undefined（TUI 返回 Result | null）。
+	// 显式 undefined 守卫：裸 result.cancelled 对 undefined 会抛 TypeError（W4 修复前
+	// 靠 dialog-queue 兜底为 {cancelled:true}，现源头短路，语义等价且不再依赖兜底）。
+	if (result === null || result === undefined || result.cancelled) return null;
 	return encodeTuiResultToProto(protoQuestions, result);
 }
 

@@ -39,7 +39,6 @@ function makeMockSession(overrides: Partial<IManagedSessionView> = {}): IManaged
     isCompacting: false,
     isBashRunning: false,
     bashRunToken: undefined,
-    labelPersisted: false,
     ...overrides,
   }
 }

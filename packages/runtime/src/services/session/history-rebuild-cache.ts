@@ -89,9 +89,10 @@ export class HistoryRebuildCache {
  * - 无 piEntryId 的消息（理论上重建路径全带——entry-tree-builder 全路径传 entryIds；
  *   防御）→ 顺序追加 + debug 日志，保证消息不丢
  *
- * 去重身份是 piEntryId 而非 Message.id：重建消息的 id 是每次随机生成的 UUID
- * （message-converter），按 Message.id 去重恒失效。renderer prependHistoryMut
- * （mutations.ts）是同语义的现成范式，此处是 runtime 侧复用。
+ * 去重身份是 piEntryId 而非 Message.id：重建消息的 id 由 core applyEntry reducer 从
+ * entry 确定性派生（entry.id（真实 uuidv7）缺失时按喂入下标 `e<N>`，W20 起），跨两次
+ * 重建无 entry id 的消息仍不保证稳定——按 Message.id 去重恒失效。renderer
+ * prependHistoryMut（mutations.ts）是同语义的现成范式，此处是 runtime 侧复用。
  *
  * @returns 新数组（不修改入参），供直接写入缓存与返回
  */

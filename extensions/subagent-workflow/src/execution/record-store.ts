@@ -28,6 +28,8 @@ import * as path from "node:path";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { getCurrentActivity, getDisplayItems, getEventLog, markReconstructedStatus, snapshot as toSnapshot } from "./execution-record.ts";
+import { writeFinalized } from "./finalized-marker.ts";
+import { toSubagentRecordEntry, SUBAGENT_RECORD_CUSTOM_TYPE } from "./record-entry.ts";
 import type { ManifestRecord, ManifestStore } from "./manifest-store.ts";
 import { INDEX_WRITE_MIN_INTERVAL_MS, loadIndex, saveIndex } from "./sessions-index.ts";
 import type { SessionsIndexEntry, SessionsIndexNegativeEntry } from "./sessions-index.ts";
@@ -150,6 +152,72 @@ interface NegativeFileEntry {
 /** fileCache 值类型：正常条目或负缓存条目。 */
 type FileCacheValue = FileCacheEntry | NegativeFileEntry;
 
+/** 孤儿判定的末行读取初始窗口（常规 entry 远小于此，避免全文件读）。 */
+// eslint-disable-next-line no-magic-numbers -- 64KB = 64 * 1024 bytes 字节换算常数
+const LAST_LINE_WINDOW_BYTES = 64 * 1024;
+/** 末行超出初始窗口时的扩窗倍数（64KB → 256KB → 1MB → …，上限=文件头）。
+ *  [HISTORICAL] 曾断言「64KB 足以容纳任何单行 entry（task 上限 ~62KB 实测）」并被
+ *  V1 探针推翻：真实库 4822 个子文件中 28 个末行为 65KB-776KB 的完整 entry
+ *  （subagent-identity 的 task 内嵌大 payload）——固定尾窗会把超长末行从中间切开
+ *  误判截断，孤儿恢复错落 error。 */
+const WINDOW_GROWTH_FACTOR = 4;
+/** 窗口内 ≥2 个非空段 = 末行之前存在换行边界（首段可能被窗口切开，末段完整到 EOF）。 */
+const MIN_SEGMENTS_WITH_BOUNDARY = 2;
+
+/**
+ * 读 JSONL 文件的最后一个非空行（孤儿终态判定用，residual-fixes §5.2）。
+ * 读文件尾部窗口起步；窗口内只有单个非空段且未到文件头时，该段可能是被窗口切开的
+ * 超长末行，按 WINDOW_GROWTH_FACTOR 扩窗直到看见末行前的换行边界或抵达文件头。
+ * 返回 ok=false 表示 IO 错误（open/read 阶段抛出，含权限/磁盘故障——可能是暂时
+ * 状态，调用方按保守方向处理）。
+ */
+function readLastJsonlLine(sessionFile: string): { ok: true; line: string } | { ok: false } {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(sessionFile, "r");
+    const size = fs.fstatSync(fd).size;
+    let windowBytes = LAST_LINE_WINDOW_BYTES;
+    let windowStart = Math.max(0, size - windowBytes);
+    let lines: string[] = [];
+    while (true) {
+      const buf = Buffer.alloc(size - windowStart);
+      fs.readSync(fd, buf, 0, buf.length, windowStart);
+      lines = buf.toString("utf-8").split("\n").filter((l) => l.length > 0);
+      // 末行完整可提取 = 窗口内末行之前还有换行（≥2 个非空段）或已覆盖到文件头。
+      if (windowStart === 0 || lines.length >= MIN_SEGMENTS_WITH_BOUNDARY) break;
+      windowBytes *= WINDOW_GROWTH_FACTOR;
+      const nextStart = Math.max(0, size - windowBytes);
+      if (nextStart === windowStart) break;
+      windowStart = nextStart;
+    }
+    // 窗口仍可能从行中间开始（首段被切开）——丢掉第一段；到文件头则首段是完整首行。
+    const candidates = windowStart > 0 && lines.length > 0 ? lines.slice(1) : lines;
+    const last = candidates.length > 0 ? candidates[candidates.length - 1] : lines[lines.length - 1];
+    if (last === undefined) return { ok: true, line: "" }; // 空文件：视为不可判终态的截断形态由 parse 失败兜住
+    return { ok: true, line: last };
+  } catch {
+    return { ok: false };
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch (_e) {
+        void _e; // 关闭失败不影响已读结果（对齐 finalized-marker best-effort 模式）
+      }
+    }
+  }
+}
+
+/** unknown → subagent-record entry 的运行时守卫（taste/no-unsafe-cast：断言前收窄）。 */
+function asSubagentRecordEntry(o: unknown): { id: string; data: Record<string, unknown> } | null {
+  if (typeof o !== "object" || o === null) return null;
+  const obj = o as Record<string, unknown>;
+  if (obj.type !== "custom" || obj.customType !== SUBAGENT_RECORD_CUSTOM_TYPE) return null;
+  if (typeof obj.data !== "object" || obj.data === null) return null;
+  const data = obj.data as Record<string, unknown>;
+  return typeof data.id === "string" ? { id: data.id, data } : null;
+}
+
 /** stat 戳（不存在 → null）。 */
 function statStamp(p: string): Stamp | null {
   try {
@@ -191,6 +259,8 @@ export class RecordStore {
   private readonly records = new Map<string, ExecutionRecord>();
   private readonly listeners = new Set<ChangeListener>();
   private _disposed = false;
+  /** 孤儿终态恢复的已判定缓存（residual-fixes）：resumable 形态无 sidecar 锚，同进程重复调用跳过。 */
+  private orphanJudged = new Set<string>();
   /** Pi handle（用于 appendEntry 上报损坏 manifest）。构造时可空，setPi() 后续注入。
    *  显式存为字段而非构造参数 readonly：setPi 需要写权限。 */
   private pi: RecordStorePi = null;
@@ -236,9 +306,12 @@ export class RecordStore {
     this.pi = pi ?? null;
   }
 
-  /** 注册新 record。触发 onChange。 */
+  /** 注册新 record。触发 onChange。
+   *  W16 [D4]：record 诞生（→ running）即 append 自描述快照 entry——pi 文件是
+   *  扩展数据持久化权威，custom entry 不进 LLM context。 */
   register(record: ExecutionRecord): void {
     this.records.set(record.id, record);
+    this.pi?.appendEntry?.("subagent-record", toSubagentRecordEntry(RecordStore.recordToSubagent(record)));
     this.notifyChange();
   }
 
@@ -246,10 +319,26 @@ export class RecordStore {
    * 归档：record 已被 completeRecord 设置了终态 status。
    * 立即从内存移除（终态 record 下次读时从 session.jsonl 重建）。
    * cancelled record 由调用方先写 tombstone（cancel 路径），此处只负责移除。
+   *
+   * W16 [D4]：终态冻结字段（result/endedAt/closedReason）在 completeRecord 已就绪，
+   * 此处 append 的快照即完整终态记录（所有终态路径的必经锚点）。
    */
   archive(record: ExecutionRecord): void {
     this.records.delete(record.id);
+    this.pi?.appendEntry?.("subagent-record", toSubagentRecordEntry(RecordStore.recordToSubagent(record)));
     this.notifyChange();
+  }
+
+  /**
+   * W16 [D4]：类外状态写点上报（record-store 内的迁移点 register/archive 已内置）。
+   *
+   * 供 service 层直接改 record.status 的恢复写点调用（chatMode 续轮 idle→running
+   * 冷路径 resumeRound、轮终 finalizeRoundToIdle 回 running-resumable）——这些
+   * 写点绕过 register/archive，若不显式上报，pi 文件缺失该次迁移、重建源滞后。
+   * pi 未注入（session_start 前）时可选链静默降级，不阻断主流程。
+   */
+  reportRecordTransition(record: ExecutionRecord): void {
+    this.pi?.appendEntry?.("subagent-record", toSubagentRecordEntry(RecordStore.recordToSubagent(record)));
   }
 
   /** 按 id 查找。返回可变 record（仅 runtime 内部用）。 */
@@ -377,6 +466,159 @@ export class RecordStore {
       .slice(0, limit);
   }
 
+  // ── 孤儿终态恢复（residual-fixes 设计 §6.1.2）──────────────────
+
+  /**
+   * 重建 SubagentRecord 的自描述 entry 落盘入口（签名适配：reportRecordTransition 收
+   * ExecutionRecord，重建孤儿的数据源是 SubagentRecord——直接经 toSubagentRecordEntry
+   * 投影 appendEntry，绕过 recordToSubagent）。pi 未注入时可选链静默。
+   */
+  reportSubagentRecord(record: SubagentRecord): void {
+    this.pi?.appendEntry?.("subagent-record", toSubagentRecordEntry(record));
+  }
+
+  /**
+   * 孤儿终态恢复：对重建矩阵分支 4 兜底（running 且无 externalInstance）的 record
+   * 判定真实终态并落 entry，消除「父扩展死后再无人写终态 → 侧栏永久 running」。
+   *
+   * 判定（residual-fixes §5.2 三判据 + chat 分流）：
+   * - chatMode = true → 不终态化（跨重启可续聊是产品语义，v4 B-1），落 resumable
+   *   entry 供侧栏 waiting 细分；
+   * - 子 JSONL 末行完整 JSON.parse → closed（closedReason=gc，与分支 2 重建映射一致；
+   *   done/failed 细分由 error 字段经 deriveClosedDisplay 派生）+ 写 .finalized sidecar
+   *   （防重锚——下次重建走分支 2 不再进判定）；
+   * - 末行截断 → closed + error（保守，错误方向安全）+ sidecar；
+   * - 文件不可读（IO 错误，可能暂时）→ 不判终态，落 resumable entry（防御性路径，
+   *   IO 恢复后重开可重判）。
+   *
+   * 防重：orphanJudged 实例级缓存（resumable 形态无 sidecar 锚，同进程重复调用跳过；
+   * 终态形态双重防护 = sidecar + 缓存）。调用方：index.ts session_start 恢复段（一次）。
+   */
+  recoverOrphanRecords(rootSessionFilter?: string): void {
+    for (const rec of this.reconstructAll(rootSessionFilter)) {
+      // 分支 4 命中集 = running 且无活进程实例（分支 3 带 externalInstance，分支 1/2 已 closed）。
+      if (rec.status !== "running" || rec.externalInstance !== undefined) continue;
+      if (this.orphanJudged.has(rec.id)) continue;
+      this.orphanJudged.add(rec.id);
+
+      if (rec.chatMode === true) {
+        // chat 会话跨重启等续聊：保留 running（可续聊），仅落执行态信号。
+        this.reportSubagentRecord({ ...rec, resumable: true });
+        continue;
+      }
+      const sessionFile = rec.sessionFile;
+      if (sessionFile === undefined) continue; // 无子文件锚（目录扫描源不可达，防御）
+      const lastLine = readLastJsonlLine(sessionFile);
+      if (!lastLine.ok) {
+        // IO 错误可能暂时——判终态不可逆，保守落 resumable 等重开重判。
+        this.reportSubagentRecord({ ...rec, resumable: true });
+        continue;
+      }
+      let parseOk = false;
+      try {
+        JSON.parse(lastLine.line);
+        parseOk = true;
+      } catch {
+        parseOk = false;
+      }
+      // .finalized sidecar：防重锚（同 doFinalizeRecord 终态路径的收尾标记）。
+      writeFinalized(sessionFile);
+      this.reportSubagentRecord({
+        ...rec,
+        status: "closed",
+        closedReason: "gc",
+        endedAt: Date.now(),
+        ...(parseOk ? {} : { error: "orphan recovery: subagent session ended abnormally (truncated last line)" }),
+      });
+    }
+  }
+
+  /**
+   * [E2E 实测缺口] entry-born 孤儿恢复：register entry 已落主 session、但子 session 文件
+   * 从未创建（父进程死在 spawn 窗口期——register 写点与子进程首笔写入之间的窗口；外部
+   * 删除子文件的已知边界同形）。目录扫描（reconstructAll）看不见这类 record（无文件即
+   * 无扫描集），recoverOrphanRecords 判不到，侧栏（runtime entry 扫描源）永久 spinner。
+   *
+   * 判定：读主 session 的 subagent-record entry，取每 id 末条；末条 status=running 且
+   * 无子文件锚（不在 reconstructAll 结果中）且不在内存活 record（防误杀刚 register 的
+   * 在途 spawn）→ 按无文件判据收敛：chatMode=true → resumable（分流语义一致）；否则
+   * closed+gc+error（子文件由子进程创建，无文件 = 子进程从未开跑，error 方向安全）。
+   * 调用点：initSession 的 recoverOrphanRecords 之后（session_start，内存恒空）。
+   */
+  recoverEntryOnlyOrphans(mainSessionFile: string | undefined, rootSessionFilter?: string): void {
+    if (mainSessionFile === undefined) return;
+    let content: string;
+    try {
+      content = fs.readFileSync(mainSessionFile, "utf-8");
+    } catch {
+      return; // 主文件不可读（含新 session 未 flush 的 ENOENT）：静默跳过（best-effort 恢复）
+    }
+    const lastById = new Map<string, Record<string, unknown>>();
+    for (const line of content.split("\n")) {
+      if (!line.includes(SUBAGENT_RECORD_CUSTOM_TYPE)) continue; // 快过滤：绝大多数行不是本类型
+      let entry: { id: string; data: Record<string, unknown> } | null = null;
+      try {
+        entry = asSubagentRecordEntry(JSON.parse(line));
+      } catch (err) {
+        // 截断/异构行跳过（主文件末行可能正被写入）——行级 best-effort，debug 留痕
+        logger.debug("[subagents] entry-only orphan scan: skip unparsable line", {
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+      if (entry !== null) lastById.set(entry.id, entry.data);
+    }
+    if (lastById.size === 0) return;
+    const anchoredIds = new Set(this.reconstructAll(rootSessionFilter).map((r) => r.id));
+    for (const [id, d] of lastById) {
+      if (d.status !== "running") continue; // 末条已终态/轮终：entry 自洽，无需恢复
+      if (rootSessionFilter !== undefined && d.rootSessionId !== rootSessionFilter) continue;
+      if (anchoredIds.has(id)) continue; // 有子文件锚：主循环已判（或 sidecar 已终态）
+      if (this.records.has(id)) continue; // 内存活 record：在途 spawn，不得误杀
+      if (this.orphanJudged.has(id)) continue;
+      this.orphanJudged.add(id);
+      // entry data 即 SubagentRecord v1 快照——带运行时 guard 重建（taste/no-unsafe-cast）。
+      const str = (k: string): string | undefined => (typeof d[k] === "string" ? (d[k] as string) : undefined);
+      const num = (k: string): number | undefined => (typeof d[k] === "number" ? (d[k] as number) : undefined);
+      const agent = str("agent");
+      const task = str("task");
+      const startedAt = num("startedAt");
+      if (agent === undefined || task === undefined || startedAt === undefined) continue; // 损坏 entry：跳过
+      const rec: SubagentRecord = {
+        id,
+        agent,
+        task,
+        slug: str("slug") ?? "",
+        status: "running",
+        mode: "background",
+        startedAt,
+        rootSessionId: str("rootSessionId"),
+        parentRecordId: str("parentRecordId"),
+        depth: num("depth") ?? 0,
+        endedAt: undefined,
+        turns: num("turns") ?? 0,
+        totalTokens: num("totalTokens") ?? 0,
+        model: str("model") ?? "",
+        thinkingLevel: str("thinkingLevel"),
+        eventLog: [],
+        displayItems: [],
+        sessionFile: undefined,
+        chatMode: d.chatMode === true,
+        round: num("round"),
+      };
+      this.reportSubagentRecord({
+        ...rec,
+        ...(d.chatMode === true
+          ? { resumable: true }
+          : {
+              status: "closed" as const,
+              closedReason: "gc" as const,
+              endedAt: Date.now(),
+              error: "orphan recovery: no child session file (spawn interrupted or file removed externally)",
+            }),
+      });
+    }
+  }
+
   /** 订阅变更。返回取消订阅函数。 */
   onChange(listener: ChangeListener): () => void {
     this.listeners.add(listener);
@@ -402,6 +644,7 @@ export class RecordStore {
     this.fileCache.clear();
     this.idToFile.clear();
     this.dirStamp = null;
+    this.orphanJudged.clear();
     // [perf L-1] 索引状态重置为初始值（「清内存」语义完备）。不取消挂起的 fire-and-forget
     // 写——in-flight 写的丢失显式接受（revive 后 dirStamp===null 重扫会重新装载/重写）。
     this.indexEntries = null;
@@ -763,6 +1006,7 @@ export class RecordStore {
         result: base.result,
         error: base.error,
         sessionFile: base.sessionFile,
+        chatMode: base.chatMode,
         worktree: base.worktree,
       };
     } else {
@@ -789,6 +1033,7 @@ export class RecordStore {
         result: undefined,
         error: undefined,
         sessionFile: base.sessionFile,
+        chatMode: base.chatMode,
         worktree: base.worktree,
       };
     }
@@ -904,6 +1149,12 @@ export class RecordStore {
       error: r.error,
       sessionFile: r.sessionFile,
       round: r.round,
+      // [E2E 实测抓漏] 缺这两行时 chatMode/resumable 在 recordToSubagent 处被丢弃，
+      // entry 序列化后无此字段 → renderer isDone（需显式 chatMode===false）恒不成立，
+      // 完成态 one-shot 永远显示 waiting。单测 schema 断言曾因内存对象保留 undefined
+      // 键名而未拦截（真实 JSONL 丢 undefined 值），故 schema 测试改为序列化后断言。
+      chatMode: r.chatMode,
+      resumable: r.resumable,
       // [review round2] worktree 隔离标志：内存源有 handle 或跨重启重建带 hadWorktree 均为 true。
       worktree: r.worktreeHandle !== undefined || r.hadWorktree === true,
     };

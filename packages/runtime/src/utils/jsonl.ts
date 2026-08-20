@@ -57,7 +57,9 @@ export const READ_TAIL_BYTES = READ_TAIL_KB * BYTES_PER_KB
  *
  * 用 openSync + readSync 从 offset=max(0, size-READ_TAIL_BYTES) 做 partial read，
  * 避免 readFileSync 全量读取。专为 extractSessionName/Outcome 这类「找尾部最后一条
- * 匹配 entry」的场景设计——pi 的 persistSessionName/End 都是 append（尾部追加）。
+ * 匹配 entry」的场景设计——这些 entry 都是 append（尾部追加）：session_info 现由
+ * pi 自身 append 落盘（[HISTORICAL] xyz 直写函数已随 W11 删除），session_end 在
+ * 存量旧 session 的 JSONL 内（W4 起现写 sidecar）。
  *
  * INVAR-tail-3：offset>0 时尾块**首行视为残行丢弃**——从文件中间位置读可能切断
  * 某行或多字节 UTF-8 字符，残行可能恰好是合法 JSON 导致误匹配，靠丢首行消除

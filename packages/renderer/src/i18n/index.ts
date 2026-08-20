@@ -52,6 +52,7 @@ const i18n = createI18n<[DefaultLocaleMessageSchema], string, false>({
 })
 
 /** 已注册 messages 的 locale（幂等守卫：避免重复动态 import / setLocaleMessage） */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：已加载 locale 标记集合（i18n 基建，非 GUI 数据）——运行时经 add() 变异（i18n/index.ts:73），字面量初始化后仍运行时写的形态归 S1 语义层兜底，显式例外登记（verifier W24 minor 3）
 const loadedLocales = new Set<Locale>(['zh-CN'])
 
 /**

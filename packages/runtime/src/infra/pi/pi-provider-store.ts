@@ -389,6 +389,10 @@ export function setDefaultThinkingLevel(level: string): void {
 // 7 个）时条目五字段全缺，旧实现重启即删除（用户刚保存的 apiKey/authMethod 静默丢失）。
 // 这类空壳从 catalog 合并 models 修复（模型级 baseUrl 由 catalog 提供），保留用户数据且
 // 仍满足 bundled pi 严格校验；非 catalog 的空壳（外部脚本 fixture）维持删除语义。
+// [W1b 语义变更] 无效判定已对齐 pi 0.84.1 八字段（isInvalidProvider，锚点见
+// pi-provider-repair.ts）：QuickSetup 条目通常含 apiKey → 直接合法，不再进修复路径；
+// 修复路径仅剩八字段全缺（连 apiKey 都无）的 catalog 空壳。曾被旧五字段判定误删的
+// 配置不追溯恢复（known-issue，见 pi-provider-repair.ts）。
 // MF-6（R4 review）：修复前提是 catalog models 每个模型都有可用 baseUrl（见下）。
 // azure-openai-responses 的 38 个 catalog models 全为空串 baseUrl，合并即毒化 pi 组合，
 // 排除出修复名单（维持删除语义）——目录中不存在任何可用 baseUrl 数据。
@@ -403,15 +407,21 @@ const builtinModelsById = new Map<string, PiModelDefinition[]>(
 )
 
 /**
- * 启动时清理 models.json 里的无效 provider（五字段全缺的空壳）。
+ * 启动时清理 models.json 里的无效 provider（八字段全缺的空壳，判定 = isInvalidProvider，
+ * 对齐 pi 0.84.1 applyModelsJson 抛错条件，锚点与 known-issue 见 pi-provider-repair.ts）。
  *
- * 修复根因：空壳 provider（如 {apiKey, name} 无五字段任一）导致 bundled pi 0.80.3
+ * 修复根因（历史）：空壳 provider（如仅 {name}，八字段全缺）导致 bundled pi 0.80.3
  * 严格校验时整个 models.json 加载失败。系统 pi 0.83 对此容错但 bundled 0.80.3 不容错，
  * 重装后切换 bundled pi 必现 "Model not found"。本函数让 xyz-agent 自愈这种脏数据。
  *
- * MF-5：catalog 已知内置 provider 的空壳（QuickSetup 保存空 baseUrl 模板产生，含用户
- * 刚保存的 apiKey）不删除，合并 catalog models 修复（条目合法化，apiKey/authMethod 保留，
- * 模型级 baseUrl 由 catalog 提供）。非 catalog 空壳维持删除语义（外部 fixture 不留存）。
+ * [W1b 语义变更] 0.84.1 判定放宽为八字段（apiKey/oauth/authHeader 在场即合法）：
+ * 只配 apiKey 的合法 provider 不再被删（旧五字段判定的误删是数据丢失级 bug，审计 A-02；
+ * 被误删数据不追溯恢复——known-issue 见 pi-provider-repair.ts）。
+ *
+ * MF-5：catalog 已知内置 provider 的空壳不删除，合并 catalog models 修复（条目合法化，
+ * name/authMethod 等既有字段保留，模型级 baseUrl 由 catalog 提供）。[W1b 语义变更]
+ * QuickSetup 保存的条目含 apiKey 时直接合法、不进修复路径；修复路径仅剩无 apiKey 的
+ * catalog 空壳。非 catalog 空壳维持删除语义（外部 fixture 不留存）。
  * MF-6：修复前提是 catalog models 每个模型均有非空 baseUrl（pi modelFromJson 对空 baseUrl
  * 直接 throw，毒化整个 provider 组合且无自愈路径）。catalog models 含空 baseUrl 的 provider
  * （azure-openai-responses）排除出修复名单，维持删除语义；catalog 未来补全 baseUrl 后自动恢复修复。
@@ -429,13 +439,14 @@ export function sanitizeInvalidProviders(): { removed: string[]; repaired: strin
     const repaired: string[] = []
     for (const [id, cfg] of Object.entries(draft.providers)) {
       if (isInvalidProvider(cfg)) {
-        // catalog 已知内置 provider 的空壳 → 合并 catalog models 修复（保留 apiKey/authMethod）。
+        // catalog 已知内置 provider 的空壳 → 合并 catalog models 修复（保留 name/authMethod
+        // 等既有字段；[W1b 语义变更] 含 apiKey 的条目直接合法，不进此分支）。
         // MF-6（R4 review）：catalog models 含空 baseUrl 的 provider 不可修复——pi modelFromJson
         // 对每个自定义模型强制非空 baseUrl（空串非 nullish，`??` 不跳过 → 直接 throw），任一空
         // baseUrl 模型即毒化整个 provider 组合（composeModelProvider 抛错 → pi 回退 builtin base，
         // 用户 apiKey 静默失效且条目 isInvalidProvider===false 无自愈路径）。这类 provider
         // （azure-openai-responses 38/38 模型空 baseUrl）维持删除语义；过滤空 baseUrl 模型会退回
-        // models:[] 五字段全缺态再次被删（transient 非法态），合成 baseUrl 不可接受（catalog 无数据）。
+        // models:[] 八字段全缺态再次被删（transient 非法态），合成 baseUrl 不可接受（catalog 无数据）。
         const catalogModels = builtinModelsById.get(id)
         if (catalogModels && catalogModels.length > 0 && catalogModels.every(m => !!m.baseUrl)) {
           draft.providers[id] = { ...cfg, models: catalogModels }

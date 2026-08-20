@@ -78,9 +78,9 @@ beforeEach(() => {
 })
 
 function setGroups(cwd: string): void {
-  useSessionStore().setGroups([
+  useSessionStore().applySnapshot({ groups: [
     { cwd, sessions: [{ id: 'hist', label: 'hist', cwd, status: 'idle', lastActiveAt: 1, modelId: 'm', tokenCount: 0 }] },
-  ] as SessionGroup[])
+  ] as SessionGroup[] })
 }
 
 describe('useNewTaskFlow: create 透传归属 projectId（D14 语义修正）', () => {

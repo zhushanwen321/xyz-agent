@@ -3,7 +3,7 @@
  *
  * 锁定：model.switch 后 runtime model-service 广播 session.state_changed（payload 含 sessionId +
  * modelId + thinkingLevel + 重算用量）。useChat.ensureStreamSubscription 的 switch 须消费此事件，
- * 调 sessionStore.updateSessionState 同步，否则切换模型后 Composer 工具条不跟随。
+ * 经 sessionStore.applySnapshot 同步，否则切换模型后 Composer 工具条不跟随。
  *
  * 参照 session-renamed-sync.test.ts 同模式（streamSubscribe 捕获回调，手动触发）。
  *
@@ -46,7 +46,7 @@ beforeEach(() => {
 function seedSession(s: SessionSummary): void {
   const store = useSessionStore()
   const group: SessionGroup = { cwd: s.cwd, sessions: [s] }
-  store.setGroups([group])
+  store.applySnapshot({ groups: [group] })
 }
 
 describe('session.state_changed 事件 → store 状态同步', () => {
@@ -110,7 +110,7 @@ describe('session.state_changed 事件 → store 状态同步', () => {
     await chat.send('s3', textToSegments('触发订阅'))
 
     // payload.sessionId 指向另一个 session（streamSubscribe 按 sid 路由，实际不会收到，
-    // 但 updateSessionState 内部按 id 查找，不匹配则 no-op）
+    // 但 applySnapshot 内部按 id 查找，不匹配则 no-op）
     streamCbHolder.current!({
       type: 'session.state_changed',
       payload: {
@@ -130,7 +130,7 @@ describe('session.state_changed 事件 → store 状态同步', () => {
 })
 
 describe('session.thinkingLevelSet 事件 → store thinkingLevel 同步', () => {
-  it('U-TLSet-1: payload 含 sessionId + level → updateSessionState 更新 thinkingLevel', async () => {
+  it('U-TLSet-1: payload 含 sessionId + level → applySnapshot 更新 thinkingLevel', async () => {
     // 注：streamSubscriptions 是 useChat 模块级单例，跨用例复用 sid 会跳过订阅，故用唯一 sid。
     const sid = 'tlset-1'
     seedSession({
@@ -141,7 +141,7 @@ describe('session.thinkingLevelSet 事件 → store thinkingLevel 同步', () =>
     await chat.send(sid, textToSegments('触发订阅'))
     expect(streamCbHolder.current).not.toBeNull()
 
-    const updateSpy = vi.spyOn(useSessionStore(), 'updateSessionState')
+    const updateSpy = vi.spyOn(useSessionStore(), 'applySnapshot')
     streamCbHolder.current!({
       type: 'session.thinkingLevelSet',
       payload: { sessionId: sid, level: 'high' },
@@ -160,7 +160,7 @@ describe('session.thinkingLevelSet 事件 → store thinkingLevel 同步', () =>
     await chat.send(sid, textToSegments('触发订阅'))
     expect(streamCbHolder.current).not.toBeNull()
 
-    const updateSpy = vi.spyOn(useSessionStore(), 'updateSessionState')
+    const updateSpy = vi.spyOn(useSessionStore(), 'applySnapshot')
     streamCbHolder.current!({
       type: 'session.thinkingLevelSet',
       payload: { sessionId: sid, level: undefined },
@@ -179,7 +179,7 @@ describe('session.thinkingLevelSet 事件 → store thinkingLevel 同步', () =>
     await chat.send(sid, textToSegments('触发订阅'))
     expect(streamCbHolder.current).not.toBeNull()
 
-    const updateSpy = vi.spyOn(useSessionStore(), 'updateSessionState')
+    const updateSpy = vi.spyOn(useSessionStore(), 'applySnapshot')
     streamCbHolder.current!({
       type: 'session.thinkingLevelSet',
       payload: { sessionId: undefined, level: 'high' },

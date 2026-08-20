@@ -21,12 +21,25 @@ export type ToolMode = 'all' | 'allowlist' | 'denylist' | 'none'
 export type ExtensionMode = 'all' | 'allowlist' | 'denylist' | 'none'
 
 /**
- * 思考级别。值域与 pi CLI --thinking 参数对齐（源码核实 args.ts:57）。
+ * pi thinking 值域全集 SSOT（W2 值域对齐，pi-assumption-remediation A-03）。
+ *
+ * 锚点：pi 0.84.1 实装版 `node_modules/@earendil-works/pi-coding-agent/dist/cli/args.js:6`
+ * `VALID_THINKING_LEVELS = ["off","minimal","low","medium","high","xhigh","max"]`；
+ * runtime 协议镜像 = `packages/runtime/src/infra/pi/pi-protocol.ts` 的 `PiThinkingLevel`。
+ * shared 不能反向 import runtime（依赖方向），双向一致性由 session-lifecycle.ts
+ * 的编译期类型断言锁定（该文件同时 import 两边）。
+ * 维护注：升级 pi 时 diff 上面锚点行，同步本数组（漏同步会在编译期报错，不会静默）。
+ */
+export const PI_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+
+/**
+ * 思考级别。从 PI_THINKING_LEVELS 全集派生（W2 起不再手写联合——曾因手写值域缺
+ * 'max' 被 runtime 白名单静默丢弃，composer 最高档实际永不生效，A-03）。
  * 注意：pi 参数名是 --thinking（不是 --thinking-level）。
  */
-export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+export type ThinkingLevel = (typeof PI_THINKING_LEVELS)[number]
 
-/** pi 内置工具列表（pi 硬编码 7 个，源码 core/tools/index.ts:83-84） */
+/** pi 内置工具列表（pi 硬编码 7 个，0.84.1 实装锚点 dist/core/tools/index.js:81-89 createAllToolDefinitions） */
 export const BUILTIN_TOOLS = ['read', 'write', 'bash', 'edit', 'grep', 'find', 'ls'] as const
 
 /**

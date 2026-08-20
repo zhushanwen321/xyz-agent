@@ -162,10 +162,13 @@ export function isRecordMessage(msg: unknown): msg is Record<string, unknown> {
   return typeof msg === 'object' && msg !== null && !Array.isArray(msg)
 }
 
-/** 畸形消息的截断描述（超大字符串/数字不能整段进日志，防日志被单条消息放大） */
+/** 畸形消息日志的截断长度（字符）：超大字符串/数字不能整段进日志，防日志被单条消息放大 */
+const MALFORMED_MSG_TRUNCATE_CHARS = 120
+
 function describeMalformedMessage(msg: unknown): string {
   const text = typeof msg === 'string' ? msg : String(msg)
-  return text.length > 120 ? `${text.slice(0, 120)}…(${text.length} chars)` : text
+  const limit = MALFORMED_MSG_TRUNCATE_CHARS
+  return text.length > limit ? `${text.slice(0, limit)}…(${text.length} chars)` : text
 }
 
 /**
@@ -202,6 +205,8 @@ export function safeDispatchHostMessage(
       handlers.reply(m)
     }
   } catch (e: unknown) {
+    // best-effort 降级（入口防御设计目标）：单条消息的处理异常记日志不冒泡——
+    // EventEmitter 回调抛错会升级为 uncaughtException 触发整机 shutdown（见上方注释）
     console.error(`[${label}] error handling message from ${workerId} (type=${String(m.type)}):`, e)
   }
 }

@@ -42,7 +42,7 @@ describe('finalizeSession reason→终态映射', () => {
     })
     store.applyMessageEvent(sid, {
       type: 'message.tool_call_start',
-      payload: { sessionId: sid, toolCallId: 'tc1', toolName: 'bash' },
+      payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'bash', arguments: {}, timestamp: new Date(0).toISOString() } },
     })
     store.finalizeSession(sid, 'normal')
     const msgs = store.getMessages(sid)
@@ -59,7 +59,7 @@ describe('finalizeSession reason→终态映射', () => {
     })
     store.applyMessageEvent(sid, {
       type: 'message.tool_call_start',
-      payload: { sessionId: sid, toolCallId: 'tc1', toolName: 'bash' },
+      payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'bash', arguments: {}, timestamp: new Date(0).toISOString() } },
     })
     store.finalizeSession(sid, 'aborted')
     const msgs = store.getMessages(sid)
@@ -76,7 +76,7 @@ describe('finalizeSession reason→终态映射', () => {
     })
     store.applyMessageEvent(sid, {
       type: 'message.tool_call_start',
-      payload: { sessionId: sid, toolCallId: 'tc1', toolName: 'bash' },
+      payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'bash', arguments: {}, timestamp: new Date(0).toISOString() } },
     })
     store.finalizeSession(sid, 'error', '进程崩溃')
     const msgs = store.getMessages(sid)
@@ -93,7 +93,7 @@ describe('finalizeSession reason→终态映射', () => {
     })
     store.applyMessageEvent(sid, {
       type: 'message.tool_call_start',
-      payload: { sessionId: sid, toolCallId: 'tc1', toolName: 'bash' },
+      payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'bash', arguments: {}, timestamp: new Date(0).toISOString() } },
     })
     store.finalizeSession(sid, 'stream_error', '流错误')
     const msgs = store.getMessages(sid)
@@ -192,12 +192,12 @@ describe('finalizeSession reason→终态映射', () => {
     })
     store.applyMessageEvent(sid, {
       type: 'message.tool_call_start',
-      payload: { sessionId: sid, toolCallId: 'tc1', toolName: 'bash' },
+      payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'bash', arguments: {}, timestamp: new Date(0).toISOString() } },
     })
     // 正常结束 toolCall
     store.applyMessageEvent(sid, {
       type: 'message.tool_call_end',
-      payload: { sessionId: sid, toolCallId: 'tc1', status: 'completed', output: 'done' },
+      payload: { sessionId: sid, entry: { type: 'message', parentId: null, timestamp: new Date(0).toISOString(), message: { role: 'toolResult', toolCallId: 'tc1', content: [{ type: 'text', text: 'done' }], isError: false, timestamp: 0 } } },
     })
     expect(store.getMessages(sid)[0].toolCalls![0].status).toBe('completed')
     // finalizeSession 不应回写已 completed 的 toolCall

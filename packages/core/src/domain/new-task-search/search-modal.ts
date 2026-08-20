@@ -15,8 +15,10 @@ export interface OpenSearchModalOptions {
 
 // ── 模块级单实例状态（Q2=A：跨 useSearchModal() 调用共享）──
 /** 浮层开关 */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：搜索弹窗开合单例 ref（12 类未覆盖）
 const isOpen = ref(false)
 /** 初始/当前搜索词（打开时设置） */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：搜索查询单例 ref（同上）
 const query = ref('')
 
 /**

@@ -46,13 +46,19 @@ const STREAM_PREFIX = "  ⎿ ";
 /** footer 用的纯空格缩进（与 STREAM_PREFIX 等宽 4 列，但不带 ⎿）。 */
 const FOOTER_PREFIX = "    ";
 
+/** process.stdout.columns 不可用（非 TTY 等）时的终端宽度兜底（列）。 */
+const DEFAULT_TERM_WIDTH_COLUMNS = 120;
+
+/** 终端宽度扣减（列）：Pi Box paddingX=1（左右各 1 列）+ 安全余量。 */
+const TERM_WIDTH_BOX_INSET_COLUMNS = 4;
+
 /**
  * 获取终端宽度（参照 nicobailon getTermWidth）。
  * truncLine 需要在创建 Text 之前执行——此时 Pi 的 Box.render(contentWidth) 还未调用，
- * 只能从 process.stdout 估算。-4 对应 Pi Box paddingX=1（左右各 1 列）+ 安全余量。
+ * 只能从 process.stdout 估算。
  */
 function getTermWidth(): number {
-  return (process.stdout.columns || 120) - 4;
+  return (process.stdout.columns || DEFAULT_TERM_WIDTH_COLUMNS) - TERM_WIDTH_BOX_INSET_COLUMNS;
 }
 
 // ============================================================
@@ -99,8 +105,9 @@ export function renderSubagentCall(
   // （displayAgentName）；extractAgentName 原值另被 subagent-tool 的 resolveModel 消费，不动。
   const agent = displayAgentName(extractAgentName(args));
   // slug：从顶层 args 提取（必填字段），非空时在 agent 后用 · 分隔展示。
+  // 断言目标含必填 slug 字段（in 守卫已确认存在），对齐 format.ts extractAgentName 先例。
   const slug = typeof args === "object" && args !== null && "slug" in args
-    ? (args as { slug?: unknown }).slug
+    ? (args as { slug: unknown }).slug
     : undefined;
   const slugStr = typeof slug === "string" ? slug.trim() : "";
   const parts = slugStr

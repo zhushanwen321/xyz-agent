@@ -10,6 +10,7 @@
  * 运行：cd packages/runtime && npx vitest run test/session-lifecycle-deletebycwd.test.ts
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { homedir } from 'node:os'
 
 // deleteByCwd 内部不调 node:fs（delete 才调 existsSync），但真实 delete 走 trash/unlink，
 // 这里 spyOn delete 覆盖整段路径，node:fs 不会被触及——不需要 vi.mock。
@@ -104,6 +105,29 @@ describe('W1: SessionLifecycle.deleteByCwd — folder 维度批量删除', () =>
     expect(deleteSpy).toHaveBeenCalledTimes(1)
     expect(deleteSpy).toHaveBeenCalledWith('s3')
     expect(result).toEqual({ cwd: '/p', deleted: ['s3'], failed: [] })
+  })
+
+  it('W11：header cwd 为死路径的 session，deleteByCwd(死路径) 命中（真实历史值匹配）', async () => {
+    // W11（patchSessionCwd 迁 tmp 管线）后的扫描侧消费边界：源文件 header 永久保持
+    // 死路径 cwd（pi append 不重写 header），deleteByCwd 按扫描条目的真实历史 cwd 命中——
+    // 旧方案（restore 时 patch 成 home）下 deleteByCwd(死路径) 不会命中。此用例锁定
+    // 「按真实历史值删除」的接受行为（plan W11 步骤 5 / 验收 4 扫描侧断言）。
+    const deadCwd = '/gone/worktree-abc'
+    const { lifecycle, svc, sessionStore, deleteSpy } = makeHarness()
+    ;(sessionStore.scanSessions as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: 'dead-cwd-1', cwd: deadCwd, filePath: '/gone/worktree-abc/dead-cwd-1.jsonl' } as ScannedSessionMeta,
+    ])
+    ;(svc.getActiveSummaries as ReturnType<typeof vi.fn>).mockReturnValue([])
+
+    const result = await lifecycle.deleteByCwd(deadCwd)
+
+    expect(deleteSpy).toHaveBeenCalledWith('dead-cwd-1')
+    expect(result.deleted).toEqual(['dead-cwd-1'])
+    // deleteByCwd(home) 不再命中该 session（home 是旧方案的修补值，死路径才是真实历史值）
+    deleteSpy.mockClear()
+    const byHome = await lifecycle.deleteByCwd(homedir())
+    expect(deleteSpy).not.toHaveBeenCalled()
+    expect(byHome.deleted).toEqual([])
   })
 
   it('W1TC1b 全部 reject → deleted=[] 且 failed 含全部，循环不中断', async () => {

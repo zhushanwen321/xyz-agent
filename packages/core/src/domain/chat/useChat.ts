@@ -13,13 +13,14 @@
  *            → api.events.streamSubscribe → store.applyMessageEvent（message.* 单一入口）
  *            → MessageStream 响应式渲染 + useVirtuaFollow.followIfStuck
  *
- * hydrate：首次进入 session 调 api.chat.getHistory 注入历史 fixture（含 tool_call/summary），
- * 让 UC-2 切换会话可见块类型丰富度（G2-006）。
+ * hydrate：首次进入 session 调 api.chat.getHistory 注入历史（含 tool_call/summary），
+ * 让 UC-2 切换会话可见块类型丰富度（G2-006）。messages 为 applyEntry reducer 重放投影
+ * （W20 D5，详见 hydrateHistory 注释）。
  *
  * abort：调 api.chat.abort（方法存在，中断流转 DEFERRED G-025）。
  */
 import { ref } from 'vue'
-import type { Segment } from '@xyz-agent/shared'
+import type { Segment, SessionViewSnapshot } from '@xyz-agent/shared'
 import { segmentsToPrompt } from '@xyz-agent/shared'
 import {
   subscribeSession,
@@ -35,12 +36,12 @@ import { createMessageCoalescer } from './delta-coalescer'
  * SessionStoreLike —— useChat 消费 session store 的最小结构类型。
  *
  * 不 import 整个 SessionStoreInstance（避免 core 内 chat→session 域强耦合 + 返回类型膨胀）。
- * useChat 只用 updateLabel（session.renamed）+ updateSessionState（state_changed/thinkingLevelSet）。
- * 结构性类型，renderer useSessionStore() 返回值自动满足。
+ * useChat 只用 applySnapshot 的单 session 形态（session.renamed / state_changed /
+ * thinkingLevelSet 三个广播驱动的跨 store 字段更新）。结构性类型，renderer useSessionStore()
+ * 返回值自动满足。
  */
 export interface SessionStoreLike {
-  updateLabel(id: string, label: string): void
-  updateSessionState(id: string, patch: { modelId?: string; thinkingLevel?: string }): void
+  applySnapshot(id: string, snapshot: SessionViewSnapshot): void
 }
 
 /**
@@ -93,6 +94,7 @@ export interface UseChatDeps {
  * 强行套用破坏消费方签名 + 语义错位（w4 retrospect 教训 #3：handoff 范式要求需结合代码
  * 所在层判断适用性）。
  */
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：会话级流订阅表（ADR-0049 例外：全局 sid 协调器模块级 Map，上方注释已述）
 const streamSubscriptions = new Map<string, () => void>()
 
 /**
@@ -111,6 +113,7 @@ const coalescer = createMessageCoalescer()
  * MessageStream 据此显隐「加载更多历史」按钮。hydrate 时设置。
  * 用 ref<Set> 保证响应式（MessageStream 的 computed showLoadMore 能自动更新）。
  */
+// @data-owner #7 —— #7 消息列表 hydrate 派生标记（尾读截断→「加载更多」显隐；权威 = session 文件 entries）
 const historyTruncatedSessions = ref<Set<string>>(new Set())
 
 /**
@@ -121,6 +124,7 @@ const historyTruncatedSessions = ref<Set<string>>(new Set())
  * RPC 未达 pi / dispatcher busy 预检拒绝，pi 未发 compaction_end，interpreter 不参与，零反馈）→ toast 兜底。
  * 仅 manual compact() 路径读写 key——auto-compaction 的 compaction_end handler 见 key 不在则跳过（不污染）。
  */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：manual compact in-flight 到达标记（流程状态，非 GUI 数据）
 const manualCompactionState = new Map<string, boolean>()
 
 /**
@@ -209,7 +213,7 @@ export function ensureStreamSubscription(
       coalescer.enqueue(sid, msg, (m) => chat.applyMessageEvent(sid, m))
       return
     }
-    // session.* → 跨 store 协调（sessionStore.updateLabel/updateSessionState/setCompacting），
+    // session.* → 跨 store 协调（sessionStore.applySnapshot/setCompacting），
     // 保留在 useChat（stores 间禁止互相 import）。
     switch (msg.type) {
       // [fix-handoff-with-message] session.handoffStarted 不再处理：前端已删除「正在交接…」
@@ -252,17 +256,18 @@ export function ensureStreamSubscription(
         // (events.on(sid, ...))，payload.sessionId 恒等于订阅 sid，不信任 payload 可能的篡改。
         const payload = msg.payload as { name?: string }
         if (payload.name) {
-          sessionStore.updateLabel(sid, payload.name)
+          sessionStore.applySnapshot(sid, { label: payload.name })
         }
         break
       }
       case 'session.state_changed': {
         // 模型切换后 runtime 推送（model-service switchModel 末尾广播，含新 modelId/thinkingLevel
-        // + 按新 contextWindow 重算的用量）。局部更新 session 状态，不触发整表 setGroups。
+        // + 按新 contextWindow 重算的用量）。applySnapshot 单 session 快照按 D1b 合并
+        // （undefined 字段 = 快照未涉及，不覆盖），不触发整表替换。
         // thinkingLevel optional：未设置时（undefined）不更新，保留旧值。
         const p = msg.payload as { sessionId?: string; modelId?: string; thinkingLevel?: string }
         if (p.sessionId) {
-          sessionStore.updateSessionState(p.sessionId, {
+          sessionStore.applySnapshot(p.sessionId, {
             ...(p.modelId !== undefined && { modelId: p.modelId }),
             ...(p.thinkingLevel !== undefined && { thinkingLevel: p.thinkingLevel }),
           })
@@ -276,7 +281,7 @@ export function ensureStreamSubscription(
         // 本 handler 独立更新 thinkingLevel，不依赖两条消息的先后顺序。
         const p = msg.payload as { sessionId?: string; level?: string }
         if (p.sessionId && p.level) {
-          sessionStore.updateSessionState(p.sessionId, { thinkingLevel: p.level })
+          sessionStore.applySnapshot(p.sessionId, { thinkingLevel: p.level })
         }
         break
       }
@@ -606,6 +611,14 @@ export function createUseChat(deps: UseChatDeps) {
   /**
    * 拉取并注入历史（首次进入 session）。
    * 无历史（空 session）也标记 hydrated，避免反复请求。
+   *
+   * [W20 D5 重放喂入侧] getHistory 返回的 messages 是 core applyEntry reducer 对
+   * pi entry 日志的重放投影（runtime wire 层：getEntries → liftHistoryToEntries →
+   * replayEntries，见 infra/pi/message-converter.ts）——hydrate 直接消费 reducer 产物，
+   * 不做二次转换；getHistory RPC 链不变（session-service getEntries 增量现状保留）。
+   * [W21 已接] 实时侧喂同一 reducer：message_end / tool_call_end 重构 entry 经
+   * store.applyMessageEvent → applyEntryFrame 累积 per-session reducer state
+   * （messages ref 的实时渲染仍走 overlay 路径，ref 与 reducer state 收敛归 W22 对账）。
    */
   async function hydrateHistory(sessionId: string): Promise<void> {
     if (chat.isHydrated(sessionId)) return

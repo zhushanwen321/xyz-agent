@@ -9,6 +9,11 @@ import { commitMessages, truncateMessagesFrom, prependHistory as prependHistoryM
 import { truncateToolOutputBatch } from './truncate-tool-output'
 import { dispatchMessageEvent } from './effects/registry'
 import {
+  applyEntry,
+  createInitialChatViewState,
+  type ChatViewState,
+} from './apply-entry'
+import {
   initTimers,
   clearSessionTimer,
 } from './timers'
@@ -26,6 +31,7 @@ import { createChangeSetController } from './changeset'
 import { createHandoffController } from './handoff'
 import type {
   Message,
+  PiEntry,
   Segment,
   ServerMessage,
   SteerFollowUpMode,
@@ -37,7 +43,9 @@ import { isDevMode } from '../../platform/dev-mode'
 /**
  * pendingBuffer 单项（m1 数据层，steer/follow-up 暂存）。
  *
- * text 用于匹配 pi 回流投递信号（normalizeContent + trim 归一化）；
+ * text 仅供 abortPending 文本匹配（RPC 失败回滚有准确原文——renderer 自己的提交，
+ * 未经 pi skill 展开）。[W14] 投递定位不再按 text 匹配：pi 入队存展开后文本 ≠ 提交
+ * 原文（D6），文本匹配在此场景必挂，改计数 FIFO（drainN 按条数取）。
  * segments 是原始 Segment[]，drain 时取出交 appendUser 进对话流（m2 接线，m1 不接）。
  * sendMode 区分 steer / follow-up，驱动气泡配色。
  */
@@ -109,7 +117,8 @@ export function createChatStore() {
    * steer/follow-up 暂存缓冲（m1 数据层）。
    *
    * 与 messages 解耦——pushPending 只写本 buffer，不写 messages（pending 不进对话流）。
-   * 投递信号 queue_update 到达时，drainPending 取出 segments 交 appendUser 进对话流（m2 接线）。
+   * 投递信号 queue_update 到达时，drainN 按计数 FIFO 取出 segments 交 appendUser 进
+   * 对话流（m2 接线，W14 计数 FIFO）。
    * 与 queueStates 同层 ref<Map<string, T>>，disposeSession 一并清理（T2）。
    *
    * [M4 queue 子域归位契约] queue 纯状态（queueStates pi 快照 + pendingBuffer 前端暂存）
@@ -121,6 +130,20 @@ export function createChatStore() {
    * 恢复机制留在 store（SSOT 检查点 2 裁决：不强行并入统一视图）。
    */
   const pendingBuffer = ref<Map<string, PendingItem[]>>(new Map())
+  /**
+   * [W21] per-session reducer state（实时 feed 喂入 applyEntry 的累积态）。
+   *
+   * 实时路径（message_end / tool_call_end 重构 entry）与文件重放（get_entries →
+   * replayEntries，hydrate 链）喂同一个 reducer——本 Map 是实时侧的累积 state，
+   * 「live ≡ reload」从构造上成立（同 reducer 同输入序列必得同 state，等价性断言见
+   * runtime src/__tests__/equivalence/live-reload.test.ts）。
+   *
+   * 非 Vue ref（[ADR-0049 例外]：factory 单例 Map，存的是纯投影数据非响应式业务状态，
+   * 与 pendingSendTimers 同判据）：渲染不走它——实时渲染走 messages ref 的 overlay 路径
+   * （message_start/delta/complete，streaming 语义）；本 state 是权威累积，供 W22
+   * broadcast≡get_state 对账与后续 ref 收敛消费。disposeSession / LRU 驱逐同点清理。
+   */
+  const entryStates = new Map<string, ChatViewState>()
   /** FileChanges 子域控制器（W10，ADR-0024 D5），委托 chat-changeset.ts。messages 由本 store 注入，设计见 ./README.md + chat-changeset.ts。 */
   const changeset = createChangeSetController(messages)
   const { changeSetStatuses, getChangeSetStatus, setChangeSetStatus, applyFileChanges, markChangeSetsSuperseded } = changeset
@@ -241,8 +264,19 @@ export function createChatStore() {
   /** LRU 驱逐依赖（setup 时构造一次复用，闭包经 getter 延迟读取无快照陈旧，详见 ./README.md）。
    *  D-3：deleteStreamingFlag 注入——deleteMessageKey 删 key 时同步清 streaming flag 派生缓存。
    *  W19 review Fix-2：deleteChangeSetStatusesFor 注入——删 messages 分区时同步清该 sid 的
-   *  changeSetStatuses 前缀条目（此前仅 disposeSession 清理，LRU 驱逐不清 → map 泄漏）。 */
-  const lruEvictDeps = makeLruEvictDeps(messages, hydrated, isLruExempt, (sid) => sessionStreamingFlags.delete(sid), deleteChangeSetStatusesFor)
+   *  changeSetStatuses 前缀条目（此前仅 disposeSession 清理，LRU 驱逐不清 → map 泄漏）。
+   *  W21：同回调内联清 entryStates 分区（reducer 累积态随 messages 分区同生共死——驱逐重进后
+   *  由 hydrate 全量重放重建，残留旧累积会造成 W22 对账基线陈旧）。 */
+  const lruEvictDeps = makeLruEvictDeps(
+    messages,
+    hydrated,
+    isLruExempt,
+    (sid) => sessionStreamingFlags.delete(sid),
+    (sid) => {
+      deleteChangeSetStatusesFor(sid)
+      entryStates.delete(sid)
+    },
+  )
   /** W3 H3：LRU 驱逐（阈值触发）/ 显式驱逐（带虚拟 key）/ [M7] 单虚拟 key 删除 */
   function evictIfNeeded(): void { lruEvictIfNeeded(lruEvictDeps) }
   function evictSessionWithVirtual(sessionId: string): void { lruEvictSession(sessionId, lruEvictDeps) }
@@ -315,9 +349,9 @@ export function createChatStore() {
   /**
    * 暂存 steer/follow-up segments 到 pendingBuffer（m1 数据层）。
    *
-   * 不碰 messages——pending 不进对话流（核心目标）。投递时 drainPending 取出 segments
-   * 交 appendUser（m2 接线）。text = segmentsToText(segments).trim()，供 drainPending/abortPending
-   * 匹配 pi 回流投递信号。
+   * 不碰 messages——pending 不进对话流（核心目标）。投递时 drainN 按计数 FIFO 取出
+   * segments 交 appendUser（m2 接线）。text = segmentsToText(segments).trim()，仅供
+   * abortPending 文本匹配（W14：投递不再依赖 text）。
    */
   function pushPending(sessionId: string, segments: Segment[], sendMode: SteerFollowUpMode): void {
     const text = segmentsToText(segments).trim()
@@ -326,31 +360,54 @@ export function createChatStore() {
   }
 
   /**
-   * FIFO 取出并移除匹配的 pending item（m1 数据层）。
+   * [W14] 计数 FIFO：按入队顺序取出 sendMode 匹配的前 n 条 pending（D1 表末行 + D6）。
    *
-   * normalizeContent + trim 归一化两边 text，sendMode 可选过滤。
-   * 命中返回 segments（交 appendUser 进对话流，m2）；无匹配返回 undefined（幂等）。FIFO——同 text
-   * 多次暂存时按入队顺序依次取出（design TC2）。
+   * 投递定位不再按文本匹配——pi 入队存 skill 展开后文本 ≠ 提交原文，文本相等匹配在该
+   * 场景必挂（消息永久丢失）；queue_update 差集（registry countDrained）算出被投递条数
+   * N，本方法直接取前 n 条，不看文本。FIFO 与 pi splice 移除顺序一致。
+   *
+   * n 超过匹配存量时取尽即止（n 截断到存量）——扩展注入例外下队列深度可大于前端暂存
+   * （见 reconcilePending），取尽即止保证队列清空时暂存同步清零、偏差收敛。
+   * 非 sendMode 匹配的项保留原相对顺序（steer 与 follow-up 各自差集各自计数，防跨类型误取）。
    */
-  function drainPending(sessionId: string, text: string, sendMode?: SteerFollowUpMode): Segment[] | undefined {
+  function drainN(sessionId: string, sendMode: SteerFollowUpMode, n: number): Segment[][] {
     const prev = pendingBuffer.value.get(sessionId)
-    if (!prev || prev.length === 0) return undefined
-    const target = normalizeContent(text).trim()
-    const idx = prev.findIndex(
-      (item) => normalizeContent(item.text).trim() === target
-        && (sendMode === undefined || item.sendMode === sendMode),
-    )
-    if (idx === -1) return undefined
-    const removed = prev[idx]
-    pendingBuffer.value = new Map(pendingBuffer.value).set(sessionId, prev.filter((_, i) => i !== idx))
-    return removed.segments
+    if (!prev || prev.length === 0 || n <= 0) return []
+    const drained: Segment[][] = []
+    const remaining: PendingItem[] = []
+    for (const item of prev) {
+      if (drained.length < n && item.sendMode === sendMode) drained.push(item.segments)
+      else remaining.push(item)
+    }
+    pendingBuffer.value = new Map(pendingBuffer.value).set(sessionId, remaining)
+    return drained
+  }
+
+  /**
+   * [W14] 深度结构性对账（D6：深度权威 = pi pendingMessageCount）。
+   *
+   * 不变式：renderer 提交数 − pi 队列深度 = 已投递数，pendingBuffer 存量 = 提交数 −
+   * 已投递数 = 深度。每帧 queue_update（drain 处理后）对账 pendingBuffer 长度 vs 深度：
+   * - buffer > 深度：队列中已不存在的暂存（僵尸项——永不被投递且污染后续 FIFO 计数），
+   *   裁剪到深度（保留最早的，与 FIFO 取出顺序一致）。
+   * - buffer < 深度：pi 队列存在 renderer 未提交的条目（扩展 deliverAs 注入，D6 已知
+   *   例外——xyz 自研扩展禁用，第三方扩展残余风险）——无法凭空补 segments，接受有界
+   *   偏差；队列清空时 drainN 取尽即止，结构偏差随之收敛，内容偏差由 queue_update
+   *   全量数组（queueStates 整体替换）收敛。
+   */
+  function reconcilePending(sessionId: string, depth: number): void {
+    const prev = pendingBuffer.value.get(sessionId)
+    if (!prev || prev.length <= depth) return
+    pendingBuffer.value = new Map(pendingBuffer.value).set(sessionId, prev.slice(0, depth))
   }
 
   /**
    * 移除匹配的 pending item（m1 数据层，steer/followUp RPC 失败回滚）。
    *
-   * 与 drainPending 同匹配范式但不返回 segments。FIFO 移除第一条匹配项；无匹配 no-op（幂等）。
-   * sendMode 必填——abort 明确指定回滚的目标模式（与 drainPending 的可选 sendMode 互补）。
+   * [W14 D6 差异标注] 保留文本匹配（normalizeContent + trim 归一化）：回滚场景有准确
+   * 原文——renderer 自己的提交原文（未经 pi skill 展开），且不走 pi 队列投递路径，文本
+   * 相等在此可靠；投递定位已改计数 FIFO（drainN，登记表 D6 条目标注此差异）。
+   * FIFO 移除第一条匹配项；无匹配 no-op（幂等）。sendMode 必填——abort 明确指定回滚的目标模式。
    */
   function abortPending(sessionId: string, text: string, sendMode: SteerFollowUpMode): void {
     const prev = pendingBuffer.value.get(sessionId)
@@ -362,6 +419,21 @@ export function createChatStore() {
     )
     if (idx === -1) return
     pendingBuffer.value = new Map(pendingBuffer.value).set(sessionId, prev.filter((_, i) => i !== idx))
+  }
+
+  /**
+   * [W21] 重构 entry 喂 per-session reducer state（applyEntry）——实时 feed 与文件重放
+   * （hydrate 链的 replayEntries）喂同一个 reducer。
+   *
+   * 本 wave 语义：纯累积（权威镜像），不直接投影 messages ref——实时渲染走 overlay 路径
+   * （message_start/delta/complete + tool_call_start/end 的 effect，streaming 态语义
+   * reducer 无法表达：running toolCall / 乐观 user 插入）。ref 与 reducer state 的收敛
+   * （对账投影）归 W22 broadcast≡get_state 全量化。纯度：applyEntry 纯函数（copy-on-write），
+   * 同 entry 序列必得同 state——「live ≡ reload」在构造上成立。
+   */
+  function applyEntryFrame(sessionId: string, entry: PiEntry): void {
+    const cur = entryStates.get(sessionId) ?? createInitialChatViewState()
+    entryStates.set(sessionId, applyEntry(cur, entry))
   }
 
   /** message.* 事件单一入口（F2 消除 double-dispatch）：经 dispatchMessageEvent 查 effects/registry.ts 执行全部副作用。非 message.* / 未注册 type no-op。重构等价性见 ./README.md。 */
@@ -379,7 +451,9 @@ export function createChatStore() {
         armBashTimer,
         clearBashTimer,
         appendUser,
-        drainPending,
+        drainN,
+        reconcilePending,
+        applyEntryFrame,
       },
       sessionId,
       msg,
@@ -581,6 +655,8 @@ export function createChatStore() {
     // changeSetStatuses：key 格式 `${sessionId}:${messageId}`，前缀过滤删除
     // （W19 review Fix-2 提取为 deleteChangeSetStatusesFor，与 LRU 驱逐共用一份逻辑）
     deleteChangeSetStatusesFor(sessionId)
+    // [W21] reducer 累积态分区同点清理（与 LRU 驱逐的 deleteMessageKey 内联清理同语义）
+    entryStates.delete(sessionId)
     // D-3 生命周期：streaming flag 惰性派生缓存随 messages 分区同点清理（漏删即慢泄漏，
     // 07 文档 §3.3.2 cleanup 契约）。
     sessionStreamingFlags.delete(sessionId)
@@ -611,7 +687,8 @@ export function createChatStore() {
     finalizeSubagentStream: (virtualId: string) => streamingStateMachine.finalizeSubagentStream(virtualId),
     appendUser,
     pushPending,
-    drainPending,
+    drainN,
+    reconcilePending,
     abortPending,
     applyMessageEvent,
     isGenerating,
@@ -641,6 +718,8 @@ export function createChatStore() {
       markBashError(messages, sessionId, errorText, clearBashTimer),
     /** 测试专用：暴露 D-3 streaming flag 惰性派生缓存（断言 disposeSession/LRU 驱逐的清理语义用，生产代码勿读）。 */
     _sessionStreamingFlagsForTest: sessionStreamingFlags,
+    /** 测试专用：暴露 [W21] per-session reducer 累积态（断言 applyEntryFrame 喂入/清理语义用，生产代码勿读——W22 对账消费前不设正式读口）。 */
+    _entryStatesForTest: entryStates,
     // W3 H3 LRU
     touchLru,
     evictIfNeeded,

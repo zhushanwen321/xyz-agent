@@ -5,14 +5,16 @@
 //   1. tool 注册名为 schedule / schedule_control
 //   2. tool 有 execute 函数字段（不是 handler/fn）
 //   3. execute 是 async function（SDK 期望返回 Promise）
-//   4. handler 抛错被 catch 转为 { isError: true }（standards.md §4.2 禁止抛）
+//   4. 错误路径 throw（W4：pi-agent-core 只对 execute throw 置 isError:true，
+//      返回值里的 isError 字段被 agent-loop 丢弃——错误轮曾被标成功；
+//      锚点 agent-loop.js:453-483/525-547）
 //
 // 不导入 SchedulerRuntime 的内部：只通过 index.ts 的 default export 测，
 // 保证 tool 注册逻辑的入口契约。
 //
 // 关键回归点：runtime 在 session_start 前为 null。execute 通过 getRuntime() 延迟
 // 读取——若在 factory 顶层捕获 runtime! 非空断言，注册时 runtime 为 null，
-// execute 调用会 NPE。此套件验证 session_start 前 execute 优雅返回 isError 而非 crash。
+// execute 调用会 NPE。此套件验证 session_start 前 execute 优雅 throw 而非 crash。
 
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { describe, expect, it, vi } from 'vitest'
@@ -111,7 +113,7 @@ describe('pi-scheduler SDK contract', () => {
     }
   })
 
-  it('session_start 前 execute 抛错返回 isError（runtime 未初始化）', async () => {
+  it('session_start 前 execute throw（runtime 未初始化；W4：pi 只采信 throw）', async () => {
     const { pi, tools, events } = createMockPi()
     schedulerExtension(pi)
     const fakeCtx = createFakeCtx()
@@ -119,12 +121,10 @@ describe('pi-scheduler SDK contract', () => {
     // 不触发 session_start，runtime 仍为 null
     expect(events.get('session_start')).toBeDefined()
 
-    const result = await tools[0]!.execute('call-1', { prompt: 'x', schedule: '5m' }, undefined, undefined, fakeCtx)
-    expect(result).toEqual({
-      content: [{ type: 'text', text: 'Error: Scheduler not initialized: session not started' }],
-      details: {},
-      isError: true,
-    })
+    // W4：错误 throw 传播——pi catch 后置 isError:true，文案（含 Error: 前缀格式，R3）进 toolResult
+    await expect(
+      tools[0]!.execute('call-1', { prompt: 'x', schedule: '5m' }, undefined, undefined, fakeCtx),
+    ).rejects.toThrow('Error: Scheduler not initialized: session not started')
   })
 
   it('session_start 后 execute 正常返回结果', async () => {
@@ -153,31 +153,30 @@ describe('pi-scheduler SDK contract', () => {
     expect(result.isError).toBeFalsy()
   })
 
-  it('handler 返回结构化失败被 isError 标记（而非 throw）—— standards.md §4.2 契约', async () => {
+  it('handler 业务失败 throw（W4：返回值 isError 被 pi 丢弃，throw 才被采信）', async () => {
     const { pi, tools, events } = createMockPi()
     schedulerExtension(pi)
     const fakeCtx = createFakeCtx()
     await events.get('session_start')!({ type: 'session_start', reason: 'startup' }, fakeCtx)
 
-    // 非法 cron 表达式：service.create 返回 INVALID_SCHEDULE 结构化失败，
-    // handler 返回 isError result（text 为 service message 本体，无 'Error:' 前缀）。
-    const result = await tools[0]!.execute('call-err', { prompt: 'x', schedule: 'invalid-cron-expr-xxx' }, undefined, undefined, fakeCtx)
-    expect(result.isError).toBe(true)
-    expect(result.content[0].text).toContain('Invalid schedule')
-    expect(result.content[0].text).not.toContain('Error:')
+    // 非法 cron 表达式：service.create 失败 → toToolResult throw service message 本体
+    //（无 'Error:' 前缀——前缀格式仅 index.ts 的初始化异常兜底使用）
+    await expect(
+      tools[0]!.execute('call-err', { prompt: 'x', schedule: 'invalid-cron-expr-xxx' }, undefined, undefined, fakeCtx),
+    ).rejects.toThrow('Invalid schedule')
   })
 
-  it('schedule_control tool 同样返回结构化 isError', async () => {
+  it('schedule_control tool 业务失败同样 throw（W4）', async () => {
     const { pi, tools, events } = createMockPi()
     schedulerExtension(pi)
     const fakeCtx = createFakeCtx()
     await events.get('session_start')!({ type: 'session_start', reason: 'startup' }, fakeCtx)
 
-    // toggle 不存在的 task id：service 返回 TASK_NOT_FOUND，handler 返回 isError
+    // toggle 不存在的 task id：service 返回 TASK_NOT_FOUND → throw message 本体
     const controlTool = tools.find(t => t.name === 'schedule_control')!
-    const result = await controlTool.execute('call-ctrl', { action: 'toggle', id: 'deadbeef', enabled: false }, undefined, undefined, fakeCtx)
-    expect(result.isError).toBe(true)
-    expect(result.content[0].text).toBe('Task deadbeef not found.')
+    await expect(
+      controlTool.execute('call-ctrl', { action: 'toggle', id: 'deadbeef', enabled: false }, undefined, undefined, fakeCtx),
+    ).rejects.toThrow('Task deadbeef not found.')
   })
 
   it('registerCommand 注册了名为 schedule 的命令', () => {

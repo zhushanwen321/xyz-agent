@@ -372,6 +372,13 @@ export interface ExecutionRecord {
    */
   readonly chatMode?: boolean;
   /**
+   * 执行态信号（residual-fixes 设计）：true = 该 record 无活进程驱动（轮终 idle /
+   * 重建孤儿兜底），处于「可续聊/等续聊」态——不是后台真在跑。轮终迁移
+   * （doFinalizeRoundToIdle）置 true，冷路径续轮（进程启动）清除；GUI 侧
+   * streaming/waiting 细分与 hasRunning 判据消费。缺省 falsy = 有进程或旧数据。
+   */
+  resumable?: boolean;
+  /**
    * 空闲超时毫秒数（仅 chatMode 有意义）。覆盖默认 5min idle timeout。
    * 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
    * 向后兼容：旧 record 无此字段，按默认值处理。
@@ -415,8 +422,8 @@ export interface ExecutionRecord {
    *   范围静默丢失。
    * - D4 不持久化：磁盘重建走 createRecord（turns 仅为初始 [emptyTurn()]），base=0 对空 turn
    *   的增量派生等价为空、天然产出仅新轮增量，持久化是死数据。故不写 manifest、不参与重建。
-   * - pi 内部序锚定依据（R1 mitigation）：@earendil-works/pi-agent-core 0.84.0
-   *   dist/agent-loop.js :106-113（error/aborted stopReason 也先 emit turn_end 再 agent_end）
+   * - pi 内部序锚定依据（R1 mitigation）：@earendil-works/pi-agent-core 0.84.2
+   *   dist/agent-loop.js :108-111（error/aborted stopReason 也先 emit turn_end 再 agent_end）
    *   与 :131（正常路径 turn_end 收尾）；agent_settled 在 agent_end 之后 emit，故未闭合
    *   turn 只可能来自滞后事件。pi 升级若改变 turn_end/agent_end 时序，onRoundSettled 推进前
    *   的观测哨（末 turn 未闭合且 text 非空 → logger.warn）会留痕。
@@ -709,6 +716,17 @@ export interface SubagentRecord {
    * ExecutionRecord.round 投影。
    */
   round?: number;
+  /**
+   * 对话模式标志（与 ExecutionRecord.chatMode 同义；投影给 GUI 侧 streaming/waiting/done
+   * 细分判据——one-shot 轮终（chatMode 非 true + result 有值）显示完成态，chat 轮终显示
+   * 等续聊。内存源由 recordToSubagent 投影，磁盘源经 subagent-record entry 重建）。
+   */
+  chatMode?: boolean;
+  /**
+   * 执行态信号（与 ExecutionRecord.resumable 同义）：true = 无活进程驱动的 running
+   * （轮终 idle / 重建孤儿兜底），GUI 侧据此排除「真在跑」判定。
+   */
+  resumable?: boolean;
   /** 外部 Pi 实例（进程隔离模式下由外部启动的子进程）。 */
   externalInstance?: AliveMarker;
   /** fork 模式下的 worktree handle。 */

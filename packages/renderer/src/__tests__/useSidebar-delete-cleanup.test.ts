@@ -52,7 +52,7 @@ function makeSummary(id: string): SessionSummary {
 // seed pinia session store（ADR-0059：useSessionStore 单例）
 function seedSessions(_sidebar: ReturnType<typeof useSidebarNew>, ids: string[]): void {
   const group: SessionGroup = { cwd: '/proj', sessions: ids.map(makeSummary) }
-  useSessionStore().setGroups([group])
+  useSessionStore().applySnapshot({ groups: [group] })
 }
 
 beforeEach(() => {

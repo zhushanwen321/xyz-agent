@@ -27,8 +27,9 @@ export const scheduleGuidelines = [
 
 /**
  * schedule tool handler（SchedulerService 瘦壳，无独立业务逻辑）。
- * 业务失败 → 结构化 isError result（不 throw）；service 未初始化等初始化异常
- * 不在此 catch——穿透到 index.ts execute 的 catch 兜底（R3）。
+ * 业务失败 → throw（pi 只对 execute throw 置 isError:true，返回值里的 isError
+ * 被 agent-loop 丢弃——W4 修复，锚点 agent-loop.js:453-483）；service 未初始化等
+ * 初始化异常不在此 catch——穿透到 index.ts execute 的 catch 兜底（R3）。
  */
 export function createScheduleHandler(service: SchedulerService) {
   return async (params: ScheduleParamsT) => {
@@ -86,19 +87,16 @@ export function createScheduleControlHandler(service: SchedulerService) {
 
 /**
  * ServiceResult → tool execute 返回。
- * 成功 → {content: [message], details: data}；失败 → isError + details.errorCode。
+ * 成功 → {content: [message], details: data}；失败 → throw（W4：pi 契约只有
+ * execute throw 才置 isError:true，pi catch 后 message 原样成为 toolResult content，
+ * 错误轮不再被标成功）。
  */
 function toToolResult(result: ServiceResult): {
   content: { type: 'text'; text: string }[]
   details: unknown
-  isError?: boolean
 } {
   if (!result.success) {
-    return {
-      content: [{ type: 'text' as const, text: result.message }],
-      details: { errorCode: result.errorCode },
-      isError: true,
-    }
+    throw new Error(result.message)
   }
   return {
     content: [{ type: 'text' as const, text: result.message }],

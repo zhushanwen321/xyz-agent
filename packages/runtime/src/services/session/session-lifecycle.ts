@@ -9,16 +9,16 @@
  *
  * 依赖经构造注入:svc(Facade 内部协议)、pm(进程创建/销毁/rekey)。
  */
-import { basename, join } from 'node:path'
-import { existsSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs'
+import { basename } from 'node:path'
+import { existsSync, unlinkSync, readFileSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
-import { homedir, tmpdir } from 'node:os'
+import { homedir } from 'node:os'
 import type { SessionSummary, BatchDeleteResult, ThinkingLevel } from '@xyz-agent/shared'
-import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
-import type { IProcessManager } from '../ports/pi-engine.js'
+import { BUILTIN_PRESET_IDS, PI_THINKING_LEVELS } from '@xyz-agent/shared'
+import type { PiThinkingLevel } from '../../infra/pi/pi-protocol.js'
+import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
-import { sessionMetaCache } from './session-meta-cache.js'
 import type { PresetResolution } from '../preset-service.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
@@ -26,44 +26,111 @@ import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND } from '../../utils/errors.js'
 import { createForkedSessionFile } from './session-fork.js'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
+import { normalizeSessionFileInPlace, cleanupMigrateResidues } from '../../infra/pi/session-file-utils.js'
+import { assertPiSessionFile } from '../../infra/pi/session-attach-assert.js'
 
 /**
- * 从 JSONL 文本中剔除 session_end 行（W9）。
+ * 匹配 `"type":"session_end"` 或 `'type':'session_end'`（容忍引号/空格差异）。
+ * 用单/双引号字符类容忍 JSON.stringify（双引号）与手写（单引号）两种写法。
  *
- * 背景：B7 sidecar 方案下 runtime 不再往 JSONL 写 session_end（改写 .meta.json sidecar）。
- * 但历史 session（迁移前写入的）JSONL 仍可能含 `type:"session_end"` 行；extractSessionOutcome 的
- * fallback 也仍会读 JSONL 中的 session_end。pi switchSession 对该 entry type 的处理未验证，
- * restore/fork 拷贝整份 JSONL 时保守 strip 掉比让 pi 报错更安全。
+ * stripSessionEndEntries（变换）与 containsSessionEndLine（F2/F3 分流判定）共用同一正则
+ * ——判定与变换必须同源，否则会出现「判进 F3 却剔不干净」或反向的缝隙。
+ */
+const SESSION_END_RE = /["']type["']\s*:\s*["']session_end["']/
+
+/**
+ * 检测 JSONL 文本是否含 session_end 行（W1 restore-fork-attach-fix F2/F3 分流判定）。
  *
- * 实现按行扫描：匹配 `"type":"session_end"` 或 `'type':'session_end'`（容忍引号/空格差异），
- * 命中的整行丢弃，其余行原样保留（含换行）。纯文本扫描不解析 JSON，避免格式异常的行被误吞。
+ * 与 stripSessionEndEntries 同款正则逐行检测。W1 设计文档明令禁止用
+ * `stripSessionEndEntries(原文) === 原文` 字符串全等做本判定——strip 函数有末尾换行
+ * 规范化副作用（原文末尾无 `\n` 时即使零剔除也产出不等文本），全等会把几乎所有文件
+ * 误判进 F3 归一化路径。
+ */
+export function containsSessionEndLine(jsonlContent: string): boolean {
+  for (const line of jsonlContent.split('\n')) {
+    if (line !== '' && SESSION_END_RE.test(line)) return true
+  }
+  return false
+}
+
+/**
+ * 从 JSONL 文本中剔除 session_end 行。
+ *
+ * 背景（动机经 restore-fork-attach-fix §2.3 复核改判保留）：B7 sidecar 方案下 runtime
+ * 不再往 JSONL 写 session_end（改写 .meta.json sidecar），但历史 session（迁移前写入的）
+ * JSONL 仍可能含 `type:"session_end"` 行。pi 侧 `_buildIndex`（pi-mono
+ * session-manager.ts）对所有非 session entry 无差别执行 `byId.set(entry.id);
+ * leafId = entry.id`——legacy session_end 行无 id 无 parentId，使 leafId=undefined →
+ * 后续 appendMessage 的 parentId 断链 → 全部旧历史不进 LLM 上下文（AI 失忆）。
+ * 因此 restore 必须在附着前剔除该类行。
+ *
+ * 实现按行扫描：命中 SESSION_END_RE 的整行丢弃，其余行原样保留（含换行）。纯文本扫描
+ * 不解析 JSON，避免格式异常的行被误吞。
  *
  * @param jsonlContent 原始 JSONL 文本
- * @returns 剔除 session_end 行后的文本（行数可能减少；末尾换行保留）
+ * @returns 剔除 session_end 行后的文本（行数可能减少；末尾换行统一补一个）
  */
 export function stripSessionEndEntries(jsonlContent: string): string {
-  // 匹配 "type":"session_end" / "type": "session_end" / 'type':'session_end' 等变体。
-  // 用单/双引号字符类容忍 JSON.stringify（双引号）与手写（单引号）两种写法。
-  const sessionEndRe = /["']type["']\s*:\s*["']session_end["']/
   const lines = jsonlContent.split('\n')
   const kept: string[] = []
   for (const line of lines) {
     if (line === '') continue // split 末尾产生的空串（原末尾换行）跳过，末尾统一补回
-    if (sessionEndRe.test(line)) continue
+    if (SESSION_END_RE.test(line)) continue
     kept.push(line)
   }
-  // 末尾统一补一个换行（pi _persist 期望每行以 \n 结尾）
+  // 末尾统一补一个换行（W2/A-06 注释修正：pi 读取侧按行 trim 分行——session-manager.js
+  // parseSessionEntries/parseSessionEntryLine 对内容先 trim 再 split("\n")，末尾 \n 非必须；
+  // 补 \n 是保守对齐 pi 写出格式，非 pi 期望）
   return kept.length > 0 ? kept.join('\n') + '\n' : ''
 }
 
 /**
- * thinkingLevel 合法值集合（S-RT-5）。
+ * 对 JSONL 文本首行的 session header 应用 cwd fallback（W11 引入，语义随 W1 更新）。
  *
- * 与 shared ThinkingLevel 类型对齐（pi CLI --thinking 参数值域，附录 A.4）。
+ * 纯字符串变换（不落盘）：restoreSession 的 F3 归一化管线内调用——session 原始 cwd 已被
+ * 删除时，把首行 header 的 cwd 改为 fallback 值，使 pi switch_session 不因 cwd 不存在
+ * 失败（pi 加载 header cwd 死路径的 session 直接 throw MissingSessionCwdError，pi-mono
+ * session-cwd.ts；RPC switch_session 无 cwdOverride 字段，只能由 xyz 在附着前修）。
+ * 变换产物经 normalizeSessionFileInPlace 原地 rename-over 落回原文件。
+ *
+ * 防御语义与原实现一致：首行缺失/非 session 类型/JSON parse 失败 → 原样返回（不抛）。
+ *
+ * @param jsonlContent stripSessionEndEntries 后的 JSONL 文本
+ * @param fallbackCwd  降级 cwd（调用方传 homedir()）
+ * @returns 首行 header.cwd 替换为 fallbackCwd 后的文本；无法解析时原样返回
+ */
+export function applyHeaderCwdFallback(jsonlContent: string, fallbackCwd: string): string {
+  const lines = jsonlContent.split('\n')
+  if (!lines[0]) return jsonlContent
+  try {
+    const header = JSON.parse(lines[0])
+    if (typeof header !== 'object' || header === null || header.type !== 'session') {
+      return jsonlContent
+    }
+    header.cwd = fallbackCwd
+    lines[0] = JSON.stringify(header)
+    return lines.join('\n')
+  } catch {
+    // 首行 JSON parse 失败：原样返回（交 pi switch_session 报错），不阻断 restore 主流程
+    return jsonlContent
+  }
+}
+
+/**
+ * thinkingLevel 合法值集合（S-RT-5；W2 值域 SSOT 派生，A-03 修复）。
+ *
+ * 值 = shared PI_THINKING_LEVELS（pi 0.84.1 全集 7 值，锚点见 pi-preset.ts），
+ * 不再手写数组——手写值域曾缺 'max' 导致 composer 最高档被静默丢弃。
  * 用 readonly 数组做运行时校验：lifecycle 透传 thinkingOverride 到 pi 前先校验，
  * 非法值 warn 后忽略（不传给 pi，避免 pi 报错或行为异常）。
+ *
+ * 类型标注同时做编译期双向防漂移（shared 不能反向 import runtime，由本文件——
+ * 唯一同时 import 两边者——锁定一致性）：
+ * - `readonly PiThinkingLevel[]`：shared 全集出现 pi-protocol 之外的值 → 编译错；
+ * - `& AssertSharedCoversPi`：pi-protocol 全集有而 shared 缺（pi 升级加档位未同步）→ 编译错。
  */
-const VALID_THINKING_LEVELS: readonly string[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+type AssertSharedCoversPi = [Exclude<PiThinkingLevel, ThinkingLevel>] extends [never] ? unknown : never
+const VALID_THINKING_LEVELS: readonly PiThinkingLevel[] & AssertSharedCoversPi = PI_THINKING_LEVELS
 
 // D8-3 迁移 promise gate（06 §3.3，perf W29）：provider 迁移（apiKey → auth.json +
 // enabledModels 白名单）完成前禁止 spawn pi——迁移窗口内 spawn 的 session 会读到迁移前
@@ -101,6 +168,29 @@ export class SessionLifecycle {
   }
 
   /**
+   * W1（数据源治理）：create / forkSession 的**显式**初始 label 经 pi set_session_name RPC
+   * 持久化（取代原 turn_end/agent_end 兜底直写机制），调用点在 client 就绪后
+   *（create 流程 getState 成功即证 RPC 可用）。
+   *
+   * 派生 label（basename(cwd)）**不调 RPC**——不再持久化：显示由内存 session.label +
+   * 既有 scanner fallback（extractSessionName 返回 null → basename(cwd)）承担，重启后
+   * 显示值不变；pi 内存 sessionName 保持空，auto-rename 守卫照常通过（行为与现状等价：
+   * 现状直写也不进 pi 内存）。
+   *
+   * RPC 失败**不阻断** create/fork：label 留内存显示 + console.error 上报，
+   * 恢复动作 = 手动 rename（renameSession 的 RPC 路径）重试。
+   */
+  private async persistExplicitLabel(client: IPiEngine, sessionId: string, label: string | undefined, source: string): Promise<void> {
+    if (label === undefined) return
+    try {
+      await client.setSessionName(label)
+    // eslint-disable-next-line taste/no-silent-catch -- best-effort 降级（docstring：RPC 失败不阻断 create/fork，label 留内存显示 + console.error 上报，恢复动作 = 手动 rename 重试）
+    } catch (e) {
+      console.error(`[session-lifecycle] ${source}: setSessionName RPC failed for ${sessionId} (label kept in memory only):`, e)
+    }
+  }
+
+  /**
    * 构建 create/restoreSession/forkSession 三处共用的 preset + override client options 子集（S-RT-4）。
    *
    * 三处原先用完全相同的 spread 模式（toolArgs/flags/modelOverride/thinkingOverride 条件 spread），
@@ -134,10 +224,11 @@ export class SessionLifecycle {
     // S-RT-5：thinkingLevel 校验合法值。Landing 传入与 preset 字段都可能是非法值
     //（如前端未约束 / preset JSON 手改），透传给 pi 会触发 pi 报错或静默忽略，统一在此拦截。
     const rawThinking = thinkingOverride ?? resolution?.thinkingLevel
-    const effectiveThinking = rawThinking && VALID_THINKING_LEVELS.includes(rawThinking)
-      ? rawThinking
-      : undefined
-    if (rawThinking && !VALID_THINKING_LEVELS.includes(rawThinking)) {
+    // widening cast（与 shared isPiLaunchPreset 的 TOOL_MODES 同款惯例）：includes 收窄参数类型，
+    // 此处本意就是对任意 string 做白名单判定。
+    const knownThinking = rawThinking !== undefined && (VALID_THINKING_LEVELS as readonly string[]).includes(rawThinking)
+    const effectiveThinking = knownThinking ? rawThinking : undefined
+    if (rawThinking !== undefined && !knownThinking) {
       console.warn(`[lifecycle] invalid thinking level: ${rawThinking}, ignored`)
     }
 
@@ -239,6 +330,9 @@ export class SessionLifecycle {
       throw initErr
     }
 
+    // W1：显式初始 label 经 pi RPC 持久化（派生 basename 值不持久化，见 helper 注释）
+    await this.persistExplicitLabel(client, id, label, 'create')
+
     // [HISTORICAL] 不再调 ensureSessionFile 提前创建 session 文件。
     // 之前的实现在此处用 openSync(wx) 创建含 session+session_info 两行的最小文件，理由是
     // 「pi 延迟写入期间 scanPiSessions 找不到该 session」。但这与 pi 0.80.3 SessionManager._persist
@@ -284,28 +378,63 @@ export class SessionLifecycle {
   async renameSession(sessionId: string, newName: string): Promise<void> {
     const session = this.svc.getSession(sessionId)
     if (session) {
+      // W1（数据源治理）：活跃 session 的 label 持久化唯一写入口 = pi set_session_name RPC
+      //（pi 内部 appendSessionInfo 落盘 + 广播 session_info_changed）。xyz 不再直写 session
+      // JSONL，消除「用户手动命名被 pi rename-session 扩展 auto-rename 直写竞争覆盖」的
+      // last-write-wins bug。
+      // client undefined（pi 崩溃窗口）或 RPC 失败（success:false / 超时）一律 throw 走上层
+      // toast——静默 no-op 会造成 UI 显示新名、零持久化、无提示的静默丢写。先 RPC 后改内存：
+      // 失败时旧名保留可重试。
+      const client = this.pm.getClient(sessionId)
+      if (!client) {
+        throw new Error(`Cannot rename session ${sessionId}: pi process is not available (try again after the session is reactivated)`)
+      }
+      await client.setSessionName(newName)
+      // 内存态同步（toSummary/config.sessions 的即时数据源；label 实例经 session_info_changed
+      // 事件 markDirty 防抖重拉收敛到同值——W9 影子缓存已删，label 不再有第三份状态）。
       session.label = newName
-      // 回写集中式缓存，确保后续 broadcastSessionList 读到新名称
-      sessionMetaCache.setLabel(sessionId, newName)
-      // 重置 labelPersisted：rename 后新名需要重新写盘。
-      // 若文件已存在（pi 已 flush），persistSessionName 的 append 分支立即写 session_info；
-      // 若文件不存在（pi 延迟写入窗口），persistSessionName no-op，labelPersisted=false 让
-      // tryPersistLabel 在下次 turn_end/agent_end 兜底写新名（规则 #6：绝不提前建文件）。
-      session.labelPersisted = false
-      if (session.sessionFilePath) {
-        this.sessionStore.persistSessionName(session.sessionFilePath, newName, session.id, session.cwd)
-      }
     } else {
-      // 非 active session:从磁盘查找 jsonl 文件并写入
+      // 非 active session：W11（绝对写规则）改经短命 pi——withEphemeralPi 附着该文件
+      // 后调 set_session_name RPC，session JSONL 仍由 pi 写（pi 对已 flush 文件的
+      // appendSessionInfo 立即落盘，尾部出现改名 session_info entry）。xyz 直写
+      // （persistSessionName openSync('a')）已随 W11 删除。探针 ~600ms 端到端
+      // （冷启动 ~500ms + RPC <1ms），逐次冷起（D2 裁决，无 warm pi）。
+      // 失败（spawn 失败 / 附着超时 / RPC 失败）rethrow 走上层 toast——旧名保留可重试
+      // （与活跃分支同语义）。
       const target = this.svc.findScannedSession(sessionId)
-      if (target) {
-        this.sessionStore.persistSessionName(target.filePath, newName, target.id, target.cwd)
+      // D3（p1p4-closure W1）：未命中必须 throw——旧形态 if (target) 无 else 静默
+      // return，UI 改名静默不生效（无持久化、无提示）。错误信息含 sessionId 与恢复
+      // 动作（全局规则 16），上层 toast 路径既有。
+      if (!target) {
+        throw new Error(
+          `Cannot rename session ${sessionId}: not found in active sessions or persisted files `
+          + `(refresh the sidebar and verify the session still exists, then retry the rename)`,
+        )
       }
+      // findings #4（p1p4-closure W1）：header cwd 死路径（如 worktree 清理后）时
+      // pi 0.84.1 switchSession 内 assertSessionCwdExists 直接拒绝附着（pi-mono
+      // coding-agent/src/core/agent-session-runtime.ts switchSession；binary strings
+      // 实证，findings §4.1；RPC switch_session 不透传 cwdOverride，无法绕过）——
+      // 附着前按 restoreSession 同款 F3 形态归一化（cwd fallback 落回原文件；
+      // 判定含 session_end 时一并 strip），然后附着原文件。cwd 检测源 = scanner
+      // 从 header 读出的 target.cwd（与 restoreSession 一致）；正常文件（cwd 活
+      // 且无 session_end）判定不命中，零变换直附着（探针 ~600ms 预期不变）。
+      const cwdFellBack = !existsSync(target.cwd)
+      if (cwdFellBack) {
+        console.warn(`[session-lifecycle] rename target cwd does not exist: ${target.cwd}, normalizing header cwd to home before attach`)
+      }
+      // 扫描 stale（文件已消失）时跳过预读归一化——「文件不存在」的报错分工归
+      // withEphemeralPi 内 switchSession（pi 报错，见其 docstring 的 @param 语义），
+      // 预读 ENOENT 会短路该分工。restoreSession 无此守卫（既有行为保持，不动）。
+      if (existsSync(target.filePath)) {
+        this.normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack)
+      }
+      await this.pm.withEphemeralPi(target.filePath, (c) => c.setSessionName(newName))
     }
 
-    // wave:perf-w26（D9-1 rename 失效点）：persistSessionName append session_info 改变文件
-    // mtime/size（sessionMetaCache 键控自然 miss），但目录列举 TTL 快照 1s 内仍返回旧 name——
-    // rename 后侧栏刷新立即显示新名，显式失效目录缓存。
+    // wave:perf-w26（D9-1 rename 失效点）：写路径改变 name（活跃分支 RPC 更新 pi 内存
+    // + 内存 label；非活跃分支短命 pi 落盘 session_info 改变文件 mtime/size），
+    // 但目录列举 TTL 快照 1s 内仍返回旧 name——rename 后侧栏刷新立即显示新名，显式失效目录缓存。
     this.sessionStore.invalidateScanCache()
     this.sessionStore.refreshAll()
   }
@@ -322,7 +451,12 @@ export class SessionLifecycle {
         try { unlinkSync(session.sessionFilePath + '.meta.json') } catch { void 0 }
         // 清理 preset 绑定 sidecar（设计文档 §4，delete 是唯一清理点）
         try { unlinkSync(session.sessionFilePath + '.preset.json') } catch { void 0 }
-        // W-Runtime4：清理 sessionMetaCache 中的 stale 条目（避免无界增长）
+        try { unlinkSync(session.sessionFilePath + '.project.json') } catch { void 0 }
+        try { unlinkSync(session.sessionFilePath + '.handoff.json') } catch { void 0 }
+        // 清理归一化残留 .tmp-migrate-*.jsonl（差距复审 suggestion 6，与 sidecar 同点 best-effort）
+        cleanupMigrateResidues(session.sessionFilePath)
+        // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
+        // 派生缓存，非已删的 label 影子缓存）中的 stale 条目（避免无界增长）
         this.sessionStore.invalidateMetaCache(session.sessionFilePath)
       }
     } else {
@@ -333,7 +467,12 @@ export class SessionLifecycle {
       try { unlinkSync(target.filePath + '.meta.json') } catch { void 0 }
       // 清理 preset 绑定 sidecar（设计文档 §4，delete 是唯一清理点）
       try { unlinkSync(target.filePath + '.preset.json') } catch { void 0 }
-      // W-Runtime4：清理 sessionMetaCache 中的 stale 条目（避免无界增长）
+      try { unlinkSync(target.filePath + '.project.json') } catch { void 0 }
+      try { unlinkSync(target.filePath + '.handoff.json') } catch { void 0 }
+      // 清理归一化残留 .tmp-migrate-*.jsonl（差距复审 suggestion 6，与 sidecar 同点 best-effort）
+      cleanupMigrateResidues(target.filePath)
+      // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
+      // 派生缓存，非已删的 label 影子缓存）中的 stale 条目（避免无界增长）
       this.sessionStore.invalidateMetaCache(target.filePath)
     }
     // wave:perf-w26（D9-1 delete 失效点）：session 文件已 trash，目录 TTL 快照 1s 内仍含
@@ -384,6 +523,47 @@ export class SessionLifecycle {
     return { cwd, deleted, failed }
   }
 
+  /**
+   * 附着前 F2/F3 分流归一化（restore-fork-attach-fix W1 形态；p1p4-closure W1 起
+   * renameSession 非活跃分支共用——两处附着前检测/变换必须同源，否则行为漂移）。
+   *
+   * 判定：containsSessionEndLine(raw) || cwdFellBack。禁止用
+   * stripSessionEndEntries(raw) === raw 字符串全等——strip 有末尾换行规范化副作用
+   * （原文末尾无 \n 时零剔除也产出不等文本），见 containsSessionEndLine。
+   *
+   * 变换（F3 一次性归一化，legacy 文件；每文件最多一次，产物收敛到 F2，幂等）：
+   * - strip session_end：legacy 行无 id/parentId，pi _buildIndex 对所有非 session
+   *   entry 无差别 byId.set(entry.id); leafId = entry.id（pi-mono session-manager.ts），
+   *   session_end 使 leafId=undefined → 新 entry parentId 断链 → 历史不进 LLM 上下文
+   * - header cwd fallback：仅 cwd 死时应用（cwdFellBack）——pi 0.84.1 switchSession
+   *   内 assertSessionCwdExists 对死 cwd 硬拒绝（pi-mono coding-agent/src/core/
+   *   agent-session-runtime.ts switchSession，binary strings 实证见 findings §4.1；
+   *   抛 MissingSessionCwdError，pi-mono session-cwd.ts；RPC switch_session 不透传
+   *   cwdOverride，只能由 xyz 附着前修）
+   *
+   * 落盘经 normalizeSessionFileInPlace（同目录临时名 rename-over 原子替换，路径
+   * 不变，登记表 §4 ⑨ 合法形态）。判定未命中（正常文件）时零变换：不写不拷贝，
+   * 调用方直附着原文件。
+   *
+   * @param filePath    目标 session JSONL 绝对路径（原地归一化，路径不变）
+   * @param cwdFellBack 调用方已判定的 session cwd 死路径标记（检测源 = scanner 从
+   *                    header 读出的 ScannedSession.cwd）
+   */
+  private normalizeInactiveSessionFileIfNeeded(filePath: string, cwdFellBack: boolean): void {
+    // 附着前清扫该文件的 .tmp-migrate-* 崩溃/失败残留（差距复审 suggestion 6；F2/F3
+    // 两路都过此处——F2 判定未命中会提前 return，清扫必须在其前）。此刻无归一化在途
+    //（restore 已销毁同 id 会话），同 basename 残留必然 stale，best-effort 清除。
+    cleanupMigrateResidues(filePath)
+    const raw = readFileSync(filePath, 'utf-8')
+    const needsNormalize = containsSessionEndLine(raw) || cwdFellBack
+    if (!needsNormalize) return
+    let cleaned = stripSessionEndEntries(raw)
+    if (cwdFellBack) {
+      cleaned = applyHeaderCwdFallback(cleaned, homedir())
+    }
+    normalizeSessionFileInPlace(filePath, cleaned)
+  }
+
   /** 从持久化文件恢复 session。 */
   async restoreSession(sessionId: string): Promise<SessionSummary> {
     const target = this.svc.findScannedSession(sessionId)
@@ -406,10 +586,15 @@ export class SessionLifecycle {
       this.svc.removeSessionEntry(sessionId)
     }
 
-    // session cwd 可能已被删除(如 worktree 清理后),降级到 home + patch session 文件
+    // session cwd 可能已被删除(如 worktree 清理后),降级到 home。
+    // W1（restore-fork-attach-fix）：cwd 死路径时两处都要兜底——spawn 侧 = 下方 sessionCwd
+    // 降级（cwdFellBack 标记）；会话文件 header 侧 = F3 归一化时 applyHeaderCwdFallback
+    // 落回原文件（归一化后 header cwd 持久化为 homedir——W11「源文件 header 永久保持
+    // 旧 cwd」的声明已被本设计取代，登记表 §4 例外③已更新）。
+    let cwdFellBack = false
     const sessionCwd = existsSync(target.cwd) ? target.cwd : (() => {
       console.warn(`[session-lifecycle] session cwd does not exist: ${target.cwd}, falling back to home`)
-      this.sessionStore.patchSessionCwd(target.filePath, homedir())
+      cwdFellBack = true
       return homedir()
     })()
 
@@ -420,7 +605,10 @@ export class SessionLifecycle {
     const presetId = target.launchPresetId ?? BUILTIN_PRESET_IDS.FULL
     const resolution = await this.svc.getLaunchPresetOptions(presetId, sessionCwd)
     const allExtPaths = resolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
-    // restore 不接收 Landing Chip override（无用户交互），只透传 preset 自身的 model/thinking。
+    // restore 不接收 Landing Chip override（无用户交互）。preset 的 model 是 launch 配置
+    // 只在创建时生效——附着路径的模型终态由 pi 从 model_change entry 恢复（见下方
+    // inheritSessionModel），presetClientOptions.model 在此处被显式清空；thinking 仍透传
+    // preset（launch 档位；session 内切档由 thinking_level_change entry 承载）。
     const presetClientOptions = this.buildPresetClientOptions(resolution, undefined, undefined)
     // D8-3（perf W29）：restore 同样 spawn pi——gate 等待（启动时恢复路径与 create 一致过 gate）。
     await migrationGate
@@ -429,23 +617,29 @@ export class SessionLifecycle {
       extensionPaths: allExtPaths,
       systemPrompt: this.svc.getReplaceSystemPrompt(),
       ...presetClientOptions,
+      // P1（pi-assumption final gate V1⑤）：pi CLI --model 恒优先于 session entry 恢复
+      //（main.js buildSessionOptions），restore 路径曾因全局默认兜底把 --model 拼进 spawn
+      // args，用户切换过的模型在重启重开时被静默压回默认。模型终态改由 pi 从
+      // model_change entry 恢复（每次创建/切换都会写该 entry，W1a 实证）。
+      model: undefined,
+      inheritSessionModel: true,
     })
 
     try {
-      // B7: sidecar 方案下 JSONL 无 session_end entry（persistSessionEnd 写 .meta.json sidecar），无需 strip。
-      // 保守隔离：pi switchSession 对源文件的写回行为未确认，先拷贝到 tmpdir 再 switchSession，
-      // 避免 pi 可能的写回污染原 JSONL（原文件仍是 source of truth，需保持完整）。
-      // W9：历史 session（迁移前写入的）JSONL 可能含 session_end 行，pi 对该 type 处理未验证 →
-      // 拷贝时 stripSessionEndEntries 保守剔除（比让 pi 报错更安全；其他行原样保留）。
-      const cleaned = stripSessionEndEntries(readFileSync(target.filePath, 'utf-8'))
-      const tmpFile = join(tmpdir(), `xyz-session-${sessionId}-${Date.now()}.jsonl`)
-      writeFileSync(tmpFile, cleaned)
-      try {
-        await client.switchSession(tmpFile)
-      } finally {
-        // switch 完成后清理临时文件，pi 已读入内存
-        try { unlinkSync(tmpFile) } catch { void 0 }
-      }
+      // W1（restore-fork-attach-fix）F2/F3 分流：pi 的 switch_session 是「永久重绑读写目标」
+      //（pi-mono session-manager.ts setSessionFile 把传入路径存为永久 sessionFile，_persist
+      // 每轮 appendFileSync 该路径——文件被删后 append 按路径重建），必须直接附着 sessions
+      // 目录内的正式文件。旧「拷贝 $TMPDIR → 附着 tmp → 立即 unlink」管线使 pi 终身写
+      // tmp 孤儿文件、原会话文件永不更新（P0 数据丢失），已整体删除。
+      // 判定/变换逻辑抽至 normalizeInactiveSessionFileIfNeeded（renameSession 非活跃
+      // 分支共用，p1p4-closure W1），行为不变。
+      this.normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack)
+      // F2 直附着（归一化判定未命中）：零拷贝零改写，pi 的读写目标 = 登记路径 = 原文件。
+      await client.switchSession(target.filePath)
+      // W2（restore-fork-attach-fix F4）：附着必断言（I1「登记路径 ≡ pi 写路径」）——
+      // get_state().sessionFile 与登记路径 resolve 归一后必须一致，不一致即 throw
+      //（D3 fail loud；本 try 的 catch 分支 safeDestroy + rethrow 保证进程不泄漏）。
+      await assertPiSessionFile(client, target.filePath, `restoreSession(${sessionId})`)
       // W2-4：清理旧 sidecar 移到 switchSession 成功之后。
       // 原顺序是 switchSession 之前 unlink，若 switchSession 抛错，原 session 的终态 sidecar
       //（done/stopped）已被删 → 原会话终态永久丢失。现在只在切换成功后才删，失败时保留旧终态。
@@ -562,6 +756,9 @@ export class SessionLifecycle {
     // sidecar 未写时，内存态兜底——getSession 返回 ManagedSession 实例，as 读 launchPresetId 字段），
     // 再 fallback 到扫描结果的 sidecar 值（source.launchPresetId），
     // 最后兜底 'builtin:full'（FR-10，历史 session 无 sidecar）。
+    // existsSync 兜底的**spawn cwd 参数**（pi 进程工作目录）；会话文件 header.cwd 的兜底
+    // 在 createForkedSessionFile 生成 newHeader 时完成（W1 F1/MF2——fork 文件是创建型
+    // 新文件，生成时兜底是最早、最便宜的拦截点）。
     const sessionCwd = existsSync(source.cwd) ? source.cwd : homedir()
     const forkPresetId = (this.svc.getSession(srcSessionId) as { launchPresetId?: string } | undefined)?.launchPresetId
       ?? source.launchPresetId
@@ -590,20 +787,17 @@ export class SessionLifecycle {
     })
 
     try {
-      // 4. switch_session 让 pi 加载截断后的历史。
-      // B7: sidecar 方案下 JSONL 无 session_end entry（persistSessionEnd 写 .meta.json sidecar），无需 strip。
-      // 保守隔离：pi switchSession 对源文件的写回行为未确认，先拷贝到 tmpdir 再 switchSession，
-      // 避免 pi 可能的写回污染 forkedFilePath（fork 产物需保持完整）。
-      // W9：fork 产物虽由 createForkedSessionFile 按树过滤生成（session_end 不在 keepIds 内本就不写入），
-      // 但保守 strip 一道——防御 createForkedSessionFile 行为变更或源文件含游离 session_end 行。
-      const cleaned = stripSessionEndEntries(readFileSync(forkedFilePath, 'utf-8'))
-      const tmpFile = join(tmpdir(), `xyz-fork-${forkedId}-${Date.now()}.jsonl`)
-      writeFileSync(tmpFile, cleaned)
-      try {
-        await client.switchSession(tmpFile)
-      } finally {
-        try { unlinkSync(tmpFile) } catch { void 0 }
-      }
+      // 4. W1（restore-fork-attach-fix F1）：pi 的 switch_session 永久重绑读写目标
+      //（pi-mono session-manager.ts setSessionFile 把传入路径存为永久 sessionFile，_persist
+      // 每轮 appendFileSync 该路径），直接附着 sessions 目录内的 fork 产物正式文件——
+      // 此后每轮对话落 forkedFilePath。旧「拷贝 $TMPDIR → 附着 tmp → 立即 unlink」管线
+      // 已删（pi 终身写按路径重建的 tmp 孤儿文件，fork 后对话全部丢失）。
+      // 无需 strip：fork 产物由 createForkedSessionFile 按树过滤生成（登记表 §4 ⑥ 创建型
+      // 合法形态），游离的 legacy session_end 行（无 id 不在树内）天然不进产物。
+      await client.switchSession(forkedFilePath)
+      // W2（restore-fork-attach-fix F4）：附着必断言（I1「登记路径 ≡ pi 写路径」）——
+      // 登记的 forkedFilePath 必须就是 pi 的终身写目标，不一致即 throw（D3 fail loud）。
+      await assertPiSessionFile(client, forkedFilePath, `forkSession(${srcSessionId})`)
       // W2-4：清理旧 sidecar 移到 switchSession 成功之后。
       // 原顺序是 switchSession 之前 unlink，若 switchSession 抛错，session 的终态 sidecar
       //（done/stopped）已被删 → 终态永久丢失。现在只在切换成功后才删，失败时保留旧终态。
@@ -648,6 +842,9 @@ export class SessionLifecycle {
       this.sessionStore.invalidateScanCache()
       throw initErr
     }
+
+    // W1：显式初始 label 经 pi RPC 持久化（派生 basename 值不持久化，见 helper 注释）
+    await this.persistExplicitLabel(client, forkedId, label, 'forkSession')
 
     void this.svc.fetchAndBroadcastContext(forkedId)
     // W-RT-4：fork 出的新 session 变 active，patch 内存态 launchPresetId（继承源 preset）。

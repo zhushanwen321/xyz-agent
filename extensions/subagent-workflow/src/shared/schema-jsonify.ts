@@ -18,6 +18,9 @@
 
 const cache = new WeakMap<object, { compact?: string; pretty?: string }>();
 
+/** pretty 格式（JSON.stringify(x, null, N)）的缩进空格数。 */
+const PRETTY_PRINT_INDENT_SPACES = 2;
+
 /**
  * JSON.stringify(schema) 的引用级缓存版。
  *
@@ -39,7 +42,7 @@ export function stringifySchemaCached(schema: object, mode: "compact" | "pretty"
   // 抛含恢复指引的错误——不回退 String(value)（"[object Object]" 会静默拼进 LLM
   // 指令，比崩溃更难排查）。抛错时 entry[mode] 未被赋值，缓存无毒化。
   const serialized: string | undefined =
-    mode === "compact" ? JSON.stringify(schema) : JSON.stringify(schema, null, 2);
+    mode === "compact" ? JSON.stringify(schema) : JSON.stringify(schema, null, PRETTY_PRINT_INDENT_SPACES);
   if (serialized === undefined) {
     throw new Error(
       `[subagent-workflow] stringifySchemaCached: JSON.stringify returned undefined (mode=${mode}) — ` +

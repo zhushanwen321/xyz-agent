@@ -111,9 +111,9 @@ function setGroups(sessions: SessionSummary[]): void {
     arr.push(s)
     byCwd.set(s.cwd, arr)
   }
-  useSessionStore().setGroups(
+  useSessionStore().applySnapshot({ groups: 
     Array.from(byCwd, ([cwd, ss]): SessionGroup => ({ cwd, sessions: ss })),
-  )
+   })
 }
 
 describe('useNewTaskFlow 状态机', () => {

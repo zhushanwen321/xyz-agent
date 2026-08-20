@@ -196,10 +196,15 @@ const currentMessages = computed(() => chat.getMessages(props.sessionId))
 /** session id（template 内多处引用：Turn :session-id / rail 等）。 */
 const sessionId = computed(() => props.sessionId)
 
-/** subagent 虚拟 session running 时强制 streaming（JSONL 读出 status 恒 complete，但 subagent 可能还在跑）。 */
+/** subagent 虚拟 session 真在跑时强制 streaming（JSONL 读出 status 恒 complete，但 subagent 可能还在跑）。
+ *  [review round2 R1-遗留-1] 窄口径判定（isStreamingSubagent，与主 session hasRunning 同判据）：
+ *  running + 轮终 result 在场（running-resumable）不算 streaming——轮终后虚拟 session 末位
+ *  turn 不再卡「streaming」，与主 session working 判定一致。resumable 续轮的真实流活动由
+ *  消息级 streaming status 承担（subscribeStream → applySubagentStreamDelta）；订阅判定
+ *  继续用宽松 isRunning（SubagentTab），此处不受影响。 */
 const forceWorking = computed(() => {
   if (!isSubagentVirtualId(props.sessionId)) return false
-  return subagentStore.isRunning(extractMainSessionId(props.sessionId), extractSubagentId(props.sessionId))
+  return subagentStore.isStreamingSubagent(extractMainSessionId(props.sessionId), extractSubagentId(props.sessionId))
 })
 
 /** session 级「对话进行中」信号（session-active-ssot T4）：驱动 Turn sticky/折叠 disabled/trace 展开等。

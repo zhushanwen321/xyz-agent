@@ -136,8 +136,9 @@ describe('EventAdapter: onHookExecute callback', () => {
     await vi.waitFor(() => expect(sent).toHaveLength(1))
 
     expect(sent[0].type).toBe('message.tool_call_start')
-    const payload = sent[0].payload as Record<string, unknown>
-    expect(payload.input).toEqual(transformedInput)
+    // [w21] hook 改写同步回 entry.arguments（payload 换 entry 形态）
+    const payload = sent[0].payload as { entry: { arguments?: unknown } }
+    expect(payload.entry.arguments).toEqual(transformedInput)
   })
 
   it('replaces output with transformedData for tool_execution_end', async () => {
@@ -164,8 +165,9 @@ describe('EventAdapter: onHookExecute callback', () => {
     await vi.waitFor(() => expect(sent).toHaveLength(1))
 
     expect(sent[0].type).toBe('message.tool_call_end')
-    const payload = sent[0].payload as Record<string, unknown>
-    expect(payload.output).toBe('REDACTED OUTPUT')
+    // [w21] hook 改写同步回 entry.message.content（text block 数组，pi 持久化形态）
+    const payload = sent[0].payload as { entry: { message: { content?: unknown } } }
+    expect(payload.entry.message.content).toEqual([{ type: 'text', text: 'REDACTED OUTPUT' }])
   })
 
   it('forwards event normally when onHookExecute is undefined', async () => {
@@ -186,7 +188,7 @@ describe('EventAdapter: onHookExecute callback', () => {
     // handleEvent is async even without hook — wait for it
     await vi.waitFor(() => expect(sent).toHaveLength(1))
     expect(sent[0].type).toBe('message.tool_call_start')
-    expect((sent[0].payload as Record<string, unknown>).toolName).toBe('read_file')
+    expect((sent[0].payload as { entry: { toolName?: string } }).entry.toolName).toBe('read_file')
   })
 
   it('proceeds with original data when hook throws', async () => {
@@ -211,8 +213,8 @@ describe('EventAdapter: onHookExecute callback', () => {
 
     // Hook error → proceed with original data
     expect(sent[0].type).toBe('message.tool_call_start')
-    const payload = sent[0].payload as Record<string, unknown>
-    expect(payload.input).toEqual({ path: '/tmp/y' })
+    const payload = sent[0].payload as { entry: { arguments?: unknown } }
+    expect(payload.entry.arguments).toEqual({ path: '/tmp/y' })
   })
 })
 

@@ -41,14 +41,24 @@ const BACKOFF_EXPONENT_BASE = 2;
 const MAX_ATTEMPTS = 3;
 
 /**
- * Stale context 检测模式（P1-5）。
+ * Stale context 检测模式（P1-5；W4b 对齐 pi 0.84.x 真实文案）。
  *
  * pi session context 被 compact/cancel 时报告的模式。这种情况下重试无意义——
  * 同样的 call 会再次失败。直接 markDone failed 终止单次调用。
+ *
+ * W4b：原 "stale context"/"stalecontext" 与 pi 真实文案零匹配（真实文案为
+ * "This extension ctx is stale after session replacement or reload. ..."——
+ * runner.ts:544（dist runner.js:352），词序是 "ctx is stale" 而非 "stale context"），stale 分诊对
+ * 真实文案失效。现对齐：
+ * - "ctx is stale"：真实文案核心子串（词序修正）
+ * - "stale after session replacement"：scheduler 已验证 marker（runtime.ts
+ *   STALE_CTX_MARKER，同文案锚定）
+ * - "context canceled"/"aborted"：保留——abort 族错误同样不重试（signal.aborted
+ *   分支的先行分诊，防边界竞态漏网），删除会放宽重试语义。
  */
 export const STALE_CONTEXT_PATTERNS = [
-  "stale context",
-  "stalecontext",
+  "ctx is stale",
+  "stale after session replacement",
   "context canceled",
   "aborted",
 ] as const;

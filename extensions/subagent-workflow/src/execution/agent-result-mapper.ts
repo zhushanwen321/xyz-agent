@@ -8,6 +8,9 @@
 import type { AgentResult as WorkflowAgentResult, AgentUsage as WorkflowAgentUsage, ToolCallEntry } from "../orchestration/models/types.ts";
 import type { AgentResult as SubagentsAgentResult, AgentUsageTotal, ToolCall } from "./types.ts";
 
+/** safeStringify 的 JSON 截断长度（字符），防大对象拼进 toolCalls 挤爆 trace。 */
+const TOOL_ARGS_JSON_MAX_CHARS = 500;
+
 /**
  * D-A10: subagents AgentResult → workflow AgentResult 映射。
  *
@@ -80,7 +83,7 @@ function mapToolCalls(calls: ToolCall[]): ToolCallEntry[] {
 function safeStringify(value: unknown): string {
   try {
     const s = JSON.stringify(value);
-    return s.length > 500 ? `${s.slice(0, 500)}...` : s;
+    return s.length > TOOL_ARGS_JSON_MAX_CHARS ? `${s.slice(0, TOOL_ARGS_JSON_MAX_CHARS)}...` : s;
   } catch {
     return String(value);
   }

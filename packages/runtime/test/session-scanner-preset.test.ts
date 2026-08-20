@@ -62,12 +62,10 @@ function makeSessionStore(): ISessionStore {
   return {
     scanSessions: () => scanPiSessions(),
     refreshAll: () => undefined,
-    persistSessionName: () => undefined,
     persistSessionEnd: () => undefined,
     persistPresetBinding: () => undefined,
     extractSessionOutcome: () => null,
     invalidateMetaCache: () => undefined,
-    patchSessionCwd: () => true,
     convertHistory: () => [],
     trash: () => undefined,
   } as unknown as ISessionStore

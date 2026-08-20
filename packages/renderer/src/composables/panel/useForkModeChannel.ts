@@ -24,6 +24,7 @@ interface ForkEnterRequest {
 
 /** 模块级单例 signal（跨组件树共享，同 useSearchModal 模式） */
 let current: ForkEnterRequest | null = null
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：fork 进入请求 signal 单例（跨组件树共享，12 类未覆盖）
 const signal = ref<ForkEnterRequest | null>(null)
 
 /** Sidebar/全局快捷键侧调用：请求 Composer 进入 fork 模式（从指定 assistant） */

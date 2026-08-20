@@ -111,9 +111,9 @@ function makeFixture(opts: { withFlow?: boolean } = {}): Fixture {
   return { session, store, api, panel, navigation, chat, flow, hooks, log, dispose: () => scope.stop() }
 }
 
-/** 组装分组（setGroups 后 store.list 派生） */
+/** 组装分组（applySnapshot 整表形态后 store.list 派生） */
 function seed(store: Fixture['store'], groups: SessionGroup[]): void {
-  store.setGroups(groups)
+  store.applySnapshot({ groups })
 }
 
 describe('selectSession', () => {
@@ -280,7 +280,7 @@ describe('deleteFolder', () => {
 })
 
 describe('loadSessions / retryHistory / renameSession / syncSessionToPanel', () => {
-  it('TC-8 loadSessions 成功：setGroups + setListLoadError(null)', async () => {
+  it('TC-8 loadSessions 成功：applySnapshot 整表 + setListLoadError(null)', async () => {
     const f = makeFixture()
     const groups = [{ cwd: '/a', sessions: [summary('s1')] }]
     f.api.list.mockResolvedValue(groups)
@@ -322,7 +322,7 @@ describe('loadSessions / retryHistory / renameSession / syncSessionToPanel', () 
     f.dispose()
   })
 
-  it('TC-13 renameSession：api.rename + 乐观更新 updateLabel', async () => {
+  it('TC-13 renameSession：api.rename + 乐观更新 applySnapshot(label)', async () => {
     const f = makeFixture()
     seed(f.store, [{ cwd: '/a', sessions: [summary('s1')] }])
     await f.session.renameSession('s1', '新名字')
@@ -390,7 +390,7 @@ describe('bindSessionListBroadcast refCount', () => {
     resetSessionListSubForTest()
   })
 
-  it('TC-10 多实例只订阅一次；全销毁后 unsub 一次；handler emit 触发 setGroups', async () => {
+  it('TC-10 多实例只订阅一次；全销毁后 unsub 一次；handler emit 触发 applySnapshot 整表', async () => {
     const unsub = vi.fn()
     let capturedHandler: ((groups: SessionGroup[]) => void) | null = null
     const scopeA = effectScope(true)

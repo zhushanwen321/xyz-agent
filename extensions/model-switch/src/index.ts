@@ -205,27 +205,27 @@ async function handleSwitch(state: SessionState, pi: ExtensionAPI, ctx: Extensio
 	const match = findModelMatch(state.config, query);
 	if (!match) return res(`No model matching "${query}". Use 'list' to see available models.`, { error: true });
 
-	return switchToModel(pi, ctx, match.plan, match.modelId, match.alias);
+	return switchToModel(pi, ctx, match.provider, match.plan, match.modelId, match.alias);
 }
 
 /** Exact match (alias or modelId), then fuzzy fallback. */
 function findModelMatch(
 	config: ModelPolicy,
 	query: string,
-): { plan: string; modelId: string; alias: string } | undefined {
+): { provider: string; plan: string; modelId: string; alias: string } | undefined {
 	// Exact match
-	for (const [, pcfg] of Object.entries(config.models)) {
+	for (const [provider, pcfg] of Object.entries(config.models)) {
 		for (const [alias, entry] of Object.entries(pcfg.models)) {
 			if (alias.toLowerCase() === query || entry.modelId.toLowerCase() === query) {
-				return { plan: pcfg.plan, modelId: entry.modelId, alias };
+				return { provider, plan: pcfg.plan, modelId: entry.modelId, alias };
 			}
 		}
 	}
 	// Fuzzy match
-	for (const [, pcfg] of Object.entries(config.models)) {
+	for (const [provider, pcfg] of Object.entries(config.models)) {
 		for (const [alias, entry] of Object.entries(pcfg.models)) {
 			if (alias.toLowerCase().includes(query) || entry.modelId.toLowerCase().includes(query)) {
-				return { plan: pcfg.plan, modelId: entry.modelId, alias };
+				return { provider, plan: pcfg.plan, modelId: entry.modelId, alias };
 			}
 		}
 	}
@@ -323,24 +323,37 @@ async function switchToModel(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	provider: string,
+	plan: string,
 	modelId: string,
 	alias: string,
 ): Promise<ToolRes> {
 	try {
-		// 尝试直接匹配 Pi 模型 registry（provider 可能含 -router 后缀）
-		const match = ctx.modelRegistry.find(provider, modelId);
-		if (!match) {
-			return res(`Model ${provider}/${modelId} not available.`, { error: true });
+		// pi 0.84.1 锚点：ModelRegistry.find(provider, modelId) 返回可直接喂给 setModel 的
+		// Model 对象（node_modules/@earendil-works/pi-coding-agent/dist/core/model-registry.d.ts:28）。
+		// 解析链：config 的 provider key（setup 生成时已剥 -router 后缀）→ 补 -router 重试
+		// （用户 models.json 可能用 router 变体注册同名 provider）→ plan 名兜底（部分 provider 与 plan 同名）。
+		const model =
+			ctx.modelRegistry.find(provider, modelId)
+			?? ctx.modelRegistry.find(`${provider}-router`, modelId)
+			?? ctx.modelRegistry.find(plan, modelId);
+		if (!model) {
+			return res(`Model ${provider}/${modelId} not available in the pi model registry. Use 'list' to see configured models.`, { error: true });
 		}
 
-		pi.appendEntry("model_change", {
-			provider,
-			modelId,
-			alias,
-			timestamp: new Date().toISOString(),
-		});
+		// pi 0.84.1 锚点：setModel 是 pi 唯一切模型 API（extensions/types.d.ts:954，
+		// `setModel(model: Model<any>): Promise<boolean>`）。host 实现对未配置 auth 的
+		// provider 返回 false（agent-session.js:1885-1890），因此 false 必须报错而非返回成功文案。
+		// host setModel 内部自写原生 model_change entry（sessionManager.appendModelChange，
+		// agent-session.js:1204 → session-manager.js:790-799）、持久化默认模型并广播 model_select
+		// 事件——所以这里不再 appendEntry("model_change") custom entry：custom entry 非 pi 原生
+		// 形态，session 重载恢复模型只认原生 entry（session-manager.js:146-160），写 custom 只会
+		// 留下双份无效记录（曾因只写 custom entry 导致切换从未生效，见 pi-assumption-remediation B-F1）。
+		const ok = await pi.setModel(model);
+		if (!ok) {
+			return res(`Switch to ${alias} rejected: no API key/auth configured for provider ${model.provider}. Configure auth and retry.`, { error: true });
+		}
 
-		return res(`Switched to ${alias} (${provider}/${modelId}).`);
+		return res(`Switched to ${alias} (${model.provider}/${model.id}).`);
 	} catch (err) {
 		return res(`Error switching: ${err instanceof Error ? err.message : String(err)}`, { error: true });
 	}

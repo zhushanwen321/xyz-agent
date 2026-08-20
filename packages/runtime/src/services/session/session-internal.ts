@@ -57,17 +57,18 @@ export interface ISessionServiceInternal {
   /** 按 RPC client 反查 managed session（更新 lastActiveAt / isGenerating 用）。 */
   getSessionByClient(client: IPiEngine): IManagedSessionView | undefined
   /**
-   * 回写 inputTokens 缓存 + 写 tokenCount + 算 usagePercent + 广播 context.update。
-   * totalTokens（W3）写入 session.tokenCount；compact 后用 estimatedTokensAfter 刷新用量。
+   * 失效 usage 实例 + 即时广播 context.update（W10 五写点收编：事件参数不直写缓存，
+   * usage 实例快照是 inputTokens/tokenCount 唯一数据源；compact 后用 estimatedTokensAfter
+   * 触发同样的失效刷新）。
    */
   applyContextUpdate(sessionId: string, inputTokens: number, totalTokens?: number): void
   /**
-   * turn_end 单 turn 副作用（W3）：tryPersistLabel 主路径——首 turn 即持久化。
+   * turn_end 单 turn 副作用（W3）：project sidecar 兜底补写（label 持久化 W1 起移交 pi RPC）。
    * 经 EventInterpreter.onTurnUsage 回调注入。
    */
   handleTurnUsageSideEffects(sessionId: string): void
   /**
-   * agent_end 副作用（W3 + W4）：复位 isGenerating=false + tryPersistLabel 兜底 + session_end 终态写入。
+   * agent_end 副作用（W3 + W4）：复位 isGenerating=false + project sidecar 兜底 + session_end 终态写入。
    * 经 EventInterpreter.onTurnFinalize 回调注入。
    * @param stopReason pi agent_end 的 stopReason（W4：决定 outcome=error|done）
    */

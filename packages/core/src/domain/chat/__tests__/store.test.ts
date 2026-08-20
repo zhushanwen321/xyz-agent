@@ -91,7 +91,7 @@ describe('createChatStore factory', () => {
     })
   })
 
-  describe('pendingBuffer 数据层（m1：pushPending / drainPending / abortPending）', () => {
+  describe('pendingBuffer 数据层（m1：pushPending / drainN 计数 FIFO / abortPending）', () => {
     it('TC1: pushPending 暂存到 buffer 不碰 messages', () => {
       const sid = 's1'
       sut.store.pushPending(sid, textToSegments('steer msg'), 'steer')
@@ -104,19 +104,31 @@ describe('createChatStore factory', () => {
       expect(sut.store.getMessages(sid)).toHaveLength(0)
     })
 
-    it('TC2: drainPending FIFO + 幂等（同 text 多次暂存，依次取出，第 3 次返回 undefined）', () => {
+    it('TC2: drainN 计数 FIFO（同 text 多次暂存，取 n 条按入队顺序，超出取尽即止）', () => {
       const sid = 's1'
       const seg = textToSegments('dup')
       sut.store.pushPending(sid, seg, 'steer')
       sut.store.pushPending(sid, seg, 'steer')
 
-      const r1 = sut.store.drainPending(sid, 'dup', 'steer')
-      const r2 = sut.store.drainPending(sid, 'dup', 'steer')
-      const r3 = sut.store.drainPending(sid, 'dup', 'steer')
+      const r1 = sut.store.drainN(sid, 'steer', 1)
+      const r2 = sut.store.drainN(sid, 'steer', 5) // n 超过存量 → 取尽即止（扩展注入例外收敛路径）
+      const r3 = sut.store.drainN(sid, 'steer', 1)
 
-      expect(r1).toBeDefined()
-      expect(r2).toBeDefined()
-      expect(r3).toBeUndefined()
+      expect(r1).toHaveLength(1)
+      expect(r2).toHaveLength(1)
+      expect(r3).toHaveLength(0)
+      expect(sut.store.pendingBuffer.value.get(sid) ?? []).toHaveLength(0)
+    })
+
+    it('TC2b: drainN sendMode 隔离（steer 计数不动 follow-up 项）', () => {
+      const sid = 's1'
+      sut.store.pushPending(sid, textToSegments('steer one'), 'steer')
+      sut.store.pushPending(sid, textToSegments('follow one'), 'follow-up')
+
+      const r = sut.store.drainN(sid, 'steer', 5)
+
+      expect(r).toHaveLength(1)
+      expect(sut.store.drainN(sid, 'follow-up', 1)).toHaveLength(1)
       expect(sut.store.pendingBuffer.value.get(sid) ?? []).toHaveLength(0)
     })
 
@@ -131,13 +143,19 @@ describe('createChatStore factory', () => {
       expect(sut.store.getMessages(sid)).toHaveLength(0)
     })
 
-    it('drainPending 无 sendMode 时退化为仅 content 匹配（跨 sendMode 命中）', () => {
+    it('TC3b: abortPending 保留文本匹配（W14 D6 差异：回滚有准确原文，sendMode 必填隔离）', () => {
       const sid = 's1'
-      sut.store.pushPending(sid, textToSegments('same'), 'steer')
-      // 不传 sendMode——仅按 text 匹配（normalizeContent + trim 归一化）
-      const r = sut.store.drainPending(sid, 'same')
-      expect(r).toBeDefined()
-      expect(sut.store.pendingBuffer.value.get(sid) ?? []).toHaveLength(0)
+      sut.store.pushPending(sid, textToSegments('rollback target'), 'steer')
+      sut.store.pushPending(sid, textToSegments('other'), 'steer')
+
+      // sendMode 不匹配（follow-up）→ no-op
+      sut.store.abortPending(sid, 'rollback target', 'follow-up')
+      expect(sut.store.pendingBuffer.value.get(sid) ?? []).toHaveLength(2)
+
+      sut.store.abortPending(sid, 'rollback target', 'steer')
+      const buf = sut.store.pendingBuffer.value.get(sid) ?? []
+      expect(buf).toHaveLength(1)
+      expect(buf[0].text).toBe('other')
     })
   })
 
@@ -297,6 +315,51 @@ describe('createChatStore factory', () => {
     })
   })
 
+  describe('finalizeAllStreaming（断连 / 崩溃兜底收口，review #1.2）', () => {
+    it('disconnect → 全部候选 session 的 streaming 复位（isGenerating false）+ 消息 error 收口 + 独立瞬态清空', () => {
+      const s1 = 's1'
+      const s2 = 's2'
+      // s1：streaming assistant（messages 分区来源的候选）
+      sut.store.setMessages(s1, [userMsg('u1'), streamingAssistant('a1', { content: '生成中' })])
+      // s2：无消息实体、仅 retry/queue 瞬态（瞬态 Map 来源的候选——只遍历 messages 会漏）
+      sut.store.applyMessageEvent(s2, msg(s2, 'message.auto_retry_start', { attempt: 1 }))
+      sut.store.applyMessageEvent(s2, msg(s2, 'message.queue_update', { steering: ['q1'] }))
+      sut.store.setCompacting(s2, true)
+      expect(sut.store.isGenerating(s1)).toBe(true)
+      expect(sut.store.getRetryState(s2)).toBeDefined()
+      expect(sut.store.getQueueState(s2)).toBeDefined()
+      expect(sut.store.isCompacting(s2)).toBe(true)
+
+      sut.store.finalizeAllStreaming('disconnect')
+
+      // streaming 实体收口为 error（disconnect 属 error 类 reason）→ isGenerating 复位
+      expect(sut.store.getMessages(s1)[1].status).toBe('error')
+      expect(sut.store.isGenerating(s1)).toBe(false)
+      // 独立瞬态（retry/queue/compacting）清空——clearIndependentTransient 断连兜底
+      expect(sut.store.getRetryState(s2)).toBeUndefined()
+      expect(sut.store.getQueueState(s2)).toBeUndefined()
+      expect(sut.store.isCompacting(s2)).toBe(false)
+    })
+
+    it('幂等：已收口 session 二次调用 no-op（重连成功后 ring 回放已收口的场景）', () => {
+      const sid = 's1'
+      sut.store.setMessages(sid, [streamingAssistant('a1', { content: '生成中' })])
+      sut.store.finalizeAllStreaming('disconnect')
+      expect(sut.store.getMessages(sid)[0].status).toBe('error')
+      // 二次调用（如 grace 到期与 IPC 崩溃路径竞态双触发）：sealed 不再改状态
+      sut.store.finalizeAllStreaming('disconnect')
+      expect(sut.store.getMessages(sid)[0].status).toBe('error')
+      expect(sut.store.isGenerating(sid)).toBe(false)
+    })
+
+    it('无瞬态 session（全部已 complete）不受影响', () => {
+      const sid = 's1'
+      sut.store.setMessages(sid, [userMsg('u1'), { id: 'a1', role: 'assistant', content: '已完成', status: 'complete', timestamp: 1 }])
+      sut.store.finalizeAllStreaming('disconnect')
+      expect(sut.store.getMessages(sid)[1].status).toBe('complete')
+    })
+  })
+
   describe('disposeSession（清理全部 per-session ref）', () => {
     it('清 messages / hydrated / pendingSend / compactingSessions', () => {
       const sid = 's1'
@@ -448,11 +511,93 @@ describe('createChatStore factory', () => {
       const sid = 's1'
       s.store.applyMessageEvent(sid, msg(sid, 'message.message_start', { messageId: 'a1' }))
       s.store.applyMessageEvent(sid, msg(sid, 'message.tool_call_start', {
-        toolCallId: 'tc1', toolName: 'read', input: {},
+        // [w21] entry 形态 payload（event-adapter 翻译时重构的 toolCall entry）
+        entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'read', arguments: {}, timestamp: new Date(0).toISOString() },
       }))
       const msgs = s.store.getMessages(sid)
       const last = msgs[msgs.length - 1]
       expect(last.toolCalls?.[0]).toMatchObject({ id: 'tc1', toolName: 'read', status: 'running' })
+      s.dispose()
+    })
+  })
+
+  // ── [W21] entry 形态实时 feed 喂 reducer（applyEntryFrame）──
+  // 实时路径（message_end / tool_call_end 重构 entry）与文件重放（replayEntries）喂同一个
+  // applyEntry reducer；messages ref 走 overlay 路径不受影响（ref 收敛归 W22 对账）。
+  describe('applyEntryFrame（w21 实时 feed 喂 reducer）', () => {
+    it('message_end（user entry）→ reducer state 累积 user 投影；messages ref 不受影响（overlay 路径不动）', () => {
+      const s = makeStore()
+      const sid = 's-w21-user'
+      s.store.applyMessageEvent(sid, msg(sid, 'message.message_end', {
+        entry: {
+          type: 'message',
+          parentId: null,
+          timestamp: new Date(1000).toISOString(),
+          message: { role: 'user', content: 'hello', timestamp: 1000 },
+        },
+      }))
+      const state = s.store._entryStatesForTest.get(sid)
+      expect(state?.messages).toHaveLength(1)
+      expect(state?.messages[0]).toMatchObject({ role: 'user', content: [{ type: 'text', text: 'hello' }], status: 'complete' })
+      // ref 不动（send 时 appendUser 的乐观消息负责实时渲染；ref 收敛归 W22 对账）
+      expect(s.store.getMessages(sid)).toHaveLength(0)
+      s.dispose()
+    })
+
+    it('message_end（assistant entry with toolCalls）→ tool_call_end（toolResult entry）→ reducer 回填 output/isError', () => {
+      const s = makeStore()
+      const sid = 's-w21-tool'
+      // pi 时序：assistant message_end（含 toolCalls）先于 tool_execution_end（探针定论，agent-session.ts:545）
+      s.store.applyMessageEvent(sid, msg(sid, 'message.message_end', {
+        entry: {
+          type: 'message',
+          parentId: null,
+          timestamp: new Date(2000).toISOString(),
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'checking' },
+              { type: 'toolCall', id: 'tc-9', name: 'read', arguments: { path: '/x' } },
+            ],
+            timestamp: 2000,
+          },
+        },
+      }))
+      s.store.applyMessageEvent(sid, msg(sid, 'message.tool_call_end', {
+        entry: {
+          type: 'message',
+          parentId: null,
+          timestamp: new Date(3000).toISOString(),
+          message: { role: 'toolResult', toolCallId: 'tc-9', toolName: 'read', content: [{ type: 'text', text: 'file body' }], isError: true, timestamp: 3000 },
+        },
+      }))
+      const state = s.store._entryStatesForTest.get(sid)
+      // reducer：assistant 投影（toolCalls completed）+ toolResult 窗口局部配对回填（isError → error 态）
+      expect(state?.messages).toHaveLength(1)
+      const tc = state?.messages[0].toolCalls?.[0]
+      expect(tc).toMatchObject({ id: 'tc-9', toolName: 'read', output: 'file body', status: 'error' })
+      s.dispose()
+    })
+
+    it('message_end 异常帧（entry 非 message type）→ 丢弃不累积', () => {
+      const s = makeStore()
+      const sid = 's-w21-bad'
+      s.store.applyMessageEvent(sid, msg(sid, 'message.message_end', {
+        entry: { type: 'compaction', timestamp: new Date(0).toISOString(), summary: 'x' },
+      }))
+      expect(s.store._entryStatesForTest.has(sid)).toBe(false)
+      s.dispose()
+    })
+
+    it('disposeSession 清 entryStates 分区', () => {
+      const s = makeStore()
+      const sid = 's-w21-clean'
+      s.store.applyMessageEvent(sid, msg(sid, 'message.message_end', {
+        entry: { type: 'message', parentId: null, timestamp: new Date(0).toISOString(), message: { role: 'user', content: 'x', timestamp: 0 } },
+      }))
+      expect(s.store._entryStatesForTest.has(sid)).toBe(true)
+      s.store.disposeSession(sid)
+      expect(s.store._entryStatesForTest.has(sid)).toBe(false)
       s.dispose()
     })
   })
