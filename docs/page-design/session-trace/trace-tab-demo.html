@@ -498,10 +498,24 @@ svg { display: block; }
           </div>
         </div>
 
-        <!-- #2 SYSTEM prompt v1 -->
-        <div class="tr-row noctx" data-kind="system" data-ctx="noctx" data-text="system prompt v1 initial hash a3f9c2 12436 字符 system-prompt-trace extension 留痕">
+        <!-- #2 USER（影子化；user message 先于首个 turn_start 落盘） -->
+        <div class="tr-row shadowed" data-kind="msg" data-ctx="shadowed" data-text="user 帮我修一下 dag-executor 的重试逻辑 固定间隔重试 指数退避 补回归测试">
           <div class="tr-head">
             <span class="tr-seq">#2</span>
+            <span class="tr-kind k-user">USER</span>
+            <span class="tr-time">09:41:15</span>
+            <span class="tr-summary">帮我修一下 dag-executor 的重试逻辑：目前固定间隔重试，要改成指数退避，补回归测试</span>
+          </div>
+          <div class="tr-detail">
+            <div class="tr-kv"><span class="k">entry</span><span class="v mono">message · role=user · 1 text block · 已被 #21 压缩影子化</span></div>
+            <div class="tr-pre">帮我修一下 dag-executor 的重试逻辑：目前固定间隔重试，要改成指数退避，补回归测试</div>
+          </div>
+        </div>
+
+        <!-- #3 SYSTEM prompt v1（首个 turn_start 写入，故排在首条 user 之后） -->
+        <div class="tr-row noctx" data-kind="system" data-ctx="noctx" data-text="system prompt v1 initial hash a3f9c2 12436 字符 system-prompt-trace extension 留痕">
+          <div class="tr-head">
+            <span class="tr-seq">#3</span>
             <span class="tr-kind k-system">SYSTEM</span>
             <span class="tr-time">09:41:02</span>
             <span class="tr-summary"><span class="dim">system prompt</span> v1 · initial <span class="dim">· 12,436 字符 · hash</span> <span class="mono">a3f9c2</span></span>
@@ -516,20 +530,6 @@ You are an expert coding assistant operating inside pi…
 ## 最优先规则
 1. 禁止谄媚式回答…</div>
             <div class="tr-actions"><button class="tr-btn">查看全文</button><button class="tr-btn">复制</button></div>
-          </div>
-        </div>
-
-        <!-- #3 USER（影子化） -->
-        <div class="tr-row shadowed" data-kind="msg" data-ctx="shadowed" data-text="user 帮我修一下 dag-executor 的重试逻辑 固定间隔重试 指数退避 补回归测试">
-          <div class="tr-head">
-            <span class="tr-seq">#3</span>
-            <span class="tr-kind k-user">USER</span>
-            <span class="tr-time">09:41:15</span>
-            <span class="tr-summary">帮我修一下 dag-executor 的重试逻辑：目前固定间隔重试，要改成指数退避，补回归测试</span>
-          </div>
-          <div class="tr-detail">
-            <div class="tr-kv"><span class="k">entry</span><span class="v mono">message · role=user · 1 text block · 已被 #21 压缩影子化</span></div>
-            <div class="tr-pre">帮我修一下 dag-executor 的重试逻辑：目前固定间隔重试，要改成指数退避，补回归测试</div>
           </div>
         </div>
 
@@ -645,7 +645,7 @@ export async function withRetry&lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;, opts: Re
             <span class="tr-seq">#21</span>
             <span class="tr-kind k-compacted">COMPACTED</span>
             <span class="tr-time">10:02:44</span>
-            <span class="tr-summary"><span class="dim">自动压缩 ·</span> <span class="mono">152,311</span> <span class="dim">tok → summary 4.2k · 保留自</span> <span class="mono">#18</span> <span class="dim">· #3–#17 影子化</span></span>
+            <span class="tr-summary"><span class="dim">自动压缩 ·</span> <span class="mono">152,311</span> <span class="dim">tok → summary 4.2k · 保留自</span> <span class="mono">#18</span> <span class="dim">· 此前消息类 entry 影子化</span></span>
           </div>
           <div class="tr-detail">
             <div class="tr-kv"><span class="k">entry</span><span class="v mono">compaction · tokensBefore=152,311 · firstKeptEntryId=#18 · fromHook=false · 触发=自动阈值（contextWindow − reserve）</span></div>
@@ -662,12 +662,18 @@ export async function withRetry&lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;, opts: Re
         </div>
 
         <!-- context 分界行 -->
-        <div class="tr-divider" id="ctxDivider"><span>当前 context = <b>#21 summary</b> + 保留区 <b>#18–#20</b> + <b>#22 之后</b> · 上方 9 条消息类 entry 已影子化（降透明显示）</span></div>
+        <div class="tr-divider" id="ctxDivider"><span>当前 context = <b>#21 summary</b> + 保留区 <b>#18–#20</b> + <b>#22 之后</b> · 上方 14 条 entry 已影子化（降透明显示）</span></div>
 
-        <!-- #22 SYSTEM v2 resume -->
+        <!-- #22 USER（resume 后首条消息，先于 turn_start 落盘） -->
+        <div class="tr-row" data-kind="msg" data-ctx="in" data-text="user 继续 把测试补上">
+          <div class="tr-head"><span class="tr-seq">#22</span><span class="tr-kind k-user">USER</span><span class="tr-time">10:03:40</span><span class="tr-summary">继续，把测试补上</span></div>
+          <div class="tr-detail"><div class="tr-pre">继续，把测试补上</div></div>
+        </div>
+
+        <!-- #23 SYSTEM v2 resume（resume 后首个 turn_start 写入） -->
         <div class="tr-row noctx" data-kind="system" data-ctx="noctx" data-text="system prompt v2 resume hash 7be2d1 12702 字符 较 v1 +266 AGENTS.md 规则变更 留痕">
           <div class="tr-head">
-            <span class="tr-seq">#22</span>
+            <span class="tr-seq">#23</span>
             <span class="tr-kind k-system">SYSTEM</span>
             <span class="tr-time">10:03:01</span>
             <span class="tr-summary"><span class="dim">system prompt</span> v2 · <b style="color:var(--info);font-weight:500">resume</b> <span class="dim">· 12,702 字符 · 较 v1 </span><span class="mono dim">+266</span><span class="dim"> · hash</span> <span class="mono">7be2d1</span></span>
@@ -687,11 +693,7 @@ export async function withRetry&lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;, opts: Re
           </div>
         </div>
 
-        <!-- #23+：resume 后继续 -->
-        <div class="tr-row" data-kind="msg" data-ctx="in" data-text="user 继续 把测试补上">
-          <div class="tr-head"><span class="tr-seq">#23</span><span class="tr-kind k-user">USER</span><span class="tr-time">10:03:40</span><span class="tr-summary">继续，把测试补上</span></div>
-          <div class="tr-detail"><div class="tr-pre">继续，把测试补上</div></div>
-        </div>
+        <!-- #24：resume 后继续 -->
         <div class="tr-row" data-kind="msg" data-ctx="in" data-text="assistant deepseek-v4-pro 写回归测试 retry.test.ts write">
           <div class="tr-head"><span class="tr-seq">#24</span><span class="tr-kind k-assistant">ASSISTANT</span><span class="tr-time">10:03:44</span><span class="tr-summary"><span class="mono dim">deepseek-v4-pro</span> <span class="dim">· thinking×1 tool×1 text×1 ·</span> 补 6 个指数退避边界用例</span></div>
           <div class="tr-detail"><div class="tr-blocks"><div class="tr-block-mini"><span class="bm-kind">toolCall</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg><span class="bm-text mono">write · packages/core/src/retry.test.ts → #25</span></div><div class="tr-block-mini"><span class="bm-kind">text</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="bm-text">补了上限/抖动/取消三类边界用例</span></div></div></div>
@@ -836,8 +838,8 @@ document.getElementById('inspBack').addEventListener('click', function () {
   inspEmpty.classList.add('on');
 });
 
-// 默认选中 #22（SYSTEM v2，展示 inspector 形态）
-var defaultRow = document.querySelectorAll('.tr-row')[21];
+// 默认选中 #23（SYSTEM v2，展示 inspector 形态）
+var defaultRow = document.querySelectorAll('.tr-row')[22];
 if (defaultRow) selectRow(defaultRow);
 
 // ── kind 过滤 + 搜索 + 仅当前 context ────────────────────
