@@ -85,6 +85,7 @@ const {
   buildScopedRecheckPrompt,
   wrapUntrusted,
   buildFixPrompt,
+  buildR1ReviewPrompt,
   buildR2ReviewPrompt,
   buildAggregatorPrompt,
   resolveReviewReportPath,
@@ -228,10 +229,13 @@ const reviewerSchema = {
         },
         required: ["prev_id", "status"],
       },
-      description: "R2+ reconciliation table (structured): MANDATORY for R2+ rounds, optional for R1",
+      description: "Reconciliation table (structured): return [] on R1 (no previous round); on R2+ every previous issue_id must have a status entry",
     },
   },
-  required: ["report_file", "must_fix", "suggestion"],
+  // T9 前缀稳定化（tier-1 6.9）：required 恒含 reconciliation——schema JSON 逐字嵌入
+  // appendSystemPrompt，R1↔R2+ 分叉会造成 system 段字节差异（消息级缓存前缀失效）。
+  // R1 的合规输出 = 空数组（prompt 动态段明示）。
+  required: ["report_file", "must_fix", "suggestion", "reconciliation"],
 };
 
 const aggregatorSchema = {
@@ -509,7 +513,7 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
     const prevRoundDir = RUN_ROOT + "/batch-" + batchIndex + "/round-" + (round - 1);
     return {
       ...base,
-      schema: { ...reviewerSchema, required: [...reviewerSchema.required, "reconciliation"] },
+      // T9：无 per-round spread——reviewerSchema 跨轮统一（缓存前缀稳定前提）
       prompt: buildR2ReviewPrompt({
         header, round, max, roundDir,
         reportFile: def.report,
@@ -520,6 +524,7 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
         knownRemaining: (state.knownRemaining && Array.isArray(state.knownRemaining)) ? state.knownRemaining : [],
         // rfl dormant 复活通道（tier-1 6.3 delta ③）：降级条目注入 R2+ prompt（动态段内容）
         dormant: (state.dormant && Array.isArray(state.dormant)) ? state.dormant : [],
+        reviewPrompt, reviewInstruction,
       }),
       agent: def.path,
     };
@@ -530,8 +535,6 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
   if (scoped) {
     return {
       ...base,
-      // m2: scoped 分支与 R2+ 分支一致——reconciliation 必填（recheck 也须对账前轮 fix）
-      schema: { ...reviewerSchema, required: [...reviewerSchema.required, "reconciliation"] },
       prompt: buildScopedRecheckPrompt({
         header, round, max, roundDir,
         reportFile: def.report,
@@ -541,24 +544,19 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
         fixResult: state.fixResults && state.fixResults.length
           ? state.fixResults[state.fixResults.length - 1]
           : null,
+        reviewPrompt, reviewInstruction,
       }),
       agent: def.path,
     };
   }
 
+  // T9：R1 函数化（三模板共享静态段，动态后置）
   return {
     ...base,
-    prompt: [
-      header,
-      "",
-      reviewInstruction + prevBatchesHint,
-      "",
-      "Review requirements:",
-      reviewPrompt,
-      "",
-      "output 路径：" + roundDir + "/" + def.report + ".md",
-      "Write report to: " + roundDir + "/" + def.report + ".md",
-    ].join("\n"),
+    prompt: buildR1ReviewPrompt({
+      header, roundDir, reportFile: def.report, prevBatchesHint,
+      reviewPrompt, reviewInstruction,
+    }),
     agent: def.path,
   };
 }

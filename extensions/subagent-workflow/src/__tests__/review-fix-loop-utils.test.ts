@@ -20,7 +20,9 @@ import {
   buildScopedRecheckPrompt,
   wrapUntrusted,
   buildFixPrompt,
+  buildR1ReviewPrompt,
   buildR2ReviewPrompt,
+  ROUND_CONTEXT_MARKER,
   buildAggregatorPrompt,
   resolveReviewReportPath,
   normalizeFixResult,
@@ -1563,5 +1565,92 @@ describe("C4 aggregatorModel 参数（T8 降档）", () => {
     expect(resolveAggregatorModel("", "main/model")).toBe("main/model");
     expect(resolveAggregatorModel(undefined, "main/model")).toBe("main/model");
     expect(resolveAggregatorModel(undefined, undefined)).toBeUndefined();
+  });
+});
+
+
+// ── D2/D3: T9 前缀稳定化（tier-1 6.9：三模板共享静态段 + 动态后置） ──
+
+describe("D2 三模板静态段逐字节相同（动态段起点标记之前）", () => {
+  const staticArgs = {
+    reviewPrompt: "审查变更是否存在逻辑错误、边界条件问题。",
+    reviewInstruction: "Review `git diff abc123...HEAD` for all committed changes.",
+  };
+
+  it("D2 R1/R2+/scoped 三模板在 ROUND CONTEXT 标记之前逐字节相同", () => {
+    const r1 = buildR1ReviewPrompt({ header: "Batch 1 Round 1/10 — b1", roundDir: "/tmp/rd1", reportFile: "rev", ...staticArgs });
+    const r2 = buildR2ReviewPrompt({
+      header: "Batch 1 Round 2/10 — b1", round: 2, max: 10, roundDir: "/tmp/rd2", reportFile: "rev",
+      aggPath: "/tmp/rd1/aggregated.md", fixResult: null, knownRemaining: [], dormant: [], ...staticArgs,
+    });
+    const scoped = buildScopedRecheckPrompt({
+      header: "Batch 1 Round 2/10 — b1", round: 2, max: 10, roundDir: "/tmp/rd3", reportFile: "rev",
+      modifiedFiles: ["src/a.ts"], affectedFiles: [], aggPath: "/tmp/rd1/aggregated.md", fixResult: null, ...staticArgs,
+    });
+    expect(r1).toContain(ROUND_CONTEXT_MARKER);
+    expect(r2).toContain(ROUND_CONTEXT_MARKER);
+    expect(scoped).toContain(ROUND_CONTEXT_MARKER);
+    const prefix1 = r1.split(ROUND_CONTEXT_MARKER)[0];
+    const prefix2 = r2.split(ROUND_CONTEXT_MARKER)[0];
+    const prefix3 = scoped.split(ROUND_CONTEXT_MARKER)[0];
+    expect(prefix1).toBe(prefix2);
+    expect(prefix2).toBe(prefix3);
+  });
+
+  it("D2 静态段不含轮次/路径等动态值；静态段全文快照锁定", () => {
+    const r1 = buildR1ReviewPrompt({ header: "Batch 1 Round 1/10 — b1", roundDir: "/tmp/rd1", reportFile: "rev", ...staticArgs });
+    const prefix = r1.split(ROUND_CONTEXT_MARKER)[0];
+    // 动态值不进静态段
+    expect(prefix).not.toContain("/tmp/rd1");
+    expect(prefix).not.toContain("Round 1");
+    expect(prefix).not.toContain("Batch 1");
+    // 快照锁定静态段全文（模板回归守护——任何静态段改动都会被本断言拦截，
+    // 需连带评估缓存前缀稳定性后再更新此快照）
+    expect(prefix).toBe([
+      "─── REVIEW PROTOCOL (stable across rounds) ────────────────",
+      "Review `git diff abc123...HEAD` for all committed changes.",
+      "",
+      "Review requirements:",
+      "审查变更是否存在逻辑错误、边界条件问题。",
+      "",
+      "Severity levels: critical (must fix) / major (should fix) / minor (suggestion).",
+      "critical + major count into must_fix; minor counts into suggestion.",
+      "",
+      "Report format — markdown report with a per-issue table. EVERY must-fix and",
+      "suggestion row MUST include a 'Fix suggestion' column: one line with the",
+      "concrete fix direction (file / location / change to make). A row without a",
+      "fix suggestion is incomplete.",
+      "Every critical/major finding must cite evidence (file/line/behavior) — bare",
+      "assertions get adjudicated down by the aggregator.",
+      "",
+      "Structured output: your JSON must include report_file (or report_content),",
+      "must_fix, suggestion, and reconciliation. reconciliation is an array —",
+      "return [] when there is no previous round to reconcile; on later rounds",
+      "every previous issue_id must have a status entry.",
+      "",
+      "",
+    ].join("\n"));
+  });
+});
+
+describe("D3 R1 空数组说明 + 修复建议必填列（T9 连带）", () => {
+  it("D3 buildR1ReviewPrompt 动态段含 R1 空数组说明", () => {
+    const p = buildR1ReviewPrompt({
+      header: "h", roundDir: "/tmp/rd", reportFile: "rev",
+      reviewPrompt: "rp", reviewInstruction: "ri",
+    });
+    const dynamic = p.split(ROUND_CONTEXT_MARKER)[1];
+    expect(dynamic).toContain("reconciliation: []");
+    expect(dynamic).toContain("round 1");
+  });
+
+  it("D3 三模板报告指令均含修复建议必填列（guidance 数据链 reviewer 源头）", () => {
+    const args = { reviewPrompt: "rp", reviewInstruction: "ri" };
+    const r1 = buildR1ReviewPrompt({ header: "h", roundDir: "/d", reportFile: "r", ...args });
+    const r2 = buildR2ReviewPrompt({ header: "h", round: 2, max: 10, roundDir: "/d", reportFile: "r", aggPath: "/a", fixResult: null, knownRemaining: [], dormant: [], ...args });
+    const scoped = buildScopedRecheckPrompt({ header: "h", round: 2, max: 10, roundDir: "/d", reportFile: "r", modifiedFiles: [], affectedFiles: [], aggPath: "/a", fixResult: null, ...args });
+    for (const p of [r1, r2, scoped]) {
+      expect(p.split(ROUND_CONTEXT_MARKER)[0]).toContain("'Fix suggestion' column");
+    }
   });
 });

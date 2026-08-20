@@ -1390,4 +1390,68 @@ describe("startup fail-fast (ADR-0003 D6)", () => {
     },
     RUN_TIMEOUT_MS,
   );
+
+  // ── D1/D4: T9 前缀稳定化（schema 跨轮统一 + R1 空数组下游无异常） ──
+
+  it(
+    "D1/D4: 同一 run 内 R1 与 R2 review 调用 schema 逐字节相同 + 无 per-round spread + R1 空数组下游无异常",
+    async () => {
+      // 剧本同 B6b 骨架（R1 带 reconciliation: [] 显式输出 → fix → R2 → clean）
+      let aggN = 0;
+      let fixN = 0;
+      const runner = makeScenarioRunner({
+        review: [
+          // R1：显式 reconciliation: []（required 统一后的合规输出）
+          () => ({ report_file: "/tmp/d-r1.md", must_fix: 1, suggestion: 0, reconciliation: [] }),
+          () => ({
+            report_file: "/tmp/d-r2.md", must_fix: 0, suggestion: 0,
+            reconciliation: [{ prev_id: "MF-1", status: "fixed", evidence: "read confirmed" }],
+          }),
+        ],
+        aggregate: () => {
+          aggN++;
+          return {
+            report_file: "/tmp/d-agg.md", must_fix: 1, suggestion: 0,
+            must_fix_ids: [{ id: "MF-1", severity: "major", adjudication: "evidence", files: ["src/a.ts"] }],
+            fixes_caution: [],
+          };
+        },
+        fix: () => {
+          fixN++;
+          return {
+            fixed_count: 1,
+            fixes: [{ issue_id: "MF-1", description: "fix", self_check: "grep: 1 hit", affected_files: ["src/b.ts"] }],
+            deferred: [],
+          };
+        },
+      });
+      const deps = makeDeps(runner);
+
+      const result = await runAndWait(
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("reviewer"), _runId: RUN_ID() },
+        deps, undefined, RUN_TIMEOUT_MS,
+      );
+      expect(result.reason).toBe("completed");
+      const outcome = assertScriptOutcome(result.scriptResult);
+      // R1 空数组下游无异常：run 到达 clean（reconcile 门控 reconCount===0 行为不变）
+      expect(outcome.terminated).toBe("clean");
+
+      // schema 跨轮逐字节相同（缓存前缀稳定化的 system 段前提）
+      const { kinds, schemas } = runner.stats();
+      const reviewSchemas = kinds
+        .map((k, i) => (k === "review" ? JSON.stringify(schemas[i]) : null))
+        .filter((s) => s !== null);
+      expect(reviewSchemas.length).toBe(2);
+      expect(reviewSchemas[0]).toBe(reviewSchemas[1]);
+      const parsed = JSON.parse(reviewSchemas[0]) as { required?: string[] };
+      expect(parsed.required).toEqual(["report_file", "must_fix", "suggestion", "reconciliation"]);
+      expect(JSON.stringify(parsed)).not.toContain("optional for R1"); // stale description 已更新
+
+      // 脚本内不再存在 per-round required spread
+      const wfSource = readFileSync(wf("review-fix-loop"), "utf-8");
+      expect(wfSource).not.toContain("...reviewerSchema, required:");
+    },
+    RUN_TIMEOUT_MS,
+  );
 });
