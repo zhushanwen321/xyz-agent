@@ -285,6 +285,17 @@ export class MessageDispatcher {
     command: string,
     excludeFromContext?: boolean,
   ): Promise<{ blocked: boolean; rejected?: boolean }> {
+    // ── 哨兵不变式守卫（D1 closure，实施审查 S-2 上移至真正入口）──
+    // bash-effects 哨兵帧判定 command === '' && cancelled（识别 abortBash 兜底广播、只清态不产
+    // entry）。真实帧 command 恒非空是「约定」——空命令在此早退使其升级为结构性不变式：入口
+    // 不可能发出 command === '' 的 bash，两类帧永不混淆。程序不变式守卫（UI `!` 解析必出非空
+    // 命令，正常不可达）：不广播 send.rejected / message.error（非用户可见错误，广播会以失真
+    // 文案打扰），仅 console.warn 留痕；blocked 返回值仅为类型完备。
+    if (command === '') {
+      console.warn(`[message-dispatcher] sendBash: empty command rejected (sentinel invariant), sid=${sessionId}`)
+      return { blocked: true }
+    }
+
     // ── ensureActive(必要时 restore)──
     let client: IPiEngine
     try {
@@ -295,15 +306,6 @@ export class MessageDispatcher {
       const errMsgObj = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
       this.messageBus?.publish(sessionId, errMsgObj)
       throw e
-    }
-
-    // ── 哨兵不变式守卫（D1 closure r3 审查补）──
-    // bash-effects 哨兵帧判定 command === '' && cancelled（识别 abortBash 兜底广播、只清态不产
-    // entry）。真实帧 command 恒非空是「约定」——空命令在此早退使其升级为结构性不变式：入口
-    // 不可能发出 command === '' 的 bash，两类帧永不混淆。
-    if (command === '') {
-      console.warn(`[message-dispatcher] sendBash: empty command rejected (sentinel invariant), sid=${sessionId}`)
-      return { blocked: true }
     }
 
     // ── busy 预检（W2: bash↔streaming 放宽并发，对齐 pi-tui）──

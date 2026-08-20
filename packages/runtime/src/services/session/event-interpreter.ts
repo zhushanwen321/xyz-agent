@@ -661,8 +661,9 @@ export class EventInterpreter {
         // closure D2）：pi appendCompaction 无条件落盘（手动 :1432 / auto :1670），summary 缺失的
         // 成功 compaction 旧逻辑 live 无消息、重开有 reducer fallback「上下文已压缩」行（登记
         // 例外④）。下游已全就绪——shared CompactionSummary.summary 可选、registry
-        // readCompactionSummary 条件窄化、reducer `summary ?? fallback`——缺省透传后两侧同走
-        // fallback，差异消灭。空串形态亦两侧一致（同值同 fallback 逻辑）。
+        // readCompactionSummary 空串透传门（`s !== undefined`，实施审查 MF-1：truthiness 门会把
+        // '' 丢成 undefined 制造两侧内容分叉）+ 条件窄化、reducer `summary ?? fallback`——
+        // undefined 与 '' 两种形态各自两侧同值同路径（E4b/E4c 锁定）。
         this.opts.send({
           type: 'message.compactionSummary',
           payload: {

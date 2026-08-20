@@ -454,4 +454,36 @@ describe('live ≡ reload 构造性等价（W6 全类型）', () => {
     expect(items).toHaveLength(1)
     expect(items[0]!.kind).toBe('systemNotice')
   })
+
+  it("E4c: compaction 空串 summary 处置（实施审查 MF-1——'' 经 readers 空串透传门保留，两侧同值同路径不分叉）", () => {
+    // 语义链（closure 实施审查 r1 MF-1）：pi appendCompaction 无条件直写 summary 字段，
+    // '' 落盘后 replay 侧 `'' ?? fallback` 不触发 → 保留空行。live 链原先在
+    // readCompactionSummary 的 truthiness 门（`if (s)`）处把 '' 丢成 undefined → 走
+    // fallback 文案 → 内容级分叉。修复 = readers 门改 `s !== undefined`（空串透传），
+    // '' 与 undefined 两种形态各自两侧一致（undefined → 双侧 fallback，见 E4b；'' → 双侧空行）。
+    // live 侧：帧 summary:'' → readers 透传 → entry summary:''（cmp- 前缀客户端 id）
+    const liveCompaction: PiEntry = {
+      type: 'compaction',
+      id: 'cmp-00000008-0000-4000-8000-000000000008',
+      parentId: null,
+      timestamp: ts(9500),
+      summary: '',
+      tokensBefore: 123456,
+    }
+    // replay 侧：pi 持久化 entry（summary 字段 ''，`'' ?? fallback` 不触发）
+    const replayCompaction: PiEntry = {
+      type: 'compaction',
+      id: piId(10),
+      parentId: null,
+      timestamp: ts(9500),
+      summary: '',
+      tokensBefore: 123456,
+    }
+    const liveState = normalizeIds(replayEntries([liveCompaction]))
+    const replayState = normalizeIds(replayEntries([replayCompaction]))
+    expect(liveState).toEqual(replayState)
+    // 用户可见行为：两侧都是空 content 行（不走 fallback 文案——与 E4b 的 undefined 形态对照）
+    expect(liveState.messages[0]).toMatchObject({ role: 'system', content: '' })
+    expect(replayState.messages[0]).toMatchObject({ role: 'system', content: '' })
+  })
 })

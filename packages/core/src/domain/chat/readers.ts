@@ -73,8 +73,11 @@ export function readUsage(payload: Record<string, unknown>): { inputTokens: numb
 /** 读 message.compactionSummary payload */
 export function readCompactionSummary(payload: Record<string, unknown>): CompactionSummary {
   const summary: CompactionSummary = {}
+  // [D2 closure r1 MF-1] 空串透传：pi appendCompaction 无条件直写 summary 字段（session-manager
+  // :803-817），'' 在 replay 侧保留为空行（apply-entry `'' ?? fallback` 不触发）——truthiness
+  // 门（原 `if (s)`）会把 live 帧的 '' 丢成 undefined 走 fallback，制造两侧内容级分叉。
   const s = readString(payload, 'summary')
-  if (s) summary.summary = s
+  if (s !== undefined) summary.summary = s
   const tokensBefore = readNumber(payload, 'tokensBefore')
   if (tokensBefore !== undefined) summary.tokensBefore = tokensBefore
   const timestamp = readNumber(payload, 'timestamp')
@@ -85,8 +88,9 @@ export function readCompactionSummary(payload: Record<string, unknown>): Compact
 /** 读 message.branchSummary payload */
 export function readBranchSummary(payload: Record<string, unknown>): BranchSummary {
   const summary: BranchSummary = {}
+  // [D2 closure r1 MF-1] 同 readCompactionSummary：summary 空串透传（同族分叉预防）。
   const s = readString(payload, 'summary')
-  if (s) summary.summary = s
+  if (s !== undefined) summary.summary = s
   const fromId = readString(payload, 'fromId')
   if (fromId) summary.fromId = fromId
   const timestamp = readNumber(payload, 'timestamp')

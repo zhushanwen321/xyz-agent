@@ -75,7 +75,7 @@ sendBash await 正常 resolve（cancelled result 全量数据）
 - `event-interpreter.ts` `handleCompactionEnd`：`if (r.summary)` 真值门——summary 缺失的**成功** compaction 不发 `message.compactionSummary` 帧 → live 无消息。
 - pi 侧事实：手动（agent-session.js:1414 → :1432）与 auto（:1654 → :1670）两路都**无条件** `appendCompaction(summary, …)` 落盘；summary 来源是 LLM 结果或 extension 提供（`compactResult.summary` / `extensionCompaction.summary`），缺失形态为 `undefined`（字段缺失，非空串）。
 - replay 侧：`apply-entry.ts:543-551` compaction case 的 `summary ?? '上下文已压缩'` fallback 已就绪；live 侧 registry handler（registry.ts:503-530）也已按 `summary !== undefined` 条件展开构造 entry——**全链路只差 interpreter 那一个真值门**。修复 = 删门（帧照发、summary 字段缺省），两侧同走 reducer fallback，差异消灭。
-- 空串陷阱已排除：若 LLM 异常返回 `''`，live 帧与 pi 落盘 entry 同为 `''`（`'' ?? fallback` 两侧都不触发），仍然一致——修复方案对 undefined/空串两种缺失形态都不引入新差异。
+- 空串陷阱（实施审查 MF-1 修正原论证）：若 LLM 异常返回 `''`，pi 落盘 entry 与 live 帧同值 `''`，且 `'' ?? fallback` 两侧都不触发——但**前提是 live 链中转门不丢空串**：原设计论证漏算了 `readCompactionSummary` 的 truthiness 门（`if (s)` 会把 `''` 丢成 undefined 走 fallback，制造两侧内容级分叉）。实施修复 = readers 门改 `s !== undefined`（空串透传，readBranchSummary 同型门一并修），`undefined` 与 `''` 两种形态自此各自两侧同值同路径（E4b/E4c 锁定）。
 
 ### 2.3 L4：steer 插话视觉——裁决记录（不修）
 
@@ -213,6 +213,15 @@ Final gate：V1 / V2 / V4 在打包链 dev app 端到端复跑一次（builtin �
 |------|------|------|
 | F1 | dispatcher sendBash：入口空命令早退守卫（哨兵不变式结构化）+ guard 命中分支改发布真实 cancelled 结果（注释重写，catch 分支维持 skip）；bash-effects 哨兵注释更新为收窄语义；E3 改判为 abort 等价（两侧 deep-equal）+ 新增 E3b transport 抛错例外锁定；runtime W1a 测试改判（2 条帧断言） | 例外①消灭 |
 | F2 | interpreter handleCompactionEnd 删 `if (r.summary)` 真值门（恒发帧，summary 缺省透传）；新增 TC2b（runtime）与 E4b（core）锁定 | 例外④消灭 |
-| F3 | executingBash cleanup 挂接（**实施期定案**：形态保留 bash-effects 模块级分区 Map——store 是 factory 模式，渲染层 `getExecutingBash` 模块级读签名不变，迁入 store 实例会迫使读方改走 pinia 解包超出「读方签名不变」约束；架构目标「cleanup 编排可达」以 store.disposeSession 同点调 `clearExecutingBash` 达成，taste 豁免 W24-EX-B 从草稿转落定）；「规则 7.5」→「关键规则 9」全仓 26 处清理（0 残留）；登记表 #7 例外清单演进（①④消灭 / ②落定 / 新增收窄例外⑤） | 技术债清偿 |
+| F3 | executingBash cleanup 挂接（**实施期定案**：形态保留 bash-effects 模块级分区 Map——store 是 factory 模式，渲染层 `getExecutingBash` 模块级读签名不变，迁入 store 实例会迫使读方改走 pinia 解包超出「读方签名不变」约束；架构目标「cleanup 编排可达」以 store.disposeSession 同点调 `clearExecutingBash` 达成，taste 豁免 W24-EX-B 从草稿转落定）；「规则 7.5」→「关键规则 9」packages 源码区 26 处清理（0 残留；`.xyz-harness/` 与 `docs/adr/` 历史记录区另存 25 处按 as-written 保留，见实施审查 S-3）；登记表 #7 例外清单演进（①④消灭 / ②落定 / 新增收窄例外⑤） | 技术债清偿 |
 
-**探针门 1（§3.5 ⛔）状态**：pi dist 侧依据已实测锚定（bash-executor.js:86-109 abort 返回 cancelled 不 throw，W1a mock 测试按此语义改判并通过）；dev app 真机复跑（V8）归 F4 验收阶段执行。F4（真机验收 V1-V6 + V8-V10 + final gate）未执行——独立阶段，发现问题回投对应 wave。
+**探针门 1（§3.5 ⛔）状态**：pi dist 侧依据为静态源码锚定（bash-executor.js:86-109 abort 返回 cancelled 不 throw）+ W1a mock 测试按此语义改判并通过；按门定义的本地 pi CLI 真机腿 + dev app 复跑（V8）归 F4 验收阶段执行。F4（真机验收 V1-V6 + V8-V10 + final gate）未执行——独立阶段，发现问题回投对应 wave。
+
+**实施审查（r1，reviewer 对 21a8564b0 + b17307a9c 对抗式）处置记录**：
+
+- **MF-1（major，已修）**：空串 summary 分叉——原设计 §2.2 论证漏算 `readCompactionSummary` 的 truthiness 中转门，live 帧 `''` 被丢成 undefined 走 fallback 而 pi 落盘 `''` 保留空行。修复：readers 门改 `s !== undefined`（readBranchSummary 同型门一并修）+ readers 单测空串断言 + E4c 用例 + interpreter 注释与 §2.2 论证同步修正。
+- S-1（已修）：registry compactionSummary handler 例外④注释更新为销案表述。
+- S-2（已修）：空命令守卫上移至 ensureActive 之前（真入口，空命令不再拉起 pi 子进程）+ 注释显式声明「程序不变式守卫不广播用户可见错误」契约。
+- S-3（表述修正）：「全仓 0 残留」改为如实口径——packages 源码区 26 处已清（0 残留）；`.xyz-harness/`（4 文件）与 `docs/adr/`（2 文件）另存 25 处，属历史决策记录区，按 as-written 原则保留（ADR/harness spec 是写作时刻的记录，改写会篡改历史语境）。
+- S-4（表述修正）：见上文探针门状态段（原文「已实测锚定」夸大为真机实测，实为 dist 静态 + mock）。
+- S-5（备案，pre-existing 非本次回归）：sendBash finally 无条件 `isBashRunning = false` 在 abort 后新旧 sendBash 交叠的窄窗口会破坏 bash↔bash 互斥并短路 abortBash 的 isBashRunning 守卫——旧代码同病且设计明言「finally 复位逻辑不变」，登记为已知问题（触发条件：abort 后立即发起下一次 `!` bash 的毫秒级窗口），归后续 bash 互斥专项处理，不在本收尾范围。

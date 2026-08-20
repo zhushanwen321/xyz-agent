@@ -512,10 +512,10 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // case（apply-entry）自此 live/reload 共用——「live ≡ reload」全类型构造性成立
     // （等价性断言见 apply-entry-equivalence / effects 测试）。
     //
-    // 已知窄差异（登记 data-source-registry #7）：interpreter 只在 result.summary 真值时发帧
-    // （event-interpreter `if (r.summary)`），pi appendCompaction 无条件落盘——summary 缺失的
-    // compaction（成功路径罕见）live 无消息、重开有 reducer fallback「上下文已压缩」行。
-    // fallback 文案随 entry 化由英文占位收敛为 reducer 中文（与重开一致，见文件头 i18n 注释）。
+    // 已知窄差异（D2 closure 已消灭，登记 data-source-registry #7 例外④销案）：interpreter 曾
+    // 只在 result.summary 真值时发帧（`if (r.summary)` 门），summary 缺失的 compaction live 无
+    // 消息、重开有 fallback 行——现恒发帧（summary 缺省透传），两侧同走 reducer fallback
+    // 「上下文已压缩」（等价性断言 E4b/E4c，含空串形态）。
     //
     // entry 注入两个异源字段（customStart 同款，差异归一见等价性测试）：id 客户端生成
     // `cmp-<uuid>`（重开侧为 pi uuidv7 entry id——id 值异源属 W21 已裁决差异类）；timestamp
