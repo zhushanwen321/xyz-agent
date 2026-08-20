@@ -8,7 +8,7 @@
 |---|---|---|---|
 | `real-mixed-kinds.jsonl` | `2026-08-17T12-26-32-445Z_01a00fb0-*.jsonl`（124 行） | 类型最丰富：message（user/assistant/toolResult）×65、custom ×44（`xyz.client-msg-id` / `pending:register` / `subagents:log`）、custom_message ×2、model_change ×2、thinking_level_change ×2、session_info ×8；**7 个无 id 的 session_info 侧支不在 leaf 路径上**（path ≠ 全量 entries 的真实样本）；无 compaction | cwd、message 文本（text/thinking 块正文、toolCall arguments、toolResult content）、custom.data、custom_message.content、session_info.name |
 | `real-lifecycle-small.jsonl` | `2026-05-20T05-46-38-409Z_*.jsonl`（10 行） | 小体积含 model_change + thinking_level_change + session_info + toolResult，无 custom | 同上 |
-| `real-lifecycle-small.bad-lines.jsonl` | 上行文件的副本 | V7 前置：手工注入 2 行坏 JSON（第 3 行半截 JSON、第 9 行纯文本） | 同上 + 注入坏行 |
+| `real-lifecycle-small.bad-lines.jsonl` | 上行文件的副本 | V7 前置：手工注入 2 行坏 JSON（第 3 行半截 JSON、第 8 行纯文本） | 同上 + 注入坏行 |
 | `real-fork-header.jsonl` | `2026-08-20T10-22-02-482Z_*.jsonl`（3 行） | fork header 形态：`parentSession` 为 sessionId fallback（源 session 未落盘，`session-lifecycle.ts:521-527` 两种形态之一） | 无需脱敏（本身是 xyz-agent fork 测试产物，cwd 为系统临时目录、id 为合成值） |
 
 脱敏原则：`type` / `id` / `parentId` / `timestamp` / `role` / `provider` / `model` / `usage` / `stopReason` / `isError` / `toolCallId` / `toolName` / `thinkingLevel` / `customType` / `display` / `version` 等结构字段原样保留（保语义可核算）；文本体一律 `<redacted>`。脱敏脚本一次性执行，不随 git 跟踪。

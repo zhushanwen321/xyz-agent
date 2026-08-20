@@ -197,6 +197,9 @@ function summarizeRow(entry: TraceFileEntry | TraceSessionEndMeta, kind: TraceRo
       meta.cancelled = bool(m.cancelled)
       meta.truncated = bool(m.truncated)
       meta.fullOutputPath = str(m.fullOutputPath) || undefined
+      // pi bashExecution message 的 excludeFromContext（messages.ts:39，!! 前缀透传）：
+      // 标记该次输出不进 LLM context，行渲染据此显示「不进上下文」注记
+      meta.excludeFromContext = bool(m.excludeFromContext)
       return { headline: str(m.command), meta }
     }
     case 'NOTICE': {
