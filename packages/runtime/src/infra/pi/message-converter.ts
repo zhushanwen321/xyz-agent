@@ -160,7 +160,7 @@ export function applyOrphanToolResults(messages: Message[], orphanToolResults: u
  * computeToolCallFill（copy-on-write 版）为重放/实时路径对应实现）。
  */
 function fillToolCallOutput(tc: ToolCall, toolResult: PiHistoryToolResult): void {
-  // 对称恢复 outputRaw（规则 7.5：对话流状态必须可重开恢复）。
+  // 对称恢复 outputRaw（关键规则 9：对话流状态必须可重开恢复）。
   // 实时路径（event-adapter handleToolExecutionEnd）已统一委托 normalizePiToolResult（W1），
   // 此处历史路径对称：output 存 stripAnsi 版本，outputRaw 存原始 ANSI 文本（仅当含 ANSI 时）。
   const { output, outputRaw } = normalizePiToolResult(toolResult)
@@ -168,7 +168,7 @@ function fillToolCallOutput(tc: ToolCall, toolResult: PiHistoryToolResult): void
   if (outputRaw) tc.outputRaw = outputRaw
   if (toolResult.isError) tc.status = 'error'
   // F1 修复：透传 details（含 __gui__），与实时路径（event-interpreter tool_call_end）对齐。
-  // 规则 7.5：对话流状态必须可重开恢复——重开 session 后 __gui__ 不丢。
+  // 关键规则 9：对话流状态必须可重开恢复——重开 session 后 __gui__ 不丢。
   if (toolResult.details && typeof toolResult.details === 'object' && !Array.isArray(toolResult.details)) {
     tc.details = toolResult.details
   }

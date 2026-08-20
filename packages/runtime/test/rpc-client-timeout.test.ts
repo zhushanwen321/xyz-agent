@@ -13,6 +13,7 @@
  * 用 fakeTimer 驱动超时，用 emitPiLine 投递迟到响应。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { RpcTimeoutError } from '../src/infra/pi/rpc-client.js'
 
 // ── Mocks ──────────────────────────────────────────────────────────
 
@@ -187,5 +188,67 @@ describe('RpcClient W3 S6 (timedOutIds)', () => {
     // 5s TTL 后自动清理
     vi.advanceTimersByTime(5_000)
     expect(timedOutIds.has(cmdId)).toBe(false)
+  })
+})
+
+describe('RpcTimeoutError 类型（D3a pi 半死自愈：超时判别收口为类型）', () => {
+  /** kill 并模拟进程退出（fakeProc.kill 不会真触发 exit，手动驱动 exit handlers 让 kill() 立即 resolve）。 */
+  async function killClient(client: { kill(): Promise<void> }): Promise<void> {
+    const killPromise = client.kill()
+    procExitHandlers.forEach((h) => h(0))
+    await killPromise
+    procExitHandlers = []
+  }
+
+  it('字段与 message：name/commandType/timeoutMs', () => {
+    const err = new RpcTimeoutError('abort', 60_000)
+    expect(err).toBeInstanceOf(RpcTimeoutError)
+    expect(err).toBeInstanceOf(Error)
+    expect(err.name).toBe('RpcTimeoutError')
+    expect(err.commandType).toBe('abort')
+    expect(err.timeoutMs).toBe(60_000)
+    // message 保持旧文案格式（依赖 /timed out/ 正则的既有测试不破）
+    expect(err.message).toBe('RPC command "abort" timed out after 60000ms')
+  })
+
+  it('sendCommand 超时 reject 的是 RpcTimeoutError 实例（instanceof 可判别）', async () => {
+    const client = new (await import('../src/infra/pi/rpc-client.js')).RpcClient({ cwd: '/project' })
+    await client.start()
+
+    vi.useFakeTimers()
+    const commandPromise = client.sendCommand('abort', {}, 100)
+    await Promise.resolve()
+    vi.advanceTimersByTime(200)
+
+    // 捕获 reject 值做 instanceof + 字段断言（rejects.toThrow 只验 message，判别不了类型）
+    const thrown = await commandPromise.then(
+      () => { throw new Error('expected rejection') },
+      (e: unknown) => e,
+    )
+    expect(thrown).toBeInstanceOf(RpcTimeoutError)
+    expect((thrown as RpcTimeoutError).commandType).toBe('abort')
+    expect((thrown as RpcTimeoutError).timeoutMs).toBe(100)
+
+    vi.useRealTimers()
+    await killClient(client)
+  })
+
+  it('普通 RPC 失败（success:false）reject 普通 Error，不误判为超时', async () => {
+    const client = new (await import('../src/infra/pi/rpc-client.js')).RpcClient({ cwd: '/project' })
+    await client.start()
+
+    const commandPromise = client.sendCommand('abort')
+    await Promise.resolve()
+    // pi 回 success:false
+    emitPiLine({ type: 'response', id: lastWrittenJson().id, success: false, error: 'boom' })
+
+    const thrown = await commandPromise.then(
+      () => { throw new Error('expected rejection') },
+      (e: unknown) => e,
+    )
+    expect(thrown).not.toBeInstanceOf(RpcTimeoutError)
+    expect((thrown as Error).message).toContain('boom')
+
+    await killClient(client)
   })
 })

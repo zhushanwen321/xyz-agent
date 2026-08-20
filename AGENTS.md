@@ -15,7 +15,7 @@ Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作台。架构分层�
 | 完整编码规范 / UI 设计演变 / 术语表 | [docs/standards.md](docs/standards.md) · [design-evolution.md](docs/design-evolution.md) · [architecture/context.md](docs/architecture/context.md) |
 | 设计系统（tokens / 原语层 / v6 SSOT / 视觉规格） | [docs/page-design/](docs/page-design/)（design-tokens.md · design-system.md · v6-master-spec.md · v6-spec-*.html；能力设计 spec 在 `archive/v3/`。禁止创建 `demos/`、`impeccable/` 目录） |
 | 窗口顶部 traffic light 布局数值 SSOT | [traffic-light-layout.md](docs/page-design/traffic-light-layout.md)（v3 刻意调整形态，不遵循 v6 demo） |
-| Renderer 七层目标架构 / v6 重构 | [architecture/renderer-target-architecture.md](docs/architecture/renderer-target-architecture.md) · [architecture/v6-architecture-refactor.md](docs/architecture/v6-architecture-refactor.md) |
+| Renderer 终态包拓扑（现行 SSOT）/ 七层目标概念与 v6 重构（历史） | [architecture/renderer-rebuild-architecture.md](docs/architecture/renderer-rebuild-architecture.md)（现行 SSOT：§3 包拓扑 / §4 core 分层）· 历史：[renderer-target-architecture.md](docs/architecture/renderer-target-architecture.md)（七层目标概念，已 supersede）· [v6-architecture-refactor.md](docs/architecture/v6-architecture-refactor.md)（已 supersede） |
 | 功能开发地图（启动新 Phase 前更新） | [docs/feature-map/](docs/feature-map/)（最新 2026-06-20.md） |
 | 测试策略 SSOT | [TEST-STRATEGY.md](TEST-STRATEGY.md) + [docs/testing/](docs/testing/)（00 总览入口；testid 清单/调用链/已知坑） |
 | 问题排查（日志/诊断/常见问题/历史排查规则） | [docs/troubleshooting.md](docs/troubleshooting.md) |
@@ -24,7 +24,7 @@ Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作台。架构分层�
 
 **外部依赖 pi**：[badlogic/pi-mono](https://github.com/badlogic/pi-mono) 上游（npm `@earendil-works/pi-coding-agent@0.84.1`，曾用 fork xyz-pi 已切回）。**[MANDATORY] 不修改 pi 源码、不提 PR、不 fork**——pi 没有的能力由 xyz-agent 自实现。**pi 语义断言的权威源 = node_modules 实装版**（断言前 `npm ls @earendil-works/pi-coding-agent` 核对版本，以 dist 编译 JS 为准）；clone `~/Code/git-fork/pi-mono-workspace/main/packages/`（coding-agent/src 核心逻辑、ai/src/providers provider 层）仅作可读 TS 参照，引用前须核对 clone 版本与实装一致（clone 领先/落后实装均属常态——曾因按 0.80.3 clone 断言 0.84.1 行为连产 4 条漂移 bug，审计 C #6）。不靠网络搜索。
 
-**Pi Extension 源码（本项目维护）**：`extensions/` 下 14 个 `@zhushanwen/pi-*` 包 + `extensions/shared/` 共享库（quota-providers / llm-shared / extension-logger），统一在本仓开发发布（旧仓 xyz-pi-extensions-workspace 已废弃，以本仓为准）。全集：ask-user / cw-tool / goal / model-switch / pending-notifications / permission / plan / rename-session / session-reader / scheduler / structured-output / subagent-workflow / todo / unified-hooks（新增/删包时更新此列举）。校验：`pnpm extensions:typecheck` / `extensions:lint` / `extensions:test`。
+**Pi Extension 源码（本项目维护）**：`extensions/` 下 14 个 `@zhushanwen/pi-*` 包 + `extensions/shared/` 共享库（quota-providers / llm-shared / extension-logger / file-lock），统一在本仓开发发布（旧仓 xyz-pi-extensions-workspace 已废弃，以本仓为准）。全集：ask-user / cw-tool / goal / model-switch / pending-notifications / permission / plan / rename-session / session-reader / scheduler / structured-output / subagent-workflow / todo / unified-hooks（新增/删包时更新此列举）。校验：`pnpm extensions:typecheck` / `extensions:lint` / `extensions:test`。
 
 - **[MANDATORY] extension 改动优先在本地 pi CLI 实测**（不是 xyz-agent 桌面）：`pi --mode rpc --session-dir <dir> --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve --extension <path>` + stdin JSONL 发 prompt；`XYZ_AGENT_DEBUG=1` 看 `~/.pi/agent/logs/` 扩展日志。xyz-agent 的 builtin 打包/数据隔离/runtime 中转层会掩盖版本差异
 - **structured-output 方案 A [HISTORICAL]**：workflow 模式 `PI_WORKFLOW_SCHEMA` 注入的权威 schema 是唯一校验权威，LLM 自报 schema 不参与校验（曾因校验自报 schema 致修复静默丢失）
@@ -61,7 +61,7 @@ bash scripts/validate-runtime-bundle.sh    # runtime bundle 深度验证
 6. **pi session 文件延迟写入**：首条 assistant 消息前文件可能不存在，读取代码必须处理；**[HISTORICAL] 禁止任何代码在 pi 首次 flush 前创建/触碰 session 文件**（EEXIST → session 永久卡死；活跃 session 靠 `SessionScanner.listAll()` 合并内存 Map 显示）
 7. **Session 隔离：所有 runtime → 前端消息必须带 `sessionId`**，缺失的消息应被前端忽略（三层：ChatStore Map 分区 / useChat 路由 / PaneSessionView 过滤；`sendError` 必须传 sessionId）
 8. **per-session 状态隔离范式 [ADR-0049]**：持有 per-session 状态的 composable 必须用 `useSessionScopedState` 工厂（Map 分区范式），禁止实例级状态 / watch(sessionId) 手动清空。**WS handler 必须用 `updateFor(capturedSid)` 不用 `update`**（结构性消除切 session 竞态）；cleanup 由 `useSidebar.deleteSession` 统一编排。新增/修改 composable 时 reviewer 按 [ADR-0049 Checklist](docs/adr/0049-session-isolation-map-partition.md#code-review-checklist范式守护替代-eslint-规则) 逐条确认
-9. **对话流状态必须实时可见 + 重开 session 仍可见 [HISTORICAL]**：实时链路（message.* 广播 + chat-message-effects）与持久化链路（RPC 路径 converter 不丢弃任何 pi entry 类型 / 文件路径 JSONL filter 不只留 message）两条通路必须同时实现。命令副作用归 `message-dispatcher.ts` 编排，不散落 event-adapter。检测：操作后关闭重开 session，对话流应一致
+9. **对话流状态必须实时可见 + 重开 session 仍可见 [HISTORICAL]**：实时链路（message.* 广播 + core `effects/registry.ts`）与持久化链路（entry → 同一 `applyEntry` reducer，不丢弃任何 pi entry 类型 / 文件路径 JSONL filter 不只留 message）两条通路必须同时实现——bash/user/custom/compaction 全类型 live entry 化（2026-08 conversation-turn-attribution）后两通路共用同一 reducer，「live ≡ reload」构造性成立，等价性测试（`apply-entry-equivalence`）守卫。命令副作用归 `message-dispatcher.ts` 编排，不散落 event-adapter。检测：操作后关闭重开 session，对话流应一致
 
 **workspace / git**：
 

@@ -101,6 +101,26 @@ const TIMED_OUT_ID_TTL_MS = 5_000
 const STDERR_BUFFER_MAX_LINES = 50
 const STDERR_TAIL_LINES = 10
 
+/**
+ * RPC 超时错误（integrity-hardening D3a：pi 半死自愈）。
+ *
+ * pi 事件循环卡死（native 模块 / 同步 IO 冻结）时一切 RPC 都以超时失败——这类失败
+ * 意味着进程「半死」（活着但不响应），处置是强杀重建而非重试。调用方
+ * （message-dispatcher 的 abort 强杀分支）经 instanceof 判别，因此必须是独立类型：
+ * 字符串 message 匹配无编译期防护，改文案即断链。
+ */
+export class RpcTimeoutError extends Error {
+  constructor(
+    /** 超时的 RPC 命令类型（如 'abort' / 'prompt'），诊断用 */
+    public readonly commandType: string,
+    /** 该命令配置的超时毫秒数，诊断用 */
+    public readonly timeoutMs: number,
+  ) {
+    super(`RPC command "${commandType}" timed out after ${timeoutMs}ms`)
+    this.name = 'RpcTimeoutError'
+  }
+}
+
 export class RpcClient implements IPiEngine {
   private proc: ChildProcess | null = null
   private pending = new Map<string, {
@@ -450,7 +470,9 @@ export class RpcClient implements IPiEngine {
         // 5s TTL 后自动从 Set 删除，避免无界增长；.unref() 避免阻止进程退出。
         this.timedOutIds.add(id)
         setTimeout(() => this.timedOutIds.delete(id), TIMED_OUT_ID_TTL_MS).unref()
-        reject(new Error(`RPC command "${type}" timed out after ${timeout}ms`))
+        // D3a：超时以 RpcTimeoutError 类型 reject（字段化 commandType/timeoutMs），调用方
+        // instanceof 判别后走强杀自愈路径，不再靠 message 字符串匹配。
+        reject(new RpcTimeoutError(type, timeout))
       }, timeout)
 
       this.pending.set(id, {
@@ -731,6 +753,12 @@ export class RpcClient implements IPiEngine {
         done()
       })
 
+      // D3a（integrity-hardening）：SIGTERM 前先 SIGCONT——唤醒可能被 SIGSTOP 冻结的
+      // 进程（事件循环卡死的一种形态），否则 SIGTERM 会被冻结状态吞掉、只能等 2s 后
+      // SIGKILL，丢失优雅退出路径（扩展落盘等 exit handler）的执行机会。对未冻结进程
+      // 无副作用（SIGCONT 对运行中进程仅确认继续执行）；对已退出进程 kill() 返回 false
+      // 不抛错。
+      proc.kill('SIGCONT')
       proc.kill('SIGTERM')
     })
   }

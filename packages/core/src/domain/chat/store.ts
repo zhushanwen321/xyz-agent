@@ -26,12 +26,13 @@ import {
   disposeLruEntry,
 } from './lru'
 import { findLastAssistantIndex } from './chunk-processor'
-import { findLastStreamingBashIndex, markBashError } from './bash-effects'
+import { findLastStreamingBashIndex, markBashError, clearExecutingBash } from './bash-effects'
 import { createChangeSetController } from './changeset'
 import { createHandoffController } from './handoff'
 import type {
   Message,
   PiEntry,
+  PiMessageEntry,
   Segment,
   ServerMessage,
   SteerFollowUpMode,
@@ -144,6 +145,21 @@ export function createChatStore() {
    * broadcast≡get_state 对账与后续 ref 收敛消费。disposeSession / LRU 驱逐同点清理。
    */
   const entryStates = new Map<string, ChatViewState>()
+  /**
+   * [W5 D5] per-session hydrate 尾窗锚（Map 分区，与 messages 同区生命周期）。
+   *
+   * 取值规则（写死）：hydrate 注入的尾窗首条消息的 `piEntryId ?? id`——user/assistant
+   * 消息带 piEntryId（entry 派生 uuidv7）；system 族消息（bashExecution/compactionSummary/
+   * custom/branchSummary）无 piEntryId 字段但 id 即 entry 派生 uuidv7（reducer
+   * deriveBaseId：entry.id 优先），两侧取值对称。load-more（useChat.loadMoreHistory）
+   * 据此在全量历史中定位切分点，只前插锚之前的段（见 mutations.splitHistoryBeforeAnchor）。
+   *
+   * // @data-owner #7 —— 权威源 = session 文件 entries（pi append-only，compaction 不改
+   * entry id）；锚非缓存（无失效/无回写：唯一写方 = hydrate 一次性写入、重 hydrate 覆盖，
+   * 唯一读方 = loadMoreHistory）。disposeSession / LRU 驱逐同点清理（随 hydrated 标记
+   * 同生共死——驱逐重进后由重 hydrate 重建）。
+   */
+  const hydrateAnchors = new Map<string, string>()
   /** FileChanges 子域控制器（W10，ADR-0024 D5），委托 chat-changeset.ts。messages 由本 store 注入，设计见 ./README.md + chat-changeset.ts。 */
   const changeset = createChangeSetController(messages)
   const { changeSetStatuses, getChangeSetStatus, setChangeSetStatus, applyFileChanges, markChangeSetsSuperseded } = changeset
@@ -275,6 +291,8 @@ export function createChatStore() {
     (sid) => {
       deleteChangeSetStatusesFor(sid)
       entryStates.delete(sid)
+      // [W5 D5] 锚随 hydrated 标记同点清理（驱逐重进后重 hydrate 覆盖重建，防陈旧锚）
+      hydrateAnchors.delete(sid)
     },
   )
   /** W3 H3：LRU 驱逐（阈值触发）/ 显式驱逐（带虚拟 key）/ [M7] 单虚拟 key 删除 */
@@ -314,8 +332,18 @@ export function createChatStore() {
     if (hydrated.value.has(sessionId)) return
     const cloned = truncateToolOutputBatch(history.map((m) => ({ ...m })))
     commitMessages(messages, sessionId, cloned)
+    // [W5 D5] hydrate 尾窗锚：hydrate 守卫保证每 session 只在此写一次；
+    // disposeSession / LRU 驱逐清 hydrated 后重 hydrate 到这里 → set 覆盖旧锚。
+    // 空 history（新 session）不记锚——此时无 load-more（truncated=false），锚缺失走兜底。
+    const anchorMsg = cloned[0]
+    if (anchorMsg) hydrateAnchors.set(sessionId, anchorMsg.piEntryId ?? anchorMsg.id)
     hydrated.value = new Set(hydrated.value).add(sessionId)
     lruTouch(sessionId) // W3: LRU recency
+  }
+
+  /** [W5 D5] 读 hydrate 尾窗锚（loadMoreHistory 唯一读方；未 hydrate / 空历史 → undefined）。 */
+  function getHydrateAnchor(sessionId: string): string | undefined {
+    return hydrateAnchors.get(sessionId)
   }
 
   /** 直接覆盖某 session 的消息（subagent 虚拟 session 用，不受 hydrated 守卫；回流路径截断 AC-10/D9）。 */
@@ -329,21 +357,45 @@ export function createChatStore() {
     prependHistoryMut(messages, sessionId, truncateToolOutputBatch(fullHistory.map((m) => ({ ...m }))))
   }
 
-  /** 追加 user 消息（Segment[]，ADR-0043）。返回 id：useChat 用作 clientUuid 建立重开回填映射。 */
+  /**
+   * 追加 user 消息（Segment[]，ADR-0043）。返回 id：useChat 用作 clientUuid 建立重开回填映射
+   * （prompt 标记 `<!--xyz:msg:u-<uuid>-->` + segments sidecar 主键——extension TAG 正则锚定
+   * `u-[0-9a-fA-F-]{36}` 形态，xyz-client-msg-id-mapper.js）。
+   *
+   * [W2 fix-chat-flow-order D6 → 后修 overlay-only] 消息形态从 user message entry 派生（形态
+   * 对照 apply-entry user 分支——segments 原样放 message.content，applyEntry 空态派生），但
+   * **不喂 reducer**：reducer 的 user entry 唯一来源 = 真实 message_end(user) 帧（见实现内
+   * 注释——乐观 entry 也喂会双计，W22 等价性测试捕获）。乐观 send 与 drainN 投递两个调用方
+   * 零改动，返回值保持 `u-<uuid>` 形态（clientUuid 映射链不断）。
+   *
+   * overlay content 覆写回原 segments：entry 反解 content 是纯文本窄化
+   * （skill/file/mention/image badge 不可从 entry 重放推导——重开侧由 segments sidecar +
+   * clientUuidMap 回填，textToSegments 已知限制），live 渲染层必须保留原始 segments；
+   * 引用原样透传（drainN FIFO 取出的 segments 原引用直接进消息流）。
+   * piEntryId 同点剥除（见实现内注释：客户端 entry id 非真实 pi entry id，防 fork 误定位）。
+   */
   function appendUser(sessionId: string, segments: Segment[]): string {
+    const entry: PiMessageEntry = {
+      type: 'message',
+      id: `u-${crypto.randomUUID()}`,
+      parentId: null,
+      timestamp: new Date().toISOString(),
+      message: { role: 'user', content: segments, timestamp: Date.now() },
+    }
+    // [W2 后修] overlay-only：不喂 reducer（applyEntryFrame）。reducer 的 user entry 唯一来源 =
+    // 真实 message_end(user) 帧（权威、无客户端 id → 位置派生，与重放天然同构——live≡reload
+    // 对 user 类型经权威帧成立）。乐观 entry 若也喂 reducer，同一条 user 消息双计（W22 等
+    // 价性测试捕获；steer 场景 pi 展开文本与乐观 segments 内容失配，内容/替换式去重均不可靠）。
+    // ref 消息形态仍从 entry 派生（与 replay 产物同构的构造保证），id = entry.id 派生的
+    // u-<uuid>（clientUuid 契约不变）。
+    // piEntryId 剥除：reducer 会把 entry.id 回填为 piEntryId，但乐观 entry 的 id 是客户端
+    // 生成（u-<uuid>）非真实 pi entry id——带着假值会改变 fork 截断行为（useForkActions
+    // 按 piEntryId 精确定位，原直插路径无此字段走 timestamp+role JSONL 匹配兜底）。
+    const derived = applyEntry(createInitialChatViewState(), entry)
+    const { piEntryId: _clientEntryId, ...derivedMsg } = derived.messages[derived.messages.length - 1]!
     const prev = messages.value.get(sessionId)?.value ?? []
-    const id = `u-${crypto.randomUUID()}`
-    commitMessages(messages, sessionId, [
-      ...prev,
-      {
-        id,
-        role: 'user',
-        content: segments,
-        status: 'complete',
-        timestamp: Date.now(),
-      },
-    ])
-    return id
+    commitMessages(messages, sessionId, [...prev, { ...derivedMsg, content: segments }])
+    return derivedMsg.id
   }
 
   /**
@@ -425,11 +477,13 @@ export function createChatStore() {
    * [W21] 重构 entry 喂 per-session reducer state（applyEntry）——实时 feed 与文件重放
    * （hydrate 链的 replayEntries）喂同一个 reducer。
    *
-   * 本 wave 语义：纯累积（权威镜像），不直接投影 messages ref——实时渲染走 overlay 路径
+   * 本语义：纯累积（权威镜像），不直接投影 messages ref——实时渲染走 overlay 路径
    * （message_start/delta/complete + tool_call_start/end 的 effect，streaming 态语义
-   * reducer 无法表达：running toolCall / 乐观 user 插入）。ref 与 reducer state 的收敛
-   * （对账投影）归 W22 broadcast≡get_state 全量化。纯度：applyEntry 纯函数（copy-on-write），
-   * 同 entry 序列必得同 state——「live ≡ reload」在构造上成立。
+   * reducer 无法表达：running toolCall / delta 累积；例外——user 消息 [W2] 已 entry 化，
+   * appendUser 构造 user entry 经本方法喂入 + overlay 投影，乐观 user 插入自此落入
+   * reducer 可表达域）。ref 与 reducer state 的收敛（对账投影）归 W22 broadcast≡get_state
+   * 全量化。纯度：applyEntry 纯函数（copy-on-write），同 entry 序列必得同 state——
+   * 「live ≡ reload」在构造上成立。
    */
   function applyEntryFrame(sessionId: string, entry: PiEntry): void {
     const cur = entryStates.get(sessionId) ?? createInitialChatViewState()
@@ -657,6 +711,11 @@ export function createChatStore() {
     deleteChangeSetStatusesFor(sessionId)
     // [W21] reducer 累积态分区同点清理（与 LRU 驱逐的 deleteMessageKey 内联清理同语义）
     entryStates.delete(sessionId)
+    // [W5 D5] hydrate 尾窗锚同点清理（唯一写方 hydrate 已随 hydrated 守卫失效，锚无独立存活意义）
+    hydrateAnchors.delete(sessionId)
+    // [D3 closure] executingBash ephemeral 分区同点清理（bash-effects 模块级 Map 挂接本
+    // 编排——session 删除无残留；形态定案理由见 bash-effects.ts 文件头注释）
+    clearExecutingBash(sessionId)
     // D-3 生命周期：streaming flag 惰性派生缓存随 messages 分区同点清理（漏删即慢泄漏，
     // 07 文档 §3.3.2 cleanup 契约）。
     sessionStreamingFlags.delete(sessionId)
@@ -682,6 +741,7 @@ export function createChatStore() {
     markChangeSetsSuperseded,
     isHydrated, markHistoryFailed, clearHistoryError,
     hydrate, setMessages,
+    getHydrateAnchor,
     prependHistory,
     applySubagentStreamDelta: (virtualId: string, lines: string[]) => streamingStateMachine.applySubagentStreamDelta(virtualId, lines),
     finalizeSubagentStream: (virtualId: string) => streamingStateMachine.finalizeSubagentStream(virtualId),

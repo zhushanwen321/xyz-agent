@@ -35,13 +35,15 @@
  * 状态暂存：webContents 事件（did-navigate / did-fail-load / isLoading）W1 先暂存到
  * manager 内部 entry，W2 经 IPC 回传 renderer。
  *
- * 依赖方向：browser-view-manager → electron(WebContentsView) + interfaces(type-only)
+ * 依赖方向：browser-view-manager → electron(WebContentsView/shell) + interfaces(type-only)
+ * + input-validators（D2b setWindowOpenHandler 的 http/https 白名单）
  * （will-download 拦截用 view.webContents.session 实例属性，不需 electron 的 session 模块导入）
  */
-import { WebContentsView } from 'electron'
+import { WebContentsView, shell } from 'electron'
 import type { Rectangle } from 'electron'
 import type { IWindowManager } from '../interfaces.js'
 import { URL_PREVIEW_MAX_LENGTH, isAllowedNavigateUrl, isDangerousScheme } from '../gateway/url-scheme-validators.js'
+import { isValidExternalUrl } from '../gateway/input-validators.js'
 
 /** 隐藏占位 rect（0,0,0,0） */
 const HIDDEN_RECT: Rectangle = { x: 0, y: 0, width: 0, height: 0 }
@@ -199,6 +201,19 @@ export class BrowserViewManager {
     // 下载拦截（MANDATORY）：嵌入页禁止触发宿主下载
     view.webContents.session.on('will-download', (event) => {
       event.preventDefault()
+    })
+
+    // D2b 新窗口分支（integrity-hardening §3.2）：window.open / target=_blank 一律
+    // 不建新窗口（deny）。嵌入 view 的导航已有三层 scheme 校验（handler 白名单+黑名单 /
+    // navigate 二次校验 / renderer useUrlBar），此处只补新窗口分支；http(s) 与主窗口
+    // 同语义，经 isValidExternalUrl 白名单转系统浏览器。
+    view.webContents.setWindowOpenHandler(({ url }) => {
+      if (isValidExternalUrl(url)) {
+        void shell.openExternal(url).catch((err) => {
+          console.error('[browser-view] openExternal for window.open failed:', err)
+        })
+      }
+      return { action: 'deny' }
     })
 
     this.views.set(sessionId, entry)

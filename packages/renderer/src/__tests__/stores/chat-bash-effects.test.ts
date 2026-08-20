@@ -1,19 +1,43 @@
 /**
- * w1 timer-decouple 回归测试（bash-align-pi-tui-w4::w1-timer-decouple）。
+ * w1 timer-decouple 回归测试（bash-align-pi-tui-w4::w1-timer-decouple；
+ * W1 fix-chat-flow-order entry 化后种子方式更新）。
  *
  * 锁定 W1 改动：
  * - W1T1（核心 C2 回归防护）：bash timer 到期只收口 bash 消息，不误杀共存中的 assistant turn streaming。
- * - W1T2：bashResultEffect 终态调 clearBashTimer（W3 遗留 bug：原未清，300s 后会误触发）。
- * - W1T3：markBashError 终态调 clearBashTimer（同上）。
+ * - W1T2：bashResult entry 化后消息恒 complete，无 300s timer 再触碰（bashStart 不再挂 timer）。
+ * - W1T3：markBashError 终态调 clearBashTimer + 清 executingBash（abortBash RPC 失败兜底）。
  * - W1T4：finalizeBashOnly 幂等（无 streaming bash 时 no-op）。
+ *
+ * [W1 fix-chat-flow-order] bashStart 不再创建 streaming bash 消息（改写 ephemeral
+ * executingBash）——W1T1/W1T3 的「streaming bash 消息」种子改为手动 setMessages 注入
+ * （防御场景：entry 化后正常流转不产生 streaming bash 消息，仅手动种子可触发该路径）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/stores/chat-bash-effects.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia, storeToRefs } from 'pinia'
 import { useChatStore } from '@/stores/chat'
-import { initTimers, markBashError, commitMessages } from '@xyz-agent/core'
-import type { ServerMessage } from '@xyz-agent/shared'
+import { initTimers, markBashError, commitMessages, getExecutingBash } from '@xyz-agent/core'
+import type { Message, ServerMessage } from '@xyz-agent/shared'
+
+/** 手动种子：streaming bash 消息（entry 化后正常流转不产生，仅手动注入可达） */
+function streamingBashMsg(command: string): Message {
+  return {
+    id: `bash-${command}`,
+    role: 'system',
+    content: '',
+    status: 'streaming',
+    bashExecution: {
+      command,
+      output: '',
+      exitCode: null,
+      cancelled: false,
+      truncated: false,
+      excludeFromContext: false,
+      timestamp: 0,
+    },
+  } as Message
+}
 
 describe('w1 timer-decouple: bash timer 不跨域误杀 streaming', () => {
   beforeEach(() => {
@@ -22,29 +46,18 @@ describe('w1 timer-decouple: bash timer 不跨域误杀 streaming', () => {
   })
   afterEach(() => vi.useRealTimers())
 
-  /**
-   * 辅助：向 session 注入一条 streaming assistant turn + 一条 streaming bash 消息
-   * （模拟 L1 放宽 bash↔streaming 并发后的共存态）。
-   */
-  function seedConcurrentMessages(store: ReturnType<typeof useChatStore>, sid: string): void {
+  it('W1T1: bash timer 到期只收口 bash 消息（手动种子），不误杀共存中的 assistant turn streaming', () => {
+    const store = useChatStore()
+    const sid = 's-w1t1'
     // assistant turn（message_start 推进到 streaming）
     store.applyMessageEvent(sid, {
       type: 'message.message_start',
       payload: { sessionId: sid, messageId: 'a-streaming' },
     } as ServerMessage)
-    // bash 消息（bashStart 创建 streaming bash）—— 不调 armBashTimer，由测试自己控制 timer
-    store.applyMessageEvent(sid, {
-      type: 'message.bashStart',
-      payload: { sessionId: sid, command: 'sleep 999', excludeFromContext: false, timestamp: 1000 },
-    } as ServerMessage)
-  }
+    // streaming bash 消息手动种子（entry 化后 bashStart 不建消息项）
+    store.setMessages(sid, [...store.getMessages(sid), streamingBashMsg('sleep 999')])
 
-  it('W1T1: bash timer 到期只收口 bash 消息，不误杀共存中的 assistant turn streaming', () => {
-    const store = useChatStore()
-    const sid = 's-w1t1'
-    seedConcurrentMessages(store, sid)
-
-    // 断言种子态：assistant 与 bash 均 streaming，session 整体 isGenerating
+    // 断言种子态：assistant 与 bash 均 streaming
     const seeded = store.getMessages(sid)
     expect(seeded[0].status).toBe('streaming') // assistant
     expect(seeded[1].status).toBe('streaming') // bash
@@ -52,14 +65,10 @@ describe('w1 timer-decouple: bash timer 不跨域误杀 streaming', () => {
 
     // 用 initTimers 构造受控 timer：spy finalizeSession（绝不应被 bash timer 调用，
     // bash timer 应调 finalizeBashOnly），真实 finalizeBashOnly 委托 store 行为。
-    // 注意：store 的 armBashTimer 已通过 bashStart 挂载了真实 timer，此处再单独用
-    // initTimers 隔离测试 bash timer 回调的收口域选择（不依赖 store 内部 timer）。
     // messagesRef 用 storeToRefs 拿到真 ref，让 commitMessages 的整体替换写回 store。
     const messagesRef = storeToRefs(store).messages
     const finalizeSessionSpy = vi.fn()
     const finalizeBashOnly = (sessionId: string): void => {
-      // 复用 store 内 finalizeBashOnly 的纯逻辑（commitMessages 写回真 store ref，
-      // D-1 容器：读分区需 .value，写回走 commitMessages 的同 sid 分区替换语义）。
       const prev = messagesRef.value.get(sessionId)?.value ?? []
       const reversedIdx = [...prev].reverse().findIndex(m => m.bashExecution && m.status === 'streaming')
       if (reversedIdx === -1) return
@@ -89,17 +98,16 @@ describe('w1 timer-decouple: bash timer 不跨域误杀 streaming', () => {
     expect(finalizeSessionSpy).not.toHaveBeenCalled()
   })
 
-  it('W1T2: bashResultEffect 终态调 clearBashTimer（防 300s 后误触发）', () => {
+  it('W1T2: bashStart→bashResult entry 化后消息恒 complete，推进 300s 无 timer 再触碰', () => {
     const store = useChatStore()
     const sid = 's-w1t2'
-    // bashStart 会挂 bash timer（真实 timer，但 fakeTimers 下不会自动跑）
     store.applyMessageEvent(sid, {
       type: 'message.bashStart',
       payload: { sessionId: sid, command: 'echo hi', excludeFromContext: false, timestamp: 1000 },
     } as ServerMessage)
-    expect(store.getMessages(sid)[0].status).toBe('streaming')
+    // [W1 fix-chat-flow-order] bashStart 不建消息项、不挂 bash timer（ephemeral 执行态）
+    expect(store.getMessages(sid)).toHaveLength(0)
 
-    // bashResult 收口 bash 消息 —— 应同时清 bash timer
     store.applyMessageEvent(sid, {
       type: 'message.bashResult',
       payload: {
@@ -114,24 +122,24 @@ describe('w1 timer-decouple: bash timer 不跨域误杀 streaming', () => {
       },
     } as ServerMessage)
 
-    // 消息已 complete
+    // 消息经 entry 入流即为 complete（无 streaming 中间态）
     expect(store.getMessages(sid)[0].status).toBe('complete')
 
-    // 推进 300s：若 clearBashTimer 未被调用，bash timer 回调会再次触碰这条已 complete 的消息。
-    // 这里通过断言消息保持 complete（不被 300s timer 翻成 error）验证 clearBashTimer 已生效。
+    // 推进 300s：无任何 bash timer 回调触碰这条已 complete 的消息（bashStart 不再挂 timer）
     vi.advanceTimersByTime(300_000)
     const after = store.getMessages(sid)
     expect(after[0].status).toBe('complete')
     expect(after[0].bashExecution?.cancelled).toBe(false)
   })
 
-  it('W1T3: markBashError 终态调 clearBashTimer（防 300s 后误触发）', () => {
+  it('W1T3: markBashError 调 clearBashTimer + 清 executingBash（abortBash RPC 失败兜底）', () => {
     const store = useChatStore()
     const sid = 's-w1t3'
     store.applyMessageEvent(sid, {
       type: 'message.bashStart',
       payload: { sessionId: sid, command: 'sleep 5', excludeFromContext: false, timestamp: 1000 },
     } as ServerMessage)
+    expect(getExecutingBash(sid)).toBeDefined()
 
     // spy clearBashTimer，传给 markBashError。
     // messagesRef 用 storeToRefs 拿真 ref：markBashError 内 commitMessages 整体替换写回 store。
@@ -139,13 +147,25 @@ describe('w1 timer-decouple: bash timer 不跨域误杀 streaming', () => {
     const clearBashTimerSpy = vi.fn()
     markBashError(messagesRef, sid, 'abort rpc failed', clearBashTimerSpy)
 
-    // 消息已 error / cancelled
+    // executingBash 已清（abortBash RPC 失败时无 bashResult 帧到达的唯一兜底清点）
+    expect(getExecutingBash(sid)).toBeUndefined()
+    // clearBashTimer 被调用一次（无 streaming bash 消息也调用——契约保留）
+    expect(clearBashTimerSpy).toHaveBeenCalledTimes(1)
+    expect(clearBashTimerSpy).toHaveBeenCalledWith(sid)
+  })
+
+  it('W1T3b: markBashError 对手动种子的 streaming bash 消息仍推 error 态（防御路径保留）', () => {
+    const store = useChatStore()
+    const sid = 's-w1t3b'
+    store.setMessages(sid, [streamingBashMsg('sleep 5')])
+    const messagesRef = storeToRefs(store).messages
+
+    markBashError(messagesRef, sid, 'abort rpc failed')
+
     const m = store.getMessages(sid)[0]
     expect(m.status).toBe('error')
     expect(m.bashExecution?.cancelled).toBe(true)
-    // clearBashTimer 被调用一次
-    expect(clearBashTimerSpy).toHaveBeenCalledTimes(1)
-    expect(clearBashTimerSpy).toHaveBeenCalledWith(sid)
+    expect(m.error).toBe('abort rpc failed')
   })
 
   it('W1T4: finalizeBashOnly 幂等——无 streaming bash 时 no-op，不抛错', () => {

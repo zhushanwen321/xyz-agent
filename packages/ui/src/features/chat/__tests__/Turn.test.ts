@@ -23,6 +23,7 @@ vi.mock('vue-i18n', () => ({
         'panel.message.traceExpandAll': '展开全部（{count} 步）',
         'panel.message.traceCollapse': '恢复精简',
         'panel.message.traceFailed': '含 {count} 次失败',
+        'panel.message.turnTriggerBgNotify': '后台任务完成 · 已继续处理',
       }
       let s = msgs[key] ?? key
       if (params) for (const [k, v] of Object.entries(params)) s = s.replace(`{${k}}`, String(v))
@@ -34,6 +35,7 @@ vi.mock('vue-i18n', () => ({
 import { mount } from '@vue/test-utils'
 import { Turn } from '@xyz-agent/ui'
 import TraceCompactorRow from '../TraceCompactorRow.vue'
+import UserBubble from '../UserBubble.vue'
 import type { MessageTurn } from '@xyz-agent/core/domain/chat'
 import type { ContentBlock, Message, ToolCall } from '@xyz-agent/shared'
 import { mockChatProvide } from './helpers'
@@ -443,5 +445,116 @@ describe('streaming-trace-window edges: D9 边界态窗口冻结（组件层）'
     const w2 = mountTurn({ turn, isLastTurn: true, isTakeover: () => true })
     expect(w2.findAll('.trace .trace-blk').length).toBe(13)
     expect(w2.find('[data-testid="trace-compactor"]').exists()).toBe(true)
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════
+// describe 5：turn-attribution W4 —— trigger 起点行 + turn 内 notice 渲染
+//
+// 固化 D3/D4 渲染契约（conversation-turn-attribution §3.1 / §3.3）：
+// - trigger==='bg-notify' && user===null 的 turn 渲染轻量起点行（非 user 气泡）；
+// - turn.notices 在 turn 内部末尾渲染：bashExecution → BashOutputBlock（复用既有消费点）、
+//   liveOnly → SystemNotice 弱化行；wrapper testid = turn-inline-bash / turn-inline-notice。
+// ═════════════════════════════════════════════════════════════════
+describe('turn-attribution W4: trigger 起点行 + turn 内 notice', () => {
+  /** bg-notify 续跑 turn：user:null + trigger + assistant 结果（无 notice 的基础形态） */
+  function makeTriggerTurn(over: Partial<MessageTurn> = {}): MessageTurn {
+    return {
+      index: 1,
+      user: null,
+      trigger: 'bg-notify',
+      assistants: [
+        { id: 'a-bg1', role: 'assistant', content: '后台任务结果已处理', status: 'complete', timestamp: NOW },
+      ],
+      isStreaming: false,
+      hasFoldable: false,
+      ...over,
+    }
+  }
+
+  /** turn 内 bash notice（role:'system' + bashExecution，分组规则 4 inline 归 turn） */
+  function bashNotice(id: string): Message {
+    return {
+      id,
+      role: 'system',
+      content: '',
+      status: 'complete',
+      bashExecution: {
+        command: 'npm test',
+        output: 'all passed',
+        exitCode: 0,
+        cancelled: false,
+        truncated: false,
+        excludeFromContext: false,
+        timestamp: NOW,
+      },
+      timestamp: NOW,
+    } as Message
+  }
+
+  /** turn 内 liveOnly 健康警告（stream_warn，无 entry 无 replay 对应物） */
+  function liveOnlyNotice(id: string): Message {
+    return {
+      id,
+      role: 'system',
+      content: '上下文长度接近上限，请注意',
+      status: 'complete',
+      liveOnly: true,
+      timestamp: NOW,
+    } as Message
+  }
+
+  it('W4-T1: trigger turn（user:null + trigger:bg-notify）→ 起点行渲染且含文案，UserBubble 不渲染', () => {
+    const wrapper = mountTurn({ turn: makeTriggerTurn() })
+    const row = wrapper.find('[data-testid="turn-trigger-bgnotify"]')
+    expect(row.exists()).toBe(true)
+    expect(row.text()).toContain('后台任务完成')
+    // 非 user 气泡：起点行是弱化元信息行，不冒充用户发言
+    expect(wrapper.findComponent(UserBubble).exists()).toBe(false)
+  })
+
+  it('W4-T2: 普通 user turn → 无 trigger 起点行（UserBubble 正常渲染）', () => {
+    const wrapper = mountTurn({ turn: makeTurn() })
+    expect(wrapper.find('[data-testid="turn-trigger-bgnotify"]').exists()).toBe(false)
+    expect(wrapper.findComponent(UserBubble).exists()).toBe(true)
+  })
+
+  it('W4-T3: assistant 自启 turn（user:null 无 trigger）→ 起点行与 UserBubble 都不渲染（首条 assistant 边缘形态不变）', () => {
+    const wrapper = mountTurn({ turn: makeTriggerTurn({ trigger: undefined }) })
+    expect(wrapper.find('[data-testid="turn-trigger-bgnotify"]').exists()).toBe(false)
+    expect(wrapper.findComponent(UserBubble).exists()).toBe(false)
+  })
+
+  it('W4-N1: turn.notices 渲染在 turn 内部末尾——bash 复用 BashOutputBlock、liveOnly 走 SystemNotice 弱化行', () => {
+    const wrapper = mountTurn({
+      turn: makeTurn({ notices: [bashNotice('bash-n1'), liveOnlyNotice('warn-n1')] }),
+    })
+    // bash notice：wrapper testid + 内部复用 BashOutputBlock（真组件，含 bash-output-block 根 testid）
+    const bashWrap = wrapper.find('[data-testid="turn-inline-bash"]')
+    expect(bashWrap.exists()).toBe(true)
+    expect(bashWrap.find('[data-testid="bash-output-block"]').exists()).toBe(true)
+    expect(bashWrap.text()).toContain('npm test')
+    // liveOnly notice：wrapper testid + SystemNotice 弱化行（兜底分支渲染 content 文本）
+    const noticeWrap = wrapper.find('[data-testid="turn-inline-notice"]')
+    expect(noticeWrap.exists()).toBe(true)
+    expect(noticeWrap.text()).toContain('上下文长度接近上限')
+    // 到达序忠实：bash（先到）在 notice（后到）之前（DOM 顺序）
+    const bashEl = bashWrap.element as HTMLElement
+    const warnEl = noticeWrap.element as HTMLElement
+    expect(bashEl.compareDocumentPosition(warnEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('W4-N2: turn.notices 为空/undefined → 不渲染任何 inline notice wrapper（历史 turn 形态不变）', () => {
+    const wrapper = mountTurn({ turn: makeTurn() })
+    expect(wrapper.find('[data-testid="turn-inline-bash"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="turn-inline-notice"]').exists()).toBe(false)
+  })
+
+  it('W4-N3: trigger turn 也可携带 notices（后台续跑期间跑过 `!` 命令）——起点行与 notice 共存', () => {
+    const wrapper = mountTurn({
+      turn: makeTriggerTurn({ notices: [bashNotice('bash-t1')] }),
+    })
+    expect(wrapper.find('[data-testid="turn-trigger-bgnotify"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="turn-inline-bash"]').exists()).toBe(true)
   })
 })

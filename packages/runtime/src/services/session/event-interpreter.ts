@@ -155,6 +155,15 @@ export interface EventInterpreterOptions {
    *   丢失（W22 混沌）时兜底触发重拉收敛）
    */
   onRecordEntriesInvalidated?: (sessionId: string, customType: 'subagent-record' | 'workflow-record') => void
+  /**
+   * W1（fix-chat-flow-order 探针 ②）：pi agent_settled（run 级联结束）到达时触发。
+   * 组合根注入 sessionService.flushPendingBashResults——dispatcher 把 streaming 期间
+   * 压入的 per-session bash 待落列按序转 message.bashResult 帧发布。时序保证：pi 在
+   * _runAgentPrompt finally 先 _flushPendingBashMessages（bash entry 落盘）再 emit
+   * agent_settled（agent-session.js:744-756），故本回调触发时 pi 文件内 bash entry 已就位，
+   * xyz flush 的 live 入流位置与落盘位置一致（级联末）。
+   */
+  onAgentSettled?: (sessionId: string) => void
 }
 
 /** 可能改文件的工具（baseline diff 触发判定，与原 event-adapter 一致）。 */
@@ -344,6 +353,11 @@ export class EventInterpreter {
         // W18：自描述 record entry 到达 → 派生缓存失效（sessionService 防抖增量重拉）。
         // 事件 payload 不进数据缓存——entry 扫描是唯一数据写路径。
         this.opts.onRecordEntriesInvalidated?.(this.sessionId, ev.customType)
+        return
+      case 'agent-settled':
+        // W1（fix-chat-flow-order）：run 级联结束（晚于 pi finally 的 bash 落盘 flush）→
+        // dispatcher 按序发布 per-session bash 待落列（见 opts.onAgentSettled 注释）。
+        this.opts.onAgentSettled?.(this.sessionId)
         return
       case 'compaction-start':
         this.handleCompactionStart(ev)
@@ -643,17 +657,22 @@ export class EventInterpreter {
       // 成功额外发 compactionSummary 进对话流 + applyContextUpdate 刷新 context 用量。
       if (ev.result) {
         const r = ev.result as { summary?: string; tokensBefore?: number; estimatedTokensAfter?: number }
-        if (r.summary) {
-          this.opts.send({
-            type: 'message.compactionSummary',
-            payload: {
-              sessionId: this.sessionId,
-              summary: r.summary,
-              tokensBefore: r.tokensBefore,
-              timestamp: Date.now(),
-            },
-          })
-        }
+        // [D2 closure] 恒发帧（原 `if (r.summary)` 真值门删除，conversation-turn-attribution-
+        // closure D2）：pi appendCompaction 无条件落盘（手动 :1432 / auto :1670），summary 缺失的
+        // 成功 compaction 旧逻辑 live 无消息、重开有 reducer fallback「上下文已压缩」行（登记
+        // 例外④）。下游已全就绪——shared CompactionSummary.summary 可选、registry
+        // readCompactionSummary 空串透传门（`s !== undefined`，实施审查 MF-1：truthiness 门会把
+        // '' 丢成 undefined 制造两侧内容分叉）+ 条件窄化、reducer `summary ?? fallback`——
+        // undefined 与 '' 两种形态各自两侧同值同路径（E4b/E4c 锁定）。
+        this.opts.send({
+          type: 'message.compactionSummary',
+          payload: {
+            sessionId: this.sessionId,
+            summary: r.summary,
+            tokensBefore: r.tokensBefore,
+            timestamp: Date.now(),
+          },
+        })
         if (typeof r.estimatedTokensAfter === 'number' && r.estimatedTokensAfter > 0) {
           // compact 后无 turn_end，context 用量不会自动刷新。用 pi 返回的估算值触发 applyContextUpdate。
           this.opts.onContextUpdate?.(this.sessionId, {

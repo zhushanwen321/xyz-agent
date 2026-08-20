@@ -14,7 +14,6 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import type { ServerMessage } from '@xyz-agent/shared'
 
 // ── api mock（B2 用：abortBash reject 触发 catch）──
 const apiMock = vi.hoisted(() => ({
@@ -42,6 +41,8 @@ vi.mock('@/composables/useToast', () => ({
 
 import { useChatStore } from '@/stores/chat'
 import { useChat, resetChatModuleState } from '@/composables/features/chat/useChat'
+import { getExecutingBash } from '@xyz-agent/core'
+import type { Message, ServerMessage } from '@xyz-agent/shared'
 
 describe('B1: streamingSessionIds 仅扫 role:assistant —— 纯 bash 不阻塞', () => {
   beforeEach(() => setActivePinia(createPinia()))
@@ -49,17 +50,14 @@ describe('B1: streamingSessionIds 仅扫 role:assistant —— 纯 bash 不阻�
   it('纯 bash 执行（streaming bash 消息，无 assistant streaming）→ isGenerating=false / isActive=false', () => {
     const store = useChatStore()
     const sid = 's-b1'
-    // bashStart 创建 role:'system', status:'streaming' 的 bash 消息
+    // [W1 fix-chat-flow-order] bashStart 只写 ephemeral executingBash，不建消息项
     store.applyMessageEvent(sid, {
       type: 'message.bashStart',
       payload: { sessionId: sid, command: 'sleep 30', excludeFromContext: false, timestamp: 1000 },
     } as ServerMessage)
 
     const msgs = store.getMessages(sid)
-    expect(msgs).toHaveLength(1)
-    expect(msgs[0].role).toBe('system')
-    expect(msgs[0].status).toBe('streaming')
-    expect(msgs[0].bashExecution).toBeTruthy()
+    expect(msgs).toHaveLength(0)
 
     // 核心断言：纯 bash 执行期间不应被当作 assistant 生成态
     expect(store.isGenerating(sid)).toBe(false)
@@ -104,11 +102,15 @@ describe('M1: finalizeMessagesImpl 跳过 bash —— assistant error 不误杀�
       type: 'message.message_start',
       payload: { sessionId: sid, messageId: 'a-streaming' },
     } as ServerMessage)
-    // bash 消息 streaming（共存）
-    store.applyMessageEvent(sid, {
-      type: 'message.bashStart',
-      payload: { sessionId: sid, command: 'longcmd', excludeFromContext: false, timestamp: 1000 },
-    } as ServerMessage)
+    // [W1 fix-chat-flow-order] bashStart 不建消息项——streaming bash 消息手动种子
+    // （防御场景：entry 化后正常流转不产生，仅手动注入可验证 finalizeMessages 的跳过语义）
+    store.setMessages(sid, [...store.getMessages(sid), {
+      id: 'bash-m1',
+      role: 'system',
+      content: '',
+      status: 'streaming',
+      bashExecution: { command: 'longcmd', output: '', exitCode: null, cancelled: false, truncated: false, excludeFromContext: false, timestamp: 1000 },
+    } as Message])
 
     const before = store.getMessages(sid)
     expect(before[0].status).toBe('streaming') // assistant
@@ -126,16 +128,37 @@ describe('M1: finalizeMessagesImpl 跳过 bash —— assistant error 不误杀�
     // 核心断言：bash 仍 streaming（不被 finalizeMessagesImpl 误杀）
     expect(after[1].status).toBe('streaming')
     expect(after[1].bashExecution?.cancelled).toBe(false)
+  })
 
-    // 后续 bashResult 到达时仍能找到 streaming bash 并收口（真实结果不丢弃）
+  it('entry 化形态：assistant streaming 中执行 bash → assistant error 后 bash 延迟帧照常 entry 入流', () => {
+    const store = useChatStore()
+    const sid = 's-m1b'
+    store.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'a-streaming' },
+    } as ServerMessage)
+    store.applyMessageEvent(sid, {
+      type: 'message.bashStart',
+      payload: { sessionId: sid, command: 'longcmd', excludeFromContext: false, timestamp: 1000 },
+    } as ServerMessage)
+
+    // assistant error 收口（run 崩溃），bash 执行态仍 ephemeral 存在
+    store.applyMessageEvent(sid, {
+      type: 'message.error',
+      payload: { sessionId: sid, message: 'assistant boom' },
+    } as ServerMessage)
+    expect(getExecutingBash(sid)).toBeDefined()
+
+    // 后续 bashResult 延迟帧到达（级联结束 flush）→ entry 入流 append（不依赖 streaming bash 消息）
     store.applyMessageEvent(sid, {
       type: 'message.bashResult',
       payload: { sessionId: sid, command: 'longcmd', output: 'real output', exitCode: 0, cancelled: false, truncated: false, timestamp: 2000 },
     } as ServerMessage)
     const final = store.getMessages(sid)
-    expect(final[1].status).toBe('complete')
+    expect(final).toHaveLength(2)
     expect(final[1].bashExecution?.output).toBe('real output')
-    expect(final[1].bashExecution?.cancelled).toBe(false)
+    expect(final[1].status).toBe('complete')
+    expect(getExecutingBash(sid)).toBeUndefined()
   })
 })
 
@@ -188,24 +211,34 @@ describe('B2: useChat.abortBash RPC 失败 → markBashError 写回 store 真 re
     vi.clearAllMocks()
   })
 
-  it('abortBash RPC reject → bash 消息被标 error（store 真正更新，cancelled=true）', async () => {
+  it('abortBash RPC reject → executingBash 被清（markBashError 兜底），手动种子消息写回真 ref', async () => {
     apiMock.abortBash.mockRejectedValueOnce(new Error('rpc boom'))
 
     const { abortBash } = useChat()
     const store = useChatStore()
     const sid = 's-b2'
 
-    // 先创建 streaming bash 消息（模拟 bash 正在执行）
+    // bashStart 写 ephemeral 执行态（模拟 bash 正在执行）+ 手动种子 streaming bash 消息
+    //（防御路径：验证 markBashError 对真 ref 的写回在新形态下仍有效）
     store.applyMessageEvent(sid, {
       type: 'message.bashStart',
       payload: { sessionId: sid, command: 'sleep 999', excludeFromContext: false, timestamp: 1000 },
     } as ServerMessage)
-    expect(store.getMessages(sid)[0].status).toBe('streaming')
+    expect(getExecutingBash(sid)).toBeDefined()
+    store.setMessages(sid, [{
+      id: 'bash-b2',
+      role: 'system',
+      content: '',
+      status: 'streaming',
+      bashExecution: { command: 'sleep 999', output: '', exitCode: null, cancelled: false, truncated: false, excludeFromContext: false, timestamp: 1000 },
+    } as Message])
 
     // abortBash RPC 失败 → catch 调 markBashError（B2 修复后写回 store 真 ref）
     await expect(abortBash(sid)).resolves.toBeUndefined()
 
-    // 核心断言：store 里的 bash 消息被标 error（旧实现 { value: chat.messages } 写入丢失，
+    // 核心断言 1：executingBash 被清（abortBash RPC 失败时无 bashResult 帧到达的唯一兜底清点）
+    expect(getExecutingBash(sid)).toBeUndefined()
+    // 核心断言 2：手动种子消息被标 error（旧实现 { value: chat.messages } 写入丢失，
     // store 不会更新，消息会仍 streaming）。cancelled=true。
     const after = store.getMessages(sid)
     expect(after[0].status).toBe('error')

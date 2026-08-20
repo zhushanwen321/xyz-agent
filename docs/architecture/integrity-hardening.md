@@ -34,7 +34,7 @@ xyz-agent 用户在 GUI 里与 LLM 对话（pi 子进程执行，每个 session 
 - **跨进程共享文件**：≥2 个进程都会写的磁盘文件。本文的治理对象。判定与协议登记在「跨进程文件登记表」（§3.8，落位 `data-source-registry.md` 新增章节）。对照：`auth.json` 是**已修对的范本**——xyz 与 pi 共用同一把 proper-lockfile 锁（`packages/runtime/src/services/auth/auth-storage.ts:42-74`）。
 - **字段域 merge**：锁内读最新文件 → 只修改调用方声明负责的字段域（如 model 域只动 `defaultModel`/`enabledModels`）→ 写回。与「全量覆盖」相对——全量覆盖会把锁内读到的其他进程旧值一并写回，丢掉并发方的修改。pi 侧 `SettingsManager.persistScopedSettings` 的 modifiedFields 语义即此（pi 源码 settings-manager.ts，enqueueWrite + withLock 只 merge 修改字段，✅审查期已读源核实）。
 - **损坏隔离（quarantine）**：JSON 读取 parse 失败时，把损坏文件 rename 为 `<path>.corrupt-<ts>` 保留取证、以默认值继续，并落 error 级日志带恢复指引。与「静默回退默认值」相对——后者会让下一次写把「半截文件」合法化为「全空文件」。
-- **收殓（reap）**：新 runtime 启动时扫描并清理**不属于自己**的残留 pi 进程。孤儿判据 = 进程 env 含本数据目录的 `PI_CODING_AGENT_DIR`（`packages/runtime/src/infra/pi/rpc-client.ts:134` ✅已核实）且不在本 runtime 的子进程表中。
+- **收殓（reap）**：新 runtime 启动时扫描并清理**不属于自己**的残留 pi 进程。孤儿判据（终态，W3 定案）= argv 判据（`--mode rpc` + `--session-dir` 值精确等于本实例 sessions 目录）+ `ppid===1`（reparent 证据，原父 runtime 已死）。设计期原判据（进程 env 含本数据目录的 `PI_CODING_AGENT_DIR`）已被 W3 探针否决（macOS SIP 拿不到他进程 env），终态判据见 §3.4 D4a/D4b。
 - **对账（reconcile）**：注册表与物理事实（git 分支、tmpdir 目录）双向 diff，清理注册表缺失但物理存在的孤儿资源。与「只信注册表」相对。
 - **机制化护栏**：不变量由机器强制（运行时守卫代码 / CI 检查 / 单元级断言），违规在编码期或 CI 期被拦截。与「纪律护栏」（注释、文档、review checklist）相对。
 
@@ -42,7 +42,7 @@ xyz-agent 用户在 GUI 里与 LLM 对话（pi 子进程执行，每个 session 
 
 - **G1（配置不丢）**：用户切模型、装扩展、改 provider 交叉进行后，重启 xyz-agent 一切配置仍在；即使 pi 崩溃在写 settings.json 的半路，用户配置也**可恢复**（.corrupt 副本 + 明确日志），而非静默清空。
 - **G2（打包态安全不变量真实成立）**：打包版里 renderer 被注入恶意代码也无法读 `~/.ssh`、无法把主窗口导航到远程页面接管 electronAPI、无法与第二实例并发操作数据目录。
-- **G3（pi 异常自动恢复）**：pi 崩溃或卡死后，用户最多重发一条消息即可继续（自动 restore），不需要删 session 或重启 app；绝不陷入「每次发消息等 60s 超时」的死循环。
+- **G3（pi 异常自动恢复）**：pi 崩溃或卡死后，用户最多重发一条消息即可继续（自动 restore），不需要删 session 或重启 app；绝不陷入「每次发消息等 60s 超时」的死循环。**例外边界（S5 真机实测发现，2026-08-20）**：全新 session 的首个 turn 进行中被冻结时，pi 尚未 flush session 文件（延迟写入规则），强杀后重发返回 SESSION_NOT_FOUND——「重发即可恢复」该边界不成立，需新建 session（见 D3a/S5 的边界登记）。
 - **G4（无烧钱孤儿）**：runtime 崩溃重启后，旧 runtime 留下的 pi 进程在秒级被回收，不残留烧 token 的进程。
 - **G5（无磁盘泄漏）**：多 session 并发跑 subagent 后，`git branch --list 'pi-sub-*'` 为空、tmpdir 无残留 checkout 目录；进程异常退出后泄漏在下一个 session_start 被对账清理。
 - **G6（弹窗不撒谎）**：pi 死亡后，挂起的 ask-user/permission 弹窗不再重弹误导用户；若重弹，作答有明确反馈而非静默失效。
@@ -73,7 +73,7 @@ xyz-agent 用户在 GUI 里与 LLM 对话（pi 子进程执行，每个 session 
 
 **失败模式 F（孤儿烧钱，M6）**：runtime 被 SIGKILL/OOM。supervisor 重启新 runtime（`apps/electron/main/supervisor/runtime-supervisor.ts:260-281`），但**不清理旧 runtime 的 pi 后代**——主动 stop 路径的进程树清理需要进程活着才能预记录后代 PID，崩溃场景天然失效。收敛唯一押注 pi 的 stdin-EOF 自杀链，而该链自身有两个挂起点：`runtimeHost.dispose()` 的 handler 串行 await 无超时（扩展异步落盘遇慢盘可挂）；stdin-EOF 路径的 `flushRawStdout` 遇 EPIPE 直接 throw 跳过后续 `process.exit`（pi 源码 rpc-mode.ts，✅审查期已读核实）。挂住的 pi 继续持有 API key、长 turn 继续烧 token，且重启 app 也不会清它。
 
-**失败模式 G（worktree 永久泄漏，M7）**：两个 session 并发派 subagent。两份扩展实例对 `worktrees.json` 各自 load→改→save，交错时后写方覆盖前写方 → 条目丢失。丢失条目对应的 subagent 进程若再崩溃，reaper（只遍历注册表）**永远看不到它**——注释声称的「丢失条目靠 OS tmpdir + 分支对账兜底」（`extensions/subagent-workflow/src/execution/worktree-registry.ts:17`，✅已核实注释原文）在代码里不存在（全仓无 `branch --list`/tmpdir 对账）。孤儿 worktree 目录 + `pi-sub-*` 分支永久泄漏。
+**失败模式 G（worktree 永久泄漏，M7）**：两个 session 并发派 subagent。两份扩展实例对 `worktrees.json` 各自 load→改→save，交错时后写方覆盖前写方 → 条目丢失。丢失条目对应的 subagent 进程若再崩溃，reaper（只遍历注册表）**永远看不到它**——设计期核实：注释声称的「丢失条目靠 OS tmpdir + 分支对账兜底」（`extensions/subagent-workflow/src/execution/worktree-registry.ts:17` 当时原文）在代码里不存在（全仓无 `branch --list`/tmpdir 对账），孤儿 worktree 目录 + `pi-sub-*` 分支永久泄漏。**（设计期快照；D5a/D5b 落地后该注释已改写为指向真实对账实现 `reconcileWithPhysical`——`worktree-manager.ts:371` 双向 diff 存在，见 §3.5。）**
 
 **失败模式 H（幽灵弹窗，M8）**：ask-user 弹窗挂起时 pi 崩溃。runtime 侧 `extensionTimeoutMgr.pendingRequests` 只在 session **删除**分支清理（`session-message-handler.ts` 仅有的调用点），pi 意外退出的收敛链不触碰它；renderer 侧 `session.exited` 也不清 extensionUIStore 分区。用户切走再切回（restore 起新 pi）→ 旧请求重弹 → 作答发给新进程 → `pendingExtensionRequests` 无此 id → **静默丢弃**，用户无任何反馈。
 
@@ -129,7 +129,11 @@ Electron main ──spawn──▶ runtime(父) ──spawn──▶ pi×N(子, 
                               旧 pi: 收 stdin EOF → dispose(handler 无超时, 可挂)
                                      → flushRawStdout(EPIPE 可 throw 跳过 exit)
                               结果: 0..N 个 pi 滞留(持有 API key, 或继续烧 token)
-                              现状: 无任何组件扫描/回收它们（孤儿判据 env 可识别却未利用）
+                              设计期现状: 无任何组件扫描/回收它们(孤儿判据 argv 可识别
+                                     —— --mode rpc + --session-dir 精确等值 + ppid=1;
+                                     设计原稿的 env 判据已被 W3 探针否决，见 §3.4)
+                              （设计期快照; W3 已落地收殓步 reapOrphanPiProcesses,
+                               见 §3.4 D4a）
 ```
 
 ---
@@ -159,7 +163,7 @@ Electron main ──spawn──▶ runtime(父) ──spawn──▶ pi×N(子, 
 #### 关键决策
 
 - **D1a 锁协议**：`pi-settings-store.updateSettingsSync` 内部改为 `withSettingsLock(fn)`——proper-lockfile `lockSync(path, { realpath: false, stale: 30_000 })`（**无 retries：lockSync 与 retries 组合会抛 ESYNC，proper-lockfile adapter 明确禁止**——R2 审查核实；auth-storage 的 retries 是 async `lock()` 才有的能力），外层自实现 busy-wait 重试（对齐 pi `acquireLockSyncWithRetry` 的模式：ELOCKED → 同步等待 ~25ms → 重试，预算 ~1s），预算耗尽则 fail-fast 抛给调用方（与 pi 放弃保存的语义对齐）。锁内重读最新 → 应用 mutator（只动声明的字段域）→ atomicWrite 写回。
-  **pi 侧锁的真实形态（设计期已 read pi 源码 `FileSettingsStorage` 核实，R1 审查纠正）**：`acquireLockSyncWithRetry` = `lockfile.lockSync(path, { realpath: false })`，遇 ELOCKED busy-wait 固定 20ms × 最多 10 次（总等待 ≤200ms）后**抛错放弃本次保存**；仅当文件存在才加锁；**无 stale 参数**——pi 崩溃持锁时锁残留，pi 自己不自愈。
+  **pi 侧锁的真实形态（设计期已 read pi 源码 `FileSettingsStorage` 核实，R1 审查纠正）**：`acquireLockSyncWithRetry` = `lockfile.lockSync(path, { realpath: false })`，遇 ELOCKED busy-wait 固定 20ms × 最多 10 次（总等待 ≤200ms）后**抛错放弃本次保存**；仅当文件存在才加锁；**未显式设 stale——proper-lockfile lockSync 默认 stale 10s 仍生效，但 pi 的 200ms 自旋窗口等不到夺取**——pi 崩溃持锁时锁残留，pi 自己不自愈。
   **不对称安全性论证（为何 xyz 设 stale、pi 无 stale，协议仍然正确且更优）**：① 互斥正确性只依赖「同一 lockfile 文件（`<settings.json>.lock`）+ 双方都先取锁再写」——retries/stale 差异不影响互斥，只影响等待策略与崩溃恢复；② stale 30s 的语义是「锁 mtime 超 30s 视为持锁者已死，可夺取」。两个临界区都是毫秒级同步读改写，30s ≫ 最坏持锁时长，stale 实际触发的唯一场景就是持锁者崩溃——正是要恢复的场景；③ pi 无 stale 的代价：残留锁下 pi 下次保存在 200ms 重试后抛错放弃（pi 现状行为，铁律下不可改）。xyz 的 stale 夺取会顺带清掉残留锁，此后 pi 写入恢复正常——xyz 的 stale 让**双方**都自愈；④ 双向等待预算对称成立：xyz 重试预算 ~1s ≫ pi 毫秒级临界区（pi 侧几乎不会因 xyz 而失败），pi 等待预算 200ms ≫ xyz 毫秒级临界区（反向同）。**契约：mutator 内禁止任何 I/O 与 await（纯内存改字段），持锁范围 = 读文件 + mutator + atomicWrite**。该不对称与理由登记进跨进程文件登记表。
 - **D1b 字段域 merge**：`updateSettingsSync(mutator)` 签名演进为 `updateSettingsFields(scope: SettingsFieldScope, mutator)`。写回时只覆盖 scope 声明的顶层 key，其余 key 取锁内最新读——进程内「分区靠调用方自觉」的现行注释约定升级为 API 强制。**字段域定义（覆盖 pi 实际写的全部字段，含 R1 审查指出的 `defaultProvider`——pi 的 setModel 落盘是 `defaultProvider` + `defaultModel` 两个独立字段，`packages/runtime/src/cli/commands.ts:88` 注释互证）**：
 
@@ -193,18 +197,18 @@ Electron main ──spawn──▶ runtime(父) ──spawn──▶ pi×N(子, 
 
 - **D2a cwd 守卫**：白名单构造提为纯函数 `computeLocalFilePrefixes({ isPackaged, cwd, appPath, dataDir, tmpdir, home })`——打包态（`app.isPackaged`）**剔除 `process.cwd()`**（打包态它不再等于用户项目目录，语义已失效）；dev 态保留（cwd=项目根是图片预览主场景）。函数级单测断言「打包态白名单不含文件系统根、不含 homedir 本身」。恢复指引不变量注释改为指向该测试（护栏从注释移到测试）。
 - **D2b 导航拦截**：主窗口（window-factory 创建的全部 BrowserWindow）挂 `will-navigate`（拒绝非应用自身源，dev 放行 vite dev server）+ `webContents.setWindowOpenHandler`（默认 deny；http/https 经现有 openExternal 白名单转系统浏览器）。browser-view 管理器创建的嵌入 view 同样挂 setWindowOpenHandler（其导航已有三层 scheme 校验，补新窗口分支）。
-- **D2c CSP**：renderer `index.html` 加 meta CSP。起点策略：`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: local-file:; connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:*`（dev HMR 与 runtime WS 都是本机回环）。⛔实施期门：dev（HMR/热更新）与打包态分别实测全部页面资源加载无 CSP 违规报告后再定稿指令集。
+- **D2c CSP**：renderer `index.html` 加 meta CSP。**定稿指令集（W2 dev 实测 + S3 打包态实测，2026-08-20）**：`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: local-file:; font-src 'self' data:; connect-src 'self' ws://localhost:*`。与设计起点策略的三处实测修正：① runtime WS host 是 `localhost` 非 `127.0.0.1`（renderer 实际连 `ws://localhost:<port>`，`packages/renderer/src/api/transport.ts:35`）——按起点指令集抄会直接断掉 runtime WS 连接，且实测无 `http://127.0.0.1:*` 需求已删；② dev HMR 的同源 ws 走 CSP3 scheme-source 家族规则被 `'self'` 覆盖，无需显式指令；③ 打包态实测发现 `@fontsource` 字体以内联 `data:font/woff2` 形态加载被 `default-src` 兜底拦截（dev 态走 vite 字体 URL 未触发——⛔双态实测门的价值记录），补 `font-src 'self' data:` 后打包态零违规。**双态均零违规定稿**（dev 见 W2 门、打包态见 §4 验收执行记录 S3）。
 - **D2d 单实例锁**：main 入口 `requestSingleInstanceLock()`，失败 `app.quit()` + `second-instance` 事件聚焦既有主窗口。样板代码，无副作用。
 
 ### 3.3 D3 pi 半死自愈：检测即收敛（修 M5，G3）
 
-**终态（使用者视角）**：pi 卡死（事件循环冻结）后 ≤4 分钟，用户看到该 session 收到一条明确终止消息（含「重发即可恢复」指引），session 状态收敛为 stopped；重发消息自动 restore 新 pi 进程、历史完整。不再出现「每次发消息等 60s 超时」的循环。
+**终态（使用者视角）**：pi 卡死（事件循环冻结）后 ≤4 分钟，用户看到该 session 收到一条明确终止消息（含「重发即可恢复」指引），session 状态收敛为 stopped；重发消息自动 restore 新 pi 进程、历史完整。不再出现「每次发消息等 60s 超时」的循环。**例外边界（S5 真机实测）**：全新 session 首个 turn 冻结时 pi 未 flush session 文件，重发得 SESSION_NOT_FOUND——「重发即可恢复」该边界不成立，需新建 session（无已落盘历史可恢复，损害限于未完成 turn）；主路径（文件已存在）实测 restore 完整。
 
 #### 方案对比
 
 | 方案 | 长期架构合理性 | 短期实现成本 | 风险 | 裁决 |
 |---|---|---|---|---|
-| A. onSilentAbort 判定超时 → 强杀 + 复用 onSessionExit 收敛 | 高：与 pi 崩溃路径同构（原则 2），收敛逻辑零新发明；ensureActive 自动 restore 已存在 | 低：改动集中在 message-dispatcher 的 abort catch 分支 + 错误判定 | 误杀窗口：ping 判死但进程只是极慢 → 强杀后 restore 也无害（restore 语义已验证） | ✅ |
+| A. onSilentAbort 判定超时 → 强杀 + message-dispatcher 内手动编排收敛（onSessionExit 同构链的第二份副本） | 高：与 pi 崩溃路径同构（原则 2）；ensureActive 自动 restore 已存在 | 低-中：改动集中在 message-dispatcher 的 abort catch 分支 + 错误判定 + 收敛编排。**W3 实施定案**：kill 路径 exit 事件被 rpc-client `_killing` 标志与 process-manager 先删 Map 双层守卫拦截，「靠 exit 事件触发、收敛零新发明」不成立，收敛须在强杀分支内手动编排并与 onSessionExit 同步维护（见 D3a） | 收敛链存在两份副本须同步维护（改 onSessionExit 收敛步骤时须同步手动编排）；误杀窗口：ping 判死但进程只是极慢 → 强杀后 restore 也无害（restore 语义已验证） | ✅ |
 | B. 只改错误文案（提示用户手动删 session） | 低：把架构缺陷转嫁给用户 | 最低 | 死循环本体仍在 | ❌（作为 A 未实施前的止血可选） |
 | C. 透明重启 + 未完成 turn 自动重放 | 过度：turn 语义不可重放（工具副作用），伪透明更危险 | 高 | 重放 = 副作用双执行 | ❌ |
 
@@ -212,7 +216,7 @@ Electron main ──spawn──▶ runtime(父) ──spawn──▶ pi×N(子, 
 
 #### 关键决策
 
-- **D3a 判定与处置**：`onSilentAbort` 的 abort RPC 若以超时类错误失败，则走强杀路径：`processManager.destroySession(sessionId)` + 复用 onSessionExit 同构收敛（广播 session.exited → removeSessionEntry → 写 stopped 终态）。下次发消息 `ensureActive` 自动 restore（该机制已存在，`session-service.ts:724-728` ✅审查期核实）。**设计期已核实两个可行性前提（R1 审查 S1 建议的探读）**：① 超时判别——rpc-client 超时在单点 reject（`rpc-client.ts:418` `reject(new Error('RPC command "..." timed out after ...ms'))`，纯 message 字符串），定案为**引入 `RpcTimeoutError` 类型**（rpc-client 内定义，reject 处替换，`instanceof` 判别），扩展点存在、改动单点；② 冻结进程收敛——destroy 链 SIGTERM→2s→SIGKILL 且 kill() 保证 resolve（`process-manager.ts:306-316` 注释明示），SIGKILL 对 SIGSTOP 冻结进程有效，**必然收敛**；增补「SIGTERM 前发 SIGCONT」唤醒冻结进程，让优雅退出路径（扩展落盘）有机会执行（⛔仅剩实测时序门：SIGSTOP 注入跑通全链）。
+- **D3a 判定与处置**：`onSilentAbort` 的 abort RPC 若以超时类错误失败，则走强杀路径：`processManager.destroySession(sessionId)` + 强杀分支内手动编排收敛（广播 session.exited → removeSessionEntry → 写 stopped 终态；编排细节与「为何不能复用 exit 事件」见本条末尾的收敛编排段）。下次发消息 `ensureActive` 自动 restore（该机制已存在，`session-service.ts:751` ✅审查期核实，W0 后行号）。**设计期已核实两个可行性前提（R1 审查 S1 建议的探读）**：① 超时判别——rpc-client 超时在单点 reject（设计期 `rpc-client.ts:418` 为纯 message 字符串 `reject(new Error('RPC command "..." timed out after ...ms'))`；W3 实施后该点为 `:452` 的 `reject(new RpcTimeoutError(type, timeout))`），定案为**引入 `RpcTimeoutError` 类型**（rpc-client 内定义，reject 处替换，`instanceof` 判别），扩展点存在、改动单点；② 冻结进程收敛——destroy 链 SIGTERM→2s→SIGKILL 且 kill() 保证 resolve（`process-manager.ts:306-316` 注释明示），SIGKILL 对 SIGSTOP 冻结进程有效，**必然收敛**；增补「SIGTERM 前发 SIGCONT」唤醒冻结进程，让优雅退出路径（扩展落盘）有机会执行（实测时序门已消解：S5 两轮真机 SIGSTOP 注入跑通全链，收敛 3m35.6s/3m53s）。**收敛编排（W3 实施定案，修正「复用 onSessionExit 同构收敛」的原文）**：kill 路径的 exit 事件被双层守卫拦截（rpc-client `_killing` 标志跳过 exitCallback、process-manager 先删 processes Map 拦截 exit 回调），收敛无法靠 exit 事件自动触发，在 message-dispatcher 强杀分支内**手动编排**：detach → destroySession → persistSessionOutcome('stopped') → publish session.exited（含重发恢复指引）→ removeSessionEntry——与 onSessionExit 收敛链构成**第二份副本，两处必须同步维护**（改 onSessionExit 收敛步骤时须同步此编排，否则两份收敛链漂移）。
 - **D3b 并发防护**：强杀路径与用户并发 deleteSession 的竞态：destroy + 收敛均需幂等（processes Map 无条目则跳过；收敛广播带 sessionId，前端按分区忽略）。与既有 removeSessionEntry 的幂等语义对齐。
 
 ### 3.4 D4 孤儿 pi 收殓（修 M6，G4）
@@ -223,7 +227,7 @@ Electron main ──spawn──▶ runtime(父) ──spawn──▶ pi×N(子, 
 
 | 方案 | 长期架构合理性 | 短期实现成本 | 风险 | 裁决 |
 |---|---|---|---|---|
-| A. 新 runtime 启动收殓步（env 特征扫描 + 非后代判定） | 高：兜底与「谁杀它」解耦，唯一不依赖父进程存活的机制；孤儿判据（PI_CODING_AGENT_DIR env）天然隔离不同数据目录的实例 | 中：一个启动步 + 三平台进程枚举 | 误杀风险须用「env 精确匹配本数据目录 + 排除本进程子代」双条件压零 | ✅ |
+| A. 新 runtime 启动收殓步（argv 特征扫描 + ppid===1 判定） | 高：兜底与「谁杀它」解耦，唯一不依赖父进程存活的机制；孤儿判据（`--mode rpc` + `--session-dir` 精确等值）天然隔离不同数据目录的实例（设计期 env 判据已被 W3 探针否决：macOS SIP 拿不到他进程 env，`ps eww` 与 `launchctl procinfo` 均不可用，Linux 才有 `/proc/*/environ`） | 中：一个启动步 + 三平台进程枚举 | 误杀风险须用「argv 精确匹配本数据目录 + ppid===1（reparent 证据）」双条件压零 | ✅ |
 | B. spawn 时挂父死联动（Linux PDEATHSIG / 包装进程 watchdog） | 中：macOS 无 PDEATHSIG，需给每个 pi 加包装层 | 高且平台不一致 | 包装层改变 stdio 管道拓扑，影响 rpc-client 既有握手假设 | ❌ |
 | C. 只修 pi 自杀链挂起点（给 handler 加超时） | 低：pi 源码不可改（铁律）；扩展侧 handler 可加超时但治标 | 中 | 挂起点不止扩展 handler 一处 | ❌（扩展侧 handler 超时作为附带加固登记） |
 
@@ -231,8 +235,8 @@ Electron main ──spawn──▶ runtime(父) ──spawn──▶ pi×N(子, 
 
 #### 关键决策
 
-- **D4a 收殓步**：挂入 `startup-background-init`（既有「每步独立 catch」结构）：启动后延迟数秒（**⛔实施期门：宽限值实测**——先给 stdin-EOF 自杀链留时间，初值 5s）→ 枚举进程 env 含 `PI_CODING_AGENT_DIR == <本实例 piAgentDir>` 的 pid（macOS `ps eww` / Linux `/proc/*/environ`；**Windows 无可移植 env 枚举 → 降级为仅日志告警**，登记为已知平台边界）→ 排除本 runtime 子进程表内的 pid（processManager 持有）→ SIGTERM → 2s → SIGKILL → 逐条日志。
-- **D4b 误杀防线**：三重条件缺一不可——env 值**精确等于**本数据目录推导值（dev/prod 数据目录天然不同，互不误伤）；不在本进程子代表；单实例锁（D2d）已在手（排除「另一合法实例的 pi」这一理论反例）。收殓动作幂等、失败仅日志不阻塞启动。
+- **D4a 收殓步**：挂入 `startup-background-init`（既有「每步独立 catch」结构）：启动后延迟数秒（宽限值 5s——给 stdin-EOF 自杀链留优雅退出时间，S6 真机实测通过维持）→ 枚举进程（`ps -axo pid=,ppid=,command=`，macOS/Linux 通用）筛 argv 含 `--mode rpc` 且 `--session-dir` 值与本实例 sessions 目录**精确等值**的 pid，再要求 `ppid===1`（reparent 证据，原父 runtime 已死；替代设计期的「排除本 runtime 子进程表内 pid」）→ SIGTERM → 2s → SIGKILL → 逐条日志。**设计期 env 判据（枚举 env 含 `PI_CODING_AGENT_DIR == <本实例 piAgentDir>` 的 pid，macOS `ps eww` / Linux `/proc/*/environ`）被 W3 探针否决**：macOS SIP 拿不到他进程 env（`ps eww` 与 `launchctl procinfo` 均否决），env 枚举无法跨平台，argv 判据跨平台统一（**Windows 无 ps → 降级为仅日志告警**，登记为已知平台边界）。实现：`packages/runtime/src/services/reap-orphan-pi.ts`（头注释含判据与探针结论）。
+- **D4b 误杀防线**：三重条件缺一不可——① `--session-dir` 值**精确等于**本实例 sessions 目录推导值（禁止子串/前缀匹配，防路径前缀混淆；dev 默认隔离数据目录 `~/.xyz-agent-dev`，dev/prod 互不误伤）；② `ppid===1`（reparent 证据——xyz 直接 spawn pi 无 wrapper，父 runtime 活着时 pi 的 ppid 恒等于该 runtime pid，reparent 到 init 即原父已死 = 真孤儿；替代设计期「不在本进程子代表」的排除法——该排除法无法覆盖「另一合法实例的活跃 pi」，ppid===1 可以：对方实例活着时其 pi 的 ppid=对方 runtime pid ≠ 1，天然不杀）；③ `--mode rpc` 必在 argv（防误杀用户终端手工跑的同目录交互式 pi）。单实例锁（D2d）**不承担**排除另一合法实例的职责——dev userData 自动隔离使 dev/prod 并存合法，跨实例安全由防线② ppid===1 承担（`reap-orphan-pi.ts` 头注释防线③明示）。收殓动作幂等、失败仅日志不阻塞启动。
 
 ### 3.5 D5 worktree 注册表：锁 + 对账（修 M7，G5）
 
@@ -269,7 +273,7 @@ Electron main ──spawn──▶ runtime(父) ──spawn──▶ pi×N(子, 
 
 #### 关键决策
 
-- **D6a runtime 侧**：**扩展点已存在（R1 审查 S1 建议的探读核实）**——`session-service.ts:210` 已有 `onSessionDestroyed` 回调槽（`:350` 注入函数，注释明示「触发点 removeSessionEntry（所有删除路径汇聚处）」，覆盖主动删 / 进程退出 / restore 清场三类路径）。实现 = 组合根在该回调（若单槽已被占用则升级为回调列表）里调用 `extensionTimeoutMgr.clearForSession(sid)` + `bridgeRequestIds` 清理；删除分支的既有直接调用点改由汇聚点统一触发（单一清理入口）。无新机制，降为实现细节。
+- **D6a runtime 侧**：**扩展点已存在（R1 审查 S1 建议的探读核实）**——设计期 `session-service.ts:210` 已有 `onSessionDestroyed` 回调槽（`:350` 注入函数，注释明示「触发点 removeSessionEntry（所有删除路径汇聚处）」，覆盖主动删 / 进程退出 / restore 清场三类路径；W0 实施后为 `:216` `onSessionDestroyedHandlers` 列表、`:361` `setOnSessionDestroyed` 注册）。实现 = 组合根在该回调（已升级为回调列表）里调用 `extensionTimeoutMgr.clearForSession(sid)` + `bridgeRequestIds` 清理；删除分支的既有直接调用点改由汇聚点统一触发（单一清理入口）。无新机制，降为实现细节。
 - **D6b renderer 侧**：`session.exited` 事件处理补 `extensionUIStore.clearSession(sid)`（对齐 deleteSession 已有路径）。`sendExtensionUiResponse` 对「目标 session 无进程」的失败改走用户可见 error（现有「client 不存在回 error」路径已覆盖发送侧，补 renderer 展示）。
 
 ### 3.7 D7 现场治理：chat-app 处置与文档导航修正（修 M9/M10，G7）
@@ -303,7 +307,7 @@ Electron main ──spawn──▶ runtime(父) ──spawn──▶ pi×N(子, 
 #### 关键决策
 
 - **D8a 跨进程文件登记表**：`docs/architecture/data-source-registry.md` 新增「跨进程共享文件登记表」章节（与 GUI 数据登记表并列，同一查询入口）。列：`文件 | 写入方（进程）| 锁协议 | 字段域归属 | 损坏隔离 | 状态`。首版条目：settings.json（D1 协议）、worktrees.json（D5）、ext-config 家族（D1e）、auth.json（范本，已达成）、auto-rename 标志（豁免锁，幂等语义）、plugin sessionData（单进程，非共享——对照组）。新文件入表 = pr-cr-fix review checklist 项（语义层，沿用前篇 G4 双层结构）。
-- **D8b CI invariants job**：ci.yml 增 `invariants` job，直调既有自包含检查（ENV 白名单 SSOT 检查、路径白名单检查、runtime bundle 检查脚本中的 import.meta/noExternal 段），使本地 pre-commit 不再是唯一拦截点。`validate-runtime-bundle.sh` 的 grep 段补 `globalThis.__dirname` 禁令（现无静态检查）。
+- **D8b CI invariants job**：ci.yml 增 `invariants` job，直调既有自包含检查（ENV 白名单 SSOT 检查、路径白名单检查、runtime bundle 检查脚本中的 import.meta/noExternal 段），使本地 pre-commit 不再是唯一拦截点。`validate-runtime-bundle.sh` 的 grep 段补 `globalThis.__dirname` 禁令（现无静态检查）。**实施形态说明（W5）**：bundle 校验脚本两段无 preflight 直调模式，CI job 内为等效 grep/node 实现并注明同步维护义务——两处改动须同步，是已论证接受的长期双维护点。
 - **D8c 定点守护测试**：`computeLocalFilePrefixes` 纯函数单测（D2a）；「打包态白名单不含文件系统根/homedir」断言进测试而非注释。
 - **D8d 同族 minor 搭车**：quota-cache 在 provider 删除后清条目（write-after-invalidate 修复）；session-reader stats 输出补 `skippedLines`（有检测无报告）；resource-discovery 同名遮蔽补 warn。均 <20 行，挂对应 wave 顺手修。
 
@@ -319,14 +323,31 @@ Electron main ──spawn──▶ runtime(父) ──spawn──▶ pi×N(子, 
 | S2 | pi 崩溃半写 → 损坏隔离 | G1 / D1c | 真机：手工把 settings.json 截断为前半截（复现 pi writeFileSync 半途崩溃的磁盘残留）→ 在 GUI 触发任一 settings 写（如切模型）| `<settings.json>.corrupt-<ts>` 副本存在且内容=截断原文；error 日志含恢复指引；新 settings.json 为合法 JSON；从 .corrupt 副本可人工找回原 packages 列表（对比确认未被静默清空） |
 | S3 | 打包态白名单与导航拦截 | G2 / §3.2 | 打包 DMG 安装、Finder 启动（cwd=/）；devtools 执行：① 图片 src 指向 `local-file:///Users/<me>/.ssh/id_rsa` ② `window.location='https://example.com'` ③ `window.open('https://example.com')` | ① 加载失败（协议 handler 返回 403，无文件内容泄漏）；② 导航被拒、窗口仍停留应用页；③ 无新 BrowserWindow 弹出；对照组：`local-file://` 指向 ~/Downloads 图片正常加载 |
 | S4 | 双开单实例 | G2 / D2d | 打包版运行中再次双击图标 | 第二实例自动退出；第一实例主窗口被前置聚焦；`~/.xyz-agent/` 全程只有一个 runtime 进程（ps 验证） |
-| S5 | pi 半死自愈 | G3 / §3.3 | dev 版开一个 session 跑长回复（流式中），对 pi 进程 `kill -STOP <pid>`（冻结事件循环，进程不退）；等待并观察；随后重发一条消息 | ≤ ping 判定窗口 + 处置时间（约 4 分钟）内：session 收到终止消息且状态收敛（非悬挂）；重发消息自动 restore 新 pi、历史完整、新回复正常产生；全程无「等 60s 报错后必须删 session」的循环 |
-| S6 | 孤儿收殓 | G4 / §3.4 | dev 版开 3 个 session（至少 1 个流式中），`kill -9 <runtime pid>`（绕过一切优雅退出）；等 supervisor 重启完成；`ps eww | grep PI_CODING_AGENT_DIR` 复查 | 新 runtime 启动数秒内日志列出 reaped pid 清单；复查无残留 pi 进程（env 匹配本数据目录）；3 个 session 重开后均可 restore，session 文件完好 |
+| S5 | pi 半死自愈 | G3 / §3.3 | dev 版开一个 session 跑长回复（流式中），对 pi 进程 `kill -STOP <pid>`（冻结事件循环，进程不退）；等待并观察；随后重发一条消息 | ≤ ping 判定窗口 + 处置时间（约 4 分钟）内：session 收到终止消息且状态收敛（非悬挂）；重发消息自动 restore 新 pi、历史完整、新回复正常产生；全程无「等 60s 报错后必须删 session」的循环。**已知边界（两轮真机实测发现）**：全新 session 的首个 turn 冻结时 pi 尚未 flush session 文件（延迟写入规则），强杀后重发返回 SESSION_NOT_FOUND——该边界需新建 session（无已落盘历史可恢复，损害限于未完成 turn）；主路径（文件已存在）实测 restore 完整 |
+| S6 | 孤儿收殓 | G4 / §3.4 | dev 版开 3 个 session（至少 1 个流式中），`kill -9 <runtime pid>`（绕过一切优雅退出）；等 supervisor 重启完成；`ps -axo pid=,ppid=,command=` 复查残留（argv + ppid 判据——设计原稿的 `ps eww` env 复查法在 macOS 因 SIP 不可执行，已废弃，见 D4a） | 新 runtime 启动数秒内日志列出 reaped pid 清单；复查无残留 pi 进程（argv 匹配本数据目录 session-dir）；3 个 session 重开后均可 restore，session 文件完好 |
 | S7 | worktree 并发 + 对账 | G5 / §3.5 | 两个 session 并发各跑一个真实 subagent workflow（如「总结 README」「格式化某文件」）；全部完成后 `git branch --list 'pi-sub-*'` 与 `ls $TMPDIR/pi-subagents`；再跑一次并发并中途 `kill -9` 其中一个 pi，随后开新 session 触发 reaper | 两轮实验最终 `pi-sub-*` 分支为空、tmpdir 目录为空；kill 注入轮的泄漏在下一 session_start 的对账中被清理（日志可见 reconcile 记录） |
 | S8 | 幽灵弹窗 | G6 / §3.6 | dev 版让 agent 调用 ask-user（弹窗挂起）→ `kill -9` 该 pi → 切到别的 session 再切回 | 弹窗在 session.exited 时即时消失；切回后不重弹旧请求；若构造出极端残留并作答，UI 显示「会话已重启」类错误反馈而非静默无响应 |
 | S9 | CI 护栏 | G7 / §3.8 | 在测试分支故意提交两处违规：runtime 源码加 `import.meta.url`、注释掉 invariants job 中任一检查的调用（验证 job 真的在跑）；另在 MR 里新增一个跨进程共享文件但不登记 | 前两者 CI 红（invariants job 失败信息指向具体检查）；第三项被 pr-cr-fix review 按登记表 checklist 拦下（人工执行，记录在 PR review） |
 | S10 | 文档导航 | G7 / §3.7 | 新开一个会话，仅按 AGENTS.md 文档索引找到「Renderer 七层/包拓扑」的现行 SSOT | 一跳到达 renderer-rebuild-architecture.md；renderer-target-architecture.md 头部可见 supersede 标注；仓库根无未声明孤岛目录、`pnpm run lint` 无 chat-app 来源的 error（处置授权后） |
 
 场景与 10 个 major 的覆盖关系：M1→S1/S2，M2/M3/M4→S3/S4，M5→S5，M6→S6，M7→S7，M8→S8，M9/M10→S10（+S9 护栏），无遗漏。
+
+### 验收执行记录（2026-08-20 实测）
+
+真机环境：隔离数据目录 + 本地 mock LLM（127.0.0.1 SSE 流式）+ SIGSTOP/SIGKILL 故障注入。未列 PASS 的条目均非「已验收」，引用 G2/G5 等结论时以本表为准。
+
+| # | 结果 | 说明 |
+|---|------|------|
+| S1 | **PASS** | 25+25 轮真机 WS 并发交错零丢失、pi 侧零放弃（另有 W1 锁探针 3×300 轮零丢失、xyz 临界区 p50=0ms/p99=1ms/max=2ms、崩溃 stale 夺取验证） |
+| S2 | **PASS** | `.corrupt` 副本与截断原文 byte-identical、error 日志含恢复指引 |
+| S3 | **PASS** | 打包态 7 断言全过（CDP 实测，cwd=/ 启动模拟 Finder 白名单塌缩场景）：白名单外 `local-file://`（~/.ih-accept-out、/etc/passwd）REJECTED / 白名单内（dataDir）LOADED 对照成立；`will-navigate` 拦截（location 不变）；`window.open` deny（返回 null）；CSP meta = 定稿指令集；零 CSP 违规。实测抓到 dev 态未暴露的 `data:font/woff2` 拦截 → 补 `font-src 'self' data:` 后 rebuild 复验全绿（见 D2c 修正③） |
+| S4 | **PASS** | 双新 build 实例同 userData：第二实例 1.4s 内 exit 0、无窗口，第一实例独活；实测澄清：已装旧版（无 W0 锁代码）与新 build 并存不互斥——单实例锁需双方实现，升级部署暂态可接受 |
+| S5 | **PASS（两轮）** | STOP→收敛 3m35.6s / 3m53s，SIGTERM 优雅退出码 143，restore 新 pid 正常回复、历史完整；边界见 G3/D3a/S5 登记 |
+| S6 | **PASS** | 冻结孤儿 ppid=1 被 SIGKILL 收殓；TaiJi 打包版实例子代未受影响（跨实例零误杀，3 个活跃 pi ppid=40842 全保留）；supervisor liveness 探针路径完成重启 |
+| S7 | 单测 + 集成测试通过 | 真机双 session 并发 deferred（锁与对账主链已由 W4 bundle/CLI 探针 + 单测覆盖） |
+| S8 | 单测通过 | 真机 ask-user + kill -9 场景 deferred |
+| S9 | 待 push 后 CI 验证 | invariants job 需远端实跑（本地等效检查全过） |
+| S10 | 达成 | chat-app 已删（经授权提前至 W0 执行）、索引已改、supersede 已加、lint 无噪音源 |
 
 ---
 
@@ -352,17 +373,17 @@ Electron main ──spawn──▶ runtime(父) ──spawn──▶ pi×N(子, 
 **设计期已消解（R1 审查推动的探读，结论已写进 §3 对应决策）**：
 
 1. ~~pi settings 锁参数~~（D1a）：已 read pi `FileSettingsStorage` 源码——`lockSync(realpath:false)` + 20ms×10 busy-wait 后抛错、无 stale、仅文件存在才锁；不对称安全性论证见 D1a。编码时仅剩「把源码行号抄进对照注释」。
-2. ~~rpc 超时判别方式~~（D3a）：单点 reject 于 `rpc-client.ts:418`，定案引入 `RpcTimeoutError` 类型。
-3. ~~session-service 销毁回调挂法~~（D6a）：`onSessionDestroyed` 回调槽已存在（`session-service.ts:210/:350`），触发点即汇聚处。
+2. ~~rpc 超时判别方式~~（D3a）：单点 reject（设计期 `rpc-client.ts:418` 纯 message；实施后为 `:452` `RpcTimeoutError`），定案引入 `RpcTimeoutError` 类型。
+3. ~~session-service 销毁回调挂法~~（D6a）：`onSessionDestroyed` 回调槽已存在（设计期 `:210/:350`；实施后为 `:216` 回调列表 / `:361` 注册），触发点即汇聚处。
 4. ~~冻结进程必然收敛~~（D3a）：kill 链 SIGTERM→2s→SIGKILL 保证 resolve（`process-manager.ts:306-316`），SIGKILL 对 stopped 进程有效。
 
-**实施期门（编码前必须先跑探针，均为运行时环境耦合项）**：
+**实施期门（编码前必须先跑探针，均为运行时环境耦合项）——已全部执行，结论回写（2026-08-20 实施完成）**：
 
-1. **并发锁交错探针**（D1a）：两进程（xyz 侧脚本 + 带锁的模拟 pi 写方）并发 RMW ≥100 轮，校验字段零丢失 + xyz 临界区时长记录（验证 ≪200ms 契约）+ ELOCKED 竞争下 busy-wait 预算（~1s）内成功获取率（偶发预算耗尽应 fail-fast 报错而非静默）。
-2. **proper-lockfile 进 extension bundle**（D5a）：esbuild bundle + 本地 pi CLI 实测（AGENTS.md 的 extension 实测规范）。
-3. **SIGSTOP 注入全链时序**（D3a）：kill -STOP pi → onSilentAbort → SIGCONT/SIGTERM/SIGKILL → 收敛广播 → restore，实测各段时间。
-4. **收殓的进程枚举与宽限值**（D4a）：macOS `ps eww` env 可见性、Linux `/proc/*/environ` 权限、宽限值（初值 5s）实测。
-5. **CSP 与 dev HMR/打包资源共存**（D2c）：双态实测页面无违规报告后定稿指令集。
+1. ~~并发锁交错探针~~（D1a）：**已消解，通过（W1 探针 + S1 真机）**——原探针目标：两进程（xyz 侧脚本 + 带锁的模拟 pi 写方）并发 RMW ≥100 轮，校验字段零丢失 + 临界区时长 + ELOCKED 预算内获取率。结论：3×300 轮真并发零丢失；xyz 临界区 p50=0ms / p99=1ms / max=2ms（≪200ms 契约成立）；预算内成功获取、崩溃 stale 夺取验证过（SIGKILL 持锁方后 xyz 夺取、pi 形态写方随后 1ms 内取锁）；S1 真机 25+25 轮 WS 并发交错零丢失、pi 侧零放弃。**通过，维持设计参数（stale 30s / busy-wait 25ms / 预算 1s）**。
+2. ~~proper-lockfile 进 extension bundle~~（D5a）：**已消解，通过（W4 探针）**——esbuild bundle 内联 proper-lockfile 15-18 处、无外部依赖残留 + 本地 pi CLI 冒烟 exit 0。
+3. ~~SIGSTOP 注入全链时序~~（D3a）：**已消解，通过（S5 真机覆盖）**——两轮全链实测：kill -STOP → onSilentAbort → SIGCONT/SIGTERM/SIGKILL → 收敛广播 → restore，收敛 3m35.6s / 3m53s，SIGTERM 优雅退出码 143，历史完整（见 §4 验收执行记录）。
+4. ~~收殓的进程枚举与宽限值~~（D4a）：**已消解，但探针结论否决设计判据（W3 探针 + S6 真机）**——env 枚举否决：macOS `ps eww` 与 `launchctl procinfo` 均因 SIP 拿不到他进程 env（Linux 才有 `/proc/*/environ` 权限面），改 argv 判据（`ps -axo pid=,ppid=,command=` + `--mode rpc` + `--session-dir` 精确等值 + ppid===1，见 D4a/D4b 修正）；宽限值 5s 维持（S6 真机：冻结孤儿收殓成功 + 跨实例零误杀）。
+5. **CSP 与 dev HMR/打包资源共存**（D2c）：**已消解（双态实测均零违规定稿）**——dev 态见 W2 门（round1 仅 ws://localhost:3310 一类）；打包态见 S3（round1 抓到 data:font/woff2 拦截，补 font-src 后复验零违规）。双态实测各抓到单态不可见的缺口，证明 ⛔门 5 的双态要求必要。
 
 ## 附录 A：与 10 个 major / 31 个 minor 的覆盖对照
 
@@ -375,3 +396,4 @@ Electron main ──spawn──▶ runtime(父) ──spawn──▶ pi×N(子, 
 - v1（2026-08-20）：初稿。基于六维架构审查报告成文。
 - v2（2026-08-20）：R1 对抗式审查（2 must-fix / 2 suggestion）后修复——D1a 重写为 pi 锁真实形态（lockSync + 20ms×10 busy-wait 无 stale）+ 不对称安全性论证；D1b 补 11 调用点 scope 映射表与字段域定义（含 defaultProvider）；D3a/D6a 两个可行性前提设计期探读消解（RpcTimeoutError 定案、onSessionDestroyed 槽已存在、SIGKILL 覆盖冻结进程）；S1 改脚本化交错验收；§6 拆分「已消解/实施期门」。
 - v3（2026-08-20，终版）：R2 复审 0 must-fix / 1 suggestion 后末轮修复——D1a 事实修正：lockSync 不支持 retries（ESYNC），API 形态定案 `lockSync(path, { realpath: false, stale: 30_000 })` + 自实现 busy-wait 重试（预算 ~1s，fail-fast 语义对齐 pi），论证第 ④ 点改写为双向等待预算对称。审查轨迹：`.review.md`（R1）/ `.review.r2.md`（R2）。
+- v4（2026-08-20，实施完成 + 审查-修复循环）：六波实施落地——W0 `026734166`（D1c/D1d/D2a/D2b/D2d/D6/D7；**chat-app 删除经用户授权后提前至 W0 执行**，设计原排在 W5「若授权」）、W1 `e3263ba83`（D1a/D1b/D1e/D8a）、W2 `0308eb1a1`（D2c）、W3 `29a555815`（D3/D4）、W4 `797655021`（D5 + 扩展侧锁 + D8d 部分）、W5 `3d9f31186`（D8b/D8d 剩余）。实施一致性审查 `.impl.review.md`（8 must-fix / 6 suggestion / 5 info）**19 项 finding 全修**；探针修正三处回写本文档：收殓判据（env→argv+ppid=1，D4a/D4b/S6/门 4/§1/§2.5）、CSP 定稿指令集（D2c）、强杀收敛编排（D3a 手动编排非 exit 复用，两份副本同步维护义务）；S5 真机发现 G3 边界（全新 session 首 turn 冻结→SESSION_NOT_FOUND，需新建 session）登记进 G3/D3a/S5/§4。验收执行状态见 §4「验收执行记录」。

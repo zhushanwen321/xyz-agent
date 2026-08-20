@@ -385,7 +385,7 @@ function computeToolCallFill(body: PiMessageBody): {
 } {
   const { output, outputRaw, images } = normalizePiToolResult(body)
   const isError = body.isError === true
-  // F1 透传 details（含 __gui__），排除数组形态（迁移前显式判定，规则 7.5 可重开恢复）。
+  // F1 透传 details（含 __gui__），排除数组形态（迁移前显式判定，关键规则 9 可重开恢复）。
   const details = isPlainRecord(body.details) ? body.details : undefined
   return { output, outputRaw, isError, details, images }
 }

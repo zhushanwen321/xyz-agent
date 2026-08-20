@@ -28,6 +28,7 @@ import { dirname, join } from 'node:path'
 import { getPiAgentDir } from '../infra/pi/pi-paths.js'
 import { logger } from '../infra/logger.js'
 import { atomicWrite } from '../utils/fs-utils.js'
+import { withFileLockSync, type SyncFileLockOptions } from '../utils/file-lock.js'
 
 /** app config.json 的 load/save 能力（ConfigService 注入，避免暴露其私有方法）。 */
 type AppConfigAccessors = {
@@ -201,6 +202,17 @@ export function getRenameConfigPath(): string {
   return join(getPiAgentDir(), RENAME_SESSION_CONFIG_REL)
 }
 
+/**
+ * 锁参数覆盖（仅测试用，如把重试预算压到几十 ms 快速验证 fail-fast）。
+ * 生产保持 file-lock.ts 的默认值（stale 30s / 25ms / 1s），与 pi-settings-store 同协议。
+ */
+let renameConfigLockOptions: SyncFileLockOptions = {}
+
+/** 覆盖 rename-session-ext-config.json 写锁参数（仅测试用）。传 {} 恢复默认。 */
+export function setRenameConfigLockTimingForTest(opts: SyncFileLockOptions): void {
+  renameConfigLockOptions = opts
+}
+
 /** JSON 序列化缩进格数（与 extension 侧 llm-shared saveConfig 的 JSON_INDENT 一致）。 */
 const JSON_INDENT = 2
 
@@ -233,21 +245,32 @@ export function getRenameModel(): string {
  * （extension 的 parseRef 对无 "/" 的 ref 返回 null，写进去也不会生效，不如归一）。
  * 写入为原子写（tmp+rename），与 extension saveConfig 的序列化格式一致（2 空格缩进 + 尾换行）。
  * 写失败（如目录不可写）抛错由调用方处理。
+ *
+ * 🔒 跨进程锁（D1e，integrity-hardening.md §3.1）：RMW 全程持 withFileLockSync
+ * （lockfile 路径 = <rename-session-ext-config.json>.lock，锁目标文件自身）。
+ * 该文件被 runtime 与 pi-rename-session extension 双方 RMW——extension 侧
+ * （extensions/shared/llm-shared saveConfig）W4 起已持同一把锁（@zhushanwen/pi-file-lock
+ * withFileLockSync，协议与本侧逐字对齐），双端闭环；extension 侧锁失败返回
+ * success:false 不降级（对端持锁时无锁写会交错丢字段）。见登记表 §6 rename-session 行。
  */
 export function setRenameModel(model: string): void {
   const normalized = model.includes('/') ? model : ''
   const configPath = getRenameConfigPath()
-  let base: Record<string, unknown>
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf-8'))
-    base = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-      ? { ...(parsed as Record<string, unknown>) }
-      : { ...RENAME_MODEL_DEFAULT_CONFIG }
-  } catch {
-    // 文件不存在/坏 JSON → 默认基底（与 extension 读取侧的回退语义一致：坏文件本来就无效）
-    base = { ...RENAME_MODEL_DEFAULT_CONFIG }
-  }
-  base['model'] = { type: 'ref', ref: normalized }
-  mkdirSync(dirname(configPath), { recursive: true })
-  atomicWrite(configPath, `${JSON.stringify(base, null, JSON_INDENT)}\n`)
+  withFileLockSync(configPath, () => {
+    let base: Record<string, unknown>
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf-8'))
+      base = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+        ? { ...(parsed as Record<string, unknown>) }
+        : { ...RENAME_MODEL_DEFAULT_CONFIG }
+    } catch {
+      // 文件不存在/坏 JSON → 默认基底（与 extension 读取侧的回退语义一致：坏文件本来就无效）
+      base = { ...RENAME_MODEL_DEFAULT_CONFIG }
+    }
+    base['model'] = { type: 'ref', ref: normalized }
+    mkdirSync(dirname(configPath), { recursive: true })
+    // tmp 唯一化：对端（rename-session 扩展 llm-shared saveConfig）写同一文件，其 tmp 已带
+    // pid+随机段；本侧留固定 .tmp 会与旧版对端碰撞（锁互斥下无害但脏残留），对齐同形态。
+    atomicWrite(configPath, `${JSON.stringify(base, null, JSON_INDENT)}\n`, `${process.pid}_${Math.random().toString(36).slice(2, 8)}`)
+  }, renameConfigLockOptions)
 }

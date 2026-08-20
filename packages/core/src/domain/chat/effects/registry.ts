@@ -39,6 +39,7 @@
 import type {
   ContentBlock,
   Message,
+  PiCompactionEntry,
   PiCustomMessageEntry,
   PiEntry,
   PiMessageEntry,
@@ -68,7 +69,8 @@ import { commitMessages, type MessagesRef } from '../mutations'
 import { truncateToolCall } from '../truncate-tool-output'
 import { bashStartEffect, bashResultEffect } from '../bash-effects'
 // [TODO @i18n-migration] core/i18n 落地后恢复 i18n.global.t 调用（§0.3 列为后续迁移）。
-// 当前 compactionSummary/branchSummary 的 summary 兑底文案用硬编码英文占位（summary 几乎总在场，兑底军见）。
+// 当前 branchSummary 的 summary 兜底文案用硬编码英文占位（summary 几乎总在场，兜底罕见）；
+// compactionSummary 已 W6 entry 化，兜底文案收敛到 reducer 中文 fallback（live/reload 一致）。
 
 /**
  * 计数差集：返回 prev 比 next 多出的元素（按出现次数，非子串匹配）。
@@ -263,13 +265,17 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   // B1（PR#86 review）：pi 静默卡死 WARN（120s 无活动，提示性，不中断流）。
   // 与 stream_error 物理隔离——仅追加 system 提示消息，不调 finalizeSession，
   // session 保持 streaming 态（pi 可能只是慢，130s 后恢复产出）。
+  // [W2 fix-chat-flow-order D4] liveOnly 标记（全仓唯一写入点）：stream_warn 是 xyz runtime
+  // 自产健康警告，pi 无对应 entry、重开即消失——无 entry 可构故不 entry 化（直插即本类
+  // 消息的正确入流路径），分组层据此归 turn 内 notice（不切断 turn，W3 消费），不参与
+  // 「live ≡ reload」等价性断言。
   'message.stream_warn': (ctx, sid, payload) => {
     const { messages } = ctx
     const warnContent = readString(payload, 'content') ?? '长时间无响应'
     const prev = messages.value.get(sid)?.value ?? []
     commitMessages(messages, sid, [
       ...prev,
-      { id: `s-${crypto.randomUUID()}`, role: 'system', content: warnContent, status: 'complete', timestamp: Date.now() },
+      { id: `s-${crypto.randomUUID()}`, role: 'system', content: warnContent, status: 'complete', timestamp: Date.now(), liveOnly: true },
     ])
   },
 
@@ -461,7 +467,9 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     commitMessages(messages, sid, next)
   },
 
-  // ── Bash 执行（composer-bash-execute W3）── 提取到 chat-bash-effects.ts（避免本文件超 ESLint max-lines）
+  // ── Bash 执行（W1 fix-chat-flow-order：bashStart 写 ephemeral executingBash 不建消息项；
+  //    bashResult 构造 bashExecution entry 走 applyEntryFrame——reducer 唯一入流通道，
+  //    dispatcher 双分支延迟使帧时序构造性对齐 pi 落盘。实现提取于 bash-effects.ts 避免本文件超行）──
   'message.bashStart': bashStartEffect,
   'message.bashResult': bashResultEffect,
 
@@ -511,20 +519,40 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
 
   'message.compactionSummary': (ctx, sid, payload) => {
     const { messages } = ctx
-    const prev = messages.value.get(sid)?.value ?? []
-    // W07-C：上下文压缩摘要。作 system 提示行。
+    // [W6 fix-chat-flow-order] compaction 双路径收尾（最后一个未 entry 化的 live 消息类型）。
+    // 判定依据（0.84.1 dist 实测）：帧数据源 = runtime event-interpreter 从 pi compaction_end
+    // 事件 result 提取 { summary, tokensBefore, timestamp }（event-interpreter handleCompactionEnd），
+    // 与 pi 落盘 compaction entry 同源同值——agent-session 手动（:1441 appendCompaction）与 auto
+    //（:1670）两路都在 emit compaction_end 前以同一批局部变量先落盘（session-manager
+    // appendCompaction，summary/tokensBefore 同值）。帧字段足以构造 PiCompactionEntry →
+    // 改直插为构造 entry → applyEntryFrame（user/bash/custom 同款范式），reducer 的 compaction
+    // case（apply-entry）自此 live/reload 共用——「live ≡ reload」全类型构造性成立
+    // （等价性断言见 apply-entry-equivalence / effects 测试）。
+    //
+    // 已知窄差异（D2 closure 已消灭，登记 data-source-registry #7 例外④销案）：interpreter 曾
+    // 只在 result.summary 真值时发帧（`if (r.summary)` 门），summary 缺失的 compaction live 无
+    // 消息、重开有 fallback 行——现恒发帧（summary 缺省透传），两侧同走 reducer fallback
+    // 「上下文已压缩」（等价性断言 E4b/E4c，含空串形态）。
+    //
+    // entry 注入两个异源字段（customStart 同款，差异归一见等价性测试）：id 客户端生成
+    // `cmp-<uuid>`（重开侧为 pi uuidv7 entry id——id 值异源属 W21 已裁决差异类）；timestamp
+    // 客户端时钟（帧 timestamp ?? Date.now() → ISO；重开侧为 pi 落盘时刻，差值为投递延迟）。
     const summary = readCompactionSummary(payload)
-    commitMessages(messages, sid, [
-      ...prev,
-      {
-        id: `c-${crypto.randomUUID()}`,
-        role: 'system',
-        content: summary.summary ?? 'Context compacted',
-        status: 'complete',
-        timestamp: summary.timestamp ?? Date.now(),
-        compactionSummary: summary,
-      },
-    ])
+    const entry: PiCompactionEntry = {
+      type: 'compaction',
+      id: `cmp-${crypto.randomUUID()}`,
+      parentId: null,
+      timestamp: new Date(summary.timestamp ?? Date.now()).toISOString(),
+      ...(summary.summary !== undefined && { summary: summary.summary }),
+      ...(summary.tokensBefore !== undefined && { tokensBefore: summary.tokensBefore }),
+    }
+    // 权威喂入：per-session reducer state（与重开 replayEntries 同一个 applyEntry）
+    ctx.applyEntryFrame(sid, entry)
+    // overlay 投影（customStart/bash 同款）：compaction 投影不依赖前置 state（reducer
+    // compaction case 无条件 append），空 state 派生即本条消息。
+    const derived = applyEntry(createInitialChatViewState(), entry)
+    const prev = messages.value.get(sid)?.value ?? []
+    commitMessages(messages, sid, [...prev, ...derived.messages])
   },
 
   'message.branchSummary': (ctx, sid, payload) => {

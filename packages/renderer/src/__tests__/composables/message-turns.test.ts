@@ -36,7 +36,7 @@ describe('filterDisplayableMessages —— 按 display 字段过滤（FR-5 / AC-
   // pi-goal/pi-todo 的 context 消息（<goal_context>/<todo_context>）声明 display:false。
   // 本次修复 message-converter/session-history/customStart 三路径透传 display 后，
   // filterDisplayableMessages 从 HIDDEN_CUSTOM_TYPES 黑名单改为读 m.display !== false。
-  // 过滤只在渲染层（本函数），chat store 保留完整 messages（规则 7.5 fork/compact/replay）。
+  // 过滤只在渲染层（本函数），chat store 保留完整 messages（关键规则 9 fork/compact/replay）。
   it('display:false 的消息过滤掉（goal/todo context 类）', () => {
     const messages: Message[] = [
       makeMsg({ id: 'u1', role: 'user', content: '开始' }),
@@ -299,8 +299,9 @@ describe('renderKey 稳定生成（M5 stable-key）', () => {
     const keysA = toRenderItems(messages).map(renderKey)
     const keysB = toRenderItems(messages).map(renderKey)
     expect(keysA).toEqual(keysB)
-    // 且 key 是稳定 id 派生（turn 用首条消息 id，system 类用 message.id），非索引
-    expect(keysA).toEqual(['t-u1', 's-c1', 't-u2', 's-bash-1'])
+    // 且 key 是稳定 id 派生（turn 用首条消息 id，system 类用 message.id），非索引。
+    // [W3 v2] bash 消息归 turn 内 notices（不产独立 bashExecution 项）——bash-1 落在 t-u2 的 turn 内
+    expect(keysA).toEqual(['t-u1', 's-c1', 't-u2'])
   })
 
   it('TC1: 顶部插入（load-more）后既有 turn 的 renderKey 不漂移', () => {
@@ -413,7 +414,7 @@ describe('toRenderItems kind 全集现算（renderer-model M1）', () => {
     expect(items.map((i) => i.kind)).toEqual(['systemNotice', 'systemNotice', 'systemNotice'])
   })
 
-  it('TC1: 混合序列顺序：turn → systemNotice → turn → bashExecution（system 消息不归入 turn）', () => {
+  it('TC1: 混合序列顺序：turn → systemNotice → turn（边界 system 独立、bash 归 turn 内 notices）', () => {
     const items = toRenderItems([
       makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
       makeMsg({ id: 'a1', role: 'assistant', content: 'r1' }),
@@ -422,11 +423,16 @@ describe('toRenderItems kind 全集现算（renderer-model M1）', () => {
       makeMsg({ id: 'a2', role: 'assistant', content: 'r2' }),
       bashMsg('bash-1'),
     ])
-    expect(items.map((i) => i.kind)).toEqual(['turn', 'systemNotice', 'turn', 'bashExecution'])
+    // [W3 v2] 压缩记录仍是独立 systemNotice 边界项；bash 执行记录归第二 turn 的 notices（不再独立成项）
+    expect(items.map((i) => i.kind)).toEqual(['turn', 'systemNotice', 'turn'])
     // 压缩记录穿插在 turn 之间，不并入任何 turn
     const notice = items[1]
     if (notice.kind !== 'systemNotice') throw new Error('expected systemNotice item')
     expect(notice.message.content).toBe('压缩记录')
+    // bash 记录挂在 u2 turn 内部末尾（D4 inline notice）
+    const lastTurn = items[2]
+    if (lastTurn.kind !== 'turn') throw new Error('expected turn item')
+    expect(lastTurn.turn.notices?.map((m) => m.id)).toEqual(['bash-1'])
   })
 
   it('TC3 kind 一致性：全覆盖消息形态产出的 kind 集合恰好 = 全集（无遗漏/无多余）', () => {
@@ -434,12 +440,12 @@ describe('toRenderItems kind 全集现算（renderer-model M1）', () => {
       // → turn
       makeMsg({ id: 'u1', role: 'user', content: 'q' }),
       makeMsg({ id: 'a1', role: 'assistant', content: 'r' }),
-      // → bashExecution
-      bashMsg('bash-1'),
       // → systemNotice 各形态（compactionSummary/branchSummary/stream_warn/customType）
       makeMsg({ id: 'c1', role: 'system', content: '压缩记录' }),
       makeMsg({ id: 'b1', role: 'system', branchSummary: { summary: 's', fromId: 'prev-id' } }),
       makeMsg({ id: 'w1', role: 'system', customType: 'stream_warn', content: 'warn' }),
+      // → bashExecution（[W3 v2] 边界 system 已关闭当前 turn，无 current 的 bash 退化为独立 static 项）
+      bashMsg('bash-1'),
     ]
     const kinds = new Set(toRenderItems(messages).map((i) => i.kind))
     // 三态全集恰好都被产出（无 kind 被遗漏）
@@ -461,10 +467,11 @@ describe('W21 re-export —— D-4 增量函数经 renderer shim 可导入（per
       makeMsg({ id: 'a1', role: 'assistant', content: 'r' }),
       bashMsg('bash-1'),
     ]
-    const r1 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
-    expect(r1).toEqual(toRenderItems(filterDisplayableMessages(msgs), false))
+    // [W4] filter 弃用参数已移除：分组消费全量数组，display 过滤内化到 toRenderItems 输出层
+    const r1 = toRenderItemsIncremental(msgs, false, cache)
+    expect(r1).toEqual(toRenderItems(msgs, false))
     // 同源数组引用二次调用 → 快路径零重算（引用恒等）
-    const r2 = toRenderItemsIncremental(msgs, filterDisplayableMessages, false, cache)
+    const r2 = toRenderItemsIncremental(msgs, false, cache)
     expect(r2).toBe(r1)
   })
 })

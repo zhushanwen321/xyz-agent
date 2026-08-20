@@ -11,6 +11,10 @@
  * - tool_call_start：push toolCall + contentBlocks toolCall 块
  * - tool_call_end：ID 锚定更新 + status/output 填充
  * - sealed guard：finalizeSession 后 text_delta 幂等丢弃（D-010）
+ * - customStart：entry 路径喂 applyEntryFrame + display 覆写（W2 entry 化验证）
+ * - stream_warn：system 提示行 + liveOnly 标记（W2，pi 无 entry 的 live-only 消息）
+ * - compactionSummary：构造 compaction entry 喂 applyEntryFrame（W6 entry 化，最后一条
+ *   直插双路径消灭——live 与重开共用 reducer compaction case）
  *
  * 运行：cd packages/core && npx vitest run src/domain/chat/__tests__/effects.test.ts
  */
@@ -19,7 +23,7 @@ import { ref, shallowRef } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { dispatchMessageEvent } from '../effects/registry'
 import type { MessageEffectContext } from '../effect-types'
-import type { Message, Segment, ServerMessage } from '@xyz-agent/shared'
+import type { Message, PiCompactionEntry, PiCustomMessageEntry, Segment, ServerMessage } from '@xyz-agent/shared'
 
 const SID = 's-test'
 
@@ -332,6 +336,101 @@ describe('dispatchMessageEvent message.customStart 完成通知 display 覆写�
     expect(sys[0].display).toBe(false)
     expect(sys[1].display).toBe(true)
     expect(sys[2].display).toBeUndefined()
+  })
+
+  it('TC4: entry 路径——customStart 构造 custom_message entry 喂 applyEntryFrame（与重开重放同构）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.customStart', {
+      customType: 'subagent-bg-notify',
+      content: 'x',
+      display: true,
+      details: { id: 'job-9' },
+    }))
+    // 喂入点：与文件重放（get_entries → replayEntries）同一个 applyEntry reducer
+    expect(ctx.applyEntryFrame).toHaveBeenCalledTimes(1)
+    const entry = vi.mocked(ctx.applyEntryFrame).mock.calls[0][1] as PiCustomMessageEntry
+    expect(entry.type).toBe('custom_message')
+    expect(entry.customType).toBe('subagent-bg-notify')
+    expect(entry.content).toBe('x')
+    expect(entry.display).toBe(true)
+    expect(entry.details).toEqual({ id: 'job-9' })
+    // ref 消息来自同一 entry 的 applyEntry 派生（display:false 覆写在 reducer 单点生效——
+    // live ≡ reload 等价由 custom-start-equivalence.test.ts 全量锁定）
+    expect(lastSystem(ctx).display).toBe(false)
+  })
+})
+
+describe('dispatchMessageEvent message.stream_warn（W2 liveOnly 标记）', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('stream_warn → system 提示行入消息流 + liveOnly:true（pi 无 entry、重开即消失）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.stream_warn', { content: 'pi 静默卡死预警' }))
+    const list = getMsgs(ctx)
+    expect(list).toHaveLength(1)
+    expect(list[0].role).toBe('system')
+    expect(list[0].content).toBe('pi 静默卡死预警')
+    expect(list[0].status).toBe('complete')
+    // liveOnly（全仓唯一写入点）：分组层据此归 turn 内 notice（W3 消费），不参与
+    // live≡reload 等价性断言——pi 无对应 entry，直插即本类消息的正确入流路径
+    expect(list[0].liveOnly).toBe(true)
+  })
+
+  it('payload 无 content → 兜底文案；liveOnly 仍置位', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.stream_warn'))
+    const list = getMsgs(ctx)
+    expect(list).toHaveLength(1)
+    expect(list[0].content).toBe('长时间无响应')
+    expect(list[0].liveOnly).toBe(true)
+  })
+})
+
+describe('dispatchMessageEvent message.compactionSummary（W6 entry 化——消灭最后一条直插双路径）', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('帧 → 构造 compaction entry 喂 applyEntryFrame（与重开 compaction entry 同构）+ overlay system 行', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.compactionSummary', {
+      summary: '压缩摘要',
+      tokensBefore: 12345,
+      timestamp: 8000,
+    }))
+    // 喂入点：与文件重放（get_entries → replayEntries）同一个 applyEntry reducer
+    expect(ctx.applyEntryFrame).toHaveBeenCalledTimes(1)
+    const entry = vi.mocked(ctx.applyEntryFrame).mock.calls[0][1] as PiCompactionEntry
+    expect(entry.type).toBe('compaction')
+    expect(entry.id).toMatch(/^cmp-/)
+    expect(entry.summary).toBe('压缩摘要')
+    expect(entry.tokensBefore).toBe(12345)
+    // 帧 timestamp（ms）→ entry ISO（reducer compaction case toMs 往返）
+    expect(entry.timestamp).toBe(new Date(8000).toISOString())
+    // overlay 投影：system 压缩行（用户可见行为——live 与重开同款，live≡reload 归一
+    // deep-equal 由 apply-entry-equivalence E4 锁定）
+    const list = getMsgs(ctx)
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({
+      role: 'system',
+      content: '压缩摘要',
+      status: 'complete',
+      timestamp: 8000,
+      compactionSummary: { summary: '压缩摘要', tokensBefore: 12345 },
+    })
+  })
+
+  it('帧缺 summary/tokensBefore → entry 不含可选字段，overlay 走 reducer 中文 fallback（W6 由英文占位收敛，与重开一致）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.compactionSummary', {}))
+    expect(ctx.applyEntryFrame).toHaveBeenCalledTimes(1)
+    const entry = vi.mocked(ctx.applyEntryFrame).mock.calls[0][1] as PiCompactionEntry
+    expect(entry.type).toBe('compaction')
+    expect(entry.summary).toBeUndefined()
+    expect(entry.tokensBefore).toBeUndefined()
+    // reducer compaction case 的 fallback：'上下文已压缩'（旧直插路径为英文占位
+    // 'Context compacted'——entry 化后两路径共用 reducer，文案归一）
+    const list = getMsgs(ctx)
+    expect(list[0].content).toBe('上下文已压缩')
+    expect(list[0].compactionSummary).toMatchObject({ summary: undefined, tokensBefore: undefined })
   })
 })
 

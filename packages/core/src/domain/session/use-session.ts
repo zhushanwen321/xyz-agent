@@ -48,7 +48,7 @@ export interface NavigationRoute {
  * chat 域历史回填端口（selectSession/retryHistory 的 hydrate 经此注入，壳适配
  * useChat()：isHydrated/hydrate/markHistoryFailed 等映射 chat store。
  * [P4 s5 w2] hydrateTasksFromMessages 随 tasks 域删除（原映射 tasks.hydrateFromMessages
- * 规则 7.5 持久化链路——tasks store 已删，goal/todo 快照渲染走 GuiComponentRenderer 历史消息）。
+ * 关键规则 9 持久化链路——tasks store 已删，goal/todo 快照渲染走 GuiComponentRenderer 历史消息）。
  */
 export interface ChatHydratePort {
   /** 拉取 session 历史（session.history RPC；尾读可能截断） */

@@ -351,7 +351,7 @@ describe('applyEntry —— entry 类型逐类型覆盖', () => {
   })
 
   // ── compaction entry（专用形态）──────────────────────────────────
-  it('compaction entry：→ system 消息 + compactionSummary 字段（可重开恢复，规则 7.5）', () => {
+  it('compaction entry：→ system 消息 + compactionSummary 字段（可重开恢复，关键规则 9）', () => {
     const state = replayEntries([
       { type: 'compaction', id: 'cp-1', parentId: null, timestamp: ISO(777), summary: '压缩了', firstKeptEntryId: 'e-1', tokensBefore: 5000 },
     ])

@@ -97,6 +97,29 @@
       <span class="h-px flex-1 bg-border" />
     </div>
 
+    <!-- bash 执行中反馈行（W1 fix-chat-flow-order D2 ephemeral 通道，W4 完整形态）：`!` 命令执行
+         期间的瞬时反馈（前缀文案 + mono 命令 + 转圈，样式对齐 compacting 行；v3 tokens 无硬编码）。
+         不进 messages 不持久化：bashStart 置 / bashResult·错误路径清；run 级联结束后由
+         bashExecution entry 入流承担持久语义（live≡reload 双通路分工）。
+         堆叠协调（W4 核实）：① 与 isCompacting 互斥——useComposerSend 优先级链 compact 分支
+         在 bash 分流之前（compacting 中 `!` 输入转排队待重放，不会执行），两者不同时出现；
+         ② 与 ForkNotice 均为 Virtualizer 之后的文档流 block（forkNoticeBaseTop absolute 基线
+         生产路径已不消费），按文档序自然堆叠，无需纳入 useNoticeStack 基线。 -->
+    <div
+      v-if="executingBash"
+      ref="executingBashEl"
+      class="system-notice flex min-w-0 items-center gap-2 py-1"
+      data-testid="executing-bash-notice"
+    >
+      <span class="h-px flex-1 bg-border" />
+      <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
+      <span class="flex min-w-0 items-center gap-1">
+        <span class="shrink-0 text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ t('panel.message.executingBash') }}</span>
+        <span class="min-w-0 truncate font-mono text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ executingBash.command }}</span>
+      </span>
+      <span class="h-px flex-1 bg-border" />
+    </div>
+
     <!-- [方案 D] dispatching 空窗期占位已移除：原 absolute 浮层改为末尾空 turn 的 TurnMeta 占位。
          message_start 前末尾空 turn（user 已发、assistants=[]）经 TurnMeta 的 isPendingPlaceholder
          渲染「思考中」+ spinner，message_start 后 assistant 填入同一 turn，原地变为 working 态。
@@ -155,9 +178,10 @@ import { ChevronDown, ChevronUp, Loader2, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Virtualizer, type VirtualizerHandle } from 'virtua/vue'
 import { useChatStore } from '@/stores/chat'
+import { getExecutingBash } from '@xyz-agent/core'
 import { useVirtuaFollow } from '@/composables/panel/useVirtuaFollow'
 import { useConstantHeightAssert } from '@/composables/panel/useConstantHeightAssert'
-import { toRenderItemsIncremental, createTurnRenderCache, filterDisplayableMessages, renderKey } from '@/composables/logic/messageTurns'
+import { toRenderItemsIncremental, createTurnRenderCache, renderKey } from '@/composables/logic/messageTurns'
 import type { TurnRenderCache } from '@/composables/logic/messageTurns'
 import { useSessionScopedState } from '@/composables/useSessionScopedState'
 import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubagentStore } from '@/stores/subagent'
@@ -175,6 +199,7 @@ import { useStreamingPin } from '@/composables/panel/useStreamingPin'
 import {
   useMessageStreamNotices,
   COMPACTING_NOTICE_HEIGHT,
+  EXECUTING_BASH_NOTICE_HEIGHT,
 } from '@/composables/panel/useMessageStreamNotices'
 
 const props = defineProps<{
@@ -195,6 +220,10 @@ const currentMessages = computed(() => chat.getMessages(props.sessionId))
 
 /** session id（template 内多处引用：Turn :session-id / rail 等）。 */
 const sessionId = computed(() => props.sessionId)
+
+/** 执行中 bash 瞬时态（W1 fix-chat-flow-order D2）：bashStart 置 / bashResult·错误路径清，
+ *  不进 messages（执行中反馈 ephemeral 通道；run 结束后 bashExecution entry 入流承担持久语义）。 */
+const executingBash = computed(() => getExecutingBash(props.sessionId))
 
 /** subagent 虚拟 session 真在跑时强制 streaming（JSONL 读出 status 恒 complete，但 subagent 可能还在跑）。
  *  [review round2 R1-遗留-1] 窄口径判定（isStreamingSubagent，与主 session hasRunning 同判据）：
@@ -223,12 +252,11 @@ const turnCacheState = useSessionScopedState(
 )
 
 /** 扁平消息 → 渲染项（增量版，08 §3.3.1 D-4：历史 turn 按成员消息身份复用，流式追加
- *  只重建末位 turn → 视口内历史 Turn 不被 patch）。filterDisplayableMessages 过滤
- *  display:false 的 custom message（ADR-0041）；快路径（源数组引用未变）跳过 filter。 */
+ *  只重建末位 turn → 视口内历史 Turn 不被 patch）。display 过滤已内化到 toRenderItems
+ *  输出层（W3·D3——分组消费全量数组，隐藏完成通知参与边界语义；filter 参数 W4 已移除）。 */
 const renderItems = computed(() =>
   toRenderItemsIncremental(
     currentMessages.value,
-    filterDisplayableMessages,
     forceWorking.value,
     turnCacheState.current.value.value, // 双层 .value：分区 shallowRef → TurnRenderCache
   ),
@@ -280,9 +308,10 @@ const vlistBottom = computed(() => {
 })
 
 /** B2 dev-only 常量漂移检测：ResizeObserver 实测 vs 像素常量，不匹配 console.warn。生产裁剪零开销。 */
-const [loadMoreEl, compactingNoticeEl] = useConstantHeightAssert([
+const [loadMoreEl, compactingNoticeEl, executingBashEl] = useConstantHeightAssert([
   { name: 'LOAD_MORE_RESERVED_HEIGHT', expected: LOAD_MORE_RESERVED_HEIGHT },
   { name: 'COMPACTING_NOTICE_HEIGHT', expected: COMPACTING_NOTICE_HEIGHT },
+  { name: 'EXECUTING_BASH_NOTICE_HEIGHT', expected: EXECUTING_BASH_NOTICE_HEIGHT },
 ]).els
 
 /** 末尾瞬时块（compacting/dispatching）状态 + 垂直堆叠定位 + 取消 handler（M2）。

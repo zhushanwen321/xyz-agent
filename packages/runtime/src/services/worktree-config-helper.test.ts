@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { mkdtempSync, rmSync } from 'node:fs'
-import { getAutoRenameEnabled, setAutoRenameEnabled, getAutoRenameEnabledPath, ensureAutoRenameDefault, getRenameModel, setRenameModel, getRenameConfigPath } from './worktree-config-helper.js'
+import lockfile from 'proper-lockfile'
+import { getAutoRenameEnabled, setAutoRenameEnabled, getAutoRenameEnabledPath, ensureAutoRenameDefault, getRenameModel, setRenameModel, getRenameConfigPath, setRenameConfigLockTimingForTest } from './worktree-config-helper.js'
 
 describe('auto-rename enabled 标志文件', () => {
   let tmpRoot: string
@@ -205,5 +206,79 @@ describe('rename-session 模型配置（config/rename-session-ext-config.json）
     setRenameModel('p1/m1')
     expect(getRenameModel()).toBe('p1/m1')
     expect(readRawConfig()['enabled']).toBe(false)
+  })
+})
+
+describe('rename-session-ext-config 写锁（D1e 跨进程锁）', () => {
+  // 参照 pi-settings-store.test.ts 的锁测试模式：同一把 lockfile（<config>.json.lock，
+  // realpath:false）模拟 extension 侧写方，验证 runtime RMW 的互斥与降级语义。
+  let tmpRoot: string
+  const configPath = () => join(tmpRoot, 'pi', 'agent', 'config', 'rename-session-ext-config.json')
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'rename-model-lock-test-'))
+    vi.stubEnv('XYZ_AGENT_DATA_DIR', tmpRoot)
+  })
+
+  afterEach(() => {
+    // 恢复锁参数默认值，避免压缩预算泄漏到后续用例
+    setRenameConfigLockTimingForTest({})
+    vi.unstubAllEnvs()
+    rmSync(tmpRoot, { recursive: true, force: true })
+  })
+
+  it('写完释放锁：.lock 目录不残留（残留会困住后续写方）', () => {
+    setRenameModel('p1/m1')
+    expect(existsSync(`${configPath()}.lock`)).toBe(false)
+    expect(getRenameModel()).toBe('p1/m1')
+  })
+
+  it('锁内重读最新：外部持锁写方（模拟 extension）写的字段不被本次 RMW 覆盖', () => {
+    setRenameModel('p1/m1')
+    // 模拟 pi-rename-session extension 持同一把锁写 enabled/maxTitleLength
+    //（llm-shared saveConfig 约定的 lockfile 路径 = 目标文件 + '.lock'）
+    const release = lockfile.lockSync(configPath(), { realpath: false })
+    try {
+      const raw = JSON.parse(readFileSync(configPath(), 'utf-8')) as Record<string, unknown>
+      raw['enabled'] = true
+      raw['maxTitleLength'] = 30
+      writeFileSync(configPath(), JSON.stringify(raw, null, 2), 'utf-8')
+    } finally {
+      release()
+    }
+    setRenameModel('p2/m2')
+    const saved = JSON.parse(readFileSync(configPath(), 'utf-8')) as Record<string, unknown>
+    // model 域被本次写更新，extension 写的域被锁内重读吃进（不覆盖）
+    expect(saved['model']).toEqual({ type: 'ref', ref: 'p2/m2' })
+    expect(saved['enabled']).toBe(true)
+    expect(saved['maxTitleLength']).toBe(30)
+  })
+
+  it('fail-fast：锁被外部持有超出重试预算 → 抛 ELOCKED，文件保持原样', () => {
+    setRenameModel('p1/m1')
+    // 压缩预算：10ms/次 × 预算 60ms，快速走完 fail-fast 路径
+    setRenameConfigLockTimingForTest({ retryDelayMs: 10, retryBudgetMs: 60 })
+    const release = lockfile.lockSync(configPath(), { realpath: false })
+    let err: unknown
+    try {
+      setRenameModel('blocked/m')
+    } catch (e) {
+      err = e
+    } finally {
+      release()
+    }
+    // fail-fast：预算耗尽抛错（对齐 pi 放弃保存语义），而非静默丢弃或死等
+    expect((err as { code?: string } | undefined)?.code).toBe('ELOCKED')
+    expect(getRenameModel()).toBe('p1/m1') // 本次写入被放弃
+    // 锁释放后恢复正常
+    setRenameModel('after/m')
+    expect(getRenameModel()).toBe('after/m')
+  })
+
+  it('目录不存在时首写：锁工具先建父目录，写入成功', () => {
+    expect(existsSync(dirname(configPath()))).toBe(false)
+    setRenameModel('first/m')
+    expect(existsSync(configPath())).toBe(true)
+    expect(getRenameModel()).toBe('first/m')
   })
 })

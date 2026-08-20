@@ -23,6 +23,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, 
 import { dirname, join } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { withFileLockSync } from "@zhushanwen/pi-file-lock";
 
 /** JSON 序列化缩进格数（permission/config.ts 同款）。 */
 const JSON_INDENT = 2;
@@ -114,12 +115,34 @@ export function loadConfig<T>(
 	}
 }
 
-// ──────────────────────── 保存（原子写） ────────────────────────
+// ──────────────────────── 保存（锁内原子写） ────────────────────────
 
 /**
- * 保存配置（原子写：tmp 文件 + rename）。
+ * 生成并发唯一的 tmp 文件名（D1e 附带风险修复：双侧 tmp 中间文件同名 `<path>.tmp`
+ * 并发可碰撞——runtime 侧 atomicWrite 未传 uniqueSuffix 也是固定名，扩展侧唯一化
+ * 后两侧名字空间不相交，碰撞面消除）。
+ *
+ * 后缀 = pid + 36 进制随机段：同进程多写方（多 session）与跨进程写方均不重名。
+ */
+const TMP_RANDOM_BASE = 36;
+const TMP_RANDOM_SLICE_START = 2; // 跳过 Math.random 字符串的 "0." 前缀
+const TMP_RANDOM_SLICE_END = 10;
+function uniqueTmpPath(configPath: string): string {
+	return `${configPath}.tmp_${process.pid}_${Math.random().toString(TMP_RANDOM_BASE).slice(TMP_RANDOM_SLICE_START, TMP_RANDOM_SLICE_END)}`;
+}
+
+/**
+ * 保存配置（锁内原子写：withFileLockSync + tmp 文件 + rename）。
  *
  * @returns 成功 {success:true}；失败 {success:false, error}
+ *
+ * 🔒 跨进程锁（D1e/W4，integrity-hardening.md §3.1，登记表 §6 rename-session 行）：
+ * ext-config 家族被 xyz runtime（如 setRenameModel 写 model 字段，W1b 已持锁）与
+ * pi 子进程内扩展（本函数）双写。互斥只依赖同一 lockfile（<config>.lock），本侧
+ * withFileLockSync 协议与 runtime 侧 settings.json 写锁逐字对齐（realpath:false +
+ * stale 30s + busy-wait 1s 预算 fail-fast）。锁获取失败不降级无锁写——对端
+ * runtime 可能正持锁写，无锁写会交错丢字段；返回 {success:false} 由调用方按
+ * 保存失败处理（下次 save 重试）。
  *
  * 原子性：writeFileSync(tmp) + renameSync(tmp→target)，rename 是原子的（POSIX/Windows）。
  * tmp 失败清理（review RK3）：writeFileSync 或 renameSync 抛错时，catch 块 unlinkSync(tmp)
@@ -137,44 +160,55 @@ export function saveConfig(
 	onWarning?: (msg: string) => void,
 ): { success: boolean; error?: string } {
 	const configPath = getConfigPath(pkgName);
-	const tmpPath = `${configPath}.tmp`;
+	const tmpPath = uniqueTmpPath(configPath);
 	const content = `${JSON.stringify(config, null, JSON_INDENT)}\n`;
 
+	const writeLocked = (): { success: boolean; error?: string } => {
+		try {
+			mkdirSync(dirname(configPath), { recursive: true });
+			writeFileSync(tmpPath, content, { encoding: "utf-8", mode: 0o600 });
+			renameSync(tmpPath, configPath);
+
+			// 写后更新缓存（用新文件 mtime+size + 写入的 config）
+			try {
+				const newStat = statSync(configPath);
+				configCache.set(configPath, {
+					mtimeMs: newStat.mtimeMs,
+					size: newStat.size,
+					config: clone(config),
+				});
+			} catch (statErr) {
+				// stat 失败不影响保存成功；缓存下次 load 时会重读
+				console.warn(
+					`[llm-shared] saveConfig stat after write failed:`,
+					statErr instanceof Error ? statErr.message : String(statErr),
+				);
+			}
+
+			return { success: true };
+		} catch (error) {
+			// RK3: 清理残留 tmp 文件（writeFileSync 或 renameSync 失败时 tmp 可能残留）
+			try {
+				if (existsSync(tmpPath)) unlinkSync(tmpPath);
+			} catch (cleanupErr) {
+				// tmp 清理失败不能阻塞保存失败的返回；记录原因
+				console.warn(
+					`[llm-shared] saveConfig tmp cleanup failed:`,
+					cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+				);
+			}
+			const message = error instanceof Error ? error.message : String(error);
+			onWarning?.(`[llm-shared] Failed to save config at '${configPath}': ${message}`);
+			return { success: false, error: `Failed to save config at '${configPath}': ${message}` };
+		}
+	};
+
 	try {
-		mkdirSync(dirname(configPath), { recursive: true });
-		writeFileSync(tmpPath, content, { encoding: "utf-8", mode: 0o600 });
-		renameSync(tmpPath, configPath);
-
-		// 写后更新缓存（用新文件 mtime+size + 写入的 config）
-		try {
-			const newStat = statSync(configPath);
-			configCache.set(configPath, {
-				mtimeMs: newStat.mtimeMs,
-				size: newStat.size,
-				config: clone(config),
-			});
-		} catch (statErr) {
-			// stat 失败不影响保存成功；缓存下次 load 时会重读
-			console.warn(
-				`[llm-shared] saveConfig stat after write failed:`,
-				statErr instanceof Error ? statErr.message : String(statErr),
-			);
-		}
-
-		return { success: true };
-	} catch (error) {
-		// RK3: 清理残留 tmp 文件（writeFileSync 或 renameSync 失败时 tmp 可能残留）
-		try {
-			if (existsSync(tmpPath)) unlinkSync(tmpPath);
-		} catch (cleanupErr) {
-			// tmp 清理失败不能阻塞保存失败的返回；记录原因
-			console.warn(
-				`[llm-shared] saveConfig tmp cleanup failed:`,
-				cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
-			);
-		}
-		const message = error instanceof Error ? error.message : String(error);
-		onWarning?.(`[llm-shared] Failed to save config at '${configPath}': ${message}`);
-		return { success: false, error: `Failed to save config at '${configPath}': ${message}` };
+		return withFileLockSync(configPath, writeLocked);
+	} catch (lockErr) {
+		// 锁获取失败（ELOCKED 预算耗尽等）：不降级无锁写（见 docstring），按保存失败返回
+		const message = lockErr instanceof Error ? lockErr.message : String(lockErr);
+		onWarning?.(`[llm-shared] Config write lock unavailable at '${configPath}': ${message}`);
+		return { success: false, error: `Config write lock unavailable at '${configPath}': ${message}` };
 	}
 }

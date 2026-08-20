@@ -30,6 +30,7 @@ import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine, PiCommandInfo } from '../ports/pi-engine.js'
 import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
 import { parseJsonl } from '../../utils/jsonl.js'
+import { quarantineCorruptFile } from '../../utils/json-store.js'
 import { extractSubagentsFromSessionFile, scanSubagentEntries } from './subagent-extractor.js'
 import { extractWorkflowsFromSessionFile, scanWorkflowEntries } from './workflow-extractor.js'
 import { getSubagentSessionDir, getPiAgentDir } from '../../infra/pi/pi-paths.js'
@@ -206,8 +207,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   /**
    * S3-W2：session 销毁回调（同上）。全部删除路径汇聚于 removeSessionEntry
    * （lifecycle.delete 主动删 / onSessionExit 进程退出 / restore 清场），触发点在彼处。
+   *
+   * D6a（integrity-hardening §3.6）：升级为回调列表。该槽原是单函数槽且已被
+   * PluginService（didDestroy 投递）占用，挂起 UI 请求清理（server 的
+   * extensionTimeoutMgr 汇聚清理）无处可挂——单槽语义下后注册者会覆盖前者。
+   * 列表语义允许多方注册，既有注入方（PluginService）行为不变，逐个隔离异常。
    */
-  private onSessionDestroyed: ((summary: SessionSummary) => void) | null = null
+  private readonly onSessionDestroyedHandlers: Array<(summary: SessionSummary) => void> = []
   /**
    * MessageBus 引用（组合根注入，wave:runtime-wiring）。
    *
@@ -347,9 +353,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     this.onSessionCreated = handler
   }
 
-  /** S3-W2：注入 session 销毁回调（同上，触发点 removeSessionEntry）。 */
+  /**
+   * S3-W2：注入 session 销毁回调（触发点 removeSessionEntry）。
+   * D6a：追加式注册（非覆盖）——回调列表语义，PluginService 的 didDestroy 投递与
+   * transport 层的挂起 UI 请求清理（server.ts setServices 注册）互不挤占。
+   */
   setOnSessionDestroyed(handler: (summary: SessionSummary) => void): void {
-    this.onSessionDestroyed = handler
+    this.onSessionDestroyedHandlers.push(handler)
   }
 
   /**
@@ -490,6 +500,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return this.dispatcher.sendBash(sessionId, command, excludeFromContext)
   }
   async abortBash(sessionId: string): Promise<void> { return this.dispatcher.abortBash(sessionId) }
+  /**
+   * W1（fix-chat-flow-order 探针 ②）：run 级联结束（pi agent_settled，晚于 pi finally 的
+   * bash 落盘 flush）→ dispatcher 按序发布 per-session bash 待落列（D2 双分支延迟的 flush 腿）。
+   * 经 EventInterpreter.onAgentSettled 回调注入（组合根 index.ts）。
+   */
+  flushPendingBashResults(sessionId: string): void { this.dispatcher.flushPendingBashResults(sessionId) }
   async steerMessage(sessionId: string, content: string): Promise<void> { return this.dispatcher.steerMessage(sessionId, content) }
   async followUpMessage(sessionId: string, content: string): Promise<void> { return this.dispatcher.followUpMessage(sessionId, content) }
   async compact(sessionId: string, customInstructions?: string): Promise<void> { return this.dispatcher.compact(sessionId, customInstructions) }
@@ -1322,12 +1338,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // R3：所有删除路径（lifecycle.delete 主动删 + onSessionExit 进程异常退）汇聚于此，
     // 触发 onSessionDelete 清 ReloadOrchestrator.pendingReload 残留。
     this.onSessionDelete?.(sessionId)
-    // S3-W2：同一汇聚点触发插件 didDestroy 定向投递（回调异常不阻塞删除主流程）。
-    try {
-      this.onSessionDestroyed?.(destroyedSummary)
-    // eslint-disable-next-line taste/no-silent-catch -- best-effort 降级：插件 didDestroy 投递异常不外抛（删除主流程优先），仅落日志供排查
-    } catch (e: unknown) {
-      console.error(`[session-service] onSessionDestroyed listener error (sessionId=${sessionId}):`, e)
+    // S3-W2 + D6a：同一汇聚点触发回调列表（插件 didDestroy 投递 + 挂起 UI 请求清理等）。
+    // 逐个 try/catch 隔离：单 handler 异常不阻塞删除主流程，也不阻断列表内其余 handler。
+    for (const handler of this.onSessionDestroyedHandlers) {
+      try {
+        handler(destroyedSummary)
+      // eslint-disable-next-line taste/no-silent-catch -- best-effort 降级：销毁回调异常不外抛（删除主流程优先），仅落日志供排查
+      } catch (e: unknown) {
+        console.error(`[session-service] onSessionDestroyed listener error (sessionId=${sessionId}):`, e)
+      }
     }
     // wave:perf-w20（D6-1）：session 删除 / pi 进程退出时清历史重建缓存 + lastLeafId。
     // pi 进程退出后缓存基线（lastLeafId）不再与新进程的 entry 集合对应，保留只会
@@ -1847,16 +1866,18 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       const dir = getAttachmentsDir(sessionId)
       mkdirSync(dir, { recursive: true })
       const filePath = join(dir, 'segments.json')
-      // 读已有（文件不存在 → 空；损坏 → 重置，best-effort 不阻断写入）
+      // 读已有（文件不存在 → 空；损坏 → 隔离现场后降级为空，best-effort 不阻断写入）
       let file: SegmentsMetadataFile = { version: 1, entries: [] }
       if (existsSync(filePath)) {
         try {
           const raw = readFileSync(filePath, 'utf-8')
           const parsed = JSON.parse(raw) as SegmentsMetadataFile
           if (parsed && Array.isArray(parsed.entries)) file = parsed
-          // eslint-disable-next-line taste/no-silent-catch -- segments.json 损坏时 best-effort 重置为空（不阻断写入），与 main 原实现语义一致
-        } catch {
-          console.warn('[session-service] segments.json malformed, resetting:', filePath)
+        } catch (e) {
+          // D1c 损坏隔离（integrity-hardening.md §3.1）：半截文件先 rename .corrupt-<ts>
+          // 保留取证再降级为空——否则下方写入把「半截」合法化成「全空」，历史 segments
+          // 永久丢失且不可恢复（与 JsonStore 共用同一 quarantine 实现，避免行为漂移）
+          quarantineCorruptFile(filePath, { tag: 'session-service', reason: 'segments.json malformed', cause: e })
         }
       }
       // 按 clientUuid 去重：同 uuid 覆盖，新 uuid 追加

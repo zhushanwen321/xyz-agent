@@ -16,6 +16,11 @@
 // [全局注册表重构] scan 不再依赖当前 cwd 是否 git repo，改为遍历
 // WorktreeRegistry（<agentDir>/subagents/worktrees.json）。判据从终态 marker
 // 状态机降为 pid 死活一条——进程崩溃无人写终态时也能正确回收。
+//
+// [D5b 对账] scan 末尾追加双向 diff（reconcileWithPhysical）：物理面（tmpdir
+// checkout 目录 + git branch --list）与注册表互相对账——注册表条目丢失（锁前
+// last-write-wins 遗留 / 锁降级窗口）或物理资源被外部清掉时收敛，注册表注释
+// 声称的「tmpdir + 分支对账兜底」由此成为代码。
 
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
@@ -27,7 +32,7 @@ import type { PatchResult,WorktreeHandle } from "./types.ts";
 import { DirtyWorktreeError } from "./types.ts";
 import { bestEffort } from "./best-effort.ts";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
-import { isProcessAlive } from "./alive-store.ts";
+import { isProcessAlive, readAliveMarker } from "./alive-store.ts";
 import { SPAWN_GRACE_MS,type WorktreeEntry,WorktreeRegistry } from "./worktree-registry.ts";
 
 const logger = getLogger("subagents");
@@ -37,6 +42,30 @@ const SAFE_ID_RE = /^[\w-]+$/;
 
 // 默认 git 命令超时（ms）
 const GIT_TIMEOUT_MS = 30_000;
+
+/** tmpdir 下的 worktree 根目录（与 create() 的路径拼装保持同源）。 */
+const WORKTREE_TMP_ROOT = "pi-subagents";
+
+/** 分支名前缀（create() 生成 `pi-sub-<recordId>`）。 */
+const BRANCH_PREFIX = "pi-sub-";
+
+/**
+ * 物理面发现的 worktree（tmpdir checkout 目录存在，无论注册表是否登记）。
+ * repo 从 checkout/.git 指针文件推导（普通 repo 与 bare+worktree 均覆盖）；
+ * 推导失败（.git 文件缺失/损坏）时 undefined——checkout 视为无主残留。
+ */
+interface PhysicalWorktree {
+  /** encodeCwd(mainCwd) 段名（checkout 路径中间层）。 */
+  readonly enc: string;
+  /** 分支名（checkout 目录名，= pi-sub-<recordId>）。 */
+  readonly branch: string;
+  /** checkout 绝对路径。 */
+  readonly checkout: string;
+  /** 推导出的主仓库路径（.git 指针解析失败则 undefined）。 */
+  readonly repo?: string;
+  /** checkout 目录 mtime（对账 SPAWN_GRACE 判据的 createdAt 近似）。 */
+  readonly mtimeMs: number;
+}
 
 /**
  * gitRunAsync 的包装错误：message 格式与旧同步 gitRun 逐字一致（下游
@@ -62,18 +91,42 @@ export class GitRunError extends Error {
 }
 
 /**
- * 写类 git 命令判定（per-repo mutex 串行对象）。读类（status/rev-parse/diff）
+ * 写类 git 命令判定（per-repo mutex 串行对象）。读类（status/rev-parse/diff/branch --list）
  * 无副作用不加锁——并发读 git 自身安全，P-lock 实测冲突仅是写窗口假设。
  */
 function isWriteCommand(args: string[]): boolean {
-  if (args[0] === "worktree") return args[1] === "add" || args[1] === "remove";
+  if (args[0] === "worktree") return args[1] === "add" || args[1] === "remove" || args[1] === "prune";
   if (args[0] === "branch") return args[1] === "-D";
   return args[0] === "add";
+}
+
+/**
+ * 从 checkout 目录的 .git 指针文件推导主仓库路径（D5b 对账用）。
+ * worktree 的 .git 是文本文件（`gitdir: <repo>/.git/worktrees/<branch>`），
+ * 普通 repo（.git）与 bare+worktree（.bare）统一取 worktrees 段上两级。
+ * 解析失败（文件缺失/格式异常/路径越界）返回 undefined——调用方按无主残留处置。
+ */
+function resolveRepoFromCheckout(checkout: string): string | undefined {
+  try {
+    const raw = fs.readFileSync(path.join(checkout, ".git"), "utf-8").trim();
+    if (!raw.startsWith("gitdir:")) return undefined;
+    const gitdir = raw.slice("gitdir:".length).trim();
+    // gitdir = <repo>/.git/worktrees/<branch> → 上三级 = repo root
+    // （bare 时 <ws>/.bare/worktrees/<br> → <ws>，git -C <bare> 操作合法）
+    const worktreesDir = path.dirname(gitdir);
+    if (path.basename(worktreesDir) !== "worktrees") return undefined;
+    const gitRootDir = path.dirname(worktreesDir);
+    return path.dirname(gitRootDir);
+  } catch {
+    return undefined;
+  }
 }
 
 export class WorktreeManager {
   // 全局注册表：跨 repo 记录所有活 worktree，reaper 遍历此表判孤儿。
   private readonly registry: WorktreeRegistry;
+  // agentDir（<agentDir>/subagents/<enc>/sessions 下扫 .alive 活信号，D5b 对账用）
+  private readonly agentDir: string;
   // per-repo 写命令串行队列：value = 队尾（已吞 rejection 的）Promise。
   // 入队形态 prev.catch(()=>{}).then(run)——后继只关心「自己已排队」，
   // 不继承前驱错误（否则 1 个 worktree add 失败会传染同 repo 后续全部写命令，
@@ -81,6 +134,7 @@ export class WorktreeManager {
   private readonly writeQueues = new Map<string, Promise<void>>();
 
   constructor(agentDir: string) {
+    this.agentDir = agentDir;
     this.registry = new WorktreeRegistry(agentDir);
   }
 
@@ -140,9 +194,9 @@ export class WorktreeManager {
       cwd: mainCwd,
     });
 
-    // 注册到全局表（pid=0 占位）。runSpawn 在 spawn() 返回后同步补 pid。
+    // 注册到全局表（pid=0 占位）。runSpawn 在 spawn() 返回后异步补 pid。
     // 放在 worktree add 成功后、symlink 前——确保只有真正创建了 worktree 才登记。
-    this.registry.add({
+    await this.registry.add({
       repo: mainCwd,
       branch,
       checkout: worktreePath,
@@ -178,19 +232,23 @@ export class WorktreeManager {
       } catch (cleanErr) {
         bestEffort(cleanErr, "branch delete (create rollback MF#3)");
       }
-      this.registry.remove(branch);
+      await this.registry.remove(branch);
       throw err;
     }
   }
 
   /**
-   * 注册子进程 pid（runSpawn spawn() 返回后同步调）。
+   * 注册子进程 pid（runSpawn spawn() 返回后调）。
    * create 时 pid 未知写 0 占位，子进程 spawn 返回后（child.pid 同步可得）由此补全。
    * reaper 据 pid 死活判孤儿，pid=0 条目用 SPAWN_GRACE 宽限。
    * sessionFile 可选补全：传入时填入 registry entry（reaper 据 pid 死活判孤儿，不读本字段；保留供诊断）。
+   *
+   * [D5a] async 化：pid 补全走跨进程锁内 RMW（互斥窗口消除 updatePid 与并发 add/remove
+   * 的交错）。永不 reject（锁降级 + best-effort save 均内部兜底），调用方可安全
+   * fire-and-forget（session-runner 的 stdout data 回调上下文）。
    */
-  registerPid(branch: string, pid: number, sessionFile?: string): void {
-    this.registry.updatePid(branch, pid, sessionFile);
+  async registerPid(branch: string, pid: number, sessionFile?: string): Promise<void> {
+    await this.registry.updatePid(branch, pid, sessionFile);
   }
 
   /**
@@ -217,7 +275,7 @@ export class WorktreeManager {
       bestEffort(err, "branch delete (cleanup)");
     }
 
-    this.registry.remove(handle.branch);
+    await this.registry.remove(handle.branch);
   }
 
   /**
@@ -261,16 +319,21 @@ export class WorktreeManager {
   }
 
   /**
-   * 扫描并清理 pi-sub-* 孤儿 worktree。
+   * 扫描并清理 pi-sub-* 孤儿 worktree + 物理面对账（D5b）。
    *
-   * 遍历全局注册表（<agentDir>/subagents/worktrees.json），按 pid 死活判孤儿。
-   * 不依赖当前 cwd 是否 git repo——注册表里记了 repo 路径，直接 git -C <repo> 跨 repo 清理。
+   * 阶段一（既有）：遍历全局注册表（<agentDir>/subagents/worktrees.json），
+   * 按 pid 死活判孤儿。不依赖当前 cwd 是否 git repo——注册表里记了 repo 路径，
+   * 直接 git -C <repo> 跨 repo 清理。
    *
    * 判据（唯一不删条件 = 进程还活着）：
    *   pid > 0 且 isProcessAlive(pid)   → 跳过（活进程，绝不删）
    *   pid > 0 且进程已死                → 孤儿（正常退出未 cleanup / 崩溃残留）
    *   pid == 0 且超 SPAWN_GRACE_MS      → 孤儿（create 后崩溃，pid 永未补全）
    *   pid == 0 且未超宽限               → 跳过（可能正在 spawn）
+   *
+   * 阶段二（D5b）：物理面（tmpdir checkout + 分支）与注册表双向 diff 收敛——
+   * 兑现 worktree-registry.ts 头注释声称的「tmpdir + 分支对账兜底」。全流程
+   * 幂等、失败仅日志（对账失败不阻断 session_start）。
    */
   async scan(): Promise<void> {
     const entries = this.registry.load();
@@ -282,6 +345,230 @@ export class WorktreeManager {
         continue;
       }
       await this.cleanupOrphan(entry);
+    }
+
+    await this.reconcileWithPhysical();
+  }
+
+  /**
+   * D5b 双向 diff 对账：物理面（tmpdir checkout 目录 + git branch --list）与
+   * 注册表互查，收敛三类漂移（锁消灭交错主因后，本对账兜底条目丢失/文件损坏的长尾）。
+   *
+   * 方向一（注册有 → 物理无）：条目的分支与 checkout 目录都已不存在 → 条目指向
+   * 幻影资源 → 移除条目（纯清账，不删任何仍存在的资源，幂等安全）。
+   *
+   * 方向二（物理有 → 注册无）：按 enc 段（encodeCwd(mainCwd)）聚合，活信号 =
+   * <agentDir>/subagents/<enc>/sessions/*.alive 中存活的 pid（session-runner
+   * first header 时写入，崩溃残留不删）：
+   *   - 无活 pid：残留判死，checkout mtime 超 SPAWN_GRACE_MS 才清（防误清另一
+   *     进程 worktree add 完成到 registry.add 落盘之间的 create 窗口）；
+   *   - 恰好 1 个活 pid 且恰好 1 个残留：补写回注册表（自愈——最常见的双 session
+   *     并发覆盖丢条目场景，补写后回归标准 pid 判据路径）；
+   *   - 多活 pid 或多残留无法建立 branch↔pid 对应：跳过 + warn——宁延迟勿误删；
+   *     活体自身 cleanup 路径正常（registry.remove 幂等），死体等活 pid 全灭后
+   *     下一周期收敛。
+   */
+  private async reconcileWithPhysical(): Promise<void> {
+    // 物理面发现失败（tmpdir 不可读等）→ 放弃本轮对账（失败仅日志，不阻断）
+    const physical = await this.discoverPhysicalWorktrees();
+    const registered = this.registry.load();
+    const registeredBranches = new Set(registered.map((e) => e.branch));
+
+    // ── 方向一：注册有 → 物理无 ──
+    // repo 集合 = 注册表条目 repo ∪ 物理推导 repo，per repo 查物理分支全集。
+    const repos = new Set<string>(registered.map((e) => e.repo));
+    for (const pt of physical) {
+      if (pt.repo) repos.add(pt.repo);
+    }
+    const branchesByRepo = await this.listPhysicalBranches(repos);
+    for (const entry of registered) {
+      const branches = branchesByRepo.get(entry.repo);
+      // repo 分支查询失败（get undefined）→ 保守跳过：视为物理存在，不动条目。
+      if (branches === undefined) continue;
+      const branchGone = !branches.has(entry.branch);
+      const checkoutGone = !fs.existsSync(entry.checkout);
+      if (branchGone && checkoutGone) {
+        logger.warn("[worktree] reconcile: registry entry has no physical worktree/branch, removing entry", {
+          branch: entry.branch,
+          repo: entry.repo,
+          pid: entry.pid,
+        });
+        await this.registry.remove(entry.branch);
+      }
+    }
+
+    // ── 方向二：物理有 → 注册无 ──
+    const orphans = physical.filter((pt) => !registeredBranches.has(pt.branch));
+    // 按 enc 段聚合处理（活信号以 enc 段为粒度——.alive 在 <enc>/sessions/ 下）
+    const orphansByEnc = new Map<string, PhysicalWorktree[]>();
+    for (const pt of orphans) {
+      const list = orphansByEnc.get(pt.enc) ?? [];
+      list.push(pt);
+      orphansByEnc.set(pt.enc, list);
+    }
+    for (const [enc, list] of orphansByEnc) {
+      const alivePids = this.collectAlivePids(enc);
+      if (alivePids.length === 0) {
+        for (const pt of list) {
+          const age = Date.now() - pt.mtimeMs;
+          if (age <= SPAWN_GRACE_MS) continue; // create 窗口（worktree add 后 add 落盘前）
+          logger.warn("[worktree] reconcile: unregistered physical worktree with no alive pid, cleaning up", {
+            branch: pt.branch,
+            checkout: pt.checkout,
+            repo: pt.repo,
+            ageMs: age,
+          });
+          await this.cleanupPhysical(pt);
+        }
+      } else if (alivePids.length === 1 && list.length === 1) {
+        // 唯一活 pid ↔ 唯一残留：对应关系无歧义，自愈补写回注册表。
+        // pid 若最终对应错误（理论上不该发生），后果是延迟清理而非误删（判活跳过）。
+        const pt = list[0];
+        logger.warn("[worktree] reconcile: unregistered physical worktree with one alive pid, re-registering (self-heal)", {
+          branch: pt.branch,
+          checkout: pt.checkout,
+          repo: pt.repo,
+          pid: alivePids[0],
+        });
+        await this.registry.add({
+          repo: pt.repo ?? path.dirname(pt.checkout),
+          branch: pt.branch,
+          checkout: pt.checkout,
+          pid: alivePids[0],
+          createdAt: pt.mtimeMs,
+        });
+      } else {
+        // 多活 pid / 多残留：无法建立 branch↔pid 对应，保守跳过待下周期。
+        logger.warn("[worktree] reconcile: unregistered physical worktrees present but alive-pid mapping ambiguous, skipping this cycle", {
+          enc,
+          orphans: list.length,
+          alivePids: alivePids.length,
+        });
+      }
+    }
+  }
+
+  /**
+   * 物理面发现：扫描 <tmpdir>/pi-subagents/<enc>/<pi-sub-*> checkout 目录。
+ * repo 从 checkout/.git 指针文件推导（`gitdir: <repo>/.git/worktrees/<branch>`，
+   * 普通 repo 与 bare+worktree（.bare/worktrees/...）统一取 worktrees 段上两级）；
+   * 推导失败（残缺 checkout）repo=undefined，由调用方按无主残留处置。
+   */
+  private async discoverPhysicalWorktrees(): Promise<PhysicalWorktree[]> {
+    const root = path.join(os.tmpdir(), WORKTREE_TMP_ROOT);
+    let encDirs: string[];
+    try {
+      encDirs = fs.readdirSync(root, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name);
+    } catch {
+      return []; // tmpdir 根不存在（从未创建过 worktree）→ 空物理面
+    }
+
+    const result: PhysicalWorktree[] = [];
+    for (const enc of encDirs) {
+      let branchDirs: string[];
+      try {
+        branchDirs = fs.readdirSync(path.join(root, enc), { withFileTypes: true })
+          .filter((d) => d.isDirectory() && d.name.startsWith(BRANCH_PREFIX))
+          .map((d) => d.name);
+      } catch {
+        continue; // 单个 enc 段不可读：跳过该段（对账失败仅影响本段收敛）
+      }
+      for (const branch of branchDirs) {
+        const checkout = path.join(root, enc, branch);
+        try {
+          const mtimeMs = fs.statSync(checkout).mtimeMs;
+          result.push({ enc, branch, checkout, repo: resolveRepoFromCheckout(checkout), mtimeMs });
+        } catch (err) {
+          bestEffort(err, "physical worktree stat (reconcile)");
+        }
+      }
+    }
+    return result;
+  }
+
+  /**
+   * per repo 查物理分支全集：`git -C <repo> branch --list 'pi-sub-*' --format=%(refname:short)`。
+   * 读类命令不加写锁；单 repo 失败 → map 不含该 repo（get 返回 undefined），
+   * 调用方据此保守跳过该 repo 的条目判定（防把「查询失败」误判成「分支不存在」）。
+   */
+  private async listPhysicalBranches(repos: Set<string>): Promise<Map<string, Set<string>>> {
+    const map = new Map<string, Set<string>>();
+    for (const repo of repos) {
+      try {
+        const out = await this.gitRunAsync(
+          ["branch", "--list", `${BRANCH_PREFIX}*`, "--format=%(refname:short)"],
+          { cwd: repo },
+        );
+        const branches = new Set(
+          out.split("\n").map((l) => l.trim()).filter((l) => l.startsWith(BRANCH_PREFIX)),
+        );
+        map.set(repo, branches);
+      } catch (err) {
+        bestEffort(err, `git branch --list (reconcile, repo=${repo})`);
+      }
+    }
+    return map;
+  }
+
+  /**
+   * 收集 enc 段的活 pid：<agentDir>/subagents/<enc>/sessions/*.alive 中
+   * readAliveMarker 解析成功且 isProcessAlive 的 pid（去重）。
+   * 崩溃残留的 .alive（pid 已死）天然过滤掉——这正是「死活判据」的物理面来源。
+   */
+  private collectAlivePids(enc: string): number[] {
+    const sessionsDir = path.join(this.agentDir, "subagents", enc, "sessions");
+    let files: string[];
+    try {
+      files = fs.readdirSync(sessionsDir);
+    } catch {
+      return []; // enc 段无 sessions 目录（该 repo 从未跑过 subagent）→ 无活信号
+    }
+    const pids = new Set<number>();
+    for (const file of files) {
+      if (!file.endsWith(".alive")) continue;
+      const marker = readAliveMarker(path.join(sessionsDir, file.slice(0, -".alive".length)));
+      if (marker && isProcessAlive(marker.pid)) {
+        pids.add(marker.pid);
+      }
+    }
+    return [...pids];
+  }
+
+  /**
+   * 清理物理残留（D5b 方向二的死体处置）：worktree remove → prune → branch -D
+   * → 目录 rm 兜底，四步各自 best-effort（幂等，失败仅日志）。
+   * prune 必要性：checkout 目录已不存在的 worktree，remove 会失败且 branch -D
+   * 被「used by worktree」拒绝——prune 清掉缺失目录的元数据后分支才可删。
+   */
+  private async cleanupPhysical(pt: PhysicalWorktree): Promise<void> {
+    if (pt.repo) {
+      try {
+        await this.gitRunAsync(["worktree", "remove", "--force", pt.checkout], { cwd: pt.repo });
+      } catch (err) {
+        bestEffort(err, "worktree remove (reconcile)");
+      }
+      try {
+        await this.gitRunAsync(["worktree", "prune"], { cwd: pt.repo });
+      } catch (err) {
+        bestEffort(err, "worktree prune (reconcile)");
+      }
+      try {
+        await this.gitRunAsync(["branch", "-D", pt.branch], { cwd: pt.repo });
+      } catch (err) {
+        bestEffort(err, "branch delete (reconcile)");
+      }
+    }
+    // 目录兜底：repo 未知（无主残留）或 remove 失败（元数据损坏）时直接删目录。
+    // 路径在 tmpdir/pi-subagents/<enc>/pi-sub-* 下，按设计只有本扩展创建，清理安全
+    // （与 create() 的前置清理同一安全边界）。
+    try {
+      if (fs.existsSync(pt.checkout)) {
+        fs.rmSync(pt.checkout, { recursive: true, force: true });
+      }
+    } catch (err) {
+      bestEffort(err, "checkout dir rm (reconcile)");
     }
   }
 
@@ -318,7 +605,7 @@ export class WorktreeManager {
     } catch (err) {
       bestEffort(err, "branch delete (orphan reaper)");
     }
-    this.registry.remove(entry.branch);
+    await this.registry.remove(entry.branch);
   }
 
   // ============================================================

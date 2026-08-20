@@ -2,10 +2,12 @@
  * ModelService 单测 —— 瘦身后的 switchModel 编排行为验证。
  *
  * session 级状态（modelId/thinkingLevel/inputTokens/usagePercent）单一 owner 是 SessionService；
- * ModelService 瘦身后职责仅为「持久化全局默认模型 + 广播 config.defaults」+ 委托
- * SessionService.switchModel 做 session 级 RPC/缓存/broadcast。usagePercent 不再在此计算。
+ * ModelService 瘦身后职责仅为「广播 config.defaults」+ 委托 SessionService.switchModel
+ * 做 session 级 RPC/缓存/broadcast。usagePercent 不再在此计算。
  *
- * 测试边界：ModelService 是编排层（session 级委托 sessionService，persist 委托 configService，
+ * 全局默认模型持久化归 pi 侧 setModel（D1d 移除 xyz 冗余写，消除双写窗口）。
+ *
+ * 测试边界：ModelService 是编排层（session 级委托 sessionService，
  * config.defaults 广播委托 broker）。全部依赖 mock，不 spawn pi、不碰真配置文件。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -73,7 +75,7 @@ describe('ModelService · switchModel 编排（瘦身后）', () => {
     expect(sessionService.switchModel).toHaveBeenCalledWith('s1', 'anthropic', 'claude-4')
   })
 
-  it('持久化全局默认模型（configService.setDefaultModel）', async () => {
+  it('不再冗余写 configService.setDefaultModel（D1d：pi 侧 setModel 已持久化，xyz 双写会开丢字段窗口）', async () => {
     const sessionService = makeMockSessionService()
     const configService = makeMockConfigService([])
     const { broker } = makeMockBroker()
@@ -83,7 +85,9 @@ describe('ModelService · switchModel 编排（瘦身后）', () => {
 
     await svc.switchModel('s1', 'anthropic' as ProviderId, 'claude-4')
 
-    expect(configService.setDefaultModel).toHaveBeenCalledWith('anthropic', 'claude-4')
+    // 全局默认模型持久化归 pi RPC setModel（sessionService.switchModel 委托链），
+    // configService.setDefaultModel 仅剩 Settings 页保存路径调用
+    expect(configService.setDefaultModel).not.toHaveBeenCalled()
   })
 
   it('广播 config.defaults（全局默认模型，landing Composer fallback）', async () => {
@@ -120,22 +124,8 @@ describe('ModelService · switchModel 编排（瘦身后）', () => {
     expect(types).not.toContain('session.state_changed')
   })
 
-  it('configService.setDefaultModel 失败时不阻塞（best-effort persist）', async () => {
-    const sessionService = makeMockSessionService()
-    const configService = makeMockConfigService([], {
-      setDefaultModel: vi.fn(() => { throw new Error('disk full') }),
-    })
-    const { broker, broadcasts } = makeMockBroker()
-
-    const svc = new ModelService(modelSource)
-    svc.setServices(sessionService, configService, broker)
-
-    // 不抛（best-effort）
-    await expect(svc.switchModel('s1', 'anthropic' as ProviderId, 'claude-4')).resolves.toBeUndefined()
-    // sessionService.switchModel 仍被调用，config.defaults 仍广播
-    expect(sessionService.switchModel).toHaveBeenCalled()
-    expect(broadcasts.some((m) => m.type === 'config.defaults')).toBe(true)
-  })
+  // D1d 移除冗余持久化后，原「setDefaultModel 失败 best-effort 不阻塞」场景不复存在
+  //（switchModel 不再触碰该写路径），无对应失败分支需要覆盖。
 })
 
 describe('ModelService · setThinkingLevel 委托', () => {

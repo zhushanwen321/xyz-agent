@@ -1127,7 +1127,7 @@ v1-draft 经 4 路并行技术审查（shim 可行性 / 交互层 / 数据链路
 
 | ID | 问题 | 修正 |
 |---|---|---|
-| **F1** | `message-converter.ts:73-95` toolResult 分支不读 details，重开 session 后 `__gui__` 全丢，违反 [HISTORICAL] 规则 7.5 | §8.2 补 details 透传 + `PiHistoryToolResult` 类型补 `details?` 字段 |
+| **F1** | `message-converter.ts:73-95` toolResult 分支不读 details，重开 session 后 `__gui__` 全丢，违反 [HISTORICAL] 关键规则 9 | §8.2 补 details 透传 + `PiHistoryToolResult` 类型补 `details?` 字段 |
 | **F2** | 前端无 `extension.ui_request` handler，交互 RPC 分支不可用，select() 卡 5 分钟超时 | §6 明确标注约束；ExtensionUIDialog + AskUserOverlay 已实现（§11 P1 完成）|
 
 ### 严重问题（需改设计/文档）

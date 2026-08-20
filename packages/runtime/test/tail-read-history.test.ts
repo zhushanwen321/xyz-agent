@@ -182,7 +182,7 @@ describe('W1 tailReadHistory 尾读 + turn 边界截断', () => {
     expect(messages.length).toBe(6)
   })
 
-  it('compaction/custom_message entry 也被保留（规则 #7.5 可重开恢复）', async () => {
+  it('compaction/custom_message entry 也被保留（AGENTS.md 关键规则 9 可重开恢复）', async () => {
     const lines: string[] = [
       JSON.stringify({ type: 'session', id: 's1', cwd: '/proj', timestamp: '2025-01-01T00:00:00Z' }),
       JSON.stringify({ type: 'compaction', summary: '压缩摘要', tokensBefore: 10000, timestamp: '2025-01-01T00:00:01Z' }),

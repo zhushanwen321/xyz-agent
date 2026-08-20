@@ -5,17 +5,17 @@
  * 新建 provider 守卫、cleanEnabledModelsResidue 移除 provider 残留清理）。
  *
  * 抽出原因：pi-provider-store.ts 超 ESLint max-lines(500)。本模块只经 settings.json
- *（readSettings/updateSettingsSync），不碰 modelsStore 模块级缓存，移到本模块后
+ *（readSettings/updateSettingsFields），不碰 modelsStore 模块级缓存，移到本模块后
  * pi-provider-store 经 barrel re-export 保 import 路径不变，行为 / 签名零变化。
  */
-import { readSettings, updateSettingsSync } from './pi-settings-store.js'
+import { readSettings, updateSettingsFields } from './pi-settings-store.js'
 
 export function getEnabledModels(): string[] {
   return readSettings().enabledModels ?? []
 }
 
 export function setEnabledModels(patterns: string[]): void {
-  updateSettingsSync(s => { s.enabledModels = patterns })
+  updateSettingsFields('model', s => { s.enabledModels = patterns })
 }
 
 /**
@@ -24,11 +24,11 @@ export function setEnabledModels(patterns: string[]): void {
  * pi 白名单语义：空 = 全可用。若用 setEnabledModels([]) 写入空数组，语义不变（readSettings
  * 仍得 []，deriveEnabled 返回全 true），但「显式空数组」与「未设置」在配置语义上有歧义，
  * 且 belt-and-suspenders 要求 runtime 层让 settings.json 物理上无此字段——故用 delete 而非写 []。
- * JSON.stringify 丢弃 undefined 字段，故 updateSettingsSync(delete) 后落盘的 settings.json
+ * JSON.stringify 丢弃 undefined 字段，故 updateSettingsFields(delete) 后落盘的 settings.json
  * 不含 enabledModels key（与从未设置过不可区分）。
  */
 export function clearEnabledModels(): void {
-  updateSettingsSync(s => { delete s.enabledModels })
+  updateSettingsFields('model', s => { delete s.enabledModels })
 }
 
 /**

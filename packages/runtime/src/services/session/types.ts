@@ -69,6 +69,20 @@ export interface IManagedSessionView {
    * 避免与 abortBash 的 cancelled bashResult 撞出双终态（先 cancelled 后真实结果，前端渲染错乱）。
    */
   bashRunToken: string | undefined
+  /**
+   * bash 结果待落列（W1 fix-chat-flow-order，D2 双分支镜像 pi）。
+   *
+   * session 处于 streaming（活跃 run）时，sendBash 收到的 pi bash RPC 结果压入此列
+   * （不立即广播）；agent_settled（级联结束，晚于 pi finally flush 的 bash 落盘）到达时由
+   * dispatcher.flushPendingBashResults 按序转 message.bashResult 帧发布并清空——xyz live
+   * 入流位置构造性对齐 pi 落盘位置（级联末，镜像 pi recordBashResult 的
+   * _pendingBashMessages 双分支，agent-session.js:2225-2247）。
+   *
+   * 唯一写方 = message-dispatcher（sendBash 压入 / flush 发布清空）。挂在本 session 对象上
+   * （与 bashRunToken 同区）：session 条目删除（removeSessionEntry）时随对象一同丢弃，
+   * 无孤儿残留；flush 信号按 sessionId 定向，跨 session 不误清。
+   */
+  pendingBashResults?: PendingBashResultData[]
   thinkingLevel?: string
   sessionFilePath?: string
   /**
@@ -97,6 +111,23 @@ export interface IManagedSessionView {
    * 已随 W11 删除）。
    */
   handedOffTo?: string
+}
+
+/**
+ * bash 待落列元素（W1 fix-chat-flow-order）：sendBash 收到 pi bash RPC 结果时构造的
+ * message.bashResult payload（除 sessionId 外的全部终态字段）。flush 时原样作为帧
+ * payload 发布（emit 只传单个 payload 对象）。timestamp 取 RPC 完成时刻（= pi
+ * recordBashResult 落盘时刻），不取 flush 时刻——保证 entry timestamp 两侧一致。
+ */
+export interface PendingBashResultData {
+  command: string
+  output: string
+  exitCode: number | null
+  cancelled: boolean
+  truncated: boolean
+  excludeFromContext: boolean
+  timestamp: number
+  fullOutputPath?: string
 }
 
 // ── PiTranslatedEvent：infra(event-adapter) → service(interpreter) 中间事件 ──
@@ -215,6 +246,16 @@ export type PiTranslatedEvent =
    * reason 驱动前端文案区分手动（'manual'）/自动（'threshold'|'overflow'）。
    */
   | { kind: 'compaction-start'; reason: string }
+  /**
+   * run 级联结束（pi agent_settled，W1 fix-chat-flow-order 探针 ②）——晚于 pi
+   * _runAgentPrompt finally 的 _flushPendingBashMessages（agent-session.js:744-756，
+   * streaming 期间缓存的 bash entry 已统一落盘）。interpreter 据此触发
+   * onAgentSettled（组合根注入 sessionService.flushPendingBashResults：dispatcher 的
+   * per-session bash 待落列按序转 message.bashResult 帧发布——xyz live 入流位置
+   * 构造性对齐 pi 落盘位置）。与 turn-end（agent_end）的区别：followUp drain 续跑
+   * 在同一次 settled 级联内，agent_end 非级联边界。
+   */
+  | { kind: 'agent-settled' }
   /**
    * compaction 生命周期结束（pi compaction_end）—— interpreter 唯一驱动 compaction 全部前端态：
    * - result 真值（成功）→ message.compactionSummary + applyContextUpdate + session.compacted + 复位 isCompacting

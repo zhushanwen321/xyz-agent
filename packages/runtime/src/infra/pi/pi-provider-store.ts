@@ -15,11 +15,12 @@ import builtinData from '../../generated/builtin-providers.json'
 import { deriveEnabled } from '../../services/provider-catalog.js'
 import { JsonStore } from '../../utils/json-store.js'
 import { getModelsPath, getPiAgentDir } from './pi-paths.js'
-// settings.json 的唯一读写层（D17 收口）：readSettings/updateSettingsSync/PiSettings/缓存/原子写
-// 都收敛到 pi-settings-store，model 域（本文件）与 extension 域共享同一所有者 + 缓存。
+// settings.json 的唯一读写层（D17 收口）：readSettings/updateSettingsFields/PiSettings/缓存/
+// 跨进程锁/原子写都收敛到 pi-settings-store，model 域（本文件）与 extension 域共享同一
+// 所有者 + 缓存 + 锁。
 import {
   readSettings,
-  updateSettingsSync,
+  updateSettingsFields,
   invalidateSettingsCache,
 } from './pi-settings-store.js'
 // enabledModels 白名单读写（Phase 1 拆出到 pi-enabled-models）：本文件的 pickFirstModelProvider /
@@ -153,7 +154,7 @@ function pickFirstModelProvider(
   // A8：跳过被 enabledModels 禁用的 provider（与 findValidDefaultModel 主路径守卫一致），
   // 避免 removeProvider/upsertProvider 重选与 findValidDefaultModel fallback 选到用户已禁用的 provider。
   // enabledModels 空（全启用）时 deriveEnabled 恒 true，行为不变。重选场景 enabledModels 不变，
-  // 实时读 getEnabledModels 安全（无 updateSettingsSync 回调内 stale 风险）。
+  // 实时读 getEnabledModels 安全（无 updateSettingsFields 回调内 stale 风险）。
   const enabledModels = getEnabledModels()
   for (const [pid, pcfg] of Object.entries(providers)) {
     if (!deriveEnabled(pid, enabledModels)) continue
@@ -195,10 +196,10 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
   models.providers[providerId] = config
   writeModels(models)
 
-  // 同步校验 defaultModel：经 updateSettingsSync 单次 RMW。
+  // 同步校验 defaultModel：经 updateSettingsFields('model') 单次锁内 RMW。
   // 结果通过外层变量捕获（mutator 不返回值）。
   let outcome: { newDefault?: { provider: ProviderId; modelId: string } } = {}
-  updateSettingsSync(s => {
+  updateSettingsFields('model', s => {
     if (s.defaultProvider !== providerId) { outcome = {}; return }
 
     // models 未参与本次更新（partial upsert：clearApiKey 剥离 apiKey / quota 覆写 /
@@ -246,9 +247,9 @@ export function removeProvider(providerId: string): {
   delete models.providers[providerId]
   writeModels(models)
 
-  // 同步清理 defaultProvider/defaultModel：经 updateSettingsSync 单次 RMW。
+  // 同步清理 defaultProvider/defaultModel：经 updateSettingsFields('model') 单次锁内 RMW。
   let outcome: { removed: boolean; newDefault?: { provider: ProviderId; modelId: string } } = { removed: true }
-  updateSettingsSync(s => {
+  updateSettingsFields('model', s => {
     if (s.defaultProvider !== providerId) { outcome = { removed: true }; return }
     delete s.defaultProvider
     delete s.defaultModel
@@ -280,8 +281,8 @@ export function getApiKeyForProvider(providerId: string): string | undefined {
 }
 
 // ── Settings.json 操作 ───────────────────────────────────────
-// readSettings/updateSettingsSync 收敛到 pi-settings-store（D17 唯一读写层）；setSettingsPath 供测试 tmpdir 隔离。
-export { readSettings, writeSettings, updateSettingsSync, setSettingsPath } from './pi-settings-store.js'
+// readSettings/updateSettingsFields 收敛到 pi-settings-store（D17 唯一读写层）；setSettingsPath 供测试 tmpdir 隔离。
+export { readSettings, writeSettings, updateSettingsFields, setSettingsPath } from './pi-settings-store.js'
 
 /**
  * 纯校验：检查 defaultProvider/defaultModel 在 models.json 中是否有效。
@@ -325,7 +326,7 @@ export function findValidDefaultModel(): {
   // models.json apiKey 任一）。遍历而非取排序第一个——amazon-bedrock 等 ambient 认证
   // provider 无凭据时不可用，不能作为默认。
   // wasFixed=false：兜底是临时展示，不是配置修复——写回 settings.json 会污染用户配置
-  //（曾踩坑：兜底结果经 updateSettingsSync 覆盖用户默认 provider，见 2026-08-09 回归）。
+  //（曾踩坑：兜底结果经 updateSettingsFields 覆盖用户默认 provider，见 2026-08-09 回归）。
   if (!fallback) {
     const authCredentials = readAuthCredentials()
     const builtinProviders = (builtinData.providers ?? []) as Array<{
@@ -356,7 +357,7 @@ export function findValidDefaultModel(): {
 export function getDefaultModel(): { provider: ProviderId; modelId: string } | null {
   const { result, wasFixed } = findValidDefaultModel()
   if (wasFixed && result) {
-    updateSettingsSync(s => {
+    updateSettingsFields('model', s => {
       s.defaultProvider = result.provider
       s.defaultModel = result.modelId
     })
@@ -366,7 +367,7 @@ export function getDefaultModel(): { provider: ProviderId; modelId: string } | n
 }
 
 export function setDefaultModel(provider: ProviderId, modelId: string): void {
-  updateSettingsSync(s => {
+  updateSettingsFields('model', s => {
     s.defaultProvider = provider
     s.defaultModel = modelId
   })
@@ -377,7 +378,7 @@ export function getDefaultThinkingLevel(): string {
 }
 
 export function setDefaultThinkingLevel(level: string): void {
-  updateSettingsSync(s => { s.defaultThinkingLevel = level })
+  updateSettingsFields('model', s => { s.defaultThinkingLevel = level })
 }
 
 // ── models.json 无效 provider 清理（重装后 "Model not found" 自愈）──────

@@ -19,6 +19,7 @@ const {
   mockMkdirSync,
   mockExistsSync,
   mockUnlinkSync,
+  mockStatSync,
   mockBuildRuntimeProviders,
   mockAvgSpeed,
 } = vi.hoisted(() => ({
@@ -28,6 +29,7 @@ const {
   mockMkdirSync: vi.fn(),
   mockExistsSync: vi.fn(),
   mockUnlinkSync: vi.fn(),
+  mockStatSync: vi.fn(),
   mockBuildRuntimeProviders: vi.fn(),
   mockAvgSpeed: vi.fn().mockReturnValue(0),
 }));
@@ -37,6 +39,7 @@ vi.mock("node:fs", () => ({
   mkdirSync: mockMkdirSync,
   readFileSync: mockReadFileSync,
   renameSync: mockRenameSync,
+  statSync: mockStatSync,
   unlinkSync: mockUnlinkSync,
   writeFileSync: mockWriteFileSync,
 }));
@@ -47,6 +50,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 
 vi.mock("../paths.js", () => ({
   getCachePath: () => "/tmp/test-cache.json",
+  getProvidersConfigPath: () => "/tmp/agent/config/providers.json",
   getSpeedDir: () => "/tmp/agent/token-stats",
 }));
 
@@ -445,5 +449,166 @@ describe("trackCacheRatio", () => {
 
     expect(result.current).toBe(33);
     expect(result.day).toBeNull();
+  });
+});
+
+describe("prune removed provider entries (D8d)", () => {
+  // prune 用模块级 prunedForMtime 标志，需 resetModules + 动态 import 隔离
+  async function importFresh() {
+    vi.resetModules();
+    return import("../cache.js");
+  }
+
+  /** providers.json 路径（paths.js mock 固定值）。 */
+  const PROVIDERS_JSON = "/tmp/agent/config/providers.json";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("prunes disk cache entries of providers removed from providers.json", async () => {
+    // providers.json 存在且 mtime 变化；provider b 已被删除（只剩 a）
+    mockExistsSync.mockImplementation((p: unknown) => p === PROVIDERS_JSON || p === NEW_CACHE_PATH);
+    mockStatSync.mockReturnValue({ mtimeMs: 1000 });
+    mockReadFileSync.mockReturnValue(
+      JSON.stringify({ updatedAt: 1, a: { pct: 10 }, b: { pct: 20 } }),
+    );
+    mockBuildRuntimeProviders.mockReturnValue([{ id: "a", fetch: vi.fn() }]);
+    mockMkdirSync.mockImplementation(() => undefined);
+    mockWriteFileSync.mockImplementation(() => undefined);
+    mockRenameSync.mockImplementation(() => undefined);
+
+    const { readCache } = await importFresh();
+    readCache();
+
+    // b 的条目被同步清除并原子写回（tmp → rename），a 保留
+    const written = JSON.parse(mockWriteFileSync.mock.calls[0]![1] as string);
+    expect(written).toEqual({ updatedAt: 1, a: { pct: 10 } });
+    expect(mockRenameSync).toHaveBeenCalledWith(
+      expect.stringContaining(".tmp"),
+      NEW_CACHE_PATH,
+    );
+  });
+
+  it("does not rewrite cache when mtime unchanged (second read is a noop)", async () => {
+    mockExistsSync.mockImplementation((p: unknown) => p === PROVIDERS_JSON || p === NEW_CACHE_PATH);
+    mockStatSync.mockReturnValue({ mtimeMs: 1000 });
+    mockReadFileSync.mockReturnValue(JSON.stringify({ updatedAt: 1, a: { pct: 10 } }));
+    mockBuildRuntimeProviders.mockReturnValue([{ id: "a", fetch: vi.fn() }]);
+
+    const { readCache } = await importFresh();
+    readCache();
+    readCache();
+
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+  });
+
+  it("keeps all entries when providers.json is missing", async () => {
+    mockExistsSync.mockImplementation((p: unknown) => p === NEW_CACHE_PATH);
+    // fresh updatedAt：不触发 TTL 过期的 triggerUpdate（它内部也会调 buildRuntimeProviders）
+    mockReadFileSync.mockReturnValue(JSON.stringify({ updatedAt: Date.now(), a: { pct: 10 } }));
+
+    const { readCache } = await importFresh();
+    expect(() => readCache()).not.toThrow();
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+    expect(mockBuildRuntimeProviders).not.toHaveBeenCalled();
+  });
+
+  it("does not clear cache when provider set resolves empty (config anomaly guard)", async () => {
+    mockExistsSync.mockImplementation((p: unknown) => p === PROVIDERS_JSON || p === NEW_CACHE_PATH);
+    mockStatSync.mockReturnValue({ mtimeMs: 1000 });
+    mockReadFileSync.mockReturnValue(JSON.stringify({ updatedAt: 1, a: { pct: 10 } }));
+    // providers.json 解析失败/为空 → buildRuntimeProviders 返回 []，不能清掉全部条目
+    mockBuildRuntimeProviders.mockReturnValue([]);
+
+    const { readCache } = await importFresh();
+    readCache();
+
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+  });
+});
+
+describe("corrupt file quarantine (D1c)", () => {
+  const SPEED_FILE = "/tmp/agent/token-stats/model_x.json";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockMkdirSync.mockImplementation(() => undefined);
+    mockWriteFileSync.mockImplementation(() => undefined);
+    mockRenameSync.mockImplementation(() => undefined);
+    mockBuildRuntimeProviders.mockReturnValue([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** 从 renameSync 调用中筛出 .corrupt- 隔离调用（排除 doUpdate 的 tmp→target 原子写）。 */
+  function corruptRenames(): unknown[][] {
+    return mockRenameSync.mock.calls.filter(
+      (c: unknown[]) => typeof c[1] === "string" && (c[1] as string).includes(".corrupt-"),
+    );
+  }
+
+  it("quarantines half-written speed record to .corrupt copy and continues", () => {
+    // 半截 JSON（写盘中途崩溃的磁盘残留形态）
+    mockExistsSync.mockImplementation((p: unknown) => p === SPEED_FILE);
+    mockReadFileSync.mockImplementation((p: unknown) => {
+      if (p === SPEED_FILE) return '{"2026-08-19": [[100, 1';
+      throw new Error("ENOENT");
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const result = trackSpeed(1000, 1000, "model x");
+
+    // 损坏文件被 rename 为 .corrupt-<ts> 副本（取证保留，不被写回合法化）+ error 日志含恢复指引
+    expect(mockRenameSync).toHaveBeenCalledWith(
+      SPEED_FILE,
+      expect.stringMatching(/\.corrupt-\d{4}-\d{2}-\d{2}T\d{9}Z$/),
+    );
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("quarantined"));
+    // 继续工作：今日记录正常追加写回（非静默清空后无产出）
+    const written = mockWriteFileSync.mock.calls.find(
+      (c: unknown[]) => c[0] === SPEED_FILE,
+    );
+    expect(written).toBeDefined();
+    const records = JSON.parse(written![1] as string) as Record<string, unknown>;
+    expect(records[today]).toBeDefined();
+    expect(result.current).toBe(1000);
+  });
+
+  it("quarantines corrupt quota-cache.json on read and returns empty", () => {
+    mockExistsSync.mockImplementation((p: unknown) => p === NEW_CACHE_PATH);
+    mockReadFileSync.mockImplementation((p: unknown) => {
+      if (p === NEW_CACHE_PATH) return '{"updatedAt": 12';
+      throw new Error("ENOENT");
+    });
+
+    const result = readCache();
+
+    expect(mockRenameSync).toHaveBeenCalledWith(
+      NEW_CACHE_PATH,
+      expect.stringMatching(/\.corrupt-\d{4}-\d{2}-\d{2}T\d{9}Z$/),
+    );
+    expect(result.updatedAt).toBe(0);
+  });
+
+  it("does not quarantine when file simply does not exist (ENOENT is normal)", () => {
+    mockExistsSync.mockImplementation(() => false);
+    mockReadFileSync.mockImplementation(() => {
+      throw new Error("ENOENT");
+    });
+
+    expect(readCache().updatedAt).toBe(0);
+    expect(corruptRenames()).toHaveLength(0);
   });
 });

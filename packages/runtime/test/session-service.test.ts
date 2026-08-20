@@ -1843,19 +1843,36 @@ describe('SessionService · 业务持久化写安全守卫（W2 ipc-converge-a3 
       expect(file.entries).toHaveLength(1)
     })
 
-    it('write 到已损坏的 segments.json → 重置后写入成功（best-effort，不阻断）', async () => {
+    it('write 到已损坏的 segments.json → 隔离现场后写入成功（D1c，best-effort，不阻断）', async () => {
       const sessionId = 'seg-test-write-corrupted-' + Date.now()
       const dir = getAttachmentsDir(sessionId)
       writtenDirs.push(dir)
-      // 先构造损坏文件
+      // 先构造半截 JSON（模拟写盘半途崩溃的磁盘残留）
       mkdirSync(dir, { recursive: true })
-      writeFileSync(join(dir, 'segments.json'), '{corrupted!!!', 'utf-8')
+      const halfJson = '{"version": 1, "entries": [{"clientUuid": "u-lo'
+      writeFileSync(join(dir, 'segments.json'), halfJson, 'utf-8')
 
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      // write 不抛（捕获了 parse 错误 → 重置为新文件 → 写入成功）
+      // fake timers 冻结时间戳 → .corrupt-<ts> 副本路径确定可断言（json-store.test.ts 同款）
+      const FROZEN_ISO = '2026-01-01T00:00:00.000Z'
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date(FROZEN_ISO))
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      // write 不抛（隔离半截文件 → 以空文件基底写入成功）
       await service.writeSegmentsMetadata(sessionId, makeEntry('u-recover'))
-      warnSpy.mockRestore()
 
+      // error 日志含路径与恢复指引（断言在 mockRestore 前——restore 会清 mock.calls）
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      const logMsg = String(errorSpy.mock.calls[0]!.join(' '))
+      expect(logMsg).toContain('segments.json malformed')
+      expect(logMsg).toContain('恢复指引')
+      errorSpy.mockRestore()
+      vi.useRealTimers()
+
+      // 原文隔离至 .corrupt-<ts> 副本且内容不变（取证现场），原位置是合法新文件
+      const corruptPath = join(dir, `segments.json.corrupt-${FROZEN_ISO.replace(/[:.]/g, '')}`)
+      expect(existsSync(corruptPath)).toBe(true)
+      expect(readFileSync(corruptPath, 'utf-8')).toBe(halfJson)
       const file = readSidecar(sessionId)
       expect(file.entries).toHaveLength(1)
       expect(file.entries[0].clientUuid).toBe('u-recover')
