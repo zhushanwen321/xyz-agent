@@ -95,46 +95,55 @@ const METHOD_EDITOR = 'editor' as const
 
 // ── Sub-handlers（纯函数：PiEvent → PiTranslatedEvent[]，无副作用）────────
 
+/** message_update.assistantMessageEvent 的 wire 局部形态（pi-protocol.ts PiMessageUpdateEvent 同源） */
+type PiMessageUpdateSub = {
+  type: string
+  delta?: string
+  content?: string
+  contentIndex?: number
+  toolCall?: { id?: string }
+}
+
+/**
+ * contentIndex 可选锚点：undefined 时不产字段（payload 形态稳定）。
+ * text/thinking delta 的 contentIndex 透传是 D-2 token coalescing（W12 DeltaBuffer 合帧）
+ * 的有序插入锚点。
+ */
+function contentIndexAnchor(contentIndex: number | undefined): { contentIndex?: number } {
+  return contentIndex !== undefined ? { contentIndex } : {}
+}
+
+/** text/thinking delta 帧（delta 缺省空串 + contentIndex 锚点，两 case 载荷形态同构） */
+function deltaUpdateMessage(
+  type: 'message.text_delta' | 'message.thinking_delta',
+  sid: string,
+  delta: string | undefined,
+  contentIndex: number | undefined,
+): PiTranslatedEvent[] {
+  return [{
+    kind: 'message',
+    message: { type, payload: { sessionId: sid, delta: delta ?? '', ...contentIndexAnchor(contentIndex) } },
+  }]
+}
+
 /** message_update — streaming text/thinking deltas and stream errors */
 function handleMessageUpdate(event: PiMessageUpdateEvent, sid: string): PiTranslatedEvent[] {
-  const sub = event.assistantMessageEvent as
-    { type: string; delta?: string; content?: string; contentIndex?: number; toolCall?: { id?: string } } | undefined
+  const sub = event.assistantMessageEvent as PiMessageUpdateSub | undefined
   if (!sub) return [{ kind: 'noop' }]
 
   switch (sub.type) {
     case 'text_delta':
-      return [{ kind: 'message', message: { type: 'message.text_delta', payload: { sessionId: sid, delta: sub.delta ?? '', ...(sub.contentIndex !== undefined ? { contentIndex: sub.contentIndex } : {}) } } }]
+      return deltaUpdateMessage('message.text_delta', sid, sub.delta, sub.contentIndex)
     case 'thinking_start':
-      return [{ kind: 'message', message: { type: 'message.thinking_start', payload: { sessionId: sid, ...(sub.contentIndex !== undefined ? { contentIndex: sub.contentIndex } : {}) } } }]
+      return [{ kind: 'message', message: { type: 'message.thinking_start', payload: { sessionId: sid, ...contentIndexAnchor(sub.contentIndex) } } }]
     case 'thinking_delta':
       // 微项 1（wave:perf-w07）：contentIndex 透传对齐 text_delta——为 D-2 token coalescing（W12
       // DeltaBuffer 合帧）保住 thinking 块的有序插入锚点；renderer 现状 handler 未消费该字段，多余字段无害。
-      return [{ kind: 'message', message: { type: 'message.thinking_delta', payload: { sessionId: sid, delta: sub.delta ?? '', ...(sub.contentIndex !== undefined ? { contentIndex: sub.contentIndex } : {}) } } }]
+      return deltaUpdateMessage('message.thinking_delta', sid, sub.delta, sub.contentIndex)
     case 'thinking_end':
       return [{ kind: 'message', message: { type: 'message.thinking_end', payload: { sessionId: sid } } }]
-    case 'toolcall_end': {
-      // toolCall 块顺序锚点（§11 检查点 3）：pi 在模型流输出 tool_use 时发 toolcall_*（带 contentIndex），
-      // 远早于 tool_execution_start（工具执行时，无 contentIndex）。toolCall 块若由 tool_execution_start 驱动，
-      // 同 turn 内 text 在 tool 之后时顺序会错位（text_delta 先到、toolCall 后到）。
-      //
-      // 提取点 = toolcall_end（W3 修正，非 toolcall_start）：wire 上 toolcall_start 只有
-      // {type, contentIndex}——pi-ai AssistantMessageEvent 的 partial（含 content[contentIndex].id）
-      // 被 RPC toJsonEvent 剥离（dist/modes/json-event.js:6-10），旧代码从
-      // event.message?.content?.[contentIndex]?.id 提取恒 undefined（wire 无顶层 message，
-      // 单测 mock 自带该字段故测试绿生产死）。toolcall_end 携带完整 toolCall 对象
-      // （{type:'toolCall', id, name, arguments}，pi-ai types.d.ts:405-409 + 244-250，非 partial
-      // 字段不被剥离）。实测 0.84.1：toolCall.id 与后续 tool_execution_start.toolCallId 同值；
-      // toolcall_end（LLM 流中工具参数输出完成）仍远早于 tool_execution_start（assistant
-      // message 完成后才开始执行工具），顺序锚点语义不变。
-      // 此处产出 tool-call-index 中间事件（toolCallId + contentIndex），interpreter 缓存后
-      // 在 tool-call-start 到达时附到 tool_call_start WS 帧，前端按 contentIndex 有序插入。
-      const contentIndex = sub.contentIndex
-      const toolCallId = sub.toolCall?.id
-      if (toolCallId !== undefined && contentIndex !== undefined) {
-        return [{ kind: 'tool-call-index', toolCallId, contentIndex }]
-      }
-      return [{ kind: 'noop' }]
-    }
+    case 'toolcall_end':
+      return handleToolcallEnd(sub)
     case 'toolcall_start': case 'toolcall_delta':
     case 'text_start': case 'text_end':
       return [{ kind: 'noop' }]
@@ -146,6 +155,34 @@ function handleMessageUpdate(event: PiMessageUpdateEvent, sid: string): PiTransl
       console.warn('[EventAdapter] Unhandled message_update sub-type:', sub.type)
       return [{ kind: 'noop' }]
   }
+}
+
+/**
+ * message_update.toolcall_end — toolCall 块顺序锚点（§11 检查点 3）。
+ *
+ * pi 在模型流输出 tool_use 时发 toolcall_*（带 contentIndex），远早于 tool_execution_start
+ * （工具执行时，无 contentIndex）。toolCall 块若由 tool_execution_start 驱动，同 turn 内
+ * text 在 tool 之后时顺序会错位（text_delta 先到、toolCall 后到）。
+ *
+ * 提取点 = toolcall_end（W3 修正，非 toolcall_start）：wire 上 toolcall_start 只有
+ * {type, contentIndex}——pi-ai AssistantMessageEvent 的 partial（含 content[contentIndex].id）
+ * 被 RPC toJsonEvent 剥离（dist/modes/json-event.js:6-10），旧代码从
+ * event.message?.content?.[contentIndex]?.id 提取恒 undefined（wire 无顶层 message，
+ * 单测 mock 自带该字段故测试绿生产死）。toolcall_end 携带完整 toolCall 对象
+ * （{type:'toolCall', id, name, arguments}，pi-ai types.d.ts:405-409 + 244-250，非 partial
+ * 字段不被剥离）。实测 0.84.1：toolCall.id 与后续 tool_execution_start.toolCallId 同值；
+ * toolcall_end（LLM 流中工具参数输出完成）仍远早于 tool_execution_start（assistant
+ * message 完成后才开始执行工具），顺序锚点语义不变。
+ * 此处产出 tool-call-index 中间事件（toolCallId + contentIndex），interpreter 缓存后
+ * 在 tool-call-start 到达时附到 tool_call_start WS 帧，前端按 contentIndex 有序插入。
+ */
+function handleToolcallEnd(sub: PiMessageUpdateSub): PiTranslatedEvent[] {
+  const toolCallId = sub.toolCall?.id
+  const contentIndex = sub.contentIndex
+  if (toolCallId !== undefined && contentIndex !== undefined) {
+    return [{ kind: 'tool-call-index', toolCallId, contentIndex }]
+  }
+  return [{ kind: 'noop' }]
 }
 
 /**
@@ -724,10 +761,10 @@ function handleAutoRetryEnd(event: PiAutoRetryEndEvent, sid: string): PiTranslat
  *
  * 深度 = pendingMessageCount = steering.length + followUp.length（pi agent-session.ts
  * `get pendingMessageCount()` 同源公式，rpc-mode get_state 的 pendingMessageCount 字段同值）。
- * 本帧附带的深度是事件自报的即时值（供前端过渡展示），**不是深度数据源**——深度权威 =
- * queue 实例的 get_state 快照（replicated-states.config.ts 队列条目），queue_update 事件到达
- * 只做深度失效信号（session-service 的 send 汇聚点对 queue 实例 markDirty，防抖重拉快照），
- * 事件 payload 永不直接写深度数据（ReplicatedState 核心不变量 1）。
+ * 本帧附带的深度 = pi 队列深度的**推送投影**（与 get_state 快照同公式同源、数值恒等，
+ * PR #185 MF2 定口径）：renderer 对账（core registry reconcilePending）直读帧内值，
+ * 不经任何 runtime 侧快照缓存——原 queue ReplicatedState 实例及 markDirty 失效接线
+ * 已撤销（.get() 生产零消费，防抖重拉 get_state 属无效 RPC，登记表 #6 修订）。
  */
 function handleQueueUpdate(event: PiQueueUpdateEvent, sid: string): PiTranslatedEvent[] {
   return [{
@@ -744,10 +781,11 @@ function handleQueueUpdate(event: PiQueueUpdateEvent, sid: string): PiTranslated
   }]
 }
 
-/** session_info_changed → session.renamed + 回写 session 缓存（interpreter 处理） */
+/** session_info_changed → session.renamed + 内存态 label 回写（interpreter 编排） */
 function handleSessionInfoChanged(event: PiSessionInfoChangedEvent, sid: string): PiTranslatedEvent[] {
   return [
-    // 回写 session.label 缓存（interpreter 调 sessionMetaCache）
+    // 回写 session.label 内存态（interpreter 调 sessionService.setLabelCache——事件路径
+    // 唯一写方，PR #185 MF1；label ReplicatedState 实例已撤销，无失效接线）
     { kind: 'session-renamed', name: event.name },
     {
       kind: 'message',
@@ -759,11 +797,13 @@ function handleSessionInfoChanged(event: PiSessionInfoChangedEvent, sid: string)
   ]
 }
 
-/** thinking_level_changed → session.thinkingLevelSet + 回写 session 缓存（interpreter 处理） */
+/** thinking_level_changed → session.thinkingLevelSet + thinkingLevel 实例失效（interpreter 编排） */
 function handleThinkingLevelChanged(event: PiThinkingLevelChangedEvent, sid: string): PiTranslatedEvent[] {
   const level = event.level
   return [
-    // 回写 session.thinkingLevel 缓存（interpreter 调 sessionService）
+    // thinkingLevel 实例失效（interpreter 调 thinkingLevelState()?.markDirty()，事件只做
+    // 失效不回写）——session.thinkingLevel 的写方是 setThinkingLevel RPC 命令路径，
+    // 事件路径不触碰该缓存；前端即时更新走下方 session.thinkingLevelSet 帧
     { kind: 'thinking-level', level },
     { kind: 'message', message: { type: 'session.thinkingLevelSet', payload: { sessionId: sid, level } } },
   ]

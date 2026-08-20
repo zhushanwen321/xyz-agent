@@ -152,27 +152,8 @@ export function scanWorkflowEntries(entries: unknown[]): WorkflowRunRecord[] {
 function collectSelfDescribedWorkflowRecords(entries: unknown[]): WorkflowRunRecord[] | null {
   const snapshots = new Map<string, RunSnapshot>()
   for (const entry of entries) {
-    if (typeof entry !== 'object' || entry === null) continue
-    const e = entry as JsonlCustomEntry
-    if (e.type !== 'custom' || e.customType !== WORKFLOW_RECORD_CUSTOM_TYPE) continue
-    const data = e.data
-    if (typeof data !== 'object' || data === null) continue
-    const d = data as Record<string, unknown>
-    if (d.v !== 1) {
-      console.warn(
-        `[workflow-extractor] workflow-record entry schema version '${String(d.v)}' unsupported (expected 1) — ` +
-          `extension/runtime version skew, skip this entry. Fix: align schema with ` +
-          `extensions/subagent-workflow/src/orchestration/jsonl-run-store.ts (W17 v1).`,
-      )
-      continue
-    }
-    const snapshot = d.snapshot
-    if (typeof snapshot !== 'object' || snapshot === null) continue
-    const snap = snapshot as Record<string, unknown>
-    // runId 存在性守卫（snapshot 内嵌完整 runId；无 runId 视为坏 entry 跳过）
-    if (typeof snap.runId !== 'string' || snap.runId.length === 0) continue
-    // 同 runId 后出现的覆盖前面的（entry 顺序 = 时间顺序，后者更新）
-    snapshots.set(snap.runId, snapshot as RunSnapshot)
+    const snapshot = parseSelfDescribedWorkflowSnapshot(entry)
+    if (snapshot) snapshots.set(snapshot.runId, snapshot)
   }
   if (snapshots.size === 0) return null
   const records: WorkflowRunRecord[] = []
@@ -183,6 +164,33 @@ function collectSelfDescribedWorkflowRecords(entries: unknown[]): WorkflowRunRec
     if (record) records.push(record)
   }
   return records
+}
+
+/**
+ * 单条 entry → RunSnapshot（type/customType/data/版本/runId 存在性逐层守卫，坏 entry 返回
+ * null）。同 runId 后出现的覆盖前面的（entry 顺序 = 时间顺序，后者更新）。
+ */
+function parseSelfDescribedWorkflowSnapshot(entry: unknown): RunSnapshot | null {
+  if (typeof entry !== 'object' || entry === null) return null
+  const e = entry as JsonlCustomEntry
+  if (e.type !== 'custom' || e.customType !== WORKFLOW_RECORD_CUSTOM_TYPE) return null
+  const data = e.data
+  if (typeof data !== 'object' || data === null) return null
+  const d = data as Record<string, unknown>
+  if (d.v !== 1) {
+    console.warn(
+      `[workflow-extractor] workflow-record entry schema version '${String(d.v)}' unsupported (expected 1) — ` +
+        `extension/runtime version skew, skip this entry. Fix: align schema with ` +
+        `extensions/subagent-workflow/src/orchestration/jsonl-run-store.ts (W17 v1).`,
+    )
+    return null
+  }
+  const snapshot = d.snapshot
+  if (typeof snapshot !== 'object' || snapshot === null) return null
+  const snap = snapshot as Record<string, unknown>
+  // runId 存在性守卫（snapshot 内嵌完整 runId；无 runId 视为坏 entry 跳过）
+  if (typeof snap.runId !== 'string' || snap.runId.length === 0) return null
+  return snapshot as RunSnapshot
 }
 
 /**

@@ -98,10 +98,10 @@ function makeFixture(): Fixture {
   return { svc, bus, client, setCurrentModel: (m) => { currentModel = m } }
 }
 
-/** 播种激活 session + 六实例（usage 快照落位 = 当前模型的 pi 权威 contextUsage 投影）。 */
+/** 播种激活 session + 四实例（usage 快照落位 = 当前模型的 pi 权威 contextUsage 投影；label/queue 已撤销 PR #185）。 */
 async function seedActiveSession(fx: Fixture, sessionId: string): Promise<void> {
   await fx.svc.initializeManagedSession(sessionId, {} as unknown as IPiEngine, '/tmp', 'race')
-  await vi.advanceTimersByTimeAsync(1) // flush 六实例播种 refetch
+  await vi.advanceTimersByTimeAsync(1) // flush 四实例播种 refetch
 }
 
 /** 此刻 get_session_stats().contextUsage 的投影（竞态用例的权威终态基准，直接调 mock RPC）。 */

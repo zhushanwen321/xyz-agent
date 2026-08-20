@@ -187,7 +187,9 @@ import MarkdownRenderer from './MarkdownRenderer.vue'
 import BlockSubagent from './BlockSubagent.vue'
 import { BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG, getBlockIcon } from './block-icon'
 import { formatDuration } from './format-utils'
-import { Button } from '@xyz-agent/ui'
+// primitives 直接路径（不经 @xyz-agent/ui 顶层 barrel）：chat 组件被 barrel 再导出，
+// barrel 自引用会闭合一族循环依赖环（详见 BashOutputBlock.vue 同款注释）
+import { Button } from '../../primitives/button'
 import { useToolMeta } from './composables/useToolMeta'
 import { useCopy } from './composables/useCopy'
 

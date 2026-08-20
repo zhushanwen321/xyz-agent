@@ -45,17 +45,13 @@ import { MessageDispatcher } from './message-dispatcher.js'
 import { SessionScanner } from './session-scanner.js'
 import { ReplicatedState } from './replicated-state.js'
 import {
-  createLabelStateConfig,
   createThinkingLevelStateConfig,
   createModelIdStateConfig,
   createUsageStateConfig,
-  createQueueDepthStateConfig,
   createCommandsStateConfig,
-  type LabelSnapshot,
   type ThinkingLevelSnapshot,
   type ModelIdSnapshot,
   type UsageSnapshot,
-  type QueueDepthSnapshot,
   type CommandsSnapshot,
   SCALAR_STATE_DEBOUNCE_MS,
 } from './replicated-states.config.js'
@@ -95,29 +91,31 @@ interface ManagedSession extends IManagedSessionView {
 }
 
 /**
- * per-session ReplicatedState 实例组（W7 + W8 data-source-governance，六实例齐备）。
+ * per-session ReplicatedState 实例组（W7 + W8 data-source-governance，四实例）。
  *
- * label / thinkingLevel / modelId（W7）：快照唯一来源 get_state，失效源分别是
- * session_info_changed / thinking_level_changed / switchModel RPC 响应。
+ * thinkingLevel / modelId（W7）：快照唯一来源 get_state，失效源分别是
+ * thinking_level_changed / switchModel RPC 响应。
  * usage（W8 + W10 收编）：快照唯一来源 get_session_stats().contextUsage，失效源 = context
  * 相关事件 turn_end / agent_end / compaction（汇聚于 applyContextUpdate）+ restore 拉取
  * （fetchContext）+ switchModel RPC（contextWindow 随模型变化）。W10 起五写点全部收编：
  * inputTokens 的旧 session 缓存直写（applyContextUpdate / fetchContext 回写）已删，
  * usage 实例快照是唯一数据源（getInputTokens / tokenCount 派生 / switchModel
  * 重算全读快照），inputTokens 竞态从「时序约定」变「结构不可能」。
- * queue 深度（W8）：快照唯一来源 get_state().pendingMessageCount（深度权威 = pi，D6），
- * 失效源 = queue_update 翻译帧（send 汇聚点）。
  * commands（W8）：快照唯一来源 get_commands，失效源 = getCommands 全部调用路径
  * （激活发布 + renderer 主动查询，查询即失效）。
- * 事件与 RPC 响应永不直接写实例数据（只 markDirty）。session.label / thinkingLevel /
+ * 事件与 RPC 响应永不直接写实例数据（只 markDirty）。session.thinkingLevel /
  * modelId 等会话字段缓存仍在双写过渡期（W12+ 收编），usage 双写已终结（W10）。
+ *
+ * [HISTORICAL] label / queue 深度两实例已撤销（PR #185 data-governance review MF1/MF2，
+ * 2026-08-20）：两实例 .get() 生产零消费，markDirty 触发的防抖 get_state 拉取纯浪费 RPC，
+ * 真值路径分别是 session_info_changed 事件直写 setLabelCache（label 唯一真值源）与
+ * queue_update 帧内 pendingMessageCount（= pi 队列深度推送投影，renderer 对账直读帧值）。
+ * 「完成 W7/W8 发布通道」属新功能开发，不在 review 修复范畴，按登记表 #1/#6 修订记录在案。
  */
 interface SessionReplicatedStates {
-  label: ReplicatedState<LabelSnapshot>
   thinkingLevel: ReplicatedState<ThinkingLevelSnapshot>
   modelId: ReplicatedState<ModelIdSnapshot>
   usage: ReplicatedState<UsageSnapshot>
-  queue: ReplicatedState<QueueDepthSnapshot>
   commands: ReplicatedState<CommandsSnapshot>
 }
 
@@ -239,8 +237,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    */
   private readonly inflightGetHistory = new Map<string, Promise<{ messages: Message[]; truncated: boolean }>>()
   /**
-   * W7/W8：per-session ReplicatedState 实例组（六实例：label / thinkingLevel / modelId /
-   * usage / queue / commands）。Map 分区（ADR-0049）：注册点 initializeManagedSession
+   * W7/W8：per-session ReplicatedState 实例组（四实例：thinkingLevel / modelId /
+   * usage / commands）。Map 分区（ADR-0049）：注册点 initializeManagedSession
    * （create/restore/fork 三入口汇聚），销毁点 removeSessionEntry（主动删 + 进程退出汇聚，
    * dispose 停防抖/退避/周期兜底全部定时器）。
    */
@@ -582,10 +580,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return effective
   }
   /**
-   * 更新活跃 session 的 label（内存态）。
+   * 更新活跃 session 的 label（内存态）——session_info_changed 事件路径的唯一写方（PR #185 MF1）。
    *
-   * 调用方：pi session_info_changed 事件到达时（pi extension auto-rename）。
-   * 不持久化——pi 侧已写 session_info，此处只同步内存态。
+   * 调用方：pi session_info_changed 事件到达时（pi extension auto-rename，经组合根
+   * onSessionRenamed 回调）。另一写方 = renameSession 活跃分支（set_session_name RPC
+   * 成功后直写 session.label，见 session-lifecycle.ts，两者写点同源 pi 权威）。
+   * 不持久化——pi 侧已写 session_info，此处只同步内存态（toSummary/config.sessions
+   * 的即时数据源）。label 的 ReplicatedState 实例已撤销（.get() 零消费、拉取纯浪费
+   * RPC，见 SessionReplicatedStates 注释 [HISTORICAL] 段）。
    */
   setLabelCache(sessionId: string, label: string): void {
     const session = this.sessions.get(sessionId)
@@ -613,13 +615,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   /**
    * W7/W8：per-session 实例组访问器。消费方：
-   * - 组合根（index.ts）：interpreter 的失效回调延迟解析（markDirty）；
-   * - session-service 自身（W8）：usage / queue / commands 失效接线（applyContextUpdate /
-   *   send 汇聚点 / getCommands）；
-   * - 测试：断言 switchModel 后 modelId 实例 markDirty、事件路径写点后 usage/queue/commands markDirty。
+   * - 组合根（index.ts）：interpreter 的失效回调延迟解析（markDirty，thinkingLevel）；
+   * - session-service 自身（W8）：usage / commands 失效接线（applyContextUpdate /
+   *   getCommands）；
+   * - 测试：断言 switchModel 后 modelId 实例 markDirty、事件路径写点后 usage/commands markDirty。
    * session 未注册（非活跃 / 已销毁）返回 undefined，调用方安全跳过。
-   * 方法名沿用 W7 的 ScalarReplicatedStates 语义（index.ts 组合根接线稳定，六实例后为
-   * 全量实例组访问器——结构扩展不破坏既有消费方）。
+   * 方法名沿用 W7 的 ScalarReplicatedStates 语义（index.ts 组合根接线稳定，四实例后为
+   * 全量实例组访问器——结构收窄不破坏既有消费方）。
    */
   getScalarReplicatedStates(sessionId: string): SessionReplicatedStates | undefined {
     return this.replicatedStates.get(sessionId)
@@ -680,21 +682,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       // 两轮：第 1 轮按 cursor 增量；Entry not found 丢 cursor 后第 2 轮全量自愈
       const MAX_REFRESH_ROUNDS = 2
       for (let round = 0; round < MAX_REFRESH_ROUNDS; round++) {
-        let entries: unknown[]
-        let leafId: string | undefined
+        let fetched: { entries: unknown[]; leafId: string | undefined }
         try {
-          if (cache.cursor !== null) {
-            const inc = await client.getEntries(cache.cursor) as { data?: { entries?: PiSessionEntry[]; leafId?: string | null } }
-            entries = inc.data?.entries ?? []
-            leafId = inc.data?.leafId ?? undefined
-          } else {
-            const full = await client.getEntries() as { data?: { entries?: PiSessionEntry[]; leafId?: string | null } }
-            entries = full.data?.entries ?? []
-            leafId = full.data?.leafId ?? undefined
-            // 全量重建：派生缓存整体重置（纯派生语义——全量扫描结果就是新基线）
-            cache.subagents.clear()
-            cache.workflows.clear()
-          }
+          fetched = await this.fetchRecordEntriesRound(client, cache)
         } catch (e) {
           if (cache.cursor !== null && isEntryNotFoundError(e)) {
             // 游标失效自愈：since 指向的 entry 不在 pi 当前集合 → 丢 cursor 全量重拉重建
@@ -706,13 +696,31 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
           console.warn(`[session-service] refresh record entries via getEntries failed for ${sessionId}: ${toErrorMessage(e)}`)
           return
         }
-        this.applyRecordEntries(cache, entries, sessionId)
-        if (leafId !== undefined) cache.cursor = leafId
+        this.applyRecordEntries(cache, fetched.entries, sessionId)
+        if (fetched.leafId !== undefined) cache.cursor = fetched.leafId
         return
       }
     }
     cache.inflight = run().finally(() => { cache.inflight = null })
     return cache.inflight
+  }
+
+  /**
+   * W18：单轮 get_entries 拉取——按 cursor 有无分流增量/全量。
+   * 全量重建时派生缓存整体重置（纯派生语义——全量扫描结果就是新基线）。
+   */
+  private async fetchRecordEntriesRound(
+    client: IPiEngine,
+    cache: RecordEntriesCache,
+  ): Promise<{ entries: unknown[]; leafId: string | undefined }> {
+    if (cache.cursor !== null) {
+      const inc = await client.getEntries(cache.cursor) as { data?: { entries?: PiSessionEntry[]; leafId?: string | null } }
+      return { entries: inc.data?.entries ?? [], leafId: inc.data?.leafId ?? undefined }
+    }
+    const full = await client.getEntries() as { data?: { entries?: PiSessionEntry[]; leafId?: string | null } }
+    cache.subagents.clear()
+    cache.workflows.clear()
+    return { entries: full.data?.entries ?? [], leafId: full.data?.leafId ?? undefined }
   }
 
   /**
@@ -1356,11 +1364,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // dispose 停防抖/退避/周期兜底全部定时器（thinkingLevel 的 30s poll 不清会泄漏定时器）。
     const replicated = this.replicatedStates.get(sessionId)
     if (replicated) {
-      replicated.label.dispose()
       replicated.thinkingLevel.dispose()
       replicated.modelId.dispose()
       replicated.usage.dispose()
-      replicated.queue.dispose()
       replicated.commands.dispose()
       this.replicatedStates.delete(sessionId)
     }
@@ -1417,12 +1423,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       // （EventAdapter 以主 session 绑定翻译，extension setWidget 从主进程上报），
       // publish 目标即主 session，renderer 全量订阅（useSessionStreamSync）覆盖，无需 R-04。
       const sid = (msg.payload as { sessionId?: string } | null)?.sessionId
-      // W8 queue 失效接线：queue_update 翻译帧只做深度失效信号（D6——深度权威 = pi get_state
-      // 快照，帧自带的 steering/followUp 数组与附带的深度仅是事件即时值），markDirty 触发
-      // queue 实例防抖重拉 get_state().pendingMessageCount，事件 payload 永不直写深度数据。
-      if (msg.type === 'message.queue_update' && sid) {
-        this.replicatedStates.get(sid)?.queue.markDirty()
-      }
+      // PR #185 MF2：queue_update 帧不再对 queue 实例 markDirty（实例已撤销——.get() 生产
+      // 零消费，防抖重拉 get_state 属无效 RPC）。深度真值 = 帧内 pendingMessageCount
+      //（pi 队列深度的推送投影，与 get_state 快照同公式同源），renderer 对账直读帧值。
       if (sid) {
         this.messageBus?.publish(sid, msg)
       } else {
@@ -1473,7 +1476,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   // ── 私有协作者 ────────────────────────────────────────────────
 
   /**
-   * W7/W8：注册 per-session 实例组（六实例）并 refetch 播种。
+   * W7/W8：注册 per-session 实例组（四实例）并 refetch 播种。
    * 配置即登记表条目（replicated-states.config.ts）；fetch 统一走窄访问器（fetchStateSnapshot /
    * fetchSessionStatsSnapshot / fetchCommandsSnapshot，复用 rpc-client 对应方法）。
    * 幂等注册（同 id 重复注册先 dispose 旧实例，防定时器泄漏）。
@@ -1481,37 +1484,31 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   private registerReplicatedStates(sessionId: string): SessionReplicatedStates {
     const existing = this.replicatedStates.get(sessionId)
     if (existing) {
-      existing.label.dispose()
       existing.thinkingLevel.dispose()
       existing.modelId.dispose()
       existing.usage.dispose()
-      existing.queue.dispose()
       existing.commands.dispose()
     }
-    const fetchState = () => this.fetchStateSnapshot(sessionId)
     // W12：modelId / thinkingLevel 的 fetch 走带 state_changed 发布挂钩的包装（快照应用后
-    // 组合投影）；label / queue 无 state 话题发布需求，仍用裸 fetchState。
+    // 组合投影）；usage / commands 的 fetch 各自带发布挂钩（fetchSessionStatsSnapshot /
+    // fetchCommandsSnapshot），无需裸 fetchState。
     const fetchStateForStateChanged = () => this.fetchStateSnapshotWithStatePublish(sessionId)
     const states: SessionReplicatedStates = {
-      label: new ReplicatedState(createLabelStateConfig(fetchState)),
       thinkingLevel: new ReplicatedState(createThinkingLevelStateConfig(fetchStateForStateChanged)),
       modelId: new ReplicatedState(createModelIdStateConfig(fetchStateForStateChanged)),
       usage: new ReplicatedState(createUsageStateConfig(() => this.fetchSessionStatsSnapshot(sessionId))),
-      queue: new ReplicatedState(createQueueDepthStateConfig(fetchState)),
       commands: new ReplicatedState(createCommandsStateConfig(() => this.fetchCommandsSnapshot(sessionId))),
     }
     this.replicatedStates.set(sessionId, states)
-    states.label.refetch()
     states.thinkingLevel.refetch()
     states.modelId.refetch()
     states.usage.refetch()
-    states.queue.refetch()
     states.commands.refetch()
     return states
   }
 
   /**
-   * W7：get_state 快照拉取——label / thinkingLevel / modelId / queue 四实例的唯一 fetch 入口
+   * W7：get_state 快照拉取——thinkingLevel / modelId 实例的唯一 fetch 入口
    * （复用 rpc-client getState）。无活跃 client 时抛错 → 实例按快照失败处理（退避重试 +
    * 保留旧值，W6 核心不变量 2）。
    */
@@ -1611,24 +1608,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const session = this.sessions.get(sessionId)
     const states = this.replicatedStates.get(sessionId)
     if (!session || !states) return
-    const usage = states.usage.get()
-    const payload = {
-      sessionId,
-      modelId: states.modelId.get()?.modelId ?? session.modelId,
-      thinkingLevel: states.thinkingLevel.get()?.thinkingLevel ?? session.thinkingLevel,
-      usagePercent: usage?.usagePercent ?? 0,
-      inputTokens: usage?.inputTokens ?? 0,
-      contextLimit: usage?.contextLimit ?? 0,
-    }
+    const payload = buildStateChangedPayload(sessionId, session, states)
     const last = this.lastPublishedStateChanged.get(sessionId)
-    if (
-      last
-      && last.modelId === payload.modelId
-      && last.thinkingLevel === payload.thinkingLevel
-      && last.usagePercent === payload.usagePercent
-      && last.inputTokens === payload.inputTokens
-      && last.contextLimit === payload.contextLimit
-    ) return
+    if (last && stateChangedPayloadEquals(last, payload)) return
     this.lastPublishedStateChanged.set(sessionId, payload)
     // wave:perf-w09（D1-2）：session.state_changed 单通道走 bus publish
     //（wave:perf-w06：state_changed 已入 bus 的 STATE_TYPE_KEY_MAP——publish 分配 seq 写
@@ -1642,13 +1624,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /** W12：state_changed 组合投影的 diff 基线（per-session，removeSessionEntry 一并清除）。 */
-  private readonly lastPublishedStateChanged = new Map<string, {
-    modelId: string
-    thinkingLevel: string | undefined
-    usagePercent: number
-    inputTokens: number
-    contextLimit: number
-  }>()
+  private readonly lastPublishedStateChanged = new Map<string, SessionStateChangedBaseline>()
 
   /**
    * W12：modelId / thinkingLevel 实例的 fetch 包装——get_state 快照应用后挂钩发布
@@ -1657,7 +1633,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 链，成功路径发布读到的必是已应用快照）。失败路径同样排发布：payload 走快照缺失的
    * fallback 过渡期缓存——对齐旧 broadcastSessionState「get_state 失败不阻塞、thinkingLevel
    * 回退缓存值」语义；rethrow 由 finally 透传，实例退避重试语义不变。
-   * label / queue 实例不发布 state 话题，仍用裸 fetchState。
    */
   private async fetchStateSnapshotWithStatePublish(sessionId: string): Promise<Record<string, unknown> | undefined> {
     try {
@@ -1974,6 +1949,51 @@ function subagentRecordEquals(a: SubagentRecord, b: SubagentRecord): boolean {
     && a.endedAt === b.endedAt
     && a.error === b.error
     && a.closedReason === b.closedReason
+}
+
+/**
+ * W12：state_changed 组合投影的 diff 基线形状（5 字段；sessionId 是 map key 恒同值，不参与 diff）。
+ * buildStateChangedPayload 产出的 payload 含 sessionId 字段，结构上是本形状的超集，可直接入基线。
+ */
+interface SessionStateChangedBaseline {
+  modelId: string
+  thinkingLevel: string | undefined
+  usagePercent: number
+  inputTokens: number
+  contextLimit: number
+}
+
+/**
+ * W12：modelId / thinkingLevel / usage 三实例快照 → session.state_changed 组合投影 payload。
+ * 快照缺失字段 fallback 双写过渡期缓存（session.modelId / thinkingLevel，W13 收编）；
+ * usage 无快照时三字段为 0 基线（与旧 broadcastSessionState 的缺省口径一致）。
+ */
+function buildStateChangedPayload(
+  sessionId: string,
+  session: ManagedSession,
+  states: SessionReplicatedStates,
+): SessionStateChangedBaseline & { sessionId: string } {
+  const usage = states.usage.get()
+  return {
+    sessionId,
+    modelId: states.modelId.get()?.modelId ?? session.modelId,
+    thinkingLevel: states.thinkingLevel.get()?.thinkingLevel ?? session.thinkingLevel,
+    usagePercent: usage?.usagePercent ?? 0,
+    inputTokens: usage?.inputTokens ?? 0,
+    contextLimit: usage?.contextLimit ?? 0,
+  }
+}
+
+/**
+ * W12：state_changed 组合投影的 diff 判定（5 字段全等 → 同值组合不重复发帧）。
+ * thinkingLevel 的 30s 周期兜底重拉会高频触发发布挂钩，靠本判定抑制重复帧。
+ */
+function stateChangedPayloadEquals(a: SessionStateChangedBaseline, b: SessionStateChangedBaseline): boolean {
+  return a.modelId === b.modelId
+    && a.thinkingLevel === b.thinkingLevel
+    && a.usagePercent === b.usagePercent
+    && a.inputTokens === b.inputTokens
+    && a.contextLimit === b.contextLimit
 }
 
 /**

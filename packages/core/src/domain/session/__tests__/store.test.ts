@@ -177,7 +177,8 @@ describe('createSessionStore', () => {
     store.applySnapshot({ groups: [{ cwd: '/a', sessions: [s1] }] })
 
     // owner 权威空值（缺省来源，无 source:'scan'）：sessionName 空 = 未命名 = 权威空
-    // （W7 label 实例空值语义，wire 到快照层为 label:''）必须覆盖旧名——守卫只对
+    // （label 空值语义沿用登记表 #1——pi sessionName 空 = 未命名合法态，wire 到快照层
+    // 为 label:''；label 实例已撤销，PR #185 MF1，语义不变）必须覆盖旧名——守卫只对
     // 扫描来源生效，不得把 owner 空值语义一并拦掉（D1b 两条规则不混用）。
     store.applySnapshot('s1', { label: '' })
     expect(store.list.value[0].label).toBe('')

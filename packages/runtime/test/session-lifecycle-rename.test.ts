@@ -185,7 +185,7 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
       expect(client.setSessionName).toHaveBeenCalledTimes(1)
       expect(client.setSessionName).toHaveBeenCalledWith('重构计划')
       // 直写路径已随 W11 全删（persistSessionName 不存在），回归守卫由 R1 承担
-      // 内存 label 更新（W9 影子缓存已删，label 只有内存态 + label 实例两份数据）
+      // 内存 label 更新（label 只有内存态一份数据——label 实例已撤销，PR #185 MF1）
       expect(session.label).toBe('重构计划')
       // 列表缓存失效仍触发（侧栏立即显示新名）
       expect(env.sessionStore.invalidateScanCache).toHaveBeenCalled()

@@ -7,6 +7,9 @@
  * 3. 不再 appendEntry("model_change") custom entry——pi host setModel 自写原生
  *    entry（agent-session.js:1204），custom 形态不参与 session 重载恢复（session-manager.js:146-160）
  *
+ * W4：错误路径 throw（pi 只对 execute throw 置 isError:true，返回值里的 isError
+ * 被 agent-loop 丢弃——错误轮曾被标成功），断言用 rejects.toThrow 语义。
+ *
  * 测试框架：vitest
  * 运行命令：npx vitest run tests/switch-model.test.ts
  */
@@ -144,32 +147,32 @@ describe("switch_model switch action", () => {
 		expect(pi.appendEntry).not.toHaveBeenCalled();
 	});
 
-	it("returns an error when pi.setModel returns false (no auth for provider)", async () => {
+	it("throws when pi.setModel returns false (no auth for provider)", async () => {
 		const { pi, tool, startHandler } = setupExtension(mockConfig);
 		await startHandler({}, {});
 		pi.setModel.mockResolvedValue(false);
 
 		const ctx = makeCtx(() => MIMO_PRO);
 
-		const result = await switchAction(tool, ctx, "mimo-pro");
-
+		// W4：错误路径 throw，pi catch 后置 isError:true
+		const err: Error = await switchAction(tool, ctx, "mimo-pro").then(
+			() => new Error("expected throw"),
+			(e: Error) => e,
+		);
+		expect(err).toBeInstanceOf(Error);
+		expect(err.message).toContain("rejected");
+		expect(err.message).toContain("xiaomi-token-plan-cn");
 		expect(pi.setModel).toHaveBeenCalledTimes(1);
-		expect(result.isError).toBe(true);
-		expect(result.content[0]?.text).toContain("rejected");
-		expect(result.content[0]?.text).toContain("xiaomi-token-plan-cn");
 	});
 
-	it("returns an error when the model is absent from the registry (setModel never called)", async () => {
+	it("throws when the model is absent from the registry (setModel never called)", async () => {
 		const { pi, tool, startHandler } = setupExtension(mockConfig);
 		await startHandler({}, {});
 
 		const ctx = makeCtx(() => undefined);
 
-		const result = await switchAction(tool, ctx, "mimo-pro");
-
+		await expect(switchAction(tool, ctx, "mimo-pro")).rejects.toThrow("not available");
 		expect(pi.setModel).not.toHaveBeenCalled();
-		expect(result.isError).toBe(true);
-		expect(result.content[0]?.text).toContain("not available");
 	});
 
 	it("resolves router-suffixed provider variants (config key without -router)", async () => {
@@ -187,17 +190,14 @@ describe("switch_model switch action", () => {
 		expect(result.content[0]?.text).toContain("xiaomi-token-plan-cn-router/mimo-v2.5-pro");
 	});
 
-	it("surfaces setModel exceptions as tool errors", async () => {
+	it("surfaces setModel exceptions as thrown tool errors", async () => {
 		const { pi, tool, startHandler } = setupExtension(mockConfig);
 		await startHandler({}, {});
 		pi.setModel.mockRejectedValue(new Error("boom"));
 
 		const ctx = makeCtx(() => MIMO_PRO);
 
-		const result = await switchAction(tool, ctx, "mimo-pro");
-
-		expect(result.isError).toBe(true);
-		expect(result.content[0]?.text).toContain("boom");
+		await expect(switchAction(tool, ctx, "mimo-pro")).rejects.toThrow(/Error switching:[\s\S]*boom/);
 	});
 
 	it("reports unknown alias before touching the registry", async () => {
@@ -205,10 +205,8 @@ describe("switch_model switch action", () => {
 		await startHandler({}, {});
 
 		const find = vi.fn();
-		const result = await switchAction(tool, makeCtx(find), "nonexistent");
+		await expect(switchAction(tool, makeCtx(find), "nonexistent")).rejects.toThrow("No model matching");
 
-		expect(result.isError).toBe(true);
-		expect(result.content[0]?.text).toContain("No model matching");
 		expect(find).not.toHaveBeenCalled();
 		expect(pi.setModel).not.toHaveBeenCalled();
 	});

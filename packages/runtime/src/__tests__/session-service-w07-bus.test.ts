@@ -48,7 +48,7 @@ function makeEnv() {
   const broker = { broadcast: vi.fn((m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBroker
 
   let exitHandler: ((sessionId: string, code: number | null, stderr: string) => void) | null = null
-  // W12：client 需供六实例播种 fetch（getState/getSessionStats）——usage 快照就位后
+  // W12：client 需供四实例播种 fetch（getState/getSessionStats）——usage 快照就位后
   // context.update 挂钩才有值可发（percent 3.90625 → 投影 round = 4，与旧 resolver 重算同值）
   const client = {
     getCommands: vi.fn(async () => []),
@@ -107,7 +107,7 @@ describe('SessionService × MessageBus（wave:perf-w07）', () => {
   it('W07-3: applyContextUpdate 失效后 usage 快照应用发布 context.update（state）——重连订阅从 state 快照恢复，不入 ring', async () => {
     const { svc, bus, broadcasts } = makeEnv()
     await svc.initializeManagedSession('s-ctx', {} as unknown as IPiEngine, '/tmp', 'test')
-    await vi.advanceTimersByTimeAsync(1) // flush 六实例播种 refetch（含挂钩发布的排程）
+    await vi.advanceTimersByTimeAsync(1) // flush 四实例播种 refetch（含挂钩发布的排程，label/queue 已撤销 PR #185）
 
     const online = createMockWs()
     bus.subscribe('s-ctx', online)

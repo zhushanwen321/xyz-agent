@@ -390,8 +390,9 @@ export class SessionLifecycle {
         throw new Error(`Cannot rename session ${sessionId}: pi process is not available (try again after the session is reactivated)`)
       }
       await client.setSessionName(newName)
-      // 内存态同步（toSummary/config.sessions 的即时数据源；label 实例经 session_info_changed
-      // 事件 markDirty 防抖重拉收敛到同值——W9 影子缓存已删，label 不再有第三份状态）。
+      // 内存态同步（toSummary/config.sessions 的即时数据源；session.label 的写方全集 =
+      // 此处 RPC 成功后直写 + 事件路径 setLabelCache，两写点同源 pi 权威——label 的
+      // ReplicatedState 实例已撤销，PR #185 MF1，label 不再有第三份状态）。
       session.label = newName
     } else {
       // 非 active session：W11（绝对写规则）改经短命 pi——withEphemeralPi 附着该文件

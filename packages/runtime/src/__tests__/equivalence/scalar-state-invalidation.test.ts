@@ -2,14 +2,13 @@
  * W7 等价性 + 失效接线用例（data-source-governance P1.1 / P1.2 第一批）。
  *
  * 验收对照（.xyz-harness/2026-08-19-data-source-governance-p1p4/acceptance/w7-acceptance.md）：
- * - 「发 session_info_changed 后实例值最终与 get_state 一致」→ describe「真实 pi 子进程」it 1
- *   （真实 pi fixture 优先：get_state 权威源 + session_info_changed 事件均真实，markDirty 按
- *   interpreter 生产行为驱动）
  * - 「switchModel 成功后 modelId 实例 markDirty 被调」→ describe「mock RPC 层」it 1 / it 2
- * - 「session_info_changed 到达只 markDirty 不直写」→ describe「mock RPC 层」it 3 / it 4
- *   （thinking_level_changed 同构覆盖；双写回调保留断言 = 双写过渡语义）
+ * - 「thinking_level_changed 到达只 markDirty 不直写」→ describe「mock RPC 层」it 3
+ *   （thinkingLevel 实例仍在用；label 实例用例随实例撤销删除——session_info_changed 的
+ *   现行编排 = onSessionRenamed 直写，覆盖见 event-interpreter.test.ts TC-RN1/RN2 与
+ *   session-service.test.ts U-setLabel-1/2/3，PR #185 MF1）
  * - RPC 频率采样（P0.5② 首次采样）：「3 轮对话 + 1 次切模型」的实例侧 get_state 次数与
- *   p95 延迟 → describe「真实 pi 子进程」it 2（数字 console.log 输出，写进 builder 汇报；
+ *   p95 延迟 → describe「真实 pi 子进程」it 1（数字 console.log 输出，写进 builder 汇报；
  *   落登记表由主 agent 串行处理，本 wave 只记录不决策）
  *
  * skip-if-no-real-pi：真实 pi 用例以 describe.skipIf(!REAL_PI_READY) 包裹（binary + LLM 凭证
@@ -22,7 +21,6 @@ import { EventInterpreter } from '../../services/session/event-interpreter.js'
 import { SessionService } from '../../services/session/session-service.js'
 import { ReplicatedState } from '../../services/session/replicated-state.js'
 import {
-  createLabelStateConfig,
   createThinkingLevelStateConfig,
   createModelIdStateConfig,
   SCALAR_STATE_DEBOUNCE_MS,
@@ -87,7 +85,7 @@ describe('W7 scalar-state 失效接线（mock RPC 层）', () => {
     const client = makeClient(makeState())
     const svc = makeSessionService(client)
     await svc.initializeManagedSession('s-switch', client as unknown as IPiEngine, '/tmp', 'test')
-    await vi.advanceTimersByTimeAsync(1) // flush 三实例播种 refetch
+    await vi.advanceTimersByTimeAsync(1) // flush 四实例播种 refetch（label/queue 已撤销，PR #185）
 
     const states = svc.getScalarReplicatedStates('s-switch')
     expect(states).toBeDefined()
@@ -115,39 +113,7 @@ describe('W7 scalar-state 失效接线（mock RPC 层）', () => {
     expect(markDirtySpy).not.toHaveBeenCalled()
   })
 
-  it('session_info_changed 到达只 markDirty 不直写：立即读为旧快照，防抖到点后快照来自 get_state（非事件 payload）', async () => {
-    const fetchState = vi.fn(async () => makeState({ sessionName: '旧名' }))
-    const labelState = new ReplicatedState(createLabelStateConfig(fetchState))
-    labelState.refetch()
-    await vi.advanceTimersByTimeAsync(1)
-    expect(labelState.get()).toEqual({ sessionName: '旧名' }) // 播种完成
-
-    // 权威源已变更（get_state 将返回新名）；事件 payload 是第三个值（证明数据来自快照而非事件）
-    fetchState.mockResolvedValue(makeState({ sessionName: '权威新名' }))
-    const markDirtySpy = vi.spyOn(labelState, 'markDirty')
-    const onSessionRenamed = vi.fn() // 组合根接 setLabelCache（W12 前列表 label 即时数据源）
-
-    const interpreter = new EventInterpreter('s-label', {
-      send: vi.fn(),
-      labelState: () => labelState,
-      onSessionRenamed,
-    })
-    interpreter.interpret([{ kind: 'session-renamed', name: '事件payload名' }])
-
-    // 事件唯一动作 = 失效；实例数据未被直写（立即读 = 旧快照）
-    expect(markDirtySpy).toHaveBeenCalledTimes(1)
-    expect(labelState.get()).toEqual({ sessionName: '旧名' })
-    // 内存态回写回调照常触发（session.label 即时数据源，W12/W13 后退役）
-    expect(onSessionRenamed).toHaveBeenCalledWith('s-label', '事件payload名')
-
-    // 防抖到点 → 唯一写路径 get_state 快照；值是权威新名而非事件 payload 名
-    await vi.advanceTimersByTimeAsync(SCALAR_STATE_DEBOUNCE_MS + 1)
-    expect(labelState.get()).toEqual({ sessionName: '权威新名' })
-    expect(labelState.isDirty()).toBe(false)
-    labelState.dispose()
-  })
-
-  it('thinking_level_changed 到达只 markDirty 不直写（同构覆盖第二事件）', async () => {
+  it('thinking_level_changed 到达只 markDirty 不直写（thinkingLevel 实例失效收敛）', async () => {
     const fetchState = vi.fn(async () => makeState({ thinkingLevel: 'low' }))
     const thinkingLevelState = new ReplicatedState(createThinkingLevelStateConfig(fetchState))
     thinkingLevelState.refetch()
@@ -199,64 +165,6 @@ describe.skipIf(!REAL_PI_READY)(
     }
   })
 
-  it('set_session_name → session_info_changed → markDirty → label 实例快照最终与 get_state 一致', { timeout: 60_000 }, async () => {
-    const fx = await spawnPiFixture()
-    fixture = fx
-
-    const fetchState = async (): Promise<StateShape> => {
-      const resp = await fx.sendCommand('get_state')
-      return (resp.data ?? {}) as StateShape
-    }
-    const labelState = new ReplicatedState(createLabelStateConfig(fetchState))
-    const modelIdState = new ReplicatedState(createModelIdStateConfig(fetchState))
-
-    // 播种首份快照（生产：registerReplicatedStates 的 refetch）
-    labelState.refetch()
-    modelIdState.refetch()
-    await waitUntil('seed snapshots', () => labelState.get() !== undefined && modelIdState.get() !== undefined)
-
-    // 播种一致性：modelId 快照 == get_state().model 组合的 'provider/model'
-    //（pi Model.id 是裸 modelId，provider 在 Model.provider——投影组合口径）
-    const seedState = await fetchState()
-    const seedModel = seedState.model as { provider?: unknown; id?: unknown } | undefined
-    const seedModelId =
-      typeof seedModel?.provider === 'string' && typeof seedModel?.id === 'string'
-        ? `${seedModel.provider}/${seedModel.id}`
-        : undefined
-    expect(seedModelId).toBeTruthy()
-    expect(modelIdState.get()).toEqual({ modelId: seedModelId })
-
-    // pi 侧改名 → 等 session_info_changed 事件（事件真实性）
-    await fx.sendCommand('set_session_name', { name: 'equiv-w7-label' })
-    await fx.waitForEvent((e) => e.type === 'session_info_changed')
-
-    // interpreter 生产行为：事件到达 → 唯一动作 markDirty
-    const before = labelState.get()
-    labelState.markDirty()
-    // 同步时刻读 = 旧快照（事件未直写；真实 timers 下防抖窗口 300ms 内）
-    expect(labelState.get()).toBe(before)
-
-    // 防抖 + get_state → 收敛（isDirty 清除 = 成功快照应用且无新失效）
-    await waitUntil('label converge after rename', () => !labelState.isDirty())
-    expect(labelState.get()).toEqual({ sessionName: 'equiv-w7-label' })
-
-    // 终态等价断言：实例快照 == 此刻权威 get_state 投影（防 0==0 空转：值是确定非空名）
-    const authoritative = await fetchState()
-    expect(authoritative.sessionName).toBe('equiv-w7-label')
-    expect(labelState.get()).toEqual({ sessionName: authoritative.sessionName as string | undefined })
-
-    // 第二次改名强化收敛链路（非首次播种巧合）
-    await fx.sendCommand('set_session_name', { name: 'equiv-w7-label-2' })
-    await fx.waitForEvent(
-      (e) => e.type === 'session_info_changed' && e.name === 'equiv-w7-label-2',
-    )
-    labelState.markDirty()
-    await waitUntil('label converge after second rename', () => labelState.get()?.sessionName === 'equiv-w7-label-2')
-
-    labelState.dispose()
-    modelIdState.dispose()
-  })
-
   it('RPC 频率采样（P0.5②）：3 轮对话 + 1 次切模型的实例侧 get_state 次数与 p95 延迟', { timeout: 180_000 }, async () => {
     const fx = await spawnPiFixture()
     fixture = fx
@@ -271,24 +179,23 @@ describe.skipIf(!REAL_PI_READY)(
       latencies.push(performance.now() - t0)
       return (resp.data ?? {}) as StateShape
     }
-    const labelState = new ReplicatedState(createLabelStateConfig(fetchState))
     const thinkingLevelState = new ReplicatedState(createThinkingLevelStateConfig(fetchState))
     const modelIdState = new ReplicatedState(createModelIdStateConfig(fetchState))
 
-    // 生产等价：注册播种（3 refetch）
-    const states = [labelState, thinkingLevelState, modelIdState]
+    // 生产等价：注册播种（2 refetch；label 实例已撤销，PR #185 MF1）
+    const states = [thinkingLevelState, modelIdState]
     for (const s of states) s.refetch()
     await waitUntil('seed', () => states.every((s) => s.get() !== undefined))
     const seededCalls = calls
 
     // 3 轮对话：每轮等「新的」agent_end（按计数递增等待，禁 waitForEvent——它匹配历史
     // 事件缓存会立即返回，下一轮 prompt 撞 pi already-processing）；期间到达的
-    // session_info_changed / thinking_level_changed 按生产接线喂给对应实例 markDirty
-    // （interpreter 生产行为），并等防抖拉取收敛
+    // thinking_level_changed 按生产接线喂给对应实例 markDirty（interpreter 生产行为），
+    // 并等防抖拉取收敛。session_info_changed 不再触发实例失效（label 实例已撤销，
+    // PR #185 MF1——真值走 onSessionRenamed 直写 setLabelCache，无 get_state 拉取）
     for (let i = 0; i < 3; i++) {
       const round = i + 1
       const agentEndBefore = fx.collectEvents((e) => e.type === 'agent_end').length
-      const infoBefore = fx.collectEvents((e) => e.type === 'session_info_changed').length
       const tlBefore = fx.collectEvents((e) => e.type === 'thinking_level_changed').length
       await fx.sendCommand('prompt', { message: `Reply with exactly: round-${round}` })
       await waitUntil(
@@ -296,10 +203,6 @@ describe.skipIf(!REAL_PI_READY)(
         () => fx.collectEvents((e) => e.type === 'agent_end').length > agentEndBefore,
         TURN_TIMEOUT_MS,
       )
-      if (fx.collectEvents((e) => e.type === 'session_info_changed').length > infoBefore) {
-        labelState.markDirty()
-        await waitUntil(`round-${round} label converge`, () => !labelState.isDirty())
-      }
       if (fx.collectEvents((e) => e.type === 'thinking_level_changed').length > tlBefore) {
         thinkingLevelState.markDirty()
         await waitUntil(`round-${round} thinkingLevel converge`, () => !thinkingLevelState.isDirty())

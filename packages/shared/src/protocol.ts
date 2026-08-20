@@ -1150,8 +1150,10 @@ export interface ServerMessageMapBase {
   'message.auto_retry_start': { sessionId: string; attempt: number; maxAttempts?: number; delayMs?: number; errorMessage?: string }
   'message.auto_retry_end': { sessionId: string; success: boolean; attempt: number; finalError?: string }
   // message.queue_update：队列深度变化广播。pendingMessageCount = steering + followUp 条数和
-  //（event-adapter 翻译恒附，W8 补声明——renderer 窄读取此前读不到该字段类型；深度权威 =
-  // runtime queue 实例快照（get_state().pendingMessageCount），帧内值仅事件即时信号）。
+  //（event-adapter 翻译恒附，W8 补声明——renderer 窄读取此前读不到该字段类型；帧内值 =
+  // pi 队列深度的推送投影，与 get_state().pendingMessageCount 同公式同源、数值恒等，
+  // PR #185 MF2 定口径：renderer 对账直读帧值，原「queue 实例快照权威、帧仅事件即时信号」
+  // 口径作废——queue ReplicatedState 实例已撤销）。
   'message.queue_update': { sessionId: string; steering?: string[]; followUp?: string[]; pendingMessageCount: number }
   // message.bashStart：bash 执行开始广播（与 message.bashResult 对称的实时反馈）。
   // excludeFromContext 透传自请求（前端据此渲染「不进上下文」标记）。

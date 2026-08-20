@@ -1,13 +1,14 @@
 /**
- * W8 等价性 + 失效接线用例（data-source-governance P1.1 / P1.2 第二批，六实例齐备）。
+ * W8 等价性 + 失效接线用例（data-source-governance P1.1 / P1.2 第二批）。
  *
  * 验收对照（.xyz-harness/2026-08-19-data-source-governance-p1p4/acceptance/w8-acceptance.md）：
  * - 「事件风暴（模拟丢 context.update）后实例值收敛 get_session_stats 快照」→ describe
  *   「mock RPC 层」it 1 + describe「真实 pi 子进程」it 1（真实 get_session_stats 权威源）
- * - queue 深度接线（queue_update 只做失效信号，深度权威 = get_state，D6）→ mock it 2 +
- *   it 5（translate 纯函数输出附深度）+ it 4（session-service send 汇聚点 markDirty）
- * - commands 快照与失效（getCommands 全部调用路径 = 失效源）→ mock it 3 + it 4
- * - RPC 频率采样（P0.5② 终判输入）：usage/queue/commands 三实例的快照 RPC 次数与 p95 延迟 →
+ * - queue 深度实例用例已随实例撤销删除（PR #185 MF2：.get() 生产零消费，深度真值 =
+ *   queue_update 帧内 pendingMessageCount 推送投影，renderer 对账直读帧值——帧翻译
+ *   覆盖见 mock it 4）
+ * - commands 快照与失效（getCommands 全部调用路径 = 失效源）→ mock it 2 + it 3
+ * - RPC 频率采样（P0.5② 终判输入）：usage/commands 实例的快照 RPC 次数与 p95 延迟 →
  *   真实 pi it 2（数字 console.log 输出，写进 builder 汇报做量化终判；落登记表由主 agent
  *   串行处理）
  *
@@ -21,7 +22,6 @@ import { SessionService } from '../../services/session/session-service.js'
 import { ReplicatedState } from '../../services/session/replicated-state.js'
 import {
   createUsageStateConfig,
-  createQueueDepthStateConfig,
   createCommandsStateConfig,
   SCALAR_STATE_DEBOUNCE_MS,
 } from '../../services/session/replicated-states.config.js'
@@ -120,29 +120,6 @@ describe('W8 usage / queue / commands 失效接线（mock RPC 层）', () => {
     usageState.dispose()
   })
 
-  it('queue 深度 markDirty 后收敛 get_state().pendingMessageCount（0 = 空队列合法值；key 缺失 = 协议异常保持 dirty）', async () => {
-    const fetchState = vi.fn(async (): Promise<StatsShape> => ({ pendingMessageCount: 2 }))
-    const queueState = new ReplicatedState(createQueueDepthStateConfig(fetchState))
-    queueState.refetch()
-    await vi.advanceTimersByTimeAsync(1)
-    expect(queueState.get()).toEqual({ pendingMessageCount: 2 })
-
-    // 深度变化（followUp 被消费 → 0）：失效 → get_state 快照收敛
-    fetchState.mockResolvedValue({ pendingMessageCount: 0 })
-    queueState.markDirty()
-    await vi.advanceTimersByTimeAsync(SCALAR_STATE_DEBOUNCE_MS + 1)
-    expect(queueState.get()).toEqual({ pendingMessageCount: 0 })
-    expect(queueState.isDirty()).toBe(false)
-
-    // key 缺失 = 协议异常：退避重试 + 保留旧值 + dirty 不清（W6 核心不变量 2）
-    fetchState.mockResolvedValue({})
-    queueState.markDirty()
-    await vi.advanceTimersByTimeAsync(SCALAR_STATE_DEBOUNCE_MS + 1)
-    expect(queueState.get()).toEqual({ pendingMessageCount: 0 }) // 保留旧值
-    expect(queueState.isDirty()).toBe(true) // 失败不清 dirty
-    queueState.dispose()
-  })
-
   it('commands markDirty 后收敛 get_commands 快照（空数组 = 合法态整字段覆盖，不清空为「不动」）', async () => {
     const fetchCommands = vi.fn(async (): Promise<unknown> => [{ name: 'cmd-a' }, { name: 'cmd-b' }])
     const commandsState = new ReplicatedState(createCommandsStateConfig(fetchCommands))
@@ -166,47 +143,36 @@ describe('W8 usage / queue / commands 失效接线（mock RPC 层）', () => {
     commandsState.dispose()
   })
 
-  it('session-service 接线：applyContextUpdate / queue_update 帧经 send 汇聚点 / getCommands 分别触发三实例 markDirty 并收敛', async () => {
+  it('session-service 接线：applyContextUpdate / getCommands 分别触发 usage / commands 实例 markDirty 并收敛', async () => {
     const state = { pendingMessageCount: 1, sessionName: 'n', thinkingLevel: 'low', model: { id: 'm', provider: 'p' } }
     const client = makeClient(state as StatsShape, [{ name: 'cmd-a' }])
     client.getSessionStats.mockResolvedValue(makeStats({
       contextUsage: { tokens: 5000, contextWindow: 20000, percent: 25 },
     }))
-    let capturedSend: ((msg: ServerMessage) => void) | undefined
-    const svc = makeSessionService(client, (send) => { capturedSend = send })
+    const svc = makeSessionService(client)
     await svc.initializeManagedSession('s-w8', client as unknown as IPiEngine, '/tmp', 'test')
-    await vi.advanceTimersByTimeAsync(1) // flush 六实例播种 refetch
+    await vi.advanceTimersByTimeAsync(1) // flush 四实例播种 refetch（label/queue 已撤销，PR #185）
 
     const states = svc.getScalarReplicatedStates('s-w8')
     expect(states).toBeDefined()
     const usageSpy = vi.spyOn(states!.usage, 'markDirty')
-    const queueSpy = vi.spyOn(states!.queue, 'markDirty')
     const commandsSpy = vi.spyOn(states!.commands, 'markDirty')
 
     // usage 失效：applyContextUpdate = turn_end / agent_end / compaction 三事件路径的汇聚点
     svc.applyContextUpdate('s-w8', 123, 456)
     expect(usageSpy).toHaveBeenCalledTimes(1)
 
-    // queue 失效：queue_update 翻译帧流经 send 汇聚点（生产链路 adapter translate → interpreter send）
-    capturedSend!({
-      type: 'message.queue_update',
-      payload: { sessionId: 's-w8', steering: [], followUp: ['queued msg'] },
-    })
-    expect(queueSpy).toHaveBeenCalledTimes(1)
-    expect(states!.queue.isDirty()).toBe(true)
-
     // commands 失效：getCommands RPC 查询即失效（对齐现有发布路径的事件源全集）
     await svc.getCommands('s-w8')
     expect(commandsSpy).toHaveBeenCalledTimes(1)
 
-    // 防抖到点：三实例收敛到各自快照 RPC 的权威值
+    // 防抖到点：两实例收敛到各自快照 RPC 的权威值
     await vi.advanceTimersByTimeAsync(SCALAR_STATE_DEBOUNCE_MS + 1)
     expect(states!.usage.get()).toEqual({ inputTokens: 5000, contextLimit: 20000, usagePercent: 25 })
-    expect(states!.queue.get()).toEqual({ pendingMessageCount: 1 })
     expect(states!.commands.get()?.commands).toEqual([{ name: 'cmd-a' }])
   })
 
-  it('translate(queue_update) 输出附深度信息：pendingMessageCount = steering + followUp 条数和（事件即时值，非深度数据源）', () => {
+  it('translate(queue_update) 输出附深度：pendingMessageCount = steering + followUp 条数和（= pi 队列深度的推送投影）', () => {
     const event = {
       type: 'queue_update',
       steering: ['steer-1'],
@@ -304,13 +270,13 @@ describe.skipIf(!REAL_PI_READY)(
     usageState.dispose()
   })
 
-  it('RPC 频率采样（P0.5② 终判输入）：2 轮对话 + 失效风暴的三实例快照 RPC 次数与 p95 延迟', { timeout: 180_000 }, async () => {
+  it('RPC 频率采样（P0.5② 终判输入）：2 轮对话 + 失效风暴的双实例快照 RPC 次数与 p95 延迟', { timeout: 180_000 }, async () => {
     const fx = await spawnPiFixture()
     fixture = fx
 
-    // 包装三个 fetch：分 RPC 统计次数 + 逐次延迟（ms）
-    const samples = { get_session_stats: [] as number[], get_state: [] as number[], get_commands: [] as number[] }
-    const counts = { get_session_stats: 0, get_state: 0, get_commands: 0 }
+    // 包装两个 fetch：分 RPC 统计次数 + 逐次延迟（ms；get_state 采样已随 queue 实例撤销移除，PR #185 MF2）
+    const samples = { get_session_stats: [] as number[], get_commands: [] as number[] }
+    const counts = { get_session_stats: 0, get_commands: 0 }
     const timed = async (rpc: keyof typeof samples, run: () => Promise<unknown>): Promise<unknown> => {
       counts[rpc] += 1
       const t0 = performance.now()
@@ -320,8 +286,6 @@ describe.skipIf(!REAL_PI_READY)(
     }
     const fetchStats = async (): Promise<StatsShape> =>
       (await timed('get_session_stats', () => fx.sendCommand('get_session_stats')).then((r) => (r as { data?: Record<string, unknown> }).data ?? {})) as StatsShape
-    const fetchState = async (): Promise<StatsShape> =>
-      (await timed('get_state', () => fx.sendCommand('get_state')).then((r) => (r as { data?: Record<string, unknown> }).data ?? {})) as StatsShape
     const fetchCommands = async (): Promise<unknown> => {
       const r = await timed('get_commands', () => fx.sendCommand('get_commands'))
       // pi get_commands 响应形态 = { commands: [...] }（rpc-mode.ts:683；生产 rpc-client.getCommands
@@ -330,11 +294,10 @@ describe.skipIf(!REAL_PI_READY)(
     }
 
     const usageState = new ReplicatedState(createUsageStateConfig(fetchStats))
-    const queueState = new ReplicatedState(createQueueDepthStateConfig(fetchState))
     const commandsState = new ReplicatedState(createCommandsStateConfig(fetchCommands))
 
-    // 生产等价：注册播种（3 refetch）
-    const states = [usageState, queueState, commandsState]
+    // 生产等价：注册播种（2 refetch；queue 实例已撤销，PR #185 MF2——深度走帧内推送投影）
+    const states = [usageState, commandsState]
     for (const s of states) s.refetch()
     await waitUntil('seed', () => states.every((s) => s.get() !== undefined))
     const seededCounts = { ...counts }
@@ -353,23 +316,20 @@ describe.skipIf(!REAL_PI_READY)(
       await waitUntil(`round-${round} usage converge`, () => !usageState.isDirty())
     }
 
-    // queue_update 失效（send 汇聚点接线）+ commands 查询失效（getCommands 接线）
-    queueState.markDirty()
+    // commands 查询失效（getCommands 接线）
     commandsState.markDirty()
-    await waitUntil('queue converge', () => !queueState.isDirty())
     await waitUntil('commands converge', () => !commandsState.isDirty())
 
-    // nearest-rank p95（1-indexed 第 ceil(0.95n) 位；分 RPC 输出 + 三 RPC 合并口径）
+    // nearest-rank p95（1-indexed 第 ceil(0.95n) 位；分 RPC 输出 + 双 RPC 合并口径）
     const p95 = (xs: number[]): number => {
       const sorted = [...xs].sort((a, b) => a - b)
       const rank = Math.max(1, Math.ceil(sorted.length * 0.95))
       return sorted[rank - 1] as number
     }
-    const all = [...samples.get_session_stats, ...samples.get_state, ...samples.get_commands]
+    const all = [...samples.get_session_stats, ...samples.get_commands]
     console.log(
-      `[W8 RPC 采样] 操作序列 = 2 轮对话 + 每轮 usage 失效 + queue/commands 各 1 次失效 | ` +
+      `[W8 RPC 采样] 操作序列 = 2 轮对话 + 每轮 usage 失效 + commands 1 次失效 | ` +
       `get_session_stats=${counts.get_session_stats} 次(p95 ${p95(samples.get_session_stats).toFixed(1)}ms) ` +
-      `get_state=${counts.get_state} 次(p95 ${p95(samples.get_state).toFixed(1)}ms) ` +
       `get_commands=${counts.get_commands} 次(p95 ${p95(samples.get_commands).toFixed(1)}ms) | ` +
       `合计 ${all.length} 次，合并 p95 = ${p95(all).toFixed(1)}ms，max = ${Math.max(...all).toFixed(1)}ms`,
     )

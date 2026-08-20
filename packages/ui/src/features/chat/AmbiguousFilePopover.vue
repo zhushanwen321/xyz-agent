@@ -64,7 +64,10 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { File as FileIcon } from '@lucide/vue'
-import { Button, Popover, PopoverAnchor, PopoverContent } from '@xyz-agent/ui'
+// primitives 直接路径（不经 @xyz-agent/ui 顶层 barrel）：chat 组件被 barrel 再导出，
+// barrel 自引用会闭合一族循环依赖环（详见 BashOutputBlock.vue 同款注释）
+import { Button } from '../../primitives/button'
+import { Popover, PopoverAnchor, PopoverContent } from '../../primitives/popover'
 import type { FileNode } from '@xyz-agent/shared'
 
 const { t } = useI18n()

@@ -57,24 +57,33 @@ function fmtCost(c) {
   return "$" + (c >= 0.01 ? c.toFixed(2) : c.toFixed(4));
 }
 
+/** usage 容错取数：usage 缺失或字段缺省一律按 0 计。 */
+function usageOrZero(u, k) {
+  return (u && u[k]) || 0;
+}
+
+/** 累加单个 call 的 token 四分量与 cost（无 usage 的 call 跳过）。 */
+function addUsageSums(sum, u) {
+  if (!u) return;
+  sum.input += u.input || 0;
+  sum.output += u.output || 0;
+  sum.cacheRead += u.cacheRead || 0;
+  sum.cacheWrite += u.cacheWrite || 0;
+  sum.cost += u.cost || 0;
+}
+
 /** 聚合 calls[]：token 四分量/cost/命中率/per-role。 */
 function summarizeCalls(calls) {
   const sum = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
   const byRole = {};
   for (const c of calls || []) {
     const u = c.usage;
-    if (u) {
-      sum.input += u.input || 0;
-      sum.output += u.output || 0;
-      sum.cacheRead += u.cacheRead || 0;
-      sum.cacheWrite += u.cacheWrite || 0;
-      sum.cost += u.cost || 0;
-    }
+    addUsageSums(sum, u);
     const key = c.role || "unknown";
     byRole[key] = byRole[key] || { count: 0, input: 0, cacheRead: 0 };
     byRole[key].count++;
-    byRole[key].input += (u && u.input) || 0;
-    byRole[key].cacheRead += (u && u.cacheRead) || 0;
+    byRole[key].input += usageOrZero(u, "input");
+    byRole[key].cacheRead += usageOrZero(u, "cacheRead");
   }
   const denom = sum.input + sum.cacheRead;
   const cachePct = denom > 0 ? Math.round((sum.cacheRead / denom) * 100) : null;
@@ -85,6 +94,11 @@ function roundCount(state) {
   return (state.batches || []).reduce((a, b) => a + (b.rounds || []).length, 0);
 }
 
+/** phaseTimings 值合法性：[startMs, endMs] 数字对（半写入 run 容错）。 */
+function isTimingPair(pair) {
+  return Array.isArray(pair) && typeof pair[0] === "number" && typeof pair[1] === "number";
+}
+
 function wallMs(state) {
   let min = null;
   let max = null;
@@ -92,10 +106,9 @@ function wallMs(state) {
     for (const r of b.rounds || []) {
       const pt = r.phaseTimings || {};
       for (const [, pair] of Object.entries(pt)) {
-        if (Array.isArray(pair) && typeof pair[0] === "number" && typeof pair[1] === "number") {
-          if (min == null || pair[0] < min) min = pair[0];
-          if (max == null || pair[1] > max) max = pair[1];
-        }
+        if (!isTimingPair(pair)) continue;
+        if (min == null || pair[0] < min) min = pair[0];
+        if (max == null || pair[1] > max) max = pair[1];
       }
     }
   }
@@ -121,14 +134,8 @@ function cmdList(repoSlug) {
   return 0;
 }
 
-function cmdStats(runIdOrLatest, repoSlug) {
-  const runs = listRuns(repoSlug);
-  if (runs.length === 0) { console.log("no runs found (root: " + ROOT + ")"); return 1; }
-  const run = runIdOrLatest === "latest" ? runs[runs.length - 1] : runs.find((r) => r.runId === runIdOrLatest);
-  if (!run) { console.log("run not found: " + runIdOrLatest); return 1; }
-  const s = run.state;
-  const { sum, byRole, cachePct } = summarizeCalls(s.calls);
-  console.log("run " + run.runId + " (repo: " + run.repo + ")");
+/** stats 概览段：terminated/轮数 + token 四分量 + per-role 明细。 */
+function printStatsSummary(s, { sum, cachePct, byRole }) {
   console.log("  terminated: " + ((s.meta && s.meta.terminated) || "?") + "  rounds: " + roundCount(s) + "  started: " + (s.meta && s.meta.startedAt));
   console.log(
     "  tokens: input " + fmtTokens(sum.input) +
@@ -140,7 +147,10 @@ function cmdStats(runIdOrLatest, repoSlug) {
   const roleParts = Object.entries(byRole).map(([role, v]) =>
     role + " ×" + v.count + " " + fmtTokens(v.input + v.cacheRead));
   console.log("  per-role: " + (roleParts.join(" │ ") || "(no calls)"));
-  // issues 概览（M1 origin/dormant 字段缺省容错）
+}
+
+/** stats issues 概览段（M1 origin/dormant 字段缺省容错）。 */
+function printStatsIssues(s) {
   const issues = s.issues ? Object.values(s.issues) : [];
   const fixed = issues.filter((i) => i.status === "fixed").length;
   const regressed = issues.filter((i) => (i.history || []).some((h) => h.status === "regressed")).length;
@@ -152,7 +162,10 @@ function cmdStats(runIdOrLatest, repoSlug) {
     "  regressed-ever " + regressed +
     "  origins " + (issues.length ? Object.entries(origins).map(([k, v]) => k + " " + v).join("/") : "-") +
     "  dormant (last batch) " + ((s.dormant || []).length));
-  // scores 表（M2 字段缺省容错）
+}
+
+/** stats scores 表段（M2 字段缺省容错）。 */
+function printStatsScores(s) {
   if (Array.isArray(s.scores) && s.scores.length > 0) {
     for (const sc of s.scores) {
       // regression=null = 该维度 unverifiable（workflow 无对账数据可回填），无分值
@@ -167,7 +180,10 @@ function cmdStats(runIdOrLatest, repoSlug) {
   } else {
     console.log("  scores: (none)");
   }
-  // 轮次时间线
+}
+
+/** stats 轮次时间线段。 */
+function printStatsTimeline(s) {
   for (const b of s.batches || []) {
     for (const r of b.rounds || []) {
       const pt = r.phaseTimings || {};
@@ -176,6 +192,20 @@ function cmdStats(runIdOrLatest, repoSlug) {
         "  mustFix " + (r.mustFix ?? "-"));
     }
   }
+}
+
+function cmdStats(runIdOrLatest, repoSlug) {
+  const runs = listRuns(repoSlug);
+  if (runs.length === 0) { console.log("no runs found (root: " + ROOT + ")"); return 1; }
+  const run = runIdOrLatest === "latest" ? runs[runs.length - 1] : runs.find((r) => r.runId === runIdOrLatest);
+  if (!run) { console.log("run not found: " + runIdOrLatest); return 1; }
+  const s = run.state;
+  const { sum, byRole, cachePct } = summarizeCalls(s.calls);
+  console.log("run " + run.runId + " (repo: " + run.repo + ")");
+  printStatsSummary(s, { sum, cachePct, byRole });
+  printStatsIssues(s);
+  printStatsScores(s);
+  printStatsTimeline(s);
   return 0;
 }
 

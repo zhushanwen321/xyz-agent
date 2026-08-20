@@ -48,6 +48,11 @@ jobs:
       - name: ESLint
         run: pnpm run lint
 
+      # taste-lint 规则用例（taste-lint/**/*.test.mjs，vitest）：lint 插件规则本体的回归
+      # 面与 ESLint 同 job 触发（规则改坏时用例先红）。vitest 经 pnpm hoisted 提升到根。
+      - name: Test - taste-lint rules
+        run: npx vitest run taste-lint
+
   typecheck:
     name: TypeCheck
     runs-on: ubuntu-latest

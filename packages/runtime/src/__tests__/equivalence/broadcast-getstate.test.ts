@@ -3,7 +3,8 @@
  *
  * 验收对照（.xyz-harness/2026-08-19-data-source-governance-p1p4/acceptance/w22-acceptance.md 交付物 1/4）：
  * - 「fixture 发事件风暴（多轮对话 + 切模型 + 队列操作），断言实例快照 + stateSnapshot 广播内容
- *   == get_state + get_session_stats + get_commands 逐字段」→ it 1：六实例（W7/W8 生产配置）+
+ *   == get_state + get_session_stats + get_commands 逐字段」→ it 1：四实例（W7/W8 生产配置，
+ *   label / queue 深度实例已随 PR #185 MF1/MF2 撤销）+
  *   MessageBus（生产类）经真实 pi RPC 喂入；state topic 三类消息按 session-service 既有发布口径
  *   （fetchContext / fetchAndBroadcastCommands / broadcastSessionState 投影）构造 publish。
  *   断言的是「广播 last-value == 发布后的独立第二次权威拉取」——W12 把发布源切实例快照后
@@ -36,11 +37,9 @@ import { MessageBus } from '../../services/message-bus/message-bus.js'
 import type { BusClient } from '../../services/message-bus/types.js'
 import { ReplicatedState } from '../../services/session/replicated-state.js'
 import {
-  createLabelStateConfig,
   createThinkingLevelStateConfig,
   createModelIdStateConfig,
   createUsageStateConfig,
-  createQueueDepthStateConfig,
   createCommandsStateConfig,
 } from '../../services/session/replicated-states.config.js'
 import type { PiCommandInfo } from '../../services/ports/pi-engine.js'
@@ -103,7 +102,7 @@ describe.skipIf(!REAL_PI_READY)(
       const fx = fixture!
       const sid = 'w22-broadcast'
 
-      // ── 装置：六实例（W7/W8 生产配置，fetch 直连 fixture RPC）+ MessageBus（生产类）──
+      // ── 装置：四实例（W7/W8 生产配置，fetch 直连 fixture RPC）+ MessageBus（生产类）──
       const fetchState = async (): Promise<Record<string, unknown>> =>
         asRecord((await fx.sendCommand('get_state')).data)
       const fetchStats = async (): Promise<Record<string, unknown>> =>
@@ -116,24 +115,24 @@ describe.skipIf(!REAL_PI_READY)(
         return Array.isArray(data.commands) ? (data.commands as PiCommandInfo[]) : []
       }
 
-      const labelState = new ReplicatedState(createLabelStateConfig(fetchState))
       const thinkingLevelState = new ReplicatedState(createThinkingLevelStateConfig(fetchState))
       const modelIdState = new ReplicatedState(createModelIdStateConfig(fetchState))
       const usageState = new ReplicatedState(createUsageStateConfig(fetchStats))
-      const queueState = new ReplicatedState(createQueueDepthStateConfig(fetchState))
       const commandsState = new ReplicatedState(createCommandsStateConfig(fetchCommands))
-      const states = [labelState, thinkingLevelState, modelIdState, usageState, queueState, commandsState]
+      // 四实例（label / queue 深度实例已撤销，PR #185 MF1/MF2：.get() 生产零消费——
+      // label 真值 = session.renamed 帧事件 payload + setLabelCache 直写；深度真值 =
+      // queue_update 帧内 pendingMessageCount 推送投影，两者均不经实例快照）
+      const states = [thinkingLevelState, modelIdState, usageState, commandsState]
       const bus = new MessageBus()
 
       // 播种（生产：registerReplicatedStates 的 refetch）
       for (const s of states) s.refetch()
-      await waitUntil('seed six instances', () => states.every((s) => s.get() !== undefined))
+      await waitUntil('seed instances', () => states.every((s) => s.get() !== undefined))
 
       // ── 事件风暴 ──
       const agentEnds = () => fx.collectEvents((e) => e.type === 'agent_end').length
       const agentEndsBefore = agentEnds()
       const countOf = (type: string) => fx.collectEvents((e) => e.type === type).length
-      const sessionInfoBefore = countOf('session_info_changed')
       const thinkingLevelChangedBefore = countOf('thinking_level_changed')
 
       // 第 1 轮对话
@@ -151,8 +150,7 @@ describe.skipIf(!REAL_PI_READY)(
       const queueUpdates = () => fx.collectEvents((e) => e.type === 'queue_update')
       const queueUpdatesBefore = queueUpdates().length
       await waitUntil('followUp queue_update', () => queueUpdates().length > queueUpdatesBefore, TURN_TIMEOUT_MS)
-      // 生产接线：queue_update 翻译帧经 send 汇聚点 → queue markDirty（事件只做失效）
-      queueState.markDirty()
+      // 队列深度经帧内 pendingMessageCount 推送（PR #185 MF2：无实例失效接线，帧即深度权威推送）
       await waitUntil(
         'round-2(run 含 followup 投递) agent_end',
         () => agentEnds() >= agentEndsBefore + 2,
@@ -173,8 +171,6 @@ describe.skipIf(!REAL_PI_READY)(
         TURN_TIMEOUT_MS,
       )
       usageState.markDirty()
-      // 投递清空队列（深度 0）→ 失效重拉
-      queueState.markDirty()
 
       // 风暴含队列操作守卫（防空转）：确实观测到非空 followUp 的 queue_update 事件
       expect(queueUpdates().some((e) => Array.isArray(e.followUp) && e.followUp.length > 0)).toBe(true)
@@ -194,9 +190,8 @@ describe.skipIf(!REAL_PI_READY)(
       await fetchCommands()
       commandsState.markDirty()
 
-      // 事件驱动失效（生产接线：interpreter 的 labelState/thinkingLevelState 解析器——
-      // pi 首 turn 后自动生成 session 标题 → session_info_changed 事件 → label markDirty）
-      if (countOf('session_info_changed') > sessionInfoBefore) labelState.markDirty()
+      // 事件驱动失效（生产接线：interpreter 的 thinkingLevelState 解析器；
+      // session_info_changed 不再触发实例失效——label 实例已撤销，PR #185 MF1）
       if (countOf('thinking_level_changed') > thinkingLevelChangedBefore) thinkingLevelState.markDirty()
 
       // ── 风暴期生产发布点：state topic 三类消息按 session-service 既有投影口径 publish ──
@@ -241,7 +236,7 @@ describe.skipIf(!REAL_PI_READY)(
       })
 
       // ── 全实例收敛（防抖 300ms + 快照 RPC，真实 timers）──
-      await waitUntil('all six instances converge', () => states.every((s) => !s.isDirty()), 30_000)
+      await waitUntil('all instances converge', () => states.every((s) => !s.isDirty()), 30_000)
 
       // ── 权威三 RPC（发布后的独立第二次拉取——与发布时无变更间隔，值必须一致）──
       const authState = await fetchState()
@@ -259,12 +254,6 @@ describe.skipIf(!REAL_PI_READY)(
       expect(modelIdState.get()).toEqual({ modelId: authModelId })
       expect(thinkingLevelState.get()).toEqual({
         thinkingLevel: typeof authState.thinkingLevel === 'string' ? authState.thinkingLevel : undefined,
-      })
-      expect(labelState.get()).toEqual({
-        sessionName: typeof authState.sessionName === 'string' ? authState.sessionName : undefined,
-      })
-      expect(queueState.get()).toEqual({
-        pendingMessageCount: authState.pendingMessageCount,
       })
       // usage 投影口径 = 实例配置（min(round, 100) clamp，对齐 MAX_USAGE_PERCENT）
       expect(usageState.get()).toEqual({

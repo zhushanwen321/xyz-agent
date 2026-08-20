@@ -288,12 +288,12 @@ async function main(): Promise<void> {
       },
       onSessionRenamed: (sid, name) => {
         // pi extension auto-rename (session_info_changed) 事件到达时。
-        // 同步更新内存态 session.label（W9 后唯一即时数据源：toSummary/config.sessions 读它，
-        // 实例快照经 labelState markDirty 防抖重拉收敛，W12/W13 逐步成为权威发布源）。
+        // 同步更新内存态 session.label（session_info_changed 事件路径唯一写方：
+        // toSummary/config.sessions 读它）。label 的 ReplicatedState 实例已撤销
+        //（PR #185 MF1：.get() 零消费，防抖重拉 get_state 属无效 RPC）。
         sessionService.setLabelCache(sid, name ?? '')
       },
       // W7：标量实例失效接线（延迟解析——interpreter 构造时实例尚未注册，见 opts 类型注释）。
-      labelState: () => sessionService.getScalarReplicatedStates(sessionId)?.label,
       thinkingLevelState: () => sessionService.getScalarReplicatedStates(sessionId)?.thinkingLevel,
       executeHooks: (hookType, context) => pluginService.executeHooks(hookType, {
         pluginId: '',
@@ -326,7 +326,7 @@ async function main(): Promise<void> {
         return client.getState()
       },
       // W18（data-source-governance P3.1）：自描述 record entry（subagent-record /
-      // workflow-record）到达 → 派生缓存失效。sessionService 同 labelState/
+      // workflow-record）到达 → 派生缓存失效。sessionService 同
       // thinkingLevelState 的延迟解析模式（createAdapter 闭包先于 sessionService 构造，
       // 调用发生在 session 创建后，引用恒就绪）。
       onRecordEntriesInvalidated: (sid, customType) => {

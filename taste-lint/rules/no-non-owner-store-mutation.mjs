@@ -80,6 +80,142 @@ const PERMITTED_FILES = [
 
 const INLINE_ALLOW_RE = /taste:allow-non-owner-mutation/
 
+// ── Program:exit 裁决子阶段（模块级提取：Program:exit 只做编排，各阶段独立可测）──
+
+/**
+ * 许可表条目失真检测（登记表驱动：条目失效即护栏失真）。
+ *
+ * 必须先于 factoryBindings 提前 return 执行：不 import store 工厂的文件（core 包
+ * 多数文件）也要跑，否则护栏配置失真在这些文件上静默。loadRegistryEntries 模块级
+ * 缓存，多文件 lint 零增量成本。取舍：多文件 lint 时同一 stale 每文件报一次
+ * （ESLint 规则实例 per-file、无跨文件去重通道；模块级去重状态会破坏测试用例
+ * 隔离）——重复不改变 fail-loud 语义与 CI 判定，接受。
+ */
+function reportStalePermittedEntries(context, sourceCode) {
+  const permittedForCheck = [
+    ...PERMITTED_FILES,
+    ...Object.entries(WATCHED_MUTATIONS).map(([name, w]) => ({
+      suffix: `WATCHED_MUTATIONS.${name}`,
+      entries: w.entries,
+    })),
+  ]
+  const stale = findStaleEntries(permittedForCheck, loadRegistryEntries())
+  const programNode = sourceCode?.ast
+  for (const { entry, suffix } of stale) {
+    if (programNode) {
+      context.report({
+        node: programNode,
+        messageId: 'stalePermittedEntry',
+        data: { entry, suffix },
+      })
+    }
+  }
+}
+
+/** 行内豁免注释探测：node 前后注释任一命中 taste:allow-non-owner-mutation */
+function hasInlineAllowComment(sourceCode, node) {
+  return Boolean(
+    sourceCode &&
+      [
+        ...sourceCode.getCommentsBefore(node),
+        ...sourceCode.getCommentsAfter(node),
+      ].some((c) => INLINE_ALLOW_RE.test(c.value)),
+  )
+}
+
+/**
+ * 形参通道表：形参名 → 绑定函数名集合。
+ *
+ * f(store) 的 f 是本文件函数 → 第 idx 个 Identifier 形参绑定 store。
+ * 多函数绑定：f(store) 与 g(store) 并存时两个函数都建通道——按形参名
+ * last-write-wins 会漏报被覆盖函数体内的调用。
+ */
+function buildParamOwnerFn(paramChannels, fnDecls) {
+  const paramOwnerFn = new Map()
+  for (const { fnName, idx } of paramChannels) {
+    const params = fnDecls.get(fnName)
+    if (!params) continue // 外部 import 函数：跨文件数据流不可判定，S1 兜底
+    const paramName = params[idx]
+    if (!paramName) continue
+    let owners = paramOwnerFn.get(paramName)
+    if (!owners) paramOwnerFn.set(paramName, (owners = new Set()))
+    owners.add(fnName)
+  }
+  return paramOwnerFn
+}
+
+/** CallExpression receiver 裁决（工厂直连 / 工厂包装 / 对象方法双重包装）→ 裁决或 null */
+function classifyCallReceiver(obj, mutation, bindings) {
+  const base = { mutation, entries: WATCHED_MUTATIONS[mutation].note }
+  if (obj.callee.type === 'Identifier') {
+    if (bindings.factoryBindings.has(obj.callee.name)) {
+      return { messageId: 'nonOwnerMutation', data: base }
+    }
+    if (bindings.storeReturningFns.has(obj.callee.name)) {
+      return { messageId: 'wrappedFactoryMutation', data: { ...base, fn: obj.callee.name } }
+    }
+    return null
+  }
+  // box.grab().applySnapshot()：receiver 工厂是对象方法（方法名命中文件级工厂集合，
+  // 同名属性碰撞的理论误报已在 docstring「已知检出边界」声明）
+  if (
+    obj.callee.type === 'MemberExpression' &&
+    obj.callee.property.type === 'Identifier' &&
+    bindings.storeReturningFns.has(obj.callee.property.name)
+  ) {
+    return {
+      messageId: 'wrappedFactoryMutation',
+      data: { ...base, fn: obj.callee.property.name },
+    }
+  }
+  return null
+}
+
+/** 单个受管 mutation 调用候选分类（Identifier / CallExpression receiver 两形态）→ 裁决或 null */
+function classifyMutationCandidate(obj, stack, mutation, bindings) {
+  const base = { mutation, entries: WATCHED_MUTATIONS[mutation].note }
+  if (obj.type === 'Identifier') {
+    if (bindings.instanceBindings.has(obj.name)) {
+      return { messageId: 'nonOwnerMutation', data: base }
+    }
+    if (
+      bindings.paramOwnerFn.has(obj.name) &&
+      // 同名形参多函数绑定：fnStack 命中任一绑定函数即报（非 last-write-wins）
+      stack.some((fn) => bindings.paramOwnerFn.get(obj.name).has(fn))
+    ) {
+      return { messageId: 'forwardedMutation', data: { ...base, param: obj.name } }
+    }
+    return null
+  }
+  if (obj.type === 'CallExpression') return classifyCallReceiver(obj, mutation, bindings)
+  return null
+}
+
+/** 裁决并上报受管 mutation 调用候选（行内豁免注释放行） */
+function reportMutationCandidates(candidates, bindings, sourceCode, context) {
+  for (const { node, mutation, fnStack: stack, obj } of candidates) {
+    const verdict = classifyMutationCandidate(obj, stack, mutation, bindings)
+    if (!verdict) continue
+    if (hasInlineAllowComment(sourceCode, node)) continue
+    context.report({ node, messageId: verdict.messageId, data: verdict.data })
+  }
+}
+
+/** 上报值位置受管方法引用（detachedMethodRef，行内豁免注释放行） */
+function reportDetachedMethodRefs(methodRefs, sourceCode, context) {
+  for (const ref of methodRefs) {
+    if (hasInlineAllowComment(sourceCode, ref)) continue
+    context.report({
+      node: ref,
+      messageId: 'detachedMethodRef',
+      data: {
+        mutation: ref.property.name,
+        entries: WATCHED_MUTATIONS[ref.property.name].note,
+      },
+    })
+  }
+}
+
 export default {
   meta: {
     type: 'problem',
@@ -280,108 +416,30 @@ export default {
       'Program:exit'() {
         const sourceCode = context.sourceCode ?? context.getSourceCode?.()
 
-        // 许可表条目失真检测（登记表驱动：条目失效即护栏失真）——必须先于下方
-        // factoryBindings 提前 return：不 import store 工厂的文件（core 包多数文件）
-        // 也要跑，否则护栏配置失真在这些文件上静默。loadRegistryEntries 模块级缓存，
-        // 多文件 lint 零增量成本。取舍：多文件 lint 时同一 stale 每文件报一次
-        // （ESLint 规则实例 per-file、无跨文件去重通道；模块级去重状态会破坏
-        // node --test 用例隔离）——重复不改变 fail-loud 语义与 CI 判定，接受。
-        const permittedForCheck = [
-          ...PERMITTED_FILES,
-          ...Object.entries(WATCHED_MUTATIONS).map(([name, w]) => ({
-            suffix: `WATCHED_MUTATIONS.${name}`,
-            entries: w.entries,
-          })),
-        ]
-        const stale = findStaleEntries(permittedForCheck, loadRegistryEntries())
-        const programNode = sourceCode?.ast
-        for (const { entry, suffix } of stale) {
-          if (programNode) {
-            context.report({
-              node: programNode,
-              messageId: 'stalePermittedEntry',
-              data: { entry, suffix },
-            })
-          }
-        }
+        // 阶段 1：许可表条目失真检测（登记表驱动）——须先于 factoryBindings 提前 return，
+        // 细节与取舍见 reportStalePermittedEntries docstring
+        reportStalePermittedEntries(context, sourceCode)
 
-        // 激活前提：文件 import 了 store 工厂（无 import 边 = port 注入/无关联，W4 语义对齐）
+        // 阶段 2 激活前提：文件 import 了 store 工厂（无 import 边 = port 注入/无关联，W4 语义对齐）
         if (factoryBindings.size === 0) return
 
-        const hasInlineAllow = (node) =>
-          sourceCode &&
-          [
-            ...sourceCode.getCommentsBefore(node),
-            ...sourceCode.getCommentsAfter(node),
-          ].some((c) => INLINE_ALLOW_RE.test(c.value))
+        // 阶段 3：形参通道表构建（f(store) 形参绑定，多函数绑定语义）
+        const paramOwnerFn = buildParamOwnerFn(paramChannels, fnDecls)
 
-        // 形参通道：f(store) 的 f 是本文件函数 → 第 idx 个 Identifier 形参绑定 store。
-        // 形参名 → 函数名集合（多函数绑定）：f(store) 与 g(store) 并存时两个函数都
-        // 建通道——按形参名 last-write-wins 会漏报被覆盖函数体内的调用
-        const paramOwnerFn = new Map()
-        for (const { fnName, idx } of paramChannels) {
-          const params = fnDecls.get(fnName)
-          if (!params) continue // 外部 import 函数：跨文件数据流不可判定，S1 兜底
-          const paramName = params[idx]
-          if (!paramName) continue
-          let owners = paramOwnerFn.get(paramName)
-          if (!owners) paramOwnerFn.set(paramName, (owners = new Set()))
-          owners.add(fnName)
-        }
-
-        // 表达式体箭头工厂：词法序陷阱在此统一消解（instanceBindings/factoryBindings 已齐）
+        // 阶段 4：表达式体箭头工厂——词法序陷阱在此统一消解（instanceBindings/factoryBindings 已齐）
         for (const { name, body } of pendingExprBodyArrows) {
           if (name && isStoreExpr(body)) storeReturningFns.add(name)
         }
 
-        for (const { node, mutation, fnStack: stack, obj } of candidates) {
-          const info = WATCHED_MUTATIONS[mutation]
-          let messageId = null
-          let data = { mutation, entries: info.note }
-          if (obj.type === 'Identifier') {
-            if (instanceBindings.has(obj.name)) {
-              messageId = 'nonOwnerMutation'
-            } else if (
-              paramOwnerFn.has(obj.name) &&
-              // 同名形参多函数绑定：fnStack 命中任一绑定函数即报（非 last-write-wins）
-              stack.some((fn) => paramOwnerFn.get(obj.name).has(fn))
-            ) {
-              messageId = 'forwardedMutation'
-              data = { ...data, param: obj.name }
-            }
-          } else if (obj.type === 'CallExpression' && obj.callee.type === 'Identifier') {
-            if (factoryBindings.has(obj.callee.name)) {
-              messageId = 'nonOwnerMutation'
-            } else if (storeReturningFns.has(obj.callee.name)) {
-              messageId = 'wrappedFactoryMutation'
-              data = { ...data, fn: obj.callee.name }
-            }
-          } else if (
-            obj.type === 'CallExpression' &&
-            obj.callee.type === 'MemberExpression' &&
-            obj.callee.property.type === 'Identifier' &&
-            storeReturningFns.has(obj.callee.property.name)
-          ) {
-            // box.grab().applySnapshot()：receiver 工厂是对象方法（方法名命中文件级工厂集合，
-            // 同名属性碰撞的理论误报已在 docstring「已知检出边界」声明）
-            messageId = 'wrappedFactoryMutation'
-            data = { ...data, fn: obj.callee.property.name }
-          }
-          if (messageId && hasInlineAllow(node)) continue
-          if (messageId) context.report({ node, messageId, data })
+        // 阶段 5/6：候选裁决上报 + 方法引用上报（行内豁免注释放行）
+        const bindings = {
+          instanceBindings,
+          factoryBindings,
+          storeReturningFns,
+          paramOwnerFn,
         }
-
-        for (const ref of methodRefs) {
-          if (hasInlineAllow(ref)) continue
-          context.report({
-            node: ref,
-            messageId: 'detachedMethodRef',
-            data: {
-              mutation: ref.property.name,
-              entries: WATCHED_MUTATIONS[ref.property.name].note,
-            },
-          })
-        }
+        reportMutationCandidates(candidates, bindings, sourceCode, context)
+        reportDetachedMethodRefs(methodRefs, sourceCode, context)
       },
     }
   },

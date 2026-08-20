@@ -353,20 +353,8 @@ export class WorktreeManager {
   /**
    * D5b 双向 diff 对账：物理面（tmpdir checkout 目录 + git branch --list）与
    * 注册表互查，收敛三类漂移（锁消灭交错主因后，本对账兜底条目丢失/文件损坏的长尾）。
-   *
-   * 方向一（注册有 → 物理无）：条目的分支与 checkout 目录都已不存在 → 条目指向
-   * 幻影资源 → 移除条目（纯清账，不删任何仍存在的资源，幂等安全）。
-   *
-   * 方向二（物理有 → 注册无）：按 enc 段（encodeCwd(mainCwd)）聚合，活信号 =
-   * <agentDir>/subagents/<enc>/sessions/*.alive 中存活的 pid（session-runner
-   * first header 时写入，崩溃残留不删）：
-   *   - 无活 pid：残留判死，checkout mtime 超 SPAWN_GRACE_MS 才清（防误清另一
-   *     进程 worktree add 完成到 registry.add 落盘之间的 create 窗口）；
-   *   - 恰好 1 个活 pid 且恰好 1 个残留：补写回注册表（自愈——最常见的双 session
-   *     并发覆盖丢条目场景，补写后回归标准 pid 判据路径）；
-   *   - 多活 pid 或多残留无法建立 branch↔pid 对应：跳过 + warn——宁延迟勿误删；
-   *     活体自身 cleanup 路径正常（registry.remove 幂等），死体等活 pid 全灭后
-   *     下一周期收敛。
+   * 方向一/方向二的完整判据见 {@link removePhantomRegistryEntries} /
+   * {@link reconcileUnregisteredWorktrees}。
    */
   private async reconcileWithPhysical(): Promise<void> {
     // 物理面发现失败（tmpdir 不可读等）→ 放弃本轮对账（失败仅日志，不阻断）
@@ -381,6 +369,19 @@ export class WorktreeManager {
       if (pt.repo) repos.add(pt.repo);
     }
     const branchesByRepo = await this.listPhysicalBranches(repos);
+    await this.removePhantomRegistryEntries(registered, branchesByRepo);
+
+    // ── 方向二：物理有 → 注册无 ──
+    const orphans = physical.filter((pt) => !registeredBranches.has(pt.branch));
+    await this.reconcileUnregisteredWorktrees(orphans);
+  }
+
+  /** 对账方向一（注册有 → 物理无）：条目的分支与 checkout 目录都已不存在 → 条目指向
+   *  幻影资源 → 移除条目（纯清账，不删任何仍存在的资源，幂等安全）。 */
+  private async removePhantomRegistryEntries(
+    registered: WorktreeEntry[],
+    branchesByRepo: Map<string, Set<string>>,
+  ): Promise<void> {
     for (const entry of registered) {
       const branches = branchesByRepo.get(entry.repo);
       // repo 分支查询失败（get undefined）→ 保守跳过：视为物理存在，不动条目。
@@ -396,9 +397,19 @@ export class WorktreeManager {
         await this.registry.remove(entry.branch);
       }
     }
+  }
 
-    // ── 方向二：物理有 → 注册无 ──
-    const orphans = physical.filter((pt) => !registeredBranches.has(pt.branch));
+  /** 对账方向二（物理有 → 注册无）：按 enc 段（encodeCwd(mainCwd)）聚合，活信号 =
+   *  <agentDir>/subagents/<enc>/sessions/*.alive 中存活的 pid（session-runner
+   *  first header 时写入，崩溃残留不删）：
+   *    - 无活 pid：残留判死，checkout mtime 超 SPAWN_GRACE_MS 才清（防误清另一
+   *      进程 worktree add 完成到 registry.add 落盘之间的 create 窗口）；
+   *    - 恰好 1 个活 pid 且恰好 1 个残留：补写回注册表（自愈——最常见的双 session
+   *      并发覆盖丢条目场景，补写后回归标准 pid 判据路径）；
+   *    - 多活 pid 或多残留无法建立 branch↔pid 对应：跳过 + warn——宁延迟勿误删；
+   *      活体自身 cleanup 路径正常（registry.remove 幂等），死体等活 pid 全灭后
+   *      下一周期收敛。 */
+  private async reconcileUnregisteredWorktrees(orphans: PhysicalWorktree[]): Promise<void> {
     // 按 enc 段聚合处理（活信号以 enc 段为粒度——.alive 在 <enc>/sessions/ 下）
     const orphansByEnc = new Map<string, PhysicalWorktree[]>();
     for (const pt of orphans) {

@@ -218,6 +218,58 @@ function asSubagentRecordEntry(o: unknown): { id: string; data: Record<string, u
   return typeof data.id === "string" ? { id: data.id, data } : null;
 }
 
+/** recoverEntryOnlyOrphans 用的 entry 扫描：主 session 全文 → 每 id 末条 record data。 */
+function collectLastRecordEntries(content: string): Map<string, Record<string, unknown>> {
+  const lastById = new Map<string, Record<string, unknown>>();
+  for (const line of content.split("\n")) {
+    if (!line.includes(SUBAGENT_RECORD_CUSTOM_TYPE)) continue; // 快过滤：绝大多数行不是本类型
+    let entry: { id: string; data: Record<string, unknown> } | null = null;
+    try {
+      entry = asSubagentRecordEntry(JSON.parse(line));
+    } catch (err) {
+      // 截断/异构行跳过（主文件末行可能正被写入）——行级 best-effort，debug 留痕
+      logger.debug("[subagents] entry-only orphan scan: skip unparsable line", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+    if (entry !== null) lastById.set(entry.id, entry.data);
+  }
+  return lastById;
+}
+
+/** entry data 即 SubagentRecord v1 快照——带运行时 guard 重建（taste/no-unsafe-cast）。
+ *  损坏 entry（agent/task/startedAt 任一缺失）返回 null，由调用方跳过。 */
+function rebuildEntryRecord(id: string, d: Record<string, unknown>): SubagentRecord | null {
+  const str = (k: string): string | undefined => (typeof d[k] === "string" ? (d[k] as string) : undefined);
+  const num = (k: string): number | undefined => (typeof d[k] === "number" ? (d[k] as number) : undefined);
+  const agent = str("agent");
+  const task = str("task");
+  const startedAt = num("startedAt");
+  if (agent === undefined || task === undefined || startedAt === undefined) return null; // 损坏 entry：跳过
+  return {
+    id,
+    agent,
+    task,
+    slug: str("slug") ?? "",
+    status: "running",
+    mode: "background",
+    startedAt,
+    rootSessionId: str("rootSessionId"),
+    parentRecordId: str("parentRecordId"),
+    depth: num("depth") ?? 0,
+    endedAt: undefined,
+    turns: num("turns") ?? 0,
+    totalTokens: num("totalTokens") ?? 0,
+    model: str("model") ?? "",
+    thinkingLevel: str("thinkingLevel"),
+    eventLog: [],
+    displayItems: [],
+    sessionFile: undefined,
+    chatMode: d.chatMode === true,
+    round: num("round"),
+  };
+}
+
 /** stat 戳（不存在 → null）。 */
 function statStamp(p: string): Stamp | null {
   try {
@@ -553,20 +605,7 @@ export class RecordStore {
     } catch {
       return; // 主文件不可读（含新 session 未 flush 的 ENOENT）：静默跳过（best-effort 恢复）
     }
-    const lastById = new Map<string, Record<string, unknown>>();
-    for (const line of content.split("\n")) {
-      if (!line.includes(SUBAGENT_RECORD_CUSTOM_TYPE)) continue; // 快过滤：绝大多数行不是本类型
-      let entry: { id: string; data: Record<string, unknown> } | null = null;
-      try {
-        entry = asSubagentRecordEntry(JSON.parse(line));
-      } catch (err) {
-        // 截断/异构行跳过（主文件末行可能正被写入）——行级 best-effort，debug 留痕
-        logger.debug("[subagents] entry-only orphan scan: skip unparsable line", {
-          reason: err instanceof Error ? err.message : String(err),
-        });
-      }
-      if (entry !== null) lastById.set(entry.id, entry.data);
-    }
+    const lastById = collectLastRecordEntries(content);
     if (lastById.size === 0) return;
     const anchoredIds = new Set(this.reconstructAll(rootSessionFilter).map((r) => r.id));
     for (const [id, d] of lastById) {
@@ -576,35 +615,8 @@ export class RecordStore {
       if (this.records.has(id)) continue; // 内存活 record：在途 spawn，不得误杀
       if (this.orphanJudged.has(id)) continue;
       this.orphanJudged.add(id);
-      // entry data 即 SubagentRecord v1 快照——带运行时 guard 重建（taste/no-unsafe-cast）。
-      const str = (k: string): string | undefined => (typeof d[k] === "string" ? (d[k] as string) : undefined);
-      const num = (k: string): number | undefined => (typeof d[k] === "number" ? (d[k] as number) : undefined);
-      const agent = str("agent");
-      const task = str("task");
-      const startedAt = num("startedAt");
-      if (agent === undefined || task === undefined || startedAt === undefined) continue; // 损坏 entry：跳过
-      const rec: SubagentRecord = {
-        id,
-        agent,
-        task,
-        slug: str("slug") ?? "",
-        status: "running",
-        mode: "background",
-        startedAt,
-        rootSessionId: str("rootSessionId"),
-        parentRecordId: str("parentRecordId"),
-        depth: num("depth") ?? 0,
-        endedAt: undefined,
-        turns: num("turns") ?? 0,
-        totalTokens: num("totalTokens") ?? 0,
-        model: str("model") ?? "",
-        thinkingLevel: str("thinkingLevel"),
-        eventLog: [],
-        displayItems: [],
-        sessionFile: undefined,
-        chatMode: d.chatMode === true,
-        round: num("round"),
-      };
+      const rec = rebuildEntryRecord(id, d);
+      if (rec === null) continue; // 损坏 entry：跳过（orphanJudged 已标记，不重判）
       this.reportSubagentRecord({
         ...rec,
         ...(d.chatMode === true

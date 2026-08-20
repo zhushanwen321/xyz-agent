@@ -623,11 +623,13 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       for (const segs of drainN(sid, 'follow-up', followN)) appendUser(sid, segs)
     }
 
-    // [W14 D6] 深度结构性对账：帧内 pendingMessageCount（event-adapter 翻译恒附 =
-    // steering.length + followUp.length，与 rpc-mode get_state 同源公式）为 pi 队列深度。
+    // [W14 D6 / PR #185 MF2 定口径] 深度结构性对账：帧内 pendingMessageCount（event-adapter
+    // 翻译恒附 = steering.length + followUp.length，与 rpc-mode get_state 同公式同源、数值恒等）
+    // = pi 队列深度的推送投影，本帧即深度的权威推送通道——对账直读帧内值，不经任何 runtime
+    // 侧快照缓存（queue ReplicatedState 实例及 markDirty 接线已撤销，登记表 #6 修订）。
     // drain 处理后 pendingBuffer 存量应等于深度，偏差则全量重对（reconcilePending：
     // buffer > 深度裁剪僵尸暂存；buffer < 深度 = 扩展注入例外，有界偏差，队列清空时收敛）。
-    // 字段缺失（旧 runtime / mock 帧）时退化为帧内数组长度和（W8 恒等公式，等价）。
+    // 字段缺失（旧 runtime / mock 帧）时退化为帧内数组长度和（恒等公式，等价）。
     reconcilePending(sid, readNumber(payload, 'pendingMessageCount') ?? (steering?.length ?? 0) + (followUp?.length ?? 0))
 
     const hasContent = !!state.steering?.length || !!state.followUp?.length

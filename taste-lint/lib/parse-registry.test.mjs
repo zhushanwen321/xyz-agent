@@ -3,10 +3,9 @@
  *
  * 覆盖三面：markdown 表格解析纯函数（§1 主表收 / §3§4 不误收）、真实登记表文件加载
  * （条目集含 #1 与 P1）、许可表条目失真检测（findStaleEntries 纯函数）。
- * 运行：node --test taste-lint/lib/*.test.mjs（node 24 目录形式不发现用例，须 glob）
+ * 运行：npx vitest run taste-lint（仓库根，builtin-ext-bundle.test.mjs 同款跑法）
  */
-import test from 'node:test';
-import assert from 'node:assert/strict';
+import { test, expect } from 'vitest';
 import {
   parseRegistryEntries,
   loadRegistryEntries,
@@ -34,27 +33,27 @@ const SAMPLE_MARKDOWN = [
 
 test('parse: §1 主表行首 #N / PN 收入，§3 §4 其他行式不误收', () => {
   const entries = parseRegistryEntries(SAMPLE_MARKDOWN);
-  assert.deepEqual([...entries].sort(), ['#1', '#2', 'P1']);
+  expect([...entries].sort()).toEqual(['#1', '#2', 'P1']);
 });
 
 test('parse: 空表格 / 无主表内容 → 空集（loadRegistryEntries 会 fail loud）', () => {
-  assert.equal(parseRegistryEntries('# 无表格文档\n正文').size, 0);
-  assert.equal(parseRegistryEntries('').size, 0);
+  expect(parseRegistryEntries('# 无表格文档\n正文').size).toBe(0);
+  expect(parseRegistryEntries('').size).toBe(0);
 });
 
 test('load: 真实登记表文件解析（条目集 ≥ 13 且含 #1/#12/P1）', () => {
   const entries = loadRegistryEntries();
-  assert.ok(entries.size >= 13, `登记表条目数 ${entries.size} < 13`);
+  expect(entries.size, `登记表条目数 ${entries.size} < 13`).toBeGreaterThanOrEqual(13);
   for (const expected of ['#1', '#12', 'P1']) {
-    assert.ok(entries.has(expected), `登记表缺条目 ${expected}`);
+    expect(entries.has(expected), `登记表缺条目 ${expected}`).toBe(true);
   }
 });
 
 test('load: REGISTRY_PATH 指向仓库内登记表真实路径', () => {
-  assert.ok(
+  expect(
     REGISTRY_PATH.endsWith('docs/architecture/data-source-registry.md'),
     `路径异常：${REGISTRY_PATH}`,
-  );
+  ).toBe(true);
 });
 
 test('findStaleEntries: 许可表条目全部在登记表内 → 空（通过）', () => {
@@ -63,7 +62,7 @@ test('findStaleEntries: 许可表条目全部在登记表内 → 空（通过）
     { suffix: 'a.ts', entries: ['#1'] },
     { suffix: 'b.ts', entries: ['#1', '#2'] },
   ];
-  assert.deepEqual(findStaleEntries(permitted, registry), []);
+  expect(findStaleEntries(permitted, registry)).toEqual([]);
 });
 
 test('findStaleEntries: 条目失效（登记表删条目/改号后）→ 检出失效引用', () => {
@@ -73,7 +72,7 @@ test('findStaleEntries: 条目失效（登记表删条目/改号后）→ 检出
     { suffix: 'b.ts', entries: ['#9'] },
   ];
   const stale = findStaleEntries(permitted, registry);
-  assert.equal(stale.length, 1);
-  assert.equal(stale[0].entry, '#9');
-  assert.equal(stale[0].suffix, 'b.ts');
+  expect(stale).toHaveLength(1);
+  expect(stale[0].entry).toBe('#9');
+  expect(stale[0].suffix).toBe('b.ts');
 });

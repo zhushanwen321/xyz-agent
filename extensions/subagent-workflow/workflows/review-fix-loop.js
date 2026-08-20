@@ -520,6 +520,71 @@ function lastModifiedFiles() {
   return (r && Array.isArray(r.modifiedFiles)) ? r.modifiedFiles : [];
 }
 
+// buildReviewCall 分支构造：fallow 内置工具型（无 .md，静态分析 prompt）。
+function buildFallowReviewCall(base, def, header, roundDir) {
+  return {
+    ...base,
+    prompt: [
+      header,
+      "",
+      "Fallow static-analysis pre-scan (tool-based, NOT a git-diff review).",
+      "",
+      "Steps:",
+      "1. Check if fallow is installed: `which fallow`",
+      "2. If NOT installed: write the report with a one-line note, must_fix=0, suggestion=0.",
+      "3. If installed, run: `fallow audit --base " + lockedBase.base + " --format json --quiet`",
+      "4. Extract: complexity hotspots, dead code, unused exports, circular deps",
+      "5. Classify findings: critical/major count into must_fix; minor into suggestion.",
+      "",
+      "output 路径：" + roundDir + "/" + def.report + ".md",
+      "Write report to: " + roundDir + "/" + def.report + ".md",
+    ].join("\n"),
+  };
+}
+
+// buildReviewCall 分支构造：R2+ 三段式（5.2）——verify-first 对账 + known-remaining + 收敛 hunt。
+function buildR2ReviewCall(base, def, header, round, max, roundDir, batchIndex) {
+  const prevRoundDir = RUN_ROOT + "/batch-" + batchIndex + "/round-" + (round - 1);
+  return {
+    ...base,
+    // T9：无 per-round spread——reviewerSchema 跨轮统一（缓存前缀稳定前提）
+    prompt: buildR2ReviewPrompt({
+      header, round, max, roundDir,
+      reportFile: def.report,
+      aggPath: prevRoundDir + "/aggregated.md",
+      fixResult: state.fixResults && state.fixResults.length
+        ? state.fixResults[state.fixResults.length - 1]
+        : null,
+      knownRemaining: (state.knownRemaining && Array.isArray(state.knownRemaining)) ? state.knownRemaining : [],
+      // rfl dormant 复活通道（tier-1 6.3 delta ③）：降级条目注入 R2+ prompt（动态段内容）
+      dormant: (state.dormant && Array.isArray(state.dormant)) ? state.dormant : [],
+      reviewPrompt, reviewInstruction,
+    }),
+    agent: def.path,
+  };
+}
+
+// buildReviewCall 分支构造：recheck 限定（5.5）——clean agent 重派时只审 fix 改动
+// 文件 + 自检关联点（scope = modifiedFiles ∪ affected_files，后者来自
+// state.fixImpactFiles），不诱导全量重扫。
+function buildScopedReviewCall(base, def, header, round, max, roundDir, batchIndex) {
+  return {
+    ...base,
+    prompt: buildScopedRecheckPrompt({
+      header, round, max, roundDir,
+      reportFile: def.report,
+      modifiedFiles: lastModifiedFiles(),
+      affectedFiles: (state.fixImpactFiles && Array.isArray(state.fixImpactFiles)) ? state.fixImpactFiles : [],
+      aggPath: RUN_ROOT + "/batch-" + batchIndex + "/round-" + (round - 1) + "/aggregated.md",
+      fixResult: state.fixResults && state.fixResults.length
+        ? state.fixResults[state.fixResults.length - 1]
+        : null,
+      reviewPrompt, reviewInstruction,
+    }),
+    agent: def.path,
+  };
+}
+
 function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
   const header = "Batch " + batchIndex + " Round " + round + "/" + max + " — " + BATCH_NAMES[batchIndex - 1];
   const prevBatchesHint = batchIndex > 1
@@ -539,67 +604,18 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
   // S4：agentRef = 路径（非 fallow 的 def 必有 path）——systemPrompt/model 由主线程
   // resolveAgentOpts 按 path 加载注入，脚本不再拼 md 内容。
   if (def.isFallow) {
-    return {
-      ...base,
-      prompt: [
-        header,
-        "",
-        "Fallow static-analysis pre-scan (tool-based, NOT a git-diff review).",
-        "",
-        "Steps:",
-        "1. Check if fallow is installed: `which fallow`",
-        "2. If NOT installed: write the report with a one-line note, must_fix=0, suggestion=0.",
-        "3. If installed, run: `fallow audit --base " + lockedBase.base + " --format json --quiet`",
-        "4. Extract: complexity hotspots, dead code, unused exports, circular deps",
-        "5. Classify findings: critical/major count into must_fix; minor into suggestion.",
-        "",
-        "output 路径：" + roundDir + "/" + def.report + ".md",
-        "Write report to: " + roundDir + "/" + def.report + ".md",
-      ].join("\n"),
-    };
+    return buildFallowReviewCall(base, def, header, roundDir);
   }
 
   // R2+ 三段式分支（5.2）：round>1 且非 scoped → verify-first 对账 + known-remaining + 收敛 hunt。
   // scoped 分支（recheck 限定）在下方单独处理（含对账段）。
   if (round > 1 && !scoped) {
-    const prevRoundDir = RUN_ROOT + "/batch-" + batchIndex + "/round-" + (round - 1);
-    return {
-      ...base,
-      // T9：无 per-round spread——reviewerSchema 跨轮统一（缓存前缀稳定前提）
-      prompt: buildR2ReviewPrompt({
-        header, round, max, roundDir,
-        reportFile: def.report,
-        aggPath: prevRoundDir + "/aggregated.md",
-        fixResult: state.fixResults && state.fixResults.length
-          ? state.fixResults[state.fixResults.length - 1]
-          : null,
-        knownRemaining: (state.knownRemaining && Array.isArray(state.knownRemaining)) ? state.knownRemaining : [],
-        // rfl dormant 复活通道（tier-1 6.3 delta ③）：降级条目注入 R2+ prompt（动态段内容）
-        dormant: (state.dormant && Array.isArray(state.dormant)) ? state.dormant : [],
-        reviewPrompt, reviewInstruction,
-      }),
-      agent: def.path,
-    };
+    return buildR2ReviewCall(base, def, header, round, max, roundDir, batchIndex);
   }
 
-  // recheck 限定分支（5.5）：clean agent 重派时只审 fix 改动文件 + 自检关联点
-  // （scope = modifiedFiles ∪ affected_files，后者来自 state.fixImpactFiles），不诱导全量重扫。
+  // recheck 限定分支（5.5）
   if (scoped) {
-    return {
-      ...base,
-      prompt: buildScopedRecheckPrompt({
-        header, round, max, roundDir,
-        reportFile: def.report,
-        modifiedFiles: lastModifiedFiles(),
-        affectedFiles: (state.fixImpactFiles && Array.isArray(state.fixImpactFiles)) ? state.fixImpactFiles : [],
-        aggPath: RUN_ROOT + "/batch-" + batchIndex + "/round-" + (round - 1) + "/aggregated.md",
-        fixResult: state.fixResults && state.fixResults.length
-          ? state.fixResults[state.fixResults.length - 1]
-          : null,
-        reviewPrompt, reviewInstruction,
-      }),
-      agent: def.path,
-    };
+    return buildScopedReviewCall(base, def, header, round, max, roundDir, batchIndex);
   }
 
   // T9：R1 函数化（三模板共享静态段，动态后置）

@@ -82,6 +82,31 @@ interface SubagentToolResultData {
 
 /** bg-notify 单条记录复用 shared/message.ts 的 BgNotifyRecord（不再本地重复定义） */
 
+/** [legacy] subagent toolCall startParam 的投影字段（按 toolCallId 索引） */
+interface LegacySubagentToolCall {
+  agent: string
+  slug: string
+  task: string
+}
+
+/** [legacy] listResponse item（background 模式状态更新，按 subagentId 索引） */
+type LegacySubagentListItem = NonNullable<NonNullable<SubagentToolResultData['listResponse']>['items']>[number]
+
+/** 自描述 entry 可选字符串字段守卫（typeof string ? 值 : undefined） */
+function optString(v: unknown): string | undefined {
+  return typeof v === 'string' ? v : undefined
+}
+
+/** 自描述 entry 可选数值字段守卫（typeof number ? 值 : undefined） */
+function optNumber(v: unknown): number | undefined {
+  return typeof v === 'number' ? v : undefined
+}
+
+/** 自描述 entry 可选布尔字段守卫（typeof boolean ? 值 : undefined） */
+function optBoolean(v: unknown): boolean | undefined {
+  return typeof v === 'boolean' ? v : undefined
+}
+
 /** JSONL 中的 message entry 结构（简化） */
 interface JsonlMessageEntry {
   type: string
@@ -136,57 +161,76 @@ export function scanSubagentEntries(entries: unknown[]): SubagentRecord[] {
 function collectSelfDescribedSubagentRecords(entries: unknown[]): SubagentRecord[] | null {
   const records = new Map<string, SubagentRecord>()
   for (const entry of entries) {
-    if (typeof entry !== 'object' || entry === null) continue
-    const e = entry as JsonlCustomEntry
-    if (e.type !== 'custom' || e.customType !== SUBAGENT_RECORD_CUSTOM_TYPE) continue
-    const data = e.data
-    if (typeof data !== 'object' || data === null) continue
-    const d = data as Record<string, unknown>
-    if (d.v !== 1) {
-      console.warn(
-        `[subagent-extractor] subagent-record entry schema version '${String(d.v)}' unsupported (expected 1) — ` +
-          `extension/runtime version skew, skip this entry. Fix: align schema with ` +
-          `extensions/subagent-workflow/src/execution/record-entry.ts (W16 v1).`,
-      )
-      continue
-    }
-    if (typeof d.id !== 'string' || typeof d.status !== 'string') continue
-    const status = normalizeSubagentStatus(d.status)
-    const startedAt = typeof d.startedAt === 'number' ? d.startedAt : undefined
-    const endedAt = typeof d.endedAt === 'number' ? d.endedAt : undefined
-    records.set(d.id, {
-      subagentId: d.id,
-      sessionFile: typeof d.sessionFile === 'string' ? d.sessionFile : null,
-      agent: typeof d.agent === 'string' ? d.agent : 'general-purpose',
-      slug: typeof d.slug === 'string' ? d.slug : '',
-      task: typeof d.task === 'string' ? d.task : '',
-      status,
-      // closedReason 仅 closed 终态投影（与 legacy 路径同构，防 running + closedReason 脏组合）
-      closedReason: status === 'closed' && typeof d.closedReason === 'string' ? d.closedReason : undefined,
-      turns: typeof d.turns === 'number' ? d.turns : undefined,
-      totalTokens: typeof d.totalTokens === 'number' ? d.totalTokens : undefined,
-      model: typeof d.model === 'string' ? d.model : undefined,
-      thinkingLevel: typeof d.thinkingLevel === 'string' ? d.thinkingLevel : undefined,
-      startedAt,
-      endedAt,
-      // elapsedSeconds 派生：entry 无 duration 字段（extension 快照不含），从 startedAt/
-      // endedAt 差值派生（与 legacy 的 listResponse.duration 同语义，秒）
-      elapsedSeconds: startedAt !== undefined && endedAt !== undefined && endedAt >= startedAt
-        // eslint-disable-next-line no-magic-numbers -- 1000 = ms→s 换算常数，无语义歧义
-        ? Math.round((endedAt - startedAt) / 1000)
-        : undefined,
-      error: typeof d.error === 'string' ? d.error : undefined,
-      // 轮终结果文本（running-resumable 轮终信号）：entry v1 的轮终迁移写点
-      // （reportRecordTransition ← finalize-round 的 doFinalizeRoundToIdle /
-      // onRoundSettled）恒写非空——renderer hasRunning 据此排除轮终 running（review #8）。
-      result: typeof d.result === 'string' ? d.result : undefined,
-      // 执行态细分判据（residual-fixes）：chatMode 显式值（register 起写入；缺省 = v1 前
-      // 存量 entry，消费端按保守方向处理）；resumable = 无活进程驱动的 running。
-      chatMode: typeof d.chatMode === 'boolean' ? d.chatMode : undefined,
-      resumable: typeof d.resumable === 'boolean' ? d.resumable : undefined,
-    })
+    const record = parseSelfDescribedSubagentRecord(entry)
+    if (record) records.set(record.subagentId, record)
   }
   return records.size > 0 ? Array.from(records.values()) : null
+}
+
+/**
+ * 单条 entry → SubagentRecord（type/customType/data/版本/必填字段逐层守卫，坏 entry 返回
+ * null）。同 id 后到覆盖（entry 顺序 = 时间顺序，extension 在状态迁移点 append，后者更新）。
+ * 版本不认识的 entry warn（可观测，对齐 workflow-extractor R4 版本漂移语义）。
+ */
+function parseSelfDescribedSubagentRecord(entry: unknown): SubagentRecord | null {
+  if (typeof entry !== 'object' || entry === null) return null
+  const e = entry as JsonlCustomEntry
+  if (e.type !== 'custom' || e.customType !== SUBAGENT_RECORD_CUSTOM_TYPE) return null
+  const data = e.data
+  if (typeof data !== 'object' || data === null) return null
+  const d = data as Record<string, unknown>
+  if (d.v !== 1) {
+    console.warn(
+      `[subagent-extractor] subagent-record entry schema version '${String(d.v)}' unsupported (expected 1) — ` +
+        `extension/runtime version skew, skip this entry. Fix: align schema with ` +
+        `extensions/subagent-workflow/src/execution/record-entry.ts (W16 v1).`,
+    )
+    return null
+  }
+  return projectSelfDescribedSubagentRecord(d)
+}
+
+/**
+ * 已守卫版本的 entry data → SubagentRecord 投影（必填 id/status 守卫 + 可选字段逐个 typeof
+ * 守卫缺省，与 legacy 路径同构）。runtime 只取 shared SubagentRecord 投影需要的字段
+ * （eventLog/displayItems 等扩展内部字段不进 runtime 契约）；缺必填字段视为坏 entry 返回 null。
+ */
+function projectSelfDescribedSubagentRecord(d: Record<string, unknown>): SubagentRecord | null {
+  if (typeof d.id !== 'string' || typeof d.status !== 'string') return null
+  const status = normalizeSubagentStatus(d.status)
+  const startedAt = optNumber(d.startedAt)
+  const endedAt = optNumber(d.endedAt)
+  return {
+    subagentId: d.id,
+    sessionFile: optString(d.sessionFile) ?? null,
+    agent: optString(d.agent) ?? 'general-purpose',
+    slug: optString(d.slug) ?? '',
+    task: optString(d.task) ?? '',
+    status,
+    // closedReason 仅 closed 终态投影（与 legacy 路径同构，防 running + closedReason 脏组合）
+    closedReason: status === 'closed' ? optString(d.closedReason) : undefined,
+    turns: optNumber(d.turns),
+    totalTokens: optNumber(d.totalTokens),
+    model: optString(d.model),
+    thinkingLevel: optString(d.thinkingLevel),
+    startedAt,
+    endedAt,
+    // elapsedSeconds 派生：entry 无 duration 字段（extension 快照不含），从 startedAt/
+    // endedAt 差值派生（与 legacy 的 listResponse.duration 同语义，秒）
+    elapsedSeconds: startedAt !== undefined && endedAt !== undefined && endedAt >= startedAt
+      // eslint-disable-next-line no-magic-numbers -- 1000 = ms→s 换算常数，无语义歧义
+      ? Math.round((endedAt - startedAt) / 1000)
+      : undefined,
+    error: optString(d.error),
+    // 轮终结果文本（running-resumable 轮终信号）：entry v1 的轮终迁移写点
+    // （reportRecordTransition ← finalize-round 的 doFinalizeRoundToIdle /
+    // onRoundSettled）恒写非空——renderer hasRunning 据此排除轮终 running（review #8）。
+    result: optString(d.result),
+    // 执行态细分判据（residual-fixes）：chatMode 显式值（register 起写入；缺省 = v1 前
+    // 存量 entry，消费端按保守方向处理）；resumable = 无活进程驱动的 running。
+    chatMode: optBoolean(d.chatMode),
+    resumable: optBoolean(d.resumable),
+  }
 }
 
 /**
@@ -214,156 +258,244 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
  * scanSubagentEntries 调用。W16 前创建的存量 session 由此路径继续可见（不静默丢失）。
  */
 function extractSubagentsFromEntriesLegacy(entries: unknown[]): SubagentRecord[] {
-
   // 提取主 session 的 cwd（首行 session entry），用于推导 subagent session 目录
-  const sessionEntry = entries.find(
-    (e): e is Record<string, unknown> =>
-      typeof e === 'object' && e !== null && (e as { type?: string }).type === 'session',
-  )
-  const mainCwd = typeof sessionEntry?.cwd === 'string' ? sessionEntry.cwd : null
+  const mainCwd = findLegacyMainCwd(entries)
 
   // 收集 subagent toolCall（按 toolCallId 索引）
-  const toolCalls = new Map<string, { agent: string; slug: string; task: string }>()
+  const toolCalls = new Map<string, LegacySubagentToolCall>()
   // 收集 subagent toolResult（按 toolCallId 索引）
   const toolResults = new Map<string, SubagentToolResultData>()
   // 收集 bg-notify（按 subagentId 索引）。复用 shared 的 BgNotifyRecord 类型，
   // 解析逻辑统一走 parseBgNotifyDetails（正确处理 single + batch 两种形态）。
   const bgNotifies = new Map<string, BgNotifyRecord>()
   // 收集 list response 中的 items（background 模式状态更新）
-  const listItems = new Map<string, NonNullable<NonNullable<SubagentToolResultData['listResponse']>['items']>[number]>()
+  const listItems = new Map<string, LegacySubagentListItem>()
 
   for (const entry of entries) {
     if (typeof entry !== 'object' || entry === null) continue
     const e = entry as JsonlMessageEntry & JsonlCustomEntry
 
-    // 处理 message entry
+    // 处理 message entry（assistant toolCall + toolResult 解析）
     if (e.type === 'message' && e.message) {
-      const msg = e.message
-      const role = msg.role
-      const content = msg.content
-
-      // assistant message：找 subagent toolCall
-      if (role === 'assistant' && Array.isArray(content)) {
-        for (const block of content) {
-          if (typeof block !== 'object' || block === null) continue
-          const b = block as { type?: string; name?: string; id?: string; arguments?: unknown }
-          if (b.type === 'toolCall' && b.name === 'subagent' && b.id && typeof b.arguments === 'object') {
-            const args = b.arguments as SubagentStartArgs
-            if (args.action === 'start') {
-              toolCalls.set(b.id, {
-                // 对齐 pi-subagent-workflow DEFAULT_AGENT_NAME。LLM 没传 agent 时 pi 实际启动的就是 general-purpose，
-                // 不是"未知"。真实值会在 record 合并时被 notify.agent 覆盖（见下方 agent 优先级链）。
-                agent: args.startParam?.agent ?? 'general-purpose',
-                slug: args.startParam?.slug ?? '',
-                task: args.startParam?.task ?? '',
-              })
-            }
-          }
-        }
-      }
-
-      // toolResult message：找 subagent toolResult
-      if (role === 'toolResult' && msg.toolName === 'subagent' && msg.toolCallId) {
-        if (Array.isArray(content) && content.length > 0) {
-          const firstBlock = content[0] as { type?: string; text?: string }
-          if (firstBlock?.type === 'text' && typeof firstBlock.text === 'string') {
-            try {
-              const parsed = JSON.parse(firstBlock.text) as SubagentToolResultData
-              toolResults.set(msg.toolCallId, parsed)
-            // eslint-disable-next-line taste/no-silent-catch -- toolResult text 不是合法 JSON（如错误消息 "startParam is required"），跳过该条
-            } catch {
-              // skip malformed toolResult
-            }
-          }
-        }
-      }
+      collectLegacyMessageEntry(e.message, toolCalls, toolResults)
     }
 
     // 处理 custom_message entry：找 subagent-bg-notify
     // 用 parseBgNotifyDetails 统一解析 single + batch 两种形态（pi notifier 滑动窗口 60s 合并），
     // 避免 batch 形态 {batch:true, items:[...]} 时 details.id 为 undefined 整批被丢弃。
     if (e.type === 'custom_message' && e.customType === 'subagent-bg-notify') {
-      const parsed = parseBgNotifyDetails(e.details)
-      if (!parsed) continue
-      const records: BgNotifyRecord[] = 'batch' in parsed ? parsed.items : [parsed]
-      for (const record of records) {
-        // 同 id 后到的覆盖先到的（理论上同一 subagent 只 notify 一次）
-        bgNotifies.set(record.id, record)
-      }
+      collectLegacyBgNotifies(e.details, bgNotifies)
     }
   }
 
   // 合并 toolResult 中的 listResponse items
-  for (const tr of toolResults.values()) {
-    if (tr.listResponse?.items) {
-      for (const item of tr.listResponse.items) {
-        if (item.subagentId) {
-          listItems.set(item.subagentId, item)
-        }
-      }
-    }
+  collectLegacyListItems(toolResults, listItems)
+
+  // 构造 SubagentRecord[]（toolCall × toolResult 配对）
+  return buildLegacySubagentRecords(toolCalls, toolResults, listItems, bgNotifies, mainCwd)
+}
+
+/** [legacy] 主 session 的 cwd 提取（首条 session entry，用于推导 subagent session 目录） */
+function findLegacyMainCwd(entries: unknown[]): string | null {
+  const sessionEntry = entries.find(
+    (e): e is Record<string, unknown> =>
+      typeof e === 'object' && e !== null && (e as { type?: string }).type === 'session',
+  )
+  return typeof sessionEntry?.cwd === 'string' ? sessionEntry.cwd : null
+}
+
+/** [legacy] message entry 分流：assistant 的 subagent toolCall 收集 + toolResult 解析 */
+function collectLegacyMessageEntry(
+  msg: NonNullable<JsonlMessageEntry['message']>,
+  toolCalls: Map<string, LegacySubagentToolCall>,
+  toolResults: Map<string, SubagentToolResultData>,
+): void {
+  const role = msg.role
+  const content = msg.content
+
+  // assistant message：找 subagent toolCall
+  if (role === 'assistant' && Array.isArray(content)) {
+    collectLegacyToolCalls(content, toolCalls)
   }
 
-  // 构造 SubagentRecord[]
+  // toolResult message：找 subagent toolResult
+  if (role === 'toolResult' && msg.toolName === 'subagent' && msg.toolCallId) {
+    const parsed = parseLegacyToolResultContent(msg.content)
+    if (parsed) toolResults.set(msg.toolCallId, parsed)
+  }
+}
+
+/** [legacy] assistant content blocks 中的 subagent start toolCall 收集（按 toolCallId 索引） */
+function collectLegacyToolCalls(content: unknown[], toolCalls: Map<string, LegacySubagentToolCall>): void {
+  for (const block of content) {
+    const call = parseLegacyToolCallBlock(block)
+    if (call) toolCalls.set(call.id, call.info)
+  }
+}
+
+/**
+ * [legacy] 单个 content block → subagent start toolCall（非命中返回 null）。
+ * agent 兜底对齐 pi-subagent-workflow DEFAULT_AGENT_NAME。LLM 没传 agent 时 pi 实际启动的就是
+ * general-purpose，不是"未知"。真实值会在 record 合并时被 notify.agent 覆盖（见 agent 优先级链）。
+ */
+function parseLegacyToolCallBlock(block: unknown): { id: string; info: LegacySubagentToolCall } | null {
+  if (typeof block !== 'object' || block === null) return null
+  const b = block as { type?: string; name?: string; id?: string; arguments?: unknown }
+  if (b.type !== 'toolCall' || b.name !== 'subagent' || !b.id || typeof b.arguments !== 'object') return null
+  const args = b.arguments as SubagentStartArgs
+  if (args.action !== 'start') return null
+  return {
+    id: b.id,
+    info: {
+      agent: args.startParam?.agent ?? 'general-purpose',
+      slug: args.startParam?.slug ?? '',
+      task: args.startParam?.task ?? '',
+    },
+  }
+}
+
+/**
+ * [legacy] toolResult message content → 解析结果（首个 text block 的 JSON）。
+ * 无 text block / 非合法 JSON（如错误消息 "startParam is required"）返回 null 跳过该条。
+ */
+function parseLegacyToolResultContent(content: unknown): SubagentToolResultData | null {
+  if (!Array.isArray(content) || content.length === 0) return null
+  const firstBlock = content[0] as { type?: string; text?: string }
+  if (firstBlock?.type !== 'text' || typeof firstBlock.text !== 'string') return null
+  try {
+    return JSON.parse(firstBlock.text) as SubagentToolResultData
+  } catch {
+    return null
+  }
+}
+
+/**
+ * [legacy] subagent-bg-notify 收集（按 subagentId 索引）。
+ * 同 id 后到的覆盖先到的（理论上同一 subagent 只 notify 一次）。
+ */
+function collectLegacyBgNotifies(details: unknown, bgNotifies: Map<string, BgNotifyRecord>): void {
+  const parsed = parseBgNotifyDetails(details)
+  if (!parsed) return
+  const records: BgNotifyRecord[] = 'batch' in parsed ? parsed.items : [parsed]
+  for (const record of records) {
+    bgNotifies.set(record.id, record)
+  }
+}
+
+/** [legacy] toolResult 的 listResponse items 合并（按 subagentId 索引，同 id 后到覆盖） */
+function collectLegacyListItems(
+  toolResults: Map<string, SubagentToolResultData>,
+  listItems: Map<string, LegacySubagentListItem>,
+): void {
+  for (const tr of toolResults.values()) {
+    const items = tr.listResponse?.items
+    if (!items) continue
+    for (const item of items) {
+      if (item.subagentId) listItems.set(item.subagentId, item)
+    }
+  }
+}
+
+/**
+ * [legacy] toolCall × toolResult 配对构造 SubagentRecord[]。
+ * 仅 background 模式（pi-subagent-workflow 只有 background）——有 bgResponse 的配对才产出
+ * 记录；同 subagentId 去重（首个配对胜出）。
+ */
+function buildLegacySubagentRecords(
+  toolCalls: Map<string, LegacySubagentToolCall>,
+  toolResults: Map<string, SubagentToolResultData>,
+  listItems: Map<string, LegacySubagentListItem>,
+  bgNotifies: Map<string, BgNotifyRecord>,
+  mainCwd: string | null,
+): SubagentRecord[] {
   const records: SubagentRecord[] = []
   const seenIds = new Set<string>()
-
   for (const [toolCallId, tc] of toolCalls) {
     const tr = toolResults.get(toolCallId)
-    if (!tr) continue
-
-    // background 模式（pi-subagent-workflow 只有 background）
-    if (tr.bgResponse) {
-      const subagentId = tr.subagentId ?? 'unknown'
-      if (seenIds.has(subagentId)) continue
-      seenIds.add(subagentId)
-
-      // 从 listResponse items 或 bg-notify 更新状态
-      const listItem = listItems.get(subagentId)
-      const notify = bgNotifies.get(subagentId)
-
-      // status 归一：v4 起 notify.status 是两态枚举（running/closed，详见 subagent-extractor.ts 头部
-      // 契约注释），legacy 值 done/failed/cancelled 仅为历史 session 数据保留；走
-      // normalizeSubagentStatus 统一兼容上游变体（completed/error/crashed 等）。notify 缺失时回落
-      // listItem.status（[review 修复] 删除原 `?? normalizeSubagentStatus(tr.bgResponse.status)` 右支——
-      // normalizeSubagentStatus 恒返回非空（falsy 输入回 'running'），?? 右支永不可达）。
-      const status: SubagentStatus = notify
-        ? normalizeSubagentStatus(notify.status)
-        : normalizeSubagentStatus(listItem?.status)
-
-      // sessionFile 回退查找：listResponse/bg-notify 都不带 sessionFile 时，
-      // 扫描 subagent session 目录用 startedAt 时间戳匹配最近的 JSONL 文件。
-      let resolvedSessionFile = listItem?.sessionFile ?? tr.sessionFile ?? null
-      if (!resolvedSessionFile && mainCwd) {
-        const startedAt = notify?.startedAt
-        resolvedSessionFile = findSubagentSessionFile(mainCwd, startedAt)
-      }
-
-      records.push({
-        subagentId,
-        sessionFile: resolvedSessionFile,
-        // agent 优先级：bg-notify（pi 执行期真实值）> listResponse item > toolCall startParam（LLM 传的，兜底 general-purpose）
-        agent: notify?.agent ?? listItem?.agent ?? tc.agent,
-        slug: tc.slug,
-        task: tc.task,
-        status,
-        model: notify?.model ?? listItem?.model,
-        totalTokens: listItem?.totalTokens,
-        elapsedSeconds: listItem?.duration,
-        startedAt: notify?.startedAt,
-        endedAt: notify?.endedAt,
-        error: notify?.error,
-        // L2 关闭原因（v4 B-1）：bg-notify 与 list item 都可能携带，notify 优先（终态时点更晚）。
-        // 仅 status === 'closed' 时投影，与实时路径（event-interpreter handleSubagentBgNotify）
-        // 同构——最后一条 notify 为 running（轮次完成通知）时不从 listItem 兜底 closedReason，
-        // 消除 running + closedReason 脏组合。
-        closedReason: status === 'closed' ? (notify?.closedReason ?? listItem?.closedReason) : undefined,
-      })
-      continue
-    }
+    if (!tr?.bgResponse) continue
+    const subagentId = tr.subagentId ?? 'unknown'
+    if (seenIds.has(subagentId)) continue
+    seenIds.add(subagentId)
+    // 从 listResponse items 或 bg-notify 更新状态
+    records.push(
+      buildLegacySubagentRecord(subagentId, tc, tr, listItems.get(subagentId), bgNotifies.get(subagentId), mainCwd),
+    )
   }
-
   return records
+}
+
+/** [legacy] 单条 background subagent → SubagentRecord（notify/listItem 双源回退链） */
+function buildLegacySubagentRecord(
+  subagentId: string,
+  tc: LegacySubagentToolCall,
+  tr: SubagentToolResultData,
+  listItem: LegacySubagentListItem | undefined,
+  notify: BgNotifyRecord | undefined,
+  mainCwd: string | null,
+): SubagentRecord {
+  const status = resolveLegacySubagentStatus(notify, listItem)
+  return {
+    subagentId,
+    // sessionFile 回退查找：listResponse/bg-notify 都不带 sessionFile 时，
+    // 扫描 subagent session 目录用 startedAt 时间戳匹配最近的 JSONL 文件。
+    sessionFile: resolveLegacySessionFile(listItem, tr, notify, mainCwd),
+    // agent 优先级：bg-notify（pi 执行期真实值）> listResponse item > toolCall startParam（LLM 传的，兜底 general-purpose）
+    agent: notify?.agent ?? listItem?.agent ?? tc.agent,
+    slug: tc.slug,
+    task: tc.task,
+    status,
+    model: notify?.model ?? listItem?.model,
+    totalTokens: listItem?.totalTokens,
+    elapsedSeconds: listItem?.duration,
+    startedAt: notify?.startedAt,
+    endedAt: notify?.endedAt,
+    error: notify?.error,
+    closedReason: resolveLegacyClosedReason(status, notify, listItem),
+  }
+}
+
+/**
+ * [legacy] status 归一：v4 起 notify.status 是两态枚举（running/closed，详见头部契约注释），
+ * legacy 值 done/failed/cancelled 仅为历史 session 数据保留；走 normalizeSubagentStatus 统一
+ * 兼容上游变体（completed/error/crashed 等）。notify 缺失时回落 listItem.status（[review 修复]
+ * 删除原 `?? normalizeSubagentStatus(tr.bgResponse.status)` 右支——normalizeSubagentStatus 恒
+ * 返回非空（falsy 输入回 'running'），?? 右支永不可达）。
+ */
+function resolveLegacySubagentStatus(
+  notify: BgNotifyRecord | undefined,
+  listItem: LegacySubagentListItem | undefined,
+): SubagentStatus {
+  return notify
+    ? normalizeSubagentStatus(notify.status)
+    : normalizeSubagentStatus(listItem?.status)
+}
+
+/**
+ * [legacy] L2 关闭原因（v4 B-1）：bg-notify 与 list item 都可能携带，notify 优先（终态时点更晚）。
+ * 仅 status === 'closed' 时投影，与实时路径（event-interpreter handleSubagentBgNotify）同构——
+ * 最后一条 notify 为 running（轮次完成通知）时不从 listItem 兜底 closedReason，消除
+ * running + closedReason 脏组合。
+ */
+function resolveLegacyClosedReason(
+  status: SubagentStatus,
+  notify: BgNotifyRecord | undefined,
+  listItem: LegacySubagentListItem | undefined,
+): string | undefined {
+  return status === 'closed' ? (notify?.closedReason ?? listItem?.closedReason) : undefined
+}
+
+/** [legacy] sessionFile 三级回退：listItem → toolResult → startedAt 时间戳匹配目录扫描 */
+function resolveLegacySessionFile(
+  listItem: LegacySubagentListItem | undefined,
+  tr: SubagentToolResultData,
+  notify: BgNotifyRecord | undefined,
+  mainCwd: string | null,
+): string | null {
+  let resolvedSessionFile = listItem?.sessionFile ?? tr.sessionFile ?? null
+  if (!resolvedSessionFile && mainCwd) {
+    resolvedSessionFile = findSubagentSessionFile(mainCwd, notify?.startedAt)
+  }
+  return resolvedSessionFile
 }
 
 /**

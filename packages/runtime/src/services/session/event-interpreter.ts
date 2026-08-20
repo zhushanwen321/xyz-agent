@@ -81,25 +81,20 @@ export interface EventInterpreterOptions {
   onTurnFinalize?: (sessionId: string, stopReason?: string) => void
   /**
    * session_info_changed 的内存态回写（组合根注入 sessionService.setLabelCache——
-   * W9 后是 session.label 的唯一即时数据源，toSummary/config.sessions 读它；W12/W13
-   * state 话题发布切实例快照后由 applySnapshot 承接）。实例失效走 labelState markDirty。
+   * session.label 事件路径的唯一写方，toSummary/config.sessions 读它；session.renamed
+   * 广播帧由 event-adapter 从事件 payload 直接转发，pi 是权威源）。
+   * [HISTORICAL] label 的 ReplicatedState 实例及其 markDirty 失效接线已撤销（PR #185
+   * MF1：实例 .get() 生产零消费，防抖重拉 get_state 属无效 RPC，事件直写即终态形态）。
    */
   onSessionRenamed?: (sessionId: string, name: string | undefined) => void
   /**
-   * W7 data-source-governance：label ReplicatedState 实例的延迟解析器。
-   *
-   * session_info_changed 到达时调 labelState()?.markDirty()——事件只做失效（置 dirty +
-   * 防抖重拉 get_state），事件 payload 永不直接写实例数据（D7 原则 4）。
-   * 延迟解析（与 pingPi 同款模式）：interpreter 在 session 创建时构造，那时实例可能尚未
-   * 注册（initializeManagedSession 先建 adapter 后注册实例）；session 已销毁时解析为
-   * undefined（实例已 dispose，markDirty 本也是 no-op），安全跳过。
-   */
-  labelState?: () => { markDirty: () => void } | undefined
-  /**
    * W7 data-source-governance：thinkingLevel ReplicatedState 实例的延迟解析器。
    *
-   * thinking_level_changed 到达时调 thinkingLevelState()?.markDirty()——同 labelState，
-   * 事件只做失效；pi 同档位切换不发射事件，由实例的周期兜底（pollIntervalMs 30s）覆盖。
+   * thinking_level_changed 到达时调 thinkingLevelState()?.markDirty()——事件只做失效；
+   * pi 同档位切换不发射事件，由实例的周期兜底（pollIntervalMs 30s）覆盖。延迟解析
+   * （与 pingPi 同款模式）：interpreter 在 session 创建时构造，那时实例可能尚未
+   * 注册（initializeManagedSession 先建 adapter 后注册实例）；session 已销毁时解析为
+   * undefined（实例已 dispose，markDirty 本也是 no-op），安全跳过。
    */
   thinkingLevelState?: () => { markDirty: () => void } | undefined
   /** extension 交互式 UI 请求（注册前端超时 + 缓存 pending 请求）。组合根注入 server.registerExtensionTimeout。 */
@@ -331,11 +326,10 @@ export class EventInterpreter {
         this.opts.thinkingLevelState?.()?.markDirty()
         return
       case 'session-renamed':
-        // W7 数据源治理：session_info_changed 只做失效——markDirty 置 dirty + 防抖重拉
-        // get_state，事件 payload 不再是 label 实例的数据源（session.renamed 广播帧由上方
-        // 'message' 分支照常转发，type 名 W12 统一切 state 话题）。
-        this.opts.labelState?.()?.markDirty()
-        // 内存态回写（setLabelCache）：W12/W13 前 toSummary/config.sessions 的即时数据源。
+        // PR #185 MF1：session_info_changed 的唯一编排动作 = onSessionRenamed 内存态回写
+        //（组合根接 sessionService.setLabelCache，session.label 事件路径唯一写方）。
+        // session.renamed 广播帧由 event-adapter 从事件 payload 直接转发（pi 权威源），
+        // label 的 ReplicatedState 实例及 markDirty 失效接线已撤销（终态 = 事件直写）。
         this.opts.onSessionRenamed?.(this.sessionId, ev.name)
         return
       case 'hook':

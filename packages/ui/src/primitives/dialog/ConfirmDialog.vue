@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { AlertTriangle, Loader2 } from '@lucide/vue'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '.'
-import { Button } from '@xyz-agent/ui'
+// ui 包内相对导入（不经 @xyz-agent/ui 顶层 barrel）：primitives 是顶层 barrel 的
+// 再导出来源，顶层 barrel 自引用会闭合循环依赖环
+import { Button } from '../button'
 
 /**
  * 确认对话框原语 —— 收敛「标题 + 描述 + 取消/确认」骨架。

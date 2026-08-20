@@ -753,6 +753,37 @@ function normalizeReviewResult(raw) {
  * rfl 数据链（tier-1 §7.2）：条目扩展字段（files/evidence/guidance/adjudication/note）透传——
  * 旧实现白名单只保留 {id,severity}，扩展字段被静默丢弃（v4 审查发现的断点）。类型防御：
  * files 非字符串数组剔除、标量扩展字段非字符串剔除；旧格式（string[] / {id,severity}）兼容不变。 */
+/** severity 归一（M1 小写 + A5 枚举校验）：js 侧 === "critical" 严格比较（converged
+ *  终止判定）依赖小写；非 critical|major|minor 一律回退 "major"（单点 choke——
+ *  must-fix 条目的 must-fix 语义缺省），畸形值（"blocker"/"urgent" 等）不透传到消费侧。 */
+function normalizeSeverity(x) {
+  const sevRaw = typeof x.severity === "string" ? x.severity.toLowerCase() : "major";
+  return (sevRaw === "critical" || sevRaw === "major" || sevRaw === "minor") ? sevRaw : "major";
+}
+
+/** must_fix_ids 单条归一：string 视作 major；object 经结构化校验后透传扩展字段；
+ *  畸形条目返回 null（调用方 filter(Boolean) 剔除）。 */
+function normalizeMustFixEntry(x) {
+  if (typeof x === "string") return { id: x, severity: "major" };
+  if (!(x && typeof x === "object" && typeof x.id === "string")) return null;
+  const entry = { id: x.id, severity: normalizeSeverity(x) };
+  // A7: files 判空与落地统一 trim——原值含空白路径会与 git 实测路径比对 miss，
+  // origin 误判 new（归因失真）。
+  if (Array.isArray(x.files)) {
+    const files = x.files
+      .filter((f) => typeof f === "string" && f.trim())
+      .map((f) => f.trim());
+    if (files.length > 0) entry.files = files;
+  }
+  for (const k of ["evidence", "guidance", "note"]) {
+    if (typeof x[k] === "string" && x[k].trim()) entry[k] = x[k];
+  }
+  if (x.adjudication === "evidence" || x.adjudication === "unverified" || x.adjudication === "downgraded") {
+    entry.adjudication = x.adjudication;
+  }
+  return entry;
+}
+
 function normalizeAggregatorResult(raw) {
   const parsed = parseResult(raw);
   if (!parsed) return null;
@@ -772,34 +803,7 @@ function normalizeAggregatorResult(raw) {
   // 让消费侧 `agg.must_fix_ids &&` gate 生效（如 A4/W5 的跨批 clean-skip 授予；
   // [] 恒 truthy，合并缺省会让 gate 对漏输出放行）。
   const idsRaw = Array.isArray(parsed.must_fix_ids) ? parsed.must_fix_ids : null;
-  const must_fix_ids = idsRaw ? idsRaw.map((x) => {
-    if (typeof x === "string") return { id: x, severity: "major" };
-    if (x && typeof x === "object" && typeof x.id === "string") {
-      // M1: severity 小写归一——LLM 可能返回 "Critical"/"MAJOR"，js 侧 === "critical"
-      // 严格比较（converged 终止判定）依赖小写；A5 枚举校验：非 critical|major|minor
-      // 一律回退 "major"（单点 choke——must-fix 条目的 must-fix 语义缺省），畸形值
-      // （"blocker"/"urgent" 等）不透传到消费侧。
-      const sevRaw = typeof x.severity === "string" ? x.severity.toLowerCase() : "major";
-      const sev = (sevRaw === "critical" || sevRaw === "major" || sevRaw === "minor") ? sevRaw : "major";
-      const entry = { id: x.id, severity: sev };
-      // A7: files 判空与落地统一 trim——原值含空白路径会与 git 实测路径比对 miss，
-      // origin 误判 new（归因失真）。
-      if (Array.isArray(x.files)) {
-        const files = x.files
-          .filter((f) => typeof f === "string" && f.trim())
-          .map((f) => f.trim());
-        if (files.length > 0) entry.files = files;
-      }
-      for (const k of ["evidence", "guidance", "note"]) {
-        if (typeof x[k] === "string" && x[k].trim()) entry[k] = x[k];
-      }
-      if (x.adjudication === "evidence" || x.adjudication === "unverified" || x.adjudication === "downgraded") {
-        entry.adjudication = x.adjudication;
-      }
-      return entry;
-    }
-    return null;
-  }).filter(Boolean) : undefined;
+  const must_fix_ids = idsRaw ? idsRaw.map(normalizeMustFixEntry).filter(Boolean) : undefined;
   const result = {
     report_file: parsed.report_file || parsed.reportFile,
     must_fix: mustFix,
@@ -1061,6 +1065,28 @@ function countMissingFields(entries) {
  * 匹配键必须含 batch（脚本侧落盘时给全部 scores entry 权威补 batch 字段）。
  * @returns 新 scores 数组（输入不修改）
  */
+/** A9 三态成因 note（无 LLM entry 时的说明文本）：clean / unverifiable / normal。 */
+function backfillNote(m) {
+  return m === "clean"
+    ? "clean-round deterministic backfill: LLM dimensions unavailable (no aggregation on the clean-terminating round)"
+    : m === "unverifiable"
+      ? "regression unverifiable: no tracked issues matched this round (aggregator numeric-only fallback?); treat as missing data"
+      : "deterministic backfill: aggregation ran but returned no usable fix score entry";
+}
+
+/** 回填计数：上轮 fix 的 fixes[].issue_id（findIssueKey 归一匹配）中，本轮 reconcile
+ *  后 history 含 {round, status:"regressed"} 的条目数。 */
+function countRegressedFixes(fixResult, issues, round) {
+  let regressed = 0;
+  for (const f of fixResult.fixes) {
+    const key = findIssueKey(issues, f && typeof f.issue_id === "string" ? f.issue_id : "");
+    if (!key) continue;
+    const hist = (issues[key].history || []);
+    if (hist.some((h) => h && h.round === round && h.status === "regressed")) regressed++;
+  }
+  return regressed;
+}
+
 function backfillFixRegression({ scores, fixResult, issues, round, batch, cleanRound, mode }) {
   const m = mode || (cleanRound ? "clean" : "normal");
   const list = Array.isArray(scores) ? scores.map((s) => ({ ...s, dimensions: { ...(s.dimensions || {}) } })) : [];
@@ -1080,11 +1106,7 @@ function backfillFixRegression({ scores, fixResult, issues, round, batch, cleanR
       round: scoredRound, targetKind: "fix", targetName: "fix", batch: batchId,
       dimensions: { coverage: null, selfCheck: null, minimality: null },
       total: null,
-      note: m === "clean"
-        ? "clean-round deterministic backfill: LLM dimensions unavailable (no aggregation on the clean-terminating round)"
-        : m === "unverifiable"
-          ? "regression unverifiable: no tracked issues matched this round (aggregator numeric-only fallback?); treat as missing data"
-          : "deterministic backfill: aggregation ran but returned no usable fix score entry",
+      note: backfillNote(m),
     };
     list.push(entry);
   } else if (entry.batch == null) {
@@ -1097,13 +1119,7 @@ function backfillFixRegression({ scores, fixResult, issues, round, batch, cleanR
     entry.dimensions.regression = null;
     return list;
   }
-  let regressed = 0;
-  for (const f of fixResult.fixes) {
-    const key = findIssueKey(issues || {}, f && typeof f.issue_id === "string" ? f.issue_id : "");
-    if (!key) continue;
-    const hist = (issues[key].history || []);
-    if (hist.some((h) => h && h.round === round && h.status === "regressed")) regressed++;
-  }
+  const regressed = countRegressedFixes(fixResult, issues || {}, round);
   entry.dimensions.regression = Math.max(0, Math.round((10 - 10 * (regressed / fixResult.fixes.length)) * 10) / 10);
   return list;
 }

@@ -46,7 +46,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { AgentCall } from "./models/agent-call.ts";
@@ -251,6 +251,51 @@ function deserializeRun(snapshot: RunSnapshot): WorkflowRun | null {
  // （进程被杀后 worker 不可能还活着），违反 I1。D-4 kill-9 恢复在 session_start
  // 时把残留 running 转 done,failed，恢复 I1（见 index.ts session_start handler）。
   return WorkflowRun.reconstruct(snapshot.runId, snapshot.spec, state, meta);
+}
+
+/** loadAll 的 entry 扫描：主 session entries → 自描述 record 快照（每 runId 末条胜出）
+ *  + 旧 workflow-state-link 指针（仅 state 文件发现通道）。 */
+function collectEntrySources(entries: SessionEntry[]): {
+  recordRuns: Map<string, WorkflowRun>;
+  pointers: Map<string, { path: string }>;
+} {
+  const recordRuns = new Map<string, WorkflowRun>();
+  const pointers = new Map<string, { path: string }>();
+  for (const entry of entries) {
+    if (entry.type !== "custom") continue;
+    if (entry.customType === WORKFLOW_RECORD_CUSTOM_TYPE) {
+      // v1 entry guard：schema 版本不认识 → 跳过（不猜测解析）
+      const data = entry.data as WorkflowRecordEntryData | undefined;
+      if (data?.v !== 1 || !data.snapshot) continue;
+      const run = deserializeRun(data.snapshot);
+      // D-5: null = old snapshot format / version mismatch — skip silently
+      if (run) recordRuns.set(run.runId, run); // 后写覆盖 = 最后一条 entry 胜出
+    } else if (entry.customType === "workflow-state-link") {
+      // 旧指针形态（W17 前写入）：仅作 state 文件的发现通道
+      const data = entry.data as { runId?: string; path?: string } | undefined;
+      if (data?.runId && data?.path) {
+        pointers.set(data.runId, { path: data.path });
+      }
+    }
+  }
+  return { recordRuns, pointers };
+}
+
+/** 旧 link 指针指向的 state 文件读取：末行 JSON 解析重建。损坏/不可读返回 null
+ *  （单文件失败不阻断其余 run 重建）。 */
+async function loadRunFromStateFile(filePath: string): Promise<WorkflowRun | null> {
+  try {
+    const content = await fs.promises.readFile(filePath, "utf8");
+    const lines = content.split("\n").filter((l) => l.trim());
+    const lastLine = lines[lines.length - 1];
+    if (!lastLine) return null;
+    const parsed = JSON.parse(lastLine) as RunSnapshot;
+    // D-5: null = old format / version mismatch — skip silently
+    return deserializeRun(parsed);
+  } catch {
+    // Corrupt/unreadable state file — skip (don't crash loadAll).
+    return null;
+  }
 }
 
 // ── JsonlRunStore ────────────────────────────────────────────
@@ -568,26 +613,7 @@ export class JsonlRunStore {
     const runs: WorkflowRun[] = [];
     try {
       const entries = this.ctx.sessionManager.getEntries();
-      const recordRuns = new Map<string, WorkflowRun>();
-      const pointers = new Map<string, { path: string }>();
-
-      for (const entry of entries) {
-        if (entry.type !== "custom") continue;
-        if (entry.customType === WORKFLOW_RECORD_CUSTOM_TYPE) {
-          // v1 entry guard：schema 版本不认识 → 跳过（不猜测解析）
-          const data = entry.data as WorkflowRecordEntryData | undefined;
-          if (data?.v !== 1 || !data.snapshot) continue;
-          const run = deserializeRun(data.snapshot);
-          // D-5: null = old snapshot format / version mismatch — skip silently
-          if (run) recordRuns.set(run.runId, run); // 后写覆盖 = 最后一条 entry 胜出
-        } else if (entry.customType === "workflow-state-link") {
-          // 旧指针形态（W17 前写入）：仅作 state 文件的发现通道
-          const data = entry.data as { runId?: string; path?: string } | undefined;
-          if (data?.runId && data?.path) {
-            pointers.set(data.runId, { path: data.path });
-          }
-        }
-      }
+      const { recordRuns, pointers } = collectEntrySources(entries);
 
       // 1) 自描述 entry 重建（优先——pi 文件是持久化权威）
       runs.push(...recordRuns.values());
@@ -595,20 +621,8 @@ export class JsonlRunStore {
       // 2) 旧 link 指针 → state 文件兼容（entry 已覆盖的 runId 跳过——link 优先级低）
       for (const [runId, pointer] of pointers) {
         if (recordRuns.has(runId)) continue;
-        try {
-          const content = await fs.promises.readFile(pointer.path, "utf8");
-          const lines = content.split("\n").filter((l) => l.trim());
-          const lastLine = lines[lines.length - 1];
-          if (!lastLine) continue;
-          const parsed = JSON.parse(lastLine) as RunSnapshot;
-          const run = deserializeRun(parsed);
- // D-5: null = old format / version mismatch — skip silently
-          if (run) runs.push(run);
-        } catch (err) {
- // Corrupt/unreadable state file — skip (don't crash loadAll).
- // Single bad file must not abort reconstruction of the rest.
-          void err;
-        }
+        const run = await loadRunFromStateFile(pointer.path);
+        if (run) runs.push(run);
       }
     } catch (err) {
  // getEntries failed — return what we have (empty).
