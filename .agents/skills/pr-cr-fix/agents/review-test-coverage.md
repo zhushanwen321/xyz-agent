@@ -16,6 +16,9 @@ task prompt 中必须包含：
 - `targets.high_crap`：introduced 函数按 CRAP 降序的靶子清单（含 path/line/name/cyclomatic/cognitive/crap/coverage_tier）。这些函数复杂且测试覆盖不足（coverage_tier 为静态估算值），是最可能藏 bug 的位置，**优先逐一核对**其测试覆盖
 - `fail`/`warn` 中的 complexity 条目：fail 项在 Gate-1.5 已被打回（若仍出现说明是门禁后新增）；warn 项中认知复杂度超标的函数重点审查边缘路径测试
 
+阶段 1.6 产物 `<repo>/.review/coverage.json` 存在时必须消费：
+- 各包 `uncovered_files` 清单（增量可执行行未覆盖文件 + 命中数/总数）：这些是**实测**（跑过测试）的增量覆盖缺口，比静态估算更权威——清单内文件的新增分支逻辑无测试 → MUST_FIX；补测试建议直接引用该清单的行缺口数字
+
 ## 执行步骤
 
 1. **获取变更范围**：`git diff main...HEAD --stat` + `git diff main...HEAD`。

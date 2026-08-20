@@ -1,4 +1,14 @@
 {
+  "dynamicallyLoaded": [
+    "extensions/*/index.ts",
+    "taste-lint/**/*.test.mjs"
+  ],
+  "ignoreExports": [
+    {
+      "file": "extensions/shared/file-lock/src/file-lock.ts",
+      "exports": ["DEFAULT_RETRY_BUDGET_MS", "DEFAULT_RETRY_DELAY_MS", "DEFAULT_STALE_MS", "SyncFileLockOptions", "withFileLockSync"]
+    }
+  ],
   "health": {
     "maxCyclomatic": 15,
     "maxCognitive": 15,

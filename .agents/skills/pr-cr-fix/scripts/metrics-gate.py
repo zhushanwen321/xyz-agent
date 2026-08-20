@@ -45,6 +45,27 @@ WARN_DEAD_CODE_KINDS = [
 TARGET_TOP_N = 20
 
 
+def locate_dead_code_item(kind: str, item: dict) -> dict:
+    """从 fallow dead_code 条目提取可定位的 path/line。
+
+    各 kind 顶层字段不一致（R2 monorepo-impact S-3：unlisted_dependencies 无 path 只有
+    imported_from[]，duplicate_exports 只有 locations[]）——逐 kind 映射，保证 warn 条目
+    可定位到文件。
+    """
+    if kind == "unlisted_dependencies":
+        first = (item.get("imported_from") or [{}])[0]
+        return {"path": first.get("path"), "line": first.get("line"),
+                "note": f"package={item.get('package_name')}"}
+    if kind == "duplicate_exports":
+        locs = item.get("locations") or []
+        return {"path": locs[0].get("path") if locs else None,
+                "line": locs[0].get("line") if locs else None,
+                "files": [l.get("path") for l in locs],
+                "note": f"export={item.get('export_name')}"}
+    return {"path": item.get("path"), "line": item.get("line"),
+            "note": item.get("parent_name") or ""}
+
+
 def load_thresholds(repo_root: Path) -> dict:
     config = repo_root / ".fallowrc.json"
     if not config.is_file():
@@ -114,8 +135,9 @@ def judge(report: dict, thresholds: dict) -> dict:
     for kind in WARN_DEAD_CODE_KINDS:
         for item in dead.get(kind) or []:
             if isinstance(item, dict) and item.get("introduced"):
-                warn.append({"type": kind, "path": item.get("path"), "line": item.get("line"),
-                             "reason": item.get("export_name") or item.get("specifier") or kind})
+                warn.append({"type": kind, **locate_dead_code_item(kind, item),
+                             "reason": item.get("export_name") or item.get("member_name")
+                                       or item.get("package_name") or item.get("type_name") or kind})
 
     dup_groups = [g for g in report.get("duplication", {}).get("clone_groups", []) if g.get("introduced")]
     for g in sorted(dup_groups, key=lambda g: -(g.get("line_count") or 0))[:5]:

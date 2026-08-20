@@ -125,11 +125,71 @@ fallow audit 的 complexity findings 超阈值即 fail、无 warn 档；且无 `
 
 ---
 
+## 阶段 1.6：增量覆盖率门禁（Gate-1.6）[MANDATORY]
+
+**增量覆盖率 ≥ 50% 才达标。** 与 Gate-1.5 互补：Gate-1.5 是静态结构度量（不跑测试），Gate-1.6 跑测试量「新代码有没有被测到」。与 renderer 全量 thresholds gate（vitest.config 内、CI 强制）互补：全量阈值防整体退化，增量阈值防「新代码不写测试」。TEST-STRATEGY.md §7「以增量覆盖率为准」的工具化落地。
+
+### 执行（主 agent 直接跑）
+
+```bash
+python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main
+```
+
+- 自动检测 base...HEAD 改动过 `src/` 的 vitest 包，逐包跑 `vitest run --coverage`（lcov），解析 lcov DA 行命中 × git diff 新增行号，算**可执行新增行覆盖率**
+- **判定**：任一被 gate 包增量 < 50%（默认）或测试失败 → `verdict=fail` exit 1；产出 `.review/coverage.json`（含各包增量 %、未覆盖文件清单）
+- 未装 `@vitest/coverage-v8` 的包记 SKIP（不 fail），报告给出启用指引：`cd <pkg> && pnpm add -D @vitest/coverage-v8`（renderer 已接入；其余包接入后 gate 全量生效）
+- **注意**：修复 worker 在途时本地读数会被污染——Gate-1.6 必须在干净工作区（全部改动已 commit）跑
+
+**Gate-1.6 判定**：fail → 派测试专项 subagent 补测试 → 重跑（上限 3 轮）。补测试优先级看 `.review/coverage.json` 的 uncovered_files 清单（按可执行新增行缺口排序）。
+
+### 怎么看覆盖率（人工排查）
+
+```bash
+# 单包全量 + HTML 报告（产物 <pkg>/coverage/index.html，浏览器打开逐行看）
+cd packages/renderer && npx vitest run --coverage        # 已配 thresholds，跌破 exit 非0
+cd packages/core && npx vitest run --coverage            # 未配 thresholds，仅出报告
+
+# 增量口径（本 PR 新增可执行行的覆盖率）
+python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main
+
+# CI 产物：PR checks 页 Test (renderer) job → artifact "coverage-report"（lcov + html）
+```
+
+renderer 全量阈值（S3-W1 基线-2~3%：lines 72 / stmts 70 / branches 59 / functions 67）由 CI 强制；其他包接入 provider 后 thresholds 再议（先测量后设阈，见 TEST-STRATEGY §7）。
+
+---
+
+## [OPTIONAL] Mutation testing 深检（StrykerJS）
+
+覆盖率证明「代码被跑过」，**mutation score 证明「断言真能抓 bug」**——覆盖率高但断言弱的测试（无断言/toMatchSnapshot 滥用/只断言不抛错）覆盖率满分也抓不住回归。对高风险模块的测试质量存疑时用。
+
+**工具**：StrykerJS（`@stryker-mutator/core` + `@stryker-mutator/vitest-runner` ≥ 9.3，2025-11 起官方支持 vitest 4；perTest coverage 分析、只跑与被突变文件相关的测试；不支持 vitest Browser Mode——本项目 happy-dom/node 环境不受影响）。
+
+**何时跑**（不进默认 gate——全量 mutation 太慢，一个中型包 10-30 分钟）：
+1. Gate-1.5 `targets.high_crap` 靶子的函数已补测试后，验证断言强度
+2. review-test-coverage 报告「弱断言」疑点（覆盖了但可疑）
+3. 修复 bug 后验证回归测试真能拦住（mutant = 人为重引入 bug，测试必须杀掉）
+
+**定向跑法**（只突变指定文件，非全包）：
+
+```bash
+cd <pkg> && pnpm add -D @stryker-mutator/core @stryker-mutator/vitest-runner
+cat > stryker.config.json << 'EOF'
+{ "testRunner": "vitest", "coverageAnalysis": "perTest",
+  "mutate": ["src/<target-file>.ts"], "reporters": ["clear-text", "progress"] }
+EOF
+npx stryker run
+```
+
+判定参考：mutation score ≥ 60% 可接受、≥ 80% 良好；存活的 mutant 逐个看——要么断言缺（补），要么等价变异（记录豁免）。产出不进 `.review/`（临时深检，结论写进 test-coverage 维度报告即可）。
+
+---
+
 ## 阶段 2：review + fix
 
-### 阶段 1.5 产物消费约定
+### 阶段 1.5 / 1.6 产物消费约定
 
-`.review/metrics.json`（阶段 1.5 必然产出）由以下两个维度按各自 agent 定义的输入约定消费：review-test-coverage 消费 `targets.high_crap` 靶子清单（优先核对这些函数的测试覆盖）；review-monorepo-impact 消费 `fail`/`warn` 中的循环依赖条目（不再手工 grep import 链）。其余 6 维不变。
+`.review/metrics.json`（阶段 1.5 必然产出）与 `.review/coverage.json`（阶段 1.6）由以下维度按各自 agent 定义的输入约定消费：review-test-coverage 消费 `targets.high_crap` 靶子清单（优先核对这些函数的测试覆盖）+ coverage.json 的 `uncovered_files` 清单（增量未覆盖文件优先补测试）；review-monorepo-impact 消费 `fail`/`warn` 中的循环依赖条目（不再手工 grep import 链）。其余 6 维不变。
 
 ### [MANDATORY] 双路径选择
 
@@ -192,6 +252,8 @@ git diff main...HEAD --stat
 **Step 4 — 修复 MUST_FIX**（条件触发，`must_fix > 0` 时）：
 - 按文件归属分组，每组派 1 个 `worker` subagent 并行修复（≤5）
 - worker task 含：review 报告原文路径（worker 必须复读）+ 本组问题清单 + 「全部修复，不挑 level」+ 「修复后 `pnpm -r typecheck` 通过」
+- **每条先验证真实性再修**：worker 逐条读代码证实 review 断言；不成立的（误报）在报告列「已验证不成立 + 证据（file:line + 逻辑）」，不盲改
+- **测试类问题派独立测试 subagent**，与修复 worker 分离：补测试 / 验证修复有效性（bug 类修复要求「修前红修后绿」——回归测试在旧代码上必须 fail、新代码上 pass，证明测试真能抓 bug 而非凑数）
 - 修复后 commit：`fix: review round 1 — N must-fix`
 
 ##### 第 2 轮（强制）
@@ -316,6 +378,13 @@ Agent 定义位于本 skill 目录 `agents/review-<维度>.md`（不全局暴露
 
 ### 3a — pre-merge 验证
 
+先复跑两道结构/覆盖率门禁（阶段 2 修复会改代码，1.5/1.6 初跑读数已过期）：
+
+```bash
+python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main     # fail 必须修复
+python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main    # 增量 <50% 补测试
+```
+
 ```text
 agent: "general-purpose"
 cwd:   <git 根>
@@ -364,7 +433,7 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 
 ## 关键约束 [MANDATORY]
 
-1. **阶段顺序不可调换**：1 (PR) → 1.5 (度量门禁) → 2 (review+fix) → 3 (pre-merge + push)；Gate-1.5 fail 时禁止进入阶段 2
+1. **阶段顺序不可调换**：1 (PR) → 1.5 (度量门禁) → 1.6 (增量覆盖率门禁) → 2 (review+fix) → 3 (pre-merge + push)；Gate-1.5 fail 时禁止进入阶段 2，Gate-1.6 fail 时补测试后重跑（上限 3 轮）
 2. **主 agent 不跑 review/fix 实现命令**：review 委托 workflow（路径 1）或 subagent（路径 2）。PR 生命周期操作（commit / push / pr-status.sh / pr-pre-merge.sh）主 agent 可直接跑
 3. **push 必须用户授权**：任何 push 操作前必须告知用户结果并获得确认
 4. **force-push 决策传递**：阶段 1 `force_push=true` → 阶段 3b 必须用 `--force-with-lease`；裸 `--force` 禁止
@@ -388,6 +457,7 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 |------|------|
 | Gate-1 拿不到 URL | 重试阶段 1；gh 认证问题先 `gh auth login` |
 | Gate-1.5 fail 超 3 轮 | 上报用户决策（不自动继续，不进阶段 2） |
+| Gate-1.6 增量覆盖率 <50% | 派测试专项 subagent 按 coverage.json uncovered_files 补测试 → 重跑（上限 3 轮；超限上报用户） |
 | Gate-2 `terminated=needs-redesign` | 结构性问题，上报用户决策（不自动重试） |
 | Gate-2 `terminated=stuck` | 看 aggregated.md 判断是 reviewer 误报还是真问题；误报可人工 ack 后进阶段 3，真问题上报用户 |
 | Gate-3a pre-merge FAIL | 按 `failed_step` 重派 worker 修复后重跑 |
@@ -410,6 +480,7 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 │   └── review-aggregator.md
 └── scripts/              # 校验脚本
     ├── metrics-gate.py   # 阶段 1.5 度量门禁（fallow audit 包装 + 显式双轨判定）
+    ├── coverage-gate.py  # 阶段 1.6 增量覆盖率门禁（vitest --coverage lcov × git diff，≥50%）
     ├── validate-skill-yaml.py
     └── validate-extensions-yaml.py
 ```
