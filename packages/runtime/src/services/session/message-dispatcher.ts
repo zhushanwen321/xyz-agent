@@ -19,6 +19,10 @@ import type { SendMessageHook } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import type { IMessageBus } from '../message-bus/message-bus.js'
 import { toErrorMessage } from '../../utils/errors.js'
+// D3a：instanceof 判别需要运行时 class 引用（非 type-only）。services 层引用 infra/pi 的
+// 具体模块在本仓已有先例（session-lifecycle 引 assertPiSessionFile / session-file-utils），
+// 本 import 只取错误类型，不触碰 RpcClient 实例——pi 交互仍走 IPiEngine port。
+import { RpcTimeoutError } from '../../infra/pi/rpc-client.js'
 
 /** 生成代次 token 用的进制（base-36：数字 + 小写字母，紧凑且无符号字符）。 */
 const RANDOM_TOKEN_RADIX = 36
@@ -196,8 +200,41 @@ export class MessageDispatcher {
       // isGenerating 永不复位，UI 卡在「思考中」。pi 卡死时 client.abort() 无响应，靠这条兜底。
       const errMsg = toErrorMessage(e)
       console.error(`[message-dispatcher] abort failed: sessionId=${sessionId}`, errMsg)
+      // 先取 active 再 destroy——destroySession 会删 processes/clientToId 条目，
+      // 之后再经 getSessionByClient 反查会拿 undefined。
       const active = this.svc.getSessionByClient(client)
       if (active) active.isGenerating = false
+
+      if (e instanceof RpcTimeoutError) {
+        // D3a（integrity-hardening，修 M5）：abort RPC 超时 = pi 事件循环卡死（ping 3 连败
+        // 已判定进程真死，event-interpreter ADR-0047）。仅收口（旧路径）会把卡死 client 留在
+        // 进程表——用户每次发消息都命中同一 client → 60s 超时死循环，唯一恢复是删 session /
+        // 重启 app。检测即收敛（原则 2）：强杀进程并走完与进程异常退出同构的收敛，下次发消息
+        // ensureActive 自动 restore 新 pi（历史完整）。
+        //
+        // 收敛需在此手动编排而非依赖 pm.onSessionExit 回调：kill 路径的 exit 事件被双层
+        // 守卫拦截（rpc-client.kill 置 _killing 跳过 exitCallback；process-manager 的 exit
+        // 回调按 processes.has 拦截 intentional destroy），不会传播到 session-service 的
+        // onSessionExit 收敛链。编排与 lifecycle.delete / onSessionExit 回调同构（detach →
+        // session.exited → removeSessionEntry），非新发明。
+        console.warn(`[message-dispatcher] abort RPC timed out (pi event loop frozen), force-destroying session ${sessionId}`)
+        this.svc.detachSession(sessionId)
+        await this.pm.destroySession(sessionId)
+        // stopped 终态须在 removeSessionEntry 前写（persistSessionOutcome 内部按 id 查
+        // sessions Map，条目删除后静默跳过）。
+        this.svc.persistSessionOutcome(sessionId, 'stopped', `Abort failed (pi unresponsive): ${errMsg}`)
+        // session.exited 须在 removeSessionEntry 前发（其后 messageBus.clearSession 清空
+        // 订阅者集合，再发等于空投，前端一条也收不到）。code=null：强杀场景退出码未知，
+        // 与 shared 协议「被信号杀死无退出码」语义一致。前端 handleSessionExited 会把
+        // reason 作为 error 消息插入聊天流 + toast（与 pi 崩溃路径同一入口），G3 的
+        // 「重发即可恢复」指引并入 reason，不再另发 message.error（避免双报）。
+        const exitedMsg = { type: 'session.exited' as const, payload: { sessionId, code: null, reason: 'pi 无响应（事件循环卡死），进程已强制终止。重发消息即可恢复（自动重启进程，历史完整）' } }
+        this.messageBus?.publish(sessionId, exitedMsg)
+        this.svc.removeSessionEntry(sessionId)
+        return
+      }
+
+      // 非超时错误（EPIPE / 进程已退出 / RPC 显式失败等）：保持现行 abort 收口行为。
       // W4：abort 失败（异常退出）写 stopped 终态
       this.svc.persistSessionOutcome(sessionId, 'stopped', `Abort failed: ${errMsg}`)
       const abortErrMsg = { type: 'message.error' as const, payload: { sessionId, message: `Abort failed: ${errMsg}` } }

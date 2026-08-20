@@ -308,7 +308,8 @@ export class ProcessManager implements IProcessManager {
     if (!proc) return
     // Remove from maps first to prevent exitCallback from triggering,
     // but keep a reference so we can kill after removal.
-    // kill() is guaranteed to resolve (SIGTERM → 2s → SIGKILL).
+    // kill() is guaranteed to resolve (SIGCONT → SIGTERM → 2s → SIGKILL).
+    // 幂等：Map 无条目时（并发 deleteSession / 强杀分支已先行）静默跳过，不重复 kill。
     this.processes.delete(sessionId)
     this.clientToId.delete(proc.client)
     try {
