@@ -133,7 +133,7 @@ catch 分支裁决（L2 边界）：维持哨兵（无真实数据可发布，�
 
 **D1：解除 abort 正常分支的丢弃（选择）**——影响 G1。
 
-dispatcher `sendBash` :339-341 的 guard 命中分支从「warn + skip」改为「发布真实 cancelled 结果」（走既有双分支：streaming 压 pendingBashResults 等 settled flush——位置与 pi 落盘一致；空闲立即发布）。token 旋转机制保留（catch 分支 :371 诊断、finally :399 复位逻辑不变）。abortBash 合成哨兵帧（:466-481）职责不变（只清 executingBash）。E3 等价性测试从「abort 例外锁定（差异恰为 cancelled entry）」改判为「abort 等价（cancelled entry 两侧 deep-equal）」+ 新增「transport 抛错场景例外锁定」用例（该场景维持哨兵不产 entry，登记收窄例外）。
+dispatcher `sendBash` :339-341 的 guard 命中分支从「warn + skip」改为「发布真实 cancelled 结果」（走既有双分支：streaming 压 pendingBashResults 等 settled flush——位置与 pi 落盘一致；空闲立即发布）。token 旋转机制保留（catch 分支 :371 诊断、finally :399 复位逻辑不变）。abortBash 合成哨兵帧（:466-481）职责不变（只清 executingBash）。**哨兵判定的隐式契约显式化（r3 审查补）**：bash-effects.ts:124 哨兵识别依赖「真实帧的 `command` 恒非空」（command 来自用户 `!` 输入的命令文本，sendBash 入口无空命令场景；哨兵帧独占 `command === '' && cancelled` 形态）——该约束目前是隐式成立，F1 实施时在 sendBash 入口补一行空命令早退守卫（空命令直接 return 不入流），使两类帧的区分从「约定」升级为「结构性不变式」。E3 等价性测试从「abort 例外锁定（差异恰为 cancelled entry）」改判为「abort 等价（cancelled entry 两侧 deep-equal）」+ 新增「transport 抛错场景例外锁定」用例（该场景维持哨兵不产 entry，登记收窄例外）。
 
 **D2：compaction 恒发帧（选择）**——影响 G2。
 
@@ -187,7 +187,7 @@ sendBash await resolve(cancelled result 全量)
 | # | 场景 | 步骤 | 通过标准 | 回溯 |
 |---|------|------|---------|------|
 | V8 | abort 后重开一致 | dev app：agent streaming 中 `!` 跑长命令（如 `sleep 30`）→ 数秒后点 abort → run 结束 → 关闭重开该 session | live 与重开都有一条 cancelled bash 记录（含部分输出），位置同在 turn 内 notice 位；重开不再「多出」记录；console 无新增 warn | G1 |
-| V9 | compaction 无摘要一致 | **混合验收形态**：summary 缺失依赖 LLM 异常返回，真实环境无法稳定构造，故核心断言用单测级注入（compaction_end 事件 summary 缺省）承载，真机部分跑正常 /compact 作不回归基线。步骤：① 注入用例（E4 断言 live 与 replay 同产「上下文已压缩」fallback 行）② 真机跑一次 /compact | 注入用例：两侧同 fallback 行、deep-equal；真机：正常摘要行两侧一致（既有行为不回归） | G2 |
+| V9 | compaction 无摘要一致 | **混合验收形态**：summary 缺失依赖 LLM 异常返回，真实环境无法稳定构造，故核心断言用单测级注入（compaction_end 事件 summary 缺省）承载，真机部分跑正常 /compact 作不回归基线。步骤：① 注入用例（E4 断言 live 与 replay 同产「上下文已压缩」fallback 行）② 真机跑一次 /compact | **① 注入用例**：两侧同 fallback 行、deep-equal。**② 真机**：正常摘要行两侧一致（既有行为不回归） | G2 |
 | V10 | 全量回归 + 等价性 | 四包全量 + E3 改判（abort 等价 / transport 例外锁定）+ E4 summary-less 用例 | 全绿；登记表 #7 例外清单与实现一致（4→1+收窄） | G3、主设计 G6 |
 
 Final gate：V1 / V2 / V4 在打包链 dev app 端到端复跑一次（builtin 扩展生效形态）。
@@ -203,6 +203,6 @@ Final gate：V1 / V2 / V4 在打包链 dev app 端到端复跑一次（builtin �
 
 **文件改动地图**：改写 `message-dispatcher.ts`（sendBash guard 分支）、`event-interpreter.ts`（删真值门）、`store.ts`（executingBash 分区）、`bash-effects.ts`（三写方改调 store + 欠账注释改写）；批量更新 12+ 处「规则 7.5」注释与测试名；登记表 #7 与主设计 §6 实施记录回填。新增无文件。
 
-**并行协调**：F1/F2 领地不相交可两路并行（F1 碰 message-dispatcher.ts、F2 碰 event-interpreter.ts，无共享文件）；F3 串行收尾，F4 最后。启动前 `git log` 复核并行 session 在途改动。
+**并行协调（r3 审查修正）**：F1/F2 的 runtime 侧领地不相交（F1 碰 message-dispatcher.ts、F2 碰 event-interpreter.ts），可两路并行开发；**但两者的测试都落在 `packages/core/src/domain/chat/__tests__/apply-entry-equivalence.test.ts`**（F1 改判 E3 :279 附近、F2 在 E4 :333 附近增用例）——该文件须串行（F1 先改判 E3、F2 后增 E4，或反之，按先合入者为准），否则并行 diff 冲突。F3 串行收尾，F4 最后。启动前 `git log` 复核并行 session 在途改动。
 
 **待验证检查点**：§3.5 实施期门 1；F3 的 ctx 访问方式（store 单例 import vs ctx 扩展，实施期按依赖方向定案）。
