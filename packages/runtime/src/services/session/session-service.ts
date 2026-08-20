@@ -30,6 +30,7 @@ import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine, PiCommandInfo } from '../ports/pi-engine.js'
 import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
 import { parseJsonl } from '../../utils/jsonl.js'
+import { quarantineCorruptFile } from '../../utils/json-store.js'
 import { extractSubagentsFromSessionFile, scanSubagentEntries } from './subagent-extractor.js'
 import { extractWorkflowsFromSessionFile, scanWorkflowEntries } from './workflow-extractor.js'
 import { getSubagentSessionDir, getPiAgentDir } from '../../infra/pi/pi-paths.js'
@@ -1850,16 +1851,18 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       const dir = getAttachmentsDir(sessionId)
       mkdirSync(dir, { recursive: true })
       const filePath = join(dir, 'segments.json')
-      // 读已有（文件不存在 → 空；损坏 → 重置，best-effort 不阻断写入）
+      // 读已有（文件不存在 → 空；损坏 → 隔离现场后降级为空，best-effort 不阻断写入）
       let file: SegmentsMetadataFile = { version: 1, entries: [] }
       if (existsSync(filePath)) {
         try {
           const raw = readFileSync(filePath, 'utf-8')
           const parsed = JSON.parse(raw) as SegmentsMetadataFile
           if (parsed && Array.isArray(parsed.entries)) file = parsed
-          // eslint-disable-next-line taste/no-silent-catch -- segments.json 损坏时 best-effort 重置为空（不阻断写入），与 main 原实现语义一致
-        } catch {
-          console.warn('[session-service] segments.json malformed, resetting:', filePath)
+        } catch (e) {
+          // D1c 损坏隔离（integrity-hardening.md §3.1）：半截文件先 rename .corrupt-<ts>
+          // 保留取证再降级为空——否则下方写入把「半截」合法化成「全空」，历史 segments
+          // 永久丢失且不可恢复（与 JsonStore 共用同一 quarantine 实现，避免行为漂移）
+          quarantineCorruptFile(filePath, { tag: 'session-service', reason: 'segments.json malformed', cause: e })
         }
       }
       // 按 clientUuid 去重：同 uuid 覆盖，新 uuid 追加

@@ -4,7 +4,7 @@
 
 ## 表头声明
 
-1. **地位**：本表是 12 类 GUI 数据的 owner / 权威源 / 唯一写入口 / 字段空值语义 / 已知例外的唯一登记 SSOT，是 S1（review-data-governance checklist）、R2（store 写入口许可表）、R3（缓存注解条目校验）的依据，review 时的对照 SSOT（父文档 §3.6 第 4 层）。
+1. **地位**：本表是 12 类 GUI 数据的 owner / 权威源 / 唯一写入口 / 字段空值语义 / 已知例外的唯一登记 SSOT，是 S1（review-data-governance checklist）、R2（store 写入口许可表）、R3（缓存注解条目校验）的依据，review 时的对照 SSOT（父文档 §3.6 第 4 层）。**§6 起另登记跨进程共享文件的锁协议**（GUI 数据多源之外的「无锁双写」元模式治理，父文档 = integrity-hardening.md），同一查询入口。
 2. **演进**：本表 P1 起演进为可执行配置——`ReplicatedState` 配置三元组（快照 RPC / 失效触发源 / 合并策略含字段空值语义）即登记条目，**W6-W8 执行时同步维护本表**（实例落地一条、登记表同步一行），P1 后 markdown 由配置生成或双向校验。
 3. **现状基线**：W11 之后——xyz 对 pi JSONL 的直写链路全部消灭（活跃 rename + 兜底直写 W1 删；非活跃 rename W11 切 `withEphemeralPi`；handoff W11 迁 sidecar；patchCwd W11 迁 restore tmp），R1 allowlist 空集、检查无条件化。
 4. **行号口径**：行号为 W1 后实测（按符号名定位）；与 plan 基线行号的偏差——非活跃 rename 直写 `:302→:331`（W1 改动使 renameSession 内行号后移），`persistHandedOff` 实现体 `:464→:455`（append `openSync('a')` 在 `:467`），`patchSessionCwd` `:518→:521`（`atomicWrite` 在 `:543`）。
@@ -75,3 +75,19 @@ xyz runtime 指向 pi session JSONL 的写点全集共 6 处（r3 审查补漏�
 3. **误报豁免闭环**：R1/R2/R3 拦到合法写入时，豁免路径 = 先在本表补条目/例外 + 豁免 allowlist 登记，禁止在代码里静默绕过。
 4. **无专门 wave 条目（#10 / #11）**：父文档 §5 的 19 个实施单元未覆盖，登记现状 + 原则性目标；改动这两条链路时须遵守 §3.0 原则（绝对写规则 / 投影一次），并先在本表补登记再动手。
 5. **新数据先登记**：新增 GUI 数据（新 store 字段 / 新缓存 / 新 WS 推送）必须先在本表建行（编号顺延）或并入既有条目，再写代码——R3 强制注解的条目即指本表编号。
+
+## 6. 跨进程共享文件登记表（integrity-hardening D8a）
+
+> 治理对象：≥2 个进程都会写的磁盘文件（GUI 数据多源之外的元模式 ①——「无锁双写」）。父文档：[integrity-hardening.md](integrity-hardening.md)（§3.1 D1 / §3.5 D5 / §3.8 D8a）。原则：凡登记为「跨进程共享」的文件，全部写入方必须使用**同一把锁**（同一 lockfile 路径），锁内读-改-写且只写调用方声明的字段域；无锁的第二写入者 = 契约违规。**新文件入表是 pr-cr-fix review checklist 项**——新增跨进程共享文件写路径必须先在本表登记锁协议再写代码。
+
+| 文件 | 写入方（进程） | 锁协议 | 字段域归属 | 损坏隔离 | 状态 |
+|---|---|---|---|---|---|
+| `~/.xyz-agent/pi/agent/settings.json` | pi 子进程（SettingsManager）+ xyz runtime（pi-settings-store） | 同一 lockfile `<settings.json>.lock`。**pi 侧**（不可改，铁律）：`lockSync(realpath:false)` + ELOCKED busy-wait 20ms×10 后抛错放弃、无 stale、仅文件存在才锁；**xyz 侧**（W1a 实施）：`lockSync(realpath:false, stale:30_000)` + 自实现 busy-wait 25ms/预算 ~1s fail-fast（lockSync 不支持 retries——ESYNC）。不对称安全性四点论证见 integrity-hardening.md §3.1 D1a（核心：互斥只依赖同一 lockfile + 双方先取锁再写；xyz stale 夺取让双方自愈） | xyz 侧 `updateSettingsFields(scope)`：`model`（defaultProvider/defaultModel/defaultThinkingLevel/enabledModels）/ `skills` / `extension`（packages）/ `full`（白名单仅 pi-maintenance 启动迁移，review 禁新代码用 full）。pi 侧 persistScopedSettings 同语义 | JsonStore quarantine（`.corrupt-<ts>` + 恢复指引日志，W0 D1c） | **已实施（W1a，探针 3×300 轮零丢失）** |
+| `<piAgentDir>/config/rename-session-ext-config.json` | xyz runtime（worktree-config-helper.setRenameModel 写 `model` 字段）+ pi 子进程内 rename-session 扩展（`extensions/rename-session/src/pure.ts:257` 写 enabled/maxTitleLength/thinkingLevel 等） | 同一 lockfile（ext-config 文件自身 + `.lock`），协议同 settings.json xyz 侧。**已知残留**：runtime 侧已持锁（W1b），**扩展侧 llm-shared `saveConfig`（extensions/shared/llm-shared/src/config.ts:134-180）RMW 不持锁**——互斥需双方都取锁，该窗口待 W4 扩展侧对齐（随 proper-lockfile 进 extension bundle 探针一并处理）；附带风险：双侧 tmp 中间文件同名 `<path>.tmp` 并发可碰撞 | runtime = `model`；扩展 = 其余字段 | 待扩展侧对齐时随 D1c 模式补 | **部分实施（W1b）**，扩展侧 open |
+| `<piAgentDir>/config/<其他包>-ext-config.json`（permission / model-switch 等） | 仅该包扩展自身（pi 子进程内），runtime 无同文件写方 | 单写方无跨进程双写面，无需锁（登记备查） | 整文件归该扩展 | — | 健康（登记对照） |
+| `<piAgentDir>/subagents/worktrees.json` | 每个活跃 pi 进程一份 subagent-workflow 扩展实例（多写方 last-write-wins） | 计划：proper-lockfile withLock（stale 30s 对齐 auth 惯例），写方全在 xyz 生态（D5a）；⛔实施期门：proper-lockfile 进 extension bundle（esbuild）验证 | 整文件（条目级 append/remove/updatePid） | —（对账兜底，D5b：reaper 双向 diff 自愈） | **计划中（W4）**；注释声称的对账兜底代码尚不存在 |
+| `~/.xyz-agent/pi/agent/auth.json` | xyz runtime + pi 子进程 | proper-lockfile async `lock()` + retries 指数退避 + stale 30s + onCompromised 守卫（`auth-storage.ts:42-74`） | 整文件（双方全量读写对称） | ensureFileExists + 0600 原子写 | **已达成（范本条目）** |
+| auto-rename 标志文件（`<piAgentDir>/config/auto-rename` 等） | xyz runtime（setAutoRenameEnabled）+ rename-session 扩展（setAutoRenameSwitch） | **豁免锁**：语义 = 「文件存在=开，不存在=关」，内容恒空从不读取，create/delete 幂等（W1b 核实：worktree-config-helper.ts:144-160 与 pure.ts:160-170 同构）。最坏交错 = 布尔开关 last-write-wins，属开关语义本身，非数据丢失 | — | — | **豁免登记（W1b 核实）** |
+| plugin sessionData（`<getDataDir>/plugins/...`） | 仅 runtime PluginService（Worker/fork 子进程单写，flush 回主进程） | 单进程单写方，非跨进程共享（对照组——证明登记边界） | 整文件（KV） | WriteBackCache + flushAll（shutdown） | 健康（登记对照） |
+
+**维护规约（本节）**：新增跨进程共享文件写路径，先在本表登记锁协议 + 字段域再写代码；已有条目新增第二写入方时，锁协议必须与登记的对齐（同一 lockfile），否则为契约违规；豁免锁条目必须像 auto-rename 一样给出「无 RMW 数据丢失面」的核实依据。

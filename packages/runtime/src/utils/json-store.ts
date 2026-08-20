@@ -126,33 +126,11 @@ export class JsonStore<T> {
   }
 
   /**
-   * 损坏隔离（D1c）：把不可读/不可解析的文件 rename 为 `<path>.corrupt-<ts>` 保留
-   * 取证，调用方以默认值继续。rename 失败（目录只读等）则原文件保留原位、仅降级，
-   * 但日志升级为 error 提示人工介入。
-   *
-   * 为什么必须把原文件移走：parse 失败若只返回默认值，下一次 write 会以默认值
-   * 覆盖原路径——「半截文件」被静默合法化为「全空文件」，用户全部配置丢失且
-   * 不可恢复（integrity-hardening.md 失败模式 A 的第二条链）。
+   * 损坏隔离（D1c）：委托共享工具 quarantineCorruptFile（实现与「为什么」见其注释；
+   * session-service 等手写 parse 的落点复用同一实现，避免隔离行为漂移）。
    */
   private quarantine(reason: string, cause: unknown): void {
-    // ISO 时间戳压缩格式（去冒号/点号）：文件名安全且按字典序即按时间排序
-    const ts = new Date().toISOString().replace(/[:.]/g, '')
-    const quarantinePath = `${this.path}.corrupt-${ts}`
-    const causeMsg = cause instanceof Error ? cause.message : cause
-    try {
-      renameSync(this.path, quarantinePath)
-      console.error(
-        `[json-store] ${reason}: ${this.path} — 文件损坏已隔离至 ${quarantinePath}，` +
-        `本次以默认值继续。恢复指引：用编辑器对比 .corrupt 副本找回配置。原因: ${causeMsg}`,
-      )
-    // eslint-disable-next-line taste/no-silent-catch -- 隔离失败不阻断读流程（仍返回默认值），只升级日志
-    } catch (renameErr) {
-      console.error(
-        `[json-store] ${reason}: ${this.path} — 损坏隔离失败（无法 rename 为 .corrupt 副本），` +
-        `原文件保留原位，本次以默认值继续。请人工检查该文件。原因: ${causeMsg}; ` +
-        `rename 失败: ${renameErr instanceof Error ? renameErr.message : renameErr}`,
-      )
-    }
+    quarantineCorruptFile(this.path, { tag: 'json-store', reason, cause })
   }
 
   private isExpired(entry: CacheEntry<T>): boolean {
@@ -166,6 +144,51 @@ export class JsonStore<T> {
     } catch (e) {
       console.debug(`[json-store] delete failed: ${this.path}:`, e instanceof Error ? e.message : e)
     }
+  }
+}
+
+// ── 损坏隔离（D1c 共享工具，JsonStore 与手写 parse 的模块复用同一实现）─────────
+
+export interface QuarantineOptions {
+  /** 日志前缀 tag（定位来源模块，如 'json-store' / 'session-service'）。 */
+  tag: string
+  /** 失败原因短语（进日志，如 'parse failed' / 'segments.json malformed'）。 */
+  reason: string
+  /** 原始错误。 */
+  cause: unknown
+}
+
+/**
+ * 损坏隔离（D1c）：把不可读/不可解析的文件 rename 为 `<path>.corrupt-<ts>` 保留
+ * 取证，调用方以默认值继续。rename 失败（目录只读等）则原文件保留原位、仅降级，
+ * 但日志升级为 error 提示人工介入。
+ *
+ * 为什么必须把原文件移走：parse 失败若只返回默认值，下一次 write 会以默认值
+ * 覆盖原路径——「半截文件」被静默合法化为「全空文件」，用户全部配置丢失且
+ * 不可恢复（integrity-hardening.md 失败模式 A 的第二条链）。
+ *
+ * 为什么是导出函数而非 JsonStore 私有方法：segments.json 等手写 read→parse 的
+ * 落点不走 JsonStore，但面临同一条「失败 reset 覆盖」链——共享同一实现避免
+ * 两处隔离行为漂移（integrity-hardening.md D1c 明确要求同模式覆盖）。
+ */
+export function quarantineCorruptFile(filePath: string, opts: QuarantineOptions): void {
+  // ISO 时间戳压缩格式（去冒号/点号）：文件名安全且按字典序即按时间排序
+  const ts = new Date().toISOString().replace(/[:.]/g, '')
+  const quarantinePath = `${filePath}.corrupt-${ts}`
+  const causeMsg = opts.cause instanceof Error ? opts.cause.message : opts.cause
+  try {
+    renameSync(filePath, quarantinePath)
+    console.error(
+      `[${opts.tag}] ${opts.reason}: ${filePath} — 文件损坏已隔离至 ${quarantinePath}，` +
+      `本次以默认值继续。恢复指引：用编辑器对比 .corrupt 副本找回配置。原因: ${causeMsg}`,
+    )
+  // eslint-disable-next-line taste/no-silent-catch -- 隔离失败不阻断读流程（仍返回默认值），只升级日志
+  } catch (renameErr) {
+    console.error(
+      `[${opts.tag}] ${opts.reason}: ${filePath} — 损坏隔离失败（无法 rename 为 .corrupt 副本），` +
+      `原文件保留原位，本次以默认值继续。请人工检查该文件。原因: ${causeMsg}; ` +
+      `rename 失败: ${renameErr instanceof Error ? renameErr.message : renameErr}`,
+    )
   }
 }
 
