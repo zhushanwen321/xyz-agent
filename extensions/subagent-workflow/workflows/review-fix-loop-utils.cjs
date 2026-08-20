@@ -150,11 +150,10 @@ function buildR1ReviewPrompt({ header, roundDir, reportFile, prevBatchesHint, re
     "",
     "This is round 1 — full-depth review of the target. There is no previous",
     "round to reconcile: return reconciliation: [] in your JSON.",
-    prevBatchesHint || "",
-    "",
+    ...(prevBatchesHint ? [prevBatchesHint, ""] : []),
     "output 路径：" + roundDir + "/" + reportFile + ".md",
     "Write report to: " + roundDir + "/" + reportFile + ".md",
-  ].filter((line) => line !== "").join("\n");
+  ].join("\n");
 }
 
 /**
@@ -184,7 +183,7 @@ function buildScopedRecheckPrompt({ header, round, max, roundDir, reportFile, mo
     "Do NOT do a full re-scan of the target — scope is limited to these files.",
     "Affected reference points (from the fix self-check) are where side-effects of the fix commonly land — check each one.",
     "Report issues as usual: critical/major → must_fix, minor → suggestion.",
-    ...reconSection,
+    ...(reconSection.length > 0 ? ["", ...reconSection] : []),
     "",
     "output 路径：" + roundDir + "/" + reportFile + ".md",
     "Write report to: " + roundDir + "/" + reportFile + ".md",
@@ -461,8 +460,9 @@ function buildAggregatorPrompt({ header, round, max, roundDir, reviewResults, pr
     "  (one line, same as the table note).",
     "- files: file paths cited by the issue (for regression attribution).",
     "- evidence: the cited evidence (files/lines/test results) as stated by the reviewer.",
-    "- guidance: one-line fix direction for the fixer (extracted from the sub-review; the fixer",
-    "  uses it to locate the fix point without re-scouting; code wins on conflict).",
+    "- guidance: one-line fix direction for the fixer — extract it verbatim from the sub-review",
+    "  report's 'Fix suggestion' column when present (the fixer uses it to locate the fix point",
+    "  without re-scouting; code wins on conflict).",
     "- fixes_caution: short caution entries for claims with weak evidence or high-risk directions (optional, empty array if none).",
     "",
     ...buildScoringSection({ round, prevFixResult }),
@@ -707,7 +707,9 @@ function findNeedsRedesign(issues, maxFixAttempts) {
 }
 
 /**
- * reviewer 结果归一化：reconciliation（可选，5.1 结构化对账声明）透传，缺省 []。
+ * reviewer 结果归一化：reconciliation 透传，缺省 []（防御性宽容——T9 起 schema 层
+ * required 已恒含 reconciliation，R1 合规输出为空数组；此处的缺省兜底只服务旧
+ * state/畸形输出，不构成 R1 省略该字段的合法性）。
  * report_content 透传（M3，5.8 schema-only agent 落盘数据源）：doc-reviewer 等无 write
  * 工具的 agent 经 report_content 返回完整报告，workflow 写盘到 <roundDir>/<def.report>.md。
  * 仅字符串透传，缺省 undefined——writer 型 agent（有 report_file）无 report_content 时
