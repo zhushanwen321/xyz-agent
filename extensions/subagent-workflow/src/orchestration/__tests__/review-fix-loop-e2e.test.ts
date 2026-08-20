@@ -187,11 +187,13 @@ function makeScenarioRunner(scenario: Scenario) {
     // m8：schema 契约校验——mock 返回的 parsedOutput 必须符合 workflow 声明的权威 schema
     // （防止未来 schema 收紧时 E2E 仍绿）。校验失败抛错让测试立即失败。
     miniValidator(opts.schema, parsed, "parsedOutput");
+    // rfl 仪表（T1）：sessionId 逐调用编号——A6 断言 calls[].sessionId 与调用序对应
     return {
       content: "mock",
       parsedOutput: parsed,
       usage: MOCK_USAGE,
       durationMs: 1,
+      sessionId: "sess-e2e-" + (calls.length - 1),
       error: undefined,
     };
   });
@@ -285,9 +287,16 @@ function makeDeps(runner: AgentRunner): LauncherDeps {
   return { ...base, registry };
 }
 
+let rflHomeDir: string;
+
 beforeEach(() => {
   sessionDir = mkdtempSync(join(tmpdir(), "rfl-e2e-"));
   fixtureDir = mkdtempSync(join(tmpdir(), "rfl-e2e-agents-"));
+  // rfl 仪表（tier-1 T3）：state.json 现落 ~/.review-fix-loop/——HOME 重定向到
+  // 临时目录，防测试写真实 home（worker_threads 在 new Worker 时拷贝主线程 env
+  // 快照，stubEnv 先于 runAndWait 即可让 worker 侧 os.homedir() 读到隔离值）。
+  rflHomeDir = mkdtempSync(join(tmpdir(), "rfl-e2e-home-"));
+  vi.stubEnv("HOME", rflHomeDir);
   createdStores = [];
 });
 
@@ -295,12 +304,15 @@ afterEach(() => {
   try {
     rmSync(sessionDir, { recursive: true, force: true });
     rmSync(fixtureDir, { recursive: true, force: true });
+    rmSync(rflHomeDir, { recursive: true, force: true });
   } catch {
     // 临时目录清理失败不影响测试结论
   }
   sessionDir = "";
   fixtureDir = "";
+  rflHomeDir = "";
   createdStores = [];
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
@@ -879,4 +891,151 @@ describe("startup fail-fast (ADR-0003 D6)", () => {
     expect(String(result.error ?? "")).toContain("/nonexistent/fix.md");
     expect(runner.stats().kinds.length).toBe(0);
   }, RUN_TIMEOUT_MS);
+
+  // ── A6: rfl 仪表 e2e（tier-1 T3+T4：存储迁移 + calls[] 采集） ──
+
+  it(
+    "A6: state.json 落 ~/.review-fix-loop/<slug>/<runId>/ 且 calls[] 十字段全集 + phaseTimings 采集（默认剧本）",
+    async () => {
+      // 剧本：R1 1 must-fix → fix → R2 clean（two-round clean 终止）
+      const runner = makeScenarioRunner({
+        review: [
+          () => ({ report_file: "/tmp/a6-r1.md", must_fix: 1, suggestion: 0, reconciliation: [] }),
+          () => ({
+            report_file: "/tmp/a6-r2.md", must_fix: 0, suggestion: 0,
+            reconciliation: [{ prev_id: "MF-1", status: "fixed", evidence: "read confirmed" }],
+          }),
+        ],
+        aggregate: () => ({
+          report_file: "/tmp/a6-agg.md", must_fix: 1, suggestion: 0,
+          must_fix_ids: [{ id: "MF-1", severity: "major" }], fixes_caution: [],
+        }),
+        fix: () => ({
+          fixed_count: 1,
+          fixes: [{ issue_id: "MF-1", description: "mock fix", self_check: "grep: 1 hit", affected_files: ["src/a.ts"] }],
+          deferred: [],
+        }),
+      });
+      const deps = makeDeps(runner);
+      const userRunId = RUN_ID();
+      const result = await runAndWait(
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("reviewer"), _runId: userRunId },
+        deps, undefined, RUN_TIMEOUT_MS,
+      );
+      expect(result.reason).toBe("completed");
+      const outcome = assertScriptOutcome(result.scriptResult);
+      expect(outcome.terminated).toBe("clean");
+
+      // T3 存储迁移：runDir 位于 HOME（已 stub 到 rflHomeDir）下 .review-fix-loop/<slug>/<runId>
+      expect(typeof outcome.runDir).toBe("string");
+      expect(outcome.runDir).toContain(join(rflHomeDir, ".review-fix-loop"));
+      // 引擎注入的 _runId 覆盖用户预传值（A3 语义）——state 目录名 = 引擎 runId
+      expect(outcome.runDir).not.toContain(userRunId);
+      expect(result.runId).toBeTruthy();
+      expect(outcome.runDir!.endsWith(result.runId)).toBe(true);
+
+      const stateFile = join(outcome.runDir!, "state.json");
+      expect(existsSync(stateFile)).toBe(true);
+      const st = JSON.parse(readFileSync(stateFile, "utf8")) as {
+        meta: { terminated: string };
+        calls: Array<Record<string, unknown>>;
+        batches: Array<{ rounds: Array<{ round: number; phaseTimings: Record<string, unknown> }> }>;
+      };
+
+      // terminated 快照（saveState 落盘）
+      expect(st.meta.terminated).toBe("clean");
+
+      // calls[]：R1 review + R1 aggregate + R1 fix + R2 review = 4 条，十字段全集
+      expect(st.calls.length).toBe(4);
+      const roles = st.calls.map((c) => c.role as string);
+      expect(roles.filter((r) => r === "reviewer").length).toBe(2);
+      expect(roles.filter((r) => r === "aggregator").length).toBe(1);
+      expect(roles.filter((r) => r === "fixer").length).toBe(1);
+      for (const c of st.calls) {
+        expect(typeof c.batch).toBe("number");
+        expect(typeof c.round).toBe("number");
+        expect(typeof c.name).toBe("string");
+        expect(c.name.length).toBeGreaterThan(0);
+        expect(typeof c.model).toBe("string");
+        expect(typeof c.durationMs).toBe("number");
+        expect(c.usage).toMatchObject({ input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0 });
+        expect(c.promptMode).toBe("full");
+        expect(typeof c.promptBytes).toBe("number");
+        expect(c.promptBytes).toBeGreaterThan(0);
+        expect(c.sessionId).toMatch(/^sess-e2e-\d+$/);
+      }
+      // sessionId 与 mock runner 调用序一一对应（0..3 各出现一次）
+      const sessionIds = st.calls.map((c) => c.sessionId as string).sort();
+      expect(sessionIds).toEqual(["sess-e2e-0", "sess-e2e-1", "sess-e2e-2", "sess-e2e-3"]);
+
+      // phaseTimings：R1 三键齐全（number 对），R2 clean 轮仅 review、aggregate/fix null
+      const rounds = st.batches[0].rounds;
+      expect(rounds.length).toBe(2);
+      const [r1, r2] = rounds;
+      const pair = [expect.any(Number), expect.any(Number)];
+      expect(r1.phaseTimings.review).toEqual(pair);
+      expect(r1.phaseTimings.aggregate).toEqual(pair);
+      expect(r1.phaseTimings.fix).toEqual(pair);
+      expect(r2.phaseTimings.review).toEqual(pair);
+      expect(r2.phaseTimings.aggregate).toBeNull();
+      expect(r2.phaseTimings.fix).toBeNull();
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
+    "A6: recheckAfterFix=true 剧本 → calls[] 出现 promptMode=\"scoped\"（scoped 分支采集）",
+    async () => {
+      // 剧本同 E2E-5：R1 reviewer dirty + doc-reviewer clean → fix → R2 全批重派，
+      // doc-reviewer 走 scoped 限定分支。
+      const runner = makeScenarioRunner({
+        review: [
+          (prompt) => prompt.includes("doc-reviewer.md")
+            ? { report_content: "# doc-reviewer report", report_file: "", must_fix: 0, suggestion: 0, reconciliation: [] }
+            : { report_file: "/tmp/a6s-r1a.md", must_fix: 2, suggestion: 0, reconciliation: [] },
+          (prompt) => prompt.includes("doc-reviewer.md")
+            ? { report_content: "# doc-reviewer report", report_file: "", must_fix: 0, suggestion: 0, reconciliation: [] }
+            : { report_file: "/tmp/a6s-r1b.md", must_fix: 2, suggestion: 0, reconciliation: [] },
+          () => ({
+            report_file: "/tmp/a6s-r2a.md", must_fix: 0, suggestion: 0,
+            reconciliation: [{ prev_id: "MF-1", status: "fixed", evidence: "read" }, { prev_id: "MF-2", status: "fixed", evidence: "read" }],
+          }),
+          () => ({ report_file: "/tmp/a6s-r2b.md", must_fix: 0, suggestion: 0, reconciliation: [] }),
+        ],
+        aggregate: () => ({
+          report_file: "/tmp/a6s-agg.md", must_fix: 2, suggestion: 0,
+          must_fix_ids: [{ id: "MF-1", severity: "major" }, { id: "MF-2", severity: "major" }], fixes_caution: [],
+        }),
+        fix: () => ({
+          fixed_count: 2,
+          fixes: [
+            { issue_id: "MF-1", description: "fix1", self_check: "grep: 1 hit", affected_files: ["src/x.ts"] },
+            { issue_id: "MF-2", description: "fix2", self_check: "grep: 1 hit", affected_files: [] },
+          ],
+          deferred: [],
+        }),
+      });
+      const deps = makeDeps(runner);
+      const result = await runAndWait(
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("reviewer") + "," + agentMd("doc-reviewer"), recheckAfterFix: true, _runId: RUN_ID() },
+        deps, undefined, RUN_TIMEOUT_MS,
+      );
+      expect(result.reason).toBe("completed");
+      const outcome = assertScriptOutcome(result.scriptResult);
+      expect(outcome.terminated).toBe("clean");
+
+      const st = JSON.parse(readFileSync(join(outcome.runDir!, "state.json"), "utf8")) as {
+        calls: Array<Record<string, unknown>>;
+      };
+      // 4 review（R1 ×2 + R2 ×2）+ 1 aggregate + 1 fix
+      expect(st.calls.length).toBe(6);
+      const reviewCalls = st.calls.filter((c) => c.role === "reviewer");
+      const modes = reviewCalls.map((c) => c.promptMode as string).sort();
+      // R1 两调用 full；R2 全批重派：reviewer 走 R2+ full、doc-reviewer（上轮 clean）走 scoped
+      expect(modes).toEqual(["full", "full", "full", "scoped"]);
+    },
+    RUN_TIMEOUT_MS,
+  );
 });

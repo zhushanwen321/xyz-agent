@@ -98,6 +98,7 @@ const {
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
+  resolveRunRoot,
   resolveAgentDefs,
   recordAgentClean,
   recordAgentDirty,
@@ -296,10 +297,15 @@ const path = require("path");
 const os = require("os");
 
 const RUN_ID = ($ARGS._runId && typeof $ARGS._runId === "string") ? $ARGS._runId : "run-" + Date.now();
-const RUN_ROOT = path.join(os.tmpdir(), "review-fix-loop", RUN_ID);
+// rfl 仪表（tier-1 §6.8/§7.5）：state 持久化迁出 $TMPDIR（系统清理即丢失）——
+// ~/.review-fix-loop/<repo-slug>/<runId>/；$TMPDIR 仅作 home 不可写时的降级。
+// 旧 $TMPDIR run 不迁移（易失数据不抢救），loadState 只从新位置读。
+const { root: RUN_ROOT, degraded: RUN_ROOT_DEGRADED } = resolveRunRoot({ runId: RUN_ID, cwd: process.cwd() });
+if (RUN_ROOT_DEGRADED) {
+  log("WARN: ~/.review-fix-loop not writable, falling back to $TMPDIR: " + RUN_ROOT);
+}
 const STATE_FILE = RUN_ROOT + "/state.json";
 
-fs.mkdirSync(RUN_ROOT, { recursive: true });
 log("Run directory: " + RUN_ROOT);
 
 // ── Startup fail-fast: validate agent ref paths exist (ADR-0003 D6) ─
@@ -342,6 +348,7 @@ function loadState() {
       agentStatus: {},
       fixCount: 0,
       batches: [],
+      calls: [],
       fixResults: [],
       issues: undefined,
       knownRemaining: [],
@@ -351,10 +358,47 @@ function loadState() {
   }
 }
 
+// rfl 仪表：终止原因快照声明上移（saveState 引用；所有实际调用发生在
+// 主循环初始化后，TDZ 不触发）。CLI list/stats 的终止原因数据源。
+let terminated = "clean";
+
 function saveState(state) {
+  // rfl 仪表：terminated 随每次落盘快照（结构化终止路径设值后即 saveState）
+  if (state.meta) state.meta.terminated = terminated;
   const tmp = STATE_FILE + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
   fs.renameSync(tmp, STATE_FILE);
+}
+
+// ── rfl 仪表（tier-1 §7.3）：calls[] 采集 + phaseTimings ───────────
+// 每次 agent() 调用记录资源与耗时；数据源 = returnMeta 透传的 usage/durationMs/
+// sessionId（引擎 T1 透传；旧引擎缺字段时 usage 为 undefined + 主循环打点 durationMs 兜底）。
+function recordCall(entry) {
+  if (!Array.isArray(state.calls)) state.calls = [];
+  state.calls.push(entry);
+}
+function normUsage(meta) {
+  const u = meta && typeof meta === "object" ? meta.usage : undefined;
+  if (!u || typeof u !== "object") return undefined;
+  return {
+    input: u.input ?? 0, output: u.output ?? 0,
+    cacheRead: u.cacheRead ?? 0, cacheWrite: u.cacheWrite ?? 0, cost: u.cost ?? 0,
+  };
+}
+// returnMeta 对象 → calls[] 条目。durationMs 优先引擎值（含排队），缺省用调用方打点。
+function buildCallRecord({ batch, round, role, name, model, prompt, promptMode, meta, fallbackDurationMs }) {
+  const promptStr = typeof prompt === "string" ? prompt : "";
+  return {
+    batch, round, role, name: name || role,
+    model: model || "(default)",
+    durationMs: (meta && typeof meta === "object" && typeof meta.durationMs === "number")
+      ? meta.durationMs
+      : (typeof fallbackDurationMs === "number" ? fallbackDurationMs : null),
+    usage: normUsage(meta),
+    promptMode: promptMode || "full",
+    promptBytes: Buffer.byteLength(promptStr, "utf8"),
+    sessionId: (meta && typeof meta === "object" && typeof meta.sessionId === "string") ? meta.sessionId : undefined,
+  };
 }
 
 // clean 记录（recordAgentClean/recordAgentDirty 与跨批跳过判定 shouldSkipAgent
@@ -488,7 +532,6 @@ const state = loadState();
 state.meta = state.meta || {};
 state.meta.baseHash = lockedBase.hash || "";
 let totalFixed = 0;
-let terminated = "clean";
 let finalMessage = "";
 
 for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
@@ -543,7 +586,20 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
 
     log("Review: " + active.map((d) => d.name).join(", ") + " (" + active.length + " agent(s) in parallel)...");
     const calls = active.map((def) => buildReviewCall(def, round, maxRounds, batchIndex, roundDir, scopedClean.has(def.name)));
+    const phaseTimings = { review: null, aggregate: null, fix: null };
+    const reviewT0 = Date.now();
     const allRaw = await parallel(calls.map(runReviewAgent));
+    phaseTimings.review = [reviewT0, Date.now()];
+    // rfl 仪表：本轮全部 reviewer 调用落 calls[]（allRaw 与 calls 一一对应，parallel 语义）
+    for (let i = 0; i < allRaw.length; i++) {
+      recordCall(buildCallRecord({
+        batch: batchIndex, round, role: "reviewer",
+        name: active[i].name, model: calls[i].model,
+        prompt: calls[i].prompt,
+        promptMode: scopedClean.has(active[i].name) ? "scoped" : "full",
+        meta: allRaw[i],
+      }));
+    }
 
     // per-agent 结果区分：parallel 结果与 calls 一一对应
     const reviewResults = [];
@@ -607,25 +663,32 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
 
     if (reviewResults.every((r) => r.must_fix === 0)) {
       log("Batch " + batchIndex + " round " + round + ": all agents clean.");
-      batchRounds.push({ round, mustFix: 0, suggestion: reviewResults.reduce((a, r) => a + (r.suggestion ?? 0), 0), agents: agentRoundResults, modifiedFiles: [] });
+      batchRounds.push({ round, mustFix: 0, suggestion: reviewResults.reduce((a, r) => a + (r.suggestion ?? 0), 0), agents: agentRoundResults, modifiedFiles: [], phaseTimings });
       saveState(state);
       batchClean = true;
       break;
     }
 
     // ── Aggregate（内置 prompt，不依赖任何 agent.md） ─────────
+    const aggT0 = Date.now();
+    const aggPrompt = buildAggregatorPrompt({
+      header: "Batch " + batchIndex + "/" + BATCHES.length + " Round " + round + "/" + maxRounds + " — AGGREGATE REVIEWS",
+      round, max: maxRounds, roundDir,
+      reviewResults,
+    });
     const aggRaw = await agent({
-      prompt: buildAggregatorPrompt({
-        header: "Batch " + batchIndex + "/" + BATCHES.length + " Round " + round + "/" + maxRounds + " — AGGREGATE REVIEWS",
-        round, max: maxRounds, roundDir,
-        reviewResults,
-      }),
+      prompt: aggPrompt,
       model: MODEL,
       schema: aggregatorSchema,
       description: "aggregate",
       timeoutMs: 3_600_000, // 1h
       returnMeta: true,
     });
+    phaseTimings.aggregate = [aggT0, Date.now()];
+    recordCall(buildCallRecord({
+      batch: batchIndex, round, role: "aggregator", name: "aggregate",
+      model: MODEL, prompt: aggPrompt, meta: aggRaw,
+    }));
 
     // returnMeta 下 aggRaw = {value, error}；失败时 value 为空串、error 在 finalMessage 透出（MF-1）
     const aggValue = aggRaw?.value ?? aggRaw;
@@ -744,7 +807,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     if (stuck.stuck) {
       const stuckIds = (stuck.stuckIds || []).join(", ");
       log("Stuck: issue(s) not converging for " + stuckThreshold + " rounds: " + stuckIds + ". Stopping.");
-      batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
+      batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [], phaseTimings });
       state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
       saveState(state);
       terminated = "stuck";
@@ -766,7 +829,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
           return r.issue_id + " [" + (hist || "no history") + "]";
         }).join("; ");
         log("Needs redesign: " + ids + " not converging after " + maxFixAttempts + " fix attempts. Stopping.");
-        batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
+        batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [], phaseTimings });
         state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
         saveState(state);
         terminated = "needs-redesign";
@@ -802,7 +865,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
           .filter(([, i]) => i.status !== "fixed" && i.status !== "deferred")
           .map(([id]) => id);
         log("Converged: new findings <= " + convergeNewIssues + " for " + convergeRounds + " rounds. Batch " + batchIndex + " done, proceeding to next batch.");
-        batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
+        batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [], phaseTimings });
         saveState(state);
         terminated = "converged";
         finalMessage = "Batch " + batchIndex + " round " + round + ": 新发现率收敛（连续 " + convergeRounds
@@ -838,14 +901,16 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         "- Commit with message: `fix: review batch " + batchIndex + " round " + round + " — " + mustFix + " must-fix`"
       : "- Do NOT commit. Leave the fixes in the working tree (autoCommit=false).";
 
+    const fixT0 = Date.now();
+    const fixPromptBuilt = buildFixPrompt({
+      header: "Fix round " + round + " (batch " + batchIndex + ")",
+      reportContent,
+      fixPrompt,
+      commitInstr,
+      caution: agg.fixes_caution && agg.fixes_caution.length ? agg.fixes_caution : [],
+    });
     const fxRaw = await agent({
-      prompt: buildFixPrompt({
-        header: "Fix round " + round + " (batch " + batchIndex + ")",
-        reportContent,
-        fixPrompt,
-        commitInstr,
-        caution: agg.fixes_caution && agg.fixes_caution.length ? agg.fixes_caution : [],
-      }),
+      prompt: fixPromptBuilt,
       schema: fixSchema,
       // S4：fixAgent = agentRef 路径（主线程按路径加载 + frontmatter model 传播）；
       // 未传保持现状（通用 subagent + 内联 fixPrompt）。
@@ -856,6 +921,11 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       returnMeta: true,
       ...(FIX_DEF && FIX_DEF.path ? { agent: FIX_DEF.path } : {}),
     });
+    phaseTimings.fix = [fixT0, Date.now()];
+    recordCall(buildCallRecord({
+      batch: batchIndex, round, role: "fixer",
+      name: (FIX_DEF && FIX_DEF.name) || "fix", model: MODEL, prompt: fixPromptBuilt, meta: fxRaw,
+    }));
 
     // returnMeta 下 fxRaw = {value, error}：先查 error（失败分支可达，MF-1），再对 value 做 parseResult
     if (fxRaw && typeof fxRaw === "object" && fxRaw.error) {
@@ -863,7 +933,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       // 与 review 路径（raw.error → review-failure）对齐：结构化终止而非静默当成功——
       // 否则 fixed_count 缺失被 `?? mustFix` 回退，totalFixed 虚增且 must_fix 不降白跑轮次（MF-1）。
       log("Fix agent failed, stopping.");
-      batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
+      batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [], phaseTimings });
       state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
       saveState(state);
       terminated = "fix-failure";
@@ -875,7 +945,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     const fixResult = fx ? normalizeFixResult(fx) : null;
     if (!fixResult) {
       log("Fix agent failed, stopping.");
-      batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
+      batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [], phaseTimings });
       state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
       saveState(state);
       terminated = "fix-failure";
@@ -899,7 +969,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
           : "deferred 含非 minor 条目（must-fix 不得 defer）— " + v.issue_id + "(" + v.severity + ")"
       );
       log("ES3 violation: " + JSON.stringify(es3Violations));
-      batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
+      batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [], phaseTimings });
       state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
       saveState(state);
       terminated = "fix-failure";
@@ -984,7 +1054,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         modifiedFiles = out ? out.split("\n") : [];
       } catch { /* empty */ }
     }
-    batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles });
+    batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles, phaseTimings });
     // M4: 批内即时字段——下轮 scoped 分支（recheckAfterFix=true）从
     // state.lastModifiedFiles 读本批 fix 的真实改动文件（git 实测兜底）
     state.lastModifiedFiles = modifiedFiles;

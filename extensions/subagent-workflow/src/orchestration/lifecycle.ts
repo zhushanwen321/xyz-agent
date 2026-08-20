@@ -167,6 +167,14 @@ export async function runWorkflow(
   validateRunArgs(spec);
 
   const runId = generateRunId();
+  // rfl 仪表（tier-1 §7.1）：注入稳定 _runId。runAndWait 与 executeNestedWorkflow
+  // 两个 args 入口都经本 choke point；rebuildRuntime 复用 run.spec.args 同一对象
+  // （error-recovery.ts），worker rebuild 后脚本侧 $ARGS._runId 不漂移——修复
+  // 「rebuild 回退 run-<Date.now()> 导致同一逻辑 run 碎裂到多个 state 目录」。
+  // 注入在 validateRunArgs 之后，不参与脚本参数 schema 校验（引擎内部字段）。
+  if (spec.args && typeof spec.args === "object") {
+    spec.args._runId = runId;
+  }
   deps.log?.("debug", "workflow:lifecycle", "runWorkflow start", { runId, scriptName: spec.scriptName });
 
  // P1-2: pre-aborted signal → fail fast

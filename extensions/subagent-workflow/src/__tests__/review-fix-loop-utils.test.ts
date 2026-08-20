@@ -34,6 +34,7 @@ import {
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
+  resolveRunRoot,
   resolveAgentDefs,
   recordAgentClean,
   recordAgentDirty,
@@ -1147,5 +1148,94 @@ describe("T-3: tracked severity 'unknown' 守卫（reconcile 新 ID 不覆盖自
       fixes: [],
       deferred: [{ issue_id: "MF-9", severity: "minor", reason: "cannot fix" }],
     }, [], trackedIssues)).toEqual([{ issue_id: "MF-9", severity: "major" }]);
+  });
+});
+
+// ── A5: resolveRunRoot（rfl 仪表 T3，tier-1 §7.5） ─────────────────
+
+describe("A5 resolveRunRoot: 存储根解析（git slug / 非 git cwd / home 不可写降级）", () => {
+  it("A5 git 目录：toplevel 路径 slug 化为 <home>/.review-fix-loop/<slug>/<runId>，目录已创建", () => {
+    const home = mkdtempSync(join(tmpdir(), "rfl-root-home-"));
+    try {
+      const made: string[] = [];
+      const { root, slug, degraded } = resolveRunRoot({
+        runId: "wf-test-1",
+        cwd: "/should/be/ignored/when/git/succeeds",
+        homeDir: home,
+        exec: (cmd: string) => {
+          expect(cmd).toBe("git rev-parse --show-toplevel");
+          return "/Users/x/proj/my-repo\n";
+        },
+        mkdir: (p: string) => { made.push(p); },
+      });
+      expect(degraded).toBe(false);
+      expect(slug).toBe("Users-x-proj-my-repo");
+      expect(root).toBe(join(home, ".review-fix-loop", "Users-x-proj-my-repo", "wf-test-1"));
+      expect(made).toEqual([root]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("A5 非 git 目录（rev-parse 失败）：slug 回退 cwd 路径", () => {
+    const home = mkdtempSync(join(tmpdir(), "rfl-root-home-"));
+    try {
+      const { root, slug, degraded } = resolveRunRoot({
+        runId: "run-42",
+        cwd: "/tmp/plain/docs",
+        homeDir: home,
+        exec: () => { throw new Error("not a git repository"); },
+        mkdir: () => {},
+      });
+      expect(degraded).toBe(false);
+      expect(slug).toBe("tmp-plain-docs");
+      expect(root).toBe(join(home, ".review-fix-loop", "tmp-plain-docs", "run-42"));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("A5 home 不可写：降级 tmpDir 并返回 degraded=true（调用方 log WARN）", () => {
+    const home = "/definitely/not/writable/home";
+    const fallbackTmp = mkdtempSync(join(tmpdir(), "rfl-root-tmp-"));
+    try {
+      const made: string[] = [];
+      const { root, degraded } = resolveRunRoot({
+        runId: "wf-test-2",
+        cwd: "/anywhere",
+        homeDir: home,
+        tmpDir: fallbackTmp,
+        exec: () => "/repo/top",
+        mkdir: (p: string) => {
+          // primary 路径抛错（模拟 home 只读），降级路径成功
+          if (p.startsWith(home)) throw new Error("EACCES");
+          made.push(p);
+        },
+      });
+      expect(degraded).toBe(true);
+      expect(root).toBe(join(fallbackTmp, "review-fix-loop", "wf-test-2"));
+      expect(made).toEqual([root]);
+    } finally {
+      rmSync(fallbackTmp, { recursive: true, force: true });
+    }
+  });
+
+  it("A5 真实文件系统集成：默认 mkdir 真建目录，slug 分隔符归一", () => {
+    const home = mkdtempSync(join(tmpdir(), "rfl-root-real-"));
+    try {
+      const { root, degraded } = resolveRunRoot({
+        runId: "wf-real-1",
+        cwd: "/Users/x/a b/c",
+        homeDir: home,
+        exec: () => "/Users/x/a b/c",
+      });
+      expect(degraded).toBe(false);
+      // mkdir recursive 已真实创建（existsSync 验证）
+      const { existsSync } = require("node:fs");
+      expect(existsSync(root)).toBe(true);
+      expect(root).toContain(join(home, ".review-fix-loop", "Users-x-a b-c", "wf-real-1"));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

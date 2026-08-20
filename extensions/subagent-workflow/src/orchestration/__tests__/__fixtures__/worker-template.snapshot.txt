@@ -100,7 +100,9 @@ function _safePost(msg, context) {
         // 不丢失。失败 resolve 为空字符串是既定容错策略。
         // parsedOutput: validated data object from structured-output execute().
         // Fallback to content (raw text) when no schema was requested or on error.
-        // W2 改动 9(b)：returnMeta===true 时 resolve {value,sessionFile,worktreePath,error}（对称缓存重放 9c）；否则单值。
+        // W2 改动 9(b)：returnMeta===true 时 resolve {value,sessionFile,worktreePath,error,usage,durationMs,sessionId}
+        // （对称缓存重放 9c）；否则单值。usage/durationMs/sessionId 为 rfl 仪表透传（tier-1 §7.1，
+        // AgentResult 已含、此处原样转发，缺省 undefined 兼容旧主线程）。
         const _value = msg.result.parsedOutput ?? msg.result.content;
         if (pending.returnMeta) {
           pending.resolve({
@@ -108,6 +110,9 @@ function _safePost(msg, context) {
             sessionFile: msg.result.sessionFile,
             worktreePath: msg.result.worktreePath,
             error: msg.result.error,
+            usage: msg.result.usage,
+            durationMs: msg.result.durationMs,
+            sessionId: msg.result.sessionId,
           });
         } else {
           pending.resolve(_value);
@@ -204,6 +209,9 @@ function _safePost(msg, context) {
           sessionFile: cached.sessionFile,
           worktreePath: cached.worktreePath,
           error: cached.error,
+          usage: cached.usage,
+          durationMs: cached.durationMs,
+          sessionId: cached.sessionId,
         };
       }
       return _cachedValue;

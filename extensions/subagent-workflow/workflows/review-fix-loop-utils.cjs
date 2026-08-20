@@ -682,6 +682,36 @@ function parseAggregatedMd(content) {
   };
 }
 
+/**
+ * rfl 仪表（tier-1 §7.5）：run 存储根解析——~/.review-fix-loop/<slug>/<runId>。
+ * slug = git toplevel 路径的分隔符替换为 '-'（rev-parse 失败用 cwd——非 git 项目）；
+ * home 不可写（mkdir 抛错）降级 tmpDir 并返回 degraded=true（调用方 log WARN）。
+ * 目录创建在此完成（mkdir recursive）；依赖注入（exec/mkdir）供单测 stub。
+ * @returns { root: string, slug: string, degraded: boolean }
+ */
+function resolveRunRoot({ runId, cwd, homeDir, tmpDir, exec, mkdir }) {
+  const os = require("os");
+  const execFn = exec || ((cmd) =>
+    require("child_process").execSync(cmd, { encoding: "utf-8", timeout: 5_000 }).trim());
+  const mkdirFn = mkdir || ((p) => require("fs").mkdirSync(p, { recursive: true }));
+  const workDir = cwd || process.cwd();
+  let toplevel = "";
+  try {
+    toplevel = String(execFn("git rev-parse --show-toplevel")).trim();
+  } catch { toplevel = ""; }
+  const baseDir = toplevel || workDir;
+  const slug = String(baseDir).split(path.sep).filter(Boolean).join("-") || "default";
+  const primary = path.join(homeDir || os.homedir(), ".review-fix-loop", slug, String(runId));
+  try {
+    mkdirFn(primary);
+    return { root: primary, slug, degraded: false };
+  } catch {
+    const fallback = path.join(tmpDir || os.tmpdir(), "review-fix-loop", String(runId));
+    try { mkdirFn(fallback); } catch { /* 降级路径也失败：root 仍返回，脚本侧写入时自然报错 */ }
+    return { root: fallback, slug, degraded: true };
+  }
+}
+
 /** fallow-scan：内置工具型 def（无 .md，跑 fallow audit 静态分析）。
  * 不由 batchN 触发（batchN 值域 = agent .md 路径）——由独立参数 fallowScan=true 在脚本层
  * 前置插入为首批。 */
@@ -788,6 +818,7 @@ module.exports = {
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
+  resolveRunRoot,
   resolveAgentDefs,
   recordAgentClean,
   recordAgentDirty,

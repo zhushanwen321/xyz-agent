@@ -62,6 +62,18 @@ describe("buildWorkerScript — 模板 hoisting byte-identical 快照（IF5）",
     const [preB] = b.split("\n  y\n");
     expect(preA).toBe(preB);
   });
+
+  it("A8 rfl 仪表透传字段字面量锚定（tier-1 §7.1）：live resolve 与缓存重放两对称点均含三字段", () => {
+    const out = buildWorkerScript("// noop");
+    // live resolve 分支（agent-result 消息处理）
+    expect(out).toContain("usage: msg.result.usage,");
+    expect(out).toContain("durationMs: msg.result.durationMs,");
+    expect(out).toContain("sessionId: msg.result.sessionId,");
+    // 缓存重放分支（_callCache 命中重建，对称点）
+    expect(out).toContain("usage: cached.usage,");
+    expect(out).toContain("durationMs: cached.durationMs,");
+    expect(out).toContain("sessionId: cached.sessionId,");
+  });
 });
 
 describe("buildWorkerScript — _KNOWN_FIELDS module scope 提升（IF6）", () => {
