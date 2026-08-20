@@ -240,8 +240,9 @@ Final gate：V1/V2/V4 在打包链 dev app 端到端复跑一次（builtin 扩�
 | W5 | b56d845cb | load-more 锚定切分（探针 ③ 落定：exact 路径 compaction 后仍命中，兜底触发率 ≈ 0） |
 | W2 | d1bee7c45 | user entry 化（appendUser 构造 entry）+ stream_warn liveOnly 标记 |
 | W3 | 02b5a5ce3 | 分组边界规则集 v2（groupRenderInput 重写 + 空 turn 折叠 + 输出侧 display 过滤） |
-| W4 | （并行 wave，渲染层在途） | Turn 模型扩展 + 渲染（trigger 起点行 / inline notice / i18n） |
-| W6 | 本次（未 commit） | 等价性测试全类型扩展（E1-E4）+ compactionSummary entry 化 + 登记表 #7 / AGENTS 规则 9 同步 + W1 交棒注释清理 |
+| W4 | 85e158d23 | Turn 模型扩展 + 渲染（trigger 起点行 / inline notice / executingBash 完整形态 / i18n）+ 跨 wave 集成修复（消费方断言对齐 v2） |
+| W6 | eb4ed5f3f | 等价性测试全类型扩展（E1-E4）+ compactionSummary entry 化 + 登记表 #7 / AGENTS 规则 9 同步 + W1 交棒注释清理 |
+| W2 后修 | 5f5f9ddad | **appendUser 改 overlay-only**：W22 真实 pi 等价性测试捕获乐观 entry 与真实 message_end(user) 帧双喂 reducer（同一条 user 双计）；无条件 user 守卫也被 chaos 否定（sendCommand 源 user 仅经 message_end 入流是合法路径）、内容式去重对 steer 展开不可靠 → 定案：reducer 的 user entry 唯一来源 = 真实 message_end(user) 帧（两侧同为位置派生 id，live≡reload 对 user 严格构造性成立），appendUser 的 entry 仅作 ref overlay 派生基底（u-uuid 契约不变）。§3.3 D6 的「appendUser → applyEntryFrame」表述按此修订 |
 
 **探针结论落定（§3.5 四项全闭环）**：
 
