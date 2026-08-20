@@ -1,0 +1,7 @@
+{
+  "acceptance": [
+    { "id": "A51", "title": "zh-CN/en-US trace 文案键全存在且被引用; 空态/损坏行/降级/SYSTEM 无留痕四类边界文案; 状态行与 chips 标签双语", "type": "unit", "core": false, "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/frontend exec vitest run trace-i18n" }
+  ],
+  "contracts": [],
+  "split": []
+}
