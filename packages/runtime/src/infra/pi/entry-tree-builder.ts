@@ -77,7 +77,7 @@ const CLIENT_MSG_ID_TYPE = 'xyz.client-msg-id'
  *    custom / branchSummary 系统消息处理），产出 Message[]。entryIds 平行传入，使产出的
  *    user/assistant Message 带 piEntryId（从 entryIds[i] 取）。
  *    ⚠️ M2 前 RPC 路径手写两遍扫只提取 message entry，丢弃 compaction/branch/custom_message，
- *    导致活跃 session 重开时这三类记录消失（违反 AGENTS.md #7.5「可重开恢复」）；
+ *    导致活跃 session 重开时这三类记录消失（违反 AGENTS.md 关键规则 9「可重开恢复」）；
  *    改用共享 mapper 后两路径覆盖 by construction 一致。
  *
  * 4. 回填 segments：对 user message 按 piEntryId 查 clientUuidMap → 查 segmentsMetadata

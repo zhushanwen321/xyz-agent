@@ -498,7 +498,7 @@ describe('rebuildHistoryFromEntries', () => {
   // ════════════════════════════════════════════════════════════════════
   // 背景：rebuildHistoryFromEntries 原本直接调 convertSinglePiMessage，对 toolResult/特殊 role
   // 返回 null 全部丢弃。C1 修复改为整批走 convertPiHistory，复用 toolResult 合并 +
-  // compactionSummary/custom/branchSummary → system 消息处理（AGENTS.md #7.5：可重开恢复）。
+  // compactionSummary/custom/branchSummary → system 消息处理（AGENTS.md 关键规则 9：可重开恢复）。
   // 以下 5 个用例覆盖这 4 类 entry 的还原，是 C1 回归的硬性 gate。
 
   // ── C1 用例 1：toolResult 合并到上一个 assistant.toolCalls ──────────

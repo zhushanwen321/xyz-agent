@@ -5,7 +5,7 @@
 ## §1 背景目标
 
 - **S（情境）**：xyz-agent 的对话历史有两条读取路径——**RPC 路径**（session 活跃有 pi 进程，`get_entries` → `rebuildHistoryFromEntries`）与**文件路径**（session 离线无进程，解析 session JSONL → `mapEntriesToPiMessages` → `convertPiHistory`）。项目关键规则 9 要求：进入对话流的状态（压缩记录、分支摘要、扩展通知等）必须「实时可见 + 重开可见」，且两条读取路径都要覆盖。
-- **C（冲突）**：现状两路覆盖**倒挂**——RPC 路径（活跃 session 重开的主路径）丢弃 compaction / branch_summary / custom_message 三类记录，文件路径（离线重开）反而完整；auto-compaction（pi 自动压缩）实时与重开**双双隐形**；AGENTS.md 7.5 描述的 `get_messages → convertPiHistory` 路径已成死代码，文档过期。
+- **C（冲突）**：现状两路覆盖**倒挂**——RPC 路径（活跃 session 重开的主路径）丢弃 compaction / branch_summary / custom_message 三类记录，文件路径（离线重开）反而完整；auto-compaction（pi 自动压缩）实时与重开**双双隐形**；AGENTS.md 关键规则 9（写作时编号 7.5）描述的 `get_messages → convertPiHistory` 路径已成死代码，文档过期。
 - **Q（问题）**：怎么让两条路径的覆盖**by construction**（结构上不可能分叉）一致，且 compaction 生命周期对用户全程可见？
 - **A（答案）**：把「entry 筛选 + 非 message entry → 伪消息映射」抽为共享单点 `mapSessionEntries`，两条路径只声明各自附加需求（RPC 要 clientUuidMap 回填 badge，文件要尾读窗口）；compaction 生命周期改由 pi 事件驱动（`compaction_start{reason}` 区分手动/自动，`compaction_end.result` 携带全部所需数据），dispatcher 只保留 RPC 触发与失败复位。本文展开这个答案。
 
@@ -33,7 +33,7 @@ session JSONL 文件 ──→ session-history.ts ─────┘
 ### Scope
 
 - **当前层 → 下一层**：runtime 历史链路技术方案 → 文件级实现拆分（§5）。
-- **In-scope**：共享 mapper 抽取与两路径接入；compaction 生命周期事件驱动（dispatcher 零广播、interpreter 唯一源）；compacting reason 文案区分手动/自动（store + MessageStream + i18n）；**display 历史链路归一（完成通知 customType 在历史链路也写 display:false，消除关键规则 9 实时/重开可见性分叉，方案 Z，MF-新2）**；直接相关的契约清理（死分支、entry_appended、AGENTS.md 7.5 文档同步）。
+- **In-scope**：共享 mapper 抽取与两路径接入；compaction 生命周期事件驱动（dispatcher 零广播、interpreter 唯一源）；compacting reason 文案区分手动/自动（store + MessageStream + i18n）；**display 历史链路归一（完成通知 customType 在历史链路也写 display:false，消除关键规则 9 实时/重开可见性分叉，方案 Z，MF-新2）**；直接相关的契约清理（死分支、entry_appended、AGENTS.md 关键规则 9 文档同步）。
 - **Out-of-scope**：renderer 消息模型归一（`conversation-renderer-model-unification.md`，本次仅改 compacting 浮层文案；**display 历史链路归一除外**——MF-新2 把完成通知 customType 的 display 覆写前移到 runtime mapper + shared SSOT 常量，core/message-turns.ts 仅改引用源不过滤逻辑，非消息模型变更）；pi 侧行为（不改 pi）；WS 全量契约 SSOT 文档化（仅同步本文触及的消息注释）；`getHistoryTailFromFile` 的 20 turn 窗口策略（不改，场景测试约束 ≤20 turn）。
 
 ## §2 现状与问题分析
@@ -97,7 +97,7 @@ session JSONL（~/.xyz-agent/pi/agent/sessions/.../*.jsonl）
 - 压缩产物 compaction entry 又被 RPC 路径丢弃（上表）——重开也丢。
 - 手动 compact 不受影响：dispatcher（`message-dispatcher.ts:423`）手动编排了 compacting → compactionSummary → compacted 全流程。同一语义的两种触发源，可见性天差地别——与 steer/pending 的「按触发源分叉」同构。
 
-**附带事实**：`rpc-client.ts:511` 的 `client.getHistory()`（pi `get_messages` RPC）生产代码零调用方（仅 port 声明与测试引用），AGENTS.md 7.5 描述的「RPC 路径 = get_messages → convertPiHistory」已过期，需同步。
+**附带事实**：`rpc-client.ts:511` 的 `client.getHistory()`（pi `get_messages` RPC）生产代码零调用方（仅 port 声明与测试引用），AGENTS.md 关键规则 9 描述的「RPC 路径 = get_messages → convertPiHistory」已过期，需同步。
 
 ## §3 解决方案
 
@@ -243,7 +243,7 @@ function mapSessionEntries(entries: PiSessionEntry[]): MappedSessionEntries
 | adapter 死分支：`message_start{role:compactionSummary/branchSummary}` | `event-adapter.ts:493-510`（compactionSummary :493 / branchSummary :502） | 删除（实时 compactionSummary 改由 3.3.4 事件驱动）。注：「pi 从不发此 role」属**运行时断言**（pi message_start handler :374-386 注释「persisted elsewhere」为旁证，:381 唯一命中），仅凭 xyz 侧代码无法证实——M5 用 grep 历史 session JSONL 实测确认无 `message_start.*compactionSummary` 命中后再删 |
 | `agent_start` hook 不可达分支 | `event-adapter.ts:738-741`（NULL_EVENTS:668 含 agent_start 先吞，:739 分支**静态不可达**——控制流事实，非运行时断言） | 裁决：**从 NULL_EVENTS 移除让分支可达**。理由：该分支产 `kind:'hook'` 交 interpreter `executeHooks('onPiEvent')`（event-interpreter.ts:259），消费方是**插件系统**（非前端 UI）——删分支会静默移除插件对 agent_start 的观测。注：onPiEvent 在 tool_execution_start/end、agent_end 等路径仍活，仅 agent_start 这一入口因 NULL_EVENTS 不可达。若确认无插件依赖 agent_start 观测，可选「删分支 + 注明牺牲」，默认保留可达 |
 | `entry_appended` 未登记 | pi-protocol.ts:399-402 已声明类型（`entry: Record<string,unknown>`，非 any），NULL_EVENTS/DISPATCHER 均无 → extension 调 ctx.appendEntry（agent-session.js:1865-1871 emit :1868）每次刷 `console.warn('Unhandled pi event type')`（event-adapter.ts:747） | 登记 NULL_EVENTS（pi 会 emit，xyz 无前端消费方）。注：仅 extension ctx.appendEntry 路径 emit，内部 append（appendCompaction 等）不 emit |
-| AGENTS.md 7.5 描述过期 | 「RPC 路径 = client.getHistory → pi get_messages → convertPiHistory」 | 同步为「get_entries → rebuildHistoryFromEntries（经共享 mapper）→ convertPiHistory」；`client.getHistory()`（rpc-client.ts:511，pi get_messages）死代码标注或删除（pi 当前依赖 0.84.1） |
+| AGENTS.md 关键规则 9 描述过期 | 「RPC 路径 = client.getHistory → pi get_messages → convertPiHistory」 | 同步为「get_entries → rebuildHistoryFromEntries（经共享 mapper）→ convertPiHistory」；`client.getHistory()`（rpc-client.ts:511，pi get_messages）死代码标注或删除（pi 当前依赖 0.84.1） |
 
 #### 3.3.6 运行时断言探针清单（准则 7）
 
@@ -300,7 +300,7 @@ function mapSessionEntries(entries: PiSessionEntry[]): MappedSessionEntries
 | M2 RPC 路径接入 | `rebuildHistoryFromEntries` 改用 mapper（clientUuidMap 从 customDataEntries 建，badge 回填保留） | 场景 1 + P-badge-backfill |
 | M3 文件路径接入 | `getHistoryFromFilePath`/`tailReadHistory` 换 mapper；删 `__entryId` 注入；扩 port 签名 `convertHistory(raw, entryIds?)` + PiSessionStore 透传（MF5） | 场景 4② + P-fork-locate + 场景 5 |
 | M4 compaction 事件驱动 | adapter 放开两事件 + interpreter 编排（errorMessage 真值判据 + isCompacting 置位/复位对称 SUG-新2 + 孤儿 end 容错 SUG-新3）+ dispatcher 零广播（补 isCompacting 预检）+ compacting reason 文案（MF4） | 场景 2/3 + P-dedup（by construction）+ P-failed-judge + P-auto-queue |
-| M5 契约清理 + 文档同步 | §3.3.5 四项 + agent_start 从 NULL_EVENTS 移除（S1）+ PiCompactionEndEvent.result 收紧类型（S5） | grep 无死分支；P-msg-start-dead 实测；AGENTS.md 7.5 更新 |
+| M5 契约清理 + 文档同步 | §3.3.5 四项 + agent_start 从 NULL_EVENTS 移除（S1）+ PiCompactionEndEvent.result 收紧类型（S5） | grep 无死分支；P-msg-start-dead 实测；AGENTS.md 关键规则 9 更新 |
 
 拆分理由：M1-M3 是「双路一致」主线（mapper 先行，两路径各自独立可验）；M4 是 compaction 可见性主线（依赖 M1 的 compaction 映射才能让重开可见，故排在 M1 后；与 M2/M3 无代码耦合但共享场景 1 的验收上下文）；M5 纯清理放最后防干扰主线。
 

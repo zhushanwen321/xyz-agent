@@ -277,9 +277,11 @@ export class MessageDispatcher {
    *
    * 生命周期：bashStart 广播（开始，执行中反馈——前端 ephemeral executingBash 态，不建消息）
    * → pi bash RPC → bashResult 广播（终态，双分支延迟如上）。
-   * 返回 { blocked: true } 有三种形态：预检拒绝（send.rejected 已广播）、执行失败（message.error
-   * 已广播）、空命令哨兵不变式早退（**不广播**——程序不变式守卫非用户可见错误，见方法头；实施审查
-   * SG-2：调用方对第三种形态的 ack 文案失真已知，归 bash 互斥专项）。
+   * 返回 { blocked: true } 有四种形态（一致性审查 SG-A1 修订——catch abort skip 是 D1 新增分支）：
+   * 预检拒绝（send.rejected 已广播）、执行失败（message.error + 错误 bashResult 终态帧均已广播）、
+   * catch abort skip（**不广播**——abortBash 已抢先收口广播哨兵帧，token 不匹配即跳过，D1 收窄
+   * 后唯一残余例外⑤）、空命令哨兵不变式早退（**不广播**——程序不变式守卫非用户可见错误，见方法头；
+   * 实施审查 SG-2：调用方对后两种形态的 ack 文案失真已知，归 bash 互斥专项）。
    * 调用方（session-message-handler）据此走对应 ack 路径，与 sendMessage 的返回语义对称。
    */
   async sendBash(

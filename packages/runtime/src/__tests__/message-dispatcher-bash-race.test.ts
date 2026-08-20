@@ -114,9 +114,11 @@ describe('MessageDispatcher —— W1 abortBash/sendBash 竞态守卫', () => {
     // （哨兵只清态、真实帧产 entry，均幂等），双终态担忧不成立。bashResult 总数 = 2。
     const allResults = findBashResults(broadcasts)
     expect(allResults).toHaveLength(2)
-    // 第一条 = abortBash 哨兵（cancelled:true）
-    expect(allResults[0]!.payload.cancelled).toBe(true)
-    // 第二条 = sendBash 发布的真实数据（token 已旋转仍发布）
+    // 第一条 = abortBash 哨兵（command:'' + cancelled:true 两字段共同构成哨兵形态，缺一不可——
+    // bash-effects 判定依赖该不变式，锁定防未来改字段）
+    expect(allResults[0]!.payload).toMatchObject({ command: '', cancelled: true })
+    // 第二条 = sendBash 发布的真实数据（token 已旋转仍发布；cancelled 随 pi 返回值透传——
+    // mock 刻意用 cancelled:false 显式验证「guard 命中与结果 cancelled 与否正交、照发不筛」）
     expect(allResults[1]!.payload).toMatchObject({ output: 'real output', cancelled: false })
 
     // 不广播 message.error（pi 是正常 resolve，无错误）

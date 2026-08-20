@@ -223,7 +223,7 @@ Final gate：V1/V2/V4 在打包链 dev app 端到端复跑一次（builtin 扩�
 | W3 | 分组边界规则集 v2（groupRenderInput 重写、display 过滤挪渲染层、空 turn 折叠、stream_warn liveOnly 标记） | core message-turns + registry 单点 | 建议在 W1 后（bash inline 规则引用其最终形态），逻辑上可并行 | 机制 A/C 主修复；纯函数重写可用等价性测试护航 |
 | W4 | Turn 模型扩展 + 渲染（trigger 起点行、inline notice 渲染、MessageStream/Turn.vue 适配、i18n） | ui/renderer | W3 | 渲染消费 W3 语义；独立可验收（V4/V5 视觉面） |
 | W5 | load-more 锚定切分（hydrate 记锚、getFullHistory 切分、prependHistory 改造 + 兜底、探针 ③） | core useChat/mutations + runtime 历史路径 | W2（id 空间收敛后锚语义最简） | 机制 5 主修复；锚逻辑小而独立 |
-| W6 | 护栏与文档（等价性测试全类型扩展、登记表 #7 注记 + 例外登记（bash 窄竞态 / exclude 分支结论）、@data-owner 注解、AGENTS 7.5 同步） | 测试 + 文档 | W1-W5 | 防复发层；对齐治理线四层护栏惯例 |
+| W6 | 护栏与文档（等价性测试全类型扩展、登记表 #7 注记 + 例外登记（bash 窄竞态 / exclude 分支结论）、@data-owner 注解、AGENTS 关键规则 9 同步） | 测试 + 文档 | W1-W5 | 防复发层；对齐治理线四层护栏惯例 |
 
 **文件改动地图**：改写 `message-turns.ts`（分组规则 v2）、`store.ts`（appendUser entry 化、锚存储）、`effects/registry.ts`（bash/customStart 处理改造、stream_warn 标记）、`bash-effects.ts`（直建路径删除）、`message-dispatcher.ts`（sendBash 双分支）、`useChat.ts`（hydrate 锚 / loadMore 切分）、`mutations.ts`（prepend 兜底）；扩展 `Turn.vue`/`MessageStream`（trigger 行、inline notice）；新增无（不新建文件，全部在既有 SSOT 位置演进——避免新文件新管线）。
 
@@ -256,4 +256,4 @@ Final gate：V1/V2/V4 在打包链 dev app 端到端复跑一次（builtin 扩�
 - **compactionSummary 判定：entry 化（消灭双路径）**。帧数据源 = runtime event-interpreter 从 pi `compaction_end` 事件 result 提取的 `{ summary, tokensBefore, timestamp }`，与 pi 落盘 compaction entry（`sessionManager.appendCompaction`，手动 :1441 / auto :1670 两路都在 emit 前以同一批局部变量先落盘，0.84.1 dist 实测）**同源同值**，帧字段足以构造 `PiCompactionEntry` → registry handler 改直插为构造 entry → `applyEntryFrame`（user/custom/bash 同款范式）。fallback 文案由英文占位收敛为 reducer 中文（live/reload 一致）。剩余窄差异登记 #7 例外④：interpreter 仅 summary 真值时发帧，summary 缺失的 compaction（成功路径罕见）live 无消息、重开有 fallback 行。
 - **等价性机器化（`apply-entry-equivalence.test.ts` W6 describe）**：E1 全类型归一 deep-equal（live 客户端 id 前缀 vs replay uuidv7）、E2 分组等价（toRenderItems 输出 deep-equal + turn 数/trigger/notices/边界行显式断言）、E3 abort 例外显式锁定（差异恰为 cancelled bash entry、分组不因它变化）、E4 compaction 处置（live 帧 entry ≡ replay entry）。
 - **登记表 #7 注记**：turn 归属语义落地（边界规则集纯派生，无物化 turnId）+ 四项例外登记（bash abort 分歧 / executingBash ephemeral 态 / stream_warn liveOnly / compaction 窄差异）。**closure 收尾更新（2026-08-20）**：例外①④已消灭、②落定、新增收窄例外⑤，见登记表现行文案。
-- **AGENTS.md 规则 9（历史编号 7.5）**：两通路落点更新为「共用同一 applyEntry reducer」，补全类型 entry 化 + 等价性测试守卫一句（写作时全仓代码注释中「规则 7.5」历史编号引用未清理——**closure F3/D4 已清**：packages 源码区 26 处 + 活文档区 10 处（含本文档 2 处）归「关键规则 9」，历史记录区 as-written 保留，明细见 closure §6）。
+- **AGENTS.md 规则 9（历史编号 7.5）**：两通路落点更新为「共用同一 applyEntry reducer」，补全类型 entry 化 + 等价性测试守卫一句（写作时全仓代码注释中「规则 7.5」历史编号引用未清理——**closure F3/D4 + cr1 一致性审查已清**：packages 源码与活文档两区对编号全变体族 0 残留；本文档共改写 3 处（§2.3 被否推演处改名、W6 行 `AGENTS 7.5` 变体补清、本行过时「未清理」自登记改写——旧编号字符串在本行作为说明性引用保留并计入 as-written），历史记录区 as-written 保留 26 处，明细见 closure §6）。
