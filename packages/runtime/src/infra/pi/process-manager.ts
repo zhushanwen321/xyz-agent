@@ -203,15 +203,24 @@ export class ProcessManager implements IProcessManager {
       throw e
     }
 
-    // Listen for unexpected exits to notify upper layer
+    // Listen for unexpected exits to notify upper layer.
+    // onExit 返回的 unsubscribe 刻意不持有：client 生命周期与 Map 条目一致，
+    // intentional destroy 由下方 clientToId 无条目守卫覆盖，无需显式解绑。
     client.onExit((code, stderr) => {
-      // If processes no longer has this sessionId, it was destroyed intentionally
-      if (!this.processes.has(sessionId)) return
-      console.warn(`[process-manager] session ${sessionId} process exited unexpectedly (code: ${code})`)
-      this.processes.delete(sessionId)
+      // 反查当前 id：闭包捕获的 sessionId 在 rekey 后过期（create 路径 tempId → piSessionId），
+      // 用 has(capturedId) 守卫会在 rekey 后误判「已被清理」→ 死亡通知整条丢失（僵尸 session 根因）。
+      // clientToId 与 processes 由 createSession/destroySession/rekey 成对维护，执行时反查天然同步。
+      const currentId = this.clientToId.get(client)
+      // clientToId 无条目 = 已被 destroySession 清理（intentional destroy），跳过通知
+      if (currentId === undefined) return
+      console.warn(`[process-manager] session ${currentId} process exited unexpectedly (code: ${code})`)
+      this.processes.delete(currentId)
       this.clientToId.delete(client)
+      // 命名消歧：this.exitCallbacks 是 ProcessManager 的 Set<(sessionId, code, stderr) => void>
+      // （上层多播，process-manager.ts:123），与 RpcClient.exitCallbacks（Set<(code, stderr) => void>）
+      // 是不同类、不同签名的同名字段
       for (const cb of this.exitCallbacks) {
-        cb(sessionId, code, stderr)
+        cb(currentId, code, stderr)
       }
     })
 

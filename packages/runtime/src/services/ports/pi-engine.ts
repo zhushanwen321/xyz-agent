@@ -189,8 +189,8 @@ export interface IPiEngine {
   start(): Promise<void>
   /** 终止 pi 子进程（SIGTERM，超时后 SIGKILL）。 */
   kill(): Promise<void>
-  /** 注册本进程退出回调。 */
-  onExit(callback: PiProcessExitCallback): void
+  /** 注册本进程退出回调。多播（可多订阅者），返回 unsubscribe（与 onEvent 对称）。 */
+  onExit(callback: PiProcessExitCallback): () => void
   /** 进程是否已退出。 */
   readonly exited: boolean
 }
