@@ -519,12 +519,21 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return this.sessions.get(sessionId)?.cwd
   }
 
+  /**
+   * 可能返回已死 client（exited=true），业务入口（prompt / subagent / auto-restore）
+   * 应走 ensureActive（死 client 视同无 client 走 restore）；直接调用方需自行处理 exited
+   * （handoff-service 等依赖裸 client 观察 exited，故本方法不改语义只标注契约）。
+   */
   getRpcClient(sessionId: string): IPiEngine | undefined { return this.pm.getClient(sessionId) }
 
   /** 确保会话活跃;不存在则自动 restore。并发 restore 时去重拒绝。 */
   async ensureActive(sessionId: string): Promise<IPiEngine> {
     const existing = this.pm.getClient(sessionId)
-    if (existing) return existing
+    // 纵深防御（pi-exit-notification-and-respawn §6.6）：上游清理（onSessionExit）出现竞态时
+    // processes Map 可能残留已死 client——视同无 client 走下方 restoreSession（其内部对
+    // existing sessions 条目已有 detach + safeDestroy + removeSessionEntry 清场），
+    // 不把死 client 交给 prompt。
+    if (existing && !existing.exited) return existing
     if (this.restoringSessions.has(sessionId)) {
       throw new Error(`Session ${sessionId} is already being restored`)
     }

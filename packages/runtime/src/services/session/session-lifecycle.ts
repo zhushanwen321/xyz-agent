@@ -387,7 +387,14 @@ export class SessionLifecycle {
   /** 从持久化文件恢复 session。 */
   async restoreSession(sessionId: string): Promise<SessionSummary> {
     const target = this.svc.findScannedSession(sessionId)
-    if (!target) throw errorWithCode(`Persisted session ${sessionId} not found`, SESSION_NOT_FOUND)
+    // 文案是追加（非替换）：既有测试用 toThrow 子串匹配「Persisted session X not found」
+    //（test/session-service.test.ts / test/session-pool-restoresession.test.ts），见设计文档 §7.3。
+    if (!target) {
+      throw errorWithCode(
+        `Persisted session ${sessionId} not found — 该会话无已保存内容（进程在首次保存前退出），请新建会话`,
+        SESSION_NOT_FOUND,
+      )
+    }
 
     if (!this.configStore.getDefaultModel()) {
       throw errorWithCode('No model configured. Please configure a provider and model in Settings before restoring a session.', MODEL_NOT_CONFIGURED)
