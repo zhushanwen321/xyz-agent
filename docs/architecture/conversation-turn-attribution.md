@@ -230,3 +230,29 @@ Final gate：V1/V2/V4 在打包链 dev app 端到端复跑一次（builtin 扩�
 **待验证检查点**：§3.5 四项探针；W4 的 ephemeral 执行反馈挂点（对齐现有 composer/状态区形态，实施时以实际 UI 结构定案）。
 
 **并行协调**：pi-assumption 修复线（W1a-W6）与 integrity-hardening 线正在并行实施，本设计领地（core chat 域 + dispatcher bash 段）与其无文件交叠（model-switch/provider/event-adapter toolcall 段）；开工前 `git log` 复核一次，若出现交叠（如 event-adapter bash 段被改）则本线对应 wave 顺延。
+
+## §6 实施记录（W6 收尾补记，2026-08-20）
+
+| wave | commit | 落定内容 |
+|------|--------|---------|
+| 前置 | a28fb6238 | shared `Message.liveOnly` 字段（stream_warn 标记的载体） |
+| W1 | a6d306d64 | bash live entry 化 + dispatcher 双分支延迟（探针 ①② 落定）；abort 分歧发现并登记 |
+| W5 | b56d845cb | load-more 锚定切分（探针 ③ 落定：exact 路径 compaction 后仍命中，兜底触发率 ≈ 0） |
+| W2 | d1bee7c45 | user entry 化（appendUser 构造 entry）+ stream_warn liveOnly 标记 |
+| W3 | 02b5a5ce3 | 分组边界规则集 v2（groupRenderInput 重写 + 空 turn 折叠 + 输出侧 display 过滤） |
+| W4 | （并行 wave，渲染层在途） | Turn 模型扩展 + 渲染（trigger 起点行 / inline notice / i18n） |
+| W6 | 本次（未 commit） | 等价性测试全类型扩展（E1-E4）+ compactionSummary entry 化 + 登记表 #7 / AGENTS 规则 9 同步 + W1 交棒注释清理 |
+
+**探针结论落定（§3.5 四项全闭环）**：
+
+1. **excludeFromContext bash 写 entry**——`recordBashResult` 对 exclude 无分支（仅字段差异），streaming/idle 两分支都经 `sessionManager.appendMessage` 无条件落盘 → 与普通 bash 同路径 entry 化，**无 liveOnly 例外**（依据锚点：bash-effects.ts 文件头注释）。
+2. **级联结束信号 = pi `agent_settled`**——pi `_runAgentPrompt` finally 先 `_flushPendingBashMessages`（bash entry 统一落盘）再 `_emitAgentSettled`，时序构造性保证；xyz 侧 dispatcher `flushPendingBashResults` 按 sessionId 定向消费（探针 ② 设计门通过）。
+3. **hydrate 锚 compaction 后存活**——pi session 文件 append-only，compaction 只 append 一条 entry、**不从文件删除被摘要 entry、entry id 不变**（compaction 过滤只发生在发 LLM 的 buildContextEntries）→ exact 定位在 compaction 后仍命中，fingerprint/none 兜底真实触发率 ≈ 0（全依据锚点：mutations.ts `splitHistoryBeforeAnchor` 注释）。
+4. **steer user entry 无可识别标记**——入队纯文本、drain 后与普通 prompt 同路径，D1b 维持 deferred（非本设计门）。
+
+**W6 处置结论**：
+
+- **compactionSummary 判定：entry 化（消灭双路径）**。帧数据源 = runtime event-interpreter 从 pi `compaction_end` 事件 result 提取的 `{ summary, tokensBefore, timestamp }`，与 pi 落盘 compaction entry（`sessionManager.appendCompaction`，手动 :1441 / auto :1670 两路都在 emit 前以同一批局部变量先落盘，0.84.1 dist 实测）**同源同值**，帧字段足以构造 `PiCompactionEntry` → registry handler 改直插为构造 entry → `applyEntryFrame`（user/custom/bash 同款范式）。fallback 文案由英文占位收敛为 reducer 中文（live/reload 一致）。剩余窄差异登记 #7 例外④：interpreter 仅 summary 真值时发帧，summary 缺失的 compaction（成功路径罕见）live 无消息、重开有 fallback 行。
+- **等价性机器化（`apply-entry-equivalence.test.ts` W6 describe）**：E1 全类型归一 deep-equal（live 客户端 id 前缀 vs replay uuidv7）、E2 分组等价（toRenderItems 输出 deep-equal + turn 数/trigger/notices/边界行显式断言）、E3 abort 例外显式锁定（差异恰为 cancelled bash entry、分组不因它变化）、E4 compaction 处置（live 帧 entry ≡ replay entry）。
+- **登记表 #7 注记**：turn 归属语义落地（边界规则集纯派生，无物化 turnId）+ 四项例外登记（bash abort 分歧 / executingBash ephemeral 态 / stream_warn liveOnly / compaction 窄差异）。
+- **AGENTS.md 规则 9（历史编号 7.5）**：两通路落点更新为「共用同一 applyEntry reducer」，补全类型 entry 化 + 等价性测试守卫一句（全仓代码注释中「规则 7.5」历史编号引用未清理——语义指向不变，归后续统一编号时处理）。

@@ -68,7 +68,12 @@ export function initTimers(
   // ── bash timer ──
 
   /**
-   * bashStartEffect 挂载 bash 专用超时 timer。
+   * bash 专用超时 timer 挂载（W1 fix-chat-flow-order 后保留契约，当前无调用方）。
+   *
+   * [W1 fix-chat-flow-order] bashStartEffect 改写 ephemeral executingBash（不再建 streaming
+   * bash 消息）后正常流转无 streaming bash 消息可被 timer 收口——本函数自 W1 起无 effect
+   * 调用方（ctx/store 契约保留，手动注入 streaming bash 消息的种子场景仍有防御意义，
+   * 配套 finalizeBashOnly / markBashError 收口链不变）。
    *
    * [W8 PR#116 review] bash timer 是 per-session（非 per-message）：armBashTimer 先
    * clearSessionTimer(bashTimers, sessionId) 再 set，每个 session 只保留一个 timer。

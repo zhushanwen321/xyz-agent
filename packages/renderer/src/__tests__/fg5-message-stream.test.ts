@@ -495,7 +495,10 @@ describe('FG5 chat store 块类型扩展', () => {
     })
     const msg = store.getMessages('sx')[0]
     expect(msg.role).toBe('system')
-    expect(msg.compactionSummary).toEqual({ summary: '压缩完成', tokensBefore: 50000 })
+    // [W6] compactionSummary 直插已 entry 化（与 replay 同路径）——compactionSummary 携带
+    // timestamp（帧缺省时取当前时刻），与文件侧重放形态一致
+    expect(msg.compactionSummary).toMatchObject({ summary: '压缩完成', tokensBefore: 50000 })
+    expect(typeof msg.compactionSummary?.timestamp).toBe('number')
   })
 
   it('branchSummary 作 system 消息追加', () => {

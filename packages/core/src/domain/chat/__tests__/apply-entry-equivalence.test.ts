@@ -15,7 +15,10 @@
  */
 import { describe, it, expect } from 'vitest'
 import { replayEntries } from '../apply-entry'
-import type { PiEntry } from '../apply-entry'
+import type { ChatViewState, PiEntry } from '../apply-entry'
+import { toRenderItems } from '../message-turns'
+import type { RenderItem } from '../message-turns'
+import type { Message } from '@xyz-agent/shared'
 import {
   convertPiHistory,
   liftHistoryToEntries,
@@ -178,5 +181,188 @@ describe('lift 保真（shim 路径 == 直接 entry 喂入）', () => {
     const viaShim = replayEntries(liftHistoryToEntries(pseudo, ids))
     const viaDirect = replayEntries(handEntries)
     expect(viaShim).toEqual(viaDirect)
+  })
+})
+
+// ── live ≡ reload 构造性等价（W6，conversation-turn-attribution G6）──────────────
+//
+// live 侧各构造点产出的 entry（客户端 id：user `u-` / bash `bash-` / custom `cm-` /
+// compaction `cmp-` / assistant message_end 重构无 id）与 replay 侧同内容 pi uuidv7
+// entry 序列，经同一 applyEntry reducer 的终态在「按字段归一（剥消息 id 与 piEntryId）」
+// 后 deep-equal——「live ≡ reload 全类型构造性成立」的机器化断言。两侧消息体独立手写
+// （lift 保真用例同款风格：等价性 = 两侧独立构造同内容，不共享字面量）。
+// id 空间异源（客户端前缀 / e<N> 派生 vs pi uuidv7）与 timestamp 异源（客户端时钟 vs
+// pi 落盘时刻，差值为投递延迟）均为 W21 已裁决并在各构造点注释登记的差异类——归一只
+// 剥 id/piEntryId，timestamp 两侧 fixture 用同值隔离无关变量。
+describe('live ≡ reload 构造性等价（W6 全类型）', () => {
+  /** ms → ISO（fixture 统一 timestamp 形态） */
+  const ts = (ms: number) => new Date(ms).toISOString()
+
+  /** uuidv7 形态假 id（replay 侧专用，模拟 pi 持久化 id 空间） */
+  const piId = (n: number) => `0198aabb-ccdd-7e${n.toString().padStart(2, '0')}-8f00-00000000000${n}`
+
+  /**
+   * 归一：剥消息 id 与 piEntryId（live 客户端前缀 id / reducer e<N> 派生 vs replay pi
+   * uuidv7 entry id——id 空间异源属 W21 已裁决差异类，等价性按内容断言）。
+   */
+  function normalizeIds(state: ChatViewState): ChatViewState {
+    const messages = state.messages.map(({ id: _id, piEntryId: _piEntryId, ...rest }) => rest)
+    return { ...state, messages }
+  }
+
+  /** live 侧 entry 序列：各构造点真实 id 形态（appendUser u- / bashResultEffect bash- / customStart cm- / compactionSummary cmp- / message_end 无 id） */
+  const liveEntries: PiEntry[] = [
+    { type: 'message', id: 'u-00000001-0000-4000-8000-000000000001', parentId: null, timestamp: ts(1000), message: { role: 'user', content: [{ type: 'text', text: '跑一下测试' }], timestamp: 1000 } },
+    { type: 'message', id: undefined, parentId: null, timestamp: ts(2000), message: { role: 'assistant', content: [{ type: 'text', text: '开始执行' }, { type: 'toolCall', id: 'tc-1', name: 'bash', arguments: { command: 'npm test' } }], timestamp: 2000 } },
+    { type: 'message', id: undefined, parentId: null, timestamp: ts(3000), message: { role: 'toolResult', toolCallId: 'tc-1', toolName: 'bash', content: [{ type: 'text', text: 'all green' }], timestamp: 3000 } },
+    // bash：pi 落盘位置 = run 级联末（recordBashResult streaming 缓存 → finally flush），
+    // xyz dispatcher 双分支延迟使 live 入流位置构造性对齐（W1）——两侧同位置
+    { type: 'message', id: 'bash-00000002-0000-4000-8000-000000000002', parentId: null, timestamp: ts(4000), message: { role: 'bashExecution', command: 'ls -la', output: 'a\nb\n', exitCode: 0, cancelled: false, truncated: false, excludeFromContext: false, timestamp: 4000 } },
+    { type: 'message', id: undefined, parentId: null, timestamp: ts(5000), message: { role: 'assistant', content: [{ type: 'text', text: '完成' }], usage: { input: 10, output: 5 }, timestamp: 5000 } },
+    { type: 'custom_message', id: 'cm-00000003-0000-4000-8000-000000000003', parentId: null, timestamp: ts(6000), customType: 'subagent-bg-notify', content: 'Subagent "coder" completed.', details: { id: 'job-1', status: 'done' } },
+    { type: 'message', id: undefined, parentId: null, timestamp: ts(7000), message: { role: 'assistant', content: [{ type: 'text', text: '收到后台结果，继续处理' }], timestamp: 7000 } },
+    { type: 'compaction', id: 'cmp-00000004-0000-4000-8000-000000000004', parentId: null, timestamp: ts(8000), summary: '压缩摘要', tokensBefore: 12345 },
+    { type: 'message', id: 'u-00000005-0000-4000-8000-000000000005', parentId: null, timestamp: ts(9000), message: { role: 'user', content: [{ type: 'text', text: '继续' }], timestamp: 9000 } },
+  ]
+
+  /** replay 侧 entry 序列：同内容，id 全部 pi uuidv7 空间（含 live 侧无 id 的 assistant） */
+  const replaySideEntries: PiEntry[] = [
+    { type: 'message', id: piId(1), parentId: null, timestamp: ts(1000), message: { role: 'user', content: [{ type: 'text', text: '跑一下测试' }], timestamp: 1000 } },
+    { type: 'message', id: piId(2), parentId: piId(1), timestamp: ts(2000), message: { role: 'assistant', content: [{ type: 'text', text: '开始执行' }, { type: 'toolCall', id: 'tc-1', name: 'bash', arguments: { command: 'npm test' } }], timestamp: 2000 } },
+    { type: 'message', id: piId(3), parentId: piId(2), timestamp: ts(3000), message: { role: 'toolResult', toolCallId: 'tc-1', toolName: 'bash', content: [{ type: 'text', text: 'all green' }], timestamp: 3000 } },
+    { type: 'message', id: piId(4), parentId: piId(3), timestamp: ts(4000), message: { role: 'bashExecution', command: 'ls -la', output: 'a\nb\n', exitCode: 0, cancelled: false, truncated: false, excludeFromContext: false, timestamp: 4000 } },
+    { type: 'message', id: piId(5), parentId: piId(4), timestamp: ts(5000), message: { role: 'assistant', content: [{ type: 'text', text: '完成' }], usage: { input: 10, output: 5 }, timestamp: 5000 } },
+    { type: 'custom_message', id: piId(6), parentId: piId(5), timestamp: ts(6000), customType: 'subagent-bg-notify', content: 'Subagent "coder" completed.', details: { id: 'job-1', status: 'done' } },
+    { type: 'message', id: piId(7), parentId: piId(6), timestamp: ts(7000), message: { role: 'assistant', content: [{ type: 'text', text: '收到后台结果，继续处理' }], timestamp: 7000 } },
+    { type: 'compaction', id: piId(8), parentId: piId(7), timestamp: ts(8000), summary: '压缩摘要', tokensBefore: 12345 },
+    { type: 'message', id: piId(9), parentId: piId(8), timestamp: ts(9000), message: { role: 'user', content: [{ type: 'text', text: '继续' }], timestamp: 9000 } },
+  ]
+
+  it('E1: live 全类型构造（客户端 id 前缀）与 replay（pi uuidv7）终态按 id/piEntryId 归一后 deep-equal', () => {
+    const liveState = normalizeIds(replayEntries(liveEntries))
+    const replayState = normalizeIds(replayEntries(replaySideEntries))
+    // 全量 state（messages + orphanToolResults + 配对锚点）非消息级抽样
+    expect(liveState).toEqual(replayState)
+    // 用户可见内容非空守卫（防两侧同归于空 / 静默 no-op 造成假等价）：
+    // user×2 / assistant×3 / bash notice / 隐藏完成通知 / 压缩行，全类型各就各位
+    expect(liveState.messages.filter((m) => m.role === 'user')).toHaveLength(2)
+    expect(liveState.messages.filter((m) => m.role === 'assistant')).toHaveLength(3)
+    expect(liveState.messages.filter((m) => m.bashExecution !== undefined)).toHaveLength(1)
+    expect(liveState.messages.filter((m) => m.customType === 'subagent-bg-notify' && m.display === false)).toHaveLength(1)
+    expect(liveState.messages.filter((m) => m.compactionSummary !== undefined)).toHaveLength(1)
+  })
+
+  it('E2: 分组等价——同一序列 live 构造与文件重放的 toRenderItems 输出 deep-equal（turn 数 / trigger / notices / 边界行一致）', () => {
+    const liveItems = toRenderItems(normalizeIds(replayEntries(liveEntries)).messages)
+    const replayItems = toRenderItems(normalizeIds(replayEntries(replaySideEntries)).messages)
+    expect(liveItems).toEqual(replayItems)
+
+    // 用户可见行为等价的显式断言（非仅内部结构）：turn 数、trigger 续跑起点、
+    // bash 归 turn 内 notice（不切断 turn）、compaction 独立边界行
+    const turns = (items: RenderItem[]) =>
+      items.flatMap((i) => (i.kind === 'turn' ? [i.turn] : []))
+    const liveTurns = turns(liveItems)
+    expect(liveTurns).toHaveLength(3) // user 锚 / bg-notify 续跑 / user 锚
+    // 首 turn：bash 执行记录归 turn 内 notice（W3 规则 4 inline），不出独立渲染项
+    expect(liveTurns[0]!.notices?.map((n) => n.bashExecution?.command)).toEqual(['ls -la'])
+    expect(liveTurns[0]!.assistants.map((a) => a.content)).toEqual(['开始执行', '完成'])
+    // 次 turn：隐藏完成通知触发 trigger:'bg-notify' 续跑 turn（无 user 气泡）
+    expect(liveTurns[1]!.trigger).toBe('bg-notify')
+    expect(liveTurns[1]!.user).toBeNull()
+    expect(liveTurns[1]!.assistants.map((a) => a.content)).toEqual(['收到后台结果，继续处理'])
+    // compaction：独立 systemNotice 边界行（关闭 turn，W3 规则 5 boundary）
+    expect(liveItems.some((i) => i.kind === 'systemNotice' && i.message.compactionSummary !== undefined)).toBe(true)
+    // 末 turn：压缩后新 user 开新组
+    expect(liveTurns[2]!.user?.content).toEqual([{ type: 'text', text: '继续' }])
+  })
+
+  it('E3: abort 例外（W1 登记）——pi 文件含 cancelled bash 记录、live 因 token 守卫丢弃：差异恰为该 entry，分组不因它变化', () => {
+    // 语义链（dispatcher abortBash/sendBash token 守卫 + bash-effects 哨兵帧分支）：
+    // 用户 abort bash → dispatcher 兑底广播哨兵帧 bashResult{command:'', cancelled:true}
+    // → bashResultEffect 只清 executingBash 不产 entry；sendBash await 返回后 token 已被
+    // 旋转 → 静默跳过真实结果广播（防双终态）。pi 侧 abort 非 throw 仍 recordBashResult
+    // 落盘（bash-executor abort 返回 cancelled 结果）→ 重开侧多一条 cancelled bash 记录。
+    // live 侧：无 bash entry（哨兵帧不产 entry）
+    const liveState = replayEntries([
+      { type: 'message', id: 'u-1', parentId: null, timestamp: ts(1000), message: { role: 'user', content: [{ type: 'text', text: '跑个长命令' }], timestamp: 1000 } },
+      { type: 'message', id: undefined, parentId: null, timestamp: ts(2000), message: { role: 'assistant', content: [{ type: 'text', text: '执行中' }], timestamp: 2000 } },
+      { type: 'message', id: 'u-2', parentId: null, timestamp: ts(5000), message: { role: 'user', content: [{ type: 'text', text: '换个任务' }], timestamp: 5000 } },
+      { type: 'message', id: undefined, parentId: null, timestamp: ts(6000), message: { role: 'assistant', content: [{ type: 'text', text: '好的' }], timestamp: 6000 } },
+    ])
+    // replay 侧：pi 文件含 cancelled bash entry（落盘位置 = run 级联末，a1 之后 user2 之前）
+    const replayState = replayEntries([
+      { type: 'message', id: piId(1), parentId: null, timestamp: ts(1000), message: { role: 'user', content: [{ type: 'text', text: '跑个长命令' }], timestamp: 1000 } },
+      { type: 'message', id: piId(2), parentId: piId(1), timestamp: ts(2000), message: { role: 'assistant', content: [{ type: 'text', text: '执行中' }], timestamp: 2000 } },
+      { type: 'message', id: piId(3), parentId: piId(2), timestamp: ts(3000), message: { role: 'bashExecution', command: 'sleep 300', output: '', exitCode: null, cancelled: true, truncated: false, timestamp: 3000 } },
+      { type: 'message', id: piId(4), parentId: piId(3), timestamp: ts(5000), message: { role: 'user', content: [{ type: 'text', text: '换个任务' }], timestamp: 5000 } },
+      { type: 'message', id: piId(5), parentId: piId(4), timestamp: ts(6000), message: { role: 'assistant', content: [{ type: 'text', text: '好的' }], timestamp: 6000 } },
+    ])
+
+    // ① 差异恰为该 entry：数量恰差 1，且 replay 剔除该条后与 live 归一 deep-equal
+    expect(replayState.messages).toHaveLength(liveState.messages.length + 1)
+    const replayMinusCancelled = replayState.messages.filter((m) => m.bashExecution?.cancelled !== true)
+    expect(replayMinusCancelled).toHaveLength(replayState.messages.length - 1)
+    expect(normalizeIds(liveState)).toEqual(normalizeIds({ ...replayState, messages: replayMinusCancelled }))
+
+    // ② 分组不因它变化：turn 骨架（turn 数 / user / assistants / trigger）两侧一致，
+    //    差异仅首 turn 的 notices 多一条——bash 是 inline notice，不影响 turn 边界
+    const skeleton = (state: ChatViewState, msgs: Message[]) =>
+      toRenderItems(normalizeIds({ ...state, messages: msgs }).messages)
+        .map((item) =>
+          item.kind === 'turn'
+            ? {
+                kind: 'turn' as const,
+                user: item.turn.user?.content ?? null,
+                assistants: item.turn.assistants.map((a) => a.content),
+                trigger: item.turn.trigger ?? null,
+                noticeCommands: (item.turn.notices ?? []).map((n) => n.bashExecution?.command ?? n.content),
+              }
+            : { kind: item.kind, content: item.message.content },
+        )
+    const liveSkeleton = skeleton(liveState, liveState.messages)
+    const replaySkeleton = skeleton(replayState, replayState.messages)
+    expect(liveSkeleton).toHaveLength(2) // 两个 user 锚 turn，两侧一致
+    // 除 noticeCommands 外全等（结构 diff 收敛到唯一分歧点）
+    const stripNotices = (s: typeof liveSkeleton) =>
+      s.map((row) => (row.kind === 'turn' ? { ...row, noticeCommands: undefined } : row))
+    expect(stripNotices(liveSkeleton)).toEqual(stripNotices(replaySkeleton))
+    expect(liveSkeleton[0]).toMatchObject({ kind: 'turn', noticeCommands: [] })
+    expect(replaySkeleton[0]).toMatchObject({ kind: 'turn', noticeCommands: ['sleep 300'] })
+  })
+
+  it('E4: compactionSummary 处置（W6 entry 化）——live 帧构造 entry 与 replay compaction entry 经 reducer 产出归一 deep-equal', () => {
+    // live 侧：registry compactionSummary handler 从帧构造的 entry（cmp- 前缀客户端 id，
+    // 形态契约见 handler 注释——帧数据源与 pi 落盘 entry 同源同值）
+    const liveCompaction: PiEntry = {
+      type: 'compaction',
+      id: 'cmp-00000006-0000-4000-8000-000000000006',
+      parentId: null,
+      timestamp: ts(8000),
+      summary: '压缩摘要',
+      tokensBefore: 12345,
+    }
+    // replay 侧：pi 持久化 compaction entry（uuidv7 id）
+    const replayCompaction: PiEntry = {
+      type: 'compaction',
+      id: piId(8),
+      parentId: null,
+      timestamp: ts(8000),
+      summary: '压缩摘要',
+      tokensBefore: 12345,
+    }
+    expect(normalizeIds(replayEntries([liveCompaction])))
+      .toEqual(normalizeIds(replayEntries([replayCompaction])))
+    // 用户可见行为：压缩记录作 system 消息（content = summary，compactionSummary 字段完整）
+    const [msg] = normalizeIds(replayEntries([liveCompaction])).messages
+    expect(msg).toMatchObject({
+      role: 'system',
+      content: '压缩摘要',
+      status: 'complete',
+      compactionSummary: { summary: '压缩摘要', tokensBefore: 12345 },
+    })
+    // 分组语义：compaction 作 boundary systemNotice 独立行（关闭当前 turn，W3 规则 5）
+    const items = toRenderItems(normalizeIds(replayEntries([liveCompaction])).messages)
+    expect(items).toHaveLength(1)
+    expect(items[0]!.kind).toBe('systemNotice')
   })
 })
