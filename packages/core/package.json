@@ -34,6 +34,10 @@
    "types": "./src/foundation/use-session-scoped-state.ts",
    "import": "./src/foundation/use-session-scoped-state.ts"
   },
+  "./domain/session-trace": {
+   "types": "./src/domain/session-trace/index.ts",
+   "import": "./src/domain/session-trace/index.ts"
+  },
   "./domain/composer": {
    "types": "./src/domain/composer/index.ts",
    "import": "./src/domain/composer/index.ts"
@@ -90,6 +94,7 @@
   "pinia": "^3"
  },
  "devDependencies": {
-  "typescript": "^5.8"
+  "typescript": "^5.8",
+  "@earendil-works/pi-coding-agent": "0.84.1"
  }
 }
