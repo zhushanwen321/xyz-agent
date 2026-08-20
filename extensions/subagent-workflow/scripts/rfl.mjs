@@ -158,7 +158,10 @@ function cmdStats(runIdOrLatest, repoSlug) {
       // regression=null = 该维度 unverifiable（workflow 无对账数据可回填），无分值
       // 语义——显示 n/a 而非 JS 字面量 "null"（与 total 缺省 "(no total)" 惯例一致）
       const dims = sc.dimensions ? Object.entries(sc.dimensions).map(([k, v]) => k + " " + (v == null ? "n/a" : v)).join(" ") : "";
-      console.log("  score R" + (sc.round ?? "?") + " " + (sc.targetKind || "?") + "/" + (sc.targetName || "?") +
+      // scores entry 的 round 是批局部编号（每批从 1 重新计数），多批 run 下批 1 与
+      // 批 2 的 "R1" 两行完全同形无法归批——行首补 B<batch> 标识（与下方时间线
+      // R<n> (batch N) 的批标注口径呼应）；旧数据无 batch 字段回退 B1
+      console.log("  score B" + (sc.batch ?? 1) + " R" + (sc.round ?? "?") + " " + (sc.targetKind || "?") + "/" + (sc.targetName || "?") +
         ": " + (sc.total != null ? sc.total + "/10" : "(no total)") + "  [" + dims + "]");
     }
   } else {
@@ -180,7 +183,9 @@ function cmdTrends(repoSlug) {
   const runs = listRuns(repoSlug);
   if (runs.length === 0) { console.log("no runs found (root: " + ROOT + ")"); return 0; }
   // started 列宽 = ISO 8601 恒长 24（padEnd(20) 会让表头比数据行左移 4 字符错位）
-  const header = "runId".padEnd(28) + "  " + "started".padEnd(24) + "  " + "rounds".padEnd(6) + "  " + "tokens".padEnd(8) + "  " + "cache%".padEnd(6) + "  " + "regressed/attempted";
+  // reg/att 列名刻意缩短：该列是末批作用域（见循环后 legend），长名 "regressed/
+  // attempted" 会被读成与 rounds/tokens/cache% 同级的 run 级指标
+  const header = "runId".padEnd(28) + "  " + "started".padEnd(24) + "  " + "rounds".padEnd(6) + "  " + "tokens".padEnd(8) + "  " + "cache%".padEnd(6) + "  " + "reg/att";
   console.log(header);
   for (const r of runs) {
     const { sum, cachePct } = summarizeCalls(r.state.calls);
@@ -201,6 +206,11 @@ function cmdTrends(repoSlug) {
       String(cachePct == null ? "-" : cachePct + "%").padEnd(6) + "  " + regressedCol,
     );
   }
+  // reg/att 与同行其他列口径不同：state.issues 每批重置，最终 state 只含末批条目
+  // （分子分母内部一致），而 rounds/tokens/cache% 是 run 级累计——跨 run 对比时
+  // 易把末批数据误读为 run 级，表后用 legend 显式标注作用域与分母口径（函数开头
+  // 已保证 runs 非空，走到这里表必然非空）
+  console.log("reg/att: last-batch scope (issues reset per batch); denominator = issues ever fix-attempted");
   return 0;
 }
 

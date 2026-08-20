@@ -712,9 +712,11 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         // aggregator-failure/stuck/fix-failure 路径一致：saveState + terminated 结构化终止，
         // 保证 state.json 有记录、调用方拿到结构化结果而非裸异常（MF-3）。
         // W8：失败轮的当前轮条目也落 batchRounds（该轮 phase 时长不因结构化终止
-        // 从时间线消失）；mustFix/suggestion 聚合未发生故为 0，agents 为已收集的
-        // 部分结果，aggregate/fix 相位 null 是如实采集（未到达）。
-        batchRounds.push({ round, mustFix: 0, suggestion: 0, agents: agentRoundResults, modifiedFiles: [], phaseTimings });
+        // 从时间线消失）；F3：聚合未发生/失败，mustFix/suggestion 是未知而非 0——
+        // 落 0 会被时间线误读为 clean 轮（rfl.mjs 消费侧 `mustFix ?? "-"` 对 null
+        // 显示 "-"，suggestion 无消费点，null 安全）；agents 为已收集的部分结果，
+        // aggregate/fix 相位 null 是如实采集（未到达）。
+        batchRounds.push({ round, mustFix: null, suggestion: null, agents: agentRoundResults, modifiedFiles: [], phaseTimings });
         state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
         saveState(state);
         terminated = "review-failure";
@@ -759,8 +761,9 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       } else {
         // tools 受限的 agent（如 tools: read）会过滤掉 structured-output → schema 失效，
         // 结果缺 must_fix。结构化终止（MF-3），raw 完整 dump 便于定位。
-        // W8：同 review-failure——当前轮条目落 batchRounds（phase 时长保留在时间线）。
-        batchRounds.push({ round, mustFix: 0, suggestion: 0, agents: agentRoundResults, modifiedFiles: [], phaseTimings });
+        // W8：同 review-failure——当前轮条目落 batchRounds（phase 时长保留在时间线）；
+        // F3：聚合未发生，mustFix/suggestion 未知非 0（null，消费侧 ?? "-" 兜底）。
+        batchRounds.push({ round, mustFix: null, suggestion: null, agents: agentRoundResults, modifiedFiles: [], phaseTimings });
         state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
         saveState(state);
         terminated = "review-failure";
@@ -836,8 +839,9 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       if (!agg || typeof agg.must_fix !== "number") {
         log("Aggregator failed and fallback failed, stopping.");
         // W8：aggregator-failure 轮的当前轮条目落 batchRounds——review/aggregate 相位
-        // 时长已实测（fix 相位 null 如实采集）；mustFix/suggestion 聚合失败故为 0。
-        batchRounds.push({ round, mustFix: 0, suggestion: 0, agents: agentRoundResults, modifiedFiles: [], phaseTimings });
+        // 时长已实测（fix 相位 null 如实采集）；F3：聚合失败，mustFix/suggestion 未知
+        // 非 0（null，消费侧 ?? "-" 兜底，不误读为 clean 轮）。
+        batchRounds.push({ round, mustFix: null, suggestion: null, agents: agentRoundResults, modifiedFiles: [], phaseTimings });
         state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
         saveState(state);
         terminated = "aggregator-failure";
@@ -1098,25 +1102,25 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       && reviewResults.some((r) => r.must_fix > 0)
       && (agg.must_fix_ids ? filterActiveIds(agg.must_fix_ids).length : 0) === 0) {
       log("All reviewer must-fix entries adjudicated down this round — no active fix queue, skipping fix stage.");
-      if (round > 1 && state.fixResults && state.fixResults.length > 0) {
-        // W4：本轮对账已在 stuck 检测处完成（reconCount>0 走 reconcileIssues，seen 中
-        // open 条目的 openStreak 已计一次），此处仅补上轮 fix 的 regression 维度——
-        // 不再走 applyCleanRoundBackfill（其内部第二次 reconcileIssues 会把 seen 中
-        // open 条目同轮 openStreak 双计）。mode 缺省 = normal（A4 轮聚合发生过，走
-        // 计算路径）；W3 终态 guard（regression 键存在即不再处理）自动跳过本轮已在
-        // 上面 else 分支写入的 unverifiable entry。
-        state.scores = backfillFixRegression({
-          scores: state.scores, fixResult: state.fixResults[state.fixResults.length - 1],
-          issues: state.issues || {}, round, batch: batchIndex,
-        });
-      }
+      // F4：此处不需要 backfillFixRegression 调用（原死防御已删）。第 3 轮探针实证
+      // 其恒为逐字节 no-op：能到达 A4 的 R2+ 轮（round>1 且 fixResults 非空），上方
+      // stuck 检测的 if/else 两分支已在相同门控与相同匹配键（round-1/batch）下分别
+      // 回填过——reconcile 路径（reconCount>0 或有 fix-attempted）mode=normal、无对账
+      // 数据路径 mode=unverifiable——regression 键必已存在（number 或 null），W3 终态
+      // guard（键存在即不再处理）使任何后续同键调用直接短路。round=1 时 A4 的调用
+      // 门控本就不满足。保留调用会误导维护者以为此处承担回填职责。
       // W5：A4 场景 reviewer 原始 must_fix>0 走了 recordAgentDirty，但裁决后全部降级
       // = 无真实问题（语义等价 clean）——对 active 中本轮 must_fix>0 的 reviewer 补记
       // recordAgentClean（快照语义对齐常规调用点：lastCleanBatch + 当时 fixCount），
       // 让「裁决降级=噪声」也推进跨批 skip（否则同 agent 后续批每批全价重扫）。
       // 本轮无 fix（fixCount 不变），批后快照比较成立。
+      // F2：agg.must_fix_ids 缺失（aggregator JSON 无效走 parseAggregatedMd numeric
+      // fallback 的 agg 无此键）时无条目级裁决证据——「must_fix=0」只是 md 里的一行
+      // 数字，不能证明 reviewer 的 must-fix 是被裁决降级的噪声。此时弱证据不授予
+      // 跨批 clean-skip（否则「跳一轮」被 shouldSkipAgent 放大为「跳到底」且该 agent
+      // 永不再重扫），留待后续批全价复核。
       for (const a of agentRoundResults) {
-        if (a.must_fix > 0) recordAgentClean(state, a.name, batchIndex);
+        if (agg.must_fix_ids && a.must_fix > 0) recordAgentClean(state, a.name, batchIndex);
       }
       batchRounds.push({ round, mustFix: 0, suggestion: reviewResults.reduce((a, r) => a + (r.suggestion ?? 0), 0), agents: agentRoundResults, modifiedFiles: [], phaseTimings });
       saveState(state);

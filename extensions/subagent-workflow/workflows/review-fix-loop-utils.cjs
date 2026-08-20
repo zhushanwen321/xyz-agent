@@ -1007,7 +1007,13 @@ function landScores(existingScores, rawScores, batchIndex) {
       malformed++;
       continue;
     }
-    list.push({ ...sc, batch: batchIndex });
+    // F1（regression 键治理）：regression 是 workflow 专属权威维度（由
+    // backfillFixRegression 确定性回填，设计 §6.6/§6.7——LLM 输出一律不采）。
+    // 若 LLM 忽略 prompt 禁令输出 dimensions.regression，原样落地后
+    // backfillFixRegression 的终态 guard（regression !== undefined 即不再处理）
+    // 会把它当已回填，workflow 确定性计算的权威值被静默屏蔽——落地前单点剥离。
+    const { regression: _stripped, ...dims } = sc.dimensions;
+    list.push({ ...sc, dimensions: dims, batch: batchIndex });
     landed++;
   }
   return { scores: list, landed, malformed };

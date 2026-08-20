@@ -195,13 +195,16 @@ describe("A7 rfl CLI（list/stats/trends/clean）", () => {
       },
     }));
     const { stdout } = await rfl(["trends", "repo-f"]);
-    // 列头
-    expect(stdout).toContain("regressed/attempted");
+    // G2：列名缩短为 reg/att（该列是末批作用域，长名会被读成 run 级指标）
+    expect(stdout.split("\n")[0]).toContain("reg/att");
     // started 列宽 = ISO 8601 恒长 24：表头须 padEnd(24) 才与数据行对齐（20 会左移 4 字符）
     expect(stdout.split("\n")[0]).toContain("started".padEnd(24) + "  " + "rounds");
     expect(stdout).toMatch(/wf-b1a[^\n]*1\/5/);
     // 分母 0：行尾 regressed 列为 -（cache% 列有值 75%，行尾 - 只能是 regressed 列）
     expect(stdout).toMatch(/wf-b1b[^\n]*75%\s+-\s*$/m);
+    // G2：表后 legend 标注 reg/att 的末批作用域与分母口径（与 rounds/tokens/cache%
+    // 的 run 级口径区分），跨 run 对比不再误读
+    expect(stdout).toContain("reg/att: last-batch scope (issues reset per batch); denominator = issues ever fix-attempted");
   });
 
   it("B2 stats：scores 的 dimensions.regression=null 显示 n/a（不输出字面量 null）+ B3 dormant (last batch) 计数", async () => {
@@ -225,5 +228,24 @@ describe("A7 rfl CLI（list/stats/trends/clean）", () => {
     expect(stdout).toContain("issues (last batch): total 0");
     // B3：dormant 计数为末批作用域，非 0 时同样带限定
     expect(stdout).toContain("dormant (last batch) 1");
+    // G1：fixture 的 scores entry 均无 batch 字段（旧数据），score 行回退 B1
+    expect(stdout).toContain("score B1 R1");
+    expect(stdout).toContain("score B1 R2");
+  });
+
+  it("G1 stats：score 行带批标识 B<n>，多批 run 中批局部 round 编号可归批", async () => {
+    // round 是批局部编号（每批从 1 重新计数）：批 1 与批 2 各有一条 round 1 的
+    // score，仅打 "R1" 时两行完全同形无法归批——带 B<batch> 后可区分
+    writeRun("repo-h", "wf-g1", fixtureState({
+      startedAt: "2026-08-19T12:00:00.000Z", terminated: "clean",
+      calls: [{ batch: 1, round: 1, role: "reviewer", name: "r" }],
+      scores: [
+        { batch: 1, round: 1, targetKind: "diff", targetName: "fixer-a", total: 8 },
+        { batch: 2, round: 1, targetKind: "diff", targetName: "fixer-b", total: 7 },
+      ],
+    }));
+    const { stdout } = await rfl(["stats", "latest", "repo-h"]);
+    expect(stdout).toContain("score B1 R1 diff/fixer-a");
+    expect(stdout).toContain("score B2 R1 diff/fixer-b");
   });
 });

@@ -1848,6 +1848,48 @@ describe("A6 landScores（scores 逐条形状校验落地）", () => {
   });
 });
 
+// ── F1: landScores 剥离 LLM 违规输出的 regression 键（第 3 轮复审 minor） ──
+// regression 是 workflow 专属权威维度（backfillFixRegression 确定性回填，设计
+// §6.6/§6.7）。prompt 已禁止 LLM 输出该维度，但弱模型（aggregatorModel 降档）
+// 违规输出的概率不可忽略——落地 chokepoint 在 landScores 单点剥离。
+
+describe("F1 landScores 剥离 dimensions.regression（workflow 权威维度治理）", () => {
+  it("F1 LLM 条目带 regression 键 → 落地后被剥离（fix 与 reviewer 条目同规则）", () => {
+    const raw = [
+      { round: 1, targetKind: "fix", targetName: "fix",
+        dimensions: { coverage: 8, selfCheck: 9, minimality: 7, regression: 10 }, total: 8 },
+      { round: 1, targetKind: "reviewer", targetName: "r1",
+        dimensions: { evidence: 9, regression: 2 }, total: 9 },
+    ];
+    const out = landScores([], raw, 1);
+    expect(out.landed).toBe(2);
+    expect(out.malformed).toBe(0);
+    // regression 键剥离（其余维度与标量字段原样保留）；剥离不判 malformed（条目合法）
+    expect(out.scores[0].dimensions).toEqual({ coverage: 8, selfCheck: 9, minimality: 7 });
+    expect(out.scores[1].dimensions).toEqual({ evidence: 9 });
+    expect(out.scores[0]).toMatchObject({ round: 1, targetKind: "fix", total: 8, batch: 1 });
+  });
+
+  it("F1 贯通：剥离后 backfill 终态 guard 不被违规值污染 → 计算值正常回填", () => {
+    // 修复前：LLM 违规输出 regression:10 原样落地 → backfillFixRegression 终态
+    // guard（regression !== undefined）把它当已回填 → 权威计算值（1/1 regressed → 0）
+    // 被静默屏蔽。剥离后 guard 不触发，计算值落地。
+    const landed = landScores([], [{
+      round: 1, targetKind: "fix", targetName: "fix",
+      dimensions: { coverage: 8, selfCheck: 9, minimality: 7, regression: 10 }, total: 8,
+    }], 1);
+    const issues = {
+      "MF-1": { firstSeen: 1, severity: "major", status: "regressed",
+        history: [{ round: 2, status: "regressed" }], fixAttempts: 1 },
+    };
+    const fixResult = { fixed_count: 1, fixes: [{ issue_id: "MF-1", description: "d", self_check: "x", affected_files: [] }], deferred: [] };
+    const out = backfillFixRegression({ scores: landed.scores, fixResult, issues, round: 2, batch: 1 });
+    expect(out).toHaveLength(1); // 命中既有 LLM entry，不重复创建
+    expect(out[0].dimensions.regression).toBe(0); // 1/1 regressed → 权威计算值（违规的 10 已剥离）
+    expect(out[0].dimensions.coverage).toBe(8); // LLM 合法维度保持
+  });
+});
+
 describe("A8 countMissingFields（guidance/evidence 缺失观测）", () => {
   it("A8 活跃条目缺 guidance/evidence 计数；降级条目（downgraded/unverified）不计", () => {
     const out = countMissingFields([

@@ -158,7 +158,13 @@ function assertScriptOutcome(scriptResult: unknown): {
 interface Scenario {
   /** review 调用序 → 返回数据生成器；R2+ 回调收到 prompt 文本（可用于对账/传递断言）。 */
   review: Array<(prompt: string) => Record<string, unknown>>;
-  aggregate: () => Record<string, unknown>;
+  /**
+   * aggregate 剧本（回调收到 prompt 文本——可从中解析 roundDir 预写 fallback 依赖的
+   * aggregated.md）。返回 { __invalidOutput: value } 哨兵 = 模拟「aggregator 输出无效」
+   * （真实 LLM 违约场景，F2 e2e）：runner 解包后直接返回 value 并跳过 miniValidator
+   * ——契约校验防的是 mock 无意脱节，刻意违约剧本必须绕过。
+   */
+  aggregate: (prompt: string) => Record<string, unknown> | { __invalidOutput: unknown };
   fix: () => Record<string, unknown>;
 }
 
@@ -178,6 +184,9 @@ function makeScenarioRunner(scenario: Scenario) {
     // rfl C5：记录 opts.model（aggregatorModel 降档断言）。
     calls.push({ kind, prompt, agent: opts.agent, schema: opts.schema, model: opts.model });
     let parsed: unknown = null;
+    // F2 e2e：__invalidOutput 哨兵 = 刻意模拟 aggregator 违约输出（缺 must_fix 等），
+    // miniValidator 对故意无效无校验意义，跳过（防契约校验拦截违约剧本）。
+    let skipContractCheck = false;
     if (kind === "review") {
       const idx = reviewCalls.length;
       const gen = scenario.review[Math.min(idx, scenario.review.length - 1)];
@@ -185,13 +194,19 @@ function makeScenarioRunner(scenario: Scenario) {
       reviewCalls.push({ prompt, result });
       parsed = result;
     } else if (kind === "aggregate") {
-      parsed = scenario.aggregate();
+      const raw = scenario.aggregate(prompt);
+      if (raw && typeof raw === "object" && "__invalidOutput" in raw) {
+        parsed = (raw as { __invalidOutput: unknown }).__invalidOutput;
+        skipContractCheck = true;
+      } else {
+        parsed = raw;
+      }
     } else {
       parsed = scenario.fix();
     }
     // m8：schema 契约校验——mock 返回的 parsedOutput 必须符合 workflow 声明的权威 schema
     // （防止未来 schema 收紧时 E2E 仍绿）。校验失败抛错让测试立即失败。
-    miniValidator(opts.schema, parsed, "parsedOutput");
+    if (!skipContractCheck) miniValidator(opts.schema, parsed, "parsedOutput");
     // rfl 仪表（T1）：sessionId 逐调用编号——A6 断言 calls[].sessionId 与调用序对应
     return {
       content: "mock",
@@ -1530,6 +1545,75 @@ describe("startup fail-fast (ADR-0003 D6)", () => {
       // 批 1 的降级条目在批 1 期间落过 dormant（中间 saveState 可查）；批 2 开始时
       // dormant 批作用域重置（A2）且批 2 无降级 → 最终落盘为空
       expect(st.dormant).toEqual([]);
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
+    "F2: aggregator numeric-fallback（无 must_fix_ids）不授予跨批 clean-skip——批 2 仍派该 agent",
+    async () => {
+      // F2 场景（第 3 轮复审 minor）：批 1 R1 reviewer-a 报 1 must-fix；aggregator
+      // JSON 无效（缺 must_fix，__invalidOutput 哨兵模拟真实违约）→ parseAggregatedMd
+      // 从预写的 aggregated.md 兜底解析 must_fix=0。兜底 agg 无 must_fix_ids 键——
+      // A4 第三条件对 undefined 恒真仍 break（保留），但 W5 补记循环若无
+      // agg.must_fix_ids 前置，会凭「md 里一行 Must-fix: 0」的弱证据给 reviewer-a 记
+      // clean → 批 2 cross-batch skip →「跳一轮」被 shouldSkipAgent 放大为「跳到底」
+      // 且无条目级裁决证据。修复后：批 2 reviewer-a 照常全价重扫。
+      const runner = makeScenarioRunner({
+        review: [
+          // 批 1 R1（reviewer-a）：1 must-fix（dirty）
+          () => ({ report_file: "/tmp/f2-b1r1.md", must_fix: 1, suggestion: 0, reconciliation: [] }),
+          // 批 2 R1（reviewer-a / reviewer-b 顺序不定，两 generator 同结果）：全 clean
+          () => ({ report_file: "/tmp/f2-b2r1a.md", must_fix: 0, suggestion: 0, reconciliation: [] }),
+          () => ({ report_file: "/tmp/f2-b2r1b.md", must_fix: 0, suggestion: 0, reconciliation: [] }),
+        ],
+        aggregate: (prompt: string) => {
+          // 真实失败形态：aggregator 的 JSON 无效，但 PART 1 的 aggregated.md 已写出。
+          // 从 prompt 解析 roundDir 预写 fallback 依赖的固定格式（"- Must-fix: 0"）。
+          const m = /^outputDir: (.+)$/m.exec(prompt);
+          if (!m) throw new Error("F2 e2e: outputDir not found in aggregator prompt");
+          writeFileSync(join(m[1].trim(), "aggregated.md"), "## Summary\n- Must-fix: 0\n- Suggestions: 0\n", "utf-8");
+          // 无 must_fix → normalizeAggregatorResult 判 null → fallback 走 md 兜底
+          return { __invalidOutput: { fixes_caution: [] } };
+        },
+        fix: () => ({ fixed_count: 0, fixes: [], deferred: [] }),
+      });
+      const deps = makeDeps(runner);
+
+      const result = await runAndWait(
+        wf("review-fix-loop"),
+        {
+          targetType: "file", target: "README.md",
+          batch1: agentMd("reviewer-a"),
+          batch2: agentMd("reviewer-a") + "," + agentMd("reviewer-b"), _runId: RUN_ID(),
+        },
+        deps, undefined, RUN_TIMEOUT_MS,
+      );
+
+      expect(result.reason).toBe("completed");
+      expect(result.error).toBeUndefined();
+      const outcome = assertScriptOutcome(result.scriptResult);
+      expect(outcome.terminated).toBe("clean");
+
+      const st = JSON.parse(readFileSync(join(outcome.runDir!, "state.json"), "utf8")) as {
+        batches: Array<{ rounds: Array<{ round: number; mustFix: number | null }> }>;
+        fixCount: number;
+        agentStatus: Record<string, { lastCleanBatch?: number; lastCleanFixCount?: number }>;
+      };
+      expect(st.batches).toHaveLength(2);
+      expect(st.fixCount).toBe(0);
+      // fallback 生效旁证：批 1 的轮条目 mustFix=0（md 兜底解析值），A4 break 路径
+      expect(st.batches[0].rounds[0].mustFix).toBe(0);
+
+      // 核心判别：批 2 仍派 reviewer-a（3 次 review = 批 1 ×1 + 批 2 ×2）。
+      // 修复前 W5 凭弱证据补记 clean（batch=1、fixCount=0）→ 批 2 skip → 仅 2 次。
+      const { kinds } = runner.stats();
+      expect(kinds.filter((k) => k === "review").length).toBe(3);
+      expect(kinds.filter((k) => k === "aggregate").length).toBe(1); // 批 2 全 clean 不聚合
+      expect(kinds.filter((k) => k === "fix").length).toBe(0);
+      // agentStatus 佐证：reviewer-a 的 clean 记录来自批 2 真实 clean 轮（=2），
+      // 而非批 1 fallback 弱证据补记（修复前 =1）
+      expect(st.agentStatus["reviewer-a"]).toMatchObject({ lastCleanBatch: 2, lastCleanFixCount: 0 });
     },
     RUN_TIMEOUT_MS,
   );
