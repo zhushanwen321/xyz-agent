@@ -15,7 +15,8 @@
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/stores/workflow.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import type { MockInstance } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useWorkflowStore } from '@/stores/workflow'
 import { agentCallVirtualId } from '@xyz-agent/shared'
@@ -124,6 +125,63 @@ describe('workflow store', () => {
     store.backToWorkflowList('panel-1')
 
     expect(store.getViewingRunId('panel-1')).toBeNull()
+  })
+})
+
+// ── 空结果守卫（sidebar-sync-plan P1）：RPC 成功返回 [] 且分区非空 → 不覆盖 ──
+// runtime getWorkflows 读盘失败时 catch 降级返回 []，瞬时读失败不得清掉 renderer 分区历史。
+
+describe('workflow store — loadWorkflows 空结果守卫', () => {
+  let warnSpy: MockInstance
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    warnSpy.mockRestore()
+  })
+
+  it('RPC 返回 [] 且分区已有数据 → 不覆盖分区 + warn 含 sessionId', async () => {
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([])
+
+    const store = useWorkflowStore()
+    store.applyRecords('sess-1', [makeRecord({ runId: 'wf-keep' })])
+    await store.loadWorkflows('sess-1')
+
+    // 守卫契约：保留旧分区，warn 说明保留行为并携带 sessionId
+    expect(store.getRecordsBySession('sess-1')).toHaveLength(1)
+    expect(store.getRecordsBySession('sess-1')[0].runId).toBe('wf-keep')
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('keeping existing records'), 'sess-1')
+    // 守卫不是错误态：不设 loadError，isLoading 正常复位
+    expect(store.loadError).toBeNull()
+    expect(store.isLoading).toBe(false)
+  })
+
+  it('RPC 返回 [] 且分区为空 → 分区保持为空，不告警', async () => {
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([])
+
+    const store = useWorkflowStore()
+    await store.loadWorkflows('sess-1')
+
+    // 分区本就为空 → [] 是合法结果，正常写入（仍为空），无守卫告警
+    expect(store.getRecordsBySession('sess-1')).toEqual([])
+    expect(warnSpy).not.toHaveBeenCalled()
+    expect(store.loadError).toBeNull()
+  })
+
+  it('RPC 返回非空且分区已有数据 → 正常覆盖为新数据（守卫不生效）', async () => {
+    const fresh = [makeRecord({ runId: 'wf-fresh' })]
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue(fresh)
+
+    const store = useWorkflowStore()
+    store.applyRecords('sess-1', [makeRecord({ runId: 'wf-old' })])
+    await store.loadWorkflows('sess-1')
+
+    expect(store.getRecordsBySession('sess-1')).toHaveLength(1)
+    expect(store.getRecordsBySession('sess-1')[0].runId).toBe('wf-fresh')
+    expect(warnSpy).not.toHaveBeenCalled()
   })
 })
 

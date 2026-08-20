@@ -175,7 +175,19 @@ export const useSubagentStore = defineStore('subagent', () => {
     isLoading.value = true
     loadError.value = null
     try {
-      applyRecords(sessionId, await sessionApi.getSubagents(sessionId))
+      const records = await sessionApi.getSubagents(sessionId)
+      // 空结果守卫（sidebar-sync-plan P1）：runtime getSubagents 读盘失败时 catch 降级返回 []，
+      // 瞬时读失败若当空列表覆盖会清掉分区历史。RPC 成功且空 + 分区非空 → 保留旧分区
+      // （极端场景 stale 不自动纠正，由下次 session.subagents 推送纠正）。推送路径是权威数据，
+      // 不经此守卫。
+      if (records.length === 0 && getRecordsBySession(sessionId).length > 0) {
+        console.warn(
+          '[subagent-store] getSubagents returned empty list but partition non-empty, keeping existing records:',
+          sessionId,
+        )
+        return
+      }
+      applyRecords(sessionId, records)
     } catch (e) {
       // M1：失败不覆盖现有分区，设 loadError
       const msg = e instanceof Error ? e.message : String(e)
