@@ -159,6 +159,11 @@
       "name": "@zhushanwen/pi-session-reader",
       "directory": "extensions/session-reader",
       "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-cache-probe",
+      "directory": "extensions/cache-probe",
+      "dependsOn": []
     }
   ]
 }

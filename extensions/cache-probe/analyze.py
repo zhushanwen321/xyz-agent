@@ -8,7 +8,9 @@
   4. 进程边界（baseline entry）前后指纹漂移统计
   5. 快照方案 GO/NO-GO 决策建议
 
-用法：python3 analyze.py ~/.pi/agent/sessions [--since 2026-08-01]
+entry schema v2：normal entry 只存变化项（增量），本脚本回放合并为全量指纹。
+
+用法：python3 extensions/cache-probe/analyze.py ~/.pi/agent/sessions [--since 2026-08-01]
 只读，不修改任何文件。
 """
 import argparse
@@ -92,7 +94,7 @@ def main():
     since_ts = datetime.strptime(args.since, "%Y-%m-%d").timestamp() if args.since else 0
 
     counters = defaultdict(int)
-    turn_rows = []          # 每 turn 一行：(model, gap_bucket, model_chg, prefix_chg, parts, cr, miss)
+    turn_rows = []          # (model, gap_bucket, model_chg, think_chg, prefix_chg, parts, cr, miss)
     baseline_pairs = []     # (start_reason, changed_parts)
     files = list(iter_session_files(args.roots, since_ts))
     counters["sessions"] = len(files)
@@ -104,7 +106,10 @@ def main():
         current_hashes = None
         prev_snapshot = None
         seen_user_turn = False
+        # 切换标记作用域 = 自上一条真实用户发言以来的变化；user 发言时冻结到该 turn，
+        # 防止「无 LLM 请求的 turn」把标记泄漏到下一 turn（保守低估样本方向的 bug）
         pending_model = pending_think = False
+        turn_model_chg = turn_think_chg = False
         last_ts = None
         gap_bucket = "new"
         seen_first = False
@@ -120,16 +125,19 @@ def main():
                 data = e.get("data") or {}
                 if data.get("error"):
                     counters["error_entries"] += 1
-                elif isinstance(data.get("hashes"), dict):
+                elif isinstance(data.get("h"), dict):
                     if data.get("baseline") and current_hashes is not None:
-                        changed = [k for k, v in data["hashes"].items() if current_hashes.get(k) != v]
+                        changed = [k for k, v in data["h"].items() if current_hashes.get(k) != v]
                         baseline_pairs.append((data.get("startReason"), changed))
-                    current_hashes = data["hashes"]
+                    # v2 增量 merge：baseline 全量覆盖；normal 增量合并
+                    current_hashes = {**(current_hashes or {}), **data["h"]}
             elif t == "message":
                 m = e.get("message", {})
                 role = m.get("role")
                 if role == "user" and is_real_user(m):
                     seen_user_turn = True
+                    turn_model_chg, turn_think_chg = pending_model, pending_think
+                    pending_model = pending_think = False
                     if last_ts is not None and ts is not None:
                         gap_bucket = bucket_of(ts - last_ts) or "d.>12h"
                     else:
@@ -148,11 +156,10 @@ def main():
                                 parts = [k for k, v in current_hashes.items()
                                          if prev_snapshot.get(k) != v]
                                 prefix_chg = len(parts) > 0
-                        turn_rows.append((m.get("model", "?"), gap_bucket, pending_model,
-                                          pending_think, prefix_chg, parts, cr, miss))
+                        turn_rows.append((m.get("model", "?"), gap_bucket, turn_model_chg,
+                                          turn_think_chg, prefix_chg, parts, cr, miss))
                         prev_snapshot = current_hashes
                         seen_first = True
-                        pending_model = pending_think = False
             if ts is not None:
                 last_ts = ts
         if has_probe_turn:
@@ -165,6 +172,11 @@ def main():
     print(f"  sessions: {counters['sessions']}（含 cache-probe 数据 {counters['sessions_with_probe']}）")
     print(f"  turns: {len(turn_rows)}   error entries: {counters['error_entries']}")
     print(f"  畸形行: {counters['malformed_lines']}   不可读文件: {counters['unreadable_files']}")
+    think_turns = [r for r in turn_rows if r[3]]
+    if think_turns:
+        cr = sum(r[6] for r in think_turns)
+        tot = cr + sum(r[7] for r in think_turns)
+        print(f"  think 切换 turn: {len(think_turns)}（命中率 {cr / tot * 100:.1f}%，历史实测 ≈ 基线，仅监控不参与归因过滤）")
 
     print()
     print("=" * 72)
@@ -230,7 +242,7 @@ def main():
             reasons[r or "unknown"] += 1
         print(f"  startReason 分布：{dict(reasons)}")
     else:
-        print("  暂无 baseline 对比数据（需 resume/fork 跨进程场景积累）")
+        print("  暂无 baseline 对比数据（需跨进程场景积累）")
 
     print()
     print("=" * 72)
@@ -238,7 +250,7 @@ def main():
     print("=" * 72)
     n_core = len(core)
     if n_core < 200:
-        print(f"  样本不足（归因矩阵 turn 数 {n_core} < 200），继续收集。终止标准见 scripts/cache-probe/README.md。")
+        print(f"  样本不足（归因矩阵 turn 数 {n_core} < 200），继续收集。终止标准见 README.md。")
     elif miss_chg + miss_same == 0:
         print("  归因矩阵内无 miss token，无需快照方案。")
     else:

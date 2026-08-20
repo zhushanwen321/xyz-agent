@@ -207,9 +207,11 @@ hash 与 `BuildSystemPromptOptions` 全部 8 字段的对应口径：`contextFil
 - hook 按 priority 串行执行（单 handler 5s 超时），8 个 sha256 计算在毫秒级，远低于超时。
 - **运行时断言**：「custom entry 不进 LLM 上下文」——✅ 已从 pi 源码核实（`sessionEntryToContextMessages` 对 custom 返回空数组），且 §1 所列 3 个生产先例佐证。
 
-### 6.8 加载方式：本地路径，不进 builtin 清单
+### 6.8 定位：长期生效的正式 extension 包（v6 决策更新）
 
-数据收集期通过 `pi --extension <path>` 本地加载（符合「extension 改动优先在本地 pi CLI 实测」规范），不修改 `packages/shared/src/mandatory-extensions.json`。是否转正为 builtin 由 G5 结论决定——若 NO-GO，探针自然退役，已写入的 entry 留在 session 文件中无任何影响（§1 机制 3 已核实全链路安全）。
+cache-probe 是 `extensions/cache-probe/`（`@zhushanwen/pi-cache-probe`）正式包，长期采集数据（用户决策：从「临时探针、G5 后转正或退役」升级为长期生效）。不进 builtin 清单（`mandatory-extensions.json`）——它是 CLI 侧观测工具，非 xyz-agent 桌面功能。日常经 `pi --extension <repo>/extensions/cache-probe/index.ts` 或 dev-link 挂载。随包交付契约测试（`src/__tests__/`，满足 extension-conventions 的 SDK 契约条款）。
+
+entry schema v2（为长期采集精简数据量）：hash 取 sha256 前 16 hex；baseline entry 存全量 9 hash + cwd（约 250B）；normal entry 只存变化项增量（约 120-160B，长期最高频路径）；无变化 turn 零写入。cwd 仅 baseline 携带（cwd 变化必然带动 contextFiles 变化，变化事实由 changed 体现）。
 
 ## 7. 实现机制
 
@@ -235,32 +237,30 @@ on(before_provider_request):  [每笔 LLM 请求，仅消费 turn 首笔；pendi
   合并 payload 侧 2 个 hash：spFull = hash(system 消息，role 兼容 system/developer，
     缺失记 'no-system')、toolsSent = hash(payload.tools，缺失记 'no-tools')
   cur = pending + { spFull, toolsSent }   // 共 9 个 hash
-  if needsBaseline:        appendEntry("cache-probe", { seq, baseline: true, startReason, changed: ["*"], cwd, hashes: cur })
-  elif 任一 hash 变化:     appendEntry("cache-probe", { seq, baseline: false, changed: [变化字段], cwd, hashes: cur })
+  if needsBaseline:        appendEntry("cache-probe", { v: 2, seq, baseline: true, startReason, changed: ["*"], cwd, h: cur })           // 全量
+  elif 任一 hash 变化:     appendEntry("cache-probe", { v: 2, seq, changed: [变化字段], h: {变化字段: hash} })                          // 增量
   lastHashes = cur; needsBaseline = false; pending = null
   catch e: appendEntry("cache-probe", { seq, error: ... }); needsBaseline = true
 on(agent_end): pending = null   // turn 无 provider 请求（用户取消等）则丢弃，防跨 turn 污染
 ```
 
-entry schema（落在 session JSONL 的一行）。两类 entry 分别示例（未列出的字段视为 undefined，JSON 序列化时省略——`hashes` 在 baseline 与 normal entry 均存在；normal entry 无 `startReason`；error entry 无 `hashes`）：
+entry schema v2（落在 session JSONL 的一行；hash 为 16 hex，`v` 为 schema 版本）。两类 entry 分别示例（未列出字段序列化时省略——`h` 在 baseline 与 normal 均存在，baseline 全量 / normal 增量；normal 无 `startReason`/`cwd`；error entry 无 `h`）：
 
-baseline entry（进程首个 turn，或异常恢复后的重建基线）：
+baseline entry（进程首个 turn，或异常恢复后的重建基线；全量指纹）：
 
 ```json
 {"type":"custom","customType":"cache-probe","data":{
-  "seq":1,"baseline":true,"startReason":"resume","changed":["*"],
-  "cwd":"/Users/...",
-  "hashes":{"spFull":"…","toolsSent":"…","contextFiles":"…","skills":"…","toolsList":"…","toolsReg":"…","append":"…","guidelines":"…","customPrompt":"…"}
+  "v":2,"seq":1,"baseline":true,"startReason":"resume","changed":["*"],"cwd":"/Users/...",
+  "h":{"spFull":"abcd0123abcd0123","toolsSent":"…16hex…","contextFiles":"…","skills":"…","toolsList":"…","toolsReg":"…","append":"…","guidelines":"…","customPrompt":"…"}
 }}
 ```
 
-normal change entry（后续 turn 检测到变化）：
+normal change entry（后续 turn 检测到变化；只存变化项，analyze.py 回放增量 merge）：
 
 ```json
 {"type":"custom","customType":"cache-probe","data":{
-  "seq":12,"baseline":false,"changed":["contextFiles"],
-  "cwd":"/Users/...",
-  "hashes":{"spFull":"…","toolsSent":"…","contextFiles":"…","skills":"…","toolsList":"…","toolsReg":"…","append":"…","guidelines":"…","customPrompt":"…"}
+  "v":2,"seq":12,"changed":["contextFiles"],
+  "h":{"contextFiles":"…16hex…"}
 }}
 ```
 
@@ -271,7 +271,7 @@ normal change entry（后续 turn 检测到变化）：
 输入：一个或多个 sessions 目录。对每个 session 文件：
 
 1. 流式解析 JSONL，抽取五类信息：cache-probe entry、真实用户发言（user role 且含 text 块，定义 turn 边界）、assistant usage（每 turn 首笔）、model_change / thinking_level_change（判定 turn 前是否切换，排除首 turn 初始化写入）、全 entry timestamp（算 gap）。
-2. 指纹状态传播：无 entry 的 turn，其指纹 = 最近一条 cache-probe entry 的 hashes（§6.1 的读取侧约定）。
+2. 指纹状态传播（v2 增量 merge）：baseline entry 全量覆盖当前指纹；normal entry 增量合并（`{**state, **entry.h}`）；无 entry 的 turn，其指纹 = 最近合并后的状态（§6.1 的读取侧约定）。
 3. 输出归因矩阵（§5.1 格式）+ resume 漂移统计 + 决策建议行；无 cache-probe entry 的旧 session 标记「无指纹数据」跳过指纹维度、其余维度照常统计（供与基线数据交叉验证）。矩阵的 miss 归因分三档：`前缀变化（options 某 hash 变）` / `options 未变仍 miss（两解释并存：服务端淘汰 或 extension 链盲区，见 §7.1 口径约束）` / `模型切换（cache 隔离，已知必然 miss）`——第二档不做单一归因断言，其占比进 G5 决策时按保守口径处理。
 
 脚本不修改任何文件；对畸形行跳过计数并在结尾报告（失败要出声）。
@@ -284,7 +284,7 @@ normal change entry（后续 turn 检测到变化）：
 
 | 场景 | 回溯目标 | 真实流程 / 数据 / 路径 | 通过标准 |
 |---|---|---|---|
-| A. 稳定性 | G2、G4 | 本地 pi CLI（真实模型）起 session，连发 3 条消息，不修改任何文件 | session 文件仅 1 条 `baseline:true` entry；无假变化 entry（防 §6.5 序列化不稳）；该 entry 的 `hashes` 含全部 8 个 key 且值均为 64 字符 hex |
+| A. 稳定性 | G2、G4 | 本地 pi CLI（真实模型）起 session，连发 3 条消息，不修改任何文件 | session 文件仅 1 条 `baseline:true` entry；无假变化 entry（防 §6.5 序列化不稳）；该 entry 的 `h` 含全部 9 个 key 且值均为 16 字符 hex（v2 口径，已实测通过） |
 | B. 部位定位 | G2 | 场景 A 后向项目 AGENTS.md 追加一行，再发 1 条消息 | 新增 entry 的 `changed` 恰为 `["contextFiles"]` |
 | C. resume 检测 | G2、G1 | 场景 B 后退出 pi，`pi --resume` 同一 session 再发 1 条消息 | 出现 `baseline:true` + `startReason:"resume"` entry；脚本对比前后基线 hash 能给出「漂移/未漂移」结论 |
 | D. 不重复记录 | G3 | 场景 C 中切换模型与 thinking level 各一次后再发消息 | 无新增 cache-probe entry；session 文件出现原生 model_change / thinking_level_change entry |
@@ -339,3 +339,4 @@ normal change entry（后续 turn 检测到变化）：
 - v3：二轮审查修复——撤回 v2 的「链尾加载约束」（源码 `resource-loader.ts:452` 证实 CLI extension 恒在链头，不可达），改为 §7.1「加载位置与测量视角约束」：options 分 hash 口径可靠、spFull 明示为链头视角并标注 extension 链盲区；§7.2 归因矩阵第二档改为双解释并存不做单一断言；entry schema 拆 baseline / normal 两类示例消除 startReason 矛盾；§4 hash 口径注释修正（全文 1 + 部分 7）；伪代码补 error entry 无 hashes 约定；新增 §11 检查点 2（盲区实测）与 5（before_provider_request 升级路径）。
 - v4：三轮终审通过（0 must-fix），采纳 1 条 suggestion：schema 说明补「hashes 在 baseline 与 normal entry 均存在」。
 - v5：实施验收后更新——§11 检查点全部落为实测结论（链盲区实证存在且为每 turn 级；spFull 升级为 payload 口径并兼容 developer role；AGENTS.md 启动快照语义；CLI reason 恒 startup）。验收场景 A-E + D2 + G 实测通过（F 留收集期首日 GUI 检查）。
+- v6：定位升级为长期生效正式包（`extensions/cache-probe/`，用户决策），按规范审查结论迁移：TS 化、契约测试（23 用例）、extension-dependencies/AGENTS.md 全集登记、lint warning 全修。schema v2 为长期采集精简数据量：hash 取前 16 hex、normal entry 增量化（约 160B/条）、cwd 仅 baseline 携带。e2e 回归通过（pi 直接加载 TS 入口）。
