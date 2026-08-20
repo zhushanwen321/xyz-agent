@@ -153,7 +153,9 @@
 import { ref, computed, watch, nextTick, onUnmounted, type Component, type ComponentPublicInstance } from 'vue'
 import { Search, Terminal, FileText, Code, MessageSquare, Clock, Loader2 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import { Input } from '@xyz-agent/ui'
+// ui 原语走包内相对导入（不经 @xyz-agent/ui 顶层 barrel）：SearchModal 经顶层 barrel
+// 再导出，顶层 barrel 自引用会闭合循环依赖环（R2 S-1）
+import { Input } from '../primitives/input'
 import { useSearch, useSearchJump, useSearchModal, segments } from '@xyz-agent/core'
 import type { SearchDeps, SearchItem } from '@xyz-agent/core'
 

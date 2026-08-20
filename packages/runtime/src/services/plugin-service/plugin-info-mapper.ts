@@ -5,8 +5,8 @@
 import type { PluginInfo } from '@xyz-agent/shared'
 import type { PluginDescriptor } from './plugin-types.js'
 
-/** 将内部 PluginState（UPPER_CASE）映射为协议层展示状态（lower_case） */
-export function mapStateForProtocol(state: string): PluginInfo['status'] {
+/** 将内部 PluginState（UPPER_CASE）映射为协议层展示状态（lower_case，模块内 toPluginInfo 消费） */
+function mapStateForProtocol(state: string): PluginInfo['status'] {
   switch (state) {
     case 'ACTIVE': return 'active'
     case 'CRASHED': return 'crashed'
@@ -28,7 +28,7 @@ export function mapStateForProtocol(state: string): PluginInfo['status'] {
  * enabled 语义：runtime 无独立「启用」持久化（togglePlugin 直接驱动激活/停用），
  * 故以激活态推导——ACTIVE 视为 enabled，其余 disabled。
  */
-export function toPluginInfo(descriptor: PluginDescriptor): PluginInfo {
+function toPluginInfo(descriptor: PluginDescriptor): PluginInfo {
   const status = mapStateForProtocol(descriptor.status)
   return {
     pluginId: descriptor.pluginId,

@@ -418,44 +418,57 @@ export class WorktreeManager {
       orphansByEnc.set(pt.enc, list);
     }
     for (const [enc, list] of orphansByEnc) {
-      const alivePids = this.collectAlivePids(enc);
-      if (alivePids.length === 0) {
-        for (const pt of list) {
-          const age = Date.now() - pt.mtimeMs;
-          if (age <= SPAWN_GRACE_MS) continue; // create 窗口（worktree add 后 add 落盘前）
-          logger.warn("[worktree] reconcile: unregistered physical worktree with no alive pid, cleaning up", {
-            branch: pt.branch,
-            checkout: pt.checkout,
-            repo: pt.repo,
-            ageMs: age,
-          });
-          await this.cleanupPhysical(pt);
-        }
-      } else if (alivePids.length === 1 && list.length === 1) {
-        // 唯一活 pid ↔ 唯一残留：对应关系无歧义，自愈补写回注册表。
-        // pid 若最终对应错误（理论上不该发生），后果是延迟清理而非误删（判活跳过）。
-        const pt = list[0];
-        logger.warn("[worktree] reconcile: unregistered physical worktree with one alive pid, re-registering (self-heal)", {
-          branch: pt.branch,
-          checkout: pt.checkout,
-          repo: pt.repo,
-          pid: alivePids[0],
-        });
-        await this.registry.add({
-          repo: pt.repo ?? path.dirname(pt.checkout),
-          branch: pt.branch,
-          checkout: pt.checkout,
-          pid: alivePids[0],
-          createdAt: pt.mtimeMs,
-        });
-      } else {
-        // 多活 pid / 多残留：无法建立 branch↔pid 对应，保守跳过待下周期。
-        logger.warn("[worktree] reconcile: unregistered physical worktrees present but alive-pid mapping ambiguous, skipping this cycle", {
-          enc,
-          orphans: list.length,
-          alivePids: alivePids.length,
-        });
-      }
+      await this.reconcileEncSegment(enc, list);
+    }
+  }
+
+  /** 单 enc 段的残留处置三分支：无活 pid 判死清理 / 唯一对应自愈补写 / 多对应保守跳过。 */
+  private async reconcileEncSegment(enc: string, list: PhysicalWorktree[]): Promise<void> {
+    const alivePids = this.collectAlivePids(enc);
+    if (alivePids.length === 0) {
+      await this.cleanupDeadSegment(list);
+      return;
+    }
+    if (alivePids.length === 1 && list.length === 1) {
+      // 唯一活 pid ↔ 唯一残留：对应关系无歧义，自愈补写回注册表。
+      // pid 若最终对应错误（理论上不该发生），后果是延迟清理而非误删（判活跳过）。
+      const pt = list[0];
+      logger.warn("[worktree] reconcile: unregistered physical worktree with one alive pid, re-registering (self-heal)", {
+        branch: pt.branch,
+        checkout: pt.checkout,
+        repo: pt.repo,
+        pid: alivePids[0],
+      });
+      await this.registry.add({
+        repo: pt.repo ?? path.dirname(pt.checkout),
+        branch: pt.branch,
+        checkout: pt.checkout,
+        pid: alivePids[0],
+        createdAt: pt.mtimeMs,
+      });
+      return;
+    }
+    // 多活 pid / 多残留：无法建立 branch↔pid 对应，保守跳过待下周期。
+    logger.warn("[worktree] reconcile: unregistered physical worktrees present but alive-pid mapping ambiguous, skipping this cycle", {
+      enc,
+      orphans: list.length,
+      alivePids: alivePids.length,
+    });
+  }
+
+  /** 无活 pid 段：残留判死清理——checkout mtime 超 SPAWN_GRACE_MS 才清（防误清另一
+   *  进程 worktree add 完成到 registry.add 落盘之间的 create 窗口）。 */
+  private async cleanupDeadSegment(list: PhysicalWorktree[]): Promise<void> {
+    for (const pt of list) {
+      const age = Date.now() - pt.mtimeMs;
+      if (age <= SPAWN_GRACE_MS) continue; // create 窗口（worktree add 后 add 落盘前）
+      logger.warn("[worktree] reconcile: unregistered physical worktree with no alive pid, cleaning up", {
+        branch: pt.branch,
+        checkout: pt.checkout,
+        repo: pt.repo,
+        ageMs: age,
+      });
+      await this.cleanupPhysical(pt);
     }
   }
 

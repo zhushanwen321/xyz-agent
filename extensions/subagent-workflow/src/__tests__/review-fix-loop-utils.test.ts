@@ -728,6 +728,30 @@ describe("normalizeAggregatorResult must_fix_ids", () => {
     });
     expect(r!.must_fix_ids).toEqual([{ id: "MF-1", severity: "critical" }, { id: "MF-2", severity: "major" }]);
   });
+  it("unknown severity 枚举回退 \"major\"（A5 单点 choke：畸形值不透传到 converged 判定侧）", () => {
+    const r = normalizeAggregatorResult({
+      report_file: "/tmp/agg.md", must_fix: 3, suggestion: 0,
+      // "blocker"/"urgent" 等词形对 js 侧 === "critical" 严格比较无意义——
+      // 回退 must-fix 语义缺省 major，不原样透传（消费侧三值枚举不被污染）
+      must_fix_ids: [{ id: "MF-1", severity: "blocker" }, { id: "MF-2", severity: "urgent" }, { id: "MF-3", severity: "CRITICAL!" }],
+    });
+    expect(r!.must_fix_ids).toEqual([
+      { id: "MF-1", severity: "major" },
+      { id: "MF-2", severity: "major" },
+      { id: "MF-3", severity: "major" },
+    ]);
+  });
+  it("severity 非字符串（number/null/缺失）→ 回退 \"major\"（normalizeSeverity 类型防御）", () => {
+    const r = normalizeAggregatorResult({
+      report_file: "/tmp/agg.md", must_fix: 3, suggestion: 0,
+      must_fix_ids: [{ id: "MF-1", severity: 1 }, { id: "MF-2", severity: null }, { id: "MF-3" }],
+    });
+    expect(r!.must_fix_ids).toEqual([
+      { id: "MF-1", severity: "major" },
+      { id: "MF-2", severity: "major" },
+      { id: "MF-3", severity: "major" },
+    ]);
+  });
   it("must_fix_ids 混排 + 非法元素过滤", () => {
     const r = normalizeAggregatorResult({ report_file: "/tmp/agg.md", must_fix: 2, suggestion: 0, must_fix_ids: ["MF-1", { id: "MF-2", severity: "critical" }, 42, null] });
     expect(r!.must_fix_ids).toEqual([{ id: "MF-1", severity: "major" }, { id: "MF-2", severity: "critical" }]);

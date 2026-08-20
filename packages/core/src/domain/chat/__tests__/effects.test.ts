@@ -478,3 +478,148 @@ describe('message.complete error 路径的 errorMessage 可见性（模型 400 �
     expect(a.error).toBeUndefined()
   })
 })
+
+// ── message.complete 收口矩阵（registry next 回调靶子：多气泡收口 / usage·content 末条定位）──
+//
+// [HISTORICAL] 一个 turn 可产出多个 streaming assistant 气泡（工具调用气泡 + 文字总结气泡）：
+// handler 的 map 回调必须收口**所有** status==='streaming' 的 assistant，而 usage / 权威
+// content / errorMessage 只回填最后一条（turn 级聚合）。只收最后一条的历史形态会让前面的
+// toolCall 气泡永远 streaming；把 usage 回填到非末 assistant 则语义错位。
+
+describe('message.complete 收口矩阵：多 streaming 气泡全收口 + turn 级聚合字段只落末条', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('多 streaming 气泡（toolCall 气泡 + 文字气泡）全部收口；usage 只回填最后一条 assistant', () => {
+    const ctx = makeCtx()
+    // 气泡 1：含 running toolCall 的 assistant（工具调用气泡）
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'read', arguments: { path: '/x' } }) }))
+    // 气泡 2：文字总结气泡（同 turn 第二个 assistant）
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a2' }))
+    dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: '总结' }))
+
+    dispatchMessageEvent(ctx, SID, msg('message.complete', {
+      stopReason: 'stop',
+      usage: { inputTokens: 100, outputTokens: 50 },
+    }))
+
+    const list = getMsgs(ctx)
+    expect(list).toHaveLength(2)
+    // 两个气泡都收口（历史 bug：只收最后一条 → toolCall 气泡永远 streaming）
+    expect(list[0].status).toBe('complete')
+    expect(list[1].status).toBe('complete')
+    // usage 是 turn 级聚合：只回填最后一条 assistant（回填到非末条语义错位）
+    expect(list[0].usage).toBeUndefined()
+    expect(list[1].usage).toEqual({ inputTokens: 100, outputTokens: 50 })
+  })
+
+  it('权威 content 覆盖最后一条 assistant（末 delta 异步渲染竞态防线）；非末气泡 content 不动', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: '部分正文未闭合' }))
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a2' }))
+    dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: '流式累积' }))
+
+    dispatchMessageEvent(ctx, SID, msg('message.complete', {
+      stopReason: 'stop',
+      content: '权威完整正文 **已闭合**',
+    }))
+
+    const list = getMsgs(ctx)
+    // 末条被权威源覆盖（强制 MarkdownRenderer watch 重新渲染）
+    expect(list[1].content).toBe('权威完整正文 **已闭合**')
+    // 非末条不在覆盖范围（finalContent 只定位 lastAssistantIdx）
+    expect(list[0].content).toBe('部分正文未闭合')
+  })
+
+  it('abort 路径 payload 无 content → 保留客户端流式累积值（空串不覆盖）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: '中断前正文' }))
+    // abort：runtime 不带 content（权威覆盖仅在非空时生效）
+    dispatchMessageEvent(ctx, SID, msg('message.complete', { stopReason: 'aborted', content: '' }))
+    const a = lastAssistant(ctx)
+    expect(a.content).toBe('中断前正文')
+    expect(a.status).toBe('complete')
+  })
+})
+
+// ── tool_call_end 降级与错误形态（registry message.tool_call_end 靶子）──
+
+describe('dispatchMessageEvent tool_call_end 异常帧降级与错误收口', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('entry 缺失 / type 非 message → 整帧降级丢弃（reducer 不喂、消息流不动）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'read', arguments: {} }) }))
+
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', {}))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { entry: { type: 'compaction', summary: 'x' } }))
+
+    // 两帧都静默丢弃：reducer 未喂、toolCall 保持 running
+    expect(ctx.applyEntryFrame).not.toHaveBeenCalled()
+    expect(lastAssistant(ctx).toolCalls![0].status).toBe('running')
+  })
+
+  it('isError toolResult → status:"error" + error 字段（实时失败必须可见，Block.vue isFailed 判定输入）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'bash', arguments: { command: 'exit 1' } }) }))
+
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { entry: toolResultEntry({ toolCallId: 'tc1', toolName: 'bash', content: 'command failed', isError: true }) }))
+
+    const tc = lastAssistant(ctx).toolCalls![0]
+    // [HISTORICAL] 实时失败的 tool call 必须带 status:'error'（与重放路径 reducer 一致），
+    // 否则前端 isFailed 恒 false（恒显示成功）；error 字段承载失败正文
+    expect(tc.status).toBe('error')
+    expect(tc.output).toBe('command failed')
+    expect(tc.error).toBe('command failed')
+  })
+
+  it('entry.message.content 缺失 → 保留 running 期间旧 output（异常帧不抹掉已见数据）', () => {
+    // 预置：带过程 output 的 running toolCall（progress/前序 update 场景的既有形态）
+    const initial: Message[] = [{
+      id: 'a1',
+      role: 'assistant',
+      content: '',
+      status: 'streaming',
+      timestamp: 0,
+      toolCalls: [{ id: 'tc1', toolName: 'read', input: {}, status: 'running', startTime: 0, output: 'progress-1' }],
+    }]
+    const ctx = makeCtx(initial)
+
+    const noContentEntry = {
+      type: 'message',
+      parentId: null,
+      timestamp: new Date(0).toISOString(),
+      message: { role: 'toolResult', toolCallId: 'tc1', toolName: 'read', isError: false, timestamp: 0 },
+    }
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { entry: noContentEntry }))
+
+    const tc = lastAssistant(ctx).toolCalls![0]
+    // content undefined（mock/异常帧）→ 不覆盖已有 output，但 status 照常收口
+    expect(tc.status).toBe('completed')
+    expect(tc.output).toBe('progress-1')
+  })
+
+  it('toolCallId 缺失 → 降级定位最后一条 assistant 回填（防御：兼容异常事件不断流）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'read', arguments: {} }) }))
+
+    // 异常帧：toolCallId 缺失（无 ID 锚点）→ fallback findLastAssistantIndex 定位
+    const noCallIdEntry = {
+      type: 'message',
+      parentId: null,
+      timestamp: new Date(0).toISOString(),
+      message: { role: 'toolResult', toolName: 'read', content: [{ type: 'text', text: 'data' }], isError: false, timestamp: 0 },
+    }
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { entry: noCallIdEntry }))
+
+    // toolCall 气泡本身收口为 complete（callId 匹配分支不命中则 status 不变——
+    // 降级路径只保证不崩、reducer 照常喂入；此处锚定「不抛 + 帧被消费」的用户可见行为）
+    expect(ctx.applyEntryFrame).toHaveBeenCalledTimes(1)
+    expect(getMsgs(ctx)).toHaveLength(1)
+  })
+})

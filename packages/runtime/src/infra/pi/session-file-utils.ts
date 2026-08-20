@@ -600,10 +600,23 @@ const TMP_MIGRATE_RESIDUE_MAX_AGE_MS = 3_600_000
  */
 export function cleanupTmpMigrateResidue(sessionsDir: string, maxAgeMs = TMP_MIGRATE_RESIDUE_MAX_AGE_MS): number {
   if (!existsSync(sessionsDir)) return 0
-  const cutoff = Date.now() - maxAgeMs
-  let removed = 0
   // 与 scanPiSessionsFromDisk 同构的两层结构：根目录直接文件 + cwd 分组子目录
   //（normalizeSessionFileInPlace 的临时文件写在 dirname(filePath)，即 session 所在层）。
+  const dirs = collectResidueScanDirs(sessionsDir)
+  if (dirs === null) return 0 // 根目录不可读：no-op（启动链兜底，失败不上抛）
+  const cutoff = Date.now() - maxAgeMs
+  let removed = 0
+  for (const dir of dirs) {
+    removed += removeStaleResiduesInDir(dir, cutoff)
+  }
+  return removed
+}
+
+/**
+ * 枚举清扫目标目录：根目录 + 一层 cwd 分组子目录（与 scanPiSessionsFromDisk 同构）。
+ * 根目录不可读返回 null（整体 no-op）；单项 stat 失败跳过（不影响其余子目录）。
+ */
+function collectResidueScanDirs(sessionsDir: string): string[] | null {
   const dirs: string[] = [sessionsDir]
   try {
     for (const name of readdirSync(sessionsDir)) {
@@ -613,27 +626,32 @@ export function cleanupTmpMigrateResidue(sessionsDir: string, maxAgeMs = TMP_MIG
       } catch { void 0 /* 单项 stat 失败跳过，不影响整体清扫 */ }
     }
   } catch {
-    return 0 // 根目录不可读：no-op（启动链兜底，失败不上抛）
+    return null
   }
-  for (const dir of dirs) {
-    let names: string[]
+  return dirs
+}
+
+/** 清扫单目录内过期的 `.tmp-migrate-*.jsonl` 残留（mtime 早于 cutoff 才删），返回删除数。
+ * 目录不可读返回 0；单文件 stat/unlink 失败跳过不中断（启动链兜底语义）。 */
+function removeStaleResiduesInDir(dir: string, cutoff: number): number {
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return 0
+  }
+  let removed = 0
+  for (const name of names) {
+    if (!name.includes('.tmp-migrate-') || !name.endsWith('.jsonl')) continue
+    const filePath = join(dir, name)
     try {
-      names = readdirSync(dir)
-    } catch {
-      continue
-    }
-    for (const name of names) {
-      if (!name.includes('.tmp-migrate-') || !name.endsWith('.jsonl')) continue
-      const filePath = join(dir, name)
-      try {
-        if (statSync(filePath).mtimeMs < cutoff) {
-          unlinkSync(filePath)
-          removed++
-        }
-      // eslint-disable-next-line taste/no-silent-catch -- best-effort: 单文件失败跳过，不阻断启动链
-      } catch (e) {
-        console.warn(`[session-file-utils] cleanupTmpMigrateResidue: failed to remove residue: ${filePath}`, e)
+      if (statSync(filePath).mtimeMs < cutoff) {
+        unlinkSync(filePath)
+        removed++
       }
+    // eslint-disable-next-line taste/no-silent-catch -- best-effort: 单文件失败跳过，不阻断启动链
+    } catch (e) {
+      console.warn(`[session-file-utils] cleanupTmpMigrateResidue: failed to remove residue: ${filePath}`, e)
     }
   }
   return removed

@@ -54,7 +54,7 @@ export interface RebuiltHistory {
 /**
  * xyz-client-msg-id extension 写入的 customType 常量。
  *
- * 与 extension 实现的 customType 字符串严格一致（步骤 1 的 xyz-client-msg-id-mapper extension）。
+ * 与 extension 实现的 customType 字符串严格一致（步骤 1 的 @zhushanwen/pi-msg-id-mapper extension）。
  * 改名需同步 extension 端 + 测试。xyz. 前缀是 xyz-agent namespace 约定，避免与 pi/其他扩展冲突。
  */
 const CLIENT_MSG_ID_TYPE = 'xyz.client-msg-id'

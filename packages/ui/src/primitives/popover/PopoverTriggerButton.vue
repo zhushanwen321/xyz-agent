@@ -16,7 +16,9 @@ import { ChevronDown } from '@lucide/vue'
 // ui 包内相对导入（不经 @xyz-agent/ui 顶层 barrel）：primitives 是顶层 barrel 的
 // 再导出来源，顶层 barrel 自引用会闭合循环依赖环
 import { Button } from '../button'
-import { PopoverTrigger } from '.'
+// 直接文件导入（不经本目录 barrel）：本组件经 popover/index.ts 再导出，
+// 目录 barrel 自引用同样闭合循环依赖环（R2 S-1，与顶层 barrel 修法同族）
+import PopoverTrigger from './PopoverTrigger.vue'
 import {
   TRIGGER_ICON_CLASS,
   TRIGGER_TEXT_CLASS,

@@ -1,7 +1,7 @@
 export type {
   ClientMessageType, ClientMessage, ClientMessageMap,
   SetProviderData,
-  ServerMessageType, ServerMessage, ServerMessageMap, ServerMessageMapBase,
+  ServerMessageType, ServerMessage, ServerMessageMap, ServerMessageMapBase, ServerMessageUnion,
   ReplyPayloadMap,
   BatchDeleteResult,
   SystemPromptConfig,

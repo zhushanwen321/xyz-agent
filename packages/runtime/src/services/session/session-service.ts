@@ -57,7 +57,6 @@ import {
 } from './replicated-states.config.js'
 import { HistoryRebuildCache, mergeIncrementalMessages } from './history-rebuild-cache.js'
 import { toErrorMessage, isEnoent } from '../../utils/errors.js'
-import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
 import { detectBareWorkspaceCached } from '../worktree/workspace-detector.js'
 import { PresetService, type PresetResolution } from '../preset-service.js'
 // MessageBus（wave:runtime-wiring）：per-session 消息广播核心。setter 注入（同 setConfigService 模式），
@@ -104,7 +103,10 @@ interface ManagedSession extends IManagedSessionView {
  * commands（W8）：快照唯一来源 get_commands，失效源 = getCommands 全部调用路径
  * （激活发布 + renderer 主动查询，查询即失效）。
  * 事件与 RPC 响应永不直接写实例数据（只 markDirty）。session.thinkingLevel /
- * modelId 等会话字段缓存仍在双写过渡期（W12+ 收编），usage 双写已终结（W10）。
+ * modelId 会话字段缓存是登记的永久双写形态（PR #185 S2 裁决，2026-08-20，登记表
+ * #4/#5 修订）：播种 refetch 三实例异步竞速 + get_state 失败退避（1s/5s/15s）窗口内
+ * 快照未就绪，state_changed 组合投影 fallback 读该缓存；toSummary（session 列表）
+ * 亦消费该字段。usage 双写已终结（W10）。
  *
  * [HISTORICAL] label / queue 深度两实例已撤销（PR #185 data-governance review MF1/MF2，
  * 2026-08-20）：两实例 .get() 生产零消费，markDirty 触发的防抖 get_state 拉取纯浪费 RPC，
@@ -112,7 +114,7 @@ interface ManagedSession extends IManagedSessionView {
  * queue_update 帧内 pendingMessageCount（= pi 队列深度推送投影，renderer 对账直读帧值）。
  * 「完成 W7/W8 发布通道」属新功能开发，不在 review 修复范畴，按登记表 #1/#6 修订记录在案。
  */
-interface SessionReplicatedStates {
+export interface SessionReplicatedStates {
   thinkingLevel: ReplicatedState<ThinkingLevelSnapshot>
   modelId: ReplicatedState<ModelIdSnapshot>
   usage: ReplicatedState<UsageSnapshot>
@@ -164,7 +166,6 @@ interface RecordEntriesCache {
 export class SessionService implements ISessionService, ISessionServiceInternal {
   private readonly sessions = new Map<string, ManagedSession>()
   private readonly restoringSessions = new Set<string>()
-  private extensionPath = ''
   private readonly lifecycle: SessionLifecycle
   private readonly dispatcher: MessageDispatcher
   private readonly scanner: SessionScanner
@@ -262,9 +263,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     private readonly workspaceService: WorkspaceService,
     messageBus?: IMessageBus,
   ) {
-    // 打包模式:extension 在 Resources 根;开发模式:在 repo root(apps/electron/ 父目录)
-    this.extensionPath = getExtensionFilePath(this.projectRoot, isPackaged())
-
     // 子模块注入 this(Facade 半构造时仅存引用,其方法在 Facade 完全构造后才被调用)
     this.lifecycle = new SessionLifecycle(this, this.pm, this.configStore, this.sessionStore, this.workspaceService)
     this.dispatcher = new MessageDispatcher(this, this.pm, this.workspaceService, messageBus)
@@ -552,6 +550,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     //（thinking_level_changed 覆盖不住），markDirty 重拉 get_state 刷新快照（旧实现靠
     // broadcastSessionState 内 get_state 直读，随该方法删除改经实例）。
     this.replicatedStates.get(sessionId)?.thinkingLevel.markDirty()
+    // PR #185 S2 裁决的永久双写形态：RPC 已成功（pi 侧生效），直写让 toSummary（session
+    // 列表）与 state_changed fallback（防抖 300ms + 重拉窗口内快照未收敛）立即读到新值；
+    // 实例快照收敛后主路径照常读快照（与直写同值，无冲突）。
     session.modelId = newModelId
     return sessionId
   }
@@ -576,6 +577,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const state = await client.getState()
     const effective = typeof state?.thinkingLevel === 'string' ? state.thinkingLevel : level
     const session = this.sessions.get(sessionId)
+    // PR #185 S2 裁决的永久双写形态：effective 来自 pi get_state（权威值），直写让
+    // toSummary 与 state_changed fallback 在实例防抖重拉窗口内即读准值（modelId 同理，
+    // 见 switchModel）。pi 同档位钳制不发事件、不写 entry，此直写是唯一即时同步点。
     if (session) session.thinkingLevel = effective
     return effective
   }
@@ -1599,7 +1603,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 触发点 = 三实例各自的 fetch 成功挂钩（fetchStateSnapshotWithStatePublish /
    * fetchSessionStatsSnapshot）——任一实例快照应用后刷新组合，全部收敛后 last-value 为
    * 终态组合（中间态帧由下方 diff 抑制去重，renderer 幂等覆盖）。
-   * 快照缺失字段 fallback 双写过渡期缓存（session.modelId / thinkingLevel，W13 收编）；
+   * 快照缺失字段 fallback 双写缓存（session.modelId / thinkingLevel）——登记的永久形态
+   * （PR #185 S2 裁决，2026-08-20）：播种 refetch 三实例异步竞速，先落定者即触发本发布，
+   * 未落定实例 .get() 为 undefined；get_state 失败退避（1s/5s/15s）窗口同理。缓存由
+   * switchModel / setThinkingLevel RPC 成功后直写保持最新，兜底值即 pi 生效值。
    * usage 无快照时三字段为 0 基线（与旧 broadcastSessionState 的缺省口径一致）。
    * diff 抑制：thinkingLevel 的 30s 周期兜底重拉会高频触发挂钩，同值组合不重复发帧。
    */
@@ -1631,8 +1638,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * session.state_changed（组合投影）。与 fetchStateSnapshot 的关系：多一层「fetch 落定
    * （成功或失败）→ setTimeout 0 宏任务发布」（宏任务晚于 doFetch 的 applySnapshot 微任务
    * 链，成功路径发布读到的必是已应用快照）。失败路径同样排发布：payload 走快照缺失的
-   * fallback 过渡期缓存——对齐旧 broadcastSessionState「get_state 失败不阻塞、thinkingLevel
-   * 回退缓存值」语义；rethrow 由 finally 透传，实例退避重试语义不变。
+   * fallback 双写缓存（永久形态，见 publishStateChangedFromSnapshot 注释）——对齐旧
+   * broadcastSessionState「get_state 失败不阻塞、thinkingLevel 回退缓存值」语义；
+   * rethrow 由 finally 透传，实例退避重试语义不变。
    */
   private async fetchStateSnapshotWithStatePublish(sessionId: string): Promise<Record<string, unknown> | undefined> {
     try {
@@ -1965,7 +1973,9 @@ interface SessionStateChangedBaseline {
 
 /**
  * W12：modelId / thinkingLevel / usage 三实例快照 → session.state_changed 组合投影 payload。
- * 快照缺失字段 fallback 双写过渡期缓存（session.modelId / thinkingLevel，W13 收编）；
+ * 快照缺失字段 fallback 双写缓存（session.modelId / thinkingLevel）——登记的永久形态
+ * （PR #185 S2 裁决，2026-08-20）：播种 refetch 异步竞速 + 失败退避窗口内 .get() 为
+ * undefined，缓存兜底（写方 = switchModel / setThinkingLevel RPC 成功后直写）；
  * usage 无快照时三字段为 0 基线（与旧 broadcastSessionState 的缺省口径一致）。
  */
 function buildStateChangedPayload(

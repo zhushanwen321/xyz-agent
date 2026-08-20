@@ -32,6 +32,7 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { parseJsonl } from '../../utils/jsonl.js'
 import { getSubagentSessionDir } from '../../infra/pi/pi-paths.js'
+import { isEnoent } from '../../utils/errors.js'
 import { parseBgNotifyDetails, SUBAGENT_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
 import { normalizeSubagentStatus } from './subagent-status.js'
 import type { SubagentRecord, SubagentStatus, BgNotifyRecord } from '@xyz-agent/shared'
@@ -105,6 +106,11 @@ function optNumber(v: unknown): number | undefined {
 /** 自描述 entry 可选布尔字段守卫（typeof boolean ? 值 : undefined） */
 function optBoolean(v: unknown): boolean | undefined {
   return typeof v === 'boolean' ? v : undefined
+}
+
+/** plain object 判定（LLM 可控的 JSON.parse 产物 shape 守卫用） */
+function isPlainRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
 /** JSONL 中的 message entry 结构（简化） */
@@ -237,14 +243,21 @@ function projectSelfDescribedSubagentRecord(d: Record<string, unknown>): Subagen
  * 从主 session JSONL 文件提取 SubagentRecord[]（冷启动 / getSubagents RPC 路径）。
  *
  * 读取文件 → parseJsonl → scanSubagentEntries（与实时增量拉取同一份派生代码）。
- * 文件不存在或无 subagent 调用时返回空数组。
+ *
+ * 读失败分级（renderer 侧栏 stale 守卫的契约前提）：
+ * - 文件不存在（ENOENT）→ 返回空数组（合法边界：pi session 文件延迟写入，首条 assistant
+ *   前 file 可能不存在——文件都没有必然无 subagent）。
+ * - 其他读错误（EACCES / EISDIR 等）→ 原样上抛（RPC 报错，renderer catch 保留旧分区并
+ *   显示重试态；降级 [] 会让 renderer 的空结果守卫把「读失败」与「真实删空」混淆）。
+ * 文件存在但无 subagent 调用时返回空数组（真实删空语义）。
  */
 export function extractSubagentsFromSessionFile(filePath: string): SubagentRecord[] {
   let content: string
   try {
     content = readFileSync(filePath, 'utf-8')
-  } catch {
-    return []
+  } catch (e) {
+    if (isEnoent(e)) return []
+    throw e
   }
 
   const entries = parseJsonl(content)
@@ -342,14 +355,37 @@ function parseLegacyToolCallBlock(block: unknown): { id: string; info: LegacySub
   if (typeof block !== 'object' || block === null) return null
   const b = block as { type?: string; name?: string; id?: string; arguments?: unknown }
   if (b.type !== 'toolCall' || b.name !== 'subagent' || !b.id || typeof b.arguments !== 'object') return null
-  const args = b.arguments as SubagentStartArgs
-  if (args.action !== 'start') return null
+  // arguments 是 LLM 生成的 toolCall 参数（不可信源）——逐字段 shape 守卫后投影
+  // （type-safety review：对齐自描述路径守卫风格，畸形字段缺省走下游 ?? 兜底）
+  const args = projectSubagentStartArgs(b.arguments)
+  if (!args) return null
   return {
     id: b.id,
     info: {
-      agent: args.startParam?.agent ?? 'general-purpose',
-      slug: args.startParam?.slug ?? '',
-      task: args.startParam?.task ?? '',
+      agent: args.startParam.agent ?? 'general-purpose',
+      slug: args.startParam.slug ?? '',
+      task: args.startParam.task ?? '',
+    },
+  }
+}
+
+/**
+ * [legacy] LLM 生成的 subagent toolCall arguments → 受控形状投影。
+ * action 非 'start' 或 startParam 非 plain object 时返回 null（坏 block 跳过）；
+ * startParam 内字段逐个 typeof 收窄（畸形值 undefined，下游 ?? 兜底）。
+ */
+function projectSubagentStartArgs(raw: unknown): SubagentStartArgs | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const r = raw as Record<string, unknown>
+  if (r.action !== 'start') return null
+  if (typeof r.startParam !== 'object' || r.startParam === null || Array.isArray(r.startParam)) return null
+  const p = r.startParam as Record<string, unknown>
+  return {
+    action: 'start',
+    startParam: {
+      agent: optString(p.agent),
+      slug: optString(p.slug),
+      task: optString(p.task),
     },
   }
 }
@@ -357,15 +393,64 @@ function parseLegacyToolCallBlock(block: unknown): { id: string; info: LegacySub
 /**
  * [legacy] toolResult message content → 解析结果（首个 text block 的 JSON）。
  * 无 text block / 非合法 JSON（如错误消息 "startParam is required"）返回 null 跳过该条。
+ * parse 产物经 projectLegacyToolResultData 逐字段 shape 守卫（LLM toolResult 文本不可信）。
  */
 function parseLegacyToolResultContent(content: unknown): SubagentToolResultData | null {
   if (!Array.isArray(content) || content.length === 0) return null
   const firstBlock = content[0] as { type?: string; text?: string }
   if (firstBlock?.type !== 'text' || typeof firstBlock.text !== 'string') return null
+  let parsed: unknown
   try {
-    return JSON.parse(firstBlock.text) as SubagentToolResultData
+    parsed = JSON.parse(firstBlock.text)
   } catch {
     return null
+  }
+  return projectLegacyToolResultData(parsed)
+}
+
+/**
+ * [legacy] toolResult 文本 JSON.parse 产物 → 受控形状投影。
+ *
+ * parse 成功≠形状正确（任意合法 JSON 值——string/number/array 都能 parse 成功），原实现
+ * 裸断言会让畸形值透传：`sessionFile: number` 直达 SubagentRecord.sessionFile，下游
+ * readFileSync 对非 string 会 throw。此处逐字段 typeof 收窄：非 plain object 整条丢弃
+ * （返回 null）；出参 string 字段畸形归 null/''；listResponse items 元素级投影。
+ */
+function projectLegacyToolResultData(parsed: unknown): SubagentToolResultData | null {
+  if (!isPlainRecord(parsed)) return null
+  const bg = isPlainRecord(parsed.bgResponse)
+    ? {
+      status: optString(parsed.bgResponse.status) ?? '',
+      ...(optString(parsed.bgResponse.message) !== undefined
+        ? { message: optString(parsed.bgResponse.message) }
+        : {}),
+    }
+    : undefined
+  let listResponse: SubagentToolResultData['listResponse']
+  if (isPlainRecord(parsed.listResponse)) {
+    const list = parsed.listResponse
+    const items = Array.isArray(list.items)
+      ? list.items
+        .filter(isPlainRecord)
+        .map((item) => ({
+          subagentId: optString(item.subagentId) ?? '',
+          agent: optString(item.agent),
+          status: optString(item.status),
+          sessionFile: optString(item.sessionFile),
+          model: optString(item.model),
+          totalTokens: optNumber(item.totalTokens),
+          duration: optNumber(item.duration),
+          closedReason: optString(item.closedReason),
+        }))
+      : []
+    listResponse = { running: optNumber(list.running) ?? 0, items }
+  }
+  return {
+    action: optString(parsed.action) ?? '',
+    subagentId: optString(parsed.subagentId) ?? null,
+    sessionFile: optString(parsed.sessionFile) ?? null,
+    ...(bg !== undefined ? { bgResponse: bg } : {}),
+    ...(listResponse !== undefined ? { listResponse } : {}),
   }
 }
 

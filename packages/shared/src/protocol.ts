@@ -829,7 +829,10 @@ export interface ServerMessageMapBase {
     allowCancel?: boolean
   }
   // session 通道推送（runtime session-service / index.ts 生产，W04 收紧）
-  'session.compacting': { sessionId: string }
+  // compacting：compaction_start → interpreter 广播（唯一发送点 event-interpreter.handleCompactionStart），
+  // status/reason 以 runtime 实发为准（R1 type-safety S4 补登记）：reason 透传 pi compaction_start 的
+  // PiCompactionReason，驱动前端 compacting 浮层文案区分手动/自动。
+  'session.compacting': { sessionId: string; status: 'compacting'; reason: 'manual' | 'threshold' | 'overflow' }
   'session.compacted': { sessionId: string; status: 'compacted'; error?: string }
   // session.subscribe（wave:runtime-wiring）：session.subscribe RPC 的 reply payload（IF6 契约）。
   // snapshot：订阅时刻 bus ring 内当前事件序列（元素为带 seq 的 ServerMessage），renderer 据此 reconcile。
@@ -884,6 +887,12 @@ export interface ServerMessageMapBase {
     inputTokens: number
     contextLimit: number
   }
+  // session.thinkingLevelSet：pi thinking_level_changed → event-adapter 广播 + setThinkingLevel RPC
+  // reply（settings-message-handler）双发送点，payload 形状一致（R1 type-safety S4 补登记——
+  // 此前 map 未登记条目落 Record<string, unknown> 占位，消费侧被迫 as）。补 state_changed 的
+  // 时序缺口：switchModel 的 state_changed 在 set_model RPC resolve 后立即广播，而
+  // thinking_level_changed 事件可能晚到，本帧独立更新 thinkingLevel。
+  'session.thinkingLevelSet': { sessionId: string; level: string }
   // FileChanges 通道（ADR-0024 D5 重构：git 作为唯一真值源）。baseline diff 机制——
   // message_start 采集 git status 快照，write/edit/bash 结束后 diff vs baseline 推 accumulating，
   // agent_end 推 ready。isFullSet 恒 true（每次 diff 都是全量结果，前端全集替换不增量合并）。
@@ -1237,6 +1246,27 @@ export interface ServerMessage<T extends ServerMessageType = ServerMessageType> 
   seq?: number
   payload: ServerMessageMap[T]
 }
+
+/**
+ * ServerMessage 的分发联合形态（消费侧收窄用，R1 type-safety S5）。
+ *
+ * ServerMessage<T> 接口的 payload 是 `ServerMessageMap[T]` 泛型查询——T 未绑定时（默认全联合）
+ * payload 为全 payload 联合，`switch (msg.type)` 无法收窄，消费侧被迫 `msg.payload as {...}`，
+ * 契约缺字段时 as 静默放行（S4 的 thinkingLevelSet 曾因此不可见）。本类型把每个 type 展开为
+ * 独立成员，TS 判别联合自动收窄 payload，ServerMessageMap 登记缺口直接变编译错误。
+ *
+ * 与 ServerMessage 的关系：同一 wire 形状的两种 TS 表达（值域相同），ServerMessageUnion 的
+ * 任一成员可赋给 ServerMessage（窄→宽）。构造侧（runtime server.ts send/reply/broadcast）继续
+ * 用 ServerMessage；消费入口（订阅 handler 签名）用本类型。二者收敛为单一表达是后续 wave。
+ */
+export type ServerMessageUnion = {
+  [K in ServerMessageType]: {
+    type: K
+    id?: string
+    seq?: number
+    payload: ServerMessageMap[K]
+  }
+}[ServerMessageType]
 
 /**
  * # ReplyPayloadMap —— RPC request → reply payload 一级映射（方案C 精简版）。

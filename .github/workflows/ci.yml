@@ -49,9 +49,11 @@ jobs:
         run: pnpm run lint
 
       # taste-lint 规则用例（taste-lint/**/*.test.mjs，vitest）：lint 插件规则本体的回归
-      # 面与 ESLint 同 job 触发（规则改坏时用例先红）。vitest 经 pnpm hoisted 提升到根。
+      # 面与 ESLint 同 job 触发（规则改坏时用例先红）。pnpm exec 显式走 workspace 本地
+      # node_modules/.bin（node-linker=hoisted 下 vitest 提升到根）；不用 npx——本地无
+      # bin 时会静默从 registry 拉最新版运行（行为漂移而非报错，PR #185 review R2 INFO）。
       - name: Test - taste-lint rules
-        run: npx vitest run taste-lint
+        run: pnpm exec vitest run taste-lint
 
   typecheck:
     name: TypeCheck
@@ -242,12 +244,13 @@ jobs:
 
       # builtin-ext-bundle vitest 套件（scripts/__tests__/builtin-ext-bundle.test.mjs，TC3/TC4/TC7/TC8
       # + checkManifest 6 失败分支）依赖 prepare-builtin-extensions.sh 预产出的 staged 产物
-      #（gitignored，fresh checkout 不存在）——先 prepare 再跑。vitest 经 pnpm hoisted 提升到根。
+      #（gitignored，fresh checkout 不存在）——先 prepare 再跑。pnpm exec 同 taste-lint step
+      # 理由（显式本地 bin，防 npx registry 静默拉版）。
       - name: Prepare builtin extensions (staged bundles)
         run: bash scripts/prepare-builtin-extensions.sh
 
       - name: Test - builtin-ext-bundle
-        run: npx vitest run scripts/__tests__/builtin-ext-bundle.test.mjs
+        run: pnpm exec vitest run scripts/__tests__/builtin-ext-bundle.test.mjs
 
   # E2E 视觉回归（mock 轨 visual-chromium）：只跑像素 diff baseline（S2 W3 交付的
   # visual-chromium project，testMatch **/visual/** + chromium.launch + spawn vite @ VITE_MOCK=true）。
@@ -382,6 +385,43 @@ jobs:
             process.exit(1);
           }
           console.log("noExternal parity OK (" + noExternal.size + " entries)");
+          '
+
+      # 包边界守卫（PR #185 review R1 F-3 / R2 S-6）：runtime→core 跨包相对 import 对依赖图
+      # 工具不可见（package.json / pnpm-lock 均无此边），仅靠注释契约。两条断言：
+      #  1. runtime 生产代码（排除 __tests__ 等价性测试直连源码模式）中 from '<相对>/core/src'
+      #     只许出现在 infra/pi/message-converter.ts（apply-entry 入口，W21/W22 包边界重评收敛）；
+      #  2. apply-entry 三件套（apply-entry.ts / apply-entry-convert.ts / apply-entry-utils.ts）
+      #     的 import 白名单 = @xyz-agent/shared + 同目录互引——文件头声明的自包含契约（防止
+      #     core 内部 import 渗入连带 vue/pinia 进 runtime bundle，体积膨胀而非报错）。
+      - name: Runtime cross-package import guard (runtime→core + apply-entry closure)
+        run: |
+          HITS=$(grep -rnE "from ['\"][./]*core/src" packages/runtime/src --include="*.ts" --exclude-dir=__tests__ 2>/dev/null | grep -v "infra/pi/message-converter.ts" || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::runtime 生产代码新增 core 相对 import（绕过 package.json 依赖图）。既有豁免仅 infra/pi/message-converter.ts（apply-entry 入口，W21/W22 收敛）；新增需求先在 runtime package.json 声明依赖或经 shared 下沉"
+            echo "$HITS"
+            exit 1
+          fi
+          node -e '
+          const fs = require("fs");
+          const path = require("path");
+          const dir = "packages/core/src/domain/chat";
+          const files = ["apply-entry.ts", "apply-entry-convert.ts", "apply-entry-utils.ts"];
+          const violations = [];
+          for (const f of files) {
+            const src = fs.readFileSync(path.join(dir, f), "utf8");
+            for (const m of src.matchAll(/from\s+["\x27]([^"\x27]+)["\x27]/g)) {
+              const spec = m[1];
+              if (spec === "@xyz-agent/shared" || spec.startsWith("./apply-entry")) continue;
+              violations.push(`${f} -> ${spec}`);
+            }
+          }
+          if (violations.length > 0) {
+            console.error("apply-entry 三件套 import 白名单违规（只许 @xyz-agent/shared + 同目录互引，防 vue/pinia 渗入 runtime bundle）：");
+            for (const v of violations) console.error("  " + v);
+            process.exit(1);
+          }
+          console.log("apply-entry closure OK (shared + intra-directory only)");
           '
 
   # PR 构建检查：electron-builder 打包流程，不在 PR 上传产物。

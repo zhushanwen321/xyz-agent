@@ -186,6 +186,54 @@ describe('subagent store — loadSubagents 空结果守卫', () => {
     expect(store.getRecordsBySession('session-1')[0].subagentId).toBe('bg-fresh')
     expect(warnSpy).not.toHaveBeenCalled()
   })
+
+  // ── R1 business-logic S3：连续空命中（strike）区分「瞬时读失败降级 []」与「真实删空」──
+
+  it('连续第 2 次 RPC 空 → 判真实删空，清分区 + warn 说明放行', async () => {
+    vi.mocked(sessionApi.getSubagents).mockResolvedValue([])
+
+    const store = useSubagentStore()
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-keep' })])
+    await store.loadSubagents('session-1') // strike 1/2：保留
+    await store.loadSubagents('session-1') // strike 2/2：真实删空判定，放行覆盖
+
+    expect(store.getRecordsBySession('session-1')).toEqual([])
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('clearing partition'),
+      'session-1',
+    )
+    expect(store.loadError).toBeNull()
+  })
+
+  it('空结果被非空结果打断 → strike 重置，再遇单次空仍保留（不累计误清）', async () => {
+    const store = useSubagentStore()
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-keep' })])
+
+    vi.mocked(sessionApi.getSubagents).mockResolvedValue([]) // strike 1/2
+    await store.loadSubagents('session-1')
+    vi.mocked(sessionApi.getSubagents).mockResolvedValue([makeRecord({ subagentId: 'bg-keep' })])
+    await store.loadSubagents('session-1') // 非空 → strike 清零
+    vi.mocked(sessionApi.getSubagents).mockResolvedValue([]) // 重新 strike 1/2
+    await store.loadSubagents('session-1')
+
+    expect(store.getRecordsBySession('session-1')).toHaveLength(1)
+    expect(store.getRecordsBySession('session-1')[0].subagentId).toBe('bg-keep')
+  })
+
+  it('RPC 失败（catch）→ strike 重置，不让连接故障累计出误清分区', async () => {
+    const store = useSubagentStore()
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-keep' })])
+
+    vi.mocked(sessionApi.getSubagents).mockResolvedValue([]) // strike 1/2
+    await store.loadSubagents('session-1')
+    vi.mocked(sessionApi.getSubagents).mockRejectedValue(new Error('network'))
+    await store.loadSubagents('session-1') // catch → strike 重置
+    vi.mocked(sessionApi.getSubagents).mockResolvedValue([]) // 重新 strike 1/2，仍保留
+    await store.loadSubagents('session-1')
+
+    expect(store.getRecordsBySession('session-1')).toHaveLength(1)
+    expect(store.getRecordsBySession('session-1')[0].subagentId).toBe('bg-keep')
+  })
 })
 
 describe('subagent store — clearSubagents', () => {
@@ -315,5 +363,180 @@ describe('subagent store — cancelSubagent', () => {
     await expect(store.cancelSubagent('session-1', 'bg-fail')).rejects.toThrow('session not active')
     // status 保持 running（回滚）
     expect(store.getRecordsBySession('session-1').find(r => r.subagentId === 'bg-fail')?.status).toBe('running')
+  })
+})
+
+// ── subscribeStream / stopStream（W4 收口机制 + U8 drawer scope token，CRAP 定向）──
+//
+// store 内 import * as events from '@/api/events'，此处 mock events.on 捕获 WS handler。
+vi.mock('@/api/events', () => ({
+  on: vi.fn(),
+}))
+
+import * as events from '@/api/events'
+
+describe('subagent store — subscribeStream / stopStream（streaming 订阅生命周期）', () => {
+  /** 注册并捕获 WS handler：events.on 单次实现 = 捕获 handler + 返回 unsub spy */
+  function captureHandler() {
+    const unsubSpy = vi.fn()
+    let handler: (msg: unknown) => void = () => {}
+    vi.mocked(events.on).mockImplementationOnce(
+      ((_sid: string, h: (msg: unknown) => void) => {
+        handler = h
+        return unsubSpy
+      }) as unknown as typeof events.on,
+    )
+    return {
+      unsubSpy,
+      getHandler: () => handler,
+    }
+  }
+
+  function subscribe(store: ReturnType<typeof useSubagentStore>, chat = makeChatMock()) {
+    const cap = captureHandler()
+    store.subscribeStream(
+      'drawer:subagent',
+      'session-1',
+      'bg-1',
+      'subagent:session-1:bg-1',
+      chat.applySubagentStreamDelta,
+      chat.finalizeSubagentStream,
+      chat.setMessages,
+    )
+    return { ...cap, chat }
+  }
+
+  it('订阅注册 events.on（mainSessionId 为键）+ 帧类型/recordId 过滤', () => {
+    const store = useSubagentStore()
+    const { getHandler, chat } = subscribe(store)
+
+    expect(events.on).toHaveBeenCalledWith('session-1', expect.any(Function))
+
+    const handler = getHandler()
+    // 非 subagent.stream_delta 帧 → 忽略
+    handler({ type: 'session.updated', payload: {} })
+    // recordId 不匹配 → 忽略
+    handler({ type: 'subagent.stream_delta', payload: { recordId: 'bg-other', lines: ['x'] } })
+    expect(chat.applySubagentStreamDelta).not.toHaveBeenCalled()
+
+    // 匹配帧 → delta 经 chat 回调收口（W4：assistant content mutation 唯一入口）
+    handler({ type: 'subagent.stream_delta', payload: { recordId: 'bg-1', lines: ['line-1', 'line-2'] } })
+    expect(chat.applySubagentStreamDelta).toHaveBeenCalledWith('subagent:session-1:bg-1', ['line-1', 'line-2'])
+  })
+
+  it('lines === undefined（终态帧）→ 停订阅 + finalize 收口 + 权威历史覆盖 setMessages', async () => {
+    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([
+      { id: 'm1', role: 'assistant', content: 'final', timestamp: 1 },
+    ])
+    const store = useSubagentStore()
+    const { getHandler, unsubSpy, chat } = subscribe(store)
+
+    getHandler()({ type: 'subagent.stream_delta', payload: { recordId: 'bg-1', lines: undefined } })
+
+    expect(unsubSpy).toHaveBeenCalledTimes(1)
+    expect(chat.finalizeSubagentStream).toHaveBeenCalledWith('subagent:session-1:bg-1')
+    // 权威历史覆盖（fire-and-forget，await 微任务 flush）
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(sessionApi.getSubagentHistory).toHaveBeenCalledWith('session-1', 'bg-1')
+    expect(chat.setMessages).toHaveBeenCalledWith('subagent:session-1:bg-1', [
+      { id: 'm1', role: 'assistant', content: 'final', timestamp: 1 },
+    ])
+  })
+
+  it('终态 refetch 失败 → console.error 兜底不抛（fire-and-forget 契约）', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(sessionApi.getSubagentHistory).mockRejectedValue(new Error('rpc gone'))
+    const store = useSubagentStore()
+    const { getHandler, chat } = subscribe(store)
+
+    expect(() =>
+      getHandler()({ type: 'subagent.stream_delta', payload: { recordId: 'bg-1', lines: undefined } }),
+    ).not.toThrow()
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(errSpy).toHaveBeenCalledWith('[subagent] finalize refetch failed:', expect.any(Error))
+    expect(chat.setMessages).not.toHaveBeenCalled()
+    errSpy.mockRestore()
+  })
+
+  it('同 scope 重复订阅 → 先 stopStream 清旧（旧 unsub 被调，drawer 单实例单订阅）', () => {
+    const store = useSubagentStore()
+    const first = subscribe(store)
+    const second = subscribe(store)
+
+    // 第二次 subscribeStream 先 stop 旧 scope 订阅
+    expect(first.unsubSpy).toHaveBeenCalledTimes(1)
+    expect(events.on).toHaveBeenCalledTimes(2)
+    // 新订阅的 handler 仍工作
+    second.getHandler()({ type: 'subagent.stream_delta', payload: { recordId: 'bg-1', lines: ['n'] } })
+    expect(second.chat.applySubagentStreamDelta).toHaveBeenCalled()
+  })
+
+  it('stopStream(scope) → 调 unsub 并移除；重复 stop / 未知 scope / 空 scope → no-op', () => {
+    const store = useSubagentStore()
+    const { unsubSpy } = subscribe(store)
+
+    store.stopStream('drawer:subagent')
+    expect(unsubSpy).toHaveBeenCalledTimes(1)
+
+    // 重复 stop：unsub 已移除，不再调用
+    store.stopStream('drawer:subagent')
+    expect(unsubSpy).toHaveBeenCalledTimes(1)
+
+    // 未知 scope / 空 scope 不抛不错调
+    expect(() => store.stopStream('never')).not.toThrow()
+    expect(() => store.stopStream(undefined)).not.toThrow()
+    expect(unsubSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('作用域销毁兜底（onScopeDispose）：store 作用域销毁（$dispose）→ 在途订阅全部 unsub', () => {
+    // pinia store 的 onScopeDispose 挂在 store 内部 effect scope 上（createPinia 用
+    // detached scope，外层 scope.stop 不级联）——$dispose 直接触发该作用域销毁路径
+    setActivePinia(createPinia())
+    const store = useSubagentStore()
+    const { unsubSpy } = subscribe(store)
+
+    store.$dispose()
+    expect(unsubSpy).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ── hasRunning / isStreamingSubagent 窄口径判据（running-resumable 排除，residual-fixes）──
+
+describe('subagent store — hasRunning / isStreamingSubagent 窄口径（轮终 running 不算真在跑）', () => {
+  it('running + result 有值（轮终回写）→ hasRunning false，isRunning 仍 true（双口径分工）', () => {
+    const store = useSubagentStore()
+    store.applyRecords('session-1', [
+      makeRecord({ subagentId: 'bg-1', status: 'running', result: '本轮产出' }),
+    ])
+    // hasRunning 窄口径：不算后台真在跑（derivedStatus 不卡 working）
+    expect(store.hasRunning('session-1')).toBe(false)
+    // isRunning 宽口径：running 即 true（SubagentTab 据此订阅增量流，resumable 续轮有流活动）
+    expect(store.isRunning('session-1', 'bg-1')).toBe(true)
+  })
+
+  it('running + resumable=true（无活进程驱动）→ hasRunning false / isStreamingSubagent false', () => {
+    const store = useSubagentStore()
+    store.applyRecords('session-1', [
+      makeRecord({ subagentId: 'bg-2', status: 'running', resumable: true }),
+    ])
+    expect(store.hasRunning('session-1')).toBe(false)
+    expect(store.isStreamingSubagent('session-1', 'bg-2')).toBe(false)
+  })
+
+  it('running 无 result 且 resumable 缺省 → hasRunning true / isStreamingSubagent true（真在跑）', () => {
+    const store = useSubagentStore()
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-3', status: 'running' })])
+    expect(store.hasRunning('session-1')).toBe(true)
+    expect(store.isStreamingSubagent('session-1', 'bg-3')).toBe(true)
+  })
+
+  it('isStreamingSubagent：终态 record / 未知 subagentId → false', () => {
+    const store = useSubagentStore()
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-4', status: 'done' })])
+    expect(store.isStreamingSubagent('session-1', 'bg-4')).toBe(false)
+    expect(store.isStreamingSubagent('session-1', 'nonexistent')).toBe(false)
   })
 })

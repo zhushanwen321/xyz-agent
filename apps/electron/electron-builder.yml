@@ -67,13 +67,8 @@ extraResources:
       - "**/*"
       - "!**/*.tar.gz"
       - "!**/*.zip"
-  # xyz-agent pi extension (xyz-navigate command)
-  # 源文件在 repo root。electron-builder projectDir=apps/electron/，
-  # from 相对 projectDir 解析，需上两级到仓库根。
-  # 注：builtin pi-extensions（@zhushanwen/pi-*）打包内置（2026-08 重构），
-  # 由下方 resources/extensions 条目拷贝，不走 Settings 推荐安装（旧机制已废弃）。
   # builtin pi extensions（@zhushanwen/pi-* 包，数量以 mandatory-extensions.json SSOT 为准，
-  # 打包内置，不走 npm install）
+  # 打包内置，不走 Settings 推荐安装——旧推荐安装机制已废弃 2026-08，也不走 npm install）
   # prepare-builtin-extensions.sh 预先 deploy 到 resources/extensions/@zhushanwen/<pkg>/
   # 含真实运行时 deps（tree-sitter-bash/ajv/croner 等），不含 peerDeps（pi 进程提供）
   - from: resources/extensions

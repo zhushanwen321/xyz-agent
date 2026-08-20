@@ -29,7 +29,7 @@
     "typebox": "*"
   },
   "dependencies": {
-    "@xyz-agent/extension-protocol": "workspace:^0.4.0"
+    "@xyz-agent/extension-protocol": "workspace:*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-tui": {

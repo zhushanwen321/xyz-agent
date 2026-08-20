@@ -365,6 +365,22 @@ if [ -d "$OUTPUT_DIR/linux-unpacked" ]; then
             fi
         done
     fi
+    # builtin pi extensions（Linux 同 mac/win 校验，复用 verify-staged）。builtin 迁移
+    # npm 包化（2026-08）时 mac/win 补了本校验、linux 覆盖丢失（PR #185 review S1），
+    # extraResources from 路径错等 linux 专属回归将静默漏检。
+    LINUX_BUILTIN="$LINUX_RESOURCES/extensions/@zhushanwen"
+    if [ -d "$LINUX_BUILTIN" ]; then
+        if node "$PROJECT_ROOT/scripts/verify-staged-extensions.mjs" --staged-dir "$LINUX_BUILTIN" > /tmp/ext-verify-linux.log 2>&1; then
+            echo -e "  ${GREEN}✓${NC} builtin ext 完整性校验通过（verify-staged）"
+        else
+            echo -e "  ${RED}✗${NC} builtin ext 完整性校验失败:"
+            sed 's/^/    /' /tmp/ext-verify-linux.log
+            FAILED=1
+        fi
+    else
+        echo -e "  ${RED}✗${NC} builtin ext 目录缺失: $LINUX_BUILTIN（检查 prepare-builtin-extensions.sh + electron-builder.yml）"
+        FAILED=1
+    fi
 fi
 
 # ── 3. 产物大小合理性 ───────────────────────────────────────────────

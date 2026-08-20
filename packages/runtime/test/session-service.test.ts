@@ -1074,6 +1074,22 @@ describe('SessionService · Facade', () => {
     it('U-setLabel-3：setLabelCache 对不存在的 session 不抛错（迟到事件的迟到回调）', () => {
       expect(() => setup.service.setLabelCache('ghost', 'x')).not.toThrow()
     })
+
+    it('U-setLabel-empty：空串 label 是权威空值必须写入（pi 清空 session name 场景，组合根 name ?? "" 兜底的下游路径）', async () => {
+      // 链路：pi session_info_changed name 为空 → interpreter onSessionRenamed 透传
+      // undefined → 组合根 index.ts name ?? '' 兜底为 '' → setLabelCache(id, '')。
+      // '' 是 pi 的权威「未命名」声明（sessionName 空 = 未命名合法态）——若 setLabelCache
+      // 对空值 return early，内存 label 永远停留在旧名，getSummary/listPersistedSessions
+      // 与 pi 侧持久化漂移（旧名复活 bug）。
+      const { id } = await setup.seedSession({ label: 'old-label' })
+      setup.service.setLabelCache(id, '')
+      expect(setup.service.getSummary(id)?.label).toBe('')
+
+      // broadcastSessionList 数据源同值（空串覆盖旧名，非「字段不动」）
+      const groups = setup.service.listPersistedSessions()
+      const summary = groups.flatMap(g => g.sessions).find(s => s.id === id)
+      expect(summary?.label).toBe('')
+    })
   })
 
   describe('inputTokens / tokenCount（W3 事件链路迁移 → W10 usage 实例收编）', () => {

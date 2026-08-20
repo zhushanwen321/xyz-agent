@@ -23,8 +23,9 @@
  * mapping is missing, and xyz-agent degrades to textToSegments (split by plain text).
  * Missing mapping doesn't affect the agent main flow.
  *
- * Single-file ESM, same pattern as xyz-system-prompt-extension.js (no build step, no npm deps),
- * loaded by pi via `--extension <path>` at spawn.
+ * Same package shape as @zhushanwen/pi-system-prompt (extensions/system-prompt/):
+ * TypeScript source with no build step and no runtime deps (peer dep on pi only),
+ * bundled as a builtin extension by scripts/bundle-extensions.mjs.
  */
 
 import type { ExtensionAPI, ExtensionContext, InputEvent, MessageEndEvent, MessageStartEvent, TurnEndEvent, AgentEndEvent } from '@earendil-works/pi-coding-agent'
@@ -42,6 +43,11 @@ const TAG_MATCH = /<!--xyz:msg:(u-[0-9a-fA-F-]{36})-->/
 const TAG_STRIP = /<!--xyz:msg:u-[0-9a-fA-F-]{36}-->/g
 const ENTRY_TYPE = 'xyz.client-msg-id'
 
+/** 提取 prompt 里首个标记的 client uuid；无标记 → undefined。 */
+function extractClientUuid(text: string): string | undefined {
+  return text.match(TAG_MATCH)?.[1]
+}
+
 export default function (pi: ExtensionAPI): void {
   // 待处理的 client uuid（input hook 抓到标记后写入，flush 后清空）。
   let pendingClientUuid: string | undefined = undefined
@@ -53,9 +59,9 @@ export default function (pi: ExtensionAPI): void {
   pi.on('input', (event: InputEvent) => {
     try {
       if (event.source !== 'rpc') return { action: 'continue' as const }
-      const m = event.text && event.text.match(TAG_MATCH)
-      if (!m) return { action: 'continue' as const }
-      pendingClientUuid = m[1]
+      const clientUuid = extractClientUuid(event.text)
+      if (!clientUuid) return { action: 'continue' as const }
+      pendingClientUuid = clientUuid
       // transform 后 LLM 看到的是剥离了标记的纯文本。
       // TAG_STRIP 全局替换：防多个标记残留时只剥掉第一个（m1 修复）。
       return { action: 'transform' as const, text: event.text.replace(TAG_STRIP, '').trimEnd() }
@@ -70,7 +76,7 @@ export default function (pi: ExtensionAPI): void {
   // （user message 尚未落盘），所以只置 flag，真正 flush 在下一个 hook。
   pi.on('message_end', (event: MessageEndEvent) => {
     try {
-      if (event.message && event.message.role === 'user' && pendingClientUuid) {
+      if (event.message.role === 'user' && pendingClientUuid) {
         awaitingUserPersist = true
       }
     } catch (err) {
@@ -80,21 +86,27 @@ export default function (pi: ExtensionAPI): void {
     return undefined
   })
 
+  /** 写映射并清空 pending 状态。leafId 未就绪时静默返回，等下一个 hook 重试。 */
+  const writeMapping = (ctx: ExtensionContext): void => {
+    if (!pendingClientUuid) return
+    // 类型已保证 sessionManager.getLeafId 必有（pi 0.84.1 ReadonlySessionManager，
+    // 返回 string | null）；运行时异常由 flush 的 catch 兜底。
+    const userEntryId = ctx.sessionManager.getLeafId()
+    if (!userEntryId) return // leafId 还没更新，等下一个 hook
+    pi.appendEntry(ENTRY_TYPE, {
+      clientUuid: pendingClientUuid,
+      userEntryId,
+    })
+    pendingClientUuid = undefined
+    awaitingUserPersist = false
+  }
+
   // flush：读 getLeafId()（= userEntryId，user message 已持久化）+ appendEntry 写映射。
   // 幂等：写完即清空 pendingClientUuid / awaitingUserPersist，重复触发无副作用。
   const flush = (ctx: ExtensionContext): void => {
-    if (!awaitingUserPersist || !pendingClientUuid) return
+    if (!awaitingUserPersist) return
     try {
-      const userEntryId = ctx && ctx.sessionManager && typeof ctx.sessionManager.getLeafId === 'function'
-        ? ctx.sessionManager.getLeafId()
-        : null
-      if (!userEntryId) return // leafId 还没更新，等下一个 hook
-      pi.appendEntry(ENTRY_TYPE, {
-        clientUuid: pendingClientUuid,
-        userEntryId,
-      })
-      pendingClientUuid = undefined
-      awaitingUserPersist = false
+      writeMapping(ctx)
     } catch (err) {
       // best-effort：映射写入失败不阻断消息流——丢的是本条映射，下次 hook 会因 flag 未清而幂等重试。
       console.error('[xyz-client-msg-id-mapper] flush error:', err)

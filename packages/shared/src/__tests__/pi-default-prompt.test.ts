@@ -4,9 +4,10 @@
  * 锁定 0.84.1 相对 0.80.3 的三处 diff 不回退：
  * ① 工具列表 7 行（+grep/find/ls）；② guidelines 含 bash PI_* 环境变量行；
  * ③ pi 文档路由行含 environment variables。
- * 完整 diff 复现（pi 升级时重跑）：
- *   node -e 'import("<repo>/node_modules/@earendil-works/pi-coding-agent/dist/core/tools/index.js").then(...)'
- *   ——用 createAllToolDefinitions + buildSystemPrompt 构建默认段对照本常量。
+ * 完整 diff 复现（pi 升级时重跑）：node --input-type=module 动态加载仓库根
+ * node_modules 下 @earendil-works/pi-coding-agent/dist/core/tools/index.js，
+ * 用 createAllToolDefinitions + buildSystemPrompt 构建默认段对照本常量。
+ *（注释不写动态导入的代码形态——fallow 会把注释里的模块路径误解析为依赖声明）
  */
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_PI_SYSTEM_PROMPT, DEFAULT_PI_SYSTEM_PROMPT_VERSION } from '../pi-default-prompt.js'

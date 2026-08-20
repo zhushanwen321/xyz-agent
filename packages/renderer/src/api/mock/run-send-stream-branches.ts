@@ -7,11 +7,12 @@
 import { guiResult, guiComponent } from "@xyz-agent/extension-protocol";
 import type { SendStreamDeps } from "./run-send-stream";
 
-type BranchDeps = Pick<
+// 导出：三个 emit*Branch 导出函数的签名引用（private_type_leak 修复——签名占有的类型须随导出可达）
+export type BranchDeps = Pick<
   SendStreamDeps,
   "nextId" | "emit" | "sleep" | "isCancelled" | "TIMING"
 >;
-type BranchDepsWithPush = BranchDeps & Pick<SendStreamDeps, "pushSession">;
+export type BranchDepsWithPush = BranchDeps & Pick<SendStreamDeps, "pushSession">;
 
 /** 按 text 关键词判分支：todo / goal / 默认（read） */
 export function detectBranch(text: string): "todo" | "goal" | "read" {

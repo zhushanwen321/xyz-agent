@@ -228,6 +228,21 @@ describe('createSessionStore', () => {
     expect(store.list.value.find((s) => s.id === 's2')?.tokenCount).toBe(0)
   })
 
+  it('TC-4d: 单 session 快照 undefined → 整条静默跳过（mergeViewSnapshot 空快照守卫，托管字段全保留）', () => {
+    const store = createSessionStore()
+    const s1 = makeSession({ id: 's1', label: 'old', modelId: 'm1', status: 'active', tokenCount: 9 })
+    store.applySnapshot({ groups: [{ cwd: '/a', sessions: [s1] }] })
+
+    // 调用方传 undefined 快照（如广播 payload 字段缺失的防御路径）：不抛、不产生任何
+    // 字段变化——五个托管字段（label/status/modelId/thinkingLevel/tokenCount）原样保留
+    store.applySnapshot('s1', undefined)
+    const after = store.list.value[0]
+    expect(after.label).toBe('old')
+    expect(after.status).toBe('active')
+    expect(after.modelId).toBe('m1')
+    expect(after.tokenCount).toBe(9)
+  })
+
   it('TC-4c: 乐观更新形态——本地入参只带乐观字段，权威广播回流幂等收敛', () => {
     const store = createSessionStore()
     const s1 = makeSession({ id: 's1', label: '旧名', modelId: 'm1' })

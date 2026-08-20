@@ -101,13 +101,16 @@ describe.skipIf(!REAL_PI_READY)(
   let fixture: PiFixture | null = null
   const sid = 'w3-toolcall'
 
+  // [HISTORICAL] 2026-08-20 PR #185：hook 显式超时——beforeAll 内跑真实 LLM 轮次（内部
+  // waitForEvent 预算 120s），vitest 默认 hookTimeout 10s 在全量并发负载下先杀 hook
+  // （隔离跑通过，纯环境饿死）。预算 = 冷启动 + 轮次等待 + 余量，对齐 attach-lifecycle 口径。
   beforeAll(async () => {
     fixture = await spawnPiFixture()
     await fixture.sendCommand('prompt', {
       message: 'Use the bash tool to run exactly: echo W3-TOOLCALL-ANCHOR . After the tool finishes, reply with the tool output text.',
     })
     await fixture.waitForEvent((e) => e.type === 'agent_end', 120_000)
-  })
+  }, 180_000)
 
   afterAll(async () => {
     await fixture?.dispose()

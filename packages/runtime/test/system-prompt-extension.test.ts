@@ -1,7 +1,7 @@
 /**
- * xyz-system-prompt-extension.js 单测（TDD 红灯）。
+ * @zhushanwen/pi-system-prompt（extensions/system-prompt/）before_agent_start hook 单测。
  *
- * 动态 import repo root 的插件文件，验证 before_agent_start hook 行为：
+ * 动态 import extensions/system-prompt/index.ts（npm 包源码），验证 hook 行为：
  * - append 开启且 prompt 非空 → 追加到 event.systemPrompt
  * - append 关闭 / 配置缺失 / 配置损坏 / append.prompt 空白 → 返回 undefined
  * - 支持 XYZ_AGENT_DATA_DIR 与 PI_CODING_AGENT_DIR 回退两种目录解析
@@ -97,7 +97,7 @@ function installPlugin(factory: (pi: unknown) => void): { pi: PiLike; handler: H
   return { pi, handler: call![1] as Handler }
 }
 
-describe('xyz-system-prompt-extension', () => {
+describe('@zhushanwen/pi-system-prompt', () => {
   it('append 开启且非空 → 返回 BASE + "\\n\\n" + EXTRA', async () => {
     const factory = await loadPlugin()
     writeConfig(dataDir, {

@@ -76,11 +76,11 @@ export type {
   PiCustomMessageEntry,
 } from '@xyz-agent/shared'
 
-// normalizePiToolResult / NormalizedToolResult 实体在 apply-entry-utils.ts（convert 侧
-// computeToolCallFill 同源调用，依赖单向 convert → utils——实体放本文件会成环），此处
-// re-export 维持既有 core API 不变（effects/registry 等继续从本模块 import，见文件头分叉注释）。
+// normalizePiToolResult 实体在 apply-entry-utils.ts（convert 侧 computeToolCallFill 同源
+// 调用，依赖单向 convert → utils——实体放本文件会成环），此处 re-export 维持既有 core API
+// 不变（effects/registry 继续从本模块 import，见文件头分叉注释）。NormalizedToolResult 类型
+// re-export 已删（无消费方——registry 只用函数值，返回类型经推断；Gate-1.5 unused_types）。
 export { normalizePiToolResult } from './apply-entry-utils'
-export type { NormalizedToolResult } from './apply-entry-utils'
 
 // ── chat 视图态切片 ─────────────────────────────────────────────────
 
@@ -99,6 +99,15 @@ export interface ChatViewState {
   /** 窗口内无法配对的孤儿 toolResult（增量合并阶段按 toolCallId 回填，W20 review Fix-1 语义） */
   orphanToolResults: PiToolResultBody[]
   /**
+   * reducer 簿记：已投递过 toolResult 的 toolCallId 集合（双入口幂等去重键，R2-S1）。
+   * 首次投递后记账（回填 / orphan 两分支都记），同 toolCallId 后续投递 no-op——pi 对同一
+   * toolResult 双发两个事件、xyz 两条帧各喂本 reducer 一次（见 applyToolResultMessage
+   * 注释），双喂入序列的效果构造性收敛为单喂入。依赖 pi 会话内 toolCallId 唯一
+   * （agent-loop 以 toolCallId 索引 pending toolCalls，同 id 本身即协议异常）；reload 侧
+   * pi 文件每 toolResult 只存一份 entry，簿记对重放路径无行为影响。
+   */
+  deliveredToolResultIds: Set<string>
+  /**
    * reducer 簿记：最近一条带 toolCalls 的消息在 messages 中的下标（-1 = 无）。
    * toolResult 窗口局部配对的查找锚点（迁移前 convertPiHistory 同名局部变量语义）。
    */
@@ -111,6 +120,7 @@ export function createInitialChatViewState(): ChatViewState {
     messages: [],
     clientUuidMap: new Map(),
     orphanToolResults: [],
+    deliveredToolResultIds: new Set(),
     lastAssistantWithToolCalls: -1,
   }
 }
@@ -128,8 +138,24 @@ function deriveBaseId(entry: PiEntryBase, state: ChatViewState): string {
 
 // ── reducer 本体 ────────────────────────────────────────────────────
 
-/** toolResult role：窗口局部配对回填 host toolCall，配不上 → 孤儿收集。 */
+/** toolResult role：窗口局部配对回填 host toolCall，配不上 → 孤儿收集；同 toolCallId 幂等。 */
 function applyToolResultMessage(state: ChatViewState, body: PiMessageBody): ChatViewState {
+  // [R2-S1 双入口幂等] pi 0.84.1 对同一条 toolResult 双发 tool_execution_end + message_end
+  // {role:'toolResult'} 两个事件，xyz 翻译为 message.tool_call_end / message.message_end
+  // 两条帧，effects/registry 两个 handler 各喂本函数一次。去重键 = deliveredToolResultIds
+  // （「已投递过该 toolCallId 的 toolResult」）而非「存在该 toolCallId」：任一帧单独到达
+  // （另一帧丢失）时是首次投递，照常投影——两入口任一单独到达仍正常投影的单入口契约；
+  // 第二条同 id 帧整体 no-op（回填不重放、orphan 不重复收集），保留首条版本（tool_call_end
+  // 恒先到，其 entry 含 hook 改写后内容、与 overlay 收口同值），故双喂入 [t_end, m_end] ≡
+  // 单喂入 [t_end] 对任意帧序/丢失组合构造成立——异常时序下不再产生重复孤儿永久残留
+  // （live/reload 漂移源消灭）。无 toolCallId 的畸形 toolResult 无键可去重，维持原语义。
+  if (typeof body.toolCallId === 'string' && state.deliveredToolResultIds.has(body.toolCallId)) {
+    return state
+  }
+  // 投递记账（copy-on-write，纯度契约不 mutate state）；无 toolCallId 保持原集合引用
+  const deliveredToolResultIds = typeof body.toolCallId === 'string'
+    ? new Set(state.deliveredToolResultIds).add(body.toolCallId)
+    : state.deliveredToolResultIds
   // 窗口局部配对：只查最近一条带 toolCalls 的消息（迁移前 lastAssistantWithToolCalls 语义）
   const last = state.lastAssistantWithToolCalls
   const host = last >= 0 ? state.messages[last] : undefined
@@ -150,12 +176,12 @@ function applyToolResultMessage(state: ChatViewState, body: PiMessageBody): Chat
     }
     const updatedHost: Message = { ...host, toolCalls: tcs.map((t) => (t === matched ? filled : t)) }
     const messages = state.messages.map((m, idx) => (idx === last ? updatedHost : m))
-    return { ...state, messages }
+    return { ...state, messages, deliveredToolResultIds }
   }
   // 孤儿：窗口内无 preceding assistant 或 toolCallId 无匹配——收集给增量合并阶段回填
   const orphan: PiToolResultBody = { ...body, role: 'toolResult' }
   console.warn(`[apply-entry] toolResult has no matching toolCall in window: ${String(body.toolCallId)}`)
-  return { ...state, orphanToolResults: [...state.orphanToolResults, orphan] }
+  return { ...state, orphanToolResults: [...state.orphanToolResults, orphan], deliveredToolResultIds }
 }
 
 /** bashExecution role：bash 是元信息非用户输入（W3 WC5）→ 带 bashExecution 字段的 system 消息。 */

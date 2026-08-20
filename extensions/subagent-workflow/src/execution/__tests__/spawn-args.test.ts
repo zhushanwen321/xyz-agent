@@ -194,18 +194,18 @@ describe("buildSpawnArgs", () => {
   it("noContextFiles 镜像：主进程 argv 含 --no-context-files → 子进程 args 含该 flag", () => {
     // 端到端链路断言：主 pi 进程以 --no-context-files 启动（用户 opt-out context files）
     // → mirrorMainProcessFlags 解析 → buildSpawnArgs 产出同 flag 给每个 subagent。
-    // 缺此镜像时，--extension 镜像带入的 xyz-system-prompt-extension.js 检查子进程
+    // 缺此镜像时，--extension 镜像带入的 @zhushanwen/pi-system-prompt 检查子进程
     // 自己的 argv（无 flag）→ 全局 AGENTS.md 注入在 subagent system prompt 照常生效，
     // 用户 opt-out 被绕过。
     const mainArgv = [
       "bun", "/pi", "--mode", "rpc", "--no-context-files",
-      "--extension", "/path/xyz-system-prompt-extension.js",
+      "--extension", "/staged/@zhushanwen/pi-system-prompt/index.js",
     ];
     const args = buildSpawnArgs({ ...baseParams, mirrorFlags: mirrorMainProcessFlags(mainArgv) });
     expect(args).toContain("--no-context-files");
     // extension 镜像照常（两者共存才构成完整契约）
     const extIdx = args.indexOf("--extension");
-    expect(args[extIdx + 1]).toBe("/path/xyz-system-prompt-extension.js");
+    expect(args[extIdx + 1]).toBe("/staged/@zhushanwen/pi-system-prompt/index.js");
   });
 
   it("noContextFiles 不镜像：主进程 argv 不含 flag → 子进程 args 不含（默认行为不变）", () => {
@@ -293,11 +293,11 @@ describe("mirrorMainProcessFlags", () => {
   it("--no-context-files 长形式解析 → noContextFiles: true", () => {
     const r = mirrorMainProcessFlags([
       "bun", "/pi", "--mode", "rpc", "--no-context-files",
-      "--extension", "/path/xyz-system-prompt-extension.js",
+      "--extension", "/staged/@zhushanwen/pi-system-prompt/index.js",
     ]);
     expect(r.noContextFiles).toBe(true);
     // 与 extension 镜像共存（实际 xyz-agent 启动形态：两 flag 同时出现）
-    expect(r.extensionPaths).toEqual(["/path/xyz-system-prompt-extension.js"]);
+    expect(r.extensionPaths).toEqual(["/staged/@zhushanwen/pi-system-prompt/index.js"]);
     expect(r.noExtensions).toBe(false);
     expect(r.approve).toBe(false);
   });

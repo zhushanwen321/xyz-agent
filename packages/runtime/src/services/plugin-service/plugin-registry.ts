@@ -85,9 +85,8 @@ export class PluginRegistry {
    *       Resources/resources/plugins（electron-builder.yml `to: resources/plugins`）
    *     - cwd=仓库根：隔离 tsx 直跑（verify-plugin-e2e.sh）/ 本地 dist 运行
    *   候选 2  <projectRoot>/../../resources/plugins
-   *     - pnpm dev：runtime cwd=apps/electron，仓库根在其上两层（与 runtime-env
-   *       .getExtensionFilePath、extension-resolver.scanBundledExtensions 的 ../..
-   *       推导同构）
+   *     - pnpm dev：runtime cwd=apps/electron，仓库根在其上两层（与
+   *       extension-resolver.scanBundledExtensions 的 ../.. 推导同构）
    *
    * [HISTORICAL] dev 缺口（F4 修复）：dev 下 cwd=apps/electron，旧实现只扫
    * <projectRoot>/resources/plugins（不存在）→ built-in statusline 在 dev 从不被

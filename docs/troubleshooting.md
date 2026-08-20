@@ -37,11 +37,11 @@ Resources/
 │   ├── agent/                         # agent skills/extensions
 │   └── assets/                        # agent 资源文件
 ├── extensions/                        # builtin pi extensions
-│   └── @zhushanwen/<pkg>/             # 10 个 @zhushanwen/pi-*（esbuild bundle 产物）
-└── xyz-agent-extension.js             # xyz-agent 定制 pi extension
+│   └── @zhushanwen/<pkg>/             # 13 个 @zhushanwen/pi-*（esbuild bundle 产物）
+└── bin/xyz-settings                   # xyz-settings CLI（pi Skill 引用）
 ```
 
-> **注**：builtin pi extensions（10 个 `@zhushanwen/pi-*`）随应用打包内置在 `Resources/extensions/@zhushanwen/` 下，离线可用、无需安装。其中 infrastructure 级 3 个（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output`）不可禁用，feature 级 7 个可在 Settings → Extensions 中禁用/启用。第三方扩展（任意 npm 包 / 本地目录 / git）经 Settings → Extensions 安装到数据目录。
+> **注**：builtin pi extensions（13 个 `@zhushanwen/pi-*`）随应用打包内置在 `Resources/extensions/@zhushanwen/` 下，离线可用、无需安装。其中 infrastructure 级 6 个（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output` / `pi-agent-ext` / `pi-system-prompt` / `pi-msg-id-mapper`）不可禁用，feature 级 7 个可在 Settings → Extensions 中禁用/启用。第三方扩展（任意 npm 包 / 本地目录 / git）经 Settings → Extensions 安装到数据目录。
 
 **数据目录** (`~/.xyz-agent/`)：
 
@@ -116,13 +116,13 @@ lsof -i :3210-3220 -P | grep LISTEN | awk '{print $2}' | sort -u
 
 ### 4. Extension 相关问题
 
-builtin pi extensions（10 个 `@zhushanwen/pi-*`）随应用打包内置，不经过 npm 安装，离线可用：
+builtin pi extensions（13 个 `@zhushanwen/pi-*`）随应用打包内置，不经过 npm 安装，离线可用：
 
 ```bash
 # 检查打包产物中的 builtin extensions
 ls /Applications/太极.app/Contents/Resources/extensions/@zhushanwen/
 
-# builtin 扩展不生效时，检查是否被禁用（infrastructure 级 3 个不可禁用）
+# builtin 扩展不生效时，检查是否被禁用（infrastructure 级 6 个不可禁用）
 cat ~/.xyz-agent/pi/agent/settings.json
 ```
 

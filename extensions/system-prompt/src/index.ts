@@ -110,82 +110,102 @@ function readConfig(dataDir: string): {
   replace: { enabled: boolean; prompt: string }
   append: { enabled: boolean; prompt: string }
 } {
-  const defaults = {
-    version: 1,
-    replace: { enabled: false, prompt: '' },
-    append: { enabled: false, prompt: '' },
-  }
-  const cfgPath = path.join(dataDir, CONFIG_FILE)
-  let raw: string
-  try {
-    raw = readFileSync(cfgPath, 'utf-8')
-  } catch {
-    return defaults
-  }
-  let parsed: Record<string, unknown>
-  try {
-    parsed = JSON.parse(raw) as Record<string, unknown>
-  } catch {
-    return defaults
-  }
-  if (!parsed || typeof parsed !== 'object') {
-    return defaults
+  const parsed = readJsonIfValid(path.join(dataDir, CONFIG_FILE))
+  if (!parsed) {
+    return {
+      version: 1,
+      replace: { enabled: false, prompt: '' },
+      append: { enabled: false, prompt: '' },
+    }
   }
   // Merge defensively — every field has its own default.
   // replace 字段仅防御性解析保持 config 结构完整，不参与本 hook 逻辑——
   // replace 走 --system-prompt CLI（ADR-0038），hook 只处理 append。
-  const replaceRaw = parsed.replace && typeof parsed.replace === 'object' ? parsed.replace as Record<string, unknown> : {}
-  const appendRaw = parsed.append && typeof parsed.append === 'object' ? parsed.append as Record<string, unknown> : {}
   return {
     version: typeof parsed.version === 'number' ? parsed.version : 1,
-    replace: {
-      enabled: replaceRaw.enabled === true,
-      prompt: typeof replaceRaw.prompt === 'string' ? replaceRaw.prompt : '',
-    },
-    append: {
-      enabled: appendRaw.enabled === true,
-      prompt: typeof appendRaw.prompt === 'string' ? appendRaw.prompt : '',
-    },
+    replace: readSection(parsed.replace),
+    append: readSection(parsed.append),
+  }
+}
+
+/** Read a JSON file and return it as an object; missing / malformed / non-object → null. */
+function readJsonIfValid(filePath: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(filePath, 'utf-8'))
+    return isJsonObject(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function isJsonObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === 'object'
+}
+
+/** Defensive field parsing for a `replace`/`append` config section. */
+function readSection(raw: unknown): { enabled: boolean; prompt: string } {
+  const section = isJsonObject(raw) ? raw : {}
+  return {
+    enabled: section.enabled === true,
+    prompt: typeof section.prompt === 'string' ? section.prompt : '',
+  }
+}
+
+/**
+ * pi 是否以 --no-context-files / -nc 启动。用户显式退出 AGENTS.md / CLAUDE.md
+ * 发现时，全局文件不得从这条通路溜回来。pi CLI 把 -nc 视为 --no-context-files
+ * 的等价短形式（cli/args.ts），两种形式都必须命中守卫——与镜像侧
+ * （argv-mirror.ts 同样解析两种形式）保持一致。
+ */
+function contextFilesDisabled(): boolean {
+  return process.argv.includes('--no-context-files') || process.argv.includes('-nc')
+}
+
+/** Append the global instructions (~/.agents/AGENTS.md ...) under a labeled header. */
+function withGlobalInstructions(prompt: string): string {
+  if (contextFilesDisabled()) return prompt
+  const global = readGlobalAgentsFile()
+  if (!global) return prompt
+  return prompt + '\n\n# Global instructions (' + global.path + ')\n\n' + global.content
+}
+
+/** Read the append config and apply it to the prompt (empty append → unchanged). */
+function withAppendPrompt(prompt: string): string {
+  const cfg = readConfig(resolveDataDir())
+  if (!cfg.append.enabled || !cfg.append.prompt.trim()) return prompt
+  return prompt + '\n\n' + cfg.append.prompt
+}
+
+/**
+ * Build the injected system prompt. Injection order per turn:
+ * base prompt → global instructions → append config (the explicitly
+ * configured text wins last). Returns the new systemPrompt, or undefined
+ * when nothing changed.
+ */
+function buildSystemPrompt(event: BeforeAgentStartEvent): { systemPrompt: string } | undefined {
+  const basePrompt = typeof event.systemPrompt === 'string' ? event.systemPrompt : ''
+  const newPrompt = withAppendPrompt(withGlobalInstructions(basePrompt))
+  return newPrompt === event.systemPrompt ? undefined : { systemPrompt: newPrompt }
+}
+
+/** 落盘诊断（pi stderr 经 rpc-client 写入 logs/pi-*.jsonl），不泄露配置内容。 */
+function logHookFailure(err: unknown): void {
+  try {
+    const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+    process.stderr.write(`[xyz-system-prompt-extension] before_agent_start hook failed: ${msg}\n`)
+  } catch (nestedErr) {
+    // best-effort：stderr 写失败的终极兜底——console 内部吞错不会抛，仍不外泄到 agent loop。
+    console.debug('[xyz-system-prompt-extension] stderr write also failed:', nestedErr)
   }
 }
 
 export default function (pi: ExtensionAPI): void {
   pi.on('before_agent_start', (event: BeforeAgentStartEvent) => {
     try {
-      const dataDir = resolveDataDir()
-      const cfg = readConfig(dataDir)
-
-      const basePrompt = typeof event.systemPrompt === 'string' ? event.systemPrompt : ''
-      let newPrompt = basePrompt
-
-      // Global instructions (~/.agents/AGENTS.md ...). Skipped when pi was
-      // spawned with --no-context-files — the user opted out of AGENTS.md /
-      // CLAUDE.md discovery, so the global file must not sneak back in.
-      // pi CLI treats -nc as the equivalent short form of --no-context-files
-      // (cli/args.ts), so both forms must hit the guard — matches the mirror
-      // side (argv-mirror.ts parses both forms too).
-      if (!process.argv.includes('--no-context-files') && !process.argv.includes('-nc')) {
-        const global = readGlobalAgentsFile()
-        if (global) {
-          newPrompt = newPrompt + '\n\n# Global instructions (' + global.path + ')\n\n' + global.content
-        }
-      }
-
-      if (cfg.append.enabled && cfg.append.prompt.trim()) {
-        newPrompt = newPrompt + '\n\n' + cfg.append.prompt
-      }
-
-      return newPrompt === event.systemPrompt ? undefined : { systemPrompt: newPrompt }
+      return buildSystemPrompt(event)
     } catch (err) {
-      // Never block the agent loop. 落盘诊断（pi stderr 经 rpc-client 写入 logs/pi-*.jsonl），
-      // 不泄露配置内容，只记错误类型与消息摘要。
-      try {
-        const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
-        process.stderr.write(`[xyz-system-prompt-extension] before_agent_start hook failed: ${msg}\n`)
-      } catch (nestedErr) {
-        // best-effort：stderr 写失败的终极兜底——console 内部吞错不会抛，仍不外泄到 agent loop。
-        console.debug('[xyz-system-prompt-extension] stderr write also failed:', nestedErr)
-      }
+      // Never block the agent loop.
+      logHookFailure(err)
       return undefined
     }
   })

@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
+import { RpcTimeoutError } from '../../utils/errors.js'
 import { ENV_WHITELIST_PREFIXES, type ThinkingLevel, type ProviderId } from '@xyz-agent/shared'
 import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
 import { createPiSessionLog, type PiSessionLog } from '../logger.js'
@@ -108,18 +109,12 @@ const STDERR_TAIL_LINES = 10
  * 意味着进程「半死」（活着但不响应），处置是强杀重建而非重试。调用方
  * （message-dispatcher 的 abort 强杀分支）经 instanceof 判别，因此必须是独立类型：
  * 字符串 message 匹配无编译期防护，改文案即断链。
+ *
+ * [arch] 类本体定义在 utils/errors.ts（中立层——services 层 instanceof 判别需要运行时
+ * 值 import，定义在 infra 会让 services→infra 违反三层规则），此处 re-export 保持
+ * 既有 import 路径（rpc-client.js）兼容。
  */
-export class RpcTimeoutError extends Error {
-  constructor(
-    /** 超时的 RPC 命令类型（如 'abort' / 'prompt'），诊断用 */
-    public readonly commandType: string,
-    /** 该命令配置的超时毫秒数，诊断用 */
-    public readonly timeoutMs: number,
-  ) {
-    super(`RPC command "${commandType}" timed out after ${timeoutMs}ms`)
-    this.name = 'RpcTimeoutError'
-  }
-}
+export { RpcTimeoutError } from '../../utils/errors.js'
 
 export class RpcClient implements IPiEngine {
   private proc: ChildProcess | null = null

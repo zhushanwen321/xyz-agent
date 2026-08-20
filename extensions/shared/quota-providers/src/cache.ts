@@ -43,6 +43,39 @@ const RECORD_MIN_FIELDS = 2;
 const CACHE_PATH = getCachePath();
 const SPEED_DIR = getSpeedDir();
 
+// ── 原子写 tmp 唯一化（对齐 llm-shared config.ts 的 uniqueTmpPath，D1e 同款）──
+// 固定名 `<path>.tmp` 在双侧并发写（同进程多 session / 跨进程）时可碰撞互相截断；
+// 后缀 = pid + 36 进制随机段，保证写方间名字空间不相交。
+
+const TMP_RANDOM_BASE = 36;
+const TMP_RANDOM_SLICE_START = 2; // 跳过 Math.random 字符串的 "0." 前缀
+const TMP_RANDOM_SLICE_END = 10;
+function uniqueTmpPath(filePath: string): string {
+	return `${filePath}.tmp_${process.pid}_${Math.random()
+		.toString(TMP_RANDOM_BASE)
+		.slice(TMP_RANDOM_SLICE_START, TMP_RANDOM_SLICE_END)}`;
+}
+
+/**
+ * 原子写 JSON：唯一 tmp + rename（D1e 对齐）。写/rename 抛错时清理残留 tmp 后
+ * 重抛原错误（RK3 对齐：唯一名不会自覆盖，不清理会随崩溃累积残留文件）。
+ */
+function atomicWriteJson(filePath: string, data: unknown): void {
+	const tmpPath = uniqueTmpPath(filePath);
+	try {
+		writeFileSync(tmpPath, JSON.stringify(data, null, JSON_INDENT), "utf-8");
+		renameSync(tmpPath, filePath);
+	} catch (err) {
+		try {
+			if (existsSync(tmpPath)) unlinkSync(tmpPath);
+		} catch (cleanupErr) {
+			// tmp 清理失败不掩盖原错误，仅记录
+			console.warn(`[quota-cache] tmp cleanup failed:`, cleanupErr);
+		}
+		throw err;
+	}
+}
+
 // ── 历史路径迁移 ────────────────────────────────────────
 // [HISTORICAL] statusline 包已删，其遗留的 <agentDir>/statusline_cache.json 由本库接管
 // 写入。旧文件名仍存在于已升级用户的磁盘上：首次加载时迁移到 config/quota-cache.json
@@ -123,9 +156,7 @@ function pruneRemovedProviderEntries(): void {
 	if (!removed) return;
 	try {
 		mkdirSync(dirname(CACHE_PATH), { recursive: true });
-		const tmpPath = `${CACHE_PATH}.tmp`;
-		writeFileSync(tmpPath, JSON.stringify(cached, null, JSON_INDENT), "utf-8");
-		renameSync(tmpPath, CACHE_PATH);
+		atomicWriteJson(CACHE_PATH, cached);
 		console.warn("[quota-cache] pruned entries of removed providers");
 	} catch (e) {
 		// best-effort：写失败保留旧缓存，下次 mtime 变化重试；消费方按 plan key 取，残留不产生错误数据
@@ -175,14 +206,12 @@ async function doUpdate(): Promise<void> {
 			r.status === "fulfilled" && r.value !== null ? r.value : oldVal;
 	}
 
-	// 原子写入：先写临时文件再 rename，防止半写损坏
+	// 原子写入：唯一 tmp + rename，防止半写损坏（tmp 唯一名防并发碰撞，D1e 对齐）
 	try {
 		mkdirSync(dirname(CACHE_PATH), { recursive: true });
-		const tmpPath = `${CACHE_PATH}.tmp`;
-		writeFileSync(tmpPath, JSON.stringify(cache, null, JSON_INDENT), "utf-8");
-		renameSync(tmpPath, CACHE_PATH);
-	// eslint-disable-next-line taste/no-silent-catch -- 磁盘写失败属于容错路径：保留旧缓存，下次 triggerUpdate 会重试
+		atomicWriteJson(CACHE_PATH, cache);
 	} catch (e) {
+		// 磁盘写失败属于容错路径：保留旧缓存，下次 triggerUpdate 会重试
 		console.warn(`[quota-cache] cache write failed (keeping old):`, e);
 	}
 }
@@ -221,8 +250,8 @@ function quarantineCorrupt(path: string, cause: unknown): void {
 			`[quota-cache] corrupt file quarantined to ${quarantinePath}; continuing with empty. ` +
 			`Recovery: compare the .corrupt copy to restore history. Cause: ${msg}`,
 		);
-	// eslint-disable-next-line taste/no-silent-catch -- 隔离失败不阻断读流程（调用方仍降级继续），只升级日志提示人工介入
 	} catch (renameErr) {
+		// 隔离失败不阻断读流程（调用方仍降级继续），只升级日志提示人工介入
 		console.error(
 			`[quota-cache] quarantine rename failed for ${path} (original kept in place, please inspect manually). ` +
 			`Cause: ${msg}; rename error: ${renameErr instanceof Error ? renameErr.message : String(renameErr)}`,
@@ -281,8 +310,8 @@ function persistDailyRecord<T extends unknown[]>(
 	try {
 		mkdirSync(dir, { recursive: true });
 		writeFileSync(filePath, JSON.stringify(records));
-	// eslint-disable-next-line taste/no-silent-catch -- 写入失败属于容错路径
 	} catch (e) {
+		// 写入失败属于容错路径：记录后继续（records 已返回，下次写入重试）
 		console.warn(`[quota-cache] ${recordName} record write failed:`, e);
 	}
 

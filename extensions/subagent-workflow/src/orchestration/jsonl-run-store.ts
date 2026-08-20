@@ -46,7 +46,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { CustomEntry, ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { AgentCall } from "./models/agent-call.ts";
@@ -135,7 +135,9 @@ export const WORKFLOW_RECORD_CUSTOM_TYPE = "workflow-record";
  * snapshotVersion guard（deserializeRun 检查），entry 层 v 与 snapshot 层 v 是两级
  * 独立版本（entry schema 演化 vs 快照格式演化）。
  */
-export interface WorkflowRecordEntryData {
+// 模块内类型（不导出：无外部消费方，fallow unused_types/private_type_leaks 双轨判定；
+// 运行侧 workflow-extractor 的同形结构独立定义，见其注释）。
+interface WorkflowRecordEntryData {
   /** schema 版本（W17 起 v1）。消费方按 v 判别解析，不认识的版本跳过而非猜测。 */
   v: 1;
   /** 完整 RunSnapshot（与同次 flush 写入 state 文件的内容是同一份，不二次序列化）。 */
@@ -253,6 +255,30 @@ function deserializeRun(snapshot: RunSnapshot): WorkflowRun | null {
   return WorkflowRun.reconstruct(snapshot.runId, snapshot.spec, state, meta);
 }
 
+/** workflow-record entry → 重建 run 写入 recordRuns（v1 entry guard + D-5 版本不匹配
+ *  跳过；同 runId 后写覆盖 = 最后一条 entry 胜出）。返回 entry 是否命中该类型。 */
+function collectRecordRun(entry: CustomEntry, recordRuns: Map<string, WorkflowRun>): boolean {
+  if (entry.customType !== WORKFLOW_RECORD_CUSTOM_TYPE) return false;
+  // v1 entry guard：schema 版本不认识 → 跳过（不猜测解析）
+  const data = entry.data as WorkflowRecordEntryData | undefined;
+  if (data?.v !== 1 || !data.snapshot) return true;
+  const run = deserializeRun(data.snapshot);
+  // D-5: null = old snapshot format / version mismatch — skip silently
+  if (run) recordRuns.set(run.runId, run); // 后写覆盖 = 最后一条 entry 胜出
+  return true;
+}
+
+/** 旧 workflow-state-link 指针 entry → 写入 pointers（仅 state 文件发现通道，W17 前形态）。
+ *  返回 entry 是否命中该类型。 */
+function collectStateLinkPointer(entry: CustomEntry, pointers: Map<string, { path: string }>): boolean {
+  if (entry.customType !== "workflow-state-link") return false;
+  const data = entry.data as { runId?: string; path?: string } | undefined;
+  if (data?.runId && data?.path) {
+    pointers.set(data.runId, { path: data.path });
+  }
+  return true;
+}
+
 /** loadAll 的 entry 扫描：主 session entries → 自描述 record 快照（每 runId 末条胜出）
  *  + 旧 workflow-state-link 指针（仅 state 文件发现通道）。 */
 function collectEntrySources(entries: SessionEntry[]): {
@@ -263,20 +289,8 @@ function collectEntrySources(entries: SessionEntry[]): {
   const pointers = new Map<string, { path: string }>();
   for (const entry of entries) {
     if (entry.type !== "custom") continue;
-    if (entry.customType === WORKFLOW_RECORD_CUSTOM_TYPE) {
-      // v1 entry guard：schema 版本不认识 → 跳过（不猜测解析）
-      const data = entry.data as WorkflowRecordEntryData | undefined;
-      if (data?.v !== 1 || !data.snapshot) continue;
-      const run = deserializeRun(data.snapshot);
-      // D-5: null = old snapshot format / version mismatch — skip silently
-      if (run) recordRuns.set(run.runId, run); // 后写覆盖 = 最后一条 entry 胜出
-    } else if (entry.customType === "workflow-state-link") {
-      // 旧指针形态（W17 前写入）：仅作 state 文件的发现通道
-      const data = entry.data as { runId?: string; path?: string } | undefined;
-      if (data?.runId && data?.path) {
-        pointers.set(data.runId, { path: data.path });
-      }
-    }
+    if (collectRecordRun(entry, recordRuns)) continue;
+    collectStateLinkPointer(entry, pointers);
   }
   return { recordRuns, pointers };
 }

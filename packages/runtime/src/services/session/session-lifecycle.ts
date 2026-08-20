@@ -25,6 +25,13 @@ import type { ISessionStore } from '../ports/session.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND } from '../../utils/errors.js'
 import { createForkedSessionFile } from './session-fork.js'
+
+// [arch 技术债登记，R3 ports 依赖倒置待收口] 下方三个 infra/pi 值 import（getSessionsDir /
+// normalizeSessionFileInPlace + cleanupMigrateResidues / assertPiSessionFile）违反「services
+// 禁止 import infra」三层规则（见 docs/architecture/runtime-three-layer-design.md 阶段 R3）。
+// 未在本轮直接 port 化的原因：restore/fork 归一化管线是 W1 高危区（tmp+rename 原子覆盖 +
+// 附着断言），包一层 port 接口属于行为敏感重构，应随 R3 阶段统一落地（ISessionStore 等
+// port 扩展 + 专项测试），不在 review 修复批混入。新写 services 代码不得再效仿此处直引 infra。
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
 import { normalizeSessionFileInPlace, cleanupMigrateResidues } from '../../infra/pi/session-file-utils.js'
 import { assertPiSessionFile } from '../../infra/pi/session-attach-assert.js'
@@ -46,7 +53,7 @@ const SESSION_END_RE = /["']type["']\s*:\s*["']session_end["']/
  * 规范化副作用（原文末尾无 `\n` 时即使零剔除也产出不等文本），全等会把几乎所有文件
  * 误判进 F3 归一化路径。
  */
-export function containsSessionEndLine(jsonlContent: string): boolean {
+function containsSessionEndLine(jsonlContent: string): boolean {
   for (const line of jsonlContent.split('\n')) {
     if (line !== '' && SESSION_END_RE.test(line)) return true
   }

@@ -42,12 +42,18 @@ import { assertPiSessionFile } from '../../infra/pi/session-attach-assert.js'
 import { createForkedSessionFile } from '../../services/session/session-fork.js'
 import { applyHeaderCwdFallback } from '../../services/session/session-lifecycle.js'
 
-/** 等 turn 完成的上限（真实 LLM 调用；对齐 live-reload.test.ts 余量口径） */
-const TURN_TIMEOUT_MS = 120_000
+/**
+ * 等 turn 完成的上限（真实 LLM 调用；对齐 live-reload.test.ts 余量口径）。
+ * [HISTORICAL] 2026-08-20 PR #185 全量测试两连绿实测：本文件是全量并发下唯一 flaky 点
+ * （305 文件并行挤占 CPU/网络，真实 pi 子进程的 LLM 轮次在 120s 内未完成——隔离跑全文件
+ * 仅 27s 全绿，纯环境饿死非代码问题）。本文件用例最重（双冷启动 + 双轮 turn 等待），
+ * 单独上调至 180s（其余 equivalence 文件维持 120s 口径不变）；断言强度不变，仅放宽等待上限。
+ */
+const TURN_TIMEOUT_MS = 180_000
 /** switch_session 慢 RPC 上限（对齐生产 rpc-client SLOW_TIMEOUT_MS） */
 const SWITCH_TIMEOUT_MS = 120_000
-/** 用例总超时 = 多次冷启动 + 多轮 LLM turn + 多次 RPC + dispose 的和再留余量 */
-const TEST_TIMEOUT_MS = 360_000
+/** 用例总超时 = 多次冷启动 + 多轮 LLM turn + 多次 RPC + dispose 的和再留余量（2×180s + 余量） */
+const TEST_TIMEOUT_MS = 480_000
 
 /** 文件层 entry 最小形态（loadEntriesFromFile 的 xyz 侧等价读取：逐行 JSON.parse） */
 interface SessionFileEntry {

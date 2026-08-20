@@ -46,7 +46,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@xyz-agent/extension-protocol": "workspace:^0.4.0",
+    "@xyz-agent/extension-protocol": "workspace:*",
     "@zhushanwen/pi-extension-logger": "workspace:*",
     "@zhushanwen/pi-file-lock": "workspace:*",
     "ajv": "^8.20.0",

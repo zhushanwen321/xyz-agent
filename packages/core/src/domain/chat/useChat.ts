@@ -198,9 +198,8 @@ export function ensureStreamSubscription(
   const unsub = deps.chatApi.streamSubscribe(sid, (msg) => {
     // [send.rejected] 防御性反馈通道（D-006 独立类型，不进对话流）
     if (msg.type === 'send.rejected') {
-      const payload = msg.payload as { sessionId: string; reason: string; message: string }
       chat.clearPendingSend(sid)
-      deps.toast.error(payload.message ?? deps.t('composable.agentProcessing'))
+      deps.toast.error(msg.payload.message ?? deps.t('composable.agentProcessing'))
       return
     }
     // message.* → 单一入口（F2 重构：消除 double-dispatch）。
@@ -222,8 +221,7 @@ export function ensureStreamSubscription(
       case 'session.compacting': {
         // #6 + M4：compact 生命周期开始（interpreter 从 compaction_start 事件唯一驱动，走 session 通道）。
         // reason 区分手动/自动，驱动 MessageStream compacting 浮层文案（M4 事件驱动核心价值）。
-        const compactingPayload = msg.payload as { reason?: string }
-        chat.setCompacting(sid, true, compactingPayload.reason)
+        chat.setCompacting(sid, true, msg.payload.reason)
         break
       }
       case 'session.compacted': {
@@ -238,9 +236,8 @@ export function ensureStreamSubscription(
         // - error 非空（compact 失败）：仅保留队列，不 flush——错误反馈归 interpreter
         //   （compaction_end{errorMessage} → message.error 对话流），handler 不 toast（避免双提示）。
         // - error 为 undefined（compact 成功 / aborted）：flush 重放；flush 返回 false（重放 RPC 失败）→
-        //   toast 提示（队列保留，下次 compact 成功时重试）。
-        const payload = msg.payload as { error?: string }
-        if (payload.error === undefined) {
+        // toast 提示（队列保留，下次 compact 成功时重试）。
+        if (msg.payload.error === undefined) {
           void deps
             .getCompactQueue()
             .flush(sid)
@@ -255,9 +252,8 @@ export function ensureStreamSubscription(
         // guard：payload.name 为空时跳过 —— 防 pi 推空名/旧名覆盖用户手动 rename 的值。
         // 用闭包 sid（对称 compacting/compacted handler）：session.* 走 session 级通道
         // (events.on(sid, ...))，payload.sessionId 恒等于订阅 sid，不信任 payload 可能的篡改。
-        const payload = msg.payload as { name?: string }
-        if (payload.name) {
-          sessionStore.applySnapshot(sid, { label: payload.name })
+        if (msg.payload.name) {
+          sessionStore.applySnapshot(sid, { label: msg.payload.name })
         }
         break
       }
@@ -266,11 +262,10 @@ export function ensureStreamSubscription(
         // + 按新 contextWindow 重算的用量）。applySnapshot 单 session 快照按 D1b 合并
         // （undefined 字段 = 快照未涉及，不覆盖），不触发整表替换。
         // thinkingLevel optional：未设置时（undefined）不更新，保留旧值。
-        const p = msg.payload as { sessionId?: string; modelId?: string; thinkingLevel?: string }
-        if (p.sessionId) {
-          sessionStore.applySnapshot(p.sessionId, {
-            ...(p.modelId !== undefined && { modelId: p.modelId }),
-            ...(p.thinkingLevel !== undefined && { thinkingLevel: p.thinkingLevel }),
+        if (msg.payload.sessionId) {
+          sessionStore.applySnapshot(msg.payload.sessionId, {
+            ...(msg.payload.modelId !== undefined && { modelId: msg.payload.modelId }),
+            ...(msg.payload.thinkingLevel !== undefined && { thinkingLevel: msg.payload.thinkingLevel }),
           })
         }
         break
@@ -280,9 +275,8 @@ export function ensureStreamSubscription(
         // 补 state_changed 的时序缺口：switchModel 的 broadcastSessionState 在 set_model RPC resolve 后
         // 立即广播，而 thinking_level_changed 事件可能晚到（异步），此时 state_changed 的 thinkingLevel 为空。
         // 本 handler 独立更新 thinkingLevel，不依赖两条消息的先后顺序。
-        const p = msg.payload as { sessionId?: string; level?: string }
-        if (p.sessionId && p.level) {
-          sessionStore.applySnapshot(p.sessionId, { thinkingLevel: p.level })
+        if (msg.payload.sessionId && msg.payload.level) {
+          sessionStore.applySnapshot(msg.payload.sessionId, { thinkingLevel: msg.payload.level })
         }
         break
       }

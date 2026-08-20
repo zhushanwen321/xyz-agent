@@ -60,3 +60,23 @@ export const MODEL_NOT_CONFIGURED = 'MODEL_NOT_CONFIGURED'
 export const SESSION_NOT_FOUND = 'SESSION_NOT_FOUND'
 /** session 恢复时 spawn pi / switchSession / initialize 失败 */
 export const RESTORE_FAILED = 'RESTORE_FAILED'
+
+/**
+ * pi RPC 命令超时错误（D3a pi 半死自愈：超时判别收口为类型）。
+ *
+ * [arch] 定义在 utils（services/infra 共享中立层）：services 层（message-dispatcher）
+ * 需要 instanceof 运行时值判别，若定义在 infra/pi/rpc-client 会构成 services→infra 的
+ * 运行时值 import（runtime 三层规则禁止，见 runtime-three-layer-design.md）。rpc-client.ts
+ * （infra）从这里 import 并 re-export，保持既有 import 路径兼容。
+ */
+export class RpcTimeoutError extends Error {
+  constructor(
+    /** 超时的 RPC 命令类型（如 'abort' / 'prompt'），诊断用 */
+    public readonly commandType: string,
+    /** 该命令配置的超时毫秒数，诊断用 */
+    public readonly timeoutMs: number,
+  ) {
+    super(`RPC command "${commandType}" timed out after ${timeoutMs}ms`)
+    this.name = 'RpcTimeoutError'
+  }
+}

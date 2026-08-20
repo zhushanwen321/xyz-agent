@@ -44,6 +44,12 @@ import { toErrorMessage } from '../../utils/errors.js'
 import type { IFileChangeDiff } from '../ports/file-change-diff.js'
 import type { PiTranslatedEvent } from './types.js'
 
+/** plain object 判定（type-safety review：plugin hook 返回值是不可信边界——Worker/
+ * sandbox 里的第三方代码可返回任意值，改写前必须 shape 守卫，畸形值丢弃改写保原值）。 */
+function isPlainRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
 /** plugin hook 执行回调（组合根注入，封装 pluginService.executeHooks + sessionId 注入）。 */
 export type ExecuteHookFn = (
   hookType: string,
@@ -374,7 +380,15 @@ export class EventInterpreter {
         if (hookResult.blocked === true) {
           blocked = true
         } else if (hookResult.transformedData !== undefined) {
-          input = hookResult.transformedData
+          if (isPlainRecord(hookResult.transformedData)) {
+            input = hookResult.transformedData
+          } else {
+            // hook 返回畸形改写值（非 plain object）→ 丢弃改写保原始 input（type-safety：
+            // entry.arguments 契约是 Record，畸形值不得以谎报类型进 wire 帧）
+            console.warn(
+              `[event-interpreter] onBeforeToolCall hook returned non-object transformedData for ${toolName} (${toolCallId}), discarding rewrite`,
+            )
+          }
         }
       } catch (e) {
         // 插件 hook 失败不影响主流程（best-effort 数据改写），降级到 debug 日志
@@ -398,7 +412,9 @@ export class EventInterpreter {
     // contentIndex 锚点（§11 检查点 3：pi toolcall_start 提供，模型输出 tool_use 时——无此锚点
     // 时同 turn 内 text 在 tool 之后 contentBlocks 顺序会错位）与 messageId 挂载目标从
     // interpreter 缓存补进 entry。锚点缺失（旧 pi/异常）时字段缺省，前端退化为 append 尾部。
-    ev.entry.arguments = (input ?? {}) as Record<string, unknown>
+    // arguments 经 isPlainRecord 守卫（hook 改写已守卫；未改写路径的 ev.input 若为 pi 契约外
+    // 畸形值同样归一为 {}，不进 wire 帧）
+    ev.entry.arguments = isPlainRecord(input) ? input : {}
     const contentIndex = this.toolCallContentIndex.get(toolCallId)
     if (contentIndex !== undefined) ev.entry.contentIndex = contentIndex
     if (this.currentMessageId !== undefined) ev.entry.messageId = this.currentMessageId
@@ -423,12 +439,18 @@ export class EventInterpreter {
     if (this.opts.executeHooks) {
       try {
         const hookResult = await this.opts.executeHooks('onAfterToolResult', { toolCallId, output })
-        if (hookResult.transformedData !== undefined) {
-          output = hookResult.transformedData as string
+        if (typeof hookResult.transformedData === 'string') {
+          output = hookResult.transformedData
           // [W21] 仅 hook 实际改写时同步回 entry.message.content（WS 帧只发 entry）——
           // 包成 text block 数组保持 pi 持久化形态（live≡reload 同构）；无改写时保持
           // adapter 归一后的原数组。
           ev.entry.message.content = [{ type: 'text', text: output }]
+        } else if (hookResult.transformedData !== undefined) {
+          // hook 返回畸形改写值（非 string）→ 丢弃改写保原始 output（type-safety：content
+          // text block 契约是 string，畸形值不得以谎报类型进 wire 帧 / 持久化 entry）
+          console.warn(
+            `[event-interpreter] onAfterToolResult hook returned non-string transformedData for ${toolName} (${toolCallId}), discarding rewrite`,
+          )
         }
       } catch (e) {
         // 插件 hook 失败不影响主流程（best-effort 数据改写），降级到 debug 日志

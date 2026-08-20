@@ -17,9 +17,9 @@ describe('pending.rejectAll', () => {
   })
 
   it('reject 所有已注册的 pending 请求（多条同时清理）', async () => {
-    const p1 = pending.register<string>(pending.create())
-    const p2 = pending.register<number>(pending.create())
-    const p3 = pending.register<boolean>(pending.create())
+    const p1 = pending.register<string>(pending.createCommandId())
+    const p2 = pending.register<number>(pending.createCommandId())
+    const p3 = pending.register<boolean>(pending.createCommandId())
 
     pending.rejectAll(new Error('WS 断连'))
 
@@ -29,7 +29,7 @@ describe('pending.rejectAll', () => {
   })
 
   it('rejectAll 后 pendingMap 被清空（后续 resolve/reject 为 no-op）', async () => {
-    const id = pending.create()
+    const id = pending.createCommandId()
     const p = pending.register<string>(id)
 
     pending.rejectAll(new Error('清空'))
@@ -48,7 +48,7 @@ describe('pending.rejectAll', () => {
   it('rejectAll 后新注册的请求不受影响（可正常 resolve）', async () => {
     pending.rejectAll(new Error('first batch'))
 
-    const id = pending.create()
+    const id = pending.createCommandId()
     const p = pending.register<string>(id)
     pending.resolve(id, 'new value')
 
@@ -56,7 +56,7 @@ describe('pending.rejectAll', () => {
   })
 
   it('rejectAll 透传 error 对象（含 code 等附加属性的场景）', async () => {
-    const id = pending.create()
+    const id = pending.createCommandId()
     const p = pending.register<string>(id)
 
     const customError = Object.assign(new Error('runtime crashed'), { code: 'E_RUNTIME' })

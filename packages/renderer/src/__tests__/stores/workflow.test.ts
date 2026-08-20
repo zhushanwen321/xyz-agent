@@ -183,6 +183,54 @@ describe('workflow store — loadWorkflows 空结果守卫', () => {
     expect(store.getRecordsBySession('sess-1')[0].runId).toBe('wf-fresh')
     expect(warnSpy).not.toHaveBeenCalled()
   })
+
+  // ── R1 business-logic S3：连续空命中（strike）区分「瞬时读失败降级 []」与「真实删空」──
+
+  it('连续第 2 次 RPC 空 → 判真实删空，清分区 + warn 说明放行', async () => {
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([])
+
+    const store = useWorkflowStore()
+    store.applyRecords('sess-1', [makeRecord({ runId: 'wf-keep' })])
+    await store.loadWorkflows('sess-1') // strike 1/2：保留
+    await store.loadWorkflows('sess-1') // strike 2/2：真实删空判定，放行覆盖
+
+    expect(store.getRecordsBySession('sess-1')).toEqual([])
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('clearing partition'),
+      'sess-1',
+    )
+    expect(store.loadError).toBeNull()
+  })
+
+  it('空结果被非空结果打断 → strike 重置，再遇单次空仍保留（不累计误清）', async () => {
+    const store = useWorkflowStore()
+    store.applyRecords('sess-1', [makeRecord({ runId: 'wf-keep' })])
+
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([]) // strike 1/2
+    await store.loadWorkflows('sess-1')
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([makeRecord({ runId: 'wf-keep' })])
+    await store.loadWorkflows('sess-1') // 非空 → strike 清零
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([]) // 重新 strike 1/2
+    await store.loadWorkflows('sess-1')
+
+    expect(store.getRecordsBySession('sess-1')).toHaveLength(1)
+    expect(store.getRecordsBySession('sess-1')[0].runId).toBe('wf-keep')
+  })
+
+  it('RPC 失败（catch）→ strike 重置，不让连接故障累计出误清分区', async () => {
+    const store = useWorkflowStore()
+    store.applyRecords('sess-1', [makeRecord({ runId: 'wf-keep' })])
+
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([]) // strike 1/2
+    await store.loadWorkflows('sess-1')
+    vi.mocked(sessionApi.getWorkflows).mockRejectedValue(new Error('network'))
+    await store.loadWorkflows('sess-1') // catch → strike 重置
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([]) // 重新 strike 1/2，仍保留
+    await store.loadWorkflows('sess-1')
+
+    expect(store.getRecordsBySession('sess-1')).toHaveLength(1)
+    expect(store.getRecordsBySession('sess-1')[0].runId).toBe('wf-keep')
+  })
 })
 
 // ── U7 MUST_FIX 1: agentcall 清理映射（deleteSession 清 agentcall 虚拟 key 唯一通路）──
@@ -248,5 +296,104 @@ describe('U7 MUST_FIX 1: agentcall 虚拟 key 清理映射', () => {
     expect(store.getAgentCallVirtualIdsByMain('never')).toEqual([])
     // 清不存在的映射不抛错
     expect(() => store.clearAgentCallMapping('never')).not.toThrow()
+  })
+})
+
+// ── clearSession per-session 分区释放 + W15 定时器防御性清理（fake timers）──
+
+describe('workflow store — clearSession（per-session 分区释放，ADR-0049 AC-8）', () => {
+  it('清除指定 sid 分区，不影响其他 sid', () => {
+    const store = useWorkflowStore()
+    store.applyRecords('session-1', [makeRecord({ runId: 'wf-a' })])
+    store.applyRecords('session-2', [makeRecord({ runId: 'wf-b' })])
+
+    store.clearSession('session-1')
+
+    expect(store.getRecordsBySession('session-1')).toEqual([])
+    expect(store.getRecordsBySession('session-2')).toHaveLength(1)
+  })
+
+  it('清除不存在的 sid 分区是 no-op（不抛错）', () => {
+    const store = useWorkflowStore()
+    expect(() => store.clearSession('never')).not.toThrow()
+  })
+
+  it('strike 簿记随分区清除：clearSession 后单次空结果重新从 strike 1 计（不残留旧计数）', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const store = useWorkflowStore()
+    store.applyRecords('session-1', [makeRecord()])
+
+    // strike 1/2：空结果保留
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([])
+    await store.loadWorkflows('session-1')
+    expect(store.getRecordsBySession('session-1')).toHaveLength(1)
+
+    // clearSession 清分区 + strike 计数 → 此时空结果直接正常写入（分区已空，守卫本就不触发）
+    store.clearSession('session-1')
+    await store.loadWorkflows('session-1')
+    expect(store.getRecordsBySession('session-1')).toEqual([])
+    warnSpy.mockRestore()
+  })
+})
+
+describe('workflow store — triggerWorkflowReload / W15 定时器防御性清理', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('running 信号：立即拉一次 + 500ms 延迟重试一次（workflow-state-link 延迟 flush 兜底）', async () => {
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([makeRecord()])
+    const store = useWorkflowStore()
+
+    store.triggerWorkflowReload('session-1', 'running')
+    // 立即拉取（微任务 flush）
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
+
+    // 延迟重试在 RUNNING_RETRY_MS=500 后触发
+    await vi.advanceTimersByTimeAsync(500)
+    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(2)
+    expect(sessionApi.getWorkflows).toHaveBeenNthCalledWith(2, 'session-1')
+  })
+
+  it('非 running 信号：只立即拉一次，不安排延迟重试', async () => {
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([makeRecord()])
+    const store = useWorkflowStore()
+
+    store.triggerWorkflowReload('session-1', 'done')
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(600)
+    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
+  })
+
+  it('同 sid 连续 running 信号去重：只保留最后一次重试 timer', async () => {
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([makeRecord()])
+    const store = useWorkflowStore()
+
+    store.triggerWorkflowReload('session-1', 'running')
+    store.triggerWorkflowReload('session-1', 'running')
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(600)
+    // 2 次立即拉取 + 1 次去重后的延迟重试（旧 timer 被 clearTimeout）
+    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(3)
+  })
+
+  it('W15 兜底：store $dispose → 在途重试 timer 被清，不再触发 loadWorkflows', async () => {
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([makeRecord()])
+    const store = useWorkflowStore()
+
+    store.triggerWorkflowReload('session-1', 'running')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
+
+    // 作用域销毁（HMR / store dispose）→ 定时器防御性清理
+    store.$dispose()
+    await vi.advanceTimersByTimeAsync(600)
+    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
   })
 })

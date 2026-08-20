@@ -232,6 +232,88 @@ describe('applyEntry —— entry 类型逐类型覆盖', () => {
     ])
   })
 
+  // ── [R2-S1 双入口幂等] pi 0.84.1 对同一 toolResult 双发 tool_execution_end +
+  // message_end{role:'toolResult'} 两事件 → 两条帧各喂 reducer 一次。deliveredToolResultIds
+  // 簿记保证双喂入 ≡ 单喂入（第二条同 id 帧整体 no-op，保留首条版本）。
+  it('message/toolResult：同 toolCallId 二次投递 no-op（幂等去重：不重放回填、孤儿不重复收集、保留首条版本）', () => {
+    const base = [
+      msgEntry('e-asst-dup', {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'tc-dup', name: 'read', arguments: { path: '/x' } }],
+        timestamp: 1000,
+      }),
+    ]
+    const first = applyEntry(
+      replayEntries(base),
+      msgEntry('e-tr-dup-1', {
+        role: 'toolResult',
+        toolCallId: 'tc-dup',
+        toolName: 'read',
+        content: [{ type: 'text', text: 'first-version' }],
+        timestamp: 2000,
+      }),
+    )
+    expect(first.messages[0].toolCalls![0].output).toBe('first-version')
+
+    // 第二条同 id 帧（message_end 载体，内容版本不同）：整体 no-op——不重放回填
+    //（保留首条版本）、state.messages 引用不变、簿记集合引用不变（copy-on-write 纯度）
+    const messagesBefore = first.messages
+    const deliveredBefore = first.deliveredToolResultIds
+    const second = applyEntry(
+      first,
+      msgEntry('e-tr-dup-2', {
+        role: 'toolResult',
+        toolCallId: 'tc-dup',
+        toolName: 'read',
+        content: [{ type: 'text', text: 'second-version-loses' }],
+        timestamp: 3000,
+      }),
+    )
+    expect(second.messages[0].toolCalls![0].output).toBe('first-version')
+    expect(second.messages).toBe(messagesBefore)
+    expect(second.deliveredToolResultIds).toBe(deliveredBefore)
+    expect(second.orphanToolResults).toHaveLength(0)
+
+    // 孤儿分支同款幂等：窗口内无匹配时首投收集孤儿，同 id 二投不再重复收集
+    const orphanFirst = applyEntry(
+      createInitialChatViewState(),
+      msgEntry('e-tr-orphan-1', {
+        role: 'toolResult',
+        toolCallId: 'tc-orphan',
+        toolName: 'read',
+        content: [{ type: 'text', text: 'out' }],
+        timestamp: 1000,
+      }),
+    )
+    expect(orphanFirst.orphanToolResults).toHaveLength(1)
+    const orphanSecond = applyEntry(
+      orphanFirst,
+      msgEntry('e-tr-orphan-2', {
+        role: 'toolResult',
+        toolCallId: 'tc-orphan',
+        toolName: 'read',
+        content: [{ type: 'text', text: 'out-again' }],
+        timestamp: 2000,
+      }),
+    )
+    expect(orphanSecond.orphanToolResults).toHaveLength(1)
+    expect(orphanSecond.orphanToolResults[0].content).toEqual([{ type: 'text', text: 'out' }])
+  })
+
+  it('message/toolResult：无 toolCallId 的畸形 body 无键可去重——每次投递都收集为孤儿（原语义保留）', () => {
+    const mkOrphan = (id: string) => msgEntry(id, {
+      role: 'toolResult',
+      toolName: 'read',
+      content: [{ type: 'text', text: 'no-call-id' }],
+      timestamp: 1000,
+    })
+    const state = replayEntries([mkOrphan('e-tr-noid-1'), mkOrphan('e-tr-noid-2')])
+    // 无 toolCallId 不进 deliveredToolResultIds（无键可去重）→ 两条都收集，不静默丢数据
+    expect(state.messages).toHaveLength(0)
+    expect(state.orphanToolResults).toHaveLength(2)
+    expect(state.deliveredToolResultIds.size).toBe(0)
+  })
+
   // ── message entry：bashExecution role ────────────────────────────
   it('message/bashExecution：→ system 消息，bashExecution 字段完整映射，exitCode undefined → null', () => {
     const state = replayEntries([
@@ -428,6 +510,7 @@ describe('applyEntry —— 确定性（D5 纯函数断言）', () => {
         content: [
           { type: 'thinking', thinking: '推理' },
           { type: 'toolCall', id: 'tc-1', name: 'write', arguments: { path: '/x.ts' } },
+          { type: 'toolCall', id: 'tc-2', name: 'read', arguments: { path: '/y.ts' } },
         ],
         usage: { input: 10, output: 5 },
         timestamp: 200,
@@ -449,10 +532,12 @@ describe('applyEntry —— 确定性（D5 纯函数断言）', () => {
   it('applyEntry 不 mutate 输入 state（copy-on-write）', () => {
     const state = replayEntries(mixedSequence())
     const snapshot = structuredClone(state)
-    // 在已含 toolCalls 的 state 上追加一条 toolResult（触发回填 copy-on-write 路径）
-    const next = applyEntry(state, msgEntry('e-6', { role: 'toolResult', toolCallId: 'tc-1', toolName: 'write', content: [{ type: 'text', text: 'again' }], timestamp: 600 }, { parentId: 'e-5', timestamp: ISO(600) }))
+    // 在已含 toolCalls 的 state 上追加一条 toolResult（触发回填 copy-on-write 路径）。
+    // [R2-S1] toolCallId 必须用未投递过的（'tc-2'）：同 id 二次投递已被
+    // deliveredToolResultIds 幂等去重（no-op，不再走回填路径）。
+    const next = applyEntry(state, msgEntry('e-6', { role: 'toolResult', toolCallId: 'tc-2', toolName: 'read', content: [{ type: 'text', text: 'again' }], timestamp: 600 }, { parentId: 'e-5', timestamp: ISO(600) }))
     expect(state).toEqual(snapshot) // 原 state 深度不变
-    expect(next.messages[1].toolCalls![0].output).toBe('again') // 新 state 可见回填
+    expect(next.messages[1].toolCalls![1].output).toBe('again') // 新 state 可见回填
   })
 
   it('无 entry.id 的 entry：确定性派生 id（两次相同）且 piEntryId 不回填', () => {

@@ -305,7 +305,7 @@ notify 主 agent：isIdle()=false 时退避等 idle 再发（triggerTurn 只在�
 - 探针（⛔）：重启后续聊 parentId 链连续；无孤儿残留。
 
 **D5：compact 引用恢复 = before_agent_start 每 loop 注入活跃 subagent 快照（主方案）；session_before_compact 自定义摘要（二期增强）**
-- 选择：注册 before_agent_start hook（types.d.ts:865 已核实存在，xyz-system-prompt-extension.js 已示范用法），有活跃 subagent 时返回 `message`（customType:"subagent-status"，content 如 §3.1 场景 D；无活跃 subagent 时不注入，零成本）。
+- 选择：注册 before_agent_start hook（types.d.ts:865 已核实存在，@zhushanwen/pi-system-prompt 包已示范用法），有活跃 subagent 时返回 `message`（customType:"subagent-status"，content 如 §3.1 场景 D；无活跃 subagent 时不注入，零成本）。
 - 依据：① BeforeAgentStartEventResult.message 机制已存在（types.d.ts:794 已核实），注入对话流 = 进入 LLM 上下文且随历史持久化；② 每 loop 重注入 = compact 后下一个 loop 自动恢复引用，**不依赖 compact 摘要质量**（摘要质量是 LLM 行为，不可控；hook 注入是 extension 行为，可控）；③ 附带收益：快照提醒主 agent「不用的记得 close」，缓解 P9 的泄漏习惯。
 - 成本控制：最多 10 条，每条一行；超过显示 "+N more, use action:'list'"。
 - **注入条件扩展（供 D6 复用）**：hook 除活跃快照外，还注入「级联关闭告知」（D6 的 recentlyCascaded，注入后清除）。注入条件 = 「有活跃 subagent」**或**「有待告知的级联关闭记录」——级联关闭后活跃数为 0 时告知仍能到达，不违反零成本原则（无活跃且无待告知时才零注入）。

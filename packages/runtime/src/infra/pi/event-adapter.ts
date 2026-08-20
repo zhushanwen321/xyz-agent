@@ -622,17 +622,22 @@ function handleMessageStart(event: PiMessageStartEvent, sid: string): PiTranslat
   // custom message from pi.sendMessage（扩展注入的结构化通知，如 subagent-bg-notify）。
   // 用独立 type 'message.customStart'，与 assistant turn 的 message_start 区分——
   // 前端 message_start handler 默认建 role:'assistant' 气泡，custom 不应走那条路径。
-  if (msg.customType) {
+  // customType 字段经 typeof 收窄（type-safety review：来源是 extension 第三方代码，
+  // 畸形值不得以谎报类型进 wire 帧）；content/details/display 同款守卫缺省。
+  if (typeof msg.customType === 'string') {
+    const customDetails = typeof msg.details === 'object' && msg.details !== null && !Array.isArray(msg.details)
+      ? (msg.details as Record<string, unknown>)
+      : undefined
     return [{
       kind: 'message',
       message: {
         type: 'message.customStart',
         payload: {
           sessionId: sid,
-          customType: msg.customType as string,
-          content: msg.content as string | undefined,
-          details: msg.details as Record<string, unknown> | undefined,
-          display: msg.display as boolean | undefined,
+          customType: msg.customType,
+          content: typeof msg.content === 'string' ? msg.content : undefined,
+          details: customDetails,
+          display: typeof msg.display === 'boolean' ? msg.display : undefined,
         },
       },
     }]
@@ -644,6 +649,21 @@ function handleMessageStart(event: PiMessageStartEvent, sid: string): PiTranslat
     { kind: 'message', message: { type: 'message.message_start', payload: { sessionId: sid, messageId: fallbackId } } },
   ]
 }
+
+/**
+ * message_end 允许下发的 role 白名单（business-logic review S2 结构防线）。
+ *
+ * pi 0.84.1 实证（agent-session.js:380「Other message types (bashExecution, compactionSummary,
+ * branchSummary) are persisted elsewhere」；recordBashResult :2225 直 appendMessage 不 emit）
+ * 这些 role 不经 message_end 事件。但该假设此前只存在于注释——若未来 pi 版本对未建模
+ * role 补发 message_end，registry 端会将其喂 applyEntry 的 append 分支，与 bashResultEffect
+ * / compactionSummary effect 已各自喂入的一次构成 reducer messages 双计（正是「live ≡ reload」
+ * 要消灭的 bug 形态）。此处白名单把协议假设升级为结构防线：未列 role warn + 跳过。
+ *
+ * custom 判定对齐 handleMessageStart（msg.customType 存在而非 role === 'custom'——pi custom
+ * message 的权威标识是 customType 字段）。
+ */
+const MESSAGE_END_ALLOWED_ROLES = new Set(['user', 'assistant', 'toolResult'])
 
 /**
  * message_end — 重构 message entry 作为实时 feed 载体（W21，D5 单一 reducer 双路喂入的实时侧）。
@@ -661,14 +681,25 @@ function handleMessageStart(event: PiMessageStartEvent, sid: string): PiTranslat
  *   字段稳定存在即可，不写投机代码——pi 上游若补 turnId 只改本构造点，reducer 不动）。
  *
  * 与 message_start 的 role 过滤（[HISTORICAL] user/toolResult 记账噪声）不同：message_end 是
- * 权威 entry 流，全量下发不过滤——user 消息与 appendUser 的乐观插入、toolResult 与
- * tool_execution_end 的回填，去重/合并归 core store 的 reducer 接入层编排。
+ * 权威 entry 流，已建模 role（user/assistant/toolResult/custom，见 MESSAGE_END_ALLOWED_ROLES）
+ * 全量下发不过滤——user 消息与 appendUser 的乐观插入、toolResult 与 tool_execution_end 的
+ * 回填，去重/合并归 core store 的 reducer 接入层编排。未建模 role（bashExecution 等）由
+ * 白名单防线跳过（双计防线）。
  */
 function handleMessageEnd(event: PiMessageEndEvent, sid: string): PiTranslatedEvent[] {
   const msg = event.message as unknown as Record<string, unknown> | undefined
   if (msg === undefined || typeof msg.role !== 'string') {
     // 防御：message_end 恒带 message（pi 契约），缺失/畸形时降级丢弃（warn 可观测，不中断事件流）
     console.warn(`[EventAdapter] message_end without message or role, skipping sid=${sid}`)
+    return [{ kind: 'noop' }]
+  }
+  const isCustom = typeof msg.customType === 'string'
+  if (!isCustom && !MESSAGE_END_ALLOWED_ROLES.has(msg.role)) {
+    // 未建模 role 防线：pi 当前不经 message_end 发这些 role，命中说明 pi 行为漂移——
+    // warn 可观测 + 跳过（防 registry 端与既有 effect 双计），不中断事件流。
+    console.warn(
+      `[EventAdapter] message_end with unmodeled role '${msg.role}', skipping (dual-count guard, sid=${sid})`,
+    )
     return [{ kind: 'noop' }]
   }
   const tsMs = typeof msg.timestamp === 'number' ? msg.timestamp : Date.now()

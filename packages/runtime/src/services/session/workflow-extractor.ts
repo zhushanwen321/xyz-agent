@@ -25,6 +25,7 @@
 
 import { readFileSync } from 'node:fs'
 import { parseJsonl } from '../../utils/jsonl.js'
+import { isEnoent } from '../../utils/errors.js'
 import { WORKFLOW_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
 import type {
   WorkflowRunRecord,
@@ -197,14 +198,18 @@ function parseSelfDescribedWorkflowSnapshot(entry: unknown): RunSnapshot | null 
  * 从主 session JSONL 文件提取 WorkflowRunRecord[]（冷启动 / getWorkflows RPC 路径）。
  *
  * 读取文件 → parseJsonl → scanWorkflowEntries（与实时增量拉取同一份派生代码）。
- * 文件不存在或无 workflow record 时返回空数组。
+ *
+ * 读失败分级（与 extractSubagentsFromSessionFile 同款，renderer 侧栏 stale 守卫的契约前提）：
+ * ENOENT → 空数组（pi session 文件延迟写入的合法窗口）；其他读错误 → 原样上抛（RPC 报错，
+ * renderer catch 保留旧分区 + 重试态，不与「真实删空」混淆）。无 workflow record 时返回空数组。
  */
 export function extractWorkflowsFromSessionFile(filePath: string): WorkflowRunRecord[] {
   let content: string
   try {
     content = readFileSync(filePath, 'utf-8')
-  } catch {
-    return []
+  } catch (e) {
+    if (isEnoent(e)) return []
+    throw e
   }
 
   const entries = parseJsonl(content)

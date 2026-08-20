@@ -48,7 +48,7 @@ describe('command — send fast-fail（WS 非 OPEN 时立即失败，不悬挂�
 
     // 残留检测：注册一个新 pending，再 rejectAll——若上条幽灵条目还在，
     // 其 reject 会在微任务产生未处理 rejection；此处只验证新注册的能正常被清理
-    const id = pending.create()
+    const id = pending.createCommandId()
     const probe = pending.register(id, 0)
     pending.rejectAll(new Error('drain'))
     await expect(probe).rejects.toThrow('drain')

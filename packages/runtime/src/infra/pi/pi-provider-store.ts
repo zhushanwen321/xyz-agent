@@ -281,8 +281,9 @@ export function getApiKeyForProvider(providerId: string): string | undefined {
 }
 
 // ── Settings.json 操作 ───────────────────────────────────────
-// readSettings/updateSettingsFields 收敛到 pi-settings-store（D17 唯一读写层）；setSettingsPath 供测试 tmpdir 隔离。
-export { readSettings, writeSettings, updateSettingsFields, setSettingsPath } from './pi-settings-store.js'
+// readSettings/writeSettings/setSettingsPath 收敛到 pi-settings-store（D17 唯一读写层）；
+// updateSettingsFields 不在此 re-export（零外部消费者，直接从 pi-settings-store import）。
+export { readSettings, writeSettings, setSettingsPath } from './pi-settings-store.js'
 
 /**
  * 纯校验：检查 defaultProvider/defaultModel 在 models.json 中是否有效。

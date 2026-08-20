@@ -7,11 +7,6 @@
     [
       "@zhushanwen/pi-quota-providers",
       "@zhushanwen/pi-model-switch"
-    ],
-    [
-      "@zhushanwen/pi-structured-output",
-      "@zhushanwen/pi-subagent-workflow",
-      "@zhushanwen/pi-ask-user"
     ]
   ],
   "access": "public",

@@ -5,11 +5,6 @@ import { execSync } from 'node:child_process'
 import { RpcClient, type RpcClientOptions } from './rpc-client.js'
 import { assertPiSessionFile } from './session-attach-assert.js'
 import type { IProcessManager } from '../../services/ports/pi-engine.js'
-
-// W2（restore-fork-attach-fix F4）：attach 断言 helper 实现在零依赖模块 session-attach-assert.ts
-//（放置缘由见该文件头注释——services 层引用不能把 rpc-client 传递链带进模块面），此处
-// re-export 保持「helper 可从 process-manager 引用」的交付物口径。
-export { assertPiSessionFile } from './session-attach-assert.js'
 import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged } from '../../utils/runtime-env.js'
 

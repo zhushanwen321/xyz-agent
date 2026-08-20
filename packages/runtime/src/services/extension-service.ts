@@ -289,7 +289,9 @@ export class ExtensionService {
         mandatory: resolved.tier !== undefined,
         tier: resolved.tier, // S10：tier 直接从 resolved 透传（天然正确）
         // layer：tier 非 undefined 即 builtin（infrastructure + feature 两级），否则 user。
-        // system（3 个文件型 xyz-*.js）走独立加载路径，不进 scanExtensions，故此处无 system 分支。
+        // [历史] 旧「3 个文件型 xyz-*.js 走独立加载路径、不进 scanExtensions」的 system 分支
+        // 已随 builtin→npm 迁移（2026-08）消灭——builtin 包现与用户扩展同走 scanExtensions，
+        // 由 mandatory-extensions.json SSOT 推导 tier 区分层级。
         layer: resolved.tier !== undefined ? 'builtin' as const : 'user' as const,
         source: isUserInstalled ? 'user-installed' : ext.source === 'discovery' ? 'discovery' : 'built-in',
         autoUpgrade: isAutoUpgrade,
@@ -364,19 +366,6 @@ export class ExtensionService {
     const { disabled } = this.readSettingsState()
     return { discovered, disabledSet: new Set(disabled) }
   }
-
-  /**
-   * 返回 builtin 文件型 extension 的绝对路径（existsSync 过滤后）。
-   *
-   * 设计文档 §2.3：3 个 builtin（xyz-agent-extension.js / xyz-system-prompt-extension.js /
-   * xyz-client-msg-id-mapper.js）永远注入，不受 preset.extensionMode 影响。
-   *
-   * 提取自原 getExtensionPaths L318-333 的内联 builtinExts 数组 + 过滤循环（行为不变）。
-   * 公开方法供 PresetService.resolveExtensionPaths 复用，避免重复 builtin 逻辑。
-   *
-   * 顺序约束：system-prompt 扩展必须在 agent extension 之后（spec §4 链式位置——
-   * 最后追加 → 链上靠后，快照≈最终生效值）。client-msg-id-mapper 位置无关，追加末尾稳定。
-   */
 
   /**
    * 一次性迁移：清理旧版 mandatory 机制遗留的 9 个 builtin 包历史记录。

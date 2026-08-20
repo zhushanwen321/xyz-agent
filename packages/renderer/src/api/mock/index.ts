@@ -17,7 +17,7 @@
  * connected），打一次 console.warn 提示。
  */
 import type {
-  Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo, BuiltinProviderTemplate,
+  Message, ModelInfo, ServerMessage, ServerMessageMap, ServerMessageUnion, SessionSummary, SessionGroup, ProviderInfo, BuiltinProviderTemplate,
   SkillInfo, AgentInfo, PluginInfo, SetProviderData,
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
   SystemPromptConfig,
@@ -87,7 +87,7 @@ function warnIfRealClientActive(): void {
  * [W17] pushSession 是 mock 与 real events 总线的接触点：首次推送时检测 real ws-client 是否
  * 已 connected，若是则 warn（防 mock 推送污染 real 订阅者）。
  */
-function pushSession(sessionId: string, msg: ServerMessage): void {
+function pushSession(sessionId: string, msg: ServerMessageUnion): void {
   warnIfRealClientActive()
   events.dispatchSession(sessionId, msg)
 }
@@ -168,7 +168,7 @@ const TIMING: Timing = {
 }
 
 // taste:allow-no-data-owner W24-EX-D（VITE_MOCK 测试基建，登记草稿）：mock 流式 handler 表
-const streamHandlers = new Map<string, Set<(msg: ServerMessage) => void>>()
+const streamHandlers = new Map<string, Set<(msg: ServerMessageUnion) => void>>()
 /** 已 abort 的 session：send 循环检查后提前返回 */
 // taste:allow-no-data-owner W24-EX-D（VITE_MOCK 测试基建，登记草稿）：mock 取消标记集合
 const cancelled = new Set<string>()
@@ -196,7 +196,7 @@ function nextId(prefix: string): string {
   return `${prefix}-${idSeq}`
 }
 
-function emit(sessionId: string, msg: ServerMessage): void {
+function emit(sessionId: string, msg: ServerMessageUnion): void {
   streamHandlers.get(sessionId)?.forEach((h) => h(msg))
 }
 
@@ -482,7 +482,11 @@ export const session = {
  *
  * delay 是 bashStart→bashResult 间隔，让 streaming loading 态可见。
  */
-function resolveBashMockBranch(command: string): { result: Record<string, unknown>; delay: number } {
+// result 锚定 protocol 契约（ServerMessageMap['message.bashResult'] 的分支可变字段子集）——
+// spread 进 payload 后由 map 登记静态校验（emit 参数为分发联合，缺字段即编译错）
+function resolveBashMockBranch(
+  command: string,
+): { result: Pick<ServerMessageMap['message.bashResult'], 'output' | 'exitCode' | 'cancelled' | 'truncated'>; delay: number } {
   const cmd = command.toLowerCase()
   // 2s 让 loading 态（spinner + 取消按钮）足够可见；timeout 用 3s 强调 timer 到期节奏
   const MOCK_BASH_DELAY = 2000
@@ -552,7 +556,7 @@ export const chat = {
    */
   async compact(sessionId: string): Promise<void> {
     await sleep(TIMING.ack)
-    emit(sessionId, { type: 'session.compacting', payload: { sessionId, status: 'compacting' } })
+    emit(sessionId, { type: 'session.compacting', payload: { sessionId, status: 'compacting', reason: 'manual' } })
     await sleep(TIMING.fileChangesGap)
     emit(sessionId, { type: 'session.compacted', payload: { sessionId, status: 'compacted' } })
   },
@@ -655,7 +659,7 @@ export const chat = {
     timers.add(t)
   },
 
-  streamSubscribe(sessionId: string, handler: (msg: ServerMessage) => void): () => void {
+  streamSubscribe(sessionId: string, handler: (msg: ServerMessageUnion) => void): () => void {
     let set = streamHandlers.get(sessionId)
     if (!set) {
       set = new Set()

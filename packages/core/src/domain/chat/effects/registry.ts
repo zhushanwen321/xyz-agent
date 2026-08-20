@@ -443,6 +443,13 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // 路径双发）。customStart effect 已在 message_start 时点以 custom_message entry 形态喂入
     // reducer + ref（display 覆写语义对齐重开 custom_message case），此处再喂会双计。
     if ((entry as { message?: { role?: unknown } }).message?.role === 'custom') return
+    // toolResult role 不在此跳过（区别于 custom，R2-S1）：pi 对同一条 toolResult 双发
+    // tool_execution_end + message_end{role:'toolResult'} 两事件，tool_call_end handler 与
+    // 本 handler 各喂 reducer 一次——但任一帧单独到达（另一帧丢失）时本入口可能是该
+    // toolResult 的唯一载体，无条件跳过会丢消息（破坏单入口契约）。去重由 reducer 的
+    // deliveredToolResultIds 幂等承担（apply-entry applyToolResultMessage：同 toolCallId
+    // 首次投递后二次 no-op），对齐 event-adapter handleMessageEnd「toolResult 与
+    // tool_execution_end 的回填，去重/合并归 core store 的 reducer 接入层编排」的职责划分。
     ctx.applyEntryFrame(sid, entry as PiEntry)
   },
 

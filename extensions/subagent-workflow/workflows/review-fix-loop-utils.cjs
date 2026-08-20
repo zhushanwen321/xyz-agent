@@ -852,17 +852,30 @@ const DORMANT_ADJUDICATIONS = new Set(["downgraded", "unverified"]);
  * @param round 当前轮
  * @returns 新 dormant 数组：同 id 重复裁决幂等（round/原因更新，revived 保持）
  */
+/** excludeIds 归一为 Set：Set 直用，数组转 Set，其余（undefined 等）空集。 */
+function toIdSet(excludeIds) {
+  if (excludeIds instanceof Set) return excludeIds;
+  if (Array.isArray(excludeIds)) return new Set(excludeIds);
+  return new Set();
+}
+
+/** dormant 条目理由文本：note 优先（非空），缺省回落 evidence（非空），均无则空串。 */
+function dormantDetail(e) {
+  if (typeof e.note === "string" && e.note.trim()) return e.note;
+  if (typeof e.evidence === "string" && e.evidence.trim()) return e.evidence;
+  return "";
+}
+
 function recordDormant(dormant, entries, round, excludeIds) {
   const list = Array.isArray(dormant) ? dormant.map((d) => ({ ...d })) : [];
-  const exclude = excludeIds instanceof Set ? excludeIds : new Set(Array.isArray(excludeIds) ? excludeIds : []);
+  const exclude = toIdSet(excludeIds);
   for (const e of entries || []) {
     if (!e || !DORMANT_ADJUDICATIONS.has(e.adjudication)) continue;
     // exec-review 修复：已在 state.issues 活跃追踪的 id 不落 dormant——同一 id
     // 「活跃 issue + 待复活 dormant」双状态会让 DORMANT 段永久注入一个每轮都在
     // must-fix 表里的条目（prompt 噪声 + 复活率数据污染）。
     if (exclude.has(e.id)) continue;
-    const detail = (typeof e.note === "string" && e.note.trim()) ? e.note
-      : ((typeof e.evidence === "string" && e.evidence.trim()) ? e.evidence : "");
+    const detail = dormantDetail(e);
     const existing = list.find((d) => d.id === e.id);
     if (existing) {
       existing.reason = "adjudication-" + e.adjudication;

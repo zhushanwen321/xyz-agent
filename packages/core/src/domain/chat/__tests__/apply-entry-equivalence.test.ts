@@ -214,6 +214,12 @@ describe('live ≡ reload 构造性等价（W6 全类型）', () => {
   const liveEntries: PiEntry[] = [
     { type: 'message', id: 'u-00000001-0000-4000-8000-000000000001', parentId: null, timestamp: ts(1000), message: { role: 'user', content: [{ type: 'text', text: '跑一下测试' }], timestamp: 1000 } },
     { type: 'message', id: undefined, parentId: null, timestamp: ts(2000), message: { role: 'assistant', content: [{ type: 'text', text: '开始执行' }, { type: 'toolCall', id: 'tc-1', name: 'bash', arguments: { command: 'npm test' } }], timestamp: 2000 } },
+    // [R2-S1] toolResult 双入口：生产实际输入是 tool_call_end + message_end 两条帧各喂
+    // reducer 一次（pi 对同一条 toolResult 双发 tool_execution_end + message_end{role:'toolResult'}，
+    // 两构造点产出同内容同构 entry、均无 id）。原 fixture 只喂单条 message_end 构造——测试
+    // 输入与生产输入不一致；幂等去重（deliveredToolResultIds）后双喂 ≡ 单喂，与 replay 侧
+    // （pi 文件每 toolResult 只存一份 entry）deep-equal 依旧成立（断言见下方「双入口等价」组）。
+    { type: 'message', id: undefined, parentId: null, timestamp: ts(3000), message: { role: 'toolResult', toolCallId: 'tc-1', toolName: 'bash', content: [{ type: 'text', text: 'all green' }], timestamp: 3000 } },
     { type: 'message', id: undefined, parentId: null, timestamp: ts(3000), message: { role: 'toolResult', toolCallId: 'tc-1', toolName: 'bash', content: [{ type: 'text', text: 'all green' }], timestamp: 3000 } },
     // bash：pi 落盘位置 = run 级联末（recordBashResult streaming 缓存 → finally flush），
     // xyz dispatcher 双分支延迟使 live 入流位置构造性对齐（W1）——两侧同位置
@@ -485,5 +491,99 @@ describe('live ≡ reload 构造性等价（W6 全类型）', () => {
     // 用户可见行为：两侧都是空 content 行（不走 fallback 文案——与 E4b 的 undefined 形态对照）
     expect(liveState.messages[0]).toMatchObject({ role: 'system', content: '' })
     expect(replayState.messages[0]).toMatchObject({ role: 'system', content: '' })
+  })
+})
+
+// ── 双入口等价（R1-S1 修复锁定 / R2-TC S1）──────────────────────────────────────
+//
+// 生产实际输入（runtime worker 对 pi 0.84.1 实证）：同一条 toolResult 双发
+// tool_execution_end + message_end{role:'toolResult'} 两个事件 → xyz 两条帧
+// （message.tool_call_end / message.message_end）各喂 applyEntry 一次（registry 两
+// handler）。此前 reducer 无幂等：异常时序（assistant 帧丢失 / hydrate 空窗）下第二条帧
+// 重复收集 orphan 或二次回填，orphan 永久残留 → live/reload 漂移。修复 = reducer
+// deliveredToolResultIds 幂等（applyToolResultMessage：同 toolCallId 首次投递后二次 no-op）。
+// 本组断言：双喂入序列终态 ≡ 单喂入序列终态（全量 state deep-equal，非抽样），且单入口
+// 契约不被去重破坏——去重键是「已投递过该 toolCallId 的 toolResult」而非「存在该
+// toolCallId」。entry 按生产构造点形态手写（tool_call_end：event-adapter
+// handleToolExecutionEnd；message_end：handleMessageEnd——同内容同构、均无 entry id）。
+describe('双入口等价（R2-TC S1）——同 toolCallId 双帧喂入 ≡ 单帧喂入', () => {
+  const ts = (ms: number) => new Date(ms).toISOString()
+
+  const assistantWithTc1: PiEntry = {
+    type: 'message',
+    id: undefined,
+    parentId: null,
+    timestamp: ts(2000),
+    message: { role: 'assistant', content: [{ type: 'toolCall', id: 'tc-1', name: 'bash', arguments: { command: 'npm test' } }], timestamp: 2000 },
+  }
+  /** 同一条 toolResult 的帧 entry 构造（两入口构造点产出同内容同构 entry） */
+  const toolResultEntry = (text: string): PiEntry => ({
+    type: 'message',
+    id: undefined,
+    parentId: null,
+    timestamp: ts(3000),
+    message: { role: 'toolResult', toolCallId: 'tc-1', toolName: 'bash', content: [{ type: 'text', text }], timestamp: 3000 },
+  })
+  const viaToolCallEnd = toolResultEntry('all green') // message.tool_call_end 帧（生产时序先到）
+  const viaMessageEnd = toolResultEntry('all green') // message.message_end 帧（后到）
+
+  it('S1a: 正常时序双喂入 ≡ 单喂入——回填恰一次、无 orphan、无重复消息', () => {
+    const dual = replayEntries([assistantWithTc1, viaToolCallEnd, viaMessageEnd])
+    const single = replayEntries([assistantWithTc1, viaToolCallEnd])
+    expect(dual).toEqual(single) // 全量 state（messages + orphan + 簿记）deep-equal
+    // 用户可见行为：host toolCall 不因双喂复制 / 二次改写，orphan 为零
+    expect(dual.messages).toHaveLength(1)
+    expect(dual.messages[0].toolCalls).toHaveLength(1)
+    expect(dual.messages[0].toolCalls![0]).toMatchObject({ id: 'tc-1', output: 'all green', status: 'completed' })
+    expect(dual.orphanToolResults).toHaveLength(0)
+  })
+
+  it('S1b: 异常时序（assistant 帧丢失）双喂入 ≡ 单喂入——orphan 恰一条不重复收集', () => {
+    const dual = replayEntries([viaToolCallEnd, viaMessageEnd])
+    const single = replayEntries([viaToolCallEnd])
+    expect(dual).toEqual(single)
+    expect(dual.messages).toHaveLength(0)
+    expect(dual.orphanToolResults).toHaveLength(1) // 修复前为 2：重复收集且永久残留（漂移源）
+  })
+
+  it('S1c: 单入口契约——tool_call_end 帧丢失时 message_end 是唯一载体，照常投影', () => {
+    const state = replayEntries([assistantWithTc1, viaMessageEnd])
+    expect(state.messages[0].toolCalls![0]).toMatchObject({ id: 'tc-1', output: 'all green' })
+    expect(state.orphanToolResults).toHaveLength(0)
+  })
+
+  it('S1d: 首投递优先——第二条帧内容不同（tool_call_end hook 改写 vs message_end 原始）不覆盖', () => {
+    const state = replayEntries([assistantWithTc1, toolResultEntry('hook-rewritten'), toolResultEntry('original')])
+    expect(state.messages[0].toolCalls![0].output).toBe('hook-rewritten') // no-op 保留首条（与 overlay 收口同值）
+  })
+
+  it('S1e: 同 turn 多 toolCall 各自双喂——按 id 各自回填恰一次，互不干扰', () => {
+    const assistant: PiEntry = {
+      type: 'message',
+      id: undefined,
+      parentId: null,
+      timestamp: ts(2000),
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'toolCall', id: 'tc-a', name: 'read', arguments: { path: '/a' } },
+          { type: 'toolCall', id: 'tc-b', name: 'bash', arguments: { command: 'ls' } },
+        ],
+        timestamp: 2000,
+      },
+    }
+    const result = (id: string, text: string): PiEntry => ({
+      type: 'message',
+      id: undefined,
+      parentId: null,
+      timestamp: ts(3000),
+      message: { role: 'toolResult', toolCallId: id, toolName: 'read', content: [{ type: 'text', text }], timestamp: 3000 },
+    })
+    // 生产时序：tc-a 双帧 → tc-b 双帧
+    const dual = replayEntries([assistant, result('tc-a', 'A'), result('tc-a', 'A'), result('tc-b', 'B'), result('tc-b', 'B')])
+    const single = replayEntries([assistant, result('tc-a', 'A'), result('tc-b', 'B')])
+    expect(dual).toEqual(single)
+    expect(dual.orphanToolResults).toHaveLength(0)
+    expect(dual.messages[0].toolCalls!.map((t) => t.output)).toEqual(['A', 'B'])
   })
 })

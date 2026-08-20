@@ -73,16 +73,6 @@ export interface PiStreamEvent {
   [key: string]: unknown
 }
 
-/** get_entries 返回的 entry（SessionEntry 形态；type === 'message' 的 entry 含 .message） */
-export interface PiSessionEntry {
-  type: string
-  id: string
-  parentId: string | null
-  timestamp: string
-  message?: PiAgentMessage
-  [key: string]: unknown
-}
-
 export interface PiFixtureOptions {
   /**
    * spawn 模型（默认 DEFAULT_MODEL）。显式 null = 不拼 --model——P1（final gate）附着
@@ -125,8 +115,8 @@ function detectPi(): string | null {
   }
 }
 
-/** 模块顶层探测结果（skip-if-no-pi 契约的唯一引用点，见文件头注释） */
-export const PI_PATH: string | null = detectPi()
+/** 模块顶层探测结果（skip-if-no-pi 契约的唯一引用点，见文件头注释；本模块内部消费，不导出） */
+const PI_PATH: string | null = detectPi()
 
 // ==================== 真实 LLM 凭证探测（等价性基线双轨，goal-audit 问题 1 修复） ====================
 

@@ -16,7 +16,11 @@ export type ToolMode = 'all' | 'allowlist' | 'denylist' | 'none'
  * 注意：pi 无原生 extension 黑名单。denylist 由 runtime 先列出全部已启用 extension，
  * 排除用户指定的 deniedExtensions 后，作为 allowlist 注入（见设计文档 §2.4）。
  *
- * BUILTIN_EXTENSION_FILES 永远注入（不受 extensionMode 影响），见设计文档 §2.3。
+ * builtin infrastructure 级扩展（mandatory-extensions.json SSOT，如
+ * @zhushanwen/pi-system-prompt / pi-msg-id-mapper）不受 extensionMode 影响（任何
+ * 模式下都注入，extension-filter.ts applyPresetMode 的 presetOverridable=false）；
+ * feature 级 builtin 与用户扩展同受 preset 筛选，见设计文档 §2.3（builtin→npm
+ * 迁移后形态）。
  */
 export type ExtensionMode = 'all' | 'allowlist' | 'denylist' | 'none'
 
@@ -41,17 +45,6 @@ export type ThinkingLevel = (typeof PI_THINKING_LEVELS)[number]
 
 /** pi 内置工具列表（pi 硬编码 7 个，0.84.1 实装锚点 dist/core/tools/index.js:81-89 createAllToolDefinitions） */
 export const BUILTIN_TOOLS = ['read', 'write', 'bash', 'edit', 'grep', 'find', 'ls'] as const
-
-/**
- * 3 个 builtin 文件型 extension 的固定标识。
- *
- * 它们不在 ExtensionService.scanExtensions() 返回值里（仅在 getExtensionPaths 追加），
- * 因此对用户不可见、不可 exclude、不受 extensionMode 影响——见设计文档 §2.3。
- * 必须与 extension-service.ts 的 builtinExts 数组完全一致。
- *
- * 消费方：extension-service.ts 的 builtinExts（Subagent C 打通）。
- * 本 shared 层仅声明标识，runtime 消费由 Wave 2 的 Subagent C 处理。
- */
 
 /** Pi 启动参数预设 */
 export interface PiLaunchPreset {

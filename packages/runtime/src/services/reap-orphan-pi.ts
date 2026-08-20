@@ -79,32 +79,55 @@ export function parsePsOutput(stdout: string): PsRow[] {
  * 真实 macOS/Linux ps 的 command 列不保留引号、只用空格连接，但测试与个别环境会以
  * 带引号形态呈现——分词按 POSIX 近似规则处理（引号内空格不分词，引号本身剥离）。
  * 真实 ps 不加引号时含空格的路径会被拆碎，由 matchesOwnPiArgv 的尾部精确匹配兜底。
+ *
+ * 实现为单字符状态机（consumeArgvChar 转移 + flushArgvToken 截断），转移规则与原
+ * 单函数逐字符循环逐一等价（行为不变拆分）。
  */
 export function tokenizeArgv(command: string): string[] {
-  const tokens: string[] = []
-  let cur = ''
-  let quote: '"' | "'" | null = null
-  let hasToken = false
+  const st: ArgvTokenizerState = { tokens: [], cur: '', quote: null, hasToken: false }
   for (const ch of command) {
-    if (quote) {
-      if (ch === quote) quote = null
-      else cur += ch
-    } else if (ch === '"' || ch === "'") {
-      quote = ch
-      hasToken = true
-    } else if (ch === ' ' || ch === '\t') {
-      if (hasToken) {
-        tokens.push(cur)
-        cur = ''
-        hasToken = false
-      }
-    } else {
-      cur += ch
-      hasToken = true
-    }
+    consumeArgvChar(st, ch)
   }
-  if (hasToken) tokens.push(cur)
-  return tokens
+  flushArgvToken(st)
+  return st.tokens
+}
+
+/** argv 分词状态机的可变态（tokenizeArgv 局部持有，转移逻辑拆到 consumeArgvChar）。 */
+interface ArgvTokenizerState {
+  tokens: string[]
+  cur: string
+  quote: '"' | "'" | null
+  hasToken: boolean
+}
+
+/** 截断当前 token（hasToken 时入列并复位累积态；连续空白不多产空 token）。 */
+function flushArgvToken(st: ArgvTokenizerState): void {
+  if (st.hasToken) {
+    st.tokens.push(st.cur)
+    st.cur = ''
+    st.hasToken = false
+  }
+}
+
+/** 单字符状态转移：引号内累积 / 引号开闭 / 空白截断 / 普通字符累积。 */
+function consumeArgvChar(st: ArgvTokenizerState, ch: string): void {
+  if (st.quote !== null) {
+    // 引号内：同款引号闭合，其余字符（含空白）原样累积
+    if (ch === st.quote) st.quote = null
+    else st.cur += ch
+    return
+  }
+  if (ch === '"' || ch === "'") {
+    st.quote = ch
+    st.hasToken = true
+    return
+  }
+  if (ch === ' ' || ch === '\t') {
+    flushArgvToken(st)
+    return
+  }
+  st.cur += ch
+  st.hasToken = true
 }
 
 /**

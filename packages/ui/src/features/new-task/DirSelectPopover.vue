@@ -4,8 +4,8 @@
  *
  * [w4 迁移] 自 renderer components/new-task/DirSelectPopover.vue（192 行）迁入 ui 包
  * features/new-task/（C-NT-4 跨端共享组件）。变化：workspaceStore.records → deps.recentWorkspaces
- * （NewTaskDeps inject，C-W4-1）；ui 原语走 @xyz-agent/ui barrel；useFlatListNav/path 本地化
- * （C-W4-3）。props/emits/模板逐字迁移（CT-4，不做功能改动）。
+ * （NewTaskDeps inject，C-W4-1）；ui 原语走包内相对导入（不经顶层 barrel，防自引用环）；
+ * useFlatListNav/path 本地化（C-W4-3）。props/emits/模板逐字迁移（CT-4，不做功能改动）。
  *
  * 纯文件系统导航：最近工作区 + 打开文件夹。
  * Worktree 相关内容（已有 worktree 列表 / 新建 worktree / 远程连接）已迁至 BranchSelectPopover 的
@@ -24,7 +24,10 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Folder, FolderPlus } from '@lucide/vue'
-import { Input, PopoverListItem, PopoverActionItem } from '@xyz-agent/ui'
+// ui 原语走包内相对导入（不经 @xyz-agent/ui 顶层 barrel）：new-task 组件经顶层 barrel
+// 再导出，顶层 barrel 自引用会闭合循环依赖环（R2 S-1）
+import { Input } from '../../primitives/input'
+import { PopoverActionItem, PopoverListItem } from '../../primitives/popover'
 import { useNewTaskDeps } from './new-task-deps'
 import { useFlatListNav } from './composables/useFlatListNav'
 import { dirNameOf, parentDirNameOf } from './logic/path'

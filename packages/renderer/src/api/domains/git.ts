@@ -5,7 +5,7 @@
  * - 请求-响应：status（→ 'git.status:result' 同步 reply，经 pending.resolve 消费）
  * - 动作-ack：stage/unstage/commit（→ 'message.status' ack，payload {sessionId, status}）
  *
- * 依赖方向：command（类型化原语，统一 pending.create + register + transport.send）。不 import events（git 无 server-push 订阅）。
+ * 依赖方向：command（类型化原语，统一 pending.createCommandId + register + transport.send）。不 import events（git 无 server-push 订阅）。
  *
  * 注：stage/unstage/commit 的 ack 复用 'message.status' type（protocol.ts 既有），前端 routeInbound
  * 按 msg.id resolve pending；domain 返回 Promise<void>，忽略 ack payload。失败走 error envelope

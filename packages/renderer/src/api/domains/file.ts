@@ -6,7 +6,7 @@
  * - file.tree.expand → 'file.tree.expand:result' 同步 reply
  * - file.read → 'file.read:result' 同步 reply
  *
- * 依赖方向：command（类型化原语，统一 pending.create + register + transport.send）。不 import events（file 无 server-push 订阅）。
+ * 依赖方向：command（类型化原语，统一 pending.createCommandId + register + transport.send）。不 import events（file 无 server-push 订阅）。
  * 失败走 error envelope（routeInbound 对 type==='error' 走 pending.reject，code 透传到 Error.code）。
  */
 import type { FileNode } from '@xyz-agent/shared'

@@ -196,9 +196,10 @@ export class ExtensionResolver implements IExtensionResolver {
    *   - dev：读源码目录 extensions/<pkg>/（repo root，pi 原生加载 .ts），
    *     改源码后新建 session 即生效，无需跑 prepare-builtin-extensions.sh。
    *
-   * dev 源码扫描只保留 mandatory 包（对齐 build staged 集合）：源码目录 extensions/ 含
-   * 17 个 @zhushanwen/pi-* 包，build 只 bundle 其中 10 个 mandatory（prepare 脚本按
-   * mandatory-extensions.json SSOT bundle）。若 dev 全量加载源码，会多出 evolve-daily
+   * dev 源码扫描只保留 mandatory 包（对齐 build staged 集合）：源码目录 extensions/ 的
+   * @zhushanwen/pi-* 包多于 build bundle 的 mandatory 集合（数量以
+   * mandatory-extensions.json SSOT 为准，不在此写死计数；prepare 脚本按 SSOT bundle）。
+   * 若 dev 全量加载源码，会多出 evolve-daily
    *（每日跑 Python 分析）等非 mandatory 包，与 build 产物集不一致。故按 mandatory SSOT
    * 过滤，保证 dev/build 加载同一集合，仅路径分流（源码 .ts vs bundle .js）。这属「builtin
    * 源集合界定」（静态定义），非 disabled/enabled/tier 运行时策略过滤（后者归 extension-filter）。
@@ -215,7 +216,18 @@ export class ExtensionResolver implements IExtensionResolver {
     if (packaged) {
       // build：读 staged bundle（projectRoot = process.resourcesPath）
       const builtinDir = join(projectRoot, 'extensions', '@zhushanwen')
-      if (!existsSync(builtinDir)) return result
+      // [W-RT-7 恢复] packaged 模式 builtin 目录缺失 = 打包错误（electron-builder extraResources
+      // 漏拷 staged extensions），fail-fast 抛错让用户/CI 立即感知，而非静默降级（builtin 缺失
+      // 会导致 system-prompt 注入 / msg-id 映射 / reload 命令全部静默失效，pi 行为严重退化）。
+      // dev 模式返回空仍合法（packaged 分支不触发）。恢复点：文件型 builtin 迁移 npm 包
+      // （34234fb66）时旧 getBuiltinExtensionPaths 的同款 fail-fast 丢失。
+      if (!existsSync(builtinDir)) {
+        throw new Error(
+          `[extension] builtin extensions directory missing in packaged build: ${builtinDir} ` +
+            `(expected staged Resources/extensions/@zhushanwen from electron-builder extraResources; ` +
+            `verify with scripts/postbuild-validate.sh)`,
+        )
+      }
       this.scanDirectory(builtinDir, result, 'bundled')
       return result
     }

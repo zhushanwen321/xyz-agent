@@ -54,16 +54,13 @@ export const SCALAR_STATE_DEBOUNCE_MS = 300
 /** usagePercent 上限（对齐 session-service.computeUsage 的 MAX_PERCENT 口径，clamp 防越界）。 */
 const MAX_USAGE_PERCENT = 100
 
-/**
- * thinkingLevel 周期兜底重拉间隔（ms，W7 验收锁定 30s）。
- * pi 同档位切换不发射 thinking_level_changed，纯事件失效覆盖不住——周期兜底补拉。
- * export 供测试 import（SR6）。
- */
-export const THINKING_LEVEL_POLL_INTERVAL_MS = 30_000
+/** thinkingLevel 周期兜底重拉间隔（ms，W7 验收锁定 30s）。
+ * pi 同档位切换不发射 thinking_level_changed，纯事件失效覆盖不住——周期兜底补拉。 */
+const THINKING_LEVEL_POLL_INTERVAL_MS = 30_000
 
-/** 快照失败退避序列（canonical，W6 接口契约锁定值）。export 供测试 import（SR6）。 */
+/** 快照失败退避序列（canonical，W6 接口契约锁定值）。 */
 // eslint-disable-next-line no-magic-numbers -- canonical 退避序列 1s/5s/15s（W6 契约锁定，非可调魔数）
-export const SCALAR_STATE_BACKOFF_SCHEDULE: readonly number[] = [1000, 5000, 15000]
+const SCALAR_STATE_BACKOFF_SCHEDULE: readonly number[] = [1000, 5000, 15000]
 
 /** get_state 字段投影的共享形态（每实例快照是其中单字段子集）。 */
 interface SessionScalarFields {

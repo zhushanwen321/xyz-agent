@@ -185,17 +185,20 @@ taste/no-silent-catch 处理：纯 console.warn 仍报（要求传播/重抛）�
 ## 7. 覆盖率与 coverage gate
 
 > S3-W1 交付 renderer coverage thresholds + CI 收集。`[from: v6-ui-refactor-test-infra S3-W1 coverage-thresholds]`
+> **2026-08-20 重校准 [from: PR #185]**：该 PR 大量重构扩大全量分母，旧基线失效（全量实测跌破旧阈值，CI 必红），按同一方法论用新实测重新设阈。
 
 **coverage gate（renderer，CI 内）**：`packages/renderer/vitest.config.ts` 的 `test.coverage` 块配 v8 provider + thresholds（任一指标 < 阈值则 vitest exit 非0，阻塞 CI）：
 
-| 指标 | threshold | 基线实测 | 余量（最紧标★）|
+| 指标 | threshold | 基线实测（2026-08-20） | 余量（最紧标★）|
 |------|-----------|---------|--------------|
-| Lines | 72 | 74.05 | 2.05% |
-| Statements | 70 | ~74 | ~4% |
-| Branches | 59 | 60.87 | 1.87% |
-| Functions | 67 | 68.42 | 1.42% ★ |
+| Lines | 68 | 70.57 | 2.57% |
+| Statements | 66 | 68.38 | 2.38% ★ |
+| Branches | 56 | 58.95 | 2.95% |
+| Functions | 60 | 63.37 | 3.37% |
 
-- **方法论 [from S3-W1]**：**先测量后设阈**——thresholds 取基线 -2~3%（非卡死基线值），留 flake 缓冲同时保整体不退化底线。卡死基线 CI 偶发红，-2~3% 是平衡点。未来若 Functions/Branches 余量持续收窄，补测试提升覆盖率或评估调整 thresholds（保持基线-2~3% 原则并记录原因）
+（旧基线 2026-06 S3-W1：thresholds 72/70/59/67，基线实测 Lines74.05/Stmts~74/Branch60.87/Funcs68.42——PR #185 重构扩大分母后作废）
+
+- **方法论 [from S3-W1]**：**先测量后设阈**——thresholds 取基线 -2~3%（非卡死基线值），留 flake 缓冲同时保整体不退化底线。卡死基线 CI 偶发红，-2~3% 是平衡点。未来若 Statements/Lines 余量持续收窄（当前最紧），补测试提升覆盖率或评估调整 thresholds（保持基线-2~3% 原则并记录原因）
 - **CI 收集**：`.github/workflows/ci.yml` test job 的 'Test - renderer' 步骤加 `--coverage` flag（与 `--reporter=junit --outputFile=test-results.xml` 共存，vitest 4.x 多 flag 无冲突），新增 'Upload coverage report' 步骤（upload-artifact `coverage-report`，`if:always()` 失败也上传便于排查 gate 红，path `packages/renderer/coverage/`）
 - **产物**：`packages/renderer/coverage/`（index.html + lcov.info + lcov-report/），已被 `.gitignore` 覆盖
 - 通用原则：增量核心逻辑应 100%；全文件覆盖率含大量 pre-existing 代码偏低，**以增量覆盖率为准**

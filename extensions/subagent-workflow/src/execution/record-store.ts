@@ -552,37 +552,44 @@ export class RecordStore {
       if (rec.status !== "running" || rec.externalInstance !== undefined) continue;
       if (this.orphanJudged.has(rec.id)) continue;
       this.orphanJudged.add(rec.id);
-
-      if (rec.chatMode === true) {
-        // chat 会话跨重启等续聊：保留 running（可续聊），仅落执行态信号。
-        this.reportSubagentRecord({ ...rec, resumable: true });
-        continue;
-      }
-      const sessionFile = rec.sessionFile;
-      if (sessionFile === undefined) continue; // 无子文件锚（目录扫描源不可达，防御）
-      const lastLine = readLastJsonlLine(sessionFile);
-      if (!lastLine.ok) {
-        // IO 错误可能暂时——判终态不可逆，保守落 resumable 等重开重判。
-        this.reportSubagentRecord({ ...rec, resumable: true });
-        continue;
-      }
-      let parseOk = false;
-      try {
-        JSON.parse(lastLine.line);
-        parseOk = true;
-      } catch {
-        parseOk = false;
-      }
-      // .finalized sidecar：防重锚（同 doFinalizeRecord 终态路径的收尾标记）。
-      writeFinalized(sessionFile);
-      this.reportSubagentRecord({
-        ...rec,
-        status: "closed",
-        closedReason: "gc",
-        endedAt: Date.now(),
-        ...(parseOk ? {} : { error: "orphan recovery: subagent session ended abnormally (truncated last line)" }),
-      });
+      this.finalizeOrphanRecord(rec);
     }
+  }
+
+  /**
+   * 单孤儿 record 的终态判定与落 entry（residual-fixes §5.2 三判据 + chat 分流）。
+   * 防重锚（orphanJudged 标记）已由调用方完成。
+   */
+  private finalizeOrphanRecord(rec: SubagentRecord): void {
+    if (rec.chatMode === true) {
+      // chat 会话跨重启等续聊：保留 running（可续聊），仅落执行态信号。
+      this.reportSubagentRecord({ ...rec, resumable: true });
+      return;
+    }
+    const sessionFile = rec.sessionFile;
+    if (sessionFile === undefined) return; // 无子文件锚（目录扫描源不可达，防御）
+    const lastLine = readLastJsonlLine(sessionFile);
+    if (!lastLine.ok) {
+      // IO 错误可能暂时——判终态不可逆，保守落 resumable 等重开重判。
+      this.reportSubagentRecord({ ...rec, resumable: true });
+      return;
+    }
+    let parseOk = false;
+    try {
+      JSON.parse(lastLine.line);
+      parseOk = true;
+    } catch {
+      parseOk = false;
+    }
+    // .finalized sidecar：防重锚（同 doFinalizeRecord 终态路径的收尾标记）。
+    writeFinalized(sessionFile);
+    this.reportSubagentRecord({
+      ...rec,
+      status: "closed",
+      closedReason: "gc",
+      endedAt: Date.now(),
+      ...(parseOk ? {} : { error: "orphan recovery: subagent session ended abnormally (truncated last line)" }),
+    });
   }
 
   /**
@@ -609,26 +616,45 @@ export class RecordStore {
     if (lastById.size === 0) return;
     const anchoredIds = new Set(this.reconstructAll(rootSessionFilter).map((r) => r.id));
     for (const [id, d] of lastById) {
-      if (d.status !== "running") continue; // 末条已终态/轮终：entry 自洽，无需恢复
-      if (rootSessionFilter !== undefined && d.rootSessionId !== rootSessionFilter) continue;
-      if (anchoredIds.has(id)) continue; // 有子文件锚：主循环已判（或 sidecar 已终态）
-      if (this.records.has(id)) continue; // 内存活 record：在途 spawn，不得误杀
-      if (this.orphanJudged.has(id)) continue;
+      if (!this.isEntryOrphanCandidate(id, d, rootSessionFilter, anchoredIds)) continue;
       this.orphanJudged.add(id);
       const rec = rebuildEntryRecord(id, d);
       if (rec === null) continue; // 损坏 entry：跳过（orphanJudged 已标记，不重判）
-      this.reportSubagentRecord({
-        ...rec,
-        ...(d.chatMode === true
-          ? { resumable: true }
-          : {
-              status: "closed" as const,
-              closedReason: "gc" as const,
-              endedAt: Date.now(),
-              error: "orphan recovery: no child session file (spawn interrupted or file removed externally)",
-            }),
-      });
+      this.finalizeEntryOnlyOrphan(rec, d.chatMode === true);
     }
+  }
+
+  /**
+   * entry-born 孤儿候选判定（recoverEntryOnlyOrphans 的守卫链拆出）：末条 running、
+   * root session 匹配、无子文件锚、不在内存活 record（防误杀在途 spawn）、未判过。
+   */
+  private isEntryOrphanCandidate(
+    id: string,
+    d: Record<string, unknown>,
+    rootSessionFilter: string | undefined,
+    anchoredIds: Set<string>,
+  ): boolean {
+    if (d.status !== "running") return false; // 末条已终态/轮终：entry 自洽，无需恢复
+    if (rootSessionFilter !== undefined && d.rootSessionId !== rootSessionFilter) return false;
+    if (anchoredIds.has(id)) return false; // 有子文件锚：主循环已判（或 sidecar 已终态）
+    if (this.records.has(id)) return false; // 内存活 record：在途 spawn，不得误杀
+    return !this.orphanJudged.has(id);
+  }
+
+  /** entry-born 孤儿按无文件判据收敛落 entry：chatMode → resumable（分流语义一致）；
+   *  否则 closed+gc+error（子文件由子进程创建，无文件 = 子进程从未开跑，error 方向安全）。 */
+  private finalizeEntryOnlyOrphan(rec: SubagentRecord, chatMode: boolean): void {
+    this.reportSubagentRecord({
+      ...rec,
+      ...(chatMode
+        ? { resumable: true }
+        : {
+            status: "closed" as const,
+            closedReason: "gc" as const,
+            endedAt: Date.now(),
+            error: "orphan recovery: no child session file (spawn interrupted or file removed externally)",
+          }),
+    });
   }
 
   /** 订阅变更。返回取消订阅函数。 */

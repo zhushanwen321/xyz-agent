@@ -18,11 +18,7 @@ import type { IPiEngine, IProcessManager } from '../ports/pi-engine.js'
 import type { SendMessageHook, PendingBashResultData } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import type { IMessageBus } from '../message-bus/message-bus.js'
-import { toErrorMessage } from '../../utils/errors.js'
-// D3a：instanceof 判别需要运行时 class 引用（非 type-only）。services 层引用 infra/pi 的
-// 具体模块在本仓已有先例（session-lifecycle 引 assertPiSessionFile / session-file-utils），
-// 本 import 只取错误类型，不触碰 RpcClient 实例——pi 交互仍走 IPiEngine port。
-import { RpcTimeoutError } from '../../infra/pi/rpc-client.js'
+import { toErrorMessage, RpcTimeoutError } from '../../utils/errors.js'
 
 /** 生成代次 token 用的进制（base-36：数字 + 小写字母，紧凑且无符号字符）。 */
 const RANDOM_TOKEN_RADIX = 36

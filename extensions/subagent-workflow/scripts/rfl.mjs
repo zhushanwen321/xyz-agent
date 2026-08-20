@@ -99,20 +99,24 @@ function isTimingPair(pair) {
   return Array.isArray(pair) && typeof pair[0] === "number" && typeof pair[1] === "number";
 }
 
-function wallMs(state) {
-  let min = null;
-  let max = null;
+/** 收集 run 内全部合法 phase 时序对 [startMs, endMs]（非法值=半写入 run 容错跳过）。 */
+function validTimingPairs(state) {
+  const pairs = [];
   for (const b of state.batches || []) {
     for (const r of b.rounds || []) {
-      const pt = r.phaseTimings || {};
-      for (const [, pair] of Object.entries(pt)) {
-        if (!isTimingPair(pair)) continue;
-        if (min == null || pair[0] < min) min = pair[0];
-        if (max == null || pair[1] > max) max = pair[1];
+      for (const pair of Object.values(r.phaseTimings || {})) {
+        if (isTimingPair(pair)) pairs.push(pair);
       }
     }
   }
-  return min != null && max != null ? max - min : null;
+  return pairs;
+}
+
+/** run 墙钟时间 = 全部合法时序对的 min(start) → max(end)；无任何合法对返回 null。 */
+function wallMs(state) {
+  const pairs = validTimingPairs(state);
+  if (pairs.length === 0) return null;
+  return Math.max(...pairs.map((p) => p[1])) - Math.min(...pairs.map((p) => p[0]));
 }
 
 function cmdList(repoSlug) {

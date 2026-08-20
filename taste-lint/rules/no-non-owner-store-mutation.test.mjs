@@ -349,3 +349,90 @@ test('R2/W24: 同名形参双函数 f(store)/g(store) 并存 → 两处转发均
   expect(messages).toHaveLength(2);
   expect(messages.every((m) => m.messageId === 'forwardedMutation')).toBe(true);
 });
+
+// ── CRAP 定向：classify/report 内部分支的边界输入（规则行为回归锁定）─────────
+
+test('R2/CRAP: import 别名 useSessionStore as getStore → 别名通道直调仍报错（ImportSpecifier local.name 分支）', () => {
+  const messages = lint(
+    'import { useSessionStore as getStore } from "@/stores/session"\n' +
+      'export function load() {\n' +
+      '  getStore().applySnapshot({ groups: [] })\n' +
+      '}\n',
+  );
+  expect(messages).toHaveLength(1);
+  expect(messages[0].messageId).toBe('nonOwnerMutation');
+  expect(messages[0].message).toMatch(/applySnapshot/);
+});
+
+test('R2/CRAP: 同名工厂名 import 自非 store 源（@/stores/workflow）→ 无 import 边，直调通过（STORE_SOURCE_RE 负分支）', () => {
+  const messages = lint(
+    'import { useSessionStore } from "@/stores/workflow"\n' +
+      'export function load() {\n' +
+      '  useSessionStore().applySnapshot({ groups: [] })\n' +
+      '}\n',
+  );
+  expect(messages).toHaveLength(0);
+});
+
+test('R2/CRAP: 同名形参双函数，仅其一被喂 store → 未喂函数体内调用不报（fnStack 裁决精度，非文件级形参名匹配）', () => {
+  const messages = lint(
+    'import { useSessionStore } from "@/stores/session"\n' +
+      'export function fed(s) {\n' +
+      '  s.applySnapshot({ groups: [] })\n' +
+      '}\n' +
+      'export function notFed(s) {\n' +
+      '  s.applySnapshot({ groups: [] })\n' +
+      '}\n' +
+      'export function setup() {\n' +
+      '  const store = useSessionStore()\n' +
+      '  fed(store)\n' +
+      '}\n',
+  );
+  // 只报 fed 体内 1 条；notFed 的同名形参未绑定 store 实参（若按文件级形参名匹配会误报 2 条）
+  expect(messages).toHaveLength(1);
+  expect(messages[0].messageId).toBe('forwardedMutation');
+});
+
+test('R2/CRAP: 值位置方法引用 const h = store.applySnapshot（VariableDeclarator init）→ detachedMethodRef 报错', () => {
+  const messages = lint(
+    'import { useSessionStore } from "@/stores/session"\n' +
+      'export function setup() {\n' +
+      '  const store = useSessionStore()\n' +
+      '  const h = store.applySnapshot\n' +
+      '  h({ groups: [] })\n' +
+      '}\n',
+  );
+  expect(messages).toHaveLength(1);
+  expect(messages[0].messageId).toBe('detachedMethodRef');
+  expect(messages[0].message).toMatch(/applySnapshot/);
+});
+
+test('R2/CRAP: 声明不追踪的间接形态（数组元素 / computed key 接收者）→ 通过（docstring 已知边界回归锁定）', () => {
+  const messages = lint(
+    'import { useSessionStore } from "@/stores/session"\n' +
+      'const box = {\n' +
+      '  grab() {\n' +
+      '    return useSessionStore()\n' +
+      '  },\n' +
+      '}\n' +
+      'export function load(snapshot) {\n' +
+      '  const stores = [useSessionStore()]\n' +
+      '  stores[0].applySnapshot(snapshot)\n' +
+      '  box["grab"]().applySnapshot(snapshot)\n' +
+      '}\n',
+  );
+  // stores[0]（MemberExpression object）不入候选；box["grab"]（computed key property 非
+  // Identifier）入候选但 classify null——两形态均为 docstring「已知检出边界」，维持 S1
+  expect(messages).toHaveLength(0);
+});
+
+test('R2/CRAP: 行内豁免注释位于调用之后（trailing comment）→ 通过（hasInlineAllowComment 的 commentsAfter 分支）', () => {
+  const messages = lint(
+    'import { useSessionStore } from "@/stores/session"\n' +
+      'export function rename(id, label) {\n' +
+      '  const store = useSessionStore()\n' +
+      '  store.applySnapshot(id, { label }) // taste:allow-non-owner-mutation\n' +
+      '}\n',
+  );
+  expect(messages).toHaveLength(0);
+});

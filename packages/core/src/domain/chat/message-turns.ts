@@ -189,6 +189,59 @@ function isInlineNotice(msg: Message): boolean {
   return msg.bashExecution !== undefined || msg.liveOnly === true
 }
 
+/** turn 未被填实（无 user、无 assistant、无 notice）→ 折叠候选。实际只可能是未被后续
+ *  assistant 填实的 trigger turn（user 锚 turn 必有 user；assistant 自启 turn 必有 assistant）。 */
+function isEmptyTurn(g: TurnGroup): boolean {
+  return g.user === null && g.assistants.length === 0 && (g.notices?.length ?? 0) === 0
+}
+
+/** 关闭 turn：若其未被填实（空 trigger turn）从产出中移除（空 turn 折叠，D3）。
+ *  current 开启期间无其他槽位压栈（notice 挂 current 不出槽位），末位槽位即 current 的
+ *  turn 槽位——groups/slots 成对弹出安全，groups 末位守卫为防御性断言。
+ *  返回 null（关闭后无当前 turn）——返回值形式让调用点直接 `current = closeTurn(...)`，
+ *  赋值对 TS CFA 可见（跨函数的外部 let 窄化不追踪）。 */
+function closeTurn(turn: TurnGroup | null, groups: TurnGroup[], slots: GroupSlot[]): null {
+  if (turn !== null && isEmptyTurn(turn) && groups[groups.length - 1] === turn) {
+    groups.pop()
+    slots.pop()
+  }
+  return null
+}
+
+/** 开启 turn 并压入 turn 槽位，返回新组（调用点赋回 current）。 */
+function openTurn(
+  user: Message | null,
+  trigger: 'bg-notify' | undefined,
+  groups: TurnGroup[],
+  slots: GroupSlot[],
+): TurnGroup {
+  const turn: TurnGroup = { user, assistants: [], trigger }
+  groups.push(turn)
+  slots.push({ slot: 'turn', group: groups.length - 1 })
+  return turn
+}
+
+/** 规则 4 分支体：inline notice 归当前 turn 内部（挂 notices，按到达序追加末尾——bash entry
+ *  在文件序即级联末，位置忠实）；无当前 turn 退化为独立 static 项（现状兜底保留）。
+ *  current 透传返回（本分支不改变边界）。 */
+function appendInlineNotice(
+  msg: Message,
+  current: TurnGroup | null,
+  slots: GroupSlot[],
+): TurnGroup | null {
+  if (current) {
+    ;(current.notices ??= []).push(msg)
+  } else {
+    slots.push({
+      slot: 'static',
+      item: msg.bashExecution
+        ? { kind: 'bashExecution', message: msg }
+        : { kind: 'systemNotice', message: msg },
+    })
+  }
+  return current
+}
+
 /**
  * 扁平消息（全量数组，含 display:false）→ 渲染槽位序列 + turn 成员组。
  * 分组规则 v2 见文件头「分组规则」节（conversation-turn-attribution §3.3 D3/D4）。
@@ -200,77 +253,41 @@ function groupRenderInput(messages: Message[]): { slots: GroupSlot[]; groups: Tu
   const groups: TurnGroup[] = []
   let current: TurnGroup | null = null
 
-  /** turn 未被填实（无 user、无 assistant、无 notice）→ 折叠候选。实际只可能是未被后续
-   *  assistant 填实的 trigger turn（user 锚 turn 必有 user；assistant 自启 turn 必有 assistant）。 */
-  const isEmptyTurn = (g: TurnGroup): boolean =>
-    g.user === null && g.assistants.length === 0 && (g.notices?.length ?? 0) === 0
-
-  /** 关闭 turn：若其未被填实（空 trigger turn）从产出中移除（空 turn 折叠，D3）。
-   *  current 开启期间无其他槽位压栈（notice 挂 current 不出槽位），末位槽位即 current 的
-   *  turn 槽位——groups/slots 成对弹出安全，groups 末位守卫为防御性断言。
-   *  返回 null（关闭后无当前 turn）——返回值形式让调用点直接 `current = closeTurn(current)`，
-   *  赋值对 TS CFA 可见（闭包内外部 let 窄化不跨调用追踪）。 */
-  const closeTurn = (turn: TurnGroup | null): null => {
-    if (turn !== null && isEmptyTurn(turn) && groups[groups.length - 1] === turn) {
-      groups.pop()
-      slots.pop()
-    }
-    return null
-  }
-
-  /** 开启 turn 并压入 turn 槽位，返回新组（调用点赋回 current）。 */
-  const openTurn = (user: Message | null, trigger?: 'bg-notify'): TurnGroup => {
-    const turn: TurnGroup = { user, assistants: [], trigger }
-    groups.push(turn)
-    slots.push({ slot: 'turn', group: groups.length - 1 })
-    return turn
-  }
-
   for (const msg of messages) {
     if (msg.role === 'user') {
       // 规则 1：user 锚 → 开新 turn（挂起的空 trigger turn 折叠不产出）
-      current = closeTurn(current)
-      current = openTurn(msg)
+      current = closeTurn(current, groups, slots)
+      current = openTurn(msg, undefined, groups, slots)
     } else if (msg.role === 'assistant') {
       // 规则 3：assistant 归 current（无则自启 user:null turn——首条 assistant 边缘保留）
-      current ??= openTurn(null)
+      current ??= openTurn(null, undefined, groups, slots)
       current.assistants.push(msg)
     } else if (isHiddenCompleteNotify(msg)) {
       // 规则 2：隐藏完成通知 → turn 边界（D3）。连续边界折叠：current 已是未填实 trigger
       // turn 时复用该组（trigger 单值常量，取最新语义天然成立），不再压新组；此分支 current
       // 为 null 或已填实（非空），closeTurn 无可折叠，直接开新 trigger turn。
       if (current === null || !isEmptyTurn(current)) {
-        current = openTurn(null, 'bg-notify')
+        current = openTurn(null, 'bg-notify', groups, slots)
       }
     } else if (msg.display === false) {
       // 隐藏非完成通知消息（todo-context 等）透明：不参与边界、不产出渲染项——现状语义
       // （分组前被 filterDisplayableMessages 滤除）原样保留。消息仍在 store，不丢。
       continue
     } else if (isInlineNotice(msg)) {
-      // 规则 4：inline notice → 归当前 turn 内部（挂 notices，按到达序追加末尾——bash entry
-      // 在文件序即级联末，位置忠实）；无当前 turn 退化为独立 static 项（现状兜底保留）。
-      if (current) {
-        ;(current.notices ??= []).push(msg)
-      } else {
-        slots.push({
-          slot: 'static',
-          item: msg.bashExecution
-            ? { kind: 'bashExecution', message: msg }
-            : { kind: 'systemNotice', message: msg },
-        })
-      }
+      // 规则 4：inline notice → 归当前 turn 内部（分支体见 appendInlineNotice）。
+      current = appendInlineNotice(msg, current, slots)
     } else {
       // 规则 5：其余可见 system → boundary：独立 systemNotice 项 + 关闭当前 turn（现状语义）。
       // else 即「非 user/assistant 且非上述属性」兜底分支：现状唯一合法值是 role === 'system'
       // （compactionSummary/branchSummary/可见 custom/通用 system）。刻意不做显式 system 判定后
       // 丢弃——类型外 role（未来扩展）兜底渲染为 systemNotice 可见可发现，静默丢弃会违背
       // 「渲染过滤不丢消息」语义（AGENTS.md 规则 9）。bashExecution 此分支不可达（规则 4 已收）。
-      current = closeTurn(current)
+      current = closeTurn(current, groups, slots)
       slots.push({ slot: 'static', item: { kind: 'systemNotice', message: msg } })
     }
   }
   // 数组结束时仍挂起的空 trigger turn 不产出（空 turn 折叠）
-  closeTurn(current)
+  closeTurn(current, groups, slots)
   return { slots, groups }
 }
 

@@ -682,7 +682,7 @@ export function buildSpawnArgs(
   if (mf) {
     if (mf.noExtensions) args.push("--no-extensions");
     if (mf.approve) args.push("--approve");
-    // 镜像 --no-context-files：xyz-system-prompt-extension.js（经 --extension 镜像进入
+    // 镜像 --no-context-files：@zhushanwen/pi-system-prompt（经 --extension 镜像进入
     // 子进程）靠子进程 argv 检测此 flag 守卫全局 AGENTS.md 注入——不镜像则用户的
     // context files opt-out 只对主进程生效，每个 subagent 仍被注入。
     if (mf.noContextFiles) args.push("--no-context-files");
