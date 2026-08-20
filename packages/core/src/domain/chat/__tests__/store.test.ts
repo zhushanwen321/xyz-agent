@@ -91,6 +91,73 @@ describe('createChatStore factory', () => {
     })
   })
 
+  describe('hydrate 尾窗锚（W5 D5：唯一写方 = hydrate，唯一读方 = loadMoreHistory）', () => {
+    it('hydrate 记锚：user 消息带 piEntryId 时取 piEntryId', () => {
+      sut.store.hydrate('s1', [
+        { id: 'ent-u2', piEntryId: 'ent-u2', role: 'user', content: 'q2', status: 'complete', timestamp: 2 },
+      ])
+      expect(sut.store.getHydrateAnchor('s1')).toBe('ent-u2')
+    })
+
+    it('hydrate 记锚：system 消息无 piEntryId 字段时取 id（对称取值 piEntryId ?? id）', () => {
+      // compaction 等 system 族消息：reducer 产物无 piEntryId，但 id 即 entry 派生 uuidv7
+      sut.store.hydrate('s1', [
+        { id: 'ent-comp', role: 'system', content: 'ctx compressed', status: 'complete', timestamp: 1 },
+      ])
+      expect(sut.store.getHydrateAnchor('s1')).toBe('ent-comp')
+    })
+
+    it('空 history 不记锚（新 session 无 load-more，锚缺失走兜底）', () => {
+      sut.store.hydrate('s1', [])
+      expect(sut.store.getHydrateAnchor('s1')).toBeUndefined()
+    })
+
+    it('锚记尾窗首条而非末条（切分点 = 最旧可见消息的 entry 身份）', () => {
+      sut.store.hydrate('s1', [
+        { id: 'ent-first', piEntryId: 'ent-first', role: 'user', content: 'q1', status: 'complete', timestamp: 1 },
+        { id: 'ent-last', piEntryId: 'ent-last', role: 'assistant', content: 'a1', status: 'complete', timestamp: 2 },
+      ])
+      expect(sut.store.getHydrateAnchor('s1')).toBe('ent-first')
+    })
+
+    it('重 hydrate（dispose 后 hydrated 已清）覆盖旧锚；hydrate 幂等守卫内不重写', () => {
+      const sid = 's1'
+      sut.store.hydrate(sid, [userMsg('m1')])
+      // 幂等守卫：已 hydrated 的二次 hydrate 不改锚
+      sut.store.hydrate(sid, [userMsg('m2')])
+      expect(sut.store.getHydrateAnchor(sid)).toBe('m1')
+      // disposeSession 清 hydrated + 锚后重 hydrate → 新锚覆盖（LRU 驱逐重进同语义）
+      sut.store.disposeSession(sid)
+      expect(sut.store.getHydrateAnchor(sid)).toBeUndefined()
+      sut.store.hydrate(sid, [userMsg('m3')])
+      expect(sut.store.getHydrateAnchor(sid)).toBe('m3')
+    })
+
+    it('disposeSession 清锚 + 分区隔离（A/B session 锚互不干扰）', () => {
+      sut.store.hydrate('sa', [userMsg('anchor-a')])
+      sut.store.hydrate('sb', [userMsg('anchor-b')])
+      expect(sut.store.getHydrateAnchor('sa')).toBe('anchor-a')
+      expect(sut.store.getHydrateAnchor('sb')).toBe('anchor-b')
+      sut.store.disposeSession('sa')
+      expect(sut.store.getHydrateAnchor('sa')).toBeUndefined()
+      expect(sut.store.getHydrateAnchor('sb')).toBe('anchor-b') // B 不受 A 销毁影响
+    })
+
+    it('LRU 驱逐清锚（随 hydrated 同生共死，驱逐重进后重 hydrate 重建）', () => {
+      // 9 个 session 全部 hydrate（记锚）+ touchLru，s0 最旧被驱逐
+      for (let i = 0; i < 9; i++) {
+        const sid = `s${i}`
+        sut.store.hydrate(sid, [userMsg(`anchor-${i}`)])
+        sut.store.touchLru(sid)
+      }
+      expect(sut.store.getHydrateAnchor('s0')).toBe('anchor-0') // 前置：锚已记录
+      sut.store.evictIfNeeded()
+      expect(sut.store.getMessages('s0')).toHaveLength(0) // 前置：s0 被驱逐
+      expect(sut.store.getHydrateAnchor('s0')).toBeUndefined() // 锚随分区同点清理
+      expect(sut.store.getHydrateAnchor('s8')).toBe('anchor-8') // 保留 session 的锚不受影响
+    })
+  })
+
   describe('pendingBuffer 数据层（m1：pushPending / drainN 计数 FIFO / abortPending）', () => {
     it('TC1: pushPending 暂存到 buffer 不碰 messages', () => {
       const sid = 's1'
@@ -183,7 +250,8 @@ describe('createChatStore factory', () => {
 
     it('bash 消息不计入 isGenerating（B1 PR#116：bash 不阻塞）', () => {
       const sid = 's1'
-      // message.bashStart 创建 role:'system' streaming bash 消息
+      // [W1 fix-chat-flow-order] bashStart 只写 ephemeral executingBash 不建消息项，
+      // bashResult 经 entry 入流的 bashExecution 消息 status 恒 complete——两种形态都不阻塞。
       sut.store.applyMessageEvent(sid, msg(sid, 'message.bashStart', { command: 'ls' }))
       expect(sut.store.isGenerating(sid)).toBe(false)
     })

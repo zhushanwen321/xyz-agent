@@ -144,6 +144,21 @@ export function createChatStore() {
    * broadcast≡get_state 对账与后续 ref 收敛消费。disposeSession / LRU 驱逐同点清理。
    */
   const entryStates = new Map<string, ChatViewState>()
+  /**
+   * [W5 D5] per-session hydrate 尾窗锚（Map 分区，与 messages 同区生命周期）。
+   *
+   * 取值规则（写死）：hydrate 注入的尾窗首条消息的 `piEntryId ?? id`——user/assistant
+   * 消息带 piEntryId（entry 派生 uuidv7）；system 族消息（bashExecution/compactionSummary/
+   * custom/branchSummary）无 piEntryId 字段但 id 即 entry 派生 uuidv7（reducer
+   * deriveBaseId：entry.id 优先），两侧取值对称。load-more（useChat.loadMoreHistory）
+   * 据此在全量历史中定位切分点，只前插锚之前的段（见 mutations.splitHistoryBeforeAnchor）。
+   *
+   * // @data-owner #7 —— 权威源 = session 文件 entries（pi append-only，compaction 不改
+   * entry id）；锚非缓存（无失效/无回写：唯一写方 = hydrate 一次性写入、重 hydrate 覆盖，
+   * 唯一读方 = loadMoreHistory）。disposeSession / LRU 驱逐同点清理（随 hydrated 标记
+   * 同生共死——驱逐重进后由重 hydrate 重建）。
+   */
+  const hydrateAnchors = new Map<string, string>()
   /** FileChanges 子域控制器（W10，ADR-0024 D5），委托 chat-changeset.ts。messages 由本 store 注入，设计见 ./README.md + chat-changeset.ts。 */
   const changeset = createChangeSetController(messages)
   const { changeSetStatuses, getChangeSetStatus, setChangeSetStatus, applyFileChanges, markChangeSetsSuperseded } = changeset
@@ -275,6 +290,8 @@ export function createChatStore() {
     (sid) => {
       deleteChangeSetStatusesFor(sid)
       entryStates.delete(sid)
+      // [W5 D5] 锚随 hydrated 标记同点清理（驱逐重进后重 hydrate 覆盖重建，防陈旧锚）
+      hydrateAnchors.delete(sid)
     },
   )
   /** W3 H3：LRU 驱逐（阈值触发）/ 显式驱逐（带虚拟 key）/ [M7] 单虚拟 key 删除 */
@@ -314,8 +331,18 @@ export function createChatStore() {
     if (hydrated.value.has(sessionId)) return
     const cloned = truncateToolOutputBatch(history.map((m) => ({ ...m })))
     commitMessages(messages, sessionId, cloned)
+    // [W5 D5] hydrate 尾窗锚：hydrate 守卫保证每 session 只在此写一次；
+    // disposeSession / LRU 驱逐清 hydrated 后重 hydrate 到这里 → set 覆盖旧锚。
+    // 空 history（新 session）不记锚——此时无 load-more（truncated=false），锚缺失走兜底。
+    const anchorMsg = cloned[0]
+    if (anchorMsg) hydrateAnchors.set(sessionId, anchorMsg.piEntryId ?? anchorMsg.id)
     hydrated.value = new Set(hydrated.value).add(sessionId)
     lruTouch(sessionId) // W3: LRU recency
+  }
+
+  /** [W5 D5] 读 hydrate 尾窗锚（loadMoreHistory 唯一读方；未 hydrate / 空历史 → undefined）。 */
+  function getHydrateAnchor(sessionId: string): string | undefined {
+    return hydrateAnchors.get(sessionId)
   }
 
   /** 直接覆盖某 session 的消息（subagent 虚拟 session 用，不受 hydrated 守卫；回流路径截断 AC-10/D9）。 */
@@ -657,6 +684,8 @@ export function createChatStore() {
     deleteChangeSetStatusesFor(sessionId)
     // [W21] reducer 累积态分区同点清理（与 LRU 驱逐的 deleteMessageKey 内联清理同语义）
     entryStates.delete(sessionId)
+    // [W5 D5] hydrate 尾窗锚同点清理（唯一写方 hydrate 已随 hydrated 守卫失效，锚无独立存活意义）
+    hydrateAnchors.delete(sessionId)
     // D-3 生命周期：streaming flag 惰性派生缓存随 messages 分区同点清理（漏删即慢泄漏，
     // 07 文档 §3.3.2 cleanup 契约）。
     sessionStreamingFlags.delete(sessionId)
@@ -682,6 +711,7 @@ export function createChatStore() {
     markChangeSetsSuperseded,
     isHydrated, markHistoryFailed, clearHistoryError,
     hydrate, setMessages,
+    getHydrateAnchor,
     prependHistory,
     applySubagentStreamDelta: (virtualId: string, lines: string[]) => streamingStateMachine.applySubagentStreamDelta(virtualId, lines),
     finalizeSubagentStream: (virtualId: string) => streamingStateMachine.finalizeSubagentStream(virtualId),

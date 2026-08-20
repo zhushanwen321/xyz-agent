@@ -29,6 +29,7 @@ import {
 } from '../../coordination/subscription-state'
 import type { ChatStoreInstance } from './store'
 import type { ChatApiPort, WriteSegmentsFn } from './api-port'
+import { splitHistoryBeforeAnchor } from './mutations'
 import { createMessageCoalescer } from './delta-coalescer'
 
 /**
@@ -618,6 +619,9 @@ export function createUseChat(deps: UseChatDeps) {
    * [W21 已接] 实时侧喂同一 reducer：message_end / tool_call_end 重构 entry 经
    * store.applyMessageEvent → applyEntryFrame 累积 per-session reducer state
    * （messages ref 的实时渲染仍走 overlay 路径，ref 与 reducer state 收敛归 W22 对账）。
+   * [W5 D5] store.hydrate 内部同时记录尾窗锚（首条消息 `piEntryId ?? id`，唯一写方），
+   * 供 loadMoreHistory 锚定切分——两条历史读取路径（RPC getEntries entry 树重建 /
+   * 文件尾读 mapSessionEntries）都携带 entry 派生 id，边界消息身份稳定可得。
    */
   async function hydrateHistory(sessionId: string): Promise<void> {
     if (chat.isHydrated(sessionId)) return
@@ -651,14 +655,36 @@ export function createUseChat(deps: UseChatDeps) {
   /**
    * W4 H4：加载更多历史（fallback 全量读 + 合并去重）。
    *
-   * 调 getFullHistory RPC（runtime 全量文件读取），与 store 现有消息按 id 去重后
-   * 合并到列表头部。幂等：重复调用不追加已有消息（FR-4/AC-7）。
-   * RPC 失败时不破坏现有消息（catch 吞错，与 hydrateHistory 的 markHistoryFailed 同策略）。
+   * [W5 D5 锚定切分] getFullHistory（runtime 全量文件读取，消息 id = entry 派生 uuidv7）
+   * 取回后**按 hydrate 尾窗锚切分**，只把锚之前的段交给 prependHistory。为什么不能靠
+   * id 去重：活跃 session 的 store 混合 live 消息（`u-`/`e<N>`/`bash-` 前缀 id）与
+   * hydrate 文件侧消息（uuidv7 id），两个 id 空间**永不相等**——live 消息在文件里的
+   * 对应物会被旧去重误判为新消息，重复前插、分组错乱（机制 5）。锚 = hydrate 尾窗
+   * 首条的 entry 身份（store.hydrate 记录，唯一写方），锚之前的段必然不在 store 中。
+   *
+   * 三级定位见 mutations.splitHistoryBeforeAnchor（exact / fingerprint / none）：
+   * 非 exact 即 console.warn（V6 验收：console 出现锚降级 warn = 兜底路径命中，需检查
+   * compaction / 外部改写情形）；none 时 prependHistory 的 id 去重兜底仍在（安全网）。
+   *
+   * 幂等：切分后空段不写入（FR-4/AC-7）；锚即全量首条 = 没有更早历史，标记清除后
+   * 按钮隐藏（hasMoreHistory → false）。RPC 失败不破坏现有消息（catch 吞错，与
+   * hydrateHistory 的 markHistoryFailed 同策略），用户可重试。
    */
   async function loadMoreHistory(sessionId: string): Promise<void> {
     try {
       const fullHistory = await deps.chatApi.getFullHistory(sessionId)
-      chat.prependHistory(sessionId, fullHistory)
+      // 锚消息 = store 当前最旧消息：live 消息只 append 到尾部，load-more 前最旧的
+      // 仍是 hydrate 尾窗首条（fingerprint 降级用其 role/首段文本/timestamp）。
+      const anchor = chat.getHydrateAnchor(sessionId)
+      const anchorSource = chat.getMessages(sessionId)[0]
+      const { segment, strategy } = splitHistoryBeforeAnchor(fullHistory, anchor, anchorSource)
+      if (strategy !== 'exact') {
+        console.warn(
+          `[useChat] loadMoreHistory anchor split degraded to '${strategy}' for session ${sessionId}` +
+            ` (anchor=${String(anchor)}) — ${strategy === 'none' ? 'id-dedup safety net engaged (live duplicates possible)' : 'content-fingerprint located the split point'}`,
+        )
+      }
+      chat.prependHistory(sessionId, segment)
       clearHistoryTruncated(sessionId) // N1: 全量加载后不再有更多历史
     // eslint-disable-next-line taste/no-silent-catch -- 加载更多是 best-effort：失败不破坏现有消息，用户可重试。与 hydrateHistory markHistoryFailed 同策略。
     } catch (e) {
