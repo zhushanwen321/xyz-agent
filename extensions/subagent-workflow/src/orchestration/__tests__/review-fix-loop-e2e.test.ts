@@ -68,7 +68,7 @@ const MOCK_USAGE: AgentUsage = {
 };
 
 type JsonSchema = {
-  type?: string;
+  type?: string | string[];
   properties?: Record<string, JsonSchema>;
   items?: JsonSchema;
   oneOf?: JsonSchema[];
@@ -97,14 +97,17 @@ function miniValidator(schema: unknown, value: unknown, path: string): void {
     return;
   }
   if (s.type) {
-    const ok =
-      (s.type === "string" && typeof value === "string") ||
-      (s.type === "number" && typeof value === "number") ||
-      (s.type === "integer" && typeof value === "number" && Number.isInteger(value)) ||
-      (s.type === "boolean" && typeof value === "boolean") ||
-      (s.type === "object" && value !== null && typeof value === "object" && !Array.isArray(value)) ||
-      (s.type === "array" && Array.isArray(value));
-    if (!ok) throw new Error(`SCHEMA CONTRACT VIOLATION: ${path} (expected ${s.type})`);
+    // rfl C5：JSON Schema union type（如 total: ["number", "null"]）——任一分支匹配即过
+    const types = Array.isArray(s.type) ? s.type : [s.type];
+    const ok = types.some((t) =>
+      (t === "string" && typeof value === "string") ||
+      (t === "number" && typeof value === "number") ||
+      (t === "integer" && typeof value === "number" && Number.isInteger(value)) ||
+      (t === "boolean" && typeof value === "boolean") ||
+      (t === "null" && value === null) ||
+      (t === "object" && value !== null && typeof value === "object" && !Array.isArray(value)) ||
+      (t === "array" && Array.isArray(value)));
+    if (!ok) throw new Error(`SCHEMA CONTRACT VIOLATION: ${path} (expected ${JSON.stringify(s.type)})`);
   }
   const rec = value as Record<string, unknown> | null;
   if (Array.isArray(s.required) && rec !== null && typeof rec === "object") {
@@ -165,14 +168,15 @@ interface Scenario {
  */
 function makeScenarioRunner(scenario: Scenario) {
   const reviewCalls: Array<{ prompt: string; result: Record<string, unknown> }> = [];
-  const calls: Array<{ kind: "review" | "aggregate" | "fix"; prompt: string; agent?: string; schema?: unknown }> = [];
-  const run = vi.fn(async (opts: { prompt?: string; schema?: unknown; agent?: string }): Promise<AgentResult> => {
+  const calls: Array<{ kind: "review" | "aggregate" | "fix"; prompt: string; agent?: string; schema?: unknown; model?: string }> = [];
+  const run = vi.fn(async (opts: { prompt?: string; schema?: unknown; agent?: string; model?: string }): Promise<AgentResult> => {
     const kind = classifyCall(opts);
     const prompt = opts.prompt ?? "";
     // m5：记录 agent 字段（review/fix 派发验证）。内置名（reviewer/doc-reviewer）走
     // def.name，自定义 .md agent 为 undefined——只断言 fix 调用的（fixAgent 派发）。
     // rfl B6：记录 opts.schema（aggregatorSchema 扩展断言——防 schema 与 prompt 脱节）。
-    calls.push({ kind, prompt, agent: opts.agent, schema: opts.schema });
+    // rfl C5：记录 opts.model（aggregatorModel 降档断言）。
+    calls.push({ kind, prompt, agent: opts.agent, schema: opts.schema, model: opts.model });
     let parsed: unknown = null;
     if (kind === "review") {
       const idx = reviewCalls.length;
@@ -206,6 +210,7 @@ function makeScenarioRunner(scenario: Scenario) {
       prompts: calls.map((c) => c.prompt),
       agents: calls.map((c) => c.agent),
       schemas: calls.map((c) => c.schema),
+      models: calls.map((c) => c.model),
     }),
   };
 }
@@ -1180,6 +1185,208 @@ describe("startup fail-fast (ADR-0003 D6)", () => {
         expect(objBranch!.properties).toHaveProperty(field);
       }
       expect(aggSchema.properties).toHaveProperty("scores");
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  // ── C5: rfl 打分 + clean 轮回填 + aggregatorModel（tier-1 M2） ──
+
+  it(
+    "C5: scores 落盘 + regression 确定性回填 + clean 轮对账回填 + aggregatorModel 降档",
+    async () => {
+      // 剧本（三轮到 clean）：R1 聚合带 reviewer scores；R2 聚合带 R2 reviewer 分 +
+      // R1 fix LLM 三维度分 + 1 条新 issue；R2 reconciliation 全 fixed（R1 fix
+      // regression 回填 = 10）；R3 全 clean → 确定性对账（N-1 fix-attempted → fixed）
+      // + R2 fix 的 regression 回填（clean 轮 entry，LLM 维度 null）。
+      let aggN = 0;
+      const runner = makeScenarioRunner({
+        review: [
+          () => ({ report_file: "/tmp/c5-r1.md", must_fix: 1, suggestion: 0, reconciliation: [] }),
+          () => ({
+            report_file: "/tmp/c5-r2.md", must_fix: 1, suggestion: 0,
+            reconciliation: [{ prev_id: "MF-1", status: "fixed", evidence: "read confirmed" }],
+          }),
+          () => ({
+            report_file: "/tmp/c5-r3.md", must_fix: 0, suggestion: 0,
+            reconciliation: [{ prev_id: "N-1", status: "fixed", evidence: "read confirmed" }],
+          }),
+        ],
+        aggregate: () => {
+          aggN++;
+          if (aggN === 1) {
+            return {
+              report_file: "/tmp/c5-agg1.md", must_fix: 1, suggestion: 0,
+              must_fix_ids: [{ id: "MF-1", severity: "major", adjudication: "evidence", files: ["src/a.ts"], evidence: "off-by-one", guidance: "fix boundary" }],
+              fixes_caution: [],
+              scores: [{
+                round: 1, targetKind: "reviewer", targetName: "reviewer",
+                dimensions: { evidence: 9, severity: 7, actionability: 8, reconciliation: 9 },
+                total: 8.2,
+              }],
+            };
+          }
+          return {
+            report_file: "/tmp/c5-agg2.md", must_fix: 1, suggestion: 0,
+            must_fix_ids: [{ id: "N-1", severity: "major", adjudication: "evidence", files: ["src/b.ts"], evidence: "new issue", guidance: "patch it" }],
+            fixes_caution: [],
+            scores: [
+              { round: 2, targetKind: "reviewer", targetName: "reviewer",
+                dimensions: { evidence: 8, severity: 8, actionability: 9, reconciliation: 10 }, total: 8.6 },
+              { round: 1, targetKind: "fix", targetName: "fix",
+                dimensions: { coverage: 8, selfCheck: 9, minimality: 7 }, total: 8 },
+            ],
+          };
+        },
+        fix: () => ({
+          // R1 修 MF-1、R2 修 N-1（按调用序内容差异不影响断言——issue_id 由 reconcile 驱动）
+          fixed_count: 1,
+          fixes: [{ issue_id: aggN === 1 ? "MF-1" : "N-1", description: "fix", self_check: "grep: 1 hit", affected_files: ["src/c.ts"] }],
+          deferred: [],
+        }),
+      });
+      const deps = makeDeps(runner);
+
+      const result = await runAndWait(
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("reviewer"),
+          aggregatorModel: "mock-model-x", _runId: RUN_ID() },
+        deps, undefined, RUN_TIMEOUT_MS,
+      );
+      expect(result.reason).toBe("completed");
+      const outcome = assertScriptOutcome(result.scriptResult);
+      expect(outcome.terminated).toBe("clean");
+
+      const st = JSON.parse(readFileSync(join(outcome.runDir!, "state.json"), "utf8")) as {
+        issues: Record<string, { status: string; history: Array<{ round: number; status: string }> }>;
+        scores: Array<{ round: number; targetKind: string; targetName: string; dimensions: Record<string, number | null>; total: number | null; note?: string }>;
+      };
+
+      // ① R1 reviewer entry（4 维度 + total）与 R1 fix entry（LLM 三维度 + regression 由
+      // R2 reconcile 确定性回填 = 10：R2 reconciliation 全 fixed，无 regressed）
+      const r1Reviewer = st.scores.find((s) => s.targetKind === "reviewer" && s.round === 1);
+      expect(r1Reviewer).toMatchObject({ targetName: "reviewer", total: 8.2 });
+      expect(r1Reviewer!.dimensions).toEqual({ evidence: 9, severity: 7, actionability: 8, reconciliation: 9 });
+
+      const r1Fix = st.scores.find((s) => s.targetKind === "fix" && s.round === 1);
+      expect(r1Fix).toBeDefined();
+      expect(r1Fix!.dimensions).toEqual({ coverage: 8, selfCheck: 9, minimality: 7, regression: 10 });
+      expect(r1Fix!.total).toBe(8); // LLM entry 的 total 保持，regression 只补维度
+
+      // ②③ clean 轮黑洞修复：R2 fix 的 N-1 从 fix-attempted → fixed（history 有 R3
+      // fixed 记录）；R2 fix 的确定性 entry（round=2，LLM 三维度 null + regression=10 +
+      // total null + note 标注）
+      expect(st.issues["N-1"].status).toBe("fixed");
+      expect(st.issues["N-1"].history).toContainEqual({ round: 3, status: "fixed" });
+      const r2Fix = st.scores.find((s) => s.targetKind === "fix" && s.round === 2);
+      expect(r2Fix).toBeDefined();
+      expect(r2Fix!.dimensions).toEqual({ coverage: null, selfCheck: null, minimality: null, regression: 10 });
+      expect(r2Fix!.total).toBeNull();
+      expect(r2Fix!.note).toContain("clean-round deterministic backfill");
+
+      // ④ aggregatorModel 降档：aggregate 调用 model=mock-model-x；review/fix 不受影响
+      const { kinds, models } = runner.stats();
+      const aggModels = kinds.map((k, i) => (k === "aggregate" ? models[i] : null)).filter((m) => m !== null);
+      expect(aggModels).toEqual(["mock-model-x", "mock-model-x"]);
+      const reviewModels = kinds.map((k, i) => (k === "review" ? models[i] : null)).filter((m) => m !== null);
+      expect(reviewModels.every((m) => m !== "mock-model-x")).toBe(true);
+
+      // ⑤ usage 提示载体：pi-meta parameters 的 aggregatorModel description（用户可见层）
+      const wfSource = readFileSync(wf("review-fix-loop"), "utf-8");
+      expect(wfSource).toContain("aggregatorModel");
+      expect(wfSource).toContain("AGENTS.md");
+      expect(wfSource).toContain("confirm with the owner");
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
+    "B6: exec-review 修复回归——对账通道不绕过 dormant 分区 + 已追踪条目降级重报不翻 regressed/不落 dormant",
+    async () => {
+      // 剧本：R1 聚合 2 条目（MF-1 活跃 + MF-D1 降级）→ fix(MF-1)；R2 reconciliation
+      // 声明 MF-D1 not-fixed（绕过尝试）+ MF-1 fixed；R2 聚合把 MF-1 降级重报
+      //（已追踪条目降级）+ N-1 活跃 → fix(N-1)；R3 clean。
+      let aggN = 0;
+      let fixN = 0;
+      const runner = makeScenarioRunner({
+        review: [
+          () => ({ report_file: "/tmp/b6b-r1.md", must_fix: 1, suggestion: 0, reconciliation: [] }),
+          () => ({
+            report_file: "/tmp/b6b-r2.md", must_fix: 1, suggestion: 0,
+            reconciliation: [
+              { prev_id: "MF-1", status: "fixed", evidence: "read confirmed" },
+              { prev_id: "MF-D1", status: "not-fixed", evidence: "still present" },
+            ],
+          }),
+          () => ({
+            report_file: "/tmp/b6b-r3.md", must_fix: 0, suggestion: 0,
+            reconciliation: [{ prev_id: "N-1", status: "fixed", evidence: "read confirmed" }],
+          }),
+        ],
+        aggregate: () => {
+          aggN++;
+          if (aggN === 1) {
+            return {
+              report_file: "/tmp/b6b-agg1.md", must_fix: 1, suggestion: 0,
+              must_fix_ids: [
+                { id: "MF-1", severity: "major", adjudication: "evidence", files: ["src/a.ts"] },
+                { id: "MF-D1", severity: "major", adjudication: "downgraded", note: "no evidence" },
+              ],
+              fixes_caution: [],
+            };
+          }
+          return {
+            report_file: "/tmp/b6b-agg2.md", must_fix: 1, suggestion: 0,
+            must_fix_ids: [
+              { id: "MF-1", severity: "major", adjudication: "downgraded", note: "re-adjudicated down" },
+              { id: "N-1", severity: "major", adjudication: "evidence", files: ["src/b.ts"] },
+            ],
+            fixes_caution: [],
+          };
+        },
+        fix: () => {
+          fixN++;
+          return {
+            fixed_count: 1,
+            fixes: [{ issue_id: fixN === 1 ? "MF-1" : "N-1", description: "fix", self_check: "grep: 1 hit", affected_files: ["src/c.ts"] }],
+            deferred: [],
+          };
+        },
+      });
+      const deps = makeDeps(runner);
+
+      const result = await runAndWait(
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("reviewer"), _runId: RUN_ID() },
+        deps, undefined, RUN_TIMEOUT_MS,
+      );
+      expect(result.reason).toBe("completed");
+      const outcome = assertScriptOutcome(result.scriptResult);
+      expect(outcome.terminated).toBe("clean");
+
+      const st = JSON.parse(readFileSync(join(outcome.runDir!, "state.json"), "utf8")) as {
+        issues: Record<string, { status: string; history: Array<{ round: number; status: string }> }>;
+        dormant: Array<{ id: string; revived: boolean }>;
+      };
+
+      // major-1 回归：reviewer 对 dormant id（MF-D1）声明 not-fixed 不经对账通道建
+      // issue（复活唯一入口 = 聚合活跃重报）——issues 无 MF-D1，dormant 记录保持
+      expect(st.issues["MF-D1"]).toBeUndefined();
+      const dormantD1 = st.dormant.find((d) => d.id === "MF-D1");
+      expect(dormantD1).toBeDefined();
+      expect(dormantD1!.revived).toBe(false);
+
+      // major-2a 回归：已追踪条目（MF-1）被 R2 聚合降级重报 → 不翻 regressed
+      //（对账 fixed 声明是权威转换：fix-attempted → fixed，history R2 fixed）
+      expect(st.issues["MF-1"].status).toBe("fixed");
+      expect(st.issues["MF-1"].history).toContainEqual({ round: 2, status: "fixed" });
+      expect(st.issues["MF-1"].history).not.toContainEqual({ round: 2, status: "regressed" });
+
+      // major-2b 回归：MF-1 在 issues 活跃追踪（recordDormant excludeIds）→ 不落 dormant
+      expect(st.dormant.find((d) => d.id === "MF-1")).toBeUndefined();
+
+      // N-1 正常链路 + R3 clean 轮对账回填（fix-attempted → fixed）
+      expect(st.issues["N-1"].status).toBe("fixed");
+      expect(st.issues["N-1"].history).toContainEqual({ round: 3, status: "fixed" });
     },
     RUN_TIMEOUT_MS,
   );

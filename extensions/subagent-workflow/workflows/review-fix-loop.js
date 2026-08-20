@@ -44,6 +44,7 @@ parameters:
     maxFixAttempts: { type: integer, default: 2, minimum: 1 }
     convergeNewIssues: { type: integer, default: 1, minimum: 1 }
     convergeRounds: { type: integer, default: 2, minimum: 1 }
+    aggregatorModel: { type: string, description: cheaper model for the aggregate step (mechanical dedup/format work); route per global/project AGENTS.md, confirm with the owner before adding a new entry; defaults to the run model }
     reviewPrompt: { type: string }
     fixPrompt: { type: string }
     fallowScan: { type: boolean, default: false }
@@ -102,6 +103,10 @@ const {
   computeOrigin,
   recordDormant,
   filterActiveIds,
+  filterDormantFromRecon,
+  backfillFixRegression,
+  applyCleanRoundBackfill,
+  resolveAggregatorModel,
   resolveAgentDefs,
   recordAgentClean,
   recordAgentDirty,
@@ -118,7 +123,7 @@ const {
 for (const key of Object.keys($ARGS)) {
   if (VALID_ARG_KEYS.has(key)) continue;
   if (/^batch\d+$/.test(key)) continue;
-  fail("未知参数: " + key + "（合法参数: targetType/target/batch1..batchN/agents/batchNames/reviewPrompt/fixPrompt/autoCommit/maxRounds/stuckThreshold/skipCleanAgents/recheckAfterFix/fallowScan/fixAgent/maxFixAttempts/convergeNewIssues/convergeRounds）");
+  fail("未知参数: " + key + "（合法参数: targetType/target/batch1..batchN/agents/batchNames/reviewPrompt/fixPrompt/autoCommit/maxRounds/stuckThreshold/skipCleanAgents/recheckAfterFix/fallowScan/fixAgent/maxFixAttempts/convergeNewIssues/convergeRounds/aggregatorModel）");
 }
 
 const targetType = $ARGS.targetType;
@@ -166,6 +171,11 @@ const maxFixAttempts = coerceInt($ARGS.maxFixAttempts, 2);
 const convergeNewIssues = coerceInt($ARGS.convergeNewIssues, 1);
 const convergeRounds = coerceInt($ARGS.convergeRounds, 2);
 const MODEL = $MODEL;
+// rfl aggregator 降档（tier-1 6.4，T8）：聚合是机械去重/格式化工作，可降档到便宜
+// 模型。模型路由参考全局/项目 AGENTS.md（当前用户全局有条目：
+// xiaomi-token-plan-cn/mimo-v2.5-pro，thinking 开非 max）；无条目请先与主人确认
+// 并写入 AGENTS.md。缺省回退主模型（行为与现状一致）。
+const AGG_MODEL = resolveAggregatorModel($ARGS.aggregatorModel, MODEL);
 
 // base 锁定（RC-6，5.6）：git-diff 场景 run 启动时锁定 base commit，全程用锁定 hash 构造
 // diff 指令，防止 run 期间 base ref 被更新导致各轮 diff 范围不一致。rev-parse 失败（非 git
@@ -228,7 +238,7 @@ const aggregatorSchema = {
   type: "object",
   properties: {
     report_file: { type: "string", description: "Absolute path to aggregated.md" },
-    must_fix: { type: "number", description: "Total must-fix after dedup across all dimensions" },
+    must_fix: { type: "number", description: "Total must-fix after dedup across all dimensions, counting adjudication=evidence entries only" },
     suggestion: { type: "number", description: "Total suggestions after dedup across all dimensions" },
     must_fix_ids: {
       type: "array",
@@ -696,6 +706,16 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
 
     if (reviewResults.every((r) => r.must_fix === 0)) {
       log("Batch " + batchIndex + " round " + round + ": all agents clean.");
+      // rfl clean 轮黑洞修复（tier-1 6.6 v5，T7）：all-clean 现状在聚合/reconcile 前
+      // break——末轮 fix 的对账与回归回填永不发生，eval 数据在最 canonical 的成功
+      // 路径上失真。break 前用本轮已解析的 reconciliation 数据做确定性回填（不调
+      // LLM）：fix-attempted 未再现 → fixed + 上轮 fix 的 regression 维度回填。
+      if (round > 1) {
+        applyCleanRoundBackfill(state, {
+          reconSeen, reconEscalate, round, stuckThreshold,
+        });
+        log("Clean-round backfill applied (reconcile + regression backfill for the previous fix).");
+      }
       batchRounds.push({ round, mustFix: 0, suggestion: reviewResults.reduce((a, r) => a + (r.suggestion ?? 0), 0), agents: agentRoundResults, modifiedFiles: [], phaseTimings });
       saveState(state);
       batchClean = true;
@@ -703,15 +723,20 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     }
 
     // ── Aggregate（内置 prompt，不依赖任何 agent.md） ─────────
+    // rfl T7/T8：prevFixResult 作打分材料（R2+ 聚合给上轮 fix 打 LLM 三维度分）；
+    // model 用 AGG_MODEL（可降档参数，缺省 = 主模型，行为与现状一致）。
     const aggT0 = Date.now();
     const aggPrompt = buildAggregatorPrompt({
       header: "Batch " + batchIndex + "/" + BATCHES.length + " Round " + round + "/" + maxRounds + " — AGGREGATE REVIEWS",
       round, max: maxRounds, roundDir,
       reviewResults,
+      prevFixResult: round > 1 && state.fixResults && state.fixResults.length
+        ? state.fixResults[state.fixResults.length - 1]
+        : null,
     });
     const aggRaw = await agent({
       prompt: aggPrompt,
-      model: MODEL,
+      model: AGG_MODEL,
       schema: aggregatorSchema,
       description: "aggregate",
       timeoutMs: 3_600_000, // 1h
@@ -720,7 +745,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     phaseTimings.aggregate = [aggT0, Date.now()];
     recordCall(buildCallRecord({
       batch: batchIndex, round, role: "aggregator", name: "aggregate",
-      model: MODEL, prompt: aggPrompt, meta: aggRaw,
+      model: AGG_MODEL, prompt: aggPrompt, meta: aggRaw,
     }));
 
     // returnMeta 下 aggRaw = {value, error}；失败时 value 为空串、error 在 finalMessage 透出（MF-1）
@@ -756,6 +781,20 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     const suggestion = agg.suggestion ?? 0;
     log("Aggregated: " + mustFix + " must-fix + " + suggestion + " suggestion(s).");
 
+    // rfl 打分落盘（tier-1 6.6，T7）：aggregator 顺手输出的弱信号 scores（reviewer
+    // 分每轮 / fix LLM 三维度 R2+）。缺失/畸形一律降级 WARN——打分失败不影响循环
+    // （权威层是状态机客观回填，见 reconcileIssues + backfillFixRegression）。
+    if (Array.isArray(agg.scores) && agg.scores.length > 0) {
+      if (!Array.isArray(state.scores)) state.scores = [];
+      for (const sc of agg.scores) {
+        if (sc && typeof sc === "object" && typeof sc.targetKind === "string" && sc.targetKind) {
+          state.scores.push(sc);
+        }
+      }
+    } else {
+      log("WARN: aggregator returned no usable scores — quality scoring degraded this round");
+    }
+
     // 5.1：R1 的 aggregator must_fix_ids 初始化 state.issues（数字 ID 起点）
     // rfl 数据链（tier-1 6.1/6.3）：降级条目（adjudication downgraded/unverified）
     // 不建 issue——消费侧过滤（filterActiveIds），修复队列/ES3 校验只含活跃条目；
@@ -784,7 +823,8 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     // 注入复活通道——「降级即消失」的修复。每轮聚合后统一记录（同 id 幂等）。
     if (agg.must_fix_ids && agg.must_fix_ids.length > 0) {
       const before = (state.dormant || []).length;
-      state.dormant = recordDormant(state.dormant, agg.must_fix_ids, round);
+      state.dormant = recordDormant(state.dormant, agg.must_fix_ids, round,
+        new Set(Object.keys(state.issues || {})));
       if (state.dormant.length > before) {
         log("Dormant recorded: " + (state.dormant.length - before) + " adjudication-downgraded issue(s) (total " + state.dormant.length + ")");
       }
@@ -823,6 +863,11 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       for (const entry of agg.must_fix_ids) {
         const id = typeof entry === "string" ? entry : entry && entry.id;
         if (!id) continue;
+        // exec-review 修复（major-2a）：本轮降级条目（不在 activeIds）对新建与已追踪
+        // 转换都不生效——已追踪条目被聚合降级重报 = 聚合撤回本轮判定，不翻 regressed
+        //（对账通道 reconcileIssues 才是 fix-attempted → regressed 的权威转换点），
+        // 也不落 dormant（在 issues 活跃追踪，recordDormant 的 excludeIds 排除）。
+        if (!activeIds.has(id)) continue;
         if (state.issues[id]) {
           if (reconCount === 0 && (state.issues[id].status === "fix-attempted" || state.issues[id].status === "fixed")) {
             state.issues[id].status = "regressed";
@@ -834,7 +879,6 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
           }
           continue;
         }
-        if (!activeIds.has(id)) continue; // 降级条目由 recordDormant 统一处理，不进修复队列
         // 复活置位（6.3 delta ③ 的闭环另一半）：dormant 条目以活跃身份重新上报 →
         // 回修复队列（下方正常建 issue），后续轮 prompt 不再注入它。
         const dormantHit = (state.dormant || []).find((d) => d.id === id && d.revived !== true);
@@ -863,11 +907,22 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
 
     let stuck = { stuck: false };
     if (round > 1 && (reconCount > 0 || hasFixAttempted)) {
-      const rec = reconcileIssues(state.issues || {}, { seenIds: reconSeen, escalateIds: reconEscalate, round, stuckThreshold });
+      // 对账通道的 dormant 分区（exec-review major-1 修复）：reviewer 对 dormant id
+      // 声明 not-fixed 不经此通道建 issue（复活唯一入口 = 聚合活跃重报）
+      const reconFiltered = filterDormantFromRecon(reconSeen, reconEscalate, state.dormant);
+      const rec = reconcileIssues(state.issues || {}, { seenIds: reconFiltered.seen, escalateIds: reconFiltered.escalate, round, stuckThreshold });
       state.issues = rec.issues;
       state.knownRemaining = rec.knownRemaining;
       stuck = { stuck: rec.stuck, stuckIds: rec.stuckIds };
       log("Reconcile: " + Object.keys(rec.issues).length + " tracked issue(s), known-remaining: " + rec.knownRemaining.length);
+      // rfl regression 维度确定性回填（tier-1 6.6，T7）：reconcile 后 regressed 数已
+      // 定，为上轮 fix 的 score entry 填 regression（无 entry 时创建确定性 entry）
+      if (state.fixResults && state.fixResults.length > 0) {
+        state.scores = backfillFixRegression({
+          scores: state.scores, fixResult: state.fixResults[state.fixResults.length - 1],
+          issues: state.issues || {}, round,
+        });
+      }
     } else {
       const s = updateStuckState(prevMustFix, stuckCount, mustFix, stuckThreshold);
       stuckCount = s.stuckCount;

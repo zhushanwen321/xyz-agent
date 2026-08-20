@@ -38,6 +38,9 @@ import {
   computeOrigin,
   recordDormant,
   filterActiveIds,
+  backfillFixRegression,
+  applyCleanRoundBackfill,
+  resolveAggregatorModel,
   resolveAgentDefs,
   recordAgentClean,
   recordAgentDirty,
@@ -58,7 +61,7 @@ function fail(msg: string): never {
 describe("VALID_ARG_KEYS（未知参数 fail-fast 白名单）", () => {
   it("覆盖全部合法参数键（与 review-fix-loop.js 头部 fail 消息列出的合法参数一一对应）", () => {
     expect([...VALID_ARG_KEYS].sort()).toEqual([
-      "_runId", "agents", "autoCommit", "batchNames", "convergeNewIssues",
+      "_runId", "agents", "aggregatorModel", "autoCommit", "batchNames", "convergeNewIssues",
       "convergeRounds", "fallowScan", "fixAgent", "fixPrompt", "maxFixAttempts", "maxRounds",
       "recheckAfterFix", "reviewPrompt", "skipCleanAgents",
       "stuckThreshold", "target", "targetType",
@@ -1414,5 +1417,151 @@ describe("B5 buildAggregatorPrompt 条目扩展字段 + adjudication 结构化�
     expect(p).toContain("Keep ALL must-fix-table entries in");
     expect(p).toContain("must_fix COUNTS ONLY adjudication=evidence entries");
     expect(p).toContain("MUST carry the adjudication reason");
+  });
+});
+
+// ── C1-C4: rfl 打分与 aggregatorModel（tier-1 M2，§6.6/§6.4） ───────
+
+describe("C1 buildAggregatorPrompt prevFixResult 入参 + 打分 rubric 段", () => {
+  it("C1 prevFixResult 传入（R2+）：SCORING 段含 reviewer 四维度权重 + fix 三 LLM 维度 + 禁止输出 regression", () => {
+    const p = buildAggregatorPrompt({
+      header: "h", round: 2, max: 10, roundDir: "/tmp/rd", reviewResults: [],
+      prevFixResult: { fixed_count: 1, fixes: [{ issue_id: "MF-1", description: "d", self_check: "grep: 1 hit", affected_files: [] }], deferred: [] },
+    });
+    expect(p).toContain("SCORING");
+    expect(p).toContain("evidence 40%, severity 20%, actionability 25%, reconciliation 15%");
+    expect(p).toContain("coverage (30%)");
+    expect(p).toContain("selfCheck (30%)");
+    expect(p).toContain("minimality (20%)");
+    expect(p).toContain("do NOT output it");
+    expect(p).toContain("prev_fix_result");
+    expect(p).toContain('"round": 2, "targetKind": "reviewer"');
+  });
+
+  it("C1 prevFixResult 为 null（R1）：无 fix 打分材料段（R1 无 fix 可打）", () => {
+    const p = buildAggregatorPrompt({
+      header: "h", round: 1, max: 10, roundDir: "/tmp/rd", reviewResults: [],
+      prevFixResult: null,
+    });
+    expect(p).toContain("SCORING");
+    expect(p).toContain("evidence 40%");
+    expect(p).not.toContain("Fix scoring");
+    expect(p).not.toContain("prev_fix_result");
+  });
+});
+
+describe("C2 backfillFixRegression：regression 确定性回填", () => {
+  const fixResult = {
+    fixed_count: 2,
+    fixes: [
+      { issue_id: "MF-1", description: "a", self_check: "x", affected_files: [] },
+      { issue_id: "MF-2", description: "b", self_check: "x", affected_files: [] },
+    ],
+    deferred: [],
+  };
+
+  it("C2 全 fixed（无 regressed）→ regression=10；已有 LLM entry 只补 regression 维度", () => {
+    const scores = [{ round: 1, targetKind: "fix", targetName: "fix", dimensions: { coverage: 8, selfCheck: 9, minimality: 7 }, total: 8 }];
+    const issues = {
+      "MF-1": { firstSeen: 1, severity: "major", status: "fixed", history: [{ round: 2, status: "fixed" }], fixAttempts: 0 },
+      "MF-2": { firstSeen: 1, severity: "major", status: "fixed", history: [{ round: 2, status: "fixed" }], fixAttempts: 0 },
+    };
+    const out = backfillFixRegression({ scores, fixResult, issues, round: 2 });
+    expect(out[0].dimensions.regression).toBe(10);
+    expect(out[0].dimensions.coverage).toBe(8); // LLM 维度保持
+    expect(out[0].total).toBe(8);
+    expect(out).toHaveLength(1);
+  });
+
+  it("C2 一半 regressed → regression=5（10 − 10×(1/2)）；ID 漂移经 findIssueKey 归一匹配", () => {
+    const scores = [{ round: 1, targetKind: "fix", targetName: "fix", dimensions: { coverage: 8, selfCheck: 9, minimality: 7 }, total: 8 }];
+    const issues = {
+      "MF-1": { firstSeen: 1, severity: "major", status: "regressed", history: [{ round: 2, status: "regressed" }], fixAttempts: 1 },
+      "MF-2": { firstSeen: 1, severity: "major", status: "fixed", history: [{ round: 2, status: "fixed" }], fixAttempts: 0 },
+    };
+    // fix agent ID 漂移形态："mf-1 (fixed)"
+    const drifted = { ...fixResult, fixes: [{ ...fixResult.fixes[0], issue_id: "mf-1 (fixed)" }, fixResult.fixes[1]] };
+    const out = backfillFixRegression({ scores, fixResult: drifted, issues, round: 2 });
+    expect(out[0].dimensions.regression).toBe(5);
+  });
+
+  it("C2 无 LLM entry（clean 轮）→ 创建确定性 entry（三维度 null + total null + note 标注）；幂等不重复创建", () => {
+    const issues = {
+      "MF-1": { firstSeen: 1, severity: "major", status: "fixed", history: [{ round: 3, status: "fixed" }], fixAttempts: 0 },
+      "MF-2": { firstSeen: 1, severity: "major", status: "fixed", history: [{ round: 3, status: "fixed" }], fixAttempts: 0 },
+    };
+    const out = backfillFixRegression({ scores: [], fixResult, issues, round: 3 });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ round: 2, targetKind: "fix" });
+    expect(out[0].dimensions).toEqual({ coverage: null, selfCheck: null, minimality: null, regression: 10 });
+    expect(out[0].total).toBeNull();
+    expect(out[0].note).toContain("clean-round deterministic backfill");
+    // 幂等：再跑一次不重复创建/不覆盖
+    const again = backfillFixRegression({ scores: out, fixResult, issues, round: 3 });
+    expect(again).toHaveLength(1);
+  });
+
+  it("C2 fixes=0 → 返回原 scores 不动（无 fix 可评）", () => {
+    const out = backfillFixRegression({ scores: [{ round: 1, targetKind: "fix", targetName: "fix", dimensions: {}, total: null }], fixResult: { fixed_count: 0, fixes: [], deferred: [] }, issues: {}, round: 2 });
+    expect(out).toHaveLength(1); // 原 entry 原样返回，不新增不改动
+  });
+});
+
+describe("C3 applyCleanRoundBackfill：clean 轮确定性对账回填（黑洞修复）", () => {
+  it("C3 fix-attempted 未再现 → fixed（history 记录）+ knownRemaining 更新 + 上轮 fix regression 回填", () => {
+    const state = {
+      issues: {
+        "MF-1": { firstSeen: 1, severity: "major", status: "fix-attempted", history: [{ round: 1, status: "open" }, { round: 1, status: "fix-attempted" }], fixAttempts: 0 },
+      },
+      knownRemaining: [],
+      scores: [],
+      fixResults: [{ fixed_count: 1, fixes: [{ issue_id: "MF-1", description: "d", self_check: "x", affected_files: [] }], deferred: [] }],
+    };
+    const out = applyCleanRoundBackfill(state, { reconSeen: new Set(), reconEscalate: new Set(), round: 2, stuckThreshold: 3 });
+    expect(out.issues["MF-1"].status).toBe("fixed");
+    expect(out.issues["MF-1"].history).toContainEqual({ round: 2, status: "fixed" });
+    expect(out.scores).toHaveLength(1);
+    expect(out.scores[0]).toMatchObject({ round: 1, targetKind: "fix" });
+    expect(out.scores[0].dimensions.regression).toBe(10);
+  });
+
+  it("C3 round=1（无上轮 fix）仅对账，不做 regression 回填", () => {
+    const state = {
+      issues: {},
+      knownRemaining: [],
+      scores: [],
+      fixResults: [],
+    };
+    const out = applyCleanRoundBackfill(state, { reconSeen: new Set(["S-9"]), reconEscalate: new Set(), round: 1, stuckThreshold: 3 });
+    expect(out.scores).toEqual([]);
+    // 新 ID 进 issues（reconcile 语义不变）
+    expect(out.issues["S-9"]).toBeDefined();
+  });
+
+  it("C3 再现（seen）→ regressed（对账语义与 reconcileIssues 一致），regression 分数相应下降", () => {
+    const state = {
+      issues: {
+        "MF-1": { firstSeen: 1, severity: "major", status: "fix-attempted", history: [], fixAttempts: 0 },
+      },
+      knownRemaining: [],
+      scores: [],
+      fixResults: [{ fixed_count: 1, fixes: [{ issue_id: "MF-1", description: "d", self_check: "x", affected_files: [] }], deferred: [] }],
+    };
+    const out = applyCleanRoundBackfill(state, { reconSeen: new Set(["MF-1"]), reconEscalate: new Set(), round: 2, stuckThreshold: 3 });
+    expect(out.issues["MF-1"].status).toBe("regressed");
+    expect(out.scores[0].dimensions.regression).toBe(0); // 1/1 regressed → 10-10
+  });
+});
+
+describe("C4 aggregatorModel 参数（T8 降档）", () => {
+  it("C4 VALID_ARG_KEYS 含 aggregatorModel（白名单放行）", () => {
+    expect(VALID_ARG_KEYS.has("aggregatorModel")).toBe(true);
+  });
+
+  it("C4 resolveAggregatorModel：非空字符串 trim 返回；空/缺省回退 fallback", () => {
+    expect(resolveAggregatorModel("  cheap/model-x  ", "main/model")).toBe("cheap/model-x");
+    expect(resolveAggregatorModel("", "main/model")).toBe("main/model");
+    expect(resolveAggregatorModel(undefined, "main/model")).toBe("main/model");
+    expect(resolveAggregatorModel(undefined, undefined)).toBeUndefined();
   });
 });
