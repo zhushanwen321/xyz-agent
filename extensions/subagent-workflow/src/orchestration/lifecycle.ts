@@ -149,7 +149,8 @@ export function scheduleTimeBudget(
  * （worker+gate+controller）+ assignRuntime（注入 runtime，恢复 I1）+ 注册到
  * deps.runs + store.save。
  *
- * @param spec RunSpec（不可变输入，含 scriptSource/args）
+ * @param spec RunSpec（scriptSource 只读；args 会被原地注入 _runId——rfl C2 契约，
+ * worker 启动与崩溃重建共用同一 args 对象）
  * @param deps LifecycleDeps（store/workerHost/runner/runs）
  * @param signal 外部 abort signal（可选；abort 时调 abortRun）
  * @returns runId（wf-<timestamp>-<random>）

@@ -209,6 +209,8 @@ returnMeta resolve 与 `_callCache` 重放重建各扩 `{usage, durationMs, sess
              "dimensions": {"evidence": 9, "...": 0}, "total": 8.2, "note": "…" }]
 ```
 
+**实施增补（M1 spec-review 裁决，2026-08-20）**：条目增加 `note` 可选字段（裁决理由载体，adjudication 为 unverified/downgraded 时必填）——设计原文的「降级条目落 dormant（含理由）」在原条目结构中无理由数据源（理由只在 aggregated.md 表格），spec-review 发现后增补此字段；dormant.detail = note ?? evidence（理由优先、证据兜底）。消费侧过滤语义同场裁决明确：降级条目**保留在 must_fix_ids 数组**（带 adjudication 标记，数据链闭合的前提），由脚本主循环 `filterActiveIds` 过滤出修复队列；must_fix 计数由 aggregator 按非降级条目报（与 6.3「不占 must-fix 计数」一致）。
+
 **配套修复**：`normalizeAggregatorResult` 白名单放行条目扩展字段与顶层 scores（v4 审查发现：现实现只保留 `{id,severity}`，扩展字段被静默丢弃）。
 
 scores 的 `round` 语义 = 被打分对象所在轮（R2 聚合给 R1 的 fix 打分则 round=1）；clean 轮无聚合调用，regression 回填 entry 由 workflow 确定性创建（round=被打分轮，LLM 三维度为 null，total 缺省标注）。条目 `adjudication` 字段随 T5 落地 schema，T6 只消费不改动。

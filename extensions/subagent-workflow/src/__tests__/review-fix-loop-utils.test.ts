@@ -35,6 +35,9 @@ import {
   normalizeAggregatorResult,
   parseAggregatedMd,
   resolveRunRoot,
+  computeOrigin,
+  recordDormant,
+  filterActiveIds,
   resolveAgentDefs,
   recordAgentClean,
   recordAgentDirty,
@@ -1237,5 +1240,179 @@ describe("A5 resolveRunRoot: 存储根解析（git slug / 非 git cwd / home 不
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+
+// ── B1-B5: rfl 数据链（tier-1 M1，§7.2/§6.1/§6.3） ──────────────────
+
+describe("B1 normalizeAggregatorResult 白名单透传（条目四扩展字段 + note + 顶层 scores）", () => {
+  it("B1 对象条目的 files/evidence/guidance/adjudication/note 归一化后保留", () => {
+    const r = normalizeAggregatorResult({
+      report_file: "/tmp/agg.md", must_fix: 1, suggestion: 0,
+      must_fix_ids: [{
+        id: "MF-1", severity: "Major",
+        files: ["src/a.ts", "src/b.ts"],
+        evidence: "cited files/lines",
+        guidance: "guard the boundary in parser",
+        adjudication: "downgraded",
+        note: "claim contradicts known facts",
+      }],
+      fixes_caution: [],
+    });
+    expect(r!.must_fix_ids[0]).toEqual({
+      id: "MF-1", severity: "major",
+      files: ["src/a.ts", "src/b.ts"],
+      evidence: "cited files/lines",
+      guidance: "guard the boundary in parser",
+      adjudication: "downgraded",
+      note: "claim contradicts known facts",
+    });
+  });
+
+  it("B1 类型防御：files 非字符串数组剔除、标量字段非字符串剔除、未知 adjudication 剔除，不抛错", () => {
+    const r = normalizeAggregatorResult({
+      must_fix: 1, suggestion: 0,
+      must_fix_ids: [{
+        id: "MF-2", severity: "major",
+        files: ["ok.ts", 42, null],
+        evidence: 123, guidance: { nope: true }, note: "",
+        adjudication: "bogus-verdict",
+      }],
+    });
+    expect(r!.must_fix_ids[0]).toEqual({ id: "MF-2", severity: "major", files: ["ok.ts"] });
+  });
+
+  it("B1 顶层 scores 数组可选透传；缺省不引入键（旧格式 string[]/{id,severity} 兼容不变）", () => {
+    const withScores = normalizeAggregatorResult({
+      must_fix: 0, suggestion: 0, must_fix_ids: [],
+      scores: [{ round: 1, targetKind: "reviewer", targetName: "r1", dimensions: { evidence: 9 }, total: 9 }],
+    });
+    expect(withScores!.scores).toHaveLength(1);
+    expect(withScores!.scores![0].total).toBe(9);
+
+    const noScores = normalizeAggregatorResult({ must_fix: 0, suggestion: 0, must_fix_ids: [] });
+    expect(noScores!.scores).toBeUndefined();
+
+    // 旧格式：string[] → {id, severity:"major"}；{id,severity} → severity 小写归一
+    expect(normalizeAggregatorResult({ must_fix: 1, must_fix_ids: ["MF-9"] })!.must_fix_ids)
+      .toEqual([{ id: "MF-9", severity: "major" }]);
+    expect(normalizeAggregatorResult({ must_fix: 1, must_fix_ids: [{ id: "MF-8", severity: "CRITICAL" }] })!.must_fix_ids)
+      .toEqual([{ id: "MF-8", severity: "critical" }]);
+  });
+});
+
+describe("B2 computeOrigin(entry, {lastModifiedFiles, fixImpactFiles}) 轮次归因三分支", () => {
+  it("B2 files 与上轮 fix 触碰文件（modifiedFiles ∪ fixImpactFiles）相交 → regression", () => {
+    expect(computeOrigin(
+      { id: "N-1", severity: "major", files: ["src/x.ts", "src/other.ts"] },
+      { lastModifiedFiles: ["src/x.ts"], fixImpactFiles: [] },
+    )).toBe("regression");
+    expect(computeOrigin(
+      { id: "N-1", severity: "major", files: ["src/other.ts"] },
+      { lastModifiedFiles: [], fixImpactFiles: ["src/other.ts"] },
+    )).toBe("regression");
+  });
+
+  it("B2 交集空且 files 非空 → new（漏检/新引入不可再分）", () => {
+    expect(computeOrigin(
+      { id: "N-2", severity: "major", files: ["docs/readme.md"] },
+      { lastModifiedFiles: ["src/x.ts"], fixImpactFiles: ["src/y.ts"] },
+    )).toBe("new");
+  });
+
+  it("B2 条目无 files → undefined（不可归因，调用方 WARN）", () => {
+    expect(computeOrigin({ id: "N-3", severity: "major" }, { lastModifiedFiles: ["src/x.ts"], fixImpactFiles: [] }))
+      .toBeUndefined();
+    expect(computeOrigin({ id: "N-3", severity: "major", files: [] }, { lastModifiedFiles: ["src/x.ts"], fixImpactFiles: [] }))
+      .toBeUndefined();
+  });
+});
+
+describe("B3 recordDormant / filterActiveIds（dormant 落盘 + 消费侧过滤）", () => {
+  const entries = [
+    { id: "MF-1", severity: "major", adjudication: "evidence" },
+    { id: "MF-D1", severity: "major", adjudication: "downgraded", note: "no reproducible evidence", evidence: "cited src/a.ts" },
+    { id: "MF-U1", severity: "major", adjudication: "unverified", evidence: "claims test failure" },
+  ];
+
+  it("B3 降级条目落 dormant（detail=note 优先，evidence 兜底）；evidence/缺省不落", () => {
+    const dormant = recordDormant([], entries, 1);
+    expect(dormant).toHaveLength(2);
+    expect(dormant[0]).toEqual({
+      id: "MF-D1", reason: "adjudication-downgraded",
+      detail: "no reproducible evidence", round: 1, revived: false,
+    });
+    expect(dormant[1]).toEqual({
+      id: "MF-U1", reason: "adjudication-unverified",
+      detail: "claims test failure", round: 1, revived: false,
+    });
+  });
+
+  it("B3 同 id 重复裁决幂等（round/原因更新，revived 保持）；纯函数返回新数组不改输入", () => {
+    const first = recordDormant([], entries, 1);
+    first[0].revived = true; // 模拟已复活
+    const again = recordDormant(first, [
+      { id: "MF-D1", severity: "major", adjudication: "downgraded", note: "still weak" },
+    ], 3);
+    expect(again).toHaveLength(2);
+    expect(again[0]).toMatchObject({ id: "MF-D1", round: 3, detail: "still weak", revived: true });
+    // 输入数组未被修改（纯函数）
+    expect(first[0].round).toBe(1);
+    expect(first[0].detail).toBe("no reproducible evidence");
+  });
+
+  it("B3 filterActiveIds：剔除 downgraded/unverified 条目的 id 列表（修复队列过滤键）", () => {
+    expect(filterActiveIds(entries)).toEqual(["MF-1"]);
+    expect(filterActiveIds([{ id: "X" }, { id: "Y", adjudication: "evidence" }])).toEqual(["X", "Y"]);
+    expect(filterActiveIds([])).toEqual([]);
+  });
+});
+
+describe("B4 buildR2ReviewPrompt dormant 复活段注入", () => {
+  const baseArgs = {
+    header: "Batch 1 Round 2/10", round: 2, max: 10, roundDir: "/tmp/rd",
+    reportFile: "reviewer", aggPath: "/tmp/rd-prev/aggregated.md",
+    fixResult: null, knownRemaining: [],
+  };
+
+  it("B4 dormant 非空 → prompt 含 DORMANT 段 + wrapUntrusted 包裹 + 复活条件说明", () => {
+    const p = buildR2ReviewPrompt({
+      ...baseArgs,
+      dormant: [{ id: "MF-D1", reason: "adjudication-downgraded", detail: "weak evidence", round: 1, revived: false }],
+    });
+    expect(p).toContain("DORMANT ISSUES");
+    expect(p).toContain('<untrusted source="dormant">');
+    expect(p).toContain("MF-D1");
+    expect(p).toContain("adjudication-downgraded");
+    expect(p).toContain("Revival rule");
+  });
+
+  it("B4 dormant 全部 revived=true 或空 → 无该段（prompt 形状稳定）；revived 条目不注入", () => {
+    const withRevived = buildR2ReviewPrompt({
+      ...baseArgs,
+      dormant: [{ id: "MF-D1", reason: "adjudication-downgraded", detail: "x", round: 1, revived: true }],
+    });
+    expect(withRevived).not.toContain("DORMANT ISSUES");
+    expect(buildR2ReviewPrompt({ ...baseArgs, dormant: [] })).not.toContain("DORMANT ISSUES");
+    // 兼容：不传 dormant（undefined）也无该段
+    expect(buildR2ReviewPrompt(baseArgs)).not.toContain("DORMANT ISSUES");
+  });
+});
+
+describe("B5 buildAggregatorPrompt 条目扩展字段 + adjudication 结构化输出说明", () => {
+  it("B5 JSON shape 含 files/evidence/guidance/note/adjudication 字面量与语义说明", () => {
+    const p = buildAggregatorPrompt({
+      header: "h", round: 1, max: 10, roundDir: "/tmp/rd", reviewResults: [],
+    });
+    expect(p).toContain('"adjudication": "evidence|unverified|downgraded"');
+    expect(p).toContain('"files"');
+    expect(p).toContain('"evidence"');
+    expect(p).toContain('"guidance"');
+    expect(p).toContain('"note"');
+    // 语义对齐设计 6.3「不占 must-fix 计数」：数组保留全部条目（含降级，带标记），计数只算 evidence
+    expect(p).toContain("Keep ALL must-fix-table entries in");
+    expect(p).toContain("must_fix COUNTS ONLY adjudication=evidence entries");
+    expect(p).toContain("MUST carry the adjudication reason");
   });
 });

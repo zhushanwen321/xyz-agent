@@ -382,13 +382,26 @@ function buildAggregatorPrompt({ header, round, max, roundDir, reviewResults }) 
     '  "report_file": "' + roundDir + '/aggregated.md",',
     '  "must_fix": <integer>,',
     '  "suggestion": <integer>,',
-    '  "must_fix_ids": [{"id": "MF-1", "severity": "critical|major|minor"}, ...],',
+    '  "must_fix_ids": [{"id": "MF-1", "severity": "critical|major|minor",',
+    '                    "adjudication": "evidence|unverified|downgraded",',
+    '                    "files": ["src/a.ts"], "evidence": "...", "guidance": "...", "note": "..."}, ...],',
     '  "fixes_caution": ["verify claim X before editing", ...]',
     "}",
     "",
     "- must_fix_ids: issue ids of the deduplicated must-fix list, matching the first column of the Must-Fix table.",
-    "- must_fix_ids: EACH element is an object {id, severity}; severity is one of critical/major/minor",
+    "- must_fix_ids: EACH element is an object; severity is one of critical/major/minor",
     "  (the converged-termination 'no critical' check depends on it). Old string-array format is still accepted.",
+    "- adjudication (rfl, per-entry): your evidence verdict for this issue —",
+    "  \"evidence\" (verified with cited files/lines), \"unverified\" (no evidence or could not verify),",
+    "  \"downgraded\" (adjudicated down to minor in the table). Keep ALL must-fix-table entries in",
+    "  must_fix_ids INCLUDING downgraded/unverified ones (marked with adjudication) — the workflow",
+    "  filters them out of the fix queue; must_fix COUNTS ONLY adjudication=evidence entries.",
+    "  When adjudication is unverified/downgraded, \"note\" MUST carry the adjudication reason",
+    "  (one line, same as the table note).",
+    "- files: file paths cited by the issue (for regression attribution).",
+    "- evidence: the cited evidence (files/lines/test results) as stated by the reviewer.",
+    "- guidance: one-line fix direction for the fixer (extracted from the sub-review; the fixer",
+    "  uses it to locate the fix point without re-scouting; code wins on conflict).",
     "- fixes_caution: short caution entries for claims with weak evidence or high-risk directions (optional, empty array if none).",
     "",
     "STRICT RULES:",
@@ -459,11 +472,29 @@ function buildReconciliationSection({ aggPath, fixResult }) {
  * 第三段新发现（收敛 hunt）：证据链门槛 + 测试覆盖类默认 minor + 修复成本标注 + 不以多发现问题为目标
  * 仅 round>1 使用；R1 保持现状全量深挖。
  */
-function buildR2ReviewPrompt({ header, round, max, roundDir, reportFile, aggPath, fixResult, knownRemaining }) {
+function buildR2ReviewPrompt({ header, round, max, roundDir, reportFile, aggPath, fixResult, knownRemaining, dormant }) {
   // 5.10 防注入：defer 理由自由文本是注入面（5.2-P3/5.10 不可信清单），必须包裹。
   const knownLines = knownRemaining && knownRemaining.length
     ? wrapUntrusted(knownRemaining.map((k) => "- " + k).join("\n"), "known_remaining")
     : "- (none)";
+  // rfl dormant 复活段（tier-1 6.3 delta ③）：裁决降级条目的复活通道。清单是
+  // 上游 LLM 产出（裁决理由自由文本）——wrapUntrusted 包裹。revived=true 的条目
+  // 已回修复队列，不再注入；全空时无该段（prompt 形状稳定）。
+  const dormantPending = (dormant || []).filter((d) => d && d.id && d.revived !== true);
+  const dormantSection = dormantPending.length > 0
+    ? [
+        "",
+        "─── DORMANT ISSUES (adjudication-downgraded — revival channel) ────",
+        "These issues were downgraded by earlier adjudication (weak evidence at the time):",
+        wrapUntrusted(dormantPending.map((d) =>
+          "- " + d.id + (d.reason ? " [" + d.reason + "]" : "") + (d.detail ? ": " + d.detail : "")
+        ).join("\n"), "dormant"),
+        "Revival rule: if THIS round's fix changed the context relevant to a dormant issue, or you now",
+        "find concrete evidence for it, re-report that issue id as a normal finding (it re-enters the",
+        "fix queue). Do NOT re-report dormant issues without new evidence — that is noise, not revival.",
+        "",
+      ]
+    : [];
   return [
     header,
     "",
@@ -471,6 +502,7 @@ function buildR2ReviewPrompt({ header, round, max, roundDir, reportFile, aggPath
     "",
     buildReconciliationSection({ aggPath, fixResult }),
     "",
+    ...dormantSection,
     "─── PART 2: KNOWN-REMAINING (deferred) ─────────────────────────",
     "Deferred issues from previous rounds (must NOT be re-reported, must NOT be escalated):",
     knownLines,
@@ -634,7 +666,10 @@ function normalizeReviewResult(raw) {
   };
 }
 
-/** 聚合结果归一化：must_fix 别名（totalMustFix/mustFix）+ report_file 别名，无 must_fix 数 → null。 */
+/** 聚合结果归一化：must_fix 别名（totalMustFix/mustFix）+ report_file 别名，无 must_fix 数 → null。
+ * rfl 数据链（tier-1 §7.2）：条目扩展字段（files/evidence/guidance/adjudication/note）透传——
+ * 旧实现白名单只保留 {id,severity}，扩展字段被静默丢弃（v4 审查发现的断点）。类型防御：
+ * files 非字符串数组剔除、标量扩展字段非字符串剔除；旧格式（string[] / {id,severity}）兼容不变。 */
 function normalizeAggregatorResult(raw) {
   const parsed = parseResult(raw);
   if (!parsed) return null;
@@ -656,11 +691,22 @@ function normalizeAggregatorResult(raw) {
       // M1: severity 小写归一——LLM 可能返回 "Critical"/"MAJOR"，js 侧 === "critical"
       // 严格比较（converged 终止判定）依赖小写；缺省回退 major（must-fix 语义）
       const sev = typeof x.severity === "string" ? x.severity.toLowerCase() : "major";
-      return { id: x.id, severity: sev };
+      const entry = { id: x.id, severity: sev };
+      if (Array.isArray(x.files)) {
+        const files = x.files.filter((f) => typeof f === "string" && f.trim());
+        if (files.length > 0) entry.files = files;
+      }
+      for (const k of ["evidence", "guidance", "note"]) {
+        if (typeof x[k] === "string" && x[k].trim()) entry[k] = x[k];
+      }
+      if (x.adjudication === "evidence" || x.adjudication === "unverified" || x.adjudication === "downgraded") {
+        entry.adjudication = x.adjudication;
+      }
+      return entry;
     }
     return null;
   }).filter(Boolean);
-  return {
+  const result = {
     report_file: parsed.report_file || parsed.reportFile,
     must_fix: mustFix,
     suggestion,
@@ -669,6 +715,79 @@ function normalizeAggregatorResult(raw) {
       ? parsed.fixes_caution.filter((x) => typeof x === "string")
       : [],
   };
+  // rfl 顶层 scores（tier-1 §7.2，M2 打分消费）：可选透传，缺省不引入键
+  if (Array.isArray(parsed.scores)) result.scores = parsed.scores;
+  return result;
+}
+
+// ── rfl 数据链消费函数（tier-1 §4/§6.1/§6.3） ──────────────────
+
+/**
+ * T6 轮次归因（6.1）：R2+ 新 issue 的 origin 判定纯函数。
+ * files ∩ (lastModifiedFiles ∪ fixImpactFiles) ≠ ∅ → "regression"（上轮 fix
+ * 触碰过的文件上出现 = 修复引入/修复相关）；交集空且 files 非空 → "new"（漏检/
+ * 新引入，不可再分如实标注）；条目无 files → undefined（不可归因，调用方 WARN）。
+ * 文件级粒度粗（regression 偏高估）——设计接受的权衡（6.1 方案对比）。
+ */
+function computeOrigin(entry, { lastModifiedFiles, fixImpactFiles }) {
+  if (!entry || !Array.isArray(entry.files) || entry.files.length === 0) return undefined;
+  const touched = new Set([
+    ...(Array.isArray(lastModifiedFiles) ? lastModifiedFiles : []),
+    ...(Array.isArray(fixImpactFiles) ? fixImpactFiles : []),
+  ]);
+  if (touched.size === 0) return "new";
+  for (const f of entry.files) {
+    if (typeof f === "string" && touched.has(f)) return "regression";
+  }
+  return "new";
+}
+
+/** adjudication 降级标记（不占修复队列，设计 §6.3「不占 must-fix 计数」的消费侧过滤键）。 */
+const DORMANT_ADJUDICATIONS = new Set(["downgraded", "unverified"]);
+
+/**
+ * T6 dormant 落盘（6.3）：聚合条目中 adjudication ∈ {downgraded, unverified} 的
+ * 条目落 dormant 清单（含裁决理由）。裁决本身是现实现（aggregator prompt 的
+ * ADJUDICATION 段），此处只做结构化落盘 + 复活通道。
+ * @param dormant 现有 dormant 数组（不修改，返回新数组）
+ * @param entries normalize 后的聚合条目
+ * @param round 当前轮
+ * @returns 新 dormant 数组：同 id 重复裁决幂等（round/原因更新，revived 保持）
+ */
+function recordDormant(dormant, entries, round) {
+  const list = Array.isArray(dormant) ? dormant.map((d) => ({ ...d })) : [];
+  for (const e of entries || []) {
+    if (!e || !DORMANT_ADJUDICATIONS.has(e.adjudication)) continue;
+    const detail = (typeof e.note === "string" && e.note.trim()) ? e.note
+      : ((typeof e.evidence === "string" && e.evidence.trim()) ? e.evidence : "");
+    const existing = list.find((d) => d.id === e.id);
+    if (existing) {
+      existing.reason = "adjudication-" + e.adjudication;
+      existing.detail = detail;
+      existing.round = round;
+      // revived 保持——复活状态只由重新上报置位，不因再次降级重置
+    } else {
+      list.push({
+        id: e.id,
+        reason: "adjudication-" + e.adjudication,
+        detail,
+        round,
+        revived: false,
+      });
+    }
+  }
+  return list;
+}
+
+/**
+ * T6 消费侧过滤（6.3）：剔除降级条目的 id 列表——主循环用它过滤修复队列
+ * （不建 issue、不进 ES3 must-fix 校验；fix prompt 的 must-fix 计数以非降级条目为准）。
+ */
+function filterActiveIds(entries) {
+  return (entries || [])
+    .filter((e) => e && !DORMANT_ADJUDICATIONS.has(e.adjudication))
+    .map((e) => e.id)
+    .filter(Boolean);
 }
 
 /** 从 aggregated.md 内容回退解析（JSON 无效时的兜底，依赖 "- Must-fix: N" 固定格式）。 */
@@ -819,6 +938,9 @@ module.exports = {
   normalizeAggregatorResult,
   parseAggregatedMd,
   resolveRunRoot,
+  computeOrigin,
+  recordDormant,
+  filterActiveIds,
   resolveAgentDefs,
   recordAgentClean,
   recordAgentDirty,

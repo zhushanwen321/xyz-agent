@@ -47,7 +47,8 @@
       "core": true,
       "command": "pnpm install --frozen-lockfile --prefer-offline --ignore-scripts --filter @zhushanwen/pi-subagent-workflow... >/dev/null 2>&1 && cd extensions/subagent-workflow && npx vitest run src/orchestration/__tests__/review-fix-loop-e2e.test.ts",
       "scenario": "真实 runAndWait + 真实 worker thread + mock AgentRunner 剧本（R1 must-fix → fix → R2 clean 终止），HOME 重定向临时目录；断言 state.json 位于新存储路径、calls[] 每条含设计 §7.3 全集十一字段（batch/round/role/name/model/durationMs/usage 五分量/promptMode/promptBytes/sessionId；默认剧本下 review 轮 promptMode=full，scoped 值由 recheckAfterFix=true 的第二条 e2e 用例覆盖）、每轮 batches[].rounds[].phaseTimings 三键（review/aggregate/fix）齐全且 [t0,t1] 为 number 对、脚本回传的 runDir 与 state 路径一致",
-      "mockFidelityNote": "唯一 mock 是 deps.runner（AgentRunner = LLM 子进程替身），返回带 MOCK_USAGE/durationMs/sessionId 的结构化 AgentResult；引擎（lifecycle/worker-host/真实 worker thread/git/文件系统）全真，与生产路径同构。现有 e2e 套件同模式（review-fix-loop-e2e.test.ts 头注释）"
+      "mockFidelityNote": "唯一 mock 是 deps.runner（AgentRunner = LLM 子进程替身），返回带 MOCK_USAGE/durationMs/sessionId 的结构化 AgentResult；引擎（lifecycle/worker-host/真实 worker thread/git/文件系统）全真，与生产路径同构。现有 e2e 套件同模式（review-fix-loop-e2e.test.ts 头注释）",
+      "runner": "vitest"
     },
     {
       "id": "A7",

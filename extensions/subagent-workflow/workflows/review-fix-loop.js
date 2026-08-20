@@ -99,6 +99,9 @@ const {
   normalizeAggregatorResult,
   parseAggregatedMd,
   resolveRunRoot,
+  computeOrigin,
+  recordDormant,
+  filterActiveIds,
   resolveAgentDefs,
   recordAgentClean,
   recordAgentDirty,
@@ -231,6 +234,10 @@ const aggregatorSchema = {
       type: "array",
       // M1: 支持 [{id, severity}] 对象（severity: critical/major/minor——converged 终止的
       // 「无 critical」判定数据源）+ 旧格式 string[] 兼容。ajv 权威校验两者皆放行。
+      // rfl 数据链（tier-1 §7.2）：对象分支增可选 files/evidence/guidance/note/adjudication——
+      // origin 归因（files）、修复指引（guidance）、裁决落盘（adjudication+note）的数据源。
+      // 降级条目（adjudication ∈ {downgraded, unverified}）保留在数组中，由主循环
+      // filterActiveIds 过滤出修复队列（must_fix 计数由 aggregator 按非降级条目报）。
       items: {
         oneOf: [
           { type: "string" },
@@ -240,6 +247,11 @@ const aggregatorSchema = {
             properties: {
               id: { type: "string" },
               severity: { type: "string" },
+              files: { type: "array", items: { type: "string" }, description: "File paths cited by the issue (regression attribution)" },
+              evidence: { type: "string", description: "Cited evidence (files/lines/test results) from the sub-review" },
+              guidance: { type: "string", description: "One-line fix direction for the fixer (code wins on conflict)" },
+              adjudication: { type: "string", enum: ["evidence", "unverified", "downgraded"], description: "Evidence verdict; downgraded/unverified entries stay in this array but are filtered out of the fix queue" },
+              note: { type: "string", description: "Adjudication reason (required when adjudication is unverified/downgraded)" },
             },
           },
         ],
@@ -250,6 +262,23 @@ const aggregatorSchema = {
       type: "array",
       items: { type: "string" },
       description: "Caution entries for weak-evidence or high-risk claims (passed to fix stage)",
+    },
+    // rfl scores（tier-1 §7.2，M2 打分 rubric 消费）：可选——M1 只透传 schema 与
+    // normalize，打分 prompt 段属 M2（T7）。提前落 schema 避免二次 schema 破坏性变更。
+    scores: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          round: { type: "number", description: "Round of the scored target (R2 aggregation scoring R1 fix -> round=1)" },
+          targetKind: { type: "string", description: "reviewer | fix" },
+          targetName: { type: "string" },
+          dimensions: { type: "object", description: "Dimension name -> 0-10 score" },
+          total: { type: ["number", "null"], description: "Weighted total; null = not computable (e.g. clean-round LLM dimensions missing)" },
+          note: { type: "string" },
+        },
+      },
+      description: "Optional per-round quality scores (may be omitted until the scoring rubric lands)",
     },
   },
   required: ["report_file", "must_fix", "suggestion"],
@@ -349,6 +378,7 @@ function loadState() {
       fixCount: 0,
       batches: [],
       calls: [],
+      dormant: [],
       fixResults: [],
       issues: undefined,
       knownRemaining: [],
@@ -372,7 +402,8 @@ function saveState(state) {
 
 // ── rfl 仪表（tier-1 §7.3）：calls[] 采集 + phaseTimings ───────────
 // 每次 agent() 调用记录资源与耗时；数据源 = returnMeta 透传的 usage/durationMs/
-// sessionId（引擎 T1 透传；旧引擎缺字段时 usage 为 undefined + 主循环打点 durationMs 兜底）。
+// sessionId（引擎 T1 透传；旧引擎缺字段时 usage/durationMs 落 null——call 级无
+// 独立打点，phase 级耗时由 phaseTimings 覆盖）。
 function recordCall(entry) {
   if (!Array.isArray(state.calls)) state.calls = [];
   state.calls.push(entry);
@@ -385,15 +416,15 @@ function normUsage(meta) {
     cacheRead: u.cacheRead ?? 0, cacheWrite: u.cacheWrite ?? 0, cost: u.cost ?? 0,
   };
 }
-// returnMeta 对象 → calls[] 条目。durationMs 优先引擎值（含排队），缺省用调用方打点。
-function buildCallRecord({ batch, round, role, name, model, prompt, promptMode, meta, fallbackDurationMs }) {
+// returnMeta 对象 → calls[] 条目（十字段，设计 §7.3）。
+function buildCallRecord({ batch, round, role, name, model, prompt, promptMode, meta }) {
   const promptStr = typeof prompt === "string" ? prompt : "";
   return {
     batch, round, role, name: name || role,
     model: model || "(default)",
     durationMs: (meta && typeof meta === "object" && typeof meta.durationMs === "number")
       ? meta.durationMs
-      : (typeof fallbackDurationMs === "number" ? fallbackDurationMs : null),
+      : null,
     usage: normUsage(meta),
     promptMode: promptMode || "full",
     promptBytes: Buffer.byteLength(promptStr, "utf8"),
@@ -477,6 +508,8 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
           ? state.fixResults[state.fixResults.length - 1]
           : null,
         knownRemaining: (state.knownRemaining && Array.isArray(state.knownRemaining)) ? state.knownRemaining : [],
+        // rfl dormant 复活通道（tier-1 6.3 delta ③）：降级条目注入 R2+ prompt（动态段内容）
+        dormant: (state.dormant && Array.isArray(state.dormant)) ? state.dormant : [],
       }),
       agent: def.path,
     };
@@ -724,11 +757,16 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     log("Aggregated: " + mustFix + " must-fix + " + suggestion + " suggestion(s).");
 
     // 5.1：R1 的 aggregator must_fix_ids 初始化 state.issues（数字 ID 起点）
+    // rfl 数据链（tier-1 6.1/6.3）：降级条目（adjudication downgraded/unverified）
+    // 不建 issue——消费侧过滤（filterActiveIds），修复队列/ES3 校验只含活跃条目；
+    // guidance/evidence 随条目落 issues（fixer 免侦查 + 裁决可追踪）。
     if (round === 1 && agg.must_fix_ids && agg.must_fix_ids.length > 0) {
       if (!state.issues) state.issues = {};
+      const activeIds = new Set(filterActiveIds(agg.must_fix_ids));
       for (const entry of agg.must_fix_ids) {
         const id = typeof entry === "string" ? entry : entry && entry.id;
         if (!id || state.issues[id]) continue;
+        if (!activeIds.has(id)) continue;
         state.issues[id] = {
           // severity 结构化（5.7）：aggregator 标注 critical/major/minor，converged 终止的
           // 「无 critical」判定依赖它；旧格式（string）默认 major（must-fix 语义）。
@@ -736,7 +774,19 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
           severity: typeof entry === "string" ? "major" : (entry.severity || "major"),
           status: "open",
           history: [{ round: 1, status: "open" }], fixAttempts: 0,
+          ...(entry && typeof entry.guidance === "string" && entry.guidance ? { guidance: entry.guidance } : {}),
+          ...(entry && typeof entry.evidence === "string" && entry.evidence ? { evidence: entry.evidence } : {}),
         };
+      }
+    }
+
+    // rfl dormant（tier-1 6.3）：adjudication 降级条目落盘（含裁决理由），R2+ prompt
+    // 注入复活通道——「降级即消失」的修复。每轮聚合后统一记录（同 id 幂等）。
+    if (agg.must_fix_ids && agg.must_fix_ids.length > 0) {
+      const before = (state.dormant || []).length;
+      state.dormant = recordDormant(state.dormant, agg.must_fix_ids, round);
+      if (state.dormant.length > before) {
+        log("Dormant recorded: " + (state.dormant.length - before) + " adjudication-downgraded issue(s) (total " + state.dormant.length + ")");
       }
     }
 
@@ -764,8 +814,12 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     //      再次被报告同样转 regressed——否则 fixed 停留 + 收敛终止组合会在默认配置下
     //      R3 即以 converged 提前终止而 must-fix 仍活跃。
     // newFindings 统计与 needs-redesign/fixAttempts 追踪对 R2+ 新发现生效。
+    // rfl 数据链（tier-1 6.1/6.3）：新发现带 origin（computeOrigin：files 与上轮 fix
+    // 触碰文件相交 = regression，否则 new；无 files 不可归因 WARN）；重新上报的
+    // dormant 条目 → revived=true 回修复队列；本轮降级条目不建 issue（同 R1 过滤）。
     if (round > 1 && state.issues && agg.must_fix_ids && agg.must_fix_ids.length > 0) {
       let added = 0;
+      const activeIds = new Set(filterActiveIds(agg.must_fix_ids));
       for (const entry of agg.must_fix_ids) {
         const id = typeof entry === "string" ? entry : entry && entry.id;
         if (!id) continue;
@@ -780,11 +834,27 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
           }
           continue;
         }
+        if (!activeIds.has(id)) continue; // 降级条目由 recordDormant 统一处理，不进修复队列
+        // 复活置位（6.3 delta ③ 的闭环另一半）：dormant 条目以活跃身份重新上报 →
+        // 回修复队列（下方正常建 issue），后续轮 prompt 不再注入它。
+        const dormantHit = (state.dormant || []).find((d) => d.id === id && d.revived !== true);
+        if (dormantHit) {
+          dormantHit.revived = true;
+          log("Dormant revived: " + id + " re-reported in round " + round);
+        }
+        const origin = computeOrigin(entry, {
+          lastModifiedFiles: state.lastModifiedFiles || [],
+          fixImpactFiles: state.fixImpactFiles || [],
+        });
+        if (!origin) log("WARN: issue " + id + " carries no files — origin not attributable");
         state.issues[id] = {
           firstSeen: round,
           severity: typeof entry === "string" ? "major" : (entry.severity || "major"),
           status: "open", openStreak: 1,
           history: [{ round, status: "open" }], fixAttempts: 0,
+          ...(origin ? { origin } : {}),
+          ...(typeof entry === "object" && typeof entry.guidance === "string" && entry.guidance ? { guidance: entry.guidance } : {}),
+          ...(typeof entry === "object" && typeof entry.evidence === "string" && entry.evidence ? { evidence: entry.evidence } : {}),
         };
         added++;
       }
@@ -959,7 +1029,9 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     // 判 violation）。任一违规 → fix-failure（结构化终止）。trackedIssues 传入
     // state.issues——deferred severity 与追踪表交叉核对（MF-4）：must-fix 被标 minor
     // 塞进 deferred 的逃逸路径在追踪表面前失效（追踪 severity 为准）。
-    const es3Violations = validateFixResult(fixResult, agg.must_fix_ids, state.issues);
+    // rfl（tier-1 6.3）：mustFixIds 传 filterActiveIds 结果——降级条目不占修复队列
+    //（must_fix 计数由 aggregator 按非降级条目报，两侧口径一致）。
+    const es3Violations = validateFixResult(fixResult, filterActiveIds(agg.must_fix_ids), state.issues);
     if (es3Violations.length > 0) {
       // m7: violation 分两类——deferred 非 minor / must-fix 漏修（must-fix-not-fixed），
       // finalMessage 文案区分：统一文案会把漏修误报成 defer 违规，误导修复方向

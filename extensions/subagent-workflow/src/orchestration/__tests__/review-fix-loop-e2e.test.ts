@@ -165,13 +165,14 @@ interface Scenario {
  */
 function makeScenarioRunner(scenario: Scenario) {
   const reviewCalls: Array<{ prompt: string; result: Record<string, unknown> }> = [];
-  const calls: Array<{ kind: "review" | "aggregate" | "fix"; prompt: string; agent?: string }> = [];
+  const calls: Array<{ kind: "review" | "aggregate" | "fix"; prompt: string; agent?: string; schema?: unknown }> = [];
   const run = vi.fn(async (opts: { prompt?: string; schema?: unknown; agent?: string }): Promise<AgentResult> => {
     const kind = classifyCall(opts);
     const prompt = opts.prompt ?? "";
     // m5：记录 agent 字段（review/fix 派发验证）。内置名（reviewer/doc-reviewer）走
     // def.name，自定义 .md agent 为 undefined——只断言 fix 调用的（fixAgent 派发）。
-    calls.push({ kind, prompt, agent: opts.agent });
+    // rfl B6：记录 opts.schema（aggregatorSchema 扩展断言——防 schema 与 prompt 脱节）。
+    calls.push({ kind, prompt, agent: opts.agent, schema: opts.schema });
     let parsed: unknown = null;
     if (kind === "review") {
       const idx = reviewCalls.length;
@@ -204,6 +205,7 @@ function makeScenarioRunner(scenario: Scenario) {
       kinds: calls.map((c) => c.kind),
       prompts: calls.map((c) => c.prompt),
       agents: calls.map((c) => c.agent),
+      schemas: calls.map((c) => c.schema),
     }),
   };
 }
@@ -1031,10 +1033,153 @@ describe("startup fail-fast (ADR-0003 D6)", () => {
       };
       // 4 review（R1 ×2 + R2 ×2）+ 1 aggregate + 1 fix
       expect(st.calls.length).toBe(6);
-      const reviewCalls = st.calls.filter((c) => c.role === "reviewer");
-      const modes = reviewCalls.map((c) => c.promptMode as string).sort();
+      const reviewCalls2 = st.calls.filter((c) => c.role === "reviewer");
+      const modes = reviewCalls2.map((c) => c.promptMode as string).sort();
       // R1 两调用 full；R2 全批重派：reviewer 走 R2+ full、doc-reviewer（上轮 clean）走 scoped
       expect(modes).toEqual(["full", "full", "full", "scoped"]);
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  // ── B6: rfl 数据链 e2e（tier-1 M1：origin/dormant/复活/消费侧过滤/schema） ──
+
+  it(
+    "B6: issues 带 origin/guidance/evidence + dormant 落盘/复活 + 消费侧过滤 + aggregatorSchema 扩展",
+    async () => {
+      // 剧本（三轮到 clean）：R1 聚合 2 条目（MF-1 活跃带扩展字段 + MF-D1 降级），
+      // fix 只修 MF-1（降级条目被 filterActiveIds 过滤出修复队列）；R2 聚合 3 条目
+      //（N-1 files 与 fix affected_files 相交 → regression；N-2 不相交 → new；
+      // MF-D1 复活重新上报）fix 修 3 条；R3 全 clean 终止。
+      // aggregate/fix 按调用序分流（闭包计数，不改 runner 接口）。
+      let aggN = 0;
+      let fixN = 0;
+      const runner = makeScenarioRunner({
+        review: [
+          // R1：1 must-fix（触发聚合）
+          () => ({ report_file: "/tmp/b6-r1.md", must_fix: 1, suggestion: 0, reconciliation: [] }),
+          // R2：3 must-fix（N-1/N-2/MF-D1 复活——聚合结构化源），对账 MF-1 fixed
+          () => ({
+            report_file: "/tmp/b6-r2.md", must_fix: 3, suggestion: 0,
+            reconciliation: [{ prev_id: "MF-1", status: "fixed", evidence: "read confirmed" }],
+          }),
+          // R3：全 clean（对账 3 条 fixed）
+          () => ({
+            report_file: "/tmp/b6-r3.md", must_fix: 0, suggestion: 0,
+            reconciliation: [
+              { prev_id: "N-1", status: "fixed", evidence: "read" },
+              { prev_id: "N-2", status: "fixed", evidence: "read" },
+              { prev_id: "MF-D1", status: "fixed", evidence: "read" },
+            ],
+          }),
+        ],
+        aggregate: () => {
+          aggN++;
+          if (aggN === 1) {
+            return {
+              report_file: "/tmp/b6-agg1.md", must_fix: 1, suggestion: 0,
+              must_fix_ids: [
+                { id: "MF-1", severity: "major", adjudication: "evidence",
+                  files: ["src/feature.ts"], evidence: "line 42 off-by-one", guidance: "fix boundary in parser" },
+                { id: "MF-D1", severity: "major", adjudication: "downgraded", note: "claim contradicts known facts" },
+              ],
+              fixes_caution: [],
+            };
+          }
+          return {
+            report_file: "/tmp/b6-agg2.md", must_fix: 3, suggestion: 0,
+            must_fix_ids: [
+              { id: "N-1", severity: "major", adjudication: "evidence",
+                files: ["src/touched.ts"], evidence: "regression found", guidance: "restore guard" },
+              { id: "N-2", severity: "major", adjudication: "evidence",
+                files: ["docs/guide.md"], evidence: "stale doc", guidance: "update doc" },
+              { id: "MF-D1", severity: "major", adjudication: "evidence",
+                files: ["src/touched.ts"], evidence: "revived with concrete repro" },
+            ],
+            fixes_caution: [],
+          };
+        },
+        fix: () => {
+          fixN++;
+          if (fixN === 1) {
+            return {
+              fixed_count: 1,
+              fixes: [{ issue_id: "MF-1", description: "fix1", self_check: "grep: 1 hit", affected_files: ["src/touched.ts"] }],
+              deferred: [],
+            };
+          }
+          return {
+            fixed_count: 3,
+            fixes: [
+              { issue_id: "N-1", description: "fix n1", self_check: "grep: 1 hit", affected_files: ["src/touched.ts"] },
+              { issue_id: "N-2", description: "fix n2", self_check: "grep: 1 hit", affected_files: ["docs/guide.md"] },
+              { issue_id: "MF-D1", description: "fix revived", self_check: "grep: 1 hit", affected_files: [] },
+            ],
+            deferred: [],
+          };
+        },
+      });
+      const deps = makeDeps(runner);
+
+      const result = await runAndWait(
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("reviewer"), _runId: RUN_ID() },
+        deps, undefined, RUN_TIMEOUT_MS,
+      );
+      expect(result.reason).toBe("completed");
+      const outcome = assertScriptOutcome(result.scriptResult);
+      // 到达 clean = ES3 未拦截 = R1 fix 只修 MF-1 而聚合 must_fix=1（非降级计数）口径一致；
+      // 若降级条目未过滤，mustFixIds 含 MF-D1、fix 剧本不修它 → fix-failure 终止（R3 不可达）。
+      expect(outcome.terminated).toBe("clean");
+
+      const st = JSON.parse(readFileSync(join(outcome.runDir!, "state.json"), "utf8")) as {
+        issues: Record<string, { origin?: string; guidance?: string; evidence?: string; status: string }>;
+        dormant: Array<{ id: string; reason: string; detail: string; round: number; revived: boolean }>;
+      };
+
+      // ① 消费侧过滤（间接+直接双证）：run 到达 clean = R1 fix 只修 MF-1 而
+      // mustFixIds=filterActiveIds=[MF-1]（若降级条目未过滤，ES3 判 MF-D1 漏修 →
+      // fix-failure，R3 不可达）；直接证 = dormant 有 MF-D1 落盘（见④）。
+      // ⑥（旧格式回归由现有 e2e 用例守护——本用例全部新格式）
+      expect(st.issues["MF-1"]).toMatchObject({
+        guidance: "fix boundary in parser",
+        evidence: "line 42 off-by-one",
+      });
+      expect(st.issues["MF-1"].origin).toBeUndefined(); // R1 条目无 origin（设计 6.1）
+
+      // ② R2 新发现 origin：N-1 regression（files 与 fix 剧本 affected_files 相交——
+      // mock fixer 不写文件，regression 经 fixImpactFiles 触发）；N-2 new
+      expect(st.issues["N-1"]).toMatchObject({ origin: "regression", guidance: "restore guard" });
+      expect(st.issues["N-2"]).toMatchObject({ origin: "new", evidence: "stale doc" });
+
+      // ④ 复活闭环：MF-D1 revived=true 且回修复队列（issues 有它）
+      const dormantD1 = st.dormant.find((d) => d.id === "MF-D1");
+      expect(dormantD1).toBeDefined();
+      expect(dormantD1!.reason).toBe("adjudication-downgraded");
+      expect(dormantD1!.detail).toBe("claim contradicts known facts"); // detail=note（裁决理由优先）
+      expect(dormantD1!.revived).toBe(true);
+      expect(st.issues["MF-D1"]).toBeDefined(); // 复活回修复队列
+
+      // ③ R2 review prompt 含 dormant 清单；R3 prompt 不再注入（revived=true 过滤）
+      const { prompts, kinds, schemas } = runner.stats();
+      const reviewPrompts = prompts.filter((_, i) => kinds[i] === "review");
+      expect(reviewPrompts[1]).toContain("DORMANT ISSUES");
+      expect(reviewPrompts[1]).toContain("MF-D1");
+      expect(reviewPrompts[1]).toContain("adjudication-downgraded");
+      expect(reviewPrompts[2]).not.toContain("DORMANT ISSUES");
+
+      // ⑤ aggregatorSchema 扩展：条目 oneOf object 分支 properties 含五扩展字段
+      const aggSchemaIdx = kinds.findIndex((k) => k === "aggregate");
+      const aggSchema = schemas[aggSchemaIdx] as {
+        properties?: { must_fix_ids?: { items?: { oneOf?: Array<{ properties?: Record<string, unknown> }> } }; scores?: unknown };
+      };
+      const objBranch = aggSchema.properties?.must_fix_ids?.items?.oneOf?.find(
+        (b) => b.properties && "files" in b.properties,
+      );
+      expect(objBranch).toBeDefined();
+      for (const field of ["files", "evidence", "guidance", "adjudication", "note"]) {
+        expect(objBranch!.properties).toHaveProperty(field);
+      }
+      expect(aggSchema.properties).toHaveProperty("scores");
     },
     RUN_TIMEOUT_MS,
   );
