@@ -73,7 +73,7 @@ xyz-agent 用户在 GUI 里与 LLM 对话（pi 子进程执行，每个 session 
 
 **失败模式 F（孤儿烧钱，M6）**：runtime 被 SIGKILL/OOM。supervisor 重启新 runtime（`apps/electron/main/supervisor/runtime-supervisor.ts:260-281`），但**不清理旧 runtime 的 pi 后代**——主动 stop 路径的进程树清理需要进程活着才能预记录后代 PID，崩溃场景天然失效。收敛唯一押注 pi 的 stdin-EOF 自杀链，而该链自身有两个挂起点：`runtimeHost.dispose()` 的 handler 串行 await 无超时（扩展异步落盘遇慢盘可挂）；stdin-EOF 路径的 `flushRawStdout` 遇 EPIPE 直接 throw 跳过后续 `process.exit`（pi 源码 rpc-mode.ts，✅审查期已读核实）。挂住的 pi 继续持有 API key、长 turn 继续烧 token，且重启 app 也不会清它。
 
-**失败模式 G（worktree 永久泄漏，M7）**：两个 session 并发派 subagent。两份扩展实例对 `worktrees.json` 各自 load→改→save，交错时后写方覆盖前写方 → 条目丢失。丢失条目对应的 subagent 进程若再崩溃，reaper（只遍历注册表）**永远看不到它**——注释声称的「丢失条目靠 OS tmpdir + 分支对账兜底」（`extensions/subagent-workflow/src/execution/worktree-registry.ts:17`，✅已核实注释原文）在代码里不存在（全仓无 `branch --list`/tmpdir 对账）。孤儿 worktree 目录 + `pi-sub-*` 分支永久泄漏。
+**失败模式 G（worktree 永久泄漏，M7）**：两个 session 并发派 subagent。两份扩展实例对 `worktrees.json` 各自 load→改→save，交错时后写方覆盖前写方 → 条目丢失。丢失条目对应的 subagent 进程若再崩溃，reaper（只遍历注册表）**永远看不到它**——设计期核实：注释声称的「丢失条目靠 OS tmpdir + 分支对账兜底」（`extensions/subagent-workflow/src/execution/worktree-registry.ts:17` 当时原文）在代码里不存在（全仓无 `branch --list`/tmpdir 对账），孤儿 worktree 目录 + `pi-sub-*` 分支永久泄漏。**（设计期快照；D5a/D5b 落地后该注释已改写为指向真实对账实现 `reconcileWithPhysical`——`worktree-manager.ts:371` 双向 diff 存在，见 §3.5。）**
 
 **失败模式 H（幽灵弹窗，M8）**：ask-user 弹窗挂起时 pi 崩溃。runtime 侧 `extensionTimeoutMgr.pendingRequests` 只在 session **删除**分支清理（`session-message-handler.ts` 仅有的调用点），pi 意外退出的收敛链不触碰它；renderer 侧 `session.exited` 也不清 extensionUIStore 分区。用户切走再切回（restore 起新 pi）→ 旧请求重弹 → 作答发给新进程 → `pendingExtensionRequests` 无此 id → **静默丢弃**，用户无任何反馈。
 
@@ -129,10 +129,11 @@ Electron main ──spawn──▶ runtime(父) ──spawn──▶ pi×N(子, 
                               旧 pi: 收 stdin EOF → dispose(handler 无超时, 可挂)
                                      → flushRawStdout(EPIPE 可 throw 跳过 exit)
                               结果: 0..N 个 pi 滞留(持有 API key, 或继续烧 token)
-                              现状: 无任何组件扫描/回收它们（孤儿判据 argv 可识别
-                                     —— --mode rpc + --session-dir 精确等值 + ppid=1
-                                     ——却未利用；设计原稿的 env 判据已被 W3 探针
-                                     否决，见 §3.4）
+                              设计期现状: 无任何组件扫描/回收它们(孤儿判据 argv 可识别
+                                     —— --mode rpc + --session-dir 精确等值 + ppid=1;
+                                     设计原稿的 env 判据已被 W3 探针否决，见 §3.4)
+                              （设计期快照; W3 已落地收殓步 reapOrphanPiProcesses,
+                               见 §3.4 D4a）
 ```
 
 ---
@@ -215,7 +216,7 @@ Electron main ──spawn──▶ runtime(父) ──spawn──▶ pi×N(子, 
 
 #### 关键决策
 
-- **D3a 判定与处置**：`onSilentAbort` 的 abort RPC 若以超时类错误失败，则走强杀路径：`processManager.destroySession(sessionId)` + 强杀分支内手动编排收敛（广播 session.exited → removeSessionEntry → 写 stopped 终态；编排细节与「为何不能复用 exit 事件」见本条末尾的收敛编排段）。下次发消息 `ensureActive` 自动 restore（该机制已存在，`session-service.ts:724-728` ✅审查期核实）。**设计期已核实两个可行性前提（R1 审查 S1 建议的探读）**：① 超时判别——rpc-client 超时在单点 reject（`rpc-client.ts:418` `reject(new Error('RPC command "..." timed out after ...ms'))`，纯 message 字符串），定案为**引入 `RpcTimeoutError` 类型**（rpc-client 内定义，reject 处替换，`instanceof` 判别），扩展点存在、改动单点；② 冻结进程收敛——destroy 链 SIGTERM→2s→SIGKILL 且 kill() 保证 resolve（`process-manager.ts:306-316` 注释明示），SIGKILL 对 SIGSTOP 冻结进程有效，**必然收敛**；增补「SIGTERM 前发 SIGCONT」唤醒冻结进程，让优雅退出路径（扩展落盘）有机会执行（实测时序门已消解：S5 两轮真机 SIGSTOP 注入跑通全链，收敛 3m35.6s/3m53s）。**收敛编排（W3 实施定案，修正「复用 onSessionExit 同构收敛」的原文）**：kill 路径的 exit 事件被双层守卫拦截（rpc-client `_killing` 标志跳过 exitCallback、process-manager 先删 processes Map 拦截 exit 回调），收敛无法靠 exit 事件自动触发，在 message-dispatcher 强杀分支内**手动编排**：detach → destroySession → persistSessionOutcome('stopped') → publish session.exited（含重发恢复指引）→ removeSessionEntry——与 onSessionExit 收敛链构成**第二份副本，两处必须同步维护**（改 onSessionExit 收敛步骤时须同步此编排，否则两份收敛链漂移）。
+- **D3a 判定与处置**：`onSilentAbort` 的 abort RPC 若以超时类错误失败，则走强杀路径：`processManager.destroySession(sessionId)` + 强杀分支内手动编排收敛（广播 session.exited → removeSessionEntry → 写 stopped 终态；编排细节与「为何不能复用 exit 事件」见本条末尾的收敛编排段）。下次发消息 `ensureActive` 自动 restore（该机制已存在，`session-service.ts:751` ✅审查期核实，W0 后行号）。**设计期已核实两个可行性前提（R1 审查 S1 建议的探读）**：① 超时判别——rpc-client 超时在单点 reject（设计期 `rpc-client.ts:418` 为纯 message 字符串 `reject(new Error('RPC command "..." timed out after ...ms'))`；W3 实施后该点为 `:452` 的 `reject(new RpcTimeoutError(type, timeout))`），定案为**引入 `RpcTimeoutError` 类型**（rpc-client 内定义，reject 处替换，`instanceof` 判别），扩展点存在、改动单点；② 冻结进程收敛——destroy 链 SIGTERM→2s→SIGKILL 且 kill() 保证 resolve（`process-manager.ts:306-316` 注释明示），SIGKILL 对 SIGSTOP 冻结进程有效，**必然收敛**；增补「SIGTERM 前发 SIGCONT」唤醒冻结进程，让优雅退出路径（扩展落盘）有机会执行（实测时序门已消解：S5 两轮真机 SIGSTOP 注入跑通全链，收敛 3m35.6s/3m53s）。**收敛编排（W3 实施定案，修正「复用 onSessionExit 同构收敛」的原文）**：kill 路径的 exit 事件被双层守卫拦截（rpc-client `_killing` 标志跳过 exitCallback、process-manager 先删 processes Map 拦截 exit 回调），收敛无法靠 exit 事件自动触发，在 message-dispatcher 强杀分支内**手动编排**：detach → destroySession → persistSessionOutcome('stopped') → publish session.exited（含重发恢复指引）→ removeSessionEntry——与 onSessionExit 收敛链构成**第二份副本，两处必须同步维护**（改 onSessionExit 收敛步骤时须同步此编排，否则两份收敛链漂移）。
 - **D3b 并发防护**：强杀路径与用户并发 deleteSession 的竞态：destroy + 收敛均需幂等（processes Map 无条目则跳过；收敛广播带 sessionId，前端按分区忽略）。与既有 removeSessionEntry 的幂等语义对齐。
 
 ### 3.4 D4 孤儿 pi 收殓（修 M6，G4）
@@ -272,7 +273,7 @@ Electron main ──spawn──▶ runtime(父) ──spawn──▶ pi×N(子, 
 
 #### 关键决策
 
-- **D6a runtime 侧**：**扩展点已存在（R1 审查 S1 建议的探读核实）**——`session-service.ts:210` 已有 `onSessionDestroyed` 回调槽（`:350` 注入函数，注释明示「触发点 removeSessionEntry（所有删除路径汇聚处）」，覆盖主动删 / 进程退出 / restore 清场三类路径）。实现 = 组合根在该回调（若单槽已被占用则升级为回调列表）里调用 `extensionTimeoutMgr.clearForSession(sid)` + `bridgeRequestIds` 清理；删除分支的既有直接调用点改由汇聚点统一触发（单一清理入口）。无新机制，降为实现细节。
+- **D6a runtime 侧**：**扩展点已存在（R1 审查 S1 建议的探读核实）**——设计期 `session-service.ts:210` 已有 `onSessionDestroyed` 回调槽（`:350` 注入函数，注释明示「触发点 removeSessionEntry（所有删除路径汇聚处）」，覆盖主动删 / 进程退出 / restore 清场三类路径；W0 实施后为 `:216` `onSessionDestroyedHandlers` 列表、`:361` `setOnSessionDestroyed` 注册）。实现 = 组合根在该回调（已升级为回调列表）里调用 `extensionTimeoutMgr.clearForSession(sid)` + `bridgeRequestIds` 清理；删除分支的既有直接调用点改由汇聚点统一触发（单一清理入口）。无新机制，降为实现细节。
 - **D6b renderer 侧**：`session.exited` 事件处理补 `extensionUIStore.clearSession(sid)`（对齐 deleteSession 已有路径）。`sendExtensionUiResponse` 对「目标 session 无进程」的失败改走用户可见 error（现有「client 不存在回 error」路径已覆盖发送侧，补 renderer 展示）。
 
 ### 3.7 D7 现场治理：chat-app 处置与文档导航修正（修 M9/M10，G7）
@@ -372,8 +373,8 @@ Electron main ──spawn──▶ runtime(父) ──spawn──▶ pi×N(子, 
 **设计期已消解（R1 审查推动的探读，结论已写进 §3 对应决策）**：
 
 1. ~~pi settings 锁参数~~（D1a）：已 read pi `FileSettingsStorage` 源码——`lockSync(realpath:false)` + 20ms×10 busy-wait 后抛错、无 stale、仅文件存在才锁；不对称安全性论证见 D1a。编码时仅剩「把源码行号抄进对照注释」。
-2. ~~rpc 超时判别方式~~（D3a）：单点 reject 于 `rpc-client.ts:418`，定案引入 `RpcTimeoutError` 类型。
-3. ~~session-service 销毁回调挂法~~（D6a）：`onSessionDestroyed` 回调槽已存在（`session-service.ts:210/:350`），触发点即汇聚处。
+2. ~~rpc 超时判别方式~~（D3a）：单点 reject（设计期 `rpc-client.ts:418` 纯 message；实施后为 `:452` `RpcTimeoutError`），定案引入 `RpcTimeoutError` 类型。
+3. ~~session-service 销毁回调挂法~~（D6a）：`onSessionDestroyed` 回调槽已存在（设计期 `:210/:350`；实施后为 `:216` 回调列表 / `:361` 注册），触发点即汇聚处。
 4. ~~冻结进程必然收敛~~（D3a）：kill 链 SIGTERM→2s→SIGKILL 保证 resolve（`process-manager.ts:306-316`），SIGKILL 对 stopped 进程有效。
 
 **实施期门（编码前必须先跑探针，均为运行时环境耦合项）——已全部执行，结论回写（2026-08-20 实施完成）**：
