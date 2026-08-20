@@ -38,6 +38,11 @@ export interface OAuthFlowHooks {
 // expires 公式：expires = Date.now() + expiresIn*1000 - skewMs（毫秒 epoch，pi resolveStoredOAuth
 // 比较 Date.now() >= expires）。skew 提前 5min 刷新，避免 token 在请求中途死亡。
 
+/** 秒 → 毫秒换算（token 响应的 expires_in / expires_at 均为 epoch 秒） */
+const MS_PER_SECOND = 1_000
+/** token 到期前 5min（5 * 60s）提前视为过期的刷新窗口：见上方 skew 语义说明 */
+const TOKEN_REFRESH_SKEW_MS = 300_000
+
 interface ExpiresRule {
   /** token 到期前提前多少 ms 视为过期（刷新窗口） */
   skewMs: number
@@ -48,11 +53,11 @@ interface ExpiresRule {
 }
 
 const PROVIDER_RULES: Record<string, ExpiresRule> = {
-  anthropic: { skewMs: 5 * 60 * 1_000 },
-  xai: { skewMs: 5 * 60 * 1_000, defaultExpiresIn: 3_600 },
+  anthropic: { skewMs: TOKEN_REFRESH_SKEW_MS },
+  xai: { skewMs: TOKEN_REFRESH_SKEW_MS, defaultExpiresIn: 3_600 },
   'kimi-coding': { skewMs: 0 },
   'openai-codex': { skewMs: 0 },
-  'github-copilot': { skewMs: 5 * 60 * 1_000, epochSeconds: true },
+  'github-copilot': { skewMs: TOKEN_REFRESH_SKEW_MS, epochSeconds: true },
 }
 
 const DEFAULT_RULE: ExpiresRule = { skewMs: 0 }
@@ -98,7 +103,9 @@ async function parseJsonResponse(response: Response): Promise<{ ok: boolean; sta
     const parsed = (await response.json()) as unknown
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) body = parsed as Record<string, unknown>
   } catch {
-    // 非 JSON 响应（HTML 错误页等）：body 保持空，调用方按 status 处理
+    // 非 JSON 响应（HTML 错误页等）：body 保持空，调用方按 status 处理。
+    // debug 级（prod info 过滤）：降级路径不刷屏，dev 排查网关错误页时可见
+    console.debug(`[oauth-flow] non-JSON response body (HTTP ${response.status}), treating as empty`)
   }
   return { ok: response.ok, status: response.status, body }
 }
@@ -232,13 +239,13 @@ function credentialFromTokenFields(
   const refresh = refreshToken ?? requireString(body, 'refresh_token', 'token')
   let expires: number
   if (rule.epochSeconds) {
-    expires = requirePositiveNumber(body, 'expires_at', 'token') * 1_000 - rule.skewMs
+    expires = requirePositiveNumber(body, 'expires_at', 'token') * MS_PER_SECOND - rule.skewMs
   } else {
     const expiresIn = body.expires_in === undefined ? rule.defaultExpiresIn : (body.expires_in as number)
     if (typeof expiresIn !== 'number' || !Number.isFinite(expiresIn) || expiresIn <= 0) {
       throw new Error('token response missing field: expires_in')
     }
-    expires = Date.now() + expiresIn * 1_000 - rule.skewMs
+    expires = Date.now() + expiresIn * MS_PER_SECOND - rule.skewMs
   }
   return { type: 'oauth', access, refresh, expires }
 }
@@ -382,7 +389,7 @@ async function runCopilotDeviceFlow(config: BuiltinOAuthConfig, hooks: OAuthFlow
     access: token,
     // refresh 存 GitHub token：pi 侧 refresh 用它在 copilot_internal/v2/token 换新 copilot token
     refresh: String(githubResult.value),
-    expires: expiresAt * 1_000 - (PROVIDER_RULES['github-copilot']?.skewMs ?? 0),
+    expires: expiresAt * MS_PER_SECOND - (PROVIDER_RULES['github-copilot']?.skewMs ?? 0),
   }
 }
 

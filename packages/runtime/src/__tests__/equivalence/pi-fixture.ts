@@ -47,6 +47,8 @@ const KILL_TIMEOUT_MS = 2_000
 const STDERR_BUFFER_MAX_LINES = 50
 const STDERR_TAIL_LINES = 10
 const UNPARSEABLE_BUFFER_MAX_LINES = 20
+/** waitForEvent 的事件轮询间隔（events 数组无推送通知，靠定时重查） */
+const EVENT_POLL_INTERVAL_MS = 50
 
 /** pi AgentMessage 的宽形态（等价性断言做整体 deep equal，只声明消费到的字段） */
 export interface PiAgentMessage {
@@ -397,7 +399,7 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
           reject(new Error(`timed out after ${timeoutMs}ms waiting for event; seen types: ${[...new Set(events.map((e) => e.type))].join(', ') || '(none)'}`))
           return
         }
-        setTimeout(poll, 50)
+        setTimeout(poll, EVENT_POLL_INTERVAL_MS)
       }
       poll()
     })

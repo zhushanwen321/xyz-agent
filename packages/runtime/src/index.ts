@@ -110,9 +110,11 @@ function resolveRuntimeToken(): string | null {
   try {
     const fileToken = fs.readFileSync(join(getDataDir(), 'runtime-token'), 'utf-8').trim()
     if (fileToken.length > 0) return fileToken
-  } catch {
+  } catch (error) {
     // token 文件不存在/不可读 → 落到下方 fail-closed warning（正常 dev 直跑场景，
-    // scripts/verify-*.sh 会显式注入 env 或写 token 文件）
+    // scripts/verify-*.sh 会显式注入 env 或写 token 文件）。
+    // debug 级（prod info 过滤）：文件不存在是常态路径不刷屏，dev 排查权限类失败时可见
+    console.debug('[runtime] read <dataDir>/runtime-token failed:', error)
   }
   console.warn('[runtime] WS auth token unavailable (XYZ_RUNTIME_TOKEN env / <dataDir>/runtime-token both missing) — fail-closed: ALL WebSocket connections will be rejected')
   return null

@@ -120,6 +120,8 @@ export class AuthService implements IAuthService {
       try {
         this.deps.clearApiKey(providerId)
       } catch (error) {
+        // best-effort 降级（见上方 try 前注释）：apiKey 残留仅造成凭据源歧义风险，
+        // 凭据已写入 auth.json，不改变 auth.success 语义
         console.warn(`[auth-service] clearApiKey failed for ${providerId} (models.json apiKey 残留):`, error)
       }
       // 第三道 abort 检查（M4 review）：第二道检查后至 broadcast 前的残余窗口
