@@ -32,6 +32,8 @@ import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-histo
 import { parseJsonl } from '../../utils/jsonl.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
 import { extractWorkflowsFromSessionFile } from './workflow-extractor.js'
+import { buildTraceSnapshotFromFile, parseTraceHeaderLine, nextTracePushId } from './session-trace.js'
+import type { SessionTraceSnapshot } from './session-trace.js'
 import { getSubagentSessionDir, getPiAgentDir } from '../../infra/pi/pi-paths.js'
 import { applyOrphanToolResults } from '../../infra/pi/message-converter.js'
 import type { IConfigStore } from '../ports/config.js'
@@ -181,6 +183,19 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 先完成者的新缓存交错写回」竞态。finally 清理，无泄漏。
    */
   private readonly inflightGetHistory = new Map<string, Promise<{ messages: Message[]; truncated: boolean }>>()
+  /**
+   * session-trace 增量腿基线（A33）：per-session 上次全量拉取的 leafId（since 基准）。
+   * getTraceEntries 活跃路径写入；syncTraceEntries 读取后 get_entries(since) 拉 delta 并
+   * 滚动更新。无基线（trace 视图未打开过）→ 增量腿 no-op（前端打开时会全量拉取建立基线）。
+   * removeSessionEntry 清除（与 historyCache 同汇聚点，见下）。
+   */
+  private readonly traceLeafCache = new Map<string, string>()
+  /**
+   * session-trace 增量腿串行链（A33）：per-session promise 链，同 session 触发事件按到达序
+   * 串行拉取（message_end + agent_settled 几乎同时到达 → 链式串行后第二次 since 已是新
+   * leaf，空 delta 不广播；burst 天然合并）。每段 catch 兑底，链永不 reject（diffChain 同款）。
+   */
+  private readonly traceSyncChains = new Map<string, Promise<void>>()
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
@@ -480,6 +495,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
     // 切模型后立即广播 session 级状态（modelId + 按新 contextWindow 重算用量 + thinkingLevel）
     await this.broadcastSessionState(sessionId, provider, modelId)
+    // session-trace（A33）：lifecycle RPC 成功后主动补拉——model_change 的 append 无通用事件
+    //（design D4：model_change / label 无事件，这些动作由 runtime 自身发起，RPC 成功后补拉覆盖）。
+    // fire-and-forget：补拉失败不影响切模型主流程（syncTraceEntries 内部吞错）。
+    this.syncTraceEntries(sessionId, 'set_model')
     return sessionId
   }
 
@@ -487,7 +506,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const session = this.sessions.get(sessionId)
     if (session) session.thinkingLevel = level
     const client = this.pm.getClient(sessionId)
-    if (client) await client.setThinkingLevel(level)
+    if (client) {
+      await client.setThinkingLevel(level)
+      // session-trace（A33）：thinking_level_change 的 append 虽有事件但消费点在 pi 侧
+      // extension 回调（xyz-agent 不订阅）；与 set_model 同款，RPC 成功后主动补拉。
+      this.syncTraceEntries(sessionId, 'set_thinking_level')
+    }
   }
   /** 仅回写 thinkingLevel 缓存（不调 pi RPC），供 thinking_level_changed 事件 callback 用 */
   setThinkingLevelCache(sessionId: string, level: string | undefined): void {
@@ -719,6 +743,110 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const target = this.sessionStore.scanSessions({ force: true }).find((s) => s.id === sessionId)
     if (!target) return []
     return extractWorkflowsFromSessionFile(target.filePath)
+  }
+
+  /**
+   * session-trace 台账全量拉取（design D4 数据通路 A1，A31/A32）。
+   *
+   * 路由：① 活跃（pm 有 client）→ RPC get_entries（pi 权威解析）+ 文件首行补 header
+   * （getEntries() 不含 header）+ sidecar session_end；成功后写 traceLeafCache（增量腿
+   * since 基线）。② RPC 失败（pi 进程异常）或无 client → 路径 B 文件直读（core parse-jsonl
+   * 坏行容错 + sidecar 合并；design §3.1 降级路径：前端 banner「来自磁盘文件」）。
+   * ③ 未落盘（pi 延迟写入窗口）→ source='empty' 空态标记。
+   *
+   * 文件路径解析：活跃 session 优先内存 sessionFilePath（pi spawn 后回填，免扫描），
+   * 否则 scanSessions({force:true})（路径解析消费方旁路 TTL，plan M-3 同 getFullHistory）。
+   */
+  async getTraceEntries(sessionId: string): Promise<SessionTraceSnapshot> {
+    const client = this.pm.getClient(sessionId)
+    if (client) {
+      try {
+        const result = await client.getEntries() as { data?: { entries?: unknown[]; leafId?: string | null } }
+        const entries = result.data?.entries ?? []
+        const leafId = result.data?.leafId ?? null
+        if (leafId) this.traceLeafCache.set(sessionId, leafId)
+        const filePath = this.resolveTraceFilePath(sessionId)
+        const header = parseTraceHeaderLine(filePath !== null ? this.sessionStore.readSessionHeaderLine(filePath) : null)
+        const sessionEnd = filePath !== null ? (this.sessionStore.readSessionEndMeta(filePath) ?? undefined) : undefined
+        return {
+          sessionId,
+          source: 'rpc',
+          ...(header !== undefined ? { header } : {}),
+          entries,
+          malformed: [],
+          ...(sessionEnd !== undefined ? { sessionEnd } : {}),
+          leafId,
+        }
+      } catch (e) {
+        // design §3.1 失败路径：RPC 失败（pi 进程异常）降级路径 B 文件直读
+        console.warn(`[session-trace] getTraceEntries via RPC failed (sid=${sessionId}), falling back to file read: ${toErrorMessage(e)}`)
+      }
+    }
+    return buildTraceSnapshotFromFile(sessionId, this.resolveTraceFilePath(sessionId), this.sessionStore)
+  }
+
+  /**
+   * session-trace 增量腿补拉（A33）：触发事件（message_end/compaction_end/agent_settled/
+   * entry_appended，经 event-interpreter onTraceSync）或 lifecycle RPC（set_model/
+   * set_thinking_level 成功后未方法内直调）到达后调用。
+   *
+   * 流程：查 traceLeafCache 基线（无 → no-op，trace 未打开过）→ get_entries(since=基线)
+   * → 滚动更新基线 → delta 非空时 bus.publish session.traceEntryAppended（含 sessionId，
+   * 规则 7）。“Entry not found”（基线跨进程失效，如 pi 重启）→ 清基线 + warn（下次
+   * getTraceEntries 重建，不广播错序数据）。串行链防 burst 重复拉取（见 traceSyncChains）。
+   */
+  syncTraceEntries(sessionId: string, trigger: string): void {
+    const prev = this.traceSyncChains.get(sessionId) ?? Promise.resolve()
+    const next = prev.then(() => this.doSyncTraceEntries(sessionId, trigger)).catch((e: unknown) => {
+      // 链段兑底：单次同步失败不断链（diffChain 同款）；错误已在 doSync 内分类处理，
+      // 此处仅防 unhandledRejection 逃逸。
+      console.warn(`[session-trace] sync chain segment failed (sid=${sessionId}, trigger=${trigger}):`, e)
+    })
+    this.traceSyncChains.set(sessionId, next)
+    void next.then(() => {
+      // 链尾自清理：settled 且仍是链尾时释放 Map 槽位（burst 期间新段已接管，不误删）
+      if (this.traceSyncChains.get(sessionId) === next) this.traceSyncChains.delete(sessionId)
+    })
+  }
+
+  private async doSyncTraceEntries(sessionId: string, trigger: string): Promise<void> {
+    const baseline = this.traceLeafCache.get(sessionId)
+    if (baseline === undefined) return // 无基线（trace 视图未打开过）→ 增量腿 no-op
+    const client = this.pm.getClient(sessionId)
+    if (!client) return // 无活跃 client → 无 RPC 增量源（文件路径无 leaf 概念）
+    let delta: unknown[] = []
+    let newLeafId: string | null = null
+    try {
+      const result = await client.getEntries(baseline) as { data?: { entries?: unknown[]; leafId?: string | null } }
+      delta = result.data?.entries ?? []
+      newLeafId = result.data?.leafId ?? null
+    } catch (e) {
+      if (isEntryNotFoundError(e)) {
+        // 基线失效（缓存跨 pi 进程存活 / session 文件被外部改写）：清基线，下次全量重建。
+        // 恢复动作：前端重新打开 Trace 视图调 session.getTraceEntries（或下次触发前无增量）。
+        console.warn(`[session-trace] since baseline invalid (sid=${sessionId}), dropping leaf cache; re-open trace view to rebuild`)
+        this.traceLeafCache.delete(sessionId)
+      } else {
+        console.warn(`[session-trace] getEntries(since) failed (sid=${sessionId}, trigger=${trigger}): ${toErrorMessage(e)}`)
+      }
+      return
+    }
+    if (newLeafId) this.traceLeafCache.set(sessionId, newLeafId)
+    if (delta.length === 0) return // 触发事件到达但无新 entry（追赶式拉取的正常稳态）
+    // 规则 7：session 级消息必带 sessionId（bus.publish 定向推给订阅该 sid 的 ws）
+    this.messageBus?.publish(sessionId, {
+      type: 'session.traceEntryAppended',
+      id: nextTracePushId(),
+      payload: { sessionId, entries: delta, leafId: newLeafId },
+    })
+  }
+
+  /** trace 文件路径解析：活跃 session 内存 sessionFilePath 优先，否则扫描（force 旁路 TTL）。 */
+  private resolveTraceFilePath(sessionId: string): string | null {
+    const active = this.sessions.get(sessionId)
+    if (active?.sessionFilePath) return active.sessionFilePath
+    const target = this.sessionStore.scanSessions({ force: true }).find((s) => s.id === sessionId)
+    return target?.filePath ?? null
   }
 
   /**
@@ -1114,6 +1242,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // pi 进程退出后缓存基线（lastLeafId）不再与新进程的 entry 集合对应，保留只会
     // 走 "Entry not found" fallback（防御兜底存在，但清理是正路径）。
     this.historyCache.delete(sessionId)
+    // session-trace（A33）：同汇聚点清 trace 增量腿基线与串行链（与 historyCache 同因——
+    // 基线跨进程存活无意义；链已 settled，删 Map 条目只释放槽位）。
+    this.traceLeafCache.delete(sessionId)
+    this.traceSyncChains.delete(sessionId)
     // wave:runtime-wiring（GAP1 决策）：session 销毁时清理 MessageBus 的该 session 状态
     // （ring buffer + state snapshot + 订阅者集合 + 反查表）。幂等（ES1：session 不存在 no-op）。
     // 不在 pi flush / turn 结束时清理——ring 容量 1000 会自然 FIFO 淘汰旧 turn delta，

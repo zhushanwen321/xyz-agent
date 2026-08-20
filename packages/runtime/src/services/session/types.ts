@@ -216,4 +216,12 @@ export type PiTranslatedEvent =
    * 孤儿 end 容错：overflow 早退路径无 preceding start，end handler 复位对「本来就 false 的 isCompacting」幂等无害。
    */
   | { kind: 'compaction-end'; reason: string; result?: unknown; aborted: boolean; errorMessage?: string }
+  /**
+   * session-trace 增量腿触发信号（design D4 / A33）—— pi 无「每次 append 都广播」的 entry
+   * 事件，改用现存事件作触发：message_end / agent_settled / entry_appended（pi 原始事件名）
+   * 到达 → interpreter 调 onTraceSync 回调（sessionService.syncTraceEntries：get_entries(since)
+   * 追赶式拉 delta → 广播 session.traceEntryAppended）。compaction_end 走 compaction-end kind，
+   * 在其 handler 内同调 onTraceSync（四类触发信号的第四类）。
+   */
+  | { kind: 'trace-trigger'; trigger: 'message_end' | 'agent_settled' | 'entry_appended' }
 

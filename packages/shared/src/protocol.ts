@@ -44,6 +44,9 @@ export interface CommandSourceInfo {
 export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'session.deleteByCwd' | 'config.sessions' | 'session.switch' | 'session.restore' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename' | 'session.fork' | 'session.setProject'
+  // session-trace（design D4 数据通路 A1）：session.getTraceEntries 拉全量 trace 台账
+  //（活跃走 RPC get_entries + header 首行补读；非活跃走文件直读），reply session.traceEntries。
+  | 'session.getTraceEntries'
   | 'session.handoff' | 'session.abortHandoff'
   // runtime-message-bus（slice:runtime-message-bus，wave:protocol-seq）：
   // session.subscribe 订阅某 session 的 live 事件流（bus.publish 推送的带 seq 消息），
@@ -257,6 +260,7 @@ export interface ClientMessageMap {
   'session.getFullHistory': { sessionId: string }
   'session.getCommands': { sessionId: string }
   'session.getContext': { sessionId: string }
+  'session.getTraceEntries': { sessionId: string }
   'session.compact': { sessionId: string; customInstructions?: string }
   'session.rename': { sessionId: string; name: string }
   // session.setProject：手动归类（SessionItem「归入项目」菜单）。
@@ -603,6 +607,8 @@ export type ServerMessageType =
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
   | 'session.workflowUpdate' | 'session.workflowActionDone' | 'session.subagentActionDone'
+  // session-trace（design D4）：getTraceEntries 的 reply（全量台账）+ 增量腿推送（since 增量 entries）。
+  | 'session.traceEntries' | 'session.traceEntryAppended'
   | 'subagent.stream_delta'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
@@ -700,6 +706,35 @@ export type ServerMessageType =
 
 /** skill 缓存失效广播的作用域：global=全局 skill 变动，project=某项目 cwd 的 skill 变动。 */
 export type SkillCacheScope = 'global' | 'project'
+
+// ── session-trace payload 辅助类型（design D4，trace-runtime 单元）──
+// 字段镜像 core domain/session-trace 的 TraceSessionHeader / TraceSessionEndMeta——shared 不依赖
+// core（依赖方向 core → shared），结构兼容即协议兼容；消费端（renderer）直接收窄为 core 类型。
+
+/** session.traceEntries 的 header（JSONL 首行 type=session 的完整 entry）。parentSession 两形态
+ *  （源 session 已落盘时为文件路径、未落盘时为源 sessionId fallback）原样透传。 */
+export interface SessionTraceHeaderPayload {
+  version?: number
+  id?: string
+  timestamp?: string
+  cwd?: string
+  parentSession?: string
+  forkEntryId?: string
+  [key: string]: unknown
+}
+
+/** 损坏 JSONL 行占位（文件直读路径；行号 1-based，raw 为原文）。 */
+export interface SessionTraceMalformedLine {
+  lineNumber: number
+  raw: string
+}
+
+/** sidecar `.jsonl.meta.json` 的 session_end 终态（ADR 0042；不进 JSONL）。 */
+export interface SessionTraceSessionEndPayload {
+  outcome: 'done' | 'error' | 'stopped'
+  reason?: string
+  timestamp?: string
+}
 
 /** config.skillCacheInvalidated 消息的 payload。scope='project' 时 cwd 携带变更的项目根；
  *  setSkillDirs 改全局配置触发的 project 广播 cwd 仍缺省（影响所有 cwd，非单个 cwd 变更）。 */
@@ -854,6 +889,33 @@ export interface ServerMessageMapBase {
   // session.workflowUpdate：workflow 状态变化增量信号（event-interpreter 推送，发起/结束时刻）。
   // 前端收到后调 loadWorkflows RPC 拉取完整列表。与 session.workflows（RPC reply 全量列表）区分。
   'session.workflowUpdate': { sessionId: string; update: { runId: string; status: string; reason?: string } }
+  // ── session-trace（design D4 数据通路 A1，trace-runtime 单元）──
+  // session.traceEntries：session.getTraceEntries 的 reply。source 区分数据通路：
+  //   rpc = 活跃 session（pi get_entries 权威解析 + 文件首行补 header）；
+  //   file = 非活跃/降级（JSONL 直读 + sidecar 合并）；
+  //   empty = session 未落盘（pi 延迟写入窗口，规则 6——空态标记，前端显示「尚未落盘」）。
+  // header 是 JSONL 首行 type=session 的完整 entry（字段镜像 core TraceSessionHeader——
+  // shared 不依赖 core，结构兼容即协议兼容；parentSession 两形态（源文件路径/源 sessionId
+  // fallback）原样透传，溯源解析归消费端）。entries 是 pi entry JSON 逐条（消费端按 core
+  // TraceSessionEntry 收窄）；malformed 仅文件路径产出（RPC 路径 pi 已静默跳坏行，恒空数组）。
+  'session.traceEntries': {
+    sessionId: string
+    source: 'rpc' | 'file' | 'empty'
+    header?: SessionTraceHeaderPayload
+    entries: unknown[]
+    malformed: SessionTraceMalformedLine[]
+    sessionEnd?: SessionTraceSessionEndPayload
+    /** 当前叶子 entry id（RPC 路径；增量腿 since 基准）。文件路径无 leaf 概念，缺省。 */
+    leafId?: string | null
+  }
+  // session.traceEntryAppended：增量腿推送（event-interpreter 触发事件 → get_entries(since=lastLeafId)
+  // 拉取后的 delta entries；lifecycle RPC 成功后 runtime 主动补拉同走此通道）。entries 为空时
+  // 不推送（触发事件到达但无新 entry）。消费端按 entry.id 去重追加。
+  'session.traceEntryAppended': {
+    sessionId: string
+    entries: unknown[]
+    leafId: string | null
+  }
   // session.workflowActionDone：workflow 操作完成确认（session.workflowAction RPC reply）
   'session.workflowActionDone': { sessionId: string; action: 'pause' | 'resume' | 'abort'; runId: string }
   // session.subagentActionDone：subagent 操作完成确认（session.subagentAction RPC reply）
@@ -1278,6 +1340,7 @@ export interface ReplyPayloadMap {
   'session.getAgentCallHistory': ServerMessageMap['session.agentCallHistory']
   'session.getCommands': ServerMessageMap['session.commands']
   'session.getContext': ServerMessageMap['context.update']
+  'session.getTraceEntries': ServerMessageMap['session.traceEntries']
   'session.getFullHistory': ServerMessageMap['session.fullHistory']
   'session.getSubagentHistory': ServerMessageMap['session.subagentHistory']
   'session.getSubagents': ServerMessageMap['session.subagents']

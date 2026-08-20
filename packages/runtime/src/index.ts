@@ -318,6 +318,12 @@ async function main(): Promise<void> {
         const s = sessionService.getSession(sid)
         if (s) s.isCompacting = v
       },
+      // session-trace（A33）：增量腿触发回调——interpreter 的四类触发事件到达后做
+      // 追赶式 since 补拉（syncTraceEntries 内部自查 leaf 基线，无基线 no-op；串行链
+      // 吸 burst）。自引用闭包与上方 onContextUpdate 同模式（sessionService 构造前仅存引用）。
+      onTraceSync: (sid, trigger) => {
+        sessionService.syncTraceEntries(sid, trigger)
+      },
       // [ADR-0047] ping get_state 进程健康探测（替代事件静默检测）。
       // 延迟解析 client：interpreter 在 session 创建时构造，那时 client 可能尚未 spawn。
       // pm（ProcessManager）在本闭包外已创建，getClient 返回 undefined 时计为一次失败

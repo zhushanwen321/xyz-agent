@@ -34,6 +34,7 @@ import type {
   ProviderId,
 } from '@xyz-agent/shared'
 import type { DirScopes } from './services/skill-dir-config.js'
+import type { SessionTraceSnapshot } from './services/session/session-trace.js'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 
 /**
@@ -171,6 +172,22 @@ export interface ISessionService {
   getAgentCallFilePath(sessionId: string, agentCallSessionId: string): Promise<string>
   /** 触发 workflow 生命周期操作（pause/resume/abort，经扩展 slash command，不经 LLM） */
   workflowAction(sessionId: string, action: 'pause' | 'resume' | 'abort', runId: string): Promise<void>
+  /**
+   * 拉取 session trace 台账快照（session-trace design D4 数据通路 A1）。
+   *
+   * 路由：活跃 session 走 pi get_entries RPC（权威解析）+ 文件首行补 header；非活跃/
+   * RPC 失败降级走 JSONL+sidecar 文件直读（core parse-jsonl 容错）；未落盘返回
+   * source='empty' 空态标记。同时建立增量腿 since 基线（活跃路径）。供 renderer
+   * Trace 视图打开时全量拉取（session.getTraceEntries → reply session.traceEntries）。
+   */
+  getTraceEntries(sessionId: string): Promise<SessionTraceSnapshot>
+  /**
+   * 增量腿补拉（session-trace A33）：触发事件（message_end/compaction_end/agent_settled/
+   * entry_appended）或 lifecycle RPC（set_model/set_thinking_level）成功后调用。
+   * get_entries(since=上次 leafId) 拉 delta → 广播 session.traceEntryAppended（含
+   * sessionId）；无基线（trace 未打开过）/无活跃 client 时 no-op。fire-and-forget 安全。
+   */
+  syncTraceEntries(sessionId: string, trigger: string): void
   /** 取消 running subagent（经扩展 /subagents cancel，不经 LLM；对称 workflowAction） */
   subagentAction(sessionId: string, action: 'cancel', subagentId: string): Promise<void>
   /** W5：session 是否空闲（进程存活且非生成中），供 ReloadOrchestrator 判断立即/排队 reload。 */

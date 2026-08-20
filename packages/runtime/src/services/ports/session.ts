@@ -52,6 +52,14 @@ export interface SessionHeader {
   forkEntryId?: string
 }
 
+/** sidecar `.jsonl.meta.json` 的 session_end 完整元数据（session-trace 用；infra readSessionEndMeta 返回）。 */
+export interface SessionEndSidecarMeta {
+  type: 'session_end'
+  outcome: SessionOutcome
+  reason?: string
+  timestamp?: string
+}
+
 /**
  * entry 树重建历史结果。
  *
@@ -139,6 +147,25 @@ export interface ISessionStore {
    * 首行非 session 类型 / 文件不存在 / JSON.parse 失败 → catch 返回 null（不抛）。
    */
   parseSessionHeader(filePath: string): SessionHeader | null
+  /**
+   * 读取 session .jsonl 首行**原文**（session-trace 路径 A 补 header 用，design D4：
+   * RPC get_entries 不含 header，由端口补读文件首行）。
+   *
+   * 返回首行文本；文件不存在 / 空文件 / 读失败 → null（不抛）。解析归调用方
+   * （session-trace 模块——需要 header 完整 JSON，含 version 等未建模字段）。
+   */
+  readSessionHeaderLine(filePath: string): string | null
+  /**
+   * 读取 session .jsonl 全文文本（session-trace 路径 B 文件直读用）。
+   *
+   * 文件不存在（pi 延迟写入窗口，规则 6）/ 读失败 → null（不抛——空态判定依据）。
+   */
+  readSessionJsonlText(filePath: string): string | null
+  /**
+   * 读取 sidecar `.jsonl.meta.json` 的 session_end 完整元数据（session-trace BOUNDARY 行，
+   * ADR 0042）。无 sidecar / JSON 损坏 / outcome 非法 → null（不抛）。
+   */
+  readSessionEndMeta(filePath: string): SessionEndSidecarMeta | null
   /**
    * 向源 session JSONL 追加 handoff_marker entry（供 scanner 尾读提取 handedOffTo）。
    *

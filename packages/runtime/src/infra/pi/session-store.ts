@@ -7,8 +7,9 @@
  * message-converter 的 convertPiHistory + system/trash。
  * service 经此 port 访问这些 session 域操作，不直接 import 各 infra 模块。
  */
-import type { ISessionStore, ScannedSessionMeta, SessionOutcome, SessionHeader, RebuiltHistory, ScanSessionsOptions } from '../../services/ports/session.js'
+import type { ISessionStore, ScannedSessionMeta, SessionOutcome, SessionHeader, SessionEndSidecarMeta, RebuiltHistory, ScanSessionsOptions } from '../../services/ports/session.js'
 import type { Message, SegmentsMetadataFile } from '@xyz-agent/shared'
+import { readFileSync } from 'node:fs'
 import type { PiSessionEntry } from './pi-protocol.js'
 import {
   scanPiSessions,
@@ -21,6 +22,8 @@ import {
   invalidateSessionMetaCache,
   invalidateScanDirCache,
   parseSessionHeader,
+  readFirstJsonlLine,
+  readSessionEndMeta as readSessionEndMetaInfra,
   persistHandedOff,
 } from './session-file-utils.js'
 import { refreshAll } from './pi-provider-store.js'
@@ -83,6 +86,23 @@ export class PiSessionStore implements ISessionStore {
 
   parseSessionHeader(filePath: string): SessionHeader | null {
     return parseSessionHeader(filePath)
+  }
+
+  readSessionHeaderLine(filePath: string): string | null {
+    return readFirstJsonlLine(filePath)
+  }
+
+  readSessionJsonlText(filePath: string): string | null {
+    try {
+      return readFileSync(filePath, 'utf-8')
+    } catch {
+      // 规则 6：pi 延迟写入窗口内文件不存在是常态（非错误），空态判定归调用方
+      return null
+    }
+  }
+
+  readSessionEndMeta(filePath: string): SessionEndSidecarMeta | null {
+    return readSessionEndMetaInfra(filePath)
   }
 
   persistHandedOff(filePath: string, newSessionId: string): void {

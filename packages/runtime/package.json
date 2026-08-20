@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5",
+    "@xyz-agent/core": "workspace:*",
     "@xyz-agent/extension-protocol": "workspace:*",
     "@xyz-agent/shared": "workspace:*",
     "chokidar": "^4.0.1",

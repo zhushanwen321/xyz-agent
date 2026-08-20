@@ -109,6 +109,15 @@ export interface EventInterpreterOptions {
    */
   onCompactingStateChange?: (sessionId: string, isCompacting: boolean) => void
   /**
+   * session-trace 增量腿补拉回调（design D4 / A33，组合根注入 sessionService.syncTraceEntries）。
+   *
+   * 触发源四类：trace-trigger（message_end / agent_settled / entry_appended 三类现存事件
+   * 作触发信号——pi 无 append 级广播）+ compaction-end（compaction entry append 先于
+   * compaction_end emit，时序已核实）。回调内部自查 traceLeafCache 基线（无则 no-op），
+   * 同步失败不影响主事件流。异步执行（追赶式拉取不阻塞 interpret 批次）。
+   */
+  onTraceSync?: (sessionId: string, trigger: string) => void
+  /**
    * [ADR-0047] ping get_state 进程健康探测回调（组合根注入）。
    *
    * 延迟解析 client：interpreter 在 session 创建时构造，那时 client 可能尚未 spawn。
@@ -315,6 +324,11 @@ export class EventInterpreter {
         return
       case 'compaction-end':
         this.handleCompactionEnd(ev)
+        return
+      case 'trace-trigger':
+        // session-trace 增量腿（A33）：触发事件到达 → 追赶式 since 补拉（fire-and-forget，
+        // 不阻塞本批次；拉到 delta 后由 syncTraceEntries 广播 session.traceEntryAppended）。
+        this.opts.onTraceSync?.(this.sessionId, ev.trigger)
         return
     }
   }
@@ -763,6 +777,10 @@ export class EventInterpreter {
     }
     // 三路复位对称（SUG-新2）
     this.opts.onCompactingStateChange?.(this.sessionId, false)
+    // session-trace 增量腿（A33）：compaction entry 的 append 先于 compaction_end emit
+    //（时序已核实，design D4），成功/aborted 路径都补拉（aborted 无新 entry 时 sync 内部
+    // 空 delta 不广播）；failed 路径也补——追赶式拉取以 pi 侧实际状态为准。
+    this.opts.onTraceSync?.(this.sessionId, 'compaction_end')
   }
 
   // ── [ADR-0047] ping 探测（进程健康检测，替代事件静默检测）──

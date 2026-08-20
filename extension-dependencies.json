@@ -164,6 +164,11 @@
       "name": "@zhushanwen/pi-cache-probe",
       "directory": "extensions/cache-probe",
       "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-system-prompt-trace",
+      "directory": "extensions/system-prompt-trace",
+      "dependsOn": []
     }
   ]
 }

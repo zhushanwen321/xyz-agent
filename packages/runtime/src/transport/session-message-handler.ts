@@ -44,6 +44,8 @@ export class SessionMessageHandler {
     'session.getSubagents', 'session.getSubagentHistory',
     'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
     'session.workflowAction', 'session.subagentAction',
+    // session-trace（design D4）：全量 trace 台账拉取（A1 混合路由归 session-service）。
+    'session.getTraceEntries',
     // wave:runtime-patch ipc-converge-a3 W2：业务持久化写 WS（session 数据单一出口归 runtime）
     'session.writeImage', 'session.migrateImage', 'session.writeSegments',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
@@ -368,6 +370,20 @@ export class SessionMessageHandler {
         }
         bus.unsubscribe(sessionId, ws as unknown as BusClient)
         return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'unsubscribed' })
+      }
+      case 'session.getTraceEntries': {
+        // session-trace（design D4 / A31 / A32）：A1 混合路由归 sessionService.getTraceEntries
+        //（活跃 RPC + header 首行补读；非活跃文件直读 + sidecar；未落盘空态）。
+        // 规则 7：reply payload 必带 sessionId（前端按 session 分区，缺 id 消息应被忽略）。
+        const traceSid = msg.payload.sessionId
+        try {
+          const snapshot = await this.ctx.sessionService.getTraceEntries(traceSid)
+          return this.ctx.reply(ws, msg.id, 'session.traceEntries', snapshot)
+        } catch (e) {
+          const errMsg = toErrorMessage(e)
+          console.error('[runtime] session.getTraceEntries failed:', errMsg)
+          return this.ctx.sendError(ws, 'trace_fetch_failed', `Failed to load session trace: ${errMsg} — retry by reopening the Trace view; if it persists, check the session JSONL file is readable`, msg.id, { sessionId: traceSid })
+        }
       }
       case 'session.getCommands': {
         // renderer 切 session 后主动拉取命令（修复 broadcast 与订阅时序竞争）。

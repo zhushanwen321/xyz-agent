@@ -693,6 +693,9 @@ importers:
       '@iarna/toml':
         specifier: ^2.2.5
         version: 2.2.5
+      '@xyz-agent/core':
+        specifier: workspace:*
+        version: link:../core
       '@xyz-agent/extension-protocol':
         specifier: workspace:*
         version: link:../extension-protocol

@@ -46,6 +46,9 @@ import type {
   PiErrorEvent,
   PiCompactionStartEvent,
   PiCompactionEndEvent,
+  PiMessageEndEvent,
+  PiAgentSettledEvent,
+  PiEntryAppendedEvent,
 } from './pi-protocol.js'
 
 // ── Sub-handler types ──────────────────────────────────────────────
@@ -703,17 +706,27 @@ function handleCompactionEnd(event: PiCompactionEndEvent, _sid: string): PiTrans
 
 // ── Null-event types (lifecycle events not forwarded to frontend) ──
 // 注意：turn_end 不在此列——它经 handleTurnEndPi 提取 usage 触发 context.update（见 DISPATCHER）。
-// agent_settled 是 pi 0.80.3 稳态事件（无待处理工具/消息），xyz-agent 不消费——显式登记忽略。
-// compaction_start/compaction_end 在 M4 移出此列（改事件驱动，interpreter 唯一编排 compaction 生命周期）。
+// agent_settled / message_end / entry_appended 在 session-trace（design D4 / A33）移出此列——
+// 改翻 trace-trigger 中间事件（interpreter 调 onTraceSync 做追赶式 since 拉取），不再静默忽略。
 // agent_start 在 M5 移出此列——其 hook 分支在 translate() 内单独消费（onPiEvent/agent_start hook，
 // 消费方是插件 executeHooks，S1）。若放回 NULL_EVENTS 会被此处 short-circuit，hook 分支不可达。
-// entry_appended 在 M5 登记此列——pi extension appendEntry 会 emit，xyz-agent 无前端消费方，
-// 不登记会刷 console.warn unhandled。
 const NULL_EVENTS = new Set([
-  'turn_start', 'message_end',
+  'turn_start',
   'extension_config', 'extension_ui_response', 'response',
-  'agent_settled', 'entry_appended',
 ])
+
+/**
+ * trace 增量腿触发事件（session-trace design D4 / A33）→ trace-trigger 中间事件。
+ *
+ * pi 无「每次 append 都广播」的 entry 事件（entry_appended 全仓唯一 emit 点在 extension
+ * appendEntry 回调，agent-session.ts:2517），message / compaction / bash 的 append 均无
+ * entry 级事件。改用三类现存事件作触发信号：message_end（每条消息 append 后）、
+ * agent_settled（稳态兑底）、entry_appended（extension appendEntry）。payload 不需要——
+ * interpreter 据此调 onTraceSync（get_entries(since) 追赶式拉取，pi 侧才是权威）。
+ */
+function handleTraceTrigger(event: PiMessageEndEvent | PiAgentSettledEvent | PiEntryAppendedEvent): PiTranslatedEvent[] {
+  return [{ kind: 'trace-trigger', trigger: event.type }]
+}
 
 // ── Dispatcher map ─────────────────────────────────────────────────
 // handler 入参是窄类型（PiMessageUpdateEvent 等），DISPATCHER value 是联合入参签名。
@@ -736,6 +749,10 @@ const DISPATCHER = new Map<string, Handler>()
   DISPATCHER.set('queue_update', handleQueueUpdate as Handler)
   DISPATCHER.set('session_info_changed', handleSessionInfoChanged as Handler)
   DISPATCHER.set('thinking_level_changed', handleThinkingLevelChanged as Handler)
+  // session-trace（A33）：三类触发事件 → trace-trigger（interpreter onTraceSync 补拉）
+  DISPATCHER.set('message_end', handleTraceTrigger as Handler)
+  DISPATCHER.set('agent_settled', handleTraceTrigger as Handler)
+  DISPATCHER.set('entry_appended', handleTraceTrigger as Handler)
   // Simple passthrough handlers
   DISPATCHER.set('status', handleStatus as Handler)
   DISPATCHER.set('error', handleError as Handler)
