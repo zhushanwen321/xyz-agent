@@ -439,15 +439,10 @@ export interface IExtensionService {
   /** 启用的 extension 路径列表（供 pi --extension 参数）。cwd 用于解析相对的 discovery extension 目录。 */
   getExtensionPaths(cwd?: string): Promise<string[]>
   /**
-   * 供 PresetService 做 preset 二次筛选：返回原始发现结果（不含 builtin、不过滤）+ disabled 集合。
-   * M1 修复：builtin 注入点唯一化，避免 preset-service 拿到含 builtin 的列表再 prepend 导致 double-builtin。
+   * 供 PresetService 做 preset 二次筛选：返回原始发现结果（不过滤；npm 化 builtin
+   * infrastructure 包随 discovery 一并返回）+ disabled 集合。
    */
   getDiscoveredAndDisabled(cwd?: string): Promise<{ discovered: import('./services/ports/installer.js').DiscoveredExtension[]; disabledSet: Set<string> }>
-  /**
-   * builtin 文件型 extension 路径（existsSync 过滤后），永远注入不受 preset.extensionMode 影响。
-   * 设计文档 §2.3：供 PresetService.resolveExtensionPaths 复用。
-   */
-  getBuiltinExtensionPaths(): string[]
   installExtension(source: string): Promise<void>
   uninstallExtension(name: string): Promise<void>
   installLocalDirectory(sourcePath: string): Promise<{ tempDir: string; candidates: import('@xyz-agent/shared').ExtensionInfo[] }>

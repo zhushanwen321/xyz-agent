@@ -1,11 +1,11 @@
 /**
- * PresetService 单测（wave 1: 存储内核 + CRUD / wave 2: resolve + builtin 提取）。
+ * PresetService 单测（wave 1: 存储内核 + CRUD / wave 2: resolve + extension mode 过滤）。
  *
  * wave 1（10 个 testCase）：CRUD + builtin 保护 + IO 容错。
- * wave 2（6 个 testCase）：resolve 各 mode 分支 + builtin 永远前置 + toolArgs 映射 + flags 透传。
+ * wave 2（6 个 testCase）：resolve 各 mode 分支 + infrastructure 保活 + toolArgs 映射 + flags 透传。
  *
  * mock 策略：fake ConfigStore（getConfigDir 返回 tmpdir）+ fake ExtensionService
- * （wave1 用空占位；wave2 注入固定 scanExtensions/getBuiltinExtensionPaths 返回值）。
+ * （wave1 用空占位；wave2 注入固定 getDiscoveredAndDisabled 返回值）。
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync as statSyncInternal, writeFileSync } from 'node:fs'
@@ -56,7 +56,6 @@ function makeFakeConfigStore(configDir: string) {
 /** 占位 fake extensionService（wave1 不调用）。wave2 用 makeFakeExtensionStoreForResolve。 */
 function makeFakeExtensionStore() {
   return {
-    getBuiltinExtensionPaths: vi.fn(() => []),
     scanExtensions: vi.fn(async () => []),
     getExtensionPaths: vi.fn(async () => []),
     getSkillPaths: vi.fn(async () => []),
@@ -64,23 +63,21 @@ function makeFakeExtensionStore() {
 }
 
 /**
- * wave2 resolve 测试用的 fake extensionService：可控的 builtin 路径 + discovered/disabled。
+ * wave2 resolve 测试用的 fake extensionService：可控的 discovered/disabled。
  *
- * worker C 把 resolveExtensionPaths 改为调 getDiscoveredAndDisabled（返回原始 discovered + disabledSet），
+ * resolveExtensionPaths 调 getDiscoveredAndDisabled（返回原始 discovered + disabledSet），
  * 本地再 resolveExtensions + applyPresetMode。所以 fake 需 mock getDiscoveredAndDisabled
  * （不再 mock scanExtensions/getExtensionPaths，resolve 不再调它们；保留方法占位给可能用到的地方）。
  *
- * builtinPaths: getBuiltinExtensionPaths 的固定返回值。
- * discovered: getDiscoveredAndDisabled 返回的原始发现结果（path + source）。
+ * discovered: getDiscoveredAndDisabled 返回的原始发现结果（path + source；npm 化 builtin
+ * infrastructure 包也经此集合进入——builtin npm 化后无独立路径注入）。
  * disabledNames: 包名数组（不含 npm: 前缀），fake 内部转成 `npm:<name>` 形式的 Set。
  */
 function makeFakeExtensionStoreForResolve(
-  builtinPaths: string[],
   discovered: DiscoveredExtension[],
   disabledNames: string[],
 ) {
   return {
-    getBuiltinExtensionPaths: vi.fn(() => builtinPaths),
     getDiscoveredAndDisabled: vi.fn(async () => ({
       discovered,
       disabledSet: new Set(disabledNames.map(n => `npm:${n}`)),
@@ -331,7 +328,6 @@ describe('PresetService · wave 2 resolve', () => {
     // fixture 含三类包：infrastructure(pi-pending-notifications) + feature(pi-goal) + 2 普通(normal-a/normal-b)
     // 假路径配合文件顶部 vi.mock('node:fs') 返回真实包名，使 resolveExtensions 真正走 infra/feature 分支
     mockExt = makeFakeExtensionStoreForResolve(
-      ['/builtin/agent.js', '/builtin/sp.js'], // 2 个 builtin 路径
       [
         // 用真实 infrastructure 包名，让 resolveExtensions 真正走 infra 分支
         { path: '/fake/ext/pi-pending-notifications', source: 'npm' },
@@ -349,11 +345,10 @@ describe('PresetService · wave 2 resolve', () => {
     )
   })
 
-  it('w2-tc3: resolve extensionMode=all 返回 builtin + 全部 discovered extension', async () => {
+  it('w2-tc3: resolve extensionMode=all 返回全部 discovered extension（含 infra）', async () => {
     const result = await svcWithMock.resolve(makePreset({ extensionMode: 'all' }), '/cwd')
-    // 2 builtin + 全部 4 个扩展（infra / feature / 2 normal）
+    // 全部 4 个扩展（infra / feature / 2 normal）
     expect(result.extensionPaths).toEqual([
-      '/builtin/agent.js', '/builtin/sp.js',
       '/fake/ext/pi-pending-notifications',
       '/fake/ext/pi-goal',
       '/fake/ext/normal-a',
@@ -366,10 +361,9 @@ describe('PresetService · wave 2 resolve', () => {
       makePreset({ extensionMode: 'allowlist', allowedExtensions: ['normal-a'] }),
       '/cwd',
     )
-    // builtin + infra（pi-pending-notifications 存活，即使不在 allowlist 也留）+ normal-a（在 allowlist）
+    // infra（pi-pending-notifications 存活，即使不在 allowlist 也留）+ normal-a（在 allowlist）
     // 不含 pi-goal（feature 不在 allowlist）、normal-b（不在 allowlist）
     expect(result.extensionPaths).toEqual([
-      '/builtin/agent.js', '/builtin/sp.js',
       '/fake/ext/pi-pending-notifications',
       '/fake/ext/normal-a',
     ])
@@ -383,23 +377,21 @@ describe('PresetService · wave 2 resolve', () => {
       }),
       '/cwd',
     )
-    // builtin + infra（pi-pending-notifications 扛住 denylist！即使被列入也留）
+    // infra（pi-pending-notifications 扛住 denylist！即使被列入也留）
     // 不含 pi-goal / normal-a（被 deny）；normal-b 未 deny 但…保留
     expect(result.extensionPaths).toEqual([
-      '/builtin/agent.js', '/builtin/sp.js',
       '/fake/ext/pi-pending-notifications',
       '/fake/ext/normal-b',
     ])
   })
 
-  it('w2-tc6: resolve extensionMode=none 只留 builtin + infrastructure（feature/normal 全排除）', async () => {
+  it('w2-tc6: resolve extensionMode=none 只留 infrastructure（feature/normal 全排除）', async () => {
     const result = await svcWithMock.resolve(
       makePreset({ extensionMode: 'none' }),
       '/cwd',
     )
-    // builtin 永远前置 + none 模式只保留 infrastructure
+    // none 模式只保留 infrastructure
     expect(result.extensionPaths).toEqual([
-      '/builtin/agent.js', '/builtin/sp.js',
       '/fake/ext/pi-pending-notifications',
     ])
   })

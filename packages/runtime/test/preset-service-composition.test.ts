@@ -75,14 +75,14 @@ function makeFakeWorkspaceService() {
   return {} as unknown as ConstructorParameters<typeof SessionService>[8]
 }
 
-/** wave2 同款 fake extensionService（可控 builtin + discovered/disabled）。
+/** wave2 同款 fake extensionService（可控 discovered/disabled）。
  * getDiscoveredAndDisabled 返回全部 userExts（enabled 和 disabled 都含，disabled 进 disabledSet），
- * resolveExtensionPaths 据此本地跑 resolveExtensions + applyPresetMode（builtin 只 prepend 一次）。 */
-function makeFakeExtensionService(builtinPaths: string[], userExts: ExtensionInfo[]): IExtensionService {
+ * resolveExtensionPaths 据此本地跑 resolveExtensions + applyPresetMode（builtin npm 化后无
+ * 独立路径注入，infrastructure 包随 discovered 进入并由 applyPresetMode 保活）。 */
+function makeFakeExtensionService(userExts: ExtensionInfo[]): IExtensionService {
   return {
-    getBuiltinExtensionPaths: () => builtinPaths,
     scanExtensions: async () => userExts,
-    getExtensionPaths: async () => [...builtinPaths, ...userExts.filter(e => e.enabled).map(e => e.path)],
+    getExtensionPaths: async () => userExts.filter(e => e.enabled).map(e => e.path),
     getDiscoveredAndDisabled: async () => ({
       discovered: userExts.map(e => ({ path: e.path, source: 'user' as const })),
       disabledSet: new Set(userExts.filter(e => !e.enabled).map(e => `npm:${e.name}`)),
@@ -115,7 +115,7 @@ beforeEach(() => {
     makeFakeBroker(),
     makeFakeAdapterFactory(),
     tmpDir, // projectRoot
-    makeFakeExtensionService([], []),
+    makeFakeExtensionService([]),
     makeFakeConfigStore(tmpDir),
     makeFakeSessionStore(),
     makeFakeGitInfoReader(),
@@ -139,10 +139,7 @@ describe('SessionService · wave 3 PresetService 注入', () => {
     // 注入真实 PresetService（带 fake configStore + extensionService）
     const presetService = new PresetService(
       makeFakeConfigStore(tmpDir) as unknown as ConstructorParameters<typeof PresetService>[0],
-      makeFakeExtensionService(
-        ['/builtin/agent.js', '/builtin/sp.js'],
-        [makeExt('user-ext', true)],
-      ) as unknown as ConstructorParameters<typeof PresetService>[1],
+      makeFakeExtensionService([makeExt('user-ext', true)]) as unknown as ConstructorParameters<typeof PresetService>[1],
     )
     sessionService.setPresetService(presetService)
 
@@ -150,7 +147,7 @@ describe('SessionService · wave 3 PresetService 注入', () => {
     const afterInjection = await sessionService.getLaunchPresetOptions(BUILTIN_PRESET_IDS.FULL, '/cwd')
     expect(afterInjection).toBeDefined()
     expect(afterInjection!.extensionPaths).toEqual([
-      '/builtin/agent.js', '/builtin/sp.js', '/fake/ext/user-ext',
+      '/fake/ext/user-ext',
     ])
     expect(afterInjection!.toolArgs).toEqual({}) // builtin:full toolMode=all
   })
@@ -161,7 +158,7 @@ describe('SessionService · wave 3 PresetService 注入', () => {
     // builtin:full 永在（DEFAULT_PRESETS 保证），故 fallback 必命中。
     const presetService = new PresetService(
       makeFakeConfigStore(tmpDir) as unknown as ConstructorParameters<typeof PresetService>[0],
-      makeFakeExtensionService([], []) as unknown as ConstructorParameters<typeof PresetService>[1],
+      makeFakeExtensionService([]) as unknown as ConstructorParameters<typeof PresetService>[1],
     )
     sessionService.setPresetService(presetService)
 
@@ -175,10 +172,7 @@ describe('SessionService · wave 3 PresetService 注入', () => {
   it('w3-tc4: builtin:full 经 getLaunchPresetOptions 返回完整 PresetResolution 形状', async () => {
     const presetService = new PresetService(
       makeFakeConfigStore(tmpDir) as unknown as ConstructorParameters<typeof PresetService>[0],
-      makeFakeExtensionService(
-        ['/builtin/agent.js', '/builtin/sp.js', '/builtin/mapper.js'],
-        [makeExt('ext-a', true), makeExt('ext-b', false)],
-      ) as unknown as ConstructorParameters<typeof PresetService>[1],
+      makeFakeExtensionService([makeExt('ext-a', true), makeExt('ext-b', false)]) as unknown as ConstructorParameters<typeof PresetService>[1],
     )
     sessionService.setPresetService(presetService)
 
@@ -186,7 +180,6 @@ describe('SessionService · wave 3 PresetService 注入', () => {
     expect(result).toBeDefined()
     // builtin:full = extensionMode:all + toolMode:all
     expect(result!.extensionPaths).toEqual([
-      '/builtin/agent.js', '/builtin/sp.js', '/builtin/mapper.js',
       '/fake/ext/ext-a', // ext-b disabled 被排除
     ])
     expect(result!.toolArgs).toEqual({})
@@ -202,7 +195,7 @@ describe('SessionService · wave 3 PresetService 注入', () => {
   it('w3-tc1: PresetService 在组合根可构造（不抛错）', () => {
     // 间接验证 index.ts 的 new PresetService(configStore, extensionService) 不抛错
     const configStore = makeFakeConfigStore(tmpDir)
-    const extensionService = makeFakeExtensionService(['/builtin/agent.js'], [makeExt('x', true)])
+    const extensionService = makeFakeExtensionService([makeExt('x', true)])
     expect(() => {
       const ps = new PresetService(
         configStore as unknown as ConstructorParameters<typeof PresetService>[0],
