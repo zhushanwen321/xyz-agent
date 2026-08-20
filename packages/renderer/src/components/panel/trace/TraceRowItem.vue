@@ -1,0 +1,129 @@
+<template>
+  <!--
+    展示组件 · trace-row-item（session-trace §3.4 渲染模型，一行 = 一个 entry）。
+    12 kind + MALFORMED 数据驱动渲染：seq + kind badge（demo 色板）+ 时间 + headline
+    （core 数据提取）+ kind 特化 meta 后缀 + 「不进 context」弱标记。
+    状态语义：
+    - 影子化（shadowed）：降透明（demo .tr-row.shadowed opacity .42），hover 恢复。
+    - 选中态：bg-surface-hover + 摘要 text-accent，无 ring 无左条（v6 §3.4 列表项型；
+      行底色已是 surface 的场景按 SearchModal sm-item 登记例外——surface-hover + 强调字色）。
+    - MALFORMED headline 走 i18n（core headline 是数据提取，损坏行文案归 UI 层）。
+  -->
+  <div
+    class="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-[5px] transition-colors duration-[var(--duration-fast)] ease-[var(--ease)] hover:bg-surface-2"
+    :class="[
+      row.shadowed ? 'opacity-40 hover:opacity-75' : '',
+      selected ? 'bg-surface-hover hover:bg-surface-hover' : '',
+    ]"
+    :data-testid="`trace-row-${row.seq}`"
+    :data-kind="row.kind"
+    :data-shadowed="row.shadowed ? 'true' : undefined"
+    :data-in-context="row.inContext ? 'true' : undefined"
+    :title="rowTitle"
+    @click="emit('select', row)"
+  >
+    <span class="w-9 shrink-0 text-right font-mono text-[10px] tabular-nums text-neutral-faint">#{{ row.seq }}</span>
+    <span
+      class="shrink-0 rounded px-1.5 py-px font-mono text-[10px] tracking-wide"
+      :class="KIND_BADGE_CLASS[row.kind]"
+    >{{ row.kind }}</span>
+    <span v-if="time" class="shrink-0 font-mono text-[10px] tabular-nums text-neutral-faint">{{ time }}</span>
+    <span
+      class="min-w-0 flex-1 truncate text-[12px]"
+      :class="selected ? 'text-accent' : row.shadowed ? 'text-neutral-mid' : 'text-neutral-fg'"
+    >
+      <template v-if="row.kind === 'MALFORMED'">{{ t('panel.trace.malformedLine', { line: row.lineNumber ?? 0 }) }}</template>
+      <template v-else>{{ headline }}</template>
+      <span v-if="suffix" class="ml-1.5 font-mono text-[10px] text-neutral-dim">{{ suffix }}</span>
+    </span>
+    <span
+      v-if="!row.inContext && !row.shadowed"
+      class="shrink-0 font-mono text-[10px] text-neutral-faint"
+    >{{ t('panel.trace.notInContext') }}</span>
+  </div>
+</template>
+
+<script setup lang="ts">
+/**
+ * 单行渲染。headline/suffix 纯数据展示（core summarizeRow 产物 + 本层拼接的数据符号
+ * 如 blocks 计数 / exit code），句子级文案（MALFORMED / 不进 context）走 t()——
+ * 键内容收口在 trace-i18n 单元。
+ */
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import type { TraceRow, TraceRowKind } from '@xyz-agent/core/domain/session-trace'
+
+const props = defineProps<{
+  row: TraceRow
+  selected: boolean
+}>()
+
+const emit = defineEmits<{ select: [row: TraceRow] }>()
+
+const { t } = useI18n()
+
+/** kind badge 色板（trace-tab-demo.html .k-* 同源：消息中性 / 系统信息蓝 / 压缩与 NOTICE 警黄 / lifecycle 与 DATA 弱描边）。 */
+const KIND_BADGE_CLASS: Record<TraceRowKind, string> = {
+  SESSION: 'bg-surface-2 text-neutral-mid',
+  SYSTEM: 'bg-info-soft text-info',
+  USER: 'bg-surface-hover text-neutral-fg',
+  ASSISTANT: 'bg-surface-hover text-neutral-fg',
+  TOOL: 'bg-surface-2 text-neutral-mid',
+  BASH: 'bg-surface-2 text-neutral-mid',
+  NOTICE: 'bg-warn-soft text-warn',
+  COMPACTED: 'bg-warn-soft text-warn',
+  BRANCH: 'bg-info-soft text-info',
+  LIFECYCLE: 'text-neutral-dim shadow-[inset_0_0_0_1px_var(--hairline)]',
+  DATA: 'text-neutral-dim shadow-[inset_0_0_0_1px_var(--hairline)]',
+  BOUNDARY: 'bg-surface-2 text-neutral-mid',
+  MALFORMED: 'bg-danger-soft text-danger',
+}
+
+/** 行 headline：空值兜底为 kind 标签（core 契约「空 headline 由 UI 以 kind 标签兜底」）。 */
+const headline = computed(() => props.row.headline || props.row.kind)
+
+/** ISO timestamp → HH:MM:SS（本地展示取字符串时间部分，避免时区换算引入的口径分裂）。 */
+const time = computed(() => {
+  const ts = props.row.timestamp
+  if (!ts) return ''
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/.exec(ts)
+  return m ? m[2] : ''
+})
+
+/** kind 特化 meta 后缀（数据符号：计数 / exit code；句子文案走 t()）。 */
+const suffix = computed(() => {
+  const m = props.row.meta
+  switch (props.row.kind) {
+    case 'ASSISTANT': {
+      const parts: string[] = []
+      if (m.thinkingBlocks) parts.push(`thinking×${m.thinkingBlocks}`)
+      if (m.toolCalls) parts.push(`tool×${m.toolCalls}`)
+      if (m.textBlocks) parts.push(`text×${m.textBlocks}`)
+      return parts.join(' ')
+    }
+    case 'BASH': {
+      const parts: string[] = []
+      if (m.exitCode !== undefined) parts.push(`exit ${m.exitCode}`)
+      if (m.cancelled) parts.push('cancelled')
+      if (m.truncated) parts.push('truncated')
+      if (m.excludeFromContext) parts.push(t('panel.trace.notInContextBash'))
+      return parts.join(' · ')
+    }
+    case 'TOOL':
+      return m.isError ? 'error' : m.isError === false ? 'ok' : ''
+    case 'COMPACTED':
+      return m.fromHook ? 'hook' : ''
+    default:
+      return ''
+  }
+})
+
+/** 悬停提示：影子化 / 损坏行给排查线索（§3.1 失败路径恢复指引）。 */
+const rowTitle = computed(() => {
+  if (props.row.kind === 'MALFORMED') {
+    return t('panel.trace.malformedHint', { line: props.row.lineNumber ?? 0 })
+  }
+  if (props.row.shadowed) return t('panel.trace.shadowedHint')
+  return ''
+})
+</script>
