@@ -129,13 +129,16 @@
         </Button>
       </div>
 
-      <!-- 展开就地编辑体（R4） -->
+      <!-- 展开就地编辑体（R4）。B-1：OAuth 态经 props/事件接线（composable 内共享单实例 useProviderOAuth，无双 listener） -->
       <div v-if="expandedId === p.id" class="border-t border-border" data-testid="provider-expand-body">
         <ProviderEditBody
           :provider="p.id === NEW_ID ? null : p"
+          :oauth-present="hasOauthPresence(p.id)"
+          :oauth-supported="isOauthSupported(p.id)"
           @dirty-change="onBodyDirtyChange"
           @saved="onBodySaved"
           @cancel="onBodyCancel"
+          @oauth-login="onEditOauthLogin(p)"
         />
       </div>
     </div>
@@ -194,11 +197,12 @@
       @cancel="onQuickSetupCancel"
       @oauth-login="onQuickSetupOAuthLogin"
     />
-    <!-- OAuth 授权对话框（wave-oauth-infra T7 产出，四态） -->
+    <!-- OAuth 授权对话框（wave-oauth-infra T7 产出，四态）。QuickSetup 与编辑体凭证区共用
+         同一 useProviderOAuth 状态机（useProviderPageOauth 内单实例 → auth.* listener 不重复注册） -->
     <OAuthDialog
-      v-if="selectedTemplate"
+      v-if="oauthDialogInfo"
       :open="oauth.state.value.open"
-      :provider="{ id: selectedTemplate.id, name: selectedTemplate.name, oauthName: selectedTemplate.oauthName }"
+      :provider="oauthDialogInfo"
       :status="oauth.state.value.status"
       :device-info="oauth.state.value.deviceInfo"
       :auth-url="oauth.state.value.authUrl"
@@ -236,7 +240,7 @@ import {
   SETTINGS_TOAST_KEY,
   USE_QUOTA_CONFIGURE_KEY,
 } from '@xyz-agent/ui/features/settings'
-import { useProviderOAuth } from '@/composables/features/settings/useProviderOAuth'
+import { useProviderPageOauth } from '@/composables/features/settings/useProviderPageOauth'
 import { useAccordionGuard } from '@/composables/features/settings/useAccordionGuard'
 import { authBadgeClass, authBadgeTextKey } from './provider-badge'
 
@@ -262,11 +266,6 @@ const {
 const builtinProviders = ref<BuiltinProviderTemplate[]>([])
 const selectedTemplate = ref<BuiltinProviderTemplate | null>(null)
 const showQuickSetup = ref(false)
-
-/** OAuth 授权状态机（composable：OAuthDialog 驱动 + auth.* 事件订阅）。
- *  auth.success 后保持 QuickSetup 打开（demo §8.3）——用户完成「保存并启用」落
- *  models.json（authMethod='oauth'）→ broadcastProviderList 刷新列表。 */
-const oauth = useProviderOAuth(() => { void 0 })
 
 onMounted(async () => {
   try {
@@ -327,7 +326,7 @@ function onQuickSetupCancel(): void {
 
 function onQuickSetupOAuthLogin(): void {
   if (!selectedTemplate.value) return
-  void oauth.login(selectedTemplate.value.id)
+  startQuickSetupOauth(selectedTemplate.value)
 }
 
 /** toggle 中的 provider id 集合（防双击） */
@@ -376,6 +375,28 @@ const {
   onBodySaved,
   onBodyCancel,
 } = useAccordionGuard(NEW_ID)
+
+// ── OAuth 编排（B-1：QuickSetup 与编辑体凭证区共用单实例状态机，提取见 useProviderPageOauth）──
+const {
+  oauth,
+  oauthDialogProvider: editOauthDialogProvider,
+  isOauthSupported,
+  hasOauthPresence,
+  onEditOauthLogin,
+  onQuickSetupOauthLogin: startQuickSetupOauth,
+} = useProviderPageOauth({
+  builtinProviders,
+  providers: computed(() => props.providers),
+  expandedId,
+  newId: NEW_ID,
+})
+
+/** OAuthDialog 显示用 provider 信息：QuickSetup 模板优先，编辑体目标兜底 */
+const oauthDialogInfo = computed(() => {
+  const tpl = selectedTemplate.value
+  if (tpl) return { id: tpl.id, name: tpl.name, oauthName: tpl.oauthName }
+  return editOauthDialogProvider.value
+})
 
 /** 删除目标 + 删除中 */
 const deleteTarget = ref<ProviderInfo | null>(null)

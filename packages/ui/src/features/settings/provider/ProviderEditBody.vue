@@ -2,11 +2,12 @@
   <!--
     ProviderEditBody —— Provider 手风琴就地编辑体（R4 · 取代 ProviderEditModal 双层 modal）。
     由 ProviderPage 在展开行内渲染，承载原 ProviderEditModal 的全部表单字段：
-    凭据（名称/类型/baseUrl/apiKey/authHeader/headers）+ Coding Plan 额度 + 测试/发现 +
-    模型清单（ModelListSection）+ sticky save-bar（dirty 时出现，保存/放弃）。
+    凭据（名称/类型/baseUrl/凭证区[OAuth 状态 | apiKey]/authHeader/headers）+ Coding Plan 额度 +
+    测试/发现 + 模型清单（custom=ModelListSection / catalog=混合列表）+ sticky save-bar。
 
-    业务编排全在 useProviderEdit composable（core 域），本组件只做展示 + 事件绑定，
-    与原 ProviderEditModal 同构，仅换 UI 载体（Dialog → 裸 div）。
+    业务编排全在 useProviderEdit composable（core 域），本组件只做展示 + 事件绑定。
+    OAuth 状态机不在此组件（ui 零 renderer import 铁律）：凭证区登录/切换按钮经
+    @oauth-login 上抛父组件（ProviderPage 共享单实例 useProviderOAuth，无双 listener）。
     dirty 状态经 @dirty-change 上抛父组件做展开切换守卫；保存/取消经 @saved/@cancel 通知父收起。
   -->
   <div class="flex flex-col">
@@ -46,8 +47,59 @@
         <Input v-model="form.baseUrl" placeholder="https://api.anthropic.com" />
       </div>
 
-      <!-- API Key -->
-      <div>
+      <!-- 凭证区（B-1：按 authMethod 条件化——oauth → OAuth 状态区 + 形态切换；
+           api_key / env_var / ambient → 现有 API Key 输入不变。切换经确认弹窗，I9 双凭据互斥） -->
+      <div v-if="isOauthForm" data-testid="provider-credential-oauth">
+        <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">
+          {{ t('settings.providerEdit.credentialLabel') }}
+        </Label>
+        <div class="flex flex-wrap items-center gap-2">
+          <span
+            v-if="oauthPresent"
+            data-testid="oauth-status-loggedin"
+            class="flex items-center gap-1.5 text-[12px] font-medium text-success"
+          >
+            <span class="size-1.5 rounded-full bg-success" />
+            {{ t('settings.providerEdit.credentialOauthLoggedIn') }}
+          </span>
+          <span
+            v-else
+            data-testid="oauth-status-not-loggedin"
+            class="text-[12px] font-medium text-warn"
+          >{{ t('settings.providerEdit.credentialOauthNotLoggedIn') }}</span>
+          <span class="flex-1" />
+          <Button
+            variant="secondary"
+            class="h-7 px-2.5 text-[11px] text-neutral-mid"
+            data-testid="oauth-relogin-btn"
+            @click="emit('oauthLogin')"
+          >
+            {{ oauthPresent ? t('settings.providerEdit.credentialOauthRelogin') : t('settings.providerEdit.credentialOauthLogin') }}
+          </Button>
+          <!-- TODO(B-1 退出登录)：需要 logout RPC——协议面（shared protocol.ts）auth 域只有
+               config.oauthLogin / oauthCancel / hasOAuth，runtime authStorage.remove 未暴露为 RPC。
+               RPC 落地前按钮禁用，禁止发明不存在的 RPC。切换到 API Key 是当前唯一的退出路径。 -->
+          <Button
+            variant="ghost"
+            class="h-7 px-2.5 text-[11px] text-neutral-dim"
+            disabled
+            :title="t('settings.providerEdit.credentialOauthLogoutUnavailable')"
+            data-testid="oauth-logout-btn"
+          >
+            {{ t('settings.providerEdit.credentialOauthLogout') }}
+          </Button>
+        </div>
+        <p class="mt-1 text-[10px] text-neutral-dim">{{ t('settings.providerEdit.credentialOauthHint') }}</p>
+        <Button
+          variant="ghost"
+          class="mt-1.5 h-auto p-0 text-[11px] text-accent hover:bg-transparent hover:underline"
+          data-testid="auth-switch-to-apikey"
+          @click="requestAuthSwitch('api_key')"
+        >
+          {{ t('settings.providerEdit.switchToApiKey') }}
+        </Button>
+      </div>
+      <div v-else data-testid="provider-credential-apikey">
         <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">
           {{ t('settings.providerEdit.fieldApiKey') }}
           <span class="normal-case tracking-normal">{{ t('settings.providerEdit.apiKeyHint') }}</span>
@@ -58,6 +110,7 @@
             :type="showKey ? 'text' : 'password'"
             :placeholder="provider?.apiKeySet ? t('settings.providerEdit.apiKeyPlaceholderSet') : t('settings.providerEdit.apiKeyPlaceholderEmpty')"
             class="flex-1"
+            data-testid="provider-edit-apikey"
           />
           <Button
             variant="ghost"
@@ -82,6 +135,15 @@
         <p class="mt-1 text-[10px] text-neutral-dim">
           {{ t('settings.providerEdit.apiKeyNoteKeep') }}{{ provider?.apiKeySet ? t('settings.providerEdit.apiKeyNoteClear') : '' }}
         </p>
+        <Button
+          v-if="oauthSupported"
+          variant="ghost"
+          class="mt-1.5 h-auto p-0 text-[11px] text-accent hover:bg-transparent hover:underline"
+          data-testid="auth-switch-to-oauth"
+          @click="requestAuthSwitch('oauth')"
+        >
+          {{ t('settings.providerEdit.switchToOauth') }}
+        </Button>
       </div>
 
       <!-- authHeader 开关 -->
@@ -158,6 +220,9 @@
         :configure-error-msg="quotaConfigureError"
         :api-key-set="!!provider?.apiKeySet || !!provider?.quota?.apiKeySet"
         :cookie-set="!!provider?.quota?.cookieSet"
+        :auth-kinds="quotaAuthKinds"
+        :oauth-ready="oauthPresent"
+        :test-fail-reason="quotaTestFailReason"
         :help-url="quotaHelpUrl"
         :help-text="quotaHelpText"
         @select-fetcher="quotaSelectFetcher"
@@ -201,26 +266,44 @@
       <div v-if="discoverResult" class="text-[12px] text-neutral-mid">{{ discoverResult }}</div>
     </div>
 
-    <!-- 模型清单（wave4 C4：catalog provider 收窄——models 来自 pi builtin 只读展示，隐藏编辑区） -->
-    <div class="border-t border-border" :data-testid="isCatalog ? 'provider-models-readonly' : 'provider-models-editable'">
+    <!--
+      模型区（B-2 混合列表）。
+      wave4 C4 决策边界修订（design §3.6 UI 决策 1，非推翻）：C4 禁止的是「修改内置模型定义」
+      ——builtin 条目保持只读（pi 升级自动覆盖编辑无意义）；「追加自定义模型」与「对内置条目做
+      参数 override」是 pi 原生支持的合法操作（D1 探针：builtin ∪ override 并集合并），非 C4
+      禁止场景——故 catalog provider 开放自定义模型增删，保存只回传 override 条目。
+    -->
+    <div class="border-t border-border" :data-testid="isCatalog ? 'provider-models-mixed' : 'provider-models-editable'">
       <template v-if="isCatalog">
-        <!-- catalog：只读提示 + 只读模型列表（内置模型由 pi catalog 提供，升级覆盖编辑无意义） -->
-        <div class="px-5 py-4">
+        <!-- builtin 只读列表（徽章「内置」；编辑/删除按钮刻意缺席——C4 边界） -->
+        <div class="px-5 py-4" data-testid="provider-models-builtin">
           <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">
-            {{ t('settings.providerEdit.catalogModelsReadonlyLabel') }}
+            {{ t('settings.providerEdit.builtinModelsLabel') }}
           </Label>
-          <p class="mb-2 text-[10px] text-neutral-dim">{{ t('settings.providerEdit.catalogModelsHint') }}</p>
-          <ul v-if="provider?.models?.length" class="flex flex-col gap-1">
+          <p class="mb-2 text-[10px] text-neutral-dim">{{ t('settings.providerEdit.catalogModelsMixedHint') }}</p>
+          <ul v-if="builtinModels.length" class="flex flex-col gap-1">
             <li
-              v-for="m in provider.models"
+              v-for="m in builtinModels"
               :key="m.id"
-              class="rounded-sm bg-surface px-2.5 py-1 text-[12px] text-neutral-mid"
+              data-testid="builtin-model-row"
+              class="flex items-center gap-1.5 rounded-sm bg-surface px-2.5 py-1 text-[12px] text-neutral-mid"
             >
               <span class="font-medium text-neutral-fg">{{ m.name || m.id }}</span>
-              <span class="ml-1.5 text-[10px] text-neutral-dim">{{ m.id }}</span>
+              <span class="text-[10px] text-neutral-dim">{{ m.id }}</span>
+              <span
+                data-testid="model-badge-builtin"
+                class="ml-auto shrink-0 rounded-sm bg-surface-hover px-1.5 py-0.5 text-[9px] font-medium text-neutral-mid"
+              >{{ t('settings.providerEdit.modelSourceBuiltin') }}</span>
             </li>
           </ul>
         </div>
+        <!-- override 条目（徽章「自定义」）：复用 ModelListSection 行编辑能力 + 手动添加入口 -->
+        <ModelListSection
+          v-model:show-add-model="showAddModel"
+          title-key="settings.providerEdit.customModelsLabel"
+          :badge-text="t('settings.providerEdit.modelSourceOverride')"
+          @add-model="onAddModel"
+        />
       </template>
       <ModelListSection
         v-else
@@ -228,6 +311,28 @@
         @add-model="onAddModel"
       />
     </div>
+
+    <!-- 形态切换确认弹窗（B-1：I9 双凭据互斥，双向切换均显式确认；取消不动凭证） -->
+    <Dialog v-model:open="authSwitchDialogOpen">
+      <DialogContent hide-close class="max-w-[360px]" data-testid="auth-switch-confirm-dialog">
+        <DialogHeader>
+          <DialogTitle>{{ authSwitchDialogTitle }}</DialogTitle>
+          <DialogDescription>{{ authSwitchDialogDesc }}</DialogDescription>
+        </DialogHeader>
+        <div class="flex justify-end gap-2 pt-4">
+          <Button
+            variant="ghost"
+            data-testid="auth-switch-cancel-btn"
+            @click="authSwitchDialogOpen = false"
+          >
+            {{ t('settings.providerEdit.cancel') }}
+          </Button>
+          <Button data-testid="auth-switch-confirm-btn" @click="confirmAuthSwitch">
+            {{ t('settings.providerEdit.switchConfirmBtn') }}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
 
     <!-- sticky save-bar：dirty 时出现（spec §4.3）。负 margin 撑满 expand-body padding。 -->
     <div
@@ -261,10 +366,9 @@
 </template>
 
 <script setup lang="ts">
-import { Button, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Switch, Label } from '@xyz-agent/ui'
-import { provide, watch } from 'vue'
+import { Button, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Switch, Label, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@xyz-agent/ui'
+import { provide, watch, ref, computed, toRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { computed, toRef } from 'vue'
 import {
   Eye, EyeOff, Loader2, Wifi, RefreshCw, CheckCircle2, AlertCircle,
   X, Trash2,
@@ -280,20 +384,31 @@ import CodingPlanSection from '../coding-plan/CodingPlanSection.vue'
 import ModelListSection from '../common/ModelListSection.vue'
 import { useSettingsToast as useToast } from '../injection-keys'
 
-const props = defineProps<{ provider: ProviderInfo | null }>()
+const props = defineProps<{
+  provider: ProviderInfo | null
+  /** auth.json 已有该 provider 的 OAuth 凭据（父组件 useProviderOAuth.oauthPresent，展开时刷新） */
+  oauthPresent?: boolean
+  /** 该 provider 支持 OAuth 登录（父组件按 builtinProviders 模板 oauthSupported 判定） */
+  oauthSupported?: boolean
+}>()
 const emit = defineEmits<{
   saved: []
   cancel: []
   /** dirty 状态变化（true=有未保存改动）。父组件用于展开切换守卫 */
   dirtyChange: [value: boolean]
+  /** OAuth 登录/重新登录（B-1：父组件驱动共享 useProviderOAuth 状态机 + OAuthDialog，单实例无双 listener） */
+  oauthLogin: []
 }>()
 
 const { t } = useI18n()
 const { info: toastInfo } = useToast()
 
-// wave4 C4：catalog provider 的 models 来自 pi builtin（升级覆盖），编辑无意义——收窄为只读展示。
-// kind 缺失（NEW_ID 新建态 null / 旧数据）当作 custom，走完整 CRUD（向后兼容）。
+// wave4 C4 边界修订（B-2）：catalog provider 的 builtin 条目只读，override 条目开放增删
+// （追加自定义模型是 pi 原生支持的合法操作，见模板区注释）。kind 缺失当作 custom（向后兼容）。
 const isCatalog = computed(() => props.provider?.kind === 'catalog')
+
+/** builtin 只读条目（B-2 徽章「内置」；override 条目在 localModels 内经 ModelListSection 编辑） */
+const builtinModels = computed(() => props.provider?.models.filter((m) => m.source === 'builtin') ?? [])
 
 // ── Coding Plan 额度查询：自动关联 + 配置 ──
 const matchedPreset = computed(() => {
@@ -312,9 +427,11 @@ const {
   apiKeyConfigured: quotaApiKeyConfigured,
   testStatus: quotaTestStatus,
   testError: quotaTestError,
+  testFailReason: quotaTestFailReason,
   quotaData,
   lastFetchAt: quotaLastFetchAt,
   isCookieAuth: quotaIsCookieAuth,
+  authKinds: quotaAuthKinds,
   helpUrl: quotaHelpUrl,
   helpText: quotaHelpText,
   configuring: quotaConfiguring,
@@ -358,6 +475,41 @@ const {
   removeHeader,
   syncHeadersFromRows,
 } = useProviderEdit(toRef(props, 'provider'), { t })
+
+// ── B-1 凭证区条件化（需 form 已就绪，故置于 useProviderEdit 之后） ──
+
+/** oauth 形态 → OAuth 状态区；api_key / env_var / ambient → 现有 API Key 输入（现状不动） */
+const isOauthForm = computed(() => form.authMethod === 'oauth')
+
+/** 形态切换目标（非 null = 确认弹窗打开） */
+const pendingAuthSwitch = ref<'api_key' | 'oauth' | null>(null)
+const authSwitchDialogOpen = computed({
+  get: () => pendingAuthSwitch.value !== null,
+  set: (open: boolean) => { if (!open) pendingAuthSwitch.value = null },
+})
+const authSwitchDialogTitle = computed(() => pendingAuthSwitch.value === 'oauth'
+  ? t('settings.providerEdit.switchToOauthConfirmTitle')
+  : t('settings.providerEdit.switchToApiKeyConfirmTitle'))
+const authSwitchDialogDesc = computed(() => pendingAuthSwitch.value === 'oauth'
+  ? t('settings.providerEdit.switchToOauthConfirmDesc')
+  : t('settings.providerEdit.switchToApiKeyConfirmDesc'))
+
+/** 发起形态切换（I9 双凭据互斥——确认后才动凭证形态） */
+function requestAuthSwitch(target: 'api_key' | 'oauth'): void {
+  pendingAuthSwitch.value = target
+}
+
+/** 确认切换：oauth→api_key 改本地形态（保存时 apiKey 覆写 auth.json OAuth 凭证，catalog 原生 I9）；
+ *  api_key→oauth 上抛 oauthLogin（父驱动 flow，成功后 authMethod='oauth' 持久化并广播回推） */
+function confirmAuthSwitch(): void {
+  const target = pendingAuthSwitch.value
+  pendingAuthSwitch.value = null
+  if (target === 'api_key') {
+    form.authMethod = 'api_key'
+  } else if (target === 'oauth') {
+    emit('oauthLogin')
+  }
+}
 
 // ModelListSection 经 provide('modelListDeps') 拿到状态/方法（与原 ProviderEditModal 同构）
 provide('modelListDeps', {
