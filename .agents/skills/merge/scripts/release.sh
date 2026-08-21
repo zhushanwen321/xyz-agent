@@ -2,7 +2,8 @@
 # release.sh — xyz-agent merge 流程阶段 5：Release Notes + 创建/更新 GitHub Release
 #
 # 做什么：
-#   1. 从 conventional commits 自动生成 release notes（feat/fix/perf/breaking 分组）
+#   1. 从 conventional commits 自动生成 release notes 草稿（双语三节结构，对齐 docs/release-notes.md；
+#      条目为 commit 原文直出，须按该规范人工定稿）
 #   2. 创建或更新 GitHub Release（优先更新 CI 创建的 Draft Release）
 #
 # 前置：阶段 4 已完成（version bump + tag push + CI 构建产物）
@@ -100,30 +101,55 @@ else
     done < "$COMMIT_FILE"
 
     {
-        echo "## What's Changed"
-        echo ""
+        echo "<!-- LANG:en -->"
         if [[ -n "$breaking" ]]; then
-            echo "### Breaking Changes"
+            echo "## Breaking Changes"
             echo "$breaking"
             echo ""
         fi
         if [[ -n "$features" ]]; then
-            echo "### Features"
+            echo "## New Features"
             echo "$features"
             echo ""
         fi
-        if [[ -n "$fixes" ]]; then
-            echo "### Bug Fixes"
-            echo "$fixes"
+        if [[ -n "$perfs" ]]; then
+            echo "## Improvements"
+            echo "$perfs"
             echo ""
         fi
-        if [[ -n "$perfs" ]]; then
-            echo "### Performance"
-            echo "$perfs"
+        if [[ -n "$fixes" ]]; then
+            echo "## Bug Fixes"
+            echo "$fixes"
             echo ""
         fi
         if [[ -n "$LAST_TAG" ]]; then
             echo "**Full Changelog**: ${REPO_URL}/compare/${LAST_TAG}...${TAG}"
+            echo ""
+        fi
+        echo "<!-- LANG:zh -->"
+        if [[ -n "$breaking" ]]; then
+            echo "## 重大变更"
+            echo "$breaking"
+            echo ""
+        fi
+        if [[ -n "$features" ]]; then
+            echo "## 新增功能"
+            echo "$features"
+            echo ""
+        fi
+        if [[ -n "$perfs" ]]; then
+            echo "## 功能优化"
+            echo "$perfs"
+            echo ""
+        fi
+        if [[ -n "$fixes" ]]; then
+            echo "## 修复缺陷"
+            echo "$fixes"
+            echo ""
+        fi
+        if [[ -n "$LAST_TAG" ]]; then
+            echo "**完整变更**: ${REPO_URL}/compare/${LAST_TAG}...${TAG}"
+            echo ""
         fi
     } > "$FINAL_NOTES_FILE"
 
@@ -133,15 +159,28 @@ else
         echo "  使用 PR 标题作为默认内容"
         PR_TITLE=$(gh pr list --repo "$GH_REPO" --state merged --limit 1 --json title --jq '.[0].title' 2>/dev/null || echo "Release $TAG")
         {
-            echo "## What's Changed"
+            echo "<!-- LANG:en -->"
+            echo "## New Features"
             echo ""
             echo "- $PR_TITLE"
             if [[ -n "$LAST_TAG" ]]; then
                 echo ""
                 echo "**Full Changelog**: ${REPO_URL}/compare/${LAST_TAG}...${TAG}"
             fi
+            echo ""
+            echo "<!-- LANG:zh -->"
+            echo "## 新增功能"
+            echo ""
+            echo "- $PR_TITLE"
+            if [[ -n "$LAST_TAG" ]]; then
+                echo ""
+                echo "**完整变更**: ${REPO_URL}/compare/${LAST_TAG}...${TAG}"
+            fi
         } > "$FINAL_NOTES_FILE"
     fi
+
+    echo -e "  ${YELLOW}⚠️  以上为自动草稿：条目是 commit 原文直出，未按规范模糊化 / 排序 / 合并${NC}"
+    echo -e "  ${YELLOW}     定稿要求见 docs/release-notes.md，手写后覆盖：gh release edit $TAG --repo $GH_REPO --notes-file <双语文件>${NC}"
 fi
 
 # 5b. 创建或更新 Release

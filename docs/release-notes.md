@@ -63,4 +63,4 @@ Release note 面向**应用使用者**，不是开发者。它的两个消费场
 
 ## 与工具的关系
 
-`merge/scripts/release.sh` 的自动生成（conventional commits 按 feat/fix/perf/breaking 分组）**仅作参考草稿**，其格式与本规范不一致（commit 原文直出、无字数与模糊度约束）。发布前必须按本规范手写定稿，再用 `gh release edit <tag> --notes-file <双语文件>` 覆盖。
+`merge/scripts/release.sh` 不指定 `--notes` 时会自动生成草稿：双语三节骨架与本规范一致，但条目是 conventional commit 原文直出（feat → 新增功能、perf → 功能优化、fix → 修复缺陷、breaking → 重大变更），**没有**本规范的模糊化、30 字、排序与合并约束，chore/test/docs 类被过滤。脚本会在生成后提醒定稿：按本规范手写后用 `gh release edit <tag> --notes-file <双语文件>` 覆盖。
