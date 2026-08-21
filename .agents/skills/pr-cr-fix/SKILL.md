@@ -125,9 +125,16 @@ fallow audit 的 complexity findings 超阈值即 fail、无 warn 档；且无 `
 
 ---
 
-## 阶段 1.6：增量覆盖率门禁（Gate-1.6）[MANDATORY]
+## 阶段 1.6：增量覆盖率门禁（Gate-1.6）[已知问题，暂缓 MANDATORY]
 
-**增量覆盖率 ≥ 50% 才达标。** 与 Gate-1.5 互补：Gate-1.5 是静态结构度量（不跑测试），Gate-1.6 跑测试量「新代码有没有被测到」。与 renderer 全量 thresholds gate（vitest.config 内、CI 强制）互补：全量阈值防整体退化，增量阈值防「新代码不写测试」。TEST-STRATEGY.md §7「以增量覆盖率为准」的工具化落地。
+> **[KNOWN-ISSUE 2026-08-21]** coverage-gate.py 在本机复现稳定的假 pass：循环体完整执行
+> （vitest 实测跑 2.5 分钟、provider 探针 True、14 包进入循环）但 report 字典恒空、输出
+> `pkgs=0`、exit 0——无异常无 traceback，超出静态分析可解释范围（python -I 隔离模式同样
+> 复现；内联 exec 调用则行为正常）。脚本核心逻辑曾被验证正确（曾正确检出 runtime 测试
+> FAIL）。根因待查（疑与本地环境干扰有关）。在此之前本 gate **不定级 MANDATORY**，
+> 流程以 Gate-1.5 + pre-merge 为准；调查清楚并复验后恢复。
+
+**目标口径（恢复后生效）**：**增量覆盖率 ≥ 50% 才达标。** 与 Gate-1.5 互补：Gate-1.5 是静态结构度量（不跑测试），Gate-1.6 跑测试量「新代码有没有被测到」。与 renderer 全量 thresholds gate（vitest.config 内、CI 强制）互补：全量阈值防整体退化，增量阈值防「新代码不写测试」。TEST-STRATEGY.md §7「以增量覆盖率为准」的工具化落地。
 
 ### 执行（主 agent 直接跑）
 

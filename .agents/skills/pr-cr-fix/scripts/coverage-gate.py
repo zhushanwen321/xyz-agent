@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """coverage-gate.py — pr-cr-fix 阶段 1.6 增量覆盖率门禁（Gate-1.6）。
 
+[KNOWN-ISSUE 2026-08-21] 本机稳定复现假 pass：主循环完整执行（vitest 实测运行 2.5min、
+provider 探针 True、14 包进入迭代、迭代间 report 恒 0、无异常无 traceback），最终 report
+字典为空 → verdict=pass exit 0。python -I 隔离模式同样复现；exec 内联调用行为正常（曾正确
+检出 runtime 测试 FAIL）。根因待查。在此之前 SKILL.md 已将 Gate-1.6 降级「暂缓 MANDATORY」，
+本脚本禁止作为放行依据使用。
+
 对 base...HEAD 改动过 src/ 的 workspace 包跑 `vitest run --coverage`（lcov），
 解析 lcov 的 DA 行命中数据 + git diff 新增行号，计算**可执行新增行的覆盖率**。
 增量覆盖率 < min-incremental（默认 50%）→ fail（exit 1）。
@@ -62,7 +68,11 @@ def provider_available(pkg_dir: Path) -> bool:
 
 
 def run_coverage(pkg_dir: Path) -> tuple[bool, str]:
-    """包内跑 vitest --coverage 产 lcov。返回 (ok, 说明)。"""
+    """包内跑 vitest --coverage 产 lcov。返回 (ok, 说明)。
+
+    XYZ_SKIP_REAL_PI=1 与 CI 同口径（TEST-STRATEGY §4 双轨设计）：真实 pi 子进程用例
+    不在覆盖率测量目标内（慢且环境敏感，插桩开销下必超时），走 mock 双轨即可。
+    """
     lcov = pkg_dir / "coverage" / "lcov.info"
     cmd = [
         "npx", "vitest", "run", "--coverage",
@@ -70,7 +80,9 @@ def run_coverage(pkg_dir: Path) -> tuple[bool, str]:
         "--coverage.include=src",
         "--coverage.exclude=src/**/__tests__/**",
     ]
-    proc = sh(cmd, pkg_dir)
+    import os
+    env = {**os.environ, "XYZ_SKIP_REAL_PI": "1"}
+    proc = subprocess.run(cmd, cwd=pkg_dir, capture_output=True, text=True, env=env)
     if proc.returncode != 0:
         return False, f"测试失败（exit={proc.returncode}）：\n{(proc.stdout + proc.stderr)[-800:]}"
     if not lcov.is_file():
@@ -166,6 +178,11 @@ def main() -> None:
 
     report: dict[str, dict] = {}
     verdict = "pass"
+    if not pkgs and only is None:
+        # 防呆：无 --packages 过滤时 pkgs 为空意味着 git diff 瞬态异常（曾观察到并发
+        # git 进程活动下 diff 空输出导致假 pass）——直接中止而非静默放行
+        print("ERROR: changed_packages 返回空（base 有改动但未检出任何 vitest 包，疑似 git 瞬态），中止", file=sys.stderr)
+        sys.exit(2)
     for pkg, files in sorted(pkgs.items()):
         pkg_dir = repo_root / pkg
         entry: dict = {"changed_src_files": len(files)}
@@ -208,7 +225,7 @@ def main() -> None:
     out = {"verdict": verdict, "base": base, "min_incremental": min_pct, "packages": report}
     (repo_root / ".review").mkdir(exist_ok=True)
     (repo_root / ".review" / "coverage.json").write_text(json.dumps(out, indent=2, ensure_ascii=False))
-    print(f"Gate-1.6 verdict={verdict}  min_incremental={min_pct}%  (base={base})")
+    print(f"Gate-1.6 verdict={verdict}  min_incremental={min_pct}%  (base=main, pkgs={len(report)})")
     for pkg, e in report.items():
         if e.get("status") == "OK":
             print(f"  OK   {pkg}: 增量 {e['incremental_pct']}% "
