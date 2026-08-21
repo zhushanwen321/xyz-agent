@@ -449,11 +449,13 @@ describe('assistant 聚合行子 block 内联展开（chevron + block 子行 + �
     view.unmount()
   })
 
-  it('点击 chevron 展开 → 三个 block 子行按序出现（thinking/toolCall/text），再点收起', async () => {
+  it('点击 assistant 整行 → 选中 + 展开（三个 block 子行按序出现），再点收起', async () => {
     const view = await mountTraceView()
     expect(view.find('[data-testid="trace-block-row-5-0"]').exists()).toBe(false)
 
-    await view.find('[data-testid="trace-expand-toggle-5"]').trigger('click')
+    await view.find('[data-testid="trace-row-5"]').trigger('click')
+    // 整行点击两件事同时发生：选中（selectedKey）+ 展开（expandedKeys）
+    expect(useSessionTrace().partition.value.selectedKey).toBe('a1')
     const b0 = view.find('[data-testid="trace-block-row-5-0"]')
     const b1 = view.find('[data-testid="trace-block-row-5-1"]')
     const b2 = view.find('[data-testid="trace-block-row-5-2"]')
@@ -466,7 +468,7 @@ describe('assistant 聚合行子 block 内联展开（chevron + block 子行 + �
     expect(b2.text()).toContain('done')
     expect(useSessionTrace().partition.value.expandedKeys).toContain('a1')
 
-    await view.find('[data-testid="trace-expand-toggle-5"]').trigger('click')
+    await view.find('[data-testid="trace-row-5"]').trigger('click')
     expect(view.find('[data-testid="trace-block-row-5-0"]').exists()).toBe(false)
     expect(useSessionTrace().partition.value.expandedKeys).not.toContain('a1')
     view.unmount()
@@ -474,7 +476,7 @@ describe('assistant 聚合行子 block 内联展开（chevron + block 子行 + �
 
   it('点击子 block 行 → selectedKey = `<entryKey>#block-N`（drawer 联动寻址）', async () => {
     const view = await mountTraceView()
-    await view.find('[data-testid="trace-expand-toggle-5"]').trigger('click')
+    await view.find('[data-testid="trace-row-5"]').trigger('click')
     await view.find('[data-testid="trace-block-row-5-1"]').trigger('click')
     expect(useSessionTrace().partition.value.selectedKey).toBe('a1#block-1')
     // 子行选中态（同 testid 元素高亮）
@@ -484,7 +486,7 @@ describe('assistant 聚合行子 block 内联展开（chevron + block 子行 + �
 
   it('toolCall 子行尾缀配对结果态（ok/error），与 TOOL 结果行区分「调用 vs 结果」', async () => {
     const view = await mountTraceView()
-    await view.find('[data-testid="trace-expand-toggle-5"]').trigger('click')
+    await view.find('[data-testid="trace-row-5"]').trigger('click')
     // a1 的 toolCall（tc1）与 tr1（isError:false）配对 → 子行尾缀 ok
     const sub = view.find('[data-testid="trace-block-row-5-1"]')
     expect(sub.text()).toContain('read')
@@ -496,7 +498,7 @@ describe('assistant 聚合行子 block 内联展开（chevron + block 子行 + �
 
   it('子行跟随父行过滤：assistant 被过滤掉时展开的子行不出现', async () => {
     const view = await mountTraceView()
-    await view.find('[data-testid="trace-expand-toggle-5"]').trigger('click')
+    await view.find('[data-testid="trace-row-5"]').trigger('click')
     expect(view.find('[data-testid="trace-block-row-5-0"]').exists()).toBe(true)
 
     // 只留 tools 组（TOOL/BASH）→ assistant 行隐藏，子行随之消失

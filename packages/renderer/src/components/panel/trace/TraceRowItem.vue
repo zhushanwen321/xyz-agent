@@ -3,7 +3,8 @@
     展示组件 · trace-row-item（session-trace §3.4 渲染模型，一行 = 一个 entry）。
     12 kind + MALFORMED 数据驱动渲染：seq + kind badge（demo 色板）+ 时间 + headline
     （core 数据提取）+ kind 特化 meta 后缀 + 「不进 context」弱标记。
-    assistant 聚合行带 chevron（toggle-expand）内联展开子 block（TraceBlockRowItem）。
+    assistant 聚合行：chevron 指示符嵌在 seq 列左部（右对齐数字天然留白处，全行
+    badge 列恒对齐）；点击整行 = 选中 + 展开/收起（chevron 无独立点击目标）。
     状态语义：
     - 影子化（shadowed）：降透明（demo .tr-row.shadowed opacity .42），hover 恢复。
     - 选中态：bg-surface-hover + 摘要 text-accent，无 ring 无左条（v6 §3.4 列表项型；
@@ -20,25 +21,27 @@
     :data-kind="row.kind"
     :data-shadowed="row.shadowed ? 'true' : undefined"
     :data-in-context="row.inContext ? 'true' : undefined"
+    :data-expanded="expandable ? (expanded ? 'true' : 'false') : undefined"
     :title="rowTitle"
-    @click="emit('select', row)"
+    @click="onRowClick"
   >
-    <!-- seq 全行对齐（不引入占位 gutter——普通行保持原左边界）；assistant 聚合行的
-         展开开关（chevron，stopPropagation 不触发行选中）置于 seq 与 badge 之间，
-         仅 assistant 行 badge 右移（badge 宽度本随 kind 文字变化，无对齐损失） -->
-    <span class="w-9 shrink-0 text-right font-mono text-[10px] tabular-nums text-neutral-faint">#{{ row.seq }}</span>
-    <Button
-      v-if="expandable"
-      variant="ghost"
-      size="sm"
-      class="h-4 w-4 shrink-0 p-0 text-neutral-faint hover:bg-surface-2 hover:text-neutral-mid"
-      :data-testid="`trace-expand-toggle-${row.seq}`"
-      :title="t('panel.trace.toggleBlocks')"
-      @click.stop="emit('toggle-expand', row)"
-    >
-      <ChevronDown v-if="expanded" class="size-3" />
-      <ChevronRight v-else class="size-3" />
-    </Button>
+    <!-- seq 列（w-12 全行恒宽 → badge 列对齐）：chevron 指示符 + 右对齐数字成组靠右，
+         chevron 落在数字左侧的列内留白处；无 chevron 行留白由左侧轨道线锚定 -->
+    <span class="flex w-12 shrink-0 items-center justify-end gap-1 font-mono text-[10px] tabular-nums text-neutral-faint">
+      <ChevronDown
+        v-if="expandable && expanded"
+        class="size-3 shrink-0"
+        :data-testid="`trace-expand-toggle-${row.seq}`"
+        aria-hidden="true"
+      />
+      <ChevronRight
+        v-else-if="expandable"
+        class="size-3 shrink-0"
+        :data-testid="`trace-expand-toggle-${row.seq}`"
+        aria-hidden="true"
+      />
+      <span>#{{ row.seq }}</span>
+    </span>
     <span
       class="shrink-0 rounded px-1.5 py-px font-mono text-[10px] tracking-wide"
       :class="KIND_BADGE_CLASS[row.kind]"
@@ -107,6 +110,12 @@ const expandable = computed(() => {
   const content = (props.row.entry as { message?: { content?: unknown } } | undefined)?.message?.content
   return Array.isArray(content) && content.length > 0
 })
+
+/** 整行点击 = 选中（inspector 详情）+ 展开/收起（可展开行）。 */
+function onRowClick(): void {
+  if (expandable.value) emit('toggle-expand', props.row)
+  emit('select', props.row)
+}
 
 /** 行 headline：空值兜底为 kind 标签（core 契约「空 headline 由 UI 以 kind 标签兜底」）。 */
 const headline = computed(() => props.row.headline || props.row.kind)

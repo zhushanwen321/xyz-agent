@@ -1,11 +1,10 @@
 <template>
   <!--
     展示组件 · trace-block-row-item（assistant 聚合行展开后的子 block 行，纯展示层派生）。
-    对齐：前导用与 TraceRowItem 同宽的结构占位（seq 槽 + chevron 槽），block badge
-    落在父行 kind badge 的正下方（父行 assistant 才有 chevron 槽，两槽皆有 → 恒对齐）。
-    badge 与 kind badge 同款自适应宽 pill（内容定宽会溢出：thinking/toolCall 文字长于
-    固定槽宽）。toolCall 子行尾缀配对结果态（ok/error）——子行是「调用 + 结果态」，
-    与紧随的 TOOL 结果行配对呈现，非重复渲染。
+    对齐：前导占位与 TraceRowItem 的 seq 列同宽（w-12），block badge 落在父行 kind
+    badge 的正下方。badge 与 kind badge 同款自适应宽 pill（内容定宽会溢出：
+    thinking/toolCall 文字长于固定槽宽）。toolCall 子行尾缀配对结果态（ok/error）——
+    子行是「调用 + 结果态」，与紧随的 TOOL 结果行配对呈现，非重复渲染。
   -->
   <div
     class="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-[5px] transition-colors duration-[var(--duration-fast)] ease-[var(--ease)] hover:bg-surface-2"
@@ -15,9 +14,9 @@
     :title="headline || blockBadgeLabel(block)"
     @click="emit('select', traceBlockKey(parent.key, index))"
   >
-    <!-- 结构占位：与 TraceRowItem 的 seq 槽（w-9）+ chevron 槽（w-4）同宽，对齐父 badge -->
-    <span class="w-9 shrink-0" aria-hidden="true" />
-    <span class="w-4 shrink-0" aria-hidden="true" />
+    <!-- 结构占位：与 TraceRowItem 的 seq 列（w-12，含 chevron 槽）同宽，block badge
+         落在父行 kind badge 正下方 -->
+    <span class="w-12 shrink-0" aria-hidden="true" />
     <span
       class="shrink-0 rounded px-1.5 py-px font-mono text-[10px] tracking-wide"
       :class="BLOCK_BADGE_CLASS[block.kind]"
