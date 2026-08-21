@@ -429,6 +429,50 @@ describe('A33 session-trace 增量腿（触发事件 → get_entries(since) → 
     expect(publishSpy).not.toHaveBeenCalled()
   })
 
+  it('空 session 基线哨兵（review round1 MUST_FIX）：leafId=null 也建立基线——sync 无参全量拉不抛错；首条 entry 后 sync 全量拉并广播 + 基线推进真实 leaf', async () => {
+    // 场景：新 session 发首条消息前打开 Trace 视图（pi _buildIndex 对仅 header 的 session
+    // 置 leafId=null）。修复前基线不写 → doSyncTraceEntries 恒 no-op，台账冻结空态无恢复出口
+    const { svc, publishSpy, client } = makeEnv({ active: true })
+    const sid = 'empty-baseline-session'
+
+    // 打开 trace 视图：空 session（无落盘文件、无 entry），pi 返回 leafId=null
+    client.getEntries.mockResolvedValue({ data: { entries: [], leafId: null } })
+    const snapshot = await svc.getTraceEntries(sid)
+    expect(snapshot.source).toBe('rpc')
+    expect(snapshot.leafId).toBeNull()
+
+    // 空 session 的 sync：'' 哨兵基线 → 无参全量拉（'' 不下传 pi 当 since），delta 空 =
+    // 正常稳态——不抛错、不广播
+    client.getEntries.mockClear()
+    svc.syncTraceEntries(sid, 'message_end')
+    await vi.waitFor(() => expect(client.getEntries).toHaveBeenCalledTimes(1))
+    expect(client.getEntries).toHaveBeenLastCalledWith()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(publishSpy).not.toHaveBeenCalled()
+
+    // session 写入首条 entry 后：sync 无参全量拉 → delta 即全部 entry → 广播 + 基线推进
+    const firstEntry = { type: 'message', id: 'first-1', parentId: null, message: { role: 'user', content: 'hello' } }
+    client.getEntries.mockImplementation(async (since?: string) => {
+      if (since === undefined) return { data: { entries: [firstEntry], leafId: 'first-1' } }
+      return { data: { entries: [], leafId: 'first-1' } }
+    })
+    svc.syncTraceEntries(sid, 'message_end')
+    await vi.waitFor(() => expect(publishSpy).toHaveBeenCalledTimes(1))
+    const [pubSid, msg] = publishSpy.mock.calls[0] as [string, ServerMessage]
+    expect(pubSid).toBe(sid)
+    expect(msg.type).toBe('session.traceEntryAppended')
+    // 规则 7：增量推送必带 sessionId；delta = 全部 entry（消费端按 entry.id 去重）
+    expect((msg.payload as { sessionId?: string }).sessionId).toBe(sid)
+    expect((msg.payload as { entries: unknown[] }).entries).toEqual([firstEntry])
+    expect((msg.payload as { leafId: string }).leafId).toBe('first-1')
+
+    // 基线已推进为真实 leaf：下次触发走 since 增量（不再无参全量）
+    svc.syncTraceEntries(sid, 'agent_settled')
+    await vi.waitFor(() => expect(client.getEntries).toHaveBeenLastCalledWith('first-1'))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(publishSpy).toHaveBeenCalledTimes(1) // 空 delta 不重复广播
+  })
+
   it('burst 合并：连发两个触发 → 串行链第二次 since 已是新 leaf → 空 delta 只广播一次', async () => {
     const recorded = loadRecorded('get-entries-1-mixed-kinds')
     const { svc, publishSpy, client } = makeEnv({ metas: [metaFor('get-entries-1-mixed-kinds')], active: true })

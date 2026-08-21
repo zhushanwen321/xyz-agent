@@ -27,7 +27,7 @@ import type {
   IEventAdapter, IExtensionService, IConfigService,
 } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
-import type { IProcessManager, IPiEngine, PiCommandInfo } from '../ports/pi-engine.js'
+import type { IProcessManager, IPiEngine, PiCommandInfo, PiMessage } from '../ports/pi-engine.js'
 import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
 import { parseJsonl } from '../../utils/jsonl.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
@@ -192,7 +192,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * session-trace 增量腿基线（A33）：per-session 上次全量拉取的 leafId（since 基准）。
    * getTraceEntries 活跃路径写入；syncTraceEntries 读取后 get_entries(since) 拉 delta 并
    * 滚动更新。无基线（trace 视图未打开过）→ 增量腿 no-op（前端打开时会全量拉取建立基线）。
-   * removeSessionEntry 清除（与 historyCache 同汇聚点，见下）。
+   * 哨兵 ''（review round1 MUST_FIX）：空 session（pi leafId=null）也要建立基线，语义 =
+   * 「基线已建立但当前无叶子」——后续 sync 经 getEntriesSince 无参全量拉（'' 不是合法
+   * entry id，不可下传 pi 当 since），拉到真实 leaf 后推进；否则空 session 台账冻结空态
+   * 且无恢复出口。removeSessionEntry 清除（与 historyCache 同汇聚点，见下）。
    */
   private readonly traceLeafCache = new Map<string, string>()
   /**
@@ -770,7 +773,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         const result = await client.getEntries() as { data?: { entries?: unknown[]; leafId?: string | null } }
         const entries = result.data?.entries ?? []
         const leafId = result.data?.leafId ?? null
-        if (leafId) this.traceLeafCache.set(sessionId, leafId)
+        // 空 session（仅 header，pi _buildIndex 置 leafId=null）也必须建立基线（哨兵 ''），
+        // 否则 doSyncTraceEntries 恒 no-op——台账冻结空态且无恢复出口（review round1 MUST_FIX）
+        this.traceLeafCache.set(sessionId, leafId ?? '')
         const filePath = this.resolveTraceFilePath(sessionId)
         const header = parseTraceHeaderLine(filePath !== null ? this.sessionStore.readSessionHeaderLine(filePath) : null)
         // G1 坏行可见性：pi get_entries 静默跳坏行，RPC 路径必须补文件解析占位（否则活跃
@@ -829,7 +834,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     let delta: unknown[] = []
     let newLeafId: string | null = null
     try {
-      const result = await client.getEntries(baseline) as { data?: { entries?: unknown[]; leafId?: string | null } }
+      // 哨兵 ''（空 session 基线）→ 无参全量拉：空 session delta 空 = 正常稳态；有新 entry
+      // 后全量 delta 即全部 entry（消费端按 entry.id 去重），拉到真实 leaf 后基线推进
+      const result = await this.getEntriesSince(client, baseline) as { data?: { entries?: unknown[]; leafId?: string | null } }
       delta = result.data?.entries ?? []
       newLeafId = result.data?.leafId ?? null
     } catch (e) {
@@ -859,6 +866,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     if (active?.sessionFilePath) return active.sessionFilePath
     const target = this.sessionStore.scanSessions({ force: true }).find((s) => s.id === sessionId)
     return target?.filePath ?? null
+  }
+
+  /**
+   * 哨兵感知 get_entries 调用：baseline === ''（空 session 基线——已建立但当时无叶子）时
+   * 无参全量拉取（'' 不是合法 entry id，下传 pi 当 since 用会 Entry not found / 空结果，
+   * `?? undefined` 只处理 null/undefined 挡不住 ''）；真实 leafId / undefined 原样透传 since。
+   */
+  private getEntriesSince(client: IPiEngine, baseline: string | undefined): Promise<PiMessage> {
+    return baseline === '' ? client.getEntries() : client.getEntries(baseline)
   }
 
   /**
@@ -905,7 +921,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       let delta: unknown[] = []
       let newLeafId: string | null = null
       try {
-        const result = await client.getEntries(baseline ?? undefined) as { data?: { entries?: unknown[]; leafId?: string | null } }
+        // 哨兵感知（getEntriesSince）：'' 基线无参全量拉，undefined 同样全量（?? 挡不住 ''）
+        const result = await this.getEntriesSince(client, baseline) as { data?: { entries?: unknown[]; leafId?: string | null } }
         delta = result.data?.entries ?? []
         newLeafId = result.data?.leafId ?? null
       } catch (e) {

@@ -52,13 +52,18 @@ export function parseSessionHeader(filePath: string): SessionHeader | null {
   try {
     const entry = JSON.parse(firstLine) as Record<string, unknown>
     if (!isSessionHeaderEntry(entry)) return null
+    // id/cwd/timestamp 与 parentSession/forkEntryId 同款 typeof 守卫条件赋值（缺就不设，
+    // 运行时语义与原裸断言一致——缺失字段读出 undefined）。SessionHeader 必有字段声明是
+    // 「正常 session 均有」的乐观约定（见 isSessionHeaderEntry 注释），宽收窄差在返回
+    // 类型边界单点 as 收口（替代原先 3 处字段级裸断言）；接口放宽会级联 ScannedSessionMeta
+    // 与 port 委托，不做。
     return {
-      id: entry.id as string,
-      cwd: entry.cwd as string,
-      timestamp: entry.timestamp as string,
+      ...(typeof entry.id === 'string' ? { id: entry.id } : {}),
+      ...(typeof entry.cwd === 'string' ? { cwd: entry.cwd } : {}),
+      ...(typeof entry.timestamp === 'string' ? { timestamp: entry.timestamp } : {}),
       parentSession: typeof entry.parentSession === 'string' ? entry.parentSession : undefined,
       forkEntryId: typeof entry.forkEntryId === 'string' ? entry.forkEntryId : undefined,
-    }
+    } as SessionHeader
   } catch {
     return null
   }
