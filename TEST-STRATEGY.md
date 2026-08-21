@@ -152,7 +152,7 @@ it('首屏渲染：<页面> DOM 含关键交互元素', () => {
 - **凭证无关子集（CI 覆盖）**：mock RPC 层 describe（`scalar-state-invalidation` / `usage-queue-commands-invalidation` 各自的「mock RPC 层」describe、`w10-usage-switchmodel-race` / `w12-owner-snapshot-publish` / `w18-record-entry-chaos` 整文件）——不 spawn pi、不发 LLM 请求，无条件执行。
 - **完整基线（开发机跑）**：真实 pi 子进程 + 真实 LLM turn 用例（`live-reload` / `broadcast-getstate` / `chaos` / `pi-protocol-contract` 整文件，及 `scalar-state-invalidation` / `usage-queue-commands-invalidation` 的「真实 pi 子进程」describe）——依赖本机 pi 凭证（默认模型 `xiaomi-token-plan-cn/mimo-v2.5-pro`）。**凭证属用户基础设施，不由 CI secrets 虚构注入**。
 
-**何时跑完整基线**：改动涉及 pi 协议链路（`event-adapter` / `message-converter` / `pi-protocol`）、entry reducer（core `apply-entry`）、replicated-states 失效收敛、或 equivalence 目录本身时，merge 前在开发机跑 `cd packages/runtime && pnpm test:equivalence` 全量。
+**何时跑完整基线**：改动涉及 pi 协议链路（`event-adapter` / `message-converter` / `pi-protocol`）、entry reducer（core `apply-entry`）、replicated-states 失效收敛、或 equivalence 目录本身时，merge 前在开发机跑 `cd packages/runtime && pnpm test:equivalence` 全量。**pr-cr-fix 阶段 3a（pr-pre-merge.sh `test:runtime` 步骤）不设 `XYZ_SKIP_REAL_PI`，默认承担该义务**——「CI 不跑 real-pi、开发验收必跑」是显式分工策略而非环境巧合；凭证缺失导致的 skip 出现即验收不完整（见 pr-cr-fix SKILL.md 3a）。
 
 **skip 机制（SSOT = `pi-fixture.ts`）**：模块顶层 `REAL_PI_READY`（binary `which pi` + 凭证三源探测：env `XIAOMI_TOKEN_PLAN_CN_API_KEY` / `<agentDir>/auth.json` stored 条目 / `models.json` providers apiKey，探测链对齐 pi AuthStorage 静态 source）。真实 LLM 用例一律 `describe.skipIf(!REAL_PI_READY)` 包裹；skip 理由注入 describe 名 + 模块加载时 console.warn（双通道显式可见，不静默消失）。
 

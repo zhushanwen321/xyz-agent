@@ -402,6 +402,8 @@ task:  "跑 bash scripts/pr-pre-merge.sh --quiet
 
 **Gate-3a**（硬 gate）：`result === 'PASS'` 才继续。FAIL 按 `failed_step` 对应工种重派 worker 修复后重跑。
 
+**real-pi 测试分工 [MANDATORY]**：CI 不跑 real-pi 测试（ci.yml test-runtime 显式设 `XYZ_SKIP_REAL_PI=1`，只跑凭证无关子集）；**开发验收必须跑 real-pi**——本阶段 pr-pre-merge.sh 的 `test:runtime` 步骤（`cd packages/runtime && npx vitest run`）不设 skip，双池全量含 real-pi 等价性测试（live ≡ reload 基线，SSOT 见 TEST-STRATEGY.md「等价性测试双轨」）。凭证缺失时用例以显式理由 skip——**输出中出现 real-pi skip 即视为开发验收不完整**，须补凭证（`~/.pi` 三源探测，见 `pi-fixture.ts` `REAL_PI_READY`）后重跑，不得凭 skip 输出宣布 PASS。
+
 ### 3b — push（需用户授权）
 
 **[MANDATORY] push 前必须获得用户明确授权。** pre-merge 通过后，告知用户结果，等待用户确认后再 push。
