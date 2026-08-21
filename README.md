@@ -88,7 +88,7 @@ curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJ
 | `pi-rename-session` | 首轮对话后自动生成会话标题 |
 | `pi-pending-notifications` | 跨扩展异步操作注册 / 查询（长任务期间防消息注入） |
 
-其中 3 个基础设级（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output`）常驻不可禁用，其余 7 个可在设置中禁用。另有 `pi-cw-tool`（coding-workflow 编排）、`pi-model-switch`（模型推荐切换）、`pi-plan`（轻量 plan 模式）、`pi-unified-hooks`（统一 hooks）4 个包经 npm 发布，可按需安装。
+其中 3 个基础设级（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output`）常驻不可禁用，其余 7 个可在设置中禁用。另有 `pi-cw-tool`（cw 2.0 runner 实操指南 + cw_query 只读查询工具）、`pi-model-switch`（模型推荐切换）、`pi-plan`（轻量 plan 模式）、`pi-unified-hooks`（统一 hooks）4 个包经 npm 发布，可按需安装。
 
 ### 模型与设置
 
