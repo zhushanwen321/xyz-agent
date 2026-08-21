@@ -78,7 +78,7 @@ bash scripts/validate-runtime-bundle.sh    # runtime bundle 深度验证
 **Plugin / Builtin extensions**：
 
 16. **Plugin System**：PluginService 是唯一适配层（WS → server.ts → PluginService）；trusted 插件跑 Worker Thread、sandbox 跑独立 fork 子进程；hook 按 priority 串行（单 handler 5s 超时放行）；sessionData 写入 debounce 缓存 + shutdown flushAll；WS 命名 Client→Server 点号（`plugin.xxx`）/ Server→Client 冒号 camelCase（`plugin:statusBarUpdate`）
-17. **Builtin pi-extensions 打包内置（现行）**：10 个 `@zhushanwen/pi-*` 包 esbuild bundle 后 staged 到 `apps/electron/resources/extensions/` 随应用打包（不走 npm 安装）。清单 SSOT = `packages/shared/src/mandatory-extensions.json`（infrastructure 3 包不可禁、feature 7 包可禁、都不可卸；守卫抛 `builtin_cannot_*`）。[HISTORICAL] 演化：builtin 依赖 → 推荐安装 → mandatory npm → 打包内置（2026-08-12）；「删除打包所需依赖致产物缺失」教训始终适用（pi binary、xyz-system-prompt-extension.js 同理）
+17. **Builtin pi-extensions 打包内置（现行）**：11 个 `@zhushanwen/pi-*` 包 esbuild bundle 后 staged 到 `apps/electron/resources/extensions/` 随应用打包（不走 npm 安装）。清单 SSOT = `packages/shared/src/mandatory-extensions.json`（infrastructure 3 包不可禁、feature 8 包可禁、都不可卸；守卫抛 `builtin_cannot_*`）。[HISTORICAL] 演化：builtin 依赖 → 推荐安装 → mandatory npm → 打包内置（2026-08-12）；「删除打包所需依赖致产物缺失」教训始终适用（pi binary、xyz-system-prompt-extension.js 同理）
 
 ## 测试
 
