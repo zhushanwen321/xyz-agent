@@ -419,6 +419,11 @@ export default {
     systemFetchCurrent: 'Fetch current',
     systemCurrentNotHistory: 'Current value, not historical',
     malformedOpenDir: 'Reveal in folder',
+    // Fork-source jump (§3.1 sample 5: SESSION row parentSession link -> source session + forkEntryId reveal)
+    jumpParent: 'fork source',
+    jumpParentTitle: 'Jump to the source session and reveal the fork point',
+    jumpTargetNotFound: 'Source session not found (deleted or not in the list)',
+    jumpLoadFailed: 'Timed out loading the source session trace, please retry',
     loadFailed: 'Failed to load trace',
     loadFailedHint: 'Retry by reopening the Trace view; if it persists, check the session JSONL file is readable',
     retry: 'Retry',

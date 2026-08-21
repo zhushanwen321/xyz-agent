@@ -35,6 +35,13 @@ import * as events from '@/api/events'
 /** 主区视图态（SegmentedTab「对话 | Trace」，D5a；默认对话）。 */
 export type TraceMainView = 'chat' | 'trace'
 
+/** 溯源跳转的行定位请求（useTraceJump 编排写入；TraceView 消费后滚动到行）。 */
+export interface TraceRevealRequest {
+  key: string
+  /** 单调递增：同 key 重复请求也触发 watch（对象引用逐次更换）。 */
+  nonce: number
+}
+
 /** 单个 session 的 trace 分区状态（数据 + 视图态，reactive 容器——ADR-0049 响应式契约）。 */
 export interface TraceSessionPartition {
   /** 加载态：idle 未加载 / loading / ready / error。 */
@@ -57,6 +64,8 @@ export interface TraceSessionPartition {
   searchText: string
   /** 选中行 key（drawer inspector 联动；null = 未选中，inspector 隐藏复原前 tab）。 */
   selectedKey: string | null
+  /** 溯源跳转定位请求（§3.1 样例 5：跳转后滚动到 forkEntryId 行；null = 无待定位）。 */
+  revealRequest: TraceRevealRequest | null
 }
 
 function createDefaultPartition(): TraceSessionPartition {
@@ -75,6 +84,7 @@ function createDefaultPartition(): TraceSessionPartition {
     activeGroups: [],
     searchText: '',
     selectedKey: null,
+    revealRequest: null,
   })
 }
 
@@ -204,6 +214,20 @@ export function clearTraceSelection(sid: string): void {
   partitions.updateFor(sid, (s) => {
     s.selectedKey = null
   })
+}
+
+/**
+ * 选中并请求滚动定位到行（溯源跳转编排专用，§3.1 样例 5）：写 selectedKey + revealRequest
+ * （nonce 递增保证同 key 重复跳转也触发 TraceView 的 watch）+ drawer 联动。手动点行走
+ * selectTraceEntry（无 revealRequest，不滚动——行已可见）。
+ */
+export function revealTraceEntry(sid: string, key: string): void {
+  partitions.updateFor(sid, (s) => {
+    s.selectedKey = key
+    s.revealRequest = { key, nonce: (s.revealRequest?.nonce ?? 0) + 1 }
+  })
+  const drawer = getDrawerControlState()
+  if (!drawer.isOpen) openDrawerTab()
 }
 
 /** 切换主区视图（SegmentedTab「对话 | Trace」，A42）。 */

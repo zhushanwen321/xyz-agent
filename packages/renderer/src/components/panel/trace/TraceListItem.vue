@@ -9,6 +9,7 @@
     :row="item.row"
     :selected="!!selected"
     @select="(row) => emit('select', row)"
+    @jump-parent="(row) => emit('jump-parent', row)"
   />
   <!-- context 分界行（demo .tr-divider：info 色两侧渐变线 + 说明文案；contextOnly 态由父级隐藏） -->
   <div
@@ -32,7 +33,7 @@ defineProps<{
   selected?: boolean
 }>()
 
-const emit = defineEmits<{ select: [row: TraceRow] }>()
+const emit = defineEmits<{ select: [row: TraceRow]; 'jump-parent': [row: TraceRow] }>()
 
 const { t } = useI18n()
 </script>

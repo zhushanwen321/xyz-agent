@@ -417,6 +417,11 @@ export default {
     systemFetchCurrent: '现取当前值',
     systemCurrentNotHistory: '当前值，非历史',
     malformedOpenDir: '打开所在目录',
+    // 溯源跳转（§3.1 样例 5：SESSION 行 parentSession 链接 → 源 session + forkEntryId 定位）
+    jumpParent: 'fork 溯源',
+    jumpParentTitle: '跳转到源 session 并定位 fork 点',
+    jumpTargetNotFound: '未找到源 session（可能已被删除或不在列表中）',
+    jumpLoadFailed: '源 session 的 trace 加载超时，请重试',
     loadFailed: '加载 trace 失败',
     loadFailedHint: '重新打开 Trace 视图重试；若持续失败，检查 session JSONL 文件是否可读',
     retry: '重试',

@@ -21,6 +21,12 @@ export {
 export type { SessionTraceInput, TraceRow, TraceRowMeta } from './trace-rows'
 export { filterTraceRows, TRACE_KIND_GROUPS } from './trace-filter'
 export type { TraceFilterState, TraceKindGroup } from './trace-filter'
+export {
+  extractSessionIdFromTraceFilePath,
+  isTraceParentSessionPath,
+  resolveTraceParentSession,
+} from './parent-session'
+export type { TraceParentSessionCandidate } from './parent-session'
 export type {
   TraceAgentMessage,
   TraceBranchSummaryEntry,

@@ -40,6 +40,20 @@
       v-if="!row.inContext && !row.shadowed"
       class="shrink-0 font-mono text-[10px] text-neutral-faint"
     >{{ t('panel.trace.notInContext') }}</span>
+    <!-- SESSION 行溯源链接（§3.1 样例 5）：parentSession 两形态由 useTraceJump 编排解析。
+         stopPropagation：链接点击不触发行选中。 -->
+    <Button
+      v-if="row.kind === 'SESSION' && row.meta.parentSession"
+      variant="ghost"
+      size="sm"
+      class="h-4 shrink-0 gap-0.5 px-1 text-[10px] text-accent hover:bg-surface-2 hover:underline"
+      data-testid="trace-row-jump-parent"
+      :title="t('panel.trace.jumpParentTitle')"
+      @click.stop="emit('jump-parent', row)"
+    >
+      <GitFork class="size-3" />
+      {{ t('panel.trace.jumpParent') }}
+    </Button>
   </div>
 </template>
 
@@ -51,6 +65,8 @@
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { GitFork } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
 import type { TraceRow } from '@xyz-agent/core/domain/session-trace'
 import { KIND_BADGE_CLASS } from './trace-kind-style'
 
@@ -59,7 +75,7 @@ const props = defineProps<{
   selected: boolean
 }>()
 
-const emit = defineEmits<{ select: [row: TraceRow] }>()
+const emit = defineEmits<{ select: [row: TraceRow]; 'jump-parent': [row: TraceRow] }>()
 
 const { t } = useI18n()
 

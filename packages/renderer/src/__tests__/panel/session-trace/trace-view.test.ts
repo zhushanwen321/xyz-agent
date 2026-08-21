@@ -33,12 +33,19 @@ vi.mock('@/api', () => ({
   session: { getTraceEntries: apiMock.getTraceEntries },
 }))
 
+// ── mock useTraceJump（TraceView 溯源链接只验证事件编排链路，真实编排归 useTraceJump.test.ts）──
+const jumpMock = vi.hoisted(() => ({ jumpToParentSession: vi.fn() }))
+vi.mock('@/composables/features/trace/useTraceJump', () => ({
+  jumpToParentSession: jumpMock.jumpToParentSession,
+}))
+
 import PanelHeader from '@/components/panel/PanelHeader.vue'
 import TraceView from '@/components/panel/trace/TraceView.vue'
 import {
   _resetTraceStoreForTest,
   bindTraceSessionId,
   ensureTraceLoaded,
+  revealTraceEntry,
   selectTraceEntry,
   setTraceFilter,
   useSessionTrace,
@@ -294,5 +301,46 @@ describe('A43 行组件渲染（12 kind + 影子化 + 选中态 + 虚拟滚动�
     const view2 = await mountTraceView()
     expect(findRows(view2).length).toBe(400)
     view2.unmount()
+  })
+})
+
+describe('溯源跳转（§3.1 样例 5：SESSION 行 parentSession 链接 + reveal 定位）', () => {
+  it('SESSION 行有 parentSession 时渲染溯源链接，点击经 stopPropagation 调 jumpToParentSession（不带 ref 的行无链接）', async () => {
+    // header 带 parentSession（sessionId fallback 形态）+ forkEntryId
+    const snap = buildFullKindsSnapshot()
+    snap.header = { type: 'session', version: 1, id: 'h0', cwd: '/w/demo', parentSession: 'sid-fork-src', forkEntryId: 'u1' }
+    apiMock.getTraceEntries.mockResolvedValue(snap)
+    const view = await mountTraceView()
+    const sessionRow = view.find('[data-kind="SESSION"]')
+    const link = sessionRow.find('[data-testid="trace-row-jump-parent"]')
+    expect(link.exists()).toBe(true)
+    expect(link.text()).toContain('fork')
+
+    jumpMock.jumpToParentSession.mockResolvedValue({ ok: true, targetSessionId: 'sid-fork-src' })
+    await link.trigger('click')
+    expect(jumpMock.jumpToParentSession).toHaveBeenCalledTimes(1)
+    expect(jumpMock.jumpToParentSession).toHaveBeenCalledWith(SID, 'sid-fork-src', 'u1')
+    view.unmount()
+  })
+
+  it('默认 fixture（header 无 parentSession）SESSION 行不渲染溯源链接', async () => {
+    const view = await mountTraceView()
+    expect(view.find('[data-testid="trace-row-jump-parent"]').exists()).toBe(false)
+    view.unmount()
+  })
+
+  it('revealTraceEntry：非虚拟路径 scrollIntoView 到目标行（溯源定位滚动）', async () => {
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    try {
+      const view = await mountTraceView()
+      revealTraceEntry(SID, 'u1')
+      await vi.waitFor(() => expect(scrollSpy).toHaveBeenCalled())
+      // 滚动目标是 u1 行（seq 4）：非虚拟路径 querySelector 命中同一元素
+      const calledOn = scrollSpy.mock.contexts[0] as HTMLElement | undefined
+      expect(calledOn?.getAttribute('data-testid')).toBe('trace-row-4')
+      view.unmount()
+    } finally {
+      scrollSpy.mockRestore()
+    }
   })
 })

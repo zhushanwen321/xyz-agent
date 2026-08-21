@@ -98,6 +98,7 @@
               :item="item"
               :selected="item.kind === 'row' && item.row.key === partition.selectedKey"
               @select="onSelectRow"
+              @jump-parent="onJumpParent"
             />
           </template>
         </Virtualizer>
@@ -109,6 +110,7 @@
             :item="item"
             :selected="item.kind === 'row' && item.row.key === partition.selectedKey"
             @select="onSelectRow"
+            @jump-parent="onJumpParent"
           />
         </template>
       </div>
@@ -128,6 +130,7 @@ import { Virtualizer } from 'virtua/vue'
 import type { VirtualizerHandle } from 'virtua/vue'
 import { AlertCircle, FileWarning, Hourglass, ListTree, Loader2, RotateCcw } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import { useToast } from '@/composables/useToast'
 import {
   filterTraceRows,
 } from '@xyz-agent/core/domain/session-trace'
@@ -142,12 +145,14 @@ import {
 } from '@/composables/features/trace/useSessionTrace'
 import TraceToolbar from './TraceToolbar.vue'
 import TraceListItem from './TraceListItem.vue'
+import { jumpToParentSession } from '@/composables/features/trace/useTraceJump'
 
 const props = defineProps<{
   sessionId: string
 }>()
 
 const { t } = useI18n()
+const { error: toastError } = useToast()
 const { partition } = useSessionTrace()
 const retry = retryTraceLoad
 const setFilter = setTraceFilter
@@ -225,6 +230,42 @@ function onToggleContext(): void {
 function onSelectRow(row: TraceRow): void {
   selectTraceEntry(props.sessionId, row.key)
 }
+
+/**
+ * 溯源跳转（§3.1 样例 5）：SESSION 行 parentSession 链接 → 切源 session + 开 Trace +
+ * 定位 forkEntryId 行。失败 toast（文案 i18n，reason → 键映射）。跳转本身切走本视图，
+ * 本组件随 session 切换重挂载/重绑，无需本地清理。
+ */
+async function onJumpParent(row: TraceRow): Promise<void> {
+  const ref = row.meta.parentSession
+  if (typeof ref !== 'string' || !ref) return
+  const forkId = typeof row.meta.forkEntryId === 'string' ? row.meta.forkEntryId : undefined
+  const result = await jumpToParentSession(props.sessionId, ref, forkId)
+  if (!result.ok) {
+    toastError(t(result.reason === 'target_not_found' ? 'panel.trace.jumpTargetNotFound' : 'panel.trace.jumpLoadFailed'))
+  }
+}
+
+/**
+ * 溯源定位滚动：revealRequest 到达 → 滚动到目标行居中（虚拟/非虚拟两路径）。
+ * 行不在 items（被过滤/不存在）时静默忽略——选中态已写入，用户可手动找。
+ */
+watch(
+  () => partition.value.revealRequest,
+  (req) => {
+    if (!req) return
+    const idx = items.value.findIndex((it) => it.kind === 'row' && it.row.key === req.key)
+    if (idx < 0) return
+    if (virtualized.value) {
+      vlistRef.value?.scrollToIndex(idx, { align: 'center' })
+    } else {
+      const seq = items.value[idx]?.kind === 'row' ? items.value[idx].row.seq : 0
+      scrollEl.value
+        ?.querySelector(`[data-testid="trace-row-${seq}"]`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }
+  },
+)
 
 onMounted(() => {
   ensureTraceLoaded(props.sessionId)

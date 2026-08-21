@@ -60,11 +60,21 @@
           <span class="min-w-0 flex-1 truncate" :class="block.type === 'thinking' ? 'text-reasoning' : ''">{{ block.preview }}</span>
         </div>
       </div>
-      <!-- meta kv（kind 特化字段：exitCode/tokensBefore/version/…） -->
+      <!-- meta kv（kind 特化字段：exitCode/tokensBefore/version/…）；SESSION 的
+           parentSession 是溯源链接（§3.1 样例 5，jump-parent）而非纯文本 -->
       <div class="mb-2 flex flex-col gap-1.5">
         <div v-for="kv in detailKv" :key="kv.k" class="flex items-baseline gap-2 text-[11px]">
           <span class="w-20 flex-shrink-0 text-neutral-faint">{{ kv.k }}</span>
-          <span class="min-w-0 break-all font-mono text-[11px] text-neutral-mid" :class="kv.tone === 'bad' ? 'text-danger' : kv.tone === 'ok' ? 'text-success' : ''">{{ kv.v }}</span>
+          <Button
+            v-if="kv.action === 'jump-parent'"
+            variant="ghost"
+            size="sm"
+            class="h-auto min-w-0 justify-start break-all px-0 py-0 font-mono text-[11px] text-accent hover:underline"
+            data-testid="trace-inspector-jump-parent"
+            :title="t('panel.trace.jumpParentTitle')"
+            @click="onJumpParent"
+          >{{ kv.v }} <ArrowUpRight class="size-3" /></Button>
+          <span v-else class="min-w-0 break-all font-mono text-[11px] text-neutral-mid" :class="kv.tone === 'bad' ? 'text-danger' : kv.tone === 'ok' ? 'text-success' : ''">{{ kv.v }}</span>
         </div>
       </div>
       <!-- 原始 entry JSON（通用兜底，G1 不丢信息；MALFORMED 行 raw 原文） -->
@@ -82,11 +92,13 @@
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, FolderOpen } from '@lucide/vue'
+import { ArrowLeft, ArrowUpRight, FolderOpen } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { TraceRow } from '@xyz-agent/core/domain/session-trace'
 import { useTraceRows } from '@/composables/features/trace/useTraceRows'
 import { clearTraceSelection, useSessionTrace } from '@/composables/features/trace/useSessionTrace'
+import { jumpToParentSession } from '@/composables/features/trace/useTraceJump'
+import { useToast } from '@/composables/useToast'
 import { KIND_BADGE_CLASS } from './trace-kind-style'
 
 const props = defineProps<{
@@ -94,6 +106,7 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const { error: toastError } = useToast()
 const { partition } = useSessionTrace()
 const rows = useTraceRows()
 
@@ -173,10 +186,10 @@ const blocks = computed<{ type: string; preview: string }[]>(() => {
 })
 
 /** kind 特化标量 kv（从 row.meta 取值——core summarizeRow 提取的 SSOT，不二次解析 entry）。 */
-const detailKv = computed<{ k: string; v: string; tone?: 'ok' | 'bad' }[]>(() => {
+const detailKv = computed<{ k: string; v: string; tone?: 'ok' | 'bad'; action?: 'jump-parent' }[]>(() => {
   const r = row.value
   if (!r) return []
-  const out: { k: string; v: string; tone?: 'ok' | 'bad' }[] = []
+  const out: { k: string; v: string; tone?: 'ok' | 'bad'; action?: 'jump-parent' }[] = []
   const m = r.meta
   const push = (k: string, v: unknown, tone?: 'ok' | 'bad') => {
     if (v !== undefined && v !== '') out.push({ k, v: String(v), tone })
@@ -219,7 +232,10 @@ const detailKv = computed<{ k: string; v: string; tone?: 'ok' | 'bad' }[]>(() =>
       break
     case 'SESSION':
       push('cwd', m.cwd)
-      push('parentSession', m.parentSession)
+      // 溯源链接（§3.1 样例 5）：两形态（文件路径 / sessionId）由 useTraceJump 解析
+      if (m.parentSession !== undefined) {
+        out.push({ k: 'parentSession', v: String(m.parentSession), action: 'jump-parent' })
+      }
       push('forkEntryId', m.forkEntryId)
       break
     case 'BOUNDARY':
@@ -236,6 +252,19 @@ const detailKv = computed<{ k: string; v: string; tone?: 'ok' | 'bad' }[]>(() =>
   else if (!r.inContext) out.push({ k: 'context', v: t('panel.trace.notInContext') })
   return out
 })
+
+/** 溯源跳转（§3.1 样例 5）：与 TraceView 的 SESSION 行链接同一编排。 */
+async function onJumpParent(): Promise<void> {
+  const r = row.value
+  if (!r || r.kind !== 'SESSION') return
+  const ref = r.meta.parentSession
+  if (typeof ref !== 'string' || !ref) return
+  const forkId = typeof r.meta.forkEntryId === 'string' ? r.meta.forkEntryId : undefined
+  const result = await jumpToParentSession(props.sessionId, ref, forkId)
+  if (!result.ok) {
+    toastError(t(result.reason === 'target_not_found' ? 'panel.trace.jumpTargetNotFound' : 'panel.trace.jumpLoadFailed'))
+  }
+}
 
 /** JSON.stringify 缩进宽度（原始 entry 兜底展示）。 */
 const JSON_INDENT = 2
