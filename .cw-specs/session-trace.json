@@ -2,31 +2,24 @@
   "acceptance": [
     {
       "id": "R0",
-      "title": "账本内机器验收抽查: core session-trace 套件(vitest JSON, 代表性覆盖 R1)",
+      "title": "机器验收抽查锚: 跨模块烟雾 + gate 标记行契约(vitest, 含区分力断言)",
       "type": "unit",
       "core": false,
-      "command": "pnpm --filter @xyz-agent/core exec vitest run session-trace"
+      "command": "pnpm --filter @xyz-agent/core exec vitest run trace-root-smoke"
     },
     {
       "id": "R1",
-      "title": "全部子单元机器验收套件通过(core/runtime/frontend/extension 四套 vitest)",
+      "title": "全部子单元机器验收套件(core/runtime/frontend/extension 四套 vitest, 单一 install 锚防并发竞态)",
       "type": "e2e-real",
       "core": false,
-      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && bash scripts/cw/trace-root-gate.sh"
+      "command": "bash scripts/cw/trace-root-r1.sh"
     },
     {
       "id": "R2",
-      "title": "全部手工 gate 勾选(P2/P3/V1/V3/V4/V5/V6/V2/V7, 见 manual-checks.md)",
+      "title": "全部手工 gate 勾选(P2/P3/V1-V7) + cw 账本 5 子单元全 closed",
       "type": "e2e-real",
       "core": false,
       "command": "bash scripts/cw/trace-root-gate.sh"
-    },
-    {
-      "id": "R3",
-      "title": "账本一致性: cw status 5 个子单元全部 closed",
-      "type": "e2e-real",
-      "core": false,
-      "command": "bash scripts/cw/trace-root-ledger.sh"
     }
   ],
   "contracts": [],
