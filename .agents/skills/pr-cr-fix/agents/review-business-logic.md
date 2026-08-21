@@ -98,3 +98,5 @@ agent 必须通过 `structured-output` tool 返回 JSON：
 - 禁止调用外部 API
 - 每个问题必须给出具体文件路径、行号范围和修复方向
 - 仅关注业务逻辑，不涉及类型安全、测试覆盖、代码风格
+- **「无消费方 / 死代码 / 孤儿数据」类断言必须沿数据流核实，符号名 grep 不构成证据 [HISTORICAL]**：判定一个字段/导出「全仓无消费方」前，必须追完整消费链——该字段的所有读取点（含经 state 对象解构传递的路径）、关联的 `applyXxx` / `mergeXxx` / `buildXxx` / rebuild 类消费函数、跨文件传递链。数据常经 state 字段传递后以另一个函数名被消费，按原字段名 grep 零命中**不证明无消费方**；追不尽时降级 SUGGESTION 并注明「消费链未追尽」，禁止断言不存在。
+  - 案例：PR #185 R3 曾据符号名 grep 误判 `orphanToolResults`「全仓无消费方」（建议把注释改成「无回填消费方」——照改会把错误事实写进代码）。实际消费链：`apply-entry.ts` reducer 收集 orphan → `session-service.ts` rebuild 后读 `rebuilt.orphanToolResults` → `applyOrphanToolResults(merged, ...)` 回填。误报根因：消费点函数名与字段名不同，符号名 grep 漏检。

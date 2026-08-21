@@ -24,7 +24,7 @@ import {
   getNpmDir,
   getTmpDir,
 } from './pi-paths.js'
-import { updateSettingsSync } from './pi-settings-store.js'
+import { updateSettingsFields } from './pi-settings-store.js'
 
 /**
  * 把 oldDir 的内容逐项迁移到 newDir（跳过 newDir 中已存在的同名项），
@@ -179,7 +179,10 @@ export function isLeakedPackage(pkg: string): boolean {
 export function cleanLeakedPackages(): { removed: string[] } {
   try {
     let removed: string[] = []
-    updateSettingsSync(s => {
+    // full scope 白名单调用点（D1b）：启动迁移在无并发 pi 进程窗口运行，且迁移可能
+    // 触及任意字段，故允许全量覆盖。新代码禁止使用 full scope——用具体字段域
+    //（model/skills/extension），review 按 data-source-registry.md 登记表检查。
+    updateSettingsFields('full', s => {
       const packages = s.packages ?? []
       const filtered = packages.filter(p => !isLeakedPackage(p))
       removed = packages.filter(p => isLeakedPackage(p))

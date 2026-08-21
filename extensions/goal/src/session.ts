@@ -30,20 +30,13 @@ export function createGoalSession(): GoalSession {
 }
 
 // ── Stale Context 检测（FR-8.2 G-010）─────────────────
-
-export const STALE_CONTEXT_PATTERNS = [
-	"aborted",
-	"context canceled",
-	"stale context",
-	"stalecontext",
-	"extension context no longer active",
-] as const;
-
-export function isStaleContextError(error: Error | unknown): boolean {
-	const msg = error instanceof Error ? error.message : String(error);
-	const lower = msg.toLowerCase();
-	return STALE_CONTEXT_PATTERNS.some((p) => lower.includes(p));
-}
+// [REMOVED W4] 原实现导出 STALE_CONTEXT_PATTERNS + isStaleContextError，双重废：
+// ① 无生产调用方（仅测试引用）——goal 的 appendEntry/sendMessage 调用点均在 pi
+//   event handler 内，pi runner 对 handler 错误有隔离，无「捕获后分诊 stale」的场景；
+// ② patterns 与 pi 0.84.1 真实 stale 文案零匹配（"This extension ctx is stale
+//   after session replacement..."，runner.js:352——"stale context" ≠ "ctx is stale"）。
+// 复用价值场景请参照 scheduler 的已验证方案：runtime.ts STALE_CTX_MARKER
+// 'stale after session replacement'（子串匹配真实文案）+ 代际计数治本（G1）。
 
 // ── reconstructGoalState（session_start 时调）──────────
 

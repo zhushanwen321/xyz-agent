@@ -9,12 +9,15 @@
  * - preload 路径：dist/preload/preload.cjs（electron-builder files 白名单对应）
  * - contextIsolation: true / nodeIntegration: false（Electron 安全默认）
  * - windowId 注入到 URL query，renderer 读取后用于注册到 WindowManager
+ * - D2b 导航拦截：will-navigate 拒绝非应用自身源 + setWindowOpenHandler 默认 deny
+ *   （integrity-hardening §3.2；防 XSS 经整页导航/新窗口接管 electronAPI）
  *
- * 依赖方向：window-factory → electron + main/interfaces（type-only）
+ * 依赖方向：window-factory → electron + input-validators + main/interfaces（type-only）
  */
 import path from 'node:path'
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
 import type { WindowOptions } from '../interfaces.js'
+import { isAllowedAppNavigation, isValidExternalUrl } from '../gateway/input-validators.js'
 
 /** Dev 模式 Vite URL */
 export const VITE_DEV_URL = 'http://localhost:1420'
@@ -96,6 +99,28 @@ export async function createWindow(
       // 与 VSCode/Cursor 一致：禁用 backgroundThrottling。
       backgroundThrottling: false,
     },
+  })
+
+  // ── D2b 导航拦截（integrity-hardening §3.2）───────────────────────
+  // will-navigate 拒绝非应用自身源：renderer 被注入（XSS）后 `window.location = 远程页`
+  // 会让 preload 对新页面重新注入 electronAPI（拿 runtime token/port），一次性注入
+  // 升级为持久接管，必须在 main 层掐断。放行集合 = vite dev server（dev）或
+  // file://<appPath>（prod/E2E loadFile 自源）；in-page/hash 导航不触发本事件。
+  win.webContents.on('will-navigate', (event) => {
+    if (!isAllowedAppNavigation(event.url, { devOrigin: VITE_DEV_URL, fileRoot: app.getAppPath() })) {
+      event.preventDefault()
+      console.warn(`[window] blocked navigation to non-app origin: ${event.url}`)
+    }
+  })
+  // window.open / target=_blank / shift+click 一律不建新窗口（默认 deny）；
+  // http(s) 链接经 isValidExternalUrl（与 open-external IPC 同一道校验）转系统浏览器。
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isValidExternalUrl(url)) {
+      void shell.openExternal(url).catch((err) => {
+        console.error('[window] openExternal for window.open failed:', err)
+      })
+    }
+    return { action: 'deny' }
   })
 
   win.once('ready-to-show', () => {

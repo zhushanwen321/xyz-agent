@@ -56,7 +56,35 @@ export function errorWithCode(message: string, code: string | number): Error & {
 /** session 创建/恢复/fork 时 model 未配置的错误码（前端据此引导用户去 Settings 配置） */
 export const MODEL_NOT_CONFIGURED = 'MODEL_NOT_CONFIGURED'
 
+/**
+ * packaged 模式 builtin extensions staged 目录缺失（electron-build R3-S1）。
+ * extension-resolver 的打包产物断链 fail-fast throw 携带此 code，供 facade
+ * （session-service.getExtensionPaths）区分「不可降级」错误 rethrow 贯通 fail-fast
+ * 与「可降级」意外错误维持降级，消息匹配不可靠（见 errorWithCode 用法约定）。
+ */
+export const BUILTIN_EXTENSIONS_MISSING = 'BUILTIN_EXTENSIONS_MISSING'
+
 /** session 恢复时找不到磁盘 session 文件（pi 延迟写入窗口崩溃 / 文件被删） */
 export const SESSION_NOT_FOUND = 'SESSION_NOT_FOUND'
 /** session 恢复时 spawn pi / switchSession / initialize 失败 */
 export const RESTORE_FAILED = 'RESTORE_FAILED'
+
+/**
+ * pi RPC 命令超时错误（D3a pi 半死自愈：超时判别收口为类型）。
+ *
+ * [arch] 定义在 utils（services/infra 共享中立层）：services 层（message-dispatcher）
+ * 需要 instanceof 运行时值判别，若定义在 infra/pi/rpc-client 会构成 services→infra 的
+ * 运行时值 import（runtime 三层规则禁止，见 runtime-three-layer-design.md）。rpc-client.ts
+ * （infra）从这里 import 并 re-export，保持既有 import 路径兼容。
+ */
+export class RpcTimeoutError extends Error {
+  constructor(
+    /** 超时的 RPC 命令类型（如 'abort' / 'prompt'），诊断用 */
+    public readonly commandType: string,
+    /** 该命令配置的超时毫秒数，诊断用 */
+    public readonly timeoutMs: number,
+  ) {
+    super(`RPC command "${commandType}" timed out after ${timeoutMs}ms`)
+    this.name = 'RpcTimeoutError'
+  }
+}

@@ -46,7 +46,7 @@ vi.mock('@/composables/features/settings/useProjectSkills', () => ({
   useGlobalSkills: () => ({ globalSkills: [] }),
 }))
 vi.mock('@/stores/session', () => ({
-  useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
+  useSessionStore: () => ({ active: undefined, list: [], applySnapshot: vi.fn() }),
 }))
 // ── mock useSidebar：forkSessionAsk（W2 新增，当前不存在）──
 const forkSessionAskMock = vi.fn(() => Promise.resolve())

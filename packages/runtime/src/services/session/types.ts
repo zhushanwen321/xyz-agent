@@ -10,7 +10,7 @@
  * 子模块经 ISessionServiceInternal 只看到 IManagedSessionView,
  * 但拿到的是 ManagedSession 实例,可读写字段(lastActiveAt / isGenerating)。
  */
-import type { ServerMessage } from '@xyz-agent/shared'
+import type { ServerMessage, PiMessageEntry, PiToolCallEntryForm } from '@xyz-agent/shared'
 import type { ScannedSessionMeta } from '../ports/session.js'
 
 /**
@@ -69,6 +69,20 @@ export interface IManagedSessionView {
    * 避免与 abortBash 的 cancelled bashResult 撞出双终态（先 cancelled 后真实结果，前端渲染错乱）。
    */
   bashRunToken: string | undefined
+  /**
+   * bash 结果待落列（W1 fix-chat-flow-order，D2 双分支镜像 pi）。
+   *
+   * session 处于 streaming（活跃 run）时，sendBash 收到的 pi bash RPC 结果压入此列
+   * （不立即广播）；agent_settled（级联结束，晚于 pi finally flush 的 bash 落盘）到达时由
+   * dispatcher.flushPendingBashResults 按序转 message.bashResult 帧发布并清空——xyz live
+   * 入流位置构造性对齐 pi 落盘位置（级联末，镜像 pi recordBashResult 的
+   * _pendingBashMessages 双分支，agent-session.js:2225-2247）。
+   *
+   * 唯一写方 = message-dispatcher（sendBash 压入 / flush 发布清空）。挂在本 session 对象上
+   * （与 bashRunToken 同区）：session 条目删除（removeSessionEntry）时随对象一同丢弃，
+   * 无孤儿残留；flush 信号按 sessionId 定向，跨 session 不误清。
+   */
+  pendingBashResults?: PendingBashResultData[]
   thinkingLevel?: string
   sessionFilePath?: string
   /**
@@ -91,23 +105,29 @@ export interface IManagedSessionView {
    * 透传此字段到 SessionSummary.handedOffTo，保持双路径输出一致。ManagedSession 经
    * extends 自动继承此字段。
    *
-   * [KNOWN-LIMIT] handedOffTo 的写入逻辑（persistHandedOff 调用）在批 2 handoff-service
-   * 中接线，当前 active session 的 handedOffTo 恒 undefined——但字段透传链路要完整，
-   * 待批 2 接线后即生效。
+   * [HISTORICAL] 批 1 时期该字段曾恒 undefined（写入逻辑待批 2 handoff-service 接线）。
+   * 现写入链 = handoff-service.runHandoff → markHandedOff（内存态 + W11 起
+   * persistHandoffSidecar 写 `.handoff.json` sidecar，原 persistHandedOff 直写 JSONL
+   * 已随 W11 删除）。
    */
   handedOffTo?: string
-  /**
-   * label 是否已持久化到 session JSONL 的 session_info 行。
-   *
-   * pi 0.80.3 的 SessionManager._persist 首次 flush（首条 assistant 消息后）才用
-   * openSync("wx") 创建文件，且 flush 时**不写 session_info**（已验证：真实 session
-   * 文件 0 个 session_info 行）。若在 flush 前用 persistSessionName 创建文件会撞
-   * EEXIST 导致 session 卡死（[HISTORICAL] 规则 #6）。故 label 写盘推迟到首次
-   * turn_end（第一个 LLM 回合结束，pi 已完成该轮 flush，文件存在 → append 安全）。
-   *
-   * 纯运行时标记，不进 toSummary，不暴露给前端。
-   */
-  labelPersisted: boolean
+}
+
+/**
+ * bash 待落列元素（W1 fix-chat-flow-order）：sendBash 收到 pi bash RPC 结果时构造的
+ * message.bashResult payload（除 sessionId 外的全部终态字段）。flush 时原样作为帧
+ * payload 发布（emit 只传单个 payload 对象）。timestamp 取 RPC 完成时刻（= pi
+ * recordBashResult 落盘时刻），不取 flush 时刻——保证 entry timestamp 两侧一致。
+ */
+export interface PendingBashResultData {
+  command: string
+  output: string
+  exitCode: number | null
+  cancelled: boolean
+  truncated: boolean
+  excludeFromContext: boolean
+  timestamp: number
+  fullOutputPath?: string
 }
 
 // ── PiTranslatedEvent：infra(event-adapter) → service(interpreter) 中间事件 ──
@@ -144,6 +164,12 @@ export type PiTranslatedEvent =
       toolCallId: string
       toolName: string
       input: unknown
+      /**
+       * [W21] toolCall entry 形态（实时 feed 权威载体，event-adapter 翻译时重构）。
+       * interpreter hook 改写 input 后同步回 entry.arguments，WS 帧 payload 只发 entry；
+       * contentIndex/messageId 锚点由 interpreter 从缓存补进。平铺字段保留供 hook 上下文消费。
+       */
+      entry: PiToolCallEntryForm
     }
   /**
    * toolCall 产出顺序锚点（pi toolcall_start，模型输出 tool_use 时，带 contentIndex）。
@@ -162,6 +188,13 @@ export type PiTranslatedEvent =
       images: Array<{ data: string; mimeType: string }> | undefined
       toolName: string
       isError: boolean
+      /**
+       * [W21] toolResult message entry 形态（实时 feed 权威载体，event-adapter 翻译时重构，
+       * 与 pi 持久化 toolResult entry 同构）。interpreter hook 改写 output 后同步回
+       * entry.message.content，WS 帧 payload 只发 entry。平铺字段保留供 hook 上下文与
+       * subagent/workflow 编排消费。
+       */
+      entry: PiMessageEntry
     }
   /** turn 结束（agent_end）—— interpreter 触发 context.update 回写 + file_changes ready diff（排 diff 链尾）+ hook。 */
   | {
@@ -200,11 +233,29 @@ export type PiTranslatedEvent =
    */
   | { kind: 'subagent-stream'; sessionId: string; recordId: string; lines: string[] | undefined }
   /**
+   * 自描述 record entry 到达的失效信号（W18，D4）——pi entry_appended（extension appendEntry
+   * 路径，message entry 不发射）经 adapter customType 过滤后仅对 subagent-record / workflow-record
+   * 产出。interpreter 据此触发 onRecordEntriesInvalidated（组合根注入 sessionService
+   * .invalidateRecordEntries：markDirty → 防抖 get_entries(since) 增量重拉 → entry 扫描写入
+   * 派生缓存）。事件 payload 不进任何数据缓存（ReplicatedState「事件只做失效」不变量）。
+   */
+  | { kind: 'record-entry-appended'; customType: 'subagent-record' | 'workflow-record' }
+  /**
    * compaction 生命周期开始（pi compaction_start{reason}）—— interpreter 编排：
    * 广播 session.compacting{reason} + 置 runtime active.isCompacting=true（经 onCompactingStateChange 回调）。
    * reason 驱动前端文案区分手动（'manual'）/自动（'threshold'|'overflow'）。
    */
   | { kind: 'compaction-start'; reason: string }
+  /**
+   * run 级联结束（pi agent_settled，W1 fix-chat-flow-order 探针 ②）——晚于 pi
+   * _runAgentPrompt finally 的 _flushPendingBashMessages（agent-session.js:744-756，
+   * streaming 期间缓存的 bash entry 已统一落盘）。interpreter 据此触发
+   * onAgentSettled（组合根注入 sessionService.flushPendingBashResults：dispatcher 的
+   * per-session bash 待落列按序转 message.bashResult 帧发布——xyz live 入流位置
+   * 构造性对齐 pi 落盘位置）。与 turn-end（agent_end）的区别：followUp drain 续跑
+   * 在同一次 settled 级联内，agent_end 非级联边界。
+   */
+  | { kind: 'agent-settled' }
   /**
    * compaction 生命周期结束（pi compaction_end）—— interpreter 唯一驱动 compaction 全部前端态：
    * - result 真值（成功）→ message.compactionSummary + applyContextUpdate + session.compacted + 复位 isCompacting

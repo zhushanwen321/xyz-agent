@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
+import { RpcTimeoutError } from '../../utils/errors.js'
 import { ENV_WHITELIST_PREFIXES, type ThinkingLevel, type ProviderId } from '@xyz-agent/shared'
 import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
 import { createPiSessionLog, type PiSessionLog } from '../logger.js'
@@ -49,6 +50,14 @@ export type PiEventListener = (event: PiMessage) => void
 export interface RpcClientOptions {
   cwd?: string
   model?: string
+  /**
+   * 附着恢复模式（restoreSession 专用）：true 时 start() 不拼 --model——options.model
+   * 与全局默认兜底都被抑制。pi 的 CLI model 恒优先于 session entry 恢复（main.js
+   * buildSessionOptions 的 `if (parsed.model)` 分支），拼了就会把用户在会话内切换过的
+   * 模型在重启重开时静默压回默认（final gate V1⑤ 实证）；模型终态由 pi 从
+   * model_change entry 恢复。create/fork 保持 launch 语义（不设此开关）。
+   */
+  inheritSessionModel?: boolean
   env?: Record<string, string>
   skillPaths?: string[]
   /** pi 可执行文件路径（默认 'pi'，从 PATH 查找） */
@@ -93,6 +102,20 @@ const TIMED_OUT_ID_TTL_MS = 5_000
 const STDERR_BUFFER_MAX_LINES = 50
 const STDERR_TAIL_LINES = 10
 
+/**
+ * RPC 超时错误（integrity-hardening D3a：pi 半死自愈）。
+ *
+ * pi 事件循环卡死（native 模块 / 同步 IO 冻结）时一切 RPC 都以超时失败——这类失败
+ * 意味着进程「半死」（活着但不响应），处置是强杀重建而非重试。调用方
+ * （message-dispatcher 的 abort 强杀分支）经 instanceof 判别，因此必须是独立类型：
+ * 字符串 message 匹配无编译期防护，改文案即断链。
+ *
+ * [arch] 类本体定义在 utils/errors.ts（中立层——services 层 instanceof 判别需要运行时
+ * 值 import，定义在 infra 会让 services→infra 违反三层规则），此处 re-export 保持
+ * 既有 import 路径（rpc-client.js）兼容。
+ */
+export { RpcTimeoutError } from '../../utils/errors.js'
+
 export class RpcClient implements IPiEngine {
   private proc: ChildProcess | null = null
   private pending = new Map<string, {
@@ -113,7 +136,14 @@ export class RpcClient implements IPiEngine {
   private msgCounter = 0
   private _exited = false
   private _killing = false
-  private exitCallback: ((code: number | null, stderr: string) => void) | null = null
+  /**
+   * 进程退出回调集合（多播）。
+   *
+   * 曾是单槽字段（exitCallback = cb）：第二个注册者会静默覆盖第一个——若覆盖
+   * ProcessManager 的清理回调即复刻「僵尸 session」根因（handoff-service.ts:63-70
+   * 曾因此被迫轮询 exited 绕开）。改 Set + onExit 返回 unsubscribe，与 onEvent 对称。
+   */
+  private exitCallbacks = new Set<(code: number | null, stderr: string) => void>()
   /** 收集 pi 进程的 stderr 输出，用于在启动失败时提供具体错误信息 */
   private stderrChunks: string[] = []
   /** pi stdout JSONL 原始流落盘（架构约定 #4，诊断 pi 卡死的决定性证据） */
@@ -123,7 +153,11 @@ export class RpcClient implements IPiEngine {
 
   async start(): Promise<void> {
     const modelRef = getDefaultModel()
-    const model = this.options.model ?? (modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '')
+    // P1（pi-assumption final gate）：附着恢复路径不拼 --model——pi CLI model 恒优先于
+    // session entry 恢复，全局默认兜底一旦拼进 args，用户切换过的模型就被静默压回默认。
+    const model = this.options.inheritSessionModel
+      ? undefined
+      : this.options.model ?? (modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '')
 
     const env = buildSafeEnv({
       ...this.options.env,
@@ -208,6 +242,12 @@ export class RpcClient implements IPiEngine {
     // 不依赖 process.cwd() 查找 package.json。因此 spawn cwd 可以安全地设为用户项目目录。
     // 这样 pi 的初始 session、system prompt、CLAUDE.md 查找、bash 工具都基于正确的 cwd。
     // Verified: xyz-pi 0.75.5-xyz-0.1 uses process.execPath for resource resolution.
+    // Re-verified 2026-08-20 (W6 A-11 探针) on upstream 0.84.1，双形态均不依赖 cwd：
+    // - bun binary（打包产物 apps/electron/resources/pi/pi-darwin-arm64）：getPackageDir() =
+    //   dirname(process.execPath)（pi 0.84.1 dist config.js isBunBinary 分支）；cwd=/tmp spawn
+    //   --version 输出 0.84.1 正常，资源布局 binary 同目录 theme/package.json 与该分支一致。
+    // - node dist（dev 形态）：从 __dirname 向上找 package.json（config.js getPackageDir Node 分支），
+    //   实测 cwd=HOME//tmp//usr 三种 cwd 下 getPackageDir/getThemesDir 返回完全一致。
     const spawnCwd = this.options.cwd ?? process.cwd()
 
     console.log('[rpc] spawning pi:', piCmd, args.join(' '), 'cwd:', spawnCwd)
@@ -242,8 +282,8 @@ export class RpcClient implements IPiEngine {
       // via a separate safety net to avoid leaving callers hanging until CMD_TIMEOUT_MS.
       if (!this._killing) {
         this.rejectAll(new Error(`pi process exited with code ${code}${this.formatStderrSuffix()}`))
-        if (this.exitCallback) {
-          this.exitCallback(code, this.getStderrTail())
+        for (const cb of this.exitCallbacks) {
+          cb(code, this.getStderrTail())
         }
       }
     })
@@ -268,10 +308,25 @@ export class RpcClient implements IPiEngine {
     // 管道断裂（EPIPE / ECONNRESET）时 stdout 会 emit 'error'，若无 listener 则升级为
     // uncaughtException → runtime 主进程崩溃。此处捕获后 rejectAll pending 并标记 _exited，
     // 把 stream error 纳入与进程退出相同的清理路径。
+    //
+    // 管道断裂但进程可能仍存活（孤儿泄漏）：SIGKILL 加速其死亡，让下方 proc.on('exit')
+    // 作为死亡通知的唯一出口（避免「stream error 通知 + exit 通知」双触发）。
+    // 刻意调 ChildProcess 原生 kill 而非 this.kill()：后者置 _killing=true，
+    // exit 处理器会跳过 exitCallbacks —— 死亡通知整条丢失。
+    const killProcAfterStreamError = (stream: 'stdout' | 'stderr'): void => {
+      try {
+        this.proc?.kill('SIGKILL')
+      } catch (e) {
+        // best-effort 降级：kill 抛错说明进程已死，exit 事件已/将至并走唯一出口，无需传播
+        console.error(`[rpc] SIGKILL after ${stream} stream error failed (process may already be dead):`, e)
+      }
+    }
+
     proc.stdout?.on('error', (err: NodeJS.ErrnoException) => {
       console.error('[rpc] stdout stream error:', err)
       this._exited = true
       this.rejectAll(new Error(`pi stdout stream error: ${err.message}`))
+      killProcAfterStreamError('stdout')
     })
 
     // 收集 stderr 用于错误诊断，同时转发到日志
@@ -292,6 +347,7 @@ export class RpcClient implements IPiEngine {
         console.error('[rpc] stderr stream error:', err)
         this._exited = true
         this.rejectAll(new Error(`pi stderr stream error: ${err.message}`))
+        killProcAfterStreamError('stderr')
       })
     }
 
@@ -326,8 +382,17 @@ export class RpcClient implements IPiEngine {
   }
 
   private handleMessage(msg: PiMessage): void {
-    // If id matches a pending request, resolve it; otherwise emit as event
-    if (msg.id && this.pending.has(msg.id)) {
+    // If id matches a pending request, resolve it; otherwise emit as event.
+    // resolve 只认 RPC response：pi 的 RpcResponse union 所有变体 type === 'response'
+    // （pi-mono coding-agent/src/modes/rpc/rpc-types.ts:114-223），事件各有独立 type 字符串。
+    // pi 0.84.1 新增 bash_execution_update 流事件复用发起 RPC 的 id
+    // （node_modules @earendil-works/pi-coding-agent dist/core/agent-session.d.ts:103-106
+    // {type:"bash_execution_update", id?, delta}；docs/rpc.md:26「bash_execution_update
+    // events also include the id of their originating bash command」）——仅凭 id 命中
+    // pending 就 resolve 会把首条 delta 误当 response（真 response 到达时 pending 已删，
+    // 真实 output 丢失，bash() shape guard 落 [protocol error: malformed] fallback）。
+    // 非 response 的带 id 消息走下方 listener 路径（event-adapter NULL_EVENTS 已登记）。
+    if (msg.type === 'response' && msg.id && this.pending.has(msg.id)) {
       const entry = this.pending.get(msg.id)!
       clearTimeout(entry.timer)
       this.pending.delete(msg.id)
@@ -400,7 +465,9 @@ export class RpcClient implements IPiEngine {
         // 5s TTL 后自动从 Set 删除，避免无界增长；.unref() 避免阻止进程退出。
         this.timedOutIds.add(id)
         setTimeout(() => this.timedOutIds.delete(id), TIMED_OUT_ID_TTL_MS).unref()
-        reject(new Error(`RPC command "${type}" timed out after ${timeout}ms`))
+        // D3a：超时以 RpcTimeoutError 类型 reject（字段化 commandType/timeoutMs），调用方
+        // instanceof 判别后走强杀自愈路径，不再靠 message 字符串匹配。
+        reject(new RpcTimeoutError(type, timeout))
       }, timeout)
 
       this.pending.set(id, {
@@ -435,9 +502,15 @@ export class RpcClient implements IPiEngine {
     })
   }
 
-  /** Register a callback for when the pi process exits unexpectedly. stderr 为 pi 进程尾部输出。 */
-  onExit(callback: (code: number | null, stderr: string) => void): void {
-    this.exitCallback = callback
+  /**
+   * Register a callback for when the pi process exits unexpectedly. stderr 为 pi 进程尾部输出。
+   * 多播（可多订阅者，后注册者不再覆盖先注册者），返回 unsubscribe（与 onEvent 对称）。
+   * 每个进程 exit 恰好通知一次：proc.on('exit') 是唯一出口（stream error 只 kill 不通知）；
+   * _killing=true 的主动 kill 流程不通知，语义不变。
+   */
+  onExit(callback: (code: number | null, stderr: string) => void): () => void {
+    this.exitCallbacks.add(callback)
+    return () => { this.exitCallbacks.delete(callback) }
   }
 
   /**
@@ -506,6 +579,19 @@ export class RpcClient implements IPiEngine {
 
   setThinkingLevel(level: string): Promise<PiMessage> {
     return this.sendCommand('set_thinking_level', { level })
+  }
+
+  /**
+   * 设置 pi session 名（set_session_name）。
+   *
+   * W1（数据源治理）：活跃 session 的 label 持久化唯一写入口——pi 内部经
+   * sessionManager.appendSessionInfo 落盘 + 广播 session_info_changed，取代 xyz
+   * 直写 session JSONL（消除与 pi 进程内 rename-session 扩展的 last-write-wins 竞争）。
+   * success:false / 超时由 sendCommand 既有约定 reject（调用方决定失败语义）。
+   */
+  setSessionName(name: string): Promise<PiMessage> {
+    // L6：set_session_name 是毫秒级 RPC（pi 内存缓冲 append），用 FAST_TIMEOUT_MS 快速失败
+    return this.sendCommand('set_session_name', { name }, FAST_TIMEOUT_MS)
   }
 
   /** [DEAD] pi get_messages 死路径——生产零调用（session-service.getHistory 走 client.getEntries entry 树重建）。
@@ -662,6 +748,12 @@ export class RpcClient implements IPiEngine {
         done()
       })
 
+      // D3a（integrity-hardening）：SIGTERM 前先 SIGCONT——唤醒可能被 SIGSTOP 冻结的
+      // 进程（事件循环卡死的一种形态），否则 SIGTERM 会被冻结状态吞掉、只能等 2s 后
+      // SIGKILL，丢失优雅退出路径（扩展落盘等 exit handler）的执行机会。对未冻结进程
+      // 无副作用（SIGCONT 对运行中进程仅确认继续执行）；对已退出进程 kill() 返回 false
+      // 不抛错。
+      proc.kill('SIGCONT')
       proc.kill('SIGTERM')
     })
   }

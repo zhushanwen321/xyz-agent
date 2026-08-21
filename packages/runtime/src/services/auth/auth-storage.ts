@@ -22,6 +22,9 @@ import {
 } from 'node:fs'
 import lockfile from 'proper-lockfile'
 
+/** auth.json 凭据文件权限：0600 = 仅 owner 可读写（文件内容是 OAuth token，见文件头安全约束） */
+const OWNER_READ_WRITE_MODE = 0o600
+
 export interface ApiKeyCredential {
   type: 'api_key'
   key: string
@@ -67,8 +70,10 @@ async function withFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<
   } finally {
     try {
       await release()
-    } catch {
-      // 锁已 compromised 时 unlock 失败可忽略（对齐 pi finally 的 catch 语义）
+    } catch (error) {
+      // 锁已 compromised 时 unlock 失败可忽略（对齐 pi finally 的 catch 语义）——
+      // 记 warn 而非静默：compromised 之外的原因（lock 文件被外部删等）需要可观测
+      console.warn('[auth-storage] release lock failed (continuing, lock may be compromised):', error)
     }
   }
 }
@@ -76,9 +81,8 @@ async function withFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<
 /** 与 pi FileAuthStorageBackend.ensureFileExists 同款：锁前保证文件存在（proper-lockfile realpath 需要） */
 function ensureFileExists(filePath: string): void {
   if (!existsSync(filePath)) {
-    // eslint-disable-next-line no-magic-numbers -- 0o600：仅 owner 可读写（文件含 token）
-    writeFileSync(filePath, '{}', { encoding: 'utf-8', mode: 0o600 })
-    chmodSync(filePath, 0o600)
+    writeFileSync(filePath, '{}', { encoding: 'utf-8', mode: OWNER_READ_WRITE_MODE })
+    chmodSync(filePath, OWNER_READ_WRITE_MODE)
   }
 }
 
@@ -89,8 +93,7 @@ function ensureFileExists(filePath: string): void {
  */
 function writeFileAtomic(filePath: string, content: string): void {
   const tmpPath = `${filePath}.tmp`
-  // eslint-disable-next-line no-magic-numbers -- 0o600：仅 owner 可读写（文件含 token）
-  const fd = openSync(tmpPath, 'w', 0o600)
+  const fd = openSync(tmpPath, 'w', OWNER_READ_WRITE_MODE)
   try {
     writeFileSync(fd, content, 'utf-8')
     fsyncSync(fd)
@@ -98,8 +101,7 @@ function writeFileAtomic(filePath: string, content: string): void {
     closeSync(fd)
   }
   renameSync(tmpPath, filePath)
-  // eslint-disable-next-line no-magic-numbers -- 0o600：rename 保留 tmp 的 mode，显式 chmod 兜底
-  chmodSync(filePath, 0o600)
+  chmodSync(filePath, OWNER_READ_WRITE_MODE)
 }
 
 /**

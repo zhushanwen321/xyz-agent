@@ -63,6 +63,15 @@ import { PassThrough } from "node:stream";
 import { createRecord } from "../../execution-record.ts";
 import type { RunOptions, SessionRunnerContext } from "../../session-runner.ts";
 
+/** FakeChild 的假 pid（满足 ChildProcess.pid 形状，无真实进程语义）。 */
+const FAKE_PID = 12345;
+
+/** waitForSpawn 默认超时（ms），超时说明 spawn 未被调（runSpawn 前置 await 卡死）。 */
+const WAIT_SPAWN_TIMEOUT_MS = 1000;
+
+/** waitForSpawn 轮询间隔（ms），微任务级等待的粒度。 */
+const SPAWN_POLL_INTERVAL_MS = 5;
+
 /**
  * FakeChild：模拟 ChildProcess（EventEmitter + PassThrough streams）。
  *
@@ -74,7 +83,7 @@ import type { RunOptions, SessionRunnerContext } from "../../session-runner.ts";
  *   2. C13 e2e 测试可直接 `new FakeChild()` 手动构造 child 喂给 ui-request-queue（不经 spawn）。
  */
 export class FakeChild extends EventEmitter {
-  pid = 12345;
+  pid = FAKE_PID;
   stdout = new PassThrough();
   stderr = new PassThrough();
   stdin = new PassThrough();
@@ -136,14 +145,14 @@ export function lastSpawnedChild<
  */
 export async function waitForSpawn<
   T extends { mock: { results: unknown[] } },
->(mockSpawn: T, timeoutMs = 1000): Promise<void> {
+>(mockSpawn: T, timeoutMs: number = WAIT_SPAWN_TIMEOUT_MS): Promise<void> {
   const start = Date.now();
   const baseline = mockSpawn.mock.results.length;
   while (mockSpawn.mock.results.length <= baseline) {
     if (Date.now() - start > timeoutMs) {
       throw new Error(`spawn was not called within ${timeoutMs}ms`);
     }
-    await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, SPAWN_POLL_INTERVAL_MS));
   }
 }
 

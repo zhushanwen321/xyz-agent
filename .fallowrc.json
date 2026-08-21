@@ -1,0 +1,48 @@
+{
+  "dynamicallyLoaded": [
+    "extensions/*/index.ts",
+    "taste-lint/**/*.test.mjs"
+  ],
+  "ignoreExports": [
+    {
+      "file": "extensions/shared/file-lock/src/file-lock.ts",
+      "exports": ["DEFAULT_RETRY_BUDGET_MS", "DEFAULT_RETRY_DELAY_MS", "DEFAULT_STALE_MS", "SyncFileLockOptions", "withFileLockSync"]
+    }
+  ],
+  "health": {
+    "maxCyclomatic": 15,
+    "maxCognitive": 15,
+    "maxCrap": 30,
+    "ignore": [
+      "**/*.test.ts",
+      "**/*.test.mts",
+      "**/*.test.mjs",
+      "**/__tests__/**",
+      "**/dist/**",
+      "**/*.d.ts"
+    ]
+  },
+  "rules": {
+    "circular-dependencies": "error",
+    "unresolved-imports": "error",
+    "unused-files": "warn",
+    "unused-exports": "warn",
+    "unused-types": "warn",
+    "unused-enum-members": "warn",
+    "unused-class-members": "warn",
+    "unused-dependencies": "warn",
+    "unused-dev-dependencies": "warn",
+    "unlisted-dependencies": "warn",
+    "duplicate-exports": "warn",
+    "private-type-leaks": "warn",
+    "type-only-dependencies": "warn",
+    "test-only-dependencies": "warn",
+    "re-export-cycle": "warn",
+    "boundary-violation": "warn",
+    "coverage-gaps": "warn",
+    "stale-suppressions": "off"
+  },
+  "audit": {
+    "gate": "new-only"
+  }
+}

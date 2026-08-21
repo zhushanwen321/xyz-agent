@@ -7,7 +7,7 @@
  * 委托化后细节断言落在本文件）。
  */
 import { describe, it, expect } from 'vitest'
-import { create, register, resolveEnvelope } from '../pending'
+import { createCommandId, register, resolveEnvelope } from '../pending'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 /** 构造 pending 分流入站消息（payload 用 as 断言对齐 ServerMessage 联合 payload） */
@@ -17,21 +17,21 @@ function envelopeMsg(type: string, id: string, payload: Record<string, unknown>)
 
 describe('pending.resolveEnvelope — error envelope 展开 + 普通 resolve（R2/ES1）', () => {
   it('非 error → resolve(id, payload)', async () => {
-    const id = create()
+    const id = createCommandId()
     const p = register<{ sessionId: string; messages: unknown[] }>(id)
     resolveEnvelope(envelopeMsg('session.getHistory', id, { sessionId: 's1', messages: [] }))
     await expect(p).resolves.toEqual({ sessionId: 's1', messages: [] })
   })
 
   it('error 空 payload → reject Error(message=request failed, code=unknown)', async () => {
-    const id = create()
+    const id = createCommandId()
     const p = register(id)
     resolveEnvelope(envelopeMsg('error', id, {}))
     await expect(p).rejects.toMatchObject({ message: 'request failed', code: 'unknown' })
   })
 
   it('error details.detail string → Error.cwd + code 透传（WORKTREE_EXISTS 场景）', async () => {
-    const id = create()
+    const id = createCommandId()
     const p = register(id)
     resolveEnvelope(
       envelopeMsg('error', id, { code: 'WORKTREE_EXISTS', message: 'exists', details: { detail: '/path/cwd' } }),
@@ -40,7 +40,7 @@ describe('pending.resolveEnvelope — error envelope 展开 + 普通 resolve（R
   })
 
   it('error details.detail object → Object.assign 展开 + code 透传（SETUP_FAILED 场景）', async () => {
-    const id = create()
+    const id = createCommandId()
     const p = register(id)
     resolveEnvelope(
       envelopeMsg('error', id, {

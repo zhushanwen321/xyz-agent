@@ -1,42 +1,43 @@
 /**
- * W1 TDD tests：EventInterpreter subagent 内存态 + session.subagents 广播。
+ * W18 tests：EventInterpreter subagent 事件 → 派生缓存失效信号。
  *
- * 背景：runtime 在 subagent 状态变化时主动 broadcast session.subagents，
- * 前端被动消费更新 sidebar badge。EventInterpreter 维护内存态：
- *   - tool-call-start 缓存 startParam（agent/slug/task）
- *   - tool-call-end 合并 details(subagentId/sessionFile/bgResponse) 建 running 记录 → 广播
- *   - bg-notify customStart 更新终态 → 广播
+ * 背景（W18 data-source-governance P3.1，D4）：subagent 列表数据源切换为
+ * 「entry_appended 失效 → get_entries(since) 增量重拉 → entry 扫描派生缓存」。
+ * interpreter 的 subagent 事件流（tool-call-end 建 running / bg-notify 合并终态）
+ * **直写退役**——全部降级为失效信号（onRecordEntriesInvalidated，组合根注入
+ * sessionService.invalidateRecordEntries）。数据合并语义（status 归一 / agent 覆盖 /
+ * closedReason 投影 / batch 合并）由 entry 扫描承载（subagent-extractor.test.ts 的
+ * scanSubagentEntries 用例 + session-record-entries.test.ts 的拉取收敛用例）。
  *
- * U1：start+end 建记录 + 广播
- * U2：bg-notify 更新终态 + 广播
- * U3：非 subagent 工具不触发广播
- * U4：start 无 end 不崩溃不广播
+ * U1：subagent tool-call-end → 失效回调（不产 session.subagents 帧）
+ * U2：bg-notify（single/batch）customStart → 失效回调 + customStart 帧照发前端
+ * U3：非 subagent 工具不触发失效
+ * U4：record-entry-appended 主信号 → 失效回调
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { EventInterpreter } from '../src/services/session/event-interpreter.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { PiTranslatedEvent } from '../src/services/session/types.js'
 
-describe('EventInterpreter · subagent 内存态 + session.subagents 广播', () => {
+describe('EventInterpreter · subagent 事件 → 派生缓存失效（W18 直写退役）', () => {
   let sent: ServerMessage[]
+  let invalidations: Array<{ sessionId: string; customType: string }>
   let send: (msg: ServerMessage) => void
 
   beforeEach(() => {
     sent = []
+    invalidations = []
     send = (msg) => { sent.push(msg) }
   })
 
-  /** 构造 subagent tool-call-start 事件 */
-  function subagentStart(toolCallId: string, startParam: Record<string, unknown>): PiTranslatedEvent {
-    return {
-      kind: 'tool-call-start',
-      toolCallId,
-      toolName: 'subagent',
-      input: { action: 'start', startParam },
-    }
+  function makeInterpreter(sessionId: string): EventInterpreter {
+    return new EventInterpreter(sessionId, {
+      send,
+      onRecordEntriesInvalidated: (sid, customType) => { invalidations.push({ sessionId: sid, customType }) },
+    })
   }
 
-  /** 构造 subagent tool-call-end 事件（details 含 SubagentToolResult） */
+  /** 构造 subagent tool-call-end 事件（W12 曾直写建 running 记录的事件流） */
   function subagentEnd(toolCallId: string, details: Record<string, unknown>): PiTranslatedEvent {
     return {
       kind: 'tool-call-end',
@@ -46,279 +47,122 @@ describe('EventInterpreter · subagent 内存态 + session.subagents 广播', ()
       details,
       images: undefined,
       isError: false,
+      entry: {
+        type: 'message',
+        parentId: null,
+        timestamp: new Date(0).toISOString(),
+        message: { role: 'toolResult', toolCallId, toolName: 'subagent', content: JSON.stringify(details), isError: false, details, timestamp: 0 },
+      },
     }
   }
 
-  // ── U1：start+end 建记录 + 广播 ──────────────────────────────────
-  describe('U1: subagent tool-call start+end → 新增 running 记录 + 广播 session.subagents', () => {
-    it('start(startParam) + end(details:bgResponse) → 广播含 running 记录', () => {
-      const interpreter = new EventInterpreter('sid-u1', { send })
+  /** 构造 customStart message 事件（bg-notify 载体） */
+  function customStart(sessionId: string, customType: string, details: Record<string, unknown>): PiTranslatedEvent {
+    return {
+      kind: 'message',
+      message: {
+        type: 'message.customStart',
+        payload: { sessionId, customType, details },
+      } as ServerMessage,
+    }
+  }
+
+  // ── U1：subagent tool-call-end → 失效回调 ──────────────────────
+  it('U1: subagent tool-call-end → 失效 subagent-record，不产 session.subagents 帧（直写退役）', () => {
+    const interpreter = makeInterpreter('sid-u1')
+
+    interpreter.interpret([
+      subagentEnd('call-1', {
+        action: 'start',
+        subagentId: 'bg-1-123',
+        sessionFile: '/data/sub.jsonl',
+        bgResponse: { status: 'running', message: 'detached' },
+      }),
+    ])
+
+    expect(invalidations).toEqual([{ sessionId: 'sid-u1', customType: 'subagent-record' }])
+    // 数据不进事件侧缓存：无 session.subagents 帧（发布归 sessionService 拉取收敛后）
+    expect(sent.filter((m) => m.type === 'session.subagents')).toHaveLength(0)
+    // 通用 tool_call_end WS 帧照常产出
+    expect(sent.some((m) => m.type === 'message.tool_call_end')).toBe(true)
+  })
+
+  // ── U2：bg-notify → 失效回调 + customStart 帧照发 ──────────────
+  describe('U2: bg-notify customStart → 失效回调（数据合并归 entry 扫描）', () => {
+    it('single 形态 bg-notify → 失效 + customStart 帧转发前端（BgNotifyCard 渲染不受退役影响）', () => {
+      const interpreter = makeInterpreter('sid-u2')
 
       interpreter.interpret([
-        subagentStart('call-1', { agent: 'reviewer', slug: 'fix-bug', task: 'Fix the bug' }),
-        subagentEnd('call-1', {
-          action: 'start',
-          subagentId: 'bg-1-123',
-          sessionFile: '/data/sub.jsonl',
-          bgResponse: { status: 'running', message: 'detached' },
+        customStart('sid-u2', 'subagent-bg-notify', {
+          id: 'bg-1-123', status: 'closed', agent: 'reviewer', model: 'glm-5.2',
+          startedAt: 1000, endedAt: 2000, closedReason: 'gc',
         }),
       ])
 
-      // tool-call-end 还会产出通用 tool_call_end WS 帧，所以 sent 里至少有 2 条。
-      // 找 type=session.subagents 的那条
-      const subagentsMsg = sent.find((m) => m.type === 'session.subagents')
-      expect(subagentsMsg).toBeDefined()
-      const payload = subagentsMsg!.payload as { sessionId: string; subagents: Array<Record<string, unknown>> }
-      expect(payload.sessionId).toBe('sid-u1')
-      expect(payload.subagents).toHaveLength(1)
-      expect(payload.subagents[0].subagentId).toBe('bg-1-123')
-      expect(payload.subagents[0].agent).toBe('reviewer')
-      expect(payload.subagents[0].slug).toBe('fix-bug')
-      expect(payload.subagents[0].task).toBe('Fix the bug')
-      expect(payload.subagents[0].status).toBe('running')
-      expect(payload.subagents[0].sessionFile).toBe('/data/sub.jsonl')
+      expect(invalidations).toEqual([{ sessionId: 'sid-u2', customType: 'subagent-record' }])
+      const frames = sent.filter((m) => m.type === 'message.customStart')
+      expect(frames).toHaveLength(1)
+      expect((frames[0]!.payload as { customType?: string }).customType).toBe('subagent-bg-notify')
+      expect(sent.filter((m) => m.type === 'session.subagents')).toHaveLength(0)
+    })
+
+    it('batch 形态 bg-notify → 同样一次失效（防抖合并由 sessionService 承接）', () => {
+      const interpreter = makeInterpreter('sid-u2b')
+
+      interpreter.interpret([
+        customStart('sid-u2b', 'subagent-bg-notify', {
+          batch: true,
+          items: [
+            { id: 'bg-a-1', status: 'closed', agent: 'worker', startedAt: 1000, endedAt: 2000 },
+            { id: 'bg-b-2', status: 'closed', agent: 'researcher', startedAt: 1100, endedAt: 2200 },
+          ],
+        }),
+      ])
+
+      expect(invalidations).toEqual([{ sessionId: 'sid-u2b', customType: 'subagent-record' }])
     })
   })
 
-  // ── U2：bg-notify 更新终态 + 广播 ────────────────────────────────
-  describe('U2: bg-notify customStart → 更新终态 + 广播', () => {
-    it('已有 running 记录时，bg-notify 到达 → 更新为 done + 广播', () => {
-      const interpreter = new EventInterpreter('sid-u2', { send })
+  // ── U3：非 subagent 工具不触发失效 ─────────────────────────────
+  it('U3: 非 subagent 工具的 tool-call-end 不触发失效', () => {
+    const interpreter = makeInterpreter('sid-u3')
 
-      // 先建记录
-      interpreter.interpret([
-        subagentStart('call-2', { agent: 'reviewer', slug: 'fix-bug', task: 'Fix the bug' }),
-        subagentEnd('call-2', {
-          action: 'start',
-          subagentId: 'bg-1-123',
-          sessionFile: '/data/sub.jsonl',
-          bgResponse: { status: 'running', message: 'detached' },
-        }),
-      ])
-      const firstBroadcast = sent.filter((m) => m.type === 'session.subagents')
-      expect(firstBroadcast).toHaveLength(1)
-
-      // 发 bg-notify
-      interpreter.interpret([{
-        kind: 'message',
-        message: {
-          type: 'message.customStart',
-          payload: {
-            sessionId: 'sid-u2',
-            customType: 'subagent-bg-notify',
-            details: {
-              id: 'bg-1-123',
-              status: 'done',
-              agent: 'reviewer',
-              model: 'glm-5.2',
-              startedAt: 1000,
-              endedAt: 2000,
-            },
-          },
-        } as ServerMessage,
-      }])
-
-      const subagentsMsgs = sent.filter((m) => m.type === 'session.subagents')
-      expect(subagentsMsgs).toHaveLength(2)
-      const payload = subagentsMsgs[1]!.payload as { subagents: Array<Record<string, unknown>> }
-      expect(payload.subagents).toHaveLength(1)
-      expect(payload.subagents[0].status).toBe('done')
-      expect(payload.subagents[0].startedAt).toBe(1000)
-      expect(payload.subagents[0].endedAt).toBe(2000)
-      expect(payload.subagents[0].model).toBe('glm-5.2')
-    })
-
-    it('batch 形态 bg-notify → 多条记录更新为 done + 仅广播一次', () => {
-      const interpreter = new EventInterpreter('sid-u2b', { send })
-
-      // 先建 2 条 running 记录（模拟 60s 内并发完成的两个 subagent）
-      interpreter.interpret([
-        subagentStart('call-a', { agent: 'worker', slug: 'task-a', task: 'Do A' }),
-        subagentEnd('call-a', {
-          action: 'start', subagentId: 'bg-a-1', sessionFile: '/a.jsonl',
-          bgResponse: { status: 'running', message: 'detached' },
-        }),
-        subagentStart('call-b', { agent: 'researcher', slug: 'task-b', task: 'Do B' }),
-        subagentEnd('call-b', {
-          action: 'start', subagentId: 'bg-b-2', sessionFile: '/b.jsonl',
-          bgResponse: { status: 'running', message: 'detached' },
-        }),
-      ])
-      const runningBroadcasts = sent.filter((m) => m.type === 'session.subagents')
-      expect(runningBroadcasts).toHaveLength(2)
-
-      // 发 batch bg-notify
-      interpreter.interpret([{
-        kind: 'message',
-        message: {
-          type: 'message.customStart',
-          payload: {
-            sessionId: 'sid-u2b',
-            customType: 'subagent-bg-notify',
-            details: {
-              batch: true,
-              items: [
-                { id: 'bg-a-1', status: 'done', agent: 'worker', startedAt: 1000, endedAt: 2000 },
-                { id: 'bg-b-2', status: 'done', agent: 'researcher', startedAt: 1100, endedAt: 2200 },
-              ],
-            },
-          },
-        } as ServerMessage,
-      }])
-
-      const subagentsMsgs = sent.filter((m) => m.type === 'session.subagents')
-      // batch 多条更新只广播一次
-      expect(subagentsMsgs).toHaveLength(3)
-      const payload = subagentsMsgs[2]!.payload as { subagents: Array<Record<string, unknown>> }
-      const a = payload.subagents.find((s) => s.subagentId === 'bg-a-1')
-      const b = payload.subagents.find((s) => s.subagentId === 'bg-b-2')
-      expect(a?.status).toBe('done')
-      expect(a?.agent).toBe('worker')
-      expect(a?.endedAt).toBe(2000)
-      expect(b?.status).toBe('done')
-      expect(b?.agent).toBe('researcher')
-      expect(b?.endedAt).toBe(2200)
-    })
-
-    it('bg-notify.agent 覆盖 startParam 兜底值（LLM 没传 agent 时显示真实 agent）', () => {
-      const interpreter = new EventInterpreter('sid-u2c', { send })
-
-      // startParam 不带 agent → 兜底 'general-purpose'
-      interpreter.interpret([
-        subagentStart('call-c', { slug: 'research', task: 'Research something' }),
-        subagentEnd('call-c', {
-          action: 'start', subagentId: 'bg-c-3', sessionFile: '/c.jsonl',
-          bgResponse: { status: 'running', message: 'detached' },
-        }),
-      ])
-      const runningPayload = sent.filter((m) => m.type === 'session.subagents')[0]!
-        .payload as { subagents: Array<Record<string, unknown>> }
-      expect(runningPayload.subagents[0]!.agent).toBe('general-purpose')
-
-      // bg-notify 回传真实 agent 'researcher'
-      interpreter.interpret([{
-        kind: 'message',
-        message: {
-          type: 'message.customStart',
-          payload: {
-            sessionId: 'sid-u2c',
-            customType: 'subagent-bg-notify',
-            details: {
-              id: 'bg-c-3', status: 'done', agent: 'researcher', startedAt: 1000, endedAt: 2000,
-            },
-          },
-        } as ServerMessage,
-      }])
-
-      const donePayload = sent.filter((m) => m.type === 'session.subagents')[1]!
-        .payload as { subagents: Array<Record<string, unknown>> }
-      // 更新后 agent 是 pi 回传的真实值，不再是 startParam 兜底
-      expect(donePayload.subagents[0]!.agent).toBe('researcher')
-      expect(donePayload.subagents[0]!.status).toBe('done')
-    })
-
-    // v4 B-1：closed 统一终态携带 closedReason，投影到 SubagentRecord 供 renderer 派生展示
-    it('closed 通知携带 closedReason → 投影到 SubagentRecord.closedReason + error 直通', () => {
-      const interpreter = new EventInterpreter('sid-u2d', { send })
-
-      interpreter.interpret([
-        subagentStart('call-d', { agent: 'worker', slug: 'task-d', task: 'Do D' }),
-        subagentEnd('call-d', {
-          action: 'start', subagentId: 'bg-d-4', sessionFile: '/d.jsonl',
-          bgResponse: { status: 'running', message: 'detached' },
-        }),
-      ])
-
-      interpreter.interpret([{
-        kind: 'message',
-        message: {
-          type: 'message.customStart',
-          payload: {
-            sessionId: 'sid-u2d',
-            customType: 'subagent-bg-notify',
-            details: {
-              id: 'bg-d-4', status: 'closed', closedReason: 'gc', agent: 'worker',
-              error: 'Model timeout', startedAt: 1000, endedAt: 3000,
-            },
-          },
-        } as ServerMessage,
-      }])
-
-      const payload = sent.filter((m) => m.type === 'session.subagents')[1]!
-        .payload as { subagents: Array<Record<string, unknown>> }
-      expect(payload.subagents[0]!.status).toBe('closed')
-      expect(payload.subagents[0]!.closedReason).toBe('gc')
-      expect(payload.subagents[0]!.error).toBe('Model timeout')
-    })
-
-    it('running 轮次完成通知 → 状态保持 running 且 closedReason 清空（防残留脏组合）', () => {
-      const interpreter = new EventInterpreter('sid-u2e', { send })
-
-      interpreter.interpret([
-        subagentStart('call-e', { agent: 'worker', slug: 'task-e', task: 'Do E' }),
-        subagentEnd('call-e', {
-          action: 'start', subagentId: 'bg-e-5', sessionFile: '/e.jsonl',
-          bgResponse: { status: 'running', message: 'detached' },
-        }),
-      ])
-
-      interpreter.interpret([{
-        kind: 'message',
-        message: {
-          type: 'message.customStart',
-          payload: {
-            sessionId: 'sid-u2e',
-            customType: 'subagent-bg-notify',
-            details: {
-              id: 'bg-e-5', status: 'running', round: 1, agent: 'worker',
-              result: 'round 1 done', startedAt: 1000, endedAt: 2000,
-            },
-          },
-        } as ServerMessage,
-      }])
-
-      const payload = sent.filter((m) => m.type === 'session.subagents')[1]!
-        .payload as { subagents: Array<Record<string, unknown>> }
-      // v4：轮次完成是非终态（等待续聊），status 保持 running，无 closedReason
-      expect(payload.subagents[0]!.status).toBe('running')
-      expect(payload.subagents[0]!.closedReason).toBeUndefined()
-    })
-  })
-
-  // ── U3：非 subagent 工具不触发 ───────────────────────────────────
-  describe('U3: 非 subagent 工具不触发 session.subagents 广播', () => {
-    it('write 工具的 start+end → 无 session.subagents 广播', () => {
-      const interpreter = new EventInterpreter('sid-u3', { send })
-
-      interpreter.interpret([
-        { kind: 'tool-call-start', toolCallId: 'call-w', toolName: 'write', input: { path: '/a.ts' } },
-        {
-          kind: 'tool-call-end',
-          toolCallId: 'call-w',
-          toolName: 'write',
-          output: 'ok',
-          details: undefined,
-          images: undefined,
-          isError: false,
+    interpreter.interpret([
+      {
+        kind: 'tool-call-end',
+        toolCallId: 'call-other',
+        toolName: 'read',
+        output: 'ok',
+        details: { action: 'start', subagentId: 'bg-x' },
+        images: undefined,
+        isError: false,
+        entry: {
+          type: 'message',
+          parentId: null,
+          timestamp: new Date(0).toISOString(),
+          message: { role: 'toolResult', toolCallId: 'call-other', toolName: 'read', content: [{ type: 'text', text: 'ok' }], isError: false, timestamp: 0 },
         },
-      ])
+      },
+    ])
 
-      const subagentsMsg = sent.find((m) => m.type === 'session.subagents')
-      expect(subagentsMsg).toBeUndefined()
-    })
+    expect(invalidations).toHaveLength(0)
   })
 
-  // ── U4：start 无 end 不崩溃 ──────────────────────────────────────
-  describe('U4: start 无 end → 不广播，不崩溃', () => {
-    it('只有 subagent tool-call-start（无 end）→ 无 session.subagents 广播，无异常', () => {
-      const interpreter = new EventInterpreter('sid-u4', { send })
+  // ── U4：record-entry-appended 主信号 ───────────────────────────
+  it('U4: record-entry-appended（entry_appended 主信号翻译产物）→ 失效回调', () => {
+    const interpreter = makeInterpreter('sid-u4')
 
-      interpreter.interpret([
-        subagentStart('call-4', { agent: 'worker', slug: 'task-a', task: 'Do task' }),
-      ])
+    interpreter.interpret([{ kind: 'record-entry-appended', customType: 'subagent-record' }])
 
-      const subagentsMsg = sent.find((m) => m.type === 'session.subagents')
-      expect(subagentsMsg).toBeUndefined()
-    })
+    expect(invalidations).toEqual([{ sessionId: 'sid-u4', customType: 'subagent-record' }])
+    expect(sent.filter((m) => m.type === 'session.subagents')).toHaveLength(0)
+  })
+
+  it('U5: 无关 customType 的 customStart 不触发失效（守卫保持）', () => {
+    const interpreter = makeInterpreter('sid-u5')
+
+    interpreter.interpret([customStart('sid-u5', 'unrelated-notify', { id: 'x' })])
+
+    expect(invalidations).toHaveLength(0)
   })
 })

@@ -131,6 +131,17 @@ export class RuntimeServer implements IMessageBroker {
     this.fileService = file
     this.handoffService = handoff
     this.sessionService = session
+    // D6a（integrity-hardening §3.6）：挂起 UI 请求的汇聚清理。extensionTimeoutMgr 的
+    // per-session 残留（pendingRequests / bridgeRequestIds / session 跟踪）此前只在
+    // session 删除分支直接清理，pi 意外退出的收敛链（onSessionExit → removeSessionEntry）
+    // 不触碰它——挂起的 ask-user 弹窗在 restore 后重弹，作答发给新进程被静默丢弃（M8 幽灵
+    // 弹窗）。挂到 onSessionDestroyed（removeSessionEntry 触发，覆盖主动删 / 进程退出 /
+    // restore 清场全部销毁路径）成为单一清理入口；session-message-handler 删除分支的
+    // 既有直接调用点已随之移除。setOnSessionDestroyed 是追加式注册，PluginService 后续
+    // 注册的 didDestroy 投递不受影响。
+    this.sessionService.setOnSessionDestroyed((summary) => {
+      this.clearExtensionTimeoutsForSession(summary.id)
+    })
     this.configService = config
     this.modelService = model
     this.skillRegistry = skillRegistry
@@ -194,7 +205,6 @@ export class RuntimeServer implements IMessageBroker {
       messageBus: this.messageBus,
       nextPushId: () => this.broker.nextPushId(),
       broadcastSessionList: () => this.broker.broadcastSessionList(),
-      clearExtensionTimeoutsForSession: (sessionId) => this.clearExtensionTimeoutsForSession(sessionId),
       broadcast: (msg) => this.broker.broadcast(msg),
     })
     this.extensionHandler = new ExtensionMessageHandler({

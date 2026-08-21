@@ -37,6 +37,7 @@ vi.mock('../ws-client', () => ({
       inboundHandler = null
     }
   },
+  onQueueDrop: vi.fn(() => () => {}),
 }))
 
 // ── 其余端口 mock（use-connection-reconnect-resubscribe.test.ts 同款）──

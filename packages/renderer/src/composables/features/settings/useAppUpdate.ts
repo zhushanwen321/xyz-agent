@@ -142,6 +142,7 @@ function extractLocalizedNotes(releaseNotes: string): string {
  * module-level 单例 state：全应用共享（UpdateButton + Sidebar 读同一份）。
  * reactive 对象：state 状态机 + latestRelease（检测到的版本信息）+ errorMessage + percent + releaseNotesHtml。
  */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：应用更新检查状态（下载进度/错误提示 UI，12 类未覆盖）
 const state = reactive({
   /** 状态机当前态 */
   state: 'idle' as UpdateState,

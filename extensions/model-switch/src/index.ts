@@ -23,16 +23,19 @@ import { asSessionEntries, getCurrentModelId, type ModelPolicy } from "./types";
 
 // ── Tool 返回值 helper ──────────────────────────────────
 
+/**
+ * execute 的返回形状（仅成功路径）。pi 契约里返回值不携带错误标记：
+ * execute 只有 throw 才被置 isError:true（agent-loop.js:453-483），返回值里的
+ * isError 字段会被 agent-loop 丢弃（W4 修复前曾误用，错误轮被标成功）。
+ * 错误路径一律 throw new Error(文案)。
+ */
 interface ToolRes {
 	content: Array<{ type: "text"; text: string }>;
 	details: Record<string, unknown>;
-	isError?: boolean;
 }
 
-function res(text: string, opts?: { error?: boolean }): ToolRes {
-	const r: ToolRes = { content: [{ type: "text" as const, text }], details: {} };
-	if (opts?.error) r.isError = true;
-	return r;
+function res(text: string): ToolRes {
+	return { content: [{ type: "text" as const, text }], details: {} };
 }
 
 // ── 状态 ────────────────────────────────────────────────
@@ -142,7 +145,8 @@ function registerSwitchTool(pi: ExtensionAPI, state: SessionState): void {
 			if (action === "recommend") return handleRecommend(state, ctx);
 			if (action === "setup") return handleSetup(state, ctx, params.query);
 
-			return res(`Unknown action: ${action}. Supported: list, search, switch, recommend, setup.`, { error: true });
+			// 错误路径 throw（W4）：pi 只对 execute throw 置 isError:true，返回值 isError 被丢弃
+			throw new Error(`Unknown action: ${action}. Supported: list, search, switch, recommend, setup.`);
 		},
 	});
 }
@@ -168,6 +172,7 @@ function handleList(state: SessionState, ctx: ExtensionContext): ToolRes {
 	}
 
 	const sceneInfo = Object.entries(state.config.scenes)
+		.filter((entry): entry is [string, string[]] => Array.isArray(entry[1]))
 		.map(([s, aliases]) => `  ${s}: ${aliases.join(", ")}`)
 		.join("\n");
 
@@ -176,7 +181,7 @@ function handleList(state: SessionState, ctx: ExtensionContext): ToolRes {
 
 function handleSearch(state: SessionState, query: string): ToolRes {
 	if (!state.config) return res("No model policy configured.");
-	if (!query) return res("Please provide a search query.", { error: true });
+	if (!query) throw new Error("Please provide a search query.");
 
 	const matches: Array<{ provider: string; alias: string; entry: { modelId: string; capabilities: string[] } }> = [];
 
@@ -199,33 +204,33 @@ function handleSearch(state: SessionState, query: string): ToolRes {
 }
 
 async function handleSwitch(state: SessionState, pi: ExtensionAPI, ctx: ExtensionContext, query: string): Promise<ToolRes> {
-	if (!state.config) return res("No model policy configured. Cannot switch.", { error: true });
-	if (!query) return res("Please specify a model alias to switch to (e.g., 'glm-5.1').", { error: true });
+	if (!state.config) throw new Error("No model policy configured. Cannot switch.");
+	if (!query) throw new Error("Please specify a model alias to switch to (e.g., 'glm-5.1').");
 
 	const match = findModelMatch(state.config, query);
-	if (!match) return res(`No model matching "${query}". Use 'list' to see available models.`, { error: true });
+	if (!match) throw new Error(`No model matching "${query}". Use 'list' to see available models.`);
 
-	return switchToModel(pi, ctx, match.plan, match.modelId, match.alias);
+	return switchToModel(pi, ctx, match.provider, match.plan, match.modelId, match.alias);
 }
 
 /** Exact match (alias or modelId), then fuzzy fallback. */
 function findModelMatch(
 	config: ModelPolicy,
 	query: string,
-): { plan: string; modelId: string; alias: string } | undefined {
+): { provider: string; plan: string; modelId: string; alias: string } | undefined {
 	// Exact match
-	for (const [, pcfg] of Object.entries(config.models)) {
+	for (const [provider, pcfg] of Object.entries(config.models)) {
 		for (const [alias, entry] of Object.entries(pcfg.models)) {
 			if (alias.toLowerCase() === query || entry.modelId.toLowerCase() === query) {
-				return { plan: pcfg.plan, modelId: entry.modelId, alias };
+				return { provider, plan: pcfg.plan, modelId: entry.modelId, alias };
 			}
 		}
 	}
 	// Fuzzy match
-	for (const [, pcfg] of Object.entries(config.models)) {
+	for (const [provider, pcfg] of Object.entries(config.models)) {
 		for (const [alias, entry] of Object.entries(pcfg.models)) {
 			if (alias.toLowerCase().includes(query) || entry.modelId.toLowerCase().includes(query)) {
-				return { plan: pcfg.plan, modelId: entry.modelId, alias };
+				return { provider, plan: pcfg.plan, modelId: entry.modelId, alias };
 			}
 		}
 	}
@@ -250,7 +255,7 @@ function handleRecommend(state: SessionState, ctx: ExtensionContext): ToolRes {
 
 		return res(`Current model context:\n\n${formatted}`);
 	} catch (err) {
-		return res(`Failed to compute context: ${(err as Error).message}`, { error: true });
+		throw new Error(`Failed to compute context: ${(err as Error).message}`);
 	}
 }
 
@@ -263,18 +268,18 @@ function handleSetup(state: SessionState, ctx: ExtensionContext, query?: string)
 			state.config = null;
 			return res(`Config deleted: ${result.path}. Run /setup-model-policy to regenerate.`);
 		}
-		return res(result.error, { error: true });
+		throw new Error(result.error);
 	}
 
 	if (subAction === "list") {
 		const result = readPolicyConfigContent();
-		if (!result.ok) return res(result.error, { error: true });
+		if (!result.ok) throw new Error(result.error);
 		return res(`Current config/model-switch-ext-config.json (${result.path}):\n\n\`\`\`json\n${result.content}\n\`\`\``);
 	}
 
 	if (subAction === "edit") {
 		const result = readPolicyConfigContent();
-		if (!result.ok) return res(result.error, { error: true });
+		if (!result.ok) throw new Error(result.error);
 		return res([
 			"Current config/model-switch-ext-config.json for editing:\n",
 			"```json",
@@ -323,27 +328,43 @@ async function switchToModel(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	provider: string,
+	plan: string,
 	modelId: string,
 	alias: string,
 ): Promise<ToolRes> {
-	try {
-		// 尝试直接匹配 Pi 模型 registry（provider 可能含 -router 后缀）
-		const match = ctx.modelRegistry.find(provider, modelId);
-		if (!match) {
-			return res(`Model ${provider}/${modelId} not available.`, { error: true });
-		}
-
-		pi.appendEntry("model_change", {
-			provider,
-			modelId,
-			alias,
-			timestamp: new Date().toISOString(),
-		});
-
-		return res(`Switched to ${alias} (${provider}/${modelId}).`);
-	} catch (err) {
-		return res(`Error switching: ${err instanceof Error ? err.message : String(err)}`, { error: true });
+	// pi 0.84.1 锚点：ModelRegistry.find(provider, modelId) 返回可直接喂给 setModel 的
+	// Model 对象（node_modules/@earendil-works/pi-coding-agent/dist/core/model-registry.d.ts:28）。
+	// 解析链：config 的 provider key（setup 生成时已剥 -router 后缀）→ 补 -router 重试
+	// （用户 models.json 可能用 router 变体注册同名 provider）→ plan 名兜底（部分 provider 与 plan 同名）。
+	const model =
+		ctx.modelRegistry.find(provider, modelId)
+		?? ctx.modelRegistry.find(`${provider}-router`, modelId)
+		?? ctx.modelRegistry.find(plan, modelId);
+	if (!model) {
+		// 错误路径 throw（W4）：pi 只对 execute throw 置 isError:true，返回值 isError 被丢弃
+		throw new Error(`Model ${provider}/${modelId} not available in the pi model registry. Use 'list' to see configured models.`);
 	}
+
+	// pi 0.84.1 锚点：setModel 是 pi 唯一切模型 API（extensions/types.d.ts:954，
+	// `setModel(model: Model<any>): Promise<boolean>`）。host 实现对未配置 auth 的
+	// provider 返回 false（agent-session.js:1885-1890），因此 false 必须报错而非返回成功文案。
+	// host setModel 内部自写原生 model_change entry（sessionManager.appendModelChange，
+	// agent-session.js:1204 → session-manager.js:790-799）、持久化默认模型并广播 model_select
+	// 事件——所以这里不再 appendEntry("model_change") custom entry：custom entry 非 pi 原生
+	// 形态，session 重载恢复模型只认原生 entry（session-manager.js:146-160），写 custom 只会
+	// 留下双份无效记录（曾因只写 custom entry 导致切换从未生效，见 pi-assumption-remediation B-F1）。
+	let ok: boolean;
+	try {
+		ok = await pi.setModel(model);
+	} catch (err) {
+		// 错误路径 throw（W4）：包装文案保留原样，pi catch 后原样进 toolResult
+		throw new Error(`Error switching: ${err instanceof Error ? err.message : String(err)}`);
+	}
+	if (!ok) {
+		throw new Error(`Switch to ${alias} rejected: no API key/auth configured for provider ${model.provider}. Configure auth and retry.`);
+	}
+
+	return res(`Switched to ${alias} (${model.provider}/${model.id}).`);
 }
 
 // Re-export for programmatic usage (e.g., workflow extension)

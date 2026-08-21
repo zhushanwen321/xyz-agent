@@ -32,8 +32,14 @@ import type {
   Theme,
 } from "@earendil-works/pi-coding-agent";
 
-/** 误用即抛错的占位成员：比静默返回 undefined 的 no-op 更早暴露「缺 mock」。 */
-function failLoud<T>(memberPath: string): T {
+/**
+ * 误用即抛错的占位成员：比静默返回 undefined 的 no-op 更早暴露「缺 mock」。
+ *
+ * T 收窄为 object：调用点（ModelRegistry/Theme）均为对象类型；Proxy 静态类型是 `{}`，
+ * 目标是 nominal class（private 字段阻断结构构造），单重 `as T` 断言已足够表达
+ * 「结构上无法构造，运行时 fail-loud 兜底」的意图，无需 `as unknown as T` 双重断言。
+ */
+function failLoud<T extends object>(memberPath: string): T {
   return new Proxy(
     {},
     {
@@ -44,7 +50,7 @@ function failLoud<T>(memberPath: string): T {
         );
       },
     },
-  ) as unknown as T;
+  ) as T;
 }
 
 /**

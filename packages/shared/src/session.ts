@@ -17,6 +17,18 @@
  */
 export type SessionStatus = 'active' | 'idle' | 'dead' | 'done' | 'error' | 'stopped'
 
+/**
+ * 条目/快照数据来源标记（W15 磁盘占位值守卫的判定依据，D1b 按来源分流）。
+ *
+ * - `'scan'`：磁盘扫描来源（SessionScanner.scannedToSummary 产出）。扫描读不出
+ *   modelId / tokenCount 真值，其 `''` / `0` 是**占位值**而非权威空值——core 合并侧
+ *   （createSessionStore.mergeViewSnapshot 守卫）据此跳过对已知真值的覆盖
+ *   （#2 空串覆盖事故的最后防线）。
+ * - 缺省（undefined）：owner 来源——runtime 活跃实例 / 广播 / 乐观更新，D1b 整字段
+ *   覆盖的权威语义，显式空值（''/0）按「owner 声明空即空」正常覆盖。
+ */
+export type SessionDataSource = 'scan'
+
 export interface SessionSummary {
   id: string
   label: string
@@ -55,6 +67,11 @@ export interface SessionSummary {
    * landing 态命令源）。scanner listAll 过滤掉 hidden:true 的 session。
    */
   hidden?: boolean
+  /**
+   * 条目数据来源（W15）：'scan' = 磁盘扫描条目（modelId/tokenCount 为占位值，见
+   * SessionDataSource）；缺省 = 活跃实例真值（SessionService.toSummary 产出，不标）。
+   */
+  source?: SessionDataSource
   /**
    * 父 session 文件路径（fork 血缘键）。fork 出的 session 在 header 记录此字段指回源文件，
    * 形成 fork 父子链。源 session 尚未落盘（pi 延迟写入窗口）时用源 sessionId 作 fallback 键

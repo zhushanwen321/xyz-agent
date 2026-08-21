@@ -15,10 +15,10 @@
  */
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IPiEngine, IProcessManager } from '../ports/pi-engine.js'
-import type { SendMessageHook } from './types.js'
+import type { SendMessageHook, PendingBashResultData } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import type { IMessageBus } from '../message-bus/message-bus.js'
-import { toErrorMessage } from '../../utils/errors.js'
+import { toErrorMessage, RpcTimeoutError } from '../../utils/errors.js'
 
 /** 生成代次 token 用的进制（base-36：数字 + 小写字母，紧凑且无符号字符）。 */
 const RANDOM_TOKEN_RADIX = 36
@@ -196,8 +196,41 @@ export class MessageDispatcher {
       // isGenerating 永不复位，UI 卡在「思考中」。pi 卡死时 client.abort() 无响应，靠这条兜底。
       const errMsg = toErrorMessage(e)
       console.error(`[message-dispatcher] abort failed: sessionId=${sessionId}`, errMsg)
+      // 先取 active 再 destroy——destroySession 会删 processes/clientToId 条目，
+      // 之后再经 getSessionByClient 反查会拿 undefined。
       const active = this.svc.getSessionByClient(client)
       if (active) active.isGenerating = false
+
+      if (e instanceof RpcTimeoutError) {
+        // D3a（integrity-hardening，修 M5）：abort RPC 超时 = pi 事件循环卡死（ping 3 连败
+        // 已判定进程真死，event-interpreter ADR-0047）。仅收口（旧路径）会把卡死 client 留在
+        // 进程表——用户每次发消息都命中同一 client → 60s 超时死循环，唯一恢复是删 session /
+        // 重启 app。检测即收敛（原则 2）：强杀进程并走完与进程异常退出同构的收敛，下次发消息
+        // ensureActive 自动 restore 新 pi（历史完整）。
+        //
+        // 收敛需在此手动编排而非依赖 pm.onSessionExit 回调：kill 路径的 exit 事件被双层
+        // 守卫拦截（rpc-client.kill 置 _killing 跳过 exitCallback；process-manager 的 exit
+        // 回调按 processes.has 拦截 intentional destroy），不会传播到 session-service 的
+        // onSessionExit 收敛链。编排与 lifecycle.delete / onSessionExit 回调同构（detach →
+        // session.exited → removeSessionEntry），非新发明。
+        console.warn(`[message-dispatcher] abort RPC timed out (pi event loop frozen), force-destroying session ${sessionId}`)
+        this.svc.detachSession(sessionId)
+        await this.pm.destroySession(sessionId)
+        // stopped 终态须在 removeSessionEntry 前写（persistSessionOutcome 内部按 id 查
+        // sessions Map，条目删除后静默跳过）。
+        this.svc.persistSessionOutcome(sessionId, 'stopped', `Abort failed (pi unresponsive): ${errMsg}`)
+        // session.exited 须在 removeSessionEntry 前发（其后 messageBus.clearSession 清空
+        // 订阅者集合，再发等于空投，前端一条也收不到）。code=null：强杀场景退出码未知，
+        // 与 shared 协议「被信号杀死无退出码」语义一致。前端 handleSessionExited 会把
+        // reason 作为 error 消息插入聊天流 + toast（与 pi 崩溃路径同一入口），G3 的
+        // 「重发即可恢复」指引并入 reason，不再另发 message.error（避免双报）。
+        const exitedMsg = { type: 'session.exited' as const, payload: { sessionId, code: null, reason: 'pi 无响应（事件循环卡死），进程已强制终止。重发消息即可恢复（自动重启进程，历史完整）' } }
+        this.messageBus?.publish(sessionId, exitedMsg)
+        this.svc.removeSessionEntry(sessionId)
+        return
+      }
+
+      // 非超时错误（EPIPE / 进程已退出 / RPC 显式失败等）：保持现行 abort 收口行为。
       // W4：abort 失败（异常退出）写 stopped 终态
       this.svc.persistSessionOutcome(sessionId, 'stopped', `Abort failed: ${errMsg}`)
       const abortErrMsg = { type: 'message.error' as const, payload: { sessionId, message: `Abort failed: ${errMsg}` } }
@@ -228,8 +261,23 @@ export class MessageDispatcher {
    *
    * 不走 sendPrompt（bash 不调 client.prompt，不需 BeforeSend hook、不需图片附件、不触发 isGenerating 流式态）。
    *
-   * 生命周期：bashStart 广播（开始）→ pi bash RPC → bashResult 广播（终态）。
-   * 返回 { blocked: true } 表示被预检拒绝（send.rejected 已广播）或执行失败（message.error 已广播），
+   * [W1 fix-chat-flow-order D2] bashResult 双分支延迟——镜像 pi recordBashResult 的双分支
+   * （agent-session.js:2225-2247：streaming 期间 bash 缓存到 _pendingBashMessages、级联结束
+   * 统一落盘；空闲立即落盘），消除「live 即时入流 vs 文件级联末落盘」的顺序分叉（重开分组跳变）：
+   * - session streaming（isGenerating，活跃 run）→ 结果压入 activeSession.pendingBashResults
+   *   待落列（不立即广播），agent_settled（级联结束，晚于 pi finally flush 的 bash 落盘，
+   *   探针 ②）到达时 flushPendingBashResults 按序以帧发布；
+   * - 空闲 → 立即以帧发布。
+   * 前端（core registry bashResult handler）把帧转 bashExecution entry 经 applyEntryFrame 入流
+   * ——两侧位置都构造性等于 pi 落盘位置。
+   *
+   * 生命周期：bashStart 广播（开始，执行中反馈——前端 ephemeral executingBash 态，不建消息）
+   * → pi bash RPC → bashResult 广播（终态，双分支延迟如上）。
+   * 返回 { blocked: true } 有四种形态（一致性审查 SG-A1 修订——catch abort skip 是 D1 新增分支）：
+   * 预检拒绝（send.rejected 已广播）、执行失败（message.error + 错误 bashResult 终态帧均已广播）、
+   * catch abort skip（**不广播**——abortBash 已抢先收口广播哨兵帧，token 不匹配即跳过，D1 收窄
+   * 后唯一残余例外⑤）、空命令哨兵不变式早退（**不广播**——程序不变式守卫非用户可见错误，见方法头；
+   * 实施审查 SG-2：调用方对后两种形态的 ack 文案失真已知，归 bash 互斥专项）。
    * 调用方（session-message-handler）据此走对应 ack 路径，与 sendMessage 的返回语义对称。
    */
   async sendBash(
@@ -237,6 +285,17 @@ export class MessageDispatcher {
     command: string,
     excludeFromContext?: boolean,
   ): Promise<{ blocked: boolean; rejected?: boolean }> {
+    // ── 哨兵不变式守卫（D1 closure，实施审查 S-2 上移至真正入口）──
+    // bash-effects 哨兵帧判定 command === '' && cancelled（识别 abortBash 兜底广播、只清态不产
+    // entry）。真实帧 command 恒非空是「约定」——空命令在此早退使其升级为结构性不变式：入口
+    // 不可能发出 command === '' 的 bash，两类帧永不混淆。程序不变式守卫（UI `!` 解析必出非空
+    // 命令，正常不可达）：不广播 send.rejected / message.error（非用户可见错误，广播会以失真
+    // 文案打扰），仅 console.warn 留痕；blocked 返回值仅为类型完备。
+    if (command === '') {
+      console.warn(`[message-dispatcher] sendBash: empty command rejected (sentinel invariant), sid=${sessionId}`)
+      return { blocked: true }
+    }
+
     // ── ensureActive(必要时 restore)──
     let client: IPiEngine
     try {
@@ -284,29 +343,40 @@ export class MessageDispatcher {
     // ── 调 pi bash + 广播终态 ──
     try {
       const result = await client.bash(command, excludeFromContext)
-      // [W1] 竞态守卫：await 期间若 abortBash 被调用，它已置 isBashRunning=false 并广播
-      // cancelled bashResult 终态（且旋转了 bashRunToken）。此处若再广播带真实 output 的
-      // bashResult 会导致前端收到两条终态（先 cancelled 后真实结果），渲染错乱。
-      // 检测 token 变化即说明被 abort 抢先收口，静默跳过本次广播。
+      // [W1 → D1 closure 修订] abort 抢收口守卫：await 期间若 abortBash 被调用，它已广播
+      // 哨兵帧（command:''，bash-effects 只清 executingBash 不产 entry）并旋转 token。旧逻辑
+      // 在此静默丢弃真实结果——但 pi 侧 recordBashResult 对 cancelled 无分支照常落盘
+      // （bash-executor abort 返回 cancelled 结果而非 throw），丢弃导致 live 无记录、重开多出
+      // 一条（登记例外①）。哨兵帧与真实帧职责正交（一个只清态、一个产 entry，均幂等），
+      // 双终态担忧不成立——故此处不再跳过，发布真实数据（含 streaming 双分支延迟，与 pi
+      // 落盘位置一致）。例外收窄登记：仅 catch 分支（transport 抛错，无真实数据可发布）
+      // 维持哨兵不产 entry。
       if (activeSession && myToken !== undefined && activeSession.bashRunToken !== myToken) {
-        console.warn(`[message-dispatcher] sendBash: aborted during await, skip duplicate terminal. sid=${sessionId}`)
-        return { blocked: true }
+        console.warn(`[message-dispatcher] sendBash: aborted during await, publishing real cancelled terminal. sid=${sessionId}`)
       }
-      const bashResultMsg = {
-        type: 'message.bashResult' as const,
-        payload: {
-          sessionId,
-          command,
-          output: result.output,
-          exitCode: result.exitCode ?? null,
-          cancelled: result.cancelled,
-          truncated: result.truncated,
-          excludeFromContext: excludeFlag,
-          timestamp: Date.now(),
-          ...(result.fullOutputPath !== undefined && { fullOutputPath: result.fullOutputPath }),
-        },
+      // 终态数据在 RPC 完成时刻构造（timestamp = pi recordBashResult 落盘时刻，非 flush 时刻，
+      // 保证与文件 entry timestamp 一致）。emit 只传单个 payload 对象。
+      const bashResultData: PendingBashResultData = {
+        command,
+        output: result.output,
+        exitCode: result.exitCode ?? null,
+        cancelled: result.cancelled,
+        truncated: result.truncated,
+        excludeFromContext: excludeFlag,
+        timestamp: Date.now(),
+        ...(result.fullOutputPath !== undefined && { fullOutputPath: result.fullOutputPath }),
       }
-      this.messageBus?.publish(sessionId, bashResultMsg)
+      // [W1 fix-chat-flow-order D2] 双分支镜像 pi recordBashResult（agent-session.js:2237-2247）：
+      // pi 在 isStreaming 时把 bash 缓存到 _pendingBashMessages（run 级联 finally 统一落盘），
+      // xyz 镜像为——session 处于活跃 run（isGenerating）时结果进待落列，agent_settled
+      // （级联结束信号，晚于 pi 的 finally flush，探针 ②）到达时 flushPendingBashResults
+      // 按序发布；空闲立即发布。已知窄竞态（设计已登记）：xyz 判空闲但 pi 实际 streaming
+      // 的窗口内两侧位置短暂不一致，重开后以文件为准收敛。
+      if (activeSession?.isGenerating) {
+        activeSession.pendingBashResults = [...(activeSession.pendingBashResults ?? []), bashResultData]
+      } else {
+        this.publishBashResult(sessionId, bashResultData)
+      }
     } catch (e) {
       const errMsg = toErrorMessage(e)
       console.error(`[message-dispatcher] sendBash failed: sessionId=${sessionId}`, errMsg)
@@ -321,20 +391,17 @@ export class MessageDispatcher {
       // role==='assistant' 过滤），不收口 role==='system' 的 streaming bash 消息——
       // 若只发 message.error，前端 bash 气泡会卡在 streaming 态。故此处补发一条
       // cancelled:false + exitCode:null + output 含错误信息的 bashResult 终态让 bash 收口。
-      const bashResultErrMsg = {
-        type: 'message.bashResult' as const,
-        payload: {
-          sessionId,
-          command,
-          output: `[bash error] ${errMsg}`,
-          exitCode: null,
-          cancelled: false,
-          truncated: false,
-          excludeFromContext: excludeFlag,
-          timestamp: Date.now(),
-        },
-      }
-      this.messageBus?.publish(sessionId, bashResultErrMsg)
+      // [W1 fix-chat-flow-order] 错误帧不进待落列（立即发布）：它是 xyz 合成帧，无 pi 落盘
+      // 时序语义；且失败场景（transport 断/pi 死）级联可能永不结束，延迟会让用户无反馈。
+      this.publishBashResult(sessionId, {
+        command,
+        output: `[bash error] ${errMsg}`,
+        exitCode: null,
+        cancelled: false,
+        truncated: false,
+        excludeFromContext: excludeFlag,
+        timestamp: Date.now(),
+      })
       const bashErrMsg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
       this.messageBus?.publish(sessionId, bashErrMsg)
       return { blocked: true }
@@ -349,6 +416,37 @@ export class MessageDispatcher {
       }
     }
     return { blocked: false }
+  }
+
+  /**
+   * 发布单条 bashResult 帧（sendBash 空闲分支 / 错误兜底 / 待落列 flush 共用）。
+   * emit 只传单个 payload 对象（架构规则 1）。
+   */
+  private publishBashResult(sessionId: string, data: PendingBashResultData): void {
+    this.messageBus?.publish(sessionId, { type: 'message.bashResult' as const, payload: { sessionId, ...data } })
+  }
+
+  /**
+   * [W1 fix-chat-flow-order D2] 按 sessionId 定向 flush bash 待落列。
+   *
+   * 触发：pi agent_settled（run 级联结束）经 EventInterpreter.onAgentSettled →
+   * sessionService.flushPendingBashResults 到达（组合根 index.ts 接线）。时序保证（探针 ②）：
+   * pi 在 _runAgentPrompt finally 先 _flushPendingBashMessages（bash entry 统一落盘，
+   * agent-session.js:754）再 _emitAgentSettled（:755），故本方法发布帧时 pi 文件内 bash
+   * entry 已就位，live 入流位置（级联末）与落盘位置一致。
+   *
+   * 语义：按入列序（= pi RPC 完成序 = pi _pendingBashMessages 落盘序）发布；先清空再发布
+   * （发布中若新 bash 压入，下一轮 settled flush 处理，不混批）。session 已删除 → 条目随
+   * session 对象丢弃（挂 activeSession 同区的生命周期语义，见 types.ts 注释），此处自然 no-op。
+   */
+  flushPendingBashResults(sessionId: string): void {
+    const session = this.svc.getSession(sessionId)
+    const queue = session?.pendingBashResults
+    if (!session || !queue || queue.length === 0) return
+    session.pendingBashResults = []
+    for (const data of queue) {
+      this.publishBashResult(sessionId, data)
+    }
   }
 
   /**

@@ -6,7 +6,7 @@
  * 请求-响应形态（对称 file.ts）：
  * - getFileCandidates → file.search → 'file.search:result' 同步 reply，返回 FileNode[]
  *
- * 依赖方向：command（类型化原语，统一 pending.create + register + transport.send）。
+ * 依赖方向：command（类型化原语，统一 pending.createCommandId + register + transport.send）。
  * 失败走 error envelope（routeInbound 对 type==='error' 走 pending.reject，code 透传到 Error.code）。
  *
  * 注意：domain 返回原始 FileNode[]（保持真实数据语义）；FileNode → CommandPopover

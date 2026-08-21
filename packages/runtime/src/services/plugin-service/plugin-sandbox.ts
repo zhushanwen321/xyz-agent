@@ -63,8 +63,10 @@ export function createRequireInterceptor(pluginDir: string): (request: string, r
   let normalizedDir = pluginDir
   try {
     normalizedDir = realpathSync(pluginDir)
-  } catch {
-    // 保持原值（无更优选择；目录不存在时插件 load 本就会失败）
+  } catch (e) {
+    // 保持原值（无更优选择；目录不存在时插件 load 本就会失败）——
+    // 记 warn 保留可观测性：realpath 失败意味着目录异常，后续判界将 fail-closed 拒绝全部路径请求
+    console.warn('[plugin-sandbox] realpath failed for plugin dir, keeping unresolved path:', e)
   }
   const normalizedPluginDir = normalizedDir.endsWith('/') ? normalizedDir : normalizedDir + '/'
 

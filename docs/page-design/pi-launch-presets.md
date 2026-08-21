@@ -40,24 +40,20 @@ export type ToolMode = 'all' | 'allowlist' | 'denylist' | 'none'
  * 注意：pi 无原生 extension 黑名单。denylist 由 runtime 先列出全部已启用 extension，
  * 排除用户指定的 deniedExtensions 后，作为 allowlist 注入（见 §2.4 实现细节）。
  *
- * BUILTIN_EXTENSION_* 永远注入（不受 extensionMode 影响），见 §2.3。
+ * builtin infrastructure 级扩展在任何 extensionMode 下都注入；feature 级 builtin
+ * 与用户扩展同受 preset 筛选，见 §2.3。
  */
 export type ExtensionMode = 'all' | 'allowlist' | 'denylist' | 'none'
 
 /** 内置工具列表（pi 硬编码 7 个，见附录 A.1） */
 export const BUILTIN_TOOLS = ['read', 'write', 'bash', 'edit', 'grep', 'find', 'ls'] as const
 
-/**
- * 3 个 builtin 文件型 extension 的固定标识。
- *
- * 它们不在 ExtensionService.scanExtensions() 的返回值里（仅在 getExtensionPaths 追加），
- * 因此对用户不可见、不可 exclude、不受 extensionMode 影响——见 §2.3。
- */
-export const BUILTIN_EXTENSION_FILES = [
-  'xyz-agent-extension.js',
-  'xyz-system-prompt-extension.js',
-  'xyz-client-msg-id-mapper.js',
-] as const
+// [历史] 设计期的 BUILTIN_EXTENSION_FILES 常量（3 个文件型 xyz-*.js）已随 builtin→npm
+// 迁移（2026-08）删除。现行 builtin 扩展 = @zhushanwen/pi-* npm 包，清单 SSOT =
+// packages/shared/src/mandatory-extensions.json（tier: infrastructure / feature 两级），
+// 打包经 scripts/bundle-extensions.mjs staging 到 apps/electron/resources/extensions/。
+// infrastructure 级（pi-system-prompt / pi-msg-id-mapper / pi-agent-ext 等）不受
+// extensionMode 影响；feature 级（pi-goal / pi-todo 等）与用户扩展同受筛选——见 §2.3。
 
 /** Pi 启动参数预设 */
 export interface PiLaunchPreset {
@@ -207,7 +203,7 @@ export interface SessionSummary {
 
 | 现有字段 | 来源 | 用途 |
 |---|---|---|
-| `extensionPaths` | `svc.getExtensionPaths(cwd)` → `ExtensionService.getExtensionPaths` | 收集 3 个 builtin 文件型 extension + 用户启用的 extension（全部走 `--extension` 显式注入）|
+| `extensionPaths` | `svc.getExtensionPaths(cwd)` → `ExtensionService.getExtensionPaths` | 收集 builtin npm 扩展（mandatory-extensions.json SSOT）+ 用户启用的 extension（全部走 `--extension` 显式注入）|
 | `skillPaths` | `svc.getSkillPaths(cwd)` → 读 `discovery.json` | 用户启用的 skill 目录 |
 | `systemPrompt` | `svc.getReplaceSystemPrompt()` → 读 `system-prompt.json` | 替换 pi 核心系统提示词 |
 
@@ -218,68 +214,35 @@ rpc-client.ts:128 当前**硬编码** `--no-extensions --approve`，所有 exten
 | preset 字段 | 与现有机制的关系 | 规则 |
 |---|---|---|
 | `toolMode` / `allowedTools` / `deniedTools` | **新增维度**（现有完全没有） | 直接映射到 `--tools` / `--exclude-tools`，叠加在现有 args 上 |
-| `extensionMode` + allowed/denied | **叠加**到现有 `getExtensionPaths` 结果 | 见 §2.4，过滤 `ExtensionService.scanExtensions()` 返回的用户 extension；builtin extension 不受影响 |
+| `extensionMode` + allowed/denied | **叠加**到现有 `getExtensionPaths` 结果 | 见 §2.4，过滤 `ExtensionService.scanExtensions()` 返回的可筛选 extension；infrastructure 级 builtin 不受影响 |
 | `noSkills` | **叠加**到现有 `getSkillPaths` | noSkills=true 时清空 skillPaths，并在 args 追加 `--no-skills` |
 | `noContextFiles` | **新增维度** | 直接映射到 `--no-context-files`，不影响其他 |
 | `modelOverride` | 见 §5.2 优先级规则 | Landing Chip 覆盖 > preset > 全局默认 |
 | `thinkingLevel` | 见 §5.2 优先级规则 | Landing Chip 覆盖 > preset > 全局默认 |
 
-### 2.3 BUILTIN EXTENSION 强制注入（不可 exclude）
+### 2.3 BUILTIN EXTENSION 强制注入（infrastructure 级不可 exclude）
 
-> **[产品决策，已确认]** 3 个 builtin 文件型 extension（`xyz-agent-extension.js` / `xyz-system-prompt-extension.js` / `xyz-client-msg-id-mapper.js`）**永远注入**，不受任何 `extensionMode` 影响。
+> **[产品决策，已确认；机制已随 builtin→npm 迁移演进（2026-08）]** 设计期为「3 个 builtin 文件型 extension（`xyz-agent-extension.js` / `xyz-system-prompt-extension.js` / `xyz-client-msg-id-mapper.js`）永远注入，不受任何 `extensionMode` 影响」。现行形态：builtin 扩展 = `@zhushanwen/pi-*` npm 包（清单 SSOT = `packages/shared/src/mandatory-extensions.json`，tier 两级），「永远注入」语义收窄到 **infrastructure 级**——feature 级 builtin 与用户扩展同受 preset 筛选与禁用。
 
-**理由**：
-- `xyz-system-prompt-extension.js` 实现「系统提示词追加注入」，屏蔽它整个系统提示词机制失效（AGENTS.md / CLAUDE.md 上下文加载、项目级提示都依赖此 extension 的 before_agent_start hook）
-- `xyz-agent-extension.js` 提供 xyz-agent 的能力扩展
-- `xyz-client-msg-id-mapper.js` 处理 msg id 映射，屏蔽会导致前端消息路由错乱
+**现行理由（按原文件型三件套的继承者）**：
+- `@zhushanwen/pi-system-prompt`（infrastructure）实现「系统提示词追加注入 + 全局 AGENTS.md 注入」，屏蔽它整个系统提示词机制失效
+- `@zhushanwen/pi-agent-ext`（infrastructure）提供 session 树导航与 `/__xyz_reload__` 内部命令
+- `@zhushanwen/pi-msg-id-mapper`（infrastructure）处理 msg id 映射，屏蔽会导致前端消息路由错乱
 
-**实现约束**：
-
-```typescript
-// packages/runtime/src/services/extension-service.ts 新增内部方法
-/**
- * 返回 builtin 文件型 extension 的绝对路径（不受 extensionMode 影响）。
- * 当前实现：extension-service.ts:316-333 的 builtinExts 数组。
- * 重构后提取为独立方法，便于 preset-service 调用而不重复 getExtensionPaths 全流程。
- */
-getBuiltinExtensionPaths(): string[]
-```
-
-`preset-service.resolveExtensionPaths(cwd, preset)` 的实现：
+**现行实现**（设计期的 `getBuiltinExtensionPaths()` + 手工前置注入链路已删，builtin 与用户扩展统一走同一发现/过滤管线）：
 
 ```typescript
-resolveExtensionPaths(cwd: string, preset: PiLaunchPreset): Promise<string[]> {
-  const builtinPaths = this.extensionService.getBuiltinExtensionPaths()
-  const userExts = await this.extensionService.scanExtensions() // 用户可见的 extension 列表
-
-  // 1. 按模式过滤用户 extension（builtin 不参与过滤）
-  let selectedUserPaths: string[] = []
-  switch (preset.extensionMode) {
-    case 'all':
-      // 全部已启用的用户 extension（与现有 getExtensionPaths 行为一致）
-      selectedUserPaths = userExts.filter(e => e.enabled).map(e => e.path)
-      break
-    case 'allowlist':
-      selectedUserPaths = userExts
-        .filter(e => e.enabled && preset.allowedExtensions?.includes(e.name))
-        .map(e => e.path)
-      break
-    case 'denylist':
-      // pi 无原生 extension 黑名单 → runtime 先列出全部再排除，作为白名单注入
-      selectedUserPaths = userExts
-        .filter(e => e.enabled && !preset.deniedExtensions?.includes(e.name))
-        .map(e => e.path)
-      break
-    case 'none':
-      // 不加载任何用户 extension，但 builtin 仍然注入
-      selectedUserPaths = []
-      break
-  }
-
-  // 2. builtin 永远前置注入
-  return [...builtinPaths, ...selectedUserPaths]
-}
+// preset-service.resolveExtensionPaths（现行，packages/runtime/src/services/preset-service.ts）
+const { discovered, disabledSet } = await this.extensionService.getDiscoveredAndDisabled(cwd)
+const resolved = resolveExtensions(discovered, disabledSet)   // tier 推导：mandatory SSOT 命中 → infrastructure/feature
+const deduped = dedupeLoadedExtensions(resolved)              // P7 同名去重
+const afterPreset = applyPresetMode(deduped, mode, allowed, denied)
+// extension-filter.applyPresetMode：presetOverridable = !(mandatory && infrastructure)
+//   —— infrastructure 级任何模式下都存活（none 模式也保留）；feature 级 / 用户扩展按 mode 筛选
+return afterPreset.filter(r => r.loadable).map(r => r.path)
 ```
+
+打包内置：builtin 包由 `scripts/bundle-extensions.mjs`（esbuild）staging 到 `apps/electron/resources/extensions/@zhushanwen/<pkg>/` 随应用分发，不走用户 npm 安装。
 
 ### 2.4 Extension 黑白名单的真实实现
 
@@ -289,10 +252,10 @@ resolveExtensionPaths(cwd: string, preset: PiLaunchPreset): Promise<string[]> {
 
 | extensionMode | runtime 行为 | 最终 pi args |
 |---|---|---|
-| `all` | 加载所有 enabled 的用户 extension | `--no-extensions --extension <builtin...> --extension <all-user...>` |
-| `allowlist` | 只加载 allowedExtensions 命中的 | `--no-extensions --extension <builtin...> --extension <allowed-user...>` |
-| `denylist` | 加载除 deniedExtensions 之外的所有 enabled | `--no-extensions --extension <builtin...> --extension <non-denied-user...>` |
-| `none` | 不加载任何用户 extension | `--no-extensions --extension <builtin...>` |
+| `all` | 加载所有 enabled 的可筛选 extension | `--no-extensions --extension <infra-builtin...> --extension <all-others...>` |
+| `allowlist` | 只加载 allowedExtensions 命中的 | `--no-extensions --extension <infra-builtin...> --extension <allowed...>` |
+| `denylist` | 加载除 deniedExtensions 之外的所有 enabled | `--no-extensions --extension <infra-builtin...> --extension <non-denied...>` |
+| `none` | 不加载任何可筛选 extension | `--no-extensions --extension <infra-builtin...>` |
 
 `--no-extensions` 一直传（与现有 rpc-client.ts:128 硬编码一致），所有 extension 走 `--extension` 显式注入。
 
@@ -385,7 +348,7 @@ const BUILTIN_TOOLS = ['read', 'write', 'bash', 'edit', 'grep', 'find', 'ls'] as
 Settings UI 在工具 Checkbox 列表旁标注默认状态（"默认启用"/"默认禁用"），帮助用户理解 `all` 模式的实际效果。
 
 **Extension 列表**（动态发现）：
-- `ExtensionService.scanExtensions()` 返回所有可用 extension（**不含** 3 个 builtin 文件型 extension——它们对用户不可见，见 §2.3）
+- `ExtensionService.scanExtensions()` 返回所有可用 extension（**含** builtin npm 扩展，layer=builtin——feature 级 builtin 与用户扩展同样出现在列表，infrastructure 级不可禁用，见 §2.3）
 - 每条展示 `name + description + 是否已启用`
 - 用户勾选/取消勾选控制 allowlist/denylist 成员
 
@@ -634,8 +597,8 @@ async forkSession(srcSessionId, fromPiEntryId, includeFrom, label): Promise<Sess
 | preset.extensionMode=all | args 含所有 enabled 用户 extension 的 `--extension` |
 | preset.extensionMode=allowlist | args 只含 allowedExtensions 的 `--extension` |
 | preset.extensionMode=denylist | args 含除 deniedExtensions 之外所有 enabled 的 `--extension` |
-| preset.extensionMode=none | args 只含 3 个 builtin 的 `--extension`（**用户 extension 全部排除**） |
-| **builtin extension 永远注入** | extensionMode=none 时 args 仍含 3 个 builtin path |
+| preset.extensionMode=none | args 只含 infrastructure 级 builtin 的 `--extension`（**可筛选 extension 全部排除**） |
+| **infrastructure builtin 永远注入** | extensionMode=none 时 args 仍含 infrastructure 级 builtin path |
 | preset.noSkills=true | args 含 `--no-skills`，skillPaths 为空 |
 | preset.noContextFiles=true | args 含 `--no-context-files` |
 | create() 写 preset sidecar | create 成功后 `<sessionFile>.preset.json` 存在 |

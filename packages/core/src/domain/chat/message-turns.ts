@@ -4,19 +4,40 @@
  * 数据模型：chat store 的 messages 是扁平 Message[]（user/assistant/system 交替）。
  * 渲染模型（draft-message-stream §4）：一个「turn」= user 气泡 + 其后所有 assistant 块。
  * assistant 的 thinking/toolCalls 折进 trace，content 作收尾 summary。
- * system 消息（compactionSummary/branchSummary，W07-C）作独立系统提示行，
- * 按到达顺序穿插在 turns 之间，不归入任何 turn（不冒充 user/assistant）。
  *
- * 分组规则：
- * - 遇到 user 消息 → 开启新 turn，该 user 归入新 turn
- * - 遇到 assistant 消息 → 归入当前 turn（无当前 turn 则自启一个，兼容首条 assistant 边缘情况）
- * - 遇到 system 消息 → 产出独立 SystemNotice 项（不并入 turn）
+ * 分组规则 v2 —— 显式边界规则集（conversation-turn-attribution §3.3 D3/D4，W3）。
+ * 旧版是 role 扫描（user 开 turn / assistant 归当前 / system 一律打断），根因有二（§2.4）：
+ * ① 把「什么开 turn」的产品语义寄托在 role 这个传输属性上——system 族既有 turn 边界语义
+ *   （压缩记录）又有 turn 内语义（bash 执行记录 / 健康警告），role 无法区分（机制 C：
+ *   mid-turn system 把一个 turn 切成两半，产生无 user 孤立组）；
+ * ② display 前置过滤让隐藏完成通知完全退出分组输入——subagent/workflow 完成通知
+ *   （display:false）触发的续跑 assistant 并入上一 turn（机制 A：后台任务结果混进上一个提问）。
+ * v2 规则表（分组消费全量数组；display 过滤挪到渲染项输出层——D3）：
+ * 1. user → 开新 turn（锚）
+ * 2. 隐藏完成通知（display===false 且 customType ∈ COMPLETE_NOTIFY_CUSTOM_TYPES，shared SSOT
+ *    常量——与 apply-entry 覆写同一常量源，无第二份判定）→ turn 边界：关闭当前 turn，开启
+ *    user:null + trigger:'bg-notify' 的新 turn，后续 assistant 归入（G3 续跑可见起点）。
+ *    空 turn 折叠：边界未被 assistant 填实即遇下一边界/user/数组结束 → 不产出（连续边界
+ *    折叠为一个 trigger turn，取最新）
+ * 3. assistant → 归当前 turn（无则自启 user:null turn，首条 assistant 边缘保留）
+ * 4. inline notice（bashExecution 存在 或 liveOnly===true）→ 归当前 turn 的 notices 列表
+ *    （按到达序追加末尾，不切断 turn、不出独立渲染项）；无当前 turn 时退化为独立 static 项
+ * 5. 其余可见 system（compactionSummary/branchSummary/可见 custom/通用 system）→ 边界：
+ *    独立 systemNotice 项 + 关闭当前 turn（现状语义）
+ * 隐藏非完成通知消息（如 todo-context，display:false）透明：不参与边界、不产出渲染项
+ * （现状 = 分组前被过滤；消息仍在 store——渲染过滤不丢消息，AGENTS.md 规则 9）。
+ *
  * - streaming 中的 turn（最后一条 assistant status==='streaming'）→ working 态，默认展开 trace
  *
  * 归属：chat 域纯函数（零 Vue/renderer 依赖），对齐 w1-w5 chat 域绞杀模式（core SSOT）。
  * ui 包经 @xyz-agent/core/domain/chat 子路径 import（仅类型/纯函数，非 store/composable 运行时）。
  */
-import { normalizeContent, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
+import {
+  COMPLETE_NOTIFY_CUSTOM_TYPES,
+  normalizeContent,
+  SUBAGENT_TOOL_NAMES,
+  WORKFLOW_TOOL_NAMES,
+} from '@xyz-agent/shared'
 import type { Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
 
 /** 一个渲染回合：起点 user + 其后的 assistant 消息序列 */
@@ -26,6 +47,14 @@ export interface MessageTurn {
   user: Message | null
   /** 回合内的 assistant 消息（一条或多条） */
   assistants: Message[]
+  /** turn 内 notice 列表（D4）：bash 执行记录 / liveOnly 健康警告，按到达序挂在 turn 内部
+   *  末尾（bash entry 在文件序即级联末，位置忠实），不切断回合、不出独立渲染项。
+   *  W4 渲染消费；undefined = 无 notice（历史 turn 形态不变）。 */
+  notices?: Message[]
+  /** 无 user 起点的续跑 turn 标记（D3）：'bg-notify' = 隐藏完成通知（subagent/workflow 后台
+   *  任务完成）触发的续跑 turn。W4 据此渲染「后台任务完成」起点行（替代 user 气泡）。
+   *  undefined = user 锚 turn 或 assistant 自启 turn（现状形态）。 */
+  trigger?: 'bg-notify'
   /** 文本是否正在流式生成（turn 级信号，最后一条 assistant 处于 streaming 或 subagent 强制态）。
    *  语义仅「文本正在流式生成」——驱动 Loader 转圈、streaming 光标、计时器、滚动跟随。
    *  ask-user 等待期间 message 已 complete → false，但对话仍在进行中（该信号由 session 级
@@ -43,9 +72,11 @@ export interface MessageTurn {
  * - systemNotice：compaction/branchSummary/stream_warn 等一行通知（system 无 bashExecution）
  * - bashExecution：BashOutputBlock（system + bashExecution 字段）
  *
- * 判定顺序与旧 MessageStream system 分支一致：bashExecution 优先于 systemNotice 兜底。
- * bgNotify/gui 两类不属全集：bgNotify 由 registry 写 display:false 过滤（M2），
- * gui 的 producer（workflow-result）同属完成通知一并移除，tool RPC 的 __gui__ 走 Block.vue。
+ * 判定顺序与旧 MessageStream system 分支一致：bashExecution 优先于 systemNotice 兜底
+ * （仅无当前 turn 的退化路径会为 bash/liveOnly 产出 static 项——规则 4 inline 归 turn 内）。
+ * bgNotify/gui 两类不属全集：隐藏完成通知在分组层被消化为 trigger turn 边界语义（W3·D3），
+ * 输出侧 display 过滤兜底；gui 的 producer（workflow-result）同属完成通知一并消化，
+ * tool RPC 的 __gui__ 走 Block.vue。
  */
 export type RenderItem =
   | { kind: 'turn'; turn: MessageTurn }
@@ -53,17 +84,19 @@ export type RenderItem =
   | { kind: 'bashExecution'; message: Message }
 
 /**
- * turn 的稳定标识：首条消息 id（user 优先，assistant 自启 turn 用首条 assistant id）。
+ * turn 的稳定标识：首条消息 id（user 优先，assistant 自启 turn 用首条 assistant id；
+ * trigger turn 仅含 notice 无 assistant 时回落 notices[0]——折叠规则保证产出 turn 必有
+ * user / assistants[0] / notices[0] 之一）。
  * 消息 id 由 runtime 在消息创建时生成（uuid，message-converter / event-adapter），
  * 同一消息两次生成同 id、其他消息插入/删除不影响——key 不随渲染重建/列表增删漂移。
  *
  * [M5 stable-key] 旧实现用 MessageTurn.index（toRenderItems 每次从 0 重算的序号），
  * 消息插入/删除（load-more、streaming 追加）会让全部后续 turn 的 key 平移，
  * virtua 按 key 复用 DOM 时错位（组件状态串台）。改首条消息 id 后 key 恒稳定。
- * 空串兜底理论不可达（toRenderItems 保证 turn 必有 user 或 assistants[0]），仅类型收窄用。
+ * 空串兜底理论不可达（产出 turn 必有 user / assistants / notices 之一），仅类型收窄用。
  */
 export function turnStableId(turn: MessageTurn): string {
-  return turn.user?.id ?? turn.assistants[0]?.id ?? ''
+  return turn.user?.id ?? turn.assistants[0]?.id ?? turn.notices?.[0]?.id ?? ''
 }
 
 /** 一个渲染回合的稳定 key（turn 用首条消息 id；system 类用 message.id）。
@@ -73,17 +106,24 @@ export function renderKey(item: RenderItem): string {
 }
 
 /** 不在对话流渲染的 customType 判定已删除 [M2 display 前置]：完成通知由生产端（registry
- *  customStart / runtime mapper）统一写 display:false，filter 只认 display 字段，不再维护
- *  customType 黑名单（conversation-renderer-model-unification §3.3.2，supersede ADR-0048）。
- *  消息仍进 chat store 供 fork/compact/replay，agent 仍能读到；此处仅过滤渲染，不丢消息
- *  （AGENTS.md 规则 7.5）。 */
+ *  customStart / runtime mapper）统一写 display:false，不再维护 customType 黑名单
+ *  （conversation-renderer-model-unification §3.3.2，supersede ADR-0048）。
+ *  消息仍进 chat store 供 fork/compact/replay，agent 仍能读到；此处仅过滤渲染，不丢消息。
+ *  [W3·D3 演进] display 过滤从「分组前置」挪到渲染项输出层（toRenderItems 内建）——
+ *  隐藏完成通知须参与分组边界语义，不能再在分组前滤除。分组路径不再消费本函数
+ *  （toRenderItemsIncremental 的 filter 参数占位已于 W4 移除）；保留供调用方独立
+ *  过滤场景使用。 */
 
 /** 过滤掉不在对话流展示的消息（display===false：完成通知由生产端写死，
- *  goal/todo context 由 pi 扩展声明——纯字段过滤，无 customType 黑名单）。 */
+ *  goal/todo context 由 pi 扩展声明——纯字段过滤，无 customType 黑名单）。
+ *  [W3·D3] 注意：分组（groupTurns/toRenderItems/toRenderItemsIncremental）已改为消费
+ *  全量数组并在输出侧内建同等过滤，调用方不再需要先 filter 再分组。 */
 export function filterDisplayableMessages(messages: Message[]): Message[] {
   return messages.filter((m) => m.display !== false)
 }
 
+/** 全量数组 → turn 列表（分组规则 v2 消费全量数组——隐藏完成通知参与边界语义，
+ *  隐藏项经输出侧过滤不产出渲染项，见文件头）。 */
 export function groupTurns(messages: Message[]): MessageTurn[] {
   return toRenderItems(messages)
     .filter((item): item is { kind: 'turn'; turn: MessageTurn } => item.kind === 'turn')
@@ -105,8 +145,8 @@ export interface TurnRenderCache {
   /** 快路径键 = 源数组引用（NOT filter 产物——filter 每调用产出新数组，键其上恒 miss）。
    *  D-1 容器范式下源数组（per-sid 分区数组）commit 才替换引用：引用未变 = 本 sid 无新 commit。 */
   lastSourceRef: Message[] | null
-  /** 每个 turn 的成员引用签名（[user, ...assistants]；首条 assistant 自启 turn 无 user 位），
-   *  与 turnObjects 一一对应 */
+  /** 每个 turn 的成员引用签名（[user?, ...assistants, ...notices]；首条 assistant 自启/触发
+   *  turn 无 user 位，notice 追加改变签名触发重建），与 turnObjects 一一对应 */
   turnSignatures: Message[][]
   /** 与 turnSignatures 一一对应：上次产出的 MessageTurn（复用载体） */
   turnObjects: MessageTurn[]
@@ -119,17 +159,92 @@ export function createTurnRenderCache(): TurnRenderCache {
   return { lastSourceRef: null, turnSignatures: [], turnObjects: [], cachedItems: [] }
 }
 
-/** 分组中间结构：一个「turn」的成员组（user 起点或 assistant 自启） */
+/** 分组中间结构：一个「turn」的成员组（user 起点锚 / assistant 自启 / 隐藏通知触发） */
 interface TurnGroup {
   user: Message | null
   assistants: Message[]
+  /** turn 内 notice（D4 规则 4），按到达序追加；undefined = 尚无 notice（输出形态同历史 turn） */
+  notices?: Message[]
+  /** 无 user 起点的续跑 turn 标记（D3 规则 2）；undefined = user 锚 / assistant 自启 turn */
+  trigger?: 'bg-notify'
 }
 
 /** 渲染槽位：turn 槽位引用 groups 下标；system 类直接产出静态项（不参与 turn 复用） */
 type GroupSlot = { slot: 'turn'; group: number } | { slot: 'static'; item: RenderItem }
 
+/** 隐藏完成通知判定（D3 边界触发器）：display===false 且 customType 属完成通知 SSOT 常量集
+ *  （与 apply-entry 覆写 / registry 同一常量源——分组侧不引入第二份判定）。 */
+function isHiddenCompleteNotify(msg: Message): boolean {
+  return (
+    msg.display === false &&
+    msg.customType !== undefined &&
+    COMPLETE_NOTIFY_CUSTOM_TYPES.has(msg.customType)
+  )
+}
+
+/** inline notice 判定（D4 规则 4）：bash 执行记录（有 bashExecution 字段）或 liveOnly
+ *  消息（stream_warn 健康警告，无 entry 无 replay 对应物，W2 创建点打标）→ turn 内部语义，
+ *  不切断 turn。 */
+function isInlineNotice(msg: Message): boolean {
+  return msg.bashExecution !== undefined || msg.liveOnly === true
+}
+
+/** turn 未被填实（无 user、无 assistant、无 notice）→ 折叠候选。实际只可能是未被后续
+ *  assistant 填实的 trigger turn（user 锚 turn 必有 user；assistant 自启 turn 必有 assistant）。 */
+function isEmptyTurn(g: TurnGroup): boolean {
+  return g.user === null && g.assistants.length === 0 && (g.notices?.length ?? 0) === 0
+}
+
+/** 关闭 turn：若其未被填实（空 trigger turn）从产出中移除（空 turn 折叠，D3）。
+ *  current 开启期间无其他槽位压栈（notice 挂 current 不出槽位），末位槽位即 current 的
+ *  turn 槽位——groups/slots 成对弹出安全，groups 末位守卫为防御性断言。
+ *  返回 null（关闭后无当前 turn）——返回值形式让调用点直接 `current = closeTurn(...)`，
+ *  赋值对 TS CFA 可见（跨函数的外部 let 窄化不追踪）。 */
+function closeTurn(turn: TurnGroup | null, groups: TurnGroup[], slots: GroupSlot[]): null {
+  if (turn !== null && isEmptyTurn(turn) && groups[groups.length - 1] === turn) {
+    groups.pop()
+    slots.pop()
+  }
+  return null
+}
+
+/** 开启 turn 并压入 turn 槽位，返回新组（调用点赋回 current）。 */
+function openTurn(
+  user: Message | null,
+  trigger: 'bg-notify' | undefined,
+  groups: TurnGroup[],
+  slots: GroupSlot[],
+): TurnGroup {
+  const turn: TurnGroup = { user, assistants: [], trigger }
+  groups.push(turn)
+  slots.push({ slot: 'turn', group: groups.length - 1 })
+  return turn
+}
+
+/** 规则 4 分支体：inline notice 归当前 turn 内部（挂 notices，按到达序追加末尾——bash entry
+ *  在文件序即级联末，位置忠实）；无当前 turn 退化为独立 static 项（现状兜底保留）。
+ *  current 透传返回（本分支不改变边界）。 */
+function appendInlineNotice(
+  msg: Message,
+  current: TurnGroup | null,
+  slots: GroupSlot[],
+): TurnGroup | null {
+  if (current) {
+    ;(current.notices ??= []).push(msg)
+  } else {
+    slots.push({
+      slot: 'static',
+      item: msg.bashExecution
+        ? { kind: 'bashExecution', message: msg }
+        : { kind: 'systemNotice', message: msg },
+    })
+  }
+  return current
+}
+
 /**
- * 扁平消息 → 渲染槽位序列 + turn 成员组。分组规则见文件头「分组规则」节。
+ * 扁平消息（全量数组，含 display:false）→ 渲染槽位序列 + turn 成员组。
+ * 分组规则 v2 见文件头「分组规则」节（conversation-turn-attribution §3.3 D3/D4）。
  * toRenderItems（全量版）与 toRenderItemsIncremental（增量版）共享的分组 SSOT——
  * 两处分组逻辑漂移会导致增量输出与全量输出不等价。
  */
@@ -137,32 +252,51 @@ function groupRenderInput(messages: Message[]): { slots: GroupSlot[]; groups: Tu
   const slots: GroupSlot[] = []
   const groups: TurnGroup[] = []
   let current: TurnGroup | null = null
+
   for (const msg of messages) {
     if (msg.role === 'user') {
-      current = { user: msg, assistants: [] }
-      groups.push(current)
-      slots.push({ slot: 'turn', group: groups.length - 1 })
+      // 规则 1：user 锚 → 开新 turn（挂起的空 trigger turn 折叠不产出）
+      current = closeTurn(current, groups, slots)
+      current = openTurn(msg, undefined, groups, slots)
     } else if (msg.role === 'assistant') {
-      if (!current) {
-        current = { user: null, assistants: [] }
-        groups.push(current)
-        slots.push({ slot: 'turn', group: groups.length - 1 })
-      }
+      // 规则 3：assistant 归 current（无则自启 user:null turn——首条 assistant 边缘保留）
+      current ??= openTurn(null, undefined, groups, slots)
       current.assistants.push(msg)
+    } else if (isHiddenCompleteNotify(msg)) {
+      // 规则 2：隐藏完成通知 → turn 边界（D3）。连续边界折叠：current 已是未填实 trigger
+      // turn 时复用该组（trigger 单值常量，取最新语义天然成立），不再压新组；此分支 current
+      // 为 null 或已填实（非空），closeTurn 无可折叠，直接开新 trigger turn。
+      if (current === null || !isEmptyTurn(current)) {
+        current = openTurn(null, 'bg-notify', groups, slots)
+      }
+    } else if (msg.display === false) {
+      // 隐藏非完成通知消息（todo-context 等）透明：不参与边界、不产出渲染项——现状语义
+      // （分组前被 filterDisplayableMessages 滤除）原样保留。消息仍在 store，不丢。
+      continue
+    } else if (isInlineNotice(msg)) {
+      // 规则 4：inline notice → 归当前 turn 内部（分支体见 appendInlineNotice）。
+      current = appendInlineNotice(msg, current, slots)
     } else {
-      // else 即「非 user/assistant」兜底分支：现状唯一合法值是 role === 'system'（systemNotice
-      // 或 bashExecution）。刻意不做显式 system 判定后丢弃——类型外 role（未来扩展）兜底渲染为
-      // systemNotice 可见可发现，静默丢弃会违背「渲染过滤不丢消息」语义（AGENTS.md 规则 7.5）。
-      current = null
-      slots.push({
-        slot: 'static',
-        item: msg.bashExecution
-          ? { kind: 'bashExecution', message: msg }
-          : { kind: 'systemNotice', message: msg },
-      })
+      // 规则 5：其余可见 system → boundary：独立 systemNotice 项 + 关闭当前 turn（现状语义）。
+      // else 即「非 user/assistant 且非上述属性」兜底分支：现状唯一合法值是 role === 'system'
+      // （compactionSummary/branchSummary/可见 custom/通用 system）。刻意不做显式 system 判定后
+      // 丢弃——类型外 role（未来扩展）兜底渲染为 systemNotice 可见可发现，静默丢弃会违背
+      // 「渲染过滤不丢消息」语义（AGENTS.md 规则 9）。bashExecution 此分支不可达（规则 4 已收）。
+      current = closeTurn(current, groups, slots)
+      slots.push({ slot: 'static', item: { kind: 'systemNotice', message: msg } })
     }
   }
+  // 数组结束时仍挂起的空 trigger turn 不产出（空 turn 折叠）
+  closeTurn(current, groups, slots)
   return { slots, groups }
+}
+
+/** D3 输出侧 display 过滤：隐藏消息（display===false）不产出渲染项。分组层已把隐藏完成
+ *  通知消化为 trigger turn 边界语义、隐藏非通知消息透明跳过——此处是不变量守卫（正常路径
+ *  零命中），防御未来新增消息类型绕过分组规则直接产出 static 项。turn 项不过滤：
+ *  user/assistant 无 display:false 写入点，隐藏成员属 turn 内部不可整组丢弃。 */
+function filterInvisibleItems(items: RenderItem[]): RenderItem[] {
+  return items.filter((item) => item.kind === 'turn' || item.message.display !== false)
 }
 
 /** turn 派生字段：isStreaming（turn 级「文本正在流式生成」，仅末位 turn 可为 true） */
@@ -194,7 +328,8 @@ function signatureEquals(a: Message[], b: Message[]): boolean {
 
 /**
  * 快路径（源数组引用未变 = 本 sid 无新 commit）：按当前 forceWorking 重驱动末位 turn 的
- * isStreaming——subagent forceWorking 翻转（subagentStore.isRunning）在源数组不变时触发本函数。
+ * isStreaming——消费方的 forceWorking 翻转（虚拟 session 的 subagent streaming 判定）在
+ * 源数组不变时触发本函数。
  * 期望值未变 → cachedItems 引用恒等返回（零重算）；变化 → 不可变替换末位 turn 对象
  * （不原地改，历史 turn 与其余项全部复用）并同步缓存自洽。
  */
@@ -226,48 +361,50 @@ function redriveLastTurnStreaming(cache: TurnRenderCache, forceWorking: boolean)
 }
 
 /**
- * 增量派生版 toRenderItems（D-4）：以「成员消息对象引用序列」为复用键。
+ * toRenderItemsIncremental（增量版，D-4，08 §3.3.1 perf W21）：
  * - 快路径：源数组引用未变 → 零重算（仅按 forceWorking 重驱动末位 isStreaming）
- * - 重扫：源数组引用变化 → filter 后重分组，同位置签名对齐的 turn 复用上次对象，
- *   只重建成员变化的 turn。首版只做同位置匹配（位置平移的 turn 重算，成本 O(turn 数)，
- *   可接受——08 §3.3.1 失效条件 2）。非 turn 项在重扫路径重建（构造便宜、数量少），
- *   经 cachedItems 随快路径整体复用。
+ * - 重扫：源数组引用变化 → 全量重分组（分组规则 v2 消费全量数组），同位置签名对齐的
+ *   turn 复用上次对象，只重建成员变化的 turn。首版只做同位置匹配（位置平移的 turn 重算，
+ *   成本 O(turn 数)，可接受——08 §3.3.1 失效条件 2）。非 turn 项在重扫路径重建（构造便宜、
+ *   数量少），经 cachedItems 随快路径整体复用。
  * - 上次末位 turn 的 streaming 态在末位地位变化时过期（如追加新 turn），复用分支
  *   按「期望 isStreaming」校正——不一致时不可变替换。
  *
- * @param sourceMessages 源消息数组（per-sid 分区数组，非 filter 产物）
- * @param filter 现状 filterDisplayableMessages（仅重扫路径调用；快路径跳过）
+ * @param sourceMessages 源消息数组（per-sid 分区数组，全量含 display:false）
  * @param forceWorking subagent 虚拟 session 强制 streaming
  * @param cache 增量缓存；undefined 时退化为全量版（等价现状 toRenderItems）
  */
 export function toRenderItemsIncremental(
   sourceMessages: Message[],
-  filter: (msgs: Message[]) => Message[],
   forceWorking: boolean,
   cache: TurnRenderCache | undefined,
 ): RenderItem[] {
   if (!cache) {
-    return toRenderItems(filter(sourceMessages), forceWorking)
+    return toRenderItems(sourceMessages, forceWorking)
   }
   if (cache.lastSourceRef === sourceMessages) {
     return redriveLastTurnStreaming(cache, forceWorking)
   }
 
-  const filtered = filter(sourceMessages)
-  const { slots, groups } = groupRenderInput(filtered)
+  const { slots, groups } = groupRenderInput(sourceMessages)
   const lastGroupIdx = groups.length - 1
   const turnObjects: MessageTurn[] = new Array<MessageTurn>(groups.length)
   const signatures: Message[][] = new Array<Message[]>(groups.length)
 
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i]
-    const sig: Message[] = g.user ? [g.user, ...g.assistants] : g.assistants.slice()
+    const sig: Message[] = [
+      ...(g.user ? [g.user] : []),
+      ...g.assistants,
+      ...(g.notices ?? []),
+    ]
     signatures[i] = sig
     const prevSig = cache.turnSignatures[i]
     const prevTurn = cache.turnObjects[i]
     const isLastTurn = i === lastGroupIdx
-    // 同位置签名逐引用对齐 → 复用上次 turn 对象。成员未变 → hasFoldable/user/assistants
-    // 必然不变，只需校正 isStreaming（末位地位变化 / forceWorking 翻转会让上次值过期）。
+    // 同位置签名逐引用对齐 → 复用上次 turn 对象。成员（含 notices）未变 →
+    // hasFoldable/user/assistants/notices/trigger 必然不变，只需校正 isStreaming
+    // （末位地位变化 / forceWorking 翻转会让上次值过期）。
     if (prevTurn && prevSig && signatureEquals(sig, prevSig)) {
       const expected = computeIsStreaming(g.assistants, isLastTurn, forceWorking)
       turnObjects[i] =
@@ -277,14 +414,16 @@ export function toRenderItemsIncremental(
         index: i + 1,
         user: g.user,
         assistants: g.assistants,
+        notices: g.notices,
+        trigger: g.trigger,
         isStreaming: computeIsStreaming(g.assistants, isLastTurn, forceWorking),
         hasFoldable: computeHasFoldable(g.assistants),
       }
     }
   }
 
-  const items: RenderItem[] = slots.map((s) =>
-    s.slot === 'turn' ? { kind: 'turn', turn: turnObjects[s.group] } : s.item,
+  const items = filterInvisibleItems(
+    slots.map((s) => (s.slot === 'turn' ? { kind: 'turn', turn: turnObjects[s.group] } : s.item)),
   )
 
   cache.lastSourceRef = sourceMessages
@@ -303,10 +442,14 @@ export function toRenderItems(
     index: i + 1,
     user: g.user,
     assistants: g.assistants,
+    notices: g.notices,
+    trigger: g.trigger,
     isStreaming: computeIsStreaming(g.assistants, i === groups.length - 1, forceWorking),
     hasFoldable: computeHasFoldable(g.assistants),
   }))
-  return slots.map((s) => (s.slot === 'turn' ? { kind: 'turn', turn: turns[s.group] } : s.item))
+  return filterInvisibleItems(
+    slots.map((s) => (s.slot === 'turn' ? { kind: 'turn', turn: turns[s.group] } : s.item)),
+  )
 }
 
 /** 统计 turn 内 thinking 块数（折叠条 badge） */

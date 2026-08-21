@@ -34,7 +34,6 @@ import { type Static, Type } from "typebox";
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
 import { THINKING_ORDER } from "../execution/model-resolver.ts";
 import type { LauncherDeps } from "../orchestration/launcher.ts";
-import { ArgsValidationError } from "../orchestration/args-validator.ts";
 import { abortRun, runWorkflow } from "../orchestration/lifecycle.ts";
 import type { RunStore } from "../orchestration/models/ports.ts";
 import type { WorkflowRun } from "../orchestration/models/workflow-run.ts";
@@ -250,8 +249,9 @@ function withGui(
 /** 按 WorkflowToolDetails 构造对应的 GuiComponent。 */
 export function buildWorkflowGui(details: WorkflowToolDetails) {
   if (details.action === "run") {
-    // not_found 是脚本未找到的逻辑错误（isError:true），不能走通用 mapper 的 done/check 成功映射。
-    // 短路为 danger severity 的 stats-line，与 isError 文案一致。
+    // not_found 曾是「isError:true + not_found details」的错误形态（W4 前返回值 isError 被
+    // pi 丢弃）；W4 后该错误改为 throw（details 不再产出此形态），本分支保留消费历史
+    // session entry / 防御性渲染，不能走通用 mapper 的 done/check 成功映射。
     if (details.status === "not_found") {
       return guiComponent("stats-line", {
         items: [{ label: "run", value: "not found", severity: "danger" as const }],
@@ -346,11 +346,13 @@ export function registerWorkflowTool(
     ): Promise<ToolResult> {
  // P1-2: Honor abort signal up-front
       if (signal?.aborted) {
-        return textResult("Operation aborted before start", true);
+        // throw（W4b）：pi 只对 execute throw 置 isError:true，返回值里的 isError
+        // 被 agent-loop 丢弃（agent-loop.js:453-483）——文案原样进 toolResult。
+        throw new Error("Operation aborted before start");
       }
- // P1-6: Reentry guard
+ // P1-6: Reentry guard（acquire 失败时尚未持有 guard，throw 前无需 release）
       if (!acquireReentryGuard(reentryRef)) {
-        return textResult(REENTRY_BUSY_MESSAGE, true);
+        throw new Error(REENTRY_BUSY_MESSAGE);
       }
       try {
         let result: ToolResult;
@@ -370,7 +372,7 @@ export function registerWorkflowTool(
           default: {
             // Exhaustiveness check — 新增 WorkflowAction 成员时未补 case，tsc 在此报错。
             const _exhaustive: never = action;
-            return textResult(`Unknown action: ${String(_exhaustive)}`, true);
+            throw new Error(`Unknown action: ${String(_exhaustive)}`);
           }
         }
         // GUI 协议：RPC 模式下附加 __gui__ 到 details
@@ -417,30 +419,27 @@ export async function actionRun(
 ): Promise<ToolResult> {
   const name = params.name;
   if (!name) {
-    return textResult("run requires 'name' parameter (absolute .js path from <available_workflows> <location>). Correct: {\"action\":\"run\",\"name\":\"<ref>\",\"args\":{...}}", true);
+    throw new Error("run requires 'name' parameter (absolute .js path from <available_workflows> <location>). Correct: {\"action\":\"run\",\"name\":\"<ref>\",\"args\":{...}}");
   }
   // 弱模型常见误用（P0 静默失败）：把 task/items 等 args 子字段平铺到 workflow params
   // 顶层（缺 args 嵌套）。args ?? {} 会静默 args={}，启动缺参 run 不报错——比 subagent
   // 平铺事故更严重。m6：先 registry.getPath（动态参数集来源——schema 即 SSOT），
   // not_found 优先返回；平铺检测报错带 Correct 正例纠正。
   const script = await deps.registry.getPath(name);
-  if (!script) {
- // 模糊匹配建议
+  // W4c：config-loader 的 toCachedMeta 对不可读/不存在文件返回 available:false 的
+  // stub（非 undefined），仅判 !script 会绕过 not_found → 空 sourceCode 假启动
+  //（W4b verifier 探针实测复现）。与下方 suggestions 分支的 wf.available 过滤口径对齐。
+  if (!script || !script.available) {
+ // 模糊匹配建议。throw（W4）：pi 只对 execute throw 置 isError:true，
+ // 返回值里的 isError 被 agent-loop 丢弃（agent-loop.js:453-483）——文案原样进 toolResult。
     const all = await deps.registry.loadAll();
     const available = all.filter((wf) => wf.available);
     const suggestions = available
       .map((wf) => `  - ${wf.name}: ${wf.meta.description || "(no description)"}`)
       .join("\n");
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Workflow '${name}' not found. Available:\n${suggestions || "  (none)"}\nUse <location> from <available_workflows> for the absolute .js path.`,
-        },
-      ],
-      details: { action: "run", runId: "", status: "not_found", name },
-      isError: true,
-    };
+    throw new Error(
+      `Workflow '${name}' not found. Available:\n${suggestions || "  (none)"}\nUse <location> from <available_workflows> for the absolute .js path.`,
+    );
   }
 
   // m6：动态参数集（schema 即 SSOT）→ 平铺检测；无 parameters → 单次 warn + 跳过
@@ -455,17 +454,15 @@ export async function actionRun(
   }
   const flattened = findFlattenedArgKeys(params, knownKeys, knownPatterns);
   if (flattened.length > 0) {
-    return textResult(
+    throw new Error(
       `Detected ${flattened.join(", ")} at top level — they belong inside 'args'. ` +
       `Correct: {"action":"run","name":"${name}","args":{${flattened.map((k) => `"${k}": "<value>"`).join(", ")}}}`,
-      true,
     );
   }
   // slug 运行时护栏（与 subagent startHandler 对称的纵深防御；schema maxLength 是第一道关卡）
   if (params.slug !== undefined && params.slug.length > SLUG_MAX_LENGTH) {
-    return textResult(
+    throw new Error(
       `slug exceeds ${SLUG_MAX_LENGTH} chars (got ${params.slug.length}). Shorten to a kebab-case label, e.g. "fix-login", "extract-urls".`,
-      true,
     );
   }
   const args = params.args ?? {};
@@ -473,36 +470,25 @@ export async function actionRun(
   const time = params.time;
 
  // 构建 RunSpec + 启动（m3：parameters 从 script.meta 拷贝——chokepoint 校验用；
- // 校验失败 → isError ToolResult 带 §5.3 指引，非 ArgsValidationError 保持传播）
-  let runId: string;
-  try {
-    runId = await runWorkflow(
-      {
-        scriptSource: script.toExecutable(),
-        args,
-        budgetTokens: tokens,
-        budgetTimeMs: time,
-        scriptName: script.name,
-        slug: params.slug,
-        scriptPath: script.path,
-        description: script.meta.description,
-        parameters: script.meta.parameters,
-        model: params.model,
-        thinkingLevel: params.thinkingLevel,
-      },
-      deps,
-      signal,
-    );
-  } catch (err) {
-    if (err instanceof ArgsValidationError) {
-      return {
-        content: [{ type: "text", text: err.message }],
-        details: { action: "run", runId: "", status: "invalid_args", name: script.name },
-        isError: true,
-      };
-    }
-    throw err;
-  }
+ // 校验失败 → ArgsValidationError 直接 throw 给 pi（W4：err.message 含 §5.3 指引，
+ // pi catch 后原文案进 toolResult content 并置 isError:true），其他错误保持传播）
+  const runId = await runWorkflow(
+    {
+      scriptSource: script.toExecutable(),
+      args,
+      budgetTokens: tokens,
+      budgetTimeMs: time,
+      scriptName: script.name,
+      slug: params.slug,
+      scriptPath: script.path,
+      description: script.meta.description,
+      parameters: script.meta.parameters,
+      model: params.model,
+      thinkingLevel: params.thinkingLevel,
+    },
+    deps,
+    signal,
+  );
 
   return {
     content: [
@@ -551,13 +537,12 @@ async function actionLifecycle(
 ): Promise<ToolResult> {
   const runId = params.runId;
   if (!runId) {
-    return textResult(`'runId' is required for ${action}. Correct: {"action":"${action}","runId":"<id>"} (use action:"status" to find runId)`, true);
+    throw new Error(`'runId' is required for ${action}. Correct: {"action":"${action}","runId":"<id>"} (use action:"status" to find runId)`);
   }
   const run = deps.runs.get(runId);
   if (!run) {
-    return textResult(
+    throw new Error(
       `Workflow '${runId}' not found. Use action:status to list active runs and their runIds.`,
-      true,
     );
   }
   try {
@@ -575,8 +560,9 @@ async function actionLifecycle(
       details: { action, runId, status: newStatus, reason: run.state.reason },
     };
   } catch (err) {
+    // throw（W4b）：abortRun 失败改 throw（原 return isError 被 pi 丢弃），"Error: " 前缀保持
     const msg = err instanceof Error ? err.message : String(err);
-    return textResult(`Error: ${msg}`, true);
+    throw new Error(`Error: ${msg}`);
   }
 }
 
@@ -597,10 +583,6 @@ function toRunSummary(run: WorkflowRun, store: RunStore): RunSummary {
   };
 }
 
-function textResult(text: string, isError = false): ToolResult {
-  return {
-    content: [{ type: "text", text }],
-    details: undefined,
-    isError: isError || undefined,
-  };
-}
+// W4b：原 textResult(text, isError) helper 已删除——23 处错误路径全部改 throw
+// （pi 只对 execute throw 置 isError:true，返回值里的 isError 被 agent-loop 丢弃，
+// agent-loop.js:453-483），且本文件无非错误纯文本结果用途，无残留调用方。

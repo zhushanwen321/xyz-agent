@@ -25,7 +25,7 @@ describe('pending.register 超时', () => {
    * U3: 超时后 reject 带 timeout code 的 Error。
    */
   it('超时后 reject 带 timeout code 的 Error', async () => {
-    const id = pending.create()
+    const id = pending.createCommandId()
     const p = pending.register<string>(id, 100)
 
     // 推进到超时点
@@ -40,7 +40,7 @@ describe('pending.register 超时', () => {
    * U4: 正常 resolve 时清理超时 timer（不泄漏，不误触发超时 reject）。
    */
   it('正常 resolve 时清理超时 timer（不泄漏）', async () => {
-    const id = pending.create()
+    const id = pending.createCommandId()
     const p = pending.register<string>(id, 5000)
 
     // 在超时前 resolve

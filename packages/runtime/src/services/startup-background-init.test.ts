@@ -16,6 +16,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { runStartupBackgroundInit } from './startup-background-init.js'
 import { getMigrationGate } from './session/session-lifecycle.js'
+import { getSessionsDir } from '../infra/pi/pi-paths.js'
 import type { ExtensionService } from './extension-service.js'
 import type { ProcessManager } from '../infra/pi/process-manager.js'
 import type { SkillRegistry } from './skill-registry.js'
@@ -32,11 +33,27 @@ const h = vi.hoisted(() => {
   return { migrateProviderConfig, deferred }
 })
 
+// ⑨ 孤儿收殓挂载测试用 mock：文件级 vi.mock 同时保护其余用例——若测试文件整体跑超
+// 5s（慢 CI），真实 5s 定时器触发时命中的也是此 mock，不会真扫/真杀本机进程。
+const rh = vi.hoisted(() => ({
+  reapOrphanPiProcesses: vi.fn(async (_options: { sessionsDir: string; ownPid: number }) => ({
+    scanned: 0,
+    reaped: [] as number[],
+    failed: [] as number[],
+    unsupported: false,
+  })),
+}))
+
 vi.mock('./migration/legacy-provider-migration.js', () => ({
   migrateProviderConfig: h.migrateProviderConfig,
 }))
 vi.mock('./worktree-config-helper.js', () => ({
   ensureAutoRenameDefault: vi.fn(),
+}))
+vi.mock('./reap-orphan-pi.js', () => ({
+  // 挂载方从该模块 import 常量与函数，mock 需两者都供给（值与真实实现一致）。
+  ORPHAN_REAP_DELAY_MS: 5_000,
+  reapOrphanPiProcesses: rh.reapOrphanPiProcesses,
 }))
 
 /** 与 ProviderConfigMigrationReport 形状一致（catalog 含 errors 字段——handled 分支会读）。 */
@@ -146,6 +163,40 @@ describe('runStartupBackgroundInit（D8-1 后台初始化序列）', () => {
     await runStartupBackgroundInit(deps)
     expect(appInfo.piVersion).toBe('unknown')
     expect(broadcastAppInfo).not.toHaveBeenCalled()
+  })
+})
+
+describe('⑨ 孤儿 pi 收殓挂载（integrity-hardening §3.4 D4a）', () => {
+  it('启动后延迟 5s 触发一次收殓，参数带本实例 sessionsDir 与 runtime pid', async () => {
+    vi.useFakeTimers()
+    try {
+      const { deps } = makeDeps()
+      await runStartupBackgroundInit(deps)
+      // 串行链完成后宽限未到：不收殓（5s 给 pi stdin-EOF 自杀链留时间）
+      expect(rh.reapOrphanPiProcesses).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(rh.reapOrphanPiProcesses).toHaveBeenCalledTimes(1)
+      const arg = rh.reapOrphanPiProcesses.mock.calls[0][0]
+      expect(arg.ownPid).toBe(process.pid)
+      expect(arg.sessionsDir).toBe(getSessionsDir())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('收殓异常不外溢：reap reject 被挂载点 catch 消化，不产生 unhandled rejection、不影响其他步', async () => {
+    vi.useFakeTimers()
+    try {
+      rh.reapOrphanPiProcesses.mockRejectedValueOnce(new Error('reap boom'))
+      const { deps, extensionService } = makeDeps()
+      await expect(runStartupBackgroundInit(deps)).resolves.toBeUndefined()
+      // advanceTimersByTimeAsync 会 flush 微任务：reject 必须已被挂载点 catch 消化
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(rh.reapOrphanPiProcesses).toHaveBeenCalledTimes(1)
+      expect(extensionService.checkAndAutoUpgrade).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

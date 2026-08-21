@@ -35,6 +35,8 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     // m2：queue_update drain 接线 drainPending + appendUser（对齐 core __tests__/effects.test.ts 形态）
     drainPending: vi.fn(),
     appendUser: vi.fn(),
+    // w21：entry 载体帧喂 reducer 的接入点
+    applyEntryFrame: vi.fn(),
   }
 }
 
@@ -99,7 +101,7 @@ describe('dispatchMessageEvent contentBlocks 填充（流式路径）', () => {
   it('U5: 收 tool_call_start(toolCallId="tc1") → toolCalls 含 tc1 且 contentBlocks 尾部 push {type:toolCall,refId:tc1}', () => {
     const ctx = makeCtx()
     dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'read', arguments: {}, timestamp: new Date(0).toISOString() } }))
     const a = lastAssistant(ctx)
     expect(a.toolCalls?.[0].id).toBe('tc1')
     expect(a.contentBlocks).toEqual([{ type: 'toolCall', refId: 'tc1' }])
@@ -111,7 +113,7 @@ describe('dispatchMessageEvent contentBlocks 填充（流式路径）', () => {
     dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
     dispatchMessageEvent(ctx, SID, msg('message.thinking_start', { thinkingId: 'th1' }))
     dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'hi' }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'read', arguments: {}, timestamp: new Date(0).toISOString() } }))
     dispatchMessageEvent(ctx, SID, msg('message.thinking_start', { thinkingId: 'th2' }))
     const a = lastAssistant(ctx)
     expect(a.contentBlocks).toEqual([
@@ -176,7 +178,7 @@ describe('dispatchMessageEvent contentBlocks 填充（流式路径）', () => {
   it('U11c: tool_call_start 无 toolCallId → fallback id 在 toolCalls[].id 与 contentBlocks[].refId 一致', () => {
     const ctx = makeCtx()
     dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolName: 'read' })) // 无 toolCallId
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: { type: 'toolCall', toolName: 'read', arguments: {}, timestamp: new Date(0).toISOString() } })) // 无 toolCallId
     const a = lastAssistant(ctx)
     const tcId = a.toolCalls?.[0].id
     expect(tcId).toBeTruthy()
@@ -188,9 +190,9 @@ describe('dispatchMessageEvent contentBlocks 填充（流式路径）', () => {
   it('U11d: contentBlocks 已定，收 tool_call_end → contentBlocks 不变，仅 toolCalls[].status 更新', () => {
     const ctx = makeCtx()
     dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'read', arguments: {}, timestamp: new Date(0).toISOString() } }))
     const before = lastAssistant(ctx).contentBlocks
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { toolCallId: 'tc1', status: 'completed', output: 'ok' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { entry: { type: 'message', parentId: null, timestamp: new Date(0).toISOString(), message: { role: 'toolResult', toolCallId: 'tc1', content: [{ type: 'text', text: 'ok' }], isError: false, timestamp: 0 } } }))
     const a = lastAssistant(ctx)
     expect(a.contentBlocks).toEqual(before)
     expect(a.toolCalls?.[0].status).toBe('completed')

@@ -236,11 +236,11 @@ describe('FG5 chat store 块类型扩展', () => {
     })
     store.applyMessageEvent('sx', {
       type: 'message.tool_call_start',
-      payload: { sessionId: 'sx', toolCallId: 'tc1', toolName: 'read' },
+      payload: { sessionId: 'sx', entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'read', arguments: {}, timestamp: new Date(0).toISOString() } },
     })
     store.applyMessageEvent('sx', {
       type: 'message.tool_call_end',
-      payload: { sessionId: 'sx', toolCallId: 'tc1', output: 'done', status: 'completed' },
+      payload: { sessionId: 'sx', entry: { type: 'message', parentId: null, timestamp: new Date(0).toISOString(), message: { role: 'toolResult', toolCallId: 'tc1', content: [{ type: 'text', text: 'done' }], isError: false, timestamp: 0 } } },
     })
     const msgs = store.getMessages('sx')
     expect(msgs[0].toolCalls).toHaveLength(1)
@@ -275,7 +275,7 @@ describe('FG5 chat store 块类型扩展', () => {
   it('tool_call_update 更新 ToolCall.detail（对齐生产端，只读 detail）', () => {
     const store = useChatStore()
     store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
-    store.applyMessageEvent('sx', { type: 'message.tool_call_start', payload: { sessionId: 'sx', toolCallId: 'tc1', toolName: 'bash' } })
+    store.applyMessageEvent('sx', { type: 'message.tool_call_start', payload: { sessionId: 'sx', entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'bash', arguments: {}, timestamp: new Date(0).toISOString() } } })
     // string detail
     store.applyMessageEvent('sx', { type: 'message.tool_call_update', payload: { sessionId: 'sx', toolCallId: 'tc1', detail: '执行中…' } })
     expect(store.getMessages('sx')[0].toolCalls?.[0].detail).toBe('执行中…')
@@ -495,7 +495,10 @@ describe('FG5 chat store 块类型扩展', () => {
     })
     const msg = store.getMessages('sx')[0]
     expect(msg.role).toBe('system')
-    expect(msg.compactionSummary).toEqual({ summary: '压缩完成', tokensBefore: 50000 })
+    // [W6] compactionSummary 直插已 entry 化（与 replay 同路径）——compactionSummary 携带
+    // timestamp（帧缺省时取当前时刻），与文件侧重放形态一致
+    expect(msg.compactionSummary).toMatchObject({ summary: '压缩完成', tokensBefore: 50000 })
+    expect(typeof msg.compactionSummary?.timestamp).toBe('number')
   })
 
   it('branchSummary 作 system 消息追加', () => {

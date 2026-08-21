@@ -1,7 +1,7 @@
 /**
  * F1 修复测试：message-converter toolResult 分支透传 details 字段
  *
- * 验证重开 session 后 __gui__ 数据不丢失（规则 7.5）。
+ * 验证重开 session 后 __gui__ 数据不丢失（关键规则 9）。
  */
 
 import { describe, it, expect } from 'vitest'
@@ -133,7 +133,7 @@ describe('message-converter: outputRaw 历史恢复（对称实时路径）', ()
     const tc = messages.find(m => m.role === 'assistant')!.toolCalls![0]
     // output 是 stripAnsi 后的纯文本
     expect(tc.output).toBe('green text')
-    // outputRaw 保留原始 ANSI（对称实时路径，规则 7.5）
+    // outputRaw 保留原始 ANSI（对称实时路径，关键规则 9）
     expect(tc.outputRaw).toBe(ansiText)
   })
 

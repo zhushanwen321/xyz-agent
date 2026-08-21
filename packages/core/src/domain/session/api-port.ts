@@ -8,7 +8,7 @@
  * 契约边界：getHistory 不在此端口（属 chat 域）——selectSession 的 hydrate
  * 经 ChatApiPort（w3 use-session 的 ChatHydratePort 注入回调）承接。
  */
-import type { SessionGroup, SessionSummary, BatchDeleteResult } from '@xyz-agent/shared'
+import type { SessionGroup, SessionSummary, BatchDeleteResult, ThinkingLevel } from '@xyz-agent/shared'
 
 /**
  * session 后端操作端口。
@@ -19,8 +19,19 @@ export interface SessionApiPort {
   list(): Promise<SessionGroup[]>
   /** 切换 session（selectSession 用；hydrate 不在此端口） */
   switchSession(id: string): Promise<void>
-  /** 新建 session（createSessionFlow 用；返回含 cwd 用于 INV-7 降级比对；projectId = D14 创建时归属） */
-  create(cwd: string, label: string, presetId?: string, projectId?: string): Promise<SessionSummary>
+  /**
+   * 新建 session（createSessionFlow 用；返回含 cwd 用于 INV-7 降级比对；projectId = D14 创建时归属）。
+   * modelOverride/thinkingOverride：Landing Chip 覆盖值，session 创建即带正确模型（B3）。
+   * 优先级：override > preset > 全局默认。消除 config.sessions 广播覆盖的竞态。
+   */
+  create(
+    cwd: string,
+    label: string,
+    presetId?: string,
+    projectId?: string,
+    modelOverride?: string,
+    thinkingOverride?: ThinkingLevel,
+  ): Promise<SessionSummary>
   /** 重命名 session（乐观更新后调） */
   rename(id: string, label: string): Promise<void>
   /** 删除单个 session（deleteSession 用） */

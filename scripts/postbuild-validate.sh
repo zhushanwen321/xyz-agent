@@ -196,32 +196,6 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
             fi
         fi
 
-        # extraResources: xyz-agent-extension.js（/xyz-navigate 命令的 pi extension）
-        # electron-builder from 路径写错时会静默丢弃（只警告不失败），故在此显式校验。
-        # 历史：pnpm workspace 迁移后 projectDir=apps/electron/，from: ../ 解析到 apps/
-        # 而非仓库根，导致文件未进产物。
-        if [ -f "$APP_PATH/Contents/Resources/xyz-agent-extension.js" ]; then
-            echo -e "  ${GREEN}✓${NC} xyz-agent-extension.js in Resources"
-        else
-            echo -e "  ${RED}✗${NC} xyz-agent-extension.js 缺失（检查 electron-builder.yml from 路径）"
-            FAILED=1
-        fi
-        # extraResources: xyz-system-prompt-extension.js（before_agent_start hook 扩展）
-        # 与 xyz-agent-extension.js 同模式校验（规则 #12 打包验证）。
-        if [ -f "$APP_PATH/Contents/Resources/xyz-system-prompt-extension.js" ]; then
-            echo -e "  ${GREEN}✓${NC} xyz-system-prompt-extension.js in Resources"
-        else
-            echo -e "  ${RED}✗${NC} xyz-system-prompt-extension.js 缺失（检查 electron-builder.yml from 路径）"
-            FAILED=1
-        fi
-        # extraResources: xyz-client-msg-id-mapper.js（input hook 剥标记 + appendEntry 写映射）
-        # 客户端 message 元数据映射框架，重开 session 回填 badge。同前两个 extension 模式校验。
-        if [ -f "$APP_PATH/Contents/Resources/xyz-client-msg-id-mapper.js" ]; then
-            echo -e "  ${GREEN}✓${NC} xyz-client-msg-id-mapper.js in Resources"
-        else
-            echo -e "  ${RED}✗${NC} xyz-client-msg-id-mapper.js 缺失（检查 electron-builder.yml from 路径）"
-            FAILED=1
-        fi
         # extraResources: bin/xyz-settings CLI（tsup 打包的 cli.cjs，pi Skill 引用）
         # 与两个 extension.js 同模式校验（electron-builder from 错误只警告不失败）。
         if [ -f "$APP_PATH/Contents/Resources/bin/xyz-settings" ]; then
@@ -296,9 +270,6 @@ if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
         "$WIN_UNPACKED/dist/runtime/plugin-bootstrap-process.cjs" \
         "$WIN_UNPACKED/dist/runtime/plugin-esm-loader.cjs" \
         "$WIN_RESOURCES/pi/pi-windows-x64.exe" \
-        "$WIN_RESOURCES/xyz-agent-extension.js" \
-        "$WIN_RESOURCES/xyz-system-prompt-extension.js" \
-        "$WIN_RESOURCES/xyz-client-msg-id-mapper.js" \
         "$WIN_RESOURCES/bin/xyz-settings"; do
         if [ -f "$required" ]; then
             echo -e "  ${GREEN}✓${NC} ${required#$WIN_ROOT/}"
@@ -385,9 +356,6 @@ if [ -d "$OUTPUT_DIR/linux-unpacked" ]; then
             "$LINUX_UNPACKED/dist/runtime/index.cjs" \
             "$LINUX_UNPACKED/dist/runtime/plugin-bootstrap.cjs" \
             "$LINUX_RESOURCES/pi/pi-linux-x64" \
-            "$LINUX_RESOURCES/xyz-agent-extension.js" \
-            "$LINUX_RESOURCES/xyz-system-prompt-extension.js" \
-            "$LINUX_RESOURCES/xyz-client-msg-id-mapper.js" \
             "$LINUX_RESOURCES/bin/xyz-settings"; do
             if [ -f "$required" ]; then
                 echo -e "  ${GREEN}✓${NC} ${required#$LINUX_ROOT/}"
@@ -396,6 +364,22 @@ if [ -d "$OUTPUT_DIR/linux-unpacked" ]; then
                 FAILED=1
             fi
         done
+    fi
+    # builtin pi extensions（Linux 同 mac/win 校验，复用 verify-staged）。builtin 迁移
+    # npm 包化（2026-08）时 mac/win 补了本校验、linux 覆盖丢失（PR #185 review S1），
+    # extraResources from 路径错等 linux 专属回归将静默漏检。
+    LINUX_BUILTIN="$LINUX_RESOURCES/extensions/@zhushanwen"
+    if [ -d "$LINUX_BUILTIN" ]; then
+        if node "$PROJECT_ROOT/scripts/verify-staged-extensions.mjs" --staged-dir "$LINUX_BUILTIN" > /tmp/ext-verify-linux.log 2>&1; then
+            echo -e "  ${GREEN}✓${NC} builtin ext 完整性校验通过（verify-staged）"
+        else
+            echo -e "  ${RED}✗${NC} builtin ext 完整性校验失败:"
+            sed 's/^/    /' /tmp/ext-verify-linux.log
+            FAILED=1
+        fi
+    else
+        echo -e "  ${RED}✗${NC} builtin ext 目录缺失: $LINUX_BUILTIN（检查 prepare-builtin-extensions.sh + electron-builder.yml）"
+        FAILED=1
     fi
 fi
 

@@ -6,11 +6,11 @@
  *  - 替换卡警告文案可见。
  *  - 保存流：修改替换区 → 开开关 → 点保存 → setSystemPrompt 被调用。
  *  - 失败反馈：setSystemPrompt reject → 出现 error toast。
- *  - 快照卡：渲染快照内容/更新时间；刷新按钮重新拉取快照。
+ *  - 放弃/恢复默认：dirty 才可用，discard 还原已保存快照、reset 清空关开关。
  *  - corrupted：getSystemPrompt 返回 corrupted=true → 页内出现损坏提示。
  *
  * mock 策略：
- *  - vi.mock('@/api') 提供 config.getSystemPrompt / setSystemPrompt / getSystemPromptSnapshot，
+ *  - vi.mock('@/api') 提供 config.getSystemPrompt / setSystemPrompt，
  *    以及 SettingsModal/store 需要的 config.listProviders / setSkillDirs / setAgentDirs。
  *  - vi.mock('@/i18n') 仅 stub setLocale，保留 t 行为（菜单 key 未翻译时回退 key）。
  *  - Dialog / DialogContent 走 reka-ui teleport 到 body，查询走 document.body。

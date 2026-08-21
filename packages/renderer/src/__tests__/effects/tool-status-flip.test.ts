@@ -234,7 +234,7 @@ describe('方案 c: mount MessageStream（真 store + 真虚拟滚动层）— t
     // 触发 tool_call_start：插入 running tool
     chat.applyMessageEvent(sid, {
       type: 'message.tool_call_start',
-      payload: { sessionId: sid, toolCallId: 'tc1', toolName: 'read', input: { path: '/x' } },
+      payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'read', arguments: { path: '/x' }, timestamp: new Date(0).toISOString() } },
     } as ServerMessage<'message.tool_call_start'>)
     await nextTick()
 
@@ -246,7 +246,7 @@ describe('方案 c: mount MessageStream（真 store + 真虚拟滚动层）— t
     // 触发 tool_call_end：翻转成 completed
     chat.applyMessageEvent(sid, {
       type: 'message.tool_call_end',
-      payload: { sessionId: sid, toolCallId: 'tc1', output: 'file content', status: 'completed' },
+      payload: { sessionId: sid, entry: { type: 'message', parentId: null, timestamp: new Date(0).toISOString(), message: { role: 'toolResult', toolCallId: 'tc1', content: [{ type: 'text', text: 'file content' }], isError: false, timestamp: 0 } } },
     } as ServerMessage<'message.tool_call_end'>)
     await nextTick()
 
@@ -336,12 +336,12 @@ describe('方案 c: mount MessageStream（真 store + 真虚拟滚动层）— t
     await nextTick()
 
     // tool_call_start
-    chat.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc1', toolName: 'read', input: {} } } as ServerMessage<'message.tool_call_start'>)
+    chat.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, entry: { type: 'toolCall', toolCallId: 'tc1', toolName: 'read', arguments: {}, timestamp: new Date(0).toISOString() } } } as ServerMessage<'message.tool_call_start'>)
     await nextTick()
     expect(wrapper.find('[data-testid="turn-xray"]').attributes('data-tool-status')).toBe('running')
 
     // tool_call_end（completed）
-    chat.applyMessageEvent(sid, { type: 'message.tool_call_end', payload: { sessionId: sid, toolCallId: 'tc1', output: 'done', status: 'completed' } } as ServerMessage<'message.tool_call_end'>)
+    chat.applyMessageEvent(sid, { type: 'message.tool_call_end', payload: { sessionId: sid, entry: { type: 'message', parentId: null, timestamp: new Date(0).toISOString(), message: { role: 'toolResult', toolCallId: 'tc1', content: [{ type: 'text', text: 'done' }], isError: false, timestamp: 0 } } } } as ServerMessage<'message.tool_call_end'>)
     await nextTick()
 
     // message.complete（normal stop）→ finalizeSession reason='normal'

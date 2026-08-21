@@ -127,6 +127,9 @@ describe('readCompactionSummary', () => {
       timestamp: 123,
     })
   })
+  it("空串 summary 透传保留（MF-1——pi 落盘 '' 时 replay 保留空行，live 链不得丢成 undefined 走 fallback）", () => {
+    expect(readCompactionSummary({ summary: '', tokensBefore: 100 })).toEqual({ summary: '', tokensBefore: 100 })
+  })
   it('部分字段仅构建存在项（非法值跳过）', () => {
     expect(readCompactionSummary({})).toEqual({})
     expect(readCompactionSummary({ tokensBefore: 100 })).toEqual({ tokensBefore: 100 })
@@ -141,6 +144,9 @@ describe('readBranchSummary', () => {
       fromId: 'f',
       timestamp: 123,
     })
+  })
+  it("空串 summary 透传保留（MF-1 同族预防——与 readCompactionSummary 同型门）", () => {
+    expect(readBranchSummary({ summary: '', fromId: 'f' })).toEqual({ summary: '', fromId: 'f' })
   })
   it('部分字段仅构建存在项', () => {
     expect(readBranchSummary({})).toEqual({})

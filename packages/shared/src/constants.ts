@@ -24,6 +24,23 @@ export const SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set(['subagent'])
  *  捕获发起时刻（action=run → 广播 session.workflows 增量信号）。 */
 export const WORKFLOW_TOOL_NAMES: ReadonlySet<string> = new Set(['workflow'])
 
+/**
+ * W16/W17 [D4]：subagent/workflow 自描述持久化 entry 的 customType（runtime 侧消费值）。
+ *
+ * 权威源在 extensions/subagent-workflow（跨包依赖方向不允许 runtime import extensions/
+ * 源码，只能在此复制字面量并保持等值——同 workflow-extractor SNAPSHOT_VERSION 的本地
+ * 副本模式）：
+ * - `subagent-record`：extensions/subagent-workflow/src/execution/record-entry.ts 的
+ *   SUBAGENT_RECORD_CUSTOM_TYPE（record 状态迁移点 append 完整快照，data schema v1）
+ * - `workflow-record`：extensions/subagent-workflow/src/orchestration/jsonl-run-store.ts 的
+ *   WORKFLOW_RECORD_CUSTOM_TYPE（每次成功 flush append 完整 RunSnapshot，data schema v1）
+ *
+ * 消费方：event-adapter（entry_appended 失效过滤）、subagent/workflow-extractor（entry
+ * 扫描的自描述分支）。extension 升级 customType 值时必须同步此处。
+ */
+export const SUBAGENT_RECORD_CUSTOM_TYPE = 'subagent-record'
+export const WORKFLOW_RECORD_CUSTOM_TYPE = 'workflow-record'
+
 /** pi 支持的 provider api 标识全集（前后端共享 SSOT）。
  *  runtime 的 applyTypeTranslation 改为透传后，前端 Select 必须直接发送此集合内的终值。
  *  注意：pi 不支持 ollama；ollama 的前端适配在 W4 处理，runtime 不做别名翻译。 */
@@ -31,12 +48,24 @@ export const PROVIDER_API_TYPES = ['anthropic-messages', 'openai-completions'] a
 export type ProviderApiType = (typeof PROVIDER_API_TYPES)[number]
 
 /** pi 运行时实际支持的所有 api 终值（用于 runtime warn 校验）。
- *  比 PROVIDER_API_TYPES 多 openai-responses —— 前端 Select 暂未暴露该类型，
- *  但 pi 运行时支持，传入时不应 warn。两个常量分离：前者是「前端可选」，后者是「pi 认识」。 */
+ *  = pi-ai KnownApi 10 值全集（W2 对齐 pi-assumption-remediation A-09，2026-08-20 现场核实）。
+ *  锚点：pi 0.84.1 实装依赖内嵌 pi-ai 0.84.2
+ *  `node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/types.d.ts:15`
+ *  的 KnownApi 联合（与根 pi-ai 0.82.1 `node_modules/@earendil-works/pi-ai/dist/types.d.ts:14` 同集）。
+ *  维护注：升级 pi / pi-ai 时 diff 上面锚点行并同步此处（顺序保持与 KnownApi 定义一致便于逐值对照），
+ *  避免白名单再漂移——此前仅 3 值导致 7 种合法 api type 误报「pi 可能不支持」warn。
+ *  比 PROVIDER_API_TYPES 多 8 值：前者是「前端可选」，本集合是「pi 认识」。 */
 export const KNOWN_PI_API_TYPES: ReadonlySet<string> = new Set([
-  'anthropic-messages',
   'openai-completions',
+  'mistral-conversations',
   'openai-responses',
+  'azure-openai-responses',
+  'openai-codex-responses',
+  'anthropic-messages',
+  'bedrock-converse-stream',
+  'google-generative-ai',
+  'google-vertex',
+  'pi-messages',
 ])
 
 /** Environment variable prefixes allowed to pass to child processes */

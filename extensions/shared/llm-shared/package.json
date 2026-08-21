@@ -21,6 +21,9 @@
     "typecheck": "npx tsc --noEmit",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@zhushanwen/pi-file-lock": "workspace:*"
+  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*"
@@ -36,6 +39,7 @@
   "devDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
+    "@vitest/coverage-v8": "^4.1.9",
     "vitest": "^4.1.8"
   }
 }

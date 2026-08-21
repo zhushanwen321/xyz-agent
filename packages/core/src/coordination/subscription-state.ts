@@ -60,6 +60,7 @@ export interface SubscriptionState {
  * 跨 routeInbound / subscribeSession 共享同一份（routeInbound 读 + 更新，subscribeSession 写，
  * 消费方 disposeSession 删）。与 renderer useChat.streamSubscriptions 同范式（会话级状态在模块顶层）。
  */
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：模块级单例订阅状态表（ADR-0049 全局 sid 协调器，上方注释已述与 useChat 同范式）
 const subscriptionStates = new Map<string, SubscriptionState>()
 
 /**
@@ -73,6 +74,7 @@ const subscriptionStates = new Map<string, SubscriptionState>()
  * 语义不同，不得互吞；同参并发（重复相同 backfill）则复用同一 Promise。
  * 失败也清理（finally）：failed subscribe 可重试，不残留死 Promise。
  */
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：in-flight 订阅去重表（并发收敛到同一 Promise，非 GUI 数据）
 const inFlightSubscribes = new Map<string, Promise<void>>()
 
 function subscribeKey(sessionId: string, fromSeq?: number): string {
@@ -264,6 +266,26 @@ export function getSubscriptionState(sessionId: string): SubscriptionState | und
  */
 export function clearSubscription(sessionId: string): void {
   subscriptionStates.delete(sessionId)
+}
+
+/**
+ * 失效指定 session 的全部订阅簿记（状态条目 + in-flight 去重条目），session.exited 时调用。
+ *
+ * 与 clearSubscription 的差异：额外清 inFlightSubscribes 里该 session 的条目。残留的
+ * in-flight Promise 对应死 session 的 subscribe RPC（runtime 侧 session 已删，reply 要么
+ * 报错要么 65s 超时），不清会让 respawn 后首次 ensureStreamSubscription 被 in-flight
+ * 去重收敛到死 Promise——不重发 subscribe RPC，新 pi 的流式推送无订阅者。
+ *
+ * 被清的旧 Promise 自身无害：resolve 路径（订阅真实成功）才写回状态条目，reject 路径
+ * 不写；其 finally 对已删 key 的 delete 是 no-op。
+ */
+export function invalidateSubscription(sessionId: string): void {
+  subscriptionStates.delete(sessionId)
+  for (const key of [...inFlightSubscribes.keys()]) {
+    if (key === sessionId || key.startsWith(`${sessionId}:`)) {
+      inFlightSubscribes.delete(key)
+    }
+  }
 }
 
 /**

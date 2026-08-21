@@ -24,6 +24,7 @@ import {
   getCachedFile,
   getCachedFileContent,
 } from "../resource-discovery.ts";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 // ============================================================
 // helpers
@@ -387,6 +388,29 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     );
     // 快照等价：源级并行 async 版与串行 sync 版输出逐项一致（含序与 source 标签）
     expect(asyncResult).toEqual(discoverResourcesSync(config));
+  });
+
+  it("async: 同名遮蔽时输出 warn（D8d 有检测必有报告）", async () => {
+    const npmPkg = path.join(agentDir, "npm", "node_modules", "test-pkg");
+    writePackageJson(npmPkg, { agents: ["./agents"] });
+    const npmFile = writeFile(path.join(npmPkg, "agents"), "dup.md", "npm-body");
+    const projFile = writeFile(path.join(ws, ".agents", "agents"), "dup.md", "project-body");
+    const warnSpy = vi.spyOn(getLogger("subagents"), "warn");
+
+    try {
+      const result = await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+
+      // 遮蔽仍生效（last-writer-wins 语义不变）
+      expect(result.find((r) => path.basename(r.path) === "dup.md")?.source).toBe("project-agents");
+      // 但不再静默：warn 报告被遮蔽方与保留方路径（D8d「有检测无报告」修复）
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const [msg, data] = warnSpy.mock.calls[0];
+      expect(String(msg)).toContain('duplicate agents "dup"');
+      expect(String(msg)).toContain("project-agents shadows npm");
+      expect(data).toMatchObject({ shadowed: npmFile, kept: projFile });
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 

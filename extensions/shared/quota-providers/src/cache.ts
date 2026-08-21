@@ -7,12 +7,12 @@
  *   - 新增 provider：实现 QuotaProvider 接口 → 在 PROVIDERS 注册（零改动 cache.ts）
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
-import { getCachePath, getSpeedDir } from "./paths.js";
+import { getCachePath, getProvidersConfigPath, getSpeedDir } from "./paths.js";
 // 架构修复：doUpdate 用 buildRuntimeProviders() 替代静态 PROVIDERS，
 // 使 providers.json 中 enabled=false 的 provider 不会被 fetch。
 // registry.ts 内部 import PROVIDERS，此处不直接引用。
@@ -42,6 +42,39 @@ const RECORD_MIN_FIELDS = 2;
 
 const CACHE_PATH = getCachePath();
 const SPEED_DIR = getSpeedDir();
+
+// ── 原子写 tmp 唯一化（对齐 llm-shared config.ts 的 uniqueTmpPath，D1e 同款）──
+// 固定名 `<path>.tmp` 在双侧并发写（同进程多 session / 跨进程）时可碰撞互相截断；
+// 后缀 = pid + 36 进制随机段，保证写方间名字空间不相交。
+
+const TMP_RANDOM_BASE = 36;
+const TMP_RANDOM_SLICE_START = 2; // 跳过 Math.random 字符串的 "0." 前缀
+const TMP_RANDOM_SLICE_END = 10;
+function uniqueTmpPath(filePath: string): string {
+	return `${filePath}.tmp_${process.pid}_${Math.random()
+		.toString(TMP_RANDOM_BASE)
+		.slice(TMP_RANDOM_SLICE_START, TMP_RANDOM_SLICE_END)}`;
+}
+
+/**
+ * 原子写 JSON：唯一 tmp + rename（D1e 对齐）。写/rename 抛错时清理残留 tmp 后
+ * 重抛原错误（RK3 对齐：唯一名不会自覆盖，不清理会随崩溃累积残留文件）。
+ */
+function atomicWriteJson(filePath: string, data: unknown): void {
+	const tmpPath = uniqueTmpPath(filePath);
+	try {
+		writeFileSync(tmpPath, JSON.stringify(data, null, JSON_INDENT), "utf-8");
+		renameSync(tmpPath, filePath);
+	} catch (err) {
+		try {
+			if (existsSync(tmpPath)) unlinkSync(tmpPath);
+		} catch (cleanupErr) {
+			// tmp 清理失败不掩盖原错误，仅记录
+			console.warn(`[quota-cache] tmp cleanup failed:`, cleanupErr);
+		}
+		throw err;
+	}
+}
 
 // ── 历史路径迁移 ────────────────────────────────────────
 // [HISTORICAL] statusline 包已删，其遗留的 <agentDir>/statusline_cache.json 由本库接管
@@ -97,7 +130,42 @@ export interface CacheRatioData {
 
 // ── Cache 公共 API ─────────────────────────────────────
 
+// [D8d write-after-invalidate] providers.json 变化（provider 删除/禁用）被 registry 按
+// mtime 感知，但磁盘缓存条目要等 TTL 过期的 doUpdate 重建才消失——窗口内已删 provider
+// 的旧数据仍被读到；进程不再读 cache 时残留永久。此处改为 mtime 变化即同步 prune。
+let prunedForMtime = -1;
+
+function pruneRemovedProviderEntries(): void {
+	const configPath = getProvidersConfigPath();
+	if (!existsSync(configPath)) return;
+	const mtime = statSync(configPath).mtimeMs;
+	if (mtime === prunedForMtime) return;
+	prunedForMtime = mtime;
+	// 集合为空（providers.json 解析失败/全删）时不清——防配置异常窗口误清全部条目
+	const ids = new Set(buildRuntimeProviders().map((p) => p.id));
+	if (ids.size === 0) return;
+
+	const cached: Record<string, unknown> = { ...readCacheSync() };
+	let removed = false;
+	for (const key of Object.keys(cached)) {
+		if (key !== "updatedAt" && !ids.has(key)) {
+			delete cached[key];
+			removed = true;
+		}
+	}
+	if (!removed) return;
+	try {
+		mkdirSync(dirname(CACHE_PATH), { recursive: true });
+		atomicWriteJson(CACHE_PATH, cached);
+		console.warn("[quota-cache] pruned entries of removed providers");
+	} catch (e) {
+		// best-effort：写失败保留旧缓存，下次 mtime 变化重试；消费方按 plan key 取，残留不产生错误数据
+		console.warn("[quota-cache] prune write failed (keeping old):", e);
+	}
+}
+
 export function readCache(): CacheData {
+	pruneRemovedProviderEntries();
 	const cached = readCacheSync();
 	if (Date.now() - cached.updatedAt > CACHE_TTL_MS) triggerUpdate();
 	return cached;
@@ -138,14 +206,12 @@ async function doUpdate(): Promise<void> {
 			r.status === "fulfilled" && r.value !== null ? r.value : oldVal;
 	}
 
-	// 原子写入：先写临时文件再 rename，防止半写损坏
+	// 原子写入：唯一 tmp + rename，防止半写损坏（tmp 唯一名防并发碰撞，D1e 对齐）
 	try {
 		mkdirSync(dirname(CACHE_PATH), { recursive: true });
-		const tmpPath = `${CACHE_PATH}.tmp`;
-		writeFileSync(tmpPath, JSON.stringify(cache, null, JSON_INDENT), "utf-8");
-		renameSync(tmpPath, CACHE_PATH);
-	// eslint-disable-next-line taste/no-silent-catch -- 磁盘写失败属于容错路径：保留旧缓存，下次 triggerUpdate 会重试
+		atomicWriteJson(CACHE_PATH, cache);
 	} catch (e) {
+		// 磁盘写失败属于容错路径：保留旧缓存，下次 triggerUpdate 会重试
 		console.warn(`[quota-cache] cache write failed (keeping old):`, e);
 	}
 }
@@ -158,8 +224,38 @@ function readCacheSync(): CacheData {
 		// 确保 updatedAt 存在，其余字段原样保留（由 provider 动态管理）
 		return { ...parsed, updatedAt: parsed.updatedAt ?? 0 };
 	} catch (e) {
+		// D1c quarantine：文件存在但读/parse 失败 → 隔离开现场再降级
+		//（ENOENT = 尚无缓存，正常态不隔离）
+		if (existsSync(CACHE_PATH)) quarantineCorrupt(CACHE_PATH, e);
 		console.warn(`[quota-cache] cache read failed (using empty):`, e);
 		return { ...EMPTY_CACHE };
+	}
+}
+
+// ── 损坏隔离（D1c 同模式，对齐 runtime json-store quarantineCorruptFile；
+//    extension 环境无该依赖，就地最小实现）──────────────
+
+/**
+ * 把 parse 失败的文件 rename 为 <path>.corrupt-<ts> 保留取证并落 error 日志
+ * （含恢复指引），防止后续写回把「半截文件」合法化为「全空文件」。
+ * rename 失败（目录只读等）仅升级日志，不阻断调用方的降级路径。
+ */
+function quarantineCorrupt(path: string, cause: unknown): void {
+	const ts = new Date().toISOString().replace(/[:.]/g, "");
+	const quarantinePath = `${path}.corrupt-${ts}`;
+	const msg = cause instanceof Error ? cause.message : String(cause);
+	try {
+		renameSync(path, quarantinePath);
+		console.error(
+			`[quota-cache] corrupt file quarantined to ${quarantinePath}; continuing with empty. ` +
+			`Recovery: compare the .corrupt copy to restore history. Cause: ${msg}`,
+		);
+	} catch (renameErr) {
+		// 隔离失败不阻断读流程（调用方仍降级继续），只升级日志提示人工介入
+		console.error(
+			`[quota-cache] quarantine rename failed for ${path} (original kept in place, please inspect manually). ` +
+			`Cause: ${msg}; rename error: ${renameErr instanceof Error ? renameErr.message : String(renameErr)}`,
+		);
 	}
 }
 
@@ -191,8 +287,10 @@ function persistDailyRecord<T extends unknown[]>(
 				);
 			}
 		}
-	// eslint-disable-next-line taste/no-silent-catch -- 文件损坏属于容错路径：fallback 到空 records
 	} catch (e) {
+		// D1c quarantine：文件损坏属于容错路径——先隔离开现场（防下方写回把半截文件
+		// 合法化为空），再 fallback 到空 records
+		if (existsSync(filePath)) quarantineCorrupt(filePath, e);
 		console.warn(`[quota-cache] ${recordName} record read failed (using empty):`, e);
 	}
 
@@ -208,12 +306,12 @@ function persistDailyRecord<T extends unknown[]>(
 		if (d < cutoff) delete records[d];
 	}
 
-	// 写回
+	// 写回（原子写：唯一 tmp + rename，防并发多 session 半写损坏 + 读改写竞态截断）
 	try {
 		mkdirSync(dir, { recursive: true });
-		writeFileSync(filePath, JSON.stringify(records));
-	// eslint-disable-next-line taste/no-silent-catch -- 写入失败属于容错路径
+		atomicWriteJson(filePath, records);
 	} catch (e) {
+		// 写入失败属于容错路径：记录后继续（records 已返回，下次写入重试）
 		console.warn(`[quota-cache] ${recordName} record write failed:`, e);
 	}
 

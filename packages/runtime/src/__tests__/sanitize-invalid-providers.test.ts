@@ -26,9 +26,38 @@ function readModelsProviders(): Record<string, unknown> {
 }
 
 describe('isInvalidProvider', () => {
-  it('WTC1: 空壳 provider（仅 apiKey+name，五字段全缺）判定无效', () => {
-    // concurrency-verify-A 场景：外部脚本写入的测试 fixture provider
-    expect(isInvalidProvider({ apiKey: 'sk-x', name: 'Verify A' })).toBe(true)
+  // [W1b 语义变更] 判定对齐 pi 0.84.1 applyModelsJson 八字段抛错条件
+  // （provider-composer.js:86-93）：models/baseUrl/headers/compat/modelOverrides/
+  //  apiKey/oauth/authHeader 任一在场即合法，全空才算无效。
+
+  it('W1b-T1 [W1b 语义变更]: 只配 apiKey 的 provider 合法（旧五字段判定误判无效 → 误删数据丢失 bug）', () => {
+    // 旧判定（0.80.3 五字段）把 {apiKey, name} 判为空壳 → sanitize 物理删除
+    expect(isInvalidProvider({ apiKey: 'sk-x', name: 'Verify A' })).toBe(false)
+  })
+
+  it('W1b-T2 [W1b 语义变更]: 只配 oauth 的 provider 合法（pi 端字段，宽松键检查不遗漏）', () => {
+    // oauth 是 pi 端 provider 级字段（zod Type.Literal("radius")），xyz-agent
+    // PiProviderConfig 未声明。模拟脏数据：Object.assign 绕过 excess property check
+    const provider: PiProviderConfig = { name: 'Radius' }
+    Object.assign(provider, { oauth: 'radius' })
+    expect(isInvalidProvider(provider)).toBe(false)
+  })
+
+  it('W1b-T3 [W1b 语义变更]: 只配 authHeader 的 provider 合法（显式 false 也算在场）', () => {
+    // pi 检查 `config.authHeader === undefined`（非 falsiness）——false 是"在场"即不触发
+    // must specify 抛错。同构用 === undefined，禁改 falsiness。
+    expect(isInvalidProvider({ authHeader: true, name: 'X' })).toBe(false)
+    expect(isInvalidProvider({ authHeader: false, name: 'X' })).toBe(false)
+  })
+
+  it('W1b-T4: 八字段全缺的真空壳判定无效', () => {
+    // concurrency-verify-A 场景：外部脚本写入的 fixture 空壳（无任何八字段）
+    expect(isInvalidProvider({ name: 'Verify A' })).toBe(true)
+    expect(isInvalidProvider({})).toBe(true)
+  })
+
+  it('W1b-T5: apiKey 空串视同未 specify（pi falsiness 同构），八字段全缺判定无效', () => {
+    expect(isInvalidProvider({ apiKey: '', name: 'X' })).toBe(true)
   })
 
   it('WTC2: 有 baseUrl 的 provider 合法', () => {
@@ -40,7 +69,7 @@ describe('isInvalidProvider', () => {
   })
 
   it('WTC4: models 空数组视为未 specify，判定无效', () => {
-    // 空数组无法提供任何模型，与 undefined 等效
+    // 空数组无法提供任何模型，与 undefined 等效（pi `!config.models?.length`）
     expect(isInvalidProvider({ models: [] })).toBe(true)
   })
 
@@ -60,8 +89,10 @@ describe('isInvalidProvider', () => {
     expect(isInvalidProvider(provider)).toBe(false)
   })
 
-  it('WTC13: baseUrl 空字符串判定无效（pi zod minLength=1 实测拒绝：must not have fewer than 1 characters）', () => {
-    expect(isInvalidProvider({ baseUrl: '', apiKey: 'sk' })).toBe(true)
+  it('WTC13 [W1b 语义变更]: baseUrl 空串 + apiKey 在场 → 合法（apiKey 满足八字字段任一）', () => {
+    // 旧判定：baseUrl 空串（falsiness）+ 五字段全缺 → 无效。0.84.1：apiKey 在场即不触发
+    // must specify 抛错（baseUrl 空串被 zod minLength:1 拒绝是 schema 层，不归 sanitize 管）
+    expect(isInvalidProvider({ baseUrl: '', apiKey: 'sk' })).toBe(false)
   })
 
   it('WTC14: modelOverrides 空对象判定无效（pi applyModelsJson 要求 Object.keys().length>0）', () => {
@@ -74,11 +105,33 @@ describe('isInvalidProvider', () => {
 })
 
 describe('sanitizeInvalidProviders', () => {
+  it('W1b-V2 [W1b 语义变更]: 只配 apiKey / oauth / authHeader 的合法 provider 全部完好，真空壳被清', () => {
+    // W1b 主验收（V2「provider 零丢失」）：真实文件系统 round-trip。旧五字段判定会把
+    // key-only 判为空壳物理删除（数据丢失）；oauth / authHeader-only 同理是 0.84.1 新合法态。
+    writeModelsFixture({
+      'key-only': { apiKey: 'sk-key-only', name: 'Key Only' },
+      'oauth-only': { name: 'OAuth Only', oauth: 'radius' },
+      'authheader-only': { name: 'AuthHeader Only', authHeader: true },
+      'empty-shell': { name: 'Shell' },
+    })
+    const result = sanitizeInvalidProviders()
+    expect(result.removed).toEqual(['empty-shell'])
+    expect(result.repaired).toEqual([])
+    const remaining = readModelsProviders()
+    expect(Object.keys(remaining).sort())
+      .toEqual(['authheader-only', 'key-only', 'oauth-only'])
+    // 三个合法条目逐字段原样保留（未被触碰/重写丢失字段）
+    expect(remaining['key-only']).toEqual({ apiKey: 'sk-key-only', name: 'Key Only' })
+    expect(remaining['oauth-only']).toEqual({ name: 'OAuth Only', oauth: 'radius' })
+    expect(remaining['authheader-only']).toEqual({ name: 'AuthHeader Only', authHeader: true })
+  })
+
   it('WTC8: 剔除空壳 provider，保留合法 provider', () => {
+    // [W1b 语义变更] 空壳 fixture 从 {apiKey, name} 改为无 apiKey 纯空壳（旧形态已合法）
     writeModelsFixture({
       legal1: { baseUrl: 'x' },
       legal2: { models: [{ id: 'm1' }] },
-      'concurrency-verify-A': { apiKey: 'sk', name: 'Verify A' },
+      'concurrency-verify-A': { name: 'Verify A' },
     })
     const result = sanitizeInvalidProviders()
     expect(result.removed).toEqual(['concurrency-verify-A'])
@@ -111,8 +164,9 @@ describe('sanitizeInvalidProviders', () => {
   })
 
   it('WTC11: 全部无效时全部剔除，文件保留为空 providers 对象', () => {
+    // [W1b 语义变更] bad1 旧为 {apiKey:'sk'}（现合法），改为八字段全缺纯空壳
     writeModelsFixture({
-      bad1: { apiKey: 'sk' },
+      bad1: { name: 'B1' },
       bad2: { name: 'X' },
     })
     const result = sanitizeInvalidProviders()
@@ -123,8 +177,9 @@ describe('sanitizeInvalidProviders', () => {
   })
 
   it('WTC12: 连续调用幂等（第二次 removed 为空，缓存未污染）', () => {
+    // [W1b 语义变更] bad 旧为 {apiKey:'sk'}（现合法），改为纯空壳
     writeModelsFixture({
-      bad: { apiKey: 'sk' },
+      bad: { name: 'bad' },
       legal: { baseUrl: 'x' },
     })
     const first = sanitizeInvalidProviders()
@@ -138,9 +193,10 @@ describe('sanitizeInvalidProviders', () => {
   it('WTC16: 脏数据含 null provider 不崩溃，null 被剔除且合法 provider 保留', () => {
     // M2 回归：provider 值为 null 时旧实现整个 sanitize 崩溃 → 外层 catch 吞掉 → {removed:[]}
     // 同文件后续合法空壳 provider 不被剔除，"Model not found" 复发。
+    // [W1b 语义变更] 空壳 fixture 从 {apiKey, name} 改为无 apiKey 纯空壳
     writeModelsFixture({
       'p-null': null,
-      'concurrency-verify-A': { apiKey: 'sk', name: 'Verify A' },
+      'concurrency-verify-A': { name: 'Verify A' },
       legal1: { baseUrl: 'x' },
     })
     const result = sanitizeInvalidProviders()
@@ -148,12 +204,25 @@ describe('sanitizeInvalidProviders', () => {
     expect(readModelsProviders()).toEqual({ legal1: { baseUrl: 'x' } })
   })
 
-  it('WTC17: catalog 已知内置 provider 的空壳被修复而非删除（models 合并，apiKey 保留）', () => {
-    // MF-5 回归：QuickSetup 保存 baseUrl 为空串模板（opencode 等 7 个）后条目五字段全缺，
-    // 旧实现重启即删除（apiKey 静默丢失）。修复：catalog 已知空壳合并 builtin models。
+  it('WTC17a [W1b 语义变更]: 只配 apiKey 的 catalog provider（opencode）原样保留，不修复不删除', () => {
+    // W1b 主验收核心：QuickSetup 保存的 {apiKey, name, authMethod} 条目（无 baseUrl/models）
+    // 直接合法——0.84.1 八字段判定 apiKey 在场即不触发 must specify 抛错。
+    // 旧五字段判定把它判为空壳（MF-5 时代走 catalog 修复救回），更早版本直接删除。
+    const fixture = { apiKey: 'sk-opencode', name: 'OpenCode Zen', authMethod: 'api_key' }
+    writeModelsFixture({ opencode: fixture })
+    const result = sanitizeInvalidProviders()
+    expect(result.removed).toEqual([])
+    expect(result.repaired).toEqual([])
+    // 逐字段原样保留（未被 catalog models 合并改写，apiKey 未丢）
+    expect(readModelsProviders()).toEqual({ opencode: fixture })
+  })
+
+  it('WTC17b (MF-5 回归，[W1b 语义变更]): 无 apiKey 的 catalog 空壳被修复而非删除（models 合并，authMethod 保留）', () => {
+    // 修复路径现仅覆盖八字段全缺（连 apiKey 都无）的 catalog 空壳——含 apiKey 条目已直接
+    // 合法（见 WTC17a），不再进此路径。
     writeModelsFixture({
-      opencode: { apiKey: 'sk-opencode', name: 'OpenCode Zen', authMethod: 'api_key' },
-      'concurrency-verify-A': { apiKey: 'sk-x', name: 'Verify A' },
+      opencode: { name: 'OpenCode Zen', authMethod: 'api_key' },
+      'concurrency-verify-A': { name: 'Verify A' },
     })
     const result = sanitizeInvalidProviders()
     // 非 catalog 空壳仍删除，catalog 已知空壳修复
@@ -162,8 +231,7 @@ describe('sanitizeInvalidProviders', () => {
     const remaining = readModelsProviders()
     expect(Object.keys(remaining).sort()).toEqual(['opencode'])
     const repaired = remaining.opencode as Record<string, unknown>
-    // apiKey/authMethod 保留（不丢用户刚保存的配置）
-    expect(repaired.apiKey).toBe('sk-opencode')
+    // authMethod 保留（不丢用户字段）
     expect(repaired.authMethod).toBe('api_key')
     // models 从 catalog 合并（模型级 baseUrl 由 catalog 提供）
     expect(Array.isArray(repaired.models)).toBe(true)
@@ -171,7 +239,7 @@ describe('sanitizeInvalidProviders', () => {
     expect(models.length).toBeGreaterThan(0)
     expect(models[0].id).toBe('claude-fable-5')
     expect(models[0].baseUrl).toBe('https://opencode.ai/zen')
-    // 修复后不再无效（bundled pi 0.80.3 严格校验可通过）
+    // 修复后不再无效（pi 0.84.1 组合层可通过）
     expect(isInvalidProvider(repaired as PiProviderConfig)).toBe(false)
     // 幂等：第二次调用不再修复/删除（修复结果已是合法条目）
     const second = sanitizeInvalidProviders()
@@ -179,14 +247,15 @@ describe('sanitizeInvalidProviders', () => {
     expect(second.repaired).toEqual([])
   })
 
-  it('WTC18: catalog models 全空 baseUrl 的 provider（azure-openai-responses）维持删除而非修复', () => {
+  it('WTC18 (MF-6 回归，[W1b 语义变更]): catalog models 全空 baseUrl 的 provider（azure-openai-responses）维持删除而非修复', () => {
     // MF-6 回归：azure-openai-responses 的 38 个 catalog models 全为空串 baseUrl 且无
     // provider 级 baseUrl——合并后 pi modelFromJson 对每个自定义模型强制非空 baseUrl
-    // （空串非 nullish）直接 throw，pi 回退 builtin base，QuickSetup 保存的 apiKey 静默失效，
+    // （空串非 nullish）直接 throw，pi 回退 builtin base，apiKey 静默失效，
     // 且毒化条目 isInvalidProvider===false 无自愈路径。此类 provider 排除出修复名单（删除）。
+    // [W1b 语义变更] fixture 去掉 apiKey（含 apiKey 条目已直接合法，见 WTC17a）。
     writeModelsFixture({
-      'azure-openai-responses': { apiKey: 'sk-azure', name: 'Azure OpenAI', authMethod: 'api_key' },
-      opencode: { apiKey: 'sk-opencode', name: 'OpenCode Zen', authMethod: 'api_key' },
+      'azure-openai-responses': { name: 'Azure OpenAI', authMethod: 'api_key' },
+      opencode: { name: 'OpenCode Zen', authMethod: 'api_key' },
     })
     const result = sanitizeInvalidProviders()
     // azure 删除（catalog 无可用 baseUrl 数据），opencode 仍修复（模型级 baseUrl 齐全）

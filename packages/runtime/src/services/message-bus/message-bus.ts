@@ -126,7 +126,7 @@ export function topicOf(type: string): TopicKind {
  *   回流（ADR-0055 4a 现状，不在本设计范围改变）。
  * - 补 `session.state_changed → 'state_changed'`（修 ADR-0055 3b）：重连后 Composer 工具条
  *   从 stateSnapshot 恢复，而非回退 fallback 默认值。
- * - compactionSummary 保持不进快照（3d：靠 JSONL 持久化兜底，符合规则 #7.5）。
+ * - compactionSummary 保持不进快照（3d：靠 JSONL 持久化兜底，符合 AGENTS.md 关键规则 9）。
  */
 const STATE_TYPE_KEY_MAP: Readonly<Record<string, string>> = {
   'session.commands': 'commands',

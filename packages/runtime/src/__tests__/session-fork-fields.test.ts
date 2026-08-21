@@ -17,7 +17,7 @@
  * 运行：cd packages/runtime && npx vitest run src/__tests__/session-fork-fields.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -27,8 +27,8 @@ import type { SessionSummary } from '@xyz-agent/shared'
 // infra 工具（U2/U3/U6 第一处）
 import {
   parseSessionHeader,
-  // persistHandedOff / extractHandedOff 尚不存在 —— 引入失败即红灯
-  persistHandedOff as persistHandedOffInfra,
+  // W11：persistHandedOff 迁 sidecar 改名 persistHandoffSidecar（旧名已删）
+  persistHandoffSidecar as persistHandoffInfra,
   extractHandedOff as extractHandedOffInfra,
 } from '../infra/pi/session-file-utils.js'
 
@@ -89,23 +89,81 @@ describe('W1 fork 字段透传', () => {
     expect(header?.forkEntryId).toBe('entry-123')
   })
 
-  // ── U3：persistHandedOff append + extractHandedOff 尾读 ───────────
+  // ── U3：persistHandoffSidecar 写 sidecar + extractHandedOff 读取（W11 迁移）──
 
-  it('U3: persistHandedOff 追加 handoff marker 行，extractHandedOff 尾读返回目标 sessionId', () => {
+  it('U3: persistHandoffSidecar 写 .handoff.json sidecar（JSONL 零写），extractHandedOff 读回目标 sessionId', () => {
     const filePath = join(dir, 'session.jsonl')
+    const original = JSON.stringify({ type: 'session', id: 'src-1', cwd: '/test', timestamp: '2026-07-07T01:00:00.000Z' }) + '\n'
+    writeFileSync(filePath, original)
+
+    persistHandoffInfra(filePath, 'new-session-id')
+
+    // sidecar 出现且内容正确（xyz 自有文件，不触碰 pi 的 JSONL）
+    const sidecarPath = filePath + '.handoff.json'
+    expect(existsSync(sidecarPath)).toBe(true)
+    const marker = JSON.parse(readFileSync(sidecarPath, 'utf-8'))
+    expect(marker.handedOffTo).toBe('new-session-id')
+    expect(marker.type).toBe('handoff_marker')
+
+    // JSONL 本体字节不变（绝对写规则：session JSONL 唯一写方是 pi）
+    expect(readFileSync(filePath, 'utf-8')).toBe(original)
+
+    // extractHandedOff 优先读 sidecar，返回被交接的目标 sessionId
+    expect(extractHandedOffInfra(filePath)).toBe('new-session-id')
+  })
+
+  it('U3b: JSONL 不存在时跳过（规则 #6——绝不创建 sidecar，pi openSync("wx") 竞态防护）', () => {
+    const filePath = join(dir, 'never-flushed.jsonl')
+    expect(() => persistHandoffInfra(filePath, 'target-id')).not.toThrow()
+    expect(existsSync(filePath + '.handoff.json')).toBe(false)
+  })
+
+  it('U3c: 存量旧 session 兼容——无 sidecar、JSONL 尾部含旧 handoff_marker entry 时 fallback 尾读', () => {
+    const filePath = join(dir, 'legacy.jsonl')
     writeFileSync(
       filePath,
-      JSON.stringify({ type: 'session', id: 'src-1', cwd: '/test', timestamp: '2026-07-07T01:00:00.000Z' }) + '\n',
+      [
+        JSON.stringify({ type: 'session', id: 'src-2', cwd: '/test', timestamp: '2026-07-07T01:00:00.000Z' }),
+        JSON.stringify({ type: 'handoff_marker', handedOffTo: 'legacy-target', timestamp: '2026-08-01T00:00:00.000Z' }),
+      ].join('\n') + '\n',
     )
+    // 无 sidecar → fallback 尾读旧 marker（W11 前写入的存量形态）
+    expect(extractHandedOffInfra(filePath)).toBe('legacy-target')
+  })
 
-    persistHandedOffInfra(filePath, 'new-session-id')
+  it('U3d: sidecar 优先于旧 JSONL marker（两者并存时新值胜出）', () => {
+    const filePath = join(dir, 'both.jsonl')
+    writeFileSync(
+      filePath,
+      [
+        JSON.stringify({ type: 'session', id: 'src-3', cwd: '/test', timestamp: '2026-07-07T01:00:00.000Z' }),
+        JSON.stringify({ type: 'handoff_marker', handedOffTo: 'old-target', timestamp: '2026-08-01T00:00:00.000Z' }),
+      ].join('\n') + '\n',
+    )
+    persistHandoffInfra(filePath, 'new-target')
+    expect(extractHandedOffInfra(filePath)).toBe('new-target')
+  })
 
-    // 文件追加了 handoff marker 行（运行时标记新 session 已接管）
-    const content = readFileSync(filePath, 'utf-8')
-    expect(content).toContain('new-session-id')
+  it('U3e: 无 sidecar 且无 marker → undefined（未交接）', () => {
+    const filePath = join(dir, 'clean.jsonl')
+    writeFileSync(
+      filePath,
+      JSON.stringify({ type: 'session', id: 'src-4', cwd: '/test', timestamp: '2026-07-07T01:00:00.000Z' }) + '\n',
+    )
+    expect(extractHandedOffInfra(filePath)).toBeUndefined()
+  })
 
-    // extractHandedOff 尾读返回被交接的目标 sessionId
-    expect(extractHandedOffInfra(filePath)).toBe('new-session-id')
+  it('U3f: 损坏 sidecar（handedOffTo 非字符串）→ fallthrough 尾读 JSONL 兜底', () => {
+    const filePath = join(dir, 'corrupt.jsonl')
+    writeFileSync(
+      filePath,
+      [
+        JSON.stringify({ type: 'session', id: 'src-5', cwd: '/test', timestamp: '2026-07-07T01:00:00.000Z' }),
+        JSON.stringify({ type: 'handoff_marker', handedOffTo: 'jsonl-target', timestamp: '2026-08-01T00:00:00.000Z' }),
+      ].join('\n') + '\n',
+    )
+    writeFileSync(filePath + '.handoff.json', JSON.stringify({ handedOffTo: 123 }))
+    expect(extractHandedOffInfra(filePath)).toBe('jsonl-target')
   })
 
   // ── U4：createForkedSessionFile 写入 forkEntryId 到 newHeader ───────

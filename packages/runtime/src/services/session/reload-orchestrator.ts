@@ -16,8 +16,10 @@
  *   - skillRegistry.onChange → orchestrator.onSkillChange
  *   - message.complete 广播包装 → orchestrator.onMessageComplete
  *
- * [内部命令] `/__xyz_reload__` 由 builtin extension（xyz-agent-extension.js）注册，
- * handler 调 pi ctx.reload()。前端 W4 已过滤 `/__` 前缀命令不显示给用户。
+ * [内部命令] `/__xyz_reload__` 由 builtin npm 扩展 @zhushanwen/pi-agent-ext
+ * （extensions/agent-ext/，打包经 scripts/bundle-extensions.mjs staging 到
+ * apps/electron/resources/extensions/）注册，handler 调 pi ctx.reload()。
+ * 前端 W4 已过滤 `/__` 前缀命令不显示给用户。
  */
 /** Orchestrator 依赖的 SessionService 窄接口（组合根注入完整实现）。 */
 export interface ReloadSessionService {

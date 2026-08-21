@@ -14,7 +14,7 @@ vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
   }
 })
 
-import { extractSubagentsFromSessionFile } from '../src/services/session/subagent-extractor.js'
+import { extractSubagentsFromSessionFile, scanSubagentEntries } from '../src/services/session/subagent-extractor.js'
 
 describe('encodeCwd', () => {
   it('encodes Unix cwd path correctly', () => {
@@ -845,5 +845,145 @@ describe('extractSubagentsFromSessionFile — background sessionFile 回退查�
     const records = extractSubagentsFromSessionFile(sessionFile)
     expect(records).toHaveLength(1)
     expect(records[0].sessionFile).toBeNull()
+  })
+})
+
+
+// ── W18：scanSubagentEntries（entry 扫描器：自描述优先 + legacy 兜底）─────────────
+describe('scanSubagentEntries（W18 entry 扫描器）', () => {
+  /** 构造自描述 subagent-record entry（W16 v1 完整快照形态，对齐 extension record-entry.ts schema） */
+  function subagentRecordEntry(data: Record<string, unknown>): Record<string, unknown> {
+    return {
+      type: 'custom',
+      customType: 'subagent-record',
+      id: 'e-1',
+      parentId: null,
+      timestamp: '2026-08-19T00:00:00Z',
+      data: {
+        v: 1,
+        agent: 'worker',
+        task: 'Do work',
+        slug: 'work',
+        status: 'running',
+        startedAt: 1000,
+        ...data,
+      },
+    }
+  }
+
+  it('自描述命中：v1 entry → SubagentRecord 投影（id/status/时间戳/closedReason 终态投影）', () => {
+    const records = scanSubagentEntries([
+      { type: 'session', id: 's', cwd: '/proj', timestamp: '2026-08-19T00:00:00Z' },
+      subagentRecordEntry({
+        id: 'sa-1',
+        status: 'closed',
+        closedReason: 'gc',
+        endedAt: 61000,
+        totalTokens: 1234,
+        model: 'p/m',
+        sessionFile: '/data/sa-1.jsonl',
+        error: 'boom',
+      }),
+    ])
+
+    expect(records).toEqual([{
+      subagentId: 'sa-1',
+      sessionFile: '/data/sa-1.jsonl',
+      agent: 'worker',
+      slug: 'work',
+      task: 'Do work',
+      status: 'closed',
+      closedReason: 'gc',
+      turns: undefined,
+      totalTokens: 1234,
+      model: 'p/m',
+      thinkingLevel: undefined,
+      startedAt: 1000,
+      endedAt: 61000,
+      // elapsedSeconds 派生：entry 无 duration，从 startedAt/endedAt 差值（60s）
+      elapsedSeconds: 60,
+      error: 'boom',
+    }])
+  })
+
+  it('同 id 后到覆盖（状态迁移 append 序列：running → closed 取最后快照）+ running 无 closedReason', () => {
+    const records = scanSubagentEntries([
+      subagentRecordEntry({ id: 'sa-1', status: 'running' }),
+      subagentRecordEntry({ id: 'sa-1', status: 'closed', closedReason: 'user-close', endedAt: 2000 }),
+    ])
+
+    expect(records).toHaveLength(1)
+    expect(records[0]!.status).toBe('closed')
+    expect(records[0]!.closedReason).toBe('user-close')
+  })
+
+  it('版本守卫：v≠1 的自描述 entry 跳过（全部无效 → 落 legacy 兜底）', () => {
+    const legacyEntries = [
+      {
+        type: 'message', id: 'm-0', timestamp: '2026-07-11T06:38:28Z',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'toolCall', id: 'call-1', name: 'subagent', arguments: { action: 'start', startParam: { agent: 'worker', slug: 's', task: 't' } } }],
+        },
+      },
+      {
+        type: 'message', id: 'm-1', timestamp: '2026-07-11T06:38:29Z',
+        message: {
+          role: 'toolResult', toolCallId: 'call-1', toolName: 'subagent',
+          content: [{ type: 'text', text: JSON.stringify({ action: 'start', subagentId: 'bg-legacy-1', sessionFile: null, bgResponse: { status: 'running' } }) }],
+        },
+      },
+    ]
+    const records = scanSubagentEntries([
+      subagentRecordEntry({ id: 'sa-new', v: 2, status: 'running' }),
+      ...legacyEntries,
+    ])
+
+    // v2 entry 全部无效 → 自描述无命中 → legacy 兜底产出（数据滞后但可用）
+    expect(records).toHaveLength(1)
+    expect(records[0]!.subagentId).toBe('bg-legacy-1')
+    expect(records[0]!.status).toBe('running')
+  })
+
+  it('无自描述 entry 的旧 session → legacy 解析（toolCall/toolResult 配对路径，D4 降级表现）', () => {
+    const records = scanSubagentEntries([
+      {
+        type: 'message', id: 'm-0', timestamp: '2026-07-11T06:38:29Z',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'toolCall', id: 'call-1', name: 'subagent', arguments: { action: 'start', startParam: { agent: 'worker', slug: 's', task: 't' } } }],
+        },
+      },
+      {
+        type: 'message', id: 'm-1', timestamp: '2026-07-11T06:38:30Z',
+        message: {
+          role: 'toolResult', toolCallId: 'call-1', toolName: 'subagent',
+          content: [{ type: 'text', text: JSON.stringify({ action: 'start', subagentId: 'bg-legacy-2', sessionFile: null, bgResponse: { status: 'running' } }) }],
+        },
+      },
+    ])
+
+    expect(records).toHaveLength(1)
+    expect(records[0]!.subagentId).toBe('bg-legacy-2')
+    expect(records[0]!.agent).toBe('worker')
+  })
+
+  it('混合时自描述优先（同批 legacy entry 存在但有自描述命中即不走 legacy）', () => {
+    const records = scanSubagentEntries([
+      subagentRecordEntry({ id: 'sa-self', status: 'running' }),
+      {
+        type: 'message', id: 'm-1', timestamp: '2026-07-11T06:38:30Z',
+        message: {
+          role: 'toolResult', toolCallId: 'call-1', toolName: 'subagent',
+          content: [{ type: 'text', text: JSON.stringify({ action: 'start', subagentId: 'bg-legacy-3', sessionFile: null, bgResponse: { status: 'running' } }) }],
+        },
+      },
+    ])
+
+    expect(records.map((r) => r.subagentId)).toEqual(['sa-self'])
+  })
+
+  it('空 entry 列表返回空数组（两条路径都不产出）', () => {
+    expect(scanSubagentEntries([])).toEqual([])
   })
 })

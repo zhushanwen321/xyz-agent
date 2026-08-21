@@ -17,6 +17,7 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.9",
     "vitest": "^4.1.8"
   },
   "files": [

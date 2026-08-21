@@ -41,6 +41,7 @@ import type { SkillCacheInvalidatedPayload, SkillInfo } from '@xyz-agent/shared'
 // - 有 cwd（磁盘 watcher 触发的具体项目目录变更）：只清该 cwd 分区。
 // - 无 cwd（setSkillDirs 改全局配置，所有 cwd 都可能受影响）：保守清所有。
 // S1：模块顶层只执行一次，无需 projectInvalidateSubscribed 守卫。
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：skills 失效信号版本号（watch 驱动重拉，12 类未覆盖）
 const projectInvalidateSignal = ref<{ version: number; cwd?: string }>({ version: 0 })
 configApi.onSkillCacheInvalidated((payload: SkillCacheInvalidatedPayload) => {
   if (payload.scope === 'project') {
@@ -140,6 +141,7 @@ let globalSkillsCache: SkillInfo[] | null = null
 let globalLoaded = false
 let globalInFlight: Promise<SkillInfo[]> | null = null
 // 模块级单例 ref，所有 useGlobalSkills() 调用共享
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：全局 skills 列表单例 ref（多 Composer 共享，12 类未覆盖）
 const globalSkills = ref<SkillInfo[]>([])
 // W2：force 重拉合并标志。多个 force 调用并发等待同一个 in-flight 时，只有第一个执行新 RPC。
 let pendingForceReload = false

@@ -78,8 +78,10 @@ export async function migrateLegacyProviderConfig(configStore: IConfigStore, aut
           report.skipped.push(providerId)
           continue
         }
-      } catch {
-        // auth.json 读失败不阻断，继续迁移（秘钥会覆盖写入）
+      } catch (e) {
+        // auth.json 读失败不阻断，继续迁移（秘钥会覆盖写入）：OAuth 冲突检查跳过，
+        // 记 warn 保留可观测性（启动期一次性，无刷屏风险）
+        console.warn('[runtime] legacy migration: read auth.json for OAuth conflict check failed, continuing:', e)
       }
 
       try {

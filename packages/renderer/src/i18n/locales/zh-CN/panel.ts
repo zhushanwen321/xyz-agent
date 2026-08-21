@@ -100,6 +100,9 @@ export default {
     bashNoContext: '不进上下文',
     bashCancel: '取消',
     bashUnknownCommand: '(未知命令)',
+    // [W4 turn-attribution] 后台续跑 turn 起点行（Turn.vue trigger==='bg-notify'）与 bash 执行中瞬时行前缀（MessageStream.vue）
+    turnTriggerBgNotify: '后台任务完成 · 已继续处理',
+    executingBash: '正在执行',
   },
   git: {
     title: 'Git',

@@ -63,9 +63,9 @@ function setGroups(sessions: SessionSummary[]): void {
     arr.push(s)
     byCwd.set(s.cwd, arr)
   }
-  useSessionStore().setGroups(
+  useSessionStore().applySnapshot({ groups: 
     Array.from(byCwd, ([cwd, ss]): SessionGroup => ({ cwd, sessions: ss })),
-  )
+   })
 }
 
 function mkSession(over: Partial<SessionSummary>): SessionSummary {
@@ -135,6 +135,6 @@ describe('Landing 选目录延迟 create（不预建 session）', () => {
 
     // 首发提交才 create，用 pendingCwd（/picked）而非 resolveDefaultCwd（/elsewhere）；label='hello'（≤10 原文）
     expect(apiMock.create).toHaveBeenCalledTimes(1)
-    expect(apiMock.create).toHaveBeenCalledWith('/picked', 'hello', undefined, undefined)
+    expect(apiMock.create).toHaveBeenCalledWith('/picked', 'hello', undefined, undefined, undefined, undefined)
   })
 })

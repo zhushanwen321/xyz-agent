@@ -349,7 +349,10 @@ export function useSidebarNew() {
     }
   }
 
-  /** WS 连接建立/重连入口：首次 initApp；重连 fire-and-forget workspaceStore.load + extensionApi.scan。 */
+  /**
+   * WS 连接建立/重连入口：首次 initApp；重连 fire-and-forget 刷新 workspace/extension +
+   * 聚焦 session 的 subagent/workflow 列表。
+   */
   async function onConnected(): Promise<void> {
     if (!hasConnectedBefore) {
       hasConnectedBefore = true
@@ -358,6 +361,16 @@ export function useSidebarNew() {
     }
     void workspaceStore.load()
     void extensionApi.scan().catch(() => {})
+    // 重连对账（residual-fixes 附录 A-3 闭环）：runtime 侧派生缓存的刷新以 entry_appended
+    // 事件为触发，重连后若无新 entry 写入（如断连前 subagent 已全部终态），侧栏将停留
+    // 断连前 stale 数据直到用户切 tab。对聚焦 session 显式重拉（getSubagents/getWorkflows
+    // RPC 直读磁盘，不依赖缓存事件）。load 内部 catch 降级（失败保留旧分区），
+    // fire-and-forget 与上面两条刷新一致。
+    const sid = focusedSessionId.value
+    if (sid) {
+      void useSubagentStore().loadSubagents(sid)
+      void useWorkflowStore().loadWorkflows(sid)
+    }
   }
 
   // ── fork/handoff：保持 useForkActions/useHandoffActions 组合（C-W5-4，正交职责内聚）──

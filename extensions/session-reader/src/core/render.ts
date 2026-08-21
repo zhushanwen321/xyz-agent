@@ -26,7 +26,8 @@ export interface TurnBrief {
 
 export interface OutlineResult {
   turns: TurnBrief[]
-  stats: { totalTurns: number; totalEntries: number; totalBytes: number; parsedBytes: number }
+  /** skippedLines：JSON 解析失败/缺结构字段的行数（parser 检测，工具层覆盖精确值；render 层无 ParseResult 恒 0） */
+  stats: { totalTurns: number; totalEntries: number; totalBytes: number; parsedBytes: number; skippedLines: number }
   /** chars / 4 近似（与 design P-outline 口径一致） */
   tokenEstimate: number
   /** 被总预算截断的 turn 数（从尾部丢弃） */
@@ -319,6 +320,7 @@ export function renderOutline(
     totalEntries: totalEntriesAll,
     totalBytes: parsedBytes,
     parsedBytes,
+    skippedLines: 0,
   }
 
   if (turns.length === 0) {

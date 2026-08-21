@@ -1,8 +1,8 @@
 /**
- * RPC 类型化 helper —— 收敛 pending.create + register + transport.send 的 4 行模板。
+ * RPC 类型化 helper —— 收敛 pending.createCommandId + register + transport.send 的 4 行模板。
  *
  * api/domains/ 下每个 RPC 函数原本手动展开：
- *   const id = pending.create()
+ *   const id = pending.createCommandId()
  *   const result = pending.register<TReply>(id)
  *   transport.send({ type, id, payload })
  *   return await result
@@ -42,7 +42,7 @@ export async function command<K extends keyof ReplyPayloadMap>(
   payload: ClientMessageMap[K],
   timeoutMs?: number,
 ): Promise<ReplyPayloadMap[K]> {
-  const id = pending.create()
+  const id = pending.createCommandId()
   const result = pending.register<ReplyPayloadMap[K]>(id, timeoutMs)
   // ClientMessage 是 discriminated union（type ↔ payload 对应），helper 的泛型 payload
   // 无法满足精确联合约束，用断言绕过——type 字面量已由 ReplyPayloadMap key 约束，安全。

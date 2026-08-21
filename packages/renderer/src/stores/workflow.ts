@@ -72,6 +72,13 @@ export const useWorkflowStore = defineStore('workflow', () => {
    */
   const workflowReloadTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
+  /**
+   * loadWorkflows 空结果守卫的连续空命中计数（R1 business-logic S3，与 subagent.ts 同款）：
+   * 达到 LIMIT 判真实删空放行覆盖。非响应式簿记（不驱动 UI），clearSession 一并清除防泄漏。
+   */
+  const emptyResultStrikes = new Map<string, number>()
+  const EMPTY_RESULT_STRIKE_LIMIT = 2
+
   // [W15] 防御性清理：workflowReloadTimers 是模块级 Map（不在 ref 里），HMR / store dispose
   // 时若不主动 clearTimeout，在途的 running 重试 timer 仍会在 500ms 后触发 loadWorkflows(sid)
   // 操作已废弃的 store。参照 subagent.ts 的 onScopeDispose panelStreamUnsub 模式。
@@ -109,6 +116,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
 
   /** 清除指定 session 的 workflow 列表分区（deleteSession 调，防泄漏，ADR-0049 AC-8） */
   function clearSession(sessionId: string): void {
+    emptyResultStrikes.delete(sessionId)
     if (!recordsBySession.value.has(sessionId)) return
     const next = new Map(recordsBySession.value)
     next.delete(sessionId)
@@ -146,9 +154,34 @@ export const useWorkflowStore = defineStore('workflow', () => {
     isLoading.value = true
     loadError.value = null
     try {
-      applyRecords(sessionId, await sessionApi.getWorkflows(sessionId))
+      const records = await sessionApi.getWorkflows(sessionId)
+      // 空结果守卫（sidebar-sync-plan P1 + R1 business-logic S3，与 subagent.ts 同款）：
+      // runtime getWorkflows 读盘失败时 catch 降级返回 []，瞬时读失败若当空列表覆盖会清掉
+      // 分区历史——RPC 成功且空 + 分区非空时先保留旧分区。但「真实删空」（记录被清掉且
+      // 无 session.workflows 推送）同样表现为空结果，单次判定无法区分二者：用连续空命中
+      // 计数（strike）区分——连续 LIMIT 次空结果判定真实删空放行覆盖（瞬时读失败不会连续
+      // 命中，RPC 失败走 catch 且重置计数），非空结果即清零。推送路径是权威数据，不经此守卫。
+      if (records.length === 0 && getRecordsBySession(sessionId).length > 0) {
+        const strikes = (emptyResultStrikes.get(sessionId) ?? 0) + 1
+        emptyResultStrikes.set(sessionId, strikes)
+        if (strikes < EMPTY_RESULT_STRIKE_LIMIT) {
+          console.warn(
+            `[workflow-store] getWorkflows returned empty list but partition non-empty, keeping existing records (empty strike ${strikes}/${EMPTY_RESULT_STRIKE_LIMIT}):`,
+            sessionId,
+          )
+          return
+        }
+        console.warn(
+          '[workflow-store] consecutive empty results, treating as real deletion and clearing partition:',
+          sessionId,
+        )
+      }
+      emptyResultStrikes.delete(sessionId)
+      applyRecords(sessionId, records)
     } catch (e) {
-      // M1：失败不覆盖现有分区（保留旧数据），设 loadError 让组件显示重试态
+      // M1：失败不覆盖现有分区（保留旧数据），设 loadError 让组件显示重试态；strike 重置
+      //（「连续 RPC 成功且空」语义纯净，读失败与数据空不同通道，不让 RPC 故障累计出误清分区）
+      emptyResultStrikes.delete(sessionId)
       const msg = e instanceof Error ? e.message : String(e)
       console.error('[workflow-store] loadWorkflows failed:', e)
       loadError.value = msg

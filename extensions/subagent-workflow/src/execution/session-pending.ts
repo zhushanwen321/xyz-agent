@@ -17,10 +17,11 @@ import * as fs from "node:fs";
 
 import { countActiveFromEntries } from "@zhushanwen/pi-pending-notifications";
 
-/** 后代刚完成（unregister）后，notify 唤醒父 agent 可能仍在路上（triggerTurn steer
- *  经进程内 EventBus 发送，与主进程处理 agent_end 行存在毫秒级竞态——explorer 3 秒完成
- *  时实测 unregister 先于 agent_end 判定写入，导致差集 0 误判完成）。此窗口内的
- *  agent_end 不 kill，等父被唤醒后的下一次 agent_end 再判。 */
+/** 后代刚完成（unregister）后，notify 唤醒父 agent 可能仍在路上（triggerTurn 的
+ *  steer/followUp 经 sendMessage → agent 队列排空（agent-session.js:1081-1087），
+ *  不经 EventBus——EventBus 只用于扩展间 pi.events；与主进程处理 agent_end 行存在
+ *  毫秒级竞态——explorer 3 秒完成时实测 unregister 先于 agent_end 判定写入，导致
+ *  差集 0 误判完成）。此窗口内的 agent_end 不 kill，等父被唤醒后的下一次 agent_end 再判。 */
 const RECENT_UNREGISTER_WINDOW_MS = 60_000;
 
 /** 判定结果：count > 0 = 有活跃后代（应保持进程等唤醒）。 */

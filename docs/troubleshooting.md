@@ -37,11 +37,11 @@ Resources/
 │   ├── agent/                         # agent skills/extensions
 │   └── assets/                        # agent 资源文件
 ├── extensions/                        # builtin pi extensions
-│   └── @zhushanwen/<pkg>/             # 10 个 @zhushanwen/pi-*（esbuild bundle 产物）
-└── xyz-agent-extension.js             # xyz-agent 定制 pi extension
+│   └── @zhushanwen/<pkg>/             # 13 个 @zhushanwen/pi-*（esbuild bundle 产物）
+└── bin/xyz-settings                   # xyz-settings CLI（pi Skill 引用）
 ```
 
-> **注**：builtin pi extensions（10 个 `@zhushanwen/pi-*`）随应用打包内置在 `Resources/extensions/@zhushanwen/` 下，离线可用、无需安装。其中 infrastructure 级 3 个（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output`）不可禁用，feature 级 7 个可在 Settings → Extensions 中禁用/启用。第三方扩展（任意 npm 包 / 本地目录 / git）经 Settings → Extensions 安装到数据目录。
+> **注**：builtin pi extensions（13 个 `@zhushanwen/pi-*`）随应用打包内置在 `Resources/extensions/@zhushanwen/` 下，离线可用、无需安装。其中 infrastructure 级 6 个（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output` / `pi-agent-ext` / `pi-system-prompt` / `pi-msg-id-mapper`）不可禁用，feature 级 7 个可在 Settings → Extensions 中禁用/启用。第三方扩展（任意 npm 包 / 本地目录 / git）经 Settings → Extensions 安装到数据目录。
 
 **数据目录** (`~/.xyz-agent/`)：
 
@@ -116,13 +116,13 @@ lsof -i :3210-3220 -P | grep LISTEN | awk '{print $2}' | sort -u
 
 ### 4. Extension 相关问题
 
-builtin pi extensions（10 个 `@zhushanwen/pi-*`）随应用打包内置，不经过 npm 安装，离线可用：
+builtin pi extensions（13 个 `@zhushanwen/pi-*`）随应用打包内置，不经过 npm 安装，离线可用：
 
 ```bash
 # 检查打包产物中的 builtin extensions
 ls /Applications/太极.app/Contents/Resources/extensions/@zhushanwen/
 
-# builtin 扩展不生效时，检查是否被禁用（infrastructure 级 3 个不可禁用）
+# builtin 扩展不生效时，检查是否被禁用（infrastructure 级 6 个不可禁用）
 cat ~/.xyz-agent/pi/agent/settings.json
 ```
 
@@ -186,3 +186,41 @@ runtime 代码禁止出现特定项目的绝对路径或硬编码假设，所有
 - 排查步骤：① xyz-agent runtime 侧（event-interpreter / session-service / message-dispatcher）只是旁观转发；② pi extension 机制（pi 进程内）——开发期源码在本项目 `extensions/`，用户机器运行时安装在 `~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/pi-*/src/`；③ pi 私有协议（`triggerTurn`/`deliverAs`）语义见 `packages/shared/src/message.ts` 注释；④ 设计文档：`docs/page-design/archive/v3/` + `docs/extensions/extension-conventions.md`
 - 判断依据：涉及 pi 的 session loop / turn 调度 / LLM 调用的行为，发起方几乎一定在 pi 进程内；xyz-agent 的职责是 UI 状态同步 + 用户命令转发
 - 教训：当用户的领域知识与 explorer 结论冲突时，**优先怀疑 explorer 排查范围不全**，而非怀疑用户
+
+## pi 行为观察项（未验证风险登记，2026-08-20 pi-assumption-remediation W6）
+
+pi 升级（`PI_VERSION` bump）或触碰相关模块时逐条重验；锚点均为实装版（当前 0.84.1，核对方式见 AGENTS.md pi 段查阅规则）。来源：审计报告 A/B（`.xyz-harness/2026-08-19-pi-assumption-audit/`）。
+
+### 1. F8：subagent-workflow SIGINT re-raise 在 pi 挂起窗口可能失效
+
+- **pi 锚点**：`modes/interactive/interactive-mode.js:3193-3223`（handleCtrlZ 挂起期间注册空 `ignoreSigint`，SIGCONT 才移除）
+- **机制**：`extensions/subagent-workflow/src/index.ts:654-680` 的 sigintHandler 收割后 re-raise SIGINT，依据「移除自身后无其他 SIGINT listener（pi 不注册）→ 默认终止」。该断言在 interactive 挂起（Ctrl-Z suspend）窗口不成立——re-raise 的 SIGINT 被 pi 的 `ignoreSigint` 吞掉，进程不死且本 extension listener 已移除，Ctrl+C 永久失效（直到 SIGCONT）
+- **触发条件**：本地 pi CLI interactive 模式 + subagent-workflow extension 激活 + 进程挂起态（suspend to background）收到 SIGINT。xyz-agent 桌面链路不走这条（runtime supervisor 用 SIGTERM，pi rpc-mode 自带 SIGTERM handler）
+- **处置建议**：re-raise 前检查 `process.listenerCount("SIGINT")`，移除自身后仍 >0 时不依赖默认终止，改用 `process.exit(exitCode)` 兜底。升级 pi 后若 interactive 模式信号处理有变，重测 Ctrl-Z 挂起 + Ctrl-C 组合
+
+### 2. F10：jsonl-run-store「首写立即可见」在 pi 延迟首写窗口内不成立
+
+- **pi 锚点**：`dist/core/session-manager.js:724-752`（`_persist` 无 assistant message 且未 flush 时仅内存记账不落盘；首条 assistant 到达才 `openSync("wx")` 全量写出）
+- **机制**：`extensions/subagent-workflow/src/orchestration/jsonl-run-store.ts` 期望「run entry 写入即跨 session 重启可从 jsonl 发现」。新 session 经 /wf 命令启动 workflow（主 session 尚无 assistant）的窗口内 crash，run entry 只在内存，盘上无文件
+- **触发条件**：全新 session + 首条 assistant 产出前 + 窗口内进程 crash/被杀 的三重组合（概率低，未实测可达性）
+- **处置建议**：现有兜底已生效——读序 entry > state 文件（store 自写）> 空，crash 恢复仍可发现 run，无需改动。升级 pi 时核对 `_persist` 的 hasAssistant 延迟首写分支是否仍在；若 pi 改为立即落盘，此观察项可关闭
+
+### 3. U1：pi-ai/compat 入口是上游自声明的临时模块（时间炸弹）
+
+- **pi 锚点**：`pi-ai dist/compat.js` 头注释——"This module is deleted with the coding-agent ModelManager migration"（随 coding-agent ModelManager 迁移完成而删除）
+- **机制**：`extensions/shared/llm-shared/src/call.ts:16-20` 顶层静态 `import { completeSimple, ... } from "@earendil-works/pi-ai/compat"`。上游删除该入口后加载期即炸，波及所有经 llm-shared 调 LLM 的 pi-* extension（goal / scheduler / structured-output 等）
+- **触发条件**：升级到「ModelManager 迁移完成」版本的 pi-ai（无明确时间表，以 changelog / package.json exports 为准）
+- **处置建议**：每次 pi 升级 PR 必查两项——`node -e "require.resolve('@earendil-works/pi-ai/package.json')"` 的 exports 是否仍含 `./compat`、pi-ai changelog 是否提及 ModelManager 迁移；命中时将 llm-shared 迁移到新 API（`createModels()` + provider factories），迁移前禁止发布依赖旧入口的 extension 版本
+
+### 4. thinking 档位按模型族钳制且 pi 静默（final gate P2，2026-08-20）
+
+- **pi 锚点**：`pi-ai models.js clampThinkingLevel`（不支持的档就近回落）；`types.d.ts:257`「xhigh/max 仅部分模型族支持」；`agent-session.js setThinkingLevel` 钳制后 isChanging=false → 不写 entry 不发事件
+- **机制**：UI 思考档全集（off~max 7 档，W2 SSOT）对所有模型一视同仁——mimo 族实际止于 high，选「最高(max)」被 pi 钳到 high，用户无感知实际生效档位（session 建立后 UI 芯片会回落显示 pi 实际值 high，但选中瞬间的「最高」与实际不符）。reply/缓存已改回生效值（P3 修复），剩余缺口在 UI 侧无「该模型最高支持 X」提示
+- **触发条件**：模型族 supported levels 不含所选档（mimo 族 + xhigh/max；其他族见 `get_available_thinking_levels` RPC）
+- **处置建议**：UI 侧调 `get_available_thinking_levels`（pi RPC，按当前模型过滤档位或禁用置灰 + 提示「该模型最高支持 high」）。涉及 renderer 新 RPC 通路，未随 P3 顺手实施（scope 控制），需要时立项
+
+### 5. fork 路径 spawn 仍可能带 --model 压过 fork 源模型终态（P1 同族，final gate 观察项）
+
+- **机制**：restoreSession 已改 `inheritSessionModel: true`（P1 修复，模型终态由 pi 从 model_change entry 恢复）；forkSession 的 createSession 仍透传 presetClientOptions.model——fork 文件内若含 model_change entry（截断点之前有切换记录），附着后被 preset model（或全局默认兜底）压过，分叉会话模型 ≠ 源会话模型
+- **触发条件**：fork 一个会话内切换过模型的 session（截断点在 model_change entry 之后）
+- **处置建议**：与 P1 修复方向相同（fork 附着路径设 inheritSessionModel），但 fork 语义「launch 配置 vs 源终态谁优先」需产品裁决（fork 时用户可能正想换 launch 配置），且截断点早于首条 model_change 时无 entry 可恢复——登记待裁决，未随 P1 一并修（gate 只实证了 restore 路径）

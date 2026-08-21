@@ -1,15 +1,16 @@
 /**
  * W3 TDD tests：EventInterpreter 新回调 onTurnUsage / onTurnFinalize（U6 + U7）。
  *
- * 背景：W3 收口第二条 pi 事件订阅（attachUsageListener），把 3 个副作用
- * （isGenerating 复位 / tryPersistLabel / tokenCount 写入）迁移到中间事件链路。
- * EventInterpreter 新增两个可选回调：
- *   - onTurnUsage(sessionId)：pi turn_end 触发（tryPersistLabel 主路径——首 turn 即持久化）
- *   - onTurnFinalize(sessionId)：pi agent_end 触发（复位 isGenerating=false + tryPersistLabel 兜底）
+ * 背景：W3 收口第二条 pi 事件订阅（attachUsageListener），把副作用
+ * （isGenerating 复位 / tokenCount 写入等）迁移到中间事件链路。
+ * EventInterpreter 两个可选回调：
+ *   - onTurnUsage(sessionId)：pi turn_end 触发（turn 级副作用：project sidecar 兜底等；
+ *     label 持久化 W1 起移交 pi set_session_name RPC，不再经此链路直写）
+ *   - onTurnFinalize(sessionId)：pi agent_end 触发（复位 isGenerating=false + 终态副作用）
  *
  * U6：turn-end / turn-usage handler 调用新回调（各调一次含 sessionId）。
- * U7：副作用经中间事件链路保留（onTurnFinalize→handleTurnEndSideEffects 复位 isGenerating + 调
- *     tryPersistLabel；onContextUpdate 含 totalTokens→applyContextUpdate 写入 tokenCount）。
+ * U7：副作用经中间事件链路保留（onTurnFinalize→handleTurnEndSideEffects 复位 isGenerating；
+ *     onContextUpdate 含 totalTokens→applyContextUpdate 写入 tokenCount）。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { EventInterpreter } from '../src/services/session/event-interpreter.js'

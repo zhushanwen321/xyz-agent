@@ -43,10 +43,13 @@ const hoisted = vi.hoisted(() => {
       setZoomFactor(factor: number): void
       getZoomFactor(): number
       executeJavaScript: ReturnType<typeof vi.fn>
+      setWindowOpenHandler: ReturnType<typeof vi.fn>
       session: { on: ReturnType<typeof vi.fn> }
     }
   }> = []
   const sessionOn = vi.fn()
+  // D2b：browser-view-manager 现引入 shell（window.open 的 http/https 转系统浏览器）
+  const shellOpenExternal = vi.fn(() => Promise.resolve())
   // WebContentsView mock：用普通 function（可 new），内部构造 view + webContents 桩
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const WebContentsViewMock = function (this: any, options?: { webPreferences?: Record<string, unknown> }) {
@@ -88,6 +91,8 @@ const hoisted = vi.hoisted(() => {
       // executeJavaScript 默认 resolve undefined（模拟 viewport 注入成功但无 autoFit 数据）。
       // autoFit 测试用例改写为返回 [scrollWidth, innerWidth] 数组触发缩放逻辑。
       executeJavaScript: vi.fn(() => Promise.resolve(undefined)),
+      // D2b 新窗口分支：create 时注册（mock 只记录 handler，语义断言见下方用例）
+      setWindowOpenHandler: vi.fn(),
       session: { on: sessionOn },
     }
     const setBounds = vi.fn()
@@ -97,7 +102,7 @@ const hoisted = vi.hoisted(() => {
     this.getBounds = getBounds
     this.webContents = wc
   }
-  return { createdViews, sessionOn, WebContentsViewMock }
+  return { createdViews, sessionOn, shellOpenExternal, WebContentsViewMock }
 })
 
 const createdViews = hoisted.createdViews
@@ -107,6 +112,7 @@ vi.mock('electron', () => ({
   // vi.fn 包裹普通 function 使其既可 new 又能被 vi.mocked/spy
   WebContentsView: vi.fn(hoisted.WebContentsViewMock as never),
   session: { defaultSession: { on: hoisted.sessionOn } },
+  shell: { openExternal: hoisted.shellOpenExternal },
 }))
 
 import { BrowserViewManager } from '../browser/browser-view-manager.js'
@@ -133,6 +139,7 @@ describe('BrowserViewManager', () => {
   beforeEach(() => {
     createdViews.length = 0
     sessionOn.mockClear()
+    hoisted.shellOpenExternal.mockClear()
   })
 
   describe('create', () => {
@@ -166,6 +173,21 @@ describe('BrowserViewManager', () => {
       mgr.create('sess-1', 'win-1')
 
       expect(createdViews[0].wc.session.on).toHaveBeenCalledWith('will-download', expect.any(Function))
+    })
+
+    it('D2b：注册 setWindowOpenHandler，window.open 一律 deny（http/https 转系统浏览器）', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      expect(createdViews[0].wc.setWindowOpenHandler).toHaveBeenCalledWith(expect.any(Function))
+      const handler = createdViews[0].wc.setWindowOpenHandler.mock.calls[0][0] as
+        (details: { url: string }) => { action: 'allow' | 'deny' }
+      // 无论 http(s) 与否都不建新窗口；http(s) 额外转系统浏览器
+      expect(handler({ url: 'https://example.com' })).toEqual({ action: 'deny' })
+      expect(handler({ url: 'file:///etc/passwd' })).toEqual({ action: 'deny' })
+      expect(hoisted.shellOpenExternal).toHaveBeenCalledWith('https://example.com')
+      expect(hoisted.shellOpenExternal).not.toHaveBeenCalledWith('file:///etc/passwd')
     })
 
     it('sessionId 已存在时幂等（不重复创建）', () => {

@@ -90,11 +90,11 @@ describe('bindSessionStreamSync 边界验证（w2）', () => {
     vi.restoreAllMocks()
   })
 
-  it('TC1: 批量 setGroups 全量替换——added/removed 各自触发，保留项不重复', () => {
+  it('TC1: 批量 applySnapshot 整表全量替换——added/removed 各自触发，保留项不重复', () => {
     // 初始 list=[a,b,c]——appendSession 触发 watch，3 个 session 各自 ensureStreamSubscription
-    sessionStore.setGroups([
+    sessionStore.applySnapshot({ groups: [
       { cwd: '/x', sessions: [mkSession('a'), mkSession('b'), mkSession('c')] },
-    ])
+    ] })
 
     // 验证：对 a/b/c 推 message_start，3 个 session 都应建立 streaming assistant
     // （证明 3 个都被订阅——未订阅的 sid dispatchSession 静默丢弃）
@@ -108,10 +108,10 @@ describe('bindSessionStreamSync 边界验证（w2）', () => {
     expect(chatStore.getMessages('b').length).toBe(1)
     expect(chatStore.getMessages('c').length).toBe(1)
 
-    // setGroups 替换为 [a,d,e]（保留 a、新增 d/e、移除 b/c）
-    sessionStore.setGroups([
+    // applySnapshot 整表替换为 [a,d,e]（保留 a、新增 d/e、移除 b/c）
+    sessionStore.applySnapshot({ groups: [
       { cwd: '/x', sessions: [mkSession('a'), mkSession('d'), mkSession('e')] },
-    ])
+    ] })
 
     // d/e 应被订阅（新 added），b/c 应被 disposeSession（messages 被清）
     events.dispatchSession('d', {

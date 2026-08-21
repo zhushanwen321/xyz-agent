@@ -7,8 +7,9 @@
  * 按 action 分发到 8 条路径，串联 M1 core（parser/tree/turns/render）+ M2 discovery
  *（find/subagents）。content 给 LLM 读（人类可读摘要），details 供程序化消费/测试断言。
  *
- * 错误规格 F1-F6：handler 抛 Error（message 含 👉 恢复指引），由 index.ts 的 execute
- * 闭包 catch 转 isError:true 文本返回——handler 可抛（纯逻辑可测），execute 不抛（pi 契约）。
+ * 错误规格 F1-F6：handler 抛 Error（message 含 👉 恢复指引），index.ts 的 execute 闭包
+ * 原样传播给 pi——pi-agent-core 只对 execute throw 置 isError:true（返回值里的 isError
+ * 字段被丢弃，agent-loop.js:453-483）。handler 可抛（纯逻辑可测）。
  * 例外：F2 多匹配与 F1 find 零匹配「不视为错误」，返回消歧/提示结果而非抛错。
  */
 import { existsSync, openSync, readSync, closeSync } from 'node:fs'
@@ -425,7 +426,9 @@ function formatOutlineText(r: OutlineResult): string {
   })
   const tail = [
     '',
-    `${r.stats.totalTurns} turns · ${r.stats.totalEntries} entries · ~${r.tokenEstimate} tokens`,
+    `${r.stats.totalTurns} turns · ${r.stats.totalEntries} entries · ~${r.tokenEstimate} tokens${
+      r.stats.skippedLines > 0 ? ` · ${r.stats.skippedLines} skipped lines` : ''
+    }`,
     r.truncated ? `[还有 ${r.truncated} 轮未显示，用 detail 或调大 budget]` : '',
   ]
     .filter(Boolean)
@@ -677,7 +680,7 @@ async function doFamily(params: SessionReadParams, agentDir: string): Promise<To
 async function doOutline(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
   const resolved = await resolveSessionId(params.session, 'outline', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
-  const { entries, totalBytes } = await safeParse(resolved.fileName)
+  const { entries, totalBytes, skippedLines } = await safeParse(resolved.fileName)
   const tree = buildTreeView(entries)
   const turns = segmentTurns(entries, new Set(tree.leafPath))
   const opts: OutlineOptions = {
@@ -689,6 +692,9 @@ async function doOutline(params: SessionReadParams, agentDir: string): Promise<T
   // 覆盖 stats.totalBytes：render 用 parsedBytes（leaf entry JSON 字节和）近似，
   // 此处用 ParseResult.totalBytes（原始文件字节数，design §3.4 stats.totalBytes 语义）
   result.stats.totalBytes = totalBytes
+  // [D8d] skippedLines 同模式覆盖：parser 已检测坏行计数（render 签名不含 ParseResult 恒 0），
+  // 有检测必有报告——静默跳过行对调用方不可见 = 数据完整性缺口
+  result.stats.skippedLines = skippedLines
   return { content: [{ type: 'text', text: formatOutlineText(result) }], details: result }
 }
 

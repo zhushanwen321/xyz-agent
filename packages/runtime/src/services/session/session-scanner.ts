@@ -78,8 +78,12 @@ export class SessionScanner {
       isBareWorkspace: detectBareWorkspaceCached(s.cwd),
       status: (outcome ?? 'idle') as SessionStatus,
       lastActiveAt: s.lastModified,
+      // W15 占位语义显式化：扫描读不出 modelId/tokenCount 真值，''/0 是占位而非权威空值。
+      // source:'scan' 标记让合并侧（core mergeViewSnapshot 守卫）能按来源分流——扫描占位
+      // 空值不覆盖实例/广播真值（#2 空串覆盖事故防线）；owner 快照的显式空值不受此守卫。
       modelId: '',
       tokenCount: 0,
+      source: 'scan',
       sessionFile: s.filePath,
       parentSession: s.parentSession,
       forkEntryId: s.forkEntryId,

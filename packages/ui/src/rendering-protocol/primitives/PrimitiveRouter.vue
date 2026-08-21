@@ -18,10 +18,8 @@ import AnsiText from './AnsiText.vue'
 import ProgressBar from './ProgressBar.vue'
 import StatsLine from './StatsLine.vue'
 import TabBar from './TabBar.vue'
-import Card from './Card.vue'
-import Columns from './Columns.vue'
-import Group from './Group.vue'
 import ListTree from './ListTree.vue'
+import { getPrimitiveContainer, type PrimitiveContainerType } from './container-registry'
 import { GUI_CUSTOM_REGISTRY_KEY } from '../registry'
 import { resolveComponent } from '@xyz-agent/core/rendering-protocol'
 
@@ -30,16 +28,17 @@ const props = defineProps<{ component: GuiComponent }>()
 /** core resolveComponent 保证可渲染的 builtin type（ansi-text + 6 布局原语）。 */
 type RenderableBuiltinType = Exclude<GuiComponentType, 'custom'>
 
-/** builtin type → Vue 组件纯映射表（无降级分支，降级 SSOT 在 core resolveComponent）。
- * 键钉到 RenderableBuiltinType，新增 type 时编译期可见。 */
-const BUILTIN_MAP: Record<RenderableBuiltinType, Component> = {
+/** 叶子原语（不递归、与 Router 无互引）——Router 静态 import 安全。
+ * 容器原语（card/columns/group）互引环的断法见 container-registry.ts 头注释。 */
+type LeafBuiltinType = Exclude<RenderableBuiltinType, PrimitiveContainerType>
+
+/** 叶子 builtin type → Vue 组件纯映射表（无降级分支，降级 SSOT 在 core resolveComponent）。
+ * 键钉到 LeafBuiltinType，新增 type 时编译期可见。 */
+const BUILTIN_MAP: Record<LeafBuiltinType, Component> = {
   'ansi-text': AnsiText,
   'progress-bar': ProgressBar,
   'stats-line': StatsLine,
   'tab-bar': TabBar,
-  'card': Card,
-  'columns': Columns,
-  'group': Group,
   'list-tree': ListTree,
 }
 
@@ -50,11 +49,16 @@ const CUSTOM_MAP = inject(GUI_CUSTOM_REGISTRY_KEY, {})
 const resolved = computed(() => resolveComponent(props.component, CUSTOM_MAP))
 
 /** resolved.type → Vue Component 纯查表（降级决策在 core，统一 AnsiText）：
- * custom → CUSTOM_MAP 按 props.component 查（core 已保证已注册）；其余 → BUILTIN_MAP。 */
+ * custom → CUSTOM_MAP 按 props.component 查（core 已保证已注册）；容器（card/columns/
+ * group）→ container-registry 注册表查（barrel 加载时注册，断互引环；未注册的独立
+ * 使用场景可见降级 AnsiText）；其余叶子 → BUILTIN_MAP。 */
 const renderComponent = computed<Component>(() => {
   const { type, props: resolvedProps } = resolved.value
   if (type === 'custom') {
     return CUSTOM_MAP[(resolvedProps as { component: string }).component]
+  }
+  if (type === 'card' || type === 'columns' || type === 'group') {
+    return getPrimitiveContainer(type) ?? AnsiText
   }
   return BUILTIN_MAP[type]
 })

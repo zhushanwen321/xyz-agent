@@ -41,7 +41,7 @@ const ARGV_FLAG_START = 2;
  * 解析规则：
  * - --no-extensions / -ne、--approve / -a：布尔 flag
  * - --no-context-files / -nc：布尔 flag（镜像理由：--extension 镜像会把
- *   xyz-system-prompt-extension.js 带进每个 subagent，该扩展靠子进程自己的
+ *   @zhushanwen/pi-system-prompt 带进每个 subagent，该扩展靠子进程自己的
  *   argv 检测此 flag 决定是否注入全局 AGENTS.md——不镜像则用户 opt-out
  *   在 subagent 路径失效）
  * - --extension / -e：支持 `--extension <path>`（空格）与 `--extension=<path>`（等号）

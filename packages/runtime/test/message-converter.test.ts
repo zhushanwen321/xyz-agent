@@ -331,7 +331,7 @@ describe('convertPiHistory - contentBlocks 到达顺序（循环内 push）', ()
 
     it('display:false 的 custom message 仍进 result（converter 不丢消息，过滤在渲染层）', () => {
       // AC-3 / FR-7：chat store 保留完整 messages，filterDisplayableMessages 只在渲染层过滤。
-      // converter 若丢消息会破坏规则 7.5（fork/compact/replay 需完整历史）。
+      // converter 若丢消息会破坏关键规则 9（fork/compact/replay 需完整历史）。
       const raw = [
         { role: 'user', content: 'hi', timestamp: 1000 },
         {

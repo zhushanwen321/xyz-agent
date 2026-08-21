@@ -9,7 +9,7 @@
  * - details 来自 `raw.details`（实时路语义：raw 即 event.result，pi 把 __gui__ 等放 result 内）。
  *   历史路径传 toolResult（顶层无 result 包装），归一返回的 details 通常为 undefined，
  *   由调用方独立透传顶层 toolResult.details（message-converter 已保留该逻辑）。
- * - outputRaw 仅在 raw 含 ANSI 时出现（与 output 不同），用于对称恢复对话流状态（规则 7.5）。
+ * - outputRaw 仅在 raw 含 ANSI 时出现（与 output 不同），用于对称恢复对话流状态（关键规则 9）。
  */
 
 /** 归一后的工具结果。 */

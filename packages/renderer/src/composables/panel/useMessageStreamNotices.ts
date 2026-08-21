@@ -30,6 +30,16 @@ import { useNoticeStack } from '@/composables/panel/useNoticeStack'
  */
 export const COMPACTING_NOTICE_HEIGHT = 24
 
+/**
+ * executing bash 瞬时行占位高度（W4 完整形态）。
+ * 强绑定 DOM：模板 executingBash 块（与 compacting 行同结构：`system-notice flex items-center
+ * gap-2 py-1`，`size-3` spinner + `text-[length:var(--text-xs)] leading-snug` 文本 + 两条
+ * `h-px` 分隔线）→ 实际高度同 COMPACTING_NOTICE_HEIGHT ≈ 24px。
+ * 文档流 block（Virtualizer 之后），不参与 absolute 定位基线——此常量仅供 dev 断言监测
+ * 高度漂移（useConstantHeightAssert）。改 padding/字号/icon 必须重测并同步（dev 断言会提醒）。
+ */
+export const EXECUTING_BASH_NOTICE_HEIGHT = 24
+
 /** 容器侧响应式依赖（getter/ComputedRef 注入，避免本 composable 反向依赖虚拟滚动/状态计算） */
 export interface MessageStreamNoticesDeps {
   /** 当前 session id（响应式，状态查询键） */

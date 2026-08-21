@@ -4,9 +4,11 @@
  * 锁定：
  * - T4: sendBash busy 时（isBashRunning=true）→ 广播 send.rejected{reason:'busy'} + 不调 client.bash + 返回 {blocked:true, rejected:true}
  * - T4c: sendBash isCompacting=true → 同样 reject（bash↔compact 互斥仍保留）
- * - T4b(w2): sendBash isGenerating=true → 允许并发（不再 reject）→ 正常 bashStart + client.bash + bashResult。
- *           W2 起放宽：bash 与 AI streaming 并发（对齐 pi-tui，pi _pendingBashMessages 对 RPC 透明回放）。
- *           仅保留 bash↔bash（T4）/ bash↔compacting（T4c）互斥。
+ * - T4b(w2+W1): sendBash isGenerating=true → 允许并发（不 reject）+ 双分支延迟：bashStart 即时，
+ *           bashResult 压入 per-session 待落列（镜像 pi _pendingBashMessages），flush 时按序发布。
+ *           W2 放宽：bash 与 AI streaming 并发（对齐 pi-tui）；W1 fix-chat-flow-order D2：
+ *           live 入流位置对齐 pi 落盘位置（级联末）。仅保留 bash↔bash（T4）/ bash↔compacting（T4c）互斥。
+ * - T4b-flush / T4b-flush-noop / T4b-error-immediate：待落列 flush 顺序 / no-op / 错误帧不延迟。
  * - T5: sendBash 正常 → 广播 message.bashStart → client.bash resolve → 广播 message.bashResult（完整字段）+ finally isBashRunning 复位 false
  * - T6: sendBash client.bash reject → 广播 message.error + finally isBashRunning 复位 + 返回 {blocked:true}
  * - T7: sendMessage 互斥（isBashRunning=true 时 sendMessage → 广播 send.rejected + 不调 client.prompt）—— G1 修复
@@ -51,7 +53,6 @@ function makeMockSession(overrides: Partial<IManagedSessionView> = {}): IManaged
     isCompacting: false,
     isBashRunning: false,
     bashRunToken: undefined,
-    labelPersisted: false,
     ...overrides,
   }
 }
@@ -101,6 +102,7 @@ function makeMocks(opts: MockOpts = {}) {
   const svc = {
     ensureActive: vi.fn(async () => client),
     getSessionByClient: vi.fn(() => session),
+    getSession: vi.fn(() => session),
   } as unknown as ISessionServiceInternal
 
   const pm = {
@@ -144,14 +146,16 @@ describe('MessageDispatcher sendBash —— busy 预检（T4）', () => {
   })
 })
 
-describe('MessageDispatcher sendBash —— 并发放宽（w2, 对齐 pi-tui）', () => {
+describe('MessageDispatcher sendBash —— 并发放宽 + 双分支延迟（w2 / W1 fix-chat-flow-order）', () => {
   beforeEach(() => vi.clearAllMocks())
 
   // W2 起放宽 bash↔streaming 并发：sendBash 预检移除 isGenerating。
   // 原因（spec C1）：pi 把 bash RPC 排入 _pendingBashMessages，待当前 turn 结束后按 JSONL 顺序回放，
   // 对 RPC 透明——runtime 侧无需排队等待。对齐 pi-tui（允许 streaming 时发 bash）。
-  // 与 T5 正常路径一致：bashStart 广播 + client.bash 调用 + bashResult 广播 + isBashRunning 复位。
-  it('T4b(w2): isGenerating=true → 允许并发（不 reject）→ 广播 message.bashStart → 调 client.bash → bashResult → isBashRunning 复位', async () => {
+  // [W1 fix-chat-flow-order D2] isGenerating（活跃 run）时结果进 per-session 待落列（镜像 pi
+  // _pendingBashMessages），agent_settled 到达（flushPendingBashResults）才按序以帧发布——
+  // live 入流位置构造性对齐 pi 落盘位置（级联末）。
+  it('T4b(w2+W1): isGenerating=true → 允许并发（不 reject）→ bashStart 即时广播，bashResult 压入待落列（不即时广播），flush 时按序发布', async () => {
     const bashResult: PiBashResult = { output: 'ok', exitCode: 0, cancelled: false, truncated: false }
     const { dispatcher, bashFn, broadcasts, session } = makeMocks({ isGenerating: true, bashResult })
 
@@ -162,15 +166,14 @@ describe('MessageDispatcher sendBash —— 并发放宽（w2, 对齐 pi-tui）'
     expect(rejected).toBeUndefined()
     // 调 client.bash（与 T5 正常路径一致）
     expect(bashFn).toHaveBeenCalledWith('echo hi', false)
-    // 广播 message.bashStart
+    // 广播 message.bashStart（执行中反馈即时）
     const start = findBashStart(broadcasts)
     expect(start).toBeDefined()
     expect(start!.payload).toMatchObject({ sessionId: 's1', command: 'echo hi', excludeFromContext: false })
-    // 广播 message.bashResult
-    const end = findBashResult(broadcasts)
-    expect(end).toBeDefined()
-    expect(end!.payload).toMatchObject({
-      sessionId: 's1',
+    // [W1 D2] streaming 中：bashResult 不即时广播，压入待落列（timestamp = RPC 完成时刻）
+    expect(findBashResult(broadcasts)).toBeUndefined()
+    expect(session.pendingBashResults).toHaveLength(1)
+    expect(session.pendingBashResults![0]).toMatchObject({
       command: 'echo hi',
       output: 'ok',
       exitCode: 0,
@@ -182,6 +185,58 @@ describe('MessageDispatcher sendBash —— 并发放宽（w2, 对齐 pi-tui）'
     expect(session.isBashRunning).toBe(false)
     // 正常返回
     expect(result).toEqual({ blocked: false })
+
+    // 级联结束（agent_settled → flushPendingBashResults）→ 按序以帧发布 + 清空待落列
+    dispatcher.flushPendingBashResults('s1')
+    const end = findBashResult(broadcasts)
+    expect(end).toBeDefined()
+    expect(end!.payload).toMatchObject({
+      sessionId: 's1',
+      command: 'echo hi',
+      output: 'ok',
+      exitCode: 0,
+      cancelled: false,
+      truncated: false,
+      excludeFromContext: false,
+    })
+    expect(session.pendingBashResults).toHaveLength(0)
+  })
+
+  it('T4b-flush: 同级联两条 bash → 待落列按 RPC 完成序，flush 一次按序发布两条', async () => {
+    // 顺序两次 sendBash（bash↔bash 互斥天然串行：第一次 finally 复位 isBashRunning 后第二次才可发）
+    const mocks = makeMocks({ isGenerating: true })
+    mocks.bashFn.mockImplementation(async () => ({ output: 'first-out', exitCode: 0, cancelled: false, truncated: false }) as PiBashResult)
+    await mocks.dispatcher.sendBash('s1', 'cmd-1', false)
+    mocks.bashFn.mockImplementation(async () => ({ output: 'second-out', exitCode: 0, cancelled: false, truncated: false }) as PiBashResult)
+    await mocks.dispatcher.sendBash('s1', 'cmd-2', false)
+
+    // 两条都待落列（按完成序）
+    expect(mocks.session.pendingBashResults?.map((d) => d.command)).toEqual(['cmd-1', 'cmd-2'])
+
+    mocks.dispatcher.flushPendingBashResults('s1')
+    const results = mocks.broadcasts.filter((m) => m.type === 'message.bashResult')
+    expect(results).toHaveLength(2)
+    expect(results[0].payload).toMatchObject({ command: 'cmd-1', output: 'first-out' })
+    expect(results[1].payload).toMatchObject({ command: 'cmd-2', output: 'second-out' })
+    expect(mocks.session.pendingBashResults).toHaveLength(0)
+  })
+
+  it('T4b-flush-noop: 无待落列 / session 不存在 → no-op 不抛、不广播', () => {
+    const { dispatcher, broadcasts } = makeMocks()
+    expect(() => dispatcher.flushPendingBashResults('s1')).not.toThrow()
+    expect(broadcasts.filter((m) => m.type === 'message.bashResult')).toHaveLength(0)
+  })
+
+  it('T4b-error-immediate: streaming 中 RPC 失败 → 错误兜底帧立即广播（不进待落列）', async () => {
+    const { dispatcher, broadcasts, session } = makeMocks({ isGenerating: true, bashError: new Error('pi boom') })
+    await dispatcher.sendBash('s1', 'git status')
+
+    // [S2] 错误兜底 bashResult 立即发布（xyz 合成帧无 pi 落盘时序语义，不延迟）
+    const end = findBashResult(broadcasts)
+    expect(end).toBeDefined()
+    expect(end!.payload.output).toContain('pi boom')
+    // 不进待落列
+    expect(session.pendingBashResults).toBeUndefined()
   })
 })
 

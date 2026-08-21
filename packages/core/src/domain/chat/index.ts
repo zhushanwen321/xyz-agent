@@ -31,6 +31,25 @@ export * from './message-turns'
 export * from './summarize-turn'
 export * from './trace-window'
 
-export { createUseChat, ensureStreamSubscription, resetChatModuleStateForTest } from './useChat'
+export { createUseChat, ensureStreamSubscription, invalidateStreamSubscription, resetChatModuleStateForTest } from './useChat'
 export type { UseChatDeps, EnsureStreamSubDeps, SessionStoreLike } from './useChat'
 export type { ChatApiPort, WriteSegmentsFn } from './api-port'
+// w20 apply-entry：chat 视图态 reducer（D5 单一 reducer 双路喂入——重放侧）。
+// 自包含纯函数模块（只依赖 @xyz-agent/shared），供 runtime wire 层与 core store（W21）共用。
+export {
+  applyEntry,
+  replayEntries,
+  createInitialChatViewState,
+} from './apply-entry'
+export type {
+  PiEntry,
+  PiEntryBase,
+  PiMessageEntry,
+  PiMessageBody,
+  PiCustomEntry,
+  PiLabelEntry,
+  PiCompactionEntry,
+  PiBranchSummaryEntry,
+  PiCustomMessageEntry,
+  ChatViewState,
+} from './apply-entry'

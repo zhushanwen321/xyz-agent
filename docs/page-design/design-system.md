@@ -29,6 +29,22 @@ design-system.md   ← 原语：值如何拼成可复用部件（本文件）
 
 > **边界澄清**：此反模式针对的是**卡片强调**（用左色条替代 Card-Active inset ring 做焦点/选中态）。编辑式 admonition（`.note` / `.warn` callout）用左色条区分类型（note=accent / warn=danger）是 callout 标准范式，**不属此反模式**——它是文档内联提示的分类标记，不是卡片选中手段。settings shell + 5 份 per-menu draft 的 `.note` 均沿用此范式（`border-left:2px solid` + surface 底），与 Card-Active 并存不冲突。
 
+### 2.5 对话流通知族（Notice Family）—— 2026-08-19 二分裁决
+
+对话流的「非对话内容行」（transient 反馈 / 元信息）按**可交互性**二分，两种形态不得混用：
+
+| 形态 | 判据 | 样式 | 实例 |
+|---|---|---|---|
+| 通知卡片 | 可交互（含链接/关闭按钮的 transient 反馈） | bg-soft（语义色 12% 透明）**单手段分隔，无 border**（遵 v6「Card 去 border 走 bg 层级」）+ `--radius` + `px-3 py-1.5` + text-sm | ForkNotice |
+| 横线分隔行 | 静态元信息（无可交互入口） | 无底色无框，两侧 `h-px` 横线 + 居中 text-xs + 12px 图标 | SystemNotice、压缩中提示（isCompacting） |
+
+共同约束：
+- **宽度**：一律 `mx-auto w-full max-w-[var(--content-max-w)]`，与对话流内容列（Turn/Composer）同一宽度体系。
+- **动效**：`notice-in` 200ms `var(--ease)`（-4px translateY 淡入），`motion-reduce:animate-none`。
+- 通知卡片内的文字链接用 accent 色 + hover 下划线，**不用 hover 底色**（soft 底卡片内再叠 hover 底 = 卡中卡）。
+
+> 裁决背景：ForkNotice 早期实现（archive spec §3）为 `border + bg-info-soft` 双分隔手段 + 全宽（无 max-w），与 v6 Card 裁决和内容列宽度体系双重脱节（实测 848px vs turn 720px），2026-08-19 critique 后收敛为本节规范。
+
 ## 3. 按钮（Button）
 
 | 变体 | 用途 | 样式 |

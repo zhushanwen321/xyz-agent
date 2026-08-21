@@ -1,37 +1,32 @@
 /**
- * Workflow 提取器 —— 从主 session JSONL 提取 WorkflowRunRecord[]。
+ * Workflow 提取器 —— 从 session entry 列表派生 WorkflowRunRecord[]。
  *
- * 数据来源：主 session JSONL 中的 `workflow-state-link` custom_message entry。
- * pi-subagent-workflow 扩展注册了 `workflow` tool，主 agent 调用时会启动一个
- * 在独立 worker 线程执行的 workflow run。
+ * [W18] 本文件重构为 entry 扫描器：`scanWorkflowEntries(entries)` 是 workflow 列表唯一
+ * 派生函数，实时（entry_appended 失效 → get_entries 增量/全量拉取）与冷启动（磁盘
+ * JSONL 全量解析 → getWorkflows RPC）两条通路都调它（D4「实时与重开走同一份扫描代码」）。
  *
- * JSONL 中的 entry 模式（pi-subagent-workflow）：
- * 1. custom_message customType:'workflow-state-link' 含 data:{runId, path, updatedAt}
- *    —— path 指向 workflow-state 文件的绝对路径。每次 RunStore.save 都 append 一条，
- *    同 runId 可有多条（去重保留最新 updatedAt 的 path）。
- * 2. workflow-state 文件（<sessionDir>/workflow-state/<runId>.jsonl）：
- *    单行 RunSnapshot（rewrite mode，文件始终是最新单行快照）。
- *    格式版本：v === 'wf-run-v2'（D-5 版本守卫，不匹配跳过；v1 快照跳过为
- *    extension 侧声明的接受边界——旧 run 历史价值低，不做兼容迁移）。
- *
- * 提取策略：
- * - 遍历所有 custom_message entry，收集 workflow-state-link（按 runId 去重，保留最新 path）
- * - 逐个读 path 指向的 state 文件，取最后一行（rewrite mode = 最新快照）
- * - 版本守卫（v !== 'wf-run-v2' 跳过，D-5 不向后兼容；v1 旧快照一并跳过）
- * - 映射 RunSnapshot → WorkflowRunRecord
+ * 数据来源优先级：
+ * 1. **自描述 `workflow-record` entry（W17 v1，权威）**：pi-subagent-workflow 每次成功
+ *    flush 同步 append 完整 RunSnapshot（customType 常量 = shared WORKFLOW_RECORD_CUSTOM_TYPE，
+ *    data = {v:1, snapshot, updatedAt}）。同 runId 多条取最后一条（后者更新）。
+ * 2. **legacy 解析（降级兜底）**：无自描述 entry 命中（W17 改造前创建的旧 session）时走
+ *    workflow-state-link 指针 entry + state 文件读取。降级表现 = 数据滞后但可用（登记表
+ *    #9 标注）。state 文件在 W17 后降级为纯性能缓存（读序 entry > state 文件 > 空）。
  *
  * agent call 对话流：trace[].sessionId 是 pi session ID（uuidv7），
  * SessionService.getAgentCallHistory 按 sessionId 全局查找 JSONL 文件
  * （scanPiSessions 扫所有 encodedCwd 子目录）。
  *
  * 参考扩展源码：
- * - extensions/subagent-workflow/src/orchestration/jsonl-run-store.ts（RunSnapshot 格式 + SNAPSHOT_VERSION）
+ * - extensions/subagent-workflow/src/orchestration/jsonl-run-store.ts（RunSnapshot 格式 + SNAPSHOT_VERSION + workflow-record entry data schema）
  * - extensions/subagent-workflow/src/orchestration/models/workflow-run.ts（WorkflowRun 聚合根）
  * - extensions/subagent-workflow/src/orchestration/models/types.ts（RunStatus/DoneReason/AgentResult）
  */
 
 import { readFileSync } from 'node:fs'
 import { parseJsonl } from '../../utils/jsonl.js'
+import { isEnoent } from '../../utils/errors.js'
+import { WORKFLOW_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
 import type {
   WorkflowRunRecord,
   WorkflowAgentCall,
@@ -49,7 +44,7 @@ import type {
  */
 const SNAPSHOT_VERSION = 'wf-run-v2'
 
-/** workflow-state-link entry 的 data 结构 */
+/** workflow-state-link entry 的 data 结构（legacy） */
 interface WorkflowStateLinkData {
   runId: string
   path: string
@@ -130,22 +125,105 @@ interface RunSnapshot {
 }
 
 /**
- * 从主 session JSONL 文件提取 WorkflowRunRecord[]。
+ * [W18] entry 扫描器：从 entry 列表派生 WorkflowRunRecord[]。
  *
- * 读取文件 → parseJsonl → filter workflow-state-link → 按 runId 去重 →
- * 逐个读 state 文件 → 版本守卫 → 映射 → 返回列表。
- * 文件不存在或无 workflow-state-link 时返回空数组。
+ * 实时（session-service 增量拉取）与冷启动（getWorkflows 磁盘全量）唯一共用派生函数：
+ * 1. 先扫自描述 `workflow-record` entry（W17 v1：data = {v:1, snapshot, updatedAt}，完整
+ *    RunSnapshot 内嵌，无需读 state 文件）；同 runId 多条取最后一条（后者更新）。命中
+ *    （≥1 条有效）直接返回。
+ * 2. 无命中（W17 前创建的旧 session）→ legacy 解析兜底（workflow-state-link 指针 +
+ *    state 文件读取，数据滞后但可用）。
+ *
+ * entries 来源两种形态同构（pi SessionEntry 内存对象与 JSONL 行反序列化）。
+ */
+export function scanWorkflowEntries(entries: unknown[]): WorkflowRunRecord[] {
+  const selfDescribed = collectSelfDescribedWorkflowRecords(entries)
+  if (selfDescribed !== null) return selfDescribed
+  return extractWorkflowsFromEntriesLegacy(entries)
+}
+
+/**
+ * 收集自描述 workflow-record entry（W17 v1）。
+ *
+ * @returns null = 无有效命中（走 legacy 兜底）；WorkflowRunRecord[] = 命中。
+ * entry 层 v 守卫（data.v !== 1 跳过 + warn）与 snapshot 层 v 守卫（mapValidatedSnapshot
+ * 内 SNAPSHOT_VERSION）是两级独立版本（entry schema 演化 vs 快照格式演化，对齐 extension
+ * 侧 WorkflowRecordEntryData 注释）。
+ */
+function collectSelfDescribedWorkflowRecords(entries: unknown[]): WorkflowRunRecord[] | null {
+  const snapshots = new Map<string, RunSnapshot>()
+  for (const entry of entries) {
+    const snapshot = parseSelfDescribedWorkflowSnapshot(entry)
+    if (snapshot) snapshots.set(snapshot.runId, snapshot)
+  }
+  if (snapshots.size === 0) return null
+  const records: WorkflowRunRecord[] = []
+  for (const [runId, snapshot] of snapshots) {
+    // stateFilePath 空串：自描述 entry 路径无 state 文件概念（W17 后 state 文件降级为
+    // 纯性能缓存，entry 内嵌完整快照）——消费方（详情面板路径展示）对空串隐藏即可
+    const record = mapValidatedSnapshot(runId, snapshot, '')
+    if (record) records.push(record)
+  }
+  return records
+}
+
+/**
+ * 单条 entry → RunSnapshot（type/customType/data/版本/runId 存在性逐层守卫，坏 entry 返回
+ * null）。同 runId 后出现的覆盖前面的（entry 顺序 = 时间顺序，后者更新）。
+ */
+function parseSelfDescribedWorkflowSnapshot(entry: unknown): RunSnapshot | null {
+  if (typeof entry !== 'object' || entry === null) return null
+  const e = entry as JsonlCustomEntry
+  if (e.type !== 'custom' || e.customType !== WORKFLOW_RECORD_CUSTOM_TYPE) return null
+  const data = e.data
+  if (typeof data !== 'object' || data === null) return null
+  const d = data as Record<string, unknown>
+  if (d.v !== 1) {
+    console.warn(
+      `[workflow-extractor] workflow-record entry schema version '${String(d.v)}' unsupported (expected 1) — ` +
+        `extension/runtime version skew, skip this entry. Fix: align schema with ` +
+        `extensions/subagent-workflow/src/orchestration/jsonl-run-store.ts (W17 v1).`,
+    )
+    return null
+  }
+  const snapshot = d.snapshot
+  if (typeof snapshot !== 'object' || snapshot === null) return null
+  const snap = snapshot as Record<string, unknown>
+  // runId 存在性守卫（snapshot 内嵌完整 runId；无 runId 视为坏 entry 跳过）
+  if (typeof snap.runId !== 'string' || snap.runId.length === 0) return null
+  return snapshot as RunSnapshot
+}
+
+/**
+ * 从主 session JSONL 文件提取 WorkflowRunRecord[]（冷启动 / getWorkflows RPC 路径）。
+ *
+ * 读取文件 → parseJsonl → scanWorkflowEntries（与实时增量拉取同一份派生代码）。
+ *
+ * 读失败分级（与 extractSubagentsFromSessionFile 同款，renderer 侧栏 stale 守卫的契约前提）：
+ * ENOENT → 空数组（pi session 文件延迟写入的合法窗口）；其他读错误 → 原样上抛（RPC 报错，
+ * renderer catch 保留旧分区 + 重试态，不与「真实删空」混淆）。无 workflow record 时返回空数组。
  */
 export function extractWorkflowsFromSessionFile(filePath: string): WorkflowRunRecord[] {
   let content: string
   try {
     content = readFileSync(filePath, 'utf-8')
-  } catch {
-    return []
+  } catch (e) {
+    if (isEnoent(e)) return []
+    throw e
   }
 
   const entries = parseJsonl(content)
+  return scanWorkflowEntries(entries)
+}
 
+/**
+ * [legacy] 旧双管线的磁盘解析逻辑（W18 前的 extractWorkflowsFromSessionFile 主体）。
+ *
+ * 降级兜底：仅当 session 无自描述 workflow-record entry（W17 改造前创建）时被
+ * scanWorkflowEntries 调用。W17 前创建的存量 session（含 workflow-state-link entry +
+ * state 文件）由此路径继续可见（不静默丢失）。
+ */
+function extractWorkflowsFromEntriesLegacy(entries: unknown[]): WorkflowRunRecord[] {
   // 收集 workflow-state-link，按 runId 去重（保留最新 path）
   const links = new Map<string, string>()
   for (const entry of entries) {
@@ -174,7 +252,7 @@ export function extractWorkflowsFromSessionFile(filePath: string): WorkflowRunRe
 }
 
 /**
- * 读 workflow-state 文件 + 映射为 WorkflowRunRecord。
+ * 读 workflow-state 文件 + 映射为 WorkflowRunRecord（legacy 路径）。
  * 文件不存在 / 解析失败 / 版本不匹配 → 返回 null（跳过该 run）。
  */
 function readAndMapSnapshot(runId: string, stateFilePath: string): WorkflowRunRecord | null {
@@ -199,10 +277,20 @@ function readAndMapSnapshot(runId: string, stateFilePath: string): WorkflowRunRe
     return null
   }
 
+  return mapValidatedSnapshot(runId, parsed, stateFilePath)
+}
+
+/**
+ * 已解析 snapshot（state 文件行 / workflow-record entry 内嵌）→ 结构校验 + 版本守卫 +
+ * 映射 WorkflowRunRecord。坏结构 / 版本不匹配 → null（跳过该 run）。
+ *
+ * [W18] 自 legacy readAndMapSnapshot 抽出共用：state 文件路径（legacy）与自描述 entry
+ * 路径（stateFilePath = ''）同守卫同映射，两路派生行为一致。
+ */
+function mapValidatedSnapshot(runId: string, parsed: unknown, stateFilePath: string): WorkflowRunRecord | null {
   // [review 修复] 结构守卫：JSON.parse 对 "null" / "42" / '"str"' / '[]' 等合法 JSON
   // 产出 null / 非对象 / 缺 v 字段值，直接 as RunSnapshot 后 .v 访问会抛 TypeError
-  // 而非走「跳过」路径——按坏行处理跳过，与上方 malformed 行为一致（状态文件由本
-  // 扩展生成，防御并发截断 / 外部覆写）。
+  // 而非走「跳过」路径——按坏行处理跳过（状态文件由本扩展生成，防御并发截断 / 外部覆写）。
   if (typeof parsed !== 'object' || parsed === null || !('v' in parsed)) return null
 
   // [review 修复 R3-S3] v 匹配后 mapSnapshotToRecord 还直接访问 state.trace /
@@ -225,7 +313,7 @@ function readAndMapSnapshot(runId: string, stateFilePath: string): WorkflowRunRe
   if (snapshot.v !== SNAPSHOT_VERSION) {
     console.warn(
       `[workflow-extractor] snapshot version '${String(snapshot.v)}' unsupported (expected '${SNAPSHOT_VERSION}') — ` +
-        `extension/runtime version skew, skip run ${runId} (${stateFilePath}). ` +
+        `extension/runtime version skew, skip run ${runId} (${stateFilePath || 'workflow-record entry'}). ` +
         `Fix: bump SNAPSHOT_VERSION in workflow-extractor.ts to match ` +
         `extensions/subagent-workflow/src/orchestration/jsonl-run-store.ts (see header comment).`,
     )

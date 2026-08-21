@@ -4,8 +4,9 @@
  * 实现 settings.json packages[]（经 pi-settings-store 统一读写层）+
  * disabled-packages.json（xyz-agent 自己的文件，独立原子读写）。
  *
- * 🔒 settings.json 的 RMW 经 pi-settings-store.updateSettingsSync（sync，单线程不交错），
- * 与 model 域（pi-provider-store）共享同一读写层，杜绝跨域竞态（D17）。
+ * 🔒 settings.json 的 RMW 经 pi-settings-store.updateSettingsFields（跨进程锁 +
+ * 字段域 merge，D1a/D1b），与 model 域（pi-provider-store）共享同一读写层与锁，
+ * 杜绝跨域竞态（D17）。
  *
  * P0-1：disabled-packages.json 的读写收敛到 JsonStore（shouldDeleteWhen 实现空则删）。
  */
@@ -13,7 +14,7 @@
 import { join } from 'node:path'
 import { JsonStore } from '../../utils/json-store.js'
 import type { IExtensionSettings } from '../../services/ports/extension-settings.js'
-import { updateSettingsSync, readSettings, invalidateSettingsCache, setSettingsPath } from './pi-settings-store.js'
+import { updateSettingsFields, readSettings, invalidateSettingsCache, setSettingsPath } from './pi-settings-store.js'
 import { getPiAgentDir } from './pi-paths.js'
 
 const DISABLED_FILE = 'disabled-packages.json'
@@ -98,8 +99,10 @@ export class PiExtensionSettings implements IExtensionSettings {
   }
 
   async addPackage(source: string): Promise<void> {
-    // sync RMW（Node 单线程 + sync IO 天然不交错）。签名保持 async 守 IExtensionSettings port 契约。
-    updateSettingsSync(s => {
+    // 锁内 sync RMW + extension 域 merge（Node 单线程 + sync IO 进程内不交错；
+    // 跨进程与 pi 互斥靠 pi-settings-store 的 proper-lockfile 锁）。
+    // 签名保持 async 守 IExtensionSettings port 契约。
+    updateSettingsFields('extension', s => {
       const packages = s.packages ?? []
       if (!packages.includes(source)) {
         packages.push(source)
@@ -109,7 +112,7 @@ export class PiExtensionSettings implements IExtensionSettings {
   }
 
   async removePackage(source: string): Promise<void> {
-    updateSettingsSync(s => {
+    updateSettingsFields('extension', s => {
       const packages = (s.packages ?? []).filter(p => p !== source)
       s.packages = packages
     })

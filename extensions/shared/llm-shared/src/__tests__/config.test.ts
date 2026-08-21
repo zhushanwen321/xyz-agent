@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clearConfigCache, getConfigPath, loadConfig, saveConfig } from "../config.ts";
+import * as fileLock from "@zhushanwen/pi-file-lock";
 
 // node:fs 的 ESM namespace 不可配置，vi.spyOn 对具名导出失效（vitest 限制）。
 // 用 vi.mock 包装 readFileSync/renameSync（默认走 actual，个别 test override），
@@ -128,6 +129,12 @@ describe("loadConfig", () => {
 });
 
 describe("saveConfig", () => {
+	/** tmp 残留断言（D1e 唯一化后 tmp 名为 <path>.tmp_<pid>_<rand>，用前缀 glob 断言）。 */
+	function tmpResidues(pkg: string): string[] {
+		const cfgDir = join(dir, "config");
+		return readdirSync(cfgDir).filter((f) => f.startsWith(`${pkg}-ext-config.json.tmp`));
+	}
+
 	it("TC16 原子写：文件落盘 + 内容正确 + 无 tmp 残留", () => {
 		const result = saveConfig("test", { b: 2 });
 		expect(result.success).toBe(true);
@@ -135,7 +142,7 @@ describe("saveConfig", () => {
 		const cfgPath = join(dir, "config", "test-ext-config.json");
 		expect(existsSync(cfgPath)).toBe(true);
 		expect(JSON.parse(readFileSync(cfgPath, "utf-8"))).toEqual({ b: 2 });
-		expect(existsSync(`${cfgPath}.tmp`)).toBe(false); // 无 tmp 残留
+		expect(tmpResidues("test")).toEqual([]); // 无 tmp 残留（唯一化 tmp 名，前缀断言）
 	});
 
 	it("TC16 文件 mode 0o600", () => {
@@ -164,8 +171,8 @@ describe("saveConfig", () => {
 
 		expect(result.success).toBe(false);
 		expect(result.error).toContain("EPERM");
-		// tmp 文件被 catch 块的 unlinkSync 清理
-		expect(existsSync(join(dir, "config", "fail-ext-config.json.tmp"))).toBe(false);
+		// tmp 文件被 catch 块的 unlinkSync 清理（唯一化 tmp 名，前缀断言）
+		expect(tmpResidues("fail")).toEqual([]);
 		// 目标文件未被创建（rename 失败）
 		expect(existsSync(join(dir, "config", "fail-ext-config.json"))).toBe(false);
 	});
@@ -185,9 +192,10 @@ describe("saveConfig", () => {
 		expect(onWarning).toHaveBeenCalledTimes(1);
 		const warning = String(onWarning.mock.calls[0][0]);
 		expect(warning).toContain("[llm-shared] Failed to save config at '" + join(dir, "config", "enoent-ext-config.json") + "'");
+		expect(warning).toContain("[llm-shared] Failed to save config at '" + join(dir, "config", "enoent-ext-config.json") + "'");
 		expect(warning).toContain("ENOENT");
-		// tmp 清理 + 目标未创建
-		expect(existsSync(join(dir, "config", "enoent-ext-config.json.tmp"))).toBe(false);
+		// tmp 清理（前缀断言）+ 目标未创建
+		expect(tmpResidues("enoent")).toEqual([]);
 		expect(existsSync(join(dir, "config", "enoent-ext-config.json"))).toBe(false);
 	});
 
@@ -204,8 +212,8 @@ describe("saveConfig", () => {
 		const warning = String(onWarning.mock.calls[0][0]);
 		expect(warning).toContain("[llm-shared] Failed to save config at '" + join(dir, "config", "eperm-ext-config.json") + "'");
 		expect(warning).toContain("EPERM");
-		// tmp 清理（Windows 目标占用场景 rename 失败后 tmp 残留被清理）
-		expect(existsSync(join(dir, "config", "eperm-ext-config.json.tmp"))).toBe(false);
+		// tmp 清理（Windows 目标占用场景 rename 失败后 tmp 残留被清理；前缀断言）
+		expect(tmpResidues("eperm")).toEqual([]);
 		expect(existsSync(join(dir, "config", "eperm-ext-config.json"))).toBe(false);
 	});
 
@@ -213,5 +221,27 @@ describe("saveConfig", () => {
 		expect(saveConfig("test", { v: 1 }).success).toBe(true);
 		expect(saveConfig("test", { v: 2 }).success).toBe(true);
 		expect(JSON.parse(readFileSync(join(dir, "config", "test-ext-config.json"), "utf-8"))).toEqual({ v: 2 });
+	});
+
+	it("W4 锁不可用（ELOCKED 预算耗尽）→ {success:false} + 不降级无锁写（目标文件不落盘）", () => {
+		// 模拟 runtime 对端长期持锁：withFileLockSync 抛 ELOCKED。扩展侧契约 =
+		// 不降级无锁写（降级会与 runtime 持锁写交错丢字段），按保存失败返回。
+		const lockErr = Object.assign(new Error("[file-lock] lock unavailable: ELOCKED"), { code: "ELOCKED" });
+		const spy = vi.spyOn(fileLock, "withFileLockSync").mockImplementation(() => {
+			throw lockErr;
+		});
+		const onWarning = vi.fn();
+
+		try {
+			const result = saveConfig("lockbusy", { x: 1 }, onWarning);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain("lock unavailable");
+			expect(onWarning).toHaveBeenCalledTimes(1);
+			// 关键：未降级写盘（无锁写会破坏与 runtime 的互斥）
+			expect(existsSync(join(dir, "config", "lockbusy-ext-config.json"))).toBe(false);
+		} finally {
+			spy.mockRestore();
+		}
 	});
 });

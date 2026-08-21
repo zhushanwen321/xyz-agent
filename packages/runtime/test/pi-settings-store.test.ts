@@ -3,12 +3,16 @@ import { mkdtemp, rm, readFileSync, writeFileSync, existsSync, mkdirSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { spawn } from 'node:child_process'
+import { createRequire } from 'node:module'
 
+import lockfile from 'proper-lockfile'
 import {
   readSettings,
   writeSettings,
-  updateSettingsSync,
+  updateSettingsFields,
   setSettingsPath,
+  setSettingsLockTimingForTest,
   getActiveSettingsPath,
   invalidateSettingsCache,
   type PiSettings,
@@ -28,6 +32,8 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  // 恢复锁参数默认值，避免压缩预算泄漏到后续用例
+  setSettingsLockTimingForTest({})
   await rmP(tmpDir, { recursive: true, force: true })
 })
 
@@ -89,16 +95,16 @@ describe('pi-settings-store', () => {
     })
   })
 
-  describe('updateSettingsSync (RMW)', () => {
+  describe('updateSettingsFields (locked RMW + scope merge)', () => {
     it('read-modify-write a single field', () => {
       writeSettings({ defaultModel: 'old' })
-      updateSettingsSync(s => { s.defaultModel = 'new' })
+      updateSettingsFields('model', s => { s.defaultModel = 'new' })
       expect(readSettings().defaultModel).toBe('new')
     })
 
     it('preserves other fields (partial update)', () => {
       writeSettings({ defaultModel: 'keep', packages: ['keep-pkg'] })
-      updateSettingsSync(s => { s.defaultModel = 'changed' })
+      updateSettingsFields('model', s => { s.defaultModel = 'changed' })
       const result = readSettings()
       expect(result.defaultModel).toBe('changed')
       expect(result.packages).toEqual(['keep-pkg'])
@@ -106,10 +112,10 @@ describe('pi-settings-store', () => {
 
     it('operates on a deep copy (mutator does not affect cache)', () => {
       writeSettings({ packages: ['original'] })
-      updateSettingsSync(s => {
+      updateSettingsFields('extension', s => {
         s.packages!.push('added')
       })
-      // mutator 改的是 draft，但 updateSettingsSync 回写了 draft
+      // mutator 改的是 draft，但 updateSettingsFields 回写了 draft
       expect(readSettings().packages).toEqual(['original', 'added'])
     })
 
@@ -117,10 +123,181 @@ describe('pi-settings-store', () => {
       writeSettings({ defaultModel: 'v1' })
       // 外部改盘（绕过 store）
       writeFileSync(settingsPath, JSON.stringify({ defaultModel: 'external' }), 'utf-8')
-      updateSettingsSync(s => { s.packages = ['x'] })
+      updateSettingsFields('extension', s => { s.packages = ['x'] })
       const result = readSettings()
       expect(result.defaultModel).toBe('external') // 拿到外部改的值
       expect(result.packages).toEqual(['x'])
+    })
+
+    it('creates lock in same dir and cleans it up after write', () => {
+      updateSettingsFields('model', s => { s.defaultModel = 'm' })
+      // 锁目录（<settings.json>.lock）在写完后必须被释放清理，否则会困住 pi 的下次保存
+      expect(existsSync(`${settingsPath}.lock`)).toBe(false)
+      expect(readSettings().defaultModel).toBe('m')
+    })
+
+    it('works when parent directory does not exist yet', () => {
+      const deepPath = join(tmpDir, 'fresh', 'dir', 'settings.json')
+      setSettingsPath(deepPath)
+      updateSettingsFields('model', s => { s.defaultModel = 'first' })
+      expect(readSettings().defaultModel).toBe('first')
+    })
+
+    it('releases lock when mutator throws (no stale lock left behind)', () => {
+      expect(() => updateSettingsFields('model', () => { throw new Error('mutator boom') })).toThrow('mutator boom')
+      expect(existsSync(`${settingsPath}.lock`)).toBe(false)
+      // 抛错后文件未被写坏，下次写入正常
+      updateSettingsFields('model', s => { s.defaultModel = 'ok' })
+      expect(readSettings().defaultModel).toBe('ok')
+    })
+  })
+
+  describe('field scope merge (D1b)', () => {
+    it('model scope drops mutator changes to non-model keys', () => {
+      writeSettings({ defaultModel: 'mine', packages: ['pkg'], skills: ['/sk'] })
+      // mutator 越界改 packages/skills（调用方 bug）——API 强制分区：越界修改被丢弃
+      updateSettingsFields('model', s => {
+        s.defaultModel = 'changed'
+        s.packages = ['hacked']
+        s.skills = ['/evil']
+      })
+      const result = readSettings()
+      expect(result.defaultModel).toBe('changed')
+      expect(result.packages).toEqual(['pkg'])
+      expect(result.skills).toEqual(['/sk'])
+    })
+
+    it('extension scope drop model-field changes and vice versa', () => {
+      writeSettings({ defaultModel: 'mine', packages: ['pkg'] })
+      updateSettingsFields('extension', s => { s.defaultModel = 'hacked'; s.packages = ['new-pkg'] })
+      expect(readSettings().defaultModel).toBe('mine')
+      expect(readSettings().packages).toEqual(['new-pkg'])
+    })
+
+    it('skills scope writes only skills', () => {
+      writeSettings({ skills: ['/a'], defaultModel: 'm', packages: ['p'] })
+      updateSettingsFields('skills', s => { s.skills = ['/b', '/c'] })
+      const result = readSettings()
+      expect(result.skills).toEqual(['/b', '/c'])
+      expect(result.defaultModel).toBe('m')
+      expect(result.packages).toEqual(['p'])
+    })
+
+    it('deleted scope field is physically removed from disk (clearEnabledModels semantics)', () => {
+      writeSettings({ enabledModels: ['a/*'], defaultModel: 'm' })
+      updateSettingsFields('model', s => { delete s.enabledModels })
+      const raw = readFileSync(settingsPath, 'utf-8')
+      expect(JSON.parse(raw)).toEqual({ defaultModel: 'm' }) // enabledModels key 物理消失
+    })
+
+    it('full scope writes everything the mutator set (migration whitelist semantics)', () => {
+      writeSettings({ defaultModel: 'old' })
+      updateSettingsFields('full', s => {
+        s.defaultModel = 'new'
+        s.packages = ['x']
+        s.customUnknown = 'kept-by-full'
+      })
+      const result = readSettings()
+      expect(result.defaultModel).toBe('new')
+      expect(result.packages).toEqual(['x'])
+      expect(result.customUnknown).toBe('kept-by-full')
+    })
+
+    it('unknown pi fields survive scoped writes (passthrough)', () => {
+      writeSettings({ somePiFutureField: { nested: true }, defaultModel: 'm' })
+      updateSettingsFields('model', s => { s.defaultModel = 'm2' })
+      expect(readSettings().somePiFutureField).toEqual({ nested: true })
+    })
+  })
+
+  describe('cross-process lock (D1a)', () => {
+    it('re-reads latest inside lock after an externally locked writer (simulated pi)', () => {
+      writeSettings({ defaultModel: 'v1', packages: ['p1'] })
+      // 模拟 pi 持同一把锁写 settings.json（realpath:false + 同 lockfile 路径）
+      const release = lockfile.lockSync(settingsPath, { realpath: false })
+      try {
+        writeFileSync(settingsPath, JSON.stringify({ defaultModel: 'pi-wrote', packages: ['p1'], defaultThinkingLevel: 'high' }), 'utf-8')
+      } finally {
+        release()
+      }
+      updateSettingsFields('extension', s => { s.packages = ['p2'] })
+      const result = readSettings()
+      // pi 写入的 model 域字段被锁内重读吃进，xyz 的 extension 域写不覆盖它们（窗口 W1/W2 关闭）
+      expect(result.defaultModel).toBe('pi-wrote')
+      expect(result.defaultThinkingLevel).toBe('high')
+      expect(result.packages).toEqual(['p2'])
+    })
+
+    it('fails fast with ELOCKED when lock is held beyond retry budget', () => {
+      writeSettings({ defaultModel: 'v1' })
+      // 压缩预算：10ms/次 × 预算 60ms，快速走完 fail-fast 路径
+      setSettingsLockTimingForTest({ retryDelayMs: 10, retryBudgetMs: 60 })
+      const release = lockfile.lockSync(settingsPath, { realpath: false })
+      let err: unknown
+      try {
+        updateSettingsFields('model', s => { s.defaultModel = 'blocked' })
+      } catch (e) {
+        err = e
+      } finally {
+        release()
+      }
+      // fail-fast：预算耗尽抛错（对齐 pi 放弃保存语义），而非静默丢弃或死等
+      expect((err as { code?: string } | undefined)?.code).toBe('ELOCKED')
+      expect(readSettings().defaultModel).toBe('v1') // 本次写入被放弃
+      // 锁释放后恢复正常
+      updateSettingsFields('model', s => { s.defaultModel = 'after' })
+      expect(readSettings().defaultModel).toBe('after')
+    })
+
+    // [HISTORICAL] 2026-08-20 PR #185：真实子进程持锁用例显式超时——真实 spawn node
+    // 子进程持 proper-lockfile 锁，满并行 + 系统余载下 spawn/锁往返超 vitest 默认 5s
+    // testTimeout（对齐 worktree-registry D5a 口径）。
+    it('busy-waits and acquires after a cross-process holder releases (real subprocess)', { timeout: 30_000 }, async () => {
+      writeSettings({ defaultModel: 'v1', packages: ['p1'] })
+      // 子进程 = 模拟 pi：持锁 150ms，锁内写 model 域字段后释放
+      const lockEntry = createRequire(import.meta.url).resolve('proper-lockfile')
+      const child = spawn(process.execPath, ['-e', `
+        const lockfile = require(${JSON.stringify(lockEntry)})
+        const fs = require('node:fs')
+        const release = lockfile.lockSync(${JSON.stringify(settingsPath)}, { realpath: false })
+        fs.writeFileSync(${JSON.stringify(settingsPath)}, JSON.stringify({ defaultModel: 'pi-child', packages: ['p1'] }), 'utf-8')
+        setTimeout(() => { release(); process.exit(0) }, 150)
+      `])
+      // 确定性等子进程持锁（替代盲等固定 40ms sleep）：探测 lockSync 直至 ELOCKED。
+      // [HISTORICAL] 2026-08-20 PR #185 全量收尾实测 flaky：满载下子进程 spawn 慢于 40ms，
+      // 主进程抢先拿锁、锁内读到旧值 'v1'（waitedMs 断言照过，仅 defaultModel 断言红）。
+      // 子进程持锁窗口 150ms、探测间隔 2ms 必命中 ELOCKED；写入在 release 之前、主进程
+      // acquire 后才锁内重读，故拿到的必是 pi-child。
+      const waitChildHoldsLock = async (): Promise<void> => {
+        const deadline = Date.now() + 10_000
+        while (Date.now() < deadline) {
+          let probeRelease: ReturnType<typeof lockfile.lockSync> | undefined
+          try {
+            probeRelease = lockfile.lockSync(settingsPath, { realpath: false })
+          } catch (e) {
+            if ((e as { code?: string }).code === 'ELOCKED') return // 子进程已持锁
+            throw e
+          }
+          probeRelease() // 子进程未起：让出锁重试
+          if (child.exitCode !== null) {
+            throw new Error(`child exited (code ${child.exitCode}) before holding lock`)
+          }
+          await new Promise((r) => setTimeout(r, 2))
+        }
+        throw new Error('child did not acquire lock within 10s')
+      }
+      await waitChildHoldsLock()
+      const t0 = Date.now()
+      updateSettingsFields('extension', s => { s.packages = ['p2'] })
+      const waitedMs = Date.now() - t0
+      // 默认预算 1s 内成功：busy-wait 吃掉子进程持锁的剩余时间，锁内重读到子进程写的值
+      expect(waitedMs).toBeLessThan(1_000)
+      const result = readSettings()
+      expect(result.defaultModel).toBe('pi-child')
+      expect(result.packages).toEqual(['p2'])
+      const childExit = new Promise<number>((resolve) => child.on('exit', (code) => resolve(code ?? -1)))
+      child.kill('SIGKILL') // 子进程可能已退出；确保不悬挂（150ms 后自然退出，此处兜底）
+      await childExit
     })
   })
 
@@ -154,8 +331,8 @@ describe('pi-settings-store', () => {
   describe('cross-domain sharing (single owner)', () => {
     it('settings.json is the same file for all domains', () => {
       // 模拟两个域（model 域和 extension 域）写各自的字段
-      updateSettingsSync(s => { s.defaultModel = 'model-domain-field' })
-      updateSettingsSync(s => { s.packages = ['ext-domain-field'] })
+      updateSettingsFields('model', s => { s.defaultModel = 'model-domain-field' })
+      updateSettingsFields('extension', s => { s.packages = ['ext-domain-field'] })
       const result = readSettings()
       // 两域的字段共存于同一文件（D17 单一所有者）
       expect(result.defaultModel).toBe('model-domain-field')

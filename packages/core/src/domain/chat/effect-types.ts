@@ -11,6 +11,7 @@
 import type {
   ChangeSetStatus,
   FileChange,
+  PiEntry,
   Segment,
   SteerFollowUpMode,
 } from '@xyz-agent/shared'
@@ -47,20 +48,39 @@ export interface MessageEffectContext {
   clearPendingSend: (sessionId: string) => void
   /** message_start 挂载 streaming 超时兜底 timer（防 complete 永不到的 pi 静默卡死）。 */
   armStreamingTimer: (sessionId: string) => void
-  /** bashStartEffect 挂载 bash 专用超时 timer（防 bash RPC 卡死永久 streaming）。 */
+  /**
+   * [W1 fix-chat-flow-order] bashStart 改写 ephemeral executingBash（不再建 streaming bash
+   * 消息）后，本 timer 挂点随之退役——armBashTimer 当前无 effect 调用方，保留 ctx/store
+   * 契约供手动注入 streaming bash 消息的种子场景防御（配套 finalizeBashOnly /
+   * markBashError 收口链不变，见 bash-effects.ts / timers.ts 注释）。
+   */
   armBashTimer: (sessionId: string) => void
-  /** bashResultEffect/markBashError 终态时清 bash 超时 timer（防 300s 后误触发，W3 遗留 bug）。 */
+  /** [W1 fix-chat-flow-order] bash timer 挂点退役后正常流转为 no-op；markBashError 兜底
+   *  路径仍调用（手动种子场景防御），保留既有契约。 */
   clearBashTimer: (sessionId: string) => void
   /**
    * 追加 user 消息（Segment[]，ADR-0043）。
-   * m2 阶段 queue_update 投递时经 drainPending 取 segments 后 appendUser 进对话流。
+   * m2 阶段 queue_update 投递时经 drainN 计数 FIFO 取 segments 后 appendUser 进对话流。
    */
   appendUser: (sessionId: string, segments: Segment[]) => string
   /**
-   * queue_update 投递信号：FIFO 取出匹配 pending segments（m1 数据层）。
-   * queue_update handler 经 drainPending 取 segments + appendUser 进对话流。
+   * [W14] queue_update 投递信号：计数 FIFO 取前 n 条 pending segments（D1 表末行 + D6）。
+   * 不按文本匹配——pi 入队存 skill 展开后文本 ≠ 提交原文，文本相等匹配必挂。
+   * queue_update handler 经 countDrained 差集算出被投递条数 N，调 drainN(sid, mode, N)。
    */
-  drainPending: (sessionId: string, text: string, sendMode?: SteerFollowUpMode) => Segment[] | undefined
+  drainN: (sessionId: string, sendMode: SteerFollowUpMode, n: number) => Segment[][]
+  /**
+   * [W14] 深度结构性对账（D6：深度权威 = pi pendingMessageCount）——queue_update
+   * handler 每帧 drain 处理后调，偏差时全量重对 pendingBuffer（见 store.reconcilePending）。
+   */
+  reconcilePending: (sessionId: string, depth: number) => void
+  /**
+   * [W21] 重构 entry 喂 store 内 per-session reducer state（applyEntry）。
+   * message_end / tool_call_end 等 entry 载体帧的 handler 经此把实时 feed 喂入与文件重放
+   * （get_entries → replayEntries）同一个 reducer——effects 退化为 reducer 薄封装（状态类
+   * 全走 reducer，副作用类保留 effect）。实现在 store.applyEntryFrame。
+   */
+  applyEntryFrame: (sessionId: string, entry: PiEntry) => void
 }
 
 /**

@@ -22,6 +22,7 @@ import type { ComputedRef } from 'vue'
 import type { Segment } from '@xyz-agent/shared'
 // AC10 跨域铁律：session 域经 '@xyz-agent/core/domain/session' 公开 index API 消费（禁内部模块相对路径）
 import type { CreateSessionFlowInput } from '@xyz-agent/core/domain/session'
+import type { ThinkingLevel } from '@xyz-agent/shared'
 import {
   useNewTaskFlowState,
   useNewTaskFlowController,
@@ -259,6 +260,9 @@ export function useNewTaskFlow(deps: NewTaskFlowDeps) {
           pendingModel: pendingModel.value,
           segments,
           bashCommand: bashCommand ?? null,
+          // B3：thinkingLevel 透传 createSessionFlow → api.create → runtime，session 创建即带正确等级。
+          // Composer emit 的 thinkingLevel 值域与 ThinkingLevel 一致，cast 消除 string→ThinkingLevel 类型差。
+          pendingThinkingLevel: (thinkingLevel as ThinkingLevel | undefined) ?? null,
         }
         const result = await ports.createSessionFlow.createSession(input)
         // 空 content guard 命中（createSessionFlow 返回 null）→ abort send（不 send，session 未创建）

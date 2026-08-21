@@ -201,3 +201,91 @@ describe('SubagentList', () => {
     expect(card.text()).not.toContain('bg-abc-1-1234567890')
   })
 })
+
+// ── statusDotClass 六态映射（CRAP 37.1 定向：执行态四形态判据 × 终态色，用户可见 DOM 断言）──
+//
+// 六态（residual-fixes §5.4 等价公式 + v4 两态色板）：
+//   1. running 真在跑          → spinner（Loader2 动画，无静态圆点）
+//   2. running one-shot 轮终投影 → bg-success 绿点（result 有值且 chatMode 显式 false）
+//   3. running 等续聊/孤儿兜底   → bg-accent opacity-60 半透明 accent 点
+//   4. done（one-shot 终态）    → bg-success 绿点
+//   5. failed/crashed          → bg-danger 红点
+//   6. cancelled（含 closed+cancelled）→ bg-neutral-dim opacity-50 中性点
+describe('SubagentList statusDotClass 六态映射', () => {
+  /** 单卡片挂载，返回 dot 元素与 spinner 探测（隔离断言，防多卡片 class 串扰） */
+  function mountDot(overrides: Partial<SubagentRecord>) {
+    const wrapper = mount(SubagentList, { props: { subagents: [makeRecord(overrides)] } })
+    return {
+      dot: wrapper.find('span.rounded-full'),
+      spinner: wrapper.find('[data-testid="subagent-card-spinner"]'),
+    }
+  }
+
+  it('态1 running 真在跑（无 result、resumable 缺省）→ spinner，无静态圆点', () => {
+    const { dot, spinner } = mountDot({ status: 'running', subagentId: 'dot-run-1' })
+    expect(spinner.exists()).toBe(true)
+    expect(dot.exists()).toBe(false)
+  })
+
+  it('态2 running one-shot 轮终投影（result 有值 + chatMode 显式 false）→ bg-success 绿点（非 spinner 非 accent）', () => {
+    const { dot, spinner } = mountDot({
+      status: 'running',
+      result: '本轮产出正文',
+      chatMode: false,
+      subagentId: 'dot-done-proj-1',
+    })
+    expect(spinner.exists()).toBe(false)
+    expect(dot.exists()).toBe(true)
+    expect(dot.classes()).toContain('bg-success')
+    expect(dot.classes()).not.toContain('bg-accent')
+  })
+
+  it('态3a running 等续聊（result 有值 + chatMode true）→ bg-accent opacity-60 半透明点（区别于 done 绿点）', () => {
+    const { dot, spinner } = mountDot({
+      status: 'running',
+      result: '本轮产出正文',
+      chatMode: true,
+      subagentId: 'dot-wait-chat-1',
+    })
+    expect(spinner.exists()).toBe(false)
+    expect(dot.exists()).toBe(true)
+    expect(dot.classes()).toContain('bg-accent')
+    expect(dot.classes()).toContain('opacity-60')
+    expect(dot.classes()).not.toContain('bg-success')
+  })
+
+  it('态3b running + resumable=true（无活进程驱动的 running）→ 半透明 accent 点，不算真在跑', () => {
+    const { dot, spinner } = mountDot({ status: 'running', resumable: true, subagentId: 'dot-wait-resumable-1' })
+    expect(spinner.exists()).toBe(false)
+    expect(dot.classes()).toContain('bg-accent')
+    expect(dot.classes()).toContain('opacity-60')
+  })
+
+  it('态3c running + result 有值但 chatMode 缺省（无法确认非 chat）→ 保守落等待态半透明点，不宣告 done', () => {
+    const { dot, spinner } = mountDot({ status: 'running', result: '产出', subagentId: 'dot-wait-default-1' })
+    expect(spinner.exists()).toBe(false)
+    expect(dot.classes()).toContain('bg-accent')
+    expect(dot.classes()).toContain('opacity-60')
+  })
+
+  it('态4 done → bg-success 绿点', () => {
+    const { dot, spinner } = mountDot({ status: 'done', subagentId: 'dot-done-1' })
+    expect(spinner.exists()).toBe(false)
+    expect(dot.classes()).toContain('bg-success')
+  })
+
+  it('态5 failed → bg-danger 红点（与 crashed 同异常终态色）', () => {
+    const { dot } = mountDot({ status: 'failed', error: 'boom', subagentId: 'dot-failed-1' })
+    expect(dot.classes()).toContain('bg-danger')
+    expect(dot.classes()).not.toContain('bg-success')
+  })
+
+  it('态6 cancelled → bg-neutral-dim opacity-50 中性点（非 accent 非绿非红）', () => {
+    const { dot } = mountDot({ status: 'cancelled', subagentId: 'dot-cancel-1' })
+    expect(dot.classes()).toContain('bg-neutral-dim')
+    expect(dot.classes()).toContain('opacity-50')
+    expect(dot.classes()).not.toContain('bg-accent')
+    expect(dot.classes()).not.toContain('bg-success')
+    expect(dot.classes()).not.toContain('bg-danger')
+  })
+})

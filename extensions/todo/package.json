@@ -22,10 +22,11 @@
     "index.ts"
   ],
   "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.9",
     "vitest": "^4.1.8"
   },
   "dependencies": {
-    "@xyz-agent/extension-protocol": "workspace:^0.4.0"
+    "@xyz-agent/extension-protocol": "workspace:*"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

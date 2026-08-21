@@ -12,7 +12,9 @@ export type SteerFollowUpMode = 'steer' | 'follow-up'
  *
  * 这些 custom_message 触发 pi triggerTurn 唤醒 agent 在后续 turn 处理结果——对用户是噪声，
  * 结果由 agent 后续 turn 体现。两条消费通路共用此 SSOT，避免字面量漂移：
- * - core registry customStart：完成通知类覆写 display:false（实时链路）
+ * - core apply-entry custom_message case：完成通知类覆写 display:false（实时 customStart
+ *   喂 entry 与重开 replay 同一个 reducer 覆写点，2026-08-19 custom 双管线收敛；实时侧
+ *   registry customStart 只构造 entry，不再独立覆写）
  * - runtime mapSessionEntries / entry-tree-builder：对称覆写 display:false（历史链路，方案 Z）
  */
 export const COMPLETE_NOTIFY_CUSTOM_TYPES = new Set(['subagent-bg-notify', 'workflow-result'])
@@ -38,6 +40,11 @@ export interface ToolCall {
   detail?: string | Record<string, unknown>
   /** 实时流式失败（tool_execution_end isError）时的错误文本，与 status:'error' 同源 */
   error?: string
+  /**
+   * 工具结果携带的图片（W5 提取，pi toolResult content 的 image 块：base64 data + mimeType）。
+   * core apply-entry 保字段写入（normalizePiToolResult 归一）；渲染消费待后续 wave。
+   */
+  images?: Array<{ data: string; mimeType: string }>
   status: ToolCallStatus
   startTime: number
   endTime?: number
@@ -294,6 +301,12 @@ export interface Message {
    *  effect 创建 system 消息，历史经 converter 还原为 system 消息，统一走 BashOutputBlock 渲染。
    *  与 toolCall 互斥（bash 不走工具链）。 */
   bashExecution?: BashExecutionData
+  /**
+   * 消息携带的图片（W5 提取）：user 消息 image part（pi UserMessage.content 的
+   * ImageContent 块：base64 data + mimeType）。core apply-entry-convert 保字段写入
+   *（extension sendMessage images 通道 / 手写 session 文件可达）；渲染消费待后续 wave。
+   */
+  images?: Array<{ data: string; mimeType: string }>
   /** pi CustomMessage details 原始字段（含 __gui__ 结构化渲染数据）。
    *  前端检测 details.__gui__ 路由到 GuiComponentRenderer。 */
   details?: Record<string, unknown>
@@ -304,4 +317,11 @@ export interface Message {
    * 缺失时（在线重开的 session 走 RPC）fork 需 fallback 读 JSONL 按 timestamp 匹配。
    */
   piEntryId?: string
+  /**
+   * live-only 消息标记（conversation-turn-attribution D4）：该消息在 pi session 文件中
+   * 无对应 entry（如 stream_warn 健康警告），重开 session 后不存在。唯一写入点 = 消息
+   * 创建处（registry stream_warn handler）；分组层据此归为 turn 内 notice（不切断 turn），
+   * 不参与「live ≡ reload」等价性断言。
+   */
+  liveOnly?: boolean
 }

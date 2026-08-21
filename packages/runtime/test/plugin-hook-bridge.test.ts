@@ -136,8 +136,9 @@ describe('EventAdapter: onHookExecute callback', () => {
     await vi.waitFor(() => expect(sent).toHaveLength(1))
 
     expect(sent[0].type).toBe('message.tool_call_start')
-    const payload = sent[0].payload as Record<string, unknown>
-    expect(payload.input).toEqual(transformedInput)
+    // [w21] hook 改写同步回 entry.arguments（payload 换 entry 形态）
+    const payload = sent[0].payload as { entry: { arguments?: unknown } }
+    expect(payload.entry.arguments).toEqual(transformedInput)
   })
 
   it('replaces output with transformedData for tool_execution_end', async () => {
@@ -164,8 +165,104 @@ describe('EventAdapter: onHookExecute callback', () => {
     await vi.waitFor(() => expect(sent).toHaveLength(1))
 
     expect(sent[0].type).toBe('message.tool_call_end')
-    const payload = sent[0].payload as Record<string, unknown>
-    expect(payload.output).toBe('REDACTED OUTPUT')
+    // [w21] hook 改写同步回 entry.message.content（text block 数组，pi 持久化形态）
+    const payload = sent[0].payload as { entry: { message: { content?: unknown } } }
+    expect(payload.entry.message.content).toEqual([{ type: 'text', text: 'REDACTED OUTPUT' }])
+  })
+
+  // ── type-safety 守卫（interpreter handleToolCallStart / handleToolCallEnd 靶子）──
+  // hook 是第三方插件代码（不可信源）：畸形 transformedData 不得以谎报类型进 wire 帧 /
+  // 持久化 entry 契约（arguments/content text block）。守卫在「裸赋值透传」形态下会红。
+
+  it('guards: onBeforeToolCall 返回非对象 transformedData → 丢弃改写保原始 input（不透传进 entry.arguments）', async () => {
+    for (const bad of ['string-rewrite', 42, ['array']]) {
+      sent = []
+      const hookFn = vi.fn().mockResolvedValue({ blocked: false, transformedData: bad }) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
+      const adapter = createEventAdapter('sess-guard-in', send, { onHookExecute: hookFn })
+      const original = { path: '/original.txt' }
+
+      adapter.attach({
+        onEvent: (listener) => {
+          listener(piEvent({ type: 'tool_execution_start', toolCallId: 'tc-g1', toolName: 'write_file', args: original }))
+          return () => {}
+        },
+      })
+      await vi.waitFor(() => expect(sent).toHaveLength(1))
+
+      const payload = sent[0].payload as { entry: { arguments?: unknown } }
+      expect(payload.entry.arguments).toEqual(original) // 原始 input 保留
+    }
+  })
+
+  it('guards: onAfterToolResult 返回非字符串 transformedData → 丢弃改写保原始 output（content 契约 string）', async () => {
+    for (const bad of [{ obj: 1 }, ['array'], 7]) {
+      sent = []
+      const hookFn = vi.fn().mockResolvedValue({ blocked: false, transformedData: bad }) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
+      const adapter = createEventAdapter('sess-guard-out', send, { onHookExecute: hookFn })
+
+      adapter.attach({
+        onEvent: (listener) => {
+          listener(piEvent({ type: 'tool_execution_end', toolCallId: 'tc-g2', result: 'original output', isError: false }))
+          return () => {}
+        },
+      })
+      await vi.waitFor(() => expect(sent).toHaveLength(1))
+
+      const payload = sent[0].payload as { entry: { message: { content?: unknown } } }
+      expect(payload.entry.message.content).toEqual([{ type: 'text', text: 'original output' }]) // 原始 output 保留
+    }
+  })
+
+  it('guards: pi 契约外畸形 args（string）→ entry.arguments 归一 {}（wire 帧不携带谎报类型）', async () => {
+    const hookFn = vi.fn().mockResolvedValue({ blocked: false }) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
+    const adapter = createEventAdapter('sess-guard-args', send, { onHookExecute: hookFn })
+
+    adapter.attach({
+      onEvent: (listener) => {
+        // pi 契约 args 恒为对象（ADR-0037）——畸形 string 经 isPlainRecord 守卫归一 {}
+        listener(piEvent({ type: 'tool_execution_start', toolCallId: 'tc-g3', toolName: 'bash', args: 'not-an-object' }))
+        return () => {}
+      },
+    })
+    await vi.waitFor(() => expect(sent).toHaveLength(1))
+
+    const payload = sent[0].payload as { entry: { arguments?: unknown } }
+    expect(payload.entry.arguments).toEqual({})
+  })
+
+  it('锚点补挂：toolcall_end 先到 → tool_call_start 帧的 entry 携带 contentIndex + messageId', async () => {
+    // toolcall_end（顺序锚点，contentIndex=1）先于 tool_execution_start 到达——
+    // interpreter 从缓存补进 entry（§11 检查点 3：contentBlocks 有序插入依据）
+    const hookFn = vi.fn().mockResolvedValue({ blocked: false }) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
+    const adapter = createEventAdapter('sess-anchor', send, { onHookExecute: hookFn })
+
+    adapter.attach({
+      onEvent: (listener) => {
+        listener(piEvent({
+          type: 'message_start',
+          message: undefined, // assistant turn 开始（无 role）→ turn-start 产 messageId
+        }))
+        listener(piEvent({
+          type: 'message_update',
+          assistantMessageEvent: {
+            type: 'toolcall_end',
+            contentIndex: 1,
+            toolCall: { type: 'toolCall', id: 'tc-anchor', name: 'bash', arguments: {} },
+          },
+        }))
+        listener(piEvent({ type: 'tool_execution_start', toolCallId: 'tc-anchor', toolName: 'bash', args: {} }))
+        return () => {}
+      },
+    })
+    await vi.waitFor(() => {
+      const start = sent.find((m) => m.type === 'message.tool_call_start')
+      expect(start).toBeDefined()
+    })
+
+    const start = sent.find((m) => m.type === 'message.tool_call_start')!
+    const payload = start.payload as { entry: { contentIndex?: number; messageId?: string } }
+    expect(payload.entry.contentIndex).toBe(1)
+    expect(payload.entry.messageId).toMatch(/^a-/)
   })
 
   it('forwards event normally when onHookExecute is undefined', async () => {
@@ -186,7 +283,7 @@ describe('EventAdapter: onHookExecute callback', () => {
     // handleEvent is async even without hook — wait for it
     await vi.waitFor(() => expect(sent).toHaveLength(1))
     expect(sent[0].type).toBe('message.tool_call_start')
-    expect((sent[0].payload as Record<string, unknown>).toolName).toBe('read_file')
+    expect((sent[0].payload as { entry: { toolName?: string } }).entry.toolName).toBe('read_file')
   })
 
   it('proceeds with original data when hook throws', async () => {
@@ -211,8 +308,8 @@ describe('EventAdapter: onHookExecute callback', () => {
 
     // Hook error → proceed with original data
     expect(sent[0].type).toBe('message.tool_call_start')
-    const payload = sent[0].payload as Record<string, unknown>
-    expect(payload.input).toEqual({ path: '/tmp/y' })
+    const payload = sent[0].payload as { entry: { arguments?: unknown } }
+    expect(payload.entry.arguments).toEqual({ path: '/tmp/y' })
   })
 })
 

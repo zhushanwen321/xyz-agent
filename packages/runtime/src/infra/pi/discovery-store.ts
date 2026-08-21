@@ -39,8 +39,11 @@ type DiscoveryKind = 'skill' | 'agent' | 'extension'
 /** 某 kind 的 v2 子结构（project + global 两组路径）。 */
 export type ScopedPaths = { projectPaths: string[]; globalPaths: string[] }
 
+/** discovery.json 当前 schema 版本（deserialize 只认此值 + v1 迁移路径） */
+const DISCOVERY_SCHEMA_VERSION = 2
+
 const DEFAULT_DISCOVERY: DiscoveryConfig = {
-  version: 2,
+  version: DISCOVERY_SCHEMA_VERSION,
   skill: { projectPaths: [], globalPaths: [] },
   agent: { projectPaths: [], globalPaths: [] },
   extension: { projectPaths: [], globalPaths: [] },
@@ -76,9 +79,9 @@ function createDiscoveryStore(path: string): JsonStore<DiscoveryConfig> {
       }
       const obj = raw as Record<string, unknown>
       // v2：字段校验 + 补全后直接用
-      if (obj.version === 2) {
+      if (obj.version === DISCOVERY_SCHEMA_VERSION) {
         return {
-          version: 2,
+          version: DISCOVERY_SCHEMA_VERSION,
           skill: asScopedPaths(obj.skill),
           agent: asScopedPaths(obj.agent),
           extension: asScopedPaths(obj.extension),

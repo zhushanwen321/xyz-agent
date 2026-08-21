@@ -12,6 +12,9 @@
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
+/** home 目录简写前缀（`~/`），展开为 homedir 绝对路径。 */
+const HOME_DIR_PREFIX = "~/";
+
 /**
  * 归一化资源引用：~ 展开 + 绝对路径校验。
  *
@@ -23,7 +26,9 @@ export function normalizeRef(ref: string, ext?: string): string | null {
   const trimmed = ref.trim();
   if (!trimmed) return null;
 
-  const expanded = trimmed.startsWith("~/") ? join(homedir(), trimmed.slice(2)) : trimmed;
+  const expanded = trimmed.startsWith(HOME_DIR_PREFIX)
+    ? join(homedir(), trimmed.slice(HOME_DIR_PREFIX.length))
+    : trimmed;
   if (!isAbsolute(expanded)) return null; // 相对路径无基准（注入段给绝对路径）
 
   if (ext !== undefined && !expanded.endsWith(ext)) return null;

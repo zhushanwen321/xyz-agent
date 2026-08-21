@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * bundle-extensions.mjs — 用 esbuild 把 builtin pi extension（数量以
- * packages/shared/src/mandatory-extensions.json 为准，现 10 个）各自 bundle 成
+ * packages/shared/src/mandatory-extensions.json SSOT 为准，不写死计数）各自 bundle 成
  * 自包含 .js，解决 prepare-builtin-extensions.sh 旧机制的根本缺陷。
  *
  * 旧机制（"拷源码 + 人工声明 PKG_DEPS + 从根 node_modules 拷依赖"）的两个根因：

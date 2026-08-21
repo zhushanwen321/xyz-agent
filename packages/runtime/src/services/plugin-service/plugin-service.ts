@@ -8,13 +8,13 @@ import { PluginRegistry } from './plugin-registry.js'
 import { PluginStorage } from './plugin-storage.js'
 import { SessionDataStore } from './session-data-store.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
-import { PluginHost, resolveAndValidateFile } from './plugin-host.js'
+import { PluginHost } from './plugin-host.js'
 import { PluginActivator } from './plugin-activator.js'
 import { registerAllRpcMethods } from './plugin-rpc-setup.js'
 import { bootstrapPluginService } from './plugin-lifecycle.js'
 import { ActiveSessionResolver, SessionEventDispatch, sessionInfoFromSummary } from './api/session-api.js'
-import { COMMAND_RPC_METHODS, commandCompositeKey } from './api/commands-api.js'
 import type { CommandRegistration } from './api/commands-api.js'
+import { executeCommand as executePluginCommand, deliverInvokeResult as deliverPluginInvokeResult } from './api/commands-executor.js'
 import type { InstallResult } from '../ports/plugin-installer.js'
 import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept, BridgeToolCache, PI_HOOK_EVENT_MAP } from './bridge-interop.js'
 import { toConfigKey, fromConfigKey, isConfigKey } from './api/config-api.js'
@@ -23,6 +23,10 @@ import { UiRequestQueue } from './ui-request-queue.js'
 import { StatusBarRegistry } from './status-bar-registry.js'
 import { PermissionStorage } from './plugin-permission-storage.js'
 import { EXTERNAL_PLUGIN_ENABLED, EXTERNAL_PLUGIN_DISABLED_MESSAGE } from './plugin-security.js'
+import { resolveEsmLoaderExecArgv } from './plugin-esm-execargv.js'
+import { toPluginInfos } from './plugin-info-mapper.js'
+import { removePluginHookEntries, removePluginToolEntries, removePluginCommandEntries } from './plugin-contributions.js'
+import { shutdownPluginCollaborators } from './plugin-shutdown.js'
 import { join } from 'node:path'
 import { toErrorMessage } from '../../utils/errors.js'
 import { PendingTracker } from '../../utils/async/pending-tracker.js'
@@ -30,74 +34,9 @@ import { PendingTracker } from '../../utils/async/pending-tracker.js'
 // wave:perf-w09（接口收敛）：依赖 publish 抽象而非 MessageBus 具体类
 import type { IMessageBus } from '../message-bus/message-bus.js'
 
-
-const COMMAND_EXECUTE_TIMEOUT_MS = 10_000
-
-/**
- * 从 execArgv 中提取 tsx 注入的 --import 值（dev 模式判定）。
- *
- * tsx 运行时（`npx tsx src/index.ts`）向 node 注入（实测 Node 24 + tsx）：
- *   ['--require', '<...>/node_modules/tsx/dist/preflight.cjs',
- *    '--import', 'file://<...>/node_modules/tsx/dist/loader.mjs']
- * 判定条件：--import 的值含 `node_modules/tsx/`（同时覆盖 file:// URL 与裸路径、
- * npm/pnpm 安装布局）。支持 `--import <value>` 与 `--import=<value>` 两种形态。
- */
-export function findTsxImportArg(execArgv: readonly string[]): string | undefined {
-  for (let i = 0; i < execArgv.length; i++) {
-    const arg = execArgv[i]
-    if (arg === '--import' && i + 1 < execArgv.length) {
-      const value = execArgv[i + 1]
-      if (value.includes('node_modules/tsx/')) return value
-    } else if (arg.startsWith('--import=')) {
-      const value = arg.slice('--import='.length)
-      if (value.includes('node_modules/tsx/')) return value
-    }
-  }
-  return undefined
-}
-
-/**
- * 解析 sandbox 子进程 ESM loader 路径，构建 execArgv（--import 注入）。
- *
- * loader（plugin-esm-loader.cjs）经 execArgv 注入 fork 子进程，注册 ESM resolve
- * hook 封堵 node:* 内置模块 + 越界路径 import（重构 3：消除 ESM import 绕过）。
- * 与 plugin-bootstrap.cjs 同目录约定，路径经 resolveAndValidateFile 动态推导
- * （AGENTS.md #12：打包后 __dirname → app.asar.unpacked/dist/runtime/，
- * dev → src/services/plugin-service/）。
- *
- * F1（dev sandbox fork 修复）：主进程运行于 tsx 时（execArgv 含 tsx 的 --import），
- * 把该项追加到 fork execArgv 末尾。fork 默认不继承父进程 execArgv（C3），子进程
- * 入口 plugin-bootstrap-process.ts 内部 `import './plugin-bootstrap.js'`（TS ESM
- * 风格后缀）依赖 tsx loader 的 resolve hook 做 .js→.ts remap——esm-loader 只透传
- * 不 remap，Node 原生 resolver 找不到 .js 文件 → ERR_MODULE_NOT_FOUND，dev 模式
- * sandbox 插件激活必炸。顺序约束：esm-loader 必须在前（fork 边界 MF-1 断言
- * execArgv 含 --import，且 Node hooks 链后注册先调用——tsx remap 后的路径仍会流经
- * esm-loader 的沙箱边界检查，不破坏封堵语义）。
- *
- * MF-1（fail-closed 分层）：loader 缺失时本函数返回 undefined（不阻塞 runtime 启动），
- * 真正的 fail-closed 在 PluginHostProcess.createProcess 的 fork 边界——sandbox fork 前
- * 断言 execArgv 含 --import，缺失即 throw（拒绝创建无 ESM 防护的 sandbox 进程）。
- * 故 loader 缺失时 runtime 仍能启动（trusted 插件正常），仅 sandbox（external）插件激活
- * 会被拒。loader 存在性另由 postbuild-validate.sh + validate-runtime-bundle.sh CI 强制校验。
- */
-export function resolveEsmLoaderExecArgv(): string[] | undefined {
-  try {
-    const loaderPath = resolveAndValidateFile('plugin-esm-loader.cjs')
-    const execArgv = ['--import', loaderPath]
-    const tsxImport = findTsxImportArg(process.execArgv)
-    if (tsxImport) {
-      execArgv.push('--import', tsxImport)
-    }
-    return execArgv
-  } catch (e: unknown) {
-    console.error(
-      '[plugin-service] plugin-esm-loader.cjs not found; sandbox ESM guard inactive ' +
-      '(sandbox plugin activation will be refused at fork boundary; fix loader packaging before shipping):',
-      e,
-    )
-    return undefined
-  }
-}
+// （BC）findTsxImportArg / resolveEsmLoaderExecArgv 原从本文件导出（实现迁至
+// plugin-esm-execargv.ts，max-lines 拆分），re-export 保持既有导入路径稳定
+export { findTsxImportArg, resolveEsmLoaderExecArgv } from './plugin-esm-execargv.js'
 
 /**
  * PluginService — 纯门面 + 初始化编排（ADR-0012/0013/0014/0023/0001）。
@@ -106,7 +45,8 @@ export function resolveEsmLoaderExecArgv(): string[] | undefined {
  *  (a) initialize 编排（9 步生命周期装配）；
  *  (b) 协作者装配（registry/storage/rpcServer/host/activator/...）；
  *  (c) 薄门面方法：委托 HookPipeline / UiRequestQueue / StatusBarRegistry /
- *      bridge-interop。
+ *      bridge-interop（命令执行发送段在 api/commands-executor.ts，协议映射在
+ *      plugin-info-mapper.ts，贡献清理在 plugin-contributions.ts）。
  */
 export class PluginService implements IPluginService {
   /** 插件注册表（与 host/rpcServer/activator 同为协作者装配位，公开供测试直注 descriptor） */
@@ -465,7 +405,8 @@ export class PluginService implements IPluginService {
   }
 
   getDiscoveredPlugins(): PluginInfo[] {
-    return this.toPluginInfos(this.registry.getAllDescriptors())
+    // 协议映射（PluginDescriptor → PluginInfo）实现迁至 plugin-info-mapper.ts
+    return toPluginInfos(this.registry.getAllDescriptors())
   }
 
   async togglePlugin(pluginId: string, enabled: boolean): Promise<PluginInfo[]> {
@@ -551,6 +492,8 @@ export class PluginService implements IPluginService {
         try {
           await installer.uninstall(pluginId, descriptor.pluginPath)
         } catch (err: unknown) {
+          // best-effort 降级：磁盘删除失败不阻断后续内存清理（registry/activator/贡献
+          // 拆除是 uninstall 的核心语义）——残留目录重启后被 scan 扫回、可重试
           console.error(`[plugin-service] on-disk removal during uninstall failed (continuing in-memory cleanup) for ${pluginId}:`, toErrorMessage(err))
         }
       } else {
@@ -584,45 +527,30 @@ export class PluginService implements IPluginService {
   /**
    * 清理指定插件的全部 hook 注册条目（P-1：togglePlugin(false) 与 uninstallPlugin 共用）。
    *
-   * filter 重建数组保序（注册时的 priority 排序不受影响）；清空的 hookType 条目整键删除。
+   * 实现在 plugin-contributions.ts（max-lines 拆分迁出）；
    * Worker 侧对偶清理在 plugin-bootstrap 的 'deactivate' 分支（disposePluginHooks）。
    */
   private removeHookEntriesFor(pluginId: string): void {
-    for (const [hookType, entries] of this.hookPipeline.registry) {
-      const filtered = entries.filter(e => e.pluginId !== pluginId)
-      if (filtered.length === 0) {
-        this.hookPipeline.registry.delete(hookType)
-      } else {
-        this.hookPipeline.registry.set(hookType, filtered)
-      }
-    }
+    removePluginHookEntries(this.hookPipeline.registry, pluginId)
   }
 
   /**
    * 清理指定插件的全部工具注册条目（Fix-7：与 removeHookEntriesFor 同模式）。
    *
    * togglePlugin(false) 与 uninstallPlugin 共用——禁用插件的工具不再出现在 bridge
-   * schema 同步（syncToolsToBridge）与 bridge 执行路由中。Worker 侧对偶清理在
-   * plugin-bootstrap 的 'deactivate' 分支（disposePluginTools）。
+   * schema 同步（syncToolsToBridge）与 bridge 执行路由中（实现迁至
+   * plugin-contributions.ts）。
    */
   private removeToolEntriesFor(pluginId: string): void {
-    for (const [toolKey, entry] of this.toolRegistry) {
-      if (entry.pluginId === pluginId) {
-        this.toolRegistry.delete(toolKey)
-      }
-    }
+    removePluginToolEntries(this.toolRegistry, pluginId)
   }
 
   /**
    * 清理指定插件的全部命令注册条目（Fix-7：与 removeHookEntriesFor 同模式）。
-   * 禁用/卸载后 command invoke 不再投递给该插件。
+   * 禁用/卸载后 command invoke 不再投递给该插件（实现迁至 plugin-contributions.ts）。
    */
   private removeCommandEntriesFor(pluginId: string): void {
-    for (const [commandId, reg] of this.commandRegistry) {
-      if (reg.pluginId === pluginId) {
-        this.commandRegistry.delete(commandId)
-      }
-    }
+    removePluginCommandEntries(this.commandRegistry, pluginId)
   }
 
   async approvePermissions(pluginId: string, permissions: string[]): Promise<void> {
@@ -665,103 +593,25 @@ export class PluginService implements IPluginService {
   /**
    * 执行插件注册的命令（S3-W1 发送段闭环）。
    *
-   * 链路：复合键查 registry → rpcServer.notify 向 Worker 发 plugin.commands.invoke
-   * （handler 驻留 Worker，方法名 COMMAND_RPC_METHODS.invoke 统一 SSOT）→ Worker
-   * 执行 handler 后经 plugin.commands.invoke.result 回传结果/错误 → 本类
-   * deliverInvokeResult resolve/reject 对应 pending（超时 COMMAND_EXECUTE_TIMEOUT_MS）。
-   *
-   * 前端消费契约（useExtensionHostBridge commandExecutor）：payload 携带分离的
-   * pluginId + commandId，本方法组复合键 `${pluginId}:${commandId}` 查表——
-   * 命令表按插件隔离（B 无法覆盖/注销 A 的同名命令）。
+   * 实现在 api/commands-executor.ts（max-lines 拆分迁出，行为不变）：复合键查
+   * registry → rpcServer.notify 向 Worker 发 plugin.commands.invoke → Worker 执行
+   * handler 后经 plugin.commands.invoke.result 回传结果/错误 → deliverInvokeResult
+   * resolve/reject 对应 pending（超时 COMMAND_EXECUTE_TIMEOUT_MS）。命令表按插件
+   * 隔离（B 无法覆盖/注销 A 的同名命令）。
    */
   async executeCommand(pluginId: string, commandId: string, args?: Record<string, unknown>): Promise<unknown> {
-    const descriptor = this.registry.getDescriptor(pluginId)
-    if (!descriptor) throw new Error(`Plugin not found: ${pluginId}`)
-
-    const compositeKey = commandCompositeKey(pluginId, commandId)
-    const registration = this.commandRegistry.get(compositeKey)
-    if (!registration) throw new Error(`Command not found: ${compositeKey}`)
-
-    const handle = this.host.getWorkerHandle(pluginId)
-    if (!handle) throw new Error(`Plugin worker not available: ${pluginId}`)
-
-    // 并发守卫：同 handlerId 二次执行会覆盖 pending 登记表条目（旧 promise 永挂），
-    // 显式拒绝并发（用户双击同一命令的第二次触发立即失败优于静默挂死）。
-    if (this.commandInvokes.has(registration.handlerId)) {
-      throw new Error(`Command already executing: ${compositeKey}`)
-    }
-
-    // 顺序约束：先登记 pending、立即发 notify、最后才 await——notify 必须在函数体
-    // 挂起等待 result 之前发出（await 放前面会挂住函数体，通知永远发不出）。
-    const result = this.commandInvokes.register(
-      registration.handlerId,
-      COMMAND_EXECUTE_TIMEOUT_MS,
-      Object.assign(new Error(`Command execution timeout: ${compositeKey}`), { code: -32000 }),
+    return executePluginCommand(
+      {
+        registry: this.registry,
+        host: this.host,
+        rpcServer: this.rpcServer,
+        commandRegistry: this.commandRegistry,
+        commandInvokes: this.commandInvokes,
+      },
+      pluginId,
+      commandId,
+      args,
     )
-    this.rpcServer.notify(
-      handle.workerId,
-      COMMAND_RPC_METHODS.invoke,
-      { handlerId: registration.handlerId, args: args ?? {} },
-    )
-    return result
-  }
-
-  /**
-   * Worker 经 plugin.commands.invoke.result 回传的执行结果（commands 域 RPC
-   * handler 调用）。error 非空 = handler 抛错，reject 对应 pending。
-   *
-   * 归属校验（D2 回传段）：handlerId 必须属于来源通道——查注册表找该 handlerId
-   * 的 registration，registration.workerId（register 时从 ctx 捕获）不等于
-   * sourceWorkerId 即拒绝投递（warn 落日志，pending 留给自身超时）。否则恶意/
-   * 失控 Worker 可伪造他人 handlerId 的 result/error，resolve/reject 其他插件
-   * 的命令 pending。registration 不存在（执行中被注销/禁用清理）同样 fail-closed
-   * 拒绝——归属无从比对即不放行。
-   *
-   * 查表方式：registry 键是复合键 `pluginId:commandId` 而非 handlerId，此处直接
-   * 遍历 values 找 handlerId 匹配。不建 handlerId 反查表的原因：反查表需在
-   * register/unregister handler、removeCommandEntriesFor 及一切直接 set/delete
-   * registry 的路径同步维护，多一处数据源多一处漂移出安全漏洞的机会；命令注册
-   * 量级（单插件个位数 × 插件数十）下每次回传遍历 O(n) 为微秒级，且仅在命令
-   * 执行回传时发生。单一数据源（registry 本身）无一致性风险。
-   */
-  private deliverInvokeResult(
-    handlerId: string,
-    payload: { result?: unknown; error?: unknown },
-    sourceWorkerId: string,
-  ): void {
-    let registration: CommandRegistration | undefined
-    for (const reg of this.commandRegistry.values()) {
-      if (reg.handlerId === handlerId) {
-        registration = reg
-        break
-      }
-    }
-
-    if (!registration) {
-      console.warn(
-        `[plugin-service] invoke result dropped: no registration for handlerId='${handlerId}' ` +
-          `(command unregistered or plugin cleaned up?) sourceWorker=${sourceWorkerId}; ` +
-          `pending (if any) left to its own timeout`,
-      )
-      return
-    }
-    if (registration.workerId !== sourceWorkerId) {
-      console.warn(
-        `[plugin-service] invoke result dropped: handlerId='${handlerId}' belongs to ` +
-          `worker='${registration.workerId}' but result arrived from worker='${sourceWorkerId}' ` +
-          `(possible forgery); pending left to its own timeout`,
-      )
-      return
-    }
-
-    if (payload.error !== undefined) {
-      this.commandInvokes.reject(
-        handlerId,
-        new Error(`Command handler error: ${toErrorMessage(payload.error)}`),
-      )
-      return
-    }
-    this.commandInvokes.resolve(handlerId, payload.result)
   }
 
   async getPluginConfig(pluginId: string, key?: string): Promise<unknown> {
@@ -782,74 +632,23 @@ export class PluginService implements IPluginService {
     this.storage.set(pluginId, toConfigKey(key), value)
   }
 
+  /**
+   * 关停链实现迁至 plugin-shutdown.ts（max-lines 拆分，行为与顺序不变——
+   * D6/W4 关停顺序的决策注释随代码迁移）。
+   */
   async shutdown(): Promise<void> {
     if (!this.initialized) return
     this.initialized = false
-
-    // D6/W3 rebuild 受约束：关停第一步立即关闭 rebuild 通道——deactivateAll 可能耗时
-    // 数秒（单插件 deactivate 5s 超时），期间 rebuild 冷却到期会复活插件（LC-C2）。
-    // host.shutdown 在链末尾才清，此时已晚。
-    this.host.cancelPendingRebuilds()
-
-    // S3-W1/W2：命令执行 pending 全部拒绝 + session 事件注册表清空
-    //（Worker 即将终止，等待中的 executeCommand 与后续事件投递都无意义）。
-    this.commandInvokes.rejectAll(new Error('Plugin service shutting down'))
-    this.sessionEventDispatch.clearAll()
-
-    // S3-W4：statusbar 广播合并窗口的待发 timer 清理（关停后不再广播）
-    this.statusBarRegistry.dispose()
-
-    // D6/W4 关停顺序（反转）：deactivateAll（allSettled，单插件 deactivate 超时不
-    // 阻塞整体——每插件自带 DEACTIVATE_TIMEOUT_MS 兜底）→ sessionData flush+dispose
-    // → storage flush+dispose → host.shutdown。旧顺序 flush 先于 deactivateAll，
-    // 插件在 onDeactivate 里写的 sessionData 落在「表已停」窗口（debounce 500ms 的
-    // flush timer 永不再触发）→ 正常关停丢数据（G6）。每步独立 catch：一步失败
-    // 不跳过后续步骤（关停是 best-effort 链，错误只记日志）。
-    try {
-      this.activator.stopAllWatchers()
-    } catch (err: unknown) {
-      // best-effort 降级：watcher 清理失败不阻塞关停链（fs 句柄随进程退出释放）
-      console.error('[plugin-service] shutdown: stopAllWatchers failed:', toErrorMessage(err))
-    }
-
-    try {
-      // 插件 onDeactivate 在此执行（其 sessionData/storage 写入发生在后面两步 flush 之前）
-      await this.activator.deactivateAll(this.host)
-    } catch (err: unknown) {
-      // best-effort 降级：单步失败继续 flush/dispose，保数据优先于保插件状态
-      console.error('[plugin-service] shutdown: deactivateAll failed:', toErrorMessage(err))
-    }
-
-    try {
-      this.sessionDataStore.flushAll()
-      this.sessionDataStore.dispose()
-      console.log('[plugin-service] shutdown: sessionData flushed and disposed')
-    } catch (err: unknown) {
-      // best-effort 降级：flush 失败仍继续后续关停（进程即将退出，重试无消费方）
-      console.error('[plugin-service] shutdown: sessionData flush/dispose failed:', toErrorMessage(err))
-    }
-
-    try {
-      this.storage.flushAll()
-      this.storage.dispose()
-    } catch (err: unknown) {
-      // best-effort 降级：同上，一步失败不跳过 host.shutdown（Worker/子进程必须终止）
-      console.error('[plugin-service] shutdown: storage flush/dispose failed:', toErrorMessage(err))
-    }
-
-    try {
-      await this.host.shutdown()
-    } catch (err: unknown) {
-      // best-effort 降级：Worker/子进程终止失败记日志（进程退出兜底回收）
-      console.error('[plugin-service] shutdown: host shutdown failed:', toErrorMessage(err))
-    }
-
-    try {
-      this.rpcServer.dispose()
-    } catch (err: unknown) {
-      // best-effort 降级：注册表清理由进程退出兜底
-      console.error('[plugin-service] shutdown: rpcServer dispose failed:', toErrorMessage(err))
-    }
+    await shutdownPluginCollaborators({
+      host: this.host,
+      activator: this.activator,
+      sessionDataStore: this.sessionDataStore,
+      storage: this.storage,
+      rpcServer: this.rpcServer,
+      statusBarRegistry: this.statusBarRegistry,
+      commandInvokes: this.commandInvokes,
+      sessionEventDispatch: this.sessionEventDispatch,
+    })
   }
 
   private registerRpcMethods(): void {
@@ -869,7 +668,12 @@ export class PluginService implements IPluginService {
       commandRegistry: this.commandRegistry,
       sessionEvents: this.sessionEventDispatch,
       deliverInvokeResult: (handlerId, payload, sourceWorkerId) =>
-        this.deliverInvokeResult(handlerId, payload, sourceWorkerId),
+        deliverPluginInvokeResult(
+          { commandRegistry: this.commandRegistry, commandInvokes: this.commandInvokes },
+          handlerId,
+          payload,
+          sourceWorkerId,
+        ),
       mountPoints: this.mountPoints,
       publishViewUpdate: (payload) => this.publishViewUpdate(payload),
     })
@@ -995,45 +799,5 @@ export class PluginService implements IPluginService {
   /** Get all current status bar items */
   getStatusBarItems(): StatusBarItem[] {
     return this.statusBarRegistry.getItems()
-  }
-
-  /** 将内部 PluginState（UPPER_CASE）映射为协议层展示状态（lower_case） */
-  private mapStateForProtocol(state: string): PluginInfo['status'] {
-    switch (state) {
-      case 'ACTIVE': return 'active'
-      case 'CRASHED': return 'crashed'
-      case 'LOADING':
-      case 'UNLOADED':
-        return 'discovered'
-      default:
-        return 'inactive'
-    }
-  }
-
-  /**
-   * PluginDescriptor（runtime 内部，PluginInfo 超集）→ PluginInfo（WS 协议契约）。
-   *
-   * 字段挑选 + status 经 mapStateForProtocol 转 lower_case + enabled 推导。
-   * 这是 config.plugins 协议债的正式收口点：之前 transport 层用 `as unknown as PluginInfo[]`
-   * 强转（仅类型缝合、不改运行时序列化），现在下沉到 service 做真实的字段裁剪。
-   *
-   * enabled 语义：runtime 无独立「启用」持久化（togglePlugin 直接驱动激活/停用），
-   * 故以激活态推导——ACTIVE 视为 enabled，其余 disabled。
-   */
-  private toPluginInfo(descriptor: PluginDescriptor): PluginInfo {
-    const status = this.mapStateForProtocol(descriptor.status)
-    return {
-      pluginId: descriptor.pluginId,
-      version: descriptor.version,
-      displayName: descriptor.displayName,
-      description: descriptor.description,
-      status,
-      trustLevel: descriptor.trustLevel,
-      enabled: status === 'active',
-    }
-  }
-
-  private toPluginInfos(descriptors: PluginDescriptor[]): PluginInfo[] {
-    return descriptors.map(d => this.toPluginInfo(d))
   }
 }

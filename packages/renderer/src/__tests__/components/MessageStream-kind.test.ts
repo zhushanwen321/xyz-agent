@@ -222,7 +222,7 @@ describe('MessageStream kind 查表分发（M1）', () => {
     expect(wrapper.find('[data-testid="system-notice-stub"]').exists()).toBe(false)
   })
 
-  it('TC2: 混合序列 [turn, systemNotice, turn, bashExecution] 按序渲染，各分支互斥', async () => {
+  it('TC2: 混合序列 [turn, systemNotice, turn] 按序渲染，各分支互斥（bash 归 turn 内 notices）', async () => {
     const chat = useChatStore()
     chat.hydrate('sess-kind-mix', [
       makeMsg({ id: 'u1', role: 'user', content: 'q1' }),
@@ -239,18 +239,21 @@ describe('MessageStream kind 查表分发（M1）', () => {
 
     expect(wrapper.findAll('[data-testid^="turn-stub-"]')).toHaveLength(2)
     expect(wrapper.find('[data-testid="system-notice-stub"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="bash-output-stub"]').exists()).toBe(true)
+    // [W3 v2] bash 执行记录归 turn2 内 notices（Turn stub 内部渲染，见 ui 包 Turn.test.ts
+    // turn-inline-bash 用例）——顶层不再产出独立 bashExecution 渲染项
+    expect(wrapper.find('[data-testid="bash-output-stub"]').exists()).toBe(false)
 
-    // DOM 顺序与 renderItems 一致：turn1 → notice → turn2 → bash
+    // DOM 顺序与 renderItems 一致：turn1 → notice → turn2
     const body = wrapper.element as HTMLElement
-    const ids = Array.from(body.querySelectorAll('[data-testid^="turn-stub-"], [data-testid="system-notice-stub"], [data-testid="bash-output-stub"]')).map(
+    const ids = Array.from(body.querySelectorAll('[data-testid^="turn-stub-"], [data-testid="system-notice-stub"]')).map(
       (el) => el.getAttribute('data-testid'),
     )
-    expect(ids).toEqual(['turn-stub-1', 'system-notice-stub', 'turn-stub-2', 'bash-output-stub'])
+    expect(ids).toEqual(['turn-stub-1', 'system-notice-stub', 'turn-stub-2'])
   })
 
   it('TC2: bgNotify 消息（customType=subagent-bg-notify, display:false）不渲染任何专属组件（M1 死分支回归防护）', async () => {
-    // [M2 display 前置] 黑名单已删：subagent-bg-notify 由生产端（registry customStart /
+    // [M2 display 前置] 黑名单已删：subagent-bg-notify 由生产端（core apply-entry
+    // custom_message case——实时 customStart 喂 entry 与重开 replay 同一覆写点 /
     // runtime mapper）统一写 display:false → filterDisplayableMessages 按 display 字段过滤移除。
     // 若未来有人给 kind 全集加回 bgNotify 类分支/嗅探，本用例确保至少不渲染专属卡片。
     const chat = useChatStore()
@@ -289,10 +292,10 @@ describe('MessageStream kind 查表分发（M1）', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    // 4 个渲染项（turn1 + notice + turn2 + bash），每个 slot vnode 都带 key
-    expect(slotKeyCollector.keys).toHaveLength(4)
+    // 3 个渲染项（turn1 + notice + turn2；[W3 v2] bash 归 turn2 内 notices 不出顶层项），每个 slot vnode 都带 key
+    expect(slotKeyCollector.keys).toHaveLength(3)
     const flatKeys = slotKeyCollector.keys.map((k) => k[0])
-    expect(flatKeys).toEqual(['t-u1', 's-c1', 't-u2', 's-bash-1'])
+    expect(flatKeys).toEqual(['t-u1', 's-c1', 't-u2'])
     // 全部 key 非空（virtua 不会 fallback `_${index}`）
     expect(flatKeys.every((k) => k != null && k !== '')).toBe(true)
 
@@ -301,7 +304,7 @@ describe('MessageStream kind 查表分发（M1）', () => {
     const wrapper2 = mountStream('sess-kind-key')
     await wrapper2.vm.$nextTick()
     await wrapper2.vm.$nextTick()
-    expect(slotKeyCollector.keys.map((k) => k[0])).toEqual(['t-u1', 's-c1', 't-u2', 's-bash-1'])
+    expect(slotKeyCollector.keys.map((k) => k[0])).toEqual(['t-u1', 's-c1', 't-u2'])
     wrapper2.unmount()
   })
 })

@@ -24,6 +24,11 @@
           "package": "@zhushanwen/pi-pending-notifications",
           "type": "package",
           "reason": "代码层静态 import countActiveFromEntries（src/execution/session-pending.ts top-level import），缺失时模块加载即抛 Cannot find module，是强依赖。另有 T2 通知合并运行时用途：subagent-workflow 的 subagent-service/lifecycle/error-recovery emit pending:register/pending:unregister 事件，pending-notifications 消费该事件并向用户发送完成通知"
+        },
+        {
+          "package": "@zhushanwen/pi-file-lock",
+          "type": "package",
+          "reason": "代码层静态 import withFileLock（src/execution/worktree-registry.ts top-level import，registry 读写盘互斥用），缺失时模块加载即抛 Cannot find module，是强依赖"
         }
       ]
     },
@@ -158,6 +163,21 @@
     {
       "name": "@zhushanwen/pi-session-reader",
       "directory": "extensions/session-reader",
+      "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-agent-ext",
+      "directory": "extensions/agent-ext",
+      "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-system-prompt",
+      "directory": "extensions/system-prompt",
+      "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-msg-id-mapper",
+      "directory": "extensions/msg-id-mapper",
       "dependsOn": []
     }
   ]

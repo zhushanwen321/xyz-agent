@@ -3,11 +3,11 @@
  *
  * 依赖方向：command（RPC，send/abort/steer/followUp/compact/getHistory）+ events（streamSubscribe 路由）。
  *
- * 注意：streamSubscribe 的 handler 参数类型是 ServerMessage（shared 协议类型），
+ * 注意：streamSubscribe 的 handler 参数类型是 ServerMessageUnion（shared 协议类型），
  * 不臆造 StreamChunk。调用方在 handler 内过滤 message.text_delta 等事件。
  * 注：mock 模式下不走本域（api/index 切到 mock 门面）。
  */
-import type { Message, ServerMessage } from '@xyz-agent/shared'
+import type { Message, ServerMessageUnion } from '@xyz-agent/shared'
 import { command as sendCommand } from '../request'
 import * as events from '../events'
 
@@ -112,11 +112,16 @@ export function abortBash(sessionId: string): Promise<void> {
 
 /**
  * 订阅指定 session 的流式消息事件，返回取消函数。
- * handler 收到原始 ServerMessage，调用方自行过滤 text_delta/thinking_delta 等 type。
+ * handler 收到分发联合形态的 ServerMessageUnion（type↔payload 配对由 ServerMessageMap 契约保证），
+ * 调用方 switch on msg.type 即自动收窄 payload，无需 `as`。
  */
 export function streamSubscribe(
   sessionId: string,
-  handler: (msg: ServerMessage) => void,
+  handler: (msg: ServerMessageUnion) => void,
 ): () => void {
-  return events.on(sessionId, handler)
+  // 类型边界转换（R1 type-safety S5）：events 层存储统一宽 ServerMessage（wire 入口
+  // isServerMessage 守卫的下游），本域出口收窄为分发联合。二者是同一 wire 形状的两种 TS
+  // 表达（值域相同），type↔payload 配对由 runtime 构造侧按 ServerMessageMap 契约构造 +
+  // shared 登记静态校验保证——消费端从此不再散点 as payload。
+  return events.on(sessionId, (msg) => handler(msg as ServerMessageUnion))
 }

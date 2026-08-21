@@ -93,6 +93,15 @@ export interface InboundEffects {
   onSubagents?(sessionId: string, subagents: SubagentRecord[]): void
   onWorkflowUpdate?(sessionId: string, update: ServerMessageMap['session.workflowUpdate']['update']): void
   onGlobalError?(message: string): void
+  /**
+   * 带 sessionId、未命中 pending 的 error envelope 兜底（D6b，integrity-hardening §3.6）。
+   *
+   * 到达此处的只剩 fire-and-forget 路径的失败（请求级失败带 msg.id，已在 pending 分流
+   * reject）——典型：extension.ui_response 目标 session 无进程（pi 死后残留弹窗的作答）。
+   * 此前这类消息落 session 通道后被静默丢弃（无 'error' type 消费者），用户作答石沉大海；
+   * 现经 effect 进消息流 error 展示。
+   */
+  onSessionError?(sessionId: string, payload: { code?: string; message?: string }): void
 }
 
 // ── ROUTE_TABLE（DM3） ─────────────────────────────────────────────
@@ -161,7 +170,8 @@ function applySeqGap(sid: string, msg: ServerMessage): boolean {
 /**
  * ROUTE_TABLE —— 精确 type 匹配条目表（DM3，TC1；Q1-4：Record 直查 O(1)）。
  *
- * 只收编现状 4 个 effect 类 type（slice design-review sufficiency gaps）：
+ * 收编 effect 类 type（session.exited / message.complete / session.subagents /
+ * session.workflowUpdate / error-with-sid）：
  * remote-use 的 busy/idle/presence/deleting/deleted 分支未迁入（feat-remote-use 未合并），
  * 由 connection-lifecycle slice 承接（届时作为新条目追加，不修改路由核心）。
  *
@@ -214,6 +224,22 @@ const ROUTE_TABLE: Record<string, RouteTableEntry> = {
       // update.status/runId 必填，runtime 改形状时此处编译报错，不再静默收 undefined。
       const payload = msg.payload as ServerMessageMap['session.workflowUpdate']
       effects.onWorkflowUpdate?.(sid, payload.update)
+    },
+  },
+  'error': {
+    handle(msg, { ports, effects, sid }) {
+      if (!sid) return // 无 sid 的 error 由 FALLBACK 的全局兜底处理（onGlobalError → toast）
+      // error envelope 无 seq（broker.send 直发，非 bus.publish live 帧）→ evalSeqGap 分支 3
+      // 正常放行，不触发 gap reconcile
+      if (!applySeqGap(sid, msg)) return
+      ports.events.dispatchSession(sid, msg)
+      // D6b：带 sid 的 error envelope 兜底（见 InboundEffects.onSessionError 注释）。
+      // payload.message 缺失时兜底通用文案，防御运行时坏形状。
+      const payload = msg.payload as { code?: string; message?: string }
+      effects.onSessionError?.(sid, {
+        code: payload.code,
+        message: typeof payload.message === 'string' ? payload.message : 'Unknown error',
+      })
     },
   },
 }

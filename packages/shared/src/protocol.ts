@@ -1,8 +1,9 @@
 // Client → Runtime message types
 
 import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig, ScannedSkillInfo, ScannedAgentInfo, BuiltinProviderTemplate, ProviderId } from './provider'
-import type { SessionGroup, SessionSummary } from './session'
+import type { SessionGroup, SessionSummary, SessionStatus, SessionDataSource } from './session'
 import type { FileChange, ChangeSetStatus, Message } from './message'
+import type { PiMessageEntry, PiToolCallEntryForm } from './pi-entry'
 import type { FileNode } from './file-tree'
 // 领域 DTO 已下沉到各自领域文件（E2 架构候选）：protocol.ts 仅保留 type→payload 映射 SSOT，
 // 领域形状（ExtensionInfo / GitStatusResult / PluginInfo …）按领域就近归属。
@@ -235,7 +236,7 @@ export interface ClientMessageMap {
   // modelOverride / thinkingOverride：Landing Model/Thinking Chip 的覆盖值（设计文档 §5.2）。
   // 优先级：Landing Chip override > preset.modelOverride/thinkingLevel > 全局默认。
   //   - modelOverride：模型 ID 字符串（如 'anthropic/claude-sonnet-4'），覆盖 preset.modelOverride
-  //   - thinkingOverride：ThinkingLevel 值（'off'|'minimal'|'low'|'medium'|'high'|'xhigh'），覆盖 preset.thinkingLevel
+  //   - thinkingOverride：ThinkingLevel 值（= PI_THINKING_LEVELS 全集 7 值，含 'max'），覆盖 preset.thinkingLevel
   // 两者均可选——省略时按 preset 字段或全局默认回退。
   'session.create': {
     cwd?: string
@@ -636,6 +637,8 @@ export type ServerMessageType =
   | 'extension.recommended'
   | 'extension.pendingRequests'
   | 'message.tool_call_update' | 'config.extensions'
+  // w21 data-source-governance：message_end 重构 entry 的实时 feed 载体帧（见 ServerMessageMapBase 条目注释）
+  | 'message.message_end'
   | 'session.commands'
   | 'session.exited'
   | 'app.info'
@@ -826,7 +829,10 @@ export interface ServerMessageMapBase {
     allowCancel?: boolean
   }
   // session 通道推送（runtime session-service / index.ts 生产，W04 收紧）
-  'session.compacting': { sessionId: string }
+  // compacting：compaction_start → interpreter 广播（唯一发送点 event-interpreter.handleCompactionStart），
+  // status/reason 以 runtime 实发为准（R1 type-safety S4 补登记）：reason 透传 pi compaction_start 的
+  // PiCompactionReason，驱动前端 compacting 浮层文案区分手动/自动。
+  'session.compacting': { sessionId: string; status: 'compacting'; reason: 'manual' | 'threshold' | 'overflow' }
   'session.compacted': { sessionId: string; status: 'compacted'; error?: string }
   // session.subscribe（wave:runtime-wiring）：session.subscribe RPC 的 reply payload（IF6 契约）。
   // snapshot：订阅时刻 bus ring 内当前事件序列（元素为带 seq 的 ServerMessage），renderer 据此 reconcile。
@@ -881,6 +887,12 @@ export interface ServerMessageMapBase {
     inputTokens: number
     contextLimit: number
   }
+  // session.thinkingLevelSet：pi thinking_level_changed → event-adapter 广播 + setThinkingLevel RPC
+  // reply（settings-message-handler）双发送点，payload 形状一致（R1 type-safety S4 补登记——
+  // 此前 map 未登记条目落 Record<string, unknown> 占位，消费侧被迫 as）。补 state_changed 的
+  // 时序缺口：switchModel 的 state_changed 在 set_model RPC resolve 后立即广播，而
+  // thinking_level_changed 事件可能晚到，本帧独立更新 thinkingLevel。
+  'session.thinkingLevelSet': { sessionId: string; level: string }
   // FileChanges 通道（ADR-0024 D5 重构：git 作为唯一真值源）。baseline diff 机制——
   // message_start 采集 git status 快照，write/edit/bash 结束后 diff vs baseline 推 accumulating，
   // agent_end 推 ready。isFullSet 恒 true（每次 diff 都是全量结果，前端全集替换不增量合并）。
@@ -1146,7 +1158,12 @@ export interface ServerMessageMapBase {
   // ── 消息流控制（W11+ 审查补充类型）──
   'message.auto_retry_start': { sessionId: string; attempt: number; maxAttempts?: number; delayMs?: number; errorMessage?: string }
   'message.auto_retry_end': { sessionId: string; success: boolean; attempt: number; finalError?: string }
-  'message.queue_update': { sessionId: string; steering?: string[]; followUp?: string[] }
+  // message.queue_update：队列深度变化广播。pendingMessageCount = steering + followUp 条数和
+  //（event-adapter 翻译恒附，W8 补声明——renderer 窄读取此前读不到该字段类型；帧内值 =
+  // pi 队列深度的推送投影，与 get_state().pendingMessageCount 同公式同源、数值恒等，
+  // PR #185 MF2 定口径：renderer 对账直读帧值，原「queue 实例快照权威、帧仅事件即时信号」
+  // 口径作废——queue ReplicatedState 实例已撤销）。
+  'message.queue_update': { sessionId: string; steering?: string[]; followUp?: string[]; pendingMessageCount: number }
   // message.bashStart：bash 执行开始广播（与 message.bashResult 对称的实时反馈）。
   // excludeFromContext 透传自请求（前端据此渲染「不进上下文」标记）。
   'message.bashStart': {
@@ -1180,6 +1197,22 @@ export interface ServerMessageMapBase {
     details?: Record<string, unknown>
     display?: boolean
   }
+  // ── W21 entry 形态实时 feed（data-source-governance P3.3）──
+  // message.message_end：pi message_end 事件重构的 message entry（user/assistant/toolResult/custom
+  // 的持久化触发点，agent-session.ts:545-561），实时路径与文件重放（get_entries）喂同一个
+  // core reducer（applyEntry）的权威载体。entry.id 恒缺省（pi 在 emit 之后才 appendMessage
+  // 分配 uuidv7，事件上拿不到）——reducer 按 `e<N>` 确定性派生，W22 对账靠 get_entries。
+  'message.message_end': { sessionId: string; entry: PiMessageEntry }
+  // message.tool_call_start：tool_execution_start 重构的 toolCall entry 形态（替换直译平铺
+  // payload——overlay 挂 running toolCall 从 entry 读取）。contentIndex/messageId 由
+  // event-interpreter 从缓存补齐（产出顺序锚点 + 挂载目标）；turnId 恒缺省（值填充归
+  // fix-chat-flow-order 分组 wave）。
+  'message.tool_call_start': { sessionId: string; entry: PiToolCallEntryForm }
+  // message.tool_call_end：tool_execution_end 重构的 toolResult message entry 形态。
+  // entry.message.content 是 plugin hook 改写后的工具产出（string 或 content block 数组，
+  // 与 pi 持久化 toolResult entry 同构）；isError/details 透传。前端 registry 喂
+  // applyEntry（toolResult 窗口局部配对回填）+ overlay 收口。
+  'message.tool_call_end': { sessionId: string; entry: PiMessageEntry }
 }
 
 /**
@@ -1213,6 +1246,27 @@ export interface ServerMessage<T extends ServerMessageType = ServerMessageType> 
   seq?: number
   payload: ServerMessageMap[T]
 }
+
+/**
+ * ServerMessage 的分发联合形态（消费侧收窄用，R1 type-safety S5）。
+ *
+ * ServerMessage<T> 接口的 payload 是 `ServerMessageMap[T]` 泛型查询——T 未绑定时（默认全联合）
+ * payload 为全 payload 联合，`switch (msg.type)` 无法收窄，消费侧被迫 `msg.payload as {...}`，
+ * 契约缺字段时 as 静默放行（S4 的 thinkingLevelSet 曾因此不可见）。本类型把每个 type 展开为
+ * 独立成员，TS 判别联合自动收窄 payload，ServerMessageMap 登记缺口直接变编译错误。
+ *
+ * 与 ServerMessage 的关系：同一 wire 形状的两种 TS 表达（值域相同），ServerMessageUnion 的
+ * 任一成员可赋给 ServerMessage（窄→宽）。构造侧（runtime server.ts send/reply/broadcast）继续
+ * 用 ServerMessage；消费入口（订阅 handler 签名）用本类型。二者收敛为单一表达是后续 wave。
+ */
+export type ServerMessageUnion = {
+  [K in ServerMessageType]: {
+    type: K
+    id?: string
+    seq?: number
+    payload: ServerMessageMap[K]
+  }
+}[ServerMessageType]
 
 /**
  * # ReplyPayloadMap —— RPC request → reply payload 一级映射（方案C 精简版）。
@@ -1470,6 +1524,58 @@ export function isSessionSummary(value: unknown): value is SessionSummary {
     typeof v.status === 'string' &&
     typeof v.modelId === 'string'
   )
+}
+
+/**
+ * session 级 view-ready 快照 DTO（W13 data-source-governance P2.1，D7 原则）。
+ *
+ * 单 session 的 owner 权威投影：runtime 侧 state 话题（state_changed/queue_update/
+ * commands/context/subagents-类，W12 起）publish 以 owner 数据源为基准（ReplicatedState
+ * 实例快照，或事件帧投影——如 queue_update 的 pendingMessageCount，见 message.queue_update
+ * 注释，PR #185 MF2 定口径），本 DTO 是这些 payload 的
+ * renderer 渲染字段并集——renderer 收到后直接渲染，零 merge/normalize/推导。core
+ * createSessionStore.applySnapshot 以此为单 session 快照入参（session store 唯一写入口）。
+ *
+ * 合并语义 = D1b 整字段覆盖：字段值非 undefined 即覆盖现值，含显式空值（owner 声明空即空）；
+ * undefined = 快照未涉及该字段，保留现值。W15 起按来源分流（SessionDataSource）：磁盘扫描
+ * 来源快照（source='scan'）的占位空值（modelId:''/tokenCount:0）在 core 合并侧被守卫，
+ * 不覆盖已知真值；owner 来源（缺省）显式空值仍正常覆盖——两条空值语义并存不混用。
+ *
+ * 字段 → runtime 来源对照（W12 后 publish payload）：
+ * - label：session.renamed（pi 改名）/ config.sessions（整表 SessionSummary.label）
+ * - status：SessionStatus 六态（session.exited → dead 等）
+ * - modelId / thinkingLevel / usagePercent / inputTokens / contextLimit：session.state_changed
+ * - pendingMessageCount：message.queue_update（帧 = pi 队列深度推送投影，与 get_state 同公式同源，PR #185 MF2 撤销 W8 实例后帧即权威）
+ * - commands：session.commands（pi 扩展命令清单，形状与广播 payload 一致）
+ * - tokenCount：SessionSummary.tokenCount（磁盘扫描占位值 0，守卫对象）
+ */
+export interface SessionViewSnapshot {
+  /** session 标签（侧栏列表项 / panel 标题）。 */
+  label?: string
+  /** 进程三态 + 终态（侧栏状态点 / dead 置灰）。 */
+  status?: SessionStatus
+  /** 当前模型复合串 "provider/modelId"（Composer 工具条）。 */
+  modelId?: string
+  /** 思考等级（前端 6 级枚举串）。undefined = 未设置，快照省略不覆盖。 */
+  thinkingLevel?: string
+  /** 上下文用量百分比 0-100（ContextCapacityPopover）。 */
+  usagePercent?: number
+  /** 当前输入 token 数（与 usagePercent 同源推送）。 */
+  inputTokens?: number
+  /** 上下文窗口上限（与 usagePercent 同源推送）。 */
+  contextLimit?: number
+  /** 队列深度（steering + followUp 条数和，QueueBubble 计数）。 */
+  pendingMessageCount?: number
+  /** slash 命令清单（Composer 补全数据源）。 */
+  commands?: ServerMessageMap['session.commands']['commands']
+  /** 累计 token 数（SessionSummary 同名字段；磁盘扫描占位值 0 是 W15 守卫对象）。 */
+  tokenCount?: number
+  /**
+   * 快照数据来源（W15 守卫判定依据）：'scan' = 磁盘扫描占位快照（modelId/tokenCount
+   * 的空值是占位，core mergeViewSnapshot 守卫其不覆盖已知真值）；缺省 = owner
+   * （runtime 实例广播 / 乐观更新，D1b 整字段覆盖含显式空值）。
+   */
+  source?: SessionDataSource
 }
 
 /** 运行时检查值是否为 SubagentRecord（含必需字段 subagentId/agent/slug/task/status）。 */

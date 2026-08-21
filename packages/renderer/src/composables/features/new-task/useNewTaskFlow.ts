@@ -62,7 +62,8 @@ function buildCreateFlowApiPort(): SessionApiPort {
   return {
     list: () => sessionApi.list(),
     switchSession: (id) => sessionApi.switchSession(id),
-    create: (cwd, label, presetId, projectId) => sessionApi.create(cwd, label, presetId, projectId),
+    create: (cwd, label, presetId, projectId, modelOverride, thinkingOverride) =>
+      sessionApi.create(cwd, label, presetId, projectId, modelOverride, thinkingOverride),
     rename: (id, label) => sessionApi.rename(id, label),
     remove: (id) => sessionApi.remove(id),
     removeByCwd: (cwd) => sessionApi.removeByCwd(cwd),

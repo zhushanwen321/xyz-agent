@@ -30,11 +30,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@xyz-agent/extension-protocol": "workspace:^0.4.0"
+    "@xyz-agent/extension-protocol": "workspace:*"
   },
   "devDependencies": {
     "@earendil-works/pi-tui": "*",
     "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "^4.1.9",
     "fast-check": "^4.9.0",
     "typebox": "*",
     "vitest": "^4.1.8"
@@ -42,14 +43,10 @@
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
-    "@zhushanwen/pi-subagent-workflow": "workspace:*",
     "typebox": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-tui": {
-      "optional": true
-    },
-    "@zhushanwen/pi-subagent-workflow": {
       "optional": true
     }
   }

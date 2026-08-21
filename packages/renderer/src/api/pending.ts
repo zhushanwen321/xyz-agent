@@ -32,6 +32,7 @@ const DEFAULT_TIMEOUT_MS = 65_000
  */
 const MAX_PENDING = 256
 
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：RPC pending promise 去重/超时表（容量上限 256，非 GUI 数据）
 const pendingMap = new Map<string, PendingRequest>()
 
 /**
@@ -83,8 +84,9 @@ function sweepExpired(): void {
   armSweepTimer()
 }
 
-/** 生成新命令 id（crypto.randomUUID） */
-export function create(): string {
+/** 生成新命令 id（crypto.randomUUID）。命名避开泛化 create（Gate-1.5 duplicate_exports：
+ *  与 api/domains/session.ts 的 session.create RPC 同名异义，消费方仅 request.ts）。 */
+export function createCommandId(): string {
   return crypto.randomUUID()
 }
 
@@ -106,7 +108,7 @@ function evictOldestIfOverflow(): void {
 /**
  * 注册 pending 请求，返回与之关联的 Promise。
  *
- * @param id 命令 id（create() 生成）
+ * @param id 命令 id（createCommandId() 生成）
  * @param timeoutMs 超时毫秒数，默认 65s。超时后自动 reject（error.code='timeout'）+ 清理。
  *                 传 0 禁用超时（向后兼容极少数长操作场景，如 compact 300s）。
  */

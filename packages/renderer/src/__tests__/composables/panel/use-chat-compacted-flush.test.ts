@@ -99,7 +99,7 @@ describe('useChat session.compacted → flush 重放（compact-queued-messages W
     const { compact } = useChat()
     await compact('c-f')
     // 建立 compact 生命周期：compacting → compacted
-    emit({ type: 'session.compacting', payload: { sessionId: 'c-f', status: 'compacting' } })
+    emit({ type: 'session.compacting', payload: { sessionId: 'c-f', status: 'compacting', reason: 'manual' } })
     expect(chat.isCompacting('c-f')).toBe(true)
 
     // 压缩期间用户消息入队
