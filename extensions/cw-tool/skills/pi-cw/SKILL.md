@@ -16,13 +16,15 @@ description: "cw 递归编排大型多 agent 并行开发任务,适用于需多�
 - 多个 slice/feature 子树要并行展开
 - 单 agent 线性走完整棵树会撑爆上下文(设计 + 实现 + 审查 + 合并全栈),需按层隔离上下文
 
-> 单 agent 模式或小任务（改 typo / 单文件 / 明确小 bug）走 `cw-cli` skill,不必建树。
+> ⚠️ **cw ≥2.0 时,上述递归编排场景由 cw-cli 的 runner 承载**（`cw run --root <id> --spawn pi`，见下方版本护栏）——本 skill 的编排流程仅在 cw 1.x 下可用。
+
+> 不需递归编排的小任务（改 typo / 单文件 / 明确小 bug）走 `cw-cli` skill,不必建树;多 unit 任务走 cw-cli 的 runner 模式,不要主 agent 手动逐 unit 编排。
 
 ## 何时不该用
 
-- 单文件小改、明确的小 bug:直接 edit,或派单个 worker subagent;或走 `cw-cli` skill 单 agent 模式
+- 单文件小改、明确的小 bug:直接 edit,或派单个 worker subagent;或走 `cw-cli` skill
 - 线性任务、无需多 agent 并行:走 cw 单层 wave 即可,不必建树
-- 能单 agent 线性走完的任务(哪怕要建 epic 树):走 `cw-cli` skill 单 agent 模式,不必上递归编排
+- 能单 agent 线性走完的任务(哪怕要建 epic 树):走 `cw-cli` skill 的 runner 模式(`cw run --root <id> --spawn pi`),不必上递归编排
 - 纯分析 / 调研 / 设计文档:不写代码不该进 cw 编排
 
 ## 前置：cw-tool
@@ -36,7 +38,17 @@ description: "cw 递归编排大型多 agent 并行开发任务,适用于需多�
 
 若 cw_* 工具缺失，说明 cw-tool 的工具未正确安装/加载，编排第一步就会失败（agent 模板的 tools 字段解析为空）。
 
+## [MANDATORY] 版本护栏（先探测再执行）
+
+**执行本 skill 任何流程前，先跑 `cw --version`：**
+
+- **≥2.0.0**：本 skill 全部流程**不可用**，立即停止按本文执行。cw 2.0 是完全重写：`cw create` 参数面已变（`--id <slug> --brief <路径>`），`cw handoff` / `cw guidance` / `cw gate` / `cw replan` / `cw design-review` 等命令已删除（实测报「未知命令」），本 skill 配套的 cw_* 工具写 action 同样全部失效。多 unit 编排改用 cw 2.0 runner：`cw run --root <id> --spawn pi`。runner 用法以 cw-cli skill 的模式分流表为唯一权威源，本 skill 不重复教学。
+- **1.x**：以下流程仅 cw 1.x 可用，正常执行。
+- **版本探测失败 / 执行中命令报「未知命令」**：按 ≥2.0 处理，切 runner 路径；不要按本文流程重试或降级。
+
 ## 流程
+
+> ⚠️ 以下流程基于 cw 1.x 命令面，cw ≥2.0 下不可用（见上方版本护栏）。
 
 ### 1. 建树根
 
@@ -44,7 +56,7 @@ description: "cw 递归编排大型多 agent 并行开发任务,适用于需多�
 cw create <顶层> --slug <kebab-slug> --objective "<一句话目标,含可验收的完成标准>"
 ```
 
-`<顶层>` 通常 epic,但 feature/slice 也能做根——选能覆盖全貌的最小层(选层标准复用 cw-cli skill 的「规模 × 性质」表)。递归编排的额外门槛:**顶层必须会拆出 ≥2 个可并行的下层 unit**;只拆 1 个(无并行价值)或整棵树线性串行即可,走 cw-cli 单 agent 模式更省。
+`<顶层>` 通常 epic,但 feature/slice 也能做根——选能覆盖全貌的最小层(选层标准复用 cw-cli skill 的「规模 × 性质」表)。递归编排的额外门槛:**顶层必须会拆出 ≥2 个可并行的下层 unit**;只拆 1 个(无并行价值)或整棵树线性串行即可,走 cw-cli skill 的 runner 模式更省。
 
 拿到根 unit 的 unitId(下文记作 `<根Id>`)。
 
