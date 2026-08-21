@@ -103,7 +103,7 @@ function checkManifest(pkgDir) {
  * 分类 import 错误：判断是否为 pi runtime 差异导致的 dev 环境假阳性。
  *
  * bundle 的正确性由 esbuild 保证（inline 完整、无语法错，否则不产出 index.js）。
- * pi 0.84.1 实测能加载全部 10 包（get_state success，2026-08-12 重测；0.80.3 首测时 9 包）。
+ * pi 0.84.1 实测能加载全部 staged 包（get_state success，2026-08-12 重测；staged 包清单以 mandatory-extensions.json SSOT 为准，不在此写死包数）。
  * verify-staged 用 node import，
  * 与 pi jiti runtime 有两类差异，需降级（不视为 bundle 缺陷）：
  *  - external：涉及 pi virtualModules（@earendil-works/* 等），dev 环境 node_modules

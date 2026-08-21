@@ -196,12 +196,13 @@ export class ExtensionResolver implements IExtensionResolver {
    *   - dev：读源码目录 extensions/<pkg>/（repo root，pi 原生加载 .ts），
    *     改源码后新建 session 即生效，无需跑 prepare-builtin-extensions.sh。
    *
-   * dev 源码扫描只保留 mandatory 包（对齐 build staged 集合）：源码目录 extensions/ 含
-   * 17 个 @zhushanwen/pi-* 包，build 只 bundle 其中 10 个 mandatory（prepare 脚本按
-   * mandatory-extensions.json SSOT bundle）。若 dev 全量加载源码，会多出 evolve-daily
-   *（每日跑 Python 分析）等非 mandatory 包，与 build 产物集不一致。故按 mandatory SSOT
-   * 过滤，保证 dev/build 加载同一集合，仅路径分流（源码 .ts vs bundle .js）。这属「builtin
-   * 源集合界定」（静态定义），非 disabled/enabled/tier 运行时策略过滤（后者归 extension-filter）。
+   * dev 源码扫描只保留 mandatory 包（对齐 build staged 集合）：源码目录 extensions/ 下
+   * 的 @zhushanwen/pi-* 包多于 mandatory 集合（非 mandatory 扩展 + shared 库），build
+   * 只 bundle mandatory 子集（prepare 脚本按 mandatory-extensions.json SSOT bundle，
+   * 包数以 SSOT 为准、不在此写死）。若 dev 全量加载源码，会多出非 mandatory 包，与
+   * build 产物集不一致。故按 mandatory SSOT 过滤，保证 dev/build 加载同一集合，仅路径
+   * 分流（源码 .ts vs bundle .js）。这属「builtin 源集合界定」（静态定义），非
+   * disabled/enabled/tier 运行时策略过滤（后者归 extension-filter）。
    *
    * [HISTORICAL] dev 模式历经三阶段：(1) 读 repoRoot/resources/pi/agent/extensions/
    *（仅含 bridge，isValidPiExtension 返回 false，恒返回空）；(2) 改读 staged bundle

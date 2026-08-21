@@ -19,7 +19,8 @@
 	"license": "MIT",
 	"files": [
 		"src/",
-		"index.ts"
+		"index.ts",
+		"analyze.py"
 	],
 	"devDependencies": {
 		"vitest": "^4.1.8"
