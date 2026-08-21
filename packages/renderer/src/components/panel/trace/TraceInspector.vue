@@ -25,6 +25,17 @@
         :class="kindBadgeClass"
       >{{ row.kind }}</span>
       <span class="min-w-0 truncate font-mono text-[11px] text-neutral-fg">#{{ row.seq }}<template v-if="time"> · {{ time }}</template></span>
+      <Button
+        variant="ghost"
+        size="sm"
+        class="ml-auto h-5 gap-1 px-1.5 text-[11px] text-neutral-dim hover:text-neutral-fg"
+        data-testid="trace-inspector-copy"
+        @click="copy(rawJson, 'entry')"
+      >
+        <Check v-if="copied === 'entry'" class="size-3 text-success" />
+        <Copy v-else class="size-3" />
+        {{ t(copied === 'entry' ? 'panel.trace.inspectorCopied' : 'panel.trace.inspectorCopy') }}
+      </Button>
     </div>
     <!-- sub：来源说明 -->
     <p class="flex-shrink-0 px-2.5 pb-1.5 pt-1 text-[11px] text-neutral-faint">{{ t('panel.trace.inspectorSubtitle') }}</p>
@@ -97,13 +108,14 @@
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, ArrowUpRight, FolderOpen } from '@lucide/vue'
+import { ArrowLeft, ArrowUpRight, Copy, Check, FolderOpen } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { TraceRow } from '@xyz-agent/core/domain/session-trace'
 import { useTraceRows } from '@/composables/features/trace/useTraceRows'
 import { clearTraceSelection, useSessionTrace } from '@/composables/features/trace/useSessionTrace'
 import { jumpToParentSession } from '@/composables/features/trace/useTraceJump'
 import { useToast } from '@/composables/useToast'
+import { useCopy } from '@/composables/panel/useCopy'
 import { revealInFolder } from '@/lib/ipc'
 import { KIND_BADGE_CLASS } from './trace-kind-style'
 
@@ -112,6 +124,7 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const { copied, copy } = useCopy()
 const { error: toastError } = useToast()
 const { partition } = useSessionTrace()
 const rows = useTraceRows()

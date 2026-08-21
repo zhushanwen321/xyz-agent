@@ -436,6 +436,8 @@ export default {
     malformedLine: '无法解析的 entry（第 {line} 行）',
     malformedHint: 'JSONL 第 {line} 行损坏；可在文件管理器中检查 session JSONL 文件',
     inspectorBack: '返回',
+    inspectorCopy: '复制',
+    inspectorCopied: '已复制',
     inspectorSubtitle: '来自 Trace 视图 · 选中 entry 的完整详情',
     inspectorRaw: '原始 entry JSON',
     inspectorNoEntry: '（无 entry 数据）',

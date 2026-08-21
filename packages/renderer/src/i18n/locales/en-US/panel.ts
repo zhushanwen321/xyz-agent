@@ -438,6 +438,8 @@ export default {
     malformedLine: 'Unparseable entry (line {line})',
     malformedHint: 'JSONL line {line} is corrupted; open the session JSONL file to inspect',
     inspectorBack: 'Back',
+    inspectorCopy: 'Copy',
+    inspectorCopied: 'Copied',
     inspectorSubtitle: 'From Trace view · full detail of the selected entry',
     inspectorRaw: 'Raw entry JSON',
     inspectorNoEntry: '(no entry data)',
