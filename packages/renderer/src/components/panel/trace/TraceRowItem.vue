@@ -53,7 +53,7 @@
     >
       <template v-if="row.kind === 'MALFORMED'">{{ t('panel.trace.malformedLine', { line: row.lineNumber ?? 0 }) }}</template>
       <template v-else>{{ headline }}</template>
-      <span v-if="suffix" class="ml-1.5 font-mono text-[10px] text-neutral-dim">{{ suffix }}</span>
+      <span v-if="suffix" data-testid="trace-suffix" class="ml-1.5 font-mono text-[10px] text-neutral-dim">{{ suffix }}</span>
     </span>
     <span
       v-if="!row.inContext && !row.shadowed"
