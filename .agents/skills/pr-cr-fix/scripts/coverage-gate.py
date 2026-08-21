@@ -22,7 +22,8 @@
 
 对 base...HEAD 改动过 src/ 的 workspace 包跑 `vitest run --coverage`（lcov），
 解析 lcov 的 DA 行命中数据 + git diff 新增行号，计算**可执行新增行的覆盖率**。
-增量覆盖率 < min-incremental（默认 50%）→ fail（exit 1）。
+增量覆盖率 < min-incremental（默认 80%，业界新代码覆盖事实标准——Sonar Way 默认
+门禁；2026-08-21 从 50% 起步值 ratchet 上调）→ fail（exit 1）。
 
 口径说明：
 - 分母 = 新增行中出现在 lcov DA 记录里的行（可执行行；注释/空行/类型声明不计）
@@ -34,7 +35,7 @@
 各包启用条件：package.json devDependencies 声明 @vitest/coverage-v8（按声明而非
 node 解析，原因见上 [HISTORICAL] #3）。未声明的包记 SKIP 并给出启用指引。
 
-用法：python3 coverage-gate.py [--base main] [--min-incremental 50] [--packages a,b] [--debug]
+用法：python3 coverage-gate.py [--base main] [--min-incremental 80] [--packages a,b] [--debug]
 退出码：0 = pass；1 = fail（增量不足或测试失败）；2 = 工具错误（git 异常 / 记账不闭合 /
       all-SKIP 配置错误）
 产出：.review/coverage.json（packages 增量口径 + files 全文件级真实覆盖率，
@@ -50,7 +51,7 @@ import sys
 import time
 from pathlib import Path
 
-MIN_INCREMENTAL_DEFAULT = 50.0
+MIN_INCREMENTAL_DEFAULT = 80.0
 # 只对这些 workspace 前缀下的包做 gate（apps/electron 无独立 vitest 包）
 PKG_PREFIXES = ("packages/", "extensions/")
 
