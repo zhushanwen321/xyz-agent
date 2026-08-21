@@ -16,7 +16,8 @@
  *
  * 订阅生命周期：loadTrace 时 ensureIncrementSubscription（Set 去重防重复注册，规则 2）；
  * 不随 TraceView 卸载退订（切回对话视图增量继续收集，切回 Trace 不丢数据）；
- * 分区 cleanup 由 useSidebar.deleteSession 经 triggerSessionCleanups 统一编排（ADR-0049）。
+ * 分区 cleanup 由 useSidebar.deleteSession 经 triggerSessionCleanups 统一编排
+ * （ADR-0049；含 events 退订与 loading 缓冲丢弃）。
  */
 import { computed, reactive, ref } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
@@ -151,13 +152,51 @@ function ensureIncrementSubscription(sid: string): void {
   events.on(sid, onTraceMessage)
 }
 
-/** 增量合并：entry.id 去重追加 + leafId 滚动更新（protocol「消费端按 entry.id 去重追加」）。 */
+/**
+ * loading 窗口内到达的增量推送缓冲（sid → 按到达序排列）。
+ *
+ * 为什么需要：runtime 在 getTraceEntries 内 getEntries 成功即写增量基线，随后 message_end
+ * 触发的 sync 推送可能先于 RPC reply 到达 renderer——推送携带的 entry 既不在快照里、也不会
+ * 被后续 sync 补发（runtime 基线已越过）。此时直接丢弃 = 台账永久缺行，只能靠手动重开/重试
+ * 找回。回包 ready 后按序 flush（entry.id 去重使与快照重叠无害）；error 路径保留缓冲，
+ * 重试 ready 时再 flush；session 删除时随 cleanup 一并丢弃。
+ */
+const pendingAppends = new Map<string, Array<{ entries: unknown[]; leafId?: string | null }>>()
+
+/** 增量合并核心：entry.id 去重追加 + leafId 滚动（protocol「消费端按 entry.id 去重追加」；
+ * ready 增量分支与 loading 缓冲 flush 共用同一份语义）。 */
+function mergeAppendedEntries(
+  s: TraceSessionPartition,
+  payload: { entries: unknown[]; leafId?: string | null },
+): void {
+  const seen = new Set(
+    s.entries
+      .map((e) => (e as { id?: unknown } | null)?.id)
+      .filter((id): id is string => typeof id === 'string'),
+  )
+  for (const entry of payload.entries) {
+    const id = (entry as { id?: unknown } | null)?.id
+    if (typeof id === 'string' && seen.has(id)) continue
+    s.entries.push(entry)
+    if (typeof id === 'string') seen.add(id)
+  }
+  if (payload.leafId !== undefined) s.leafId = payload.leafId
+}
+
+/** 增量腿入口：ready 分区去重追加；loading 分区入队缓冲（回包后 flush，防丢）；其余不增量。 */
 function applyTraceAppend(
   sid: string,
   payload: { entries: unknown[]; leafId?: string | null },
 ): void {
   let needsReload = false
   partitions.updateFor(sid, (s) => {
+    if (s.status === 'loading') {
+      // 推送先于全量回包到达的竞态窗口（见 pendingAppends 注释）：入队，回包 ready 后按序 flush
+      const queue = pendingAppends.get(sid)
+      if (queue) queue.push(payload)
+      else pendingAppends.set(sid, [payload])
+      return
+    }
     if (s.status !== 'ready') return // 未加载过的分区不增量（打开时走全量）
     if (s.source === 'empty') {
       // 未落盘 → 有增量说明数据出现：回 idle 由外部触发全量重拉（§3.1 失败路径「落盘后自动加载」）
@@ -165,18 +204,7 @@ function applyTraceAppend(
       needsReload = true
       return
     }
-    const seen = new Set(
-      s.entries
-        .map((e) => (e as { id?: unknown } | null)?.id)
-        .filter((id): id is string => typeof id === 'string'),
-    )
-    for (const entry of payload.entries) {
-      const id = (entry as { id?: unknown } | null)?.id
-      if (typeof id === 'string' && seen.has(id)) continue
-      s.entries.push(entry)
-      if (typeof id === 'string') seen.add(id)
-    }
-    if (payload.leafId !== undefined) s.leafId = payload.leafId
+    mergeAppendedEntries(s, payload)
   })
   if (needsReload) void loadTrace(sid)
 }
@@ -202,6 +230,14 @@ async function loadTrace(sid: string): Promise<void> {
       s.sessionEnd = snap.sessionEnd as TraceSessionEndMeta | undefined
       s.leafId = snap.leafId ?? null
       s.status = 'ready'
+      // loading 窗口缓冲的推送按序补落：推送晚于快照产生（携带的 entry/leafId 更新），
+      // 与快照重叠的 entry 由 mergeAppendedEntries 按 id 去重。error 路径不删缓冲，
+      // 重试 ready 时再 flush（见 pendingAppends 注释）。
+      const queued = pendingAppends.get(sid)
+      if (queued) {
+        for (const p of queued) mergeAppendedEntries(s, p)
+        pendingAppends.delete(sid)
+      }
     })
   } catch (e) {
     const err = e as Error & { code?: string }
@@ -321,7 +357,12 @@ export function setTraceFilter(
 
 // 分区销毁：session 删除时 useSidebar.deleteSession → triggerSessionCleanups 统一调到这里。
 registerSessionCleanup((sid) => {
+  // 退订增量 handler：不退订则 handler 永久滞留 events.sessionHandlers（per 删除 session
+  // 一条 Map+Set 泄漏），且迟到推送会经 updateFor 的 getOrCreatePartition 复活已删分区
+  // （违背 ADR-0049 cleanup 编排语义）
+  events.off(sid, onTraceMessage)
   subscribedSids.delete(sid)
+  pendingAppends.delete(sid)
   fetchingPromptSids.delete(sid)
 })
 
@@ -356,12 +397,13 @@ export function useSessionTrace(): {
   }
 }
 
-/** 测试隔离：清空所有分区 + 退订 + 解绑分区键。生产代码禁止调用。 */
+/** 测试隔离：清空所有分区 + 退订 + 清加载缓冲 + 解绑分区键。生产代码禁止调用。 */
 export function _resetTraceStoreForTest(): void {
   for (const sid of [...subscribedSids]) {
     events.off(sid, onTraceMessage)
   }
   subscribedSids.clear()
+  pendingAppends.clear()
   partitions._clearAllForTest()
   boundSid.value = null
 }

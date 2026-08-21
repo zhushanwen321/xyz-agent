@@ -3,6 +3,8 @@
  *
  * 覆盖：加载/增量/过滤/选中 per-session 分区隔离，切 session 不串；
  * 增量腿 entry.id 去重追加 + empty（未落盘）→ 增量触发全量重拉；
+ * loading 窗口推送缓冲 flush（竞态：推送先于回包到达不丢行）；
+ * cleanup 退订 events handler（防 per 删除 session 监听泄漏）；
  * payload → rows 派生（mergeTraceLines 归并 + core mapSessionTraceRows）。
  *
  * 真实 events 模块（内存路由，dispatchSession 触发订阅 handler——非 mock 订阅链路）；
@@ -15,6 +17,7 @@ import { computed } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
 import * as events from '@/api/events'
+import { triggerSessionCleanups } from '@xyz-agent/core/foundation/use-session-scoped-state'
 import { mapSessionTraceRows, resolveTraceRowKind } from '@xyz-agent/core/domain/session-trace'
 import type { ServerMessageMap } from '@xyz-agent/shared'
 
@@ -180,6 +183,46 @@ describe('A41 per-session trace store（ADR-0049 useSessionScopedState 分区）
 
     traceStore.retryTraceLoad(SID_A)
     await vi.waitFor(() => expect(partitionOf(SID_A).status).toBe('ready'))
+  })
+
+  it('loading 窗口内的推送不丢：回包后 flush（快照已有 id 去重 + 快照后新 entry 追加 + leafId 滚动）', async () => {
+    // 复现 review 竞态：runtime 写增量基线后，traceEntryAppended 推送先于 RPC reply 到达
+    // renderer——手动 resolve 制造 loading 窗口，推送既不在快照里也不会被 sync 补发
+    let resolveSnap!: (v: ServerMessageMap['session.traceEntries']) => void
+    apiMock.getTraceEntries.mockImplementation(
+      () => new Promise<ServerMessageMap['session.traceEntries']>((res) => { resolveSnap = res }),
+    )
+    const u1 = { type: 'message', id: 'e1', parentId: null, message: { role: 'user', content: 'q1' } }
+    focusSession(SID_A)
+    traceStore.ensureTraceLoaded(SID_A)
+    await vi.waitFor(() => expect(partitionOf(SID_A).status).toBe('loading'))
+
+    // 窗口内推送：e1 快照里已有（flush 时去重）+ e2 是快照后新 entry（不得丢，否则台账永久缺行）
+    const a1 = { type: 'message', id: 'e2', parentId: 'e1', message: { role: 'assistant', content: [] } }
+    pushAppend(SID_A, [u1, a1], 'e2')
+
+    resolveSnap(snapshotOf(SID_A, [u1]))
+    await vi.waitFor(() => expect(partitionOf(SID_A).status).toBe('ready'))
+    expect(partitionOf(SID_A).entries.map((e) => (e as { id?: string }).id)).toEqual(['e1', 'e2'])
+    expect(partitionOf(SID_A).leafId).toBe('e2')
+  })
+
+  it('cleanup 退订增量 handler：triggerSessionCleanups 后 events.off 移除该 sid 的订阅 handler', async () => {
+    apiMock.getTraceEntries.mockResolvedValue(snapshotOf(SID_A, []))
+    const onSpy = vi.spyOn(events, 'on')
+    focusSession(SID_A)
+    traceStore.ensureTraceLoaded(SID_A)
+    await vi.waitFor(() => expect(partitionOf(SID_A).status).toBe('ready'))
+    // 前置：loadTrace → ensureIncrementSubscription 确实建立了订阅
+    const handler = onSpy.mock.calls.find(([sid]) => sid === SID_A)?.[1]
+    expect(handler).toBeTypeOf('function')
+    onSpy.mockRestore()
+
+    const offSpy = vi.spyOn(events, 'off')
+    triggerSessionCleanups(SID_A) // useSidebar.deleteSession 的 session 销毁编排路径
+    // 不退订则 handler 永久滞留 events 内部 Map（per 删除 session 泄漏）+ 迟到推送可复活已删分区
+    expect(offSpy).toHaveBeenCalledWith(SID_A, handler)
+    offSpy.mockRestore()
   })
 
   it('payload → rows 派生：mergeTraceLines 坏行归并 + core 映射（损坏行占位原位可见）', () => {
