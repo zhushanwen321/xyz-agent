@@ -8,7 +8,8 @@
     - 搜索：文本过滤（demo 行为：不匹配隐藏）。Input（xyz-ui）+ v-model 转发。
     - context toggle：xyz-ui Switch（禁原生 HTML 表单元素）。
   -->
-  <div class="flex flex-shrink-0 flex-col gap-1.5 px-3.5 pb-2 pt-1">
+  <!-- px-2 与行内文字左缘对齐（行贴容器边缘、自带 px-2；见 TraceView 列表容器注释） -->
+  <div class="flex flex-shrink-0 flex-col gap-1.5 px-2 pb-2 pt-1">
     <!-- 状态行 -->
     <div
       class="flex flex-wrap items-center gap-2 font-mono text-[11px] tabular-nums text-neutral-dim"

@@ -71,9 +71,11 @@
         @update:search-text="(v) => setFilter(props.sessionId, { searchText: v })"
         @fetch-current="fetchCurrentPrompt(props.sessionId)"
       />
+      <!-- 行自带 px-2（hover 底色内文字留白），容器不另加水平 padding——行底色贴面板左缘，
+           文字距左缘仅剩行内 8px（seq 左对齐后不再有右对齐留白） -->
       <div
         ref="scrollEl"
-        class="min-h-0 flex-1 overflow-y-auto px-2 pb-4 pt-1 [overflow-anchor:none]"
+        class="min-h-0 flex-1 overflow-y-auto pb-4 pt-1 [overflow-anchor:none]"
         data-testid="trace-list"
       >
         <!-- 空态：过滤后无匹配 -->
