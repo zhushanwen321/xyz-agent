@@ -8,8 +8,8 @@
     - 搜索：文本过滤（demo 行为：不匹配隐藏）。Input（xyz-ui）+ v-model 转发。
     - context toggle：xyz-ui Switch（禁原生 HTML 表单元素）。
   -->
-  <!-- px-2 与行内文字左缘对齐（行贴容器边缘、自带 px-2；见 TraceView 列表容器注释） -->
-  <div class="flex flex-shrink-0 flex-col gap-1.5 px-2 pb-2 pt-1">
+  <!-- pl-4 对齐轨道线后的 seq 列起点（线在 8px + 边框 1px + 行 px-2 8px ≈ 17px） -->
+  <div class="flex flex-shrink-0 flex-col gap-1.5 pl-4 pr-2 pb-2 pt-1">
     <!-- 状态行 -->
     <div
       class="flex flex-wrap items-center gap-2 font-mono text-[11px] tabular-nums text-neutral-dim"

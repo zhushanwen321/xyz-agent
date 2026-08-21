@@ -26,7 +26,7 @@
     <!-- seq 全行对齐（不引入占位 gutter——普通行保持原左边界）；assistant 聚合行的
          展开开关（chevron，stopPropagation 不触发行选中）置于 seq 与 badge 之间，
          仅 assistant 行 badge 右移（badge 宽度本随 kind 文字变化，无对齐损失） -->
-    <span class="w-9 shrink-0 text-left font-mono text-[10px] tabular-nums text-neutral-faint">#{{ row.seq }}</span>
+    <span class="w-9 shrink-0 text-right font-mono text-[10px] tabular-nums text-neutral-faint">#{{ row.seq }}</span>
     <Button
       v-if="expandable"
       variant="ghost"

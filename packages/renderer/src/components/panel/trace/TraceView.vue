@@ -71,11 +71,12 @@
         @update:search-text="(v) => setFilter(props.sessionId, { searchText: v })"
         @fetch-current="fetchCurrentPrompt(props.sessionId)"
       />
-      <!-- 行自带 px-2（hover 底色内文字留白），容器不另加水平 padding——行底色贴面板左缘，
-           文字距左缘仅剩行内 8px（seq 左对齐后不再有右对齐留白） -->
+      <!-- 左侧 timeline 轨道线：neutral-faint（token 语义「极弱/装饰」，实色明确可见）
+           填充 seq 右对齐列的留白区；border 在滚动容器边框盒上，行 hover 底色（内容区）
+           不会盖住线；ml-2 让线与面板边缘留 8px 呼吸 -->
       <div
         ref="scrollEl"
-        class="min-h-0 flex-1 overflow-y-auto pb-4 pt-1 [overflow-anchor:none]"
+        class="ml-2 min-h-0 flex-1 overflow-y-auto border-l border-neutral-faint pb-4 pt-1 [overflow-anchor:none]"
         data-testid="trace-list"
       >
         <!-- 空态：过滤后无匹配 -->
