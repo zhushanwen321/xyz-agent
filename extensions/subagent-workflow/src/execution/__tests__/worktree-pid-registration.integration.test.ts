@@ -139,7 +139,10 @@ afterEach(async () => {
 
 // ── 用例 ──
 
-describe("worktree pid 注册链路（真实 spawn 集成）", () => {
+// [HISTORICAL] 2026-08-20 PR #185：真实 spawn node 子进程 + 真实 git worktree + 注册表
+// 文件锁集成用例显式超时——整包满并行 + 系统余载下真实子进程链路超 vitest 默认 5s
+// testTimeout（对齐本包 worktree-registry D5a / process-shutdown-hook 口径）。
+describe("worktree pid 注册链路（真实 spawn 集成）", { timeout: 30_000 }, () => {
   it("正向：spawn 返回后注册表 pid 同步补全，活 worktree 超宽限不被 scan 误清", async () => {
     // 0. 长驻脚本（子进程 90s 内不退出，模拟长跑子 agent）
     scriptHolder.script = LONG_RUNNING_SCRIPT;    // 1. 真实创建 worktree（pid=0 占位）

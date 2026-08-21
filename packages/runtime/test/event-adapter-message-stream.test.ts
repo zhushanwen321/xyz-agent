@@ -18,8 +18,13 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createEventAdapter, type WsSender, type EventAdapterOptions } from './helpers/event-adapter-test-fixture.js'
 import { EventAdapter } from '../src/infra/pi/event-adapter.js'
-import type { ServerMessage } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageUnion } from '@xyz-agent/shared'
 import type { PiMessage } from '../src/infra/pi/rpc-client.js'
+
+// 帧收窄：sent 元素是宽联合 ServerMessage（payload 全联合），按 type 断言到判别联合
+// 成员后 payload 形状取自 protocol SSOT（ServerMessageMap），不手写字段形状。
+type CustomStartFrame = Extract<ServerMessageUnion, { type: 'message.customStart' }>
+type MessageStartFrame = Extract<ServerMessageUnion, { type: 'message.message_start' }>
 
 type PiTestEvent = PiMessage & Record<string, unknown>
 
@@ -124,7 +129,8 @@ describe('message_start 畸形字段守卫（handleMessageStart custom 分支）
     await flushAsync()
     expect(sent).toHaveLength(1)
     expect(sent[0].type).toBe('message.message_start') // fallback 分支（非 customStart）
-    expect(sent[0].payload.messageId).toMatch(/^a-/) // 生成 messageId 供 file_changes 挂载
+    const start = sent[0] as MessageStartFrame
+    expect(start.payload.messageId).toMatch(/^a-/) // 生成 messageId 供 file_changes 挂载
   })
 
   it('details 畸形（数组 / 原始值）→ customStart 帧 details 缺省（不透传谎报类型）', async () => {
@@ -133,7 +139,8 @@ describe('message_start 畸形字段守卫（handleMessageStart custom 分支）
       dispatchOne(adapter, { type: 'message_start', message: { customType: 'subagent-bg-notify', details: bad } })
       await flushAsync()
       expect(sent[0].type).toBe('message.customStart')
-      expect(sent[0].payload.details).toBeUndefined()
+      const custom = sent[0] as CustomStartFrame
+      expect(custom.payload.details).toBeUndefined()
     }
   })
 
@@ -145,9 +152,10 @@ describe('message_start 畸形字段守卫（handleMessageStart custom 分支）
     })
     await flushAsync()
     expect(sent[0].type).toBe('message.customStart')
-    expect(sent[0].payload.customType).toBe('workflow-result')
-    expect(sent[0].payload.content).toBeUndefined()
-    expect(sent[0].payload.display).toBeUndefined()
+    const custom = sent[0] as CustomStartFrame
+    expect(custom.payload.customType).toBe('workflow-result')
+    expect(custom.payload.content).toBeUndefined()
+    expect(custom.payload.display).toBeUndefined()
   })
 
   it('msg 有但无 role 且无 customType（assistant turn 变体）→ fallback messageId 路径', async () => {
@@ -156,6 +164,7 @@ describe('message_start 畸形字段守卫（handleMessageStart custom 分支）
     await flushAsync()
     expect(sent).toHaveLength(1)
     expect(sent[0].type).toBe('message.message_start')
-    expect(sent[0].payload.messageId).toMatch(/^a-/)
+    const start = sent[0] as MessageStartFrame
+    expect(start.payload.messageId).toMatch(/^a-/)
   })
 })

@@ -26,7 +26,11 @@ const WORKER_MOCK_ALIVE = resolve(__dirname, 'fixtures/mock-bootstrap-alive.cjs'
 /** MF-1：sandbox fork 边界断言 execArgv 含 --import；测试用 noop loader 满足契约 */
 const NOOP_ESM_LOADER = resolve(__dirname, 'fixtures/noop-esm-loader.cjs')
 
-describe('PluginHost', () => {
+// [HISTORICAL] 2026-08-20 PR #185：真实 fork 子进程 / Worker 线程用例显式超时——
+// assignWorker/loadPlugin/shutdown 走真实子进程与线程生命周期（含 2s SHUTDOWN_KILL
+// 宽限），整包满并行 + 系统余载下超 vitest 默认 5s testTimeout（对齐 equivalence
+// 真实 pi 用例显式超时口径）。
+describe('PluginHost', { timeout: 30_000 }, () => {
   // ── TC-2-01: sandbox 分配独立 fork 子进程 ─────────────────────
   it('TC-2-01: assignWorker for sandbox creates unique fork process per plugin', async () => {
     const rpc = new PluginRpcServer()

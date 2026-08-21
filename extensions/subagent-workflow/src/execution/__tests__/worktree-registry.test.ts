@@ -160,7 +160,10 @@ describe("WorktreeRegistry", () => {
   });
 
   describe("D5a 锁互斥（两写方并发不丢条目）", () => {
-    it("两个 registry 实例（模拟两 pi 进程写方）并发各 add 50 条，零丢失", async () => {
+    // [HISTORICAL] 2026-08-20 PR #185：真实 proper-lockfile 文件锁 RMW 用例显式超时——
+    // 单跑 >1s，整包满并行 + 系统余载下 100/31 次持锁 load→mutate→save 超过 vitest
+    // 默认 5s testTimeout（隔离跑通过，纯环境饿死），对齐本包 record-store-index 口径。
+    it("两个 registry 实例（模拟两 pi 进程写方）并发各 add 50 条，零丢失", { timeout: 30_000 }, async () => {
       // 失败模式 G 的复现形态：无锁时两实例 load→mutate→save 交错，后写者覆盖
       // 先写者 → 条目丢失。锁内 RMW 应保证 100 条全部落盘。
       const r1 = new WorktreeRegistry(tmpAgentDir);
@@ -178,7 +181,7 @@ describe("WorktreeRegistry", () => {
       expect(loaded.filter((e) => e.branch.startsWith("pi-sub-w2-"))).toHaveLength(50);
     });
 
-    it("并发 add + remove 交错：remove 只删自己的 branch", async () => {
+    it("并发 add + remove 交错：remove 只删自己的 branch", { timeout: 30_000 }, async () => {
       const r1 = new WorktreeRegistry(tmpAgentDir);
       const r2 = new WorktreeRegistry(tmpAgentDir);
       await r1.add(makeEntry({ branch: "pi-sub-keep" }));

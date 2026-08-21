@@ -30,7 +30,10 @@ function git(repo: string, ...args: string[]): string {
 	return execFileSync("git", ["-C", repo, ...args], { encoding: "utf-8" }).trim();
 }
 
-describe("WorktreeManager.scan 物理面对账（D5b）", () => {
+// [HISTORICAL] 2026-08-20 PR #185：真实 git 子进程 + 注册表文件锁集成用例显式超时——
+// 每用例多次 git init/worktree add/branch -D 真实子进程调用，整包满并行 + 系统余载下
+// 超 vitest 默认 5s testTimeout（对齐本包 worktree-registry D5a / process-shutdown-hook 口径）。
+describe("WorktreeManager.scan 物理面对账（D5b）", { timeout: 30_000 }, () => {
 	let baseDir: string;
 	let agentDir: string;
 	let repo: string;

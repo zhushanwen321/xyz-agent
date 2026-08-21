@@ -249,7 +249,10 @@ describe('pi-settings-store', () => {
       expect(readSettings().defaultModel).toBe('after')
     })
 
-    it('busy-waits and acquires after a cross-process holder releases (real subprocess)', async () => {
+    // [HISTORICAL] 2026-08-20 PR #185：真实子进程持锁用例显式超时——真实 spawn node
+    // 子进程持 proper-lockfile 锁，满并行 + 系统余载下 spawn/锁往返超 vitest 默认 5s
+    // testTimeout（对齐 worktree-registry D5a 口径）。
+    it('busy-waits and acquires after a cross-process holder releases (real subprocess)', { timeout: 30_000 }, async () => {
       writeSettings({ defaultModel: 'v1', packages: ['p1'] })
       // 子进程 = 模拟 pi：持锁 150ms，锁内写 model 域字段后释放
       const lockEntry = createRequire(import.meta.url).resolve('proper-lockfile')
@@ -260,8 +263,30 @@ describe('pi-settings-store', () => {
         fs.writeFileSync(${JSON.stringify(settingsPath)}, JSON.stringify({ defaultModel: 'pi-child', packages: ['p1'] }), 'utf-8')
         setTimeout(() => { release(); process.exit(0) }, 150)
       `])
-      // 等子进程拿到锁再发起写（否则可能抢先）
-      await new Promise((resolve) => setTimeout(resolve, 40))
+      // 确定性等子进程持锁（替代盲等固定 40ms sleep）：探测 lockSync 直至 ELOCKED。
+      // [HISTORICAL] 2026-08-20 PR #185 全量收尾实测 flaky：满载下子进程 spawn 慢于 40ms，
+      // 主进程抢先拿锁、锁内读到旧值 'v1'（waitedMs 断言照过，仅 defaultModel 断言红）。
+      // 子进程持锁窗口 150ms、探测间隔 2ms 必命中 ELOCKED；写入在 release 之前、主进程
+      // acquire 后才锁内重读，故拿到的必是 pi-child。
+      const waitChildHoldsLock = async (): Promise<void> => {
+        const deadline = Date.now() + 10_000
+        while (Date.now() < deadline) {
+          let probeRelease: ReturnType<typeof lockfile.lockSync> | undefined
+          try {
+            probeRelease = lockfile.lockSync(settingsPath, { realpath: false })
+          } catch (e) {
+            if ((e as { code?: string }).code === 'ELOCKED') return // 子进程已持锁
+            throw e
+          }
+          probeRelease() // 子进程未起：让出锁重试
+          if (child.exitCode !== null) {
+            throw new Error(`child exited (code ${child.exitCode}) before holding lock`)
+          }
+          await new Promise((r) => setTimeout(r, 2))
+        }
+        throw new Error('child did not acquire lock within 10s')
+      }
+      await waitChildHoldsLock()
       const t0 = Date.now()
       updateSettingsFields('extension', s => { s.packages = ['p2'] })
       const waitedMs = Date.now() - t0

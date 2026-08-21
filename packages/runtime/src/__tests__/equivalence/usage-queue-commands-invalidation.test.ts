@@ -209,8 +209,15 @@ async function waitUntil(label: string, predicate: () => boolean, timeoutMs = 5_
   }
 }
 
-/** 等 turn 完成的上限（真实 LLM 调用；对齐 W7 scalar-state-invalidation.test.ts 的余量口径） */
-const TURN_TIMEOUT_MS = 120_000
+/**
+ * 等 turn 完成的上限（真实 LLM 调用）。
+ * [HISTORICAL] 2026-08-20 PR #185 测试收尾：满并行全量（305 文件）+ 系统余载下真实 LLM
+ * 轮次饿死——round-N agent_end 在 120s 内未完成（事件流证明轮次在推进、只是被拖慢；
+ * 隔离跑全文件仅 11s 全绿，纯环境饿死非代码问题）。按主 agent 裁决对齐 equivalence
+ * 目录 300-420s 口径放宽至 300s；断言强度不变，仅放宽等待上限（同 attach-lifecycle
+ * 120→180→300 放宽史）。
+ */
+const TURN_TIMEOUT_MS = 300_000
 
 /** pi RpcSessionStats.contextUsage 的宽形态（真实 pi 用例的投影口径，对齐 fetchContext）。 */
 interface ContextUsageShape {
@@ -231,7 +238,7 @@ describe.skipIf(!REAL_PI_READY)(
     }
   })
 
-  it('事件风暴（丢 context.update）后 usage 实例值收敛 get_session_stats 快照', { timeout: 180_000 }, async () => {
+  it('事件风暴（丢 context.update）后 usage 实例值收敛 get_session_stats 快照', { timeout: 420_000 }, async () => {
     const fx = await spawnPiFixture()
     fixture = fx
 
@@ -270,7 +277,7 @@ describe.skipIf(!REAL_PI_READY)(
     usageState.dispose()
   })
 
-  it('RPC 频率采样（P0.5② 终判输入）：2 轮对话 + 失效风暴的双实例快照 RPC 次数与 p95 延迟', { timeout: 180_000 }, async () => {
+  it('RPC 频率采样（P0.5② 终判输入）：2 轮对话 + 失效风暴的双实例快照 RPC 次数与 p95 延迟', { timeout: 600_000 }, async () => {
     const fx = await spawnPiFixture()
     fixture = fx
 
