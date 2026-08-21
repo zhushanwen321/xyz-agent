@@ -77,6 +77,14 @@ export default {
         input: 'var(--input)',
         ring: 'var(--ring)',
       },
+      // [HISTORICAL] 修复潜伏配置 bug：colors 键 'border-hairline' 生成的工具类是
+      // border-border-hairline（无人使用），而代码里 10 处 border-hairline 用法从未
+      // 生成过规则——一直静默落到 preflight 灰 200 兜底。borderColor.hairline 才能产出
+      // .border-hairline（v6 §4.3 hairline 0.05 弱分隔语义类，2026-08-21 由 trace 左侧
+      // 轨道竖线暴露并修复；既有用法边框由灰 200 回归 0.05 弱分隔的设计本意）。
+      borderColor: {
+        hairline: 'var(--hairline)',
+      },
       fontFamily: {
         sans: ['Inter', 'SF Pro Display', 'PingFang SC', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'IBM Plex Mono', 'ui-monospace', 'Menlo', 'monospace'],
