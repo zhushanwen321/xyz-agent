@@ -476,8 +476,11 @@ describe('生命周期竞态（lifecycle races）', () => {
       await host.loadPlugin(workerId, 'lc-decay', '/tmp/lc-decay')
 
       host.getWorkerHandle('lc-decay')!.postMessage({ type: 'crash' })
-      // 等真实 exit 事件（I/O 驱动，非 timer 驱动）
-      for (let i = 0; i < 200 && host.getPendingRebuildTimer(workerId) === undefined; i++) {
+      // 等真实 exit 事件（I/O 驱动，非 timer 驱动）。固定轮数 setImmediate 在 CI 慢环境
+      // 下可能跑完仍等不到线程退出（曾以 200 轮上限在 CI 必挂）——按真实墙钟兜底：
+      // Date 未被 fake 可作 deadline，setTimeout 已被 fake 不能用于 waitFor 轮询
+      const exitDeadline = Date.now() + 5_000
+      while (host.getPendingRebuildTimer(workerId) === undefined && Date.now() < exitDeadline) {
         await flushIO()
       }
       expect(host.getPendingRebuildTimer(workerId)).toBeDefined()
