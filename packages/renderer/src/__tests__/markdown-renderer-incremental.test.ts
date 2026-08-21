@@ -45,13 +45,16 @@ const originalCAF = globalThis.cancelAnimationFrame
 // 真实 setTimeout（fake timers 下 flushRaf 仍需 macrotask 边界驱动 microtask 链落定）
 const realSetTimeout: typeof setTimeout = globalThis.setTimeout.bind(globalThis)
 
-/** 触发一帧：执行已排队 rAF 回调 + macrotask 边界等 doRender 异步链（首帧含 markdown-it/shiki
- *  模块初始化，await 链深不定，microtask 定数轮询不可靠 → 真实 macrotask 排空全部 microtask） */
+/** 触发渲染链收敛：每轮执行已排队 rAF 回调 + 一轮 macrotask 排空其异步链，队列静默
+ *  （无新 schedule）即收敛，上限防死循环。固定两轮在高负载下不够（首帧含 markdown-it/
+ *  shiki 模块初始化，await 链深不定），轮询驱动使链深 > 2 轮也能排空，消除负载敏感 */
 async function flushRaf(): Promise<void> {
-  const cbs = [...rafQueue]
-  rafQueue.length = 0
-  for (const cb of cbs) cb(0)
-  await new Promise((r) => realSetTimeout(r, 0))
+  for (let i = 0; i < 20 && rafQueue.length > 0; i++) {
+    const cbs = [...rafQueue]
+    rafQueue.length = 0
+    for (const cb of cbs) cb(0)
+    await new Promise((r) => realSetTimeout(r, 0))
+  }
   await new Promise((r) => realSetTimeout(r, 0))
   await nextTick()
 }
