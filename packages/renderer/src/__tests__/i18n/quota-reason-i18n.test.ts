@@ -32,6 +32,38 @@ const REQUIRED_QUOTA_FAIL_KEYS = [
   'quotaFetchFailNetwork',
 ] as const
 
+/** Phase B 新增 key（settings.ts providerEdit 命名空间：B-1 凭证区 / B-3 额度区泛化） */
+const REQUIRED_PHASE_B_KEYS = [
+  'credentialOauthLoggedIn',
+  'credentialOauthNotLoggedIn',
+  'credentialOauthRelogin',
+  'credentialOauthLogout',
+  'switchToApiKey',
+  'switchToOauth',
+  'switchToApiKeyConfirmDesc',
+  'switchToOauthConfirmDesc',
+  'switchConfirmBtn',
+  'quotaCredentialOauthReady',
+  'quotaCredentialOauthMissing',
+  'quotaCredentialOauthMissingHint',
+  'quotaApiKeyFallbackOrder',
+  'quotaUsedOf',
+  'quotaUnitRequests',
+  'quotaUnitTokens',
+  'quotaUnitCredits',
+  'quotaLastSuccessToggle',
+  'quotaLastSuccessAt',
+] as const
+
+/** Phase B 新增 key（settings.ts providerEdit 命名空间：B-2 混合列表） */
+const REQUIRED_PHASE_B_MODEL_KEYS = [
+  'builtinModelsLabel',
+  'customModelsLabel',
+  'catalogModelsMixedHint',
+  'modelSourceBuiltin',
+  'modelSourceOverride',
+] as const
+
 /** settings locale 的 providerEdit 节（quota 文案所在命名空间） */
 function loadProviderEdit(locale: string): LocaleObject {
   const settings = loadLocaleObject(join(LOCALES_DIR, locale, 'settings.ts'))
@@ -63,4 +95,18 @@ describe('A2-4 quota 失败态 i18n key 双侧存在且非空', () => {
     const providerEdit = loadProviderEdit('en-US')
     expect(providerEdit.quotaFetchFailUnauthorized).not.toBe(providerEdit.quotaFetchFailNetwork)
   })
+})
+
+describe('Phase B 新增 i18n key 双侧存在且非空（B-1 凭证区 / B-2 混合列表 / B-3 额度区）', () => {
+  const ALL_KEYS = [...REQUIRED_PHASE_B_KEYS, ...REQUIRED_PHASE_B_MODEL_KEYS] as const
+  for (const locale of ['zh-CN', 'en-US'] as const) {
+    it(`${locale}: providerEdit 含 Phase B 全部 ${ALL_KEYS.length} 个 key 且值非空`, () => {
+      const providerEdit = loadProviderEdit(locale)
+      for (const key of ALL_KEYS) {
+        const value = providerEdit[key]
+        expect(typeof value, `${locale}.providerEdit.${key} 应为字符串`).toBe('string')
+        expect((value as string).trim().length, `${locale}.providerEdit.${key} 值应为非空文案`).toBeGreaterThan(0)
+      }
+    })
+  }
 })

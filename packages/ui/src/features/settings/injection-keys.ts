@@ -14,7 +14,7 @@
  */
 import { inject, ref } from 'vue'
 import type { ComputedRef, InjectionKey, Ref } from 'vue'
-import type { ProviderInfo, NormalizedQuotaRow, QuotaPreset } from '@xyz-agent/shared'
+import type { ProviderInfo, NormalizedQuotaRow, QuotaPreset, QuotaAuthKind, QuotaFetchFailureReason } from '@xyz-agent/shared'
 
 // ── ① Toast ──
 
@@ -60,6 +60,10 @@ export interface QuotaConfigureState {
   quotaData: Ref<NormalizedQuotaRow | null>
   lastFetchAt: Ref<number | null>
   isCookieAuth: Ref<boolean>
+  /** 当前选中 fetcher 的凭证能力声明（B-3：凭证态渲染）。源实现为 computed，类型兼容 Ref。 */
+  authKinds: Ref<readonly QuotaAuthKind[]>
+  /** 最近一次查询失败原因（A2-4 reason 透传；null = 无失败） */
+  testFailReason: Ref<QuotaFetchFailureReason | null>
   helpUrl: Ref<string | undefined>
   helpText: Ref<string | undefined>
   configuring: Ref<boolean>
@@ -94,6 +98,8 @@ const NOOP_FACTORY: UseQuotaConfigureFactory = () => ({
   quotaData: ref<NormalizedQuotaRow | null>(null),
   lastFetchAt: ref<number | null>(null),
   isCookieAuth: ref(false),
+  authKinds: ref<readonly QuotaAuthKind[]>([]),
+  testFailReason: ref<QuotaFetchFailureReason | null>(null),
   helpUrl: ref<string | undefined>(undefined),
   helpText: ref<string | undefined>(undefined),
   configuring: ref(false),

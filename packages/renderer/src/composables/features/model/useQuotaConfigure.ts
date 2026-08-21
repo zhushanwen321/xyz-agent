@@ -8,7 +8,7 @@
  * HANDOFF：.xyz-harness/coding-plan-quota/HANDOFF.md §5 Wave 3
  */
 import { ref, computed, watch, type Ref } from 'vue'
-import type { NormalizedQuotaRow, QuotaPreset, ProviderInfo } from '@xyz-agent/shared'
+import type { NormalizedQuotaRow, QuotaPreset, ProviderInfo, QuotaAuthKind, QuotaFetchFailureReason } from '@xyz-agent/shared'
 import { QUOTA_PRESETS } from '@xyz-agent/shared'
 import * as quotaApi from '@/api/domains/quota'
 import { useQuotaStore } from '@/stores/quota'
@@ -40,6 +40,10 @@ export interface UseQuotaConfigureReturn {
   lastFetchAt: Ref<number | null>
   /** 当前 preset 是否为 cookie 类认证 */
   isCookieAuth: Ref<boolean>
+  /** 当前选中 fetcher 的凭证能力声明（B-3：凭证态按 fetcher.auth 渲染） */
+  authKinds: Ref<readonly QuotaAuthKind[]>
+  /** 最近一次查询失败原因（A2-4 reason 透传；null = 无失败）。旧缓存保留在 quotaData */
+  testFailReason: Ref<QuotaFetchFailureReason | null>
   /** 帮助链接（基于当前选中 fetcher） */
   helpUrl: Ref<string | undefined>
   /** 帮助文案（基于当前选中 fetcher） */
@@ -118,6 +122,15 @@ export function useQuotaConfigure(
   /** 帮助文案（基于当前选中 fetcher）。 */
   const helpText = computed<string | undefined>(() => activePreset.value?.helpText)
 
+  /**
+   * 当前选中 fetcher 的凭证能力声明（B-3）：fetcherId 优先、fallback 自动匹配 preset。
+   * CodingPlanSection 据此渲染凭证态（oauth 就绪/缺失、api-key 回退顺序说明）。
+   */
+  const authKinds = computed<readonly QuotaAuthKind[]>(() => activePreset.value?.auth ?? [])
+
+  /** 最近一次查询失败原因（A2-4 reason 透传；null = 无失败）。旧缓存保留在 quotaData（「查看上次成功数据」） */
+  const testFailReason = ref<QuotaFetchFailureReason | null>(null)
+
   // ── 初始化：从 provider.quota 读取已保存的配置 ──
   function syncFromProvider(): void {
     const p = providerRef.value
@@ -130,6 +143,7 @@ export function useQuotaConfigure(
       apiKeyConfigured.value = false
       testStatus.value = 'idle'
       testError.value = ''
+      testFailReason.value = null
       quotaData.value = null
       lastFetchAt.value = null
       return
@@ -157,9 +171,11 @@ export function useQuotaConfigure(
       if (result.data) {
         quotaData.value = result.data
         lastFetchAt.value = result.lastFetchAt
-        // 有缓存视为之前成功过
         if (testStatus.value === 'idle') {
-          testStatus.value = 'success'
+          // 上次查询失败（缓存层透传 reason）：整体呈失败态，旧数据经「查看上次成功数据」
+          // 展开可见（design §3.4 失败态与旧缓存并存的展示语义）
+          testStatus.value = result.reason ? 'error' : 'success'
+          testFailReason.value = result.reason ?? null
         }
       }
     } catch (e) {
@@ -334,6 +350,7 @@ export function useQuotaConfigure(
 
     testStatus.value = 'loading'
     testError.value = ''
+    testFailReason.value = null
 
     try {
       // 用 refresh 绕过 10s throttle，确保测试查询每次都发真实请求（设计 §2.2.5）
@@ -343,8 +360,11 @@ export function useQuotaConfigure(
         lastFetchAt.value = result.lastFetchAt
         testStatus.value = 'success'
       } else {
-        // refresh 返回 null data = 凭证缺失或查询失败
+        // 失败态（A2-4）：reason 透传给 UI（恢复指引文案按 reason 渲染）；旧缓存保留在
+        // quotaData 不展示（「查看上次成功数据」展开可见）；lastFetchAt = 最近一次成功时间
         testStatus.value = 'error'
+        testFailReason.value = result.reason ?? null
+        lastFetchAt.value = result.lastFetchAt
         testError.value = '查询失败，请检查凭证是否有效'
       }
     } catch (e) {
@@ -362,6 +382,7 @@ export function useQuotaConfigure(
     apiKeyConfigured.value = false
     testStatus.value = 'idle'
     testError.value = ''
+    testFailReason.value = null
     quotaData.value = null
     lastFetchAt.value = null
     configuring.value = false
@@ -377,9 +398,11 @@ export function useQuotaConfigure(
     apiKeyConfigured,
     testStatus,
     testError,
+    testFailReason,
     quotaData,
     lastFetchAt,
     isCookieAuth,
+    authKinds,
     helpUrl,
     helpText,
     configuring,
