@@ -25,7 +25,8 @@
     "vue": "^3.5"
   },
   "devDependencies": {
-    "typescript": "^5.8",
-    "jsdom": "^29.1.1"
+    "@vitest/coverage-v8": "^4.1.9",
+    "jsdom": "^29.1.1",
+    "typescript": "^5.8"
   }
 }

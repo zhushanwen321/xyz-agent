@@ -8,7 +8,12 @@
 为什么不直接用 fallow 的 verdict：fallow 的 complexity findings 超阈值即 fail、无 warn 档；
 且无 --coverage 数据时覆盖率是估算值（无测试路径的文件 cov≈0，CC>=5 即触发 CRAP>=30），
 把认知复杂度/CRAP 放进 fail 档会误杀。故门禁与报告用同一份 audit JSON、两套阈值在脚本内显式判定。
-真实覆盖率数据接入后（vitest coverage-final.json + fallow --coverage），CRAP 可升级为 fail 档。
+
+真实覆盖率消费（2026-08-21 接入）：同 base 的 `.review/coverage.json`（Gate-1.6 coverage-gate
+产出）存在时，complexity warn 条目按**文件级 lcov 真实覆盖率**分流——≥80% 移入 covered 列表
+（出 warn，保留展示与证据链），<80% 或无 lcov 记录留 warn 并附 coverage_real 注记；数据缺失/
+base 不匹配时整体降级回 fallow 静态估算（行为同旧版）。运行顺序：coverage-gate 先跑、
+metrics-gate 后跑（SKILL.md 阶段 1.5/1.6 执行序）。
 
 用法：python3 metrics-gate.py [--base main]
 退出码：0 = pass/warn（放行）；1 = fail（打回）；2 = 工具/运行错误（中止）
@@ -43,6 +48,30 @@ WARN_DEAD_CODE_KINDS = [
 ]
 
 TARGET_TOP_N = 20
+
+# 文件级真实覆盖率 ≥ 此值时，complexity warn 条目视为「复杂但有充分测试证据」→ 移入
+# covered 列表（出 warn 保留展示）。文件级是函数级的有损近似（函数体行区间需 AST 才
+# 能精确），warn 分流用途下可接受；精确函数级需 fallow --coverage 接 lcov，后续再议。
+REAL_COVERAGE_COVERED_PCT = 80.0
+
+
+def load_real_coverage(repo_root: Path, base: str) -> dict[str, dict] | None:
+    """读 Gate-1.6 产出的 .review/coverage.json files 节。
+
+    返回 None（整体降级 fallow 静态估算）的条件：文件缺失 / JSON 损坏 / base 不匹配 /
+    files 节为空。调用方必须先跑 coverage-gate（同 base）才有真实数据。
+    """
+    p = repo_root / ".review" / "coverage.json"
+    if not p.is_file():
+        return None
+    try:
+        data = json.loads(p.read_text())
+    except json.JSONDecodeError:
+        return None
+    if data.get("base") != base:
+        return None
+    files = data.get("files")
+    return files if isinstance(files, dict) and files else None
 
 
 def locate_dead_code_item(kind: str, item: dict) -> dict:
@@ -91,12 +120,13 @@ def run_audit(repo_root: Path, base: str) -> dict:
         sys.exit(2)
 
 
-def judge(report: dict, thresholds: dict) -> dict:
+def judge(report: dict, thresholds: dict, real_cov: dict[str, dict] | None) -> dict:
     max_cc = thresholds["maxCyclomatic"]
     max_cog = thresholds["maxCognitive"]
     max_crap = thresholds["maxCrap"]
     fail: list[dict] = []
     warn: list[dict] = []
+    covered: list[dict] = []  # 真实覆盖率 ≥80% 的 complexity 条目（出 warn，保留证据链）
     targets: list[dict] = []
 
     for f in report.get("complexity", {}).get("findings", []):
@@ -116,8 +146,22 @@ def judge(report: dict, thresholds: dict) -> dict:
         if f["cyclomatic"] > max_cc:
             fail.append({**entry, "reason": f"cyclomatic {f['cyclomatic']} > {max_cc}"})
         elif f["cognitive"] > max_cog or (f.get("crap") or 0) >= max_crap:
-            warn.append({**entry, "reason": f"cognitive {f['cognitive']} / crap {f.get('crap')}"})
+            item = {**entry, "reason": f"cognitive {f['cognitive']} / crap {f.get('crap')}"}
+            rc = real_cov.get(item["path"]) if real_cov else None
+            if rc is not None:
+                item["coverage_real"] = {"pct": rc["pct"], "basis": "file-level lcov (Gate-1.6)"}
+                if rc["pct"] >= REAL_COVERAGE_COVERED_PCT:
+                    covered.append(item)
+                else:
+                    warn.append(item)
+            else:
+                item["coverage_basis"] = ("fallow-static (no lcov record: file not loaded by "
+                                          "any test or package not coverage-gated)") if real_cov else "fallow-static"
+                warn.append(item)
         if f.get("crap") is not None:
+            rc = real_cov.get(entry["path"]) if real_cov else None
+            if rc is not None:
+                entry["coverage_real"] = {"pct": rc["pct"], "basis": "file-level lcov (Gate-1.6)"}
             targets.append(entry)
 
     dead = report.get("dead_code", {})
@@ -154,10 +198,13 @@ def judge(report: dict, thresholds: dict) -> dict:
         "verdict": verdict,
         "fail": fail,
         "warn": warn,
+        "covered": covered,
         "targets": {"high_crap": targets[:TARGET_TOP_N]},
         "stats": {
             "fail": len(fail),
             "warn": len(warn),
+            "covered_by_real_coverage": len(covered),
+            "coverage_basis": "lcov-file-level" if real_cov is not None else "fallow-static",
             "duplication_introduced_groups": len(dup_groups),
             "thresholds": thresholds,
         },
@@ -175,8 +222,9 @@ def main() -> None:
     repo_root = Path(subprocess.check_output(
         ["git", "rev-parse", "--show-toplevel"], text=True).strip())
     thresholds = load_thresholds(repo_root)
+    real_cov = load_real_coverage(repo_root, base)
     report = run_audit(repo_root, base)
-    result = judge(report, thresholds)
+    result = judge(report, thresholds, real_cov)
     result["base"] = base
 
     out_dir = repo_root / ".review"
@@ -185,6 +233,7 @@ def main() -> None:
 
     s = result["stats"]
     print(f"Gate-1.5 verdict={result['verdict']}  fail={s['fail']} warn={s['warn']} "
+          f"covered={s['covered_by_real_coverage']}({s['coverage_basis']}) "
           f"dup_groups={s['duplication_introduced_groups']}  (base={base}, thresholds={s['thresholds']})")
     for item in result["fail"][:10]:
         loc = item.get("path") or ",".join(item.get("files", []))

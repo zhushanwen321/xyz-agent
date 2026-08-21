@@ -125,16 +125,21 @@ fallow audit 的 complexity findings 超阈值即 fail、无 warn 档；且无 `
 
 ---
 
-## 阶段 1.6：增量覆盖率门禁（Gate-1.6）[已知问题，暂缓 MANDATORY]
+## 阶段 1.6：增量覆盖率门禁（Gate-1.6）[MANDATORY]
 
-> **[KNOWN-ISSUE 2026-08-21]** coverage-gate.py 在本机复现稳定的假 pass：循环体完整执行
-> （vitest 实测跑 2.5 分钟、provider 探针 True、14 包进入循环）但 report 字典恒空、输出
-> `pkgs=0`、exit 0——无异常无 traceback，超出静态分析可解释范围（python -I 隔离模式同样
-> 复现；内联 exec 调用则行为正常）。脚本核心逻辑曾被验证正确（曾正确检出 runtime 测试
-> FAIL）。根因待查（疑与本地环境干扰有关）。在此之前本 gate **不定级 MANDATORY**，
-> 流程以 Gate-1.5 + pre-merge 为准；调查清楚并复验后恢复。
+> **[HISTORICAL 2026-08-21] 曾有稳定假 pass，根因已修复并双向验收**（真实 diff 17 包
+> 非空报告全绿 exit 0 + 高阈值探针 fail 方向 exit 1）。主因：OK 路径漏记 `report[pkg] =
+> entry`，全部包 OK 时 report 恒空被 `all(空)==True` 判 pass；同批修复 basename 兜底误配、
+> hoisting 幻影依赖（改按 package.json 声明判定，24 个 vitest 包已全部声明
+> @vitest/coverage-v8）、extensions/shared 三层目录漏切、git diff 瞬态空输出四项加固。
+> 完整根因链与守卫见 coverage-gate.py 头部 [HISTORICAL] 段。守卫原则：**记账不闭合
+> （迭代数 ≠ 报告条目数）与 all-SKIP 一律 exit 2（工具错误），绝不静默 pass**。
 
-**目标口径（恢复后生效）**：**增量覆盖率 ≥ 50% 才达标。** 与 Gate-1.5 互补：Gate-1.5 是静态结构度量（不跑测试），Gate-1.6 跑测试量「新代码有没有被测到」。与 renderer 全量 thresholds gate（vitest.config 内、CI 强制）互补：全量阈值防整体退化，增量阈值防「新代码不写测试」。TEST-STRATEGY.md §7「以增量覆盖率为准」的工具化落地。
+**口径 [MANDATORY]**：**增量覆盖率 ≥ 50% 才达标。** 与 Gate-1.5 互补：Gate-1.5 是静态结构度量（不跑测试），Gate-1.6 跑测试量「新代码有没有被测到」。与 renderer 全量 thresholds gate（vitest.config 内、CI 强制）互补：全量阈值防整体退化，增量阈值防「新代码不写测试」。TEST-STRATEGY.md §7「以增量覆盖率为准」的工具化落地。（业界参考：新代码覆盖阈值事实标准是 80%——Sonar Way 默认门禁；50% 为宽松起步值，是否 ratchet 升 80% 留用户决策，调研见 `references/coverage-industry-research.md`）
+
+### 执行顺序：coverage-gate 先跑，metrics-gate 后跑
+
+coverage-gate 产出 `.review/coverage.json` 的 `files` 节（全文件级真实 lcov 覆盖率），metrics-gate（Gate-1.5）消费它把 complexity warn 中**真实文件覆盖 ≥80%** 的条目移入 covered 列表（出 warn、保留证据链），替换 fallow 静态估算。阶段 1 初跑与 3a 复跑均按 **coverage → metrics** 顺序；coverage.json 缺失或 base 不匹配时 metrics-gate 自动降级静态估算（不阻塞，报告标注 `fallow-static`）。
 
 ### 执行（主 agent 直接跑）
 
@@ -142,10 +147,10 @@ fallow audit 的 complexity findings 超阈值即 fail、无 warn 档；且无 `
 python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main
 ```
 
-- 自动检测 base...HEAD 改动过 `src/` 的 vitest 包，逐包跑 `vitest run --coverage`（lcov），解析 lcov DA 行命中 × git diff 新增行号，算**可执行新增行覆盖率**
-- **判定**：任一被 gate 包增量 < 50%（默认）或测试失败 → `verdict=fail` exit 1；产出 `.review/coverage.json`（含各包增量 %、未覆盖文件清单）
-- 未装 `@vitest/coverage-v8` 的包记 SKIP（不 fail），报告给出启用指引：`cd <pkg> && pnpm add -D @vitest/coverage-v8`（renderer 已接入；其余包接入后 gate 全量生效）
-- **注意**：修复 worker 在途时本地读数会被污染——Gate-1.6 必须在干净工作区（全部改动已 commit）跑
+- 自动检测 base...HEAD 改动过 `src/` 的 vitest 包（含 `extensions/shared/<lib>` 三层目录），逐包跑 `vitest run --coverage`（lcov），解析 lcov DA 行命中 × git diff 新增行号（精确路径匹配），算**可执行新增行覆盖率**
+- **判定**：任一被 gate 包增量 < 50%（默认）或测试失败 → `verdict=fail` exit 1；记账不闭合 / all-SKIP / git 瞬态异常 → exit 2（工具错误，修复后重跑）；产出 `.review/coverage.json`（packages 增量口径 + files 全文件级真实覆盖率）
+- SKIP 语义：按 package.json **声明**判定（非 node 解析——node-linker=hoisted 下解析恒真）；24 个 vitest 包已全部声明，出现 SKIP 即配置漂移，按报告内指引补声明
+- **注意**：修复 worker 在途时本地读数会被污染——Gate-1.6 必须在干净工作区（全部改动已 commit）跑；`--packages <pkg>` 探针运行会覆盖 `.review/coverage.json`（单包产物），探针后需重跑全量恢复
 
 **Gate-1.6 判定**：fail → 派测试专项 subagent 补测试 → 重跑（上限 3 轮）。补测试优先级看 `.review/coverage.json` 的 uncovered_files 清单（按可执行新增行缺口排序）。
 
@@ -162,7 +167,7 @@ python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main
 # CI 产物：PR checks 页 Test (renderer) job → artifact "coverage-report"（lcov + html）
 ```
 
-renderer 全量阈值（S3-W1 基线-2~3%：lines 72 / stmts 70 / branches 59 / functions 67）由 CI 强制；其他包接入 provider 后 thresholds 再议（先测量后设阈，见 TEST-STRATEGY §7）。
+renderer 全量阈值（S3-W1 基线-2~3% 重校准：lines 68 / stmts 66 / branches 56 / functions 60）由 CI 强制；其余包 provider 已全部声明（增量口径由 Gate-1.6 覆盖），全量 thresholds 先测量后设阈（见 TEST-STRATEGY §7）。
 
 ---
 
@@ -385,11 +390,11 @@ Agent 定义位于本 skill 目录 `agents/review-<维度>.md`（不全局暴露
 
 ### 3a — pre-merge 验证
 
-先复跑两道结构/覆盖率门禁（阶段 2 修复会改代码，1.5/1.6 初跑读数已过期）：
+先复跑两道结构/覆盖率门禁（阶段 2 修复会改代码，1.5/1.6 初跑读数已过期）。**顺序固定 coverage → metrics**（coverage-gate 的 files 节供 metrics-gate 替换 fallow 静态估算）：
 
 ```bash
-python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main     # fail 必须修复
 python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main    # 增量 <50% 补测试
+python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main     # fail 必须修复
 ```
 
 ```text
@@ -487,9 +492,11 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 │   ├── review-monorepo-impact.md
 │   ├── review-data-governance.md
 │   └── review-aggregator.md
+├── references/            # 调研参考（git 跟踪）
+│   └── coverage-industry-research.md   # 增量覆盖率门禁业界调研（vitest 原生能力/diff-cover/阈值惯例/采纳决策）
 └── scripts/              # 校验脚本
-    ├── metrics-gate.py   # 阶段 1.5 度量门禁（fallow audit 包装 + 显式双轨判定）
-    ├── coverage-gate.py  # 阶段 1.6 增量覆盖率门禁（vitest --coverage lcov × git diff，≥50%）
+    ├── metrics-gate.py   # 阶段 1.5 度量门禁（fallow audit 包装 + 显式双轨判定 + 真实覆盖率分流）
+    ├── coverage-gate.py  # 阶段 1.6 增量覆盖率门禁（vitest --coverage lcov × git diff，≥50%；产出 files 节供 metrics-gate 消费）
     ├── validate-skill-yaml.py
     └── validate-extensions-yaml.py
 ```
