@@ -107,21 +107,53 @@ export function computeTraceContextBoundary(
     }
   }
 
-  const contextIds = new Set<string>()
   if (lastCompaction === undefined || compactionIdx < 0) {
     // 无压缩：整个 path 即 context 候选
-    for (const entry of path) {
-      if (entry.id !== undefined && convertsToContextMessages(entry)) contextIds.add(entry.id)
-    }
-    return {
-      path,
-      contextEntryIds: contextIds,
-      shadowedEntryIds: new Set<string>(),
-      lastCompaction: null,
+    return boundaryWithoutCompaction(path)
+  }
+  return boundaryWithCompaction(path, lastCompaction, compactionIdx)
+}
+
+/** 收集「有 id 且转换非空」的 entry → context 成员 id 集（无压缩/有压缩两径共用）。 */
+function collectContextEntryIds(entries: TraceSessionEntry[]): Set<string> {
+  const ids = new Set<string>()
+  for (const entry of entries) {
+    if (entry.id !== undefined && convertsToContextMessages(entry)) ids.add(entry.id)
+  }
+  return ids
+}
+
+/** 影子化 = path 上可进类型但不在 context（含被二次压缩的旧 compaction / 旧保留头）。 */
+function collectShadowedEntryIds(path: TraceSessionEntry[], contextIds: Set<string>): Set<string> {
+  const shadowedIds = new Set<string>()
+  for (const entry of path) {
+    if (entry.id !== undefined && convertsToContextMessages(entry) && !contextIds.has(entry.id)) {
+      shadowedIds.add(entry.id)
     }
   }
+  return shadowedIds
+}
 
-  // context = [compaction] + 保留区（firstKeptEntryId 含 → compaction 前）+ compaction 后全部
+/** 无压缩分径：整个 path 即 context 候选，无影子化。 */
+function boundaryWithoutCompaction(path: TraceSessionEntry[]): TraceContextBoundary {
+  return {
+    path,
+    contextEntryIds: collectContextEntryIds(path),
+    shadowedEntryIds: new Set<string>(),
+    lastCompaction: null,
+  }
+}
+
+/**
+ * 有压缩分径（单次/多次同径：多次压缩只有最后一次生效，故不按次数拆）。
+ *
+ * context = [compaction] + 保留区（firstKeptEntryId 含 → compaction 前）+ compaction 后全部。
+ */
+function boundaryWithCompaction(
+  path: TraceSessionEntry[],
+  lastCompaction: TraceSessionEntry,
+  compactionIdx: number,
+): TraceContextBoundary {
   const firstKeptEntryId = String(
     (lastCompaction as { firstKeptEntryId?: unknown }).firstKeptEntryId ?? '',
   )
@@ -134,22 +166,12 @@ export function computeTraceContextBoundary(
   }
   candidates.push(...path.slice(compactionIdx + 1))
 
-  for (const entry of candidates) {
-    if (entry.id !== undefined && convertsToContextMessages(entry)) contextIds.add(entry.id)
-  }
-
-  // 影子化 = path 上可进类型但不在 context（含被二次压缩的旧 compaction / 旧保留头）
-  const shadowedIds = new Set<string>()
-  for (const entry of path) {
-    if (entry.id !== undefined && convertsToContextMessages(entry) && !contextIds.has(entry.id)) {
-      shadowedIds.add(entry.id)
-    }
-  }
-
+  // 影子化判定依赖 context 集合先算完（保留区/压缩后进 context，其余可进类型影子化）
+  const contextIds = collectContextEntryIds(candidates)
   return {
     path,
     contextEntryIds: contextIds,
-    shadowedEntryIds: shadowedIds,
+    shadowedEntryIds: collectShadowedEntryIds(path, contextIds),
     lastCompaction:
       lastCompaction.id !== undefined
         ? { id: lastCompaction.id, firstKeptEntryId, indexInPath: compactionIdx }

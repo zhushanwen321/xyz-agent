@@ -63,50 +63,43 @@ export interface SessionTraceInput {
   leafId?: string
 }
 
+/** entry.type → kind 直映表（§3.4 映射表的无歧义项；custom/message 需按子字段细分）。 */
+const TYPE_TO_KIND: Partial<Record<string, TraceRowKind>> = {
+  session: 'SESSION',
+  compaction: 'COMPACTED',
+  branch_summary: 'BRANCH',
+  custom_message: 'NOTICE',
+  model_change: 'LIFECYCLE',
+  thinking_level_change: 'LIFECYCLE',
+  session_info: 'LIFECYCLE',
+  label: 'LIFECYCLE',
+  handoff_marker: 'BOUNDARY',
+}
+
+/** message.role → kind（message entry 的二级分派键）。 */
+const MESSAGE_ROLE_TO_KIND: Partial<Record<string, TraceRowKind>> = {
+  user: 'USER',
+  assistant: 'ASSISTANT',
+  toolResult: 'TOOL',
+  bashExecution: 'BASH',
+  custom: 'NOTICE',
+}
+
 /** entry → 行 kind（§3.4 映射表；独立导出供单测/复用）。 */
 export function resolveTraceRowKind(entry: TraceFileEntry): TraceRowKind {
-  switch (entry.type) {
-    case 'session':
-      return 'SESSION'
-    case 'compaction':
-      return 'COMPACTED'
-    case 'branch_summary':
-      return 'BRANCH'
-    case 'custom_message':
-      return 'NOTICE'
-    case 'model_change':
-    case 'thinking_level_change':
-    case 'session_info':
-    case 'label':
-      return 'LIFECYCLE'
-    case 'handoff_marker':
-      return 'BOUNDARY'
-    case 'custom':
-      return (entry as { customType?: unknown }).customType === SYSTEM_PROMPT_CUSTOM_TYPE
-        ? 'SYSTEM'
-        : 'DATA'
-    case 'message': {
-      const role = (entry as { message?: TraceAgentMessage }).message?.role
-      switch (role) {
-        case 'user':
-          return 'USER'
-        case 'assistant':
-          return 'ASSISTANT'
-        case 'toolResult':
-          return 'TOOL'
-        case 'bashExecution':
-          return 'BASH'
-        case 'custom':
-          return 'NOTICE'
-        default:
-          // 未知 role 的 message：类型上可进 context（转换非空），归消息类兜底 NOTICE
-          return 'NOTICE'
-      }
-    }
-    default:
-      // pi 未来新增/未建模 entry：不可进 context，按纯数据兜底（不丢失，G1）
-      return 'DATA'
+  if (entry.type === 'custom') {
+    return (entry as { customType?: unknown }).customType === SYSTEM_PROMPT_CUSTOM_TYPE
+      ? 'SYSTEM'
+      : 'DATA'
   }
+  if (entry.type === 'message') {
+    // role ?? ''：无 message 体/无 role 统一走查表 miss → NOTICE 兜底（与旧 switch default 等价）
+    const role = (entry as { message?: TraceAgentMessage }).message?.role ?? ''
+    // 未知 role 的 message：类型上可进 context（转换非空），归消息类兜底 NOTICE
+    return MESSAGE_ROLE_TO_KIND[role] ?? 'NOTICE'
+  }
+  // pi 未来新增/未建模 entry：不可进 context，按纯数据兜底（不丢失，G1）
+  return TYPE_TO_KIND[entry.type] ?? 'DATA'
 }
 
 /** 取 content 中第一段可读文本（text block 或 string content），供 USER/NOTICE headline。 */
@@ -131,6 +124,11 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : ''
 }
 
+/** 非空 string 或 undefined（空串/非 string 统一 undefined——meta 不落空值键）。 */
+function strOpt(v: unknown): string | undefined {
+  return str(v) || undefined
+}
+
 function num(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined
 }
@@ -139,153 +137,211 @@ function bool(v: unknown): boolean | undefined {
   return typeof v === 'boolean' ? v : undefined
 }
 
-/** 单行摘要：headline + meta（数据提取；空 headline 由 UI 以 kind 标签兜底）。 */
-function summarizeRow(entry: TraceFileEntry | TraceSessionEndMeta, kind: TraceRowKind): { headline: string; meta: TraceRowMeta } {
+/** 行摘要产物（headline + meta；子函数与分派表的统一返回形状）。 */
+type RowSummary = { headline: string; meta: TraceRowMeta }
+
+function summarizeSessionRow(entry: TraceFileEntry | TraceSessionEndMeta): RowSummary {
   const meta: TraceRowMeta = {}
-  switch (kind) {
-    case 'SESSION': {
-      const h = entry as TraceFileEntry & { cwd?: unknown; parentSession?: unknown; forkEntryId?: unknown }
-      meta.cwd = str(h.cwd)
-      if (h.parentSession !== undefined) meta.parentSession = str(h.parentSession)
-      if (h.forkEntryId !== undefined) meta.forkEntryId = str(h.forkEntryId)
-      return { headline: str(h.cwd), meta }
+  const h = entry as TraceFileEntry & { cwd?: unknown; parentSession?: unknown; forkEntryId?: unknown }
+  meta.cwd = str(h.cwd)
+  if (h.parentSession !== undefined) meta.parentSession = str(h.parentSession)
+  if (h.forkEntryId !== undefined) meta.forkEntryId = str(h.forkEntryId)
+  return { headline: str(h.cwd), meta }
+}
+
+function summarizeSystemRow(entry: TraceFileEntry | TraceSessionEndMeta): RowSummary {
+  const meta: TraceRowMeta = {}
+  const d = (entry as { data?: unknown }).data
+  const rec = typeof d === 'object' && d !== null ? (d as Record<string, unknown>) : {}
+  meta.version = num(rec.version)
+  meta.reason = strOpt(rec.reason)
+  meta.hash = strOpt(rec.hash)
+  meta.charCount = num(rec.charCount)
+  return { headline: `system prompt v${rec.version ?? '?'}`, meta }
+}
+
+function summarizeUserRow(entry: TraceFileEntry | TraceSessionEndMeta): RowSummary {
+  const m = (entry as { message?: TraceAgentMessage }).message ?? ({} as TraceAgentMessage)
+  return { headline: firstText(m.content), meta: {} }
+}
+
+/**
+ * assistant usage 标量提取（pi AssistantMessage 必带；字段可选防御——corpus 有 4 种键集变体）。
+ * input/cacheRead/cacheWrite 是互斥桶（pi-ai 跨协议归一化：anthropic 原生互斥，
+ * openai chat/responses 的总量含缓存、pi 已减除）——输入侧合计 = 三者之和。
+ */
+function collectAssistantUsage(m: TraceAgentMessage, meta: TraceRowMeta): void {
+  const u = typeof m.usage === 'object' && m.usage !== null ? (m.usage as Record<string, unknown>) : {}
+  meta.inputTokens = num(u.input)
+  meta.outputTokens = num(u.output)
+  meta.cacheReadTokens = num(u.cacheRead)
+  meta.cacheWriteTokens = num(u.cacheWrite)
+  const cacheWrite = num(u.cacheWrite) ?? 0
+  const inputTotal =
+    (num(u.input) ?? 0) + (num(u.cacheRead) ?? 0) + cacheWrite
+  if (inputTotal > 0) meta.inputTotal = inputTotal
+  meta.reasoningTokens = num(u.reasoning)
+  const cost = typeof u.cost === 'object' && u.cost !== null ? (u.cost as Record<string, unknown>) : {}
+  meta.costTotal = num(cost.total)
+}
+
+/** assistant content 的块分布计数（thinking / toolCall / text）。 */
+function countContentBlocks(content: unknown): { thinking: number; toolCall: number; text: number } {
+  let thinking = 0
+  let toolCall = 0
+  let text = 0
+  for (const b of extractContentBlocks(content)) {
+    if (b.kind === 'thinking') thinking++
+    else if (b.kind === 'toolCall') toolCall++
+    else if (b.kind === 'text') text++
+  }
+  return { thinking, toolCall, text }
+}
+
+function summarizeAssistantRow(entry: TraceFileEntry | TraceSessionEndMeta): RowSummary {
+  const meta: TraceRowMeta = {}
+  const m = (entry as { message?: TraceAgentMessage }).message ?? ({} as TraceAgentMessage)
+  meta.provider = strOpt(m.provider)
+  meta.model = strOpt(m.model)
+  meta.stopReason = strOpt(m.stopReason)
+  collectAssistantUsage(m, meta)
+  const blocks = countContentBlocks(m.content)
+  meta.thinkingBlocks = blocks.thinking
+  meta.toolCalls = blocks.toolCall
+  meta.textBlocks = blocks.text
+  return { headline: str(m.model) || str(m.provider), meta }
+}
+
+function summarizeToolRow(entry: TraceFileEntry | TraceSessionEndMeta): RowSummary {
+  const meta: TraceRowMeta = {}
+  const m = (entry as { message?: TraceAgentMessage }).message ?? ({} as TraceAgentMessage)
+  meta.toolName = strOpt(m.toolName)
+  meta.toolCallId = strOpt(m.toolCallId)
+  meta.isError = bool(m.isError)
+  return { headline: str(m.toolName), meta }
+}
+
+function summarizeBashRow(entry: TraceFileEntry | TraceSessionEndMeta): RowSummary {
+  const meta: TraceRowMeta = {}
+  const m = (entry as { message?: TraceAgentMessage }).message ?? ({} as TraceAgentMessage)
+  meta.command = strOpt(m.command)
+  meta.exitCode = num(m.exitCode)
+  meta.cancelled = bool(m.cancelled)
+  meta.truncated = bool(m.truncated)
+  meta.fullOutputPath = strOpt(m.fullOutputPath)
+  // pi bashExecution message 的 excludeFromContext（messages.ts:39，!! 前缀透传）：
+  // 标记该次输出不进 LLM context，行渲染据此显示「不进上下文」注记
+  meta.excludeFromContext = bool(m.excludeFromContext)
+  return { headline: str(m.command), meta }
+}
+
+/** NOTICE 两种来源形态：custom_message entry 与 message(role=custom)（字段同名同义）。 */
+function summarizeNoticeRow(entry: TraceFileEntry | TraceSessionEndMeta): RowSummary {
+  const meta: TraceRowMeta = {}
+  if (entry.type === 'custom_message') {
+    const e = entry as TraceFileEntry & { customType?: unknown; display?: unknown }
+    meta.customType = strOpt(e.customType)
+    meta.display = bool(e.display)
+    return { headline: str(e.customType), meta }
+  }
+  const m = (entry as { message?: TraceAgentMessage }).message ?? ({} as TraceAgentMessage)
+  meta.customType = strOpt(m.customType)
+  meta.display = bool(m.display)
+  return { headline: str(m.customType), meta }
+}
+
+function summarizeCompactedRow(entry: TraceFileEntry | TraceSessionEndMeta): RowSummary {
+  const meta: TraceRowMeta = {}
+  const e = entry as TraceFileEntry & { tokensBefore?: unknown; firstKeptEntryId?: unknown; fromHook?: unknown }
+  meta.tokensBefore = num(e.tokensBefore)
+  meta.firstKeptEntryId = strOpt(e.firstKeptEntryId)
+  meta.fromHook = bool(e.fromHook)
+  return { headline: `compaction (${num(e.tokensBefore) ?? '?'} tok before)`, meta }
+}
+
+function summarizeBranchRow(entry: TraceFileEntry | TraceSessionEndMeta): RowSummary {
+  const meta: TraceRowMeta = {}
+  const e = entry as TraceFileEntry & { fromId?: unknown }
+  meta.fromId = strOpt(e.fromId)
+  return { headline: `branch from ${str(e.fromId) || '?'}`, meta }
+}
+
+/** LIFECYCLE 覆盖 4 种 lifecycle entry（model/thinking/rename/label），headline 用类型前缀区分。 */
+function summarizeLifecycleRow(entry: TraceFileEntry | TraceSessionEndMeta): RowSummary {
+  const meta: TraceRowMeta = {}
+  switch (entry.type) {
+    case 'model_change': {
+      const e = entry as TraceFileEntry & { provider?: unknown; modelId?: unknown }
+      meta.provider = strOpt(e.provider)
+      meta.modelId = strOpt(e.modelId)
+      return { headline: `${str(e.provider)}/${str(e.modelId)}`, meta }
     }
-    case 'SYSTEM': {
-      const d = (entry as { data?: unknown }).data
-      const rec = typeof d === 'object' && d !== null ? (d as Record<string, unknown>) : {}
-      meta.version = num(rec.version)
-      meta.reason = str(rec.reason) || undefined
-      meta.hash = str(rec.hash) || undefined
-      meta.charCount = num(rec.charCount)
-      return { headline: `system prompt v${rec.version ?? '?'}`, meta }
+    case 'thinking_level_change': {
+      const e = entry as TraceFileEntry & { thinkingLevel?: unknown }
+      meta.thinkingLevel = strOpt(e.thinkingLevel)
+      return { headline: `thinking: ${str(e.thinkingLevel) || '?'}`, meta }
     }
-    case 'USER': {
-      const m = (entry as { message?: TraceAgentMessage }).message ?? ({} as TraceAgentMessage)
-      return { headline: firstText(m.content), meta }
+    case 'session_info': {
+      const e = entry as TraceFileEntry & { name?: unknown }
+      meta.name = strOpt(e.name)
+      return { headline: `rename: ${str(e.name) || '?'}`, meta }
     }
-    case 'ASSISTANT': {
-      const m = (entry as { message?: TraceAgentMessage }).message ?? ({} as TraceAgentMessage)
-      meta.provider = str(m.provider) || undefined
-      meta.model = str(m.model) || undefined
-      meta.stopReason = str(m.stopReason) || undefined
-      // usage 标量（pi AssistantMessage 必带；字段可选防御——corpus 有 4 种键集变体）。
-      // input/cacheRead/cacheWrite 是互斥桶（pi-ai 跨协议归一化：anthropic 原生互斥，
-      // openai chat/responses 的总量含缓存、pi 已减除）——输入侧合计 = 三者之和。
-      const u = typeof m.usage === 'object' && m.usage !== null ? (m.usage as Record<string, unknown>) : {}
-      meta.inputTokens = num(u.input)
-      meta.outputTokens = num(u.output)
-      meta.cacheReadTokens = num(u.cacheRead)
-      meta.cacheWriteTokens = num(u.cacheWrite)
-      const cacheWrite = num(u.cacheWrite) ?? 0
-      const inputTotal =
-        (num(u.input) ?? 0) + (num(u.cacheRead) ?? 0) + cacheWrite
-      if (inputTotal > 0) meta.inputTotal = inputTotal
-      meta.reasoningTokens = num(u.reasoning)
-      const cost = typeof u.cost === 'object' && u.cost !== null ? (u.cost as Record<string, unknown>) : {}
-      meta.costTotal = num(cost.total)
-      let thinking = 0
-      let tool = 0
-      let text = 0
-      for (const b of extractContentBlocks(m.content)) {
-        if (b.kind === 'thinking') thinking++
-        else if (b.kind === 'toolCall') tool++
-        else if (b.kind === 'text') text++
-      }
-      meta.thinkingBlocks = thinking
-      meta.toolCalls = tool
-      meta.textBlocks = text
-      return { headline: str(m.model) || str(m.provider), meta }
-    }
-    case 'TOOL': {
-      const m = (entry as { message?: TraceAgentMessage }).message ?? ({} as TraceAgentMessage)
-      meta.toolName = str(m.toolName) || undefined
-      meta.toolCallId = str(m.toolCallId) || undefined
-      meta.isError = bool(m.isError)
-      return { headline: str(m.toolName), meta }
-    }
-    case 'BASH': {
-      const m = (entry as { message?: TraceAgentMessage }).message ?? ({} as TraceAgentMessage)
-      meta.command = str(m.command) || undefined
-      meta.exitCode = num(m.exitCode)
-      meta.cancelled = bool(m.cancelled)
-      meta.truncated = bool(m.truncated)
-      meta.fullOutputPath = str(m.fullOutputPath) || undefined
-      // pi bashExecution message 的 excludeFromContext（messages.ts:39，!! 前缀透传）：
-      // 标记该次输出不进 LLM context，行渲染据此显示「不进上下文」注记
-      meta.excludeFromContext = bool(m.excludeFromContext)
-      return { headline: str(m.command), meta }
-    }
-    case 'NOTICE': {
-      if (entry.type === 'custom_message') {
-        const e = entry as TraceFileEntry & { customType?: unknown; display?: unknown }
-        meta.customType = str(e.customType) || undefined
-        meta.display = bool(e.display)
-        return { headline: str(e.customType), meta }
-      }
-      const m = (entry as { message?: TraceAgentMessage }).message ?? ({} as TraceAgentMessage)
-      meta.customType = str(m.customType) || undefined
-      meta.display = bool(m.display)
-      return { headline: str(m.customType), meta }
-    }
-    case 'COMPACTED': {
-      const e = entry as TraceFileEntry & { tokensBefore?: unknown; firstKeptEntryId?: unknown; fromHook?: unknown }
-      meta.tokensBefore = num(e.tokensBefore)
-      meta.firstKeptEntryId = str(e.firstKeptEntryId) || undefined
-      meta.fromHook = bool(e.fromHook)
-      return { headline: `compaction (${num(e.tokensBefore) ?? '?'} tok before)`, meta }
-    }
-    case 'BRANCH': {
-      const e = entry as TraceFileEntry & { fromId?: unknown }
-      meta.fromId = str(e.fromId) || undefined
-      return { headline: `branch from ${str(e.fromId) || '?'}`, meta }
-    }
-    case 'LIFECYCLE': {
-      switch (entry.type) {
-        case 'model_change': {
-          const e = entry as TraceFileEntry & { provider?: unknown; modelId?: unknown }
-          meta.provider = str(e.provider) || undefined
-          meta.modelId = str(e.modelId) || undefined
-          return { headline: `${str(e.provider)}/${str(e.modelId)}`, meta }
-        }
-        case 'thinking_level_change': {
-          const e = entry as TraceFileEntry & { thinkingLevel?: unknown }
-          meta.thinkingLevel = str(e.thinkingLevel) || undefined
-          return { headline: `thinking: ${str(e.thinkingLevel) || '?'}`, meta }
-        }
-        case 'session_info': {
-          const e = entry as TraceFileEntry & { name?: unknown }
-          meta.name = str(e.name) || undefined
-          return { headline: `rename: ${str(e.name) || '?'}`, meta }
-        }
-        case 'label': {
-          const e = entry as TraceFileEntry & { targetId?: unknown; label?: unknown }
-          meta.targetId = str(e.targetId) || undefined
-          meta.label = str(e.label) || undefined
-          return { headline: `label ${str(e.label) || '(cleared)'} → ${str(e.targetId) || '?'}`, meta }
-        }
-        default:
-          return { headline: entry.type, meta }
-      }
-    }
-    case 'DATA': {
-      const e = entry as TraceFileEntry & { customType?: unknown }
-      meta.customType = str(e.customType) || undefined
-      return { headline: str(e.customType) || entry.type, meta }
-    }
-    case 'BOUNDARY': {
-      if (entry.type === 'handoff_marker') {
-        const e = entry as TraceFileEntry & { handedOffTo?: unknown }
-        meta.handedOffTo = str(e.handedOffTo) || undefined
-        return { headline: `handoff → ${str(e.handedOffTo) || '?'}`, meta }
-      }
-      const e = entry as TraceSessionEndMeta
-      meta.outcome = e.outcome
-      meta.reason = e.reason
-      return { headline: `session end: ${e.outcome}`, meta }
+    case 'label': {
+      const e = entry as TraceFileEntry & { targetId?: unknown; label?: unknown }
+      meta.targetId = strOpt(e.targetId)
+      meta.label = strOpt(e.label)
+      return { headline: `label ${str(e.label) || '(cleared)'} → ${str(e.targetId) || '?'}`, meta }
     }
     default:
-      return { headline: '', meta }
+      return { headline: entry.type, meta }
   }
+}
+
+function summarizeDataRow(entry: TraceFileEntry | TraceSessionEndMeta): RowSummary {
+  const meta: TraceRowMeta = {}
+  const e = entry as TraceFileEntry & { customType?: unknown }
+  meta.customType = strOpt(e.customType)
+  return { headline: str(e.customType) || entry.type, meta }
+}
+
+/** BOUNDARY 两种来源：JSONL handoff_marker 行与 sidecar session_end（终态行）。 */
+function summarizeBoundaryRow(entry: TraceFileEntry | TraceSessionEndMeta): RowSummary {
+  const meta: TraceRowMeta = {}
+  if (entry.type === 'handoff_marker') {
+    const e = entry as TraceFileEntry & { handedOffTo?: unknown }
+    meta.handedOffTo = strOpt(e.handedOffTo)
+    return { headline: `handoff → ${str(e.handedOffTo) || '?'}`, meta }
+  }
+  const e = entry as TraceSessionEndMeta
+  meta.outcome = e.outcome
+  meta.reason = e.reason
+  return { headline: `session end: ${e.outcome}`, meta }
+}
+
+/**
+ * kind → 行摘要子函数分派表（§3.4 数据提取按 kind 一行一态）。MALFORMED 无 entry 来源
+ * 不进表——查表 miss 走空摘要兜底（等价旧 switch default，空 headline 由 UI 兜底）。
+ */
+const ROW_SUMMARIZERS: Partial<
+  Record<TraceRowKind, (entry: TraceFileEntry | TraceSessionEndMeta) => RowSummary>
+> = {
+  SESSION: summarizeSessionRow,
+  SYSTEM: summarizeSystemRow,
+  USER: summarizeUserRow,
+  ASSISTANT: summarizeAssistantRow,
+  TOOL: summarizeToolRow,
+  BASH: summarizeBashRow,
+  NOTICE: summarizeNoticeRow,
+  COMPACTED: summarizeCompactedRow,
+  BRANCH: summarizeBranchRow,
+  LIFECYCLE: summarizeLifecycleRow,
+  DATA: summarizeDataRow,
+  BOUNDARY: summarizeBoundaryRow,
+}
+
+/** 单行摘要：headline + meta（数据提取；空 headline 由 UI 以 kind 标签兜底）。 */
+function summarizeRow(entry: TraceFileEntry | TraceSessionEndMeta, kind: TraceRowKind): RowSummary {
+  return ROW_SUMMARIZERS[kind]?.(entry) ?? { headline: '', meta: {} }
 }
 
 /**
