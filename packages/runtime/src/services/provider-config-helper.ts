@@ -229,6 +229,14 @@ export function listProviders(
     // 手动填 key 的旧数据（迁移前错位）合理扩展，双源判定避免遗漏。
     const apiKeySet = authIdSet.has(id) || !!override?.apiKey
     const overrideModels = override?.models ?? []
+    // B-2 聚合层配合（design §3.6）：混合合并——builtin 副本（未被 override 同 id 覆盖的）
+    // + override 条目，替换旧「override 非空即整体替换」。旧逻辑与 pi 真实行为漂移：pi 侧
+    // catalog override 与内置目录合并显示、内置模型恒在（design D1 探针实测）。source 在
+    // 合并点标注（不做事后猜测）：override 条目（含同 id 覆盖 builtin 的）标 'override'——
+    // 它已被用户定义覆盖；builtin 副本条目标 'builtin'。builtin 在前与 design §3.1 场景 A
+    // 的混合列表形态一致（内置在前、自定义追加在后）。
+    const overrideIds = new Set(overrideModels.map(m => m.id))
+    const builtinNotOverridden = (builtinP.models ?? []).filter(m => !overrideIds.has(m.id))
     // id 来自 models.json / auth.json 的磁盘 key（反序列化边界，design D5）→ as ProviderId 提升
     result.push({
       id: id as ProviderId,
@@ -241,10 +249,10 @@ export function listProviders(
       // catalog 凭据在 auth.json：apiKeySet 已含 auth.json 判定（authIdSet.has(id)），
       // 与旧 status 逻辑（hasCredentialSync(id)）等价，避免重复读 auth.json。
       status: apiKeySet ? 'connected' as const : 'not_configured' as const,
-      // models 优先 override，空则 builtin 副本（builtinP.models 经 toProviderModel 映射）
-      models: overrideModels.length > 0
-        ? overrideModels.map(m => toUserInfoModel(m, extras?.modelStates))
-        : (builtinP.models?.map(m => toProviderModel(m, extras?.modelStates)) ?? []),
+      models: [
+        ...builtinNotOverridden.map(m => ({ ...toProviderModel(m, extras?.modelStates), source: 'builtin' as const })),
+        ...overrideModels.map(m => ({ ...toUserInfoModel(m, extras?.modelStates), source: 'override' as const })),
+      ],
       // DM3：enabled 从 enabledModels 派生，不读 models.json provider.enabled（F2）
       enabled: deriveEnabled(id, enabledModels),
       kind: 'catalog' as const,
