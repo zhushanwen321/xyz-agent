@@ -3,6 +3,7 @@
     展示组件 · trace-row-item（session-trace §3.4 渲染模型，一行 = 一个 entry）。
     12 kind + MALFORMED 数据驱动渲染：seq + kind badge（demo 色板）+ 时间 + headline
     （core 数据提取）+ kind 特化 meta 后缀 + 「不进 context」弱标记。
+    assistant 聚合行带 chevron（toggle-expand）内联展开子 block（TraceBlockRowItem）。
     状态语义：
     - 影子化（shadowed）：降透明（demo .tr-row.shadowed opacity .42），hover 恢复。
     - 选中态：bg-surface-hover + 摘要 text-accent，无 ring 无左条（v6 §3.4 列表项型；
@@ -22,6 +23,21 @@
     :title="rowTitle"
     @click="emit('select', row)"
   >
+    <!-- assistant 聚合行展开开关（chevron；stopPropagation 不触发行选中）；
+         非可展开行占位对齐 -->
+    <Button
+      v-if="expandable"
+      variant="ghost"
+      size="sm"
+      class="h-4 w-4 shrink-0 p-0 text-neutral-faint hover:bg-surface-2 hover:text-neutral-mid"
+      :data-testid="`trace-expand-toggle-${row.seq}`"
+      :title="t('panel.trace.toggleBlocks')"
+      @click.stop="emit('toggle-expand', row)"
+    >
+      <ChevronDown v-if="expanded" class="size-3" />
+      <ChevronRight v-else class="size-3" />
+    </Button>
+    <span v-else class="w-4 shrink-0" aria-hidden="true" />
     <span class="w-9 shrink-0 text-right font-mono text-[10px] tabular-nums text-neutral-faint">#{{ row.seq }}</span>
     <span
       class="shrink-0 rounded px-1.5 py-px font-mono text-[10px] tracking-wide"
@@ -65,7 +81,7 @@
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { GitFork } from '@lucide/vue'
+import { ChevronDown, ChevronRight, GitFork } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { TraceRow } from '@xyz-agent/core/domain/session-trace'
 import { KIND_BADGE_CLASS } from './trace-kind-style'
@@ -73,11 +89,24 @@ import { KIND_BADGE_CLASS } from './trace-kind-style'
 const props = defineProps<{
   row: TraceRow
   selected: boolean
+  /** 子 block 展开态（仅 assistant 可展开行有意义）。 */
+  expanded?: boolean
 }>()
 
-const emit = defineEmits<{ select: [row: TraceRow]; 'jump-parent': [row: TraceRow] }>()
+const emit = defineEmits<{
+  select: [row: TraceRow]
+  'jump-parent': [row: TraceRow]
+  'toggle-expand': [row: TraceRow]
+}>()
 
 const { t } = useI18n()
+
+/** 可展开 = assistant 且 content 为非空数组（展开内容抽取在 display items 层）。 */
+const expandable = computed(() => {
+  if (props.row.kind !== 'ASSISTANT') return false
+  const content = (props.row.entry as { message?: { content?: unknown } } | undefined)?.message?.content
+  return Array.isArray(content) && content.length > 0
+})
 
 /** 行 headline：空值兜底为 kind 标签（core 契约「空 headline 由 UI 以 kind 标签兜底」）。 */
 const headline = computed(() => props.row.headline || props.row.kind)

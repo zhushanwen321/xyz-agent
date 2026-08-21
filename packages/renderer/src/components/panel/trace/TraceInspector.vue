@@ -3,28 +3,32 @@
     展示组件 · trace-inspector（session-trace D5b：drawer 临时上下文页）。
     选中 trace 行才切入（PanelContainer default slot v-if chain 最前），不占一级 tab 位
     （SideDrawerTab 体系不变）；顶部「← 返回」清除选中 → 复原前 tab 内容（activeTab 未被
-    改过，单向 main→drawer）。内容按 kind 分支（§3.4「展开详情」列）：
-    消息类文本/逐 block、工具完整输出、压缩 summary 全文、SYSTEM 留痕全文、
-    其余原始 JSON 兜底（G1：任何 entry 详情不丢信息）。
+    改过，单向 main→drawer）。两态：
+    - 聚合态（selectedKey = entry key）：kind 分支详情（消息类文本/逐 block/工具输出/
+      压缩 summary 全文/SYSTEM 留痕全文，其余原始 JSON 兜底，G1 不丢信息）。
+    - block 态（selectedKey = `<entryKey>#block-N`）：assistant 子 block 全文
+      （thinking/text 正文、toolCall arguments），「← 返回」回父聚合态。
+    正文可鼠标框选复制（body 容器 select-text——全局 user-select:none 下的恢复点，
+    与 chat 域 WidgetArea 同款范式）。
   -->
   <div v-if="row" class="flex h-full min-h-0 flex-col" data-testid="trace-inspector">
-    <!-- head：返回 + kind badge + 定位 -->
+    <!-- head：返回 + badge（block 态为 block 类型）+ 定位 + copy -->
     <div class="flex flex-shrink-0 items-center gap-2 border-b border-hairline px-2.5 py-2">
       <Button
         variant="ghost"
         size="sm"
         class="h-5 gap-1 px-1.5 text-[11px] text-neutral-dim hover:text-neutral-fg"
         data-testid="trace-inspector-back"
-        @click="clearTraceSelection(props.sessionId)"
+        @click="onBack"
       >
         <ArrowLeft class="size-3" />
         {{ t('panel.trace.inspectorBack') }}
       </Button>
       <span
         class="shrink-0 rounded px-1.5 py-px font-mono text-[10px] tracking-wide"
-        :class="kindBadgeClass"
-      >{{ row.kind }}</span>
-      <span class="min-w-0 truncate font-mono text-[11px] text-neutral-fg">#{{ row.seq }}<template v-if="time"> · {{ time }}</template></span>
+        :class="badgeClass"
+      >{{ badgeLabel }}</span>
+      <span class="min-w-0 truncate font-mono text-[11px] text-neutral-fg">#{{ row.seq }}<template v-if="blockIndex !== null"> · block {{ blockIndex }}</template><template v-if="time"> · {{ time }}</template></span>
       <Button
         variant="ghost"
         size="sm"
@@ -39,8 +43,8 @@
     </div>
     <!-- sub：来源说明 -->
     <p class="flex-shrink-0 px-2.5 pb-1.5 pt-1 text-[11px] text-neutral-faint">{{ t('panel.trace.inspectorSubtitle') }}</p>
-    <!-- body：kind 分支详情 -->
-    <div class="min-h-0 flex-1 overflow-y-auto px-2.5 pb-4" data-testid="trace-inspector-body">
+    <!-- body：两态详情（select-text：全局 user-select:none 的内容区恢复点） -->
+    <div class="min-h-0 flex-1 select-text overflow-y-auto px-2.5 pb-4" data-testid="trace-inspector-body">
       <!-- 损坏行恢复指引（§3.1）：打开 JSONL 所在目录（Electron reveal-in-folder IPC →
            shell.showItemInFolder；路径来自快照 filePath，未落盘/未知时置灰） -->
       <div
@@ -61,37 +65,89 @@
         </Button>
         <span class="min-w-0 flex-1 text-[11px] text-neutral-faint">{{ t('panel.trace.malformedHint', { line: row.lineNumber ?? 0 }) }}</span>
       </div>
-      <!-- 消息类：USER / NOTICE(role=custom) 文本全文 -->
-      <pre v-if="preText !== null" class="mb-2 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[11px] leading-relaxed text-neutral-mid">{{ preText }}</pre>
-      <!-- ASSISTANT：逐 content block -->
-      <div v-if="blocks.length > 0" class="mb-2 flex flex-col gap-1" data-testid="trace-inspector-blocks">
-        <div
-          v-for="(block, i) in blocks"
-          :key="i"
-          class="flex items-center gap-2 rounded-sm px-1.5 py-1 text-[11px] text-neutral-mid hover:bg-surface-2"
-        >
-          <span class="w-14 flex-shrink-0 font-mono text-[10px] text-neutral-faint">{{ block.type }}</span>
-          <span class="min-w-0 flex-1 truncate" :class="block.type === 'thinking' ? 'text-reasoning' : ''">{{ block.preview }}</span>
-        </div>
-      </div>
-      <!-- meta kv（kind 特化字段：exitCode/tokensBefore/version/…）；SESSION 的
-           parentSession 是溯源链接（§3.1 样例 5，jump-parent）而非纯文本 -->
-      <div class="mb-2 flex flex-col gap-1.5">
-        <div v-for="kv in detailKv" :key="kv.k" class="flex items-baseline gap-2 text-[11px]">
-          <span class="w-20 flex-shrink-0 text-neutral-faint">{{ kv.k }}</span>
+
+      <!-- block 态：assistant 子 block 全文（父 entry 溯源 + 类型分支渲染） -->
+      <template v-if="block !== null">
+        <p class="mb-2 font-mono text-[10px] text-neutral-faint">{{ blockParentRef }}</p>
+        <pre
+          v-if="block.kind === 'thinking' || block.kind === 'text'"
+          class="mb-2 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[11px] leading-relaxed"
+          :class="block.kind === 'thinking' ? 'text-reasoning' : 'text-neutral-mid'"
+          data-testid="trace-inspector-block-content"
+        >{{ block.kind === 'thinking' && block.redacted ? t('panel.trace.blockRedacted') : block.text }}</pre>
+        <template v-else-if="block.kind === 'toolCall'">
+          <div class="mb-2 flex flex-col gap-1.5">
+            <div class="flex items-baseline gap-2 text-[11px]">
+              <span class="w-20 flex-shrink-0 text-neutral-faint">toolName</span>
+              <span class="min-w-0 break-all font-mono text-[11px] text-neutral-mid">{{ block.name }}</span>
+            </div>
+            <div class="flex items-baseline gap-2 text-[11px]">
+              <span class="w-20 flex-shrink-0 text-neutral-faint">toolCallId</span>
+              <span class="min-w-0 break-all font-mono text-[11px] text-neutral-mid">{{ block.callId }}</span>
+            </div>
+          </div>
           <Button
-            v-if="kv.action === 'jump-parent'"
+            v-if="block.callId"
             variant="ghost"
             size="sm"
-            class="h-auto min-w-0 justify-start break-all px-0 py-0 font-mono text-[11px] text-accent hover:underline"
-            data-testid="trace-inspector-jump-parent"
-            :title="t('panel.trace.jumpParentTitle')"
-            @click="onJumpParent"
-          >{{ kv.v }} <ArrowUpRight class="size-3" /></Button>
-          <span v-else class="min-w-0 break-all font-mono text-[11px] text-neutral-mid" :class="kv.tone === 'bad' ? 'text-danger' : kv.tone === 'ok' ? 'text-success' : ''">{{ kv.v }}</span>
+            :disabled="toolResultKey === null"
+            class="mb-2 h-5 gap-1 px-1.5 text-[11px] text-accent hover:underline"
+            data-testid="trace-inspector-jump-tool-result"
+            :title="t('panel.trace.jumpToolResult')"
+            @click="onJumpToolResult"
+          >
+            <ArrowUpRight class="size-3" />
+            {{ t('panel.trace.jumpToolResult') }}
+          </Button>
+          <pre
+            class="mb-2 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[11px] leading-relaxed text-neutral-mid"
+            data-testid="trace-inspector-block-arguments"
+          >{{ blockArgumentsJson }}</pre>
+        </template>
+        <pre
+          v-else
+          class="mb-2 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[11px] leading-relaxed text-neutral-mid"
+          data-testid="trace-inspector-block-content"
+        >{{ JSON.stringify(block.kind === 'unknown' ? block.raw : block, null, JSON_INDENT) }}</pre>
+      </template>
+
+      <!-- 聚合态：kind 分支详情（原有四层） -->
+      <template v-else>
+        <!-- 消息类：USER / NOTICE(role=custom) / TOOL 输出 文本全文 -->
+        <pre v-if="preText !== null" class="mb-2 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[11px] leading-relaxed text-neutral-mid">{{ preText }}</pre>
+        <!-- ASSISTANT：逐 content block（可点击进入 block 态） -->
+        <div v-if="blocks.length > 0" class="mb-2 flex flex-col gap-1" data-testid="trace-inspector-blocks">
+          <div
+            v-for="b in blocks"
+            :key="b.key"
+            class="flex cursor-pointer items-center gap-2 rounded-sm px-1.5 py-1 text-[11px] text-neutral-mid hover:bg-surface-2"
+            :data-testid="`trace-inspector-block-${b.index}`"
+            @click="selectTraceEntry(props.sessionId, b.key)"
+          >
+            <span class="w-14 flex-shrink-0 rounded px-1.5 py-px font-mono text-[10px] tracking-wide" :class="b.badgeClass">{{ b.label }}</span>
+            <span class="min-w-0 flex-1 truncate" :class="b.thinking ? 'text-reasoning' : ''">{{ b.preview || b.label }}</span>
+          </div>
         </div>
-      </div>
-      <!-- 原始 entry JSON（通用兜底，G1 不丢信息；默认折叠减少视觉噪音） -->
+        <!-- meta kv（kind 特化字段：exitCode/tokensBefore/version/…）；SESSION 的
+             parentSession 是溯源链接（§3.1 样例 5，jump-parent）而非纯文本 -->
+        <div class="mb-2 flex flex-col gap-1.5">
+          <div v-for="kv in detailKv" :key="kv.k" class="flex items-baseline gap-2 text-[11px]">
+            <span class="w-20 flex-shrink-0 text-neutral-faint">{{ kv.k }}</span>
+            <Button
+              v-if="kv.action === 'jump-parent'"
+              variant="ghost"
+              size="sm"
+              class="h-auto min-w-0 justify-start break-all px-0 py-0 font-mono text-[11px] text-accent hover:underline"
+              data-testid="trace-inspector-jump-parent"
+              :title="t('panel.trace.jumpParentTitle')"
+              @click="onJumpParent"
+            >{{ kv.v }} <ArrowUpRight class="size-3" /></Button>
+            <span v-else class="min-w-0 break-all font-mono text-[11px] text-neutral-mid" :class="kv.tone === 'bad' ? 'text-danger' : kv.tone === 'ok' ? 'text-success' : ''">{{ kv.v }}</span>
+          </div>
+        </div>
+      </template>
+
+      <!-- 原始 JSON（通用兜底，G1 不丢信息；默认折叠减少视觉噪音；block 态为该 block 原文） -->
       <details class="group/raw mb-1">
         <summary class="cursor-pointer select-none text-[10px] uppercase tracking-wide text-neutral-faint hover:text-neutral-mid">{{ t('panel.trace.inspectorRaw') }}</summary>
         <pre class="mt-1 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[10px] leading-relaxed text-neutral-dim">{{ rawJson }}</pre>
@@ -102,22 +158,41 @@
 
 <script setup lang="ts">
 /**
- * inspector 详情渲染。数据源 = useTraceRows 共享派生（与 TraceView 同源，选中行按
- * partition.selectedKey 查找）。结构：preText（文本全文）/ blocks（assistant 逐块）/
- * detailKv（kind 特化标量）/ rawJson（原始 entry 兜底）四层，按 kind 填充。
+ * inspector 详情渲染。数据源 = useTraceRows 共享派生（与 TraceView 同源）。
+ * 两态：block 态（selectedKey 带 `#block-N` 后缀 → 父溯源 + block 全文）与
+ * 聚合态（preText 文本全文 / blocks assistant 逐块可点击 / detailKv kind 特化标量 /
+ * rawJson 原始 JSON 兜底）四层，按 kind 填充。block 归一化走 core extractContentBlocks。
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft, ArrowUpRight, Copy, Check, FolderOpen } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import type { TraceRow } from '@xyz-agent/core/domain/session-trace'
+import {
+  blockHeadline,
+  extractContentBlocks,
+} from '@xyz-agent/core/domain/session-trace'
+import type { TraceContentBlock, TraceRow } from '@xyz-agent/core/domain/session-trace'
 import { useTraceRows } from '@/composables/features/trace/useTraceRows'
-import { clearTraceSelection, useSessionTrace } from '@/composables/features/trace/useSessionTrace'
+import {
+  clearTraceSelection,
+  revealTraceEntry,
+  selectTraceEntry,
+  useSessionTrace,
+} from '@/composables/features/trace/useSessionTrace'
+import {
+  parseTraceBlockKey,
+  traceBlockKey,
+} from '@/composables/features/trace/trace-display-items'
 import { jumpToParentSession } from '@/composables/features/trace/useTraceJump'
 import { useToast } from '@/composables/useToast'
 import { useCopy } from '@/composables/panel/useCopy'
 import { revealInFolder } from '@/lib/ipc'
-import { KIND_BADGE_CLASS } from './trace-kind-style'
+import {
+  BLOCK_BADGE_CLASS,
+  blockBadgeLabel,
+  KIND_BADGE_CLASS,
+} from './trace-kind-style'
+import { buildTraceDetailKv } from './trace-inspector-kv'
 
 const props = defineProps<{
   sessionId: string
@@ -129,14 +204,36 @@ const { error: toastError } = useToast()
 const { partition } = useSessionTrace()
 const rows = useTraceRows()
 
-/** 选中行（selectedKey → rows 查找；分区切换/选中清除时为 null → 本组件整体不渲染）。 */
-const row = computed<TraceRow | null>(() => {
+/** 选中解析：selectedKey → 行 + block 下标（block 态时非 null；分区切换/清除时整体 null）。 */
+const selection = computed<{ row: TraceRow; blockIndex: number | null } | null>(() => {
   const key = partition.value.selectedKey
   if (!key) return null
-  return rows.value.find((r) => r.key === key) ?? null
+  const parsed = parseTraceBlockKey(key)
+  if (parsed) {
+    const row = rows.value.find((r) => r.key === parsed.parentKey) ?? null
+    return row ? { row, blockIndex: parsed.index } : null
+  }
+  const row = rows.value.find((r) => r.key === key) ?? null
+  return row ? { row, blockIndex: null } : null
 })
 
-const kindBadgeClass = computed(() => (row.value ? KIND_BADGE_CLASS[row.value.kind] : ''))
+const row = computed<TraceRow | null>(() => selection.value?.row ?? null)
+
+const blockIndex = computed<number | null>(() => selection.value?.blockIndex ?? null)
+
+/** block 态的归一化 block（下标越界/非 assistant 行 → null 回聚合态）。 */
+const block = computed<TraceContentBlock | null>(() => {
+  const sel = selection.value
+  if (!sel || sel.blockIndex === null) return null
+  const content = (sel.row.entry as { message?: { content?: unknown } })?.message?.content
+  return extractContentBlocks(content)[sel.blockIndex] ?? null
+})
+
+/** head badge：block 态显示 block 类型，聚合态显示 kind。 */
+const badgeClass = computed(() =>
+  block.value ? BLOCK_BADGE_CLASS[block.value.kind] : row.value ? KIND_BADGE_CLASS[row.value.kind] : '',
+)
+const badgeLabel = computed(() => (block.value ? blockBadgeLabel(block.value) : row.value?.kind ?? ''))
 
 const time = computed(() => {
   const ts = row.value?.timestamp
@@ -144,6 +241,23 @@ const time = computed(() => {
   const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/.exec(ts)
   return m ? m[2] : ''
 })
+
+/** block 态父溯源行（父 assistant entry id + model）。 */
+const blockParentRef = computed(() => {
+  const r = row.value
+  if (!r) return ''
+  const id = r.entry && 'id' in r.entry ? String((r.entry as { id?: unknown }).id ?? '') : ''
+  const model = typeof r.meta.model === 'string' ? r.meta.model : ''
+  return `assistant ${id}${model ? ` · ${model}` : ''}`
+})
+
+/** 返回：block 态回父聚合态（保留 drawer），聚合态清除选中复原前 tab。 */
+function onBack(): void {
+  const key = partition.value.selectedKey
+  const parsed = key ? parseTraceBlockKey(key) : null
+  if (parsed) selectTraceEntry(props.sessionId, parsed.parentKey)
+  else clearTraceSelection(props.sessionId)
+}
 
 /** content 中第一段长文本（USER/NOTICE 文本全文，与 core firstText 语义一致但保留全文）。 */
 function textContent(content: unknown): string {
@@ -157,12 +271,26 @@ function textContent(content: unknown): string {
   return ''
 }
 
-/** 文本全文层（USER / NOTICE / COMPACTED summary / BRANCH summary / SYSTEM 留痕全文 / MALFORMED raw）。 */
+/** 文本全文层（USER / NOTICE / TOOL 输出 / COMPACTED summary / BRANCH summary / SYSTEM 留痕全文 / MALFORMED raw）。 */
 const preText = computed<string | null>(() => {
   const r = row.value
-  if (!r) return null
+  if (!r || block.value !== null) return null
   if (r.kind === 'MALFORMED') return r.raw ?? null
   if (r.kind === 'USER') return textContent((r.entry as { message?: { content?: unknown } })?.message?.content) || null
+  if (r.kind === 'TOOL') {
+    // toolResult 输出结构化：text block 全文 + image 占位计数（真实 corpus toolResult 仅这两种）
+    const content = (r.entry as { message?: { content?: unknown } })?.message?.content
+    if (typeof content === 'string') return content || null
+    if (!Array.isArray(content)) return null
+    const parts: string[] = []
+    let images = 0
+    for (const b of extractContentBlocks(content)) {
+      if (b.kind === 'text') parts.push(b.text)
+      else if (b.kind === 'image') images++
+    }
+    if (images > 0) parts.push(`[image ×${images}]`)
+    return parts.join('\n') || null
+  }
   if (r.kind === 'NOTICE') {
     const entry = r.entry
     if (entry?.type === 'custom_message') {
@@ -186,91 +314,50 @@ const preText = computed<string | null>(() => {
   return null
 })
 
-/** assistant 逐 block 列表（type + 预览：thinking/text 正文、toolCall 工具名）。 */
-const blocks = computed<{ type: string; preview: string }[]>(() => {
+/** assistant 逐 block 清单（聚合态；点击进入 block 态——key = traceBlockKey）。 */
+const blocks = computed<
+  { index: number; key: string; label: string; preview: string; badgeClass: string; thinking: boolean }[]
+>(() => {
   const r = row.value
-  if (!r || r.kind !== 'ASSISTANT') return []
+  if (!r || r.kind !== 'ASSISTANT' || block.value !== null) return []
   const content = (r.entry as { message?: { content?: unknown } })?.message?.content
-  if (!Array.isArray(content)) return []
-  return content.map((b) => {
-    if (typeof b !== 'object' || b === null) return { type: '?', preview: '' }
-    const block = b as { type?: unknown; text?: unknown; thinking?: unknown; toolName?: unknown; toolCallId?: unknown }
-    const type = String(block.type ?? '?')
-    let preview = ''
-    if (typeof block.text === 'string') preview = block.text
-    else if (typeof block.thinking === 'string') preview = block.thinking
-    else if (typeof block.toolName === 'string') preview = `${block.toolName}${block.toolCallId ? ` → ${block.toolCallId}` : ''}`
-    return { type, preview: preview.split('\n')[0] ?? '' }
-  })
+  return extractContentBlocks(content).map((b, i) => ({
+    index: i,
+    key: traceBlockKey(r.key, i),
+    label: blockBadgeLabel(b),
+    preview: blockHeadline(b),
+    badgeClass: BLOCK_BADGE_CLASS[b.kind],
+    thinking: b.kind === 'thinking',
+  }))
 })
 
-/** kind 特化标量 kv（从 row.meta 取值——core summarizeRow 提取的 SSOT，不二次解析 entry）。 */
-const detailKv = computed<{ k: string; v: string; tone?: 'ok' | 'bad'; action?: 'jump-parent' }[]>(() => {
-  const r = row.value
-  if (!r) return []
-  const out: { k: string; v: string; tone?: 'ok' | 'bad'; action?: 'jump-parent' }[] = []
-  const m = r.meta
-  const push = (k: string, v: unknown, tone?: 'ok' | 'bad') => {
-    if (v !== undefined && v !== '') out.push({ k, v: String(v), tone })
+/** toolCall arguments 展示 JSON（解析失败兜底占位，不让 inspector 崩）。 */
+const blockArgumentsJson = computed(() => {
+  const b = block.value
+  if (!b || b.kind !== 'toolCall') return ''
+  try {
+    return JSON.stringify(b.arguments ?? {}, null, JSON_INDENT)
+  } catch {
+    return '(unserializable arguments)'
   }
-  push('id', r.entry && 'id' in r.entry ? (r.entry as { id?: unknown }).id : undefined)
-  push('parentId', r.entry && 'parentId' in r.entry ? (r.entry as { parentId?: unknown }).parentId : undefined)
-  switch (r.kind) {
-    case 'ASSISTANT':
-      push('model', m.model)
-      push('provider', m.provider)
-      push('stopReason', m.stopReason)
-      break
-    case 'TOOL':
-      push('toolName', m.toolName)
-      push('toolCallId', m.toolCallId)
-      if (m.isError === true) push('result', 'error', 'bad')
-      else if (m.isError === false) push('result', 'ok', 'ok')
-      break
-    case 'BASH':
-      push('command', m.command)
-      if (m.exitCode !== undefined) push('exitCode', m.exitCode, m.exitCode === 0 ? 'ok' : 'bad')
-      push('cancelled', m.cancelled)
-      push('truncated', m.truncated)
-      push('fullOutputPath', m.fullOutputPath)
-      push('excludeFromContext', m.excludeFromContext)
-      break
-    case 'COMPACTED':
-      push('tokensBefore', m.tokensBefore)
-      push('firstKeptEntryId', m.firstKeptEntryId)
-      push('fromHook', m.fromHook)
-      break
-    case 'BRANCH':
-      push('fromId', m.fromId)
-      break
-    case 'SYSTEM':
-      push('version', m.version)
-      push('reason', m.reason)
-      push('hash', m.hash)
-      push('charCount', m.charCount)
-      break
-    case 'SESSION':
-      push('cwd', m.cwd)
-      // 溯源链接（§3.1 样例 5）：两形态（文件路径 / sessionId）由 useTraceJump 解析
-      if (m.parentSession !== undefined) {
-        out.push({ k: 'parentSession', v: String(m.parentSession), action: 'jump-parent' })
-      }
-      push('forkEntryId', m.forkEntryId)
-      break
-    case 'BOUNDARY':
-      push('outcome', m.outcome)
-      push('reason', m.reason)
-      push('handedOffTo', m.handedOffTo)
-      break
-    default:
-      push('customType', m.customType)
-      break
-  }
-  // context 语义标注（§3.4：全量态下不进 context 的 kind 弱标记；影子化给排查线索）
-  if (r.shadowed) out.push({ k: 'context', v: t('panel.trace.shadowedHint') })
-  else if (!r.inContext) out.push({ k: 'context', v: t('panel.trace.notInContext') })
-  return out
 })
+
+/** 配对 toolResult 行 key（toolCallId 匹配；找不到 → 跳转按钮置灰）。 */
+const toolResultKey = computed<string | null>(() => {
+  const b = block.value
+  if (!b || b.kind !== 'toolCall' || !b.callId) return null
+  return rows.value.find((r) => r.kind === 'TOOL' && r.meta.toolCallId === b.callId)?.key ?? null
+})
+
+/** 跳到配对 TOOL 行（reveal = 选中 + 滚动定位；inspector 切到该行详情）。 */
+function onJumpToolResult(): void {
+  const key = toolResultKey.value
+  if (key === null) return
+  revealTraceEntry(props.sessionId, key)
+}
+
+/** kind 特化标量 kv（构造逻辑提取在 trace-inspector-kv，meta SSOT 不二次解析 entry）。 */
+const detailKv = computed(() => (row.value ? buildTraceDetailKv(row.value, t) : []))
 
 /** 溯源跳转（§3.1 样例 5）：与 TraceView 的 SESSION 行链接同一编排。 */
 async function onJumpParent(): Promise<void> {
@@ -299,13 +386,19 @@ function onRevealFolder(): void {
   })
 }
 
-/** JSON.stringify 缩进宽度（原始 entry 兜底展示）。 */
+/** JSON.stringify 缩进宽度（原始 entry / block 原文兜底展示）。 */
 const JSON_INDENT = 2
 
-/** 原始 entry JSON（COMPACTED summary / SYSTEM 全文等长文本也兜底可见）。 */
+/** 原始 JSON 兜底：block 态为该 block 原文（content[index]），聚合态为整个 entry。 */
 const rawJson = computed(() => {
   const r = row.value
   if (!r) return ''
+  const idx = blockIndex.value
+  if (idx !== null) {
+    const content = (r.entry as { message?: { content?: unknown } })?.message?.content
+    const rawBlock = Array.isArray(content) ? content[idx] : undefined
+    return JSON.stringify(rawBlock ?? { block: block.value?.kind }, null, JSON_INDENT)
+  }
   return JSON.stringify(r.entry ?? { raw: r.raw }, null, JSON_INDENT)
 })
 </script>

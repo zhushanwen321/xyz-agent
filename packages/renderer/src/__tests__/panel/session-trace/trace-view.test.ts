@@ -20,7 +20,7 @@
  * 运行：cd packages/renderer && npx vitest run src/__tests__/panel/session-trace/trace-view.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { computed } from 'vue'
+import { computed, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
@@ -64,7 +64,7 @@ function buildFullKindsSnapshot(): ServerMessageMap['session.traceEntries'] {
   const entries: unknown[] = [
     { type: 'custom', id: 'sp1', parentId: null, customType: 'xyz:system-prompt', data: { version: 2, reason: 'resume', hash: 'aabbcc', charCount: 12702 } },
     { type: 'message', id: 'u1', parentId: 'sp1', message: { role: 'user', content: '修一下重试逻辑' } },
-    { type: 'message', id: 'a1', parentId: 'u1', message: { role: 'assistant', provider: 'p', model: 'm-pro', content: [{ type: 'thinking', thinking: 'x' }, { type: 'toolCall', toolCallId: 'tc1', toolName: 'read', arguments: {} }, { type: 'text', text: 'done' }] } },
+    { type: 'message', id: 'a1', parentId: 'u1', message: { role: 'assistant', provider: 'p', model: 'm-pro', usage: { input: 21318, output: 160, cacheRead: 192, cost: { total: 0 } }, content: [{ type: 'thinking', thinking: '先定位问题\n再改代码' }, { type: 'toolCall', id: 'tc1', name: 'read', arguments: { path: 'a.ts' } }, { type: 'text', text: 'done' }] } },
     { type: 'message', id: 'tr1', parentId: 'a1', message: { role: 'toolResult', toolCallId: 'tc1', toolName: 'read', isError: false, content: 'file body' } },
     { type: 'message', id: 'b1', parentId: 'tr1', message: { role: 'bashExecution', command: 'npm test', output: 'FAIL', exitCode: 1, excludeFromContext: true } },
     { type: 'custom_message', id: 'cm1', parentId: 'b1', customType: 'demo:notice', content: '通知内容', display: true },
@@ -435,6 +435,63 @@ describe('C2 现取当前 system prompt（§3.1 失败路径：无留痕降级�
     expect(view.find('[data-testid="trace-fetch-current"]').exists()).toBe(false)
     expect(view.find('[data-testid="trace-fetch-current-note"]').exists()).toBe(false)
     expect(apiMock.fetchCurrentSystemPrompt).not.toHaveBeenCalled()
+    view.unmount()
+  })
+})
+
+describe('assistant 聚合行子 block 内联展开（chevron + block 子行 + 选中寻址）', () => {
+  it('chevron 显隐：有 content 的 ASSISTANT 行显示展开开关，其余行占位对齐不显示', async () => {
+    const view = await mountTraceView()
+    // a1（seq 5，3 个 block）与 a2（seq 10，1 个 text block）有 toggle；USER 行（seq 3）无
+    expect(view.find('[data-testid="trace-expand-toggle-5"]').exists()).toBe(true)
+    expect(view.find('[data-testid="trace-expand-toggle-10"]').exists()).toBe(true)
+    expect(view.find('[data-testid="trace-expand-toggle-3"]').exists()).toBe(false)
+    view.unmount()
+  })
+
+  it('点击 chevron 展开 → 三个 block 子行按序出现（thinking/toolCall/text），再点收起', async () => {
+    const view = await mountTraceView()
+    expect(view.find('[data-testid="trace-block-row-5-0"]').exists()).toBe(false)
+
+    await view.find('[data-testid="trace-expand-toggle-5"]').trigger('click')
+    const b0 = view.find('[data-testid="trace-block-row-5-0"]')
+    const b1 = view.find('[data-testid="trace-block-row-5-1"]')
+    const b2 = view.find('[data-testid="trace-block-row-5-2"]')
+    expect(b0.attributes('data-block-kind')).toBe('thinking')
+    expect(b0.text()).toContain('先定位问题')
+    expect(b1.attributes('data-block-kind')).toBe('toolCall')
+    expect(b1.text()).toContain('read')
+    expect(b1.text()).toContain('a.ts')
+    expect(b2.attributes('data-block-kind')).toBe('text')
+    expect(b2.text()).toContain('done')
+    expect(useSessionTrace().partition.value.expandedKeys).toContain('a1')
+
+    await view.find('[data-testid="trace-expand-toggle-5"]').trigger('click')
+    expect(view.find('[data-testid="trace-block-row-5-0"]').exists()).toBe(false)
+    expect(useSessionTrace().partition.value.expandedKeys).not.toContain('a1')
+    view.unmount()
+  })
+
+  it('点击子 block 行 → selectedKey = `<entryKey>#block-N`（drawer 联动寻址）', async () => {
+    const view = await mountTraceView()
+    await view.find('[data-testid="trace-expand-toggle-5"]').trigger('click')
+    await view.find('[data-testid="trace-block-row-5-1"]').trigger('click')
+    expect(useSessionTrace().partition.value.selectedKey).toBe('a1#block-1')
+    // 子行选中态（同 testid 元素高亮）
+    expect(view.find('[data-testid="trace-block-row-5-1"]').classes().join(' ')).toContain('bg-surface-hover')
+    view.unmount()
+  })
+
+  it('子行跟随父行过滤：assistant 被过滤掉时展开的子行不出现', async () => {
+    const view = await mountTraceView()
+    await view.find('[data-testid="trace-expand-toggle-5"]').trigger('click')
+    expect(view.find('[data-testid="trace-block-row-5-0"]').exists()).toBe(true)
+
+    // 只留 tools 组（TOOL/BASH）→ assistant 行隐藏，子行随之消失
+    setTraceFilter(SID, { activeGroups: ['tools'] })
+    await nextTick()
+    expect(view.find('[data-testid="trace-row-4"]').exists()).toBe(false)
+    expect(view.find('[data-testid="trace-block-row-5-0"]').exists()).toBe(false)
     view.unmount()
   })
 })

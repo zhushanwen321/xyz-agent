@@ -83,9 +83,36 @@ function buildSnapshot(): ServerMessageMap['session.traceEntries'] {
     header: { type: 'session', version: 1, id: 'h0', cwd: '/w/demo' },
     entries: [
       { type: 'message', id: 'u1', parentId: 'h0', message: { role: 'user', content: '帮我修一下重试逻辑' } },
-      { type: 'message', id: 'b1', parentId: 'u1', message: { role: 'bashExecution', command: 'npm test', output: 'FAIL 1', exitCode: 1, excludeFromContext: true } },
+      {
+        type: 'message', id: 'a1', parentId: 'u1',
+        message: {
+          role: 'assistant', provider: 'p', model: 'm-pro',
+          usage: { input: 21318, output: 160, cacheRead: 192, cost: { total: 0 } },
+          stopReason: 'toolUse',
+          content: [
+            { type: 'thinking', thinking: '先定位问题\n再改代码' },
+            { type: 'toolCall', id: 'call_1', name: 'read', arguments: { path: 'a.ts' } },
+            { type: 'text', text: '读取完成' },
+          ],
+        },
+      },
+      {
+        type: 'message', id: 'tr1', parentId: 'a1',
+        message: {
+          role: 'toolResult', toolCallId: 'call_1', toolName: 'read', isError: false,
+          content: [
+            { type: 'text', text: 'file body line1\nfile body line2' },
+            { type: 'image', data: 'base64', mimeType: 'image/png' },
+          ],
+        },
+      },
+      { type: 'message', id: 'b1', parentId: 'tr1', message: { role: 'bashExecution', command: 'npm test', output: 'FAIL 1', exitCode: 1, excludeFromContext: true } },
       { type: 'compaction', id: 'c1', parentId: 'b1', summary: '## 压缩摘要正文', firstKeptEntryId: 'b1', tokensBefore: 152311 },
       { type: 'message', id: 'u2', parentId: 'c1', message: { role: 'user', content: '压缩后的消息' } },
+      {
+        type: 'message', id: 'a2', parentId: 'u2',
+        message: { role: 'assistant', provider: 'p', model: 'm-pro', content: [{ type: 'thinking', thinking: '', redacted: true }] },
+      },
     ],
     malformed: [{ lineNumber: 5, raw: 'not json' }],
     leafId: 'u2',
@@ -256,6 +283,95 @@ describe('C2 MALFORMED 行「打开所在目录」（reveal-in-folder IPC 接线
     expect(revealBtn.attributes('disabled')).toBeDefined()
     await revealBtn.trigger('click')
     expect(ipcMock.revealInFolder).not.toHaveBeenCalled()
+    view.unmount()
+  })
+})
+
+describe('assistant 子 block 详情（聚合态清单 + block 态全文 + TOOL 输出 + 框选）', () => {
+  async function mountInspector(key: string) {
+    await readyPartition()
+    selectTraceEntry(SID, key)
+    await nextTick()
+    return mount(TraceInspector, { props: { sessionId: SID } })
+  }
+
+  it('聚合态：blocks 清单逐块展示（toolCall 预览含 name+arguments——真实字段口径回归）+ usage kv', async () => {
+    const view = await mountInspector('a1')
+    const body = view.find('[data-testid="trace-inspector-body"]')
+    const list = view.find('[data-testid="trace-inspector-blocks"]')
+    expect(list.exists()).toBe(true)
+    const items = list.findAll('[data-testid^="trace-inspector-block-"]')
+    expect(items).toHaveLength(3)
+    expect(items[0]!.text()).toContain('先定位问题')
+    expect(items[1]!.text()).toContain('read')
+    expect(items[1]!.text()).toContain('a.ts')
+    expect(items[2]!.text()).toContain('读取完成')
+    // usage 标量进 kv（meta SSOT）
+    expect(body.text()).toContain('inputTokens')
+    expect(body.text()).toContain('21318')
+    expect(body.text()).toContain('192')
+    view.unmount()
+  })
+
+  it('点击清单项进入 block 态：toolCall 显示 name/callId/arguments，可跳到配对 TOOL 行', async () => {
+    const view = await mountInspector('a1')
+    await view.find('[data-testid="trace-inspector-block-1"]').trigger('click')
+    expect(useSessionTrace().partition.value.selectedKey).toBe('a1#block-1')
+    await nextTick()
+
+    const body = view.find('[data-testid="trace-inspector-body"]')
+    expect(body.text()).toContain('read')
+    expect(body.text()).toContain('call_1')
+    const args = view.find('[data-testid="trace-inspector-block-arguments"]')
+    expect(args.exists()).toBe(true)
+    expect(args.text()).toContain('"path"')
+    expect(args.text()).toContain('a.ts')
+
+    // toolCallId 配对 tr1 → 跳转按钮可点，点击选中并定位 TOOL 行
+    const jump = view.find('[data-testid="trace-inspector-jump-tool-result"]')
+    expect(jump.exists()).toBe(true)
+    expect(jump.attributes('disabled')).toBeUndefined()
+    await jump.trigger('click')
+    expect(useSessionTrace().partition.value.selectedKey).toBe('tr1')
+    view.unmount()
+  })
+
+  it('block 态：thinking 全文展示（多行不截断）；「← 返回」回父聚合态，再返回才清除', async () => {
+    const view = await mountInspector('a1#block-0')
+    const content = view.find('[data-testid="trace-inspector-block-content"]')
+    expect(content.exists()).toBe(true)
+    expect(content.text()).toContain('先定位问题')
+    expect(content.text()).toContain('再改代码')
+
+    await view.find('[data-testid="trace-inspector-back"]').trigger('click')
+    expect(useSessionTrace().partition.value.selectedKey).toBe('a1')
+    expect(view.find('[data-testid="trace-inspector-blocks"]').exists()).toBe(true)
+
+    await view.find('[data-testid="trace-inspector-back"]').trigger('click')
+    expect(useSessionTrace().partition.value.selectedKey).toBeNull()
+    view.unmount()
+  })
+
+  it('redacted thinking：block 态显示脱敏占位文案', async () => {
+    const view = await mountInspector('a2#block-0')
+    const content = view.find('[data-testid="trace-inspector-block-content"]')
+    expect(content.text()).toContain('已脱敏')
+    view.unmount()
+  })
+
+  it('TOOL 行 content 层：text block 全文 + image 占位计数（不再只能翻 raw JSON）', async () => {
+    const view = await mountInspector('tr1')
+    const body = view.find('[data-testid="trace-inspector-body"]')
+    expect(body.text()).toContain('file body line1')
+    expect(body.text()).toContain('file body line2')
+    expect(body.text()).toContain('[image ×1]')
+    view.unmount()
+  })
+
+  it('框选：inspector body 容器恢复 select-text（全局 user-select:none 的内容区恢复点）', async () => {
+    const view = await mountInspector('a1')
+    const body = view.find('[data-testid="trace-inspector-body"]')
+    expect(body.classes()).toContain('select-text')
     view.unmount()
   })
 })

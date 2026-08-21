@@ -443,5 +443,9 @@ export default {
     inspectorSubtitle: 'From Trace view · full detail of the selected entry',
     inspectorRaw: 'Raw entry JSON',
     inspectorNoEntry: '(no entry data)',
+    // assistant sub-blocks (chevron expansion / inspector block mode)
+    toggleBlocks: 'Expand / collapse content blocks',
+    blockRedacted: '(thinking redacted, original text unavailable)',
+    jumpToolResult: 'Jump to the paired TOOL row',
   },
 }

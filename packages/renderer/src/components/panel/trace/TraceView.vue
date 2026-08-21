@@ -88,7 +88,8 @@
           </p>
         </div>
         <!-- >500 启用虚拟滚动（D9）。slot 内仅单一 TraceListItem vnode + 稳定 key
-             （virtua 从 slot vnode 取 key，注释/多 vnode 会破坏 stable-key）。 -->
+             （virtua 从 slot vnode 取 key，注释/多 vnode 会破坏 stable-key；
+             block 子行 key = `<entryKey>#block-N`，不与 entry key 冲突）。 -->
         <Virtualizer
           v-else-if="virtualized"
           ref="vlistRef"
@@ -98,11 +99,13 @@
         >
           <template #default="{ item }">
             <TraceListItem
-              :key="item.kind === 'row' ? item.row.key : 'ctx-divider'"
+              :key="displayItemKey(item)"
               :item="item"
-              :selected="item.kind === 'row' && item.row.key === partition.selectedKey"
+              :selected="displayItemKey(item) === partition.selectedKey"
               @select="onSelectRow"
               @jump-parent="onJumpParent"
+              @toggle-expand="onToggleExpand"
+              @select-block="onSelectBlock"
             />
           </template>
         </Virtualizer>
@@ -110,11 +113,13 @@
         <template v-else>
           <TraceListItem
             v-for="item in items"
-            :key="item.kind === 'row' ? item.row.key : 'ctx-divider'"
+            :key="displayItemKey(item)"
             :item="item"
-            :selected="item.kind === 'row' && item.row.key === partition.selectedKey"
+            :selected="displayItemKey(item) === partition.selectedKey"
             @select="onSelectRow"
             @jump-parent="onJumpParent"
+            @toggle-expand="onToggleExpand"
+            @select-block="onSelectBlock"
           />
         </template>
       </div>
@@ -146,8 +151,14 @@ import {
   retryTraceLoad,
   selectTraceEntry,
   setTraceFilter,
+  toggleTraceExpand,
   useSessionTrace,
 } from '@/composables/features/trace/useSessionTrace'
+import {
+  buildTraceDisplayItems,
+  displayItemKey,
+} from '@/composables/features/trace/trace-display-items'
+import type { TraceDisplayItem } from '@/composables/features/trace/trace-display-items'
 import TraceToolbar from './TraceToolbar.vue'
 import TraceListItem from './TraceListItem.vue'
 import { jumpToParentSession } from '@/composables/features/trace/useTraceJump'
@@ -168,9 +179,6 @@ const vlistRef = ref<VirtualizerHandle | null>(null)
 /** 虚拟滚动启用阈值（D9：>500 entry）与行高估计。 */
 const VIRTUAL_SCROLL_THRESHOLD = 500
 const ESTIMATED_ROW_HEIGHT = 28
-
-/** 列表项：台账行或 context 分界行（demo .tr-divider）。 */
-type TraceListItemSpec = { kind: 'row'; row: TraceRow } | { kind: 'divider' }
 
 /** store 分区 → core TraceRow[]（useTraceRows 共享派生，TraceInspector 同源）。 */
 const rows = useTraceRows()
@@ -195,9 +203,9 @@ const filteredRows = computed<TraceRow[]>(() => {
   return byState.filter((row) => searchableText(row).includes(q))
 })
 
-/** 渲染项：过滤后行 + context 分界行（最后一个 COMPACTED 之后；contextOnly 态隐藏——demo 行为）。 */
-const items = computed<TraceListItemSpec[]>(() => {
-  const list: TraceListItemSpec[] = filteredRows.value.map((row) => ({ kind: 'row', row }))
+/** 渲染项：展开子 block 的台账行 + context 分界行（最后一个 COMPACTED 之后；contextOnly 态隐藏——demo 行为）。 */
+const items = computed<TraceDisplayItem[]>(() => {
+  const list = buildTraceDisplayItems(filteredRows.value, partition.value.expandedKeys)
   if (partition.value.contextOnly) return list
   let lastCompactionIdx = -1
   for (let i = list.length - 1; i >= 0; i--) {
@@ -234,6 +242,16 @@ function onToggleContext(): void {
 
 function onSelectRow(row: TraceRow): void {
   selectTraceEntry(props.sessionId, row.key)
+}
+
+/** assistant 聚合行 chevron：切换子 block 展开（不改变选中态）。 */
+function onToggleExpand(row: TraceRow): void {
+  toggleTraceExpand(props.sessionId, row.key)
+}
+
+/** 子 block 行点击：选中该 block（selectedKey = `<entryKey>#block-N`）。 */
+function onSelectBlock(key: string): void {
+  selectTraceEntry(props.sessionId, key)
 }
 
 /**

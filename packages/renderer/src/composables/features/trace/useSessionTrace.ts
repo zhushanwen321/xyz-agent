@@ -79,8 +79,13 @@ export interface TraceSessionPartition {
   contextOnly: boolean
   activeGroups: TraceKindGroup[]
   searchText: string
-  /** 选中行 key（drawer inspector 联动；null = 未选中，inspector 隐藏复原前 tab）。 */
+  /** 选中行 key（drawer inspector 联动；null = 未选中，inspector 隐藏复原前 tab）。
+   *  约定扩展：`<entryKey>#block-<N>` 寻址 assistant 聚合行内第 N 个 content block
+   *  （见 trace-display-items.ts 的 traceBlockKey——台账仍是「一行 = 一个 entry」，
+   *  block 寻址纯展示层派生）。 */
   selectedKey: string | null
+  /** 已展开子 block 的 assistant 行 key 集（chevron 切换；切视图保留）。 */
+  expandedKeys: string[]
   /** 溯源跳转定位请求（§3.1 样例 5：跳转后滚动到 forkEntryId 行；null = 无待定位）。 */
   revealRequest: TraceRevealRequest | null
 }
@@ -105,6 +110,7 @@ function createDefaultPartition(): TraceSessionPartition {
     activeGroups: [],
     searchText: '',
     selectedKey: null,
+    expandedKeys: [],
     revealRequest: null,
   })
 }
@@ -271,6 +277,15 @@ export function clearTraceSelection(sid: string): void {
   })
 }
 
+/** 切换 assistant 行的子 block 展开（chevron；key = 行 key，幂等切换）。 */
+export function toggleTraceExpand(sid: string, key: string): void {
+  partitions.updateFor(sid, (s) => {
+    s.expandedKeys = s.expandedKeys.includes(key)
+      ? s.expandedKeys.filter((k) => k !== key)
+      : [...s.expandedKeys, key]
+  })
+}
+
 /**
  * 选中并请求滚动定位到行（溯源跳转编排专用，§3.1 样例 5）：写 selectedKey + revealRequest
  * （nonce 递增保证同 key 重复跳转也触发 TraceView 的 watch）+ drawer 联动。手动点行走
@@ -324,6 +339,7 @@ export function useSessionTrace(): {
   fetchCurrentPrompt: typeof fetchCurrentPrompt
   select: typeof selectTraceEntry
   clearSelection: typeof clearTraceSelection
+  toggleExpand: typeof toggleTraceExpand
   setView: typeof setTraceView
   setFilter: typeof setTraceFilter
   } {
@@ -334,6 +350,7 @@ export function useSessionTrace(): {
     fetchCurrentPrompt,
     select: selectTraceEntry,
     clearSelection: clearTraceSelection,
+    toggleExpand: toggleTraceExpand,
     setView: setTraceView,
     setFilter: setTraceFilter,
   }

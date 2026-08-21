@@ -441,5 +441,9 @@ export default {
     inspectorSubtitle: '来自 Trace 视图 · 选中 entry 的完整详情',
     inspectorRaw: '原始 entry JSON',
     inspectorNoEntry: '（无 entry 数据）',
+    // assistant 子 block（chevron 展开 / inspector block 态）
+    toggleBlocks: '展开 / 收起内容块',
+    blockRedacted: '（thinking 已脱敏，原文不可见）',
+    jumpToolResult: '跳到对应 TOOL 行',
   },
 }
