@@ -80,9 +80,11 @@
           <span v-else class="min-w-0 break-all font-mono text-[11px] text-neutral-mid" :class="kv.tone === 'bad' ? 'text-danger' : kv.tone === 'ok' ? 'text-success' : ''">{{ kv.v }}</span>
         </div>
       </div>
-      <!-- 原始 entry JSON（通用兜底，G1 不丢信息；MALFORMED 行 raw 原文） -->
-      <p class="mb-1 text-[10px] uppercase tracking-wide text-neutral-faint">{{ t('panel.trace.inspectorRaw') }}</p>
-      <pre class="overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[10px] leading-relaxed text-neutral-dim">{{ rawJson }}</pre>
+      <!-- 原始 entry JSON（通用兜底，G1 不丢信息；默认折叠减少视觉噪音） -->
+      <details class="group/raw mb-1">
+        <summary class="cursor-pointer select-none text-[10px] uppercase tracking-wide text-neutral-faint hover:text-neutral-mid">{{ t('panel.trace.inspectorRaw') }}</summary>
+        <pre class="mt-1 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[10px] leading-relaxed text-neutral-dim">{{ rawJson }}</pre>
+      </details>
     </div>
   </div>
 </template>
