@@ -245,6 +245,16 @@ SESSION 行数据来源注意：`getEntries()` 明确**不含 session header**�
 
 kind chips → 行 kind 映射（§3.1 样例 3 的过滤维度）：**消息** = USER / ASSISTANT；**工具** = TOOL / BASH；**系统** = SYSTEM / NOTICE / COMPACTED / BRANCH；**生命周期** = LIFECYCLE；**边界** = SESSION / DATA / BOUNDARY（demo 的 KIND_GROUPS 即此映射）。
 
+### 3.5 assistant 聚合行的子 block 展开（2026-08-21 增补）
+
+台账契约「一行 = 一个 entry」不变；assistant 行的 content blocks（真实 corpus 仅 thinking / text / toolCall 三种，字段口径 `thinking.thinking` / `toolCall.id+name+arguments`——core `trace-blocks.ts` 归一化 SSOT）是**展示层派生**的内联子行：
+
+- **列表**：ASSISTANT 行带 chevron（`expandedKeys` per-session 分区存储，切视图保留），展开后按序插入缩进的子 block 行（badge + `blockHeadline` 首行摘要）；子行跟随父行过滤（父行被过滤掉则子行不出现）；子行 key = `<entryKey>#block-N`（entry key 取值域不含 `#`，无碰撞；virtua stable-key 同源）。
+- **选中寻址**：`selectedKey` 扩展上述 block key；点 assistant 行 → inspector 聚合态（id / model / usage tokens / blocks 清单），点子 block 行（或聚合态清单项）→ inspector block 态（thinking/text 全文、toolCall name/callId/arguments + 按 toolCallId 配对跳转 TOOL 行、redacted 占位）。
+- **返回层级**：block 态「← 返回」回父聚合态；聚合态「← 返回」清除选中复原前 tab。
+- **TOOL 行 content 层**：toolResult 的 content（text block 全文 + `[image ×N]` 占位）直接渲染在 inspector 正文，不再只能翻 raw JSON。
+- **框选**：inspector body 容器 `select-text`（全局 `user-select:none` 下的内容区恢复点，与 chat 域 WidgetArea 同款范式）；拖选不触发 click，按钮不受影响。
+
 ## 4. 验收（真实场景，非单测非 mock）
 
 改动规模：新功能（新 tab + runtime 端口 + 新 extension）。在 dev app（`pnpm dev`）用真实 session 验证，禁止 mock entry 流。每个场景回溯 §1.2 目标。

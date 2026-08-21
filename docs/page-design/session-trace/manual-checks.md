@@ -33,3 +33,16 @@
   - 记录：2026-08-21 GUI 实测：①打开有留痕的非活跃 session（dsh 调研）→ SYSTEM #4 行可见，点击 inspector 显示 SYSTEM prompt 全文 + diff 摘要（version/reason/hash/charCount 键位）+「返回」按钮可复原；②活跃 session（无留痕）→ 点「现取当前值」按钮 → 获取 31777 字符成功（12:36:33），DATA 行追加到行尾。SYSTEM reason=change 场景未在 GUI 触发（需修改 agent prompts 配置），但 vitest trace-ext 覆盖 reason=change 测试 + core parse-session-trace 覆盖 SYSTEM 变更合并。详见 probe-results.md V2 节。
 - [x] V7: 坏 JSON 行容错；未落盘空态；禁用留痕 extension 降级 + 现取通道可用
   - 记录：2026-08-21 GUI 实测：①坏 JSON 行（dsh session 尾部注入 `{invalid json!!!`）→ MALFORMED #1748 行渲染（`无法解析的 entry（第 1748 行）`），inspector 显示原始 raw +「打开所在目录」按钮可触发 reveal-in-folder IPC；②未落盘空态（新 session 未 flush）→ 未在 GUI 触发（vitest trace-runtime 覆盖 filePath=null → source=empty 测试）；③禁用 extension 降级 → 无 SYSTEM 行（正常降级，不崩溃）；④现取通道可用：非活跃无留痕 session（dsh 调研）→「现取当前值」→ 31777 字符成功（runtime 常驻扩展 session.currentSystemPrompt 通道）。详见 probe-results.md V7 节。
+
+## trace-ui · assistant 子 block 展开（§3.5 增补，2026-08-21）
+
+- [x] B1: assistant 行 chevron 展开/收起，子 block 行（thinking/text/toolCall）类型与摘要正确；过滤后子行跟随父行
+  - 记录：2026-08-21 dev app（真实 session 复制进 ~/.xyz-agent-dev，205 行/80 可展开行）：#7 ASSISTANT 展开后 thinking + toolCall 子行按序出现，toolCall 摘要含工具名+arguments 单行摘要（真实字段口径）。过滤跟随为 vitest 覆盖（trace-view.test「子行跟随父行过滤」）。
+- [x] B2: 点 assistant 聚合行 → inspector 显示 id/model/usage tokens/blocks 清单；点清单项或子 block 行 → block 态全文（长 thinking 多行不截断、toolCall arguments pretty JSON）
+  - 记录：2026-08-21 同 session GUI 实测：聚合态显示 id 2424537e / model k3 / stopReason / inputTokens 12453 / outputTokens 186 / cacheRead 7680 / cost 0.042 + 2 项 blocks 清单；点 toolCall 清单项进入 block 态（toolName/toolCallId/arguments pretty JSON + 父溯源行 `assistant <id> · k3`）。
+- [x] B3: toolCall block「跳到对应 TOOL 行」按 toolCallId 配对定位；block 态返回回聚合态、再返回清除选中
+  - 记录：2026-08-21 同 session GUI 实测：block 态点「跳到对应 TOOL 行」→ inspector 切 TOOL #8 且列表行选中高亮；返回两段层级（block → 聚合 → 清除选中）实测正确。
+- [x] B4: inspector 内鼠标拖选复制（thinking 正文 / arguments / raw JSON）；TOOL 行 content 全文 + image 占位
+  - 记录：2026-08-21 GUI 实测：inspector body computed style userSelect=text（拖选可用）；TOOL 行 content 结构化渲染真实 session outline 输出（此前只能翻 raw JSON）。image 占位为 vitest 覆盖。
+- [x] B5: 大 session（>500 行虚拟滚动）下展开/收起与子行选中正常
+  - 记录：2026-08-21 GUI 实测（真实 session 复制，923 行）：虚拟滚动生效（DOM 仅渲染 38 行）；展开 #5 出现 5 个子 block（thinking/text/toolCall×3），点子行进入 block 态 inspector 正常。
