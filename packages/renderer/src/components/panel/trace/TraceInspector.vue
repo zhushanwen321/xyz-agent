@@ -195,6 +195,7 @@ import {
   KIND_BADGE_CLASS,
 } from './trace-kind-style'
 import { buildTraceDetailKv } from './trace-inspector-kv'
+import { buildTracePreText } from './trace-inspector-pretext'
 
 const props = defineProps<{
   sessionId: string
@@ -261,59 +262,11 @@ function onBack(): void {
   else clearTraceSelection(props.sessionId)
 }
 
-/** content 中第一段长文本（USER/NOTICE 文本全文，与 core firstText 语义一致但保留全文）。 */
-function textContent(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    return content
-      .filter((b) => typeof b === 'object' && b !== null && (b as { type?: unknown }).type === 'text')
-      .map((b) => String((b as { text?: unknown }).text ?? ''))
-      .join('\n')
-  }
-  return ''
-}
-
-/** 文本全文层（USER / NOTICE / TOOL 输出 / COMPACTED summary / BRANCH summary / SYSTEM 留痕全文 / MALFORMED raw）。 */
+/** 文本全文层（构造逻辑提取在 trace-inspector-pretext；block 态不出该层）。 */
 const preText = computed<string | null>(() => {
   const r = row.value
   if (!r || block.value !== null) return null
-  if (r.kind === 'MALFORMED') return r.raw ?? null
-  if (r.kind === 'USER') return textContent((r.entry as { message?: { content?: unknown } })?.message?.content) || null
-  if (r.kind === 'TOOL') {
-    // toolResult 输出结构化：text block 全文 + image 占位计数（真实 corpus toolResult 仅这两种）
-    const content = (r.entry as { message?: { content?: unknown } })?.message?.content
-    if (typeof content === 'string') return content || null
-    if (!Array.isArray(content)) return null
-    const parts: string[] = []
-    let images = 0
-    for (const b of extractContentBlocks(content)) {
-      if (b.kind === 'text') parts.push(b.text)
-      else if (b.kind === 'image') images++
-    }
-    if (images > 0) parts.push(`[image ×${images}]`)
-    return parts.join('\n') || null
-  }
-  if (r.kind === 'NOTICE') {
-    const entry = r.entry
-    if (entry?.type === 'custom_message') {
-      const c = (entry as { content?: unknown }).content
-      return typeof c === 'string' ? c : textContent(c) || null
-    }
-    if (entry?.type === 'message') {
-      return textContent((entry as { message?: { content?: unknown } })?.message?.content) || null
-    }
-    return null
-  }
-  if (r.kind === 'COMPACTED' || r.kind === 'BRANCH') {
-    const s = (r.entry as { summary?: unknown })?.summary
-    return typeof s === 'string' && s ? s : null
-  }
-  if (r.kind === 'SYSTEM') {
-    const data = (r.entry as { data?: { fullText?: unknown } })?.data
-    const full = data && typeof data === 'object' ? data.fullText : undefined
-    return typeof full === 'string' && full ? full : null
-  }
-  return null
+  return buildTracePreText(r)
 })
 
 /** assistant 逐 block 清单（聚合态；点击进入 block 态——key = traceBlockKey）。 */
