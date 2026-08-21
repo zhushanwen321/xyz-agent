@@ -51,6 +51,8 @@ export interface ConfigModelDefinition {
   maxTokens?: number
   thinkingLevelMap?: Record<string, string | null>
   cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
+  /** model 级自定义请求头（pi ModelDefinitionSchema 内字段，B-4b 白名单）。 */
+  headers?: Record<string, string>
   compat?: Record<string, unknown>
 }
 

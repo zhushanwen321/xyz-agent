@@ -41,7 +41,7 @@ beforeEach(() => {
     authStorage: new AuthStorage(authJsonPath),
     getOAuthConfig: () => undefined,
     broadcast: () => {},
-    nextPushId: () => 1,
+    nextPushId: () => '1',
     clearApiKey: () => {},
   })
   mockFetch.mockReset()

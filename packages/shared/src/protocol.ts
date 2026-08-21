@@ -162,6 +162,14 @@ export interface SetProviderData {
     contextWindow?: number
     maxTokens?: number
     thinkingLevelMap?: Record<string, string | null>
+    /** model 级自定义请求头（B-4b 白名单，pi ModelDefinitionSchema 内字段）。 */
+    headers?: Record<string, string>
+    /**
+     * model 级计费（B-4b 白名单，pi ModelDefinitionSchema 内字段）。pi schema 要求
+     * input/output/cacheRead/cacheWrite 四字段必填 number，runtime setProvider 校验后落盘。
+     * tiers 可选透传（请求级分档定价，最高匹配阈值整单生效）。
+     */
+    cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; tiers?: Array<{ inputTokensAbove: number; input: number; output: number; cacheRead: number; cacheWrite: number }> }
     /** model 级启停（W2）。省略时默认 true，与 PiModelDefinition 同构。 */
     enabled?: boolean
   }>

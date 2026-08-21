@@ -30,7 +30,11 @@ export type SetProviderInput = {
   apiKey?: string
   authMethod?: 'api_key' | 'oauth' | 'env_var' | 'ambient'
   baseUrl?: string
-  models?: Array<string | { id: string; name?: string; api?: string; baseUrl?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null>; enabled?: boolean; compat?: Record<string, unknown> }>
+  /** provider 级自定义请求头（B-4a，pi ProviderConfigSchema 内字段）。 */
+  headers?: Record<string, string>
+  /** 是否把 apiKey 写入 Authorization header（B-4a，pi ProviderConfigSchema 内字段）。 */
+  authHeader?: boolean
+  models?: Array<string | { id: string; name?: string; api?: string; baseUrl?: string; reasoning?: boolean; maxTokens?: number; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null>; enabled?: boolean; cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; tiers?: Array<{ inputTokensAbove: number; input: number; output: number; cacheRead: number; cacheWrite: number }> }; headers?: Record<string, string>; compat?: Record<string, unknown> }>
   enabled?: boolean
 }
 
@@ -114,6 +118,56 @@ function deriveAuthMethod(config?: ConfigProviderConfig): ProviderInfo['authMeth
 function isValidThinkingLevelMap(v: unknown): v is Record<string, string | null> {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
   return Object.values(v as Record<string, unknown>).every(val => val === null || typeof val === 'string')
+}
+
+/**
+ * headers 校验 + prototype-pollution 清洗（B-4a/B-4b，对齐 compat 的 sanitize 模式：
+ * 类型守卫通过后、赋值前剔除 __proto__/prototype/constructor）。
+ * 与 compat 的差异：headers 契约是 Record<string, string>，value 非 string 直接 throw
+ * （pi schema Type.Record(String, String)——静默剔除坏 value 会让「保存成功但 header 丢失」
+ * 无从排查）；compat value 是 unknown 只剔 undefined。
+ */
+function sanitizeHeaders(v: unknown, ctx: string): Record<string, string> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) {
+    throw new Error(`Invalid ${ctx}: expected Record<string, string>`)
+  }
+  const sanitized: Record<string, string> = {}
+  for (const [k, val] of Object.entries(v)) {
+    if (k === '__proto__' || k === 'prototype' || k === 'constructor') continue
+    if (typeof val !== 'string') {
+      throw new Error(`Invalid ${ctx}: value of "${k}" must be a string`)
+    }
+    sanitized[k] = val
+  }
+  return sanitized
+}
+
+/**
+ * model 级 cost 校验（B-4b）。pi 0.84.1 ModelDefinitionSchema 的 cost 四字段是必填
+ * `Type.Number()`（model-config.js ModelCostSchema）——缺字段或非法类型写入会让 pi 拒载
+ * 整个 models.json，故此处 throw 而非静默丢弃。非负校验：价格为负无业务语义。
+ * tiers 可选透传（存在时必须是数组，元素结构由 pi schema 自行把关）。
+ */
+function sanitizeModelCost(v: unknown, ctx: string): Record<string, unknown> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) {
+    throw new Error(`Invalid ${ctx}: expected an object with input/output/cacheRead/cacheWrite numbers`)
+  }
+  const raw = v as Record<string, unknown>
+  const result: Record<string, unknown> = {}
+  for (const field of ['input', 'output', 'cacheRead', 'cacheWrite'] as const) {
+    const val = raw[field]
+    if (typeof val !== 'number' || !Number.isFinite(val) || val < 0) {
+      throw new Error(`Invalid ${ctx}: field "${field}" must be a non-negative number`)
+    }
+    result[field] = val
+  }
+  if (raw.tiers !== undefined) {
+    if (!Array.isArray(raw.tiers)) {
+      throw new Error(`Invalid ${ctx}: "tiers" must be an array`)
+    }
+    result.tiers = raw.tiers
+  }
+  return result
 }
 
 // ── 默认模型 ──
@@ -345,6 +399,21 @@ export async function setProvider(
   if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl as string
   if (data.type !== undefined) merged.api = configStore.applyTypeTranslation(data.type as string)
   if (data.name !== undefined) merged.name = data.name as string
+  // B-4a 断链修复（design §2.1 场景 D）：headers/authHeader 是 pi ProviderConfigSchema 内
+  // 字段，写入 models.json provider 条目。跟随 baseUrl/name 的 merged 赋值模式：undefined =
+  // 不变（base spread 保留既有值），显式传值才覆盖——headers 传空对象 {} 即清空（pi schema
+  // Type.Record 允许空对象；null 不在契约内，由 sanitizeHeaders 拒绝）。不做 apiKey 式
+  // __CLEAR__ 哨兵：apiKey 需要 '' 哨兵是因 string 空串已被复用，对象 {} 天然可作清空值。
+  if (data.headers !== undefined) {
+    merged.headers = sanitizeHeaders(data.headers, `headers for provider "${providerId}"`)
+  }
+  if (data.authHeader !== undefined) {
+    if (typeof data.authHeader !== 'boolean') {
+      throw new Error(`Invalid authHeader for provider "${providerId}": must be a boolean`)
+    }
+    // boolean 不能用 truthiness 判定：显式 false 是合法值（关闭 Authorization header 注入）
+    merged.authHeader = data.authHeader
+  }
   // wave3 C5/TC6：停用 provider 级 enabled 写入——provider 启用改由 enabledModels 白名单承载
   // （wave2 listProviders 已不读 models.json provider.enabled）。前端 onToggleEnabled 改走
   // toggleProviderEnabled（wave4），不再传 data.enabled 给 setProvider。data.enabled 参数声明保留
@@ -386,6 +455,32 @@ export async function setProvider(
       }
       if (typeof m.api === 'string') model.api = m.api
       if (typeof m.baseUrl === 'string') model.baseUrl = m.baseUrl
+      // B-4b 模型写入白名单补全：reasoning/maxTokens/cost/headers 全是 pi
+      // ModelDefinitionSchema 内字段（0.84.1 model-config.js），此前白名单缺失导致前端
+      // 回传即丢。undefined = 不变（base spread 保留）；显式传值走校验，非法值 throw
+      // 上抛（handler try-catch 转 sendError）而非静默丢弃——静默会让「保存成功但参数
+      // 丢失」无从排查。与存量字段（name/contextWindow 等的静默忽略）模式不同：新字段
+      // 从第一天就走校验路径，存量字段保持行为兼容不动。
+      if (m.reasoning !== undefined) {
+        if (typeof m.reasoning !== 'boolean') {
+          throw new Error(`Invalid reasoning for model "${id}": must be a boolean`)
+        }
+        model.reasoning = m.reasoning
+      }
+      if (m.maxTokens !== undefined) {
+        if (typeof m.maxTokens !== 'number' || !Number.isInteger(m.maxTokens) || m.maxTokens <= 0) {
+          throw new Error(`Invalid maxTokens for model "${id}": must be a positive integer`)
+        }
+        model.maxTokens = m.maxTokens
+      }
+      if (m.cost !== undefined) {
+        // 四字段必填对齐 pi ModelCostSchema（缺字段写入 → pi 拒载整个 models.json）
+        model.cost = sanitizeModelCost(m.cost, `cost for model "${id}"`)
+      }
+      if (m.headers !== undefined) {
+        // 清空语义对齐 provider 级：传 {} 即清空（pi Record 允许空对象）
+        model.headers = sanitizeHeaders(m.headers, `headers for model "${id}"`)
+      }
       // compat 透传：前端 compat 编辑器回传的兼容性覆盖必须写回，
       // 否则编辑保存即丢失用户手动配置的 compat（隐性数据丢失 bug）。
       // 类型守卫对齐 isValidThinkingLevelMap：必须排除 null（typeof null === 'object'）
