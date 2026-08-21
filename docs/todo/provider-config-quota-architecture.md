@@ -245,7 +245,7 @@ type QuotaFetchOutcome =
   | { ok: false; reason: 'unauthorized' | 'network' | 'no-subscription' | 'parse' }
 ```
 
-`reason` 经 QuotaService 缓存层透传到前端（现状缓存结构 `QuotaFetchResult` 只有 data/lastFetchAt，需同步扩展 reason 字段）。
+`reason` 经 QuotaService 缓存层透传到前端（现状缓存结构 `QuotaFetchResult` 只有 data/lastFetchAt，需同步扩展 reason 字段）。**失败态与旧缓存并存的展示语义**：查询失败时额度区整体替换为失败态文案（含恢复指引），旧缓存数据保留在内存缓存中但不展示（避免用户把陈旧数据当当前额度决策）；失败态上提供「查看上次成功数据」入口可展开旧值并标注「数据截至 <lastFetchAt>」。
 
 `QUOTA_PRESETS` 的 `auth` 字段同步数组化：kimi-coding 声明 `['api-key','oauth']`（其 usages API 与 oauth 同域同 Bearer——pi 侧 kimi oauth 的 `toAuth` 即 `Authorization: Bearer credential.access`，`pi-ai/dist/auth/oauth/kimi-coding.js:257-258`，与 xyz fetcher 的 Bearer 调用同构，`runtime/services/quota-providers/kimi.ts:52-57`）；zhipu/minimax 维持 `['api-key']`（zhipu 额度 API 为裸 authorization 头无 Bearer，oauth 通道暂不声明）。⛔ 实施期门：kimi oauth access token 查 `/coding/v1/usages` 是否 200 需真实凭证实测（Phase C 前置）。
 
@@ -273,8 +273,8 @@ Renderer 永不感知文件名（WS RPC → ConfigService facade → 三 Store�
 |---|---|---|
 | oauth 额度 401 | `reason:'unauthorized'` 失败态，不自动 refresh、不重试风暴 | 「与该供应商发起一次对话触发 token 刷新后，点击刷新重试」（D6） |
 | providers.json 迁移失败 | 不阻塞启动，双读回退 models.json 旧字段，日志告警 | 下次启动自动重试迁移（幂等）；持续失败查看 `<dataDir>/logs/` |
-| 迁移失败窗口内的双源合并 | **双读优先级：providers.json 优先、models.json 旧字段兜底；重试迁移只搬入 providers.json 中尚无条目的 provider，已有条目以 providers.json 为准并丢弃 models.json 旧字段**（防止失败窗口内的用户新写入被 stale 旧值覆盖） | 搬运成功后写回剥离版 models.json，即完成剥离判定 |
-| 迁移产生 pi 校验空壳条目 | 剥离寄生字段后若条目不满足 pi 八字段校验（models/baseUrl/headers/compat/modelOverrides/apiKey/oauth/authHeader 全缺——pi `applyModelsJson` 对此 throw），**整条删除**（典型：存量「只有 quota + name」的条目，`quota-service.ts:260-270` 经 upsertProvider 产生） | 无需恢复（该条目在 pi 侧本就无定义语义，xyz 扩展信息已保入 providers.json） |
+| 迁移失败窗口内的双源合并 | 双读优先级：providers.json 优先、models.json 旧字段兜底；重试迁移只搬入 providers.json 中尚无条目的 provider，已有条目以 providers.json 为准并丢弃 models.json 旧字段（防止失败窗口内的用户新写入被 stale 旧值覆盖）；搬运成功后写回剥离版 models.json，即完成剥离判定 | 无需人工恢复：窗口自动收敛（下一次成功迁移即消除双源） |
+| 迁移产生 pi 校验空壳条目 | 剥离寄生字段后若条目不满足 pi 八字段校验（models/baseUrl/headers/compat/modelOverrides/apiKey/oauth/authHeader 全缺——pi `applyModelsJson` 对此 throw），**整条删除**（典型来源：`setProvider` 仅传 quota/name 时 `merged = {...existing(空), name, quota}` 落盘，`provider-config-helper.ts:349`；`persistQuotaConfig` 经 upsertProvider 也会产生近空条目，但因其要求 existing 非空而至少继承原有字段） | 无需恢复（该条目在 pi 侧本就无定义语义，xyz 扩展信息已保入 providers.json） |
 | models.json 写入锁冲突/超时 | save-bar 报错，保持旧值 | 「重试保存；持续失败检查磁盘后重启」（§3.1 场景 A 失败路径） |
 | providers.json 损坏（非法 JSON） | 按空配置启动，备份坏文件 | 从 `<config>/providers.json.corrupt-<ts>` 人工恢复 |
 | 用户降级安装旧版 xyz | 旧版不识别 providers.json，quota/modelStates 表现为「未配置」（models.json 旧字段已剥离，不回写） | 重新配置套餐；此为已接受的取舍（pi schema 损毁风险 > 降级体验损失，见对比一风险栏） |
@@ -334,11 +334,11 @@ Provider 行展开体（ProviderEditBody 泛化，唯一编辑入口；QuickSetu
 - 步骤：Settings 展开各 provider → 套餐区启用额度查询 → 触发查询 → hover 输入框容量 chip。
 - 通过标准：三个 provider 均返回真实额度（非缓存空值）；**智谱显示 5h 窗口绝对量（used/limit，待验证检查点 4 实测确认可得性；若平台确实无总量字段，则显示 currentValue + percentage 并在文档修订时如实记录）**，周/月 ∞ 窗口维持隐藏语义（此前完全查不到额度是断点，此为恢复验证）；kimi 显示三窗口中平台实际提供的窗口；V1 的对话使其 used 可观察增长；`config/providers.json` 中出现对应 quota 绑定（含 cookieSet/apiKeySet），models.json 中不再有 quota/authMethod 字段。
 
-**V3（验证 G3：迁移与 pi 升级隔离）**
+**V3（验证 G3：迁移与 pi 升级隔离 + 写侧不复活）**
 
-- 场景：构造存量数据（用当前版本写一份含寄生字段的 models.json：provider.quota + authMethod + models[].enabled，**另含一条只有 quota + name 的空壳条目**——`persistQuotaConfig` 经 upsertProvider 产生的真实形态）→ 启动新版 xyz-agent。
-- 步骤：观察启动迁移 → 重启二次（幂等验证）→ 检查两个文件内容 → 用 `node <项目>/node_modules/@earendil-works/pi-coding-agent/dist/cli.js --list-models`（PI_CODING_AGENT_DIR 指向 xyz 数据目录）验证 pi 正常加载。
-- 通过标准：迁移后 models.json 只含 pi 原生语义字段、providers.json 含迁出的 quota/authMethod/modelStates（含 cookieSet/apiKeySet）且值不丢失（provider 列表、额度开关、模型启停与迁移前行为一致）；**空壳条目按 §3.4 错误规格整条删除且其 quota 信息保入 providers.json**；二次启动 no-op；pi --list-models 输出与迁移前有效 provider 集合一致（空壳条目本就不产生 pi 侧模型，删除不影响输出）。
+- 场景：构造存量数据（用当前版本写一份含寄生字段的 models.json：provider.quota + authMethod + models[].enabled，**另含一条只有 quota + name 的空壳条目**——`setProvider` 仅传 quota/name 产生的真实形态）→ 启动新版 xyz-agent。
+- 步骤：观察启动迁移 → 重启二次（幂等验证）→ 检查两个文件内容 → **在 Settings 中 toggle 一次额度开关 + 用 QuickSetup 保存一次 provider**（写侧复活检验）→ 再检查 models.json → 用 `node <项目>/node_modules/@earendil-works/pi-coding-agent/dist/cli.js --list-models`（PI_CODING_AGENT_DIR 指向 xyz 数据目录）验证 pi 正常加载。
+- 通过标准：迁移后 models.json 只含 pi 原生语义字段、providers.json 含迁出的 quota/authMethod/modelStates（含 cookieSet/apiKeySet）且值不丢失（provider 列表、额度开关、模型启停与迁移前行为一致）；**toggle 与 QuickSetup 保存后 models.json 仍无 quota/authMethod（增量写入只落 providers.json）**；空壳条目按 §3.4 错误规格整条删除且其 quota 信息保入 providers.json——**预期差异**：若空壳 provider 的 id 不在 auth.json 且非 catalog 有效凭据，迁移后 provider 列表中消失（该条目无定义无凭据，本就无操作价值，明示为预期行为而非回归）；二次启动 no-op；pi --list-models 输出与迁移前有效 provider 集合一致（空壳条目本就不产生 pi 侧模型，删除不影响输出）。
 
 **V4（验证 G4：oauth 型 provider 统一编辑体全链路 + 401 恢复闭环）**
 
@@ -364,9 +364,10 @@ Provider 行展开体（ProviderEditBody 泛化，唯一编辑入口；QuickSetu
 | 单元 | 内容 | justification |
 |---|---|---|
 | A1-1 | `getProviderExtrasPath()` + `XyzProviderStore`（file-lock + 原子写 + version） | 路径入 pi-paths SSOT；锁与原子性是收口硬约束 |
-| A1-2 | 存量迁移（剥离 models.json 寄生字段——quota/authMethod/enabled/cookieSet/apiKeySet → providers.json，幂等 + 双读回退 + 备份 + §3.4 空壳条目整条删除 + 合并策略） | 先迁数据再切读侧，读侧切换才能零风险 |
+| A1-2 | 存量迁移（剥离 models.json 寄生字段——quota、authMethod、models[].enabled（迁为 providers.json 的 modelStates）、**provider 级 `enabled` 死字段一并剥除**（`PiProviderConfig` 仍声明但 wave3 C5 已停写、无消费方，不剥则成为 G3 下唯一残留寄生字段）→ providers.json，幂等 + 双读回退 + 备份 + §3.4 空壳条目整条删除 + 合并策略） | 先迁数据再切读侧，读侧切换才能零风险 |
 | A1-3 | 聚合层/消费方切换读源（quota/authMethod 读 providers.json；modelStates 过滤同） | 双读回退保证兼容窗口 |
 | A1-4 | AuthService 收口（`authStorage.set` 的两个独立调用点——`auth-service.ts:104` 与 `provider-config-helper.ts:271`——收拢到 AuthService 单一入口）+ QuotaService 读凭证走 AuthService | 读侧收口与写侧同步完成，避免新直读产生 |
+| A1-5 | **写侧切换**：三条寄生字段写入路径改走 XyzProviderStore——① `persistQuotaConfig`（quota.configure RPC 链路，`quota-service.ts:260-270` 经 upsertProvider 写 models.json）改写 providers.json；② `setProvider` 的 `merged.authMethod = data.authMethod` 分支（`provider-config-helper.ts:288`，QuickSetup onSave 持续填充）改写 providers.json；③ `setProvider` 的 `if (data.quota !== undefined) merged.quota` 分支（`provider-config-helper.ts:297`，现状无前端调用方传 quota 的死分支）**直接删除**（防未来新调用方复活该路径绕过收口）。与 A1-2 同批交付（迁移后立即切换，否则用户 toggle 一次额度开关寄生字段即复活，迁移变启动搬运-运行写回的乒乓） | 迁移只清存量，写侧切换才断增量——G3 承诺的两个半面 |
 
 ### Phase A2：额度凭证源与数据结构（对应 V2）
 
@@ -393,7 +394,7 @@ kimi oauth token 实测 usages → openai-codex / anthropic（Claude Pro/Max）�
 ### 文件改动地图
 
 - 新增：`<agentDir>/config/providers.json`（运行时生成）；`packages/runtime/src/services/provider-extras-store.ts`（XyzProviderStore）
-- 修改：`pi-paths.ts`（+getProviderExtrasPath）、`quota-types.ts` / `quota-presets.ts`（shared）、`quota-service.ts` + `quota-providers/*`（runtime）、`provider-config-helper.ts` / `pi-provider-store.ts`（写侧收口与白名单）、`auth-service.ts` / `oauth-flow.ts`（写口合并）、`provider.ts`（ProviderInfo.models[].source）、`ProviderEditBody.vue` / `CodingPlanSection.vue` / `ModelListSection.vue` / `useProviderOAuth.ts`（UI）、i18n 两个 locale 文件
+- 修改：`pi-paths.ts`（+getProviderExtrasPath）、`quota-types.ts` / `quota-presets.ts`（shared）、`quota-service.ts` + `quota-providers/*`（runtime）、`provider-config-helper.ts` / `pi-provider-store.ts`（写侧收口与白名单）、`auth-service.ts`（authStorage.set 调用点收拢，`provider-config-helper.ts:271` 的 apiKey 写入改经 AuthService）、`provider.ts`（ProviderInfo.models[].source）、`ProviderEditBody.vue` / `CodingPlanSection.vue` / `ModelListSection.vue` / `useProviderOAuth.ts`（UI）、i18n 两个 locale 文件
 - 不动：pi 包（node_modules）、pi 内置 extension、`extensions/shared/quota-providers`（Out scope）
 
 ### 待验证检查点（设计阶段无法确定，诚实标注）
