@@ -12,10 +12,14 @@ import { type ProviderInfo, type BuiltinProviderTemplate, type ProviderId } from
 import { isCatalogProvider, deriveEnabled } from './provider-catalog.js'
 import type { IConfigStore, ConfigModelDefinition, ConfigProviderConfig } from './ports/config.js'
 import type { AuthStorage } from './auth/auth-storage.js'
+import type { XyzProviderStore } from './provider-extras-store.js'
 import { pickModelCapabilityFields } from './model-mapper.js'
 
 /** auth.json 存储能力（ConfigService 注入，与 ConfigService 构造函数 authStorage 同构）。 */
 type AuthStorageAccessors = Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'set' | 'hasCredentialSync' | 'listCredentialIds'>
+
+/** providers.json 存储能力（ConfigService 注入，A1-5 写侧切换）。 */
+export type ProviderExtrasAccessors = Pick<XyzProviderStore, 'modify'>
 
 /** setProvider 的入参形状（原 ConfigService.setProvider 内联类型提取，逐字一致）。 */
 export type SetProviderInput = {
@@ -26,8 +30,6 @@ export type SetProviderInput = {
   baseUrl?: string
   models?: Array<string | { id: string; name?: string; api?: string; baseUrl?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null>; enabled?: boolean; compat?: Record<string, unknown> }>
   enabled?: boolean
-  /** Coding Plan 额度查询配置（手动选择 fetcher + 启用状态）。 */
-  quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean }
 }
 
 /**
@@ -242,11 +244,16 @@ export function getProvider(configStore: IConfigStore, providerId: string): { ap
 
 /**
  * 新建 / 更新 provider（wave3 边界1 白名单守卫 + I9 auth.json 清理 + catalog 分体系）。
- * 纯函数：configStore / authStorage 经参数注入（原 ConfigService.setProvider 逐字搬迁）。
+ * 纯函数：configStore / authStorage / extrasStore 经参数注入（原 ConfigService.setProvider 逐字搬迁）。
+ *
+ * A1-5 写侧切换：authMethod 写 config/providers.json（extrasStore），不再寄生 models.json；
+ * quota 分支已删除（历史死分支，无前端调用方——防复活，quota 配置唯一写路径是
+ * QuotaService.configure → providers.json）。
  */
 export async function setProvider(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
+  extrasStore: ProviderExtrasAccessors | undefined,
   providerId: string,
   data: SetProviderInput,
 ): Promise<{ newDefault?: { provider: ProviderId; modelId: string } }> {
@@ -284,8 +291,18 @@ export async function setProvider(
   // 的安全动机被此路径持续回填）。仅非 catalog 分支写回；catalog + 无 authStorage 时
   // apiKey 无处安放（凭据只允许落 auth.json 0600），宁丢不写错位（生产恒注入 authStorage）。
   if (data.apiKey !== undefined && !isCatalogProvider(providerId)) merged.apiKey = data.apiKey as string
-  // I6：authMethod 透传（ProviderQuickSetup.onSave 按所选认证方式填充）
-  if (data.authMethod !== undefined) merged.authMethod = data.authMethod
+  // I6 + A1-5 写侧切换：authMethod 写 config/providers.json（不再寄生 models.json）。
+  // await（对齐上方 catalog apiKey 的 MF-1 语义）：modify 失败直接 reject 上抛，handler
+  // try-catch 转 sendError，不静默吞、不 stale 广播。extrasStore 未注入时丢弃 + warn
+  // （宁丢不写错位——生产恒注入，与 catalog apiKey 无 authStorage 时的处理对称）。
+  if (data.authMethod !== undefined) {
+    if (extrasStore) {
+      const authMethod = data.authMethod
+      await extrasStore.modify(providerId, current => ({ ...current, authMethod }))
+    } else {
+      console.warn(`[config-service] authMethod dropped for ${providerId}: providerExtrasStore not injected (A1-5)`)
+    }
+  }
   if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl as string
   if (data.type !== undefined) merged.api = configStore.applyTypeTranslation(data.type as string)
   if (data.name !== undefined) merged.name = data.name as string
@@ -293,8 +310,8 @@ export async function setProvider(
   // （wave2 listProviders 已不读 models.json provider.enabled）。前端 onToggleEnabled 改走
   // toggleProviderEnabled（wave4），不再传 data.enabled 给 setProvider。data.enabled 参数声明保留
   // （向后兼容），但不写入 models.json。model 级 enabled（下文 model 合并逻辑）保留。
-  // Coding Plan 额度查询：整体覆写 quota（fetcher/enabled/cookieSet 三字段一起持久化）
-  if (data.quota !== undefined) merged.quota = data.quota
+  // A1-5：quota 写入分支已删除（历史死分支：无前端调用方传 quota；quota 配置唯一写路径是
+  // QuotaService.configure → config/providers.json）。禁止恢复经 setProvider 写 models.json quota。
   if (data.models !== undefined) {
     const rawModels = data.models as Array<Record<string, unknown>>
     const existingModels = (existing.models ?? []) as ConfigModelDefinition[]

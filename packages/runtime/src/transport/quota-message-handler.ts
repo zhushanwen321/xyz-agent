@@ -63,7 +63,9 @@ export class QuotaMessageHandler {
           this.ctx.sendError(ws, 'invalid_payload', 'providerId required', msg.id)
           return
         }
-        const result = this.ctx.quotaService.configure(providerId, enabled, cookie, fetcher, apiKey)
+        // A1-5：configure 持久化走 providers.json（proper-lockfile RMW），await 防止
+        // reply 先于落盘（handler 返回时配置已持久，broadcast/后续读不拿 stale）
+        const result = await this.ctx.quotaService.configure(providerId, enabled, cookie, fetcher, apiKey)
         this.ctx.reply(ws, msg.id, 'quota.configure:result', result)
         return
       }

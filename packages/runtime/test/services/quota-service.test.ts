@@ -8,10 +8,11 @@
  * 运行：cd packages/runtime && npx vitest run test/services/quota-service.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, rmSync, existsSync, statSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, statSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { QuotaService } from '../../src/services/quota-service.js'
+import { XyzProviderStore } from '../../src/services/provider-extras-store.js'
 
 // vi.hoisted 提升变量到 vi.mock factory 可访问的位置（factory 会被 hoist 到文件顶部）
 const { mockFetchQuota, mockFetchers } = vi.hoisted(() => {
@@ -38,15 +39,25 @@ vi.mock('../../src/infra/pi/pi-provider-store.js', () => ({
 import { getApiKeyForProvider, getProviderConfig, upsertProvider } from '../../src/infra/pi/pi-provider-store.js'
 
 let tmpDir: string
+let extrasStore: XyzProviderStore
+let extrasPath: string
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'quota-svc-'))
+  extrasPath = join(tmpDir, 'pi', 'agent', 'config', 'providers.json')
+  extrasStore = new XyzProviderStore(extrasPath)
   vi.clearAllMocks()
   vi.mocked(getApiKeyForProvider).mockImplementation((id: string) => `key-for-${id}`)
   vi.mocked(getProviderConfig).mockImplementation(() => undefined)
   vi.mocked(upsertProvider).mockImplementation(() => ({}))
   mockFetchQuota.mockReset()
 })
+
+/** 读 providers.json 单 provider 断言用（文件不存在返回 undefined = 无扩展数据）。 */
+function readExtras(providerId: string): Record<string, unknown> | undefined {
+  if (!existsSync(extrasPath)) return undefined
+  return (JSON.parse(readFileSync(extrasPath, 'utf-8')).providers as Record<string, Record<string, unknown>>)[providerId]
+}
 
 afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true })
@@ -193,64 +204,58 @@ describe('QuotaService — 手动选择 fetcher（任务 1）', () => {
   })
 })
 
-describe('QuotaService — configure 持久化（任务 4）', () => {
-  it('configure 持久化 fetcher/enabled 到 provider config', () => {
+describe('QuotaService — configure 持久化（任务 4，A1-5 写侧切换：落 config/providers.json）', () => {
+  it('configure 持久化 fetcher/enabled 到 providers.json，不再写 models.json', async () => {
     vi.mocked(getProviderConfig).mockImplementation(() => ({
       name: 'test',
       baseUrl: 'https://bigmodel.cn',
       apiKey: 'k',
     }))
-    const svc = new QuotaService({ dataDir: tmpDir })
+    const svc = new QuotaService({ dataDir: tmpDir, providerExtrasStore: extrasStore })
 
-    const result = svc.configure('my-glm', true, undefined, 'zhipu')
+    const result = await svc.configure('my-glm', true, undefined, 'zhipu')
 
     expect(result.ok).toBe(true)
-    expect(upsertProvider).toHaveBeenCalledWith('my-glm', expect.objectContaining({
-      quota: expect.objectContaining({ fetcher: 'zhipu', enabled: true }),
-    }))
+    expect(readExtras('my-glm')).toEqual({ quota: { fetcher: 'zhipu', enabled: true } })
+    // A1-5：quota 不再经 upsertProvider 写 models.json（寄生字段禁复活）
+    expect(upsertProvider).not.toHaveBeenCalled()
   })
 
-  it('configure 未传 fetcher 时保留既有 quota.fetcher', () => {
+  it('configure 未传 fetcher 时保留既有 quota.fetcher（providers.json 无条目回退 models.json 旧值）', async () => {
     vi.mocked(getProviderConfig).mockImplementation(() => ({
       name: 'test',
       quota: { fetcher: 'kimi-coding', enabled: false },
     }))
-    const svc = new QuotaService({ dataDir: tmpDir })
+    const svc = new QuotaService({ dataDir: tmpDir, providerExtrasStore: extrasStore })
 
-    svc.configure('my-glm', true)
+    await svc.configure('my-glm', true)
 
-    expect(upsertProvider).toHaveBeenCalledWith('my-glm', expect.objectContaining({
-      quota: expect.objectContaining({ fetcher: 'kimi-coding', enabled: true }),
-    }))
+    expect(readExtras('my-glm')).toEqual({ quota: { fetcher: 'kimi-coding', enabled: true } })
   })
 
-  it('configure provider 不存在时返回 ok=false', () => {
+  it('configure provider 不存在时返回 ok=false', async () => {
     vi.mocked(getProviderConfig).mockImplementation(() => undefined)
-    const svc = new QuotaService({ dataDir: tmpDir })
+    const svc = new QuotaService({ dataDir: tmpDir, providerExtrasStore: extrasStore })
 
-    const result = svc.configure('nonexistent', true, undefined, 'zhipu')
+    const result = await svc.configure('nonexistent', true, undefined, 'zhipu')
 
     expect(result.ok).toBe(false)
     expect(upsertProvider).not.toHaveBeenCalled()
+    expect(existsSync(extrasPath)).toBe(false)
   })
 
-  it('configure cookie 类写入 cookie 文件 + 标记 cookieSet', () => {
+  it('configure cookie 类写入 cookie 文件 + 标记 cookieSet', async () => {
     vi.mocked(getProviderConfig).mockImplementation(() => ({
       name: 'test',
       baseUrl: 'https://xiaomimimo.com',
     }))
-    const svc = new QuotaService({ dataDir: tmpDir })
+    const svc = new QuotaService({ dataDir: tmpDir, providerExtrasStore: extrasStore })
 
-    const result = svc.configure('mimo-id', true, 'session=abc123', 'mimo')
+    const result = await svc.configure('mimo-id', true, 'session=abc123', 'mimo')
 
     expect(result.ok).toBe(true)
-    expect(upsertProvider).toHaveBeenCalledWith('mimo-id', expect.objectContaining({
-      quota: expect.objectContaining({
-        fetcher: 'mimo',
-        enabled: true,
-        cookieSet: true,
-      }),
-    }))
+    expect(readExtras('mimo-id')).toEqual({ quota: { fetcher: 'mimo', enabled: true, cookieSet: true } })
+    expect(upsertProvider).not.toHaveBeenCalled()
   })
 })
 
@@ -323,10 +328,11 @@ describe('QuotaService — getCredential fallback: api-key 类无专属 key 时�
   it('secrets 目录有专属 API Key 文件时优先用专属 key（不 fallback）', async () => {
     const svc = new QuotaService({
       dataDir: tmpDir,
+      providerExtrasStore: extrasStore,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
     })
     // 先写入专属 key 文件
-    svc.configure('glm-id', true, undefined, 'zhipu', 'quota-exclusive-key')
+    await svc.configure('glm-id', true, undefined, 'zhipu', 'quota-exclusive-key')
     mockFetchQuota.mockResolvedValue({ label: 'zhipu', wins: [] as never })
 
     await svc.fetch('glm-id')
@@ -337,37 +343,35 @@ describe('QuotaService — getCredential fallback: api-key 类无专属 key 时�
 })
 
 describe('QuotaService — W4 + apiKey 清除路径', () => {
-  it('configure 传 apiKey="" 时删除专属 key 文件 + 标记 apiKeySet=false', () => {
+  it('configure 传 apiKey="" 时删除专属 key 文件 + 标记 apiKeySet=false（落 providers.json）', async () => {
     vi.mocked(getProviderConfig).mockImplementation(() => ({
       name: 'test',
       baseUrl: 'https://bigmodel.cn',
-      quota: { fetcher: 'zhipu', enabled: true, apiKeySet: true },
     }))
-    const svc = new QuotaService({ dataDir: tmpDir })
+    const svc = new QuotaService({ dataDir: tmpDir, providerExtrasStore: extrasStore })
 
     // 先写入专属 key，再清除
-    svc.configure('glm-id', true, undefined, 'zhipu', 'some-key')
+    await svc.configure('glm-id', true, undefined, 'zhipu', 'some-key')
     const keyPath = join(tmpDir, 'secrets', 'glm-id-apikey.txt')
     expect(existsSync(keyPath)).toBe(true)
 
     // 清除：传 apiKey=''
-    const result = svc.configure('glm-id', true, undefined, 'zhipu', '')
+    const result = await svc.configure('glm-id', true, undefined, 'zhipu', '')
 
     expect(result.ok).toBe(true)
     expect(existsSync(keyPath)).toBe(false)
-    expect(upsertProvider).toHaveBeenLastCalledWith('glm-id', expect.objectContaining({
-      quota: expect.objectContaining({ apiKeySet: false }),
-    }))
+    expect(readExtras('glm-id')).toEqual({ quota: { fetcher: 'zhipu', enabled: true, apiKeySet: false } })
+    expect(upsertProvider).not.toHaveBeenCalled()
   })
 
-  it('configure 写入的 secret 文件权限为 0o600（仅属主可读写）', () => {
+  it('configure 写入的 secret 文件权限为 0o600（仅属主可读写）', async () => {
     vi.mocked(getProviderConfig).mockImplementation(() => ({
       name: 'test',
       baseUrl: 'https://bigmodel.cn',
     }))
-    const svc = new QuotaService({ dataDir: tmpDir })
+    const svc = new QuotaService({ dataDir: tmpDir, providerExtrasStore: extrasStore })
 
-    svc.configure('glm-id', true, 'cookie-val', undefined, undefined)
+    await svc.configure('glm-id', true, 'cookie-val', undefined, undefined)
 
     const cookiePath = join(tmpDir, 'secrets', 'glm-id-cookie.txt')
     const mode = statSync(cookiePath).mode & 0o777

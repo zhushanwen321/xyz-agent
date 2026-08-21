@@ -12,7 +12,7 @@ import { initLogger, closeLogger } from './infra/logger.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
 import { migrateToPiSubdir, getProviderConfig, upsertProvider, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
-import { getExtensionsDir, getNpmDir, getTmpDir } from './infra/pi/pi-paths.js'
+import { getExtensionsDir, getNpmDir, getTmpDir, getProviderExtrasPath } from './infra/pi/pi-paths.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
 import { ModelApiDiscoverer } from './infra/model-api-discoverer.js'
@@ -60,6 +60,10 @@ import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 // D8-1（perf W29）：后台初始化序列（listen 后执行）——独立模块承载使「migrateBuiltin →
 // autoUpgrade 顺序」可 spy 断言（06 §5 门禁），组合根只负责构造与注入。
 import { runStartupBackgroundInit } from './services/startup-background-init.js'
+// A1-2（provider-config-quota 架构）：models.json 寄生字段 → config/providers.json 迁移。
+import { migrateProviderExtras } from './services/migration/provider-extras-migration.js'
+import { migrateProviderEnabledToWhitelist } from './services/migration/legacy-provider-migration.js'
+import { XyzProviderStore } from './services/provider-extras-store.js'
 
 function parseArgs(): { port: number; projectRoot?: string; builtinPluginsDir?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
@@ -161,12 +165,36 @@ async function main(): Promise<void> {
   migrateToPiSubdir()
   // 清理 settings.json.packages 中泄漏到 pi 全局目录的相对路径项（架构约定 #1 隔离保障）
   cleanLeakedPackages()
+  // PiConfigStore 提前构造（纯委托无副作用）：下方 A1-2 迁移经 port 读写 models.json。
+  const configStore = new PiConfigStore()
+  // XyzProviderStore：config/providers.json 唯一读写者（组合根单例，下方注入迁移/ConfigService/QuotaService）。
+  const providerExtrasStore = new XyzProviderStore(getProviderExtrasPath())
+  // step2（provider 级 enabled → enabledModels 白名单）先于 A1-2：A1-2 会剥除 enabled
+  // 字段，先跑保住启停语义。后台序列的 migrateProviderConfig 会再调 step2，幂等 no-op。
+  await migrateProviderEnabledToWhitelist(configStore)
+  // A1-2：models.json 寄生字段（quota/authMethod/models[].enabled）剥离迁入 providers.json。
+  // 顺序约束：必须在 sanitizeInvalidProviders 之前——sanitize 对非 catalog 空壳条目（八字段
+  // 全缺，如 setProvider 仅传 quota/name 的历史形态）直接删除，先迁移才能把其寄生数据保入
+  // providers.json。迁移失败不阻塞启动（warn + 下次重试，幂等）。
+  try {
+    const extrasReport = await migrateProviderExtras(configStore, providerExtrasStore)
+    if (!extrasReport.noOp) {
+      console.log('[runtime] provider extras migration:', JSON.stringify({
+        migrated: extrasReport.migrated.length,
+        removedShells: extrasReport.removedShells,
+        skippedExisting: extrasReport.skippedExisting.length,
+      }))
+    }
+  } catch (e) {
+    // 启动期迁移 best-effort：失败不阻塞启动（warn + 下次启动幂等重试，对齐
+    // sanitizeInvalidProviders/cleanLeakedPackages 同类语义）
+    console.warn('[runtime] provider extras migration failed (will retry on next startup):', e)
+  }
   // 剔除 models.json 里的空壳 provider（五字段全缺）：空壳导致 bundled pi 0.80.3 严格校验时
   // 整个 models.json 加载失败（Model not found）。系统 pi 0.83 容错但 bundled 不容错，
   // 重装后必现。sanitize 让 xyz-agent 自愈这种脏数据（如外部脚本写入的测试 fixture）。
   sanitizeInvalidProviders()
 
-  const configStore = new PiConfigStore()
   const sessionStore = new PiSessionStore()
   const modelSource = new ModelApiDiscoverer()
   const extensionInstaller = new NpmGitInstaller()
@@ -192,7 +220,8 @@ async function main(): Promise<void> {
   // AuthStorage（OAuth 路径 B）：auth.json 在 pi agent 目录（与 models.json 同路径，与 pi 读取侧一致）。
   // ConfigService 用它做 I9 清理①（setProvider 保存 apiKey 时清 auth.json oauth）+ I8（deleteProvider 清 auth.json）。
   const authStorage = new AuthStorage(join(configStore.getPiAgentDir(), 'auth.json'))
-  const configService = new ConfigService(effectiveRoot, configStore, authStorage)
+  // providerExtrasStore 注入：setProvider 的 authMethod 改写 providers.json（A1-5 写侧切换）。
+  const configService = new ConfigService(effectiveRoot, configStore, authStorage, providerExtrasStore)
   // ADR-0021 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
   // 首启用时提升为 discovery.json SSOT。幂等：discovery 已有数据则 no-op。
   // D8-1 位置判断（perf W29，06 §5 m-7 结论）：保持 listen 前同步执行——
@@ -506,12 +535,16 @@ async function main(): Promise<void> {
   // 经 server.setServices 注入到 QuotaMessageHandler（quota.fetch/getCached/refresh/configure 路由）。
   // getProviderInfo：从 providerId 解析 ProviderInfo（baseUrl/name/quota.fetcher），
   // quota.fetcher 优先于 matchQuotaPreset（设计文档 §8.2 + 手动选择 fetcher 需求）。
+  // A1-5 写侧切换：quota 配置改落 config/providers.json（providerExtrasStore），
+  // providerExists 聚合层判定（catalog 或 custom 均可配置，不再要求 models.json 有条目）。
   const quotaService = new QuotaService({
     getProviderInfo: (providerId) => {
       const cfg = getProviderConfig(providerId)
       if (!cfg) return undefined
       return { baseUrl: cfg.baseUrl, name: cfg.name, quota: cfg.quota }
     },
+    providerExtrasStore,
+    providerExists: (providerId) => configService.listProviders().some(p => p.id === providerId),
   })
 
   const tServicesReady = performance.now()

@@ -32,6 +32,7 @@ import {
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore } from './ports/config.js'
 import type { AuthStorage } from './auth/auth-storage.js'
+import type { XyzProviderStore } from './provider-extras-store.js'
 import type { DirScopes } from './skill-dir-config.js'
 import { detectSources as detectSourcesImpl, previewImport as previewImportImpl, applyImport as applyImportImpl } from './migration/index.js'
 import {
@@ -101,6 +102,12 @@ export class ConfigService implements IConfigService {
      * 可选注入：未注入时两处清理 no-op（测试/无 OAuth 场景）。
      */
     private authStorage?: Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'set' | 'hasCredentialSync' | 'listCredentialIds'>,
+    /**
+     * providers.json 存储（A1-5 写侧切换）：setProvider 的 authMethod 经此写
+     * config/providers.json，不再寄生 models.json。
+     * 可选注入：未注入时 authMethod 丢弃 + warn（宁丢不写错位，生产恒注入）。
+     */
+    private providerExtrasStore?: Pick<XyzProviderStore, 'modify'>,
   ) {}
 
   // ── Provider CRUD（委托 provider-config-helper）─────────────────
@@ -126,7 +133,7 @@ export class ConfigService implements IConfigService {
   }
 
   async setProvider(providerId: string, data: SetProviderInput): Promise<{ newDefault?: { provider: ProviderId; modelId: string } }> {
-    return setProviderImpl(this.configStore, this.authStorage, providerId, data)
+    return setProviderImpl(this.configStore, this.authStorage, this.providerExtrasStore, providerId, data)
   }
 
   toggleProviderEnabled(providerId: string, enabled: boolean): { newDefault?: { provider: ProviderId; modelId: string } } {

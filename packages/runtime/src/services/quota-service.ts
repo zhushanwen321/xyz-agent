@@ -17,9 +17,10 @@ import type { NormalizedQuotaRow, ProviderQuotaFetcher } from '@xyz-agent/shared
 import { matchQuotaPreset } from '@xyz-agent/shared'
 import { QUOTA_FETCHERS } from './quota-providers/index.js'
 import { QuotaCache } from './quota-cache.js'
-import { getApiKeyForProvider, getProviderConfig, upsertProvider } from '../infra/pi/pi-provider-store.js'
+import { getApiKeyForProvider, getProviderConfig } from '../infra/pi/pi-provider-store.js'
 import { logger } from '../infra/logger.js'
 import { getDataDir } from '@xyz-agent/shared/paths'
+import type { XyzProviderStore } from './provider-extras-store.js'
 
 /** 最小查询间隔（毫秒） */
 const THROTTLE_MS = 10_000
@@ -60,6 +61,18 @@ export interface QuotaServiceOptions {
    * 默认实现返回 undefined（无法匹配，仅当 providerId 恰好等于 fetcher id 时命中）。
    */
   getProviderInfo?: ProviderInfoResolver
+  /**
+   * providers.json 存储（A1-5 写侧切换）：quota 配置持久化落 config/providers.json，
+   * 不再经 upsertProvider 写 pi models.json（寄生字段禁复活）。
+   * 未注入时 configure 的持久化失败返回（宁失败不写错位）。
+   */
+  providerExtrasStore?: XyzProviderStore
+  /**
+   * provider 聚合层存在性判定（catalog ∪ custom）：quota 绑定不再依赖 models.json
+   * 条目存在（场景 E：oauth-only catalog provider 在 models.json 无条目），改为查
+   * provider 聚合。默认回退 models.json 条目判定（保守，向后兼容未注入场景）。
+   */
+  providerExists?: (providerId: string) => boolean
 }
 
 export class QuotaService {
@@ -72,6 +85,10 @@ export class QuotaService {
   private secretsDir: string
   /** 从 providerId 解析 ProviderInfo 的回调 */
   private getProviderInfo: ProviderInfoResolver
+  /** providers.json 存储（quota 配置持久化落点，A1-5 写侧切换） */
+  private extrasStore: XyzProviderStore | undefined
+  /** provider 聚合层存在性判定 */
+  private providerExists: (providerId: string) => boolean
 
   constructor(options: QuotaServiceOptions | string = {}) {
     // 兼容旧签名：直接传 dataDir 字符串
@@ -81,6 +98,11 @@ export class QuotaService {
     this.getProviderInfo = typeof options === 'object' && options.getProviderInfo
       ? options.getProviderInfo
       : () => undefined
+    this.extrasStore = typeof options === 'object' ? options.providerExtrasStore : undefined
+    this.providerExists = typeof options === 'object' && options.providerExists
+      ? options.providerExists
+      // 保守默认：维持旧限制语义（models.json 有条目才可配置），生产恒注入聚合判定
+      : (providerId) => getProviderConfig(providerId) !== undefined
   }
 
   /**
@@ -154,20 +176,20 @@ export class QuotaService {
 
   /**
    * 配置 provider 额度查询（Settings UI 调用）。
-   * - 持久化 fetcher/enabled/cookieSet/apiKeySet 到 models.json 的 provider.quota
+   * - 持久化 fetcher/enabled/cookieSet/apiKeySet 到 config/providers.json（A1-5 写侧切换）
    * - cookie 写入 secrets 目录（cookie 类 provider）
    * - apiKey 写入 secrets 目录（api-key 类 provider，可选；不填 = 复用 provider.apiKey）
    *
    * @param fetcher - 用户手动选择的 fetcher id（可选）。未传时保留既有 fetcher 不变。
    * @param apiKey - Coding Plan 专属 API Key（可选，api-key 类）。空字符串 = 清除专属 key，复用 provider.apiKey。
    */
-  configure(
+  async configure(
     providerId: string,
     enabled: boolean,
     cookie?: string,
     fetcher?: string,
     apiKey?: string,
-  ): QuotaConfigureResult {
+  ): Promise<QuotaConfigureResult> {
     // 确保 secrets 目录存在
     // [W4] 临时清零 umask 保证 mode 0o700 不被进程 umask 过滤（mkdirSync 的 mode 受 umask 影响）。
     // 文件级 mode 0o600 同理在写入时设置。恢复原 umask 以免影响调用方其他 IO。
@@ -226,8 +248,8 @@ export class QuotaService {
       }
     }
 
-    // 持久化 quota 配置到 models.json（fetcher/enabled/cookieSet/apiKeySet）
-    const persistOk = this.persistQuotaConfig(
+    // 持久化 quota 配置到 config/providers.json（fetcher/enabled/cookieSet/apiKeySet）
+    const persistOk = await this.persistQuotaConfig(
       providerId,
       enabled,
       fetcher,
@@ -241,34 +263,50 @@ export class QuotaService {
   }
 
   /**
-   * 持久化 quota 配置到 models.json 的 provider.quota。
-   * 复用 upsertProvider 的 spread 合并语义：只覆写 quota 字段，其他 provider 字段不动。
+   * 持久化 quota 配置到 config/providers.json（A1-5 写侧切换，经 XyzProviderStore.modify
+   * RMW——只覆写 quota 字段，同 provider 其他扩展数据不动）。
+   *
+   * 校验：provider 必须存在于聚合层（catalog 或 custom，providerExists 注入判定）——
+   * quota 绑定不再依赖 models.json 条目存在（场景 E：oauth-only catalog provider）。
+   *
+   * 既有值继承：providers.json 条目优先；无条目时回退 models.json 旧 quota（迁移失败
+   * 窗口兼容——迁移成功后 models.json 已剥离，该回退恒 miss）。
    */
-  private persistQuotaConfig(
+  private async persistQuotaConfig(
     providerId: string,
     enabled: boolean,
     fetcher: string | undefined,
     cookieSet: boolean | undefined,
     apiKeySet: boolean | undefined,
-  ): boolean {
-    const existing = getProviderConfig(providerId)
-    if (!existing) {
-      logger.warn('[quota] provider not found, cannot persist quota', { providerId })
+  ): Promise<boolean> {
+    if (!this.providerExists(providerId)) {
+      logger.warn('[quota] provider not found in aggregated provider list, cannot persist quota', { providerId })
       return false
     }
-    const nextFetcher = fetcher ?? existing.quota?.fetcher
-    upsertProvider(providerId, {
-      ...existing,
-      quota: {
-        fetcher: nextFetcher,
-        enabled,
-        // 保留既有 cookieSet，除非本次明确写入新 cookie
-        cookieSet: cookieSet ?? existing.quota?.cookieSet,
-        // 保留既有 apiKeySet，除非本次明确传入新值（含空字符串清除）
-        apiKeySet: apiKeySet ?? existing.quota?.apiKeySet,
-      },
-    })
-    return true
+    if (!this.extrasStore) {
+      logger.warn('[quota] provider extras store not configured, cannot persist quota', { providerId })
+      return false
+    }
+    // models.json 旧 quota 只作迁移失败窗口的继承兜底（providers.json 无条目时）
+    const legacyQuota = getProviderConfig(providerId)?.quota
+    try {
+      await this.extrasStore.modify(providerId, current => ({
+        ...current,
+        quota: {
+          fetcher: fetcher ?? current?.quota?.fetcher ?? legacyQuota?.fetcher,
+          enabled,
+          // 保留既有 cookieSet，除非本次明确写入新 cookie
+          cookieSet: cookieSet ?? current?.quota?.cookieSet ?? legacyQuota?.cookieSet,
+          // 保留既有 apiKeySet，除非本次明确传入新值（含空字符串清除）
+          apiKeySet: apiKeySet ?? current?.quota?.apiKeySet ?? legacyQuota?.apiKeySet,
+        },
+      }))
+      return true
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.warn('[quota] failed to persist quota config to providers.json', { providerId, error: msg })
+      return false
+    }
   }
 
   /**
