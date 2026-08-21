@@ -24,11 +24,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import {
 	buildProbeEntry,
+	computePendingFingerprint,
 	extractSystem,
 	hashOf,
 	SCHEMA_VERSION,
 	sentToolsOf,
 	type Fingerprints,
+	type PendingFingerprint,
 } from "./fingerprint";
 
 const CUSTOM_TYPE = "cache-probe";
@@ -43,7 +45,7 @@ export default function (pi: ExtensionAPI): void {
 	let needsBaseline = true; // 初始 true 兜底 extension 加载晚于 session_start 的情况
 	let startReason: string | null = null;
 	let last: Fingerprints | null = null;
-	let pending: { cwd: string | null; parts: Omit<Fingerprints, "spFull" | "toolsSent"> } | null = null;
+	let pending: PendingFingerprint | null = null;
 
 	pi.on("session_start", (event) => {
 		needsBaseline = true;
@@ -55,26 +57,8 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("before_agent_start", (event) => {
 		seq += 1;
 		try {
-			const o = event?.systemPromptOptions ?? {};
-			pending = {
-				cwd: o.cwd ?? null,
-				parts: {
-					contextFiles: hashOf(o.contextFiles ?? null),
-					skills: hashOf(o.skills ?? null),
-					toolsList: hashOf([o.selectedTools ?? null, o.toolSnippets ?? null]),
-					append: hashOf(o.appendSystemPrompt ?? null),
-					guidelines: hashOf(o.promptGuidelines ?? null),
-					customPrompt: hashOf(o.customPrompt ?? null),
-					toolsReg: hashOf(
-						(pi.getAllTools() ?? []).map((t) => ({
-							name: t?.name ?? null,
-							description: t?.description ?? null,
-							parameters: t?.parameters ?? null,
-							promptGuidelines: t?.promptGuidelines ?? null,
-						})),
-					),
-				},
-			};
+			// 输入侧 7 hash 计算在 fingerprint.ts 纯函数层（handler 只做编排与 fail-safe）
+			pending = computePendingFingerprint(event?.systemPromptOptions, pi.getAllTools());
 		} catch (err) {
 			stderr(`before_agent_start failed: ${err instanceof Error ? err.message : String(err)}`);
 			pending = null;

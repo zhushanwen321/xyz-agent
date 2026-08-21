@@ -1157,57 +1157,75 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     if (active?.isGenerating || active?.isCompacting) {
       throw Object.assign(new Error(`Session ${sessionId} is busy`), { code: 'session_busy' })
     }
-    // since 基线：trace 打开过则用缓存；否则 getEntries() 全量拉一次建立（全量拉是接受的
-    // 一次性开销——现取是用户显式动作）
-    let baseline = this.traceLeafCache.get(sessionId)
-    if (baseline === undefined) {
-      const initial = await client.getEntries() as { data?: { leafId?: string | null } }
-      baseline = initial.data?.leafId ?? undefined
-      if (baseline) this.traceLeafCache.set(sessionId, baseline)
-    }
+    let baseline = await this.ensurePromptBaseline(sessionId, client)
     await client.prompt('/__xyz_get_system_prompt__')
     // 轮询：命令 handler 毫秒级完成，RPC 往返 1-2 轮命中；超时上限覆盖慢盘/慢命令
     const deadline = Date.now() + FETCH_CURRENT_PROMPT_TIMEOUT_MS
     while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, FETCH_CURRENT_PROMPT_POLL_MS))
-      let delta: unknown[] = []
-      let newLeafId: string | null = null
-      try {
-        // 哨兵感知（getEntriesSince）：'' 基线无参全量拉，undefined 同样全量（?? 挡不住 ''）
-        const result = await this.getEntriesSince(client, baseline) as { data?: { entries?: unknown[]; leafId?: string | null } }
-        delta = result.data?.entries ?? []
-        newLeafId = result.data?.leafId ?? null
-      } catch (e) {
-        if (isEntryNotFoundError(e)) {
-          // 基线跨 pi 进程失效：重建后继续轮询（命令可能已产出 entry）
-          this.traceLeafCache.delete(sessionId)
-          baseline = undefined
-          continue
-        }
-        throw e
+      const step = await this.pollOnceForPromptEntry(sessionId, client, baseline)
+      if (step === 'retry') {
+        baseline = undefined
+        continue
       }
-      const hit = [...delta].reverse().find(
-        (e) => (e as { type?: unknown; customType?: unknown })?.type === 'custom'
-          && (e as { customType?: unknown })?.customType === CURRENT_SYSTEM_PROMPT_CUSTOM_TYPE,
-      )
-      if (newLeafId) this.traceLeafCache.set(sessionId, newLeafId)
-      if (hit) {
-        // 增量同步给 trace 台账（DATA 行留取值痕迹；消费端按 entry.id 去重）
-        if (delta.length > 0 && this.messageBus) {
-          this.messageBus.publish(sessionId, {
-            type: 'session.traceEntryAppended',
-            id: nextTracePushId(),
-            payload: { sessionId, entries: delta, leafId: newLeafId },
-          })
-        }
-        const data = (hit as { data?: Record<string, unknown> }).data
-        const fullText = typeof data?.fullText === 'string' ? data.fullText : ''
-        const charCount = typeof data?.charCount === 'number' ? data.charCount : fullText.length
-        const fetchedAt = typeof data?.fetchedAt === 'string' ? data.fetchedAt : ''
-        return { sessionId, fullText, charCount, fetchedAt }
+      if (!step.hit) continue
+      // 增量同步给 trace 台账（DATA 行留取值痕迹；消费端按 entry.id 去重）
+      if (step.delta.length > 0 && this.messageBus) {
+        this.messageBus.publish(sessionId, {
+          type: 'session.traceEntryAppended',
+          id: nextTracePushId(),
+          payload: { sessionId, entries: step.delta, leafId: step.newLeafId },
+        })
       }
+      return extractCurrentPromptHit(sessionId, step.hit)
     }
     throw Object.assign(new Error(`Timed out fetching current system prompt for session ${sessionId}`), { code: 'fetch_current_prompt_timeout' })
+  }
+
+  /**
+   * 现取轮询的 since 基线初始化：trace 打开过则用缓存；否则 getEntries() 全量拉一次建立
+   *（全量拉是接受的一次性开销——现取是用户显式动作）。
+   */
+  private async ensurePromptBaseline(sessionId: string, client: IPiEngine): Promise<string | undefined> {
+    const cached = this.traceLeafCache.get(sessionId)
+    if (cached !== undefined) return cached
+    const initial = await client.getEntries() as { data?: { leafId?: string | null } }
+    const baseline = initial.data?.leafId ?? undefined
+    if (baseline) this.traceLeafCache.set(sessionId, baseline)
+    return baseline
+  }
+
+  /**
+   * 现取轮询单步：sleep → getEntries(since=baseline) → 倒序找 xyz:current-system-prompt
+   * custom entry。未命中也滚动 traceLeafCache 基线（增量无遗漏）。
+   * 基线跨 pi 进程失效（Entry not found）时清缓存基线并返回 'retry'——调用方置
+   * baseline=undefined 全量重建后继续轮询（命令可能已产出 entry）。
+   */
+  private async pollOnceForPromptEntry(
+    sessionId: string,
+    client: IPiEngine,
+    baseline: string | undefined,
+  ): Promise<PromptPollStep> {
+    await new Promise((resolve) => setTimeout(resolve, FETCH_CURRENT_PROMPT_POLL_MS))
+    let delta: unknown[] = []
+    let newLeafId: string | null = null
+    try {
+      // 哨兵感知（getEntriesSince）：'' 基线无参全量拉，undefined 同样全量（?? 挡不住 ''）
+      const result = await this.getEntriesSince(client, baseline) as { data?: { entries?: unknown[]; leafId?: string | null } }
+      delta = result.data?.entries ?? []
+      newLeafId = result.data?.leafId ?? null
+    } catch (e) {
+      if (isEntryNotFoundError(e)) {
+        this.traceLeafCache.delete(sessionId)
+        return 'retry'
+      }
+      throw e
+    }
+    const hit = [...delta].reverse().find(
+      (e) => (e as { type?: unknown; customType?: unknown })?.type === 'custom'
+        && (e as { customType?: unknown })?.customType === CURRENT_SYSTEM_PROMPT_CUSTOM_TYPE,
+    )
+    if (newLeafId) this.traceLeafCache.set(sessionId, newLeafId)
+    return { hit: hit ?? null, delta, newLeafId }
   }
 
   /**
@@ -2182,6 +2200,20 @@ async function readSegmentsMetadataFile(sessionId: string): Promise<SegmentsMeta
 function isEntryNotFoundError(e: unknown): boolean {
   const msg = e instanceof Error ? e.message : String(e)
   return /^entry not found/i.test(msg)
+}
+
+/** fetchCurrentSystemPrompt 单轮轮询产物；'retry' = 基线跨 pi 进程失效，需全量重建后再轮。 */
+type PromptPollStep =
+  | 'retry'
+  | { hit: unknown; delta: unknown[]; newLeafId: string | null }
+
+/** 从命中的 xyz:current-system-prompt custom entry 提取响应载荷（缺字段降级为空值）。 */
+function extractCurrentPromptHit(sessionId: string, hit: unknown): ServerMessageMap['session.currentSystemPrompt'] {
+  const data = (hit as { data?: Record<string, unknown> }).data
+  const fullText = typeof data?.fullText === 'string' ? data.fullText : ''
+  const charCount = typeof data?.charCount === 'number' ? data.charCount : fullText.length
+  const fetchedAt = typeof data?.fetchedAt === 'string' ? data.fetchedAt : ''
+  return { sessionId, fullText, charCount, fetchedAt }
 }
 
 /**

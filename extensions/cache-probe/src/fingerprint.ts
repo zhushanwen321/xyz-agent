@@ -94,6 +94,58 @@ export function diffFingerprints(cur: Fingerprints, last: Fingerprints | null): 
 	return (Object.keys(cur) as FingerprintKey[]).filter((k) => last[k] !== cur[k]);
 }
 
+/** systemPromptOptions 的结构子集（探针只读这些字段；宽松类型避免纯函数层耦合 SDK）。 */
+export interface SystemPromptOptionsLike {
+	cwd?: string | null;
+	contextFiles?: unknown;
+	skills?: unknown;
+	selectedTools?: unknown;
+	toolSnippets?: unknown;
+	appendSystemPrompt?: unknown;
+	promptGuidelines?: unknown;
+	customPrompt?: unknown;
+}
+
+/** before_agent_start 暂存的输入侧指纹（payload 侧 spFull/toolsSent 到 provider 请求时补齐）。 */
+export interface PendingFingerprint {
+	cwd: string | null;
+	parts: Omit<Fingerprints, "spFull" | "toolsSent">;
+}
+
+/** getAllTools 注册表条目归一（非对象/缺字段归 null，形态稳定后参与 toolsReg hash）。 */
+function normalizeTool(t: unknown): { name: unknown; description: unknown; parameters: unknown; promptGuidelines: unknown } {
+	if (!isRecord(t)) return { name: null, description: null, parameters: null, promptGuidelines: null };
+	return {
+		name: t["name"] ?? null,
+		description: t["description"] ?? null,
+		parameters: t["parameters"] ?? null,
+		promptGuidelines: t["promptGuidelines"] ?? null,
+	};
+}
+
+/**
+ * before_agent_start 输入侧 7 hash 计算（handler 只做编排，纯函数便于单测）。
+ * null 容忍语义与 turn 侧一致：缺省字段归一为 null 再 hash，防 undefined/null 抖动产生假变化。
+ */
+export function computePendingFingerprint(
+	o: SystemPromptOptionsLike | null | undefined,
+	tools: readonly unknown[] | null | undefined,
+): PendingFingerprint {
+	const opts = o ?? {};
+	return {
+		cwd: opts.cwd ?? null,
+		parts: {
+			contextFiles: hashOf(opts.contextFiles ?? null),
+			skills: hashOf(opts.skills ?? null),
+			toolsList: hashOf([opts.selectedTools ?? null, opts.toolSnippets ?? null]),
+			append: hashOf(opts.appendSystemPrompt ?? null),
+			guidelines: hashOf(opts.promptGuidelines ?? null),
+			customPrompt: hashOf(opts.customPrompt ?? null),
+			toolsReg: hashOf((tools ?? []).map(normalizeTool)),
+		},
+	};
+}
+
 /**
  * 构建待写入的 probe entry；无变化返回 null（不写 entry，session 零膨胀）。
  * baseline 全量；normal 增量。cwd 仅 baseline 携带（cwd 变化必然带动 contextFiles 变化，
