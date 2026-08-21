@@ -19,6 +19,8 @@ export {
   SYSTEM_PROMPT_CUSTOM_TYPE,
 } from './trace-rows'
 export type { SessionTraceInput, TraceRow, TraceRowMeta } from './trace-rows'
+export { blockHeadline, extractContentBlocks } from './trace-blocks'
+export type { TraceContentBlock } from './trace-blocks'
 export { filterTraceRows, TRACE_KIND_GROUPS } from './trace-filter'
 export type { TraceFilterState, TraceKindGroup } from './trace-filter'
 export {

@@ -6,6 +6,7 @@
  * inContext / shadowed 由 context-boundary 计算（探针 P4 语义）。
  */
 import { computeTraceContextBoundary } from './context-boundary'
+import { extractContentBlocks } from './trace-blocks'
 import type {
   ParsedSessionTraceLine,
 } from './parse-jsonl'
@@ -167,16 +168,20 @@ function summarizeRow(entry: TraceFileEntry | TraceSessionEndMeta, kind: TraceRo
       meta.provider = str(m.provider) || undefined
       meta.model = str(m.model) || undefined
       meta.stopReason = str(m.stopReason) || undefined
+      // usage 标量（pi AssistantMessage 必带；字段可选防御——corpus 有 4 种键集变体）
+      const u = typeof m.usage === 'object' && m.usage !== null ? (m.usage as Record<string, unknown>) : {}
+      meta.inputTokens = num(u.input)
+      meta.outputTokens = num(u.output)
+      meta.cacheReadTokens = num(u.cacheRead)
+      const cost = typeof u.cost === 'object' && u.cost !== null ? (u.cost as Record<string, unknown>) : {}
+      meta.costTotal = num(cost.total)
       let thinking = 0
       let tool = 0
       let text = 0
-      if (Array.isArray(m.content)) {
-        for (const b of m.content) {
-          const t = typeof b === 'object' && b !== null ? (b as { type?: unknown }).type : undefined
-          if (t === 'thinking') thinking++
-          else if (t === 'toolCall') tool++
-          else if (t === 'text') text++
-        }
+      for (const b of extractContentBlocks(m.content)) {
+        if (b.kind === 'thinking') thinking++
+        else if (b.kind === 'toolCall') tool++
+        else if (b.kind === 'text') text++
       }
       meta.thinkingBlocks = thinking
       meta.toolCalls = tool

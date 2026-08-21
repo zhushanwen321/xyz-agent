@@ -70,6 +70,10 @@ describe('A21 entry→TraceRow kind 映射（12 kind 全覆盖 + 损坏行占位
     expect(rowBySeq(rows, 6)?.meta.model).toBe('demo-model')
     expect(rowBySeq(rows, 6)?.meta.toolCalls).toBe(1)
     expect(rowBySeq(rows, 6)?.meta.thinkingBlocks).toBe(1)
+    // usage 标量（fixture 该行 usage 只有 input/output；缺省字段不进 meta）
+    expect(rowBySeq(rows, 6)?.meta.inputTokens).toBe(100)
+    expect(rowBySeq(rows, 6)?.meta.outputTokens).toBe(50)
+    expect(rowBySeq(rows, 6)?.meta.cacheReadTokens).toBeUndefined()
     expect(rowBySeq(rows, 7)?.meta.toolName).toBe('read')
     expect(rowBySeq(rows, 7)?.meta.isError).toBe(false)
     expect(rowBySeq(rows, 8)?.headline).toBe('npm test')
@@ -141,6 +145,16 @@ describe('A21 entry→TraceRow kind 映射（12 kind 全覆盖 + 损坏行占位
     expect(rows[0]?.kind).toBe('SESSION')
     expect(rows[0]?.meta.parentSession).toBe('s-fork-src')
     expect(rows[0]?.meta.forkEntryId).toBe('a1')
+  })
+
+  it('real-mixed-kinds：完整 usage（cacheRead + cost.total）标量进 meta', () => {
+    const rows = loadRows('real-mixed-kinds.jsonl')
+    const row = rows.find((r) => r.key === 'cd0cdf60')
+    expect(row?.kind).toBe('ASSISTANT')
+    expect(row?.meta.inputTokens).toBe(43549)
+    expect(row?.meta.outputTokens).toBe(70)
+    expect(row?.meta.cacheReadTokens).toBe(512)
+    expect(row?.meta.costTotal).toBe(0)
   })
 
   it('resolveTraceRowKind 单点映射（含未知类型兜底不丢失）', () => {
