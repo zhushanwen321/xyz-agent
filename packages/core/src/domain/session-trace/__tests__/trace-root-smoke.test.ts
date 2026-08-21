@@ -49,4 +49,11 @@ describe('R0 session-trace root smoke', () => {
       for (const line of lines) expect(line).toMatch(markerRe)
     }
   })
+
+  it('ledger 脚本含 CW_HOME 隔离逃逸修复', () => {
+    // cw verify 给验收子进程注入隔离 CW_HOME(空账本); ledger.sh 必须 CW_HOME= 回落 ~/.cw
+    // 读真实 closure 状态, 否则 R2 的账本部分结构性不可过。本断言锚定该修复的存在。
+    const ledger = readFileSync(new URL('trace-root-ledger.sh', SCRIPTS), 'utf-8')
+    expect(ledger).toContain('CW_HOME= cw status')
+  })
 })

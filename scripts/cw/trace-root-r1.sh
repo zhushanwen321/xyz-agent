@@ -6,6 +6,11 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 fail=0
 
+# spec 路由断言: R0 的 command 必须直指 smoke 测试文件(红阶段 patch 锚纪律)。
+# 失配 = spec 与脚本漂移, 本聚合回归门拒绝执行。
+grep -q 'trace-root-smoke.test.ts' .cw-specs/session-trace.json || {
+  echo "R1 FAIL"; echo "R1 FAIL (spec R0 command 未引用 trace-root-smoke.test.ts, patch 锚纪律漂移)" >&2; exit 1; }
+
 pnpm install --prefer-offline --frozen-lockfile > /tmp/trace-root-install.log 2>&1 || {
   echo "R1 FAIL" ; echo "R1 FAIL (pnpm install 失败, 明细 /tmp/trace-root-install.log)" >&2; exit 1; }
 

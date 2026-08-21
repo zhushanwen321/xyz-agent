@@ -5,7 +5,7 @@
       "title": "机器验收抽查锚: 跨模块烟雾 + gate 标记行契约(vitest, 含区分力断言)",
       "type": "unit",
       "core": false,
-      "command": "pnpm --filter @xyz-agent/core exec vitest run trace-root-smoke"
+      "command": "([ -d node_modules ] || pnpm install --prefer-offline --frozen-lockfile >/dev/null) && pnpm --filter @xyz-agent/core exec vitest run src/domain/session-trace/__tests__/trace-root-smoke.test.ts"
     },
     {
       "id": "R1",
