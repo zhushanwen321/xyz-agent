@@ -31,7 +31,7 @@ import {
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore } from './ports/config.js'
-import type { AuthStorage } from './auth/auth-storage.js'
+import type { AuthStorage, CredentialWriter } from './auth/auth-storage.js'
 import type { XyzProviderStore } from './provider-extras-store.js'
 import type { DirScopes } from './skill-dir-config.js'
 import { detectSources as detectSourcesImpl, previewImport as previewImportImpl, applyImport as applyImportImpl } from './migration/index.js'
@@ -96,19 +96,36 @@ export class ConfigService implements IConfigService {
     private projectRoot: string,
     private configStore: IConfigStore,
     /**
-     * auth.json 存储（OAuth 路径 B）。
+     * auth.json 存储读取/清理能力（OAuth 路径 B）。
+     * 不含 'set'——写入唯一经 credentialWriter（A1-4 收口）：
      * I9 清理①：setProvider 保存 apiKey 时清 auth.json oauth 凭据（both provider 切换凭据源）；
      * I8：deleteProvider 时同步清 auth.json（防 OAuth token 永久残留）。
      * 可选注入：未注入时两处清理 no-op（测试/无 OAuth 场景）。
      */
-    private authStorage?: Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'set' | 'hasCredentialSync' | 'listCredentialIds'>,
+    private authStorage?: Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'hasCredentialSync' | 'listCredentialIds'>,
     /**
-     * providers.json 存储（A1-5 写侧切换）：setProvider 的 authMethod 经此写
-     * config/providers.json，不再寄生 models.json。
-     * 可选注入：未注入时 authMethod 丢弃 + warn（宁丢不写错位，生产恒注入）。
+     * providers.json 存储（A1-5 写侧切换 + A1-3 读源切换）：setProvider 的 authMethod
+     * 经此写 config/providers.json；listProviders 聚合经此读 authMethod/quota/modelStates
+     * （双读回退：providers.json 优先 + models.json 旧寄生字段兜底）。
+     * 可选注入：未注入时 authMethod 丢弃 + warn（宁丢不写错位），聚合层 extras 恒空
+     * （authMethod 退回推断、quota undefined），生产恒注入。
      */
-    private providerExtrasStore?: Pick<XyzProviderStore, 'modify'>,
+    private providerExtrasStore?: Pick<XyzProviderStore, 'modify' | 'getExtrasSync' | 'readAllSync'>,
   ) {}
+
+  /**
+   * auth.json 凭据写通道（A1-4 收口）：setProvider 的 catalog apiKey 写入与
+   * applyImportProviders 的凭据导入经此（AuthService.saveCredential），不再直接
+   * 持有 authStorage.set。setter 注入：AuthService 依赖 configService
+   * （listBuiltinProviders 取 oauthConfig），组合根在 AuthService 构造后回填——
+   * 回填前无 RPC 处理（server.start 在全部装配后），无窗口期风险。
+   * 未注入时 catalog apiKey 丢弃（宁丢不写错位，生产恒注入）。
+   */
+  private credentialWriter?: CredentialWriter
+
+  setCredentialWriter(writer: CredentialWriter): void {
+    this.credentialWriter = writer
+  }
 
   // ── Provider CRUD（委托 provider-config-helper）─────────────────
 
@@ -121,7 +138,7 @@ export class ConfigService implements IConfigService {
   }
 
   listProviders(): ProviderInfo[] {
-    return listProvidersImpl(this.configStore, this.authStorage)
+    return listProvidersImpl(this.configStore, this.authStorage, this.providerExtrasStore)
   }
 
   listBuiltinProviders(): BuiltinProviderTemplate[] {
@@ -133,11 +150,11 @@ export class ConfigService implements IConfigService {
   }
 
   async setProvider(providerId: string, data: SetProviderInput): Promise<{ newDefault?: { provider: ProviderId; modelId: string } }> {
-    return setProviderImpl(this.configStore, this.authStorage, this.providerExtrasStore, providerId, data)
+    return setProviderImpl(this.configStore, this.authStorage, this.providerExtrasStore, this.credentialWriter, providerId, data)
   }
 
   toggleProviderEnabled(providerId: string, enabled: boolean): { newDefault?: { provider: ProviderId; modelId: string } } {
-    return toggleProviderEnabledImpl(this.configStore, this.authStorage, providerId, enabled)
+    return toggleProviderEnabledImpl(this.configStore, this.authStorage, this.providerExtrasStore, providerId, enabled)
   }
 
   async deleteProvider(providerId: string): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
@@ -145,7 +162,7 @@ export class ConfigService implements IConfigService {
   }
 
   async removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
-    return removeProviderByKindImpl(this.configStore, this.authStorage, providerId, kind)
+    return removeProviderByKindImpl(this.configStore, this.authStorage, this.providerExtrasStore, providerId, kind)
   }
 
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined {
@@ -358,7 +375,7 @@ export class ConfigService implements IConfigService {
   }
 
   async applyImportProviders(importId: string, selectedIds: string[]): Promise<{ result: ProviderImportResult } | { error: { code: string; message: string } }> {
-    return applyImportImpl(importId, selectedIds, this.authStorage)
+    return applyImportImpl(importId, selectedIds, this.credentialWriter)
   }
 
   // ── System prompt config（FR-6/FR-7，ADR-0044，委托 system-prompt-config-helper）──

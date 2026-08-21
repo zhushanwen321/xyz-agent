@@ -15,14 +15,15 @@ export interface ConfigProviderConfig {
   baseUrl?: string
   /** pi 的 api 标识（前端直接发送 pi 终值，runtime 透传，见 applyTypeTranslation）。 */
   api?: string
-  /** 认证方式（I6）：ProviderQuickSetup.onSave 标注。与 infra PiProviderConfig.authMethod 同构。 */
+  /** 认证方式（寄生字段，仅存量数据兼容读）。A1 后权威存 config/providers.json（XyzProviderStore）。 */
   authMethod?: 'api_key' | 'oauth' | 'env_var' | 'ambient'
   /** provider 级启停（W1）。省略时默认 true，与 infra PiProviderConfig 同构。 */
   enabled?: boolean
   models?: ConfigModelDefinition[]
   /**
-   * Coding Plan 额度查询配置（手动选择 fetcher + 启用状态 + cookie 标记）。
-   * 与 infra PiProviderConfig.quota 同构，listProviders 透传到 ProviderInfo.quota。
+   * Coding Plan 额度查询配置（寄生字段，仅存量数据兼容读）。
+   * A1 后权威存 config/providers.json（XyzProviderStore），listProviders 经双读回退
+   * 映射到 ProviderInfo.quota。
    */
   quota?: {
     /** 用户手动指定的 fetcher id（省略时 QuotaService 自动按 baseUrl/name 匹配）。 */

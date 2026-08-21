@@ -6,6 +6,8 @@
  *   推 auth.deviceCode / auth.authUrl，终态 auth.success / auth.error
  * - cancel(providerId)：abort 进行中的 flow（停轮询 / 关 callback server / 清 state）
  * - hasOAuth(providerId)：读 auth.json 是否有 oauth 凭据（provider 列表徽章数据源）
+ * - getCredential/saveCredential(providerId)：auth.json 凭证的收口读/写通道（A1-4）
+ *   ——全 runtime 对 auth.json 的写入唯一入口（三 Store 收口，架构 §3.4）
  * - both 清理②（I9）：login 成功后清 models.json apiKey——authMode='both' 的 provider
  *   切换认证方式时清另一种凭据，避免 pi 优先级困惑
  *
@@ -18,7 +20,7 @@
  */
 import type { BuiltinOAuthConfig, ServerMessage, ServerMessageMap } from '@xyz-agent/shared'
 import type { IAuthService } from '../../interfaces.js'
-import type { AuthStorage } from './auth-storage.js'
+import type { AuthStorage, Credential } from './auth-storage.js'
 import { runOAuthLogin } from './oauth-flow.js'
 
 export interface AuthServiceDeps {
@@ -76,6 +78,24 @@ export class AuthService implements IAuthService {
   /** 读 auth.json：该 provider 是否有 oauth 凭据（列表徽章 / OAuthDialog 已授权态） */
   async hasOAuth(providerId: string): Promise<boolean> {
     return this.deps.authStorage.hasOAuth(providerId)
+  }
+
+  /**
+   * 读 auth.json 凭证（A1-4 读通道；Phase A2 的 QuotaService 凭证源将经此取
+   * api_key.key / oauth.access）。直读不缓存——pi 侧 resolveStoredOAuth 刷新写回
+   * auth.json 后必须能立即读到新值（D6：额度查询只读现值，不自行 refresh）。
+   */
+  async getCredential(providerId: string): Promise<Credential | undefined> {
+    return this.deps.authStorage.get(providerId)
+  }
+
+  /**
+   * 写 auth.json 凭证（A1-4 写收口）：全 runtime 对 authStorage.set 的直接调用只剩
+   * 本方法（catalog apiKey 保存 / provider 导入 / legacy 迁移 / OAuth 登录全部经此）。
+   * AuthStorage 的锁语义（proper-lockfile + 原子写 + 0600）不变，只是调用点收拢。
+   */
+  async saveCredential(providerId: string, credential: Credential): Promise<void> {
+    await this.deps.authStorage.set(providerId, credential)
   }
 
   private async runFlow(providerId: string, config: BuiltinOAuthConfig, controller: AbortController): Promise<void> {

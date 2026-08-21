@@ -140,6 +140,20 @@ export class XyzProviderStore {
   }
 
   /**
+   * 同步读全部扩展数据（readAll 的同步版）。同步契约的消费方（listProviders 聚合层，
+   * IConfigService 同步接口）用；与 async 版同一 readInternal（读路径不持锁、不缓存，
+   * 每次调用读盘）——先例：AuthStorage.hasCredentialSync / listCredentialIds。
+   */
+  readAllSync(): Record<string, ProviderExtras> {
+    return readInternal(this.filePath).providers
+  }
+
+  /** 同步读单 provider 扩展数据（getExtras 的同步版，无条目 → undefined）。 */
+  getExtrasSync(providerId: string): ProviderExtras | undefined {
+    return readInternal(this.filePath).providers[providerId]
+  }
+
+  /**
    * RMW 单入口：锁内重读最新文件 → fn(current) 计算新值 → 原子写回。
    * current 是该 provider 当前扩展数据（无条目时 undefined）；返回值整条替换。
    * 并发 modify 同 provider 由锁串行化（后者基于前者的结果计算）。

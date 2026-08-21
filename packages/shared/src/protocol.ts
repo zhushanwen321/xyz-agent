@@ -166,8 +166,6 @@ export interface SetProviderData {
     enabled?: boolean
   }>
   enabled?: boolean
-  /** Coding Plan 额度查询配置（手动选择 fetcher + 启用状态）。 */
-  quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean; apiKeySet?: boolean }
 }
 
 /** 系统提示词配置（FR-6）。文件：<dataDir>/system-prompt.json。

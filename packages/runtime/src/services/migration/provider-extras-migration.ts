@@ -148,20 +148,45 @@ export async function migrateProviderExtras(
 }
 
 /**
- * 双读回退（Wave 2 读侧切换预留，本波只实现不接消费方）：
- * providers.json 优先，无条目时回退读 models.json 旧寄生字段——兼容迁移失败窗口
- * （迁移失败时 models.json 寄生字段仍在，读侧仍能取到值；迁移成功后 models.json
- * 已剥离，providers.json 恒命中）。
+ * providers.json 读能力（双读回退的最小接口，A1-3 读侧切换）。XyzProviderStore 结构匹配。
  */
-export async function readExtrasWithFallback(
-  extrasStore: XyzProviderStore,
+export type ProviderExtrasReader = Pick<XyzProviderStore, 'getExtrasSync' | 'readAllSync'>
+
+/**
+ * 双读回退（A1-3 读侧切换）：providers.json 优先，无条目时回退读 models.json 旧寄生
+ * 字段——兼容迁移失败窗口（迁移失败时 models.json 寄生字段仍在，读侧仍能取到值；
+ * 迁移成功后 models.json 已剥离，providers.json 恒命中）。
+ *
+ * 同步签名：主要消费方 listProviders 是同步契约（IConfigService 接口 + 多个 handler
+ * 同步依赖），读路径本就不持锁（readInternal 纯同步 IO），同步化不改变并发语义。
+ */
+export function readExtrasWithFallback(
+  extrasStore: ProviderExtrasReader,
   configStore: IConfigStore,
   providerId: string,
-): Promise<ProviderExtras | undefined> {
-  const fromStore = await extrasStore.getExtras(providerId)
+): ProviderExtras | undefined {
+  const fromStore = extrasStore.getExtrasSync(providerId)
   if (fromStore !== undefined) return fromStore
   const legacy = configStore.getProviderConfig(providerId)
   if (legacy === undefined) return undefined
   const { extras, dirty } = stripParasiticFields(legacy)
   return dirty ? extras : undefined
+}
+
+/**
+ * 批量双读回退（listProviders 聚合用）：providers.json 一次全读 + models.json 旧寄生
+ * 字段逐条兜底合并。per-provider 逐条调 readExtrasWithFallback 会 N 次读盘，批量版
+ * 两个文件各只读一次。
+ */
+export function readAllExtrasWithFallback(
+  extrasStore: ProviderExtrasReader,
+  configStore: IConfigStore,
+): Record<string, ProviderExtras> {
+  const merged: Record<string, ProviderExtras> = extrasStore.readAllSync()
+  for (const [providerId, config] of Object.entries(configStore.readModels().providers)) {
+    if (merged[providerId] !== undefined) continue
+    const { extras, dirty } = stripParasiticFields(config)
+    if (dirty) merged[providerId] = extras
+  }
+  return merged
 }

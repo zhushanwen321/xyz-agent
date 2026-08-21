@@ -11,12 +11,14 @@ import builtinData from '../generated/builtin-providers.json'
 import { type ProviderInfo, type BuiltinProviderTemplate, type ProviderId } from '@xyz-agent/shared'
 import { isCatalogProvider, deriveEnabled } from './provider-catalog.js'
 import type { IConfigStore, ConfigModelDefinition, ConfigProviderConfig } from './ports/config.js'
-import type { AuthStorage } from './auth/auth-storage.js'
+import type { AuthStorage, CredentialWriter } from './auth/auth-storage.js'
 import type { XyzProviderStore } from './provider-extras-store.js'
+import { readAllExtrasWithFallback, type ProviderExtrasReader } from './migration/provider-extras-migration.js'
 import { pickModelCapabilityFields } from './model-mapper.js'
 
-/** auth.json 存储能力（ConfigService 注入，与 ConfigService 构造函数 authStorage 同构）。 */
-type AuthStorageAccessors = Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'set' | 'hasCredentialSync' | 'listCredentialIds'>
+/** auth.json 存储能力（ConfigService 注入，与 ConfigService 构造函数 authStorage 同构）。
+ * 不含 'set'——写入唯一经 credentialWriter（A1-4 收口，AuthService.saveCredential）。 */
+type AuthStorageAccessors = Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'hasCredentialSync' | 'listCredentialIds'>
 
 /** providers.json 存储能力（ConfigService 注入，A1-5 写侧切换）。 */
 export type ProviderExtrasAccessors = Pick<XyzProviderStore, 'modify'>
@@ -45,8 +47,14 @@ const builtinModelsById = new Map<string, BuiltinProviderTemplate['models']>(
  * BuiltinModelSummary → ProviderInfo.models 元素形状（T9 合并兜底用）。
  * 差异：BuiltinModelSummary.input 是 string[]（恒输出 11 键），ProviderInfo 元素 input 是
  * Array<'text' | 'image'>——过滤 + null→undefined 归一。
+ * A1-3：builtin 副本同样应用 modelStates（providers.json 模型启停对 catalog 内置模型
+ * 生效）；有值才设 enabled（与 builtin 模板无 enabled 字段的现状一致，消费方
+ * `enabled !== false` 兼容 undefined）。
  */
-function toProviderModel(m: BuiltinProviderTemplate['models'][number]): ProviderInfo['models'][number] {
+function toProviderModel(
+  m: BuiltinProviderTemplate['models'][number],
+  modelStates?: Record<string, { enabled: boolean }>,
+): ProviderInfo['models'][number] {
   return {
     id: m.id,
     name: m.name,
@@ -58,6 +66,7 @@ function toProviderModel(m: BuiltinProviderTemplate['models'][number]): Provider
     maxTokens: m.maxTokens ?? undefined,
     thinkingLevelMap: m.thinkingLevelMap ?? undefined,
     compat: m.compat ?? undefined,
+    ...(modelStates?.[m.id] !== undefined ? { enabled: modelStates[m.id].enabled } : {}),
   }
 }
 
@@ -68,9 +77,13 @@ const builtinProvidersById = new Map<string, BuiltinProviderTemplate>(
 
 /**
  * ConfigModelDefinition → ProviderInfo.models 元素（wave2 双源共用，提取 custom 内联逻辑避免重复）。
- * model 级 enabled 透传（默认 true 向上兼容存量无此字段的 model）。
+ * A1-3 读源切换：model 级 enabled 以 providers.json modelStates 优先（迁移后唯一来源），
+ * models.json m.enabled 兜底（迁移失败窗口 + setProvider 仍写 m.enabled 的写侧残留路径）。
  */
-function toUserInfoModel(m: ConfigModelDefinition): ProviderInfo['models'][number] {
+function toUserInfoModel(
+  m: ConfigModelDefinition,
+  modelStates?: Record<string, { enabled: boolean }>,
+): ProviderInfo['models'][number] {
   return {
     id: m.id,
     name: m.name,
@@ -78,19 +91,23 @@ function toUserInfoModel(m: ConfigModelDefinition): ProviderInfo['models'][numbe
     baseUrl: m.baseUrl,
     input: m.input,
     compat: m.compat,
-    // W2：model 级 enabled 透传（默认 true 向上兼容存量无此字段的 model）
-    enabled: m.enabled !== false,
+    enabled: modelStates?.[m.id]?.enabled ?? (m.enabled !== false),
     ...pickModelCapabilityFields(m),
   }
 }
 
-/** 按 models.json config 推断 authMethod（I6：优先标注值，否则 $开头→env_var / 非空→api_key）。config 缺省→undefined。 */
+/**
+ * 按 models.json config 推断 authMethod（I6：$开头→env_var / 非空→api_key）。
+ * 显式标注（extras.authMethod，providers.json 优先 + models.json 旧字段兜底）在聚合层
+ * 优先于本推断（A1-3）；本函数不再读 config.authMethod——双读回退已覆盖该值，且
+ * 「providers.json 已有条目时丢弃 models.json 旧值」的合并策略要求标注不穿透
+ * （防 stale 旧值复活）。config 缺省→undefined。
+ */
 function deriveAuthMethod(config?: ConfigProviderConfig): ProviderInfo['authMethod'] {
   if (!config) return undefined
-  return config.authMethod
-    ?? (typeof config.apiKey === 'string' && config.apiKey.startsWith('$')
-      ? 'env_var' as const
-      : config.apiKey ? 'api_key' as const : undefined)
+  return typeof config.apiKey === 'string' && config.apiKey.startsWith('$')
+    ? 'env_var' as const
+    : config.apiKey ? 'api_key' as const : undefined
 }
 
 /** Runtime type guard for thinkingLevelMap values. */
@@ -113,11 +130,21 @@ export function setDefaultModel(configStore: IConfigStore, provider: ProviderId,
 
 /**
  * catalog ∪ custom 双源聚合 provider 列表。
- * 纯函数：configStore / authStorage 经参数注入（原 ConfigService.listProviders 逐字搬迁）。
+ * 纯函数：configStore / authStorage / extrasStore 经参数注入（原 ConfigService.listProviders 搬迁）。
+ *
+ * A1-3 读源切换：xyz 私有字段（authMethod 显式标注 / quota / modelStates 模型启停）
+ * 经 readAllExtrasWithFallback 双读——providers.json 优先 + models.json 旧寄生字段兜底
+ * （迁移失败窗口兼容）。未注入 extrasStore 时 extras 恒空：authMethod 退回 apiKey 推断、
+ * quota 为 undefined（与迁移后 models.json 已剥离寄生字段的读值一致）。
  */
-export function listProviders(configStore: IConfigStore, authStorage?: AuthStorageAccessors): ProviderInfo[] {
+export function listProviders(
+  configStore: IConfigStore,
+  authStorage?: AuthStorageAccessors,
+  extrasStore?: ProviderExtrasReader,
+): ProviderInfo[] {
   const models = configStore.readModels()
   const enabledModels = configStore.getEnabledModels()
+  const extrasAll = extrasStore ? readAllExtrasWithFallback(extrasStore, configStore) : {}
   const authIds = authStorage?.listCredentialIds() ?? []
   const authIdSet = new Set(authIds)
 
@@ -142,6 +169,8 @@ export function listProviders(configStore: IConfigStore, authStorage?: AuthStora
     catalogIdsHandled.add(id)
     const override = models.providers[id]
     const hasOverride = !!override
+    // A1-3：xyz 私有字段读 providers.json（双读回退，models.json 寄生字段仅兜底）
+    const extras = extrasAll[id]
     // C1 契约「catalog 凭据 = id ∈ auth.json keys」；override?.apiKey 是 catalog provider
     // 手动填 key 的旧数据（迁移前错位）合理扩展，双源判定避免遗漏。
     const apiKeySet = authIdSet.has(id) || !!override?.apiKey
@@ -153,19 +182,20 @@ export function listProviders(configStore: IConfigStore, authStorage?: AuthStora
       api: override?.api ?? builtinP.api,
       baseUrl: override?.baseUrl ?? builtinP.baseUrl,
       apiKeySet,
-      authMethod: deriveAuthMethod(override),
+      // 显式标注（extras.authMethod）优先；无标注退回 apiKey 格式推断（I6）
+      authMethod: extras?.authMethod ?? deriveAuthMethod(override),
       // catalog 凭据在 auth.json：apiKeySet 已含 auth.json 判定（authIdSet.has(id)），
       // 与旧 status 逻辑（hasCredentialSync(id)）等价，避免重复读 auth.json。
       status: apiKeySet ? 'connected' as const : 'not_configured' as const,
       // models 优先 override，空则 builtin 副本（builtinP.models 经 toProviderModel 映射）
       models: overrideModels.length > 0
-        ? overrideModels.map(toUserInfoModel)
-        : (builtinP.models?.map(toProviderModel) ?? []),
+        ? overrideModels.map(m => toUserInfoModel(m, extras?.modelStates))
+        : (builtinP.models?.map(m => toProviderModel(m, extras?.modelStates)) ?? []),
       // DM3：enabled 从 enabledModels 派生，不读 models.json provider.enabled（F2）
       enabled: deriveEnabled(id, enabledModels),
       kind: 'catalog' as const,
       hasOverride,
-      quota: override?.quota,
+      quota: extras?.quota,
     })
   }
 
@@ -173,7 +203,9 @@ export function listProviders(configStore: IConfigStore, authStorage?: AuthStora
   // catalogIdsHandled 已收录 models.json 里的 catalog 条目（上面聚合时加入），此处跳过避免重复。
   for (const [id, config] of Object.entries(models.providers)) {
     if (catalogIdsHandled.has(id)) continue
-    const userModels = (config.models ?? []).map(toUserInfoModel)
+    // A1-3：xyz 私有字段读 providers.json（双读回退，models.json 寄生字段仅兜底）
+    const extras = extrasAll[id]
+    const userModels = (config.models ?? []).map(m => toUserInfoModel(m, extras?.modelStates))
     const apiKeySet = !!config.apiKey
     // id 来自 models.json 的磁盘 key（反序列化边界，design D5）→ as ProviderId 提升
     result.push({
@@ -183,7 +215,8 @@ export function listProviders(configStore: IConfigStore, authStorage?: AuthStora
       api: config.api,
       baseUrl: config.baseUrl,
       apiKeySet,
-      authMethod: deriveAuthMethod(config),
+      // 显式标注（extras.authMethod）优先；无标注退回 apiKey 格式推断（I6）
+      authMethod: extras?.authMethod ?? deriveAuthMethod(config),
       // M6 status 派生：apiKey 或 auth.json 凭据任一 → connected。
       // B3：复用 authIdSet（listProviders 开头批量读），消除每次循环 hasCredentialSync 的 N+1 读盘。
       status: (config.apiKey || authIdSet.has(id))
@@ -192,11 +225,11 @@ export function listProviders(configStore: IConfigStore, authStorage?: AuthStora
       // T9/M5 models 合并：用户自定义 models 非空 → 保留；为空 → builtin models 兜底
       models: userModels.length > 0
         ? userModels
-        : (builtinModelsById.get(id)?.map(toProviderModel) ?? userModels),
+        : (builtinModelsById.get(id)?.map(m => toProviderModel(m, extras?.modelStates)) ?? userModels),
       // DM3：enabled 从 enabledModels 派生，不读 models.json provider.enabled（F2）
       enabled: deriveEnabled(id, enabledModels),
       kind: 'custom' as const,
-      quota: config.quota,
+      quota: extras?.quota,
     })
   }
 
@@ -244,16 +277,20 @@ export function getProvider(configStore: IConfigStore, providerId: string): { ap
 
 /**
  * 新建 / 更新 provider（wave3 边界1 白名单守卫 + I9 auth.json 清理 + catalog 分体系）。
- * 纯函数：configStore / authStorage / extrasStore 经参数注入（原 ConfigService.setProvider 逐字搬迁）。
+ * 纯函数：configStore / authStorage / extrasStore / credentialWriter 经参数注入
+ * （原 ConfigService.setProvider 逐字搬迁）。
  *
  * A1-5 写侧切换：authMethod 写 config/providers.json（extrasStore），不再寄生 models.json；
  * quota 分支已删除（历史死分支，无前端调用方——防复活，quota 配置唯一写路径是
  * QuotaService.configure → providers.json）。
+ * A1-4 收口：catalog apiKey 写入经 credentialWriter（AuthService.saveCredential），
+ * 不再直接持有 authStorage.set。
  */
 export async function setProvider(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
   extrasStore: ProviderExtrasAccessors | undefined,
+  credentialWriter: CredentialWriter | undefined,
   providerId: string,
   data: SetProviderInput,
 ): Promise<{ newDefault?: { provider: ProviderId; modelId: string } }> {
@@ -267,15 +304,17 @@ export async function setProvider(
   // - catalog provider：apiKey 归 auth.json (api_key overwrites oauth natively)
   // - custom provider：apiKey 写 models.json，清 auth.json oauth (I9 cleanup)
   if (data.apiKey !== undefined && data.apiKey !== '') {
-    if (isCatalogProvider(providerId) && authStorage) {
+    if (isCatalogProvider(providerId) && credentialWriter) {
       // catalog provider: apiKey → auth.json (0600), strip from models.json
-      // MF-1（stale 广播 + 静默丢 key）：await authStorage.set 后再 delete merged.apiKey +
+      // A1-4 收口：写入经 credentialWriter（AuthService.saveCredential），authStorage.set
+      // 的直接调用全 runtime 只剩 auth-service.ts 内部。
+      // MF-1（stale 广播 + 静默丢 key）：await 落盘后再 delete merged.apiKey +
       // upsertProvider。fire-and-forget 时 withFileLock 未落盘 → handler 同步返回后
       // broadcastProviderList 裸读 auth.json 拿到 stale（catalog 显示 not_configured）；
-      // 且 set 失败只 warn，apiKey 既未进 auth.json 又已从 models.json 删 → 凭据静默丢失。
+      // 且写失败只 warn，apiKey 既未进 auth.json 又已从 models.json 删 → 凭据静默丢失。
       // await 后失败直接 reject 上抛（handler try-catch 转 sendError），不静默吞、不 stale 广播。
       // 与 deleteProvider/removeProviderByKind 的 cleanAuthCredential await 对称（写入路径对齐删除路径）。
-      await authStorage.set(providerId, { type: 'api_key', key: data.apiKey })
+      await credentialWriter.saveCredential(providerId, { type: 'api_key', key: data.apiKey })
       // Don't write apiKey to models.json for catalog providers
       delete merged.apiKey
     } else {
@@ -288,8 +327,8 @@ export async function setProvider(
   }
   // M5-01（P0，pi-alignment 决策 1）：catalog provider 的 apiKey 只归 auth.json——上面
   // delete merged.apiKey 后若此处无条件 re-add，apiKey 会双写进 models.json（G5 迁移
-  // 的安全动机被此路径持续回填）。仅非 catalog 分支写回；catalog + 无 authStorage 时
-  // apiKey 无处安放（凭据只允许落 auth.json 0600），宁丢不写错位（生产恒注入 authStorage）。
+  // 的安全动机被此路径持续回填）。仅非 catalog 分支写回；catalog + 无 credentialWriter 时
+  // apiKey 无处安放（凭据只允许落 auth.json 0600），宁丢不写错位（生产恒注入）。
   if (data.apiKey !== undefined && !isCatalogProvider(providerId)) merged.apiKey = data.apiKey as string
   // I6 + A1-5 写侧切换：authMethod 写 config/providers.json（不再寄生 models.json）。
   // await（对齐上方 catalog apiKey 的 MF-1 语义）：modify 失败直接 reject 上抛，handler
@@ -389,6 +428,7 @@ export async function setProvider(
 export function toggleProviderEnabled(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
+  extrasStore: ProviderExtrasReader | undefined,
   providerId: string,
   enabled: boolean,
 ): { newDefault?: { provider: ProviderId; modelId: string } } {
@@ -430,7 +470,7 @@ export function toggleProviderEnabled(
     //（wave2 双源聚合 + deriveEnabled + B1 凭据优先）选新 default 并 setDefaultModel 写回，
     // 不依赖 getDefaultModel 的惰性 auto-fix（其 fallback 只扫 models.json，看不到
     // auth.json-only 的 catalog provider）。
-    const newDefault = pickEnabledDefaultModel(configStore, authStorage, providerId)
+    const newDefault = pickEnabledDefaultModel(configStore, authStorage, extrasStore, providerId)
     if (newDefault) {
       configStore.setDefaultModel(newDefault.provider, newDefault.modelId)
       return { newDefault }
@@ -449,9 +489,10 @@ export function toggleProviderEnabled(
 function pickEnabledDefaultModel(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
+  extrasStore: ProviderExtrasReader | undefined,
   excludedId: string,
 ): { provider: ProviderId; modelId: string } | undefined {
-  const providers = listProviders(configStore, authStorage)
+  const providers = listProviders(configStore, authStorage, extrasStore)
   // B1：优先选有凭据（apiKeySet）的启用 provider 作 default，
   // 避免重选到无凭据的 catalog provider（用户禁用某 provider 触发重选时）。
   // 有凭据优先，找不到再 fallback 到任意启用 provider（含 ambient 认证如 bedrock）。
@@ -533,6 +574,7 @@ export async function deleteProvider(
 export async function removeProviderByKind(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
+  extrasStore: ProviderExtrasReader | undefined,
   providerId: string,
   kind: 'catalog' | 'custom',
 ): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
@@ -560,7 +602,7 @@ export async function removeProviderByKind(
     // toggle 边界2 的 pickEnabledDefaultModel，B1 凭据优先），透传 newDefault 广播 config.defaults。
     if (!overrideResult.removed) {
       if (oldDefault && oldDefault.provider === providerId) {
-        const newDefault = pickEnabledDefaultModel(configStore, authStorage, providerId)
+        const newDefault = pickEnabledDefaultModel(configStore, authStorage, extrasStore, providerId)
         if (newDefault) {
           configStore.setDefaultModel(newDefault.provider, newDefault.modelId)
           overrideResult = { removed: false, newDefault }

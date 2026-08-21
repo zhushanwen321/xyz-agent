@@ -20,7 +20,7 @@ import { QuotaCache } from './quota-cache.js'
 import { getApiKeyForProvider, getProviderConfig } from '../infra/pi/pi-provider-store.js'
 import { logger } from '../infra/logger.js'
 import { getDataDir } from '@xyz-agent/shared/paths'
-import type { XyzProviderStore } from './provider-extras-store.js'
+import type { XyzProviderStore, ProviderExtras } from './provider-extras-store.js'
 
 /** 最小查询间隔（毫秒） */
 const THROTTLE_MS = 10_000
@@ -269,8 +269,9 @@ export class QuotaService {
    * 校验：provider 必须存在于聚合层（catalog 或 custom，providerExists 注入判定）——
    * quota 绑定不再依赖 models.json 条目存在（场景 E：oauth-only catalog provider）。
    *
-   * 既有值继承：providers.json 条目优先；无条目时回退 models.json 旧 quota（迁移失败
-   * 窗口兼容——迁移成功后 models.json 已剥离，该回退恒 miss）。
+   * 既有值继承（A1-3 读源切换）：quota 既有值经 readQuotaFallback 双读——providers.json
+   * 条目优先，无条目时回退 models.json 旧 quota（迁移失败窗口兼容——迁移成功后
+   * models.json 已剥离，该回退恒 miss）。
    */
   private async persistQuotaConfig(
     providerId: string,
@@ -287,8 +288,7 @@ export class QuotaService {
       logger.warn('[quota] provider extras store not configured, cannot persist quota', { providerId })
       return false
     }
-    // models.json 旧 quota 只作迁移失败窗口的继承兜底（providers.json 无条目时）
-    const legacyQuota = getProviderConfig(providerId)?.quota
+    const legacyQuota = this.readQuotaFallback(providerId)
     try {
       await this.extrasStore.modify(providerId, current => ({
         ...current,
@@ -307,6 +307,17 @@ export class QuotaService {
       logger.warn('[quota] failed to persist quota config to providers.json', { providerId, error: msg })
       return false
     }
+  }
+
+  /**
+   * quota 既有值双读回退（A1-3 读源切换）：providers.json 条目（经 XyzProviderStore 同步
+   * 读）优先，无条目时回退 models.json 旧寄生 quota。providers.json 有条目时与 modify
+   * 回调的 current.quota 同值（兜底链中 current 优先，此处值仅补充无条目场景）。
+   */
+  private readQuotaFallback(providerId: string): NonNullable<ProviderExtras['quota']> | undefined {
+    const fromStore = this.extrasStore?.getExtrasSync(providerId)
+    if (fromStore !== undefined) return fromStore.quota
+    return getProviderConfig(providerId)?.quota
   }
 
   /**

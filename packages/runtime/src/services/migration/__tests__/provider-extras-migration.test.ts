@@ -228,15 +228,15 @@ describe('A1-2 合并策略（验收 2）', () => {
   })
 })
 
-describe('readExtrasWithFallback（双读回退，Wave 2 读侧切换预留）', () => {
+describe('readExtrasWithFallback（双读回退，A1-3 读侧切换）', () => {
   it('providers.json 有条目 → 优先返回', async () => {
     await extrasStore.modify('p1', () => ({ authMethod: 'api_key' }))
     writeModelsJson({ p1: { authMethod: 'oauth', baseUrl: 'https://x.example.com' } })
-    const extras = await readExtrasWithFallback(extrasStore, configStore, 'p1')
+    const extras = readExtrasWithFallback(extrasStore, configStore, 'p1')
     expect(extras).toEqual({ authMethod: 'api_key' })
   })
 
-  it('providers.json 无条目 + models.json 有旧寄生字段 → 回退读旧值（迁移失败窗口）', async () => {
+  it('providers.json 无条目 + models.json 有旧寄生字段 → 回退读旧值（迁移失败窗口）', () => {
     writeModelsJson({
       p1: {
         baseUrl: 'https://x.example.com',
@@ -245,7 +245,7 @@ describe('readExtrasWithFallback（双读回退，Wave 2 读侧切换预留）',
         models: [{ id: 'm1', enabled: false }],
       },
     })
-    const extras = await readExtrasWithFallback(extrasStore, configStore, 'p1')
+    const extras = readExtrasWithFallback(extrasStore, configStore, 'p1')
     expect(extras).toEqual({
       authMethod: 'oauth',
       quota: { fetcher: 'kimi', enabled: true },
@@ -253,9 +253,9 @@ describe('readExtrasWithFallback（双读回退，Wave 2 读侧切换预留）',
     })
   })
 
-  it('两处都无 → undefined', async () => {
+  it('两处都无 → undefined', () => {
     writeModelsJson({ p1: { baseUrl: 'https://x.example.com' } })
-    expect(await readExtrasWithFallback(extrasStore, configStore, 'p1')).toBeUndefined()
-    expect(await readExtrasWithFallback(extrasStore, configStore, 'missing')).toBeUndefined()
+    expect(readExtrasWithFallback(extrasStore, configStore, 'p1')).toBeUndefined()
+    expect(readExtrasWithFallback(extrasStore, configStore, 'missing')).toBeUndefined()
   })
 })

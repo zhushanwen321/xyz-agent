@@ -34,6 +34,7 @@ import type {
   ProviderId,
 } from '@xyz-agent/shared'
 import type { DirScopes } from './services/skill-dir-config.js'
+import type { Credential } from './services/auth/auth-storage.js'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 
 /**
@@ -468,6 +469,10 @@ export interface IAuthService {
   cancel(providerId: string): { cancelled: boolean }
   /** 读 auth.json：该 provider 是否有 oauth 凭据。 */
   hasOAuth(providerId: string): Promise<boolean>
+  /** 读 auth.json 凭证（A1-4 收口读通道，Phase A2 QuotaService 凭证源）。直读不缓存。 */
+  getCredential(providerId: string): Promise<Credential | undefined>
+  /** 写 auth.json 凭证（A1-4 收口写通道）：全 runtime 对 auth.json 写入的唯一入口。 */
+  saveCredential(providerId: string, credential: Credential): Promise<void>
 }
 
 /** Model aggregation, API discovery, and model/thinking-level orchestration. */

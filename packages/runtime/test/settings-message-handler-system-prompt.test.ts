@@ -74,7 +74,7 @@ function makeHandler() {
     configService: configService as unknown as IConfigService,
     sessionService: {} as unknown as ISessionService,
     modelService,
-    authService: { login: vi.fn(), cancel: vi.fn(), hasOAuth: vi.fn() },
+    authService: { login: vi.fn(), cancel: vi.fn(), hasOAuth: vi.fn(), getCredential: vi.fn(), saveCredential: vi.fn() },
     skillRegistry: { getGlobalSkills: () => [], getProjectSkills: vi.fn().mockResolvedValue([]) } as unknown as SettingsHandlerContext['skillRegistry'],
     projectRoot: '/proj',
     nextPushId: vi.fn().mockReturnValue('push-1'),

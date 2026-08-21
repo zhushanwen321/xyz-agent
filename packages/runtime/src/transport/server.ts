@@ -18,6 +18,8 @@ const noopAuthService: IAuthService = {
   login: () => ({ started: false, error: 'OAuth 不可用（authService 未装配）' }),
   cancel: () => ({ cancelled: false }),
   hasOAuth: async () => false,
+  getCredential: async () => undefined,
+  saveCredential: async () => { throw new Error('OAuth 不可用（authService 未装配）') },
 }
 import type { GitService } from '../services/git-service.js'
 import type { FileService } from '../services/file-service.js'

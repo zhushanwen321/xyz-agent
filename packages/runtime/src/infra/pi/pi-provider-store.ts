@@ -55,7 +55,7 @@ export interface PiProviderConfig {
   baseUrl?: string
   apiKey?: string
   api?: string
-  /** 认证方式（I6）：ProviderQuickSetup.onSave 标注。旧数据缺失时按 apiKey 格式推断。 */
+  /** 认证方式（寄生字段，仅存量数据兼容读）。A1 后权威存 config/providers.json（XyzProviderStore）。 */
   authMethod?: 'api_key' | 'oauth' | 'env_var' | 'ambient'
   /** provider 级启停（W1）。省略时默认 true，向上兼容存量数据。 */
   enabled?: boolean
@@ -64,8 +64,9 @@ export interface PiProviderConfig {
   models?: PiModelDefinition[]
   modelOverrides?: Record<string, Record<string, unknown>>
   /**
-   * Coding Plan 额度查询配置（可选）。
-   * 持久化在 models.json 的 provider 级，listProviders 映射到 ProviderInfo.quota。
+   * Coding Plan 额度查询配置（寄生字段，仅存量数据兼容读）。
+   * A1 后权威存 config/providers.json（XyzProviderStore），models.json 不再写入；
+   * 此字段仅供迁移（stripParasiticFields）与迁移失败窗口的双读回退读取。
    */
   quota?: {
     /** 用户手动指定的 fetcher id（省略时 QuotaService 自动按 baseUrl/name 匹配）。 */

@@ -61,7 +61,7 @@ import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 // autoUpgrade 顺序」可 spy 断言（06 §5 门禁），组合根只负责构造与注入。
 import { runStartupBackgroundInit } from './services/startup-background-init.js'
 // A1-2（provider-config-quota 架构）：models.json 寄生字段 → config/providers.json 迁移。
-import { migrateProviderExtras } from './services/migration/provider-extras-migration.js'
+import { migrateProviderExtras, readExtrasWithFallback } from './services/migration/provider-extras-migration.js'
 import { migrateProviderEnabledToWhitelist } from './services/migration/legacy-provider-migration.js'
 import { XyzProviderStore } from './services/provider-extras-store.js'
 
@@ -432,6 +432,10 @@ async function main(): Promise<void> {
       upsertProvider(providerId, rest)
     },
   })
+  // A1-4 收口：auth.json 写入唯一入口 = AuthService.saveCredential。AuthService 依赖
+  // configService（getOAuthConfig），构造在 configService 之后——setter 回填（回填前无
+  // RPC 处理，server.start 在全部装配后，无窗口期）。
+  configService.setCredentialWriter(authService)
   const fileService = new FileService({
     sessionService,
     executor: new FsExecutor(),
@@ -537,11 +541,14 @@ async function main(): Promise<void> {
   // quota.fetcher 优先于 matchQuotaPreset（设计文档 §8.2 + 手动选择 fetcher 需求）。
   // A1-5 写侧切换：quota 配置改落 config/providers.json（providerExtrasStore），
   // providerExists 聚合层判定（catalog 或 custom 均可配置，不再要求 models.json 有条目）。
+  // A1-3 读源切换：quota 经 readExtrasWithFallback 双读（providers.json 优先 + models.json
+  // 旧寄生字段兜底）；baseUrl/name 仍是 pi 原生语义字段，继续读 models.json。
   const quotaService = new QuotaService({
     getProviderInfo: (providerId) => {
       const cfg = getProviderConfig(providerId)
-      if (!cfg) return undefined
-      return { baseUrl: cfg.baseUrl, name: cfg.name, quota: cfg.quota }
+      const extras = readExtrasWithFallback(providerExtrasStore, configStore, providerId)
+      if (!cfg && !extras?.quota) return undefined
+      return { baseUrl: cfg?.baseUrl, name: cfg?.name, quota: extras?.quota }
     },
     providerExtrasStore,
     providerExists: (providerId) => configService.listProviders().some(p => p.id === providerId),
@@ -631,6 +638,8 @@ async function main(): Promise<void> {
   void runStartupBackgroundInit({
     configStore,
     authStorage,
+    // A1-4 收口：legacy step1 迁移的 apiKey 写 auth.json 经 AuthService（唯一写入口）
+    credentialWriter: authService,
     extensionService,
     pm,
     appInfo,

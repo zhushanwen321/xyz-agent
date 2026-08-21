@@ -86,6 +86,7 @@ function makeDeps() {
   const deps = {
     configStore: {} as PiConfigStore,
     authStorage: {} as AuthStorage,
+    credentialWriter: { saveCredential: vi.fn() },
     extensionService,
     pm,
     appInfo,
