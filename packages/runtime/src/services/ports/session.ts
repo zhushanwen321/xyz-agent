@@ -67,6 +67,8 @@ export interface SessionEndSidecarMeta {
  * rebuildHistoryFromEntries 收口到 port 后其返回类型必须 port 可见。
  * 保留 clientUuidMap（userEntryId→clientUuid 映射）——未来增量拉取
  * （getEntries(since=leafId)）/ branch 完整性判断需用，收口不降级原函数能力。
+ * ⚠️ 映射是稀疏的（最小写入）：仅含非纯文本消息（send 端 needsBackfill 谓词门控），
+ * steer/followUp/compact 重放消息历来无映射。上述未来特性不得假设映射覆盖全部 user entry。
  */
 export interface RebuiltHistory {
   messages: Message[]

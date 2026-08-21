@@ -315,8 +315,8 @@ export function createUseChat(deps: UseChatDeps) {
    * 调用方负责：appendUser / truncateFrom / pendingSend 等状态机编排
    * （submitSegments 只管「文本化 + 发送」核心步骤）：
    *   1. segmentsToPrompt（trim 后的 pi prompt 文本，image 段产出裸路径）
-   *   2. 写 segments.json sidecar（clientUuid 关联，重开时回填 badge）
-   *   3. chatApi.send(promptText + clientUuid 标记)
+   *   2. 写 segments.json sidecar（clientUuid 关联，重开时回填 badge）——仅非纯文本消息
+   *   3. chatApi.send(promptText + clientUuid 标记)——仅非纯文本消息（最小写入，见下方注释）
    *
    * 图片走路径模式（对齐 pi TUI）：路径已在 promptText 里（segmentsToText 产出裸路径），
    * LLM 自己调 read 工具读（vision/非 vision 模型都能处理）。不再传 images base64 字段。
@@ -337,11 +337,16 @@ export function createUseChat(deps: UseChatDeps) {
     precomputedPromptText?: string,
   ): Promise<void> {
     const promptText = precomputedPromptText ?? segmentsToPrompt(segments)
+    // 最小写入：纯文本消息（全部 segment 为 text）跳过 sidecar + 标记——重开时 textToSegments
+    // 降级与结构化回填渲染等价，只有非 text 段（image/file/skill/mention/handoff）的 badge
+    // 依赖映射回填。谓词对未知新类型默认保留写入（≠ 'text' 即写），失败方向安全。
+    // 不变式：sidecar 条目存在 ⟺ 映射 custom entry 存在（两侧同谓词门控）。
+    const needsBackfill = segments.some((s) => s.type !== 'text')
     // 写 segments.json sidecar（重开 session 时回填 image/file badge 用）。
     // 异步 fire-and-forget：失败 console.warn 不阻断（sidecar 丢失只是降级为占位文本，非硬错误）。
     // landing 态 session 尚未创建时（sessionId 为占位）不写——submitFirstMessage 在 session.create 后
     // 调 chat.send，send 内部 appendUser 用已创建的 newSid，故 submitSegments 收到的 sessionId 恒有效。
-    if (sessionId) {
+    if (needsBackfill && sessionId) {
       deps
         .writeSegments({
           sessionId,
@@ -350,10 +355,11 @@ export function createUseChat(deps: UseChatDeps) {
         .catch((e) => console.warn('[useChat] writeSegments failed:', e))
     }
     // 加 HTML 注释标记：pi extension 的 input hook 会剥离它（LLM 看不到），并建立
-    // clientUuid ↔ userEntryId 映射（重开时按映射回填 segments）。
+    // clientUuid ↔ userEntryId 映射（重开时按映射回填 segments）。纯文本轮不拼标记，
+    // extension input hook 见不到标记即不写映射 custom entry（自然 no-op）。
     // 标记格式严格：`<!--xyz:msg:<uuid>-->`，uuid 是 clientUuid 完整值（u-<uuid>），
     // 与 extension TAG 正则（u-[0-9a-fA-F-]{36}）+ segments.json clientUuid key 严格一致。
-    const markedPromptText = `${promptText}\n<!--xyz:msg:${clientUuid}-->`
+    const markedPromptText = needsBackfill ? `${promptText}\n<!--xyz:msg:${clientUuid}-->` : promptText
     // 图片走路径模式（对齐 pi TUI）：路径已在 promptText 里（segmentsToText 产出裸路径），
     // LLM 自己调 read 工具读。不再传 images base64 字段。
     await deps.chatApi.send(sessionId, markedPromptText)
