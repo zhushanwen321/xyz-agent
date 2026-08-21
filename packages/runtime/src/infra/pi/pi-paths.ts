@@ -17,6 +17,7 @@
  *         models.json                ← Provider & Model 定义
  *         settings.json              ← xyz-pi 设置（pi 原生配置，不迁出）
  *         disabled-packages.json     ← extension 启停状态（不迁出）
+ *         config/providers.json      ← xyz 扩展域（quota/authMethod/modelStates，pi 不扫描）
  *       sessions/                    ← Session jsonl 文件
  */
 
@@ -73,6 +74,18 @@ export function getModelsPath(): string {
 
 export function getSettingsPath(): string {
   return join(getPiAgentDir(), 'settings.json')
+}
+
+/**
+ * xyz 扩展域 providers.json 路径：`<piAgentDir>/config/providers.json`。
+ *
+ * 承载自 pi models.json 迁出的 xyz 私有字段（provider 级 quota/authMethod、
+ * models[].enabled 转化的 modelStates），models.json 只留 pi schema 内字段
+ *（provider-config-quota 架构 D4）。同目录已有先例 config/rename-session-ext-config.json
+ *（worktree-config-helper），pi 不扫描 agent/config/ 子目录，无冲突。
+ */
+export function getProviderExtrasPath(): string {
+  return join(getPiAgentDir(), 'config', 'providers.json')
 }
 
 export function getSessionsDir(): string {
