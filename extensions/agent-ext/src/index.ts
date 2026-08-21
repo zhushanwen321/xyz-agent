@@ -38,8 +38,9 @@ export default function (pi: ExtensionAPI): void {
   // infrastructure 包（builtin 不可禁，原根目录 xyz-agent-extension.js 常驻文件随 main
   // 的 agent-ext 包化迁移至此）。host 经 client.prompt 发 /__xyz_get_system_prompt__
   // （双下划线 = 内部命令，前端过滤 /__ 前缀不显示），handler 取当前 system prompt 写
-  // xyz:current-system-prompt custom entry（不进 LLM context，零模型侧影响），runtime
-  // 轮询 get_entries(since) 拉到后返回前端（同条 entry 也会作为 DATA 行出现在 trace
+  // xyz:current-system-prompt custom entry（不进 LLM context，零模型侧影响——pi
+  // sessionEntryToContextMessages 对 type=custom 落入末尾 return []，session-manager.ts:383-413），
+  // runtime 轮询 get_entries(since) 拉到后返回前端（同条 entry 也会作为 DATA 行出现在 trace
   // 台账里，留下取值痕迹）。
   pi.registerCommand("__xyz_get_system_prompt__", {
     description:

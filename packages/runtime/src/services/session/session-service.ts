@@ -1140,7 +1140,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    *   → 本方法轮询 get_entries(since=基线) 拉到该 entry 后提取返回。
    *
    * 副作用：命中后滚动 traceLeafCache 基线 + 广播 session.traceEntryAppended（现取 entry
-   * 作为 DATA 行同步出现在 trace 台账，留下取值痕迹；custom 不进 LLM context，零模型影响）。
+   * 作为 DATA 行同步出现在 trace 台账，留下取值痕迹；custom 不进 LLM context，零模型影响——
+   * pi sessionEntryToContextMessages 对 type=custom 落入末尾 return []，session-manager.ts:383-413）。
    *
    * @throws code=session_not_active（无活跃 pi 进程——非活跃 session 无现取源）/
    *   session_busy（生成/压缩中，命令会排队导致超时，预检拒绝更诚实）/

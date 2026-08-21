@@ -10,7 +10,7 @@
  * 下次 resume 多写一条留痕（设计 D2 已接受），不允许影响 agent 主流程。
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { isRecord, isSystemPromptTraceEntryData, SYSTEM_PROMPT_CUSTOM_TYPE } from "./types.js";
@@ -36,7 +36,7 @@ interface PersistedBaselineFile {
 /**
  * 解析单行 session JSONL 为留痕 entry data（运行时 guard；任何形状不符 / JSON 损坏返回 null）。
  * pi 落盘形状：{"type":"custom","customType":"xyz:system-prompt","data":{...},...}
- * （session-manager.ts appendCustomEntry）。
+ * （session-manager.ts:1122 appendCustomEntry）。
  */
 export function parseTraceEntryData(line: string): { hash: string; version: number; fullText: string } | null {
 	let parsed: unknown;
@@ -109,8 +109,22 @@ export function readPersistedBaseline(baselineFilePath: string, sessionId: strin
  *
  * 并发语义：session pool 下多个 pi 进程共享同一 agentDir，RMW 竞态按 last-writer-wins
  * 容忍（丢的是某 session 的基线 → 下次 resume 走兜底多写一条，设计 D2 已接受）；
- * 原子 rename 保证读方永远不会看到半截 JSON。
+ * 原子 rename 保证读方永远不会看到半截 JSON。跨进程共享豁免锁论证 + tmp 唯一化登记于
+ * data-source-registry.md §6（PR #186 MF2）。
  */
+
+// ── 原子写 tmp 唯一化（对齐 quota-providers cache.ts / ext-config W4 同款）──
+// 固定名 `<path>.tmp` 在多 pi 进程并发写时可碰撞互相截断；后缀 = pid + 36 进制随机段，
+// 保证写方间名字空间不相交。
+const TMP_RANDOM_BASE = 36;
+const TMP_RANDOM_SLICE_START = 2; // 跳过 Math.random 字符串的 "0." 前缀
+const TMP_RANDOM_SLICE_END = 10;
+function uniqueTmpPath(filePath: string): string {
+	return `${filePath}.tmp_${process.pid}_${Math.random()
+		.toString(TMP_RANDOM_BASE)
+		.slice(TMP_RANDOM_SLICE_START, TMP_RANDOM_SLICE_END)}`;
+}
+
 export function writePersistedBaseline(
 	baselineFilePath: string,
 	sessionId: string,
@@ -122,9 +136,20 @@ export function writePersistedBaseline(
 		file.sessions[sessionId] = { hash, version, updatedAt: new Date().toISOString() };
 		pruneSessions(file.sessions);
 		mkdirSync(dirname(baselineFilePath), { recursive: true });
-		const tmpPath = `${baselineFilePath}.tmp`;
-		writeFileSync(tmpPath, JSON.stringify(file, null, "\t") + "\n");
-		renameSync(tmpPath, baselineFilePath);
+		const tmpPath = uniqueTmpPath(baselineFilePath);
+		try {
+			writeFileSync(tmpPath, JSON.stringify(file, null, "\t") + "\n");
+			renameSync(tmpPath, baselineFilePath);
+		} catch (err) {
+			// 唯一名不自覆盖：写/rename 抛错的残留 tmp 须显式清理后重抛（registry §6 本文件
+			// 条目；对齐 quota-providers atomicWriteJson）；清理失败不掩盖原错误
+			try {
+				if (existsSync(tmpPath)) unlinkSync(tmpPath);
+			} catch {
+				// 清理失败仅残留一个小文件，原错误优先上抛
+			}
+			throw err;
+		}
 	} catch (e) {
 		// best-effort 降级：基线写失败只影响下次 app 重启 resume 的去重（多写一条留痕，
 		// 设计 D2 已接受），不阻断 agent 主流程；错误进 pi stdout 随日志落盘供排查

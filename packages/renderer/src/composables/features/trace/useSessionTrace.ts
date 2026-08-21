@@ -163,7 +163,9 @@ function ensureIncrementSubscription(sid: string): void {
  * 找回。回包 ready 后按序 flush（entry.id 去重使与快照重叠无害）；error 路径保留缓冲，
  * 重试 ready 时再 flush；session 删除时随 cleanup 一并丢弃。
  */
-// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：loading 窗口推送缓冲（trace 台账数据的过渡队列，flush 后即空）
+// @data-owner #13 —— #13 trace 台账的 loading 窗口推送缓冲（trace 数据本体的过渡队列，
+// 主表 #13 唯一写入口三腿之一：回包 ready 后按序 flush、flush 后即空；原 W24-EX-B 豁免
+// 系分类失当——缓冲的是数据本体非 UI 瞬态，随 #13 登记转正向注解，PR #186 MF1）
 const pendingAppends = new Map<string, Array<{ entries: unknown[]; leafId?: string | null }>>()
 
 /** 增量合并核心：entry.id 去重追加 + leafId 滚动（protocol「消费端按 entry.id 去重追加」；
